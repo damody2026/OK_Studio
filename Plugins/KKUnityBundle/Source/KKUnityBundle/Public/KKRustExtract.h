@@ -204,6 +204,12 @@ public:
 	// His penis root turned so his penis points along UnityDir (his skeleton space): written as his FK, applied after the
 	// pair contacts. False: no penis. OutDegrees: turned now.
 	bool AimPenis(const FVector& UnityDir,float& OutDegrees);
+	// His penis length (times along his dan bones) and size (his penis root scale) from the next frame (ok_set_penis_size).
+	bool SetPenisSize(float Length,float Scale);
+	// For points in her skeleton space (Unity metres): how far out of her skin near her entrance (metres, below 0 inside, 1e9
+	// with no skin near), the way out of her there and the nearest skin's distance from her entrance at rest (ok_skin_check):
+	// five floats a point.
+	bool SkinCheck(const TArray<FVector>& UnityAt,TArray<float>& Out) const;
 	bool StaticInteractionFrame(float Delta);
 	bool Skin();
 	TArray<float> ShapeBody() const;

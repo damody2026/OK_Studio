@@ -2,6 +2,7 @@
 #include "OKCharacterController.h"
 #include "OKInteractionScene.h"
 #include "OKHScene.h"
+#include "Framework/Application/SlateApplication.h"
 #include "KKPreviewActor.h"
 #include "ok_extract.h"
 #include "Components/PoseableMeshComponent.h"
@@ -146,6 +147,11 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
         const TArray<TSharedPtr<FJsonValue>>* SiruLevels=nullptr;if(Body->TryGetArrayField(TEXT("siru"),SiruLevels)&&SiruLevels->Num()==5){int32 L[5];for(int32 A=0;A<5;++A)L[A]=int32((*SiruLevels)[A]->AsNumber());Panel->SetSiruTest(L);}
         // {"dev":{"oral":100,...}}: her development there, for testing (0..100; -1 back to hers).
         const TSharedPtr<FJsonObject>* Devs=nullptr;if(Body->TryGetObjectField(TEXT("dev"),Devs))for(const auto& D:(*Devs)->Values){const double V=D.Value->AsNumber();if(V<0.)Panel->DevTest.Remove(FString(D.Key));else Panel->DevTest.Add(FString(D.Key),float(V));}
+        bool Green=false;if(Body->TryGetBoolField(TEXT("penis_green"),Green))Panel->SetPenisGreen(Green);
+        // {"penis":{"length":1.2,"scale":1.1,"root":[x,y]}}: his penis set as the panel's sliders and pad do.
+        const TSharedPtr<FJsonObject>* Penis=nullptr;if(Body->TryGetObjectField(TEXT("penis"),Penis)){double L=-1,S=-1;(*Penis)->TryGetNumberField(TEXT("length"),L);(*Penis)->TryGetNumberField(TEXT("scale"),S);
+            if(L>0||S>0)Panel->SetPenis(L>0?float(L):1.f,S>0?float(S):1.f);
+            const TArray<TSharedPtr<FJsonValue>>* Root=nullptr;if((*Penis)->TryGetArrayField(TEXT("root"),Root)&&Root->Num()==2)Panel->SetRootPad(FVector2D((*Root)[0]->AsNumber(),(*Root)[1]->AsNumber()));}
         double FaceCam=0;if(Body->TryGetNumberField(TEXT("face_cam"),FaceCam))Panel->LookAtFace(float(FaceCam));
         double CrotchCam=0;const TSharedPtr<FJsonObject>* CrotchView=nullptr;if(Body->TryGetNumberField(TEXT("crotch_cam"),CrotchCam))Panel->LookAtCrotch(float(CrotchCam));
         else if(Body->TryGetObjectField(TEXT("crotch_cam"),CrotchView)){double Dist=60,Pitch=15,Turn=0;(*CrotchView)->TryGetNumberField(TEXT("distance"),Dist);(*CrotchView)->TryGetNumberField(TEXT("pitch"),Pitch);(*CrotchView)->TryGetNumberField(TEXT("turn"),Turn);bool Front=false;(*CrotchView)->TryGetBoolField(TEXT("front"),Front);Panel->LookAtCrotch(float(Dist),float(Pitch),float(Turn),Front);}
@@ -206,6 +212,12 @@ void AOKInteractionMode::Fail(const FString& Why){Error=Why;UE_LOG(LogTemp,Error
 void AOKInteractionMode::Tick(float Delta){
     Super::Tick(Delta);if(Finished||!Controller)return;
     if(auto* PC=Controller->GetOwningPlayer())if(PC->WasInputKeyJustPressed(EKeys::Escape)){Exit(!Ready);return;}
+    // Space pauses or resumes the two of them (user, 2026-11-02: to take pictures), not while typing to her.
+    if(auto* PC=Controller->GetOwningPlayer())if(Controller->HPanel&&Controller->PairedPlayback&&PC->WasInputKeyJustPressed(EKeys::SpaceBar)){
+        const TSharedPtr<SWidget> Focus=FSlateApplication::IsInitialized()?FSlateApplication::Get().GetKeyboardFocusedWidget():nullptr;
+        if(!Focus||!Focus->GetType().ToString().Contains(TEXT("EditableText"))){const bool bPaused=!Controller->PairedPlayback->IsPaused();
+            Controller->PairedPlayback->SetPaused(bPaused);if(Controller->PreviewActor)Controller->PreviewActor->SetSpeechPaused(bPaused);if(Controller->PartnerActor)Controller->PartnerActor->SetSpeechPaused(bPaused);
+            UE_LOG(LogTemp,Display,TEXT("H scene: %s with space"),bPaused?TEXT("paused"):TEXT("resumed"));}}
     if(FPlatformTime::Seconds()-Started>180&&!Ready&&(!Activated||ReturnLabel==TEXT("返回多人街區"))){Fail(TEXT("一對一互動準備逾時"));return;}
     if(LoadingFemale){FString Why;
         if(!LoadingFemale->ContinueSessionLoad(Why)){Fail(Why);return;}

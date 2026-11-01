@@ -30,6 +30,24 @@ public:
     UFUNCTION() void HandleClick();
 };
 
+// Where his penis root goes (user, 2026-11-02): a point in a circle, dragged; its edge is the farthest that way
+// (UOKHScenePanel::RootPad). Up her back, down her belly, left and right hers.
+UCLASS()
+class OPENKOIKATSU_API UOKHRootPad : public UUserWidget {
+    GENERATED_BODY()
+public:
+    UPROPERTY() TObjectPtr<UOKHScenePanel> Owner;
+    FVector2D Value=FVector2D::ZeroVector;
+    virtual TSharedRef<SWidget> RebuildWidget() override;
+    virtual int32 NativePaint(const FPaintArgs& Args,const FGeometry& Geometry,const FSlateRect& Culling,FSlateWindowElementList& Out,int32 Layer,const FWidgetStyle& Style,bool bParentEnabled) const override;
+    virtual FReply NativeOnMouseButtonDown(const FGeometry& Geometry,const FPointerEvent& Event) override;
+    virtual FReply NativeOnMouseMove(const FGeometry& Geometry,const FPointerEvent& Event) override;
+    virtual FReply NativeOnMouseButtonUp(const FGeometry& Geometry,const FPointerEvent& Event) override;
+private:
+    bool bDragging=false;
+    void Drag(const FGeometry& Geometry,const FPointerEvent& Event);
+};
+
 // One authored pose (Content/IndependentResources/StreetSocialData/h_poses.json, from ok-hposes) on the pair list.
 struct FOKHPose {
     int32 Pair=INDEX_NONE;      // index in the controller's NativePairs
@@ -67,13 +85,19 @@ public:
     void ShowLine(const FString& Text);
     void SpokeLine(){bTalkSpoken=true;}
     UFUNCTION() void OnInputCommitted(const FText& Text,ETextCommit::Type Commit);
+    // His penis set live (user, 2026-11-02): length (times along his dan bones) and size (his penis root scale), and
+    // where its root goes: Pad in the unit circle, its edge RootReach cm off the way into her toward that side, the
+    // entrance staying the pivot, so he presses the other way. Up her back, down her belly.
+    void SetPenis(float Length,float Scale);void SetRootPad(const FVector2D& Pad);
+    UFUNCTION() void OnPenisLength(float Value);
+    UFUNCTION() void OnPenisScale(float Value);
 
     enum EKind : int32 {
         TabHand=10,TabMouth=11,TabBreast=12,TabSonyu=20,TabClothes=30,TabAibu=40,
         AibuBase=500,
         TouchChest=2101,TouchCrotch=2102,TouchAnal=2103,TouchButt=2104,TouchNipple=2105,Kiss=2106,Release=2107,
         PoseBase=1000,
-        Faster=2001,Slower=2002,Toggle=2003,Inside=2004,Outside=2005,Drink=2006,Vomit=2007,Again=2008,Insert=2009,InsertAnal=2010,Pull=2011,Condom=2012,Stop=2014,Continue=2015,ToggleMale=2016,LockHer=2017,LockHis=2018,MaleBottom=2019,PenisXRayToggle=2020,PhysicsNext=2021,GrayRoomToggle=2022,
+        Faster=2001,Slower=2002,Toggle=2003,Inside=2004,Outside=2005,Drink=2006,Vomit=2007,Again=2008,Insert=2009,InsertAnal=2010,Pull=2011,Condom=2012,Stop=2014,Continue=2015,ToggleMale=2016,LockHer=2017,LockHis=2018,MaleBottom=2019,PenisXRayToggle=2020,PhysicsNext=2021,GrayRoomToggle=2022,PenisPanelToggle=2023,PenisReset=2024,
         ClothesBase=3000,RoomBase=3200,
     };
 private:
@@ -114,7 +138,7 @@ private:
     UPROPERTY() TArray<TObjectPtr<USoundBase>> SoundsPlaying;
     // One of her lines from the intercourse voice table (HSonyu playVoices - 300), in her experience bank.
     bool PlayHVoice(int32 Row);
-    void ApplySpeed();bool bStrokeDeep=false;double StrokeCryAt=0.;
+    void ApplySpeed();bool bStrokeDeep=false;double StrokeCryAt=0.;float BellyPullback=0.f;bool bPullbackLogged=false;float TipInside=-1.f; // cm his glans is past her entrance along himself (-1 none)
     FString Current() const;
     int32 Level() const;
     // She has come as many times as she will this scene (climax_limit): she wants it to stop, the panel offers no more
@@ -128,6 +152,16 @@ private:
     UPROPERTY() TObjectPtr<UProgressBar> HerGauge;
     UPROPERTY() TObjectPtr<UProgressBar> HisGauge;
     UPROPERTY() TObjectPtr<USlider> Speed;
+    UPROPERTY() TObjectPtr<UVerticalBox> PenisBox;
+    // Half size: the inner box twice the panel high (NativeTick, from the panel as laid out), drawn at half.
+    UPROPERTY() TObjectPtr<class USizeBox> HalfInner;UPROPERTY() TObjectPtr<class USizeBox> PanelWidth;
+    UPROPERTY() TObjectPtr<USlider> LengthSlider;
+    UPROPERTY() TObjectPtr<USlider> ScaleSlider;
+    UPROPERTY() TObjectPtr<UTextBlock> PenisLabel;
+    UPROPERTY() TObjectPtr<UOKHRootPad> RootPadWidget;
+    float PenisLength=1.f,PenisScale=1.f,PenisSetLength=1.f,PenisSetScale=1.f;FVector2D RootPad=FVector2D::ZeroVector;FVector2D RootPadNow=FVector2D::ZeroVector;float RootPadScale=1.f;bool bPenisPanel=false;
+    static constexpr float RootReach=8.f;
+    void ShowPenis();
     UPROPERTY() TObjectPtr<UWrapBox> Actions;
     UPROPERTY() TObjectPtr<UWrapBox> Tabs;
     UPROPERTY() TObjectPtr<UScrollBox> List;
@@ -173,6 +207,8 @@ public:
     void LookAtCrotch(float Distance,float Pitch=15.f,float Turn=0.f,bool bFront=false); // /hscene {"crotch_cam":cm} or {distance, pitch, turn}: where they join, from beside her body // /hscene {"face_cam":cm}: the camera in front of her face, to see what is on it
     void SetSiruTest(const int32 (&Levels)[5]); // /hscene {"siru":[...]}: set her liquid levels directly
     TMap<FString,float> DevTest; // /hscene {"dev":{...}}: her development, for testing (Dev)
+    // /hscene {"penis_green":true}: his penis flat pure green, depth-tested, so any of it out of her skin shows (testing).
+    void SetPenisGreen(bool bOn);bool bPenisGreen=false;UPROPERTY() TArray<TObjectPtr<UMaterialInterface>> GreenKept;TArray<TWeakObjectPtr<UMeshComponent>> GreenComps;
     float BlushTest=-1.f; // /hscene {"blush":v}: hold her blush at v (0..1) to compare shots; -1 follows her
 private:
     UPROPERTY() TArray<TObjectPtr<class UMaterialInstanceDynamic>> BlushMats; TArray<float> BlushBase;
@@ -188,7 +224,7 @@ private:
     // See-through by default: where his penis is in her shows (the original's silhouette).
     // The street hidden behind a plain grey room around them (user, 2026-11-01): the world's actors hidden (lights,
     // cameras and the two of them kept), six grey slabs round her.
-    void SetGrayRoom(bool bOn);bool bGrayRoom=false;UPROPERTY() TArray<TObjectPtr<AActor>> GrayRoom;TArray<TWeakObjectPtr<AActor>> GrayHidden;
+    void SetGrayRoom(bool bOn);void HideWorld();double GrayCheckAt=0.;bool bGrayRoom=false;UPROPERTY() TArray<TObjectPtr<AActor>> GrayRoom;TArray<TWeakObjectPtr<AActor>> GrayHidden;
     int32 MaleView=1;bool bMaleBottomOff=true;bool bPenisXRay=true;TWeakObjectPtr<class AKKPreviewActor> MaleLookFor;
     UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> MaleGhost;
     UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> PenisXRay; // over her while he is see-through (M_PreviewXRay)
@@ -208,7 +244,7 @@ private:
     void BulgeBelly(class AKKPreviewActor* Girl,const FVector* Tip,float Off,float Delta);
     // His glans and how far it is out of her skin, read from both sessions when the pair playback says they are idle
     // (AKKPairedPlayback::OnSessionsIdle); without a playback, AlignHim and BulgeBelly read them themselves.
-    float AimTilt=35.f;void ReadPairSessions();void ReadBulge(class AKKPreviewActor* Girl,const FVector& Tip);void HangHair(class AKKPreviewActor* Girl);int32 LiftedPose=INDEX_NONE;bool bLifted=false;
+    float AimTilt=35.f;void ReadPairSessions();void ReadBulge(class AKKPreviewActor* Girl,const FVector& Tip,const FVector* Root=nullptr);float AimRelax=0.f;float SkinOutMost=-100.f;float SkinUnderMost=-100.f;float SkinWorst=-100.f;float SkinRest=0.f;float SkinWorstAlong=0.f;FVector SkinNormal=FVector::ZeroVector;FVector RootDodge=FVector::ZeroVector;float DepthCap=1.f;void HangHair(class AKKPreviewActor* Girl);int32 LiftedPose=INDEX_NONE;bool bLifted=false;
     TWeakObjectPtr<class AKKPairedPlayback> ReadingPlayback;FDelegateHandle ReadingHandle;
     TMap<FName,float> Bulge;int32 BulgePart=INDEX_NONE;FName BulgeOpen;float OpenEased=0.f;FName BulgeTarget;float BulgePast=0.f,BulgeMoves=0.f;bool bBulgeLogged=false;TWeakObjectPtr<class AKKPreviewActor> BulgedHer;
     // The girl whose shoes were taken off on coming into her room (NativeTick): once each, she may put them back on.

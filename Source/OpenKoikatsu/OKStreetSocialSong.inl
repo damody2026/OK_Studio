@@ -140,11 +140,13 @@ void AOKStreetSocialScene::SongListen(){
  // the captions (below), so it is waited for.
  Request->SetHeader(TEXT("Content-Type"),TEXT("application/json"));Request->SetContentAsString(Text);Request->SetTimeout(600);
  const FString Path=G.SongPath;const int32 Count=Spans->Num(),Total=All.Num();
- Request->OnProcessRequestComplete().BindWeakLambda(this,[this,Path,Count,Total](FHttpRequestPtr,FHttpResponsePtr Response,bool Connected){
-  if(!State)return;auto& L=State->Song;TSharedPtr<FJsonObject> J;const TArray<TSharedPtr<FJsonValue>>* Texts=nullptr;
-  if(!Connected||!Response.IsValid()||!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()),J)||!J.IsValid()||!J->TryGetArrayField(TEXT("texts"),Texts)||Texts->Num()!=Total){
-   UE_LOG(LogTemp,Display,TEXT("Street song: %s was not transcribed; its captions follow the sheet"),*Path);return;}
-  TArray<FString> Heard,Win;for(int32 K=0;K<Texts->Num();++K)(K<Count?Heard:Win).Add((*Texts)[K]->AsString());
+ // Heard once per song file (user, 2026-11-02: every start of the game sent the whole song through ok-asr again, the
+ // song itself coming from ok-song's cache): the answer is kept beside the song (<song>.heard.json, with the spans it
+ // answers) and read back while the spans are the same.
+ const FString HeardFile=FPaths::ChangeExtension(Path,TEXT("heard.json"));FString SpansText;FJsonSerializer::Serialize(All,TJsonWriterFactory<>::Create(&SpansText));
+ auto Use=[this,Path,Count](const TArray<TSharedPtr<FJsonValue>>& Texts){
+  if(!State)return;auto& L=State->Song;
+  TArray<FString> Heard,Win;for(int32 K=0;K<Texts.Num();++K)(K<Count?Heard:Win).Add(Texts[K]->AsString());
   bool Kept=false;for(auto& M:L.Memories)if(M.SongPath==Path&&(M.Heard!=Heard||M.HeardWindows!=Win)){M.Heard=Heard;M.HeardWindows=Win;Kept=true;}
   if(Kept)SongSave();
   UE_LOG(LogTemp,Display,TEXT("Street song: heard %d breaths and %d windows of %s"),Heard.Num(),Win.Num(),*Path);
@@ -160,6 +162,17 @@ void AOKStreetSocialScene::SongListen(){
    if(Timed&&Timed->TryGetArrayField(TEXT("lines"),Lines)){L.LineAt.Reset();L.LineText.Reset();L.Line=-1;
     for(const auto& V:*Lines){const auto O=V->AsObject();if(!O)continue;L.LineAt.Add(O->GetNumberField(TEXT("at")));L.LineText.Add(O->GetStringField(TEXT("text")));}}
   }
+ };
+ {FString Saved;TSharedPtr<FJsonObject> J;const TArray<TSharedPtr<FJsonValue>>* Texts=nullptr;FString Was;
+  if(FFileHelper::LoadFileToString(Saved,*HeardFile)&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Saved),J)&&J.IsValid()&&J->TryGetStringField(TEXT("spans"),Was)&&Was==SpansText
+     &&J->TryGetArrayField(TEXT("texts"),Texts)&&Texts->Num()==Total){UE_LOG(LogTemp,Display,TEXT("Street song: %s heard before (%s)"),*Path,*HeardFile);Use(*Texts);return;}}
+ Request->OnProcessRequestComplete().BindWeakLambda(this,[this,Path,Total,HeardFile,SpansText,Use](FHttpRequestPtr,FHttpResponsePtr Response,bool Connected){
+  if(!State)return;TSharedPtr<FJsonObject> J;const TArray<TSharedPtr<FJsonValue>>* Texts=nullptr;
+  if(!Connected||!Response.IsValid()||!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()),J)||!J.IsValid()||!J->TryGetArrayField(TEXT("texts"),Texts)||Texts->Num()!=Total){
+   UE_LOG(LogTemp,Display,TEXT("Street song: %s was not transcribed; its captions follow the sheet"),*Path);return;}
+  {auto Save=MakeShared<FJsonObject>();Save->SetStringField(TEXT("spans"),SpansText);Save->SetArrayField(TEXT("texts"),*Texts);FString Out;
+   FJsonSerializer::Serialize(Save,TJsonWriterFactory<>::Create(&Out));FFileHelper::SaveStringToFile(Out,*HeardFile,FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);}
+  Use(*Texts);
  });
  Request->ProcessRequest();
 }

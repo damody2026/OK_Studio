@@ -231,6 +231,10 @@ bool FOkSession::SetExternalAnimation(bool bExternal) { ExternalAnimation=bExter
 bool FOkSession::PenisTip(FVector& OutUnity) const { float P[3]; if(!Handle||ok_penis_tip(Handle,P)!=0)return false;OutUnity=FVector(P[0],P[1],P[2]);return true; }
 int32 FOkSession::HangHair(bool bOn){return Handle?ok_hang_hair(Handle,bOn?1:0):-1;}
 bool FOkSession::AimPenis(const FVector& UnityDir,float& OutDegrees){OutDegrees=0.f;const float D[3]={float(UnityDir.X),float(UnityDir.Y),float(UnityDir.Z)};return Handle&&ok_aim_penis(Handle,D,&OutDegrees)==0;}
+bool FOkSession::SkinCheck(const TArray<FVector>& UnityAt,TArray<float>& Out) const{
+	TArray<float> At;At.Reserve(UnityAt.Num()*3);for(const FVector& V:UnityAt){At.Add(float(V.X));At.Add(float(V.Y));At.Add(float(V.Z));}
+	Out.SetNumZeroed(UnityAt.Num()*5);return Handle&&UnityAt.Num()>0&&ok_skin_check(Handle,At.GetData(),uint32(UnityAt.Num()),Out.GetData())==0;}
+bool FOkSession::SetPenisSize(float Length,float Scale){return Handle&&ok_set_penis_size(Handle,Length,Scale)==0;}
 bool FOkSession::BellyBulgePast(const FVector& UnityTip,float& OutPast,float& OutNear,FName& OutTarget,float& OutMoves) const {
 	const float Tip[3]={float(UnityTip.X),float(UnityTip.Y),float(UnityTip.Z)};float Out[3]={};char Target[64]={};
 	if(!Handle||ok_belly_bulge_past(Handle,Tip,Out,Target,64)!=0)return false;

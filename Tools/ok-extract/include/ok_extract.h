@@ -123,6 +123,11 @@ int32_t ok_hang_hair(OkSession* s,int32_t on);
 /* His penis root turned so his penis points along dir[3] (his skeleton space, Unity): written as his FK on
    cm_J_dan100_00, applied after the pair contacts. 0 ok (out_degrees: turned now), 1 no penis. */
 int32_t ok_aim_penis(OkSession* s,const float* dir,float* out_degrees);
+/* His penis length (times along his dan bones) and size (his penis root scale), applied from the next frame; 0 ok. */
+int32_t ok_set_penis_size(OkSession* s,float length,float scale);
+/* For count points (her skeleton space, Unity, 3 each): how far out of her skin near her entrance, metres (below 0 inside,
+   1e9 with no skin near), the way out of her there (3) and the nearest skin's distance from her entrance at rest: out[count*5]; 0 ok. */
+int32_t ok_skin_check(OkSession* s,const float* at,uint32_t count,float* out);
 int32_t ok_static_interaction_frame(OkSession* s,float dt);
 int32_t ok_apply_shape_live(OkSession* s,const float* body,int32_t n_body,const float* face,int32_t n_face);
 int32_t ok_prepare_shape_live(OkSession* s,const float* body,int32_t n_body,const float* face,int32_t n_face);

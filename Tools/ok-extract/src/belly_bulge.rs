@@ -22,6 +22,9 @@ const SIDES: [(char, [f32; 2]); 4] = [('f', [0., 1.]), ('b', [0., -1.]), ('l', [
 /// out of a thin girl's belly made a 4 cm wide one a pillar.
 pub const BULGE_M: f32 = 0.14;
 const ROUND_M: f32 = 0.055;
+/// How near her entrance (cf_j_kokan, bind pose) the skin never swells, and over how much further it comes in.
+const NEAR_ENTRANCE_M: f32 = 0.05;
+const ENTRANCE_FADE_M: f32 = 0.05;
 /// How far around a place its normal is averaged for the way it moves (a navel is about 1 cm across).
 const SMOOTH_M: f32 = 0.03;
 /// Bones whose skin never swells (part of a name): a straight clip leaves her low, at the groin, where the skin is on
@@ -136,8 +139,17 @@ pub fn add(session: &mut OkSession) -> bool {
                         // Facing out on that side; round across her (x) and along her (y).
                         let facing = n[0] * way[0] + n[2] * way[1];if facing < 0.15 { continue; }
                         let dx = (if way[0] == 0. { v.p[0] - x } else { v.p[2] - z }) / ROUND_M;let dy = (v.p[1] - y) / ROUND_M;
-                        let fall = (-0.5 * (dx * dx + dy * dy)).exp() * facing.min(1.) * free;
-                        if fall < 0.01 { continue; }
+                        // Nothing by her entrance: the lowest swells reached her labia and groin and, at his deepest
+                        // stroke, pulled that skin apart into a black hole (user, 2026-11-02, 後背位): none within
+                        // NEAR_ENTRANCE_M of it, growing to full over the next ENTRANCE_FADE_M.
+                        let e = ((0..3).map(|i| (v.p[i] - kokan[i]) * (v.p[i] - kokan[i])).sum::<f32>().sqrt() - NEAR_ENTRANCE_M) / ENTRANCE_FADE_M;
+                        let clear = { let t = e.clamp(0., 1.); t * t * (3. - 2. * t) };
+                        // That skin is still in the target, unmoved, outside NEAR_ENTRANCE_M: `past` then sees his
+                        // penis come out of her lower belly there (user, 2026-11-02, 騎乘位) with nothing to swell, and
+                        // the scene draws him back or turns him instead.
+                        let reach = (-0.5 * (dx * dx + dy * dy)).exp() * facing.min(1.) * free;
+                        if reach < 0.01 || e <= 0. { continue; }
+                        let fall = reach * clear;
                         let moved = [v.p[0] + n[0] * BULGE_M * fall, v.p[1] + n[1] * BULGE_M * fall, v.p[2] + n[2] * BULGE_M * fall];
                         let local = point(&v.inv, moved);let base = part.rest_positions[v.j];
                         deltas.push((v.j as u32, [local[0] - base[0], local[1] - base[1], local[2] - base[2]]));
@@ -258,6 +270,118 @@ const NEAR_M: f32 = 0.06;
 /// (none that near: the nearest); how far that vertex is; the swell that moves it most and how far it does at weight 100
 /// (metres). Not simply the nearest: a glans 6 cm out of her belly is often nearest a vertex below where it came through,
 /// and the swell picked there bulged under it.
+/// His penis made longer or bigger in the scene (user, 2026-11-02: set live): `length` times the way along his dan
+/// bones (cm_J_dan100_00's children), `scale` his penis root's scale (the whole penis, girth and length). 0 is 1.
+#[derive(Debug, Default, Clone)]
+pub struct PenisSize { pub length: f32, pub scale: f32, kept: HashMap<i64, ([f32; 3], [f32; 3])> }
+
+/// Applied after each frame's pose (and once more after the pair contacts): the bones' own local positions times
+/// `length`. A bone not set again since (the same position as written) keeps the one it had, so it is never lengthened
+/// twice. True when his bones changed (the worlds need rebuilding).
+pub fn apply_penis_size(sk: &mut crate::pose::Skeleton, size: &mut PenisSize) -> bool {
+    let one = |v: f32| if v > 0. && v.is_finite() { v } else { 1. };
+    let (l, s) = (one(size.length), one(size.scale));
+    if l == 1. && s == 1. && size.kept.is_empty() { return false; }
+    let Some(root) = sk.tfs.iter().find(|(_, t)| t.name == "cm_J_dan100_00").map(|(id, _)| *id) else { return false; };
+    if let Some(t) = sk.tfs.get_mut(&root) { t.scale = [s; 3]; }
+    for id in crate::pose::subtree_ids_pub(root, &sk.tfs) {
+        if id == root { continue; }
+        let Some(t) = sk.tfs.get_mut(&id) else { continue; };
+        if !t.name.starts_with("cm_J_dan") { continue; }
+        let raw = match size.kept.get(&id) { Some((w, r)) if *w == t.pos => *r, _ => t.pos };
+        let p = [raw[0] * l, raw[1] * l, raw[2] * l];
+        t.pos = p;size.kept.insert(id, (p, raw));
+    }
+    if l == 1. && s == 1. { size.kept.clear(); }
+    true
+}
+
+/// Her skin round her entrance that `skin_check` reads (bind pose, metres from cf_j_kokan): her belly, groin, bottom and the
+/// tops of her thighs.
+const PROBE_M: f32 = 0.25;
+/// Her opening itself is left out: his penis passes through it, and its rim read as him out of her skin (1 to 1.6 cm
+/// all the time, 桌上躺位), drawing him almost out of her. Only the opening: at 6 cm her perineum and the start of the
+/// cleft of her bottom were left out too, and his penis lay in them unseen (user, 2026-11-02, 桌上躺位 from the front).
+const PROBE_INNER_M: f32 = 0.03;
+/// Farther than this from all of it a point counts as deep in her.
+const NEAR_SKIN_M: f32 = 0.10;
+
+/// How many of her nearest skin vertices one depth reading averages (skin_check): one alone read his penis between two
+/// folds that face each other (her vulva, her perineum, the cleft of her bottom) as out of one of them whichever way
+/// he went, and its normal said only "sideways".
+const NEAREST: usize = 6;
+/// Step of the depth's slope (skin_check), metres.
+const SLOPE_M: f32 = 0.01;
+
+/// Her skin round her entrance as it is now: position, outward normal, and the vertex's distance from her entrance at
+/// rest (metres).
+struct SkinNow { p: [f32; 3], n: [f32; 3], rest: f32 }
+
+fn skin_now(session: &OkSession) -> Option<Vec<SkinNow>> {
+    let skel = session.body_skel.as_ref()?;
+    let part = session.parts.iter().find(|p| p.blend_shapes.iter().any(|(n, _)| is_bulge(n)))?;
+    let (worlds, binds) = crate::skel_export::palettes(skel, part);
+    if worlds.is_empty() { return None; }
+    let probe = session.skin_probe.get_or_init(|| {
+        let Some(rest) = crate::skel_export::bind_body(session) else { return Vec::new(); };
+        let Some(k) = rest.world_tf("cf_j_kokan").or_else(|| rest.world_tf("cf_J_Kokan")).map(|m| translation(&m)) else { return Vec::new(); };
+        let (rw, rb) = crate::skel_export::palettes(&rest, part);
+        // Nor the folds of her vulva (skin led by cf_j_kokan): his penis goes through them.
+        let fold: Vec<bool> = rest.names.iter().map(|n| n.to_ascii_lowercase().contains("kokan")).collect();
+        let led_by_fold = |j: usize| { let (b, w) = (part.bone_idx[j], part.weights[j]);let mut top = 0;for t in 1..4 { if w[t] > w[top] { top = t; } }
+            fold.get(b[top] as usize) == Some(&true) };
+        (0..part.rest_positions.len()).filter(|&j| !led_by_fold(j)).filter_map(|j| {
+            let (s, _, _) = skin_of(part, j, &rw, &rb, &[], &[])?;
+            let p = point(&s, part.rest_positions[j]);let d = (0..3).map(|i| (p[i] - k[i]) * (p[i] - k[i])).sum::<f32>().sqrt();
+            (d < PROBE_M && d > PROBE_INNER_M).then_some((j as u32, d))
+        }).collect()
+    });
+    Some(probe.iter().filter_map(|&(j, rest)| {
+        let j = j as usize;
+        let (skin, _, _) = skin_of(part, j, &worlds, &binds, &[], &[])?;
+        let p = point(&skin, part.rest_positions[j]);let o = point(&skin, [0.; 3]);
+        let n = point(&skin, *part.rest_normals.get(j)?);let n = [n[0] - o[0], n[1] - o[1], n[2] - o[2]];
+        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();if len < 1e-6 { return None; }
+        Some(SkinNow { p, n: [n[0] / len, n[1] / len, n[2] / len], rest })
+    }).collect())
+}
+
+/// Out of her skin at `at`: the signed distances to her NEAREST skin vertices along their normals, the nearer counting
+/// more; below 0 inside her. And the rest distance of the nearest. None with no skin within NEAR_SKIN_M.
+fn depth(skin: &[SkinNow], at: [f32; 3]) -> Option<(f32, f32)> {
+    let mut near: [(f32, usize); NEAREST] = [(f32::MAX, 0); NEAREST];
+    for (i, s) in skin.iter().enumerate() {
+        let d = (0..3).map(|c| (at[c] - s.p[c]) * (at[c] - s.p[c])).sum::<f32>();
+        if d < near[NEAREST - 1].0 { let mut k = NEAREST - 1;while k > 0 && near[k - 1].0 > d { near[k] = near[k - 1];k -= 1; }near[k] = (d, i); }
+    }
+    if near[0].0 > NEAR_SKIN_M * NEAR_SKIN_M { return None; }
+    let (mut sum, mut weight) = (0f32, 0f32);
+    for &(d, i) in near.iter().filter(|(d, _)| *d < f32::MAX) {
+        let s = &skin[i];let w = 1. / (d.sqrt() + 0.005);
+        sum += w * ((at[0] - s.p[0]) * s.n[0] + (at[1] - s.p[1]) * s.n[1] + (at[2] - s.p[2]) * s.n[2]);weight += w;
+    }
+    Some((sum / weight, skin[near[0].1].rest))
+}
+
+/// For each point (her skeleton space, Unity metres): how far it is out of her skin round her entrance (metres, below 0
+/// inside her; any skin, not only the swells': user, 2026-11-02, 桌上躺位, his glans out of her bottom), the way that
+/// distance grows (unit, her skeleton space: the way out of her there), and the rest distance from her entrance of the
+/// nearest skin. None where no skin is within NEAR_SKIN_M. Her skin is placed once for all of them.
+pub fn skin_check(session: &OkSession, at: &[[f32; 3]]) -> Vec<Option<(f32, [f32; 3], f32)>> {
+    let Some(skin) = skin_now(session) else { return vec![None; at.len()]; };
+    at.iter().map(|&a| {
+        let (d, rest) = depth(&skin, a)?;
+        let mut g = [0f32; 3];
+        for c in 0..3 {
+            let (mut hi, mut lo) = (a, a);hi[c] += SLOPE_M;lo[c] -= SLOPE_M;
+            g[c] = match (depth(&skin, hi), depth(&skin, lo)) { (Some(h), Some(l)) => h.0 - l.0, _ => 0. };
+        }
+        let len = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt();
+        Some((d, if len > 1e-6 { [g[0] / len, g[1] / len, g[2] / len] } else { [0.; 3] }, rest))
+    }).collect()
+}
+
+
 pub fn past(session: &OkSession, tip: [f32; 3]) -> Option<(f32, f32, String, f32)> {
     let skel = session.body_skel.as_ref()?;
     let part = session.parts.iter().find(|p| p.blend_shapes.iter().any(|(n, _)| is_bulge(n)))?;

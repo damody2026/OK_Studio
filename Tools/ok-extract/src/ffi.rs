@@ -156,6 +156,27 @@ pub unsafe extern "C" fn ok_aim_penis(s:*mut OkSession,dir:*const f32,out_degree
     if !out_degrees.is_null(){*out_degrees=d;}0
 }
 #[no_mangle]
+pub unsafe extern "C" fn ok_skin_check(s:*mut OkSession,at:*const f32,count:u32,out:*mut f32)->i32 {
+    // For count points (her skeleton space, Unity, 3 each): how far out of her skin near her entrance (metres, below 0
+    // inside; 1e9 with no skin near), the way out of her there (3, unit) and the nearest skin's distance from her entrance
+    // at rest (belly_bulge::skin_check): out[count*5]. 0 ok.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if at.is_null()||out.is_null() {return -1;}
+    let pts:Vec<[f32;3]>=(0..count as usize).map(|i|[*at.add(i*3),*at.add(i*3+1),*at.add(i*3+2)]).collect();
+    for (i,r) in crate::belly_bulge::skin_check(s,&pts).into_iter().enumerate(){
+        let (d,n,rest)=r.unwrap_or((1e9,[0.;3],0.));
+        let o=out.add(i*5);*o=d;*o.add(1)=n[0];*o.add(2)=n[1];*o.add(3)=n[2];*o.add(4)=rest;}
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_set_penis_size(s:*mut OkSession,length:f32,scale:f32)->i32 {
+    // His penis length (times along his dan bones) and size (his penis root scale) from the next frame on; 1 and 1 as
+    // made (belly_bulge::apply_penis_size).
+    let Some(s)=sess_ref(s) else{return -1;};
+    if !length.is_finite()||!scale.is_finite()||length<=0.||scale<=0. {return -1;}
+    s.penis_size.length=length;s.penis_size.scale=scale;0
+}
+#[no_mangle]
 pub unsafe extern "C" fn ok_hang_hair(s:*mut OkSession,on:i32)->i32 {
     // Her hair chains hang under their weight (on 1) or keep the card's own parameters (0): dbone hang_hair. Returns the
     // chains changed now (a part whose dynamics are rebuilt later starts from the card's own; call it again then).
@@ -1092,8 +1113,9 @@ unsafe fn animation_pair_frame_impl(female:*mut OkSession,male:*mut OkSession,ti
         // His FK (his penis root turned toward her belly, belly_bulge::aim_penis) and hers (her body trembling as she comes,
         // OKHScene) over what the contacts set.
         for s in [&mut *female,&mut *male] {
-            if s.user_fk.is_empty() {continue;}
-            if let Some(sk)=s.body_skel.as_mut() {if crate::session::apply_user_fk_locals(sk,&s.user_fk,&mut s.user_fk_ids){sk.rebuild_worlds();}}
+            let Some(sk)=s.body_skel.as_mut() else{continue;};
+            let fk=!s.user_fk.is_empty()&&crate::session::apply_user_fk_locals(sk,&s.user_fk,&mut s.user_fk_ids);
+            if crate::belly_bulge::apply_penis_size(sk,&mut s.penis_size)||fk {sk.rebuild_worlds();}
         }
         for s in [&mut *female,&mut *male] {
             if s.studio_ik.is_empty() {continue;}
