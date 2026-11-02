@@ -1248,7 +1248,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 		if (FOKSceneObject* X = Game.IsValid() ? Game->Document->Find(ItemId) : nullptr) { X->Item.MaterialEdits.Reset(); Changed(); RebuildFloat(TEXT("material")); }
 	}, 0.f, 18.f, false, 10.f)];
 	// Exports (HS2Studio6 导出): the picked renderer's UV layout, the item as OBJ, every texture it shows.
-	Materials->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 1.f)[OKStudioStyle::Label(FText::FromString(TEXT("匯出到 Saved/OKStudio/MaterialExport")), 9.f, TextHint())];
+	Materials->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 1.f)[OKStudioStyle::Label(FText::FromString(TEXT("匯出（位置在視窗下方）")), 9.f, TextHint())];
 	Materials->AddSlot().AutoHeight()
 	[
 		SNew(SHorizontalBox)
@@ -1434,14 +1434,41 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)[OKStudioStyle::Label(FText::FromString(TEXT("● 是改過的屬性；改動隨場景儲存。")), 9.f, TextHint())]
-			+ SHorizontalBox::Slot().AutoWidth()[Button(FText::FromString(TEXT("此材質全部預設")), [Reset] { Reset(FString()); }, 0.f, 20.f, false, 10.f)]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("此材質全部預設")), [Reset] { Reset(FString()); }, 0.f, 20.f, false, 10.f)]
+			// HS2Studio6 材质编辑器 刷新: read the item's renderers and materials again.
+			+ SHorizontalBox::Slot().AutoWidth()[Button(FText::FromString(TEXT("刷新")), [this] { RebuildFloat(TEXT("material")); }, 44.f, 20.f, false, 10.f)]
+		]
+		// HS2Studio6 导出位置: the folder UV / OBJ / texture exports go under (each item in its own folder there).
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f, 0.f, 0.f)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 4.f, 0.f)[OKStudioStyle::Label(FText::FromString(TEXT("匯出位置")), 10.f, TextHint())]
+			+ SHorizontalBox::Slot().FillWidth(1.f)[SNew(SBox).HeightOverride(20.f)[TextBox([] { const FString& R = FOKStudioSettings::Get().MaterialExportRoot; return R.IsEmpty() ? FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("OKStudio/MaterialExport")) : R; },
+				[this](const FString& V)
+				{
+					// Empty or the default folder: back to the default.
+					const FString Typed = V.TrimStartAndEnd().TrimQuotes();
+					const FString Default = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("OKStudio/MaterialExport"));
+					const FString Dir = Typed.IsEmpty() ? Default : FPaths::ConvertRelativePathToFull(Typed);
+					if (Dir != Default && !IFileManager::Get().MakeDirectory(*Dir, true)) { SetStatus(TEXT("無法建立資料夾：") + Dir); RebuildFloat(TEXT("material")); return; }
+					FOKStudioSettings::Get().MaterialExportRoot = Dir == Default ? FString() : Dir;
+					FOKStudioSettings::Get().Save();
+					SetStatus(TEXT("材質匯出位置：") + Dir);
+				}, TEXT("匯出資料夾（Enter 套用）"))]]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("預設")), [this]
+			{
+				FOKStudioSettings::Get().MaterialExportRoot.Reset();
+				FOKStudioSettings::Get().Save();
+				RebuildFloat(TEXT("material"));
+			}, 44.f, 20.f, false, 10.f)]
 		];
 }
 
 FString SOKStudioPanel::MaterialExportDir(int32 ItemId) const
 {
 	const FOKSceneObject* X = Game.IsValid() ? Game->Document->Find(ItemId) : nullptr;
-	const FString Dir = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("OKStudio/MaterialExport")
+	const FString& Root = FOKStudioSettings::Get().MaterialExportRoot;
+	const FString Dir = FPaths::ConvertRelativePathToFull((Root.IsEmpty() ? FPaths::ProjectSavedDir() / TEXT("OKStudio/MaterialExport") : Root)
 		/ FPaths::MakeValidFileName(FString::Printf(TEXT("%d_%s"), ItemId, X ? *X->Name : TEXT(""))));
 	IFileManager::Get().MakeDirectory(*Dir, true);
 	return Dir;

@@ -34,6 +34,8 @@ struct FOKStudioSettings
 	/** The cards 加入預設角色 adds (HS2Studio6 添加默认角色): [0] male, [1] female (KK sex); empty: the first such card
 	 *  under Content/CharacterCards/Demo. */
 	FString DefaultCards[2];
+	/** Where the Material Editor exports UV layouts, OBJ and textures (HS2Studio6 导出位置); empty: Saved/OKStudio/MaterialExport. */
+	FString MaterialExportRoot;
 	/** UI scale (times the HS2Studio6 canvas scale). */
 	float UiScale = 1.f;
 	/** Game settings (HS2Studio6 游戏设置): master volume 0..1, keep running unfocused, vsync (-1 the engine's, 0 off,
