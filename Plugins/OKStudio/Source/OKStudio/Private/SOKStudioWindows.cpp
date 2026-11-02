@@ -338,7 +338,7 @@ TSharedPtr<SWidget> SOKStudioPanel::TreeContextMenu()
 			Button(FText::FromString(Tip(I.Label, Command)), [this, Command] { FSlateApplication::Get().DismissAllMenus(); RunCommand(Command); }, 190.f, 18.f, false, 10.f)
 		];
 	}
-	return SNew(SBorder).BorderImage(Brush(Panel())).Padding(4.f)[Box];
+	return MenuScaled(SNew(SBorder).BorderImage(Brush(Panel())).Padding(4.f)[Box]);
 }
 
 void SOKStudioPanel::BeginRename()
@@ -1896,7 +1896,7 @@ void SOKStudioPanel::ShowEaseMenu(const FVector2D& At)
 				RunCommand(TEXT("timeline.cut"), FString::FromInt(Camera));
 			}, 100.f, 18.f, false, 10.f)];
 	}
-	FSlateApplication::Get().PushMenu(AsShared(), FWidgetPath(), SNew(SBorder).BorderImage(Brush(Panel())).Padding(4.f)[Box], At, FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));
+	FSlateApplication::Get().PushMenu(AsShared(), FWidgetPath(), MenuScaled(SNew(SBorder).BorderImage(Brush(Panel())).Padding(4.f)[Box]), At, FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));
 }
 
 TSharedRef<SWidget> SOKStudioPanel::BuildTimeline()

@@ -264,13 +264,7 @@ public:
 			+ SOverlay::Slot()
 			[
 				SNew(SDPIScaler).Visibility_Lambda([this] { return bHideUi ? EVisibility::Collapsed : EVisibility::SelfHitTestInvisible; })
-				.DPIScale_Lambda([this]
-				{
-					// Unity CanvasScaler (match 0.5) on the window's pixels, divided by the scale Slate already applies.
-					const FGeometry& G = GetTickSpaceGeometry();
-					const float Pixel = G.Scale > 0.f ? G.Scale : 1.f;
-					return CanvasScale(FVector2D(G.GetLocalSize()) * Pixel) / Pixel * FMath::Clamp(FOKStudioSettings::Get().UiScale, 0.5f, 2.f);
-				})
+				.DPIScale_Lambda([this] { return UiDpiScale(); })
 				[
 					SAssignNew(Canvas, SConstraintCanvas).Visibility(EVisibility::SelfHitTestInvisible)
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(0.f, 0.f)).Offset(FMargin(7.f, 7.f, 35.f, 177.f))[Tagged(TEXT("RootToolbar"), MakeRootToolbar())]
@@ -1432,6 +1426,29 @@ public:
 	int32 DragHoverId = -1;
 	double DragHoverStart = 0.;
 	TSharedPtr<SWidget> TreeContextMenu();
+	/** The studio UI's scale: Unity CanvasScaler (match 0.5) on the window's pixels, divided by the scale Slate already
+	 *  applies, times the UI scale setting. */
+	float UiDpiScale() const
+	{
+		const FGeometry& G = GetTickSpaceGeometry();
+		const float Pixel = G.Scale > 0.f ? G.Scale : 1.f;
+		return OKStudioStyle::CanvasScale(FVector2D(G.GetLocalSize()) * Pixel) / Pixel * FMath::Clamp(FOKStudioSettings::Get().UiScale, 0.5f, 2.f);
+	}
+	/** A context menu's content at the size the panel's widgets have on screen. Menus open in their own window, whose
+	 *  scale differs from the panel's, so the scaler divides by the scale it finds itself under. */
+	TSharedRef<SWidget> MenuScaled(const TSharedRef<SWidget>& Content) const
+	{
+		TSharedRef<TWeakPtr<SWidget>> Self = MakeShared<TWeakPtr<SWidget>>();
+		TSharedRef<SDPIScaler> Scaler = SNew(SDPIScaler).DPIScale_Lambda([this, Self]
+		{
+			const float Panel = GetTickSpaceGeometry().Scale > 0.f ? GetTickSpaceGeometry().Scale : 1.f;
+			const TSharedPtr<SWidget> W = Self->Pin();
+			const float Under = W && W->GetTickSpaceGeometry().Scale > 0.f ? W->GetTickSpaceGeometry().Scale : Panel;
+			return Panel * UiDpiScale() / Under;
+		})[Content];
+		*Self = Scaler;
+		return Scaler;
+	}
 	void BeginRename();
 	bool CanDropOn(const TArray<int32>& Ids, int32 Target) const;
 	void DropOn(const TArray<int32>& Ids, int32 Target);

@@ -1295,6 +1295,24 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
 - 實測：不等待連續送「加相機、拖播放頭、場景 key」，`undo_steps` 為 2，Ctrl+Z 第一次拿掉場景 key、第二次拿掉相機（之前三者合成一步）。控制通道 `spawn` 內部呼叫 `add.camera` 再改名，仍是一步。
 - 遊戲與編輯器都連結成功；`Tools/ok-game-mcp` `cargo check --release` 通過；`verify_ok_studio --tag u73_1102`（最終版本）6/6。測試場景已刪除。
 
+### U74～U75　第十三批：右鍵選單大小與滑鼠拖曳實測（2026-11-02，F 組）
+
+| 項目 | 內容 | 現況 |
+|---|---|---|
+| U74 右鍵選單實測與大小 | 樹與時間軸的右鍵選單用 `mouse` 右鍵實際打開；選單字級與面板一致 | U72 只修了時間軸選單會關掉 |
+| U75 控制通道拖曳與實測 | `mouse` 加 `to`／`steps`（按住拖到另一點）；實測 gizmo 拖曳、樹拖放改父物件、時間軸拖 key，及各自的復原 | 拖曳只能真人操作 |
+
+#### U74 完成紀錄
+
+- 樹的右鍵選單開得起來，但字比面板大約一倍：選單開在自己的子視窗，不在面板的縮放（`SDPIScaler`）底下。改成選單內容包一層縮放，比例＝面板在畫面上的縮放 ÷ 選單所在位置的縮放（`MenuScaled`，每幀依實際所在的縮放換算；面板縮放抽成 `UiDpiScale`）。樹選單與時間軸曲線選單都套用，現在和面板同大小（`F:\OpenKoikatsu\Saved\OKStudio\mcp_ui\u74_tree_menu_fixed.png`、`u74_ease_menu_fixed.png`；修正前 `u74_tree_menu.png`）。
+- 相機頁書籤的右鍵（存視角）沒有測。
+
+#### U75 完成紀錄
+
+- `mouse` 的 `to: [x, y]` 會按住按鍵分 `steps`（預設 10）次移過去再放開；ok-game-mcp 的 `studio_mouse` 同步加參數。
+- 實測：拖沙發 gizmo 的綠軸 100 像素，Y 變 15.4 cm，Ctrl+Z 一步回 0；把樹上的 CamA 拖到 Sofa 上，變成 Sofa 的子物件（狀態列「1 個物件移到 Sofa 底下」），Ctrl+Z 回根層；時間軸把 1 秒的 key 拖到 2 秒，Ctrl+Z 回 1 秒。
+- 遊戲與編輯器都連結成功；`Tools/ok-game-mcp` `cargo check --release` 通過；`verify_ok_studio --tag u74_1102`（最終版本）6/6。測試場景已刪除。
+
 ### U15　工作室模式只顯示工作室 UI（2026-10-30，使用者要求）
 
 從卡片牆等其他模式進入工作室時，畫面上原本的 UI 會留著。改成：工作室面板加到 viewport 後，從 viewport 的 Slate 樹往下找到面板，沿路把其他兄弟節點（其他模式的 UMG、Slate 面板、圖層）全部收起來，並把 HUD 的 `bShowHUD` 關掉；`Stop` 時還原成原本的可見狀態。

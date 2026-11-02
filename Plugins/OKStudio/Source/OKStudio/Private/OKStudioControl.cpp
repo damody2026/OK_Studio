@@ -826,10 +826,24 @@ namespace
 			if (!Window.IsValid()) Window = App.GetActiveTopLevelWindow();
 			if (!Window.IsValid()) return Result(false, TEXT("no studio window"));
 			const FVector2D At = Window->GetPositionInScreen() + FVector2D(X, Y);
+			// "to": [x, y] drags there with the button held, in "steps" moves (a gizmo, a timeline key, a tree row).
+			FVector2D To = At;
+			const TArray<TSharedPtr<FJsonValue>>* ToJson = nullptr;
+			const bool bDrag = J->TryGetArrayField(TEXT("to"), ToJson) && ToJson->Num() == 2;
+			if (bDrag) To = Window->GetPositionInScreen() + FVector2D((*ToJson)[0]->AsNumber(), (*ToJson)[1]->AsNumber());
+			const int32 Steps = FMath::Clamp(ReadId(J, TEXT("steps"), 10), 1, 200);
 			const FModifierKeysState Mods;
-			App.ProcessMouseMoveEvent(FPointerEvent(App.GetUserIndexForMouse(), 0, At, At, TSet<FKey>(), EKeys::Invalid, 0.f, Mods));
-			App.ProcessMouseButtonDownEvent(Window->GetNativeWindow(), FPointerEvent(App.GetUserIndexForMouse(), 0, At, At, TSet<FKey>({ Key }), Key, 0.f, Mods));
-			App.ProcessMouseButtonUpEvent(FPointerEvent(App.GetUserIndexForMouse(), 0, At, At, TSet<FKey>(), Key, 0.f, Mods));
+			const uint32 User = App.GetUserIndexForMouse();
+			App.ProcessMouseMoveEvent(FPointerEvent(User, 0, At, At, TSet<FKey>(), EKeys::Invalid, 0.f, Mods));
+			App.ProcessMouseButtonDownEvent(Window->GetNativeWindow(), FPointerEvent(User, 0, At, At, TSet<FKey>({ Key }), Key, 0.f, Mods));
+			FVector2D Last = At;
+			for (int32 I = 1; bDrag && I <= Steps; ++I)
+			{
+				const FVector2D Now = FMath::Lerp(At, To, float(I) / Steps);
+				App.ProcessMouseMoveEvent(FPointerEvent(User, 0, Now, Last, TSet<FKey>({ Key }), EKeys::Invalid, 0.f, Mods));
+				Last = Now;
+			}
+			App.ProcessMouseButtonUpEvent(FPointerEvent(User, 0, To, Last, TSet<FKey>(), Key, 0.f, Mods));
 			TSharedRef<FJsonObject> O = Result(true);
 			O->SetArrayField(TEXT("screen"), { MakeShared<FJsonValueNumber>(At.X), MakeShared<FJsonValueNumber>(At.Y) });
 			O->SetBoolField(TEXT("menu_open"), App.AnyMenusVisible());
