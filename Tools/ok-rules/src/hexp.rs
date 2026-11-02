@@ -329,9 +329,13 @@ fn session_end(r: &Value) -> Result<Value, String> {
     if !was.kissed && h.kissed {
         first(&mut fx, "hexp.first_kiss", 0.95);
     }
-    for i in CHEST..=NIPPLE {
-        if was.area(i) < 100.0 && h.area(i) >= 100.0 {
-            fx.note_at(&rel.id, "h_area", &crate::tr::m("hexp.area_used_to", &[("area", crate::tr::a(area_name(i)))]), place, 0.7);
+    // Each place past 30 (she starts to feel it), 60 (sensitive to him) and 100 (used to him), her mouth too
+    // (H_DEVELOPMENT_EXPERIENCE_PLAN P3): only the highest crossed this time.
+    let steps = [(100.0, "hexp.area_used_to", 0.7), (60.0, "hexp.area_sensitive", 0.6), (30.0, "hexp.area_feels", 0.5)];
+    let places = (CHEST..=NIPPLE).map(|i| (was.area(i), h.area(i), area_name(i))).chain(std::iter::once((was.oral, h.oral, crate::tr::t("hexp.area_mouth"))));
+    for (before, after, name) in places {
+        if let Some(&(_, id, importance)) = steps.iter().find(|&&(at, _, _)| before < at && after >= at) {
+            fx.note_at(&rel.id, "h_area", &crate::tr::m(id, &[("area", crate::tr::a(name))]), place, importance);
         }
     }
     let level_after = h.level(rel.lewdness);
@@ -416,6 +420,9 @@ mod tests {
         assert_eq!(h.areas[CROTCH], 50.0);
         assert_eq!(h.areas[ANAL], 100.0);
         assert_eq!(h.oral, 70.0);
+        // Her anal past 100, her mouth past 60 and her crotch past 60 (its intercourse counted in) are remembered.
+        let areas = out["effects"].as_array().unwrap().iter().filter(|e| e.get("act").and_then(Value::as_str) == Some("h_area")).count();
+        assert_eq!(areas, 3);
         let e = experience(&json!({"girl": "g", "relation": rel(0.0), "ext": out["ext"]})).unwrap();
         assert_eq!(e["areas"]["oral"], json!(70.0));
     }
