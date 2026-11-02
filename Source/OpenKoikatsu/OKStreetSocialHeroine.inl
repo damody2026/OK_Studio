@@ -92,11 +92,15 @@ void AOKStreetSocialScene::HeroineNote(int32 Girl,const TCHAR* ActId,const FStri
  FOKHeroineArgs A;A.RecordOnly=true;A.Detail=Text;A.Place=Place;A.Importance=Importance;A.RumorDetail=RumorDetail;Interact(Girl,ActId,A);
 }
 
+// "This one is on me" holds until its time runs out: no checkout or prompt reads an expired one days later (her dinner
+// treat was still paying for his things three days on).
+bool AOKStreetSocialScene::HerTreatPromised(int32 Girl) const{
+ const int64* Until=State->HerTreatPromise.Find(Girl);return Until&&*Until>=OKStreetMindNow(*State);
+}
 // Who pays (P2): her own leaning at a checkout, unless she said this one is on her (a treat back she came over for).
 void AOKStreetSocialScene::HeroineCheckoutLean(int32 Girl,int32 Total,FString& Lean,float& Insist){
  auto& S=*State;const FString Id=OKStreetStableId(S.Manifest.Characters[Girl]);
- bool Promise=false;
- if(const int64* Until=S.HerTreatPromise.Find(Girl)){if(*Until>=OKStreetMindNow(S))Promise=true;else S.HerTreatPromise.Remove(Girl);}
+ const bool Promise=HerTreatPromised(Girl);
  auto Request=OKRulesHeroineRequest(S,TEXT("checkout_lean"),Id);Request->SetNumberField(TEXT("total"),Total);Request->SetBoolField(TEXT("promise"),Promise);
  Lean=TEXT("player_pays");Insist=0.f;
  if(const TSharedPtr<FJsonObject> Answer=OKRulesEval(S,Request)){Lean=Answer->GetStringField(TEXT("lean"));Insist=float(Answer->GetNumberField(TEXT("insist")));}

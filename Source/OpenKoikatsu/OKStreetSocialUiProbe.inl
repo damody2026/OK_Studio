@@ -70,7 +70,7 @@ bool AOKStreetSocialScene::ProbeAction(const FString& Label,FString& Why){
  if(Label==TEXT("@talk")){BeginTalk(Girl);return S.Target==Girl;}
  if(Label==TEXT("@promise")){S.HerTreatPromise.Add(Girl,OKStreetMindNow(S)+360);return true;}
  if(Label==TEXT("@lean")){FString Lean;float Insist=0;HeroineCheckoutLean(Girl,120,Lean,Insist);
-  UE_LOG(LogTemp,Display,TEXT("UI probe heroine: actor=%d lean=%s insist=%.2f promise=%d"),Girl,*Lean,Insist,int32(S.HerTreatPromise.Contains(Girl)));return true;}
+  UE_LOG(LogTemp,Display,TEXT("UI probe heroine: actor=%d lean=%s insist=%.2f promise=%d"),Girl,*Lean,Insist,int32(HerTreatPromised(Girl)));return true;}
  if(Label==TEXT("@giftnote")){const int32 Before=S.Store.Rumors.Num();HeroineNote(Girl,TEXT("gift"),TEXT("他送了我測試花束（¥1）"),FString(),0.5f,TEXT("測試花束"));
   UE_LOG(LogTemp,Display,TEXT("UI probe heroine: actor=%d gift rumours %d -> %d last=%s"),Girl,Before,S.Store.Rumors.Num(),S.Store.Rumors.Num()?*S.Store.Rumors.Last().Text:TEXT(""));return true;}
  // A booking made with her, missed: the place blacklists him all the same (P3).

@@ -312,12 +312,12 @@ void AOKStreetSocialScene::PlaceChatOrder(int32 Her,const FString& HerSaid){
  // She promised to treat him: it is hers to pay (what she cannot cover he fronts and she owes him).
  // She promised to treat him: hers to pay, unless he insists now (chat_order_payer, promise).
  FString Lean;float Insist=0;HeroineCheckoutLean(Her,CartTotal(),Lean,Insist);
- auto Request=OKRulesRequest(TEXT("chat_order_payer"));Request->SetStringField(TEXT("lean"),Lean);Request->SetStringField(TEXT("agreed"),PayAgreed(Her));Request->SetBoolField(TEXT("has_hers"),S.Cart.ContainsByPredicate([](const FOKStreetCartLine& L){return L.ForHer;}));Request->SetBoolField(TEXT("has_his"),S.Cart.ContainsByPredicate([](const FOKStreetCartLine& L){return !L.ForHer&&L.Girl==INDEX_NONE;}));Request->SetNumberField(TEXT("insist"),Insist);Request->SetBoolField(TEXT("promise"),S.HerTreatPromise.Contains(Her));
+ auto Request=OKRulesRequest(TEXT("chat_order_payer"));Request->SetStringField(TEXT("lean"),Lean);Request->SetStringField(TEXT("agreed"),PayAgreed(Her));Request->SetBoolField(TEXT("has_hers"),S.Cart.ContainsByPredicate([](const FOKStreetCartLine& L){return L.ForHer;}));Request->SetBoolField(TEXT("has_his"),S.Cart.ContainsByPredicate([](const FOKStreetCartLine& L){return !L.ForHer&&L.Girl==INDEX_NONE;}));Request->SetNumberField(TEXT("insist"),Insist);Request->SetBoolField(TEXT("promise"),HerTreatPromised(Her));
  // Everything a thing he buys to give her (for her, not her own pick, nothing to eat or drink): his to pay (R3-255b).
  Request->SetBoolField(TEXT("his_gift"),S.Cart.Num()>0&&!S.Cart.ContainsByPredicate([&S](const FOKStreetCartLine& L){const auto* I=S.Catalog.Find(L.ItemId);return !L.ForHer||L.HerOwn||!I||I->Consumable;}));
  const TSharedPtr<FJsonObject> Payer=OKRulesEval(S,Request);const FString Option=Payer.IsValid()?Payer->GetStringField(TEXT("option")):Lean;
  if(!PayAgreed(Her).IsEmpty()&&S.PayAgreedShop.IsEmpty())S.PayAgreedShop=S.ShopPlace; // used here: this shop's agreement from now on
- UE_LOG(LogTemp,Display,TEXT("Street chat order: actor=%d lines=%d lean=%s insist=%.2f agreed=%s promise=%d -> %s"),Her,S.Cart.Num(),*Lean,Insist,*PayAgreed(Her),S.HerTreatPromise.Contains(Her),*Option);
+ UE_LOG(LogTemp,Display,TEXT("Street chat order: actor=%d lines=%d lean=%s insist=%.2f agreed=%s promise=%d -> %s"),Her,S.Cart.Num(),*Lean,Insist,*PayAgreed(Her),HerTreatPromised(Her),*Option);
  if(Option==TEXT("choice"))StartCheckout(Her);else FinishCheckout(Option,Her);
 }
 
@@ -357,7 +357,7 @@ void AOKStreetSocialScene::SettleGroupOrder(int32 Partner){
   S.Cart.Reset();for(const auto& L:All)if(G==Partner?L.Girl==INDEX_NONE:L.Girl==G)S.Cart.Add(L);
   if(S.Cart.IsEmpty()||!S.Manifest.Characters.IsValidIndex(G))continue;
   FString Option=TEXT("she_pays");
-  if(!S.HerTreatPromise.Contains(G)){
+  if(!HerTreatPromised(G)){
    FString Lean;float Insist=0;HeroineCheckoutLean(G,CartTotal(),Lean,Insist);
    auto Request=OKRulesRequest(TEXT("chat_order_payer"));Request->SetStringField(TEXT("lean"),Lean);Request->SetStringField(TEXT("agreed"),PayAgreed(Partner));Request->SetNumberField(TEXT("insist"),Insist);
    // His own dishes ride on the partner's bill: the rule needs to know (each pays their own unless she treats, R6-108).
@@ -632,7 +632,7 @@ void AOKStreetSocialScene::StartCheckout(int32 ForHer){
  const bool Shared=Her!=INDEX_NONE&&S.Cart.ContainsByPredicate([](const FOKStreetCartLine& L){return L.ForHer;});
  // She promised to treat him: it is hers to pay, whether he picked it with the buttons or by talking, and even when the
  // cart holds only his own dish (he asked her to treat him to a drink and chose one for himself).
- if(Her!=INDEX_NONE&&S.HerTreatPromise.Contains(Her)){UE_LOG(LogTemp,Display,TEXT("Street checkout: actor=%d promised to treat -> she pays"),Her);FinishCheckout(TEXT("she_pays"),Her);return;}
+ if(Her!=INDEX_NONE&&HerTreatPromised(Her)){UE_LOG(LogTemp,Display,TEXT("Street checkout: actor=%d promised to treat -> she pays"),Her);FinishCheckout(TEXT("she_pays"),Her);return;}
  if(!Shared){FinishCheckout(TEXT("player_pays"),INDEX_NONE);return;}
  if(S.Choices.ContainsByPredicate([](const FOKStreetPendingChoice& C){return C.Kind==TEXT("checkout");}))return;
  const FString Id=OKStreetStableId(S.Manifest.Characters[Her]);
@@ -646,7 +646,7 @@ void AOKStreetSocialScene::StartCheckout(int32 ForHer){
  S.FreeTalkNotice=Label+OKT(TEXT("ui.economy.pay_hint_text"));
  {const FOKStreetRelation Mine=OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget);
   S.CheckoutNote=OKMsg(TEXT("ui.economy.checkout_decision_prompt"), {{TEXT("total"), Total}, {TEXT("names"), *FString::Join(Names,OKT(TEXT("ui.bank.list_separator")))}, {TEXT("wallet_cash"), FMath::Max<int64>(0,Mine.Cash)}, {TEXT("affordable"), Mine.Cash>=Total?TEXT("yes"):TEXT("no")}});S.TellHer.Add(S.CheckoutNote);} // what she has, a fact: "not enough" said for 2 out of 235
- if(S.HerTreatPromise.Contains(Her)&&Insist>=1.f)S.FreeTalkNotice+=OKT(TEXT("ui.economy.she_treats_this_time"));
+ if(HerTreatPromised(Her)&&Insist>=1.f)S.FreeTalkNotice+=OKT(TEXT("ui.economy.she_treats_this_time"));
  else if(Lean==TEXT("she_pays")&&Insist>0.6f)S.FreeTalkNotice+=OKT(TEXT("ui.economy.she_wants_to_pay_suffix"));
  RefreshUI();
 }
@@ -697,7 +697,7 @@ void AOKStreetSocialScene::FinishCheckout(const FString& Option,int32 Her,const 
  for(const auto& L:S.Cart)if(const auto* I=S.Catalog.Find(L.ItemId);I&&!I->Consumable)S.RecentBought.Add(L.ItemId+(L.ForHer?TEXT("|her"):TEXT("|him")),OKStreetMindNow(S));
  if(GiveHer.Num()){S.PendingGift=GiveHer[0];UE_LOG(LogTemp,Display,TEXT("Street checkout: %s bought for her, given next"),*GiveHer[0]);}
  // Her treat promise this bill keeps: only one she had made (read before it is cleared just below).
- const bool PromiseKept=WithHer&&Answer->GetBoolField(TEXT("treat_kept"))&&S.HerTreatPromise.Contains(Her);
+ const bool PromiseKept=WithHer&&Answer->GetBoolField(TEXT("treat_kept"))&&HerTreatPromised(Her);
  // Kept only by a bill with something of his on it: her own noodles, billed first, used up "this meal is on me" and his
  // chicken rice a minute later was his to pay (R6-39).
  const bool HisOnBill=S.Cart.ContainsByPredicate([](const FOKStreetCartLine& L){return !L.ForHer&&L.Girl==INDEX_NONE;});

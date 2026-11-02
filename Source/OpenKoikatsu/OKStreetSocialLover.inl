@@ -255,7 +255,7 @@ FString AOKStreetSocialScene::FreeTalkExtras() const{
  if(Lift!=INDEX_NONE)Out+=OKT(TEXT("ui.lover.elevator_reaches_label"))+FString::Join(S.Elevators[Lift].Labels,OKT(TEXT("ui.bank.list_separator")));
  if(S.SleepPhase==0&&OKStreetNearestBed(S.Male,400,nullptr))Out+=OKT(TEXT("ui.lover.bed_nearby_note"));
  if(S.Pair.Partner!=INDEX_NONE&&S.Pair.Phase==1&&!S.Pair.Seated&&!S.Pair.Drink&&!S.Pair.Meal&&!S.Pair.PhoneUse&&!S.Pair.Watermelon&&!S.Pair.Splash&&!S.Pair.Read&&!S.Pair.Bath&&!S.Pair.NoProps)Out+=OKT(TEXT("ui.lover.posing_photo_note"));
- if(const int32 Her=FreeTalkPartner();Her!=INDEX_NONE&&S.HerTreatPromise.Contains(Her))Out+=OKT(TEXT("ui.lover.you_promised_treat_note"));
+ if(const int32 Her=FreeTalkPartner();Her!=INDEX_NONE&&HerTreatPromised(Her))Out+=OKT(TEXT("ui.lover.you_promised_treat_note"));
  if(!S.Table.IsEmpty())Out+=OKT(TEXT("ui.lover.on_table_label"))+DishTableText().Replace(TEXT("\n"),OKT(TEXT("ui.bank.list_separator")));
  Out+=CompanyPromptLine(FreeTalkPartner()); // what she knows of his company
  return Out;

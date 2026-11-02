@@ -504,6 +504,7 @@ private:
  void ApplyCompanyEffect(struct FOKStreetStore& C,const class FJsonObject& Effect);
  void HeroineNote(int32 Girl,const TCHAR* ActId,const FString& Text,const FString& Place,float Importance=-1.f,const FString& RumorDetail=FString());
  void HeroineCheckoutLean(int32 Girl,int32 Total,FString& Lean,float& Insist);
+ bool HerTreatPromised(int32 Girl) const;
  void BuildHeroinePanel(const TSharedRef<class SVerticalBox>& Panel,int32 Her);
  float ChastityOf(int32 Girl) const;
  void InitStrangerCap(const FString& Id,const TSharedPtr<class FJsonObject>& Profile);
