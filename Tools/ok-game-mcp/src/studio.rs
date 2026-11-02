@@ -211,6 +211,8 @@ pub fn tools() -> Vec<Value> {
           json!({}), &[]),
         t("studio_ui_shot", "Screenshot the whole studio window WITH its UI panels (studio_capture renders only the view), to see what the person sees in the SceneEditor. Written a frame or two later; waits up to 15 s for the file and shows it. Returns {file}.",
           json!({"name": {"type": "string", "description": "file name (never overwrites)"}}), &[]),
+        t("studio_mouse", "A mouse click at a point of the studio window (pixels from its top-left, as in studio_ui_shot), sent through the UI inside the process (the real cursor does not move): right opens context menus such as a timeline key's. Returns {screen}.",
+          json!({"x": {"type": "number"}, "y": {"type": "number"}, "button": {"type": "string", "enum": ["left", "right", "middle"]}}), &["x", "y"]),
         t("studio_combo", "The drop-downs shown in the studio UI, in window order. Without pick: {combos [{index, current, options [text]}]}. With index and pick (an option's number or its exact text): chooses it as a click in the open list would. Returns {picked}.",
           json!({"index": {"type": "integer"}, "pick": {"type": ["integer", "string"]}}), &[]),
     ]

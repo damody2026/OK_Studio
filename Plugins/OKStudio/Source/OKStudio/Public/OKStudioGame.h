@@ -270,6 +270,13 @@ public:
 	int32 UndoSteps() const { return UndoStack.Num() + (bHistoryDirty ? 1 : 0); }
 	/** Records a pending change now (otherwise done on the next still tick). */
 	void CommitHistory();
+	/** Ends the undo step a pending change is in, so a command or control op is a step of its own (changes within 0.4 s
+	 *  otherwise join one step, which a drag needs). */
+	void EndHistoryStep() { if (bHistoryDirty) CommitHistory(); }
+	/** Around a command or control op: only the outermost one ends steps (an op that runs commands is one step). */
+	void BeginStep() { if (StepDepth++ == 0) EndHistoryStep(); }
+	void EndStep() { if (StepDepth > 0 && --StepDepth == 0) EndHistoryStep(); }
+	int32 StepDepth = 0;
 	void ResetHistory();
 	/** Objects the last undo or redo left as they were (not rebuilt). */
 	int32 LastHistoryKept = 0;

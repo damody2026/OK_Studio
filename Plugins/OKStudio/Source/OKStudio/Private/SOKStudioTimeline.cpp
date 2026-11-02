@@ -187,7 +187,8 @@ FReply SOKStudioTimeline::OnMouseButtonDown(const FGeometry& G, const FPointerEv
 	if (E.GetEffectingButton() == EKeys::RightMouseButton)
 	{
 		if (bKey && !Selected.Contains(Key)) Selected = { Key };
-		if (bKey && OnEaseMenu) OnEaseMenu(E.GetScreenSpacePosition());
+		// The menu keeps the focus (taking it back to the timeline would dismiss the menu at once).
+		if (bKey && OnEaseMenu) { OnEaseMenu(E.GetScreenSpacePosition()); return FReply::Handled(); }
 		return FReply::Handled().SetUserFocus(SharedThis(this), EFocusCause::Mouse);
 	}
 	if (E.GetEffectingButton() != EKeys::LeftMouseButton) return FReply::Unhandled();

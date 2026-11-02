@@ -328,7 +328,12 @@ public:
 	bool RunCommand(const FString& Id, const FString& Arg = FString())
 	{
 		FCommand* C = Commands.Find(Id);
-		return C && Game.IsValid() && C->Run(Arg);
+		if (!C || !Game.IsValid()) return false;
+		// A command is one undo step: not joined to the edit just before it, nor to the next one.
+		Game->BeginStep();
+		const bool bOk = C->Run(Arg);
+		if (Game.IsValid()) Game->EndStep();
+		return bOk;
 	}
 
 	void RegisterCommands()
@@ -676,7 +681,9 @@ public:
 			const FOKSceneObject* Cam = Game->Document->Find(Camera);
 			if (Camera < -2 || (Camera >= 0 && (!Cam || Cam->Kind != EOKSceneObjectKind::Camera))) return false;
 			TArray<float> Times;
-			if (TimelineView) for (const SOKStudioTimeline::FKeyRef& R : TimelineView->Selected) if (R.Track == UOKSceneDocument::SceneTrackId) Times.Add(R.Time);
+			if (TimelineView)
+				for (const SOKStudioTimeline::FKeyRef& R : TimelineView->Selected)
+					if (R.Track == UOKSceneDocument::SceneTrackId && Game->Document->KeyAt(R.Track, R.Time)) Times.Add(R.Time);
 			if (Times.IsEmpty()) Times.Add(Game->TimelineTime);
 			int32 Set = 0;
 			for (float T : Times) if (FOKSceneKey* K = Game->Document->KeyAt(UOKSceneDocument::SceneTrackId, T)) { K->Camera = Camera; ++Set; }

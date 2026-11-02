@@ -57,6 +57,14 @@ namespace
 		Out = FVector((*A)[0]->AsNumber(), (*A)[1]->AsNumber(), (*A)[2]->AsNumber());
 		return true;
 	}
+	/** The windows a person can click in: the top-level ones and their child windows (context menus open in those). */
+	TArray<TSharedRef<SWindow>> UiWindows()
+	{
+		TArray<TSharedRef<SWindow>> Out;
+		TFunction<void(const TSharedRef<SWindow>&)> Add = [&](const TSharedRef<SWindow>& W) { Out.Add(W); for (const TSharedRef<SWindow>& C : W->GetChildWindows()) Add(C); };
+		for (const TSharedRef<SWindow>& W : FSlateApplication::Get().GetInteractiveTopLevelWindows()) Add(W);
+		return Out;
+	}
 	int32 ReadId(const TSharedRef<FJsonObject>& J, const TCHAR* Name, int32 Default = -1)
 	{
 		double D;
@@ -163,6 +171,7 @@ namespace
 		FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(G.UiStateJson()), Ui);
 		if (Ui) O->SetObjectField(TEXT("ui"), Ui);
 		O->SetStringField(TEXT("busy"), G.BusyReason());
+		O->SetNumberField(TEXT("undo_steps"), G.UndoSteps());
 		TSharedRef<FJsonObject> T = MakeShared<FJsonObject>();
 		T->SetNumberField(TEXT("time"), G.TimelineTime);
 		T->SetNumberField(TEXT("duration"), G.Document->Duration);
@@ -779,7 +788,7 @@ namespace
 				FChildren* Children = W->GetChildren();
 				for (int32 I = 0; Children && I < Children->Num(); ++I) Walk(Children->GetChildAt(I));
 			};
-			for (const TSharedRef<SWindow>& Window : FSlateApplication::Get().GetInteractiveTopLevelWindows()) Walk(Window);
+			for (const TSharedRef<SWindow>& Window : UiWindows()) Walk(Window);
 			if (!Found.IsValidIndex(Index)) return Result(false, FString::Printf(TEXT("%d buttons match: %s"), Found.Num(), *FString::Join(Labels, TEXT(" | "))));
 			if (!Found[Index]->IsEnabled()) return Result(false, TEXT("the button is disabled"));
 			if (Found[Index]->GetType() == TEXT("SCheckBox")) StaticCastSharedRef<SCheckBox>(Found[Index])->ToggleCheckedState();
@@ -801,6 +810,31 @@ namespace
 			O->SetStringField(TEXT("clicked"), Labels[Index]);
 			return O;
 		}
+		// A mouse press and release at a point of the studio window (pixels from its top-left, as in a ui_shot), sent
+		// through Slate inside the process like the real mouse: a right click opens context menus (a timeline key's),
+		// a left click selects what is under the point. The system cursor does not move.
+		if (Op == TEXT("mouse"))
+		{
+			if (!FSlateApplication::IsInitialized()) return Result(false, TEXT("no UI"));
+			double X = 0., Y = 0.;
+			if (!J->TryGetNumberField(TEXT("x"), X) || !J->TryGetNumberField(TEXT("y"), Y)) return Result(false, TEXT("x and y required"));
+			FString Button = TEXT("left");
+			J->TryGetStringField(TEXT("button"), Button);
+			const FKey Key = Button == TEXT("right") ? EKeys::RightMouseButton : (Button == TEXT("middle") ? EKeys::MiddleMouseButton : EKeys::LeftMouseButton);
+			FSlateApplication& App = FSlateApplication::Get();
+			TSharedPtr<SWindow> Window = GEngine && GEngine->GameViewport ? GEngine->GameViewport->GetWindow() : nullptr;
+			if (!Window.IsValid()) Window = App.GetActiveTopLevelWindow();
+			if (!Window.IsValid()) return Result(false, TEXT("no studio window"));
+			const FVector2D At = Window->GetPositionInScreen() + FVector2D(X, Y);
+			const FModifierKeysState Mods;
+			App.ProcessMouseMoveEvent(FPointerEvent(App.GetUserIndexForMouse(), 0, At, At, TSet<FKey>(), EKeys::Invalid, 0.f, Mods));
+			App.ProcessMouseButtonDownEvent(Window->GetNativeWindow(), FPointerEvent(App.GetUserIndexForMouse(), 0, At, At, TSet<FKey>({ Key }), Key, 0.f, Mods));
+			App.ProcessMouseButtonUpEvent(FPointerEvent(App.GetUserIndexForMouse(), 0, At, At, TSet<FKey>(), Key, 0.f, Mods));
+			TSharedRef<FJsonObject> O = Result(true);
+			O->SetArrayField(TEXT("screen"), { MakeShared<FJsonValueNumber>(At.X), MakeShared<FJsonValueNumber>(At.Y) });
+			O->SetBoolField(TEXT("menu_open"), App.AnyMenusVisible());
+			return O;
+		}
 		// The drop-downs on screen, in window order: without pick, each one's shown value and options; with index and pick
 		// (an option's number or its text), that option is chosen as a click in the open list would choose it.
 		if (Op == TEXT("combo"))
@@ -814,7 +848,7 @@ namespace
 				FChildren* Children = W->GetChildren();
 				for (int32 I = 0; Children && I < Children->Num(); ++I) Walk(Children->GetChildAt(I));
 			};
-			for (const TSharedRef<SWindow>& Window : FSlateApplication::Get().GetInteractiveTopLevelWindows()) Walk(Window);
+			for (const TSharedRef<SWindow>& Window : UiWindows()) Walk(Window);
 			const TSharedPtr<FJsonValue> PickValue = J->TryGetField(TEXT("pick"));
 			if (!PickValue.IsValid())
 			{
@@ -873,7 +907,7 @@ namespace
 				FChildren* Children = W->GetChildren();
 				for (int32 I = 0; Children && I < Children->Num(); ++I) Walk(Children->GetChildAt(I));
 			};
-			for (const TSharedRef<SWindow>& Window : FSlateApplication::Get().GetInteractiveTopLevelWindows()) Walk(Window);
+			for (const TSharedRef<SWindow>& Window : UiWindows()) Walk(Window);
 			if (!Found.IsValidIndex(Index)) return Result(false, FString::Printf(TEXT("%d fields match"), Found.Num()));
 			FSlateApplication& App = FSlateApplication::Get();
 			App.SetKeyboardFocus(Found[Index], EFocusCause::Mouse);
@@ -1001,8 +1035,20 @@ namespace
 		return false;
 	}
 
-	/** Runs one op on the studio (game thread). */
+	TSharedRef<FJsonObject> RunOp(const FString& Op, const TSharedRef<FJsonObject>& J);
+
+	/** Runs one op on the studio (game thread). An op that edits is one undo step, as a command is. */
 	TSharedRef<FJsonObject> Run(const FString& Op, const TSharedRef<FJsonObject>& J)
+	{
+		UOKStudioGame* G = UOKStudioGame::Get();
+		const bool bStep = G && !ReadsOnly(Op, J) && Op != TEXT("undo") && Op != TEXT("redo") && Op != TEXT("leave");
+		if (bStep) G->BeginStep();
+		TSharedRef<FJsonObject> Out = RunOp(Op, J);
+		if (bStep && (G = UOKStudioGame::Get()) != nullptr) G->EndStep();
+		return Out;
+	}
+
+	TSharedRef<FJsonObject> RunOp(const FString& Op, const TSharedRef<FJsonObject>& J)
 	{
 		UOKStudioGame* G = UOKStudioGame::Get();
 		SOKStudioPanel* P = G ? G->GetPanel() : nullptr;
@@ -1333,7 +1379,7 @@ namespace OKStudioControl
 		if (!GRouter.IsValid()) { UE_LOG(LogTemp, Warning, TEXT("OK studio control: could not open port %d"), Port); return; }
 		static const TCHAR* Ops[] = { TEXT("state"), TEXT("inspect"), TEXT("catalog_search"), TEXT("spawn"), TEXT("transform"), TEXT("reparent"), TEXT("delete"), TEXT("select"),
 			TEXT("pose"), TEXT("camera"), TEXT("capture"), TEXT("save"), TEXT("load"), TEXT("undo"), TEXT("redo"), TEXT("cmd"), TEXT("timeline"),
-			TEXT("patch"), TEXT("scene"), TEXT("bones"), TEXT("bounds"), TEXT("catalog"), TEXT("keys"), TEXT("duplicate"), TEXT("export"), TEXT("scenes"), TEXT("report"), TEXT("ui_shot"), TEXT("ui_fit"), TEXT("click"), TEXT("combo"), TEXT("type"), TEXT("leave"), TEXT("exec"), TEXT("parts") };
+			TEXT("patch"), TEXT("scene"), TEXT("bones"), TEXT("bounds"), TEXT("catalog"), TEXT("keys"), TEXT("duplicate"), TEXT("export"), TEXT("scenes"), TEXT("report"), TEXT("ui_shot"), TEXT("ui_fit"), TEXT("click"), TEXT("mouse"), TEXT("combo"), TEXT("type"), TEXT("leave"), TEXT("exec"), TEXT("parts") };
 		for (const TCHAR* Op : Ops)
 		{
 			const FString Name = Op;
