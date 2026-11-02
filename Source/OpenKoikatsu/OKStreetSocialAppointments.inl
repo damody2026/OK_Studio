@@ -108,6 +108,9 @@ void AOKStreetSocialScene::AddPromiseFromChat(int32 Character,const FString& Day
   const FString DaySaid=Day.StartsWith(TEXT("+"))&&Day.Mid(1).IsNumeric()?[&]{const FDateTime T=OKStreetCalendarDateTime(S.Store.CalendarDay+FCString::Atoi(*Day.Mid(1)),12.0);return OKMsg(TEXT("ui.calendar.date_full"),{{TEXT("year"),T.GetYear()},{TEXT("month"),T.GetMonth()},{TEXT("day"),T.GetDay()},{TEXT("weekday"),OKMsg(TEXT("ui.calendar.weekday_name"),{{TEXT("d"),int32(T.GetDayOfWeek())}})}});}():Day;
   // A place the town does not have ("the cinema"): both agreed and nothing was booked. She is told, so she says so and
   // they pick a place that exists; he sees it too.
+  // He did say where and when: her question still waiting ("what time, where?") is out of date. 爱丽丝 asked it right
+  // after his "Wednesday four, at the game centre", then said there is no game centre (R6-116).
+  if(Reason==TEXT("not_a_place")&&!Place.IsEmpty()&&!S.PromiseAskNotes.IsEmpty()){S.TellHer.RemoveAll([&](const FString& N){return S.PromiseAskNotes.Contains(N);});S.PromiseAskNotes.Reset();}
   if(Reason==TEXT("not_a_place")&&!Place.IsEmpty()){S.TellHer.Add(OKMsg(TEXT("ui.appointments.no_such_place_note"),{{TEXT("place_name"),*Place}}));
    S.FreeTalkNotice=OKMsg(TEXT("ui.appointments.no_such_place_notice"),{{TEXT("place_name"),*Place}});RefreshUI();}
   // A day and a place but no hour ("Saturday at the park"): agreed, yet nothing to book. She asks him what time,
