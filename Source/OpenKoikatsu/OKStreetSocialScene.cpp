@@ -1635,6 +1635,11 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
   {bool Ends=false,Treats=false;Verdict->TryGetBoolField(TEXT("ends"),Ends);Verdict->TryGetBoolField(TEXT("she_treats"),Treats);
    // Still walking her there ("here's the dorm, I'm home" said a street early): the walk ends at the door, and the talk
    // goes on there, so no goodbye on the way.
+   // He steps away a moment and she says she waits here for him ("I'll keep our seats"): she stays a while (her plan's
+   // fixed blocks still go on). 三月七 kept their library seats, he talked with 贞德 two tables off, and she had walked
+   // off to the playground (R6-121).
+   {bool Waits=false;Verdict->TryGetBoolField(TEXT("she_waits_here"),Waits);
+    if(Waits){L->WaitsForHim.Add(Character,OKStreetMindNow(*L)+30);UE_LOG(LogTemp,Display,TEXT("Street judge: actor=%d waits here for him (30 min)"),Character);}}
    // Agreed that he goes no further ("I can only take you this far", "fine, go"): the walk ends here. 雷电将军 said
    // "you have plans, go", and he was still led on to her dorm, late for 三月七 (R6-119).
    {bool HereOnly=false;Verdict->TryGetBoolField(TEXT("walk_ends_here"),HereOnly);
