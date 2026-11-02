@@ -406,6 +406,10 @@ void AOKStreetSocialScene::TickShopArrival(){
  // Closing within twenty minutes: no "look at the menu and order" (they ordered at 21:59 and it closed on their dishes);
  // the closing notice (TickPlaceClosing) tells her when it comes.
  if(PlaceClosedAt(Place,StreetNow()+FTimespan::FromMinutes(20),Why)){S.ShopArrivalPlace=Place;UE_LOG(LogTemp,Display,TEXT("Street shop arrival: %s closes within 20 minutes; no menu prompt"),*Place);return;}
+ // Already ordered here in this visit (he treated 雷电将军 to two milk teas at the counter, and then "the menu is in front
+ // of you, order what you like" came: "mine is ordered, what will you have?", about his tea on its way, R6-99).
+ if(S.MealPlace==Place&&(!S.Table.IsEmpty()||!S.Serves.IsEmpty())){S.ShopArrivalPlace=Place;S.ShopArrivalAt=SceneTime();
+  UE_LOG(LogTemp,Display,TEXT("Street shop arrival: actor=%d already ordered at %s; no menu prompt"),Her,*Place);return;}
  S.ShopArrivalPlace=Place;S.ShopArrivalAt=SceneTime();
  const auto* Where=OKStreetFindPlace(Place);
  // A bookshop or a pet shop: what is on sale, not "order what you feel like eating" (she said "nothing to eat here, don't order").

@@ -1782,6 +1782,13 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
   // Only against a menu the judge was shown: said on the way, in the very line that set off for the bookstore, there
   // was none yet, and 胡桃 was told the bookstore did not sell the book it does (R6-18). She orders it on arrival.
   {const TArray<TSharedPtr<FJsonValue>>* Unsold=nullptr;if(HadMenu&&Verdict->TryGetArrayField(TEXT("unsold"),Unsold))for(const auto& V:*Unsold){FString Name;if(!V.IsValid()||!V->TryGetString(Name)||Name.TrimStartAndEnd().IsEmpty())continue;
+   // Sold at another shop he named ("the convenience store nearby has onigiri, I'll treat you", said in the park): the
+   // park's menu has no onigiri, and Alice was told the convenience store did not sell it (R6-98). She is told where it is.
+   Name.TrimStartAndEndInline();
+   if(const FOKStreetCatalogItem* Elsewhere=L->Catalog.Items.FindByPredicate([&](const FOKStreetCatalogItem& I){return I.Name==Name&&!I.Place.IsEmpty();})){
+    const FOKStreetPlace* P=OKStreetFindPlace(Elsewhere->Place);
+    L->TellHer.Add(OKMsg(TEXT("ui.economy.sold_elsewhere_order"),{{TEXT("item"),Name},{TEXT("place"),P?FString(P->Name):Elsewhere->Place}}));
+    UE_LOG(LogTemp,Display,TEXT("Street judge: %s is not sold here but at %s; she is told where"),*Name,*Elsewhere->Place);continue;}
    L->TellHer.Add(OKMsg(TEXT("ui.economy.not_sold_here_order"),{{TEXT("item"),Name}}));L->FreeTalkNotice=OKMsg(TEXT("ui.economy.not_sold_here_notice"),{{TEXT("item"),Name}});
    UE_LOG(LogTemp,Display,TEXT("Street judge: %s is not sold here; nothing bought, she is told"),*Name);}}
   // He lends her money now ("拿去吧，五百"), as the judge read it: only he can offer it; her act alone asks.
