@@ -184,6 +184,16 @@ pub fn bone_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
         let lifted = w.iter().filter(|(b, _)| pushed[*b as usize] > 0.005).map(|(_, w)| *w).sum::<f32>().min(1.);
         w.iter().map(|(b, w)| bones.lift[*b as usize] * w).sum::<f32>() * lips(v.from_entrance) * free.max(lifted)
     }).collect();
+    // The copies of one place of her skin (split at her mesh's UV seams; no edge joins them) go up together, the
+    // highest: evened and turned each on its own side they parted, a dark crack down her belly (GalBones6).
+    let mut copies: HashMap<[i64; 3], Vec<usize>> = HashMap::new();
+    for (i, p) in pos.iter().enumerate() { if let Some(p) = p { copies.entry(p.map(|v| (v * 5000.).round() as i64)).or_default().push(i); } }
+    copies.retain(|_, v| v.len() > 1);
+    let weld = |lift: &mut [f32]| for group in copies.values() {
+        let top = group.iter().map(|&i| lift[i]).fold(0f32, f32::max);
+        for &i in group { lift[i] = top; }
+    };
+    weld(&mut lift);
     // Her skin evened over her mesh, never lowered (her lips stay, and so does skin on her thighs and bottom: raised by
     // its neighbours it rose in sheets, GalBones5).
     for _ in 0..SKIN_EVEN_ROUNDS {
@@ -193,6 +203,7 @@ pub fn bone_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
             let avg = v.nbr.iter().map(|&k| was[k as usize]).sum::<f32>() / v.nbr.len() as f32;
             lift[i] = was[i].max((was[i] + avg) * 0.5);
         }
+        weld(&mut lift);
     }
     // No skin turns its back (user 2026-11-02, the black walls beside the tent, GalBones2): a triangle that faces the
     // other way once lifted (its lower corner left far under its higher one, at her groin crease and where her thighs
@@ -219,6 +230,7 @@ pub fn bone_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
                 raised = true;
             }
         }
+        weld(&mut lift);
         if !raised { break; }
     }
     let moved: Vec<Option<[f32; 3]>> = (0..verts.len()).map(|i| pos[i].map(|p| [p[0] + up[0] * lift[i], p[1] + up[1] * lift[i], p[2] + up[2] * lift[i]])).collect();
