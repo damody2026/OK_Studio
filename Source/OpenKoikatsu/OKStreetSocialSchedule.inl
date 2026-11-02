@@ -348,6 +348,10 @@ void AOKStreetSocialScene::FinishHeroineWalk(int32 I,const FOKStreetPendingMove&
  auto& S=*State;if(!S.Agents.IsValidIndex(I-1))return;auto& A=S.Agents[I-1];
  // Taken by him (a talk, a call, an elevator) while it was being routed: the walk is dropped like a commute.
  if(BusyWithPlayer(I)||S.LiftWalks.Contains(I)||S.LiftPins.Contains(I))return;
+ // Waiting for him (she said so, or wrote him where she is): a walk routed before she said it does not take her off.
+ // 三月七 said "I'll wait here" and the route found a moment later walked her out of the library (R6-121).
+ if(S.WaitsForHim.FindRef(I,0)>OKStreetMindNow(S)){int32 Ix=INDEX_NONE;
+  if(!OKStreetFixedBlock(BlockNow(I,int32(OKStreetMindNow(S)%1440),&Ix))){UE_LOG(LogTemp,Display,TEXT("Street plan: actor %d waits for him; the walk to %s is dropped"),I,*Move.Place);return;}}
  if(Path.Num()>=2){
   S.Commutes.Add(I,MoveTemp(Path));
   if(Move.Leave){S.CommuteFinal.Remove(I);S.ReleaseAtDoor.Add(I);UE_LOG(LogTemp,Display,TEXT("Street plan: actor %d leaves %s for the street"),I,*Move.Place);}
