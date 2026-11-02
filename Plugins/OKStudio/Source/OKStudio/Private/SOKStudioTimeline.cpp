@@ -122,6 +122,16 @@ int32 SOKStudioTimeline::OnPaint(const FPaintArgs&, const FGeometry& G, const FS
 			const FLinearColor C = bSel ? FLinearColor::Yellow : (K.Ease == EOKSceneEase::Step ? FLinearColor(1.f, .55f, .2f) : FLinearColor(.75f, .85f, 1.f));
 			const float H = R.Sub < 0 ? 5.f : 3.5f, CY = Y + RowHeight * 0.5f;
 			FSlateDrawElement::MakeLines(Out, Layer + 3, G.ToPaintGeometry(), { FVector2f(X, CY - H), FVector2f(X + H, CY), FVector2f(X, CY + H), FVector2f(X - H, CY), FVector2f(X, CY - H) }, ESlateDrawEffect::None, C, true, 2.f);
+			// Scene keys name the view they cut to.
+			if (R.Track == UOKSceneDocument::SceneTrackId && K.Camera >= -1)
+			{
+				// Only as many characters as fit before the next key (about 6 px each at this size).
+				const FOKSceneKey* NextKey = T->Keys.FindByPredicate([&K](const FOKSceneKey& N) { return N.Time > K.Time; });
+				const float Room = (NextKey ? FMath::Min(TimeToX(G, NextKey->Time) - H, Size.X) : Size.X) - (X + H + 2.f);
+				const FOKSceneObject* Cam = Doc->Find(K.Camera);
+				const FString Name = K.Camera < 0 ? FString(TEXT("自由")) : (Cam ? Cam->Name : FString(TEXT("（已刪）")));
+				if (Room >= 12.f) Text(X + H + 2.f, Y + 1.f, Name.Left(FMath::Max(int32(Room / 6.f), 1)), TextHint(), 9.f, Layer + 3);
+			}
 		}
 	}
 	FSlateDrawElement::MakeLines(Out, Layer + 2, G.ToPaintGeometry(), { FVector2f(LabelWidth, 0.f), FVector2f(LabelWidth, Size.Y) }, ESlateDrawEffect::None, FLinearColor(1.f, 1.f, 1.f, 0.2f));
@@ -177,7 +187,8 @@ FReply SOKStudioTimeline::OnMouseButtonDown(const FGeometry& G, const FPointerEv
 	if (E.GetEffectingButton() == EKeys::RightMouseButton)
 	{
 		if (bKey && !Selected.Contains(Key)) Selected = { Key };
-		if (bKey && OnEaseMenu) OnEaseMenu(E.GetScreenSpacePosition());
+		// The menu keeps the focus (taking it back to the timeline would dismiss the menu at once).
+		if (bKey && OnEaseMenu) { OnEaseMenu(E.GetScreenSpacePosition()); return FReply::Handled(); }
 		return FReply::Handled().SetUserFocus(SharedThis(this), EFocusCause::Mouse);
 	}
 	if (E.GetEffectingButton() != EKeys::LeftMouseButton) return FReply::Unhandled();

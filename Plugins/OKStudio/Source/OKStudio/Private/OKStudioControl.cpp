@@ -57,6 +57,14 @@ namespace
 		Out = FVector((*A)[0]->AsNumber(), (*A)[1]->AsNumber(), (*A)[2]->AsNumber());
 		return true;
 	}
+	/** The windows a person can click in: the top-level ones and their child windows (context menus open in those). */
+	TArray<TSharedRef<SWindow>> UiWindows()
+	{
+		TArray<TSharedRef<SWindow>> Out;
+		TFunction<void(const TSharedRef<SWindow>&)> Add = [&](const TSharedRef<SWindow>& W) { Out.Add(W); for (const TSharedRef<SWindow>& C : W->GetChildWindows()) Add(C); };
+		for (const TSharedRef<SWindow>& W : FSlateApplication::Get().GetInteractiveTopLevelWindows()) Add(W);
+		return Out;
+	}
 	int32 ReadId(const TSharedRef<FJsonObject>& J, const TCHAR* Name, int32 Default = -1)
 	{
 		double D;
@@ -163,6 +171,7 @@ namespace
 		FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(G.UiStateJson()), Ui);
 		if (Ui) O->SetObjectField(TEXT("ui"), Ui);
 		O->SetStringField(TEXT("busy"), G.BusyReason());
+		O->SetNumberField(TEXT("undo_steps"), G.UndoSteps());
 		TSharedRef<FJsonObject> T = MakeShared<FJsonObject>();
 		T->SetNumberField(TEXT("time"), G.TimelineTime);
 		T->SetNumberField(TEXT("duration"), G.Document->Duration);
@@ -241,6 +250,7 @@ namespace
 		if (K.Color.A >= 0.f) O->SetStringField(TEXT("color"), TEXT("#") + K.Color.ToFColor(false).ToHex());
 		O->SetNumberField(TEXT("exposure"), K.Exposure);
 		O->SetNumberField(TEXT("focal_distance"), K.FocalDistance);
+		if (K.Camera >= -1) O->SetNumberField(TEXT("camera"), K.Camera);
 		return O;
 	}
 
@@ -493,7 +503,19 @@ namespace
 			J->TryGetStringField(TEXT("action"), Action);
 			double Time = G.TimelineTime, To = 0.;
 			J->TryGetNumberField(TEXT("time"), Time);
-			if (Action == TEXT("set")) Doc->SetKey(Id, float(Time));
+			if (Action == TEXT("set"))
+			{
+				// The scene track: a camera cut other than the current view (-1 free view, -2 none).
+				double Camera = 0.;
+				const bool bCut = Id == UOKSceneDocument::SceneTrackId && J->TryGetNumberField(TEXT("camera"), Camera);
+				const FOKSceneObject* CamObject = bCut && Camera >= 0. ? Doc->Find(int32(Camera)) : nullptr;
+				if (bCut && Camera >= 0. && (!CamObject || CamObject->Kind != EOKSceneObjectKind::Camera)) return Result(false, TEXT("camera: no such camera object"));
+				Doc->SetKey(Id, float(Time));
+				if (bCut)
+				{
+					if (FOKSceneKey* K = Doc->KeyAt(Id, float(Time))) { K->Camera = FMath::Max(int32(Camera), -2); Doc->NotifyChanged(); }
+				}
+			}
 			else if (Action == TEXT("remove") && !Doc->RemoveKey(Id, float(Time))) return Result(false, TEXT("no key at that time"));
 			else if (Action == TEXT("move"))
 			{
@@ -569,6 +591,7 @@ namespace
 			FString Folder;
 			J->TryGetStringField(TEXT("folder"), Folder);
 			if (Folder.IsEmpty()) Folder = UOKStudioGame::SceneDirectory();
+			else if (FPaths::IsRelative(Folder)) Folder = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / Folder);
 			TArray<FString> Names, More;
 			IFileManager::Get().FindFiles(Names, *(Folder / TEXT("*.png")), true, false);
 			IFileManager::Get().FindFiles(More, *(Folder / TEXT("*.okscene")), true, false);
@@ -765,7 +788,7 @@ namespace
 				FChildren* Children = W->GetChildren();
 				for (int32 I = 0; Children && I < Children->Num(); ++I) Walk(Children->GetChildAt(I));
 			};
-			for (const TSharedRef<SWindow>& Window : FSlateApplication::Get().GetInteractiveTopLevelWindows()) Walk(Window);
+			for (const TSharedRef<SWindow>& Window : UiWindows()) Walk(Window);
 			if (!Found.IsValidIndex(Index)) return Result(false, FString::Printf(TEXT("%d buttons match: %s"), Found.Num(), *FString::Join(Labels, TEXT(" | "))));
 			if (!Found[Index]->IsEnabled()) return Result(false, TEXT("the button is disabled"));
 			if (Found[Index]->GetType() == TEXT("SCheckBox")) StaticCastSharedRef<SCheckBox>(Found[Index])->ToggleCheckedState();
@@ -785,6 +808,133 @@ namespace
 			TSharedRef<FJsonObject> O = Result(true);
 			O->SetNumberField(TEXT("matches"), Found.Num());
 			O->SetStringField(TEXT("clicked"), Labels[Index]);
+			return O;
+		}
+		// A mouse press and release at a point of the studio window (pixels from its top-left, as in a ui_shot), sent
+		// through Slate inside the process like the real mouse: a right click opens context menus (a timeline key's),
+		// a left click selects what is under the point. The system cursor does not move.
+		if (Op == TEXT("mouse"))
+		{
+			if (!FSlateApplication::IsInitialized()) return Result(false, TEXT("no UI"));
+			double X = 0., Y = 0.;
+			if (!J->TryGetNumberField(TEXT("x"), X) || !J->TryGetNumberField(TEXT("y"), Y)) return Result(false, TEXT("x and y required"));
+			FString Button = TEXT("left");
+			J->TryGetStringField(TEXT("button"), Button);
+			const FKey Key = Button == TEXT("right") ? EKeys::RightMouseButton : (Button == TEXT("middle") ? EKeys::MiddleMouseButton : EKeys::LeftMouseButton);
+			FSlateApplication& App = FSlateApplication::Get();
+			TSharedPtr<SWindow> Window = GEngine && GEngine->GameViewport ? GEngine->GameViewport->GetWindow() : nullptr;
+			if (!Window.IsValid()) Window = App.GetActiveTopLevelWindow();
+			if (!Window.IsValid()) return Result(false, TEXT("no studio window"));
+			const FVector2D At = Window->GetPositionInScreen() + FVector2D(X, Y);
+			// "to": [x, y] drags there with the button held, in "steps" moves (a gizmo, a timeline key, a tree row).
+			FVector2D To = At;
+			const TArray<TSharedPtr<FJsonValue>>* ToJson = nullptr;
+			const bool bDrag = J->TryGetArrayField(TEXT("to"), ToJson) && ToJson->Num() == 2;
+			if (bDrag) To = Window->GetPositionInScreen() + FVector2D((*ToJson)[0]->AsNumber(), (*ToJson)[1]->AsNumber());
+			const int32 Steps = FMath::Clamp(ReadId(J, TEXT("steps"), 10), 1, 200);
+			const FModifierKeysState Mods;
+			const uint32 User = App.GetUserIndexForMouse();
+			// The real mouse's pointer index (0 is a touch's), so these presses and the real mouse's moves are one pointer.
+			const uint32 Pointer = FSlateApplication::CursorPointerIndex;
+			// A capture left from an earlier press takes this press and release too (only the hover moved, 2026-11-02 U83):
+			// start from no capture, as a fresh press of the real mouse does.
+			if (App.HasAnyMouseCaptor())
+			{
+				const TSharedPtr<SWidget> Captor = App.GetCursorUser().IsValid() ? App.GetCursorUser()->GetCursorCaptor() : nullptr;
+				UE_LOG(LogTemp, Display, TEXT("OK studio control: mouse released a stale capture (%s)"), Captor.IsValid() ? *Captor->GetTypeAsString() : TEXT("?"));
+				App.ReleaseAllPointerCapture();
+			}
+			App.ProcessMouseMoveEvent(FPointerEvent(User, Pointer, At, At, TSet<FKey>(), EKeys::Invalid, 0.f, Mods));
+			// What is under the point and whether the press was taken: a click that only moves the hover shows why here.
+			const FWidgetPath Under = App.LocateWindowUnderMouse(At, App.GetInteractiveTopLevelWindows(), false, User);
+			const FString UnderType = Under.IsValid() ? Under.GetLastWidget()->GetTypeAsString() : FString(TEXT("none"));
+			const bool bPressHandled = App.ProcessMouseButtonDownEvent(Window->GetNativeWindow(), FPointerEvent(User, Pointer, At, At, TSet<FKey>({ Key }), Key, 0.f, Mods));
+			const TSharedPtr<SWidget> Captor = App.GetCursorUser().IsValid() ? App.GetCursorUser()->GetCursorCaptor() : nullptr;
+			const FString CaptorType = Captor.IsValid() ? Captor->GetTypeAsString() : FString(TEXT("none"));
+			FVector2D Last = At;
+			for (int32 I = 1; bDrag && I <= Steps; ++I)
+			{
+				const FVector2D Now = FMath::Lerp(At, To, float(I) / Steps);
+				App.ProcessMouseMoveEvent(FPointerEvent(User, Pointer, Now, Last, TSet<FKey>({ Key }), EKeys::Invalid, 0.f, Mods));
+				Last = Now;
+			}
+			App.ProcessMouseButtonUpEvent(FPointerEvent(User, Pointer, To, Last, TSet<FKey>(), Key, 0.f, Mods));
+			TSharedRef<FJsonObject> O = Result(true);
+			O->SetArrayField(TEXT("screen"), { MakeShared<FJsonValueNumber>(At.X), MakeShared<FJsonValueNumber>(At.Y) });
+			O->SetBoolField(TEXT("menu_open"), App.AnyMenusVisible());
+			O->SetStringField(TEXT("under"), UnderType);
+			O->SetBoolField(TEXT("handled"), bPressHandled);
+			O->SetStringField(TEXT("captor"), CaptorType);
+			return O;
+		}
+		// A key press through Slate inside the process, as the keyboard sends it: the studio's shortcuts (Delete, Ctrl+Z, F,
+		// K, ...) run as they do for a person. "key" is an Unreal key name (Delete, Z, F, SpaceBar, F2, ...).
+		if (Op == TEXT("key"))
+		{
+			if (!FSlateApplication::IsInitialized()) return Result(false, TEXT("no UI"));
+			FString Name;
+			J->TryGetStringField(TEXT("key"), Name);
+			const FKey Key(*Name);
+			if (!Key.IsValid()) return Result(false, TEXT("unknown key: ") + Name);
+			bool bCtrl = false, bShift = false, bAlt = false;
+			J->TryGetBoolField(TEXT("ctrl"), bCtrl); J->TryGetBoolField(TEXT("shift"), bShift); J->TryGetBoolField(TEXT("alt"), bAlt);
+			const FModifierKeysState Mods(bShift, false, bCtrl, false, bAlt, false, false, false, false);
+			FSlateApplication& App = FSlateApplication::Get();
+			const uint32* Code = nullptr; const uint32* Char = nullptr;
+			FInputKeyManager::Get().GetCodesFromKey(Key, Code, Char);
+			const FKeyEvent Down(Key, Mods, App.GetUserIndexForKeyboard(), false, Char ? *Char : 0, Code ? *Code : 0);
+			const bool bHandled = App.ProcessKeyDownEvent(Down);
+			App.ProcessKeyUpEvent(FKeyEvent(Key, Mods, App.GetUserIndexForKeyboard(), false, Char ? *Char : 0, Code ? *Code : 0));
+			TSharedRef<FJsonObject> O = Result(true);
+			O->SetBoolField(TEXT("handled"), bHandled);
+			return O;
+		}
+		// The drop-downs on screen, in window order: without pick, each one's shown value and options; with index and pick
+		// (an option's number or its text), that option is chosen as a click in the open list would choose it.
+		if (Op == TEXT("combo"))
+		{
+			if (!FSlateApplication::IsInitialized()) return Result(false, TEXT("no UI"));
+			TArray<const SOKStudioPanel::FComboHandle*> Found;
+			TFunction<void(const TSharedRef<SWidget>&)> Walk = [&](const TSharedRef<SWidget>& W)
+			{
+				if (!W->GetVisibility().IsVisible()) return;
+				if (const SOKStudioPanel::FComboHandle* H = P.ComboOf(&W.Get())) { Found.Add(H); return; }
+				FChildren* Children = W->GetChildren();
+				for (int32 I = 0; Children && I < Children->Num(); ++I) Walk(Children->GetChildAt(I));
+			};
+			for (const TSharedRef<SWindow>& Window : UiWindows()) Walk(Window);
+			const TSharedPtr<FJsonValue> PickValue = J->TryGetField(TEXT("pick"));
+			if (!PickValue.IsValid())
+			{
+				TArray<TSharedPtr<FJsonValue>> List;
+				for (int32 I = 0; I < Found.Num(); ++I)
+				{
+					TSharedRef<FJsonObject> C = MakeShared<FJsonObject>();
+					C->SetNumberField(TEXT("index"), I);
+					C->SetStringField(TEXT("current"), Found[I]->Show(Found[I]->Current()));
+					TArray<TSharedPtr<FJsonValue>> Options;
+					for (const TSharedPtr<int32>& V : *Found[I]->Options) Options.Add(MakeShared<FJsonValueString>(V ? Found[I]->Show(*V) : FString()));
+					C->SetArrayField(TEXT("options"), Options);
+					List.Add(MakeShared<FJsonValueObject>(C));
+				}
+				TSharedRef<FJsonObject> O = Result(true);
+				O->SetArrayField(TEXT("combos"), List);
+				return O;
+			}
+			const int32 Index = ReadId(J, TEXT("index"), 0);
+			if (!Found.IsValidIndex(Index)) return Result(false, FString::Printf(TEXT("%d drop-downs on screen"), Found.Num()));
+			const SOKStudioPanel::FComboHandle& H = *Found[Index];
+			int32 Option = INDEX_NONE;
+			double Number = 0.;
+			if (PickValue->TryGetNumber(Number)) Option = int32(Number);
+			else for (int32 I = 0; I < H.Options->Num(); ++I) if ((*H.Options)[I] && H.Show(*(*H.Options)[I]) == PickValue->AsString()) { Option = I; break; }
+			if (!H.Options->IsValidIndex(Option) || !(*H.Options)[Option]) return Result(false, TEXT("no such option"));
+			const TFunction<void(int32)> Pick = H.Pick;
+			const TFunction<FString(int32)> Show = H.Show;
+			const int32 Value = *(*H.Options)[Option];
+			Pick(Value);
+			TSharedRef<FJsonObject> O = Result(true);
+			O->SetStringField(TEXT("picked"), Show(Value));
 			return O;
 		}
 		// Types into a text field as the keyboard would: the field whose hint (or text) contains "field" takes keyboard
@@ -811,7 +961,7 @@ namespace
 				FChildren* Children = W->GetChildren();
 				for (int32 I = 0; Children && I < Children->Num(); ++I) Walk(Children->GetChildAt(I));
 			};
-			for (const TSharedRef<SWindow>& Window : FSlateApplication::Get().GetInteractiveTopLevelWindows()) Walk(Window);
+			for (const TSharedRef<SWindow>& Window : UiWindows()) Walk(Window);
 			if (!Found.IsValidIndex(Index)) return Result(false, FString::Printf(TEXT("%d fields match"), Found.Num()));
 			FSlateApplication& App = FSlateApplication::Get();
 			App.SetKeyboardFocus(Found[Index], EFocusCause::Mouse);
@@ -939,8 +1089,20 @@ namespace
 		return false;
 	}
 
-	/** Runs one op on the studio (game thread). */
+	TSharedRef<FJsonObject> RunOp(const FString& Op, const TSharedRef<FJsonObject>& J);
+
+	/** Runs one op on the studio (game thread). An op that edits is one undo step, as a command is. */
 	TSharedRef<FJsonObject> Run(const FString& Op, const TSharedRef<FJsonObject>& J)
+	{
+		UOKStudioGame* G = UOKStudioGame::Get();
+		const bool bStep = G && !ReadsOnly(Op, J) && Op != TEXT("undo") && Op != TEXT("redo") && Op != TEXT("leave");
+		if (bStep) G->BeginStep();
+		TSharedRef<FJsonObject> Out = RunOp(Op, J);
+		if (bStep && (G = UOKStudioGame::Get()) != nullptr) G->EndStep();
+		return Out;
+	}
+
+	TSharedRef<FJsonObject> RunOp(const FString& Op, const TSharedRef<FJsonObject>& J)
 	{
 		UOKStudioGame* G = UOKStudioGame::Get();
 		SOKStudioPanel* P = G ? G->GetPanel() : nullptr;
@@ -1047,6 +1209,25 @@ namespace
 		{
 			FOKSceneObject* X = Doc->Find(ReadId(J, TEXT("id")));
 			if (!X || X->Kind != EOKSceneObjectKind::Character) return Result(false, TEXT("not a character"));
+			// Every bone and effector named is checked before anything changes: a misspelt bone (HS2's cf_J_ArmUp00_L for
+			// KK's cf_j_arm00_L) was kept and did nothing.
+			const TArray<TSharedPtr<FJsonValue>>* Check = nullptr;
+			if (J->TryGetArrayField(TEXT("fk"), Check))
+				for (const TSharedPtr<FJsonValue>& V : *Check)
+				{
+					const TSharedPtr<FJsonObject> B = V->AsObject();
+					const FString Bone = B ? B->GetStringField(TEXT("bone")) : FString();
+					if (!FOKStudioCatalog::Get().FkBones.ContainsByPredicate([&Bone](const FOKStudioFkBone& F) { return F.Bone == Bone; }))
+						return Result(false, TEXT("unknown FK bone '") + Bone + TEXT("' (studio_bones lists them)"));
+				}
+			if (J->TryGetArrayField(TEXT("ik"), Check))
+				for (const TSharedPtr<FJsonValue>& V : *Check)
+				{
+					const TSharedPtr<FJsonObject> T = V->AsObject();
+					double E = -1.;
+					if (!T || !T->TryGetNumberField(TEXT("effector"), E) || E < 0. || E > 12. || E != FMath::FloorToDouble(E))
+						return Result(false, TEXT("IK effector must be 0..12 (studio_bones lists them)"));
+				}
 			G->Select(X->Id);
 			bool bFlag = false;
 			if (J->TryGetBoolField(TEXT("clear_fk"), bFlag) && bFlag) X->Character.Fk.Reset();
@@ -1170,6 +1351,7 @@ namespace
 			FString Path;
 			J->TryGetStringField(TEXT("path"), Path);
 			if (Path.IsEmpty()) Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("UserData/Studio/screenshot")) / FDateTime::Now().ToString(TEXT("okstudio_mcp_%Y%m%d_%H%M%S.png"));
+			else if (FPaths::IsRelative(Path)) Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / Path);
 			if (FPaths::FileExists(Path)) return Result(false, TEXT("file exists (never overwritten): ") + Path);
 			FString Error;
 			if (!G->CaptureToPng(Path, W, H, Error, bAlpha)) return Result(false, Error);
@@ -1191,7 +1373,7 @@ namespace
 			if (Clean.IsEmpty()) return Result(false, TEXT("name required"));
 			const FString Path = UOKStudioGame::SceneDirectory() / Clean + TEXT(".png");
 			if (FPaths::FileExists(Path)) return Result(false, TEXT("file exists (never overwritten): ") + Path);
-			if (!P->SaveNamed(Clean)) return Result(false, TEXT("not saved"));
+			if (!P->SaveNamed(Clean)) return Result(false, TEXT("not saved: ") + P->StatusText());
 			TSharedRef<FJsonObject> O = Result(true);
 			O->SetStringField(TEXT("file"), Path);
 			return O;
@@ -1202,7 +1384,9 @@ namespace
 			J->TryGetStringField(TEXT("path"), Path);
 			bool bMerge = false;
 			J->TryGetBoolField(TEXT("merge"), bMerge);
-			if (Path.IsEmpty() || !FPaths::FileExists(Path)) return Result(false, TEXT("no such file"));
+			// A path relative to the checkout (UserData/Studio/scene/x.png), as the studio_load tool documents.
+			if (FPaths::IsRelative(Path)) Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / Path);
+			if (Path.IsEmpty() || !FPaths::FileExists(Path)) return Result(false, TEXT("no such file: ") + Path);
 			const bool bOk = bMerge ? P->OpenScene(Path, true) : (FOKSceneCard::Kind(Path) == FOKSceneCard::EKind::KStudio ? P->ImportKStudio(Path) : P->LoadFile(Path));
 			TSharedRef<FJsonObject> O = Result(bOk, bOk ? FString() : TEXT("not opened"));
 			TArray<TSharedPtr<FJsonValue>> Report;
@@ -1249,7 +1433,7 @@ namespace OKStudioControl
 		if (!GRouter.IsValid()) { UE_LOG(LogTemp, Warning, TEXT("OK studio control: could not open port %d"), Port); return; }
 		static const TCHAR* Ops[] = { TEXT("state"), TEXT("inspect"), TEXT("catalog_search"), TEXT("spawn"), TEXT("transform"), TEXT("reparent"), TEXT("delete"), TEXT("select"),
 			TEXT("pose"), TEXT("camera"), TEXT("capture"), TEXT("save"), TEXT("load"), TEXT("undo"), TEXT("redo"), TEXT("cmd"), TEXT("timeline"),
-			TEXT("patch"), TEXT("scene"), TEXT("bones"), TEXT("bounds"), TEXT("catalog"), TEXT("keys"), TEXT("duplicate"), TEXT("export"), TEXT("scenes"), TEXT("report"), TEXT("ui_shot"), TEXT("ui_fit"), TEXT("click"), TEXT("type"), TEXT("leave"), TEXT("exec"), TEXT("parts") };
+			TEXT("patch"), TEXT("scene"), TEXT("bones"), TEXT("bounds"), TEXT("catalog"), TEXT("keys"), TEXT("duplicate"), TEXT("export"), TEXT("scenes"), TEXT("report"), TEXT("ui_shot"), TEXT("ui_fit"), TEXT("click"), TEXT("mouse"), TEXT("key"), TEXT("combo"), TEXT("type"), TEXT("leave"), TEXT("exec"), TEXT("parts") };
 		for (const TCHAR* Op : Ops)
 		{
 			const FString Name = Op;

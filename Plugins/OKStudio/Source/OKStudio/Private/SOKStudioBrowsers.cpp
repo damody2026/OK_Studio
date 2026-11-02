@@ -141,6 +141,17 @@ void SOKStudioPanel::ScanCardFolder()
 	CardPage = FMath::Clamp(CardPage, 0, FMath::Max(0, (CardFiles.Num() - 1) / 18));
 }
 
+void SOKStudioPanel::GoCardFolder(const FString& Folder)
+{
+	// HS2Studio6 角色載入器's 上一步／下一步: going somewhere new drops the folders ahead.
+	if (Folder == CardFolder) return;
+	if (!CardFolder.IsEmpty()) CardBack.Add(CardFolder);
+	if (CardBack.Num() > 50) CardBack.RemoveAt(0);
+	CardForward.Reset();
+	CardFolder = Folder;
+	CardPage = 0;
+}
+
 bool SOKStudioPanel::AddOrReplaceCard(const FString& Card, bool bReplace)
 {
 	if (!Game.IsValid() || Card.IsEmpty()) return false;
@@ -182,7 +193,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildCardBrowser()
 	auto FolderButton = [this, &Folders](const FString& Label, const FString& Folder)
 	{
 		Folders->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)
-			[SNew(SBox).ToolTipText(FText::FromString(Folder))[Button(FText::FromString(Label), [this, Folder] { CardFolder = Folder; CardPage = 0; DeferFloat(TEXT("cards")); }, 0.f, 18.f, CardFolder == Folder, 10.f)]];
+			[SNew(SBox).ToolTipText(FText::FromString(Folder))[Button(FText::FromString(Label), [this, Folder] { GoCardFolder(Folder); DeferFloat(TEXT("cards")); }, 0.f, 18.f, CardFolder == Folder, 10.f)]];
 	};
 	const TArray<FString> Roots = CardRoots();
 	for (const FString& R : Roots) FolderButton(FPaths::GetCleanFilename(R), R);
@@ -240,11 +251,31 @@ TSharedRef<SWidget> SOKStudioPanel::BuildCardBrowser()
 		Hint->SetAutoWrapText(true);
 		Pick->AddSlot().AutoHeight()[Hint];
 	}
+	// The root the current folder is under (the first root when it is under none).
+	FString Root = Roots.Num() ? Roots[0] : FString();
+	for (const FString& R : Roots) if (FPaths::IsUnderDirectory(CardFolder, R)) { Root = R; break; }
 	return SNew(SVerticalBox)
+		// Path row (HS2Studio6 角色載入器): back, forward, the root, and a path to type or paste.
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 3.f)
 		[
 			SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)[OKStudioStyle::Label(FText::FromString(CardFolder), 9.f, TextHint())]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 2.f, 0.f)[SNew(SBox).ToolTipText(FText::FromString(TEXT("上一步")))[Button(FText::FromString(TEXT("‹")), Cmd(TEXT("cards.back")), 24.f, 20.f, false, 11.f, ButtonFill(), CardBack.Num() > 0)]]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 2.f, 0.f)[SNew(SBox).ToolTipText(FText::FromString(TEXT("下一步")))[Button(FText::FromString(TEXT("›")), Cmd(TEXT("cards.forward")), 24.f, 20.f, false, 11.f, ButtonFill(), CardForward.Num() > 0)]]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)[SNew(SBox).ToolTipText(FText::FromString(Root))[Button(FText::FromString(TEXT("根目錄")), Cmd(TEXT("cards.root")), 52.f, 20.f, CardFolder == Root, 10.f)]]
+			+ SHorizontalBox::Slot().FillWidth(1.f)[SNew(SBox).HeightOverride(20.f)[SNew(SEditableTextBox).Style(&TextBoxStyle()).Text(FText::FromString(CardFolder)).HintText(FText::FromString(TEXT("輸入或貼上資料夾按 Enter")))
+				.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type C)
+				{
+					if (C != ETextCommit::OnEnter) return;
+					if (!RunCommand(TEXT("cards.folder"), T.ToString())) DeferFloat(TEXT("cards"));
+				})]]
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 3.f)
+		[
+			SNew(SHorizontalBox)
+			// HS2Studio6 KK角色加载器 刷新 / 目录.
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("刷新")), Cmd(TEXT("cards.refresh")), 44.f, 20.f, false, 10.f)]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("開資料夾")), Cmd(TEXT("cards.explore")), 64.f, 20.f, false, 10.f)]
+			+ SHorizontalBox::Slot().FillWidth(1.f)[SNullWidget::NullWidget]
 			// 全部 → 女 → 男, and 加入預設角色 of the sex shown (female when all are).
 			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(CardSexFilter < 0 ? TEXT("全部") : CardSexFilter == 1 ? TEXT("女") : TEXT("男")),
 				[this] { CardSexFilter = CardSexFilter < 0 ? 1 : CardSexFilter == 1 ? 0 : -1; CardPage = 0; DeferFloat(TEXT("cards")); }, 40.f, 20.f, CardSexFilter >= 0, 10.f)]
@@ -256,7 +287,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildCardBrowser()
 				const FOKSceneObject* X = Obj();
 				if (!X || X->Kind != EOKSceneObjectKind::Character) return;
 				const FString Path = FPaths::ConvertRelativePathToFull(FPaths::IsRelative(X->Character.Card) ? FPaths::ProjectDir() / X->Character.Card : X->Character.Card);
-				CardFolder = FPaths::GetPath(Path); CardSearch.Reset(); CardPreview = Path;
+				GoCardFolder(FPaths::GetPath(Path)); CardSearch.Reset(); CardPreview = Path;
 				ScanCardFolder();
 				CardPage = FMath::Max(0, CardFiles.IndexOfByKey(Path)) / 18;
 				DeferFloat(TEXT("cards"));
@@ -387,7 +418,8 @@ TArray<SOKStudioPanel::FHit> SOKStudioPanel::SearchCatalog(const FString& Query,
 	if (Wants(TEXT("anim")))
 		for (const FOKStudioAnim& A : C.Anims) if (!A.File.IsEmpty()) Add(TEXT("anim"), FString::Printf(TEXT("anim:%d/%d/%d/%d"), A.Kind, A.Group, A.Category, A.No), A.Name);
 	if (Wants(TEXT("pose"))) for (const FString& F : FOKStudioPose::Files()) Add(TEXT("pose"), TEXT("pose:") + F, FPaths::GetBaseFilename(F), F);
-	if (Wants(TEXT("card"))) for (const TSharedPtr<FString>& F : Cards) Add(TEXT("card"), TEXT("card:") + *F, FPaths::GetBaseFilename(*F), *F);
+	// Cards of the same name in different folders tell apart by the folder (HS2Studio6 lists the folder too).
+	if (Wants(TEXT("card"))) for (const TSharedPtr<FString>& F : Cards) Add(TEXT("card"), TEXT("card:") + *F, FPaths::GetBaseFilename(*F) + TEXT("　") + FPaths::GetCleanFilename(FPaths::GetPath(*F)), *F);
 	// Favourites first, then the recently used, then by name.
 	Out.Sort([&S](const FHit& A, const FHit& B)
 	{
@@ -560,6 +592,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 	const FOKStudioCatalog& C = FOKStudioCatalog::Get();
 	if (MapPick == -1 && Game.IsValid()) MapPick = Game->Document->Map;
 	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
+	TSharedPtr<SWidget> PickedRow;
 	Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)[Button(FText::FromString(TEXT("（無地圖）")), [this] { MapPick = -2; DeferFloat(TEXT("maps")); }, 0.f, 18.f, MapPick == -2, 10.f, RowFill())];
 	for (const FOKStudioCatalogGroup& Cat : C.MapCategories)
 	{
@@ -569,7 +602,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 			if (M.Category != Cat.Id || (!MapSearch.IsEmpty() && !M.Name.Contains(MapSearch))) continue;
 			if (!bHeader) { Box->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 1.f)[OKStudioStyle::Label(FText::FromString(Cat.Name), 10.f, TextSoft())]; bHeader = true; }
 			const int32 No = M.No;
-			Box->AddSlot().AutoHeight().Padding(8.f, 0.f, 0.f, 1.f)[Button(FText::FromString(FString::Printf(TEXT("%d %s"), No, *M.Name)), [this, No] { MapPick = No; DeferFloat(TEXT("maps")); }, 0.f, 18.f, MapPick == No, 10.f, RowFill())];
+			{ TSharedRef<SWidget> Row = Button(FText::FromString(FString::Printf(TEXT("%d %s"), No, *M.Name)), [this, No] { MapPick = No; DeferFloat(TEXT("maps")); }, 0.f, 18.f, MapPick == No, 10.f, RowFill()); if (MapPick == No) PickedRow = Row; Box->AddSlot().AutoHeight().Padding(8.f, 0.f, 0.f, 1.f)[Row]; }
 		}
 	}
 	// Maps of categories the catalogue has no name for.
@@ -577,24 +610,44 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 		if (!C.MapCategories.ContainsByPredicate([&M](const FOKStudioCatalogGroup& G) { return G.Id == M.Category; }) && (MapSearch.IsEmpty() || M.Name.Contains(MapSearch)))
 		{
 			const int32 No = M.No;
-			Box->AddSlot().AutoHeight().Padding(8.f, 0.f, 0.f, 1.f)[Button(FText::FromString(FString::Printf(TEXT("%d %s"), No, *M.Name)), [this, No] { MapPick = No; DeferFloat(TEXT("maps")); }, 0.f, 18.f, MapPick == No, 10.f, RowFill())];
+			{ TSharedRef<SWidget> Row = Button(FText::FromString(FString::Printf(TEXT("%d %s"), No, *M.Name)), [this, No] { MapPick = No; DeferFloat(TEXT("maps")); }, 0.f, 18.f, MapPick == No, 10.f, RowFill()); if (MapPick == No) PickedRow = Row; Box->AddSlot().AutoHeight().Padding(8.f, 0.f, 0.f, 1.f)[Row]; }
 		}
 	const FOKStudioCatalogMap* Picked = C.FindMap(MapPick);
+	TSharedRef<SScrollBox> MapList = SNew(SScrollBox) + SScrollBox::Slot()[Box];
+	// 定位當前: scrolled once the rows are laid out (a request made now, before the first layout, finds no row).
+	if (bMapLocate && PickedRow.IsValid())
+		MapList->RegisterActiveTimer(0.05f, FWidgetActiveTimerDelegate::CreateLambda([WeakList = TWeakPtr<SScrollBox>(MapList), WeakRow = TWeakPtr<SWidget>(PickedRow)](double, float)
+		{
+			if (const TSharedPtr<SScrollBox> L = WeakList.Pin()) L->ScrollDescendantIntoView(WeakRow.Pin(), false, EDescendantScrollDestination::Center);
+			return EActiveTimerReturnType::Stop;
+		}));
+	bMapLocate = false;
 	return SNew(SVerticalBox)
-		+ SVerticalBox::Slot().AutoHeight()[SNew(SBox).HeightOverride(20.f)[SNew(SEditableTextBox).Style(&TextBoxStyle()).HintText(FText::FromString(TEXT("搜尋地圖"))).Text(FText::FromString(MapSearch))
-			.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type) { MapSearch = T.ToString(); DeferFloat(TEXT("maps")); })]]
-		+ SVerticalBox::Slot().FillHeight(1.f).Padding(0.f, 3.f)[SNew(SBorder).BorderImage(Brush(ListArea())).Padding(2.f)[SNew(SScrollBox) + SScrollBox::Slot()[Box]]]
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1.f)[SNew(SBox).HeightOverride(20.f)[SNew(SEditableTextBox).Style(&TextBoxStyle()).HintText(FText::FromString(TEXT("搜尋地圖"))).Text(FText::FromString(MapSearch))
+				.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type) { MapSearch = T.ToString(); DeferFloat(TEXT("maps")); })]]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("定位當前")), Cmd(TEXT("map.locate")), 64.f, 20.f, false, 10.f)]
+		]
+		+ SVerticalBox::Slot().FillHeight(1.f).Padding(0.f, 3.f)[SNew(SBorder).BorderImage(Brush(ListArea())).Padding(2.f)[MapList]]
 		+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(MapPick == -2 ? FString(TEXT("選擇：無地圖")) : Picked ? TEXT("選擇：") + Picked->Name : FString(TEXT("點一張地圖，再按「讀取」"))), 10.f, TextSoft())]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f, 0.f, 0.f)
 		[
-			Button(FText::FromString(TEXT("讀取")), [this]
-			{
-				if (!Game.IsValid() || MapPick == -1) return;
-				Game->Document->Map = MapPick == -2 ? -1 : MapPick;
-				Changed();
-				FOKStudioSettings::Get().UseRecent(FString::Printf(TEXT("map:%d"), Game->Document->Map));
-				SetStatus(TEXT("地圖：") + (FOKStudioCatalog::Get().FindMap(Game->Document->Map) ? FOKStudioCatalog::Get().FindMap(Game->Document->Map)->Name : FString(TEXT("無"))));
-			}, 0.f, 22.f)
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1.f)
+			[
+				Button(FText::FromString(TEXT("讀取")), [this]
+				{
+					if (!Game.IsValid() || MapPick == -1) return;
+					Game->Document->Map = MapPick == -2 ? -1 : MapPick;
+					Changed();
+					FOKStudioSettings::Get().UseRecent(FString::Printf(TEXT("map:%d"), Game->Document->Map));
+					SetStatus(TEXT("地圖：") + (FOKStudioCatalog::Get().FindMap(Game->Document->Map) ? FOKStudioCatalog::Get().FindMap(Game->Document->Map)->Name : FString(TEXT("無"))));
+				}, 0.f, 22.f)
+			]
+			// Studio's map window "設置": the map's position, rotation, time of day and sky (畫面設定's map tab).
+			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("設定")), Cmd(TEXT("scene.tab"), TEXT("1")), 60.f, 22.f)]
 		];
 }
 

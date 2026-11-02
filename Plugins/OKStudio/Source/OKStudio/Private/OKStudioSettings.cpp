@@ -102,11 +102,15 @@ FString FOKStudioSettings::CommandFor(const FKeyEvent& Event) const
 TArray<FString> FOKStudioSettings::Conflicts() const
 {
 	TMap<FString, TArray<FString>> ByChord;
-	for (const TPair<FString, FString>& D : DefaultBindings())
+	// Commands with a default key and those bound by hand (a command with no default key bound to K once went unreported, U88).
+	TArray<FString> Ids;
+	for (const TPair<FString, FString>& D : DefaultBindings()) Ids.AddUnique(D.Key);
+	for (const TPair<FString, FString>& B : Bindings) Ids.AddUnique(B.Key);
+	for (const FString& Id : Ids)
 	{
 		TArray<FString> Parts;
-		BindingOf(D.Key).ParseIntoArray(Parts, TEXT(","));
-		for (FString& P : Parts) { P.TrimStartAndEndInline(); if (!P.IsEmpty()) ByChord.FindOrAdd(P.ToLower()).AddUnique(D.Key); }
+		BindingOf(Id).ParseIntoArray(Parts, TEXT(","));
+		for (FString& P : Parts) { P.TrimStartAndEndInline(); if (!P.IsEmpty()) ByChord.FindOrAdd(P.ToLower()).AddUnique(Id); }
 	}
 	TArray<FString> Out;
 	for (const TPair<FString, TArray<FString>>& C : ByChord) if (C.Value.Num() > 1) Out.Add(C.Key + TEXT(": ") + FString::Join(C.Value, TEXT(", ")));
@@ -164,6 +168,7 @@ void FOKStudioSettings::Load()
 		Num(TEXT("ui_scale"), UiScale); Num(TEXT("master_volume"), MasterVolume);
 		J->TryGetBoolField(TEXT("fly_mode"), bFlyMode);
 		J->TryGetBoolField(TEXT("run_in_background"), bRunInBackground);
+		J->TryGetBoolField(TEXT("merge_keep_directional"), bMergeKeepDirectional);
 		J->TryGetNumberField(TEXT("vsync"), VSync);
 		J->TryGetNumberField(TEXT("max_fps"), MaxFps);
 		double D;
@@ -176,6 +181,7 @@ void FOKStudioSettings::Load()
 		J->TryGetStringArrayField(TEXT("frame_roots"), FrameRoots);
 		J->TryGetStringField(TEXT("default_card_male"), DefaultCards[0]);
 		J->TryGetStringField(TEXT("default_card_female"), DefaultCards[1]);
+		J->TryGetStringField(TEXT("material_export_root"), MaterialExportRoot);
 		const TSharedPtr<FJsonObject>* B = nullptr;
 		if (J->TryGetObjectField(TEXT("bindings"), B)) for (const auto& P : (*B)->Values) Bindings.Add(FString(*P.Key), P.Value->AsString());
 		const TArray<TSharedPtr<FJsonValue>>* Colors = nullptr;
@@ -201,6 +207,7 @@ void FOKStudioSettings::Save() const
 	J->SetNumberField(TEXT("backup_minutes"), BackupMinutes); J->SetNumberField(TEXT("backup_keep"), BackupKeep);
 	J->SetNumberField(TEXT("ui_scale"), UiScale);
 	J->SetNumberField(TEXT("master_volume"), MasterVolume); J->SetBoolField(TEXT("run_in_background"), bRunInBackground);
+	J->SetBoolField(TEXT("merge_keep_directional"), bMergeKeepDirectional);
 	J->SetNumberField(TEXT("vsync"), VSync); J->SetNumberField(TEXT("max_fps"), MaxFps);
 	auto Paths = [&J](const TCHAR* Key, const TArray<FString>& List)
 	{
@@ -215,6 +222,7 @@ void FOKStudioSettings::Save() const
 	Paths(TEXT("frame_roots"), FrameRoots);
 	J->SetStringField(TEXT("default_card_male"), DefaultCards[0]);
 	J->SetStringField(TEXT("default_card_female"), DefaultCards[1]);
+	J->SetStringField(TEXT("material_export_root"), MaterialExportRoot);
 	TSharedRef<FJsonObject> B = MakeShared<FJsonObject>();
 	for (const TPair<FString, FString>& P : Bindings) B->SetStringField(P.Key, P.Value);
 	J->SetObjectField(TEXT("bindings"), B);

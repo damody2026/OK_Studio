@@ -264,13 +264,7 @@ public:
 			+ SOverlay::Slot()
 			[
 				SNew(SDPIScaler).Visibility_Lambda([this] { return bHideUi ? EVisibility::Collapsed : EVisibility::SelfHitTestInvisible; })
-				.DPIScale_Lambda([this]
-				{
-					// Unity CanvasScaler (match 0.5) on the window's pixels, divided by the scale Slate already applies.
-					const FGeometry& G = GetTickSpaceGeometry();
-					const float Pixel = G.Scale > 0.f ? G.Scale : 1.f;
-					return CanvasScale(FVector2D(G.GetLocalSize()) * Pixel) / Pixel * FMath::Clamp(FOKStudioSettings::Get().UiScale, 0.5f, 2.f);
-				})
+				.DPIScale_Lambda([this] { return UiDpiScale(); })
 				[
 					SAssignNew(Canvas, SConstraintCanvas).Visibility(EVisibility::SelfHitTestInvisible)
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(0.f, 0.f)).Offset(FMargin(7.f, 7.f, 35.f, 177.f))[Tagged(TEXT("RootToolbar"), MakeRootToolbar())]
@@ -328,7 +322,12 @@ public:
 	bool RunCommand(const FString& Id, const FString& Arg = FString())
 	{
 		FCommand* C = Commands.Find(Id);
-		return C && Game.IsValid() && C->Run(Arg);
+		if (!C || !Game.IsValid()) return false;
+		// A command is one undo step: not joined to the edit just before it, nor to the next one.
+		Game->BeginStep();
+		const bool bOk = C->Run(Arg);
+		if (Game.IsValid()) Game->EndStep();
+		return bOk;
 	}
 
 	void RegisterCommands()
@@ -371,6 +370,92 @@ public:
 		Float_(TEXT("scene.recent"), TEXT("最近的場景"), TEXT("recent"));
 		Float_(TEXT("app.material"), TEXT("材質編輯器"), TEXT("material"));
 		AddCommand(TEXT("material.export"), TEXT("匯出道具的 UV／OBJ／貼圖（參數 uv、obj、textures）"), [this](const FString& Arg) { return ExportMaterial(Arg); });
+		// HS2Studio6 导出位置: the folder the exports go under (empty or the default folder: the default).
+		AddCommand(TEXT("material.exportroot"), TEXT("材質匯出位置（參數資料夾；空白回預設）"), [this](const FString& Arg)
+		{
+			const FString Typed = Arg.TrimStartAndEnd().TrimQuotes();
+			const FString Default = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("OKStudio/MaterialExport"));
+			const FString Dir = Typed.IsEmpty() ? Default : FPaths::ConvertRelativePathToFull(Typed);
+			bool bOk = true;
+			if (Dir != Default && !IFileManager::Get().MakeDirectory(*Dir, true)) { SetStatus(TEXT("無法建立資料夾：") + Dir); bOk = false; }
+			else
+			{
+				FOKStudioSettings::Get().MaterialExportRoot = Dir == Default ? FString() : Dir;
+				FOKStudioSettings::Get().Save();
+				SetStatus(TEXT("材質匯出位置：") + Dir);
+			}
+			RebuildFloat(TEXT("material"));
+			return bOk;
+		});
+		// 只看所選 of the resource check (1 on, 0 off, empty toggles).
+		AddCommand(TEXT("resources.selected"), TEXT("資源檢查只看所選"), [this](const FString& Arg)
+		{
+			bResourcesSelectedOnly = Arg.IsEmpty() ? !bResourcesSelectedOnly : Arg.TrimStartAndEnd() != TEXT("0");
+			if (IsFloatOpen(TEXT("resources"))) DeferFloat(TEXT("resources")); else OpenFloat(TEXT("resources"));
+			return true;
+		});
+		// HS2Studio6 旧版姿势库 刷新 and 上一页／下一页 (U58): the files and pictures read again; prev, next or a page number (1..).
+		AddCommand(TEXT("poselib.refresh"), TEXT("姿勢庫刷新"), [this](const FString&)
+		{
+			for (const FString& F : FOKStudioPose::Files()) FOKStudioThumbnails::Get().Forget(FPaths::ChangeExtension(F, TEXT("png")));
+			if (IsFloatOpen(TEXT("poselib"))) DeferFloat(TEXT("poselib")); else OpenFloat(TEXT("poselib"));
+			return true;
+		});
+		AddCommand(TEXT("poselib.page"), TEXT("姿勢庫換頁（prev、next 或頁碼）"), [this](const FString& Arg)
+		{
+			const FString A = Arg.TrimStartAndEnd();
+			const int32 Want = A == TEXT("prev") ? PosePage - 1 : A == TEXT("next") ? PosePage + 1 : FCString::Atoi(*A) - 1;
+			if (Want < 0 || Want >= PosePagesShown) return false;
+			PosePage = Want;
+			DeferFloat(TEXT("poselib"));
+			return true;
+		});
+		// HS2Studio6 KK角色加载器 刷新 and 目录 (U59): the folder and its card pictures read again; the folder in Explorer.
+		AddCommand(TEXT("cards.refresh"), TEXT("角色卡窗刷新"), [this](const FString&)
+		{
+			for (const FString& F : CardFiles) FOKStudioThumbnails::Get().Forget(F);
+			if (IsFloatOpen(TEXT("cards"))) DeferFloat(TEXT("cards")); else OpenFloat(TEXT("cards"));
+			return true;
+		});
+		AddCommand(TEXT("cards.explore"), TEXT("角色卡窗開資料夾"), [this](const FString&)
+		{
+			if (CardFolder.IsEmpty() || !FPaths::DirectoryExists(CardFolder)) return false;
+			FPlatformProcess::ExploreFolder(*CardFolder);
+			return true;
+		});
+		// The card browser's path row (U50): go to a folder, back, forward, the root of the current folder.
+		AddCommand(TEXT("cards.folder"), TEXT("角色卡窗前往資料夾"), [this](const FString& Arg)
+		{
+			const FString Dir = FPaths::ConvertRelativePathToFull(Arg.TrimStartAndEnd().TrimQuotes());
+			if (Arg.TrimStartAndEnd().IsEmpty() || !FPaths::DirectoryExists(Dir)) { SetStatus(TEXT("沒有這個資料夾：") + Dir); return false; }
+			GoCardFolder(Dir);
+			DeferFloat(TEXT("cards"));
+			return true;
+		});
+		AddCommand(TEXT("cards.back"), TEXT("角色卡窗上一步"), [this](const FString&)
+		{
+			if (CardBack.IsEmpty()) return false;
+			CardForward.Add(CardFolder); CardFolder = CardBack.Pop(); CardPage = 0;
+			DeferFloat(TEXT("cards"));
+			return true;
+		});
+		AddCommand(TEXT("cards.forward"), TEXT("角色卡窗下一步"), [this](const FString&)
+		{
+			if (CardForward.IsEmpty()) return false;
+			CardBack.Add(CardFolder); CardFolder = CardForward.Pop(); CardPage = 0;
+			DeferFloat(TEXT("cards"));
+			return true;
+		});
+		AddCommand(TEXT("cards.root"), TEXT("角色卡窗回根目錄"), [this](const FString&)
+		{
+			const TArray<FString> Roots = CardRoots();
+			if (Roots.IsEmpty()) return false;
+			FString Root = Roots[0];
+			for (const FString& R : Roots) if (FPaths::IsUnderDirectory(CardFolder, R)) { Root = R; break; }
+			GoCardFolder(Root);
+			DeferFloat(TEXT("cards"));
+			return true;
+		});
 		Float_(TEXT("app.animcontrol"), TEXT("動畫控制器"), TEXT("animctl"));
 		Float_(TEXT("app.bgm"), TEXT("背景音樂"), TEXT("bgm"));
 		Float_(TEXT("app.voice"), TEXT("語音"), TEXT("voice"));
@@ -443,6 +528,16 @@ public:
 			return true;
 		});
 		Float_(TEXT("add.map"), TEXT("地圖"), TEXT("maps"));
+		// HS2Studio6 地图窗 定位当前: the scene's map picked in the map window and scrolled to (the search cleared).
+		AddCommand(TEXT("map.locate"), TEXT("地圖定位當前"), [this](const FString&)
+		{
+			if (!Game.IsValid()) return false;
+			MapPick = Game->Document->Map < 0 ? -2 : Game->Document->Map;
+			MapSearch.Reset();
+			bMapLocate = true;
+			if (IsFloatOpen(TEXT("maps"))) DeferFloat(TEXT("maps")); else OpenFloat(TEXT("maps"));
+			return true;
+		});
 		// Editing the selection.
 		Simple(TEXT("edit.duplicate"), TEXT("複製物件"), [this] { DuplicateSelection(); });
 		Simple(TEXT("edit.duplicateoffset"), TEXT("複製並錯開"), [this] { DuplicateSelectionOffset(); });
@@ -567,8 +662,53 @@ public:
 		Simple(TEXT("transform.reset"), TEXT("重設變換"), [this] { for (int32 Id : Game->Selection) if (FOKSceneObject* O = Game->Document->Find(Id)) O->Transform = FTransform::Identity; Changed(); });
 		// Timeline.
 		Simple(TEXT("timeline.key"), TEXT("打 key"), [this] { if (TimelineView) TimelineView->KeySelection(); else for (int32 Id : Game->Selection) Game->Document->SetKey(Id, Game->TimelineTime); });
-		Simple(TEXT("timeline.scenekey"), TEXT("場景 key"), [this] { Game->Document->SetKey(UOKSceneDocument::SceneTrackId, Game->TimelineTime); });
-		Simple(TEXT("timeline.bonekey"), TEXT("骨骼打 key"), [this] { if (FkBone.IsEmpty()) { SetStatus(TEXT("先在 FK 頁選一根骨骼")); return; } for (int32 Id : Game->Selection) Game->Document->SetBoneKey(Id, Game->TimelineTime, FkBone); SetStatus(TEXT("骨骼 key：") + FkBone); });
+		Simple(TEXT("timeline.scenekey"), TEXT("場景 key"), [this]
+		{
+			Game->Document->SetKey(UOKSceneDocument::SceneTrackId, Game->TimelineTime);
+			const FOKSceneObject* Cam = Game->Document->Find(Game->Document->ActiveCamera);
+			SetStatus(FString::Printf(TEXT("場景 key %.2f 秒：曝光、對焦距離、鏡頭（%s）"), Game->TimelineTime, Cam ? *Cam->Name : TEXT("自由視角")));
+		});
+		// The view the selected scene keys cut to (else the scene key at the play head): -2 none, -1 free view, a camera id.
+		AddCommand(TEXT("timeline.cut"), TEXT("鏡頭 key"), [this](const FString& Arg)
+		{
+			const int32 Camera = FCString::Atoi(*Arg);
+			const FOKSceneObject* Cam = Game->Document->Find(Camera);
+			if (Camera < -2 || (Camera >= 0 && (!Cam || Cam->Kind != EOKSceneObjectKind::Camera))) return false;
+			TArray<float> Times;
+			if (TimelineView)
+				for (const SOKStudioTimeline::FKeyRef& R : TimelineView->Selected)
+					if (R.Track == UOKSceneDocument::SceneTrackId && Game->Document->KeyAt(R.Track, R.Time)) Times.Add(R.Time);
+			if (Times.IsEmpty()) Times.Add(Game->TimelineTime);
+			int32 Set = 0;
+			for (float T : Times) if (FOKSceneKey* K = Game->Document->KeyAt(UOKSceneDocument::SceneTrackId, T)) { K->Camera = Camera; ++Set; }
+			if (!Set) { SetStatus(TEXT("沒有場景 key：先按「場景 key」")); return false; }
+			Changed();
+			Game->SetTimelineTime(Game->TimelineTime);
+			SetStatus(FString::Printf(TEXT("%d 個場景 key 的鏡頭：%s"), Set, Camera == -2 ? TEXT("不切換") : Camera == -1 ? TEXT("自由視角") : *Cam->Name));
+			return true;
+		});
+		// Picks the FK bone for bone keys: an exact bone name, else the first whose name or bone contains the text.
+		AddCommand(TEXT("pose.bone"), TEXT("選骨骼"), [this](const FString& Arg)
+		{
+			const FOKStudioCatalog& C = FOKStudioCatalog::Get();
+			const FString Text = Arg.TrimStartAndEnd();
+			const FOKStudioFkBone* B = C.FkBones.FindByPredicate([&](const FOKStudioFkBone& X) { return X.Bone == Text; });
+			if (!B && !Text.IsEmpty()) B = C.FkBones.FindByPredicate([&](const FOKStudioFkBone& X) { return X.Name.Contains(Text) || X.Bone.Contains(Text); });
+			if (!B) { SetStatus(TEXT("找不到骨骼：") + Text); return false; }
+			FkBone = B->Bone;
+			SetStatus(FString::Printf(TEXT("骨骼：%s %s"), *B->Name, *B->Bone));
+			DeferRebuild();
+			return true;
+		});
+		AddCommand(TEXT("timeline.bonekey"), TEXT("骨骼打 key"), [this](const FString&)
+		{
+			if (FkBone.IsEmpty()) { SetStatus(TEXT("先選一根骨骼（FK 頁或時間軸的骨骼搜尋）")); return false; }
+			int32 Keyed = 0;
+			for (int32 Id : Game->Selection) Keyed += Game->Document->SetBoneKey(Id, Game->TimelineTime, FkBone) ? 1 : 0;
+			// Only a bone with an FK value has something to key (the animation's pose is not a value of its own).
+			SetStatus(Keyed ? TEXT("骨骼 key：") + FkBone : TEXT("沒有打上：所選角色的 ") + FkBone + TEXT(" 沒有 FK 值（在 FK 頁調整它或按「取目前姿勢」）"));
+			return Keyed > 0;
+		});
 		Simple(TEXT("timeline.boneunkey"), TEXT("骨骼刪 key"), [this] { for (int32 Id : Game->Selection) Game->Document->RemoveBoneKey(Id, Game->TimelineTime, FkBone); });
 		Simple(TEXT("timeline.clear"), TEXT("清空軌道"), [this] { for (int32 Id : Game->Selection) Game->Document->ClearTrack(Id); SetStatus(TEXT("已清空所選物件的軌道")); });
 		Simple(TEXT("timeline.delete"), TEXT("刪 key"), [this] { if (TimelineView && TimelineView->Selected.Num()) TimelineView->DeleteSelected(); else for (int32 Id : Game->Selection) Game->Document->RemoveKey(Id, Game->TimelineTime); });
@@ -607,7 +747,18 @@ public:
 		if (!RebindingId.IsEmpty())
 		{
 			if (K == EKeys::LeftControl || K == EKeys::RightControl || K == EKeys::LeftShift || K == EKeys::RightShift || K == EKeys::LeftAlt || K == EKeys::RightAlt) return true;
-			if (K != EKeys::Escape) { FOKStudioSettings& S = FOKStudioSettings::Get(); S.Bindings.Add(RebindingId, FOKStudioSettings::ChordText(E)); S.Save(); }
+			if (K != EKeys::Escape)
+			{
+				FOKStudioSettings& S = FOKStudioSettings::Get();
+				const FString Chord = FOKStudioSettings::ChordText(E);
+				S.Bindings.Add(RebindingId, Chord);
+				S.Save();
+				// Say at once when the key is another command's too (the list's 衝突 line says it as well).
+				const FString Prefix = Chord.ToLower() + TEXT(": ");
+				const TArray<FString> All = S.Conflicts();
+				const FString* Clash = All.FindByPredicate([&Prefix](const FString& C) { return C.StartsWith(Prefix); });
+				SetStatus(Clash ? TEXT("快捷鍵衝突：") + *Clash : FString::Printf(TEXT("%s 綁定 %s"), *RebindingId, *Chord));
+			}
 			RebindingId.Reset();
 			DeferFloat(TEXT("settings"));
 			return true;
@@ -679,6 +830,23 @@ public:
 		J->SetNumberField(TEXT("material_part"), MaterialPart);
 		J->SetNumberField(TEXT("material_properties"), MaterialPropertiesShown);
 		J->SetStringField(TEXT("material_name"), MaterialNameShown);
+		J->SetStringField(TEXT("material_export_root"), FOKStudioSettings::Get().MaterialExportRoot);
+		J->SetStringField(TEXT("fk_bone"), FkBone);
+		static const TCHAR* GizmoModes[] = { TEXT("move"), TEXT("rotate"), TEXT("scale") };
+		J->SetStringField(TEXT("gizmo_mode"), Game.IsValid() ? GizmoModes[FMath::Clamp(int32(Game->GuideMode), 0, 2)] : TEXT(""));
+		J->SetStringField(TEXT("card_folder"), CardFolder);
+		J->SetNumberField(TEXT("card_back"), CardBack.Num());
+		J->SetNumberField(TEXT("card_forward"), CardForward.Num());
+		J->SetBoolField(TEXT("resources_selected_only"), bResourcesSelectedOnly);
+		J->SetNumberField(TEXT("card_count"), CardFiles.Num());
+		J->SetNumberField(TEXT("pose_page"), PosePage + 1);
+		J->SetNumberField(TEXT("pose_pages"), PosePagesShown);
+		J->SetNumberField(TEXT("pose_count"), PosesShown);
+		{
+			TArray<TSharedPtr<FJsonValue>> Res;
+			if (IsFloatOpen(TEXT("resources"))) for (const FString& L : ResourcesShown) Res.Add(MakeShared<FJsonValueString>(L));
+			J->SetArrayField(TEXT("resources"), Res);
+		}
 		J->SetStringField(TEXT("help"), IsFloatOpen(TEXT("help")) ? PinnedHelpTitle : FString());
 		// The motion and item catalogues' place (定位當前 reads back here): kind/group/category, and what the list picked.
 		J->SetStringField(TEXT("anim_browse"), FString::Printf(TEXT("%d/%d/%d"), AnimKind, AnimGroup, AnimCategory));
@@ -1063,7 +1231,9 @@ public:
 					SNew(SBox).WidthOverride(51.f).HeightOverride(15.f)
 					[
 						SNew(SSpinBox<float>).Style(&SpinStyle()).Font(Font(11.f)).MinValue(Row == 2 ? 0.01f : -100000.f).MaxValue(100000.f).Delta(Row == 1 ? 1.f : (Row == 2 ? 0.01f : 1.f))
-						.Value_Lambda([this, Row, Axis] { const FOKSceneObject* O = Obj(); return O ? TransformValue(O->Transform, Row, Axis) : 0.f; })
+						// Nothing selected: the identity (scale 1, as HS2Studio6 shows), not editable.
+						.Value_Lambda([this, Row, Axis] { const FOKSceneObject* O = Obj(); return O ? TransformValue(O->Transform, Row, Axis) : (Row == 2 ? 1.f : 0.f); })
+						.IsEnabled_Lambda([this] { return Obj() != nullptr; })
 						// The field holds about seven characters (-2412.5): 1 mm and 0.1 degree, scale to 0.01.
 						.MaxFractionalDigits(Row == 2 ? 2 : 1)
 						.OnValueChanged_Lambda([this, Row, Axis](float V) { if (FOKSceneObject* O = Obj()) { SetTransformValue(O->Transform, Row, Axis, V); Changed(); } })
@@ -1271,6 +1441,29 @@ public:
 	int32 DragHoverId = -1;
 	double DragHoverStart = 0.;
 	TSharedPtr<SWidget> TreeContextMenu();
+	/** The studio UI's scale: Unity CanvasScaler (match 0.5) on the window's pixels, divided by the scale Slate already
+	 *  applies, times the UI scale setting. */
+	float UiDpiScale() const
+	{
+		const FGeometry& G = GetTickSpaceGeometry();
+		const float Pixel = G.Scale > 0.f ? G.Scale : 1.f;
+		return OKStudioStyle::CanvasScale(FVector2D(G.GetLocalSize()) * Pixel) / Pixel * FMath::Clamp(FOKStudioSettings::Get().UiScale, 0.5f, 2.f);
+	}
+	/** A context menu's content at the size the panel's widgets have on screen. Menus open in their own window, whose
+	 *  scale differs from the panel's, so the scaler divides by the scale it finds itself under. */
+	TSharedRef<SWidget> MenuScaled(const TSharedRef<SWidget>& Content) const
+	{
+		TSharedRef<TWeakPtr<SWidget>> Self = MakeShared<TWeakPtr<SWidget>>();
+		TSharedRef<SDPIScaler> Scaler = SNew(SDPIScaler).DPIScale_Lambda([this, Self]
+		{
+			const float Panel = GetTickSpaceGeometry().Scale > 0.f ? GetTickSpaceGeometry().Scale : 1.f;
+			const TSharedPtr<SWidget> W = Self->Pin();
+			const float Under = W && W->GetTickSpaceGeometry().Scale > 0.f ? W->GetTickSpaceGeometry().Scale : Panel;
+			return Panel * UiDpiScale() / Under;
+		})[Content];
+		*Self = Scaler;
+		return Scaler;
+	}
 	void BeginRename();
 	bool CanDropOn(const TArray<int32>& Ids, int32 Target) const;
 	void DropOn(const TArray<int32>& Ids, int32 Target);
@@ -1318,6 +1511,9 @@ public:
 	FString CardFolder, CardSearch, CardPreview;
 	int32 CardPage = 0;
 	TArray<FString> CardFiles;
+	/** The card browser's path row (U50): folders visited before and after the current one. */
+	TArray<FString> CardBack, CardForward;
+	void GoCardFolder(const FString& Folder);
 	TArray<FString> CardRoots() const;
 	void ScanCardFolder();
 	TSharedRef<SWidget> BuildCardBrowser();
@@ -1358,6 +1554,8 @@ public:
 	TSharedRef<SWidget> BuildEffectList();
 	TSharedRef<SWidget> BuildMapBrowser();
 	int32 MapPick = -1;
+	/** 定位當前 (HS2Studio6 地图窗 定位当前): the next build scrolls the list to the picked map. */
+	bool bMapLocate = false;
 	FString EffectSearch, MapSearch;
 
 	// --- Pose (U5). ---
@@ -1389,6 +1587,9 @@ public:
 	TArray<FOKSceneIkTarget> PoseClipIk;
 	bool bHasPoseClip = false;
 	FString PoseSearch, PoseName, PosePreviewFile;
+	/** The pose library's page (U58, PosesPerPage a page) and its pages and poses as last built. */
+	static constexpr int32 PosesPerPage = 24;
+	int32 PosePage = 0, PosePagesShown = 1, PosesShown = 0;
 	TArray<FOKSceneFkBone> PoseBeforeFk;
 	TArray<FOKSceneIkTarget> PoseBeforeIk;
 	int32 PosePreviewId = -1;
@@ -1421,6 +1622,10 @@ public:
 	FString SceneFolder, SceneSearch, ScenePick, SceneNewName, SaveAsName;
 	/** The scene browser lists the folders inside the current one too (包含子資料夾). */
 	bool bSceneRecursive = false;
+	/** The resource check lists only the selected objects (HS2Studio6 所选角色资源检查). */
+	bool bResourcesSelectedOnly = false;
+	/** The resource check's lines as last built (the control channel's ui.resources). */
+	TArray<FString> ResourcesShown;
 	/** The scene browser's page (100 scenes a page). */
 	int32 ScenePage = 0;
 	int32 SceneSort = 0;
@@ -1475,6 +1680,8 @@ public:
 	TSharedRef<SWidget> BuildMaterialEditor();
 	int32 MaterialPart = 0;
 	FString MaterialFilter;
+	/** HS2Studio6 隐藏属性: also list the material's internal `_OK*` values (read only). */
+	bool bMaterialShowHidden = false;
 	/** A material's edits copied for 貼上改動, and the PNG path the texture slots' 載入 reads. */
 	TArray<FOKSceneMaterialEdit> MaterialClipboard;
 	FString MaterialTexturePath;
@@ -1516,6 +1723,8 @@ public:
 public:
 
 	void SetStatus(const FString& Text) { if (Status) Status->SetText(FText::FromString(Text)); }
+	/** What the status line says now (the reason a save or load failed). */
+	FString StatusText() const { return Status ? Status->GetText().ToString() : FString(); }
 	/** The status after adding an object: what came in (the selection), not the last character's line. */
 	void AddedStatus() { if (const FOKSceneObject* O = Obj()) SetStatus(FString::Printf(TEXT("加入%s %s"), OKStudioPanelText::KindTag(O->Kind), *O->Name)); }
 
@@ -1538,6 +1747,15 @@ public:
 		const bool bOk = Game->Load(Path, E);
 		SetStatus(bOk ? TEXT("已讀取 ") + FPaths::GetBaseFilename(Path) : E);
 		if (bOk) { ReportPending = 90; SaveAsName = FPaths::GetBaseFilename(Path); }
+		// A backup opens as an unsaved scene however it is opened (備份窗, scene browser, scene.load): saving asks for a
+		// name and the backup stays as it is.
+		if (bOk && FPaths::IsUnderDirectory(FPaths::ConvertRelativePathToFull(Path), FPaths::ConvertRelativePathToFull(UOKStudioGame::BackupDirectory())))
+		{
+			Game->File.Reset();
+			Game->bDirty = true;
+			SaveAsName.Reset();
+			SetStatus(TEXT("已從備份恢復 ") + FPaths::GetBaseFilename(Path) + TEXT("（儲存時要另取名稱）"));
+		}
 		return bOk;
 	}
 	/** Scene files the browser lists now (UserData/Studio/scene when it was never opened). */
@@ -1690,6 +1908,13 @@ public:
 							DeferRebuild();
 						})
 					]
+					// A locked object cannot be picked in the view; the row says so.
+					+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(3.f, 0.f, 2.f, 0.f)
+					[
+						SNew(SBox).ToolTipText(FText::FromString(TEXT("已鎖定：畫面上點不到")))
+						.Visibility_Lambda([this, Id] { const FOKSceneObject* O = Game.IsValid() ? Game->Document->Find(Id) : nullptr; return O && O->bLocked ? EVisibility::Visible : EVisibility::Collapsed; })
+						[OKStudioStyle::Label(FText::FromString(TEXT("鎖")), 9.f, TextSoft())]
+					]
 				]
 			];
 		RowNames.Add(Id, Name);
@@ -1835,11 +2060,26 @@ public:
 	/** A drop-down of named values. */
 	TSharedRef<SWidget> Combo(TArray<TSharedPtr<int32>>* Options, TFunction<FString(int32)> Show, TFunction<int32()> Current, TFunction<void(int32)> Pick)
 	{
-		return SNew(SComboBox<TSharedPtr<int32>>).ComboBoxStyle(&OKStudioStyle::ComboStyle()).ItemStyle(&OKStudioStyle::RowStyle()).OptionsSource(Options)
+		TSharedRef<SWidget> W = SNew(SComboBox<TSharedPtr<int32>>).ComboBoxStyle(&OKStudioStyle::ComboStyle()).ItemStyle(&OKStudioStyle::RowStyle()).OptionsSource(Options)
 			.OnGenerateWidget_Lambda([Show](TSharedPtr<int32> V) { return OKStudioStyle::Label(FText::FromString(Show(*V)), 10.f); })
 			.OnSelectionChanged_Lambda([Pick](TSharedPtr<int32> V, ESelectInfo::Type Info) { if (V && Info != ESelectInfo::Direct) Pick(*V); })
 			[OKStudioStyle::Label(TAttribute<FText>::CreateLambda([Show, Current] { return FText::FromString(Show(Current())); }), 10.f)];
+		ComboHandles.RemoveAll([](const FComboHandle& H) { return !H.Widget.IsValid(); });
+		ComboHandles.Add({ W, Options, Show, Current, Pick });
+		return W;
 	}
+	/** Every drop-down built, so the control channel can read and pick it as a click on its list would (the list is a
+	 *  popup menu the click walk does not reach). */
+	struct FComboHandle
+	{
+		TWeakPtr<SWidget> Widget;
+		TArray<TSharedPtr<int32>>* Options = nullptr;
+		TFunction<FString(int32)> Show;
+		TFunction<int32()> Current;
+		TFunction<void(int32)> Pick;
+	};
+	TArray<FComboHandle> ComboHandles;
+	const FComboHandle* ComboOf(const SWidget* W) const { return ComboHandles.FindByPredicate([W](const FComboHandle& H) { return H.Widget.Pin().Get() == W; }); }
 	/** Named pattern lists (TArray of options kept per list; -1 first: "the card's / the animation's"). */
 	TMap<FString, TSharedRef<TArray<TSharedPtr<int32>>>> NamedOptions;
 	/** The eye / neck look modes offered (HS2Studio6's order); Fixed only when the character carries the saved locals. */
@@ -3118,7 +3358,7 @@ private:
 	bool bItemLocate = false;
 	FString ItemLocated; // the item 定位當前 scrolled to, "group/category/no"
 	int32 BrowseCategory = -1;
-	TArray<TSharedPtr<int32>> GroupOptions, CategoryOptions, ItemOptions, MapOptions, SkyOptions, SunOptions;
+	TArray<TSharedPtr<int32>> GroupOptions, CategoryOptions, ItemOptions, MapOptions, SkyOptions, SunOptions, ShaderOptions;
 
 	TWeakObjectPtr<UOKStudioGame> Game;
 	TArray<TSharedPtr<FRow>> Rows;

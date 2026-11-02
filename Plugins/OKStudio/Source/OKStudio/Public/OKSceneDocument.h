@@ -861,6 +861,10 @@ struct OKSTUDIO_API FOKSceneKey
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
 	float FocalDistance = 300.f;
+
+	/** The scene track: the view from this key on (-1: the free view, else a camera object id; -2: unchanged). It cuts, no blending. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	int32 Camera = -2;
 };
 
 /** One of the scene's ten view bookmarks (Ctrl+digit stores the view, the digit returns to it). */
@@ -1006,8 +1010,8 @@ public:
 	/** Removes the object's key within 1/60 s of Time. */
 	bool RemoveKey(int32 Id, float Time);
 	/** One FK bone of a character keyed at Time (HS2Studio6 bone key): a key already there gets only this bone; a new key
-	 *  holds only this bone (no transform or state change: it takes the track's values at Time). */
-	void SetBoneKey(int32 Id, float Time, const FString& Bone);
+	 *  holds only this bone (no transform or state change: it takes the track's values at Time). False when the character has no FK value for the bone. */
+	bool SetBoneKey(int32 Id, float Time, const FString& Bone);
 	/** Drops one bone from the key at Time (the key stays for its other values). */
 	bool RemoveBoneKey(int32 Id, float Time, const FString& Bone);
 	/** Removes the object's whole track (清空軌道). */
@@ -1040,7 +1044,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "OK Studio")
 	bool Reparent(int32 Id, int32 NewParent);
 
-	/** A copy of the object and its subtree next to it; returns the new id. */
+	/** A copy of the object and its subtree next to it, with their timeline keys; returns the new id. */
 	UFUNCTION(BlueprintCallable, Category = "OK Studio")
 	int32 Duplicate(int32 Id);
 
