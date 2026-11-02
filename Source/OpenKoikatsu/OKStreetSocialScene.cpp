@@ -1635,6 +1635,10 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
   {bool Ends=false,Treats=false;Verdict->TryGetBoolField(TEXT("ends"),Ends);Verdict->TryGetBoolField(TEXT("she_treats"),Treats);
    // Still walking her there ("here's the dorm, I'm home" said a street early): the walk ends at the door, and the talk
    // goes on there, so no goodbye on the way.
+   // Agreed that he goes no further ("I can only take you this far", "fine, go"): the walk ends here. 雷电将军 said
+   // "you have plans, go", and he was still led on to her dorm, late for 三月七 (R6-119).
+   {bool HereOnly=false;Verdict->TryGetBoolField(TEXT("walk_ends_here"),HereOnly);
+    if(HereOnly&&DoNow.IsEmpty()&&L->OutingGirl==Character&&Weak.IsValid()){UE_LOG(LogTemp,Display,TEXT("Street farewell: actor=%d they part on the way to %s"),Character,*L->OutingPlace);Weak->CancelOuting(FString());Ends=true;}}
    if(Ends&&DoNow.IsEmpty()&&L->OutingGirl==Character)UE_LOG(LogTemp,Display,TEXT("Street farewell: actor=%d not on the way; the outing reaches %s first"),Character,*L->OutingPlace);
    // "I'll go once I've finished my tea" with her food still on the table: not now; the meal ends first (she does not
    // walk off from a full plate). He can still leave himself.
