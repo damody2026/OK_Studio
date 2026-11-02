@@ -669,6 +669,23 @@ public:
 			const FOKSceneObject* Cam = Game->Document->Find(Game->Document->ActiveCamera);
 			SetStatus(FString::Printf(TEXT("場景 key %.2f 秒：曝光、對焦距離、鏡頭（%s）"), Game->TimelineTime, Cam ? *Cam->Name : TEXT("自由視角")));
 		});
+		// The view the selected scene keys cut to (else the scene key at the play head): -2 none, -1 free view, a camera id.
+		AddCommand(TEXT("timeline.cut"), TEXT("鏡頭 key"), [this](const FString& Arg)
+		{
+			const int32 Camera = FCString::Atoi(*Arg);
+			const FOKSceneObject* Cam = Game->Document->Find(Camera);
+			if (Camera < -2 || (Camera >= 0 && (!Cam || Cam->Kind != EOKSceneObjectKind::Camera))) return false;
+			TArray<float> Times;
+			if (TimelineView) for (const SOKStudioTimeline::FKeyRef& R : TimelineView->Selected) if (R.Track == UOKSceneDocument::SceneTrackId) Times.Add(R.Time);
+			if (Times.IsEmpty()) Times.Add(Game->TimelineTime);
+			int32 Set = 0;
+			for (float T : Times) if (FOKSceneKey* K = Game->Document->KeyAt(UOKSceneDocument::SceneTrackId, T)) { K->Camera = Camera; ++Set; }
+			if (!Set) { SetStatus(TEXT("沒有場景 key：先按「場景 key」")); return false; }
+			Changed();
+			Game->SetTimelineTime(Game->TimelineTime);
+			SetStatus(FString::Printf(TEXT("%d 個場景 key 的鏡頭：%s"), Set, Camera == -2 ? TEXT("不切換") : Camera == -1 ? TEXT("自由視角") : *Cam->Name));
+			return true;
+		});
 		// Picks the FK bone for bone keys: an exact bone name, else the first whose name or bone contains the text.
 		AddCommand(TEXT("pose.bone"), TEXT("選骨骼"), [this](const FString& Arg)
 		{

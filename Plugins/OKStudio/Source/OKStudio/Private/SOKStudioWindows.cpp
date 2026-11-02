@@ -1883,6 +1883,19 @@ void SOKStudioPanel::ShowEaseMenu(const FVector2D& At)
 	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
 	for (int32 I = 0; I < 5; ++I)
 		Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)[Button(FText::FromString(Names[I]), [this, I] { FSlateApplication::Get().DismissAllMenus(); if (TimelineView) TimelineView->SetEase(EOKSceneEase(I)); }, 100.f, 18.f, false, 10.f)];
+	// Selected scene keys: the view they cut to (U64), changed here without going back to that view first.
+	if (TimelineView && Game.IsValid() && TimelineView->Selected.ContainsByPredicate([](const SOKStudioTimeline::FKeyRef& R) { return R.Track == UOKSceneDocument::SceneTrackId; }))
+	{
+		Box->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 1.f)[OKStudioStyle::Label(FText::FromString(TEXT("鏡頭")), 10.f, TextHint())];
+		TArray<TPair<int32, FString>> Views = { { -2, TEXT("不切換") }, { -1, TEXT("自由視角") } };
+		for (const FOKSceneObject& O : Game->Document->Objects) if (O.Kind == EOKSceneObjectKind::Camera) Views.Add({ O.Id, O.Name });
+		for (const TPair<int32, FString>& V : Views)
+			Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)[Button(FText::FromString(V.Value), [this, Camera = V.Key]
+			{
+				FSlateApplication::Get().DismissAllMenus();
+				RunCommand(TEXT("timeline.cut"), FString::FromInt(Camera));
+			}, 100.f, 18.f, false, 10.f)];
+	}
 	FSlateApplication::Get().PushMenu(AsShared(), FWidgetPath(), SNew(SBorder).BorderImage(Brush(Panel())).Padding(4.f)[Box], At, FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));
 }
 
