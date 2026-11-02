@@ -105,6 +105,11 @@ public:
 	virtual FReply OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override
 	{
 		Travelled = 0.f;
+		// SSpinBox drops the first commit of a drag when the value differs from the one it last saw (it takes that for an
+		// outside change), and it only looks again when it commits: after the selection, an undo or the gizmo changed the
+		// value, the first frame of a drag was lost (and the whole drag when it all comes in one frame, as the control
+		// channel's does). Look at the value now.
+		ResetCachedValueString();
 		return SSpinBox<float>::OnMouseButtonDown(MyGeometry, MouseEvent);
 	}
 	virtual FReply OnMouseMove(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override
