@@ -87,7 +87,18 @@ def motel_world_edge_install():
  PREFIX='/Game/UniversityCity/WorldEdgeV1';KEEP=[];save=save_asset
  src=(ROOT/'Tools/street_city_activity_native_payload.lua').read_text('utf8').split('def import_one(',1)[1].split('def simple_water(',1)[0];ns=dict(globals());exec('def import_one('+src,ns);imp=ns['import_one']
  mesh=imp(Path(b['path']),'world-edge-skirt',0,False)
- grass=EAL.load_asset('/Game/UniversityCity/GrassHillsV1/M_GrassWorldTriplanar_v2');assert grass,'grass hills material missing'
+ # the city ground's meadow instance (on G12): the skirt carries planar UVs at the ground sheets' scale since 11-02, so
+ # it draws the same lawn and the border is no longer a material seam (G150); older builds without UVs keep the
+ # triplanar grass
+ grass=None
+ if b.get('holes_m') is not None:
+  MEL=unreal.MaterialEditingLibrary
+  for a in SUB.get_all_level_actors():
+   if a.get_actor_label()=='G12':
+    for k in range(a.static_mesh_component.get_num_materials()):
+     m=a.static_mesh_component.get_material(k)
+     if m and any('meadow' in t.get_name() for t in [MEL.get_material_instance_texture_parameter_value(m,n) for n in MEL.get_texture_parameter_names(m)] if t):grass=m;break
+ grass=grass or EAL.load_asset('/Game/UniversityCity/GrassHillsV1/M_GrassWorldTriplanar_v2');assert grass,'grass material missing'
  for k in range(len(mesh.get_editor_property('static_materials'))):mesh.set_material(k,grass)
  bs=mesh.get_editor_property('body_setup')
  if bs:
@@ -502,7 +513,18 @@ def motel_world_coast_strip_install():
     m=c.get_material(k)
     if isinstance(m,unreal.MaterialInstance) and any('beach_sand' in (t.get_path_name() if t else '') for t in [MEL.get_material_instance_texture_parameter_value(m,n) for n in MEL.get_texture_parameter_names(m)]):sand=m
  assert sand,'beach sand instance not found on G01-G04'
- for k in range(len(mesh.get_editor_property('static_materials'))):mesh.set_material(k,sand)
+ # slot S_RiverBed (inland river / lake bed, 11-02) draws the city ground's river gravel instance, every other slot the sand
+ gravel=None
+ for a in SUB.get_all_level_actors():
+  if not re.match(r'^G\d\d$',a.get_actor_label()) or gravel:continue
+  for c in a.get_components_by_class(unreal.StaticMeshComponent):
+   for k in range(c.get_num_materials()):
+    m=c.get_material(k)
+    if isinstance(m,unreal.MaterialInstance) and any('river_gravel' in (t.get_path_name() if t else '') for t in [MEL.get_material_instance_texture_parameter_value(m,n) for n in MEL.get_texture_parameter_names(m)]):gravel=m
+ for k,slot in enumerate(mesh.get_editor_property('static_materials')):
+  river='RiverBed' in str(slot.get_editor_property('material_slot_name'))
+  assert gravel or not river,'river gravel instance not found on the city ground'
+  mesh.set_material(k,gravel if river else sand)
  bs=mesh.get_editor_property('body_setup')
  if bs:bs.set_editor_property('collision_trace_flag',unreal.CollisionTraceFlag.CTF_USE_COMPLEX_AS_SIMPLE)
  assert EAL.save_loaded_asset(mesh,False)

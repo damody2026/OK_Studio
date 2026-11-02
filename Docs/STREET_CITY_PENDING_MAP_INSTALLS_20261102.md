@@ -30,14 +30,22 @@ Native job 一律用 `Tools\lua\lua.exe Tools\street_city_motel_job.lua <job> <p
 | `Landmark_stage_92` 在 S18 車庫路線上 | 先開碰撞、重跑 routes，拿到被擋住的點 | 搬到 80 m 內最近的空草地（足跡外擴 3 m 全落在街面草地上，也沒有壓到其他物件），保留朝向，然後開碰撞。實際移了 20 m（到 45373, 53314），routes 重跑通過 | `world_landmark_relocate` |
 | `Landmark_playground_a_98` | 它沒有浮空，而是站在 Campus_D3_F06 的屋頂上（z 34.2 m），玩家到不了 | 搬移規則加一條「屋頂」：底下不是 G?? 地面、而且底部高於 13 m，就搬到草地 | `world_landmark_relocate` |
 | G086／G104／G148 色差 | 交界的另一邊是 `Outdoor_annex_ground`（城界以南，y 1100–1380 m），它用兩個自己的 MI，貼圖和城市地面相同，只是色調不同 | 這兩個槽改用 G01–G16 的 meadow MI。走路面仍比城市地面低 10 cm（1188 對 1198），這就是 G085 的落差帶；把它抬高會把站在上面的東西埋掉，所以沒動 | `world_annex_ground_unify` |
-| G113 白色沙坡 | `world_view_ground_probe` 顯示那是沙條的河床部分（z 1015–1055，在 1100 水面以下），透過清澈的水看到海灘沙材質 | 沒改：要改就得讓內陸河床用另一個材質（例如河礫石 MI），這要把沙條拆成兩個材質槽 | — |
 
 第二輪驗收：cook `20261102-143741`（audit、routes、physics_plan、mirror migration 通過），4 段實走都一次通過（`motel-v1/physics-20261102-144612.json`、`-145716.json`、`-150831.json`、`-152047.json`），slice 0 這次開場 57.5 fps，證實上一輪的 14 fps 是 GPU 被別的遊戲占用。重拍 `shop-survey-v1/captures-20261102-153142`（20/20）：A04、A01 沙灘內緣變成平滑曲線，A13 中央有樹叢；G086 色差減輕，但前景仍有一條深色線和一塊偏暗的方格（10 cm 落差的邊與另一塊地面），列在下表。
+
+## 第三輪（11-02 傍晚，已裝進地圖、尚未驗收）
+
+| 項目 | 原因 | 做法 | 工具／job |
+|---|---|---|---|
+| G085／G086 落差線與偏暗方格 | 城外的 skirt 蓋在城南已有的地面（`Outdoor_annex_ground` 與體育場，x 569–975、y 1100–1380 m）上方，浮在 1188 的走路面上 10 cm，材質又不同 | skirt 建置讀 `probe.json`，把伸出城界的平坦地面當成開口：開口裡不鋪 skirt；開口的邊線成為格線，離開口比離城界近的點，邊緣高度跟著那塊地面 | `Tools/build_street_city_world_edge.lua` → `world_edge_install` |
+| G150 接縫 | skirt 用自己的三向投影草地（`M_GrassWorldTriplanar_v2`），和城市草地不同 | skirt 加上公尺 / 4 的平面 UV（和城市地面同比例），安裝時改用 G12 上的城市 meadow MI；舊版沒有 UV 的 skirt 仍用三向投影草地 | 同上 |
+| G113 河床白色沙坡 | 內陸河床和海灘共用沙的材質 | 沙條把內陸河床的面放在第二個材質槽 `S_RiverBed`，安裝時這個槽用城市地面的河礫石 MI | `Tools/build_street_city_shore_strip.lua` → `world_coast_strip_install` |
+
+16:29 已裝進地圖（地圖 `969acee9857e`）。cook 跑了兩次（`20261102-163250`、`-165344`），兩次都在 mirror migration 前讓位，之後因為我的背景鏈沒停乾淨、同時開了太多 Unreal（見 `Docs/STREET_ERRORS.md`），全部關掉後使用者喊停。**還沒驗收**：下次從 `run_street_city_motel_acceptance.lua --from-cook --no-walk --yield c-street-city` 續跑，再 4 段實走與重拍（`edge-recheck-views.json`）。
 
 ## 還沒處理
 
 | 項目 | 現象 | 說明 |
 |---|---|---|
-| 地面接縫（剩下的） | G085 落差帶；G086 前景仍有深色線與偏暗方格（`captures-20261102-153142/G086.png`）；G150 平鋪接縫 | G085、G086 的線是 annex 地面比城市地面低 10 cm 的邊；偏暗方格還要查是哪個 actor。G150 往城外看到的是 skirt（`M_GrassWorldTriplanar_v2`）和城市草地的交界，skirt 沒有 UV，不能直接換成城市地面的 MI |
 | G113 白色沙坡 | 內陸河床透過水看起來是白沙 | 見上表；要把沙條拆成海灘與內陸河床兩個材質槽 |
 | A17 轉角 | 環狀道路在東北角是 L 形轉角，往北沒有延伸 | 判斷為轉角而不是斷頭；北側空地已由樹叢補上 |
