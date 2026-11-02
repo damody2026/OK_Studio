@@ -1441,7 +1441,8 @@ void AOKStreetSocialScene::ExecuteFreeTalkAction(int32 Character,const FString& 
   // In the middle of an activity with him, an action that names no activity or place is her word for what they are doing
   // ("take_photo" while their photo was being taken): told it "failed", she said the camera had died and they gave up
   // the photo they were taking (R3-229).
-  else if(S.Pair.Partner==Character&&Action!=TEXT("leave")&&!Action.StartsWith(TEXT("go:"))&&!OKStreetFindActivity(Action)&&!OKStreetFindPlace(Action)){
+  // Not a walk: "let's get up and walk along the river" on the park bench is leaving the bench, and they sat on (R6-143).
+  else if(S.Pair.Partner==Character&&Action!=TEXT("leave")&&Action!=TEXT("stroll")&&Action!=TEXT("walk")&&!Action.StartsWith(TEXT("go:"))&&!OKStreetFindActivity(Action)&&!OKStreetFindPlace(Action)){
    UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s during the activity they are in names nothing else: taken as that activity"),*Action);}
   // Drinking or eating what is being made for them here, said as another place's drink or meal: 惠惠 agreed to two
   // vending-machine drinks at the boys' dorm, the judge called it "drink" (the snack shop's), and once the bottles came

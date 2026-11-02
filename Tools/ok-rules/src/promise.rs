@@ -80,7 +80,14 @@ fn class_end_on(r: &Value, day: i64) -> i64 {
 /// kept); place_changed; why (closed); clash (another girl's meeting near it, its label); replaces_id (with replaces: the
 /// meeting with her this new one takes the place of, 0 for none).
 fn promise(c: &Catalog, r: &Value) -> Value {
-    let ignore = |reason: &str| json!({"action": "ignore", "reason": reason});
+    let today = i(r, "today");
+    let game_day = game_day_of(s(r, "day"), today);
+    // No hour or no place said for a day they already have a meeting on (stargazing on Wednesday night, talked about on
+    // the park bench, is the Wednesday afternoon-and-evening they booked): that meeting, not a new one to ask about. 惠惠
+    // was told "no time or place yet" three times and asked "what time on Wednesday, and where?" each time (R6-144).
+    let booked_that_day = r.get("pending").and_then(Value::as_array).into_iter().flatten()
+        .any(|a| s(a, "heroine") == s(r, "heroine") && (i(a, "start") - 240).div_euclid(1440) == game_day);
+    let ignore = |reason: &str| json!({"action": "ignore", "reason": if booked_that_day && matches!(reason, "no_time" | "not_a_place") { "already_booked" } else { reason }});
     let place_known = r.get("place_known").and_then(Value::as_bool).unwrap_or(true);
     if !place_known && !(s(r, "place").is_empty() && matches!(s(r, "time"), "after_class" | "after_work")) {
         return ignore("not_a_place");
@@ -90,8 +97,6 @@ fn promise(c: &Catalog, r: &Value) -> Value {
     // C++ gives the ends of today's classes and shifts after now. Another day (R3-205: "明天放学后" was read with
     // today's timetable, nothing left at 17:40, no time): the timetables (his_courses / her_courses [{weekday, slot}])
     // on that day's weekday while classes run, and his shifts [{start, minutes}] on that day.
-    let today = i(r, "today");
-    let game_day = game_day_of(s(r, "day"), today);
     let after = |kind: &str| -> Option<i64> {
         let end = if game_day == today {
             i(r, &format!("his_{kind}_end")).max(i(r, &format!("her_{kind}_end")))
@@ -279,6 +284,11 @@ mod tests {
         none_left["her_class_end"] = json!(-1);
         none_left["his_class_end"] = json!(-1);
         assert_eq!(ask(none_left)["reason"], "not_a_place", "no time and no place: she asks");
+        // A day they already meet on, no hour or place said: that meeting (R6-144); another girl's does not count.
+        let wed = json!([{"id": 7, "heroine": "a", "kind": "date", "place": "girls_dorm", "start": 11 * 1440 + 750}]);
+        assert_eq!(ask(json!({"time": "", "place_known": false, "pending": wed}))["reason"], "already_booked");
+        assert_eq!(ask(json!({"time": "晚上", "pending": wed}))["reason"], "already_booked");
+        assert_eq!(ask(json!({"time": "晚上", "heroine": "b", "pending": wed}))["reason"], "no_time");
         // 01:30 "tonight" is the night after the game day.
         assert_eq!(ask(json!({"day": "+0", "time": "01:30"}))["start"], 11 * 1440 + 90);
         assert_eq!(ask(json!({"day": "2010-09-12", "time": "12:00"}))["start"], 11 * 1440 + 720);
