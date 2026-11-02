@@ -54,6 +54,7 @@
 #endif
 #include "ProceduralMeshComponent.h"
 #include "Misc/Paths.h"
+#include "Misc/PackageName.h"
 #include "String/LexFromString.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Crc.h"
@@ -184,6 +185,7 @@ static TAutoConsoleVariable<int32> CVarOkAnimationSourceConversion(
 #include "EngineUtils.h"
 #include "Animation/MorphTarget.h"
 #include "Rendering/SkeletalMeshRenderData.h"
+#include "Components/ExternalMorphSet.h"
 #include "GameFramework/GameModeBase.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerState.h"
@@ -5034,6 +5036,9 @@ void AKKPreviewActor::Destroyed()
 void AKKPreviewActor::DestroyAllParts()
 {
 	StopRenderTextureCaptures();
+	// Wrap morph sets released before their renderers go (their GPU buffers must be released first).
+	for(const FOkMouthSlot& Slot:TArray<FOkMouthSlot>(MouthSlots))SetPartWrapDeltas(Slot.SessionPartIndex,{},{});
+	if(!WrapReleases.IsEmpty()){for(auto& R:WrapReleases)if(!R->bReleased)BeginReleaseResource(&R->Set->MorphBuffers);FlushRenderingCommands();WrapReleases.Reset();}
  CookedRoleMaterials.Reset();CookedRoleOutlines.Reset();CookedRoleBuild.Reset();
 	bProductSweep = false; bProductLightLatched = false; ProductCardRamps.Reset(); ProductRampSlots = 0;
 	bSessionLoadComplete = false; SessionLoadNextPart = 0; SessionLoadWhiteRamp = nullptr;
@@ -6572,10 +6577,13 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 						Output.GenitalPrimitives.Remove(Follow);
 						Output.GenitalPrimitives.Add(MouthComp);
 					}
+					// Which session part it draws, for whoever looks parts up by tag (the hidden follower keeps KKSessionPart_).
+					MouthComp->ComponentTags.Add(*FString::Printf(TEXT("KKMorphPart_%d"), Published));
 					FOkMouthSlot Slot;
 					Slot.Comp = MouthComp;
 					Slot.SessionPartIndex = Published;
 					Slot.bHideWhenClosed = bHideClosed;
+					Slot.InsideBit = LowName == TEXT("cf_o_tooth") ? 1 : LowName == TEXT("cf_o_canine") ? 2 : LowName == TEXT("o_tang") ? 4 : 0;
 					if (!bNoSharedOutline && bOutlinable && bSkinOutline && View.normals)
 					{
 						// The face shell needs its own morph buffer, with exactly the
@@ -6594,6 +6602,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 							Shell->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 							Shell->ComponentTags.Add(TEXT("KKPreviewOutline"));
 							Shell->SetMaterial(0, MakeOutlineMaterial(Tex, Part.LineColor, false, true, View.line_width, DetailTex, &ShadowParams, AlphaMaskTex));
+							Shell->ComponentTags.Add(*FString::Printf(TEXT("KKMorphPart_%d"), Published));
 							Slot.OutlineComp = Shell;
 						}
 					}
@@ -7000,6 +7009,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 				Slot.SessionPartIndex = Published;
 				Slot.bHideWhenClosed = LowName == TEXT("cf_o_tooth")
 					|| LowName == TEXT("cf_o_canine") || LowName == TEXT("o_tang");
+				Slot.InsideBit = LowName == TEXT("cf_o_tooth") ? 1 : LowName == TEXT("cf_o_canine") ? 2 : LowName == TEXT("o_tang") ? 4 : 0;
 				TMap<FString, FName> AvailableMorphs;
 				for (int32 Morph = 0; Morph < Source.MorphCount(i); ++Morph)
 				{
@@ -8654,6 +8664,14 @@ void AKKPreviewActor::SetMouthOpen(float Open01)
 	ApplyMouth();
 }
 
+void AKKPreviewActor::SetMouthOpenFloor(float Open01)
+{
+	Open01 = FMath::Clamp(Open01, 0.f, 1.f);
+	if (FMath::IsNearlyEqual(Open01, MouthOpenFloor, .01f)) return;
+	MouthOpenFloor = Open01;
+	ApplyMouth();
+}
+
 void AKKPreviewActor::SetMouthPattern(int32 Pattern, bool bBlend)
 {
 	MouthPattern = FMath::Clamp(Pattern, 0, GetMouthPatternCount() - 1);
@@ -8836,7 +8854,7 @@ void AKKPreviewActor::ForceBlink()
 
 float AKKPreviewActor::EffectiveFaceRate(int32 Control) const
 {
-    if(Control==0) return bSpeechActive&&bSpeechDrivesMouth?FMath::Lerp(SpeechOpenMin,1.f,SpeechOpen):MouthOpen01;
+    if(Control==0) return FMath::Max(MouthOpenFloor,bSpeechActive&&bSpeechDrivesMouth?FMath::Lerp(SpeechOpenMin,1.f,SpeechOpen):MouthOpen01);
     const int32 Index=Control-1;
     if(bManualFaceControl[Index]) return FaceOpen01[Index];
     const float Fixed=Session.FaceRuntimeSetting(6+Index);
@@ -8985,8 +9003,12 @@ TArray<FName> AKKPreviewActor::GetPartMorphNames(int32 PartIndex) const
 }
 bool AKKPreviewActor::SetPartMorphWeight(int32 PartIndex,FName Name,float Percent)
 {
-    if(!FMath::IsFinite(Percent) || !GetPartMorphNames(PartIndex).Contains(Name)) return false;
-    if(!MouthSlots.ContainsByPredicate([PartIndex](const FOkMouthSlot& S){return S.SessionPartIndex==PartIndex;})) return false;
+    if(!FMath::IsFinite(Percent)) return false;
+    const FOkMouthSlot* Slot=MouthSlots.FindByPredicate([PartIndex](const FOkMouthSlot& S){return S.SessionPartIndex==PartIndex;});
+    if(!Slot) return false;
+    // The slot's own names when it has them: asking the session for all of them on every call took 50 ms a frame with
+    // dozens of belly swells changing at once.
+    if(!(Slot->MorphNames.IsEmpty()?GetPartMorphNames(PartIndex).Contains(Name):Slot->MorphNames.Contains(Name))) return false;
     PartMorphWeights.FindOrAdd(PartIndex).Add(Name,FMath::Clamp(Percent,0.f,100.f));
     ApplyMouth();return true;
 }
@@ -9333,11 +9355,111 @@ void AKKPreviewActor::ApplyMouth()
         }
         if (Slot.bHideWhenClosed)
         {
-			const bool bShow = EffectiveFaceRate(0) > 0.001f;
+			const bool bShow = EffectiveFaceRate(0) > 0.001f && !(HiddenMouthInside & Slot.InsideBit);
             if (Slot.CpuComp) Slot.CpuComp->SetVisibility(bShow, true);
             if (Slot.Comp) { Slot.Comp->SetVisibility(bShow, true); Slot.Comp->SetHiddenInGame(!bShow); }
         }
     }
+}
+
+
+// Her skin wrapping his penis in the material (ok.HScene.Wrap 2): the skin instances swapped for ones of the _Wrap parents
+// (Tools/prepare_runtime_shared_material.lua --wrap-only), whose world position offset pushes her skin off the segment.
+// Her own instances stay as they are (whatever sets their values each frame still does) and are copied into the wrap ones
+// on every call; the skin parents themselves never get the offset, so every other scene draws as before.
+bool AKKPreviewActor::SetWrapLine(bool bOn,const FVector& From,const FVector& To,float RadiusCm,const FString& WrapRoot)
+{
+    TInlineComponentArray<UMeshComponent*> Meshes(this);
+    if(!bOn)
+    {
+        for(UMeshComponent* Mesh:Meshes)for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
+            if(auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot)))if(const auto* Original=WrapOriginalOf.Find(M))Mesh->SetMaterial(Slot,*Original);
+        WrapInstanceOf.Reset();WrapOriginalOf.Reset();
+        return true;
+    }
+    static const TSet<FString> Skins={TEXT("M_ForgeSkin"),TEXT("M_ForgeSkin_Outline"),TEXT("M_KoikanoSkin"),TEXT("M_KoikanoSkin_Outline")};
+    TSet<UMaterialInstanceDynamic*> Shown;
+    for(UMeshComponent* Mesh:Meshes)for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
+    {
+        auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot));if(!M)continue;
+        UMaterialInstanceDynamic* Wrap=WrapOriginalOf.Contains(M)?M:nullptr;
+        if(!Wrap)if(const auto* Found=WrapInstanceOf.Find(M))Wrap=*Found;
+        if(!Wrap)
+        {
+            UMaterialInterface* Parent=M->Parent;
+            if(!Parent||!Skins.Contains(Parent->GetName())||Parent->GetPathName().Contains(TEXT("/StreetHG")))continue;
+            const FString Name=Parent->GetName()+TEXT("_Wrap");
+            UMaterialInterface* WrapParent=FPackageName::DoesPackageExist(WrapRoot/Name)?LoadObject<UMaterialInterface>(nullptr,*(WrapRoot/Name+TEXT(".")+Name)):nullptr;
+            if(!WrapParent){if(!bWrapParentMissingLogged){bWrapParentMissingLogged=true;UE_LOG(LogTemp,Warning,TEXT("Skin wrap: no %s under %s"),*Name,*WrapRoot);}continue;}
+            Wrap=UMaterialInstanceDynamic::Create(WrapParent,this);
+            WrapInstanceOf.Add(M,Wrap);WrapOriginalOf.Add(Wrap,M);
+        }
+        if(Mesh->GetMaterial(Slot)!=Wrap)Mesh->SetMaterial(Slot,Wrap);
+        Shown.Add(Wrap);
+    }
+    const float Radius=FMath::Max(RadiusCm,0.f);
+    for(UMaterialInstanceDynamic* Wrap:Shown)
+    {
+        Wrap->CopyParameterOverrides(WrapOriginalOf[Wrap]);
+        Wrap->SetVectorParameterValue(TEXT("__OK_WrapFrom"),FLinearColor(From.X,From.Y,From.Z,0.f));
+        Wrap->SetVectorParameterValue(TEXT("__OK_WrapTo"),FLinearColor(To.X,To.Y,To.Z,0.f));
+        Wrap->SetScalarParameterValue(TEXT("__OK_WrapRadius"),Radius);
+        // A falloff of twice the radius: the skin moved never passes the skin farther out (no fold).
+        Wrap->SetScalarParameterValue(TEXT("__OK_WrapSoft"),Radius*2.f);
+    }
+    return Shown.Num()>0;
+}
+
+// Her body part's skin moved this frame by a set of per-vertex moves (belly_bulge::wrap_deltas: her belly wrapping his
+// penis), drawn as an external morph set on the part's renderers (the ML Deformer's way): one morph at weight 1,
+// rebuilt each call. The sets just replaced stay alive until the render thread is past them. Empty clears it.
+bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& Indices,const TArray<FVector3f>& UnityDeltas,const TArray<FVector3f>& UnityNormalDeltas)
+{
+    const FOkMouthSlot* Slot=MouthSlots.FindByPredicate([PartIndex](const FOkMouthSlot& S){return S.SessionPartIndex==PartIndex;});
+    if(!Slot||Indices.Num()!=UnityDeltas.Num())return false;
+    // A replaced set is still read by the skeletal mesh command pipe a frame or two later (it runs after the ordinary render
+    // commands, so a release sent now came before the morph update that uses it and the set was skipped): released a few
+    // frames on, then dropped once the render thread is past the release.
+    for(int32 P=WrapReleases.Num()-1;P>=0;--P){FOkWrapRelease& R=*WrapReleases[P];
+        if(!R.bReleased){if(GFrameCounter>R.Frame+4){BeginReleaseResource(&R.Set->MorphBuffers);R.Fence.BeginFence();R.bReleased=true;}}
+        else if(R.Fence.IsFenceComplete())WrapReleases.RemoveAtSwap(P);}
+    static constexpr int32 WrapSetId=0x4F4B5752; // 'OKWR'
+    bool bAny=false;
+    for(USkeletalMeshComponent* Mesh:{Slot->Comp,Slot->OutlineComp}){
+        if(!Mesh||!Mesh->GetSkinnedAsset()||!Mesh->IsValidExternalMorphSetLODIndex(0))continue;
+        FSkeletalMeshRenderData* Render=Mesh->GetSkinnedAsset()->GetResourceForRendering();
+        if(!Render||Render->LODRenderData.IsEmpty())continue;
+        const int32 NumVerts=int32(Render->LODRenderData[0].GetNumVertices());
+        // The set it had, released once the render thread is done with it.
+        if(Mesh->HasExternalMorphSet(0,WrapSetId)){
+            TSharedPtr<FExternalMorphSet> Old=Mesh->GetExternalMorphSets(0).FindRef(WrapSetId);
+            Mesh->RemoveExternalMorphSet(0,WrapSetId);
+            if(Old.IsValid()){auto Pending=MakeUnique<FOkWrapRelease>();Pending->Set=Old;Pending->Frame=GFrameCounter;WrapReleases.Add(MoveTemp(Pending));}
+        }
+        if(Indices.IsEmpty()){Mesh->RefreshExternalMorphTargetWeights();continue;}
+        FMorphTargetLODModel Model;Model.Vertices.Reserve(Indices.Num());
+        for(int32 I=0;I<Indices.Num();++I){
+            if(int32(Indices[I])>=NumVerts)continue;
+            FMorphTargetDelta Delta;Delta.PositionDelta=FVector3f(OkToUe(UnityDeltas[I].X,UnityDeltas[I].Y,UnityDeltas[I].Z));
+            // The normal's turn (Unity metres' axes, unit length: OkToUe scales by 100).
+            Delta.TangentZDelta=UnityNormalDeltas.IsValidIndex(I)?FVector3f(OkToUe(UnityNormalDeltas[I].X,UnityNormalDeltas[I].Y,UnityNormalDeltas[I].Z)/100.):FVector3f::ZeroVector;Delta.SourceIdx=Indices[I];Model.Vertices.Add(Delta);
+        }
+        if(Model.Vertices.IsEmpty()){Mesh->RefreshExternalMorphTargetWeights();continue;}
+        Model.NumVertices=Model.Vertices.Num();Model.NumBaseMeshVerts=NumVerts;
+        for(int32 Section=0;Section<Render->LODRenderData[0].RenderSections.Num();++Section)Model.SectionIndices.Add(Section);
+        TSharedPtr<FExternalMorphSet> Set=MakeShared<FExternalMorphSet>();Set->Name=FName(TEXT("OKBellyWrap"));
+        const FMorphTargetLODModel* Models[1]={&Model};
+        Set->MorphBuffers.InitMorphResourcesStreaming(GMaxRHIShaderPlatform,Render->LODRenderData[0].RenderSections,MakeArrayView(Models,1),NumVerts,20.f); // error tolerance in micrometres (0.0001 clamped every move to 2.7 cm)
+        if(!Set->MorphBuffers.IsMorphCPUDataValid()||Set->MorphBuffers.GetNumMorphs()<1)continue;
+        BeginInitResource(&Set->MorphBuffers);
+        Mesh->AddExternalMorphSet(0,WrapSetId,Set);
+        Mesh->RefreshExternalMorphTargetWeights(false);
+        FExternalMorphWeightData& Weights=Mesh->GetExternalMorphWeights(0);
+        if(FExternalMorphSetWeights* W=Weights.MorphSets.Find(WrapSetId)){W->Weights.SetNumZeroed(1);W->Weights[0]=1.f;W->UpdateNumActiveMorphTargets();}
+        Weights.UpdateNumActiveMorphTargets();
+        Mesh->MarkRenderDynamicDataDirty();bAny=true;
+    }
+    return bAny||Indices.IsEmpty();
 }
 
 static FAutoConsoleCommandWithWorldAndArgs GOKPartMorph(

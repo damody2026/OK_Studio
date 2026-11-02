@@ -44,6 +44,11 @@ void FOKArousalDrops::PlaceGlints(const FVector& Eye){
 }
 
 bool FOKArousalDrops::Spawn(AActor* Owner,int32 Who,FName Bone,const FVector& At,float Ground,uint8 Colour){
+ // Full: the oldest bead already lying where it fell goes (its wet mark stays). Beads lying out their ten seconds took
+ // every place at a developed girl's rates, and her drips and milk stopped at about 16 a second whatever her
+ // development (2026-11-02, H_DEVELOPMENT_EXPERIENCE_PLAN P0).
+ if(Drops.Num()>=MaxDrops){int32 Oldest=INDEX_NONE;for(int32 I=0;I<Drops.Num();++I)if(Drops[I].Phase==2&&(Oldest==INDEX_NONE||Drops[I].Age>Drops[Oldest].Age))Oldest=I;
+  if(Oldest!=INDEX_NONE){FDrop& O=Drops[Oldest];if(auto* C=O.Mesh.Get())C->DestroyComponent();if(auto* G=O.Glint.Get())G->DestroyComponent();Drops.RemoveAtSwap(Oldest);}}
  UStaticMesh* Mesh=Sphere();if(!Owner||!Mesh||Drops.Num()>=MaxDrops)return false;
  UMaterialInstanceDynamic* M=Material(Owner,Colour,false);if(!M)return false;
  auto* C=NewObject<UStaticMeshComponent>(Owner);C->SetStaticMesh(Mesh);C->SetMaterial(0,M);C->SetCollisionEnabled(ECollisionEnabled::NoCollision);

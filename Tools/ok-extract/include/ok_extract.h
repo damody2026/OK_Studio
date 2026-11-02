@@ -117,12 +117,34 @@ int32_t ok_penis_tip(OkSession* s,float* out);
    (negative inside), out[1] distance to the skin vertex that says so, out[2] how far target (the belly.bulge swell that
    moves that vertex most, written to target) moves it at weight 100. 1: no belly.bulge targets. */
 int32_t ok_belly_bulge_past(OkSession* s,const float* tip,float* out,char* target,int32_t cap);
+/* How her body's skin moves this frame to wrap his penis in her: at = her entrance, his glans, the way her belly faces
+   (her skeleton space, metres, 9 floats; that way zero: read off her skin), radius his and a margin. Writes up to max (body vertex index, move in the mesh's own space, Unity
+   metres, then the turn of its normal there: 6 floats each); returns how many there are, -1 on bad input. */
+int32_t ok_belly_wrap_deltas(OkSession* s,const float* at,float radius,uint32_t* out_idx,float* out_d,uint32_t max);
+/* As ok_belly_wrap_deltas, her skin moved by her belly bones, pushed by his penis as BetterPenetration's colliders push
+   its belly DynamicBone (belly_bulge::bone_deltas). Same input and output. */
+int32_t ok_belly_bone_deltas(OkSession* s,const float* at,float radius,uint32_t* out_idx,float* out_d,uint32_t max);
+/* Where the line from her entrance to his glans comes out of her through her back (belly_bulge::back_exit): at as
+   ok_belly_wrap_deltas (9 floats); out = the place and her skin's outward normal there (6). 0 found, 1 none, -1 bad input. */
+int32_t ok_back_exit(OkSession* s,const float* at,float* out);
+/* His penis past her skin folded under it (belly_bulge::clip_deltas): at = where he comes out of her, her skin's outward
+   normal there, the way his penis points, how much further under her skin (his skeleton space, metres, 10 floats). Output as ok_belly_wrap_deltas, for his
+   penis part (the one with the morph "penis.clip"). */
+int32_t ok_penis_clip_deltas(OkSession* s,const float* at,uint32_t* out_idx,float* out_d,uint32_t max);
 /* Her hair chains hang under their weight (on 1) or keep the card's own DynamicBone parameters (0). Returns the chains
    changed now, -1 on a bad session. */
 int32_t ok_hang_hair(OkSession* s,int32_t on);
 /* His penis root turned so his penis points along dir[3] (his skeleton space, Unity): written as his FK on
    cm_J_dan100_00, applied after the pair contacts. 0 ok (out_degrees: turned now), 1 no penis. */
 int32_t ok_aim_penis(OkSession* s,const float* dir,float* out_degrees);
+/* His penis length (times along his dan bones) and size (his penis root scale), applied from the next frame; 0 ok. */
+int32_t ok_set_penis_size(OkSession* s,float length,float scale);
+/* For count points (her skeleton space, Unity, 3 each): how far out of her skin near her entrance, metres (below 0 inside,
+   1e9 with no skin near), the way out of her there (3) and the nearest skin's distance from her entrance at rest: out[count*5]; 0 ok. */
+int32_t ok_skin_check(OkSession* s,const float* at,uint32_t count,float* out);
+/* Her tear's way down her face as posed now (her skeleton space, Unity metres): from, down (3 each), step and lift (m);
+   up to count points of position + normal (out[count*6]). Returns the number of points, -1 on error. */
+int32_t ok_face_tear_path(OkSession* s,const float* from,const float* down,float step,float lift,uint32_t count,float* out);
 int32_t ok_static_interaction_frame(OkSession* s,float dt);
 int32_t ok_apply_shape_live(OkSession* s,const float* body,int32_t n_body,const float* face,int32_t n_face);
 int32_t ok_prepare_shape_live(OkSession* s,const float* body,int32_t n_body,const float* face,int32_t n_face);

@@ -287,6 +287,9 @@ public:
 		float Height = 0.f, float Breast = 0.f, float Motion = 0.f);
 	bool SetGameSceneMode(int32 Mode,bool bPublishFrame=true);
 	void SetMouthOpen(float Open01);
+	// Her mouth at least this open whatever her pattern or voice says (sucking him: OKHScene); 0 none.
+	void SetMouthOpenFloor(float Open01);
+	float MouthOpenFloor=0.f;
 	UFUNCTION(BlueprintCallable, Category="Koikatsu|Speech")
 	bool LoadGeneralSpeech(const FString& VoiceRoot,int32 Personality,float VoicePitch,FString& Error);
 	UFUNCTION(BlueprintCallable, Category="Koikatsu|Speech")
@@ -593,8 +596,13 @@ public:
 		TMap<FName, float> BaselineWeights;
         TArray<FName> MorphNames;
 		bool bHideWhenClosed = false;
+		// Which inside of her mouth it is (HiddenMouthInside): 1 her teeth, 2 her canines, 4 her tongue; 0 none.
+		uint8 InsideBit = 0;
 	};
 	TArray<FOkMouthSlot> MouthSlots;
+	// The insides of her mouth hidden even while it is open (FOkMouthSlot::InsideBit), e.g. her teeth while her lips are
+	// drawn forward round him (they came out through her upper lip).
+	uint8 HiddenMouthInside = 0;
 	// Native renderer morph weights, in Unity's percent units. Runtime only;
 	// reload/destroy clears them so one character cannot inherit another's.
 	TMap<int32, TMap<FName, float>> PartMorphWeights;
@@ -602,6 +610,20 @@ public:
 	TArray<FName> GetPartMorphNames(int32 SessionPartIndex) const;
 	UFUNCTION(BlueprintCallable, Category="Koikatsu|Morph")
 	bool SetPartMorphWeight(int32 SessionPartIndex, FName Name, float Percent);
+	// A part's skin moved this frame by per-vertex moves (vertex index, Unity metres in the mesh's own space; belly_bulge::
+	// wrap_deltas), drawn as an external morph set on its renderers and rebuilt on each call. Empty clears it.
+	bool SetPartWrapDeltas(int32 SessionPartIndex, const TArray<uint32>& Indices, const TArray<FVector3f>& UnityDeltas, const TArray<FVector3f>& UnityNormalDeltas = TArray<FVector3f>());
+	// External morph sets replaced, kept until the render thread is past them.
+	struct FOkWrapRelease { TSharedPtr<struct FExternalMorphSet> Set; FRenderCommandFence Fence; uint64 Frame=0; bool bReleased=false; };
+	TArray<TUniquePtr<FOkWrapRelease>> WrapReleases;
+	// Her skin wraps the segment From..To (UE world cm) in the material instead (ok.HScene.Wrap 2): her skin instances
+	// (parents M_ForgeSkin, M_KoikanoSkin and their outlines, not the HG ones) drawn with their <name>_Wrap parents under
+	// WrapRoot, whose world position offset pushes the skin within RadiusCm (falling off to 3x) of the segment out to it.
+	// Each call refreshes them from her own instances; off puts her own instances back. False when none was found.
+	bool SetWrapLine(bool bOn, const FVector& From, const FVector& To, float RadiusCm, const FString& WrapRoot);
+	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> WrapInstanceOf;
+	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> WrapOriginalOf;
+	bool bWrapParentMissingLogged = false;
 	// Insertion depth within the current pose. Authored vagina.open only; bone
 	// spread is used when that morph is absent. Range is owned by paired playback.
 	void DriveVaginaOpening(const AKKPreviewActor& Male, float& RangeMin, float& RangeMax, bool& bRange);

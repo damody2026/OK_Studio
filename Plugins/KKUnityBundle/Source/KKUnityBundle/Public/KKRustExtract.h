@@ -199,11 +199,30 @@ public:
 	// How far a point (skeleton space, Unity metres) is outside her skin now, unswollen (metres; negative inside), how far
 	// the skin vertex that says so is, and the belly.bulge swell that moves it most with how far it does at weight 100.
 	bool BellyBulgePast(const FVector& UnityTip,float& OutPast,float& OutNear,FName& OutTarget,float& OutMoves) const;
+	// How her body's skin moves this frame to wrap his penis in her (ok_belly_wrap_deltas): From her entrance, To his glans
+	// (her skeleton space, Unity metres), RadiusM his and a margin; body vertex indices and moves in the mesh's own space (Unity metres), and the turns of their normals.
+	bool BellyWrapDeltas(const FVector& From,const FVector& To,const FVector& Up,float RadiusM,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,TArray<FVector3f>* OutNormalDeltas=nullptr,bool bBellyBones=false) const;
+	// bBellyBones: moved by her belly bones his penis pushes instead (ok_belly_bone_deltas).
+	// Where the line From her entrance To his glans comes out of her through her back (ok_back_exit; Up the way her belly
+	// faces, her skeleton space, Unity metres): the place and her skin's outward normal there. False when it does not.
+	bool BackExit(const FVector& From,const FVector& To,const FVector& Up,FVector& OutAt,FVector& OutNormal) const;
+	// His penis past her skin folded under it (ok_penis_clip_deltas, his skeleton space): At where he comes out, Normal
+	// her skin's outward normal there, Axis the way he points, InsetM how much further under her skin; his penis vertex
+	// indices and moves in the mesh's own space.
+	bool PenisClipDeltas(const FVector& At,const FVector& Normal,const FVector& Axis,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,float InsetM=0.f) const;
 	// Her hair hangs under its weight (true) or keeps the card's DynamicBone parameters: the chains changed now.
 	int32 HangHair(bool bOn);
 	// His penis root turned so his penis points along UnityDir (his skeleton space): written as his FK, applied after the
 	// pair contacts. False: no penis. OutDegrees: turned now.
 	bool AimPenis(const FVector& UnityDir,float& OutDegrees);
+	// His penis length (times along his dan bones) and size (his penis root scale) from the next frame (ok_set_penis_size).
+	bool SetPenisSize(float Length,float Scale);
+	// For points in her skeleton space (Unity metres): how far out of her skin near her entrance (metres, below 0 inside, 1e9
+	// with no skin near), the way out of her there and the nearest skin's distance from her entrance at rest (ok_skin_check):
+	// five floats a point.
+	bool SkinCheck(const TArray<FVector>& UnityAt,TArray<float>& Out) const;
+	// Her tear's way down her face as she is posed now (Unity, her skeleton space): points and her skin's normal at each.
+	bool FaceTearPath(const FVector& UnityFrom,const FVector& UnityDown,float StepM,float LiftM,int32 Count,TArray<FVector>& OutPoints,TArray<FVector>& OutNormals) const;
 	bool StaticInteractionFrame(float Delta);
 	bool Skin();
 	TArray<float> ShapeBody() const;

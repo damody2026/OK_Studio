@@ -1205,6 +1205,10 @@ pub struct OkSession {
     /// rotation of these bones of the body Animator tree after sampling.
     pub(crate) user_fk: Vec<(String, [f32; 3])>,
     pub(crate) user_fk_ids: BoneIdCache,
+    /// His penis longer / bigger in the H scene (belly_bulge::apply_penis_size).
+    pub(crate) penis_size: crate::belly_bulge::PenisSize,
+    /// Her skin round her entrance read by belly_bulge::skin_check (vertex, rest distance from her entrance), found once.
+    pub(crate) skin_probe: std::sync::OnceLock<Vec<(u32, f32)>>,
     pub(crate) hand_shape_ids: BoneIdCache,
     /// Studio IK: FullBodyBipedIK (the game's body-bone setup) and its position targets (effector index 0 body, 1/2
     /// shoulders, 3/4 thighs, 5/6 hands, 7/8 feet; skeleton space). Solved after FK.
@@ -1877,6 +1881,7 @@ impl OkSession {
             }
             locals |= self.hand_shapes.apply_cached_locals(sk, &mut self.hand_shape_ids);
             locals |= apply_user_fk_locals(sk, &self.user_fk, &mut self.user_fk_ids);
+            locals |= crate::belly_bulge::apply_penis_size(sk, &mut self.penis_size);
             // Shape, limb sizes, hand shapes and FK change local transforms only: the worlds are published once.
             if locals { sk.rebuild_worlds(); }
             // OCIChar.ActiveKinematicMode disables Preparation.pvCopy for all
@@ -2158,6 +2163,7 @@ impl OkSession {
             let t = std::time::Instant::now();
             locals |= self.hand_shapes.apply_cached_locals(sk, &mut self.hand_shape_ids);
             locals |= apply_user_fk_locals(sk, &self.user_fk, &mut self.user_fk_ids);
+            locals |= crate::belly_bulge::apply_penis_size(sk, &mut self.penis_size);
             // Shape, limb sizes, hand shapes and FK change local transforms only: the worlds are published once.
             if locals { sk.rebuild_worlds(); }
             prof::add(13, t);
@@ -3347,6 +3353,8 @@ impl SessionBlob {
             hand_shapes,
             user_fk: Vec::new(),
             user_fk_ids: BoneIdCache::default(),
+            penis_size: Default::default(),
+            skin_probe: Default::default(),
             hand_shape_ids: BoneIdCache::default(),
             studio_ik_solver: None,
             studio_ik: Vec::new(),

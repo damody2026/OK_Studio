@@ -47,6 +47,8 @@ local function main()
   -- Every render style's parents go into the same patch and shader library (hg_root: the HG style, Plugins/OKHGShading).
   local material_roots = { material_root }
   if type(materials.hg_root) == "string" and materials.hg_root ~= "" then material_roots[#material_roots + 1] = materials.hg_root end
+  -- wrap_root: the skin parents with the 1-on-1 scene's wrap offset (Tools/prepare_runtime_shared_material.lua --wrap-only).
+  if type(materials.wrap_root) == "string" and materials.wrap_root ~= "" then material_roots[#material_roots + 1] = materials.wrap_root end
   local material_tag = material_root:match("([^/]*)$")
   local assets = {}
   for _, each in ipairs(material_roots) do

@@ -146,6 +146,52 @@ pub unsafe extern "C" fn ok_belly_bulge_past(s:*mut OkSession,tip:*const f32,out
     std::ptr::copy_nonoverlapping(name.as_ptr(),target as *mut u8,name.len());*target.add(name.len())=0;0
 }
 #[no_mangle]
+pub unsafe extern "C" fn ok_belly_wrap_deltas(s:*mut OkSession,at:*const f32,radius:f32,out_idx:*mut u32,out_d:*mut f32,max:u32)->i32 {
+    // How her body's skin moves this frame to wrap his penis in her (belly_bulge::wrap_deltas): at = her entrance, his
+    // glans, the way her belly faces (her skeleton space, metres, 9 floats; that way zero: read off her skin), radius
+    // his and a margin. Writes up to max (body vertex index, move in the mesh's own space, Unity metres, then the turn of
+    // its normal there: 6 floats each); returns how many there are, -1 on bad input.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if at.is_null()||out_idx.is_null()||out_d.is_null() {return -1;}
+    let from=[*at,*at.add(1),*at.add(2)];let to=[*at.add(3),*at.add(4),*at.add(5)];let up=[*at.add(6),*at.add(7),*at.add(8)];
+    let moves=crate::belly_bulge::wrap_deltas(s,from,to,up,radius);
+    for (i,(j,d)) in moves.iter().take(max as usize).enumerate(){*out_idx.add(i)=*j;for k in 0..6{*out_d.add(i*6+k)=d[k];}}
+    moves.len() as i32
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_belly_bone_deltas(s:*mut OkSession,at:*const f32,radius:f32,out_idx:*mut u32,out_d:*mut f32,max:u32)->i32 {
+    // As ok_belly_wrap_deltas, her skin moved by the belly bones his penis pushes (belly_bulge::bone_deltas, ok.HScene.Wrap 3).
+    let Some(s)=sess_ref(s) else{return -1;};
+    if at.is_null()||out_idx.is_null()||out_d.is_null() {return -1;}
+    let from=[*at,*at.add(1),*at.add(2)];let to=[*at.add(3),*at.add(4),*at.add(5)];let up=[*at.add(6),*at.add(7),*at.add(8)];
+    let moves=crate::belly_bulge::bone_deltas(s,from,to,up,radius);
+    for (i,(j,d)) in moves.iter().take(max as usize).enumerate(){*out_idx.add(i)=*j;for k in 0..6{*out_d.add(i*6+k)=d[k];}}
+    moves.len() as i32
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_back_exit(s:*mut OkSession,at:*const f32,out:*mut f32)->i32 {
+    // Where the line from her entrance to his glans comes out of her through her back (belly_bulge::back_exit): at = her
+    // entrance, his glans, the way her belly faces (her skeleton space, metres, 9 floats); out = the place and her skin's
+    // outward normal there (6). 0 found, 1 none (still in her, or out on her belly side), -1 bad input.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if at.is_null()||out.is_null() {return -1;}
+    let from=[*at,*at.add(1),*at.add(2)];let to=[*at.add(3),*at.add(4),*at.add(5)];let up=[*at.add(6),*at.add(7),*at.add(8)];
+    let Some((p,n))=crate::belly_bulge::back_exit(s,from,to,up) else{return 1;};
+    for k in 0..3{*out.add(k)=p[k];*out.add(3+k)=n[k];}0
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_penis_clip_deltas(s:*mut OkSession,at:*const f32,out_idx:*mut u32,out_d:*mut f32,max:u32)->i32 {
+    // His penis past her skin folded under it (belly_bulge::clip_deltas): at = where he comes out of her, her skin's
+    // outward normal there, the way his penis points, how much further under her skin (his skeleton space, metres, 10 floats). Output as ok_belly_wrap_deltas,
+    // for his penis part.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if at.is_null()||out_idx.is_null()||out_d.is_null() {return -1;}
+    let p=[*at,*at.add(1),*at.add(2)];let n=[*at.add(3),*at.add(4),*at.add(5)];let a=[*at.add(6),*at.add(7),*at.add(8)];
+    let moves=crate::belly_bulge::clip_deltas(s,p,n,a,*at.add(9));
+    for (i,(j,d)) in moves.iter().take(max as usize).enumerate(){*out_idx.add(i)=*j;for k in 0..6{*out_d.add(i*6+k)=d[k];}}
+    moves.len() as i32
+}
+#[no_mangle]
 pub unsafe extern "C" fn ok_aim_penis(s:*mut OkSession,dir:*const f32,out_degrees:*mut f32)->i32 {
     // His penis root turned so his penis points along dir (belly_bulge::aim_penis), his skeleton space, Unity.
     // 0 ok (out: degrees turned now), 1 no penis / root.
@@ -154,6 +200,39 @@ pub unsafe extern "C" fn ok_aim_penis(s:*mut OkSession,dir:*const f32,out_degree
     let d=[*dir,*dir.add(1),*dir.add(2)];if !d.iter().all(|v|v.is_finite()) {return -1;}
     let Some(d)=crate::belly_bulge::aim_penis(s,d) else{return 1;};
     if !out_degrees.is_null(){*out_degrees=d;}0
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_skin_check(s:*mut OkSession,at:*const f32,count:u32,out:*mut f32)->i32 {
+    // For count points (her skeleton space, Unity, 3 each): how far out of her skin near her entrance (metres, below 0
+    // inside; 1e9 with no skin near), the way out of her there (3, unit) and the nearest skin's distance from her entrance
+    // at rest (belly_bulge::skin_check): out[count*5]. 0 ok.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if at.is_null()||out.is_null() {return -1;}
+    let pts:Vec<[f32;3]>=(0..count as usize).map(|i|[*at.add(i*3),*at.add(i*3+1),*at.add(i*3+2)]).collect();
+    for (i,r) in crate::belly_bulge::skin_check(s,&pts).into_iter().enumerate(){
+        let (d,n,rest)=r.unwrap_or((1e9,[0.;3],0.));
+        let o=out.add(i*5);*o=d;*o.add(1)=n[0];*o.add(2)=n[1];*o.add(3)=n[2];*o.add(4)=rest;}
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_face_tear_path(s:*mut OkSession,from:*const f32,down:*const f32,step:f32,lift:f32,count:u32,out:*mut f32)->i32 {
+    // Her tear's way down her face as she is posed now (face_shapes::tear_path; her skeleton space, Unity metres):
+    // up to count points, each its position and her skin's normal there (out[count*6]). The number of points, -1 on error.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if from.is_null()||down.is_null()||out.is_null()||!step.is_finite()||!lift.is_finite()||step<=0. {return -1;}
+    let (f,d)=([*from,*from.add(1),*from.add(2)],[*down,*down.add(1),*down.add(2)]);
+    if !f.iter().chain(d.iter()).all(|v|v.is_finite()) {return -1;}
+    let path=crate::face_shapes::tear_path(s,f,d,step,lift,count as usize);
+    for (i,(p,n)) in path.iter().enumerate(){let o=out.add(i*6);for c in 0..3{*o.add(c)=p[c];*o.add(3+c)=n[c];}}
+    path.len() as i32
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_set_penis_size(s:*mut OkSession,length:f32,scale:f32)->i32 {
+    // His penis length (times along his dan bones) and size (his penis root scale) from the next frame on; 1 and 1 as
+    // made (belly_bulge::apply_penis_size).
+    let Some(s)=sess_ref(s) else{return -1;};
+    if !length.is_finite()||!scale.is_finite()||length<=0.||scale<=0. {return -1;}
+    s.penis_size.length=length;s.penis_size.scale=scale;0
 }
 #[no_mangle]
 pub unsafe extern "C" fn ok_hang_hair(s:*mut OkSession,on:i32)->i32 {
@@ -1092,8 +1171,9 @@ unsafe fn animation_pair_frame_impl(female:*mut OkSession,male:*mut OkSession,ti
         // His FK (his penis root turned toward her belly, belly_bulge::aim_penis) and hers (her body trembling as she comes,
         // OKHScene) over what the contacts set.
         for s in [&mut *female,&mut *male] {
-            if s.user_fk.is_empty() {continue;}
-            if let Some(sk)=s.body_skel.as_mut() {if crate::session::apply_user_fk_locals(sk,&s.user_fk,&mut s.user_fk_ids){sk.rebuild_worlds();}}
+            let Some(sk)=s.body_skel.as_mut() else{continue;};
+            let fk=!s.user_fk.is_empty()&&crate::session::apply_user_fk_locals(sk,&s.user_fk,&mut s.user_fk_ids);
+            if crate::belly_bulge::apply_penis_size(sk,&mut s.penis_size)||fk {sk.rebuild_worlds();}
         }
         for s in [&mut *female,&mut *male] {
             if s.studio_ik.is_empty() {continue;}

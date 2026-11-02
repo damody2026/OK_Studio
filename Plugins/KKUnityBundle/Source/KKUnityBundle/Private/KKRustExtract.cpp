@@ -231,10 +231,43 @@ bool FOkSession::SetExternalAnimation(bool bExternal) { ExternalAnimation=bExter
 bool FOkSession::PenisTip(FVector& OutUnity) const { float P[3]; if(!Handle||ok_penis_tip(Handle,P)!=0)return false;OutUnity=FVector(P[0],P[1],P[2]);return true; }
 int32 FOkSession::HangHair(bool bOn){return Handle?ok_hang_hair(Handle,bOn?1:0):-1;}
 bool FOkSession::AimPenis(const FVector& UnityDir,float& OutDegrees){OutDegrees=0.f;const float D[3]={float(UnityDir.X),float(UnityDir.Y),float(UnityDir.Z)};return Handle&&ok_aim_penis(Handle,D,&OutDegrees)==0;}
+bool FOkSession::SkinCheck(const TArray<FVector>& UnityAt,TArray<float>& Out) const{
+	TArray<float> At;At.Reserve(UnityAt.Num()*3);for(const FVector& V:UnityAt){At.Add(float(V.X));At.Add(float(V.Y));At.Add(float(V.Z));}
+	Out.SetNumZeroed(UnityAt.Num()*5);return Handle&&UnityAt.Num()>0&&ok_skin_check(Handle,At.GetData(),uint32(UnityAt.Num()),Out.GetData())==0;}
+bool FOkSession::FaceTearPath(const FVector& UnityFrom,const FVector& UnityDown,float StepM,float LiftM,int32 Count,TArray<FVector>& OutPoints,TArray<FVector>& OutNormals) const{
+	OutPoints.Reset();OutNormals.Reset();if(!Handle||Count<=0)return false;
+	const float From[3]={float(UnityFrom.X),float(UnityFrom.Y),float(UnityFrom.Z)},Down[3]={float(UnityDown.X),float(UnityDown.Y),float(UnityDown.Z)};
+	TArray<float> Out;Out.SetNumZeroed(Count*6);const int32 N=ok_face_tear_path(Handle,From,Down,StepM,LiftM,uint32(Count),Out.GetData());
+	for(int32 I=0;I<N;++I){const float* O=&Out[I*6];OutPoints.Add(FVector(O[0],O[1],O[2]));OutNormals.Add(FVector(O[3],O[4],O[5]));}
+	return N>0;}
+bool FOkSession::SetPenisSize(float Length,float Scale){return Handle&&ok_set_penis_size(Handle,Length,Scale)==0;}
 bool FOkSession::BellyBulgePast(const FVector& UnityTip,float& OutPast,float& OutNear,FName& OutTarget,float& OutMoves) const {
 	const float Tip[3]={float(UnityTip.X),float(UnityTip.Y),float(UnityTip.Z)};float Out[3]={};char Target[64]={};
 	if(!Handle||ok_belly_bulge_past(Handle,Tip,Out,Target,64)!=0)return false;
 	OutPast=Out[0];OutNear=Out[1];OutMoves=Out[2];OutTarget=FName(UTF8_TO_TCHAR(Target));return true; }
+bool FOkSession::BellyWrapDeltas(const FVector& From,const FVector& To,const FVector& Up,float RadiusM,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,TArray<FVector3f>* OutNormalDeltas,bool bBellyBones) const {
+	OutIndices.Reset();OutDeltas.Reset();if(OutNormalDeltas)OutNormalDeltas->Reset();if(!Handle)return false;
+	const float At[9]={float(From.X),float(From.Y),float(From.Z),float(To.X),float(To.Y),float(To.Z),float(Up.X),float(Up.Y),float(Up.Z)};
+	TArray<uint32> Idx;TArray<float> D;Idx.SetNumUninitialized(8192);D.SetNumUninitialized(8192*6);
+	auto* Deltas=bBellyBones?&ok_belly_bone_deltas:&ok_belly_wrap_deltas;
+	int32 N=Deltas(Handle,At,RadiusM,Idx.GetData(),D.GetData(),uint32(Idx.Num()));
+	if(N<0)return false;
+	if(N>Idx.Num()){Idx.SetNumUninitialized(N);D.SetNumUninitialized(N*6);N=Deltas(Handle,At,RadiusM,Idx.GetData(),D.GetData(),uint32(Idx.Num()));if(N<0)return false;}
+	OutIndices.Append(Idx.GetData(),N);OutDeltas.Reserve(N);for(int32 I=0;I<N;++I)OutDeltas.Add(FVector3f(D[I*6],D[I*6+1],D[I*6+2]));
+	if(OutNormalDeltas){OutNormalDeltas->Reserve(N);for(int32 I=0;I<N;++I)OutNormalDeltas->Add(FVector3f(D[I*6+3],D[I*6+4],D[I*6+5]));}return true; }
+bool FOkSession::BackExit(const FVector& From,const FVector& To,const FVector& Up,FVector& OutAt,FVector& OutNormal) const {
+	if(!Handle)return false;
+	const float At[9]={float(From.X),float(From.Y),float(From.Z),float(To.X),float(To.Y),float(To.Z),float(Up.X),float(Up.Y),float(Up.Z)};
+	float Out[6];if(ok_back_exit(Handle,At,Out)!=0)return false;
+	OutAt=FVector(Out[0],Out[1],Out[2]);OutNormal=FVector(Out[3],Out[4],Out[5]);return true; }
+bool FOkSession::PenisClipDeltas(const FVector& At,const FVector& Normal,const FVector& Axis,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,float InsetM) const {
+	OutIndices.Reset();OutDeltas.Reset();if(!Handle)return false;
+	const float In[10]={float(At.X),float(At.Y),float(At.Z),float(Normal.X),float(Normal.Y),float(Normal.Z),float(Axis.X),float(Axis.Y),float(Axis.Z),InsetM};
+	TArray<uint32> Idx;TArray<float> D;Idx.SetNumUninitialized(4096);D.SetNumUninitialized(4096*6);
+	int32 N=ok_penis_clip_deltas(Handle,In,Idx.GetData(),D.GetData(),uint32(Idx.Num()));
+	if(N<0)return false;
+	if(N>Idx.Num()){Idx.SetNumUninitialized(N);D.SetNumUninitialized(N*6);N=ok_penis_clip_deltas(Handle,In,Idx.GetData(),D.GetData(),uint32(Idx.Num()));if(N<0)return false;}
+	OutIndices.Append(Idx.GetData(),N);OutDeltas.Reserve(N);for(int32 I=0;I<N;++I)OutDeltas.Add(FVector3f(D[I*6],D[I*6+1],D[I*6+2]));return true; }
 bool FOkSession::HeadLookError(float& Residual,float& Excess) const { float Out[2]={0.f,0.f}; if(!Handle||ok_head_look_error(Handle,Out)!=0)return false; Residual=Out[0];Excess=Out[1];return true; }
 bool FOkSession::SetHeadLook(const FVector& Target,bool Enabled) { return Handle&&ok_set_head_look(Handle,Target.X,Target.Y,Target.Z,Enabled?1:0)==0; }
 bool FOkSession::SetFk(const TArray<FString>& Bones,const TArray<FVector>& UnityEuler)

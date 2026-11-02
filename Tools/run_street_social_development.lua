@@ -10,6 +10,8 @@
 --     [-GpuRig | -NoGpuRig]  (heroine poses from the GPU runtime rig, Docs/CROWD_ROOM100.md, or from her own solved banks)
 --     [-GpuRigVerify N]  (also solve full banks and compare N frames of the rig with them: runtime.json "gpu_rig", rig.bin)
 --     [-Sandbox NAME [-PortBase N] [-RulesDll DLL]] [-Exec "CMD,CMD"] [-Trace [CHANNELS]] [-GameArgs "-SWITCH ..."]
+--     [-Heroine N|PNG]  (test: only the male and this one heroine, N counting from 1 in the selection, nobody else
+--       loaded; a save made with the full roster is not for it)
 --     [-Inspect [N]]  (straight into the inspection room with heroine N: her alone in an empty room, the camera round her
 --       by the arrow keys, wheel nearer/farther, PageUp/PageDown another heroine, End back to the street)
 -- -Sandbox runs a second game beside one already playing from this checkout without touching it: its own ports
@@ -30,7 +32,7 @@ local instance = require "ok_instance"
 local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, editor = true, nogpurig = true, gpurig = true }
 local VALUES = { selectionfile = true, malecard = true, retargetfile = true, renderscale = true, executable = true,
   controlport = true, clock = true, window = true, sandbox = true, portbase = true, rulesdll = true, exec = true, trace = true, gpucachedir = true,
-  gameargs = true, gpurigverify = true }
+  gameargs = true, gpurigverify = true, heroine = true }
 
 local function parse(argv)
   local o, i = {}, 1
@@ -229,6 +231,20 @@ local function main()
   if o.strict then strict_checks(build) end
   o.selectionfile = o.selectionfile or path.join(root, "Saved/StreetSocial/heroines.json")
   o.malecard = o.malecard or path.join(root, "output/StreetSocialAPNG/Male01.png")
+  -- -Heroine: the male and one heroine only (user, 2026-11-02: a test of one scene need not wait for every other girl).
+  if o.heroine then
+    local n, card = tonumber(o.heroine), nil
+    if n then
+      local cards = read_json(o.selectionfile).cards or {}
+      card = cards[n]
+      if not card then error(("-Heroine %d: the selection has %d heroines"):format(n, #cards), 0) end
+    else card = path.abs(o.heroine) end
+    local only = path.join(root, "Saved/StreetSocial/heroine-only" .. (o.sandbox and ("-" .. o.sandbox) or "") .. ".json")
+    path.mkdir(path.parent(only), true)
+    path.write_text(only, json.encode(json.object({ { "cards", json.array({ card }) } }), { indent = 2, ensure_ascii = false }))
+    o.selectionfile = only
+    say("Heroine only: " .. card)
+  end
   -- The patch is not an input check outside -Strict: it was rebuilt above when missing (it carries the material roots).
   local inputs = { build.executable, build.catalogue, o.selectionfile, o.malecard }
   if o.strict then inputs[#inputs + 1] = build.patch end
