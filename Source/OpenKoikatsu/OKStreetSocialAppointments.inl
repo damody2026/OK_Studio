@@ -403,7 +403,9 @@ void AOKStreetSocialScene::TickAppointments(){
   // working, 25 more minutes" when she had already walked over).
   {const int32 Id=int32(V->AsObject()->GetNumberField(TEXT("id")));const FOKStreetAppointment* A=S.Store.Appointments.FindByPredicate([&](const FOKStreetAppointment& X){return X.Id==Id;});
    const FOKStreetPlanBlock* B=BlockNow(Girl,int32(Now%1440));
-   if(A&&Now<A->Start&&B&&(B->Kind==TEXT("work")||B->Kind==TEXT("class"))){S.ArriveLater.Add(Girl,A->Start);UE_LOG(LogTemp,Display,TEXT("Street appointment: actor=%d is at %s until %02d:%02d; she comes then"),Girl,*B->Kind,int32(A->Start%1440)/60,int32(A->Start%60));continue;}}
+   // Her shift over before the meeting's time: she comes as it ends. The meeting is settled, so her day no longer holds
+   // her there; 惠惠's work ended at 22:00 and she walked home before the 22:15 pickup he was waiting for (R6-127).
+   if(A&&Now<A->Start&&B&&(B->Kind==TEXT("work")||B->Kind==TEXT("class"))){const int64 At=FMath::Min(A->Start,Now-Now%1440+B->End);S.ArriveLater.Add(Girl,At);UE_LOG(LogTemp,Display,TEXT("Street appointment: actor=%d is at %s until %02d:%02d; she comes then"),Girl,*B->Kind,int32(At%1440)/60,int32(At%60));continue;}}
   bool Join=false;V->AsObject()->TryGetBoolField(TEXT("join"),Join);
   // Who they said would pay when they made it: the bill there follows it (RecordPayAgreed), as said that day (R3-216).
   {const int32 Id=int32(V->AsObject()->GetNumberField(TEXT("id")));if(const FOKStreetAppointment* A=S.Store.Appointments.FindByPredicate([&](const FOKStreetAppointment& X){return X.Id==Id;});A&&!A->Payer.IsEmpty())
