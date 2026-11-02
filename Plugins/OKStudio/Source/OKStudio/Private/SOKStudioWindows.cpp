@@ -1700,11 +1700,15 @@ TSharedRef<SWidget> SOKStudioPanel::BuildResources()
 {
 	// Every character card and item model the scene needs, and what is missing (from the shown scene and the files).
 	TArray<FString> Lines;
+	// 只看所選 (HS2Studio6 所选角色资源检查): the selected objects only, and no map line.
+	const bool bSelectedOnly = bResourcesSelectedOnly && Game.IsValid();
+	auto Listed = [this, bSelectedOnly](const FOKSceneObject& O) { return !bSelectedOnly || Game->Selection.Contains(O.Id) || Game->SelectedId == O.Id; };
 	if (Game.IsValid())
 	{
 		const FString Project = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
 		for (const FOKSceneObject& O : Game->Document->Objects)
 		{
+			if (!Listed(O)) continue;
 			FString Missing;
 			if (O.Kind == EOKSceneObjectKind::Character)
 			{
@@ -1721,10 +1725,11 @@ TSharedRef<SWidget> SOKStudioPanel::BuildResources()
 			if (const FString* E = Game->SceneActor ? Game->SceneActor->Errors.Find(O.Id) : nullptr) Missing += (Missing.IsEmpty() ? TEXT("") : TEXT("；")) + *E;
 			if (!Missing.IsEmpty()) Lines.Add(FString::Printf(TEXT("#%d %s：%s"), O.Id, *O.Name, *Missing));
 		}
-		if (Game->SceneActor && !Game->SceneActor->MapError.IsEmpty()) Lines.Add(TEXT("地圖：") + Game->SceneActor->MapError);
+		if (!bSelectedOnly && Game->SceneActor && !Game->SceneActor->MapError.IsEmpty()) Lines.Add(TEXT("地圖：") + Game->SceneActor->MapError);
 	}
 	const int32 Count = Lines.Num();
-	if (Lines.IsEmpty()) Lines.Add(TEXT("沒有缺少的資源。"));
+	if (bSelectedOnly && !Game->Document->Objects.ContainsByPredicate(Listed)) Lines.Add(TEXT("請先選取物件。"));
+	else if (Lines.IsEmpty()) Lines.Add(TEXT("沒有缺少的資源。"));
 	// Each character (HS2Studio6 资源检查): its card's kind, whether it shows, and the mods an original card names (what
 	// to install before 重新讀取角色). An OK card carries its own parts.
 	if (Game.IsValid())
@@ -1733,7 +1738,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildResources()
 		bool bHeading = false;
 		for (const FOKSceneObject& O : Game->Document->Objects)
 		{
-			if (O.Kind != EOKSceneObjectKind::Character) continue;
+			if (O.Kind != EOKSceneObjectKind::Character || !Listed(O)) continue;
 			if (!bHeading) { Lines.Add(TEXT("── 角色 ──")); bHeading = true; }
 			const FString Card = FPaths::IsRelative(O.Character.Card) ? Project / O.Character.Card : O.Character.Card;
 			const bool bShown = Game->SceneActor && Game->SceneActor->PreviewOf(O.Id);
@@ -1756,7 +1761,12 @@ TSharedRef<SWidget> SOKStudioPanel::BuildResources()
 		}
 	}
 	return SNew(SVerticalBox)
-		+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("%d 項缺件（點一行選取物件）"), Count)), 10.f, TextSoft())]
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("%d 項缺件（點一行選取物件）"), Count)), 10.f, TextSoft())]
+			+ SHorizontalBox::Slot().AutoWidth()[CheckBox(TEXT("只看所選"), [this] { return bResourcesSelectedOnly; }, [this](bool B) { bResourcesSelectedOnly = B; DeferFloat(TEXT("resources")); })]
+		]
 		+ SVerticalBox::Slot().FillHeight(1.f).Padding(0.f, 3.f)[TextList(Lines, [this, Lines](int32 I) { const int32 Id = LineId(Lines[I]); if (Id > 0 && Game.IsValid()) { Game->Select(Id); LocateSelection(); } }, 260.f)]
 		+ SVerticalBox::Slot().AutoHeight()
 		[
