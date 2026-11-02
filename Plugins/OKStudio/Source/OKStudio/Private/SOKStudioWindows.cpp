@@ -1109,7 +1109,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 	// The picked renderer's source material (name, shader, values), as the card's bundle has it.
 	FString Material, Shader;
 	TArray<TPair<FString, FLinearColor>> Colors;
-	TArray<TPair<FString, float>> Numbers;
+	TArray<TPair<FString, float>> Numbers, Hidden;
 	TArray<TPair<FString, FString>> Textures;
 	TSharedPtr<FJsonObject> Root;
 	const TSharedPtr<FJsonObject>* M = nullptr;
@@ -1125,7 +1125,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 				if (P.Value->TryGetArray(A) && A->Num() >= 4) Colors.Add({ FString(*P.Key), FLinearColor((*A)[0]->AsNumber(), (*A)[1]->AsNumber(), (*A)[2]->AsNumber(), (*A)[3]->AsNumber()) });
 			}
 		if ((*M)->TryGetObjectField(TEXT("floats"), Map) && Map && *Map)
-			for (const auto& P : (*Map)->Values) if (!FString(*P.Key).StartsWith(TEXT("_OK"))) Numbers.Add({ FString(*P.Key), float(P.Value->AsNumber()) });
+			for (const auto& P : (*Map)->Values) (FString(*P.Key).StartsWith(TEXT("_OK")) ? Hidden : Numbers).Add({ FString(*P.Key), float(P.Value->AsNumber()) });
 		const TArray<TSharedPtr<FJsonValue>>* Slots = nullptr;
 		if ((*M)->TryGetArrayField(TEXT("tex_slots"), Slots))
 			for (const TSharedPtr<FJsonValue>& S : *Slots)
@@ -1138,6 +1138,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 	MaterialPropertiesShown = Colors.Num() + Numbers.Num() + Textures.Num();
 	Colors.Sort([](const auto& A, const auto& B) { return A.Key < B.Key; });
 	Numbers.Sort([](const auto& A, const auto& B) { return A.Key < B.Key; });
+	Hidden.Sort([](const auto& A, const auto& B) { return A.Key < B.Key; });
 	TSharedRef<SVerticalBox> Materials = SNew(SVerticalBox)
 		+ SVerticalBox::Slot().AutoHeight()[Button(FText::FromString(Material.IsEmpty() ? TEXT("（無名材質）") : Material), [] {}, 0.f, 18.f, true, 10.f)]
 		+ SVerticalBox::Slot().AutoHeight().Padding(2.f)[OKStudioStyle::Label(FText::FromString(Shader), 9.f, TextHint())];
@@ -1178,6 +1179,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 		Materials->AddSlot().AutoHeight()[CheckBox(TEXT("顯示"), [RendererValue] { return RendererValue(TEXT("Enabled"), 1.f) > 0.5f; }, [SetRenderer](bool B) { SetRenderer(TEXT("Enabled"), B ? 1.f : 0.f, 1.f); })];
 		Materials->AddSlot().AutoHeight().Padding(0.f, 1.f)[Button(TAttribute<FText>::CreateLambda([RendererValue] { return FText::FromString(FString(TEXT("陰影：")) + ShadowNames[FMath::Clamp(FMath::RoundToInt(RendererValue(TEXT("ShadowCastingMode"), 1.f)), 0, 3)]); }),
 			[RendererValue, SetRenderer] { SetRenderer(TEXT("ShadowCastingMode"), float((FMath::Clamp(FMath::RoundToInt(RendererValue(TEXT("ShadowCastingMode"), 1.f)), 0, 3) + 1) % 4), 1.f); }, 0.f, 18.f, false, 10.f)];
+		Materials->AddSlot().AutoHeight()[CheckBox(TEXT("接收陰影"), [RendererValue] { return RendererValue(TEXT("ReceiveShadows"), 1.f) > 0.5f; }, [SetRenderer](bool B) { SetRenderer(TEXT("ReceiveShadows"), B ? 1.f : 0.f, 1.f); })];
 	}
 	// The material's shader and render queue (Material Editor 换 shader): the item is built again with them.
 	{
@@ -1301,6 +1303,19 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 		Line(Property, Spin([EditOf, Property, Source] { const FOKSceneMaterialEdit* E = EditOf(Property); return E ? E->Value.R : Source; },
 			[Write, Property](float V) { Write(Property, EOKSceneMaterialEditKind::Float, FLinearColor(V, 0.f, 0.f, 0.f)); }, -100.f, 100.f, 0.01f));
 	}
+	// 隐藏属性: the values the importer adds for itself (renderer settings, lightmaps, map sun), shown as they are.
+	if (bMaterialShowHidden && !Hidden.IsEmpty())
+	{
+		Properties->AddSlot().AutoHeight().Padding(0.f, 3.f, 0.f, 1.f)[OKStudioStyle::Label(FText::FromString(TEXT("隱藏屬性（程式內部用，唯讀）")), 9.f, TextHint())];
+		for (const TPair<FString, float>& N : Hidden)
+			if (Shows(N.Key))
+				Properties->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot().FillWidth(0.42f)[OKStudioStyle::Label(FText::FromString(N.Key), 10.f, TextHint())]
+					+ SHorizontalBox::Slot().FillWidth(0.58f)[OKStudioStyle::Label(FText::FromString(FString::SanitizeFloat(N.Value)), 10.f, TextHint())]
+				];
+	}
 	// Texture slots (HS2Studio6 纹理): load a PNG (a path, or a name under UserData/Studio/texture), clear it, back to the
 	// source, export what it shows; scale and offset (_ST).
 	if (!Textures.IsEmpty())
@@ -1390,8 +1405,12 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 	}
 	const TSharedRef<SVerticalBox> Right = SNew(SVerticalBox)
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)
-			[TextBox([this] { return MaterialFilter; }, [this](const FString& V) { MaterialFilter = V.TrimStartAndEnd(); RebuildFloat(TEXT("material")); }, TEXT("篩選屬性"))]
-		+ SVerticalBox::Slot().FillHeight(1.f)[Column(FString::Printf(TEXT("屬性（%d 色、%d 數值、%d 貼圖）"), Colors.Num(), Numbers.Num(), Textures.Num()), Properties)];
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().FillWidth(1.f)[TextBox([this] { return MaterialFilter; }, [this](const FString& V) { MaterialFilter = V.TrimStartAndEnd(); RebuildFloat(TEXT("material")); }, TEXT("篩選屬性"))]
+				+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 0.f, 0.f)[CheckBox(TEXT("隱藏屬性"), [this] { return bMaterialShowHidden; }, [this](bool B) { bMaterialShowHidden = B; RebuildFloat(TEXT("material")); })]
+			]
+		+ SVerticalBox::Slot().FillHeight(1.f)[Column(FString::Printf(TEXT("屬性（%d 色、%d 數值、%d 貼圖%s）"), Colors.Num(), Numbers.Num(), Textures.Num(), Hidden.IsEmpty() ? TEXT("") : *FString::Printf(TEXT("、%d 隱藏"), Hidden.Num())), Properties)];
 	return SNew(SVerticalBox)
 		+ SVerticalBox::Slot().FillHeight(1.f)
 		[

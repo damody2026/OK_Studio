@@ -6354,8 +6354,11 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 		FOKNativeItemDraw NativeItem;
 		if (View.shader_kind == 9 || View.shader_kind == 8 || View.shader_kind == 11 || View.shader_kind == 2)
 		{
-			NativeItem.ShadowDepth=bCharacterDisplayShadows?ShadowParams.AmbientAlpha:1.f;NativeItem.LineDepth=View.line_depth;NativeItem.LineWidth=View.line_width;
-			NativeItem.ForgeShadowDepth=bCharacterDisplayShadows?ShadowParams.Depth:nullptr;NativeItem.ForgeShadowCenter=ShadowParams.Center;
+			// Material Editor's renderer 接收陰影 off (Unity Renderer.receiveShadows): the part samples no shadow.
+			FLinearColor ReceiveShadows(1.f,0.f,0.f,0.f);Source.MaterialValue(i,"_OKRendererReceiveShadows",ReceiveShadows);
+			const bool bReceiveShadows=bCharacterDisplayShadows&&ReceiveShadows.R!=0.f;
+			NativeItem.ShadowDepth=bReceiveShadows?ShadowParams.AmbientAlpha:1.f;NativeItem.LineDepth=View.line_depth;NativeItem.LineWidth=View.line_width;
+			NativeItem.ForgeShadowDepth=bReceiveShadows?ShadowParams.Depth:nullptr;NativeItem.ForgeShadowCenter=ShadowParams.Center;
 			NativeItem.ForgeShadowRight=ShadowParams.Right;NativeItem.ForgeShadowUp=ShadowParams.Up;
 			NativeItem.ForgeShadowLight=ShadowParams.LightDir;NativeItem.ForgeShadowWidth=ShadowParams.Width;
 			NativeItem.ForgeShadowDistance=ShadowParams.CameraDistance;

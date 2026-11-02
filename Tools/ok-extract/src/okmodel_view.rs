@@ -15,7 +15,7 @@ pub struct ItemMaterialEdits {
     /// MaterialShaderList: material (as Material Editor names it), shader, render queue (-1: unchanged).
     #[serde(default)]
     pub shaders: Vec<(String, String, i32)>,
-    /// RendererPropertyList: renderer (GameObject) name, property (Enabled, ShadowCastingMode), value.
+    /// RendererPropertyList: renderer (GameObject) name, property (Enabled, ShadowCastingMode, ReceiveShadows), value.
     #[serde(default)]
     pub renderers: Vec<(String, String, f32)>,
     /// The item's Studio light cancel (OIItemInfo.lightCancel): ItemComponent writes it to the materials with _LightCancel.
@@ -56,7 +56,8 @@ impl ItemMaterialEdits {
         }
     }
 
-    /// Renderer properties by the renderer's GameObject name: off, or its shadow casting mode (0 off .. 3 shadows only).
+    /// Renderer properties by the renderer's GameObject name: off, its shadow casting mode (0 off .. 3 shadows only), and
+    /// whether it receives shadows.
     fn apply_renderer(&self, m: &mut ExtractedMesh, node_name: &str) {
         let Some(mat) = m.mat.as_mut() else { return };
         for (_, property, value) in self.renderers.iter().filter(|(renderer, _, _)| renderer == node_name) {
@@ -65,6 +66,7 @@ impl ItemMaterialEdits {
             match property.as_str() {
                 "Enabled" => { mat.floats.insert("_OKRendererEnabled".into(), if *value != 0.0 { 1.0 } else { 0.0 }); }
                 "ShadowCastingMode" => { mat.floats.insert("_OKRendererShadowMode".into(), value.clamp(0.0, 3.0)); }
+                "ReceiveShadows" => { mat.floats.insert("_OKRendererReceiveShadows".into(), if *value != 0.0 { 1.0 } else { 0.0 }); }
                 _ => {}
             }
         }

@@ -1478,6 +1478,8 @@ public:
 	TSharedRef<SWidget> BuildMaterialEditor();
 	int32 MaterialPart = 0;
 	FString MaterialFilter;
+	/** HS2Studio6 隐藏属性: also list the material's internal `_OK*` values (read only). */
+	bool bMaterialShowHidden = false;
 	/** A material's edits copied for 貼上改動, and the PNG path the texture slots' 載入 reads. */
 	TArray<FOKSceneMaterialEdit> MaterialClipboard;
 	FString MaterialTexturePath;
