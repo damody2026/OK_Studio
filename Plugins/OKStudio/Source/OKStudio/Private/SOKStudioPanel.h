@@ -747,7 +747,18 @@ public:
 		if (!RebindingId.IsEmpty())
 		{
 			if (K == EKeys::LeftControl || K == EKeys::RightControl || K == EKeys::LeftShift || K == EKeys::RightShift || K == EKeys::LeftAlt || K == EKeys::RightAlt) return true;
-			if (K != EKeys::Escape) { FOKStudioSettings& S = FOKStudioSettings::Get(); S.Bindings.Add(RebindingId, FOKStudioSettings::ChordText(E)); S.Save(); }
+			if (K != EKeys::Escape)
+			{
+				FOKStudioSettings& S = FOKStudioSettings::Get();
+				const FString Chord = FOKStudioSettings::ChordText(E);
+				S.Bindings.Add(RebindingId, Chord);
+				S.Save();
+				// Say at once when the key is another command's too (the list's 衝突 line says it as well).
+				const FString Prefix = Chord.ToLower() + TEXT(": ");
+				const TArray<FString> All = S.Conflicts();
+				const FString* Clash = All.FindByPredicate([&Prefix](const FString& C) { return C.StartsWith(Prefix); });
+				SetStatus(Clash ? TEXT("快捷鍵衝突：") + *Clash : FString::Printf(TEXT("%s 綁定 %s"), *RebindingId, *Chord));
+			}
 			RebindingId.Reset();
 			DeferFloat(TEXT("settings"));
 			return true;
@@ -1712,6 +1723,8 @@ public:
 public:
 
 	void SetStatus(const FString& Text) { if (Status) Status->SetText(FText::FromString(Text)); }
+	/** What the status line says now (the reason a save or load failed). */
+	FString StatusText() const { return Status ? Status->GetText().ToString() : FString(); }
 	/** The status after adding an object: what came in (the selection), not the last character's line. */
 	void AddedStatus() { if (const FOKSceneObject* O = Obj()) SetStatus(FString::Printf(TEXT("加入%s %s"), OKStudioPanelText::KindTag(O->Kind), *O->Name)); }
 

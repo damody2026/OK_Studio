@@ -102,11 +102,15 @@ FString FOKStudioSettings::CommandFor(const FKeyEvent& Event) const
 TArray<FString> FOKStudioSettings::Conflicts() const
 {
 	TMap<FString, TArray<FString>> ByChord;
-	for (const TPair<FString, FString>& D : DefaultBindings())
+	// Commands with a default key and those bound by hand (a command with no default key bound to K once went unreported, U88).
+	TArray<FString> Ids;
+	for (const TPair<FString, FString>& D : DefaultBindings()) Ids.AddUnique(D.Key);
+	for (const TPair<FString, FString>& B : Bindings) Ids.AddUnique(B.Key);
+	for (const FString& Id : Ids)
 	{
 		TArray<FString> Parts;
-		BindingOf(D.Key).ParseIntoArray(Parts, TEXT(","));
-		for (FString& P : Parts) { P.TrimStartAndEndInline(); if (!P.IsEmpty()) ByChord.FindOrAdd(P.ToLower()).AddUnique(D.Key); }
+		BindingOf(Id).ParseIntoArray(Parts, TEXT(","));
+		for (FString& P : Parts) { P.TrimStartAndEndInline(); if (!P.IsEmpty()) ByChord.FindOrAdd(P.ToLower()).AddUnique(Id); }
 	}
 	TArray<FString> Out;
 	for (const TPair<FString, TArray<FString>>& C : ByChord) if (C.Value.Num() > 1) Out.Add(C.Key + TEXT(": ") + FString::Join(C.Value, TEXT(", ")));

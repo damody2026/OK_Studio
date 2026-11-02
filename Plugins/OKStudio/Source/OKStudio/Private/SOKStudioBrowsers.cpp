@@ -418,7 +418,8 @@ TArray<SOKStudioPanel::FHit> SOKStudioPanel::SearchCatalog(const FString& Query,
 	if (Wants(TEXT("anim")))
 		for (const FOKStudioAnim& A : C.Anims) if (!A.File.IsEmpty()) Add(TEXT("anim"), FString::Printf(TEXT("anim:%d/%d/%d/%d"), A.Kind, A.Group, A.Category, A.No), A.Name);
 	if (Wants(TEXT("pose"))) for (const FString& F : FOKStudioPose::Files()) Add(TEXT("pose"), TEXT("pose:") + F, FPaths::GetBaseFilename(F), F);
-	if (Wants(TEXT("card"))) for (const TSharedPtr<FString>& F : Cards) Add(TEXT("card"), TEXT("card:") + *F, FPaths::GetBaseFilename(*F), *F);
+	// Cards of the same name in different folders tell apart by the folder (HS2Studio6 lists the folder too).
+	if (Wants(TEXT("card"))) for (const TSharedPtr<FString>& F : Cards) Add(TEXT("card"), TEXT("card:") + *F, FPaths::GetBaseFilename(*F) + TEXT("　") + FPaths::GetCleanFilename(FPaths::GetPath(*F)), *F);
 	// Favourites first, then the recently used, then by name.
 	Out.Sort([&S](const FHit& A, const FHit& B)
 	{

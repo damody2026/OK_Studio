@@ -166,8 +166,10 @@ void SOKStudioPanel::CloseAddLists(const FString& Keep)
 	for (const TCHAR* Other : AddLists) if (Keep != Other && IsFloatOpen(Other)) CloseFloat(Other);
 }
 
-void SOKStudioPanel::CloseFloat(const FString& Id)
+void SOKStudioPanel::CloseFloat(const FString& InId)
 {
+	// A copy: Esc passes OpenOrder.Last(), and removing an element of OpenOrder by a reference into it asserts (U86).
+	const FString Id = InId;
 	FFloat* F = Floats.Find(Id);
 	if (!F) return;
 	if (Id == TEXT("poselib")) CancelPosePreview();
@@ -644,6 +646,13 @@ bool SOKStudioPanel::DeleteScene(const FString& Path)
 	const FString Trash = FOKStudioSettings::Directory() / TEXT("Trash") / FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S_")) + FPaths::GetCleanFilename(Path);
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Trash), true);
 	const bool bOk = IFileManager::Get().Move(*Trash, *Path, false, true);
+	// A scene card's "<name>_cards" (the cards opening it took out; made again on the next open) goes along, unless the open
+	// scene still uses them. An .okscene's cards are what it refers to and stay.
+	const FString CardsDir = FPaths::GetPath(Path) / FPaths::GetBaseFilename(Path) + TEXT("_cards");
+	const bool bInUse = Game.IsValid() && Game->Document->Objects.ContainsByPredicate([&CardsDir](const FOKSceneObject& O)
+		{ return O.Kind == EOKSceneObjectKind::Character && FPaths::IsUnderDirectory(O.Character.Card, CardsDir); });
+	if (bOk && FPaths::GetExtension(Path) == TEXT("png") && IFileManager::Get().DirectoryExists(*CardsDir) && !bInUse)
+		IFileManager::Get().Move(*(FPaths::GetPath(Trash) / FPaths::GetBaseFilename(Trash) + TEXT("_cards")), *CardsDir, false, true);
 	SetStatus(bOk ? TEXT("已移到 ") + Trash : TEXT("無法刪除 ") + Path);
 	if (bOk) { ScenePick.Reset(); ScanScenes(); DeferFloat(TEXT("scenes")); }
 	return bOk;
@@ -659,6 +668,15 @@ bool SOKStudioPanel::RenameScene(const FString& Path, const FString& NewName)
 	if (bOk)
 	{
 		if (Game.IsValid() && Game->File == Path) Game->File = To;
+		// Its "<name>_cards" follows the new name (else it is left as a folder of its own), and the open scene's characters
+		// that use them point there.
+		const FString CardsDir = FPaths::GetPath(Path) / FPaths::GetBaseFilename(Path) + TEXT("_cards"), NewCardsDir = FPaths::GetPath(To) / Clean + TEXT("_cards");
+		if (FPaths::GetExtension(Path) == TEXT("png") && IFileManager::Get().DirectoryExists(*CardsDir) && !IFileManager::Get().DirectoryExists(*NewCardsDir)
+			&& IFileManager::Get().Move(*NewCardsDir, *CardsDir, false, true) && Game.IsValid() && Game->File == To)
+		{
+			for (FOKSceneObject& O : Game->Document->Objects)
+				if (O.Kind == EOKSceneObjectKind::Character && FPaths::IsUnderDirectory(O.Character.Card, CardsDir)) O.Character.Card = NewCardsDir / O.Character.Card.RightChop(CardsDir.Len() + 1);
+		}
 		ScenePick = To;
 		FOKStudioThumbnails::Get().Forget(Path);
 		ScanScenes();

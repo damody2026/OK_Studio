@@ -834,6 +834,8 @@ namespace
 			const int32 Steps = FMath::Clamp(ReadId(J, TEXT("steps"), 10), 1, 200);
 			const FModifierKeysState Mods;
 			const uint32 User = App.GetUserIndexForMouse();
+			// The real mouse's pointer index (0 is a touch's), so these presses and the real mouse's moves are one pointer.
+			const uint32 Pointer = FSlateApplication::CursorPointerIndex;
 			// A capture left from an earlier press takes this press and release too (only the hover moved, 2026-11-02 U83):
 			// start from no capture, as a fresh press of the real mouse does.
 			if (App.HasAnyMouseCaptor())
@@ -842,19 +844,27 @@ namespace
 				UE_LOG(LogTemp, Display, TEXT("OK studio control: mouse released a stale capture (%s)"), Captor.IsValid() ? *Captor->GetTypeAsString() : TEXT("?"));
 				App.ReleaseAllPointerCapture();
 			}
-			App.ProcessMouseMoveEvent(FPointerEvent(User, 0, At, At, TSet<FKey>(), EKeys::Invalid, 0.f, Mods));
-			App.ProcessMouseButtonDownEvent(Window->GetNativeWindow(), FPointerEvent(User, 0, At, At, TSet<FKey>({ Key }), Key, 0.f, Mods));
+			App.ProcessMouseMoveEvent(FPointerEvent(User, Pointer, At, At, TSet<FKey>(), EKeys::Invalid, 0.f, Mods));
+			// What is under the point and whether the press was taken: a click that only moves the hover shows why here.
+			const FWidgetPath Under = App.LocateWindowUnderMouse(At, App.GetInteractiveTopLevelWindows(), false, User);
+			const FString UnderType = Under.IsValid() ? Under.GetLastWidget()->GetTypeAsString() : FString(TEXT("none"));
+			const bool bPressHandled = App.ProcessMouseButtonDownEvent(Window->GetNativeWindow(), FPointerEvent(User, Pointer, At, At, TSet<FKey>({ Key }), Key, 0.f, Mods));
+			const TSharedPtr<SWidget> Captor = App.GetCursorUser().IsValid() ? App.GetCursorUser()->GetCursorCaptor() : nullptr;
+			const FString CaptorType = Captor.IsValid() ? Captor->GetTypeAsString() : FString(TEXT("none"));
 			FVector2D Last = At;
 			for (int32 I = 1; bDrag && I <= Steps; ++I)
 			{
 				const FVector2D Now = FMath::Lerp(At, To, float(I) / Steps);
-				App.ProcessMouseMoveEvent(FPointerEvent(User, 0, Now, Last, TSet<FKey>({ Key }), EKeys::Invalid, 0.f, Mods));
+				App.ProcessMouseMoveEvent(FPointerEvent(User, Pointer, Now, Last, TSet<FKey>({ Key }), EKeys::Invalid, 0.f, Mods));
 				Last = Now;
 			}
-			App.ProcessMouseButtonUpEvent(FPointerEvent(User, 0, To, Last, TSet<FKey>(), Key, 0.f, Mods));
+			App.ProcessMouseButtonUpEvent(FPointerEvent(User, Pointer, To, Last, TSet<FKey>(), Key, 0.f, Mods));
 			TSharedRef<FJsonObject> O = Result(true);
 			O->SetArrayField(TEXT("screen"), { MakeShared<FJsonValueNumber>(At.X), MakeShared<FJsonValueNumber>(At.Y) });
 			O->SetBoolField(TEXT("menu_open"), App.AnyMenusVisible());
+			O->SetStringField(TEXT("under"), UnderType);
+			O->SetBoolField(TEXT("handled"), bPressHandled);
+			O->SetStringField(TEXT("captor"), CaptorType);
 			return O;
 		}
 		// A key press through Slate inside the process, as the keyboard sends it: the studio's shortcuts (Delete, Ctrl+Z, F,
@@ -1363,7 +1373,7 @@ namespace
 			if (Clean.IsEmpty()) return Result(false, TEXT("name required"));
 			const FString Path = UOKStudioGame::SceneDirectory() / Clean + TEXT(".png");
 			if (FPaths::FileExists(Path)) return Result(false, TEXT("file exists (never overwritten): ") + Path);
-			if (!P->SaveNamed(Clean)) return Result(false, TEXT("not saved"));
+			if (!P->SaveNamed(Clean)) return Result(false, TEXT("not saved: ") + P->StatusText());
 			TSharedRef<FJsonObject> O = Result(true);
 			O->SetStringField(TEXT("file"), Path);
 			return O;

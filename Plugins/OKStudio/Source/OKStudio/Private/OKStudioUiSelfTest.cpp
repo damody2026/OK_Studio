@@ -42,6 +42,8 @@ namespace
 			FFileHelper::SaveStringArrayToFile(Lines, *(FPaths::ProjectSavedDir() / TEXT("OKStudio/ui_selftest.txt")));
 			UE_LOG(LogTemp, Display, TEXT("UI SELFTEST %d/%d"), Passed, Passed + Failed);
 			if (!SceneFile.IsEmpty()) IFileManager::Get().Delete(*SceneFile, false, true, true);
+			// Opening the saved scene card took its cards out beside it; they go too (they once stayed, a folder of their own).
+			if (!SceneFile.IsEmpty()) IFileManager::Get().DeleteDirectory(*(FPaths::GetPath(SceneFile) / FPaths::GetBaseFilename(SceneFile) + TEXT("_cards")), false, true);
 			if (!OtherFile.IsEmpty()) IFileManager::Get().Delete(*OtherFile, false, true, true);
 			if (!ExportDir.IsEmpty()) IFileManager::Get().DeleteDirectory(*ExportDir, false, true);
 			if (bExit) FPlatformMisc::RequestExit(false);
