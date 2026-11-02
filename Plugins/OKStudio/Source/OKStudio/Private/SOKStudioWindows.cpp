@@ -18,6 +18,12 @@ namespace
 {
 	FString LayoutFile() { return FOKStudioSettings::Directory() / TEXT("ui_layout.json"); }
 
+	/** The shaders the Material Editor can switch a material to (Tools/ok-extract okmodel_view::shader_supported). */
+	const TCHAR* const GOKSwitchableShaders[] = {
+		TEXT("Shader Forge/main_item_studio"), TEXT("Shader Forge/main_item_studio_alpha"), TEXT("Shader Forge/main_item_studio_add"),
+		TEXT("Shader Forge/main_item"), TEXT("Shader Forge/main_item_emission"), TEXT("Shader Forge/main_opaque"), TEXT("Shader Forge/main_alpha"),
+		TEXT("Shader Forge/main_StandardMDK_studio"), TEXT("Standard"), TEXT("HarvexARC/XRay"), TEXT("Unlit/Glitch3DProjection") };
+
 	/** A list of text rows with a click action (reports, backups, stories). */
 	TSharedRef<SWidget> TextList(const TArray<FString>& Lines, TFunction<void(int32)> OnClick, float Height)
 	{
@@ -1195,17 +1201,24 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 	// The material's shader and render queue (Material Editor 换 shader): the item is built again with them.
 	{
 		auto ShaderEdit = [FindEdit, Material] { return FindEdit(EOKSceneMaterialEditKind::Shader, Material, FString()); };
-		Materials->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 1.f)[OKStudioStyle::Label(FText::FromString(TEXT("Shader（Enter 套用；空白回原本）")), 10.f, TextHint())];
-		Materials->AddSlot().AutoHeight()[SNew(SBox).HeightOverride(18.f)[TextBox([ShaderEdit, Shader] { const FOKSceneMaterialEdit* E = ShaderEdit(); return E ? E->Text : Shader; },
-			[this, Put, Drop, Material, Shader, ShaderEdit](const FString& V)
-			{
-				const FString Name = V.TrimStartAndEnd();
-				const FOKSceneMaterialEdit* Old = ShaderEdit();
-				const float Queue = Old ? Old->Value.R : -1.f;
-				if (Name.IsEmpty() || (Name == Shader && Queue < 0.f)) Drop(EOKSceneMaterialEditKind::Shader, Material, FString());
-				else if (FOKSceneMaterialEdit* E = Put(EOKSceneMaterialEditKind::Shader, Material, FString())) { E->Text = Name; E->Value = FLinearColor(Queue, 0.f, 0.f, 0.f); }
-				Changed();
-			}, Shader)]];
+		Materials->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 1.f)[OKStudioStyle::Label(FText::FromString(TEXT("Shader（Enter 套用）")), 10.f, TextHint())];
+		auto SetShader = [this, Put, Drop, Material, Shader, ShaderEdit](const FString& V)
+		{
+			const FString Name = V.TrimStartAndEnd();
+			const FOKSceneMaterialEdit* Old = ShaderEdit();
+			const float Queue = Old ? Old->Value.R : -1.f;
+			if (Name.IsEmpty() || (Name == Shader && Queue < 0.f)) Drop(EOKSceneMaterialEditKind::Shader, Material, FString());
+			else if (FOKSceneMaterialEdit* E = Put(EOKSceneMaterialEditKind::Shader, Material, FString())) { E->Text = Name; E->Value = FLinearColor(Queue, 0.f, 0.f, 0.f); }
+			Changed();
+		};
+		Materials->AddSlot().AutoHeight()[SNew(SBox).HeightOverride(18.f)[TextBox([ShaderEdit, Shader] { const FOKSceneMaterialEdit* E = ShaderEdit(); return E ? E->Text : Shader; }, SetShader, Shader)]];
+		// The shaders a material can switch to (okmodel_view::shader_supported), picked instead of typed; 原本 drops the edit.
+		ShaderOptions.Reset();
+		for (int32 I = 0; I <= UE_ARRAY_COUNT(GOKSwitchableShaders); ++I) ShaderOptions.Add(MakeShared<int32>(I));
+		Materials->AddSlot().AutoHeight().Padding(0.f, 1.f, 0.f, 0.f)[SNew(SBox).HeightOverride(18.f)[Combo(&ShaderOptions,
+			[](int32 I) { return I == 0 ? FString(TEXT("（原本的 shader）")) : I > 0 && I <= UE_ARRAY_COUNT(GOKSwitchableShaders) ? FString(GOKSwitchableShaders[I - 1]) : FString(TEXT("（上面輸入的 shader）")); },
+			[ShaderEdit] { const FOKSceneMaterialEdit* E = ShaderEdit(); if (!E || E->Text.IsEmpty()) return 0; for (int32 I = 0; I < UE_ARRAY_COUNT(GOKSwitchableShaders); ++I) if (E->Text.Equals(GOKSwitchableShaders[I], ESearchCase::IgnoreCase)) return I + 1; return -1; },
+			[SetShader](int32 I) { SetShader(I == 0 ? FString() : FString(GOKSwitchableShaders[I - 1])); })]];
 		Materials->AddSlot().AutoHeight().Padding(0.f, 1.f)
 		[
 			SNew(SHorizontalBox)

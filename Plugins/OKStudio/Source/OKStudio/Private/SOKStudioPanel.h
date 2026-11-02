@@ -3251,7 +3251,7 @@ private:
 	bool bItemLocate = false;
 	FString ItemLocated; // the item 定位當前 scrolled to, "group/category/no"
 	int32 BrowseCategory = -1;
-	TArray<TSharedPtr<int32>> GroupOptions, CategoryOptions, ItemOptions, MapOptions, SkyOptions, SunOptions;
+	TArray<TSharedPtr<int32>> GroupOptions, CategoryOptions, ItemOptions, MapOptions, SkyOptions, SunOptions, ShaderOptions;
 
 	TWeakObjectPtr<UOKStudioGame> Game;
 	TArray<TSharedPtr<FRow>> Rows;
