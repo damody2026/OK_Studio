@@ -141,6 +141,17 @@ void SOKStudioPanel::ScanCardFolder()
 	CardPage = FMath::Clamp(CardPage, 0, FMath::Max(0, (CardFiles.Num() - 1) / 18));
 }
 
+void SOKStudioPanel::GoCardFolder(const FString& Folder)
+{
+	// HS2Studio6 角色載入器's 上一步／下一步: going somewhere new drops the folders ahead.
+	if (Folder == CardFolder) return;
+	if (!CardFolder.IsEmpty()) CardBack.Add(CardFolder);
+	if (CardBack.Num() > 50) CardBack.RemoveAt(0);
+	CardForward.Reset();
+	CardFolder = Folder;
+	CardPage = 0;
+}
+
 bool SOKStudioPanel::AddOrReplaceCard(const FString& Card, bool bReplace)
 {
 	if (!Game.IsValid() || Card.IsEmpty()) return false;
@@ -182,7 +193,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildCardBrowser()
 	auto FolderButton = [this, &Folders](const FString& Label, const FString& Folder)
 	{
 		Folders->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)
-			[SNew(SBox).ToolTipText(FText::FromString(Folder))[Button(FText::FromString(Label), [this, Folder] { CardFolder = Folder; CardPage = 0; DeferFloat(TEXT("cards")); }, 0.f, 18.f, CardFolder == Folder, 10.f)]];
+			[SNew(SBox).ToolTipText(FText::FromString(Folder))[Button(FText::FromString(Label), [this, Folder] { GoCardFolder(Folder); DeferFloat(TEXT("cards")); }, 0.f, 18.f, CardFolder == Folder, 10.f)]];
 	};
 	const TArray<FString> Roots = CardRoots();
 	for (const FString& R : Roots) FolderButton(FPaths::GetCleanFilename(R), R);
@@ -240,11 +251,41 @@ TSharedRef<SWidget> SOKStudioPanel::BuildCardBrowser()
 		Hint->SetAutoWrapText(true);
 		Pick->AddSlot().AutoHeight()[Hint];
 	}
+	// The root the current folder is under (the first root when it is under none).
+	FString Root = Roots.Num() ? Roots[0] : FString();
+	for (const FString& R : Roots) if (FPaths::IsUnderDirectory(CardFolder, R)) { Root = R; break; }
 	return SNew(SVerticalBox)
+		// Path row (HS2Studio6 角色載入器): back, forward, the root, and a path to type or paste.
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 3.f)
 		[
 			SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)[OKStudioStyle::Label(FText::FromString(CardFolder), 9.f, TextHint())]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 2.f, 0.f)[SNew(SBox).ToolTipText(FText::FromString(TEXT("上一步")))[Button(FText::FromString(TEXT("‹")), [this]
+			{
+				if (CardBack.IsEmpty()) return;
+				CardForward.Add(CardFolder); CardFolder = CardBack.Pop(); CardPage = 0;
+				DeferFloat(TEXT("cards"));
+			}, 24.f, 20.f, false, 11.f, ButtonFill(), CardBack.Num() > 0)]]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 2.f, 0.f)[SNew(SBox).ToolTipText(FText::FromString(TEXT("下一步")))[Button(FText::FromString(TEXT("›")), [this]
+			{
+				if (CardForward.IsEmpty()) return;
+				CardBack.Add(CardFolder); CardFolder = CardForward.Pop(); CardPage = 0;
+				DeferFloat(TEXT("cards"));
+			}, 24.f, 20.f, false, 11.f, ButtonFill(), CardForward.Num() > 0)]]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)[SNew(SBox).ToolTipText(FText::FromString(Root))[Button(FText::FromString(TEXT("根目錄")), [this, Root] { GoCardFolder(Root); DeferFloat(TEXT("cards")); }, 52.f, 20.f, CardFolder == Root, 10.f)]]
+			+ SHorizontalBox::Slot().FillWidth(1.f)[SNew(SBox).HeightOverride(20.f)[SNew(SEditableTextBox).Style(&TextBoxStyle()).Text(FText::FromString(CardFolder)).HintText(FText::FromString(TEXT("輸入或貼上資料夾按 Enter")))
+				.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type C)
+				{
+					if (C != ETextCommit::OnEnter) return;
+					const FString Dir = FPaths::ConvertRelativePathToFull(T.ToString().TrimStartAndEnd().TrimQuotes());
+					if (Dir.IsEmpty() || !FPaths::DirectoryExists(Dir)) { SetStatus(TEXT("沒有這個資料夾：") + Dir); DeferFloat(TEXT("cards")); return; }
+					GoCardFolder(Dir);
+					DeferFloat(TEXT("cards"));
+				})]]
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 3.f)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1.f)[SNullWidget::NullWidget]
 			// 全部 → 女 → 男, and 加入預設角色 of the sex shown (female when all are).
 			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(CardSexFilter < 0 ? TEXT("全部") : CardSexFilter == 1 ? TEXT("女") : TEXT("男")),
 				[this] { CardSexFilter = CardSexFilter < 0 ? 1 : CardSexFilter == 1 ? 0 : -1; CardPage = 0; DeferFloat(TEXT("cards")); }, 40.f, 20.f, CardSexFilter >= 0, 10.f)]
@@ -256,7 +297,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildCardBrowser()
 				const FOKSceneObject* X = Obj();
 				if (!X || X->Kind != EOKSceneObjectKind::Character) return;
 				const FString Path = FPaths::ConvertRelativePathToFull(FPaths::IsRelative(X->Character.Card) ? FPaths::ProjectDir() / X->Character.Card : X->Character.Card);
-				CardFolder = FPaths::GetPath(Path); CardSearch.Reset(); CardPreview = Path;
+				GoCardFolder(FPaths::GetPath(Path)); CardSearch.Reset(); CardPreview = Path;
 				ScanCardFolder();
 				CardPage = FMath::Max(0, CardFiles.IndexOfByKey(Path)) / 18;
 				DeferFloat(TEXT("cards"));

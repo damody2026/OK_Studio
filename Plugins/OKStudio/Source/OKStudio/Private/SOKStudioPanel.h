@@ -1318,6 +1318,9 @@ public:
 	FString CardFolder, CardSearch, CardPreview;
 	int32 CardPage = 0;
 	TArray<FString> CardFiles;
+	/** The card browser's path row (U50): folders visited before and after the current one. */
+	TArray<FString> CardBack, CardForward;
+	void GoCardFolder(const FString& Folder);
 	TArray<FString> CardRoots() const;
 	void ScanCardFolder();
 	TSharedRef<SWidget> BuildCardBrowser();
