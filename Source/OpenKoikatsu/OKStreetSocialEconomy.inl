@@ -501,8 +501,8 @@ void AOKStreetSocialScene::TickMeal(float Dt){
   S.MealAwayAt=0;
   const float SoloStep=float(100.0/OKStreetEatSeconds)*FMath::Clamp(Dt,0.f,.1f);
   // One dish and one drink at a time, side by side (tea with the tart, not the tea first and then the tart).
-  bool Ate=false,Sipped=false;
-  for(auto& D:S.Table)if(!D.ForHer&&D.Served&&D.Percent>0.f){const auto* I=S.Catalog.Find(D.ItemId);bool& Busy=I&&I->IsDrink()?Sipped:Ate;if(Busy)continue;Busy=true;D.Percent=FMath::Max(0.f,D.Percent-SoloStep);}
+  bool Ate=false,Sided=false,Sipped=false;
+  for(auto& D:S.Table)if(!D.ForHer&&D.Served&&D.Percent>0.f){const auto* I=S.Catalog.Find(D.ItemId);bool& Busy=I&&I->IsDrink()?Sipped:I&&I->Category==TEXT("light")?Sided:Ate;if(Busy)continue;Busy=true;D.Percent=FMath::Max(0.f,D.Percent-SoloStep);}
   bool Any=false;for(const auto& D:S.Table)if(D.Percent>0.f||!D.Served)Any=true;
   if(!Any){S.Message=OKT(TEXT("ui.economy.dishes_all_eaten"));S.Table.Reset();UE_LOG(LogTemp,Display,TEXT("Street meal: everything eaten (alone)"));RefreshUI();}
   return;
@@ -543,10 +543,13 @@ void AOKStreetSocialScene::TickMeal(float Dt){
  auto Drink=[&](const FOKStreetDish& D){const auto* I=S.Catalog.Find(D.ItemId);return I&&I->IsDrink();};
  // She goes on with a dish while she is not full, or when the rest of it still fits (OKStreetOverfullSatiety).
  auto CanEat=[&](int32 G,const FOKStreetDish& D){if(Drink(D)||!Full.Contains(G)||Full[G]<OKStreetFullSatiety)return true;const auto* I=S.Catalog.Find(D.ItemId);return I&&Full[G]+OKStreetItemFill(*I)*D.Percent/100.f*100.f/SatietyMax(G)<=OKStreetOverfullSatiety;};
- // Each eats one dish and sips one drink at a time, side by side (tea with the tart, not the tea first and then the tart).
- auto EatSome=[&](TFunctionRef<bool(const FOKStreetDish&)> Mine){bool Ate=false,Sipped=false;
-  for(auto& D:S.Table)if(Mine(D)){bool& Busy=Drink(D)?Sipped:Ate;if(Busy)continue;Busy=true;D.Percent=FMath::Max(0.f,D.Percent-Step);}
-  return Ate||Sipped;};
+ // Each eats one dish, one side (a light one: the soup) and sips one drink at a time, side by side (tea with the tart,
+ // not the tea first and then the tart; the soup with the dumplings: 三月七 ate all ten and was full with the soup
+ // untouched, R6-120).
+ auto Side=[&](const FOKStreetDish& D){const auto* I=S.Catalog.Find(D.ItemId);return I&&!I->IsDrink()&&I->Category==TEXT("light");};
+ auto EatSome=[&](TFunctionRef<bool(const FOKStreetDish&)> Mine){bool Ate=false,Sided=false,Sipped=false;
+  for(auto& D:S.Table)if(Mine(D)){bool& Busy=Drink(D)?Sipped:Side(D)?Sided:Ate;if(Busy)continue;Busy=true;D.Percent=FMath::Max(0.f,D.Percent-Step);}
+  return Ate||Sided||Sipped;};
  // Who is eating now (the pair's clips follow it: eating, or sitting with nothing to eat).
  for(const int32 G:Eaters)if(G!=Her||!S.StopEating)if(EatSome([&](const FOKStreetDish& D){return D.ForHer&&DishOwner(D)==G&&D.Served&&D.Percent>0.f&&CanEat(G,D);}))S.MealAteAt.Add(G,Wall);
  if(EatSome([](const FOKStreetDish& D){return !D.ForHer&&D.Served&&D.Percent>0.f;}))S.MealAteAt.Add(0,Wall);
