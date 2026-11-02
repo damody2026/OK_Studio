@@ -290,6 +290,15 @@ fn session_end(r: &Value) -> Result<Value, String> {
         }
         // Each climax satisfies ten points of her desire for him; what is left she still wants (frustrated).
         rel.sex_desire = (rel.sex_desire - 10.0 * climaxes).max(0.0);
+        // Found touching herself on the street (her desire at 200, OKStreetSocialOnani.inl) and taken there: each time he
+        // came in her without a condom fills her favor for him by her whole stage (user 2026-11-03: 中出好感度 +100%).
+        if flag(&c, "street_onani") {
+            let inside = num(&c, "his_inside_vagina_raw").clamp(0.0, 20.0) as f32;
+            if inside > 0.0 {
+                let cap = rel.favor_cap();
+                rel.favor = (rel.favor + cap * inside).min(cap);
+            }
+        }
         // He asked again for no condom and she gave in: how she takes it is her chastity and her character (a proud
         // girl minds, one who worships him or is already lewd less so).
         if flag(&c, "raw_pressed") {

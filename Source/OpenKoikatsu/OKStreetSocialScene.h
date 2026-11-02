@@ -734,6 +734,7 @@ private:
  void RunPhoneUseProbe(double Now);
  void StopAmbientActivity();
  void TickAmbientActivity(double Now);
+ void TickOnani(double Now);void StopOnani(bool bSettle);
  void RunAmbientActivityProbe(double Now);
  void RunMealProbe(double Now);
  void RunWatermelonProbe(double Now);

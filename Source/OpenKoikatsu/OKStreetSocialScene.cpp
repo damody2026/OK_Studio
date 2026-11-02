@@ -225,6 +225,9 @@ struct FOKStreetSceneState {
  int32 AmbientActor=INDEX_NONE,AmbientCursor=0,AmbientPhase=0,AmbientAction=0,AmbientNextAction=0;FString AmbientPlaceClip;
  bool AmbientDrinkOnlyTest=false,AmbientSelfieOnlyTest=false,AmbientGroomOnlyTest=false;
  double AmbientRequested=0,AmbientPlaying=0,AmbientDuration=0;FOKStreetAgentSim AmbientSaved;
+ // Touching herself on the street (OKStreetSocialOnani.inl): who, which step of hers is playing since when, her hour's
+ // start (game minutes), her climaxes, her next drop; and who was taken from it into the room (street_onani).
+ int32 OnaniGirl=INDEX_NONE,OnaniStep=0,OnaniClimaxes=0,OnaniPrivate=INDEX_NONE;bool OnaniPlaying=false;double OnaniRequested=0,OnaniAskedAt=0,OnaniStepAt=0,OnaniCheckAt=0,OnaniSquirtAt=0;float OnaniStepSeconds=0;int64 OnaniStartMinute=0;FOKStreetAgentSim OnaniSaved;TMap<int32,double> OnaniCooldown;
  TMap<int32,double> AmbientCooldown;TArray<TWeakObjectPtr<AStaticMeshActor>> AmbientProps;
  bool AmbientOnlyTest=false,AmbientChecked=false;
  int32 AmbientVerified=0,AmbientProbePhase=0,AmbientPrepareCancels=0,AmbientInterrupts=0,AmbientSamples=0,AmbientNaturalCompletions=0;
@@ -899,6 +902,9 @@ bool AOKStreetSocialScene::BeginTalk(int32 Character){
  if(S.Pair.Partner!=INDEX_NONE||S.Facility!=INDEX_NONE||S.Companion!=INDEX_NONE)return false;
  if(S.PrivateGirl!=INDEX_NONE)return false; // the one-on-one scene is his conversation now; a street talk would close it
  if(!S.Agents.IsValidIndex(Character-1)||!S.Manifest.Characters.IsValidIndex(Character))return false;
+ // She is touching herself (OKStreetSocialOnani.inl; user 2026-11-03): spoken to, she goes into the one-on-one with him
+ // at once, whoever he is to her.
+ if(S.OnaniGirl==Character){StopOnani(false);S.OnaniPrivate=Character;BeginPrivate(Character);if(S.PrivateGirl!=Character)S.OnaniPrivate=INDEX_NONE;return true;}
  StopAmbientActivity();
  // He speaks to her while she (or he) is doing a one-person activity beside him (shopping at a shelf, watching the fish): that
  // activity ends first. Its action clips otherwise held the action slots and the greeting waited 60 s and was aborted.
@@ -2892,6 +2898,7 @@ static FTransform OKStreetPhonePartTransform(const FTransform& Hand,int32 Part){
 }
 #include "OKStreetSocialPhone.inl"
 #include "OKStreetSocialAmbient.inl"
+#include "OKStreetSocialOnani.inl"
 #include "OKStreetSocialLiveTalk.inl"
 // Defined in OKStreetSocialMind.inl; the earlier .inl files use it too.
 static int64 OKStreetMindNow(const FOKStreetSceneState& S);
@@ -3990,6 +3997,7 @@ void AOKStreetSocialScene::Tick(float Dt){
 
  }
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickAmbientActivity);TickAmbientActivity(Now);}
+ {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickOnani);TickOnani(Now);}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickReadingProps);TickReadingProps();}
  // Development: -StreetSocialNavWalk walks the auto navigation from the plaza to every place's door and logs it.
  if(S.AllReady&&FParse::Param(FCommandLine::Get(),TEXT("StreetSocialNavWalk"))){

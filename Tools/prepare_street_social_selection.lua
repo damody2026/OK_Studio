@@ -274,7 +274,7 @@ function M.main(argv)
   local photo_data, seated_data, drink_data, splash_data
   for _, common_name in ipairs({ "facilities.manifest.json", "photo.manifest.json", "seated.manifest.json", "drink.manifest.json",
     "splash.manifest.json", "watermelon.manifest.json", "phone.manifest.json", "selfie.manifest.json", "groom.manifest.json",
-    "touch.manifest.json", "venue.manifest.json", "lover.manifest.json", "photo_poses.manifest.json" }) do
+    "touch.manifest.json", "venue.manifest.json", "lover.manifest.json", "photo_poses.manifest.json", "onani.manifest.json" }) do
     local common_path = path.join(anim_dir, common_name)
     if path.is_file(common_path) then
       local common_data = read_json(common_path)
