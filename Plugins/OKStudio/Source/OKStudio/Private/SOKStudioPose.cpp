@@ -43,14 +43,17 @@ FReply SOKStudioView::OnMouseButtonDown(const FGeometry& Geometry, const FPointe
 	bool bPoint = false;
 	if (Game.IsValid() && Button == EKeys::LeftMouseButton)
 	{
-		// Pose points sit over the guide and are picked first; then the look point; then the guide's handles.
+		// Pose points sit over the guide and are picked first; then the look point; then the guide's handles. Where a handle
+		// passes, only a click right on a point takes the point: with every FK bone shown (113, with hair and skirt) the
+		// points lie all over the rings, which could not be taken.
 		FVector2D Look;
-		if (Owner && Owner->PickPosePoint(Local)) bPoint = true;
+		const int32 Handle = Game->HitGuide(Local);
+		if (Owner && Owner->PickPosePoint(Local, Handle >= 0 ? 3. : -1.)) bPoint = true;
 		else if (Owner && Owner->LookPointScreen(Look) && FVector2D::Distance(Look, Local) < 10.) bLookDrag = true;
-		else
+		else if (Handle >= 0)
 		{
-			DragAxis = Game->HitGuide(Local);
-			if (DragAxis >= 0) Game->BeginGuideDrag(DragAxis);
+			DragAxis = Handle;
+			Game->BeginGuideDrag(DragAxis);
 		}
 		Game->bUserDragging = DragAxis >= 0 || bLookDrag;
 	}
@@ -315,12 +318,12 @@ bool SOKStudioPanel::PosePoints(TArray<FPosePoint>& Out) const
 	return Out.Num() > 0;
 }
 
-bool SOKStudioPanel::PickPosePoint(const FVector2D& At)
+bool SOKStudioPanel::PickPosePoint(const FVector2D& At, double Within)
 {
 	TArray<FPosePoint> Points;
 	if (!PosePoints(Points)) return false;
 	const FPosePoint* Best = nullptr;
-	double BestDistance = 7. * FMath::Clamp(FOKStudioSettings::Get().PointScale, 0.3f, 4.f);
+	double BestDistance = Within >= 0. ? Within : 7. * FMath::Clamp(FOKStudioSettings::Get().PointScale, 0.3f, 4.f);
 	for (const FPosePoint& P : Points) { const double D = FVector2D::Distance(P.At, At); if (D < BestDistance) { BestDistance = D; Best = &P; } }
 	if (!Best) return false;
 	FOKSceneObject* X = Obj();

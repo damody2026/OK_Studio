@@ -1613,7 +1613,8 @@ public:
 	struct FPosePoint { FVector2D At = FVector2D::ZeroVector; int32 Ik = -1; FString Bone; bool bParent = false; FVector2D Parent = FVector2D::ZeroVector; bool bOn = false; };
 	bool IsPoseMode() const;
 	bool PosePoints(TArray<FPosePoint>& Out) const;
-	bool PickPosePoint(const FVector2D& At);
+	/** Picks the pose point under At (within Within pixels; below 0: the point size). */
+	bool PickPosePoint(const FVector2D& At, double Within = -1.);
 	bool LookPointScreen(FVector2D& Out) const;
 	void DragLookPoint(const FVector2D& Delta);
 	bool MirrorPose(FOKSceneObject& X, int32 Mode);
