@@ -738,6 +738,21 @@ public:
 			const FOKSceneObject* Cam = Game->Document->Find(Game->Document->ActiveCamera);
 			SetStatus(FString::Printf(TEXT("場景 key %.2f 秒：曝光、對焦距離、鏡頭（%s）"), Game->TimelineTime, Cam ? *Cam->Name : TEXT("自由視角")));
 		});
+		// A cut in one step (U120): a scene key at the play head that cuts to this view (-1 free view, a camera id), and the
+		// view goes there. It took 選相機、用此相機、場景 key for each cut.
+		AddCommand(TEXT("timeline.cutkey"), TEXT("在播放頭切鏡頭"), [this](const FString& Arg)
+		{
+			const int32 Camera = FCString::Atoi(*Arg);
+			const FOKSceneObject* Cam = Game->Document->Find(Camera);
+			if (Camera < -1 || (Camera >= 0 && (!Cam || Cam->Kind != EOKSceneObjectKind::Camera))) return false;
+			Game->Document->ActiveCamera = Camera;
+			Game->Document->SetKey(UOKSceneDocument::SceneTrackId, Game->TimelineTime);
+			if (FOKSceneKey* K = Game->Document->KeyAt(UOKSceneDocument::SceneTrackId, Game->TimelineTime)) K->Camera = Camera;
+			Changed();
+			Game->SetTimelineTime(Game->TimelineTime);
+			SetStatus(FString::Printf(TEXT("%.2f 秒切到 %s"), Game->TimelineTime, Cam ? *Cam->Name : TEXT("自由視角")));
+			return true;
+		});
 		// The view the selected scene keys cut to (else the scene key at the play head): -2 none, -1 free view, a camera id.
 		AddCommand(TEXT("timeline.cut"), TEXT("鏡頭 key"), [this](const FString& Arg)
 		{
@@ -1597,6 +1612,7 @@ public:
 	/** The card browser's path row (U50): folders visited before and after the current one. */
 	TArray<FString> CardBack, CardForward;
 	void GoCardFolder(const FString& Folder);
+	TArray<FString> RecentCardFolders() const;
 	TArray<FString> CardRoots() const;
 	void ScanCardFolder();
 	TSharedRef<SWidget> BuildCardBrowser();
@@ -1698,6 +1714,8 @@ public:
 	TSharedPtr<SOKStudioTimeline> TimelineView;
 	TSharedRef<SWidget> BuildTimeline();
 	void ShowEaseMenu(const FVector2D& At);
+	/** The views a cut at the play head can go to (timeline.cutkey). */
+	void ShowCutMenu(const FVector2D& At);
 	float ExportFromT = 0.f, ExportToT = -1.f, ExportFpsV = 30.f;
 	int32 ExportW = 1920, ExportH = 1080, ExportKind = 0;
 	FString ExportFolderText;
@@ -2232,9 +2250,11 @@ public:
 		if (!NamedOptions.Contains(ListName)) NamedOptions.Add(ListName, MakeShared<TArray<TSharedPtr<int32>>>());
 		TArray<TSharedPtr<int32>>& Options = NamedOptions[ListName].Get();
 		if (Options.Num() != Count + 1) { Options.Reset(); for (int32 I = -1; I < Count; ++I) Options.Add(MakeShared<int32>(I)); }
-		Row(Name, Combo(&Options, Show, [this, Get] { FOKSceneObject* O = Obj(); return O ? Get(*O) : -1; }, [this, Set](int32 V) { if (FOKSceneObject* O = Obj()) { Set(*O, V); Changed(); } }));
+		// The status line says what was set (U119: the face is often out of sight).
+		auto Report = [this, Name, Show](const FOKSceneObject& O, int32 V) { SetStatus(FString::Printf(TEXT("%s %s：%s"), *O.Name, *Name, *Show(V))); };
+		Row(Name, Combo(&Options, Show, [this, Get] { FOKSceneObject* O = Obj(); return O ? Get(*O) : -1; }, [this, Set, Report](int32 V) { if (FOKSceneObject* O = Obj()) { Set(*O, V); Report(*O, V); Changed(); } }));
 		// HS2Studio6's pattern pages: previous / next (wrapping, -1 is the card's or animation's own) and "current / total".
-		auto Step = [this, Get, Set, Count](int32 By) { if (FOKSceneObject* O = Obj()) { Set(*O, (Get(*O) + 1 + By + Count + 1) % (Count + 1) - 1); Changed(); } };
+		auto Step = [this, Get, Set, Count, Report](int32 By) { if (FOKSceneObject* O = Obj()) { const int32 V = (Get(*O) + 1 + By + Count + 1) % (Count + 1) - 1; Set(*O, V); Report(*O, V); Changed(); } };
 		Props->AddSlot().AutoHeight().Padding(0.f, 1.f)
 		[
 			SNew(SHorizontalBox)
@@ -3065,7 +3085,7 @@ private:
 		if (Current && AnimSyncedTo != Current) { AnimKind = Current->Kind; AnimGroup = Current->Group; AnimCategory = Current->Category; }
 		AnimSyncedTo = Current;
 		// Groups and categories that have converted motions of this kind (and of the picked sex: either-sex motions show in every tab but 共用 shows only them).
-		auto Shown = [this](const FOKStudioAnim& A) { return A.Kind == AnimKind && !A.File.IsEmpty() && (AnimSex < 0 || A.Sex == AnimSex || (AnimSex > 0 && A.Sex == 0)); };
+		auto Shown = [this](const FOKStudioAnim& A) { return A.Kind == AnimKind && !A.File.IsEmpty() && (AnimSex < 0 || A.Sex == AnimSex || (AnimSex > 0 && A.Sex == 0)) && (!bAnimPairsOnly || HasPartner(A)); };
 		TSet<int32> Groups;
 		for (const FOKStudioAnim& A : C.Anims) if (Shown(A)) Groups.Add(A.Group);
 		if (!Groups.Contains(AnimGroup) && Groups.Num()) AnimGroup = *Groups.CreateConstIterator();
@@ -3106,8 +3126,9 @@ private:
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[OKStudioStyle::Button(FText::FromString(TEXT("定位當前")), [this] { LocateAnim(); }, 0.f, 18.f, false, 10.f)]
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[OKStudioStyle::Button(FText::FromString(TEXT("動畫控制器")), [this] { RunCommand(TEXT("app.animcontrol")); }, 0.f, 18.f, TAttribute<bool>::CreateLambda([this] { return IsFloatOpen(TEXT("animctl")); }), 10.f)]
 			// The H partner in one click: the other sex's motion on the other character, at this one's place.
+			// Pressable whenever a character is selected (U117): when it cannot pair, the status line says why (it was grey without a word).
 			+ SHorizontalBox::Slot().FillWidth(1.f)[OKStudioStyle::Button(FText::FromString(TEXT("配給對方")), [this] { RunCommand(TEXT("anim.partner")); }, 0.f, 18.f, false, 10.f, OKStudioStyle::ButtonFill(),
-				TAttribute<bool>::CreateLambda([this] { const FOKSceneObject* X = Obj(); return X && X->Kind == EOKSceneObjectKind::Character && PartnerAnim(X->Character); }))]
+				TAttribute<bool>::CreateLambda([this] { const FOKSceneObject* X = Obj(); return X && X->Kind == EOKSceneObjectKind::Character; }))]
 		];
 		{
 			TSharedRef<SHorizontalBox> Tabs = SNew(SHorizontalBox);
@@ -3116,6 +3137,7 @@ private:
 				Tabs->AddSlot().FillWidth(1.f).Padding(0.f, 0.f, S < 2 ? 1.f : 0.f, 0.f)[OKStudioStyle::Button(FText::FromString(SexNames[S + 1]), [this, S] { AnimSex = S; DeferRebuild(); }, 0.f, 18.f, AnimSex == S, 10.f)];
 			Props->AddSlot().AutoHeight().Padding(0.f, 1.f)[Tabs];
 		}
+		if (AnimKind == 1) Props->AddSlot().AutoHeight().Padding(0.f, 1.f)[CheckBox(TEXT("只看雙人（有對方動作，清單標「（雙人）」）"), [this] { return bAnimPairsOnly; }, [this](bool B) { bAnimPairsOnly = B; DeferRebuild(); })];
 		Props->AddSlot().AutoHeight().Padding(0.f, 1.f)
 		[
 			SNew(SEditableTextBox).Style(&OKStudioStyle::TextBoxStyle()).HintText(FText::FromString(TEXT("搜尋動作（Enter；空格＝且，-詞＝排除）"))).Text(FText::FromString(AnimSearch))
@@ -3147,7 +3169,9 @@ private:
 				const bool bCurrent = X && X->Character.StudioAnimeNo == A.No && X->Character.StudioAnimeKind == A.Kind && X->Character.StudioAnimeGroup == A.Group && X->Character.StudioAnimeCategory == A.Category;
 				// Search hits come from every group: each says where it is.
 				const FString Where = AnimSearch.IsEmpty() ? FString() : FString::Printf(TEXT("　· %s／%s"), *GroupLabel(A.Group), *CategoryLabel(A.Group, A.Category));
-				return SNew(STableRow<TSharedPtr<int32>>, Owner)[SNew(STextBlock).ColorAndOpacity(bCurrent ? FLinearColor::Yellow : FLinearColor::White).Text(FText::FromString(A.Name + Where))];
+				// A motion that has the other sex's side is marked (U117): 配給對方 works from it.
+				const TCHAR* Pair = A.Kind == 1 && HasPartner(A) ? TEXT("（雙人）") : TEXT("");
+				return SNew(STableRow<TSharedPtr<int32>>, Owner)[SNew(STextBlock).ColorAndOpacity(bCurrent ? FLinearColor::Yellow : FLinearColor::White).Text(FText::FromString(A.Name + Pair + Where))];
 			})
 			.OnMouseButtonClick_Lambda([this](TSharedPtr<int32> I) { if (I) PickAnim(*I); })
 		];
@@ -3178,6 +3202,23 @@ public:
 	}
 	/** The other side of the selected character's H motion (女H挿入／騎乗位／弱ループ → 男H挿入／騎乗位／弱ループ): the
 	 *  catalogue motion of the same category, number and name for the other sex. */
+	/** Whether a motion has the other sex's side (PartnerAnim's rule), from an index of the catalogue built once. */
+	static bool HasPartner(const FOKStudioAnim& A)
+	{
+		if (A.Sex == 0) return false;
+		static TMap<FString, int32> Sexes;
+		static int32 Built = -1;
+		const TArray<FOKStudioAnim>& All = FOKStudioCatalog::Get().Anims;
+		auto Key = [](const FOKStudioAnim& X) { return FString::Printf(TEXT("%d|%d|%d|%s"), X.Kind, X.Category, X.No, *X.Name); };
+		if (Built != All.Num())
+		{
+			Sexes.Reset();
+			for (const FOKStudioAnim& X : All) if (X.Sex != 0 && !X.File.IsEmpty()) Sexes.FindOrAdd(Key(X)) |= 1 << FMath::Clamp(X.Sex, 0, 7);
+			Built = All.Num();
+		}
+		const int32* Mask = Sexes.Find(Key(A));
+		return Mask && (*Mask & ~(1 << FMath::Clamp(A.Sex, 0, 7))) != 0;
+	}
 	static const FOKStudioAnim* PartnerAnim(const FOKSceneCharacter& C)
 	{
 		const FOKStudioAnim* A = C.StudioAnimeNo >= 0 ? FOKStudioCatalog::Get().FindAnim(C.StudioAnimeKind, C.StudioAnimeGroup, C.StudioAnimeCategory, C.StudioAnimeNo) : nullptr;
@@ -3193,7 +3234,14 @@ public:
 	{
 		FOKSceneObject* X = Obj();
 		const FOKStudioAnim* B = X && X->Kind == EOKSceneObjectKind::Character ? PartnerAnim(X->Character) : nullptr;
-		if (!B || !Game.IsValid()) return false;
+		if (!Game.IsValid() || !X || X->Kind != EOKSceneObjectKind::Character) return false;
+		if (!B)
+		{
+			const FOKStudioAnim* A = X->Character.StudioAnimeNo >= 0 ? FOKStudioCatalog::Get().FindAnim(X->Character.StudioAnimeKind, X->Character.StudioAnimeGroup, X->Character.StudioAnimeCategory, X->Character.StudioAnimeNo) : nullptr;
+			SetStatus(!A ? FString(TEXT("先在 H 動作選一個標「（雙人）」的動作，再配給對方"))
+				: FString::Printf(TEXT("「%s」沒有對方的動作：請選標「（雙人）」的動作（可勾「只看雙人」）"), *A->Name));
+			return false;
+		}
 		FOKSceneObject* Y = nullptr;
 		for (const int32 Id : Game->Selection)
 			if (FOKSceneObject* S = Game->Document->Find(Id); S && S != X && S->Kind == EOKSceneObjectKind::Character) { Y = S; break; }
@@ -3220,6 +3268,15 @@ public:
 		Game->Document->Reparent(YId, Parent);
 		if (FOKSceneObject* Z = Game->Document->Find(YId)) { Z->AttachBone = Bone; Z->Transform = Place; SetStatus(FString::Printf(TEXT("%s 配上 %s：%s"), *Z->Name, *Name, *B->Name)); }
 		Changed();
+		// Both in view, from their side turned a little to the selected one's front (U118: the view stayed behind the
+		// partner; from the front the partner hid her). The partner has just moved: the scene is built first, so the bounds
+		// are where the two are now.
+		const int32 XId = Game->SelectedId;
+		Game->Yaw = float(Game->Document->WorldTransform(XId).Rotator().Yaw) - 90.f + 100.f;
+		Game->Pitch = -10.f;
+		Game->SelectMany({ XId, YId }, XId);
+		Game->SyncDocumentNow();
+		Game->FocusSelection();
 		DeferRebuild();
 		return true;
 	}
@@ -3228,6 +3285,7 @@ private:
 	int32 AnimKind = 0, AnimGroup = -1, AnimCategory = -1;
 	FString AnimSearch;
 	int32 AnimSex = -1;
+	bool bAnimPairsOnly = false;
 	/** The pose page's place in the Studio pose files (-1: none loaded by stepping). */
 	int32 PoseStep = -1;
 	const FOKStudioAnim* AnimSyncedTo = nullptr;

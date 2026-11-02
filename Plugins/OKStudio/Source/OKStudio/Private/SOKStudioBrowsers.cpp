@@ -110,8 +110,28 @@ FString SOKStudioPanel::DefaultCard(int32 Sex)
 	return FString();
 }
 
+TArray<FString> SOKStudioPanel::RecentCardFolders() const
+{
+	// The folders of the cards added lately (the settings' recent list, newest first), each once.
+	TArray<FString> Out;
+	for (const FString& R : FOKStudioSettings::Get().Recent)
+	{
+		if (!R.StartsWith(TEXT("card:"))) continue;
+		const FString Card = R.Mid(5);
+		const FString Dir = FPaths::GetPath(FPaths::ConvertRelativePathToFull(FPaths::IsRelative(Card) ? FPaths::ProjectDir() / Card : Card));
+		if (FPaths::DirectoryExists(Dir)) Out.AddUnique(Dir);
+	}
+	return Out;
+}
+
 void SOKStudioPanel::ScanCardFolder()
 {
+	// Opened again where the last card was added from (U121: it always began at the first root's first folder).
+	if (CardFolder.IsEmpty())
+	{
+		const TArray<FString> Recent = RecentCardFolders();
+		if (Recent.Num()) CardFolder = Recent[0];
+	}
 	if (CardFolder.IsEmpty() || !FPaths::DirectoryExists(CardFolder))
 	{
 		// The first root; when its cards are all in folders, the first folder with cards.
@@ -203,6 +223,14 @@ TSharedRef<SWidget> SOKStudioPanel::BuildCardBrowser()
 	if (!CardFolder.IsEmpty()) IFileManager::Get().FindFiles(Subs, *(CardFolder / TEXT("*")), false, true);
 	Subs.Sort();
 	for (const FString& S : Subs) if (!S.StartsWith(TEXT("."))) FolderButton(TEXT("▸ ") + S, CardFolder / S);
+	// 最近用過: the folders cards were added from lately.
+	TArray<FString> Recent = RecentCardFolders();
+	Recent.Remove(CardFolder);
+	if (Recent.Num())
+	{
+		Folders->AddSlot().AutoHeight().Padding(0.f, 6.f, 0.f, 2.f)[OKStudioStyle::Label(FText::FromString(TEXT("最近用過")), 10.f, TextHint())];
+		for (int32 I = 0; I < FMath::Min(Recent.Num(), 4); ++I) FolderButton(FPaths::GetCleanFilename(Recent[I]), Recent[I]);
+	}
 
 	// A page of cards: 6 across, 3 down. Each keeps its size (a folder of two cards does not blow them up to fill the area).
 	TSharedRef<SUniformGridPanel> Grid = SNew(SUniformGridPanel).SlotPadding(FMargin(2.f));

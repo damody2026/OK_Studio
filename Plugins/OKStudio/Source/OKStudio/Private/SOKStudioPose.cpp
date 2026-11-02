@@ -812,6 +812,14 @@ void SOKStudioPanel::LookPage(FOKSceneObject& O, bool bNeck)
 void SOKStudioPanel::ExpressionPage(FOKSceneObject& O)
 {
 	Label(TEXT("表情"));
+	// The view to the selected character's face (HS2Studio6's face close-up; U119: with a partner the face was hidden).
+	Props->AddSlot().AutoHeight().Padding(0.f, 1.f)[Button(FText::FromString(TEXT("看臉")), [this]
+	{
+		FOKSceneObject* X = Obj();
+		if (!Game.IsValid() || !X) return;
+		Game->SelectMany({ X->Id }, X->Id);
+		Game->FocusSelection(true);
+	}, 0.f, 18.f, false, 10.f)];
 	auto Show = [](const TCHAR* Kind) { return [Kind](int32 N) { return N < 0 ? FString(TEXT("照卡片")) : FString::Printf(TEXT("%s %d"), Kind, N); }; };
 	Named(TEXT("眉"), TEXT("eyebrow"), 40, Show(TEXT("眉型")), [](FOKSceneObject& X) { return X.Character.EyebrowPattern; }, [](FOKSceneObject& X, int32 V) { X.Character.EyebrowPattern = V; });
 	// Eyes patterns carry the game's names (character list cha_eyeset); eyebrows and mouths have none in the game data.

@@ -1987,6 +1987,22 @@ void SOKStudioPanel::ShowEaseMenu(const FVector2D& At)
 	FSlateApplication::Get().PushMenu(AsShared(), FWidgetPath(), MenuScaled(SNew(SBorder).BorderImage(Brush(Panel())).Padding(4.f)[Box]), At, FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));
 }
 
+void SOKStudioPanel::ShowCutMenu(const FVector2D& At)
+{
+	if (!Game.IsValid()) return;
+	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
+	TArray<TPair<int32, FString>> Views = { { -1, TEXT("自由視角") } };
+	for (const FOKSceneObject& O : Game->Document->Objects) if (O.Kind == EOKSceneObjectKind::Camera) Views.Add({ O.Id, O.Name });
+	if (Views.Num() == 1) Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)[OKStudioStyle::Label(FText::FromString(TEXT("場景裡沒有相機（工作區下方的相機鈕可從目前視角加入）")), 10.f, TextHint())];
+	for (const TPair<int32, FString>& V : Views)
+		Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)[Button(FText::FromString(V.Value), [this, Camera = V.Key]
+		{
+			FSlateApplication::Get().DismissAllMenus();
+			RunCommand(TEXT("timeline.cutkey"), FString::FromInt(Camera));
+		}, 120.f, 18.f, false, 10.f)];
+	FSlateApplication::Get().PushMenu(AsShared(), FWidgetPath(), MenuScaled(SNew(SBorder).BorderImage(Brush(Panel())).Padding(4.f)[Box]), At, FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));
+}
+
 TSharedRef<SWidget> SOKStudioPanel::BuildTimeline()
 {
 	auto Icon = [this](FName I, const FString& Label, const FString& Command) { return IconButton(I, Tip(Label, Command), Cmd(Command), 22.f, 20.f); };
@@ -2007,6 +2023,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildTimeline()
 		+ SHorizontalBox::Slot().AutoWidth()[IconButton(TEXT("key"), Tip(TEXT("為選取物件打 key"), TEXT("timeline.key")), Cmd(TEXT("timeline.key")), 22.f, 20.f)]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(FText::FromString(TEXT("刪 key")), Cmd(TEXT("timeline.delete")), 40.f, 20.f, false, 10.f)]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(FText::FromString(TEXT("場景 key")), Cmd(TEXT("timeline.scenekey")), 52.f, 20.f, false, 10.f)]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(FText::FromString(TEXT("切鏡頭 ▼")), [this] { ShowCutMenu(FSlateApplication::Get().GetCursorPos()); }, 56.f, 20.f, false, 10.f)]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(FText::FromString(TEXT("清空軌道")), Cmd(TEXT("timeline.clear")), 52.f, 20.f, false, 10.f)]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(TAttribute<FText>::CreateLambda([this]
 		{

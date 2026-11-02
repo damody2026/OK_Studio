@@ -8,6 +8,7 @@
 #include "Blueprint/WidgetLayoutLibrary.h"
 #include "Camera/CameraComponent.h"
 #include "Components/PoseableMeshComponent.h"
+#include "AnimationRuntime.h"
 #include "Components/PrimitiveComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -134,11 +135,29 @@ void UOKStudioGame::FocusSelection(bool bFace)
 {
 	const FOKSceneObject* One = Selection.Num() == 1 ? Document->Find(Selection[0]) : nullptr;
 	FTransform Head;
-	if (bFace && One && One->Kind == EOKSceneObjectKind::Character && SceneActor && OKStudioGameInternal::BoneWorld(SceneActor->PreviewOf(One->Id), TEXT("cf_j_head"), Head))
+	const AKKPreviewActor* Shown = One && SceneActor ? SceneActor->PreviewOf(One->Id) : nullptr;
+	if (bFace && One && One->Kind == EOKSceneObjectKind::Character && OKStudioGameInternal::BoneWorld(Shown, TEXT("cf_j_head"), Head))
 	{
-		// The head bone sits at the top of the neck: the face is a hand above it.
-		Focus = Head.GetLocation() + FVector(0.f, 0.f, 8.f);
-		Distance = 90.f;
+		// Where the face looks now (U119: a kneeling or turned character was framed at the neck, from behind her partner):
+		// the head's turn from its rest pose applied to the character's front (+Y at yaw 0) and up. The view comes from 40°
+		// to the side of the face, so a partner right in front of it does not fill the view.
+		const float Yaw0 = float(Document->WorldTransform(One->Id).Rotator().Yaw);
+		FVector Front = FRotator(0.f, Yaw0 + 90.f, 0.f).Vector(), Up = FVector::UpVector;
+		UPoseableMeshComponent* Mesh = Shown->BodySkel ? Shown->BodySkel.Get() : (Shown->SkelFollowers.Num() ? Shown->SkelFollowers[0].Get() : nullptr);
+		const int32 Bone = Mesh && Mesh->GetSkinnedAsset() ? Mesh->GetBoneIndex(TEXT("cf_j_head")) : INDEX_NONE;
+		if (Bone != INDEX_NONE)
+		{
+			const FQuat Rest = Mesh->GetComponentQuat() * FAnimationRuntime::GetComponentSpaceTransformRefPose(Mesh->GetSkinnedAsset()->GetRefSkeleton(), Bone).GetRotation();
+			const FQuat Turn = Head.GetRotation() * Rest.Inverse();
+			Front = Turn.RotateVector(Front);
+			Up = Turn.RotateVector(Up);
+		}
+		// The head bone sits at the top of the neck: the face is a hand above it and a little forward.
+		Focus = Head.GetLocation() + Up * 8.f + Front * 3.f;
+		const FRotator Look = (-Front).Rotation();
+		Yaw = float(Look.Yaw) + 40.f;
+		Pitch = FMath::Clamp(float(Look.Pitch), -45.f, 30.f);
+		Distance = 70.f;
 		Document->ActiveCamera = -1;
 		return;
 	}
