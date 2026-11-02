@@ -147,6 +147,9 @@ void AOKStreetSocialScene::AddPromiseFromChat(int32 Character,const FString& Day
  // Another girl is already booked near that time: he is told (both stay booked; it is his to sort out).
  {const FString Clash=Out->GetStringField(TEXT("clash"));if(!Clash.IsEmpty()){S.FreeTalkNotice=OKMsg(TEXT("ui.appointments.clash_notice"), {{TEXT("label"), *Clash}});UE_LOG(LogTemp,Display,TEXT("Street appointment: clashes with %s"),*Clash);RefreshUI();}}
  if(S.Store.Appointments.Num())S.PromiseBookedAt.Add(S.Store.Appointments.Last().Id,FPlatformTime::Seconds());
+ // At its door before it opens: she hears when it opens (promise.rs opens_at), not "it is open then, I checked" (R6-114).
+ {FString Opens;if(Out->TryGetStringField(TEXT("opens_at"),Opens)&&!Opens.IsEmpty()){S.TellHer.Add(OKMsg(TEXT("ui.appointments.opens_later_note"),{{TEXT("place_name"),P->Name},{TEXT("time"),*Opens}}));
+  S.FreeTalkNotice=OKMsg(TEXT("ui.appointments.opens_later_notice"),{{TEXT("place_name"),P->Name},{TEXT("time"),*Opens}});UE_LOG(LogTemp,Display,TEXT("Street appointment: at %s before it opens at %s"),*Place,*Opens);RefreshUI();}}
  HeroineNote(Character,TEXT("promise"),OKMsg(TEXT("ui.appointments.promised_meet_with_him"), {{TEXT("label"), *OKStreetCalendarLabel(int32(Start/1440)-(Minute<240?1:0),Minute/60.0)}, {TEXT("place_name"), P->Name}, {TEXT("what"), What.IsEmpty()?OKT(TEXT("ui.appointments.meeting_label")):*What}}),Place,0.7f);
 }
 

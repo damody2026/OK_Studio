@@ -188,7 +188,13 @@ fn promise(c: &Catalog, r: &Value) -> Value {
         .find(|a| s(a, "heroine") != her && s(a, "kind") != "entrust" && (i(a, "start") - start).abs() < 90 && s(a, "place") != place)
         .map(|a| s(a, "label").to_string())
         .unwrap_or_default();
-    json!({"action": "book", "reason": "new", "start": start, "minute": minute, "clash": clash, "replaces_id": replaces_id})
+    // At its door before it opens: when it opens, for her to know. Booked for 07:30 at the cafe opening at 8, 早濑优香 said
+    // "the cafe is open in the morning, I checked" (R6-114).
+    let opens_at = if c.place_open(place, hours, d.weekday as i32) { String::new() } else {
+        (1..=4).find(|k| c.place_open(place, hours + *k as f64 * 0.25, d.weekday as i32))
+            .map(|k| { let m = (start % 1440) as i32 + k * 15; format!("{:02}:{:02}", m / 60 % 24, m % 60) }).unwrap_or_default()
+    };
+    json!({"action": "book", "reason": "new", "start": start, "minute": minute, "clash": clash, "replaces_id": replaces_id, "opens_at": opens_at})
 }
 
 pub fn eval(c: &Catalog, kind: &str, r: &Value) -> Option<Result<Value, String>> {
@@ -263,6 +269,8 @@ mod tests {
         // At the bookstore door half an hour before it opens (10:00): a meeting, they wait for it there (R3-253).
         let door = ask(json!({"place": "bookstore", "time": "09:30"}));
         assert_ne!(door["action"], "closed", "{door}");
+        assert_eq!(ask(json!({"place": "cafe", "time": "09:30"}))["opens_at"], "10:00", "she hears when it opens (R6-114)");
+        assert_eq!(ask(json!({"place": "cafe", "time": "12:00"}))["opens_at"], "", "open then: nothing to tell");
         // Picking her up at the cafe door as it closes (22:00, her shift's end) is a meeting too; an hour later is not (R3-260).
         let pickup = ask(json!({"place": "cafe", "time": "22:00", "ends_there": [{"place": "cafe", "end": 11 * 1440 + 22 * 60}]}));
         assert_ne!(pickup["action"], "closed", "{pickup}");
