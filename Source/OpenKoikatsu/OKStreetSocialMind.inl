@@ -513,6 +513,10 @@ void AOKStreetSocialScene::ApplyChoiceReply(int32 Character,const FOKFreeTalkRep
   if(ShopAhead){FOKStreetCartLine Carry;Carry.ItemId=O.Id;Carry.ForHer=ForHer;Carry.HerOwn=ForHer;Carry.Size=Item->Price.Contains(O.Size)?O.Size:Item->DefaultSize();
    if(!Item->Options.IsEmpty()){Carry.Sweetness=O.Sweetness.IsEmpty()?OKT(TEXT("ui.mind.full_sugar_label")):O.Sweetness;Carry.Ice=O.Ice.IsEmpty()?OKT(TEXT("ui.mind.normal_state_label")):O.Ice;}
    S.CarriedOrders.FindOrAdd(Character).Add(Carry);S.CarriedOrderSaid.Add(Character,Reply.Reply);UE_LOG(LogTemp,Display,TEXT("Street order carried: %s until they reach %s"),*O.Id,*Item->Place);continue;}
+  // Bought by the activity she is doing with him there (the dorm vending machine): the activity bills it, nothing to
+  // order and nothing "not sold here" for her to explain as a jammed machine.
+  if(Item&&S.SoloGirl==Character&&!S.SoloId.IsEmpty())if(const FOKStreetActivity* A=OKStreetFindActivity(S.SoloId);A&&A->Place&&Item->Place==A->Place){
+   UE_LOG(LogTemp,Display,TEXT("Street order covered: %s by the activity %s"),*O.Id,*S.SoloId);continue;}
   // Not sold here: she is told, so she says so (胡桃 ordered "tiramisu and red bean soup" at the snack shop's door, both
   // were dropped without a word, and she ate a strawberry cake while his soup never came, R4-28).
   if(!Item||!SoldHere(*Item,Place)){UE_LOG(LogTemp,Display,TEXT("Street order rejected: %s at %s"),*O.Id,*Place);
