@@ -33,7 +33,7 @@ Native job 一律用 `Tools\lua\lua.exe Tools\street_city_motel_job.lua <job> <p
 
 第二輪驗收：cook `20261102-143741`（audit、routes、physics_plan、mirror migration 通過），4 段實走都一次通過（`motel-v1/physics-20261102-144612.json`、`-145716.json`、`-150831.json`、`-152047.json`），slice 0 這次開場 57.5 fps，證實上一輪的 14 fps 是 GPU 被別的遊戲占用。重拍 `shop-survey-v1/captures-20261102-153142`（20/20）：A04、A01 沙灘內緣變成平滑曲線，A13 中央有樹叢；G086 色差減輕，但前景仍有一條深色線和一塊偏暗的方格（10 cm 落差的邊與另一塊地面），列在下表。
 
-## 第三輪（11-02 傍晚，已裝進地圖、尚未驗收）
+## 第三輪（11-02 傍晚，已驗收）
 
 | 項目 | 原因 | 做法 | 工具／job |
 |---|---|---|---|
@@ -41,11 +41,20 @@ Native job 一律用 `Tools\lua\lua.exe Tools\street_city_motel_job.lua <job> <p
 | G150 接縫 | skirt 用自己的三向投影草地（`M_GrassWorldTriplanar_v2`），和城市草地不同 | skirt 加上公尺 / 4 的平面 UV（和城市地面同比例），安裝時改用 G12 上的城市 meadow MI；舊版沒有 UV 的 skirt 仍用三向投影草地 | 同上 |
 | G113 河床白色沙坡 | 內陸河床和海灘共用沙的材質 | 沙條把內陸河床的面放在第二個材質槽 `S_RiverBed`，安裝時這個槽用城市地面的河礫石 MI | `Tools/build_street_city_shore_strip.lua` → `world_coast_strip_install` |
 
-16:29 已裝進地圖（地圖 `969acee9857e`）。cook 跑了兩次（`20261102-163250`、`-165344`），兩次都在 mirror migration 前讓位，之後因為我的背景鏈沒停乾淨、同時開了太多 Unreal（見 `Docs/STREET_ERRORS.md`），全部關掉後使用者喊停。**還沒驗收**：下次從 `run_street_city_motel_acceptance.lua --from-cook --no-walk --yield c-street-city` 續跑，再 4 段實走與重拍（`edge-recheck-views.json`）。
+16:29 已裝進地圖（地圖 `969acee9857e`）。
+
+第三輪驗收（11-02 晚上，整合後續跑）：
+- cook `20261102-165344` 其實已完成（`package.json` 為 `built_requires_actual_game_acceptance`，地圖相同），所以沒有重新 cook，只補跑 mirror migration（7 處鏡前檢查值）。17:41 那次 cook 是整合時被中止的，不用管。
+- 實走：slice 1–3 一次通過（`motel-v1/physics-20261102-225546.json`、`-230655.json`、`-231827.json`）。slice 0 第一次在 `imore-281de587d726-pool-entry-and-exit`（x 313.6、y 655.9 m）判卡住，離這輪改的地方很遠；單獨重跑一次通過（`physics-20261102-233432.json`，開場 58.3 fps），算偶發。
+- 重拍 `shop-survey-v1/captures-20261102-232927`（20/20）：
+  - G150：skirt 和城市草地接起來，看不出接縫。
+  - G113：河床已是河礫石。
+  - G085、G086：色差沒了，但城市地面邊緣 1198 對城南地面 1188 的 10 cm 側面仍是一道深色線（見下表）。
 
 ## 還沒處理
 
 | 項目 | 現象 | 說明 |
 |---|---|---|
-| G113 白色沙坡 | 內陸河床透過水看起來是白沙 | 見上表；要把沙條拆成海灘與內陸河床兩個材質槽 |
+| G085／G086 台階線 | 城市地面邊緣（1198）比城南地面（1188）高 10 cm，側面在畫面上是一道深色線 | 沿城界、城南地面那一側補一條 1 m 寬、從 1198 降到 1188 的草地斜坡 |
+| G113 白色斜牆 | 河岸左邊一大面沒有貼圖的白色斜面 | 第二輪就有，不是這次改出來的；要查是哪個 actor |
 | A17 轉角 | 環狀道路在東北角是 L 形轉角，往北沒有延伸 | 判斷為轉角而不是斷頭；北側空地已由樹叢補上 |
