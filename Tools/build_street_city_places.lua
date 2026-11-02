@@ -123,10 +123,12 @@ end
 -- UE X = X0 + north*100, UE Y = Y0 + east*100, UE Z = 1200 + z*100 with (X0, Y0) the floor actor location. The front
 -- of an asset faces UE yaw 180 - theta, so a person using it (facing its front) gets anchor yaw 90 - theta.
 local planrooms = {}
-for _, r in ipairs(load('../../Docs/StreetSocialCity/production/effective-city-plan.json').rooms) do planrooms[r.id] = r end
+local cityplan = load('../../Docs/StreetSocialCity/production/effective-city-plan.json')
+for _, r in ipairs(cityplan.rooms) do planrooms[r.id] = r end
+local bname = {}; for _, b in ipairs(cityplan.buildings) do bname[b.id] = b.name end
 local origin = {}
 for _, a in ipairs(load('shop-survey-v1/city-floor-meshes.json')) do local b = a.actor:match('^%a+_(%w+)_F%d+$'); if b and not origin[b] then origin[b] = a.location end end
-for _, a in ipairs(load('shop-survey-v1/actor-bounds.json').rows) do local b = a.actor:match('^(S%d+)_F%d+$'); if b and not origin[b] then origin[b] = a.location end end
+for _, a in ipairs(actors.actors) do local b = a.label:match('^(S%d+)_F01$'); if b and not origin[b] then origin[b] = a.loc end end
 local ANCHOR = { -- asset -> anchor name prefix, uses
   ['COMMON-CITY-bunk'] = 'bed', ['large-bunk'] = 'bed', ['COMMON-CITY-king'] = 'bed', ['bed'] = 'bed',
   ['COMMON-CITY-sofa'] = 'sofa', ['sofa'] = 'sofa', ['COMMON-CITY-lounge'] = 'sofa', ['large-lounger'] = 'lounger',
@@ -142,7 +144,10 @@ for _, dir in ipairs({ 'campus-v1/buildings', 'world-completion-v1/buildings' })
     if exists(root .. dir .. '/' .. b .. '/assembly-report.json') then reports[#reports + 1] = { b, dir .. '/' .. b .. '/assembly-report.json' } end
   end
 end
-for _, b in ipairs({ 'S18', 'S19' }) do reports[#reports + 1] = { b, b .. '-modular-components-v1/assembly-building/assembly-report.json' } end
+for n = 1, 96 do
+  local b = string.format('S%02d', n); local f = b .. '-modular-components-v1/assembly-building/assembly-report.json'
+  if exists(root .. f) then reports[#reports + 1] = { b, f } end
+end
 local motel_floors = { H1 = { [2] = true, [3] = true, [4] = true, [5] = true } } -- replaced by the motel suites
 for _, rep in ipairs(reports) do
   local b, o = rep[1], origin[rep[1]]
@@ -161,20 +166,21 @@ for _, rep in ipairs(reports) do
     end
     for owner, R in pairs(rooms) do
       local pr = planrooms[owner]
-      local typ = pr and pr.type or (b == 'S18' and 'inn' or b == 'S19' and 'spa' or 'building_common')
+      local typ = pr and pr.type or (b == 'S18' and 'inn' or b == 'S19' and 'spa' or b:match('^S%d+$') and 'shop' or 'building_common')
       local priv = PRIV[typ] or 0
       local has = {}; for _, a in ipairs(R.list) do has[a.name:match('^(%a+)')] = true end
-      if has.bed or has.sofa or has.pool or has.bath or has.lounger or priv > 0 then
+      if has.bed or has.sofa or has.pool or has.bath or has.lounger or priv > 0 or (typ == 'shop' and (has.seat or has.table)) then
         local x0, y0, x1, y1, z = math.huge, math.huge, -math.huge, -math.huge, math.huge
         for _, a in ipairs(R.list) do x0 = math.min(x0, a.pos[1]); y0 = math.min(y0, a.pos[2]); x1 = math.max(x1, a.pos[1]); y1 = math.max(y1, a.pos[2]); z = math.min(z, a.pos[3]) end
         local uses = {}
-        if has.bed then uses[#uses + 1] = 'sleep' end
+        if has.bed and typ ~= 'shop' then uses[#uses + 1] = 'sleep' end
+        if has.seat or has.table then uses[#uses + 1] = 'sit_pair' end
         if has.bed and priv >= 2 then uses[#uses + 1] = 'h_bed' end
         if priv >= 2 then uses[#uses + 1] = 'h_floor'; uses[#uses + 1] = 'h_wall' end
         if has.sofa then uses[#uses + 1] = priv >= 2 and 'h_sofa' or 'sit_pair' end
         if has.pool or has.bath then uses[#uses + 1] = 'bath' end
         if has.lounger then uses[#uses + 1] = 'lie' end
-        add({ id = owner:lower(), building = b, floor = R.floor, kind = 'room_' .. typ, name = pr and pr.name or owner,
+        add({ id = owner:lower(), building = b, floor = R.floor, kind = 'room_' .. typ, name = pr and pr.name or ((bname[b] or b) .. (owner:match('%-F0%d$') or '')),
           privacy = priv, lockable = priv >= 2, sleep_rule = pr and pr.sleep or nil,
           door = P((x0 + x1) / 2, (y0 + y1) / 2, z),
           room = { min = P(x0 - 150, y0 - 150, z), max = P(x1 + 150, y1 + 150, z + 320), note = 'furniture bounds + 1.5 m' },

@@ -564,6 +564,10 @@ def motel_world_coast_strip_install():
   wm=imp(Path(w['path']),'world-edge-seawall',0,True);ws=wm.get_editor_property('body_setup')
   if ws:ws.set_editor_property('collision_trace_flag',unreal.CollisionTraceFlag.CTF_USE_COMPLEX_AS_SIMPLE);assert EAL.save_loaded_asset(wm,False)
   wa,wp,_,wg=place(w,wm,'WorldEdge_Seawall')
+  # the glb's own light concrete reads as a blank white slope from the bank (G113, 11-03): river gravel like the bed
+  gravel=EAL.load_asset('/Game/UniversityCity/GroundPBRV2/Materials/MI_Detail_9ea1c3103a2d3f4c9850')
+  if gravel:
+   for k in range(wa.static_mesh_component.get_num_materials()):wa.static_mesh_component.set_material(k,gravel)
   wa.static_mesh_component.set_editor_property('cast_shadow',True);wall=dict(asset=wm.get_path_name(),actor_yaw=wp[0],actor_mirror_y=wp[1],placed_bounds=wg,triangles=wm.get_num_triangles(0))
  actors.get('CityEnvironmentController') and actors['CityEnvironmentController'].prepare_for_save()
  assert unreal.EditorLevelLibrary.save_current_level();new=sha(MAPFILE)

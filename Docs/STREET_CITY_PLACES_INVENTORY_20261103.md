@@ -2,7 +2,7 @@
 
 使用者 11-03 要求：明天把大學城（`StreetSocialCity` 專案的 `/Game/UniversityCity/Maps/UniversityCity`）換進街區遊戲，今天先把所有可以做一般活動、色色姿勢的地點盤點出來，並和 [C組] 街區攻略確認。
 
-- 資料：`output/street-social-city-production/places-v1/places.json`，共 612 個地點。
+- 資料：`output/street-social-city-production/places-v1/places.json`，共 781 個地點。
 - 重建：
   1. 拿 Unreal slot，跑 `lua Tools/street_city_motel_job.lua world_places_probe Tools/street_city_places_payload.lua`，輸出 `places-v1/actors.json`（地圖全部 actor）。
   2. 跑 `Tools\lua\lua.exe Tools\build_street_city_places.lua`。
@@ -55,6 +55,7 @@
 | 舞台、鐘塔、遊樂場 | 1 / 1 / 4 | 看表演、約見面、玩 |
 | 活動場景 `actspace-01…10` | 10 | 8F 大熊、噴水池寫生、夜市、海灣步道、煙火觀賞台、錦鯉池、晨練慢跑、行政窗口、繪本區、表演空地（見 `Docs/StreetSocialCity/production/activity-scenes-implementation.md`） |
 | 大樓共用區 `room_building_common` | 11 棟 | 宿舍交誼區、接待大廳沙發等 |
+| 商店樓層 `room_shop` | 169 層（S01–S96） | 店內座位 `seat*`、桌子 `table*`、沙發，共 1102 個錨點；都在該店範圍內。咖啡、手搖飲、餐館、甜點、書店等各自對應遊戲的 cafe／drinkshop／restaurant／snack／bookstore |
 
 遊戲現有地點和大學城建築的對應：
 
@@ -84,7 +85,6 @@
 
 ## 還沒做或有疑問
 
-- **店內座位**：S01–S96 的模組化商店只有 S18、S19 讀進了錨點，其他店的桌椅還沒換算。
 - **百貨**：M1 沒有家具實例，只有規劃資料。
 - **H1 原本的飯店房**：被汽車旅館取代的那幾層沒有列入。H1 只列 1 樓大廳。
 - **汽車旅館 209**：`imore-93474c507aaf` 是樣板房，床不在預設位置，床錨點是預設值，要再量。
@@ -92,3 +92,29 @@
 - **宿舍 1 樓 16 張床**：沒有實測資料可以對照。其餘 400 張和地圖實測相差都在 10 cm 內。
 - **門口**：室內地點的 `door` 目前是家具範圍的中心，不是真正的房門；汽車旅館用的是真正的入口。
 - **等攻略確認**：哪些地點開放 H、戶外隱密點要不要開放、還缺哪些場地。
+
+## 明天把大學城換進遊戲：做法草案（11-03 整理）
+
+現況：大學城在獨立專案 `StreetSocialCity/`，引擎 `E:/PhysX/UE5.8`。
+
+- Content 有 83 GB，裡面有歷史資產；完整 cook 之後約 21.6 GB。
+- 地圖依賴兩個 Runtime 外掛：
+  - `CityEnvironment`：日夜時鐘、`CityEnvironmentController`、`ACityImmersionWalker`（鏡子「最近兩面」的開關也在這裡），附 ThirdParty。
+  - `CityLocalization`：三語招牌。
+- 另有 Editor 外掛 `CityDepthAudit`，只有驗收用得到。
+
+建議步驟：
+
+1. **外掛**：把 `CityEnvironment`、`CityLocalization` 複製進 `OpenKoikatsu/Plugins/`，在 `.uproject` 啟用。這是共用程式碼，提交前要照 AGENTS.md 建置遊戲 `OpenKoikatsu` Development 和編輯器，確認連結成功，也要通知 E／F 組。
+2. **內容**：用編輯器的 Migrate，從 `/Game/UniversityCity/Maps/UniversityCity` 沿依賴搬到 `OpenKoikatsu/Content/UniversityCity/`，只搬地圖實際用到的資產。
+   - 這些是第三方生成模型與大量貼圖，照「版控只放共用資源」不進版控：加 `.gitignore`，只留本機，和角色卡一樣。
+3. **玩家與鏡子**：遊戲用自己的 Pawn。地圖裡的 `ACityImmersionWalker` 只用在大學城自己的實走驗收。換進遊戲後，鏡子的「最近兩面」開關要改由遊戲的 Pawn 或場景 Tick 呼叫，或保留一個不受控制、只負責開關鏡子的 actor。
+4. **地點**：
+   - 把 `OKStreetPlaces()` 的寫死表換成讀 `places.json`（或由它產生 C++ 表）。
+   - 遊戲原有 id（`cafe`、`hotel`、`boys_dorm`…）依上面的對照表指到大學城的地點。
+   - 汽車旅館、宿舍、公寓等新的可上鎖房間，在 `places.toml` 加 privacy 2 的類別。
+5. **地圖路徑**：改兩處，`Tools/run_street_social_development.lua:463` 和 `OKStreetSocialScene.cpp:4661`。路線點（`OKStreetPlaceRoutePoints`）改用大學城的道路與門口。
+6. **打包**：照 `rebuild_street_social_runtime.lua` 的完整流程（新 tag、新 base），C 端用 `D:/PhysX/UE5.8`；兩邊引擎都是 5.8 PhysX 分支。
+7. **驗收**：`StreetSocial.cmd` 實際啟動、走到各地點、睡覺、H 能在旅館房進行，`CardReaderDevelopment.cmd` 也要能啟動。
+
+步驟 1、3、4、5 動到 C++，要使用者決定由誰做。我（c-street-city）目前只動場景。

@@ -3,8 +3,10 @@
 --   world_fix_probe    read-only: what the G113 / G086 views actually hit -> world-edge-v1/fix-probe.json
 --   world_fix_install  (1) the four restroom vanity mirrors that were spawned lying flat (Rotator(0,yaw,0) is
 --                          roll/pitch/yaw in Python) are turned upright, facing their recorded normal;
---                      (2) the 10 cm step where the city ground (1198) meets Outdoor_annex_ground (1188) along
---                          y = 110000 gets a 1 m sloped strip of world-aligned grass on the annex side
+--                      (2) the 10 cm step along the south border (y = 110000; city ground 1198 against the annex /
+--                          skirt): measured every 2 m, a 1 m sloped strip of world-aligned grass where the outside is
+--                          3-30 cm lower
+--                      (3) WorldEdge_Seawall (river-mouth quay, the white slope in G113) gets the river gravel MI
 -- The install backs the map up to world-edge-v1/UniversityCity-before-scene-fixes-<sha>.umap.
 return [====[
 FX_OUT=ROOT/'output/street-social-city-production/world-edge-v1'
@@ -25,7 +27,15 @@ def motel_world_fix_probe():
    for pitch in (-20,-8,0,8,20):
     a=math.radians(ang);p=math.radians(pitch);d=(f*math.cos(a)+r*math.sin(a))*math.cos(p)+unreal.Vector(0,0,math.sin(p))
     rows.append(dict(view=v['id'],yaw=ang,pitch=pitch,hit=_fx_hit(world,e,e+d*6000)))
- (FX_OUT/'fix-probe.json').write_text(json.dumps(dict(map_sha256=LOAD_SHA,rows=rows),ensure_ascii=False,indent=1),'utf8')
+ # height profiles: down-traces every 25 cm along the G086 view line and across the south border at three x
+ prof=[]
+ for name,(ax,ay),(bx,by) in [('G086_line',(58257,120500),(58257,108500)),('border_x30000',(30000,111500),(30000,108500)),('border_x58000',(58000,111500),(58000,108500)),('border_x80000',(80000,111500),(80000,108500))]:
+  n=int(math.hypot(bx-ax,by-ay)/25);pts=[]
+  for i in range(n+1):
+   x=ax+(bx-ax)*i/n;y=ay+(by-ay)*i/n;h=_fx_hit(world,unreal.Vector(x,y,1600),unreal.Vector(x,y,900))
+   pts.append([round(x),round(y),round(h['point'][2],1) if h else None,h['actor'] if h else None])
+  prof.append(dict(name=name,points=pts))
+ (FX_OUT/'fix-probe.json').write_text(json.dumps(dict(map_sha256=LOAD_SHA,rows=rows,profiles=prof),ensure_ascii=False,indent=1),'utf8')
 def motel_world_fix_install():
  b=FX_OUT/('UniversityCity-before-scene-fixes-'+LOAD_SHA[:16]+'.umap')
  if not b.exists():shutil.copy2(MAPFILE,b)
@@ -44,16 +54,35 @@ def motel_world_fix_install():
  for a in list(acts.values()):
   if a.get_actor_label().startswith('SceneFix_AnnexStep'):SUB.destroy_actor(a)
  cube=EAL.load_asset('/Engine/BasicShapes/Cube');grass=EAL.load_asset('/Game/UniversityCity/GrassHillsV1/M_GrassWorldTriplanar_v2');assert cube and grass
- ann=acts['Outdoor_annex_ground'];o,e=ann.get_actor_bounds(False);x0,x1=o.x-e.x,o.x+e.x
- run,drop=100.,10.;L=math.hypot(run,drop);s=drop/L;c=run/L
- rot=unreal.MathLibrary.make_rotation_from_axes(unreal.Vector(1,0,0),unreal.Vector(0,c,-s),unreal.Vector(0,s,c))
- seg=2000.;k=0;x=x0
- while x<x1-1:
-  w=min(seg,x1-x);centre=unreal.Vector(x+w/2,110000+run/2,1193-1.0)
+ # measured: along the whole south border (y = 110000) every 2 m, the walk surface just inside (y 109950) and just
+ # outside (y 110050); a strip goes only where the outside is 3-30 cm lower, from the inside height down to it
+ world=unreal.EditorLevelLibrary.get_editor_world()
+ def top(x,y):
+  h=_fx_hit(world,unreal.Vector(x,y,1600),unreal.Vector(x,y,900))
+  return h['point'][2] if h else None
+ run=100.;k=0;runs=[];cur=None
+ for i in range(0,110000//200):
+  x=i*200.+100;zi=top(x,109950);zo=top(x,110050)
+  ok=zi is not None and zo is not None and 3<=zi-zo<=30
+  if ok and cur and abs(zi-cur['zi'])<2 and abs(zo-cur['zo'])<2 and x-cur['x1']<=200.5:cur['x1']=x+100
+  elif ok:
+   cur=dict(x0=x-100,x1=x+100,zi=zi,zo=zo);runs.append(cur)
+  else:cur=None
+ for r in runs:
+  drop=r['zi']-r['zo'];L=math.hypot(run,drop);s=drop/L;c=run/L;w=r['x1']-r['x0']
+  rot=unreal.MathLibrary.make_rotation_from_axes(unreal.Vector(1,0,0),unreal.Vector(0,c,-s),unreal.Vector(0,s,c))
+  centre=unreal.Vector(r['x0']+w/2,110000+run/2,(r['zi']+r['zo'])/2-1.0)
   a=SUB.spawn_actor_from_class(unreal.StaticMeshActor,centre,rot);a.set_actor_label('SceneFix_AnnexStep_%02d'%k);a.set_folder_path('UniversityCity/SceneFixesV1');a.tags=[unreal.Name('SceneFix')]
   m=a.static_mesh_component;m.set_static_mesh(cube);m.set_material(0,grass);m.set_collision_profile_name('NoCollision');m.set_editor_property('cast_shadow',False);a.set_actor_scale3d(unreal.Vector(w/100,L/100,.02))
-  k+=1;x+=w
- done.append(dict(fix='annex_step_strip',segments=k,x=[x0,x1],y=110000,top=1198,bottom=1188))
+  k+=1
+ done.append(dict(fix='south_border_step_strip',segments=k,runs=runs))
+ # (3) G113: the river-mouth quay kept the glb's light concrete (a blank white slope); river gravel like the bed
+ sw=acts.get('WorldEdge_Seawall');gravel=EAL.load_asset('/Game/UniversityCity/GroundPBRV2/Materials/MI_Detail_9ea1c3103a2d3f4c9850')
+ if sw and gravel:
+  c=sw.static_mesh_component
+  if any(c.get_material(i)!=gravel for i in range(c.get_num_materials())):
+   for i in range(c.get_num_materials()):c.set_material(i,gravel)
+   done.append(dict(fix='seawall_gravel',slots=c.get_num_materials()))
  acts.get('CityEnvironmentController') and acts['CityEnvironmentController'].prepare_for_save()
  assert unreal.EditorLevelLibrary.save_current_level();new=sha(MAPFILE)
  installed=read('motel-install');installed.update(parent_map_sha256=LOAD_SHA,map_sha256=new);write('motel-install',installed)
