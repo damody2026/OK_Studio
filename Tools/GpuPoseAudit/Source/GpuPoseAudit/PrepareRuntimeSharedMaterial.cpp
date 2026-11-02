@@ -17,6 +17,7 @@
 #include "Materials/MaterialExpressionConstant.h"
 #include "Materials/MaterialExpressionTransform.h"
 #include "Materials/MaterialExpressionTime.h"
+#include "Materials/MaterialExpressionAdd.h"
 #include "Engine/Texture2D.h"
 #include "Engine/TextureCube.h"
 #include "Engine/VolumeTexture.h"
@@ -35,7 +36,7 @@
 #endif
 #include "RenderingThread.h"
 
-bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,const FString& Output,bool HGShading){
+bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,const FString& Output,bool HGShading,bool WrapOnly){
 #if !OK_HG_SHADING_TOOL
  if(HGShading){UE_LOG(LogTemp,Error,TEXT("-HGShading needs the OKHGShading plugin in the material host"));return false;}
 #else
@@ -54,8 +55,10 @@ bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,c
  };
  for(auto Recipe:OKRuntimeSharedMaterialRecipes())for(bool Outline:{false,true}){
  if(Outline&&!OKRuntimeOutlineLayout(Recipe))continue;
+ // -WrapOnly: only her skin and its outline, as <name>_Wrap (the 1-on-1 scene's skin pushed off his penis, DPG below).
+ if(WrapOnly&&Recipe!=EKKRuntimeMaterialRecipe::ForgeSkin&&Recipe!=EKKRuntimeMaterialRecipe::KoikanoSkin)continue;
  const bool Translucent=!Outline&&OKRuntimeSharedMaterialTranslucent(Recipe);
- const FString Name=OKRuntimeSharedMaterialParentName(Recipe)+(Outline?TEXT("_Outline"):TEXT(""));auto* Mat=NewObject<UMaterial>(CreatePackage(*(Root/Name)),*Name,RF_Public|RF_Standalone);Keep.Emplace(Mat);Assets.Add(Mat);
+ const FString Name=OKRuntimeSharedMaterialParentName(Recipe)+(Outline?TEXT("_Outline"):TEXT(""))+(WrapOnly?TEXT("_Wrap"):TEXT(""));auto* Mat=NewObject<UMaterial>(CreatePackage(*(Root/Name)),*Name,RF_Public|RF_Standalone);Keep.Emplace(Mat);Assets.Add(Mat);
  Mat->MaterialDomain=MD_Surface;Mat->BlendMode=Outline?BLEND_Masked:OKRuntimeSharedMaterialBlendMode(Recipe);Mat->SetShadingModel(MSM_Unlit);Mat->TwoSided=Outline||OKRuntimeSharedMaterialTwoSided(Recipe);Mat->OpacityMaskClipValue=.5f;
  // The native vertex recipes consume independent UV0..UV3. Declare their
  // vertex pass-through explicitly; pixel custom inputs alone are insufficient
@@ -191,6 +194,20 @@ bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,c
   WPO->Code+=TEXT("approx=normalize(Normal)*(width*coverage*alpha);}\nreturn OutlineApprox>.5?approx:native;");
   Register(WPO);Ed->WorldPositionOffset.Expression=WPO;
  }
+ // -WrapOnly: her skin pushed off the capsule along his penis (DPG-style), __OK_WrapFrom/__OK_WrapTo (UE world cm),
+ // __OK_WrapRadius (0: none, the default), __OK_WrapSoft (the falloff past the radius; above the radius it never folds).
+ // The skin at distance d from the segment moves out R*(1-d/(R+Soft))^2; an outline adds it to its own hull offset.
+ if(WrapOnly){
+  auto* Wrap=NewObject<UMaterialExpressionCustom>(Mat);Wrap->OutputType=CMOT_Float3;Wrap->Description=TEXT("OK wrap DPG");
+  auto In=[&](const TCHAR* N,UMaterialExpression* E){Register(E);auto& I=Wrap->Inputs.AddDefaulted_GetRef();I.InputName=N;I.Input.Expression=E;};
+  auto* At=NewObject<UMaterialExpressionWorldPosition>(Mat);At->WorldPositionShaderOffset=WPT_ExcludeAllShaderOffsets;In(TEXT("P"),At);
+  auto Point=[&](const TCHAR* N){auto* V=NewObject<UMaterialExpressionVectorParameter>(Mat);V->ParameterName=N;V->DefaultValue=FLinearColor(0,0,0,0);return V;};
+  In(TEXT("From"),Point(TEXT("__OK_WrapFrom")));In(TEXT("To"),Point(TEXT("__OK_WrapTo")));In(TEXT("Radius"),Scalar(TEXT("__OK_WrapRadius"),0.f));In(TEXT("Soft"),Scalar(TEXT("__OK_WrapSoft"),0.f));
+  Wrap->Code=TEXT("float3 ab=To-From;float l2=dot(ab,ab);float t=l2>1e-6?saturate(dot(P-From,ab)/l2):0;float3 v=P-(From+ab*t);float d=length(v);float reach=Radius+max(Soft,0);\nif(Radius<=0||d>=reach||d<1e-4)return float3(0,0,0);\nfloat k=1-d/reach;return v/d*(Radius*k*k);");
+  Register(Wrap);
+  if(auto* Native=Ed->WorldPositionOffset.Expression){auto* Sum=NewObject<UMaterialExpressionAdd>(Mat);Sum->A.Expression=Native;Sum->B.Expression=Wrap;Register(Sum);Ed->WorldPositionOffset.Expression=Sum;}
+  else Ed->WorldPositionOffset.Expression=Wrap;
+ }
  Mat->UpdateCachedExpressionData();Mat->PostEditChange();
  Mat->CacheShaders(EMaterialShaderPrecompileMode::Synchronous);
  // Finish async DDC shader-map retrieval as well as submitted compiler jobs.
@@ -216,7 +233,7 @@ bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,c
  }
  TArray<TSharedPtr<FJsonValue>> Saved;for(auto* A:Assets){const FString File=FPackageName::LongPackageNameToFilename(A->GetOutermost()->GetName(),FPackageName::GetAssetPackageExtension());IFileManager::Get().MakeDirectory(*FPaths::GetPath(File),true);FSavePackageArgs Args;Args.TopLevelFlags=RF_Public|RF_Standalone;if(!UPackage::SavePackage(A->GetOutermost(),A,*File,Args))return false;Saved.Add(MakeShared<FJsonValueString>(A->GetPathName()));}
  auto Report=MakeShared<FJsonObject>();Report->SetBoolField(TEXT("passed"),true);Report->SetBoolField(TEXT("source_mesh_shader_permutations_verified"),true);Report->SetNumberField(TEXT("schema"),1);Report->SetStringField(TEXT("root"),Root);Report->SetStringField(TEXT("parent"),Root/TEXT("M_ForgeOpaque.M_ForgeOpaque"));Report->SetStringField(TEXT("alpha_masked_parent"),Root/TEXT("M_ForgeAlphaMasked.M_ForgeAlphaMasked"));Report->SetStringField(TEXT("alpha_translucent_parent"),Root/TEXT("M_ForgeAlphaTranslucent.M_ForgeAlphaTranslucent"));Report->SetStringField(TEXT("item_parent"),Root/TEXT("M_ForgeItem.M_ForgeItem"));Report->SetStringField(TEXT("hair_parent"),Root/TEXT("M_ForgeHair.M_ForgeHair"));Report->SetStringField(TEXT("hair_front_parent"),Root/TEXT("M_ForgeHairFront.M_ForgeHairFront"));Report->SetStringField(TEXT("studio_alpha_parent"),Root/TEXT("M_ForgeStudioAlpha.M_ForgeStudioAlpha"));Report->SetArrayField(TEXT("assets"),Saved);Report->SetBoolField(TEXT("per_card_input_used"),false);Report->SetBoolField(TEXT("runtime_compilation_required"),false);
- Report->SetBoolField(TEXT("runtime_reveal_supported"),true);Report->SetStringField(TEXT("render_style"),HGShading?TEXT("hg"):TEXT("koikatsu"));Report->SetNumberField(TEXT("runtime_reveal_duration_seconds"),3);
+ Report->SetBoolField(TEXT("runtime_reveal_supported"),true);Report->SetBoolField(TEXT("wrap_only"),WrapOnly);Report->SetStringField(TEXT("render_style"),HGShading?TEXT("hg"):TEXT("koikatsu"));Report->SetNumberField(TEXT("runtime_reveal_duration_seconds"),3);
  FString Text;FJsonSerializer::Serialize(Report,TJsonWriterFactory<>::Create(&Text));return FFileHelper::SaveStringToFile(Text,*Output);
 }
 

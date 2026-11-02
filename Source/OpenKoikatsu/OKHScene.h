@@ -138,7 +138,7 @@ private:
     UPROPERTY() TArray<TObjectPtr<USoundBase>> SoundsPlaying;
     // One of her lines from the intercourse voice table (HSonyu playVoices - 300), in her experience bank.
     bool PlayHVoice(int32 Row);
-    void ApplySpeed();bool bStrokeDeep=false;double StrokeCryAt=0.;float BellyPullback=0.f;bool bPullbackLogged=false;float SkinFacing=0.f;bool bBellySide=false;int32 BulgeRefused=0;float WrapMs=0.f,SwellMs=0.f;bool bWrapShown=false;int32 WrapVerts=0; /* her skin moved over him (ReadBulge) */FVector BellyFront=FVector::ZeroVector;float TipInside=-1.f; // cm his glans is past her entrance along himself (-1 none)
+    void ApplySpeed();bool bStrokeDeep=false;double StrokeCryAt=0.;float BellyPullback=0.f;bool bPullbackLogged=false;float SkinFacing=0.f;bool bBellySide=false;int32 BulgeRefused=0;float WrapMs=0.f,SwellMs=0.f;bool bWrapShown=false,bWrapLineShown=false;int32 WrapVerts=0; /* her skin moved over him (ReadBulge) */FVector BellyFront=FVector::ZeroVector;float TipInside=-1.f; // cm his glans is past her entrance along himself (-1 none)
     FString Current() const;
     int32 Level() const;
     // She has come as many times as she will this scene (climax_limit): she wants it to stop, the panel offers no more

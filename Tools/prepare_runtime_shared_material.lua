@@ -2,6 +2,8 @@
 -- commandlet (-PrepareRuntimeSharedMaterial) in the material bake host Saved/Crowd/RuntimeMaterialBakeHost, and checks
 -- the gates of its Saved/Crowd/RuntimeSharedMaterial-<tag>.json evidence. Prints the evidence path as the last line.
 -- --hg-shading authors the HG render style parents (Plugins/OKHGShading) instead of the Koikatsu ones.
+-- --wrap-only authors only the skin parents and their outlines as <name>_Wrap, with the 1-on-1 scene's DPG world position
+-- offset (her skin pushed off his penis; Launch/materials.json wrap_root, e.g. StreetWrap01).
 --
 --   Tools\lua\lua.exe Tools\prepare_runtime_shared_material.lua --tag StreetHG01 [--hg-shading] [--engine DIR]
 -- require "prepare_runtime_shared_material" gives M.prepare_bake_host() (also used by rebuild_street_social_patch.lua).
@@ -70,6 +72,7 @@ local function main()
   p:opt("--tag", { required = true })
   p:opt("--engine", { default = ok.engine_root() })
   p:flag("--hg-shading")
+  p:flag("--wrap-only")
   local a = p:parse(arg)
   if not a.tag:match("^[%w_%-]+$") then error("--tag must match ^[A-Za-z0-9_-]+$", 0) end
   local engine = path.norm(a.engine)
@@ -87,6 +90,7 @@ local function main()
     "-MaterialRoot=/Game/IndependentResources/RuntimeMaterials/" .. a.tag, '-Output="' .. win(base) .. '.json"',
     '-abslog="' .. win(base) .. '.log"' }
   if a.hg_shading then args[#args + 1] = "-HGShading" end
+  if a.wrap_only then args[#args + 1] = "-WrapOnly" end
   local line = '"' .. win(path.join(engine, "Engine/Binaries/Win64/UnrealEditor-Cmd.exe")) .. '"' .. " " .. table.concat(args, " ")
   local child = proc.popen(line, { shell = false, hide = true, stdout = "NUL", stderr = "NUL" })
   path.write_text(base .. ".pid", tostring(child:pid()) .. "\n")

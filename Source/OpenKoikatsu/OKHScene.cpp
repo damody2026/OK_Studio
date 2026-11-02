@@ -1127,7 +1127,14 @@ static constexpr float PenisRadiusCm=1.8f;
 // How far his root may be moved off her skin past where the pad puts it (AlignHim: RootDodge).
 static constexpr float RootDodgeMaxCm=20.f;
 static TAutoConsoleVariable<float> CVarHWrapTest(TEXT("ok.HScene.WrapTest"),0.f,TEXT("Test: every wrapped skin moved this many metres up her mesh instead (0 off)"));
-static TAutoConsoleVariable<int32> CVarHWrap(TEXT("ok.HScene.Wrap"),1,TEXT("1: her skin moves each frame to wrap his penis in her (belly_bulge::wrap_deltas); 0 off, to compare"));
+static TAutoConsoleVariable<int32> CVarHWrap(TEXT("ok.HScene.Wrap"),1,TEXT("1: her skin moves each frame to wrap his penis in her (belly_bulge::wrap_deltas); 2: her skin material pushes it off his penis (world position offset, the _Wrap parents of wrap_material_root); 0 off, to compare"));
+// The skin parents with the wrap offset (manifest wrap_material_root, Launch/materials.json wrap_root).
+static const FString& OKWrapMaterialRoot(){
+    static const FString Root=[]{FString Manifest,Json,Found;TSharedPtr<FJsonObject> Object;
+        if(FParse::Value(FCommandLine::Get(),TEXT("StreetSocialManifest="),Manifest)&&FFileHelper::LoadFileToString(Json,*Manifest)&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Object)&&Object)Object->TryGetStringField(TEXT("wrap_material_root"),Found);
+        return Found.IsEmpty()?FString(TEXT("/Game/IndependentResources/RuntimeMaterials/StreetWrap01")):Found;}();
+    return Root;
+}
 static TAutoConsoleVariable<float> CVarHEntranceDown(TEXT("ok.HScene.EntranceDown"),1.5f,TEXT("cm his entry point sits below J_Kokan, toward J_Ana"));
 static bool HEntrance(AKKPreviewActor* Girl,bool bAnal,FVector& Out){
     if(bAnal)return HBone(Girl,TEXT("J_Ana"),Out);
@@ -1305,7 +1312,7 @@ void UOKHScenePanel::BulgeBelly(AKKPreviewActor* Girl,const FVector* Tip,float O
     // Where his tip is against her skin now: read when the pair playback has the sessions idle (ReadPairSessions); with
     // none, here.
     FVector Kokan;
-    if(!Tip){BulgeTarget=NAME_None;if(bWrapShown&&IsValid(Girl)){Girl->SetPartWrapDeltas(BulgePart,{},{});bWrapShown=false;}}
+    if(!Tip){BulgeTarget=NAME_None;if(bWrapShown&&IsValid(Girl)){Girl->SetPartWrapDeltas(BulgePart,{},{});bWrapShown=false;}if(bWrapLineShown&&IsValid(Girl)){Girl->SetWrapLine(false,FVector::ZeroVector,FVector::ZeroVector,0.f,FString());bWrapLineShown=false;}}
     else if(!IsValid(Gallery?Gallery->PairedPlayback.Get():nullptr))ReadBulge(Girl,*Tip);
     // Once his tip is past her skin (inside, the margin swelled her where he does not show), out by how far and 2.5 cm
     // more (his glans is round, the skin beside the one measured moves less). A swell that hardly moves that skin (the
@@ -1389,9 +1396,15 @@ void UOKHScenePanel::ReadBulge(AKKPreviewActor* Girl,const FVector& Tip,const FV
     // wedges (GalV1103a~c). So each frame her skin over him moves by itself, in her posed body, along its own normal to
     // just past him, the skin round it rising with it (belly_bulge::wrap_deltas), drawn as one morph of her renderers.
     {const double WrapT0=FPlatformTime::Seconds();TArray<uint32> Idx;TArray<FVector3f> D,N;
-     if(!E.IsZero()&&CVarHWrap.GetValueOnGameThread()!=0&&TipInside>=6.f)Girl->Session.BellyWrapDeltas(ToUnity(E),ToUnity(Tip),Front.IsZero()?FVector::ZeroVector:(ToUnity(Kokan+Front*10.)-ToUnity(Kokan)).GetSafeNormal(),(Radius+.5f)/100.f,Idx,D,&N);
+     const int32 WrapMode=CVarHWrap.GetValueOnGameThread();
+     if(!E.IsZero()&&WrapMode==1&&TipInside>=6.f)Girl->Session.BellyWrapDeltas(ToUnity(E),ToUnity(Tip),Front.IsZero()?FVector::ZeroVector:(ToUnity(Kokan+Front*10.)-ToUnity(Kokan)).GetSafeNormal(),(Radius+.5f)/100.f,Idx,D,&N);
      if(const float Test=CVarHWrapTest.GetValueOnGameThread();Test!=0.f)for(FVector3f& V:D)V=FVector3f(0.f,Test,0.f);
      if(D.Num()||bWrapShown){Girl->SetPartWrapDeltas(BulgePart,Idx,D,N);bWrapShown=D.Num()>0;}WrapVerts=D.Num();
+     // ok.HScene.Wrap 2 (the material route, to compare): her skin parents with the wrap offset push her skin off the
+     // segment from her entrance to his glans, his radius and half a centimetre (as above) out; nothing while he is in
+     // her entrance alone.
+     if(WrapMode==2||bWrapLineShown){const bool bLine=WrapMode==2;const bool bIn=!E.IsZero()&&TipInside>=6.f;
+      Girl->SetWrapLine(bLine,E,Tip,bIn?Radius+.5f:0.f,OKWrapMaterialRoot());bWrapLineShown=bLine;}
      WrapMs=float((FPlatformTime::Seconds()-WrapT0)*1000.);}
     // His glans alone read out for the panel (bulge_at, belly_out): each reading skins all her swells' skin again, and
     // with the fine grid that for every point of him took the game from 100 FPS to 25.

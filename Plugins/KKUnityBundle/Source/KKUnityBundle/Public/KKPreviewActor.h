@@ -608,6 +608,14 @@ public:
 	// External morph sets replaced, kept until the render thread is past them.
 	struct FOkWrapRelease { TSharedPtr<struct FExternalMorphSet> Set; FRenderCommandFence Fence; uint64 Frame=0; bool bReleased=false; };
 	TArray<TUniquePtr<FOkWrapRelease>> WrapReleases;
+	// Her skin wraps the segment From..To (UE world cm) in the material instead (ok.HScene.Wrap 2): her skin instances
+	// (parents M_ForgeSkin, M_KoikanoSkin and their outlines, not the HG ones) drawn with their <name>_Wrap parents under
+	// WrapRoot, whose world position offset pushes the skin within RadiusCm (falling off to 3x) of the segment out to it.
+	// Each call refreshes them from her own instances; off puts her own instances back. False when none was found.
+	bool SetWrapLine(bool bOn, const FVector& From, const FVector& To, float RadiusCm, const FString& WrapRoot);
+	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> WrapInstanceOf;
+	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> WrapOriginalOf;
+	bool bWrapParentMissingLogged = false;
 	// Insertion depth within the current pose. Authored vagina.open only; bone
 	// spread is used when that morph is absent. Range is owned by paired playback.
 	void DriveVaginaOpening(const AKKPreviewActor& Male, float& RangeMin, float& RangeMax, bool& bRange);

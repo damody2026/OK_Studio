@@ -54,6 +54,7 @@
 #endif
 #include "ProceduralMeshComponent.h"
 #include "Misc/Paths.h"
+#include "Misc/PackageName.h"
 #include "String/LexFromString.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Crc.h"
@@ -9348,6 +9349,53 @@ void AKKPreviewActor::ApplyMouth()
     }
 }
 
+
+// Her skin wrapping his penis in the material (ok.HScene.Wrap 2): the skin instances swapped for ones of the _Wrap parents
+// (Tools/prepare_runtime_shared_material.lua --wrap-only), whose world position offset pushes her skin off the segment.
+// Her own instances stay as they are (whatever sets their values each frame still does) and are copied into the wrap ones
+// on every call; the skin parents themselves never get the offset, so every other scene draws as before.
+bool AKKPreviewActor::SetWrapLine(bool bOn,const FVector& From,const FVector& To,float RadiusCm,const FString& WrapRoot)
+{
+    TInlineComponentArray<UMeshComponent*> Meshes(this);
+    if(!bOn)
+    {
+        for(UMeshComponent* Mesh:Meshes)for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
+            if(auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot)))if(const auto* Original=WrapOriginalOf.Find(M))Mesh->SetMaterial(Slot,*Original);
+        WrapInstanceOf.Reset();WrapOriginalOf.Reset();
+        return true;
+    }
+    static const TSet<FString> Skins={TEXT("M_ForgeSkin"),TEXT("M_ForgeSkin_Outline"),TEXT("M_KoikanoSkin"),TEXT("M_KoikanoSkin_Outline")};
+    TSet<UMaterialInstanceDynamic*> Shown;
+    for(UMeshComponent* Mesh:Meshes)for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
+    {
+        auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot));if(!M)continue;
+        UMaterialInstanceDynamic* Wrap=WrapOriginalOf.Contains(M)?M:nullptr;
+        if(!Wrap)if(const auto* Found=WrapInstanceOf.Find(M))Wrap=*Found;
+        if(!Wrap)
+        {
+            UMaterialInterface* Parent=M->Parent;
+            if(!Parent||!Skins.Contains(Parent->GetName())||Parent->GetPathName().Contains(TEXT("/StreetHG")))continue;
+            const FString Name=Parent->GetName()+TEXT("_Wrap");
+            UMaterialInterface* WrapParent=FPackageName::DoesPackageExist(WrapRoot/Name)?LoadObject<UMaterialInterface>(nullptr,*(WrapRoot/Name+TEXT(".")+Name)):nullptr;
+            if(!WrapParent){if(!bWrapParentMissingLogged){bWrapParentMissingLogged=true;UE_LOG(LogTemp,Warning,TEXT("Skin wrap: no %s under %s"),*Name,*WrapRoot);}continue;}
+            Wrap=UMaterialInstanceDynamic::Create(WrapParent,this);
+            WrapInstanceOf.Add(M,Wrap);WrapOriginalOf.Add(Wrap,M);
+        }
+        if(Mesh->GetMaterial(Slot)!=Wrap)Mesh->SetMaterial(Slot,Wrap);
+        Shown.Add(Wrap);
+    }
+    const float Radius=FMath::Max(RadiusCm,0.f);
+    for(UMaterialInstanceDynamic* Wrap:Shown)
+    {
+        Wrap->CopyParameterOverrides(WrapOriginalOf[Wrap]);
+        Wrap->SetVectorParameterValue(TEXT("__OK_WrapFrom"),FLinearColor(From.X,From.Y,From.Z,0.f));
+        Wrap->SetVectorParameterValue(TEXT("__OK_WrapTo"),FLinearColor(To.X,To.Y,To.Z,0.f));
+        Wrap->SetScalarParameterValue(TEXT("__OK_WrapRadius"),Radius);
+        // A falloff of twice the radius: the skin moved never passes the skin farther out (no fold).
+        Wrap->SetScalarParameterValue(TEXT("__OK_WrapSoft"),Radius*2.f);
+    }
+    return Shown.Num()>0;
+}
 
 // Her body part's skin moved this frame by a set of per-vertex moves (belly_bulge::wrap_deltas: her belly wrapping his
 // penis), drawn as an external morph set on the part's renderers (the ML Deformer's way): one morph at weight 1,
