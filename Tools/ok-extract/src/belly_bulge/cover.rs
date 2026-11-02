@@ -9,11 +9,13 @@ use super::*;
 use crate::pose::Skeleton;
 
 /// How far across the skin one place pushes the cloth (its push fades to nothing there), and the cells it is looked up in.
-const REACH_M: f32 = 0.035;
+const REACH_M: f32 = 0.015;
 /// Cloth further under the skin as it was (not lifted) is on her far side, or under another garment's skin: left alone.
 const UNDER_M: f32 = 0.015;
 /// Her skin is thinned to one place in each cube this wide (the nearest a garment vertex looks is `REACH_M`).
 const THIN_M: f32 = 0.006;
+/// How far moved skin must have swelled out along its normal to push the cloth.
+const OUT_M: f32 = 0.003;
 /// Bones whose skin pushes every frame (part of a name): her breasts and nipples.
 const PUSHING: [&str; 2] = ["bust", "bnip"];
 
@@ -104,6 +106,9 @@ impl CoverField {
             let p0 = point(&m, r);let p = point(&m, [r[0] + d[0], r[1] + d[1], r[2] + d[2]]);
             let o = point(&m, [0.; 3]);let q = point(&m, [rn[0] + d[3], rn[1] + d[4], rn[2] + d[5]]);
             let Some(n) = unit(sub(q, o)) else { continue; };
+            // Moved skin only where it swells out (his bulge under her belly): round him at her crotch it is drawn aside
+            // and in, and cloth pushed off that tore into black folds.
+            if !on_bust && dot(sub(p, p0), n) < OUT_M { continue; }
             if !taken.insert(p.map(|v| (v / THIN_M).floor() as i64)) { continue; }
             skin.push((p0, p, n));
         }
@@ -143,7 +148,7 @@ impl CoverField {
     pub(crate) fn cover(&self, _index: usize, part: &SessionPart, positions: &mut [[f32; 3]]) {
         if !covers(&part.role) || part.runtime_accessory.is_none() || positions.len() != part.rest_positions.len() { return; }
         let nbr = neighbours(&part.indices, &part.rest_positions);
-        let Some(push) = self.pushes(margin(&part.role), positions, &nbr) else { return; };
+        let Some(push) = self.pushes(margin(&part.role), positions, &nbr, &part.indices) else { return; };
         for (p, v) in positions.iter_mut().zip(push) { for a in 0..3 { p[a] += v[a]; } }
     }
 
@@ -157,30 +162,32 @@ impl CoverField {
 
     /// How far each of `positions` (a garment posed, her skeleton space) moves to stay `keep` past her skin, evened over
     /// the cloth round it (so a nipple lifts a little tent of cloth and not one vertex).
-    fn pushes(&self, keep: f32, positions: &[[f32; 3]], nbr: &[Vec<u32>]) -> Option<Vec<[f32; 3]>> {
+    fn pushes(&self, keep: f32, positions: &[[f32; 3]], nbr: &[Vec<u32>], indices: &[u32]) -> Option<Vec<[f32; 3]>> {
         let mut push: Vec<[f32; 3]> = vec![[0.; 3]; positions.len()];
         let mut any = false;
         for (j, &c) in positions.iter().enumerate() {
             let Some(list) = self.at(c) else { continue; };
+            // As far as the skin that needs it most, along the normals of all that does weighed by how much: the way taken
+            // from the one skin alone jumped between neighbouring cloth vertices and folded the cloth between them, black.
             let mut best = 0f32;let mut way = [0f32; 3];
-            {
-                for &i in list {
-                    let (p0, p, n) = self.skin[i as usize];
-                    // Cloth behind the skin as it was: her far side, or under it.
-                    if dot(sub(c, p0), n) < -UNDER_M { continue; }
-                    let g = sub(c, p);let h = dot(g, n);let across = dot(g, g) - h * h;
-                    if across >= REACH_M * REACH_M { continue; }
-                    let t = 1. - across.sqrt() / REACH_M;let w = t * t * (3. - 2. * t);
-                    let need = (keep - h) * w;
-                    if need > best { best = need;way = n; }
-                }
+            for &i in list {
+                let (p0, p, n) = self.skin[i as usize];
+                // Cloth behind the skin as it was: her far side, or under it.
+                if dot(sub(c, p0), n) < -UNDER_M { continue; }
+                let g = sub(c, p);let h = dot(g, n);let across = dot(g, g) - h * h;
+                if across >= REACH_M * REACH_M { continue; }
+                let t = 1. - across.sqrt() / REACH_M;let w = t * t * (3. - 2. * t);
+                let need = (keep - h) * w;
+                if need <= 0. { continue; }
+                best = best.max(need);for a in 0..3 { way[a] += n[a] * need; }
             }
-            if best > 0. { push[j] = [way[0] * best, way[1] * best, way[2] * best];any = true; }
+            let l = dot(way, way).sqrt();
+            if best > 0. && l > 1e-9 { push[j] = [way[0] / l * best, way[1] / l * best, way[2] / l * best];any = true; }
         }
         if !any { return None; }
-        // Only the cloth round what moved: four rings out from it.
+        // Only the cloth round what moved: six rings out from it (the push reaches only `REACH_M` across the skin itself).
         let mut near: Vec<u32> = (0..push.len() as u32).filter(|&j| dot(push[j as usize], push[j as usize]) > 0.).collect();
-        for _ in 0..4 {
+        for _ in 0..6 {
             let mut ring: Vec<u32> = near.iter().flat_map(|&j| nbr.get(j as usize).into_iter().flatten().copied()).chain(near.iter().copied()).collect();
             ring.sort_unstable();ring.dedup();near = ring;
             let was: Vec<[f32; 3]> = near.iter().map(|&j| push[j as usize]).collect();
@@ -191,6 +198,22 @@ impl CoverField {
                 let f = 0.6 / list.len() as f32;let avg = [s[0] * f, s[1] * f, s[2] * f];
                 if dot(avg, avg) > dot(was[i], was[i]) { push[j as usize] = avg; }
             }
+        }
+        // A triangle of cloth the pushes turn over (her crotch, where the skin round him moves apart) showed its black inside:
+        // its corners are pushed half as far, until none turns over.
+        let cross = |u: [f32; 3], v: [f32; 3]| [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+        let moved = |push: &[[f32; 3]], k: usize| { let (p, v) = (positions[k], push[k]);[p[0] + v[0], p[1] + v[1], p[2] + v[2]] };
+        for _ in 0..6 {
+            let mut halve: Vec<usize> = Vec::new();
+            for t in indices.chunks_exact(3) {
+                let (a, b, c) = (t[0] as usize, t[1] as usize, t[2] as usize);
+                if a >= push.len() || b >= push.len() || c >= push.len() || [a, b, c].iter().all(|&k| dot(push[k], push[k]) == 0.) { continue; }
+                let was = cross(sub(positions[b], positions[a]), sub(positions[c], positions[a]));
+                let now = cross(sub(moved(&push, b), moved(&push, a)), sub(moved(&push, c), moved(&push, a)));
+                if dot(was, now) <= 0.2 * dot(was, was).sqrt() * dot(now, now).sqrt() { halve.extend([a, b, c]); }
+            }
+            if halve.is_empty() { break; }
+            for k in halve { push[k] = push[k].map(|v| v * 0.5); }
         }
         Some(push)
     }
@@ -226,7 +249,7 @@ pub fn cover_deltas(session: &OkSession, body_moves: &[(u32, [f32; 6])]) -> Vec<
         }).collect();
         let posed: Vec<[f32; 3]> = mats.iter().zip(rest).map(|(m, r)| m.map_or([f32::MAX; 3], |m| point(&m, *r))).collect();
         let nbr = if part.rest_positions.len() == rest.len() { neighbours(&part.indices, &part.rest_positions) } else { std::sync::Arc::new(Vec::new()) };
-        let Some(push) = field.pushes(margin(&part.role), &posed, &nbr) else { continue; };
+        let Some(push) = field.pushes(margin(&part.role), &posed, &nbr, &part.indices) else { continue; };
         let mut moves = Vec::new();
         for (j, v) in push.into_iter().enumerate() {
             let Some(m) = mats[j] else { continue; };
