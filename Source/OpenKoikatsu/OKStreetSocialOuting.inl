@@ -1,4 +1,5 @@
 // Street places (OKStreetSocialPlaces.h) and going to an activity together ("一起走過去").
+bool OKStreetFixedBlock(const FOKStreetPlanBlock* B); // OKStreetSocialLife.inl
 //
 // An activity tied to a place starts with an outing: the player walks the planned route on autopilot and
 // she follows with the shared-walk follow (StepCompanion). Free talk keeps working on the way
@@ -780,7 +781,15 @@ void AOKStreetSocialScene::ArriveOuting(){
   const FString Run=S.StrollActivity;S.StrollActivity.Reset();S.OutingRun=false;S.PhotoWalkAlbum.Reset();
   if(!Run.IsEmpty()&&Girl!=INDEX_NONE)ActivityAftermath(Run,Girl,S.StrollStartMinute);
   S.Message=OKT(TEXT("ui.outing.stroll_ended"));ResumeTalkQuiet(Girl);RefreshUI();return;}
- if(Activity.StartsWith(TEXT("go:"))){S.Message=OKMsg(TEXT("ui.outing.arrived_at_place"), {{TEXT("place"), *Place}});ResumeTalkQuiet(Girl);RefreshUI();return;}
+ if(Activity.StartsWith(TEXT("go:"))){
+  // Walked home by him: she stays in for the rest of this block. 安可, full and walked back to the dorm at 20:37, set off
+  // at once for her 18:16-21:00 meal at the department store she had just come from (R6-102). A class, shift, promise
+  // or the night still takes her (the schedule's own check).
+  if(Girl!=INDEX_NONE&&S.Manifest.Characters.IsValidIndex(Girl)&&Activity.Mid(3)==OKStreetProfileString(S.MindProfiles.FindRef(OKStreetStableId(S.Manifest.Characters[Girl])),nullptr,TEXT("home_place_id"))){
+   const int64 Now=OKStreetMindNow(S);const int32 Minute=int32(Now%1440);
+   if(const FOKStreetPlanBlock* B=BlockNow(Girl,Minute);B&&B->End>Minute&&!OKStreetFixedBlock(B)){S.WaitsForHim.Add(Girl,Now-Minute+B->End);
+    UE_LOG(LogTemp,Display,TEXT("Street outing: actor %d walked home; stays in until %02d:%02d"),Girl,B->End/60%24,B->End%60);}}
+  S.Message=OKMsg(TEXT("ui.outing.arrived_at_place"), {{TEXT("place"), *Place}});ResumeTalkQuiet(Girl);RefreshUI();return;}
  // Gone in to play cards: they sit down to the game, not to the place's own activity.
  if(!S.BluffOnArrival.IsEmpty()&&S.BluffOnArrival==Activity){S.BluffOnArrival.Reset();FString Why;
   if(BluffCanStart(&Why)){S.Message=OKMsg(TEXT("ui.outing.arrived_start_bluff_game"), {{TEXT("place"), *Place}});StartBluff();}

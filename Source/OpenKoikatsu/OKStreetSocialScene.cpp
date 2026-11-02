@@ -188,7 +188,9 @@ struct FOKStreetLoverPose {int32 Girl=INDEX_NONE;FString After;double Since=0;FS
 // A heroine's own loop while her schedule holds her near him (OKStreetSocialLife.inl), with its chair/table props.
 struct FOKLifePose {int32 Actor=INDEX_NONE,Phase=0;FString Clip;double Requested=0;TArray<TWeakObjectPtr<AActor>> Props;};
 // A heroine riding a lift to her spot upstairs while he can see her (OKStreetSocialLife.inl).
-struct FOKNpcLift {int32 Elevator=INDEX_NONE,From=0,To=0,Stage=0;double At=0;FVector Spot=FVector::ZeroVector;};
+// Onward: down to the building's door first, then this walk on (her next block elsewhere, seen by him upstairs).
+struct FOKNpcLift {int32 Elevator=INDEX_NONE,From=0,To=0,Stage=0;double At=0;FVector Spot=FVector::ZeroVector;
+ bool Onward=false,OnHasFinal=false;FVector OnTo=FVector::ZeroVector,OnFinal=FVector::ZeroVector,OnFallback=FVector::ZeroVector;float OnYaw=0;FString OnPlace;};
 struct FOKStreetLoverReact {int32 Girl=INDEX_NONE;FString Clip,MaleClip;int32 Phase=0;double At=0;float Seconds=0;bool WasHeld=false;};
 // One grid route search (AOKStreetSocialScene::GridSearchStep): GridRoute runs it to the end; a heroine's walk runs it a
 // slice a frame (TickRouteJobs), since a search through cells not yet tested (each a physics overlap) took 20-37 ms.

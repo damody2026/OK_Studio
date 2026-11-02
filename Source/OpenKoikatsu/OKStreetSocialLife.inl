@@ -558,9 +558,10 @@ void AOKStreetSocialScene::TickLifeBlocks(){
 
 // 4-6 Seen by him, she takes the lift to her spot upstairs (to the lift, call it, in, her floor, out, to the spot)
 // instead of appearing there. Out of his sight, or with no lift, she is simply placed (the caller does that).
-bool AOKStreetSocialScene::StartNpcLift(int32 I,const FVector& Spot){
+// InPlace: the building whose lift it is, when the spot is not inside it (its door, on the way down and out).
+bool AOKStreetSocialScene::StartNpcLift(int32 I,const FVector& Spot,const FString& InPlace){
  auto& S=*State;if(!S.Agents.IsValidIndex(I-1)||FVector::Dist2D(S.Agents[I-1].Position,S.Male)>4000.f)return false;
- const FString Place=PlaceHere(Spot);int32 PlaceIndex=INDEX_NONE;const auto& Places=OKStreetPlaces();
+ const FString Place=InPlace.IsEmpty()?PlaceHere(Spot):InPlace;int32 PlaceIndex=INDEX_NONE;const auto& Places=OKStreetPlaces();
  for(int32 K=0;K<Places.Num();++K)if(Place==Places[K].Id)PlaceIndex=K;
  const int32 Lift=PlaceIndex==INDEX_NONE?INDEX_NONE:ElevatorOfPlace(PlaceIndex);if(Lift==INDEX_NONE)return false;
  const auto& E=S.Elevators[Lift];auto Nearest=[&](float Z){int32 Best=0;for(int32 F=1;F<E.StopZ.Num();++F)if(FMath::Abs(E.StopZ[F]-Z)<FMath::Abs(E.StopZ[Best]-Z))Best=F;return Best;};
@@ -580,7 +581,7 @@ void AOKStreetSocialScene::TickNpcLifts(){
   auto& A=S.Agents[I-1];auto& E=S.Elevators[L.Elevator];A.Held=true;
   // Her plan moved on, or the lift is taking far too long (he holds it, it is busy): she is simply there.
   if(S.Commutes.Contains(I)||(BusyWithPlayer(I)&&!S.ArriveAfterLift.Contains(I))){It.RemoveCurrent();continue;}
-  if(Now-L.At>90.0){A.Position=L.Spot;S.LiftWalks.Remove(I);UE_LOG(LogTemp,Display,TEXT("Street lift: actor %d gave up waiting, placed at her spot"),I);It.RemoveCurrent();continue;}
+  if(Now-L.At>90.0){A.Position=L.Onward?L.OnFallback:L.Spot;S.LiftWalks.Remove(I);UE_LOG(LogTemp,Display,TEXT("Street lift: actor %d gave up waiting, placed at her spot"),I);It.RemoveCurrent();continue;}
   if(S.LiftWalks.Contains(I))continue; // walking a leg
   const FVector Inside=FVector(E.Centre.X,E.Centre.Y,E.StopZ[L.From])-E.Out[L.From]*15.f+E.Side*(I%2?30.f:-30.f);
   switch(L.Stage){
@@ -596,7 +597,9 @@ void AOKStreetSocialScene::TickNpcLifts(){
    if(E.Floor==L.To&&(E.Phase==1||E.Phase==2)&&FMath::Abs(A.Position.Z-E.StopZ[L.To])<60.f){TArray<FVector> Path=PlaceRoute(E.Landing[L.To],L.Spot);if(Path.IsEmpty())Path.Add(L.Spot);Path.Insert(E.Landing[L.To],0);LiftWalk(I,Path);L.Stage=3;}
    break;
   default:
-   UE_LOG(LogTemp,Display,TEXT("Street lift: actor %d reached her spot on %s"),I,*E.Labels[L.To]);S.NpcLiftArrivedZ.Add(I,A.Position.Z);It.RemoveCurrent();break;
+   UE_LOG(LogTemp,Display,TEXT("Street lift: actor %d reached her spot on %s"),I,*E.Labels[L.To]);S.NpcLiftArrivedZ.Add(I,A.Position.Z);
+   {const FOKNpcLift Done=L;It.RemoveCurrent();if(Done.Onward)QueueHeroineWalk(I,A.Position,Done.OnTo,false,Done.OnHasFinal,Done.OnFinal,Done.OnFallback,Done.OnYaw,Done.OnPlace);}
+   break;
   }
  }
 }

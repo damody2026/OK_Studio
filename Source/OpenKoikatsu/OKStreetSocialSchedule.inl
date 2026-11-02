@@ -323,7 +323,14 @@ void AOKStreetSocialScene::TickDestroyQueue(){
 void AOKStreetSocialScene::QueueHeroineWalk(int32 I,const FVector& From,const FVector& To,bool Leave,bool HasFinal,const FVector& Final,const FVector& Fallback,float Yaw,const FString& Place){
  auto& S=*State;FOKStreetPendingMove Move;Move.Leave=Leave;Move.HasFinal=HasFinal;Move.Final=Final;Move.Fallback=Fallback;Move.Yaw=Yaw;Move.Place=Place;
  S.PendingMoves.Remove(I);
- if(FMath::Abs(From.Z-To.Z)>=150.f){FinishHeroineWalk(I,Move,PlaceRouteWaypoints(From,To));return;}
+ if(FMath::Abs(From.Z-To.Z)>=150.f){TArray<FVector> Path=PlaceRouteWaypoints(From,To);
+  // Upstairs with no route down (雷电将军 on the department store's 8F, 1.3 m from him, off to the park): she was put in
+  // the park at once, gone before his eyes (R6-101). Seen by him, she rides the lift down to the door, then walks on.
+  if(Path.Num()<2&&!Leave&&From.Z>100.f){const FString Here=PlaceHere(From);
+   if(const FOKStreetPlace* P=Here.IsEmpty()?nullptr:OKStreetFindPlace(Here);P&&FMath::Abs(P->Door.Z-From.Z)>100.f&&StartNpcLift(I,P->Door,Here)){
+    auto& L=S.NpcLifts[I];L.Onward=true;L.OnTo=To;L.OnHasFinal=HasFinal;L.OnFinal=Final;L.OnFallback=Fallback;L.OnYaw=Yaw;L.OnPlace=Place;
+    UE_LOG(LogTemp,Display,TEXT("Street plan: actor %d rides down from %s before walking to %s"),I,*Here,*Place);return;}}
+  FinishHeroineWalk(I,Move,MoveTemp(Path));return;}
  Move.Search=MakeShared<FOKStreetGridSearch>();Move.Search->From=From;Move.Search->To=To;
  S.PendingMoves.Add(I,MoveTemp(Move));
 }

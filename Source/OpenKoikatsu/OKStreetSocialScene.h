@@ -512,7 +512,7 @@ private:
  void ActivityAftermath(const FString& ActivityId,int32 Girl,int64 StartMinute);
  void TickActivityWatch();
  void TickLifeBlocks();
- bool StartNpcLift(int32 I,const FVector& Spot);
+ bool StartNpcLift(int32 I,const FVector& Spot,const FString& InPlace=FString());
  void TickNpcLifts();
  struct FOKStreetBias BiasOf(int32 Girl) const;
  bool InviteAllowedBiased(int32 Character,const FString& Action,FString& Why);
