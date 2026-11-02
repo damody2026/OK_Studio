@@ -701,14 +701,19 @@ fn order_too_full(r: &Value) -> Value {
     let appetite = 100.0 / f64::from(crate::needs::satiety_max(r.get("profile").unwrap_or(&Value::Null)));
     // Her own pick (her_choice): she knows her stomach; only when she is full already (with what is coming) is it not
     // ordered. 胡桃 asked for curry omurice at seven in the evening (satiety 75) and it was quietly dropped (R6-12).
+    // As the table eats it (OKStreetFullSatiety 92, then only what still fits under OVERFULL_SATIETY): 安可, at 99, ordered
+    // a soup she then could not touch at all (R6-124).
     if r.get("her_choice").and_then(Value::as_bool) == Some(true) {
-        return json!({"too_full": satiety + coming * appetite >= 100.0});
+        let before = satiety + coming * appetite;
+        return json!({"too_full": before >= 100.0 || (before >= FULL_SATIETY && before + weight(&item) * appetite > OVERFULL_SATIETY)});
     }
     json!({"too_full": satiety + (coming + weight(&item)) * appetite > OVERFULL_SATIETY})
 }
 
 /// How full she can get before a dish is too much (her stomach's 100 is full; a little more still goes in).
 pub const OVERFULL_SATIETY: f64 = 115.0;
+/// Where she stops eating at the table (OKStreetFullSatiety): past it only a dish whose rest fits under OVERFULL_SATIETY.
+pub const FULL_SATIETY: f64 = 92.0;
 
 fn order_second_dish(r: &Value) -> Value {
     let has_like = r.get("has_like").and_then(Value::as_bool).unwrap_or(false);
@@ -881,6 +886,10 @@ mod tests {
     assert_eq!(order_too_full(&json!({"satiety": 75, "item": omurice, "her_choice": true}))["too_full"], false);
     assert_eq!(order_too_full(&json!({"satiety": 75, "item": omurice}))["too_full"], true);
     assert_eq!(order_too_full(&json!({"satiety": 70, "item": omurice, "her_choice": true, "coming": [omurice]}))["too_full"], true, "a second omurice coming");
+    // Past where the table stops her (92), only what she could still eat (R6-124): a soup at 99 is not; a bite at 95 is.
+    let soup = json!({"fill": 20, "category": "light"});
+    assert_eq!(order_too_full(&json!({"satiety": 99, "item": soup, "her_choice": true}))["too_full"], true);
+    assert_eq!(order_too_full(&json!({"satiety": 95, "item": {"fill": 10, "category": "light"}, "her_choice": true}))["too_full"], false);
     }
 
     #[test]

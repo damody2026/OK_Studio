@@ -389,6 +389,9 @@ void AOKStreetSocialScene::TickShopArrival(){
  if(Place==S.ShopArrivalPlace)S.ShopArrivalAt=SceneTime();
  if(Place==S.ShopArrivalPlace||!S.FreeTalkOpen||S.FreeTalkBusy)return;
  const int32 Her=FreeTalkPartner();if(Her==INDEX_NONE)return;
+ // On the phone, or still walking over: not in the shop with him. 安可, still on the call and 21 m off, was told "we just
+ // walked in" and said "here we are, let me see the menu" (R6-123).
+ if(S.RemoteMode!=0||!S.Agents.IsValidIndex(Her-1)||PlaceHere(S.Agents[Her-1].Position)!=Place)return; // asked again once she is in
  if(!S.ShopEnteredWith){S.ShopArrivalPlace=Place;UE_LOG(LogTemp,Display,TEXT("Street shop arrival: actor=%d was already in %s; no arrival prompt"),Her,*Place);return;}
  // On their way through a shop to an activity in the same building (the food court on 9F of the department store):
  // that activity is the visit. The "we just walked in, nothing to eat here" at the 1F door came back on 9F, at the
