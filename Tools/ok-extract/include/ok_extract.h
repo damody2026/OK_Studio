@@ -121,6 +121,9 @@ int32_t ok_belly_bulge_past(OkSession* s,const float* tip,float* out,char* targe
    (her skeleton space, metres, 9 floats; that way zero: read off her skin), radius his and a margin. Writes up to max (body vertex index, move in the mesh's own space, Unity
    metres, then the turn of its normal there: 6 floats each); returns how many there are, -1 on bad input. */
 int32_t ok_belly_wrap_deltas(OkSession* s,const float* at,float radius,uint32_t* out_idx,float* out_d,uint32_t max);
+/* As ok_belly_wrap_deltas, her skin moved by her belly bones, pushed by his penis as BetterPenetration's colliders push
+   its belly DynamicBone (belly_bulge::bone_deltas). Same input and output. */
+int32_t ok_belly_bone_deltas(OkSession* s,const float* at,float radius,uint32_t* out_idx,float* out_d,uint32_t max);
 /* Her hair chains hang under their weight (on 1) or keep the card's own DynamicBone parameters (0). Returns the chains
    changed now, -1 on a bad session. */
 int32_t ok_hang_hair(OkSession* s,int32_t on);

@@ -9,6 +9,8 @@
 use crate::pose::{mat_inv_pub, mat_mul_pub, Mat4};
 use crate::session::{OkSession, SessionPart};
 use std::collections::HashMap;
+mod bones;
+pub use bones::bone_deltas;
 
 /// Where the swells are along her crotch-to-upper-spine line (fractions of it): her belly only, from just over her
 /// crotch up (user 2026-11-01: the swells under it, on her upper thighs and by her entrance, moved her thighs).
@@ -568,16 +570,7 @@ pub fn wrap_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
     let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     let axis = sub(to, from);let axis_len2 = dot(axis, axis).max(1e-8);
     let along = |k: f32| [from[0] + axis[0] * k, from[1] + axis[1] * k, from[2] + axis[2] * k];
-    // Each vertex posed: position, normal, skin matrix.
-    struct Posed { i: usize, p: [f32; 3], n: [f32; 3], m: Mat4 }
-    let mut posed = Vec::with_capacity(verts.len());
-    for (i, v) in verts.iter().enumerate() {
-        let Some((m, _, _)) = skin_of(part, v.j, &worlds, &binds, &[], &[]) else { continue; };
-        let p = point(&m, part.rest_positions[v.j]);
-        let o = point(&m, [0.; 3]);let q = point(&m, v.n);let n = sub(q, o);
-        let l = dot(n, n).sqrt();if l < 1e-6 { continue; }
-        posed.push(Posed { i, p, n: [n[0] / l, n[1] / l, n[2] / l], m });
-    }
+    let posed = posed_verts(part, &verts, &worlds, &binds);
     // Her skin over him, lifted all one way (user, 2026-11-02: project him onto her belly for a height line and pull her
     // belly up): each skin moved along its own normal fanned out into a slab when he stood 60 cm out of her, and went
     // only half way along him when it looked along him.
@@ -691,6 +684,28 @@ pub fn wrap_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
     // Where each skin goes, and its normal there (its triangles' after the move against before, welded over UV seams):
     // left as it was, the outline shell swelled out of the stretched skin along the old normals, black teeth (GalV1104j).
     let moved: Vec<Option<[f32; 3]>> = (0..verts.len()).map(|i| pos[i].map(|p| [p[0] + up[0] * lift[i], p[1] + up[1] * lift[i], p[2] + up[2] * lift[i]])).collect();
+    mesh_moves(&verts, &posed, &pos, &moved)
+}
+
+/// Each vertex of `verts` posed this frame: position, normal (its averaged one), skin matrix.
+struct Posed { i: usize, p: [f32; 3], n: [f32; 3], m: Mat4 }
+fn posed_verts(part: &SessionPart, verts: &[WrapVert], worlds: &[Mat4], binds: &[Mat4]) -> Vec<Posed> {
+    let mut posed = Vec::with_capacity(verts.len());
+    for (i, v) in verts.iter().enumerate() {
+        let Some((m, _, _)) = skin_of(part, v.j, worlds, binds, &[], &[]) else { continue; };
+        let p = point(&m, part.rest_positions[v.j]);
+        let o = point(&m, [0.; 3]);let q = point(&m, v.n);let n = [q[0] - o[0], q[1] - o[1], q[2] - o[2]];
+        let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();if l < 1e-6 { continue; }
+        posed.push(Posed { i, p, n: [n[0] / l, n[1] / l, n[2] / l], m });
+    }
+    posed
+}
+
+/// The moves of the skin (`pos` posed, `moved` where it goes this frame) as morph deltas: body vertex index, the move in
+/// the mesh's own space (the posed skin's inverse, as the morph is skinned), then the turn of its normal there.
+fn mesh_moves(verts: &[WrapVert], posed: &[Posed], pos: &[Option<[f32; 3]>], moved: &[Option<[f32; 3]>]) -> Vec<(u32, [f32; 6])> {
+    let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     let weld = |p: [f32; 3]| p.map(|v| (v * 5000.).round() as i64);
     let mut sums: HashMap<[i64; 3], ([f32; 3], [f32; 3])> = HashMap::new();
     for (i, v) in verts.iter().enumerate() {
@@ -705,8 +720,8 @@ pub fn wrap_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
     }
     let unit = |v: [f32; 3]| { let l = dot(v, v).sqrt();if l < 1e-12 { None } else { Some([v[0] / l, v[1] / l, v[2] / l]) } };
     let mut out = Vec::new();
-    for q in &posed {
-        let need = lift[q.i];
+    for q in posed {
+        let need = moved[q.i].map_or(0., |m| dot(sub(m, q.p), sub(m, q.p)).sqrt());
         // The normal's turn, as a change of her mesh's own normal (the morph's TangentZ delta).
         let dn = sums.get(&weld(q.p)).and_then(|(a, b)| Some((unit(*a)?, unit(*b)?))).map_or([0.; 3], |(a, b)| sub(b, a));
         if need < 0.0005 && dot(dn, dn) < 1e-4 { continue; }

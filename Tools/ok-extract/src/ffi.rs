@@ -159,6 +159,16 @@ pub unsafe extern "C" fn ok_belly_wrap_deltas(s:*mut OkSession,at:*const f32,rad
     moves.len() as i32
 }
 #[no_mangle]
+pub unsafe extern "C" fn ok_belly_bone_deltas(s:*mut OkSession,at:*const f32,radius:f32,out_idx:*mut u32,out_d:*mut f32,max:u32)->i32 {
+    // As ok_belly_wrap_deltas, her skin moved by the belly bones his penis pushes (belly_bulge::bone_deltas, ok.HScene.Wrap 3).
+    let Some(s)=sess_ref(s) else{return -1;};
+    if at.is_null()||out_idx.is_null()||out_d.is_null() {return -1;}
+    let from=[*at,*at.add(1),*at.add(2)];let to=[*at.add(3),*at.add(4),*at.add(5)];let up=[*at.add(6),*at.add(7),*at.add(8)];
+    let moves=crate::belly_bulge::bone_deltas(s,from,to,up,radius);
+    for (i,(j,d)) in moves.iter().take(max as usize).enumerate(){*out_idx.add(i)=*j;for k in 0..6{*out_d.add(i*6+k)=d[k];}}
+    moves.len() as i32
+}
+#[no_mangle]
 pub unsafe extern "C" fn ok_aim_penis(s:*mut OkSession,dir:*const f32,out_degrees:*mut f32)->i32 {
     // His penis root turned so his penis points along dir (belly_bulge::aim_penis), his skeleton space, Unity.
     // 0 ok (out: degrees turned now), 1 no penis / root.

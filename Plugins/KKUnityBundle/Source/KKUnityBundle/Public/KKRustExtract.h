@@ -201,7 +201,8 @@ public:
 	bool BellyBulgePast(const FVector& UnityTip,float& OutPast,float& OutNear,FName& OutTarget,float& OutMoves) const;
 	// How her body's skin moves this frame to wrap his penis in her (ok_belly_wrap_deltas): From her entrance, To his glans
 	// (her skeleton space, Unity metres), RadiusM his and a margin; body vertex indices and moves in the mesh's own space (Unity metres), and the turns of their normals.
-	bool BellyWrapDeltas(const FVector& From,const FVector& To,const FVector& Up,float RadiusM,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,TArray<FVector3f>* OutNormalDeltas=nullptr) const;
+	bool BellyWrapDeltas(const FVector& From,const FVector& To,const FVector& Up,float RadiusM,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,TArray<FVector3f>* OutNormalDeltas=nullptr,bool bBellyBones=false) const;
+	// bBellyBones: moved by her belly bones his penis pushes instead (ok_belly_bone_deltas).
 	// Her hair hangs under its weight (true) or keeps the card's DynamicBone parameters: the chains changed now.
 	int32 HangHair(bool bOn);
 	// His penis root turned so his penis points along UnityDir (his skeleton space): written as his FK, applied after the
