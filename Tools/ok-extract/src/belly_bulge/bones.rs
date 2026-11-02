@@ -178,19 +178,19 @@ pub fn bone_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
     let lips = |d: f32| { let t = ((d - WRAP_LIPS_M) / WRAP_LIPS_FADE_M).clamp(0., 1.); t * t * (3. - 2. * t) };
     let mut lift: Vec<f32> = (0..verts.len()).map(|i| {
         let v = &verts[i];let free = v.free * v.free * (3. - 2. * v.free);
-        let w = &bones.weights[i];
-        // Only the bones he pushes himself: following the bones the rounding lifted too, her drawn-up thighs rose in
-        // sheets, black and blue (GalBones5).
-        let lifted = w.iter().filter(|(b, _)| pushed[*b as usize] > 0.005).map(|(_, w)| *w).sum::<f32>().min(1.);
-        w.iter().map(|(b, w)| bones.lift[*b as usize] * w).sum::<f32>() * lips(v.from_entrance) * free.max(lifted)
+        // Skin on her thighs and bottom stays where it is (user 2026-11-02: the mesh pulled onto her thighs and bottom
+        // is wrong; following the bones he pushes, it was drawn up with her belly, GalBones7).
+        bones.weights[i].iter().map(|(b, w)| bones.lift[*b as usize] * w).sum::<f32>() * lips(v.from_entrance) * free
     }).collect();
+    // Skin that never rises however its neighbours do: her lips, her thighs and bottom.
+    let held: Vec<bool> = verts.iter().map(|v| lips(v.from_entrance) <= 0. || v.free < 0.5).collect();
     // The copies of one place of her skin (split at her mesh's UV seams; no edge joins them) go up together, the
     // highest: evened and turned each on its own side they parted, a dark crack down her belly (GalBones6).
     let mut copies: HashMap<[i64; 3], Vec<usize>> = HashMap::new();
     for (i, p) in pos.iter().enumerate() { if let Some(p) = p { copies.entry(p.map(|v| (v * 5000.).round() as i64)).or_default().push(i); } }
     copies.retain(|_, v| v.len() > 1);
     let weld = |lift: &mut [f32]| for group in copies.values() {
-        let top = group.iter().map(|&i| lift[i]).fold(0f32, f32::max);
+        let top = if group.iter().any(|&i| held[i]) { 0. } else { group.iter().map(|&i| lift[i]).fold(0f32, f32::max) };
         for &i in group { lift[i] = top; }
     };
     weld(&mut lift);
@@ -219,12 +219,12 @@ pub fn bone_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
     for _ in 0..BONE_FLIP_ROUNDS {
         let mut raised = false;
         for i in 0..verts.len() {
-            let held = lips(verts[i].from_entrance) <= 0.;
+            let held = held[i];
             for &t in &verts[i].tri {
                 let top = lift[t[0] as usize].max(lift[t[1] as usize]);
                 if top <= lift[i] + 1e-4 || !flipped(&lift, i, t) { continue; }
-                // A corner on her lips stays, so its higher corners come down to it instead (the black wedge left at her
-                // mons beside her entrance, GalBones3).
+                // A corner that stays (her lips, thighs, bottom), so its higher corners come down to it instead (the black
+                // wedge left at her mons beside her entrance, GalBones3).
                 if held { for k in t { let k = k as usize;if lift[k] > lift[i] { lift[k] = lift[i] + (lift[k] - lift[i]) * 0.5; } } }
                 else { lift[i] += (top - lift[i]) * 0.5; }
                 raised = true;
