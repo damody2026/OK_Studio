@@ -1706,7 +1706,13 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
       // aquarium, ¥32 twice). The one he gave is the one he means.
       auto JustBought=[&](const FString& Id){for(const TCHAR* Who:{TEXT("|her"),TEXT("|him")})if(const int64* At=L->RecentBought.Find(Id+Who);At&&OKStreetMindNow(*L)-*At<=10)return true;return false;};
       if(Sold&&JustBought(Sold->Id)){UE_LOG(LogTemp,Display,TEXT("Street judge: actor=%d gift %s was just bought and given, not bought again"),Character,*Sold->Id);}
-      else if(Sold){UE_LOG(LogTemp,Display,TEXT("Street judge: actor=%d gift %s not carried, bought here first"),Character,*Sold->Id);Weak->BuyForGift(Sold->Id);}
+      else if(Sold){UE_LOG(LogTemp,Display,TEXT("Street judge: actor=%d gift %s not carried, bought here first"),Character,*Sold->Id);Weak->BuyForGift(Sold->Id);
+       // Bought here for the gift: the same book among the orders ("for her") is that one, not a second (惠惠's 烟火图鉴,
+       // ¥45 billed twice, R6-105).
+       if(const TArray<TSharedPtr<FJsonValue>>* Had=nullptr;Verdict->TryGetArrayField(TEXT("orders"),Had)){TArray<TSharedPtr<FJsonValue>> Kept;
+        for(const auto& V:*Had){const TSharedPtr<FJsonObject> O=V.IsValid()?V->AsObject():nullptr;FString OrderId;if(O)O->TryGetStringField(TEXT("id"),OrderId);
+         if(O&&Weak->ResolveItemId(OrderId,Shop)==Sold->Id){UE_LOG(LogTemp,Display,TEXT("Street judge: order %s is the gift just bought; not bought again"),*OrderId);continue;}Kept.Add(V);}
+        Verdict->SetArrayField(TEXT("orders"),Kept);}}
       else{L->TellHer.Add(OKMsg(TEXT("ui.economy.gift_not_carried"),{{TEXT("item"),Gift}}));UE_LOG(LogTemp,Display,TEXT("Street judge: actor=%d gift %s: he has none and none is sold here"),Character,*Gift);}}
      for(const FString& Item:L->Store.Inventory)if(const auto* Known=L->Catalog.Find(Item);Known&&(Item==Gift||OKStreetNameMatches(Gift,Known->Name))){ // either script: "月饼" for the catalogue's 月餅（單顆）
       UE_LOG(LogTemp,Display,TEXT("Street judge: actor=%d he gives her %s"),Character,*Item);Weak->HandleWorldAct(Character,TEXT("gift"),Item);break;}}}
