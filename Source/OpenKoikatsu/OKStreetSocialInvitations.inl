@@ -7,8 +7,9 @@
  FString Reason;if(!OKRulesCanInvite(S,R,Command,Reason)){S.Message=Reason==TEXT("talk_budget")?OKT(TEXT("ui.invitations.invite_no_budget")):OKT(TEXT("ui.invitations.invite_already_today"));RefreshUI();return;}
  const int32 Stage=OKStreetStageIndex(R.Stage),Personality=S.Manifest.Characters[Character].PersonalityId;
  const auto* Item=S.Invitations.FindByPredicate([&](const FOKStreetInvitation& I){return I.Personality==Personality&&I.Stage==Stage&&I.Command==Command;});
- if(!Item){S.Message=OKT(TEXT("ui.invitations.invite_data_missing"));RefreshUI();return;}
  const bool Accept=PanelConsent(Character,Command==3?TEXT("meal"):TEXT("walk"),false); // the voiced scene follows the shared rule (Life.inl)
+ // Only some personalities have source invitation voices; the others answer the same rule without the voiced scene.
+ if(!Item){S.InvitationAccepted=Accept;S.InvitationCommand=Command;S.InvitationGirl=Character;FinishInvitation();return;}
  const auto& Sequence=Accept?Item->Accept:Item->Refuse;
  if(Sequence.IsEmpty())return;
  S.InvitationActive=true;S.InvitationAccepted=Accept;S.InvitationCommand=Command;S.InvitationGirl=Character;S.InvitationSequence=Sequence;
@@ -18,7 +19,10 @@
 void AOKStreetSocialScene::CompleteInvitation(){
  auto& S=*State;if(S.Target!=S.InvitationGirl||!S.Catalogue.Nodes.IsValidIndex(S.Node)||S.Catalogue.Nodes[S.Node].Category!=TEXT("invitation")){FailTalk(TEXT("Invitation lost its response transaction"));return;}++S.InvitationVoices;S.Node=INDEX_NONE;S.VoiceIds.Reset();S.ClipStarted=false;
  if(!S.InvitationSequence.IsEmpty()){const int32 Next=S.InvitationSequence[0];S.InvitationSequence.RemoveAt(0);const FString Prompt=S.PlayerLine;QueueNode(Next,TEXT("invitation"));SetSourcePlayerLine(Prompt);RefreshUI();return;}
- const int32 Character=S.InvitationGirl,Command=S.InvitationCommand;const bool Accept=S.InvitationAccepted;
+ FinishInvitation();
+}
+void AOKStreetSocialScene::FinishInvitation(){
+ auto& S=*State;const int32 Character=S.InvitationGirl,Command=S.InvitationCommand;const bool Accept=S.InvitationAccepted;
  S.InvitationActive=false;S.InvitationGirl=INDEX_NONE;S.InvitationCommand=INDEX_NONE;S.ActiveCategory.Reset();
  const FString Id=OKStreetStableId(S.Manifest.Characters[Character]),Transaction=FGuid::NewGuid().ToString(EGuidFormats::Digits);
  auto Candidate=S.Store;const auto Result=OKRulesCommitInvitation(S,Candidate,Id,Command,Transaction);FString SaveError;

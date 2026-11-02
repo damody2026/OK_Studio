@@ -720,6 +720,7 @@ private:
  void FinishLine();
  void RequestInvitation(int32 Character,int32 Command);
  void CompleteInvitation();
+ void FinishInvitation();
  void RunInvitationProbe(double Now);
  void WriteReport(bool Passed);
  bool RunRelationshipSelfTest();
