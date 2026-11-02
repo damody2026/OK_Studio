@@ -92,6 +92,8 @@ public:
 	/** The part of the view no panel covers, as fractions of the view (0..1, y down); the panel keeps it current. Framing
 	 *  centres there and sizes the distance to it. */
 	FBox2D ClearView = FBox2D(FVector2D(0.f, 0.f), FVector2D(1.f, 1.f));
+	/** The last AddCharacter found no free spot near the view (on a map full of furniture): it stands at the focus. */
+	bool bLastAddBlocked = false;
 	/** Free view presets: 0 front, 1 right side, 2 top, 3 back, 4 left side, 5 the view a new scene opens with. */
 	void ViewPreset(int32 Preset);
 	/** View bookmarks 0..9 (kept in the scene). */
@@ -244,8 +246,12 @@ public:
 	 *  (returns the file; empty on failure). */
 	FString ExportOkAnim(int32 Id, float Fps, FString& OutError);
 	/** Encodes a PNG frame folder (frame_00000.png…) into an H.264 mp4 with Tools/ffmpeg (the first encoder that works:
-	 *  NVENC, AMF, Media Foundation, OpenH264). OutEncoder: the encoder used. */
-	static bool EncodeMp4(const FString& FramesDir, float Fps, const FString& OutFile, FString& OutEncoder, FString& OutError);
+	 *  NVENC, AMF, Media Foundation, OpenH264). OutEncoder: the encoder used. Audio: sound files mixed in from the
+	 *  movie's start (true: looped), cut at Seconds. */
+	static bool EncodeMp4(const FString& FramesDir, float Fps, const FString& OutFile, FString& OutEncoder, FString& OutError,
+		const TArray<TPair<FString, bool>>& Audio = {}, float Seconds = 0.f);
+	/** A movie export takes the scene's BGM and outside sound that play (U129: the mp4 had no sound). */
+	bool bExportAudio = true;
 	/** The ffmpeg the movie export uses (not under version control; downloaded into Tools/ffmpeg). */
 	static FString FfmpegPath();
 	/** Movie export: the last mp4 written, or why it was not. */
@@ -320,6 +326,8 @@ private:
 	/** Earlier document states (oldest first), undone states, and the state the history last recorded. */
 	TArray<FString> UndoStack, RedoStack;
 	FString HistoryState;
+	/** The document as last saved or opened: undoing back to it leaves the scene unchanged (U130). */
+	FString SavedState;
 	/** The selection each history state was left with (restored with it; the view is not). */
 	TArray<TArray<int32>> UndoSelections, RedoSelections;
 	TArray<int32> HistorySelection;

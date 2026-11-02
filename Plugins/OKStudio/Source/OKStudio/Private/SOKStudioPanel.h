@@ -1112,9 +1112,10 @@ public:
 		using namespace OKStudioStyle;
 		struct FTool { const TCHAR* Icon; const TCHAR* Label; const TCHAR* Command; };
 		const FTool Row1[] = { { TEXT("root"), TEXT("移到根層"), TEXT("edit.root") }, { TEXT("copy"), TEXT("複製物件"), TEXT("edit.duplicate") }, { TEXT("delete"), TEXT("刪除"), TEXT("edit.delete") },
-			{ TEXT("folder"), TEXT("加資料夾"), TEXT("add.folder") }, { TEXT("camera_add"), TEXT("加入相機（從目前視角）"), TEXT("camera.fromview") }, { TEXT("frame"), TEXT("用此相機"), TEXT("camera.use") }, { TEXT("options"), TEXT("屬性"), TEXT("page.object") } };
+			{ TEXT("folder_add"), TEXT("加資料夾物件（把物件分組；開場景檔是旁邊的「開啟場景」）"), TEXT("add.folder") }, { TEXT("open"), TEXT("開啟場景"), TEXT("scene.browser") }, { TEXT("camera_add"), TEXT("加入相機（從目前視角）"), TEXT("camera.fromview") }, { TEXT("frame"), TEXT("用此相機"), TEXT("camera.use") }, { TEXT("options"), TEXT("屬性"), TEXT("page.object") } };
 		TSharedRef<SHorizontalBox> Tools = SNew(SHorizontalBox);
-		for (const FTool& T : Row1) Tools->AddSlot().AutoWidth().Padding(0.f, 0.f, 4.f, 0.f)[IconButton(T.Icon, Tip(T.Label, T.Command), Cmd(T.Command), 28.f, 28.f)];
+		// Eight tools in the 240 wide panel (U130 added 開啟場景): 26 + 3 each.
+		for (const FTool& T : Row1) Tools->AddSlot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)[IconButton(T.Icon, Tip(T.Label, T.Command), Cmd(T.Command), 26.f, 26.f)];
 		static const TCHAR* FilterIcons[] = { TEXT("tree"), TEXT("folder"), TEXT("chara"), TEXT("frame"), TEXT("light"), TEXT("camera"), TEXT("effect") };
 		return SNew(SBorder).BorderImage(Brush(Panel())).Padding(0.f)
 		[
@@ -1506,6 +1507,20 @@ public:
 	double LayoutSavedAt = 0.;
 	void AddFloat(const FString& Id, const FString& Title, const FMargin& Rect, TFunction<TSharedRef<SWidget>()> Build);
 	void RegisterFloats();
+	/** The scene's time of day: the scene's own sky (the 0..3 time skies) follows it, and the status line says what it
+	 *  does on the map (U128). */
+	void SetSunType(int32 Time)
+	{
+		if (!Game.IsValid()) return;
+		FOKScenePost& P = Game->Document->Post;
+		P.SunType = Time;
+		if (P.bSky && P.SkyPattern >= 0 && P.SkyPattern <= 3) P.SkyPattern = FMath::Clamp(Time, 0, 3);
+		Changed();
+		Game->SyncDocumentNow();
+		static const TCHAR* Names[] = { TEXT("朝"), TEXT("昼"), TEXT("夕"), TEXT("夜") };
+		const FString Note = Game->SceneActor ? Game->SceneActor->MapTimeNote() : FString();
+		SetStatus(FString::Printf(TEXT("時段：%s"), Names[FMath::Clamp(Time, 0, 3)]) + (Note.IsEmpty() ? FString() : TEXT("（") + Note + TEXT("）")));
+	}
 	/** Tells the game the largest part of the view no panel covers (framing centres there, U123). */
 	void UpdateClearView();
 	void OpenFloat(const FString& Id, bool bToggle = false);
@@ -3486,7 +3501,7 @@ private:
 			[
 				SNew(SComboBox<TSharedPtr<int32>>).OptionsSource(&SunOptions)
 				.OnGenerateWidget_Lambda([SunName](TSharedPtr<int32> T) { return SNew(STextBlock).Text(FText::FromString(SunName(*T))); })
-				.OnSelectionChanged_Lambda([this, Doc](TSharedPtr<int32> T, ESelectInfo::Type) { if (FOKScenePost* P = Doc(); P && T) { P->SunType = *T; Changed(); } })
+				.OnSelectionChanged_Lambda([this, Doc](TSharedPtr<int32> T, ESelectInfo::Type) { if (Doc() && T) SetSunType(*T); })
 				[SNew(STextBlock).Text_Lambda([Doc, SunName] { FOKScenePost* P = Doc(); return FText::FromString(P ? SunName(P->SunType) : FString()); })]
 			]
 		];

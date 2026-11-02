@@ -185,7 +185,7 @@ bool SOKStudioPanel::AddOrReplaceCard(const FString& Card, bool bReplace)
 	if (!bReplace || !X || X->Kind != EOKSceneObjectKind::Character)
 	{
 		Game->AddCharacter(Path, 0);
-		SetStatus(TEXT("加入角色 ") + FPaths::GetBaseFilename(Path));
+		SetStatus(TEXT("加入角色 ") + FPaths::GetBaseFilename(Path) + (Game->bLastAddBlocked ? TEXT("（附近沒有空地，放在視角中心，可能和地圖物件重疊）") : TEXT("")));
 		return true;
 	}
 	// Replacing: a card that cannot be opened leaves the character as it was.
@@ -634,7 +634,24 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 	if (MapPick == -1 && Game.IsValid()) MapPick = Game->Document->Map;
 	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
 	TSharedPtr<SWidget> PickedRow;
-	Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)[Button(FText::FromString(TEXT("（無地圖）")), [this] { MapPick = -2; DeferFloat(TEXT("maps")); }, 0.f, 18.f, MapPick == -2, 10.f, RowFill())];
+	auto LoadMap = [this]
+	{
+		if (!Game.IsValid() || MapPick == -1) return;
+		Game->Document->Map = MapPick == -2 ? -1 : MapPick;
+		// A map without its own sky gets the scene's sky, for its time of day (U128: the classroom's windows were black).
+		int32 MapPattern = -1;
+		FOKScenePost& Post = Game->Document->Post;
+		if (Game->Document->Map >= 0 && !Post.bSky && !OKStudioMapSky(Game->Document->Map, Post.SunType, MapPattern)) { Post.bSky = true; Post.SkyPattern = FMath::Clamp(Post.SunType, 0, 3); }
+		Changed();
+		FOKStudioSettings::Get().UseRecent(FString::Printf(TEXT("map:%d"), Game->Document->Map));
+		SetStatus(TEXT("地圖：") + (FOKStudioCatalog::Get().FindMap(Game->Document->Map) ? FOKStudioCatalog::Get().FindMap(Game->Document->Map)->Name : FString(TEXT("無"))));
+	};
+	// A double click loads the map at once (U126), as a card's adds it.
+	auto MapRow = [this, LoadMap](const FString& Text, int32 No)
+	{
+		return RowButton(FText::FromString(Text), [this, No] { MapPick = No; DeferFloat(TEXT("maps")); }, [this, No, LoadMap] { MapPick = No; LoadMap(); DeferFloat(TEXT("maps")); }, 18.f, MapPick == No, 10.f, RowFill());
+	};
+	Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)[MapRow(TEXT("（無地圖）"), -2)];
 	for (const FOKStudioCatalogGroup& Cat : C.MapCategories)
 	{
 		bool bHeader = false;
@@ -643,7 +660,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 			if (M.Category != Cat.Id || (!MapSearch.IsEmpty() && !M.Name.Contains(MapSearch))) continue;
 			if (!bHeader) { Box->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 1.f)[OKStudioStyle::Label(FText::FromString(Cat.Name), 10.f, TextSoft())]; bHeader = true; }
 			const int32 No = M.No;
-			{ TSharedRef<SWidget> Row = Button(FText::FromString(FString::Printf(TEXT("%d %s"), No, *M.Name)), [this, No] { MapPick = No; DeferFloat(TEXT("maps")); }, 0.f, 18.f, MapPick == No, 10.f, RowFill()); if (MapPick == No) PickedRow = Row; Box->AddSlot().AutoHeight().Padding(8.f, 0.f, 0.f, 1.f)[Row]; }
+			{ TSharedRef<SWidget> Row = MapRow(FString::Printf(TEXT("%d %s"), No, *M.Name), No); if (MapPick == No) PickedRow = Row; Box->AddSlot().AutoHeight().Padding(8.f, 0.f, 0.f, 1.f)[Row]; }
 		}
 	}
 	// Maps of categories the catalogue has no name for.
@@ -651,7 +668,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 		if (!C.MapCategories.ContainsByPredicate([&M](const FOKStudioCatalogGroup& G) { return G.Id == M.Category; }) && (MapSearch.IsEmpty() || M.Name.Contains(MapSearch)))
 		{
 			const int32 No = M.No;
-			{ TSharedRef<SWidget> Row = Button(FText::FromString(FString::Printf(TEXT("%d %s"), No, *M.Name)), [this, No] { MapPick = No; DeferFloat(TEXT("maps")); }, 0.f, 18.f, MapPick == No, 10.f, RowFill()); if (MapPick == No) PickedRow = Row; Box->AddSlot().AutoHeight().Padding(8.f, 0.f, 0.f, 1.f)[Row]; }
+			{ TSharedRef<SWidget> Row = MapRow(FString::Printf(TEXT("%d %s"), No, *M.Name), No); if (MapPick == No) PickedRow = Row; Box->AddSlot().AutoHeight().Padding(8.f, 0.f, 0.f, 1.f)[Row]; }
 		}
 	const FOKStudioCatalogMap* Picked = C.FindMap(MapPick);
 	TSharedRef<SScrollBox> MapList = SNew(SScrollBox) + SScrollBox::Slot()[Box];
@@ -672,20 +689,13 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("定位當前")), Cmd(TEXT("map.locate")), 64.f, 20.f, false, 10.f)]
 		]
 		+ SVerticalBox::Slot().FillHeight(1.f).Padding(0.f, 3.f)[SNew(SBorder).BorderImage(Brush(ListArea())).Padding(2.f)[MapList]]
-		+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(MapPick == -2 ? FString(TEXT("選擇：無地圖")) : Picked ? TEXT("選擇：") + Picked->Name : FString(TEXT("點一張地圖，再按「讀取」"))), 10.f, TextSoft())]
+		+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(MapPick == -2 ? FString(TEXT("選擇：無地圖")) : Picked ? TEXT("選擇：") + Picked->Name : FString(TEXT("點一張地圖再按「讀取」，或雙擊它"))), 10.f, TextSoft())]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f, 0.f, 0.f)
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().FillWidth(1.f)
 			[
-				Button(FText::FromString(TEXT("讀取")), [this]
-				{
-					if (!Game.IsValid() || MapPick == -1) return;
-					Game->Document->Map = MapPick == -2 ? -1 : MapPick;
-					Changed();
-					FOKStudioSettings::Get().UseRecent(FString::Printf(TEXT("map:%d"), Game->Document->Map));
-					SetStatus(TEXT("地圖：") + (FOKStudioCatalog::Get().FindMap(Game->Document->Map) ? FOKStudioCatalog::Get().FindMap(Game->Document->Map)->Name : FString(TEXT("無"))));
-				}, 0.f, 22.f)
+				Button(FText::FromString(TEXT("讀取")), LoadMap, 0.f, 22.f)
 			]
 			// Studio's map window "設置": the map's position, rotation, time of day and sky (畫面設定's map tab).
 			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("設定")), Cmd(TEXT("scene.tab"), TEXT("1")), 60.f, 22.f)]
@@ -839,7 +849,7 @@ void SOKStudioPanel::SceneSettingsPage()
 				[this, Axis](float V) { FVector L = Game->Document->MapTransform.GetLocation(); L[Axis] = V; Game->Document->MapTransform.SetLocation(L); Changed(); }, -100000.f, 100000.f, 1.f));
 		Row(TEXT("地圖旋轉"), Spin([this] { return float(Game->Document->MapTransform.Rotator().Yaw); },
 			[this](float V) { FRotator R = Game->Document->MapTransform.Rotator(); R.Yaw = V; Game->Document->MapTransform.SetRotation(R.Quaternion()); Changed(); }, -360.f, 360.f, 1.f));
-		ChoiceF(TEXT("時段"), { TEXT("朝"), TEXT("昼"), TEXT("夕"), TEXT("夜") }, [this] { return Game->Document->Post.SunType; }, [this](int32 V) { Game->Document->Post.SunType = V; Changed(); });
+		ChoiceF(TEXT("時段"), { TEXT("朝"), TEXT("昼"), TEXT("夕"), TEXT("夜") }, [this] { return Game->Document->Post.SunType; }, [this](int32 V) { SetSunType(V); });
 		Label(TEXT("天空"));
 		PostCheck(TEXT("天空"), &FOKScenePost::bSky);
 		SkyOptions.Reset();

@@ -291,6 +291,7 @@ void UOKStudioGame::ResetHistory()
 	UndoSelections.Reset();
 	RedoSelections.Reset();
 	HistoryState = Document ? Document->ToJson() : FString();
+	SavedState = HistoryState;
 	HistorySelection = Selection;
 	bHistoryDirty = false;
 }
@@ -353,7 +354,8 @@ void UOKStudioGame::Undo()
 	TArray<int32> Keep;
 	for (int32 Id : EditSelection) if (Document->Find(Id)) Keep.Add(Id);
 	if (Keep.Num()) SelectMany(Keep, Keep.Last());
-	bDirty = true;
+	// Back at the saved document: nothing to save (U130: an add undone still asked to save).
+	bDirty = HistoryState != SavedState;
 }
 
 void UOKStudioGame::Redo()
@@ -365,7 +367,7 @@ void UOKStudioGame::Redo()
 	HistoryState = RedoStack.Pop();
 	HistorySelection = RedoSelections.Num() ? RedoSelections.Pop() : TArray<int32>();
 	RestoreHistory(HistoryState);
-	bDirty = true;
+	bDirty = HistoryState != SavedState;
 }
 
 void UOKStudioGame::Stop()
@@ -422,16 +424,37 @@ int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 		O->Character.FkPartsOff = (1 << 2) | (1 << 3);
 		O->Name = FPaths::GetBaseFilename(Card);
 		// It stands on the floor under the view's focus, beside the characters already there (not inside them): three
-		// cards added in a row are three people side by side, each one moved on from where it came.
+		// cards added in a row are three people side by side, each one moved on from where it came. On a map it also
+		// keeps out of the map's furniture (U127: 教室1-1's origin is inside a desk): the nearest free spot around the
+		// focus, by the bounds of the map's parts that stand between the ankles and the head (not the floor, not the
+		// walls and ceiling of the room, whose bounds hold all of it).
 		const FVector Right = FRotationMatrix(FRotator(0.f, Yaw, 0.f)).GetUnitAxis(EAxis::Y);
-		FVector At(Focus.X, Focus.Y, 0.f);
-		for (int32 Step = 0; Step < 16; ++Step)
+		TArray<FBox> Furniture;
+		if (SceneActor)
 		{
-			const bool bTaken = Document->Objects.ContainsByPredicate([this, Id, &At](const FOKSceneObject& X)
-				{ return X.Id != Id && X.Kind == EOKSceneObjectKind::Character && FVector::Dist2D(Document->WorldTransform(X.Id).GetLocation(), At) < 50.f; });
-			if (!bTaken) break;
-			At += Right * 60.f;
+			TArray<FBox> Parts;
+			SceneActor->MapPartBounds(Parts);
+			for (const FBox& B : Parts)
+				if (B.GetSize().X < 400. && B.GetSize().Y < 400. && B.Max.Z > 15. && B.Min.Z < 150.) Furniture.Add(B);
 		}
+		const FTransform Scene = SceneActor ? SceneActor->GetActorTransform() : FTransform::Identity;
+		auto Free = [this, Id, &Furniture, &Scene](const FVector& P)
+		{
+			if (Document->Objects.ContainsByPredicate([this, Id, &P](const FOKSceneObject& X)
+				{ return X.Id != Id && X.Kind == EOKSceneObjectKind::Character && FVector::Dist2D(Document->WorldTransform(X.Id).GetLocation(), P) < 50.f; })) return false;
+			const FVector W = Scene.TransformPosition(P);
+			const FBox Body(W + FVector(-22.f, -22.f, 15.f), W + FVector(22.f, 22.f, 150.f));
+			return !Furniture.ContainsByPredicate([&Body](const FBox& B) { return B.Intersect(Body); });
+		};
+		const FVector Start(Focus.X, Focus.Y, 0.f);
+		FVector At = Start;
+		bool bFound = false;
+		// Side by side first (as before), then rings around the focus, nearest first.
+		for (int32 Step = 0; Step < 6 && !bFound; ++Step) { At = Start + Right * (60.f * Step); bFound = Free(At); }
+		for (int32 Ring = 1; Ring <= 10 && !bFound; ++Ring)
+			for (int32 A = 0; A < 16 && !bFound; ++A) { At = Start + FRotator(0.f, Yaw + 90.f + A * 22.5f, 0.f).Vector() * (40.f * Ring); bFound = Free(At); }
+		if (!bFound) At = Start;
+		bLastAddBlocked = !bFound;
 		O->Transform.SetLocation(O->Parent >= 0 ? Document->WorldTransform(O->Parent).InverseTransformPosition(At) : At);
 		if (Panel) Panel->RefreshRows();
 		Document->NotifyChanged();
@@ -512,6 +535,10 @@ bool UOKStudioGame::Save(const FString& Path, FString& OutError)
 	else if (!Document->SaveToFile(Path, OutError)) return false;
 	File = Path;
 	FOKStudioSettings::Get().UseScene(Path);
+	// The history takes the edits made since its last step first: undoing an edit made after saving comes back to
+	// exactly this state (U130: a step not yet recorded at the save left the undo short of it, still unsaved).
+	if (bHistoryDirty) CommitHistory();
+	SavedState = HistoryState;
 	bDirty = false;
 	return true;
 }
@@ -1130,7 +1157,8 @@ FString UOKStudioGame::FfmpegPath()
 	return FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("Tools/ffmpeg/ffmpeg.exe"));
 }
 
-bool UOKStudioGame::EncodeMp4(const FString& FramesDir, float Fps, const FString& OutFile, FString& OutEncoder, FString& OutError)
+bool UOKStudioGame::EncodeMp4(const FString& FramesDir, float Fps, const FString& OutFile, FString& OutEncoder, FString& OutError,
+	const TArray<TPair<FString, bool>>& Audio, float Seconds)
 {
 	const FString Ffmpeg = FfmpegPath();
 	if (!FPaths::FileExists(Ffmpeg)) { OutError = TEXT("ffmpeg 不在 ") + Ffmpeg + TEXT("（第三方工具不進版控：請放一份 LGPL 版 ffmpeg.exe 到 Tools/ffmpeg）"); return false; }
@@ -1143,11 +1171,22 @@ bool UOKStudioGame::EncodeMp4(const FString& FramesDir, float Fps, const FString
 		{ TEXT("libopenh264"), TEXT("-b:v 16M") },
 	};
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(OutFile), true);
+	// The sounds: one input each (looped ones repeat), mixed into one AAC track as long as the frames.
+	FString AudioIn, AudioOut;
+	for (const TPair<FString, bool>& A : Audio) AudioIn += FString::Printf(TEXT(" %s-i \"%s\""), A.Value ? TEXT("-stream_loop -1 ") : TEXT(""), *A.Key);
+	if (Audio.Num() == 1) AudioOut = TEXT(" -map 0:v -map 1:a -c:a aac -b:a 192k");
+	else if (Audio.Num() > 1)
+	{
+		FString Inputs;
+		for (int32 I = 0; I < Audio.Num(); ++I) Inputs += FString::Printf(TEXT("[%d:a]"), I + 1);
+		AudioOut = FString::Printf(TEXT(" -filter_complex \"%samix=inputs=%d:duration=longest[a]\" -map 0:v -map \"[a]\" -c:a aac -b:a 192k"), *Inputs, Audio.Num());
+	}
+	if (!Audio.IsEmpty() && Seconds > 0.f) AudioOut += FString::Printf(TEXT(" -t %.3f"), Seconds);
 	FString Tried;
 	for (const FEncoder& E : Encoders)
 	{
-		const FString Args = FString::Printf(TEXT("-hide_banner -loglevel error -y -framerate %g -i \"%s\" -vf \"pad=ceil(iw/2)*2:ceil(ih/2)*2\" -c:v %s %s -pix_fmt yuv420p -movflags +faststart \"%s\""),
-			Fps, *(FramesDir / TEXT("frame_%05d.png")), E.Name, E.Options, *OutFile);
+		const FString Args = FString::Printf(TEXT("-hide_banner -loglevel error -y -framerate %g -i \"%s\"%s -vf \"pad=ceil(iw/2)*2:ceil(ih/2)*2\" -c:v %s %s -pix_fmt yuv420p%s -movflags +faststart \"%s\""),
+			Fps, *(FramesDir / TEXT("frame_%05d.png")), *AudioIn, E.Name, E.Options, *AudioOut, *OutFile);
 		int32 Code = -1;
 		FString Out, Err;
 		FPlatformProcess::ExecProcess(*Ffmpeg, *Args, &Code, &Out, &Err);
@@ -1199,7 +1238,22 @@ void UOKStudioGame::TickExport()
 			// The frames become one mp4 beside their folder; the folder goes once the movie is written.
 			const FString Movie = ExportDir + TEXT(".mp4");
 			FString Encoder;
-			if (EncodeMp4(ExportDir, ExportFps, Movie, Encoder, LastMovieError))
+			TArray<TPair<FString, bool>> Audio;
+			if (bExportAudio)
+			{
+				const FOKSceneSound& S = Document->Sound;
+				if (const FString Bgm = BgmFile(); S.bBgmPlay && FPaths::FileExists(Bgm)) Audio.Add({ Bgm, S.bBgmRepeat });
+				if (const FString Outside = OutsideSoundFile(); S.bOutsidePlay && FPaths::FileExists(Outside)) Audio.Add({ Outside, S.bOutsideRepeat });
+			}
+			bool bMovie = EncodeMp4(ExportDir, ExportFps, Movie, Encoder, LastMovieError, Audio, ExportTotal / ExportFps);
+			// A sound ffmpeg cannot read still leaves the picture.
+			if (!bMovie && !Audio.IsEmpty())
+			{
+				UE_LOG(LogTemp, Warning, TEXT("OK studio: movie with sound not written (%s), again without"), *LastMovieError);
+				bMovie = EncodeMp4(ExportDir, ExportFps, Movie, Encoder, LastMovieError);
+				if (bMovie) Encoder += TEXT(", no sound");
+			}
+			if (bMovie)
 			{
 				LastMovie = Movie;
 				IFileManager::Get().DeleteDirectory(*ExportDir, false, true);
@@ -1213,6 +1267,10 @@ void UOKStudioGame::TickExport()
 	SetTimelineTime(FrameTime);
 	SyncNow();
 	for (const FOKSceneObject& O : Document->Objects) if (O.Kind == EOKSceneObjectKind::Character) SceneActor->SetAnimationTime(O.Id, FrameTime);
+	// What the scene's tick does after this one: items on posed hands and the characters' light for this frame's
+	// keys (U131: each frame showed the light of the one before; the first, of where the playhead had been).
+	SceneActor->PlaceAttached();
+	SceneActor->UpdateItemLighting();
 	FString Error;
 	if (!CaptureToPng(ExportDir / FString::Printf(TEXT("frame_%05d.png"), ExportFrame), ExportWidth, ExportHeight, Error))
 	{

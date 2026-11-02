@@ -88,6 +88,11 @@ public:
 	/** The scene map (Document->Map), if shown; MapError when it could not be. */
 	AKKPreviewActor* MapPreview() const { return ShownMapPreviews.Num() ? ShownMapPreviews[0].Get() : nullptr; }
 	int32 MapPartCount() const;
+	/** World bounds of every shown part of the map (its desks, shelves, walls), to keep new characters out of them. */
+	void MapPartBounds(TArray<FBox>& Out) const;
+	/** What the scene's time of day does on this map, for the status line: a time the map lacks, a lightmapped map, the
+	 *  sun's height and colour (U128: picking 夕 showed no change and said nothing). Empty without a map. */
+	FString MapTimeNote() const;
 	FString MapError;
 
 	virtual void Destroyed() override;
@@ -231,6 +236,9 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<class UDirectionalLightComponent> MapSun;
 	int32 ShownMapTime = -2;
+	/** The times of day the map has (bit per time) and whether its light is baked into its lightmaps. */
+	int32 MapTimes = 0;
+	bool bMapSunBaked = false;
 	/** The map sun as the items' forward light (Unity: the brightest directional light whose culling mask has the
 	 *  item's layer; the map's own sun lights layer 11, where landscape items are authored): towards-light direction,
 	 *  linear colour and culling mask (0: no sun). */

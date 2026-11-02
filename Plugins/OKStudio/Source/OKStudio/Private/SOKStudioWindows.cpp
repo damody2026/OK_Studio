@@ -800,12 +800,23 @@ TSharedRef<SWidget> SOKStudioPanel::BuildSceneBrowser()
 					SNew(SButton).ButtonStyle(&FlatButton()).ContentPadding(FMargin(2.f)).ToolTipText(FText::FromString(F))
 					.OnClicked_Lambda([this, F] { ScenePick = F; SceneNewName = FPaths::GetBaseFilename(F); DeferFloat(TEXT("scenes")); return FReply::Handled(); })
 					[
+						// A double click opens the scene (U126), as 覆蓋（開啟） does.
+						SNew(SBorder).BorderImage(FStyleDefaults::GetNoBrush()).Padding(0.f)
+						.OnMouseDoubleClick_Lambda([this, F](const FGeometry&, const FPointerEvent& E)
+						{
+							if (E.GetEffectingButton() != EKeys::LeftMouseButton) return FReply::Unhandled();
+							ScenePick = F;
+							OpenScene(F, false);
+							return FReply::Handled();
+						})
+						[
 						SNew(SVerticalBox)
 						+ SVerticalBox::Slot().FillHeight(1.f)
 						[
 							SNew(SImage).Image_Lambda([F, bPng] { const FSlateBrush* B = bPng ? FOKStudioThumbnails::Get().File(F, 96) : nullptr; return B ? B : Brush(Input()); })
 						]
 						+ SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Font(Font(9.f)).ColorAndOpacity(OKStudioStyle::Text()).OverflowPolicy(ETextOverflowPolicy::Ellipsis).AddMetaData<FTagMetaData>(TEXT("Ellipsis")).Text(FText::FromString(KindTag + FPaths::GetBaseFilename(F)))]
+						]
 					])
 			]
 		];
@@ -996,7 +1007,9 @@ TSharedRef<SWidget> SOKStudioPanel::BuildBgm()
 		const bool bThere = !C.BgmSound(No).IsEmpty();
 		Missing += bThere ? 0 : 1;
 		SoundRows->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)
-			[Button(FText::FromString(FString::Printf(TEXT("%02d %s"), No, *B.Name)), [this, Sound, No] { if (FOKSceneSound* S = Sound()) { S->Bgm = No; Changed(); } }, 0.f, 18.f,
+			// A double click plays the piece (U126); a click only picks it.
+			[RowButton(FText::FromString(FString::Printf(TEXT("%02d %s"), No, *B.Name)), [this, Sound, No] { if (FOKSceneSound* S = Sound()) { S->Bgm = No; Changed(); } },
+				[this, Sound, No] { if (FOKSceneSound* S = Sound()) { S->Bgm = No; S->bBgmPlay = true; Changed(); } }, 18.f,
 				TAttribute<bool>::CreateLambda([Sound, No] { const FOKSceneSound* S = Sound(); return S && S->Bgm == No; }), 10.f, ButtonFill(), bThere)];
 	}
 	const FString Note = C.Bgm.IsEmpty() ? TEXT("基礎庫沒有 BGM 清單：執行 ok-extract <遊戲> --oklib studio-sounds <基礎庫>。")
@@ -2129,6 +2142,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildExport()
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[Line(TEXT("寬"), Spin([this] { return float(ExportW); }, [this](float V) { ExportW = FMath::Clamp(FMath::RoundToInt(V), 16, 8192); }, 16.f, 8192.f, 1.f))]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[Line(TEXT("高"), Spin([this] { return float(ExportH); }, [this](float V) { ExportH = FMath::Clamp(FMath::RoundToInt(V), 16, 8192); }, 16.f, 8192.f, 1.f))]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[Line(TEXT("輸出資料夾"), TextBox([this] { return ExportFolderText; }, [this](const FString& V) { ExportFolderText = V.TrimStartAndEnd().TrimQuotes(); }, TEXT("UserData/Studio/movie")))]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[CheckBox(TEXT("mp4 含音樂（播放中的 BGM 與外部音源）"), [this] { return Game.IsValid() && Game->bExportAudio; }, [this](bool B) { if (Game.IsValid()) Game->bExportAudio = B; })]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
 		[
 			SNew(SBox).HeightOverride(14.f)

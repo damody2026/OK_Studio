@@ -182,6 +182,27 @@ namespace OKStudioStyle
 				[Label(Text, FontSize)], OnFill)
 		];
 	}
+	/** A list row: a click picks it (Do), a double click also acts on it (OnDouble: load, open, play; U126). */
+	inline TSharedRef<SWidget> RowButton(const TAttribute<FText>& Text, TFunction<void()> Do, TFunction<void()> OnDouble, float Height, TAttribute<bool> bOn = false,
+		float FontSize = 10.f, const FLinearColor& FillColor = ButtonFill(), TAttribute<bool> bEnabled = true)
+	{
+		return SNew(SBox).HeightOverride(Height)
+		[
+			Fill(bOn, FillColor,
+				SNew(SButton).ButtonStyle(&FlatButton()).IsEnabled(bEnabled).ContentPadding(FMargin(0.f))
+				.OnClicked_Lambda([Do] { if (Do) Do(); return FReply::Handled(); })
+				[
+					SNew(SBorder).BorderImage(FStyleDefaults::GetNoBrush()).Padding(FMargin(1.f, 0.f)).HAlign(HAlign_Center).VAlign(VAlign_Center)
+					.OnMouseDoubleClick_Lambda([OnDouble, bEnabled](const FGeometry&, const FPointerEvent& E)
+					{
+						if (E.GetEffectingButton() != EKeys::LeftMouseButton || !OnDouble || !bEnabled.Get()) return FReply::Unhandled();
+						OnDouble();
+						return FReply::Handled();
+					})
+					[Label(Text, FontSize)]
+				])
+		];
+	}
 	/** Drags its content's window: reports the mouse movement in the widget's own units while the left button is held. */
 	class SDragArea : public SCompoundWidget
 	{
@@ -274,6 +295,9 @@ namespace OKStudioStyle
 			else if (N == TEXT("mmd")) { Line({ {2, 7}, {14, 7}, {14, 14}, {2, 14}, {2, 7} }); Line({ {2, 7}, {2.5f, 3}, {14, 1.5f}, {14, 5.5f}, {2, 7} }); Line({ {6, 2.6f}, {7, 6.2f} }); Line({ {10, 2}, {11, 5.8f} }); }
 			else if (N == TEXT("groups")) { Circle(5.5f, 5, 2.f); Circle(11, 5, 2.f); Line({ {2, 13}, {3, 9}, {8, 9}, {9, 13} }); Line({ {9, 9}, {13.5f, 9}, {14.5f, 13} }); }
 			else if (N == TEXT("menu")) { Line({ {2, 4}, {14, 4} }); Line({ {2, 8}, {14, 8} }); Line({ {2, 12}, {14, 12} }); }
+			// Adding a folder object (a folder and a plus) is told apart from opening a scene file (an open folder), U130.
+			else if (N == TEXT("folder_add")) { Line({ {1, 6}, {4.5f, 6}, {5.7f, 7.2f}, {11, 7.2f}, {11, 14}, {1, 14}, {1, 6} }); Line({ {13, 1}, {13, 7} }); Line({ {10, 4}, {16, 4} }); }
+			else if (N == TEXT("open")) { Line({ {1.5f, 4}, {6, 4}, {7.5f, 5.5f}, {13, 5.5f}, {13, 7.5f} }); Line({ {1.5f, 4}, {1.5f, 13}, {12.5f, 13}, {15, 7.5f}, {4, 7.5f}, {1.5f, 13} }); }
 			else if (N == TEXT("folder")) { Line({ {1.5f, 4}, {6, 4}, {7.5f, 5.5f}, {14.5f, 5.5f}, {14.5f, 13}, {1.5f, 13}, {1.5f, 4} }); }
 			else if (N == TEXT("light")) { Circle(8, 6.5f, 4.f, 140.f, 400.f); Line({ {5.5f, 9.5f}, {6, 12}, {10, 12}, {10.5f, 9.5f} }); Line({ {6.3f, 14}, {9.7f, 14} }); }
 			else if (N == TEXT("effect")) { Line({ {8, 1.5f}, {9.6f, 6.2f}, {14.5f, 6.4f}, {10.6f, 9.4f}, {12, 14.3f}, {8, 11.4f}, {4, 14.3f}, {5.4f, 9.4f}, {1.5f, 6.4f}, {6.4f, 6.2f}, {8, 1.5f} }); }
