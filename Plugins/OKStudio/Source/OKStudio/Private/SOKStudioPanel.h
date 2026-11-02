@@ -47,6 +47,7 @@
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopeExit.h"
+#include "Styling/StyleDefaults.h"
 #include "OKSceneActor.h"
 #include "OKStudioCatalog.h"
 #include "OKStudioSky.h"
@@ -572,9 +573,16 @@ public:
 					const FTransform Parent = O->Parent >= 0 ? Game->Document->WorldTransform(O->Parent) : FTransform::Identity;
 					O->Transform = FTransform(Parent.InverseTransformRotation((Game->Focus - At).Rotation().Quaternion()), Parent.InverseTransformPosition(At));
 				}
+				// A point or spot light as Studio adds one (intensity 1, which an imported scene's lights become as 800): the
+				// directional light's 4 (UOKStudioGame::Add) left it too weak to light a map at all (U115).
+				if (O->Light.Type == EOKSceneLightType::Point || O->Light.Type == EOKSceneLightType::Spot) O->Light.Intensity = 800.f;
 				Game->Document->NotifyChanged();
 			}
 			AddedStatus();
+			// Toon characters take one directional light only (KKS's character shaders have no ForwardAdd pass): say so,
+			// since nothing on the character changes when one of these is added (U115).
+			if (const FOKSceneObject* O = Obj(); O && O->Light.Type != EOKSceneLightType::Directional)
+				SetStatus(FString::Printf(TEXT("加入燈光 %s（照地圖；角色與卡通道具和原作一樣只受方向光影響）"), *O->Name));
 			return true;
 		});
 		Simple(TEXT("add.camera"), TEXT("相機"), [this] { Game->CameraFromView(); AddedStatus(); });
@@ -1202,7 +1210,7 @@ public:
 				[SNew(SEditableTextBox).Font(Font(10.f)).HintText(FText::FromString(TEXT("搜尋分組／部位"))).OnTextChanged_Lambda([this](const FText& T) { GroupSearch = T.ToString(); DeferGroups(); })]
 			]
 			+ SVerticalBox::Slot().AutoHeight().Padding(7.f, 3.f, 0.f, 0.f)
-			[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("10 個分組 · %d 個部位；先選道具再選部位"), FOKStudioCatalog::Get().AccessoryPoints.Num())), 10.f, TextHint())]
+			[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("10 個分組 · %d 個部位；選道具後雙擊部位掛上"), FOKStudioCatalog::Get().AccessoryPoints.Num())), 10.f, TextHint())]
 		];
 	}
 
@@ -1255,7 +1263,18 @@ public:
 					[
 						OKStudioStyle::Fill(TAttribute<bool>::CreateLambda([this, Key] { return GroupPoint == Key; }), FLinearColor::Transparent, SNew(SButton).ButtonStyle(&OKStudioStyle::FlatButton()).ContentPadding(FMargin(4.f, 0.f))
 						.OnClicked_Lambda([this, Key] { GroupPoint = GroupPoint == Key ? FString() : Key; return FReply::Handled(); })
-						[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("%s（%s）"), *P->Name, *P->Key)), 10.f, TextSoft())])
+						[
+							// A double click hangs the selected object there at once (U114: pick the part, then 掛到所選部位).
+							SNew(SBorder).BorderImage(FStyleDefaults::GetNoBrush()).Padding(0.f)
+							.OnMouseDoubleClick_Lambda([this, Key](const FGeometry&, const FPointerEvent& E)
+							{
+								if (E.GetEffectingButton() != EKeys::LeftMouseButton) return FReply::Unhandled();
+								GroupPoint = Key;
+								if (!AttachToPoint(Key)) SetStatus(TEXT("先選要掛的道具（或燈光、相機），再雙擊部位"));
+								return FReply::Handled();
+							})
+							[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("%s（%s）"), *P->Name, *P->Key)), 10.f, TextSoft())]
+						])
 					]
 				];
 			}
@@ -1786,6 +1805,33 @@ public:
 	/** The detail window's scroll box, and what it showed when last rebuilt (RebuildProperties keeps its offset). */
 	TSharedPtr<SScrollBox> PropsScroll;
 	FString PropsScrollKey;
+	/** A clicked list row kept in place across the rebuild it causes: its key, its top in the scroll box before, and the
+	 *  row built again for that key. Rows above it can change height (U113), so the offset alone did not keep it. */
+	FString PlacedRowKey;
+	float PlacedRowTop = -1.f;
+	TWeakPtr<SWidget> PlacedRow;
+	void RememberRowPlace(const TSharedPtr<SWidget>& Row, const FString& Key)
+	{
+		if (!Row || !PropsScroll) return;
+		PlacedRowKey = Key;
+		PlacedRowTop = PropsScroll->GetCachedGeometry().AbsoluteToLocal(Row->GetCachedGeometry().GetAbsolutePosition()).Y;
+		// Two frames on, the new row has been laid out: scroll by how far it moved.
+		TSharedRef<int32> Frames = MakeShared<int32>(0);
+		RegisterActiveTimer(0.f, FWidgetActiveTimerDelegate::CreateLambda([this, Frames](double, float)
+		{
+			if (++*Frames < 3) return EActiveTimerReturnType::Continue;
+			const TSharedPtr<SWidget> Now = PlacedRow.Pin();
+			if (Now && PropsScroll && PlacedRowTop >= 0.f)
+			{
+				const float Top = PropsScroll->GetCachedGeometry().AbsoluteToLocal(Now->GetCachedGeometry().GetAbsolutePosition()).Y;
+				PropsScroll->SetScrollOffset(PropsScroll->GetScrollOffset() + Top - PlacedRowTop);
+			}
+			PlacedRowKey.Reset();
+			PlacedRowTop = -1.f;
+			PlacedRow.Reset();
+			return EActiveTimerReturnType::Stop;
+		}));
+	}
 	int32 RootMenu = -1;
 	int32 LoaderCard = 0;
 	int32 LastCharacter = -1;

@@ -563,16 +563,19 @@ void SOKStudioPanel::BoneTree(const TArray<FString>& Bones, TFunction<FString(co
 		if (!BoneSearch.IsEmpty() && !Name.Contains(BoneSearch) && !Bone.Contains(BoneSearch)) continue;
 		if (++Listed > 300) { Label(TEXT("（太多了，請用搜尋）")); break; }
 		const bool bOpen = OpenBones.Contains(Bone);
-		Props->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)
-		[
-			Button(FText::FromString(FString::Printf(TEXT("%s %s"), bOpen ? TEXT("▼") : TEXT("▶"), *Name)), [this, Bone, OnPick]
+		// The clicked row stays where it was on screen after the rows are built again (U113: it moved ~140 px down).
+		TSharedRef<TWeakPtr<SWidget>> Self = MakeShared<TWeakPtr<SWidget>>();
+		// The chosen bone in amber, as the chosen IK target is (U108: after a pick it was not told apart).
+		TSharedRef<SWidget> RowWidget = Button(FText::FromString(FString::Printf(TEXT("%s %s"), bOpen ? TEXT("▼") : TEXT("▶"), *Name)), [this, Bone, OnPick, Self]
 			{
+				RememberRowPlace(Self->Pin(), Bone);
 				if (OpenBones.Contains(Bone)) OpenBones.Remove(Bone); else OpenBones.Add(Bone);
 				if (OnPick) OnPick(Bone);
 				DeferRebuild();
-			// The chosen bone in amber, as the chosen IK target is (U108: after a pick it was not told apart).
-			}, 0.f, 17.f, TAttribute<bool>::CreateLambda([IsSet, Bone] { return IsSet && IsSet(Bone); }), 10.f, Bone == FkBone ? FLinearColor(0.45f, 0.35f, 0.1f) : RowFill())
-		];
+			}, 0.f, 17.f, TAttribute<bool>::CreateLambda([IsSet, Bone] { return IsSet && IsSet(Bone); }), 10.f, Bone == FkBone ? FLinearColor(0.45f, 0.35f, 0.1f) : RowFill());
+		*Self = RowWidget;
+		if (Bone == PlacedRowKey) PlacedRow = RowWidget;
+		Props->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)[RowWidget];
 		if (!bOpen) continue;
 		for (int32 Axis = 0; Axis < 3; ++Axis)
 			Float(FString(TEXT("　　")) + FString(TEXT("XYZ")).Mid(Axis, 1), [Get, Bone, Axis](FOKSceneObject& X) { return float(Get(X, Bone)[Axis]); },
