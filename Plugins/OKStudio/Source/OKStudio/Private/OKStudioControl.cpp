@@ -801,6 +801,10 @@ namespace
 				// from an earlier press would take the release: start from no capture, as a fresh press does. (A tree click
 				// once only moved the highlight, 2026-11-01; not seen again, the log says whether a capture was released.)
 				if (App.HasAnyMouseCaptor()) { UE_LOG(LogTemp, Display, TEXT("OK studio control: click released a stale mouse capture")); App.ReleaseAllPointerCapture(); }
+				// The row takes the press only with the capture, which Slate gives only in front (see "mouse").
+				const bool bWasHandlingInactive = App.GetHandleDeviceInputWhenApplicationNotActive();
+				App.SetHandleDeviceInputWhenApplicationNotActive(true);
+				ON_SCOPE_EXIT { App.SetHandleDeviceInputWhenApplicationNotActive(bWasHandlingInactive); };
 				App.ProcessMouseButtonDownEvent(nullptr, FPointerEvent(0, 0, At, At, TSet<FKey>{ EKeys::LeftMouseButton }, EKeys::LeftMouseButton, 0.f, FModifierKeysState()));
 				App.ProcessMouseButtonUpEvent(FPointerEvent(0, 0, At, At, TSet<FKey>(), EKeys::LeftMouseButton, 0.f, FModifierKeysState()));
 			}
@@ -832,6 +836,12 @@ namespace
 			const bool bDrag = J->TryGetArrayField(TEXT("to"), ToJson) && ToJson->Num() == 2;
 			if (bDrag) To = Window->GetPositionInScreen() + FVector2D((*ToJson)[0]->AsNumber(), (*ToJson)[1]->AsNumber());
 			const int32 Steps = FMath::Clamp(ReadId(J, TEXT("steps"), 10), 1, 200);
+			// Slate gives a press the mouse capture only while the application is in front: with the studio window behind
+			// another one, a button went pressed but never clicked (only the hover moved, U83, U86, U94). These presses are
+			// meant for the studio wherever its window is.
+			const bool bWasHandlingInactive = App.GetHandleDeviceInputWhenApplicationNotActive();
+			App.SetHandleDeviceInputWhenApplicationNotActive(true);
+			ON_SCOPE_EXIT { App.SetHandleDeviceInputWhenApplicationNotActive(bWasHandlingInactive); };
 			const FModifierKeysState Mods;
 			const uint32 User = App.GetUserIndexForMouse();
 			// The real mouse's pointer index (0 is a touch's), so these presses and the real mouse's moves are one pointer.
@@ -845,12 +855,31 @@ namespace
 				App.ReleaseAllPointerCapture();
 			}
 			App.ProcessMouseMoveEvent(FPointerEvent(User, Pointer, At, At, TSet<FKey>(), EKeys::Invalid, 0.f, Mods));
+			// "wheel": wheel notches at the point instead of a click (positive scrolls up), as the real wheel turns: a
+			// panel's lower part, a list, the view's zoom.
+			double Wheel = 0.;
+			if (J->TryGetNumberField(TEXT("wheel"), Wheel))
+			{
+				const bool bWheelHandled = App.ProcessMouseWheelOrGestureEvent(FPointerEvent(User, Pointer, At, At, TSet<FKey>(), EKeys::MouseWheelAxis, float(Wheel), Mods), nullptr);
+				TSharedRef<FJsonObject> O = Result(true);
+				O->SetBoolField(TEXT("handled"), bWheelHandled);
+				return O;
+			}
 			// What is under the point and whether the press was taken: a click that only moves the hover shows why here.
 			const FWidgetPath Under = App.LocateWindowUnderMouse(At, App.GetInteractiveTopLevelWindows(), false, User);
 			const FString UnderType = Under.IsValid() ? Under.GetLastWidget()->GetTypeAsString() : FString(TEXT("none"));
-			const bool bPressHandled = App.ProcessMouseButtonDownEvent(Window->GetNativeWindow(), FPointerEvent(User, Pointer, At, At, TSet<FKey>({ Key }), Key, 0.f, Mods));
+			// No platform window: these presses are not the OS mouse, so Slate takes no OS capture for them.
+			const bool bPressHandled = App.ProcessMouseButtonDownEvent(nullptr, FPointerEvent(User, Pointer, At, At, TSet<FKey>({ Key }), Key, 0.f, Mods));
 			const TSharedPtr<SWidget> Captor = App.GetCursorUser().IsValid() ? App.GetCursorUser()->GetCursorCaptor() : nullptr;
-			const FString CaptorType = Captor.IsValid() ? Captor->GetTypeAsString() : FString(TEXT("none"));
+			FString CaptorType = Captor.IsValid() ? Captor->GetTypeAsString() : FString(TEXT("none"));
+			// The button under the point, pressed or not after the press (diagnostic for clicks that do nothing).
+			FString PathTypes;
+			for (int32 I = Under.IsValid() ? Under.Widgets.Num() - 1 : -1, N = 0; I >= 0 && N < 8; --I, ++N)
+			{
+				const TSharedRef<SWidget> W = Under.Widgets[I].Widget;
+				PathTypes += (N ? TEXT(" < ") : TEXT("")) + W->GetTypeAsString();
+				if (W->GetType() == TEXT("SButton")) { PathTypes += StaticCastSharedRef<SButton>(W)->IsPressed() ? TEXT("(pressed)") : TEXT("(not pressed)"); break; }
+			}
 			FVector2D Last = At;
 			for (int32 I = 1; bDrag && I <= Steps; ++I)
 			{
@@ -865,6 +894,7 @@ namespace
 			O->SetStringField(TEXT("under"), UnderType);
 			O->SetBoolField(TEXT("handled"), bPressHandled);
 			O->SetStringField(TEXT("captor"), CaptorType);
+			O->SetStringField(TEXT("path"), PathTypes);
 			return O;
 		}
 		// A key press through Slate inside the process, as the keyboard sends it: the studio's shortcuts (Delete, Ctrl+Z, F,

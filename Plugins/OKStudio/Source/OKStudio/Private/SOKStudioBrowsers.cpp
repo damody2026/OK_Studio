@@ -230,8 +230,8 @@ TSharedRef<SWidget> SOKStudioPanel::BuildCardBrowser()
 	if (!CardPreview.IsEmpty())
 	{
 		const FString F = CardPreview;
-		const FOKSceneObject* X = Obj();
-		const bool bCanReplace = X && X->Kind == EOKSceneObjectKind::Character;
+		// Asked each frame: the selection changes while the window stays open (adding a card selects the new character).
+		const TAttribute<bool> bCanReplace = TAttribute<bool>::CreateLambda([this] { const FOKSceneObject* X = Obj(); return X && X->Kind == EOKSceneObjectKind::Character; });
 		Pick->AddSlot().AutoHeight()[SNew(SBox).WidthOverride(128.f).HeightOverride(180.f)[SNew(SImage).Image_Lambda([F] { const FSlateBrush* B = FOKStudioThumbnails::Get().File(F, 256); return B ? B : Brush(Input()); })]];
 		Pick->AddSlot().AutoHeight().Padding(0.f, 2.f)[SNew(STextBlock).Font(Font(10.f)).ColorAndOpacity(OKStudioStyle::Text()).AutoWrapText(true).Text(FText::FromString(FPaths::GetBaseFilename(F)))];
 		Pick->AddSlot().AutoHeight().Padding(0.f, 2.f)[Button(FText::FromString(TEXT("加入")), [this, F] { AddOrReplaceCard(F, false); }, 0.f, 22.f)];
@@ -280,7 +280,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildCardBrowser()
 			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(CardSexFilter < 0 ? TEXT("全部") : CardSexFilter == 1 ? TEXT("女") : TEXT("男")),
 				[this] { CardSexFilter = CardSexFilter < 0 ? 1 : CardSexFilter == 1 ? 0 : -1; CardPage = 0; DeferFloat(TEXT("cards")); }, 40.f, 20.f, CardSexFilter >= 0, 10.f)]
 			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("加入預設角色")), Cmd(TEXT("add.defaultcharacter"), CardSexFilter == 0 ? TEXT("male") : TEXT("female")), 84.f, 20.f, false, 10.f)]
-			+ SHorizontalBox::Slot().AutoWidth()[SNew(SBox).WidthOverride(150.f).HeightOverride(20.f)[SNew(SEditableTextBox).Style(&TextBoxStyle()).HintText(FText::FromString(TEXT("搜尋卡片"))).Text(FText::FromString(CardSearch))
+			+ SHorizontalBox::Slot().AutoWidth()[SNew(SBox).WidthOverride(150.f).HeightOverride(20.f)[SNew(SEditableTextBox).Style(&TextBoxStyle()).HintText(FText::FromString(TEXT("搜尋卡片（Enter）"))).Text(FText::FromString(CardSearch))
 				.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type) { CardSearch = T.ToString(); CardPage = 0; DeferFloat(TEXT("cards")); })]]
 			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[IconButton(TEXT("eye"), TEXT("定位當前角色的卡"), [this]
 			{

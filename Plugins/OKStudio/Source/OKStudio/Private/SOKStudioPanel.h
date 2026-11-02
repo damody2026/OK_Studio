@@ -2596,7 +2596,7 @@ public:
 		[
 			SNew(SBox).HeightOverride(18.f)
 			[
-				SNew(SEditableTextBox).Style(&TextBoxStyle()).HintText(FText::FromString(TEXT("搜尋道具（空格＝且，-詞＝排除）"))).Text(FText::FromString(ItemSearch))
+				SNew(SEditableTextBox).Style(&TextBoxStyle()).HintText(FText::FromString(TEXT("搜尋道具（Enter；空格＝且，-詞＝排除）"))).Text(FText::FromString(ItemSearch))
 				.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type) { ItemSearch = T.ToString(); DeferRebuild(); })
 			]
 		];
@@ -2665,7 +2665,7 @@ public:
 						[
 							SNew(SVerticalBox)
 							+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("%s　[%d/%d/%d]"), *I.Name, G, Ca, N)), 11.f)]
-							+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(TEXT("左鍵加入（選著道具時替換）；中鍵加到所選物件底下")), 9.f, TextHint())]
+							+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(TEXT("左鍵加入；Shift＋左鍵替換所選道具；中鍵加到所選物件底下")), 9.f, TextHint())]
 							+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f)
 							[
 								SNew(SBox).WidthOverride(256.f).HeightOverride(144.f)
@@ -2682,8 +2682,11 @@ public:
 							.OnUnhovered_Lambda([this] { HoverItem = FIntVector(-1); })
 							.OnClicked_Lambda([this, G, Ca, N]
 							{
+								// A click adds, as in HS2Studio6 (adding selects the new item, so replacing on a plain click
+								// turned a second click into a swap, U97); Shift+click puts it in place of the selected item.
 								const FOKSceneObject* X = Obj();
-								if (!X || X->Kind != EOKSceneObjectKind::Item) AddItemTo(G, Ca, N, false);
+								const bool bReplace = FSlateApplication::Get().GetModifierKeys().IsShiftDown();
+								if (!bReplace || !X || X->Kind != EOKSceneObjectKind::Item) AddItemTo(G, Ca, N, false);
 								else { PickItem(G, Ca, N); FOKStudioSettings::Get().UseRecent(ItemKey(G, Ca, N)); }
 								return FReply::Handled();
 							})
@@ -2972,7 +2975,7 @@ private:
 		}
 		Props->AddSlot().AutoHeight().Padding(0.f, 1.f)
 		[
-			SNew(SEditableTextBox).Style(&OKStudioStyle::TextBoxStyle()).HintText(FText::FromString(TEXT("搜尋動作（空格＝且，-詞＝排除）"))).Text(FText::FromString(AnimSearch))
+			SNew(SEditableTextBox).Style(&OKStudioStyle::TextBoxStyle()).HintText(FText::FromString(TEXT("搜尋動作（Enter；空格＝且，-詞＝排除）"))).Text(FText::FromString(AnimSearch))
 			.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type) { AnimSearch = T.ToString(); DeferRebuild(); })
 		];
 		Props->AddSlot().AutoHeight().Padding(0.f, 1.f)[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("%d 個動作%s"), AnimOptions.Num(), AnimSearch.IsEmpty() ? TEXT("") : TEXT("（搜尋結果，跨分組）"))), 10.f, OKStudioStyle::TextHint())];
