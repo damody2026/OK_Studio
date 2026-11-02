@@ -1047,6 +1047,25 @@ namespace
 		{
 			FOKSceneObject* X = Doc->Find(ReadId(J, TEXT("id")));
 			if (!X || X->Kind != EOKSceneObjectKind::Character) return Result(false, TEXT("not a character"));
+			// Every bone and effector named is checked before anything changes: a misspelt bone (HS2's cf_J_ArmUp00_L for
+			// KK's cf_j_arm00_L) was kept and did nothing.
+			const TArray<TSharedPtr<FJsonValue>>* Check = nullptr;
+			if (J->TryGetArrayField(TEXT("fk"), Check))
+				for (const TSharedPtr<FJsonValue>& V : *Check)
+				{
+					const TSharedPtr<FJsonObject> B = V->AsObject();
+					const FString Bone = B ? B->GetStringField(TEXT("bone")) : FString();
+					if (!FOKStudioCatalog::Get().FkBones.ContainsByPredicate([&Bone](const FOKStudioFkBone& F) { return F.Bone == Bone; }))
+						return Result(false, TEXT("unknown FK bone '") + Bone + TEXT("' (studio_bones lists them)"));
+				}
+			if (J->TryGetArrayField(TEXT("ik"), Check))
+				for (const TSharedPtr<FJsonValue>& V : *Check)
+				{
+					const TSharedPtr<FJsonObject> T = V->AsObject();
+					double E = -1.;
+					if (!T || !T->TryGetNumberField(TEXT("effector"), E) || E < 0. || E > 12. || E != FMath::FloorToDouble(E))
+						return Result(false, TEXT("IK effector must be 0..12 (studio_bones lists them)"));
+				}
 			G->Select(X->Id);
 			bool bFlag = false;
 			if (J->TryGetBoolField(TEXT("clear_fk"), bFlag) && bFlag) X->Character.Fk.Reset();
@@ -1202,7 +1221,9 @@ namespace
 			J->TryGetStringField(TEXT("path"), Path);
 			bool bMerge = false;
 			J->TryGetBoolField(TEXT("merge"), bMerge);
-			if (Path.IsEmpty() || !FPaths::FileExists(Path)) return Result(false, TEXT("no such file"));
+			// A path relative to the checkout (UserData/Studio/scene/x.png), as the studio_load tool documents.
+			if (FPaths::IsRelative(Path)) Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / Path);
+			if (Path.IsEmpty() || !FPaths::FileExists(Path)) return Result(false, TEXT("no such file: ") + Path);
 			const bool bOk = bMerge ? P->OpenScene(Path, true) : (FOKSceneCard::Kind(Path) == FOKSceneCard::EKind::KStudio ? P->ImportKStudio(Path) : P->LoadFile(Path));
 			TSharedRef<FJsonObject> O = Result(bOk, bOk ? FString() : TEXT("not opened"));
 			TArray<TSharedPtr<FJsonValue>> Report;

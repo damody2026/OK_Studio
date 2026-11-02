@@ -1662,6 +1662,15 @@ public:
 		const bool bOk = Game->Load(Path, E);
 		SetStatus(bOk ? TEXT("已讀取 ") + FPaths::GetBaseFilename(Path) : E);
 		if (bOk) { ReportPending = 90; SaveAsName = FPaths::GetBaseFilename(Path); }
+		// A backup opens as an unsaved scene however it is opened (備份窗, scene browser, scene.load): saving asks for a
+		// name and the backup stays as it is.
+		if (bOk && FPaths::IsUnderDirectory(FPaths::ConvertRelativePathToFull(Path), FPaths::ConvertRelativePathToFull(UOKStudioGame::BackupDirectory())))
+		{
+			Game->File.Reset();
+			Game->bDirty = true;
+			SaveAsName.Reset();
+			SetStatus(TEXT("已從備份恢復 ") + FPaths::GetBaseFilename(Path) + TEXT("（儲存時要另取名稱）"));
+		}
 		return bOk;
 	}
 	/** Scene files the browser lists now (UserData/Studio/scene when it was never opened). */
