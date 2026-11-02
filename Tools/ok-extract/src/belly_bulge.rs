@@ -684,6 +684,15 @@ pub fn wrap_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
     }
     // Held skin rises less; the skin under him all the way.
     for i in 0..lift.len() { lift[i] = if src[i] > 0. && face[i] > 0. { src[i].max(lift[i] * face[i]) } else { lift[i] * face[i] }; }
+    // The copies of one place of her skin (split at her mesh's UV seams; no edge joins them) rise together, the highest of
+    // them: each worked out on its own, they rose apart and her belly split open along the seams, black (椅子對面 with
+    // the root pad up, user 2026-11-02; the belly bones had the same, GalBones7).
+    {
+        let weld = |p: [f32; 3]| p.map(|v| (v * 5000.).round() as i64);
+        let mut most: HashMap<[i64; 3], f32> = HashMap::new();
+        for (i, p) in pos.iter().enumerate() { if let Some(p) = p { let e = most.entry(weld(*p)).or_insert(lift[i]);if lift[i] > *e { *e = lift[i]; } } }
+        for (i, p) in pos.iter().enumerate() { if let Some(p) = p { lift[i] = most[&weld(*p)]; } }
+    }
     // Where each skin goes, and its normal there (its triangles' after the move against before, welded over UV seams):
     // left as it was, the outline shell swelled out of the stretched skin along the old normals, black teeth (GalV1104j).
     let moved: Vec<Option<[f32; 3]>> = (0..verts.len()).map(|i| pos[i].map(|p| [p[0] + up[0] * lift[i], p[1] + up[1] * lift[i], p[2] + up[2] * lift[i]])).collect();
