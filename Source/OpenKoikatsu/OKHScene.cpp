@@ -217,6 +217,23 @@ TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
         if(auto* S=PenisBox->AddChildToVerticalBox(RootPadWidget)){S->SetHorizontalAlignment(HAlign_Center);S->SetPadding(FMargin(0,4));}
         Box->AddChildToVerticalBox(PenisBox)->SetPadding(FMargin(0,3));ShowPenis();
     }
+    {   // Her pose (SetHerPose): ankles, each thigh, each hand.
+        auto Label=[&](UHorizontalBox* R,const TCHAR* Key){auto* L=WidgetTree->ConstructWidget<UTextBlock>();L->SetText(FText::FromString(OKT(Key)));L->SetColorAndOpacity(FSlateColor(FLinearColor(1.f,.85f,.9f)));
+            if(auto* S=R->AddChildToHorizontalBox(L)){S->SetPadding(FMargin(0,0,8,0));S->SetVerticalAlignment(VAlign_Center);}};
+        auto Row=[&](const TCHAR* Key,float Low,float High,float Value)->USlider*{UHorizontalBox* R=WidgetTree->ConstructWidget<UHorizontalBox>();Label(R,Key);
+            auto* S_=WidgetTree->ConstructWidget<USlider>();S_->SetMinValue(Low);S_->SetMaxValue(High);S_->SetStepSize(1.f);S_->SetValue(Value);
+            if(auto* S=R->AddChildToHorizontalBox(S_))S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));Box->AddChildToVerticalBox(R)->SetPadding(FMargin(0,1));return S_;};
+        Text(11.f,FLinearColor(1.f,.75f,.85f))->SetText(FText::FromString(OKT(TEXT("ui.hscene.her_pose"))));
+        AnkleSlider=Row(TEXT("ui.hscene.ankle"),-60.f,60.f,AnkleTurn);AnkleSlider->OnValueChanged.AddDynamic(this,&UOKHScenePanel::OnAnkle);
+        ThighSliders[0]=Row(TEXT("ui.hscene.thigh_l"),-30.f,60.f,ThighOpen[0]);ThighSliders[0]->OnValueChanged.AddDynamic(this,&UOKHScenePanel::OnThighL);
+        ThighSliders[1]=Row(TEXT("ui.hscene.thigh_r"),-30.f,60.f,ThighOpen[1]);ThighSliders[1]->OnValueChanged.AddDynamic(this,&UOKHScenePanel::OnThighR);
+        UHorizontalBox* R=WidgetTree->ConstructWidget<UHorizontalBox>();HandOptions=-1;
+        for(int32 Side=0;Side<2;++Side){Label(R,Side?TEXT("ui.hscene.hand_r"):TEXT("ui.hscene.hand_l"));
+            HandCombos[Side]=WidgetTree->ConstructWidget<UComboBoxString>();HandCombos[Side]->AddOption(OKT(TEXT("ui.hscene.hand_follow")));HandCombos[Side]->SetSelectedIndex(0);
+            if(Side)HandCombos[Side]->OnSelectionChanged.AddDynamic(this,&UOKHScenePanel::OnHandR);else HandCombos[Side]->OnSelectionChanged.AddDynamic(this,&UOKHScenePanel::OnHandL);
+            if(auto* S=R->AddChildToHorizontalBox(HandCombos[Side])){S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));S->SetPadding(FMargin(0,0,6,0));}}
+        Box->AddChildToVerticalBox(R)->SetPadding(FMargin(0,2));
+    }
     Actions=WidgetTree->ConstructWidget<UWrapBox>();Actions->SetInnerSlotPadding(FVector2D(6,6));Box->AddChildToVerticalBox(Actions)->SetPadding(FMargin(0,8));
     Hint=Text(12.f,FLinearColor(1.f,.9f,.6f));
     Caption=Text(13.f,FLinearColor(1.f,1.f,1.f));
@@ -747,7 +764,7 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     if(HalfInner&&PanelWidth){const float High=2.f*float(PanelWidth->GetCachedGeometry().GetLocalSize().Y);if(High>10.f&&!FMath::IsNearlyEqual(High,HalfInner->GetHeightOverride(),1.f))HalfInner->SetHeightOverride(High);}
     if(!Gallery)return;
     if(Poses.IsEmpty()&&!Gallery->NativePairs.IsEmpty()){LoadPoses();BuildList();}
-    TickDrips(Delta);Tremble(FPlatformTime::Seconds());TickSounds();SwellBust(Delta);
+    TickDrips(Delta);Tremble(FPlatformTime::Seconds());TickHands();TickSounds();SwellBust(Delta);
     // Her breathing as the original picks it (HVoiceCtrl): her gauge past 50 and his fast motion (voice.speedMotion,
     // with its own up and down marks) change the cries, her experience the bank. A change starts the matching set
     // (user, 2026-11-01: in her it kept the first, quiet set the caress also uses).
@@ -1055,13 +1072,21 @@ void UOKHScenePanel::TickDrips(float Delta){
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;
     auto Where=[Girl](int32,FName Bone,FVector& At){return IsValid(Girl)&&HBone(Girl,*Bone.ToString(),At);};
     const float Desire=HerDesire();const double Now=FPlatformTime::Seconds();
+    const AActor* Ignore[]={Girl,Gallery?Gallery->PartnerActor.Get():nullptr};
+    auto Drop=[&](const TCHAR* Bone,uint8 Colour){FVector At,L,R;if(!HBone(Girl,Bone,At))return false;
+        // Nothing under her: her lowest foot is the floor.
+        const float Floor=HBone(Girl,TEXT("j_foot_L"),L)&&HBone(Girl,TEXT("j_foot_R"),R)?FMath::Min(L.Z,R.Z)-3.f:At.Z-80.f;
+        return Drips.Spawn(Girl,0,Bone,At,FOKArousalDrops::GroundBelow(Girl,At-FVector(0,0,4.f),Ignore,Floor),Colour);};
+    // Between her breasts (the chest service, user 2026-11-02): her nipples run milk as he rubs, whatever her desire,
+    // the more the more they are developed: none undeveloped, a drop every 2.4 s at 5, eight a second at 100 (both
+    // nipples together), quicker the faster they move.
+    const FString Base=HBase(Current());
+    const bool bPaizuri=Mode==1&&Poses.IsValidIndex(ActivePose)&&Poses[ActivePose].KindHoushi==2&&Gallery->PairedPlayback&&Gallery->PairedPlayback->GetElapsed()>0.f&&(HIsLoop(Base)||Base==TEXT("OLoop"));
+    if(IsValid(Girl)&&bPaizuri&&!bCovered&&Dev(TEXT("nipple"))>=.05f&&Now>=PaizuriMilkAt){
+        PaizuriMilkAt=Now+.12f/Dev(TEXT("nipple"))/FMath::Clamp(.6f+.4f*PlaybackSpeed(),.6f,2.f)*FMath::FRandRange(.8f,1.2f);
+        if(Drop(++MilkTurn%2?TEXT("j_bnip02_L"):TEXT("j_bnip02_R"),OKArousal::White))++HerMilk;}
     if(IsValid(Girl)&&Desire>OKArousal::DesireFlush&&!bCovered){
         const auto& X=Gallery->HExperience;double Bust=0;if(X.IsValid())X->TryGetNumberField(TEXT("bust"),Bust);
-        const AActor* Ignore[]={Girl,Gallery->PartnerActor.Get()};
-        auto Drop=[&](const TCHAR* Bone,uint8 Colour){FVector At,L,R;if(!HBone(Girl,Bone,At))return false;
-            // Nothing under her: her lowest foot is the floor.
-            const float Floor=HBone(Girl,TEXT("j_foot_L"),L)&&HBone(Girl,TEXT("j_foot_R"),R)?FMath::Min(L.Z,R.Z)-3.f:At.Z-80.f;
-            return Drips.Spawn(Girl,0,Bone,At,FOKArousalDrops::GroundBelow(Girl,At-FVector(0,0,4.f),Ignore,Floor),Colour);};
         // Developed, more of it (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md): her crotch up to twice, her nipples three times.
         if(Now>=DripAt){DripAt=Now+OKArousal::CrotchInterval(Desire)/(1.f+Dev(TEXT("crotch")))*FMath::FRandRange(.8f,1.2f);if(Drop(TEXT("J_Kokan"),OKArousal::Clear))++HerDrips;}
         if(Now>=MilkAt){MilkAt=Now+OKArousal::NippleInterval(Desire,float(Bust))*.5f/(1.f+2.f*Dev(TEXT("nipple")))*FMath::FRandRange(.8f,1.2f);if(Drop(++MilkTurn%2?TEXT("j_bnip02_L"):TEXT("j_bnip02_R"),OKArousal::White))++HerMilk;}
@@ -1074,7 +1099,7 @@ void UOKHScenePanel::TickDrips(float Delta){
     // As she comes (her cry, ClimaxUntil; user 2026-11-01): her crotch squirts and both nipples spray, shot out from her,
     // whatever her desire.
     if(IsValid(Girl)&&Now<FMath::Max(ClimaxUntil,NippleUntil)&&Now>=SquirtAt){SquirtAt=Now+.05/(1.f+(Mode==2?Dev(bAnalPlay?TEXT("anal"):TEXT("crotch")):0.f));
-        const AActor* Ignore[]={Girl,Gallery->PartnerActor.Get()};FVector Kokan,Hips,Chest,L,R;
+        FVector Kokan,Hips,Chest,L,R;
         auto Floor=[&](const FVector& At){return HBone(Girl,TEXT("j_foot_L"),L)&&HBone(Girl,TEXT("j_foot_R"),R)?FMath::Min(L.Z,R.Z)-3.f:At.Z-80.f;};
         auto Shoot=[&](const FVector& At,const FVector& Out,float Speed,uint8 Colour){const FVector V=(Out+FMath::VRand()*.3f).GetSafeNormal()*Speed*FMath::FRandRange(.7f,1.2f);
             return Drips.Squirt(Girl,0,At,V,FOKArousalDrops::GroundBelow(Girl,At-FVector(0,0,4.f),Ignore,Floor(At)),Colour);};
@@ -1092,14 +1117,50 @@ void UOKHScenePanel::Tremble(double Now){
     if(!bVaginaLogged&&Girl->BodySkel){bVaginaLogged=true;TArray<FString> Found;
         for(int32 I=0;I<Girl->BodySkel->GetNumBones();++I){const FString N=Girl->BodySkel->GetBoneName(I).ToString();if(N.Contains(TEXT("agina"))||N.Contains(TEXT("okan"))||N.Contains(TEXT("Ana")))Found.Add(N);}
         UE_LOG(LogTemp,Display,TEXT("H scene: her vagina bones: %s"),*FString::Join(Found,TEXT(" ")));}
-    const double Left=ClimaxUntil-Now;
+    const double Left=ClimaxUntil-Now;TArray<FString> Names;TArray<FVector> Turns;
     if(Left>0.){static const TCHAR* Bones[]={TEXT("+cf_j_waist01"),TEXT("+cf_j_spine01"),TEXT("+cf_j_spine02"),TEXT("+cf_j_thigh00_L"),TEXT("+cf_j_thigh00_R")};
-        const float A=3.f*FMath::Min(1.f,float(Left));TArray<FString> Names;TArray<FVector> Turns;
+        const float A=3.f*FMath::Min(1.f,float(Left));
         for(int32 I=0;I<UE_ARRAY_COUNT(Bones);++I){Names.Add(Bones[I]);const double T=Now*UE_DOUBLE_TWO_PI;
-            Turns.Add(FVector(float(FMath::Sin(T*11.+I*1.3))*A,float(FMath::Sin(T*13.+I*.7))*A*.6f,float(FMath::Sin(T*9.+I*2.1))*A*.4f));}
-        Girl->Session.SetFk(Names,Turns);bTrembling=true;}
+            Turns.Add(FVector(float(FMath::Sin(T*11.+I*1.3))*A,float(FMath::Sin(T*13.+I*.7))*A*.6f,float(FMath::Sin(T*9.+I*2.1))*A*.4f));}}
+    ApplyHerFk(Girl,Names,Turns);
+}
+// The pose he set on her, after her trembling (both '+': on top of the animation). Set every frame while there is any,
+// so a new self of hers (outfit change) or a new pair keeps it.
+void UOKHScenePanel::ApplyHerFk(AKKPreviewActor* Girl,TArray<FString>& Names,TArray<FVector>& Turns){
+    if(!FMath::IsNearlyZero(AnkleTurn))for(const TCHAR* Bone:{TEXT("+cf_j_leg03_L"),TEXT("+cf_j_leg03_R")}){Names.Add(Bone);Turns.Add(FVector(AnkleTurn,0.f,0.f));}
+    // Opening is out to her own side: the left thigh turns one way about its forward axis, the right the other.
+    if(!FMath::IsNearlyZero(ThighOpen[0])){Names.Add(TEXT("+cf_j_thigh00_L"));Turns.Add(FVector(0.f,0.f,-ThighOpen[0]));}
+    if(!FMath::IsNearlyZero(ThighOpen[1])){Names.Add(TEXT("+cf_j_thigh00_R"));Turns.Add(FVector(0.f,0.f,ThighOpen[1]));}
+    // Changed while the pair is paused: the paused pair solves one more frame (it only does for a reason to).
+    const FVector4f Set(AnkleTurn,ThighOpen[0],ThighOpen[1],0.f);if(Set!=HerPoseShown){HerPoseShown=Set;Girl->bHeadLookPoseDirty=true;}
+    if(!Names.IsEmpty()){Girl->Session.SetFk(Names,Turns);bTrembling=true;}
     else if(bTrembling){Girl->Session.SetFk({},{});bTrembling=false;}
 }
+// Her hands as he set them: given again to whichever self of hers is shown (an outfit change makes a new one).
+void UOKHScenePanel::TickHands(){
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl))return;
+    const int32 Count=Girl->GetHandShapeCount();
+    if(Count!=HandOptions)for(int32 Side=0;Side<2;++Side)if(UComboBoxString* C=HandCombos[Side]){
+        C->ClearOptions();C->AddOption(OKT(TEXT("ui.hscene.hand_follow")));for(int32 P=0;P<Count;++P)C->AddOption(OKMsg(TEXT("ui.hscene.hand_pattern"),{{TEXT("n"),P}}));
+        HandPattern[Side]=FMath::Clamp(HandPattern[Side],-1,Count-1);C->SetSelectedIndex(HandPattern[Side]+1);}
+    HandOptions=Count;
+    const bool bNew=HandGirl.Get()!=Girl;HandGirl=Girl;
+    for(int32 Side=0;Side<2;++Side)if(bNew?HandPattern[Side]>=0:HandShown[Side]!=HandPattern[Side]){const int32 P=HandPattern[Side];
+        if(Girl->SetHandShape(Side,P>=0,FMath::Max(0,P),FMath::Max(0,P),0.f)){HandShown[Side]=P;Girl->bHeadLookPoseDirty=true;}}
+}
+void UOKHScenePanel::SetHerPose(const float* Ankle,const float* ThighL,const float* ThighR,const int32* HandL,const int32* HandR){
+    if(Ankle){AnkleTurn=FMath::Clamp(*Ankle,-60.f,60.f);if(AnkleSlider)AnkleSlider->SetValue(AnkleTurn);}
+    if(ThighL){ThighOpen[0]=FMath::Clamp(*ThighL,-30.f,60.f);if(ThighSliders[0])ThighSliders[0]->SetValue(ThighOpen[0]);}
+    if(ThighR){ThighOpen[1]=FMath::Clamp(*ThighR,-30.f,60.f);if(ThighSliders[1])ThighSliders[1]->SetValue(ThighOpen[1]);}
+    const int32* Hands[2]={HandL,HandR};
+    for(int32 Side=0;Side<2;++Side)if(Hands[Side]){HandPattern[Side]=FMath::Max(-1,*Hands[Side]);if(HandOptions>=0)HandPattern[Side]=FMath::Min(HandPattern[Side],HandOptions-1);
+        if(HandCombos[Side])HandCombos[Side]->SetSelectedIndex(HandPattern[Side]+1);}
+}
+void UOKHScenePanel::OnAnkle(float Value){AnkleTurn=Value;}
+void UOKHScenePanel::OnThighL(float Value){ThighOpen[0]=Value;}
+void UOKHScenePanel::OnThighR(float Value){ThighOpen[1]=Value;}
+void UOKHScenePanel::OnHandL(FString,ESelectInfo::Type How){if(How!=ESelectInfo::Direct&&HandCombos[0])HandPattern[0]=HandCombos[0]->GetSelectedIndex()-1;}
+void UOKHScenePanel::OnHandR(FString,ESelectInfo::Type How){if(How!=ESelectInfo::Direct&&HandCombos[1])HandPattern[1]=HandCombos[1]->GetSelectedIndex()-1;}
 void UOKHScenePanel::AddSiru(int32 Area){
     if(Area<0||Area>4)return;Siru[Area]=FMath::Min(2,Siru[Area]+1);ApplySiru();
     UE_LOG(LogTemp,Display,TEXT("H scene: semen on her %d (levels %d %d %d %d %d)"),Area,Siru[0],Siru[1],Siru[2],Siru[3],Siru[4]);
@@ -1994,6 +2055,7 @@ TSharedRef<FJsonObject> UOKHScenePanel::Describe() const{
     TArray<TSharedPtr<FJsonValue>> Q;for(const FString& S:Queue)Q.Add(MakeShared<FJsonValueString>(S));O->SetArrayField(TEXT("queue"),Q);
     O->SetNumberField(TEXT("playback_speed"),PlaybackSpeed());if(Gallery&&Gallery->PreviewActor)O->SetNumberField(TEXT("breath_rate"),Gallery->PreviewActor->SpeechTempo);O->SetBoolField(TEXT("hooked"),Hooked());O->SetNumberField(TEXT("oral_suck"),OralSuckSet);O->SetNumberField(TEXT("oral_pull"),OralPullSet);O->SetNumberField(TEXT("mouth_turned"),bMouthAimed?MouthTurned:0.f);O->SetStringField(TEXT("mouth_dbg"),MouthDbg.ToString());O->SetNumberField(TEXT("mouth_hidden_verts"),MouthClipVerts);O->SetNumberField(TEXT("bust_swell"),BustSwellSet);O->SetNumberField(TEXT("depth_top"),AlignDeep);O->SetNumberField(TEXT("belly_out"),BulgeTarget.IsNone()?-1.f:BulgePast);O->SetNumberField(TEXT("belly_allow"),FMath::Max(0.f,BulgeMoves-2.5f));O->SetNumberField(TEXT("pullback"),BellyPullback);O->SetNumberField(TEXT("tip_inside"),TipInside);O->SetNumberField(TEXT("aim_relax"),AimRelax);O->SetNumberField(TEXT("skin_out"),SkinOutMost);O->SetNumberField(TEXT("skin_under"),SkinUnderMost);O->SetNumberField(TEXT("skin_worst"),SkinWorst);O->SetNumberField(TEXT("skin_rest"),SkinRest);O->SetNumberField(TEXT("skin_along"),SkinWorstAlong);O->SetNumberField(TEXT("root_dodge"),RootDodge.Size());O->SetNumberField(TEXT("depth_cap"),DepthCap);{auto Wr=MakeShared<FJsonObject>();for(const auto& W:Bulge)if(W.Value>1.f)Wr->SetNumberField(W.Key.ToString(),FMath::RoundToFloat(W.Value));O->SetObjectField(TEXT("swells"),Wr);O->SetNumberField(TEXT("swells_refused"),BulgeRefused);O->SetNumberField(TEXT("wrap_ms"),WrapMs);O->SetNumberField(TEXT("wrap_verts"),WrapVerts);O->SetNumberField(TEXT("cloth_verts"),ClothVerts);O->SetNumberField(TEXT("cloth_ms"),ClothMs);O->SetNumberField(TEXT("clip_verts"),ClipVerts);O->SetNumberField(TEXT("back_exit"),BackExitCm);O->SetNumberField(TEXT("clip_lead"),ClipLeadCm);O->SetNumberField(TEXT("swell_ms"),SwellMs);O->SetNumberField(TEXT("swell_part"),BulgePart);}O->SetNumberField(TEXT("skin_facing"),SkinFacing);O->SetBoolField(TEXT("belly_side"),bBellySide);if(Gallery&&Gallery->PreviewActor){const FTransform& HerT=Gallery->PreviewActor->GetActorTransform();auto Vec=[&](const TCHAR* Name,const FVector& V){FVector U=AKKPreviewActor::ActorLocalToUnity(HerT.InverseTransformVectorNoScale(V))*100.;float K[16];if(Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_j_kokan"),K)||Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_J_Kokan"),K)){const FVector X(K[0],K[4],K[8]),Y(K[1],K[5],K[9]),Z(K[2],K[6],K[10]);U=FVector(U|X.GetSafeNormal(),U|Y.GetSafeNormal(),U|Z.GetSafeNormal());}TArray<TSharedPtr<FJsonValue>> A;A.Add(MakeShared<FJsonValueNumber>(U.X));A.Add(MakeShared<FJsonValueNumber>(U.Y));A.Add(MakeShared<FJsonValueNumber>(U.Z));O->SetArrayField(Name,A);};Vec(TEXT("dodge_her"),RootDodge);Vec(TEXT("skin_normal_her"),SkinNormal);Vec(TEXT("front_her"),BellyFront);}O->SetNumberField(TEXT("root_scale"),RootPadScale);O->SetBoolField(TEXT("xray"),bPenisXRay);if(Gallery&&Gallery->PairedPlayback)O->SetNumberField(TEXT("pair_rate"),Gallery->PairedPlayback->GetSpeed());O->SetNumberField(TEXT("held"),Held.Num());O->SetStringField(TEXT("caption"),Caption?Caption->GetText().ToString():FString());
     O->SetNumberField(TEXT("her"),Her);O->SetNumberField(TEXT("his"),His);
+    {auto P=MakeShared<FJsonObject>();P->SetNumberField(TEXT("ankle"),AnkleTurn);P->SetNumberField(TEXT("thigh_l"),ThighOpen[0]);P->SetNumberField(TEXT("thigh_r"),ThighOpen[1]);P->SetNumberField(TEXT("hand_l"),HandPattern[0]);P->SetNumberField(TEXT("hand_r"),HandPattern[1]);P->SetNumberField(TEXT("hand_patterns"),HandOptions);O->SetObjectField(TEXT("her_pose"),P);}
     // Her development as the scene uses it now (her own plus this scene's climaxes), and how long her climax and her
     // nipples' spray have left (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md).
     {auto D=MakeShared<FJsonObject>();for(const TCHAR* A:{TEXT("crotch"),TEXT("anal"),TEXT("oral"),TEXT("chest"),TEXT("nipple")})D->SetNumberField(A,FMath::RoundToFloat(Dev(A)*100.f));O->SetObjectField(TEXT("dev"),D);

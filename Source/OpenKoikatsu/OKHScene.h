@@ -97,6 +97,15 @@ public:
     void OutfitChanged(bool bOk);
     UFUNCTION() void OnPenisLength(float Value);
     UFUNCTION() void OnPenisScale(float Value);
+    // Her pose set by him (user, 2026-11-02), on top of whatever plays: her ankles bent (degrees, both), each thigh opened
+    // (degrees, left and right apart) and each hand's shape (-1 as the motion has it, else the game's hand pattern).
+    // Held every frame through the pair's animation (her FK with '+' names, ApplyHerFk; her session's hand shapes).
+    void SetHerPose(const float* Ankle,const float* ThighL,const float* ThighR,const int32* HandL,const int32* HandR);
+    UFUNCTION() void OnAnkle(float Value);
+    UFUNCTION() void OnThighL(float Value);
+    UFUNCTION() void OnThighR(float Value);
+    UFUNCTION() void OnHandL(FString Option,ESelectInfo::Type How);
+    UFUNCTION() void OnHandR(FString Option,ESelectInfo::Type How);
 
     enum EKind : int32 {
         TabHand=10,TabMouth=11,TabBreast=12,TabSonyu=20,TabClothes=30,TabAibu=40,
@@ -163,6 +172,11 @@ private:
     // Half size: the inner box twice the panel high (NativeTick, from the panel as laid out), drawn at half.
     UPROPERTY() TObjectPtr<class USizeBox> HalfInner;UPROPERTY() TObjectPtr<class USizeBox> PanelWidth;
     UPROPERTY() TObjectPtr<USlider> LengthSlider;
+    UPROPERTY() TObjectPtr<USlider> AnkleSlider;UPROPERTY() TObjectPtr<USlider> ThighSliders[2];UPROPERTY() TObjectPtr<class UComboBoxString> HandCombos[2];
+    float AnkleTurn=0.f,ThighOpen[2]={0.f,0.f};int32 HandPattern[2]={-1,-1},HandShown[2]={-1,-1},HandOptions=-1;TWeakObjectPtr<class AKKPreviewActor> HandGirl;FVector4f HerPoseShown=FVector4f(0.f,0.f,0.f,0.f);
+    // Her FK this frame: her trembling (Tremble) and the pose he set, together (her session holds one FK list).
+    void ApplyHerFk(class AKKPreviewActor* Girl,TArray<FString>& Names,TArray<FVector>& Turns);void TickHands();
+    double PaizuriMilkAt=0;
     UPROPERTY() TObjectPtr<USlider> ScaleSlider;
     UPROPERTY() TObjectPtr<UTextBlock> PenisLabel;
     UPROPERTY() TObjectPtr<UOKHRootPad> RootPadWidget;

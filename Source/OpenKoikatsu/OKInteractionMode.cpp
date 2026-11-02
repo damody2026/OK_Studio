@@ -245,6 +245,12 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
         // {"dev":{"oral":100,...}}: her development there, for testing (0..100; -1 back to hers).
         const TSharedPtr<FJsonObject>* Devs=nullptr;if(Body->TryGetObjectField(TEXT("dev"),Devs))for(const auto& D:(*Devs)->Values){const double V=D.Value->AsNumber();if(V<0.)Panel->DevTest.Remove(FString(D.Key));else Panel->DevTest.Add(FString(D.Key),float(V));}
         bool Green=false;if(Body->TryGetBoolField(TEXT("penis_green"),Green))Panel->SetPenisGreen(Green);
+        // {"her_pose":{"ankle":20,"thigh_l":30,"thigh_r":0,"hand_l":3,"hand_r":-1}}: her pose as the panel sets it (degrees;
+        // a hand pattern, -1 as the motion). Fields left out stay as they are.
+        const TSharedPtr<FJsonObject>* HerPose=nullptr;if(Body->TryGetObjectField(TEXT("her_pose"),HerPose)){double V;float F[3];int32 H[2];const float* FP[3]={};const int32* HP[2]={};
+            static const TCHAR* FK[3]={TEXT("ankle"),TEXT("thigh_l"),TEXT("thigh_r")};for(int32 I=0;I<3;++I)if((*HerPose)->TryGetNumberField(FK[I],V)){F[I]=float(V);FP[I]=&F[I];}
+            static const TCHAR* HK[2]={TEXT("hand_l"),TEXT("hand_r")};for(int32 I=0;I<2;++I)if((*HerPose)->TryGetNumberField(HK[I],V)){H[I]=int32(V);HP[I]=&H[I];}
+            Panel->SetHerPose(FP[0],FP[1],FP[2],HP[0],HP[1]);}
         // {"penis":{"length":1.2,"scale":1.1,"root":[x,y]}}: his penis set as the panel's sliders and pad do.
         const TSharedPtr<FJsonObject>* Penis=nullptr;if(Body->TryGetObjectField(TEXT("penis"),Penis)){double L=-1,S=-1;(*Penis)->TryGetNumberField(TEXT("length"),L);(*Penis)->TryGetNumberField(TEXT("scale"),S);
             if(L>0||S>0)Panel->SetPenis(L>0?float(L):1.f,S>0?float(S):1.f,5.f);
