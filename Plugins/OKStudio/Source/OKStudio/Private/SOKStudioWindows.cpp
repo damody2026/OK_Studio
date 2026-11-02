@@ -817,9 +817,20 @@ TSharedRef<SWidget> SOKStudioPanel::BuildBackups()
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("每 %d 分鐘自動備份，保留 %d 份（設定可改）"), S.BackupMinutes, S.BackupKeep)), 10.f, TextHint())]
-			+ SHorizontalBox::Slot().AutoWidth()[Button(FText::FromString(TEXT("立即備份")), [this] { RunCommand(TEXT("scene.backup")); DeferFloat(TEXT("backups")); }, 80.f, 20.f)]
 		]
-		+ SVerticalBox::Slot().FillHeight(1.f)[SNew(SBorder).BorderImage(Brush(ListArea())).Padding(3.f)[SNew(SScrollBox) + SScrollBox::Slot()[Box]]];
+		+ SVerticalBox::Slot().FillHeight(1.f)[SNew(SBorder).BorderImage(Brush(ListArea())).Padding(3.f)[SNew(SScrollBox) + SScrollBox::Slot()[Box]]]
+		// HS2Studio6 场景备份与恢复: 立即备份, 刷新列表, 备份设置 (the settings' 備份 page).
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f, 0.f, 0.f)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("立即備份")), [this] { RunCommand(TEXT("scene.backup")); DeferFloat(TEXT("backups")); }, 0.f, 20.f)]
+			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("刷新列表")), [this] { DeferFloat(TEXT("backups")); }, 0.f, 20.f)]
+			+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("備份設定")), [this]
+			{
+				SettingsTab = 2;
+				if (IsFloatOpen(TEXT("settings"))) DeferFloat(TEXT("settings")); else OpenFloat(TEXT("settings"));
+			}, 0.f, 20.f)]
+		];
 }
 
 TSharedRef<SWidget> SOKStudioPanel::BuildRecent()
