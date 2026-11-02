@@ -6581,6 +6581,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 					Slot.Comp = MouthComp;
 					Slot.SessionPartIndex = Published;
 					Slot.bHideWhenClosed = bHideClosed;
+					Slot.InsideBit = LowName == TEXT("cf_o_tooth") ? 1 : LowName == TEXT("cf_o_canine") ? 2 : LowName == TEXT("o_tang") ? 4 : 0;
 					if (!bNoSharedOutline && bOutlinable && bSkinOutline && View.normals)
 					{
 						// The face shell needs its own morph buffer, with exactly the
@@ -7005,6 +7006,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 				Slot.SessionPartIndex = Published;
 				Slot.bHideWhenClosed = LowName == TEXT("cf_o_tooth")
 					|| LowName == TEXT("cf_o_canine") || LowName == TEXT("o_tang");
+				Slot.InsideBit = LowName == TEXT("cf_o_tooth") ? 1 : LowName == TEXT("cf_o_canine") ? 2 : LowName == TEXT("o_tang") ? 4 : 0;
 				TMap<FString, FName> AvailableMorphs;
 				for (int32 Morph = 0; Morph < Source.MorphCount(i); ++Morph)
 				{
@@ -9342,7 +9344,7 @@ void AKKPreviewActor::ApplyMouth()
         }
         if (Slot.bHideWhenClosed)
         {
-			const bool bShow = EffectiveFaceRate(0) > 0.001f;
+			const bool bShow = EffectiveFaceRate(0) > 0.001f && !(HiddenMouthInside & Slot.InsideBit);
             if (Slot.CpuComp) Slot.CpuComp->SetVisibility(bShow, true);
             if (Slot.Comp) { Slot.Comp->SetVisibility(bShow, true); Slot.Comp->SetHiddenInGame(!bShow); }
         }

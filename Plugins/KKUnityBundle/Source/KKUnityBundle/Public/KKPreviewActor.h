@@ -593,8 +593,13 @@ public:
 		TMap<FName, float> BaselineWeights;
         TArray<FName> MorphNames;
 		bool bHideWhenClosed = false;
+		// Which inside of her mouth it is (HiddenMouthInside): 1 her teeth, 2 her canines, 4 her tongue; 0 none.
+		uint8 InsideBit = 0;
 	};
 	TArray<FOkMouthSlot> MouthSlots;
+	// The insides of her mouth hidden even while it is open (FOkMouthSlot::InsideBit), e.g. her teeth while her lips are
+	// drawn forward round him (they came out through her upper lip).
+	uint8 HiddenMouthInside = 0;
 	// Native renderer morph weights, in Unity's percent units. Runtime only;
 	// reload/destroy clears them so one character cannot inherit another's.
 	TMap<int32, TMap<FName, float>> PartMorphWeights;

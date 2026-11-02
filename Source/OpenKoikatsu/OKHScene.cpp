@@ -510,6 +510,7 @@ bool UOKHScenePanel::PlayHVoice(int32 Row){
             UE_LOG(LogTemp,Display,TEXT("H scene: her line %d (bank %d) %s"),300+Row,Gallery->HBreath.Experience,*Line.Name);return true;}}
     UE_LOG(LogTemp,Display,TEXT("H scene: no line %d: %s"),300+Row,*Error);return false;
 }
+static TAutoConsoleVariable<int32> CVarHSuckHide(TEXT("ok.HScene.SuckHide"),1,TEXT("The insides of her mouth hidden while she sucks him (her lower face forward): 1 teeth, 2 canines, 4 tongue"));
 float UOKHScenePanel::Dev(const TCHAR* Area) const{
     if(const float* T=DevTest.Find(Area))return FMath::Clamp(*T/100.f,0.f,1.f);
     const auto& X=Gallery?Gallery->HExperience:nullptr;const TSharedPtr<FJsonObject>* Areas=nullptr;double V=0;
@@ -528,6 +529,9 @@ void UOKHScenePanel::SwellBust(float Delta){
      if(!bAhegaoShown&&FMath::Abs(Gaze-OralGazeSet)>.03f){OralGazeSet=Gaze;Girl->SetEyeGaze(0.f,0.f,Gaze);}}
     const bool BustMoved=FMath::Abs(BustSwell-BustSwellSet)>=.01f||(BustSwellSet!=1.f&&FMath::Abs(BustSwell-1.f)<.01f);
     const bool FaceMoved=FMath::Abs(OralSuck-OralSuckSet)>=.02f||(OralSuckSet!=0.f&&OralSuck<.02f);
+    // Her lower face drawn forward that far brought her teeth out through her upper lip (blue at its corners, oral
+    // development 100, 2026-11-02): hidden while it is (her lips are round him there).
+    Girl->HiddenMouthInside=OralSuck>=.2f?uint8(CVarHSuckHide.GetValueOnGameThread()):0;
     if(!BustMoved&&!FaceMoved)return;
     BustSwellSet=FMath::Abs(BustSwell-1.f)<.01f?1.f:BustSwell;OralSuckSet=OralSuck<.02f?0.f:OralSuck;
     TArray<float> Body=Gallery->Selected.Body.ShapeValueBody;Body[4]*=BustSwellSet; // cf_a_bust0x_size (ChaFileBody shapeValueBody[4])
@@ -1293,7 +1297,7 @@ void UOKHScenePanel::RestoreAlign(){
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;auto* Him=Gallery?Gallery->PartnerActor.Get():nullptr;
     if(IsValid(Girl)&&(BustSwellSet!=1.f||OralSuckSet!=0.f))Girl->MarkShapeDirty(Gallery->Selected.Face.ShapeValueFace,Gallery->Selected.Body.ShapeValueBody); // her own bust and face again
     if(IsValid(Girl)&&OralGazeSet!=0.f&&!bAhegaoShown)Girl->SetEyeGaze(0.f,0.f,0.f);
-    BustSwell=BustSwellSet=1.f;OralSuck=OralSuckSet=OralGazeSet=0.f;bSucking=false;
+    BustSwell=BustSwellSet=1.f;OralSuck=OralSuckSet=OralGazeSet=0.f;bSucking=false;if(IsValid(Girl))Girl->HiddenMouthInside=0;
     if(AlignedHer==Girl)MoveParts(Girl,FVector::ZeroVector,HerApplied);if(AlignedHim==Him)MoveParts(Him,FVector::ZeroVector,HimApplied);
     if(bHerIk||bHisIk)SyncPair();
     if(bHerIk&&IsValid(Girl)&&Girl->Session.IsOpen())Girl->Session.SetStudioIk({},{});if(bHisIk&&IsValid(Him)&&Him->Session.IsOpen())Him->Session.SetStudioIk({},{});
