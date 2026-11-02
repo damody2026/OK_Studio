@@ -8985,8 +8985,12 @@ TArray<FName> AKKPreviewActor::GetPartMorphNames(int32 PartIndex) const
 }
 bool AKKPreviewActor::SetPartMorphWeight(int32 PartIndex,FName Name,float Percent)
 {
-    if(!FMath::IsFinite(Percent) || !GetPartMorphNames(PartIndex).Contains(Name)) return false;
-    if(!MouthSlots.ContainsByPredicate([PartIndex](const FOkMouthSlot& S){return S.SessionPartIndex==PartIndex;})) return false;
+    if(!FMath::IsFinite(Percent)) return false;
+    const FOkMouthSlot* Slot=MouthSlots.FindByPredicate([PartIndex](const FOkMouthSlot& S){return S.SessionPartIndex==PartIndex;});
+    if(!Slot) return false;
+    // The slot's own names when it has them: asking the session for all of them on every call took 50 ms a frame with
+    // dozens of belly swells changing at once.
+    if(!(Slot->MorphNames.IsEmpty()?GetPartMorphNames(PartIndex).Contains(Name):Slot->MorphNames.Contains(Name))) return false;
     PartMorphWeights.FindOrAdd(PartIndex).Add(Name,FMath::Clamp(Percent,0.f,100.f));
     ApplyMouth();return true;
 }
