@@ -1,4 +1,5 @@
 #include "OKStreetSocialScene.h"
+#include "OKStreetBacks.h"
 #include "OKStreetSocialText.h"
 #include "OKStreetSpokenText.h"
 #include "OKStreetSocialSpeakerText.h"
@@ -3812,7 +3813,9 @@ double AOKStreetSocialScene::SceneTime() const {
  return State?(State->PrivateGirl!=INDEX_NONE?State->HighPrivateAt:Wall)-State->PrivatePausedSeconds:Wall;
 }
 void AOKStreetSocialScene::Tick(float Dt){
- Super::Tick(Dt);if(!State||!State->Started||State->Reported)return;auto& S=*State;GOKStreetTalkLimit=S.SelfTest; // the self-tests check the budget arithmetic; normal play has no daily talk limit
+ Super::Tick(Dt);
+ // Walls, buildings and floors not drawn from behind (OKStreetBacks.h), in the street and in the room alike.
+ if(APlayerController* PC=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr;PC&&PC->PlayerCameraManager)OKHideStreetBacks(GetWorld(),PC->PlayerCameraManager->GetCameraLocation());if(!State||!State->Started||State->Reported)return;auto& S=*State;GOKStreetTalkLimit=S.SelfTest; // the self-tests check the budget arithmetic; normal play has no daily talk limit
  // Walking into or out of a shop, or its opening hours passing: the shop part of the right panel has to follow without waiting for
 // some other event to rebuild it.
  if(const double WallNow=FPlatformTime::Seconds();WallNow>=S.UiShopCheckAt){
