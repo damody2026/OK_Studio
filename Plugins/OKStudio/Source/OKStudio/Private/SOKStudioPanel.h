@@ -1895,6 +1895,13 @@ public:
 							DeferRebuild();
 						})
 					]
+					// A locked object cannot be picked in the view; the row says so.
+					+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(3.f, 0.f, 2.f, 0.f)
+					[
+						SNew(SBox).ToolTipText(FText::FromString(TEXT("已鎖定：畫面上點不到")))
+						.Visibility_Lambda([this, Id] { const FOKSceneObject* O = Game.IsValid() ? Game->Document->Find(Id) : nullptr; return O && O->bLocked ? EVisibility::Visible : EVisibility::Collapsed; })
+						[OKStudioStyle::Label(FText::FromString(TEXT("鎖")), 9.f, TextSoft())]
+					]
 				]
 			];
 		RowNames.Add(Id, Name);

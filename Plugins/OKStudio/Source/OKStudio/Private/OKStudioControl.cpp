@@ -834,6 +834,14 @@ namespace
 			const int32 Steps = FMath::Clamp(ReadId(J, TEXT("steps"), 10), 1, 200);
 			const FModifierKeysState Mods;
 			const uint32 User = App.GetUserIndexForMouse();
+			// A capture left from an earlier press takes this press and release too (only the hover moved, 2026-11-02 U83):
+			// start from no capture, as a fresh press of the real mouse does.
+			if (App.HasAnyMouseCaptor())
+			{
+				const TSharedPtr<SWidget> Captor = App.GetCursorUser().IsValid() ? App.GetCursorUser()->GetCursorCaptor() : nullptr;
+				UE_LOG(LogTemp, Display, TEXT("OK studio control: mouse released a stale capture (%s)"), Captor.IsValid() ? *Captor->GetTypeAsString() : TEXT("?"));
+				App.ReleaseAllPointerCapture();
+			}
 			App.ProcessMouseMoveEvent(FPointerEvent(User, 0, At, At, TSet<FKey>(), EKeys::Invalid, 0.f, Mods));
 			App.ProcessMouseButtonDownEvent(Window->GetNativeWindow(), FPointerEvent(User, 0, At, At, TSet<FKey>({ Key }), Key, 0.f, Mods));
 			FVector2D Last = At;

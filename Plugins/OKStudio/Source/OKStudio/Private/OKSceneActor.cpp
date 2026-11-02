@@ -1380,6 +1380,16 @@ TArray<TPair<FString, float>> AOKSceneActor::BlendControlsOf(int32 Id) const
 	return Out;
 }
 
+bool AOKSceneActor::PlayTimeOf(int32 Id, float& Seconds, float& Length) const
+{
+	const FShown* Item = Shown.Find(Id);
+	const AKKPreviewActor* Actor = Item ? Item->Preview.Get() : nullptr;
+	if (!Actor || !(Actor->OkPlayer || Actor->PoseMode == 2)) return false;
+	Length = Actor->OkPlayer ? Actor->OkPlayer->Duration() : 0.f;
+	Seconds = Length > 0.f ? FMath::Fmod(FMath::Max(Item->Time, 0.f), Length) : Item->Time;
+	return true;
+}
+
 USceneComponent* AOKSceneActor::ComponentOf(int32 Id) const
 {
 	const FShown* Item = Shown.Find(Id);

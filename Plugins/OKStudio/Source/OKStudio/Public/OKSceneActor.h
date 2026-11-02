@@ -73,6 +73,9 @@ public:
 	/** The Studio controls (option1, option2, pattern) a shown character's H motion blends along and the values its
 	 *  player has (empty: a plain clip). */
 	TArray<TPair<FString, float>> BlendControlsOf(int32 Id) const;
+	/** Where a shown character's motion is now: seconds played (looping motions wrap) and the motion's length (0: unknown).
+	 *  False when it plays no motion. */
+	bool PlayTimeOf(int32 Id, float& Seconds, float& Length) const;
 	/** The shown objects' preview actors (characters and items; not the map). */
 	TArray<AActor*> ObjectPreviews() const;
 	USceneComponent* ComponentOf(int32 Id) const;

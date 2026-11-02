@@ -101,7 +101,7 @@ void SOKStudioPanel::RegisterFloats()
 	AddFloat(TEXT("recent"), TEXT("最近的場景"), FMargin(300.f, 60.f, 520.f, 380.f), [this] { return BuildRecent(); });
 	AddFloat(TEXT("stories"), TEXT("播放故事"), FMargin(300.f, 60.f, 420.f, 360.f), [this] { return BuildStories(); });
 	AddFloat(TEXT("material"), TEXT("材質編輯器"), FMargin(300.f, 60.f, 640.f, 420.f), [this] { return BuildMaterialEditor(); });
-	AddFloat(TEXT("animctl"), TEXT("動畫控制器"), FMargin(470.f, 400.f, 300.f, 150.f), [this] { return BuildAnimController(); });
+	AddFloat(TEXT("animctl"), TEXT("動畫控制器"), FMargin(470.f, 400.f, 300.f, 170.f), [this] { return BuildAnimController(); });
 	AddFloat(TEXT("bgm"), TEXT("背景音樂"), FMargin(142.f, 36.f, 280.f, 420.f), [this] { return BuildBgm(); });
 	AddFloat(TEXT("outside"), TEXT("外部音源"), FMargin(142.f, 36.f, 320.f, 360.f), [this] { return BuildOutsideSound(); });
 	AddFloat(TEXT("voice"), TEXT("語音"), FMargin(142.f, 36.f, 600.f, 420.f), [this] { return BuildVoice(); });
@@ -1622,6 +1622,15 @@ TSharedRef<SWidget> SOKStudioPanel::BuildAnimController()
 			[Line(TEXT("速度"), Spin([Character] { const FOKSceneObject* X = Character(); return X ? X->Character.Speed : 0.f; }, [Do](float V) { Do([V](FOKSceneCharacter& C) { C.Speed = FMath::Max(V, 0.f); }); }, 0.f, 4.f, 0.05f))]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)
 			[Line(TEXT("時間 秒"), Spin([Character] { const FOKSceneObject* X = Character(); return X ? X->Character.Time : 0.f; }, [Do](float V) { Do([V](FOKSceneCharacter& C) { C.Time = FMath::Max(V, 0.f); C.Speed = 0.f; }); }, 0.f, 600.f, 0.01f))]
+		// Where the motion is now (HS2Studio6 shows the playing time beside the controls); 時間 above is where it starts.
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)
+			[Line(TEXT("目前"), OKStudioStyle::Label(TAttribute<FText>::CreateLambda([this, Character]
+			{
+				const FOKSceneObject* X = Character();
+				float Seconds = 0.f, Length = 0.f;
+				if (!X || !Game.IsValid() || !Game->SceneActor || !Game->SceneActor->PlayTimeOf(X->Id, Seconds, Length)) return FText::FromString(TEXT("—"));
+				return FText::FromString(Length > 0.f ? FString::Printf(TEXT("%.2f / %.2f 秒"), Seconds, Length) : FString::Printf(TEXT("%.2f 秒"), Seconds));
+			}), 10.f, TextSoft()))]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f)
 		[
 			SNew(SHorizontalBox)
