@@ -42,6 +42,9 @@ struct FOKStudioSettings
 	 *  1 on), frame cap (-1 the engine's / the launcher's, 0 none). The defaults leave the engine as it is. */
 	float MasterVolume = 1.f;
 	bool bRunInBackground = true;
+	/** 疊加 keeps the other scene's directional lights even when this scene has one (off: they are left out, since the
+	 *  toon characters take one directional light and a second only brightens the map). */
+	bool bMergeKeepDirectional = false;
 	int32 VSync = -1;
 	int32 MaxFps = -1;
 	/** Puts the game settings on the engine; at startup only those changed from the defaults. */

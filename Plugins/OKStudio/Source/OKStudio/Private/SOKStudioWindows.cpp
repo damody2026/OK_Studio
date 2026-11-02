@@ -619,10 +619,20 @@ bool SOKStudioPanel::OpenScene(const FString& Path, bool bMerge)
 	UOKSceneDocument* Other = NewObject<UOKSceneDocument>();
 	FString Note;
 	if (!FOKSceneCard::Open(Source, Other, Error, &Note)) { SetStatus(TEXT("讀取失敗：") + Error); return false; }
+	// Every scene starts with a directional 主光: the other scene's directional lights (without children) stay out when
+	// this one already has one, unless the settings keep them.
+	int32 Skipped = 0;
+	const auto IsDirectional = [](const FOKSceneObject& O) { return O.Kind == EOKSceneObjectKind::Light && O.Light.Type == EOKSceneLightType::Directional; };
+	if (!FOKStudioSettings::Get().bMergeKeepDirectional && Game->Document->Objects.ContainsByPredicate(IsDirectional))
+	{
+		TSet<int32> Out;
+		for (const FOKSceneObject& O : Other->Objects) if (IsDirectional(O) && Other->Children(O.Id).IsEmpty()) Out.Add(O.Id);
+		Skipped = Other->Objects.RemoveAll([&Out](const FOKSceneObject& O) { return Out.Contains(O.Id); });
+	}
 	const TArray<int32> New = Game->Document->Merge(Other->ToJson(), Error);
 	if (New.IsEmpty() && !Error.IsEmpty()) { SetStatus(TEXT("疊加失敗：") + Error); return false; }
 	Game->SelectMany(New, New.Num() ? New.Last() : -1);
-	SetStatus(FString::Printf(TEXT("已疊加 %s：%d 個物件"), *FPaths::GetBaseFilename(Path), New.Num()));
+	SetStatus(FString::Printf(TEXT("已疊加 %s：%d 個物件"), *FPaths::GetBaseFilename(Path), New.Num()) + (Skipped ? FString::Printf(TEXT("（略過對方 %d 盞方向光，設定可改）"), Skipped) : FString()));
 	ReportPending = 90;
 	CloseFloat(TEXT("scenes"));
 	return true;
@@ -1216,7 +1226,8 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 		ShaderOptions.Reset();
 		for (int32 I = 0; I <= UE_ARRAY_COUNT(GOKSwitchableShaders); ++I) ShaderOptions.Add(MakeShared<int32>(I));
 		Materials->AddSlot().AutoHeight().Padding(0.f, 1.f, 0.f, 0.f)[SNew(SBox).HeightOverride(18.f)[Combo(&ShaderOptions,
-			[](int32 I) { return I == 0 ? FString(TEXT("（原本的 shader）")) : I > 0 && I <= UE_ARRAY_COUNT(GOKSwitchableShaders) ? FString(GOKSwitchableShaders[I - 1]) : FString(TEXT("（上面輸入的 shader）")); },
+			// Shown without the "Shader Forge/" folder, so the open list stays inside the window.
+			[](int32 I) { return I == 0 ? FString(TEXT("（原本的 shader）")) : I > 0 && I <= UE_ARRAY_COUNT(GOKSwitchableShaders) ? FString(GOKSwitchableShaders[I - 1]).Replace(TEXT("Shader Forge/"), TEXT("")) : FString(TEXT("（上面輸入的 shader）")); },
 			[ShaderEdit] { const FOKSceneMaterialEdit* E = ShaderEdit(); if (!E || E->Text.IsEmpty()) return 0; for (int32 I = 0; I < UE_ARRAY_COUNT(GOKSwitchableShaders); ++I) if (E->Text.Equals(GOKSwitchableShaders[I], ESearchCase::IgnoreCase)) return I + 1; return -1; },
 			[SetShader](int32 I) { SetShader(I == 0 ? FString() : FString(GOKSwitchableShaders[I - 1])); })]];
 		Materials->AddSlot().AutoHeight().Padding(0.f, 1.f)
@@ -2030,6 +2041,9 @@ TSharedRef<SWidget> SOKStudioPanel::BuildSettings()
 			Setting(TEXT("幀率上限"), TEXT("-1 不改（引擎或啟動器的設定），0 不限制，其他是每秒最多幾幀"), Spin([] { return float(FOKStudioSettings::Get().MaxFps); }, [Apply](float V) { FOKStudioSettings::Get().MaxFps = FMath::Clamp(FMath::RoundToInt(V), -1, 1000); Apply(); }, -1.f, 1000.f, 1.f),
 				[Apply] { FOKStudioSettings::Get().MaxFps = -1; Apply(); });
 		}
+		Setting(TEXT("疊加保留對方方向光"), TEXT("關閉時，這個場景已有方向光就不加入對方的方向光（角色只吃一盞，多的只會讓地圖變亮）"),
+			CheckBox(TEXT("開"), [] { return FOKStudioSettings::Get().bMergeKeepDirectional; }, [](bool B) { FOKStudioSettings::Get().bMergeKeepDirectional = B; FOKStudioSettings::Get().Save(); }),
+			[] { FOKStudioSettings::Get().bMergeKeepDirectional = false; FOKStudioSettings::Get().Save(); });
 		Setting(TEXT("場景檔資料夾"), TEXT("場景瀏覽器的預設資料夾（唯讀）"), OKStudioStyle::Label(FText::FromString(UOKStudioGame::SceneDirectory()), 9.f, TextHint()), nullptr);
 		Setting(TEXT("全部恢復預設"), TEXT("所有設定與快捷鍵回到預設（收藏與最近使用保留）"), Button(FText::FromString(TEXT("恢復預設")), [this] { FOKStudioSettings::Get().Reset(); DeferFloat(TEXT("settings")); }, 0.f, 18.f), nullptr);
 		break;

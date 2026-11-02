@@ -1995,11 +1995,26 @@ public:
 	/** A drop-down of named values. */
 	TSharedRef<SWidget> Combo(TArray<TSharedPtr<int32>>* Options, TFunction<FString(int32)> Show, TFunction<int32()> Current, TFunction<void(int32)> Pick)
 	{
-		return SNew(SComboBox<TSharedPtr<int32>>).ComboBoxStyle(&OKStudioStyle::ComboStyle()).ItemStyle(&OKStudioStyle::RowStyle()).OptionsSource(Options)
+		TSharedRef<SWidget> W = SNew(SComboBox<TSharedPtr<int32>>).ComboBoxStyle(&OKStudioStyle::ComboStyle()).ItemStyle(&OKStudioStyle::RowStyle()).OptionsSource(Options)
 			.OnGenerateWidget_Lambda([Show](TSharedPtr<int32> V) { return OKStudioStyle::Label(FText::FromString(Show(*V)), 10.f); })
 			.OnSelectionChanged_Lambda([Pick](TSharedPtr<int32> V, ESelectInfo::Type Info) { if (V && Info != ESelectInfo::Direct) Pick(*V); })
 			[OKStudioStyle::Label(TAttribute<FText>::CreateLambda([Show, Current] { return FText::FromString(Show(Current())); }), 10.f)];
+		ComboHandles.RemoveAll([](const FComboHandle& H) { return !H.Widget.IsValid(); });
+		ComboHandles.Add({ W, Options, Show, Current, Pick });
+		return W;
 	}
+	/** Every drop-down built, so the control channel can read and pick it as a click on its list would (the list is a
+	 *  popup menu the click walk does not reach). */
+	struct FComboHandle
+	{
+		TWeakPtr<SWidget> Widget;
+		TArray<TSharedPtr<int32>>* Options = nullptr;
+		TFunction<FString(int32)> Show;
+		TFunction<int32()> Current;
+		TFunction<void(int32)> Pick;
+	};
+	TArray<FComboHandle> ComboHandles;
+	const FComboHandle* ComboOf(const SWidget* W) const { return ComboHandles.FindByPredicate([W](const FComboHandle& H) { return H.Widget.Pin().Get() == W; }); }
 	/** Named pattern lists (TArray of options kept per list; -1 first: "the card's / the animation's"). */
 	TMap<FString, TSharedRef<TArray<TSharedPtr<int32>>>> NamedOptions;
 	/** The eye / neck look modes offered (HS2Studio6's order); Fixed only when the character carries the saved locals. */

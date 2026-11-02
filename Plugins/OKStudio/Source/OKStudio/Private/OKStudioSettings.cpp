@@ -164,6 +164,7 @@ void FOKStudioSettings::Load()
 		Num(TEXT("ui_scale"), UiScale); Num(TEXT("master_volume"), MasterVolume);
 		J->TryGetBoolField(TEXT("fly_mode"), bFlyMode);
 		J->TryGetBoolField(TEXT("run_in_background"), bRunInBackground);
+		J->TryGetBoolField(TEXT("merge_keep_directional"), bMergeKeepDirectional);
 		J->TryGetNumberField(TEXT("vsync"), VSync);
 		J->TryGetNumberField(TEXT("max_fps"), MaxFps);
 		double D;
@@ -202,6 +203,7 @@ void FOKStudioSettings::Save() const
 	J->SetNumberField(TEXT("backup_minutes"), BackupMinutes); J->SetNumberField(TEXT("backup_keep"), BackupKeep);
 	J->SetNumberField(TEXT("ui_scale"), UiScale);
 	J->SetNumberField(TEXT("master_volume"), MasterVolume); J->SetBoolField(TEXT("run_in_background"), bRunInBackground);
+	J->SetBoolField(TEXT("merge_keep_directional"), bMergeKeepDirectional);
 	J->SetNumberField(TEXT("vsync"), VSync); J->SetNumberField(TEXT("max_fps"), MaxFps);
 	auto Paths = [&J](const TCHAR* Key, const TArray<FString>& List)
 	{

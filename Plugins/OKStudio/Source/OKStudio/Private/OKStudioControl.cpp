@@ -801,6 +801,54 @@ namespace
 			O->SetStringField(TEXT("clicked"), Labels[Index]);
 			return O;
 		}
+		// The drop-downs on screen, in window order: without pick, each one's shown value and options; with index and pick
+		// (an option's number or its text), that option is chosen as a click in the open list would choose it.
+		if (Op == TEXT("combo"))
+		{
+			if (!FSlateApplication::IsInitialized()) return Result(false, TEXT("no UI"));
+			TArray<const SOKStudioPanel::FComboHandle*> Found;
+			TFunction<void(const TSharedRef<SWidget>&)> Walk = [&](const TSharedRef<SWidget>& W)
+			{
+				if (!W->GetVisibility().IsVisible()) return;
+				if (const SOKStudioPanel::FComboHandle* H = P.ComboOf(&W.Get())) { Found.Add(H); return; }
+				FChildren* Children = W->GetChildren();
+				for (int32 I = 0; Children && I < Children->Num(); ++I) Walk(Children->GetChildAt(I));
+			};
+			for (const TSharedRef<SWindow>& Window : FSlateApplication::Get().GetInteractiveTopLevelWindows()) Walk(Window);
+			const TSharedPtr<FJsonValue> PickValue = J->TryGetField(TEXT("pick"));
+			if (!PickValue.IsValid())
+			{
+				TArray<TSharedPtr<FJsonValue>> List;
+				for (int32 I = 0; I < Found.Num(); ++I)
+				{
+					TSharedRef<FJsonObject> C = MakeShared<FJsonObject>();
+					C->SetNumberField(TEXT("index"), I);
+					C->SetStringField(TEXT("current"), Found[I]->Show(Found[I]->Current()));
+					TArray<TSharedPtr<FJsonValue>> Options;
+					for (const TSharedPtr<int32>& V : *Found[I]->Options) Options.Add(MakeShared<FJsonValueString>(V ? Found[I]->Show(*V) : FString()));
+					C->SetArrayField(TEXT("options"), Options);
+					List.Add(MakeShared<FJsonValueObject>(C));
+				}
+				TSharedRef<FJsonObject> O = Result(true);
+				O->SetArrayField(TEXT("combos"), List);
+				return O;
+			}
+			const int32 Index = ReadId(J, TEXT("index"), 0);
+			if (!Found.IsValidIndex(Index)) return Result(false, FString::Printf(TEXT("%d drop-downs on screen"), Found.Num()));
+			const SOKStudioPanel::FComboHandle& H = *Found[Index];
+			int32 Option = INDEX_NONE;
+			double Number = 0.;
+			if (PickValue->TryGetNumber(Number)) Option = int32(Number);
+			else for (int32 I = 0; I < H.Options->Num(); ++I) if ((*H.Options)[I] && H.Show(*(*H.Options)[I]) == PickValue->AsString()) { Option = I; break; }
+			if (!H.Options->IsValidIndex(Option) || !(*H.Options)[Option]) return Result(false, TEXT("no such option"));
+			const TFunction<void(int32)> Pick = H.Pick;
+			const TFunction<FString(int32)> Show = H.Show;
+			const int32 Value = *(*H.Options)[Option];
+			Pick(Value);
+			TSharedRef<FJsonObject> O = Result(true);
+			O->SetStringField(TEXT("picked"), Show(Value));
+			return O;
+		}
 		// Types into a text field as the keyboard would: the field whose hint (or text) contains "field" takes keyboard
 		// focus, Ctrl+A and Backspace clear it, each character is a key press and "enter" commits (its own handlers run).
 		if (Op == TEXT("type"))
@@ -1285,7 +1333,7 @@ namespace OKStudioControl
 		if (!GRouter.IsValid()) { UE_LOG(LogTemp, Warning, TEXT("OK studio control: could not open port %d"), Port); return; }
 		static const TCHAR* Ops[] = { TEXT("state"), TEXT("inspect"), TEXT("catalog_search"), TEXT("spawn"), TEXT("transform"), TEXT("reparent"), TEXT("delete"), TEXT("select"),
 			TEXT("pose"), TEXT("camera"), TEXT("capture"), TEXT("save"), TEXT("load"), TEXT("undo"), TEXT("redo"), TEXT("cmd"), TEXT("timeline"),
-			TEXT("patch"), TEXT("scene"), TEXT("bones"), TEXT("bounds"), TEXT("catalog"), TEXT("keys"), TEXT("duplicate"), TEXT("export"), TEXT("scenes"), TEXT("report"), TEXT("ui_shot"), TEXT("ui_fit"), TEXT("click"), TEXT("type"), TEXT("leave"), TEXT("exec"), TEXT("parts") };
+			TEXT("patch"), TEXT("scene"), TEXT("bones"), TEXT("bounds"), TEXT("catalog"), TEXT("keys"), TEXT("duplicate"), TEXT("export"), TEXT("scenes"), TEXT("report"), TEXT("ui_shot"), TEXT("ui_fit"), TEXT("click"), TEXT("combo"), TEXT("type"), TEXT("leave"), TEXT("exec"), TEXT("parts") };
 		for (const TCHAR* Op : Ops)
 		{
 			const FString Name = Op;
