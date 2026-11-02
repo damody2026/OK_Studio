@@ -249,6 +249,8 @@ private:
     float AimTilt=35.f;void ReadPairSessions();void ReadBulge(class AKKPreviewActor* Girl,const FVector& Tip,const FVector* Root=nullptr);float AimRelax=0.f;float SkinOutMost=-100.f;float SkinUnderMost=-100.f;float SkinWorst=-100.f;float SkinRest=0.f;float SkinWorstAlong=0.f;FVector SkinNormal=FVector::ZeroVector;FVector RootDodge=FVector::ZeroVector;float DepthCap=1.f;int32 LiftedPose=INDEX_NONE;bool bLifted=false;
     TWeakObjectPtr<class AKKPairedPlayback> ReadingPlayback;FDelegateHandle ReadingHandle;
     TMap<FName,float> Bulge;int32 BulgePart=INDEX_NONE;FName BulgeOpen;float OpenEased=0.f;FName BulgeTarget;float BulgePast=0.f,BulgeMoves=0.f;bool bBulgeLogged=false;TWeakObjectPtr<class AKKPreviewActor> BulgedHer;
+    // His penis out through her back folded under her skin (ReadBulge, penis.clip): his part with that morph, whether it is moved now.
+    TWeakObjectPtr<class AKKPreviewActor> ClipHim;int32 ClipPart=INDEX_NONE;bool bClipShown=false;int32 ClipVerts=0;float BackExitCm=-1.f;float ClipLastTip=-1.f,ClipLeadCm=0.f;
     // The girl whose shoes were taken off on coming into her room (NativeTick): once each, she may put them back on.
     TWeakObjectPtr<class AKKPreviewActor> ShoesOffFor;
     // His glans from his penis root, from his session (the end of his penis mesh; J_dan109 draws in as he goes in): kept

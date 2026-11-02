@@ -124,6 +124,13 @@ int32_t ok_belly_wrap_deltas(OkSession* s,const float* at,float radius,uint32_t*
 /* As ok_belly_wrap_deltas, her skin moved by her belly bones, pushed by his penis as BetterPenetration's colliders push
    its belly DynamicBone (belly_bulge::bone_deltas). Same input and output. */
 int32_t ok_belly_bone_deltas(OkSession* s,const float* at,float radius,uint32_t* out_idx,float* out_d,uint32_t max);
+/* Where the line from her entrance to his glans comes out of her through her back (belly_bulge::back_exit): at as
+   ok_belly_wrap_deltas (9 floats); out = the place and her skin's outward normal there (6). 0 found, 1 none, -1 bad input. */
+int32_t ok_back_exit(OkSession* s,const float* at,float* out);
+/* His penis past her skin folded under it (belly_bulge::clip_deltas): at = where he comes out of her, her skin's outward
+   normal there, the way his penis points, how much further under her skin (his skeleton space, metres, 10 floats). Output as ok_belly_wrap_deltas, for his
+   penis part (the one with the morph "penis.clip"). */
+int32_t ok_penis_clip_deltas(OkSession* s,const float* at,uint32_t* out_idx,float* out_d,uint32_t max);
 /* Her hair chains hang under their weight (on 1) or keep the card's own DynamicBone parameters (0). Returns the chains
    changed now, -1 on a bad session. */
 int32_t ok_hang_hair(OkSession* s,int32_t on);

@@ -11,6 +11,8 @@ use crate::session::{OkSession, SessionPart};
 use std::collections::HashMap;
 mod bones;
 pub use bones::bone_deltas;
+mod clip;
+pub use clip::{back_exit, clip_deltas};
 
 /// Where the swells are along her crotch-to-upper-spine line (fractions of it): her belly only, from just over her
 /// crotch up (user 2026-11-01: the swells under it, on her upper thighs and by her entrance, moved her thighs).
@@ -70,8 +72,9 @@ fn skin_of(part: &SessionPart, j: usize, worlds: &[Mat4], binds: &[Mat4], still:
 
 /// Adds the targets to her body part once; true when added (the skeleton export is then rebuilt with them).
 pub fn add(session: &mut OkSession) -> bool {
-    // Hers only (ChaFileParameter.sex 1): his body has the same cf_ bones, cf_j_kokan too.
-    if session.sex != 1 { return false; }
+    // Hers only (ChaFileParameter.sex 1): his body has the same cf_ bones, cf_j_kokan too. His penis gets the morph it is
+    // folded into her with (clip.rs).
+    if session.sex != 1 { return session.sex == 0 && clip::add_clip_morph(session); }
     let Some(rest) = crate::skel_export::bind_body(session) else { return false; };
     let at = |n: &str| rest.world_tf(n).map(|m| translation(&m));
     // Her crotch to her upper spine in the bind pose (she faces +z): the heights the swells are at.

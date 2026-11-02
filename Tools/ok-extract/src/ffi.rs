@@ -169,6 +169,29 @@ pub unsafe extern "C" fn ok_belly_bone_deltas(s:*mut OkSession,at:*const f32,rad
     moves.len() as i32
 }
 #[no_mangle]
+pub unsafe extern "C" fn ok_back_exit(s:*mut OkSession,at:*const f32,out:*mut f32)->i32 {
+    // Where the line from her entrance to his glans comes out of her through her back (belly_bulge::back_exit): at = her
+    // entrance, his glans, the way her belly faces (her skeleton space, metres, 9 floats); out = the place and her skin's
+    // outward normal there (6). 0 found, 1 none (still in her, or out on her belly side), -1 bad input.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if at.is_null()||out.is_null() {return -1;}
+    let from=[*at,*at.add(1),*at.add(2)];let to=[*at.add(3),*at.add(4),*at.add(5)];let up=[*at.add(6),*at.add(7),*at.add(8)];
+    let Some((p,n))=crate::belly_bulge::back_exit(s,from,to,up) else{return 1;};
+    for k in 0..3{*out.add(k)=p[k];*out.add(3+k)=n[k];}0
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_penis_clip_deltas(s:*mut OkSession,at:*const f32,out_idx:*mut u32,out_d:*mut f32,max:u32)->i32 {
+    // His penis past her skin folded under it (belly_bulge::clip_deltas): at = where he comes out of her, her skin's
+    // outward normal there, the way his penis points, how much further under her skin (his skeleton space, metres, 10 floats). Output as ok_belly_wrap_deltas,
+    // for his penis part.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if at.is_null()||out_idx.is_null()||out_d.is_null() {return -1;}
+    let p=[*at,*at.add(1),*at.add(2)];let n=[*at.add(3),*at.add(4),*at.add(5)];let a=[*at.add(6),*at.add(7),*at.add(8)];
+    let moves=crate::belly_bulge::clip_deltas(s,p,n,a,*at.add(9));
+    for (i,(j,d)) in moves.iter().take(max as usize).enumerate(){*out_idx.add(i)=*j;for k in 0..6{*out_d.add(i*6+k)=d[k];}}
+    moves.len() as i32
+}
+#[no_mangle]
 pub unsafe extern "C" fn ok_aim_penis(s:*mut OkSession,dir:*const f32,out_degrees:*mut f32)->i32 {
     // His penis root turned so his penis points along dir (belly_bulge::aim_penis), his skeleton space, Unity.
     // 0 ok (out: degrees turned now), 1 no penis / root.

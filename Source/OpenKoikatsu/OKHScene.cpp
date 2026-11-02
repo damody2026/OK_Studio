@@ -555,6 +555,9 @@ void UOKHScenePanel::SwellBust(float Delta){
     Girl->MarkShapeDirty(Face,Body);
 }
 static bool HBone(AKKPreviewActor* A,const TCHAR* Name,FVector& Out);
+// The session part a component of his draws (KKSessionPart_<n>; KKMorphPart_<n> on the renderer that replaces it once the
+// part has morphs, his penis with penis.clip): INDEX_NONE for another tag.
+static int32 HTagPart(const FString& T){if(T.StartsWith(TEXT("KKSessionPart_")))return FCString::Atoi(*T.Mid(14));if(T.StartsWith(TEXT("KKMorphPart_")))return FCString::Atoi(*T.Mid(12));return INDEX_NONE;}
 void UOKHScenePanel::HideWorld(){
     AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl)||!GetWorld())return;
     // Asked again every second while the room is grey (UOKHScenePanel::NativeTick): the street shows its people again as
@@ -599,8 +602,8 @@ void UOKHScenePanel::SetPenisGreen(bool bOn){
     UMaterialInterface* Parent=LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/IndependentResources/PreviewMaterials/M_PreviewOpaque.M_PreviewOpaque"),nullptr,LOAD_NoWarn);if(!Parent)return;
     UMaterialInstanceDynamic* Green=UMaterialInstanceDynamic::Create(Parent,this);Green->SetVectorParameterValue(TEXT("PreviewTint"),FLinearColor(0.f,1.f,0.f,1.f));
     TInlineComponentArray<UMeshComponent*> All;Him->GetComponents(All);
-    for(UMeshComponent* Comp:All)for(const FName& Tag:Comp->ComponentTags){const FString T=Tag.ToString();if(!T.StartsWith(TEXT("KKSessionPart_")))continue;
-        OkMeshView V{};if(Him->Session.PartAt(FCString::Atoi(*T.Mid(14)),V)&&V.name){const FString N=FString(UTF8_TO_TCHAR(V.name)).ToLower();
+    for(UMeshComponent* Comp:All)for(const FName& Tag:Comp->ComponentTags){const FString T=Tag.ToString();const int32 PartIdx=HTagPart(T);if(PartIdx==INDEX_NONE)continue;
+        OkMeshView V{};if(Him->Session.PartAt(PartIdx,V)&&V.name){const FString N=FString(UTF8_TO_TCHAR(V.name)).ToLower();
             if(N==TEXT("o_dankon")||N==TEXT("cm_o_dan00")){GreenComps.Add(Comp);for(int32 I=0;I<Comp->GetNumMaterials();++I){GreenKept.Add(Comp->GetMaterial(I));Comp->SetMaterial(I,Green);}}}break;} // the see-through overlay (bPenisXRay) stays on it
     UE_LOG(LogTemp,Display,TEXT("H scene: his penis drawn green (%d parts)"),GreenComps.Num());
 }
@@ -1153,6 +1156,8 @@ static constexpr float PenisRadiusCm=1.8f;
 // How far his root may be moved off her skin past where the pad puts it (AlignHim: RootDodge).
 static constexpr float RootDodgeMaxCm=20.f;
 static TAutoConsoleVariable<float> CVarHWrapTest(TEXT("ok.HScene.WrapTest"),0.f,TEXT("Test: every wrapped skin moved this many metres up her mesh instead (0 off)"));
+static TAutoConsoleVariable<float> CVarHBackClipLead(TEXT("ok.HScene.BackClipLead"),8.f,TEXT("His penis folded under her back this many frames of his glans' way out further in (the morph is drawn after his pose is read)"));
+static TAutoConsoleVariable<int32> CVarHBackClip(TEXT("ok.HScene.BackClip"),1,TEXT("1: his penis out through her back folded under her skin there, not drawn (belly_bulge::clip_deltas); 0 drawn"));
 static TAutoConsoleVariable<int32> CVarHWrap(TEXT("ok.HScene.Wrap"),1,TEXT("1: her skin moves each frame to wrap his penis in her (belly_bulge::wrap_deltas); 2: her skin material pushes it off his penis (world position offset, the _Wrap parents of wrap_material_root); 3: belly bones added to her body, pushed by his penis (belly_bulge::bone_deltas); 0 off, to compare"));
 // The skin parents with the wrap offset (manifest wrap_material_root, Launch/materials.json wrap_root).
 static const FString& OKWrapMaterialRoot(){
@@ -1265,14 +1270,14 @@ void UOKHScenePanel::ApplyMaleLook(){
     Him->SetGenitalVisible(bMaleBottomOff);
     // His balls stay hidden (user, 2026-11-01): o_dan_f / cm_o_dan_f and their outlines.
     {TInlineComponentArray<UPrimitiveComponent*> Prims;Him->GetComponents(Prims);
-     for(UPrimitiveComponent* Comp:Prims)for(const FName& Tag:Comp->ComponentTags){const FString T=Tag.ToString();if(!T.StartsWith(TEXT("KKSessionPart_")))continue;
-         OkMeshView V{};if(Him->Session.PartAt(FCString::Atoi(*T.Mid(14)),V)&&V.name){const FString N=FString(UTF8_TO_TCHAR(V.name)).ToLower();
+     for(UPrimitiveComponent* Comp:Prims)for(const FName& Tag:Comp->ComponentTags){const FString T=Tag.ToString();const int32 PartIdx=HTagPart(T);if(PartIdx==INDEX_NONE)continue;
+         OkMeshView V{};if(Him->Session.PartAt(PartIdx,V)&&V.name){const FString N=FString(UTF8_TO_TCHAR(V.name)).ToLower();
              if(N==TEXT("o_dan_f")||N==TEXT("cm_o_dan_f")){Comp->SetVisibility(false,true);Comp->SetHiddenInGame(true);}}break;}}
     // Where his penis is inside her: while he is see-through it is drawn once more over everything (depth test off), a
     // faint colour, so the part in her body shows too (whether it runs inside her or comes out through her skin).
     TInlineComponentArray<UMeshComponent*> All;Him->GetComponents(All);
-    auto IsGenital=[Him](UMeshComponent* Comp){for(const FName& Tag:Comp->ComponentTags){const FString T=Tag.ToString();if(!T.StartsWith(TEXT("KKSessionPart_")))continue;
-        OkMeshView V{};if(Him->Session.PartAt(FCString::Atoi(*T.Mid(14)),V)&&V.name){const FString N=FString(UTF8_TO_TCHAR(V.name)).ToLower();return N==TEXT("o_dankon")||N==TEXT("cm_o_dan00");}}return false;};
+    auto IsGenital=[Him](UMeshComponent* Comp){for(const FName& Tag:Comp->ComponentTags){const FString T=Tag.ToString();const int32 PartIdx=HTagPart(T);if(PartIdx==INDEX_NONE)continue;
+        OkMeshView V{};if(Him->Session.PartAt(PartIdx,V)&&V.name){const FString N=FString(UTF8_TO_TCHAR(V.name)).ToLower();return N==TEXT("o_dankon")||N==TEXT("cm_o_dan00");}}return false;};
     UMaterialInterface* XRayParent=bPenisXRay&&MaleView!=2&&bMaleBottomOff?LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/IndependentResources/PreviewMaterials/M_PreviewXRay.M_PreviewXRay"),nullptr,LOAD_NoWarn):nullptr;
     if(XRayParent&&!PenisXRay){PenisXRay=UMaterialInstanceDynamic::Create(XRayParent,this);PenisXRay->SetVectorParameterValue(TEXT("PreviewTint"),FLinearColor(1.f,.35f,.75f,.45f));}
     int32 Shown=0;for(UMeshComponent* Comp:All)if(IsGenital(Comp)){Comp->SetOverlayMaterial(XRayParent?PenisXRay.Get():nullptr);Shown+=XRayParent?1:0;}
@@ -1286,8 +1291,8 @@ void UOKHScenePanel::ApplyMaleLook(){
     if(!MaleGhost){MaleGhost=UMaterialInstanceDynamic::Create(Parent,this);MaleGhost->SetVectorParameterValue(TEXT("PreviewTint"),FLinearColor(.25f,.45f,1.f,.05f));}
     TInlineComponentArray<UMeshComponent*> Comps;Him->GetComponents(Comps);
     // Everything but the penis and the balls (o_dankon / cm_o_dan00, o_dan_f): those stay as they are, to see where he is in her.
-    auto PartName=[Him](UMeshComponent* Comp){for(const FName& Tag:Comp->ComponentTags){const FString T=Tag.ToString();if(!T.StartsWith(TEXT("KKSessionPart_")))continue;
-        OkMeshView V{};if(Him->Session.PartAt(FCString::Atoi(*T.Mid(14)),V)&&V.name)return FString(UTF8_TO_TCHAR(V.name)).ToLower();}return FString();};
+    auto PartName=[Him](UMeshComponent* Comp){for(const FName& Tag:Comp->ComponentTags){const FString T=Tag.ToString();const int32 PartIdx=HTagPart(T);if(PartIdx==INDEX_NONE)continue;
+        OkMeshView V{};if(Him->Session.PartAt(PartIdx,V)&&V.name)return FString(UTF8_TO_TCHAR(V.name)).ToLower();}return FString();};
     auto Genital=[&](UMeshComponent* Comp){const FString N=PartName(Comp);return N==TEXT("o_dankon")||N==TEXT("cm_o_dan00")||N==TEXT("o_dan_f")||N==TEXT("cm_o_dan_f");};
     for(UMeshComponent* Comp:Comps){if(!Comp->IsVisible()||Genital(Comp))continue;
         // One layer of colour: his body and face only. Hair cards, clothes, eyes and outline shells stacked on them made the
@@ -1338,7 +1343,8 @@ void UOKHScenePanel::BulgeBelly(AKKPreviewActor* Girl,const FVector* Tip,float O
     // Where his tip is against her skin now: read when the pair playback has the sessions idle (ReadPairSessions); with
     // none, here.
     FVector Kokan;
-    if(!Tip){BulgeTarget=NAME_None;if(bWrapShown&&IsValid(Girl)){Girl->SetPartWrapDeltas(BulgePart,{},{});bWrapShown=false;}if(bWrapLineShown&&IsValid(Girl)){Girl->SetWrapLine(false,FVector::ZeroVector,FVector::ZeroVector,0.f,FString());bWrapLineShown=false;}}
+    if(!Tip){BulgeTarget=NAME_None;if(bWrapShown&&IsValid(Girl)){Girl->SetPartWrapDeltas(BulgePart,{},{});bWrapShown=false;}
+        if(bClipShown&&ClipHim.IsValid()){ClipHim->SetPartWrapDeltas(ClipPart,{},{});bClipShown=false;ClipVerts=0;}if(bWrapLineShown&&IsValid(Girl)){Girl->SetWrapLine(false,FVector::ZeroVector,FVector::ZeroVector,0.f,FString());bWrapLineShown=false;}}
     else if(!IsValid(Gallery?Gallery->PairedPlayback.Get():nullptr))ReadBulge(Girl,*Tip);
     // Once his tip is past her skin (inside, the margin swelled her where he does not show), out by how far and 2.5 cm
     // more (his glans is round, the skin beside the one measured moves less). A swell that hardly moves that skin (the
@@ -1433,6 +1439,38 @@ void UOKHScenePanel::ReadBulge(AKKPreviewActor* Girl,const FVector& Tip,const FV
      if(WrapMode==2||bWrapLineShown){const bool bLine=WrapMode==2;const bool bIn=!E.IsZero()&&TipInside>=6.f;
       Girl->SetWrapLine(bLine,E,Tip,bIn?Radius+.5f:0.f,OKWrapMaterialRoot());bWrapLineShown=bLine;}
      WrapMs=float((FPlatformTime::Seconds()-WrapT0)*1000.);}
+    // His penis out through her back not drawn (user, 2026-11-02: "背部要直接把超出的部分不顯示"; her belly bones lift only
+    // her belly): where the line from her entrance to his glans leaves her through skin facing away from her belly
+    // (belly_bulge::back_exit), what of him is past it folds back along him to just under her skin there (clip_deltas),
+    // drawn as the morph penis.clip of his penis.
+    {AKKPreviewActor* Him=Gallery?Gallery->PartnerActor.Get():nullptr;
+     if(ClipHim!=Him){if(bClipShown&&ClipHim.IsValid())ClipHim->SetPartWrapDeltas(ClipPart,{},{});ClipHim=Him;ClipPart=INDEX_NONE;bClipShown=false;
+         for(int32 Part=0;IsValid(Him)&&Part<Him->Session.PartCount();++Part)if(Him->GetPartMorphNames(Part).Contains(FName(TEXT("penis.clip")))){ClipPart=Part;break;}
+         UE_LOG(LogTemp,Display,TEXT("H scene: his penis folds under her back %s"),ClipPart!=INDEX_NONE?*FString::Printf(TEXT("on part %d"),ClipPart):TEXT("never (no penis.clip morph)"));}
+     // His glans' way out of her each frame (cm, along him) times BackClipLead: the morph is drawn a frame or two after
+     // his pose is read, and a fast thrust (6 cm a frame, 後背位) carried his glans out past a fold made at her skin.
+     const float Lead=ClipLastTip>=0.f?FMath::Clamp((TipInside-ClipLastTip)*CVarHBackClipLead.GetValueOnGameThread(),0.f,20.f):0.f;ClipLastTip=TipInside;
+     TArray<uint32> Idx;TArray<FVector3f> D;FVector At,N;BackExitCm=-1.f;
+     if(IsValid(Him)&&ClipPart!=INDEX_NONE&&CVarHBackClip.GetValueOnGameThread()!=0&&!E.IsZero()&&TipInside>=6.f&&!Front.IsZero()
+        &&[&]{const FVector Up=(ToUnity(Kokan+Front*10.)-ToUnity(Kokan)).GetSafeNormal();
+            // Where his glans is now, else where the lead carries it (only then: the line drawn on past him found her skin
+            // farther on, her upper back, and the place he comes out now was missed).
+            return Girl->Session.BackExit(ToUnity(E),ToUnity(Tip),Up,At,N)||(Lead>0.f&&Girl->Session.BackExit(ToUnity(E),ToUnity(Tip+(Tip-E).GetSafeNormal()*Lead),Up,At,N));}()){
+         const FVector K(M[3],M[7],M[11]),KL=AKKPreviewActor::ActorLocalToUnity(Body.InverseTransformPosition(Kokan));
+         const FVector WAt=Body.TransformPosition(AKKPreviewActor::UnityToActorLocal(At-K+KL));
+         const FVector WN=Body.TransformVectorNoScale(AKKPreviewActor::UnityToActorLocal(N)).GetSafeNormal();
+         BackExitCm=float((WAt-E).Size());
+         // Never folded back past 2 cm in from her entrance (the fold reaches 4 cm and the lead before where he comes out):
+         // his shaft out of her stays drawn.
+         const float Inset=FMath::Min(Lead,BackExitCm-6.f);ClipLeadCm=Inset;
+         // To his skeleton space: his parts are drawn HimApplied off his actor (AlignHim).
+         const FTransform& HimT=Him->GetActorTransform();
+         auto HisPos=[&](const FVector& W){return AKKPreviewActor::ActorLocalToUnity(HimT.InverseTransformPosition(W-HimApplied));};
+         auto HisDir=[&](const FVector& W){return (HisPos(W*100.+WAt)-HisPos(WAt)).GetSafeNormal();};
+         Him->Session.PenisClipDeltas(HisPos(WAt),HisDir(WN),HisDir((Tip-E).GetSafeNormal()),Idx,D,FMath::Max(0.f,Inset)/100.f);
+         // Moves under a tenth of a millimetre dropped: a set of only those has no morph batches and the engine asserts.
+         for(int32 I=D.Num()-1;I>=0;--I)if(D[I].SizeSquared()<1e-8f){D.RemoveAtSwap(I);Idx.RemoveAtSwap(I);}}
+     if(IsValid(Him)&&ClipPart!=INDEX_NONE&&(D.Num()||bClipShown)){Him->SetPartWrapDeltas(ClipPart,Idx,D);bClipShown=D.Num()>0;}ClipVerts=D.Num();}
     // His glans alone read out for the panel (bulge_at, belly_out): each reading skins all her swells' skin again, and
     // with the fine grid that for every point of him took the game from 100 FPS to 25.
     bool bAny=false;float Most=0.f;
@@ -1804,7 +1842,7 @@ TSharedRef<FJsonObject> UOKHScenePanel::Describe() const{
     O->SetNumberField(TEXT("blush"),BlushMats.IsEmpty()?-1.f:BlushShown);
     O->SetStringField(TEXT("state"),Current());O->SetStringField(TEXT("wanted"),Wanted);O->SetNumberField(TEXT("mode"),Mode);
     TArray<TSharedPtr<FJsonValue>> Q;for(const FString& S:Queue)Q.Add(MakeShared<FJsonValueString>(S));O->SetArrayField(TEXT("queue"),Q);
-    O->SetNumberField(TEXT("playback_speed"),PlaybackSpeed());if(Gallery&&Gallery->PreviewActor)O->SetNumberField(TEXT("breath_rate"),Gallery->PreviewActor->SpeechTempo);O->SetBoolField(TEXT("hooked"),Hooked());O->SetNumberField(TEXT("oral_suck"),OralSuckSet);O->SetNumberField(TEXT("oral_pull"),OralPullSet);O->SetNumberField(TEXT("bust_swell"),BustSwellSet);O->SetNumberField(TEXT("depth_top"),AlignDeep);O->SetNumberField(TEXT("belly_out"),BulgeTarget.IsNone()?-1.f:BulgePast);O->SetNumberField(TEXT("belly_allow"),FMath::Max(0.f,BulgeMoves-2.5f));O->SetNumberField(TEXT("pullback"),BellyPullback);O->SetNumberField(TEXT("tip_inside"),TipInside);O->SetNumberField(TEXT("aim_relax"),AimRelax);O->SetNumberField(TEXT("skin_out"),SkinOutMost);O->SetNumberField(TEXT("skin_under"),SkinUnderMost);O->SetNumberField(TEXT("skin_worst"),SkinWorst);O->SetNumberField(TEXT("skin_rest"),SkinRest);O->SetNumberField(TEXT("skin_along"),SkinWorstAlong);O->SetNumberField(TEXT("root_dodge"),RootDodge.Size());O->SetNumberField(TEXT("depth_cap"),DepthCap);{auto Wr=MakeShared<FJsonObject>();for(const auto& W:Bulge)if(W.Value>1.f)Wr->SetNumberField(W.Key.ToString(),FMath::RoundToFloat(W.Value));O->SetObjectField(TEXT("swells"),Wr);O->SetNumberField(TEXT("swells_refused"),BulgeRefused);O->SetNumberField(TEXT("wrap_ms"),WrapMs);O->SetNumberField(TEXT("wrap_verts"),WrapVerts);O->SetNumberField(TEXT("swell_ms"),SwellMs);O->SetNumberField(TEXT("swell_part"),BulgePart);}O->SetNumberField(TEXT("skin_facing"),SkinFacing);O->SetBoolField(TEXT("belly_side"),bBellySide);if(Gallery&&Gallery->PreviewActor){const FTransform& HerT=Gallery->PreviewActor->GetActorTransform();auto Vec=[&](const TCHAR* Name,const FVector& V){FVector U=AKKPreviewActor::ActorLocalToUnity(HerT.InverseTransformVectorNoScale(V))*100.;float K[16];if(Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_j_kokan"),K)||Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_J_Kokan"),K)){const FVector X(K[0],K[4],K[8]),Y(K[1],K[5],K[9]),Z(K[2],K[6],K[10]);U=FVector(U|X.GetSafeNormal(),U|Y.GetSafeNormal(),U|Z.GetSafeNormal());}TArray<TSharedPtr<FJsonValue>> A;A.Add(MakeShared<FJsonValueNumber>(U.X));A.Add(MakeShared<FJsonValueNumber>(U.Y));A.Add(MakeShared<FJsonValueNumber>(U.Z));O->SetArrayField(Name,A);};Vec(TEXT("dodge_her"),RootDodge);Vec(TEXT("skin_normal_her"),SkinNormal);Vec(TEXT("front_her"),BellyFront);}O->SetNumberField(TEXT("root_scale"),RootPadScale);O->SetBoolField(TEXT("xray"),bPenisXRay);if(Gallery&&Gallery->PairedPlayback)O->SetNumberField(TEXT("pair_rate"),Gallery->PairedPlayback->GetSpeed());O->SetNumberField(TEXT("held"),Held.Num());O->SetStringField(TEXT("caption"),Caption?Caption->GetText().ToString():FString());
+    O->SetNumberField(TEXT("playback_speed"),PlaybackSpeed());if(Gallery&&Gallery->PreviewActor)O->SetNumberField(TEXT("breath_rate"),Gallery->PreviewActor->SpeechTempo);O->SetBoolField(TEXT("hooked"),Hooked());O->SetNumberField(TEXT("oral_suck"),OralSuckSet);O->SetNumberField(TEXT("oral_pull"),OralPullSet);O->SetNumberField(TEXT("bust_swell"),BustSwellSet);O->SetNumberField(TEXT("depth_top"),AlignDeep);O->SetNumberField(TEXT("belly_out"),BulgeTarget.IsNone()?-1.f:BulgePast);O->SetNumberField(TEXT("belly_allow"),FMath::Max(0.f,BulgeMoves-2.5f));O->SetNumberField(TEXT("pullback"),BellyPullback);O->SetNumberField(TEXT("tip_inside"),TipInside);O->SetNumberField(TEXT("aim_relax"),AimRelax);O->SetNumberField(TEXT("skin_out"),SkinOutMost);O->SetNumberField(TEXT("skin_under"),SkinUnderMost);O->SetNumberField(TEXT("skin_worst"),SkinWorst);O->SetNumberField(TEXT("skin_rest"),SkinRest);O->SetNumberField(TEXT("skin_along"),SkinWorstAlong);O->SetNumberField(TEXT("root_dodge"),RootDodge.Size());O->SetNumberField(TEXT("depth_cap"),DepthCap);{auto Wr=MakeShared<FJsonObject>();for(const auto& W:Bulge)if(W.Value>1.f)Wr->SetNumberField(W.Key.ToString(),FMath::RoundToFloat(W.Value));O->SetObjectField(TEXT("swells"),Wr);O->SetNumberField(TEXT("swells_refused"),BulgeRefused);O->SetNumberField(TEXT("wrap_ms"),WrapMs);O->SetNumberField(TEXT("wrap_verts"),WrapVerts);O->SetNumberField(TEXT("clip_verts"),ClipVerts);O->SetNumberField(TEXT("back_exit"),BackExitCm);O->SetNumberField(TEXT("clip_lead"),ClipLeadCm);O->SetNumberField(TEXT("swell_ms"),SwellMs);O->SetNumberField(TEXT("swell_part"),BulgePart);}O->SetNumberField(TEXT("skin_facing"),SkinFacing);O->SetBoolField(TEXT("belly_side"),bBellySide);if(Gallery&&Gallery->PreviewActor){const FTransform& HerT=Gallery->PreviewActor->GetActorTransform();auto Vec=[&](const TCHAR* Name,const FVector& V){FVector U=AKKPreviewActor::ActorLocalToUnity(HerT.InverseTransformVectorNoScale(V))*100.;float K[16];if(Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_j_kokan"),K)||Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_J_Kokan"),K)){const FVector X(K[0],K[4],K[8]),Y(K[1],K[5],K[9]),Z(K[2],K[6],K[10]);U=FVector(U|X.GetSafeNormal(),U|Y.GetSafeNormal(),U|Z.GetSafeNormal());}TArray<TSharedPtr<FJsonValue>> A;A.Add(MakeShared<FJsonValueNumber>(U.X));A.Add(MakeShared<FJsonValueNumber>(U.Y));A.Add(MakeShared<FJsonValueNumber>(U.Z));O->SetArrayField(Name,A);};Vec(TEXT("dodge_her"),RootDodge);Vec(TEXT("skin_normal_her"),SkinNormal);Vec(TEXT("front_her"),BellyFront);}O->SetNumberField(TEXT("root_scale"),RootPadScale);O->SetBoolField(TEXT("xray"),bPenisXRay);if(Gallery&&Gallery->PairedPlayback)O->SetNumberField(TEXT("pair_rate"),Gallery->PairedPlayback->GetSpeed());O->SetNumberField(TEXT("held"),Held.Num());O->SetStringField(TEXT("caption"),Caption?Caption->GetText().ToString():FString());
     O->SetNumberField(TEXT("her"),Her);O->SetNumberField(TEXT("his"),His);
     // Her development as the scene uses it now (her own plus this scene's climaxes), and how long her climax and her
     // nipples' spray have left (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md).

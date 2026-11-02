@@ -6577,6 +6577,8 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 						Output.GenitalPrimitives.Remove(Follow);
 						Output.GenitalPrimitives.Add(MouthComp);
 					}
+					// Which session part it draws, for whoever looks parts up by tag (the hidden follower keeps KKSessionPart_).
+					MouthComp->ComponentTags.Add(*FString::Printf(TEXT("KKMorphPart_%d"), Published));
 					FOkMouthSlot Slot;
 					Slot.Comp = MouthComp;
 					Slot.SessionPartIndex = Published;
@@ -6600,6 +6602,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 							Shell->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 							Shell->ComponentTags.Add(TEXT("KKPreviewOutline"));
 							Shell->SetMaterial(0, MakeOutlineMaterial(Tex, Part.LineColor, false, true, View.line_width, DetailTex, &ShadowParams, AlphaMaskTex));
+							Shell->ComponentTags.Add(*FString::Printf(TEXT("KKMorphPart_%d"), Published));
 							Slot.OutlineComp = Shell;
 						}
 					}

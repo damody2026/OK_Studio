@@ -249,6 +249,19 @@ bool FOkSession::BellyWrapDeltas(const FVector& From,const FVector& To,const FVe
 	if(N>Idx.Num()){Idx.SetNumUninitialized(N);D.SetNumUninitialized(N*6);N=Deltas(Handle,At,RadiusM,Idx.GetData(),D.GetData(),uint32(Idx.Num()));if(N<0)return false;}
 	OutIndices.Append(Idx.GetData(),N);OutDeltas.Reserve(N);for(int32 I=0;I<N;++I)OutDeltas.Add(FVector3f(D[I*6],D[I*6+1],D[I*6+2]));
 	if(OutNormalDeltas){OutNormalDeltas->Reserve(N);for(int32 I=0;I<N;++I)OutNormalDeltas->Add(FVector3f(D[I*6+3],D[I*6+4],D[I*6+5]));}return true; }
+bool FOkSession::BackExit(const FVector& From,const FVector& To,const FVector& Up,FVector& OutAt,FVector& OutNormal) const {
+	if(!Handle)return false;
+	const float At[9]={float(From.X),float(From.Y),float(From.Z),float(To.X),float(To.Y),float(To.Z),float(Up.X),float(Up.Y),float(Up.Z)};
+	float Out[6];if(ok_back_exit(Handle,At,Out)!=0)return false;
+	OutAt=FVector(Out[0],Out[1],Out[2]);OutNormal=FVector(Out[3],Out[4],Out[5]);return true; }
+bool FOkSession::PenisClipDeltas(const FVector& At,const FVector& Normal,const FVector& Axis,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,float InsetM) const {
+	OutIndices.Reset();OutDeltas.Reset();if(!Handle)return false;
+	const float In[10]={float(At.X),float(At.Y),float(At.Z),float(Normal.X),float(Normal.Y),float(Normal.Z),float(Axis.X),float(Axis.Y),float(Axis.Z),InsetM};
+	TArray<uint32> Idx;TArray<float> D;Idx.SetNumUninitialized(4096);D.SetNumUninitialized(4096*6);
+	int32 N=ok_penis_clip_deltas(Handle,In,Idx.GetData(),D.GetData(),uint32(Idx.Num()));
+	if(N<0)return false;
+	if(N>Idx.Num()){Idx.SetNumUninitialized(N);D.SetNumUninitialized(N*6);N=ok_penis_clip_deltas(Handle,In,Idx.GetData(),D.GetData(),uint32(Idx.Num()));if(N<0)return false;}
+	OutIndices.Append(Idx.GetData(),N);OutDeltas.Reserve(N);for(int32 I=0;I<N;++I)OutDeltas.Add(FVector3f(D[I*6],D[I*6+1],D[I*6+2]));return true; }
 bool FOkSession::HeadLookError(float& Residual,float& Excess) const { float Out[2]={0.f,0.f}; if(!Handle||ok_head_look_error(Handle,Out)!=0)return false; Residual=Out[0];Excess=Out[1];return true; }
 bool FOkSession::SetHeadLook(const FVector& Target,bool Enabled) { return Handle&&ok_set_head_look(Handle,Target.X,Target.Y,Target.Z,Enabled?1:0)==0; }
 bool FOkSession::SetFk(const TArray<FString>& Bones,const TArray<FVector>& UnityEuler)
