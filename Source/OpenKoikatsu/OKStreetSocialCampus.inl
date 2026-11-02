@@ -17,8 +17,9 @@ void AOKStreetSocialScene::TickAcademics(){
  // One answer at a time: the minutes passing meanwhile go into the next request's elapsed.
  if(S.AcademicsInFlight)return;
  // Game minutes since the last tick (time skips count; capped so a long sleep is not a study marathon).
- const int32 Elapsed=S.AcademicMinute<0?1:int32(FMath::Clamp<int64>(Key-S.AcademicMinute,0,180));S.AcademicMinute=Key;
- auto Request=OKRulesRequest(TEXT("campus_tick"));
+ const bool First=S.AcademicMinute<0; // the first minute after a start or a load (academics.rs: what ended before is settled)
+ const int32 Elapsed=First?1:int32(FMath::Clamp<int64>(Key-S.AcademicMinute,0,180));S.AcademicMinute=Key;
+ auto Request=OKRulesRequest(TEXT("campus_tick"));Request->SetBoolField(TEXT("first"),First);
  Request->SetNumberField(TEXT("day"),S.Store.CalendarDay);Request->SetNumberField(TEXT("minute"),Minute);Request->SetNumberField(TEXT("elapsed"),Elapsed);Request->SetStringField(TEXT("here"),PlaceHere(S.Male));
  Request->SetObjectField(TEXT("player"),OKStreetAcademicJson(S.Store.PlayerAcademic));
  const int32 Partner=S.Studying?StudyPartner():INDEX_NONE;if(Partner!=INDEX_NONE)S.StudiedWith.Add(Partner);

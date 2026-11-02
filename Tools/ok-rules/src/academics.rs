@@ -289,6 +289,17 @@ pub fn tick(r: &Value) -> Result<Value, String> {
     let civil = civil_day(day);
     let (term, phase) = campus::term_at(civil);
     let weekday = date(day, minute as f64 / 60.0).weekday as i32;
+    // The first minute after a start or a load: the class slots that ended before it were settled before the save (the
+    // closed slots are not in the save), not again now; a load at 16:07 marked the morning class he sat through missed.
+    let first = r.get("first").and_then(Value::as_bool).unwrap_or(false);
+    if first {
+        for slot in 0..2 {
+            let close = format!("{day}|{slot}");
+            if minute >= SLOT_END[slot] && !st.class_closed.split(',').any(|c| c == close) {
+                st.class_closed = if st.class_closed.starts_with(&format!("{day}|")) { format!("{},{close}", st.class_closed) } else { close };
+            }
+        }
+    }
     let mut fx = Effects::default();
     let mut message = String::new();
     let mut changed = false;
@@ -392,6 +403,10 @@ pub fn tick(r: &Value) -> Result<Value, String> {
     };
     if let Some((week, fin)) = exam_week {
         let done = format!("{}|{}", term.key, if fin { "final" } else { "mid" });
+        // Taken before the save (a load later that Friday evening): not graded and announced again.
+        if first && civil == week + 4 && minute >= 17 * 60 && !st.exams_done.contains(&done) {
+            st.exams_done.push(done.clone());
+        }
         if civil == week + 4 && minute >= 17 * 60 && !st.exams_done.contains(&done) {
             st.exams_done.push(done.clone());
             let mut news = Vec::new();
@@ -722,6 +737,10 @@ mod tests {
             assert!(v4["message"].as_str().unwrap().contains(&c.name), "{}", v4["message"]);
             let v5 = tick(&json!({"day": 12, "minute": soon, "here": c.building, "player": me, "heroines": [], "state": {}})).unwrap();
             assert_eq!(v5["message"], "", "in the building already: nothing to say");
+            // The first tick after a load past the slot's end: settled before the save, not marked missed now.
+            let v6 = tick(&json!({"day": 12, "minute": end + 5, "first": true, "player": me, "heroines": [], "state": {}})).unwrap();
+            assert_eq!(v6["player"]["courses"][k]["held"], me.courses[k].held);
+            assert_eq!(v6["message"], "");
         }
         // After both slots closed, later ticks the same evening count nothing again.
         let mut st = json!({});
