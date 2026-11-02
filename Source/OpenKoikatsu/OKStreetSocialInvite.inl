@@ -160,7 +160,9 @@ void AOKStreetSocialScene::StepApproach(){
  auto Stop=[&](){A.Held=false;S.ApproachGirl=INDEX_NONE;S.ApproachPath.Reset();S.ApproachBlockedNear=false;S.ApproachJoin=false;S.ApproachSong=false;S.ApproachPrivate=false;};
  // On her way to a meeting she was held up step after step (a park exit: 40 cm every 8 s) and ran out of time: the meeting
  // used to vanish. Once more on a fresh route; out of his sight (25 m) she is already further along it.
- if(FPlatformTime::Seconds()-S.ApproachStarted>S.ApproachLimit&&S.ApproachAppointment&&S.ApproachRetries==0&&S.Target==INDEX_NONE){
+ // Him talking with someone meanwhile is no reason to stop: 惠惠, coming to their breakfast, stuck behind a wall while
+ // he chatted with 贞德 at the table, gave up and never came (R6-117).
+ if(FPlatformTime::Seconds()-S.ApproachStarted>S.ApproachLimit&&S.ApproachAppointment&&S.ApproachRetries==0){
   TArray<FVector> Path=ContactRoute(A.Position,S.Male);int32 From=0;
   if(FVector::Dist2D(A.Position,S.Male)>2500.f)for(int32 K=0;K<Path.Num();++K)if(FVector::Dist2D(Path[K],S.Male)<=1500.f){From=FMath::Max(0,K-1);break;}
   if(Path.Num()>=2){
