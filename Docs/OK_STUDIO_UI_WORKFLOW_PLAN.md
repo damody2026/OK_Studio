@@ -1179,6 +1179,25 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
 
 遊戲與編輯器都連結成功，`verify_ok_studio --tag u60_1102` 6/6。
 
+#### U61 完成紀錄
+
+- 材質編輯器的 Shader 輸入框下多一個下拉，列出可切換的 11 個 shader（Shader Forge 的 main_item_studio／_alpha／_add、main_item、main_item_emission、main_opaque、main_alpha、main_StandardMDK_studio，以及 Standard、HarvexARC/XRay、Unlit/Glitch3DProjection，和 Rust `okmodel_view::shader_supported` 一致），第一項「（原本的 shader）」等於清掉改動。下拉和輸入框共用同一個設定函式；輸入的名稱不在清單裡時，下拉顯示「（上面輸入的 shader）」。
+- 驗證：控制通道的 `click` 打得開下拉（畫面上 11 項都在，`Saved/OKStudio/mcp_ui/u61_combo.png`），但**點不到下拉裡的列**：選單內容走得到（SMenuContentWrapper、SMenuPanel），卻對不到列上的文字。試了三種走訪方式（排版子元件、子視窗、所有頂層視窗）都不行，沒有繼續追，`OKStudioControl.cpp` 的嘗試全部還原。改用 `type` 在輸入框打 `Shader Forge/main_opaque` 加 Enter：場景存成材質改動 `Shader`，下拉同步顯示這個 shader（`u61_typed.png`）。遊戲與編輯器都連結成功，`verify_ok_studio --tag u61_1102` 6/6。
+- 更正前面紀錄：U50、U54、U55 寫「控制通道不能點 UI、不能在輸入框打字」是錯的，控制通道本來就有 `click`、`type`（HTTP `POST /studio/click`、`/studio/type`），只是 ok-game-mcp 沒有包成工具；中文參數要用 UTF-8 檔案送（`curl --data-binary @檔案`），直接放在命令列會變成亂碼。
+
+#### U62 完成紀錄
+
+- 以 1280×720 開 Studio，用控制通道 `ui_fit` 逐一打開 20 個浮窗、各詳情頁（含骨骼 10 個子頁、畫面設定 8 個分頁）檢查超出與截字。只有兩處有問題，已修：
+  - 材質編輯器：材質名下的 shader 名改成自動換行；說明「Shader（Enter 套用；空白回原本）」縮成「Shader（Enter 套用）」（「原本」改由下拉第一項提供）；長屬性名（`_ShadowExtendAnother`）改成省略號、滑過顯示全名。
+  - IK 頁：「IK←動作」被截，按鈕列比例改成 IK←動作 1.3、鏡像 0.8。
+- 剩下一項沒改：shader 下拉打開時，選單比材質窗右緣多出 75（canvas 單位），選單本身完整可見。
+- 修完再量：材質窗只剩這一項，IK 頁沒有問題。同一次建置與 verify 6/6。
+
+#### U63 紀錄（未解決，交回畫面還原）
+
+- 沙發（`2/13/79`，shader main_item_studio，隱藏屬性 `_OKShaderOutline` = 1，表示原作有描邊 pass）：描邊寬度 1 → 4、描邊色改紅、發光改綠強度 1，前後 800×450 逐像素比對**差異 0**；存檔重讀後再拍也一樣。畫面上這個道具本來就看不到描邊，發光也沒有作用。
+- 所以 U43 的描邊色、發光欄位目前在這類道具上沒有畫面效果。原因在描邊／發光的繪製（`KKPreviewActor` 的 outline 條件與 item 材質），屬計畫第 9 節「畫面還原」，交給 [OK Studio 計畫](OK_STUDIO_PLAN.md) 處理，這裡不改。
+
 ### U15　工作室模式只顯示工作室 UI（2026-10-30，使用者要求）
 
 從卡片牆等其他模式進入工作室時，畫面上原本的 UI 會留著。改成：工作室面板加到 viewport 後，從 viewport 的 Slate 樹往下找到面板，沿路把其他兄弟節點（其他模式的 UMG、Slate 面板、圖層）全部收起來，並把 HUD 的 `bShowHUD` 關掉；`Stop` 時還原成原本的可見狀態。

@@ -1158,7 +1158,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 	Hidden.Sort([](const auto& A, const auto& B) { return A.Key < B.Key; });
 	TSharedRef<SVerticalBox> Materials = SNew(SVerticalBox)
 		+ SVerticalBox::Slot().AutoHeight()[Button(FText::FromString(Material.IsEmpty() ? TEXT("（無名材質）") : Material), [] {}, 0.f, 18.f, true, 10.f)]
-		+ SVerticalBox::Slot().AutoHeight().Padding(2.f)[OKStudioStyle::Label(FText::FromString(Shader), 9.f, TextHint())];
+		+ SVerticalBox::Slot().AutoHeight().Padding(2.f)[SNew(STextBlock).Font(Font(9.f)).ColorAndOpacity(TextHint()).AutoWrapText(true).Text(FText::FromString(Shader))];
 	// One edit of the item (kind, material or renderer, property), or null; Put adds it when missing.
 	auto FindEdit = [this, ItemId](EOKSceneMaterialEditKind Kind, const FString& Target, const FString& Property) -> FOKSceneMaterialEdit*
 	{
@@ -1305,7 +1305,9 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().FillWidth(0.42f).VAlign(VAlign_Center)
-				[OKStudioStyle::Label(TAttribute<FText>::CreateLambda([EditOf, Property] { return FText::FromString((EditOf(Property) ? TEXT("● ") : TEXT("")) + Property); }), 10.f)]
+				// A long name (_ShadowExtendAnother) ends in an ellipsis; the whole name is its tooltip.
+				[SNew(STextBlock).Font(Font(10.f)).ColorAndOpacity(OKStudioStyle::Text()).OverflowPolicy(ETextOverflowPolicy::Ellipsis).AddMetaData<FTagMetaData>(TEXT("Ellipsis")).ToolTipText(FText::FromString(Property))
+					.Text_Lambda([EditOf, Property] { return FText::FromString((EditOf(Property) ? TEXT("● ") : TEXT("")) + Property); })]
 			+ SHorizontalBox::Slot().FillWidth(0.58f)[SNew(SBox).HeightOverride(18.f)[Value]]
 			+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("預設")), [Reset, Property] { Reset(Property); }, 34.f, 18.f, false, 9.f)]
 		];

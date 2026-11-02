@@ -729,10 +729,11 @@ void SOKStudioPanel::IkPage(FOKSceneObject& O)
 		}, 0.f, 18.f, false, 10.f)];
 	Props->AddSlot().AutoHeight().Padding(0.f, 1.f)[Weights];
 	TSharedRef<SHorizontalBox> Row1 = SNew(SHorizontalBox)
-		+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[Button(FText::FromString(TEXT("IK←動作")), Cmd(TEXT("pose.ikfromanim")), 0.f, 18.f, false, 10.f)]
+		// 「IK←動作」is the longest label: a wider share so it is not cut (1280×720 check, U62).
+		+ SHorizontalBox::Slot().FillWidth(1.3f).Padding(0.f, 0.f, 1.f, 0.f)[Button(FText::FromString(TEXT("IK←動作")), Cmd(TEXT("pose.ikfromanim")), 0.f, 18.f, false, 10.f)]
 		+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[Button(FText::FromString(TEXT("IK←FK")), Cmd(TEXT("pose.ikfromfk")), 0.f, 18.f, false, 10.f)]
 		+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[Button(FText::FromString(TEXT("FK←IK")), Cmd(TEXT("pose.fkfromik")), 0.f, 18.f, false, 10.f)]
-		+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[Button(FText::FromString(TEXT("鏡像")), Cmd(TEXT("pose.mirror"), TEXT("all")), 0.f, 18.f, false, 10.f)]
+		+ SHorizontalBox::Slot().FillWidth(0.8f).Padding(0.f, 0.f, 1.f, 0.f)[Button(FText::FromString(TEXT("鏡像")), Cmd(TEXT("pose.mirror"), TEXT("all")), 0.f, 18.f, false, 10.f)]
 		+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("清除 IK")), [this] { if (FOKSceneObject* X = Obj()) { X->Character.Ik.Reset(); if (Game.IsValid()) Game->GuideIk = -1; Changed(); DeferRebuild(); } }, 0.f, 18.f, false, 10.f)];
 	Props->AddSlot().AutoHeight().Padding(0.f, 3.f)[Row1];
 	HandleSizes();
