@@ -601,6 +601,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 	const FOKStudioCatalog& C = FOKStudioCatalog::Get();
 	if (MapPick == -1 && Game.IsValid()) MapPick = Game->Document->Map;
 	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
+	TSharedPtr<SWidget> PickedRow;
 	Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)[Button(FText::FromString(TEXT("（無地圖）")), [this] { MapPick = -2; DeferFloat(TEXT("maps")); }, 0.f, 18.f, MapPick == -2, 10.f, RowFill())];
 	for (const FOKStudioCatalogGroup& Cat : C.MapCategories)
 	{
@@ -610,7 +611,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 			if (M.Category != Cat.Id || (!MapSearch.IsEmpty() && !M.Name.Contains(MapSearch))) continue;
 			if (!bHeader) { Box->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 1.f)[OKStudioStyle::Label(FText::FromString(Cat.Name), 10.f, TextSoft())]; bHeader = true; }
 			const int32 No = M.No;
-			Box->AddSlot().AutoHeight().Padding(8.f, 0.f, 0.f, 1.f)[Button(FText::FromString(FString::Printf(TEXT("%d %s"), No, *M.Name)), [this, No] { MapPick = No; DeferFloat(TEXT("maps")); }, 0.f, 18.f, MapPick == No, 10.f, RowFill())];
+			{ TSharedRef<SWidget> Row = Button(FText::FromString(FString::Printf(TEXT("%d %s"), No, *M.Name)), [this, No] { MapPick = No; DeferFloat(TEXT("maps")); }, 0.f, 18.f, MapPick == No, 10.f, RowFill()); if (MapPick == No) PickedRow = Row; Box->AddSlot().AutoHeight().Padding(8.f, 0.f, 0.f, 1.f)[Row]; }
 		}
 	}
 	// Maps of categories the catalogue has no name for.
@@ -618,13 +619,27 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 		if (!C.MapCategories.ContainsByPredicate([&M](const FOKStudioCatalogGroup& G) { return G.Id == M.Category; }) && (MapSearch.IsEmpty() || M.Name.Contains(MapSearch)))
 		{
 			const int32 No = M.No;
-			Box->AddSlot().AutoHeight().Padding(8.f, 0.f, 0.f, 1.f)[Button(FText::FromString(FString::Printf(TEXT("%d %s"), No, *M.Name)), [this, No] { MapPick = No; DeferFloat(TEXT("maps")); }, 0.f, 18.f, MapPick == No, 10.f, RowFill())];
+			{ TSharedRef<SWidget> Row = Button(FText::FromString(FString::Printf(TEXT("%d %s"), No, *M.Name)), [this, No] { MapPick = No; DeferFloat(TEXT("maps")); }, 0.f, 18.f, MapPick == No, 10.f, RowFill()); if (MapPick == No) PickedRow = Row; Box->AddSlot().AutoHeight().Padding(8.f, 0.f, 0.f, 1.f)[Row]; }
 		}
 	const FOKStudioCatalogMap* Picked = C.FindMap(MapPick);
+	TSharedRef<SScrollBox> MapList = SNew(SScrollBox) + SScrollBox::Slot()[Box];
+	// 定位當前: scrolled once the rows are laid out (a request made now, before the first layout, finds no row).
+	if (bMapLocate && PickedRow.IsValid())
+		MapList->RegisterActiveTimer(0.05f, FWidgetActiveTimerDelegate::CreateLambda([WeakList = TWeakPtr<SScrollBox>(MapList), WeakRow = TWeakPtr<SWidget>(PickedRow)](double, float)
+		{
+			if (const TSharedPtr<SScrollBox> L = WeakList.Pin()) L->ScrollDescendantIntoView(WeakRow.Pin(), false, EDescendantScrollDestination::Center);
+			return EActiveTimerReturnType::Stop;
+		}));
+	bMapLocate = false;
 	return SNew(SVerticalBox)
-		+ SVerticalBox::Slot().AutoHeight()[SNew(SBox).HeightOverride(20.f)[SNew(SEditableTextBox).Style(&TextBoxStyle()).HintText(FText::FromString(TEXT("搜尋地圖"))).Text(FText::FromString(MapSearch))
-			.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type) { MapSearch = T.ToString(); DeferFloat(TEXT("maps")); })]]
-		+ SVerticalBox::Slot().FillHeight(1.f).Padding(0.f, 3.f)[SNew(SBorder).BorderImage(Brush(ListArea())).Padding(2.f)[SNew(SScrollBox) + SScrollBox::Slot()[Box]]]
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1.f)[SNew(SBox).HeightOverride(20.f)[SNew(SEditableTextBox).Style(&TextBoxStyle()).HintText(FText::FromString(TEXT("搜尋地圖"))).Text(FText::FromString(MapSearch))
+				.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type) { MapSearch = T.ToString(); DeferFloat(TEXT("maps")); })]]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("定位當前")), Cmd(TEXT("map.locate")), 64.f, 20.f, false, 10.f)]
+		]
+		+ SVerticalBox::Slot().FillHeight(1.f).Padding(0.f, 3.f)[SNew(SBorder).BorderImage(Brush(ListArea())).Padding(2.f)[MapList]]
 		+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(MapPick == -2 ? FString(TEXT("選擇：無地圖")) : Picked ? TEXT("選擇：") + Picked->Name : FString(TEXT("點一張地圖，再按「讀取」"))), 10.f, TextSoft())]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f, 0.f, 0.f)
 		[

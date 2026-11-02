@@ -443,6 +443,16 @@ public:
 			return true;
 		});
 		Float_(TEXT("add.map"), TEXT("地圖"), TEXT("maps"));
+		// HS2Studio6 地图窗 定位当前: the scene's map picked in the map window and scrolled to (the search cleared).
+		AddCommand(TEXT("map.locate"), TEXT("地圖定位當前"), [this](const FString&)
+		{
+			if (!Game.IsValid()) return false;
+			MapPick = Game->Document->Map < 0 ? -2 : Game->Document->Map;
+			MapSearch.Reset();
+			bMapLocate = true;
+			if (IsFloatOpen(TEXT("maps"))) DeferFloat(TEXT("maps")); else OpenFloat(TEXT("maps"));
+			return true;
+		});
 		// Editing the selection.
 		Simple(TEXT("edit.duplicate"), TEXT("複製物件"), [this] { DuplicateSelection(); });
 		Simple(TEXT("edit.duplicateoffset"), TEXT("複製並錯開"), [this] { DuplicateSelectionOffset(); });
@@ -1361,6 +1371,8 @@ public:
 	TSharedRef<SWidget> BuildEffectList();
 	TSharedRef<SWidget> BuildMapBrowser();
 	int32 MapPick = -1;
+	/** 定位當前 (HS2Studio6 地图窗 定位当前): the next build scrolls the list to the picked map. */
+	bool bMapLocate = false;
 	FString EffectSearch, MapSearch;
 
 	// --- Pose (U5). ---
