@@ -242,6 +242,7 @@ struct FOKStreetSceneState {
  int32 DayRewound=-1; // the game day the hour buttons went back from (R3-225): reached again, it is not begun twice
  FVector OutingStuckPos=FVector::ZeroVector;int32 OutingStuckCount=0; // an outing held up in the same spot again and again (R3-234)
  TMap<int32,int64> WaitsForHim; // she wrote him where she is: until this minute she stays there for him (R3-230)
+ TMap<int32,FIntPoint> HomeAfterWalk; // walked home by him: X = the minute she arrived, Y = until when she stays in (R6-102)
  // Who was with him in the save, by stable id, until each is put back (R3-238); the one who walks with him again, and until when it is tried.
  TMap<FString,FOKStreetStore::FWithHim> ResumeWithHim;int32 ResumeFollow=INDEX_NONE;double ResumeFollowUntil=0;TArray<int32> ResumeParty;
  int32 HisShareGirl=INDEX_NONE;int64 HisShareAmount=0,HisShareMinute=-1; // his own part of the last bill with her (a treat she says next covers it)

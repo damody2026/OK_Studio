@@ -228,6 +228,11 @@ void AOKStreetSocialScene::TickSchedules(){
    UE_LOG(LogTemp,Display,TEXT("Street load: actor %d was with him (%s), her %s block takes her"),I,*W->Mode,Block?*Block->Kind:TEXT("-"));
    S.ResumeWithHim.Remove(Id);}
   if((Fresh||Index!=Previous)&&Changes>0&&FPlatformTime::Seconds()>ChangeBudget){S.ScheduleTickAt=0;continue;} // her change waits for the next frame
+  // Walked home by him (Outing.inl): in for the rest of that block. A class, shift or the night still takes her, and so
+  // does a meeting with him that starts after she got home; the one she came home from does not (R6-102).
+  if(const FIntPoint* Home=S.HomeAfterWalk.Find(I)){
+   if(Home->Y<=OKStreetMindNow(S))S.HomeAfterWalk.Remove(I);
+   else if(!Fresh&&Index!=Previous&&(!OKStreetFixedBlock(Block)||Block->Kind==TEXT("promise")&&OKStreetMindNow(S)-Minute+Block->Start<=Home->X))continue;}
   // She wrote him where she is ("at the bookstore out of the rain, a bit bored"): she waits there a while for him, not
   // off home nine seconds later (R3-230); a class, shift, promise or the night still takes her.
   if(!Fresh&&Index!=Previous&&S.WaitsForHim.FindRef(I,0)>OKStreetMindNow(S)&&!OKStreetFixedBlock(Block)){

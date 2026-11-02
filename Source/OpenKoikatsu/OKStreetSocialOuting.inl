@@ -787,7 +787,9 @@ void AOKStreetSocialScene::ArriveOuting(){
   // or the night still takes her (the schedule's own check).
   if(Girl!=INDEX_NONE&&S.Manifest.Characters.IsValidIndex(Girl)&&Activity.Mid(3)==OKStreetProfileString(S.MindProfiles.FindRef(OKStreetStableId(S.Manifest.Characters[Girl])),nullptr,TEXT("home_place_id"))){
    const int64 Now=OKStreetMindNow(S);const int32 Minute=int32(Now%1440);
-   if(const FOKStreetPlanBlock* B=BlockNow(Girl,Minute);B&&B->End>Minute&&!OKStreetFixedBlock(B)){S.WaitsForHim.Add(Girl,Now-Minute+B->End);
+   // The meeting with him she is coming home from counts as over too: 安可's 19:00 date block ran to 21:44, and walked home
+   // after it at 20:41 she went straight back out.
+   if(const FOKStreetPlanBlock* B=BlockNow(Girl,Minute);B&&B->End>Minute&&(!OKStreetFixedBlock(B)||B->Kind==TEXT("promise"))){S.HomeAfterWalk.Add(Girl,FIntPoint(int32(Now),int32(Now-Minute+B->End)));
     UE_LOG(LogTemp,Display,TEXT("Street outing: actor %d walked home; stays in until %02d:%02d"),Girl,B->End/60%24,B->End%60);}}
   S.Message=OKMsg(TEXT("ui.outing.arrived_at_place"), {{TEXT("place"), *Place}});ResumeTalkQuiet(Girl);RefreshUI();return;}
  // Gone in to play cards: they sit down to the game, not to the place's own activity.
