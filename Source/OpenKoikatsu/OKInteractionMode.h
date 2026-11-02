@@ -29,6 +29,7 @@ public:
     void BeginHScene(const FString& Name,const FString& Stage,const TSharedPtr<FJsonObject>& Experience,const FString& Player);
     // The control channel's /hscene: {kind} presses a panel button, {pose} picks a pose by name, {speed} sets it; answers the panel's view.
     TSharedPtr<FJsonObject> HSceneControl(const TSharedPtr<FJsonObject>& Body,FString& Error);
+    void SetHPaused(bool bPaused); // the two of them stopped where they are (space key, control channel)
     // Talk in the H scene through the street (UOKHScenePanel::Say): his next line and what she is in the middle of;
     // her line to show; her spoken line on her high model.
     bool HSceneTakeLine(FString& Text,FString& Context,bool& System);

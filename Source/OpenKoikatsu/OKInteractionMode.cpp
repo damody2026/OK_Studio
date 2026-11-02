@@ -138,6 +138,7 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
     double Kind=0,Speed=-1;FString Pose;
     if(Body.IsValid()){
         if(Body->TryGetNumberField(TEXT("speed"),Speed)&&Speed>=0)Panel->SetSpeed(float(Speed));
+        bool Pause=false;if(Body->TryGetBoolField(TEXT("pause"),Pause))SetHPaused(Pause); // {"pause":true}: as the space key
         if(Body->TryGetStringField(TEXT("pose"),Pose)&&!Pose.IsEmpty()&&!Panel->SelectPoseNamed(Pose)){Why=TEXT("no pose named ")+Pose;return nullptr;}
         if(Body->TryGetNumberField(TEXT("kind"),Kind)&&Kind>0)Panel->Click(int32(Kind));
         FString Say;if(Body->TryGetStringField(TEXT("say"),Say)&&!Say.IsEmpty())Panel->Say(Say);
@@ -210,15 +211,18 @@ bool AOKInteractionMode::HSceneSpeak(const FString& Path){
 bool AOKInteractionMode::HSceneHasReaction() const{return Controller&&Controller->HPanel&&Controller->HPanel->HasReaction();}
 bool AOKInteractionMode::HSceneSpeaking() const{return Controller&&IsValid(Controller->PreviewActor)&&Controller->PreviewActor->IsSpeaking()&&!Controller->PreviewActor->bHBreath;}
 void AOKInteractionMode::Fail(const FString& Why){Error=Why;UE_LOG(LogTemp,Error,TEXT("Shared interaction mode: %s"),*Why);Exit(true);}
+void AOKInteractionMode::SetHPaused(bool bPaused){
+    if(!Controller||!Controller->PairedPlayback)return;
+    Controller->PairedPlayback->SetPaused(bPaused);if(Controller->PreviewActor)Controller->PreviewActor->SetSpeechPaused(bPaused);if(Controller->PartnerActor)Controller->PartnerActor->SetSpeechPaused(bPaused);
+    UE_LOG(LogTemp,Display,TEXT("H scene: %s"),bPaused?TEXT("paused"):TEXT("resumed"));
+}
 void AOKInteractionMode::Tick(float Delta){
     Super::Tick(Delta);if(Finished||!Controller)return;
     if(auto* PC=Controller->GetOwningPlayer())if(PC->WasInputKeyJustPressed(EKeys::Escape)){Exit(!Ready);return;}
     // Space pauses or resumes the two of them (user, 2026-11-02: to take pictures), not while typing to her.
     if(auto* PC=Controller->GetOwningPlayer())if(Controller->HPanel&&Controller->PairedPlayback&&PC->WasInputKeyJustPressed(EKeys::SpaceBar)){
         const TSharedPtr<SWidget> Focus=FSlateApplication::IsInitialized()?FSlateApplication::Get().GetKeyboardFocusedWidget():nullptr;
-        if(!Focus||!Focus->GetType().ToString().Contains(TEXT("EditableText"))){const bool bPaused=!Controller->PairedPlayback->IsPaused();
-            Controller->PairedPlayback->SetPaused(bPaused);if(Controller->PreviewActor)Controller->PreviewActor->SetSpeechPaused(bPaused);if(Controller->PartnerActor)Controller->PartnerActor->SetSpeechPaused(bPaused);
-            UE_LOG(LogTemp,Display,TEXT("H scene: %s with space"),bPaused?TEXT("paused"):TEXT("resumed"));}}
+        if(!Focus||!Focus->GetType().ToString().Contains(TEXT("EditableText")))SetHPaused(!Controller->PairedPlayback->IsPaused());}
     if(FPlatformTime::Seconds()-Started>180&&!Ready&&(!Activated||ReturnLabel==TEXT("返回多人街區"))){Fail(TEXT("一對一互動準備逾時"));return;}
     if(LoadingFemale){FString Why;
         if(!LoadingFemale->ContinueSessionLoad(Why)){Fail(Why);return;}

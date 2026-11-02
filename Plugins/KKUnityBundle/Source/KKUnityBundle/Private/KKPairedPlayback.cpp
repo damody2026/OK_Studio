@@ -69,18 +69,23 @@ bool AKKPairedPlayback::Advance(float Delta,FString& Error)
 	const float PoseDelta=bPaused?0.f:Delta;
 	const double Next=FMath::Min(Elapsed+double(PoseDelta)*double(Speed),double(MAX_flt));
 	FemaleActor->UpdateHeadLookTarget();MaleActor->UpdateHeadLookTarget();
-	for(auto* PreviewRole:{FemaleActor.Get(),MaleActor.Get()})if(PreviewRole->bShapeDirty){TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairLiveShape);if(!PreviewRole->Session.ApplyShapeLive(PreviewRole->PendingBody,PreviewRole->PendingFace,true)){Error=TEXT("配對角色形狀更新失敗");return false;}PreviewRole->bShapeDirty=false;}
+	bool Reshaped=false;
+	for(auto* PreviewRole:{FemaleActor.Get(),MaleActor.Get()})if(PreviewRole->bShapeDirty){TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairLiveShape);Reshaped=true;if(!PreviewRole->Session.ApplyShapeLive(PreviewRole->PendingBody,PreviewRole->PendingFace,true)){Error=TEXT("配對角色形狀更新失敗");return false;}PreviewRole->bShapeDirty=false;}
+	// A reshape puts her body back to its rest pose before the frame is sampled again; with no time passing (paused) the
+	// dynamic chains keep that rest pose instead of their solved one and her hair came off her head (user, 2026-11-02: her
+	// breasts swelling while paused). The physics then runs on the real frame time, as for a touch; the clip stays where it is.
+	const float PhysicsDelta=BodyUpdate||Reshaped?Delta:PoseDelta;
  if(OkPlayer&&CVarPairAsync.GetValueOnGameThread()!=0&&Delta>0.f){TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairOKAsync);
   // The next frame is solved in the background and shown at the start of the next tick.
   FemaleActor->PublishPhysicsFrame();MaleActor->PublishPhysicsFrame();
-  PendingNext=Next;PendingDelta=BodyUpdate?Delta:PoseDelta;PendingReactions[0]=Reactions[0];PendingReactions[1]=Reactions[1];
+  PendingNext=Next;PendingDelta=PhysicsDelta;PendingReactions[0]=Reactions[0];PendingReactions[1]=Reactions[1];
   TSharedPtr<FOkAnimPlayer> Player=OkPlayer;FOkSession* F=&FemaleActor->Session;FOkSession* M=&MaleActor->Session;const float T=float(Next),D=PendingDelta;
   bSolvePending=true;bPendingNative=false;
   PendingSolve=UE::Tasks::Launch(UE_SOURCE_LOCATION,[this,Player,F,M,T,D]{bSolveOk=Player->ApplySessions({F,M},T,D,&PendingReport);});
   return true;}
  if(OkPlayer){TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairOK);
   FemaleActor->PublishPhysicsFrame();MaleActor->PublishPhysicsFrame();
-  if(!OkPlayer->ApplySessions({&FemaleActor->Session,&MaleActor->Session},float(Next),BodyUpdate?Delta:PoseDelta,&OkReport)){Error=TEXT("OK pair frame: ")+OkReport;return false;}
+  if(!OkPlayer->ApplySessions({&FemaleActor->Session,&MaleActor->Session},float(Next),PhysicsDelta,&OkReport)){Error=TEXT("OK pair frame: ")+OkReport;return false;}
   OkPlayer->ApplyFaceCurves(0,float(Next),*FemaleActor);OkPlayer->ApplyFaceCurves(1,float(Next),*MaleActor);}
  else{
   // No OK group for this state (none are saved for the game's pairs, so this is every one-on-one pose): the native
@@ -90,14 +95,14 @@ bool AKKPairedPlayback::Advance(float Delta,FString& Error)
   if(CVarPairAsync.GetValueOnGameThread()!=0&&Delta>0.f&&AKKPreviewActor::PairedFrameGpuParts(*FemaleActor,*MaleActor,FemaleParts,FemaleRevisions,MaleParts,MaleRevisions)){
    TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairNativeAsync);
    FemaleActor->PublishPhysicsFrame();MaleActor->PublishPhysicsFrame();
-   PendingNext=Next;PendingDelta=BodyUpdate?Delta:PoseDelta;PendingReactions[0]=Reactions[0];PendingReactions[1]=Reactions[1];
+   PendingNext=Next;PendingDelta=PhysicsDelta;PendingReactions[0]=Reactions[0];PendingReactions[1]=Reactions[1];
    FOkSession* F=&FemaleActor->Session;FOkSession* M=&MaleActor->Session;const float T=float(Next),D=PendingDelta;
    bSolvePending=true;bPendingNative=true;
    PendingSolve=UE::Tasks::Launch(UE_SOURCE_LOCATION,[this,F,M,T,D,State=StateName,FemaleMotion=FemaleIK,MaleMotion=MaleIK,
     FemaleParts=MoveTemp(FemaleParts),FemaleRevisions=MoveTemp(FemaleRevisions),MaleParts=MoveTemp(MaleParts),MaleRevisions=MoveTemp(MaleRevisions)]{
     FString Report;bSolveOk=FOkSession::ApplyPairedFrameGpu(*F,*M,T,D,State,FemaleMotion,MaleMotion,FemaleParts,FemaleRevisions,MaleParts,MaleRevisions,Report);PendingReport=Report;});
    return true;}
-  TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairNative);if(!AKKPreviewActor::ApplyPairedFrameWithDisplay(*FemaleActor,*MaleActor,float(Next),BodyUpdate?Delta:PoseDelta,StateName,FemaleIK,MaleIK,Error)) return false;}
+  TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairNative);if(!AKKPreviewActor::ApplyPairedFrameWithDisplay(*FemaleActor,*MaleActor,float(Next),PhysicsDelta,StateName,FemaleIK,MaleIK,Error)) return false;}
 	Elapsed=Next;
 	return ShowFrame(Delta,Reactions,Error);
 }
