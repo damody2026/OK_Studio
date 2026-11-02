@@ -1338,6 +1338,26 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
 - 拖時間軸窗標題列，從 (160, 458) 移到 (460, 319)；結束 Studio 時寫進 `Saved/OKStudio/ui_layout.json`，重開後在同一位置（`F:\OpenKoikatsu\Saved\OKStudio\mcp_ui\u78_reopen.png`）。詳情頁（骨骼頁）不隨版面保存、重開是關著的，這是原本的設計。
 - 遊戲與編輯器都連結成功，`verify_ok_studio --tag u76_1102` 6/6。這批沒有改 ok-game-mcp。測試場景已刪除。
 
+### U79～U81　第十五批：鍵盤快捷鍵與把手實測（2026-11-02，F 組）
+
+| 項目 | 內容 |
+|---|---|
+| U79 控制通道按鍵 | 控制通道 `key`（Unreal 鍵名加 ctrl／shift／alt，程序內走 Slate，快捷鍵與真人按鍵同一路徑）；ok-game-mcp 加 `studio_key`；`studio_state` 的 `ui.gizmo_mode` 回報把手模式 |
+| U80 快捷鍵實測 | K、Ctrl+D、Delete、Ctrl+Z、Ctrl+Y、H、F、W／E／R |
+| U81 旋轉、縮放把手與 FK 骨點拖曳 | 物件的旋轉環、軸向縮放、中心等比縮放；角色 FK 骨點點選後拖旋轉環 |
+
+#### U79～U80 完成紀錄
+
+- 沙發道具上逐一按：K 打 key（1 個 key）、Ctrl+D 複製（2 個道具）、Delete 刪除（1 個）、Ctrl+Z 復原（2 個）、Ctrl+Y 重做（1 個）、H 隱藏所選、F 聚焦（焦點從 (500,500,500) 移到沙發）、W／E／R 把手模式依序 move／rotate／scale。全部 `handled` 為 true，結果正確。
+
+#### U81 完成紀錄
+
+- 旋轉：拖藍環（Z 軸）約 70 像素，沙發繞 Z 轉 36°；Ctrl+Z 一步回原。第一次起點剛好落在側看成一直線的綠環上，轉成了 Y 軸，是選點錯，不是程式問題。
+- 縮放：拖綠軸 80 像素，Y 縮放 1 → 1.8；拖中心方塊，三軸一起 ×1.6。
+- FK：骨骼頁打開時畫面顯示骨點；點右上臂骨點出現旋轉環，拖環後 `cf_j_arm00_R` 得到 Z 32.5°，手臂抬起（`F:\OpenKoikatsu\Saved\OKStudio\mcp_ui\u81_fk_rotated.png`）。
+- 發現：在畫面點骨點後，狀態列仍是上一次的骨骼名。改成點到骨點時狀態列顯示「骨骼：名稱 骨骼名」（`u81_fk_status4.png`；骨骼名稱沿用目錄裡的原作日文名，例如「体のトップ cf_j_hips」）。
+- 遊戲與編輯器都連結成功；`Tools/ok-game-mcp` `cargo check --release` 通過；`verify_ok_studio --tag u79_1102` 6/6。測試場景已刪除。
+
 ### U15　工作室模式只顯示工作室 UI（2026-10-30，使用者要求）
 
 從卡片牆等其他模式進入工作室時，畫面上原本的 UI 會留著。改成：工作室面板加到 viewport 後，從 viewport 的 Slate 樹往下找到面板，沿路把其他兄弟節點（其他模式的 UMG、Slate 面板、圖層）全部收起來，並把 HUD 的 `bShowHUD` 關掉；`Stop` 時還原成原本的可見狀態。

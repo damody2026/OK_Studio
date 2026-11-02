@@ -338,6 +338,9 @@ bool SOKStudioPanel::PickPosePoint(const FVector2D& At)
 		Game->GuideBone = Best->Bone;
 		Game->GuideIk = -1;
 		OpenBones.Add(Best->Bone);
+		// Which bone the click took (the status line otherwise still names the one picked before).
+		const FOKStudioFkBone* B = FOKStudioCatalog::Get().FindFkBone(Best->Bone);
+		SetStatus(TEXT("骨骼：") + (B ? B->Name + TEXT(" ") : FString()) + Best->Bone);
 	}
 	DeferRebuild();
 	return true;

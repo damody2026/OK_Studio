@@ -821,6 +821,8 @@ public:
 		J->SetStringField(TEXT("material_name"), MaterialNameShown);
 		J->SetStringField(TEXT("material_export_root"), FOKStudioSettings::Get().MaterialExportRoot);
 		J->SetStringField(TEXT("fk_bone"), FkBone);
+		static const TCHAR* GizmoModes[] = { TEXT("move"), TEXT("rotate"), TEXT("scale") };
+		J->SetStringField(TEXT("gizmo_mode"), Game.IsValid() ? GizmoModes[FMath::Clamp(int32(Game->GuideMode), 0, 2)] : TEXT(""));
 		J->SetStringField(TEXT("card_folder"), CardFolder);
 		J->SetNumberField(TEXT("card_back"), CardBack.Num());
 		J->SetNumberField(TEXT("card_forward"), CardForward.Num());

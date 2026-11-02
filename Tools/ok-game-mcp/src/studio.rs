@@ -215,6 +215,8 @@ pub fn tools() -> Vec<Value> {
           json!({"x": {"type": "number"}, "y": {"type": "number"}, "button": {"type": "string", "enum": ["left", "right", "middle"]},
                  "to": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2, "description": "drag to [x, y] with the button held"},
                  "steps": {"type": "integer", "description": "moves along a drag (default 10)"}}), &["x", "y"]),
+        t("studio_key", "A key press in the studio as the keyboard sends it (inside the process): its shortcuts run as for a person, e.g. Delete, Z with ctrl (undo), F (focus), K (key). key is an Unreal key name (Delete, Z, F, SpaceBar, F2, Escape...). Returns {handled}.",
+          json!({"key": {"type": "string"}, "ctrl": {"type": "boolean"}, "shift": {"type": "boolean"}, "alt": {"type": "boolean"}}), &["key"]),
         t("studio_combo", "The drop-downs shown in the studio UI, in window order. Without pick: {combos [{index, current, options [text]}]}. With index and pick (an option's number or its exact text): chooses it as a click in the open list would. Returns {picked}.",
           json!({"index": {"type": "integer"}, "pick": {"type": ["integer", "string"]}}), &[]),
     ]

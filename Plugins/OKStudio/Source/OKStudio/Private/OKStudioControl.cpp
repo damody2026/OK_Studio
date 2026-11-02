@@ -849,6 +849,28 @@ namespace
 			O->SetBoolField(TEXT("menu_open"), App.AnyMenusVisible());
 			return O;
 		}
+		// A key press through Slate inside the process, as the keyboard sends it: the studio's shortcuts (Delete, Ctrl+Z, F,
+		// K, ...) run as they do for a person. "key" is an Unreal key name (Delete, Z, F, SpaceBar, F2, ...).
+		if (Op == TEXT("key"))
+		{
+			if (!FSlateApplication::IsInitialized()) return Result(false, TEXT("no UI"));
+			FString Name;
+			J->TryGetStringField(TEXT("key"), Name);
+			const FKey Key(*Name);
+			if (!Key.IsValid()) return Result(false, TEXT("unknown key: ") + Name);
+			bool bCtrl = false, bShift = false, bAlt = false;
+			J->TryGetBoolField(TEXT("ctrl"), bCtrl); J->TryGetBoolField(TEXT("shift"), bShift); J->TryGetBoolField(TEXT("alt"), bAlt);
+			const FModifierKeysState Mods(bShift, false, bCtrl, false, bAlt, false, false, false, false);
+			FSlateApplication& App = FSlateApplication::Get();
+			const uint32* Code = nullptr; const uint32* Char = nullptr;
+			FInputKeyManager::Get().GetCodesFromKey(Key, Code, Char);
+			const FKeyEvent Down(Key, Mods, App.GetUserIndexForKeyboard(), false, Char ? *Char : 0, Code ? *Code : 0);
+			const bool bHandled = App.ProcessKeyDownEvent(Down);
+			App.ProcessKeyUpEvent(FKeyEvent(Key, Mods, App.GetUserIndexForKeyboard(), false, Char ? *Char : 0, Code ? *Code : 0));
+			TSharedRef<FJsonObject> O = Result(true);
+			O->SetBoolField(TEXT("handled"), bHandled);
+			return O;
+		}
 		// The drop-downs on screen, in window order: without pick, each one's shown value and options; with index and pick
 		// (an option's number or its text), that option is chosen as a click in the open list would choose it.
 		if (Op == TEXT("combo"))
@@ -1393,7 +1415,7 @@ namespace OKStudioControl
 		if (!GRouter.IsValid()) { UE_LOG(LogTemp, Warning, TEXT("OK studio control: could not open port %d"), Port); return; }
 		static const TCHAR* Ops[] = { TEXT("state"), TEXT("inspect"), TEXT("catalog_search"), TEXT("spawn"), TEXT("transform"), TEXT("reparent"), TEXT("delete"), TEXT("select"),
 			TEXT("pose"), TEXT("camera"), TEXT("capture"), TEXT("save"), TEXT("load"), TEXT("undo"), TEXT("redo"), TEXT("cmd"), TEXT("timeline"),
-			TEXT("patch"), TEXT("scene"), TEXT("bones"), TEXT("bounds"), TEXT("catalog"), TEXT("keys"), TEXT("duplicate"), TEXT("export"), TEXT("scenes"), TEXT("report"), TEXT("ui_shot"), TEXT("ui_fit"), TEXT("click"), TEXT("mouse"), TEXT("combo"), TEXT("type"), TEXT("leave"), TEXT("exec"), TEXT("parts") };
+			TEXT("patch"), TEXT("scene"), TEXT("bones"), TEXT("bounds"), TEXT("catalog"), TEXT("keys"), TEXT("duplicate"), TEXT("export"), TEXT("scenes"), TEXT("report"), TEXT("ui_shot"), TEXT("ui_fit"), TEXT("click"), TEXT("mouse"), TEXT("key"), TEXT("combo"), TEXT("type"), TEXT("leave"), TEXT("exec"), TEXT("parts") };
 		for (const TCHAR* Op : Ops)
 		{
 			const FString Name = Op;
