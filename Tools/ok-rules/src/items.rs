@@ -88,6 +88,15 @@ pub fn owned_ids(r: &Value, girl: &str) -> Vec<String> {
     st["owned"].get(girl).and_then(Value::as_array).into_iter().flatten().filter_map(|e| e["item"].as_str().map(str::to_string)).collect()
 }
 
+/// Whether she got this thing today (bought it herself, or his gift). Request: ext, girl, item, day. Answer: owns_today.
+/// "The sketchbook is already in your hands" was read as giving her one, and a second was bought (R6-140).
+fn owns_today(r: &Value) -> Value {
+    let st = state(r);
+    let (item, today) = (s(r, "item"), day(r));
+    let owns = !item.is_empty() && st["owned"].get(s(r, "girl")).and_then(Value::as_array).into_iter().flatten().any(|e| s(e, "item") == item && day(e) == today);
+    json!({"owns_today": owns})
+}
+
 /// One of hers used up (the fish food fed to the fish): the ext without it, or None when she has none.
 pub fn use_up(r: &Value, girl: &str, item: &str) -> Option<Value> {
     let mut st = state(r);
@@ -350,6 +359,7 @@ pub fn eval(c: &Catalog, acts: &ActivitiesTuning, kind: &str, r: &Value) -> Opti
         "items_judge" => judge(c, r),
         "items_facts" => facts(c, r),
         "items_view" => view(c, r),
+        "items_owns_today" => owns_today(r),
         _ => return None,
     }))
 }
@@ -383,6 +393,15 @@ mod tests {
         assert_eq!(v["his_add"], json!(["bk_postcard", "bk_notebook"]));
         assert_eq!(v["give_her"], "bk_postcard");
         assert_eq!(v["ext"]["items"]["owned"]["r"][0]["item"], "bk_novel_sword");
+    }
+
+    #[test]
+    fn owns_today_only_what_she_got_today() {
+        let ext = add_owned(&json!({}), "r", "bk_sketchbook", "", "bought", 5);
+        let ask = |item: &str, day: i64| owns_today(&json!({"ext": ext, "girl": "r", "item": item, "day": day}))["owns_today"].as_bool().unwrap();
+        assert!(ask("bk_sketchbook", 5));
+        assert!(!ask("bk_sketchbook", 6), "a later day's gift is a new one");
+        assert!(!ask("bk_postcard", 5));
     }
 
     #[test]

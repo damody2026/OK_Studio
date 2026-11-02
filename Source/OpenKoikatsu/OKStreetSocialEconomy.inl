@@ -67,6 +67,10 @@ FString AOKStreetSocialScene::ShopPlaceHere() const{
  if(const auto* F=S.Facility!=INDEX_NONE?OKStreetFacilityActivity(S.Facility):nullptr)
   if(S.Catalog.Items.ContainsByPredicate([&](const FOKStreetCatalogItem& I){return I.Place==F->Place;}))return F->Place;
  for(const auto& Place:OKStreetPlaces())if(OKStreetInsidePlace(Place,S.Male)&&S.Catalog.Items.ContainsByPredicate([&](const FOKStreetCatalogItem& I){return I.Place==Place.Id;}))return Place.Id;
+ // Just outside the shop where their table is (she came out to the doorstep to meet him, her cocoa already served
+ // inside): still that shop. His latte and panini were "not sold here" and she made up a kitchen out of milk (R6-139).
+ if(!S.Table.IsEmpty()&&!S.MealPlace.IsEmpty())if(const FOKStreetPlace* P=OKStreetFindPlace(S.MealPlace))
+  for(const FBox& Room:P->Rooms)if(Room.ComputeSquaredDistanceToPoint(FVector(S.Male.X,S.Male.Y,Room.GetCenter().Z))<=FMath::Square(300.f))return S.MealPlace;
  return FString();
 }
 
@@ -140,6 +144,10 @@ void AOKStreetSocialScene::TickOrderNotice(){
   // Nobody to tell, or they are saying goodbye (her "good night" said, the talk ends after it): a note now would start
   // the talk again ("all eaten — so what shall we do next?" after the goodbye).
   if(FreeTalkPartner()==INDEX_NONE||S.FarewellPending){if(S.FarewellPending)UE_LOG(LogTemp,Display,TEXT("Street till notice dropped (%d): they are saying goodbye"),S.TellHer.Num());S.TellHer.Reset();}
+  // "Not served yet" for her own reach for the food, with a turn of hers gone by since (she said "the waffle still
+  // takes a while" and asked him who his ten o'clock was): it would answer for him, and she took it as him eating
+  // instead of answering ("别光顾着吃，回答我呢", R6-139).
+  else if(S.TellHer[0]==S.NotServedNote&&S.FreeTalkTurns>S.NotServedTurns){S.TellHer.RemoveAt(0);S.NotServedNote.Reset();UE_LOG(LogTemp,Display,TEXT("Street till notice dropped: not served yet, she has spoken since"));}
   else if(S.FreeTalkOpen&&!S.FreeTalkBusy&&!FreeTalkHerVoiceBusy()){S.SystemNote=true;S.FreeTalkDraft=S.TellHer[0];S.TellHer.RemoveAt(0);UE_LOG(LogTemp,Display,TEXT("Street till notice sent: %s"),*S.FreeTalkDraft.Left(120));SendFreeTalk();return;}
  }
  if(S.OrderNoticeDue<=0)return;
@@ -486,7 +494,8 @@ void AOKStreetSocialScene::TickMeal(float Dt){
   }
  };
  // Still at the meal: in the place, or in one of its rooms (a private room is a facility away from the floor).
- const bool There=PlaceHere(S.Male)==S.MealPlace||S.Facility!=INDEX_NONE;
+ // So is its doorstep (ShopPlaceHere): she came out to meet him there and her cocoa and scone were cleared (R6-139).
+ const bool There=PlaceHere(S.Male)==S.MealPlace||S.Facility!=INDEX_NONE||ShopPlaceHere()==S.MealPlace;
  // One who has gone from the table (not talking with him, not in the group, a few steps off) has left hers: 安可 said
  // goodbye with her soup half drunk, and it sat on the table for 胡桃, who came for lunch half an hour later.
  auto Gone=[&S,Talking](const FOKStreetDish& D){return D.Her!=Talking&&S.Agents.IsValidIndex(D.Her-1)&&!S.Party.Contains(D.Her)&&FVector::Dist2D(S.Agents[D.Her-1].Position,S.Male)>300.f;};
@@ -619,7 +628,7 @@ bool AOKStreetSocialScene::EatActBlocked(int32 Girl,const FString& Act){
  for(const auto& D:S.Table)if(D.Served)return false;
  const double Now=SceneTime();double Wait=0;for(const auto& P:S.Serves)Wait=FMath::Max(Wait,P.At-Now);
  S.FreeTalkNotice=OKT(TEXT("ui.economy.not_served_yet"));
- S.NotServedNote=OKMsg(TEXT("ui.economy.not_served_wait_prompt"), {{TEXT("seconds"), FMath::Max(0,int32(FMath::CeilToDouble(Wait)))}});S.TellHer.Add(S.NotServedNote);
+ S.NotServedNote=OKMsg(TEXT("ui.economy.not_served_wait_prompt"), {{TEXT("seconds"), FMath::Max(0,int32(FMath::CeilToDouble(Wait)))}});S.TellHer.Add(S.NotServedNote);S.NotServedTurns=S.FreeTalkTurns;
  UE_LOG(LogTemp,Display,TEXT("Street meal: %s refused, the food is not served yet"),*Act);RefreshUI();
  return true;
 }

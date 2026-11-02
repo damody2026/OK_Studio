@@ -285,7 +285,7 @@ struct FOKStreetSceneState {
  TMap<int32,FOKNpcLift> NpcLifts;int32 ActGirl=INDEX_NONE,LastActivityGirl=INDEX_NONE;int32 ArrivedWith=INDEX_NONE;FString ArrivedPlace;int64 ArrivedMinute=-1; /* the last walk he and a girl ended together, for appointments_tick (R5-13) */bool ActCutShort=false,ActTimeCut=false;int64 ActStart=0,LifeBlocksMinute=-1;int32 ActFirstAppointment=0; /* the appointments made during it are for later (ActivityAftermath) */ FString ActId,ActSig,LastActivity;int32 HerPaidGirl=INDEX_NONE;int64 HerPaidAmount=0,HerPaidAt=0;bool HerPaidAgreed=false;FString ShopPromptedPlace; /* the place whose menu prompt she was given (TickShopArrival) */int32 PaidBackGirl=INDEX_NONE;int64 PaidBackAmount=0,PaidBackAt=0;FString HerPaidNote;FString HerPaidShop; /* her own bill just paid (RecordPayAgreed) */ /* ActSig: what kind of activity ActId is (TickActivityWatch) */ TSet<FString> LifeDone;double BiasCheckAt=0;TMap<int32,double> PossessiveAt;
  // Round 3 (Docs/STREET_BEHAVIOR_PLAN_20261012b.md).
  TMap<int32,int32> PlanBlockSince;TMap<FString,int32> PaidShiftMinutes;bool ActIsHers=false,ActLover=false;int32 IntroFriend=INDEX_NONE;double IntroAt=0,GatePenaltyAt=-100,LastActivityAt=-100;
- TMap<int32,TArray<int64>> SelfTexts;int32 SentRemoteGirl=INDEX_NONE,SentRemoteMode=0,ReplyRemoteGirl=INDEX_NONE,ReplyRemoteMode=0;int64 LastCheckoutMinute=-1;FString NotServedNote,CheckoutNote;TMap<FString,int32> JobRejected;
+ TMap<int32,TArray<int64>> SelfTexts;int32 SentRemoteGirl=INDEX_NONE,SentRemoteMode=0,ReplyRemoteGirl=INDEX_NONE,ReplyRemoteMode=0;int64 LastCheckoutMinute=-1;FString NotServedNote,CheckoutNote;int32 NotServedTurns=0;TMap<FString,int32> JobRejected;
  // His company (OKStreetSocialCompany*.inl).
  FString CompanyTab=TEXT("overview"),CompanyAmount,HeroJobSig,PayslipNote;TMap<int32,float> NpcLiftArrivedZ;bool FinMenuOpen=false; // the money buttons open under one "理財" (BuildFinanceRows)
  // The books (OKStreetSocialBooks.inl, OKStreetSocialAccountsApp.inl): journals by book, what each account was last seen at, posts already written.
@@ -1727,7 +1727,11 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
       // Just bought and handed over: "this keyring is for you" after "I'll buy you one" bought a second one (優香 at the
       // aquarium, ¥32 twice). The one he gave is the one he means.
       auto JustBought=[&](const FString& Id){for(const TCHAR* Who:{TEXT("|her"),TEXT("|him")})if(const int64* At=L->RecentBought.Find(Id+Who);At&&OKStreetMindNow(*L)-*At<=10)return true;return false;};
-      if(Sold&&JustBought(Sold->Id)){UE_LOG(LogTemp,Display,TEXT("Street judge: actor=%d gift %s was just bought and given, not bought again"),Character,*Sold->Id);}
+      // Or already hers since today (she bought it herself, he paid her back): "it is already in your hands" bought a
+      // second sketchbook twenty minutes on (R6-140).
+      auto HersToday=[&](const FString& Id){auto Ask=OKRulesRequest(TEXT("items_owns_today"));OKRulesPutExt(*L,Ask);Ask->SetStringField(TEXT("girl"),OKStreetStableId(L->Manifest.Characters[Character]));Ask->SetStringField(TEXT("item"),Id);
+       const TSharedPtr<FJsonObject> Out=OKRulesEval(*L,Ask);return Out.IsValid()&&Out->GetBoolField(TEXT("owns_today"));};
+      if(Sold&&(JustBought(Sold->Id)||HersToday(Sold->Id))){UE_LOG(LogTemp,Display,TEXT("Street judge: actor=%d gift %s was just bought and given, not bought again"),Character,*Sold->Id);}
       else if(Sold){UE_LOG(LogTemp,Display,TEXT("Street judge: actor=%d gift %s not carried, bought here first"),Character,*Sold->Id);Weak->BuyForGift(Sold->Id);
        // Bought here for the gift: the same book among the orders ("for her") is that one, not a second (惠惠's 烟火图鉴,
        // ¥45 billed twice, R6-105).
