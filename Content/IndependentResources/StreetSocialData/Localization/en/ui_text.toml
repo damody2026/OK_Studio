@@ -2140,6 +2140,8 @@ left = "Left the inspection room; she is back to her day."
 
 [ui.hscene]
 her_gauge = "Her"
+dev_line = "Development  chest {chest}%  nipples {nipple}%  vagina {crotch}%{crotch_gain}  anus {anal}%{anal_gain}  mouth {oral}%{oral_gain}"
+dev_gain = " (+{n})"
 his_gauge = "Him"
 speed = "Speed"
 tab_hand = "Service: hand"

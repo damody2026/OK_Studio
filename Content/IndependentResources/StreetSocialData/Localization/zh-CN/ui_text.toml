@@ -2140,6 +2140,8 @@ left = "离开检视，她回到原本的行程。"
 
 [ui.hscene]
 her_gauge = "她"
+dev_line = "开发度　胸部 {chest}%　乳头 {nipple}%　阴部 {crotch}%{crotch_gain}　屁股 {anal}%{anal_gain}　口 {oral}%{oral_gain}"
+dev_gain = "（+{n}）"
 his_gauge = "他"
 speed = "速度"
 tab_hand = "奉仕·手"

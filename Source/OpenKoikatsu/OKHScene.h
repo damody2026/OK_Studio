@@ -148,6 +148,7 @@ private:
 
     UPROPERTY() TObjectPtr<UTextBlock> Title;
     UPROPERTY() TObjectPtr<UTextBlock> Status;
+    UPROPERTY() TObjectPtr<UTextBlock> DevLine; // her five developments now, with what this scene added
     UPROPERTY() TObjectPtr<UTextBlock> Hint;
     UPROPERTY() TObjectPtr<UProgressBar> HerGauge;
     UPROPERTY() TObjectPtr<UProgressBar> HisGauge;

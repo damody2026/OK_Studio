@@ -188,6 +188,7 @@ TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
     Status=Text(12.f,FLinearColor::White);
     HerGauge=Gauge(TEXT("ui.hscene.her_gauge"),FLinearColor(1.f,.35f,.6f));
     HisGauge=Gauge(TEXT("ui.hscene.his_gauge"),FLinearColor(.35f,.6f,1.f));
+    DevLine=Text(11.f,FLinearColor(1.f,.75f,.85f));
     {
         UHorizontalBox* Row=WidgetTree->ConstructWidget<UHorizontalBox>();
         auto* L=WidgetTree->ConstructWidget<UTextBlock>();L->SetText(FText::FromString(OKT(TEXT("ui.hscene.speed"))));L->SetColorAndOpacity(FSlateColor(FLinearColor::White));
@@ -820,6 +821,13 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     // Her spoken answer is over: her breathing goes on (the line stopped it).
     if(bTalkSpoken&&Gallery->PreviewActor&&!Gallery->PreviewActor->IsSpeaking()){bTalkSpoken=false;if(Mode!=0&&Gallery->PairedPlayback)Gallery->StartPairBreath();}
     if(HerGauge)HerGauge->SetPercent(Her/100.f);if(HisGauge)HisGauge->SetPercent(His/100.f);
+    // Her five developments as the scene uses them, each climax there (his finish in her mouth) shown as it adds 10
+    // (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md P3).
+    if(DevLine){auto Pct=[this](const TCHAR* A){return int32(FMath::RoundToFloat(Dev(A)*100.f));};
+        auto Gain=[](int32 N){return N>0?OKMsg(TEXT("ui.hscene.dev_gain"),{{TEXT("n"),N}}):FString();};
+        DevLine->SetText(FText::FromString(OKMsg(TEXT("ui.hscene.dev_line"),{{TEXT("chest"),Pct(TEXT("chest"))},{TEXT("nipple"),Pct(TEXT("nipple"))},
+            {TEXT("crotch"),Pct(TEXT("crotch"))},{TEXT("crotch_gain"),Gain(10*CrotchClimaxes)},{TEXT("anal"),Pct(TEXT("anal"))},{TEXT("anal_gain"),Gain(10*AnalClimaxes)},
+            {TEXT("oral"),Pct(TEXT("oral"))},{TEXT("oral_gain"),Gain(10*HisMouth)}})));}
     if(Title){FString Name=Gallery->HHeroineName;const FString LevelName=Gallery->HExperience.IsValid()?Gallery->HExperience->GetStringField(TEXT("level_name")):FString();
         Title->SetText(FText::FromString(LevelName.IsEmpty()?Name:FString::Printf(TEXT("%s · %s"),*Name,*LevelName)));}
     if(Status){
@@ -937,6 +945,9 @@ void UOKHScenePanel::UpdateFace(){
         else{Girl->SetEyeGaze(0.f,0.f,0.f);Girl->SetMouthPattern(0);}}
     if(bAhegao){Eye=8;Brow=11;Open=.6f;}
     else if(Cur.Contains(TEXT("Dislikes"))){Eye=13;Brow=1;Open=.9f;}
+    // Sucking him (her mouth developed, Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md): her eyes roll up under lids that fall
+    // the harder she sucks (her gaze up alone hardly showed, 2026-11-02); in steps, not every frame.
+    else if(Mode==1&&OralSuck>.3f){Eye=8;Brow=11;Open=FMath::GridSnap(FMath::Lerp(.85f,.45f,OralSuck),.05f);}
     else if(Mode==0&&(Base==TEXT("K_Loop")||Base==TEXT("K_Touch"))){Eye=1;Brow=2;Open=0.f;}
     else if(Base.StartsWith(TEXT("Orgasm"))||(Mode!=0&&!HIsLoop(Base)&&StateWords(Base)==OKT(TEXT("ui.hscene.state_finishing")))){Eye=24;Brow=2;Open=0.f;}
     else if(StateWords(Base)==OKT(TEXT("ui.hscene.state_after"))){Eye=7;Brow=2;Open=.45f;}
@@ -1016,7 +1027,8 @@ void UOKHScenePanel::TickDrips(float Delta){
     // Sucking him, tears run from both eyes, the more the more her mouth is developed (H_DEVELOPMENT_EXPERIENCE_PLAN).
     if(IsValid(Girl)&&OralSuck>.15f&&Now>=TearAt){TearAt=Now+1.5/OralSuck*FMath::FRandRange(.7f,1.3f);
         const AActor* Ignore[]={Girl,Gallery->PartnerActor.Get()};
-        for(const TCHAR* Eye:{TEXT("J_Eye02_s_L"),TEXT("J_Eye02_s_R")}){FVector At,L,R;if(!HBone(Girl,Eye,At))continue;
+        // From the top of her cheeks under each eye: from the eye itself the drop was inside her eyeball, never seen.
+        for(const TCHAR* Eye:{TEXT("J_CheekUp_L"),TEXT("J_CheekUp_R")}){FVector At,L,R;if(!HBone(Girl,Eye,At)&&!HBone(Girl,FCString::Strstr(Eye,TEXT("_L"))?TEXT("J_Eye02_s_L"):TEXT("J_Eye02_s_R"),At))continue;
             const float Floor=HBone(Girl,TEXT("j_foot_L"),L)&&HBone(Girl,TEXT("j_foot_R"),R)?FMath::Min(L.Z,R.Z)-3.f:At.Z-80.f;
             Drips.Spawn(Girl,0,Eye,At,FOKArousalDrops::GroundBelow(Girl,At-FVector(0,0,4.f),Ignore,Floor),OKArousal::Clear);}}
     // As she comes (her cry, ClimaxUntil; user 2026-11-01): her crotch squirts and both nipples spray, shot out from her,
@@ -1566,8 +1578,9 @@ void UOKHScenePanel::AlignHim(float Delta){
                 // How deep she takes him is her development there (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md): at most half of
                 // him at first (her anus 40%), nine tenths at 100%; he draws out to a fifth.
                 // Her mouth: a tenth to 30% at first, to 70% at 100%.
-                // For now (user, 2026-11-02: the limits hid why he would not go in) a set 20% to 90% in her.
-                const float Top=bOral?FMath::Lerp(.3f,.7f,Dev(TEXT("oral"))):.9f;
+                // Her crotch 50% to 90%, her anus 40% to 90% (user, 2026-11-02, again after the set 20% to 90% used to find
+                // why he would not go in).
+                const float Top=bOral?FMath::Lerp(.3f,.7f,Dev(TEXT("oral"))):bAnalPlay?FMath::Lerp(.4f,.9f,Dev(TEXT("anal"))):FMath::Lerp(.5f,.9f,Dev(TEXT("crotch")));
                 const float Low=bOral?.1f:.2f;
                 float InHer=Top;
                 if((HIsLoop(Base)||Base==TEXT("OLoop"))&&ThrustHigh-ThrustLow>.5f)InHer=Low+(Top-Low)*FMath::SmoothStep(0.f,1.f,(ThrustHigh-Raw)/(ThrustHigh-ThrustLow));
@@ -1790,7 +1803,11 @@ TSharedRef<FJsonObject> UOKHScenePanel::Describe() const{
     O->SetStringField(TEXT("state"),Current());O->SetStringField(TEXT("wanted"),Wanted);O->SetNumberField(TEXT("mode"),Mode);
     TArray<TSharedPtr<FJsonValue>> Q;for(const FString& S:Queue)Q.Add(MakeShared<FJsonValueString>(S));O->SetArrayField(TEXT("queue"),Q);
     O->SetNumberField(TEXT("playback_speed"),PlaybackSpeed());if(Gallery&&Gallery->PreviewActor)O->SetNumberField(TEXT("breath_rate"),Gallery->PreviewActor->SpeechTempo);O->SetBoolField(TEXT("hooked"),Hooked());O->SetNumberField(TEXT("oral_suck"),OralSuckSet);O->SetNumberField(TEXT("bust_swell"),BustSwellSet);O->SetNumberField(TEXT("depth_top"),AlignDeep);O->SetNumberField(TEXT("belly_out"),BulgeTarget.IsNone()?-1.f:BulgePast);O->SetNumberField(TEXT("belly_allow"),FMath::Max(0.f,BulgeMoves-2.5f));O->SetNumberField(TEXT("pullback"),BellyPullback);O->SetNumberField(TEXT("tip_inside"),TipInside);O->SetNumberField(TEXT("aim_relax"),AimRelax);O->SetNumberField(TEXT("skin_out"),SkinOutMost);O->SetNumberField(TEXT("skin_under"),SkinUnderMost);O->SetNumberField(TEXT("skin_worst"),SkinWorst);O->SetNumberField(TEXT("skin_rest"),SkinRest);O->SetNumberField(TEXT("skin_along"),SkinWorstAlong);O->SetNumberField(TEXT("root_dodge"),RootDodge.Size());O->SetNumberField(TEXT("depth_cap"),DepthCap);{auto Wr=MakeShared<FJsonObject>();for(const auto& W:Bulge)if(W.Value>1.f)Wr->SetNumberField(W.Key.ToString(),FMath::RoundToFloat(W.Value));O->SetObjectField(TEXT("swells"),Wr);O->SetNumberField(TEXT("swells_refused"),BulgeRefused);O->SetNumberField(TEXT("wrap_ms"),WrapMs);O->SetNumberField(TEXT("wrap_verts"),WrapVerts);O->SetNumberField(TEXT("swell_ms"),SwellMs);O->SetNumberField(TEXT("swell_part"),BulgePart);}O->SetNumberField(TEXT("skin_facing"),SkinFacing);O->SetBoolField(TEXT("belly_side"),bBellySide);if(Gallery&&Gallery->PreviewActor){const FTransform& HerT=Gallery->PreviewActor->GetActorTransform();auto Vec=[&](const TCHAR* Name,const FVector& V){FVector U=AKKPreviewActor::ActorLocalToUnity(HerT.InverseTransformVectorNoScale(V))*100.;float K[16];if(Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_j_kokan"),K)||Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_J_Kokan"),K)){const FVector X(K[0],K[4],K[8]),Y(K[1],K[5],K[9]),Z(K[2],K[6],K[10]);U=FVector(U|X.GetSafeNormal(),U|Y.GetSafeNormal(),U|Z.GetSafeNormal());}TArray<TSharedPtr<FJsonValue>> A;A.Add(MakeShared<FJsonValueNumber>(U.X));A.Add(MakeShared<FJsonValueNumber>(U.Y));A.Add(MakeShared<FJsonValueNumber>(U.Z));O->SetArrayField(Name,A);};Vec(TEXT("dodge_her"),RootDodge);Vec(TEXT("skin_normal_her"),SkinNormal);Vec(TEXT("front_her"),BellyFront);}O->SetNumberField(TEXT("root_scale"),RootPadScale);O->SetBoolField(TEXT("xray"),bPenisXRay);if(Gallery&&Gallery->PairedPlayback)O->SetNumberField(TEXT("pair_rate"),Gallery->PairedPlayback->GetSpeed());O->SetNumberField(TEXT("held"),Held.Num());O->SetStringField(TEXT("caption"),Caption?Caption->GetText().ToString():FString());
-    O->SetNumberField(TEXT("her"),Her);O->SetNumberField(TEXT("his"),His);O->SetNumberField(TEXT("speed"),SpeedValue);O->SetBoolField(TEXT("condom"),bCondom);O->SetBoolField(TEXT("anal_play"),bAnalPlay);
+    O->SetNumberField(TEXT("her"),Her);O->SetNumberField(TEXT("his"),His);
+    // Her development as the scene uses it now (her own plus this scene's climaxes), and how long her climax and her
+    // nipples' spray have left (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md).
+    {auto D=MakeShared<FJsonObject>();for(const TCHAR* A:{TEXT("crotch"),TEXT("anal"),TEXT("oral"),TEXT("chest"),TEXT("nipple")})D->SetNumberField(A,FMath::RoundToFloat(Dev(A)*100.f));O->SetObjectField(TEXT("dev"),D);
+     const double Now=FPlatformTime::Seconds();O->SetNumberField(TEXT("climax_left"),FMath::Max(0.,ClimaxUntil-Now));O->SetNumberField(TEXT("nipple_left"),FMath::Max(0.,NippleUntil-Now));}O->SetNumberField(TEXT("speed"),SpeedValue);O->SetBoolField(TEXT("condom"),bCondom);O->SetBoolField(TEXT("anal_play"),bAnalPlay);
     O->SetStringField(TEXT("title"),Title?Title->GetText().ToString():FString());O->SetStringField(TEXT("hint"),Hint?Hint->GetText().ToString():FString());O->SetStringField(TEXT("face"),FaceKey); /* eye/brow/openness now (UpdateFace) */
     if(Gallery&&Gallery->PreviewActor){O->SetBoolField(TEXT("breath"),Gallery->PreviewActor->bHBreath);O->SetBoolField(TEXT("speaking"),Gallery->PreviewActor->IsSpeaking());O->SetNumberField(TEXT("mouth"),Gallery->PreviewActor->EffectiveFaceRate(0));}
     if(Gallery&&Gallery->HExperience.IsValid())O->SetObjectField(TEXT("experience"),Gallery->HExperience); // what she allows (hexp.rs h_experience)

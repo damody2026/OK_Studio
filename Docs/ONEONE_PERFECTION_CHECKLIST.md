@@ -226,7 +226,7 @@
 | 圓盤控制距離加倍（邊緣＝原本的 (0,2)） | ✅ | 使用者要求；RootReach 8→16 cm |
 | 陰莖方向維持原本（圓盤中心對準肚皮外一點） | ✅ | 使用者決定；本輪曾改方向，已還原為 4440108d9 |
 | 根部不自動閃避（圓盤設在哪根部就在哪） | 🟡 | 拿掉 RootDodge（原本會往旁邊推 8.6 cm）；待全姿勢確認 |
-| 深度：暫時固定 20%～90% | 🟡 | 使用者要求先拿掉限制以便除錯；之後要接回開發度與「只有頂到背才截」 |
+| 深度：暫時固定 20%～90% | ✅ 已接回 | GalDev2：深度上限接回開發度（陰道 50%→90%、肛門 40%→90%、口交 30%→70%），實測見 `Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md` 第五節；「只有頂到背才截」仍照舊 |
 | 只有龜頭真的從背側穿出才截深度 | ⬜ | 判斷已改成只看龜頭、背側、靜止時離入口 9 cm 外；深度限制接回後再驗 |
 | 全部性交姿勢 × 圓盤 9 方向 | ⬜ | 開發度 100、全脫、鎖住雙方、強；側面與正面 |
 | 身體開發度 0／100 對照 | ✅ | GalWrapA1／A5，`/hscene {"dev":{...}}` 全部部位設 0 或 100。**深度上限**：正常位兩者都是 90%（使用者決定暫時固定 20%～90%，開發度目前不影響陰道深度）；雙手口交 0 → 30%、100 → 70%。**胸部**：她的興奮 95 時 bust_swell 1.00 → 1.47，正常位正上方 `E:\OpenKoikatsu\Saved\StreetSocial\Play-20261102T141528\control_shots\shot.0005.png`（0）／`E:\OpenKoikatsu\Saved\StreetSocial\Play-20261102T141528\control_shots\shot.0006.png`（100）。**口交臉部**：oral_suck 0 → 1，下臉與嘴唇往前、臉頰內凹。100 時上唇兩角露出兩塊藍色（`E:\OpenKoikatsu\Saved\StreetSocial\Play-20261102T142315\control_shots\shot.0011.png`）：下臉往前 1.2 讓上排牙齒（cf_O_tooth）穿出上唇，縮到 0.6 仍穿出；改成她吸得夠深時（oral_suck ≥ 0.2）把上排牙齒藏起來（`AKKPreviewActor::HiddenMouthInside`，`ok.HScene.SuckHide`，預設 1＝只藏牙齒，犬齒與舌頭照常），臉形不變。修好後 0／100 正臉 `E:\OpenKoikatsu\Saved\StreetSocial\Play-20261102T143408\control_shots\shot.0002.png`／`E:\OpenKoikatsu\Saved\StreetSocial\Play-20261102T143408\control_shots\shot.0004.png`，沒有藍色 |
