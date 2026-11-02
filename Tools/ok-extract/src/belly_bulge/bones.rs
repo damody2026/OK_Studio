@@ -26,8 +26,16 @@ const BONE_SETTLE: f32 = 0.3;
 /// round, and how many rounds of raising its lower corners at most.
 const BONE_FLIP_COS: f32 = 0.0;
 const BONE_FLIP_ROUNDS: usize = 40;
+/// Her swell rounded (user 2026-11-02: smoother, not so sharp): each bone at most `BONE_SLOPE` metres lower than a
+/// neighbour for each metre between them at rest, then evened with its neighbours `BONE_EVEN_ROUNDS` times (never below
+/// where he pushes it); her skin evened `SKIN_EVEN_ROUNDS` times more (never lowered). Neighbours: bones within
+/// `BONE_NEAR` cells.
+const BONE_SLOPE: f32 = 1.0;
+const BONE_EVEN_ROUNDS: usize = 6;
+const SKIN_EVEN_ROUNDS: usize = 4;
+const BONE_NEAR: f32 = 1.6;
 
-struct BellyBones { key: (usize, usize), anchor: Vec<usize>, weights: Vec<Vec<(u32, f32)>>, lift: Vec<f32> }
+struct BellyBones { key: (usize, usize), anchor: Vec<usize>, weights: Vec<Vec<(u32, f32)>>, lift: Vec<f32>, nbr: Vec<Vec<(u32, f32)>> }
 static BONES: std::sync::Mutex<Option<BellyBones>> = std::sync::Mutex::new(None);
 
 /// Her bones and their weights, made from her skin at rest (bind pose): `wrap_verts`' skin, a bone on the skin nearest
@@ -72,7 +80,24 @@ fn make(session: &OkSession, part: &SessionPart, verts: &[WrapVert]) -> Option<B
         w
     }).collect();
     let n = anchor.len();
-    Some(BellyBones { key: (0, 0), anchor, weights, lift: vec![0.; n] })
+    // Each bone's neighbours and how far they are at rest.
+    let near = BONE_CELL_M * BONE_NEAR;
+    let ncell = |p: [f32; 3]| p.map(|v| (v / near).floor() as i64);
+    let mut ngrid: HashMap<[i64; 3], Vec<u32>> = HashMap::new();
+    for (b, &i) in anchor.iter().enumerate() { ngrid.entry(ncell(at[i].unwrap())).or_default().push(b as u32); }
+    let nbr = anchor.iter().enumerate().map(|(b, &i)| {
+        let p = at[i].unwrap();let c = ncell(p);let mut out = Vec::new();
+        for dx in -1..=1 { for dy in -1..=1 { for dz in -1..=1 {
+            for &k in ngrid.get(&[c[0] + dx, c[1] + dy, c[2] + dz]).into_iter().flatten() {
+                if k as usize == b { continue; }
+                let q = at[anchor[k as usize]].unwrap();
+                let d = (0..3).map(|a| (p[a] - q[a]) * (p[a] - q[a])).sum::<f32>().sqrt();
+                if d < near { out.push((k, d)); }
+            }
+        }}}
+        out
+    }).collect();
+    Some(BellyBones { key: (0, 0), anchor, weights, lift: vec![0.; n], nbr })
 }
 
 /// How her body's skin moves this frame with her belly bones pushed by his penis, the tube from `from` (her entrance) to
@@ -104,8 +129,9 @@ pub fn bone_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
     // the bone's of the line up from it (BP: the collider pushes the particle out of it).
     let axis = sub(to, from);let reach = radius + BONE_RADIUS_M;
     let samples = ((dot(axis, axis).sqrt() / (reach * 0.5)).ceil() as usize).max(1);
+    let mut wants = vec![0f32; bones.anchor.len()];
     for (b, &i) in bones.anchor.iter().enumerate() {
-        let mut want = 0f32;
+        let want = &mut wants[b];
         if let (Some(p), true) = (pos[i], ul > 1e-6) {
             let face = ((dot(normal[i], up) - WRAP_FACE_FROM) / (WRAP_FACE_FULL - WRAP_FACE_FROM)).clamp(0., 1.);
             if face > 0. {
@@ -114,11 +140,34 @@ pub fn bone_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
                     let rel = sub([from[0] + axis[0] * k, from[1] + axis[1] * k, from[2] + axis[2] * k], p);
                     let hu = dot(rel, up);let lat = sub(rel, [up[0] * hu, up[1] * hu, up[2] * hu]);
                     let l2 = dot(lat, lat);if l2 >= reach * reach { continue; }
-                    want = want.max(hu + (reach * reach - l2).sqrt());
+                    *want = want.max(hu + (reach * reach - l2).sqrt());
                 }
-                want = want.min(WRAP_MOST_M) * face;
+                *want = want.min(WRAP_MOST_M) * face;
             }
         }
+    }
+    // Rounded: no steeper than BONE_SLOPE from any neighbour, then evened, never below where he pushes it.
+    let pushed = wants.clone();
+    for _ in 0..200 {
+        let mut changed = false;
+        for b in 0..wants.len() {
+            for &(k, d) in &bones.nbr[b] {
+                let cand = wants[k as usize] - BONE_SLOPE * d;
+                if cand > wants[b] + 1e-5 { wants[b] = cand;changed = true; }
+            }
+        }
+        if !changed { break; }
+    }
+    for _ in 0..BONE_EVEN_ROUNDS {
+        let was = wants.clone();
+        for b in 0..wants.len() {
+            if bones.nbr[b].is_empty() { continue; }
+            let avg = bones.nbr[b].iter().map(|(k, _)| was[*k as usize]).sum::<f32>() / bones.nbr[b].len() as f32;
+            wants[b] = pushed[b].max((was[b] + avg) * 0.5);
+        }
+    }
+    for (b, want) in wants.iter().enumerate() {
+        let want = *want;
         let h = &mut bones.lift[b];
         *h += (want - *h) * if want > *h { BONE_RISE } else { BONE_SETTLE };
         if *h < 1e-4 { *h = 0.; }
@@ -130,9 +179,21 @@ pub fn bone_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
     let mut lift: Vec<f32> = (0..verts.len()).map(|i| {
         let v = &verts[i];let free = v.free * v.free * (3. - 2. * v.free);
         let w = &bones.weights[i];
-        let lifted = w.iter().filter(|(b, _)| bones.lift[*b as usize] > 0.005).map(|(_, w)| *w).sum::<f32>().min(1.);
+        // Only the bones he pushes himself: following the bones the rounding lifted too, her drawn-up thighs rose in
+        // sheets, black and blue (GalBones5).
+        let lifted = w.iter().filter(|(b, _)| pushed[*b as usize] > 0.005).map(|(_, w)| *w).sum::<f32>().min(1.);
         w.iter().map(|(b, w)| bones.lift[*b as usize] * w).sum::<f32>() * lips(v.from_entrance) * free.max(lifted)
     }).collect();
+    // Her skin evened over her mesh, never lowered (her lips stay, and so does skin on her thighs and bottom: raised by
+    // its neighbours it rose in sheets, GalBones5).
+    for _ in 0..SKIN_EVEN_ROUNDS {
+        let was = lift.clone();
+        for (i, v) in verts.iter().enumerate() {
+            if v.nbr.is_empty() || lips(v.from_entrance) <= 0. || v.free < 0.5 { continue; }
+            let avg = v.nbr.iter().map(|&k| was[k as usize]).sum::<f32>() / v.nbr.len() as f32;
+            lift[i] = was[i].max((was[i] + avg) * 0.5);
+        }
+    }
     // No skin turns its back (user 2026-11-02, the black walls beside the tent, GalBones2): a triangle that faces the
     // other way once lifted (its lower corner left far under its higher one, at her groin crease and where her thighs
     // lie by her belly) has its lower corners raised towards its highest, until none does. Her lips stay.
