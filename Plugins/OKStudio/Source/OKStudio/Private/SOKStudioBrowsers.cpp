@@ -587,14 +587,20 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 		+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(MapPick == -2 ? FString(TEXT("選擇：無地圖")) : Picked ? TEXT("選擇：") + Picked->Name : FString(TEXT("點一張地圖，再按「讀取」"))), 10.f, TextSoft())]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f, 0.f, 0.f)
 		[
-			Button(FText::FromString(TEXT("讀取")), [this]
-			{
-				if (!Game.IsValid() || MapPick == -1) return;
-				Game->Document->Map = MapPick == -2 ? -1 : MapPick;
-				Changed();
-				FOKStudioSettings::Get().UseRecent(FString::Printf(TEXT("map:%d"), Game->Document->Map));
-				SetStatus(TEXT("地圖：") + (FOKStudioCatalog::Get().FindMap(Game->Document->Map) ? FOKStudioCatalog::Get().FindMap(Game->Document->Map)->Name : FString(TEXT("無"))));
-			}, 0.f, 22.f)
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1.f)
+			[
+				Button(FText::FromString(TEXT("讀取")), [this]
+				{
+					if (!Game.IsValid() || MapPick == -1) return;
+					Game->Document->Map = MapPick == -2 ? -1 : MapPick;
+					Changed();
+					FOKStudioSettings::Get().UseRecent(FString::Printf(TEXT("map:%d"), Game->Document->Map));
+					SetStatus(TEXT("地圖：") + (FOKStudioCatalog::Get().FindMap(Game->Document->Map) ? FOKStudioCatalog::Get().FindMap(Game->Document->Map)->Name : FString(TEXT("無"))));
+				}, 0.f, 22.f)
+			]
+			// Studio's map window "設置": the map's position, rotation, time of day and sky (畫面設定's map tab).
+			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("設定")), Cmd(TEXT("scene.tab"), TEXT("1")), 60.f, 22.f)]
 		];
 }
 
