@@ -914,13 +914,25 @@ TSharedRef<SWidget> SOKStudioPanel::BuildRecent()
 				+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(FPaths::GetBaseFilename(F) + (bThere ? TEXT("") : TEXT("（檔案不在了）"))), 11.f)]
 				+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(FPaths::GetPath(F)), 9.f, TextHint())]
 			]
-			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[Button(FText::FromString(TEXT("開啟")), [this, F] { if (OpenScene(F, false)) CloseFloat(TEXT("recent")); }, 50.f, 20.f, false, 10.f, ButtonFill(), bThere)]
+			// A scene whose file is gone comes off the list (U112: it stayed there for good).
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[bThere
+				? Button(FText::FromString(TEXT("開啟")), [this, F] { if (OpenScene(F, false)) CloseFloat(TEXT("recent")); }, 50.f, 20.f, false, 10.f)
+				: Button(FText::FromString(TEXT("移除")), [this, F] { FOKStudioSettings::Get().RecentScenes.Remove(F); FOKStudioSettings::Get().SaveFavorites(); DeferFloat(TEXT("recent")); }, 50.f, 20.f, false, 10.f)]
 		];
 	}
 	if (FOKStudioSettings::Get().RecentScenes.IsEmpty()) Box->AddSlot().AutoHeight()[OKStudioStyle::Label(FText::FromString(TEXT("還沒有開啟或儲存過場景。")), 10.f, TextHint())];
-	return SNew(SVerticalBox)
+	const int32 Gone = FOKStudioSettings::Get().RecentScenes.FilterByPredicate([](const FString& F) { return !FPaths::FileExists(F); }).Num();
+	TSharedRef<SVerticalBox> Out = SNew(SVerticalBox)
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 4.f)[OKStudioStyle::Label(FText::FromString(Stats), 10.f)]
 		+ SVerticalBox::Slot().FillHeight(1.f)[SNew(SBorder).BorderImage(Brush(ListArea())).Padding(3.f)[SNew(SScrollBox) + SScrollBox::Slot()[Box]]];
+	if (Gone > 0)
+		Out->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)[Button(FText::FromString(FString::Printf(TEXT("清除不存在的場景（%d）"), Gone)), [this]
+		{
+			FOKStudioSettings::Get().RecentScenes.RemoveAll([](const FString& F) { return !FPaths::FileExists(F); });
+			FOKStudioSettings::Get().SaveFavorites();
+			DeferFloat(TEXT("recent"));
+		}, 0.f, 20.f)];
+	return Out;
 }
 
 TSharedRef<SWidget> SOKStudioPanel::BuildBgm()

@@ -888,6 +888,13 @@ namespace
 				Last = Now;
 			}
 			App.ProcessMouseButtonUpEvent(FPointerEvent(User, Pointer, To, Last, TSet<FKey>(), Key, 0.f, Mods));
+			// "double": true makes it a double click, as the OS sends one: press, release, double click, release.
+			bool bDouble = false;
+			if (J->TryGetBoolField(TEXT("double"), bDouble) && bDouble && !bDrag)
+			{
+				App.ProcessMouseButtonDoubleClickEvent(nullptr, FPointerEvent(User, Pointer, At, At, TSet<FKey>({ Key }), Key, 0.f, Mods));
+				App.ProcessMouseButtonUpEvent(FPointerEvent(User, Pointer, At, At, TSet<FKey>(), Key, 0.f, Mods));
+			}
 			TSharedRef<FJsonObject> O = Result(true);
 			O->SetArrayField(TEXT("screen"), { MakeShared<FJsonValueNumber>(At.X), MakeShared<FJsonValueNumber>(At.Y) });
 			O->SetBoolField(TEXT("menu_open"), App.AnyMenusVisible());

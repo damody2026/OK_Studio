@@ -1,6 +1,7 @@
 ﻿// OK Studio panel: the card browser, item previews, quick search, the effect list and map browser, the colour window and
 // colour fields, the scene settings (畫面設定) tabs and their presets.
 #include "SOKStudioPanel.h"
+#include "Styling/StyleDefaults.h"
 #include "KKCardReader.h"
 #include "Materials/MaterialInstance.h"
 #include "Misc/ConfigCacheIni.h"
@@ -217,9 +218,21 @@ TSharedRef<SWidget> SOKStudioPanel::BuildCardBrowser()
 					SNew(SButton).ButtonStyle(&FlatButton()).ContentPadding(FMargin(1.f)).ToolTipText(FText::FromString(FPaths::GetBaseFilename(F)))
 					.OnClicked_Lambda([this, F] { CardPreview = F; DeferFloat(TEXT("cards")); return FReply::Handled(); })
 					[
-						SNew(SVerticalBox)
-						+ SVerticalBox::Slot().FillHeight(1.f)[SNew(SImage).Image_Lambda([F] { const FSlateBrush* B = FOKStudioThumbnails::Get().File(F, 96); return B ? B : Brush(Input()); })]
-						+ SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Font(Font(8.f)).ColorAndOpacity(OKStudioStyle::Text()).OverflowPolicy(ETextOverflowPolicy::Ellipsis).AddMetaData<FTagMetaData>(TEXT("Ellipsis")).Text(FText::FromString(FPaths::GetBaseFilename(F)))]
+						// A double click adds the card at once (U105): adding several characters needs no 加入 each time.
+						SNew(SBorder).BorderImage(FStyleDefaults::GetNoBrush()).Padding(0.f)
+						.OnMouseDoubleClick_Lambda([this, F](const FGeometry&, const FPointerEvent& E)
+						{
+							if (E.GetEffectingButton() != EKeys::LeftMouseButton) return FReply::Unhandled();
+							CardPreview = F;
+							AddOrReplaceCard(F, false);
+							DeferFloat(TEXT("cards"));
+							return FReply::Handled();
+						})
+						[
+							SNew(SVerticalBox)
+							+ SVerticalBox::Slot().FillHeight(1.f)[SNew(SImage).Image_Lambda([F] { const FSlateBrush* B = FOKStudioThumbnails::Get().File(F, 96); return B ? B : Brush(Input()); })]
+							+ SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Font(Font(8.f)).ColorAndOpacity(OKStudioStyle::Text()).OverflowPolicy(ETextOverflowPolicy::Ellipsis).AddMetaData<FTagMetaData>(TEXT("Ellipsis")).Text(FText::FromString(FPaths::GetBaseFilename(F)))]
+						]
 					])
 			]
 		];

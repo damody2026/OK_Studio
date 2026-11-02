@@ -46,6 +46,7 @@
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeExit.h"
 #include "OKSceneActor.h"
 #include "OKStudioCatalog.h"
 #include "OKStudioSky.h"
@@ -325,7 +326,8 @@ public:
 						[Tagged(TEXT("PoseLibraryButton"), IconButton(TEXT("pose"), Tip(TEXT("姿勢庫"), TEXT("app.poselibrary")), Cmd(TEXT("app.poselibrary")), 33.f, 33.f, TAttribute<bool>::CreateLambda([this] { return IsFloatOpen(TEXT("poselib")); })))]
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(0.f, 0.f)).Offset(FMargin(4.f, 458.f, 33.f, 33.f))
 						[Tagged(TEXT("QuickSearchButton"), IconButton(TEXT("search"), Tip(TEXT("快搜"), TEXT("app.quicksearch")), Cmd(TEXT("app.quicksearch")), 33.f, 33.f, TAttribute<bool>::CreateLambda([this] { return IsFloatOpen(TEXT("quick")); })))]
-					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(1.f, 0.f)).Offset(FMargin(Right(1448.9f), 7.f, 313.f, 33.f))[Tagged(TEXT("TopTools"), MakeTopTools())]
+					// One tool wider than HS2Studio6's row: the timeline toggle beside MMD 導演 (U111).
+					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(1.f, 0.f)).Offset(FMargin(Right(1408.9f), 7.f, 353.f, 33.f))[Tagged(TEXT("TopTools"), MakeTopTools())]
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(1.f, 0.f)).Offset(FMargin(Right(1284.9f), 47.f, 240.f, 429.f))
 						[Tagged(TEXT("CharacterGroupPanel"), SNew(SBox).Visibility_Lambda([this] { return bShowGroups ? EVisibility::Visible : EVisibility::Collapsed; })[MakeGroupPanel()])]
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(1.f, 0.f)).Offset(FMargin(Right(1528.9f), 47.f, 240.f, 429.f))
@@ -561,6 +563,15 @@ public:
 			{
 				O->Light.Type = Arg == TEXT("spot") ? EOKSceneLightType::Spot : Arg == TEXT("point") ? EOKSceneLightType::Point : Arg == TEXT("area") ? EOKSceneLightType::Area : EOKSceneLightType::Directional;
 				O->Name = Arg == TEXT("spot") ? TEXT("聚光") : Arg == TEXT("point") ? TEXT("點光") : Arg == TEXT("area") ? TEXT("面光") : TEXT("方向光");
+				// A light with a place comes in front of the view, a little above what it looks at and aimed at it (U109: it
+				// stood at (0, 0, 300), out of sight and away from the character). A directional light keeps its sun angle.
+				if (O->Light.Type != EOKSceneLightType::Directional)
+				{
+					const FVector Dir = FRotator(Game->Pitch, Game->Yaw, 0.f).Vector();
+					const FVector At = Game->Focus - Dir * FMath::Min(Game->Distance * 0.5f, 150.f) + FVector(0.f, 0.f, 60.f);
+					const FTransform Parent = O->Parent >= 0 ? Game->Document->WorldTransform(O->Parent) : FTransform::Identity;
+					O->Transform = FTransform(Parent.InverseTransformRotation((Game->Focus - At).Rotation().Quaternion()), Parent.InverseTransformPosition(At));
+				}
 				Game->Document->NotifyChanged();
 			}
 			AddedStatus();
@@ -1050,13 +1061,14 @@ public:
 		struct FTool { const TCHAR* Label; const TCHAR* Command; TFunction<bool()> On; const TCHAR* Icon; };
 		const FTool Tools[] = {
 			{ TEXT("角色分組"), TEXT("toggle.groups"), [this] { return bShowGroups; }, TEXT("groups") },
-			{ TEXT("MMD 導演／設定"), TEXT("toggle.mmd"), [this] { return IsFloatOpen(TEXT("mmd")); }, TEXT("play") },
+			{ TEXT("MMD 導演／設定"), TEXT("toggle.mmd"), [this] { return IsFloatOpen(TEXT("mmd")); }, TEXT("mmd") },
+			{ TEXT("時間軸"), TEXT("toggle.timeline"), [this] { return IsFloatOpen(TEXT("timeline")); }, TEXT("timeline") },
 			{ TEXT("主選單"), TEXT("toggle.root"), [this] { return bShowRoot; }, TEXT("menu") },
 			{ TEXT("工作區"), TEXT("toggle.workspace"), [this] { return bShowWorkspace; }, TEXT("tree") },
 			{ TEXT("變換列"), TEXT("toggle.transform"), [this] { return bShowTransform; }, TEXT("move") },
 			{ TEXT("畫面設定"), TEXT("page.scene"), [this] { return Page == EPage::Scene; }, TEXT("color") },
 			{ TEXT("屬性"), TEXT("page.object"), [this] { return Page == EPage::Object; }, TEXT("options") },
-			{ TEXT("相機"), TEXT("page.camera"), [this] { return Page == EPage::Camera; }, TEXT("camera") },
+			{ TEXT("相機設定"), TEXT("page.camera"), [this] { return Page == EPage::Camera; }, TEXT("camera") },
 		};
 		TSharedRef<SHorizontalBox> Box = SNew(SHorizontalBox);
 		for (int32 I = 0; I < UE_ARRAY_COUNT(Tools); ++I)
@@ -1076,7 +1088,7 @@ public:
 		using namespace OKStudioStyle;
 		struct FTool { const TCHAR* Icon; const TCHAR* Label; const TCHAR* Command; };
 		const FTool Row1[] = { { TEXT("root"), TEXT("移到根層"), TEXT("edit.root") }, { TEXT("copy"), TEXT("複製物件"), TEXT("edit.duplicate") }, { TEXT("delete"), TEXT("刪除"), TEXT("edit.delete") },
-			{ TEXT("folder"), TEXT("加資料夾"), TEXT("add.folder") }, { TEXT("camera"), TEXT("從視角建相機"), TEXT("camera.fromview") }, { TEXT("frame"), TEXT("用此相機"), TEXT("camera.use") }, { TEXT("options"), TEXT("屬性"), TEXT("page.object") } };
+			{ TEXT("folder"), TEXT("加資料夾"), TEXT("add.folder") }, { TEXT("camera_add"), TEXT("加入相機（從目前視角）"), TEXT("camera.fromview") }, { TEXT("frame"), TEXT("用此相機"), TEXT("camera.use") }, { TEXT("options"), TEXT("屬性"), TEXT("page.object") } };
 		TSharedRef<SHorizontalBox> Tools = SNew(SHorizontalBox);
 		for (const FTool& T : Row1) Tools->AddSlot().AutoWidth().Padding(0.f, 0.f, 4.f, 0.f)[IconButton(T.Icon, Tip(T.Label, T.Command), Cmd(T.Command), 28.f, 28.f)];
 		static const TCHAR* FilterIcons[] = { TEXT("tree"), TEXT("folder"), TEXT("chara"), TEXT("frame"), TEXT("light"), TEXT("camera"), TEXT("effect") };
@@ -1419,7 +1431,7 @@ public:
 	{
 		using namespace OKStudioStyle;
 		if (!DetailBody) return;
-		TSharedRef<SWidget> Area = SNew(SScrollBox).ScrollBarThickness(FVector2D(4.f, 4.f)) + SScrollBox::Slot().Padding(3.f, 0.f)[SAssignNew(Props, SVerticalBox)];
+		TSharedRef<SWidget> Area = SAssignNew(PropsScroll, SScrollBox).ScrollBarThickness(FVector2D(4.f, 4.f)) + SScrollBox::Slot().Padding(3.f, 0.f)[SAssignNew(Props, SVerticalBox)];
 		if (Page == EPage::Scene)
 		{
 			// 畫面設定: tabs down the left (camera, environment / sky, fog, bloom, depth of field, tone / LUT, vignette, background / frame).
@@ -1619,7 +1631,9 @@ public:
 	bool IkPartOn(int32 Part) const { const FOKSceneObject* O = Obj(); return !O || O->Character.IkPartOn(Part); }
 	FString BoneSearch;
 	TSet<FString> OpenBones;
-	struct FPosePoint { FVector2D At = FVector2D::ZeroVector; int32 Ik = -1; FString Bone; bool bParent = false; FVector2D Parent = FVector2D::ZeroVector; bool bOn = false; };
+	/** Rank: an FK point's weight (FkPointRank): 2 a limb, 1 the trunk, neck or head, 0 the rest (fingers, hair, skirt...). */
+	struct FPosePoint { FVector2D At = FVector2D::ZeroVector; int32 Ik = -1; FString Bone; bool bParent = false; FVector2D Parent = FVector2D::ZeroVector; bool bOn = false; int32 Rank = 2; };
+	static int32 FkPointRank(const FString& Bone);
 	bool IsPoseMode() const;
 	bool PosePoints(TArray<FPosePoint>& Out) const;
 	/** Picks the pose point under At (within Within pixels; below 0: the point size). */
@@ -1769,6 +1783,9 @@ public:
 	TSharedPtr<SVerticalBox> GroupList;
 	EPage Page = EPage::None;
 	int32 BonePage = 0;
+	/** The detail window's scroll box, and what it showed when last rebuilt (RebuildProperties keeps its offset). */
+	TSharedPtr<SScrollBox> PropsScroll;
+	FString PropsScrollKey;
 	int32 RootMenu = -1;
 	int32 LoaderCard = 0;
 	int32 LastCharacter = -1;
@@ -2187,6 +2204,23 @@ public:
 	void RebuildProperties()
 	{
 		if (!Props) return;
+		// The rows stay where they were scrolled while the page and the selection are the same (U108: picking a bone far
+		// down the list rebuilt the rows and showed the top again); another page or object starts at the top.
+		const FString ScrollKey = FString::Printf(TEXT("%d|%d|%d|%d"), int32(Page), BonePage, SceneTab, Game.IsValid() ? Game->SelectedId : -1);
+		const float KeepScroll = PropsScroll && ScrollKey == PropsScrollKey ? PropsScroll->GetScrollOffset() : 0.f;
+		PropsScrollKey = ScrollKey;
+		// Set again a frame later: the scroll box clamps the offset to the rows it measured last, fewer while rebuilding.
+		ON_SCOPE_EXIT
+		{
+			if (!PropsScroll) return;
+			PropsScroll->SetScrollOffset(KeepScroll);
+			if (KeepScroll <= 0.f) return;
+			RegisterActiveTimer(0.f, FWidgetActiveTimerDelegate::CreateLambda([Weak = TWeakPtr<SScrollBox>(PropsScroll), KeepScroll](double, float)
+			{
+				if (const TSharedPtr<SScrollBox> Box = Weak.Pin()) Box->SetScrollOffset(KeepScroll);
+				return EActiveTimerReturnType::Stop;
+			}));
+		};
 		Props->ClearChildren();
 		switch (Page)
 		{
@@ -3092,6 +3126,8 @@ public:
 		X->Character.Time = 0.f;
 		Changed();
 		DeferRebuild();
+		// The status line says what was applied (U106): it kept 「加入角色 …」 from before.
+		SetStatus(FString::Printf(TEXT("%s 套用動作 %s"), *X->Name, *A.Name));
 		return true;
 	}
 	/** The other side of the selected character's H motion (女H挿入／騎乗位／弱ループ → 男H挿入／騎乗位／弱ループ): the

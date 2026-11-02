@@ -213,8 +213,12 @@ int32 SOKStudioView::OnPaint(const FPaintArgs& Args, const FGeometry& Geometry, 
 		for (const SOKStudioPanel::FPosePoint& P : Points)
 		{
 			const bool bActive = (P.Ik >= 0 && Game->GuideIk == P.Ik) || (!P.Bone.IsEmpty() && Game->GuideBone == P.Bone);
-			const FLinearColor C = bActive ? FLinearColor::Yellow : P.Ik >= 9 ? FLinearColor(.3f, .5f, 1.f) : P.Ik >= 0 ? FLinearColor(1.f, .25f, .2f) : (P.bOn ? FLinearColor(.4f, 1.f, .4f) : FLinearColor(.75f, .95f, .75f));
-			const float R = (bActive ? 6.f : 4.f) * FMath::Clamp(FOKStudioSettings::Get().PointScale, 0.3f, 4.f);
+			// FK points by weight (U107, HS2Studio6's big red and blue balls): limbs red, trunk and head blue, the rest small and
+			// pale; a bone that has an FK value is greener.
+			const FLinearColor Fk = P.Rank == 2 ? FLinearColor(1.f, .35f, .25f) : P.Rank == 1 ? FLinearColor(.3f, .55f, 1.f) : FLinearColor(.8f, .9f, .8f, .7f);
+			const FLinearColor C = bActive ? FLinearColor::Yellow : P.Ik >= 9 ? FLinearColor(.3f, .5f, 1.f) : P.Ik >= 0 ? FLinearColor(1.f, .25f, .2f)
+				: (P.bOn ? FMath::Lerp(Fk, FLinearColor(.4f, 1.f, .4f), .6f) : Fk);
+			const float R = (bActive ? 6.f : (P.Ik < 0 && P.Rank == 0 ? 2.5f : (P.Ik < 0 ? 5.f : 4.f))) * FMath::Clamp(FOKStudioSettings::Get().PointScale, 0.3f, 4.f);
 			FSlateDrawElement::MakeBox(Out, Layer + 4, Geometry.ToPaintGeometry(FVector2f(2.f * R, 2.f * R), FSlateLayoutTransform(FVector2f(P.At - FVector2D(R, R)))), Brush(C), ESlateDrawEffect::None, C);
 		}
 	}
@@ -302,6 +306,7 @@ bool SOKStudioPanel::PosePoints(TArray<FPosePoint>& Out) const
 			FPosePoint Point;
 			if (!OKStudioGameInternal::BoneWorld(P, B.Bone, World) || !ToScreen(Game.Get(), World.GetLocation(), Point.At)) continue;
 			Point.Bone = B.Bone;
+			Point.Rank = FkPointRank(B.Bone);
 			Point.bOn = O->Character.Fk.ContainsByPredicate([&B](const FOKSceneFkBone& F) { return F.Bone == B.Bone; });
 			Shown.Add(FName(*B.Bone), Point.At);
 			Out.Add(Point);
@@ -318,13 +323,28 @@ bool SOKStudioPanel::PosePoints(TArray<FPosePoint>& Out) const
 	return Out.Num() > 0;
 }
 
+int32 SOKStudioPanel::FkPointRank(const FString& Bone)
+{
+	const FString B = Bone.ToLower();
+	if (FOKSceneCharacter::FkPartOf(Bone) == 0 || B.StartsWith(TEXT("cf_j_hand_")) || B.StartsWith(TEXT("cm_j_hand_")))
+	{
+		static const TCHAR* Limbs[] = { TEXT("shoulder"), TEXT("_arm"), TEXT("forearm"), TEXT("_hand_"), TEXT("thigh"), TEXT("_leg"), TEXT("foot"), TEXT("toes") };
+		for (const TCHAR* L : Limbs) if (B.Contains(L)) return 2;
+		static const TCHAR* Trunk[] = { TEXT("hips"), TEXT("spine"), TEXT("waist") };
+		for (const TCHAR* T : Trunk) if (B.Contains(T)) return 1;
+		return 0;
+	}
+	return FOKSceneCharacter::FkPartOf(Bone) == 3 ? 1 : 0;
+}
+
 bool SOKStudioPanel::PickPosePoint(const FVector2D& At, double Within)
 {
 	TArray<FPosePoint> Points;
 	if (!PosePoints(Points)) return false;
 	const FPosePoint* Best = nullptr;
 	double BestDistance = Within >= 0. ? Within : 7. * FMath::Clamp(FOKStudioSettings::Get().PointScale, 0.3f, 4.f);
-	for (const FPosePoint& P : Points) { const double D = FVector2D::Distance(P.At, At); if (D < BestDistance) { BestDistance = D; Best = &P; } }
+	// A small point counts as farther (U107): one on a limb's ball takes the limb, a finger or hair point needs a close click.
+	for (const FPosePoint& P : Points) { const double D = FVector2D::Distance(P.At, At) * (P.Ik < 0 && P.Rank == 0 ? 1.8 : 1.); if (D < BestDistance) { BestDistance = D; Best = &P; } }
 	if (!Best) return false;
 	FOKSceneObject* X = Obj();
 	if (Best->Ik >= 0)
@@ -550,7 +570,8 @@ void SOKStudioPanel::BoneTree(const TArray<FString>& Bones, TFunction<FString(co
 				if (OpenBones.Contains(Bone)) OpenBones.Remove(Bone); else OpenBones.Add(Bone);
 				if (OnPick) OnPick(Bone);
 				DeferRebuild();
-			}, 0.f, 17.f, TAttribute<bool>::CreateLambda([IsSet, Bone] { return IsSet && IsSet(Bone); }), 10.f, RowFill())
+			// The chosen bone in amber, as the chosen IK target is (U108: after a pick it was not told apart).
+			}, 0.f, 17.f, TAttribute<bool>::CreateLambda([IsSet, Bone] { return IsSet && IsSet(Bone); }), 10.f, Bone == FkBone ? FLinearColor(0.45f, 0.35f, 0.1f) : RowFill())
 		];
 		if (!bOpen) continue;
 		for (int32 Axis = 0; Axis < 3; ++Axis)
@@ -626,7 +647,14 @@ void SOKStudioPanel::FkPage(FOKSceneObject& O)
 	BoneTree(Bones, [](const FString& Bone) { const FOKStudioFkBone* B = FOKStudioCatalog::Get().FindFkBone(Bone); return B ? FString::Printf(TEXT("%s %s"), *B->Name, *Bone) : Bone; },
 		[this](FOKSceneObject& X, const FString& Bone) { const FOKSceneFkBone* B = X.Character.Fk.FindByPredicate([&Bone](const FOKSceneFkBone& F) { return F.Bone == Bone; }); return B ? B->Euler : PosedEuler(X, Bone); },
 		[](FOKSceneObject& X, const FString& Bone, const FVector& E) { SetFk(X, Bone, E); },
-		[this](const FString& Bone) { FkBone = Bone; if (Game.IsValid()) { Game->GuideBone = Bone; Game->GuideIk = -1; } },
+		[this](const FString& Bone)
+		{
+			FkBone = Bone;
+			if (Game.IsValid()) { Game->GuideBone = Bone; Game->GuideIk = -1; }
+			// As a click on the bone's point does (U106).
+			const FOKStudioFkBone* B = FOKStudioCatalog::Get().FindFkBone(Bone);
+			SetStatus(TEXT("骨骼：") + (B ? B->Name + TEXT(" ") : FString()) + Bone);
+		},
 		[this](const FString& Bone) { const FOKSceneObject* X = Obj(); return X && X->Character.Fk.ContainsByPredicate([&Bone](const FOKSceneFkBone& F) { return F.Bone == Bone; }); });
 }
 
