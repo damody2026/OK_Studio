@@ -131,6 +131,14 @@ void AOKStreetSocialScene::SaveCalendar(){
   if(!S.Cart.IsEmpty()){const int32 With=S.RemoteMode!=0?INDEX_NONE:FreeTalkPartner();Candidate.CartPlace=PlaceHere(S.Male);if(S.Manifest.Characters.IsValidIndex(With)&&With>0)Candidate.CartHer=OKStreetStableId(S.Manifest.Characters[With]);
    for(const auto& L:S.Cart){FOKStreetStore::FCartItem C;C.ItemId=L.ItemId;C.Size=L.Size;C.Sweetness=L.Sweetness;C.Ice=L.Ice;C.ForHer=L.ForHer;C.HerOwn=L.HerOwn;
     if(S.Manifest.Characters.IsValidIndex(L.Girl)&&L.Girl>0)C.Girl=OKStreetStableId(S.Manifest.Characters[L.Girl]);Candidate.Cart.Add(MoveTemp(C));}}}
+ // Today's plans as they stand (TickSchedules puts them back after a load): a load planned the day again, and 惠惠's
+ // afternoon of a bookstore errand and friends in the park, which she had told him about, became a class (R6-145).
+ if(S.PlanDay==Candidate.CalendarDay&&!S.Plans.IsEmpty()){TSharedPtr<FJsonObject> E;
+  if(Candidate.Ext.IsEmpty()||!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Candidate.Ext),E)||!E.IsValid())E=MakeShared<FJsonObject>();
+  auto Actors=MakeShared<FJsonObject>();
+  for(const auto& P:S.Plans)if(P.Key>0&&S.Manifest.Characters.IsValidIndex(P.Key)){TArray<TSharedPtr<FJsonValue>> Blocks;for(const auto& B:P.Value)Blocks.Add(MakeShared<FJsonValueObject>(OKRulesBlockJson(B)));Actors->SetArrayField(OKStreetStableId(S.Manifest.Characters[P.Key]),Blocks);}
+  auto Day=MakeShared<FJsonObject>();Day->SetNumberField(TEXT("day"),S.PlanDay);Day->SetObjectField(TEXT("actors"),Actors);E->SetObjectField(TEXT("day_plan"),Day);
+  FString Out;auto W=TJsonWriterFactory<TCHAR,TCondensedJsonPrintPolicy<TCHAR>>::Create(&Out);FJsonSerializer::Serialize(E.ToSharedRef(),W);Candidate.Ext=Out;}
  S.Store=MoveTemp(Candidate);OKStreetAtomicSaveStoreAsync(S.Manifest.SavePath,S.Store);
 }
 

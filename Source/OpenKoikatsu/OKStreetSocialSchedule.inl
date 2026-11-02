@@ -130,6 +130,13 @@ void AOKStreetSocialScene::TickSchedules(){
  // The day is planned from the heroines' profiles (student: classes, the cafeteria at noon), which the mind sends a
  // moment after the map starts: planned before they came, every heroine had a day of "leisure street" and lunch in
  // the department store, all ten at once, the whole day after a load. Wait for them (30 s at most).
+ // Loaded into a day already planned (SaveCalendar keeps it): that day as it was, not planned again (R6-145).
+ if(S.PlanDay!=S.Store.CalendarDay&&!S.Store.Ext.IsEmpty()){TSharedPtr<FJsonObject> E;const TSharedPtr<FJsonObject>* Day=nullptr;const TSharedPtr<FJsonObject>* Actors=nullptr;
+  if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(S.Store.Ext),E)&&E.IsValid()&&E->TryGetObjectField(TEXT("day_plan"),Day)&&int32((*Day)->GetNumberField(TEXT("day")))==S.Store.CalendarDay&&(*Day)->TryGetObjectField(TEXT("actors"),Actors)){
+   TMap<int32,TArray<FOKStreetPlanBlock>> Kept;
+   for(const auto& P:(*Actors)->Values){const int32 I=CharacterOf(FString(*P.Key));if(I<=0)continue;TArray<FOKStreetPlanBlock> Blocks;for(const auto& V:P.Value->AsArray())if(V->AsObject())Blocks.Add(OKRulesReadBlock(*V->AsObject()));Kept.Add(I,MoveTemp(Blocks));}
+   if(Kept.Num()==S.Manifest.Characters.Num()-1){S.Plans=MoveTemp(Kept);S.PlanDay=S.Store.CalendarDay;S.PlanBlock.Reset();S.PlanEaten.Reset();S.MorningPair={INDEX_NONE,INDEX_NONE};S.LifePairRoute.Reset();
+    UE_LOG(LogTemp,Display,TEXT("Street plan: day %d as saved (%d heroines), not planned again"),S.PlanDay,S.Plans.Num());}}}
  if(S.PlanDay!=S.Store.CalendarDay){
   const bool Ready=MindProfilesReady();
   if(!Ready&&S.PlanWaitSince==0)S.PlanWaitSince=Wall;
