@@ -7,6 +7,7 @@
 #include "ImageUtils.h"
 #include "Misc/Base64.h"
 #include "Algo/Find.h"
+#include "Async/Async.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Widgets/SToolTip.h"
@@ -257,6 +258,13 @@ void SOKStudioPanel::TickUi(float DeltaTime)
 		const AKKPreviewActor* Shown = Game->SceneActor ? Game->SceneActor->PreviewOf(Game->SelectedId) : nullptr;
 		const TPair<int32, int32> Now(Game->SelectedId, Shown ? Shown->Session.PartCount() : 0);
 		if (Now != MaterialShown || Shown != MaterialShownActor) { if (Now.Key != MaterialShown.Key) MaterialPart = 0; MaterialShown = Now; MaterialShownActor = Shown; DeferFloat(TEXT("material")); }
+	}
+	// The resource check fills in each original card's missing mods once its background check is done.
+	if (bAbsentModsWaiting)
+	{
+		bool bAll = true;
+		for (const auto& C : AbsentModChecks) bAll &= C.Value->bDone.load();
+		if (bAll) { bAbsentModsWaiting = false; if (IsFloatOpen(TEXT("resources"))) DeferFloat(TEXT("resources")); }
 	}
 	// The animation controller lists the Studio controls of the selected character's motion, which change with it.
 	if (IsFloatOpen(TEXT("animctl")))
@@ -1779,11 +1787,10 @@ TSharedRef<SWidget> SOKStudioPanel::BuildResources()
 		}
 		if (!bSelectedOnly && Game->SceneActor && !Game->SceneActor->MapError.IsEmpty()) Lines.Add(TEXT("地圖：") + Game->SceneActor->MapError);
 	}
-	const int32 Count = Lines.Num();
-	if (bSelectedOnly && !Game->Document->Objects.ContainsByPredicate(Listed)) Lines.Add(TEXT("請先選取物件。"));
-	else if (Lines.IsEmpty()) Lines.Add(TEXT("沒有缺少的資源。"));
 	// Each character (HS2Studio6 资源检查): its card's kind, whether it shows, and the mods an original card names (what
 	// to install before 重新讀取角色). An OK card carries its own parts.
+	// Its missing zipmods also count as missing resources (the list above).
+	TArray<FString> Chars;
 	if (Game.IsValid())
 	{
 		const FString Project = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
@@ -1791,7 +1798,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildResources()
 		for (const FOKSceneObject& O : Game->Document->Objects)
 		{
 			if (O.Kind != EOKSceneObjectKind::Character || !Listed(O)) continue;
-			if (!bHeading) { Lines.Add(TEXT("── 角色 ──")); bHeading = true; }
+			if (!bHeading) { Chars.Add(TEXT("── 角色 ──")); bHeading = true; }
 			const FString Card = FPaths::IsRelative(O.Character.Card) ? Project / O.Character.Card : O.Character.Card;
 			const bool bShown = Game->SceneActor && Game->SceneActor->PreviewOf(O.Id);
 			FString Kind;
@@ -1806,12 +1813,40 @@ TSharedRef<SWidget> SOKStudioPanel::BuildResources()
 				if (UKKCardReader::LoadFromFile(Card, File, Error)) { for (const FKKResolveInfo& R : File.Resolves) if (!R.ModID.IsEmpty()) Mods.AddUnique(R.ModID); }
 				else Kind += TEXT("，讀不出：") + Error;
 			}
-			Lines.Add(FString::Printf(TEXT("#%d %s：%s，%s%s"), O.Id, *O.Name, *Kind, bShown ? TEXT("已顯示") : TEXT("未顯示"),
-				Mods.IsEmpty() ? TEXT("") : *FString::Printf(TEXT("，卡片指名 %d 個 mod"), Mods.Num())));
-			Mods.Sort();
-			for (const FString& M : Mods) Lines.Add(FString::Printf(TEXT("#%d 　　%s"), O.Id, *M));
+			// Which of them the open finds in no zipmod (base library, beside the card, the KKS installation): asked once per
+			// card in the background, the window rebuilt when the answer is in (HS2Studio6 资源检查 lists the missing ones).
+			const FOKAbsentModsCheck* Check = nullptr;
+			if (!Mods.IsEmpty())
+			{
+				TSharedPtr<FOKAbsentModsCheck, ESPMode::ThreadSafe>& Slot = AbsentModChecks.FindOrAdd(Card);
+				if (!Slot.IsValid())
+				{
+					Slot = MakeShared<FOKAbsentModsCheck, ESPMode::ThreadSafe>();
+					Async(EAsyncExecution::ThreadPool, [Load = Slot, Card] { Load->bOk = FOkSession::AbsentCardMods(Card, Load->Absent, Load->Error); Load->bDone = true; });
+					bAbsentModsWaiting = true;
+				}
+				if (Slot->bDone.load()) Check = Slot.Get();
+			}
+			FString ModsNote;
+			if (!Mods.IsEmpty())
+			{
+				ModsNote = FString::Printf(TEXT("，卡片指名 %d 個 mod"), Mods.Num());
+				if (!Check) ModsNote += TEXT("（檢查中…）");
+				else if (!Check->bOk) ModsNote += TEXT("（檢查失敗：") + Check->Error + TEXT("）");
+				else ModsNote += Check->Absent.IsEmpty() ? FString(TEXT("，都找得到")) : FString::Printf(TEXT("，缺 %d 個"), Check->Absent.Num());
+			}
+			Chars.Add(FString::Printf(TEXT("#%d %s：%s，%s%s"), O.Id, *O.Name, *Kind, bShown ? TEXT("已顯示") : TEXT("未顯示"), *ModsNote));
+			if (Check && Check->bOk && !Check->Absent.IsEmpty()) Lines.Add(FString::Printf(TEXT("#%d %s：缺 zipmod %s"), O.Id, *O.Name, *FString::Join(Check->Absent, TEXT("、"))));
+			// Missing ones first, marked; then the ones found.
+			const auto Missing = [Check](const FString& M) { return Check && Check->bOk && Check->Absent.ContainsByPredicate([&M](const FString& A) { return A.Equals(M, ESearchCase::IgnoreCase); }); };
+			Mods.Sort([&Missing](const FString& A, const FString& B) { const bool MA = Missing(A), MB = Missing(B); return MA != MB ? MA : A < B; });
+			for (const FString& M : Mods) Chars.Add(FString::Printf(TEXT("#%d 　　%s%s"), O.Id, Missing(M) ? TEXT("缺少　") : TEXT(""), *M));
 		}
 	}
+	const int32 Count = Lines.Num();
+	if (bSelectedOnly && !Game->Document->Objects.ContainsByPredicate(Listed)) Lines.Add(TEXT("請先選取物件。"));
+	else if (Lines.IsEmpty()) Lines.Add(TEXT("沒有缺少的資源。"));
+	Lines.Append(Chars);
 	ResourcesShown = Lines;
 	return SNew(SVerticalBox)
 		+ SVerticalBox::Slot().AutoHeight()
@@ -1825,7 +1860,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildResources()
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("複製清單")), [Lines] { FPlatformApplicationMisc::ClipboardCopy(*FString::Join(Lines, TEXT("\n"))); }, 0.f, 20.f)]
-			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("重新檢查")), [this] { DeferFloat(TEXT("resources")); }, 0.f, 20.f)]
+			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("重新檢查")), [this] { AbsentModChecks.Reset(); DeferFloat(TEXT("resources")); }, 0.f, 20.f)]
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("重新讀取角色")), Cmd(TEXT("scene.reloadcharacters")), 0.f, 20.f)]
 			// HS2Studio6 资源检查's 资源目录: the settings page where card, sound, pose and picture folders are added.
 			+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("資源目錄")), [this]

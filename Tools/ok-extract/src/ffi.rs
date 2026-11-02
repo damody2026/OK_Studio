@@ -54,6 +54,17 @@ fn remake_card_in_place(card:&std::path::Path)->Result<(),String> {
     std::fs::write(card,bytes).map_err(|e|format!("{}: {e}",card.display()))
 }
 
+/// The mods an original card names that its open cannot find (oklib::card_absent_mods): 0 and the GUIDs one per line
+/// in `msg` (empty for none), -1 and the error.
+#[no_mangle]
+pub unsafe extern "C" fn ok_card_absent_mods(card:*const c_char,msg:*mut c_char,cap:i32)->i32 {
+    let result=std::panic::catch_unwind(||{
+        let card=cstr_opt(card).ok_or("card path missing")?;
+        crate::oklib::card_absent_mods(&installed_game_root(),std::path::Path::new(&card))
+    }).unwrap_or_else(|_|Err("card_absent_mods: panic".into()));
+    match result{Ok(absent)=>{write_err(msg,cap,&absent.join("\n"));0},Err(e)=>{write_err(msg,cap,&e);-1}}
+}
+
 /// Convert a card to an OK card (`out`): an original KKS card with its zipmods (OK_GAME_ROOT, or `game`), or an
 /// edited OK card made again. Uses the configured base library. Returns 0 and "digest parts pack-bytes" in `msg`.
 #[no_mangle]

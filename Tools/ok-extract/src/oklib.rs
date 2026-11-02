@@ -1625,6 +1625,24 @@ pub fn open_with_zipmods(lib: &Path, game: &Path, card: &Path, outfit: i32) -> R
     })
 }
 
+/// The mods an original card names (sideloader resolve list) that its open finds in no zipmod: not recorded by the
+/// library, not beside the card, not in the installation (`game`, else OK_GAME_ROOT). The same view and GUID lookup
+/// as `open_original_card`. Empty for OK cards and portable cards, which carry their parts. Sorted GUIDs.
+pub fn card_absent_mods(game: &Path, card: &Path) -> Result<Vec<String>, String> {
+    let lib = configured_library().ok_or("OK base library not configured")?;
+    let bytes = std::fs::read(card).map_err(|e| format!("{}: {e}", card.display()))?;
+    if is_library_card(card) || crate::portable::png_snapshot(&bytes).ok().is_some_and(|s| s.1.is_some()) { return Ok(Vec::new()); }
+    let info = crate::card::parse_card(card)?;
+    let wanted: std::collections::HashSet<String> = info.resolves.iter().map(|r| r.mod_id.clone()).filter(|g| !g.is_empty()).collect();
+    if wanted.is_empty() { return Ok(Vec::new()); }
+    let configured = std::env::var_os("OK_GAME_ROOT").map(PathBuf::from).filter(|g| g.is_dir());
+    let game = if game.join("mods").is_dir() { game } else { configured.as_deref().unwrap_or(game) };
+    let found = with_zipmods(&lib, game, card, || Ok(crate::mods::find_guids(&lib.join("mods"), Some(&wanted))))?;
+    let mut absent: Vec<String> = wanted.into_iter().filter(|g| !found.contains_key(g)).collect();
+    absent.sort();
+    Ok(absent)
+}
+
 /// Runs `f` with the library active and the card's zipmods as fallback (card directory, the game's mods/).
 /// Fallback directories are process-wide: one original card at a time.
 pub fn with_zipmods<R>(lib: &Path, game: &Path, card: &Path, f: impl FnOnce() -> Result<R, String>) -> Result<R, String> {

@@ -159,6 +159,15 @@ namespace OKStudioPanelText
 	inline const TCHAR* ClothesStateName(uint8 S) { return S == 0 ? TEXT("穿") : (S == 1 ? TEXT("半脫") : TEXT("脫")); }
 }
 
+/** One original card's mods that its open would not find (U102), read off the game thread. */
+struct FOKAbsentModsCheck
+{
+	std::atomic<bool> bDone{false};
+	bool bOk = false;
+	TArray<FString> Absent;
+	FString Error;
+};
+
 class SOKStudioPanel;
 
 /** The scene area: left click picks (Ctrl / Shift add), left drag orbits (right drag too; in fly mode it turns the camera
@@ -1670,6 +1679,10 @@ public:
 	bool bResourcesSelectedOnly = false;
 	/** The resource check's lines as last built (the control channel's ui.resources). */
 	TArray<FString> ResourcesShown;
+	/** The resource check's per-card answer of which named mods are missing (FOkSession::AbsentCardMods), by card path;
+	 *  dropped by 重新檢查. Waiting: some check is still running and the window is rebuilt when it finishes. */
+	TMap<FString, TSharedPtr<FOKAbsentModsCheck, ESPMode::ThreadSafe>> AbsentModChecks;
+	bool bAbsentModsWaiting = false;
 	/** The scene browser's page (100 scenes a page). */
 	int32 ScenePage = 0;
 	int32 SceneSort = 0;

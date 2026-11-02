@@ -36,6 +36,8 @@ int32_t ok_common_interaction_poses(const char* root,char* out,int32_t capacity)
 int32_t ok_clothing_transition(const char* root,const char* card,int32_t outfit,const uint8_t* previous,int32_t kind,uint8_t* out,char* error,int32_t error_cap);
 /* OK clothes (.okclothes). op 0 import coordinate card a; 1 export outfit of card a; 2 wear okclothes b as outfit of card a. Writes out; summary or error in msg. */
 int32_t ok_clothes_file(int32_t op,const char* a,const char* b,int32_t outfit,const char* out,char* msg,int32_t msg_cap);
+/* GUIDs (one per line in msg) an original card names that its open finds in no zipmod; 0, or -1 and the error. */
+int32_t ok_card_absent_mods(const char* card, char* msg, int32_t cap);
 int32_t ok_okcard_make(const char* game, const char* card, const char* out, char* msg, int32_t cap);
 /* Preserve coordinate numbering and record resources for the explicitly selected outfit. */
 int32_t ok_okcard_make_outfit(const char* game, const char* card, const char* out, int32_t outfit, char* msg, int32_t cap);
