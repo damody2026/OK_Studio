@@ -1809,6 +1809,11 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
   // He lends her money now ("拿去吧，五百"), as the judge read it: only he can offer it; her act alone asks.
   {double Lend=0;Verdict->TryGetNumberField(TEXT("he_lends"),Lend);Weak->SettleMoneyHandover(Character,Lend,true);}
   {bool Back=false;Verdict->TryGetBoolField(TEXT("pays_her_back"),Back);if(Back)Weak->PayHerBack(Character);}
+  // He eats what she could not finish: her dish becomes his on the table. 优香's noodles stayed at 51% after his
+  // 「剩下的我帮你吃」 (R6-115).
+  {bool Rest=false;Verdict->TryGetBoolField(TEXT("he_eats_her_rest"),Rest);if(Rest){int32 Took=0;
+   for(auto& D:L->Table)if(D.ForHer&&(D.Her==Character||!L->Manifest.Characters.IsValidIndex(D.Her))&&D.Served&&D.Percent>0.f)if(const auto* I=L->Catalog.Find(D.ItemId);I&&!I->IsDrink()){D.ForHer=false;D.Her=INDEX_NONE;++Took;}
+   if(Took)UE_LOG(LogTemp,Display,TEXT("Street meal: he eats the rest of her %d dish(es)"),Took);}}
   // He told her himself about another girl ("I'm going out with 三月七"): heard from him, not a rumour to have out (social.rs rival_named).
   {TArray<FString> Told;FString One;const TArray<TSharedPtr<FJsonValue>>* List=nullptr;if(Verdict->TryGetArrayField(TEXT("told_about"),List))for(const auto& V:*List){FString N;if(V.IsValid()&&V->TryGetString(N)&&!N.IsEmpty())Told.Add(N);}else if(Verdict->TryGetStringField(TEXT("told_about"),One)&&!One.IsEmpty())Told.Add(One);for(const FString& N:Told)Weak->ToldAboutRival(Character,N);}
   Weak->ExecuteFreeTalkAction(Character,Id,DoNow);
