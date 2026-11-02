@@ -93,6 +93,43 @@
 #include "Engine/SkinnedAsset.h"
 #include "Components/SkeletalMeshComponent.h"
 
+/**
+ * Number box whose drag suits the field (HS2Studio6's sliders and number fields). SSpinBox spreads a bounded range over
+ * the box's width, at a tenth of that for ranges up to 10: dragging the full width moved a 0~1 weight by a tenth. Here
+ * such a range spans the width (drag to where you want it), after the drag threshold so a click still enters the number.
+ * A range much wider than its step is left unbounded and linear instead (SOKStudioPanel::Spin): one step a pixel.
+ */
+class SOKSpinBox : public SSpinBox<float>
+{
+public:
+	virtual FReply OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override
+	{
+		Travelled = 0.f;
+		return SSpinBox<float>::OnMouseButtonDown(MyGeometry, MouseEvent);
+	}
+	virtual FReply OnMouseMove(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override
+	{
+		// SSpinBox's step for ranges up to 10.
+		constexpr float SmallStep = 0.1f;
+		const float Range = GetMaxValue() - GetMinValue();
+		const FVector2f Moved = MouseEvent.GetCursorDelta();
+		// The move that crosses the threshold goes through as it is, so SSpinBox's own threshold (the same distance) starts its drag.
+		const bool bBefore = Travelled <= FSlateApplication::Get().GetDragTriggerDistance();
+		Travelled += FMath::Abs(Moved.X);
+		if (!HasMouseCapture() || Range <= 0.f || Range > 10.f || bBefore)
+		{
+			return SSpinBox<float>::OnMouseMove(MyGeometry, MouseEvent);
+		}
+		const FVector2f At = MouseEvent.GetScreenSpacePosition();
+		const FPointerEvent Scaled(MouseEvent.GetUserIndex(), MouseEvent.GetPointerIndex(), At, At - Moved / SmallStep,
+			MouseEvent.GetPressedButtons(), MouseEvent.GetEffectingButton(), 0.f, MouseEvent.GetModifierKeys());
+		return SSpinBox<float>::OnMouseMove(MyGeometry, Scaled);
+	}
+
+private:
+	float Travelled = 0.f;
+};
+
 namespace OKStudioPanelText
 {
 	inline const TCHAR* KindTag(EOKSceneObjectKind Kind)
@@ -890,7 +927,7 @@ public:
 			if (!W->GetVisibility().IsVisible()) return;
 			const TSharedPtr<FTagMetaData> Tag = W->GetMetaData<FTagMetaData>();
 			const FName Type = W->GetType();
-			const bool bLeaf = Type == TEXT("SButton") || Type == TEXT("STextBlock") || Type == TEXT("SSpinBox<float>") || Type == TEXT("SEditableTextBox") || Type == TEXT("SCheckBox") || Type.ToString().StartsWith(TEXT("SListView"));
+			const bool bLeaf = Type == TEXT("SButton") || Type == TEXT("STextBlock") || Type == TEXT("SSpinBox<float>") || Type == TEXT("SOKSpinBox") || Type == TEXT("SEditableTextBox") || Type == TEXT("SCheckBox") || Type.ToString().StartsWith(TEXT("SListView"));
 			FString Here = Path;
 			if (Tag) Here = Path.IsEmpty() ? Tag->Tag.ToString() : Path + TEXT("/") + Tag->Tag.ToString();
 			if (Tag || bLeaf)
@@ -903,7 +940,7 @@ public:
 					N->SetStringField(TEXT("path"), Tag ? Here : Here + TEXT("/") + Type.ToString());
 					N->SetNumberField(TEXT("d"), Depth);
 					const FString Kind = Type == TEXT("SButton") ? TEXT("Button") : Type == TEXT("STextBlock") ? TEXT("Text") : Type == TEXT("SCheckBox") ? TEXT("Toggle")
-						: Type == TEXT("SEditableTextBox") || Type == TEXT("SSpinBox<float>") ? TEXT("InputField") : Type.ToString().StartsWith(TEXT("SListView")) ? TEXT("ScrollRect") : TEXT("Rect");
+						: Type == TEXT("SEditableTextBox") || Type == TEXT("SSpinBox<float>") || Type == TEXT("SOKSpinBox") ? TEXT("InputField") : Type.ToString().StartsWith(TEXT("SListView")) ? TEXT("ScrollRect") : TEXT("Rect");
 					N->SetStringField(TEXT("kind"), Kind);
 					TArray<TSharedPtr<FJsonValue>> R;
 					for (double V : { P.X, P.Y, S.X, S.Y }) R.Add(MakeShared<FJsonValueNumber>(FMath::RoundToDouble(V * 10.) / 10.));
@@ -1230,7 +1267,8 @@ public:
 				[
 					SNew(SBox).WidthOverride(51.f).HeightOverride(15.f)
 					[
-						SNew(SSpinBox<float>).Style(&SpinStyle()).Font(Font(11.f)).MinValue(Row == 2 ? 0.01f : -100000.f).MaxValue(100000.f).Delta(Row == 1 ? 1.f : (Row == 2 ? 0.01f : 1.f))
+						// Unbounded and linear: 1 cm, 1 degree, 0.01 a pixel (SetTransformValue keeps the scale above 0).
+						SNew(SOKSpinBox).Style(&SpinStyle()).Font(Font(11.f)).LinearDeltaSensitivity(1).Delta(Row == 1 ? 1.f : (Row == 2 ? 0.01f : 1.f))
 						// Nothing selected: the identity (scale 1, as HS2Studio6 shows), not editable.
 						.Value_Lambda([this, Row, Axis] { const FOKSceneObject* O = Obj(); return O ? TransformValue(O->Transform, Row, Axis) : (Row == 2 ? 1.f : 0.f); })
 						.IsEnabled_Lambda([this] { return Obj() != nullptr; })
@@ -1690,6 +1728,7 @@ public:
 	/** The selected item's exports: "uv" (the picked renderer's UV layout PNG), "obj" (every renderer), "textures". */
 	bool ExportMaterial(const FString& What);
 	TPair<int32, int32> MaterialShown = { -2, 0 }; // selection and its part count the window shows
+	const AKKPreviewActor* MaterialShownActor = nullptr; // the item build it shows (a shader edit or reset builds a new one)
 	FString AnimCtlShown; // selection and animation parameters the animation controller shows
 	int32 VoiceGroupPick = 0, VoiceCategoryPick = 0, VoiceListPick = -1; // the voice window's browsed personality / category and picked list entry
 	FString VoiceShown; // what the voice window shows (selection, browsing, the list)
@@ -1978,11 +2017,16 @@ public:
 		return Help;
 	}
 	/** Number box in the theme: drag to change, click to type. Dragging counts as one undo step. */
+	/** Many more steps than the box has pixels (positions, distances): SSpinBox spreads a bounded range over the width, so
+	 *  such a field jumps hundreds a pixel. Unbounded with a linear sensitivity it moves one step a pixel; the setter clamps. */
+	static bool WideRange(float Min, float Max, float Delta) { return Delta > 0.f && Max - Min > 400.f * Delta; }
 	TSharedRef<SWidget> Spin(TFunction<float()> Get, TFunction<void(float)> Set, float Min, float Max, float Delta)
 	{
-		return SNew(SSpinBox<float>).Style(&OKStudioStyle::SpinStyle()).Font(OKStudioStyle::Font(10.f)).MinValue(Min).MaxValue(Max).Delta(Delta).MaxFractionalDigits(3)
+		const bool bWide = WideRange(Min, Max, Delta);
+		return SNew(SOKSpinBox).Style(&OKStudioStyle::SpinStyle()).Font(OKStudioStyle::Font(10.f)).Delta(Delta).MaxFractionalDigits(3)
+			.MinValue(bWide ? TOptional<float>() : TOptional<float>(Min)).MaxValue(bWide ? TOptional<float>() : TOptional<float>(Max)).LinearDeltaSensitivity(bWide ? 1 : 0)
 			.Value_Lambda([Get] { return Get(); })
-			.OnValueChanged_Lambda([Set](float V) { Set(V); })
+			.OnValueChanged_Lambda([Set, Min, Max](float V) { Set(FMath::Clamp(V, Min, Max)); })
 			.OnBeginSliderMovement_Lambda([this] { if (Game.IsValid()) Game->bUserDragging = true; })
 			.OnEndSliderMovement_Lambda([this](float) { if (Game.IsValid()) Game->bUserDragging = false; });
 	}
@@ -3229,9 +3273,9 @@ private:
 				+ SHorizontalBox::Slot().FillWidth(0.4f).VAlign(VAlign_Center)[SNew(STextBlock).Text(FText::FromString(Name)).ColorAndOpacity(FLinearColor::White)]
 				+ SHorizontalBox::Slot().FillWidth(0.6f)
 				[
-					SNew(SSpinBox<float>).MinValue(Min).MaxValue(Max).Delta(Delta)
+					SNew(SOKSpinBox).Delta(Delta).MinValue(WideRange(Min, Max, Delta) ? TOptional<float>() : TOptional<float>(Min)).MaxValue(WideRange(Min, Max, Delta) ? TOptional<float>() : TOptional<float>(Max)).LinearDeltaSensitivity(WideRange(Min, Max, Delta) ? 1 : 0)
 					.Value_Lambda([Doc, Field] { FOKScenePost* P = Doc(); return P ? P->*Field : 0.f; })
-					.OnValueChanged_Lambda([this, Doc, Field](float V) { if (FOKScenePost* P = Doc()) { P->*Field = V; Changed(); } })
+					.OnValueChanged_Lambda([this, Doc, Field, Min, Max](float V) { if (FOKScenePost* P = Doc()) { P->*Field = FMath::Clamp(V, Min, Max); Changed(); } })
 				]
 			];
 		};

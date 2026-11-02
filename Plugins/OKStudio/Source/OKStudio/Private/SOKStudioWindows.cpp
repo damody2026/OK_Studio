@@ -251,12 +251,12 @@ void SOKStudioPanel::TickUi(float DeltaTime)
 	if (!Game->GuideReadout.IsEmpty()) SetStatus(Game->GuideReadout);
 	// The colour window is bound to the object it was opened for.
 	if (IsFloatOpen(TEXT("color")) && ColorKey.StartsWith(TEXT("obj")) && FCString::Atoi(*ColorKey.Mid(3)) != Game->SelectedId) CloseFloat(TEXT("color"));
-	// The material editor follows the selection, and fills in once the item has built.
+	// The material editor follows the selection, and fills in once the item has built (again after a shader edit).
 	if (IsFloatOpen(TEXT("material")))
 	{
 		const AKKPreviewActor* Shown = Game->SceneActor ? Game->SceneActor->PreviewOf(Game->SelectedId) : nullptr;
 		const TPair<int32, int32> Now(Game->SelectedId, Shown ? Shown->Session.PartCount() : 0);
-		if (Now != MaterialShown) { if (Now.Key != MaterialShown.Key) MaterialPart = 0; MaterialShown = Now; DeferFloat(TEXT("material")); }
+		if (Now != MaterialShown || Shown != MaterialShownActor) { if (Now.Key != MaterialShown.Key) MaterialPart = 0; MaterialShown = Now; MaterialShownActor = Shown; DeferFloat(TEXT("material")); }
 	}
 	// The animation controller lists the Studio controls of the selected character's motion, which change with it.
 	if (IsFloatOpen(TEXT("animctl")))
@@ -832,15 +832,29 @@ TSharedRef<SWidget> SOKStudioPanel::BuildBackups()
 				SNew(SVerticalBox)
 				+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString((When + (FDateTime::Now() - FDateTime::UtcNow())).ToString(TEXT("%Y-%m-%d %H:%M:%S"))), 11.f)]
 				+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(FPaths::GetCleanFilename(F)), 9.f, TextHint())]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f)[Button(FText::FromString(TEXT("恢復這份")), [this, F]
-				{
-					GuardUnsaved([this, F]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f)
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot().AutoWidth()[Button(FText::FromString(TEXT("恢復這份")), [this, F]
 					{
-						// A backup opens as an unsaved scene: saving asks for a name, the backup stays as it is.
-						if (LoadFile(F) && Game.IsValid()) { Game->File.Reset(); Game->bDirty = true; }
-						CloseFloat(TEXT("backups"));
-					});
-				}, 90.f, 20.f)]
+						GuardUnsaved([this, F]
+						{
+							// A backup opens as an unsaved scene: saving asks for a name, the backup stays as it is.
+							if (LoadFile(F) && Game.IsValid()) { Game->File.Reset(); Game->bDirty = true; }
+							CloseFloat(TEXT("backups"));
+						});
+					}, 90.f, 20.f)]
+					+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("刪除")), [this, F, Picture]
+					{
+						Confirm(FString::Printf(TEXT("刪除備份 %s？"), *FPaths::GetCleanFilename(F)), { { TEXT("刪除"), [this, F, Picture]
+						{
+							IFileManager::Get().Delete(*F);
+							if (Picture != F) IFileManager::Get().Delete(*Picture);
+							SetStatus(TEXT("已刪除備份 ") + FPaths::GetCleanFilename(F));
+							DeferFloat(TEXT("backups"));
+						} }, { TEXT("取消"), nullptr } });
+					}, 50.f, 20.f)]
+				]
 			]
 		];
 	}
