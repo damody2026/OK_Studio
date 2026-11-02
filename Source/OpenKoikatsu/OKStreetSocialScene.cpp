@@ -1629,7 +1629,13 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
    FString Payer;if(Verdict->TryGetStringField(TEXT("payer"),Payer)&&(Payer==TEXT("him")||Payer==TEXT("her")||Payer==TEXT("split"))){
     const FString HerId=OKStreetStableId(L->Manifest.Characters[Character]);const double Wall=FPlatformTime::Seconds();
     for(auto& A:L->Store.Appointments)if(A.Heroine==HerId&&A.Status==TEXT("pending")&&A.Kind==TEXT("date"))if(const double* At=L->PromiseBookedAt.Find(A.Id);At&&Wall-*At<5.0){A.Payer=Payer;PayForPromise=true;
-     UE_LOG(LogTemp,Display,TEXT("Street appointment %d: %s pays"),A.Id,*Payer);}}}
+     UE_LOG(LogTemp,Display,TEXT("Street appointment %d: %s pays"),A.Id,*Payer);}}
+   // Who pays changed for a meeting made earlier (the judge's meeting_payer): her next one with him. "The tickets are on
+   // me" for Sunday's aquarium, then "each our own ticket" two days later, and the meeting still had him paying (R6-128).
+   if(FString Changed;!PayForPromise&&Verdict->TryGetStringField(TEXT("meeting_payer"),Changed)&&(Changed==TEXT("him")||Changed==TEXT("her")||Changed==TEXT("split"))){
+    const FString HerId=OKStreetStableId(L->Manifest.Characters[Character]);FOKStreetAppointment* Next=nullptr;
+    for(auto& A:L->Store.Appointments)if(A.Heroine==HerId&&A.Status==TEXT("pending")&&A.Kind==TEXT("date")&&A.Start>OKStreetMindNow(*L)&&(!Next||A.Start<Next->Start))Next=&A;
+    if(Next&&Next->Payer!=Changed){UE_LOG(LogTemp,Display,TEXT("Street appointment %d: who pays changed from '%s' to %s"),Next->Id,*Next->Payer,*Changed);Next->Payer=Changed;PayForPromise=true;}}}
   // "Every Wednesday" (the judge's promise.repeat): the meeting just booked is the first of a series (series.rs).
   if(!Place.IsEmpty()&&Promise&&(*Promise).IsValid())if(const TSharedPtr<FJsonValue> Rep=(*Promise)->TryGetField(TEXT("repeat"));Rep.IsValid()&&!Rep->IsNull()&&!(Rep->Type==EJson::String&&Rep->AsString().IsEmpty()))Weak->StartSeries(Character,Place,Rep);
   {bool Ends=false,Treats=false;Verdict->TryGetBoolField(TEXT("ends"),Ends);Verdict->TryGetBoolField(TEXT("she_treats"),Treats);
