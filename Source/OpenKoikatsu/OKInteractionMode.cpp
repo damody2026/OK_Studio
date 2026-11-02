@@ -152,7 +152,8 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
         const TSharedPtr<FJsonObject>* Penis=nullptr;if(Body->TryGetObjectField(TEXT("penis"),Penis)){double L=-1,S=-1;(*Penis)->TryGetNumberField(TEXT("length"),L);(*Penis)->TryGetNumberField(TEXT("scale"),S);
             if(L>0||S>0)Panel->SetPenis(L>0?float(L):1.f,S>0?float(S):1.f,5.f);
             const TArray<TSharedPtr<FJsonValue>>* Root=nullptr;if((*Penis)->TryGetArrayField(TEXT("root"),Root)&&Root->Num()==2)Panel->SetRootPad(FVector2D((*Root)[0]->AsNumber(),(*Root)[1]->AsNumber()),3.f);}
-        double FaceCam=0;if(Body->TryGetNumberField(TEXT("face_cam"),FaceCam))Panel->LookAtFace(float(FaceCam));
+        double FaceCam=0;const TSharedPtr<FJsonObject>* FaceView=nullptr;if(Body->TryGetNumberField(TEXT("face_cam"),FaceCam))Panel->LookAtFace(float(FaceCam));
+        else if(Body->TryGetObjectField(TEXT("face_cam"),FaceView)){double Dist=40,Turn=0;(*FaceView)->TryGetNumberField(TEXT("distance"),Dist);(*FaceView)->TryGetNumberField(TEXT("turn"),Turn);Panel->LookAtFace(float(Dist),float(Turn));} // {"face_cam":{"distance":40,"turn":90}}: from her side
         double CrotchCam=0;const TSharedPtr<FJsonObject>* CrotchView=nullptr;if(Body->TryGetNumberField(TEXT("crotch_cam"),CrotchCam))Panel->LookAtCrotch(float(CrotchCam));
         else if(Body->TryGetObjectField(TEXT("crotch_cam"),CrotchView)){double Dist=60,Pitch=15,Turn=0;(*CrotchView)->TryGetNumberField(TEXT("distance"),Dist);(*CrotchView)->TryGetNumberField(TEXT("pitch"),Pitch);(*CrotchView)->TryGetNumberField(TEXT("turn"),Turn);bool Front=false;(*CrotchView)->TryGetBoolField(TEXT("front"),Front);Panel->LookAtCrotch(float(Dist),float(Pitch),float(Turn),Front);}
         const TSharedPtr<FJsonObject>* Heights=nullptr;if(Body->TryGetObjectField(TEXT("height"),Heights)){

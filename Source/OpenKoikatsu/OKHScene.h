@@ -120,7 +120,7 @@ private:
     // Her bust grows with her excitement as her chest is developed (up to half again at 100%), eased.
     // and, sucking him, her face (her mouth's development): cheeks drawn in, mouth and chin pulled long, eyes rolled up,
     // tears. Both through her live shape (her card's values changed, MarkShapeDirty).
-    void SwellBust(float Delta);float BustSwell=1.f,BustSwellSet=1.f,OralSuck=0.f,OralSuckSet=0.f,OralGazeSet=0.f;double NippleUntil=0,TearAt=0;bool bSucking=false;
+    void SwellBust(float Delta);float BustSwell=1.f,BustSwellSet=1.f,OralSuck=0.f,OralSuckSet=0.f,OralPull=0.f,OralPullSet=0.f,OralGazeSet=0.f;double NippleUntil=0,TearAt=0;bool bSucking=false;
     void LoadPoses();
     void BuildList();
     void BuildActions();
@@ -205,7 +205,7 @@ public:
     bool HasReaction() const {return Outbox.ContainsByPredicate([](const FHLine& L){return L.System;});}
     FString JudgeFacts() const; // for the H talk judge: the pose, what is happening, the poses she could be asked into
     bool ApplyTalk(const TSharedPtr<FJsonObject>& Verdict); // its verdict done as the buttons would; true: the scene ends
-    void LookAtFace(float Distance);
+    void LookAtFace(float Distance,float Turn=0.f); // Turn: degrees round her from in front of her face (90: her side)
     void LookAtCrotch(float Distance,float Pitch=15.f,float Turn=0.f,bool bFront=false); // /hscene {"crotch_cam":cm} or {distance, pitch, turn}: where they join, from beside her body // /hscene {"face_cam":cm}: the camera in front of her face, to see what is on it
     void SetSiruTest(const int32 (&Levels)[5]); // /hscene {"siru":[...]}: set her liquid levels directly
     TMap<FString,float> DevTest; // /hscene {"dev":{...}}: her development, for testing (Dev)
