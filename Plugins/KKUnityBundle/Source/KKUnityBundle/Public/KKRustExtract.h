@@ -221,6 +221,8 @@ public:
 	// with no skin near), the way out of her there and the nearest skin's distance from her entrance at rest (ok_skin_check):
 	// five floats a point.
 	bool SkinCheck(const TArray<FVector>& UnityAt,TArray<float>& Out) const;
+	// Her tear's way down her face as she is posed now (Unity, her skeleton space): points and her skin's normal at each.
+	bool FaceTearPath(const FVector& UnityFrom,const FVector& UnityDown,float StepM,float LiftM,int32 Count,TArray<FVector>& OutPoints,TArray<FVector>& OutNormals) const;
 	bool StaticInteractionFrame(float Delta);
 	bool Skin();
 	TArray<float> ShapeBody() const;

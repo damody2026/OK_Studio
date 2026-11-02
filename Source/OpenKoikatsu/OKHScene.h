@@ -5,6 +5,7 @@
 #include "Dom/JsonObject.h"
 #include "Commandlets/Commandlet.h"
 #include "OKArousalDrops.h"
+#include "OKTears.h"
 #include "OKHScene.generated.h"
 
 // The street one-on-one as the original H scene (HSceneProc / HSprite, D:\KoikatuSunshine\H_scene.md): a menu of the
@@ -193,7 +194,8 @@ public:
     void BareChest();bool bAhegaoShown=false;int32 AhegaoMouth=INDEX_NONE;
     // What runs out of her in the room (her desire past 100, OKArousalDrops.h): the drops, her next one at her crotch and
     // at a nipple, which nipple, and how many came (into the result: she leaves the room as wet).
-    void TickDrips(float Delta);float HerDesire() const;FOKArousalDrops Drips;double DripAt=0,MilkAt=0,SquirtAt=0,ClimaxUntil=0;bool bTrembling=false,bVaginaLogged=false;void Tremble(double Now);int32 MilkTurn=0,HerDrips=0,HerMilk=0;
+    void TickDrips(float Delta);float HerDesire() const;FOKArousalDrops Drips;FOKTears Tears;uint8 TearsWanted=0;void SpawnTears(class AKKPreviewActor* Girl);void AimIntoMouth(class AKKPreviewActor* Girl,class AKKPreviewActor* Him);void HideInMouth(class AKKPreviewActor* Girl,class AKKPreviewActor* Him);
+    TWeakObjectPtr<class AKKPreviewActor> MouthClipHim;int32 MouthClipPart=INDEX_NONE;int32 MouthClipVerts=0;bool bMouthAimed=false;FVector MouthAim=FVector::ZeroVector;float MouthTurned=0.f;FVector MouthDbg=FVector::ZeroVector;double DripAt=0,MilkAt=0,SquirtAt=0,ClimaxUntil=0;bool bTrembling=false,bVaginaLogged=false;void Tremble(double Now);int32 MilkTurn=0,HerDrips=0,HerMilk=0;
     void ClearLine();
     // Her line asked for before a climax, a finish or a new pose comes back after it ("don't stop" once he had come):
     // it is not shown or spoken. LineEpoch moves at those; SentEpoch is the epoch her last line was asked in.
@@ -261,6 +263,8 @@ private:
     // held where they were (Studio IK foot targets); when he would have to rise, she is lowered the same way.
     FVector HerOffset=FVector::ZeroVector,HerApplied=FVector::ZeroVector;TWeakObjectPtr<class AKKPreviewActor> AlignedHer;
     int32 FeetWait=0;bool bFeetRead=false,bHisStands=false,bHerStands=false,bHisIk=false,bHerIk=false;FVector HisFeet[2],HerFeet[2],HisHeld[2],HerHeld[2];
+    // Her hands on his penis while she sucks him (GripHim): IK effectors (5, 6) and where, her skeleton space; what was set.
+    TArray<int32> HandEff;TArray<FVector> HandAt,HandHeld;void GripHim(class AKKPreviewActor* Girl,class AKKPreviewActor* Him,const FVector& Lips,const FVector& Root,const FVector& Axis);
     void MoveParts(class AKKPreviewActor* A,const FVector& Want,FVector& Applied);void HoldFeet(class AKKPreviewActor* A,bool bStands,const FVector& Offset,const FVector (&Feet)[2],FVector (&Kept)[2],bool& bIk);
     // The pair solves its next frame in the background (ok.Anim.AsyncPair): wait for it before touching either session.
     void SyncPair();

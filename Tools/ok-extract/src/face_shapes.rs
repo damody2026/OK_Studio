@@ -296,3 +296,61 @@ pub(crate) fn neutral_fbs_integer_percent_matches_native() {
     assert_eq!(fbs_integer_open_percent(eye_controller_open_max(1.0)),92);
     assert_eq!(fbs_integer_open_percent(eye_controller_open_max(0.91999)),91);
 }
+
+/// Her tears (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md P2): from `from` (her skeleton space, Unity metres) a path down her
+/// face as she is posed now, each step `step` metres along `down` laid flat on her skin there and kept `lift` metres
+/// off it. The points and her skin's normal at each; it ends where her face does (no face vertex within 1.5 cm).
+pub fn tear_path(session: &crate::session::OkSession, from: [f32; 3], down: [f32; 3], step: f32, lift: f32, count: usize) -> Vec<([f32; 3], [f32; 3])> {
+    // Her face is skinned on her head's skeleton, which sits on her body's head bone (crate::head_onto_body).
+    let Some(part) = session.parts.iter().find(|p| p.name.eq_ignore_ascii_case("cf_O_face")) else { return Vec::new() };
+    let body = session.body_skel.as_ref();
+    let skel = match part.skel_kind { 2 => session.head_full_posed.as_ref().or(session.head_skel.as_ref()), _ => body };
+    let Some(skel) = skel else { return Vec::new() };
+    let (worlds, binds) = crate::skel_export::palettes(skel, part);
+    if worlds.is_empty() { return Vec::new(); }
+    let onto = if part.skel_kind == 2 { crate::head_onto_body(body, Some(skel)) } else { crate::pose::ident() };
+    let pal: Vec<crate::pose::Mat4> = worlds.iter().zip(&binds).map(|(w, b)| crate::pose::mat_mul_pub(&onto, &crate::pose::mat_mul_pub(w, b))).collect();
+    let apply = |m: &crate::pose::Mat4, p: [f32; 3], w: f32| -> [f32; 3] { std::array::from_fn(|i| m[i][0] * p[0] + m[i][1] * p[1] + m[i][2] * p[2] + m[i][3] * w) };
+    let len = |v: [f32; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    // Her face as posed: each vertex and its normal skinned by its bones.
+    let face: Vec<([f32; 3], [f32; 3])> = (0..part.rest_positions.len()).filter_map(|j| {
+        let (b, w) = (part.bone_idx.get(j)?, part.weights.get(j)?);
+        let (mut p, mut n) = ([0f32; 3], [0f32; 3]);
+        for (b, w) in b.iter().zip(w) {
+            let Some(m) = pal.get(*b as usize) else { continue };
+            if *w <= 0. { continue; }
+            let (q, r) = (apply(m, part.rest_positions[j], 1.), apply(m, *part.rest_normals.get(j)?, 0.));
+            for c in 0..3 { p[c] += q[c] * w;n[c] += r[c] * w; }
+        }
+        let l = len(n);if l < 1e-6 { return None; }
+        Some((p, [n[0] / l, n[1] / l, n[2] / l]))
+    }).collect();
+    // Where a point lies on her face: the nearest four vertices, nearer counting more.
+    let near = |a: [f32; 3]| -> Option<([f32; 3], [f32; 3])> {
+        let mut best = [(f32::MAX, 0usize); 4];
+        for (i, (p, _)) in face.iter().enumerate() {
+            let d = (0..3).map(|c| (a[c] - p[c]) * (a[c] - p[c])).sum::<f32>();
+            if d < best[3].0 { let mut k = 3;while k > 0 && best[k - 1].0 > d { best[k] = best[k - 1];k -= 1; }best[k] = (d, i); }
+        }
+        if best[0].0 > 0.015 * 0.015 { return None; }
+        let (mut p, mut n, mut sum) = ([0f32; 3], [0f32; 3], 0f32);
+        for &(d, i) in best.iter().filter(|(d, _)| *d < f32::MAX) {
+            let w = 1. / (d.sqrt() + 0.001);sum += w;
+            for c in 0..3 { p[c] += face[i].0[c] * w;n[c] += face[i].1[c] * w; }
+        }
+        let l = len(n);if l < 1e-6 { return None; }
+        Some(([p[0] / sum, p[1] / sum, p[2] / sum], [n[0] / l, n[1] / l, n[2] / l]))
+    };
+    let mut out = Vec::with_capacity(count);
+    let mut at = from;
+    for _ in 0..count {
+        let Some((p, n)) = near(at) else { break };
+        out.push(([p[0] + n[0] * lift, p[1] + n[1] * lift, p[2] + n[2] * lift], n));
+        // Down her skin: the way down with the part into her skin taken out.
+        let dn = down[0] * n[0] + down[1] * n[1] + down[2] * n[2];
+        let t = [down[0] - n[0] * dn, down[1] - n[1] * dn, down[2] - n[2] * dn];
+        let l = len(t);if l < 0.2 { break; } // her skin faces up or down there: the tear stops
+        at = [p[0] + t[0] / l * step, p[1] + t[1] / l * step, p[2] + t[2] / l * step];
+    }
+    out
+}

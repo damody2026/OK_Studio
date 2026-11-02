@@ -215,6 +215,18 @@ pub unsafe extern "C" fn ok_skin_check(s:*mut OkSession,at:*const f32,count:u32,
     0
 }
 #[no_mangle]
+pub unsafe extern "C" fn ok_face_tear_path(s:*mut OkSession,from:*const f32,down:*const f32,step:f32,lift:f32,count:u32,out:*mut f32)->i32 {
+    // Her tear's way down her face as she is posed now (face_shapes::tear_path; her skeleton space, Unity metres):
+    // up to count points, each its position and her skin's normal there (out[count*6]). The number of points, -1 on error.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if from.is_null()||down.is_null()||out.is_null()||!step.is_finite()||!lift.is_finite()||step<=0. {return -1;}
+    let (f,d)=([*from,*from.add(1),*from.add(2)],[*down,*down.add(1),*down.add(2)]);
+    if !f.iter().chain(d.iter()).all(|v|v.is_finite()) {return -1;}
+    let path=crate::face_shapes::tear_path(s,f,d,step,lift,count as usize);
+    for (i,(p,n)) in path.iter().enumerate(){let o=out.add(i*6);for c in 0..3{*o.add(c)=p[c];*o.add(3+c)=n[c];}}
+    path.len() as i32
+}
+#[no_mangle]
 pub unsafe extern "C" fn ok_set_penis_size(s:*mut OkSession,length:f32,scale:f32)->i32 {
     // His penis length (times along his dan bones) and size (his penis root scale) from the next frame on; 1 and 1 as
     // made (belly_bulge::apply_penis_size).

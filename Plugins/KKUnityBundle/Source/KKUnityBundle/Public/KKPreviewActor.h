@@ -287,6 +287,9 @@ public:
 		float Height = 0.f, float Breast = 0.f, float Motion = 0.f);
 	bool SetGameSceneMode(int32 Mode,bool bPublishFrame=true);
 	void SetMouthOpen(float Open01);
+	// Her mouth at least this open whatever her pattern or voice says (sucking him: OKHScene); 0 none.
+	void SetMouthOpenFloor(float Open01);
+	float MouthOpenFloor=0.f;
 	UFUNCTION(BlueprintCallable, Category="Koikatsu|Speech")
 	bool LoadGeneralSpeech(const FString& VoiceRoot,int32 Personality,float VoicePitch,FString& Error);
 	UFUNCTION(BlueprintCallable, Category="Koikatsu|Speech")

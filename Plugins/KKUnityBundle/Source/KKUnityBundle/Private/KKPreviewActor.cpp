@@ -8664,6 +8664,14 @@ void AKKPreviewActor::SetMouthOpen(float Open01)
 	ApplyMouth();
 }
 
+void AKKPreviewActor::SetMouthOpenFloor(float Open01)
+{
+	Open01 = FMath::Clamp(Open01, 0.f, 1.f);
+	if (FMath::IsNearlyEqual(Open01, MouthOpenFloor, .01f)) return;
+	MouthOpenFloor = Open01;
+	ApplyMouth();
+}
+
 void AKKPreviewActor::SetMouthPattern(int32 Pattern, bool bBlend)
 {
 	MouthPattern = FMath::Clamp(Pattern, 0, GetMouthPatternCount() - 1);
@@ -8846,7 +8854,7 @@ void AKKPreviewActor::ForceBlink()
 
 float AKKPreviewActor::EffectiveFaceRate(int32 Control) const
 {
-    if(Control==0) return bSpeechActive&&bSpeechDrivesMouth?FMath::Lerp(SpeechOpenMin,1.f,SpeechOpen):MouthOpen01;
+    if(Control==0) return FMath::Max(MouthOpenFloor,bSpeechActive&&bSpeechDrivesMouth?FMath::Lerp(SpeechOpenMin,1.f,SpeechOpen):MouthOpen01);
     const int32 Index=Control-1;
     if(bManualFaceControl[Index]) return FaceOpen01[Index];
     const float Fixed=Session.FaceRuntimeSetting(6+Index);

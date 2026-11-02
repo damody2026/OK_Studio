@@ -234,6 +234,12 @@ bool FOkSession::AimPenis(const FVector& UnityDir,float& OutDegrees){OutDegrees=
 bool FOkSession::SkinCheck(const TArray<FVector>& UnityAt,TArray<float>& Out) const{
 	TArray<float> At;At.Reserve(UnityAt.Num()*3);for(const FVector& V:UnityAt){At.Add(float(V.X));At.Add(float(V.Y));At.Add(float(V.Z));}
 	Out.SetNumZeroed(UnityAt.Num()*5);return Handle&&UnityAt.Num()>0&&ok_skin_check(Handle,At.GetData(),uint32(UnityAt.Num()),Out.GetData())==0;}
+bool FOkSession::FaceTearPath(const FVector& UnityFrom,const FVector& UnityDown,float StepM,float LiftM,int32 Count,TArray<FVector>& OutPoints,TArray<FVector>& OutNormals) const{
+	OutPoints.Reset();OutNormals.Reset();if(!Handle||Count<=0)return false;
+	const float From[3]={float(UnityFrom.X),float(UnityFrom.Y),float(UnityFrom.Z)},Down[3]={float(UnityDown.X),float(UnityDown.Y),float(UnityDown.Z)};
+	TArray<float> Out;Out.SetNumZeroed(Count*6);const int32 N=ok_face_tear_path(Handle,From,Down,StepM,LiftM,uint32(Count),Out.GetData());
+	for(int32 I=0;I<N;++I){const float* O=&Out[I*6];OutPoints.Add(FVector(O[0],O[1],O[2]));OutNormals.Add(FVector(O[3],O[4],O[5]));}
+	return N>0;}
 bool FOkSession::SetPenisSize(float Length,float Scale){return Handle&&ok_set_penis_size(Handle,Length,Scale)==0;}
 bool FOkSession::BellyBulgePast(const FVector& UnityTip,float& OutPast,float& OutNear,FName& OutTarget,float& OutMoves) const {
 	const float Tip[3]={float(UnityTip.X),float(UnityTip.Y),float(UnityTip.Z)};float Out[3]={};char Target[64]={};

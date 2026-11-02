@@ -142,6 +142,9 @@ int32_t ok_set_penis_size(OkSession* s,float length,float scale);
 /* For count points (her skeleton space, Unity, 3 each): how far out of her skin near her entrance, metres (below 0 inside,
    1e9 with no skin near), the way out of her there (3) and the nearest skin's distance from her entrance at rest: out[count*5]; 0 ok. */
 int32_t ok_skin_check(OkSession* s,const float* at,uint32_t count,float* out);
+/* Her tear's way down her face as posed now (her skeleton space, Unity metres): from, down (3 each), step and lift (m);
+   up to count points of position + normal (out[count*6]). Returns the number of points, -1 on error. */
+int32_t ok_face_tear_path(OkSession* s,const float* from,const float* down,float step,float lift,uint32_t count,float* out);
 int32_t ok_static_interaction_frame(OkSession* s,float dt);
 int32_t ok_apply_shape_live(OkSession* s,const float* body,int32_t n_body,const float* face,int32_t n_face);
 int32_t ok_prepare_shape_live(OkSession* s,const float* body,int32_t n_body,const float* face,int32_t n_face);
