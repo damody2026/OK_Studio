@@ -427,10 +427,18 @@ void UOKHScenePanel::Click(int32 Kind){
         auto* Girl=Gallery->PreviewActor.Get();const int32 C=Kind-ClothesBase;if(!IsValid(Girl))return;
         static const TCHAR* Parts[]={TEXT("ui.hscene.cloth_top"),TEXT("ui.hscene.cloth_bottom"),TEXT("ui.hscene.cloth_bra"),TEXT("ui.hscene.cloth_shorts"),TEXT("ui.hscene.cloth_gloves"),TEXT("ui.hscene.cloth_pantyhose"),TEXT("ui.hscene.cloth_socks"),TEXT("ui.hscene.cloth_inner_shoes"),TEXT("ui.hscene.cloth_shoes")};
         uint8* S=Gallery->ClothesStates;FString Event;
-        if(C==100){for(int32 K=0;K<9;++K)S[K]=Girl->DisplayClothesStates[K];Event=OKT(TEXT("ui.hscene.event_dressed"));}
-        else if(C==102){for(int32 K=0;K<9;++K)S[K]=3;Event=OKT(TEXT("ui.hscene.event_undressed"));}
-        else if(C>=0&&C<9){const bool Off=S[C]!=3;S[C]=Off?3:Girl->DisplayClothesStates[C];Event=OKMsg(Off?TEXT("ui.hscene.event_part_off"):TEXT("ui.hscene.event_part_on"),{{TEXT("part"),OKT(Parts[C])}});}
+        // A piece goes on, half off (where it has a half), off, as the original's buttons (user, 2026-11-02: one press took
+        // it all off). Off is visibility; a state she is not opened in (half off, back on from half) opens her again in it.
+        uint8 Next[9];FMemory::Memcpy(Next,S,9);AOKInteractionMode* M=Interaction();
+        if(C==100){FMemory::Memzero(Next,9);Event=OKT(TEXT("ui.hscene.event_dressed"));}
+        else if(C==102){FMemory::Memset(Next,3,9);Event=OKT(TEXT("ui.hscene.event_undressed"));}
+        else if(C>=0&&C<9){FString Why;if(!M||!M->ClothesTransition(C,Next,Why)){UE_LOG(LogTemp,Warning,TEXT("H scene: clothes rule: %s"),*Why);Next[C]=S[C]!=3?3:0;}
+            Event=OKMsg(Next[C]==3?TEXT("ui.hscene.event_part_off"):Next[C]==0?TEXT("ui.hscene.event_part_on"):TEXT("ui.hscene.event_part_half"),{{TEXT("part"),OKT(Parts[C])}});}
         else return;
+        bool Shown=true;for(int32 K=0;K<9;++K)Shown&=Next[K]==3||Next[K]==Girl->DisplayClothesStates[K];
+        if(!Shown){if(!M||!M->ChangeClothesStates(Next)){if(Hint)Hint->SetText(FText::FromString(OKT(TEXT("ui.hscene.outfit_busy"))));return;}
+            FMemory::Memcpy(S,Next,9);Gallery->RefreshClothesStateLabels();Note(Event);BuildList();return;}
+        FMemory::Memcpy(S,Next,9);
         Girl->SetClothingPartsHidden(S);Gallery->RefreshClothesStateLabels();Note(Event);BuildList();return;
     }
     const auto& X=Gallery->HExperience;
@@ -2140,14 +2148,15 @@ void UOKHScenePanel::OutfitChanged(bool bOk){
     AOKInteractionMode* M=Interaction();
     if(!bOk){if(Hint)Hint->SetText(FText::FromString(OKMsg(TEXT("ui.hscene.outfit_failed"),{{TEXT("error"),M?M->OutfitError:FString()}})));BuildList();return;}
     const FString Worn=M?M->WornCoordinate:FString();
-    Note(Worn.IsEmpty()?OKMsg(TEXT("ui.hscene.event_outfit"),{{TEXT("name"),FString(OKT(*FString::Printf(TEXT("ui.hscene.outfit_%d"),FMath::Clamp(Gallery->OutfitIndex,0,7))))}})
+    if(!M||!M->bSwapClothesOnly)Note(Worn.IsEmpty()?OKMsg(TEXT("ui.hscene.event_outfit"),{{TEXT("name"),FString(OKT(*FString::Printf(TEXT("ui.hscene.outfit_%d"),FMath::Clamp(Gallery->OutfitIndex,0,7))))}})
         :OKMsg(TEXT("ui.hscene.event_coordinate"),{{TEXT("name"),FPaths::GetBaseFilename(Worn)}}));
     // Her new self starts the pose again where it was chosen: a caress state on her own, or the pair from its start.
     AKKPreviewActor* Girl=Gallery->PreviewActor.Get();
     if(Mode==0&&AibuPoses.IsValidIndex(ActiveAibu)&&IsValid(Girl)){
         if(Gallery->PartnerActor)Gallery->PartnerActor->SetActorHiddenInGame(true);
         Girl->SetGameSceneMode(3,false);PlaySolo(SoloState.IsEmpty()?FString(TEXT("Idle")):SoloState);
-    }else if(Poses.IsValidIndex(ActivePose)&&Gallery->PairCombo){
+    }else if(Poses.IsValidIndex(ActivePose)&&Gallery->PairCombo&&!Gallery->PairedPlayback&&!Gallery->bPairPreparing){
+        // The pair goes on in the state it was in (AOKInteractionMode::TickOutfitSwap); when it could not, from the start.
         const int32 Pose=ActivePose;SelectPose(Pose);
         // The same pose is still chosen in the list: its selection does not fire again.
         if(PendingPose==Pose&&Gallery->PairCombo->GetSelectedIndex()>0)Gallery->OnPairSelected(Gallery->PairCombo->GetSelectedOption(),ESelectInfo::OnMouseClick);

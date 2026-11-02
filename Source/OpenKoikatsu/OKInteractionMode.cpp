@@ -33,7 +33,7 @@
 #include "Widgets/Input/SButton.h"
 
 namespace {
-struct FInteractionRoleLoad {FOkSession Session;FKKCharacterFile Card;FString Error,Pairs;bool Ok=false;};
+struct FInteractionRoleLoad {FOkSession Session;FKKCharacterFile Card;FString Error,Pairs,Opened;bool Ok=false;};
 }
 AOKInteractionMode::AOKInteractionMode(){PrimaryActorTick.bCanEverTick=true;}
 AOKInteractionMode* AOKInteractionMode::Enter(UOKCharacterController* Input,const FTransform* InPlace){
@@ -133,15 +133,29 @@ void AOKInteractionMode::LoadFemale(const FString& Path,int32 Outfit){
     });
 }
 bool AOKInteractionMode::ChangeOutfit(int32 Outfit,const FString& Coordinate,bool bWithAccessories){
-    if(!Ready||Finished||IsChangingOutfit()||!Controller||!IsValid(Controller->PreviewActor)||!Controller->Entries.IsValidIndex(0))return false;
-    if(Outfit<0||(Controller->Selected.Outfits.Num()>0&&Outfit>=Controller->Selected.Outfits.Num()))return false;
+    if(Outfit<0||(Controller&&Controller->Selected.Outfits.Num()>0&&Outfit>=Controller->Selected.Outfits.Num()))return false;
     if(!Coordinate.IsEmpty()&&!FPaths::FileExists(Coordinate))return false;
-    OutfitChanging=true;OutfitError.Reset();SwapOutfit=Outfit;SwapCoordinate=Coordinate;
-    const FString Card=Controller->Entries[0].Path;const FVector2D Physics(Controller->Selected.Body.BustSoftness,Controller->Selected.Body.BustWeight);
+    return StartSwap(Outfit,Coordinate,bWithAccessories,nullptr);
+}
+FString AOKInteractionMode::OpenedRoot() const{
+    return UKKCardWorkspace::PortableSourcePath(OpenedFemaleCard()).IsEmpty()&&UKKGameRoot::Get()?UKKGameRoot::Get()->Root:FString();
+}
+FString AOKInteractionMode::OpenedFemaleCard() const{return !OpenedCard.IsEmpty()?OpenedCard:Controller&&Controller->Entries.IsValidIndex(0)?Controller->Entries[0].Path:FString();}
+bool AOKInteractionMode::ClothesTransition(int32 Kind,uint8 Out[9],FString& Why) const{
+    if(!Controller)return false;
+    return FOkSession::ClothingTransition(OpenedRoot(),OpenedFemaleCard(),Controller->OutfitIndex,Controller->ClothesStates,Kind,Out,Why);
+}
+bool AOKInteractionMode::ChangeClothesStates(const uint8 States[9]){return Controller&&StartSwap(Controller->OutfitIndex,FString(),false,States);}
+bool AOKInteractionMode::StartSwap(int32 Outfit,const FString& Coordinate,bool bWithAccessories,const uint8* States){
+    if(!Ready||Finished||IsChangingOutfit()||!Controller||!IsValid(Controller->PreviewActor)||!Controller->Entries.IsValidIndex(0))return false;
+    // States: the same clothes opened again in these states (half off is another part of the garment, chosen as she opens).
+    OutfitChanging=true;OutfitError.Reset();SwapOutfit=Outfit;bSwapClothesOnly=States!=nullptr;SwapCoordinate=States?WornCoordinate:Coordinate;
+    TArray<uint8> Opening;Opening.SetNumZeroed(9);if(States)for(int32 K=0;K<9;++K)Opening[K]=States[K];FMemory::Memcpy(SwapStates,Opening.GetData(),9);
+    const FString Card=States?OpenedFemaleCard():Controller->Entries[0].Path;const FVector2D Physics(Controller->Selected.Body.BustSoftness,Controller->Selected.Body.BustWeight);
     const FString GameRoot=UKKGameRoot::Get()?UKKGameRoot::Get()->Root:FString();
     auto Job=MakeShared<FInteractionRoleLoad,ESPMode::ThreadSafe>();const auto Token=Cancelled;TWeakObjectPtr<AOKInteractionMode> Weak(this);
     UE_LOG(LogTemp,Display,TEXT("H scene outfit change: outfit %d%s%s"),Outfit,Coordinate.IsEmpty()?TEXT(""):TEXT(" coordinate "),*Coordinate);
-    Async(EAsyncExecution::Thread,[Weak,Job,Token,Card,Coordinate,Outfit,Physics,GameRoot,bWithAccessories](){
+    Async(EAsyncExecution::Thread,[Weak,Job,Token,Card,Coordinate,Outfit,Physics,GameRoot,bWithAccessories,Opening](){
         if(*Token)return;const double T0=FPlatformTime::Seconds();
         FString Path=Card;
         if(!Coordinate.IsEmpty()){
@@ -172,7 +186,8 @@ bool AOKInteractionMode::ChangeOutfit(int32 Outfit,const FString& Coordinate,boo
         const double T1=FPlatformTime::Seconds();
         const FString Portable=UKKCardWorkspace::PortableSourcePath(Path);
         if(Portable.IsEmpty()&&GameRoot.IsEmpty())Job->Error=TEXT("沒有設定遊戲目錄，不能開啟服裝卡的衣服");
-        else Job->Ok=Job->Session.Open(Portable.IsEmpty()?GameRoot:FString(),Portable.IsEmpty()?Path:Portable,Outfit,Job->Error);
+        else Job->Ok=Job->Session.Open(Portable.IsEmpty()?GameRoot:FString(),Portable.IsEmpty()?Path:Portable,Outfit,Job->Error,Opening.GetData());
+        Job->Opened=Path;
         const double T2=FPlatformTime::Seconds();
         if(Job->Ok&&!*Token){Job->Session.ApplyBodyPhysics(Physics.X,Physics.Y);
             FString MaterialError;if(!Job->Session.PrepareRuntimeMaterials(MaterialError,true))UE_LOG(LogTemp,Warning,TEXT("H scene outfit materials: %s"),*MaterialError);
@@ -186,7 +201,7 @@ bool AOKInteractionMode::ChangeOutfit(int32 Outfit,const FString& Coordinate,boo
             auto* Actor=Mode->GetWorld()->SpawnActor<AKKPreviewActor>(C->PreviewActor->GetActorLocation(),C->PreviewActor->GetActorRotation());if(!Actor){Failed(TEXT("無法建立角色"));return;}
             Actor->bPreserveSourceWorld=true;Actor->SetActorHiddenInGame(true);Actor->SetActorTickEnabled(false);Actor->Session=MoveTemp(Job->Session);
             FString Error;if(!Actor->BeginSessionLoad(Error)){Actor->Destroy();Failed(Error);return;}
-            Mode->SwappingFemale=Actor;Mode->OutfitChanging=false;
+            Mode->SwappingFemale=Actor;Mode->SwapOpened=Job->Opened;Mode->OutfitChanging=false;
         });
     });
     return true;
@@ -198,7 +213,9 @@ void AOKInteractionMode::TickOutfitSwap(){
     if(!IsValid(Old)||!New->ContinueSessionLoad(Why)){SwappingFemale=nullptr;New->Destroy();OutfitError=Why.IsEmpty()?TEXT("新服裝載入失敗"):Why;if(Controller->HPanel)Controller->HPanel->OutfitChanged(false);return;}
     if(!New->IsSessionLoadComplete()||!New->BeginProgressiveMaterials())return;
     SwappingFemale=nullptr;
-    // The pair player holds views into her old session: it stops here and the panel starts the pose again on her new one.
+    // The pair player holds views into her old session: it stops here and starts again on her new one in the state it was
+    // in (the card reader's reload of the same card), so she goes on where she was.
+    Controller->KeepPartnerForReload();
     Controller->CancelPairPreparation();
     if(Controller->PairedPlayback){Controller->PairedPlayback->Stop();Controller->PairedPlayback->Destroy();Controller->PairedPlayback=nullptr;}
     Old->StopSpeech();Old->StopHBreath();
@@ -210,13 +227,14 @@ void AOKInteractionMode::TickOutfitSwap(){
     New->StudioCam=Old->StudioCam;Old->StudioCam=nullptr;
     New->OrbitFocus=Old->OrbitFocus;New->OrbitYaw=Old->OrbitYaw;New->OrbitPitch=Old->OrbitPitch;New->OrbitDistance=Old->OrbitDistance;
     // The pieces he had taken off stay off (the original keeps fileStatus.clothesState over a coordinate change).
-    New->SetClothingPartsHidden(Controller->ClothesStates);
+    FMemory::Memcpy(New->DisplayClothesStates,SwapStates,9);New->SetClothingPartsHidden(Controller->ClothesStates);
     if(PairPhysicsActors.Remove(Old))Old->RemovePairPhysics();
-    Controller->PreviewActor=New;Controller->OutfitIndex=SwapOutfit;Controller->PreviewOutfitIndex=SwapOutfit;WornCoordinate=SwapCoordinate;
+    Controller->PreviewActor=New;Controller->OutfitIndex=SwapOutfit;Controller->PreviewOutfitIndex=SwapOutfit;WornCoordinate=SwapCoordinate;OpenedCard=SwapOpened;
     New->SetActorHiddenInGame(false);New->SetActorTickEnabled(true);
     if(IsValid(Controller->PartnerActor))Controller->PartnerActor->SetActorTickEnabled(true);
     OKRetireActor(Old);
     UpdatePairPhysics();
+    Controller->RestorePairAfterReload();
     UE_LOG(LogTemp,Display,TEXT("H scene outfit changed: outfit %d%s%s, %d parts"),SwapOutfit,SwapCoordinate.IsEmpty()?TEXT(""):TEXT(" coordinate "),*FPaths::GetCleanFilename(SwapCoordinate),New->Session.PartCount());
     if(Controller->HPanel)Controller->HPanel->OutfitChanged(true);
 }

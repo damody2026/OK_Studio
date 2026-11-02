@@ -8352,12 +8352,15 @@ void AKKPreviewActor::UpdateRigidFollowers()
 		return;
 	}
 	TMap<FName, FTransform> Deltas;
+	// The body moved under the actor (the H scene lowers her with her feet held, UOKHScenePanel::MoveParts): parts that
+	// follow a bone go with it (user, 2026-11-02: her hair stayed where her head had been).
+	const FTransform BodyOffset = BodySkel->GetRelativeTransform();
 	for (const TPair<FName, FTransform>& Entry : RigidNeutralBones)
 	{
 		const FTransform Current = BodySkel->GetSocketTransform(Entry.Key, RTS_Component);
 		// Procedural vertices are in component space: neutral bone inverse,
 		// followed by the current bone transform, preserves their pivot.
-		Deltas.Add(Entry.Key, Entry.Value.Inverse() * Current);
+		Deltas.Add(Entry.Key, Entry.Value.Inverse() * Current * BodyOffset);
 	}
 	for (FKKLoadedPart& Part : Parts)
 	{

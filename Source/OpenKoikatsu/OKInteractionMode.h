@@ -49,6 +49,11 @@ public:
     // among them, stay, as the maker loads one with accessories unticked).
     bool ChangeOutfit(int32 Outfit,const FString& Coordinate=FString(),bool bWithAccessories=false);
     bool IsChangingOutfit() const {return OutfitChanging||SwappingFemale!=nullptr;}
+    // A garment's next state as the original cycles it (on, half off where it has one, off), from the card she is opened
+    // from; ChangeClothesStates opens her again in states a garment's half off needs (visibility alone cannot show it).
+    bool ClothesTransition(int32 Kind,uint8 Out[9],FString& Why) const;
+    bool ChangeClothesStates(const uint8 States[9]);
+    bool bSwapClothesOnly=false; // the change in progress (or last) only opened her clothes in other states
     FString OutfitError;     // the last change's failure (empty when it worked)
     FString WornCoordinate;  // the coordinate card she wears now (empty: her card's own outfit)
     bool IsReady() const {return Ready;}
@@ -69,7 +74,9 @@ private:
     void Fail(const FString& Why);
     UPROPERTY() TObjectPtr<AKKPreviewActor> LoadingFemale;
     UPROPERTY() TObjectPtr<AKKPreviewActor> SwappingFemale; // her in the new outfit, built hidden (ChangeOutfit)
-    bool OutfitChanging=false;int32 SwapOutfit=0;FString SwapCoordinate;
+    bool OutfitChanging=false;int32 SwapOutfit=0;FString SwapCoordinate,SwapOpened,OpenedCard;uint8 SwapStates[9]{};
+    bool StartSwap(int32 Outfit,const FString& Coordinate,bool bWithAccessories,const uint8* States);
+    FString OpenedFemaleCard() const;FString OpenedRoot() const; // the card she is opened from now (a coordinate worn: that copy)
     void TickOutfitSwap();
     UPROPERTY() TObjectPtr<AActor> PreviousView;
     FString MalePath;
