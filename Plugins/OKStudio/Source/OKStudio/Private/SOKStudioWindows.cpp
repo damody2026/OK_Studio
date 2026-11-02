@@ -1908,9 +1908,23 @@ TSharedRef<SWidget> SOKStudioPanel::BuildTimeline()
 		+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 1.f, 0.f).VAlign(VAlign_Center)[CheckBox(TEXT("30fps 吸附"), [this] { return !TimelineView || TimelineView->SnapFps > 0.f; }, [this](bool B) { if (TimelineView) TimelineView->SnapFps = B ? 30.f : 0.f; })]
 		+ SHorizontalBox::Slot().FillWidth(1.f)
 		+ SHorizontalBox::Slot().AutoWidth()[Button(FText::FromString(TEXT("輸出…")), Cmd(TEXT("timeline.export")), 50.f, 20.f, false, 10.f)];
+	// Bone keys without the FK page (HS2Studio6's bone search, 打骨骼帧 / 删骨骼帧).
+	TSharedRef<SWidget> Row3 = SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 3.f, 0.f)[OKStudioStyle::Label(FText::FromString(TEXT("骨骼")), 10.f)]
+		+ SHorizontalBox::Slot().AutoWidth()[SNew(SBox).WidthOverride(90.f).HeightOverride(18.f)[TextBox([] { return FString(); }, [this](const FString& V) { if (!V.TrimStartAndEnd().IsEmpty()) RunCommand(TEXT("pose.bone"), V); }, TEXT("搜尋，Enter 選")) ]]
+		+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(4.f, 0.f)
+		[SNew(STextBlock).Font(OKStudioStyle::Font(10.f)).ColorAndOpacity(OKStudioStyle::Text()).OverflowPolicy(ETextOverflowPolicy::Ellipsis)
+			.Text_Lambda([this]
+			{
+				const FOKStudioFkBone* B = FOKStudioCatalog::Get().FindFkBone(FkBone);
+				return FText::FromString(B ? FString::Printf(TEXT("%s %s"), *B->Name, *B->Bone) : FString(TEXT("未選骨骼（搜尋或在 FK 頁點選）")));
+			})]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(FText::FromString(TEXT("打骨骼 key")), Cmd(TEXT("timeline.bonekey")), 64.f, 20.f, false, 10.f)]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(FText::FromString(TEXT("刪骨骼 key")), Cmd(TEXT("timeline.boneunkey")), 64.f, 20.f, false, 10.f)];
 	return SNew(SVerticalBox)
 		+ SVerticalBox::Slot().AutoHeight()[Row1]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)[Row2]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)[Row3]
 		+ SVerticalBox::Slot().FillHeight(1.f)[SAssignNew(TimelineView, SOKStudioTimeline).Game(Game)
 			.OnEaseMenu([this](const FVector2D& At) { ShowEaseMenu(At); }).OnStatus([this](const FString& S) { SetStatus(S); })];
 }

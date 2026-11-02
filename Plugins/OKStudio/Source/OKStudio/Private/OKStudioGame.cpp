@@ -1176,7 +1176,8 @@ FString UOKStudioGame::ExportFrames(float Fps, int32 Width, int32 Height, bool b
 	ExportFrom = FMath::Clamp(From, 0.f, Document->Duration);
 	const float Until = To > ExportFrom ? FMath::Min(To, Document->Duration) : Document->Duration;
 	ExportTotal = FMath::Max(1, FMath::CeilToInt((Until - ExportFrom) * ExportFps));
-	const FString Parent = Folder.IsEmpty() ? FPaths::ProjectDir() / TEXT("UserData/Studio/movie") : Folder;
+	// A relative folder is inside the project (the process runs from the engine binaries folder).
+	const FString Parent = Folder.IsEmpty() ? FPaths::ProjectDir() / TEXT("UserData/Studio/movie") : (FPaths::IsRelative(Folder) ? FPaths::ProjectDir() / Folder : Folder);
 	ExportDir = FPaths::ConvertRelativePathToFull(Parent / FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S")));
 	IFileManager::Get().MakeDirectory(*ExportDir, true);
 	ExportFrame = 0;

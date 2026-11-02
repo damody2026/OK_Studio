@@ -241,6 +241,7 @@ namespace
 		if (K.Color.A >= 0.f) O->SetStringField(TEXT("color"), TEXT("#") + K.Color.ToFColor(false).ToHex());
 		O->SetNumberField(TEXT("exposure"), K.Exposure);
 		O->SetNumberField(TEXT("focal_distance"), K.FocalDistance);
+		if (K.Camera >= -1) O->SetNumberField(TEXT("camera"), K.Camera);
 		return O;
 	}
 
@@ -493,7 +494,19 @@ namespace
 			J->TryGetStringField(TEXT("action"), Action);
 			double Time = G.TimelineTime, To = 0.;
 			J->TryGetNumberField(TEXT("time"), Time);
-			if (Action == TEXT("set")) Doc->SetKey(Id, float(Time));
+			if (Action == TEXT("set"))
+			{
+				// The scene track: a camera cut other than the current view (-1 free view, -2 none).
+				double Camera = 0.;
+				const bool bCut = Id == UOKSceneDocument::SceneTrackId && J->TryGetNumberField(TEXT("camera"), Camera);
+				const FOKSceneObject* CamObject = bCut && Camera >= 0. ? Doc->Find(int32(Camera)) : nullptr;
+				if (bCut && Camera >= 0. && (!CamObject || CamObject->Kind != EOKSceneObjectKind::Camera)) return Result(false, TEXT("camera: no such camera object"));
+				Doc->SetKey(Id, float(Time));
+				if (bCut)
+				{
+					if (FOKSceneKey* K = Doc->KeyAt(Id, float(Time))) { K->Camera = FMath::Max(int32(Camera), -2); Doc->NotifyChanged(); }
+				}
+			}
 			else if (Action == TEXT("remove") && !Doc->RemoveKey(Id, float(Time))) return Result(false, TEXT("no key at that time"));
 			else if (Action == TEXT("move"))
 			{
@@ -569,6 +582,7 @@ namespace
 			FString Folder;
 			J->TryGetStringField(TEXT("folder"), Folder);
 			if (Folder.IsEmpty()) Folder = UOKStudioGame::SceneDirectory();
+			else if (FPaths::IsRelative(Folder)) Folder = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / Folder);
 			TArray<FString> Names, More;
 			IFileManager::Get().FindFiles(Names, *(Folder / TEXT("*.png")), true, false);
 			IFileManager::Get().FindFiles(More, *(Folder / TEXT("*.okscene")), true, false);
@@ -1189,6 +1203,7 @@ namespace
 			FString Path;
 			J->TryGetStringField(TEXT("path"), Path);
 			if (Path.IsEmpty()) Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("UserData/Studio/screenshot")) / FDateTime::Now().ToString(TEXT("okstudio_mcp_%Y%m%d_%H%M%S.png"));
+			else if (FPaths::IsRelative(Path)) Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / Path);
 			if (FPaths::FileExists(Path)) return Result(false, TEXT("file exists (never overwritten): ") + Path);
 			FString Error;
 			if (!G->CaptureToPng(Path, W, H, Error, bAlpha)) return Result(false, Error);

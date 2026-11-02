@@ -663,8 +663,34 @@ public:
 		Simple(TEXT("transform.reset"), TEXT("重設變換"), [this] { for (int32 Id : Game->Selection) if (FOKSceneObject* O = Game->Document->Find(Id)) O->Transform = FTransform::Identity; Changed(); });
 		// Timeline.
 		Simple(TEXT("timeline.key"), TEXT("打 key"), [this] { if (TimelineView) TimelineView->KeySelection(); else for (int32 Id : Game->Selection) Game->Document->SetKey(Id, Game->TimelineTime); });
-		Simple(TEXT("timeline.scenekey"), TEXT("場景 key"), [this] { Game->Document->SetKey(UOKSceneDocument::SceneTrackId, Game->TimelineTime); });
-		Simple(TEXT("timeline.bonekey"), TEXT("骨骼打 key"), [this] { if (FkBone.IsEmpty()) { SetStatus(TEXT("先在 FK 頁選一根骨骼")); return; } for (int32 Id : Game->Selection) Game->Document->SetBoneKey(Id, Game->TimelineTime, FkBone); SetStatus(TEXT("骨骼 key：") + FkBone); });
+		Simple(TEXT("timeline.scenekey"), TEXT("場景 key"), [this]
+		{
+			Game->Document->SetKey(UOKSceneDocument::SceneTrackId, Game->TimelineTime);
+			const FOKSceneObject* Cam = Game->Document->Find(Game->Document->ActiveCamera);
+			SetStatus(FString::Printf(TEXT("場景 key %.2f 秒：曝光、對焦距離、鏡頭（%s）"), Game->TimelineTime, Cam ? *Cam->Name : TEXT("自由視角")));
+		});
+		// Picks the FK bone for bone keys: an exact bone name, else the first whose name or bone contains the text.
+		AddCommand(TEXT("pose.bone"), TEXT("選骨骼"), [this](const FString& Arg)
+		{
+			const FOKStudioCatalog& C = FOKStudioCatalog::Get();
+			const FString Text = Arg.TrimStartAndEnd();
+			const FOKStudioFkBone* B = C.FkBones.FindByPredicate([&](const FOKStudioFkBone& X) { return X.Bone == Text; });
+			if (!B && !Text.IsEmpty()) B = C.FkBones.FindByPredicate([&](const FOKStudioFkBone& X) { return X.Name.Contains(Text) || X.Bone.Contains(Text); });
+			if (!B) { SetStatus(TEXT("找不到骨骼：") + Text); return false; }
+			FkBone = B->Bone;
+			SetStatus(FString::Printf(TEXT("骨骼：%s %s"), *B->Name, *B->Bone));
+			DeferRebuild();
+			return true;
+		});
+		AddCommand(TEXT("timeline.bonekey"), TEXT("骨骼打 key"), [this](const FString&)
+		{
+			if (FkBone.IsEmpty()) { SetStatus(TEXT("先選一根骨骼（FK 頁或時間軸的骨骼搜尋）")); return false; }
+			int32 Keyed = 0;
+			for (int32 Id : Game->Selection) Keyed += Game->Document->SetBoneKey(Id, Game->TimelineTime, FkBone) ? 1 : 0;
+			// Only a bone with an FK value has something to key (the animation's pose is not a value of its own).
+			SetStatus(Keyed ? TEXT("骨骼 key：") + FkBone : TEXT("沒有打上：所選角色的 ") + FkBone + TEXT(" 沒有 FK 值（在 FK 頁調整它或按「取目前姿勢」）"));
+			return Keyed > 0;
+		});
 		Simple(TEXT("timeline.boneunkey"), TEXT("骨骼刪 key"), [this] { for (int32 Id : Game->Selection) Game->Document->RemoveBoneKey(Id, Game->TimelineTime, FkBone); });
 		Simple(TEXT("timeline.clear"), TEXT("清空軌道"), [this] { for (int32 Id : Game->Selection) Game->Document->ClearTrack(Id); SetStatus(TEXT("已清空所選物件的軌道")); });
 		Simple(TEXT("timeline.delete"), TEXT("刪 key"), [this] { if (TimelineView && TimelineView->Selected.Num()) TimelineView->DeleteSelected(); else for (int32 Id : Game->Selection) Game->Document->RemoveKey(Id, Game->TimelineTime); });
@@ -776,6 +802,7 @@ public:
 		J->SetNumberField(TEXT("material_properties"), MaterialPropertiesShown);
 		J->SetStringField(TEXT("material_name"), MaterialNameShown);
 		J->SetStringField(TEXT("material_export_root"), FOKStudioSettings::Get().MaterialExportRoot);
+		J->SetStringField(TEXT("fk_bone"), FkBone);
 		J->SetStringField(TEXT("card_folder"), CardFolder);
 		J->SetNumberField(TEXT("card_back"), CardBack.Num());
 		J->SetNumberField(TEXT("card_forward"), CardForward.Num());

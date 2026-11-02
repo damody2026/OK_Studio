@@ -1491,6 +1491,26 @@ void UOKStudioGame::RunSelfTest(bool bExit)
 			Document->TrackOf(Moving)->Keys.Last().Transform = SavedAt2;
 		}
 		Check(Document->RemoveKey(Moving, 2.f) && Document->TrackOf(Moving)->Keys.Num() == 1, TEXT("removing a key"));
+		// Scene keys cut the view: free view from 0 s, a camera from 1 s (no blend), back after deleting the camera.
+		{
+			const int32 CutCam = Add(EOKSceneObjectKind::Camera);
+			const int32 CutSavedActive = Document->ActiveCamera;
+			Document->ActiveCamera = -1;
+			Document->SetKey(UOKSceneDocument::SceneTrackId, 0.f);
+			Document->ActiveCamera = CutCam;
+			Document->SetKey(UOKSceneDocument::SceneTrackId, 1.f);
+			SetTimelineTime(0.99f);
+			const int32 CutBefore = Document->ActiveCamera;
+			SetTimelineTime(1.5f);
+			const int32 CutAfter = Document->ActiveCamera;
+			UOKSceneDocument* CutCopy = NewObject<UOKSceneDocument>();
+			FString CutError;
+			const bool bCutSaved = CutCopy->FromJson(Document->ToJson(), CutError) && CutCopy->TrackOf(UOKSceneDocument::SceneTrackId) && CutCopy->TrackOf(UOKSceneDocument::SceneTrackId)->Keys.Last().Camera == CutCam;
+			Check(CutBefore == -1 && CutAfter == CutCam && bCutSaved, FString::Printf(TEXT("scene keys cut the view: %d at 0.99 s, %d at 1.5 s (camera %d), saved %d"), CutBefore, CutAfter, CutCam, bCutSaved ? 1 : 0));
+			Document->Tracks.RemoveAll([](const FOKSceneTrack& T) { return T.ObjectId == UOKSceneDocument::SceneTrackId; });
+			Document->RemoveObject(CutCam);
+			Document->ActiveCamera = Document->Find(CutSavedActive) ? CutSavedActive : -1;
+		}
 		// A character's FK is part of its keys: the bone turns between the keyed rotations.
 		{
 			FOKSceneObject* Ch = Document->Find(A);

@@ -68,6 +68,9 @@ int32 UOKSceneDocument::Duplicate(int32 Id)
 		IdMap.Add(Old, Copy.Id);
 		Objects.Add(Copy);
 	}
+	// The copies keep their timeline keys, as a copy and paste does.
+	for (int32 T = 0, Count = Tracks.Num(); T < Count; ++T)
+		if (const int32* To = IdMap.Find(Tracks[T].ObjectId)) { FOKSceneTrack Track = Tracks[T]; Track.ObjectId = *To; Tracks.Add(MoveTemp(Track)); }
 	NotifyChanged();
 	return IdMap[Id];
 }
@@ -469,6 +472,7 @@ void UOKSceneDocument::SetKey(int32 Id, float Time)
 		K.Time = FMath::Max(Time, 0.f);
 		K.Exposure = Post.Exposure;
 		K.FocalDistance = Post.FocalDistance;
+		K.Camera = ActiveCamera;
 		T->Keys.Add(K);
 		T->Keys.Sort([](const FOKSceneKey& A, const FOKSceneKey& B) { return A.Time < B.Time; });
 		Duration = FMath::Max(Duration, K.Time);
@@ -505,13 +509,13 @@ void UOKSceneDocument::SetKey(int32 Id, float Time)
 	NotifyChanged();
 }
 
-void UOKSceneDocument::SetBoneKey(int32 Id, float Time, const FString& Bone)
+bool UOKSceneDocument::SetBoneKey(int32 Id, float Time, const FString& Bone)
 {
 	const FOKSceneObject* O = Find(Id);
-	if (!O || O->Kind != EOKSceneObjectKind::Character || Bone.IsEmpty()) return;
+	if (!O || O->Kind != EOKSceneObjectKind::Character || Bone.IsEmpty()) return false;
 	// The bone's value now: its FK, or nothing to key.
 	const FOKSceneFkBone* Now = O->Character.Fk.FindByPredicate([&](const FOKSceneFkBone& B) { return B.Bone == Bone; });
-	if (!Now) return;
+	if (!Now) return false;
 	const FOKSceneFkBone Value = *Now;
 	FOKSceneKey* K = KeyAt(Id, Time);
 	if (!K)
@@ -531,6 +535,7 @@ void UOKSceneDocument::SetBoneKey(int32 Id, float Time, const FString& Bone)
 	if (FOKSceneFkBone* B = K->Fk.FindByPredicate([&](const FOKSceneFkBone& X) { return X.Bone == Bone; })) *B = Value;
 	else K->Fk.Add(Value);
 	NotifyChanged();
+	return true;
 }
 
 bool UOKSceneDocument::RemoveBoneKey(int32 Id, float Time, const FString& Bone)
@@ -642,6 +647,11 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 		Around(T, A, B, U);
 		Post.Exposure = B ? FMath::Lerp(A->Exposure, B->Exposure, U) : A->Exposure;
 		Post.FocalDistance = B ? FMath::Lerp(A->FocalDistance, B->FocalDistance, U) : A->FocalDistance;
+		// The view cuts to the last key's camera at or before Time (before the first key: the first key's).
+		const FOKSceneKey* Cut = nullptr;
+		for (const FOKSceneKey& K : T.Keys)
+			if (K.Camera >= -1 && (K.Camera == -1 || Find(K.Camera)) && (!Cut || K.Time <= Time)) Cut = &K;
+		if (Cut) ActiveCamera = Cut->Camera;
 		bAny = true;
 	}
 	for (const FOKSceneTrack& T : Tracks)
