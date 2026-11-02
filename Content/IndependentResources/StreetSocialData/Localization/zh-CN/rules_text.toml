@@ -4,6 +4,8 @@
 
 [academics]
 class_attended = "这堂课有出席。"
+class_soon = "{time} 有「{name}」，你还没到上课的大楼（缺课超过一半会被当）。"
+class_missed = "「{name}」这堂课缺席了（出席 {attended}/{held}）。"
 enrollment_label = "入学"
 exam_failed_score = "{subject}考试 {score, number, ::integer} 分（门槛 {threshold}），没有通过。多读点书再来吧。"
 exam_passed_status = "{subject}考试 {score, number, ::integer} 分（门槛 {threshold}），通过！现在是{student_level}的学生。"

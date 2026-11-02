@@ -331,6 +331,14 @@ pub fn tick(r: &Value) -> Result<Value, String> {
     // Attendance: he counts if he is inside the course's building during its slot; she, if her plan took her there.
     if phase == Phase::Classes && weekday < 5 {
         for slot in 0..2 {
+            // Half an hour before his class he is told, while he is not in its building: he went on two dates through
+            // his first two classes without a word, attendance 0/1 each (R6-122).
+            if me.status == "enrolled" && minute >= SLOT_START[slot] - 30 && minute < SLOT_START[slot] - 25 {
+                if let Some(x) = me.courses.iter().find(|x| x.weekday == weekday && x.slot == slot as i32 && here != x.building) {
+                    let at = format!("{:02}:{:02}", SLOT_START[slot] / 60, SLOT_START[slot] % 60);
+                    message = crate::tr::m("academics.class_soon", &[("name", crate::tr::a(&x.name)), ("time", crate::tr::a(&at))]);
+                }
+            }
             if minute >= SLOT_START[slot] && minute < SLOT_END[slot] {
                 for (k, x) in me.courses.iter().enumerate() {
                     if x.weekday == weekday && x.slot == slot as i32 && here == x.building && !st.seen_in_class.contains(&k) {
@@ -368,6 +376,9 @@ pub fn tick(r: &Value) -> Result<Value, String> {
                 changed = true;
                 if !st.seen_in_class.is_empty() {
                     message = crate::tr::t("academics.class_attended").into();
+                } else if let Some(x) = me.courses.iter().find(|x| me.status == "enrolled" && x.weekday == weekday && x.slot == slot as i32) {
+                    // Missed: said, with the count (more than half missed and the course is failed).
+                    message = crate::tr::m("academics.class_missed", &[("name", crate::tr::a(&x.name)), ("attended", crate::tr::a(&x.attended)), ("held", crate::tr::a(&x.held))]);
                 }
                 st.seen_in_class.clear();
             }
@@ -703,6 +714,14 @@ mod tests {
             let v2 = tick(&json!({"day": 12, "minute": end, "player": me, "heroines": [], "state": {"seen_in_class": [k], "class_closed": "12|0"}})).unwrap();
             assert_eq!(v2["player"]["courses"][k]["attended"], 1);
             assert_eq!(v2["message"], "這堂課有出席。");
+            // Not there: missed, said with the count; half an hour before, told while he is elsewhere (R6-122).
+            let v3 = tick(&json!({"day": 12, "minute": end, "player": me, "heroines": [], "state": {"class_closed": "12|0"}})).unwrap();
+            assert!(v3["message"].as_str().unwrap().contains("缺席"), "{}", v3["message"]);
+            let soon = SLOT_START[c.slot as usize] - 30;
+            let v4 = tick(&json!({"day": 12, "minute": soon, "here": "park", "player": me, "heroines": [], "state": {}})).unwrap();
+            assert!(v4["message"].as_str().unwrap().contains(&c.name), "{}", v4["message"]);
+            let v5 = tick(&json!({"day": 12, "minute": soon, "here": c.building, "player": me, "heroines": [], "state": {}})).unwrap();
+            assert_eq!(v5["message"], "", "in the building already: nothing to say");
         }
         // After both slots closed, later ticks the same evening count nothing again.
         let mut st = json!({});

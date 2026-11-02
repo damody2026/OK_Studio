@@ -4,6 +4,8 @@
 
 [academics]
 class_attended = "Attended this class."
+class_soon = "\"{name}\" starts at {time} and you are not in its building yet (miss more than half and you fail it)."
+class_missed = "You missed \"{name}\" (attended {attended}/{held})."
 enrollment_label = "Enrollment"
 exam_failed_score = "{subject} exam: {score, number, ::integer} points (passing mark {threshold}). Not passed. Hit the books harder next time."
 exam_passed_status = "{subject} exam: {score, number, ::integer} points (passing mark {threshold}). Passed! You're now a student of {student_level}."
