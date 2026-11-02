@@ -184,6 +184,7 @@ static TAutoConsoleVariable<int32> CVarOkAnimationSourceConversion(
 #include "EngineUtils.h"
 #include "Animation/MorphTarget.h"
 #include "Rendering/SkeletalMeshRenderData.h"
+#include "Components/ExternalMorphSet.h"
 #include "GameFramework/GameModeBase.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerState.h"
@@ -5034,6 +5035,9 @@ void AKKPreviewActor::Destroyed()
 void AKKPreviewActor::DestroyAllParts()
 {
 	StopRenderTextureCaptures();
+	// Wrap morph sets released before their renderers go (their GPU buffers must be released first).
+	for(const FOkMouthSlot& Slot:TArray<FOkMouthSlot>(MouthSlots))SetPartWrapDeltas(Slot.SessionPartIndex,{},{});
+	if(!WrapReleases.IsEmpty()){for(auto& R:WrapReleases)if(!R->bReleased)BeginReleaseResource(&R->Set->MorphBuffers);FlushRenderingCommands();WrapReleases.Reset();}
  CookedRoleMaterials.Reset();CookedRoleOutlines.Reset();CookedRoleBuild.Reset();
 	bProductSweep = false; bProductLightLatched = false; ProductCardRamps.Reset(); ProductRampSlots = 0;
 	bSessionLoadComplete = false; SessionLoadNextPart = 0; SessionLoadWhiteRamp = nullptr;
@@ -9342,6 +9346,59 @@ void AKKPreviewActor::ApplyMouth()
             if (Slot.Comp) { Slot.Comp->SetVisibility(bShow, true); Slot.Comp->SetHiddenInGame(!bShow); }
         }
     }
+}
+
+
+// Her body part's skin moved this frame by a set of per-vertex moves (belly_bulge::wrap_deltas: her belly wrapping his
+// penis), drawn as an external morph set on the part's renderers (the ML Deformer's way): one morph at weight 1,
+// rebuilt each call. The sets just replaced stay alive until the render thread is past them. Empty clears it.
+bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& Indices,const TArray<FVector3f>& UnityDeltas,const TArray<FVector3f>& UnityNormalDeltas)
+{
+    const FOkMouthSlot* Slot=MouthSlots.FindByPredicate([PartIndex](const FOkMouthSlot& S){return S.SessionPartIndex==PartIndex;});
+    if(!Slot||Indices.Num()!=UnityDeltas.Num())return false;
+    // A replaced set is still read by the skeletal mesh command pipe a frame or two later (it runs after the ordinary render
+    // commands, so a release sent now came before the morph update that uses it and the set was skipped): released a few
+    // frames on, then dropped once the render thread is past the release.
+    for(int32 P=WrapReleases.Num()-1;P>=0;--P){FOkWrapRelease& R=*WrapReleases[P];
+        if(!R.bReleased){if(GFrameCounter>R.Frame+4){BeginReleaseResource(&R.Set->MorphBuffers);R.Fence.BeginFence();R.bReleased=true;}}
+        else if(R.Fence.IsFenceComplete())WrapReleases.RemoveAtSwap(P);}
+    static constexpr int32 WrapSetId=0x4F4B5752; // 'OKWR'
+    bool bAny=false;
+    for(USkeletalMeshComponent* Mesh:{Slot->Comp,Slot->OutlineComp}){
+        if(!Mesh||!Mesh->GetSkinnedAsset()||!Mesh->IsValidExternalMorphSetLODIndex(0))continue;
+        FSkeletalMeshRenderData* Render=Mesh->GetSkinnedAsset()->GetResourceForRendering();
+        if(!Render||Render->LODRenderData.IsEmpty())continue;
+        const int32 NumVerts=int32(Render->LODRenderData[0].GetNumVertices());
+        // The set it had, released once the render thread is done with it.
+        if(Mesh->HasExternalMorphSet(0,WrapSetId)){
+            TSharedPtr<FExternalMorphSet> Old=Mesh->GetExternalMorphSets(0).FindRef(WrapSetId);
+            Mesh->RemoveExternalMorphSet(0,WrapSetId);
+            if(Old.IsValid()){auto Pending=MakeUnique<FOkWrapRelease>();Pending->Set=Old;Pending->Frame=GFrameCounter;WrapReleases.Add(MoveTemp(Pending));}
+        }
+        if(Indices.IsEmpty()){Mesh->RefreshExternalMorphTargetWeights();continue;}
+        FMorphTargetLODModel Model;Model.Vertices.Reserve(Indices.Num());
+        for(int32 I=0;I<Indices.Num();++I){
+            if(int32(Indices[I])>=NumVerts)continue;
+            FMorphTargetDelta Delta;Delta.PositionDelta=FVector3f(OkToUe(UnityDeltas[I].X,UnityDeltas[I].Y,UnityDeltas[I].Z));
+            // The normal's turn (Unity metres' axes, unit length: OkToUe scales by 100).
+            Delta.TangentZDelta=UnityNormalDeltas.IsValidIndex(I)?FVector3f(OkToUe(UnityNormalDeltas[I].X,UnityNormalDeltas[I].Y,UnityNormalDeltas[I].Z)/100.):FVector3f::ZeroVector;Delta.SourceIdx=Indices[I];Model.Vertices.Add(Delta);
+        }
+        if(Model.Vertices.IsEmpty()){Mesh->RefreshExternalMorphTargetWeights();continue;}
+        Model.NumVertices=Model.Vertices.Num();Model.NumBaseMeshVerts=NumVerts;
+        for(int32 Section=0;Section<Render->LODRenderData[0].RenderSections.Num();++Section)Model.SectionIndices.Add(Section);
+        TSharedPtr<FExternalMorphSet> Set=MakeShared<FExternalMorphSet>();Set->Name=FName(TEXT("OKBellyWrap"));
+        const FMorphTargetLODModel* Models[1]={&Model};
+        Set->MorphBuffers.InitMorphResourcesStreaming(GMaxRHIShaderPlatform,Render->LODRenderData[0].RenderSections,MakeArrayView(Models,1),NumVerts,20.f); // error tolerance in micrometres (0.0001 clamped every move to 2.7 cm)
+        if(!Set->MorphBuffers.IsMorphCPUDataValid()||Set->MorphBuffers.GetNumMorphs()<1)continue;
+        BeginInitResource(&Set->MorphBuffers);
+        Mesh->AddExternalMorphSet(0,WrapSetId,Set);
+        Mesh->RefreshExternalMorphTargetWeights(false);
+        FExternalMorphWeightData& Weights=Mesh->GetExternalMorphWeights(0);
+        if(FExternalMorphSetWeights* W=Weights.MorphSets.Find(WrapSetId)){W->Weights.SetNumZeroed(1);W->Weights[0]=1.f;W->UpdateNumActiveMorphTargets();}
+        Weights.UpdateNumActiveMorphTargets();
+        Mesh->MarkRenderDynamicDataDirty();bAny=true;
+    }
+    return bAny||Indices.IsEmpty();
 }
 
 static FAutoConsoleCommandWithWorldAndArgs GOKPartMorph(

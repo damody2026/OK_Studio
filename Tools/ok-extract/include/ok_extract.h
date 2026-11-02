@@ -117,6 +117,10 @@ int32_t ok_penis_tip(OkSession* s,float* out);
    (negative inside), out[1] distance to the skin vertex that says so, out[2] how far target (the belly.bulge swell that
    moves that vertex most, written to target) moves it at weight 100. 1: no belly.bulge targets. */
 int32_t ok_belly_bulge_past(OkSession* s,const float* tip,float* out,char* target,int32_t cap);
+/* How her body's skin moves this frame to wrap his penis in her: at = her entrance, his glans, the way her belly faces
+   (her skeleton space, metres, 9 floats; that way zero: read off her skin), radius his and a margin. Writes up to max (body vertex index, move in the mesh's own space, Unity
+   metres, then the turn of its normal there: 6 floats each); returns how many there are, -1 on bad input. */
+int32_t ok_belly_wrap_deltas(OkSession* s,const float* at,float radius,uint32_t* out_idx,float* out_d,uint32_t max);
 /* Her hair chains hang under their weight (on 1) or keep the card's own DynamicBone parameters (0). Returns the chains
    changed now, -1 on a bad session. */
 int32_t ok_hang_hair(OkSession* s,int32_t on);

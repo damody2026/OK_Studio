@@ -602,6 +602,12 @@ public:
 	TArray<FName> GetPartMorphNames(int32 SessionPartIndex) const;
 	UFUNCTION(BlueprintCallable, Category="Koikatsu|Morph")
 	bool SetPartMorphWeight(int32 SessionPartIndex, FName Name, float Percent);
+	// A part's skin moved this frame by per-vertex moves (vertex index, Unity metres in the mesh's own space; belly_bulge::
+	// wrap_deltas), drawn as an external morph set on its renderers and rebuilt on each call. Empty clears it.
+	bool SetPartWrapDeltas(int32 SessionPartIndex, const TArray<uint32>& Indices, const TArray<FVector3f>& UnityDeltas, const TArray<FVector3f>& UnityNormalDeltas = TArray<FVector3f>());
+	// External morph sets replaced, kept until the render thread is past them.
+	struct FOkWrapRelease { TSharedPtr<struct FExternalMorphSet> Set; FRenderCommandFence Fence; uint64 Frame=0; bool bReleased=false; };
+	TArray<TUniquePtr<FOkWrapRelease>> WrapReleases;
 	// Insertion depth within the current pose. Authored vagina.open only; bone
 	// spread is used when that morph is absent. Range is owned by paired playback.
 	void DriveVaginaOpening(const AKKPreviewActor& Male, float& RangeMin, float& RangeMax, bool& bRange);

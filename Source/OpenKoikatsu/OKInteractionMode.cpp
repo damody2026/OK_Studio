@@ -150,8 +150,8 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
         bool Green=false;if(Body->TryGetBoolField(TEXT("penis_green"),Green))Panel->SetPenisGreen(Green);
         // {"penis":{"length":1.2,"scale":1.1,"root":[x,y]}}: his penis set as the panel's sliders and pad do.
         const TSharedPtr<FJsonObject>* Penis=nullptr;if(Body->TryGetObjectField(TEXT("penis"),Penis)){double L=-1,S=-1;(*Penis)->TryGetNumberField(TEXT("length"),L);(*Penis)->TryGetNumberField(TEXT("scale"),S);
-            if(L>0||S>0)Panel->SetPenis(L>0?float(L):1.f,S>0?float(S):1.f);
-            const TArray<TSharedPtr<FJsonValue>>* Root=nullptr;if((*Penis)->TryGetArrayField(TEXT("root"),Root)&&Root->Num()==2)Panel->SetRootPad(FVector2D((*Root)[0]->AsNumber(),(*Root)[1]->AsNumber()));}
+            if(L>0||S>0)Panel->SetPenis(L>0?float(L):1.f,S>0?float(S):1.f,5.f);
+            const TArray<TSharedPtr<FJsonValue>>* Root=nullptr;if((*Penis)->TryGetArrayField(TEXT("root"),Root)&&Root->Num()==2)Panel->SetRootPad(FVector2D((*Root)[0]->AsNumber(),(*Root)[1]->AsNumber()),3.f);}
         double FaceCam=0;if(Body->TryGetNumberField(TEXT("face_cam"),FaceCam))Panel->LookAtFace(float(FaceCam));
         double CrotchCam=0;const TSharedPtr<FJsonObject>* CrotchView=nullptr;if(Body->TryGetNumberField(TEXT("crotch_cam"),CrotchCam))Panel->LookAtCrotch(float(CrotchCam));
         else if(Body->TryGetObjectField(TEXT("crotch_cam"),CrotchView)){double Dist=60,Pitch=15,Turn=0;(*CrotchView)->TryGetNumberField(TEXT("distance"),Dist);(*CrotchView)->TryGetNumberField(TEXT("pitch"),Pitch);(*CrotchView)->TryGetNumberField(TEXT("turn"),Turn);bool Front=false;(*CrotchView)->TryGetBoolField(TEXT("front"),Front);Panel->LookAtCrotch(float(Dist),float(Pitch),float(Turn),Front);}

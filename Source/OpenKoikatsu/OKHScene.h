@@ -88,7 +88,7 @@ public:
     // His penis set live (user, 2026-11-02): length (times along his dan bones) and size (his penis root scale), and
     // where its root goes: Pad in the unit circle, its edge RootReach cm off the way into her toward that side, the
     // entrance staying the pivot, so he presses the other way. Up her back, down her belly.
-    void SetPenis(float Length,float Scale);void SetRootPad(const FVector2D& Pad);
+    void SetPenis(float Length,float Scale,float Most=2.f);void SetRootPad(const FVector2D& Pad,float Most=1.f);
     UFUNCTION() void OnPenisLength(float Value);
     UFUNCTION() void OnPenisScale(float Value);
 
@@ -138,7 +138,7 @@ private:
     UPROPERTY() TArray<TObjectPtr<USoundBase>> SoundsPlaying;
     // One of her lines from the intercourse voice table (HSonyu playVoices - 300), in her experience bank.
     bool PlayHVoice(int32 Row);
-    void ApplySpeed();bool bStrokeDeep=false;double StrokeCryAt=0.;float BellyPullback=0.f;bool bPullbackLogged=false;float TipInside=-1.f; // cm his glans is past her entrance along himself (-1 none)
+    void ApplySpeed();bool bStrokeDeep=false;double StrokeCryAt=0.;float BellyPullback=0.f;bool bPullbackLogged=false;float SkinFacing=0.f;bool bBellySide=false;int32 BulgeRefused=0;float WrapMs=0.f,SwellMs=0.f;bool bWrapShown=false;int32 WrapVerts=0; /* her skin moved over him (ReadBulge) */FVector BellyFront=FVector::ZeroVector;float TipInside=-1.f; // cm his glans is past her entrance along himself (-1 none)
     FString Current() const;
     int32 Level() const;
     // She has come as many times as she will this scene (climax_limit): she wants it to stop, the panel offers no more
@@ -160,7 +160,8 @@ private:
     UPROPERTY() TObjectPtr<UTextBlock> PenisLabel;
     UPROPERTY() TObjectPtr<UOKHRootPad> RootPadWidget;
     float PenisLength=1.f,PenisScale=1.f,PenisSetLength=1.f,PenisSetScale=1.f;FVector2D RootPad=FVector2D::ZeroVector;FVector2D RootPadNow=FVector2D::ZeroVector;float RootPadScale=1.f;bool bPenisPanel=false;
-    static constexpr float RootReach=8.f;
+    // Twice the 8 cm it was (user, 2026-11-02: the pad's edge reaches where (0,2) did).
+    static constexpr float RootReach=16.f;
     void ShowPenis();
     UPROPERTY() TObjectPtr<UWrapBox> Actions;
     UPROPERTY() TObjectPtr<UWrapBox> Tabs;

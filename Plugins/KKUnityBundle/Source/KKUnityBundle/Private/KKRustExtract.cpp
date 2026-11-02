@@ -239,6 +239,15 @@ bool FOkSession::BellyBulgePast(const FVector& UnityTip,float& OutPast,float& Ou
 	const float Tip[3]={float(UnityTip.X),float(UnityTip.Y),float(UnityTip.Z)};float Out[3]={};char Target[64]={};
 	if(!Handle||ok_belly_bulge_past(Handle,Tip,Out,Target,64)!=0)return false;
 	OutPast=Out[0];OutNear=Out[1];OutMoves=Out[2];OutTarget=FName(UTF8_TO_TCHAR(Target));return true; }
+bool FOkSession::BellyWrapDeltas(const FVector& From,const FVector& To,const FVector& Up,float RadiusM,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,TArray<FVector3f>* OutNormalDeltas) const {
+	OutIndices.Reset();OutDeltas.Reset();if(OutNormalDeltas)OutNormalDeltas->Reset();if(!Handle)return false;
+	const float At[9]={float(From.X),float(From.Y),float(From.Z),float(To.X),float(To.Y),float(To.Z),float(Up.X),float(Up.Y),float(Up.Z)};
+	TArray<uint32> Idx;TArray<float> D;Idx.SetNumUninitialized(8192);D.SetNumUninitialized(8192*6);
+	int32 N=ok_belly_wrap_deltas(Handle,At,RadiusM,Idx.GetData(),D.GetData(),uint32(Idx.Num()));
+	if(N<0)return false;
+	if(N>Idx.Num()){Idx.SetNumUninitialized(N);D.SetNumUninitialized(N*6);N=ok_belly_wrap_deltas(Handle,At,RadiusM,Idx.GetData(),D.GetData(),uint32(Idx.Num()));if(N<0)return false;}
+	OutIndices.Append(Idx.GetData(),N);OutDeltas.Reserve(N);for(int32 I=0;I<N;++I)OutDeltas.Add(FVector3f(D[I*6],D[I*6+1],D[I*6+2]));
+	if(OutNormalDeltas){OutNormalDeltas->Reserve(N);for(int32 I=0;I<N;++I)OutNormalDeltas->Add(FVector3f(D[I*6+3],D[I*6+4],D[I*6+5]));}return true; }
 bool FOkSession::HeadLookError(float& Residual,float& Excess) const { float Out[2]={0.f,0.f}; if(!Handle||ok_head_look_error(Handle,Out)!=0)return false; Residual=Out[0];Excess=Out[1];return true; }
 bool FOkSession::SetHeadLook(const FVector& Target,bool Enabled) { return Handle&&ok_set_head_look(Handle,Target.X,Target.Y,Target.Z,Enabled?1:0)==0; }
 bool FOkSession::SetFk(const TArray<FString>& Bones,const TArray<FVector>& UnityEuler)
