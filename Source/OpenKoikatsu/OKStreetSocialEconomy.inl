@@ -913,7 +913,11 @@ TSharedRef<SWidget> AOKStreetSocialScene::BuildMenuCard(const FString& Title,int
 // into the aquarium beside him, talking, and only his ticket was bought (R3-267).
 int32 AOKStreetSocialScene::EntryCompanion(const FString& Place) const{
  const auto& S=*State;if(S.Companion!=INDEX_NONE)return S.Companion;if(S.OutingGirl!=INDEX_NONE)return S.OutingGirl;
- return S.RemoteMode==0&&S.Target>0&&S.Agents.IsValidIndex(S.Target-1)&&PlaceHere(S.Agents[S.Target-1].Position)==Place?S.Target:INDEX_NONE;
+ // The girl he is talking with at its door counts too: 三月七 waited with him for the aquarium to open, he walked in a
+ // step ahead, paid his own ticket alone, and hers was never asked for (R6-130).
+ if(S.RemoteMode!=0||S.Target<=0||!S.Agents.IsValidIndex(S.Target-1))return INDEX_NONE;
+ const FVector& At=S.Agents[S.Target-1].Position;const FOKStreetPlace* P=OKStreetFindPlace(Place);
+ return PlaceHere(At)==Place||(P&&FVector::Dist2D(P->Door,At)<1000)?S.Target:INDEX_NONE;
 }
 bool AOKStreetSocialScene::PayEntry(const FString& Place,int32 MinutesInside){
  auto& S=*State;const int32 Her=EntryCompanion(Place);const bool With=S.Manifest.Characters.IsValidIndex(Her)&&Her>0;

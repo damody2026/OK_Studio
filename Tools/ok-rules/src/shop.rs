@@ -438,6 +438,8 @@ fn activity_end(c: &Catalog, r: &Value) -> Result<Value, String> {
     // in front of it charged the ticket twice. Request: admitted (already paid at this place today), ext and day: the
     // ticket bought at the door (entry_fee) counts too; it was charged again at the end of the first activity inside.
     let mut admission = false;
+    // The tickets in the bill, his and hers: "each our own" is each one's ticket, not half of what is left.
+    let mut tickets = (0i64, 0i64);
     let mut ext = r.get("ext").cloned().filter(Value::is_object);
     let day = r.get("day").and_then(Value::as_i64);
     for cst in COSTS.iter().filter(|cst| id.starts_with(cst.0)) {
@@ -462,6 +464,7 @@ fn activity_end(c: &Catalog, r: &Value) -> Result<Value, String> {
                     let fee = |student: bool| crate::region::amount("price", if student && pl.entry_student > 0 { pl.entry_student } else { pl.entry }) as i32;
                     let him = if in_today(cst.0) { 0 } else { fee(him_student) };
                     let her = match &her_key { Some(k) if !in_today(k) => fee(her_student), _ => 0 };
+                    tickets = (tickets.0 + him as i64, tickets.1 + her as i64);
                     him + her
                 }
                 _ => crate::region::price(cst.1 as i64) as i32,
@@ -527,9 +530,14 @@ fn activity_end(c: &Catalog, r: &Value) -> Result<Value, String> {
                 payer = crate::tr::t("shop.she_treats").into();
                 payer_her = crate::tr::t("shop.her_view_she_treats").into();
                 treat_kept = true;
-            } else if lean == "split" && rng.frand() < insist && rel.cash >= price64 / 2 && his >= price64 - price64 / 2 {
-                rel.cash -= price64 / 2;
-                fx.cash(-(price64 - price64 / 2), "treat", &crate::tr::m("shop.split_half_label", &[("why", crate::tr::a(&why))]));
+            } else if let Some((mine, hers)) = (lean == "split")
+                // Only tickets in the bill: each pays their own. His was bought at the door and hers came due at the tank;
+                // "各付各的" took half of hers from him too (R6-131).
+                .then(|| if tickets.0 + tickets.1 == price64 { tickets } else { (price64 - price64 / 2, price64 / 2) })
+                .filter(|&(mine, hers)| rng.frand() < insist && rel.cash >= hers && his >= mine)
+            {
+                rel.cash -= hers;
+                fx.cash(-mine, "treat", &crate::tr::m("shop.split_half_label", &[("why", crate::tr::a(&why))]));
                 payer = crate::tr::t("shop.split_half").into();
                 payer_her = payer.clone();
             } else if his >= price64 {
@@ -1063,6 +1071,11 @@ mod tests {
         let alone = activity_end(&c, &json!({"id": "aquarium_observe", "kind": "solo", "name": "看魚", "player_cash": 1000, "day": 5,
             "ext": {"entries": {"aquarium": 5}}, "relation": rel(json!({"cash": 0})), "profile": {}, "seed": 1})).unwrap();
         assert_eq!((alone["price"].as_i64(), alone["ext"]["entries"]["aquarium|a"].as_i64()), (Some(96), Some(5)), "{alone}");
+        // "各付各的" with his ticket bought at the door: she pays all of hers, he pays nothing more (R6-131: half of hers).
+        let own = activity_end(&c, &json!({"id": "aquarium_observe", "kind": "solo", "name": "看魚", "player_cash": 1000, "day": 5, "agreed": "split",
+            "ext": {"entries": {"aquarium": 5}}, "relation": rel(json!({"cash": 500})), "profile": {}, "seed": 1})).unwrap();
+        assert_eq!(own["price"].as_i64(), Some(96), "{own}");
+        assert!(!own["effects"].to_string().contains("\"op\":\"cash\""), "he paid part of her ticket: {own}");
         // Hers at the student price, as the door would charge her (R6-3: a flat ¥60 after his ¥74 at the door).
         let student = activity_end(&c, &json!({"id": "aquarium_observe", "kind": "solo", "name": "看魚", "player_cash": 1000, "day": 5, "her_status": "enrolled",
             "ext": {"entries": {"aquarium": 5}}, "relation": rel(json!({"cash": 0})), "profile": {}, "seed": 1})).unwrap();
