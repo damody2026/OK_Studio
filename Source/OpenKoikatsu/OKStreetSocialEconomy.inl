@@ -279,7 +279,7 @@ void AOKStreetSocialScene::RecordPayAgreed(int32 Girl,const FString& How,const F
 // He pays her back the bill she just paid here (the judge's pays_her_back, or "my treat" right after her own bill).
 void AOKStreetSocialScene::PayHerBack(int32 Girl){
  auto& S=*State;
- if(Girl==S.HerPaidGirl&&S.HerPaidAmount>0&&!S.HerPaidShop.IsEmpty()&&S.HerPaidShop==ShopPlaceHere()&&OKStreetMindNow(S)-S.HerPaidAt<=15&&S.Store.PlayerCash>=S.HerPaidAmount){
+ if(Girl==S.HerPaidGirl&&S.HerPaidAmount>0&&!S.HerPaidShop.IsEmpty()&&(S.HerPaidShop==ShopPlaceHere()||S.HerPaidShop==PlaceHere(S.Male))&&OKStreetMindNow(S)-S.HerPaidAt<=15&&S.Store.PlayerCash>=S.HerPaidAmount){
   const int64 Back=S.HerPaidAmount;S.HerPaidAmount=0;GiveMoneyNow(Girl,Back);S.PaidBackGirl=Girl;S.PaidBackAmount=Back;S.PaidBackAt=OKStreetMindNow(S);
   // That bill's note ("you paid your own, he did not treat you") not yet heard is out of date now: it reached her after
   // the money was back and she said "I paid it myself after all" (R6-45).
@@ -911,6 +911,9 @@ int32 AOKStreetSocialScene::EntryCompanion(const FString& Place) const{
 }
 bool AOKStreetSocialScene::PayEntry(const FString& Place,int32 MinutesInside){
  auto& S=*State;const int32 Her=EntryCompanion(Place);const bool With=S.Manifest.Characters.IsValidIndex(Her)&&Her>0;
+ // What he is saying to her may be who pays: wait for her answer. 三月七's ticket was bought by her own lean while he
+ // was saying 「门票我请」, and she answered 「说好你请的，怎么变成我自己掏钱了」 (R6-111).
+ if(With&&S.FreeTalkBusy&&S.Target==Her)return false;
  const FString HerId=With?OKStreetStableId(S.Manifest.Characters[Her]):FString();
  auto Request=With?OKRulesHeroineRequest(S,TEXT("entry_fee"),HerId):OKRulesRequest(TEXT("entry_fee"));OKRulesPutExt(S,Request);
  Request->SetStringField(TEXT("place"),Place);Request->SetNumberField(TEXT("player_cash"),double(S.Store.PlayerCash));Request->SetNumberField(TEXT("minutes_inside"),MinutesInside);
@@ -924,5 +927,7 @@ bool AOKStreetSocialScene::PayEntry(const FString& Place,int32 MinutesInside){
   S.FreeTalkNotice=Notice;S.Message=Notice;UE_LOG(LogTemp,Display,TEXT("Street entry: %s refused (%s)"),*Place,*Notice);RefreshUI();return true;}
  auto Candidate=S.Store;OKRulesTakeExt(Candidate,*Out);ApplyRulesEffects(Candidate,*Out);if(!CommitStore(MoveTemp(Candidate)))return true;FlushRulesEffects();
  if(With)S.TellHer.Add(OKMsg(TEXT("ui.scene.game_fact_note"),{{TEXT("fact"),Notice}}));
+ // Her own ticket is a bill he can pay back (pays_her_back): 三月七 said "then I'll take it" and no money moved (R6-112).
+ if(const int64 HerPays=int64(Out->GetNumberField(TEXT("her_pay")));With&&HerPays>0){S.HerPaidGirl=Her;S.HerPaidAmount=HerPays;S.HerPaidShop=Place;S.HerPaidAt=OKStreetMindNow(S);S.HerPaidAgreed=PayAgreed(Her)==TEXT("her");S.HerPaidNote=S.TellHer.Last();}
  S.FreeTalkNotice=Notice;UE_LOG(LogTemp,Display,TEXT("Street entry: %s %s (day %d, actor %d, %d minutes in)"),*Place,*Notice,S.Store.CalendarDay,With?Her:-1,MinutesInside);RefreshUI();return true;
 }

@@ -159,7 +159,11 @@ void AOKStreetSocialScene::TickSchedules(){
  if(Now!=S.PlaceCountMinute){S.PlaceCountMinute=Now;const FString Here=PlaceHere(S.Male);if(!Here.IsEmpty())++S.PlayerPlaceMinutes.FindOrAdd(Here);
   // Walked into another place: its admission, if it has one (shop.rs entry_fee).
   // Where a game or a save starts him is free; elsewhere the rules ask each minute until they settle it (passing the door is not going in).
-  if(Here!=S.EntryPlace){S.EntryPlace=Here;S.EntryMinutes=0;S.bEntrySettled=Here.IsEmpty()||!S.bEntryPlaceKnown;}else ++S.EntryMinutes;
+  // Waiting at the door, or there while it is closed, is not going in: waiting for 胡桃 at the aquarium's door from 08:27,
+  // he was charged ¥74 the minute it opened at nine, alone (R6-110).
+  const FOKStreetPlace* HerePlace=Here.IsEmpty()?nullptr:OKStreetFindPlace(Here);FString ClosedWhy;
+  const bool NotIn=HerePlace&&((!HerePlace->Door.IsNearlyZero()&&FVector::Dist2D(S.Male,HerePlace->Door)<300.f)||PlaceClosedNow(Here,ClosedWhy));
+  if(Here!=S.EntryPlace){S.EntryPlace=Here;S.EntryMinutes=0;S.bEntrySettled=Here.IsEmpty()||!S.bEntryPlaceKnown;}else if(NotIn)S.EntryMinutes=0;else ++S.EntryMinutes;
   // She joined him inside (he bought his ticket alone, she met him in the hall): asked again, and the rules charge
   // only the ticket not bought yet today (R3-110).
   const int32 WithHer=EntryCompanion(Here);
