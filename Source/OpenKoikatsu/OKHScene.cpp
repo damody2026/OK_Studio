@@ -715,7 +715,6 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     if(HalfInner&&PanelWidth){const float High=2.f*float(PanelWidth->GetCachedGeometry().GetLocalSize().Y);if(High>10.f&&!FMath::IsNearlyEqual(High,HalfInner->GetHeightOverride(),1.f))HalfInner->SetHeightOverride(High);}
     if(!Gallery)return;
     if(Poses.IsEmpty()&&!Gallery->NativePairs.IsEmpty()){LoadPoses();BuildList();}
-    if(!IsValid(Gallery->PairedPlayback.Get()))HangHair(Gallery->PreviewActor.Get());
     TickDrips(Delta);Tremble(FPlatformTime::Seconds());TickSounds();SwellBust(Delta);
     // Her breathing as the original picks it (HVoiceCtrl): her gauge past 50 and his fast motion (voice.speedMotion,
     // with its own up and down marks) change the cries, her experience the bank. A change starts the matching set
@@ -1444,19 +1443,11 @@ void UOKHScenePanel::ReadBulge(AKKPreviewActor* Girl,const FVector& Tip,const FV
         if(!bAny||Over>Most){bAny=true;Most=Over;BulgeTarget=Target;BulgePast=Past;BulgeMoves=Moves;}}
     if(!bAny)BulgeTarget=NAME_None;
 }
-// Her hair hangs under its weight in the scene (user, 2026-11-01: leaning forward it stayed level behind her head; the
-// scene may leave the card's hair weight and stiffness). Asked again each time: a part whose dynamics are rebuilt starts
-// from the card's own. Only while her session is not being solved (ReadPairSessions, or with no pair playback).
-void UOKHScenePanel::HangHair(AKKPreviewActor* Girl){
-    if(!IsValid(Girl))return;const int32 Chains=Girl->Session.HangHair(true);
-    if(Chains>0)UE_LOG(LogTemp,Display,TEXT("H scene: her hair let hang (%d chains)"),Chains);
-}
 void UOKHScenePanel::ReadPairSessions(){
     // Both sessions are idle and show this frame (AKKPairedPlayback::OnSessionsIdle). Reading them at any other time while
     // the pair plays meant either a crash (the solve was writing them) or values several frames old: a tick almost never
     // finds the background solve finished, and the swell missed his glans coming out.
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;auto* Him=Gallery?Gallery->PartnerActor.Get():nullptr;FVector P0,Glans;
-    HangHair(Girl);
     if(IsValid(Him)&&(PenisSetLength!=PenisLength||PenisSetScale!=PenisScale)&&Him->Session.SetPenisSize(PenisLength,PenisScale)){PenisSetLength=PenisLength;PenisSetScale=PenisScale;
         UE_LOG(LogTemp,Display,TEXT("H scene: his penis length x%.2f size x%.2f"),PenisLength,PenisScale);}
     if(!IsValid(Girl)||!IsValid(Him)||AlignedHim!=Him||!HBone(Him,TEXT("J_dan100_00"),P0)||!Him->Session.PenisTip(Glans))return;

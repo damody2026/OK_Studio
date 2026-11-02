@@ -246,7 +246,7 @@ private:
     void BulgeBelly(class AKKPreviewActor* Girl,const FVector* Tip,float Off,float Delta);
     // His glans and how far it is out of her skin, read from both sessions when the pair playback says they are idle
     // (AKKPairedPlayback::OnSessionsIdle); without a playback, AlignHim and BulgeBelly read them themselves.
-    float AimTilt=35.f;void ReadPairSessions();void ReadBulge(class AKKPreviewActor* Girl,const FVector& Tip,const FVector* Root=nullptr);float AimRelax=0.f;float SkinOutMost=-100.f;float SkinUnderMost=-100.f;float SkinWorst=-100.f;float SkinRest=0.f;float SkinWorstAlong=0.f;FVector SkinNormal=FVector::ZeroVector;FVector RootDodge=FVector::ZeroVector;float DepthCap=1.f;void HangHair(class AKKPreviewActor* Girl);int32 LiftedPose=INDEX_NONE;bool bLifted=false;
+    float AimTilt=35.f;void ReadPairSessions();void ReadBulge(class AKKPreviewActor* Girl,const FVector& Tip,const FVector* Root=nullptr);float AimRelax=0.f;float SkinOutMost=-100.f;float SkinUnderMost=-100.f;float SkinWorst=-100.f;float SkinRest=0.f;float SkinWorstAlong=0.f;FVector SkinNormal=FVector::ZeroVector;FVector RootDodge=FVector::ZeroVector;float DepthCap=1.f;int32 LiftedPose=INDEX_NONE;bool bLifted=false;
     TWeakObjectPtr<class AKKPairedPlayback> ReadingPlayback;FDelegateHandle ReadingHandle;
     TMap<FName,float> Bulge;int32 BulgePart=INDEX_NONE;FName BulgeOpen;float OpenEased=0.f;FName BulgeTarget;float BulgePast=0.f,BulgeMoves=0.f;bool bBulgeLogged=false;TWeakObjectPtr<class AKKPreviewActor> BulgedHer;
     // The girl whose shoes were taken off on coming into her room (NativeTick): once each, she may put them back on.
