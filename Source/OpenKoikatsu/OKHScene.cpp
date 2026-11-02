@@ -1379,6 +1379,7 @@ void UOKHScenePanel::GripHim(AKKPreviewActor* Girl,AKKPreviewActor* Him,const FV
 }
 void UOKHScenePanel::RestoreAlign(){
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;auto* Him=Gallery?Gallery->PartnerActor.Get():nullptr;
+    WrapIdxShown.Reset();WrapDShown.Reset();WrapNShown.Reset();if(AKKPreviewActor* Was=ClothGirl.Get()){for(int32 Part:ClothShown)Was->SetPartWrapDeltas(Part,{},{});TArray<int32> None;Was->Session.SetClothCover(false,{},{},{},None);Was->CpuSkinnedParts.Reset();}ClothGirl=nullptr;ClothCpuUntil.Reset();ClothShown.Reset();ClothVerts=0;
     if(IsValid(Girl)&&(BustSwellSet!=1.f||OralSuckSet!=0.f))Girl->MarkShapeDirty(Gallery->Selected.Face.ShapeValueFace,Gallery->Selected.Body.ShapeValueBody); // her own bust and face again
     if(IsValid(Girl)&&OralGazeSet!=0.f&&!bAhegaoShown)Girl->SetEyeGaze(0.f,0.f,0.f);
     BustSwell=BustSwellSet=1.f;OralSuck=OralSuckSet=OralGazeSet=OralPull=OralPullSet=0.f;bSucking=false;if(IsValid(Girl)){Girl->HiddenMouthInside=0;Girl->SetMouthOpenFloor(0.f);}
@@ -1400,7 +1401,7 @@ void UOKHScenePanel::BulgeBelly(AKKPreviewActor* Girl,const FVector* Tip,float O
     // Where his tip is against her skin now: read when the pair playback has the sessions idle (ReadPairSessions); with
     // none, here.
     FVector Kokan;
-    if(!Tip){BulgeTarget=NAME_None;if(bWrapShown&&IsValid(Girl)){Girl->SetPartWrapDeltas(BulgePart,{},{});bWrapShown=false;}
+    if(!Tip){BulgeTarget=NAME_None;WrapIdxShown.Reset();WrapDShown.Reset();WrapNShown.Reset();if(bWrapShown&&IsValid(Girl)){Girl->SetPartWrapDeltas(BulgePart,{},{});bWrapShown=false;}
         if(bClipShown&&ClipHim.IsValid()){ClipHim->SetPartWrapDeltas(ClipPart,{},{});bClipShown=false;ClipVerts=0;}if(bWrapLineShown&&IsValid(Girl)){Girl->SetWrapLine(false,FVector::ZeroVector,FVector::ZeroVector,0.f,FString());bWrapLineShown=false;}}
     else if(!IsValid(Gallery?Gallery->PairedPlayback.Get():nullptr))ReadBulge(Girl,*Tip);
     // Once his tip is past her skin (inside, the margin swelled her where he does not show), out by how far and 2.5 cm
@@ -1489,7 +1490,7 @@ void UOKHScenePanel::ReadBulge(AKKPreviewActor* Girl,const FVector& Tip,const FV
      // 3: her belly bones (BetterPenetration's way, the bones added to her body here) pushed by him, the skin with them.
      if(!E.IsZero()&&(WrapMode==1||WrapMode==3)&&TipInside>=6.f)Girl->Session.BellyWrapDeltas(ToUnity(E),ToUnity(Tip),Front.IsZero()?FVector::ZeroVector:(ToUnity(Kokan+Front*10.)-ToUnity(Kokan)).GetSafeNormal(),(Radius+.5f)/100.f,Idx,D,&N,WrapMode==3);
      if(const float Test=CVarHWrapTest.GetValueOnGameThread();Test!=0.f)for(FVector3f& V:D)V=FVector3f(0.f,Test,0.f);
-     if(D.Num()||bWrapShown){Girl->SetPartWrapDeltas(BulgePart,Idx,D,N);bWrapShown=D.Num()>0;}WrapVerts=D.Num();
+     if(D.Num()||bWrapShown){Girl->SetPartWrapDeltas(BulgePart,Idx,D,N);bWrapShown=D.Num()>0;}WrapVerts=D.Num();WrapIdxShown=Idx;WrapDShown=D;WrapNShown=N;
      // ok.HScene.Wrap 2 (the material route, to compare): her skin parents with the wrap offset push her skin off the
      // segment from her entrance to his glans, his radius and half a centimetre (as above) out; nothing while he is in
      // her entrance alone.
@@ -1600,11 +1601,36 @@ void UOKHScenePanel::HideInMouth(AKKPreviewActor* Girl,AKKPreviewActor* Him){
         for(int32 I=D.Num()-1;I>=0;--I)if(D[I].SizeSquared()<1e-8f){D.RemoveAtSwap(I);Idx.RemoveAtSwap(I);}}
     if(D.Num()||MouthClipVerts){Him->SetPartWrapDeltas(MouthClipPart,Idx,D);MouthClipVerts=D.Num();}
 }
+// Her clothes kept over her skin (user, 2026-11-02: her nipples, her swollen bust and her belly lifted over his penis came
+// through her clothes): each frame her breasts and the skin lifted over him push her garments out over them
+// (belly_bulge::cover_deltas), drawn as a morph of each garment. ok.HScene.ClothCover 0 leaves her clothes as they are.
+static TAutoConsoleVariable<int32> CVarHClothCover(TEXT("ok.HScene.ClothCover"),1,TEXT("1: her clothes are pushed out over her breasts and her belly lifted over his penis (belly_bulge::cover_deltas); 0 off"));
+void UOKHScenePanel::CoverClothes(AKKPreviewActor* Girl){
+    if(ClothGirl.Get()!=Girl){if(AKKPreviewActor* Was=ClothGirl.Get()){for(int32 Part:ClothShown)Was->SetPartWrapDeltas(Part,{},{});TArray<int32> None;Was->Session.SetClothCover(false,{},{},{},None);Was->CpuSkinnedParts.Reset();}ClothShown.Reset();ClothCpuUntil.Reset();ClothGirl=Girl;}
+    if(!IsValid(Girl))return;
+    // Her garments with their own rig, as they are skinned on the CPU in her next frame (drawn from those vertices then:
+    // the private GPU route skins its own copy of the rest mesh); those on her body skeleton below, as a morph.
+    // Kept there two seconds after it last reached her pushing skin: switching a garment between the routes each frame
+    // rebuilt its GPU display every time.
+    {TArray<int32> Cpu;Girl->Session.SetClothCover(CVarHClothCover.GetValueOnGameThread()!=0,WrapIdxShown,WrapDShown,WrapNShown,Cpu);
+     const double Now=FPlatformTime::Seconds();for(int32 Part:Cpu)ClothCpuUntil.Add(Part,Now+2.);
+     for(auto It=ClothCpuUntil.CreateIterator();It;++It)if(It.Value()<Now||Cpu.IsEmpty()&&CVarHClothCover.GetValueOnGameThread()==0)It.RemoveCurrent();
+     TSet<int32> Keep;ClothCpuUntil.GetKeys(Keep);if(!Keep.Includes(Girl->CpuSkinnedParts)||!Girl->CpuSkinnedParts.Includes(Keep))Girl->CpuSkinnedParts=MoveTemp(Keep);}
+    const double T0=FPlatformTime::Seconds();TArray<int32> Parts;TArray<uint32> Idx;TArray<FVector3f> D;
+    if(CVarHClothCover.GetValueOnGameThread()!=0)Girl->Session.ClothCoverDeltas(WrapIdxShown,WrapDShown,WrapNShown,Parts,Idx,D);
+    TMap<int32,TPair<TArray<uint32>,TArray<FVector3f>>> ByPart;
+    // Moves under a tenth of a millimetre dropped: a set of only those has no morph batches and the engine asserts.
+    for(int32 I=0;I<Parts.Num();++I)if(D[I].SizeSquared()>=1e-8f){auto& P=ByPart.FindOrAdd(Parts[I]);P.Key.Add(Idx[I]);P.Value.Add(D[I]);}
+    for(auto It=ClothShown.CreateIterator();It;++It)if(!ByPart.Contains(*It)){Girl->SetPartWrapDeltas(*It,{},{});It.RemoveCurrent();}
+    ClothVerts=0;for(const auto& P:ByPart)if(Girl->SetPartWrapDeltas(P.Key,P.Value.Key,P.Value.Value)){ClothShown.Add(P.Key);ClothVerts+=P.Value.Key.Num();}
+    ClothMs=float((FPlatformTime::Seconds()-T0)*1000.);
+}
 void UOKHScenePanel::ReadPairSessions(){
     // Both sessions are idle and show this frame (AKKPairedPlayback::OnSessionsIdle). Reading them at any other time while
     // the pair plays meant either a crash (the solve was writing them) or values several frames old: a tick almost never
     // finds the background solve finished, and the swell missed his glans coming out.
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;auto* Him=Gallery?Gallery->PartnerActor.Get():nullptr;FVector P0,Glans;
+    ON_SCOPE_EXIT{CoverClothes(Girl);};
     if(TearsWanted)SpawnTears(Girl);AimIntoMouth(Girl,Him);HideInMouth(Girl,Him);
     if(IsValid(Him)&&(PenisSetLength!=PenisLength||PenisSetScale!=PenisScale)&&Him->Session.SetPenisSize(PenisLength,PenisScale)){PenisSetLength=PenisLength;PenisSetScale=PenisScale;
         UE_LOG(LogTemp,Display,TEXT("H scene: his penis length x%.2f size x%.2f"),PenisLength,PenisScale);}
@@ -1966,7 +1992,7 @@ TSharedRef<FJsonObject> UOKHScenePanel::Describe() const{
     O->SetNumberField(TEXT("blush"),BlushMats.IsEmpty()?-1.f:BlushShown);
     O->SetStringField(TEXT("state"),Current());O->SetStringField(TEXT("wanted"),Wanted);O->SetNumberField(TEXT("mode"),Mode);
     TArray<TSharedPtr<FJsonValue>> Q;for(const FString& S:Queue)Q.Add(MakeShared<FJsonValueString>(S));O->SetArrayField(TEXT("queue"),Q);
-    O->SetNumberField(TEXT("playback_speed"),PlaybackSpeed());if(Gallery&&Gallery->PreviewActor)O->SetNumberField(TEXT("breath_rate"),Gallery->PreviewActor->SpeechTempo);O->SetBoolField(TEXT("hooked"),Hooked());O->SetNumberField(TEXT("oral_suck"),OralSuckSet);O->SetNumberField(TEXT("oral_pull"),OralPullSet);O->SetNumberField(TEXT("mouth_turned"),bMouthAimed?MouthTurned:0.f);O->SetStringField(TEXT("mouth_dbg"),MouthDbg.ToString());O->SetNumberField(TEXT("mouth_hidden_verts"),MouthClipVerts);O->SetNumberField(TEXT("bust_swell"),BustSwellSet);O->SetNumberField(TEXT("depth_top"),AlignDeep);O->SetNumberField(TEXT("belly_out"),BulgeTarget.IsNone()?-1.f:BulgePast);O->SetNumberField(TEXT("belly_allow"),FMath::Max(0.f,BulgeMoves-2.5f));O->SetNumberField(TEXT("pullback"),BellyPullback);O->SetNumberField(TEXT("tip_inside"),TipInside);O->SetNumberField(TEXT("aim_relax"),AimRelax);O->SetNumberField(TEXT("skin_out"),SkinOutMost);O->SetNumberField(TEXT("skin_under"),SkinUnderMost);O->SetNumberField(TEXT("skin_worst"),SkinWorst);O->SetNumberField(TEXT("skin_rest"),SkinRest);O->SetNumberField(TEXT("skin_along"),SkinWorstAlong);O->SetNumberField(TEXT("root_dodge"),RootDodge.Size());O->SetNumberField(TEXT("depth_cap"),DepthCap);{auto Wr=MakeShared<FJsonObject>();for(const auto& W:Bulge)if(W.Value>1.f)Wr->SetNumberField(W.Key.ToString(),FMath::RoundToFloat(W.Value));O->SetObjectField(TEXT("swells"),Wr);O->SetNumberField(TEXT("swells_refused"),BulgeRefused);O->SetNumberField(TEXT("wrap_ms"),WrapMs);O->SetNumberField(TEXT("wrap_verts"),WrapVerts);O->SetNumberField(TEXT("clip_verts"),ClipVerts);O->SetNumberField(TEXT("back_exit"),BackExitCm);O->SetNumberField(TEXT("clip_lead"),ClipLeadCm);O->SetNumberField(TEXT("swell_ms"),SwellMs);O->SetNumberField(TEXT("swell_part"),BulgePart);}O->SetNumberField(TEXT("skin_facing"),SkinFacing);O->SetBoolField(TEXT("belly_side"),bBellySide);if(Gallery&&Gallery->PreviewActor){const FTransform& HerT=Gallery->PreviewActor->GetActorTransform();auto Vec=[&](const TCHAR* Name,const FVector& V){FVector U=AKKPreviewActor::ActorLocalToUnity(HerT.InverseTransformVectorNoScale(V))*100.;float K[16];if(Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_j_kokan"),K)||Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_J_Kokan"),K)){const FVector X(K[0],K[4],K[8]),Y(K[1],K[5],K[9]),Z(K[2],K[6],K[10]);U=FVector(U|X.GetSafeNormal(),U|Y.GetSafeNormal(),U|Z.GetSafeNormal());}TArray<TSharedPtr<FJsonValue>> A;A.Add(MakeShared<FJsonValueNumber>(U.X));A.Add(MakeShared<FJsonValueNumber>(U.Y));A.Add(MakeShared<FJsonValueNumber>(U.Z));O->SetArrayField(Name,A);};Vec(TEXT("dodge_her"),RootDodge);Vec(TEXT("skin_normal_her"),SkinNormal);Vec(TEXT("front_her"),BellyFront);}O->SetNumberField(TEXT("root_scale"),RootPadScale);O->SetBoolField(TEXT("xray"),bPenisXRay);if(Gallery&&Gallery->PairedPlayback)O->SetNumberField(TEXT("pair_rate"),Gallery->PairedPlayback->GetSpeed());O->SetNumberField(TEXT("held"),Held.Num());O->SetStringField(TEXT("caption"),Caption?Caption->GetText().ToString():FString());
+    O->SetNumberField(TEXT("playback_speed"),PlaybackSpeed());if(Gallery&&Gallery->PreviewActor)O->SetNumberField(TEXT("breath_rate"),Gallery->PreviewActor->SpeechTempo);O->SetBoolField(TEXT("hooked"),Hooked());O->SetNumberField(TEXT("oral_suck"),OralSuckSet);O->SetNumberField(TEXT("oral_pull"),OralPullSet);O->SetNumberField(TEXT("mouth_turned"),bMouthAimed?MouthTurned:0.f);O->SetStringField(TEXT("mouth_dbg"),MouthDbg.ToString());O->SetNumberField(TEXT("mouth_hidden_verts"),MouthClipVerts);O->SetNumberField(TEXT("bust_swell"),BustSwellSet);O->SetNumberField(TEXT("depth_top"),AlignDeep);O->SetNumberField(TEXT("belly_out"),BulgeTarget.IsNone()?-1.f:BulgePast);O->SetNumberField(TEXT("belly_allow"),FMath::Max(0.f,BulgeMoves-2.5f));O->SetNumberField(TEXT("pullback"),BellyPullback);O->SetNumberField(TEXT("tip_inside"),TipInside);O->SetNumberField(TEXT("aim_relax"),AimRelax);O->SetNumberField(TEXT("skin_out"),SkinOutMost);O->SetNumberField(TEXT("skin_under"),SkinUnderMost);O->SetNumberField(TEXT("skin_worst"),SkinWorst);O->SetNumberField(TEXT("skin_rest"),SkinRest);O->SetNumberField(TEXT("skin_along"),SkinWorstAlong);O->SetNumberField(TEXT("root_dodge"),RootDodge.Size());O->SetNumberField(TEXT("depth_cap"),DepthCap);{auto Wr=MakeShared<FJsonObject>();for(const auto& W:Bulge)if(W.Value>1.f)Wr->SetNumberField(W.Key.ToString(),FMath::RoundToFloat(W.Value));O->SetObjectField(TEXT("swells"),Wr);O->SetNumberField(TEXT("swells_refused"),BulgeRefused);O->SetNumberField(TEXT("wrap_ms"),WrapMs);O->SetNumberField(TEXT("wrap_verts"),WrapVerts);O->SetNumberField(TEXT("cloth_verts"),ClothVerts);O->SetNumberField(TEXT("cloth_ms"),ClothMs);O->SetNumberField(TEXT("clip_verts"),ClipVerts);O->SetNumberField(TEXT("back_exit"),BackExitCm);O->SetNumberField(TEXT("clip_lead"),ClipLeadCm);O->SetNumberField(TEXT("swell_ms"),SwellMs);O->SetNumberField(TEXT("swell_part"),BulgePart);}O->SetNumberField(TEXT("skin_facing"),SkinFacing);O->SetBoolField(TEXT("belly_side"),bBellySide);if(Gallery&&Gallery->PreviewActor){const FTransform& HerT=Gallery->PreviewActor->GetActorTransform();auto Vec=[&](const TCHAR* Name,const FVector& V){FVector U=AKKPreviewActor::ActorLocalToUnity(HerT.InverseTransformVectorNoScale(V))*100.;float K[16];if(Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_j_kokan"),K)||Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_J_Kokan"),K)){const FVector X(K[0],K[4],K[8]),Y(K[1],K[5],K[9]),Z(K[2],K[6],K[10]);U=FVector(U|X.GetSafeNormal(),U|Y.GetSafeNormal(),U|Z.GetSafeNormal());}TArray<TSharedPtr<FJsonValue>> A;A.Add(MakeShared<FJsonValueNumber>(U.X));A.Add(MakeShared<FJsonValueNumber>(U.Y));A.Add(MakeShared<FJsonValueNumber>(U.Z));O->SetArrayField(Name,A);};Vec(TEXT("dodge_her"),RootDodge);Vec(TEXT("skin_normal_her"),SkinNormal);Vec(TEXT("front_her"),BellyFront);}O->SetNumberField(TEXT("root_scale"),RootPadScale);O->SetBoolField(TEXT("xray"),bPenisXRay);if(Gallery&&Gallery->PairedPlayback)O->SetNumberField(TEXT("pair_rate"),Gallery->PairedPlayback->GetSpeed());O->SetNumberField(TEXT("held"),Held.Num());O->SetStringField(TEXT("caption"),Caption?Caption->GetText().ToString():FString());
     O->SetNumberField(TEXT("her"),Her);O->SetNumberField(TEXT("his"),His);
     // Her development as the scene uses it now (her own plus this scene's climaxes), and how long her climax and her
     // nipples' spray have left (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md).

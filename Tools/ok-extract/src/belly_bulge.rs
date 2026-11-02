@@ -13,6 +13,8 @@ mod bones;
 pub use bones::bone_deltas;
 mod clip;
 pub use clip::{back_exit, clip_deltas};
+mod cover;
+pub use cover::{cover_deltas, set_cover, CoverField};
 
 /// Where the swells are along her crotch-to-upper-spine line (fractions of it): her belly only, from just over her
 /// crotch up (user 2026-11-01: the swells under it, on her upper thighs and by her entrance, moved her thighs).

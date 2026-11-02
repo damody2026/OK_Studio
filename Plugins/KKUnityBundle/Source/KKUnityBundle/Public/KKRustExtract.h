@@ -209,6 +209,12 @@ public:
 	// Where the line From her entrance To his glans comes out of her through her back (ok_back_exit; Up the way her belly
 	// faces, her skeleton space, Unity metres): the place and her skin's outward normal there. False when it does not.
 	bool BackExit(const FVector& From,const FVector& To,const FVector& Up,FVector& OutAt,FVector& OutNormal) const;
+	// Her clothes kept over her skin this frame (ok_cover_deltas): her body's skin moves (as BellyWrapDeltas gave them; may be
+	// empty) in, each garment vertex's move out (session part index, vertex index, move in the mesh's own space, Unity metres).
+	// Her garments with their own rig kept over her skin as they are skinned on the CPU (ok_set_cover), or no longer; her
+	// body's skin moves now as for ClothCoverDeltas. OutParts: the garments it moves (to be drawn from their CPU vertices).
+	bool SetClothCover(bool bOn,const TArray<uint32>& BodyIndices,const TArray<FVector3f>& BodyDeltas,const TArray<FVector3f>& BodyNormalDeltas,TArray<int32>& OutParts);
+	bool ClothCoverDeltas(const TArray<uint32>& BodyIndices,const TArray<FVector3f>& BodyDeltas,const TArray<FVector3f>& BodyNormalDeltas,TArray<int32>& OutParts,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas) const;
 	// His penis past her skin folded under it (ok_penis_clip_deltas, his skeleton space): At where he comes out, Normal
 	// her skin's outward normal there, Axis the way he points, InsetM how much further under her skin; his penis vertex
 	// indices and moves in the mesh's own space.

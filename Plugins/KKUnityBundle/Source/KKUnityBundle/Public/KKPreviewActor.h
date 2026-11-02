@@ -311,6 +311,9 @@ public:
 	/** Makes the face parts of this actor tick after `PoseOwner` (the actor posing it); true when there were any. */
 	bool OrderSceneTicks(AActor* PoseOwner);
     bool bUsePrivateGpuPlayback=false; // opt in only while the interaction scene owns playback
+    // Session parts drawn from their CPU-skinned vertices even then (her clothes pushed out over her skin as they are
+    // skinned, belly_bulge::CoverField; the private GPU route skins its own copy of the rest mesh).
+    TSet<int32> CpuSkinnedParts;
     // The card reader's shown character: its game-animation frame is solved on a worker during the previous frame
     // (drawn one frame later), so the game thread does not wait ~4-6 ms for it (ok.Animation.AsyncNativePose).
     bool bAsyncNativePose=false;bool bTickPose=false;bool bLaunchAsyncPose=false;float AsyncPoseDelta=0.f;
