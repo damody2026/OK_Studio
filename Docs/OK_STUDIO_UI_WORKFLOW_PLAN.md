@@ -1313,6 +1313,31 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
 - 實測：拖沙發 gizmo 的綠軸 100 像素，Y 變 15.4 cm，Ctrl+Z 一步回 0；把樹上的 CamA 拖到 Sofa 上，變成 Sofa 的子物件（狀態列「1 個物件移到 Sofa 底下」），Ctrl+Z 回根層；時間軸把 1 秒的 key 拖到 2 秒，Ctrl+Z 回 1 秒。
 - 遊戲與編輯器都連結成功；`Tools/ok-game-mcp` `cargo check --release` 通過；`verify_ok_studio --tag u74_1102`（最終版本）6/6。測試場景已刪除。
 
+### U76～U78　第十四批：滑鼠操作實測（2026-11-02，F 組）
+
+用 U72／U75 的 `mouse` 實際以滑鼠操作，補前幾批沒測到的部分。
+
+| 項目 | 內容 |
+|---|---|
+| U76 相機頁書籤、變換列 | 書籤右鍵存視角、左鍵讀回；沒選物件時下方變換列的顯示 |
+| U77 畫面點選與 IK 拖曳 | 在 3D 畫面點角色選取、點空白取消；點 IK 點選取後拖把手 |
+| U78 浮窗拖動與版面保存 | 拖浮窗標題列，結束後重開位置是否還原 |
+
+#### U76 完成紀錄
+
+- 相機頁書籤 3：視角 yaw 30 時右鍵存、改成 yaw 120 後左鍵讀，回到 yaw 30、pitch -10、距離 300。
+- 沒選物件時，下方變換列縮放顯示 0.0（HS2Studio6 顯示 1）。改成無選取時顯示單位值（位置 0、旋轉 0、縮放 1）並停用欄位（`F:\OpenKoikatsu\Saved\OKStudio\mcp_ui\u76_transform_none.png`）。
+
+#### U77 完成紀錄
+
+- 畫面點角色身上選取（selection [2]），點空白處取消選取。
+- IK 頁「IK←FK」後畫面出現 13 個 IK 點；點右手 IK 點會選取它並出現把手（點下去拖不會直接移動點，要拖把手，與 HS2Studio6 相同）。拖把手藍軸 120 像素，右手 IK 目標 Z 118.2 → 102.3，手臂跟著下垂（`F:\OpenKoikatsu\Saved\OKStudio\mcp_ui\u77_ik_moved.png`）；Ctrl+Z 一步回 118.2。
+
+#### U78 完成紀錄
+
+- 拖時間軸窗標題列，從 (160, 458) 移到 (460, 319)；結束 Studio 時寫進 `Saved/OKStudio/ui_layout.json`，重開後在同一位置（`F:\OpenKoikatsu\Saved\OKStudio\mcp_ui\u78_reopen.png`）。詳情頁（骨骼頁）不隨版面保存、重開是關著的，這是原本的設計。
+- 遊戲與編輯器都連結成功，`verify_ok_studio --tag u76_1102` 6/6。這批沒有改 ok-game-mcp。測試場景已刪除。
+
 ### U15　工作室模式只顯示工作室 UI（2026-10-30，使用者要求）
 
 從卡片牆等其他模式進入工作室時，畫面上原本的 UI 會留著。改成：工作室面板加到 viewport 後，從 viewport 的 Slate 樹往下找到面板，沿路把其他兄弟節點（其他模式的 UMG、Slate 面板、圖層）全部收起來，並把 HUD 的 `bShowHUD` 關掉；`Stop` 時還原成原本的可見狀態。

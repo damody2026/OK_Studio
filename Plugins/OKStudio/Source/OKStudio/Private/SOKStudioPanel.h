@@ -1218,7 +1218,9 @@ public:
 					SNew(SBox).WidthOverride(51.f).HeightOverride(15.f)
 					[
 						SNew(SSpinBox<float>).Style(&SpinStyle()).Font(Font(11.f)).MinValue(Row == 2 ? 0.01f : -100000.f).MaxValue(100000.f).Delta(Row == 1 ? 1.f : (Row == 2 ? 0.01f : 1.f))
-						.Value_Lambda([this, Row, Axis] { const FOKSceneObject* O = Obj(); return O ? TransformValue(O->Transform, Row, Axis) : 0.f; })
+						// Nothing selected: the identity (scale 1, as HS2Studio6 shows), not editable.
+						.Value_Lambda([this, Row, Axis] { const FOKSceneObject* O = Obj(); return O ? TransformValue(O->Transform, Row, Axis) : (Row == 2 ? 1.f : 0.f); })
+						.IsEnabled_Lambda([this] { return Obj() != nullptr; })
 						// The field holds about seven characters (-2412.5): 1 mm and 0.1 degree, scale to 0.01.
 						.MaxFractionalDigits(Row == 2 ? 2 : 1)
 						.OnValueChanged_Lambda([this, Row, Axis](float V) { if (FOKSceneObject* O = Obj()) { SetTransformValue(O->Transform, Row, Axis, V); Changed(); } })
