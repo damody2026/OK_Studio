@@ -114,16 +114,12 @@ def motel_world_landmark_collision():
  # mesh already carries one simple convex hull; the components block pawns with it (simple collision only, so the hull,
  # not the render triangles, is what the capsule meets) and characters may not step up on them. A landmark the motel
  # route review (motel-v1/route-review.json, routes job) found blocking a planned route stands on that route (the stage
- # on the S18 garage-10 forecourt, 11-02): it stays NoCollision and is listed as misplaced instead of cutting the route.
+ # on the S18 garage-10 forecourt, 11-02): while its bounds still hold the blocked point it stays NoCollision and is listed
+ # as misplaced instead of cutting the route (world_landmark_relocate moves such props off the route).
  _gaps_backup('landmark-collision');rows=[];skip=set()
- rr=OUT/'route-review.json'
- if rr.exists():
-  for r in json.loads(rr.read_text('utf-8-sig')).get('issues',[]):
-   for i in r['issues']:
-    l=(i.get('result') or {}).get('actor','')
-    if l.startswith('Landmark_'):skip.add(l)
  for a in SUB.get_all_level_actors():
   if not a.get_actor_label().startswith('Landmark_'):continue
+  if _landmark_blocks_route(a):skip.add(a.get_actor_label())
   if a.get_actor_label() in skip:
    for c in a.get_components_by_class(unreal.StaticMeshComponent):c.set_collision_profile_name('NoCollision');c.set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
    continue
@@ -137,6 +133,91 @@ def motel_world_landmark_collision():
    rows.append(dict(label=a.get_actor_label(),mesh=sm.get_path_name().split('/')[-1],convex=n))
  assert rows,'no Landmark_ actors'
  _gaps_save('landmark-collision',dict(status='saved_requires_walk',components=rows,misplaced_on_routes=sorted(skip)))
+
+def _route_block_points():
+ rr=OUT/'route-review.json';pts={}
+ if rr.exists():
+  for r in json.loads(rr.read_text('utf-8-sig')).get('issues',[]):
+   for i in r['issues']:
+    q=i.get('result') or {}
+    if q.get('actor','').startswith('Landmark_') and q.get('point'):pts.setdefault(q['actor'],[]).append(q['point'])
+ return pts
+def _landmark_blocks_route(a):
+ o,e=a.get_actor_bounds(False)
+ return any(o.x-e.x-50<=p[0]<=o.x+e.x+50 and o.y-e.y-50<=p[1]<=o.y+e.y+50 for p in _route_block_points().get(a.get_actor_label(),[]))
+def motel_world_landmark_relocate():
+ # world_landmark_relocate (rule): a Landmark_* prop that stands on a planned motel route (route review blocked point
+ # inside its bounds: the stage on the S18 garage-10 forecourt) or floats (its base more than 30 cm over the first
+ # surface under its centre) or stands on a roof (base over 13 m on something that is not city ground: playground_a_98
+ # on the Campus_D3_F06 roof at z 34 m, where no player gets) is moved to the nearest free lawn spot within
+ # 80 m (5 m rings): every point of its footprint grown by 3 m (centre, corners, edge middles) must land on grass-level
+ # city ground G?? (1150-1201, spread < 10 cm), and no other actor under 60 m extent (trees, groves, props) may overlap
+ # that grown footprint. The prop keeps its yaw, sits on that ground and then gets its blocking collision.
+ world=unreal.EditorLevelLibrary.get_editor_world();acts=SUB.get_all_level_actors();rows=[]
+ def down(x,y,ign):
+  r=unreal.SystemLibrary.line_trace_single(world,unreal.Vector(x,y,8000),unreal.Vector(x,y,-5000),unreal.TraceTypeQuery.TRACE_TYPE_QUERY1,True,ign,unreal.DrawDebugTrace.NONE,True)
+  t=r.to_tuple() if r is not None else (False,)
+  return (t[9].get_actor_label(),t[4].z) if t[0] and t[9] is not None else (None,None)
+ boxes=[]
+ for b in acts:
+  l=b.get_actor_label()
+  if re.match(r'^G\d\d$',l) or l.startswith('WorldEdge_'):continue
+  try:o,e=b.get_actor_bounds(False)
+  except Exception:continue
+  if max(e.x,e.y)<6000:boxes.append((l,o.x-e.x,o.y-e.y,o.x+e.x,o.y+e.y))
+ movers=[]
+ for a in acts:
+  l=a.get_actor_label()
+  if not l.startswith('Landmark_'):continue
+  o,e=a.get_actor_bounds(False);base=o.z-e.z;g=down(o.x,o.y,[a])
+  why='route' if _landmark_blocks_route(a) else 'floating' if g[1] is not None and base-g[1]>30 else 'roof' if g[0] is not None and not re.match(r'^G\d\d$',g[0]) and base>1300 else None
+  if why:movers.append((a,why,o,e,base,g))
+ if not movers:raise RuntimeError('no landmark to relocate')
+ _gaps_backup('landmark-relocate')
+ for a,why,o,e,base,g in movers:
+  l=a.get_actor_label();loc=a.get_actor_location();hx,hy=e.x+300,e.y+300;found=None
+  for R in range(500,8001,500):
+   for s in range(max(8,int(2*math.pi*R/500))):
+    t=2*math.pi*s/max(8,int(2*math.pi*R/500));cx=o.x+R*math.cos(t);cy=o.y+R*math.sin(t)
+    if any(b[0]!=l and b[1]<cx+hx and b[3]>cx-hx and b[2]<cy+hy and b[4]>cy-hy for b in boxes):continue
+    zs=[]
+    for dx in (-hx,0,hx):
+     for dy in (-hy,0,hy):
+      q=down(cx+dx,cy+dy,[a])
+      if q[0] is None or not re.match(r'^G\d\d$',q[0]) or not(1150<=q[1]<1201):zs=None;break
+      zs.append(q[1])
+     if zs is None:break
+    if zs and max(zs)-min(zs)<10:found=(cx,cy,max(zs));break
+   if found:break
+  assert found,('no free lawn spot within 80 m for',l)
+  cx,cy,gz=found;a.set_actor_location(unreal.Vector(loc.x+cx-o.x,loc.y+cy-o.y,loc.z+gz-base),False,False)
+  for c in a.get_components_by_class(unreal.StaticMeshComponent):
+   c.set_collision_profile_name('BlockAll');c.set_collision_enabled(unreal.CollisionEnabled.QUERY_AND_PHYSICS);c.set_editor_property('can_character_step_up_on',unreal.CanBeCharacterBase.ECB_NO)
+  boxes=[b for b in boxes if b[0]!=l]+[(l,cx-e.x,cy-e.y,cx+e.x,cy+e.y)]
+  rows.append(dict(label=l,reason=why,from_=[round(o.x),round(o.y),round(base)],under_before=g,to=[round(cx),round(cy),round(gz)],moved_cm=round(math.hypot(cx-o.x,cy-o.y))))
+ _gaps_save('landmark-relocate',dict(status='saved_requires_routes_and_walk',moved=rows))
+
+def motel_world_annex_ground_unify():
+ # world_annex_ground_unify: Outdoor_annex_ground (the lawn south of the city union, y 1100-1380 m) draws the same meadow
+ # textures as the city ground G01-G16 through two instances of its own with other tints, so its border reads as a
+ # colour seam (G086, G104, G148). Every slot of it that draws the meadow texture gets the city ground's meadow instance
+ # (the one on G01-G16). Its walk surface stays 10 cm lower (1188 vs 1198): raising it would bury what stands on it.
+ MEL=unreal.MaterialEditingLibrary;city=None
+ for a in SUB.get_all_level_actors():
+  if a.get_actor_label()=='G12':
+   for k in range(a.static_mesh_component.get_num_materials()):
+    m=a.static_mesh_component.get_material(k)
+    if m and 'meadow' in str([MEL.get_material_instance_texture_parameter_value(m,n).get_name() for n in MEL.get_texture_parameter_names(m) if MEL.get_material_instance_texture_parameter_value(m,n)]):city=m;break
+ assert city,'city meadow instance not found on G12'
+ _gaps_backup('annex-ground');rows=[]
+ for a in SUB.get_all_level_actors():
+  if a.get_actor_label()!='Outdoor_annex_ground':continue
+  for c in a.get_components_by_class(unreal.StaticMeshComponent):
+   for k in range(c.get_num_materials()):
+    m=c.get_material(k);tex=[MEL.get_material_instance_texture_parameter_value(m,n).get_name() for n in MEL.get_texture_parameter_names(m) if MEL.get_material_instance_texture_parameter_value(m,n)] if m else []
+    if any('meadow' in t for t in tex):rows.append(dict(slot=k,before=m.get_path_name(),after=city.get_path_name()));c.set_material(k,city)
+ assert rows,'no meadow slot on Outdoor_annex_ground'
+ _gaps_save('annex-ground-unify',dict(status='saved_requires_capture_review',slots=rows))
 
 def motel_world_road_raster_probe():
  # world_road_raster_probe (read-only): 2 m raster of what the player stands on over the city union, for the road end
@@ -164,6 +245,54 @@ def motel_world_road_raster_probe():
  while y<y1:rows.append(''.join(cell(x0+S/2+k*S,y) for k in range(int((x1-x0)//S))));y+=S
  assert sha(MAPFILE)==LOAD_SHA
  (EDGE_OUT/'road-raster.json').write_text(json.dumps(dict(status='read_only_probe',map_sha256=LOAD_SHA,origin=[x0+S/2,y0+S/2],step_cm=S,rows=rows)),'utf8')
+def motel_world_ground_sections_probe():
+ # world_ground_sections_probe (read-only): which material section of the city ground sheets G01-G16 draws each top
+ # cell. Traces cannot tell (the face index does not map back to the section), so this reads the meshes: every polygon
+ # of LOD0 whose normal points up (z > 0.7), with its polygon group's material (component slot), rasterised at 1 m by
+ # polygon centre-in-triangle over x -30..300 m (the west coast) on the whole union y. Per cell one char: 's' beach
+ # sand, 'g' meadow grass, 'a' asphalt, 'v' river gravel, 'x' another material, '.' no up-facing ground polygon.
+ # Output world-edge-v1/ground-sections.json (rows along y, 1 m).
+ P=json.loads((EDGE_OUT/'probe.json').read_text('utf8'));x0,y0,x1,y1=P['city_ground_union'];X0,X1=int(x0)-3000,int(x0)+30000
+ NX=(X1-X0)//100;NY=int((y1-y0)//100);grid=[bytearray(b'.'*NX) for _ in range(NY)];code={}
+ def ch(m):
+  p=m.get_path_name() if m else ''
+  return b's' if 'c6f565f3d91f57f03b7a' in p else b'g' if 'b6a245f3a69b53317770' in p else b'a' if '932bc009ac742438e2bf' in p else b'v' if '9ea1c3103a2d3f4c9850' in p else b'x'
+ stats={}
+ for a in SUB.get_all_level_actors():
+  l=a.get_actor_label()
+  if not re.match(r'^G\d\d$',l):continue
+  c=a.static_mesh_component;sm=c.static_mesh;md=sm.get_static_mesh_description(0);T=c.get_world_transform()
+  slots=[str(s.get_editor_property('material_slot_name')) for s in sm.get_editor_property('static_materials')]
+  gm={}
+  for gi in range(md.get_polygon_group_count()):
+   g=unreal.PolygonGroupID(gi)
+   try:name=str(md.get_polygon_group_material_slot_name(g))
+   except Exception:name=''
+   k=slots.index(name) if name in slots else gi
+   gm[gi]=ch(c.get_material(k)) if k<c.get_num_materials() else b'x'
+  for pi in range(md.get_polygon_count()):
+   p=unreal.PolygonID(pi);vs=[T.transform_location(md.get_vertex_position(v)) for v in md.get_polygon_vertices(p)]
+   if len(vs)<3:continue
+   ax,ay,az=vs[1].x-vs[0].x,vs[1].y-vs[0].y,vs[1].z-vs[0].z;bx,by,bz=vs[2].x-vs[0].x,vs[2].y-vs[0].y,vs[2].z-vs[0].z
+   nx_,ny_,nz_=ay*bz-az*by,az*bx-ax*bz,ax*by-ay*bx;n=math.sqrt(nx_*nx_+ny_*ny_+nz_*nz_) or 1
+   if abs(nz_/n)<.7:continue
+   xs=[v.x for v in vs];ys=[v.y for v in vs]
+   if max(xs)<X0 or min(xs)>X1:continue
+   m=gm.get(md.get_polygon_polygon_group(p).id_value if hasattr(md.get_polygon_polygon_group(p),'id_value') else 0,b'x')
+   stats[m.decode()]=stats.get(m.decode(),0)+1
+   # fill the cells whose centres fall in the polygon's triangles (fan from vertex 0)
+   for t in range(1,len(vs)-1):
+    A,B,C=vs[0],vs[t],vs[t+1]
+    k0=max(0,int((min(A.x,B.x,C.x)-X0)//100));k1=min(NX-1,int((max(A.x,B.x,C.x)-X0)//100));i0=max(0,int((min(A.y,B.y,C.y)-y0)//100));i1=min(NY-1,int((max(A.y,B.y,C.y)-y0)//100))
+    d=(B.y-C.y)*(A.x-C.x)+(C.x-B.x)*(A.y-C.y)
+    if abs(d)<1e-6:continue
+    for i in range(i0,i1+1):
+     py=y0+(i+.5)*100
+     for k in range(k0,k1+1):
+      px=X0+(k+.5)*100;w1=((B.y-C.y)*(px-C.x)+(C.x-B.x)*(py-C.y))/d;w2=((C.y-A.y)*(px-C.x)+(A.x-C.x)*(py-C.y))/d
+      if w1>=-1e-6 and w2>=-1e-6 and w1+w2<=1+1e-6:grid[i][k:k+1]=m
+ assert sha(MAPFILE)==LOAD_SHA
+ (EDGE_OUT/'ground-sections.json').write_text(json.dumps(dict(status='read_only_probe',map_sha256=LOAD_SHA,x0_cm=X0,y0_cm=y0,step_cm=100,polygons=stats,rows=[r.decode() for r in grid])),'utf8')
 def motel_world_road_ends_install():
  # world_road_ends_install (rule): every street end from world-edge-v1/road-ends.json (Tools/find_street_city_road_ends.lua
  # over the road raster, which must be of this map) is closed:
@@ -232,8 +361,9 @@ def motel_world_groves_install():
    r=unreal.SystemLibrary.line_trace_single(world,unreal.Vector(x,y,5000),unreal.Vector(x,y,-5000),unreal.TraceTypeQuery.TRACE_TYPE_QUERY1,True,[],unreal.DrawDebugTrace.NONE,True)
    t=r.to_tuple() if r is not None else (False,)
    if not(t[0] and t[9] is not None and re.match(r'^G\d\d$',t[9].get_actor_label()) and 1150<=t[4].z<=1260):occ[i][k]=True
- # chamfer distance (cells) to the nearest occupied cell
- INF=10**6;D=[[0 if occ[i][k] else INF for k in range(NX)] for i in range(NY)]
+ # chamfer distance (cells) to the nearest occupied cell; the city border counts as occupied (the first run, 11-02,
+ # treated the outside as open, so most groves sat on the border and the middle of A13 stayed empty)
+ INF=10**6;D=[[0 if occ[i][k] else min(INF,i+1,k+1,NY-i,NX-k) for k in range(NX)] for i in range(NY)]
  for i in range(NY):
   for k in range(NX):
    if i:D[i][k]=min(D[i][k],D[i-1][k]+1)
