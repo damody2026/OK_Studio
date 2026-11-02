@@ -214,7 +214,7 @@ public:
     // What runs out of her in the room (her desire past 100, OKArousalDrops.h): the drops, her next one at her crotch and
     // at a nipple, which nipple, and how many came (into the result: she leaves the room as wet).
     void TickDrips(float Delta);float HerDesire() const;FOKArousalDrops Drips;FOKTears Tears;uint8 TearsWanted=0;void SpawnTears(class AKKPreviewActor* Girl);void AimIntoMouth(class AKKPreviewActor* Girl,class AKKPreviewActor* Him);void HideInMouth(class AKKPreviewActor* Girl,class AKKPreviewActor* Him);
-    TWeakObjectPtr<class AKKPreviewActor> MouthClipHim;int32 MouthClipPart=INDEX_NONE;int32 MouthClipVerts=0;bool bMouthAimed=false;FVector MouthAim=FVector::ZeroVector;float MouthTurned=0.f;FVector MouthDbg=FVector::ZeroVector;double DripAt=0,MilkAt=0,SquirtAt=0,ClimaxUntil=0;bool bTrembling=false,bVaginaLogged=false;void Tremble(double Now);int32 MilkTurn=0,HerDrips=0,HerMilk=0;
+    TWeakObjectPtr<class AKKPreviewActor> MouthClipHim;int32 MouthClipPart=INDEX_NONE;int32 MouthClipVerts=0;bool bMouthAimed=false;FVector MouthAim=FVector::ZeroVector;float MouthTurned=0.f;FVector MouthDbg=FVector::ZeroVector;double DripAt=0,MilkAt=0,SquirtAt=0,ClimaxUntil=0,ClimaxLoopFor=0;bool bTrembling=false,bVaginaLogged=false;void Tremble(double Now);int32 MilkTurn=0,HerDrips=0,HerMilk=0;
     void ClearLine();
     // Her line asked for before a climax, a finish or a new pose comes back after it ("don't stop" once he had come):
     // it is not shown or spoken. LineEpoch moves at those; SentEpoch is the epoch her last line was asked in.

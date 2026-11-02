@@ -374,7 +374,7 @@ void UOKHScenePanel::Finish(const TCHAR* Kind){
         ClimaxUntil=FMath::Max(ClimaxUntil,FPlatformTime::Seconds()+3.);
         // Developed there, she comes twice as long; her developed nipples spray six seconds more (H_DEVELOPMENT_EXPERIENCE_PLAN).
         if(Org||Same){const double Now=FPlatformTime::Seconds();ClimaxUntil=Now+(ClimaxUntil-Now)*(1.f+(Mode==2?Dev(bAnalPlay?TEXT("anal"):TEXT("crotch")):0.f));
-            NippleUntil=ClimaxUntil+6.*Dev(TEXT("nipple"));}}
+            NippleUntil=ClimaxUntil+6.*Dev(TEXT("nipple"));ClimaxLoopFor=ClimaxUntil-Now;}}
     bInsideFinished=Same||K==TEXT("inside");
     if(K==TEXT("outside"))AddSiru(SiruSide()==0?1:3); // over the side of her he is on
     else if((Same||K==TEXT("inside"))&&!bCondom)AddSiru(bAnalPlay?4:2);
@@ -843,14 +843,18 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
         }
         if(Base==TEXT("Oral_Idle"))OralIdleSince=Now;
     }
-    // The queued flow: a one-shot state moves on when it has played once; a finish's own loop after two rounds.
+    // The queued flow: a one-shot state moves on when it has played once; a finish's own loop after two rounds, and the
+    // loop of her climax (WF/WS/SF/SS_IN_Loop, her body shaking in it) for as long as she comes, from when the loop
+    // starts (OLoop plays first), as HSonyu holds it while her climax voice plays (user 2026-11-03: the original shaking,
+    // not a made-up one).
     if(!Queue.IsEmpty()&&(Playback||Mode==0)){
         if(Cur==Queue[0]){
             if(Queue.Num()==1)Queue.Reset();
             else{
                 const float Elapsed=Mode==0?float(Now-SoloStarted):Playback->GetElapsed(),Length=FMath::Max(.2f,Gallery->PreviewActor?Gallery->PreviewActor->AnimDuration:1.f);
                 const bool LoopLike=Base.EndsWith(TEXT("_Loop"))||Base==TEXT("OLoop")||Base==TEXT("Oral_Idle_IN");
-                if(Elapsed>=(LoopLike?FMath::Max(Length*2.f,2.5f):Length*.98f)){Queue.RemoveAt(0);Want(Queue[0]);}
+                const bool HerClimax=Mode==2&&(Base.EndsWith(TEXT("F_IN_Loop"))||Base.EndsWith(TEXT("S_IN_Loop")));
+                if(HerClimax?Elapsed>=ClimaxLoopFor&&!(bTalkSpoken&&Gallery->PreviewActor&&Gallery->PreviewActor->IsSpeaking()):Elapsed>=(LoopLike?FMath::Max(Length*2.f,2.5f):Length*.98f)){Queue.RemoveAt(0);Want(Queue[0]);}
             }
         }else if(Wanted!=Queue[0])Want(Queue[0]);
     }
@@ -1117,19 +1121,15 @@ void UOKHScenePanel::TickDrips(float Delta){
     }
     Drips.Tick(Delta,Where);
 }
-// Her body trembling as she comes (user, 2026-11-01): her waist, spine and thighs shake fast on top of the animation
-// (her FK with '+' names, session.rs apply_user_fk_locals), three degrees, easing out over its last second.
+// Her body shaking as she comes is her climax loop's own animation (user 2026-11-03: not the shake once made up here on
+// top of it); left here, the pose he set on her (ApplyHerFk).
 void UOKHScenePanel::Tremble(double Now){
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl))return;
     // Once: what of her could open around him (her body's vagina bones and morphs), for opening her with him.
     if(!bVaginaLogged&&Girl->BodySkel){bVaginaLogged=true;TArray<FString> Found;
         for(int32 I=0;I<Girl->BodySkel->GetNumBones();++I){const FString N=Girl->BodySkel->GetBoneName(I).ToString();if(N.Contains(TEXT("agina"))||N.Contains(TEXT("okan"))||N.Contains(TEXT("Ana")))Found.Add(N);}
         UE_LOG(LogTemp,Display,TEXT("H scene: her vagina bones: %s"),*FString::Join(Found,TEXT(" ")));}
-    const double Left=ClimaxUntil-Now;TArray<FString> Names;TArray<FVector> Turns;
-    if(Left>0.){static const TCHAR* Bones[]={TEXT("+cf_j_waist01"),TEXT("+cf_j_spine01"),TEXT("+cf_j_spine02"),TEXT("+cf_j_thigh00_L"),TEXT("+cf_j_thigh00_R")};
-        const float A=3.f*FMath::Min(1.f,float(Left));
-        for(int32 I=0;I<UE_ARRAY_COUNT(Bones);++I){Names.Add(Bones[I]);const double T=Now*UE_DOUBLE_TWO_PI;
-            Turns.Add(FVector(float(FMath::Sin(T*11.+I*1.3))*A,float(FMath::Sin(T*13.+I*.7))*A*.6f,float(FMath::Sin(T*9.+I*2.1))*A*.4f));}}
+    TArray<FString> Names;TArray<FVector> Turns;
     ApplyHerFk(Girl,Names,Turns);
 }
 // The pose he set on her, after her trembling (both '+': on top of the animation). Set every frame while there is any,
