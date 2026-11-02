@@ -46,6 +46,9 @@
 #include "Framework/Application/SlateApplication.h"
 #include "Components/SizeBox.h"
 #include "Components/Border.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
+#include "Components/Spacer.h"
 #include "Components/ComboBoxString.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
@@ -159,13 +162,19 @@ void UOKHScenePanel::Touch(int32 Area){
     if(Area==0){
         // A kiss she has not allowed yet (not his lover, never kissed) is refused (HandCtrl: voice 103).
         if(!(X.IsValid()&&X->GetBoolField(TEXT("kiss_ok")))){Note(OKT(TEXT("ui.hscene.kiss_refused")));Chain({TEXT("Front_Dislikes"),TEXT("Idle")});TouchArea=INDEX_NONE;return;}
-        TouchArea=0;Chain({TEXT("K_Touch"),TEXT("K_Loop")});Note(OKT(TEXT("ui.hscene.event_kiss")));return;
+        // Her first kiss ever (not this scene's first): she answers it as one, in her own words (TTS; user 2026-11-03:
+        // a first-time line by TTS, not the original's first bank).
+        const bool bFirst=!(X->HasField(TEXT("kissed"))&&X->GetBoolField(TEXT("kissed")))&&AreaSeconds[0]<=0.f;
+        TouchArea=0;Chain({TEXT("K_Touch"),TEXT("K_Loop")});Note(OKT(bFirst?TEXT("ui.hscene.event_first_kiss"):TEXT("ui.hscene.event_kiss")));return;
     }
     // Her anal untouched and him not her lover: she pulls away (anal_dislikes).
     if(Area==3&&AreaExperience(3)<=0.f&&Gallery->HHeroineStage!=TEXT("lover")){Note(OKT(TEXT("ui.hscene.anal_touch_refused")));Chain({TEXT("Back_Dislikes"),TEXT("Idle")});TouchArea=INDEX_NONE;return;}
     static const TCHAR* Prefix[]={TEXT(""),TEXT("M_"),TEXT("A_"),TEXT("S_"),TEXT("S_"),TEXT("M_")};
     static const TCHAR* TouchEvents[]={TEXT(""),TEXT("ui.hscene.event_touch_chest"),TEXT("ui.hscene.event_touch_crotch"),TEXT("ui.hscene.event_touch_anal"),TEXT("ui.hscene.event_touch_butt"),TEXT("ui.hscene.event_touch_nipple")};
-    if(TouchArea!=Area)Note(OKT(TouchEvents[Area]));
+    // A place she has never been touched (HVoiceCtrl GetStateSelect gives it her first-time bank): she answers it as her
+    // first time there, by TTS.
+    static const TCHAR* FirstEvents[]={TEXT(""),TEXT("ui.hscene.event_first_chest"),TEXT("ui.hscene.event_first_crotch"),TEXT("ui.hscene.event_first_anal"),TEXT("ui.hscene.event_first_butt"),TEXT("ui.hscene.event_first_nipple")};
+    if(TouchArea!=Area)Note(OKT(AreaExperience(Area)<.05f&&AreaSeconds[Area]<=0.f?FirstEvents[Area]:TouchEvents[Area]));
     TouchArea=Area;Chain({FString(Prefix[Area])+TEXT("Touch"),FString(Prefix[Area])+TEXT("Idle")});
 }
 void UOKHScenePanel::Note(const FString& Text,bool bReact){Events.Add(Text);if(Gallery)Gallery->NoteAction(TEXT("h"),Text);if(bReact)React(Text);if(Hint)Hint->SetText(FText::FromString(Text));UE_LOG(LogTemp,Display,TEXT("H scene: %s"),*Text);}
@@ -200,7 +209,15 @@ TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
         auto* L=WidgetTree->ConstructWidget<UTextBlock>();L->SetText(FText::FromString(OKT(TEXT("ui.hscene.speed"))));L->SetColorAndOpacity(FSlateColor(FLinearColor::White));
         if(auto* S=Row->AddChildToHorizontalBox(L)){S->SetPadding(FMargin(0,0,8,0));S->SetVerticalAlignment(VAlign_Center);}
         Speed=WidgetTree->ConstructWidget<USlider>();Speed->SetMinValue(0.f);Speed->SetMaxValue(1.f);Speed->SetValue(SpeedValue);
-        if(auto* S=Row->AddChildToHorizontalBox(Speed))S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+        // The original's cover over the bar past 70% (HAibu SetSpriteDislikesis70): touched where she never was, faster
+        // than that and she pulls away.
+        UOverlay* Over=WidgetTree->ConstructWidget<UOverlay>();if(UOverlaySlot* O=Over->AddChildToOverlay(Speed)){O->SetHorizontalAlignment(HAlign_Fill);O->SetVerticalAlignment(VAlign_Center);}
+        UHorizontalBox* Marks=WidgetTree->ConstructWidget<UHorizontalBox>();Marks->SetVisibility(ESlateVisibility::HitTestInvisible);
+        if(auto* S=Marks->AddChildToHorizontalBox(WidgetTree->ConstructWidget<USpacer>())){FSlateChildSize Z(ESlateSizeRule::Fill);Z.Value=.7f;S->SetSize(Z);}
+        SpeedCover=WidgetTree->ConstructWidget<UBorder>();SpeedCover->SetBrushColor(FLinearColor(.85f,.1f,.15f,.45f));SpeedCover->SetVisibility(ESlateVisibility::Hidden);
+        if(auto* S=Marks->AddChildToHorizontalBox(SpeedCover)){FSlateChildSize Z(ESlateSizeRule::Fill);Z.Value=.3f;S->SetSize(Z);}
+        if(UOverlaySlot* O=Over->AddChildToOverlay(Marks)){O->SetHorizontalAlignment(HAlign_Fill);O->SetVerticalAlignment(VAlign_Fill);}
+        if(auto* S=Row->AddChildToHorizontalBox(Over))S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
         Box->AddChildToVerticalBox(Row)->SetPadding(FMargin(0,3));
     }
     {
@@ -359,7 +376,7 @@ void UOKHScenePanel::Finish(const TCHAR* Kind){
     }
     const bool Org=K.StartsWith(TEXT("org")),Same=K.StartsWith(TEXT("same"));
     if(Org||Same){++(bAnalPlay?AnalClimaxes:CrotchClimaxes);Her=0.f;}
-    if(Same||K==TEXT("inside")||K==TEXT("outside")){++HisFinishes;His=0.f;++(K==TEXT("outside")?HisOutside:HisInside);if(Mode==2){if(bCondom)++HisCondom;else if(K!=TEXT("outside"))++HisInsideRaw;}}
+    if(Same||K==TEXT("inside")||K==TEXT("outside")){++HisFinishes;His=0.f;++(K==TEXT("outside")?HisOutside:HisInside);if(Mode==2){if(bCondom)++HisCondom;else if(K!=TEXT("outside")){++HisInsideRaw;if(!bAnalPlay)++HisInsideVaginaRaw;}}}
     if(Org||Same){ReleaseHeld();CountHerOrgasm();
         // Her cry as she comes (HSonyu: 325 in the slow loop, 326 in the fast one, from her experience bank; user 2026-11-01:
         // the breathing went on through it). The breathing comes back once she is quiet (bTalkSpoken).
@@ -571,6 +588,43 @@ float UOKHScenePanel::Dev(const TCHAR* Area) const{
     const FString A=Area;V+=A==TEXT("crotch")?10.*CrotchClimaxes:A==TEXT("anal")?10.*AnalClimaxes:A==TEXT("oral")?10.*HisMouth:0.;
     return FMath::Clamp(float(V)/100.f,0.f,1.f);
 }
+// Her pregnancy as her experience carries it (pregnancy.rs view): the belly by stage, and her areolae larger and
+// nipples darker by her births and how far along she is (a pregnancy darkens them on its own).
+static TSharedPtr<FJsonObject> OKPregnancyOf(const TSharedPtr<FJsonObject>& X){const TSharedPtr<FJsonObject>* P=nullptr;return X.IsValid()&&X->TryGetObjectField(TEXT("pregnancy"),P)?*P:nullptr;}
+float UOKHScenePanel::PregBelly() const{
+    if(PregBellyTest>=0.f)return FMath::Clamp(PregBellyTest,0.f,1.f);
+    const auto P=OKPregnancyOf(Gallery?Gallery->HExperience:nullptr);double V=0;if(P.IsValid())P->TryGetNumberField(TEXT("belly"),V);return FMath::Clamp(float(V),0.f,1.f);
+}
+float UOKHScenePanel::PregNipples() const{
+    if(PregBodyTest>=0.f)return FMath::Clamp(PregBodyTest,0.f,1.f);
+    const auto P=OKPregnancyOf(Gallery?Gallery->HExperience:nullptr);double Body=0,Progress=0;if(P.IsValid()){P->TryGetNumberField(TEXT("body"),Body);P->TryGetNumberField(TEXT("progress"),Progress);}
+    return FMath::Clamp(FMath::Max(float(Body),.7f*float(Progress)),0.f,1.f);
+}
+static TAutoConsoleVariable<FString> CVarHPregNipple(TEXT("ok.HScene.PregNipple"),TEXT("0.85,0.42,0.24,0.2"),TEXT("Her areolae and nipples fully changed by pregnancy: areola size, then nipple colour r,g,b"));
+// The PregnancyPlus Standard preset (OKPregnancyPresets.h) the belly takes when her card has no shape of its own.
+static const TCHAR* OKPregStandard[][2]={{TEXT("inflationMultiplier"),TEXT("0.25")},{TEXT("inflationStretchX"),TEXT("-0.12")},{TEXT("inflationStretchY"),TEXT("-0.07")},{TEXT("inflationTaperY"),TEXT("-0.005")},{TEXT("inflationTaperZ"),TEXT("-0.003")},{TEXT("inflationRoundness"),TEXT("0.005")},{TEXT("inflationDrop"),TEXT("0.05")}};
+void UOKHScenePanel::ApplyPregnancy(double Now){
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl)||Now<PregCheckAt)return;PregCheckAt=Now+1.;
+    // Areolae and nipples: every second (an outfit change builds her materials again).
+    {TArray<FString> V;CVarHPregNipple.GetValueOnGameThread().ParseIntoArray(V,TEXT(","));const float Size=V.Num()>0?FCString::Atof(*V[0]):.85f;
+     const FLinearColor To(V.Num()>3?FCString::Atof(*V[1]):.42f,V.Num()>3?FCString::Atof(*V[2]):.24f,V.Num()>3?FCString::Atof(*V[3]):.2f,1.f);
+     const float Amount=PregNipples();if(Amount>0.f||!Girl->NippleBase.IsEmpty())Girl->SetNippleChange(Amount,Size,To);}
+    // The belly: her body sculpted again only when it changes (or she was built again).
+    const float Belly=PregBelly();
+    if(PregActor==Girl&&PregOutfit==Gallery->OutfitIndex&&FMath::IsNearlyEqual(Belly,PregBellyShown,.005f))return;
+    if(Belly<=0.f&&PregBellyShown<=0.f&&PregActor==Girl){PregOutfit=Gallery->OutfitIndex;return;}
+    TSharedPtr<FJsonObject> Mods;if(!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Gallery->EditorModsJson()),Mods)||!Mods.IsValid())return;
+    const TSharedPtr<FJsonObject>* Own=nullptr;TSharedPtr<FJsonObject> P=Mods->TryGetObjectField(TEXT("pregnancy"),Own)?*Own:MakeShared<FJsonObject>();
+    double Card=0;P->TryGetNumberField(TEXT("inflationSize"),Card);bool bShaped=P->HasField(TEXT("inflationMultiplier"));
+    if(!bShaped)for(const auto& KV:OKPregStandard)P->SetNumberField(KV[0],FCString::Atof(KV[1]));
+    P->SetBoolField(TEXT("GameplayEnabled"),true);P->SetNumberField(TEXT("inflationSize"),FMath::Max(Card,40.*Belly));Mods->SetObjectField(TEXT("pregnancy"),P);
+    FString Json;FJsonSerializer::Serialize(Mods.ToSharedRef(),TJsonWriterFactory<>::Create(&Json));bool Geometry=false;
+    if(!Girl->Session.ApplyEditorMods(Json,Gallery->OutfitIndex,&Geometry)){UE_LOG(LogTemp,Warning,TEXT("H scene: her pregnant belly %.2f not applied"),Belly);return;}
+    if(Geometry){const float Phase=Girl->AnimPhase;const int32 PoseMode=Girl->PoseMode;FString Error;if(!Girl->RefreshEditorGeometry())Girl->LoadSession(Error);Girl->AnimPhase=Phase;Girl->PoseMode=PoseMode;
+        Girl->ApplyShapes(Gallery->Selected.Face.ShapeValueFace,Gallery->Selected.Body.ShapeValueBody);}
+    UE_LOG(LogTemp,Display,TEXT("H scene: her pregnant belly %.2f (size %.1f, geometry %d)"),Belly,FMath::Max(Card,40.*Belly),Geometry?1:0);
+    PregBellyShown=Belly;PregActor=Girl;PregOutfit=Gallery->OutfitIndex;
+}
 void UOKHScenePanel::SwellBust(float Delta){
     AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl)||Gallery->Selected.Body.ShapeValueBody.Num()<=4)return;
     const float Want=1.f+.5f*Dev(TEXT("chest"))*FMath::Clamp(Her/100.f,0.f,1.f);
@@ -772,7 +826,7 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     if(HalfInner&&PanelWidth){const float High=2.f*float(PanelWidth->GetCachedGeometry().GetLocalSize().Y);if(High>10.f&&!FMath::IsNearlyEqual(High,HalfInner->GetHeightOverride(),1.f))HalfInner->SetHeightOverride(High);}
     if(!Gallery)return;
     if(Poses.IsEmpty()&&!Gallery->NativePairs.IsEmpty()){LoadPoses();BuildList();}
-    TickDrips(Delta);Tremble(FPlatformTime::Seconds());TickHands();TickSounds();SwellBust(Delta);
+    TickDrips(Delta);Tremble(FPlatformTime::Seconds());TickHands();TickSounds();SwellBust(Delta);ApplyPregnancy(FPlatformTime::Seconds());
     // Her breathing as the original picks it (HVoiceCtrl): her gauge past 50 and his fast motion (voice.speedMotion,
     // with its own up and down marks) change the cries, her experience the bank. A change starts the matching set
     // (user, 2026-11-01: in her it kept the first, quiet set the caress also uses).
@@ -868,6 +922,8 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     // Gauges (HFlag gaugeFemale / gaugeMale): they rise with the movement, faster when strong; hers by her experience.
     if(Speed)SpeedValue=Speed->GetValue();
     const float Rate=SpeedValue,Strong=Base==TEXT("SLoop")?1.25f:1.f;
+    if(SpeedCover){const bool bCover=Mode==0&&TouchArea!=INDEX_NONE&&TouchArea!=0&&AreaExperience(TouchArea)<=0.f;
+        const ESlateVisibility Want=bCover?ESlateVisibility::HitTestInvisible:ESlateVisibility::Hidden;if(SpeedCover->GetVisibility()!=Want)SpeedCover->SetVisibility(Want);}
     static const float HerByLevel[]={.55f,.8f,1.f,1.35f};
     // Caress (HAibu): resting on a place she is being touched; her gauge by how used to it she is, and too hard on a
     // place she has never been touched there makes her pull away (JudgeDislikesis70).
@@ -892,11 +948,15 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     // Her spoken answer is over: her breathing goes on (the line stopped it).
     if(bTalkSpoken&&Gallery->PreviewActor&&!Gallery->PreviewActor->IsSpeaking()){bTalkSpoken=false;if(Mode!=0&&Gallery->PairedPlayback)Gallery->StartPairBreath();}
     if(HerGauge)HerGauge->SetPercent(Her/100.f);if(HisGauge)HisGauge->SetPercent(His/100.f);
-    // Her five developments as the scene uses them, each climax there (his finish in her mouth) shown as it adds 10
-    // (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md P3).
+    // Her developments as the scene uses them, each climax there (his finish in her mouth) shown as it adds 10
+    // (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md P3); kissing and her caressed places with what this scene's touch adds when it
+    // ends (hexp h_session_end: a second of kissing a point, of touch half a point; user 2026-11-03: kiss and butt shown).
     if(DevLine){auto Pct=[this](const TCHAR* A){return int32(FMath::RoundToFloat(Dev(A)*100.f));};
         auto Gain=[](int32 N){return N>0?OKMsg(TEXT("ui.hscene.dev_gain"),{{TEXT("n"),N}}):FString();};
-        DevLine->SetText(FText::FromString(OKMsg(TEXT("ui.hscene.dev_line"),{{TEXT("chest"),Pct(TEXT("chest"))},{TEXT("nipple"),Pct(TEXT("nipple"))},
+        auto Touch=[&](int32 Area,float PerSecond){const float Was=AreaExperience(Area);return Gain(int32(FMath::Min(100.f,Was+AreaSeconds[Area]*PerSecond))-int32(Was));};
+        DevLine->SetText(FText::FromString(OKMsg(TEXT("ui.hscene.dev_line"),{{TEXT("kiss"),Pct(TEXT("kiss"))},{TEXT("kiss_gain"),Touch(0,1.f)},
+            {TEXT("chest"),Pct(TEXT("chest"))},{TEXT("chest_gain"),Touch(1,.5f)},{TEXT("nipple"),Pct(TEXT("nipple"))},{TEXT("nipple_gain"),Touch(5,.5f)},
+            {TEXT("butt"),Pct(TEXT("butt"))},{TEXT("butt_gain"),Touch(4,.5f)},
             {TEXT("crotch"),Pct(TEXT("crotch"))},{TEXT("crotch_gain"),Gain(10*CrotchClimaxes)},{TEXT("anal"),Pct(TEXT("anal"))},{TEXT("anal_gain"),Gain(10*AnalClimaxes)},
             {TEXT("oral"),Pct(TEXT("oral"))},{TEXT("oral_gain"),Gain(10*HisMouth)}})));}
     if(Title){FString Name=Gallery->HHeroineName;const FString LevelName=Gallery->HExperience.IsValid()?Gallery->HExperience->GetStringField(TEXT("level_name")):FString();
@@ -2061,7 +2121,7 @@ TSharedRef<FJsonObject> UOKHScenePanel::Describe() const{
     O->SetNumberField(TEXT("blush"),BlushMats.IsEmpty()?-1.f:BlushShown);
     O->SetStringField(TEXT("state"),Current());O->SetStringField(TEXT("wanted"),Wanted);O->SetNumberField(TEXT("mode"),Mode);
     TArray<TSharedPtr<FJsonValue>> Q;for(const FString& S:Queue)Q.Add(MakeShared<FJsonValueString>(S));O->SetArrayField(TEXT("queue"),Q);
-    O->SetNumberField(TEXT("playback_speed"),PlaybackSpeed());if(Gallery&&Gallery->PreviewActor)O->SetNumberField(TEXT("breath_rate"),Gallery->PreviewActor->SpeechTempo);O->SetBoolField(TEXT("hooked"),Hooked());O->SetNumberField(TEXT("oral_suck"),OralSuckSet);O->SetNumberField(TEXT("oral_pull"),OralPullSet);O->SetNumberField(TEXT("mouth_turned"),bMouthAimed?MouthTurned:0.f);O->SetStringField(TEXT("mouth_dbg"),MouthDbg.ToString());O->SetNumberField(TEXT("mouth_hidden_verts"),MouthClipVerts);O->SetNumberField(TEXT("bust_swell"),BustSwellSet);O->SetNumberField(TEXT("depth_top"),AlignDeep);O->SetNumberField(TEXT("belly_out"),BulgeTarget.IsNone()?-1.f:BulgePast);O->SetNumberField(TEXT("belly_allow"),FMath::Max(0.f,BulgeMoves-2.5f));O->SetNumberField(TEXT("pullback"),BellyPullback);O->SetNumberField(TEXT("tip_inside"),TipInside);O->SetNumberField(TEXT("aim_relax"),AimRelax);O->SetNumberField(TEXT("skin_out"),SkinOutMost);O->SetNumberField(TEXT("skin_under"),SkinUnderMost);O->SetNumberField(TEXT("skin_worst"),SkinWorst);O->SetNumberField(TEXT("skin_rest"),SkinRest);O->SetNumberField(TEXT("skin_along"),SkinWorstAlong);O->SetNumberField(TEXT("root_dodge"),RootDodge.Size());O->SetNumberField(TEXT("depth_cap"),DepthCap);{auto Wr=MakeShared<FJsonObject>();for(const auto& W:Bulge)if(W.Value>1.f)Wr->SetNumberField(W.Key.ToString(),FMath::RoundToFloat(W.Value));O->SetObjectField(TEXT("swells"),Wr);O->SetNumberField(TEXT("swells_refused"),BulgeRefused);O->SetNumberField(TEXT("wrap_ms"),WrapMs);O->SetNumberField(TEXT("wrap_verts"),WrapVerts);O->SetNumberField(TEXT("cloth_verts"),ClothVerts);O->SetNumberField(TEXT("cloth_ms"),ClothMs);O->SetNumberField(TEXT("clip_verts"),ClipVerts);O->SetNumberField(TEXT("back_exit"),BackExitCm);O->SetNumberField(TEXT("clip_lead"),ClipLeadCm);O->SetNumberField(TEXT("swell_ms"),SwellMs);O->SetNumberField(TEXT("swell_part"),BulgePart);}O->SetNumberField(TEXT("skin_facing"),SkinFacing);O->SetBoolField(TEXT("belly_side"),bBellySide);if(Gallery&&Gallery->PreviewActor){const FTransform& HerT=Gallery->PreviewActor->GetActorTransform();auto Vec=[&](const TCHAR* Name,const FVector& V){FVector U=AKKPreviewActor::ActorLocalToUnity(HerT.InverseTransformVectorNoScale(V))*100.;float K[16];if(Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_j_kokan"),K)||Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_J_Kokan"),K)){const FVector X(K[0],K[4],K[8]),Y(K[1],K[5],K[9]),Z(K[2],K[6],K[10]);U=FVector(U|X.GetSafeNormal(),U|Y.GetSafeNormal(),U|Z.GetSafeNormal());}TArray<TSharedPtr<FJsonValue>> A;A.Add(MakeShared<FJsonValueNumber>(U.X));A.Add(MakeShared<FJsonValueNumber>(U.Y));A.Add(MakeShared<FJsonValueNumber>(U.Z));O->SetArrayField(Name,A);};Vec(TEXT("dodge_her"),RootDodge);Vec(TEXT("skin_normal_her"),SkinNormal);Vec(TEXT("front_her"),BellyFront);}O->SetNumberField(TEXT("root_scale"),RootPadScale);O->SetBoolField(TEXT("xray"),bPenisXRay);if(Gallery&&Gallery->PairedPlayback)O->SetNumberField(TEXT("pair_rate"),Gallery->PairedPlayback->GetSpeed());O->SetNumberField(TEXT("held"),Held.Num());O->SetStringField(TEXT("caption"),Caption?Caption->GetText().ToString():FString());
+    O->SetNumberField(TEXT("playback_speed"),PlaybackSpeed());if(Gallery&&Gallery->PreviewActor)O->SetNumberField(TEXT("breath_rate"),Gallery->PreviewActor->SpeechTempo);O->SetBoolField(TEXT("hooked"),Hooked());O->SetNumberField(TEXT("oral_suck"),OralSuckSet);O->SetNumberField(TEXT("oral_pull"),OralPullSet);O->SetNumberField(TEXT("mouth_turned"),bMouthAimed?MouthTurned:0.f);O->SetStringField(TEXT("mouth_dbg"),MouthDbg.ToString());O->SetNumberField(TEXT("mouth_hidden_verts"),MouthClipVerts);O->SetNumberField(TEXT("bust_swell"),BustSwellSet);O->SetNumberField(TEXT("preg_belly"),PregBellyShown);O->SetNumberField(TEXT("preg_nipples"),PregNipples());O->SetNumberField(TEXT("depth_top"),AlignDeep);O->SetNumberField(TEXT("belly_out"),BulgeTarget.IsNone()?-1.f:BulgePast);O->SetNumberField(TEXT("belly_allow"),FMath::Max(0.f,BulgeMoves-2.5f));O->SetNumberField(TEXT("pullback"),BellyPullback);O->SetNumberField(TEXT("tip_inside"),TipInside);O->SetNumberField(TEXT("aim_relax"),AimRelax);O->SetNumberField(TEXT("skin_out"),SkinOutMost);O->SetNumberField(TEXT("skin_under"),SkinUnderMost);O->SetNumberField(TEXT("skin_worst"),SkinWorst);O->SetNumberField(TEXT("skin_rest"),SkinRest);O->SetNumberField(TEXT("skin_along"),SkinWorstAlong);O->SetNumberField(TEXT("root_dodge"),RootDodge.Size());O->SetNumberField(TEXT("depth_cap"),DepthCap);{auto Wr=MakeShared<FJsonObject>();for(const auto& W:Bulge)if(W.Value>1.f)Wr->SetNumberField(W.Key.ToString(),FMath::RoundToFloat(W.Value));O->SetObjectField(TEXT("swells"),Wr);O->SetNumberField(TEXT("swells_refused"),BulgeRefused);O->SetNumberField(TEXT("wrap_ms"),WrapMs);O->SetNumberField(TEXT("wrap_verts"),WrapVerts);O->SetNumberField(TEXT("cloth_verts"),ClothVerts);O->SetNumberField(TEXT("cloth_ms"),ClothMs);O->SetNumberField(TEXT("clip_verts"),ClipVerts);O->SetNumberField(TEXT("back_exit"),BackExitCm);O->SetNumberField(TEXT("clip_lead"),ClipLeadCm);O->SetNumberField(TEXT("swell_ms"),SwellMs);O->SetNumberField(TEXT("swell_part"),BulgePart);}O->SetNumberField(TEXT("skin_facing"),SkinFacing);O->SetBoolField(TEXT("belly_side"),bBellySide);if(Gallery&&Gallery->PreviewActor){const FTransform& HerT=Gallery->PreviewActor->GetActorTransform();auto Vec=[&](const TCHAR* Name,const FVector& V){FVector U=AKKPreviewActor::ActorLocalToUnity(HerT.InverseTransformVectorNoScale(V))*100.;float K[16];if(Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_j_kokan"),K)||Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_J_Kokan"),K)){const FVector X(K[0],K[4],K[8]),Y(K[1],K[5],K[9]),Z(K[2],K[6],K[10]);U=FVector(U|X.GetSafeNormal(),U|Y.GetSafeNormal(),U|Z.GetSafeNormal());}TArray<TSharedPtr<FJsonValue>> A;A.Add(MakeShared<FJsonValueNumber>(U.X));A.Add(MakeShared<FJsonValueNumber>(U.Y));A.Add(MakeShared<FJsonValueNumber>(U.Z));O->SetArrayField(Name,A);};Vec(TEXT("dodge_her"),RootDodge);Vec(TEXT("skin_normal_her"),SkinNormal);Vec(TEXT("front_her"),BellyFront);}O->SetNumberField(TEXT("root_scale"),RootPadScale);O->SetBoolField(TEXT("xray"),bPenisXRay);if(Gallery&&Gallery->PairedPlayback)O->SetNumberField(TEXT("pair_rate"),Gallery->PairedPlayback->GetSpeed());O->SetNumberField(TEXT("held"),Held.Num());O->SetStringField(TEXT("caption"),Caption?Caption->GetText().ToString():FString());
     O->SetNumberField(TEXT("her"),Her);O->SetNumberField(TEXT("his"),His);
     {auto P=MakeShared<FJsonObject>();P->SetNumberField(TEXT("ankle"),AnkleTurn);P->SetNumberField(TEXT("thigh_l"),ThighOpen[0]);P->SetNumberField(TEXT("thigh_r"),ThighOpen[1]);P->SetNumberField(TEXT("hand_l"),HandPattern[0]);P->SetNumberField(TEXT("hand_r"),HandPattern[1]);P->SetNumberField(TEXT("hand_patterns"),HandOptions);O->SetObjectField(TEXT("her_pose"),P);}
     // Her development as the scene uses it now (her own plus this scene's climaxes), and how long her climax and her
@@ -2090,7 +2150,7 @@ TSharedRef<FJsonObject> UOKHScenePanel::Result() const{
     {static const TCHAR* Keys[]={TEXT("kiss"),TEXT("chest"),TEXT("crotch"),TEXT("anal"),TEXT("butt"),TEXT("nipple")};auto Areas=MakeShared<FJsonObject>();
      for(int32 I=0;I<6;++I)Areas->SetNumberField(Keys[I],FMath::RoundToDouble(AreaSeconds[I]));Counts->SetObjectField(TEXT("areas"),Areas);Counts->SetNumberField(TEXT("kiss"),FMath::RoundToDouble(AreaSeconds[0]));}
     Counts->SetBoolField(TEXT("raw"),bRaw);Counts->SetBoolField(TEXT("raw_pressed"),bRawPressed&&bRaw);
-    Counts->SetNumberField(TEXT("his_inside"),HisInside);Counts->SetNumberField(TEXT("his_inside_raw"),HisInsideRaw);Counts->SetNumberField(TEXT("his_condom"),HisCondom);Counts->SetNumberField(TEXT("her_drips"),HerDrips);Counts->SetNumberField(TEXT("her_milk"),HerMilk);Counts->SetNumberField(TEXT("his_outside"),HisOutside);Counts->SetNumberField(TEXT("his_mouth"),HisMouth);Counts->SetNumberField(TEXT("swallowed"),Swallowed);Counts->SetNumberField(TEXT("her_orgasms"),HerOrgasms);Counts->SetNumberField(TEXT("his_finishes"),HisFinishes);
+    Counts->SetNumberField(TEXT("his_inside"),HisInside);Counts->SetNumberField(TEXT("his_inside_raw"),HisInsideRaw);Counts->SetNumberField(TEXT("his_inside_vagina_raw"),HisInsideVaginaRaw);Counts->SetNumberField(TEXT("his_condom"),HisCondom);Counts->SetNumberField(TEXT("her_drips"),HerDrips);Counts->SetNumberField(TEXT("her_milk"),HerMilk);Counts->SetNumberField(TEXT("his_outside"),HisOutside);Counts->SetNumberField(TEXT("his_mouth"),HisMouth);Counts->SetNumberField(TEXT("swallowed"),Swallowed);Counts->SetNumberField(TEXT("her_orgasms"),HerOrgasms);Counts->SetNumberField(TEXT("his_finishes"),HisFinishes);
     auto Out=MakeShared<FJsonObject>();Out->SetObjectField(TEXT("counts"),Counts);
     TArray<TSharedPtr<FJsonValue>> P,E;for(const FString& S:PosesPlayed)P.Add(MakeShared<FJsonValueString>(S));for(const FString& S:Events)E.Add(MakeShared<FJsonValueString>(S));
     Out->SetArrayField(TEXT("poses"),P);Out->SetArrayField(TEXT("events"),E);

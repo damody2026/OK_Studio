@@ -331,6 +331,36 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character){
     .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->FinishPrivate();return FReply::Handled();})];
   GEngine->GameViewport->AddViewportWidgetContent(S.PrivateLeave.ToSharedRef(),20);}
 }
+// The original's result after an H scene (HSceneResult): her level then and now, each place's development before and
+// after (what grew in green), and this time's firsts; on the street until he closes it or another one-on-one ends.
+void AOKStreetSocialScene::ShowHResult(int32 Girl,const FJsonObject& Answer){
+ auto& S=*State;const TSharedPtr<FJsonObject>* Result=nullptr;
+ if(S.HResultPanel.IsValid()){if(GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(S.HResultPanel.ToSharedRef());S.HResultPanel.Reset();}
+ if(!Answer.TryGetObjectField(TEXT("result"),Result)||!(*Result)->GetBoolField(TEXT("played"))||!GEngine||!GEngine->GameViewport)return;
+ TSharedRef<SVerticalBox> Rows=SNew(SVerticalBox);
+ auto Line=[&](const FString& Text,const FLinearColor& Color,int32 Size){Rows->AddSlot().AutoHeight().Padding(FMargin(0,2))[SNew(STextBlock).Text(FText::FromString(Text)).ColorAndOpacity(FSlateColor(Color)).Font(FCoreStyle::GetDefaultFontStyle("Regular",Size))];};
+ Line(OKMsg(TEXT("ui.hresult.title"),{{TEXT("name"),SpokenName(Girl)}}),FLinearColor::White,18);
+ const FString Was=(*Result)->GetStringField(TEXT("level_before_name")),Now=Answer.GetStringField(TEXT("level_name"));
+ Line(Was==Now?OKMsg(TEXT("ui.hresult.level"),{{TEXT("level"),Now}}):OKMsg(TEXT("ui.hresult.level_up"),{{TEXT("before"),Was},{TEXT("after"),Now}}),Was==Now?FLinearColor(.85f,.85f,.9f):FLinearColor(1.f,.75f,.3f),15);
+ const TArray<TSharedPtr<FJsonValue>>* Areas=nullptr;
+ if((*Result)->TryGetArrayField(TEXT("areas"),Areas))for(const auto& V:*Areas){const auto O=V->AsObject();if(!O)continue;
+  const int32 B=int32(O->GetNumberField(TEXT("before"))),A=int32(O->GetNumberField(TEXT("after")));
+  Line(OKMsg(A>B?TEXT("ui.hresult.area_up"):TEXT("ui.hresult.area"),{{TEXT("name"),O->GetStringField(TEXT("name"))},{TEXT("before"),B},{TEXT("after"),A},{TEXT("n"),A-B}}),A>B?FLinearColor(.55f,1.f,.6f):FLinearColor(.8f,.8f,.85f),14);}
+ const TArray<TSharedPtr<FJsonValue>>* Firsts=nullptr;
+ if((*Result)->TryGetArrayField(TEXT("firsts"),Firsts))for(const auto& V:*Firsts)Line(OKMsg(TEXT("ui.hresult.first"),{{TEXT("text"),V->AsString()}}),FLinearColor(1.f,.6f,.75f),14);
+ // Her pregnancy (pregnancy.rs): conceived this time, or how far along.
+ const TSharedPtr<FJsonObject>* Preg=nullptr;bool bConceived=false;(*Result)->TryGetBoolField(TEXT("conceived"),bConceived);
+ if((*Result)->TryGetObjectField(TEXT("pregnancy"),Preg)&&(*Preg)->GetBoolField(TEXT("pregnant")))
+  Line(bConceived?OKT(TEXT("ui.hresult.conceived")):OKMsg(TEXT("ui.hresult.pregnant"),{{TEXT("week"),int32((*Preg)->GetNumberField(TEXT("week")))}}),FLinearColor(1.f,.55f,.85f),14);
+ Rows->AddSlot().AutoHeight().HAlign(HAlign_Right).Padding(FMargin(0,10,0,0))
+  [SNew(SButton).ButtonStyle(OKStreetGlassButton()).ContentPadding(FMargin(18,6)).Text(FText::FromString(OKT(TEXT("ui.hresult.close"))))
+   .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid()&&Weak->State&&Weak->State->HResultPanel.IsValid()&&GEngine&&GEngine->GameViewport){GEngine->GameViewport->RemoveViewportWidgetContent(Weak->State->HResultPanel.ToSharedRef());Weak->State->HResultPanel.Reset();}return FReply::Handled();})];
+ TSharedRef<SBorder> Panel=SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(FLinearColor(.05f,.04f,.08f,.88f)).Padding(FMargin(28,20));
+ Panel->SetContent(Rows);
+ S.HResultPanel=SNew(SBox).HAlign(HAlign_Center).VAlign(VAlign_Center)[Panel];
+ GEngine->GameViewport->AddViewportWidgetContent(S.HResultPanel.ToSharedRef(),25);
+ UE_LOG(LogTemp,Display,TEXT("Street private: result shown (%s -> %s, %d places)"),*Was,*Now,Areas?Areas->Num():0);
+}
 void AOKStreetSocialScene::FinishPrivate(){
  if(!State||State->PrivateGirl==INDEX_NONE)return;auto& S=*State;
  auto Mode=S.PrivateMode;const int32 Girl=S.PrivateGirl;S.PrivateMode.Reset();S.PrivateGirl=INDEX_NONE;
@@ -363,7 +393,8 @@ void AOKStreetSocialScene::FinishPrivate(){
    const FString Id=OKStreetStableId(S.Manifest.Characters[Girl]);auto Request=OKRulesHeroineRequest(S,TEXT("h_session_end"),Id);
    Request->SetStringField(TEXT("girl"),Id);Request->SetNumberField(TEXT("day"),S.Store.CalendarDay);Request->SetStringField(TEXT("place"),PlaceHere(S.Male));Request->SetNumberField(TEXT("minute"),double(OKStreetMindNow(S)));Request->SetObjectField(TEXT("counts"),(*H)->GetObjectField(TEXT("counts")));{const TArray<TSharedPtr<FJsonValue>>* Poses=nullptr;if((*H)->TryGetArrayField(TEXT("poses"),Poses))Request->SetArrayField(TEXT("poses"),*Poses);}OKRulesPutExt(S,Request);
    if(const TSharedPtr<FJsonObject> Answer=OKRulesEval(S,Request)){auto Candidate=S.Store;OKRulesTakeExt(Candidate,*Answer);ApplyRulesEffects(Candidate,*Answer);if(CommitStore(MoveTemp(Candidate)))FlushRulesEffects();OKStreetApplyHerExtras(S,Id);
-    UE_LOG(LogTemp,Display,TEXT("Street private: experience %d -> %d (%s)"),int32(Answer->GetNumberField(TEXT("level_before"))),int32(Answer->GetNumberField(TEXT("level_after"))),*Answer->GetStringField(TEXT("level_name")));}
+    UE_LOG(LogTemp,Display,TEXT("Street private: experience %d -> %d (%s)"),int32(Answer->GetNumberField(TEXT("level_before"))),int32(Answer->GetNumberField(TEXT("level_after"))),*Answer->GetStringField(TEXT("level_name")));
+    ShowHResult(Girl,*Answer);}
   }
  }
  // Back on the street with her beside him: they go on talking (the scene started from their talk, which it ended).

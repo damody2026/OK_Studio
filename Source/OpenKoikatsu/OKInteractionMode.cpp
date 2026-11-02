@@ -263,6 +263,9 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
         // {"dev":{"oral":100,...}}: her development there, for testing (0..100; -1 back to hers).
         const TSharedPtr<FJsonObject>* Devs=nullptr;if(Body->TryGetObjectField(TEXT("dev"),Devs))for(const auto& D:(*Devs)->Values){const double V=D.Value->AsNumber();if(V<0.)Panel->DevTest.Remove(FString(D.Key));else Panel->DevTest.Add(FString(D.Key),float(V));}
         bool Green=false;if(Body->TryGetBoolField(TEXT("penis_green"),Green))Panel->SetPenisGreen(Green);
+        // {"preg":{"belly":0.8,"body":0.5}}: her pregnant belly and changed areolae held there for testing (-1 hers).
+        const TSharedPtr<FJsonObject>* Preg=nullptr;if(Body->TryGetObjectField(TEXT("preg"),Preg)){double V=0;
+            if((*Preg)->TryGetNumberField(TEXT("belly"),V))Panel->PregBellyTest=float(V);if((*Preg)->TryGetNumberField(TEXT("body"),V))Panel->PregBodyTest=float(V);Panel->PregCheckAt=0.;}
         // {"her_pose":{"ankle":20,"thigh_l":30,"thigh_r":0,"hand_l":3,"hand_r":-1}}: her pose as the panel sets it (degrees;
         // a hand pattern, -1 as the motion). Fields left out stay as they are.
         const TSharedPtr<FJsonObject>* HerPose=nullptr;if(Body->TryGetObjectField(TEXT("her_pose"),HerPose)){double V;float F[3];int32 H[2];const float* FP[3]={};const int32* HP[2]={};

@@ -168,6 +168,7 @@ private:
     UPROPERTY() TObjectPtr<UProgressBar> HerGauge;
     UPROPERTY() TObjectPtr<UProgressBar> HisGauge;
     UPROPERTY() TObjectPtr<USlider> Speed;
+    UPROPERTY() TObjectPtr<class UBorder> SpeedCover; // over 70% of the speed bar while she is touched where she never was
     UPROPERTY() TObjectPtr<UVerticalBox> PenisBox;
     // Half size: the inner box twice the panel high (NativeTick, from the panel as laid out), drawn at half.
     UPROPERTY() TObjectPtr<class USizeBox> HalfInner;UPROPERTY() TObjectPtr<class USizeBox> PanelWidth;
@@ -230,6 +231,11 @@ public:
     void LookAtCrotch(float Distance,float Pitch=15.f,float Turn=0.f,bool bFront=false); // /hscene {"crotch_cam":cm} or {distance, pitch, turn}: where they join, from beside her body // /hscene {"face_cam":cm}: the camera in front of her face, to see what is on it
     void SetSiruTest(const int32 (&Levels)[5]); // /hscene {"siru":[...]}: set her liquid levels directly
     TMap<FString,float> DevTest; // /hscene {"dev":{...}}: her development, for testing (Dev)
+    // Her pregnancy (ok-rules pregnancy.rs, in her experience): belly and changed areolae shown in the scene.
+    // /hscene {"preg":{"belly":0..1,"body":0..1}} holds them for testing (-1 back to hers).
+    float PregBellyTest=-1.f,PregBodyTest=-1.f;
+    void ApplyPregnancy(double Now);double PregCheckAt=0.;float PregBellyShown=0.f;TWeakObjectPtr<class AKKPreviewActor> PregActor;int32 PregOutfit=-1;
+    float PregBelly() const;float PregNipples() const;
     // /hscene {"penis_green":true}: his penis flat pure green, depth-tested, so any of it out of her skin shows (testing).
     void SetPenisGreen(bool bOn);bool bPenisGreen=false;UPROPERTY() TArray<TObjectPtr<UMaterialInterface>> GreenKept;TArray<TWeakObjectPtr<UMeshComponent>> GreenComps;
     float BlushTest=-1.f; // /hscene {"blush":v}: hold her blush at v (0..1) to compare shots; -1 follows her
@@ -329,7 +335,7 @@ private:
     FString StateWords(const FString& Base) const;
     bool bRawAsked=false,bRawPressed=false;
     int32 HisInside=0,HisOutside=0,HisMouth=0,Swallowed=0;
-    int32 HisInsideRaw=0,HisCondom=0; // in her: his finishes inside without a condom, and any with one (discharge)
+    int32 HisInsideRaw=0,HisCondom=0,HisInsideVaginaRaw=0; // in her: his finishes inside without a condom, and any with one (discharge); in her vagina without one (pregnancy)
     TArray<FOKHPose> Poses;
     int32 Tab=TabSonyu,ActivePose=INDEX_NONE,PendingPose=INDEX_NONE;
     int32 Mode=-1;              // of the active pose: 0 caress, 1 service, 2 intercourse

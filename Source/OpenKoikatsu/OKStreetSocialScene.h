@@ -112,6 +112,7 @@ private:
  void ToggleBigMap();
  void BeginPrivate(int32 Character);
  void FinishPrivate();
+ void ShowHResult(int32 Girl,const class FJsonObject& Answer); // OKStreetSocialContacts.inl
  bool TickPrivate(double Now);
  void TickContacts(float Dt,double Now);
  void RunContactsProbe(double Now);

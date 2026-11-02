@@ -158,6 +158,7 @@ fn experience(r: &Value) -> Result<Value, String> {
     let day = r.get("day").and_then(Value::as_i64).unwrap_or(-1);
     let today = day >= 0 && h.today_day == day;
     let (today_orgasms, today_service, anal_refused_today) = if today { (h.today_orgasms, h.today_service, h.today_anal_refused) } else { (0, 0, false) };
+    let preg = crate::pregnancy::on_day(r.get("ext").unwrap_or(&Value::Null), girl, day.max(0));
     let mut areas: serde_json::Map<String, Value> = AREA_KEYS.iter().enumerate().map(|(i, k)| (k.to_string(), json!(h.area(i)))).collect();
     areas.insert("oral".into(), json!(h.oral.min(100.0)));
     Ok(json!({
@@ -183,6 +184,8 @@ fn experience(r: &Value) -> Result<Value, String> {
         "kiss_ok": kiss_ok,
         "chastity": chaste,
         "used": level >= 2,
+        "kissed": h.kissed,
+        "pregnancy": crate::pregnancy::view(&preg, girl, day.max(0)),
     }))
 }
 
@@ -323,6 +326,34 @@ fn session_end(r: &Value) -> Result<Value, String> {
         }
     }
     let level_after = h.level(rel.lewdness);
+    // The result shown when the scene ends (HSceneResult): each place before and after, in the panel's order, and the
+    // firsts of this time.
+    let rows: Vec<Value> = [(KISS, "kiss"), (CHEST, "chest"), (NIPPLE, "nipple"), (BUTT, "butt"), (CROTCH, "crotch"), (ANAL, "anal")]
+        .iter()
+        .map(|&(i, key)| json!({"area": key, "name": area_name(i), "before": was.areas[i].round(), "after": h.areas[i].round()}))
+        .chain(std::iter::once(json!({"area": "oral", "name": crate::tr::t("hexp.area_mouth"), "before": was.oral.round(), "after": h.oral.round()})))
+        .collect();
+    let firsts: Vec<&str> = [
+        (was.count == 0 && h.count > 0, "hexp.first_time"),
+        (was.virgin && !h.virgin, "hexp.lost_virginity"),
+        (was.anal_virgin && !h.anal_virgin, "hexp.first_anal"),
+        (!was.kissed && h.kissed, "hexp.first_kiss"),
+    ]
+    .iter()
+    .filter(|(yes, _)| *yes)
+    .map(|(_, id)| crate::tr::t(id))
+    .collect();
+    // Her pregnancy (pregnancy.rs): the days since the last scene first (a birth past term), then his finishes in her
+    // vagina without a condom this time.
+    let day = r.get("day").and_then(Value::as_i64).unwrap_or(-1);
+    let mut preg = crate::pregnancy::on_day(&ext, girl, day.max(0));
+    let seed = r.get("seed").and_then(Value::as_i64).unwrap_or(day * 7919 + h.count as i64) as i32;
+    let conceived = crate::pregnancy::after_scene(&mut preg, girl, day, num(&c, "his_inside_vagina_raw") as i64, seed);
+    if day >= 0 {
+        crate::pregnancy::store(&mut ext, girl, &preg);
+    }
+    let pregnancy = crate::pregnancy::view(&preg, girl, day.max(0));
+    let result = json!({"areas": rows, "firsts": firsts, "level_before_name": level_name(level_before), "played": played, "pregnancy": pregnancy, "conceived": conceived});
     if level_after != level_before && level_after > 0 {
         fx.note_at(&rel.id, "h_level", &crate::tr::m("hexp.level_changed", &[("level", crate::tr::a(level_name(level_after)))]), place, 0.85);
     }
@@ -331,7 +362,7 @@ fn session_end(r: &Value) -> Result<Value, String> {
         ext["hexp"] = json!({});
     }
     ext["hexp"][girl] = serde_json::to_value(&h).map_err(|e| e.to_string())?;
-    Ok(json!({"ext": ext, "effects": fx.into_value(), "level_before": level_before, "level_after": level_after, "level_name": level_name(level_after), "hexp": h}))
+    Ok(json!({"ext": ext, "effects": fx.into_value(), "level_before": level_before, "level_after": level_after, "level_name": level_name(level_after), "hexp": h, "result": result}))
 }
 
 pub fn eval(kind: &str, r: &Value) -> Option<Result<Value, String>> {
