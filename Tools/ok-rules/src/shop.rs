@@ -652,6 +652,9 @@ pub fn chat_order_payer(r: &Value) -> Value {
         None if r.get("has_hers").and_then(Value::as_bool).unwrap_or(false) => "choice",
         None => "player_pays",
     };
+    // Her own wish to pay (nothing settled, no treat promised) pays hers, not his too: at the cafe 胡桃 paid for the Earl
+    // Grey he ordered for himself at the group table (R6-108).
+    let option = if option == "she_pays" && !promise && r.get("has_his").and_then(Value::as_bool).unwrap_or(false) { "split" } else { option };
     json!({"option": option})
 }
 
@@ -1084,6 +1087,8 @@ mod tests {
         assert_eq!(o(json!({"lean": "player_pays", "agreed": "her"})), "she_pays");
         assert_eq!(o(json!({"lean": "she_pays", "agreed": "her", "has_his": true})), "split", "she pays her own, his is his (R6-38)");
         assert_eq!(o(json!({"lean": "she_pays", "agreed": "her", "has_his": true, "promise": true})), "she_pays", "her treat pays his too");
+        assert_eq!(o(json!({"lean": "she_pays", "has_his": true})), "split", "her wish to pay is for hers, his is his (R6-108)");
+        assert_eq!(o(json!({"lean": "she_pays"})), "she_pays");
         assert_eq!(o(json!({"lean": "player_pays", "insist": 0.4, "has_hers": true})), "choice", "her own order, nothing settled: he decides");
         assert_eq!(o(json!({"lean": "split", "promise": true})), "she_pays", "her promise");
         assert_eq!(o(json!({"lean": "split", "promise": true, "agreed": "him"})), "player_pays", "he insisted and she let him");

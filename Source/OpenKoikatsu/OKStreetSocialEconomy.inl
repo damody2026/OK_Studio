@@ -360,6 +360,9 @@ void AOKStreetSocialScene::SettleGroupOrder(int32 Partner){
   if(!S.HerTreatPromise.Contains(G)){
    FString Lean;float Insist=0;HeroineCheckoutLean(G,CartTotal(),Lean,Insist);
    auto Request=OKRulesRequest(TEXT("chat_order_payer"));Request->SetStringField(TEXT("lean"),Lean);Request->SetStringField(TEXT("agreed"),PayAgreed(Partner));Request->SetNumberField(TEXT("insist"),Insist);
+   // His own dishes ride on the partner's bill: the rule needs to know (each pays their own unless she treats, R6-108).
+   Request->SetBoolField(TEXT("has_his"),G==Partner&&S.Cart.ContainsByPredicate([](const FOKStreetCartLine& L){return !L.ForHer&&L.Girl==INDEX_NONE;}));
+   Request->SetBoolField(TEXT("has_hers"),S.Cart.ContainsByPredicate([](const FOKStreetCartLine& L){return L.ForHer||L.Girl!=INDEX_NONE;}));Request->SetBoolField(TEXT("promise"),false);
    const TSharedPtr<FJsonObject> Payer=OKRulesEval(S,Request);Option=Payer.IsValid()?Payer->GetStringField(TEXT("option")):Lean;
    if(!PayAgreed(Partner).IsEmpty()&&S.PayAgreedShop.IsEmpty())S.PayAgreedShop=S.ShopPlace;
    if(Option==TEXT("choice"))Option=TEXT("she_pays");
