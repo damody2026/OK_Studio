@@ -118,3 +118,97 @@
 7. **驗收**：`StreetSocial.cmd` 實際啟動、走到各地點、睡覺、H 能在旅館房進行，`CardReaderDevelopment.cmd` 也要能啟動。
 
 步驟 1、3、4、5 動到 C++，要使用者決定由誰做。我（c-street-city）目前只動場景。
+
+### 給整合者：每一步需要的資料
+
+協調者 11-03 決定：C++ 的部分（第 1、3、4、5 步）照使用者 11-01 的說法，留到使用者整合時處理。c-street-city 只負責把資料準備好。
+
+**`places.json` 欄位和遊戲結構的對應**
+
+遊戲結構在 `Source/OpenKoikatsu/OKStreetSocialPlaces.h`：
+- `FOKStreetPlace`：約第 130 行。
+- `FOKStreetModelAnchor`：約第 38 行。
+- 寫死的地點表：`OKStreetPlaces()`，約第 290–411 行。
+
+| `places.json` | 遊戲 | 說明 |
+|---|---|---|
+| `id` | `FOKStreetPlace::Id` | 新地點的 id。沿用舊 id 的對應表見上方「遊戲現有地點和大學城建築的對應」 |
+| `name` | `Name`／`ZhName` | 中文名 |
+| `door` [x,y,z] cm | `Door` | 抵達點。汽車旅館是真正的入口，室內房間是家具範圍的中心 |
+| `room.center/size/yaw`（汽車旅館）或 `room.min/max`（其他室內） | `Rooms`（FBox） | 汽車旅館的房間框要依 `yaw` 轉，`yaw` 只會是 0、90、180、270 |
+| `anchors[].name/pos/yaw` | `Anchors{Name, Position, Yaw}` | yaw 規則和遊戲一樣：角色面向 yaw+90。床錨點名是 `bed1_0`，宿舍、公寓是 `bed0_0`、`bed1_0`…，座位 `seat*`、桌子 `table*`、沙發 `sofa*`、SPA 池 `pool*` |
+| `privacy` | `places.toml` 的 `privacy` | 2 才能 H（`RequestIntimacy`，`OKStreetSocialInvite.inl` 約第 285 行） |
+| `mirrors[]`（汽車旅館） | 不用讀 | 鏡子已經在地圖上，資料只供參考 |
+| `kind`、`uses` | 不用讀 | 給人看的分類 |
+
+**要改的地方**
+
+- **地圖路徑**：兩處都寫 `/Game/Scenes/StreetSocial/StreetSocial`，換成 `/Game/UniversityCity/Maps/UniversityCity`。
+  - `Tools/run_street_social_development.lua:463`
+  - `Source/OpenKoikatsu/OKStreetSocialScene.cpp:4661`（`UOKBuildStreetSocialMapCommandlet::Main`）
+- **地點表**：`OKStreetPlaces()` 改成讀 `places.json`（或由它產生）。`.okmesh` 模型（`OKStreetLoadPlaceModel`）在大學城用不到，因為建築已經在地圖上。
+- **路線點**：`OKStreetPlaceRoutePoints()`（約第 420 行）。大學城的道路格點可以從 `output/street-social-city-production/world-edge-v1/road-raster.json` 取（2 m 一格，`r` 是路面），也可以直接用各地點的 `door`。
+- **附加地面**：`OKStreetPlaceGround()`（約第 453 行）。大學城地面都有碰撞，可以清空。
+- **床**：`OKStreetNearestBed`（約第 478 行）找名稱開頭是 `bed` 的錨點、Z 差 150 cm 以內。`places.json` 的床錨點都照這個命名。
+- **鏡子**：`StreetSocialCity/Plugins/CityEnvironment/Source/CityEnvironment/Private/CityImmersionWalker.cpp` 第 97–130 行，是「最近兩面鏡子」的邏輯：找 `ImmersionLargeMirror` tag，玩家眼睛同一層、在鏡子前面、22 m 內的最近兩面開啟。遊戲的 Pawn 要做同樣的事。
+- **外掛**：
+  - 執行期外掛：`StreetSocialCity/Plugins/CityEnvironment`（含 `CityLocalization` 模組）、`StreetSocialCity/Plugins/CityLocalization`。
+  - 地圖上有 `CityEnvironmentController`（日夜與天空）。
+
+**資料重建**：見文件開頭（`world_places_probe` → `build_street_city_places.lua`）。
+
+## 攻略確認（c-conquest，11-03）與 `game_places`
+
+攻略（[C組] 街區攻略：十位女主循環）11-03 回覆：
+
+- **格式**：照 `OKStreetSocialPlaces.h` 的格式，`places.json` 可以直接用。
+- **Door**：要用真正的入口，因為它是抵達點，也是「店門口 3 m 內仍算在店」的判斷基準。已改：
+  - 房間用房門（往房內 60 cm）。
+  - 商店用 `entryframe`。
+  - 大樓用 `<棟>-entry-A`。
+  - `door_kind` 標示是哪一種。
+- **錨點名稱**：照遊戲讀的名稱。這些放在 `places.json` 的 `game_places`（下表），每個遊戲 id 都有 `door`、`rooms`、`anchors`。
+- **H（privacy 2）**：
+  - 開放：汽車旅館 H1 全部、民宿 S18、男宿 D2 的房間、公寓 R1／R2。
+  - 女宿 D1 的房間：要她是住戶或由她邀請（`needs_invite`）。
+  - 溫泉包場、午睡室：privacy 1，只能接吻、擁抱。
+  - 戶外樹叢：不開 H，只當人少的接吻點（privacy 1）。
+- **最缺**：便利店內用座位、女宿交誼廳可以兩人打電動的沙發＋電視。已用 `Tools/street_city_lover_spots_payload.lua` 補上，同時補：
+  - 地圖上原本沒有的販賣機，共 11 處。
+  - 一座小神社（鳥居、石板參道、小祠、賽錢箱、石燈籠），給 `shrine`。
+  - 男宿 D2 交誼廳也一樣有沙發＋電視。
+
+| 遊戲 id | 大學城 | privacy | 錨點 | 還缺 |
+|---|---|---:|---|---|
+| `aquarium` | 錦鯉池 | 0 | tank、bench | vending |
+| `bookstore` | S07 街角書局 | 0 | shelf、seat |  |
+| `boys_dorm` | D2 男生宿舍B | 2 | lounge、bed3_0 | vending |
+| `cafe` | S01 咖啡書屋 | 0 | counter、seat |  |
+| `cafeteria` | SC 學生餐廳 | 0 | table | vending |
+| `campus_gate` | 校門 | 0 | gate |  |
+| `campus_sports` | SP 運動健康館 | 0 | seat、field |  |
+| `conveni` | S06 便利商店 | 0 | aisle | seat、table |
+| `department` | M1 大學城百貨 | 0 | mirror2、food、beauty、books、phones、shoes、mirror3、sofa、view、bear | vending |
+| `drinkshop` | S02 手搖飲店 | 0 | counter、seat |  |
+| `fruitshop` | S05 水果店 | 0 | stand |  |
+| `girls_dorm` | D1 女生宿舍A | 0 | lounge | vending |
+| `hotel` | H1 星澄豪華溫泉飯店 | 1 | lobby、bar、room6、bed6_1、pool | vending |
+| `lecture` | T2 第二教學大樓 | 0 | seat |  |
+| `library` | LI 借還書服務大廳 | 0 | seat、shelf | vending |
+| `lodge` | H1 泳池套房（星澄汽車旅館 203 Swimming Pool Suite1） | 2 | bed2_0、seat、lounge2 | vending |
+| `lottery` | S20 星運彩券行 | 0 |  |  |
+| `minshuku` | S18 日式民宿 | 2 | seat、bed1_0 |  |
+| `onsen` | S19 溫泉會館 | 1 | pool |  |
+| `park` | 中央公園 | 0 | fountain、plaza、pond、bench | vending |
+| `petshop` | S08 寵物用品店 | 0 | pets |  |
+| `playground` | 遊樂場 | 0 | field | vending |
+| `restaurant` | S04 家庭餐館 | 0 | table |  |
+| `restroom_campus` | SC 學生中心 1F 廁所 | 1 | wait、women |  |
+| `restroom_north` | D3 研究生宿舍C 1F 廁所 | 1 | wait、women |  |
+| `restroom_park` | CV 市民文化與生活中心 1F 廁所 | 1 | wait、women |  |
+| `restroom_resort` | H1 星澄豪華溫泉飯店 1F 廁所 | 1 | wait、women |  |
+| `school` | T1 第一教學大樓 | 0 | seat、class2、music | vending |
+| `shrine` | 小神社 | 0 |  | torii、pray |
+| `snack` | S03 烘焙甜點店 | 0 | counter、table |  |
+
+「還缺」那一欄是新物件裝進地圖、`lover-spots-install-*.json` 寫出來之前的狀態；`build_street_city_places.lua` 重跑後會自動填進去。
