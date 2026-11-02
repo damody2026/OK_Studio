@@ -259,27 +259,14 @@ TSharedRef<SWidget> SOKStudioPanel::BuildCardBrowser()
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 3.f)
 		[
 			SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 2.f, 0.f)[SNew(SBox).ToolTipText(FText::FromString(TEXT("上一步")))[Button(FText::FromString(TEXT("‹")), [this]
-			{
-				if (CardBack.IsEmpty()) return;
-				CardForward.Add(CardFolder); CardFolder = CardBack.Pop(); CardPage = 0;
-				DeferFloat(TEXT("cards"));
-			}, 24.f, 20.f, false, 11.f, ButtonFill(), CardBack.Num() > 0)]]
-			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 2.f, 0.f)[SNew(SBox).ToolTipText(FText::FromString(TEXT("下一步")))[Button(FText::FromString(TEXT("›")), [this]
-			{
-				if (CardForward.IsEmpty()) return;
-				CardBack.Add(CardFolder); CardFolder = CardForward.Pop(); CardPage = 0;
-				DeferFloat(TEXT("cards"));
-			}, 24.f, 20.f, false, 11.f, ButtonFill(), CardForward.Num() > 0)]]
-			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)[SNew(SBox).ToolTipText(FText::FromString(Root))[Button(FText::FromString(TEXT("根目錄")), [this, Root] { GoCardFolder(Root); DeferFloat(TEXT("cards")); }, 52.f, 20.f, CardFolder == Root, 10.f)]]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 2.f, 0.f)[SNew(SBox).ToolTipText(FText::FromString(TEXT("上一步")))[Button(FText::FromString(TEXT("‹")), Cmd(TEXT("cards.back")), 24.f, 20.f, false, 11.f, ButtonFill(), CardBack.Num() > 0)]]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 2.f, 0.f)[SNew(SBox).ToolTipText(FText::FromString(TEXT("下一步")))[Button(FText::FromString(TEXT("›")), Cmd(TEXT("cards.forward")), 24.f, 20.f, false, 11.f, ButtonFill(), CardForward.Num() > 0)]]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)[SNew(SBox).ToolTipText(FText::FromString(Root))[Button(FText::FromString(TEXT("根目錄")), Cmd(TEXT("cards.root")), 52.f, 20.f, CardFolder == Root, 10.f)]]
 			+ SHorizontalBox::Slot().FillWidth(1.f)[SNew(SBox).HeightOverride(20.f)[SNew(SEditableTextBox).Style(&TextBoxStyle()).Text(FText::FromString(CardFolder)).HintText(FText::FromString(TEXT("輸入或貼上資料夾按 Enter")))
 				.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type C)
 				{
 					if (C != ETextCommit::OnEnter) return;
-					const FString Dir = FPaths::ConvertRelativePathToFull(T.ToString().TrimStartAndEnd().TrimQuotes());
-					if (Dir.IsEmpty() || !FPaths::DirectoryExists(Dir)) { SetStatus(TEXT("沒有這個資料夾：") + Dir); DeferFloat(TEXT("cards")); return; }
-					GoCardFolder(Dir);
-					DeferFloat(TEXT("cards"));
+					if (!RunCommand(TEXT("cards.folder"), T.ToString())) DeferFloat(TEXT("cards"));
 				})]]
 		]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 3.f)

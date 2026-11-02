@@ -1444,23 +1444,8 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 4.f, 0.f)[OKStudioStyle::Label(FText::FromString(TEXT("匯出位置")), 10.f, TextHint())]
 			+ SHorizontalBox::Slot().FillWidth(1.f)[SNew(SBox).HeightOverride(20.f)[TextBox([] { const FString& R = FOKStudioSettings::Get().MaterialExportRoot; return R.IsEmpty() ? FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("OKStudio/MaterialExport")) : R; },
-				[this](const FString& V)
-				{
-					// Empty or the default folder: back to the default.
-					const FString Typed = V.TrimStartAndEnd().TrimQuotes();
-					const FString Default = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("OKStudio/MaterialExport"));
-					const FString Dir = Typed.IsEmpty() ? Default : FPaths::ConvertRelativePathToFull(Typed);
-					if (Dir != Default && !IFileManager::Get().MakeDirectory(*Dir, true)) { SetStatus(TEXT("無法建立資料夾：") + Dir); RebuildFloat(TEXT("material")); return; }
-					FOKStudioSettings::Get().MaterialExportRoot = Dir == Default ? FString() : Dir;
-					FOKStudioSettings::Get().Save();
-					SetStatus(TEXT("材質匯出位置：") + Dir);
-				}, TEXT("匯出資料夾（Enter 套用）"))]]
-			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("預設")), [this]
-			{
-				FOKStudioSettings::Get().MaterialExportRoot.Reset();
-				FOKStudioSettings::Get().Save();
-				RebuildFloat(TEXT("material"));
-			}, 44.f, 20.f, false, 10.f)]
+				[this](const FString& V) { RunCommand(TEXT("material.exportroot"), V); }, TEXT("匯出資料夾（Enter 套用）"))]]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("預設")), Cmd(TEXT("material.exportroot"), FString()), 44.f, 20.f, false, 10.f)]
 		];
 }
 
@@ -1760,12 +1745,13 @@ TSharedRef<SWidget> SOKStudioPanel::BuildResources()
 			for (const FString& M : Mods) Lines.Add(FString::Printf(TEXT("#%d 　　%s"), O.Id, *M));
 		}
 	}
+	ResourcesShown = Lines;
 	return SNew(SVerticalBox)
 		+ SVerticalBox::Slot().AutoHeight()
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("%d 項缺件（點一行選取物件）"), Count)), 10.f, TextSoft())]
-			+ SHorizontalBox::Slot().AutoWidth()[CheckBox(TEXT("只看所選"), [this] { return bResourcesSelectedOnly; }, [this](bool B) { bResourcesSelectedOnly = B; DeferFloat(TEXT("resources")); })]
+			+ SHorizontalBox::Slot().AutoWidth()[CheckBox(TEXT("只看所選"), [this] { return bResourcesSelectedOnly; }, [this](bool B) { RunCommand(TEXT("resources.selected"), B ? TEXT("1") : TEXT("0")); })]
 		]
 		+ SVerticalBox::Slot().FillHeight(1.f).Padding(0.f, 3.f)[TextList(Lines, [this, Lines](int32 I) { const int32 Id = LineId(Lines[I]); if (Id > 0 && Game.IsValid()) { Game->Select(Id); LocateSelection(); } }, 260.f)]
 		+ SVerticalBox::Slot().AutoHeight()

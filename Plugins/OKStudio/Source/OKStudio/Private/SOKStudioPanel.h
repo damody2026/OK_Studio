@@ -371,6 +371,63 @@ public:
 		Float_(TEXT("scene.recent"), TEXT("最近的場景"), TEXT("recent"));
 		Float_(TEXT("app.material"), TEXT("材質編輯器"), TEXT("material"));
 		AddCommand(TEXT("material.export"), TEXT("匯出道具的 UV／OBJ／貼圖（參數 uv、obj、textures）"), [this](const FString& Arg) { return ExportMaterial(Arg); });
+		// HS2Studio6 导出位置: the folder the exports go under (empty or the default folder: the default).
+		AddCommand(TEXT("material.exportroot"), TEXT("材質匯出位置（參數資料夾；空白回預設）"), [this](const FString& Arg)
+		{
+			const FString Typed = Arg.TrimStartAndEnd().TrimQuotes();
+			const FString Default = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("OKStudio/MaterialExport"));
+			const FString Dir = Typed.IsEmpty() ? Default : FPaths::ConvertRelativePathToFull(Typed);
+			bool bOk = true;
+			if (Dir != Default && !IFileManager::Get().MakeDirectory(*Dir, true)) { SetStatus(TEXT("無法建立資料夾：") + Dir); bOk = false; }
+			else
+			{
+				FOKStudioSettings::Get().MaterialExportRoot = Dir == Default ? FString() : Dir;
+				FOKStudioSettings::Get().Save();
+				SetStatus(TEXT("材質匯出位置：") + Dir);
+			}
+			RebuildFloat(TEXT("material"));
+			return bOk;
+		});
+		// 只看所選 of the resource check (1 on, 0 off, empty toggles).
+		AddCommand(TEXT("resources.selected"), TEXT("資源檢查只看所選"), [this](const FString& Arg)
+		{
+			bResourcesSelectedOnly = Arg.IsEmpty() ? !bResourcesSelectedOnly : Arg.TrimStartAndEnd() != TEXT("0");
+			if (IsFloatOpen(TEXT("resources"))) DeferFloat(TEXT("resources")); else OpenFloat(TEXT("resources"));
+			return true;
+		});
+		// The card browser's path row (U50): go to a folder, back, forward, the root of the current folder.
+		AddCommand(TEXT("cards.folder"), TEXT("角色卡窗前往資料夾"), [this](const FString& Arg)
+		{
+			const FString Dir = FPaths::ConvertRelativePathToFull(Arg.TrimStartAndEnd().TrimQuotes());
+			if (Arg.TrimStartAndEnd().IsEmpty() || !FPaths::DirectoryExists(Dir)) { SetStatus(TEXT("沒有這個資料夾：") + Dir); return false; }
+			GoCardFolder(Dir);
+			DeferFloat(TEXT("cards"));
+			return true;
+		});
+		AddCommand(TEXT("cards.back"), TEXT("角色卡窗上一步"), [this](const FString&)
+		{
+			if (CardBack.IsEmpty()) return false;
+			CardForward.Add(CardFolder); CardFolder = CardBack.Pop(); CardPage = 0;
+			DeferFloat(TEXT("cards"));
+			return true;
+		});
+		AddCommand(TEXT("cards.forward"), TEXT("角色卡窗下一步"), [this](const FString&)
+		{
+			if (CardForward.IsEmpty()) return false;
+			CardBack.Add(CardFolder); CardFolder = CardForward.Pop(); CardPage = 0;
+			DeferFloat(TEXT("cards"));
+			return true;
+		});
+		AddCommand(TEXT("cards.root"), TEXT("角色卡窗回根目錄"), [this](const FString&)
+		{
+			const TArray<FString> Roots = CardRoots();
+			if (Roots.IsEmpty()) return false;
+			FString Root = Roots[0];
+			for (const FString& R : Roots) if (FPaths::IsUnderDirectory(CardFolder, R)) { Root = R; break; }
+			GoCardFolder(Root);
+			DeferFloat(TEXT("cards"));
+			return true;
+		});
 		Float_(TEXT("app.animcontrol"), TEXT("動畫控制器"), TEXT("animctl"));
 		Float_(TEXT("app.bgm"), TEXT("背景音樂"), TEXT("bgm"));
 		Float_(TEXT("app.voice"), TEXT("語音"), TEXT("voice"));
@@ -689,6 +746,16 @@ public:
 		J->SetNumberField(TEXT("material_part"), MaterialPart);
 		J->SetNumberField(TEXT("material_properties"), MaterialPropertiesShown);
 		J->SetStringField(TEXT("material_name"), MaterialNameShown);
+		J->SetStringField(TEXT("material_export_root"), FOKStudioSettings::Get().MaterialExportRoot);
+		J->SetStringField(TEXT("card_folder"), CardFolder);
+		J->SetNumberField(TEXT("card_back"), CardBack.Num());
+		J->SetNumberField(TEXT("card_forward"), CardForward.Num());
+		J->SetBoolField(TEXT("resources_selected_only"), bResourcesSelectedOnly);
+		{
+			TArray<TSharedPtr<FJsonValue>> Res;
+			if (IsFloatOpen(TEXT("resources"))) for (const FString& L : ResourcesShown) Res.Add(MakeShared<FJsonValueString>(L));
+			J->SetArrayField(TEXT("resources"), Res);
+		}
 		J->SetStringField(TEXT("help"), IsFloatOpen(TEXT("help")) ? PinnedHelpTitle : FString());
 		// The motion and item catalogues' place (定位當前 reads back here): kind/group/category, and what the list picked.
 		J->SetStringField(TEXT("anim_browse"), FString::Printf(TEXT("%d/%d/%d"), AnimKind, AnimGroup, AnimCategory));
@@ -1438,6 +1505,8 @@ public:
 	bool bSceneRecursive = false;
 	/** The resource check lists only the selected objects (HS2Studio6 所选角色资源检查). */
 	bool bResourcesSelectedOnly = false;
+	/** The resource check's lines as last built (the control channel's ui.resources). */
+	TArray<FString> ResourcesShown;
 	/** The scene browser's page (100 scenes a page). */
 	int32 ScenePage = 0;
 	int32 SceneSort = 0;

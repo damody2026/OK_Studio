@@ -1118,6 +1118,26 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
 - 地圖窗搜尋框旁多「定位當前」（指令 `map.locate`，地圖窗沒開時會打開）：清掉搜尋、選中場景目前的地圖，等清單排版後捲到中間。第一次直接在建窗時要求捲動沒有作用（子元件還沒排版，SScrollBox 找不到那一列就丟掉請求），改成 active timer 延 0.05 秒再捲。
 - 驗證：`ill_ss_sample_00`（地圖 51 民宿）執行 `map.locate`，清單捲到サンシャイン分類、51 民宿反白在中間（`Saved/OKStudio/mcp_ui/u56_map_locate2.png`）。遊戲與編輯器都連結成功，`verify_ok_studio --tag u53b_1102` 6/6。
 
+### U57～U59　第七批（2026-11-02，F 組）
+
+協調者要求先補上一批控制通道測不到的部分，再對照截圖（`L_02_kk_loader.png`、`L_51_pose_library.png`、`07_map.png`）列新缺口。
+
+| 階段 | 內容 | 目前缺的 |
+|---|---|---|
+| U57 控制通道補指令並實測 | U50／U54／U55 的按鈕與輸入框改走指令：`cards.folder`、`cards.back`、`cards.forward`、`cards.root`、`material.exportroot`、`resources.selected`；`studio_state` 的 `ui` 多 `card_folder`、`card_back`、`card_forward`、`material_export_root`、`resources_selected_only`、`resources`（資源檢查窗開著時的清單） | 這些只能點畫面，控制通道看不到結果 |
+| U58 姿勢庫「刷新」與分頁 | 搜尋框旁「刷新」，下方「上一頁／下一頁」與「N 個姿勢 · 第 i/n 頁」（`L_51_pose_library.png`） | 一次列出全部、沒有刷新 |
+| U59 角色卡窗「刷新」「開資料夾」 | KK 角色載入器的「刷新」「目錄」（`L_02_kk_loader.png`）：重掃資料夾與縮圖、在檔案總管打開目前資料夾 | 沒有 |
+
+#### U57 完成紀錄
+
+- 新指令與 `ui` 欄位如上表；畫面上的按鈕、輸入框、勾選框都改呼叫同一個指令，行為不變。
+- 實測（`ill_ss_sample_00`）：
+  - 只看所選：選道具 #2 只列「沒有缺少的資源」；選角色 #1 只列 #1；不選時是「請先選取物件」；關掉後列出 #1 與 #4 兩個角色。
+  - 匯出位置：設成暫存資料夾後 `material.export obj`、`uv`，檔案寫在 `<新位置>/2_野原/`（`野原.obj`、`o_koi_stu_sougen00_00_uv.png`）；空字串回到預設，`settings.json` 的 `material_export_root` 變回空的。
+  - 角色卡路徑列：CrowdAPNG → `cards.folder` Demo（back 1）→ `cards.back` 回 CrowdAPNG（forward 1）→ `cards.forward` 回 Demo → `cards.root` 到 CharacterCards（back 2）；不存在的資料夾回傳失敗、資料夾不變。
+  - 接收陰影：新場景放預設女角，腳下一塊壓扁的立方體，`studio_patch` 加 `renderer/ReceiveShadows = 0` 前後各拍一張 800×450，逐像素比對**差異 0**。這個情境下本來就沒有影子落在道具上：角色的影子不會投到別的道具（卡通陰影是每個物件自己拍自己），立方體也不會遮到自己。所以 U52 的「接收陰影」目前只影響會遮到自己的道具，畫面上能看出差別的情況還沒找到；開關仍會存進場景、和 KStudio 場景互通。
+- 遊戲與編輯器都連結成功，`verify_ok_studio --tag u57_1102` 6/6。
+
 ### U15　工作室模式只顯示工作室 UI（2026-10-30，使用者要求）
 
 從卡片牆等其他模式進入工作室時，畫面上原本的 UI 會留著。改成：工作室面板加到 viewport 後，從 viewport 的 Slate 樹往下找到面板，沿路把其他兄弟節點（其他模式的 UMG、Slate 面板、圖層）全部收起來，並把 HUD 的 `bShowHUD` 關掉；`Stop` 時還原成原本的可見狀態。
