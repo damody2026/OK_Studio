@@ -395,6 +395,35 @@ public:
 			if (IsFloatOpen(TEXT("resources"))) DeferFloat(TEXT("resources")); else OpenFloat(TEXT("resources"));
 			return true;
 		});
+		// HS2Studio6 旧版姿势库 刷新 and 上一页／下一页 (U58): the files and pictures read again; prev, next or a page number (1..).
+		AddCommand(TEXT("poselib.refresh"), TEXT("姿勢庫刷新"), [this](const FString&)
+		{
+			for (const FString& F : FOKStudioPose::Files()) FOKStudioThumbnails::Get().Forget(FPaths::ChangeExtension(F, TEXT("png")));
+			if (IsFloatOpen(TEXT("poselib"))) DeferFloat(TEXT("poselib")); else OpenFloat(TEXT("poselib"));
+			return true;
+		});
+		AddCommand(TEXT("poselib.page"), TEXT("姿勢庫換頁（prev、next 或頁碼）"), [this](const FString& Arg)
+		{
+			const FString A = Arg.TrimStartAndEnd();
+			const int32 Want = A == TEXT("prev") ? PosePage - 1 : A == TEXT("next") ? PosePage + 1 : FCString::Atoi(*A) - 1;
+			if (Want < 0 || Want >= PosePagesShown) return false;
+			PosePage = Want;
+			DeferFloat(TEXT("poselib"));
+			return true;
+		});
+		// HS2Studio6 KK角色加载器 刷新 and 目录 (U59): the folder and its card pictures read again; the folder in Explorer.
+		AddCommand(TEXT("cards.refresh"), TEXT("角色卡窗刷新"), [this](const FString&)
+		{
+			for (const FString& F : CardFiles) FOKStudioThumbnails::Get().Forget(F);
+			if (IsFloatOpen(TEXT("cards"))) DeferFloat(TEXT("cards")); else OpenFloat(TEXT("cards"));
+			return true;
+		});
+		AddCommand(TEXT("cards.explore"), TEXT("角色卡窗開資料夾"), [this](const FString&)
+		{
+			if (CardFolder.IsEmpty() || !FPaths::DirectoryExists(CardFolder)) return false;
+			FPlatformProcess::ExploreFolder(*CardFolder);
+			return true;
+		});
 		// The card browser's path row (U50): go to a folder, back, forward, the root of the current folder.
 		AddCommand(TEXT("cards.folder"), TEXT("角色卡窗前往資料夾"), [this](const FString& Arg)
 		{
@@ -751,6 +780,10 @@ public:
 		J->SetNumberField(TEXT("card_back"), CardBack.Num());
 		J->SetNumberField(TEXT("card_forward"), CardForward.Num());
 		J->SetBoolField(TEXT("resources_selected_only"), bResourcesSelectedOnly);
+		J->SetNumberField(TEXT("card_count"), CardFiles.Num());
+		J->SetNumberField(TEXT("pose_page"), PosePage + 1);
+		J->SetNumberField(TEXT("pose_pages"), PosePagesShown);
+		J->SetNumberField(TEXT("pose_count"), PosesShown);
 		{
 			TArray<TSharedPtr<FJsonValue>> Res;
 			if (IsFloatOpen(TEXT("resources"))) for (const FString& L : ResourcesShown) Res.Add(MakeShared<FJsonValueString>(L));
@@ -1471,6 +1504,9 @@ public:
 	TArray<FOKSceneIkTarget> PoseClipIk;
 	bool bHasPoseClip = false;
 	FString PoseSearch, PoseName, PosePreviewFile;
+	/** The pose library's page (U58, PosesPerPage a page) and its pages and poses as last built. */
+	static constexpr int32 PosesPerPage = 24;
+	int32 PosePage = 0, PosePagesShown = 1, PosesShown = 0;
 	TArray<FOKSceneFkBone> PoseBeforeFk;
 	TArray<FOKSceneIkTarget> PoseBeforeIk;
 	int32 PosePreviewId = -1;

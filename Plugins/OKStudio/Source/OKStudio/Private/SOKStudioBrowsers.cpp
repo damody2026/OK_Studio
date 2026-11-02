@@ -272,6 +272,9 @@ TSharedRef<SWidget> SOKStudioPanel::BuildCardBrowser()
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 3.f)
 		[
 			SNew(SHorizontalBox)
+			// HS2Studio6 KK角色加载器 刷新 / 目录.
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("刷新")), Cmd(TEXT("cards.refresh")), 44.f, 20.f, false, 10.f)]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("開資料夾")), Cmd(TEXT("cards.explore")), 64.f, 20.f, false, 10.f)]
 			+ SHorizontalBox::Slot().FillWidth(1.f)[SNullWidget::NullWidget]
 			// 全部 → 女 → 男, and 加入預設角色 of the sex shown (female when all are).
 			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(CardSexFilter < 0 ? TEXT("全部") : CardSexFilter == 1 ? TEXT("女") : TEXT("男")),

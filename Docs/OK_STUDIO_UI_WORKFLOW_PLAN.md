@@ -1138,6 +1138,16 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
   - 接收陰影：新場景放預設女角，腳下一塊壓扁的立方體，`studio_patch` 加 `renderer/ReceiveShadows = 0` 前後各拍一張 800×450，逐像素比對**差異 0**。這個情境下本來就沒有影子落在道具上：角色的影子不會投到別的道具（卡通陰影是每個物件自己拍自己），立方體也不會遮到自己。所以 U52 的「接收陰影」目前只影響會遮到自己的道具，畫面上能看出差別的情況還沒找到；開關仍會存進場景、和 KStudio 場景互通。
 - 遊戲與編輯器都連結成功，`verify_ok_studio --tag u57_1102` 6/6。
 
+#### U58 完成紀錄
+
+- 姿勢庫搜尋框旁多「刷新」（指令 `poselib.refresh`：重列姿勢檔、丟掉縮圖快取重讀）；下方多「N 個姿勢 · 第 i / n 頁」與上一頁／下一頁（指令 `poselib.page prev|next|頁碼`），每頁 24 個，搜尋後回第 1 頁；最下面一行說明其他資料夾在設定的資源目錄加。`ui` 多 `pose_page`、`pose_pages`、`pose_count`。
+- 驗證：暫時把放了 30 個測試 `.dat` 的資料夾加進設定的姿勢資料夾，姿勢庫顯示 30 個、2 頁；`next` 到第 2 頁，再 `next` 回傳失敗仍在第 2 頁；`poselib.page 1` 回第 1 頁；多放一個檔後 `poselib.refresh` 變 31 個（`Saved/OKStudio/mcp_ui/u58_poselib.png`）。測完已還原 `settings.json`。遊戲與編輯器都連結成功，`verify_ok_studio --tag u58_1102` 6/6。
+
+#### U59 完成紀錄
+
+- 角色卡窗第二列左邊多「刷新」（指令 `cards.refresh`：重掃資料夾、丟掉這些卡的縮圖快取）與「開資料夾」（指令 `cards.explore`，在檔案總管打開目前資料夾）。`ui` 多 `card_count`。
+- 驗證：到一個只有 1 張卡的暫存資料夾，再複製一張後 `cards.refresh` 變 2 張；把 a.png 換成另一張卡再刷新，縮圖跟著換（`Saved/OKStudio/mcp_ui/u59_cards.png`、`u59_cards_refresh.png`）。「開資料夾」會在使用者桌面開檔案總管，沒有實際執行。同一次建置與 verify 6/6。
+
 ### U15　工作室模式只顯示工作室 UI（2026-10-30，使用者要求）
 
 從卡片牆等其他模式進入工作室時，畫面上原本的 UI 會留著。改成：工作室面板加到 viewport 後，從 viewport 的 Slate 樹往下找到面板，沿路把其他兄弟節點（其他模式的 UMG、Slate 面板、圖層）全部收起來，並把 HUD 的 `bShowHUD` 關掉；`Stop` 時還原成原本的可見狀態。

@@ -908,8 +908,13 @@ TSharedRef<SWidget> SOKStudioPanel::BuildPoseLibrary()
 	TArray<FString> Files = FOKStudioPose::Files();
 	if (!PoseSearch.IsEmpty()) Files.RemoveAll([this](const FString& F) { return !FPaths::GetBaseFilename(F).Contains(PoseSearch); });
 	TSharedRef<SWrapBox> Grid = SNew(SWrapBox).UseAllottedSize(true);
-	for (const FString& F : Files)
+	// Pages of PosesPerPage (HS2Studio6 旧版姿势库 上一页／下一页).
+	PosesShown = Files.Num();
+	PosePagesShown = FMath::Max(1, (Files.Num() + PosesPerPage - 1) / PosesPerPage);
+	PosePage = FMath::Clamp(PosePage, 0, PosePagesShown - 1);
+	for (int32 Index = PosePage * PosesPerPage; Index < FMath::Min(Files.Num(), (PosePage + 1) * PosesPerPage); ++Index)
 	{
+		const FString& F = Files[Index];
 		const FString Picture = FPaths::ChangeExtension(F, TEXT("png"));
 		Grid->AddSlot().Padding(2.f)
 		[
@@ -953,7 +958,8 @@ TSharedRef<SWidget> SOKStudioPanel::BuildPoseLibrary()
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().FillWidth(1.f)[SNew(SBox).HeightOverride(20.f)[SNew(SEditableTextBox).Style(&TextBoxStyle()).HintText(FText::FromString(TEXT("搜尋姿勢"))).Text(FText::FromString(PoseSearch))
-				.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type) { PoseSearch = T.ToString(); DeferFloat(TEXT("poselib")); })]]
+				.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type) { PoseSearch = T.ToString(); PosePage = 0; DeferFloat(TEXT("poselib")); })]]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("刷新")), Cmd(TEXT("poselib.refresh")), 44.f, 20.f, false, 10.f)]
 		]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)[Preview]
 		+ SVerticalBox::Slot().FillHeight(1.f)[SNew(SBorder).BorderImage(Brush(ListArea())).Padding(2.f)[SNew(SScrollBox) + SScrollBox::Slot()[Grid]]]
@@ -964,5 +970,12 @@ TSharedRef<SWidget> SOKStudioPanel::BuildPoseLibrary()
 				.OnTextChanged_Lambda([this](const FText& T) { PoseName = T.ToString(); })]]
 			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("存目前姿勢")), [this] { SavePoseWithPicture(PoseName); }, 80.f, 20.f)]
 		]
-		+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("%d 個姿勢（%s）"), Files.Num(), *FOKStudioPose::Directory())), 9.f, TextHint())];
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f, 0.f, 0.f)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("%d 個姿勢 · 第 %d / %d 頁"), Files.Num(), PosePage + 1, PosePagesShown)), 9.f, TextHint())]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 2.f, 0.f)[Button(FText::FromString(TEXT("上一頁")), Cmd(TEXT("poselib.page"), TEXT("prev")), 52.f, 18.f, false, 10.f, ButtonFill(), PosePage > 0)]
+			+ SHorizontalBox::Slot().AutoWidth()[Button(FText::FromString(TEXT("下一頁")), Cmd(TEXT("poselib.page"), TEXT("next")), 52.f, 18.f, false, 10.f, ButtonFill(), PosePage + 1 < PosePagesShown)]
+		]
+		+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(FOKStudioPose::Directory() + TEXT("（其他資料夾在設定的資源目錄加）")), 9.f, TextHint())];
 }
