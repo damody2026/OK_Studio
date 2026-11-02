@@ -1706,7 +1706,13 @@ TSharedRef<SWidget> SOKStudioPanel::BuildResources()
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("複製清單")), [Lines] { FPlatformApplicationMisc::ClipboardCopy(*FString::Join(Lines, TEXT("\n"))); }, 0.f, 20.f)]
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("重新檢查")), [this] { DeferFloat(TEXT("resources")); }, 0.f, 20.f)]
-			+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("重新讀取角色")), Cmd(TEXT("scene.reloadcharacters")), 0.f, 20.f)]
+			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("重新讀取角色")), Cmd(TEXT("scene.reloadcharacters")), 0.f, 20.f)]
+			// HS2Studio6 资源检查's 资源目录: the settings page where card, sound, pose and picture folders are added.
+			+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("資源目錄")), [this]
+			{
+				SettingsTab = 3;
+				if (IsFloatOpen(TEXT("settings"))) DeferFloat(TEXT("settings")); else OpenFloat(TEXT("settings"));
+			}, 0.f, 20.f)]
 		];
 }
 
