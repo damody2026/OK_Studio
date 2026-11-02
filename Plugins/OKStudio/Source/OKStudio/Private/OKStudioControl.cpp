@@ -1378,6 +1378,7 @@ namespace
 			O->SetNumberField(TEXT("yaw"), G->Yaw);
 			O->SetNumberField(TEXT("pitch"), G->Pitch);
 			O->SetNumberField(TEXT("distance"), G->Distance);
+			O->SetArrayField(TEXT("clear_view"), { MakeShared<FJsonValueNumber>(G->ClearView.Min.X), MakeShared<FJsonValueNumber>(G->ClearView.Min.Y), MakeShared<FJsonValueNumber>(G->ClearView.Max.X), MakeShared<FJsonValueNumber>(G->ClearView.Max.Y) });
 			return O;
 		}
 		if (Op == TEXT("capture"))

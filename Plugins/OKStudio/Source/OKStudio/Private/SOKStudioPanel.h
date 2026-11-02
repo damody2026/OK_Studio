@@ -346,6 +346,7 @@ public:
 			]
 		];
 		RegisterFloats();
+		RegisterActiveTimer(0.25f, FWidgetActiveTimerDelegate::CreateLambda([this](double, float) { UpdateClearView(); return EActiveTimerReturnType::Continue; }));
 		LoadLayout();
 		RebuildSubMenu();
 		RebuildDetailBody();
@@ -1505,6 +1506,8 @@ public:
 	double LayoutSavedAt = 0.;
 	void AddFloat(const FString& Id, const FString& Title, const FMargin& Rect, TFunction<TSharedRef<SWidget>()> Build);
 	void RegisterFloats();
+	/** Tells the game the largest part of the view no panel covers (framing centres there, U123). */
+	void UpdateClearView();
 	void OpenFloat(const FString& Id, bool bToggle = false);
 	void CloseFloat(const FString& Id);
 	/** The add lists open in one place beside the menus (HS2Studio6 shows one at a time): a new one replaces the others. */
@@ -3171,7 +3174,8 @@ private:
 				const FString Where = AnimSearch.IsEmpty() ? FString() : FString::Printf(TEXT("　· %s／%s"), *GroupLabel(A.Group), *CategoryLabel(A.Group, A.Category));
 				// A motion that has the other sex's side is marked (U117): 配給對方 works from it.
 				const TCHAR* Pair = A.Kind == 1 && HasPartner(A) ? TEXT("（雙人）") : TEXT("");
-				return SNew(STableRow<TSharedPtr<int32>>, Owner)[SNew(STextBlock).ColorAndOpacity(bCurrent ? FLinearColor::Yellow : FLinearColor::White).Text(FText::FromString(A.Name + Pair + Where))];
+				// The same 10 pt as the other lists (U124: it took the default, a size larger).
+				return SNew(STableRow<TSharedPtr<int32>>, Owner)[SNew(STextBlock).Font(OKStudioStyle::Font(10.f)).ColorAndOpacity(bCurrent ? FLinearColor::Yellow : FLinearColor::White).Text(FText::FromString(A.Name + Pair + Where))];
 			})
 			.OnMouseButtonClick_Lambda([this](TSharedPtr<int32> I) { if (I) PickAnim(*I); })
 		];

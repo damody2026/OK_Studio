@@ -81,6 +81,52 @@ void SOKStudioPanel::AddFloat(const FString& Id, const FString& Title, const FMa
 	F.Slot = Slot;
 }
 
+void SOKStudioPanel::UpdateClearView()
+{
+	if (!Game.IsValid() || !View || !Canvas) return;
+	const FSlateRect ViewRect = View->GetCachedGeometry().GetLayoutBoundingRect();
+	const FVector2D ViewSize = ViewRect.GetSize();
+	if (ViewSize.X < 10.f || ViewSize.Y < 10.f) return;
+	TArray<FSlateRect> Panels;
+	if (!bHideUi)
+	{
+		FArrangedChildren Parts(EVisibility::Visible);
+		Canvas->ArrangeChildren(Canvas->GetCachedGeometry(), Parts);
+		for (int32 I = 0; I < Parts.Num(); ++I)
+		{
+			// The status line is a line of text over the view, not a panel.
+			if (Parts[I].Widget == Status) continue;
+			const FSlateRect R = Parts[I].Geometry.GetLayoutBoundingRect().IntersectionWith(ViewRect);
+			if (R.GetSize().X > 1.f && R.GetSize().Y > 1.f) Panels.Add(R);
+		}
+	}
+	// The best open rectangle: every pair of panel edges across, the tallest gap between the panels in that span.
+	TArray<float> Xs = { ViewRect.Left, ViewRect.Right };
+	for (const FSlateRect& R : Panels) { Xs.AddUnique(R.Left); Xs.AddUnique(R.Right); }
+	Xs.Sort();
+	FSlateRect Best(ViewRect);
+	double BestArea = Panels.IsEmpty() ? 1e30 : -1.;
+	for (int32 A = 0; A < Xs.Num() && !Panels.IsEmpty(); ++A)
+		for (int32 B = A + 1; B < Xs.Num(); ++B)
+		{
+			TArray<FVector2f> Blocked;
+			for (const FSlateRect& R : Panels) if (R.Left < Xs[B] - 0.5f && R.Right > Xs[A] + 0.5f) Blocked.Add(FVector2f(R.Top, R.Bottom));
+			Blocked.Sort([](const FVector2f& L, const FVector2f& R) { return L.X < R.X; });
+			float From = ViewRect.Top;
+			auto Try = [&](float To)
+			{
+				// Scored by the shorter side first: a wide strip under the timeline holds less of a standing figure than a
+				// narrower, taller column beside it.
+				const double W = Xs[B] - Xs[A], H = To - From, Area = FMath::Min(W, H) * FMath::Sqrt(W * H);
+				if (To > From && Area > BestArea) { BestArea = Area; Best = FSlateRect(Xs[A], From, Xs[B], To); }
+			};
+			for (const FVector2f& Y : Blocked) { Try(Y.X); From = FMath::Max(From, Y.Y); }
+			Try(ViewRect.Bottom);
+		}
+	Game->ClearView = FBox2D(FVector2D((Best.Left - ViewRect.Left) / ViewSize.X, (Best.Top - ViewRect.Top) / ViewSize.Y),
+		FVector2D((Best.Right - ViewRect.Left) / ViewSize.X, (Best.Bottom - ViewRect.Top) / ViewSize.Y));
+}
+
 void SOKStudioPanel::RegisterFloats()
 {
 	// Default places: HS2Studio6's (layout spec) where it has the window, else beside the menus.
@@ -2019,11 +2065,20 @@ TSharedRef<SWidget> SOKStudioPanel::BuildTimeline()
 		+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f)[SNew(SBox).WidthOverride(48.f).HeightOverride(18.f)[Spin([this] { return Game.IsValid() ? Game->Document->Duration : 10.f; }, [this](float V) { if (Game.IsValid()) { Game->Document->Duration = FMath::Max(V, 0.1f); Changed(); } }, 0.1f, 3600.f, 0.1f)]]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[OKStudioStyle::Label(FText::FromString(TEXT("速度")), 10.f)]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f)[SNew(SBox).WidthOverride(40.f).HeightOverride(18.f)[Spin([this] { return Game.IsValid() ? Game->TimelineSpeed : 1.f; }, [this](float V) { if (Game.IsValid()) Game->TimelineSpeed = FMath::Clamp(V, 0.05f, 8.f); }, 0.05f, 8.f, 0.05f)]];
+	// The cut menu opens under its button (U122: at the system cursor it opened elsewhere for keyboard and simulated clicks).
+	TSharedRef<TWeakPtr<SWidget>> CutSelf = MakeShared<TWeakPtr<SWidget>>();
+	TSharedRef<SWidget> CutButton = Button(FText::FromString(TEXT("切鏡頭 ▼")), [this, CutSelf]
+	{
+		const TSharedPtr<SWidget> W = CutSelf->Pin();
+		const FGeometry& G = W ? W->GetCachedGeometry() : FGeometry();
+		ShowCutMenu(W ? FVector2D(G.LocalToAbsolute(FVector2f(0.f, G.GetLocalSize().Y))) : FSlateApplication::Get().GetCursorPos());
+	}, 56.f, 20.f, false, 10.f);
+	*CutSelf = CutButton;
 	TSharedRef<SWidget> Row2 = SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot().AutoWidth()[IconButton(TEXT("key"), Tip(TEXT("為選取物件打 key"), TEXT("timeline.key")), Cmd(TEXT("timeline.key")), 22.f, 20.f)]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(FText::FromString(TEXT("刪 key")), Cmd(TEXT("timeline.delete")), 40.f, 20.f, false, 10.f)]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(FText::FromString(TEXT("場景 key")), Cmd(TEXT("timeline.scenekey")), 52.f, 20.f, false, 10.f)]
-		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(FText::FromString(TEXT("切鏡頭 ▼")), [this] { ShowCutMenu(FSlateApplication::Get().GetCursorPos()); }, 56.f, 20.f, false, 10.f)]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[CutButton]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(FText::FromString(TEXT("清空軌道")), Cmd(TEXT("timeline.clear")), 52.f, 20.f, false, 10.f)]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(TAttribute<FText>::CreateLambda([this]
 		{
