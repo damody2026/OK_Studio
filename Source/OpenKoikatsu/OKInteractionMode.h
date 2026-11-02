@@ -40,6 +40,17 @@ public:
     bool HSceneSpeak(const FString& Path);
     bool HSceneSpeaking() const;
     bool HSceneHasReaction() const;
+    // Her outfit changed in the H scene (the original's HSprite.OnClickCoordinateChange → ChangeCoordinateTypeAndReload):
+    // her card's outfit Outfit (KKS coordinate 0..6), or with Coordinate a game coordinate card (UserData/coordinate) worn
+    // as that outfit, as Studio loads one (a copy of her card is written under Saved/StreetSocial/HOutfits; hers stays as
+    // it was). She opens in the background, is swapped in when ready, and the pose starts again. False: one is already
+    // changing, or the scene is not ready.
+    // bWithAccessories: the coordinate card's accessories too (else only its clothes: her accessories, hair made of them
+    // among them, stay, as the maker loads one with accessories unticked).
+    bool ChangeOutfit(int32 Outfit,const FString& Coordinate=FString(),bool bWithAccessories=false);
+    bool IsChangingOutfit() const {return OutfitChanging||SwappingFemale!=nullptr;}
+    FString OutfitError;     // the last change's failure (empty when it worked)
+    FString WornCoordinate;  // the coordinate card she wears now (empty: her card's own outfit)
     bool IsReady() const {return Ready;}
     bool IsFinished() const {return Finished;}
     FString Error;
@@ -57,6 +68,9 @@ private:
 #endif
     void Fail(const FString& Why);
     UPROPERTY() TObjectPtr<AKKPreviewActor> LoadingFemale;
+    UPROPERTY() TObjectPtr<AKKPreviewActor> SwappingFemale; // her in the new outfit, built hidden (ChangeOutfit)
+    bool OutfitChanging=false;int32 SwapOutfit=0;FString SwapCoordinate;
+    void TickOutfitSwap();
     UPROPERTY() TObjectPtr<AActor> PreviousView;
     FString MalePath;
     TSharedPtr<FThreadSafeBool,ESPMode::ThreadSafe> Cancelled;

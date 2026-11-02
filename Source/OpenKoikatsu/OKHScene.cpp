@@ -7,6 +7,9 @@
 #include "Components/ButtonSlot.h"
 #include "HAL/IConsoleManager.h"
 #include "OKCharacterController.h"
+#include "OKInteractionMode.h"
+#include "KKGameRoot.h"
+#include "HAL/FileManager.h"
 #include "OKArousalDrops.h"
 #include "Misc/App.h"
 #include "OKStreetSocialText.h"
@@ -103,6 +106,9 @@ static int32 HPropKind(const FString& Category,int32 Id){
         if(K>0&&Kind<0)Kind=K;}
     return Kind;
 }
+// Her spoken lines in H (the original's Japanese voice table rows, her climax words, her TTS answers): off (user 2026-11-02:
+// only her cries, the breathing bank). 1 brings them back.
+TAutoConsoleVariable<int32> CVarHSpokenLines(TEXT("ok.HScene.SpokenLines"),0,TEXT("1: she speaks lines in H (voice table, climax words, TTS answers); 0: only her cries"));
 static bool HFitsRoom(const FString& Category,int32 Id){return CVarHAllPoses.GetValueOnGameThread()||HPropKind(Category,Id)>=0;}
 void UOKHScenePanel::LoadAibuPoses(){
     bAibuLoaded=true;AibuPoses.Reset();TArray<TSharedPtr<FJsonValue>> Rows;
@@ -267,6 +273,14 @@ void UOKHScenePanel::BuildList(){
         auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;
         for(int32 K=0;K<9;++K)if(Girl&&Girl->HasClothingKind(K)&&Girl->DisplayClothesStates[K]!=3)
             Add(ClothesBase+K,FString::Printf(TEXT("%s：%s"),OKT(Parts[K]),OKT(States[FMath::Clamp<int32>(Gallery->ClothesStates[K],0,3)])),true,Gallery->ClothesStates[K]==3);
+        // Her outfits, as the original H scene's coordinate buttons, and the game's coordinate cards worn as the one on.
+        const AOKInteractionMode* M=Interaction();const bool Free=M&&M->IsReady()&&!M->IsChangingOutfit();
+        const FString Worn=M?M->WornCoordinate:FString();
+        for(int32 O=0;O<FMath::Min(Gallery->Selected.Outfits.Num(),10);++O)
+            Add(OutfitBase+O,OKMsg(TEXT("ui.hscene.outfit"),{{TEXT("name"),FString(OKT(*FString::Printf(TEXT("ui.hscene.outfit_%d"),FMath::Min(O,7))))}}),Free,Worn.IsEmpty()&&O==Gallery->OutfitIndex);
+        Add(CoordinateToggle,OKT(bCoordinateList?TEXT("ui.hscene.coordinate_close"):TEXT("ui.hscene.coordinate_open")),true,!Worn.IsEmpty());
+        if(bCoordinateList)Add(CoordinateAccessories,OKT(bCoordinateAccessories?TEXT("ui.hscene.coordinate_with_accessories"):TEXT("ui.hscene.coordinate_clothes_only")),true,bCoordinateAccessories);
+        if(bCoordinateList)for(int32 I=0;I<CoordinateCards.Num();++I)Add(CoordinateBase+I,FPaths::GetBaseFilename(CoordinateCards[I]),Free,FPaths::IsSamePath(CoordinateCards[I],Worn));
         return;
     }
     if(Tab==TabAibu){if(!bAibuLoaded)LoadAibuPoses();for(int32 I=0;I<AibuPoses.Num();++I)Add(AibuBase+I,AibuPoses[I].Name,true,(I==ActiveAibu&&Mode==0)||I==PendingAibu);return;}
@@ -335,7 +349,8 @@ void UOKHScenePanel::Finish(const TCHAR* Kind){
         auto* Girl=Gallery->PreviewActor.Get();const int32 PairIndex=Gallery->PairCombo?Gallery->PairCombo->GetSelectedIndex()-1:-1;
         const int32 AnimId=Gallery->NativePairs.IsValidIndex(PairIndex)?int32(Gallery->NativePairs[PairIndex]->GetNumberField(TEXT("id"))):-1;
         TArray<FKKHBreathCue> Cries;FString Error;
-        if(IsValid(Girl)&&KKSpeech::CollectHVoice(UOKCharacterController::DefaultVoiceRoot(),Gallery->Selected.Personality,K.EndsWith(TEXT("S"))?26:25,AnimId,Gallery->HBreath,Cries,Error)){
+        // User 2026-11-02: no spoken lines in H, only her cries (the breathing goes on through her climax).
+        if(CVarHSpokenLines.GetValueOnGameThread()&&IsValid(Girl)&&KKSpeech::CollectHVoice(UOKCharacterController::DefaultVoiceRoot(),Gallery->Selected.Personality,K.EndsWith(TEXT("S"))?26:25,AnimId,Gallery->HBreath,Cries,Error)){
             const FKKHBreathCue& Cry=Cries[FMath::RandHelper(Cries.Num())];Girl->StopHBreath();
             if(Girl->PlaySpeechFile(Cry.Path,FMath::Lerp(.94f,1.06f,Gallery->Selected.VoiceRate),Error)){bTalkSpoken=true;ClimaxUntil=FPlatformTime::Seconds()+4.;UE_LOG(LogTemp,Display,TEXT("H scene: her climax cry %s"),*Cry.Name);}}
         if(!Error.IsEmpty())UE_LOG(LogTemp,Display,TEXT("H scene: no climax cry: %s"),*Error);
@@ -387,6 +402,10 @@ void UOKHScenePanel::Click(int32 Kind){
     if(Kind==ToggleMale){MaleView=(MaleView+1)%3;bMaleHidden=MaleView==2;ApplyMaleLook();BuildList();return;}
     if(Kind==MaleBottom){bMaleBottomOff=!bMaleBottomOff;ApplyMaleLook();BuildList();return;}
     if(Kind==Release&&Mode==0){TouchArea=INDEX_NONE;Chain({TEXT("Idle")});ActionsKey.Reset();return;}
+    if(Kind==CoordinateToggle){bCoordinateList=!bCoordinateList;if(bCoordinateList)FindCoordinateCards();BuildList();return;}
+    if(Kind==CoordinateAccessories){bCoordinateAccessories=!bCoordinateAccessories;BuildList();return;}
+    if(Kind>=OutfitBase&&Kind<OutfitBase+10){FString Why;if(!WearOutfit(Kind-OutfitBase,FString(),Why)&&Hint)Hint->SetText(FText::FromString(Why));return;}
+    if(Kind>=CoordinateBase){FString Why;if(CoordinateCards.IsValidIndex(Kind-CoordinateBase)&&!WearOutfit(Gallery->OutfitIndex,CoordinateCards[Kind-CoordinateBase],Why)&&Hint)Hint->SetText(FText::FromString(Why));return;}
     if(Kind>=ClothesBase){
         auto* Girl=Gallery->PreviewActor.Get();const int32 C=Kind-ClothesBase;if(!IsValid(Girl))return;
         static const TCHAR* Parts[]={TEXT("ui.hscene.cloth_top"),TEXT("ui.hscene.cloth_bottom"),TEXT("ui.hscene.cloth_bra"),TEXT("ui.hscene.cloth_shorts"),TEXT("ui.hscene.cloth_gloves"),TEXT("ui.hscene.cloth_pantyhose"),TEXT("ui.hscene.cloth_socks"),TEXT("ui.hscene.cloth_inner_shoes"),TEXT("ui.hscene.cloth_shoes")};
@@ -502,6 +521,7 @@ void UOKHScenePanel::PlaySe(const FString& Clip){
     UGameplayStatics::PlaySound2D(this,Wave);
 }
 bool UOKHScenePanel::PlayHVoice(int32 Row){
+    if(!CVarHSpokenLines.GetValueOnGameThread())return false; // only her cries (user 2026-11-02): the breathing goes on
     AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl)||!Poses.IsValidIndex(ActivePose))return false;
     const FOKHPose& Pose=Poses[ActivePose];const int32 AnimId=Gallery->NativePairs.IsValidIndex(Pose.Pair)?int32(Gallery->NativePairs[Pose.Pair]->GetNumberField(TEXT("id"))):-1;
     TArray<FKKHBreathCue> Lines;FString Error;FKKHBreathContext Context=Gallery->HBreath;Context.bAnal=bAnalPlay;Context.bCondom=bCondom; // the panel may have just changed them
@@ -1999,4 +2019,50 @@ int32 UOKBuildHXRayMaterialCommandlet::Main(const FString& Params){
 #else
     return 1;
 #endif
+}
+
+// ---------------------------------------------------------------------------------------------- her outfit
+AOKInteractionMode* UOKHScenePanel::Interaction() const{
+    if(!Gallery||!GetWorld())return nullptr;
+    for(TActorIterator<AOKInteractionMode> It(GetWorld());It;++It)if(It->Controller==Gallery&&!It->IsFinished())return *It;
+    return nullptr;
+}
+void UOKHScenePanel::FindCoordinateCards(){
+    CoordinateCards.Reset();const UKKGameRoot* Root=UKKGameRoot::Get();if(!Root||Root->Root.IsEmpty())return;
+    IFileManager::Get().FindFilesRecursive(CoordinateCards,*(Root->Root/TEXT("UserData/coordinate")),TEXT("*.png"),true,false);
+    CoordinateCards.Sort();if(CoordinateCards.Num()>500)CoordinateCards.SetNum(500);
+}
+bool UOKHScenePanel::WearOutfit(int32 Outfit,const FString& Coordinate,FString& Why){
+    AOKInteractionMode* M=Interaction();if(!M||!M->IsReady()){Why=OKT(TEXT("ui.hscene.outfit_not_ready"));return false;}
+    if(M->IsChangingOutfit()){Why=OKT(TEXT("ui.hscene.outfit_busy"));return false;}
+    FString Card=Coordinate;
+    if(!Card.IsEmpty()&&!FPaths::FileExists(Card)){
+        // A file name (with or without .png) among the game's coordinate cards.
+        if(CoordinateCards.IsEmpty())FindCoordinateCards();
+        const FString Want=FPaths::GetBaseFilename(Card);const FString* Found=CoordinateCards.FindByPredicate([&](const FString& P){return FPaths::GetBaseFilename(P).Equals(Want,ESearchCase::IgnoreCase);});
+        if(!Found){Why=OKMsg(TEXT("ui.hscene.coordinate_missing"),{{TEXT("name"),Coordinate}});return false;}
+        Card=*Found;
+    }
+    if(Card.IsEmpty()&&Outfit==Gallery->OutfitIndex&&M->WornCoordinate.IsEmpty()){Why=OKT(TEXT("ui.hscene.outfit_same"));return false;}
+    if(!M->ChangeOutfit(Outfit,Card,bCoordinateAccessories)){Why=OKT(TEXT("ui.hscene.outfit_none"));return false;}
+    if(Hint)Hint->SetText(FText::FromString(OKT(TEXT("ui.hscene.outfit_loading"))));
+    BuildList();return true;
+}
+void UOKHScenePanel::OutfitChanged(bool bOk){
+    AOKInteractionMode* M=Interaction();
+    if(!bOk){if(Hint)Hint->SetText(FText::FromString(OKMsg(TEXT("ui.hscene.outfit_failed"),{{TEXT("error"),M?M->OutfitError:FString()}})));BuildList();return;}
+    const FString Worn=M?M->WornCoordinate:FString();
+    Note(Worn.IsEmpty()?OKMsg(TEXT("ui.hscene.event_outfit"),{{TEXT("name"),FString(OKT(*FString::Printf(TEXT("ui.hscene.outfit_%d"),FMath::Clamp(Gallery->OutfitIndex,0,7))))}})
+        :OKMsg(TEXT("ui.hscene.event_coordinate"),{{TEXT("name"),FPaths::GetBaseFilename(Worn)}}));
+    // Her new self starts the pose again where it was chosen: a caress state on her own, or the pair from its start.
+    AKKPreviewActor* Girl=Gallery->PreviewActor.Get();
+    if(Mode==0&&AibuPoses.IsValidIndex(ActiveAibu)&&IsValid(Girl)){
+        if(Gallery->PartnerActor)Gallery->PartnerActor->SetActorHiddenInGame(true);
+        Girl->SetGameSceneMode(3,false);PlaySolo(SoloState.IsEmpty()?FString(TEXT("Idle")):SoloState);
+    }else if(Poses.IsValidIndex(ActivePose)&&Gallery->PairCombo){
+        const int32 Pose=ActivePose;SelectPose(Pose);
+        // The same pose is still chosen in the list: its selection does not fire again.
+        if(PendingPose==Pose&&Gallery->PairCombo->GetSelectedIndex()>0)Gallery->OnPairSelected(Gallery->PairCombo->GetSelectedOption(),ESelectInfo::OnMouseClick);
+    }
+    BuildList();
 }

@@ -64,6 +64,9 @@ public:
  static bool ClothesImport(const FString& CoordinateCard,const FString& Out,FString& Summary);
  static bool ClothesExport(const FString& Card,int32 Outfit,const FString& Out,FString& Summary);
  static bool ClothesWear(const FString& Card,const FString& OkClothes,int32 Outfit,const FString& Out,FString& Summary);
+ // Only the clothes worn: the character keeps that outfit's accessories and makeup (the maker's coordinate load with its
+ // accessories unticked).
+ static bool ClothesWearClothesOnly(const FString& Card,const FString& OkClothes,int32 Outfit,const FString& Out,FString& Summary);
  /** OK card at Out from an original KKS card (zipmods from the KKS installation) or an edited OK card (made again so
   *  its models list and pack match the card data). Summary gets "digest parts pack" or the error. */
  static bool MakeOkCard(const FString& Card,const FString& Out,FString& Summary);

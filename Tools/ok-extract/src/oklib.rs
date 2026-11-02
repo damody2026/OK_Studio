@@ -2833,12 +2833,13 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             println!("OKCLOTHES export {} outfit={outfit} -> {} bytes={}", card.display(), out.display(), bytes.len());
         }
         "clothes-wear" => {
-            // clothes-wear <card> <okclothes> <outfit> <out card>
+            // clothes-wear <card> <okclothes> <outfit> <out card> [--clothes-only]
             let card = std::fs::read(args.get(1).ok_or("card required")?).map_err(|e| e.to_string())?;
             let clothes = crate::okclothes::OkClothes::from_bytes(&std::fs::read(args.get(2).ok_or("okclothes required")?).map_err(|e| e.to_string())?)?;
             let outfit: usize = args.get(3).and_then(|v| v.parse().ok()).ok_or("outfit required")?;
             let out = PathBuf::from(args.get(4).ok_or("output required")?);
-            let (bytes, dropped) = crate::okclothes::wear(&card, &clothes, outfit)?;
+            let (bytes, dropped) = if args.get(5).is_some_and(|a| a == "--clothes-only") { crate::okclothes::wear_clothes_only(&card, &clothes, outfit)? }
+                else { crate::okclothes::wear(&card, &clothes, outfit)? };
             std::fs::write(&out, &bytes).map_err(|e| e.to_string())?;
             println!("OKCLOTHES wear outfit={outfit} -> {} dropped={dropped:?}", out.display());
         }

@@ -1513,6 +1513,7 @@ static FAutoConsoleCommand GOKMakeOkCardCommand(TEXT("OK.MakeOkCard"),
  }));
 extern "C" int32_t ok_head_texture_changes(OkSession*,const OkSession*,int32_t*,int32_t,int32_t,char*,int32_t);
 bool FOkSession::HeadTextureChanges(const FOkSession& Source,TArray<int32>& Parts,bool Apply,FString& Error){
+bool FOkSession::ClothesWearClothesOnly(const FString& Card,const FString& OkClothes,int32 Outfit,const FString& Out,FString& Summary){OKPrepareCardEnvironment();return OKClothesFile(3,Card,OkClothes,Outfit,Out,Summary);}
  Parts.SetNumUninitialized(PartCount());char Buffer[4096]{};
  const int32 Count=ok_head_texture_changes(Handle,Source.Handle,Parts.GetData(),Parts.Num(),Apply?1:0,Buffer,UE_ARRAY_COUNT(Buffer));
  if(Count<0){Parts.Reset();Error=UTF8_TO_TCHAR(Buffer);return false;}

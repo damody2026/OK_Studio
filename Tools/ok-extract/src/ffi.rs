@@ -36,6 +36,9 @@ pub unsafe extern "C" fn ok_clothes_file(op:i32,a:*const c_char,b:*const c_char,
                 // An OK card wearing new clothes is made again, so its models list and pack cover them.
                 if crate::oklib::is_library_card(out) {remake_card_in_place(out)?;}
                 Ok(summary)}
+            3=>{let b=cstr_opt(b).ok_or("okclothes: clothes path missing")?;let summary=crate::okclothes::file::wear_clothes_only_file(a,std::path::Path::new(&b),outfit?,out)?;
+                if crate::oklib::is_library_card(out) {remake_card_in_place(out)?;}
+                Ok(summary)}
             _=>Err(format!("okclothes: unknown op {op}")),
         }
     }).unwrap_or_else(|_|Err("okclothes: panic".into()));

@@ -198,13 +198,16 @@ const ACCESSORY_SWITCH: &str = "madevil.kk.ass";
 // ------------------------------------------------------- per-plugin rules
 
 /// Sideloader: coordinate properties have no `outfitN.` prefix.
-fn sideloader(from: &Value, to: &mut Value, outfit: usize, wear: bool) {
+fn sideloader(from: &Value, to: &mut Value, outfit: usize, wear: bool, clothes_only: bool) {
+    // Clothes only (wear_clothes_only): the accessories' entries (ChaFileAccessory...) stay the character's.
+    let accessory = |p: &str| clothes_only && p.contains("Accessor");
     let prefix = format!("outfit{outfit}.");
     let entries = |v: Option<(Value, &Value)>| -> Vec<Value> { v.and_then(|(_, d)| map_get(d, "info").and_then(|i| i.as_array()).cloned()).unwrap_or_default() };
-    let mut kept: Vec<Value> = if wear { entries(plugin_data(to, SIDELOADER)).into_iter().filter(|e| map_get(&unbin(e), "Property").and_then(|p| p.as_str()).is_none_or(|p| !p.starts_with(&prefix))).collect() } else { Vec::new() };
+    let mut kept: Vec<Value> = if wear { entries(plugin_data(to, SIDELOADER)).into_iter().filter(|e| map_get(&unbin(e), "Property").and_then(|p| p.as_str()).is_none_or(|p| !p.starts_with(&prefix) || accessory(p))).collect() } else { Vec::new() };
     for e in entries(plugin_data(from, SIDELOADER)) {
         let mut info = unbin(&e);
         let Some(property) = map_get(&info, "Property").and_then(|p| p.as_str()).map(str::to_owned) else { continue };
+        if accessory(&property) { continue; }
         let property = if wear { format!("{prefix}{property}") } else { match property.strip_prefix(&prefix) { Some(p) => p.to_owned(), None => continue } };
         map_set(&mut info, "Property", property.into());
         kept.push(bin(&info));
@@ -216,7 +219,7 @@ fn sideloader(from: &Value, to: &mut Value, outfit: usize, wear: bool) {
 
 /// Material Editor: list entries carry CoordinateIndex; clothing (1) and
 /// accessory (2) objects follow the outfit, with their textures.
-fn material_editor(from: &Value, to: &mut Value, outfit: usize, wear: bool) {
+fn material_editor(from: &Value, to: &mut Value, outfit: usize, wear: bool, clothes_only: bool) {
     let Some((version, src)) = plugin_data(from, MATERIAL_EDITOR) else { return };
     let src = src.clone();
     let mut dst = if wear { plugin_data(to, MATERIAL_EDITOR).map(|(_, d)| d.clone()).unwrap_or(Value::Map(Vec::new())) } else { Value::Map(Vec::new()) };
@@ -231,7 +234,7 @@ fn material_editor(from: &Value, to: &mut Value, outfit: usize, wear: bool) {
         let incoming = map_get(&src, &list).map(unbin).and_then(|v| v.as_array().cloned()).unwrap_or_default();
         let mut out: Vec<Value> = if wear { map_get(&dst, &list).map(unbin).and_then(|v| v.as_array().cloned()).unwrap_or_default() } else { Vec::new() };
         let ours = |e: &Value, index: i64| map_get(e, "CoordinateIndex").and_then(int_key) == Some(index)
-            && map_get(e, "ObjectType").and_then(int_key).is_some_and(|t| t == 1 || t == 2);
+            && map_get(e, "ObjectType").and_then(int_key).is_some_and(|t| t == 1 || (t == 2 && !clothes_only));
         if wear { out.retain(|e| !ours(e, outfit)); }
         for mut e in incoming {
             let from_index = if wear { 0 } else { outfit };
@@ -366,11 +369,13 @@ fn migration(from: &Value, to: &mut Value) {
 const HANDLED: [&str; 10] = [SIDELOADER, MATERIAL_EDITOR, OVERLAYS, PUSHUP, MORE_ACCESSORIES, DYNAMIC_BONES, MIGRATION, HAIR_ACCESSORIES, ACCESSORY_STATES, ACCESSORY_SWITCH];
 
 /// Outfit-scoped plugin data, both directions (`wear` = coordinate -> character).
-fn convert_plugins(from: &Value, to: &mut Value, outfit: usize, wear: bool) {
-    sideloader(from, to, outfit, wear);
-    material_editor(from, to, outfit, wear);
+/// `clothes_only`: the accessories' data stays the character's (wear_clothes_only).
+fn convert_plugins(from: &Value, to: &mut Value, outfit: usize, wear: bool, clothes_only: bool) {
+    sideloader(from, to, outfit, wear, clothes_only);
+    material_editor(from, to, outfit, wear, clothes_only);
     per_outfit_maps(from, to, outfit, wear, OVERLAYS, &[("Overlays", "Overlays")]);
     per_outfit_maps(from, to, outfit, wear, PUSHUP, &[("PushupCoordinate_BraData", "Pushup_BraData"), ("PushupCoordinate_TopData", "Pushup_TopData")]);
+    if clothes_only { return; }
     per_outfit_maps(from, to, outfit, wear, HAIR_ACCESSORIES, &[("CoordinateHairAccessories", "HairAccessories")]);
     per_outfit_maps(from, to, outfit, wear, ACCESSORY_STATES, &[("CoordinateData", "CoordinateData")]);
     more_accessories(from, to, outfit, wear);
@@ -379,8 +384,8 @@ fn convert_plugins(from: &Value, to: &mut Value, outfit: usize, wear: bool) {
 }
 
 /// Coordinate-level plugin data -> the character's, for outfit `outfit`.
-fn wear_plugins(coordinate: &Value, character: &mut Value, outfit: usize) -> Vec<String> {
-    convert_plugins(coordinate, character, outfit, true);
+fn wear_plugins(coordinate: &Value, character: &mut Value, outfit: usize, clothes_only: bool) -> Vec<String> {
+    convert_plugins(coordinate, character, outfit, true, clothes_only);
     migration(coordinate, character);
     coordinate.as_map().map(|m| m.iter().filter_map(|(k, _)| k.as_str()).filter(|k| !HANDLED.contains(k)).map(str::to_owned).collect()).unwrap_or_default()
 }
@@ -388,7 +393,7 @@ fn wear_plugins(coordinate: &Value, character: &mut Value, outfit: usize) -> Vec
 /// The character's plugin data for outfit `outfit` -> coordinate level.
 fn export_plugins(character: &Value, outfit: usize) -> Value {
     let mut out = Value::Map(Vec::new());
-    convert_plugins(character, &mut out, outfit, false);
+    convert_plugins(character, &mut out, outfit, false, false);
     if let Some(m) = map_get(character, MIGRATION) { map_set(&mut out, MIGRATION, m.clone()); }
     out
 }
@@ -468,13 +473,34 @@ pub fn export_outfit(card: &[u8], outfit: usize) -> Result<(OkClothes, Vec<u8>),
 
 /// Wear okclothes as outfit `outfit` of a character card (a new card).
 pub fn wear(card: &[u8], clothes: &OkClothes, outfit: usize) -> Result<(Vec<u8>, Vec<String>), String> {
+    wear_scoped(card, clothes, outfit, false)
+}
+
+/// Only the clothes of okclothes worn as outfit `outfit`: the character keeps that outfit's accessories (hair made of
+/// accessories among them) and makeup, as the game's maker loads a coordinate card with its accessories unticked.
+pub fn wear_clothes_only(card: &[u8], clothes: &OkClothes, outfit: usize) -> Result<(Vec<u8>, Vec<String>), String> {
+    wear_scoped(card, clothes, outfit, true)
+}
+
+/// A Coordinate entry's clothes section and the rest (accessories, makeup): [i32 length][clothes][the rest].
+fn split_clothes(entry: &[u8]) -> Option<(&[u8], &[u8])> {
+    let n = i32::from_le_bytes(entry.get(..4)?.try_into().ok()?);
+    let end = 4usize.checked_add(usize::try_from(n).ok()?)?;
+    (end <= entry.len()).then(|| entry.split_at(end))
+}
+
+fn wear_scoped(card: &[u8], clothes: &OkClothes, outfit: usize, clothes_only: bool) -> Result<(Vec<u8>, Vec<String>), String> {
     let mut blocks = crate::appearance::blocks_from_card(card)?;
     let mut entries = coordinate_entries(&blocks)?;
     if outfit >= entries.len() { return Err(format!("card has {} outfits", entries.len())); }
-    entries[outfit] = clothes.coordinate.clone();
+    entries[outfit] = if clothes_only {
+        let (worn, _) = split_clothes(&clothes.coordinate).ok_or("okclothes coordinate shape")?;
+        let (_, kept) = split_clothes(&entries[outfit]).ok_or("card outfit shape")?;
+        [worn, kept].concat()
+    } else { clothes.coordinate.clone() };
     blocks.insert("Coordinate".into(), encode(&Value::Array(entries.into_iter().map(Value::Binary).collect())));
     let mut kkex = card_kkex(card)?.unwrap_or(Value::Map(Vec::new()));
-    let dropped = wear_plugins(&clothes.plugins, &mut kkex, outfit);
+    let dropped = wear_plugins(&clothes.plugins, &mut kkex, outfit, clothes_only);
     blocks.insert("KKEx".into(), encode(&kkex));
     Ok((crate::appearance::write_blocks(card, blocks)?, dropped))
 }
@@ -633,6 +659,13 @@ pub mod file {
         let (bytes, dropped) = wear(&read(card)?, &clothes, outfit)?;
         write(out, &bytes)?;
         Ok(format!("wear outfit={outfit} dropped={dropped:?}"))
+    }
+    /// Only the clothes of .okclothes worn as outfit `outfit` (her accessories kept), written as a new card.
+    pub fn wear_clothes_only_file(card: &Path, okclothes: &Path, outfit: usize, out: &Path) -> Result<String, String> {
+        let clothes = OkClothes::from_bytes(&read(okclothes)?)?;
+        let (bytes, dropped) = wear_clothes_only(&read(card)?, &clothes, outfit)?;
+        write(out, &bytes)?;
+        Ok(format!("wear clothes only outfit={outfit} dropped={dropped:?}"))
     }
 }
 

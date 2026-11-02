@@ -90,6 +90,11 @@ public:
     // where its root goes: Pad in the unit circle, its edge RootReach cm off the way into her toward that side, the
     // entrance staying the pivot, so he presses the other way. Up her back, down her belly.
     void SetPenis(float Length,float Scale,float Most=2.f);void SetRootPad(const FVector2D& Pad,float Most=1.f);
+    // Her outfit (the clothes tab, /hscene {"outfit":N} or {"coordinate":"file"}): her card's outfit 0..6, or a game
+    // coordinate card (UserData/coordinate, by file name or path) worn as the outfit she has on (AOKInteractionMode::
+    // ChangeOutfit). OutfitChanged: it is on her (or failed); the pose starts again on her new self.
+    bool WearOutfit(int32 Outfit,const FString& Coordinate,FString& Why);
+    void OutfitChanged(bool bOk);
     UFUNCTION() void OnPenisLength(float Value);
     UFUNCTION() void OnPenisScale(float Value);
 
@@ -99,7 +104,7 @@ public:
         TouchChest=2101,TouchCrotch=2102,TouchAnal=2103,TouchButt=2104,TouchNipple=2105,Kiss=2106,Release=2107,
         PoseBase=1000,
         Faster=2001,Slower=2002,Toggle=2003,Inside=2004,Outside=2005,Drink=2006,Vomit=2007,Again=2008,Insert=2009,InsertAnal=2010,Pull=2011,Condom=2012,Stop=2014,Continue=2015,ToggleMale=2016,LockHer=2017,LockHis=2018,MaleBottom=2019,PenisXRayToggle=2020,PhysicsNext=2021,GrayRoomToggle=2022,PenisPanelToggle=2023,PenisReset=2024,
-        ClothesBase=3000,RoomBase=3200,
+        ClothesBase=3000,RoomBase=3200,OutfitBase=3300,CoordinateToggle=3310,CoordinateAccessories=3311,CoordinateBase=3400,
     };
 private:
     // Caress (AnimationInfo_00): her own animation, him hidden (HAibu); each state is prepared up front.
@@ -255,6 +260,13 @@ private:
     TWeakObjectPtr<class AKKPreviewActor> ClipHim;int32 ClipPart=INDEX_NONE;bool bClipShown=false;int32 ClipVerts=0;float BackExitCm=-1.f;float ClipLastTip=-1.f,ClipLeadCm=0.f;
     // The girl whose shoes were taken off on coming into her room (NativeTick): once each, she may put them back on.
     TWeakObjectPtr<class AKKPreviewActor> ShoesOffFor;
+    // The game's coordinate cards (UserData/coordinate and its folders), listed in the clothes tab when opened.
+    bool bCoordinateList=false;TArray<FString> CoordinateCards;void FindCoordinateCards();
+public:
+    // A coordinate card worn with its accessories too (else only its clothes: hers, hair made of accessories among them, stay).
+    bool bCoordinateAccessories=false;
+private:
+    class AOKInteractionMode* Interaction() const;
     // His glans from his penis root, from his session (the end of his penis mesh; J_dan109 draws in as he goes in): kept
     // between reads.
     FVector GlansFromRoot=FVector::ZeroVector;bool bGlans=false;

@@ -17,6 +17,8 @@
 #include "Components/AudioComponent.h"
 #include "EngineUtils.h"
 #include "HAL/PlatformProcess.h"
+#include "HAL/FileManager.h"
+#include "HAL/IConsoleManager.h"
 #include "Dom/JsonObject.h"
 #include "Misc/Paths.h"
 #include "Components/ComboBoxString.h"
@@ -130,6 +132,94 @@ void AOKInteractionMode::LoadFemale(const FString& Path,int32 Outfit){
         });
     });
 }
+bool AOKInteractionMode::ChangeOutfit(int32 Outfit,const FString& Coordinate,bool bWithAccessories){
+    if(!Ready||Finished||IsChangingOutfit()||!Controller||!IsValid(Controller->PreviewActor)||!Controller->Entries.IsValidIndex(0))return false;
+    if(Outfit<0||(Controller->Selected.Outfits.Num()>0&&Outfit>=Controller->Selected.Outfits.Num()))return false;
+    if(!Coordinate.IsEmpty()&&!FPaths::FileExists(Coordinate))return false;
+    OutfitChanging=true;OutfitError.Reset();SwapOutfit=Outfit;SwapCoordinate=Coordinate;
+    const FString Card=Controller->Entries[0].Path;const FVector2D Physics(Controller->Selected.Body.BustSoftness,Controller->Selected.Body.BustWeight);
+    const FString GameRoot=UKKGameRoot::Get()?UKKGameRoot::Get()->Root:FString();
+    auto Job=MakeShared<FInteractionRoleLoad,ESPMode::ThreadSafe>();const auto Token=Cancelled;TWeakObjectPtr<AOKInteractionMode> Weak(this);
+    UE_LOG(LogTemp,Display,TEXT("H scene outfit change: outfit %d%s%s"),Outfit,Coordinate.IsEmpty()?TEXT(""):TEXT(" coordinate "),*Coordinate);
+    Async(EAsyncExecution::Thread,[Weak,Job,Token,Card,Coordinate,Outfit,Physics,GameRoot,bWithAccessories](){
+        if(*Token)return;const double T0=FPlatformTime::Seconds();
+        FString Path=Card;
+        if(!Coordinate.IsEmpty()){
+            // Her card with the coordinate card written into this outfit, made once per card, coordinate and outfit.
+            const FString Dir=FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir()/TEXT("StreetSocial/HOutfits"));IFileManager::Get().MakeDirectory(*Dir,true);
+            const FString Clothes=Dir/(FPaths::GetBaseFilename(Coordinate)+TEXT(".okclothes"));
+            const FString Worn=Dir/FString::Printf(TEXT("%s__%s_%d%s.png"),*FPaths::GetBaseFilename(Card),*FPaths::GetBaseFilename(Coordinate),Outfit,bWithAccessories?TEXT("_acc"):TEXT(""));
+            const FDateTime Made=IFileManager::Get().GetTimeStamp(*Worn);
+            if(Made==FDateTime::MinValue()||Made<IFileManager::Get().GetTimeStamp(*Card)||Made<IFileManager::Get().GetTimeStamp(*Coordinate)){
+                // Worn on her card as the game's card (its OK chunks, ok*, dropped) and opened from the game: an OK card
+                // wearing new clothes would be made again (oklib::remake_ok_card, a minute, and only with every zipmod
+                // its outfits name installed), too long to wait for in the scene.
+                FString Summary;TArray<uint8> Bytes,Plain;const FString PlainCard=Dir/(FPaths::GetBaseFilename(Card)+TEXT("__game.png"));
+                bool Stripped=FFileHelper::LoadFileToArray(Bytes,*Card)&&Bytes.Num()>8&&FMemory::Memcmp(Bytes.GetData(),"\x89PNG\r\n\x1a\n",8)==0;
+                if(Stripped){Plain.Append(Bytes.GetData(),8);int64 Pos=8;Stripped=false;
+                    while(Pos+12<=Bytes.Num()){const uint32 Len=(uint32(Bytes[Pos])<<24)|(uint32(Bytes[Pos+1])<<16)|(uint32(Bytes[Pos+2])<<8)|uint32(Bytes[Pos+3]);const int64 End=Pos+12+int64(Len);
+                        if(End>Bytes.Num())break;const uint8* Type=&Bytes[Pos+4];
+                        if(FMemory::Memcmp(Type,"IEND",4)==0){Plain.Append(&Bytes[Pos],Bytes.Num()-Pos);Stripped=true;break;}
+                        if(!(Type[0]=='o'&&Type[1]=='k'))Plain.Append(&Bytes[Pos],End-Pos);Pos=End;}}
+                if(!Stripped||!FFileHelper::SaveArrayToFile(Plain,*PlainCard))Job->Error=TEXT("無法讀取她的角色卡：")+Card;
+                else if(!FOkSession::ClothesImport(Coordinate,Clothes,Summary)){Job->Error=TEXT("服裝卡讀取失敗：")+Summary;}
+                else if(!(bWithAccessories?FOkSession::ClothesWear(PlainCard,Clothes,Outfit,Worn,Summary):FOkSession::ClothesWearClothesOnly(PlainCard,Clothes,Outfit,Worn,Summary))){Job->Error=TEXT("穿上服裝卡失敗：")+Summary;}
+                UE_LOG(LogTemp,Display,TEXT("H scene outfit: coordinate %s worn as outfit %d -> %s: %s"),*FPaths::GetCleanFilename(Coordinate),Outfit,*Worn,*Summary);
+            }
+            if(!Job->Error.IsEmpty()){AsyncTask(ENamedThreads::GameThread,[Weak,Job](){if(auto* Mode=Weak.Get()){Mode->OutfitChanging=false;Mode->OutfitError=Job->Error;if(Mode->Controller&&Mode->Controller->HPanel)Mode->Controller->HPanel->OutfitChanged(false);}});return;}
+            Path=Worn;
+        }
+        const double T1=FPlatformTime::Seconds();
+        const FString Portable=UKKCardWorkspace::PortableSourcePath(Path);
+        if(Portable.IsEmpty()&&GameRoot.IsEmpty())Job->Error=TEXT("沒有設定遊戲目錄，不能開啟服裝卡的衣服");
+        else Job->Ok=Job->Session.Open(Portable.IsEmpty()?GameRoot:FString(),Portable.IsEmpty()?Path:Portable,Outfit,Job->Error);
+        const double T2=FPlatformTime::Seconds();
+        if(Job->Ok&&!*Token){Job->Session.ApplyBodyPhysics(Physics.X,Physics.Y);
+            FString MaterialError;if(!Job->Session.PrepareRuntimeMaterials(MaterialError,true))UE_LOG(LogTemp,Warning,TEXT("H scene outfit materials: %s"),*MaterialError);
+            AKKPreviewActor::PrecacheSessionTextures(Job->Session,true);}
+        UE_LOG(LogTemp,Display,TEXT("H scene outfit open: wear %.0f ms, session %.0f ms, materials and textures %.0f ms"),(T1-T0)*1000.,(T2-T1)*1000.,(FPlatformTime::Seconds()-T2)*1000.);
+        AsyncTask(ENamedThreads::GameThread,[Weak,Job,Token](){
+            if(*Token||!Weak.IsValid())return;auto* Mode=Weak.Get();auto* C=Mode->Controller.Get();
+            auto Failed=[&](const FString& Why){Mode->OutfitChanging=false;Mode->OutfitError=Why;UE_LOG(LogTemp,Warning,TEXT("H scene outfit change failed: %s"),*Why);if(C&&C->HPanel)C->HPanel->OutfitChanged(false);};
+            if(!C||!IsValid(C->PreviewActor)){Mode->OutfitChanging=false;return;}
+            if(!Job->Ok){Failed(Job->Error.IsEmpty()?TEXT("新服裝載入失敗"):Job->Error);return;}
+            auto* Actor=Mode->GetWorld()->SpawnActor<AKKPreviewActor>(C->PreviewActor->GetActorLocation(),C->PreviewActor->GetActorRotation());if(!Actor){Failed(TEXT("無法建立角色"));return;}
+            Actor->bPreserveSourceWorld=true;Actor->SetActorHiddenInGame(true);Actor->SetActorTickEnabled(false);Actor->Session=MoveTemp(Job->Session);
+            FString Error;if(!Actor->BeginSessionLoad(Error)){Actor->Destroy();Failed(Error);return;}
+            Mode->SwappingFemale=Actor;Mode->OutfitChanging=false;
+        });
+    });
+    return true;
+}
+void OKRetireActor(AActor* Actor); // OKGalleryWidget.cpp
+void AOKInteractionMode::TickOutfitSwap(){
+    AKKPreviewActor* New=SwappingFemale;if(!New)return;
+    auto* Old=Controller->PreviewActor.Get();FString Why;
+    if(!IsValid(Old)||!New->ContinueSessionLoad(Why)){SwappingFemale=nullptr;New->Destroy();OutfitError=Why.IsEmpty()?TEXT("新服裝載入失敗"):Why;if(Controller->HPanel)Controller->HPanel->OutfitChanged(false);return;}
+    if(!New->IsSessionLoadComplete()||!New->BeginProgressiveMaterials())return;
+    SwappingFemale=nullptr;
+    // The pair player holds views into her old session: it stops here and the panel starts the pose again on her new one.
+    Controller->CancelPairPreparation();
+    if(Controller->PairedPlayback){Controller->PairedPlayback->Stop();Controller->PairedPlayback->Destroy();Controller->PairedPlayback=nullptr;}
+    Old->StopSpeech();Old->StopHBreath();
+    New->SetActorTransform(Old->GetActorTransform());
+    New->ApplyShapes(Controller->Selected.Face.ShapeValueFace,Controller->Selected.Body.ShapeValueBody);
+    New->SpeechLines=Old->SpeechLines;New->SpeechPitch=Old->SpeechPitch;New->bSpeechDrivesMouth=Old->bSpeechDrivesMouth;
+    // The view stays where the player had it.
+    if(New->StudioCam&&New->StudioCam!=Old->StudioCam)New->StudioCam->Destroy();
+    New->StudioCam=Old->StudioCam;Old->StudioCam=nullptr;
+    New->OrbitFocus=Old->OrbitFocus;New->OrbitYaw=Old->OrbitYaw;New->OrbitPitch=Old->OrbitPitch;New->OrbitDistance=Old->OrbitDistance;
+    // The pieces he had taken off stay off (the original keeps fileStatus.clothesState over a coordinate change).
+    New->SetClothingPartsHidden(Controller->ClothesStates);
+    if(PairPhysicsActors.Remove(Old))Old->RemovePairPhysics();
+    Controller->PreviewActor=New;Controller->OutfitIndex=SwapOutfit;Controller->PreviewOutfitIndex=SwapOutfit;WornCoordinate=SwapCoordinate;
+    New->SetActorHiddenInGame(false);New->SetActorTickEnabled(true);
+    if(IsValid(Controller->PartnerActor))Controller->PartnerActor->SetActorTickEnabled(true);
+    OKRetireActor(Old);
+    UpdatePairPhysics();
+    UE_LOG(LogTemp,Display,TEXT("H scene outfit changed: outfit %d%s%s, %d parts"),SwapOutfit,SwapCoordinate.IsEmpty()?TEXT(""):TEXT(" coordinate "),*FPaths::GetCleanFilename(SwapCoordinate),New->Session.PartCount());
+    if(Controller->HPanel)Controller->HPanel->OutfitChanged(true);
+}
 void AOKInteractionMode::BeginHScene(const FString& Name,const FString& Stage,const TSharedPtr<FJsonObject>& Experience,const FString& Player){
     if(!Controller)return;Controller->bHScene=true;Controller->HPlayerName=Player;Controller->HHeroineName=Name;Controller->HHeroineStage=Stage;Controller->HExperience=Experience;Controller->HResult.Reset();
 }
@@ -142,6 +232,12 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
         if(Body->TryGetStringField(TEXT("pose"),Pose)&&!Pose.IsEmpty()&&!Panel->SelectPoseNamed(Pose)){Why=TEXT("no pose named ")+Pose;return nullptr;}
         if(Body->TryGetNumberField(TEXT("kind"),Kind)&&Kind>0)Panel->Click(int32(Kind));
         FString Say;if(Body->TryGetStringField(TEXT("say"),Say)&&!Say.IsEmpty())Panel->Say(Say);
+        // {"outfit":N}: her card's outfit N (0..6); {"coordinate":"file name or path"}: a game coordinate card worn as the
+        // outfit she has on. Both load in the background (outfit_changing in the answer until she is swapped in).
+        double OutfitN=-1;FString Coordinate,OutfitWhy;
+        if(Body->TryGetNumberField(TEXT("outfit"),OutfitN)&&OutfitN>=0&&!Panel->WearOutfit(int32(OutfitN),FString(),OutfitWhy)){Why=OutfitWhy;return nullptr;}
+        bool WithAccessories=false;if(Body->TryGetBoolField(TEXT("accessories"),WithAccessories))Panel->bCoordinateAccessories=WithAccessories; // {"accessories":true}: its accessories too
+        if(Body->TryGetStringField(TEXT("coordinate"),Coordinate)&&!Coordinate.IsEmpty()&&!Panel->WearOutfit(Controller->OutfitIndex,Coordinate,OutfitWhy)){Why=OutfitWhy;return nullptr;}
         // {"height":{"her":0..1,"him":0..1}}: their height slider (ChaFile shapeBody[0]) for testing the pair at other sizes.
         double BlushValue;if(Body->TryGetNumberField(TEXT("blush"),BlushValue))Panel->BlushTest=float(BlushValue);
         // {"siru":[face,ftop,fbot,btop,bbot]}: set the liquid levels (0..2) directly, to look at how they draw.
@@ -167,6 +263,8 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
             double V;if((*Heights)->TryGetNumberField(TEXT("her"),V))Set(Controller->PreviewActor,V);if((*Heights)->TryGetNumberField(TEXT("him"),V))Set(Controller->PartnerActor,V);}
     }
     TSharedPtr<FJsonObject> View=Panel->Describe();
+    View->SetNumberField(TEXT("outfit"),Controller->OutfitIndex);View->SetStringField(TEXT("coordinate"),WornCoordinate);
+    View->SetBoolField(TEXT("outfit_changing"),IsChangingOutfit());View->SetStringField(TEXT("outfit_error"),OutfitError);
     // {"faces":true}: her eye (1) and brow (2) pattern labels, for choosing expressions.
     bool Faces=false;if(View.IsValid()&&Body.IsValid()&&Body->TryGetBoolField(TEXT("faces"),Faces)&&Faces&&IsValid(Controller->PreviewActor))
         for(int32 Control=1;Control<=2;++Control){TArray<TSharedPtr<FJsonValue>> L;for(int32 P=0;P<Controller->PreviewActor->GetFacePatternCount(Control);++P)L.Add(MakeShared<FJsonValueString>(Controller->PreviewActor->GetFacePatternLabel(Control,P)));View->SetArrayField(Control==1?TEXT("eyes"):TEXT("brows"),L);}
@@ -199,7 +297,9 @@ bool AOKInteractionMode::HSceneHear(const FString& Text,FString& Context){return
 void AOKInteractionMode::HSceneShowLine(const FString& Text){if(Controller&&Controller->HPanel)Controller->HPanel->ShowLine(Text);}
 FString AOKInteractionMode::HSceneJudgeFacts() const{return Controller&&Controller->HPanel?Controller->HPanel->JudgeFacts():FString();}
 bool AOKInteractionMode::HSceneApplyTalk(const TSharedPtr<FJsonObject>& Verdict){return Controller&&Controller->HPanel&&Controller->HPanel->ApplyTalk(Verdict);}
+extern TAutoConsoleVariable<int32> CVarHSpokenLines; // OKHScene.cpp
 bool AOKInteractionMode::HSceneSpeak(const FString& Path){
+    if(!CVarHSpokenLines.GetValueOnGameThread())return false; // her answer shown, not spoken: only her cries in H (user 2026-11-02)
     if(!Controller||!IsValid(Controller->PreviewActor))return false;auto* Her=Controller->PreviewActor.Get();
     if(Controller->HPanel&&Controller->HPanel->LineIsStale())return false; // said to what happened before (UOKHScenePanel::ShowLine)
     Her->StopHBreath();FString Why;const bool Ok=Her->PlaySpeechFile(Path,1.f,Why);
@@ -255,6 +355,7 @@ void AOKInteractionMode::Tick(float Delta){
         Evidence->SetNumberField(TEXT("playback_start_seconds"),Controller->PairedPlayback->GetElapsed());
         if(!ReportPath.IsEmpty())FScreenshotRequest::RequestScreenshot(FPaths::GetPath(ReportPath)/TEXT("high-interaction.png"),true,false);
     }
+    if(Ready)TickOutfitSwap();
 #if !UE_BUILD_SHIPPING
     if(Ready&&!TickFeatureAudit())return;
 #endif
@@ -275,6 +376,7 @@ void AOKInteractionMode::Exit(bool WasCancelled){
         if(auto* PC=Controller->GetOwningPlayer()){if(PreviousView)PC->SetViewTarget(PreviousView);PC->bShowMouseCursor=PreviousMouse;if(auto* O=Cast<AOpenKoikatsuPlayerController>(PC)){O->SetBodyTouchEnabled(false);O->BodyInteraction=MoveTemp(PreviousBodyInteraction);O->BodyGesture=MoveTemp(PreviousBodyGesture);O->bBodyTouchEnabled=PreviousTouch;O->SetPaintPreviewActive(PreviousPaint);}}
     }
     if(LoadingFemale){LoadingFemale->Destroy();LoadingFemale=nullptr;}
+    if(SwappingFemale){SwappingFemale->Destroy();SwappingFemale=nullptr;}
     for(const auto& State:SourceActors)if(auto* Actor=State.Actor.Get()){Actor->SetActorHiddenInGame(State.Hidden);Actor->SetActorEnableCollision(State.Collision);Actor->SetActorTickEnabled(State.Tick);}
     for(const auto& State:SourceAudio)if(auto* Audio=State.Audio.Get())Audio->SetPaused(State.Paused);SourceAudio.Reset();
     SourceActors.Reset();
