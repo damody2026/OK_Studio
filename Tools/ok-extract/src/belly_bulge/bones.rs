@@ -22,6 +22,10 @@ const BONE_RADIUS_M: f32 = 0.01;
 /// (0.6 left the tent a frame behind his thrust, his glans out of its top, GalBones1.)
 const BONE_RISE: f32 = 0.9;
 const BONE_SETTLE: f32 = 0.3;
+/// A lifted triangle whose normal is turned this far from its own (cosine; 0: past edge on, its back out) counts as turned
+/// round, and how many rounds of raising its lower corners at most.
+const BONE_FLIP_COS: f32 = 0.0;
+const BONE_FLIP_ROUNDS: usize = 40;
 
 struct BellyBones { key: (usize, usize), anchor: Vec<usize>, weights: Vec<Vec<(u32, f32)>>, lift: Vec<f32> }
 static BONES: std::sync::Mutex<Option<BellyBones>> = std::sync::Mutex::new(None);
@@ -123,12 +127,39 @@ pub fn bone_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
     // Her skin with its bones (her lips less, as in `wrap_deltas`). Skin on her thighs and bottom carries no bone but
     // goes with the lifted bones it is bound to: left down beside them it stood as a black wall (GalBones1).
     let lips = |d: f32| { let t = ((d - WRAP_LIPS_M) / WRAP_LIPS_FADE_M).clamp(0., 1.); t * t * (3. - 2. * t) };
-    let moved: Vec<Option<[f32; 3]>> = (0..verts.len()).map(|i| pos[i].map(|p| {
+    let mut lift: Vec<f32> = (0..verts.len()).map(|i| {
         let v = &verts[i];let free = v.free * v.free * (3. - 2. * v.free);
         let w = &bones.weights[i];
         let lifted = w.iter().filter(|(b, _)| bones.lift[*b as usize] > 0.005).map(|(_, w)| *w).sum::<f32>().min(1.);
-        let lift = w.iter().map(|(b, w)| bones.lift[*b as usize] * w).sum::<f32>() * lips(v.from_entrance) * free.max(lifted);
-        [p[0] + up[0] * lift, p[1] + up[1] * lift, p[2] + up[2] * lift]
-    })).collect();
+        w.iter().map(|(b, w)| bones.lift[*b as usize] * w).sum::<f32>() * lips(v.from_entrance) * free.max(lifted)
+    }).collect();
+    // No skin turns its back (user 2026-11-02, the black walls beside the tent, GalBones2): a triangle that faces the
+    // other way once lifted (its lower corner left far under its higher one, at her groin crease and where her thighs
+    // lie by her belly) has its lower corners raised towards its highest, until none does. Her lips stay.
+    let flipped = |lift: &[f32], i: usize, t: [u32; 2]| -> bool {
+        let (Some(a), Some(b), Some(c)) = (pos[i], pos[t[0] as usize], pos[t[1] as usize]) else { return false; };
+        let lifted = |p: [f32; 3], h: f32| [p[0] + up[0] * h, p[1] + up[1] * h, p[2] + up[2] * h];
+        let cross = |a: [f32; 3], b: [f32; 3], c: [f32; 3]| { let (u, w) = (sub(b, a), sub(c, a));[u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]] };
+        let n0 = cross(a, b, c);
+        let n1 = cross(lifted(a, lift[i]), lifted(b, lift[t[0] as usize]), lifted(c, lift[t[1] as usize]));
+        dot(n0, n1) <= BONE_FLIP_COS * dot(n0, n0).sqrt() * dot(n1, n1).sqrt()
+    };
+    for _ in 0..BONE_FLIP_ROUNDS {
+        let mut raised = false;
+        for i in 0..verts.len() {
+            let held = lips(verts[i].from_entrance) <= 0.;
+            for &t in &verts[i].tri {
+                let top = lift[t[0] as usize].max(lift[t[1] as usize]);
+                if top <= lift[i] + 1e-4 || !flipped(&lift, i, t) { continue; }
+                // A corner on her lips stays, so its higher corners come down to it instead (the black wedge left at her
+                // mons beside her entrance, GalBones3).
+                if held { for k in t { let k = k as usize;if lift[k] > lift[i] { lift[k] = lift[i] + (lift[k] - lift[i]) * 0.5; } } }
+                else { lift[i] += (top - lift[i]) * 0.5; }
+                raised = true;
+            }
+        }
+        if !raised { break; }
+    }
+    let moved: Vec<Option<[f32; 3]>> = (0..verts.len()).map(|i| pos[i].map(|p| [p[0] + up[0] * lift[i], p[1] + up[1] * lift[i], p[2] + up[2] * lift[i]])).collect();
     mesh_moves(&verts, &posed, &pos, &moved)
 }
