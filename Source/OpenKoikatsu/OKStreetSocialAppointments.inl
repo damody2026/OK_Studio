@@ -100,6 +100,8 @@ void AOKStreetSocialScene::AddPromiseFromChat(int32 Character,const FString& Day
   Request->SetArrayField(TEXT("pending"),Pending);}
  const TSharedPtr<FJsonObject> Out=OKRulesEval(S,Request);if(!Out.IsValid())return;
  const FString Action=Out->GetStringField(TEXT("action")),Reason=Out->GetStringField(TEXT("reason"));
+ // "After class" with no place: promise.rs meets where the last of them finishes (R6-126).
+ {FString Met;if(!P&&Out->TryGetStringField(TEXT("place"),Met)&&!Met.IsEmpty())if(const FOKStreetPlace* MetP=OKStreetFindPlace(Met)){Place=Met;P=MetP;}}
  // An ignored promise has no start or minute.
  double StartAt=0,MinuteAt=0;Out->TryGetNumberField(TEXT("start"),StartAt);Out->TryGetNumberField(TEXT("minute"),MinuteAt);
  const int64 Start=int64(StartAt);const int32 Minute=int32(MinuteAt);

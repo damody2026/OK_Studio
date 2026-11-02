@@ -81,7 +81,8 @@ fn class_end_on(r: &Value, day: i64) -> i64 {
 /// meeting with her this new one takes the place of, 0 for none).
 fn promise(c: &Catalog, r: &Value) -> Value {
     let ignore = |reason: &str| json!({"action": "ignore", "reason": reason});
-    if !r.get("place_known").and_then(Value::as_bool).unwrap_or(true) {
+    let place_known = r.get("place_known").and_then(Value::as_bool).unwrap_or(true);
+    if !place_known && !(s(r, "place").is_empty() && matches!(s(r, "time"), "after_class" | "after_work")) {
         return ignore("not_a_place");
     }
     // No clear time, no meeting (it used to become 19:00 by default, a time nobody said).
@@ -107,7 +108,7 @@ fn promise(c: &Catalog, r: &Value) -> Value {
         "after_work" => after("work"),
         t => minute_of(t),
     };
-    let Some(minute) = minute else { return ignore("no_time") };
+    let Some(minute) = minute else { return ignore(if place_known { "no_time" } else { "not_a_place" }) };
     // Before 04:00 belongs to the previous game day's night.
     let mut start = game_day * 1440 + minute + if minute < 240 { 1440 } else { 0 };
     // A weekday named on that weekday, its hour gone ("每周二早上八点" at 09:21 on a Tuesday): next week's, not today's
@@ -118,7 +119,17 @@ fn promise(c: &Catalog, r: &Value) -> Value {
     if start <= i(r, "now") {
         return ignore("past");
     }
-    let (her, place) = (s(r, "heroine"), s(r, "place"));
+    // "After class" with no place ("下课后陪你"): where the one who finishes last finishes, her classroom building or the
+    // shop of a shift (ends_there). 惠惠's "下课后你可得来" was dropped as no place, the talk ended before she asked
+    // where, and she went to work at 16:30 (R6-126). Nothing ending then that the town knows: no place, as before.
+    let derived = if place_known { String::new() } else {
+        let ends = r.get("ends_there").and_then(Value::as_array).map(|a| a.as_slice()).unwrap_or(&[]);
+        match ends.iter().find(|e| i(e, "end") == start && !s(e, "place").is_empty()) {
+            Some(e) => s(e, "place").to_string(),
+            None => return ignore("not_a_place"),
+        }
+    };
+    let (her, place) = (s(r, "heroine"), if place_known { s(r, "place") } else { derived.as_str() });
     let pending: Vec<&Value> = r.get("pending").and_then(Value::as_array).map(|a| a.iter().collect()).unwrap_or_default();
     // The same meeting booked twice from one exchange (her reply's promise and the judge's), one of them a day off
     // ("seven tonight" read as tomorrow): within a minute and a half, same place and hour a day apart is that meeting,
@@ -129,7 +140,7 @@ fn promise(c: &Catalog, r: &Value) -> Value {
             // Unless the judge says this line moves it ("tomorrow I can't, the day after"): then the day said now.
             let replaces = r.get("replaces").and_then(Value::as_bool).unwrap_or(false);
             let at = if replaces { start } else { i(a, "start").min(start) };
-            return json!({"action": if at != i(a, "start") { "move" } else { "keep" }, "reason": if replaces { "moved_a_day" } else { "same_exchange_day_apart" }, "id": i(a, "id"), "start": at, "minute": minute, "place_changed": false});
+            return json!({"action": if at != i(a, "start") { "move" } else { "keep" }, "reason": if replaces { "moved_a_day" } else { "same_exchange_day_apart" }, "id": i(a, "id"), "start": at, "minute": minute, "place_changed": false, "place": place});
         }
     }
     // One meeting with her at a time: the same hour already has one, or the same place on the same day is the same
@@ -149,7 +160,7 @@ fn promise(c: &Catalog, r: &Value) -> Value {
         let said = if (at - start).abs() != 720 || (daytime(start) && !daytime(at)) { start } else { at };
         let moved = at != said || s(a, "place") != place;
         return json!({"action": if moved { "move" } else { "keep" }, "reason": if said != start { "twelve_hours_off" } else { "said_again" },
-                      "id": i(a, "id"), "start": said, "minute": minute, "place_changed": s(a, "place") != place});
+                      "id": i(a, "id"), "start": said, "minute": minute, "place_changed": s(a, "place") != place, "place": place});
     }
     // Booked for when the place is closed (breakfast at 8:00 at a shop opening at 10:00): not booked; she hears why.
     // Meeting at its door a little before it opens ("09:30 at the bookstore door, we read once it opens at 10") is a
@@ -163,7 +174,7 @@ fn promise(c: &Catalog, r: &Value) -> Value {
     let ends_there = r.get("ends_there").and_then(Value::as_array).is_some_and(|l| l.iter().any(|e| s(e, "place") == place && (i(e, "end") - start).abs() <= 30));
     let just_closed = ends_there && (1..=2).any(|k| c.place_open(place, hours - k as f64 * 0.25, d.weekday as i32));
     if !c.place_open(place, hours, d.weekday as i32) && !opens_soon && !just_closed {
-        return json!({"action": "closed", "reason": "closed", "start": start, "minute": minute, "why": c.closed_why(place, d.weekday as i32)});
+        return json!({"action": "closed", "reason": "closed", "start": start, "minute": minute, "why": c.closed_why(place, d.weekday as i32), "place": place});
     }
     // Another girl already booked near that time: he is told (both stay booked; it is his to sort out).
     // "Not today, tomorrow" (the judge's replaces) when it is not the same meeting said again: her meeting at the same
@@ -194,7 +205,7 @@ fn promise(c: &Catalog, r: &Value) -> Value {
         (1..=4).find(|k| c.place_open(place, hours + *k as f64 * 0.25, d.weekday as i32))
             .map(|k| { let m = (start % 1440) as i32 + k * 15; format!("{:02}:{:02}", m / 60 % 24, m % 60) }).unwrap_or_default()
     };
-    json!({"action": "book", "reason": "new", "start": start, "minute": minute, "clash": clash, "replaces_id": replaces_id, "opens_at": opens_at})
+    json!({"action": "book", "reason": "new", "start": start, "minute": minute, "clash": clash, "replaces_id": replaces_id, "opens_at": opens_at, "place": place})
 }
 
 pub fn eval(c: &Catalog, kind: &str, r: &Value) -> Option<Result<Value, String>> {
@@ -256,6 +267,18 @@ mod tests {
         assert_eq!(ask(json!({"day": "周二", "time": "08:00", "today": 6, "now": 6 * 1440 + 561}))["start"], 13 * 1440 + 480);
         assert_eq!(ask(json!({"day": "周二", "time": "10:00", "today": 6, "now": 6 * 1440 + 561}))["start"], 6 * 1440 + 600, "later today stays today");
         assert_eq!(ask(json!({"place_known": false}))["reason"], "not_a_place");
+        // "下课后陪你" with no place: where the last of them finishes (R6-126); nothing ends then, still no place.
+        let here = json!({"day": "+0", "time": "after_class", "place": "", "place_known": false, "his_class_end": 720, "her_class_end": 990,
+                          "ends_there": [{"place": "campus_ee", "end": 10 * 1440 + 720}, {"place": "cafe", "end": 10 * 1440 + 990}]});
+        let met = ask(here.clone());
+        assert_eq!((met["action"].as_str(), met["place"].as_str(), met["start"].as_i64()), (Some("book"), Some("cafe"), Some(10 * 1440 + 990)), "{met}");
+        let mut nowhere = here.clone();
+        nowhere["ends_there"] = json!([]);
+        assert_eq!(ask(nowhere)["reason"], "not_a_place");
+        let mut none_left = here;
+        none_left["her_class_end"] = json!(-1);
+        none_left["his_class_end"] = json!(-1);
+        assert_eq!(ask(none_left)["reason"], "not_a_place", "no time and no place: she asks");
         // 01:30 "tonight" is the night after the game day.
         assert_eq!(ask(json!({"day": "+0", "time": "01:30"}))["start"], 11 * 1440 + 90);
         assert_eq!(ask(json!({"day": "2010-09-12", "time": "12:00"}))["start"], 11 * 1440 + 720);
