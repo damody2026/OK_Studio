@@ -255,7 +255,95 @@
   - 或在這些地點停用遊戲電梯，改用地圖的電梯。
 - **樓梯**：城市樓梯可以實際走，遊戲的「按鍵上下樓」（`stairK`，170 cm 內）也能用，兩者並存不衝突。
 - **設施活動**：`restaurant_room`、`hotel_spa`、`hotel_rest`、`inn_rest`、`rest`、`spa` 走 `OKStreetSocialPrivateEnv`，不需要地圖錨點。要改成在城市的真房間進行（例如汽車旅館房、S19 溫泉），需要改 C++。
+- **路線**：城市地圖沒有 NavMesh（沒有 `NavMeshBoundsVolume`／`RecastNavMesh`）。路線點要從 `world-edge-v1/road-raster.json`（2 m 一格，`r` 是路面）產生，各地點的 `door` 接到最近的路格。
+- **新地點**：`livehouse`、`karaoke` 是新 id，遊戲要在 `places.toml` 和活動表加上（見下節 C7、C8）。
+- **飯店樓層**：`hotel` 的 `room6`、`bed6_1` 只是沿用遊戲的錨點名稱，實際是汽車旅館 209 房，在 H1 的 2 樓高度（z 1871）。H1 只有 5 層，活動資料不要寫 `floor = 6`。
+
+### c-conquest 清單逐項回答（`Docs/STREET_CITY_GAME_NEEDS_INVENTORY_20261103.md`）
+
+狀態欄：
+- 「資料」：已寫進 `places.json`，由 `build_street_city_places.lua` 產生。
+- 「場景」：要裝進地圖。由 `street_city_lover_spots_payload.lua` 第 7–11 節安裝，裝完要驗收、實走、重拍。
+
+| # | 回答 | 狀態 |
+|---|---|---|
+| C1 便利店收銀台 | S06 1 樓在牆邊放 2 m 收銀台和收銀機，店員錨點 `counter` 在台後 | 場景 |
+| C2 彩券行 | S20 1 樓放 1.6 m 櫃台。店員 `counter`、客人 `buy`。牆上掛開獎螢幕，觀看位 `screen` 在螢幕前 2.3 m | 場景 |
+| C3 9 棟上課大樓 | `campus_*` 9 個，每層一個框。錨點：`stair1–5`；`classK_R`（2–5 樓，每層 4 間，取教室座位）。遊戲讀的是 `classK_R`，不是 `class<樓><間>_seat<n>`；`campus.py` 原本也是這個命名，所以沿用 | 資料 |
+| C4 系辦與行政窗口 | 21 系的 `office_<系代號>` 照 `department_offices` 放在各館。AD 有 `office_registrar`（AD-0102）、`office_aa`（AD-0103）、`office_student`（AD-0201，2 樓）；T1 有 `office_general`（T1-0106）。錨點在房門內 60 cm | 資料 |
+| C5 電梯與大廳 | `department`（10 層）、`hotel`、`school`、`lecture`、兩棟宿舍、9 棟 `campus_*` 都有 `liftK:KF`、`stairK`，還有一個 `hall`（1 樓電梯口外 2 m） | 資料 |
+| C6 10 個活動場景 | `places[]` 裡 `actspace-01…10` 的 `anchors` 由場景道具產生。名稱有 `seat*`、`stall*`（夜市 12 攤）、`view`、`pond*`、`stage`、`watch*`、`field`、`jog`、`fireworks`（ActivityArt_Fireworks_0）、`gate*`、`stand`、`fountain`。01 的大熊和 09 的繪本牆不在場景範圍內：大熊已是 `department` 的 `bear`，繪本牆在 S07 書局 | 資料 |
+| C7 Live House | S96 回聲音樂店 1 樓：4×2.5 m 舞台、兩顆喇叭、麥克風架，加一座吧台。新地點 `livehouse`，錨點 `stage`、`watch`…`watch4`、`bar`、`counter` | 場景 |
+| C8 KTV | S48 唱片小室 1 樓：最多 3 間 3.2×2.6 m 包廂（2.5 m 高牆、留門），裡面有沙發、桌子、螢幕。新地點 `karaoke`（privacy 1），錨點 `seat`/`screen`、`seat2`/`screen2`… | 場景 |
+| C9 公司空地 | `Tools/find_street_city_lots.lua` 從路網格找出臨路草地候選，安裝時取前 8 塊實測平坦（40 cm 內）、淨空的，寫進 `places.json` 的 `lots`：`id`、`center`、`size_cm`（寬、深）、`yaw`（朝路的一側） | 場景（只量測） |
+| C10 公司辦公室 | 城市已有：H1-0107 商務會議室（`hotel_business`）、SC-0202 社團聯合辦公室（`school_club`）。M1 沒有辦公樓層，每層都是商店；會館（`lodge`）也沒有辦公室。`dept_office`、`lodge_office` 請整合時改指到 AD 或 IN 的辦公室，例如 IN 跨域研究中心 | 給整合者 |
+| C11 女宿房間 | `places.json` 的 `girls_dorm_rooms`：52 間，每間有 `place`、`floor`、`beds`、`showers`、`door`。另外 `girls_dorm` 有 16 個 `bedK_NN`，每人一張 | 資料 |
+| Q2 門與營業時間 | `door` 都是真入口，種類見 `door_kind`。城市招牌只有店名，沒有營業時間，不會和 `catalog.json` 衝突 | — |
+| Q3 每層的框 | 多層地點都改成每層一個框（`rooms[].floor`），商店 3 層、宿舍 6 層、百貨 10 層 | 資料 |
+| Q5 路線 | 沒有 NavMesh，見上節「路線」 | 給整合者 |
+| Q7 拍照點 | 還沒有逐一拍照確認背景裡有主題物。噴水池、鳥居、大熊、水族館的重拍見 `lover-spots-views.json` | 待驗 |
+| Q11 設施 | S04 沒有包廂。可以用的房間：M1-1008 慶祝包廂餐廳、H1-0106 私人宴會廳（`restaurant_room`）；H1-0203 精油護理室（`hotel_spa`、`spa`）；H1-0202 私人雙人湯屋。目前設施走 PrivateEnv，不讀地圖 | 給整合者 |
+| Q13 洗澡 | 女宿每間房的 `shower*` 列在 `girls_dorm_rooms` | 資料 |
+| Q16 出生點 | `boys_dorm` 加 `spawn`：D2 入口外 3 m，面向門口。重拍的 `LS-spawn` 用來確認他站在路上 | 資料（待驗） |
+| Q17 描述不同 | 遊戲描述要改的地點：<br>• `aquarium`：現在是 S28 改建的小水族館，不是錦鯉池。<br>• `onsen`：S19 室內溫泉會館，不是露天。<br>• `playground`：遊樂場，沒有跑道；跑道在 `campus_sports`。<br>• `school`：T1 第一教學大樓。<br>• `lecture`：T2 教學大樓，沒有紅磚和鐘塔；鐘塔是另一個地點 `clock_tower`。<br>• `lodge`：汽車旅館泳池套房。<br>• `restroom_*`：在大樓 1 樓，不是獨立公廁。<br>• `shrine`：在公園旁的石板廣場，不在公園後方。<br>• `hotel`：H1 溫泉飯店，泳池在泳池套房 | 給整合者 |
 
 ## 道具索引（女主知道身邊有什麼，11-03）
 
 每個房間、地點裡有哪些道具（鏡子、床、椅子、廁所、販賣機……），列在 `places-v1/props.json`，可用 Rust 模組 `Tools/ok-city-props` 查詢半徑 10 m／20 m 內的東西；細節見 [大學城道具索引](STREET_CITY_PROPS_INDEX_20261103.md)。同一次修正：`park_bench` 地點原本取 cluster actor 的中心點，位置不對，改用街道擺放計畫套到實測路緣的位置，長椅地點從 55 個增加為 337 個（`bench_oak` 274、`bench_stone` 63）。
+
+### 完整生活場景（c-conquest 第 8 節，11-03 晚）分四輪
+
+使用者決定場景之後不再改，所以要把所有互動場景一次建模完成。逐項回覆已經傳給 c-conquest；命名照 c-conquest 給的 game id 和錨點名稱。
+
+**第 1 輪：只改資料（已完成，`build_street_city_places.lua` 第 5f 節）**
+- 現成房間直接對成 game id：
+
+  | game id | 房間 |
+  |---|---|
+  | `dentist` | CV-0102 |
+  | `clinic_general` | CV-0103 + 藥局 CV-0105 |
+  | `post` | CV-0201 |
+  | `bank` | CV-0202 |
+  | `cinema` | CV-0402 |
+  | `museum` | CV-0403、0404 |
+  | `gym` | SP 重訓、有氧、瑜伽、飛輪 |
+  | `pool` | SP-0101～0103 |
+  | `gym_hall` | SP 籃球、排球、桌球 |
+  | `club_room` | SC 社團室 |
+  | `art_room` | SC-0401 |
+  | `optician` | M1-0407 |
+  | `jewelry` | M1-0105、0408 |
+  | `lingerie` | M1-0206 |
+  | `phone_shop` | M1-0701 |
+  | `ramen` | M1-0901 |
+  | `arcade` | M1-0806、0807 |
+  | `observation` | M1-1006 |
+  | `clothing` | M1 2F、3F |
+  | `photo_studio` | S34 |
+
+- `clinic_gyn` 改成只用 CV-0101、CV-0104，避免和牙醫、家醫科共用房間。
+- `beach`：沿西岸 6 座救生員台周圍各一個 100 m 框，錨點有 `lifeguard*`、`shower*`、`parasol*`、`lounger*`、`changing*`。
+- 每個 game_place 加 `outdoor`。
+- 公寓、旅館房、宿舍房依房內道具補上 `kitchen`、`stove`、`bath` 錨點。
+- 沒有家具的房間（M1 大多數店面、SP 泳池館）這一輪只有 door 和 rooms，第 2 輪再放家具。
+
+**第 2 輪：室內改建（payload 放家具）**
+- M1 各店：衣架、試衣間、鏡子、櫃台、拉麵吧台座、夾娃娃機、拍貼機。
+- 6 間服飾店加試衣間。
+- 牙醫加診療椅和燈。
+- 從重複的店（S49–S96）改建：泳裝、浴衣、美甲、超市、迴轉壽司、燒肉、居酒屋、可麗餅、速食、貓咪咖啡、漫畫網咖、保齡球加撞球。
+- 保健室（T1）、屋頂圍欄、天文館（CV-0401）。
+- 女宿公共廚房、宿舍浴缸。
+- 私密房間補齊 H 姿勢要用的道具。
+- 確認 SP 泳池和 S19 浴池的水面、台階。
+
+**第 3 輪：戶外**
+- 海灘：游泳區、香蕉船、西瓜、沙灘排球、沙堡、更衣小屋、出租、海之家、水上摩托車。
+- 河湖：天鵝船、釣魚、烤肉露營、花海、小山觀景、溜冰場。
+- 祭典攤位、聖誕樹廣場、打擊練習場。
+
+**第 4 輪：遊樂園**
+- 摩天輪、雲霄飛車站加軌道、旋轉木馬、鬼屋。
+- 大型模型用 Tripo，每個 30 點以內；一次只開一個 Blender。
+
+**不做（遊戲端 C++）**：遊樂設施的乘坐動作、游泳與水體物理。城市只提供錨點與水域範圍框。

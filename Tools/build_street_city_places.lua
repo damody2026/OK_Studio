@@ -277,7 +277,7 @@ do
   for name in io.popen('ls -1 "' .. root .. 'world-edge-v1" 2>nul'):lines() do
     if name:match('^lover%-spots%-install%-.*%.json$') and (not last or name > last) then last = name end
   end
-  if last then for _, it in ipairs(load('world-edge-v1/' .. last).items or {}) do newitems[it.place .. ':' .. it.anchor] = it end end
+  if last then local inst_ = load('world-edge-v1/' .. last); for _, it in ipairs(inst_.items or {}) do newitems[it.place .. ':' .. it.anchor] = it end; LOTS = inst_.lots end
 end
 -- building AABB over all its floor actors
 local function bbox(b)
@@ -326,7 +326,9 @@ do -- school = T1 (two classrooms) + the SC music club room
   for _, a in ipairs(seats) do rooms1[a.owner] = rooms1[a.owner] or a end
   local ids = {}; for k in pairs(rooms1) do ids[#ids + 1] = k end; table.sort(ids)
   local mc, md = roomcentre('SC-0301')
-  local an = { ids[1] and A('seat', rooms1[ids[1]].pos, rooms1[ids[1]].yaw, ids[1]) or nil, ids[2] and A('class2', rooms1[ids[2]].pos, rooms1[ids[2]].yaw, ids[2]) or nil, mc and A('music', md or mc, 0, 'SC-0301 音樂社練習室') or nil }
+  -- class2 = "the second-floor classroom" (c-conquest 11-03): the first seat on T1 2F
+  local s2 = pick('seat', { b = 'T1', floor = 2 }); table.sort(s2, function(x, y) return x.owner < y.owner end); local c2 = s2[1]
+  local an = { ids[1] and A('seat', rooms1[ids[1]].pos, rooms1[ids[1]].yaw, ids[1]) or nil, c2 and A('class2', c2.pos, c2.yaw, c2.owner) or nil, mc and A('music', md or mc, 0, 'SC-0301 音樂社練習室') or nil }
   def('school', { building = 'T1', name = bname.T1, door = entry.T1, rooms = { bbox('T1') }, anchors = an, privacy = 0 })
 end
 do local s = pick('seat', { b = 'T2', floor = 1 }); def('lecture', { building = 'T2', name = bname.T2, door = entry.T2, rooms = { bbox('T2') }, anchors = { first(s, 'seat') }, privacy = 0 }) end
@@ -343,13 +345,13 @@ do local gates = {}; for l, a in pairs(alabel) do if l:match('campus%-gate$') th
   table.sort(gates, function(a, b) return a.label < b.label end)
   local g = gates[1]; if g then def('campus_gate', { name = '校門', door = abase(g), rooms = { aroundbox(abase(g), 1200) }, anchors = { A('gate', abase(g), r1(g.yaw), g.label) }, privacy = 0 }) end
 end
--- dorms: girls D1, boys D2 (his room: the first D2 dorm room with beds)
+-- dorms: girls D1, boys D2 (his room: the first D2 dorm room with beds on 3F, the activity's "third-floor room")
 for id, b in pairs({ girls_dorm = 'D1', boys_dorm = 'D2' }) do
   local lc, ld = roomcentre(b .. '-0102')
   local an = { lc and A('lounge', lc, 0, b .. '-0102 訪客交誼廳') or nil }
   if b == 'D2' then
     local beds = pick('bed', { b = 'D2' }); table.sort(beds, function(x, y) return x.owner < y.owner end)
-    for _, bd in ipairs(beds) do if planrooms[bd.owner] and planrooms[bd.owner].type == 'dorm' then an[#an + 1] = A('bed3_0', bd.pos, bd.yaw, bd.owner); break end end
+    for _, bd in ipairs(beds) do if planrooms[bd.owner] and planrooms[bd.owner].type == 'dorm' and mrooms[bd.owner] and mrooms[bd.owner].floor == 3 then an[#an + 1] = A('bed3_0', bd.pos, bd.yaw, bd.owner); break end end
   else -- D1: the heroines' home; one bed per dorm room, each heroine in her own (OKStreetSocialSchedule.inl sorts by name)
     local beds = pick('bed', { b = 'D1' }); table.sort(beds, function(x, y) return x.owner < y.owner end)
     local seen, n = {}, 0
@@ -454,7 +456,17 @@ do
       def(gid, { building = b.id, name = bname[b.id], door = entry[b.id], rooms = { bbox(b.id) }, anchors = an, privacy = 0 })
     end
   end
-  for _, g in ipairs(G) do if g.id == 'girls_dorm' or g.id == 'boys_dorm' then cores(g.building, g.anchors) end end
+  -- the other multi-storey game places (department 9F/10F, hotel 6F, school 2F/3F, dorms) get the same, plus 'hall':
+  -- the ground-floor lobby point 2 m out from the lift landing that the outing route walks through to the lift
+  local multi = { girls_dorm = true, boys_dorm = true, department = true, hotel = true, school = true, lecture = true }
+  for _, g in ipairs(G) do
+    if multi[g.id] or (g.id:match('^campus_') and g.building) then
+      if multi[g.id] then cores(g.building, g.anchors) end
+      for _, a in pairs(g.anchors) do
+        if a and a.name:match('^lift1:') then local r = math.rad(a.yaw); g.anchors[#g.anchors + 1] = A('hall', P(a.pos[1] + math.cos(r) * 200, a.pos[2] + math.sin(r) * 200, a.pos[3]), a.yaw, 'lobby before ' .. a.source); break end
+      end
+    end
+  end
 end
 -- shrine: built by the lover-spots install (torii + pray)
 def('shrine', { name = '小神社', anchors = {}, privacy = 0 })
@@ -478,6 +490,49 @@ for _, g in ipairs(G) do
   g.anchors = an
   local miss = {}; for _, name in ipairs(wants[g.id] or {}) do if not have[name] then miss[#miss + 1] = name end end
   if #miss > 0 then g.missing = miss end
+end
+-- other install items: anchors the wants list does not name (conveni counter, lottery counter / buy / screen) join their
+-- place; a place the game does not have yet (livehouse, karaoke) comes from its 'door' item (building, name, rooms)
+do
+  local byid = {}; for _, g in ipairs(G) do byid[g.id] = g end
+  local keys = {}; for k in pairs(newitems) do keys[#keys + 1] = k end; table.sort(keys)
+  for _, k in ipairs(keys) do local it = newitems[k]
+    if it.anchor == 'door' and not byid[it.place] and it.rooms then
+      byid[it.place] = { id = it.place, building = it.building, name = it.name, door = it.pos, rooms = it.rooms, anchors = {}, privacy = it.place == 'karaoke' and 1 or 0, new_place = true }
+      G[#G + 1] = byid[it.place]
+    end
+  end
+  for _, k in ipairs(keys) do local it = newitems[k]; local g = byid[it.place]
+    if g and it.anchor ~= 'door' then
+      local have = false; for _, a in pairs(g.anchors) do if a and a.name == it.anchor then have = true end end
+      if not have then g.anchors[#g.anchors + 1] = A(it.anchor, it.pos, it.yaw, it.actor) end
+    end
+  end
+end
+-- new-game spawn (c-conquest Q16): 3 m out from the boys' dorm entrance, away from the building, facing the door
+for _, g in ipairs(G) do
+  local whole = g.id == 'boys_dorm' and g.door and bbox(g.building)
+  if whole then
+    local cx, cy = (whole.min[1] + whole.max[1]) / 2, (whole.min[2] + whole.max[2]) / 2
+    local dx, dy = g.door[1] - cx, g.door[2] - cy; local L = math.sqrt(dx * dx + dy * dy); dx, dy = dx / L, dy / L
+    -- snap the push to the facade the door is on (the longer side of the offset)
+    if math.abs(dx) > math.abs(dy) then dx, dy = dx > 0 and 1 or -1, 0 else dx, dy = 0, dy > 0 and 1 or -1 end
+    g.anchors[#g.anchors + 1] = A('spawn', P(g.door[1] + dx * 300, g.door[2] + dy * 300, g.door[3]), r1(math.deg(math.atan(-dy, -dx)) - 90), 'outside ' .. g.building .. '-entry-A')
+  end
+end
+-- multi-storey buildings: one room box per floor (the game derives RoomLevels from the boxes' floor heights and uses
+-- them for "which floor am I on" and the lift route), from the building box and the manifest floor heights
+local mbuild = load('places-v1/manifest-rooms.json').buildings
+for _, g in ipairs(G) do
+  local fl = g.building and mbuild[g.building] and mbuild[g.building].floors; local whole = g.building and bbox(g.building)
+  if fl and #fl > 1 and whole and #g.rooms == 1 and g.rooms[1].min and g.rooms[1].min[1] == whole.min[1] and g.rooms[1].max[2] == whole.max[2] then
+    local boxes = {}
+    for k, f in ipairs(fl) do
+      local z0 = 1200 + f.z_m * 100; local z1 = fl[k + 1] and 1200 + fl[k + 1].z_m * 100 or whole.max[3]
+      boxes[#boxes + 1] = { min = P(whole.min[1], whole.min[2], z0 - 30), max = P(whole.max[1], whole.max[2], z1 - 30), floor = k }
+    end
+    g.rooms = boxes
+  end
 end
 table.sort(G, function(a, b) return a.id < b.id end)
 GAME_PLACES = G
@@ -717,6 +772,147 @@ for _, t in ipairs(props) do
     end end end
   if not dup then kept[#kept + 1] = t; cell[key] = cell[key] or {}; table.insert(cell[key], t) end
 end
+-- 5d. game anchors for the activity scenes (c-conquest C6): their props by kind become seat* / stall* / view / pond /
+-- stage / watch* / field / jog / fireworks, so the game can stand or sit people there. Anchor yaw = prop face - 90.
+do
+  local AK = { chair = 'seat', bench = 'seat', sofa = 'seat', picnic_table = 'seat', cafe_set = 'seat', goods = 'stall', food_cart = 'stall', counter = 'stall',
+    telescope = 'view', viewpoint = 'view', fish_pond = 'pond', feed_dispenser = 'pond', stage = 'stage', sport_rack = 'field', photo_spot = 'photo', easel = 'stand',
+    bookshelf = 'shelf', display_case = 'stand', festival_gate = 'gate', computer = 'stand', fountain = 'fountain' }
+  local fw = {}; for _, a in ipairs(actors.actors) do if a.label:match('^ActivityArt_Fireworks_') then fw[#fw + 1] = a end end
+  for _, p in ipairs(places) do
+    if p.kind == 'activity_scene' and areaid[p.id] then
+      local ai = areaid[p.id] - 1; local an, n = {}, {}
+      local stagey = p.id == 'actspace-10'
+      for _, t in ipairs(kept) do
+        local base = t.a == ai and AK[t.k]
+        if base == 'seat' and stagey then base = 'watch' end
+        if base == 'stall' and p.id == 'actspace-08' then base = 'counter' end
+        if base then
+          n[base] = (n[base] or 0) + 1
+          local name = base .. (n[base] > 1 and tostring(n[base]) or '')
+          if n[base] <= 12 then an[#an + 1] = { name = name, pos = t.p, yaw = t.face and r1(t.face - 90) or 0, source = t.n or t.k } end
+        end
+      end
+      if p.id == 'actspace-07' then an[#an + 1] = { name = 'jog', pos = p.door, yaw = 0, source = 'loop start (scene centre)' }; if not n.field then an[#an + 1] = { name = 'field', pos = p.door, yaw = 0, source = 'scene centre' } end end
+      if p.id == 'actspace-05' and fw[1] then table.sort(fw, function(a, b) return a.label < b.label end); an[#an + 1] = { name = 'fireworks', pos = P(fw[1].c[1], fw[1].c[2], fw[1].c[3]), yaw = 0, source = fw[1].label } end
+      if p.id == 'actspace-04' and not n.view then an[#an + 1] = { name = 'view', pos = p.door, yaw = 0, source = 'scene centre' } end
+      p.anchors = an; p.name = p.name or scenename[p.id]
+    end
+  end
+end
+-- 5e. places built from furnished rooms (c-conquest C12, C10): the gynaecology clinic in the CV clinic wing
+-- (CV-0101 and CV-0104 only, CV-0102 is the dentist and CV-0103 the general clinic: doctor = the chair and bed_op a
+-- medical bed in CV-0101, rest* = medical beds in CV-0104; counter / seat* come from
+-- the lover-spots install) and the company office units (desk* / seat* in the room)
+local function inroom(rid, kind) local out = {}; local ai = areaid[rid] and areaid[rid] - 1
+  for _, t in ipairs(kept) do if t.a == ai and t.k == kind then out[#out + 1] = t end end; return out end
+local function roomrect(rid) local a = area[areaid[rid] or 0]; return a and { min = a.min, max = a.max, floor = a.floor } end
+do
+  local a1 = area[areaid['cv-0101'] or 0]
+  if a1 then
+    local an = {}
+    local function put(name, t) if t then an[#an + 1] = A(name, t.p, t.face and r1(t.face - 90) or 0, t.k .. ' ' .. (t.n or '')) end end
+    put('doctor', inroom('cv-0101', 'chair')[1]); put('bed_op', inroom('cv-0101', 'medical_bed')[1])
+    local rb = inroom('cv-0104', 'medical_bed'); put('rest', rb[1]); put('rest2', rb[2])
+    -- he waits in the corridor: 1.5 m out of the clinic door, away from the room centre
+    local cx, cy = (a1.min[1] + a1.max[1]) / 2, (a1.min[2] + a1.max[2]) / 2; local dx, dy = a1.door[1] - cx, a1.door[2] - cy
+    if math.abs(dx) > math.abs(dy) then dx, dy = dx > 0 and 1 or -1, 0 else dx, dy = 0, dy > 0 and 1 or -1 end
+    an[#an + 1] = A('wait', P(a1.door[1] + dx * 150, a1.door[2] + dy * 150, a1.door[3]), r1(math.deg(math.atan(-dy, -dx)) - 90), 'corridor outside CV-0101')
+    for _, k in ipairs({ 'counter', 'seat', 'seat2', 'seat3' }) do local it = newitems['clinic_gyn:' .. k]; if it then an[#an + 1] = A(k, it.pos, it.yaw, it.actor) end end
+    GAME_PLACES[#GAME_PLACES + 1] = { id = 'clinic_gyn', building = 'CV', name = '婦科小診所（CV 1F 社區診所）', door = a1.door,
+      rooms = { roomrect('cv-0101'), roomrect('cv-0104') }, anchors = an, privacy = 1, new_place = true }
+    table.sort(GAME_PLACES, function(a, b) return a.id < b.id end)
+  end
+end
+-- 5f. life places that already exist as furnished (or empty) rooms (c-conquest 8.2, round 1: data only). Each game id
+-- lists its rooms; anchors come from the props in them by kind (KA, overridable per place), numbered name, name2, ...
+-- Rooms without furniture (most M1 shops) only get door and rooms here; round 2 dresses them.
+do
+  local KA = { checkout = 'counter', counter = 'counter', chair = 'seat', bench = 'seat', sofa = 'seat', desk = 'desk', table = 'table', bookshelf = 'shelf',
+    mirror = 'mirror', medical_bed = 'bed', locker = 'locker', shower = 'shower', bathtub = 'bath', kitchen = 'kitchen', stove = 'stove',
+    table_tennis = 'pingpong', screen = 'screen', indoor_stage = 'stage', goods_shelf = 'shelf', display_case = 'case', clothes_rack = 'rack', treadmill = 'treadmill' }
+  local L = {
+    { 'dentist', '牙醫診所（CV-0102）', { 'cv-0102' }, { medical_bed = 'dental_chair' } },
+    { 'clinic_general', '家醫科診所與藥局（CV-0103、CV-0105）', { 'cv-0103', 'cv-0105' }, { medical_bed = 'bed_exam', checkout = 'pharmacy' } },
+    { 'post', '郵局（CV-0201）', { 'cv-0201' } }, { 'bank', '銀行（CV-0202）', { 'cv-0202' } },
+    { 'cinema', '電影院（CV-0402 電影放映室）', { 'cv-0402' }, { indoor_stage = 'screen' } },
+    { 'museum', '美術館與城市歷史館（CV-0403、CV-0404）', { 'cv-0403', 'cv-0404' }, { chair = 'bench', bench = 'bench' } },
+    { 'gym', '健身房（SP 重量訓練、有氧、瑜伽、飛輪）', { 'sp-0403', 'sp-0404', 'sp-0501', 'sp-0506' } },
+    { 'pool', '室內游泳池（SP 50 公尺泳池館）', { 'sp-0101', 'sp-0102', 'sp-0103' } },
+    { 'gym_hall', '體育館（SP 籃球、排球、桌球館）', { 'sp-0104', 'sp-0106', 'sp-0108' } },
+    { 'club_room', '社團教室（SC 2–3F）', { 'sc-0202', 'sc-0203', 'sc-0305', 'sc-0306', 'sc-0307' } },
+    { 'art_room', '美術教室（SC-0401 美術社畫室）', { 'sc-0401' } },
+    { 'optician', '眼鏡行（M1-0407）', { 'm1-0407' } }, { 'jewelry', '珠寶飾品（M1-0105、M1-0408）', { 'm1-0105', 'm1-0408' } },
+    { 'lingerie', '內衣店（M1-0206）', { 'm1-0206' } }, { 'phone_shop', '手機行（M1-0701）', { 'm1-0701' } },
+    { 'ramen', '拉麵店（M1-0901）', { 'm1-0901' } }, { 'arcade', '遊戲中心（M1-0806、M1-0807）', { 'm1-0806', 'm1-0807' } },
+    { 'observation', '展望台（M1-1006 高空咖啡館）', { 'm1-1006' } },
+    { 'clothing', '服飾店（M1 2F 女裝、3F 男裝）', { 'm1-0201', 'm1-0202', 'm1-0203', 'm1-0204', 'm1-0205', 'm1-0301', 'm1-0302', 'm1-0303', 'm1-0304' } },
+    { 'photo_studio', '寫真館（S34 底片相館）', { 's34-0101', 's34-0201' } },
+  }
+  for _, e in ipairs(L) do
+    local rooms, an, n, door, b = {}, {}, {}, nil, nil
+    for _, rid in ipairs(e[3]) do
+      local r = area[areaid[rid] or 0]
+      if r then
+        rooms[#rooms + 1] = { min = r.min, max = r.max, floor = r.floor }; door = door or r.door; b = b or r.building
+        for _, t in ipairs(kept) do if t.a == areaid[rid] - 1 then
+          local base = (e[4] and e[4][t.k]) or KA[t.k]
+          if base then n[base] = (n[base] or 0) + 1; if n[base] <= 12 then an[#an + 1] = A(base .. (n[base] > 1 and n[base] or ''), t.p, t.face and r1(t.face - 90) or 0, rid .. ' ' .. t.k) end end
+        end end
+      end
+    end
+    if #rooms > 0 then GAME_PLACES[#GAME_PLACES + 1] = { id = e[1], building = b, name = e[2], door = door, rooms = rooms, anchors = an, privacy = 0, new_place = true, furnished = #an > 0 } end
+  end
+  -- the beach: every beach prop (loungers, umbrellas, lifeguard towers, showers, changing screens) in one box
+  -- the shore runs ~1 km along the west coast: one 100 x 100 m box round each lifeguard tower west of x 40000 (the
+  -- tower at the inland pool is not the sea); umbrellas also stand at street cafes, so only those inside a box count
+  local BK = { lounger = 'lounger', beach_umbrella = 'parasol', lifeguard_tower = 'lifeguard', beach_shower = 'shower', changing_screen = 'changing' }
+  local boxes = {}
+  for _, t in ipairs(kept) do if t.k == 'lifeguard_tower' and t.p[1] < 40000 then
+    boxes[#boxes + 1] = { min = P(t.p[1] - 5000, t.p[2] - 5000, t.p[3] - 400), max = P(t.p[1] + 5000, t.p[2] + 5000, t.p[3] + 800) }
+  end end
+  local function onshore(p) for _, b in ipairs(boxes) do if p[1] >= b.min[1] and p[1] <= b.max[1] and p[2] >= b.min[2] and p[2] <= b.max[2] then return true end end end
+  local x0 = #boxes > 0 and 0 or math.huge
+  local an, n = {}, {}
+  for _, t in ipairs(kept) do local base = BK[t.k]
+    if base and onshore(t.p) then
+      n[base] = (n[base] or 0) + 1; if n[base] <= 12 then an[#an + 1] = A(base .. (n[base] > 1 and n[base] or ''), t.p, t.face and r1(t.face - 90) or 0, t.n or t.k) end
+    end
+  end
+  if x0 < math.huge and #an > 0 then
+    local door; for _, a in ipairs(an) do if a.name == 'lifeguard' then door = a.pos end end
+    GAME_PLACES[#GAME_PLACES + 1] = { id = 'beach', name = '海水浴場', door = door or an[1].pos, rooms = boxes,
+      anchors = an, privacy = 0, new_place = true, outdoor = true, note = 'swim*, banana_boat, volleyball, watermelon, sandcastle, rental: round 3' }
+  end
+  -- every game place: outdoor when it has no building (park, playground, shrine, campus gate, beach); the sports field too
+  for _, g in ipairs(GAME_PLACES) do if g.outdoor == nil then g.outdoor = g.building == nil end end
+  table.sort(GAME_PLACES, function(a, b) return a.id < b.id end)
+end
+-- kitchens and baths in the homes (c-conquest 8.2 住家): every lockable room gets kitchen / stove / bath anchors from
+-- its own props (apartments and motel suites have them; the dorm rooms only have showers until round 2)
+do
+  local HK = { kitchen = 'kitchen', stove = 'stove', bathtub = 'bath' }
+  for _, p in ipairs(places) do
+    if areaid[p.id] and p.anchors and (p.kind == 'room_apartment' or p.kind == 'room_dorm' or p.kind == 'motel_suite' or p.kind == 'motel_pool_suite' or p.kind == 'room_inn') then
+      local have = {}; for _, a in ipairs(p.anchors) do have[a.name] = true end
+      for _, t in ipairs(kept) do local base = t.a == areaid[p.id] - 1 and HK[t.k]
+        if base and not have[base] then have[base] = true; p.anchors[#p.anchors + 1] = { name = base, pos = t.p, yaw = t.face and r1(t.face - 90) or 0, asset = t.k } end
+      end
+    end
+  end
+end
+local OFFICE_UNITS = {}
+for unit, rid in pairs({ dept_office = 'o01-0201', hotel_business = 'h1-0107', lodge_office = 'o01-0102', school_club = 'sc-0202' }) do
+  local r = area[areaid[rid] or 0]
+  if r then
+    local an, n = {}, {}
+    for _, kind in ipairs({ 'desk', 'chair', 'sofa' }) do for _, t in ipairs(inroom(rid, kind)) do
+      local base = kind == 'desk' and 'desk' or 'seat'; n[base] = (n[base] or 0) + 1
+      if n[base] <= 8 then an[#an + 1] = A(base .. (n[base] > 1 and n[base] or ''), t.p, t.face and r1(t.face - 90) or 0, t.k) end
+    end end
+    OFFICE_UNITS[unit] = { room = rid, building = r.building, name = r.name, floor = r.floor, door = r.door, min = r.min, max = r.max, anchors = an }
+  end
+end
 local kinds = {}; for k, v in pairs(KIND) do kinds[k] = { zh = v[1], category = v[2], uses = v[3] } end
 local pout = assert(io.open(root .. 'places-v1/props.json', 'wb'))
 pout:write(json.encode({ schema = 1, map_sha256 = actors.map_sha256, frame = 'UE cm, +X north, +Y east; face = world yaw the front looks to', cell_cm = 1000,
@@ -728,8 +924,17 @@ local l = {}; for k, v in pairs(pc) do l[#l + 1] = k .. '=' .. v end; table.sort
 print('props', #kept, '(' .. (#props - #kept) .. ' duplicates merged)', 'areas', #area, 'outside every area', noarea)
 print(table.concat(l, ' '))
 table.sort(places, function(a, b) return a.id < b.id end)
+-- the girls' dorm rooms (c-conquest C11): the game hands each heroine one of them (sleep / bath / "her room")
+local dorm_rooms = {}
+for _, p in ipairs(places) do
+  if p.kind == 'room_dorm' and p.building == 'D1' then
+    local beds, showers = {}, {}
+    for _, a in ipairs(p.anchors) do if a.name:match('^bed') then beds[#beds + 1] = a.name elseif a.name:match('^shower') then showers[#showers + 1] = a.name end end
+    dorm_rooms[#dorm_rooms + 1] = { place = p.id, room = p.room_id or p.id, floor = p.floor or (mrooms[(p.room_id or ''):upper()] or {}).floor, beds = beds, showers = showers, door = p.door }
+  end
+end
 local out = assert(io.open(root .. 'places-v1/places.json', 'wb'))
-out:write(json.encode({ schema = 1, map_sha256 = actors.map_sha256, frame = 'UE cm, +X north, +Y east; anchor yaw: character faces yaw+90', mirrors_from = latest, places = places, game_places = GAME_PLACES }))
+out:write(json.encode({ schema = 1, map_sha256 = actors.map_sha256, frame = 'UE cm, +X north, +Y east; anchor yaw: character faces yaw+90', mirrors_from = latest, places = places, game_places = GAME_PLACES, girls_dorm_rooms = dorm_rooms, lots = LOTS, office_units = OFFICE_UNITS }))
 out:close()
 local count = {}; for _, p in ipairs(places) do count[p.kind] = (count[p.kind] or 0) + 1 end
 for k, v in pairs(count) do print(k, v) end

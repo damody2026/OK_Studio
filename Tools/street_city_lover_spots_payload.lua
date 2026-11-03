@@ -8,6 +8,10 @@
 --   aquarium   the pet-shop clone S28 becomes a small aquarium: a 3.6 m tank wall with koi, a bench in front
 --              (aquarium tank / bench; its vending machine goes outside S28, not at the park pond)
 --   lodge      a shared sofa corner in the gallery outside the four motel pool suites (lodge lounge2 / seat)
+--   counters   S06 checkout (conveni counter), S20 counter + draw screen (lottery counter / buy / screen)
+--   livehouse  stage, speakers, bar and standing room in the music shop S96 (new place livehouse)
+--   karaoke    up to three closed booths with sofa and screen in the record shop S48 (new place karaoke)
+--   lots       eight flat empty roadside lots for the company game, from world-edge-v1/lot-candidates.json
 -- Every item is placed by search, not by hand: candidate spots spiral out from a hint at 25 cm steps; a spot needs a
 -- floor within 8 cm under its centre and four corners and no blocking geometry in the item's box (box sweep from 3 cm
 -- above the floor). Indoor items prefer a wall behind them. Items keep 1.6 m off doors and entrances.
@@ -251,10 +255,228 @@ def motel_world_lover_spots_install():
    items.append(dict(place='lodge',anchor='seat',pos=num(_ls_off(c,yaw,10,45)),yaw=yaw-90,actor=tag+'_SofaBase'))
    views.append(dict(id='LS-lodge-lounge',eye=num(_ls_off(c,yaw,380,100,160)),target=num(_ls_off(c,yaw,0,0,60)),fov=75,hour=15))
   else:skipped.append(dict(place='lodge',reason='no free sofa corner within 16 m of the pool suite doors'))
+ # 7-11 (c-conquest 11-03 game-needs list C1/C2/C7/C8/C9): shop counters, a live house, karaoke booths, company lots
+ acts={a.get_actor_label():a for a in SUB.get_all_level_actors()}
+ def shopbox(b):
+  sh=acts.get(b+'_F01')
+  if not sh:return None
+  o,e=sh.get_actor_bounds(False);return o,e,([o.x-e.x+80,o.y-e.y+80],[o.x+e.x-80,o.y+e.y-80])
+ def shopdoor(b):
+  ds=[p['door'] for p in P['places'] if p.get('building')==b and p.get('door') and abs(p['door'][2]-1200)<60]
+  return V(ds[0]) if ds else None
+ def counter(tag,b,w,M,scr=False):
+  # counter w x 60 x 100 at the front of a w x 150 spot with a wall behind; the clerk stands between counter and wall
+  sb=shopbox(b);d=shopdoor(b)
+  if not sb:return None
+  o,e,reg=sb;z=1200.
+  got=_ls_search(world,unreal.Vector(o.x,o.y,z),z,w,150,120,[0,90,180,270],rmax=1200,avoid=[d] if d else [],wall=True,region=reg)
+  if not got:return None
+  c,yaw=got;f=_ls_off(c,yaw,45)
+  _ls_box(tag+'_Counter',f,yaw,(60,w,100),M['counter']);_ls_box(tag+'_CounterTop',_ls_off(f,yaw,0,0,100),yaw,(66,w+6,4),M['wood'])
+  _ls_box(tag+'_Register',_ls_off(f,yaw,-5,w/2-35,104),yaw,(35,40,25),M['dark'])
+  return c,yaw,f
+ # 7. convenience store S06: a checkout counter on the ground floor (job conveni_clerk: counter)
+ got=counter('LoverSpot_ConveniCheckout','S06',200,M)
+ if got:
+  c,yaw,f=got;items.append(dict(place='conveni',anchor='counter',pos=num(_ls_off(c,yaw,-35)),yaw=yaw-90,actor='LoverSpot_ConveniCheckout_Counter'))
+  views.append(dict(id='LS-conveni-checkout',eye=num(_ls_off(f,yaw,380,90,170)),target=num(_ls_off(f,yaw,0,0,90)),fov=75,hour=15))
+ else:skipped.append(dict(place='conveni',reason='no 2 x 1.5 m counter spot against a wall in S06_F01'))
+ # 8. lottery shop S20: counter (clerk / buyer) and a draw screen on a wall (lottery counter / buy / screen)
+ got=counter('LoverSpot_Lottery','S20',160,M)
+ if got:
+  c,yaw,f=got;items.append(dict(place='lottery',anchor='counter',pos=num(_ls_off(c,yaw,-35)),yaw=yaw-90,actor='LoverSpot_Lottery_Counter'))
+  items.append(dict(place='lottery',anchor='buy',pos=num(_ls_off(f,yaw,75)),yaw=yaw+180-90,actor='LoverSpot_Lottery_Counter'))
+  views.append(dict(id='LS-lottery-counter',eye=num(_ls_off(f,yaw,380,-90,170)),target=num(_ls_off(f,yaw,0,0,90)),fov=75,hour=15))
+  sb=shopbox('S20');o,e,reg=sb
+  sg=_ls_search(world,_ls_off(f,yaw,200),1200.,200,40,240,[0,90,180,270],rmax=900,avoid=[f,shopdoor('S20') or f],wall=True,region=reg,step=20)
+  if sg:
+   s,sy=sg;_ls_box('LoverSpot_Lottery_Screen',_ls_off(s,sy,-12,0,140),sy,(6,170,95),M['dark']);_ls_box('LoverSpot_Lottery_ScreenGlow',_ls_off(s,sy,-8.5,0,145),sy,(.6,160,85),M['screen'],False)
+   items.append(dict(place='lottery',anchor='screen',pos=num(_ls_off(s,sy,230)),yaw=sy+180-90,actor='LoverSpot_Lottery_Screen'))
+  else:skipped.append(dict(place='lottery',reason='no free wall for the draw screen in S20_F01'))
+ else:skipped.append(dict(place='lottery',reason='no 1.6 x 1.5 m counter spot against a wall in S20_F01'))
+ # 9. live house in the music shop S96 回聲音樂店: a 4 x 2.5 m stage against a wall, speakers, a bar, standing room
+ sb=shopbox('S96');d=shopdoor('S96')
+ if sb and d:
+  o,e,reg=sb;z=1200.
+  got=_ls_search(world,unreal.Vector(o.x,o.y,z),z,420,560,250,[0,90,180,270],rmax=1200,avoid=[d],wall=True,region=reg,step=25)
+  if got:
+   c,yaw=got;st=_ls_off(c,yaw,-150);tag='LoverSpot_LiveHouse'
+   _ls_box(tag+'_Stage',st,yaw,(250,400,40),M['dark'])
+   for s in (-170,170):_ls_box(tag+'_Speaker%+d'%s,_ls_off(st,yaw,60,s,40),yaw,(45,50,110),M['dark'])
+   _ls_cyl(tag+'_MicStand',_ls_off(st,yaw,50,0,40),2,150,M['steel'])
+   items.append(dict(place='livehouse',anchor='door',pos=num(d),yaw=0,actor='S96_F01',building='S96',name='Live House（S96 回聲音樂店）',rooms=[dict(min=num(o-e),max=num(o+e))]))
+   items.append(dict(place='livehouse',anchor='stage',pos=num(_ls_off(st,yaw,40,0,40)),yaw=yaw-90,actor=tag+'_Stage'))
+   for k,(fw,sd) in enumerate([(230,-90),(230,90),(320,-150),(320,150)]):
+    items.append(dict(place='livehouse',anchor='watch' if k==0 else 'watch%d'%(k+1),pos=num(_ls_off(st,yaw,fw,sd)),yaw=yaw+180-90,actor=tag+'_Stage'))
+   views.append(dict(id='LS-livehouse',eye=num(_ls_off(st,yaw,520,0,180)),target=num(_ls_off(st,yaw,0,0,100)),fov=80,hour=20))
+   bar=_ls_search(world,_ls_off(c,yaw,250),z,200,150,120,[0,90,180,270],rmax=1000,avoid=[d,c],wall=True,region=reg)
+   if bar:
+    bc,by=bar;bf=_ls_off(bc,by,45)
+    _ls_box(tag+'_Bar',bf,by,(60,200,105),M['wood']);_ls_box(tag+'_BarTop',_ls_off(bf,by,0,0,105),by,(66,206,4),M['counter'])
+    items.append(dict(place='livehouse',anchor='counter',pos=num(_ls_off(bc,by,-35)),yaw=by-90,actor=tag+'_Bar'))
+    items.append(dict(place='livehouse',anchor='bar',pos=num(_ls_off(bf,by,70)),yaw=by+180-90,actor=tag+'_Bar'))
+   else:skipped.append(dict(place='livehouse',reason='no bar spot in S96_F01'))
+  else:skipped.append(dict(place='livehouse',reason='no 4.2 x 5.6 m stage + audience spot in S96_F01'))
+ else:skipped.append(dict(place='livehouse',reason='S96_F01 or its door not found'))
+ # 10. karaoke booths in S48 唱片小室: up to three closed 3.2 x 2.6 m rooms (walls 2.5 m, a door gap), sofa + screen
+ sb=shopbox('S48');d=shopdoor('S48')
+ if sb and d:
+  o,e,reg=sb;z=1200.;tag='LoverSpot_KTV';booths=[]
+  items.append(dict(place='karaoke',anchor='door',pos=num(d),yaw=0,actor='S48_F01',building='S48',name='KTV（S48 唱片小室）',rooms=[dict(min=num(o-e),max=num(o+e))]))
+  for k in range(3):
+   got=_ls_search(world,unreal.Vector(o.x,o.y,z),z,320,260,250,[0,90,180,270],rmax=1200,avoid=[d]+booths,wall=False,region=reg,step=25)
+   if not got:break
+   c,yaw=got;booths.append(c);t=tag+'_%d'%(k+1)
+   # walls: back (behind the sofa), two sides, front with a 90 cm door gap on the right
+   _ls_box(t+'_WallBack',_ls_off(c,yaw,-125),yaw,(10,320,250),M['sofa'])
+   for s in (-155,155):_ls_box(t+'_WallSide%+d'%s,_ls_off(c,yaw,0,s),yaw,(260,10,250),M['sofa'])
+   _ls_box(t+'_WallFront',_ls_off(c,yaw,125,-45),yaw,(10,230,250),M['sofa'])
+   _ls_box(t+'_SofaBase',_ls_off(c,yaw,-75),yaw,(80,220,42),M['cushion']);_ls_box(t+'_SofaBack',_ls_off(c,yaw,-108),yaw,(16,220,80),M['cushion'])
+   _ls_box(t+'_Table',_ls_off(c,yaw,10),yaw,(50,100,40),M['wood'])
+   _ls_box(t+'_Screen',_ls_off(c,yaw,116,-60,110),yaw,(4,130,75),M['dark']);_ls_box(t+'_ScreenGlow',_ls_off(c,yaw,113.5,-60,113),yaw,(.6,122,67),M['screen'],False)
+   n='' if k==0 else str(k+1)
+   items.append(dict(place='karaoke',anchor='seat'+n,pos=num(_ls_off(c,yaw,-70,-40)),yaw=yaw-90,actor=t+'_SofaBase'))
+   items.append(dict(place='karaoke',anchor='screen'+n,pos=num(_ls_off(c,yaw,-70,40)),yaw=yaw-90,actor=t+'_Screen'))
+   views.append(dict(id='LS-ktv-%d'%(k+1),eye=num(_ls_off(c,yaw,60,100,200)),target=num(_ls_off(c,yaw,-90,0,60)),fov=90,hour=20))
+  if not booths:skipped.append(dict(place='karaoke',reason='no free 3.2 x 2.6 m booth spot in S48_F01'))
+ else:skipped.append(dict(place='karaoke',reason='S48_F01 or its door not found'))
+ # 11. company lots: the first eight raster candidates (Tools/find_street_city_lots.lua) that are flat (40 cm) and empty
+ lots=[];lc=ROOT/'output/street-social-city-production/world-edge-v1/lot-candidates.json'
+ for cand in (json.loads(lc.read_text('utf8'))['candidates'] if lc.exists() else []):
+  if len(lots)>=8:break
+  x,y=cand['center'];g=_ls_hit(world,unreal.Vector(x,y,8000),unreal.Vector(x,y,-2000))
+  if g is None:continue
+  yaw=cand['yaw'];sx,sy=cand['size'];dep,wid=(sx,sy) if yaw in (0,180) else (sy,sx)
+  c=unreal.Vector(x,y,g[4].z)
+  if not _ls_fits(world,c,yaw,wid-100,dep-100,300,c.z,40):continue
+  lots.append(dict(id='lot_%d'%(len(lots)+1),center=num(c),size_cm=[wid,dep],yaw=yaw,road_side='front (+yaw)'))
+  views.append(dict(id='LS-'+lots[-1]['id'],eye=num(_ls_off(c,yaw,dep/2+900,0,700)),target=num(c),fov=75,hour=15))
+ if len(lots)<8:skipped.append(dict(place='lots',reason='only %d flat empty roadside lots among the candidates'%len(lots)))
+ # 12-14 (c-conquest 11-03 C12-C14): gynaecology clinic, cosmetic clinic, hair salon
+ silver=EAL.load_asset('/Game/UniversityCity/ImmersionV1/Mirrors/M_SilverMirror')
+ def mirror(tag,p,yaw,w,h):
+  # wall mirror, bottom centre p on the wall face, looking along yaw; reflection tagged like the bed mirrors so the
+  # walker's nearest-two policy switches it
+  n=unreal.Vector(math.cos(math.radians(yaw)),math.sin(math.radians(yaw)),0);t=unreal.Vector(-n.y,n.x,0);mid=unreal.Vector(p.x,p.y,p.z+h/2)
+  _ls_box(tag+'_Frame',_ls_off(p,yaw,.75),yaw,(1.5,w+8,h+8),M['dark'])
+  g=_ls_box(tag+'_Glass',_ls_off(p,yaw,2.25,0,4),yaw,(1.5,w,h),silver or M['steel']);g.static_mesh_component.set_editor_property('cast_shadow',False)
+  a=SUB.spawn_actor_from_class(unreal.PlanarReflection,mid+n*3.1,unreal.MathLibrary.make_rotation_from_axes(t,unreal.MathLibrary.cross_vector_vector(n,t),n));a.set_actor_label(tag+'_Reflection')
+  a.tags=[unreal.Name('LoverSpot'),unreal.Name('ImmersionLargeMirror')];a.set_folder_path('UniversityCity/LoverSpotsV1');a.set_actor_scale3d(unreal.Vector(w/4000,h/4000,1));c=a.get_components_by_class(unreal.PlanarReflectionComponent)[0]
+  for key,value in dict(screen_percentage=75,normal_distortion_strength=0.,prefilter_roughness=0.,distance_from_plane_fadeout_start=5.,distance_from_plane_fadeout_end=15.,show_preview_plane=False,max_view_distance_override=2200.).items():c.set_editor_property(key,value)
+  c.set_visibility(False)
+  for m in a.get_components_by_class(unreal.StaticMeshComponent):m.set_visibility(False);m.set_hidden_in_game(True);m.set_collision_profile_name('NoCollision')
+ def wd(c,yaw):
+  # distance from c back to the wall behind it (measured 120 cm up), so wall items sit on the wall
+  a=math.radians(yaw);p=unreal.Vector(c.x,c.y,c.z+120);h=_ls_hit(world,p,p-unreal.Vector(math.cos(a),math.sin(a),0)*300)
+  return (h[4]-p).length() if h else None
+ def bench(tag,c,yaw,place,first,n=2):
+  # waiting bench 200 x 50 x 45 with a back; n seat anchors along it, people face yaw
+  _ls_box(tag+'_Seat',c,yaw,(50,200,45),M['sofa']);_ls_box(tag+'_Back',_ls_off(c,yaw,-22,0,45),yaw,(8,200,45),M['sofa'])
+  for k in range(n):items.append(dict(place=place,anchor=first if k==0 else first+str(k+1),pos=num(_ls_off(c,yaw,10,-50+100*k/(max(n-1,1)))),yaw=yaw-90,actor=tag+'_Seat'))
+ def spot(c0,w,d,h,reg,avoid,wall=True,step=25):
+  return _ls_search(world,c0,1200.,w,d,h,[0,90,180,270],rmax=1500,avoid=avoid,wall=wall,region=reg,step=step)
+ def booth(t,c,yaw,w,d,M):
+  # 2.5 m partition walls round a w x d room open on the front-right (door gap 90 cm)
+  _ls_box(t+'_WallBack',_ls_off(c,yaw,-d/2),yaw,(10,w,250),M['counter'])
+  for s in (-w/2,w/2):_ls_box(t+'_WallSide%+d'%s,_ls_off(c,yaw,0,s),yaw,(d,10,250),M['counter'])
+  _ls_box(t+'_WallFront',_ls_off(c,yaw,d/2,-45),yaw,(10,w-90,250),M['counter'])
+ white=_ls_mat('M_LS_ClinicWhite',(.92,.94,.95),.5);mint=_ls_mat('M_LS_ClinicMint',(.55,.8,.75),.6)
+ # 12. gynaecology clinic in the CV community clinic wing (CV-0101..0104 already hold medical beds and chairs; the
+ #     builder takes doctor / bed_op / rest from them): a reception counter and a waiting bench in CV-0101
+ pr=json.loads((ROOT/'output/street-social-city-production/places-v1/props.json').read_text('utf8'));ar={a['id']:a for a in pr['areas']}
+ r=ar.get('cv-0101')
+ if r:
+  reg=([r['min'][0]+40,r['min'][1]+40],[r['max'][0]-40,r['max'][1]-40]);d=V(r['door']);c0=unreal.Vector((r['min'][0]+r['max'][0])/2,(r['min'][1]+r['max'][1])/2,1200.)
+  got=spot(c0,180,150,120,reg,[d])
+  if got:
+   c,yaw=got;f=_ls_off(c,yaw,45);_ls_box('LoverSpot_Gyn_Counter',f,yaw,(60,180,100),white);_ls_box('LoverSpot_Gyn_CounterTop',_ls_off(f,yaw,0,0,100),yaw,(66,186,4),mint)
+   items.append(dict(place='clinic_gyn',anchor='counter',pos=num(_ls_off(c,yaw,-35)),yaw=yaw-90,actor='LoverSpot_Gyn_Counter'))
+   b=spot(c0,210,80,100,reg,[d,c])
+   if b:bench('LoverSpot_Gyn_Bench',b[0],b[1],'clinic_gyn','seat',3)
+   else:skipped.append(dict(place='clinic_gyn',reason='no waiting bench spot in CV-0101'))
+   views.append(dict(id='LS-clinic-gyn',eye=num(_ls_off(f,yaw,420,120,170)),target=num(_ls_off(f,yaw,0,0,90)),fov=80,hour=11))
+  else:skipped.append(dict(place='clinic_gyn',reason='no reception counter spot in CV-0101'))
+ else:skipped.append(dict(place='clinic_gyn',reason='cv-0101 not in props.json areas'))
+ # 13. cosmetic clinic in the drugstore S82 南苑藥妝 (ground floor is nearly empty): counter, consult table with a face
+ #     sample screen, an operating booth with a bed and lamp, a recovery bed, a waiting bench and a large mirror
+ sb=shopbox('S82');d=shopdoor('S82')
+ if sb and d:
+  o,e,reg=sb;c0=unreal.Vector(o.x,o.y,1200.);used=[d];t='LoverSpot_Beauty'
+  items.append(dict(place='clinic_beauty',anchor='door',pos=num(d),yaw=0,actor='S82_F01',building='S82',name='醫美診所（S82 改建）',rooms=[dict(min=num(o-e),max=num(o+e))]))
+  got=counter(t,'S82',160,dict(M,counter=white,wood=mint))
+  if got:c,yaw,f=got;used.append(c);items.append(dict(place='clinic_beauty',anchor='counter',pos=num(_ls_off(c,yaw,-35)),yaw=yaw-90,actor=t+'_Counter'))
+  else:skipped.append(dict(place='clinic_beauty',reason='no counter spot'))
+  g=spot(c0,330,310,250,reg,used,wall=False)
+  if g:
+   c,yaw=g;used.append(c);booth(t+'_Op',c,yaw,330,310,dict(M,counter=white))
+   _ls_box(t+'_OpBed',_ls_off(c,yaw,-40),yaw+90,(200,80,75),mint);_ls_box(t+'_OpBedPad',_ls_off(c,yaw,-40,0,75),yaw+90,(195,75,8),white)
+   _ls_cyl(t+'_OpLampPost',_ls_off(c,yaw,-40,110),3,200,M['steel']);_ls_box(t+'_OpLamp',_ls_off(c,yaw,-40,60,195),yaw,(50,50,8),M['lamp'],False)
+   items.append(dict(place='clinic_beauty',anchor='bed_op',pos=num(_ls_off(c,yaw,-40)),yaw=yaw,actor=t+'_OpBed'))
+   views.append(dict(id='LS-beauty-op',eye=num(_ls_off(c,yaw,120,60,200)),target=num(_ls_off(c,yaw,-60,0,70)),fov=90,hour=11))
+  else:skipped.append(dict(place='clinic_beauty',reason='no 3.3 x 3.1 m operating booth spot'))
+  g=spot(c0,240,200,120,reg,used,wall=False)
+  if g:
+   c,yaw=g;used.append(c);_ls_box(t+'_ConsultTable',c,yaw,(80,120,75),white);_ls_box(t+'_ConsultScreen',_ls_off(c,yaw,0,40,75),yaw,(4,45,30),M['screen'])
+   for s,an in ((-70,'consult'),(70,'consult2')):
+    _ls_box(t+'_ConsultChair%+d'%s,_ls_off(c,yaw,s),yaw,(45,45,45),mint)
+    items.append(dict(place='clinic_beauty',anchor=an,pos=num(_ls_off(c,yaw,s)),yaw=(yaw if s<0 else yaw+180)-90,actor=t+'_ConsultTable'))
+  else:skipped.append(dict(place='clinic_beauty',reason='no consult table spot'))
+  g=spot(c0,220,110,90,reg,used)
+  if g:c,yaw=g;used.append(c);_ls_box(t+'_RestBed',_ls_off(c,yaw,0),yaw+90,(200,90,50),white);items.append(dict(place='clinic_beauty',anchor='rest',pos=num(c),yaw=yaw,actor=t+'_RestBed'))
+  else:skipped.append(dict(place='clinic_beauty',reason='no recovery bed spot'))
+  g=spot(c0,210,80,100,reg,used)
+  if g:used.append(g[0]);bench(t+'_Bench',g[0],g[1],'clinic_beauty','seat',2);items.append(dict(place='clinic_beauty',anchor='wait',pos=num(_ls_off(g[0],g[1],80)),yaw=g[1]-90,actor=t+'_Bench_Seat'))
+  else:skipped.append(dict(place='clinic_beauty',reason='no waiting bench spot'))
+  g=spot(c0,140,90,230,reg,used,step=20)
+  if g:
+   c,yaw=g;used.append(c);mirror(t+'_Mirror',_ls_off(c,yaw,-((wd(c,yaw) or 45)-1),0,20),yaw,110,180)
+   items.append(dict(place='clinic_beauty',anchor='mirror',pos=num(_ls_off(c,yaw,60)),yaw=yaw+180-90,actor=t+'_Mirror_Glass'))
+   views.append(dict(id='LS-beauty-mirror',eye=num(_ls_off(c,yaw,320,80,165)),target=num(_ls_off(c,yaw,-45,0,110)),fov=75,hour=11))
+  else:skipped.append(dict(place='clinic_beauty',reason='no free wall for the large mirror'))
+  views.append(dict(id='LS-beauty',eye=num(_ls_off(d,0,0,0,170)),target=num(unreal.Vector(o.x,o.y,1290.)),fov=90,hour=11))
+ else:skipped.append(dict(place='clinic_beauty',reason='S82_F01 or its door not found'))
+ # 14. hair salon in S31 造型髮廊 (no salon furniture is baked in): counter, three chairs facing wall mirrors, a wash
+ #     basin with a reclining chair, a waiting bench and a hair-colour swatch wall
+ sb=shopbox('S31');d=shopdoor('S31')
+ if sb and d:
+  o,e,reg=sb;c0=unreal.Vector(o.x,o.y,1200.);used=[d];t='LoverSpot_Salon'
+  items.append(dict(place='salon',anchor='door',pos=num(d),yaw=0,actor='S31_F01',building='S31',name='S31 造型髮廊',rooms=[dict(min=num(o-e),max=num(o+e))]))
+  got=counter(t,'S31',140,M)
+  if got:c,yaw,f=got;used.append(c);items.append(dict(place='salon',anchor='counter',pos=num(_ls_off(c,yaw,-35)),yaw=yaw-90,actor=t+'_Counter'))
+  else:skipped.append(dict(place='salon',reason='no counter spot'))
+  n=0
+  for k in range(3):
+   g=spot(c0,100,160,230,reg,used,step=20)
+   if not g:break
+   c,yaw=g;used.append(c);n+=1;s=t+'_Station%d'%n
+   w0=(wd(c,yaw) or 80)-1;mirror(s+'_Mirror',_ls_off(c,yaw,-w0,0,70),yaw,80,120);_ls_box(s+'_Shelf',_ls_off(c,yaw,-w0+14,0,70),yaw,(25,90,4),M['wood'])
+   ch=_ls_off(c,yaw,20);_ls_cyl(s+'_ChairPost',ch,8,45,M['steel']);_ls_box(s+'_ChairSeat',_ls_off(ch,yaw,0,0,45),yaw,(50,50,10),M['dark']);_ls_box(s+'_ChairBack',_ls_off(ch,yaw,22,0,55),yaw,(8,50,60),M['dark'])
+   items.append(dict(place='salon',anchor='chair' if n==1 else 'chair%d'%n,pos=num(ch),yaw=yaw+180-90,actor=s+'_ChairSeat'))
+  if n:views.append(dict(id='LS-salon',eye=num(_ls_off(c,yaw,380,120,170)),target=num(_ls_off(c,yaw,-40,0,110)),fov=80,hour=15))
+  else:skipped.append(dict(place='salon',reason='no styling station spot'))
+  g=spot(c0,90,200,120,reg,used)
+  if g:
+   c,yaw=g;used.append(c);_ls_box(t+'_WashBasin',_ls_off(c,yaw,-65,0,0),yaw,(60,70,90),white);_ls_box(t+'_WashChair',_ls_off(c,yaw,30),yaw,(120,60,50),M['dark'])
+   items.append(dict(place='salon',anchor='wash',pos=num(_ls_off(c,yaw,30)),yaw=yaw+180-90,actor=t+'_WashBasin'))
+  else:skipped.append(dict(place='salon',reason='no wash basin spot'))
+  g=spot(c0,210,80,100,reg,used)
+  if g:used.append(g[0]);bench(t+'_Bench',g[0],g[1],'salon','seat',2)
+  else:skipped.append(dict(place='salon',reason='no waiting bench spot'))
+  g=spot(c0,180,60,220,reg,used,step=20)
+  if g:
+   c,yaw=g;used.append(c);w0=(wd(c,yaw) or 30)-2;_ls_box(t+'_SwatchBoard',_ls_off(c,yaw,-w0,0,90),yaw,(4,160,110),white)
+   cols=[(.08,.06,.05),(.35,.2,.1),(.75,.55,.3),(.92,.85,.6),(.7,.15,.15),(.85,.45,.6),(.3,.35,.75),(.55,.7,.75)]
+   for k,col in enumerate(cols):_ls_box(t+'_Swatch%d'%k,_ls_off(c,yaw,-w0+2.5,-70+20*k,110),yaw,(2,12,70),_ls_mat('M_LS_Swatch%d'%k,col,.6),False)
+   items.append(dict(place='salon',anchor='swatch',pos=num(_ls_off(c,yaw,80)),yaw=yaw+180-90,actor=t+'_SwatchBoard'))
+  else:skipped.append(dict(place='salon',reason='no free wall for the swatch board'))
+ else:skipped.append(dict(place='salon',reason='S31_F01 or its door not found'))
+ # new-game spawn outside the boys' dorm: only a check view, nothing placed
+ sp=next((a for a in (gp.get('boys_dorm') or {}).get('anchors',[]) if a['name']=='spawn'),None)
+ if sp:views.append(dict(id='LS-spawn',eye=num(_ls_off(V(sp['pos']),sp['yaw']+90,-500,0,250)),target=num(_ls_off(V(sp['pos']),sp['yaw']+90,300,0,120)),fov=80,hour=9))
  acts={a.get_actor_label():a for a in SUB.get_all_level_actors()}
  acts.get('CityEnvironmentController') and acts['CityEnvironmentController'].prepare_for_save()
  assert unreal.EditorLevelLibrary.save_current_level();new=sha(MAPFILE)
  installed=read('motel-install');installed.update(parent_map_sha256=LOAD_SHA,map_sha256=new);write('motel-install',installed)
  (LS_OUT/'lover-spots-views.json').write_text(json.dumps(views,indent=1),'utf8')
- (LS_OUT/('lover-spots-install-'+time.strftime('%Y%m%d-%H%M%S')+'.json')).write_text(json.dumps(dict(status='saved_requires_capture_review',map_sha256=new,parent_map_sha256=LOAD_SHA,backup=str(b),items=items,skipped=skipped),ensure_ascii=False,indent=1),'utf8')
+ (LS_OUT/('lover-spots-install-'+time.strftime('%Y%m%d-%H%M%S')+'.json')).write_text(json.dumps(dict(status='saved_requires_capture_review',map_sha256=new,parent_map_sha256=LOAD_SHA,backup=str(b),items=items,lots=lots,skipped=skipped),ensure_ascii=False,indent=1),'utf8')
 ]====]
