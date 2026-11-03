@@ -222,6 +222,40 @@
 
 「還缺」那一欄是新物件裝進地圖、`lover-spots-install-*.json` 寫出來之前的狀態；`build_street_city_places.lua` 重跑後會自動填進去。
 
+### 換地圖逐項對照（11-03 晚）
+
+使用者決定遊戲改用大學城。以遊戲現有的需求逐項比對 `game_places`，對照來源有三處：
+- `OKStreetSocialPlaces.h` 的地點表；
+- `rules/activities.toml` 109 個活動的 `place` 與 `anchor`；
+- 校園程式 `OKStreetSocialCampus.inl`／`OKStreetSocialSchedule.inl` 讀的錨點名稱。
+
+**已有**
+- 遊戲 39 個地點 id 全部都有對應：原本 30 個，這次補上 9 棟學院大樓。
+- 109 個活動的地點和錨點都找得到。
+- 打工與購物用的地點（`academics.rs`、`items.rs`、`jobs` 的 `place`）都在表內。
+
+**這次補的**（都在 `build_street_city_places.lua`，資料來源寫在程式註解）
+- **9 棟學院大樓**：`campus_t1`／`rb`／`ib`／`t4`／`e1`／`ma`／`t2`／`ee`／`ad`，依城市規劃的 `legacy_place` 對到 T1、RB、IB、T4、E1、MA、T2、EE、AD。每棟有：
+  - `stairK`：每層樓梯核心 A 的中心。
+  - `liftK:KF`：電梯井 A 前方 1.6 m，yaw 朝外，符合 `OKStreetSocialElevator.inl`「井中心在停靠點後 1.6 m」的假設。
+  - `classK_R`：K 是 2–5 樓，R 是該層第 R 間 `class` 教室，取教室裡的座位。
+  - `office_<系>`：取自 `department_offices`。
+  - 行政櫃台：`office_registrar`（AD-0102 註冊組）、`office_aa`（AD-0103 課務組）、`office_student`（AD-0201 學務處，在 2 樓）、`office_general`（T1-0106 通識教育中心）。
+  - 樓梯和電梯的位置取自 `Docs/StreetSocialCity/production/building-floor-audit.json` 的 `circulation`。
+- **兩棟宿舍**：`girls_dorm`、`boys_dorm` 也加上每層的 `stairK`、`liftK`。
+- **女宿床位**：`girls_dorm` 加了 16 張床（`bed1_00`…`bed3_15`），每間宿舍房一張。女主的 `home_place_id` 都是 `girls_dorm`，`OKStreetSocialSchedule.inl` 讓每人睡自己的床，之前城市版沒有床錨點，她們只能睡交誼廳。
+
+**給整合者（要改 C++ 才能接）**
+- **同一棟對到兩個 id**：
+  - T1 同時是 `school` 和 `campus_t1`。
+  - T2 同時是 `lecture` 和 `campus_t2`。
+  - `PlaceHere` 取第一個包含玩家的地點，順序要決定好。建議學院大樓排在前面，`school`／`lecture` 只用來找活動錨點。
+- **電梯**：城市的電梯井是實體的，`travel_mode` 為 moving platform。遊戲的 `OKStreetSocialElevator.inl` 會在 `lift*` 錨點自己生成車廂。二選一：
+  - 用遊戲車廂，地圖的電梯門要關掉碰撞；
+  - 或在這些地點停用遊戲電梯，改用地圖的電梯。
+- **樓梯**：城市樓梯可以實際走，遊戲的「按鍵上下樓」（`stairK`，170 cm 內）也能用，兩者並存不衝突。
+- **設施活動**：`restaurant_room`、`hotel_spa`、`hotel_rest`、`inn_rest`、`rest`、`spa` 走 `OKStreetSocialPrivateEnv`，不需要地圖錨點。要改成在城市的真房間進行（例如汽車旅館房、S19 溫泉），需要改 C++。
+
 ## 道具索引（女主知道身邊有什麼，11-03）
 
 每個房間、地點裡有哪些道具（鏡子、床、椅子、廁所、販賣機……），列在 `places-v1/props.json`，可用 Rust 模組 `Tools/ok-city-props` 查詢半徑 10 m／20 m 內的東西；細節見 [大學城道具索引](STREET_CITY_PROPS_INDEX_20261103.md)。同一次修正：`park_bench` 地點原本取 cluster actor 的中心點，位置不對，改用街道擺放計畫套到實測路緣的位置，長椅地點從 55 個增加為 337 個（`bench_oak` 274、`bench_stone` 63）。

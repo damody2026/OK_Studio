@@ -350,6 +350,14 @@ for id, b in pairs({ girls_dorm = 'D1', boys_dorm = 'D2' }) do
   if b == 'D2' then
     local beds = pick('bed', { b = 'D2' }); table.sort(beds, function(x, y) return x.owner < y.owner end)
     for _, bd in ipairs(beds) do if planrooms[bd.owner] and planrooms[bd.owner].type == 'dorm' then an[#an + 1] = A('bed3_0', bd.pos, bd.yaw, bd.owner); break end end
+  else -- D1: the heroines' home; one bed per dorm room, each heroine in her own (OKStreetSocialSchedule.inl sorts by name)
+    local beds = pick('bed', { b = 'D1' }); table.sort(beds, function(x, y) return x.owner < y.owner end)
+    local seen, n = {}, 0
+    for _, bd in ipairs(beds) do
+      if n < 16 and not seen[bd.owner] and planrooms[bd.owner] and planrooms[bd.owner].type == 'dorm' and mrooms[bd.owner] then
+        seen[bd.owner] = true; an[#an + 1] = A(string.format('bed%d_%02d', mrooms[bd.owner].floor, n), bd.pos, bd.yaw, bd.owner); n = n + 1
+      end
+    end
   end
   def(id, { building = b, name = bname[b], door = entry[b], rooms = { bbox(b) }, anchors = an, privacy = b == 'D2' and 2 or 0, note = b == 'D1' and 'rooms: privacy 2 only when she lives there or invites him (sleep_rule)' or nil })
 end
@@ -402,6 +410,51 @@ end
 for id, b in pairs({ restroom_campus = 'SC', restroom_north = 'D3', restroom_park = 'CV', restroom_resort = 'H1' }) do
   local w = pick('washbasin', { b = b, floor = 1 }); local tl = pick('toilet', { b = b, floor = 1 })
   if w[1] then def(id, { building = b, name = (bname[b] or b) .. ' 1F 廁所', door = w[1].pos, rooms = { aroundbox(w[1].pos, 800) }, anchors = { A('wait', w[1].pos, w[1].yaw, w[1].asset), tl[#tl] and A('women', tl[#tl].pos, tl[#tl].yaw, tl[#tl].asset) or nil }, privacy = 1 }) end
+end
+-- campus_* = the college buildings (effective-city-plan legacy_place), with the anchors the game's campus code reads
+-- (OKStreetSocialCampus.inl, Tools/street_models/campus.py): 'stairK' on every floor (stair core A), 'liftK:label'
+-- (1.6 m in front of shaft A, yaw = out of the shaft), 'classK_R' (K 2..5: the R-th classroom on floor K) and
+-- 'office_<dept>' (department_offices). The dorms get stairK / liftK too. Cores come from building-floor-audit.json.
+do
+  local audit = load('../../Docs/StreetSocialCity/production/building-floor-audit.json')
+  local circ = {}; for _, b in ipairs(audit.buildings) do circ[b.id] = b.floors end
+  local function cores(b, an)
+    for _, fl in ipairs(circ[b] or {}) do
+      local k = fl.floor; local c = fl.circulation or {}
+      for _, s in ipairs(c.stairs or {}) do if s.core == 'A' then an[#an + 1] = A('stair' .. k, BW(b, s.position_m[1], s.position_m[2], fl.z_m), 0, s.id); break end end
+      for _, l in ipairs(c.lifts or {}) do
+        if l.core == 'A' and not l.service and l.landing_position_m then
+          local sx, sy = l.position_m[1], l.position_m[2]; local dx, dy = l.landing_position_m[1] - sx, l.landing_position_m[2] - sy
+          local L = math.sqrt(dx * dx + dy * dy); if L > 0 then dx, dy = dx / L, dy / L end
+          -- building-local X east / Y north -> UE yaw (X north, Y east)
+          an[#an + 1] = A('lift' .. k .. ':' .. k .. 'F', BW(b, sx + dx * 1.6, sy + dy * 1.6, fl.z_m), r1(math.deg(math.atan(dx, dy))), l.id); break
+        end
+      end
+    end
+  end
+  local offices = {}; for _, o in ipairs(cityplan.department_offices or {}) do offices[o.building] = offices[o.building] or {}; table.insert(offices[o.building], o) end
+  -- the administration counters (OKCampusOfficeName: registrar / aa / student; any other id = general education)
+  for _, o in ipairs({ { 'AD', 'registrar', 'AD-0102' }, { 'AD', 'aa', 'AD-0103' }, { 'AD', 'student', 'AD-0201' }, { 'T1', 'general', 'T1-0106' } }) do
+    offices[o[1]] = offices[o[1]] or {}; table.insert(offices[o[1]], { department_id = o[2], room = o[3], department = planrooms[o[3]] and planrooms[o[3]].name or '' })
+  end
+  for _, b in ipairs(cityplan.buildings) do
+    local gid = b.legacy_place
+    if type(gid) == 'string' and gid:match('^campus_') then
+      local an = {}
+      cores(b.id, an)
+      for k = 2, 5 do
+        local ids = {}; for _, rid in ipairs(b.room_ids or {}) do local r = planrooms[rid]; if r and r.type == 'class' and mrooms[rid] and mrooms[rid].floor == k then ids[#ids + 1] = rid end end
+        table.sort(ids)
+        for r = 1, math.min(4, #ids) do
+          local seat = pick('seat', { room = ids[r] })[1]; local c, d = roomcentre(ids[r])
+          if seat then an[#an + 1] = A('class' .. k .. '_' .. r, seat.pos, seat.yaw, ids[r]) elseif c then an[#an + 1] = A('class' .. k .. '_' .. r, d or c, 0, ids[r]) end
+        end
+      end
+      for _, o in ipairs(offices[b.id] or {}) do local c, d = roomcentre(o.room); if c then an[#an + 1] = A('office_' .. o.department_id, d or c, 0, o.room .. ' ' .. o.department) end end
+      def(gid, { building = b.id, name = bname[b.id], door = entry[b.id], rooms = { bbox(b.id) }, anchors = an, privacy = 0 })
+    end
+  end
+  for _, g in ipairs(G) do if g.id == 'girls_dorm' or g.id == 'boys_dorm' then cores(g.building, g.anchors) end end
 end
 -- shrine: built by the lover-spots install (torii + pray)
 def('shrine', { name = '小神社', anchors = {}, privacy = 0 })
