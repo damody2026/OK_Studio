@@ -39,6 +39,11 @@ fn main() {
         if let Err(e) = ok_extract::oklib::cli(&game, &rest) { eprintln!("oklib: {e}"); std::process::exit(1); }
         return;
     }
+    if out == "--compat-audit" {
+        let rest: Vec<String> = args.collect();
+        if let Err(e) = ok_extract::compat_audit::cli(&rest) { eprintln!("compat-audit: {e}"); std::process::exit(1); }
+        return;
+    }
     if out == "--appearance" {
         let request=args.next().expect("request JSON required");
         let report=args.next().expect("report JSON required");

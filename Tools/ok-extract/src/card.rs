@@ -14,7 +14,7 @@ pub struct ResolveInfo {
     pub name: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CardInfo {
     /// Hash of the card data this was parsed from (everything after IEND) and of the parse mode: two infos with the
     /// same digest and outfit say the same. View memos of stages that read many fields key on it (extract.rs).
@@ -90,6 +90,8 @@ pub struct CardInfo {
     pub status_eyes_look_ptn: i32,
     pub status_neck_look_ptn: i32,
     pub status_coordinate: i32,
+    /// ChaFileStatus.shoesType: 0 indoor (slot 7), 1 outdoor (slot 8, default in ChaFileStatus).
+    pub status_shoes_type: u8,
     /// ChaFileStatus.clothesState: per clothes part, 0 on, 1 half, 2/3 off (empty: not saved).
     pub status_clothes: Vec<u8>,
     /// ChaFileStatus.showAccessory: per accessory slot (20), whether it is shown.
@@ -200,6 +202,9 @@ pub struct CardInfo {
     /// HairAccessoryCustomizer `HairAccessories`: `(coordinate, slot)`.
     /// Coordinate-level `CoordinateHairAccessories` overrides the current outfit.
     pub hair_acc: std::collections::HashMap<(i32, i32), HairAccessoryInfo>,
+    pub edit_fangs: Option<[f32; 4]>,
+    pub clothes_blend_shapes: std::collections::HashMap<(i32, i32, i32), [f32; 4]>,
+    pub acc_state_sync: crate::card_plugins::AccStateSyncData,
 }
 
 /// `(object_type, coordinate, slot, material, property) -> shader color`.
@@ -2270,6 +2275,7 @@ pub(crate) fn parse_card_bytes_mode_cached(data:&[u8],outfit:i32,apply_shape_plu
         status_eyes_look_ptn: -1,
         status_neck_look_ptn: -1,
         status_coordinate: -1,
+        status_shoes_type: 1,
         status_clothes: Vec::new(),
         show_accessory: vec![true; 20],
         siru_lv: [0; 5],
@@ -2311,10 +2317,14 @@ pub(crate) fn parse_card_bytes_mode_cached(data:&[u8],outfit:i32,apply_shape_plu
         me_copies: Vec::new(),
         me_float: MeFloatMap::new(),
         hair_acc: std::collections::HashMap::new(),
+        edit_fangs: None,
+        clothes_blend_shapes: std::collections::HashMap::new(),
+        acc_state_sync: Default::default(),
     };
 
     let mut more_acc_xml: Option<String> = None;
     let mut pushup_plugin: Option<Value> = None;
+    let mut accessory_states_plugin: Option<Value> = None;
     if let Some(cache)=cache.as_deref_mut(){cache.parse_phases.clear();}
     for (name, bpos, bsize) in blocks {
         let start = base + bpos as usize;
@@ -2362,6 +2372,7 @@ pub(crate) fn parse_card_bytes_mode_cached(data:&[u8],outfit:i32,apply_shape_plu
                     .map(as_f32).unwrap_or(info.skin_tuya_rate);
                 info.tears_lv = map_get(&val, "tearsLv").map(as_i32).unwrap_or(info.tears_lv);
                 info.status_coordinate = map_get(&val, "coordinateType").map(as_i32).unwrap_or(info.status_coordinate);
+                info.status_shoes_type = map_get(&val, "shoesType").map(|v| as_i32(v).clamp(0, 1) as u8).unwrap_or(info.status_shoes_type);
                 info.status_eyebrow_ptn = map_get(&val, "eyebrowPtn").map(as_i32).unwrap_or(info.status_eyebrow_ptn);
                 info.status_eyes_ptn = map_get(&val, "eyesPtn").map(as_i32).unwrap_or(info.status_eyes_ptn);
                 info.status_mouth_ptn = map_get(&val, "mouthPtn").map(as_i32).unwrap_or(info.status_mouth_ptn);
@@ -2470,6 +2481,26 @@ pub(crate) fn parse_card_bytes_mode_cached(data:&[u8],outfit:i32,apply_shape_plu
                                 info.dynamic_bone_edits = parse_dynamic_bone_editor(data);
                             }
                         }
+                        if k.as_str().is_some_and(|s| s.eq_ignore_ascii_case("com.deathweasel.bepinex.eyecontrol")) {
+                            crate::card_plugins::apply_eyecontrol(kv, &mut info);
+                        }
+                        if k.as_str().is_some_and(|s| s.eq_ignore_ascii_case("org.njaecha.plugins.editfangs")) {
+                            info.edit_fangs = crate::card_plugins::parse_edit_fangs(kv);
+                        }
+                        if k.as_str().is_some_and(|s| s.eq_ignore_ascii_case("nakay.kk.ClothingBlendShape")) {
+                            crate::card_plugins::parse_clothing_blend_shapes(kv, None, &mut info.clothes_blend_shapes);
+                        }
+                        if k.as_str().is_some_and(|s| s.eq_ignore_ascii_case("madevil.kk.ass")) {
+                            crate::card_plugins::parse_acc_state_sync(
+                                kv,
+                                None,
+                                crate::studio_status::current().is_some(),
+                                &mut info.acc_state_sync,
+                            );
+                        }
+                        if k.as_str().is_some_and(|s| s.eq_ignore_ascii_case("Accessory_States")) {
+                            accessory_states_plugin = Some(kv.clone());
+                        }
                         if k.as_str() == Some("com.deathweasel.bepinex.colliders") {
                             if let Some(data) = me_plugin_data(kv) {
                                 info.collider_overrides = crate::dbone::game_colliders::CardOverrides {
@@ -2519,6 +2550,9 @@ pub(crate) fn parse_card_bytes_mode_cached(data:&[u8],outfit:i32,apply_shape_plu
         let applied_ms=phase_begin.elapsed().as_secs_f64()*1000.;
         drop(val);drop(dictionaries);
         if let Some(cache)=cache.as_deref_mut(){cache.parse_phases.push((name,[decode_ms,applied_ms-decode_ms,phase_begin.elapsed().as_secs_f64()*1000.-applied_ms]));}
+    }
+    if let Some(acc_states) = accessory_states_plugin.as_ref() {
+        crate::card_plugins::parse_accessory_states(acc_states, &mut info.acc_state_sync);
     }
     if let Some(xml) = more_acc_xml {
         append_more_accessories(&xml, outfit, &mut info);

@@ -21,6 +21,20 @@ pub struct ItemMaterialEdits {
     /// The item's Studio light cancel (OIItemInfo.lightCancel): ItemComponent writes it to the materials with _LightCancel.
     #[serde(default)]
     pub light_cancel: Option<f32>,
+    /// Optional KKPE static bone local TRS overrides (`name`, `pos`, `rot` Euler degrees, `scale`).
+    #[serde(default)]
+    pub bone_trs: Vec<ItemBoneTrs>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+pub struct ItemBoneTrs {
+    pub name: String,
+    #[serde(default)]
+    pub pos: Option<[f32; 3]>,
+    #[serde(default)]
+    pub rot: Option<[f32; 3]>,
+    #[serde(default)]
+    pub scale: Option<[f32; 3]>,
 }
 
 impl ItemMaterialEdits {
@@ -28,10 +42,16 @@ impl ItemMaterialEdits {
     /// loaded, and so do we for the others.
     fn shader_supported(shader: &str) -> bool {
         let family = crate::shader_family(shader);
-        family.contains("main_item_studio") || ["shader forge/main_item", "shader forge/main_opaque", "shader forge/main_alpha",
+        family.contains("main_item_studio") || [
+            "shader forge/main_item", "shader forge/main_opaque", "shader forge/main_alpha",
             "shader forge/main_standardmdk_studio", "standard", "shader forge/main_item_emission",
+            "shader forge/main_item_ditherd", "shader forge/toon_glasses_lod0",
+            "kkussitem", "kkuss", "ibl_shader", "ibl_shader_alpha", "goo", "bettermatcap", "da/chara/oil painting",
+            "koikano/main_clothes_item_glasses", "koikano/main_clothes_opaque", "koikano/main_clothes_item",
+            "koikano/main_clothes_alpha", "koikano/low_clothes_alpha",
             // Drawn by AKKPreviewActor's own graphs (OKXRayMaterial, OKGlitchMaterial).
-            "harvexarc-xray", "harvexarc/xray", "unlit/glitch3dprojection"].contains(&family.as_str())
+            "harvexarc-xray", "harvexarc/xray", "unlit/glitch3dprojection",
+        ].contains(&family.as_str())
     }
 
     fn apply_shaders(&self, meshes: &mut [ExtractedMesh]) {
@@ -473,10 +493,13 @@ impl ModelView {
         // Shaders the renderer draws with their own graph (AKKPreviewActor) take their named textures the same way.
         const STANDARD: &[&str] = &["_MainTex", "_BumpMap", "_ParallaxMap", "_MetallicGlossMap", "_EmissionMap"];
         const STYLIZED_WATER: &[&str] = &["_Normals", "_Shadermap"];
+        const GLASSES: &[&str] = &["_GlassRamp"];
         for mesh in &mut meshes {
             let Some(mat) = mesh.mat.as_ref() else { continue };
             let properties = if mat.shader == "Shader Forge/main_StandardMDK_studio" || mat.shader.starts_with("Standard") { STANDARD }
-                else if mat.shader == "StylizedWater/Desktop" { STYLIZED_WATER } else { continue };
+                else if mat.shader == "StylizedWater/Desktop" { STYLIZED_WATER }
+                else if matches!(mat.shader.to_ascii_lowercase().as_str(), "koikano/main_clothes_item_glasses" | "shader forge/toon_glasses_lod0") { GLASSES }
+                else { continue };
             for &property in properties {
                 let Some(name) = mat.slot(property) else { continue };
                 if let Some(png) = self.parsed.texture_png_named(name) {
@@ -485,7 +508,8 @@ impl ModelView {
                         // Policy 1 means generated encoded RenderTexture mips,
                         // not the source asset's authored mip count. Do not
                         // synthesize RT mips for static alpha-tested textures.
-                        mesh.runtime_textures.insert(property.into(), [s.filter, s.wrap_u, s.wrap_v, i32::from(s.srgb), 0]);
+                        let mip = if property == "_GlassRamp" { s.mip_count } else { 0 };
+                        mesh.runtime_textures.insert(property.into(), [s.filter, s.wrap_u, s.wrap_v, i32::from(s.srgb), mip]);
                     }
                 }
             }
@@ -532,11 +556,19 @@ impl ModelView {
         if let Some(entry) = &entry { crate::preview_list_item(&self.lib, entry, prefab, &mut meshes); }
         if profile { eprintln!("ok-extract: PROFILE okmodel list item {:.1}ms", t.elapsed().as_secs_f64() * 1000.0); }
         let t = std::time::Instant::now();
-        let mut meshes: Vec<ExtractedMesh> = meshes.iter().map(|m| posed_static_fk(m, fk)).collect();
+        let mut meshes: Vec<ExtractedMesh> = meshes.iter().map(|m| posed_static_fk_trs(m, fk, &edits.bone_trs)).collect();
         // Rigid meshes (MeshFilter) keep mesh-space vertices: place them at their GameObject in the prefab, through the
         // recorded hierarchy with the FK nodes turned (without a recorded hierarchy, at the recorded prefab matrix).
         let h = self.hierarchy(prefab);
-        let worlds = h.worlds_with(&|i| fk.iter().find(|(n, _)| *n == h.nodes[i].name).map(|(_, e)| crate::pose::euler_deg_to_quat(*e)));
+        let worlds = h.worlds_with_trs(&|i| {
+            let name = &h.nodes[i].name;
+            let fk_rot = fk.iter().find(|(n, _)| *n == *name).map(|(_, e)| crate::pose::euler_deg_to_quat(*e));
+            if let Some(bt) = edits.bone_trs.iter().find(|b| b.name == *name) {
+                (bt.pos, fk_rot.or_else(|| bt.rot.map(crate::pose::euler_deg_to_quat)), bt.scale)
+            } else {
+                (None, fk_rot, None)
+            }
+        });
         let place = |m: &mut ExtractedMesh, w: &crate::pose::Mat4| {
             crate::pose::apply_mat(&mut m.positions, w);
             let mut r = *w;
@@ -574,7 +606,7 @@ impl ModelView {
                 mat.floats.insert("_OKRendererLayer".into(), *layer as f32);
                 mat.floats.insert("_OKRendererEnabled".into(), u8::from(*enabled && renderer_visibility.iter().find(|(n, _)| *n == node).is_none_or(|(_, v)| *v)) as f32);
             }
-            if let Some(n) = usize::try_from(node).ok().and_then(|i| h.nodes.get(i)) { edits.apply_renderer(m, &n.name); }
+            if let Some(n) = usize::try_from(node).ok().and_then(|i| h.nodes.get(i)) { if !m.renderer_names.contains(&n.name) { m.renderer_names.push(n.name.clone()); } edits.apply_renderer(m, &n.name); }
         };
         let mut instances: Vec<ExtractedMesh> = Vec::new();
         for m in meshes.iter_mut().filter(|m| !m.uses_skin_renderer()) {
@@ -702,6 +734,28 @@ pub fn diff_cli(lib: &Path, which: &str, prefab: &str, card: &Path) -> Result<()
 /// unposable meshes keep their mesh-space vertices.
 /// `posed_static` after turning the skinned mesh's bones by item FK (the bone's local rotation becomes the Euler).
 pub(crate) fn posed_static_fk(mesh: &ExtractedMesh, fk: &[(String, [f32; 3])]) -> ExtractedMesh {
+    posed_static_fk_trs(mesh, fk, &[])
+}
+
+pub(crate) fn posed_static_fk_trs(mesh: &ExtractedMesh, fk: &[(String, [f32; 3])], bone_trs: &[ItemBoneTrs]) -> ExtractedMesh {
+    if (fk.is_empty() && bone_trs.is_empty()) || mesh.weights.is_empty() || mesh.smr_skel.is_none() { return posed_static(mesh); }
+    let mut m = mesh.clone();
+    if let Some(skel) = m.smr_skel.as_mut() {
+        for tf in skel.tfs.values_mut() {
+            if let Some(bt) = bone_trs.iter().find(|b| b.name == tf.name) {
+                if let Some(p) = bt.pos { tf.pos = p; }
+                if let Some(r) = bt.rot { tf.rot = crate::pose::euler_deg_to_quat(r); }
+                if let Some(s) = bt.scale { tf.scale = s; }
+            }
+            if let Some((_, e)) = fk.iter().find(|(n, _)| *n == tf.name) { tf.rot = crate::pose::euler_deg_to_quat(*e); }
+        }
+        skel.rebuild_worlds();
+    }
+    posed_static(&m)
+}
+
+#[allow(dead_code)]
+fn posed_static_fk_legacy(mesh: &ExtractedMesh, fk: &[(String, [f32; 3])]) -> ExtractedMesh {
     if fk.is_empty() || mesh.weights.is_empty() || mesh.smr_skel.is_none() { return posed_static(mesh); }
     let mut m = mesh.clone();
     if let Some(skel) = m.smr_skel.as_mut() {
@@ -988,3 +1042,61 @@ mod reflection_probe_choice {
         }).unwrap();
     }
 }
+
+#[cfg(test)]
+mod material_edit_shader_tests {
+    use super::ItemMaterialEdits;
+    use crate::unity::{ExtractedMesh, MeshMaterial};
+
+    fn studio_alpha_cube_mesh() -> ExtractedMesh {
+        let mut mat = MeshMaterial::default();
+        mat.name = "m_koi_stu_kihon01_02 (Instance)".into();
+        mat.shader = "Shader Forge/main_item_studio_alpha".into();
+        mat.render_queue = 4907;
+        mat.floats.insert("_LightCancel".into(), 0.0);
+        let mut mesh = ExtractedMesh::default();
+        mesh.name = "acs_O_cube".into();
+        mesh.mat = Some(mat);
+        mesh
+    }
+
+    #[test]
+    fn kkussitem_shader_edit_overrides_stale_alpha_queue_and_preserves_item_colors() {
+        let mut meshes = vec![studio_alpha_cube_mesh()];
+        let edits = ItemMaterialEdits {
+            shaders: vec![("m_koi_stu_kihon01_02".into(), "KKUSSitem".into(), -1)],
+            renderers: Vec::new(),
+            light_cancel: Some(0.25),
+            bone_trs: Vec::new(),
+        };
+        edits.apply_shaders(&mut meshes);
+        let mat = meshes[0].mat.as_ref().unwrap();
+        assert_eq!(mat.shader, "KKUSSitem");
+        assert_eq!(mat.render_queue, 4907, "queue -1 keeps serialized queue");
+        assert_eq!(mat.floats.get("_OKStudioItemColors"), Some(&1.0));
+        assert_eq!(mat.floats.get("_LightCancel"), Some(&0.25));
+        let (blend, unlit) = crate::blend_for_mesh("acc_slot00", &meshes[0]);
+        assert_eq!((blend.as_str(), unlit), ("masked", false));
+    }
+
+    #[test]
+    fn unsupported_or_empty_shader_edit_keeps_original_shader_and_updates_explicit_queue() {
+        let mut meshes = vec![studio_alpha_cube_mesh()];
+        let edits = ItemMaterialEdits {
+            shaders: vec![
+                ("m_koi_stu_kihon01_02".into(), "Custom/UnknownModShader".into(), 2450),
+                ("m_koi_stu_kihon01_02".into(), "".into(), -1),
+            ],
+            renderers: Vec::new(),
+            light_cancel: None,
+            bone_trs: Vec::new(),
+        };
+        edits.apply_shaders(&mut meshes);
+        let mat = meshes[0].mat.as_ref().unwrap();
+        assert_eq!(mat.shader, "Shader Forge/main_item_studio_alpha");
+        assert_eq!(mat.render_queue, 2450);
+        let (blend, unlit) = crate::blend_for_mesh("acc_slot00", &meshes[0]);
+        assert_eq!((blend.as_str(), unlit), ("translucent", true));
+    }
+}
+

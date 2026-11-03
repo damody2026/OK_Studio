@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
@@ -257,6 +257,8 @@ public:
  UPROPERTY() TArray<FOKMaterialOverrideOriginal> MaterialOverrideOriginals;
  /** Studio FK (bone -> Unity local Euler degrees; empty clears) and re-poses the character. */
  bool SetUserFk(const TArray<FString>& Bones, const TArray<FVector>& UnityEuler);
+ bool SetUserBonePosScale(const TArray<FString>& Bones, const TArray<FVector>& UnityPos, const TArray<FVector>& UnityScale, const TArray<uint8>& Flags);
+ bool SetRendererMorphOverrides(const TArray<FString>& Renderers, const TArray<int32>& MorphIndices, const TArray<FName>& MorphNames, const TArray<float>& Percents);
  /** Studio IK targets (effector index, skeleton-space Unity metres; empty clears) and re-poses the character. */
  bool SetStudioIk(const TArray<int32>& Effectors, const TArray<FVector>& UnityPositions, FString& OutError, const TArray<FQuat>& UnityRotations = {}, const TArray<uint8>& UseRotations = {});
  bool bStudioIkReady=false;
@@ -405,6 +407,26 @@ public:
 	float FaceOpen01[2] = {0.92f, 1.f};
 	int32 FacePattern[2] = {0, 0};
 	bool bManualFaceControl[2] = {false, false};
+	void SetEyeOpenAsymmetric(float Left01, float Right01, float WinkLeftHappy = 0.f, float WinkRightHappy = 0.f, float ExprWeight = 1.f, float WideWeight = 0.f);
+	void ClearAsymmetricEyes();
+	void SetCompoundFaceWeights(float InBrowWeight, float InMouthWeight, float InMouthCornerUp, float InMouthCornerDown);
+	void ResetTransientFaceOverrides(bool bRefreshDisplay = true);
+	UFUNCTION(BlueprintCallable, Category="Koikatsu|Expression")
+	bool SetBlush(float Rate01);
+	UFUNCTION(BlueprintCallable, Category="Koikatsu|Expression")
+	bool SetIrisSmall(float Rate);
+	bool bAsymmetricEyes = false;
+	float EyeOpenLR[2] = {1.f, 1.f};
+	float EyeWinkHappyLR[2] = {0.f, 0.f};
+	float EyeExprWeight = 0.f;
+	float EyeWideWeight = 0.f;
+	float BrowWeight = 1.f;
+	float MouthWeight = 1.f;
+	float MouthCornerUp = 0.f;
+	float MouthCornerDown = 0.f;
+	float DefaultBlushRate = 0.f;
+	float BlushRate = -1.f;
+	float IrisSmallRate = 0.f;
 	UFUNCTION(BlueprintCallable, Category="Koikatsu|Animation")
 	bool SetHandShape(int32 Side, bool Enabled, int32 A, int32 B, float Blend);
 	UFUNCTION(BlueprintPure, Category="Koikatsu|Animation")
@@ -606,6 +628,13 @@ public:
 		TArray<TPair<FName, FName>> BrowPatterns;
 		TMap<FName, float> BaselineWeights;
         TArray<FName> MorphNames;
+		FName WinkLeftOpen = NAME_None;
+		FName WinkRightOpen = NAME_None;
+		FName HappyWinkLeftOpen = NAME_None;
+		FName HappyWinkRightOpen = NAME_None;
+		FName HappyBothClosed = NAME_None;
+		FName MouthCornerUp = NAME_None;
+		FName MouthCornerDown = NAME_None;
 		bool bHideWhenClosed = false;
 		// Which inside of her mouth it is (HiddenMouthInside): 1 her teeth, 2 her canines, 4 her tongue; 0 none.
 		uint8 InsideBit = 0;
@@ -617,6 +646,7 @@ public:
 	// Native renderer morph weights, in Unity's percent units. Runtime only;
 	// reload/destroy clears them so one character cannot inherit another's.
 	TMap<int32, TMap<FName, float>> PartMorphWeights;
+	TMap<int32, TSet<FName>> SceneMorphOverrideKeys;
 	UFUNCTION(BlueprintCallable, Category="Koikatsu|Morph")
 	TArray<FName> GetPartMorphNames(int32 SessionPartIndex) const;
 	UFUNCTION(BlueprintCallable, Category="Koikatsu|Morph")
@@ -742,6 +772,7 @@ public:
      *  actor, outlines included; instances without it are left alone. */
     void SetSharedVectorParameter(FName Name, const FLinearColor& Value);
     void SetSharedTextureParameter(FName Name,UTexture* Value);
+    void SetToonShadowLight(const FVector& WorldTowardsLight, float ShadowStrength);
     /** True when every renderer with a recorded Unity layer (component tag OKLayer<n>) is on a layer outside LayerMask
      *  (a light with that culling mask does not reach this actor); false without recorded layers. */
     bool IsOutsideLayerMask(uint32 LayerMask) const;
@@ -805,11 +836,19 @@ public:
     int32 ToonShadowBoundIndex = INDEX_NONE;
     int32 ToonShadowBoundMaterialCount = 0;
     void BindToonShadowTarget(int32 Index);
+    void UpdateToonShadowProjection();
 	FVector ToonShadowCenter = FVector(0.f, 0.f, 90.f);
 	FVector ToonShadowLightDir = FVector(-0.25f, 0.85f, 0.45f);
 	FVector ToonShadowRight = FVector::RightVector;
 	FVector ToonShadowUp = FVector::UpVector;
 	float ToonShadowWidth = 260.f;
+	float ToonShadowStrength = 0.f;
+	bool bExplicitToonShadowLight = false;
+	FVector ToonShadowAppliedCenter = FVector(NAN);
+	FVector ToonShadowAppliedLightDir = FVector::ZeroVector;
+	float ToonShadowAppliedWidth = -1.f;
+	float ToonShadowAppliedStrength = -1.f;
+	int32 ToonShadowAppliedMaterialCount = 0;
 
 	bool bAnimLoop = false;
 	// Game sampler elapsed time is never wrapped by the base layer duration.

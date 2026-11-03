@@ -225,6 +225,65 @@ pub(crate) fn resolve_head_detail_texture(
         }
         return;
     }
+    if mesh.mat.as_ref().is_some_and(|m| matches!(
+        m.shader.to_ascii_lowercase().as_str(),
+        "koikano/main_clothes_item_glasses" | "shader forge/toon_glasses_lod0"
+    )) {
+        if let Some(name) = mesh.mat.as_ref().map(|m| crate::card::me_mat_key(&m.name)) {
+            for ((object, coord, slot, material, prop), value) in &card.me_color {
+                if *object == 4 && *coord == 0 && *slot == 0 && *material == name {
+                    let key = if prop.starts_with('_') { prop.clone() } else { format!("_{prop}") };
+                    set_material_color(mesh, &key, *value);
+                }
+            }
+        }
+        let c4 = crate::accessories::mat_color(mesh, "_Color4");
+        set_material_color(mesh, "_Color4", c4);
+        let me_main = me_maintex(Some(&card.me_tex), 0, "head", None, mesh).map(|p| p.to_vec());
+        let main_from_me = me_main.is_some();
+        if let Some(png) = me_main {
+            mesh.texture_png = Some(png);
+            mark_material_editor_main_texture(mesh);
+        }
+        let null_main = mesh.mat.as_ref().is_some_and(|mat| mat.slot("_MainTex").is_none_or(str::is_empty));
+        let native_main = if null_main && !main_from_me {
+            crate::unity::solid_png([1.; 4], 1, 1)
+        } else if main_from_me {
+            mesh.texture_png.clone().or_else(|| crate::unity::solid_png([1.; 4], 1, 1))
+        } else {
+            mesh.texture_png.as_deref().and_then(flip_png_v).or_else(|| mesh.texture_png.clone()).or_else(|| crate::unity::solid_png([1.; 4], 1, 1))
+        };
+        if let Some(png) = native_main {
+            mesh.shader_extra_textures.insert("_MainTex".into(), png);
+        }
+        let base = mesh.shader_extra_textures.get("_MainTex").map(Vec::as_slice);
+        mesh.texture_png = crate::accessories::bake_accessory_glass_color(base, c4);
+        let override_ramp = me_texture(Some(&card.me_tex), 0, "head", None, mesh, "glassramp").map(|p| p.to_vec());
+        let ramp_from_me = override_ramp.is_some();
+        if let Some(data) = override_ramp.or_else(|| mesh.shader_extra_textures.remove("_GlassRamp")) {
+            if ramp_from_me { mark_material_editor_texture(mesh, "_GlassRamp"); }
+            let data = if ramp_from_me { data } else { flip_png_v(&data).unwrap_or(data) };
+            mesh.shader_extra_textures.insert("_GlassRamp".into(), data);
+        }
+        let me_norm = me_texture(Some(&card.me_tex), 0, "head", None, mesh, "normalmap").map(|p| p.to_vec());
+        let norm_overridden = me_norm.is_some();
+        if let Some(png) = me_norm {
+            mesh.normal_map_png = Some(png);
+            mark_material_editor_texture(mesh, "_NormalMap");
+        }
+        if material_editor_converts_normals(game_root) {
+            if let Some(png) = mesh.normal_map_png.take() {
+                let srgb = norm_overridden || mesh.runtime_textures.get("_OKSourceNormalMap").is_some_and(|s| s[3] == 1);
+                let converted = convert_runtime_normal_map_rows(png, srgb, !norm_overridden);
+                mark_native_runtime_normal_texture(mesh, "_NormalMap");
+                mesh.normal_map_png = Some(linear_texture_to_srgb_png(&converted).unwrap_or(converted));
+            }
+        }
+        if let Some(png) = mesh.normal_map_png.as_ref() {
+            mesh.shader_extra_textures.insert("_NormalMap".into(), png.clone());
+        }
+        return;
+    }
     if head_uses_item_draw(mesh) {
         // MaterialEditor also converts head normals to a runtime RT. Share
         // the same verified blit path as body/clothes/accessories.
@@ -704,7 +763,7 @@ pub(crate) fn adopt_uncensor_genitals(
     // draw settings are material values only, set on each open's copy.
     let painted = crate::view_memo(format!("uncensor_genitals|{:016x}|{kind:?}|{seed}|{skin:?}|{sub:?}|{nail:?}", card.source_digest),
         || uncensor_genitals_painted(game_root, card, kind, is_kind, seed, skin, sub, nail))
-        .map(|meshes| meshes.into_iter().map(|mut mesh| { apply_native_skin_draw_settings(&mut mesh, card, outfit, true); mesh }).collect::<Vec<_>>());
+        .map(|meshes| meshes.into_iter().map(|mut mesh| { apply_native_skin_draw_settings(game_root, &mut mesh, card, outfit, true); mesh }).collect::<Vec<_>>());
     match painted {
         None => {
             if !replaced_body {

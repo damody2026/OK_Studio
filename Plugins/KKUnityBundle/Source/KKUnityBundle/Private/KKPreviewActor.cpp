@@ -4976,7 +4976,15 @@ void AKKPreviewActor::SetSharedVectorParameter(FName Name, const FLinearColor& V
 		for (UMaterialInstanceDynamic* M : *List)
 		{
 			FLinearColor Current;
-			if (M && M->GetVectorParameterValue(FMaterialParameterInfo(Name), Current) && !Current.Equals(Value)) M->SetVectorParameterValue(Name, Value);
+			float Scalar = 0.f;
+			if (M && M->GetVectorParameterValue(FMaterialParameterInfo(Name), Current))
+			{
+				if (!Current.Equals(Value)) M->SetVectorParameterValue(Name, Value);
+			}
+			else if (M && M->GetScalarParameterValue(FMaterialParameterInfo(Name), Scalar) && Scalar != Value.R)
+			{
+				M->SetScalarParameterValue(Name, Value.R);
+			}
 			// Shared shader graphs transport float4 alpha through a separate
 			// scalar parameter; update it along with the RGB vector.
 			float Alpha = 0.f;
@@ -5081,6 +5089,11 @@ void AKKPreviewActor::DestroyAllParts()
 	}
 	ToonShadowMaterials.Reset();
     ToonShadowBoundIndex=INDEX_NONE;ToonShadowBoundMaterialCount=0;
+	ToonShadowAppliedCenter = FVector(NAN);
+	ToonShadowAppliedLightDir = FVector::ZeroVector;
+	ToonShadowAppliedWidth = -1.f;
+	ToonShadowAppliedStrength = -1.f;
+	ToonShadowAppliedMaterialCount = 0;
 	ToonShadowTargets.Reset();
 	ToonShadowReadIndex = 0;
 	for (FKKLoadedPart& Part : Parts)
@@ -5128,6 +5141,19 @@ void AKKPreviewActor::DestroyAllParts()
 	}
 
 	PartMorphWeights.Reset();
+	SceneMorphOverrideKeys.Reset();
+	bAsymmetricEyes = false;
+	EyeOpenLR[0] = 1.f; EyeOpenLR[1] = 1.f;
+	EyeWinkHappyLR[0] = 0.f; EyeWinkHappyLR[1] = 0.f;
+	EyeExprWeight = 0.f;
+	EyeWideWeight = 0.f;
+	BrowWeight = 1.f;
+	MouthWeight = 1.f;
+	MouthCornerUp = 0.f;
+	MouthCornerDown = 0.f;
+	DefaultBlushRate = 0.f;
+	BlushRate = -1.f;
+	IrisSmallRate = 0.f;
 	GenitalPrimitives.Reset();
 	bGenitalVisible = false;
 	VaginaMorphPart = INDEX_NONE;
@@ -6269,6 +6295,8 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
                 UE_LOG(LogTemp,Display,TEXT("OK face native overlay slot=%d bytes=%d alpha=%.6f"),Slot,Length,Color.A);
             }
             ShadowParams.bFaceForgeOverlay=View.shader_kind==7;
+            ShadowParams.Exposed.Add(TEXT("_overcolor2"));
+            ShadowParams.Exposed.Add(TEXT("_OverColor2"));
             if(ShadowParams.bFaceForgeOverlay) {
                 Source.MaterialValue(i,"_overtex1_ST",ShadowParams.Texcoord2ST);
                 Source.MaterialValue(i,"_overtex2_ST",ShadowParams.Texcoord3ST);
@@ -6330,10 +6358,10 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 		// omitted the ramp's chroma/ambient tail and shifted texture highlights.
 #if WITH_EDITOR
 		// A part on a shared parent (ShadowParams.CookedMaterial) draws with that instance; no skin graph of its own.
-		if (View.shader_kind == 5 && !ShadowParams.CookedMaterial)
+		if ((View.shader_kind == 5 || View.shader_kind == 7) && !ShadowParams.CookedMaterial)
 		{
 			FKKRuntimeMaterialPart SkinPart;
-			SkinPart.ShaderKind=5;SkinPart.SourceMetadataJson=Source.MaterialMetadataJson(i);
+			SkinPart.ShaderKind=View.shader_kind;SkinPart.SourceMetadataJson=Source.MaterialMetadataJson(i);
 			// Optional input audit records the bytes actually delivered to the preview.
 			const FString SkinAudit=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_SKIN_INPUT_AUDIT"));
 			if(!SkinAudit.IsEmpty())
@@ -7706,7 +7734,9 @@ void AKKPreviewActor::RefreshSkinnedDisplay()
  const double AccessoriesDone=FPlatformTime::Seconds();
 	UpdateRigidFollowers();
  const double RigidDone=FPlatformTime::Seconds();
-	if (!PartMorphWeights.IsEmpty()) ApplyMouth();
+	bool bHasCpuMouthSlot = false;
+	for (const FOkMouthSlot& Slot : MouthSlots) if (Slot.CpuComp) { bHasCpuMouthSlot = true; break; }
+	if (!PartMorphWeights.IsEmpty() || bHasCpuMouthSlot) ApplyMouth();
  if(Profile)UE_LOG(LogTemp,Display,TEXT("OK animation display bones_ms=%.3f rigid_ms=%.3f accessories_ms=%.3f morph_ms=%.3f"),(BonesDone-Begin)*1000.,(RigidDone-AccessoriesDone)*1000.,(AccessoriesDone-BonesDone)*1000.,(FPlatformTime::Seconds()-RigidDone)*1000.);
 }
 
@@ -8451,6 +8481,7 @@ bool AKKPreviewActor::SetOkAnimation(TSharedPtr<FOkAnimPlayer> Player,bool bPubl
 {
 	if(!Session.IsOpen()||!Player||!Player->IsValid()||Player->Roles()<1) return false;
 	if(bShapeDirty) SetPoseMode(0);
+	ResetTransientFaceOverrides(!bPublishFrame);
 #if PLATFORM_WINDOWS
 	::SetEnvironmentVariableW(TEXT("OK_UE_ANIM"), nullptr);
 #endif
@@ -8462,6 +8493,7 @@ bool AKKPreviewActor::SetOkAnimation(TSharedPtr<FOkAnimPlayer> Player,bool bPubl
 	{
 		if(!OkPlayer->ApplySessions({&Session},0.f,0.f,&OkReport)){UE_LOG(LogTemp,Error,TEXT("OK animation first frame failed: %s"),*OkReport);return false;}
 		RefreshSkinnedDisplay();
+		OkPlayer->ApplyFaceCurves(0,0.f,*this);
 	}
 	return true;
 }
@@ -8499,6 +8531,7 @@ void AKKPreviewActor::SetPoseMode(int32 Mode)
         return;
     }
     PoseMode=0;bAnimLoop=false;AnimationReadyClock.Stop();OkPlayer.Reset();
+	ResetTransientFaceOverrides(!Session.IsOpen());
 	AnimPhase = 0.f;
 	if (PoseMode == 0)
 	{
@@ -8840,7 +8873,48 @@ void AKKPreviewActor::InitializeFaceControls()
             const FName Name=NameAt(Morph);Slot.MorphNames.Add(Name);
             Slot.BaselineWeights.Add(Name, Session.FaceBaselineWeight(Slot.SessionPartIndex, Morph));
         }
+        auto FindSuffix = [&](const TCHAR* Suffix) -> FName {
+            for (const FName& N : Slot.MorphNames)
+                if (N.ToString().EndsWith(Suffix, ESearchCase::IgnoreCase)) return N;
+            return NAME_None;
+        };
+        Slot.WinkLeftOpen = FindSuffix(TEXT("_winkl_op"));
+        if (Slot.WinkLeftOpen.IsNone() && Slot.EyePatterns.IsValidIndex(5)) Slot.WinkLeftOpen = Slot.EyePatterns[5].Value;
+        Slot.WinkRightOpen = FindSuffix(TEXT("_winkr_op"));
+        if (Slot.WinkRightOpen.IsNone() && Slot.EyePatterns.IsValidIndex(6)) Slot.WinkRightOpen = Slot.EyePatterns[6].Value;
+        Slot.HappyWinkLeftOpen = FindSuffix(TEXT("_gyul_op"));
+        if (Slot.HappyWinkLeftOpen.IsNone()) Slot.HappyWinkLeftOpen = Slot.WinkLeftOpen;
+        Slot.HappyWinkRightOpen = FindSuffix(TEXT("_gyur_op"));
+        if (Slot.HappyWinkRightOpen.IsNone()) Slot.HappyWinkRightOpen = Slot.WinkRightOpen;
+        Slot.HappyBothClosed = FindSuffix(TEXT("_egao_cl"));
+        if (Slot.HappyBothClosed.IsNone() && Slot.EyePatterns.IsValidIndex(3)) Slot.HappyBothClosed = Slot.EyePatterns[3].Key;
+        Slot.MouthCornerUp = FindSuffix(TEXT("_uresi_cl"));
+        if (Slot.MouthCornerUp.IsNone() && Slot.Patterns.IsValidIndex(2)) Slot.MouthCornerUp = Slot.Patterns[2].Key;
+        Slot.MouthCornerDown = FindSuffix(TEXT("_ikari_cl"));
+        if (Slot.MouthCornerDown.IsNone() && Slot.Patterns.IsValidIndex(8)) Slot.MouthCornerDown = Slot.Patterns[8].Key;
     }
+    bAsymmetricEyes = false;
+    EyeOpenLR[0] = 1.f; EyeOpenLR[1] = 1.f;
+    EyeWinkHappyLR[0] = 0.f; EyeWinkHappyLR[1] = 0.f;
+    EyeExprWeight = 0.f;
+    EyeWideWeight = 0.f;
+    BrowWeight = 1.f;
+    MouthWeight = 1.f;
+    MouthCornerUp = 0.f;
+    MouthCornerDown = 0.f;
+    DefaultBlushRate = 0.f;
+    for (int32 PartIdx = 0, PartNum = Session.PartCount(); PartIdx < PartNum; ++PartIdx)
+    {
+        OkMeshView View{};
+        if (Session.PartAt(PartIdx, View) && View.role && FCStringAnsi::Stricmp(View.role, "head") == 0
+            && (View.shader_kind == 5 || View.shader_kind == 7))
+        {
+            DefaultBlushRate = FMath::Clamp(View.overcolor2[3] / 0.2f, 0.f, 1.f);
+            break;
+        }
+    }
+    BlushRate = -1.f;
+    IrisSmallRate = 0.f;
     UE_LOG(LogTemp, Display, TEXT("OK face controls slots=%d eyes=%d brow=%d defaults=(%.6f,%.6f)"),
         MouthSlots.Num(), GetFacePatternCount(1), GetFacePatternCount(2), FaceOpen01[0], FaceOpen01[1]);
     for (int32 Index = 0; Index < 2; ++Index)
@@ -8882,12 +8956,150 @@ bool AKKPreviewActor::SetFaceControl(int32 Control, int32 Pattern, float Open01,
 {
     if (Control < 1 || Control > 2 || Pattern < 0 || Pattern >= GetFacePatternCount(Control)
         || !FMath::IsFinite(Open01)) return false;
+    if (Control == 1) bAsymmetricEyes = false;
+    if (Control == 2) BrowWeight = 1.f;
     FacePattern[Control - 1] = Pattern;
     bManualFaceControl[Control - 1] = true;
     FaceOpen01[Control - 1] = FMath::Clamp(Open01, 0.f, 1.f);
     FaceTransitions[Control].Change(Pattern,bBlend);
     ApplyMouth();
     return true;
+}
+
+void AKKPreviewActor::SetEyeOpenAsymmetric(float Left01, float Right01, float WinkLeftHappy, float WinkRightHappy, float ExprWeight, float WideWeight)
+{
+    const float NL = FMath::Clamp(Left01, 0.f, 1.f);
+    const float NR = FMath::Clamp(Right01, 0.f, 1.f);
+    const float NHL = FMath::Clamp(WinkLeftHappy, 0.f, 1.f);
+    const float NHR = FMath::Clamp(WinkRightHappy, 0.f, 1.f);
+    const float NExpr = FMath::Clamp(ExprWeight, 0.f, 1.f);
+    const float NWide = FMath::Clamp(WideWeight, 0.f, 1.f);
+    if (bAsymmetricEyes
+        && FMath::IsNearlyEqual(NL, EyeOpenLR[0], 1.e-4f)
+        && FMath::IsNearlyEqual(NR, EyeOpenLR[1], 1.e-4f)
+        && FMath::IsNearlyEqual(NHL, EyeWinkHappyLR[0], 1.e-4f)
+        && FMath::IsNearlyEqual(NHR, EyeWinkHappyLR[1], 1.e-4f)
+        && FMath::IsNearlyEqual(NExpr, EyeExprWeight, 1.e-4f)
+        && FMath::IsNearlyEqual(NWide, EyeWideWeight, 1.e-4f))
+    {
+        return;
+    }
+    bAsymmetricEyes = true;
+    EyeOpenLR[0] = NL;
+    EyeOpenLR[1] = NR;
+    EyeWinkHappyLR[0] = NHL;
+    EyeWinkHappyLR[1] = NHR;
+    EyeExprWeight = NExpr;
+    EyeWideWeight = NWide;
+    FaceOpen01[0] = 0.5f * (NL + NR);
+    bManualFaceControl[0] = true;
+    ApplyMouth();
+}
+
+void AKKPreviewActor::ClearAsymmetricEyes()
+{
+    if (!bAsymmetricEyes) return;
+    bAsymmetricEyes = false;
+    EyeOpenLR[0] = 1.f; EyeOpenLR[1] = 1.f;
+    EyeWinkHappyLR[0] = 0.f; EyeWinkHappyLR[1] = 0.f;
+    EyeExprWeight = 0.f;
+    EyeWideWeight = 0.f;
+    ApplyMouth();
+}
+
+void AKKPreviewActor::SetCompoundFaceWeights(float InBrowWeight, float InMouthWeight, float InMouthCornerUp, float InMouthCornerDown)
+{
+    const float NBW = FMath::Clamp(InBrowWeight, 0.f, 1.f);
+    const float NMW = FMath::Clamp(InMouthWeight, 0.f, 1.f);
+    const float NCUp = FMath::Clamp(InMouthCornerUp, 0.f, 1.f);
+    const float NCDown = FMath::Clamp(InMouthCornerDown, 0.f, 1.f);
+    if (FMath::IsNearlyEqual(NBW, BrowWeight, 1.e-4f)
+        && FMath::IsNearlyEqual(NMW, MouthWeight, 1.e-4f)
+        && FMath::IsNearlyEqual(NCUp, MouthCornerUp, 1.e-4f)
+        && FMath::IsNearlyEqual(NCDown, MouthCornerDown, 1.e-4f))
+    {
+        return;
+    }
+    BrowWeight = NBW;
+    MouthWeight = NMW;
+    MouthCornerUp = NCUp;
+    MouthCornerDown = NCDown;
+    ApplyMouth();
+}
+
+void AKKPreviewActor::ResetTransientFaceOverrides(bool bRefreshDisplay)
+{
+    bool bMouthDirty = false;
+    if (bAsymmetricEyes)
+    {
+        bAsymmetricEyes = false;
+        EyeOpenLR[0] = 1.f; EyeOpenLR[1] = 1.f;
+        EyeWinkHappyLR[0] = 0.f; EyeWinkHappyLR[1] = 0.f;
+        EyeExprWeight = 0.f;
+        EyeWideWeight = 0.f;
+        bMouthDirty = true;
+    }
+    if (BrowWeight < 0.999f || MouthWeight < 0.999f || MouthCornerUp > 1.e-4f || MouthCornerDown > 1.e-4f)
+    {
+        BrowWeight = 1.f;
+        MouthWeight = 1.f;
+        MouthCornerUp = 0.f;
+        MouthCornerDown = 0.f;
+        bMouthDirty = true;
+    }
+    if (BlushRate >= 0.f)
+    {
+        SetBlush(DefaultBlushRate);
+        BlushRate = -1.f;
+    }
+    if (FMath::Abs(IrisSmallRate) > 1.e-4f)
+    {
+        SetIrisSmall(0.f);
+        bMouthDirty = false;
+    }
+    if (bRefreshDisplay && bMouthDirty)
+    {
+        ApplyMouth();
+    }
+}
+
+bool AKKPreviewActor::SetBlush(float Rate01)
+{
+    if (!FMath::IsFinite(Rate01)) return false;
+    const float Clamped = FMath::Clamp(Rate01, 0.f, 1.f);
+    if (!Session.SetBlush(Clamped)) return false;
+    BlushRate = Clamped;
+    const float Alpha = Clamped * 0.2f;
+    auto IsHeadSkin = [&](int32 SessionIdx) -> bool {
+        OkMeshView View{};
+        return Session.PartAt(SessionIdx, View) && View.role && FCStringAnsi::Stricmp(View.role, "head") == 0
+            && (View.shader_kind == 5 || View.shader_kind == 7);
+    };
+    auto UpdateMid = [&](UMaterialInstanceDynamic* Mid) {
+        if (!Mid) return;
+        FLinearColor Cur;
+        if (Mid->GetVectorParameterValue(FMaterialParameterInfo(TEXT("_overcolor2")), Cur))
+            Mid->SetVectorParameterValue(TEXT("_overcolor2"), FLinearColor(Cur.R, Cur.G, Cur.B, Alpha));
+        if (Mid->GetVectorParameterValue(FMaterialParameterInfo(TEXT("_OverColor2")), Cur))
+            Mid->SetVectorParameterValue(TEXT("_OverColor2"), FLinearColor(Cur.R, Cur.G, Cur.B, Alpha));
+        float ScalarA = 0.f;
+        if (Mid->GetScalarParameterValue(FMaterialParameterInfo(TEXT("_overcolor2__A")), ScalarA))
+            Mid->SetScalarParameterValue(TEXT("_overcolor2__A"), Alpha);
+    };
+    for (int32 i = 0; i < CookedRoleMaterials.Num(); ++i)
+        if (IsHeadSkin(i)) UpdateMid(CookedRoleMaterials[i].Get());
+    for (FKKLoadedPart& Part : Parts)
+        if (IsHeadSkin(Part.SessionIndex)) UpdateMid(Cast<UMaterialInstanceDynamic>(Part.SurfaceMat.Get()));
+    return true;
+}
+
+bool AKKPreviewActor::SetIrisSmall(float Rate)
+{
+    if (!FMath::IsFinite(Rate)) return false;
+    const float Clamped = FMath::Clamp(Rate, -1.f, 1.f);
+    if (!Session.SetIrisSmall(Clamped)) return false;
+    IrisSmallRate = Clamped;
+    return SetEyeGaze(EyeGaze[0], EyeGaze[1], EyeGaze[2]);
 }
 
 bool AKKPreviewActor::SetFacePattern(int32 Control,int32 Pattern,bool bBlend)
@@ -8927,6 +9139,11 @@ float AKKPreviewActor::EffectiveFaceRate(int32 Control) const
     {
         const float Correct=OKEyeCorrectOpenMax(Maximum,EyeGaze[0],EyeGaze[2],Session.FaceRuntimeSetting(8),Session.FaceRuntimeSetting(9),Session.FaceRuntimeSetting(10));
         if(Correct>=0.f) Maximum=Correct; // FBSBase negative sentinel.
+    }
+    if(Control==2 && bAsymmetricEyes)
+    {
+        const float SyncRate=bBrowSyncBlink?0.5f*(EyeOpenLR[0]+EyeOpenLR[1]):1.f;
+        return FMath::Lerp(Session.FaceRuntimeSetting(4+Index),Maximum,SyncRate);
     }
     return FMath::Lerp(Session.FaceRuntimeSetting(4+Index),Maximum,
         Control==1?BlinkEyeRate:BlinkBrowRate);
@@ -9373,9 +9590,138 @@ void AKKPreviewActor::ApplyMouth()
     for (const FOkMouthSlot& Slot : MouthSlots)
     {
         TMap<FName, float> Desired;
-        OKFbsWriteTransition(Desired, Slot.BrowPatterns, FaceTransitions[2], EffectiveFaceRate(2));
-        OKFbsWriteTransition(Desired, Slot.EyePatterns, FaceTransitions[1], EffectiveFaceRate(1));
-        OKFbsWriteTransition(Desired, Slot.Patterns, FaceTransitions[0], EffectiveFaceRate(0));
+        if (BrowWeight < 0.999f && FacePattern[1] > 0 && Slot.BrowPatterns.IsValidIndex(0) && Slot.BrowPatterns.IsValidIndex(FacePattern[1]))
+        {
+            for (const auto& Pair : Slot.BrowPatterns)
+            {
+                if (!Pair.Key.IsNone()) Desired.Add(Pair.Key, 0.f);
+                if (!Pair.Value.IsNone()) Desired.Add(Pair.Value, 0.f);
+            }
+            const float OpenPct = float(OKFbsOpenPercent(EffectiveFaceRate(2)));
+            auto AddBrow = [&](int32 P, float Blend) {
+                if (Blend <= 1.e-5f || !Slot.BrowPatterns.IsValidIndex(P)) return;
+                if (!Slot.BrowPatterns[P].Key.IsNone()) Desired.FindOrAdd(Slot.BrowPatterns[P].Key) += Blend * (100.f - OpenPct);
+                if (!Slot.BrowPatterns[P].Value.IsNone()) Desired.FindOrAdd(Slot.BrowPatterns[P].Value) += Blend * OpenPct;
+            };
+            AddBrow(0, 1.f - BrowWeight);
+            AddBrow(FacePattern[1], BrowWeight);
+        }
+        else
+        {
+            OKFbsWriteTransition(Desired, Slot.BrowPatterns, FaceTransitions[2], EffectiveFaceRate(2));
+        }
+
+        for (const FName& Aux : {Slot.WinkLeftOpen, Slot.WinkRightOpen, Slot.HappyWinkLeftOpen, Slot.HappyWinkRightOpen, Slot.HappyBothClosed})
+            if (!Aux.IsNone()) Desired.Add(Aux, 0.f);
+        if (bAsymmetricEyes && (!Slot.EyePatterns.IsEmpty() || !Slot.WinkLeftOpen.IsNone() || !Slot.WinkRightOpen.IsNone()))
+        {
+            for (const auto& Pair : Slot.EyePatterns)
+            {
+                if (!Pair.Key.IsNone()) Desired.Add(Pair.Key, 0.f);
+                if (!Pair.Value.IsNone()) Desired.Add(Pair.Value, 0.f);
+            }
+            const float OpenL = FMath::Clamp(EyeOpenLR[0], 0.f, 1.f);
+            const float OpenR = FMath::Clamp(EyeOpenLR[1], 0.f, 1.f);
+            const float HappyL = FMath::Clamp(EyeWinkHappyLR[0], 0.f, 1.f);
+            const float HappyR = FMath::Clamp(EyeWinkHappyLR[1], 0.f, 1.f);
+            const float C_L = 1.f - OpenL;
+            const float C_R = 1.f - OpenR;
+            const float M = FMath::Min(C_L, C_R);
+            const float D_L = C_L - M;
+            const float D_R = C_R - M;
+            const float O_Both = FMath::Max(0.f, 1.f - FMath::Max(C_L, C_R));
+            const float DefRate = Session.FaceDefaultRate(1);
+            const float BaseRate = FMath::Lerp(DefRate, 1.f, FMath::Clamp(EyeWideWeight, 0.f, 1.f));
+            const float BaseOpenPct = float(OKFbsOpenPercent(BaseRate));
+            const int32 Ptn = Slot.EyePatterns.IsEmpty() ? 0 : FMath::Clamp(FacePattern[0], 0, Slot.EyePatterns.Num() - 1);
+            const float ExprW = Ptn > 0 ? FMath::Clamp(EyeExprWeight, 0.f, 1.f) : 0.f;
+            auto AddDesired = [&](FName MorphName, float DeltaPct) {
+                if (!MorphName.IsNone() && DeltaPct > 1.e-5f) Desired.FindOrAdd(MorphName) += DeltaPct;
+            };
+            auto AddEyePtn = [&](int32 P, float Weight) {
+                if (Weight <= 1.e-5f || !Slot.EyePatterns.IsValidIndex(P)) return;
+                AddDesired(Slot.EyePatterns[P].Key, Weight * (100.f - BaseOpenPct));
+                AddDesired(Slot.EyePatterns[P].Value, Weight * BaseOpenPct);
+            };
+            if (Ptn > 0 && ExprW > 1.e-4f)
+            {
+                AddEyePtn(0, O_Both * (1.f - ExprW));
+                AddEyePtn(Ptn, O_Both * ExprW);
+            }
+            else
+            {
+                AddEyePtn(0, O_Both);
+            }
+            const FName DefCl = Slot.EyePatterns.IsValidIndex(0) ? Slot.EyePatterns[0].Key : NAME_None;
+            if (D_L > 1.e-5f)
+            {
+                AddDesired(Slot.WinkLeftOpen, D_L * (1.f - HappyL) * BaseOpenPct);
+                AddDesired(Slot.HappyWinkLeftOpen, D_L * HappyL * BaseOpenPct);
+                AddDesired(DefCl, D_L * (100.f - BaseOpenPct));
+            }
+            if (D_R > 1.e-5f)
+            {
+                AddDesired(Slot.WinkRightOpen, D_R * (1.f - HappyR) * BaseOpenPct);
+                AddDesired(Slot.HappyWinkRightOpen, D_R * HappyR * BaseOpenPct);
+                AddDesired(DefCl, D_R * (100.f - BaseOpenPct));
+            }
+            if (M > 1.e-5f)
+            {
+                const float HappyBoth = FMath::Min(HappyL, HappyR);
+                const FName BaseCl = Slot.EyePatterns.IsValidIndex(Ptn) && !Slot.EyePatterns[Ptn].Key.IsNone()
+                    ? Slot.EyePatterns[Ptn].Key
+                    : (Slot.EyePatterns.IsValidIndex(0) ? Slot.EyePatterns[0].Key : NAME_None);
+                const FName HapCl = !Slot.HappyBothClosed.IsNone() ? Slot.HappyBothClosed : BaseCl;
+                AddDesired(BaseCl, M * (1.f - HappyBoth) * 100.f);
+                AddDesired(HapCl, M * HappyBoth * 100.f);
+            }
+        }
+        else
+        {
+            OKFbsWriteTransition(Desired, Slot.EyePatterns, FaceTransitions[1], EffectiveFaceRate(1));
+        }
+
+        for (const FName& Aux : {Slot.MouthCornerUp, Slot.MouthCornerDown})
+            if (!Aux.IsNone()) Desired.Add(Aux, 0.f);
+        const bool bCompoundMouth = !bSpeechActive && (!Slot.Patterns.IsEmpty())
+            && ((MouthWeight < 0.999f && MouthPattern > 0) || MouthCornerUp > 1.e-4f || MouthCornerDown > 1.e-4f);
+        if (bCompoundMouth)
+        {
+            for (const auto& Pair : Slot.Patterns)
+            {
+                if (!Pair.Key.IsNone()) Desired.Add(Pair.Key, 0.f);
+                if (!Pair.Value.IsNone()) Desired.Add(Pair.Value, 0.f);
+            }
+            const int32 MPtn = FMath::Clamp(MouthPattern, 0, Slot.Patterns.Num() - 1);
+            const float MOpen = FMath::Clamp(EffectiveFaceRate(0), 0.f, 1.f);
+            const float MW = FMath::Clamp(MouthWeight, 0.f, 1.f);
+            const float CUp = FMath::Clamp(MouthCornerUp, 0.f, 1.f);
+            const float CDown = FMath::Clamp(MouthCornerDown, 0.f, 1.f);
+            const float CSum = FMath::Min(1.f, CUp + CDown);
+            const float CloseScale = 1.f - CSum * (1.f - MOpen);
+            const float MOpenPct = float(OKFbsOpenPercent(MOpen));
+            auto AddMouth = [&](int32 P, float Blend, float POpenPct) {
+                if (Blend <= 1.e-5f || !Slot.Patterns.IsValidIndex(P)) return;
+                if (!Slot.Patterns[P].Key.IsNone()) Desired.FindOrAdd(Slot.Patterns[P].Key) += Blend * (100.f - POpenPct) * CloseScale;
+                if (!Slot.Patterns[P].Value.IsNone()) Desired.FindOrAdd(Slot.Patterns[P].Value) += Blend * POpenPct;
+            };
+            if (MPtn > 0 && MW < 0.999f)
+            {
+                AddMouth(0, 1.f - MW, 0.f);
+                AddMouth(MPtn, MW, MOpenPct);
+            }
+            else
+            {
+                AddMouth(MPtn, 1.f, MOpenPct);
+            }
+            const float Damp = 1.f - 0.35f * MOpen;
+            if (CUp > 1.e-4f && !Slot.MouthCornerUp.IsNone()) Desired.FindOrAdd(Slot.MouthCornerUp) += CUp * Damp * 100.f;
+            if (CDown > 1.e-4f && !Slot.MouthCornerDown.IsNone()) Desired.FindOrAdd(Slot.MouthCornerDown) += CDown * Damp * 100.f;
+        }
+        else
+        {
+            OKFbsWriteTransition(Desired, Slot.Patterns, FaceTransitions[0], EffectiveFaceRate(0));
+        }
         if(const auto* Overrides=PartMorphWeights.Find(Slot.SessionPartIndex))
             for(const auto& Weight:*Overrides) Desired.Add(Weight.Key,Weight.Value);
         if (Slot.CpuComp && Parts.IsValidIndex(Slot.PartArrayIndex))
@@ -9728,8 +10074,10 @@ bool AKKPreviewActor::SolveScenePose(float DeltaSeconds,bool bAdvanceAnimation)
 bool AKKPreviewActor::OrderSceneTicks(AActor* PoseOwner)
 {
     // The face parts' anim update reads the pose SyncMouthPose leaves; ticking after the owner, they read this frame's.
+    // Order this actor's tick after PoseOwner as well so ToonShadowCapture frames the current-frame pose and lighting.
     if(!PoseOwner)return false;
-    int32 Ordered=0;
+    AddTickPrerequisiteActor(PoseOwner);
+    int32 Ordered=1;
     for(const FOkMouthSlot& Slot:MouthSlots)
         for(USkeletalMeshComponent* Mesh:{Slot.Comp,Slot.OutlineComp})
             if(Mesh){Mesh->AddTickPrerequisiteActor(PoseOwner);++Ordered;}
@@ -10291,8 +10639,9 @@ void AKKPreviewActor::Tick(float DeltaSeconds)
 	static uint64 GShadowCaptureFrame = 0;
 	static int32 GShadowCapturersThisFrame = 0, GShadowCapturersLastFrame = 0;
 	if (ShadowCapturePhase == MAX_uint32) ShadowCapturePhase = GShadowCapturePhases++;
+	const bool bShadowActive = !bExplicitToonShadowLight || ToonShadowStrength > 0.0001f;
 	bool bShadowTurn = true;
-	if (bSceneDrivenPose && bCharacterDisplayShadows && ToonShadowCapture && CVarOkShadowCaptureStagger.GetValueOnGameThread() != 0)
+	if (bSceneDrivenPose && bCharacterDisplayShadows && bShadowActive && ToonShadowCapture && CVarOkShadowCaptureStagger.GetValueOnGameThread() != 0)
 	{
 		if (GShadowCaptureFrame != GFrameCounter) { GShadowCapturersLastFrame = GShadowCapturersThisFrame; GShadowCapturersThisFrame = 0; GShadowCaptureFrame = GFrameCounter; }
 		++GShadowCapturersThisFrame;
@@ -10300,22 +10649,112 @@ void AKKPreviewActor::Tick(float DeltaSeconds)
 		const uint64 Period = (uint64)FMath::Max(2, FMath::DivideAndRoundUp(GShadowCapturersLastFrame, Budget));
 		bShadowTurn = (GFrameCounter + ShadowCapturePhase) % Period == 0;
 	}
-	if (bCharacterDisplayShadows && ToonShadowCapture && ToonShadowTargets.Num() == 2 && bShadowTurn)
+	if (bCharacterDisplayShadows && ToonShadowCapture && ToonShadowTargets.Num() == 2 && (!bShadowActive || bShadowTurn))
 	{
-        // CaptureScene() builds and executes a renderer immediately, so the game
-        // thread stalls every frame and stat unitgraph steps. The deferred photo
-        // path already keeps one target bound and captures it before the main view.
-        const bool bStable = CVarOkStableShadowTarget.GetValueOnGameThread() != 0;
-        const int32 WriteIndex = bStable ? ToonShadowReadIndex : (1 - ToonShadowReadIndex);
-        ToonShadowCapture->TextureTarget = ToonShadowTargets[WriteIndex];
-        ToonShadowCapture->CaptureSceneDeferred();
-        BindToonShadowTarget(WriteIndex);
-        ToonShadowReadIndex = WriteIndex;
+        UpdateToonShadowProjection();
+        if (bShadowActive)
+        {
+            // CaptureScene() builds and executes a renderer immediately, so the game
+            // thread stalls every frame and stat unitgraph steps. The deferred photo
+            // path already keeps one target bound and captures it before the main view.
+            const bool bStable = CVarOkStableShadowTarget.GetValueOnGameThread() != 0;
+            const int32 WriteIndex = bStable ? ToonShadowReadIndex : (1 - ToonShadowReadIndex);
+            ToonShadowCapture->TextureTarget = ToonShadowTargets[WriteIndex];
+            ToonShadowCapture->CaptureSceneDeferred();
+            BindToonShadowTarget(WriteIndex);
+            ToonShadowReadIndex = WriteIndex;
+        }
 	}
  if(bLaunchAsyncPose){bLaunchAsyncPose=false;if(PoseMode==2&&Session.IsOpen())Session.LaunchAsyncAnimFrame(float(FMath::Min(double(AnimPhase)+double(AsyncPoseDelta)*double(AnimationPlaybackSpeed),double(MAX_flt))),AsyncPoseDelta);}
  const double TickMs=(FPlatformTime::Seconds()-Begin)*1000.;
  if(bNeedPose){AnimationTickTotalMs+=TickMs;++AnimationTickSamples;AnimationTickMaxMs=FMath::Max(AnimationTickMaxMs,TickMs);++AnimationTickHistogram[FMath::Clamp(int32(TickMs),0,255)];}
  if(Profile)UE_LOG(LogTemp,Display,TEXT("OK animation tick pose_ms=%.3f face_ms=%.3f shadow_ms=%.3f"),(PoseDone-Begin)*1000.,(FaceDone-PoseDone)*1000.,(FPlatformTime::Seconds()-FaceDone)*1000.);
+}
+
+void AKKPreviewActor::SetToonShadowLight(const FVector& WorldTowardsLight, float ShadowStrength)
+{
+    bExplicitToonShadowLight = true;
+    const FVector Normalized = WorldTowardsLight.GetSafeNormal();
+    if (!Normalized.IsNearlyZero())
+    {
+        ToonShadowLightDir = Normalized;
+    }
+    ToonShadowStrength = FMath::Clamp(ShadowStrength, 0.f, 1.f);
+    UpdateToonShadowProjection();
+}
+
+void AKKPreviewActor::UpdateToonShadowProjection()
+{
+    if (!bExplicitToonShadowLight) return;
+    FBox WorldBox(ForceInit);
+    TInlineComponentArray<UMeshComponent*> Meshes(this);
+    for (const UMeshComponent* Mesh : Meshes)
+    {
+        if (Mesh && Mesh->IsRegistered() && Mesh->IsVisible() && Mesh->bRenderInMainPass
+            && !Mesh->ComponentHasTag(TEXT("KKPreviewOutline")) && Mesh->Bounds.SphereRadius > KINDA_SMALL_NUMBER)
+        {
+            WorldBox += Mesh->Bounds.GetBox();
+        }
+    }
+    if (WorldBox.IsValid)
+    {
+        ToonShadowCenter = WorldBox.GetCenter();
+        ToonShadowWidth = FMath::Clamp(float(WorldBox.GetExtent().GetMax()) * 2.4f, 180.f, 600.f);
+    }
+    else
+    {
+        ToonShadowCenter = GetActorLocation() + FVector(0.f, 0.f, 90.f);
+        ToonShadowWidth = 260.f;
+    }
+    FVector Dir = ToonShadowLightDir.GetSafeNormal();
+    if (Dir.IsNearlyZero()) Dir = FVector(-0.25f, 0.85f, 0.45f).GetSafeNormal();
+    ToonShadowLightDir = Dir;
+    const FRotator ShadowRotation = (-Dir).Rotation();
+    const FQuat ShadowQuat = ShadowRotation.Quaternion();
+    ToonShadowRight = ShadowQuat.GetRightVector();
+    ToonShadowUp = ShadowQuat.GetUpVector();
+    const float ShadowDistance = FMath::Max(500.f, ToonShadowWidth * 1.5f);
+    if (ToonShadowCapture)
+    {
+        ToonShadowCapture->SetWorldLocationAndRotation(ToonShadowCenter + Dir * ShadowDistance, ShadowRotation);
+        ToonShadowCapture->OrthoWidth = ToonShadowWidth;
+    }
+    const float EffectiveStrength = bCharacterDisplayShadows ? FMath::Clamp(ToonShadowStrength, 0.f, 1.f) : 0.f;
+    const bool bGeometryDirty = EffectiveStrength > 0.0001f && (
+        !FMath::IsNearlyEqual(ToonShadowAppliedWidth, ToonShadowWidth, 0.05f)
+        || !ToonShadowAppliedCenter.ContainsNaN() && FVector::DistSquared(ToonShadowAppliedCenter, ToonShadowCenter) > 0.01
+        || ToonShadowAppliedCenter.ContainsNaN()
+        || (ToonShadowAppliedLightDir | Dir) < 0.99999f);
+    if (ToonShadowAppliedMaterialCount != ToonShadowMaterials.Num()
+        || !FMath::IsNearlyEqual(ToonShadowAppliedStrength, EffectiveStrength, 1e-4f)
+        || bGeometryDirty)
+    {
+        const float Bias = OKToonShadowBias();
+        const FLinearColor CenterLin(ToonShadowCenter.X, ToonShadowCenter.Y, ToonShadowCenter.Z, 1.f);
+        const FLinearColor DirLin(Dir.X, Dir.Y, Dir.Z, 1.f);
+        const FLinearColor RightLin(ToonShadowRight.X, ToonShadowRight.Y, ToonShadowRight.Z, 1.f);
+        const FLinearColor UpLin(ToonShadowUp.X, ToonShadowUp.Y, ToonShadowUp.Z, 1.f);
+        for (UMaterialInstanceDynamic* Mat : ToonShadowMaterials)
+        {
+            if (!Mat) continue;
+            Mat->SetScalarParameterValue(TEXT("__OK_ShadowStrength"), EffectiveStrength);
+            if (EffectiveStrength > 0.0001f)
+            {
+                Mat->SetVectorParameterValue(TEXT("__OK_ShadowCenter"), CenterLin);
+                Mat->SetVectorParameterValue(TEXT("__OK_ShadowLightDir"), DirLin);
+                Mat->SetVectorParameterValue(TEXT("__OK_ShadowRight"), RightLin);
+                Mat->SetVectorParameterValue(TEXT("__OK_ShadowUp"), UpLin);
+                Mat->SetScalarParameterValue(TEXT("__OK_ShadowWidth"), ToonShadowWidth);
+                Mat->SetScalarParameterValue(TEXT("__OK_ShadowDistance"), ShadowDistance);
+                Mat->SetScalarParameterValue(TEXT("__OK_ShadowBias"), Bias);
+            }
+        }
+        ToonShadowAppliedCenter = ToonShadowCenter;
+        ToonShadowAppliedLightDir = Dir;
+        ToonShadowAppliedWidth = ToonShadowWidth;
+        ToonShadowAppliedStrength = EffectiveStrength;
+        ToonShadowAppliedMaterialCount = ToonShadowMaterials.Num();
+    }
 }
 
 void AKKPreviewActor::BindToonShadowTarget(int32 Index)
@@ -10334,6 +10773,11 @@ bool AKKPreviewActor::RefreshShotShadow(bool bDeferred)
 	if (!ToonShadowCapture || ToonShadowTargets.Num() != 2) return false;
 	const float HeldPhase = AnimPhase;
 	const float HeldFaceClock = FaceClock;
+    UpdateToonShadowProjection();
+    if (bExplicitToonShadowLight && ToonShadowStrength <= 0.0001f)
+    {
+        return AnimPhase == HeldPhase && FaceClock == HeldFaceClock;
+    }
     // Scene-depth capture writes its resolved target after rendering, before
     // the main view reads it. Its lighting does not consume KKShadowDepth.
     // Keep that resource bound to avoid invalidating every material uniform
@@ -12411,6 +12855,64 @@ static FAutoConsoleCommand ShotPreviewCmd(
 	TEXT("ok.ShotPreview"),
 	TEXT("Load card via Rust session, capture user_check_3d.png, user_check_face.png, user_check_face_side.png, quit"),
 	FConsoleCommandDelegate::CreateStatic(&ShotPreviewNow));
+
+bool AKKPreviewActor::SetUserBonePosScale(const TArray<FString>& Bones, const TArray<FVector>& UnityPos, const TArray<FVector>& UnityScale, const TArray<uint8>& Flags)
+{
+	if (!Session.IsOpen() || !Session.SetBonePosScale(Bones, UnityPos, UnityScale, Flags)) return false;
+	bUserPoseDirty = true;
+	ApplyPoseFrame(0.f, false);
+	return true;
+}
+
+bool AKKPreviewActor::SetRendererMorphOverrides(const TArray<FString>& Renderers, const TArray<int32>& MorphIndices, const TArray<FName>& MorphNames, const TArray<float>& Percents)
+{
+	if (!Session.IsOpen()) return false;
+	const int32 Count = Renderers.Num();
+	if (MorphIndices.Num() != Count || MorphNames.Num() != Count || Percents.Num() != Count) return false;
+	bool bChanged = false;
+	for (const TPair<int32, TSet<FName>>& Prev : SceneMorphOverrideKeys)
+	{
+		if (TMap<FName, float>* Map = PartMorphWeights.Find(Prev.Key))
+		{
+			for (const FName& Key : Prev.Value) { if (Map->Remove(Key) > 0) bChanged = true; }
+			if (Map->IsEmpty()) PartMorphWeights.Remove(Prev.Key);
+		}
+	}
+	SceneMorphOverrideKeys.Reset();
+	TArray<int32> PartIds;
+	for (int32 I = 0; I < Count; ++I)
+	{
+		if (!FMath::IsFinite(Percents[I])) continue;
+		if (!Session.FindRendererParts(Renderers[I], PartIds)) continue;
+		const float Clamped = FMath::Clamp(Percents[I], 0.f, 100.f);
+		for (int32 PartIndex : PartIds)
+		{
+			const FOkMouthSlot* Slot = MouthSlots.FindByPredicate([PartIndex](const FOkMouthSlot& S) { return S.SessionPartIndex == PartIndex; });
+			if (!Slot) continue;
+			FName Resolved = MorphNames[I];
+			if (Resolved.IsNone())
+			{
+				if (Slot->MorphNames.IsValidIndex(MorphIndices[I])) Resolved = Slot->MorphNames[MorphIndices[I]];
+				else
+				{
+					const TArray<FName> Names = GetPartMorphNames(PartIndex);
+					if (Names.IsValidIndex(MorphIndices[I])) Resolved = Names[MorphIndices[I]];
+				}
+			}
+			else if (!Slot->MorphNames.Contains(Resolved) && !GetPartMorphNames(PartIndex).Contains(Resolved))
+			{
+				if (Slot->MorphNames.IsValidIndex(MorphIndices[I])) Resolved = Slot->MorphNames[MorphIndices[I]];
+				else continue;
+			}
+			if (Resolved.IsNone()) continue;
+			PartMorphWeights.FindOrAdd(PartIndex).Add(Resolved, Clamped);
+			SceneMorphOverrideKeys.FindOrAdd(PartIndex).Add(Resolved);
+			bChanged = true;
+		}
+	}
+	if (bChanged) ApplyMouth();
+	return true;
+}
 
 bool AKKPreviewActor::SetUserFk(const TArray<FString>& Bones, const TArray<FVector>& UnityEuler)
 {

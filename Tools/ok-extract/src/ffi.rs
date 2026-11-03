@@ -306,6 +306,101 @@ pub unsafe extern "C" fn ok_session_set_fk(s:*mut OkSession,names:*const c_char,
     }
     s.user_fk=fk;0
 }
+/// KKPE / Timeline bone local position (Unity metres) and scale overrides.
+/// `flags[i]` bit 1 = apply `pos[i*3..+3]`, bit 2 = apply `scale[i*3..+3]`. `count == 0` clears overrides.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_set_bone_pos_scale(
+    s: *mut OkSession,
+    names: *const c_char,
+    pos: *const f32,
+    scale: *const f32,
+    flags: *const u8,
+    count: i32,
+) -> i32 {
+    let Some(s) = sess_ref(s) else { return -1; };
+    if count < 0 || (count > 0 && (names.is_null() || flags.is_null())) {
+        return -1;
+    }
+    let mut entries = Vec::with_capacity(count as usize);
+    let mut p = names;
+    for i in 0..count as usize {
+        let name = std::ffi::CStr::from_ptr(p);
+        let fl = *flags.add(i);
+        let pos_opt = if (fl & 1) != 0 {
+            if pos.is_null() { return -1; }
+            let pv = std::slice::from_raw_parts(pos.add(i * 3), 3);
+            if !pv.iter().all(|v| v.is_finite()) { return -1; }
+            Some([pv[0], pv[1], pv[2]])
+        } else {
+            None
+        };
+        let scale_opt = if (fl & 2) != 0 {
+            if scale.is_null() { return -1; }
+            let sv = std::slice::from_raw_parts(scale.add(i * 3), 3);
+            if !sv.iter().all(|v| v.is_finite()) { return -1; }
+            Some([sv[0], sv[1], sv[2]])
+        } else {
+            None
+        };
+        if pos_opt.is_some() || scale_opt.is_some() {
+            entries.push((name.to_string_lossy().into_owned(), pos_opt, scale_opt));
+        }
+        p = p.add(name.to_bytes().len() + 1);
+    }
+    s.user_bone_pos_scale = entries;
+    s.user_bone_ps_ids = Default::default();
+    0
+}
+/// Resolve all `SessionPart` indices belonging to a Unity `SkinnedMeshRenderer` name or hierarchy path
+/// (e.g. `"cf_O_face"`, `"o_body_a"`, or `"BodyTop/.../ca_slot05/.../renderer"`).
+/// Returns total matching part count (writes up to `cap` indices into `out_parts`), or -1 on invalid args.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_renderer_parts(
+    s: *const OkSession,
+    renderer: *const c_char,
+    out_parts: *mut i32,
+    cap: i32,
+) -> i32 {
+    if s.is_null() || renderer.is_null() || cap < 0 || (cap > 0 && out_parts.is_null()) {
+        return -1;
+    }
+    let s = &*s;
+    let query = std::ffi::CStr::from_ptr(renderer).to_string_lossy();
+    let q = query.trim();
+    if q.is_empty() {
+        return 0;
+    }
+    let leaf = q.rsplit('/').next().unwrap_or(q);
+    let slot_filter: Option<usize> = q.split('/').find_map(|seg| {
+        seg.strip_prefix("ca_slot")
+            .and_then(|num| num.parse::<usize>().ok())
+    });
+    let mut written = 0i32;
+    let mut total = 0i32;
+    for (idx, part) in s.parts.iter().enumerate() {
+        if let Some(want_slot) = slot_filter {
+            let matches_slot = part.source_property.as_deref().is_some_and(|prop| {
+                prop.rsplit('.').next().and_then(|s| s.strip_prefix("accessory")).and_then(|n| n.parse::<usize>().ok()) == Some(want_slot)
+            });
+            if !matches_slot {
+                continue;
+            }
+        }
+        let base_part_name = part.name.rsplit_once("_s").and_then(|(b, suf)| suf.chars().all(|c| c.is_ascii_digit()).then_some(b)).unwrap_or(part.name.as_str());
+        let name_hit = part.source_renderer_names.iter().any(|rn| {
+            rn.eq_ignore_ascii_case(q) || rn.eq_ignore_ascii_case(leaf)
+        }) || part.name.eq_ignore_ascii_case(leaf)
+            || base_part_name.eq_ignore_ascii_case(leaf);
+        if name_hit {
+            if written < cap {
+                *out_parts.add(written as usize) = idx as i32;
+                written += 1;
+            }
+            total += 1;
+        }
+    }
+    total
+}
 /// Studio IK: builds the solver from the shared resources root (once per session). 0 ok, 1 error (message in `err`).
 #[no_mangle]
 pub unsafe extern "C" fn ok_session_prepare_studio_ik(s:*mut OkSession,root:*const c_char,err:*mut c_char,cap:i32)->i32 {
@@ -1284,12 +1379,13 @@ pub(crate) unsafe extern "C" fn session_open(
     err_buf: *mut c_char,
     err_cap: i32,
 ) -> i32 {
+    let card_for_meta = cstr_opt(card_path_utf8);
     let run = crate::run_no_panic(|| {
         // A foreground open makes background opens (clothing variant warm-up) yield the card pack mount.
         let _foreground = crate::ForegroundOpen::begin();
         let _defer = crate::oklib::DeferCacheStore::begin();
         let game = cstr_opt(game_root_utf8).ok_or_else(|| "null game_root".to_string())?;
-        let card = cstr_opt(card_path_utf8);
+        let card = card_for_meta.clone();
         // Original KKS card with a base library configured: the library plus the card's zipmods.
         if let Some(card) = card.as_deref() {
             if let Some(result) = crate::oklib::open_original_card(std::path::Path::new(&game), std::path::Path::new(card), outfit) {
@@ -1320,6 +1416,11 @@ pub(crate) unsafe extern "C" fn session_open(
         Ok(mut sess) => {
             // Her belly bulge targets (belly_bulge.rs), on every way a body opens: original cards, OK cards, packs.
             crate::belly_bulge::add(&mut sess);
+            if sess.active_shoe_meta.is_none() {
+                if let Some(cp) = card_for_meta.as_deref() {
+                    crate::mmdd::populate_session_shoe_meta(&mut sess, std::path::Path::new(cp), outfit);
+                }
+            }
             if out.is_null() {
                 write_err(err_buf, err_cap, "null out");
                 return 1;
@@ -1662,21 +1763,8 @@ pub(crate) unsafe extern "C" fn eye_material_setting(s:*mut OkSession,part:i32,s
     runtime.and_then(|r|r.settings.get(setting as usize)).copied().unwrap_or(0.)
 }
 pub(crate) unsafe extern "C" fn set_eye_gaze(s:*mut OkSession,left:f32,right:f32,vertical:f32)->i32 {
-    if !left.is_finite() || !right.is_finite() || !vertical.is_finite() {return 1;}
     let Some(session)=sess_ref(s) else{return 1;};
-    for part in &mut session.parts {
-        if let Some(runtime)=part.iris_runtime.as_ref() {
-            // Vertical past ±1 rolls her eyes on past the limit (IrisRuntime::st_rolled); the look's rates stay in -1..1.
-            let h=if runtime.settings[0]==1. {right}else{left};
-            let most=crate::eye_look::most();
-            let st=runtime.st_rolled(h.clamp(-most,most),vertical.clamp(-2.,2.));
-            runtime.apply_st(&mut part.uvs,st);
-            if let Some(draw)=part.eye_draw.as_mut() {
-                draw.apply(st,&runtime.raw_uvs,&mut part.uv2,&mut part.uv3);
-            }
-        }
-    }
-    0
+    if session.set_eye_gaze_rates(left,right,vertical) {0} else {1}
 }
 unsafe extern "C" fn eye_look_pattern_count(s:*mut OkSession)->i32 {
     sess_ref(s).and_then(|s|s.eye_look_config.as_ref()).map_or(0,|c|c.patterns.len() as i32)
@@ -2828,6 +2916,16 @@ pub unsafe extern "C" fn ok_unity_euler_slerp(a: *const f32, b: *const f32, t: f
     std::ptr::copy_nonoverlapping(e.as_ptr(), out, 3);
     0
 }
+/// Convert a Unity quaternion `(x, y, z, w)` to Unity Euler degrees `(x, y, z)` (ZXY order).
+#[no_mangle]
+pub unsafe extern "C" fn ok_unity_quat_to_euler(q4: *const f32, out: *mut f32) -> i32 {
+    if q4.is_null() || out.is_null() { return -1; }
+    let q = std::slice::from_raw_parts(q4, 4);
+    if !q.iter().all(|v| v.is_finite()) { return -1; }
+    let e = crate::pose::quat_to_unity_euler([q[0], q[1], q[2], q[3]]);
+    std::ptr::copy_nonoverlapping(e.as_ptr(), out, 3);
+    0
+}
 /// KStudio scene import step 1 (`studio_scene::export`): JSON in `out` (needs a large buffer); 0 ok, 1 error.
 #[no_mangle]
 pub unsafe extern "C" fn ok_studio_scene_export(scene: *const c_char, out_dir: *const c_char, out: *mut c_char, cap: i32) -> i32 {
@@ -2890,4 +2988,16 @@ pub unsafe extern "C" fn ok_okmodel_texture_png(lib: *const c_char, id: *const c
         Ok(png) => { if !out.is_null() && cap as usize >= png.len() { ptr::copy_nonoverlapping(png.as_ptr(), out, png.len()); } png.len() as i32 }
         Err(_) => -1,
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_set_blush(s: *mut OkSession, rate: f32) -> i32 {
+    let Some(session) = sess_ref(s) else { return 1; };
+    if session.set_blush(rate) { 0 } else { 1 }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_set_iris_small(s: *mut OkSession, rate: f32) -> i32 {
+    let Some(session) = sess_ref(s) else { return 1; };
+    if session.set_iris_small(rate) { 0 } else { 1 }
 }

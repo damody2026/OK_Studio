@@ -1183,6 +1183,83 @@ pub fn apply_expression_bone_masked(skel: &mut Skeleton, mask: u16) {
 /// Whether category `category` (left side; +1 for the right) is on in `mask`.
 fn expression_on(mask: u16, category: u16, is_left: bool) -> bool { mask & (1 << (category + if is_left { 0 } else { 1 })) != 0 }
 
+/// Returns true for pure leaf/twist corrective deform helpers driven by final `cf_j_*`
+/// transforms (none of which is an ancestor of any MMDD-synced `cf_j_*` bone).
+pub(crate) fn is_leaf_corrective_expression_bone(name: &str) -> bool {
+    matches!(
+        name,
+        "cf_d_arm01_L"
+            | "cf_d_arm02_L"
+            | "cf_d_arm03_L"
+            | "cf_d_arm01_R"
+            | "cf_d_arm02_R"
+            | "cf_d_arm03_R"
+            | "cf_s_elbo_L"
+            | "cf_s_elboback_L"
+            | "cf_s_elbo_R"
+            | "cf_s_elboback_R"
+            | "cf_d_hand_L"
+            | "cf_d_wrist_L"
+            | "cf_d_forearm02_L"
+            | "cf_d_hand_R"
+            | "cf_d_wrist_R"
+            | "cf_d_forearm02_R"
+            | "cf_d_thigh01_L"
+            | "cf_d_thigh02_L"
+            | "cf_d_thigh03_L"
+            | "cf_d_thigh01_R"
+            | "cf_d_thigh02_R"
+            | "cf_d_thigh03_R"
+            | "cf_s_kneeB_L"
+            | "cf_d_kneeF_L"
+            | "cf_s_kneeB_R"
+            | "cf_d_kneeF_R"
+            | "cf_d_leg02_L"
+            | "cf_d_leg02_R"
+            | "cf_d_bust00"
+            | "cf_d_hit_bust_L"
+            | "cf_d_hit_bust_R"
+            | "a_n_neck"
+    )
+}
+
+fn apply_expression_bone_arm_twists_only(skel: &mut Skeleton) {
+    let name2id = rig_name_index(skel, false);
+    let get = |n: &str| name2id.get(n).copied();
+    for side in ["L", "R"] {
+        let Some(i_arm) = get(&format!("cf_j_arm00_{side}")) else {
+            continue;
+        };
+        let arm_rot = skel.tfs.get(&i_arm).map(|t| t.rot).unwrap_or([0.0, 0.0, 0.0, 1.0]);
+        let x = quat_to_euler_deg(5, arm_rot)[0];
+        for (bone, coef) in [
+            (format!("cf_d_arm01_{side}"), 0.6f32),
+            (format!("cf_d_arm02_{side}"), 0.5),
+            (format!("cf_d_arm03_{side}"), 0.125),
+        ] {
+            if let Some(id) = get(&bone) {
+                let rot = skel.tfs.get(&id).map(|t| t.rot).unwrap_or([0.0, 0.0, 0.0, 1.0]);
+                let mut e = quat_to_euler_deg(5, rot);
+                e[0] = -x * coef;
+                if let Some(tf) = skel.tfs.get_mut(&id) {
+                    tf.rot = euler_order_to_quat(5, e[0], e[1], e[2]);
+                }
+            }
+        }
+    }
+}
+
+/// Recomputes pure leaf/twist ExpressionBone helpers from the final world-locked `cf_j_*`
+/// pose without touching intermediate parent bones (`cf_d_shoulder02_L/R`, `cf_s_leg_L/R`, `cf_d_siri_L/R`).
+pub(crate) fn apply_expression_bone_leaf_twists(skel: &mut Skeleton) {
+    apply_expression_bone_arm_twists_only(skel);
+    apply_expression_bone_elbows_impl(skel, false, EXPRESSION_ALL);
+    apply_expression_bone_hands_impl(skel, false, EXPRESSION_ALL);
+    apply_expression_bone_leg_twists_impl(skel, false, EXPRESSION_ALL);
+    apply_expression_bone_bust_impl(skel, false, EXPRESSION_ALL);
+    apply_expression_bone_acs_null_impl(skel, false, EXPRESSION_ALL);
+}
+
 /// LegL/R use a calculation Transform with thigh WORLD position and waist
 /// WORLD rotation, then the helpers created by ExpressionBone.Initialize.
 pub fn apply_expression_bone_leg_positions(skel: &mut Skeleton) {
@@ -2023,6 +2100,21 @@ impl PrefabHierarchy {
     pub fn worlds(&self) -> Vec<Mat4> { self.worlds_with(&|_| None) }
     /// `worlds` with some nodes' local rotation replaced (item FK: node index -> Unity quaternion).
     pub fn worlds_with(&self, rot: &dyn Fn(usize) -> Option<[f32; 4]>) -> Vec<Mat4> {
+        self.worlds_with_trs(&|i| (None, rot(i), None))
+    }
+    /// `worlds` with optional local position, rotation (Unity quaternion) and scale overrides per node.
+    pub fn worlds_with_trs(&self, trs_fn: &dyn Fn(usize) -> (Option<[f32; 3]>, Option<[f32; 4]>, Option<[f32; 3]>)) -> Vec<Mat4> {
+        let mut out: Vec<Mat4> = Vec::with_capacity(self.nodes.len());
+        for (i, n) in self.nodes.iter().enumerate() {
+            let (p, r, s) = trs_fn(i);
+            let local = trs(p.unwrap_or(n.pos), r.unwrap_or(n.rot), s.unwrap_or(n.scale));
+            let world = if n.parent >= 0 && (n.parent as usize) < out.len() { mat_mul(&out[n.parent as usize], &local) } else { local };
+            out.push(world);
+        }
+        out
+    }
+    #[allow(dead_code)]
+    pub fn worlds_with_legacy_unused(&self, rot: &dyn Fn(usize) -> Option<[f32; 4]>) -> Vec<Mat4> {
         let mut out: Vec<Mat4> = Vec::with_capacity(self.nodes.len());
         for (i, n) in self.nodes.iter().enumerate() {
             let local = trs(n.pos, rot(i).unwrap_or(n.rot), n.scale);

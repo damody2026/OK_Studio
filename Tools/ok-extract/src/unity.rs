@@ -965,6 +965,142 @@ fn clothes_renderer_map_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &
 /// Node existence used by `ChaControl.AddClothesStateKind` through
 /// `ChaReference.GetReferenceInfo`. This walks the named prefab subtree, so a
 /// sibling prefab in the same asset bundle cannot lend it a reference node.
+/// `ChaClothesBlendShape` component slots (`ItemName01..04`, `Meshes01..04`, `BlendShapeIndex01..04`)
+/// inside the named clothing prefab subtree.
+pub fn clothes_blend_shape_defs<B: BundleInput + ?Sized>(
+    bytes: &B,
+    prefab_name: &str,
+) -> Vec<crate::card_plugins::ClothesBlendShapeSlot> {
+    crate::oklib::memo_bytes_optional(bytes.bundle_bytes(), "clothes_blend_shape_defs", prefab_name, || {
+        clothes_blend_shape_defs_unity(bytes, prefab_name)
+    })
+}
+
+fn clothes_blend_shape_defs_unity<B: BundleInput + ?Sized>(
+    bytes: &B,
+    prefab_name: &str,
+) -> Vec<crate::card_plugins::ClothesBlendShapeSlot> {
+    let Some(bundle) = load_bundle_source(bytes.to_source(), false).ok().map(Arc::new) else {
+        return Vec::new();
+    };
+    let want = prefab_name.to_ascii_lowercase();
+    let want_trim = prefab_name.trim_start_matches("p_").to_ascii_lowercase();
+    for node in &bundle.nodes {
+        let file = unity_asset_binary::bundle::BundleFileInfo::new(node.name.clone(), node.offset, node.size);
+        let Ok(ser) = parse_shared_serialized(BundleFileBytes { bundle: bundle.clone(), file }) else {
+            continue;
+        };
+        let mut scripts: HashMap<i64, String> = HashMap::new();
+        for info in ser.objects_of_type(115) {
+            if let Ok(obj) = ser.scene_object(&info) {
+                let props = obj.class.properties();
+                let class = props
+                    .get("m_ClassName")
+                    .or_else(|| props.get("m_Name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                scripts.insert(info.path_id, class);
+            }
+        }
+        if !scripts.values().any(|c| c.contains("ChaClothesBlendShape")) {
+            continue;
+        }
+        let mut go_names: HashMap<i64, String> = HashMap::new();
+        let mut tf_go: HashMap<i64, i64> = HashMap::new();
+        let mut tf_children: HashMap<i64, Vec<i64>> = HashMap::new();
+        for info in ser.objects_of_type(1) {
+            if let Ok(obj) = ser.scene_object(&info) {
+                if let Some(n) = obj.name() {
+                    go_names.insert(info.path_id, n);
+                }
+            }
+        }
+        for info in ser.objects_of_type(4) {
+            if let Ok(obj) = ser.scene_object(&info) {
+                let props = obj.class.properties();
+                if let Some(g) = props.get("m_GameObject").and_then(pptr_path_id) {
+                    tf_go.insert(info.path_id, g);
+                }
+                if let Some(unity_asset_core::UnityValue::Array(ch)) = props.get("m_Children") {
+                    tf_children.insert(info.path_id, ch.iter().filter_map(pptr_path_id).collect());
+                }
+            }
+        }
+        let mut go_tf: HashMap<i64, i64> = HashMap::new();
+        for (tf, go) in &tf_go {
+            go_tf.insert(*go, *tf);
+        }
+        let mut subtree: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        let mut stack: Vec<i64> = go_names
+            .iter()
+            .filter(|(_, n)| {
+                let l = n.to_ascii_lowercase();
+                l == want || (!want_trim.is_empty() && l == want_trim)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        while let Some(go) = stack.pop() {
+            if !subtree.insert(go) {
+                continue;
+            }
+            if let Some(tf) = go_tf.get(&go) {
+                if let Some(kids) = tf_children.get(tf) {
+                    for t in kids {
+                        if let Some(g) = tf_go.get(t) {
+                            stack.push(*g);
+                        }
+                    }
+                }
+            }
+        }
+        for info in ser.objects_of_type(114) {
+            let Ok(obj) = ser.scene_object(&info) else {
+                continue;
+            };
+            let props = obj.class.properties();
+            let class = props
+                .get("m_Script")
+                .and_then(pptr_path_id)
+                .and_then(|id| scripts.get(&id))
+                .cloned()
+                .unwrap_or_default();
+            if !class.contains("ChaClothesBlendShape") {
+                continue;
+            }
+            let go = props.get("m_GameObject").and_then(pptr_path_id);
+            if !go.map(|g| subtree.contains(&g)).unwrap_or(false) {
+                continue;
+            }
+            let mut slots = Vec::with_capacity(4);
+            for idx in 1..=4 {
+                let item_name = props
+                    .get(&format!("ItemName{idx:02}"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let renderers: Vec<i64> = props
+                    .get(&format!("Meshes{idx:02}"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(pptr_path_id).filter(|&id| id != 0).collect())
+                    .unwrap_or_default();
+                let shape_index = props
+                    .get(&format!("BlendShapeIndex{idx:02}"))
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0)
+                    .max(0) as usize;
+                slots.push(crate::card_plugins::ClothesBlendShapeSlot {
+                    item_name,
+                    renderers,
+                    shape_index,
+                });
+            }
+            return slots;
+        }
+    }
+    Vec::new()
+}
+
 pub fn prefab_node_names(bytes: &[u8], prefab_name: &str) -> std::collections::HashSet<String> {
     crate::oklib::memo_bytes(bytes,"prefab_node_names",prefab_name,||prefab_node_names_unity(bytes,prefab_name))
 }
@@ -4883,7 +5019,7 @@ impl ParsedBundle {
                 }
             }
             // Capture the whole material for downstream tint/blend/slot use.
-            for property in ["_NormalMapDetail","_AnotherRamp","_EmissionMask","_EmissionMap","_ReflectionMapCap","_ReflectMapDetail","_Texture2","_Texture3","_liquidmask","_overtex1","_overtex2","_overtex3"] {
+            for property in ["_NormalMapDetail","_AnotherRamp","_GlassRamp","_EmissionMask","_EmissionMap","_ReflectionMapCap","_ReflectMapDetail","_Texture2","_Texture3","_liquidmask","_overtex1","_overtex2","_overtex3"] {
                 if let Some(name)=mat.slot(property) {
                     if let Some(png)=self.decode_tex(name) {
                         m.shader_extra_textures.insert(property.into(),png);
@@ -4898,7 +5034,7 @@ impl ParsedBundle {
                                     [s.filter,s.wrap_u,s.wrap_v,i32::from(s.srgb),s.mip_count]);
                             }
                         }
-                        if matches!(property,"_AnotherRamp"|"_Texture2"|"_Texture3"|"_liquidmask") {
+                        if matches!(property,"_AnotherRamp"|"_GlassRamp"|"_Texture2"|"_Texture3"|"_liquidmask") {
                             if let Some(sampling) = self.texture_sampling_named(name) {
                                 m.runtime_textures.insert(property.into(), [
                                     sampling.filter, sampling.wrap_u, sampling.wrap_v,

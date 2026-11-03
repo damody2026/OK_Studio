@@ -15,6 +15,8 @@ namespace OKStudioGameInternal
 	inline bool IkEffectorTurns(int32 Effector) { return Effector >= 5 && Effector <= 8; }
 	/** The hand or foot bone's rotation now, in the character's Unity space, as a Studio IK target's Euler. */
 	bool IkEffectorEuler(const AKKPreviewActor* Actor, int32 Effector, FVector& OutEuler);
+	bool LoadAudioFile(const FString& Path, TSharedPtr<const struct FKKSpeechPcm, ESPMode::ThreadSafe>& Out, FString& Error);
+	float ComputeFocusSelectionDistance(const FBox& Bounds, const FRotator& ViewRotation, float HorizontalFovDegrees, float AspectRatio);
 }
 
 /** The studio's control channel (OKStudioControl.cpp): listens while a studio runs with -Control. */
