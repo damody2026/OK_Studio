@@ -1589,7 +1589,9 @@ U149～U153 完成紀錄（2026-11-03，控制通道實測）：
   - 指令和 U143 一樣，把清單換成這個檔：
 
     ```powershell
-    cargo build --release --manifest-path Tools\ok-extract\Cargo.toml
+    # ok 系列的程式（含 cargo 與它們跑的工作）最多 8 個執行緒
+    $env:RAYON_NUM_THREADS='8'
+    cargo build -j 8 --release --manifest-path Tools\ok-extract\Cargo.toml
     $env:OKLIB_REFRESH='meshes_for_maindata,meshes_for_maindata_including_disabled,decode_all,base_bundle'
     .\Tools\ok-extract\target\release\ok-extract.exe <遊戲目錄> --oklib convert Content\IndependentResources\base_v1 8 "@$PWD\Tools\oklib_rerecord\u149_wide_uv.txt"
     ```
@@ -1663,11 +1665,13 @@ U143～U148 完成紀錄（2026-11-03，控制通道實測）：
   - mods 每台不同，C、E 先在自己的環境掃出清單，再重錄：
 
     ```powershell
+    # ok 系列的程式（含 cargo 與它們跑的工作）最多 8 個執行緒
+    $env:RAYON_NUM_THREADS='8'
     # 1. 掃出受影響的來源（約 50 分鐘，讀遊戲與 mods 的全部來源）
     $env:OK_TEST_GAME_ROOT='<遊戲目錄>'; $env:OK_DIM_SCAN_OUT="$PWD\Saved\u143_sources.txt"
-    cargo test --release --manifest-path Tools\ok-extract\Cargo.toml --lib sources_with_flagged_channel_dimensions -- --ignored --nocapture
+    cargo test -j 8 --release --manifest-path Tools\ok-extract\Cargo.toml --lib sources_with_flagged_channel_dimensions -- --ignored --nocapture
     # 2. 重錄（新的紀錄附加在 okmodel 後面，讀取時以後面的為準）
-    cargo build --release --manifest-path Tools\ok-extract\Cargo.toml
+    cargo build -j 8 --release --manifest-path Tools\ok-extract\Cargo.toml
     $env:OKLIB_REFRESH='meshes_for_maindata,meshes_for_maindata_including_disabled,decode_all,base_bundle'
     .\Tools\ok-extract\target\release\ok-extract.exe <遊戲目錄> --oklib convert Content\IndependentResources\base_v1 8 "@$PWD\Saved\u143_sources.txt"
     ```
