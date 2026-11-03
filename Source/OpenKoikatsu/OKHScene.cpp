@@ -355,11 +355,19 @@ void UOKHScenePanel::ApplySpeed(){
     if(!FMath::IsNearlyEqual(Gallery->PairedPlayback->GetSpeed(),Target,.01f))Gallery->OnPairSpeed(Target/4.f);
 }
 
+// A place of hers past 30 (she starts to feel it), 60 (sensitive) or 100 (used to him) with this climax or his coming in
+// her mouth (H_DEVELOPMENT_EXPERIENCE_PLAN P3): said with the event, so her reaction to it speaks of it.
+static FString OKDevStep(const TCHAR* Area,float Before,float After){
+    for(const int32 Step:{100,60,30})if(Before<Step/100.f-1e-4f&&After>=Step/100.f-1e-4f)
+        return OKMsg(TEXT("ui.hscene.event_dev_step"),{{TEXT("area"),OKT(*(FString(TEXT("ui.hscene.dev_area_"))+Area))},{TEXT("step"),Step}});
+    return FString();
+}
+
 void UOKHScenePanel::Finish(const TCHAR* Kind){
     const FString K=Kind;++LineEpoch;
     JustCameAt=FPlatformTime::Seconds();JustCame=K.StartsWith(TEXT("org"))?1:K.StartsWith(TEXT("same"))?2:0;
     if(Mode==1){
-        ++ServiceFinishes;++HisFinishes;His=0.f;
+        ++ServiceFinishes;++HisFinishes;His=0.f;const float OralBefore=Dev(TEXT("oral"));
         // In her mouth only for a mouth pose: on her chest or in her hand is outside her (not swallowed or spat).
         if(K==TEXT("inside")&&(!Poses.IsValidIndex(ActivePose)||Poses[ActivePose].KindHoushi==1))++HisMouth;else ++HisOutside;
         if(K==TEXT("inside")){const int32 Kind=Poses.IsValidIndex(ActivePose)?Poses[ActivePose].KindHoushi:1;
@@ -368,13 +376,14 @@ void UOKHScenePanel::Finish(const TCHAR* Kind){
             if(Kind==1){Chain({TEXT("IN_Start"),TEXT("IN_Loop"),TEXT("Oral_Idle_IN"),TEXT("Oral_Idle")});OralIdleSince=0.;}
             else Chain({TEXT("IN_Start"),TEXT("IN_Loop"),Has(TEXT("IN_A"))?TEXT("IN_A"):TEXT("OUT_A")});
             if(Kind==2)AddSiru(1); // on her chest
-            Note(OKT(Kind==1?TEXT("ui.hscene.event_service_inside"):Kind==2?TEXT("ui.hscene.event_service_chest"):TEXT("ui.hscene.event_service_hand")));}
+            Note(OKT(Kind==1?TEXT("ui.hscene.event_service_inside"):Kind==2?TEXT("ui.hscene.event_service_chest"):TEXT("ui.hscene.event_service_hand"))+OKDevStep(TEXT("oral"),OralBefore,Dev(TEXT("oral"))));}
         else{const bool Mouth=Poses.IsValidIndex(ActivePose)&&Poses[ActivePose].KindHoushi==1;Chain({TEXT("M_OUT_Start"),TEXT("M_OUT_Loop"),TEXT("OUT_A")});AddSiru(Mouth?0:1);
             // Out of her mouth it lands on her face (she said "my mouth is full" to a plain "outside").
             Note(OKT(Mouth?TEXT("ui.hscene.event_service_face"):TEXT("ui.hscene.event_service_outside")));}
         return;
     }
     const bool Org=K.StartsWith(TEXT("org")),Same=K.StartsWith(TEXT("same"));
+    const TCHAR* DevArea=bAnalPlay?TEXT("anal"):TEXT("crotch");const float DevBefore=Dev(DevArea);
     if(Org||Same){++(bAnalPlay?AnalClimaxes:CrotchClimaxes);Her=0.f;}
     if(Same||K==TEXT("inside")||K==TEXT("outside")){++HisFinishes;His=0.f;++(K==TEXT("outside")?HisOutside:HisInside);if(Mode==2){if(bCondom)++HisCondom;else if(K!=TEXT("outside")){++HisInsideRaw;if(!bAnalPlay)++HisInsideVaginaRaw;}}}
     if(Org||Same){ReleaseHeld();CountHerOrgasm();
@@ -403,7 +412,7 @@ void UOKHScenePanel::Finish(const TCHAR* Kind){
     else if(K==TEXT("orgS"))States.Append({P(TEXT("SF_IN_Start")),P(TEXT("SF_IN_Loop")),P(TEXT("SS_IN_A"))});
     else States.Append({P(TEXT("SS_IN_Start")),P(TEXT("SS_IN_Loop")),P(TEXT("SS_IN_A"))});
     Chain(States);
-    Note(OKT(Org?TEXT("ui.hscene.event_her_orgasm"):Same?TEXT("ui.hscene.event_together"):K==TEXT("inside")?(bCondom?TEXT("ui.hscene.event_inside_condom"):TEXT("ui.hscene.event_inside")):TEXT("ui.hscene.event_outside")));
+    Note(OKT(Org?TEXT("ui.hscene.event_her_orgasm"):Same?TEXT("ui.hscene.event_together"):K==TEXT("inside")?(bCondom?TEXT("ui.hscene.event_inside_condom"):TEXT("ui.hscene.event_inside")):TEXT("ui.hscene.event_outside"))+OKDevStep(DevArea,DevBefore,Dev(DevArea)));
 }
 
 void UOKHScenePanel::Click(int32 Kind){
