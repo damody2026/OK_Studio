@@ -251,6 +251,44 @@ impl PropIndex {
         a.map_or(false, |i| self.areas[i as usize].kind == "room")
     }
 
+    /// Whether a prop is on the level she stands on. Positions are object bases on the floor (mirrors: the glass
+    /// centre, up to the ceiling), so the window looks up more than down. Inside her own room the room box already
+    /// fixes the floor and a ceiling mirror 3.9 m above her feet still counts; elsewhere the window stays below the
+    /// smallest storey height (3.6 m), so the floor above and the floor below never leak in.
+    fn same_level(&self, feet: [f32; 3], pr: &Prop, in_her_room: bool) -> bool {
+        let dz = pr.p[2] - feet[2];
+        let up = match (in_her_room, pr.k == "mirror") {
+            (true, true) => 450.0,
+            (true, false) => 300.0,
+            (false, true) => 320.0,
+            (false, false) => LEVEL_CM,
+        };
+        dz >= -120.0 && dz <= up
+    }
+
+    /// Storey she is on: the floor number of her room or, in a corridor, of the room nearest below her feet.
+    pub fn floor_at(&self, p: [f32; 3]) -> Option<i32> {
+        let here = self.area_at(p)?;
+        let a = &self.areas[here as usize];
+        if a.floor.is_some() {
+            return a.floor;
+        }
+        if a.kind != "building" {
+            return None;
+        }
+        let mut best: Option<(f32, i32)> = None;
+        for &i in self.area_grid.get(&self.cell_of(p)).into_iter().flatten() {
+            let r = &self.areas[i as usize];
+            if let (Some(f), Some(lo)) = (r.floor, r.min) {
+                let dz = p[2] - lo[2];
+                if r.building == a.building && dz > -60.0 && best.map_or(true, |b| dz < b.0) {
+                    best = Some((dz, f));
+                }
+            }
+        }
+        best.map(|b| b.1)
+    }
+
     /// Props near `p`, nearest first.
     pub fn nearby(&self, p: [f32; 3], q: &Query) -> Vec<Hit> {
         let here = self.area_at(p);
@@ -259,9 +297,7 @@ impl PropIndex {
         for c in self.cells_around(p, q.radius_cm) {
             for &i in self.prop_grid.get(&c).into_iter().flatten() {
                 let pr = &self.props[i as usize];
-                if (pr.p[2] - p[2]).abs() > LEVEL_CM
-                    && !(pr.k == "mirror" && (pr.p[2] - p[2]).abs() < LEVEL_CM + 150.0)
-                {
+                if !self.same_level(p, pr, in_room && pr.a == here) {
                     continue;
                 }
                 let d = dist(p, pr.p);
@@ -377,27 +413,41 @@ impl PropIndex {
             .filter(|h| Some(h.index) != here)
             .filter(|h| {
                 // shops and named places; skip the individual rooms of other buildings (a dorm has hundreds)
+                // rooms only on her own storey (the dorm rooms right above her are not "nearby")
                 let a = &self.areas[h.index as usize];
                 a.kind != "room"
-                    || here.map_or(false, |i| {
-                        self.areas[i as usize].building.is_some()
-                            && self.areas[i as usize].building == a.building
-                    })
+                    || (a.door[2] - p[2]).abs() < LEVEL_CM
+                        && here.map_or(false, |i| {
+                            self.areas[i as usize].building.is_some()
+                                && self.areas[i as usize].building == a.building
+                        })
             })
             .take(12)
             .map(|h| {
                 let mut v = self.area_json(h.index);
                 v["dist_cm"] = json!(h.dist_cm.round());
-                v["direction"] = json!(direction_zh(p, self.areas[h.index as usize].door));
+                let door = self.areas[h.index as usize].door;
+                v["direction"] = json!(direction_zh(p, door));
+                let dz = door[2] - p[2];
+                v["level"] = json!(if dz > LEVEL_CM {
+                    "above"
+                } else if dz < -LEVEL_CM {
+                    "below"
+                } else {
+                    "same"
+                });
                 v
             })
             .collect();
         let mut text = String::new();
         if let Some(i) = here {
-            text.push_str(&format!(
-                "妳在「{}」。",
-                self.area_name(&self.areas[i as usize])
-            ));
+            let a = &self.areas[i as usize];
+            match self.floor_at(p) {
+                Some(f) if a.kind != "place" => {
+                    text.push_str(&format!("妳在「{}」（{} 樓）。", self.area_name(a), f))
+                }
+                _ => text.push_str(&format!("妳在「{}」。", self.area_name(a))),
+            }
         }
         if !props.is_empty() {
             let parts: Vec<String> = props
@@ -421,7 +471,12 @@ impl PropIndex {
                 .iter()
                 .take(6)
                 .map(|v| {
-                    let dir = v["direction"].as_str().unwrap_or("");
+                    let dir = match v["level"].as_str() {
+                        Some("above") => format!("樓上，{}", v["direction"].as_str().unwrap_or("")),
+                        Some("below") => format!("樓下，{}", v["direction"].as_str().unwrap_or("")),
+                        _ => v["direction"].as_str().unwrap_or("").to_string(),
+                    };
+                    let dir = dir.as_str();
                     let name = v["name"].as_str().unwrap_or("");
                     if dir == "就在旁邊" {
                         format!("{name}（{dir}）")
@@ -435,7 +490,7 @@ impl PropIndex {
                 .collect();
             text.push_str(&format!("附近的地點：{}。", parts.join("、")));
         }
-        json!({ "here": here.map(|i| self.area_json(i)), "props": props, "areas": areas, "text": text })
+        json!({ "here": here.map(|i| self.area_json(i)), "floor": self.floor_at(p), "props": props, "areas": areas, "text": text })
     }
 
     /// ok-rules style entry: `kind` names the question, `request` carries `pos` [x,y,z] and the Query fields.
@@ -513,7 +568,9 @@ mod tests {
          "door": [1700, 1000, 0], "min": [1700, 1000, 0], "max": [2300, 1600, 320]},
         {"id": "building_r1", "kind": "building", "type": "住宅", "name": "住宅一號", "building": "R1", "door": [900, 1300, 0],
          "min": [900, 900, 0], "max": [2400, 1700, 2000]},
-        {"id": "grove_00", "kind": "place", "type": "grove", "door": [5000, 5000, 0], "radius_cm": 1500}
+        {"id": "grove_00", "kind": "place", "type": "grove", "door": [5000, 5000, 0], "radius_cm": 1500},
+        {"id": "r1-0201", "kind": "room", "type": "apartment", "name": "2樓住家01", "building": "R1", "floor": 2, "privacy": 2,
+         "door": [1000, 1000, 360], "min": [1000, 1000, 360], "max": [1600, 1600, 680]}
       ],
       "props": [
         {"k": "bed", "p": [1200, 1200, 0], "a": 0, "face": 90},
@@ -522,7 +579,10 @@ mod tests {
         {"k": "bed", "p": [1900, 1200, 0], "a": 1},
         {"k": "vending", "p": [850, 1300, 0]},
         {"k": "bench", "p": [5200, 5000, 0], "a": 3},
-        {"k": "bench", "p": [5200, 5000, 900]}
+        {"k": "bench", "p": [5200, 5000, 900]},
+        {"k": "bed", "p": [1200, 1200, 360], "a": 4},
+        {"k": "mirror", "p": [1300, 1000, 490], "a": 4},
+        {"k": "mirror", "p": [950, 1300, 130]}
       ]
     }"#;
 
@@ -565,7 +625,7 @@ mod tests {
             .iter()
             .map(|h| i.props[h.index as usize].k.as_str())
             .collect();
-        assert_eq!(kinds, vec!["vending"]);
+        assert_eq!(kinds, vec!["vending", "mirror"]);
         let all = i.nearby(
             [900.0, 1250.0, 0.0],
             &Query {
@@ -574,7 +634,11 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(all.len(), 5);
+        assert_eq!(
+            all.len(),
+            6,
+            "the corridor mirror counts, the floor above does not"
+        );
     }
 
     #[test]
@@ -622,7 +686,7 @@ mod tests {
         assert_eq!(names, vec!["床", "床邊大鏡子", "鏡子"]);
         let text = v["text"].as_str().unwrap();
         assert!(
-            text.starts_with("妳在「1樓住家01」。附近有：床（0.7 公尺）"),
+            text.starts_with("妳在「1樓住家01」（1 樓）。附近有：床（0.7 公尺）"),
             "{text}"
         );
         let n = i
@@ -634,6 +698,58 @@ mod tests {
         assert_eq!(n["prop"]["kind"], "vending");
         assert_eq!(n["prop"]["direction"], "西南邊");
         assert!(i.eval("unknown", &json!({})).is_none());
+    }
+
+    #[test]
+    fn storeys_stay_apart() {
+        let i = idx();
+        // in the 1F room: the 2F room's bed and mirror right above are not hers
+        let v = i
+            .eval(
+                "nearby_props",
+                &json!({ "pos": [1250, 1250, 0], "radius_cm": 1000 }),
+            )
+            .unwrap();
+        assert_eq!(v["props"].as_array().unwrap().len(), 3);
+        assert!(
+            v["areas"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|a| a["id"] != "r1-0201"),
+            "{}",
+            v["areas"]
+        );
+        // in the 2F room: its own bed and mirror, nothing from 1F; the floor is 2
+        let v = i
+            .eval(
+                "nearby_props",
+                &json!({ "pos": [1250, 1250, 360], "radius_cm": 1000 }),
+            )
+            .unwrap();
+        assert_eq!(v["here"]["id"], "r1-0201");
+        assert_eq!(v["floor"], 2);
+        let names: Vec<&str> = v["props"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["床", "鏡子"]);
+        // the 1F corridor mirror is not seen from the 2F corridor above it
+        let up = i.nearby(
+            [950.0, 1250.0, 360.0],
+            &Query {
+                radius_cm: 2000.0,
+                ..Default::default()
+            },
+        );
+        assert!(up.is_empty(), "{up:?}");
+        assert_eq!(
+            i.floor_at([950.0, 1250.0, 0.0]),
+            None,
+            "corridor at ground: no room below to name the floor"
+        );
     }
 
     #[test]
