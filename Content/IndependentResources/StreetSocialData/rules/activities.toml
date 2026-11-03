@@ -268,6 +268,30 @@ code = 1
 anchor = "lounge"
 
 [[activity]]
+# 在交誼廳電視前一起打電動（沙發＋電視＋遊戲機的 game 錨點，模型還沒有時落在交誼廳）：愛麗絲約「挑戰最難關」，
+# 只有讀書與滑手機的活動，兩人被排成坐著讀書
+id = "girls_lounge_game"
+name = "在女生宿舍交誼廳一起打電動"
+place = "girls_dorm"
+kind = "pair"
+code = 1
+anchor = "game|lounge"
+female_clip = "venue_phone_seated.okanim"
+male_clip = "venue_phone_seated.okanim"
+feed = { fun = 10, social = 6, energy = -4 }
+
+[[activity]]
+id = "boys_lounge_game"
+name = "在男生宿舍交誼廳一起打電動"
+place = "boys_dorm"
+kind = "pair"
+code = 1
+anchor = "game|lounge"
+female_clip = "venue_phone_seated.okanim"
+male_clip = "venue_phone_seated.okanim"
+feed = { fun = 10, social = 6, energy = -4 }
+
+[[activity]]
 id = "lodge_lobby"
 name = "在會館大廳坐著滑手機聊天"
 place = "lodge"
