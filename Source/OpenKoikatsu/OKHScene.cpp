@@ -881,6 +881,7 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
         }
     }
     const FString Cur=Current(),Base=Mode==0?Cur:HBase(Cur);
+    if(Mode==2&&Base.Contains(TEXT("Loop"))){float& Deepest=Cur.StartsWith(TEXT("A_"))?AnalDeepest:CrotchDeepest;Deepest=FMath::Max(Deepest,AlignDeep);}
     if(Cur!=LastState){
         const FString Before=HBase(LastState);
         LastState=Cur;StateSeen=Now;
@@ -2149,8 +2150,8 @@ void UOKHScenePanel::SetSpeed(float Value){SpeedValue=FMath::Clamp(Value,0.f,1.f
 TSharedRef<FJsonObject> UOKHScenePanel::Result() const{
     auto Counts=MakeShared<FJsonObject>();
     Counts->SetBoolField(TEXT("anal_refused"),bAnalAsked&&bAnalRefused);Counts->SetBoolField(TEXT("played"),bPlayed);Counts->SetBoolField(TEXT("service"),bService);Counts->SetNumberField(TEXT("service_finishes"),ServiceFinishes);
-    auto Part=[](bool Inserted,int32 Climaxes){auto O=MakeShared<FJsonObject>();O->SetBoolField(TEXT("inserted"),Inserted);O->SetNumberField(TEXT("climaxes"),Climaxes);return O;};
-    Counts->SetObjectField(TEXT("crotch"),Part(bCrotch,CrotchClimaxes));Counts->SetObjectField(TEXT("anal"),Part(bAnal,AnalClimaxes));
+    auto Part=[](bool Inserted,int32 Climaxes,float Deepest){auto O=MakeShared<FJsonObject>();O->SetBoolField(TEXT("inserted"),Inserted);O->SetNumberField(TEXT("climaxes"),Climaxes);O->SetNumberField(TEXT("deepest"),FMath::RoundToFloat(Deepest));return O;};
+    Counts->SetObjectField(TEXT("crotch"),Part(bCrotch,CrotchClimaxes,CrotchDeepest));Counts->SetObjectField(TEXT("anal"),Part(bAnal,AnalClimaxes,AnalDeepest));
     {static const TCHAR* Keys[]={TEXT("kiss"),TEXT("chest"),TEXT("crotch"),TEXT("anal"),TEXT("butt"),TEXT("nipple")};auto Areas=MakeShared<FJsonObject>();
      for(int32 I=0;I<6;++I)Areas->SetNumberField(Keys[I],FMath::RoundToDouble(AreaSeconds[I]));Counts->SetObjectField(TEXT("areas"),Areas);Counts->SetNumberField(TEXT("kiss"),FMath::RoundToDouble(AreaSeconds[0]));}
     Counts->SetBoolField(TEXT("raw"),bRaw);Counts->SetBoolField(TEXT("raw_pressed"),bRawPressed&&bRaw);

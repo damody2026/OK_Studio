@@ -18,6 +18,8 @@ pub const NIPPLE: usize = 5;
 /// Climaxes in a day after which each one raises her libido (hexp libido_gain).
 const LIBIDO_AFTER: i32 = 10;
 const AREA_KEYS: [&str; 6] = ["kiss", "chest", "crotch", "anal", "butt", "nipple"];
+/// How deep (AlignDeep, 0..100) counts as all the way in: her top is 90 once that place is developed to 100.
+const DEEPEST: f64 = 85.0;
 
 /// What she has been through (Heroine's H fields).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -48,11 +50,14 @@ pub struct HExp {
     /// Game minute until which his semen (white) and her blood (red) run out of her after a scene (-1 none; discharge).
     pub white_until: i64,
     pub red_until: i64,
+    /// He has gone all the way into her vagina / anus once (counts.crotch.deepest past DEEPEST): a memory the first time.
+    pub crotch_deep: bool,
+    pub anal_deep: bool,
 }
 
 impl Default for HExp {
     fn default() -> Self {
-        HExp { count: 0, kissed: false, areas: [0.0; 6], crotch_h: 0.0, anal_h: 0.0, service: 0.0, service_count: 0, oral: 0.0, raw_count: 0, virgin: true, anal_virgin: true, today_day: -1, today_orgasms: 0, today_service: 0, today_anal_refused: false, libido_gain: 0, white_until: -1, red_until: -1 }
+        HExp { count: 0, kissed: false, areas: [0.0; 6], crotch_h: 0.0, anal_h: 0.0, service: 0.0, service_count: 0, oral: 0.0, raw_count: 0, virgin: true, anal_virgin: true, today_day: -1, today_orgasms: 0, today_service: 0, today_anal_refused: false, libido_gain: 0, white_until: -1, red_until: -1, crotch_deep: false, anal_deep: false }
     }
 }
 
@@ -329,6 +334,13 @@ fn session_end(r: &Value) -> Result<Value, String> {
     if !was.kissed && h.kissed {
         first(&mut fx, "hexp.first_kiss", 0.95);
     }
+    // The first time he went all the way in (the scene's deepest, AlignDeep: 90 once she is opened up).
+    for (key, deep, id) in [("crotch", &mut h.crotch_deep, "hexp.first_deepest"), ("anal", &mut h.anal_deep, "hexp.first_deepest_anal")] {
+        if played && !*deep && num(c.get(key).unwrap_or(&Value::Null), "deepest") >= DEEPEST {
+            *deep = true;
+            first(&mut fx, id, 0.8);
+        }
+    }
     // Each place past 30 (she starts to feel it), 60 (sensitive to him) and 100 (used to him), her mouth too
     // (H_DEVELOPMENT_EXPERIENCE_PLAN P3): only the highest crossed this time.
     let steps = [(100.0, "hexp.area_used_to", 0.7), (60.0, "hexp.area_sensitive", 0.6), (30.0, "hexp.area_feels", 0.5)];
@@ -351,6 +363,8 @@ fn session_end(r: &Value) -> Result<Value, String> {
         (was.virgin && !h.virgin, "hexp.lost_virginity"),
         (was.anal_virgin && !h.anal_virgin, "hexp.first_anal"),
         (!was.kissed && h.kissed, "hexp.first_kiss"),
+        (!was.crotch_deep && h.crotch_deep, "hexp.first_deepest"),
+        (!was.anal_deep && h.anal_deep, "hexp.first_deepest_anal"),
     ]
     .iter()
     .filter(|(yes, _)| *yes)
@@ -425,6 +439,19 @@ mod tests {
         assert_eq!(areas, 3);
         let e = experience(&json!({"girl": "g", "relation": rel(0.0), "ext": out["ext"]})).unwrap();
         assert_eq!(e["areas"]["oral"], json!(70.0));
+    }
+
+    #[test]
+    fn the_first_time_all_the_way_in_is_remembered_once() {
+        let deep = |ext: Value, d: f64| session_end(&json!({"girl": "g", "relation": rel(0.0), "ext": ext, "counts": {"played": true,
+            "crotch": {"inserted": true, "deepest": d}}})).unwrap();
+        let firsts = |out: &Value| out["result"]["firsts"].as_array().unwrap().len();
+        let shallow = deep(json!({"hexp": {"g": {"count": 1, "virgin": false}}}), 70.0);
+        assert_eq!(firsts(&shallow), 0);
+        let all_in = deep(shallow["ext"].clone(), 90.0);
+        assert_eq!(firsts(&all_in), 1);
+        assert!(all_in["ext"]["hexp"]["g"]["crotch_deep"].as_bool().unwrap());
+        assert_eq!(firsts(&deep(all_in["ext"].clone(), 90.0)), 0, "only the first time");
     }
 
     #[test]

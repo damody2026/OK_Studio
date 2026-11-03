@@ -347,6 +347,8 @@ private:
     // Counts for her experience.
     bool bPlayed=false,bService=false,bRaw=false,bCrotch=false,bAnal=false;
     int32 ServiceFinishes=0,CrotchClimaxes=0,AnalClimaxes=0,HerOrgasms=0,HisFinishes=0;
+    // How deep he went in each (AlignDeep while they move, 0..100): her first time all the way in is a memory (hexp.rs).
+    float CrotchDeepest=0.f,AnalDeepest=0.f;
     TArray<FString> PosesPlayed,Events;
 };
 
