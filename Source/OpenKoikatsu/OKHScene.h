@@ -142,6 +142,8 @@ private:
     void BuildActions();
     void SelectPose(int32 PoseIndex);
     void PoseClothes(const FOKHPose& Pose);
+    // His penis drawn through her (ApplyMaleLook) only in a pose where he is in her: as it was last applied.
+    bool XRayInHer() const;bool bXRayInHer=false;
     void Want(const FString& State);
     void Chain(const TArray<FString>& States);
     bool Has(const FString& State) const;

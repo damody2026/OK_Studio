@@ -899,7 +899,7 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     // Only once the pair plays: while his parts and materials are still being prepared, hiding his clothes or swapping his
     // materials keeps that preparation from ever finishing (the room timed out).
     const bool PairPlaying=Gallery->PairedPlayback&&Gallery->PairedPlayback->GetElapsed()>0.f;
-    if(Mode!=0&&PairPlaying&&Gallery->PartnerActor&&MaleLookFor!=Gallery->PartnerActor.Get())ApplyMaleLook(); // he was (re)made for the pair
+    if(Mode!=0&&PairPlaying&&Gallery->PartnerActor&&(MaleLookFor!=Gallery->PartnerActor.Get()||bXRayInHer!=XRayInHer()))ApplyMaleLook(); // he was (re)made for the pair, or he went into her / out of her
     AlignHim(Delta); // measures while the pair plays; a new pose or mode puts them back
     const double Now=FPlatformTime::Seconds();
     auto* Playback=Gallery->PairedPlayback.Get();
@@ -965,7 +965,9 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     if(Mode==0&&Queue.IsEmpty()&&TouchArea!=INDEX_NONE&&(Base.EndsWith(TEXT("_Idle"))||Base==TEXT("K_Loop"))){
         bPlayed=true;AreaSeconds[TouchArea]+=Delta;
         const float Used=FMath::Clamp(AreaExperience(TouchArea)/100.f,0.f,1.f);
-        Her+=Delta*(1.5f+5.f*Rate)*(.6f+.6f*Used)*HerByLevel[FMath::Clamp(Level(),0,3)];if(bLockHer)Her=FMath::Min(Her,95.f);
+        // The original's rate (HandCtrl: FemaleGaugeUp(deltaTime * rateClickGauge), rateClickGauge 2 in the H scene's HFlag,
+        // level8): two points a second, fifty seconds to her climax.
+        Her+=Delta*2.f;if(bLockHer)Her=FMath::Min(Her,95.f);
         if(Rate>=.7f&&Used<=0.f&&TouchArea!=0){Note(OKT(TEXT("ui.hscene.too_hard")));Chain({TouchArea>=3&&TouchArea<=4?TEXT("Back_Dislikes"):TEXT("Front_Dislikes"),TEXT("Idle")});TouchArea=INDEX_NONE;}
         else if(Her>=100.f){Her=0.f;TouchArea=INDEX_NONE;ReleaseHeld();Chain({TEXT("Orgasm_Start"),TEXT("Orgasm_Loop"),TEXT("Orgasm_A"),TEXT("Idle")});Note(OKT(TEXT("ui.hscene.event_her_orgasm")));CountHerOrgasm();}
     }else if(Queue.IsEmpty()&&HIsLoop(Base)){
@@ -1452,6 +1454,7 @@ void UOKHScenePanel::FrameCamera(){
     UE_LOG(LogTemp,Display,TEXT("H camera: facing (%.2f,%.2f) shot from (%.2f,%.2f) pitch %.0f distance %.0f"),Facing.X,Facing.Y,Dir.X,Dir.Y,Pitch,Girl->OrbitDistance);
     HideWallsInTheWay();
 }
+bool UOKHScenePanel::XRayInHer() const{return Mode==2||(Mode==1&&Poses.IsValidIndex(ActivePose)&&Poses[ActivePose].KindHoushi==1);}
 void UOKHScenePanel::ApplyMaleLook(){
     auto* Him=Gallery?Gallery->PartnerActor.Get():nullptr;if(!IsValid(Him)||Mode==0||Him->IsHidden()||!Gallery->PairedPlayback)return;MaleLookFor=Him;
     // His bottom and briefs (the original takes them off in H): off shows the body under them, the penis with it. His
@@ -1473,7 +1476,9 @@ void UOKHScenePanel::ApplyMaleLook(){
     TInlineComponentArray<UMeshComponent*> All;Him->GetComponents(All);
     auto IsGenital=[Him](UMeshComponent* Comp){for(const FName& Tag:Comp->ComponentTags){const FString T=Tag.ToString();const int32 PartIdx=HTagPart(T);if(PartIdx==INDEX_NONE)continue;
         OkMeshView V{};if(Him->Session.PartAt(PartIdx,V)&&V.name){const FString N=FString(UTF8_TO_TCHAR(V.name)).ToLower();return N==TEXT("o_dankon")||N==TEXT("cm_o_dan00");}}return false;};
-    UMaterialInterface* XRayParent=bPenisXRay&&MaleView!=2&&bMaleBottomOff?LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/IndependentResources/PreviewMaterials/M_PreviewXRay.M_PreviewXRay"),nullptr,LOAD_NoWarn):nullptr;
+    // Only where he is in her (intercourse, her mouth): in her hands or between her breasts it would be drawn over them.
+    bXRayInHer=XRayInHer();
+    UMaterialInterface* XRayParent=bPenisXRay&&bXRayInHer&&MaleView!=2&&bMaleBottomOff?LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/IndependentResources/PreviewMaterials/M_PreviewXRay.M_PreviewXRay"),nullptr,LOAD_NoWarn):nullptr;
     if(XRayParent&&!PenisXRay){PenisXRay=UMaterialInstanceDynamic::Create(XRayParent,this);PenisXRay->SetVectorParameterValue(TEXT("PreviewTint"),FLinearColor(1.f,.35f,.75f,.45f));}
     int32 Shown=0;for(UMeshComponent* Comp:All)if(IsGenital(Comp)){Comp->SetOverlayMaterial(XRayParent?PenisXRay.Get():nullptr);Shown+=XRayParent?1:0;}
     if(XRayParent)UE_LOG(LogTemp,Display,TEXT("H scene: penis drawn through her: %d parts%s"),Shown,XRayParent?TEXT(""):TEXT(" (no M_PreviewXRay)"));

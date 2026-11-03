@@ -1900,7 +1900,10 @@ void AOKStreetSocialScene::RequestFreeTalkSegment(int32 Generation,int32 Index){
  // text must be 1..400 characters" notice; a longer one is cut at its last sentence end within 400 (R3-215).
  FString Spoken=OKStreetSpokenText(S.FreeTalkSpeechLines[Index]); // no stage directions (OKStreetSpokenText.h)
  {bool Speakable=false;for(const TCHAR C:Spoken)if(FChar::IsAlnum(C)||(C>=0x3040&&C<0xFF00)){Speakable=true;break;}
-  if(!Speakable){S.FreeTalkSpeechStreamed[Index]=2;if(S.FreeTalkSpeechReady[Index]==0)S.FreeTalkSpeechReady[Index]=2;return;}
+  // Silent on purpose (4), and the next line still asked for: returning here left every line after it unasked until the
+  // TTS timeout (her lines after a "……" waited half a minute, then went unvoiced).
+  if(!Speakable){S.FreeTalkSpeechStreamed[Index]=2;if(S.FreeTalkSpeechReady[Index]==0)S.FreeTalkSpeechReady[Index]=4;
+   if(S.FreeTalkSpeechStreamed.IsValidIndex(Index+1)&&S.FreeTalkSpeechStreamed[Index+1]==0)RequestFreeTalkSegment(Generation,Index+1);return;}
   if(Spoken.Len()>400){int32 Cut=400;for(int32 I=399;I>200;--I)if(FCString::Strchr(TEXT("。！？!?…"),Spoken[I])){Cut=I+1;break;}Spoken.LeftInline(Cut);}}
  // Same synth request as scripted lines, keyed by the personality voice.
  auto Body=MakeShared<FJsonObject>();Body->SetStringField(TEXT("text"),Spoken);Body->SetStringField(TEXT("personality"),FString::FromInt(S.Manifest.Characters[Character].PersonalityId));Body->SetNumberField(TEXT("age"),S.TtsAge);Body->SetStringField(TEXT("out_dir"),S.TtsCacheDir);
@@ -2002,9 +2005,10 @@ void AOKStreetSocialScene::TickFreeTalkSpeech(double Now){
  // the stream, which plays on the street actor.
  if(S.PrivateGirl==Character&&S.PrivateMode.IsValid()){
   if(S.PrivateMode->HSceneSpeaking())return;const int32 Index=S.FreeTalkSpeechPlayed;
-  if(S.FreeTalkSpeechPaths[Index].IsEmpty()&&S.FreeTalkSpeechReady[Index]!=2&&FPlatformTime::Seconds()-S.FreeTalkSpeechRepliedAt<S.TtsTimeout+5)return;
+  if(S.FreeTalkSpeechPaths[Index].IsEmpty()&&S.FreeTalkSpeechReady[Index]!=2&&S.FreeTalkSpeechReady[Index]!=4&&FPlatformTime::Seconds()-S.FreeTalkSpeechRepliedAt<S.TtsTimeout+5)return;
   ++S.FreeTalkSpeechPlayed;if(!S.FreeTalkSpeechPaths[Index].IsEmpty())S.PrivateMode->HSceneSpeak(S.FreeTalkSpeechPaths[Index]);
-  else UE_LOG(LogTemp,Warning,TEXT("H scene: her line %d is not voiced (no file %.1fs after the reply)"),Index,FPlatformTime::Seconds()-S.FreeTalkSpeechRepliedAt);
+  else if(S.FreeTalkSpeechReady[Index]==4){UE_LOG(LogTemp,Display,TEXT("H scene: her line %d has nothing to say aloud (shown silent)"),Index);}
+  else{UE_LOG(LogTemp,Warning,TEXT("H scene: her line %d is not voiced (no file %.1fs after the reply)"),Index,FPlatformTime::Seconds()-S.FreeTalkSpeechRepliedAt);}
   S.FreeTalkSpeechNext=Now+.1;return;
  }
  // Several of them (a party): one at a time. The next girl waits until whoever spoke before her is done, not only
