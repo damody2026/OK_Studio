@@ -1120,7 +1120,7 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     if(Mode==0&&Queue.IsEmpty()&&TouchArea!=INDEX_NONE&&BodyTouching()&&!Base.EndsWith(TEXT("Dislikes"))&&!Base.StartsWith(TEXT("Orgasm"))){
         bPlayed=true;AreaSeconds[TouchArea]+=Delta;if(FPlatformTime::Seconds()>=FlinchNext)Flinch(TouchArea);
         Her+=Delta*(1.f+Dev(TouchArea==0?TEXT("kiss"):HBodyKey(TouchArea)));if(bLockHer)Her=FMath::Min(Her,95.f);
-        if(Her>=100.f){Her=0.f;TouchArea=INDEX_NONE;bLipsTouch=false;ReleaseHeld();Chain({TEXT("Orgasm_Start"),TEXT("Orgasm_Loop"),TEXT("Orgasm_A"),TEXT("Idle")});Note(OKT(TEXT("ui.hscene.event_her_orgasm")));CountHerOrgasm();}
+        if(Her>=100.f){Her=0.f;++AreaClimaxes[TouchArea];TouchArea=INDEX_NONE;bLipsTouch=false;ReleaseHeld();Chain({TEXT("Orgasm_Start"),TEXT("Orgasm_Loop"),TEXT("Orgasm_A"),TEXT("Idle")});Note(OKT(TEXT("ui.hscene.event_her_orgasm")));CountHerOrgasm();}
     }
     else if(Mode==0&&Queue.IsEmpty()&&TouchArea!=INDEX_NONE&&(Base.EndsWith(TEXT("_Idle"))||Base==TEXT("K_Loop"))){
         bPlayed=true;AreaSeconds[TouchArea]+=Delta;
@@ -1129,7 +1129,7 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
         // level8): two points a second, fifty seconds to her climax.
         Her+=Delta*2.f;if(bLockHer)Her=FMath::Min(Her,95.f);
         if(Rate>=.7f&&Used<=0.f&&TouchArea!=0){Note(OKT(TEXT("ui.hscene.too_hard")));Chain({TouchArea>=3&&TouchArea<=4?TEXT("Back_Dislikes"):TEXT("Front_Dislikes"),TEXT("Idle")});TouchArea=INDEX_NONE;}
-        else if(Her>=100.f){Her=0.f;TouchArea=INDEX_NONE;ReleaseHeld();Chain({TEXT("Orgasm_Start"),TEXT("Orgasm_Loop"),TEXT("Orgasm_A"),TEXT("Idle")});Note(OKT(TEXT("ui.hscene.event_her_orgasm")));CountHerOrgasm();}
+        else if(Her>=100.f){Her=0.f;++AreaClimaxes[TouchArea];TouchArea=INDEX_NONE;ReleaseHeld();Chain({TEXT("Orgasm_Start"),TEXT("Orgasm_Loop"),TEXT("Orgasm_A"),TEXT("Idle")});Note(OKT(TEXT("ui.hscene.event_her_orgasm")));CountHerOrgasm();}
     }else if(Queue.IsEmpty()&&HIsLoop(Base)){
         if(Mode==1){His+=Delta*(2.5f+8.f*Rate)*Strong;if(bLockHis)His=FMath::Min(His,69.f);Her=FMath::Min(69.f,Her+Delta*.8f);if(His>=70.f&&Wanted.IsEmpty())Want(TEXT("OLoop"));}
         else{His+=Delta*(1.2f+3.5f*Rate)*Strong;Her+=Delta*(1.5f+6.f*Rate)*Strong*HerByLevel[FMath::Clamp(Level(),0,3)];
@@ -2429,6 +2429,20 @@ void UOKHScenePanel::PlaceProps(int32 Kind){
     UE_LOG(LogTemp,Display,TEXT("H scene: %s placed for the pose (%d)"),*What,Props.Num());
     HideWallsInTheWay(); // the camera may already be framed for this pose
 }
+// What she has been through with him so far, this time too (hexp orgasms, climaxes, sex_count; user 2026-11-03): she
+// can say how many times they have done it and where she came.
+FString UOKHScenePanel::History() const{
+    const auto& X=Gallery?Gallery->HExperience:nullptr;
+    auto Int=[&](const TCHAR* K){double V=0;if(X.IsValid())X->TryGetNumberField(K,V);return int32(V);};
+    static const TCHAR* Keys[]={TEXT("kiss"),TEXT("chest"),TEXT("crotch"),TEXT("anal"),TEXT("butt"),TEXT("nipple"),TEXT("head"),TEXT("hand"),TEXT("thigh"),TEXT("calf"),TEXT("foot")};
+    const TSharedPtr<FJsonObject>* Before=nullptr;if(X.IsValid())X->TryGetObjectField(TEXT("climaxes"),Before);
+    TArray<FString> Where;
+    for(int32 I=0;I<11;++I){double V=0;if(Before)(*Before)->TryGetNumberField(Keys[I],V);
+        const int32 N=int32(V)+AreaClimaxes[I]+(I==2?CrotchClimaxes:I==3?AnalClimaxes:0);
+        if(N>0)Where.Add(OKMsg(TEXT("ui.hscene.history_place"),{{TEXT("place"),OKT(*(FString(TEXT("ui.hscene.part_"))+(I==0?TEXT("lips"):Keys[I])))},{TEXT("n"),N}}));}
+    return OKMsg(TEXT("ui.hscene.talk_history"),{{TEXT("sex"),Int(TEXT("sex_count"))+int32(bCrotch||bAnal)},{TEXT("orgasms"),Int(TEXT("orgasms"))+HerOrgasms},
+        {TEXT("where"),Where.IsEmpty()?FString():OKMsg(TEXT("ui.hscene.history_where"),{{TEXT("list"),FString::Join(Where,OKT(TEXT("ui.memory.list_separator")))}})}});
+}
 FString UOKHScenePanel::StateWords(const FString& Base) const{
     if(Mode==0)return OKT(Base==TEXT("K_Loop")||Base==TEXT("K_Touch")?TEXT("ui.hscene.state_kiss"):Base.StartsWith(TEXT("Orgasm"))?TEXT("ui.hscene.state_after"):TouchArea!=INDEX_NONE?TEXT("ui.hscene.state_caress"):TEXT("ui.hscene.state_idle"));
     if(Base==TEXT("Idle")||Base==TEXT("Stop_Idle"))return OKT(TEXT("ui.hscene.state_idle"));
@@ -2462,6 +2476,7 @@ FString UOKHScenePanel::Context() const{
     return OKMsg(TEXT("ui.hscene.talk_context"),{{TEXT("body"),OKMsg(bHooked?TEXT("ui.hscene.talk_body_hooked"):TEXT("ui.hscene.talk_body"),{{TEXT("left"),Left}})},{TEXT("want"),bHooked?Want:FMath::Min(Want,Left)},{TEXT("bare"),Bare.IsEmpty()?OKT(TEXT("ui.hscene.bare_none")):FString::Join(Bare,TEXT("、"))},{TEXT("pose"),PoseName},{TEXT("state"),StateWords(Base)},{TEXT("speed"),FString::Printf(TEXT("%.1f"),Mode==0||HIsLoop(Base)?PlaybackSpeed():0.f)},
         {TEXT("her"),FMath::RoundToInt(Her)},{TEXT("his"),FMath::RoundToInt(His)},{TEXT("orgasms"),HerOrgasms},{TEXT("finishes"),HisFinishes},{TEXT("condom"),Mode==2&&(bCrotch||bAnal)?(bCondom?TEXT("yes"):TEXT("no")):TEXT("none")}})
         // What runs out of her now (TickDrips): she feels it, so he may say so and she knows.
+        +History()
         +OKMsg(TEXT("ui.mind.body_wet_status"),{{TEXT("crotch"),HerDesire()>OKArousal::DesireMilk?TEXT("flooding"):HerDesire()>OKArousal::DesireFlush?TEXT("dripping"):TEXT("none")},{TEXT("discharge"),TEXT("none")},
             {TEXT("milk"),HerDesire()>OKArousal::DesireFlush?TEXT("leaking"):TEXT("none")},{TEXT("any"),HerDesire()>OKArousal::DesireFlush?TEXT("yes"):TEXT("no")}});
 }
@@ -2511,9 +2526,11 @@ TSharedRef<FJsonObject> UOKHScenePanel::Result() const{
     auto Part=[](bool Inserted,int32 Climaxes,float Deepest){auto O=MakeShared<FJsonObject>();O->SetBoolField(TEXT("inserted"),Inserted);O->SetNumberField(TEXT("climaxes"),Climaxes);O->SetNumberField(TEXT("deepest"),FMath::RoundToFloat(Deepest));return O;};
     Counts->SetObjectField(TEXT("crotch"),Part(bCrotch,CrotchClimaxes,CrotchDeepest));Counts->SetObjectField(TEXT("anal"),Part(bAnal,AnalClimaxes,AnalDeepest));
     {static const TCHAR* Keys[]={TEXT("kiss"),TEXT("chest"),TEXT("crotch"),TEXT("anal"),TEXT("butt"),TEXT("nipple"),TEXT("head"),TEXT("hand"),TEXT("thigh"),TEXT("calf"),TEXT("foot")};auto Areas=MakeShared<FJsonObject>();
-     for(int32 I=0;I<11;++I)Areas->SetNumberField(Keys[I],FMath::RoundToDouble(AreaSeconds[I]));Counts->SetObjectField(TEXT("areas"),Areas);Counts->SetNumberField(TEXT("kiss"),FMath::RoundToDouble(AreaSeconds[0]));}
+     for(int32 I=0;I<11;++I)Areas->SetNumberField(Keys[I],FMath::RoundToDouble(AreaSeconds[I]));Counts->SetObjectField(TEXT("areas"),Areas);
+     auto Came=MakeShared<FJsonObject>();for(int32 I=0;I<11;++I)if(AreaClimaxes[I]>0)Came->SetNumberField(Keys[I],AreaClimaxes[I]);Counts->SetObjectField(TEXT("climax_areas"),Came);Counts->SetNumberField(TEXT("kiss"),FMath::RoundToDouble(AreaSeconds[0]));}
     Counts->SetBoolField(TEXT("raw"),bRaw);Counts->SetBoolField(TEXT("raw_pressed"),bRawPressed&&bRaw);
-    Counts->SetNumberField(TEXT("his_inside"),HisInside);Counts->SetNumberField(TEXT("his_inside_raw"),HisInsideRaw);Counts->SetNumberField(TEXT("his_inside_vagina_raw"),HisInsideVaginaRaw);Counts->SetBoolField(TEXT("street_onani"),StreetOnani());Counts->SetNumberField(TEXT("his_condom"),HisCondom);Counts->SetNumberField(TEXT("condoms_his"),CondomsHis-int32(bCondomFresh&&!bCondomHers));Counts->SetNumberField(TEXT("condoms_her"),CondomsHer-int32(bCondomFresh&&bCondomHers)); // one on but never in her goes backCounts->SetNumberField(TEXT("her_drips"),HerDrips);Counts->SetNumberField(TEXT("her_milk"),HerMilk);Counts->SetNumberField(TEXT("her_drip_times"),HerDripTimes);Counts->SetNumberField(TEXT("her_milk_times"),HerMilkTimes);Counts->SetNumberField(TEXT("his_outside"),HisOutside);Counts->SetNumberField(TEXT("his_mouth"),HisMouth);Counts->SetNumberField(TEXT("swallowed"),Swallowed);Counts->SetNumberField(TEXT("her_orgasms"),HerOrgasms);Counts->SetNumberField(TEXT("his_finishes"),HisFinishes);
+    Counts->SetNumberField(TEXT("his_inside"),HisInside);Counts->SetNumberField(TEXT("his_inside_raw"),HisInsideRaw);Counts->SetNumberField(TEXT("his_inside_vagina_raw"),HisInsideVaginaRaw);Counts->SetBoolField(TEXT("street_onani"),StreetOnani());Counts->SetNumberField(TEXT("his_condom"),HisCondom);Counts->SetNumberField(TEXT("condoms_his"),CondomsHis-int32(bCondomFresh&&!bCondomHers));Counts->SetNumberField(TEXT("condoms_her"),CondomsHer-int32(bCondomFresh&&bCondomHers)); // one on but never in her goes back
+    Counts->SetNumberField(TEXT("her_drips"),HerDrips);Counts->SetNumberField(TEXT("her_milk"),HerMilk);Counts->SetNumberField(TEXT("her_drip_times"),HerDripTimes);Counts->SetNumberField(TEXT("her_milk_times"),HerMilkTimes);Counts->SetNumberField(TEXT("his_outside"),HisOutside);Counts->SetNumberField(TEXT("his_mouth"),HisMouth);Counts->SetNumberField(TEXT("swallowed"),Swallowed);Counts->SetNumberField(TEXT("her_orgasms"),HerOrgasms);Counts->SetNumberField(TEXT("his_finishes"),HisFinishes);
     auto Out=MakeShared<FJsonObject>();Out->SetObjectField(TEXT("counts"),Counts);
     TArray<TSharedPtr<FJsonValue>> P,E;for(const FString& S:PosesPlayed)P.Add(MakeShared<FJsonValueString>(S));for(const FString& S:Events)E.Add(MakeShared<FJsonValueString>(S));
     Counts->SetArrayField(TEXT("poses"),P); // kept with her: the ones never played are marked New (hexp.rs poses_played)

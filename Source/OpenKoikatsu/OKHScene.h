@@ -127,6 +127,7 @@ private:
     TMap<FString,FString> SoloKeys;      // state -> clip key of the active caress pose
     FString SoloState;double SoloStarted=0.;
     int32 ActiveAibu=INDEX_NONE,PendingAibu=INDEX_NONE,AibuGeneration=0,TouchArea=INDEX_NONE;
+    int32 AreaClimaxes[11]={};          // her climaxes from his touch or kiss there (AreaSeconds order; hexp climaxes)
     float AreaSeconds[11]={};           // kiss, chest, crotch, anal, butt, nipples (hAreaExps order); head, hand, thigh, calf, foot
     // Touching or kissing (bLickMode) the rest of her (H_SCENE_ADDITIONS_PLAN 3): her lips touched (bLipsTouch, area 0
     // without the kiss), and the flinch of the touched part as the original's HitReaction.
@@ -180,7 +181,7 @@ private:
     // She has come as many times as she will this scene (climax_limit): she wants it to stop, the panel offers no more
     // touching, moving or entering her.
     bool HadEnough() const;
-    void CountHerOrgasm();
+    void CountHerOrgasm();FString History() const;
 
     UPROPERTY() TObjectPtr<UTextBlock> Title;
     UPROPERTY() TObjectPtr<UTextBlock> Status;
