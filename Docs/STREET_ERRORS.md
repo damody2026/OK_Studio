@@ -1881,3 +1881,5 @@
 - 2026-11-03 e-galgame 街上自慰（OKStreetSocialOnani.inl）：(1) 只挑沒被 Held 的女主，結果一個都挑不到——排程站崗中的女主平常就是 Held（ScheduleHeld），要放行排程持有的。(2) 片段播放中直接 Play 下一段會排隊到舊的那段結束（迴圈永遠不結束），等到 60 秒準備逾時才換；在播放中 Prewarm 下一段也一樣被卡 60 秒。照唱歌的做法：先 Release 目前這段再 Play，並以 `Playing && ClipId==目標 && !Pending && !Preparing` 判斷真的換好了（ClipId 在準備中時就會變成新片段）。(3) 她會被「主動過來唱歌」帶走，自慰中的女主要在 ContactReady 排除。(4) 用 `sed -n "$(grep … | cut …)p"` 時 grep 結果帶了中文註解，sed 把它當 w 指令在專案根目錄寫出一個空檔，已刪除；取行號要只留數字。
 
 - 2026-11-03 e-galgame 在 Git Bash 把中文字串當命令列參數傳給 Tools\lua\lua.exe 寫進 rules_text.toml，參數經過系統碼頁轉換，寫進去的不是 UTF-8，ok-rules 的 include_str! 編譯失敗。修正：還原後用 Edit 工具直接改 toml。往後中文內容不要經命令列參數傳給 Windows 程式，寫進檔案或用 Edit。同一輪也在指令裡留了一個沒有輸入的 `cat > 檔案`，整個指令卡在等 stdin 直到逾時。
+
+- 2026-11-03 e-galgame 長度 2 重拍：用 sed 把拍攝腳本的 `"length":1,` 換成 2，但腳本裡是跳脫過的 `\"length\":1,`，沒有換到，整輪 720 張其實還是長度 1，拍完看 tip_inside 都是 17 cm 才發現（長度 2 實測可到 34 cm）。修正：改對 sed 重拍。往後改完腳本先 grep 確認替換後的內容，並在第一筆結果檢查參數真的生效。
