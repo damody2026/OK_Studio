@@ -1589,6 +1589,10 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
   if(DoNow.StartsWith(TEXT("go:"))&&!OKStreetFindPlace(DoNow.Mid(3))){UE_LOG(LogTemp,Display,TEXT("Street judge: do_now %s is no place; nothing to start"),*DoNow);DoNow.Reset();}
   // "Let's go see the show — Sure, let's go!" inside the aquarium judged as going to the aquarium: they are there
   // already, so they walk around it together instead of standing still after her "let's go" (R3-111).
+  // Not at their table here, though: "after we eat we'll walk out together" at the cafeteria was judged go:cafeteria,
+  // became a stroll waiting for his noodles, and set off ten minutes later just as he said he had to run to class (R6-161).
+  if(DoNow.StartsWith(TEXT("go:"))&&DoNow.Mid(3)==Weak->PlaceHere(L->Male)&&((L->Pair.Partner==Character&&(L->Pair.Meal||L->Pair.Drink))||(!L->Table.IsEmpty()&&L->MealPlace==DoNow.Mid(3)))){
+   UE_LOG(LogTemp,Display,TEXT("Street judge: do_now %s is where they sit at their table; nothing to start"),*DoNow);DoNow.Reset();}
   if(DoNow.StartsWith(TEXT("go:"))&&DoNow.Mid(3)==Weak->PlaceHere(L->Male)){UE_LOG(LogTemp,Display,TEXT("Street judge: do_now %s is where he is; a stroll here"),*DoNow);DoNow=TEXT("stroll");}
   const TSharedPtr<FJsonObject>* Promise=nullptr;FString Day,Time,Place,What;bool PayForPromise=false;
   if(Verdict->TryGetObjectField(TEXT("promise"),Promise)&&Promise&&(*Promise).IsValid()){(*Promise)->TryGetStringField(TEXT("day"),Day);(*Promise)->TryGetStringField(TEXT("time"),Time);(*Promise)->TryGetStringField(TEXT("place"),Place);(*Promise)->TryGetStringField(TEXT("what"),What);}

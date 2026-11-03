@@ -64,16 +64,27 @@ FString AOKStreetSocialScene::TodayText(int32 Character) const{
   // later one, the class itself; a meal or a stay just runs on.
   TArray<FOKStreetPlanBlock> Shown;
   for(const auto& B:*Plan)if(B.End>Minute&&B.Kind!=TEXT("sleep")){
-   if(Shown.Num()&&Shown.Last().Kind==B.Kind&&Shown.Last().Place==B.Place&&Shown.Last().End>=B.Start-1){if(B.Kind==TEXT("class"))Shown.Last()=B;else Shown.Last().End=B.End;}
+   if(Shown.Num()&&Shown.Last().Kind==B.Kind&&Shown.Last().Place==B.Place&&Shown.Last().End>=B.Start-1){if(B.Kind==TEXT("class")||B.Kind==TEXT("work"))Shown.Last()=B;else Shown.Last().End=B.End;}
    else Shown.Add(B);}
-  for(const auto& B:Shown)if(Next.Num()<4){const FOKStreetPlace* P=OKStreetFindPlace(B.Place);
+  // Four of the day's blocks, and past them still what she is bound to (a class, a shift, a promise): Jeanne's 17:00
+  // shift at the bookstore was the fifth and she said she had no work tonight (R6-160).
+  for(const auto& B:Shown)if(Next.Num()<4||(Next.Num()<8&&(B.Kind==TEXT("class")||B.Kind==TEXT("work")||B.Kind==TEXT("promise")))){const FOKStreetPlace* P=OKStreetFindPlace(B.Place);
    // On the hour or the quarter as people say it ("快十点"), not the staggered 09:44 she once repeated word for word.
    const int32 Said=(B.Start+7)/15*15;
    const FString Block=OKMsg(TEXT("ui.director.plan_block"),{{TEXT("doing"),OKPhoneDoingWord(B.Kind)},{TEXT("place"),P?FString(P->Name):B.Place}});
    // The block she is in already is now, not at its start: at 10:30 刻晴 said she would go to the library "at 10:15" (R4-2).
    if(B.Start<=Minute){const int32 Until=(B.End+7)/15*15;Next.Add(OKMsg(TEXT("ui.director.plan_now"),{{TEXT("end"),FString::Printf(TEXT("%02d:%02d"),Until/60%24,Until%60)},{TEXT("block"),Block}}));}
    else Next.Add(FString::Printf(TEXT("%02d:%02d %s"),Said/60%24,Said%60,*Block));}
-  if(Next.Num())Parts.Add(OKMsg(TEXT("ui.director.your_plan_line"),{{TEXT("plan"),FString::Join(Next,OKT(TEXT("ui.bank.list_separator")))}}));}
+  if(Next.Num())Parts.Add(OKMsg(TEXT("ui.director.your_plan_line"),{{TEXT("plan"),FString::Join(Next,OKT(TEXT("ui.bank.list_separator")))}}));
+  // And what her day already held: 安可, back from an afternoon at the library, said she had not been there yet, and
+  // Jeanne said she had no class that morning after one (R6-163). The last four, merged the same way.
+  TArray<FOKStreetPlanBlock> Done;
+  for(const auto& B:*Plan)if(B.End<=Minute&&B.Kind!=TEXT("sleep")){
+   if(Done.Num()&&Done.Last().Kind==B.Kind&&Done.Last().Place==B.Place&&Done.Last().End>=B.Start-1){if(B.Kind==TEXT("class")||B.Kind==TEXT("work"))Done.Last().Start=FMath::Max(Done.Last().Start,B.Start);Done.Last().End=B.End;}
+   else Done.Add(B);}
+  TArray<FString> Earlier;for(int32 K=FMath::Max(0,Done.Num()-4);K<Done.Num();++K){const auto& B=Done[K];const FOKStreetPlace* P=OKStreetFindPlace(B.Place);const int32 Said=(B.Start+7)/15*15;
+   Earlier.Add(FString::Printf(TEXT("%02d:%02d %s"),Said/60%24,Said%60,*OKMsg(TEXT("ui.director.plan_block"),{{TEXT("doing"),OKPhoneDoingWord(B.Kind)},{TEXT("place"),P?FString(P->Name):B.Place}})));}
+  if(Earlier.Num())Parts.Add(OKMsg(TEXT("ui.director.your_day_so_far_line"),{{TEXT("done"),FString::Join(Earlier,OKT(TEXT("ui.bank.list_separator")))}}));}
  if(BirthdayOf(Character,Day))Parts.Add(OKT(TEXT("ui.director.today_is_birthday")));else if(BirthdayOf(Character,Day+1))Parts.Add(OKT(TEXT("ui.director.tomorrow_birthday_hint")));
  return FString::Join(Parts,OKT(TEXT("ui.bank.list_separator")));
 }
