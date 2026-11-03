@@ -1901,3 +1901,5 @@
 - 2026-11-03 e-galgame 啊嘿顏：把視線設成上翻後，看截圖就說「眼睛有動」，其實所有截圖眼珠位置都沒變（使用者指出）。街區角色的眼睛由 KKRuntimePose 共用母材質畫，UV 在建 mesh 時烘死，`SetEyeGaze` 只改到看不見的 session UV。之後改視覺效果，先確認畫面上那個元件（`{"parts":true}`）的材質真的吃這個參數，再用同一個鏡頭、同一個時間點的前後截圖並排比對。也誤把原作 Eye ID（`cha_eyeset` 清單）當成 FBS 眼型編號用（25 號變成單眼眨），要先查 `ChangeEyesPtn`。
 
 - 2026-11-03 e-galgame（H 補充、啊嘿顏測試）：一整個下午反覆用 `game_launch` 開沙盒 EAdd／EAdd2 的遊戲（Add3～Add13，至少 8 次），一次都沒有先 `unreal_slot.lua claim`，以為 slot3 的 e-galgame（其實是 E 主線 EMain 的）也算我。全機變成 4 個 Unreal，GPU 用到 31/32.6 GB，c-conquest 掉到 1.6 FPS，協調者提醒了四次。規則：每次開遊戲前自己 `claim e-galgame "e-fork <做什麼>" --wait`，拿到 slot 才開；測完一段、等建置時馬上 `game_stop` 並 `release`，不要讓遊戲一直開著。
+
+- 2026-11-03 e-galgame 提早暫存，被別的 session 的提交帶走：我先 `git add` 了檢查表三列，接著花二十多分鐘在 OKHeadBuild 建置；這段時間另一個 session 提交 c84154466（unreal_slot 加 e-fork），共用同一個 index，把我已暫存的檢查表一起提交了。內容沒錯，但出現在別人的提交裡。另外 HEAD 在我建置期間前進了兩次，第一次差點用舊 HEAD 為底的檔案蓋掉 6029f8b4c 的改動（暫存後看 --stat 出現大量刪除才發現）。教訓：等驗證完、要提交的那一刻才暫存，暫存後立刻提交；用 OKHeadBuild 的檔案暫存前先確認 HEAD 沒變（`git log -1` 與驗證樹的底一致），變了就在新 HEAD 上重套重建。
