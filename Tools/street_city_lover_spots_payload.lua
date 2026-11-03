@@ -72,8 +72,11 @@ def _ls_search(world,hint,z,w,d,h,yaws,rmin=0,rmax=1200,avoid=[],wall=False,regi
     return c,yaw
   if best and not wall:return best
  return best
+_LS_REC=[None]  # a list while a round-2 recipe runs: the actors it spawns (section 16 swaps them for a Tripo model)
 def _ls_spawn(label,mesh,p,yaw,scale,mat=None,collide=True):
- a=SUB.spawn_actor_from_class(unreal.StaticMeshActor,p,unreal.Rotator(roll=0,pitch=0,yaw=yaw));a.set_actor_label(label);a.set_folder_path('UniversityCity/LoverSpotsV1');a.tags=[unreal.Name('LoverSpot')]
+ a=SUB.spawn_actor_from_class(unreal.StaticMeshActor,p,unreal.Rotator(roll=0,pitch=0,yaw=yaw))
+ if _LS_REC[0] is not None:_LS_REC[0].append(a)
+ a.set_actor_label(label);a.set_folder_path('UniversityCity/LoverSpotsV1');a.tags=[unreal.Name('LoverSpot')]
  c=a.static_mesh_component;c.set_static_mesh(mesh)
  if mat:
   for i in range(c.get_num_materials()):c.set_material(i,mat)
@@ -263,7 +266,15 @@ def motel_world_lover_spots_install():
   o,e=sh.get_actor_bounds(False);return o,e,([o.x-e.x+80,o.y-e.y+80],[o.x+e.x-80,o.y+e.y-80])
  def shopdoor(b):
   ds=[p['door'] for p in P['places'] if p.get('building')==b and p.get('door') and abs(p['door'][2]-1200)<60]
-  return V(ds[0]) if ds else None
+  if ds:return V(ds[0])
+  # shops with only upstairs places: the refit frame (metres, front at -H, door at door_x) of the shop's F01 actor
+  f=shopframe.get(b);sh=acts.get(b+'_F01')
+  if not f or not sh:return None
+  o=sh.get_actor_location();yaw=math.radians(sh.get_actor_rotation().yaw);lx,ly=f['door_x']*100,(f['H']-.5)*100
+  return unreal.Vector(o.x+lx*math.cos(yaw)-ly*math.sin(yaw),o.y+lx*math.sin(yaw)+ly*math.cos(yaw),1200.)
+ shopframe={}
+ for p in ('shop-refits-v1/refits-build.json','shop-samples-v1/samples-build.json'):
+  for s in json.loads((ROOT/'output/street-social-city-production'/p).read_text('utf8'))['shops']:shopframe.setdefault(s['id'],s)
  def counter(tag,b,w,M,scr=False):
   # counter w x 60 x 100 at the front of a w x 150 spot with a wall behind; the clerk stands between counter and wall
   sb=shopbox(b);d=shopdoor(b)
@@ -470,6 +481,408 @@ def motel_world_lover_spots_install():
    items.append(dict(place='salon',anchor='swatch',pos=num(_ls_off(c,yaw,80)),yaw=yaw+180-90,actor=t+'_SwatchBoard'))
   else:skipped.append(dict(place='salon',reason='no free wall for the swatch board'))
  else:skipped.append(dict(place='salon',reason='S31_F01 or its door not found'))
+ # 15. round 2 (c-conquest 8.2): dress the empty or converted rooms. A recipe draws one piece of furniture in a w x d
+ #     footprint (front = +yaw, the standing room in front is part of the footprint) and returns its anchors; spots are
+ #     searched inside the room with the same floor / box tests, plus a reserve so later pieces keep off earlier ones.
+ R2={}
+ def R2mat(name,col,r=.6,emit=0.):
+  if name not in R2:R2[name]=_ls_mat('M_LS_R2_'+name,col,r,0.,emit)
+  return R2[name]
+ cnt={}
+ def nm(place,base):
+  k=(place,base);cnt[k]=cnt.get(k,0)+1;return base if cnt[k]==1 else '%s%d'%(base,cnt[k])
+ def A2(place,base,p,yaw,actor):items.append(dict(place=place,anchor=nm(place,base),pos=num(p),yaw=yaw,actor=actor))
+ def face(c,yaw,fw,side=0):return _ls_off(c,yaw,fw,side),yaw+180-90   # standing at fw, looking back at the piece
+ def r_rack(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-45)
+  for s in (-60,60):_ls_cyl(t+'_Post%+d'%s,_ls_off(b,yaw,0,s),2.5,160,M['steel'])
+  _ls_box(t+'_Rail',_ls_off(b,yaw,0,0,155),yaw,(4,125,4),M['steel'],False)
+  for k in range(6):_ls_box(t+'_Cloth%d'%k,_ls_off(b,yaw,0,-50+20*k,60),yaw,(38,6,90),R2mat('Cloth%d'%(k%6),[(.85,.3,.35),(.25,.45,.8),(.95,.9,.85),(.2,.2,.25),(.4,.7,.5),(.95,.75,.35)][k%6]),False)
+  p,y=face(c,yaw,30);A2(pl,'rack',p,y,t+'_Rail')
+ def r_fitting(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-40);wall=R2mat('Booth',(.88,.86,.82))
+  _ls_box(t+'_Back',_ls_off(b,yaw,-60),yaw,(8,125,220),wall)
+  for s in (-62,62):_ls_box(t+'_Side%+d'%s,_ls_off(b,yaw,0,s),yaw,(120,6,220),wall)
+  _ls_box(t+'_Curtain',_ls_off(b,yaw,58,0,15),yaw,(3,118,195),R2mat('Curtain',(.55,.2,.3)),False)
+  _ls_box(t+'_Glass',_ls_off(b,yaw,-55,0,40),yaw,(1.5,60,150),silver or M['steel'],False)
+  A2(pl,'fitting',b,yaw+180-90,t+'_Curtain')
+ def r_mirror(t,c,yaw,pl):
+  w0=(wd(c,yaw) or 60)-1;mirror(t+'_M',_ls_off(c,yaw,-w0,0,20),yaw,90,180);p,y=face(c,yaw,40);A2(pl,'mirror',p,y,t+'_M_Glass')
+ def r_counter(t,c,yaw,pl,base='counter'):
+  f=_ls_off(c,yaw,45);_ls_box(t+'_Counter',f,yaw,(60,c_w,100),M['counter']);_ls_box(t+'_Top',_ls_off(f,yaw,0,0,100),yaw,(66,c_w+6,4),M['wood'])
+  A2(pl,base,_ls_off(c,yaw,-35),yaw-90,t+'_Counter')
+ c_w=160
+ def r_checkout(t,c,yaw,pl):r_counter(t,c,yaw,pl,'checkout')
+ def r_bar(t,c,yaw,pl):r_counter(t,c,yaw,pl,'bar')
+ def r_case(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-30);_ls_box(t+'_Case',b,yaw,(60,150,90),M['wood']);_ls_box(t+'_Glass',_ls_off(b,yaw,0,0,90),yaw,(56,146,20),R2mat('CaseGlass',(.8,.9,.95),.05,.3),False)
+  p,y=face(c,yaw,50);A2(pl,'case',p,y,t+'_Case')
+ def r_display(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-30);_ls_box(t+'_Table',b,yaw,(60,150,85),M['counter'])
+  for k in range(4):_ls_box(t+'_Phone%d'%k,_ls_off(b,yaw,0,-55+37*k,85),yaw,(14,7,1.5),M['screen'],False)
+  p,y=face(c,yaw,50);A2(pl,'display',p,y,t+'_Table')
+ def r_table2(t,c,yaw,pl,base='table',seat='seat',grill=False):
+  _ls_box(t+'_Table',c,yaw,(80,80,74),M['wood'])
+  if grill:_ls_cyl(t+'_Grill',_ls_off(c,yaw,0,0,74),20,4,M['dark'],False)
+  for s in (-65,65):_ls_box(t+'_Chair%+d'%s,_ls_off(c,yaw,s),yaw,(42,42,45),M['sofa'])
+  A2(pl,base,_ls_off(c,yaw,-65),yaw-90,t+'_Table')
+  if seat:A2(pl,seat,_ls_off(c,yaw,65),yaw+180-90,t+'_Table')
+ def r_grill(t,c,yaw,pl):r_table2(t,c,yaw,pl,'grill_table',None,True)
+ def r_try(t,c,yaw,pl):r_table2(t,c,yaw,pl,'try',None)
+ def r_counter_seats(t,c,yaw,pl,base='counter_seat'):
+  b=_ls_off(c,yaw,-50);_ls_box(t+'_Bar',b,yaw,(50,300,100),M['wood']);_ls_box(t+'_Top',_ls_off(b,yaw,0,0,100),yaw,(56,306,4),M['counter'])
+  for k in range(4):
+   s=_ls_off(c,yaw,10,-112+75*k);_ls_cyl(t+'_Stool%d'%k,s,4,65,M['steel']);_ls_cyl(t+'_Seat%d'%k,_ls_off(s,yaw,0,0,65),17,6,M['cushion'])
+   A2(pl,base,s,yaw+180-90,t+'_Bar')
+ def r_conveyor(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-50);_ls_box(t+'_Counter',b,yaw,(60,460,95),M['wood']);_ls_box(t+'_Belt',_ls_off(b,yaw,-10,0,95),yaw,(22,450,4),R2mat('Belt',(.75,.75,.78),.3),False)
+  for k in range(5):_ls_box(t+'_Plate%d'%k,_ls_off(b,yaw,-10,-180+90*k,99),yaw,(14,14,3),R2mat('Plate',(.95,.55,.4)),False)
+  for k in range(5):
+   s=_ls_off(c,yaw,15,-180+90*k);_ls_cyl(t+'_Stool%d'%k,s,4,62,M['steel']);_ls_cyl(t+'_Seat%d'%k,_ls_off(s,yaw,0,0,62),17,6,M['cushion'])
+   A2(pl,'conveyor_seat',s,yaw+180-90,t+'_Counter')
+ def r_booth(t,c,yaw,pl,base='booth'):
+  _ls_box(t+'_Table',c,yaw,(70,110,74),M['wood'])
+  for s in (-70,70):
+   _ls_box(t+'_Bench%+d'%s,_ls_off(c,yaw,s),yaw,(45,120,45),M['sofa']);_ls_box(t+'_Back%+d'%s,_ls_off(c,yaw,s*1.35),yaw,(12,120,95),M['sofa'])
+  A2(pl,base,_ls_off(c,yaw,-70),yaw-90,t+'_Table')
+ def r_claw(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-40);_ls_box(t+'_Body',b,yaw,(85,85,100),R2mat('Claw',(.95,.45,.6)));_ls_box(t+'_Glass',_ls_off(b,yaw,0,0,100),yaw,(80,80,80),R2mat('ClawGlass',(.85,.95,1.),.05,.4),False)
+  _ls_box(t+'_Top',_ls_off(b,yaw,0,0,180),yaw,(85,85,15),R2mat('Claw',(.95,.45,.6)))
+  p,y=face(c,yaw,45);A2(pl,'claw',p,y,t+'_Body')
+ def r_cabinet(t,c,yaw,pl,base):
+  b=_ls_off(c,yaw,-45);_ls_box(t+'_Body',b,yaw,(70,80,180),M['dark']);_ls_box(t+'_Screen',_ls_off(b,yaw,35.5,0,110),yaw,(1,66,50),M['screen'],False)
+  if base=='racing':_ls_box(t+'_Seat',_ls_off(b,yaw,90),yaw,(60,55,50),M['cushion'])
+  p,y=face(c,yaw,50 if base=='rhythm' else 90);A2(pl,base,p,y,t+'_Body')
+ def r_rhythm(t,c,yaw,pl):r_cabinet(t,c,yaw,pl,'rhythm')
+ def r_racing(t,c,yaw,pl):r_cabinet(t,c,yaw,pl,'racing')
+ def r_photobooth(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-30);wall=R2mat('Photo',(.95,.8,.9))
+  _ls_box(t+'_Back',_ls_off(b,yaw,-75),yaw,(8,180,220),wall)
+  for s in (-90,90):_ls_box(t+'_Side%+d'%s,_ls_off(b,yaw,0,s),yaw,(150,6,220),wall)
+  _ls_box(t+'_Roof',_ls_off(b,yaw,0,0,220),yaw,(150,186,6),wall);_ls_box(t+'_Curtain',_ls_off(b,yaw,74,0,30),yaw,(3,176,180),R2mat('Curtain',(.55,.2,.3)),False)
+  _ls_box(t+'_Screen',_ls_off(b,yaw,-70,0,120),yaw,(2,60,40),M['screen'],False)
+  A2(pl,'photobooth',b,yaw+180-90,t+'_Curtain')
+ def r_dental(t,c,yaw,pl):
+  ch=_ls_off(c,yaw,-20);_ls_box(t+'_Base',ch,yaw+90,(170,65,55),R2mat('Dental',(.55,.8,.85)));_ls_box(t+'_Head',_ls_off(ch,yaw,0,-80,55),yaw,(40,30,25),R2mat('Dental',(.55,.8,.85)))
+  _ls_cyl(t+'_LampPost',_ls_off(ch,yaw,-55,-60),3,190,M['steel']);_ls_box(t+'_Lamp',_ls_off(ch,yaw,-25,-45,185),yaw,(30,30,8),M['lamp'],False)
+  A2(pl,'dental_chair',_ls_off(ch,yaw,0,0,55),yaw,t+'_Base')
+ def r_nail(t,c,yaw,pl):
+  _ls_box(t+'_Table',c,yaw,(50,100,72),M['counter']);_ls_box(t+'_Lamp',_ls_off(c,yaw,0,40,72),yaw,(10,10,35),M['lamp'],False)
+  for s in (-55,55):_ls_box(t+'_Chair%+d'%s,_ls_off(c,yaw,s),yaw,(42,42,45),M['cushion'])
+  A2(pl,'nail_table',_ls_off(c,yaw,-55),yaw-90,t+'_Table');A2(pl,'seat',_ls_off(c,yaw,55),yaw+180-90,t+'_Table')
+ def r_cats(t,c,yaw,pl):
+  _ls_box(t+'_Mat',c,yaw,(160,160,2),R2mat('CatMat',(.7,.85,.6)),False)
+  for k,(fw,sd,h) in enumerate([(-40,-40,150),(30,40,100)]):
+   p=_ls_off(c,yaw,fw,sd);_ls_cyl(t+'_Post%d'%k,p,8,h,R2mat('Sisal',(.75,.62,.45)));_ls_box(t+'_Shelf%d'%k,_ls_off(p,yaw,0,0,h),yaw,(45,45,5),R2mat('CatMat',(.7,.85,.6)))
+  for k,(fw,sd) in enumerate([(10,-10),(-30,50)]):_ls_box(t+'_Cat%d'%k,_ls_off(c,yaw,fw,sd,2),yaw+30*k,(32,16,18),R2mat('Cat%d'%k,[(.95,.6,.3),(.2,.2,.22)][k]),False)
+  A2(pl,'cats',_ls_off(c,yaw,85),yaw+180-90,t+'_Mat')
+ def r_mbooth(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-20);wall=R2mat('MBooth',(.4,.45,.55))
+  _ls_box(t+'_Back',_ls_off(b,yaw,-80),yaw,(8,200,160),wall)
+  for s in (-100,100):_ls_box(t+'_Side%+d'%s,_ls_off(b,yaw,0,s),yaw,(160,6,160),wall)
+  _ls_box(t+'_Sofa',_ls_off(b,yaw,-40),yaw,(70,180,40),M['sofa']);_ls_box(t+'_Desk',_ls_off(b,yaw,40),yaw,(40,120,70),M['wood']);_ls_box(t+'_PC',_ls_off(b,yaw,45,0,70),yaw,(4,45,30),M['screen'],False)
+  A2(pl,'booth',_ls_off(b,yaw,-40),yaw-90,t+'_Sofa')
+ def r_shelf(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-40);_ls_box(t+'_Shelf',b,yaw,(40,200,200),M['wood'])
+  for k in range(4):_ls_box(t+'_Books%d'%k,_ls_off(b,yaw,4,0,25+45*k),yaw,(34,190,30),R2mat('Books%d'%k,[(.8,.3,.3),(.3,.5,.8),(.9,.8,.4),(.4,.7,.5)][k]),False)
+  p,y=face(c,yaw,40);A2(pl,'shelf',p,y,t+'_Shelf')
+ def r_aisle(t,c,yaw,pl):
+  _ls_box(t+'_Shelf',c,yaw,(60,300,170),M['counter'])
+  for k in range(3):
+   for s in (-31,31):_ls_box(t+'_Goods%d%+d'%(k,s),_ls_off(c,yaw,s,0,30+50*k),yaw,(2,290,30),R2mat('Goods%d'%k,[(.9,.5,.3),(.4,.7,.4),(.8,.8,.3)][k]),False)
+  p,y=face(c,yaw,80);A2(pl,'aisle',p,y,t+'_Shelf')
+ def r_fresh(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-35);_ls_box(t+'_Case',b,yaw,(80,200,90),M['counter']);_ls_box(t+'_Top',_ls_off(b,yaw,0,0,90),yaw,(76,196,4),R2mat('Fresh',(.6,.9,.6),.4,.5),False)
+  p,y=face(c,yaw,45);A2(pl,'fresh',p,y,t+'_Case')
+ def r_cart(t,c,yaw,pl):
+  _ls_box(t+'_Basket',_ls_off(c,yaw,0,0,45),yaw,(80,50,45),M['steel']);_ls_box(t+'_Base',c,yaw,(70,45,8),M['dark'])
+  p,y=face(c,yaw,-70);A2(pl,'cart',p,y,t+'_Basket')
+ def r_ticket(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-30);_ls_box(t+'_Machine',b,yaw,(50,60,170),R2mat('Ticket',(.85,.85,.8)));_ls_box(t+'_Screen',_ls_off(b,yaw,25.5,0,120),yaw,(1,45,30),M['screen'],False)
+  p,y=face(c,yaw,40);A2(pl,'ticket',p,y,t+'_Machine')
+ def r_bench(t,c,yaw,pl):
+  _ls_box(t+'_Seat',c,yaw,(45,180,45),M['wood']);A2(pl,'bench',_ls_off(c,yaw,5),yaw-90,t+'_Seat')
+ def r_lane(t,c,yaw,pl):
+  L=lane_len;_ls_box(t+'_Lane',c,yaw,(L,105,4),R2mat('Lane',(.85,.7,.45),.3))
+  for s in (-62,62):_ls_box(t+'_Gutter%+d'%s,_ls_off(c,yaw,0,s),yaw,(L,20,2),M['dark'])
+  for k in range(10):_ls_cyl(t+'_Pin%d'%k,_ls_off(c,yaw,-L/2+40+12*(k%4),-20+13*(k%3),4),4,38,R2mat('Pin',(.97,.97,.95)),False)
+  A2(pl,'lane',_ls_off(c,yaw,L/2-30),yaw+180-90,t+'_Lane')
+ lane_len=900
+ def r_billiards(t,c,yaw,pl):
+  _ls_box(t+'_Table',c,yaw,(250,140,70),M['wood']);_ls_box(t+'_Cloth',_ls_off(c,yaw,0,0,70),yaw,(230,120,6),R2mat('Felt',(.1,.45,.25),.9))
+  A2(pl,'billiards',_ls_off(c,yaw,0,-105),yaw,t+'_Table')
+ def r_bed(t,c,yaw,pl,base='bed'):
+  _ls_box(t+'_Bed',c,yaw+90,(200,90,55),M['counter']);_ls_box(t+'_Pillow',_ls_off(c,yaw,0,-80,55),yaw,(30,60,10),R2mat('Linen',(.95,.95,.98)),False)
+  _ls_box(t+'_Curtain',_ls_off(c,yaw,60),yaw,(2,220,190),R2mat('Curtain2',(.75,.85,.9)),False)
+  A2(pl,base,_ls_off(c,yaw,0,0,55),yaw,t+'_Bed')
+ def r_desk(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-30);_ls_box(t+'_Desk',b,yaw,(60,120,74),M['wood']);_ls_box(t+'_Chair',_ls_off(b,yaw,60),yaw,(42,42,45),M['sofa'])
+  A2(pl,'desk',_ls_off(b,yaw,60),yaw+180-90,t+'_Desk')
+ def r_recliner(t,c,yaw,pl):
+  for s in (-38,38):_ls_box(t+'_Seat%+d'%s,_ls_off(c,yaw,0,s),yaw,(110,70,40),M['sofa']);_ls_box(t+'_Back%+d'%s,_ls_off(c,yaw,-50,s,40),yaw,(20,70,25),M['sofa'])
+  A2(pl,'seat',_ls_off(c,yaw,0,-38,40),yaw-90,t+'_Seat-38')
+ def r_kitchen(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-45);_ls_box(t+'_Counter',b,yaw,(60,240,90),M['counter']);_ls_box(t+'_Top',_ls_off(b,yaw,0,0,90),yaw,(62,242,4),M['stone'])
+  _ls_box(t+'_Stove',_ls_off(b,yaw,0,60,94),yaw,(50,60,2),M['dark'],False);_ls_box(t+'_Sink',_ls_off(b,yaw,0,-60,92),yaw,(45,55,3),M['steel'],False)
+  A2(pl,'kitchen',_ls_off(c,yaw,20,-60),yaw+180-90,t+'_Counter');A2(pl,'stove',_ls_off(c,yaw,20,60),yaw+180-90,t+'_Stove')
+ def r_atm(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-40);_ls_box(t+'_ATM',b,yaw,(60,70,150),M['steel']);_ls_box(t+'_Screen',_ls_off(b,yaw,30.5,0,115),yaw,(1,40,28),M['screen'],False)
+  p,y=face(c,yaw,40);A2(pl,'atm',p,y,t+'_ATM')
+ def r_backdrop(t,c,yaw,pl):
+  w0=(wd(c,yaw) or 80)-2;_ls_box(t+'_Backdrop',_ls_off(c,yaw,-w0),yaw,(3,280,250),R2mat('Backdrop',(.9,.9,.92)));_ls_box(t+'_Stool',_ls_off(c,yaw,-w0+80),yaw,(40,40,50),M['wood'])
+  A2(pl,'backdrop',_ls_off(c,yaw,-w0+80),yaw+180-90,t+'_Backdrop')
+  tp=_ls_off(c,yaw,-w0+380);_ls_cyl(t+'_Tripod',tp,2,140,M['steel']);_ls_box(t+'_Camera',_ls_off(tp,yaw,0,0,140),yaw,(20,15,12),M['dark'])
+  A2(pl,'camera',_ls_off(tp,yaw,30),yaw+180-90,t+'_Camera')
+ def r_net(t,c,yaw,pl):
+  for s in (-450,450):_ls_cyl(t+'_Post%+d'%s,_ls_off(c,yaw,0,s),5,245,M['steel'])
+  _ls_box(t+'_Net',_ls_off(c,yaw,0,0,145),yaw,(2,900,100),R2mat('Net',(.95,.95,.95)),False);A2(pl,'net',_ls_off(c,yaw,150),yaw+180-90,t+'_Net')
+ def r_pingpong(t,c,yaw,pl):
+  _ls_box(t+'_Table',c,yaw,(274,152,76),R2mat('TT',(.1,.3,.55),.5));_ls_box(t+'_Net',_ls_off(c,yaw,0,0,76),yaw,(2,170,15),R2mat('Net',(.95,.95,.95)),False)
+  A2(pl,'pingpong',_ls_off(c,yaw,-190),yaw-90,t+'_Table')
+ def r_treadmill(t,c,yaw,pl,base='treadmill'):
+  _ls_box(t+'_Deck',c,yaw,(170,75,20),M['dark']);_ls_box(t+'_Console',_ls_off(c,yaw,80,0,20),yaw,(10,70,120),M['dark'])
+  A2(pl,base,_ls_off(c,yaw,-10,0,20),yaw-90,t+'_Deck')
+ def r_bike(t,c,yaw,pl):
+  _ls_box(t+'_Frame',c,yaw,(110,40,60),M['dark']);_ls_box(t+'_Seat',_ls_off(c,yaw,-30,0,60),yaw,(25,20,40),M['dark']);A2(pl,'bike',_ls_off(c,yaw,-30,0,0),yaw-90,t+'_Frame')
+ def r_named_counter(base):
+  return lambda t,c,yaw,pl:r_counter(t,c,yaw,pl,base)
+ def r_doctor(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-30);_ls_box(t+'_Desk',b,yaw,(60,120,74),M['wood']);_ls_box(t+'_Chair',_ls_off(b,yaw,60),yaw,(42,42,45),M['sofa'])
+  _ls_box(t+'_PatientChair',_ls_off(b,yaw,40,90),yaw,(40,40,45),M['cushion'])
+  A2(pl,'doctor',_ls_off(b,yaw,60),yaw+180-90,t+'_Desk')
+ def r_seatbench(t,c,yaw,pl):
+  _ls_box(t+'_Seat',c,yaw,(45,180,45),M['sofa']);_ls_box(t+'_Back',_ls_off(c,yaw,-20,0,45),yaw,(6,180,40),M['sofa'])
+  A2(pl,'seat',_ls_off(c,yaw,5,-45),yaw-90,t+'_Seat');A2(pl,'seat',_ls_off(c,yaw,5,45),yaw-90,t+'_Seat')
+ def r_exhibit(t,c,yaw,pl):
+  _ls_box(t+'_Plinth',c,yaw,(60,60,100),R2mat('Plinth',(.92,.92,.9)));_ls_box(t+'_Piece',_ls_off(c,yaw,0,0,100),yaw+25,(30,30,45),R2mat('Bronze',(.55,.4,.25),.35))
+  p,y=face(c,yaw,90);A2(pl,'exhibit',p,y,t+'_Plinth')
+ def r_easel(t,c,yaw,pl):
+  _ls_box(t+'_Leg',c,yaw,(6,60,160),M['wood']);_ls_box(t+'_Canvas',_ls_off(c,yaw,4,0,80),yaw,(2,60,70),R2mat('Canvas',(.97,.96,.93)),False);_ls_box(t+'_Stool',_ls_off(c,yaw,70),yaw,(35,35,45),M['wood'])
+  A2(pl,'easel',_ls_off(c,yaw,70),yaw+180-90,t+'_Canvas')
+ def r_weights(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-40);_ls_box(t+'_Rack',b,yaw,(50,180,110),M['steel'])
+  for k in range(5):_ls_cyl(t+'_Plate%d'%k,_ls_off(b,yaw,0,-70+35*k,110),12,8,M['dark'],False)
+  _ls_box(t+'_Bench',_ls_off(c,yaw,40),yaw,(120,35,45),M['cushion']);A2(pl,'weights',_ls_off(c,yaw,40,0,45),yaw-90,t+'_Rack')
+ def r_locker(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-35);_ls_box(t+'_Locker',b,yaw,(45,180,190),R2mat('Locker',(.45,.55,.65),.4))
+  p,y=face(c,yaw,45);A2(pl,'locker',p,y,t+'_Locker')
+ def r_shower(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-30);wall=R2mat('Tile',(.85,.9,.92),.3)
+  _ls_box(t+'_Back',_ls_off(b,yaw,-50),yaw,(6,105,220),wall)
+  for s in (-52,52):_ls_box(t+'_Side%+d'%s,_ls_off(b,yaw,0,s),yaw,(100,6,220),wall)
+  _ls_cyl(t+'_Head',_ls_off(b,yaw,-40,0,195),8,4,M['steel'],False);A2(pl,'shower',b,yaw-90,t+'_Back')
+ def r_tank(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-60);water=_ls_mat('M_LS_AquaWater',(.1,.45,.6),.05,0.,.8)
+  _ls_box(t+'_Base',b,yaw,(60,420,50),M['wood']);_ls_box(t+'_Water',_ls_off(b,yaw,-20,0,50),yaw,(8,400,180),water)
+  for s in (-205,205):_ls_box(t+'_Side%+d'%s,_ls_off(b,yaw,0,s,50),yaw,(60,10,180),M['dark'])
+  _ls_box(t+'_Top',_ls_off(b,yaw,0,0,230),yaw,(60,420,10),M['dark'])
+  koi=next((a.static_mesh_component.static_mesh for a in acts.values() if a.get_actor_label().startswith('Activity_ACTSPACE-06') and isinstance(a,unreal.StaticMeshActor) and a.static_mesh_component.static_mesh and 'koi' in a.static_mesh_component.static_mesh.get_name().lower()),None)
+  if koi:
+   for k,(s,u) in enumerate([(-150,40),(-60,110),(20,70),(110,140),(170,60),(60,30)]):_ls_spawn(t+'_Fish%d'%k,koi,_ls_off(b,yaw,0,s,50+u),yaw+(90 if k%2 else -90),[.7,.7,.7],None,False)
+  p,y=face(c,yaw,80);A2(pl,'tank',p,y,t+'_Water')
+ def r_jelly(t,c,yaw,pl):
+  _ls_cyl(t+'_Base',c,45,40,M['dark']);_ls_cyl(t+'_Column',_ls_off(c,yaw,0,0,40),40,200,_ls_mat('M_LS_JellyWater',(.25,.3,.7),.05,0.,1.2),True);_ls_cyl(t+'_Cap',_ls_off(c,yaw,0,0,240),45,15,M['dark'])
+  p,y=face(c,yaw,90);A2(pl,'jelly',p,y,t+'_Column')
+ def r_vend(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-30);_ls_vending(60+cnt.get(('_vend',''),0),b,yaw,M);cnt[('_vend','')]=cnt.get(('_vend',''),0)+1
+  p,y=face(c,yaw,80);A2(pl,'vending',p,y,'LoverSpot_Vending')
+ def r_mat(t,c,yaw,pl):
+  _ls_box(t+'_Mat',c,yaw,(180,60,1.5),R2mat('Yoga',(.55,.4,.75)),False);A2(pl,'mat',c,yaw-90,t+'_Mat')
+ # 16. Tripo furniture (life-tripo-v1, prepared + instant-meshes-rs; remeshed.json): a dressed piece whose recipe has a
+ #     model shows the model, scaled into the recipe's w x d x h box on the same spot. The recipe's boxes stay as the
+ #     collision (invisible), so anchors keep their actor names and the walk replay sees the same blockers.
+ LT=ROOT/'output/street-social-city-production/life-tripo-v1';ltr={};ltm={};tripo_used=[]
+ if (LT/'remeshed.json').exists():
+  pre={a['id']:a for a in json.loads((LT/'prepared.json').read_text('utf8'))['assets']}
+  for r in json.loads((LT/'remeshed.json').read_text('utf8'))['assets']:
+   p=pre.get(r['id'])
+   if r.get('status')!='passed' or not p:continue
+   # keep the prepared mesh when the remesh did not cut triangles (prepared pieces are already at their budget)
+   ltr[p['key']]=r['path'] if r['triangles']<p['triangles'] else p['path']
+ TRIPO={'rack':'clothing_rack','case':'jewelry_case','try':'eyeglass_display','ticket':'ticket_machine','conveyor':'sushi_conveyor',
+  'grill':'yakiniku_table','cats':'cat_tree','mbooth':'manga_booth','claw':'claw_machine','photobooth':'photo_booth','rhythm':'rhythm_game',
+  'racing':'racing_game','billiards':'billiards_table','dental':'dental_chair','bed':'hospital_bed_curtain','doctor':'consult_desk_screen',
+  'nail':'nail_table','aisle':'supermarket_shelf','fresh':'produce_case','cart':'shopping_cart','atm':'atm','concession':'popcorn_counter',
+  'recliner':'planetarium_recliner','exhibit':'museum_vitrine','easel':'easel_canvas','tank':'aquarium_tank_wall','jelly':'jellyfish_column',
+  'bike':'spin_bike','mat':'yoga_mat_roll','shower':'gym_shower_stall','backdrop':'studio_backdrop','kitchen':'kitchen_unit'}
+ PLACE_TRIPO={('rack','swimwear'):'swimsuit_rack',('rack','yukata'):'yukata_rack',('rack','lingerie'):'lingerie_mannequin',('display','phone_shop'):'phone_display',
+  ('counter_seats','ramen'):'ramen_counter',('counter_seats','izakaya'):'izakaya_lantern_bar',('counter','crepe'):'crepe_stand',
+  ('counter','fastfood'):'fastfood_counter',('shelf','manga_cafe'):'manga_shelf'}
+ def tripo_mesh(key):
+  if key in ltm:return ltm[key]
+  ltm[key]=None;path=ltr.get(key)
+  if path:
+   src=(ROOT/'Tools/street_city_activity_native_payload.lua').read_text('utf8').split('def import_one(',1)[1].split('def simple_water(',1)[0]
+   ns=dict(globals());ns.update(PREFIX='/Game/UniversityCity/LifeTripoV1',KEEP=[],save=lambda a:EAL.save_loaded_asset(a,False))
+   exec('def import_one('+src,ns);ltm[key]=ns['import_one'](type(ROOT)(path),'lt-'+key,0,True)
+  return ltm[key]
+ def tripo_swap(t,c,yaw,w,dd,h,key,spawned):
+  mesh=tripo_mesh(key)
+  if not mesh or not spawned:return
+  bb=mesh.get_bounding_box();lo,hi=bb.min,bb.max;ex,ey,ez=hi.x-lo.x,hi.y-lo.y,hi.z-lo.z
+  # the model's long horizontal side goes along the recipe's long side (across = w, along the facing = dd)
+  rot=90 if (w>=dd)==(ex>ey) else 0;fw,ac=(ey,ex) if rot else (ex,ey)
+  s=min(dd/max(fw,1),w/max(ac,1),h/max(ez,1));a=math.radians(yaw+rot);cx,cy=(lo.x+hi.x)/2,(lo.y+hi.y)/2
+  p=unreal.Vector(c.x-(cx*math.cos(a)-cy*math.sin(a))*s,c.y-(cx*math.sin(a)+cy*math.cos(a))*s,c.z-lo.z*s)
+  _ls_spawn(t+'_Tripo',mesh,p,yaw+rot,[s,s,s],None,False)
+  for b in spawned:b.static_mesh_component.set_visibility(False);b.static_mesh_component.set_cast_shadow(False)
+  tripo_used.append(dict(actor=t,key=key,scale=s))
+ REC={'rack':(r_rack,130,140,180,True),'fitting':(r_fitting,135,210,225,True),'mirror':(r_mirror,100,120,210,True),'counter':(r_counter,170,150,120,True),
+  'checkout':(r_checkout,170,150,120,True),'bar':(r_bar,170,150,120,True),'case':(r_case,160,150,115,False),'display':(r_display,160,150,95,False),
+  'table':(r_table2,90,250,80,False),'grill':(r_grill,90,250,80,False),'try':(r_try,90,250,80,False),'counter_seats':(r_counter_seats,310,200,110,True),
+  'conveyor':(r_conveyor,470,200,110,True),'booth':(r_booth,130,320,100,False),'claw':(r_claw,95,180,200,False),'rhythm':(r_rhythm,90,190,185,False),
+  'racing':(r_racing,90,250,185,False),'photobooth':(r_photobooth,195,230,230,False),'dental':(r_dental,170,260,200,False),'nail':(r_nail,110,200,110,False),
+  'cats':(r_cats,170,260,160,False),'mbooth':(r_mbooth,210,240,170,False),'shelf':(r_shelf,210,140,210,True),'aisle':(r_aisle,310,260,175,False),
+  'fresh':(r_fresh,210,160,100,True),'cart':(r_cart,90,200,95,False),'ticket':(r_ticket,70,140,175,True),'bench':(r_bench,190,110,50,False),
+  'lane':(r_lane,145,960,40,False),'billiards':(r_billiards,330,290,80,False),'bed':(r_bed,230,130,200,False),'desk':(r_desk,130,200,80,True),
+  'recliner':(r_recliner,160,200,70,False),'kitchen':(r_kitchen,250,170,100,True),'atm':(r_atm,80,150,155,True),'backdrop':(r_backdrop,290,520,255,True),
+  'concession':(r_named_counter('concession'),170,150,120,True),'shop':(r_named_counter('shop'),170,150,120,True),'doctor':(r_doctor,180,200,80,False),
+  'seatbench':(r_seatbench,190,110,90,False),'exhibit':(r_exhibit,90,200,150,False),'easel':(r_easel,80,160,165,False),'weights':(r_weights,190,180,115,True),
+  'locker':(r_locker,190,130,195,True),'shower':(r_shower,115,170,225,True),'tank':(r_tank,430,260,240,True),'jelly':(r_jelly,100,200,260,False),'vend':(r_vend,110,190,195,True),
+  'net':(r_net,920,320,250,False),'pingpong':(r_pingpong,190,500,80,False),'treadmill':(r_treadmill,90,220,140,False),'bike':(r_bike,60,170,100,False),'mat':(r_mat,80,200,20,False)}
+ def roomreg(rid):
+  a=ar.get(rid)
+  if not a:return None
+  return ([a['min'][0]+30,a['min'][1]+30],[a['max'][0]-30,a['max'][1]-30]),V(a['door']),a['min'][2]
+ def shopreg(b):
+  sb=shopbox(b);d=shopdoor(b)
+  return (sb[2],d,1200.) if sb and d else None
+ # every open door the physics replay walks through (side and support doors too, not only the room's main door):
+ # the newest physics plan's player-capsule sweeps; pieces keep 1.5 m off both ends of each
+ import glob
+ pp=sorted(glob.glob(str(ROOT/'output/street-social-city-production/motel-v1/physics-*-plan.json')))
+ opendoors=[]
+ if pp:
+  for s in json.loads(open(pp[-1],encoding='utf8').read()).get('sweeps',[]):
+   if s.get('kind')=='open_door_player_capsule':opendoors+=[V(s['start']),V(s['end'])]
+ def dress(place,where,plan,newplace=None):
+  if not where:skipped.append(dict(place=place,reason='room not found'));return
+  reg,d,z=where;c0=unreal.Vector((reg[0][0]+reg[1][0])/2,(reg[0][1]+reg[1][1])/2,z);res=[(d,150)]
+  res+=[(p,150) for p in opendoors if reg[0][0]-200<=p.x<=reg[1][0]+200 and reg[0][1]-200<=p.y<=reg[1][1]+200 and abs(p.z-z)<300]
+  if newplace:items.append(dict(place=place,anchor='door',pos=num(d),yaw=0,actor=newplace[0],building=newplace[1],name=newplace[2],rooms=[dict(min=[reg[0][0]-80,reg[0][1]-80,z-30],max=[reg[1][0]+80,reg[1][1]+80,z+400])]))
+  for key,n in plan:
+   fn,w,dd,h,wall=REC[key]
+   for k in range(n):
+    best=None
+    for r in range(0,1601,25):
+     m=max(1,int(2*math.pi*max(r,1)/25))
+     for q in range(m):
+      a=2*math.pi*q/m;c=unreal.Vector(c0.x+r*math.cos(a),c0.y+r*math.sin(a),z)
+      if not(reg[0][0]<=c.x<=reg[1][0] and reg[0][1]<=c.y<=reg[1][1]):continue
+      if any((c-unreal.Vector(p.x,p.y,z)).length()<rr+max(w,dd)*.45 for p,rr in res):continue
+      for yaw in (0,90,180,270):
+       if not _ls_fits(world,c,yaw,w,dd,h,z,10):continue
+       if wall and not _ls_wall_behind(world,c,yaw,dd,z):continue
+       best=(c,yaw);break
+      if best:break
+     if best:break
+    if not best:skipped.append(dict(place=place,reason='no spot for %s #%d'%(key,k+1)));break
+    c,yaw=best;res.append((c,max(w,dd)*.45));t='LoverSpot_R2_%s_%s%d'%(place,key,cnt.get((place,'_'+key),0)+1);cnt[(place,'_'+key)]=cnt.get((place,'_'+key),0)+1
+    key2=PLACE_TRIPO.get((key,place),TRIPO.get(key));_LS_REC[0]=[] if key2 else None
+    try:fn(t,c,yaw,place)
+    finally:spawned=_LS_REC[0];_LS_REC[0]=None
+    if key2:tripo_swap(t,c,yaw,w,dd,h,key2,spawned)
+  views.append(dict(id='R2-%s-%d'%(place,len(views)),eye=num(unreal.Vector(d.x,d.y,z+180)),target=num(unreal.Vector(c0.x,c0.y,z+90)),fov=90,hour=15))
+ S=lambda b,name:(('%s_F01'%b),b,name)
+ for rid in ('m1-0201','m1-0202','m1-0203','m1-0204','m1-0205','m1-0301','m1-0302','m1-0303','m1-0304'):dress('clothing',roomreg(rid),[('rack',2),('fitting',1),('mirror',1),('counter',1)])
+ for b in ('S10','S30','S46','S94'):dress('clothing_'+b.lower(),shopreg(b),[('fitting',1),('mirror',1)],S(b,b+' 服飾店'))
+ dress('lingerie',roomreg('m1-0206'),[('rack',2),('fitting',2),('mirror',1),('counter',1)])
+ dress('swimwear',shopreg('S58'),[('rack',3),('fitting',2),('mirror',1),('counter',1)],S('S58','泳裝店（S58 改建）'))
+ dress('yukata',shopreg('S76'),[('rack',3),('fitting',2),('mirror',1),('counter',1)],S('S76','浴衣租借（S76 改建）'))
+ dress('optician',roomreg('m1-0407'),[('counter',1),('mirror',1),('try',2)])
+ dress('jewelry',roomreg('m1-0105'),[('case',3),('counter',1),('mirror',1)])
+ dress('phone_shop',roomreg('m1-0701'),[('display',3),('counter',1)])
+ dress('ramen',roomreg('m1-0901'),[('ticket',1),('counter_seats',1),('table',2)])
+ dress('arcade',roomreg('m1-0807'),[('claw',4),('photobooth',1)]);dress('arcade',roomreg('m1-0806'),[('rhythm',1),('racing',2),('counter',1)])
+ dress('dentist',roomreg('cv-0102'),[('dental',2),('counter',1)])
+ dress('nail',shopreg('S59'),[('nail',3),('counter',1),('bench',1)],S('S59','美甲店（S59 改建）'))
+ dress('supermarket',shopreg('S72'),[('aisle',3),('fresh',1),('checkout',2),('cart',1)],S('S72','超市（S72 改建）'))
+ dress('sushi',shopreg('S70'),[('conveyor',1),('booth',2),('counter',1)],S('S70','迴轉壽司（S70 改建）'))
+ dress('yakiniku',shopreg('S88'),[('grill',4),('counter',1)],S('S88','燒肉店（S88 改建）'))
+ dress('izakaya',shopreg('S52'),[('counter_seats',1),('booth',2),('bar',1)],S('S52','居酒屋（S52 改建）'))
+ dress('crepe',shopreg('S69'),[('counter',1),('bench',2)],S('S69','可麗餅店（S69 改建）'))
+ dress('fastfood',shopreg('S41'),[('counter',1),('table',4)],S('S41','速食店（S41 改建）'))
+ dress('cat_cafe',shopreg('S67'),[('cats',2),('table',2),('counter',1)],S('S67','貓咪咖啡（S67 改建）'))
+ dress('manga_cafe',shopreg('S73'),[('mbooth',3),('shelf',2),('counter',1)],S('S73','漫畫網咖（S73 改建）'))
+ dress('bowling',shopreg('S79'),[('lane',2),('billiards',2),('bench',1),('counter',1)],S('S79','保齡球與撞球（S79 改建）'))
+ dress('photo_studio',shopreg('S34'),[('backdrop',1),('fitting',1)])
+ ir=roomreg('t1-0105')
+ dress('infirmary',ir,[('bed',2),('desk',1)],('T1_F01','T1','保健室（T1-0105 改）'))
+ dress('planetarium',roomreg('cv-0401'),[('recliner',4)],('CV_F04','CV','天文館（CV-0401 小劇場改）'))
+ dress('bank',roomreg('cv-0202'),[('atm',1)])
+ dress('girls_dorm',roomreg('d1-0102'),[('kitchen',1)]);dress('boys_dorm',roomreg('d2-0102'),[('kitchen',1)])
+ dress('gym_hall',roomreg('sp-0106'),[('net',1)]);dress('gym_hall',roomreg('sp-0108'),[('pingpong',3)])
+ dress('gym',roomreg('sp-0404'),[('treadmill',2),('bike',2),('locker',1),('shower',1)]);dress('gym',roomreg('sp-0501'),[('mat',3)]);dress('gym',roomreg('sp-0403'),[('weights',1)])
+ # c-conquest 8.2.2: furnished rooms that still lack the game's anchors
+ dress('clinic_general',roomreg('cv-0103'),[('counter',1),('doctor',1)])
+ dress('post',roomreg('cv-0201'),[('seatbench',1)])
+ dress('cinema',roomreg('cv-0402'),[('ticket',1),('concession',1)])
+ dress('museum',roomreg('cv-0403'),[('exhibit',3),('bench',1)]);dress('museum',roomreg('cv-0404'),[('exhibit',2),('bench',1),('shop',1)])
+ dress('club_room',roomreg('sc-0202'),[('table',2),('shelf',1)])
+ dress('art_room',roomreg('sc-0401'),[('easel',3)])
+ # aquarium moves to the CV ocean halls (c-conquest 11-03): a wall tank with koi, a bench and a vending machine in
+ # CV-0301, two jellyfish columns in CV-0302; these items replace the S28 ones (same place:anchor keys, written later)
+ a1,a2=ar.get('cv-0301'),ar.get('cv-0302')
+ if a1 and a2:
+  dress('aquarium',roomreg('cv-0301'),[('tank',1),('bench',1),('vend',1)])
+  items.append(dict(place='aquarium',anchor='door',pos=a1['door'],yaw=0,actor='CV-0301',building='CV',name='海洋水族館（CV 3F 大水槽展廳、水母展廳）',rooms=[dict(min=a1['min'],max=[a1['max'][0],a1['max'][1],a1['min'][2]+420]),dict(min=a2['min'],max=[a2['max'][0],a2['max'][1],a2['min'][2]+420])]))
+  dress('aquarium',roomreg('cv-0302'),[('jelly',2),('bench',1)])
+ else:skipped.append(dict(place='aquarium',reason='cv-0301 / cv-0302 not in props areas'))
+ # water checks for round 2: the SP pools and the S19 onsen bath (views only)
+ for rid in ('sp-0101','s19-0101'):
+  a=ar.get(rid)
+  if a:views.append(dict(id='R2-water-'+rid,eye=num(unreal.Vector(a['door'][0],a['door'][1],a['min'][2]+250)),target=num(unreal.Vector((a['min'][0]+a['max'][0])/2,(a['min'][1]+a['max'][1])/2,a['min'][2])),fov=90,hour=15))
+ # 17. rounds 3-4 outdoors (life-tripo-v1 models at their prepared size): beach play near each lifeguard tower, the summer
+ #     festival on the park plaza, a Christmas tree at the campus gate, batting cages by the sports field, a skate rental
+ #     and fishing spots at the park pond, barbecue / tents and the amusement park past the playground field. Each piece
+ #     stands on a free, level enough lawn / sand spot (the ground is followed), has an invisible box blocker at its
+ #     footprint and an anchor in front; places that the game does not have yet get a door item with a box round them.
+ gpa=lambda pid,name:next((V(a['pos']) for a in (gp.get(pid) or {}).get('anchors',[]) if a['name']==name),None)
+ out_used=[]
+ def outdoor(place,hint,plan,rmin=200,rmax=2500,newname=None,margin=60,step=50):
+  if not hint:skipped.append(dict(place=place,reason='no hint anchor'));return
+  placed=[];av=[]
+  for key,n in plan:
+   mesh=tripo_mesh(key)
+   if not mesh:skipped.append(dict(place=place,reason='no Tripo model for '+key));continue
+   bb=mesh.get_bounding_box();lo,hi=bb.min,bb.max;ex,ey,ez=hi.x-lo.x,hi.y-lo.y,hi.z-lo.z
+   for k in range(n):
+    # the followed ground can be a roof or a deck (the amusement teacups first landed 4 m up): keep only ground within
+    # 1.5 m of the hint, ruling the rest out and searching again
+    bad=[]
+    for _ in range(40):
+     got=_ls_search(world,hint,hint.z,ey+margin,ex+margin,min(ez,400),[0,90,180,270],rmin=rmin,rmax=rmax,avoid=av+bad,follow=True,tol=20,step=step)
+     if not got or abs(got[0].z-hint.z)<=150:break
+     bad.append(got[0]);got=None
+    if not got:skipped.append(dict(place=place,reason='no free %dx%d cm spot for %s #%d'%(ex,ey,key,k+1)));break
+    c,yaw=got;a=math.radians(yaw);cx,cy=(lo.x+hi.x)/2,(lo.y+hi.y)/2
+    t='LoverSpot_R3_%s_%s%d'%(place,key,k+1)
+    _ls_box(t+'_Block',c,yaw,(ex,ey,min(ez,300)),M['counter']).static_mesh_component.set_visibility(False)
+    p=unreal.Vector(c.x-(cx*math.cos(a)-cy*math.sin(a)),c.y-(cx*math.sin(a)+cy*math.cos(a)),c.z-lo.z)
+    _ls_spawn(t+'_Tripo',mesh,p,yaw,[1,1,1],None,False)
+    av.append(c);placed.append((c,max(ex,ey)/2));q,y=face(c,yaw,ex/2+70);A2(place,key,q,y,t+'_Tripo')
+    out_used.append(dict(actor=t,key=key,place=place))
+  if newname and placed:
+   xs=[c.x-r for c,r in placed]+[c.x+r for c,r in placed];ys=[c.y-r for c,r in placed]+[c.y+r for c,r in placed];z=min(c.z for c,r in placed)
+   items.append(dict(place=place,anchor='door',pos=num(placed[0][0]),yaw=0,actor='LoverSpot_R3_'+place,building=None,name=newname,
+    rooms=[dict(min=[min(xs)-200,min(ys)-200,z-100],max=[max(xs)+200,max(ys)+200,z+3600])]))
+  # look down on what was placed from high up (a low eye near the hint can sit inside a building)
+  if placed:
+   mx,my=sum(c.x for c,r in placed)/len(placed),sum(c.y for c,r in placed)/len(placed);span=max(1500,max(max(abs(c.x-mx),abs(c.y-my))+r for c,r in placed))
+   views.append(dict(id='R3-%s-%d'%(place,len(views)),eye=num(unreal.Vector(mx-span,my-span,hint.z+span*1.3)),target=num(unreal.Vector(mx,my,hint.z+100)),fov=80,hour=15))
+ for i,nm_ in enumerate(['lifeguard','lifeguard2','lifeguard3','lifeguard4','lifeguard5','lifeguard6']):
+  h_=gpa('beach',nm_)
+  if not h_:continue
+  outdoor('beach',h_,[('changing_hut',1),('sandcastle',1),('watermelon_split',1)]+([('beach_volleyball_net',1),('float_rental_rack',1),('banana_boat',2)] if i==0 else []),rmin=400,rmax=3000)
+  if i==0:outdoor('beach_house',h_,[('beach_house_stall',1)],rmin=800,rmax=4000,newname='海之家')
+  if i==1:outdoor('jetski',h_,[('jetski',2)],rmin=600,rmax=4000,newname='水上摩托車出租')
+ outdoor('festival',gpa('park','plaza'),[('goldfish_stall',1),('shooting_stall',1),('takoyaki_stall',1),('cotton_candy_stall',1),('yoyo_pool',1),('lantern_string',4)],rmin=300,rmax=3000,newname='夏日祭典（公園廣場）')
+ outdoor('xmas_tree',gpa('campus_gate','gate'),[('christmas_tree',1)],rmin=800,rmax=3000,newname='聖誕樹廣場（校門）')
+ outdoor('batting',gpa('campus_sports','field'),[('batting_machine',2)],rmin=1500,rmax=5000,newname='打擊練習場')
+ outdoor('skating',gpa('park','pond'),[('skate_rental',1)],rmin=300,rmax=2500,newname='溜冰場（公園池畔）')
+ outdoor('fishing',gpa('park','pond'),[('fishing_spot',3)],rmin=200,rmax=2000,newname='釣魚池（公園池畔）')
+ outdoor('bbq',gpa('playground','field'),[('bbq_grill',3),('camping_tent',3)],rmin=1500,rmax=5000,newname='烤肉露營區')
+ outdoor('amusement',gpa('playground','field'),[('ferris_wheel',1),('carousel',1),('teacup_ride',1),('haunted_house',1),('coaster_station',1),('coaster_track',3),('ticket_gate',1),('popcorn_cart',2)],rmin=3000,rmax=15000,newname='遊樂園',margin=300,step=250)
  # new-game spawn outside the boys' dorm: only a check view, nothing placed
  sp=next((a for a in (gp.get('boys_dorm') or {}).get('anchors',[]) if a['name']=='spawn'),None)
  if sp:views.append(dict(id='LS-spawn',eye=num(_ls_off(V(sp['pos']),sp['yaw']+90,-500,0,250)),target=num(_ls_off(V(sp['pos']),sp['yaw']+90,300,0,120)),fov=80,hour=9))
@@ -478,5 +891,5 @@ def motel_world_lover_spots_install():
  assert unreal.EditorLevelLibrary.save_current_level();new=sha(MAPFILE)
  installed=read('motel-install');installed.update(parent_map_sha256=LOAD_SHA,map_sha256=new);write('motel-install',installed)
  (LS_OUT/'lover-spots-views.json').write_text(json.dumps(views,indent=1),'utf8')
- (LS_OUT/('lover-spots-install-'+time.strftime('%Y%m%d-%H%M%S')+'.json')).write_text(json.dumps(dict(status='saved_requires_capture_review',map_sha256=new,parent_map_sha256=LOAD_SHA,backup=str(b),items=items,lots=lots,skipped=skipped),ensure_ascii=False,indent=1),'utf8')
+ (LS_OUT/('lover-spots-install-'+time.strftime('%Y%m%d-%H%M%S')+'.json')).write_text(json.dumps(dict(status='saved_requires_capture_review',map_sha256=new,parent_map_sha256=LOAD_SHA,backup=str(b),items=items,lots=lots,skipped=skipped,tripo=tripo_used,outdoor=out_used),ensure_ascii=False,indent=1),'utf8')
 ]====]

@@ -479,7 +479,7 @@ local wants = { aquarium = { 'tank', 'vending', 'bench' }, boys_dorm = { 'lounge
 local OVERRIDE = { ['aquarium:tank'] = true, ['aquarium:bench'] = true, ['lodge:lounge2'] = true, ['lodge:seat'] = true }
 local aq = newitems['aquarium:door']
 for _, g in ipairs(G) do
-  if g.id == 'aquarium' and aq then g.building = aq.building; g.name = '水族館（S28 改建）'; g.door = aq.pos; g.rooms = aq.rooms; g.note = nil end
+  if g.id == 'aquarium' and aq then g.building = aq.building; g.name = aq.name or '水族館（S28 改建）'; g.door = aq.pos; g.rooms = aq.rooms; g.note = nil end
   local have = {}; local an = {}
   for _, a in pairs(g.anchors) do if a then have[a.name] = true; an[#an + 1] = a end end
   for _, name in ipairs(wants[g.id] or {}) do
@@ -861,9 +861,15 @@ do
         end end
       end
     end
+    -- clinics: he waits in the corridor, 1.5 m out of the first room's door
+    if door and (e[1] == 'dentist' or e[1] == 'clinic_general') then
+      local cx, cy = (rooms[1].min[1] + rooms[1].max[1]) / 2, (rooms[1].min[2] + rooms[1].max[2]) / 2; local dx, dy = door[1] - cx, door[2] - cy
+      if math.abs(dx) > math.abs(dy) then dx, dy = dx > 0 and 1 or -1, 0 else dx, dy = 0, dy > 0 and 1 or -1 end
+      an[#an + 1] = A('wait', P(door[1] + dx * 150, door[2] + dy * 150, door[3]), r1(math.deg(math.atan(-dy, -dx)) - 90), 'corridor outside ' .. e[3][1]:upper())
+    end
     if #rooms > 0 then GAME_PLACES[#GAME_PLACES + 1] = { id = e[1], building = b, name = e[2], door = door, rooms = rooms, anchors = an, privacy = 0, new_place = true, furnished = #an > 0 } end
   end
-  -- the beach: every beach prop (loungers, umbrellas, lifeguard towers, showers, changing screens) in one box
+  -- the beach: every beach prop (loungers, umbrellas, lifeguard towers, showers, changing screens)
   -- the shore runs ~1 km along the west coast: one 100 x 100 m box round each lifeguard tower west of x 40000 (the
   -- tower at the inland pool is not the sea); umbrellas also stand at street cafes, so only those inside a box count
   local BK = { lounger = 'lounger', beach_umbrella = 'parasol', lifeguard_tower = 'lifeguard', beach_shower = 'shower', changing_screen = 'changing' }
@@ -876,13 +882,27 @@ do
   local an, n = {}, {}
   for _, t in ipairs(kept) do local base = BK[t.k]
     if base and onshore(t.p) then
-      n[base] = (n[base] or 0) + 1; if n[base] <= 12 then an[#an + 1] = A(base .. (n[base] > 1 and n[base] or ''), t.p, t.face and r1(t.face - 90) or 0, t.n or t.k) end
+      n[base] = (n[base] or 0) + 1
+      local name = base .. (n[base] > 1 and n[base] or '')
+      -- c-conquest 8.2.2: the changing rooms are split by sex (first women, second men)
+      if base == 'changing' then name = ({ 'changing_women', 'changing_men' })[n[base]] or ('changing' .. n[base]) end
+      if n[base] <= 12 then an[#an + 1] = A(name, t.p, t.face and r1(t.face - 90) or 0, t.n or t.k) end
     end
   end
   if x0 < math.huge and #an > 0 then
     local door; for _, a in ipairs(an) do if a.name == 'lifeguard' then door = a.pos end end
     GAME_PLACES[#GAME_PLACES + 1] = { id = 'beach', name = '海水浴場', door = door or an[1].pos, rooms = boxes,
       anchors = an, privacy = 0, new_place = true, outdoor = true, note = 'swim*, banana_boat, volleyball, watermelon, sandcastle, rental: round 3' }
+  end
+  -- round-2 furniture for the places made here (lingerie racks, dentist chairs, ...): the install items join them too;
+  -- an item replaces the anchor of the same name taken from the room props
+  local byid = {}; for _, g in ipairs(GAME_PLACES) do byid[g.id] = g end
+  local keys = {}; for k in pairs(newitems) do keys[#keys + 1] = k end; table.sort(keys)
+  for _, k in ipairs(keys) do local it = newitems[k]; local g = byid[it.place]
+    if g and it.anchor ~= 'door' and g.new_place then
+      for i = #g.anchors, 1, -1 do if g.anchors[i].name == it.anchor then table.remove(g.anchors, i) end end
+      g.anchors[#g.anchors + 1] = A(it.anchor, it.pos, it.yaw, it.actor); g.furnished = true
+    end
   end
   -- every game place: outdoor when it has no building (park, playground, shrine, campus gate, beach); the sports field too
   for _, g in ipairs(GAME_PLACES) do if g.outdoor == nil then g.outdoor = g.building == nil end end

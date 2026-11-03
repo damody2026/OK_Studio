@@ -1929,3 +1929,14 @@
 - 2026-11-03 e-galgame（H 補充、啊嘿顏測試）：一整個下午反覆用 `game_launch` 開沙盒 EAdd／EAdd2 的遊戲（Add3～Add13，至少 8 次），一次都沒有先 `unreal_slot.lua claim`，以為 slot3 的 e-galgame（其實是 E 主線 EMain 的）也算我。全機變成 4 個 Unreal，GPU 用到 31/32.6 GB，c-conquest 掉到 1.6 FPS，協調者提醒了四次。規則：每次開遊戲前自己 `claim e-galgame "e-fork <做什麼>" --wait`，拿到 slot 才開；測完一段、等建置時馬上 `game_stop` 並 `release`，不要讓遊戲一直開著。
 
 - 2026-11-03 e-galgame 提早暫存，被別的 session 的提交帶走：我先 `git add` 了檢查表三列，接著花二十多分鐘在 OKHeadBuild 建置；這段時間另一個 session 提交 c84154466（unreal_slot 加 e-fork），共用同一個 index，把我已暫存的檢查表一起提交了。內容沒錯，但出現在別人的提交裡。另外 HEAD 在我建置期間前進了兩次，第一次差點用舊 HEAD 為底的檔案蓋掉 6029f8b4c 的改動（暫存後看 --stat 出現大量刪除才發現）。教訓：等驗證完、要提交的那一刻才暫存，暫存後立刻提交；用 OKHeadBuild 的檔案暫存前先確認 HEAD 沒變（`git log -1` 與驗證樹的底一致），變了就在新 HEAD 上重套重建。
+
+- 2026-11-03 c-street-city `Tools/build_street_city_places.lua` 出現非 UTF-8 的一行（協調者發現）：用 `lua.exe -e "…"` 在 bash 命令列裡寫進中文字串，經過 Windows 命令列的 ANSI 字碼頁轉換後，寫入檔案就成了亂碼。已改回 UTF-8（無 BOM），並用 iconv 確認。規則：含中文的改檔一律寫成 .lua 腳本檔再執行，不放在命令列字串裡；提交前用 `iconv -f utf-8 -t utf-8` 檢查。
+
+- 2026-11-03 c-street-city `places.json` 的 `park_bench` 地點的位置取錯：街道長椅在地圖裡和整座城市的其他長椅併成同一個 cluster actor（`BP_StreetCluster_C`），我用 actor 外框中心當長椅位置，55 個地點都落在 cluster 中心，高度也是 0。改正：長椅、回收桶、腳踏車架、公車亭改用 `Tools/street_city_anchors.lua`（街道擺放計畫套到實測路緣，4688/4688 吻合）的單件位置；其他外框超過 6 m 的 cluster 不當成單一道具。規則：取道具位置前先看 actor 類別與外框大小，cluster 要找單件來源。
+
+- 2026-11-03 c-street-city：462fab1fe 用暫存 index 提交 `build_street_city_places.lua` 和地點盤點文件後，沒有對真正的 index 執行 `git reset -q HEAD -- <檔>`。真正的 index 一直留著提交前的舊版（`git status` 顯示 `MM`，`git diff --cached` 是 87 行刪除），別的 session 只要直接 `git commit`，就會把我的提交改回去。8d5031b9b 提交後已同步。修正：每次用暫存 index 提交後，都對自己提交的路徑執行 `git reset -q HEAD -- <檔>`，再用 `git status --short <檔>` 確認是空的。
+
+- 2026-11-03 c-street-city 第 2 輪佈置擋住側門：`dress()` 只讓家具避開房間的主門（props areas 的 `door`），沒看實走計畫裡的其他門。SC-0202 社團教室的第二張桌子放在 support1 側門內 1.1 m，實走的開門膠囊掃掠被擋住（`cooked_player_capsule_obstruction`，chain18 四段全失敗）。修正：`dress()` 讀最新物理計畫的所有 `open_door_player_capsule` 端點，家具一律離每個門 1.5 m。
+
+- 2026-11-03 c-street-city 一樓店面找不到門：S10、S52、S58、S59、S67、S69、S70、S72 在 places.json 只有 3 樓的地點，`shopdoor()` 只找 z≈1200 的門，結果 8 家店「room not found」整家沒佈置。修正：沒有一樓地點時，改用店面改建資料（refits-build／samples-build 的 `door_x`、`H`）加上 F01 actor 的位置與朝向算出門口。
+
