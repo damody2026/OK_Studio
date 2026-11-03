@@ -82,7 +82,11 @@ FString AOKStreetSocialScene::TodayText(int32 Character) const{
   for(const auto& B:*Plan)if(B.End<=Minute&&B.Kind!=TEXT("sleep")){
    if(Done.Num()&&Done.Last().Kind==B.Kind&&Done.Last().Place==B.Place&&Done.Last().End>=B.Start-1){if(B.Kind==TEXT("class")||B.Kind==TEXT("work"))Done.Last().Start=FMath::Max(Done.Last().Start,B.Start);Done.Last().End=B.End;}
    else Done.Add(B);}
-  TArray<FString> Earlier;for(int32 K=FMath::Max(0,Done.Num()-4);K<Done.Num();++K){const auto& B=Done[K];const FOKStreetPlace* P=OKStreetFindPlace(B.Place);const int32 Said=(B.Start+7)/15*15;
+  // Before those four, still what she was bound to (a class, a shift, a promise): 爱丽丝 worked the drink shop 10:00-15:10
+  // and, four leisure blocks later, told him at dinner she had no work today (R6-172).
+  TArray<int32> Keep;for(int32 K=0;K<Done.Num();++K){const FString& Kind=Done[K].Kind;if(K>=Done.Num()-4||Kind==TEXT("class")||Kind==TEXT("work")||Kind==TEXT("promise"))Keep.Add(K);}
+  while(Keep.Num()>8)Keep.RemoveAt(0);
+  TArray<FString> Earlier;for(const int32 K:Keep){const auto& B=Done[K];const FOKStreetPlace* P=OKStreetFindPlace(B.Place);const int32 Said=(B.Start+7)/15*15;
    Earlier.Add(FString::Printf(TEXT("%02d:%02d %s"),Said/60%24,Said%60,*OKMsg(TEXT("ui.director.plan_block"),{{TEXT("doing"),OKPhoneDoingWord(B.Kind)},{TEXT("place"),P?FString(P->Name):B.Place}})));}
   if(Earlier.Num())Parts.Add(OKMsg(TEXT("ui.director.your_day_so_far_line"),{{TEXT("done"),FString::Join(Earlier,OKT(TEXT("ui.bank.list_separator")))}}));}
  if(BirthdayOf(Character,Day))Parts.Add(OKT(TEXT("ui.director.today_is_birthday")));else if(BirthdayOf(Character,Day+1))Parts.Add(OKT(TEXT("ui.director.tomorrow_birthday_hint")));

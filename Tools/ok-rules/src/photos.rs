@@ -43,7 +43,11 @@ fn pick(photos: &[Value], which: &Value, from: &str) -> Option<usize> {
         return photos.iter().position(|p| p.get("id").and_then(Value::as_i64) == Some(id));
     }
     let topic = which.as_str().unwrap_or("latest");
-    let mine = |p: &&Value| s(p, "taker") == from;
+    // Hers: taken by her, or one of the two of them (by the fountain, his camera; not his photo of her alone). 三月七
+    // said "sending it to you" about the photo just taken of them, and her sunset from ten days before went (R6-170).
+    let mine = |p: &&Value| {
+        s(p, "taker") == from || p.get("people").and_then(Value::as_array).is_some_and(|a| a.iter().any(|v| v == from) && a.iter().any(|v| v == "him"))
+    };
     if topic == "latest" || topic.is_empty() {
         return photos.iter().enumerate().filter(|(_, p)| mine(p)).map(|(k, _)| k).last();
     }
@@ -204,6 +208,14 @@ mod tests {
         let f = facts(&json!({"ext": sent["ext"], "girl": "m7"}));
         let t = f["text"].as_str().unwrap();
         assert!(t.contains("夕陽"));
+    }
+
+    #[test]
+    fn her_latest_includes_the_photo_of_the_two_he_took() {
+        let a = taken(&json!({"ext": {}, "file": "sunset.png", "day": 22, "minute": 1093, "place": "park", "taker": "m7", "people": [], "topic": "晚霞"}));
+        let b = taken(&json!({"ext": a["ext"], "file": "us.png", "day": 32, "minute": 893, "place": "park", "taker": "him", "people": ["m7", "him"], "topic": ""}));
+        let sent = send(&json!({"ext": b["ext"], "which": "latest", "from": "m7", "to": "him"}));
+        assert_eq!(sent["file"], "us.png");
     }
 
     #[test]
