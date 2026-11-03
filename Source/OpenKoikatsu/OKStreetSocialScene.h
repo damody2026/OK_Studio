@@ -166,6 +166,10 @@ private:
  TArray<const struct FOKStreetCatalogItem*> ItemsHere(const FString& Place) const;
  FString ResolveItemId(const FString& Id,const FString& Place) const; // OKStreetSocialEconomy.inl
  bool SoldHere(const struct FOKStreetCatalogItem& Item,const FString& Place) const;
+ void SetDrinkOptions(struct FOKStreetCartLine& Line,const FString& Sweet,const FString& Ice,FString* Refused=nullptr,const struct FOKStreetCartLine* Keep=nullptr) const; // OKStreetSocialEconomy.inl
+ FString DrinkMenuNote(const struct FOKStreetCatalogItem& Item) const;
+ FString DishName(const struct FOKStreetCatalogItem& Item,const FString& Sweet,const FString& Ice) const;
+ void ChangeDrinkOptions(int32 Girl,const FString& Said,bool ForHer,const FString& Sweet,const FString& Ice);
  bool PlaceClosedNow(const FString& PlaceId,FString& Why) const;
  bool CommitStore(struct FOKStreetStore&& Candidate);
  TSharedPtr<class FJsonObject> ProfileOf(int32 Character) const;

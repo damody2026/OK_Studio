@@ -52,6 +52,7 @@ inline const TCHAR* OKStreetMoodBand(float Level) { return Level <= -45.f ? TEXT
 inline float OKStreetItemFill(const FOKStreetCatalogItem& I) { if (I.IsDrink()) return 0.f; const float* V = I.Effects.Find(TEXT("satiety")); return V ? *V : 0.f; }
 struct FOKStreetDish {
  FString ItemId, Name;
+ FString Sweetness, Ice; // a drink's, as made (catalog.rs drink_options levels)
  bool ForHer = false, Served = false;
  float Percent = 100.f, Booked = 0.f;
  int32 Batch = 0, Her = INDEX_NONE;

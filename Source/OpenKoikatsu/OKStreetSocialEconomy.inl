@@ -83,6 +83,44 @@ bool AOKStreetSocialScene::PlaceClosedAt(const FString& PlaceId,const FDateTime&
  Why=Answer->GetStringField(TEXT("why"));return true;
 }
 
+// A drink's sweetness and ice as the shop makes it (catalog.rs drink_options): 無糖 微糖 少糖 半糖 全糖, 無冰 to 全冰, and
+// 溫 / 熱 only for a drink that can be (tea, milk tea: not juice); a smoothie's ice is not chosen. What was not said keeps
+// Keep (else the shop's 全糖 全冰). Refused: what was asked and cannot be made.
+void AOKStreetSocialScene::SetDrinkOptions(FOKStreetCartLine& Line,const FString& Sweet,const FString& Ice,FString* Refused,const FOKStreetCartLine* Keep) const{
+ auto Request=OKRulesRequest(TEXT("drink_options"));Request->SetStringField(TEXT("item"),Line.ItemId);
+ Request->SetStringField(TEXT("sweetness"),Sweet.IsEmpty()&&Keep?Keep->Sweetness:Sweet);Request->SetStringField(TEXT("ice"),Ice.IsEmpty()&&Keep?Keep->Ice:Ice);
+ const TSharedPtr<FJsonObject> A=OKRulesEval(*State,Request);if(!A)return;
+ Line.Sweetness=A->GetStringField(TEXT("sweetness"));Line.Ice=A->GetStringField(TEXT("ice"));
+ if(Refused)*Refused=A->GetStringField(TEXT("refused_ice"));
+}
+// What a drink's menu line says about its options, so she and the judge know what can be asked for.
+FString AOKStreetSocialScene::DrinkMenuNote(const FOKStreetCatalogItem& Item) const{
+ if(Item.Options.IsEmpty())return FString();
+ return OKT(!Item.Options.Contains(TEXT("ice"))?TEXT("ui.drink.menu_note_no_ice"):Item.Options.Contains(TEXT("hot"))?TEXT("ui.drink.menu_note_hot"):TEXT("ui.drink.menu_note_cold"));
+}
+// A dish's name on the table: a drink with how it is made ("珍珠奶茶（半糖少冰）").
+FString AOKStreetSocialScene::DishName(const FOKStreetCatalogItem& Item,const FString& Sweet,const FString& Ice) const{
+ if(Item.Options.IsEmpty()||(Sweet.IsEmpty()&&Ice.IsEmpty()))return Item.Name;
+ return OKMsg(TEXT("ui.drink.dish_with_options"),{{TEXT("item_name"),Item.Name},{TEXT("sweetness"),Sweet.IsEmpty()?TEXT(""):OKT(*Sweet)},{TEXT("ice"),Ice.IsEmpty()?TEXT(""):OKT(*Ice)}});
+}
+// Sweetness or ice said for a drink already ordered (the judge's drink_options): the cup in the basket, or on its way and
+// not yet made, is changed. 刻晴 asked "甜度冰块呢？" after his pearl milk tea had gone in full sugar and full ice, and his
+// "半糖少冰" changed nothing (R6-164).
+void AOKStreetSocialScene::ChangeDrinkOptions(int32 Girl,const FString& Said,bool ForHer,const FString& Sweet,const FString& Ice){
+ auto& S=*State;const FString Shop=!ShopPlaceHere().IsEmpty()?ShopPlaceHere():S.MealPlace;
+ const FString ItemId=ResolveItemId(Said,Shop);const auto* Item=S.Catalog.Find(ItemId);if(!Item||Item->Options.IsEmpty())return;
+ auto Told=[&](const FString& Refused,const FString& Made){if(Refused.IsEmpty())return;
+  S.TellHer.Add(OKMsg(TEXT("ui.scene.game_fact_note"),{{TEXT("fact"),OKMsg(TEXT("ui.drink.cannot_make_fact"),{{TEXT("item"),Item->Name},{TEXT("asked"),OKT(*Refused)},{TEXT("made"),Made.IsEmpty()?OKT(TEXT("ui.drink.ice_fixed")):OKT(*Made)}})}}));};
+ for(auto& L:S.Cart)if(L.ItemId==ItemId&&L.ForHer==ForHer){const FOKStreetCartLine Was=L;FString Refused;SetDrinkOptions(L,Sweet,Ice,&Refused,&Was);Told(Refused,L.Ice);
+  UE_LOG(LogTemp,Display,TEXT("Street drink: %s in the basket now %s %s"),*ItemId,*L.Sweetness,*L.Ice);RefreshUI();return;}
+ for(auto& D:S.Table)if(D.ItemId==ItemId&&D.ForHer==ForHer&&(!ForHer||D.Her==Girl)){
+  if(D.Served){UE_LOG(LogTemp,Display,TEXT("Street drink: %s already made, its options stay"),*ItemId);return;}
+  FOKStreetCartLine L;L.ItemId=ItemId;FOKStreetCartLine Was;Was.Sweetness=D.Sweetness;Was.Ice=D.Ice;FString Refused;SetDrinkOptions(L,Sweet,Ice,&Refused,&Was);Told(Refused,L.Ice);
+  D.Sweetness=L.Sweetness;D.Ice=L.Ice;D.Name=DishName(*Item,D.Sweetness,D.Ice);
+  UE_LOG(LogTemp,Display,TEXT("Street drink: %s on its way now %s"),*ItemId,*D.Name);RefreshUI();return;}
+ UE_LOG(LogTemp,Display,TEXT("Street drink: %s for %s is not ordered; options not set"),*ItemId,ForHer?TEXT("her"):TEXT("him"));
+}
+
 // Writes a changed store; self-tests keep the file untouched.
 bool AOKStreetSocialScene::CommitStore(FOKStreetStore&& Candidate){
  auto& S=*State;FString Error;
@@ -110,7 +148,7 @@ float AOKStreetSocialScene::MoodNow(int32 Character) const{
 void AOKStreetSocialScene::AddToCart(const FString& ItemId,bool ForHer){
  auto& S=*State;const auto* Item=S.Catalog.Find(ItemId);if(!Item)return;
  FOKStreetCartLine Line;Line.ItemId=ItemId;Line.Size=Item->DefaultSize();Line.ForHer=ForHer;
- if(!Item->Options.IsEmpty()){Line.Sweetness=TEXT("全糖");Line.Ice=TEXT("正常");}
+ if(!Item->Options.IsEmpty())SetDrinkOptions(Line,FString(),FString());
  S.Cart.Add(Line);
  // Every dish is told to her as he orders it (not once at the end), so she reacts to each: pleased, does not like it, does not
  // want it, wants to eat it together. She answers when she is free; the dishes queue in the order they were picked.
@@ -730,7 +768,7 @@ void AOKStreetSocialScene::FinishCheckout(const FString& Option,int32 Her,const 
   for(const auto& L:S.Cart)if(const auto* I=S.Catalog.Find(L.ItemId))if(I->Consumable){
    Serve.Lines.Add(L);
    // The dishes are on the table at 100% but cannot be eaten until they are served.
-   FOKStreetDish D;D.ItemId=L.ItemId;D.Name=I->Name;D.ForHer=L.ForHer||L.Girl!=INDEX_NONE;D.Batch=Serve.Batch;D.Her=L.Girl!=INDEX_NONE?L.Girl:Her;S.Table.Add(D);
+   FOKStreetDish D;D.ItemId=L.ItemId;D.Sweetness=L.Sweetness;D.Ice=L.Ice;D.Name=DishName(*I,L.Sweetness,L.Ice);D.ForHer=L.ForHer||L.Girl!=INDEX_NONE;D.Batch=Serve.Batch;D.Her=L.Girl!=INDEX_NONE?L.Girl:Her;S.Table.Add(D);
   }
   if(!Serve.Lines.IsEmpty()){S.Serves.Add(Serve);S.MealPlace=S.ShopPlace;if(Serve.Lines.ContainsByPredicate(Edible))S.OrderedAtPlace.Add(S.ShopPlace,OKStreetMindNow(S));S.StopEating=false;S.FullTold=false;S.MealAwayAt=0;}
  }
@@ -860,9 +898,12 @@ void AOKStreetSocialScene::BuildShopPanel(const TSharedRef<SVerticalBox>& Box){
   for(int32 Index=0;Index<S.Cart.Num();++Index){const auto& L=S.Cart[Index];const auto* I=S.Catalog.Find(L.ItemId);if(!I)continue;
    auto Row=SNew(SHorizontalBox);
    Row->AddSlot().FillWidth(1).VAlign(VAlign_Center)[SNew(STextBlock).Text(FText::FromString(FString::Printf(TEXT("%s %s%s%s"),L.ForHer?OKT(TEXT("ui.economy.she_speaker_label")):OKT(TEXT("ui.economy.you_speaker_label")),*I->Name,L.Sweetness.IsEmpty()?TEXT(""):*(TEXT(" ")+FString(OKT(*L.Sweetness))),L.Ice.IsEmpty()?TEXT(""):*(TEXT(" ")+FString(OKT(*L.Ice))))))];
-   if(!I->Options.IsEmpty()){
-    Row->AddSlot().AutoWidth()[Button(OKT(TEXT("ui.economy.sweetness_label")),[Weak,Index](){static const TArray<FString> V={TEXT("全糖"),TEXT("少糖"),TEXT("半糖"),TEXT("微糖"),TEXT("無糖")};auto& Line=Weak->State->Cart[Index];Line.Sweetness=V[(V.IndexOfByKey(Line.Sweetness)+1)%V.Num()];Weak->RefreshUI();})];
-    Row->AddSlot().AutoWidth()[Button(OKT(TEXT("ui.economy.ice_label")),[Weak,Index](){static const TArray<FString> V={TEXT("正常"),TEXT("少冰"),TEXT("微冰"),TEXT("去冰"),TEXT("溫"),TEXT("熱")};auto& Line=Weak->State->Cart[Index];Line.Ice=V[(V.IndexOfByKey(Line.Ice)+1)%V.Num()];Weak->RefreshUI();})];
+   // The levels this drink has (catalog.rs drink_options): 無糖 to 全糖; 無冰 to 全冰, 溫 and 熱 only for a drink that can
+   // be made warm; no ice button for a smoothie.
+   if(!I->Options.IsEmpty()){auto Request=OKRulesRequest(TEXT("drink_options"));Request->SetStringField(TEXT("item"),L.ItemId);
+    TArray<FString> Sweets,Ices;if(const TSharedPtr<FJsonObject> A=OKRulesEval(*State,Request)){A->TryGetStringArrayField(TEXT("sweetness_choices"),Sweets);A->TryGetStringArrayField(TEXT("ice_choices"),Ices);}
+    if(!Sweets.IsEmpty())Row->AddSlot().AutoWidth()[Button(OKT(TEXT("ui.economy.sweetness_label")),[Weak,Index,Sweets](){if(!Weak.IsValid()||!Weak->State->Cart.IsValidIndex(Index))return;auto& Line=Weak->State->Cart[Index];Line.Sweetness=Sweets[(Sweets.IndexOfByKey(Line.Sweetness)+1)%Sweets.Num()];Weak->RefreshUI();})];
+    if(!Ices.IsEmpty())Row->AddSlot().AutoWidth()[Button(OKT(TEXT("ui.economy.ice_label")),[Weak,Index,Ices](){if(!Weak.IsValid()||!Weak->State->Cart.IsValidIndex(Index))return;auto& Line=Weak->State->Cart[Index];Line.Ice=Ices[(Ices.IndexOfByKey(Line.Ice)+1)%Ices.Num()];Weak->RefreshUI();})];
    }
    Row->AddSlot().AutoWidth()[Button(OKT(TEXT("ui.economy.remove_button")),[Weak,Index](){auto& L=*Weak->State;if(L.Cart.IsValidIndex(Index)){if(const auto* Gone=L.Catalog.Find(L.Cart[Index].ItemId))L.TellHer.Add(OKMsg(TEXT("ui.economy.cancelled_order_prompt"), {{TEXT("item_name"), *Gone->Name}}));L.Cart.RemoveAt(Index);L.OrderDroppedMinute=OKStreetMindNow(L);}Weak->RefreshUI();})];
    Panel->AddSlot().AutoHeight()[Row];

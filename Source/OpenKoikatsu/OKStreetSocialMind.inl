@@ -524,7 +524,7 @@ void AOKStreetSocialScene::ApplyChoiceReply(int32 Character,const FOKFreeTalkRep
   // Or the shop the outing is already walking to (a later reply on the way has no action of its own).
   const bool ShopAhead=Item&&Item->Place!=Place&&(Reply.Action==TEXT("go:")+Item->Place||(Going&&Going->Place&&Item->Place==Going->Place)||(Place.IsEmpty()&&Item->Place==OutingShop(Character)));
   if(ShopAhead){FOKStreetCartLine Carry;Carry.ItemId=O.Id;Carry.ForHer=ForHer;Carry.HerOwn=ForHer;Carry.Size=Item->Price.Contains(O.Size)?O.Size:Item->DefaultSize();
-   if(!Item->Options.IsEmpty()){Carry.Sweetness=O.Sweetness.IsEmpty()?OKT(TEXT("ui.mind.full_sugar_label")):O.Sweetness;Carry.Ice=O.Ice.IsEmpty()?OKT(TEXT("ui.mind.normal_state_label")):O.Ice;}
+   if(!Item->Options.IsEmpty())SetDrinkOptions(Carry,O.Sweetness,O.Ice);
    S.CarriedOrders.FindOrAdd(Character).Add(Carry);S.CarriedOrderSaid.Add(Character,Reply.Reply);UE_LOG(LogTemp,Display,TEXT("Street order carried: %s until they reach %s"),*O.Id,*Item->Place);continue;}
   // Bought by the activity she is doing with him there (the dorm vending machine): the activity bills it, nothing to
   // order and nothing "not sold here" for her to explain as a jammed machine.
@@ -557,7 +557,9 @@ void AOKStreetSocialScene::ApplyChoiceReply(int32 Character,const FOKFreeTalkRep
   // Told so: not told, she asked where her milk tea was, "still being made, then" (R5-10).
   if(ForHer&&ShiftUntil(Character)>0){S.TellHer.Add(OKMsg(TEXT("ui.economy.on_shift_no_order"),{{TEXT("item"),Item->Name}}));UE_LOG(LogTemp,Display,TEXT("Street order rejected: %s, she is on her shift"),*O.Id);continue;}
   FOKStreetCartLine Line;Line.ItemId=O.Id;Line.ForHer=ForHer;Line.HerOwn=ForHer;Line.Size=Item->Price.Contains(O.Size)?O.Size:Item->DefaultSize();
-  if(!Item->Options.IsEmpty()){Line.Sweetness=O.Sweetness.IsEmpty()?OKT(TEXT("ui.mind.full_sugar_label")):O.Sweetness;Line.Ice=O.Ice.IsEmpty()?OKT(TEXT("ui.mind.normal_state_label")):O.Ice;}
+  // How she asked for it (半糖少冰, 熱的), as the shop makes it; a hot fruit tea is not made, and she is told so.
+  if(!Item->Options.IsEmpty()){FString Refused;SetDrinkOptions(Line,O.Sweetness,O.Ice,&Refused);
+   if(!Refused.IsEmpty())S.TellHer.Add(OKMsg(TEXT("ui.scene.game_fact_note"),{{TEXT("fact"),OKMsg(TEXT("ui.drink.cannot_make_fact"),{{TEXT("item"),Item->Name},{TEXT("asked"),OKT(*Refused)},{TEXT("made"),Line.Ice.IsEmpty()?OKT(TEXT("ui.drink.ice_fixed")):OKT(*Line.Ice)}})}}));}
   S.ShopPlace=Place;S.Cart.Add(Line);++Added;
  }
  S.LastPlayerSaid.Reset();
@@ -725,7 +727,7 @@ FString AOKStreetSocialScene::MenuText(float Satiety,float Appetite,int32 Girl) 
   TArray<FString> Prices;for(const auto& P:I->Price)Prices.Add(P.Key.IsEmpty()?FString::FromInt(P.Value):P.Key+FString::FromInt(P.Value));
   const float Fills=OKStreetItemFill(*I); // a drink fits even when full
   // Non-food on the list (the park's fish food) is marked: right under "you just ate", she turned it down as "not hungry".
-  Lines.Add(FString::Printf(TEXT("%s %s %s"),*I->Id,*I->Name,*FString::Join(Prices,TEXT("/")))+(!I->Consumable?OKT(TEXT("ui.mind.menu_not_food")):Fills*Appetite>Room?OKT(TEXT("ui.mind.menu_too_much")):FString()));
+  Lines.Add(FString::Printf(TEXT("%s %s %s"),*I->Id,*I->Name,*FString::Join(Prices,TEXT("/")))+DrinkMenuNote(*I)+(!I->Consumable?OKT(TEXT("ui.mind.menu_not_food")):Fills*Appetite>Room?OKT(TEXT("ui.mind.menu_too_much")):FString()));
  }
  if(!State->Cart.IsEmpty()){TArray<FString> Cart;for(const auto& L:State->Cart)if(const auto* I=State->Catalog.Find(L.ItemId))Cart.Add((L.ForHer?OKT(TEXT("ui.economy.she_speaker_label")):OKT(TEXT("ui.mind.he_label")))+I->Name);Lines.Add(OKT(TEXT("ui.mind.ordered_label"))+FString::Join(Cart,OKT(TEXT("ui.bank.list_separator"))));}
  return FString::Join(Lines,OKT(TEXT("ui.economy.semicolon_mark")));

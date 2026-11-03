@@ -1810,11 +1810,19 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
     if(!Item->Consumable&&!Item->UsedOnTheSpot()){const int64* At=L->RecentBought.Find(ItemId+(ForHer?TEXT("|her"):TEXT("|him")));
      if(At&&OKStreetMindNow(*L)-*At<=15){L->TellHer.Add(OKMsg(TEXT("ui.economy.already_bought_order"),{{TEXT("for"),ForHer?TEXT("her"):TEXT("him")},{TEXT("item"),Item->Name}}));UE_LOG(LogTemp,Display,TEXT("Street judge order skipped: %s, bought for %s %lld min ago"),*Item->Name,ForHer?TEXT("her"):TEXT("him"),OKStreetMindNow(*L)-*At);continue;}}
     if(ForHer&&Weak->TooFullFor(Character,*Item)){L->TellHer.Add(OKMsg(TEXT("ui.economy.too_full_to_order"),{{TEXT("item"),Item->Name}}));UE_LOG(LogTemp,Display,TEXT("Street judge order skipped: %s, she is full"),*Item->Name);continue;}
-    FOKStreetCartLine Line;Line.ItemId=ItemId;Line.ForHer=ForHer;Line.Size=Item->DefaultSize();if(!Item->Options.IsEmpty()){Line.Sweetness=OKT(TEXT("ui.mind.full_sugar_label"));Line.Ice=OKT(TEXT("ui.mind.normal_state_label"));}
+    FOKStreetCartLine Line;Line.ItemId=ItemId;Line.ForHer=ForHer;Line.Size=Item->DefaultSize();
+    // As he asked for it ("a pearl milk tea, half sugar less ice"): the judge's sweetness and ice, as the shop makes them.
+    if(!Item->Options.IsEmpty()){FString Sweet,Ice,Refused;O->TryGetStringField(TEXT("sweetness"),Sweet);O->TryGetStringField(TEXT("ice"),Ice);Weak->SetDrinkOptions(Line,Sweet,Ice,&Refused);
+     if(!Refused.IsEmpty())L->TellHer.Add(OKMsg(TEXT("ui.scene.game_fact_note"),{{TEXT("fact"),OKMsg(TEXT("ui.drink.cannot_make_fact"),{{TEXT("item"),Item->Name},{TEXT("asked"),OKT(*Refused)},{TEXT("made"),Line.Ice.IsEmpty()?OKT(TEXT("ui.drink.ice_fixed")):OKT(*Line.Ice)}})}}));}
     if(OnTheWay){L->CarriedOrders.FindOrAdd(Character).Add(Line);UE_LOG(LogTemp,Display,TEXT("Street judge order: %s for %s, carried to %s"),*Item->Name,*For,*Shop);continue;}
     L->ShopPlace=Shop;L->Cart.Add(Line);++Added;UE_LOG(LogTemp,Display,TEXT("Street judge order: %s for %s"),*Item->Name,*For);
    }
    if(Added>0||(OrderWaited&&!L->Cart.IsEmpty()))Weak->PlaceChatOrder(Character,Her);}
+  // Sweetness or ice said for a drink already ordered ("半糖少冰" after "甜度冰块呢？"): the cup not yet made is changed (R6-164).
+  {const TArray<TSharedPtr<FJsonValue>>* Changes=nullptr;if(Verdict->TryGetArrayField(TEXT("drink_options"),Changes))for(const auto& V:*Changes){
+   const TSharedPtr<FJsonObject> O=V.IsValid()?V->AsObject():nullptr;if(!O)continue;FString ItemId,For,Sweet,Ice;
+   O->TryGetStringField(TEXT("id"),ItemId);O->TryGetStringField(TEXT("for"),For);O->TryGetStringField(TEXT("sweetness"),Sweet);O->TryGetStringField(TEXT("ice"),Ice);
+   if(!ItemId.IsEmpty()&&(!Sweet.IsEmpty()||!Ice.IsEmpty()))Weak->ChangeDrinkOptions(Character,ItemId,For==TEXT("her"),Sweet,Ice);}}
   // Something agreed to be bought here that the shop does not sell (a book on the 6F of the department store, which
   // sells stationery: Jeanne Alter said "I'll pay for it myself" and believed she had it; Hu Tao "took" a book he never
   // bought, R4-23 / R5-12). Nothing was billed: she is told, so she does not go on as if it were hers.

@@ -439,7 +439,7 @@ void AOKStreetSocialScene::FinishPartyTalk(const FString& Text,const TArray<int3
      // Food for a girl already full is not ordered (as one-on-one, TooFullFor): she would leave it untouched.
      if(Eater!=0&&TooFullFor(Eater,*Item)){S.PartyEvents.Add(OKMsg(TEXT("ui.party.too_full_to_order"),{{TEXT("girl_name"),*S.Manifest.Characters[Eater].Name},{TEXT("item"),Item->Name}}));
       UE_LOG(LogTemp,Display,TEXT("Street party order skipped: %s, %s is full"),*Item->Name,*S.Manifest.Characters[Eater].Name);continue;}}
-    FOKStreetCartLine Line;Line.ItemId=ItemId;Line.Size=Item->DefaultSize();if(!Item->Options.IsEmpty()){Line.Sweetness=OKT(TEXT("ui.mind.full_sugar_label"));Line.Ice=OKT(TEXT("ui.mind.normal_state_label"));}
+    FOKStreetCartLine Line;Line.ItemId=ItemId;Line.Size=Item->DefaultSize();if(!Item->Options.IsEmpty())SetDrinkOptions(Line,FString(),FString());
     const int32 G=Find(Who);if(G==Partner)Line.ForHer=true;else if(G!=INDEX_NONE)Line.Girl=G;
     S.Cart.Add(Line);UE_LOG(LogTemp,Display,TEXT("Street party order: %s for %s"),*Item->Name,G==INDEX_NONE?TEXT("him"):*S.Manifest.Characters[G].Name);}
    if(!S.Cart.IsEmpty()){S.ShopPlace=Shop;const int32 Told=S.TellHer.Num();SettleGroupOrder(Partner);

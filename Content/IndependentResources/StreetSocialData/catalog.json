@@ -1193,6 +1193,7 @@
    "options": [
     "sweetness",
     "ice",
+    "hot",
     "topping"
    ],
    "effects": {
@@ -1219,6 +1220,7 @@
    "options": [
     "sweetness",
     "ice",
+    "hot",
     "topping"
    ],
    "effects": {
@@ -1245,6 +1247,7 @@
    "options": [
     "sweetness",
     "ice",
+    "hot",
     "topping"
    ],
    "effects": {
@@ -1271,6 +1274,7 @@
    "options": [
     "sweetness",
     "ice",
+    "hot",
     "topping"
    ],
    "effects": {
@@ -1297,6 +1301,7 @@
    "options": [
     "sweetness",
     "ice",
+    "hot",
     "topping"
    ],
    "effects": {
@@ -1323,6 +1328,7 @@
    "options": [
     "sweetness",
     "ice",
+    "hot",
     "topping"
    ],
    "effects": {
@@ -1350,6 +1356,7 @@
    "options": [
     "sweetness",
     "ice",
+    "hot",
     "topping"
    ],
    "effects": {
@@ -1376,6 +1383,7 @@
    "options": [
     "sweetness",
     "ice",
+    "hot",
     "topping"
    ],
    "effects": {
@@ -1529,7 +1537,6 @@
    "prop": "cup",
    "options": [
     "sweetness",
-    "ice",
     "topping"
    ],
    "effects": {
@@ -1556,7 +1563,6 @@
    "prop": "cup",
    "options": [
     "sweetness",
-    "ice",
     "topping"
    ],
    "effects": {
