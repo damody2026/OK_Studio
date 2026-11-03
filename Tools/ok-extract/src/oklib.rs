@@ -1257,7 +1257,8 @@ pub fn session_cache_location() -> Option<PathBuf> {
 /// 28: including an accessory's private-rig source mesh, which every pose is skinned from.
 /// 29: the geometry stays put again; parts carry their draw layer and the engine orders them (OpaqueSortPriority).
 /// 30-32: the skin and clothes keep their liquid textures (_liquidmask, _Texture2, _Texture3) for the H scene's semen.
-const SESSION_CACHE_REVISION: u32 = 32;
+/// 33: native ForgeSkin/KKUSS draw settings, glasses _GlassRamp/V-flip, and character card plugins.
+const SESSION_CACHE_REVISION: u32 = 33;
 /// What the library contributes to an open, by content (not file times): the same library in another clone, after a
 /// git checkout or a copy gives the same identity, so its cached opens stay valid there. Memoized per process.
 fn library_identity(lib: &Path) -> String {
@@ -1810,8 +1811,9 @@ fn make_ok_card_for_outfit(lib: &Path, game: &Path, card: &Path, outfit: i32) ->
     let root = zipmod_source(game).0;
     let mut extra: Vec<PathBuf> = Vec::new();
     let made = loop {
-        // (a retry records a new pack: bundles cached by the previous attempt would be answered without being read)
-        if !extra.is_empty() { crate::unity::release_bundle_caches(); }
+        // Nothing an earlier open or retry in this process kept may stand in for this pack's reads.
+        crate::unity::release_bundle_caches();
+        crate::clear_entry_memo();
         let made = convert(&extra);
         let _ = std::fs::remove_dir_all(&work);
         let made = made?;
@@ -2166,6 +2168,35 @@ where A: serde::Serialize + ?Sized, R: serde::Serialize + serde::de::Deserialize
     if !ACTIVE.load(Ordering::Relaxed) { return f(); }
     let id = content_id(bytes);
     memo(Some(&id), method, args, f)
+}
+
+/// Optional query on raw bundle bytes: replays stored records when present, computes on real Unity bytes
+/// (including recording into an active card pack or `.okmodel` conversion), and returns `R::default()`
+/// without recording a `missing.txt` gap on pre-existing shared `.okmodel` tokens that lack this query.
+pub fn memo_bytes_optional<A, R, F>(bytes: &[u8], method: &str, args: &A, f: F) -> R
+where A: serde::Serialize + ?Sized, R: Default + serde::Serialize + serde::de::DeserializeOwned, F: FnOnce() -> R {
+    if !ACTIVE.load(Ordering::Relaxed) { return f(); }
+    let Some(store) = active() else { return f(); };
+    let id = content_id(bytes);
+    let arg_bytes = bincode::serialize(args).unwrap_or_default();
+    if let Some(raw) = store.get_raw(&id, method, &arg_bytes) {
+        if let Ok(value) = crate::unity::with_texture_plans(|| bincode::deserialize::<R>(&raw)) {
+            if store.mode == Mode::Replay { store.hits.fetch_add(1, Ordering::Relaxed); }
+            return value;
+        }
+    }
+    if token_id(bytes).is_some() {
+        return R::default();
+    }
+    let value = f();
+    if store.mode == Mode::Record {
+        if let Ok(raw) = crate::unity::with_texture_plans(|| bincode::serialize(&value)) { store.put_raw(&id, method, &arg_bytes, &raw); }
+    } else if let Some(card_pack) = store.recording_pack() {
+        if let Ok(raw) = crate::unity::with_texture_plans(|| bincode::serialize(&value)) { card_pack.put_raw(&id, method, &arg_bytes, &raw); }
+    } else if crate::okstrict::completing_model(&id) {
+        if let Ok(raw) = crate::unity::with_texture_plans(|| bincode::serialize(&value)) { crate::okstrict::keep_record(&id, method, &arg_bytes, raw); }
+    }
+    value
 }
 
 /// A session needed the contents of model `id`, which this checkout does not have.

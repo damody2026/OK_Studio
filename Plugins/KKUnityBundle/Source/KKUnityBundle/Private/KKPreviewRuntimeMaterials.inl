@@ -145,6 +145,15 @@ static int32 OKPrepareCookedRole(AKKPreviewActor* Actor,FString& Error,double Bu
         if(BuildPart(Data.Parts[Role.NextPart++])<0)return Fail();
         if(Role.NextPart<Data.Parts.Num()&&FPlatformTime::Seconds()>=Deadline)return 0;
     }
+    if(Actor->bCharacterDisplayShadows){
+        for(UMaterialInstanceDynamic* Material:Actor->CookedRoleMaterials){
+            UTexture* ShadowTex=nullptr;
+            if(Material&&Material->GetTextureParameterValue(FMaterialParameterInfo(TEXT("KKShadowDepth")),ShadowTex))Actor->ToonShadowMaterials.AddUnique(Material);
+        }
+        Actor->ToonShadowBoundIndex=INDEX_NONE;
+        if(Actor->ToonShadowTargets.IsValidIndex(Actor->ToonShadowReadIndex))Actor->BindToonShadowTarget(Actor->ToonShadowReadIndex);
+        Actor->UpdateToonShadowProjection();
+    }
     UE_LOG(LogTemp,Display,TEXT("High model cooked shared materials root=%s style=%s parts=%d own_graph=%d"),*Role.Root,Role.HG?TEXT("hg"):TEXT("koikatsu"),Actor->CookedRoleMaterials.Num(),Role.Uncovered);
     // A Studio item's instances are made and its textures uploaded: the decoded texture data is not needed again, and
     // a scene holds thousands of items (it stayed per actor: 28 -> 39 GB on a 1,900-item scene).

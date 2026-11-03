@@ -1,4 +1,4 @@
-﻿#include "KKRuntimeSharedMaterial.h"
+#include "KKRuntimeSharedMaterial.h"
 #include "Engine/Texture2D.h"
 #include "Engine/TextureCube.h"
 #include "Engine/VolumeTexture.h"
@@ -309,9 +309,9 @@ bool OKPrepareRuntimeSharedMaterialBinding(const FKKRuntimeMaterialPart& P,const
  }
  // Skin's legacy transport contains card-resolved properties; source metadata
  // is the prefab before character customization. Resolve before color conversion.
- if(Recipe==EKKRuntimeMaterialRecipe::KoikanoSkin){
-  const TCHAR* Keys[]={TEXT("_OverColor1"),TEXT("_OverColor2"),TEXT("_SpecularColor"),TEXT("_ShadowExtend"),TEXT("_NormalDetailScale"),TEXT("_FaceNormal"),TEXT("_LineTexOn"),TEXT("_SpecularHeight"),TEXT("_SpecularPower"),TEXT("_SpecularPowerNail"),TEXT("_NoTexSpecular"),TEXT("_NormalDetail_ST")};
-  const TCHAR* Targets[]={TEXT("_overcolor1"),TEXT("_overcolor2"),TEXT("_SpecularColor"),TEXT("_ShadowExtend"),TEXT("_DetailNormalMapScale"),TEXT("_FaceNormalG"),TEXT("_linetexon"),TEXT("_SpeclarHeight"),TEXT("_SpecularPower"),TEXT("_SpecularPowerNail"),TEXT("_notusetexspecular"),TEXT("_NormalMapDetail_ST")};
+ if(Recipe==EKKRuntimeMaterialRecipe::KoikanoSkin||Recipe==EKKRuntimeMaterialRecipe::ForgeSkin){
+  const TCHAR* Keys[]={TEXT("_OverColor1"),TEXT("_OverColor2"),TEXT("_SpecularColor"),TEXT("_ShadowExtend"),TEXT("_NormalDetailScale"),TEXT("_FaceNormal"),TEXT("_FaceShadow"),TEXT("_LineTexOn"),TEXT("_SpecularHeight"),TEXT("_SpecularPower"),TEXT("_SpecularPowerNail"),TEXT("_NoTexSpecular"),TEXT("_NipSize"),TEXT("_NipSpecular"),TEXT("_NormalDetail_ST")};
+  const TCHAR* Targets[]={TEXT("_overcolor1"),TEXT("_overcolor2"),TEXT("_SpecularColor"),TEXT("_ShadowExtend"),TEXT("_DetailNormalMapScale"),TEXT("_FaceNormalG"),TEXT("_FaceShadowG"),TEXT("_linetexon"),TEXT("_SpeclarHeight"),TEXT("_SpecularPower"),TEXT("_SpecularPowerNail"),TEXT("_notusetexspecular"),TEXT("_nipsize"),TEXT("_nip_specular"),TEXT("_NormalMapDetail_ST")};
   for(int32 I=0;I<UE_ARRAY_COUNT(Keys);++I)if(const auto* V=P.Values.Find(Keys[I])){if(V->ContainsNaN())return Fail(TEXT("Resolved skin property nonfinite"));Values.Add(Targets[I],FLinearColor(V->X,V->Y,V->Z,V->W));}
  }
  FKKRuntimeMaterialBinding B;B.Scalars.Add(TEXT("__OK_RuntimeMaterialSchema"),1);B.Scalars.Add(TEXT("__OK_RuntimeMaterialFamily"),float(Recipe)+(Outline?128:0));if(Outline)B.Scalars.Add(TEXT("__OK_OutlineApprox"),OKRuntimeOutlineApprox());

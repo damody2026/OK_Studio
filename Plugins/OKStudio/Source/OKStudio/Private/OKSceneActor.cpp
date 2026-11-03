@@ -309,7 +309,7 @@ namespace
 		}
 		FString Json;
 		const auto Writer = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Json);
-		if (Shaders.IsEmpty() && Renderers.IsEmpty() && Item.LightCancel < 0.f)
+		if (Shaders.IsEmpty() && Renderers.IsEmpty() && Item.BoneOverrides.IsEmpty() && Item.LightCancel < 0.f)
 		{
 			if (Fk.IsEmpty()) return FString();
 			FJsonSerializer::Serialize(Fk, Writer);
@@ -320,6 +320,21 @@ namespace
 		Material->SetArrayField(TEXT("renderers"), Renderers);
 		// Studio's per-item light cancel overrides _LightCancel on the materials that have it (ItemComponent.SetLineAndEmission).
 		if (Item.LightCancel >= 0.f) Material->SetNumberField(TEXT("light_cancel"), Item.LightCancel);
+		if (!Item.BoneOverrides.IsEmpty())
+		{
+			TArray<TSharedPtr<FJsonValue>> BoneTrs;
+			for (const FOKSceneBoneTrs& B : Item.BoneOverrides)
+			{
+				if (B.Bone.IsEmpty() || (!B.bHasPos && !B.bHasRot && !B.bHasScale)) continue;
+				TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
+				Entry->SetStringField(TEXT("name"), B.Bone);
+				if (B.bHasPos) Entry->SetArrayField(TEXT("pos"), { MakeShared<FJsonValueNumber>(B.Pos.X), MakeShared<FJsonValueNumber>(B.Pos.Y), MakeShared<FJsonValueNumber>(B.Pos.Z) });
+				if (B.bHasRot) Entry->SetArrayField(TEXT("rot"), { MakeShared<FJsonValueNumber>(B.Euler.X), MakeShared<FJsonValueNumber>(B.Euler.Y), MakeShared<FJsonValueNumber>(B.Euler.Z) });
+				if (B.bHasScale) Entry->SetArrayField(TEXT("scale"), { MakeShared<FJsonValueNumber>(B.Scale.X), MakeShared<FJsonValueNumber>(B.Scale.Y), MakeShared<FJsonValueNumber>(B.Scale.Z) });
+				BoneTrs.Add(MakeShared<FJsonValueObject>(Entry));
+			}
+			if (!BoneTrs.IsEmpty()) Material->SetArrayField(TEXT("bone_trs"), BoneTrs);
+		}
 		const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
 		Root->SetArrayField(TEXT("fk"), Fk);
 		Root->SetObjectField(TEXT("material"), Material);
@@ -352,7 +367,7 @@ namespace
 		if (!bMap) Actor->CharacterDisplayShadowsOverride = Item == nullptr;
 		// Items draw from the Studio root: the street's parents plus M_ForgeStudioOpaque, the depth-writing variant of the
 		// game's item program (opaque items overlapping each other sort by depth, not by distance).
-		if (!bMap) Actor->SharedMaterialRootOverride = TEXT("/Game/IndependentResources/RuntimeMaterials/StudioDisplay29");
+		if (!bMap) Actor->SharedMaterialRootOverride = TEXT("/Game/IndependentResources/RuntimeMaterials/StudioDisplay30");
 		// The scene's shading globals (Studio's _ambientshadowG, _LineColorG, _linewidthG): Studio sets them for everything
 		// it draws, characters as well as items.
 		if (!bMap) Actor->StudioShaderGlobals = ShaderGlobals;
@@ -436,6 +451,7 @@ bool AOKSceneActor::Build(const FOKSceneObject& Object, FShown& Out, FString& Ou
 		Actor->bUsePrivateGpuPlayback = bGpuPlayback;
 		if (Object.Character.StudioAnimeNo >= 0)
 		{
+			ActiveVmdSources.Remove(Object.Id);
 			// A Studio animation of the OK animation library (no Unity bundles).
 			const FOKSceneCharacter& C = Object.Character;
 			const FOKStudioAnim* Entry = FOKStudioCatalog::Get().FindAnim(C.StudioAnimeKind, C.StudioAnimeGroup, C.StudioAnimeCategory, C.StudioAnimeNo);
@@ -455,6 +471,25 @@ bool AOKSceneActor::Build(const FOKSceneObject& Object, FShown& Out, FString& Ou
 		}
 		else if (!Object.Character.AnimFile.IsEmpty())
 		{
+			if (const FActiveVmdSource* VmdSrc = ActiveVmdSources.Find(Object.Id))
+			{
+				if (Object.Character.AnimFile == VmdSrc->OkAnimRelPath && FPaths::FileExists(VmdSrc->VmdFile))
+				{
+					const float ObjScaleY = FMath::Max(float(Object.Transform.GetScale3D().Z), 0.001f);
+					const FString ParamsJson = FString::Printf(TEXT("{\"obj_scale_y\":%.6f}"), ObjScaleY);
+					TArray<uint8> ReSolvedBytes;
+					if (FOkAnimBridge::FromVmd(&Actor->Session, VmdSrc->VmdFile, ParamsJson, ReSolvedBytes))
+					{
+						const FString AbsOut = FPaths::IsRelative(Object.Character.AnimFile) ? FPaths::ProjectDir() / Object.Character.AnimFile : Object.Character.AnimFile;
+						IFileManager::Get().MakeDirectory(*FPaths::GetPath(AbsOut), true);
+						FFileHelper::SaveArrayToFile(ReSolvedBytes, *AbsOut);
+					}
+				}
+				else
+				{
+					ActiveVmdSources.Remove(Object.Id);
+				}
+			}
 			// An .okanim file of its own (a video motion, an exported timeline).
 			const FString File = FPaths::IsRelative(Object.Character.AnimFile) ? FPaths::ProjectDir() / Object.Character.AnimFile : Object.Character.AnimFile;
 			FString AnimError;
@@ -479,6 +514,7 @@ bool AOKSceneActor::Build(const FOKSceneObject& Object, FShown& Out, FString& Ou
 		}
 		else if (Object.Character.Animation.IsValid())
 		{
+			ActiveVmdSources.Remove(Object.Id);
 			const UOKAnimationAsset* Anim = Cast<UOKAnimationAsset>(Object.Character.Animation.TryLoad());
 			FString AnimError;
 			const TSharedPtr<FOkAnimPlayer> Player = Anim ? Anim->CreatePlayer(AnimError) : nullptr;
@@ -767,6 +803,8 @@ void AOKSceneActor::Release(FShown& Item)
 	Item.Preview = nullptr;
 	Item.bFixedEyesApplied = false;
 	Item.AppliedFixedEyes.Reset();
+	Item.AppliedBoneOverrides.Reset();
+	Item.AppliedMorphOverrides.Reset();
 	Item.AppliedFixedEyesPattern = -1;
 	Item.EyesOpenBefore = -1.f;
 	Item.Component = nullptr;
@@ -778,7 +816,8 @@ void AOKSceneActor::ApplyCharacterState(const FOKSceneObject& Object, FShown& It
 	if (!Actor) return;
 	const FOKSceneCharacter& C = Object.Character;
 	// The eyes pattern is a cha_eyeset row: its FaceBlendShape pattern is the row's EyesPtn (ChaControl.ChangeEyesPtn).
-	const bool bHasAnimFace = Actor->OkPlayer && Actor->OkPlayer->Curves(0, 0.f).Contains(TEXT("face.mouth_open"));
+	const TMap<FString, float> InitCurves = Actor->OkPlayer ? Actor->OkPlayer->Curves(0, 0.f) : TMap<FString, float>();
+	const bool bHasAnimFace = InitCurves.Contains(TEXT("face.mouth_open")) || InitCurves.Contains(TEXT("face.eye_open")) || InitCurves.Contains(TEXT("face.eye_open_l"));
 	if (!bHasAnimFace && C.EyesPattern >= 0)
 	{
 		const int32 Blend = FOKStudioCatalog::Get().EyeSet(C.EyesPattern).BlendPattern;
@@ -788,7 +827,7 @@ void AOKSceneActor::ApplyCharacterState(const FOKSceneObject& Object, FShown& It
 	if (!bHasAnimFace && C.MouthPattern >= 0) Actor->SetMouthPattern(C.MouthPattern, false);
 	if (!bHasAnimFace && C.MouthOpen >= 0.f) Actor->SetMouthOpen(C.MouthOpen);
 	// Eye opening: the eye control's fixed open rate on its current pattern (ChaControl.ChangeEyesOpenMax).
-	if (C.EyesOpen >= 0.f)
+	if (!bHasAnimFace && C.EyesOpen >= 0.f)
 	{
 		if (Item.EyesOpenBefore < 0.f) { Item.EyesOpenBefore = Actor->FaceOpen01[0]; Item.bEyesManualBefore = Actor->bManualFaceControl[0]; }
 		Actor->SetFaceControl(1, Actor->FacePattern[0], C.EyesOpen, false);
@@ -799,6 +838,10 @@ void AOKSceneActor::ApplyCharacterState(const FOKSceneObject& Object, FShown& It
 		Actor->FaceOpen01[0] = Item.EyesOpenBefore;
 		Actor->bManualFaceControl[0] = Item.bEyesManualBefore;
 		Item.EyesOpenBefore = -1.f;
+	}
+	if (!InitCurves.Contains(TEXT("face.blush")) && C.Blush >= 0.f && !FMath::IsNearlyEqual(C.Blush, Actor->BlushRate, 1.e-3f))
+	{
+		Actor->SetBlush(C.Blush);
 	}
 	if (bHasAnimFace) { if (Actor->bAutomaticBlink) Actor->SetAutomaticBlink(false); } else if (C.Blink >= 0 && Actor->bAutomaticBlink != (C.Blink == 1)) Actor->SetAutomaticBlink(C.Blink == 1);
 	// Studio controls of a blended H motion (option 1 height, option 2 breast, pattern): the scene's value, else the
@@ -819,14 +862,33 @@ void AOKSceneActor::ApplyCharacterState(const FOKSceneObject& Object, FShown& It
 		if (Actor->SetHandShape(Side, Pattern >= 0, FMath::Max(Pattern, 0), FMath::Max(Pattern, 0), 0.f)) Item.AppliedHands[Side] = Pattern;
 	}
 	// FK re-poses the character (no rebuild); a fresh character starts without FK.
-	if (C.Fk != Item.AppliedFk || C.FkPartsOff != Item.AppliedFkPartsOff)
+	if (C.Fk != Item.AppliedFk || C.FkPartsOff != Item.AppliedFkPartsOff || C.BoneOverrides != Item.AppliedBoneOverrides)
 	{
 		Item.AppliedFkPartsOff = C.FkPartsOff;
 		TArray<FString> Bones;
 		TArray<FVector> Euler;
 		// A switched-off part's bones follow the animation (their values are kept for when it comes back on).
 		for (const FOKSceneFkBone& B : C.Fk) if (C.FkPartOn(FOKSceneCharacter::FkPartOf(B.Bone))) { Bones.Add(B.Bone); Euler.Add(B.Euler); }
-		if (Actor->SetUserFk(Bones, Euler)) Item.AppliedFk = C.Fk;
+		for (const FOKSceneBoneTrs& B : C.BoneOverrides)
+		{
+			if (!B.bHasRot || B.Bone.IsEmpty()) continue;
+			const int32 Existing = Bones.IndexOfByKey(B.Bone);
+			if (Existing != INDEX_NONE) Euler[Existing] = B.Euler;
+			else { Bones.Add(B.Bone); Euler.Add(B.Euler); }
+		}
+		TArray<FString> PsBones;
+		TArray<FVector> PsPos, PsScale;
+		TArray<uint8> PsFlags;
+		for (const FOKSceneBoneTrs& B : C.BoneOverrides)
+		{
+			if ((!B.bHasPos && !B.bHasScale) || B.Bone.IsEmpty()) continue;
+			PsBones.Add(B.Bone);
+			PsPos.Add(B.Pos);
+			PsScale.Add(B.Scale);
+			PsFlags.Add((B.bHasPos ? 1u : 0u) | (B.bHasScale ? 2u : 0u));
+		}
+		const bool bPsOk = Actor->SetUserBonePosScale(PsBones, PsPos, PsScale, PsFlags);
+		if (Actor->SetUserFk(Bones, Euler) && bPsOk) { Item.AppliedFk = C.Fk; Item.AppliedBoneOverrides = C.BoneOverrides; }
 		else Errors.Add(Object.Id, TEXT("FK not applied"));
 	}
 	if (C.Ik != Item.AppliedIk || C.IkPartsOff != Item.AppliedIkPartsOff || C.IkWeight != Item.AppliedIkWeight)
@@ -874,6 +936,26 @@ void AOKSceneActor::ApplyCharacterState(const FOKSceneObject& Object, FShown& It
 		}
 		else Errors.Add(Object.Id, TEXT("joint correction not applied"));
 	}
+	if (C.MorphOverrides != Item.AppliedMorphOverrides)
+	{
+		TArray<FString> Renderers;
+		TArray<FName> Names;
+		TArray<int32> Indices;
+		TArray<float> Weights;
+		Renderers.Reserve(C.MorphOverrides.Num());
+		Indices.Reserve(C.MorphOverrides.Num());
+		Names.Reserve(C.MorphOverrides.Num());
+		Weights.Reserve(C.MorphOverrides.Num());
+		for (const FOKSceneMorphOverride& M : C.MorphOverrides)
+		{
+			Renderers.Add(M.Renderer);
+			Indices.Add(M.Index);
+			Names.Add(M.Name.IsEmpty() ? NAME_None : FName(*M.Name));
+			Weights.Add(M.Weight);
+		}
+		Actor->SetRendererMorphOverrides(Renderers, Indices, Names, Weights);
+		Item.AppliedMorphOverrides = C.MorphOverrides;
+	}
     const TArray<FQuat> Neck = C.NeckLook == EOKSceneLook::Fixed ? C.FixedNeck : TArray<FQuat>();
     if (Neck != Item.AppliedFixedNeck)
     {
@@ -915,7 +997,7 @@ void AOKSceneActor::Sync()
 		// Content changes rebuild the object; transform and visibility only move it.
 		// An eyes pattern is set on the live face, unless its eye set changes parts (gag eyes): then it is built in.
 		auto PartsEyes = [](int32 Ptn) { return Ptn >= 0 && FOKStudioCatalog::Get().EyeSet(Ptn).bChangesParts ? Ptn : -1; };
-		const bool bSame = Item && Item->Kind == Object.Kind && Item->Character.SameContent(Object.Character) && Item->Item == Object.Item && Item->Light == Object.Light
+		const bool bSame = Item && Item->Kind == Object.Kind && Item->Character.SameContent(Object.Character) && Item->Item.SameContent(Object.Item) && Item->Light == Object.Light
 			&& (Object.Kind != EOKSceneObjectKind::Effect || Item->Effect == Object.Effect.Effect)
 			&& (Object.Kind != EOKSceneObjectKind::Character || PartsEyes(Item->Character.EyesPattern) == PartsEyes(Object.Character.EyesPattern));
 		if (!bSame && Built >= BuildsPerFrame)
@@ -946,6 +1028,26 @@ void AOKSceneActor::Sync()
 			ApplyCharacterState(Object, *Item);
 			// A stopped animation (speed 0) shows the frame at its time: the UI and timeline keys scrub it.
 			if (Object.Character.Speed == 0.f && Item->Time != Object.Character.Time) SetAnimationTime(Object.Id, 0.f);
+		}
+		if (Object.Kind == EOKSceneObjectKind::Item && Item->AppliedMorphOverrides != Object.Item.MorphOverrides)
+		{
+			if (AKKPreviewActor* Preview = Item->Preview.Get())
+			{
+				TArray<FString> Renderers;
+				TArray<FName> Names;
+				TArray<int32> Indices;
+				TArray<float> Weights;
+				for (const FOKSceneMorphOverride& M : Object.Item.MorphOverrides)
+				{
+					Renderers.Add(M.Renderer);
+					Indices.Add(M.Index);
+					Names.Add(M.Name.IsEmpty() ? NAME_None : FName(*M.Name));
+					Weights.Add(M.Weight);
+				}
+				Preview->SetRendererMorphOverrides(Renderers, Indices, Names, Weights);
+			}
+			Item->AppliedMorphOverrides = Object.Item.MorphOverrides;
+			Item->Item.MorphOverrides = Object.Item.MorphOverrides;
 		}
 		if (Object.Kind == EOKSceneObjectKind::Camera)
 		{
@@ -1270,8 +1372,8 @@ namespace
 void AOKSceneActor::AdvanceCharacterFrames(float DeltaSeconds, bool bAdvancePhase)
 {
     if (!Document || !FMath::IsFinite(DeltaSeconds) || DeltaSeconds < 0.f) return;
-    const bool bHasTracks = Document->Tracks.Num() > 0;
-    if (bAdvancePhase && !bHasTracks) Document->ItemAnimationSeconds += DeltaSeconds;
+    const bool bUseTimelineClock = Document->Tracks.Num() > 0 || Document->TimelineTracks.Num() > 0 || bTimelineDriven;
+    if (bAdvancePhase && !bUseTimelineClock) Document->ItemAnimationSeconds += DeltaSeconds;
     TArray<AKKPreviewActor*, TInlineAllocator<16>> Actors;
     const bool bSharePose = CVarSharePose.GetValueOnGameThread() != 0;
     for (auto& Pair : Shown)
@@ -1282,7 +1384,7 @@ void AOKSceneActor::AdvanceCharacterFrames(float DeltaSeconds, bool bAdvancePhas
         // An anim player or a session clip (a video motion, PoseMode 2) runs on the scene's clock.
         if (Actor->OkPlayer || Actor->PoseMode == 2)
         {
-            if (bHasTracks)
+            if (bUseTimelineClock)
                 Pair.Value.Time = Object->Character.Time + Document->ItemAnimationSeconds * Object->Character.Speed;
             else if (bAdvancePhase)
                 Pair.Value.Time += DeltaSeconds * Object->Character.Speed;
@@ -1363,8 +1465,15 @@ void AOKSceneActor::Rebuild(int32 Id)
 	if (FShown* Item = Shown.Find(Id)) Item->Kind = EOKSceneObjectKind::Folder == Item->Kind ? EOKSceneObjectKind::Character : EOKSceneObjectKind::Folder;
 }
 
+void AOKSceneActor::SetActiveVmdSource(int32 Id, const FString& VmdFile, const FString& OkAnimRelPath)
+{
+	if (VmdFile.IsEmpty() || OkAnimRelPath.IsEmpty()) ActiveVmdSources.Remove(Id);
+	else ActiveVmdSources.Add(Id, FActiveVmdSource{ VmdFile, OkAnimRelPath });
+}
+
 bool AOKSceneActor::SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int32 Category, int32 No, FString& OutError)
 {
+	ActiveVmdSources.Remove(Id);
 	FShown* Item = Shown.Find(Id);
 	FOKSceneObject* Object = Document ? Document->Find(Id) : nullptr;
 	AKKPreviewActor* Actor = Item ? Item->Preview.Get() : nullptr;
@@ -1706,6 +1815,42 @@ void AOKSceneActor::UpdateItemLighting()
         }
 		AmbientLit.Add(Preview);
 	}
+	{
+		const TMap<FName, FLinearColor> Globals = Document->Post.ShaderGlobals();
+		bool bGlobalsChanged = Globals.Num() != AppliedShaderGlobals.Num();
+		if (!bGlobalsChanged)
+		{
+			for (const TPair<FName, FLinearColor>& Pair : Globals)
+			{
+				const FLinearColor* Prev = AppliedShaderGlobals.Find(Pair.Key);
+				if (!Prev || !Prev->Equals(Pair.Value, 1e-4f)) { bGlobalsChanged = true; break; }
+			}
+		}
+		if (bGlobalsChanged) { AppliedShaderGlobals = Globals; ShaderGlobalsLit.Reset(); }
+		for (const TPair<int32, FShown>& It : Shown)
+		{
+			if (It.Value.Kind != EOKSceneObjectKind::Character && It.Value.Kind != EOKSceneObjectKind::Item) continue;
+			AKKPreviewActor* Preview = It.Value.Preview.Get();
+			if (!Preview || ShaderGlobalsLit.Contains(Preview)) continue;
+			Preview->StudioShaderGlobals = Globals;
+			for (const TPair<FName, FLinearColor>& Pair : Globals)
+				Preview->SetSharedVectorParameter(Pair.Key, Pair.Value);
+			ShaderGlobalsLit.Add(Preview);
+		}
+	}
+	{
+		const FVector WorldTowards = Light ? (-Light->GetForwardVector()).GetSafeNormal() : FVector::ZeroVector;
+		for (const TPair<int32, FShown>& It : Shown)
+		{
+			if (It.Value.Kind != EOKSceneObjectKind::Character) continue;
+			AKKPreviewActor* Preview = It.Value.Preview.Get();
+			if (!Preview) continue;
+			const bool bCast = Document->Post.bShadow && Light && SourceLight && SourceLight->bShadows
+				&& SourceLight->ShadowStrength > KINDA_SMALL_NUMBER && Intensity > KINDA_SMALL_NUMBER
+				&& !Preview->IsOutsideLayerMask(1u << 10);
+			Preview->SetToonShadowLight(WorldTowards, bCast ? FMath::Clamp(SourceLight->ShadowStrength, 0.f, 1.f) : 0.f);
+		}
+	}
 	if (!Light && !bCharacterLightSeen && MapSunMask == 0) return;
 	FLinearColor Direction = ItemLightDirection.A < 0.f ? FLinearColor(0.f, 0.f, -1.f, 0.f) : ItemLightDirection;
 	FLinearColor Color(0.f, 0.f, 0.f, 0.f);
@@ -1754,6 +1899,7 @@ void AOKSceneActor::PlaceAttached()
 	// until the scene changes: placed once per placement generation (a sync, the scene actor moving) instead of every
 	// frame (a scene of thousands of items spent ~1.7 ms here).
 	if (!GetActorTransform().Equals(PlacedActorTransform, 0.)) { PlacedActorTransform = GetActorTransform(); ++PlaceGeneration; }
+	struct FDeferConstraints { AOKSceneActor* Self; ~FDeferConstraints() { Self->SolveConstraints(); } } DeferConstraints{ this };
 	const FOKStudioCatalog& Catalog = FOKStudioCatalog::Get();
 	for (const FOKSceneObject& Object : Document->Objects)
 	{
@@ -1775,6 +1921,323 @@ void AOKSceneActor::PlaceAttached()
 		const FTransform World = Document->WorldTransform(Object.Id) * GetActorTransform();
 		if (AKKPreviewActor* Preview = Item->Preview.Get()) Preview->SetActorTransform(Compose(Item->RenderCorrection, World));
 		if (USceneComponent* Component = Item->Component.Get()) Component->SetWorldTransform(Compose(Item->ComponentOffset, World));
+	}
+}
+
+void AOKSceneActor::SolveConstraints()
+{
+	if (!Document || Document->Constraints.IsEmpty()) return;
+	const FQuat CamTurn(FVector::UpVector, UE_HALF_PI);
+	const FQuat CamTurnInv(FVector::UpVector, -UE_HALF_PI);
+	auto SceneUeToUnity = [&](const FTransform& T, bool bCamOrLight, FVector& OutPos, FQuat& OutRot, FVector& OutScale)
+	{
+		const FVector L = T.GetLocation() * 0.01;
+		OutPos = FVector(-L.X, L.Z, L.Y);
+		const FQuat Q = (bCamOrLight ? (T.GetRotation() * CamTurnInv) : T.GetRotation()).GetNormalized();
+		OutRot = FQuat(-Q.X, Q.Z, Q.Y, Q.W).GetNormalized();
+		const FVector S = T.GetScale3D();
+		OutScale = FVector(S.X, S.Z, S.Y);
+	};
+	auto UnityToSceneUe = [&](const FVector& UPos, const FQuat& URot, const FVector& UScale, bool bCamOrLight) -> FTransform
+	{
+		FQuat Q(-URot.X, URot.Z, URot.Y, URot.W);
+		Q.Normalize();
+		if (bCamOrLight) Q = (Q * CamTurn).GetNormalized();
+		return FTransform(Q, FVector(-UPos.X, UPos.Z, UPos.Y) * 100.0, FVector(UScale.X, UScale.Z, UScale.Y));
+	};
+
+	TMap<int32, FTransform> ConstrainedSceneWorld;
+	TMap<int32, AKKPreviewActor*> DirtyConstraintChars;
+	auto FlushDirtyChar = [&](int32 CharId)
+	{
+		if (AKKPreviewActor* Pending = DirtyConstraintChars.FindRef(CharId))
+		{
+			DirtyConstraintChars.Remove(CharId);
+			Pending->ApplyPoseFrame(0.f, false);
+		}
+	};
+	auto GetSceneWorld = [&](int32 ObjId) -> FTransform
+	{
+		if (const FTransform* Direct = ConstrainedSceneWorld.Find(ObjId)) return *Direct;
+		for (int32 Steps = 0, Cur = ObjId; Cur >= 0 && Steps < UOKSceneDocument::MaxDepth; ++Steps)
+		{
+			const FOKSceneObject* O = Document->Find(Cur);
+			if (!O) break;
+			if (O->Parent >= 0)
+				if (const FTransform* AncWorld = ConstrainedSceneWorld.Find(O->Parent))
+				{
+					const FTransform OrigAncWorld = Document->WorldTransform(O->Parent);
+					const FTransform Rel = Document->WorldTransform(ObjId).GetRelativeTransform(OrigAncWorld);
+					return Compose(Rel, *AncWorld);
+				}
+			Cur = O->Parent;
+		}
+		return Document->WorldTransform(ObjId);
+	};
+
+	for (const FOKSceneConstraint& Con : Document->Constraints)
+	{
+		if (!Con.bEnabled) continue;
+		const FOKSceneObject* ChildObj = Document->Find(Con.ChildId);
+		FShown* ChildShown = Shown.Find(Con.ChildId);
+		if (!ChildObj || !ChildShown) continue;
+
+		FVector ParentPos = FVector::ZeroVector, ParentScale = FVector::OneVector;
+		FQuat ParentRot = FQuat::Identity;
+		if (Con.ParentId == -2)
+		{
+			const int32 CamId = Document->ActiveCamera >= 0 ? Document->ActiveCamera : Document->StudioCameraId;
+			const FOKSceneObject* CamObj = Document->Find(CamId);
+			if (!CamObj) continue;
+			SceneUeToUnity(GetSceneWorld(CamId), true, ParentPos, ParentRot, ParentScale);
+		}
+		else
+		{
+			const FOKSceneObject* ParentObj = Document->Find(Con.ParentId);
+			if (!ParentObj) continue;
+			FlushDirtyChar(Con.ParentId);
+			const FTransform ParentObjWorld = GetSceneWorld(Con.ParentId);
+			if (Con.ParentBone.IsEmpty())
+			{
+				const bool bParentCamLight = ParentObj->Kind == EOKSceneObjectKind::Camera || ParentObj->Kind == EOKSceneObjectKind::Light;
+				SceneUeToUnity(ParentObjWorld, bParentCamLight, ParentPos, ParentRot, ParentScale);
+			}
+			else if (ParentObj->Kind == EOKSceneObjectKind::Character)
+			{
+				FTransform BoneRel;
+				if (!Document->BoneFrame || !Document->BoneFrame(Con.ParentId, Con.ParentBone, BoneRel)) continue;
+				SceneUeToUnity(Compose(BoneRel, ParentObjWorld), false, ParentPos, ParentRot, ParentScale);
+			}
+			else if (ParentObj->Kind == EOKSceneObjectKind::Item)
+			{
+				FString Model, Prefab, DummyErr;
+				FVector NodePos, NodeScale;
+				FQuat NodeRot;
+				if (ItemModel(ParentObj->Item, Model, Prefab, DummyErr)
+					&& FOkSession::OkModelNodeWorld(LibraryDirectory(), Model, Prefab, Con.ParentBone, NodePos, NodeRot, NodeScale))
+				{
+					const FTransform NodeUe(FQuat(-NodeRot.X, NodeRot.Z, NodeRot.Y, NodeRot.W).GetNormalized(),
+						FVector(-NodePos.X, NodePos.Z, NodePos.Y) * 100.0, FVector(NodeScale.X, NodeScale.Z, NodeScale.Y));
+					const FShown* ParentShown = Shown.Find(Con.ParentId);
+					const FTransform Corr = ParentShown ? ParentShown->RenderCorrection : FTransform::Identity;
+					SceneUeToUnity(Compose(Compose(NodeUe, Corr), ParentObjWorld), false, ParentPos, ParentRot, ParentScale);
+				}
+				else
+				{
+					SceneUeToUnity(ParentObjWorld, false, ParentPos, ParentRot, ParentScale);
+				}
+			}
+			else
+			{
+				SceneUeToUnity(ParentObjWorld, false, ParentPos, ParentRot, ParentScale);
+			}
+		}
+
+		FVector OutPos = FVector::ZeroVector, OutScale = FVector::OneVector;
+		FQuat OutRot = FQuat::Identity;
+		const bool bChildCamLight = ChildObj->Kind == EOKSceneObjectKind::Camera || ChildObj->Kind == EOKSceneObjectKind::Light;
+		const FTransform ChildObjWorld = GetSceneWorld(Con.ChildId);
+		if (ChildObj->Kind == EOKSceneObjectKind::Character && Con.ChildIkEffector >= 0)
+		{
+			const TArray<FOKSceneIkTarget>& ActiveIk = ChildShown->AppliedIk.Num() ? ChildShown->AppliedIk : ChildObj->Character.Ik;
+			if (const FOKSceneIkTarget* Existing = ActiveIk.FindByPredicate([&](const FOKSceneIkTarget& T) { return T.Effector == Con.ChildIkEffector; }))
+			{
+				const FTransform RelUe(FOKStudioImport::UnityToUe(FVector::ZeroVector, Existing->Euler, FVector::OneVector).GetRotation(), Existing->Position, FVector::OneVector);
+				SceneUeToUnity(Compose(RelUe, ChildObjWorld), false, OutPos, OutRot, OutScale);
+			}
+			else
+			{
+				SceneUeToUnity(ChildObjWorld, false, OutPos, OutRot, OutScale);
+			}
+		}
+		else if (ChildObj->Kind == EOKSceneObjectKind::Character && !Con.ChildBone.IsEmpty())
+		{
+			FlushDirtyChar(Con.ChildId);
+			FTransform BoneRel;
+			if (Document->BoneFrame && Document->BoneFrame(Con.ChildId, Con.ChildBone, BoneRel))
+				SceneUeToUnity(Compose(BoneRel, ChildObjWorld), false, OutPos, OutRot, OutScale);
+			else
+				SceneUeToUnity(ChildObjWorld, false, OutPos, OutRot, OutScale);
+		}
+		else
+		{
+			SceneUeToUnity(ChildObjWorld, bChildCamLight, OutPos, OutRot, OutScale);
+		}
+
+		if (Con.bPosition)
+		{
+			const FVector Movement = ParentPos - Con.OrigParentPos;
+			const FVector LocalPt = (!Con.bMirrorPosition ? Movement * (Con.PosFactor - 1.f) : -Movement * (Con.PosFactor + 1.f)) + Con.PositionOffset;
+			const FVector ValPos = ParentPos + ParentRot.RotateVector(ParentScale * LocalPt);
+			if (Con.bLockPosX) OutPos.X = ValPos.X;
+			if (Con.bLockPosY) OutPos.Y = ValPos.Y;
+			if (Con.bLockPosZ) OutPos.Z = ValPos.Z;
+		}
+		if (Con.bRotation)
+		{
+			FQuat ValRot = OutRot;
+			if (!Con.bLookAt)
+			{
+				FQuat RotChange = Con.OrigParentRot.Inverse() * ParentRot;
+				if (!FMath::IsNearlyEqual(Con.RotFactor, 1.f, 1e-4f))
+					RotChange = FQuat::Slerp(FQuat::Identity, RotChange, Con.RotFactor).GetNormalized();
+				ValRot = (!Con.bMirrorRotation ? (Con.OrigParentRot * RotChange) : (Con.OrigParentRot * RotChange.Inverse())) * Con.RotationOffset;
+				ValRot.Normalize();
+			}
+			else
+			{
+				const FVector ToParentScene = UnityToSceneUe(ParentPos, FQuat::Identity, FVector::OneVector, false).GetLocation()
+					- UnityToSceneUe(OutPos, FQuat::Identity, FVector::OneVector, false).GetLocation();
+				if (ToParentScene.SizeSquared() > 1e-6)
+				{
+					const FQuat LookUe = FRotationMatrix::MakeFromYZ(ToParentScene.GetSafeNormal(), FVector::UpVector).ToQuat();
+					const FQuat LookUnity(-LookUe.X, LookUe.Z, LookUe.Y, LookUe.W);
+					ValRot = (LookUnity.GetNormalized() * Con.RotationOffset).GetNormalized();
+				}
+			}
+			if (Con.bLockRotX && Con.bLockRotY && Con.bLockRotZ)
+			{
+				OutRot = ValRot;
+			}
+			else if (Con.bLockRotX || Con.bLockRotY || Con.bLockRotZ)
+			{
+				float CurE[3] = { 0.f, 0.f, 0.f }, ValE[3] = { 0.f, 0.f, 0.f };
+				const float CurQ[4] = { float(OutRot.X), float(OutRot.Y), float(OutRot.Z), float(OutRot.W) };
+				const float ValQ[4] = { float(ValRot.X), float(ValRot.Y), float(ValRot.Z), float(ValRot.W) };
+				ok_unity_quat_to_euler(CurQ, CurE);
+				ok_unity_quat_to_euler(ValQ, ValE);
+				const FVector MergedEuler(
+					Con.bLockRotX ? ValE[0] : CurE[0],
+					Con.bLockRotY ? ValE[1] : CurE[1],
+					Con.bLockRotZ ? ValE[2] : CurE[2]);
+				const FQuat MergedUe = FOKStudioImport::UnityToUe(FVector::ZeroVector, MergedEuler, FVector::OneVector).GetRotation();
+				OutRot = FQuat(-MergedUe.X, MergedUe.Z, MergedUe.Y, MergedUe.W).GetNormalized();
+			}
+		}
+		if (Con.bScale)
+		{
+			const FVector SafeOrig(
+				FMath::Abs(Con.OrigParentScale.X) > 1e-5f ? Con.OrigParentScale.X : 1.f,
+				FMath::Abs(Con.OrigParentScale.Y) > 1e-5f ? Con.OrigParentScale.Y : 1.f,
+				FMath::Abs(Con.OrigParentScale.Z) > 1e-5f ? Con.OrigParentScale.Z : 1.f);
+			FVector Ratio = ParentScale / SafeOrig;
+			if (Con.bMirrorScale)
+			{
+				Ratio = FVector(
+					FMath::Abs(Ratio.X) > 1e-5f ? 1.f / Ratio.X : 1.f,
+					FMath::Abs(Ratio.Y) > 1e-5f ? 1.f / Ratio.Y : 1.f,
+					FMath::Abs(Ratio.Z) > 1e-5f ? 1.f / Ratio.Z : 1.f);
+			}
+			const FVector ValScale = Con.OrigParentScale * FMath::Lerp(FVector::OneVector, Ratio, Con.ScaleFactor) * Con.ScaleOffset;
+			if (Con.bLockScaleX) OutScale.X = ValScale.X;
+			if (Con.bLockScaleY) OutScale.Y = ValScale.Y;
+			if (Con.bLockScaleZ) OutScale.Z = ValScale.Z;
+		}
+
+		if (ChildObj->Kind == EOKSceneObjectKind::Character && Con.ChildIkEffector >= 0)
+		{
+			AKKPreviewActor* ChildActor = ChildShown->Preview.Get();
+			if (!ChildActor) continue;
+			const FTransform TargetSceneUe = UnityToSceneUe(OutPos, OutRot, FVector::OneVector, false);
+			const FTransform RelUe = TargetSceneUe.GetRelativeTransform(ChildObjWorld);
+			const FQuat RelQ = RelUe.GetRotation().GetNormalized();
+			const float QArr[4] = { float(-RelQ.X), float(RelQ.Z), float(RelQ.Y), float(RelQ.W) };
+			float EArr[3] = { 0.f, 0.f, 0.f };
+			ok_unity_quat_to_euler(QArr, EArr);
+
+			TArray<FOKSceneIkTarget> NextIk = ChildShown->AppliedIk.Num() ? ChildShown->AppliedIk : ChildObj->Character.Ik;
+			FOKSceneIkTarget* Entry = NextIk.FindByPredicate([&](const FOKSceneIkTarget& T) { return T.Effector == Con.ChildIkEffector; });
+			if (!Entry)
+			{
+				Entry = &NextIk.AddDefaulted_GetRef();
+				Entry->Effector = Con.ChildIkEffector;
+				Entry->Weight = 1.f;
+			}
+			if (Con.bPosition) Entry->Position = RelUe.GetLocation();
+			if (Con.bRotation)
+			{
+				Entry->bUseRotation = (Con.ChildIkEffector >= 5 && Con.ChildIkEffector <= 8);
+				Entry->Euler = FVector(EArr[0], EArr[1], EArr[2]);
+			}
+			TArray<int32> Effectors;
+			TArray<FVector> Positions;
+			TArray<FQuat> Rotations;
+			TArray<uint8> UseRotations;
+			TArray<float> Weights;
+			for (const FOKSceneIkTarget& T : NextIk)
+			{
+				Effectors.Add(T.Effector);
+				Weights.Add(T.Weight);
+				Positions.Add(AKKPreviewActor::ActorLocalToUnity(T.Position));
+				const FQuat U = FOKStudioImport::UnityToUe(FVector::ZeroVector, T.Euler, FVector::OneVector).GetRotation();
+				Rotations.Add(FQuat(-U.X, U.Z, U.Y, U.W));
+				UseRotations.Add(T.bUseRotation ? 1 : 0);
+			}
+			FString IkErr;
+			if (ChildActor->SetStudioIk(Effectors, Positions, IkErr, Rotations, UseRotations))
+			{
+				if (Weights.ContainsByPredicate([](float W) { return W < 1.f; })) ChildActor->Session.SetStudioIkWeights(Weights);
+				ChildShown->AppliedIk = MoveTemp(NextIk);
+				DirtyConstraintChars.Add(Con.ChildId, ChildActor);
+			}
+		}
+		else if (ChildObj->Kind == EOKSceneObjectKind::Character && !Con.ChildBone.IsEmpty())
+		{
+			// Object root fallback if ChildBone is character root; otherwise local FK rotation if constrained.
+			if (Con.ChildBone == TEXT("cf_j_root") || Con.ChildBone == TEXT("cm_j_root") || Con.ChildBone == TEXT("BodyTop"))
+			{
+				const FTransform NewSceneWorld = UnityToSceneUe(OutPos, OutRot, OutScale, false);
+				ConstrainedSceneWorld.Add(Con.ChildId, NewSceneWorld);
+				ChildShown->PlacedGeneration = 0;
+				const FTransform FinalWorld = Compose(NewSceneWorld, GetActorTransform());
+				if (AKKPreviewActor* Preview = ChildShown->Preview.Get()) Preview->SetActorTransform(Compose(ChildShown->RenderCorrection, FinalWorld));
+			}
+			else if (Con.bRotation)
+			{
+				AKKPreviewActor* ChildActor = ChildShown->Preview.Get();
+				FTransform BoneRel;
+				FVector CurLocalEuler = FVector::ZeroVector;
+				if (ChildActor && Document->BoneFrame && Document->BoneFrame(Con.ChildId, Con.ChildBone, BoneRel)
+					&& ChildActor->Session.BoneEuler(Con.ChildBone, CurLocalEuler))
+				{
+					const FTransform BoneSceneWorld = Compose(BoneRel, ChildObjWorld);
+					const FTransform CurLocalUe = FOKStudioImport::UnityToUe(FVector::ZeroVector, CurLocalEuler, FVector::OneVector);
+					const FTransform ParentBoneSceneWorld = Compose(CurLocalUe.Inverse(), BoneSceneWorld);
+					const FTransform TargetSceneUe = UnityToSceneUe(OutPos, OutRot, FVector::OneVector, false);
+					const FQuat NewLocalQ = TargetSceneUe.GetRelativeTransform(ParentBoneSceneWorld).GetRotation().GetNormalized();
+					const float QArr[4] = { float(-NewLocalQ.X), float(NewLocalQ.Z), float(NewLocalQ.Y), float(NewLocalQ.W) };
+					float EArr[3] = { 0.f, 0.f, 0.f };
+					ok_unity_quat_to_euler(QArr, EArr);
+					TArray<FOKSceneFkBone> NextFk = ChildShown->AppliedFk.Num() ? ChildShown->AppliedFk : ChildObj->Character.Fk;
+					if (FOKSceneFkBone* ExistingFk = NextFk.FindByPredicate([&](const FOKSceneFkBone& B) { return B.Bone == Con.ChildBone; }))
+						ExistingFk->Euler = FVector(EArr[0], EArr[1], EArr[2]);
+					else
+						NextFk.Add({ Con.ChildBone, FVector(EArr[0], EArr[1], EArr[2]) });
+					TArray<FString> FkBones;
+					TArray<FVector> FkEulers;
+					for (const FOKSceneFkBone& B : NextFk) { FkBones.Add(B.Bone); FkEulers.Add(B.Euler); }
+					if (ChildActor->SetUserFk(FkBones, FkEulers))
+					{
+						ChildShown->AppliedFk = MoveTemp(NextFk);
+						DirtyConstraintChars.Add(Con.ChildId, ChildActor);
+					}
+				}
+			}
+		}
+		else
+		{
+			const FTransform NewSceneWorld = UnityToSceneUe(OutPos, OutRot, OutScale, bChildCamLight);
+			ConstrainedSceneWorld.Add(Con.ChildId, NewSceneWorld);
+			ChildShown->PlacedGeneration = 0;
+			const FTransform FinalWorld = Compose(NewSceneWorld, GetActorTransform());
+			if (AKKPreviewActor* Preview = ChildShown->Preview.Get()) Preview->SetActorTransform(Compose(ChildShown->RenderCorrection, FinalWorld));
+			if (USceneComponent* Component = ChildShown->Component.Get()) Component->SetWorldTransform(Compose(ChildShown->ComponentOffset, FinalWorld));
+		}
+	}
+
+	for (const TPair<int32, AKKPreviewActor*>& Pair : DirtyConstraintChars)
+	{
+		if (Pair.Value) Pair.Value->ApplyPoseFrame(0.f, false);
 	}
 }
 
@@ -2078,6 +2541,7 @@ void AOKSceneActor::ReleaseScene()
 	bSkyDomesDirty = true;
 	for (auto& Pair : Shown) Release(Pair.Value);
 	Shown.Reset();
+	ActiveVmdSources.Reset();
 	for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews) if (P.IsValid()) P->Destroy();
 	ShownMapPreviews.Reset();
 	ShownMap = -1;

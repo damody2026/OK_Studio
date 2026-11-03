@@ -126,9 +126,14 @@ pub(crate) fn accessory_bundle_source_uncached(game_root:&Path,zip:Option<&Path>
 pub(crate) fn mat_color(mesh: &ExtractedMesh, key: &str) -> [f32; 4] {
     let is_hair = mesh.hair_shader_hint || mesh.mat.as_ref().is_some_and(|m|
         is_native_hair_shader(&m.shader));
+    let is_glasses = mesh.mat.as_ref().is_some_and(|m| matches!(
+        m.shader.to_ascii_lowercase().as_str(),
+        "koikano/main_clothes_item_glasses" | "shader forge/toon_glasses_lod0"
+    ));
     let default = match key {
         "_Color2" if is_hair => [0.7843137, 0.7843137, 0.7843137, 1.0],
         "_Color3" if is_hair => [0.5, 0.5, 0.5, 1.0],
+        "_Color4" if is_glasses => [0.5019608, 0.5019608, 0.5019608, 1.0],
         _ => [1.0; 4],
     };
     mesh.mat.as_ref().and_then(|mm| mm.color(key)).unwrap_or(default)
@@ -453,24 +458,114 @@ pub(crate) fn apply_me_floats(
 
 /// ChaControl writes CustomTextureControl.matDraw settings after texture
 /// creation, before MaterialEditor reload. Prefab values are not card gloss.
-pub(crate) fn apply_native_skin_draw_settings(mesh: &mut ExtractedMesh, card: &CardInfo, outfit: i32, body: bool) {
-    let values=if body {
-        [("_DetailNormalMapScale",card.body_detail_power),
-         ("_SpecularPower",card.skin_gloss_power+(1.-card.skin_gloss_power)*card.skin_tuya_rate.clamp(0.,1.)),
-         ("_SpecularPowerNail",card.nail_gloss_power)]
-    } else {
-        [("_DetailNormalMapScale",card.face_detail_power),
-         ("_SpecularPower",card.cheek_gloss_power),("_SpecularPowerNail",card.lip_gloss_power)]
-    };
-    if let Some(mat)=mesh.mat.as_mut() {for (key,value) in values {
-        mat.floats.retain(|k,_|!k.eq_ignore_ascii_case(key));mat.floats.insert(key.into(),value);
-    }}
-    // Replay only these implemented draw settings; keep unsupported shader
-    // selection and unrelated legacy body overrides outside this change.
-    let edits=card.me_float.iter().filter(|((_,_,_,_,key),_)|
-        values.iter().any(|(name,_)|key.trim_start_matches('_').eq_ignore_ascii_case(name.trim_start_matches('_'))))
-        .map(|(k,v)|(k.clone(),*v)).collect();
-    apply_me_floats(&edits,outfit,if body {"body"}else{"head"},None,mesh);
+pub(crate) fn apply_native_skin_draw_settings(
+    game_root: &Path,
+    mesh: &mut ExtractedMesh,
+    card: &CardInfo,
+    outfit: i32,
+    body: bool,
+) {
+    let role = if body { "body" } else { "head" };
+    if let Some(mat) = mesh.mat.as_mut() {
+        let set_f = |mat: &mut crate::unity::MeshMaterial, key: &str, value: f32| {
+            mat.floats.retain(|k, _| !k.eq_ignore_ascii_case(key));
+            mat.floats.insert(key.into(), value);
+        };
+        let set_c = |mat: &mut crate::unity::MeshMaterial, key: &str, value: [f32; 4]| {
+            mat.colors.retain(|k, _| !k.eq_ignore_ascii_case(key));
+            mat.colors.insert(key.into(), value);
+        };
+        if body {
+            set_f(mat, "_DetailNormalMapScale", card.body_detail_power);
+            set_f(
+                mat,
+                "_SpecularPower",
+                card.skin_gloss_power + (1. - card.skin_gloss_power) * card.skin_tuya_rate.clamp(0., 1.),
+            );
+            set_f(mat, "_SpecularPowerNail", card.nail_gloss_power);
+            set_f(mat, "_nipsize", card.areola_size);
+            set_f(mat, "_nip_specular", card.nip_gloss_power);
+            set_f(mat, "_linetexon", if card.body_draw_add_line { 1. } else { 0. });
+            set_c(mat, "_overcolor1", card.nip_color);
+            set_c(mat, "_overcolor2", card.underhair_color);
+        } else {
+            set_f(mat, "_DetailNormalMapScale", card.face_detail_power);
+            set_f(mat, "_SpecularPower", card.cheek_gloss_power);
+            set_f(mat, "_SpecularPowerNail", card.lip_gloss_power);
+        }
+    }
+    // Replay supported shared-renderer skin shader switches (Koikano/main_skin,
+    // Shader Forge/main_skin, KKUSS); keep unintegrated xukmi/SkinPlus gated out.
+    let switched_to_forge_skin = mesh
+        .mat
+        .as_ref()
+        .and_then(|mat| card.me_shader.get(&(4, 0, 0, crate::card::me_mat_key(&mat.name))).cloned())
+        .is_some_and(|(target, queue)| {
+            let supported = matches!(
+                target.to_ascii_lowercase().as_str(),
+                "koikano/main_skin" | "shader forge/main_skin" | "kkuss"
+            );
+            if supported {
+                let prev = mesh.mat.as_ref().map(|m| m.shader.clone()).unwrap_or_default();
+                apply_me_shader(game_root, Some(&card.me_shader), 0, role, None, mesh);
+                mesh.mat.as_ref().is_some_and(|m| {
+                    m.shader.eq_ignore_ascii_case("Shader Forge/main_skin")
+                        && !prev.eq_ignore_ascii_case("Shader Forge/main_skin")
+                })
+            } else {
+                if let (Some(q), Some(mat)) = (queue, mesh.mat.as_mut()) {
+                    mat.render_queue = q;
+                }
+                false
+            }
+        });
+    if switched_to_forge_skin {
+        if let Some(mat) = mesh.mat.as_mut() {
+            // Unity's Material.shader setter preserves existing serialized values and
+            // populates ShaderLab defaults only for properties absent on the material.
+            for (key, default_val) in [
+                ("_SpeclarHeight", 0.98f32),
+                ("_ShadowExtend", 1.0),
+                ("_rimpower", 0.5),
+                ("_rimV", 0.0),
+                ("_nipsize", 0.5),
+                ("_nip_specular", 0.5),
+                ("_alpha_a", 1.0),
+                ("_alpha_b", 1.0),
+                ("_linetexon", 1.0),
+                ("_notusetexspecular", 0.0),
+            ] {
+                if !mat.floats.keys().any(|k| k.eq_ignore_ascii_case(key)) {
+                    mat.floats.insert(key.into(), default_val);
+                }
+            }
+            for (key, default_col) in [
+                ("_ShadowColor", [0.628f32, 0.628, 0.628, 1.0]),
+                ("_SpecularColor", [1.0, 1.0, 1.0, 0.0]),
+            ] {
+                if !mat.colors.keys().any(|k| k.eq_ignore_ascii_case(key)) {
+                    mat.colors.insert(key.into(), default_col);
+                }
+            }
+        }
+    }
+    apply_me_floats(&card.me_float, outfit, role, None, mesh);
+    if let Some(mat) = mesh.mat.as_mut() {
+        let name = crate::card::me_mat_key(&mat.name);
+        for ((t, coord, s, material, prop), value) in &card.me_color {
+            if *t == 4 && *coord == 0 && *s == 0 && *material == name {
+                let requested = if prop.starts_with('_') { prop.clone() } else { format!("_{prop}") };
+                let key = mat
+                    .colors
+                    .keys()
+                    .find(|existing| existing.eq_ignore_ascii_case(&requested))
+                    .cloned()
+                    .unwrap_or_else(|| requested.clone());
+                mat.colors.retain(|existing, _| !existing.eq_ignore_ascii_case(&requested));
+                mat.colors.insert(key, *value);
+            }
+        }
+    }
 }
 
 /// `MaterialAPI.CopyMaterial` appends a second material to the renderer. Unity
@@ -751,20 +846,26 @@ pub(crate) fn color_accessory_meshes(
             return Some(m);
         }
         // The native glasses shader declares a white _MainTex default.
-        // A null texture is valid, and _Color4's alpha remains a shader input.
+        // A null texture is valid, and _Color4's alpha remains a shader input
+        // regardless of whether the renderer came from rendAlpha or ME shader swap.
         let is_glasses = shader == "koikano/main_clothes_item_glasses"
             || shader == "shader forge/toon_glasses_lod0";
-        if is_glasses && role == 2 {
+        if is_glasses {
             // Preserve native inputs separately from the legacy preview bake.
             for (key, color) in color_key.iter().zip(cols.iter()) {
                 set_material_color(&mut m, key, *color);
             }
             set_material_color(&mut m, "_Color4", cols[3]);
             let null_main = m.mat.as_ref().is_some_and(|mat| mat.slot("_MainTex").is_none_or(str::is_empty));
-            let native_main = if null_main && !main_from_me { crate::unity::solid_png([1.;4], 1, 1) }
-                else { m.texture_png.clone().or_else(|| crate::unity::solid_png([1.;4], 1, 1)) };
+            let native_main = if null_main && !main_from_me {
+                crate::unity::solid_png([1.; 4], 1, 1)
+            } else if main_from_me {
+                m.texture_png.clone().or_else(|| crate::unity::solid_png([1.; 4], 1, 1))
+            } else {
+                m.texture_png.as_deref().and_then(flip_png_v).or_else(|| m.texture_png.clone()).or_else(|| crate::unity::solid_png([1.; 4], 1, 1))
+            };
             if let Some(png) = native_main { m.shader_extra_textures.insert("_MainTex".into(), png); }
-            let png = m.texture_png.as_deref();
+            let png = if null_main && !main_from_me { None } else { m.texture_png.as_deref() };
             m.texture_png = bake_accessory_glass_color(png, cols[3]);
             return Some(m);
         }

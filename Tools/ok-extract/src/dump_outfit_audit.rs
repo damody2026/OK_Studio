@@ -64,18 +64,18 @@ fn native_draw_settings_preserve_status_and_editor_precedence() {
     let mut mesh=crate::unity::ExtractedMesh {mat:Some(crate::unity::MeshMaterial {
         name:"cf_m_body".into(),floats:[("_specularpower".into(),0.3)].into(),..Default::default()}),..Default::default()};
     for (rate,expected) in [(-1.,0.2),(0.25,0.4),(2.,1.)] {
-        card.skin_tuya_rate=rate;crate::apply_native_skin_draw_settings(&mut mesh,&card,6,true);
+        card.skin_tuya_rate=rate;crate::apply_native_skin_draw_settings(std::path::Path::new(""),&mut mesh,&card,6,true);
         let mat=mesh.mat.as_ref().unwrap();assert!((mat.float("_SpecularPower").unwrap()-expected).abs()<1e-6);
         assert_eq!(mat.floats.keys().filter(|k|k.eq_ignore_ascii_case("_SpecularPower")).count(),1);
         assert_eq!(mat.float("_SpecularPowerNail"),Some(0.75));
     }
     card.me_float.insert((4,0,0,"cf_m_body".into(),"specularpower".into()),0.9);
     card.me_float.insert((4,0,0,"other".into(),"specularpowernail".into()),0.1);
-    crate::apply_native_skin_draw_settings(&mut mesh,&card,6,true);
+    crate::apply_native_skin_draw_settings(std::path::Path::new(""),&mut mesh,&card,6,true);
     assert_eq!(mesh.mat.as_ref().unwrap().float("_SpecularPower"),Some(0.9));
     assert_eq!(mesh.mat.as_ref().unwrap().float("_SpecularPowerNail"),Some(0.75));
     mesh.mat.as_mut().unwrap().name="cf_m_face_00".into();
-    crate::apply_native_skin_draw_settings(&mut mesh,&card,6,false);
+    crate::apply_native_skin_draw_settings(std::path::Path::new(""),&mut mesh,&card,6,false);
     assert_eq!(mesh.mat.as_ref().unwrap().float("_SpecularPower"),Some(0.4));
     assert_eq!(mesh.mat.as_ref().unwrap().float("_SpecularPowerNail"),Some(-1.));
 }

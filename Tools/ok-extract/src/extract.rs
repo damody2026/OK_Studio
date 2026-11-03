@@ -60,6 +60,7 @@ pub(crate) fn extract_session_from_info(
         }
     }
     let mut session_parts: Vec<crate::session::SessionPart> = Vec::new();
+    let mut active_shoe_meta: Option<(String, String, String)> = None;
     let mut manifest = Manifest::default();
     manifest.clothes_states = crate::unity::clothes_states();
     manifest.shoes_type = crate::unity::requested_shoes_type();
@@ -746,7 +747,7 @@ pub(crate) fn extract_session_from_info(
         };
         mesh.normal_map_png = converted.or_else(|| normal_now.map(convert_runtime_normal_map));
         profile_tick("body normal convert", t_mark); t_mark = Instant::now();
-        if let Some(card)=parsed_card.as_ref() {apply_native_skin_draw_settings(mesh,card,outfit,true);}
+        if let Some(card)=parsed_card.as_ref() {apply_native_skin_draw_settings(game_root,mesh,card,outfit,true);}
         let (p, tex) = emit_part(out_dir, &mut session_parts, "body", "body", mesh, body_blend, false)?;
         profile_tick("body draw+emit", t_mark); t_mark = Instant::now();
         if let Some(part) = session_parts.last_mut() {
@@ -762,9 +763,9 @@ pub(crate) fn extract_session_from_info(
                 part.overtex_png = Some(png);
                 assign_display_texture_settings(part, "_overtex1", settings);
             }
-            part.overcolor = card.nip_color;
-            part.nip_size = card.areola_size;
-            part.nip_specular = card.nip_gloss_power;
+            part.overcolor = mesh.mat.as_ref().and_then(|m| m.color("_overcolor1")).unwrap_or(card.nip_color);
+            part.nip_size = mesh.mat.as_ref().and_then(|m| m.float("_nipsize")).unwrap_or(card.areola_size);
+            part.nip_specular = mesh.mat.as_ref().and_then(|m| m.float("_nip_specular")).unwrap_or(card.nip_gloss_power);
             if card.underhair_id != 0 {
                 if let Some((png, settings)) = load_catalog_display_texture(
                     game_root, &vanilla, &mod_catalog, 424, card.underhair_id, "UnderhairTex",
@@ -772,7 +773,7 @@ pub(crate) fn extract_session_from_info(
                     part.overtex2_png = Some(png);
                     assign_display_texture_settings(part, "_overtex2", settings);
                 }
-                part.overcolor2 = card.underhair_color;
+                part.overcolor2 = mesh.mat.as_ref().and_then(|m| m.color("_overcolor2")).unwrap_or(card.underhair_color);
             }
             eprintln!("ok-extract: body display overtex nip={} underhair={} uv1={} uv2={} color={}",
                 part.overtex_png.as_ref().map_or(0, Vec::len),
@@ -1138,8 +1139,10 @@ pub(crate) fn extract_session_from_info(
         if std::env::var("OK_FACE_SKIN").is_ok() {
             mesh.texture_png = crate::unity::solid_png(skin_tint, 64, 64);
         }
-        if let Some(card)=parsed_card.as_ref() {apply_native_skin_draw_settings(&mut mesh,card,outfit,false);}
-        if let Some(card)=parsed_card.as_ref() {apply_native_face_overlays(game_root,&vanilla,&mod_catalog,card,outfit,&mut mesh);}
+        if let Some(card)=parsed_card.as_ref() {
+            apply_native_face_overlays(game_root,&vanilla,&mod_catalog,card,outfit,&mut mesh);
+            apply_native_skin_draw_settings(game_root,&mut mesh,card,outfit,false);
+        }
         // main_skin clips min(max(r,1-_alpha_a),max(g,1-_alpha_b)) < 0.5 on the face too: a card's _AlphaMask
         // (Material Editor) cuts the scalp that would show through its hair. Disabled channels are whitened as for
         // the body, and the face draws masked like the body.
@@ -1250,6 +1253,10 @@ pub(crate) fn extract_session_from_info(
             eyebrow:head_eyebrow_patterns.get(&key).map(|(_,p)|p.as_slice()),
         };
         let prepare = |mut mesh: ExtractedMesh| {
+            crate::card_plugins::apply_edit_fangs(
+                &mut mesh,
+                parsed_card.as_ref().and_then(|c| c.edit_fangs),
+            );
             rig_mesh(
                 &mut mesh,
                 "head",
@@ -1739,6 +1746,7 @@ pub(crate) fn extract_session_from_info(
         let mut hide_shorts_bot = false;
         let mut bottom_present = false;
         let mut not_shorts = false;
+        let mut clothes_state_present = [false; 9];
         let mut top_prefab_world = crate::pose::ident();
         for (kind, &cid) in card.clothes_ids.iter().enumerate() {
             if kind >= CLOTHES_PROP.len() {
@@ -1751,6 +1759,17 @@ pub(crate) fn extract_session_from_info(
                 .and_then(|slot| slot.as_ref()).cloned() else {
                 continue;
             };
+            let active_shoe_kind = if manifest.shoes_type == 0 || card.clothes_ids.len() <= 8 { 7 } else { 8 };
+            if !is_dummy_part(&entry.main_data, Some(&entry.name)) {
+                clothes_state_present[kind] = true;
+            }
+            if kind == active_shoe_kind && !is_dummy_part(&entry.main_data, Some(&entry.name)) {
+                active_shoe_meta = Some((
+                    entry.name.clone(),
+                    entry.main_data.clone(),
+                    guid.clone(),
+                ));
+            }
             if kind == 0 {
                 top_type = entry.info("Kind").parse().unwrap_or(0);
                 top_not_bra = entry.info("NotBra").trim() == "1";
@@ -1819,7 +1838,20 @@ pub(crate) fn extract_session_from_info(
             // rendNormal01 / rendNormal02 / rendNormal03.
             let t_part = Instant::now();
             let cmp = accessory_bundle_bytes(game_root, zip.as_deref(), &entry)
-                .and_then(|b| crate::unity::clothes_renderer_map(&b, &entry.main_data));
+                .and_then(|b| {
+                    let cbs_defs = crate::unity::clothes_blend_shape_defs(&b, &entry.main_data);
+                    if !cbs_defs.is_empty() {
+                        crate::card_plugins::apply_clothes_blend_shapes(
+                            &mut meshes,
+                            &cbs_defs,
+                            card,
+                            outfit,
+                            cat,
+                            if kind == 8 { 1 } else { 0 },
+                        );
+                    }
+                    crate::unity::clothes_renderer_map(&b, &entry.main_data)
+                });
             profile_tick("clothes renderer map", t_part);
             let t_part = Instant::now();
             let (baked, used_mask) = bake_clothes_create_memo(game_root, card, outfit, &format!("main{kind}"), zip.as_deref(),
@@ -1993,7 +2025,20 @@ pub(crate) fn extract_session_from_info(
                     outfit,
                 );
                 let cmp = accessory_bundle_bytes(game_root, zip.as_deref(), &entry)
-                    .and_then(|b| crate::unity::clothes_renderer_map(&b, &entry.main_data));
+                    .and_then(|b| {
+                    let cbs_defs = crate::unity::clothes_blend_shape_defs(&b, &entry.main_data);
+                    if !cbs_defs.is_empty() {
+                        crate::card_plugins::apply_clothes_blend_shapes(
+                            &mut meshes,
+                            &cbs_defs,
+                            card,
+                            outfit,
+                            cat,
+                            if kind == 8 { 1 } else { 0 },
+                        );
+                    }
+                    crate::unity::clothes_renderer_map(&b, &entry.main_data)
+                });
                 let (baked, used_mask) = bake_clothes_create_memo(game_root, card, outfit, &format!("sub{kind}"), zip.as_deref(),
                     &entry, cols, &pats, &head_texs, &body_texs);
                 apply_clothes_create_textures(&mut meshes, cmp.as_ref(), &baked);
@@ -2080,6 +2125,20 @@ pub(crate) fn extract_session_from_info(
         if not_shorts || (hide_shorts_bot && bottom_present && manifest.clothes_states[1] == 0) {
             parts.retain(|part| part.role != "clothes_shorts");
             session_parts.retain(|part| part.role != "clothes_shorts");
+        }
+        if !crate::state_variant_open() {
+            let apply_slot_vis = crate::studio_status::current().is_none_or(|o| o.show_accessory.is_none())
+                || crate::unity::explicit_requested_clothes_states().is_some();
+            crate::card_plugins::apply_acc_state_sync_visibility(
+                card,
+                outfit,
+                manifest.clothes_states,
+                clothes_state_present,
+                not_bot,
+                not_shorts,
+                apply_slot_vis,
+                &mut session_parts,
+            );
         }
         eprintln!("ok-extract: top_type={top_type} top_not_bra={top_not_bra} sub_not_bra={sub_not_bra:?} bra_visible={} hide_shorts_bot={hide_shorts_bot} not_shorts={not_shorts} shorts_visible={}", !not_bra, !not_shorts && !(hide_shorts_bot && bottom_present && manifest.clothes_states[1] == 0));
     }
@@ -2277,6 +2336,8 @@ pub(crate) fn extract_session_from_info(
         user_fk_ids: Default::default(),
         penis_size: Default::default(),
         skin_probe: Default::default(),
+        user_bone_pos_scale: Vec::new(),
+        user_bone_ps_ids: Default::default(),
         hand_shape_ids: Default::default(),
         studio_ik_solver: None,
         studio_ik: Vec::new(),
@@ -2300,6 +2361,10 @@ pub(crate) fn extract_session_from_info(
         paired_ik_runtime: None,
         anim_clip: std::env::var("OK_POSE").unwrap_or_else(|_| "Stand_D_00".to_string()),
         anim_scene_mode: 0,
+        mmdd_world_lock: false,
+        mmdd_face_bone_dirty: false,
+        active_shoe_meta,
+        face_runtime: Default::default(),
         anim_parameters: std::collections::HashMap::new(),
         anim_clock:Default::default(),anim_crossfade:None,anim_layer_crossfades:Default::default(),
         body_shaped: None,

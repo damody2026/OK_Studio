@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
@@ -60,6 +60,8 @@ public:
     void AdvanceCharacterFrames(float DeltaSeconds, bool bAdvancePhase);
     /** Evidence capture holds the saved animation phase while rendering settles. */
     bool bPauseAnimations = false;
+    /** True when UOKStudioGame drives character animation time from TimelineTime / AudioMasterClock (even without keyframe tracks). */
+    bool bTimelineDriven = false;
 	/** Poses a character's animation at `Time` seconds of the scene timeline (its own start time and speed applied). */
 	void SetAnimationTime(int32 Id, float Time);
 	/** The next Sync builds the object again (after something changed its preview outside the document). */
@@ -67,6 +69,8 @@ public:
 	/** Plays another Studio animation (OK animation library) on a shown character in place, without building it again;
 	 *  the document object follows. */
 	bool SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int32 Category, int32 No, FString& OutError);
+	/** Records an active live .vmd source for a character so rebuilding (outfit / shoe on-off) re-solves ShoesDetect. */
+	void SetActiveVmdSource(int32 Id, const FString& VmdFile, const FString& OkAnimRelPath);
 
 	/** The preview actor showing a character or item object. */
 	AKKPreviewActor* PreviewOf(int32 Id) const;
@@ -120,6 +124,8 @@ public:
 	int32 AmbientSky = -1;
 	int32 AmbientMap = -1;
 	TSet<TWeakObjectPtr<AKKPreviewActor>> AmbientLit;
+	TMap<FName, FLinearColor> AppliedShaderGlobals;
+	TSet<TWeakObjectPtr<AKKPreviewActor>> ShaderGlobalsLit;
 	/** Stands the scene's background image (Post.Background) behind everything in the view `View` with horizontal field of
 	 * view `Fov` (degrees), filling it like Studio's BackgroundCtrl; hidden without a background. */
 	void PlaceBackground(const FTransform& View, float Fov, float Aspect = 16.f / 9.f);
@@ -201,6 +207,8 @@ private:
 		float Time = 0.f;
 		/** FK bones the preview currently has. */
 		TArray<FOKSceneFkBone> AppliedFk;
+		TArray<FOKSceneBoneTrs> AppliedBoneOverrides;
+		TArray<FOKSceneMorphOverride> AppliedMorphOverrides;
 		TArray<FOKSceneIkTarget> AppliedIk;
 		int32 AppliedFkPartsOff = 0, AppliedIkPartsOff = 0;
 		float AppliedIkWeight = 1.f;
@@ -229,6 +237,12 @@ private:
 	uint32 PlaceGeneration = 1;
 	FTransform PlacedActorTransform;
 	TMap<int32, FShown> Shown;
+	struct FActiveVmdSource
+	{
+		FString VmdFile;
+		FString OkAnimRelPath;
+	};
+	TMap<int32, FActiveVmdSource> ActiveVmdSources;
 	int32 ShownMap = -1;
 	TArray<TWeakObjectPtr<AKKPreviewActor>> ShownMapPreviews;
 	void SyncMap();
@@ -271,4 +285,5 @@ private:
 	TArray<TWeakObjectPtr<class UMaterialInstanceDynamic>> MirrorCaptureMaterials;
 	void Release(FShown& Item);
 	void ApplyCharacterState(const FOKSceneObject& Object, FShown& Item);
+	void SolveConstraints();
 };

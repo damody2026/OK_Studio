@@ -7085,3 +7085,258 @@ fn material_editor_copy_replays_accessory_overlay() {
     assert_eq!(crate::session::SessionPart::from_mesh("accessory", &copied_hair, &blend, unlit).shader_kind, 4);
     assert_eq!(info.me_float.get(&(2, 0, 2, hair_copy.copy.clone(), "alpha".into())).copied(), Some(0.8));
 }
+
+#[test]
+fn accessory_non_alpha_role_material_editor_glasses_preserves_unbaked_inputs_and_color4() {
+    let mut raw_img = image::RgbaImage::new(1, 2);
+    raw_img.put_pixel(0, 0, image::Rgba([200, 180, 160, 255]));
+    raw_img.put_pixel(0, 1, image::Rgba([100, 120, 140, 255]));
+    let raw_main = crate::teximg::encode_rgba_owned(raw_img).unwrap();
+    let expected_top_down = crate::flip_png_v(&raw_main).unwrap();
+    let mask_png = crate::unity::solid_png([1.0, 0.0, 0.0, 1.0], 1, 2).unwrap();
+
+    for shader in ["Shader Forge/toon_glasses_lod0", "Koikano/main_clothes_item_glasses"] {
+        for me_c4 in [None, Some([0.18, 0.27, 0.41, 0.85])] {
+            let mut card = crate::card::CardInfo::default();
+            card.accessory.resize(1, crate::card::AccPart {
+                type_id: 120,
+                id: 1,
+                parent_key: "N_Head".into(),
+                color: [0.1, 0.2, 0.95, 1.0],
+                color2: [0.2, 0.8, 0.3, 1.0],
+                color3: [0.9, 0.3, 0.1, 1.0],
+                // Even if card.color4 has alpha 0, role 1 (rendNormal) must not
+                // copy card.color4 into _Color4 or drop the renderer.
+                color4: [0.9, 0.1, 0.1, 0.0],
+                ..Default::default()
+            });
+            card.me_shader.insert((2, 0, 0, "mat_acc".into()), (shader.into(), None));
+            if let Some(c4) = me_c4 {
+                card.me_color.insert((2, 0, 0, "mat_acc".into(), "color4".into()), c4);
+            }
+
+            let mut mesh = ExtractedMesh::default();
+            mesh.name = "o_acc_ribbon".into();
+            mesh.renderer_ids = vec![10];
+            mesh.texture_png = Some(raw_main.clone());
+            mesh.color_mask_png = Some(mask_png.clone());
+            mesh.mat = Some(crate::unity::MeshMaterial {
+                name: "mat_acc".into(),
+                shader: "Shader Forge/main_alpha".into(),
+                tex_slots: vec![("_MainTex".into(), "tex_main".into()), ("_ColorMask".into(), "tex_mask".into())],
+                ..Default::default()
+            });
+            let mut meshes = vec![mesh];
+            let entry = crate::list::ListEntry::default();
+            crate::accessories::color_accessory_meshes(
+                std::path::Path::new("X:/NoSuchGameRoot"),
+                None,
+                &entry,
+                &card,
+                "outfit0.accessory0.ChaFileAccessory.PartsInfo.id",
+                0,
+                &mut meshes,
+                &[],
+                &[],
+                None,
+            );
+            assert_eq!(meshes.len(), 1, "role=1 renderer must not be dropped when card.color4.a == 0");
+            let out = &meshes[0];
+            let mat = out.mat.as_ref().unwrap();
+            assert_eq!(mat.color("_Color"), Some([0.1, 0.2, 0.95, 1.0]));
+            assert_eq!(mat.color("_Color2"), Some([0.2, 0.8, 0.3, 1.0]));
+            assert_eq!(mat.color("_Color3"), Some([0.9, 0.3, 0.1, 1.0]));
+            let expected_c4 = me_c4.unwrap_or([0.5019608, 0.5019608, 0.5019608, 1.0]);
+            let got_c4 = mat.color("_Color4").expect("_Color4 must be populated for glasses shader");
+            for k in 0..4 {
+                assert!((got_c4[k] - expected_c4[k]).abs() < 1e-5, "shader={shader} me_c4={me_c4:?} ch={k}: got {got_c4:?}");
+            }
+            assert_eq!(
+                out.shader_extra_textures.get("_MainTex"),
+                Some(&expected_top_down),
+                "exact glasses shader must receive top-down unbaked _MainTex without ColorMask tint"
+            );
+            let (blend, unlit) = blend_for_mesh("accessory", out);
+            assert_eq!(blend, "translucent");
+            let part = crate::session::SessionPart::from_mesh("accessory", out, &blend, unlit);
+            let expected_kind = if shader.starts_with("Koikano/") { 3 } else { 0 };
+            assert_eq!(part.shader_kind, expected_kind);
+            assert_eq!(part.source_material.as_ref().unwrap().shader, shader);
+            assert_eq!(part.shader_textures.get("_MainTex"), Some(&expected_top_down));
+        }
+    }
+}
+
+#[test]
+fn non_accessory_part_material_editor_glasses_preserves_color4_and_glass_ramp() {
+    let mut ramp_img = image::RgbaImage::new(1, 2);
+    ramp_img.put_pixel(0, 0, image::Rgba([10, 20, 30, 255]));
+    ramp_img.put_pixel(0, 1, image::Rgba([210, 220, 230, 255]));
+    let raw_ramp = crate::teximg::encode_rgba_owned(ramp_img).unwrap();
+    let expected_ramp = crate::flip_png_v(&raw_ramp).unwrap();
+    let white_main = crate::unity::solid_png([1.0; 4], 1, 1).unwrap();
+
+    let mut me_shader = crate::card::MeShaderMap::default();
+    me_shader.insert((1, 0, 0, "mat_top".into()), ("Koikano/main_clothes_item_glasses".into(), None));
+    let mut me_color = crate::card::MeColorMap::default();
+    me_color.insert((1, 0, 0, "mat_top".into(), "color4".into()), [0.25, 0.5, 0.75, 0.6]);
+
+    let mut mesh = ExtractedMesh::default();
+    mesh.name = "o_top_glass".into();
+    mesh.hair_shader_hint = true;
+    mesh.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    mesh.normals = vec![[0.0, 0.0, 1.0]; 3];
+    mesh.uvs = vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]];
+    mesh.indices = vec![0, 1, 2];
+    mesh.texture_png = Some(white_main.clone());
+    mesh.shader_extra_textures.insert("_GlassRamp".into(), raw_ramp);
+    mesh.mat = Some(crate::unity::MeshMaterial {
+        name: "mat_top".into(),
+        shader: "Shader Forge/main_opaque".into(),
+        tex_slots: vec![("_MainTex".into(), "tex_top".into()), ("_GlassRamp".into(), "tex_ramp".into())],
+        ..Default::default()
+    });
+
+    let mut parts = Vec::new();
+    let mut session_parts = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    crate::push::push_meshes(
+        &mut parts,
+        &mut session_parts,
+        None,
+        std::path::Path::new("X:/NoSuchGameRoot"),
+        "clothes_top",
+        vec![mesh],
+        Some(0),
+        None,
+        None,
+        Some("outfit0.clothes0".into()),
+        None,
+        None,
+        None,
+        None,
+        Some([[0.9, 0.1, 0.1, 1.0], [1.0; 4], [1.0; 4]]),
+        &mut seen,
+        None,
+        None,
+        None,
+        None,
+        Some(&me_color),
+        Some(&me_shader),
+        None,
+        0,
+        None,
+        None,
+        None,
+        None,
+    ).unwrap();
+    assert_eq!(session_parts.len(), 1);
+    let part = &session_parts[0];
+    assert_eq!(part.shader_kind, 3);
+    assert_eq!(part.source_material.as_ref().unwrap().shader, "Koikano/main_clothes_item_glasses");
+    assert_eq!(part.source_material.as_ref().unwrap().color("_Color4"), Some([0.25, 0.5, 0.75, 0.6]));
+    assert_eq!(part.shader_textures.get("_MainTex"), Some(&white_main));
+    assert_eq!(part.shader_textures.get("_GlassRamp"), Some(&expected_ramp));
+}
+
+#[test]
+fn skin_material_editor_replays_supported_forge_skin_and_gates_unsupported_skinplus() {
+    let mut card = crate::card::CardInfo::default();
+    card.face_detail_power = 0.35;
+    card.cheek_gloss_power = 0.15;
+    card.lip_gloss_power = 0.45;
+    card.me_shader.insert((4, 0, 0, "cf_m_face_00".into()), ("Shader Forge/main_skin".into(), None));
+    card.me_float.insert((4, 0, 0, "cf_m_face_00".into(), "shadowextend".into()), 0.66);
+    card.me_float.insert((4, 0, 0, "cf_m_face_00".into(), "speclarheight".into()), 0.99);
+    card.me_float.insert((4, 0, 0, "cf_m_face_00".into(), "rimv".into()), 0.4);
+    card.me_float.insert((4, 0, 0, "cf_m_face_00".into(), "rimpower".into()), 0.1);
+    card.me_color.insert((4, 0, 0, "cf_m_face_00".into(), "specularcolor".into()), [0.9, 0.8, 0.7, 0.25]);
+
+    let mut face = ExtractedMesh {
+        name: "cf_O_face".into(),
+        mat: Some(crate::unity::MeshMaterial {
+            name: "cf_m_face_00 (Instance)".into(),
+            shader: "Koikano/main_skin".into(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    crate::apply_native_skin_draw_settings(std::path::Path::new("X:/NoSuchGameRoot"), &mut face, &card, 0, false);
+    let mat = face.mat.as_ref().unwrap();
+    assert_eq!(mat.shader, "Shader Forge/main_skin");
+    assert_eq!(mat.float("_ShadowExtend"), Some(0.66));
+    assert_eq!(mat.float("_SpeclarHeight"), Some(0.99));
+    assert_eq!(mat.float("_rimV"), Some(0.4));
+    assert_eq!(mat.float("_rimpower"), Some(0.1));
+    assert_eq!(mat.float("_DetailNormalMapScale"), Some(0.35));
+    assert_eq!(mat.color("_SpecularColor"), Some([0.9, 0.8, 0.7, 0.25]));
+
+    let part = crate::session::SessionPart::from_mesh("head", &face, "masked", true);
+    assert_eq!(part.shader_kind, 7, "Shader Forge/main_skin must select ForgeSkin shader_kind=7");
+    assert!((part.shadow_extend - 0.66).abs() < 1e-6);
+    assert!((part.spec_height - 0.99).abs() < 1e-6);
+
+    // Unsupported xukmi/SkinPlus must NOT switch the live shared skin material.
+    let mut card_sp = crate::card::CardInfo::default();
+    card_sp.me_shader.insert((4, 0, 0, "cf_m_body".into()), ("xukmi/SkinPlus".into(), Some(2455)));
+    let mut body = ExtractedMesh {
+        name: "o_body_a".into(),
+        mat: Some(crate::unity::MeshMaterial {
+            name: "cf_m_body".into(),
+            shader: "Koikano/main_skin".into(),
+            render_queue: 2000,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    crate::apply_native_skin_draw_settings(std::path::Path::new("X:/NoSuchGameRoot"), &mut body, &card_sp, 0, true);
+    assert_eq!(body.mat.as_ref().unwrap().shader, "Koikano/main_skin");
+    assert_eq!(body.mat.as_ref().unwrap().render_queue, 2455);
+}
+
+#[test]
+fn head_detail_material_editor_glasses_preserves_unbaked_textures_and_color4() {
+    let mut raw_img = image::RgbaImage::new(1, 2);
+    raw_img.put_pixel(0, 0, image::Rgba([20, 40, 60, 255]));
+    raw_img.put_pixel(0, 1, image::Rgba([180, 200, 220, 255]));
+    let raw_main = crate::teximg::encode_rgba_owned(raw_img).unwrap();
+    let expected_main = crate::flip_png_v(&raw_main).unwrap();
+
+    let mut card = crate::card::CardInfo::default();
+    card.me_shader.insert((4, 0, 0, "mat_visor".into()), ("Shader Forge/toon_glasses_lod0".into(), None));
+    card.me_color.insert((4, 0, 0, "mat_visor".into(), "color".into()), [0.2, 0.4, 0.8, 1.0]);
+    card.me_color.insert((4, 0, 0, "mat_visor".into(), "color4".into()), [0.3, 0.5, 0.7, 0.65]);
+
+    let mut mesh = ExtractedMesh {
+        name: "cf_O_visor".into(),
+        texture_png: Some(raw_main.clone()),
+        shader_extra_textures: [("_GlassRamp".into(), raw_main.clone())].into(),
+        mat: Some(crate::unity::MeshMaterial {
+            name: "mat_visor".into(),
+            shader: "Shader Forge/main_alpha".into(),
+            tex_slots: vec![("_MainTex".into(), "tex_v".into()), ("_GlassRamp".into(), "tex_r".into())],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let empty_cat = crate::list::ChaListCatalog::default();
+    let guids = std::collections::HashMap::new();
+    crate::head_body::resolve_head_detail_texture(
+        std::path::Path::new("X:/NoSuchGameRoot"),
+        &empty_cat,
+        &empty_cat,
+        &card,
+        &guids,
+        0,
+        &mut mesh,
+        &[],
+        &[],
+    );
+    let mat = mesh.mat.as_ref().unwrap();
+    assert_eq!(mat.shader, "Shader Forge/toon_glasses_lod0");
+    assert_eq!(mat.color("_Color"), Some([0.2, 0.4, 0.8, 1.0]));
+    assert_eq!(mat.color("_Color4"), Some([0.3, 0.5, 0.7, 0.65]));
+    assert_eq!(mesh.shader_extra_textures.get("_MainTex"), Some(&expected_main));
+    assert_eq!(mesh.shader_extra_textures.get("_GlassRamp"), Some(&expected_main));
+}
+
