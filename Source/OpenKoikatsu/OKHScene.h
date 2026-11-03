@@ -143,6 +143,7 @@ private:
     void PlaySolo(const FString& State);
     void Touch(int32 Area);
     float AreaExperience(int32 Area) const;
+    bool NeverHad(int32 Area) const;
     // Her development there, 0..1 (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md): chest, nipple, crotch, anal or oral, as she
     // came in plus ten points for each climax there this scene (crotch, anal) or each time he came in her mouth (oral).
     float Dev(const TCHAR* Area) const;

@@ -93,6 +93,14 @@ float UOKHScenePanel::AreaExperience(int32 Area) const{
     if(Gallery&&Gallery->HExperience.IsValid()&&Gallery->HExperience->TryGetObjectField(TEXT("areas"),Areas)&&Area>=0&&Area<11)(*Areas)->TryGetNumberField(Keys[Area],V);
     return float(V);
 }
+// Nothing ever done to her there: undeveloped (development counts only climaxes, hexp.rs) and, for her vagina and anus,
+// never had him in it either (she is not a virgin there), so a girl who has had sex is not touched there "for the first time".
+bool UOKHScenePanel::NeverHad(int32 Area) const{
+    if(AreaExperience(Area)>=.05f)return false;
+    const TCHAR* Virgin=Area==2?TEXT("virgin"):Area==3?TEXT("anal_virgin"):nullptr;bool V=true;
+    if(Virgin&&Gallery&&Gallery->HExperience.IsValid()&&Gallery->HExperience->TryGetBoolField(Virgin,V)&&!V)return false;
+    return true;
+}
 // The private room is a bare floor: a pose fits it when the original lets it play on the floor, a bed or standing
 // (H point categories 0, 1, 9; 1008, which only マングリ正常位 has, is played on the floor too). Chair, desk, wall,
 // pool, fence, net and the rest need their prop and floated there (he sat on air in 椅子対面, she lay in mid-air in 机寝位).
@@ -172,14 +180,14 @@ void UOKHScenePanel::Touch(int32 Area){
         TouchArea=0;Chain({TEXT("K_Touch"),TEXT("K_Loop")});Note(OKT(bFirst?TEXT("ui.hscene.event_first_kiss"):TEXT("ui.hscene.event_kiss")));return;
     }
     // Her anal untouched and him not her lover: she pulls away (anal_dislikes).
-    if(Area==3&&AreaExperience(3)<=0.f&&Gallery->HHeroineStage!=TEXT("lover")){Note(OKT(TEXT("ui.hscene.anal_touch_refused")));Chain({TEXT("Back_Dislikes"),TEXT("Idle")});TouchArea=INDEX_NONE;return;}
+    if(Area==3&&NeverHad(3)&&Gallery->HHeroineStage!=TEXT("lover")){Note(OKT(TEXT("ui.hscene.anal_touch_refused")));Chain({TEXT("Back_Dislikes"),TEXT("Idle")});TouchArea=INDEX_NONE;return;}
     static const TCHAR* Prefix[]={TEXT(""),TEXT("M_"),TEXT("A_"),TEXT("S_"),TEXT("S_"),TEXT("M_")};
     static const TCHAR* TouchEvents[]={TEXT(""),TEXT("ui.hscene.event_touch_chest"),TEXT("ui.hscene.event_touch_crotch"),TEXT("ui.hscene.event_touch_anal"),TEXT("ui.hscene.event_touch_butt"),TEXT("ui.hscene.event_touch_nipple")};
     // A place she has never been touched (HVoiceCtrl GetStateSelect gives it her first-time bank): she answers it as her
     // first time there, by TTS.
     static const TCHAR* FirstEvents[]={TEXT(""),TEXT("ui.hscene.event_first_chest"),TEXT("ui.hscene.event_first_crotch"),TEXT("ui.hscene.event_first_anal"),TEXT("ui.hscene.event_first_butt"),TEXT("ui.hscene.event_first_nipple")};
     // Kissed or licked there (bLickMode): the same caress of hers (the original's tongue item), said as his mouth.
-    if(TouchArea!=Area){const bool First=AreaExperience(Area)<.05f&&AreaSeconds[Area]<=0.f;
+    if(TouchArea!=Area){const bool First=NeverHad(Area)&&AreaSeconds[Area]<=0.f;
         if(bLickMode){static const TCHAR* Parts[]={TEXT(""),TEXT("chest"),TEXT("crotch"),TEXT("anal"),TEXT("butt"),TEXT("nipple")};
             Note(OKMsg(First?TEXT("ui.hscene.event_first_body"):TEXT("ui.hscene.event_body"),{{TEXT("how"),TEXT("kiss")},{TEXT("part"),OKT(*(FString(TEXT("ui.hscene.part_"))+Parts[Area]))}}));}
         else Note(OKT(First?FirstEvents[Area]:TouchEvents[Area]));}
@@ -318,6 +326,7 @@ void UOKHScenePanel::LoadPoses(){
     }
 }
 
+static bool OKHServiceSpent(int32 Finishes,const TSharedPtr<FJsonObject>& X);
 void UOKHScenePanel::BuildList(){
     if(!List||!WidgetTree)return;List->ClearChildren();
     auto Add=[this](int32 Kind,const FString& Label,bool Enabled,bool Current){
@@ -358,11 +367,13 @@ void UOKHScenePanel::BuildList(){
     for(int32 I=0;I<Poses.Num();++I){const FOKHPose& Pose=Poses[I];
         const bool Shown=Tab==TabSonyu?Pose.Mode==2:Pose.Mode==1&&Pose.KindHoushi==Tab-TabHand;if(!Shown)continue;
         const bool PregLocked=PregLocks(Pose);const bool Locked=Pose.IsExperience==1&&!Used||PregLocked;
+        // Her service rounds used up (she said so): no hand, mouth or breast pose to pick, as she would not start it.
+        const bool Spent=Pose.Mode==1&&(bServiceRefused||OKHServiceSpent(ServiceFinishes,Gallery?Gallery->HExperience:nullptr));
         FString Label=Pose.Name;if(Pose.Anal)Label+=OKT(TEXT("ui.hscene.anal_mark"));
         // The room brings a seat, table or wall for it (PlaceProps).
         if(Pose.Prop>=1&&Pose.Prop<=3)Label+=OKT(*FString::Printf(TEXT("ui.hscene.prop_mark_%d"),Pose.Prop));
         if(Locked)Label+=OKT(PregLocked?TEXT("ui.hscene.preg_locked_mark"):TEXT("ui.hscene.locked_mark"));Label+=Fresh(Pose.Name);
-        Add(PoseBase+I,Label,!Locked,(Mode!=0&&I==ActivePose)||I==PendingPose);
+        Add(PoseBase+I,Label,!Locked&&!Spent,(Mode!=0&&I==ActivePose)||I==PendingPose);
     }
 }
 
@@ -374,7 +385,10 @@ void UOKHScenePanel::SelectPose(int32 Index){
     if(Gallery->PartnerActor)Gallery->PartnerActor->SetActorHiddenInGame(false);
     ++AibuGeneration;PendingAibu=INDEX_NONE;TouchArea=INDEX_NONE;
     PendingPose=Index;Queue.Reset();Wanted.Reset();bAnalPlay=false;bInsideFinished=false;bStrong=false;
-    Gallery->PairCombo->SetSelectedIndex(Option+1);
+    // Already the list's choice (the scene opens with its first pose there, or he picks the one playing): setting it again
+    // fires nothing and the pose stayed pending for good, so load it as a new choice.
+    if(Gallery->PairCombo->GetSelectedIndex()==Option+1)Gallery->OnPairSelected(Gallery->PairCombo->GetSelectedOption(),ESelectInfo::OnMouseClick);
+    else Gallery->PairCombo->SetSelectedIndex(Option+1);
     Gallery->NoteAction(TEXT("pair"),Poses[Index].Name);
     PoseClothes(Poses[Index]);
     BuildList();
@@ -1046,7 +1060,7 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     // Gauges (HFlag gaugeFemale / gaugeMale): they rise with the movement, faster when strong; hers by her experience.
     if(Speed)SpeedValue=Speed->GetValue();
     const float Rate=SpeedValue,Strong=Base==TEXT("SLoop")?1.25f:1.f;
-    if(SpeedCover){const bool bCover=Mode==0&&TouchArea!=INDEX_NONE&&TouchArea!=0&&AreaExperience(TouchArea)<=0.f;
+    if(SpeedCover){const bool bCover=Mode==0&&TouchArea!=INDEX_NONE&&TouchArea!=0&&NeverHad(TouchArea);
         const ESlateVisibility Want=bCover?ESlateVisibility::HitTestInvisible:ESlateVisibility::Hidden;if(SpeedCover->GetVisibility()!=Want)SpeedCover->SetVisibility(Want);}
     static const float HerByLevel[]={.55f,.8f,1.f,1.35f};
     // Caress (HAibu): resting on a place she is being touched; her gauge by how used to it she is, and too hard on a
