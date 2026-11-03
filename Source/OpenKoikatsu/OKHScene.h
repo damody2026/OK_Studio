@@ -55,6 +55,7 @@ struct FOKHPose {
     int32 Pair=INDEX_NONE;      // index in the controller's NativePairs
     int32 Mode=0;               // 1 service, 2 intercourse (AnimationInfo_XX)
     int32 KindHoushi=0;         // service: 0 hand, 1 mouth, 2 breasts
+    int32 SysTaii=0;            // sysTaii: 0 hand or breasts only, 1 licking, 2 him in her mouth (咥え)
     bool Anal=false;
     bool FemaleLead=false;      // isFemaleInitiative: her lines are the voice table's rows 38 on (HSonyu num2)
     int32 IsExperience=0;       // 1: needs her used to it (慣れ)
@@ -158,6 +159,7 @@ private:
     void PoseClothes(const FOKHPose& Pose);
     // His penis drawn through her (ApplyMaleLook) only in a pose where he is in her: as it was last applied.
     bool XRayInHer() const;bool bXRayInHer=false;
+    bool FinishInMouth() const;
     bool bOpeningChecked=false; // the scene moved from its opening pose to the first caress, once (NativeTick)
     void Want(const FString& State);
     void Chain(const TArray<FString>& States);

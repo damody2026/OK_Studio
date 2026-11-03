@@ -313,7 +313,7 @@ void UOKHScenePanel::LoadPoses(){
         FOKHPose Pose;Pose.Pair=I;Pose.Mode=Category==TEXT("AnimationInfo_01")?1:Category==TEXT("AnimationInfo_02")?2:0;if(!Pose.Mode||!HFitsRoom(Category,Id))continue;
         Pose.Name=Row->GetStringField(TEXT("name"));
         if(const TSharedPtr<FJsonObject>* M=Meta.Find(FString::Printf(TEXT("%s:%d"),*Category,Id))){
-            Pose.KindHoushi=int32((*M)->GetNumberField(TEXT("kind_houshi")));Pose.Anal=(*M)->GetBoolField(TEXT("anal"));
+            Pose.KindHoushi=int32((*M)->GetNumberField(TEXT("kind_houshi")));Pose.SysTaii=int32((*M)->GetNumberField(TEXT("sys_taii")));Pose.Anal=(*M)->GetBoolField(TEXT("anal"));
             Pose.FemaleLead=(*M)->HasField(TEXT("female_initiative"))&&(*M)->GetBoolField(TEXT("female_initiative"));
             Pose.IsExperience=int32((*M)->GetNumberField(TEXT("is_experience")));Pose.StateRestriction=int32((*M)->GetNumberField(TEXT("state_restriction")));
             Pose.UpperCloth=int32((*M)->GetNumberField(TEXT("upper_cloth")));Pose.LowerCloth=int32((*M)->GetNumberField(TEXT("lower_cloth")));
@@ -438,14 +438,20 @@ static FString OKDevStep(const TCHAR* Area,float Before,float After){
     return FString();
 }
 
+// Where his inside finish of a service goes: her mouth for a mouth pose, and for one with him in her mouth (sysTaii 2:
+// パイズリ+咥え), as the original's IN_Start leads on to Oral_Idle (she holds it, then swallows or spits) for every pose.
+bool UOKHScenePanel::FinishInMouth() const{
+    if(!Poses.IsValidIndex(ActivePose))return true;const FOKHPose& P=Poses[ActivePose];
+    return P.KindHoushi==1||P.SysTaii==2&&Has(TEXT("Oral_Idle"));
+}
 void UOKHScenePanel::Finish(const TCHAR* Kind){
     const FString K=Kind;++LineEpoch;
     JustCameAt=FPlatformTime::Seconds();JustCame=K.StartsWith(TEXT("org"))?1:K.StartsWith(TEXT("same"))?2:0;
     if(Mode==1){
         ++ServiceFinishes;++HisFinishes;His=0.f;const float OralBefore=Dev(TEXT("oral"));
         // In her mouth only for a mouth pose: on her chest or in her hand is outside her (not swallowed or spat).
-        if(K==TEXT("inside")&&(!Poses.IsValidIndex(ActivePose)||Poses[ActivePose].KindHoushi==1))++HisMouth;else ++HisOutside;
-        if(K==TEXT("inside")){const int32 Kind=Poses.IsValidIndex(ActivePose)?Poses[ActivePose].KindHoushi:1;
+        if(K==TEXT("inside")&&FinishInMouth())++HisMouth;else ++HisOutside;
+        if(K==TEXT("inside")){const int32 Kind=FinishInMouth()?1:Poses[ActivePose].KindHoushi;
             // In her mouth: she holds it, then swallows or spits (Oral_Idle). On her chest or in her hand there is nothing to
             // swallow: the finish, then the after state (IN_A, or OUT_A where the pose has none).
             if(Kind==1){Chain({TEXT("IN_Start"),TEXT("IN_Loop"),TEXT("Oral_Idle_IN"),TEXT("Oral_Idle")});OralIdleSince=0.;}
@@ -455,7 +461,7 @@ void UOKHScenePanel::Finish(const TCHAR* Kind){
             const FString Event=OKT(Kind==1?TEXT("ui.hscene.event_service_inside"):Kind==2?TEXT("ui.hscene.event_service_chest"):TEXT("ui.hscene.event_service_hand"))+OKDevStep(TEXT("oral"),OralBefore,Dev(TEXT("oral")));
             // In her mouth: he picks swallow or spit next, so her line now must not say she already did either.
             if(Kind==1){Note(Event,false);React(Event,OKT(TEXT("ui.hscene.mouth_full_note")));}else Note(Event);}
-        else{const bool Mouth=Poses.IsValidIndex(ActivePose)&&Poses[ActivePose].KindHoushi==1;Chain({TEXT("M_OUT_Start"),TEXT("M_OUT_Loop"),TEXT("OUT_A")});AddSiru(Mouth?0:1);Spurt(5);
+        else{const bool Mouth=Poses.IsValidIndex(ActivePose)&&FinishInMouth();Chain({TEXT("M_OUT_Start"),TEXT("M_OUT_Loop"),TEXT("OUT_A")});AddSiru(Mouth?0:1);Spurt(5);
             // Out of her mouth it lands on her face (she said "my mouth is full" to a plain "outside").
             Note(OKT(Mouth?TEXT("ui.hscene.event_service_face"):TEXT("ui.hscene.event_service_outside")));}
         return;
@@ -936,7 +942,7 @@ void UOKHScenePanel::BuildActions(){
     if(Mode==1){
         if((Base==TEXT("Idle")||Base==TEXT("Stop_Idle"))&&!bServiceRefused)Add(Faster,TEXT("ui.hscene.act_start"));
         else if(HIsLoop(Base)){Add(Faster,TEXT("ui.hscene.act_faster"));Add(Slower,TEXT("ui.hscene.act_slower"));Add(Toggle,TEXT("ui.hscene.act_toggle"));Add(Stop,TEXT("ui.hscene.act_stop"));}
-        else if(Base==TEXT("OLoop")){Add(Inside,Pose.KindHoushi==1?TEXT("ui.hscene.act_in_mouth"):Pose.KindHoushi==2?TEXT("ui.hscene.act_on_chest"):TEXT("ui.hscene.act_in_hand"));Add(Outside,TEXT("ui.hscene.act_outside"));}
+        else if(Base==TEXT("OLoop")){Add(Inside,FinishInMouth()?TEXT("ui.hscene.act_in_mouth"):Pose.KindHoushi==2?TEXT("ui.hscene.act_on_chest"):TEXT("ui.hscene.act_in_hand"));Add(Outside,TEXT("ui.hscene.act_outside"));}
         else if(Base==TEXT("Oral_Idle")){Add(Drink,TEXT("ui.hscene.act_drink"));Add(Vomit,TEXT("ui.hscene.act_vomit"));}
         else if(Base.EndsWith(TEXT("_A"))){if(!bServiceRefused)Add(Again,TEXT("ui.hscene.act_again"));Add(Stop,TEXT("ui.hscene.act_rest"));}
         return;
@@ -1084,7 +1090,7 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
             if(bLockHer)Her=FMath::Min(Her,95.f);if(bLockHis)His=FMath::Min(His,95.f);
             if(Her>=100.f)Finish(His>=70.f?(Strong>1.f?TEXT("sameS"):TEXT("sameW")):(Strong>1.f?TEXT("orgS"):TEXT("orgW")));
             else if(His>=100.f)Finish(!bCondom?TEXT("outside"):Her>=70.f&&!bLockHer?(Strong>1.f?TEXT("sameS"):TEXT("sameW")):TEXT("inside"));}
-    }else if(Queue.IsEmpty()&&Base==TEXT("OLoop")&&Mode==1){His=FMath::Min(bLockHis?95.f:100.f,His+Delta*3.f);if(His>=100.f)Finish(Poses.IsValidIndex(ActivePose)&&Poses[ActivePose].KindHoushi==1?TEXT("inside"):TEXT("outside"));}
+    }else if(Queue.IsEmpty()&&Base==TEXT("OLoop")&&Mode==1){His=FMath::Min(bLockHis?95.f:100.f,His+Delta*3.f);if(His>=100.f)Finish(Poses.IsValidIndex(ActivePose)&&FinishInMouth()?TEXT("inside"):TEXT("outside"));}
     else if(Queue.IsEmpty()){Her=FMath::Max(0.f,Her-Delta*3.f);His=FMath::Max(0.f,His-Delta*3.f);}
     Her=FMath::Clamp(Her,0.f,100.f);His=FMath::Clamp(His,0.f,100.f);
     // In her mouth she decides herself if he waits (HHoushi Oral_Idle: drink or spit after a while).
