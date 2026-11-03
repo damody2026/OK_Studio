@@ -440,6 +440,11 @@ void UOKHScenePanel::Finish(const TCHAR* Kind){
     Note(OKT(Org?TEXT("ui.hscene.event_her_orgasm"):Same?TEXT("ui.hscene.event_together"):K==TEXT("inside")?(bCondom?TEXT("ui.hscene.event_inside_condom"):TEXT("ui.hscene.event_inside")):TEXT("ui.hscene.event_outside"))+OKDevStep(DevArea,DevBefore,Dev(DevArea)));
 }
 
+// Her service_rounds for the scene (hexp.rs, with what she already did today) are used up: she will not start another
+// hand, mouth or breast round, whether he asks once more or picks a new pose.
+static bool OKHServiceSpent(int32 Finishes,const TSharedPtr<FJsonObject>& X){
+ return Finishes+(X.IsValid()&&X->HasField(TEXT("today_service"))?int32(X->GetNumberField(TEXT("today_service"))):0)>=FMath::Max(1,X.IsValid()?int32(X->GetNumberField(TEXT("service_rounds"))):2);
+}
 void UOKHScenePanel::Click(int32 Kind){
     if(!Gallery)return;
     const FString Base=Mode==0?Current():HBase(Current());
@@ -512,7 +517,7 @@ void UOKHScenePanel::Click(int32 Kind){
     case Vomit:Chain({TEXT("Vomit_IN"),TEXT("Vomit"),TEXT("Vomit_A")});AddSiru(0);Note(OKT(TEXT("ui.hscene.event_vomit")));break; // spat out: on her mouth and chin
     case Again:
         // Once more only while she is willing: past her service_rounds for the scene she says no (and the panel stops offering it).
-        if(ServiceFinishes+(X.IsValid()&&X->HasField(TEXT("today_service"))?int32(X->GetNumberField(TEXT("today_service"))):0)>=FMath::Max(1,X.IsValid()?int32(X->GetNumberField(TEXT("service_rounds"))):2)){bServiceRefused=true;Note(OKT(TEXT("ui.hscene.again_refused")));BuildList();break;}
+        if(OKHServiceSpent(ServiceFinishes,X)){bServiceRefused=true;Note(OKT(TEXT("ui.hscene.again_refused")));BuildList();break;}
         Want(TEXT("WLoop"));bStrong=false;break;
     case Condom:bCondom=!bCondom;Note(OKT(bCondom?TEXT("ui.hscene.condom_on"):TEXT("ui.hscene.condom_off")),false);break;
     case Insert:
@@ -916,6 +921,8 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
         if(Found!=INDEX_NONE&&(Found!=ActivePose||PendingPose==Found)){
             ActivePose=Found;PendingPose=INDEX_NONE;Mode=Poses[Found].Mode;ClearLine();Queue.Reset();Wanted.Reset();bAnalPlay=false;bInsideFinished=false;bStrong=false;
             if(Has(TEXT("Idle")))Want(TEXT("Idle"));
+            // A new service pose past her rounds: she says no as to "once more" (the panel then offers no start).
+            if(Mode==1&&!bServiceRefused&&OKHServiceSpent(ServiceFinishes,Gallery->HExperience)){bServiceRefused=true;Note(OKT(TEXT("ui.hscene.again_refused")));}
             if(Mode==1&&Poses[Found].KindHoushi==2)BareChest();
             Tab=Mode==2?TabSonyu:TabHand+Poses[Found].KindHoushi;BuildList();if(Hint)Hint->SetText(FText::FromString(Mode==1&&bServiceRefused?OKT(TEXT("ui.hscene.again_refused")):Poses[Found].Name)); // the new pose (or why she will not start it), not the last one's event
         }

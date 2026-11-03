@@ -437,6 +437,7 @@ bool AOKStreetSocialScene::TickPrivate(double Now){
 void AOKStreetSocialScene::TickContacts(float Dt,double Now){
  auto& S=*State;
  if(S.PrivateGirl!=INDEX_NONE&&!ContactReady(S.PrivateGirl)){FinishPrivate();return;}
+ TickAfter();
  // Her route is redrawn as she moves; not while the navigation is on its way to (or in) an elevator, or with her upstairs.
  if(S.NavGirl!=INDEX_NONE&&Now-S.NavAt>.75&&S.NavRide.Elevator==INDEX_NONE&&S.Agents.IsValidIndex(S.NavGirl-1)&&!NavNeedsLift(S.Agents[S.NavGirl-1].Position)){if(!ContactReady(S.NavGirl)){S.NavGirl=INDEX_NONE;S.NavPath.Reset();S.ContactsNotice=OKT(TEXT("ui.contacts.nav_target_unavailable"));RefreshUI();}else{S.NavAt=Now;S.NavPath=ContactRoute(S.Male,NavApproachSpot(S.Agents[S.NavGirl-1].Position));S.NavStep=1;}}
 }
@@ -450,7 +451,6 @@ void AOKStreetSocialScene::RunContactsProbe(double Now){
   S.ContactsProbeStore=S.Store;S.ContactsProbeAgents=S.Agents;S.ContactsProbeRotations=S.Rotations;S.ContactsProbeMale=S.Male;S.ContactsProbeAt=Now;S.ContactsOpen=true;S.ContactsSnapshot.Yaw=S.Yaw;S.ContactsSnapshot.Pitch=S.Pitch;S.ContactsSnapshot.Distance=S.Distance;S.ContactsSnapshot.Greetings=S.Greetings;
   auto Clear=[](const FVector& A,const FVector& B){for(int32 I=0;I<=100;++I){const FVector P=FMath::Lerp(A,B,I/100.f);if(P.X>40&&P.X<60&&FMath::Abs(P.Y)<20)return false;}return true;};
   const auto Detour=OKStreetContactRoute(FVector(0,0,0),FVector(100,0,0),{FVector(0,50,0),FVector(100,50,0)},Clear);
- TickAfter();
   if(Detour.Num()<3||!OKStreetContactRoute(FVector(0,0,0),FVector(100,0,0),{},Clear).IsEmpty()){Fail(TEXT("Navigation graph failed obstacle/unreachable check"));return;}
   for(const bool Intro:{false,true}){auto C=MakeShared<FJsonObject>();C->SetNumberField(TEXT("id"),0);C->SetStringField(TEXT("street_support"),TEXT("supported"));if(Intro){C->SetStringField(TEXT("context"),TEXT("introduction"));C->SetStringField(TEXT("rule"),TEXT("fallback_shuffle_pool"));}TArray<FString> Terms;int32 Id;FString Filter,Support,Error;if(!OKStreetAppendConditionObject(C,Terms,Id,Filter,Support,Error)||!Terms.Contains(Intro?TEXT("speak=always"):TEXT("speak=never"))){Fail(TEXT("Lover introduction fallback confused with Speak condition zero"));return;}}
   for(auto& A:S.Agents)A.Held=true;

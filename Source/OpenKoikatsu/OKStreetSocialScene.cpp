@@ -1217,16 +1217,16 @@ bool AOKStreetSocialScene::PrepareFreeTalk(int32 Character,const FString& Text,F
  if(S.PrivateGirl==Character&&S.PrivateMode.IsValid()){Status.Doing=OKT(TEXT("ui.free_talk.private_doing"));Status.Nearby=OKT(TEXT("ui.free_talk.private_nearby"));} // the places around him are not around her on the phone
  {const double Hours=OKStreetClockHours(S.ClockStartHours,FPlatformTime::Seconds()-S.ClockStartWall);Status.Now=OKStreetFreeTalkDateTime(OKStreetCalendarDateTime(S.Store.CalendarDay,Hours));Status.StreetTime=OKStreetFreeTalkClock(Hours);}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkRecall);Status.Memories=MindRecallText(Id,Text);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkHistory);Status.Memories+=HistoryPromptText(Character);}
+ // The moments he bookmarked with her (bookmarks.rs): the last five, and the lines of one he asks about.
+ {const FString Marks=BookmarkFacts(Character,Text);if(!Marks.IsEmpty())Status.Memories+=(Status.Memories.IsEmpty()?FString():FString(OKT(TEXT("ui.economy.semicolon_mark"))))+Marks;}
+ // Just after a scene, still together (OKStreetSocialBookmarks.inl): the places around are the street's again.
+ if(S.AfterGirl==Character&&S.PrivateGirl==INDEX_NONE)Status.Doing=OKT(TEXT("ui.bookmarks.after_doing"));
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkMindStatus);FillMindStatus(Character,Status);}
  // The private room is not the street: no shop menu to order from, no open choices or invitations (her needs stay:
  // at satiety 23 she is hungry there too).
  // Nor the street place's scene line (the lounge, the crowd, who of hers is standing a few metres away): the room is theirs.
  if(S.PrivateGirl==Character&&S.PrivateMode.IsValid()){Status.Menu.Reset();Status.Choices.Reset();Status.Invite.Reset();Status.Scene=OKT(TEXT("ui.free_talk.private_scene"));}
  System=OKStreetFreeTalkSystemPrompt(Persona,OKStreetPlaceCatalogue());UserMessage=OKStreetFreeTalkUserMessage(Status,Text);
- // The moments he bookmarked with her (bookmarks.rs): the last five, and the lines of one he asks about.
- {const FString Marks=BookmarkFacts(Character,Text);if(!Marks.IsEmpty())Status.Memories+=(Status.Memories.IsEmpty()?FString():FString(OKT(TEXT("ui.economy.semicolon_mark"))))+Marks;}
- // Just after a scene, still together (OKStreetSocialBookmarks.inl): the places around are the street's again.
- if(S.AfterGirl==Character&&S.PrivateGirl==INDEX_NONE)Status.Doing=OKT(TEXT("ui.bookmarks.after_doing"));
  return true;
 }
 
@@ -2748,14 +2748,14 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
    FreeTalk->AddSlot().AutoHeight().Padding(2)[SNew(STextBlock).AutoWrapText(true).WrapTextAt(360).ColorAndOpacity(FLinearColor(1,.83f,.35f)).Text_Lambda([Weak=TWeakPtr<FOKStreetSceneState>(State)](){const auto L=Weak.Pin();if(!L)return FText::GetEmpty();
     if(!L->FreeTalkNotice.IsEmpty())return FText::FromString(L->FreeTalkNotice);
     return L->FreeTalkCaptionHer.IsEmpty()?FText::FromString(OKT(TEXT("ui.scene.free_talk_hint"))):FText::GetEmpty();})];
+   // Keep this moment with her (OKStreetSocialBookmarks.inl).
+   FreeTalk->AddSlot().AutoHeight().HAlign(HAlign_Right).Padding(2)[BookmarkButton(FreeTalkPartner())];
    FreeTalk->AddSlot().AutoHeight().Padding(2)[SNew(SEditableTextBox).Text(FText::FromString(S.FreeTalkDraft)).HintText(FText::FromString(OKT(TEXT("ui.scene.chat_input_hint")))).OnTextChanged_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](const FText& Text){if(Weak.IsValid()&&Weak->State){Weak->State->FreeTalkDraft=Text.ToString();Weak->State->SystemNote=false;}}).OnTextCommitted_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](const FText&,ETextCommit::Type Kind){if(Kind==ETextCommit::OnEnter&&Weak.IsValid())Weak->SendFreeTalk();})];
    // Opening free talk is the live conversation: the microphone listens by itself, no further button.
    FreeTalk->AddSlot().AutoHeight().Padding(2)[SNew(STextBlock).AutoWrapText(true).WrapTextAt(360).ColorAndOpacity(FLinearColor(.55f,1.f,.7f))
     .Visibility_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){return Weak.IsValid()&&Weak->State->FreeTalkLive?EVisibility::Visible:EVisibility::Collapsed;})
     .Text_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){return Weak.IsValid()?FText::FromString(Weak->FreeTalkLiveStatus()):FText::GetEmpty();})];
    // Always visible: what the microphone hears right now (green while speech is detected).
-   // Keep this moment with her (OKStreetSocialBookmarks.inl).
-   FreeTalk->AddSlot().AutoHeight().HAlign(HAlign_Right).Padding(2)[BookmarkButton(FreeTalkPartner())];
    FreeTalk->AddSlot().AutoHeight().Padding(8,4,2,2)[SNew(SProgressBar).Percent_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(!Weak.IsValid())return TOptional<float>(0.f);const float Level=Weak->State->FreeTalkMicLevel;return TOptional<float>(FMath::Clamp((20.f*FMath::LogX(10.f,FMath::Max(Level,1e-5f))+60.f)/60.f,0.f,1.f));})
     .FillColorAndOpacity_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){return Weak.IsValid()&&Weak->State->FreeTalkLiveSpeaking?FSlateColor(FLinearColor(.3f,1.f,.45f)):FSlateColor(FLinearColor(.4f,.7f,1.f));})];
    FreeTalk->AddSlot().AutoHeight().Padding(8,0,2,2)[SNew(STextBlock).AutoWrapText(true).WrapTextAt(350).Text_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(!Weak.IsValid())return FText::GetEmpty();const auto& L=*Weak->State;
