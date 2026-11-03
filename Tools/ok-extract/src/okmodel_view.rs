@@ -599,6 +599,22 @@ impl ModelView {
             if let Some((_, node)) = h.mesh_nodes.iter().find(|(id, _)| *id == m.path_id) { mark_renderer(m, *node); }
         }
         meshes.extend(instances);
+        // A LODGroup draws one level at a time; the parts of every level drawn at once stacked the lighthouse's plants
+        // three deep (U149). Levels above 0 go where the mesh's LOD0 is in the prefab (Unity's `<name>_LOD<n>` naming).
+        let lod = |name: &str| -> Option<(String, u32)> {
+            let base = name.split('#').next().unwrap_or(name);
+            let (stem, level) = base.rsplit_once("_LOD")?;
+            Some((stem.to_owned(), level.parse().ok()?))
+        };
+        let has_lod0: BTreeSet<String> = meshes.iter().filter_map(|m| lod(&m.name)).filter(|(_, l)| *l == 0).map(|(s, _)| s).collect();
+        meshes.retain(|m| lod(&m.name).is_none_or(|(stem, level)| level == 0 || !has_lod0.contains(&stem)));
+        // Unity's SpeedTree shader clips its leaf cards at _Cutoff; drawn opaque, their atlas's clear texels showed as
+        // white and dark sheets (U149). Its bark has opaque alpha, so the clip leaves it whole.
+        for mat in meshes.iter_mut().filter_map(|m| m.mat.as_mut()) {
+            if mat.shader.to_ascii_lowercase().starts_with("nature/speedtree") && !mat.keywords.iter().any(|k| k == "_ALPHATEST_ON") {
+                mat.keywords.push("_ALPHATEST_ON".into());
+            }
+        }
         // The map's sun for each time of day (Unity Euler angle, colour, intensity) and its culling mask, on every part
         // (the renderer reads them from any part of the map).
         if !sun.infos.is_empty() {

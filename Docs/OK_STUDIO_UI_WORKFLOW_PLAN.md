@@ -1545,7 +1545,17 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
   - 貼圖：「載入」一張 PNG 後編輯內嵌進場景，「清空」換成 1×1 白圖。
   - 發現材質窗在換 shader 或重置後不會更新，要按「刷新」才看到新的 shader。原因是窗只在選取或部件數改變時重建，而換 shader 會重建道具、部件數不變。改成連預覽 actor 一起比對，重測換 shader、重置都會自動更新。
 
-### U149～U153　第三十批：U143 修好後 KKS 地圖剩下的問題（2026-11-03 列出，F 組，待做）
+### U154～U158　第三十一批：U149～U153 實測找到的問題（2026-11-03 列出，F 組，待做）
+
+| 項目 | 內容 |
+|---|---|
+| U154 時段「夕」天空變黑、夜晚不暗 | U152 在灯台拍朝、昼、夕、夜四張：整體亮度幾乎一樣，夜只多了灯塔的燈光；切到「夕」後天空變成黑色（存檔重開後仍是黑的）；海面顏色四個時段都一樣。查時段切換時天空、環境光與海面該跟著換的值 |
+| U155 輸出 mp4 時 Studio 當掉 | U153 第一次輸出 mp4（灯台、兩個角色、相機兩個 key、播著 BGM、時間軸窗開著）到第 9 幀時當掉：Slate 斷言 `RenderBatch.NumIndices > 0`（`SlateRHIRenderingPolicy.cpp:1384`）。之後同樣的條件輸出 1 秒、10 秒與輸出中截 UI 都沒有重現。查哪個自繪元件可能送出沒有索引的批次（`MakeLines` 的點、零尺寸的框），補上防護 |
+| U156 灯台初始視角被烏鴉擋住 | 讀灯台後的初始視角正對地圖原點的大烏鴉道具，畫面一半是烏鴉的臉；新加的角色也站進烏鴉裡。初始視角避開它，U146 的落地與找空位也要把它當成障礙 |
+| U157 灯台的黑色斑塊與岩石條紋 | 植物修好後，灯台草地上還有幾塊黑色的面，岩石有拉長的條紋貼圖。查這些部件的材質與 UV |
+| U158 小操作問題 | 地圖窗的搜尋要按 Enter 才過濾，改成打字就過濾（角色卡窗是按 Enter，說明裡寫明）；讀檔後時間軸的播放頭停在結尾（9.97 秒），改回 0 |
+
+### U149～U153　第三十批：U143 修好後 KKS 地圖剩下的問題（2026-11-03 列出，F 組，完成）
 
 | 項目 | 內容 |
 |---|---|
@@ -1554,6 +1564,64 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
 | U151 重錄的基礎庫與 OK 卡要提交（需協調） | U143 用 `OKLIB_REFRESH` 在本機 base_v1 重錄了 89 個來源（遊戲 80、mod 9），沒有提交（base_v1 不是 F 組提交的檔案）。要由負責基礎庫的人提交，並照規定在乾淨 clone 跑 `kks-verify` 與 `okcard-check`。另外，用到那 34 個受影響飾品（`abdata/chara/ao_*` 等）的 OK 卡，卡內的資源包也是舊的解碼結果，要重轉 |
 | U152 時段光照的實景對照（U144 再延） | 等 U149、U150 修好後，在灯台拍朝、昼、夕、夜四張，對照太陽方向與色溫 |
 | U153 第六輪整段實測：KKS 戶外地圖 | 用滑鼠做：灯台、時段「夕」、兩個角色面對面（U145）、相機兩個 key、輸出 mp4（含音樂）、存檔重開。記下點擊次數與卡手處 |
+
+U149～U153 完成紀錄（2026-11-03，控制通道實測）：
+
+- U149 KKS 植物：
+  - LOD：
+    - Unity 的 LODGroup 一次只畫一級，原本 LOD0～LOD2 全畫，疊成三層。
+    - `okmodel_view.rs` 取地圖部件時，同名 `<名稱>_LOD0` 在 prefab 裡時，丟掉 LOD1 以上的部件。讀取時處理，不必重錄。
+  - UV：
+    - 植物是 SpeedTree 網格（shader `Nature/SpeedTree`），TexCoord0 是 float4（前兩個分量是 UV，後面是其他資料）。
+    - 原本只看 2 維的通道，讀成了風力與 LOD 資料的通道，貼圖拉成條紋或變灰。
+    - `mesh_decode.rs` 的 `decode_uvs` 改成：14 通道佈局中 TexCoord0 是寬通道時，直接用它的前兩個分量。
+    - 中途兩版規則誤傷了別的網格：舊版 8 通道佈局的切線、Studio 鞦韆的 UV0。經過全庫掃描與抽查後收窄成現在這條，見 ERROR_LOG。
+  - 樹葉卡片：
+    - SpeedTree shader 會在 `_Cutoff` 裁掉樹葉卡片的透明處。原本畫成不透明，透明處成了白色、深色的大片。
+    - `okmodel_view.rs` 給 `Nature/SpeedTree` 材質加上 `_ALPHATEST_ON`，走 masked。
+  - 掃描與基礎庫：
+    - 掃描測試 `sources_with_changed_main_uv` 新增 `OK_UV_SCAN_RULE=wide`。
+    - 遊戲 22017 個來源中 21 個有變（`abdata/studio/map` 19、`abdata/studio` 2），全是 `toon_*` 植物，沒有角色部件。
+    - 本機以 `OKLIB_REFRESH` 重錄（用的是中途一版掃描的 30 個來源，包含這 21 個；另外 9 個 mod 來源在最終規則下沒有變）。沒有提交（U151）。
+  - 實測：灯台的樹、棕櫚、花、草都有正確的貼圖，樹葉卡片的透明處不再畫出來，也不再疊三層。
+- U149 整合時的基礎庫重錄（C、E 都要做）：
+  - 清單：[`Tools/oklib_rerecord/u149_wide_uv.txt`](../Tools/oklib_rerecord/u149_wide_uv.txt)（21 個，全是遊戲本體，各環境相同，不必重掃）。
+  - 指令和 U143 一樣，把清單換成這個檔：
+
+    ```powershell
+    cargo build --release --manifest-path Tools\ok-extract\Cargo.toml
+    $env:OKLIB_REFRESH='meshes_for_maindata,meshes_for_maindata_including_disabled,decode_all,base_bundle'
+    .\Tools\ok-extract\target\release\ok-extract.exe <遊戲目錄> --oklib convert Content\IndependentResources\base_v1 8 "@$PWD\Tools\oklib_rerecord\u149_wide_uv.txt"
+    ```
+
+  - 要對 mods 也確認時，照 U143 的做法跑掃描，環境變數換成 `OK_UV_SCAN_RULE=wide`、`OK_UV_SCAN_OUT`，測試名換成 `sources_with_changed_main_uv`（約 45 分鐘）。
+- U150 灯台的海面：
+  - 海面的 shader 是 `Lux Water/WaterSurface`，UE 端沒有對應，畫成了它的法線貼圖。
+  - `KKPreviewActor.cpp` 讓它沿用 StylizedWater 的圖：
+    - `_TranslucencyColor` 當水色，`_UnderWaterReflCol` 當 fresnel 色，`_FoamColor` 當岸邊色。
+    - `_BumpMap` 當法線，`_BumpTiling` 決定每公尺的重複次數，`_DepthAtten` 當深度。
+  - 實測：海面是藍色、有波紋的水面，記錄寫 `lux=1`。
+- U151 基礎庫提交（需協調）：U143 的 89 個與 U149 的 21 個來源都只在 F 本機重錄，等負責基礎庫的人提交，並在乾淨 clone 跑 `kks-verify` 與 `okcard-check`。U149 只動 Studio 地圖，沒有 OK 卡要重轉。
+- U152 時段光照的實景對照：
+  - 灯台四個時段（狀態列寫明太陽仰角與顏色）都能切換。
+  - 但整體亮度幾乎一樣，夜只多了灯塔的燈光；「夕」的天空變成黑色。列為 U154。
+- U153 第六輪整段實測（灯台）：
+  - 用滑鼠完成：
+    - 新場景、地圖窗搜尋「灯台」並讀取、「設定」裡的時段選「夕」。
+    - 加 C050 與 Male01，各選一次再按「面向對方」。
+    - 從目前視角加相機，在 0 秒與 5 秒各打一個 key。
+    - 背景音樂選「02 マップ夕方」播放，輸出 mp4，另存新檔，再讀回來。
+  - 大約 30 次點擊。
+  - 結果：
+    - 讀回後地圖、時段「夕」、相機的兩個 key 都在。
+    - mp4 有影像與音軌。
+  - 卡手處：
+    - 第一次輸出到第 9 幀時 Studio 當掉，之後重現不出來（U155）。
+    - 初始視角被烏鴉擋住，C050 站進烏鴉裡（U156）。
+    - 地圖搜尋要按 Enter 才過濾（U158）。
+    - 讀檔後播放頭停在結尾（U158）。
+  - 另外：啟動時有兩次停在「Waiting for ZenServer」超過 5 分鐘，關掉自己的編輯器重開就好。
+  - 測試場景、影片、截圖都已刪除。
 
 ### U143～U148　第二十九批：U138～U142 找到的問題（2026-11-03 列出，F 組，完成）
 

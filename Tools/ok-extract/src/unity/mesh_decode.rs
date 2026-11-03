@@ -21,8 +21,11 @@ pub(crate) fn decode_uvs(mesh: &unity_asset_decode::mesh::Mesh) -> Vec<[f32; 2]>
     // 4-byte offset), the pantshot uses channel 3. Scan every 2-component
     // channel and keep the one that looks most like UVs.
     for (ci, c) in chs.iter().enumerate() {
-        let _ = ci;
-        if c.dimension != 2 || c.stream as usize >= strides.len() {
+        // A TexCoord0 of more components (SpeedTree's is a float4: the UV, then data) is the UV, in its first two (U149:
+        // the lighthouse's plants read their wind or LOD channels as UV, the bark tiling past 8 losing to them). Only in
+        // the 14-channel layout (TexCoord0 is channel 4); the older 8-channel one puts the tangent in a float4 at 7.
+        let wide = chs.len() >= 12 && ci == 4 && c.dimension > 2 && !UV_TWO_COMPONENT_ONLY.with(|f| f.get());
+        if (c.dimension != 2 && !wide) || c.stream as usize >= strides.len() {
             continue;
         }
         let stride = strides[c.stream as usize];
@@ -82,6 +85,10 @@ pub(crate) fn decode_uvs(mesh: &unity_asset_decode::mesh::Mesh) -> Vec<[f32; 2]>
         // Require a non-degenerate UV set (not all zeros).
         let total: f64 = uv.iter().map(|p| p[0].abs() as f64 + p[1].abs() as f64).sum();
         let not_zero = total > 1.0;
+        if wide {
+            if not_zero && uv.iter().all(|p| p.iter().all(|v| v.is_finite() && v.abs() <= 4096.0)) { return uv; }
+            continue;
+        }
         if tiled.is_none() && not_zero && uv.iter().all(|p| p.iter().all(|v| v.is_finite() && v.abs() <= 4096.0)) { tiled = Some(uv.clone()); }
         if not_zero && best.as_ref().map(|b| score > b.0).unwrap_or(true) {
             best = Some((score, uv));
