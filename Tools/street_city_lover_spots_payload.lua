@@ -5,6 +5,9 @@
 --   eat-in     a window counter with three stools in the convenience store S06 (conveni seat / table)
 --   lounges    sofa + TV on a low cabinet + game console in the D1 and D2 visitor lounges (dorm game dates)
 --   shrine     a small shrine: torii, stone path, hokora, offering box and two stone lanterns (shrine torii / pray)
+--   aquarium   the pet-shop clone S28 becomes a small aquarium: a 3.6 m tank wall with koi, a bench in front
+--              (aquarium tank / bench; its vending machine goes outside S28, not at the park pond)
+--   lodge      a shared sofa corner in the gallery outside the four motel pool suites (lodge lounge2 / seat)
 -- Every item is placed by search, not by hand: candidate spots spiral out from a hint at 25 cm steps; a spot needs a
 -- floor within 8 cm under its centre and four corners and no blocking geometry in the item's box (box sweep from 3 cm
 -- above the floor). Indoor items prefer a wall behind them. Items keep 1.6 m off doors and entrances.
@@ -93,10 +96,12 @@ def motel_world_lover_spots_install():
  items=[];views=[];skipped=[];V=lambda l:unreal.Vector(*l)
  # 1. vending machines: outside each place's door (or beside its main anchor outdoors), facing out, off the doorway
  vend_for=['park','aquarium','girls_dorm','boys_dorm','cafeteria','library','school','playground','hotel','lodge','department']
+ # the aquarium is the converted pet shop S28 (c-conquest: an indoor aquarium, not the park koi pond)
+ pl={p['id']:p for p in P['places']};aqua_door=pl.get('s28-f02',{}).get('door')
  for i,pid in enumerate(vend_for):
-  g=gp.get(pid)
-  if not g or not g.get('door'):skipped.append(dict(place=pid,reason='no door'));continue
-  d=V(g['door']);z=_ls_floor(world,d.x,d.y,d.z)
+  g=gp.get(pid);door=aqua_door if pid=='aquarium' else (g or {}).get('door')
+  if not door:skipped.append(dict(place=pid,reason='no door'));continue
+  d=V(door);z=_ls_floor(world,d.x,d.y,d.z)
   if z is None:skipped.append(dict(place=pid,reason='no floor at door'));continue
   got=_ls_search(world,d,z,100,80,190,[0,90,180,270],rmin=200,rmax=1000,avoid=[d],wall=True)
   if not got:skipped.append(dict(place=pid,reason='no free spot within 10 m'));continue
@@ -149,6 +154,8 @@ def motel_world_lover_spots_install():
   _ls_box(tag+'_Console',_ls_off(cab,yaw,-8,45,50),yaw,(20,30,6),M['dark'])
   _ls_box(tag+'_Pad',_ls_off(c,yaw,10,30,42),yaw,(10,15,4),M['dark'],False)
   items.append(dict(place=pid,anchor='lounge',pos=num(_ls_off(c,yaw,10,-45)),yaw=yaw-90,actor=tag+'_SofaBase'))
+  # c-conquest 11-03: a separate anchor for "play video games together" on the same sofa, facing the TV
+  items.append(dict(place=pid,anchor='game',pos=num(_ls_off(c,yaw,10,-45)),yaw=yaw-90,actor=tag+'_TV'))
   views.append(dict(id='LS-'+pid+'-lounge',eye=num(_ls_off(c,yaw,-60,-260,170)),target=num(_ls_off(c,yaw,150,0,60)),fov=80,hour=20))
  # 4. shrine: 5 x 9 m flat lawn near the park, torii at the path start, hokora at the end
  g=gp.get('park');hint=V(g['door']) if g else None
@@ -173,6 +180,58 @@ def motel_world_lover_spots_install():
    items.append(dict(place='shrine',anchor='pray',pos=num(_ls_off(ho,yaw,-170)),yaw=yaw-90,actor='LoverSpot_Shrine_OfferingBox'))
    views.append(dict(id='LS-shrine',eye=num(_ls_off(st,yaw,-700,150,170)),target=num(_ls_off(c,yaw,0,0,150)),fov=75,hour=15))
   else:skipped.append(dict(place='shrine',reason='no flat 5 x 9 m lawn 15-60 m from the park'))
+ # 5. aquarium in S28 (毛孩選物, a pet-shop clone): a 3.6 m tank wall with koi against a wall, a bench 2.2 m in front
+ acts={a.get_actor_label():a for a in SUB.get_all_level_actors()};sh=acts.get('S28_F01')
+ if sh and aqua_door:
+  o,e=sh.get_actor_bounds(False);z=1200.;lo=[o.x-e.x+100,o.y-e.y+100];hi=[o.x+e.x-100,o.y+e.y-100]
+  got=_ls_search(world,unreal.Vector(o.x,o.y,z),z,380,330,170,[0,90,180,270],rmax=900,avoid=[V(aqua_door)],wall=True,region=(lo,hi))
+  if got:
+   c,yaw=got;tk=_ls_off(c,yaw,-130)   # tank at the back (wall side), bench toward the front
+   water=_ls_mat('M_LS_AquaWater',(.1,.45,.6),.05,0.,.8);glass=_ls_mat('M_LS_AquaFrame',(.08,.08,.09),.3,.6)
+   _ls_box('LoverSpot_Aqua_Base',tk,yaw,(65,380,50),M['wood'])
+   # opaque constant materials only: a lit blue back panel with the fish in front of it, gravel floor, dark frame
+   _ls_box('LoverSpot_Aqua_Water',_ls_off(tk,yaw,-25,0,50),yaw,(8,360,115),water,True)
+   _ls_box('LoverSpot_Aqua_Gravel',_ls_off(tk,yaw,0,0,50),yaw,(55,360,6),M['stone'],False)
+   for s in (-185,185):_ls_box('LoverSpot_Aqua_Side%+d'%s,_ls_off(tk,yaw,0,s,50),yaw,(65,10,115),glass)
+   _ls_box('LoverSpot_Aqua_Top',_ls_off(tk,yaw,0,0,165),yaw,(65,380,8),glass)
+   koi=next((a.static_mesh_component.static_mesh for a in acts.values() if a.get_actor_label().startswith('Activity_ACTSPACE-06') and isinstance(a,unreal.StaticMeshActor) and a.static_mesh_component.static_mesh and 'koi' in a.static_mesh_component.static_mesh.get_name()),None)
+   if koi:
+    for k,(s,u) in enumerate([(-120,35),(-60,80),(0,55),(60,95),(120,40),(30,70)]):
+     _ls_spawn('LoverSpot_Aqua_Fish_%d'%k,koi,_ls_off(tk,yaw,0,s,50+u),yaw+(90 if k%2 else -90),[.6,.6,.6],None,False)
+   bench=_ls_off(c,yaw,90)
+   _ls_box('LoverSpot_Aqua_Bench',bench,yaw+180,(45,180,45),M['wood'])
+   items.append(dict(place='aquarium',anchor='tank',pos=num(_ls_off(tk,yaw,90)),yaw=yaw+180-90,actor='LoverSpot_Aqua_Water'))
+   items.append(dict(place='aquarium',anchor='bench',pos=num(bench),yaw=yaw+180-90,actor='LoverSpot_Aqua_Bench'))
+   items.append(dict(place='aquarium',anchor='door',pos=aqua_door,yaw=0,actor='S28_F01',building='S28',rooms=[dict(min=num(o-e),max=num(o+e))]))
+   views.append(dict(id='LS-aquarium',eye=num(_ls_off(c,yaw,260,80,160)),target=num(_ls_off(tk,yaw,0,0,100)),fov=75,hour=15))
+  else:skipped.append(dict(place='aquarium',reason='no free 3.8 x 3.3 m spot in S28'))
+ # 6. lodge lounge: a shared sitting corner in the gallery outside the four pool suites (lounge2 = sofa, seat = chair)
+ suites=[p for p in P['places'] if p['kind']=='motel_pool_suite']
+ if suites:
+  ds=[V(p['door']) for p in suites];hint=unreal.Vector(sum(d.x for d in ds)/len(ds)-250,sum(d.y for d in ds)/len(ds),0)
+  z=_ls_floor(world,hint.x,hint.y,ds[0].z) or ds[0].z-165
+  boxes=[(p['room']['center'],p['room']['size']) for p in suites]
+  def outside(c):return all(abs(c.x-b[0][0])>b[1][1]/2+60 or abs(c.y-b[0][1])>b[1][0]/2+60 for b in boxes) and all(abs(c.x-b[0][0])>b[1][0]/2+60 or abs(c.y-b[0][1])>b[1][1]/2+60 for b in boxes)
+  got=None
+  for r in range(0,1601,25):
+   n=max(1,int(2*math.pi*max(r,1)/25))
+   for k in range(n):
+    t=2*math.pi*k/n;c=unreal.Vector(hint.x+r*math.cos(t),hint.y+r*math.sin(t),z)
+    if not outside(c) or any((c-unreal.Vector(d.x,d.y,z)).size()<220 for d in ds):continue
+    for yaw in (0,90,180,270):
+     if _ls_fits(world,c,yaw,210,95,90,z) and _ls_fits(world,_ls_off(c,yaw,110),yaw,90,60,50,z) and _ls_wall_behind(world,c,yaw,95,z):got=(c,yaw);break
+    if got:break
+   if got:break
+  if got:
+   c,yaw=got;tag='LoverSpot_LodgeLounge'
+   _ls_box(tag+'_SofaBase',c,yaw,(95,210,42),M['cushion'])
+   _ls_box(tag+'_SofaBack',_ls_off(c,yaw,-37),yaw,(22,210,85),M['cushion'])
+   for s in (-95,95):_ls_box(tag+'_SofaArm%+d'%s,_ls_off(c,yaw,0,s),yaw,(95,20,62),M['cushion'])
+   _ls_box(tag+'_Table',_ls_off(c,yaw,110),yaw,(60,90,42),M['wood'])
+   items.append(dict(place='lodge',anchor='lounge2',pos=num(_ls_off(c,yaw,10,-45)),yaw=yaw-90,actor=tag+'_SofaBase'))
+   items.append(dict(place='lodge',anchor='seat',pos=num(_ls_off(c,yaw,10,45)),yaw=yaw-90,actor=tag+'_SofaBase'))
+   views.append(dict(id='LS-lodge-lounge',eye=num(_ls_off(c,yaw,380,100,160)),target=num(_ls_off(c,yaw,0,0,60)),fov=75,hour=15))
+  else:skipped.append(dict(place='lodge',reason='no free sofa corner within 16 m of the pool suite doors'))
  acts={a.get_actor_label():a for a in SUB.get_all_level_actors()}
  acts.get('CityEnvironmentController') and acts['CityEnvironmentController'].prepare_for_save()
  assert unreal.EditorLevelLibrary.save_current_level();new=sha(MAPFILE)

@@ -212,3 +212,7 @@
 | `snack` | S03 烘焙甜點店 | 0 | counter、table |  |
 
 「還缺」那一欄是新物件裝進地圖、`lover-spots-install-*.json` 寫出來之前的狀態；`build_street_city_places.lua` 重跑後會自動填進去。
+
+## 道具索引（女主知道身邊有什麼，11-03）
+
+每個房間、地點裡有哪些道具（鏡子、床、椅子、廁所、販賣機……），列在 `places-v1/props.json`，可用 Rust 模組 `Tools/ok-city-props` 查詢半徑 10 m／20 m 內的東西；細節見 [大學城道具索引](STREET_CITY_PROPS_INDEX_20261103.md)。同一次修正：`park_bench` 地點原本取 cluster actor 的中心點，位置不對，改用街道擺放計畫套到實測路緣的位置，長椅地點從 55 個增加為 337 個（`bench_oak` 274、`bench_stone` 63）。
