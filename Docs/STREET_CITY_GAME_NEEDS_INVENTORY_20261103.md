@@ -91,7 +91,71 @@ C++ 的地點結構是 `FOKStreetPlace{Id, Door, Rooms, RoomLevels, Anchors{Name
 | Q16 | 出生點 | 新遊戲他在男宿門口，女主在各自作息的地點；讀檔用存下的座標 | D2 男宿門口的出生點（站在路上、不卡牆）；舊存檔的座標在新地圖無效，整合時要把存檔座標換成「地點 id＋錨點」 |
 | Q17 | 地點描述 | `places.toml` 的 label 與 C++ 的地點說明會給 AI 看（例：「舊校舍，社團活動和自習用」「露天溫泉，竹籬笆圍著」「水族館，展區禁止飲食」） | 名稱對上但內容不同的要列出來，整合時改描述：`aquarium`→錦鯉池、`onsen`→室內溫泉會館、`playground`（操場：草地與跑道，打西瓜、潑水、跑步、爆裂魔法）→遊樂場、`school`→第一教學大樓、`lodge`→汽車旅館套房 |
 
-## 6. 下一步
+## 6. c-street-city 回覆後的比對（11-03 19:00 版 places.json）
+
+c-street-city 的逐項回答在 `Docs/STREET_CITY_PLACES_INVENTORY_20261103.md` 的「c-conquest 清單逐項回答」一節。比對腳本：
+
+- `C:\Users\Damody\AppData\Local\Temp\claude\C--portable-OpenKoikatsu\73be5e18-f8ea-466d-8357-5af9e42f345e\scratchpad\inv_anchors.lua`
+- `C:\Users\Damody\AppData\Local\Temp\claude\C--portable-OpenKoikatsu\73be5e18-f8ea-466d-8357-5af9e42f345e\scratchpad\inv_stations.lua`
+- `C:\Users\Damody\AppData\Local\Temp\claude\C--portable-OpenKoikatsu\73be5e18-f8ea-466d-8357-5af9e42f345e\scratchpad\inv_verify.lua`
+
+**已確認**
+
+- 活動表 109 項的地點與錨點：全部對上（重跑後不變）。
+- C3：9 棟 `campus_*` 都有 `door`、5 層框、`stair1`–`stair5`、`lift1`–`lift5`、`hall`。
+  - 8 棟上課館舍的 `class2_1`…`class5_4` 16 間都有；`campus_ad` 沒有教室（行政大樓，正常）。
+  - 教室名稱 `classK_R` 就是 `OKStreetSocialSchedule.inl` 讀的名稱（`Kind.StartsWith("class")` 時找同名錨點）。
+- C4：21 個系的 `office_<系代號>` 全有，另有 `office_registrar`、`office_aa`、`office_student`（`campus_ad`）、`office_general`（`campus_t1`）。
+- C5：`department` 10 層、`hotel` 5 層、`school`、`lecture` 各 5 層、兩棟宿舍各 6 層，都有依高度排好的 `lift<n>:<n>F` 和 `hall`。名稱開頭是 `lift`，`OKStreetPlaceLifts` 讀得到。
+  - 百貨 `food` 在 9 樓高度、`view` 在 10 樓高度，和活動的 `floor = 9/10` 一致。
+- C6：ACTSPACE-02…10 都有錨點：
+  - 夜市 `stall`…`stall12`
+  - 煙火台 `seat*`、`gate*`、`fireworks`
+  - 錦鯉池 `pond`…`pond4`
+  - 晨練 `field`、`jog`
+  - 表演 `stage`、`watch*`
+  - 01 的大熊已經是百貨的 `bear`，沒有另外的錨點，正常。
+- C11：`girls_dorm_rooms` 52 間；`girls_dorm` 另有 16 個 `bed*` 錨點。
+- Q16：`boys_dorm` 有 `spawn`。
+
+**還沒好**
+
+- C1、C2：`conveni`、`lottery` 的 `counter` 還沒出現。等 chain16 裝完場景。
+- C7、C8：`livehouse`、`karaoke` 還沒進 `game_places`。等 chain16。
+- C9：`places.json` 還沒有 `lots`。
+
+**錨點高度和活動名稱的樓層對不上**
+
+| 活動 | 名稱寫的樓層 | 錨點實際高度 | 誰處理 |
+|---|---|---|---|
+| `school_class2`（學校二樓教室） | 2 樓 | `school.class2` z=1248，是 1 樓（`lift1` 1200、`lift2` 1600） | c-street-city 把 `class2` 移到 T1 2 樓的教室 |
+| `sleep_dorm`（男宿三樓寢室） | 3 樓 | `boys_dorm.bed3_0` z=1200，是 1 樓 | c-street-city 把 `bed3_0` 移到 D2 3 樓的房間 |
+| `hotel_room6`、`sleep_hotel`（飯店六樓景觀客房） | 6 樓 | `room6` z=1871、`bed6_1` z=1761，是 2 樓；H1 只有 5 層 | 整合時改活動名稱（H1 沒有 6 樓） |
+
+**整合時要處理的（c-street-city 回答，不改 C++，記在這裡）**
+
+- C10 辦公室：
+  - `hotel_business` → H1-0107 商務會議室；`school_club` → SC-0202 社團聯合辦公室。
+  - M1 沒有辦公樓層、會館沒有辦公室，`dept_office`、`lodge_office` 改指 AD 或 IN 的辦公室。
+  - 這些房間還沒有 `desk*`、`seat*` 錨點。
+- Q5 導航：城市沒有 NavMesh。`OKStreetPlaceRoutePoints()` 要改成從 `world-edge-v1/road-raster.json` 產生。
+- Q11 設施：
+  - `restaurant_room` 改指 M1-1008 慶祝包廂餐廳或 H1-0106 私人宴會廳（S04 沒有包廂）。
+  - `hotel_spa`、`spa` 改指 H1-0203 精油護理室；另有 H1-0202 私人雙人湯屋。
+  - `rest` 改指 H1-0208 靜音午睡沙龍。
+- Q17 描述：
+  - `aquarium` 是 S28 改建的小水族館（有水槽、長椅），錦鯉池是 ACTSPACE-06，第 5 節寫錯，以這裡為準。
+  - `playground` 的活動（打西瓜、潑水、跑步、爆裂魔法）需要草地與跑道，城市的遊樂場沒有。整合時改指 `campus_sports` 的 `field`（跑道操場）。
+  - 另外要改描述的地點：
+    - `onsen`：S19 室內溫泉會館。
+    - `school`：T1。
+    - `lodge`：汽車旅館泳池套房。
+    - `lecture`：T2，沒有紅磚鐘塔。
+    - `restroom_*`：在大樓 1 樓。
+    - `shrine`：在公園旁的石板廣場。
+- Q7 拍照點的背景：c-street-city 下一輪補拍照確認。
+
+## 7. 下一步
 
 1. c-street-city 依第 2 節（C1–C11）補場景與 `places.json`，重跑 `build_street_city_places.lua`。
 2. c-conquest 重跑比對腳本確認沒有缺漏。
