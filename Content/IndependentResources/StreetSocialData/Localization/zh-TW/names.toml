@@ -523,6 +523,10 @@ snk_redbean_cake = "紅豆餅（2 個）"
 snk_shaved_ice = "八寶冰"
 snk_strawberry_cake = "草莓鮮奶油蛋糕"
 snk_waffle = "鬆餅"
+gyn_hymen_repair = "處女膜重建手術"
+beauty_face_swap = "臉型整形（換成別人的臉型）"
+beauty_face_restore = "臉型還原手術"
+salon_dye = "染髮"
 
 [ui.name.job]
 aquarium_staff = "售票、導覽"
@@ -595,6 +599,9 @@ restaurant = "餐廳"
 school = "舊校舍，社團活動和自習用"
 shrine = "神社"
 snack = "點心店"
+clinic_gyn = "婦科診所，候診區要安靜，看診和手術在診間裡"
+clinic_beauty = "醫美診所，有諮詢室、手術室和恢復室"
+salon = "美髮店，可以剪髮、染髮"
 
 [ui.name.place]
 aquarium = "海洋水族館"
@@ -627,6 +634,9 @@ restroom_resort = "公廁（度假區）"
 school = "舊校舍（社團大樓）"
 shrine = "神社"
 snack = "點心店"
+clinic_gyn = "婦科診所"
+clinic_beauty = "醫美診所"
+salon = "美髮店"
 
 [ui.name.place_about]
 aquarium = "大學城的海洋水族館，有整面牆的大水槽、水母柱和小水槽，大水槽前有長椅"
@@ -659,6 +669,9 @@ restroom_resort = "公共廁所，男廁和女廁分開，各有自己的入口"
 school = "大學搬到北邊新校園後留下的舊校舍，現在是社團活動和自習用的大樓：一樓教室、二樓自習教室、三樓音樂教室"
 shrine = "公園後面的小神社，有紅色鳥居和石燈籠，可以參拜許願"
 snack = "賣飲料和甜點的小店，可以外帶"
+clinic_gyn = "小小的婦科診所，有櫃台、候診區、診間和手術室，可以做處女膜重建手術"
+clinic_beauty = "醫美診所，諮詢室裡有臉型參考，可以把臉整成別人的臉型，也能還原"
+salon = "美髮店，有理髮椅、洗頭台和髮色樣本牆，可以染頭髮"
 
 [ui.name.role]
 clerk = "店員"

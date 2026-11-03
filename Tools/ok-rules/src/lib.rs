@@ -24,6 +24,7 @@ pub mod estate;
 pub mod events;
 pub mod games;
 pub mod heroine;
+pub mod clinic;
 pub mod hexp;
 mod hexp_edges;
 pub mod pregnancy;
@@ -167,6 +168,7 @@ impl Rules {
                     .or_else(|| invite::eval(tuning.places_in(locale::lang(&request)), &kind, &request))
                     .or_else(|| mind::eval(&kind, &request))
                     .or_else(|| hexp::eval(&kind, &request))
+                    .or_else(|| clinic::eval(&kind, &request))
                     .or_else(|| pregnancy::eval(&kind, &request))
                     .or_else(|| day::eval(&kind, &request))
                     .or_else(|| bank::eval(&kind, &request))

@@ -415,6 +415,18 @@ fn export_edited(root:&Path,r:&J,raw:&[u8],output:&Path)->Result<J,String>{
 }
 pub fn request(root:&Path,path:&Path)->Result<J,String>{
  let r:J=serde_json::from_slice(&crate::gamefs::read(path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+ // The street's clinics and salon: a copy of her card with someone else's face shape and/or dyed hair (properties::restyle).
+ // No game root or cache: the card alone. Request: card, output, donor (a card path, optional), hair_rgb ("#rrggbb", optional).
+ if text(&r,"action")?=="restyle"{
+  let card=crate::gamefs::read(text(&r,"card")?).map_err(|e|e.to_string())?;
+  let donor=match r["donor"].as_str().filter(|d|!d.is_empty()){Some(d)=>Some(crate::gamefs::read(d).map_err(|e|e.to_string())?),None=>None};
+  let rgb=match r["hair_rgb"].as_str().filter(|h|!h.is_empty()){Some(h)=>{let h=h.trim_start_matches('#');if h.len()!=6||!h.is_ascii(){return Err("髮色格式錯誤".into());}
+   let c=|i:usize|u8::from_str_radix(&h[i..i+2],16).map(|v|v as f32/255.0).map_err(|_|"髮色格式錯誤".to_string());Some([c(0)?,c(2)?,c(4)?])},None=>None};
+  let out=properties::restyle(&card,donor.as_deref(),rgb)?;
+  let output=Path::new(text(&r,"output")?);if let Some(dir)=output.parent(){std::fs::create_dir_all(dir).map_err(|e|e.to_string())?;}
+  std::fs::write(output,&out).map_err(|e|e.to_string())?;
+  return Ok(json!({"valid":true,"output":output.to_string_lossy(),"bytes":out.len()}));
+ }
  if matches!(text(&r,"action")?,"properties"|"properties_apply"|"accessory_slot_add"){
   let original=crate::gamefs::read(text(&r,"card")?).map_err(|e|e.to_string())?;let outfit=r["outfit"].as_u64().unwrap_or(0) as usize;
   let cache=Path::new(text(&r,"cache")?);let metadata=original_metadata(root,cache,&original)?;let mut blocks=blocks_from_card(&original)?;if let Some(metadata)=metadata{blocks.insert("KKEx".into(),metadata);}

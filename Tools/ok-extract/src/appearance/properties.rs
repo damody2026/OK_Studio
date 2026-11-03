@@ -97,6 +97,25 @@ pub(crate) fn patch_paths(original:&[u8],outfit:usize,edits:&[(String,J)])->Resu
  super::write_blocks(original,blocks)
 }
 
+/// The street's clinics and salon (ok-rules clinic.rs, user 2026-11-03): `card` with the face shape of `donor` (its
+/// face.shapeValueFace, the head stays hers) and/or every hair part dyed `rgb` (sRGB 0..1; the root a little darker,
+/// the tips a little lighter, the outline darker, gloss and alpha kept). Either may be absent.
+pub(crate) fn restyle(card:&[u8],donor:Option<&[u8]>,rgb:Option<[f32;3]>)->Result<Vec<u8>,String>{
+ let mut edits:Vec<(String,J)>=Vec::new();
+ if let Some(donor)=donor {for(k,v)in list_paths(donor,0)? {if k.starts_with("face.shapeValueFace."){let n:f64=v.parse().map_err(|_|"臉型數值格式錯誤")?;edits.push((k,json!(n)));}}if edits.is_empty(){return Err("對方的卡沒有臉型數值".into());}}
+ if let Some(c)=rgb {
+  let mine=list_paths(card,0)?;
+  let alpha=|key:&str|mine.iter().find(|(p,_)|p==&format!("{key}.3")).and_then(|(_,v)|v.parse::<f32>().ok()).unwrap_or(1.0);
+  for part in 0..8 {for(field,k)in [("baseColor",1.0f32),("startColor",0.85),("endColor",1.15),("outlineColor",0.45)] {
+   let key=format!("hair.parts.{part}.{field}");
+   if mine.iter().any(|(p,_)|p==&format!("{key}.0")){let a=alpha(&key);edits.push((key,json!([(c[0]*k).min(1.0),(c[1]*k).min(1.0),(c[2]*k).min(1.0),a])));}
+  }}
+  if !edits.iter().any(|(k,_)|k.starts_with("hair.")){return Err("卡片沒有頭髮顏色欄位".into());}
+ }
+ if edits.is_empty(){return Ok(card.to_vec());}
+ patch_paths(card,0,&edits)
+}
+
 /// Every scalar field of the card's face/body/hair/outfit sections as (path, value text): what `patch_paths` can set.
 pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String)>,String>{
  fn flat(v:&Value,path:&str,out:&mut Vec<(String,String)>){match v {
@@ -118,6 +137,18 @@ pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String
   fs::write(&path,serde_json::to_vec(&json!({"action":"properties","card":card,"outfit":0,"cache":"C:/portable/OpenKoikatsu/Saved/AppearanceEditor/cache"})).unwrap()).unwrap();
   let result=super::super::request(root,&path).unwrap();let props=result["properties"].as_array().unwrap();assert!(props.len()>base.len());assert!(props.iter().any(|p|p["key"].as_str().is_some_and(|k|k.starts_with("plugins."))));assert_eq!(result["parents"].as_array().unwrap().len(),55);assert!(props.iter().all(|p|!p["label"].as_str().unwrap().contains("進階設定（")));
   fs::write(format!("C:/portable/OpenKoikatsu/Saved/Tests/EditorPropertiesRecoveredManifest-{}.json",std::process::id()),serde_json::to_vec_pretty(&result).unwrap()).unwrap();let _=fs::remove_file(path);
+ }
+ #[test]fn restyle_gives_her_the_donor_face_and_dyed_hair(){
+  let card=crate::gamefs::read("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C000.png").unwrap();
+  let donor=crate::gamefs::read("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C001.png").unwrap();
+  let out=restyle(&card,Some(&donor),Some([0.9,0.56,0.66])).unwrap();
+  let (got,want,mine)=(list_paths(&out,0).unwrap(),list_paths(&donor,0).unwrap(),list_paths(&card,0).unwrap());
+  let face=|l:&[(String,String)]|l.iter().filter(|(k,_)|k.starts_with("face.shapeValueFace.")).cloned().collect::<Vec<_>>();
+  assert!(!face(&want).is_empty());assert_eq!(face(&got),face(&want),"her face shape is the donor's");
+  let base=got.iter().find(|(k,_)|k=="hair.parts.0.baseColor.0").unwrap().1.parse::<f32>().unwrap();assert!((base-0.9).abs()<1e-4);
+  // Everything else of hers is untouched (her eyes, her head type, her clothes).
+  for (k,v) in &mine {if !k.starts_with("face.shapeValueFace.")&&!k.starts_with("hair.parts."){assert_eq!(got.iter().find(|(g,_)|g==k).map(|(_,x)|x),Some(v),"{k}");}}
+  let before=blocks_from_card(&card).unwrap();let after=blocks_from_card(&out).unwrap();for(name,bytes)in before{if name!="Custom"{assert_eq!(after[&name],bytes,"{name}");}}
  }
  #[test]fn properties_real_card_roundtrip_and_untouched_sections(){
   let original=crate::gamefs::read("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C000.png").unwrap();

@@ -2,6 +2,36 @@
  "version": 2,
  "currency": "CNY",
  "places": {
+  "clinic_gyn": {
+   "open": [
+    [
+     9,
+     18
+    ]
+   ],
+   "closed_weekdays": [
+    "sun"
+   ]
+  },
+  "clinic_beauty": {
+   "open": [
+    [
+     10,
+     20
+    ]
+   ]
+  },
+  "salon": {
+   "open": [
+    [
+     10,
+     21
+    ]
+   ],
+   "closed_weekdays": [
+    "tue"
+   ]
+  },
   "restaurant": {
    "open": [
     [
@@ -4461,6 +4491,91 @@
    "options": [],
    "effects": {},
    "giftable": true,
+   "consumable": false
+  },
+  {
+   "id": "gyn_hymen_repair",
+   "place": "clinic_gyn",
+   "name": "處女膜重建手術",
+   "category": "clinic",
+   "price": {
+    "": 4800
+   },
+   "season": null,
+   "tags": [
+    "for_her",
+    "surgery"
+   ],
+   "prop": "none",
+   "options": [],
+   "effects": {
+    "energy": -20,
+    "mood": -5
+   },
+   "giftable": false,
+   "consumable": false
+  },
+  {
+   "id": "beauty_face_swap",
+   "place": "clinic_beauty",
+   "name": "臉型整形（換成別人的臉型）",
+   "category": "clinic",
+   "price": {
+    "": 68000
+   },
+   "season": null,
+   "tags": [
+    "for_her",
+    "surgery"
+   ],
+   "prop": "none",
+   "options": [],
+   "effects": {
+    "energy": -40,
+    "mood": -5
+   },
+   "giftable": false,
+   "consumable": false
+  },
+  {
+   "id": "beauty_face_restore",
+   "place": "clinic_beauty",
+   "name": "臉型還原手術",
+   "category": "clinic",
+   "price": {
+    "": 38000
+   },
+   "season": null,
+   "tags": [
+    "for_her",
+    "surgery"
+   ],
+   "prop": "none",
+   "options": [],
+   "effects": {
+    "energy": -40
+   },
+   "giftable": false,
+   "consumable": false
+  },
+  {
+   "id": "salon_dye",
+   "place": "salon",
+   "name": "染髮",
+   "category": "clinic",
+   "price": {
+    "": 398
+   },
+   "season": null,
+   "tags": [
+    "for_her"
+   ],
+   "prop": "none",
+   "options": [],
+   "effects": {
+    "mood": 8
+   },
+   "giftable": false,
    "consumable": false
   }
  ],

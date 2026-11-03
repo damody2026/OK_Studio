@@ -523,6 +523,10 @@ snk_redbean_cake = "Red Bean Cakes (2 Pcs)"
 snk_shaved_ice = "Eight-Treasure Shaved Ice"
 snk_strawberry_cake = "Strawberry Shortcake"
 snk_waffle = "Waffle"
+gyn_hymen_repair = "Hymen reconstruction"
+beauty_face_swap = "Facial surgery (someone else's face)"
+beauty_face_restore = "Facial surgery (her own face back)"
+salon_dye = "Hair dye"
 
 [ui.name.job]
 aquarium_staff = "Ticket Desk & Tour Guide"
@@ -595,6 +599,9 @@ restaurant = "Restaurant"
 school = "Old school building, for club activities and study"
 shrine = "Shrine"
 snack = "Snack shop"
+clinic_gyn = "Gynaecology clinic; quiet in the waiting area, examinations and surgery in the rooms"
+clinic_beauty = "Cosmetic clinic with consulting, operating and recovery rooms"
+salon = "Hair salon for cuts and colour"
 
 [ui.name.place]
 campus_t1 = "Teaching Building 1 T1 (General Education Committee)"
@@ -636,6 +643,9 @@ restroom_resort = "Public Restroom (Resort Area)"
 school = "Old School Building (Club Hall)"
 shrine = "Shrine"
 snack = "Snack Shop"
+clinic_gyn = "Gynaecology clinic"
+clinic_beauty = "Cosmetic clinic"
+salon = "Hair salon"
 
 [ui.name.place_about]
 campus_t1 = "Classroom building for general education courses, five floors; the General Education Center office is on 1F"
@@ -678,6 +688,9 @@ restroom_resort = "Public restroom with separate men's and women's entrances"
 school = "The old school building left behind after the university moved to the new northern campus. It now holds club activities and study space: classrooms on the first floor, a study room on the second, and a music room on the third."
 shrine = "A small shrine behind the park, with red torii gates and stone lanterns, where you can pray and make wishes."
 snack = "A small shop selling drinks and desserts, for takeout."
+clinic_gyn = "A small gynaecology clinic with a front desk, a waiting area, a consulting room and an operating room; it does hymen reconstruction"
+clinic_beauty = "A cosmetic clinic: in the consulting room she can choose someone else's face to be given, or have her own back"
+salon = "A hair salon with styling chairs, a wash basin and a wall of colour swatches; it dyes hair"
 
 [ui.name.role]
 clerk = "Clerk"

@@ -953,6 +953,8 @@ TSharedRef<SWidget> AOKStreetSocialScene::BuildMenuCard(const FString& Title,int
   // The dotted leader from the dish to its price.
   Row->AddSlot().FillWidth(1).VAlign(VAlign_Center).Padding(6,0)[SNew(STextBlock).Clipping(EWidgetClipping::ClipToBounds).ColorAndOpacity(Ink.CopyWithNewOpacity(.45f)).Text(FText::FromString(FString::ChrN(120,TEXT('.'))))];
   Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(0,0,10,0)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold",15)).ColorAndOpacity(Ink).Text(FText::FromString(Money(Item->PriceOf(Item->DefaultSize()))))];
+  // A treatment at the clinics and the salon is done for her when she says yes, not put in the cart.
+  if(Item->Category==TEXT("clinic")){List->AddSlot().AutoHeight().Padding(0,3)[Row];AddClinicRows(List,*Item,Her);continue;}
   if(Item->Consumable||Item->UsedOnTheSpot())
    Row->AddSlot().AutoWidth().Padding(2,0)[Button(OKT(TEXT("ui.economy.i_want_button")),[Weak,Id](){Weak->AddToCart(Id,false);})];
   if(Her!=INDEX_NONE&&Item->Consumable)Row->AddSlot().AutoWidth().Padding(2,0)[Button(OKT(TEXT("ui.economy.order_for_her_button")),[Weak,Id](){Weak->AddToCart(Id,true);})];

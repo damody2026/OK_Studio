@@ -393,7 +393,7 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  // The time after an H scene (OKStreetSocialBookmarks.inl): who with, the result waiting for "leave", its buttons; the
  // bookmark open on the phone page.
  int32 AfterGirl=INDEX_NONE,BookmarkOpen=INDEX_NONE;TSharedPtr<FJsonObject> AfterAnswer;TSharedPtr<SWidget> AfterBar;
- TArray<FString> HighCards;TArray<int32> HighOutfits;TWeakObjectPtr<AOKInteractionMode> PrivateMode;TSharedPtr<SWidget> PrivateLeave;TSharedPtr<SWidget> HResultPanel; /* what the last one-on-one left on her (h_session_end result), until closed */ /* the one-on-one scene's own leave button (R3-228) */FString HighPrivateReport;double HighPrivateAt=0,PrivatePausedSeconds=0;bool PrivateClockFrozen=false; /* the street clock stood still for the private scene (it runs again on leaving, by the real minutes spent) */bool HighPrivateSeenReady=false;TSharedPtr<FJsonObject> HighPrivateResult;TArray<FOKStreetAgentSim> HighPrivateAgents;TArray<FRotator> HighPrivateRotations;FVector HighPrivateMale;
+ TArray<FString> HighCards;TArray<FString> BaseCards; /* her own card (HighCards may be her clinic/salon copy, OKStreetSocialClinic.inl) */TArray<int32> HighOutfits;TWeakObjectPtr<AOKInteractionMode> PrivateMode;TSharedPtr<SWidget> PrivateLeave;TSharedPtr<SWidget> HResultPanel; /* what the last one-on-one left on her (h_session_end result), until closed */ /* the one-on-one scene's own leave button (R3-228) */FString HighPrivateReport;double HighPrivateAt=0,PrivatePausedSeconds=0;bool PrivateClockFrozen=false; /* the street clock stood still for the private scene (it runs again on leaving, by the real minutes spent) */bool HighPrivateSeenReady=false;TSharedPtr<FJsonObject> HighPrivateResult;TArray<FOKStreetAgentSim> HighPrivateAgents;TArray<FRotator> HighPrivateRotations;FVector HighPrivateMale;
  TMap<int32,double> CommutePausedUntil; // a girl he walked up to stops her walk for a moment (StepNavigation)
  // PrivateInPlace: the one-on-one is where she stands on the street (user, 2026-11-01: no change of scene); the street
  // goes on around them and their street figures are kept out of sight under it (OKStreetOffstage).
@@ -875,7 +875,9 @@ void AOKStreetSocialScene::BeginPlay(){
  {TSharedPtr<FJsonObject> M;FString Path;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),M)&&M&&M->TryGetStringField(TEXT("relationship_catalogue"),Path)&&!(OKStreetLoadRelationshipDialogue(Path,S.Catalogue,S.OtherLanguage,S.RelationshipDialogues,Error)&&(FillSubtitleScripts(),true))){S.Errors.Add(Error);WriteReport(false);return;}}
  OKStreetMakeAgents(S.Agents,S.Manifest.Characters.Num()-1);S.Rotations.SetNumZeroed(S.Manifest.Characters.Num());S.RenderedRotations.SetNumZeroed(S.Manifest.Characters.Num());
  if(S.Store.HasPlayerSpot&&!S.SelfTest)S.Rotations[0]=S.RenderedRotations[0]=FRotator(0,S.Store.PlayerYaw,0); // facing the way he was (StartCalendarAndMind)
- if(!OKStartCrowdRuntimeScene(this,ManifestPath,Error)){S.Errors.Add(Error);WriteReport(false);return;}
+ // Her face and hair as the clinics and the salon left them (OKStreetSocialClinic.inl): the crowd reads her restyled card.
+ const FString CrowdSelection=ApplyAppearanceToSelection(ManifestPath,Json);
+ if(!OKStartCrowdRuntimeScene(this,CrowdSelection,Error)){S.Errors.Add(Error);WriteReport(false);return;}
  if(!OKStreetCreateRuntimeBackdrop(GetWorld(),this,S,Error)){S.Errors.Add(Error);WriteReport(false);return;}
  SpawnStreetPlaces();
  OKSetCrowdRuntimeCharacterMotion(this,0,FTransform(FRotator::ZeroRotator,S.Male),0,Error);
@@ -2984,6 +2986,7 @@ static int64 OKStreetMindNow(const FOKStreetSceneState& S);
 #include "OKStreetSocialInspector.inl"
 #include "OKStreetSocialUiProbe.inl"
 #include "OKStreetSocialControl.inl"
+#include "OKStreetSocialClinic.inl"
 void AOKStreetSocialScene::BeginPhoto(int32 Character){BeginPair(Character,false);}
 void AOKStreetSocialScene::BeginPair(int32 Character,int32 Kind){
  const bool PhoneUse=Kind==8,Watermelon=Kind==6||Kind==7,FemaleStrikes=Kind==7,Meal=Kind==5,Bath=Kind==9,Read=Kind==10,NoProps=Kind==11,Seated=Kind==1||Bath||NoProps,Drink=Kind==2,Splash=Kind==3||Kind==4,FemaleThrows=Kind==4;

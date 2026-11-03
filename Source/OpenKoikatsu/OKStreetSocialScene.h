@@ -224,6 +224,13 @@ private:
  void BuyForGift(const FString& ItemId);
  void StartGift(const FString& ItemId);
  void FinishGift(int32 Her,const FString& ItemId,const FString& Option,float Score);
+ // The clinics and the salon (OKStreetSocialClinic.inl): offered to her, done when she says yes; her restyled card.
+ TSharedPtr<class FJsonObject> ClinicRequest(int32 Her,const FString& ItemId,const FString& From,const FString& Color);
+ void OfferClinic(int32 Her,const FString& ItemId,const FString& From,const FString& Color);
+ void FinishClinic(int32 Her,const FString& ItemId,const FString& Option,const FString& From,const FString& Color);
+ FString RestyledCard(int32 Her,FString& Error);
+ FString ApplyAppearanceToSelection(const FString& ManifestPath,const FString& Json);
+ void AddClinicRows(const TSharedRef<class SVerticalBox>& List,const struct FOKStreetCatalogItem& Item,int32 Her);
  void StartLoan(int32 Amount);
  void InitWalletFromProfile(const FString& Id,const TSharedPtr<class FJsonObject>& Profile);
  void BuildShopPanel(const TSharedRef<class SVerticalBox>& Box);

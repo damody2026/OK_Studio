@@ -120,9 +120,17 @@ c-street-city 的逐項回答在 `Docs/STREET_CITY_PLACES_INVENTORY_20261103.md`
 
 **還沒好**
 
-- C1、C2：`conveni`、`lottery` 的 `counter` 還沒出現。等 chain16 裝完場景。
-- C7、C8：`livehouse`、`karaoke` 還沒進 `game_places`。等 chain16。
-- C9：`places.json` 還沒有 `lots`。
+- C1、C2、C7、C8、C9：chain16 裝好後再比對，都已對上（11-03 晚）。
+  - `conveni` 有 `counter`；`lottery` 有 `counter`、`buy`、`screen`。打工站位全部對上。
+  - `livehouse`（S96）有 `stage`、`watch`…`watch4`、`bar`、`counter`。
+  - `karaoke`（S48，privacy 1）有 3 間包廂的 `seat*`、`screen*`。
+  - `lots` 8 塊。編號是 `lot_1`…`lot_8`，和 `property.json` 的 `lot_02`…`lot_12` 不同，整合時要對應或改名。
+- C10：`places.json` 頂層的 `office_units`（以單位 id 為鍵的物件）已有 4 個單位，都有房間、`door`、`desk*`：
+  - `dept_office`：O01-0201，3 張桌。
+  - `hotel_business`：H1-0107，8 張桌。
+  - `lodge_office`：O01-0102，3 張桌。
+  - `school_club`：SC-0202，2 張桌。
+  - 沒有分開的椅子，所以沒有 `seat*`。
 
 **錨點高度和活動名稱的樓層對不上**
 
@@ -155,7 +163,56 @@ c-street-city 的逐項回答在 `Docs/STREET_CITY_PLACES_INVENTORY_20261103.md`
     - `shrine`：在公園旁的石板廣場。
 - Q7 拍照點的背景：c-street-city 下一輪補拍照確認。
 
-## 7. 下一步
+## 7. 婦科診所、醫美診所、美髮店（使用者 11-03 新增）
+
+使用者要的三個設施：
+- 婦科小診所：做處女膜重建手術。
+- 醫美診所：把臉型換成別人的臉型。
+- 美髮店：染頭髮。
+
+**城市端（已請 c-street-city 補，編號接 C12–C14）**
+
+| # | game id | 錨點 |
+|---|---|---|
+| C12 | `clinic_gyn` | `counter`、`seat*`、`doctor`、`bed_op`、`rest*`、`wait`；privacy 1 |
+| C13 | `clinic_beauty` | `counter`、`consult`、`bed_op`、`rest*`、`wait`、`seat*`、`mirror`；privacy 1 |
+| C14 | `salon` | `chair*`、`wash`、`seat*`、`counter`、`swatch`；建議用現有的 S31 造型髮廊 |
+
+**遊戲端（已做）**
+
+- 規則：`Tools/ok-rules/src/clinic.rs`
+  - `clinic_treat`：`kind` 是 `hymen_restore`、`face_swap`、`face_restore`、`hair_dye`。
+  - `appearance_of`、`hair_colors`（12 色）。
+  - 處女膜重建記在她的 `hexp.hymen_restored`（`hexp.rs`）：
+    - 下一次被插入時，H 場景照第一次演出，流血不管卡片的「已撐開」設定。
+    - 之後恢復成已破，她的記憶是「重建的處女膜又被弄破」，不是「失去第一次」。
+    - 還是處女、處女膜會再生、已經重建過的，都不能做。
+  - 臉型與髮色記在 `ext.appearance.<她的 id>`。
+- 卡片：`Tools/ok-extract` 的 `AppearanceRequest` 新增 action `restyle`。
+  - 把對方卡的 `face.shapeValueFace.*` 複製到她卡的副本（頭型與其他外觀不變）。
+  - 頭髮每一段的 base／start／end／outline 顏色換成新色，保留透明度。
+  - 副本放在 `Saved/StreetSocial/Appearance/`。
+- 商品：`catalog.json` 的 `clinic` 類。
+  - 處女膜重建 ¥4,800、換臉 ¥68,000、臉型還原 ¥38,000、染髮 ¥398。
+  - 營業時間：婦科 9–18（週日休）、醫美 10–20、美髮 10–21（週二休）。
+- 地點：舊地圖暫時加了三棟能走進去的方塊建築（`OKStreetSocialPlaces.h` 的 `OKStreetWalkInBuilding`）。
+  - 婦科在度假區公廁旁 (500,-4300)。
+  - 醫美在飯店東側 (2800,-5300)。
+  - 美髮在咖啡廳和學生餐廳之間 (3550,4100)。
+  - 換成大學城後改用 C12–C14。
+- 流程（`OKStreetSocialClinic.inl`）：
+  1. 帶她到店裡開菜單。換臉要選「誰的臉型」，染髮要選顏色。
+  2. 按鈕會問她要不要。她用自己的話答應或拒絕（choice，和送禮一樣），答應了才付錢、才做。
+  3. 做完會告訴她發生了什麼（`game_fact_note`），她也會記得。
+
+**限制**
+
+- 她的新臉型與髮色：
+  - 一對一與 H 場景開她時馬上用新卡。
+  - 街上的群眾模型要等下次開遊戲才換：群眾的角色一次載入、共用 GPU bank，沒有單人重載。
+- 街上即時換色另外要做兩件事：群眾材質裡頭髮的參數分類，以及不和別人共用的材質實體。
+
+## 8. 下一步
 
 1. c-street-city 依第 2 節（C1–C11）補場景與 `places.json`，重跑 `build_street_city_places.lua`。
 2. c-conquest 重跑比對腳本確認沒有缺漏。

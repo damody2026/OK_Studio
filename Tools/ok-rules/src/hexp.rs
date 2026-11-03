@@ -42,6 +42,9 @@ pub struct HExp {
     pub raw_count: i32,
     pub virgin: bool,
     pub anal_virgin: bool,
+    /// Her hymen was rebuilt at the clinic (clinic.rs hymen_restore, user 2026-11-03): she is not a virgin, but the next
+    /// time he enters her she bleeds and it hurts as the first time; then it is broken again.
+    pub hymen_restored: bool,
     /// The game day the today_* fields are for (-1 none): what she has had today carries from one scene to the next, so
     /// leaving the room and coming back does not undo "that is enough for today".
     pub today_day: i64,
@@ -65,7 +68,7 @@ pub struct HExp {
 
 impl Default for HExp {
     fn default() -> Self {
-        HExp { count: 0, kissed: false, areas: [0.0; 6], crotch_h: 0.0, anal_h: 0.0, service: 0.0, service_count: 0, oral: 0.0, raw_count: 0, virgin: true, anal_virgin: true, today_day: -1, today_orgasms: 0, today_service: 0, today_anal_refused: false, libido_gain: 0, white_until: -1, red_until: -1, crotch_deep: false, anal_deep: false, poses: Vec::new(), body: Default::default() }
+        HExp { count: 0, kissed: false, areas: [0.0; 6], crotch_h: 0.0, anal_h: 0.0, service: 0.0, service_count: 0, oral: 0.0, raw_count: 0, virgin: true, anal_virgin: true, hymen_restored: false, today_day: -1, today_orgasms: 0, today_service: 0, today_anal_refused: false, libido_gain: 0, white_until: -1, red_until: -1, crotch_deep: false, anal_deep: false, poses: Vec::new(), body: Default::default() }
     }
 }
 
@@ -93,7 +96,7 @@ impl HExp {
     }
 }
 
-fn of(ext: &Value, girl: &str) -> HExp {
+pub fn of(ext: &Value, girl: &str) -> HExp {
     ext.get("hexp").and_then(|h| h.get(girl)).and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default()
 }
 
@@ -196,7 +199,9 @@ fn experience(r: &Value) -> Result<Value, String> {
     touch_ok.insert("lips".into(), json!({"touch": stage >= 1 - i32::from(h.area(KISS) >= 30.0), "kiss": kiss_ok}));
     Ok(json!({
         "touch_ok": touch_ok,
-        "level": level, "level_name": level_name(level), "areas": areas, "count": h.count, "virgin": h.virgin, "anal_virgin": h.anal_virgin,
+        // A rebuilt hymen plays as her first time in the scene (the insertion's pain, blood and reaction, OKHScene).
+        "level": level, "level_name": level_name(level), "areas": areas, "count": h.count, "virgin": h.virgin || h.hymen_restored, "anal_virgin": h.anal_virgin,
+        "hymen_restored": h.hymen_restored,
         "raw_ok": raw_ok,
         "anal_chance": anal_chance,
         "service_rounds": service_rounds,
@@ -265,8 +270,11 @@ fn session_end(r: &Value) -> Result<Value, String> {
     // same way. Counted from the minute the scene ended; a longer run already going is kept.
     if let Some(now) = r.get("minute").and_then(Value::as_i64).filter(|m| *m >= 0) {
         let t = crate::traits::Traits::from_profile(r.get("profile").unwrap_or(&Value::Null));
-        let first = h.virgin && flag(c.get("crotch").unwrap_or(&Value::Null), "inserted");
-        let bleeds = t.vagina_fragile || ((first || t.hymen_regen) && !t.hymen_stretched);
+        let inserted = flag(c.get("crotch").unwrap_or(&Value::Null), "inserted");
+        let first = h.virgin && inserted;
+        // A hymen rebuilt at the clinic bleeds whatever her card says about it being stretched.
+        let rebuilt = h.hymen_restored && inserted;
+        let bleeds = t.vagina_fragile || rebuilt || ((first || t.hymen_regen) && !t.hymen_stretched);
         let (white, red) = discharge_hours(num(&c, "his_inside_raw") as i64, num(&c, "his_condom") as i64, bleeds);
         if white > 0 { h.white_until = h.white_until.max(now + 60 * white); }
         if red > 0 { h.red_until = h.red_until.max(now + 60 * red); }
@@ -322,6 +330,9 @@ fn session_end(r: &Value) -> Result<Value, String> {
                 *virgin = false;
             }
         }
+        if flag(c.get("crotch").unwrap_or(&Value::Null), "inserted") {
+            h.hymen_restored = false;
+        }
         if flag(&c, "raw") {
             h.raw_count = (h.raw_count + 1).min(1000);
         }
@@ -370,6 +381,9 @@ fn session_end(r: &Value) -> Result<Value, String> {
     if was.virgin && !h.virgin {
         first(&mut fx, "hexp.lost_virginity", 1.0);
     }
+    if was.hymen_restored && !h.hymen_restored {
+        first(&mut fx, "hexp.restored_hymen_broken", 0.9);
+    }
     if was.anal_virgin && !h.anal_virgin {
         first(&mut fx, "hexp.first_anal", 0.95);
     }
@@ -406,6 +420,7 @@ fn session_end(r: &Value) -> Result<Value, String> {
     let firsts: Vec<&str> = [
         (was.count == 0 && h.count > 0, "hexp.first_time"),
         (was.virgin && !h.virgin, "hexp.lost_virginity"),
+        (was.hymen_restored && !h.hymen_restored, "hexp.restored_hymen_broken"),
         (was.anal_virgin && !h.anal_virgin, "hexp.first_anal"),
         (!was.kissed && h.kissed, "hexp.first_kiss"),
         (!was.crotch_deep && h.crotch_deep, "hexp.first_deepest"),

@@ -436,3 +436,11 @@ cat = "activity"
 history = "betrayal"
 text = "%s"
 memory = -1
+
+# 診所與美髮店（clinic.rs）：處女膜重建、換臉、染髮，她記得自己做過。
+[[act]]
+id = "body_change"
+cat = "activity"
+history = "activity"
+text = "%s"
+memory = -1

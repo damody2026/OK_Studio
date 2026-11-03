@@ -265,6 +265,19 @@ inline void OKStreetBuilding(FOKStreetPlace& P, FVector2D Center, FVector Size, 
  P.Door = Base + Normal * (Half + 260);
 }
 
+// A box building he walks into (the clinics and the salon, user 2026-11-03, before the map has them): open inside, one
+// room, spots given in the building's own frame (Ahead towards the door, Right to its right, Turn from facing the door).
+struct FOKStreetSpot { const TCHAR* Name; float Ahead, Right, Turn; };
+inline void OKStreetWalkInBuilding(FOKStreetPlace& P, FVector2D Center, FVector Size, FVector2D Facing, EOKStreetMaterial Body, EOKStreetMaterial Roof, EOKStreetMaterial Sign, std::initializer_list<FOKStreetSpot> Spots) {
+ OKStreetBuilding(P, Center, Size, Facing, Body, Roof, Sign, false);
+ P.Parts[0].Solid = false;
+ const FVector Base(Center.X, Center.Y, 0), Front(Facing.X, Facing.Y, 0), Right(-Facing.Y, Facing.X, 0);
+ P.Rooms.Add(FBox(Base - FVector(Size.X * .5f, Size.Y * .5f, 0), Base + FVector(Size.X * .5f, Size.Y * .5f, 450.f))); P.RoomLevels.Add(1);
+ const float FrontYaw = Front.Rotation().Yaw;
+ // (Anchor yaw is a character rotation: she faces yaw + 90.)
+ for (const FOKStreetSpot& S : Spots) { FOKStreetModelAnchor A; A.Name = S.Name; A.Position = Base + Front * S.Ahead + Right * S.Right; A.Yaw = FRotator::NormalizeAxis(FrontYaw + S.Turn - 90.f); P.Anchors.Add(A); }
+}
+
 // Vacant lots from property.json become places (navigation, PlaceHere, a heroine's workplace): the lot's ground is
 // its one room; what stands on it is spawned at runtime (OKStreetSocialCompanyWorld.inl). Id and name are TCHAR
 // pointers in FOKStreetPlace, so their strings are kept for the life of the program.
@@ -359,6 +372,14 @@ inline const TArray<FOKStreetPlace>& OKStreetPlaces() {
   OKStreetBuilding(Make(TEXT("restroom_campus"), TEXT("公廁（大學講堂旁）"), RestroomAbout), FVector2D(-3500, 5600), FVector(700, 500, 300), FVector2D(0, -1), M::Cream, M::Leaf, M::Cream, false);
   OKStreetBuilding(Make(TEXT("restroom_north"), TEXT("公廁（學校操場旁）"), RestroomAbout), FVector2D(3500, -2300), FVector(500, 700, 300), FVector2D(1, 0), M::Cream, M::Leaf, M::Cream, false);
   OKStreetBuilding(Make(TEXT("restroom_resort"), TEXT("公廁（度假區）"), RestroomAbout), FVector2D(500, -5400), FVector(700, 500, 300), FVector2D(0, 1), M::Cream, M::Leaf, M::Cream, false);
+  // The clinics and the salon (user 2026-11-03; ok-rules clinic.rs): rebuilding her hymen, giving her someone else's face,
+  // dyeing her hair. In the resort's gap by the restroom, east of the hotel, and between the cafe and the cafeteria.
+  OKStreetWalkInBuilding(Make(TEXT("clinic_gyn"), TEXT("婦科診所"), TEXT("小小的婦科診所，有櫃台、候診區、診間和手術室，可以做處女膜重建手術")), FVector2D(500, -4300), FVector(600, 700, 340), FVector2D(0, 1), M::Cream, M::Stone, M::Glass,
+   {{TEXT("counter"), 200, 0, 180}, {TEXT("seat"), 150, -220, 90}, {TEXT("seat2"), 150, 220, -90}, {TEXT("doctor"), -150, -150, 0}, {TEXT("bed_op"), -200, 150, 0}, {TEXT("rest"), -50, 230, -90}, {TEXT("wait"), 250, -150, 180}});
+  OKStreetWalkInBuilding(Make(TEXT("clinic_beauty"), TEXT("醫美診所"), TEXT("醫美診所，諮詢室裡有臉型參考，可以把臉整成別人的臉型，也能還原")), FVector2D(2800, -5300), FVector(700, 800, 360), FVector2D(0, 1), M::Glass, M::Stone, M::Lamp,
+   {{TEXT("counter"), 230, 0, 180}, {TEXT("consult"), 0, -200, 90}, {TEXT("seat"), 150, 250, -90}, {TEXT("bed_op"), -250, 0, 0}, {TEXT("rest"), -250, 250, 0}, {TEXT("mirror"), -100, -300, 90}, {TEXT("wait"), 250, -200, 180}});
+  OKStreetWalkInBuilding(Make(TEXT("salon"), TEXT("美髮店"), TEXT("美髮店，有理髮椅、洗頭台和髮色樣本牆，可以染頭髮")), FVector2D(3550, 4100), FVector(800, 800, 340), FVector2D(0, -1), M::Stripe, M::Stone, M::Lamp,
+   {{TEXT("counter"), 250, -250, 180}, {TEXT("chair"), 0, -200, 90}, {TEXT("chair2"), 0, 200, -90}, {TEXT("wash"), -250, 0, 0}, {TEXT("seat"), 250, 250, 180}, {TEXT("swatch"), -100, -300, 90}});
   // Models replace the box buildings: same spot, the model's front (+X) turned to the street.
   struct FPlacement { const TCHAR* Id; FVector Origin; float Yaw; };
   const FPlacement Placements[] = {

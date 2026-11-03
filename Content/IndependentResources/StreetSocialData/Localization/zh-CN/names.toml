@@ -523,6 +523,10 @@ snk_redbean_cake = "红豆饼（2 个）"
 snk_shaved_ice = "八宝冰"
 snk_strawberry_cake = "草莓鲜奶油蛋糕"
 snk_waffle = "松饼"
+gyn_hymen_repair = "处女膜重建手术"
+beauty_face_swap = "脸型整形（换成别人的脸型）"
+beauty_face_restore = "脸型还原手术"
+salon_dye = "染发"
 
 [ui.name.job]
 aquarium_staff = "售票、导览"
@@ -595,6 +599,9 @@ restaurant = "餐厅"
 school = "旧校舍，社团活动和自习用"
 shrine = "神社"
 snack = "点心店"
+clinic_gyn = "妇科诊所，候诊区要安静，看诊和手术在诊室里"
+clinic_beauty = "医美诊所，有咨询室、手术室和恢复室"
+salon = "美发店，可以剪发、染发"
 
 [ui.name.place]
 campus_t1 = "第一教学楼 T1（共同教育委员会）"
@@ -636,6 +643,9 @@ restroom_resort = "公厕（度假区）"
 school = "旧校舍（社团楼）"
 shrine = "神社"
 snack = "点心店"
+clinic_gyn = "妇科诊所"
+clinic_beauty = "医美诊所"
+salon = "美发店"
 
 [ui.name.place_about]
 campus_t1 = "通识课的教室大楼，五层楼，1 楼有通识教育中心办公室"
@@ -678,6 +688,9 @@ restroom_resort = "公共厕所，男厕和女厕分开，各有自己的入口"
 school = "大学搬到北边新校园后留下的旧校舍，现在是社团活动和自习用的大楼：一楼教室、二楼自习教室、三楼音乐教室"
 shrine = "公园后面的小神社，有红色鸟居和石灯笼，可以参拜许愿"
 snack = "卖饮料和甜点的小店，可以外带"
+clinic_gyn = "小小的妇科诊所，有柜台、候诊区、诊室和手术室，可以做处女膜重建手术"
+clinic_beauty = "医美诊所，咨询室里有脸型参考，可以把脸整成别人的脸型，也能还原"
+salon = "美发店，有理发椅、洗头台和发色样本墙，可以染头发"
 
 [ui.name.role]
 clerk = "店员"
