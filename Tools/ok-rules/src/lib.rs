@@ -25,6 +25,7 @@ pub mod events;
 pub mod games;
 pub mod heroine;
 pub mod hexp;
+mod hexp_edges;
 pub mod pregnancy;
 pub mod invite;
 pub mod mind;
