@@ -3585,7 +3585,11 @@ impl PartBlob {
 
 pub fn open(game: &Path, card: Option<&Path>, outfit: i32) -> Result<OkSession, String> {
     let mut sess = open_unconfigured(game, card, outfit)?;
-    if let Some(bytes) = card.and_then(|c| crate::card::card_file_bytes(c).ok()) { sess.physics = crate::okphysics::CardPhysics::read_card(&bytes); }
+    if let Some(bytes) = card.and_then(|c| crate::card::card_file_bytes(c).ok()) {
+        sess.physics = crate::okphysics::CardPhysics::read_card(&bytes);
+        // An OK character card (okCh) replaces the base character's renderers with its authored parts.
+        crate::okchara::apply(&mut sess, &bytes)?;
+    }
     Ok(sess)
 }
 

@@ -78,6 +78,37 @@ pub(super) fn patch_properties(original:&[u8],outfit:usize,edits:&[J])->Result<V
  if physics_edits.is_empty(){Ok(card)}else{physics::apply(original,&card,outfit,&physics_edits)}
 }
 
+/// Set card fields by path (`face.shapeValueFace.30`, `face.pupil.0.id`, `body.shapeValueBody.1`, ...) without the
+/// editor's allow-list: tools building cards write ids and shape values too. Each value keeps the stored type
+/// (an integer field stays an integer, a colour is four floats).
+pub(crate) fn patch_paths(original:&[u8],outfit:usize,edits:&[(String,J)])->Result<Vec<u8>,String>{
+ let mut blocks=blocks_from_card(original)?;
+ let convert=|old:&Value,new:&J|->Result<Value,String>{Ok(match (old,new) {
+  (Value::Integer(_),J::Number(n))=>Value::from(n.as_f64().ok_or("數值格式錯誤")?.round() as i64),
+  (Value::Boolean(_),J::Bool(b))=>Value::Boolean(*b),
+  (Value::Array(_),J::Array(a))=>Value::Array(a.iter().map(|x|x.as_f64().map(|f|Value::F32(f as f32)).ok_or("顏色格式錯誤")).collect::<Result<_,_>>()?),
+  (_,J::Number(n))=>Value::F32(n.as_f64().ok_or("數值格式錯誤")? as f32),
+  (_,J::String(s))=>Value::from(s.as_str()),
+  _=>return Err("不支援的欄位型別".into()),
+ })};
+ let mut seen=0usize;
+ sections(&mut blocks,outfit,|name,v|{for(key,value)in edits {if let Some(path)=key.strip_prefix(&format!("{name}.")){let slot=at(v,path)?;*slot=convert(slot,value)?;seen+=1;}}Ok(())})?;
+ if seen!=edits.len(){return Err(format!("有 {} 個欄位不在卡片裡",edits.len()-seen));}
+ super::write_blocks(original,blocks)
+}
+
+/// Every scalar field of the card's face/body/hair/outfit sections as (path, value text): what `patch_paths` can set.
+pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String)>,String>{
+ fn flat(v:&Value,path:&str,out:&mut Vec<(String,String)>){match v {
+  Value::Map(m)=>for(k,v)in m {if let Some(k)=k.as_str(){flat(v,&format!("{path}.{k}"),out)}},
+  Value::Array(a) if a.len()<=64=>for(i,v)in a.iter().enumerate(){flat(v,&format!("{path}.{i}"),out)},
+  Value::Binary(_)|Value::Array(_)=>{},
+  v=>out.push((path.to_string(),v.to_string())),
+ }}
+ let mut blocks=blocks_from_card(original)?;let mut out=Vec::new();
+ sections(&mut blocks,outfit,|name,v|{flat(v,name,&mut out);Ok(())})?;Ok(out)
+}
+
 #[cfg(test)] mod tests {
  use super::*;
  #[test]#[ignore="game oracle: reads the original KKS installation (set OK_TEST_GAME_ROOT)"]fn lean_card_property_request_recovers_original_mod_controls(){

@@ -35,7 +35,8 @@ unity-asset-decode = { version = "0.2.0", default-features = false, features = [
 texture2ddecoder = "0.1"
 lz4_flex = "0.11"
 crc32fast = "1"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+gltf = { version = "1.4", default-features = false, features = ["utils", "names"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 roxmltree = "0.20"
 fsbex = { version = "0.3", optional = true }
