@@ -53,7 +53,7 @@ def _ls_search(world,hint,z,w,d,h,yaws,rmin=0,rmax=1200,avoid=[],wall=False,regi
   for k in range(n):
    t=2*math.pi*k/n;c=unreal.Vector(hint.x+r*math.cos(t),hint.y+r*math.sin(t),z)
    if region and not(region[0][0]<=c.x<=region[1][0] and region[0][1]<=c.y<=region[1][1]):continue
-   if any((c-unreal.Vector(p.x,p.y,z)).size()<160+max(w,d)/2 for p in avoid):continue
+   if any((c-unreal.Vector(p.x,p.y,z)).length()<160+max(w,d)/2 for p in avoid):continue
    for yaw in yaws:
     if not _ls_fits(world,c,yaw,w,d,h,z):continue
     if wall and not _ls_wall_behind(world,c,yaw,d,z):
@@ -217,7 +217,7 @@ def motel_world_lover_spots_install():
    n=max(1,int(2*math.pi*max(r,1)/25))
    for k in range(n):
     t=2*math.pi*k/n;c=unreal.Vector(hint.x+r*math.cos(t),hint.y+r*math.sin(t),z)
-    if not outside(c) or any((c-unreal.Vector(d.x,d.y,z)).size()<220 for d in ds):continue
+    if not outside(c) or any((c-unreal.Vector(d.x,d.y,z)).length()<220 for d in ds):continue
     for yaw in (0,90,180,270):
      if _ls_fits(world,c,yaw,210,95,90,z) and _ls_fits(world,_ls_off(c,yaw,110),yaw,90,60,50,z) and _ls_wall_behind(world,c,yaw,95,z):got=(c,yaw);break
     if got:break

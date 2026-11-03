@@ -33,6 +33,8 @@ for _, r in ipairs(install.rooms) do
   local bed = { -3.34, 4.7 }
   local bj = root .. 'motel-v1/sample-rooms/models-v2/' .. r.id .. '/build.json'
   if exists(bj) then local L = load('motel-v1/sample-rooms/models-v2/' .. r.id .. '/build.json').lights; if L[2] then bed = { L[2]['local'][1], L[2]['local'][2] + .4 } end end
+  -- sample rooms whose bed is not at the shell default (Tools/build_street_city_motel_sample_rooms.lua: 209 canopy_bed, 203 bx = w*.14)
+  if r.id == 'imore-93474c507aaf' then bed = { 1.6, 5.15 } elseif r.id == 'imore-cda5d5e2dcb9' then bed = { q.size_m[1] * .14, 4.7 } end
   local top = .55
   for _, m in ipairs(mirrors[r.id] or {}) do top = m.bed_top_m or top end
   -- headboard direction (room +y) as a world yaw; a person lying on the bed with the head at the headboard

@@ -11,7 +11,7 @@
 
 ```powershell
 .\Tools\lua\lua.exe Tools\build_street_city_places.lua
-cargo test --release --manifest-path Tools\ok-city-props\Cargo.toml
+cargo test -j 8 --release --manifest-path Tools\ok-city-props\Cargo.toml
 ```
 
 ## 資料內容

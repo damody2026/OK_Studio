@@ -5,7 +5,8 @@
 --   world_bed_mirrors_install  probe again, (re)place BedMirror_<room>_{Wall,Ceiling}_{Frame,Glass,Reflection}, save the map
 -- Placement (room-local frame of Docs/STREET_CITY_MOTEL_ROOM_SPEC_20261025.md, +y = headboard side):
 --   bed centre   v2 rooms: the bed downlight of models-v2/<id>/build.json (lights[1], 0.4 m toward the foot);
---                the four approved sample rooms: the shell default (-3.34, 4.7). A down ray must find a bed top
+--                the four approved sample rooms: the shell default (-3.34, 4.7), except 209 (canopy bed at 1.6, 5.15)
+--                and 203 (bed at x = width * 0.14, y 4.7), as built by build_street_city_motel_sample_rooms.lua. A down ray must find a bed top
 --                0.3-1.1 m above the floor, otherwise the suite is skipped.
 --   wall         rays from 1.3 m over the bed centre to the left, the right and the foot; the hit must be the suite
 --                shell 1.3-6.5 m away. The mirror (z 0.4-2.2 m, 1.4 / 1.1 / 0.8 m wide) needs a flat face there
@@ -41,6 +42,9 @@ def _bm_plan():
   if bj.exists():
    L=json.loads(bj.read_text('utf8'))['lights']
    if len(L)>1:bed=(L[1]['local'][0],L[1]['local'][1]+.4)
+  # sample rooms whose bed is not at the shell default (build_street_city_motel_sample_rooms.lua: 209 canopy_bed, 203 bx=w*.14)
+  if rid=='imore-93474c507aaf':bed=(1.6,5.15)
+  elif rid=='imore-cda5d5e2dcb9':bed=(q['size_m'][0]*.14,4.7)
   h=_bm_ray(world,W(bed[0],bed[1],2.5),W(bed[0],bed[1],-.2));top=(h[4].z-base[2])/100 if h else None
   if top is None or not .3<top<1.1:skipped.append(dict(id=rid,reason='no_bed_top',bed=bed,top=top));continue
   eye=W(bed[0],bed[1],top+.5);best=None;tried=[]
