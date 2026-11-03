@@ -2073,6 +2073,21 @@ impl PrefabHierarchy {
     pub fn worlds(&self) -> Vec<Mat4> { self.worlds_with(&|_| None) }
     /// `worlds` with some nodes' local rotation replaced (item FK: node index -> Unity quaternion).
     pub fn worlds_with(&self, rot: &dyn Fn(usize) -> Option<[f32; 4]>) -> Vec<Mat4> {
+        self.worlds_with_trs(&|i| (None, rot(i), None))
+    }
+    /// `worlds` with optional local position, rotation (Unity quaternion) and scale overrides per node.
+    pub fn worlds_with_trs(&self, trs_fn: &dyn Fn(usize) -> (Option<[f32; 3]>, Option<[f32; 4]>, Option<[f32; 3]>)) -> Vec<Mat4> {
+        let mut out: Vec<Mat4> = Vec::with_capacity(self.nodes.len());
+        for (i, n) in self.nodes.iter().enumerate() {
+            let (p, r, s) = trs_fn(i);
+            let local = trs(p.unwrap_or(n.pos), r.unwrap_or(n.rot), s.unwrap_or(n.scale));
+            let world = if n.parent >= 0 && (n.parent as usize) < out.len() { mat_mul(&out[n.parent as usize], &local) } else { local };
+            out.push(world);
+        }
+        out
+    }
+    #[allow(dead_code)]
+    pub fn worlds_with_legacy_unused(&self, rot: &dyn Fn(usize) -> Option<[f32; 4]>) -> Vec<Mat4> {
         let mut out: Vec<Mat4> = Vec::with_capacity(self.nodes.len());
         for (i, n) in self.nodes.iter().enumerate() {
             let local = trs(n.pos, rot(i).unwrap_or(n.rot), n.scale);

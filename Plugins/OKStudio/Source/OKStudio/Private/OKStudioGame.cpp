@@ -525,7 +525,8 @@ bool UOKStudioGame::Load(const FString& Path, FString& OutError)
 	else
 	{
 		bLockActiveCamera = false;
-		bTimelinePlaying = false;
+		bTimelinePlaying = !Document->TimelineTracks.IsEmpty();
+		if (bTimelinePlaying) SetTimelineTime(0.f);
 	}
 	ResetHistory();
 	bDirty = false;

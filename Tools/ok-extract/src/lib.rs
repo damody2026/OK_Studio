@@ -15,6 +15,8 @@ mod clothing_rules;
 mod pregnancy;
 mod belly_bulge;
 mod card;
+pub mod card_plugins;
+pub mod studio_scene_plugins;
 mod face_create;
 mod face_create_source;
 mod face_create_gpu;
@@ -84,6 +86,7 @@ mod studio_scene;
 pub mod vnge;
 pub mod vmd;
 pub mod mmdd;
+pub mod compat_audit;
 mod studio_anims;
 mod studio_sky;
 mod skel_export;
@@ -277,6 +280,16 @@ pub(crate) fn blend_for_mesh(role: &str, mesh: &crate::unity::ExtractedMesh) -> 
         // Cull Back. The recovered fragment exports MainTex alpha and never
         // discards. The shader is lit even for O_nosetama ("nose" in its name).
         if shader == "ibl_shader_alpha" {
+            return ("translucent".into(), false);
+        }
+        // Shared runtime item/character shaders (StudioDisplay29: M_KKUSSItem, M_KKUSS, M_IBLOpaque, M_ForgeMDK,
+        // M_ForgeDither, M_ForgeEmission, M_OilPainting) draw masked with depth writes even when Material Editor
+        // switched from main_item_studio_alpha without resetting its serialized render_queue (e.g. 4907).
+        if matches!(shader.as_str(), "kkussitem" | "kkuss" | "ibl_shader" | "shader forge/main_standardmdk_studio"
+            | "shader forge/main_item_ditherd" | "shader forge/main_item_emission" | "da/chara/oil painting") {
+            return ("masked".into(), false);
+        }
+        if matches!(shader.as_str(), "goo" | "bettermatcap") {
             return ("translucent".into(), false);
         }
         // Unity renderQueue changes draw order, not a shader pass's Blend or

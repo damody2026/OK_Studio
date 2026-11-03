@@ -116,6 +116,8 @@ public:
 	int32 AmbientSky = -1;
 	int32 AmbientMap = -1;
 	TSet<TWeakObjectPtr<AKKPreviewActor>> AmbientLit;
+	TMap<FName, FLinearColor> AppliedShaderGlobals;
+	TSet<TWeakObjectPtr<AKKPreviewActor>> ShaderGlobalsLit;
 	/** Stands the scene's background image (Post.Background) behind everything in the view `View` with horizontal field of
 	 * view `Fov` (degrees), filling it like Studio's BackgroundCtrl; hidden without a background. */
 	void PlaceBackground(const FTransform& View, float Fov, float Aspect = 16.f / 9.f);
@@ -196,6 +198,8 @@ private:
 		float Time = 0.f;
 		/** FK bones the preview currently has. */
 		TArray<FOKSceneFkBone> AppliedFk;
+		TArray<FOKSceneBoneTrs> AppliedBoneOverrides;
+		TArray<FOKSceneMorphOverride> AppliedMorphOverrides;
 		TArray<FOKSceneIkTarget> AppliedIk;
 		int32 AppliedFkPartsOff = 0, AppliedIkPartsOff = 0;
         TArray<FQuat> AppliedFixedNeck;
@@ -266,4 +270,5 @@ private:
 	TArray<TWeakObjectPtr<class UMaterialInstanceDynamic>> MirrorCaptureMaterials;
 	void Release(FShown& Item);
 	void ApplyCharacterState(const FOKSceneObject& Object, FShown& Item);
+	void SolveConstraints();
 };

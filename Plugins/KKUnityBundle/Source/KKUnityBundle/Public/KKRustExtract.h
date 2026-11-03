@@ -67,7 +67,7 @@ public:
  /** OK card at Out from an original KKS card (zipmods from the KKS installation) or an edited OK card (made again so
   *  its models list and pack match the card data). Summary gets "digest parts pack" or the error. */
  static bool MakeOkCard(const FString& Card,const FString& Out,FString& Summary);
- static bool MakeOkCardForOutfit(const FString& Card,const FString& Out,int32 Outfit,FString& Summary);
+ static bool MakeOkCardForOutfit(const FString& Card,const FString& Out,int32 Outfit,FString& Summary,const FString& GameRoot=FString());
  static bool CopyPortableClothingStates(const FString& Source,const FString& Output,FString& Error);
  static TArray<FString> AnimationSourceNames(const FString& Root,const FString& Source);
  static bool PrepareStudioAnimation(const FString& Root,const FString& Key,const FString& Source,const FString& Owner);
@@ -178,6 +178,8 @@ public:
 	bool SetHeadLook(const FVector& UnityTarget,bool Enabled);
 	/** Studio FK: these bones take these local rotations (Unity Euler degrees) instead of the animated ones; empty clears. */
 	bool SetFk(const TArray<FString>& Bones,const TArray<FVector>& UnityEuler);
+	bool SetBonePosScale(const TArray<FString>& Bones,const TArray<FVector>& UnityPos,const TArray<FVector>& UnityScale,const TArray<uint8>& Flags);
+	bool FindRendererParts(const FString& Renderer,TArray<int32>& OutParts) const;
 	/** Local rotation (Unity Euler degrees) of a body bone in the current pose. */
 	bool BoneEuler(const FString& Bone,FVector& OutUnityEuler) const;
 	/** Studio IK (FullBodyBipedIK): effectors 0 body, 1/2 L/R shoulder, 3/4 L/R thigh, 5/6 L/R hand, 7/8 L/R foot.

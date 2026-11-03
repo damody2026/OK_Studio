@@ -1,4 +1,4 @@
-﻿#include "KKRuntimeSharedMaterial.h"
+#include "KKRuntimeSharedMaterial.h"
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
 #include "KKRuntimeDisplayProfile.h"
@@ -57,4 +57,34 @@ bool FOKVertexAmbientParentCompatibility::RunTest(const FString&)
     return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOKForgeSkinCustomizationBinding,
+    "OpenKoikatsu.RuntimeMaterial.ForgeSkinCustomizationBinding",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FOKForgeSkinCustomizationBinding::RunTest(const FString&)
+{
+    FKKRuntimeMaterialPart Part;
+    Part.ShaderKind = 7;
+    Part.Blend = TEXT("masked");
+    Part.Unlit = true;
+    Part.SourceMetadataJson = TEXT("{\"schema\":1,\"material\":{\"shader\":\"Shader Forge/main_skin\",\"floats\":{\"_rimV\":0.4,\"_rimpower\":0.1},\"colors\":{}}}");
+    Part.Values.Add(TEXT("_ShadowExtend"), FVector4f(0.66f, 0.f, 0.f, 0.f));
+    Part.Values.Add(TEXT("_SpecularHeight"), FVector4f(0.99f, 0.f, 0.f, 0.f));
+    Part.Values.Add(TEXT("_OverColor1"), FVector4f(0.85f, 0.5f, 0.55f, 0.3f));
+    auto* Parent = OKLoadRuntimeSharedMaterialParent(TEXT("/Game/IndependentResources/RuntimeMaterials/StudioDisplay30"), EKKRuntimeMaterialRecipe::ForgeSkin);
+    if (!TestNotNull(TEXT("StudioDisplay30 ForgeSkin parent"), Parent)) return false;
+    FKKRuntimeMaterialScene Scene;
+    OKApplyCharacterMakerLighting(Scene);
+    FString Error;
+    auto* MID = OKCreateRuntimeSharedMaterial(Part, {}, Parent, Scene, Error);
+    if (!TestNotNull(*FString::Printf(TEXT("ForgeSkin MID binds card skin properties: %s"), *Error), MID)) return false;
+    float ShadowExtend = 0.f, SpecHeight = 0.f, RimV = 0.f, RimPower = 0.f, ShadowStrength = -1.f;
+    TestTrue(TEXT("ForgeSkin binds _ShadowExtend"), MID->GetScalarParameterValue(FMaterialParameterInfo(TEXT("_ShadowExtend")), ShadowExtend) && FMath::IsNearlyEqual(ShadowExtend, 0.66f, 1e-4f));
+    TestTrue(TEXT("ForgeSkin binds _SpeclarHeight"), MID->GetScalarParameterValue(FMaterialParameterInfo(TEXT("_SpeclarHeight")), SpecHeight) && FMath::IsNearlyEqual(SpecHeight, 0.99f, 1e-4f));
+    TestTrue(TEXT("ForgeSkin binds _rimV"), MID->GetScalarParameterValue(FMaterialParameterInfo(TEXT("_rimV")), RimV) && FMath::IsNearlyEqual(RimV, 0.4f, 1e-4f));
+    TestTrue(TEXT("ForgeSkin binds _rimpower"), MID->GetScalarParameterValue(FMaterialParameterInfo(TEXT("_rimpower")), RimPower) && FMath::IsNearlyEqual(RimPower, 0.1f, 1e-4f));
+    TestTrue(TEXT("StudioDisplay30 defaults __OK_ShadowStrength to 0"), MID->GetScalarParameterValue(FMaterialParameterInfo(TEXT("__OK_ShadowStrength")), ShadowStrength) && FMath::IsNearlyEqual(ShadowStrength, 0.f, 1e-5f));
+    return true;
+}
+
 #endif
+

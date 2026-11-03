@@ -63,10 +63,11 @@ public:
 	UPROPERTY()
 	TObjectPtr<ACameraActor> Viewer;
 
-	/** Orbit viewer (free camera): focus point, yaw / pitch (degrees) and distance (cm). */
+	/** Orbit viewer (free camera): focus point, yaw / pitch / horizontal FOV (degrees) and distance (cm). */
 	FVector Focus = FVector(0.f, 0.f, 90.f);
 	float Yaw = -90.f;
 	float Pitch = -8.f;
+	float OrbitFov = 40.f;
 	float Distance = 380.f;
 
 	FString File;

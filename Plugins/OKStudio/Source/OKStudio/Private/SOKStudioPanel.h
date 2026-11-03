@@ -347,7 +347,7 @@ public:
 			GuardUnsaved([this]
 			{
 				Game->ReleaseSceneResources();
-				Game->Document->Objects.Reset(); Game->Document->Tracks.Reset(); Game->Document->Bookmarks.Reset(); Game->Document->NextId = 1; Game->Document->ActiveCamera = -1;
+				Game->Document->Objects.Reset(); Game->Document->Tracks.Reset(); Game->Document->TimelineTracks.Reset(); Game->Document->Constraints.Reset(); Game->Document->bLoopTimeline = false; Game->Document->Bookmarks.Reset(); Game->Document->NextId = 1; Game->Document->ActiveCamera = -1; Game->Document->StudioCameraId = -1; Game->Document->CharaLightId = -1; Game->Document->bLinkCharaLightToCamera = false;
 				Game->Document->Map = -1; Game->Document->Post = FOKScenePost(); Game->Document->Sound = FOKSceneSound(); Game->File.Reset();
 				// The timeline starts over too (the playhead stayed where the last scene was paused).
 				Game->Document->Duration = 10.f; Game->bTimelinePlaying = false; Game->TimelineTime = Game->Document->Playhead = 0.f; Game->LoopStart = Game->LoopEnd = 0.f;

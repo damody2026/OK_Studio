@@ -5,6 +5,7 @@
 #include "HAL/FileManager.h"
 #include "ImageUtils.h"
 #include "KKAnimatedPng.h"
+#include "KKPreviewActor.h"
 #include "Misc/Compression.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -119,6 +120,14 @@ bool FOKSceneCard::Capture(AOKSceneActor* Scene, const FTransform& View, float F
 	UWorld* World = Scene ? Scene->GetWorld() : nullptr;
 	if (!World) { OutError = TEXT("no scene world"); return false; }
 	const int32 W = FMath::Clamp(InWidth, 16, 8192), H = FMath::Clamp(InHeight, 16, 8192);
+	Scene->UpdateItemLighting();
+	if (Scene->Document)
+	{
+		for (const FOKSceneObject& O : Scene->Document->Objects)
+			if (O.Kind == EOKSceneObjectKind::Character && Scene->Document->IsShown(O.Id))
+				if (AKKPreviewActor* Preview = Scene->PreviewOf(O.Id))
+					Preview->RefreshShotShadow(false);
+	}
 	const TArray<AActor*> Objects = bTransparent ? Scene->ObjectPreviews() : TArray<AActor*>();
 	auto Shot = [&](ESceneCaptureSource Source, ETextureRenderTargetFormat Format) -> UTextureRenderTarget2D*
 	{

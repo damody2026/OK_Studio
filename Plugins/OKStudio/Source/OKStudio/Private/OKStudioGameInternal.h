@@ -9,6 +9,7 @@ namespace OKStudioGameInternal
 {
 	bool BoneWorld(const AKKPreviewActor* Actor, const FString& Bone, FTransform& Out);
 	bool LoadAudioFile(const FString& Path, TSharedPtr<const struct FKKSpeechPcm, ESPMode::ThreadSafe>& Out, FString& Error);
+	float ComputeFocusSelectionDistance(const FBox& Bounds, const FRotator& ViewRotation, float HorizontalFovDegrees, float AspectRatio);
 }
 
 /** The studio's control channel (OKStudioControl.cpp): listens while a studio runs with -Control. */

@@ -35,6 +35,97 @@
 #endif
 #include "RenderingThread.h"
 
+static bool OKShadowInjection(EKKRuntimeMaterialRecipe Recipe, const TCHAR*& OutAnchor, const TCHAR*& OutInject)
+{
+	switch (Recipe)
+	{
+	case EKKRuntimeMaterialRecipe::ForgeOpaque:
+		OutAnchor = TEXT("r1.w=mad(r3.x,r1.w,r4.x);");
+		OutInject = TEXT("r1.w*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::ForgeAlphaMasked:
+	case EKKRuntimeMaterialRecipe::ForgeAlphaTranslucent:
+		OutAnchor = TEXT("r2.z=saturate(min(r5.x,r6.x));");
+		OutInject = TEXT("r2.z*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::ForgeItem:
+		OutAnchor = TEXT("r1.w=mad(r1.w,r4.w,r7.x);");
+		OutInject = TEXT("r1.w*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::ForgeHair:
+	case EKKRuntimeMaterialRecipe::ForgeHairFront:
+		OutAnchor = TEXT("r0.w=saturate(min(r3.x,r5.x));");
+		OutInject = TEXT("r0.w*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::ForgeStudioAlpha:
+		OutAnchor = TEXT("r1.w=mad(r1.w,r4.w,r11.x);");
+		OutInject = TEXT("r1.w*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::ForgeStudio:
+	case EKKRuntimeMaterialRecipe::ForgeStudioOpaque:
+		OutAnchor = TEXT("r0.w=mad(r0.w,r3.w,r12.x);");
+		OutInject = TEXT("r0.w*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::ForgeSkin:
+		OutAnchor = TEXT("r1.w=(r2.w*r6.x);");
+		OutInject = TEXT("r1.w*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::KoikanoSkin:
+	case EKKRuntimeMaterialRecipe::KoikanoClothesOpaque:
+	case EKKRuntimeMaterialRecipe::KoikanoClothesColor:
+	case EKKRuntimeMaterialRecipe::KoikanoClothesAlphaCull:
+	case EKKRuntimeMaterialRecipe::KoikanoClothesAlpha:
+		OutAnchor = TEXT("r3.z=saturate(dot(r4.xyzw,cb2[46].xyzw));");
+		OutInject = TEXT("r3.z*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::KoikanoBrow:
+		OutAnchor = TEXT("r0.y=saturate(dot(r1.xyzw,cb1[46].xyzw));");
+		OutInject = TEXT("r0.y*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::KoikanoClothesItem:
+	case EKKRuntimeMaterialRecipe::KoikanoClothesItemTranslucent:
+		OutAnchor = TEXT("r3.w=saturate(dot(r10.xyzw,cb2[46].xyzw));");
+		OutInject = TEXT("r3.w*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::KoikanoClothesItemAlpha:
+	case EKKRuntimeMaterialRecipe::KoikanoClothesItemAlphaTranslucent:
+		OutAnchor = TEXT("r8.x=saturate(dot(r8.xyzw,cb2[46].xyzw));");
+		OutInject = TEXT("r8.x*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::KoikanoHairSun0:
+	case EKKRuntimeMaterialRecipe::KoikanoHairSun1:
+	case EKKRuntimeMaterialRecipe::KoikanoHairSun2:
+	case EKKRuntimeMaterialRecipe::KoikanoHairSun3:
+	case EKKRuntimeMaterialRecipe::KoikanoHairSun4:
+	case EKKRuntimeMaterialRecipe::KoikanoHairSun5:
+	case EKKRuntimeMaterialRecipe::KoikanoHairSun6:
+	case EKKRuntimeMaterialRecipe::KoikanoHairSun7:
+	case EKKRuntimeMaterialRecipe::KoikanoLowAlphaCull:
+		OutAnchor = TEXT("r2.w=saturate(dot(r3.xyzw,cb2[46].xyzw));");
+		OutInject = TEXT("r2.w*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::KoikanoLowAlpha:
+		OutAnchor = TEXT("r1.w=saturate(dot(r3.xyzw,cb2[46].xyzw));");
+		OutInject = TEXT("r1.w*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::KKUSSItem:
+	case EKKRuntimeMaterialRecipe::KKUSS:
+		OutAnchor = TEXT("r2.w=saturate(dot(r6.xyzw,cb2[45].xyzw));");
+		OutInject = TEXT("r2.w*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::XukmiItem:
+		OutAnchor = TEXT("r2.y=mad(r3.w,r2.y,r11.x);");
+		OutInject = TEXT("r2.y*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::ForgeMDK:
+		OutAnchor = TEXT("r0.xy=max(r0.xy,float2(asfloat(0x00000000u),asfloat(0x00000000u)));");
+		OutInject = TEXT("r0.y*=ok_atten;");
+		return true;
+	default:
+		return false;
+	}
+}
+
 bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,const FString& Output,bool HGShading){
 #if !OK_HG_SHADING_TOOL
  if(HGShading){UE_LOG(LogTemp,Error,TEXT("-HGShading needs the OKHGShading plugin in the material host"));return false;}
@@ -120,6 +211,21 @@ bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,c
  if(Outline&&Recipe==EKKRuntimeMaterialRecipe::KoikanoSkin){const TCHAR* Names[]={TEXT("_texcoord_ST"),TEXT("_texcoord2_ST"),TEXT("_texcoord3_ST"),TEXT("_texcoord4_ST")};const TCHAR* Dest[]={TEXT("v1.xy"),TEXT("v1.zw"),TEXT("v2.xy"),TEXT("v2.zw")};for(int32 I=0;I<4;++I)for(const auto& U:L.Uniforms)if(U.Name==Names[I])Code+=FString::Printf(TEXT("%s=%s*cb%d[%d].xy+cb%d[%d].zw;\n"),Dest[I],Dest[I],U.CB,U.Offset/16,U.CB,U.Offset/16);}
  if(Outline&&int32(Recipe)>=17&&int32(Recipe)<=25){for(int32 I=0;I<2;++I){if(I==1&&(Recipe==EKKRuntimeMaterialRecipe::KoikanoClothesItem||Recipe==EKKRuntimeMaterialRecipe::KoikanoClothesItemAlpha||Recipe==EKKRuntimeMaterialRecipe::KoikanoClothesItemTranslucent||Recipe==EKKRuntimeMaterialRecipe::KoikanoClothesItemAlphaTranslucent))continue;for(const auto& U:L.Uniforms)if(U.Name==(I?TEXT("_texcoord2_ST"):TEXT("_texcoord_ST")))Code+=FString::Printf(TEXT("v1.%s=float2(%s.x,1-%s.y)*cb%d[%d].xy+cb%d[%d].zw;\n"),I?TEXT("zw"):TEXT("xy"),I?TEXT("SecondaryUV"):TEXT("UV"),I?TEXT("SecondaryUV"):TEXT("UV"),U.CB,U.Offset/16,U.CB,U.Offset/16);}}
  FString Program=Outline?OKRuntimeOutlineProgram(Recipe):OKRuntimeSharedMaterialProgram(Recipe);for(const auto& T:L.Textures){auto* E=NewObject<UMaterialExpressionTextureObjectParameter>(Mat);E->ParameterName=*T.Name;E->Texture=Default(T);E->SamplerType=SAMPLERTYPE_LinearColor;Add(FString::Printf(TEXT("Texture%d"),T.Index),E);if(T.Sampler>=0)Program.ReplaceInline(*FString::Printf(TEXT("Sampler%d,"),T.Sampler),*FString::Printf(TEXT("Texture%dSampler,"),T.Index));}
+ const TCHAR* ShadowAnchor=nullptr;const TCHAR* ShadowInject=nullptr;
+ if(!HGShading&&!Outline&&OKShadowInjection(Recipe,ShadowAnchor,ShadowInject)){
+  auto* Depth=NewObject<UMaterialExpressionTextureObjectParameter>(Mat);Depth->ParameterName=TEXT("KKShadowDepth");Depth->Texture=Default(FKKRuntimeShaderTexture{TEXT("KKShadowDepth"),TEXT("white"),0,0,2});Depth->SamplerType=SAMPLERTYPE_LinearColor;Add(TEXT("OKShadowDepth"),Depth);
+  auto Vec3=[&](const TCHAR* ParamName,const FLinearColor& Def){auto* V=NewObject<UMaterialExpressionVectorParameter>(Mat);V->ParameterName=ParamName;V->DefaultValue=Def;return V;};
+  Add(TEXT("OKShadowStrength"),Scalar(TEXT("__OK_ShadowStrength"),0.f));
+  Add(TEXT("OKShadowWidth"),Scalar(TEXT("__OK_ShadowWidth"),260.f));
+  Add(TEXT("OKShadowDistance"),Scalar(TEXT("__OK_ShadowDistance"),500.f));
+  Add(TEXT("OKShadowBias"),Scalar(TEXT("__OK_ShadowBias"),1.5f));
+  Add(TEXT("OKShadowCenter"),Vec3(TEXT("__OK_ShadowCenter"),FLinearColor(0.f,0.f,90.f,1.f)));
+  Add(TEXT("OKShadowLightDir"),Vec3(TEXT("__OK_ShadowLightDir"),FLinearColor(-0.25f,0.85f,0.45f,1.f)));
+  Add(TEXT("OKShadowRight"),Vec3(TEXT("__OK_ShadowRight"),FLinearColor(0.f,1.f,0.f,1.f)));
+  Add(TEXT("OKShadowUp"),Vec3(TEXT("__OK_ShadowUp"),FLinearColor(0.f,0.f,1.f,1.f)));
+  Code+=TEXT("float ok_atten=1.0;\nif(OKShadowStrength>0.0001){\n float3 ok_sd=Position-OKShadowCenter;\n float ok_invw=1.0/max(OKShadowWidth,1.0);\n float2 ok_su=float2(0.5+dot(ok_sd,OKShadowRight)*ok_invw,0.5-dot(ok_sd,OKShadowUp)*ok_invw);\n if(all(ok_su>=0.0)&&all(ok_su<=1.0)){\n  float ok_recv=OKShadowDistance-dot(ok_sd,OKShadowLightDir);\n  float4 ok_d=float4(\n   OKShadowDepth.SampleLevel(OKShadowDepthSampler,ok_su+float2(-0.00048828125,-0.00048828125),0).r,\n   OKShadowDepth.SampleLevel(OKShadowDepthSampler,ok_su+float2( 0.00048828125,-0.00048828125),0).r,\n   OKShadowDepth.SampleLevel(OKShadowDepthSampler,ok_su+float2(-0.00048828125, 0.00048828125),0).r,\n   OKShadowDepth.SampleLevel(OKShadowDepthSampler,ok_su+float2( 0.00048828125, 0.00048828125),0).r);\n  float ok_vis=dot(step(ok_recv,ok_d+OKShadowBias),float4(0.25,0.25,0.25,0.25));\n  ok_atten=lerp(1.0,ok_vis,saturate(OKShadowStrength));\n }\n}\n");
+  if(Program.ReplaceInline(ShadowAnchor,*(FString(ShadowAnchor)+ShadowInject),ESearchCase::CaseSensitive)!=1){UE_LOG(LogTemp,Error,TEXT("Shadow anchor replacement count != 1 for %s"),*Name);return false;}
+ }
  // Evaluate native discard in depth/shadow passes as well as main color.
  if(ForgeHairDebug)Program.ReplaceInline(TEXT("return o0;"),TEXT("if(DisplayDebug>2.5)return float4(frac(v1.zw),0,1);if(DisplayDebug>1.5)return float4(r2.xxx,1);if(DisplayDebug>.5)return float4(frac(v1.xy),0,1);return o0;"));
 #if OK_HG_SHADING_TOOL

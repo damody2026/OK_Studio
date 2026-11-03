@@ -99,6 +99,7 @@ Tools/ilspy/
 # 角色卡不進版控（只留在本機）：街頭女主、群眾卡、Demo 卡、Studio 場景拆出的角色卡、含角色的 Studio 樣本場景
 /Content/CharacterCards/
 /UserData/Studio/scene/*_cards/
+/UserData/Studio/import/
 /output/StreetSocialAPNG/Male01.png
 /Content/IndependentResources/base_v1/studio/samples/koikatu_cs0000010.png
 /Content/IndependentResources/base_v1/studio/samples/koikatu_cs0000059.png

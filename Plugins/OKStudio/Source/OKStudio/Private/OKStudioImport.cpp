@@ -29,6 +29,73 @@ namespace
 		return O ? FLinearColor(O->GetNumberField(TEXT("r")), O->GetNumberField(TEXT("g")), O->GetNumberField(TEXT("b")), O->GetNumberField(TEXT("a"))) : FLinearColor::White;
 	}
 
+	/** Matches jim60105's StudioCharaLightLinkedToCamera.ComputeAngle for Directional Chara localEuler = (40, 180) (sign = -1). */
+	FVector ComputeLinkedCharaLightEuler(const FVector2D& PreLig, const FVector2D& PreCam, const FVector2D& CamEuler)
+	{
+		auto Wrap180 = [](double Deg) -> double
+		{
+			if (Deg < -180.0 || Deg > 180.0)
+				Deg = Deg <= 0.0 ? FMath::Fmod(Deg - 180.0, 360.0) + 180.0 : FMath::Fmod(Deg + 180.0, 360.0) - 180.0;
+			return Deg;
+		};
+		auto Wrap90 = [](double Deg) -> double
+		{
+			if (Deg < -90.0 || Deg > 90.0)
+				Deg = Deg <= 0.0 ? FMath::Fmod(Deg - 90.0, 180.0) + 90.0 : FMath::Fmod(Deg + 90.0, 180.0) - 90.0;
+			return Deg;
+		};
+		auto Fix360 = [](double Deg) -> double
+		{
+			Deg = FMath::Fmod(Deg, 360.0);
+			return Deg < 0.0 ? Deg + 360.0 : Deg;
+		};
+
+		const double Dx = CamEuler.X - PreCam.X;
+		const double Dy = CamEuler.Y - PreCam.Y;
+		if (FMath::IsNearlyZero(Dx, 1e-6) && FMath::IsNearlyZero(Dy, 1e-6))
+			return FVector(PreLig.X, PreLig.Y, 0.0);
+
+		const double Alpha = Wrap180(PreLig.Y + 180.0 - PreCam.Y);
+		const double Beta = Wrap90(40.0 - PreLig.X);
+		int32 Situ = 0;
+		if (FMath::IsNearlyZero(Alpha, 1e-4)) Situ = 1;
+		else if (FMath::IsNearlyEqual(FMath::Abs(Alpha), 180.0, 1e-4)) Situ = 2;
+		else if (FMath::IsNearlyEqual(FMath::Abs(Beta), 90.0, 1e-4)) Situ = 3;
+
+		if (Situ != 0)
+		{
+			double OffX = Dx, OffY = Dy;
+			if (Situ == 2)
+			{
+				OffX = -Dx;
+			}
+			else if (Situ == 3)
+			{
+				if (Alpha > 90.0) { OffX = -Dx; OffY = Dy + 180.0 - Alpha; }
+				else if (Alpha < -90.0) { OffX = -Dx; OffY = Dy - 180.0 - Alpha; }
+				else { OffX = Dx; OffY = Dy - Alpha; }
+			}
+			return FVector(Fix360(PreLig.X - OffX), Fix360(PreLig.Y + OffY), 0.0);
+		}
+
+		const double AlphaR = FMath::DegreesToRadians(Alpha);
+		const double BetaR = FMath::DegreesToRadians(Beta);
+		const double SinAlphaCosBeta = FMath::Sin(AlphaR) * FMath::Cos(BetaR);
+		double CosR = FMath::Sqrt(FMath::Max(0.0, 1.0 - SinAlphaCosBeta * SinAlphaCosBeta));
+		if (Alpha < -90.0 || Alpha > 90.0) CosR = -CosR;
+		const double SinAgls = FMath::IsNearlyZero(CosR, 1e-12) ? 0.0 : FMath::Clamp(FMath::Sin(BetaR) / CosR, -1.0, 1.0);
+		const double NextAgls = FMath::Asin(SinAgls) + FMath::DegreesToRadians(Dx);
+		const double NewBetaR = FMath::Asin(FMath::Clamp(FMath::Sin(NextAgls) * CosR, -1.0, 1.0));
+		const double CosNewBeta = FMath::Cos(NewBetaR);
+		const double CosNewAlpha = FMath::IsNearlyZero(CosNewBeta, 1e-12)
+			? 1.0 : FMath::Clamp(FMath::Cos(NextAgls) * CosR / CosNewBeta, -1.0, 1.0);
+		double NewAlphaR = FMath::Acos(CosNewAlpha);
+		if (Alpha < 0.0) NewAlphaR = -NewAlphaR;
+		const double DeltaBeta = FMath::RadiansToDegrees(NewBetaR) - Beta;
+		const double DeltaYaw = Dy + FMath::RadiansToDegrees(NewAlphaR) - Alpha;
+		return FVector(Fix360(PreLig.X - DeltaBeta), Fix360(PreLig.Y + DeltaYaw), 0.0);
+	}
+
 	struct FImporter
 	{
 		UOKSceneDocument* Doc = nullptr;
@@ -202,16 +269,31 @@ namespace
 			{
 				++Report->Lights;
 				const int32 Id = Add(EOKSceneObjectKind::Light, TEXT("Light"), Parent, O);
+				// Unity's directional and spot lights shine along +Z, Unreal's along +X.
+				FTransform& T = Doc->Find(Id)->Transform;
+				T.SetRotation(T.GetRotation() * FQuat(FVector::UpVector, UE_HALF_PI));
 				FOKSceneLight& L = Doc->Find(Id)->Light;
 				const int32 No = int32(O->GetNumberField(TEXT("no")));
-				L.Type = No == 0 ? EOKSceneLightType::Directional : No == 2 ? EOKSceneLightType::Spot : EOKSceneLightType::Point;
+				const float SpotAngleFull = float(O->GetNumberField(TEXT("spot_angle")));
+				FString LightType;
+				if (O->TryGetStringField(TEXT("light_type"), LightType))
+				{
+					L.Type = LightType == TEXT("directional") ? EOKSceneLightType::Directional
+						: LightType == TEXT("spot") ? EOKSceneLightType::Spot : EOKSceneLightType::Point;
+				}
+				else
+				{
+					L.Type = No == 0 ? EOKSceneLightType::Directional
+						: (No == 2 || (No > 2 && !FMath::IsNearlyEqual(SpotAngleFull, 30.f, 1e-2f))) ? EOKSceneLightType::Spot
+						: EOKSceneLightType::Point;
+				}
 				const TSharedPtr<FJsonObject>* C = nullptr;
 				if (O->TryGetObjectField(TEXT("color"), C)) L.Color = Color(*C);
 				// Unity intensity (about 0..2) to UE units; ranges are metres.
 				const float Intensity = float(O->GetNumberField(TEXT("intensity")));
 				L.Intensity = L.Type == EOKSceneLightType::Directional ? Intensity * 4.f : Intensity * 800.f;
 				L.Range = float(O->GetNumberField(TEXT("range"))) * 100.f;
-				L.SpotAngle = float(O->GetNumberField(TEXT("spot_angle"))) * 0.5f;
+				L.SpotAngle = SpotAngleFull * 0.5f;
 				L.bShadows = O->GetBoolField(TEXT("shadow"));
 				if (!O->GetBoolField(TEXT("enable"))) Doc->Find(Id)->bVisible = false;
 				Note(TEXT("light intensities are converted approximately"));
@@ -347,7 +429,29 @@ namespace
 				int32 SavedOutfit = 0;
 				if (O->TryGetObjectField(TEXT("status"), SavedStatus)) (*SavedStatus)->TryGetNumberField(TEXT("coordinate"), SavedOutfit);
 				SavedOutfit = FMath::Max(0, SavedOutfit);
-				const bool bCard = !KksCard.IsEmpty() && FOkSession::MakeOkCardForOutfit(KksCard, OkCard, SavedOutfit, Summary);
+				bool bCard = !KksCard.IsEmpty() && FOkSession::MakeOkCardForOutfit(KksCard, OkCard, SavedOutfit, Summary);
+				if (!bCard && !KksCard.IsEmpty() && !Report->Source.IsEmpty())
+				{
+					FString Dir = FPaths::ConvertRelativePathToFull(FPaths::GetPath(Report->Source));
+					for (int32 Depth = 0; Depth < 8 && !Dir.IsEmpty(); ++Depth)
+					{
+						const FString ModsDir = Dir / TEXT("mods");
+						if (IFileManager::Get().DirectoryExists(*ModsDir))
+						{
+							FString RetrySummary;
+							if (FOkSession::MakeOkCardForOutfit(KksCard, OkCard, SavedOutfit, RetrySummary, ModsDir)
+								|| FOkSession::MakeOkCardForOutfit(KksCard, OkCard, SavedOutfit, RetrySummary, Dir))
+							{
+								bCard = true;
+								Summary = MoveTemp(RetrySummary);
+							}
+							break;
+						}
+						const FString ParentDir = FPaths::GetPath(Dir);
+						if (ParentDir.IsEmpty() || ParentDir == Dir) break;
+						Dir = ParentDir;
+					}
+				}
 				if (bCard) ++Report->CharacterCards; else Report->Notes.Add(FString::Printf(TEXT("character %d: no OK card (%s)"), Key, *Summary));
 				// A card that did not convert stays beside the scene's cards (char_<key>.kks.png) to reproduce the failure.
 				if (bCard) IFileManager::Get().Delete(*KksCard);
@@ -607,7 +711,17 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 	IFileManager::Get().MakeDirectory(*CardDirectory, true);
 	TArray<ANSICHAR> Buffer;
 	Buffer.SetNumZeroed(64 << 20);
-	if (ok_studio_scene_export(TCHAR_TO_UTF8(*ScenePng), TCHAR_TO_UTF8(*CardDirectory), Buffer.GetData(), Buffer.Num()) != 0) { OutError = UTF8_TO_TCHAR(Buffer.GetData()); return false; }
+	int32 ExportRc = ok_studio_scene_export(TCHAR_TO_UTF8(*ScenePng), TCHAR_TO_UTF8(*CardDirectory), Buffer.GetData(), Buffer.Num());
+	if (ExportRc != 0 && FCStringAnsi::Strncmp(Buffer.GetData(), "needs ", 6) == 0)
+	{
+		const int64 Needed = FCStringAnsi::Atoi64(Buffer.GetData() + 6);
+		if (Needed > Buffer.Num() && Needed <= (1536LL << 20))
+		{
+			Buffer.SetNumZeroed(int32(Needed + 4096));
+			ExportRc = ok_studio_scene_export(TCHAR_TO_UTF8(*ScenePng), TCHAR_TO_UTF8(*CardDirectory), Buffer.GetData(), Buffer.Num());
+		}
+	}
+	if (ExportRc != 0) { OutError = UTF8_TO_TCHAR(Buffer.GetData()); return false; }
 	TSharedPtr<FJsonObject> Scene;
 	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(UTF8_TO_TCHAR(Buffer.GetData())), Scene) || !Scene) { OutError = TEXT("bad scene JSON"); return false; }
 	Report = FReport();
@@ -626,6 +740,17 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
     Document->Sound = FOKSceneSound();
     Document->ItemAnimationSeconds=0.f;
 	Document->NextId = 1;
+	Document->Constraints.Reset();
+	Document->TimelineTracks.Reset();
+	Document->bLoopTimeline = false;
+	Document->StudioCameraId = -1;
+	Document->StudioCameraOrbitTarget = FVector::ZeroVector;
+	Document->StudioCameraOrbitRot = FVector::ZeroVector;
+	Document->StudioCameraOrbitDist = FVector::ZeroVector;
+	Document->CharaLightId = -1;
+	Document->bLinkCharaLightToCamera = false;
+	Document->LinkedLightBase = FVector2D::ZeroVector;
+	Document->LinkedCameraBase = FVector2D::ZeroVector;
 	Document->ActiveCamera = -1;
 	Document->Map = FOKStudioCatalog::Get().FindMap(Report.Map) ? Report.Map : -1;
 	if (Report.Map >= 0 && Document->Map < 0) Report.Notes.Add(FString::Printf(TEXT("map %d is not in the base library"), Report.Map));
@@ -682,6 +807,7 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 			if (E.TryGetNumberField(TEXT("bloom_blur"), Value)) Document->Post.BloomSize = float(FMath::Clamp(Value / 4., 0.1, 8.));
 		}
 		if (E.TryGetBoolField(TEXT("vignette"), bOn)) Document->Post.bVignette = bOn;
+		if (E.TryGetBoolField(TEXT("shadow"), bOn)) Document->Post.bShadow = bOn;
 		// The shading globals (ambient shadow colour and strength, outline darkness and width): Studio writes them to
 		// _ambientshadowG, _LineColorG, _linewidthG for everything it draws.
 		const TSharedPtr<FJsonObject>* Ambient = nullptr;
@@ -730,6 +856,7 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 			const FString File = FPaths::GetCleanFilename(Name);
 			const FString Library = FString::Printf(TEXT("studio/%s/%s"), Kind, *File);
 			if (FPaths::FileExists(AOKSceneActor::LibraryDirectory() / Library)) return Library;
+			if (FPaths::FileExists(CardDirectory / File)) return CardDirectory / File;
 			const FString Normal = FPaths::ConvertRelativePathToFull(ScenePng).Replace(TEXT("\\"), TEXT("/"));
 			const int32 UserData = Normal.Find(TEXT("/UserData/"), ESearchCase::IgnoreCase);
 			TArray<FString> Candidates;
@@ -786,6 +913,7 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 				? OKStudioUngradeSourceColor(Document->Post, Shown, 1.86f) : OKStudioConfiguredClearColor();
 	}
 	// The Studio view the scene was saved with: a camera object, the active view unless a camera object is.
+	int32 CharaLightId = -1;
 	const TSharedPtr<FJsonObject>* Camera = nullptr;
 	if (Scene->TryGetObjectField(TEXT("camera"), Camera))
 	{
@@ -812,6 +940,10 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 			Document->Post.Aperture = float(FMath::Clamp(Document->Post.Aperture * Scale, 0.3, 22.0));
 		}
 		Cam->Camera.Fov = float(FMath::RadiansToDegrees(2.0 * FMath::Atan(FMath::Tan(VerticalFov * 0.5) * 16.0 / 9.0)));
+		Document->StudioCameraId = Id;
+		Document->StudioCameraOrbitTarget = Vec3(*Camera, TEXT("pos"));
+		Document->StudioCameraOrbitRot = Vec3(*Camera, TEXT("rotate"));
+		Document->StudioCameraOrbitDist = Distance;
 		if (Document->ActiveCamera < 0) Document->ActiveCamera = Id;
 		++Report.Cameras;
 		// CameraLightCtrl.LightCalc rotates the scene-root "Light Chara", not
@@ -843,8 +975,62 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 				Light.bShadows = L->GetBoolField(TEXT("shadow"));
 				// Studio's character light lights the characters and items, not the map.
 				Light.bCharactersOnly = true;
+				if (Light.Type == EOKSceneLightType::Directional && CharaLightId < 0) CharaLightId = LightId;
 				++Report.Lights;
 			}
+	}
+	bool bLinkCharaLight = false;
+	FVector2D LinkedLightBase(0., 0.), LinkedCamBase(0., 0.);
+	const TSharedPtr<FJsonObject>* LinkedLightObj = nullptr;
+	if (CharaLightId >= 0 && Scene->TryGetObjectField(TEXT("chara_light_linked_to_camera"), LinkedLightObj) && LinkedLightObj && (*LinkedLightObj).IsValid())
+	{
+		bool bLocked = false;
+		(*LinkedLightObj)->TryGetBoolField(TEXT("locked"), bLocked);
+		const TArray<TSharedPtr<FJsonValue>>* LA = nullptr;
+		const TArray<TSharedPtr<FJsonValue>>* CA = nullptr;
+		if (bLocked
+			&& (*LinkedLightObj)->TryGetArrayField(TEXT("light_angle"), LA) && LA->Num() == 2
+			&& (*LinkedLightObj)->TryGetArrayField(TEXT("camera_angle"), CA) && CA->Num() == 2)
+		{
+			LinkedLightBase = FVector2D((*LA)[0]->AsNumber(), (*LA)[1]->AsNumber());
+			LinkedCamBase = FVector2D((*CA)[0]->AsNumber(), (*CA)[1]->AsNumber());
+			bLinkCharaLight = true;
+		}
+	}
+	Document->CharaLightId = CharaLightId;
+	Document->bLinkCharaLightToCamera = bLinkCharaLight;
+	Document->LinkedLightBase = LinkedLightBase;
+	Document->LinkedCameraBase = LinkedCamBase;
+	const TSharedPtr<FJsonObject>* LightSettingsObj = nullptr;
+	if (Scene->TryGetObjectField(TEXT("light_settings"), LightSettingsObj) && LightSettingsObj && (*LightSettingsObj).IsValid())
+	{
+		double GlobalStrength = -1.;
+		if ((*LightSettingsObj)->TryGetNumberField(TEXT("shadow_strength"), GlobalStrength) && FMath::IsFinite(GlobalStrength))
+		{
+			const float Clamped = float(FMath::Clamp(GlobalStrength, 0., 1.));
+			for (FOKSceneObject& Obj : Document->Objects)
+				if (Obj.Kind == EOKSceneObjectKind::Light) Obj.Light.ShadowStrength = Clamped;
+		}
+		const TArray<TSharedPtr<FJsonValue>>* LightEntries = nullptr;
+		if ((*LightSettingsObj)->TryGetArrayField(TEXT("lights"), LightEntries))
+		{
+			for (const TSharedPtr<FJsonValue>& EntryVal : *LightEntries)
+			{
+				const TSharedPtr<FJsonObject> Entry = EntryVal->AsObject();
+				if (!Entry) continue;
+				int32 ObjKey = 0;
+				if (!Entry->TryGetNumberField(TEXT("object_id"), ObjKey)) continue;
+				const int32 TargetId = (ObjKey == -10) ? CharaLightId : (Importer.KeyToId.Find(ObjKey) ? *Importer.KeyToId.Find(ObjKey) : -1);
+				FOKSceneObject* TargetObj = Document->Find(TargetId);
+				if (!TargetObj || TargetObj->Kind != EOKSceneObjectKind::Light) continue;
+				bool bLightEnable = TargetObj->bVisible; if (Entry->TryGetBoolField(TEXT("enable"), bLightEnable)) TargetObj->bVisible = bLightEnable;
+				bool bLightShadows = TargetObj->Light.bShadows;
+				if (Entry->TryGetBoolField(TEXT("shadows"), bLightShadows)) TargetObj->Light.bShadows = bLightShadows;
+				double EntryStrength = 0.;
+				if (Entry->TryGetNumberField(TEXT("shadow_strength"), EntryStrength) && FMath::IsFinite(EntryStrength))
+					TargetObj->Light.ShadowStrength = float(FMath::Clamp(EntryStrength, 0., 1.));
+			}
+		}
 	}
 	// MMDD (MMD Director / KKVMDPlay) motion speeds, durations, and evaluated VMD camera timeline track.
 	const TSharedPtr<FJsonObject>* Mmdd = nullptr;
@@ -931,10 +1117,16 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 				if (!C->TryGetArrayField(TEXT("keyframes"), Keyframes) || Keyframes->IsEmpty()) continue;
 				const int32 MmddCamId = Document->AddObject(EOKSceneObjectKind::Camera, TEXT("MMDD camera"), -1);
 				FOKSceneObject* MmddCam = Document->Find(MmddCamId);
+				FOKSceneObject* LightObj = bLinkCharaLight ? Document->Find(CharaLightId) : nullptr;
+				const float LightIntensity = LightObj ? LightObj->Light.Intensity : 0.f;
 				FOKSceneTrack CamTrack;
 				CamTrack.ObjectId = MmddCamId;
 				CamTrack.bSmoothPath = false;
+				FOKSceneTrack LightTrack;
+				LightTrack.ObjectId = CharaLightId;
+				LightTrack.bSmoothPath = false;
 				const FQuat CamTurn(FVector::UpVector, UE_HALF_PI);
+				const FQuat LightChild = UnityToUe(FVector::ZeroVector, FVector(40.f, 180.f, 0.f), FVector::OneVector).GetRotation();
 				for (int32 K = 0; K < Keyframes->Num(); ++K)
 				{
 					const TSharedPtr<FJsonObject> Kf = (*Keyframes)[K]->AsObject();
@@ -955,8 +1147,20 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 					Key.Ease = EOKSceneEase::Linear;
 					Key.Transform = T;
 					Key.Value = HorizFov;
-					CamTrack.Keys.Add(MoveTemp(Key));
 					Document->Duration = FMath::Max(Document->Duration, Key.Time);
+					if (LightObj)
+					{
+						const FVector LightEuler = ComputeLinkedCharaLightEuler(LinkedLightBase, LinkedCamBase, FVector2D(Rot.X, Rot.Y));
+						const FQuat LightShine = UnityToUe(FVector::ZeroVector, LightEuler, FVector::OneVector).GetRotation() * LightChild * CamTurn;
+						if (K == 0) LightObj->Transform = FTransform(LightShine);
+						FOKSceneKey LightKey;
+						LightKey.Time = Key.Time;
+						LightKey.Ease = EOKSceneEase::Linear;
+						LightKey.Transform = FTransform(LightShine);
+						LightKey.Value = LightIntensity;
+						LightTrack.Keys.Add(MoveTemp(LightKey));
+					}
+					CamTrack.Keys.Add(MoveTemp(Key));
 				}
 				if (!CamTrack.Keys.IsEmpty())
 				{
@@ -965,6 +1169,11 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 					++Report.Cameras;
 					Document->Post.bDepthOfField = false;
 					Importer.Note(TEXT("MMDD VMD camera track imported"));
+					if (!LightTrack.Keys.IsEmpty())
+					{
+						Document->Tracks.Add(MoveTemp(LightTrack));
+						Importer.Note(TEXT("StudioCharaLightLinkedToCamera track attached to character light"));
+					}
 				}
 				break;
 			}
@@ -1046,7 +1255,10 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 						{
 							const auto& A = Entry.Value->AsArray();
 							const FVector R(A[0]->AsNumber(), A[1]->AsNumber(), A[2]->AsNumber());
-							Key->Transform.SetRotation(UnityToUe(FVector::ZeroVector, R, FVector::OneVector).GetRotation());
+							FQuat Q = UnityToUe(FVector::ZeroVector, R, FVector::OneVector).GetRotation();
+							if (BaseObj->Kind == EOKSceneObjectKind::Camera || BaseObj->Kind == EOKSceneObjectKind::Light)
+								Q = Q * FQuat(FVector::UpVector, UE_HALF_PI);
+							Key->Transform.SetRotation(Q);
 						}
 						else if (PropName == TEXT("eyebrow_ptn")) { Key->bCharacterState = true; Key->EyebrowPattern = int32(Entry.Value->AsNumber()); }
 						else if (PropName == TEXT("eyes_ptn")) { Key->bCharacterState = true; Key->EyesPattern = int32(Entry.Value->AsNumber()); }
@@ -1068,6 +1280,344 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 				{
 					Importer.Note(TEXT("VNGE KFA animation tracks imported"));
 					break;
+				}
+			}
+		}
+	}
+	// Studio scene plugins: TreeNodeNaming, SaveCameraObjectFOV, StudioSceneSettings, MoarCamz, KKPE, NodesConstraints, Timeline.
+	{
+		auto JsonFloats = [](const TSharedPtr<FJsonObject>& Obj, const TCHAR* Key, TArray<float>& Out) -> bool
+		{
+			Out.Reset();
+			const TArray<TSharedPtr<FJsonValue>>* Arr = nullptr;
+			if (!Obj || !Obj->TryGetArrayField(Key, Arr)) return false;
+			Out.Reserve(Arr->Num());
+			for (const TSharedPtr<FJsonValue>& V : *Arr) Out.Add(float(V->AsNumber()));
+			return true;
+		};
+		auto JsonBools3 = [](const TSharedPtr<FJsonObject>& Obj, const TCHAR* Key, bool& X, bool& Y, bool& Z)
+		{
+			const TArray<TSharedPtr<FJsonValue>>* Arr = nullptr;
+			if (Obj && Obj->TryGetArrayField(Key, Arr) && Arr->Num() >= 3)
+			{
+				X = (*Arr)[0]->AsBool();
+				Y = (*Arr)[1]->AsBool();
+				Z = (*Arr)[2]->AsBool();
+			}
+		};
+		auto VertFovToHoriz = [](double VertDeg) -> float
+		{
+			const double VertRad = FMath::DegreesToRadians(FMath::Clamp(VertDeg, 1.0, 170.0));
+			return float(FMath::RadiansToDegrees(2.0 * FMath::Atan(FMath::Tan(VertRad * 0.5) * 16.0 / 9.0)));
+		};
+
+		// 1. TreeNodeNaming (`object_names`)
+		const TSharedPtr<FJsonObject>* ObjectNamesObj = nullptr;
+		if (Scene->TryGetObjectField(TEXT("object_names"), ObjectNamesObj) && ObjectNamesObj && (*ObjectNamesObj).IsValid())
+		{
+			int32 NamedCount = 0;
+			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*ObjectNamesObj)->Values)
+			{
+				const int32 DicKey = FCString::Atoi(*Pair.Key);
+				const FString CustomName = Pair.Value.IsValid() ? Pair.Value->AsString() : FString();
+				if (CustomName.IsEmpty()) continue;
+				if (const int32* ObjId = Importer.KeyToId.Find(DicKey))
+					if (FOKSceneObject* Obj = Document->Find(*ObjId)) { Obj->Name = CustomName; ++NamedCount; }
+			}
+			if (NamedCount > 0) Importer.Note(TEXT("TreeNodeNaming custom names imported"));
+		}
+
+		// 2. SaveCameraObjectFOV (`camera_fovs`)
+		const TSharedPtr<FJsonObject>* CameraFovsObj = nullptr;
+		if (Scene->TryGetObjectField(TEXT("camera_fovs"), CameraFovsObj) && CameraFovsObj && (*CameraFovsObj).IsValid())
+		{
+			const TSharedPtr<FJsonObject>* CamMap = nullptr;
+			if ((*CameraFovsObj)->TryGetObjectField(TEXT("cameras"), CamMap) && CamMap && (*CamMap).IsValid())
+			{
+				for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*CamMap)->Values)
+				{
+					const int32 DicKey = FCString::Atoi(*Pair.Key);
+					if (const int32* ObjId = Importer.KeyToId.Find(DicKey))
+						if (FOKSceneObject* CamObj = Document->Find(*ObjId); CamObj && CamObj->Kind == EOKSceneObjectKind::Camera && Pair.Value.IsValid())
+							CamObj->Camera.Fov = VertFovToHoriz(Pair.Value->AsNumber());
+				}
+			}
+			double MainVertFov = 0.;
+			if ((*CameraFovsObj)->TryGetNumberField(TEXT("main_fov"), MainVertFov) && Document->StudioCameraId >= 0)
+				if (FOKSceneObject* StudioCam = Document->Find(Document->StudioCameraId))
+					StudioCam->Camera.Fov = VertFovToHoriz(MainVertFov);
+			Importer.Note(TEXT("SaveCameraObjectFOV settings imported"));
+		}
+
+		// 3. MoarCamz (`moar_camz`)
+		const TSharedPtr<FJsonObject>* MoarCamzObj = nullptr;
+		if (Scene->TryGetObjectField(TEXT("moar_camz"), MoarCamzObj) && MoarCamzObj && (*MoarCamzObj).IsValid())
+		{
+			const TArray<TSharedPtr<FJsonValue>>* Slots = nullptr;
+			if ((*MoarCamzObj)->TryGetArrayField(TEXT("slots"), Slots) && !Slots->IsEmpty())
+			{
+				int32 AddedMoar = 0;
+				for (const TSharedPtr<FJsonValue>& SVal : *Slots)
+				{
+					const TSharedPtr<FJsonObject> S = SVal->AsObject();
+					if (!S) continue;
+					const int32 SlotNum = int32(S->GetNumberField(TEXT("slot")));
+					FVector TargetPos = Vec3(S, TEXT("pos"));
+					const FVector OffsetPos = Vec3(S, TEXT("offset_pos"));
+					bool bEngaged = false;
+					S->TryGetBoolField(TEXT("center_target_engaged"), bEngaged);
+					if (bEngaged && TargetPos.IsNearlyZero(1e-4f))
+					{
+						int32 TargetKey = -1;
+						if (S->TryGetNumberField(TEXT("center_target"), TargetKey))
+							if (const int32* TargetId = Importer.KeyToId.Find(TargetKey))
+							{
+								const FVector UeLoc = Document->WorldTransform(*TargetId).GetLocation() * 0.01;
+								TargetPos = FVector(-UeLoc.X, UeLoc.Z, UeLoc.Y);
+							}
+					}
+					TargetPos += OffsetPos;
+					const FVector Rot = Vec3(S, TEXT("rot"));
+					const FVector Dist = Vec3(S, TEXT("distance"));
+					double Fov = 23.;
+					S->TryGetNumberField(TEXT("fov"), Fov);
+					const int32 CamId = Document->AddObject(EOKSceneObjectKind::Camera, FString::Printf(TEXT("MoarCamz %d"), SlotNum), -1);
+					if (FOKSceneObject* CamObj = Document->Find(CamId))
+					{
+						const FTransform Base = UnityToUe(TargetPos, Rot, FVector::OneVector);
+						CamObj->Transform = FTransform(Base.GetRotation() * FQuat(FVector::UpVector, UE_HALF_PI),
+							Base.GetLocation() + Base.GetRotation().RotateVector(FVector(-Dist.X, Dist.Z, Dist.Y) * 100.0));
+						CamObj->Camera.Fov = VertFovToHoriz(Fov);
+						++Report.Cameras;
+						++AddedMoar;
+						if (AddedMoar <= 10)
+						{
+							const int32 MarkIdx = AddedMoar - 1;
+							while (Document->Bookmarks.Num() <= MarkIdx) Document->Bookmarks.AddDefaulted();
+							if (!Document->Bookmarks[MarkIdx].bSet)
+							{
+								Document->Bookmarks[MarkIdx].bSet = true;
+								Document->Bookmarks[MarkIdx].Focus = Base.GetLocation();
+								Document->Bookmarks[MarkIdx].Distance = float(FMath::Max(Dist.Size() * 100.0, 10.0));
+								Document->Bookmarks[MarkIdx].Camera = CamId;
+							}
+						}
+					}
+				}
+				if (AddedMoar > 0) Importer.Note(TEXT("MoarCamz camera slots imported"));
+			}
+		}
+
+		// 4. StudioSceneSettings (`scene_settings`)
+		const TSharedPtr<FJsonObject>* SceneSettingsObj = nullptr;
+		if (Scene->TryGetObjectField(TEXT("scene_settings"), SceneSettingsObj) && SceneSettingsObj && (*SceneSettingsObj).IsValid())
+		{
+			double NearM = 0., FarM = 0.;
+			const bool bHasNear = (*SceneSettingsObj)->TryGetNumberField(TEXT("near_clip"), NearM) && NearM > 0.;
+			const bool bHasFar = (*SceneSettingsObj)->TryGetNumberField(TEXT("far_clip"), FarM) && FarM > 0.;
+			if (bHasNear || bHasFar)
+			{
+				for (FOKSceneObject& Obj : Document->Objects)
+				{
+					if (Obj.Kind != EOKSceneObjectKind::Camera) continue;
+					if (bHasNear) Obj.Camera.Near = float(NearM * 100.0);
+					if (bHasFar) Obj.Camera.Far = float(FarM * 100.0);
+				}
+				Importer.Note(TEXT("StudioSceneSettings clip planes imported"));
+			}
+		}
+
+		// 5. KKPE (`kkpe` character & item bone TRS + blendshapes)
+		const TSharedPtr<FJsonObject>* KkpeObj = nullptr;
+		if (Scene->TryGetObjectField(TEXT("kkpe"), KkpeObj) && KkpeObj && (*KkpeObj).IsValid())
+		{
+			auto ParseKkpeBonesAndMorphs = [&](const TSharedPtr<FJsonObject>& Elem, TArray<FOKSceneBoneTrs>& OutBones, TArray<FOKSceneMorphOverride>& OutMorphs)
+			{
+				const TArray<TSharedPtr<FJsonValue>>* BonesArr = nullptr;
+				if (Elem->TryGetArrayField(TEXT("bones"), BonesArr))
+				{
+					for (const TSharedPtr<FJsonValue>& BVal : *BonesArr)
+					{
+						const TSharedPtr<FJsonObject> B = BVal->AsObject();
+						if (!B) continue;
+						FOKSceneBoneTrs Trs;
+						if (!B->TryGetStringField(TEXT("bone"), Trs.Bone) || Trs.Bone.IsEmpty()) continue;
+						TArray<float> V;
+						if (JsonFloats(B, TEXT("pos"), V) && V.Num() >= 3) { Trs.bHasPos = true; Trs.Pos = FVector(V[0], V[1], V[2]); }
+						if (JsonFloats(B, TEXT("euler"), V) && V.Num() >= 3) { Trs.bHasRot = true; Trs.Euler = FVector(V[0], V[1], V[2]); }
+						if (JsonFloats(B, TEXT("scale"), V) && V.Num() >= 3) { Trs.bHasScale = true; Trs.Scale = FVector(V[0], V[1], V[2]); }
+						if (Trs.bHasPos || Trs.bHasRot || Trs.bHasScale) OutBones.Add(MoveTemp(Trs));
+					}
+				}
+				const TArray<TSharedPtr<FJsonValue>>* MorphsArr = nullptr;
+				if (Elem->TryGetArrayField(TEXT("morphs"), MorphsArr))
+				{
+					for (const TSharedPtr<FJsonValue>& MVal : *MorphsArr)
+					{
+						const TSharedPtr<FJsonObject> M = MVal->AsObject();
+						if (!M) continue;
+						FOKSceneMorphOverride Morph;
+						if (!M->TryGetStringField(TEXT("renderer"), Morph.Renderer) || Morph.Renderer.IsEmpty()) continue;
+						Morph.Index = int32(M->GetNumberField(TEXT("index")));
+						Morph.Weight = float(FMath::Clamp(M->GetNumberField(TEXT("weight")), 0.0, 100.0));
+						if (Morph.Index >= 0) OutMorphs.Add(MoveTemp(Morph));
+					}
+				}
+			};
+			int32 KkpeApplied = 0;
+			const TArray<TSharedPtr<FJsonValue>>* KkpeChars = nullptr;
+			if ((*KkpeObj)->TryGetArrayField(TEXT("characters"), KkpeChars))
+			{
+				for (const TSharedPtr<FJsonValue>& CVal : *KkpeChars)
+				{
+					const TSharedPtr<FJsonObject> Elem = CVal->AsObject();
+					if (!Elem) continue;
+					const int32* ObjId = Importer.KeyToId.Find(int32(Elem->GetNumberField(TEXT("dic_key"))));
+					FOKSceneObject* Obj = ObjId ? Document->Find(*ObjId) : nullptr;
+					if (!Obj || Obj->Kind != EOKSceneObjectKind::Character) continue;
+					int32 Ptn = -1;
+					double Open = -1.;
+					if (Elem->TryGetNumberField(TEXT("eyes_ptn"), Ptn) && Ptn >= 0) Obj->Character.EyesPattern = Ptn;
+					if (Elem->TryGetNumberField(TEXT("eyes_open"), Open) && Open >= 0.) Obj->Character.EyesOpen = float(FMath::Clamp(Open, 0., 1.));
+					if (Elem->TryGetNumberField(TEXT("mouth_ptn"), Ptn) && Ptn >= 0) Obj->Character.MouthPattern = Ptn;
+					if (Elem->TryGetNumberField(TEXT("mouth_open"), Open) && Open >= 0.) Obj->Character.MouthOpen = float(FMath::Clamp(Open, 0., 1.));
+					if (Elem->TryGetNumberField(TEXT("eyebrows_ptn"), Ptn) && Ptn >= 0) Obj->Character.EyebrowPattern = Ptn;
+					ParseKkpeBonesAndMorphs(Elem, Obj->Character.BoneOverrides, Obj->Character.MorphOverrides);
+					++KkpeApplied;
+				}
+			}
+			const TArray<TSharedPtr<FJsonValue>>* KkpeItems = nullptr;
+			if ((*KkpeObj)->TryGetArrayField(TEXT("items"), KkpeItems))
+			{
+				for (const TSharedPtr<FJsonValue>& IVal : *KkpeItems)
+				{
+					const TSharedPtr<FJsonObject> Elem = IVal->AsObject();
+					if (!Elem) continue;
+					const int32* ObjId = Importer.KeyToId.Find(int32(Elem->GetNumberField(TEXT("dic_key"))));
+					FOKSceneObject* Obj = ObjId ? Document->Find(*ObjId) : nullptr;
+					if (!Obj || Obj->Kind != EOKSceneObjectKind::Item) continue;
+					ParseKkpeBonesAndMorphs(Elem, Obj->Item.BoneOverrides, Obj->Item.MorphOverrides);
+					++KkpeApplied;
+				}
+			}
+			if (KkpeApplied > 0) Importer.Note(TEXT("KKPE bone TRS & blendshape overrides imported"));
+		}
+
+		// 6. NodesConstraints & KK_AnimationController (`constraints`)
+		const TArray<TSharedPtr<FJsonValue>>* ConstraintsArr = nullptr;
+		if (Scene->TryGetArrayField(TEXT("constraints"), ConstraintsArr) && !ConstraintsArr->IsEmpty())
+		{
+			for (const TSharedPtr<FJsonValue>& CVal : *ConstraintsArr)
+			{
+				const TSharedPtr<FJsonObject> C = CVal->AsObject();
+				if (!C) continue;
+				const int32 ParentKey = int32(C->GetNumberField(TEXT("parent_key")));
+				const int32 ChildKey = int32(C->GetNumberField(TEXT("child_key")));
+				int32 ParentId = -1;
+				if (ParentKey == -2) ParentId = -2;
+				else if (const int32* FoundP = Importer.KeyToId.Find(ParentKey)) ParentId = *FoundP;
+				else continue;
+				const int32* FoundC = Importer.KeyToId.Find(ChildKey);
+				if (!FoundC) continue;
+
+				FOKSceneConstraint Con;
+				Con.LoadId = int32(C->GetNumberField(TEXT("load_id")));
+				C->TryGetBoolField(TEXT("enabled"), Con.bEnabled);
+				Con.ParentId = ParentId;
+				C->TryGetStringField(TEXT("parent_bone"), Con.ParentBone);
+				Con.ChildId = *FoundC;
+				C->TryGetStringField(TEXT("child_bone"), Con.ChildBone);
+				C->TryGetNumberField(TEXT("child_ik_effector"), Con.ChildIkEffector);
+				C->TryGetBoolField(TEXT("position"), Con.bPosition);
+				C->TryGetBoolField(TEXT("mirror_position"), Con.bMirrorPosition);
+				C->TryGetBoolField(TEXT("rotation"), Con.bRotation);
+				C->TryGetBoolField(TEXT("mirror_rotation"), Con.bMirrorRotation);
+				C->TryGetBoolField(TEXT("look_at"), Con.bLookAt);
+				C->TryGetBoolField(TEXT("scale"), Con.bScale);
+				C->TryGetBoolField(TEXT("mirror_scale"), Con.bMirrorScale);
+				TArray<float> V;
+				if (JsonFloats(C, TEXT("pos_offset"), V) && V.Num() >= 3) Con.PositionOffset = FVector(V[0], V[1], V[2]);
+				if (JsonFloats(C, TEXT("rot_offset"), V) && V.Num() >= 4) Con.RotationOffset = FQuat(V[0], V[1], V[2], V[3]).GetNormalized();
+				if (JsonFloats(C, TEXT("scale_offset"), V) && V.Num() >= 3) Con.ScaleOffset = FVector(V[0], V[1], V[2]);
+				if (JsonFloats(C, TEXT("orig_parent_pos"), V) && V.Num() >= 3) Con.OrigParentPos = FVector(V[0], V[1], V[2]);
+				if (JsonFloats(C, TEXT("orig_parent_rot"), V) && V.Num() >= 4) Con.OrigParentRot = FQuat(V[0], V[1], V[2], V[3]).GetNormalized();
+				if (JsonFloats(C, TEXT("orig_parent_scale"), V) && V.Num() >= 3) Con.OrigParentScale = FVector(V[0], V[1], V[2]);
+				double Factor = 1.;
+				if (C->TryGetNumberField(TEXT("pos_factor"), Factor)) Con.PosFactor = float(Factor);
+				if (C->TryGetNumberField(TEXT("rot_factor"), Factor)) Con.RotFactor = float(Factor);
+				if (C->TryGetNumberField(TEXT("scale_factor"), Factor)) Con.ScaleFactor = float(Factor);
+				JsonBools3(C, TEXT("pos_locks"), Con.bLockPosX, Con.bLockPosY, Con.bLockPosZ);
+				JsonBools3(C, TEXT("rot_locks"), Con.bLockRotX, Con.bLockRotY, Con.bLockRotZ);
+				JsonBools3(C, TEXT("scale_locks"), Con.bLockScaleX, Con.bLockScaleY, Con.bLockScaleZ);
+				Document->Constraints.Add(MoveTemp(Con));
+			}
+			if (!Document->Constraints.IsEmpty()) Importer.Note(TEXT("NodesConstraints parent-child constraints imported"));
+		}
+
+		// 7. Timeline (`timeline`)
+		const TSharedPtr<FJsonObject>* TimelineObj = nullptr;
+		if (Scene->TryGetObjectField(TEXT("timeline"), TimelineObj) && TimelineObj && (*TimelineObj).IsValid())
+		{
+			double TlDuration = 0.;
+			if ((*TimelineObj)->TryGetNumberField(TEXT("duration"), TlDuration) && TlDuration > 0.)
+				Document->Duration = FMath::Max(Document->Duration, float(TlDuration));
+			const TArray<TSharedPtr<FJsonValue>>* TlTracks = nullptr;
+			if ((*TimelineObj)->TryGetArrayField(TEXT("tracks"), TlTracks) && !TlTracks->IsEmpty())
+			{
+				for (const TSharedPtr<FJsonValue>& TVal : *TlTracks)
+				{
+					const TSharedPtr<FJsonObject> T = TVal->AsObject();
+					if (!T) continue;
+					FOKSceneTimelineTrack Track;
+					T->TryGetStringField(TEXT("owner"), Track.Owner);
+					T->TryGetStringField(TEXT("id"), Track.InterpolableId);
+					const int32 DicKey = int32(T->GetNumberField(TEXT("dic_key")));
+					if (DicKey < 0) Track.ObjectId = -1;
+					else if (const int32* FoundId = Importer.KeyToId.Find(DicKey)) Track.ObjectId = *FoundId;
+					else if (Track.Owner == TEXT("NodesConstraints")) Track.ObjectId = -1;
+					else continue;
+					T->TryGetStringField(TEXT("target_path"), Track.TargetPath);
+					T->TryGetStringField(TEXT("target_bone"), Track.TargetBone);
+					T->TryGetNumberField(TEXT("target_ik_effector"), Track.TargetIkEffector);
+					T->TryGetNumberField(TEXT("param_int"), Track.ParamInt);
+					const TArray<TSharedPtr<FJsonValue>>* Kfs = nullptr;
+					if (!T->TryGetArrayField(TEXT("keyframes"), Kfs) || Kfs->IsEmpty()) continue;
+					Track.Keyframes.Reserve(Kfs->Num());
+					for (const TSharedPtr<FJsonValue>& KfVal : *Kfs)
+					{
+						const TSharedPtr<FJsonObject> KfObj = KfVal->AsObject();
+						if (!KfObj) continue;
+						FOKSceneTimelineKeyframe Kf;
+						Kf.Time = float(KfObj->GetNumberField(TEXT("time")));
+						JsonFloats(KfObj, TEXT("values"), Kf.Values);
+						const TArray<TSharedPtr<FJsonValue>>* NamesArr = nullptr;
+						if (KfObj->TryGetArrayField(TEXT("names"), NamesArr))
+							for (const TSharedPtr<FJsonValue>& NVal : *NamesArr) Kf.Names.Add(NVal->AsString());
+						const TArray<TSharedPtr<FJsonValue>>* CurveArr = nullptr;
+						if (KfObj->TryGetArrayField(TEXT("curve"), CurveArr))
+						{
+							Kf.Curve.Reserve(CurveArr->Num());
+							for (const TSharedPtr<FJsonValue>& PtVal : *CurveArr)
+							{
+								const TSharedPtr<FJsonObject> PtObj = PtVal->AsObject();
+								if (!PtObj) continue;
+								FOKSceneTimelineCurvePt Pt;
+								Pt.Time = float(PtObj->GetNumberField(TEXT("t")));
+								Pt.Value = float(PtObj->GetNumberField(TEXT("v")));
+								Pt.InTangent = float(PtObj->GetNumberField(TEXT("in_t")));
+								Pt.OutTangent = float(PtObj->GetNumberField(TEXT("out_t")));
+								Kf.Curve.Add(Pt);
+							}
+						}
+						Track.Keyframes.Add(MoveTemp(Kf));
+					}
+					if (!Track.Keyframes.IsEmpty()) Document->TimelineTracks.Add(MoveTemp(Track));
+				}
+				if (!Document->TimelineTracks.IsEmpty())
+				{
+					Document->bLoopTimeline = true;
+					Document->EvaluateTimeline(0.f);
+					Importer.Note(TEXT("Timeline tracks imported"));
 				}
 			}
 		}

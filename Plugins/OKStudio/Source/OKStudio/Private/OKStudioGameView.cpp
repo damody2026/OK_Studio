@@ -1,4 +1,4 @@
-﻿// OK Studio in-game: picking in the view, framing the selection, view presets and bookmarks, camera objects from the
+// OK Studio in-game: picking in the view, framing the selection, view presets and bookmarks, camera objects from the
 // view, auto backups and the open report.
 #include "OKStudioGame.h"
 #include "OKStudioGameInternal.h"
@@ -7,8 +7,10 @@
 #include "KKPreviewActor.h"
 #include "Blueprint/WidgetLayoutLibrary.h"
 #include "Camera/CameraComponent.h"
+#include "Components/MeshComponent.h"
 #include "Components/PoseableMeshComponent.h"
 #include "Components/PrimitiveComponent.h"
+#include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/FileManager.h"
@@ -55,8 +57,16 @@ bool UOKStudioGame::WorldBounds(int32 Id, FBox& Out) const
 	if (!O || !SceneActor) return false;
 	if (O->Kind == EOKSceneObjectKind::Character)
 	{
+		const AKKPreviewActor* Preview = SceneActor->PreviewOf(Id);
 		TArray<TPair<FVector, FVector>> Segments;
-		if (SkeletonSegments(SceneActor->PreviewOf(Id), Segments)) for (const TPair<FVector, FVector>& S : Segments) { Out += S.Key; Out += S.Value; }
+		if (SkeletonSegments(Preview, Segments)) for (const TPair<FVector, FVector>& S : Segments) { Out += S.Key; Out += S.Value; }
+		if (Preview)
+		{
+			TInlineComponentArray<UMeshComponent*> Meshes(Preview);
+			for (const UMeshComponent* M : Meshes)
+				if (M && M->IsRegistered() && M->IsVisible() && M->bRenderInMainPass && !M->ComponentHasTag(TEXT("KKPreviewOutline")) && M->Bounds.SphereRadius > KINDA_SMALL_NUMBER)
+					Out += M->Bounds.GetBox();
+		}
 	}
 	else if (const AKKPreviewActor* Preview = SceneActor->PreviewOf(Id))
 	{
@@ -130,15 +140,70 @@ int32 UOKStudioGame::PickObject(const FVector2D& Position) const
 	return Best;
 }
 
+float OKStudioGameInternal::ComputeFocusSelectionDistance(const FBox& Bounds, const FRotator& ViewRotation, float HorizontalFovDegrees, float AspectRatio)
+{
+	if (!Bounds.IsValid) return 380.f;
+	const float Aspect = (FMath::IsFinite(AspectRatio) && AspectRatio > 0.f)
+		? FMath::Clamp(AspectRatio, 0.1f, 10.f)
+		: (16.f / 9.f);
+	const float HFov = (FMath::IsFinite(HorizontalFovDegrees) && HorizontalFovDegrees > 0.f)
+		? FMath::Clamp(HorizontalFovDegrees, 5.f, 170.f)
+		: 40.f;
+	const float TanHalfH = FMath::Max(FMath::Tan(FMath::DegreesToRadians(HFov * 0.5f)), 0.05f);
+	const float TanHalfV = FMath::Max(TanHalfH / Aspect, 0.05f);
+	const FRotationMatrix Basis(FRotator(ViewRotation.Pitch, ViewRotation.Yaw, 0.f));
+	const FVector Forward = Basis.GetUnitAxis(EAxis::X);
+	const FVector Right = Basis.GetUnitAxis(EAxis::Y);
+	const FVector Up = Basis.GetUnitAxis(EAxis::Z);
+	const FVector Center = Bounds.GetCenter();
+	FVector Corners[8];
+	Bounds.GetVertices(Corners);
+	constexpr double Margin = 1.08;
+	double Needed = 20.0;
+	for (const FVector& Corner : Corners)
+	{
+		const FVector Delta = Corner - Center;
+		const double DepthOffset = FVector::DotProduct(Delta, Forward);
+		const double HalfSpanH = (FMath::Abs(FVector::DotProduct(Delta, Right)) * Margin) / double(TanHalfH);
+		const double HalfSpanV = (FMath::Abs(FVector::DotProduct(Delta, Up)) * Margin) / double(TanHalfV);
+		Needed = FMath::Max(Needed, FMath::Max3(HalfSpanH, HalfSpanV, 1.0) - DepthOffset);
+	}
+	return FMath::Clamp(float(Needed), 20.f, 5000.f);
+}
+
 void UOKStudioGame::FocusSelection(bool bFace)
 {
-	const FOKSceneObject* One = Selection.Num() == 1 ? Document->Find(Selection[0]) : nullptr;
+	float Aspect = 16.f / 9.f;
+	if (SceneActor)
+	{
+		if (UWorld* World = SceneActor->GetWorld())
+		{
+			FVector2D ViewportSize(0.0, 0.0);
+			if (UGameViewportClient* Viewport = World->GetGameViewport())
+			{
+				Viewport->GetViewportSize(ViewportSize);
+				if (ViewportSize.X > 1.0 && ViewportSize.Y > 1.0) Aspect = float(ViewportSize.X / ViewportSize.Y);
+			}
+		}
+	}
+	// When already viewing through the free orbit camera, read any runtime FOV adjustment back from the camera component.
+	const bool bInSceneCamera = Document && Document->ActiveCamera >= 0
+		&& Document->Find(Document->ActiveCamera) && Document->Find(Document->ActiveCamera)->Kind == EOKSceneObjectKind::Camera;
+	if (!bInSceneCamera && Viewer && Viewer->GetCameraComponent() && Viewer->GetCameraComponent()->FieldOfView > 0.f)
+	{
+		OrbitFov = FMath::Clamp(Viewer->GetCameraComponent()->FieldOfView, 5.f, 170.f);
+	}
+	const float EffectiveFov = FMath::Clamp(OrbitFov, 5.f, 170.f);
+	const FOKSceneObject* One = (Document && Selection.Num() == 1) ? Document->Find(Selection[0]) : nullptr;
 	FTransform Head;
 	if (bFace && One && One->Kind == EOKSceneObjectKind::Character && SceneActor && OKStudioGameInternal::BoneWorld(SceneActor->PreviewOf(One->Id), TEXT("cf_j_head"), Head))
 	{
 		// The head bone sits at the top of the neck: the face is a hand above it.
 		Focus = Head.GetLocation() + FVector(0.f, 0.f, 8.f);
-		Distance = 90.f;
+		const float TanRef = FMath::Tan(FMath::DegreesToRadians(20.f));
+		const float TanH = FMath::Max(FMath::Tan(FMath::DegreesToRadians(EffectiveFov * 0.5f)), 0.05f);
+		const float NarrowScale = Aspect < 1.f ? (1.f / FMath::Max(Aspect, 0.25f)) : 1.f;
+		Distance = FMath::Clamp(90.f * (TanRef / TanH) * NarrowScale, 20.f, 5000.f);
 		Document->ActiveCamera = -1;
 		return;
 	}
@@ -147,9 +212,8 @@ void UOKStudioGame::FocusSelection(bool bFace)
 	if (!All.IsValid || !SceneActor) return;
 	// Back into the scene's own frame (the orbit focus is in world space, the scene actor sits at the origin).
 	Focus = All.GetCenter();
-	const float Radius = FMath::Max(float(All.GetExtent().Size()), 10.f);
-	Distance = FMath::Clamp(Radius / FMath::Tan(FMath::DegreesToRadians(20.f)) * 1.15f, 20.f, 5000.f);
-	Document->ActiveCamera = -1;
+	Distance = OKStudioGameInternal::ComputeFocusSelectionDistance(All, FRotator(Pitch, Yaw, 0.f), EffectiveFov, Aspect);
+	if (Document) Document->ActiveCamera = -1;
 }
 
 void UOKStudioGame::ViewPreset(int32 Preset)

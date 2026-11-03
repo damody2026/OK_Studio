@@ -115,6 +115,8 @@ IK_TOE_R=IK_FOOT_R:右つま先ＩＫ:rpi:i,TOE_R,FOOT_R
 IK_ROOT_L=ROOT:左足IK親:rp
 IK_FOOT_L=IK_ROOT_L:左足ＩＫ:rpi:i,FOOT_L,LOWLEG_L,UPLEG_L
 IK_TOE_L=IK_FOOT_L:左つま先ＩＫ:rpi:i,TOE_L,FOOT_L
+IK_HAND_R=ROOT:右腕ＩＫ:rpi:i,HAND_R,LOWARM_R,UPARM_R
+IK_HAND_L=ROOT:左腕ＩＫ:rpi:i,HAND_L,LOWARM_L,UPARM_L
 UPLEG_D_R=BACK_HIPS_C_R:右足D:rt:tr,1,UPLEG_R
 LOWLEG_D_R=UPLEG_D_R:右ひざD:rt:tr,1,LOWLEG_R
 FOOT_D_R=LOWLEG_D_R:右足首D:rt:tr,1,FOOT_R
@@ -207,6 +209,8 @@ IK_TOE_R=bbs:cf_j_leg03_R:cf_j_toes_R:1.4
 IK_ROOT_L=bo:cf_j_leg03_L:0,-0.08,0
 IK_FOOT_L=b:cf_j_leg03_L
 IK_TOE_L=bbs:cf_j_leg03_L:cf_j_toes_L:1.4
+IK_HAND_R=b:cf_j_hand_R
+IK_HAND_L=b:cf_j_hand_L
 UPLEG_D_R=b:cf_j_thigh00_R
 LOWLEG_D_R=b:cf_j_leg01_R
 FOOT_D_R=b:cf_j_leg03_R
@@ -283,7 +287,7 @@ MOUTH_BASE=cf_J_MouthBase_ty
 EYEBROW_BASE=cf_J_Mayu_ty
 
 [BoneIKSetOverview]
-IK_SET_NUMBER=2
+IK_SET_NUMBER=3
 
 [BoneIKSet_1]
 NAME=FOOT IK
@@ -298,6 +302,14 @@ MIN_KNEE_ROT=1
 NAME=TOE IK
 ENABLE=1
 IKBONE=IK_TOE_R,IK_TOE_L
+SOLVER=MMDIKSolverNoLimit
+ITERATIONS=3
+STEP_ANGLE=229.1831
+
+[BoneIKSet_3]
+NAME=HAND IK
+ENABLE=0
+IKBONE=IK_HAND_R,IK_HAND_L
 SOLVER=MMDIKSolverNoLimit
 ITERATIONS=3
 STEP_ANGLE=229.1831
@@ -1781,10 +1793,9 @@ fn load_stiletto_txt_preset(shoe_name: &str, search_roots: &[&Path]) -> Option<O
             roots.push(p);
         }
     }
+    roots.extend(configured_game_roots());
     for root in roots {
-        let mut cur: Option<&Path> = Some(root.as_path());
-        for _ in 0..5 {
-            let Some(dir) = cur else { break };
+        for dir in root.ancestors().take(6) {
             for rel in [
                 "BepInEx/config/Stiletto/Heels",
                 "BepInEx/config/Stiletto",
@@ -1796,7 +1807,6 @@ fn load_stiletto_txt_preset(shoe_name: &str, search_roots: &[&Path]) -> Option<O
                     candidate_dirs.push(c);
                 }
             }
-            cur = dir.parent();
         }
     }
     let filenames = if trimmed == shoe_name {
@@ -1910,7 +1920,27 @@ pub fn detect_high_heel_preset(
     None
 }
 
-fn candidate_catalog_roots(extra_roots: &[&Path]) -> Vec<PathBuf> {
+pub(crate) fn configured_game_roots() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let Some(proj_root) = manifest_dir.parent().and_then(Path::parent) else {
+        return out;
+    };
+    if let Ok(ini) = std::fs::read_to_string(proj_root.join("Config/DefaultGame.ini")) {
+        for line in ini.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("Root=") {
+                let p = PathBuf::from(rest.trim().trim_matches('"'));
+                if !p.as_os_str().is_empty() && !out.contains(&p) {
+                    out.push(p);
+                }
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn candidate_catalog_roots(extra_roots: &[&Path]) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     let mut push_unique = |p: PathBuf| {
         if !p.as_os_str().is_empty() && !out.contains(&p) {
@@ -1918,10 +1948,18 @@ fn candidate_catalog_roots(extra_roots: &[&Path]) -> Vec<PathBuf> {
         }
     };
     for r in extra_roots {
-        push_unique(r.to_path_buf());
+        for anc in r.ancestors().take(6) {
+            push_unique(anc.to_path_buf());
+        }
     }
     if let Ok(env_root) = std::env::var("OK_GAME_ROOT") {
-        push_unique(PathBuf::from(env_root.trim()));
+        let p = PathBuf::from(env_root.trim());
+        for anc in p.ancestors().take(6) {
+            push_unique(anc.to_path_buf());
+        }
+    }
+    for cfg in configured_game_roots() {
+        push_unique(cfg);
     }
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     if let Some(proj_root) = manifest_dir.parent().and_then(Path::parent) {
@@ -2017,6 +2055,8 @@ pub struct MmddCharacterRig {
     /// Live shaped skeleton in `BodyTop`/`ChaControl` space (post-Studio limb corrections + ABMX + grafted head).
     pub live_rest: Skeleton,
     pub abm: Vec<crate::abmx::AbmBone>,
+    /// Active outfit coordinate index (`0..`) used when applying per-coordinate ABMX deltas.
+    pub abm_coord: usize,
     pub sex: i32,
     /// `cf_n_height.localScale.y` on `live_rest`.
     pub height_scale: f32,
@@ -2034,6 +2074,17 @@ impl MmddCharacterRig {
         sex: i32,
         obj_scale_y: f32,
     ) -> Self {
+        Self::build_for_coord(body_shaped, head_posed, abm, 0, sex, obj_scale_y)
+    }
+
+    pub fn build_for_coord(
+        body_shaped: Skeleton,
+        head_posed: Option<&Skeleton>,
+        abm: Vec<crate::abmx::AbmBone>,
+        abm_coord: usize,
+        sex: i32,
+        obj_scale_y: f32,
+    ) -> Self {
         let mut live_rest = body_shaped.clone();
         if sex == 1 {
             // Studio clips (`anim_scene_mode == 4`) apply `(arm=false, hand=true)` limb size corrections.
@@ -2041,7 +2092,7 @@ impl MmddCharacterRig {
         }
         if !abm.is_empty() {
             let base = crate::pose::capture_abm_baseline(&live_rest, &abm);
-            crate::pose::apply_abm(&mut live_rest, &abm, 0, &base);
+            crate::pose::apply_abm(&mut live_rest, &abm, abm_coord, &base);
         }
         let height_scale = find_skel_bone_ci(&live_rest, "cf_n_height")
             .or_else(|| find_skel_bone_ci(&live_rest, "cm_n_height"))
@@ -2060,6 +2111,7 @@ impl MmddCharacterRig {
             body_shaped,
             live_rest,
             abm,
+            abm_coord,
             sex,
             height_scale,
             obj_scale_y,
@@ -2093,10 +2145,11 @@ impl MmddCharacterRig {
             .as_ref()
             .or(session.head_full_posed.as_ref())
             .or(session.head_rest.as_ref());
-        let mut rig = Self::build(
+        let mut rig = Self::build_for_coord(
             body_shaped,
             head_posed,
             session.abm.clone(),
+            0,
             session.sex,
             obj_scale_y,
         );
@@ -2154,6 +2207,7 @@ impl MmddCharacterRig {
         obj_scale_y: f32,
         search_roots: &[&Path],
     ) -> Option<Self> {
+        let abm_coord = outfit.max(0) as usize;
         let tpl = mmdd_shape_template()?;
         let mut body_shaped = if card.sex == 0 {
             tpl.male_body_rest
@@ -2196,13 +2250,14 @@ impl MmddCharacterRig {
             crate::pose::assigned_weights_remap(h);
             if !card.abm.is_empty() {
                 let base = crate::pose::capture_abm_baseline(h, &card.abm);
-                crate::pose::apply_abm(h, &card.abm, 0, &base);
+                crate::pose::apply_abm(h, &card.abm, abm_coord, &base);
             }
         }
-        let mut rig = Self::build(
+        let mut rig = Self::build_for_coord(
             body_shaped,
             head_posed.as_ref(),
             card.abm.clone(),
+            abm_coord,
             card.sex,
             obj_scale_y,
         );
@@ -2347,14 +2402,10 @@ pub fn resolve_high_heels_and_offset(
             }
         } else if let Some(preset) = shoe_state.and_then(|s| s.detected_heel) {
             Some(preset.rot)
-        } else if params.enable_high_heelz == Some(true) {
-            let known_flat = shoe_state
-                .is_some_and(|s| !s.shoe_name.is_empty() && s.detected_heel.is_none());
-            if known_flat {
-                None
-            } else {
-                Some(DEFAULT_HIGH_HEEL_ROT)
-            }
+        } else if params.enable_high_heelz == Some(true) && shoe_state.is_none() {
+            // Rigless callers (`solve_vmd_to_okanim`) have no character shoe slot to inspect;
+            // when a character rig is bound, `vmdlib.py` (`restoreManualHeelzAdjust`) keeps 0° unless a Stiletto/Heelz preset matched.
+            Some(DEFAULT_HIGH_HEEL_ROT)
         } else {
             None
         }
@@ -2373,16 +2424,12 @@ pub fn resolve_high_heels_and_offset(
         None
     };
 
-    let root_y_offset = if let Some((enabled, on_y, off_y)) = params.shoes_offset {
-        if enabled {
-            Some(if !params.shoes_detect || (has_shoes && shoes_active) {
-                on_y
-            } else {
-                off_y
-            })
+    let root_y_offset = if let Some((_, on_y, off_y)) = params.shoes_offset.filter(|(en, _, _)| *en) {
+        Some(if !params.shoes_detect || (has_shoes && shoes_active) {
+            on_y
         } else {
-            None
-        }
+            off_y
+        })
     } else if params.shoes_detect && has_shoes && shoes_active {
         shoe_state
             .and_then(|s| s.detected_heel)
@@ -2590,7 +2637,12 @@ pub fn solve_vmd_to_okanim_for_rig(
             crate::pose::mat_inverse_checked(&crate::pose::world_of_id(pid, &prep_body.tfs))
         });
     let hips_abm = rig
-        .and_then(|r| r.abm.iter().find(|b| b.name == "cf_j_hips").map(|b| b.for_coord(0)))
+        .and_then(|r| {
+            r.abm
+                .iter()
+                .find(|b| b.name == "cf_j_hips")
+                .map(|b| b.for_coord(r.abm_coord))
+        })
         .filter(|d| !d.is_empty());
 
     // 1. Apply [PrepareBoneBeforeCreateDummyBone] onto prep_body
@@ -2671,6 +2723,13 @@ pub fn solve_vmd_to_okanim_for_rig(
             .ik_enable
             .get(&ik_set.name)
             .copied()
+            .or_else(|| {
+                params
+                    .ik_enable
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(&ik_set.name))
+                    .map(|(_, &v)| v)
+            })
             .unwrap_or(ik_set.enable);
         if !enabled {
             continue;
@@ -4683,7 +4742,34 @@ pub fn extract_mmdd(
                         .and_then(|p| p.file_stem())
                         .and_then(|s| s.to_str())
                         .unwrap_or("mmdd");
-                    if let Ok(anim) = solve_vmd_to_okanim_for_rig(&parsed_vmd, &ini, &params, stem, rig) {
+                    let custom_ini = smap
+                        .get("boneDefine")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty() && s.to_ascii_lowercase().ends_with(".ini"))
+                        .and_then(|bdef| {
+                            let fname = Path::new(bdef).file_name().and_then(|n| n.to_str()).unwrap_or(bdef);
+                            for root in candidate_catalog_roots(&scene_roots) {
+                                for rel in [
+                                    "BepInEx/plugins/Console/Lib/mmdd",
+                                    "BepInEx/plugins/Console/Lib",
+                                    "BepinEx/plugins/Console/Lib/mmdd",
+                                    "BepinEx/plugins/Console/Lib",
+                                ] {
+                                    let p = root.join(rel).join(fname);
+                                    if let Ok(txt) = std::fs::read_to_string(&p) {
+                                        if let Ok(parsed) = CharaIniConfig::parse(&txt) {
+                                            return Some(parsed);
+                                        }
+                                    }
+                                }
+                            }
+                            resolve_external_file(bdef, scene_path)
+                                .and_then(|p| std::fs::read_to_string(p).ok())
+                                .and_then(|txt| CharaIniConfig::parse(&txt).ok())
+                        });
+                    let eff_ini = custom_ini.as_ref().unwrap_or(&ini);
+                    if let Ok(anim) = solve_vmd_to_okanim_for_rig(&parsed_vmd, eff_ini, &params, stem, rig) {
                         frames = ((anim.frames.saturating_sub(1)) / 2 + 1).max(1);
                         duration = anim.duration();
                         if let Ok(anim_bytes) = anim.to_bytes() {
@@ -5180,10 +5266,14 @@ mod tests {
     #[test]
     fn default_chara_ini_parses_completely() {
         let ini = CharaIniConfig::parse(DEFAULT_CHARA_INI).expect("parse default chara ini");
-        assert_eq!(ini.bone_names.len(), 90);
-        assert_eq!(ini.ik_sets.len(), 2);
+        assert_eq!(ini.bone_names.len(), 92);
+        assert_eq!(ini.ik_sets.len(), 3);
         assert_eq!(ini.ik_sets[0].name, "FOOT IK");
+        assert!(ini.ik_sets[0].enable);
         assert_eq!(ini.ik_sets[1].name, "TOE IK");
+        assert!(ini.ik_sets[1].enable);
+        assert_eq!(ini.ik_sets[2].name, "HAND IK");
+        assert!(!ini.ik_sets[2].enable);
         assert!(ini.bones.values().any(|b| b.is_track));
         assert!(!ini.twist_disperse.is_empty());
     }
@@ -5299,6 +5389,8 @@ mod tests {
             hand_shapes: Default::default(),
             user_fk: Vec::new(),
             user_fk_ids: Default::default(),
+            user_bone_pos_scale: Vec::new(),
+            user_bone_ps_ids: Default::default(),
             hand_shape_ids: Default::default(),
             studio_ik_solver: None,
             studio_ik: Vec::new(),
@@ -5415,6 +5507,21 @@ mod tests {
         }
         let mut ik_solvers: HashMap<usize, IkSolver> = HashMap::new();
         for ik_set in &ini.ik_sets {
+            let enabled = params
+                .ik_enable
+                .get(&ik_set.name)
+                .copied()
+                .or_else(|| {
+                    params
+                        .ik_enable
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case(&ik_set.name))
+                        .map(|(_, &v)| v)
+                })
+                .unwrap_or(ik_set.enable);
+            if !enabled {
+                continue;
+            }
             for ik_bname in &ik_set.ik_bones {
                 let Some(&ik_idx) = tree.by_name.get(ik_bname) else { continue };
                 let bdef = &ini.bones[ik_bname];
@@ -6748,6 +6855,93 @@ mod tests {
         assert!(
             max_brow_residual < 1e-6 && max_face_residual < 1e-6,
             "expected zero residual head mesh drift after bone morph reset, got brow={max_brow_residual}, face={max_face_residual}"
+        );
+    }
+
+    #[test]
+    fn mmdd_saved_scene_high_heelz_flat_and_disabled_shoes_offset_regressions() {
+        let ini = CharaIniConfig::parse(DEFAULT_CHARA_INI).expect("parse DEFAULT_CHARA_INI");
+        assert_eq!(ini.ik_sets.len(), 3, "DEFAULT_CHARA_INI must include FOOT IK, TOE IK, and HAND IK");
+        assert!(ini.bones.contains_key("ik_hand_r") && ini.bones.contains_key("ik_hand_l"));
+
+        // Exact MMDD serialized defaults (`enableHighHeelz: True`, `shoesOffset: [False, 0.0, 0.0]`)
+        let params = MotionSolveParams {
+            enable_high_heelz: Some(true),
+            shoes_detect: true,
+            shoes_offset: Some((false, 0.0, 0.0)),
+            ..Default::default()
+        };
+
+        // 1. Rigless callers (`rig = None`) still opt into DEFAULT_HIGH_HEEL_ROT
+        assert_eq!(
+            resolve_high_heels_and_offset(&params, None),
+            (Some(DEFAULT_HIGH_HEEL_ROT), None)
+        );
+
+        // 2. Character rig with unresolved mod shoe (`shoe_name = ""`, `detected_heel = None`) or flat boots
+        // MUST NOT receive DEFAULT_HIGH_HEEL_ROT (+40° pitch without lift, which buried flat boots 5cm underground)
+        let dummy_skel = Skeleton {
+            names: Vec::new(),
+            worlds: Vec::new(),
+            rest: Vec::new(),
+            smr_count: 0,
+            tfs: Default::default(),
+            bone_ids: Vec::new(),
+            source_mesh: 0,
+        };
+        let mut rig_unresolved = MmddCharacterRig::build_for_coord(dummy_skel.clone(), None, Vec::new(), 3, 1, 1.0);
+        assert_eq!(rig_unresolved.abm_coord, 3);
+        rig_unresolved.shoe_state = MmddShoeState {
+            has_shoes: true,
+            shoes_active: true,
+            shoe_name: String::new(),
+            detected_heel: None,
+        };
+        assert_eq!(
+            resolve_high_heels_and_offset(&params, Some(&rig_unresolved)),
+            (None, None),
+            "unresolved or flat shoes on a character rig must keep 0° ankle pitch and 0m lift"
+        );
+
+        // 3. Character rig with a detected Stiletto preset AND disabled manual `shoesOffset: [false, 0.0, 0.0]`
+        // MUST still apply the preset's automatic `height` root lift!
+        let preset = MmddHeelPreset {
+            rot: [24.5, 19.5, -26.3],
+            height: 0.062,
+        };
+        let mut rig_stiletto = rig_unresolved.clone();
+        rig_stiletto.shoe_state = MmddShoeState {
+            has_shoes: true,
+            shoes_active: true,
+            shoe_name: "CustomStilettoPump".into(),
+            detected_heel: Some(preset),
+        };
+        let (rot, lift) = resolve_high_heels_and_offset(&params, Some(&rig_stiletto));
+        assert_eq!(rot, Some(preset.rot));
+        assert_eq!(
+            lift,
+            Some(preset.height),
+            "disabled manual shoesOffset=[false,0,0] must fall through to Stiletto auto-lift"
+        );
+
+        // 4. Per-coordinate ABMX (`outfit = 3`) uses `coord[3]` rather than `coord[0]`
+        let Some(tpl) = mmdd_shape_template() else {
+            return;
+        };
+        let mut coords = vec![crate::abmx::AbmData::default(); 4];
+        coords[3].scale = [1.0, 1.12, 1.0];
+        let abm = vec![crate::abmx::AbmBone {
+            name: "cf_n_height".into(),
+            location: 0,
+            coord: coords,
+        }];
+        let rig_c0 = MmddCharacterRig::build_for_coord(tpl.female_body_rest.clone(), None, abm.clone(), 0, 1, 1.0);
+        let rig_c3 = MmddCharacterRig::build_for_coord(tpl.female_body_rest.clone(), None, abm, 3, 1, 1.0);
+        assert!(
+            (rig_c3.height_scale - rig_c0.height_scale * 1.12).abs() < 1e-4,
+            "expected outfit 3 height_scale {} to apply coord[3] 1.12x over coord[0] {}",
+            rig_c3.height_scale,
+            rig_c0.height_scale
         );
     }
 }

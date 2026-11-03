@@ -248,6 +248,33 @@ bool FOkSession::SetFk(const TArray<FString>& Bones,const TArray<FVector>& Unity
 	if(Names.IsEmpty())Names.Add(0);
 	return ok_session_set_fk(Handle,Names.GetData(),Euler.GetData(),Bones.Num())==0;
 }
+bool FOkSession::SetBonePosScale(const TArray<FString>& Bones,const TArray<FVector>& UnityPos,const TArray<FVector>& UnityScale,const TArray<uint8>& Flags)
+{
+	if(!Handle||Bones.Num()!=UnityPos.Num()||Bones.Num()!=UnityScale.Num()||Bones.Num()!=Flags.Num())return false;
+	TArray<ANSICHAR> Names;TArray<float> Pos,Scale;
+	for(int32 I=0;I<Bones.Num();++I)
+	{
+		const FTCHARToUTF8 Name(*Bones[I]);
+		Names.Append(Name.Get(),Name.Length());Names.Add(0);
+		Pos.Append({float(UnityPos[I].X),float(UnityPos[I].Y),float(UnityPos[I].Z)});
+		Scale.Append({float(UnityScale[I].X),float(UnityScale[I].Y),float(UnityScale[I].Z)});
+	}
+	if(Names.IsEmpty())Names.Add(0);
+	return ok_session_set_bone_pos_scale(Handle,Names.GetData(),Pos.GetData(),Scale.GetData(),Flags.GetData(),Bones.Num())==0;
+}
+bool FOkSession::FindRendererParts(const FString& Renderer,TArray<int32>& OutParts) const
+{
+	OutParts.Reset();
+	if(!Handle||Renderer.IsEmpty())return false;
+	const FTCHARToUTF8 Query(*Renderer);
+	const int32 Total=ok_session_renderer_parts(Handle,Query.Get(),nullptr,0);
+	if(Total<=0)return false;
+	OutParts.SetNumUninitialized(Total);
+	const int32 Written=ok_session_renderer_parts(Handle,Query.Get(),OutParts.GetData(),Total);
+	if(Written<0){OutParts.Reset();return false;}
+	OutParts.SetNum(FMath::Min(Written,Total));
+	return !OutParts.IsEmpty();
+}
 bool FOkSession::PrepareStudioIk(FString& OutError)
 {
 	if(!Handle){OutError=TEXT("no session");return false;}
@@ -1467,9 +1494,10 @@ bool FOkSession::MakeOkCard(const FString& Card,const FString& Out,FString& Summ
  const int32 Result=ok_okcard_make(nullptr,TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Card)),TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Out)),Buffer,UE_ARRAY_COUNT(Buffer));
  Summary=UTF8_TO_TCHAR(Buffer);return Result==0;
 }
-bool FOkSession::MakeOkCardForOutfit(const FString& Card,const FString& Out,int32 Outfit,FString& Summary){
+bool FOkSession::MakeOkCardForOutfit(const FString& Card,const FString& Out,int32 Outfit,FString& Summary,const FString& GameRoot){
  OKPrepareCardEnvironment();char Buffer[2048]{};
- const int32 Result=ok_okcard_make_outfit(nullptr,TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Card)),TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Out)),Outfit,Buffer,UE_ARRAY_COUNT(Buffer));
+ const FTCHARToUTF8 GameUtf8(*GameRoot);
+ const int32 Result=ok_okcard_make_outfit(GameRoot.IsEmpty()?nullptr:GameUtf8.Get(),TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Card)),TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Out)),Outfit,Buffer,UE_ARRAY_COUNT(Buffer));
  Summary=UTF8_TO_TCHAR(Buffer);return Result==0;
 }
 static FAutoConsoleCommand GOKMakeOkCardCommand(TEXT("OK.MakeOkCard"),

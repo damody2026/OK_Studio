@@ -670,6 +670,7 @@ fn validate_part_origin(property:&str)->Result<(),String>{
 pub struct SessionPart {
     /// Exact card property which emitted this renderer; names and mesh hashes are not slot identities.
     pub(crate) source_property: Option<String>,
+    pub(crate) source_renderer_names: Vec<String>,
     pub runtime_textures: std::collections::BTreeMap<String, [i32; 5]>,
     /// Resolved material data for source-program renderers (not role/card heuristics).
     pub source_material: Option<crate::unity::MeshMaterial>,
@@ -819,12 +820,14 @@ impl SessionPart {
         } else {
             mesh.normals.clone()
         };
-        let is_forge_opaque = mesh.mat.as_ref().is_some_and(|m|
-            m.shader.to_ascii_lowercase().contains("main_opaque")
+        let is_forge_opaque = mesh.mat.as_ref().is_some_and(|m| {
+            let s = m.shader.to_ascii_lowercase();
+            s.contains("main_opaque") || matches!(s.as_str(), "kkussitem" | "kkuss")
                 || (m.shader.is_empty() && role.starts_with("clothes")
-                    && m.slot("_Texture3").is_some()));
+                    && m.slot("_Texture3").is_some())
+        });
         let hair_shader_name = mesh.mat.as_ref().map(|m| m.shader.to_ascii_lowercase()).unwrap_or_default();
-        let is_hair_shader = crate::is_native_hair_shader(&hair_shader_name) || mesh.hair_shader_hint;
+        let is_hair_shader = crate::is_native_hair_shader(&hair_shader_name) || (hair_shader_name.is_empty() && mesh.hair_shader_hint);
         let is_hair_front = hair_shader_name.contains("main_hair_front") || hair_shader_name=="koikano/hair_main_sun_front";
         // Studio items (Shader Forge/main_item_studio and _alpha) mix their three colours, and the Studio patterns,
         // through the ColorMask like the game. The light effects (_add) have no ColorMask: texture times colour, added.
@@ -834,6 +837,7 @@ impl SessionPart {
         Self {
             source_property: None,
             draw_layer: 0,
+            source_renderer_names: mesh.renderer_names.clone(),
             runtime_textures: mesh.runtime_textures.clone(),
             source_material: {
                 let mut material=mesh.mat.clone();
@@ -900,10 +904,12 @@ impl SessionPart {
                     let stage=mesh.mat.as_ref().is_some_and(|m|m.floats.contains_key("_OKStageEffect"));
                     let metal_map=mesh.mat.as_ref().is_some_and(|m|m.keywords.iter().any(|k|k=="_METALLICGLOSSMAP"));
                     let standard_normal=mesh.mat.as_ref().is_some_and(|m|m.shader.starts_with("Standard")&&m.keywords.iter().any(|k|k=="_NORMALMAP"));
+                    let is_kkuss=matches!(hair_shader_name.as_str(),"kkussitem"|"kkuss");
                     // The character shaders' liquid (ChaControl siruLv, the H scene's semen) samples its region mask
                     // `_liquidmask`, pattern `_Texture2` and (Forge) normal `_Texture3`: kept so the skin and clothes show it.
                     textures.retain(|name,_|(standard_normal && name=="_BumpMap") || (emits && name=="_EmissionMap") || (metal_map && name=="_MetallicGlossMap") || name=="_OKLightmap" || name=="_OKLightmapDirection" || name=="_OKReflection" || name=="_OKSkyCube" || name=="_expression"
                         || matches!(name.as_str(),"_liquidmask"|"_Texture2"|"_Texture3")
+                        || (is_kkuss && matches!(name.as_str(),"_NormalMapDetail"|"_overtex1"|"_overtex2"|"_overtex3"))
                         || (stage && matches!(name.as_str(),"_color"|"_mask"|"_Emission"|"_MaskFast"|"_MaskSlow"|"_MaskFull")));
                 }
                 textures
@@ -1045,7 +1051,7 @@ impl SessionPart {
                 else if crate::shader_family(mesh.mat.as_ref().map_or("", |m| m.shader.as_str())).contains("main_item_studio") { 4 }
                 else if shader == "ibl_shader_alpha" { 6 }
                 else if matches!(shader.as_str(),"koikano/hair_main_sun"|"koikano/hair_main_sun_front") { 10 }
-                else if crate::is_native_hair_shader(&shader) || mesh.hair_shader_hint { 1 }
+                else if crate::is_native_hair_shader(&shader) || (shader.is_empty() && mesh.hair_shader_hint) { 1 }
                 // The extracted Forge ForwardBase pass is Cull Off, while
                 // Koikano/main_skin is Cull Back. Keep the shader families
                 // distinct so the renderer can reproduce their pass state.
@@ -1204,6 +1210,9 @@ pub struct OkSession {
     /// rotation of these bones of the body Animator tree after sampling.
     pub(crate) user_fk: Vec<(String, [f32; 3])>,
     pub(crate) user_fk_ids: BoneIdCache,
+    /// KKPE / Timeline bone position (Unity local metres) and scale overrides on body/head/item bones.
+    pub(crate) user_bone_pos_scale: Vec<(String, Option<[f32; 3]>, Option<[f32; 3]>)>,
+    pub(crate) user_bone_ps_ids: BoneIdCache,
     pub(crate) hand_shape_ids: BoneIdCache,
     /// Studio IK: FullBodyBipedIK (the game's body-bone setup) and its position targets (effector index 0 body, 1/2
     /// shoulders, 3/4 thighs, 5/6 hands, 7/8 feet; skeleton space). Solved after FK.
@@ -2359,6 +2368,7 @@ impl OkSession {
             }
             locals |= self.hand_shapes.apply_cached_locals(sk, &mut self.hand_shape_ids);
             locals |= apply_user_fk_locals(sk, &self.user_fk, &mut self.user_fk_ids);
+            locals |= apply_user_bone_pos_scale_locals(sk, &self.user_bone_pos_scale, &mut self.user_bone_ps_ids);
             // Shape, limb sizes, hand shapes and FK change local transforms only: the worlds are published once.
             if locals { sk.rebuild_worlds(); }
             // OCIChar.ActiveKinematicMode disables Preparation.pvCopy for all
@@ -2427,6 +2437,7 @@ impl OkSession {
             let abm_base = crate::pose::capture_baseline(sk, &abm_names);
             crate::pose::apply_abm(sk, &self.abm, 0, &abm_base);
             sk.include_tree_bones();
+            apply_user_overrides_on_head(sk, &self.user_fk, &self.user_bone_pos_scale);
         }
         }
         // Hair and head accessories use the full prefab tree, not the face
@@ -2446,6 +2457,7 @@ impl OkSession {
             let names:Vec<String>=self.abm.iter().map(|b|b.name.clone()).collect();
             let baseline=crate::pose::capture_baseline(sk,&names);
             crate::pose::apply_abm(sk,&self.abm,0,&baseline);
+            apply_user_overrides_on_head(sk, &self.user_fk, &self.user_bone_pos_scale);
         }
         }
         drop(full_head_trace);
@@ -2600,6 +2612,7 @@ impl OkSession {
         if let Some(head)=self.head_skel.as_mut() {
             let baseline=crate::pose::capture_abm_baseline(head,&self.abm);
             crate::pose::apply_abm(head,&self.abm,0,&baseline);
+            apply_user_overrides_on_head(head, &self.user_fk, &self.user_bone_pos_scale);
         }
         if self.mmdd_face_bone_dirty {
             self.mmdd_face_bone_dirty = false;
@@ -2678,6 +2691,7 @@ impl OkSession {
             let t = std::time::Instant::now();
             locals |= self.hand_shapes.apply_cached_locals(sk, &mut self.hand_shape_ids);
             locals |= apply_user_fk_locals(sk, &self.user_fk, &mut self.user_fk_ids);
+            locals |= apply_user_bone_pos_scale_locals(sk, &self.user_bone_pos_scale, &mut self.user_bone_ps_ids);
             // Shape, limb sizes, hand shapes and FK change local transforms only: the worlds are published once.
             if locals { sk.rebuild_worlds(); }
             prof::add(13, t);
@@ -4019,6 +4033,8 @@ impl SessionBlob {
             hand_shapes,
             user_fk: Vec::new(),
             user_fk_ids: BoneIdCache::default(),
+            user_bone_pos_scale: Vec::new(),
+            user_bone_ps_ids: BoneIdCache::default(),
             hand_shape_ids: BoneIdCache::default(),
             studio_ik_solver: None,
             studio_ik: Vec::new(),
@@ -4157,6 +4173,7 @@ impl PartBlob {
         SessionPart {
             source_property: None,
             draw_layer: 0,
+            source_renderer_names: Vec::new(),
             runtime_textures: self.runtime_textures,
             source_material: self.source_material,
             shader_textures: self.shader_textures,
@@ -7194,6 +7211,56 @@ fn body_bone_id(sk: &crate::pose::Skeleton, name: &str) -> Option<i64> {
 /// Bone ids looked up by name on one skeleton (a Studio FK list, the hand shapes), found once instead of every frame.
 #[derive(Default)]
 pub(crate) struct BoneIdCache { pub(crate) key: u64, pub(crate) ids: Vec<Option<i64>> }
+
+pub(crate) fn apply_user_bone_pos_scale_locals(
+    sk: &mut crate::pose::Skeleton,
+    list: &[(String, Option<[f32; 3]>, Option<[f32; 3]>)],
+    cache: &mut BoneIdCache,
+) -> bool {
+    if list.is_empty() { return false; }
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for (name, _, _) in list { name.hash(&mut h); }
+    sk.bone_ids.hash(&mut h);
+    let key = h.finish();
+    if cache.key != key || cache.ids.len() != list.len() {
+        let ids = crate::pose::animator_root_id(sk).map(|root| crate::pose::subtree_ids_pub(root, &sk.tfs)).unwrap_or_else(|| sk.bone_ids.clone());
+        let mut by_name: HashMap<String, i64> = HashMap::with_capacity(ids.len());
+        for id in ids { if let Some(t) = sk.tfs.get(&id) { by_name.entry(t.name.to_ascii_lowercase()).or_insert(id); } }
+        cache.ids = list.iter().map(|(name, _, _)| by_name.get(&name.to_ascii_lowercase()).copied()).collect();
+        cache.key = key;
+    }
+    let mut any = false;
+    for ((_, pos, scale), id) in list.iter().zip(&cache.ids) {
+        if let Some(tf) = id.and_then(|id| sk.tfs.get_mut(&id)) {
+            if let Some(p) = pos { tf.pos = *p; any = true; }
+            if let Some(s) = scale { tf.scale = *s; any = true; }
+        }
+    }
+    any
+}
+
+pub(crate) fn apply_user_overrides_on_head(
+    sk: &mut crate::pose::Skeleton,
+    fk: &[(String, [f32; 3])],
+    ps: &[(String, Option<[f32; 3]>, Option<[f32; 3]>)],
+) {
+    if fk.is_empty() && ps.is_empty() { return; }
+    let mut changed = false;
+    for tf in sk.tfs.values_mut() {
+        if let Some((_, euler)) = fk.iter().find(|(n, _)| tf.name.eq_ignore_ascii_case(n)) {
+            tf.rot = crate::pose::euler_deg_to_quat(*euler);
+            changed = true;
+        }
+        if let Some((_, pos, scale)) = ps.iter().find(|(n, _, _)| tf.name.eq_ignore_ascii_case(n)) {
+            if let Some(p) = pos { tf.pos = *p; changed = true; }
+            if let Some(s) = scale { tf.scale = *s; changed = true; }
+        }
+    }
+    if changed {
+        sk.rebuild_worlds();
+    }
+}
 
 /// `apply_user_fk` with the bone lookup kept across frames (the key covers the FK names and the skeleton's bones), local
 /// rotations only: the caller rebuilds the world matrices when this returns true.

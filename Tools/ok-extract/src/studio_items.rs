@@ -387,6 +387,41 @@ pub struct ModCatalog {
 /// Mod items live beside the shared catalogue, in a file of their own that stays local (third-party content).
 pub const MOD_FILE_NAME: &str = "studio_mod_items.json";
 
+pub(crate) fn merge_mod_catalogs(existing: ModCatalog, scanned: ModCatalog) -> ModCatalog {
+    let mut groups: BTreeMap<i32, Group> = existing.groups.into_iter().map(|g| (g.id, g)).collect();
+    for g in scanned.groups { groups.insert(g.id, g); }
+    let mut categories: BTreeMap<(i32, i32), Category> = existing.categories.into_iter().map(|c| ((c.group, c.id), c)).collect();
+    for c in scanned.categories { categories.insert((c.group, c.id), c); }
+    let mut filters: BTreeMap<i32, Filter> = existing.filters.into_iter().map(|f| (f.no, f)).collect();
+    for f in scanned.filters { filters.insert(f.no, f); }
+
+    let mut old_by_key: std::collections::HashMap<(String, i32), ModItem> = existing.items.into_iter()
+        .map(|m| ((m.guid.to_ascii_lowercase(), m.item.no), m)).collect();
+    let mut items = Vec::with_capacity(scanned.items.len() + old_by_key.len());
+    let mut seen = std::collections::HashSet::new();
+    for mut m in scanned.items {
+        let key = (m.guid.to_ascii_lowercase(), m.item.no);
+        if let Some(prev) = old_by_key.remove(&key) {
+            if m.item.model.is_empty() && !prev.item.model.is_empty() {
+                m.item.model = prev.item.model;
+                m.item.bundle = prev.item.bundle;
+            }
+        }
+        if seen.insert(key) { items.push(m); }
+    }
+    let mut carry: Vec<ModItem> = old_by_key.into_values().collect();
+    carry.sort_by(|a, b| a.guid.cmp(&b.guid).then(a.item.no.cmp(&b.item.no)));
+    items.extend(carry);
+
+    ModCatalog {
+        format: "ok-studio-mod-items-1".into(),
+        groups: groups.into_values().collect(),
+        categories: categories.into_values().collect(),
+        items,
+        filters: filters.into_values().collect(),
+    }
+}
+
 /// `--oklib studio-mods <lib>`: every Studio item list of the installation's zipmods, each item with the library model
 /// of its bundle (the converter's `converted.tsv`: mod Studio bundles are converted with the character mods). Returns
 /// (items, items whose bundle is not in the library).
@@ -399,12 +434,13 @@ pub fn add_mod_items(game: &Path, lib: &Path) -> Result<(usize, usize), String> 
         let (Some(label), Some("ok"), _, Some(detail)) = (f.next(), f.next(), f.next(), f.next()) else { continue };
         if let Some(id) = detail.split(' ').next().filter(|id| id.len() == 32) { models.insert(label, id); }
     }
+    let existing: ModCatalog = std::fs::read_to_string(lib.join(MOD_FILE_NAME)).ok()
+        .and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let mods = game.join("mods");
     let mut zips = crate::mods::all_zipmods(&mods);
     zips.sort();
     let mut out = Vec::new();
     let (mut groups, mut categories, mut filters) = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
-    let mut missing = 0usize;
     for zip_path in zips {
         let Ok(file) = std::fs::File::open(&zip_path) else { continue };
         let Ok(mut zip) = zip::ZipArchive::new(file) else { continue };
@@ -454,7 +490,6 @@ pub fn add_mod_items(game: &Path, lib: &Path) -> Result<(usize, usize), String> 
                 let prefab = cell(&r, 6);
                 if bundle.is_empty() || prefab.is_empty() { continue; }
                 let model = models.get(format!("{rel}|{bundle}").as_str()).map(|s| s.to_string()).unwrap_or_default();
-                if model.is_empty() { missing += 1; }
                 out.push(ModItem { guid: guid.clone(), item: Item {
                     no, group: num(r.get(1)).unwrap_or_default(), category: num(r.get(2)).unwrap_or_default(), name: cell(&r, 3),
                     bundle: format!("{rel}|{bundle}"), prefab, model, child: cell(&r, 7), anime: flag(&r, 8),
@@ -464,8 +499,17 @@ pub fn add_mod_items(game: &Path, lib: &Path) -> Result<(usize, usize), String> 
             }
         }
     }
-    let n = out.len();
-    let text = serde_json::to_string_pretty(&ModCatalog { format: "ok-studio-mod-items-1".into(), groups: groups.into_values().collect(), categories: categories.into_values().collect(), items: out, filters: filters.into_values().collect() }).map_err(|e| e.to_string())?;
+    let scanned = ModCatalog {
+        format: "ok-studio-mod-items-1".into(),
+        groups: groups.into_values().collect(),
+        categories: categories.into_values().collect(),
+        items: out,
+        filters: filters.into_values().collect(),
+    };
+    let merged = merge_mod_catalogs(existing, scanned);
+    let n = merged.items.len();
+    let missing = merged.items.iter().filter(|m| m.item.model.is_empty()).count();
+    let text = serde_json::to_string_pretty(&merged).map_err(|e| e.to_string())?;
     std::fs::write(lib.join(MOD_FILE_NAME), text).map_err(|e| format!("{MOD_FILE_NAME}: {e}"))?;
     Ok((n, missing))
 }
@@ -2118,3 +2162,62 @@ mod flare_material_probe {
         }).unwrap();
     }
 }
+
+#[cfg(test)]
+mod mod_catalog_merge_tests {
+    use super::{merge_mod_catalogs, Category, Filter, Group, Item, ModCatalog, ModItem};
+
+    #[test]
+    fn merge_preserves_other_install_items_and_non_empty_models() {
+        let existing = ModCatalog {
+            format: "ok-studio-mod-items-1".into(),
+            groups: vec![Group { id: 861, name: "[Cz]".into() }],
+            categories: vec![Category { group: 861, id: 974, name: "Skybox".into() }],
+            items: vec![
+                ModItem {
+                    guid: "Cz_skybox".into(),
+                    item: Item { no: 99011, name: "Night MoonBurst".into(), bundle: "mods/cz.zipmod|sky.unity3d".into(), prefab: "Sky_08".into(), model: "5e018301000000009dcfbc484f4b4331".into(), ..Item::default() },
+                },
+                ModItem {
+                    guid: "Shared.Mod".into(),
+                    item: Item { no: 10, name: "Prop".into(), bundle: "mods/a.zipmod|p.unity3d".into(), prefab: "P".into(), model: "1111111111111111111111114f4b4331".into(), ..Item::default() },
+                },
+            ],
+            filters: vec![Filter { no: 580, name: "F1".into(), bundle: "b".into(), file: "f".into() }],
+        };
+        let scanned = ModCatalog {
+            format: "ok-studio-mod-items-1".into(),
+            groups: vec![Group { id: 900, name: "KKS".into() }],
+            categories: Vec::new(),
+            items: vec![
+                // Same (guid, no) with different case and empty model must retain existing non-empty model.
+                ModItem {
+                    guid: "shared.mod".into(),
+                    item: Item { no: 10, name: "Prop".into(), bundle: "mods/other/a.zipmod|p.unity3d".into(), prefab: "P".into(), model: String::new(), ..Item::default() },
+                },
+                ModItem {
+                    guid: "KKS.Only".into(),
+                    item: Item { no: 20, name: "Bench".into(), bundle: "mods/b.zipmod|b.unity3d".into(), prefab: "B".into(), model: "2222222222222222222222224f4b4331".into(), ..Item::default() },
+                },
+            ],
+            filters: Vec::new(),
+        };
+        let merged = merge_mod_catalogs(existing, scanned);
+        assert_eq!(merged.groups.len(), 2);
+        assert_eq!(merged.categories.len(), 1);
+        assert_eq!(merged.filters.len(), 1);
+        assert_eq!(merged.items.len(), 3);
+        let shared = merged.items.iter().find(|m| m.guid.eq_ignore_ascii_case("shared.mod")).unwrap();
+        assert_eq!(shared.item.model, "1111111111111111111111114f4b4331");
+        let sky = merged.items.iter().find(|m| m.guid == "Cz_skybox" && m.item.no == 99011).unwrap();
+        assert_eq!(sky.item.model, "5e018301000000009dcfbc484f4b4331");
+    }
+
+    #[test]
+    fn merge_handles_empty_catalogs() {
+        let empty = merge_mod_catalogs(ModCatalog::default(), ModCatalog::default());
+        assert!(empty.items.is_empty());
+        assert_eq!(empty.format, "ok-studio-mod-items-1");
+    }
+}
+

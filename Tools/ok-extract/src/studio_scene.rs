@@ -243,6 +243,119 @@ pub fn scene_vmd(bytes: &[u8]) -> Option<(serde_json::Map<String, serde_json::Va
     Some((scene, chars))
 }
 
+/// jim60105's StudioCharaLightLinkedToCamera (`com.jim60105.kk.studiocharalightlinkedtocamera`): when `locked` is true,
+/// Studio's character directional light rotates in lockstep with the camera (`attachedLightAngle`, `attachedCameraAngle`).
+pub(crate) fn scene_chara_light_linked_to_camera(bytes: &[u8]) -> Option<serde_json::Value> {
+    use crate::card::map_get;
+    let blocks = scene_plugins(bytes)?;
+    let plugin = map_get(&blocks, "com.jim60105.kk.studiocharalightlinkedtocamera")
+        .or_else(|| map_get(&blocks, "com.jim60105.kks.studiocharalightlinkedtocamera"))?;
+    let data = plugin.as_array().and_then(|a| a.get(1)).unwrap_or(plugin);
+    let locked = map_get(data, "locked").and_then(|v| {
+        v.as_bool().or_else(|| v.as_str().map(|s| s.eq_ignore_ascii_case("true")))
+    }).unwrap_or(false);
+    if !locked { return None; }
+    let vec2 = |key: &str| -> Option<[f32; 2]> {
+        let m = map_get(data, key)?;
+        let num = |k: &str| map_get(m, k).and_then(|v| v.as_f64().or_else(|| v.as_i64().map(|n| n as f64))).map(|v| v as f32);
+        let (x, y) = (num("x")?, num("y")?);
+        (x.is_finite() && y.is_finite()).then_some([x, y])
+    };
+    let light = vec2("attachedLightAngle")?;
+    let camera = vec2("attachedCameraAngle")?;
+    Some(serde_json::json!({
+        "locked": true,
+        "light_angle": light,
+        "camera_angle": camera,
+    }))
+}
+
+/// Optional Studio light / shadow plugin settings saved in `KKEx` (e.g. `ShadowSettings`, `LightSettings`).
+/// Returns `None` when absent so vanilla scenes carry zero extra fields.
+pub(crate) fn scene_light_settings(bytes: &[u8]) -> Option<serde_json::Value> {
+    use crate::card::map_get;
+    let blocks = scene_plugins(bytes)?;
+    let num = |m: &rmpv::Value, k: &str| -> Option<f32> {
+        map_get(m, k)
+            .and_then(|v| v.as_f64().or_else(|| v.as_i64().map(|n| n as f64)).or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())))
+            .map(|v| v as f32)
+            .filter(|v| v.is_finite())
+    };
+    let flag = |m: &rmpv::Value, k: &str| -> Option<bool> {
+        map_get(m, k).and_then(|v| {
+            v.as_bool()
+                .or_else(|| v.as_i64().map(|n| n != 0))
+                .or_else(|| v.as_u64().map(|n| n != 0))
+                .or_else(|| v.as_str().and_then(|s| match s.trim().to_ascii_lowercase().as_str() {
+                    "true" | "1" | "2" | "hard" | "soft" => Some(true),
+                    "false" | "0" | "none" => Some(false),
+                    _ => None,
+                }))
+        })
+    };
+    let mut global_strength: Option<f32> = None;
+    let mut overrides = Vec::new();
+    if let Some(entries) = blocks.as_map() {
+        for (k, raw_plugin) in entries {
+            let Some(plugin_id) = k.as_str() else { continue };
+            let pid = plugin_id.to_ascii_lowercase();
+            let data = raw_plugin.as_array().and_then(|a| a.get(1)).unwrap_or(raw_plugin);
+            if pid == "lightswitch" {
+                if let Some(en) = flag(data, "lightEnabled") {
+                    overrides.push(serde_json::json!({ "object_id": -10, "enable": en }));
+                }
+                continue;
+            }
+            if !pid.contains("shadowsettings") && !pid.contains("lightsettings") {
+                continue;
+            }
+            if let Some(s) = num(data, "shadowStrength").or_else(|| num(data, "ShadowStrength")) {
+                global_strength = Some(s.clamp(0.0, 1.0));
+            }
+            for list_key in ["LightSettingsData_lights", "LightSettingsData", "lightSettingsData", "lights"] {
+                let Some(val) = map_get(data, list_key) else { continue };
+                let decoded = if let Some(bin) = val.as_slice() {
+                    rmpv::decode::read_value(&mut std::io::Cursor::new(bin)).ok()
+                } else {
+                    Some(val.clone())
+                };
+                let Some(items) = decoded.as_ref().and_then(rmpv::Value::as_array) else { continue };
+                for item in items {
+                    let Some(oid) = map_get(item, "objectId")
+                        .or_else(|| map_get(item, "ObjectId"))
+                        .or_else(|| map_get(item, "id"))
+                        .and_then(|v| v.as_i64()) else { continue };
+                    let mut entry = serde_json::Map::new();
+                    entry.insert("object_id".into(), serde_json::json!(oid as i32));
+                    if let Some(en) = flag(item, "state").or_else(|| flag(item, "lightSwitch")).or_else(|| flag(item, "lightEnabled")) {
+                        entry.insert("enable".into(), serde_json::json!(en));
+                    }
+                    if let Some(sw) = flag(item, "shadows").or_else(|| flag(item, "Shadows")) {
+                        entry.insert("shadows".into(), serde_json::json!(sw));
+                    }
+                    if let Some(st) = num(item, "shadowStrength").or_else(|| num(item, "ShadowStrength")) {
+                        entry.insert("shadow_strength".into(), serde_json::json!(st.clamp(0.0, 1.0)));
+                    }
+                    if entry.len() > 1 {
+                        overrides.push(serde_json::Value::Object(entry));
+                    }
+                }
+            }
+        }
+    }
+    if global_strength.is_none() && overrides.is_empty() {
+        return None;
+    }
+    let mut out = serde_json::Map::new();
+    if let Some(s) = global_strength {
+        out.insert("shadow_strength".into(), serde_json::json!(s));
+    }
+    if !overrides.is_empty() {
+        out.insert("lights".into(), serde_json::Value::Array(overrides));
+    }
+    Some(serde_json::Value::Object(out))
+}
+
 /// Material Editor edits in the scene's plugin data.
 fn scene_material_edits(bytes: &[u8]) -> Vec<MaterialEdit> {
     use crate::card::{map_get, me_plugin_data, parse_color};
@@ -1082,8 +1195,9 @@ pub fn export(scene_path: &std::path::Path, out_dir: &std::path::Path) -> Result
     let scene = read(&bytes)?;
     std::fs::create_dir_all(out_dir).map_err(|e| e.to_string())?;
     let mut cards = std::collections::HashMap::new();
+    let mut char_card_bytes = std::collections::HashMap::new();
     let mut errors = Vec::new();
-    fn walk(bytes: &[u8], objects: &[Object], out_dir: &std::path::Path, cards: &mut std::collections::HashMap<i32, (String, serde_json::Value)>, errors: &mut Vec<String>) {
+    fn walk(bytes: &[u8], objects: &[Object], out_dir: &std::path::Path, cards: &mut std::collections::HashMap<i32, (String, serde_json::Value)>, char_card_bytes: &mut std::collections::HashMap<i32, Vec<u8>>, errors: &mut Vec<String>) {
         for o in objects {
             match o {
                 Object::Character { key, children, .. } => {
@@ -1097,18 +1211,18 @@ pub fn export(scene_path: &std::path::Path, out_dir: &std::path::Path) -> Result
                                 "eyebrow_ptn": i.status_eyebrow_ptn, "eyes_ptn": i.status_eyes_ptn, "mouth_ptn": i.status_mouth_ptn,
                                 "eyes_look_ptn": i.status_eyes_look_ptn, "neck_look_ptn": i.status_neck_look_ptn,
                             })).unwrap_or(serde_json::Value::Null);
-                            match std::fs::write(&path, card) { Ok(()) => { cards.insert(*key, (path.display().to_string(), status)); } Err(e) => errors.push(format!("character {key}: {e}")) }
+                            match std::fs::write(&path, &card) { Ok(()) => { cards.insert(*key, (path.display().to_string(), status)); char_card_bytes.insert(*key, card); } Err(e) => errors.push(format!("character {key}: {e}")) }
                         }
                         Err(e) => errors.push(format!("character {key}: {e}")),
                     }
-                    for (_, c) in children { walk(bytes, c, out_dir, cards, errors); }
+                    for (_, c) in children { walk(bytes, c, out_dir, cards, char_card_bytes, errors); }
                 }
-                Object::Item { children, .. } | Object::Folder { children, .. } | Object::Route { children, .. } => walk(bytes, children, out_dir, cards, errors),
+                Object::Item { children, .. } | Object::Folder { children, .. } | Object::Route { children, .. } => walk(bytes, children, out_dir, cards, char_card_bytes, errors),
                 _ => {}
             }
         }
     }
-    walk(&bytes, &scene.objects, out_dir, &mut cards, &mut errors);
+    walk(&bytes, &scene.objects, out_dir, &mut cards, &mut char_card_bytes, &mut errors);
     let mut json = serde_json::to_value(&scene).map_err(|e| e.to_string())?;
     let mods = scene_mod_items(&bytes);
     let vmd = scene_vmd(&bytes);
@@ -1124,13 +1238,52 @@ pub fn export(scene_path: &std::path::Path, out_dir: &std::path::Path) -> Result
             }
         }
     }
-    fn mark(v: &mut serde_json::Value, cards: &std::collections::HashMap<i32, (String, serde_json::Value)>, mods: &std::collections::HashMap<i32, (String, i32)>, vmd: &std::collections::HashMap<i32, serde_json::Map<String, serde_json::Value>>, mmdd_okanims: &std::collections::HashMap<i32, String>) {
+    let has_mod_lights = {
+        fn any_mod_light(objs: &[Object], mods: &std::collections::HashMap<i32, (String, i32)>) -> bool {
+            objs.iter().any(|o| match o {
+                Object::Light { key, .. } => mods.contains_key(key),
+                Object::Character { children, .. } => children.iter().any(|(_, c)| any_mod_light(c, mods)),
+                Object::Item { children, .. } | Object::Folder { children, .. } | Object::Route { children, .. } => any_mod_light(children, mods),
+                _ => false,
+            })
+        }
+        any_mod_light(&scene.objects, &mods)
+    };
+    let mod_light_types = if has_mod_lights {
+        let mut search_roots = Vec::new();
+        if let Some(p) = scene_path.parent() { search_roots.push(p); }
+        search_roots.push(out_dir);
+        resolve_mod_light_types(&mods, &crate::mmdd::candidate_catalog_roots(&search_roots))
+    } else {
+        std::collections::HashMap::new()
+    };
+    fn mark(
+        v: &mut serde_json::Value,
+        cards: &std::collections::HashMap<i32, (String, serde_json::Value)>,
+        mods: &std::collections::HashMap<i32, (String, i32)>,
+        mod_light_types: &std::collections::HashMap<(String, i32), &'static str>,
+        vmd: &std::collections::HashMap<i32, serde_json::Map<String, serde_json::Value>>,
+        mmdd_okanims: &std::collections::HashMap<i32, String>,
+    ) {
         match v {
             serde_json::Value::Object(m) => {
                 // A mod item: its mod's GUID and slot in the mod's list (studio_mods resolves it).
                 if m.get("kind").and_then(|k| k.as_str()) == Some("Item") {
                     let key = m.get("key").and_then(|k| k.as_i64()).unwrap_or(-1) as i32;
                     if let Some((guid, slot)) = mods.get(&key) { m.insert("mod_guid".into(), guid.clone().into()); m.insert("mod_slot".into(), (*slot).into()); }
+                }
+                if m.get("kind").and_then(|k| k.as_str()) == Some("Light") {
+                    let key = m.get("key").and_then(|k| k.as_i64()).unwrap_or(-1) as i32;
+                    let no = m.get("no").and_then(|n| n.as_i64()).unwrap_or(1) as i32;
+                    let spot_angle = m.get("spot_angle").and_then(|a| a.as_f64()).unwrap_or(30.0) as f32;
+                    let mut resolved_type: Option<&'static str> = None;
+                    if let Some((guid, slot)) = mods.get(&key) {
+                        m.insert("mod_guid".into(), guid.clone().into());
+                        m.insert("mod_slot".into(), (*slot).into());
+                        resolved_type = mod_light_types.get(&(guid.to_ascii_lowercase(), *slot)).copied();
+                    }
+                    let light_type = resolved_type.unwrap_or_else(|| infer_studio_light_type(no, spot_angle));
+                    m.insert("light_type".into(), light_type.into());
                 }
                 if m.get("kind").and_then(|k| k.as_str()) == Some("Character") {
                     let key = m.get("key").and_then(|k| k.as_i64()).unwrap_or(-1) as i32;
@@ -1141,18 +1294,85 @@ pub fn export(scene_path: &std::path::Path, out_dir: &std::path::Path) -> Result
                     if let Some(okanim) = mmdd_okanims.get(&key) { m.insert("okanim".into(), okanim.clone().into()); }
                     for k in ["card_offset", "card_len", "face_png_offset", "face_png_len", "ext_offset", "ext_len"] { m.remove(k); }
                 }
-                for (_, x) in m.iter_mut() { mark(x, cards, mods, vmd, mmdd_okanims); }
+                for (_, x) in m.iter_mut() { mark(x, cards, mods, mod_light_types, vmd, mmdd_okanims); }
             }
-            serde_json::Value::Array(a) => for x in a { mark(x, cards, mods, vmd, mmdd_okanims); },
+            serde_json::Value::Array(a) => for x in a { mark(x, cards, mods, mod_light_types, vmd, mmdd_okanims); },
             _ => {}
         }
     }
-    mark(&mut json, &cards, &mods, vmd_chars, &mmdd_okanims);
+    mark(&mut json, &cards, &mods, &mod_light_types, vmd_chars, &mmdd_okanims);
     if let Some((scene_vmd, _)) = &vmd { json["vmd_scene"] = serde_json::Value::Object(scene_vmd.clone()); }
     if !vnge.is_empty() { if let Ok(val) = serde_json::to_value(vnge) { json["vnge"] = val; } }
     if let Some(mmdd_data) = mmdd { if let Ok(val) = serde_json::to_value(mmdd_data) { json["mmdd"] = val; } }
+    if let Some(linked) = scene_chara_light_linked_to_camera(&bytes) { json["chara_light_linked_to_camera"] = linked; }
+    if let Some(light_settings) = scene_light_settings(&bytes) { json["light_settings"] = light_settings; }
+    crate::studio_scene_plugins::export_scene_plugins(&bytes, &scene, &char_card_bytes, out_dir, &mut json);
     json["card_errors"] = errors.into();
     Ok(json)
+}
+
+pub(crate) fn classify_light_csv_row(name: &str, prefab: &str) -> Option<&'static str> {
+    let p = prefab.trim().to_ascii_lowercase();
+    let n = name.trim().to_ascii_lowercase();
+    if p.contains("spot") || n.contains("spot") || n.starts_with("s-") {
+        Some("spot")
+    } else if p.contains("directional") || p.contains("dir") || n.contains("directional") || n.starts_with("d-") {
+        Some("directional")
+    } else if p.contains("point") || n.contains("point") || n.starts_with("p-") {
+        Some("point")
+    } else {
+        None
+    }
+}
+
+pub(crate) fn infer_studio_light_type(no: i32, spot_angle: f32) -> &'static str {
+    match no {
+        0 => "directional",
+        2 => "spot",
+        1 => "point",
+        _ if (spot_angle - 30.0).abs() > 1e-3 => "spot",
+        _ => "point",
+    }
+}
+
+fn resolve_mod_light_types(
+    mods: &std::collections::HashMap<i32, (String, i32)>,
+    roots: &[std::path::PathBuf],
+) -> std::collections::HashMap<(String, i32), &'static str> {
+    use std::io::Read;
+    let wanted_guids: std::collections::HashSet<String> = mods.values().map(|(g, _)| g.to_ascii_lowercase()).collect();
+    let mut out = std::collections::HashMap::new();
+    for root in roots {
+        let mods_dir = root.join("mods");
+        if !mods_dir.is_dir() { continue; }
+        for zip_path in crate::mods::all_zipmods(&mods_dir) {
+            let guids = crate::mods::guids_from_zipmod(&zip_path);
+            let Some(guid) = guids.into_iter().find(|g| wanted_guids.contains(&g.to_ascii_lowercase())) else { continue };
+            let guid_lc = guid.to_ascii_lowercase();
+            let Ok(file) = std::fs::File::open(&zip_path) else { continue };
+            let Ok(mut zip) = zip::ZipArchive::new(file) else { continue };
+            let names: Vec<String> = zip.file_names().map(str::to_owned).collect();
+            for n in names {
+                let l = n.replace('\\', "/").to_ascii_lowercase();
+                if !l.starts_with("abdata/studio/info/") { continue; }
+                let Some(fname) = l.rsplit('/').next() else { continue };
+                if !fname.starts_with("light_") || !fname.ends_with(".csv") { continue; }
+                let Ok(mut entry) = zip.by_name(&n) else { continue };
+                let mut bytes = Vec::new();
+                if entry.read_to_end(&mut bytes).is_err() { continue; }
+                for line in String::from_utf8_lossy(&bytes).trim_start_matches('\u{feff}').lines() {
+                    let cols: Vec<&str> = line.split(',').map(str::trim).collect();
+                    let Some(slot) = cols.first().and_then(|s| s.parse::<i32>().ok()) else { continue };
+                    let name = cols.get(1).copied().unwrap_or_default();
+                    let prefab = cols.get(4).copied().unwrap_or_default();
+                    if let Some(kind) = classify_light_csv_row(name, prefab) {
+                        out.insert((guid_lc.clone(), slot), kind);
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1362,3 +1582,143 @@ fn scene_1268_clothing_source() {
     }
     assert_eq!(std::fs::read(path).unwrap(),source,"conversion never edits the source file");
 }
+
+#[cfg(test)]
+mod chara_light_linked_tests {
+    use rmpv::Value;
+
+    fn pack_kkex(plugin_val: Value) -> Vec<u8> {
+        let blocks = Value::Map(vec![(
+            Value::from("com.jim60105.kk.studiocharalightlinkedtocamera"),
+            plugin_val,
+        )]);
+        let mut msg = Vec::new();
+        rmpv::encode::write_value(&mut msg, &blocks).unwrap();
+        let mut out = b"prefix\x04KKEx".to_vec();
+        out.extend_from_slice(&3i32.to_le_bytes());
+        out.extend_from_slice(&(msg.len() as i32).to_le_bytes());
+        out.extend_from_slice(&msg);
+        out
+    }
+
+    fn vec2_map(x: f64, y: f64) -> Value {
+        Value::Map(vec![(Value::from("x"), Value::from(x)), (Value::from("y"), Value::from(y))])
+    }
+
+    #[test]
+    fn parses_string_and_bool_locked_payloads() {
+        let str_locked = Value::Array(vec![
+            Value::from(3),
+            Value::Map(vec![
+                (Value::from("locked"), Value::from("true")),
+                (Value::from("attachedLightAngle"), vec2_map(35.0, 0.0)),
+                (Value::from("attachedCameraAngle"), vec2_map(11.4, 180.0)),
+            ]),
+        ]);
+        let parsed = super::scene_chara_light_linked_to_camera(&pack_kkex(str_locked)).unwrap();
+        assert_eq!(parsed["locked"], true);
+        assert!((parsed["light_angle"][0].as_f64().unwrap() - 35.0).abs() < 1e-4);
+        assert!((parsed["camera_angle"][0].as_f64().unwrap() - 11.4).abs() < 1e-4);
+        assert!((parsed["camera_angle"][1].as_f64().unwrap() - 180.0).abs() < 1e-4);
+
+        let bool_locked = Value::Map(vec![
+            (Value::from("locked"), Value::from(true)),
+            (Value::from("attachedLightAngle"), Value::Map(vec![(Value::from("x"), Value::from(10i64)), (Value::from("y"), Value::from(-25i64))])),
+            (Value::from("attachedCameraAngle"), vec2_map(0.0, 90.0)),
+        ]);
+        let parsed2 = super::scene_chara_light_linked_to_camera(&pack_kkex(bool_locked)).unwrap();
+        assert_eq!(parsed2["light_angle"][0].as_f64().unwrap(), 10.0);
+        assert_eq!(parsed2["light_angle"][1].as_f64().unwrap(), -25.0);
+    }
+
+    #[test]
+    fn rejects_unlocked_nan_or_missing_payloads() {
+        let unlocked = Value::Array(vec![
+            Value::from(3),
+            Value::Map(vec![
+                (Value::from("locked"), Value::from("false")),
+                (Value::from("attachedLightAngle"), vec2_map(35.0, 0.0)),
+                (Value::from("attachedCameraAngle"), vec2_map(11.4, 180.0)),
+            ]),
+        ]);
+        assert!(super::scene_chara_light_linked_to_camera(&pack_kkex(unlocked)).is_none());
+
+        let nan_angle = Value::Map(vec![
+            (Value::from("locked"), Value::from(true)),
+            (Value::from("attachedLightAngle"), vec2_map(f64::NAN, 0.0)),
+            (Value::from("attachedCameraAngle"), vec2_map(11.4, 180.0)),
+        ]);
+        assert!(super::scene_chara_light_linked_to_camera(&pack_kkex(nan_angle)).is_none());
+        assert!(super::scene_chara_light_linked_to_camera(b"").is_none());
+    }
+
+    #[test]
+    fn classifies_vanilla_and_modded_studio_lights() {
+        assert_eq!(super::classify_light_csv_row("D-MODMAP", "Directional light"), Some("directional"));
+        assert_eq!(super::classify_light_csv_row("P-MODMAP", "Point light"), Some("point"));
+        assert_eq!(super::classify_light_csv_row("S-MODMAP", "Spotlight"), Some("spot"));
+        assert_eq!(super::infer_studio_light_type(0, 30.0), "directional");
+        assert_eq!(super::infer_studio_light_type(1, 30.0), "point");
+        assert_eq!(super::infer_studio_light_type(2, 30.0), "spot");
+        // Modded local slot (`no > 2`) with non-default spot angle (`63.0` != `30.0`) falls back to spot
+        assert_eq!(super::infer_studio_light_type(77723033, 63.0), "spot");
+        assert_eq!(super::infer_studio_light_type(77723032, 30.0), "point");
+    }
+
+    #[test]
+    fn parses_optional_shadow_and_light_settings_plugins() {
+        let mut raw_list = Vec::new();
+        rmpv::encode::write_value(
+            &mut raw_list,
+            &Value::Array(vec![
+                Value::Map(vec![
+                    (Value::from("ObjectId"), Value::from(-10i64)),
+                    (Value::from("state"), Value::from(true)),
+                    (Value::from("shadows"), Value::from(2i64)), // LightShadows.Soft = 2
+                    (Value::from("shadowStrength"), Value::from(0.72)),
+                ]),
+                Value::Map(vec![
+                    (Value::from("ObjectId"), Value::from(4i64)),
+                    (Value::from("shadows"), Value::from(0i64)), // LightShadows.None = 0
+                ]),
+            ]),
+        )
+        .unwrap();
+        let blocks = Value::Map(vec![
+            (
+                Value::from("com.shallty.shadowsettings"),
+                Value::Array(vec![
+                    Value::from(1),
+                    Value::Map(vec![(Value::from("shadowStrength"), Value::from(0.65))]),
+                ]),
+            ),
+            (
+                Value::from("LightSettingsData"),
+                Value::Array(vec![
+                    Value::from(0),
+                    Value::Map(vec![(Value::from("LightSettingsData_lights"), Value::Binary(raw_list))]),
+                ]),
+            ),
+        ]);
+        let mut msg = Vec::new();
+        rmpv::encode::write_value(&mut msg, &blocks).unwrap();
+        let mut buf = b"prefix\x04KKEx".to_vec();
+        buf.extend_from_slice(&3i32.to_le_bytes());
+        buf.extend_from_slice(&(msg.len() as i32).to_le_bytes());
+        buf.extend_from_slice(&msg);
+
+        let parsed = super::scene_light_settings(&buf).expect("light_settings must parse");
+        assert!((parsed["shadow_strength"].as_f64().unwrap() - 0.65).abs() < 1e-5);
+        let lights = parsed["lights"].as_array().unwrap();
+        assert_eq!(lights.len(), 2);
+        assert_eq!(lights[0]["object_id"], -10);
+        assert_eq!(lights[0]["enable"], true);
+        assert_eq!(lights[0]["shadows"], true);
+        assert!((lights[0]["shadow_strength"].as_f64().unwrap() - 0.72).abs() < 1e-5);
+        assert_eq!(lights[1]["object_id"], 4);
+        assert_eq!(lights[1]["shadows"], false);
+        assert!(super::scene_light_settings(b"").is_none());
+    }
+}
+
+

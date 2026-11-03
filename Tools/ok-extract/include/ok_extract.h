@@ -78,6 +78,10 @@ int32_t ok_private_skin_stages_batch(const OkSession* s,const int32_t* parts,con
 int32_t ok_set_head_look(OkSession* s,float x,float y,float z,int32_t enabled);
 /* Studio FK: count NUL-terminated bone names back to back, 3 floats (Unity local Euler degrees) each; count 0 clears. */
 int32_t ok_session_set_fk(OkSession* s,const char* names,const float* euler,int32_t count);
+/* KKPE / Timeline bone position (Unity local metres) & scale overrides; flags[i]: bit 1 = pos, bit 2 = scale; count 0 clears. */
+int32_t ok_session_set_bone_pos_scale(OkSession* s,const char* names,const float* pos,const float* scale,const uint8_t* flags,int32_t count);
+/* Find all part indices matching a SkinnedMeshRenderer name or path; returns total matches (writes up to cap). */
+int32_t ok_session_renderer_parts(const OkSession* s,const char* renderer,int32_t* out_parts,int32_t cap);
 /* Local rotation (Unity Euler degrees) of a body bone in the current pose; -1 when absent. */
 int32_t ok_session_bone_euler(OkSession* s,const char* name,float* out3);
 /* Studio IK (FullBodyBipedIK): prepare from the shared resources root; targets are effector indexes 0..8 (body, L/R
@@ -101,6 +105,7 @@ void ok_studio_shader_states_ensure(const char* game,const char* lib);
 int32_t ok_unity_euler_rotate(const float* euler3,int32_t axis,float degrees,float* out3);
 /* Timeline FK: Unity Euler degrees t (0..1) of the way from a3 to b3 along the shortest arc. */
 int32_t ok_unity_euler_slerp(const float* a3,const float* b3,float t,float* out3);
+int32_t ok_unity_quat_to_euler(const float* q4,float* out3);
 int32_t ok_studio_pose_write(const char* path,const char* json,char* err,int32_t cap);
 /* PhysX secondary dynamics for this character: 1 = host solver (gallery menu, one-to-one, paired playback), 0 = built-in (default). */
 int32_t ok_session_set_physx_secondary(OkSession* s,int32_t enabled);

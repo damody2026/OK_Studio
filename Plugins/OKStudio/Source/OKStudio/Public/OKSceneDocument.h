@@ -75,6 +75,57 @@ struct OKSTUDIO_API FOKSceneFkBone
 	bool operator==(const FOKSceneFkBone& O) const = default;
 };
 
+/** KKPE / Timeline local bone position (Unity metres), rotation (Unity Euler degrees) and scale override. */
+USTRUCT(BlueprintType)
+struct OKSTUDIO_API FOKSceneBoneTrs
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose")
+	FString Bone;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose")
+	bool bHasPos = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose")
+	FVector Pos = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose")
+	bool bHasRot = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose")
+	FVector Euler = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose")
+	bool bHasScale = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose")
+	FVector Scale = FVector::OneVector;
+
+	bool operator==(const FOKSceneBoneTrs& O) const = default;
+};
+
+/** KKPE / Timeline SkinnedMeshRenderer blendshape weight override (0..100 percent). */
+USTRUCT(BlueprintType)
+struct OKSTUDIO_API FOKSceneMorphOverride
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Morph")
+	FString Renderer;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Morph")
+	int32 Index = -1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Morph")
+	FString Name;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Morph")
+	float Weight = 0.f;
+
+	bool operator==(const FOKSceneMorphOverride& O) const = default;
+};
+
 /** A Studio IK target: position in character-local cm and optional native hand/foot orientation. */
 USTRUCT(BlueprintType)
 struct OKSTUDIO_API FOKSceneIkTarget
@@ -255,6 +306,14 @@ struct OKSTUDIO_API FOKSceneCharacter
 	/** Studio IK: these effectors reach these positions (solved after FK and the card's bone modifiers). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose")
 	TArray<FOKSceneIkTarget> Ik;
+
+	/** KKPE / Timeline per-bone TRS overrides (applied live without rebuilding the character). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose")
+	TArray<FOKSceneBoneTrs> BoneOverrides;
+
+	/** KKPE / Timeline SkinnedMeshRenderer blendshape overrides (applied live without rebuilding the character). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face")
+	TArray<FOKSceneMorphOverride> MorphOverrides;
 
 	/** Parts whose FK is switched off (bit per FkPartOf part: body, chest, hair, neck, left hand, right hand, skirt): their
 	 *  bones keep their values but follow the animation (HS2Studio6 部位開關). */
@@ -475,7 +534,25 @@ struct OKSTUDIO_API FOKSceneItem
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item")
 	TArray<FOKSceneMaterialEdit> MaterialEdits;
 
+	/** KKPE / Timeline item bone TRS overrides (baked with item FK). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item")
+	TArray<FOKSceneBoneTrs> BoneOverrides;
+
+	/** KKPE / Timeline item blendshape overrides (applied live without rebuilding the item). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item")
+	TArray<FOKSceneMorphOverride> MorphOverrides;
+
 	bool operator==(const FOKSceneItem& O) const = default;
+
+	bool SameContent(const FOKSceneItem& O) const
+	{
+		return Model == O.Model && Prefab == O.Prefab && Group == O.Group && Category == O.Category && No == O.No
+			&& AnimePattern == O.AnimePattern && AnimeTime == O.AnimeTime && AnimeSpeed == O.AnimeSpeed
+			&& Colors == O.Colors && ShadowColor == O.ShadowColor && Alpha == O.Alpha && LineWidth == O.LineWidth
+			&& LightCancel == O.LightCancel && EmissionColor == O.EmissionColor && EmissionPower == O.EmissionPower
+			&& LineColor == O.LineColor && Fk == O.Fk && BoneOverrides == O.BoneOverrides
+			&& Patterns == O.Patterns && MaterialEdits == O.MaterialEdits;
+	}
 };
 
 USTRUCT(BlueprintType)
@@ -510,6 +587,10 @@ struct OKSTUDIO_API FOKSceneLight
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Light")
 	bool bShadows = true;
+
+	/** Unity Light.shadowStrength (0..1; KKS Studio Directional Chara defaults to 0.8). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Light", meta = (ClampMin = "0", ClampMax = "1"))
+	float ShadowStrength = 0.8f;
 
 	/** Lights the characters and items only, not the map (Studio's character light). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Light")
@@ -689,6 +770,9 @@ struct OKSTUDIO_API FOKScenePost
 
 	/** Studio's shader globals for these settings (SystemButtonCtrl.SetAmbientShadow / SetLineColor / SetLineWidth). */
 	TMap<FName, FLinearColor> ShaderGlobals() const;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Post")
+	bool bShadow = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Post")
 	bool bDepthOfField = false;
@@ -905,6 +989,189 @@ struct OKSTUDIO_API FOKSceneSound
 	bool bOutsideRepeat = true;
 };
 
+/** Parent/child transform constraint imported from NodesConstraints or KK_AnimationController. */
+USTRUCT(BlueprintType)
+struct OKSTUDIO_API FOKSceneConstraint
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	int32 LoadId = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	bool bEnabled = true;
+
+	/** -2: active/Studio camera; > 0: parent scene object id. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	int32 ParentId = -1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	FString ParentBone;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	int32 ChildId = -1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	FString ChildBone;
+
+	/** >= 0 when Child targets a character's Studio IK effector (0..12). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	int32 ChildIkEffector = -1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	bool bPosition = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	bool bMirrorPosition = false;
+
+	/** Unity local-space position offset (metres). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	FVector PositionOffset = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	bool bRotation = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	bool bMirrorRotation = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	bool bLookAt = false;
+
+	/** Unity rotation offset quaternion (x, y, z, w). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	FQuat RotationOffset = FQuat::Identity;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	bool bScale = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	bool bMirrorScale = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	FVector ScaleOffset = FVector::OneVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	FVector OrigParentPos = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	FQuat OrigParentRot = FQuat::Identity;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	FVector OrigParentScale = FVector::OneVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	float PosFactor = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	float RotFactor = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	float ScaleFactor = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	bool bLockPosX = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	bool bLockPosY = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	bool bLockPosZ = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	bool bLockRotX = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	bool bLockRotY = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	bool bLockRotZ = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	bool bLockScaleX = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	bool bLockScaleY = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	bool bLockScaleZ = true;
+
+	bool operator==(const FOKSceneConstraint& O) const = default;
+};
+
+/** One cubic-Hermite curve control point inside a KK/KKS Timeline keyframe. */
+USTRUCT(BlueprintType)
+struct OKSTUDIO_API FOKSceneTimelineCurvePt
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	float Time = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	float Value = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	float InTangent = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	float OutTangent = 1.f;
+
+	bool operator==(const FOKSceneTimelineCurvePt& O) const = default;
+};
+
+/** One keyframe on a KK/KKS Timeline interpolable track. */
+USTRUCT(BlueprintType)
+struct OKSTUDIO_API FOKSceneTimelineKeyframe
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	float Time = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	TArray<float> Values;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	TArray<FString> Names;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	TArray<FOKSceneTimelineCurvePt> Curve;
+
+	bool operator==(const FOKSceneTimelineKeyframe& O) const = default;
+};
+
+/** One continuous interpolable track imported from Timeline.dll (Timeline::*, KKPE::*, NodesConstraints::*). */
+USTRUCT(BlueprintType)
+struct OKSTUDIO_API FOKSceneTimelineTrack
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	FString Owner;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	FString InterpolableId;
+
+	/** -1 for global camera/scene tracks; > 0 for object tracks. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	int32 ObjectId = -1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	FString TargetPath;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	FString TargetBone;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	int32 TargetIkEffector = -1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	int32 ParamInt = -1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	TArray<FOKSceneTimelineKeyframe> Keyframes;
+};
+
 /** Timeline keys of one object, in time order. */
 USTRUCT(BlueprintType)
 struct OKSTUDIO_API FOKSceneTrack
@@ -976,6 +1243,41 @@ public:
 	float SoundDelay = 0.f;
 
 	static constexpr int32 SceneTrackId = -2;
+
+	/** NodesConstraints / KK_AnimationController parent-child constraints evaluated after poses. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Constraints")
+	TArray<FOKSceneConstraint> Constraints;
+
+	/** Continuous cubic-Hermite tracks imported from Timeline.dll. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	TArray<FOKSceneTimelineTrack> TimelineTracks;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	bool bLoopTimeline = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
+	int32 StudioCameraId = -1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
+	FVector StudioCameraOrbitTarget = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
+	FVector StudioCameraOrbitRot = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
+	FVector StudioCameraOrbitDist = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
+	int32 CharaLightId = -1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
+	bool bLinkCharaLightToCamera = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
+	FVector2D LinkedLightBase = FVector2D::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
+	FVector2D LinkedCameraBase = FVector2D::ZeroVector;
 
 	/** View bookmarks 0..9. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")

@@ -4946,7 +4946,15 @@ void AKKPreviewActor::SetSharedVectorParameter(FName Name, const FLinearColor& V
 		for (UMaterialInstanceDynamic* M : *List)
 		{
 			FLinearColor Current;
-			if (M && M->GetVectorParameterValue(FMaterialParameterInfo(Name), Current) && !Current.Equals(Value)) M->SetVectorParameterValue(Name, Value);
+			float Scalar = 0.f;
+			if (M && M->GetVectorParameterValue(FMaterialParameterInfo(Name), Current))
+			{
+				if (!Current.Equals(Value)) M->SetVectorParameterValue(Name, Value);
+			}
+			else if (M && M->GetScalarParameterValue(FMaterialParameterInfo(Name), Scalar) && Scalar != Value.R)
+			{
+				M->SetScalarParameterValue(Name, Value.R);
+			}
 			// Shared shader graphs transport float4 alpha through a separate
 			// scalar parameter; update it along with the RGB vector.
 			float Alpha = 0.f;
@@ -5048,6 +5056,11 @@ void AKKPreviewActor::DestroyAllParts()
 	}
 	ToonShadowMaterials.Reset();
     ToonShadowBoundIndex=INDEX_NONE;ToonShadowBoundMaterialCount=0;
+	ToonShadowAppliedCenter = FVector(NAN);
+	ToonShadowAppliedLightDir = FVector::ZeroVector;
+	ToonShadowAppliedWidth = -1.f;
+	ToonShadowAppliedStrength = -1.f;
+	ToonShadowAppliedMaterialCount = 0;
 	ToonShadowTargets.Reset();
 	ToonShadowReadIndex = 0;
 	for (FKKLoadedPart& Part : Parts)
@@ -5095,6 +5108,7 @@ void AKKPreviewActor::DestroyAllParts()
 	}
 
 	PartMorphWeights.Reset();
+	SceneMorphOverrideKeys.Reset();
 	bAsymmetricEyes = false;
 	EyeOpenLR[0] = 1.f; EyeOpenLR[1] = 1.f;
 	EyeWinkHappyLR[0] = 0.f; EyeWinkHappyLR[1] = 0.f;
@@ -6304,10 +6318,10 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 		// omitted the ramp's chroma/ambient tail and shifted texture highlights.
 #if WITH_EDITOR
 		// A part on a shared parent (ShadowParams.CookedMaterial) draws with that instance; no skin graph of its own.
-		if (View.shader_kind == 5 && !ShadowParams.CookedMaterial)
+		if ((View.shader_kind == 5 || View.shader_kind == 7) && !ShadowParams.CookedMaterial)
 		{
 			FKKRuntimeMaterialPart SkinPart;
-			SkinPart.ShaderKind=5;SkinPart.SourceMetadataJson=Source.MaterialMetadataJson(i);
+			SkinPart.ShaderKind=View.shader_kind;SkinPart.SourceMetadataJson=Source.MaterialMetadataJson(i);
 			// Optional input audit records the bytes actually delivered to the preview.
 			const FString SkinAudit=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_SKIN_INPUT_AUDIT"));
 			if(!SkinAudit.IsEmpty())
@@ -9814,8 +9828,10 @@ bool AKKPreviewActor::SolveScenePose(float DeltaSeconds,bool bAdvanceAnimation)
 bool AKKPreviewActor::OrderSceneTicks(AActor* PoseOwner)
 {
     // The face parts' anim update reads the pose SyncMouthPose leaves; ticking after the owner, they read this frame's.
+    // Order this actor's tick after PoseOwner as well so ToonShadowCapture frames the current-frame pose and lighting.
     if(!PoseOwner)return false;
-    int32 Ordered=0;
+    AddTickPrerequisiteActor(PoseOwner);
+    int32 Ordered=1;
     for(const FOkMouthSlot& Slot:MouthSlots)
         for(USkeletalMeshComponent* Mesh:{Slot.Comp,Slot.OutlineComp})
             if(Mesh){Mesh->AddTickPrerequisiteActor(PoseOwner);++Ordered;}
@@ -10377,8 +10393,9 @@ void AKKPreviewActor::Tick(float DeltaSeconds)
 	static uint64 GShadowCaptureFrame = 0;
 	static int32 GShadowCapturersThisFrame = 0, GShadowCapturersLastFrame = 0;
 	if (ShadowCapturePhase == MAX_uint32) ShadowCapturePhase = GShadowCapturePhases++;
+	const bool bShadowActive = !bExplicitToonShadowLight || ToonShadowStrength > 0.0001f;
 	bool bShadowTurn = true;
-	if (bSceneDrivenPose && bCharacterDisplayShadows && ToonShadowCapture && CVarOkShadowCaptureStagger.GetValueOnGameThread() != 0)
+	if (bSceneDrivenPose && bCharacterDisplayShadows && bShadowActive && ToonShadowCapture && CVarOkShadowCaptureStagger.GetValueOnGameThread() != 0)
 	{
 		if (GShadowCaptureFrame != GFrameCounter) { GShadowCapturersLastFrame = GShadowCapturersThisFrame; GShadowCapturersThisFrame = 0; GShadowCaptureFrame = GFrameCounter; }
 		++GShadowCapturersThisFrame;
@@ -10386,22 +10403,112 @@ void AKKPreviewActor::Tick(float DeltaSeconds)
 		const uint64 Period = (uint64)FMath::Max(2, FMath::DivideAndRoundUp(GShadowCapturersLastFrame, Budget));
 		bShadowTurn = (GFrameCounter + ShadowCapturePhase) % Period == 0;
 	}
-	if (bCharacterDisplayShadows && ToonShadowCapture && ToonShadowTargets.Num() == 2 && bShadowTurn)
+	if (bCharacterDisplayShadows && ToonShadowCapture && ToonShadowTargets.Num() == 2 && (!bShadowActive || bShadowTurn))
 	{
-        // CaptureScene() builds and executes a renderer immediately, so the game
-        // thread stalls every frame and stat unitgraph steps. The deferred photo
-        // path already keeps one target bound and captures it before the main view.
-        const bool bStable = CVarOkStableShadowTarget.GetValueOnGameThread() != 0;
-        const int32 WriteIndex = bStable ? ToonShadowReadIndex : (1 - ToonShadowReadIndex);
-        ToonShadowCapture->TextureTarget = ToonShadowTargets[WriteIndex];
-        ToonShadowCapture->CaptureSceneDeferred();
-        BindToonShadowTarget(WriteIndex);
-        ToonShadowReadIndex = WriteIndex;
+        UpdateToonShadowProjection();
+        if (bShadowActive)
+        {
+            // CaptureScene() builds and executes a renderer immediately, so the game
+            // thread stalls every frame and stat unitgraph steps. The deferred photo
+            // path already keeps one target bound and captures it before the main view.
+            const bool bStable = CVarOkStableShadowTarget.GetValueOnGameThread() != 0;
+            const int32 WriteIndex = bStable ? ToonShadowReadIndex : (1 - ToonShadowReadIndex);
+            ToonShadowCapture->TextureTarget = ToonShadowTargets[WriteIndex];
+            ToonShadowCapture->CaptureSceneDeferred();
+            BindToonShadowTarget(WriteIndex);
+            ToonShadowReadIndex = WriteIndex;
+        }
 	}
  if(bLaunchAsyncPose){bLaunchAsyncPose=false;if(PoseMode==2&&Session.IsOpen())Session.LaunchAsyncAnimFrame(float(FMath::Min(double(AnimPhase)+double(AsyncPoseDelta)*double(AnimationPlaybackSpeed),double(MAX_flt))),AsyncPoseDelta);}
  const double TickMs=(FPlatformTime::Seconds()-Begin)*1000.;
  if(bNeedPose){AnimationTickTotalMs+=TickMs;++AnimationTickSamples;AnimationTickMaxMs=FMath::Max(AnimationTickMaxMs,TickMs);++AnimationTickHistogram[FMath::Clamp(int32(TickMs),0,255)];}
  if(Profile)UE_LOG(LogTemp,Display,TEXT("OK animation tick pose_ms=%.3f face_ms=%.3f shadow_ms=%.3f"),(PoseDone-Begin)*1000.,(FaceDone-PoseDone)*1000.,(FPlatformTime::Seconds()-FaceDone)*1000.);
+}
+
+void AKKPreviewActor::SetToonShadowLight(const FVector& WorldTowardsLight, float ShadowStrength)
+{
+    bExplicitToonShadowLight = true;
+    const FVector Normalized = WorldTowardsLight.GetSafeNormal();
+    if (!Normalized.IsNearlyZero())
+    {
+        ToonShadowLightDir = Normalized;
+    }
+    ToonShadowStrength = FMath::Clamp(ShadowStrength, 0.f, 1.f);
+    UpdateToonShadowProjection();
+}
+
+void AKKPreviewActor::UpdateToonShadowProjection()
+{
+    if (!bExplicitToonShadowLight) return;
+    FBox WorldBox(ForceInit);
+    TInlineComponentArray<UMeshComponent*> Meshes(this);
+    for (const UMeshComponent* Mesh : Meshes)
+    {
+        if (Mesh && Mesh->IsRegistered() && Mesh->IsVisible() && Mesh->bRenderInMainPass
+            && !Mesh->ComponentHasTag(TEXT("KKPreviewOutline")) && Mesh->Bounds.SphereRadius > KINDA_SMALL_NUMBER)
+        {
+            WorldBox += Mesh->Bounds.GetBox();
+        }
+    }
+    if (WorldBox.IsValid)
+    {
+        ToonShadowCenter = WorldBox.GetCenter();
+        ToonShadowWidth = FMath::Clamp(float(WorldBox.GetExtent().GetMax()) * 2.4f, 180.f, 600.f);
+    }
+    else
+    {
+        ToonShadowCenter = GetActorLocation() + FVector(0.f, 0.f, 90.f);
+        ToonShadowWidth = 260.f;
+    }
+    FVector Dir = ToonShadowLightDir.GetSafeNormal();
+    if (Dir.IsNearlyZero()) Dir = FVector(-0.25f, 0.85f, 0.45f).GetSafeNormal();
+    ToonShadowLightDir = Dir;
+    const FRotator ShadowRotation = (-Dir).Rotation();
+    const FQuat ShadowQuat = ShadowRotation.Quaternion();
+    ToonShadowRight = ShadowQuat.GetRightVector();
+    ToonShadowUp = ShadowQuat.GetUpVector();
+    const float ShadowDistance = FMath::Max(500.f, ToonShadowWidth * 1.5f);
+    if (ToonShadowCapture)
+    {
+        ToonShadowCapture->SetWorldLocationAndRotation(ToonShadowCenter + Dir * ShadowDistance, ShadowRotation);
+        ToonShadowCapture->OrthoWidth = ToonShadowWidth;
+    }
+    const float EffectiveStrength = bCharacterDisplayShadows ? FMath::Clamp(ToonShadowStrength, 0.f, 1.f) : 0.f;
+    const bool bGeometryDirty = EffectiveStrength > 0.0001f && (
+        !FMath::IsNearlyEqual(ToonShadowAppliedWidth, ToonShadowWidth, 0.05f)
+        || !ToonShadowAppliedCenter.ContainsNaN() && FVector::DistSquared(ToonShadowAppliedCenter, ToonShadowCenter) > 0.01
+        || ToonShadowAppliedCenter.ContainsNaN()
+        || (ToonShadowAppliedLightDir | Dir) < 0.99999f);
+    if (ToonShadowAppliedMaterialCount != ToonShadowMaterials.Num()
+        || !FMath::IsNearlyEqual(ToonShadowAppliedStrength, EffectiveStrength, 1e-4f)
+        || bGeometryDirty)
+    {
+        const float Bias = OKToonShadowBias();
+        const FLinearColor CenterLin(ToonShadowCenter.X, ToonShadowCenter.Y, ToonShadowCenter.Z, 1.f);
+        const FLinearColor DirLin(Dir.X, Dir.Y, Dir.Z, 1.f);
+        const FLinearColor RightLin(ToonShadowRight.X, ToonShadowRight.Y, ToonShadowRight.Z, 1.f);
+        const FLinearColor UpLin(ToonShadowUp.X, ToonShadowUp.Y, ToonShadowUp.Z, 1.f);
+        for (UMaterialInstanceDynamic* Mat : ToonShadowMaterials)
+        {
+            if (!Mat) continue;
+            Mat->SetScalarParameterValue(TEXT("__OK_ShadowStrength"), EffectiveStrength);
+            if (EffectiveStrength > 0.0001f)
+            {
+                Mat->SetVectorParameterValue(TEXT("__OK_ShadowCenter"), CenterLin);
+                Mat->SetVectorParameterValue(TEXT("__OK_ShadowLightDir"), DirLin);
+                Mat->SetVectorParameterValue(TEXT("__OK_ShadowRight"), RightLin);
+                Mat->SetVectorParameterValue(TEXT("__OK_ShadowUp"), UpLin);
+                Mat->SetScalarParameterValue(TEXT("__OK_ShadowWidth"), ToonShadowWidth);
+                Mat->SetScalarParameterValue(TEXT("__OK_ShadowDistance"), ShadowDistance);
+                Mat->SetScalarParameterValue(TEXT("__OK_ShadowBias"), Bias);
+            }
+        }
+        ToonShadowAppliedCenter = ToonShadowCenter;
+        ToonShadowAppliedLightDir = Dir;
+        ToonShadowAppliedWidth = ToonShadowWidth;
+        ToonShadowAppliedStrength = EffectiveStrength;
+        ToonShadowAppliedMaterialCount = ToonShadowMaterials.Num();
+    }
 }
 
 void AKKPreviewActor::BindToonShadowTarget(int32 Index)
@@ -10420,6 +10527,11 @@ bool AKKPreviewActor::RefreshShotShadow(bool bDeferred)
 	if (!ToonShadowCapture || ToonShadowTargets.Num() != 2) return false;
 	const float HeldPhase = AnimPhase;
 	const float HeldFaceClock = FaceClock;
+    UpdateToonShadowProjection();
+    if (bExplicitToonShadowLight && ToonShadowStrength <= 0.0001f)
+    {
+        return AnimPhase == HeldPhase && FaceClock == HeldFaceClock;
+    }
     // Scene-depth capture writes its resolved target after rendering, before
     // the main view reads it. Its lighting does not consume KKShadowDepth.
     // Keep that resource bound to avoid invalidating every material uniform
@@ -12497,6 +12609,64 @@ static FAutoConsoleCommand ShotPreviewCmd(
 	TEXT("ok.ShotPreview"),
 	TEXT("Load card via Rust session, capture user_check_3d.png, user_check_face.png, user_check_face_side.png, quit"),
 	FConsoleCommandDelegate::CreateStatic(&ShotPreviewNow));
+
+bool AKKPreviewActor::SetUserBonePosScale(const TArray<FString>& Bones, const TArray<FVector>& UnityPos, const TArray<FVector>& UnityScale, const TArray<uint8>& Flags)
+{
+	if (!Session.IsOpen() || !Session.SetBonePosScale(Bones, UnityPos, UnityScale, Flags)) return false;
+	bUserPoseDirty = true;
+	ApplyPoseFrame(0.f, false);
+	return true;
+}
+
+bool AKKPreviewActor::SetRendererMorphOverrides(const TArray<FString>& Renderers, const TArray<int32>& MorphIndices, const TArray<FName>& MorphNames, const TArray<float>& Percents)
+{
+	if (!Session.IsOpen()) return false;
+	const int32 Count = Renderers.Num();
+	if (MorphIndices.Num() != Count || MorphNames.Num() != Count || Percents.Num() != Count) return false;
+	bool bChanged = false;
+	for (const TPair<int32, TSet<FName>>& Prev : SceneMorphOverrideKeys)
+	{
+		if (TMap<FName, float>* Map = PartMorphWeights.Find(Prev.Key))
+		{
+			for (const FName& Key : Prev.Value) { if (Map->Remove(Key) > 0) bChanged = true; }
+			if (Map->IsEmpty()) PartMorphWeights.Remove(Prev.Key);
+		}
+	}
+	SceneMorphOverrideKeys.Reset();
+	TArray<int32> PartIds;
+	for (int32 I = 0; I < Count; ++I)
+	{
+		if (!FMath::IsFinite(Percents[I])) continue;
+		if (!Session.FindRendererParts(Renderers[I], PartIds)) continue;
+		const float Clamped = FMath::Clamp(Percents[I], 0.f, 100.f);
+		for (int32 PartIndex : PartIds)
+		{
+			const FOkMouthSlot* Slot = MouthSlots.FindByPredicate([PartIndex](const FOkMouthSlot& S) { return S.SessionPartIndex == PartIndex; });
+			if (!Slot) continue;
+			FName Resolved = MorphNames[I];
+			if (Resolved.IsNone())
+			{
+				if (Slot->MorphNames.IsValidIndex(MorphIndices[I])) Resolved = Slot->MorphNames[MorphIndices[I]];
+				else
+				{
+					const TArray<FName> Names = GetPartMorphNames(PartIndex);
+					if (Names.IsValidIndex(MorphIndices[I])) Resolved = Names[MorphIndices[I]];
+				}
+			}
+			else if (!Slot->MorphNames.Contains(Resolved) && !GetPartMorphNames(PartIndex).Contains(Resolved))
+			{
+				if (Slot->MorphNames.IsValidIndex(MorphIndices[I])) Resolved = Slot->MorphNames[MorphIndices[I]];
+				else continue;
+			}
+			if (Resolved.IsNone()) continue;
+			PartMorphWeights.FindOrAdd(PartIndex).Add(Resolved, Clamped);
+			SceneMorphOverrideKeys.FindOrAdd(PartIndex).Add(Resolved);
+			bChanged = true;
+		}
+	}
+	if (bChanged) ApplyMouth();
+	return true;
+}
 
 bool AKKPreviewActor::SetUserFk(const TArray<FString>& Bones, const TArray<FVector>& UnityEuler)
 {

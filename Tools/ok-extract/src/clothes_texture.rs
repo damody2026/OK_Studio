@@ -606,7 +606,9 @@ pub(crate) fn set_material_color(mesh: &mut ExtractedMesh, property: &str, value
 // matDraw after CreateFaceTexture. MaterialEditor then overrides that material.
 pub(crate) fn apply_native_face_overlays(game: &Path, vanilla: &ChaListCatalog, mods: &ChaListCatalog,
     card: &CardInfo, outfit: i32, mesh: &mut ExtractedMesh) {
-    if !mesh.mat.as_ref().is_some_and(|m|matches!(m.shader.to_ascii_lowercase().as_str(),"koikano/main_skin"|"shader forge/main_skin"|"xukmi/skinplus")) {return;}
+    let is_skin = |s: &str| matches!(s.to_ascii_lowercase().as_str(), "koikano/main_skin" | "shader forge/main_skin" | "kkuss" | "xukmi/skinplus");
+    if !mesh.mat.as_ref().is_some_and(|m| is_skin(&m.shader)
+        || card.me_shader.get(&(4, 0, 0, crate::card::me_mat_key(&m.name))).is_some_and(|(target, _)| is_skin(target))) {return;}
     let mut hoho=mesh.mat.as_ref().and_then(|m|m.color("_overcolor2")).unwrap_or([1.;4]);
     hoho[3]=0.2*card.hoho_aka_rate.clamp(0.,1.);
     if crate::gamefs::read_to_string(game.join("UserData/config/system.xml")).ok()

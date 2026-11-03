@@ -726,7 +726,7 @@ pub(crate) fn meshes_for_accessory_entry_prefab(
         .is_none_or(|part| !part.no_shake);
     let normal = meshes_for_entry_shake(game_root, zip, entry, shake_enabled);
     let Some(slot) = slot else { return normal };
-    let has_renderer_overrides = card.me_renderer_on.iter().any(|(ot, coord, s, _)| {
+    let has_renderer_overrides = card.acc_state_sync.any_render_show_in_slot(outfit, slot as i32) || card.me_renderer_on.iter().any(|(ot, coord, s, _)| {
         *ot == 2 && *coord == outfit && *s == slot as i32
     });
     if !has_renderer_overrides {
@@ -743,7 +743,8 @@ pub(crate) fn meshes_for_accessory_entry_prefab(
         return normal;
     }
     meshes.retain(|m| normal.0.iter().any(|n|n.path_id==m.path_id&&n.renderer_ids.iter().any(|id|m.renderer_ids.contains(id))) ||
-        m.renderer_names.iter().any(|name|card.me_renderer_on.contains(&(2,outfit,slot as i32,name.to_ascii_lowercase()))));
+        m.renderer_names.iter().any(|name|card.me_renderer_on.contains(&(2,outfit,slot as i32,name.to_ascii_lowercase()))
+            || card.acc_state_sync.has_render_show_for(outfit, slot as i32, name)));
     hang_part_dynamic_bones(game_root, source_zip.as_deref(), &bytes, &mut meshes, skel.as_mut(), true, shake_enabled);
     meshes.retain(|m| !is_dummy_part(&m.name, Some(&entry.name)));
     (meshes, skel)

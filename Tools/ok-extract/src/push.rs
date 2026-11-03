@@ -260,16 +260,25 @@ impl<'a, 's> PushCtx<'a, 's> {
                     );
                 }
             }
-            if source_program || native_hair_color {
-                // Both shader families sample the original full-resolution mask.
+            let is_glasses = mesh.mat.as_ref().is_some_and(|m| matches!(
+                m.shader.to_ascii_lowercase().as_str(),
+                "koikano/main_clothes_item_glasses" | "shader forge/toon_glasses_lod0"
+            ));
+            if source_program || native_hair_color || is_glasses {
+                // Both shader families sample the original full-resolution mask;
+                // glasses shaders likewise consume raw _Color.._Color4 directly.
                 if hair_like {
                     if let Some(cols) = hair_color {
                         for (key, color) in ["_Color", "_Color2", "_Color3"].iter().zip(cols.iter()) {
                             set_material_color(&mut mesh, key, *color);
                         }
                     }
-                    if mesh.texture_png.is_none() {
+                    if mesh.texture_png.is_none() && !is_glasses {
                         mesh.texture_png = crate::unity::solid_png([1.0; 4], 8, 8);
+                    }
+                } else if is_glasses && role.starts_with("clothes") {
+                    if let Some(cols) = hair_color {
+                        set_material_color(&mut mesh, "_Color", cols[0]);
                     }
                 }
             } else if hair_like && std::env::var("OK_HAIR_RAW").is_ok() {
@@ -330,7 +339,7 @@ impl<'a, 's> PushCtx<'a, 's> {
             clear_unbound_normal_map(&mut mesh);
             if let Some(png) = me_texture(me_tex, outfit, role, property.as_deref(), &mesh, "normalmap") {
                 mesh.normal_map_png = Some(png.to_vec());
-                if source_program {mark_material_editor_texture(&mut mesh,"_NormalMap");}
+                if source_program || is_glasses {mark_material_editor_texture(&mut mesh,"_NormalMap");}
             }
             if let Some(png) = me_texture(me_tex, outfit, role, property.as_deref(), &mesh, "alphamask") {
                 mesh.alpha_mask_png = Some(png.to_vec());
@@ -349,7 +358,7 @@ impl<'a, 's> PushCtx<'a, 's> {
                     // RenderTexture. Its stored RGB is sRGB encoded, then the
                     // native shader samples it through a sRGB sampler. Keep the
                     // legacy normal representation unchanged.
-                    mesh.normal_map_png=Some(if source_program {
+                    mesh.normal_map_png=Some(if source_program || is_glasses {
                         mark_native_runtime_normal_texture(&mut mesh,"_NormalMap");
                         linear_texture_to_srgb_png(&converted).unwrap_or(converted)
                     } else {converted});
@@ -385,7 +394,7 @@ impl<'a, 's> PushCtx<'a, 's> {
                     }
                 }
             }
-            if source_program || native_hair_color {
+            if source_program || native_hair_color || is_glasses {
                 if let Some(overrides)=me_color {
                     if let (Some(ot),Some(s),Some(mat))=(me_object_type(role),me_slot(role,property.as_deref()),mesh.mat.as_mut()) {
                         let material=crate::card::me_mat_key(&mat.name);
@@ -401,19 +410,49 @@ impl<'a, 's> PushCtx<'a, 's> {
                         }
                     }
                 }
+            }
+            if source_program || (native_hair_color && !is_glasses) {
                 let me_color_mask = me_texture(me_tex,outfit,role,property.as_deref(),&mesh,"colormask");
-                if native_hair_color || source_program {
-                    if let Some(png) = me_color_mask {
-                        mesh.color_mask_png = Some(png.to_vec());
-                        // SetTexture changes the source to a runtime texture.
-                        if source_program {mark_material_editor_texture(&mut mesh,"_ColorMask");}
-                        else {mesh.runtime_textures.remove("_ColorMask");}
-                    }
+                if let Some(png) = me_color_mask {
+                    mesh.color_mask_png = Some(png.to_vec());
+                    // SetTexture changes the source to a runtime texture.
+                    if source_program {mark_material_editor_texture(&mut mesh,"_ColorMask");}
+                    else {mesh.runtime_textures.remove("_ColorMask");}
                 }
                 if let Some(png)=mesh.color_mask_png.take() {
                     mesh.color_mask_png=Some(if me_color_mask.is_some() {
                         png
                     } else {flip_png_v(&png).unwrap_or(png)});
+                }
+            }
+            if is_glasses {
+                if !role.contains("acc") {
+                    let c4 = crate::accessories::mat_color(&mesh, "_Color4");
+                    set_material_color(&mut mesh, "_Color4", c4);
+                    let main_from_me = me_maintex(me_tex, outfit, role, property.as_deref(), &mesh).is_some();
+                    let null_main = mesh.mat.as_ref().is_some_and(|mat| mat.slot("_MainTex").is_none_or(str::is_empty));
+                    let native_main = if null_main && !main_from_me {
+                        crate::unity::solid_png([1.; 4], 1, 1)
+                    } else if main_from_me || role.starts_with("clothes") {
+                        mesh.texture_png.clone().or_else(|| crate::unity::solid_png([1.; 4], 1, 1))
+                    } else {
+                        mesh.texture_png.as_deref().and_then(flip_png_v).or_else(|| mesh.texture_png.clone()).or_else(|| crate::unity::solid_png([1.; 4], 1, 1))
+                    };
+                    if let Some(png) = native_main {
+                        mesh.shader_extra_textures.insert("_MainTex".into(), png);
+                    }
+                    let base = mesh.shader_extra_textures.get("_MainTex").map(Vec::as_slice);
+                    mesh.texture_png = crate::accessories::bake_accessory_glass_color(base, c4);
+                }
+                let override_png = me_texture(me_tex, outfit, role, property.as_deref(), &mesh, "glassramp").map(|png| png.to_vec());
+                let is_override = override_png.is_some();
+                if let Some(data) = override_png.or_else(|| mesh.shader_extra_textures.remove("_GlassRamp")) {
+                    if is_override { mark_material_editor_texture(&mut mesh, "_GlassRamp"); }
+                    let data = if is_override { data } else { flip_png_v(&data).unwrap_or(data) };
+                    mesh.shader_extra_textures.insert("_GlassRamp".into(), data);
+                }
+                if let Some(png) = mesh.normal_map_png.as_ref() {
+                    mesh.shader_extra_textures.insert("_NormalMap".into(), png.clone());
                 }
             }
             if source_program {
@@ -461,7 +500,7 @@ impl<'a, 's> PushCtx<'a, 's> {
                 if me_texture(me_tex, outfit, role, property.as_deref(), &mesh, "colormask").is_none() {
                     if let Some(png) = mesh.color_mask_png.take() { mesh.color_mask_png = Some(flip_png_v(&png).unwrap_or(png)); }
                 }
-            } else if mesh.hair_shader_hint || mesh.mat.as_ref().is_some_and(|mat| is_native_hair_shader(&mat.shader)) {
+            } else if !is_glasses && (mesh.hair_shader_hint || mesh.mat.as_ref().is_some_and(|mat| is_native_hair_shader(&mat.shader))) {
                 // Forge hair samples _AnotherRamp with N dot view. Preserve a
                 // MaterialEditor replacement and the original texture's sampling
                 // provenance independently of the global _RampG. Match the
@@ -483,7 +522,7 @@ impl<'a, 's> PushCtx<'a, 's> {
                     mesh.shader_extra_textures.insert(name.into(), flip_png_v(&png).unwrap_or(png));
                 }
             }
-            let material_mask = if role.starts_with("clothes") {
+            let material_mask = if role.starts_with("clothes") && !is_glasses {
                 mesh.alpha_mask_png.as_deref().map(|mask| (mask, 1.0, 0.0))
             } else { None };
             if source_program {
@@ -494,18 +533,20 @@ impl<'a, 's> PushCtx<'a, 's> {
                     apply_native_clothes_over_mask(&mut mesh, mask, v_scale, v_offset,
                         clothes_alpha_state(crate::unity::clothes_states()[0]));
                 }
-            } else if let (Some((mask, v_scale, v_offset)), Some(png)) = (alpha_mask.or(material_mask), mesh.texture_png.as_deref()) {
-                let dynamic_alpha = role == "clothes_bra"
-                    || property.as_deref().is_some_and(|p| p.ends_with("clothesTopParts0"));
-                let flags = if dynamic_alpha {
-                    clothes_alpha_state(crate::unity::clothes_states()[0])
-                } else {
-                    [true, true]
-                };
-                mesh.texture_png = apply_clothes_over_mask(png, mask, v_scale, v_offset, flags);
-            } else if mesh.mat.as_ref().is_some_and(|mat| is_native_hair_shader(&mat.shader)) {
-                if let (Some(mask), Some(png)) = (mesh.alpha_mask_png.as_deref(), mesh.texture_png.as_deref()) {
-                    mesh.texture_png = apply_hair_alpha_mask(png, mask);
+            } else if !is_glasses {
+                if let (Some((mask, v_scale, v_offset)), Some(png)) = (alpha_mask.or(material_mask), mesh.texture_png.as_deref()) {
+                    let dynamic_alpha = role == "clothes_bra"
+                        || property.as_deref().is_some_and(|p| p.ends_with("clothesTopParts0"));
+                    let flags = if dynamic_alpha {
+                        clothes_alpha_state(crate::unity::clothes_states()[0])
+                    } else {
+                        [true, true]
+                    };
+                    mesh.texture_png = apply_clothes_over_mask(png, mask, v_scale, v_offset, flags);
+                } else if mesh.mat.as_ref().is_some_and(|mat| is_native_hair_shader(&mat.shader)) {
+                    if let (Some(mask), Some(png)) = (mesh.alpha_mask_png.as_deref(), mesh.texture_png.as_deref()) {
+                        mesh.texture_png = apply_hair_alpha_mask(png, mask);
+                    }
                 }
             }
         (i, mesh, runtime_accessory)
