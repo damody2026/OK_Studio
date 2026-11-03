@@ -447,10 +447,10 @@ void AOKStreetSocialScene::StartControlServer(){
   OKControlReply(Done,O);
  });
  // The one-on-one scene: {girl} enters it with her (as the 進入場景 button, without the talk), {off:true} leaves it (as
- // its leave button); {} tells whether one is open and with whom.
+ // its leave button, and after it the time after's "leave the room"); {} tells whether one is open and with whom.
  Bind(TEXT("/private"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   auto& S=*State;auto B=OKControlBody(Req);bool Off=false;B->TryGetBoolField(TEXT("off"),Off);double Girl=0;B->TryGetNumberField(TEXT("girl"),Girl);
-  if(Off)FinishPrivate();
+  if(Off){if(S.PrivateGirl!=INDEX_NONE)FinishPrivate();else EndAfter(true);}
   else if(Girl>0&&S.PrivateGirl==INDEX_NONE){if(S.InspectSlot!=INDEX_NONE)EndInspect();BeginPrivate(int32(Girl));
    if(S.PrivateGirl!=int32(Girl)){OKControlReply(Done,OKControlResult(false,TEXT("could not open (not ready, not idle, or no high model for her)")));return;}}
   auto O=OKControlResult(true);O->SetNumberField(TEXT("girl"),S.PrivateGirl);OKControlReply(Done,O);

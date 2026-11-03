@@ -317,7 +317,8 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character){
  // The street clock runs about 24 times real time: an hour in the room would be a whole night gone (she said the sun was
  // up after one scene). It stands still while they are in there and moves on by the real time spent when they leave.
  if(!S.ClockPaused){const double Wall=FPlatformTime::Seconds();S.ClockStartHours=OKStreetClockHours(S.ClockStartHours,Wall-S.ClockStartWall);S.ClockStartWall=Wall;S.ClockPaused=true;S.PrivateClockFrozen=true;}
- // The last scene's result still open does not stay over this one.
+ // The last scene's result still open (or still waiting for the time after it to end) does not stay over this one.
+ EndAfter(false);
  if(S.HResultPanel.IsValid()){if(GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(S.HResultPanel.ToSharedRef());S.HResultPanel.Reset();}
  S.PrivateGirl=Character;S.HighPrivateAt=FPlatformTime::Seconds();S.HighPrivateSeenReady=false;S.HighPrivateResult.Reset();S.PrivateMouse=S.MouseUI;S.PrivateMode=Mode;
  const FString Directory=FPaths::GetPath(S.Manifest.SocialReport)/TEXT("HighInteraction")/FGuid::NewGuid().ToString(EGuidFormats::Digits);IFileManager::Get().MakeDirectory(*Directory,true);
@@ -331,9 +332,10 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character){
  // at the top of a long scrolled list, and the control channel cannot reach it).
  if(GEngine&&GEngine->GameViewport){
   S.PrivateLeave=SNew(SBox).HAlign(HAlign_Right).VAlign(VAlign_Top).Padding(FMargin(0,16,24,0))
-   [SNew(SButton).ButtonStyle(OKStreetGlassButton()).ContentPadding(FMargin(18,8))
+   [SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().Padding(0,0,8,0)[BookmarkButton(Character)] // this moment kept (OKStreetSocialBookmarks.inl)
+    +SHorizontalBox::Slot().AutoWidth()[SNew(SButton).ButtonStyle(OKStreetGlassButton()).ContentPadding(FMargin(18,8))
     .Text(FText::FromString(OKT(TEXT("ui.contacts.leave_one_on_one"))))
-    .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->FinishPrivate();return FReply::Handled();})];
+    .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->FinishPrivate();return FReply::Handled();})]];
   GEngine->GameViewport->AddViewportWidgetContent(S.PrivateLeave.ToSharedRef(),20);}
 }
 // The original's result after an H scene (HSceneResult): her level then and now, each place's development before and
@@ -399,7 +401,10 @@ void AOKStreetSocialScene::FinishPrivate(){
    Request->SetStringField(TEXT("girl"),Id);Request->SetNumberField(TEXT("day"),S.Store.CalendarDay);Request->SetStringField(TEXT("place"),PlaceHere(S.Male));Request->SetNumberField(TEXT("minute"),double(OKStreetMindNow(S)));Request->SetObjectField(TEXT("counts"),(*H)->GetObjectField(TEXT("counts")));{const TArray<TSharedPtr<FJsonValue>>* Poses=nullptr;if((*H)->TryGetArrayField(TEXT("poses"),Poses))Request->SetArrayField(TEXT("poses"),*Poses);}OKRulesPutExt(S,Request);
    if(const TSharedPtr<FJsonObject> Answer=OKRulesEval(S,Request)){auto Candidate=S.Store;OKRulesTakeExt(Candidate,*Answer);ApplyRulesEffects(Candidate,*Answer);if(CommitStore(MoveTemp(Candidate)))FlushRulesEffects();OKStreetApplyHerExtras(S,Id);
     UE_LOG(LogTemp,Display,TEXT("Street private: experience %d -> %d (%s)"),int32(Answer->GetNumberField(TEXT("level_before"))),int32(Answer->GetNumberField(TEXT("level_after"))),*Answer->GetStringField(TEXT("level_name")));
-    ShowHResult(Girl,*Answer);}
+    // With her beside him they stay a while first and talk (the time after); the result waits for "leave".
+    const TSharedPtr<FJsonObject>* Played=nullptr;
+    if(S.Agents.IsValidIndex(Girl-1)&&FVector::Dist2D(S.Agents[Girl-1].Position,S.Male)<400.f&&Answer->TryGetObjectField(TEXT("result"),Played)&&(*Played)->GetBoolField(TEXT("played")))BeginAfter(Girl,Answer);
+    else ShowHResult(Girl,*Answer);}
   }
  }
  // Back on the street with her beside him: they go on talking (the scene started from their talk, which it ended).
@@ -445,6 +450,7 @@ void AOKStreetSocialScene::RunContactsProbe(double Now){
   S.ContactsProbeStore=S.Store;S.ContactsProbeAgents=S.Agents;S.ContactsProbeRotations=S.Rotations;S.ContactsProbeMale=S.Male;S.ContactsProbeAt=Now;S.ContactsOpen=true;S.ContactsSnapshot.Yaw=S.Yaw;S.ContactsSnapshot.Pitch=S.Pitch;S.ContactsSnapshot.Distance=S.Distance;S.ContactsSnapshot.Greetings=S.Greetings;
   auto Clear=[](const FVector& A,const FVector& B){for(int32 I=0;I<=100;++I){const FVector P=FMath::Lerp(A,B,I/100.f);if(P.X>40&&P.X<60&&FMath::Abs(P.Y)<20)return false;}return true;};
   const auto Detour=OKStreetContactRoute(FVector(0,0,0),FVector(100,0,0),{FVector(0,50,0),FVector(100,50,0)},Clear);
+ TickAfter();
   if(Detour.Num()<3||!OKStreetContactRoute(FVector(0,0,0),FVector(100,0,0),{},Clear).IsEmpty()){Fail(TEXT("Navigation graph failed obstacle/unreachable check"));return;}
   for(const bool Intro:{false,true}){auto C=MakeShared<FJsonObject>();C->SetNumberField(TEXT("id"),0);C->SetStringField(TEXT("street_support"),TEXT("supported"));if(Intro){C->SetStringField(TEXT("context"),TEXT("introduction"));C->SetStringField(TEXT("rule"),TEXT("fallback_shuffle_pool"));}TArray<FString> Terms;int32 Id;FString Filter,Support,Error;if(!OKStreetAppendConditionObject(C,Terms,Id,Filter,Support,Error)||!Terms.Contains(Intro?TEXT("speak=always"):TEXT("speak=never"))){Fail(TEXT("Lover introduction fallback confused with Speak condition zero"));return;}}
   for(auto& A:S.Agents)A.Held=true;

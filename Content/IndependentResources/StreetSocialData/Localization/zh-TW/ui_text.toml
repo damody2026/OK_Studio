@@ -2364,3 +2364,11 @@ act_unlock_her = "解鎖她"
 act_lock_his = "鎖住他"
 act_unlock_his = "解鎖他"
 act_continue = "繼續"
+
+[ui.bookmarks]
+button = "書籤"
+tab = "書籤"
+saved = "已存書籤：{title}"
+empty = "還沒有書籤。"
+leave_after = "離開房間"
+after_doing = "剛和他做完愛，兩人還待在一起事後溫存、聊天（還沒分開；剛才的事可以聊，但已經結束了）"

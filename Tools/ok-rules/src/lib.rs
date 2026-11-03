@@ -6,6 +6,7 @@ pub mod motions;
 pub mod bank;
 pub mod bias;
 pub mod bluff;
+pub mod bookmarks;
 pub mod icu;
 pub mod items;
 pub mod locale;
@@ -183,6 +184,7 @@ impl Rules {
                     .or_else(|| activities::eval(tuning.activities_in(locale::lang(&request)), &tuning.activities, tuning.catalog_in(locale::region(&request), locale::lang(&request)), &kind, &request))
                     .or_else(|| motions::eval(&tuning.motions, &kind, &request))
                     .or_else(|| photos::eval(&kind, &request))
+                    .or_else(|| bookmarks::eval(&kind, &request))
                     .or_else(|| work::eval(&kind, &request))
                     .or_else(|| series::eval(&kind, &request))
                     .or_else(|| weather::eval(&kind, &request))

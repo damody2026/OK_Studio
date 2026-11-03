@@ -2363,3 +2363,11 @@ act_unlock_her = "解锁她"
 act_lock_his = "锁住他"
 act_unlock_his = "解锁他"
 act_continue = "继续"
+
+[ui.bookmarks]
+button = "书签"
+tab = "书签"
+saved = "已存书签：{title}"
+empty = "还没有书签。"
+leave_after = "离开房间"
+after_doing = "刚和他做完爱，两人还待在一起事后温存、聊天（还没分开；刚才的事可以聊，但已经结束了）"

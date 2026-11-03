@@ -2363,3 +2363,11 @@ act_unlock_her = "Unlock her"
 act_lock_his = "Lock him"
 act_unlock_his = "Unlock him"
 act_continue = "Continue"
+
+[ui.bookmarks]
+button = "Bookmark"
+tab = "Bookmarks"
+saved = "Bookmark saved: {title}"
+empty = "No bookmarks yet."
+leave_after = "Leave the room"
+after_doing = "You just had sex with him and are still together afterwards, lingering and talking (not parted yet; what just happened can be talked about, but it is over)"

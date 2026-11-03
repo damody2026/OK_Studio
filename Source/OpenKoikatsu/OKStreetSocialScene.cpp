@@ -390,6 +390,9 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  // PrivateInPlace: the one-on-one is where she stands on the street (user, 2026-11-01: no change of scene); the street
  // goes on around them and their street figures are kept out of sight under it (OKStreetOffstage).
  bool PrivateInPlace=false;
+ // The time after an H scene (OKStreetSocialBookmarks.inl): who with, the result waiting for "leave", its buttons; the
+ // bookmark open on the phone page.
+ int32 AfterGirl=INDEX_NONE,BookmarkOpen=INDEX_NONE;TSharedPtr<FJsonObject> AfterAnswer;TSharedPtr<SWidget> AfterBar;
  int32 NavGirl=INDEX_NONE,PrivateGirl=INDEX_NONE,ContactsProbePhase=0;FOKStreetLiftRide NavRide; // the navigation riding an elevator (PlanNavLift)
  double NavAt=0,ContactsProbeAt=0;
  int32 ContactsProbeGreeting=0;TArray<TSharedPtr<FJsonValue>> ContactsVoiceEvidence;TArray<FVector> NavPath;
@@ -1220,6 +1223,10 @@ bool AOKStreetSocialScene::PrepareFreeTalk(int32 Character,const FString& Text,F
  // Nor the street place's scene line (the lounge, the crowd, who of hers is standing a few metres away): the room is theirs.
  if(S.PrivateGirl==Character&&S.PrivateMode.IsValid()){Status.Menu.Reset();Status.Choices.Reset();Status.Invite.Reset();Status.Scene=OKT(TEXT("ui.free_talk.private_scene"));}
  System=OKStreetFreeTalkSystemPrompt(Persona,OKStreetPlaceCatalogue());UserMessage=OKStreetFreeTalkUserMessage(Status,Text);
+ // The moments he bookmarked with her (bookmarks.rs): the last five, and the lines of one he asks about.
+ {const FString Marks=BookmarkFacts(Character,Text);if(!Marks.IsEmpty())Status.Memories+=(Status.Memories.IsEmpty()?FString():FString(OKT(TEXT("ui.economy.semicolon_mark"))))+Marks;}
+ // Just after a scene, still together (OKStreetSocialBookmarks.inl): the places around are the street's again.
+ if(S.AfterGirl==Character&&S.PrivateGirl==INDEX_NONE)Status.Doing=OKT(TEXT("ui.bookmarks.after_doing"));
  return true;
 }
 
@@ -2747,6 +2754,8 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
     .Visibility_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){return Weak.IsValid()&&Weak->State->FreeTalkLive?EVisibility::Visible:EVisibility::Collapsed;})
     .Text_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){return Weak.IsValid()?FText::FromString(Weak->FreeTalkLiveStatus()):FText::GetEmpty();})];
    // Always visible: what the microphone hears right now (green while speech is detected).
+   // Keep this moment with her (OKStreetSocialBookmarks.inl).
+   FreeTalk->AddSlot().AutoHeight().HAlign(HAlign_Right).Padding(2)[BookmarkButton(FreeTalkPartner())];
    FreeTalk->AddSlot().AutoHeight().Padding(8,4,2,2)[SNew(SProgressBar).Percent_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(!Weak.IsValid())return TOptional<float>(0.f);const float Level=Weak->State->FreeTalkMicLevel;return TOptional<float>(FMath::Clamp((20.f*FMath::LogX(10.f,FMath::Max(Level,1e-5f))+60.f)/60.f,0.f,1.f));})
     .FillColorAndOpacity_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){return Weak.IsValid()&&Weak->State->FreeTalkLiveSpeaking?FSlateColor(FLinearColor(.3f,1.f,.45f)):FSlateColor(FLinearColor(.4f,.7f,1.f));})];
    FreeTalk->AddSlot().AutoHeight().Padding(8,0,2,2)[SNew(STextBlock).AutoWrapText(true).WrapTextAt(350).Text_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(!Weak.IsValid())return FText::GetEmpty();const auto& L=*Weak->State;
@@ -2937,6 +2946,7 @@ static int64 OKStreetMindNow(const FOKStreetSceneState& S);
 #include "OKStreetSocialHeroCompany.inl"
 #include "OKStreetSocialCompanyApp.inl"
 #include "OKStreetSocialAccountsApp.inl"
+#include "OKStreetSocialBookmarks.inl" // after the photos (their picture brush), before the phone (its bookmarks page)
 #include "OKStreetSocialVenture.inl"
 #include "OKStreetSocialCampus.inl"
 #include "OKStreetSocialBank.inl"
