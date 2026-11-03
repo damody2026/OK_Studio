@@ -251,6 +251,23 @@ yields = ["study"]
 male_clip = "venue_study_seated.okanim"
 
 [[activity]]
+# 在交誼廳沙發坐著聊天（只有滑手機與讀書時，說好「坐沙發聊聊」的惠惠被排成站著滑手機，R6-155）
+id = "girls_lounge_sofa"
+name = "在女生宿舍交誼廳沙發坐著聊天"
+place = "girls_dorm"
+kind = "pair"
+code = 1
+anchor = "lounge"
+
+[[activity]]
+id = "boys_lounge_sofa"
+name = "在男生宿舍交誼廳沙發坐著聊天"
+place = "boys_dorm"
+kind = "pair"
+code = 1
+anchor = "lounge"
+
+[[activity]]
 id = "lodge_lobby"
 name = "在會館大廳坐著滑手機聊天"
 place = "lodge"
