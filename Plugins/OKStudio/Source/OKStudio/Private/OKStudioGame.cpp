@@ -461,12 +461,41 @@ int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 			return !Furniture.ContainsByPredicate([&Body](const FBox& B) { return B.Intersect(Body); });
 		};
 		const FVector Start(Focus.X, Focus.Y, 0.f);
+		// Spots beside the others (side by side as before, then rings round each character already there) and rings round
+		// the focus; the free one nearest to both the focus and the nearest character wins (U139: with desks in the way of
+		// the row, the first free step of the row was 7 m off, at the far end of the classroom).
+		TArray<FVector> Others;
+		for (const FOKSceneObject& X : Document->Objects)
+			if (X.Id != Id && X.Kind == EOKSceneObjectKind::Character) Others.Add(Document->WorldTransform(X.Id).GetLocation() * FVector(1.f, 1.f, 0.f));
+		TArray<FVector> Spots;
+		const float Gap = HalfWidth * 2.f + 10.f;
+		for (int32 Step = 0; Step < 6; ++Step) Spots.Add(Start + Right * (Gap * Step));
+		for (const FVector& C : Others)
+			for (int32 Ring = 0; Ring < 8; ++Ring)
+				for (int32 A = 0; A < 16; ++A) Spots.Add(C + FRotator(0.f, Yaw + 90.f + A * 22.5f, 0.f).Vector() * (Gap + 25.f * Ring));
+		for (int32 Ring = 1; Ring <= 10; ++Ring)
+			for (int32 A = 0; A < 16; ++A) Spots.Add(Start + FRotator(0.f, Yaw + 90.f + A * 22.5f, 0.f).Vector() * (40.f * Ring));
+		// In front of or behind the nearest character (along the view) costs extra: one would hide the other (U142).
+		const FVector Ahead = FRotationMatrix(FRotator(0.f, Yaw, 0.f)).GetUnitAxis(EAxis::X);
+		auto Cost = [&Start, &Others, &Ahead](const FVector& P)
+		{
+			double Near = 0., Behind = 0.;
+			if (Others.Num())
+			{
+				Near = TNumericLimits<double>::Max();
+				for (const FVector& C : Others)
+					if (FVector::Dist2D(C, P) < Near) { Near = FVector::Dist2D(C, P); Behind = FMath::Abs(FVector::DotProduct(P - C, Ahead)); }
+			}
+			return FVector::Dist2D(Start, P) + Near + 2. * Behind;
+		};
 		FVector At = Start;
 		bool bFound = false;
-		// Side by side first (as before), then rings around the focus, nearest first.
-		for (int32 Step = 0; Step < 6 && !bFound; ++Step) { At = Start + Right * ((HalfWidth * 2.f + 10.f) * Step); bFound = Free(At); }
-		for (int32 Ring = 1; Ring <= 10 && !bFound; ++Ring)
-			for (int32 A = 0; A < 16 && !bFound; ++A) { At = Start + FRotator(0.f, Yaw + 90.f + A * 22.5f, 0.f).Vector() * (40.f * Ring); bFound = Free(At); }
+		double Best = TNumericLimits<double>::Max();
+		for (const FVector& P : Spots)
+		{
+			const double C = Cost(P);
+			if (C < Best && Free(P)) { Best = C; At = P; bFound = true; }
+		}
 		if (!bFound) At = Start;
 		bLastAddBlocked = !bFound;
 		O->Transform.SetLocation(O->Parent >= 0 ? Document->WorldTransform(O->Parent).InverseTransformPosition(At) : At);
