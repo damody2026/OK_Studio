@@ -1838,6 +1838,14 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
     UE_LOG(LogTemp,Display,TEXT("Street judge: %s is not sold here but at %s; she is told where"),*Name,*Elsewhere->Place);continue;}
    L->TellHer.Add(OKMsg(TEXT("ui.economy.not_sold_here_order"),{{TEXT("item"),Name}}));L->FreeTalkNotice=OKMsg(TEXT("ui.economy.not_sold_here_notice"),{{TEXT("item"),Name}});
    UE_LOG(LogTemp,Display,TEXT("Street judge: %s is not sold here; nothing bought, she is told"),*Name);}}
+  // A place she said is not open that is open now (the judge's said_closed): she is told it is, so she does not hold to it.
+  // At 10:40 on Saturday 雷电将军 answered "the drink shop is not open yet, is it?" to his invitation; it opens at ten
+  // and her nearby list said every place not marked closed was open (R6-165).
+  {const TArray<TSharedPtr<FJsonValue>>* SaidClosed=nullptr;if(Verdict->TryGetArrayField(TEXT("said_closed"),SaidClosed))for(const auto& V:*SaidClosed){FString PlaceId;if(!V.IsValid()||!V->TryGetString(PlaceId))continue;PlaceId.TrimStartAndEndInline();
+   const FOKStreetPlace* P=OKStreetFindPlace(PlaceId);if(!P)for(const auto& Q:OKStreetPlaces())if(PlaceId==Q.Name){P=&Q;break;}
+   FString ClosedWhy;if(!P||Weak->PlaceClosedNow(P->Id,ClosedWhy))continue;
+   L->TellHer.AddUnique(OKMsg(TEXT("ui.scene.game_fact_note"),{{TEXT("fact"),OKMsg(TEXT("ui.outing.place_is_open_fact"),{{TEXT("place"),FString(P->Name)}})}}));
+   UE_LOG(LogTemp,Display,TEXT("Street judge: she said %s is not open; it is, she is told"),*FString(P->Id));}}
   // He lends her money now ("拿去吧，五百"), as the judge read it: only he can offer it; her act alone asks.
   {double Lend=0;Verdict->TryGetNumberField(TEXT("he_lends"),Lend);Weak->SettleMoneyHandover(Character,Lend,true);}
   {bool Back=false;Verdict->TryGetBoolField(TEXT("pays_her_back"),Back);if(Back)Weak->PayHerBack(Character);}

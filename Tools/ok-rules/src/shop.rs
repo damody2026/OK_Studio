@@ -199,6 +199,10 @@ fn checkout(c: &Catalog, r: &Value) -> Result<Value, String> {
         // How she answers depends on who paid: thanks only when he paid for her.
         let how = if her_share == 0 && her_pays == 0 {
             crate::tr::t("shop.his_own_purchase_note")
+        } else if player_pays == 0 && her_share == 0 && her_pays > 0 {
+            // Only his dish on this bill, hers paid by him on the one before: 惠惠 said "this meal is mine, don't fight me"
+            // after he had paid ¥39 for her pancake and cocoa and she ¥7 for his dorayaki (R6-166).
+            crate::tr::t("shop.she_paid_his_only_note")
         } else if player_pays == 0 && her_pays > i64::from(her_share) {
             crate::tr::t("shop.she_treated_him_note")
         } else if player_pays == 0 {

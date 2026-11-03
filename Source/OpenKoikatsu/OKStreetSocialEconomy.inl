@@ -534,6 +534,12 @@ void AOKStreetSocialScene::TickMeal(float Dt){
  // Still at the meal: in the place, or in one of its rooms (a private room is a facility away from the floor).
  // So is its doorstep (ShopPlaceHere): she came out to meet him there and her cocoa and scone were cleared (R6-139).
  const bool There=PlaceHere(S.Male)==S.MealPlace||S.Facility!=INDEX_NONE||ShopPlaceHere()==S.MealPlace;
+ // Their goodbye waited for her plate ("go, I'll finish my dango") and he has gone from the place: that was the goodbye.
+ // She stays (what is left of hers counts as eaten as the table clears) and no longer walks with him. 惠惠, still in the
+ // group from 三月七's invitation, followed him to the dorm and left her dango on the table (R6-168).
+ if(!There&&Talking!=INDEX_NONE&&S.FarewellAfterMeal==Talking){S.FarewellAfterMeal=INDEX_NONE;
+  UE_LOG(LogTemp,Display,TEXT("Street farewell: actor=%d he left the place after their goodbye; she stays"),Talking);
+  FreeTalkLeave(OKMsg(TEXT("ui.party.you_said_goodbye"),{{TEXT("name"),*S.Manifest.Characters[Talking].Name}}));return;}
  // One who has gone from the table (not talking with him, not in the group, a few steps off) has left hers: 安可 said
  // goodbye with her soup half drunk, and it sat on the table for 胡桃, who came for lunch half an hour later.
  auto Gone=[&S,Talking](const FOKStreetDish& D){return D.Her!=Talking&&S.Agents.IsValidIndex(D.Her-1)&&!S.Party.Contains(D.Her)&&FVector::Dist2D(S.Agents[D.Her-1].Position,S.Male)>300.f;};
@@ -639,7 +645,10 @@ void AOKStreetSocialScene::TickMeal(float Dt){
  if(!AnyLeft){
   S.Message=OKT(TEXT("ui.economy.all_dishes_eaten"));RememberMeal(Eaters);S.Table.Reset();S.TableClearedAt=SceneTime();
   S.TellHer.Add(OKT(TEXT("ui.economy.all_eaten_prompt")));
-  UE_LOG(LogTemp,Display,TEXT("Street meal: everything eaten"));RefreshUI();
+  // Eaten clean and still hungry (below mind.rs hungry_mood's 25): said next to it, not only in her status far above.
+  // 惠惠 at 10 after the explosion's pancake and cocoa said "all eaten, my strength is back to full" (R6-167).
+  if(Satiety<25.f)S.TellHer.Add(OKMsg(TEXT("ui.scene.game_fact_note"),{{TEXT("fact"),OKT(TEXT("ui.economy.eaten_still_hungry_fact"))}}));
+  UE_LOG(LogTemp,Display,TEXT("Street meal: everything eaten (her satiety %.0f)"),Satiety);RefreshUI();
  }
 }
 
