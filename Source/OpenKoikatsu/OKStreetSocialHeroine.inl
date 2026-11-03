@@ -222,6 +222,9 @@ FOKHeroineResult AOKStreetSocialScene::Interact(int32 Girl,const FString& ActId,
  Request->SetStringField(TEXT("name"),S.Manifest.Characters[Girl].Name);
  Request->SetBoolField(TEXT("remote"),!Args.RecordOnly&&RemoteWith(Girl));Request->SetBoolField(TEXT("penalty_ready"),SceneTime()-S.GatePenaltyAt>20.0);
  Request->SetStringField(TEXT("place"),Here);Request->SetStringField(TEXT("place_name"),HerePlace?HerePlace->Name:OKT(TEXT("ui.etiquette.street_location")));Request->SetNumberField(TEXT("hours"),Now.GetHour()+Now.GetMinute()/60.0);
+ // Game minutes since he last did this with her (the rules give a touch again soon nothing new; R6-146).
+ const FString ActKey=Id+TEXT("|")+ActId;const int64 NowMinute=Now.GetTicks()/ETimespan::TicksPerMinute;
+ if(const int64* Last=S.ActDoneAt.Find(ActKey))Request->SetNumberField(TEXT("since_same"),double(NowMinute-*Last));
  TSharedPtr<FJsonObject> A=OKRulesEval(S,Request);if(!A.IsValid())return Out;
  // Settled elsewhere: only the record (and the rumour).
  if(Args.RecordOnly){HeroineApplyRecord(Girl,*A,Args.Place);Out.Done=true;return Out;}
@@ -246,6 +249,7 @@ FOKHeroineResult AOKStreetSocialScene::Interact(int32 Girl,const FString& ActId,
  FString Recent;
  if(A->TryGetStringField(TEXT("recent"),Recent)){
   S.MindRecent.Add(Id,Recent);S.FreeTalkNotice=Recent;ApplyRulesRelation(Id,*A);
+  bool Counted=false;if(A->TryGetBoolField(TEXT("counted"),Counted)&&Counted)S.ActDoneAt.Add(ActKey,NowMinute);
   UE_LOG(LogTemp,Display,TEXT("Street act: actor=%d act=%s place=%s awkward=%.2f reaction=%d staff=%d"),Girl,*ActId,*Here,A->GetNumberField(TEXT("awkward")),Out.Reaction,A->GetBoolField(TEXT("staff"))?1:0);
  }
  // 5. Her record (an awkward scene is a memory of hers) and 6. what others hear.

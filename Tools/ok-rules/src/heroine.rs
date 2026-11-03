@@ -80,6 +80,9 @@ pub fn gate_penalty(r: &mut Relation) {
     r.add_axis("trust", -hit * 0.5);
 }
 
+/// Game minutes in which the same act with her again gives nothing new.
+const SAME_ACT_MINUTES: f64 = 60.0;
+
 /// How she took an act in this place.
 pub fn reaction_delta(r: &mut Relation, reaction: Reaction, intimate: bool) {
     match reaction {
@@ -236,9 +239,16 @@ fn interact(acts: &ActsTuning, places: &PlacesTuning, request: &Value) -> Result
         if crowd >= 0.35 && awkward >= 0.3 {
             recent += crate::tr::t("heroine.bystanders_watching");
         }
-        // 4. Values: how she took it.
+        // 4. Values: how she took it. The same touch again within the hour is nothing new: 爱丽丝's head patted three
+        // times in ten minutes was worth seven favor each, more than an evening of talk (R6-146). She still goes along;
+        // only a refusal or a protest counts every time.
+        let since = request.get("since_same").and_then(Value::as_f64).unwrap_or(-1.0);
+        let fresh = !(0.0..SAME_ACT_MINUTES).contains(&since);
         let mut r = c.rel.clone();
-        reaction_delta(&mut r, reaction, needs.intimate);
+        if fresh || matches!(reaction, Reaction::Protest | Reaction::Refuse) {
+            reaction_delta(&mut r, reaction, needs.intimate);
+        }
+        out.insert("counted".into(), json!(fresh && reaction != Reaction::Refuse));
         out.insert("relation".into(), Value::Object(r.patch(&c.rel)));
         out.insert("recent".into(), json!(recent));
         out.insert("staff".into(), json!(staff));
@@ -346,6 +356,27 @@ mod tests {
         let mine = interact(&t.acts, &t.places, &req(json!({"act": "kiss", "hers": true, "relation": {"id": "a", "stage": "lover"}, "place": "library", "hours": 10.0, "traits": {"shyness": 1.0}}))).unwrap();
         assert_ne!(mine["reaction"], 3, "her own idea is not refused by her");
         assert!(v["awkward_memory"]["importance"].as_f64().unwrap() >= 0.3);
+    }
+
+    /// A head pat again ten minutes later: she goes along, nothing new; an hour on it counts again (R6-146).
+    #[test]
+    fn the_same_touch_again_soon_is_nothing_new() {
+        let t = Tuning::builtin();
+        let pat = |since: Option<f64>| {
+            let mut extra = json!({"act": "head_pat", "relation": {"id": "a", "stage": "friend", "favor": 80}, "place": "girls_dorm", "hours": 19.5});
+            if let Some(s) = since {
+                extra["since_same"] = json!(s);
+            }
+            interact(&t.acts, &t.places, &req(extra)).unwrap()
+        };
+        let first = pat(None);
+        assert_eq!((first["reaction"].as_i64(), first["counted"].as_bool()), (Some(0), Some(true)));
+        assert!(first["relation"]["favor"].as_f64().unwrap() > 80.0, "{first}");
+        let again = pat(Some(10.0));
+        assert_eq!(again["counted"], false);
+        assert!(again["relation"].get("favor").is_none(), "{again}");
+        assert_eq!(again["done"], true);
+        assert!(pat(Some(70.0))["relation"]["favor"].as_f64().unwrap() > 80.0);
     }
 
     #[test]
