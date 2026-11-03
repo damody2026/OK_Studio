@@ -1032,6 +1032,9 @@ namespace
 		{
 			FString Match;
 			J->TryGetStringField(TEXT("match"), Match);
+			// "exact": the part of that name only ("Part_1" alone, not Part_10..19 too).
+			bool bExact = false;
+			J->TryGetBoolField(TEXT("exact"), bExact);
 			bool bHide = false;
 			const bool bSet = J->TryGetBoolField(TEXT("hide"), bHide);
 			// "has_param": only parts whose first material has that parameter; "params": true lists the material's
@@ -1052,7 +1055,7 @@ namespace
 				TInlineComponentArray<UMeshComponent*> Meshes(*It);
 				for (UMeshComponent* Mesh : Meshes)
 				{
-					if (!Match.IsEmpty() && !Mesh->GetName().Contains(Match)) continue;
+					if (!Match.IsEmpty() && (bExact ? Mesh->GetName() != Match : !Mesh->GetName().Contains(Match))) continue;
 					UMaterialInterface* Material = Mesh->GetNumMaterials() ? Mesh->GetMaterial(0) : nullptr;
 					TArray<FMaterialParameterInfo> Scalars, Vectors, Textures;
 					TArray<FGuid> Ids;
@@ -1077,6 +1080,7 @@ namespace
 					X->SetStringField(TEXT("center"), B.Origin.ToString());
 					X->SetNumberField(TEXT("radius"), B.SphereRadius);
 					X->SetBoolField(TEXT("visible"), Mesh->IsVisible());
+					X->SetBoolField(TEXT("main_pass"), Mesh->bRenderInMainPass);
 					if (bParams && Material)
 					{
 						X->SetStringField(TEXT("material"), Material->GetPathName());

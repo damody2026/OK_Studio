@@ -127,6 +127,26 @@ void SOKStudioPanel::UpdateClearView()
 		FVector2D((Best.Right - ViewRect.Left) / ViewSize.X, (Best.Bottom - ViewRect.Top) / ViewSize.Y));
 }
 
+void SOKStudioPanel::ReadExportChoices()
+{
+	// "kind;from;to;fps;width;height;sound;folder" (FOKStudioSettings::ExportChoices).
+	TArray<FString> P;
+	FOKStudioSettings::Get().ExportChoices.ParseIntoArray(P, TEXT(";"), false);
+	if (P.Num() < 8) return;
+	ExportKind = FMath::Clamp(FCString::Atoi(*P[0]), 0, 2);
+	ExportFromT = FCString::Atof(*P[1]); ExportToT = FCString::Atof(*P[2]); ExportFpsV = FMath::Clamp(FCString::Atof(*P[3]), 1.f, 120.f);
+	ExportW = FMath::Clamp(FCString::Atoi(*P[4]), 16, 8192); ExportH = FMath::Clamp(FCString::Atoi(*P[5]), 16, 8192);
+	if (Game.IsValid()) Game->bExportAudio = P[6] != TEXT("0");
+	ExportFolderText = P[7];
+}
+
+void SOKStudioPanel::WriteExportChoices()
+{
+	FOKStudioSettings& S = FOKStudioSettings::Get();
+	S.ExportChoices = FString::Printf(TEXT("%d;%g;%g;%g;%d;%d;%d;%s"), ExportKind, ExportFromT, ExportToT, ExportFpsV, ExportW, ExportH, Game.IsValid() && !Game->bExportAudio ? 0 : 1, *ExportFolderText.Replace(TEXT(";"), TEXT("")));
+	S.Save();
+}
+
 void SOKStudioPanel::RegisterFloats()
 {
 	// Default places: HS2Studio6's (layout spec) where it has the window, else beside the menus.
@@ -195,6 +215,20 @@ void SOKStudioPanel::OpenFloat(const FString& Id, bool bToggle)
 	if (Id == TEXT("cards") && CardFiles.IsEmpty()) ScanCardFolder();
 	if (Id == TEXT("scenes")) ScanScenes();
 	if (Id == TEXT("quick")) RunQuickSearch();
+	if (Id == TEXT("export"))
+	{
+		// The last choices (U136: every new session opened on PNG 序列 to the end), and beside the timeline rather than
+		// on it: the window covered the keys it exports.
+		if (!bExportChoicesRead) { bExportChoicesRead = true; ReadExportChoices(); }
+		const FFloat* T = Floats.Find(TEXT("timeline"));
+		if (T && T->bOpen && Canvas && FBox2D(F->Pos, F->Pos + F->Size).Intersect(FBox2D(T->Pos, T->Pos + T->Size)))
+		{
+			const FVector2D Area = Canvas->GetCachedGeometry().GetLocalSize();
+			if (T->Pos.X + T->Size.X + 4.f + F->Size.X <= Area.X) F->Pos = FVector2D(T->Pos.X + T->Size.X + 4.f, T->Pos.Y);
+			else if (T->Pos.Y - F->Size.Y - 4.f >= 40.f) F->Pos = FVector2D(T->Pos.X, T->Pos.Y - F->Size.Y - 4.f);
+			else if (T->Pos.X - F->Size.X - 4.f >= 40.f) F->Pos = FVector2D(T->Pos.X - F->Size.X - 4.f, T->Pos.Y);
+		}
+	}
 	if (Id == TEXT("dialog") && Canvas)
 	{
 		const FVector2D Area = Canvas->GetCachedGeometry().GetLocalSize();
@@ -2088,11 +2122,13 @@ TSharedRef<SWidget> SOKStudioPanel::BuildTimeline()
 	}, 56.f, 20.f, false, 10.f);
 	*CutSelf = CutButton;
 	TSharedRef<SWidget> Row2 = SNew(SHorizontalBox)
-		+ SHorizontalBox::Slot().AutoWidth()[IconButton(TEXT("key"), Tip(TEXT("為選取物件打 key"), TEXT("timeline.key")), Cmd(TEXT("timeline.key")), 22.f, 20.f)]
-		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(FText::FromString(TEXT("刪 key")), Cmd(TEXT("timeline.delete")), 40.f, 20.f, false, 10.f)]
+		// 打 key first, with its name and the "on" colour; 刪 key small and grey beside it (U135: the bare ◇ was taken for
+		// something else and 刪 key, the one with a name, was clicked instead).
+		+ SHorizontalBox::Slot().AutoWidth()[SNew(SBox).ToolTipText(FText::FromString(Tip(TEXT("為選取物件打 key"), TEXT("timeline.key"))))[Button(FText::FromString(TEXT("◆ 打 key")), Cmd(TEXT("timeline.key")), 50.f, 20.f, false, 10.f, On())]]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[SNew(SBox).ToolTipText(FText::FromString(Tip(TEXT("刪除播放頭上的 key"), TEXT("timeline.delete"))))[Button(FText::FromString(TEXT("刪 key")), Cmd(TEXT("timeline.delete")), 36.f, 20.f, false, 9.f, Input())]]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(FText::FromString(TEXT("場景 key")), Cmd(TEXT("timeline.scenekey")), 52.f, 20.f, false, 10.f)]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[CutButton]
-		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(FText::FromString(TEXT("清空軌道")), Cmd(TEXT("timeline.clear")), 52.f, 20.f, false, 10.f)]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[SNew(SBox).ToolTipText(FText::FromString(TEXT("清空所選物件的軌道")))[Button(FText::FromString(TEXT("清空")), Cmd(TEXT("timeline.clear")), 32.f, 20.f, false, 10.f)]]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(TAttribute<FText>::CreateLambda([this]
 		{
 			const FOKSceneTrack* T = Game.IsValid() ? Game->Document->TrackOf(Game->SelectedId) : nullptr;
@@ -2162,6 +2198,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildExport()
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 2.f, 0.f)[Button(FText::FromString(TEXT("開始")), [this]
 			{
 				if (!Game.IsValid() || Game->IsExporting()) return;
+				WriteExportChoices();
 				if (ExportKind == 2)
 				{
 					FString Error;

@@ -71,6 +71,8 @@ struct FOKStudioSettings
 	void UseScene(const FString& Path);
 	/** Colours picked lately (newest first). */
 	TArray<FLinearColor> RecentColors;
+	/** The movie export window's last choices, "kind;from;to;fps;width;height;sound;folder" (U136). */
+	FString ExportChoices;
 	void UseColor(const FLinearColor& Color);
 
 	static FString Directory();

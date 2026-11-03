@@ -1414,7 +1414,8 @@ public:
 		case EPage::State: return FMargin(134.f, 7.f, 252.f, 326.f);
 		case EPage::Bones: return FMargin(134.f, 7.f, 320.f, 390.f);
 		case EPage::Anim: return FMargin(135.f, 10.f, 446.f, 370.f);
-		case EPage::ItemAdd: return FMargin(134.f, 7.f, 274.f, 234.f);
+		// Larger than HS2Studio6's 274 x 234 (U137: the third column cut every item name).
+		case EPage::ItemAdd: return FMargin(134.f, 7.f, 440.f, 400.f);
 		case EPage::LightAdd: return FMargin(142.f, 36.f, 210.f, 192.f);
 		case EPage::CharLoader: case EPage::Files: return FMargin(142.f, 36.f, 620.f, 420.f);
 		case EPage::Scene: return FMargin(142.f, 36.f, 480.f, 326.f);
@@ -1736,6 +1737,10 @@ public:
 	void ShowCutMenu(const FVector2D& At);
 	float ExportFromT = 0.f, ExportToT = -1.f, ExportFpsV = 30.f;
 	int32 ExportW = 1920, ExportH = 1080, ExportKind = 0;
+	/** The export window's choices kept in the settings (U136). */
+	bool bExportChoicesRead = false;
+	void ReadExportChoices();
+	void WriteExportChoices();
 	FString ExportFolderText;
 	TSharedRef<SWidget> BuildExport();
 	TSharedRef<SWidget> BuildMmdDirector();
@@ -2801,7 +2806,7 @@ public:
 		else for (const FOKStudioCatalogItem* I : C.ItemsIn(BrowseGroup, BrowseCategory)) ItemOptions.Add(MakeShared<int32>(int32(I - C.Items.GetData())));
 		auto Column = [this](float Width, TArray<TSharedPtr<int32>>* Options, TFunction<FString(int32)> Name, TFunction<bool(int32)> IsOn, TFunction<void(int32)> Pick)
 		{
-			return SNew(SBox).WidthOverride(Width).HeightOverride(176.f)
+			return SNew(SBox).WidthOverride(Width).HeightOverride(330.f)
 			[
 				SNew(SBorder).BorderImage(Brush(ListArea())).Padding(1.f)
 				[
@@ -2822,7 +2827,7 @@ public:
 		auto GroupName = [](int32 Id) { const FOKStudioCatalogGroup* G = FOKStudioCatalog::Get().Groups.FindByPredicate([Id](const FOKStudioCatalogGroup& X) { return X.Id == Id; }); return G ? G->Name : FString(); };
 		auto CategoryName = [this](int32 Id) { const int32 Group = BrowseGroup; const FOKStudioCatalogGroup* G = FOKStudioCatalog::Get().Categories.FindByPredicate([Id, Group](const FOKStudioCatalogGroup& X) { return X.Id == Id && X.Group == Group; }); return G ? G->Name : FString(); };
 		// The item column: hover for the name and a picture, left click adds, middle click adds under the selection.
-		TSharedRef<SWidget> Items = SNew(SBox).WidthOverride(ItemSearch.IsEmpty() ? 102.f : 264.f).HeightOverride(176.f)
+		TSharedRef<SWidget> Items = SNew(SBox).WidthOverride(ItemSearch.IsEmpty() ? 226.f : 420.f).HeightOverride(330.f)
 		[
 			SNew(SBorder).BorderImage(Brush(ListArea())).Padding(1.f)
 			[
@@ -2881,8 +2886,8 @@ public:
 			Props->AddSlot().AutoHeight()
 			[
 				SNew(SHorizontalBox)
-				+ SHorizontalBox::Slot().AutoWidth()[Column(80.f, &GroupOptions, GroupName, [this](int32 V) { return V == BrowseGroup; }, [this](int32 V) { BrowseGroup = V; BrowseCategory = -1; DeferRebuild(); })]
-				+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f)[Column(80.f, &CategoryOptions, CategoryName, [this](int32 V) { return V == BrowseCategory; }, [this](int32 V) { BrowseCategory = V; DeferRebuild(); })]
+				+ SHorizontalBox::Slot().AutoWidth()[Column(90.f, &GroupOptions, GroupName, [this](int32 V) { return V == BrowseGroup; }, [this](int32 V) { BrowseGroup = V; BrowseCategory = -1; DeferRebuild(); })]
+				+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f)[Column(100.f, &CategoryOptions, CategoryName, [this](int32 V) { return V == BrowseCategory; }, [this](int32 V) { BrowseCategory = V; DeferRebuild(); })]
 				+ SHorizontalBox::Slot().AutoWidth()[Items]
 			];
 		else Props->AddSlot().AutoHeight()[Items];

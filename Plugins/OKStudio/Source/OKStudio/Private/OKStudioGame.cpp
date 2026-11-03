@@ -438,11 +438,25 @@ int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 				if (B.GetSize().X < 400. && B.GetSize().Y < 400. && B.Max.Z > 15. && B.Min.Z < 150.) Furniture.Add(B);
 		}
 		const FTransform Scene = SceneActor ? SceneActor->GetActorTransform() : FTransform::Identity;
-		auto Free = [this, Id, &Furniture, &Scene](const FVector& P)
+		// The characters already there take the room their bones span, and the new one is taken to stand as wide as the
+		// widest of them (U134: 60 cm apart, a T-posed man's arm went through her head).
+		TArray<FBox> People;
+		float HalfWidth = 25.f;
+		for (const FOKSceneObject& X : Document->Objects)
+		{
+			FBox B;
+			if (X.Id == Id || X.Kind != EOKSceneObjectKind::Character || !WorldBounds(X.Id, B)) continue;
+			People.Add(B);
+			HalfWidth = FMath::Max(HalfWidth, float(FMath::Max(B.GetExtent().X, B.GetExtent().Y)));
+		}
+		HalfWidth = FMath::Min(HalfWidth, 120.f);
+		auto Free = [this, Id, &Furniture, &People, &Scene, HalfWidth](const FVector& P)
 		{
 			if (Document->Objects.ContainsByPredicate([this, Id, &P](const FOKSceneObject& X)
 				{ return X.Id != Id && X.Kind == EOKSceneObjectKind::Character && FVector::Dist2D(Document->WorldTransform(X.Id).GetLocation(), P) < 50.f; })) return false;
 			const FVector W = Scene.TransformPosition(P);
+			const FBox Reach(W - FVector(HalfWidth, HalfWidth, 0.f), W + FVector(HalfWidth, HalfWidth, 0.f));
+			if (People.ContainsByPredicate([&Reach](const FBox& B) { return B.Min.X < Reach.Max.X && B.Max.X > Reach.Min.X && B.Min.Y < Reach.Max.Y && B.Max.Y > Reach.Min.Y; })) return false;
 			const FBox Body(W + FVector(-22.f, -22.f, 15.f), W + FVector(22.f, 22.f, 150.f));
 			return !Furniture.ContainsByPredicate([&Body](const FBox& B) { return B.Intersect(Body); });
 		};
@@ -450,12 +464,22 @@ int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 		FVector At = Start;
 		bool bFound = false;
 		// Side by side first (as before), then rings around the focus, nearest first.
-		for (int32 Step = 0; Step < 6 && !bFound; ++Step) { At = Start + Right * (60.f * Step); bFound = Free(At); }
+		for (int32 Step = 0; Step < 6 && !bFound; ++Step) { At = Start + Right * ((HalfWidth * 2.f + 10.f) * Step); bFound = Free(At); }
 		for (int32 Ring = 1; Ring <= 10 && !bFound; ++Ring)
 			for (int32 A = 0; A < 16 && !bFound; ++A) { At = Start + FRotator(0.f, Yaw + 90.f + A * 22.5f, 0.f).Vector() * (40.f * Ring); bFound = Free(At); }
 		if (!bFound) At = Start;
 		bLastAddBlocked = !bFound;
 		O->Transform.SetLocation(O->Parent >= 0 ? Document->WorldTransform(O->Parent).InverseTransformPosition(At) : At);
+		// Out of sight (beside the others, past the view's edge or behind a panel): the view moves onto it (halfway left it
+		// out of the picture when the room put it metres away).
+		if (APlayerController* PC = SceneActor && SceneActor->GetWorld() ? SceneActor->GetWorld()->GetFirstPlayerController() : nullptr)
+		{
+			FVector2D Screen, Size(1.0, 1.0);
+			if (GEngine && GEngine->GameViewport) GEngine->GameViewport->GetViewportSize(Size);
+			const bool bShown = PC->ProjectWorldLocationToScreen(Scene.TransformPosition(At + FVector(0.f, 0.f, 90.f)), Screen) && Size.X > 1.0 && Size.Y > 1.0
+				&& ClearView.IsInside(FVector2D(Screen.X / Size.X, Screen.Y / Size.Y));
+			if (!bShown) { Focus.X = At.X; Focus.Y = At.Y; Document->ActiveCamera = -1; }
+		}
 		if (Panel) Panel->RefreshRows();
 		Document->NotifyChanged();
 	}

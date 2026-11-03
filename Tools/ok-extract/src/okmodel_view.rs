@@ -544,7 +544,18 @@ impl ModelView {
         let render_textures = self.parsed.prefab_render_textures(prefab);
         let animated = self.parsed.prefab_animated_materials(prefab);
         let mark_renderer = |m: &mut ExtractedMesh, node: i32| {
-            if let (Some(mat), Some((_, casting, layer, enabled))) = (m.mat.as_mut(), renderers.iter().find(|r| r.0 == node)) {
+            // A shadow-only or switched-off renderer whose material is in another bundle still has to carry its flags, or
+            // it is drawn.
+            if m.mat.is_none() && renderers.iter().any(|r| r.0 == node && (r.1 == 3 || !r.3)) { m.mat = Some(crate::unity::MeshMaterial::default()); }
+            let renderer = renderers.iter().find(|r| r.0 == node);
+            // A mesh on a node with no Renderer (a MeshFilter kept for a collider) is never drawn: the classroom's
+            // `o_koi_map08_tkabe00/01` walls (a grey "Cube" box round the room) hid every window (U132).
+            if renderer.is_none() && !renderers.is_empty() && !m.uses_skin_renderer() {
+                let mat = m.mat.get_or_insert_with(crate::unity::MeshMaterial::default);
+                mat.floats.insert("_OKRendererShadowMode".into(), 0.);
+                mat.floats.insert("_OKRendererEnabled".into(), 0.);
+            }
+            if let (Some(mat), Some((_, casting, layer, enabled))) = (m.mat.as_mut(), renderer) {
                 mat.floats.insert("_OKRendererShadowMode".into(), *casting as f32);
                 mat.floats.insert("_OKRendererLayer".into(), *layer as f32);
                 mat.floats.insert("_OKRendererEnabled".into(), u8::from(*enabled && renderer_visibility.iter().find(|(n, _)| *n == node).is_none_or(|(_, v)| *v)) as f32);
