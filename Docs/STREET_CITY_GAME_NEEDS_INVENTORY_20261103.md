@@ -67,7 +67,31 @@
   - 汽車旅館 58 間、公寓 80 間、午睡室 6 間。
   - 遊戲要在 `places.toml` 加 privacy 2／1 的類別（11-03 盤點的「換地圖」第 4 步）。
 
-## 4. 下一步
+## 5. 換地圖時遊戲需要地圖提供的東西（逐項給 c-street-city 回答有／沒有／名稱不同）
+
+C++ 的地點結構是 `FOKStreetPlace{Id, Door, Rooms, RoomLevels, Anchors{Name, Position, Yaw}}`（`OKStreetSocialPlaces.h`）。錨點只認名字，不認 actor tag。
+
+| # | 項目 | 遊戲用的名稱／判斷方式 | 問 c-street-city |
+|---|---|---|---|
+| Q1 | 地點 id（30 個＋C3 的 9 棟） | 第 1 節的 30 個 id 加 `campus_*`；`OKStreetFindPlace(id)` | 已有 30 個；9 棟待補 |
+| Q2 | 門 `Door` | 抵達點；離門 3 m 內仍算在店裡；營業時間外會被請離開（`catalog.json places.open`） | 每個 game_place 的 `door` 都是真正的入口嗎？招牌上的營業時間要和 `catalog.json` 一致（例：圖書館週一公休、8–21） |
+| Q3 | 所在範圍 `Rooms`／`RoomLevels` | 判斷「現在在哪個地點、哪一樓」；多樓層地點每層一個框 | 多樓層地點有沒有每層分開的框？ |
+| Q4 | 上下樓 | `lift<n>`（電梯，`OKStreetPlaceLifts`）、`hall`（大廳路點）、校舍用 `stair<n>`（`StairHere` 在 170 cm、Z 差 100 cm 內） | C5、C3 |
+| Q5 | NPC 與帶路的路線 | 舊地圖用寫死的路線點 `OKStreetPlaceRoutePoints()`（約第 420 行），沒有用 NavMesh；附加地面 `OKStreetPlaceGround()` | 城市有 NavMesh 嗎？有的話整合時改用它；沒有的話請由 `world-edge-v1/road-raster.json` 產生路線點（各門口要接到路網） |
+| Q6 | 共同活動錨點 | 第 1 節全部對上（`table`、`counter`、`seat`、`shelf`、`pets`、`lounge`、`game`、`bed*_*`、`vending`、`fountain`、`pond`、`plaza`、`bench`、`torii`、`pray`、`gate`、`field`、`tank`、`beauty`、`mirror2/3`、`shoes`、`sofa`、`books`、`phones`、`bear`、`food`、`view`、`pool`、`bar`、`lobby`、`room6`、`lounge2`、`class2`、`music`、`stand`、`aisle`、`wait`、`women`） | 已有 |
+| Q7 | 拍照點 | 活動 kind=photo：`park_photo` fountain、`campus_gate_photo` gate、`shrine_photo` torii、`pet_photo` pets、`school_music` music、`dept_beauty/women/men/bear`、`aquarium_photo` tank；照片要拍得到主題物（舊地圖出過「噴水池前合照卻看不到噴水池」，R3-46 大熊不在場） | 每個拍照錨點的鏡頭方向（yaw+90 的反方向）背景裡有主題物嗎？ |
+| Q8 | 打工站位 | `catalog.json jobs[].stations`：`counter`、`aisle`、`seat`、`table`、`stand`、`shelf`、`pets`、`beauty`、`mirror2/3`、`shoes`、`sofa`、`books`、`phones`、`bear`、`food`、`view`、`tank`、`lobby`、`bar`、`pool` | 只缺 C1、C2 |
+| Q9 | 購物點 | 進入有營業的地點就能開菜單買（`catalog.json items[].place`），19 個地點有商品 | 已有；店內要看得出賣什麼（貨架、菜單看板） |
+| Q10 | 一對一、H 用的房間 | `places.toml` privacy ≥ 2 才能 H（`RequestIntimacy`）：`lodge`、`minshuku`、`boys_dorm`；hotel 帶去 `hotel_rest`。H 場景自己生床，不讀場景道具。接吻、擁抱看 privacy 與人數 | 旅館房、民宿、男宿房間已列；整合時 `places.toml` 加 `motel_*`、公寓等類別（第 3 節） |
+| Q11 | 「進設施」類活動 | kind=facility：`restaurant_room`（餐廳包廂）、`hotel_spa`、`hotel_rest`、`inn_rest`、`rest`（會館休息房）、`spa`（會館精油護理室）。舊地圖是兩人淡出進房 | S04 有包廂嗎？H1 有 SPA 護理室嗎？`lodge` 現在對到汽車旅館泳池套房，「會館精油護理室」對不上 |
+| Q12 | 睡覺 | `sleep_*` 活動找名稱開頭 `bed` 的錨點（`OKStreetNearestBed`，Z 差 150 cm 內）；女主 `sleep`／`bath` 作息回她的 `home_place_id`（都是 `girls_dorm`） | C11：女宿房間清單（床、淋浴 `shower*`） |
+| Q13 | 洗澡 | 女主 `bath` 作息在自己宿舍；一起泡澡用 `onsen` 的 `pool`、飯店 `pool` | S19 的 `pool*` 已有；女宿房間的 `shower*` 已有，要和 C11 一起分配 |
+| Q14 | 廁所 | `restroom_*` 的 `wait`（他等的位置）、`women`（女廁） | 已有 4 處 |
+| Q15 | 販賣機 | `vending`（12 個地點） | 已有 |
+| Q16 | 出生點 | 新遊戲他在男宿門口，女主在各自作息的地點；讀檔用存下的座標 | D2 男宿門口的出生點（站在路上、不卡牆）；舊存檔的座標在新地圖無效，整合時要把存檔座標換成「地點 id＋錨點」 |
+| Q17 | 地點描述 | `places.toml` 的 label 與 C++ 的地點說明會給 AI 看（例：「舊校舍，社團活動和自習用」「露天溫泉，竹籬笆圍著」「水族館，展區禁止飲食」） | 名稱對上但內容不同的要列出來，整合時改描述：`aquarium`→錦鯉池、`onsen`→室內溫泉會館、`playground`（操場：草地與跑道，打西瓜、潑水、跑步、爆裂魔法）→遊樂場、`school`→第一教學大樓、`lodge`→汽車旅館套房 |
+
+## 6. 下一步
 
 1. c-street-city 依第 2 節（C1–C11）補場景與 `places.json`，重跑 `build_street_city_places.lua`。
 2. c-conquest 重跑比對腳本確認沒有缺漏。
