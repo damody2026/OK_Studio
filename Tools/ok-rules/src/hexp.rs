@@ -351,11 +351,11 @@ fn session_end(r: &Value) -> Result<Value, String> {
         }
     }
     let level_after = h.level(rel.lewdness);
-    // The result shown when the scene ends (HSceneResult): each place before and after, in the panel's order, and the
-    // firsts of this time.
+    // The result shown when the scene ends (HSceneResult): each place before and after, in the panel's order, as the scene
+    // shows them (area(): crotch and anal with their intercourse), and the firsts of this time.
     let rows: Vec<Value> = [(KISS, "kiss"), (CHEST, "chest"), (NIPPLE, "nipple"), (BUTT, "butt"), (CROTCH, "crotch"), (ANAL, "anal")]
         .iter()
-        .map(|&(i, key)| json!({"area": key, "name": area_name(i), "before": was.areas[i].round(), "after": h.areas[i].round()}))
+        .map(|&(i, key)| json!({"area": key, "name": area_name(i), "before": was.area(i).round(), "after": h.area(i).round()}))
         .chain(std::iter::once(json!({"area": "oral", "name": crate::tr::t("hexp.area_mouth"), "before": was.oral.round(), "after": h.oral.round()})))
         .collect();
     let firsts: Vec<&str> = [
@@ -439,6 +439,14 @@ mod tests {
         assert_eq!(areas, 3);
         let e = experience(&json!({"girl": "g", "relation": rel(0.0), "ext": out["ext"]})).unwrap();
         assert_eq!(e["areas"]["oral"], json!(70.0));
+    }
+
+    #[test]
+    fn the_result_shows_each_place_as_the_scene_does() {
+        let ext = json!({"hexp": {"g": {"count": 1, "virgin": false, "areas": [0, 0, 20, 0, 0, 0], "crotch_h": 30}}});
+        let out = session_end(&json!({"girl": "g", "relation": rel(0.0), "ext": ext, "counts": {"played": true}})).unwrap();
+        let crotch = out["result"]["areas"].as_array().unwrap().iter().find(|a| a["area"] == "crotch").unwrap().clone();
+        assert_eq!(crotch["before"], json!(50.0), "20 touched + 30 intercourse, as the scene's panel and experience() show");
     }
 
     #[test]
