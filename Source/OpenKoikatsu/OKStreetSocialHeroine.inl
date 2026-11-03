@@ -250,6 +250,9 @@ FOKHeroineResult AOKStreetSocialScene::Interact(int32 Girl,const FString& ActId,
  if(A->TryGetStringField(TEXT("recent"),Recent)){
   S.MindRecent.Add(Id,Recent);S.FreeTalkNotice=Recent;ApplyRulesRelation(Id,*A);
   bool Counted=false;if(A->TryGetBoolField(TEXT("counted"),Counted)&&Counted)S.ActDoneAt.Add(ActKey,NowMinute);
+  // What he does with her answers her too: 爱丽丝 asked how late he would stay, he patted her head, and half a minute
+  // on she was told "he keeps not saying anything" (R6-147).
+  if(!Args.Hers){S.FreeTalkSilenceSince=FPlatformTime::Seconds();S.FreeTalkSilencePenalties=0;}
   UE_LOG(LogTemp,Display,TEXT("Street act: actor=%d act=%s place=%s awkward=%.2f reaction=%d staff=%d"),Girl,*ActId,*Here,A->GetNumberField(TEXT("awkward")),Out.Reaction,A->GetBoolField(TEXT("staff"))?1:0);
  }
  // 5. Her record (an awkward scene is a memory of hers) and 6. what others hear.

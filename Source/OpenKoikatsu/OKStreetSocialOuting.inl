@@ -902,7 +902,9 @@ bool AOKStreetSocialScene::StartOutingActivity(int32 Girl,const FString& Activit
   // code 1: a run around the place they are in (jogging in the park), the rules' table says so.
   // code 2: a photo walk (a stroll with stops where he photographs her, one album).
   case EOKStreetActivityKind::Walk:if(A->Code==1||A->Code==2){BeginStroll(Girl,Error,A->Code==1);if(!Error.IsEmpty())return false;S.StrollActivity=A->Id;S.StrollStartMinute=OKStreetMindNow(S);
-   S.PhotoWalkStops=0;S.PhotoWalkPauseUntil=0;S.PhotoWalkAlbum=A->Code==2?FString::Printf(TEXT("walk:%lld"),OKStreetMindNow(S)):FString();return true;}BeginCompanion(Girl);break;
+   S.PhotoWalkStops=0;S.PhotoWalkPauseUntil=0;S.PhotoWalkAlbum=A->Code==2?FString::Printf(TEXT("walk:%lld"),OKStreetMindNow(S)):FString();
+   // Told as what it is: the run with 贞德 they had agreed on read "taking a walk nearby" (R6-148).
+   S.Message=OKMsg(TEXT("ui.outing.activity_route_together"),{{TEXT("girl_name"),*S.Manifest.Characters[Girl].Name},{TEXT("activity"),OKStreetActivityName(A->Id)}});RefreshUI();return true;}BeginCompanion(Girl);break;
  }
  const bool Started=S.Pair.Partner==Girl||S.Facility!=INDEX_NONE||S.Companion==Girl;
  if(!Started)Error=S.Message.IsEmpty()?OKMsg(TEXT("ui.outing.cannot_do_action_now"), {{TEXT("action_name"), A->Name}}):S.Message;
@@ -945,6 +947,9 @@ FString AOKStreetSocialScene::FreeTalkActivity() const{
   float Left=0.f;if(S.OutingRoute.IsValidIndex(S.OutingStep)){Left=FVector::Dist2D(S.Male,S.OutingRoute[S.OutingStep]);
    for(int32 K=S.OutingStep+1;K<S.OutingRoute.Num();++K)Left+=FVector::Dist2D(S.OutingRoute[K-1],S.OutingRoute[K]);}
   const FString Way=Left>=500.f?OKMsg(TEXT("ui.outing.walking_left"),{{TEXT("meters"),FMath::RoundToInt(Left/100.f)}}):FString();
+  // A run or a photo walk is the activity itself, under way: told "walking somewhere nearby", "after the run, breakfast"
+  // set off for the cafeteria five minutes into the run with 贞德 (R6-149).
+  if(!S.StrollActivity.IsEmpty())return OKMsg(TEXT("ui.outing.doing_route_activity_now"),{{TEXT("activity_name"),OKStreetActivityName(S.StrollActivity)}});
   return (A?OKMsg(TEXT("ui.outing.walking_prepare_activity"), {{TEXT("outing_place"), *S.OutingPlace}, {TEXT("activity_name"), A->Name}}):OKMsg(TEXT("ui.outing.walking_with_player_to"), {{TEXT("outing_place"), *S.OutingPlace}}))+Way;
  }
  if(S.Pair.Partner!=INDEX_NONE){

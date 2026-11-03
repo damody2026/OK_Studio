@@ -195,6 +195,17 @@ void AOKStreetSocialScene::StepApproach(){
  const bool RouteDone=S.ApproachPath.Num()<2&&SceneTime()-S.ApproachRouteAt<1.0&&FVector::Dist2D(A.Position,S.Male)<450;
  if((FVector::Dist2D(A.Position,S.Male)<170||(S.ApproachBlockedNear&&FVector::Dist2D(A.Position,S.Male)<260)||RouteDone)&&S.RemoteMode==0&&S.PrivateGirl==INDEX_NONE){
   const bool Join=S.ApproachJoin||S.ApproachAppointment,ForSong=S.ApproachSong,ForPrivate=S.ApproachPrivate;const int32 With=S.Target!=INDEX_NONE?S.Target:FreeTalkPartner();
+  // Beside him but not able to speak yet (still loading in after a load, her actions not ready): she waits there, the
+  // loading not counted against her patience. 贞德 came to their 07:15 run while the characters were still fading in,
+  // the talk could not open, and she went off on her day before he could say a word (R6-153).
+  if(S.Target==INDEX_NONE&&!ForPrivate&&!(Join&&With!=INDEX_NONE&&With!=I)){
+   FOKRuntimeCharacterStatus St;const bool Q=OKGetCrowdRuntimeCharacterStatus(this,I,St);
+   const FOKStreetTalkCandidateSample Smp=OKStreetMakeTalkSample(GetWorld(),this,S.Male,A,&S.Manifest.Characters[I],Q?&St:nullptr,Q);
+   if(!OKStreetTalkCandidateEligible(Smp)&&(!Q||!Smp.Ready||!Smp.Visible||!Smp.ActionsReady)){
+    S.ApproachStarted=FMath::Max(S.ApproachStarted,FPlatformTime::Seconds()-S.ApproachLimit+30.0);
+    if(S.ApproachWaitLogged!=I){S.ApproachWaitLogged=I;UE_LOG(LogTemp,Display,TEXT("Street approach: actor=%d beside him but not ready to talk yet (queried=%d visible=%d actions=%d); she waits"),I,Q?1:0,Smp.Visible?1:0,Smp.ActionsReady?1:0);}
+    return;}}
+  S.ApproachWaitLogged=INDEX_NONE;
   UE_LOG(LogTemp,Display,TEXT("Street approach: actor=%d arrived beside him (join=%d, song=%d, private=%d, he is with %d)"),I,Join?1:0,ForSong?1:0,ForPrivate?1:0,With);
   Stop();
   // The date he called off (a yandere lover, R3-268): straight into the one-on-one; while he is on a date with someone

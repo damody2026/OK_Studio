@@ -379,7 +379,8 @@ TSharedRef<SWidget> AOKStreetSocialScene::BuildPhoneApp(){
   auto Lines=SNew(SVerticalBox);
   for(const auto& T:Fa.FatherTexts)
    Lines->AddSlot().AutoHeight().Padding(FMargin(4,3,120,3)).HAlign(HAlign_Left)[SNew(SBorder).BorderImage(OKFinSolid()).BorderBackgroundColor(FLinearColor(.22f,.22f,.28f)).Padding(8)[SNew(SVerticalBox)
-    +SVerticalBox::Slot().AutoHeight()[OKFinText(T.Value,FLinearColor::White,12)]
+    // Wrapped like her messages: unwrapped, the father's text ran off the bubble at "别让人" (R6-150).
+    +SVerticalBox::Slot().AutoHeight()[OKFinText(T.Value,FLinearColor::White,12,false,true)]
     +SVerticalBox::Slot().AutoHeight()[OKFinText(OKStreetCalendarLabel(int32(T.Key/1440),(T.Key%1440)/60.0),FLinearColor(.65f,.65f,.7f),8)]]];
   TSharedRef<SScrollBox> Scroll=SNew(SScrollBox).ScrollBarAlwaysVisible(true)+SScrollBox::Slot()[Lines];Scroll->ScrollToEnd();
   return SNew(SHorizontalBox)

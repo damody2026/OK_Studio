@@ -345,7 +345,12 @@ void AOKStreetSocialScene::FillMindStatus(int32 Character,FOKFreeTalkStatus& Sta
   // singing date with none ready, then stood silent and asked why he said nothing (R6-55).
   const EOKSongPhase Song=S.Song.Girl==Character?S.Song.Phase:EOKSongPhase::Idle;
   Status.Scene+=OKMsg(TEXT("ui.mind.song_status"),{{TEXT("state"),Song==EOKSongPhase::Ready||Song==EOKSongPhase::Offered?TEXT("ready"):Song>=EOKSongPhase::Intro&&Song<=EOKSongPhase::Outro?TEXT("singing"):Song==EOKSongPhase::Preparing?TEXT("preparing"):TEXT("none")}});}
- if(!Apart&&S.ShiftAppointment)if(const auto* Job=S.Catalog.FindJob(S.ShiftJob)){const FDateTime T=StreetNow();Status.Scene+=OKMsg(TEXT("ui.mind.he_working_here_status"), {{TEXT("job_title"), *Job->Title}, {TEXT("busyness_percent"), OKRulesCrowdAt(S,Job->Place,T.GetHour()+T.GetMinute()/60.0)*100.f}, {TEXT("minutes_to_shift_end"), FMath::Max<int64>(0,S.ShiftEnd-OKStreetMindNow(S))}});NoteShiftChat();}
+ if(!Apart&&S.ShiftAppointment)if(const auto* Job=S.Catalog.FindJob(S.ShiftJob)){const FDateTime T=StreetNow();
+  // Clock times and hours: told "505 minutes to the end of his shift", 优香 said "five hundred-odd minutes" — at
+  // 22:35, before the 23:00 shift had even begun (R6-151).
+  const int64 Now=OKStreetMindNow(S);auto Clock=[](int64 M){return FString::Printf(TEXT("%02d:%02d"),int32(M%1440/60),int32(M%60));};
+  Status.Scene+=OKMsg(TEXT("ui.mind.he_working_here_status"), {{TEXT("job_title"), *Job->Title}, {TEXT("busyness_percent"), OKRulesCrowdAt(S,Job->Place,T.GetHour()+T.GetMinute()/60.0)*100.f},
+   {TEXT("started"), Now>=S.ShiftStart?TEXT("yes"):TEXT("no")}, {TEXT("start_time"), Clock(S.ShiftStart)}, {TEXT("end_time"), Clock(S.ShiftEnd)}, {TEXT("hours_to_shift_end"), FMath::Max<int64>(0,FMath::RoundToInt64((S.ShiftEnd-Now)/60.0))}});NoteShiftChat();}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_StatusInvite);Status.Invite=RollInviteStance(Character);}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_StatusHeard);Status.Heard=HeardText(Character);}
  // The meetings the game really has with him: she must not remember others (a time she said once is not a promise).
@@ -557,7 +562,10 @@ void AOKStreetSocialScene::ApplyChoiceReply(int32 Character,const FOKFreeTalkRep
  // Ordered in conversation (his words, or hers): straight to the kitchen, he pays unless she insists.
  // Unless her reply says who pays, it waits for the judge reading his words ("我请你"): billed at once, 雷电将军's latte
  // went by her own lean (split) a second before the judge said he treats (R4-3). TickServes bills it if no verdict comes.
- if(Added>0){if(Reply.Payer.IsEmpty())S.ChatOrderAwaitsJudge.Add(Character,FPlatformTime::Seconds());else PlaceChatOrder(Character,Reply.Reply);}
+ // Her "I pay" with something of his she ordered also waits: buying it for him (the judge's she_treats) or each their own
+ // is the judge's reading; billed at once, 优香's "let me get you a tea egg" was his to pay (R6-152).
+ const bool HisByHer=Reply.Payer==TEXT("her")&&S.Cart.ContainsByPredicate([](const FOKStreetCartLine& L){return !L.ForHer&&L.Girl==INDEX_NONE;});
+ if(Added>0){if(Reply.Payer.IsEmpty()||HisByHer)S.ChatOrderAwaitsJudge.Add(Character,FPlatformTime::Seconds());else PlaceChatOrder(Character,Reply.Reply);}
  if(Reply.ActKind==TEXT("checkout"))StartCheckout();
  // Her own wish waiting for his answer (AskIntimacyWish): the line she asks it with is not his yes. It took 三月七
  // straight into the one-on-one scene in the middle of her song (R4-6).
