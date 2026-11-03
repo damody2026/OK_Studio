@@ -234,26 +234,24 @@ local function cmd_restore(o)
     okx, paired_exe = build_tools(work .. "/target")
   end
   local function x(...) run_logged(log, { okx, game, "--oklib", ... }) end
-  if game and want("models") then
-    print("[models] base library models from the game and its mods/")
-    x("convert", lib, "8", "@" .. MODEL_SOURCES)
+  -- A step that fails (this install lacks something the converter needs) is reported and its files come from the
+  -- archive instead, so one missing texture does not leave the rest of the library unrestored.
+  local failed = {}
+  local function step(name, title, fn)
+    if not (game and want(name)) then return end
+    print(("[%s] %s"):format(name, title))
+    local good, err = pcall(fn)
+    if not good then failed[name] = true; print(("[%s] FAILED: %s; its files will come from the archive"):format(name, tostring(err))) end
   end
-  if game and want("studio") then
-    print("[studio] Studio catalogs, images, sky, reflections, shader states")
+  step("models", "base library models from the game and its mods/", function() x("convert", lib, "8", "@" .. MODEL_SOURCES) end)
+  step("studio", "Studio catalogs, images, sky, reflections, shader states", function()
     x("studio-catalog", lib); x("studio-names", lib); x("studio-nodes", lib, "8"); x("studio-standard-textures", lib)
     x("studio-child-anims", lib); x("studio-images", lib); x("studio-sky", lib); x("studio-environments", lib)
     x("studio-reflections", lib); x("shader-states", lib, "8")
-  end
-  if game and want("sounds") then
-    print("[sounds] Studio voices, BGM, H sound effects")
-    x("studio-sounds", lib); x("studio-voices", lib); x("h-sounds", lib)
-  end
-  if game and want("anims") then
-    print("[anims] Studio animations and H motion variants")
-    x("anim-convert", lib, "-", "all", "8"); x("anim-pack", lib)
-  end
-  if game and want("paired") then
-    print("[paired] pair motions, poses and IK")
+  end)
+  step("sounds", "Studio voices, BGM, H sound effects", function() x("studio-sounds", lib); x("studio-voices", lib); x("h-sounds", lib) end)
+  step("anims", "Studio animations and H motion variants", function() x("anim-convert", lib, "-", "all", "8"); x("anim-pack", lib) end)
+  step("paired", "pair motions, poses and IK", function()
     local src = work .. "/PairedAnimations"
     local m = ok.read_json(PAIRED_SOURCES .. "/manifest.json")
     for _, f in ipairs(m.files) do
@@ -262,9 +260,8 @@ local function cmd_restore(o)
     end
     for _, n in ipairs({ "manifest.json", "editor-demos.json" }) do path.copy(PAIRED_SOURCES .. "/" .. n, src .. "/" .. n) end
     run_logged(log, { paired_exe, "convert", src, lib .. "/paired" })
-  end
-  if game and want("runtime-clips") then
-    print("[runtime-clips] street animation clips")
+  end)
+  step("runtime-clips", "street animation clips", function()
     path.mkdir(ROOT .. "/" .. RA .. "/library", true)
     local rows = {}
     for line in io.lines(CLIP_SOURCES) do
@@ -275,12 +272,20 @@ local function cmd_restore(o)
     path.write_text(tsv, table.concat(rows, "\n") .. "\n")
     run_logged(log, { okx, game, "--export-runtime-clips", tsv })
     run_logged(log, { ok.lua_exe, ROOT .. "/Tools/export_street_animation_library.lua", "--game", game, "--exe", okx })
-  end
+  end)
   local report = verify(ROOT, true)
   if want("archive") and o.archive then
-    print(("[archive] %d missing files from %s"):format(#report.missing, o.archive))
-    if #report.missing > 0 then extract(o.archive, ROOT, report.missing) end
+    local members, seen = {}, {}
+    for _, p in ipairs(report.missing) do members[#members + 1] = p; seen[p] = true end
+    for _, p in ipairs(report.differs) do
+      local g = group_of(p)
+      if g and failed[g.step] and not seen[p] then members[#members + 1] = p end
+    end
+    print(("[archive] %d files from %s"):format(#members, o.archive))
+    if #members > 0 then extract(o.archive, ROOT, members) end
   end
+  local names = ok.util.sorted_keys(failed)
+  if #names > 0 then print("steps that failed on this install (restored from the archive where given): " .. table.concat(names, ", ")) end
   report = verify(ROOT)
   if #report.missing > 0 then
     print("still missing; " .. (o.archive and "the archive does not have them" or "give --archive <zip> for the files no converter makes"))

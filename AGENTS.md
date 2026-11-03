@@ -7,6 +7,7 @@
 - **回覆語言**：一律用繁體中文；程式碼、識別名稱、路徑、指令保持原文。
 - **照使用者的決定做**：使用者做出的決定或指出的錯誤，直接照辦，不質疑、不反問、不二度確認；使用者說錯就是錯。
 - **版控只放共用資源**（[Docs/BASE_LIBRARY_SHARED_RESOURCES_PLAN.md](Docs/BASE_LIBRARY_SHARED_RESOURCES_PLAN.md)）：
+  - **原作資料不進版控**（2026-11-04 起，[Docs/ORIGINAL_DATA_OUT_OF_GIT_PLAN_20261104.md](Docs/ORIGINAL_DATA_OUT_OF_GIT_PLAN_20261104.md)）：`base_v1/`、`RuntimeAnimations/`、街區語音與台詞等原作／mod 衍生資料列在 `Tools/original_data_manifest.json`，新 checkout 用 `Tools\lua\lua.exe Tools\original_data.lua restore --archive <zip> [--game <原作>]` 還原；zip 在 `F:\backup\OKOriginalData_20261104.zip`。歷史已改寫（2026-11-04），舊 checkout 要 reset 到新的 origin，不能 merge 舊歷史。
   - 角色卡（`Content/CharacterCards/`、`UserData/Studio/scene/*_cards/`、含角色的 Studio 樣本場景）與第三方 mod 轉出的模型只留本機，不要 `git add -f`。
   - commit 前的 hook 會擋下角色卡、OK 卡與含角色的 Studio 場景（`Tools/check_no_cards.lua`；新 checkout 先執行 `Tools/lua/lua.exe Tools/install_git_hooks.lua`，`--all` 可檢查全部已追蹤檔）。私有卡與測試卡只留本機。
   - 共用 mod 清單在 `Tools/base_library_shared_mods.txt`。轉換新 mod 後執行 `ok-extract <遊戲> --oklib shared-ignore <base_v1>` 重新產生 `Content/IndependentResources/base_v1/models/.gitignore` 再提交。

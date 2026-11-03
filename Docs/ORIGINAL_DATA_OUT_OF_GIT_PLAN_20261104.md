@@ -1,6 +1,6 @@
 # 原作資料移出版控計畫（2026-11-04）
 
-目標：版控只留專案自己的程式與內容。原作（KKS `abdata`、遊戲 `UserData`、語音）與第三方 mod 衍生的資料全部移出 git，另外打包成 zip 保存。新增 `Tools/restore_original_data.lua`：只要指定原作路徑，就能把整套 OK 共用資料還原到可以建置、遊玩的狀態。
+目標：版控只留專案自己的程式與內容。原作（KKS `abdata`、遊戲 `UserData`、語音）與第三方 mod 衍生的資料全部移出 git，另外打包成 zip 保存。新增 `Tools/original_data.lua`：只要指定原作路徑，就能把整套 OK 共用資料還原到可以建置、遊玩的狀態。
 
 盤點依據：[基礎庫共用資源盤點](BASE_LIBRARY_SHARED_INVENTORY_20261104.md)，以及本次對 `git ls-files` 的全倉掃描（40,590 個追蹤檔，其中 LFS 9,944 個、約 12.2 GB）。
 
@@ -44,51 +44,48 @@ B 類之後若補上產生工具（例如從 abdata 解語音與台詞、ramp �
 - 專案自己的程式、地圖、`RuntimeMaterials`（GpuPoseAudit 產生，貼圖是佔位）、`StreetSocialData` 的規則 toml、Regions、Profiles、`Models/*.okmesh`（Blender 自建）、`Localization/*.toml`、`Launch/*`、`PreviewMaterials`、`Story`、`OKStudio/effects.json`、`StreetSocialCity`、`VideoMotionDemos`。
 - 新增、只含名稱與雜湊的清單：`Tools/base_library_sources.txt`、`Tools/paired_sources.json`、`Tools/runtime_clip_sources.txt`、`Tools/original_data_manifest.json`（每個移出檔案的路徑、sha256、大小、類別 A/B、產生步驟）。
 
-## 二、要先改的程式（否則移出後無法建置）
+## 二、實作（2026-11-04，C）
 
-1. `Tools/ok-extract/src/hit_reaction.rs:143,204` 用 `include_bytes!` 嵌入 `BodyInteractions/hit-reaction-v1.json`，檔案不在就連 `ok_extract.lib` 都編不過。改成執行期讀檔，缺檔時停用該功能並寫 log。
-2. `Config/DefaultGame.ini` 的 `DirectoriesToAlwaysCook` 含 `/Game/Koikatsu/Data`、`DirectoriesToAlwaysStageAsNonUFS` 含 `base_v1/paired`、`BodyInteractions`、`KKPreview`、`MotionCatalogue`；`RampTexture=KKPreview/MinimalistRamp.png`。目錄不存在時 cook 與 stage 不能失敗（逐項確認，必要時改由還原腳本檢查）。
-3. 執行期讀取點缺檔要給明確訊息，例如「原作資料未還原，請執行 `Tools/lua/lua.exe Tools/restore_original_data.lua --game <路徑>`」：`KKCardSource.cpp:43`、`OKStudioCatalog.cpp`、`OKHScene.cpp`、`OKStreetSocialScene.cpp`、`OKBodyInteraction.cpp`、`OKMotionCatalogue.cpp`、`OKCrowdQuality.cpp:112`、`KKAnimationCatalog.cpp:7`。
-4. `.gitignore` 加入所有移出路徑；`Tools/check_no_cards.lua`（commit hook）加一條規則：擋下 manifest 裡列的路徑，避免日後又被加回。
+使用者決定：台詞翻譯一起移出；146 個 shader `.inl` 保留；共用 mod 衍生的模型移出；改寫歷史並 force push 到 `damody2026/OpenKoikatsu`；zip 放 `F:\backup` 並要測試過。先只處理 C，E、F 不動。
 
-## 三、還原腳本 `Tools/restore_original_data.lua`
+| 項目 | 內容 |
+|---|---|
+| 清單 | `Tools/original_data_manifest.json`：32,229 檔、13.30 GB（路徑、bytes、sha256、群組）；目前所有 LFS 檔（9,944 個）都在其中，sha256 與 LFS oid 全部吻合 |
+| 轉換用名稱清單 | `Tools/original_data/model_sources.txt`（610 個來源標籤對應 626 個模型）、`paired/manifest.json`＋`editor-demos.json`、`runtime_clips.tsv`（81 個） |
+| 腳本 | `Tools/original_data.lua`：`manifest`、`pack --out <zip>`、`verify [--root]`、`test-archive <zip> <空資料夾>`、`restore [--game <原作>] [--archive <zip>] [--only/--skip <步驟>]` |
+| zip | `F:\backup\OKOriginalData_20261104.zip`（9.83 GB）。由 `ok-luakit zip-create` 寫出（Windows 的 tar 讀不了含日文檔名的清單），Zip64、UTF-8 檔名 |
+| 程式修改 | `hit_reaction.rs` 測試改在執行期讀 BodyInteractions（檔案不在就略過）；`export_street_animation_library.lua` 改用 `ok.root` 並加 `--exe`；`ok-luakit` 加 `zip-create`／`zip-extract`，順手修 `shader.rs` 一個原本就編不過的借用 |
+| 版控 | `.gitignore` 加入整段路徑；commit hook（`Tools/check_no_cards.lua`）擋下這些路徑 |
+
+restore 的步驟：`tools`（建 ok-extract `--features studio-sounds` 與 ok-paired-library，`-j 8`）→ `models` → `studio` → `sounds` → `anims` → `paired` → `runtime-clips` → `archive`。某一步失敗只記下來，它負責的檔案改由 zip 覆蓋；最後對照 manifest 報告相同／不同／缺少。
+
+## 三、驗證結果
+
+| 測試 | 結果 |
+|---|---|
+| zip 解到空資料夾 | 32,229 檔 sha256 全部吻合 |
+| 乾淨 clone（`C:\portable\OKZipTest`）＋只用 zip 還原 | 2.8 分鐘，32,229 檔全部吻合 |
+| 同一個 clone 建置編輯器（D: 引擎） | 成功。需要另外放本機商用外掛 `Plugins/BpGeneratorUltimate`（含 Binaries，本來就不進版控） |
+| 同一個 clone 的 OK Studio | SceneEditor 開 Addiction 場景，VMD 動作、音訊、MMDD 鏡頭都匯入，播放正常 |
+| 同一個 clone 的街區遊戲 | 完整打包（cook 0 錯 0 警告），沙盒啟動 11/11 角色就緒、0 個缺模型，走到雷電將軍旁按 E 交談正常。需要先 `cargo build --release` 建 `Tools/ok-rules`；TTS、ASR、唱歌伺服器沒建，改用內建人聲 |
+| 乾淨 clone（`C:\portable\OKRestoreTest`）＋`--game D:/KoikatuSunshine`＋zip | 跑完 0 缺檔。`studio` 一步失敗（這台遊戲缺 `abdata/studio/map/minsyukulobby_studio.unity3d` 的 `t_ks_r08_outview` 貼圖），改從 zip 補。重新產生的檔案有 14,706 個 bytes 和 manifest 不同：模型 551、Studio 語音 8,346（重新編碼）、Studio 動畫 5,805、paired 2、索引 2；街區動畫片段全部相同。這份重新產生的資料庫沒有實際開遊戲驗證 |
+| C 遊戲與編輯器建置（D: 引擎） | 成功；`cargo check` 預設與 `--no-default-features` 通過，`hit_reaction` 測試 7 個通過 |
+
+結論：**source＋zip** 可以還原成能玩遊戲、能用 OK Studio 的專案（已實測）。**只給原作路徑**能產生 A 類的大部分檔案，但不是逐位元相同，B 類一定要 zip；要把它當成正式還原方式，需要另外驗證重新產生的模型與語音。
+
+## 四、版控歷史
+
+- 改寫前先把舊歷史備份到 `https://github.com/damody/OpenKoikatsu` 的 `master2`（`8a57fc422`，含全部 LFS）。
+- 用 `git filter-repo --invert-paths` 在另一個 bare clone 刪掉原作資料路徑，另外刪掉歷史裡曾提交過的 `Content/CharacterCards/`（角色卡本來就不能進版控）。1,319 個 commit 裡已找不到這些路徑；最新 commit 的 tree 與改寫前相同。
+- force push：`damody2026/OpenKoikatsu` 的 `master`、`duo2` → `8f603d99`，`feat/mmd-vnge-support` → `2fcc1084`。GitHub 上 `refs/pull/1/head`（PR #1）仍指向舊歷史，這個 ref 無法從 git 刪除；舊的 LFS 物件也還在 GitHub 的 LFS 儲存空間，要完全清掉只能刪倉庫重建或請 GitHub 客服處理。
+- C 已 `reset --mixed` 到新的 `master`（工作樹不動）。**E、F 還在舊歷史**：之後要 `git fetch` 後 reset 到新的 `origin/duo2`，不能 merge 舊歷史（會把原作資料帶回來）。E、F 的原作資料檔案仍在各自磁碟上，reset 時用 `--mixed` 或 `--soft` 保留。
+
+## 五、新 checkout 的準備
 
 ```text
-Tools\lua\lua.exe Tools\restore_original_data.lua --game <原作路徑> [--archive <zip>] [--only <類別>] [--verify] [--threads 8]
+git clone https://github.com/damody2026/OpenKoikatsu.git
+Tools\lua\lua.exe Tools\original_data.lua restore --archive F:/backup/OKOriginalData_20261104.zip
+（可選）Tools\lua\lua.exe Tools\original_data.lua restore --game D:/KoikatuSunshine --archive F:/backup/OKOriginalData_20261104.zip
 ```
 
-1. 檢查：原作路徑有 `abdata/`；列出 `mods/` 缺少哪些共用 mod（缺的話只略過那些模型並列出，不中斷）；確認沒有 Unreal 正在使用 `base_v1`。
-2. 建置 ok-extract（release，`--features studio-sounds`，`-j 8`）與 `ok-paired-library`，所有呼叫帶 `RAYON_NUM_THREADS=8`。
-3. 依序產生 A 類：模型（convert @清單）→ Studio 目錄、圖片、天空、反射、環境、shader 狀態 → Studio 動畫與 variants → 語音、BGM、H 音效 → paired → RuntimeAnimations。每一步寫到暫存目錄，成功後才換進正式位置；步驟可單獨重跑（`--only`）。
-4. 有 `--archive` 就解出 B 類到原位置，先核對 zip 裡的 manifest。
-5. 需要編輯器的步驟（CrowdBehaviorBake 曲線、官方 Studio 場景匯入）放最後，透過 `Tools/unreal_slot.lua` 拿 slot，用完就關。
-6. 對照 `Tools/original_data_manifest.json` 輸出報告：相同、內容不同但可接受（例如 `converted.tsv` 的時間欄、ffmpeg 版本差異）、缺少。`--verify` 時只比對不寫入。
-
-## 四、zip 封存
-
-- 工具：`Tools/pack_original_data.lua --out <zip>`，依 manifest 打包 A＋B 兩類（A 類也放進去，讓沒有原作的機器也能還原；也可以只打包 B 類），zip 內附同一份 manifest。
-- 預計大小：A 類約 11.5 GB（okmodel、ogg 大多已壓縮，zip 幫助有限）、B 類約 0.8 GB。
-- 存放位置不在倉庫內，建議放在 `D:\OKArchive\OKOriginalData_20261104.zip`，再另外備份到雲端或外接碟。
-
-## 五、版控歷史
-
-- 從 HEAD 移除只影響之後的 commit；`origin`（damody2026/OpenKoikatsu）2026-10-20 起的每個 commit 和 LFS 仍含這些檔案，`damody/OpenKoikatsu` 的 `master2` 備份（正在上傳）也一樣。
-- 要真的移除，需要改寫歷史（`git filter-repo` 依 manifest 路徑刪除），強制推送後再處理 GitHub 上的 LFS 物件。GitHub 刪除 LFS 物件只能刪掉整個倉庫或請客服處理，所以實際做法是建一個新的乾淨倉庫，或刪掉舊倉庫重推。
-- C／E／F 三個 checkout 都要重新 clone 或 reset 到改寫後的歷史；改寫前先完成一次整合，並暫停所有 agent。
-
-## 六、執行順序
-
-1. **準備**（不動版控）：產生 `original_data_manifest.json` 與三份來源清單；寫 `pack_original_data.lua`，打出第一份 zip 並核對 sha256。
-2. **程式修正**：第二節 1～3，三邊建置（`cargo check` 預設與 `--no-default-features`、遊戲與編輯器連結）。
-3. **還原腳本**：寫 `restore_original_data.lua`，在乾淨 clone（例如 `E:\OpenKoikatsuClean`）只給原作路徑還原，比對 manifest。
-4. **驗收**（乾淨 clone）：`kks-verify`、`okcard-check ... live`、`ok_cards.lua verify` 現有 OK 卡零缺件；`verify_ok_studio.lua`；街區完整重建並啟動沙盒 11/11；`CardReaderDevelopment` 啟動。
-5. **移出版控**：`git rm --cached` manifest 列的路徑、更新 `.gitignore` 與 hook，提交並在三個 checkout 同步。
-6. **歷史清理**（第五節，另外決定時間）。
-
-## 七、待使用者決定
-
-1. `Localization/*/dialogue.json` 等原作台詞的翻譯，以及 StreetSocial 台詞 JSON，是否一起移出（本計畫預設移出，放 zip）。
-2. 從遊戲／mod shader 轉出來的 146 個 `.inl`（`KKRuntimePose`、`KKUnityBundle`、`OKStudio`，編譯必需），以及骨架名稱、rest pose 這類小型資料，要留在版控，還是改成還原時產生（後者會讓沒有原作的人無法編譯）。本計畫預設先保留。
-3. 共用 mod 衍生的模型（uncensor、KKS_Fixes、ME shader、ramp 等 134 個）是否也算「原作資料」移出（本計畫預設移出，還原時從遊戲 `mods/` 產生）。
-4. 是否做第五節的歷史改寫與新倉庫，以及 `master2` 備份是否保留。
-5. zip 的存放位置。
+另外需要本機的：`Plugins/BpGeneratorUltimate`、`Tools/engine.local.json`、街區用的角色卡（`Content/CharacterCards/StreetHeroines/`、`output/StreetSocialAPNG/Male01.png`），以及 `Tools/ok-rules` 的建置。

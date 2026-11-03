@@ -74,3 +74,12 @@
 - 陰莖、插入、皮膚問題（龜頭穿出、正常位入口細黑線、桌球桌後入、口交斜側露出）何時處理；肛門深度上限要不要接回隨開發度 40%→90%。
 - F 的 H 動作變體檔是否進版控（10-31 起未決）。
 - 何時恢復 agent（使用者交代這次整合後不恢復）。
+
+## 之後：原作資料移出版控（2026-11-04 凌晨）
+
+整合後使用者另外要求：原作資料移出版控、打包 zip、寫還原腳本、改寫歷史並 force push。只在 C 處理，E、F 沒動。詳見 [原作資料移出版控](ORIGINAL_DATA_OUT_OF_GIT_PLAN_20261104.md)。
+
+- 舊歷史備份：`https://github.com/damody/OpenKoikatsu` 的 `master2`（`8a57fc422`，含全部 LFS）。
+- 新歷史：`damody2026/OpenKoikatsu` 的 `master`、`duo2` 都改寫並 force push；C 已對齊。**E、F 還在舊歷史**，下次恢復 agent 或整合前要先 `git fetch` 再 `reset --mixed origin/duo2`，絕對不能 merge 舊歷史。
+- zip：`F:\backup\OKOriginalData_20261104.zip`；新 checkout 用 `Tools\lua\lua.exe Tools\original_data.lua restore --archive <zip>`。
+- 測試用的乾淨 clone：`C:\portable\OKZipTest`（source＋zip，已實測遊戲與 OK Studio）、`C:\portable\OKRestoreTest`（原作＋zip）、改寫用 bare clone `C:\portable\OKRewrite.git`；確認不需要後可刪除（`OKZipTest` 的 `.stage` 裡有 junction，用 `cmd /c rmdir /s /q`）。
