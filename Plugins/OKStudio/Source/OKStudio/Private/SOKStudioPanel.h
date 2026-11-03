@@ -405,7 +405,9 @@ public:
 				Game->Document->Map = -1; Game->Document->Post = FOKScenePost(); Game->Document->Sound = FOKSceneSound(); Game->Document->FreeView = FOKSceneCamera(); Game->File.Reset();
 				// The timeline starts over too (the playhead stayed where the last scene was paused).
 				Game->Document->Duration = 10.f; Game->bTimelinePlaying = false; Game->TimelineTime = Game->Document->Playhead = 0.f; Game->LoopStart = Game->LoopEnd = 0.f;
-				SaveAsName = FDateTime::Now().ToString(TEXT("scene_%Y%m%d_%H%M%S")); // not the last scene's name to overwrite
+				// Not the last scene's name to overwrite; the save window names it by the time it opens (U165: a scene
+				// saved minutes later was named by the time it was made).
+				SaveAsName.Reset();
 				Game->Add(EOKSceneObjectKind::Light); Game->Document->NotifyChanged();
 				// The view starts over too (U147: it stayed on the last map's far view, a new character a speck in it).
 				Game->ViewPreset(5);
@@ -417,7 +419,8 @@ public:
 			if (Arg.IsEmpty() && !Game->File.IsEmpty() && FOKSceneCard::Kind(Game->File) != FOKSceneCard::EKind::KStudio) { FString E; const bool bOk = Game->Save(Game->File, E); SetStatus(bOk ? TEXT("已存 ") + Game->File : E); return bOk; }
 			return SaveNamed(Arg.IsEmpty() ? FDateTime::Now().ToString(TEXT("scene_%Y%m%d_%H%M%S")) : Arg);
 		});
-		Simple(TEXT("scene.saveas"), TEXT("另存新檔"), [this] { bSceneSaveMode = true; OpenFloat(TEXT("scenes")); });
+		// Save as starts from a new name (the time now), so saving twice keeps both (U165).
+		Simple(TEXT("scene.saveas"), TEXT("另存新檔"), [this] { bSceneSaveMode = true; SaveAsName = FDateTime::Now().ToString(TEXT("scene_%Y%m%d_%H%M%S")); OpenFloat(TEXT("scenes")); });
 		Simple(TEXT("scene.browser"), TEXT("開啟場景"), [this] { bSceneSaveMode = false; OpenFloat(TEXT("scenes"), true); });
 		AddCommand(TEXT("scene.load"), TEXT("讀取"), [this](const FString& Arg) { return !Arg.IsEmpty() && LoadFile(Arg); });
 		AddCommand(TEXT("scene.merge"), TEXT("疊加"), [this](const FString& Arg) { return !Arg.IsEmpty() && OpenScene(Arg, true); });

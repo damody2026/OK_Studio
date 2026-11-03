@@ -888,6 +888,8 @@ TSharedRef<SWidget> SOKStudioPanel::BuildSceneBrowser()
 				.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type C) { SaveAsName = T.ToString(); if (C == ETextCommit::OnEnter) SaveNamed(SaveAsName); })]]
 			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f)[Button(FText::FromString(bSceneSaveMode ? TEXT("另存") : TEXT("儲存")), [this]
 			{
+				// An empty name (a new scene while this window stayed open) is the time now.
+				if (SaveAsName.TrimStartAndEnd().IsEmpty()) SaveAsName = FDateTime::Now().ToString(TEXT("scene_%Y%m%d_%H%M%S"));
 				const FString Path = UOKStudioGame::SceneDirectory() / FPaths::MakeValidFileName(SaveAsName.TrimStartAndEnd()) + TEXT(".png");
 				if (FPaths::FileExists(Path) && (!Game.IsValid() || Game->File != Path))
 					Confirm(TEXT("已有同名場景，要覆蓋嗎？"), { { TEXT("覆蓋"), [this] { SaveNamed(SaveAsName); } }, { TEXT("取消"), nullptr } });

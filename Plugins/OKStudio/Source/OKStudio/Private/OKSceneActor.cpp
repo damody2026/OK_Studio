@@ -1158,6 +1158,25 @@ void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
 	const FVector Towards = FVector(SunForward.X, -SunForward.Z, -SunForward.Y).GetSafeNormal();
 	MapSunItemDirection = FLinearColor(Towards.X, Towards.Y, Towards.Z, 0.f);
 	MapSunItemColor = FLinearColor(Irradiance.R, Irradiance.G, Irradiance.B, 1.f);
+	// The map's water (StylizedWater, the lighthouse's Lux Water sea) is lit by the map's sun as Unity's ForwardBase
+	// gives it: _LightColor0 the sun's colour times intensity, from the sun's direction (U166: the sea kept the same
+	// colour at every time).
+	for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews)
+	{
+		if (!P.IsValid()) continue;
+		TInlineComponentArray<UMeshComponent*> Meshes(P.Get());
+		for (UMeshComponent* Mesh : Meshes)
+			for (int32 Slot = 0; Slot < Mesh->GetNumMaterials(); ++Slot)
+			{
+				UMaterialInstanceDynamic* Water = Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot));
+				float Speed = 0.f;
+				if (Water && Water->GetScalarParameterValue(FMaterialParameterInfo(TEXT("_Wavesspeed")), Speed))
+				{
+					Water->SetVectorParameterValue(TEXT("_LightColor0"), MapSunItemColor);
+					Water->SetVectorParameterValue(TEXT("_OKLightDir"), FLinearColor(MapSunItemDirection.R, MapSunItemDirection.G, MapSunItemDirection.B, 1.f));
+				}
+			}
+	}
 	UE_LOG(LogTemp, Display, TEXT("OK studio: map time %d sun angle=(%.1f,%.1f,%.1f) colour=(%.2f,%.2f,%.2f) intensity=%.2f"), Time, Angle.R, Angle.G, Angle.B, Color.R, Color.G, Color.B, Color.A);
 }
 

@@ -19,6 +19,7 @@
 #include "Engine/GameViewportClient.h"
 #include "Types/ISlateMetaData.h"
 #include "Widgets/Input/SEditableText.h"
+#include "Widgets/Input/SSpinBox.h"
 
 namespace
 {
@@ -976,6 +977,8 @@ namespace
 		}
 		// Types into a text field as the keyboard would: the field whose hint (or text) contains "field" takes keyboard
 		// focus, Ctrl+A and Backspace clear it, each character is a key press and "enter" commits (its own handlers run).
+		// A number box (spin box) matches by its value or by the label left of it in its row ("到" in the export
+		// window): its text field shows only while typing, so it is focused as Tab would focus it (U164).
 		if (Op == TEXT("type"))
 		{
 			FString Field, Text;
@@ -986,22 +989,41 @@ namespace
 			bool bEnter = false;
 			J->TryGetBoolField(TEXT("enter"), bEnter);
 			if (Field.IsEmpty() || !FSlateApplication::IsInitialized()) return Result(false, TEXT("field required"));
-			TArray<TSharedRef<SEditableText>> Found;
-			TFunction<void(const TSharedRef<SWidget>&)> Walk = [&](const TSharedRef<SWidget>& W)
+			TArray<TSharedRef<SWidget>> Found;
+			// A row's label: its first slot is (or wraps) a text block holding "field".
+			auto Labels = [&Field](const TSharedRef<SWidget>& Row)
+			{
+				FChildren* Slots = Row->GetChildren();
+				TSharedPtr<SWidget> First = Slots && Slots->Num() > 1 ? Slots->GetChildAt(0) : TSharedPtr<SWidget>();
+				while (First && First->GetType() != TEXT("STextBlock") && First->GetChildren() && First->GetChildren()->Num() == 1) First = First->GetChildren()->GetChildAt(0);
+				return First && First->GetType() == TEXT("STextBlock") && static_cast<const STextBlock&>(*First).GetText().ToString().Contains(Field);
+			};
+			auto IsSpin = [](const SWidget& W) { return W.GetType() == TEXT("SSpinBox<float>") || W.GetType() == TEXT("SOKSpinBox"); };
+			TFunction<void(const TSharedRef<SWidget>&, bool)> Walk = [&](const TSharedRef<SWidget>& W, bool bLabelled)
 			{
 				if (!W->GetVisibility().IsVisible()) return;
+				if (IsSpin(*W))
+				{
+					// Its value as typed or as the box shows it (one decimal: -68.06 shows -68.1).
+					const float Value = static_cast<const SSpinBox<float>&>(*W).GetValue();
+					if (bLabelled || FString::Printf(TEXT("%g"), Value).Contains(Field) || FString::Printf(TEXT("%.1f"), Value).Contains(Field)) Found.Add(W);
+					return;
+				}
 				if (W->GetType() == TEXT("SEditableText"))
 				{
-					const TSharedRef<SEditableText> E = StaticCastSharedRef<SEditableText>(W);
-					if (E->GetHintText().ToString().Contains(Field) || E->GetText().ToString().Contains(Field)) Found.Add(E);
+					const SEditableText& E = static_cast<const SEditableText&>(*W);
+					if (bLabelled || E.GetHintText().ToString().Contains(Field) || E.GetText().ToString().Contains(Field)) Found.Add(W);
 				}
+				if (W->GetType() == TEXT("SHorizontalBox") && Labels(W)) bLabelled = true;
 				FChildren* Children = W->GetChildren();
-				for (int32 I = 0; Children && I < Children->Num(); ++I) Walk(Children->GetChildAt(I));
+				for (int32 I = 0; Children && I < Children->Num(); ++I) Walk(Children->GetChildAt(I), bLabelled);
 			};
-			for (const TSharedRef<SWindow>& Window : UiWindows()) Walk(Window);
+			for (const TSharedRef<SWindow>& Window : UiWindows()) Walk(Window, false);
 			if (!Found.IsValidIndex(Index)) return Result(false, FString::Printf(TEXT("%d fields match"), Found.Num()));
 			FSlateApplication& App = FSlateApplication::Get();
-			App.SetKeyboardFocus(Found[Index], EFocusCause::Mouse);
+			const bool bSpin = IsSpin(*Found[Index]);
+			// The spin box enters its text mode on a direct focus and hands the focus to its text field.
+			App.SetKeyboardFocus(Found[Index], bSpin ? EFocusCause::SetDirectly : EFocusCause::Mouse);
 			auto Key = [&App](const FKey& K, bool bCtrl)
 			{
 				const FModifierKeysState Mods(false, false, bCtrl, false, false, false, false, false, false);
@@ -1014,7 +1036,8 @@ namespace
 			if (bEnter) Key(EKeys::Enter, false);
 			TSharedRef<FJsonObject> O = Result(true);
 			O->SetNumberField(TEXT("matches"), Found.Num());
-			O->SetStringField(TEXT("text"), Found[Index]->GetText().ToString());
+			O->SetStringField(TEXT("text"), bSpin ? FString::Printf(TEXT("%g"), static_cast<const SSpinBox<float>&>(*Found[Index]).GetValue())
+				: static_cast<const SEditableText&>(*Found[Index]).GetText().ToString());
 			return O;
 		}
 		// A console command on the game world (cvars, show flags, stat), for diagnosing what the studio draws.

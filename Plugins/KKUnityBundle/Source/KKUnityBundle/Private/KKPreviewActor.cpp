@@ -3843,6 +3843,10 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 	Vector(TEXT("_FresnelColor"), FLinearColor(0.26f, 0.72f, 1.f, 0.272f));
 	Vector(TEXT("_LightColor0"), FLinearColor::White);
 	Vector(TEXT("_OKAmbient"), FLinearColor(0.2f, 0.2f, 0.2f, 1.f));
+	// A scene light (Unity space, towards the light, w 1), set by OK Studio to the map's sun; w 0: the mod's
+	// camera-parented light. The program's L is the way the light travels (the camera's forward), so it takes the
+	// opposite (U166: lit from the view, the sea did not change with the time of day).
+	Vector(TEXT("_OKLightDir"), FLinearColor(0.f, 0.f, 0.f, 0.f));
 	Scalar(TEXT("_RimSize"), 0.75f); Scalar(TEXT("_Tiling"), 0.9f); Scalar(TEXT("_RefractionAmount"), 0.055f);
 	Scalar(TEXT("_Transparency"), 0.35f); Scalar(TEXT("_Wavesspeed"), 0.5f); Scalar(TEXT("_Glossiness"), 0.5f);
 	Scalar(TEXT("_Depth"), 15.f); Scalar(TEXT("_Depthdarkness"), 0.15f); Scalar(TEXT("_Rimtiling"), 1.f);
@@ -3878,7 +3882,7 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 		"float3 wp = float3(-Pos.x, Pos.z, Pos.y) * 0.01, cam = float3(-Cam.x, Cam.z, Cam.y) * 0.01;\n"
 		"float3 v3 = float3(-N.x, N.z, N.y), v4 = float3(-T.x, T.z, T.y), v5 = normalize(float3(-B.x, B.z, B.y));\n"
 		"float2 v1 = float2(Uv.x, 1.0 - Uv.y);\n"
-		"float3 L = normalize(float3(ResolvedView.ViewForward.x, -ResolvedView.ViewForward.z, -ResolvedView.ViewForward.y));\n"
+		"float3 L = OKLightDir.w > 0.5 ? -normalize(OKLightDir.xyz) : normalize(float3(ResolvedView.ViewForward.x, -ResolvedView.ViewForward.z, -ResolvedView.ViewForward.y));\n"
 		"float4 r0, r1, r2, r3, r4, r5, r6, r7; float4 s;\n"
 		"r0.x = Time * (Wavesspeed * 0.1);\n"
 		"r0 = r0.xxxx * float4(0.0, 1.0, 0.9, 0.0);\n"
