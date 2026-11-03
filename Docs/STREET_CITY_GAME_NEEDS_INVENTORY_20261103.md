@@ -382,6 +382,42 @@ c-street-city 的逐項回答在 `Docs/STREET_CITY_PLACES_INVENTORY_20261103.md`
 - **遊戲端要做**
   - 搭乘遊樂設施、在水裡游的動作與水體：城市只給上下車錨點和範圍框，水域框標 `water`，動作由遊戲 C++ 做。
 
+### 8.2.2 chain17 與第 1 輪比對（11-03 晚，`game_places` 65 個）
+
+腳本：`C:\Users\Damody\AppData\Local\Temp\claude\C--portable-OpenKoikatsu\73be5e18-f8ea-466d-8357-5af9e42f345e\scratchpad\inv_round1.lua`
+
+- **已對上**
+  - `clinic_gyn`、`clinic_beauty`、`salon`：第 7 節要的錨點全有。
+  - `aquarium`：已改指 CV，`tank`、`bench`、`vending` 都在。
+  - 65 個地點都有 `outdoor`。原本 109 項活動和所有打工站位仍然全部對上。
+- **有家具、還缺錨點**（請第 2 輪補）
+
+  | 地點 | 現有 | 還缺 |
+  |---|---|---|
+  | `dentist` | `dental_chair*` | `counter`、`wait` |
+  | `clinic_general` | `bed_exam*`、`pharmacy`、`seat` | `counter`、`doctor` |
+  | `bank` | `counter`、`seat` | `atm` |
+  | `post` | `counter*` | `seat*` |
+  | `cinema` | 12 個 `seat*`、`screen` | `ticket`、`concession` |
+  | `museum` | 只有 `desk*`、`shelf*` | `exhibit*`、`bench*`、`shop` |
+  | `gym` | 只有 `mirror*` | `treadmill*`、`bike*`、`weights`、`mat*`、`shower`、`locker` |
+  | `club_room` | 只有 `desk*` | `seat*`、`table*`、`shelf` |
+  | `art_room` | 只有 `desk*` | `easel*`、`seat*` |
+  | `beach` | `shower*`、`parasol*`、`lifeguard*`、`lounger*`、`changing*` | `changing` 分成 `changing_women`、`changing_men`；其餘第 3 輪 |
+
+- **空房間（`furnished: false`，第 2 輪放家具）**：`arcade`、`clothing`、`jewelry`、`lingerie`、`optician`、`phone_shop`、`ramen`、`observation`、`photo_studio`、`pool`、`gym_hall`。
+- **還沒有的**（第 2–4 輪）
+  - 第 2 輪：
+    - 購物與服務：`swimwear`、`yukata`、`nail`、`supermarket`。
+    - 餐飲：`sushi`、`yakiniku`、`izakaya`、`crepe`、`fastfood`、`cat_cafe`。
+    - 娛樂：`manga_cafe`、`bowling`。
+    - 校園與其他：`infirmary`、`rooftop`、`planetarium`。
+  - 第 3 輪：
+    - 海邊：`beach_house`、`jetski`。
+    - 河湖戶外：`boat`、`fishing`、`bbq`、`flower_field`、`hill`、`skating`。
+    - 其他：`festival`、`xmas_tree`、`batting`。
+  - 第 4 輪：`amusement`。
+
 ### 8.3 遊戲端之後要做（我負責，換城市整合時）
 
 - 每個新地點的活動（`activities.toml`）、商品與營業時間（`catalog.json`）、`places.toml` 規範、三語文字。
