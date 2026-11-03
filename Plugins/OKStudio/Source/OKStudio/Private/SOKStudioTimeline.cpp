@@ -137,7 +137,7 @@ int32 SOKStudioTimeline::OnPaint(const FPaintArgs&, const FGeometry& G, const FS
 	FSlateDrawElement::MakeLines(Out, Layer + 2, G.ToPaintGeometry(), { FVector2f(LabelWidth, 0.f), FVector2f(LabelWidth, Size.Y) }, ESlateDrawEffect::None, FLinearColor(1.f, 1.f, 1.f, 0.2f));
 	// Play head.
 	const float PX = TimeToX(G, Game->TimelineTime);
-	FSlateDrawElement::MakeLines(Out, Layer + 4, G.ToPaintGeometry(), { FVector2f(PX, 0.f), FVector2f(PX, Size.Y) }, ESlateDrawEffect::None, FLinearColor(1.f, .3f, .3f), true, 1.5f);
+	if (Size.Y > 0.f) FSlateDrawElement::MakeLines(Out, Layer + 4, G.ToPaintGeometry(), { FVector2f(PX, 0.f), FVector2f(PX, Size.Y) }, ESlateDrawEffect::None, FLinearColor(1.f, .3f, .3f), true, 1.5f);
 	if (Drag == EDrag::Box)
 	{
 		const FVector2D A(FMath::Min(DragFrom.X, DragNow.X), FMath::Min(DragFrom.Y, DragNow.Y)), B(FMath::Max(DragFrom.X, DragNow.X), FMath::Max(DragFrom.Y, DragNow.Y));

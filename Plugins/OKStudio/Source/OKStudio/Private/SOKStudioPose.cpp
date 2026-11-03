@@ -109,7 +109,7 @@ int32 SOKStudioView::OnPaint(const FPaintArgs& Args, const FGeometry& Geometry, 
 	{
 		TArray<FVector2f> P;
 		for (const FVector2D& V : Points) P.Add(FVector2f(V));
-		FSlateDrawElement::MakeLines(Out, L, Paint, P, ESlateDrawEffect::None, Color, true, Thickness);
+		if (OKStudioStyle::DrawableLine(P)) FSlateDrawElement::MakeLines(Out, L, Paint, P, ESlateDrawEffect::None, Color, true, Thickness);
 	};
 	if (Game->bHideHelpers) return Layer;
 	// The ground grid: 50 cm cells over 10 m on the scene's floor, each line in short pieces so lines that pass behind

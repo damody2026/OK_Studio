@@ -21,6 +21,19 @@
 namespace OKStudioStyle
 {
 	inline FLinearColor Hex(const TCHAR* Rgba) { return FLinearColor(FColor::FromHex(Rgba)); }
+	// An antialiased MakeLines whose points all coincide (or are not finite) builds a batch without indices, and Slate's
+	// renderer asserts on it (RenderBatch.NumIndices > 0; U155: the studio closed in the middle of a movie export).
+	// Such lines draw nothing anyway: they are left out.
+	inline bool DrawableLine(const TArray<FVector2f>& Points)
+	{
+		float Length = 0.f;
+		for (int32 I = 0; I < Points.Num(); ++I)
+		{
+			if (!FMath::IsFinite(Points[I].X) || !FMath::IsFinite(Points[I].Y)) return false;
+			if (I > 0) Length += FVector2f::Distance(Points[I - 1], Points[I]);
+		}
+		return Points.Num() >= 2 && Length > 0.01f;
+	}
 
 	// Theme (spec "theme"): panel, button, list rows, selected / on, list area, input, dark settings window, text.
 	inline FLinearColor Panel() { return Hex(TEXT("163D7AF9")); }
@@ -270,12 +283,12 @@ namespace OKStudioStyle
 			const FVector2f O = FVector2f((Local.X - 16.f * K) * 0.5f, (Local.Y - 16.f * K) * 0.5f);
 			const FLinearColor C = Color.Get();
 			auto P = [&](float X, float Y) { return O + FVector2f(X, Y) * K; };
-			auto Line = [&](std::initializer_list<FVector2f> Pts) { TArray<FVector2f> A; for (const FVector2f& V : Pts) A.Add(P(V.X, V.Y)); FSlateDrawElement::MakeLines(Out, Layer, G.ToPaintGeometry(), A, ESlateDrawEffect::None, C, true, FMath::Max(1.2f, 1.5f * K)); };
+			auto Line = [&](std::initializer_list<FVector2f> Pts) { TArray<FVector2f> A; for (const FVector2f& V : Pts) A.Add(P(V.X, V.Y)); if (DrawableLine(A)) FSlateDrawElement::MakeLines(Out, Layer, G.ToPaintGeometry(), A, ESlateDrawEffect::None, C, true, FMath::Max(1.2f, 1.5f * K)); };
 			auto Circle = [&](float X, float Y, float R, float From = 0.f, float To = 360.f)
 			{
 				TArray<FVector2f> A;
 				for (int32 I = 0; I <= 20; ++I) { const float T = FMath::DegreesToRadians(From + (To - From) * I / 20.f); A.Add(P(X + R * FMath::Cos(T), Y + R * FMath::Sin(T))); }
-				FSlateDrawElement::MakeLines(Out, Layer, G.ToPaintGeometry(), A, ESlateDrawEffect::None, C, true, FMath::Max(1.2f, 1.5f * K));
+				if (DrawableLine(A)) FSlateDrawElement::MakeLines(Out, Layer, G.ToPaintGeometry(), A, ESlateDrawEffect::None, C, true, FMath::Max(1.2f, 1.5f * K));
 			};
 			const FString N = Icon.ToString();
 			if (N == TEXT("add")) { Line({ {8, 2}, {8, 14} }); Line({ {2, 8}, {14, 8} }); }

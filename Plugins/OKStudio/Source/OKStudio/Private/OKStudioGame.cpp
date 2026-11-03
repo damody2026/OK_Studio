@@ -462,6 +462,45 @@ int32 UOKStudioGame::SettleCharactersOnMap()
 	return Moved;
 }
 
+bool UOKStudioGame::FrameMapStart()
+{
+	// The map's origin, where Studio stands its characters and the first view looks, can be taken: the lighthouse's crow
+	// stands on it (U156: the view opened on the crow's face, the first character beside it). The view then goes to the
+	// nearest free ground, which is also where AddCharacter starts, from a side whose line of sight passes no furniture.
+	if (!SceneActor || !Document || Document->Map < 0) return false;
+	TArray<FBox> Parts, Furniture;
+	SceneActor->MapPartBounds(Parts);
+	if (Parts.IsEmpty()) return false;
+	OKMapFurniture(Parts, Furniture);
+	auto Good = [&](const FVector& W)
+	{
+		const FBox Body(W + FVector(-22.f, -22.f, 15.f), W + FVector(22.f, 22.f, 150.f));
+		return OKStandsOnMap(Parts, W) && !Furniture.ContainsByPredicate([&Body](const FBox& B) { return B.Intersect(Body); });
+	};
+	const FVector P(Focus.X, Focus.Y, 0.f);
+	if (Good(P)) return false;
+	FVector At = P;
+	bool bFound = false;
+	for (int32 Ring = 1; Ring <= 25 && !bFound; ++Ring)
+		for (int32 A = 0; A < 24 && !bFound; ++A) { At = P + FRotator(0.f, A * 15.f, 0.f).Vector() * (40.f * Ring); bFound = Good(At); }
+	if (!bFound) return false;
+	Focus = FVector(At.X, At.Y, Focus.Z);
+	// Seen from the first side whose sight lines to the spot's middle and to its knees cross no furniture.
+	const float Base = Yaw;
+	for (const float Turn : { 0.f, 45.f, -45.f, 90.f, -90.f, 135.f, -135.f, 180.f })
+	{
+		const FVector Eye = Focus - FRotator(Pitch, Base + Turn, 0.f).Vector() * Distance;
+		const FVector Knee(Focus.X, Focus.Y, 40.f);
+		if (!Furniture.ContainsByPredicate([&](const FBox& B)
+			{ return FMath::LineBoxIntersection(B, Eye, Focus, Focus - Eye) || FMath::LineBoxIntersection(B, Eye, Knee, Knee - Eye); }))
+		{
+			Yaw = Base + Turn;
+			break;
+		}
+	}
+	return true;
+}
+
 int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 {
 	const int32 Id = Add(EOKSceneObjectKind::Character);
@@ -1314,6 +1353,7 @@ void UOKStudioGame::CancelExport()
 	if (ExportFrame < 0) return;
 	UE_LOG(LogTemp, Display, TEXT("OK studio: export cancelled after %d of %d frames (%s)"), ExportFrame, ExportTotal, *ExportDir);
 	ExportFrame = -1;
+	SetTimelineTime(ExportReturnTime);
 	LastMovieError = TEXT("cancelled");
 }
 
@@ -1335,6 +1375,7 @@ FString UOKStudioGame::ExportFrames(float Fps, int32 Width, int32 Height, bool b
 	ExportFrame = 0;
 	bExportShotPending = false;
 	bTimelinePlaying = false;
+	ExportReturnTime = TimelineTime;
 	return ExportDir;
 }
 
@@ -1345,6 +1386,8 @@ void UOKStudioGame::TickExport()
 	if (ExportFrame >= ExportTotal)
 	{
 		ExportFrame = -1;
+		// The playhead goes back to where it was (U158: left at the end, a save kept it there and reopened at 9.97 s).
+		SetTimelineTime(ExportReturnTime);
 		UE_LOG(LogTemp, Display, TEXT("OK studio: exported %d frames to %s"), ExportTotal, *ExportDir);
 		if (bExportMp4)
 		{
@@ -1390,6 +1433,7 @@ void UOKStudioGame::TickExport()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("OK studio: frame %d not exported: %s"), ExportFrame, *Error);
 		ExportFrame = -1;
+		SetTimelineTime(ExportReturnTime);
 		return;
 	}
 	++ExportFrame;

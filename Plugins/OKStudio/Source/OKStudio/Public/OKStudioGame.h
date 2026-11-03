@@ -115,6 +115,8 @@ public:
 	/** After a map change: the characters at the scene's root with no map ground under them, or inside the map's
 	 *  furniture, move to the nearest spot that has ground (U146). Returns how many moved. */
 	int32 SettleCharactersOnMap();
+	/** With nobody in the scene: the view's focus off the map's furniture onto free ground, seen past it (U156). */
+	bool FrameMapStart();
 
 	/** Adds an object under the selected folder (or next to the selected object) and selects it. */
 	int32 Add(EOKSceneObjectKind Kind);
@@ -352,6 +354,7 @@ private:
 	FString ExportDir;
 	float ExportFps = 30.f;
 	float ExportFrom = 0.f;
+	float ExportReturnTime = 0.f;
 	int32 ExportFrame = -1, ExportTotal = 0, ExportWidth = 1920, ExportHeight = 1080;
 	bool bExportMp4 = false;
 	bool bExportShotPending = false;

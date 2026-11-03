@@ -36,7 +36,7 @@ namespace
 				for (int32 I = 0; I <= 6; ++I) Stops.Add(FSlateGradientStop(FVector2D(0.f, Size.Y * I / 6.f), Show(FLinearColor(I * 60.f, 1.f, 1.f).HSVToLinearRGB())));
 				FSlateDrawElement::MakeGradient(Out, Layer, G.ToPaintGeometry(), Stops, Orient_Horizontal);
 				const float Y = Hsv.R / 360.f * Size.Y;
-				FSlateDrawElement::MakeLines(Out, Layer + 1, G.ToPaintGeometry(), { FVector2f(0.f, Y), FVector2f(Size.X, Y) }, ESlateDrawEffect::None, FLinearColor::White, true, 2.f);
+				if (Size.X > 0.f) FSlateDrawElement::MakeLines(Out, Layer + 1, G.ToPaintGeometry(), { FVector2f(0.f, Y), FVector2f(Size.X, Y) }, ESlateDrawEffect::None, FLinearColor::White, true, 2.f);
 				return Layer + 2;
 			}
 			const FLinearColor Pure = Show(FLinearColor(Hsv.R, 1.f, 1.f).HSVToLinearRGB());
@@ -644,11 +644,14 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 		if (Game->Document->Map >= 0 && !Post.bSky && !OKStudioMapSky(Game->Document->Map, Post.SunType, MapPattern)) { Post.bSky = true; Post.SkyPattern = FMath::Clamp(Post.SunType, 0, 3); }
 		Changed();
 		// With nobody in the scene yet the view goes to the map's origin, where Studio stands its characters (U147).
-		if (!Game->Document->Objects.ContainsByPredicate([](const FOKSceneObject& O) { return O.Kind == EOKSceneObjectKind::Character; })) Game->ViewPreset(5);
+		const bool bNobody = !Game->Document->Objects.ContainsByPredicate([](const FOKSceneObject& O) { return O.Kind == EOKSceneObjectKind::Character; });
+		if (bNobody) Game->ViewPreset(5);
 		FOKStudioSettings::Get().UseRecent(FString::Printf(TEXT("map:%d"), Game->Document->Map));
 		FString Note = TEXT("地圖：") + (FOKStudioCatalog::Get().FindMap(Game->Document->Map) ? FOKStudioCatalog::Get().FindMap(Game->Document->Map)->Name : FString(TEXT("無")));
 		// The characters are carried over: those left over nothing or in a wall of the new map move to its ground (U146).
 		Game->SyncDocumentNow();
+		// The origin taken by the map's own things: the view (and the next character) goes to free ground beside it (U156).
+		if (bNobody && Game->FrameMapStart()) Note += TEXT("；原點有地圖物件，視角移到旁邊的空地");
 		if (const int32 Moved = Game->SettleCharactersOnMap()) { Changed(); Note += FString::Printf(TEXT("；%d 個角色移到地圖的地面上"), Moved); }
 		SetStatus(Note);
 	};
@@ -658,24 +661,29 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 		return RowButton(FText::FromString(Text), [this, No] { MapPick = No; DeferFloat(TEXT("maps")); }, [this, No, LoadMap] { MapPick = No; LoadMap(); DeferFloat(TEXT("maps")); }, 18.f, MapPick == No, 10.f, RowFill());
 	};
 	Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)[MapRow(TEXT("（無地圖）"), -2)];
+	// Every map has its row; the search hides the others as it is typed (U158: it filtered only on Enter, by rebuilding
+	// the window), matching the name or the number.
+	auto Shown = [this](const FString& Text) { return MapSearch.IsEmpty() || Text.Contains(MapSearch) ? EVisibility::Visible : EVisibility::Collapsed; };
+	auto AddMap = [&](const FOKStudioCatalogMap& M)
+	{
+		const FString Text = FString::Printf(TEXT("%d %s"), M.No, *M.Name);
+		TSharedRef<SWidget> Row = MapRow(Text, M.No);
+		if (MapPick == M.No) PickedRow = Row;
+		Box->AddSlot().AutoHeight().Padding(8.f, 0.f, 0.f, 1.f)[SNew(SBox).Visibility_Lambda([Shown, Text] { return Shown(Text); })[Row]];
+	};
 	for (const FOKStudioCatalogGroup& Cat : C.MapCategories)
 	{
-		bool bHeader = false;
-		for (const FOKStudioCatalogMap& M : C.Maps)
-		{
-			if (M.Category != Cat.Id || (!MapSearch.IsEmpty() && !M.Name.Contains(MapSearch))) continue;
-			if (!bHeader) { Box->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 1.f)[OKStudioStyle::Label(FText::FromString(Cat.Name), 10.f, TextSoft())]; bHeader = true; }
-			const int32 No = M.No;
-			{ TSharedRef<SWidget> Row = MapRow(FString::Printf(TEXT("%d %s"), No, *M.Name), No); if (MapPick == No) PickedRow = Row; Box->AddSlot().AutoHeight().Padding(8.f, 0.f, 0.f, 1.f)[Row]; }
-		}
+		TArray<FString> Texts;
+		for (const FOKStudioCatalogMap& M : C.Maps) if (M.Category == Cat.Id) Texts.Add(FString::Printf(TEXT("%d %s"), M.No, *M.Name));
+		if (Texts.IsEmpty()) continue;
+		Box->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 1.f)[SNew(SBox).Visibility_Lambda([Shown, Texts]
+			{ return Texts.ContainsByPredicate([&Shown](const FString& T) { return Shown(T) == EVisibility::Visible; }) ? EVisibility::Visible : EVisibility::Collapsed; })
+			[OKStudioStyle::Label(FText::FromString(Cat.Name), 10.f, TextSoft())]];
+		for (const FOKStudioCatalogMap& M : C.Maps) if (M.Category == Cat.Id) AddMap(M);
 	}
 	// Maps of categories the catalogue has no name for.
 	for (const FOKStudioCatalogMap& M : C.Maps)
-		if (!C.MapCategories.ContainsByPredicate([&M](const FOKStudioCatalogGroup& G) { return G.Id == M.Category; }) && (MapSearch.IsEmpty() || M.Name.Contains(MapSearch)))
-		{
-			const int32 No = M.No;
-			{ TSharedRef<SWidget> Row = MapRow(FString::Printf(TEXT("%d %s"), No, *M.Name), No); if (MapPick == No) PickedRow = Row; Box->AddSlot().AutoHeight().Padding(8.f, 0.f, 0.f, 1.f)[Row]; }
-		}
+		if (!C.MapCategories.ContainsByPredicate([&M](const FOKStudioCatalogGroup& G) { return G.Id == M.Category; })) AddMap(M);
 	const FOKStudioCatalogMap* Picked = C.FindMap(MapPick);
 	TSharedRef<SScrollBox> MapList = SNew(SScrollBox) + SScrollBox::Slot()[Box];
 	// 定位當前: scrolled once the rows are laid out (a request made now, before the first layout, finds no row).
@@ -691,7 +699,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().FillWidth(1.f)[SNew(SBox).HeightOverride(20.f)[SNew(SEditableTextBox).Style(&TextBoxStyle()).HintText(FText::FromString(TEXT("搜尋地圖"))).Text(FText::FromString(MapSearch))
-				.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type) { MapSearch = T.ToString(); DeferFloat(TEXT("maps")); })]]
+				.OnTextChanged_Lambda([this](const FText& T) { MapSearch = T.ToString(); })]]
 			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("定位當前")), Cmd(TEXT("map.locate")), 64.f, 20.f, false, 10.f)]
 		]
 		+ SVerticalBox::Slot().FillHeight(1.f).Padding(0.f, 3.f)[SNew(SBorder).BorderImage(Brush(ListArea())).Padding(2.f)[MapList]]
