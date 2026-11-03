@@ -135,3 +135,37 @@ deepseek.json
 /model3d.md
 # Galgame story playback: saves, settings, read lines and the tool control folder (per machine).
 /UserData/Story/
+
+# Original game and zipmod data: not versioned (Docs/ORIGINAL_DATA_OUT_OF_GIT_PLAN_20261104.md).
+# Tools/original_data_manifest.json lists every file; restore with
+#   Tools\lua\lua.exe Tools\original_data.lua restore --game <install> --archive <zip>
+/Content/IndependentResources/base_v1/
+/Content/IndependentResources/RuntimeAnimations/
+/Content/IndependentResources/RuntimeVoices/
+/Content/IndependentResources/BodyInteractions/
+/Content/IndependentResources/MotionCatalogue/
+/Content/IndependentResources/StreetSocialData/ja_ogg/
+/Content/IndependentResources/StreetSocialData/zh_ogg/
+/Content/IndependentResources/StreetSocialData/audio_manifest.json
+/Content/IndependentResources/StreetSocialData/RuntimeV2/
+/Content/IndependentResources/StreetSocialData/RuntimeV3/
+/Content/IndependentResources/StreetSocialData/RuntimeV4/
+/Content/IndependentResources/StreetSocialData/RuntimeV5/
+/Content/IndependentResources/StreetSocialData/RuntimeV5Base/
+/Content/IndependentResources/StreetSocialData/TestFixtures/
+/Content/IndependentResources/StreetSocialData/catalogue.json
+/Content/IndependentResources/StreetSocialData/invitations.json
+/Content/IndependentResources/StreetSocialData/gaps.json
+/Content/IndependentResources/StreetSocialData/rules.json
+/Content/IndependentResources/StreetSocialData/summary.json
+/Content/IndependentResources/StreetSocialData/h_poses.json
+/Content/IndependentResources/StreetSocialData/player_context_zh.tsv
+/Content/IndependentResources/StreetSocialData/Localization/*/dialogue.json
+/Content/Koikatsu/Data/
+/Content/KKPreview/
+/Content/Scenes/CrowdRoom/SharedWalk/Shared_0000.uasset
+/Content/Scenes/CrowdRoom/BehaviorR1Curves/Shared_0000.uasset
+/Content/Scenes/CrowdRoom/BehaviorR1Curves/Shared_0001.uasset
+/UserData/Studio/scene/
+/UserData/Studio/screenshot/
+/Docs/images/OKStudio/

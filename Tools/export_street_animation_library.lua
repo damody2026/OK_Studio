@@ -1,6 +1,6 @@
 -- Exports the original game's non-H Studio animations as street runtime clips (OKCLIP01) and writes their manifest.
 --
---   Tools\lua\lua.exe Tools\export_street_animation_library.lua [--game D:/KoikatuSunshine] [--only-manifest]
+--   Tools\lua\lua.exe Tools\export_street_animation_library.lua [--game D:/KoikatuSunshine] [--exe <ok-extract.exe>] [--only-manifest]
 --
 -- Source list: Content/IndependentResources/base_v1/studio_anims.json (every Studio animation, with its group,
 -- category, Japanese name and controller-state key). Each kept state that plays one clip is exported with
@@ -14,12 +14,14 @@ local ok = require("ok")
 local json = ok.json
 local lfs = require("lfs")
 
-local ROOT = "C:/portable/OpenKoikatsu/"
+local ROOT = ok.root .. "/"
 local game = "D:/KoikatuSunshine"
 local only_manifest = false
+local exe = ROOT .. "Tools/ok-extract/target/release/ok-extract.exe"
 local i = 1
 while i <= #arg do
   if arg[i] == "--game" then game = arg[i + 1]; i = i + 1
+  elseif arg[i] == "--exe" then exe = arg[i + 1]; i = i + 1
   elseif arg[i] == "--only-manifest" then only_manifest = true
   else error("unknown argument " .. arg[i]) end
   i = i + 1
@@ -70,7 +72,6 @@ local exported = {}
 if not only_manifest then
   local tsv = OUT .. "export-list.tsv"
   local f = assert(io.open(tsv, "wb")); f:write(table.concat(list, "\n"), "\n"); f:close()
-  local exe = ROOT .. "Tools/ok-extract/target/release/ok-extract.exe"
   local p = assert(io.popen('""' .. exe .. '" ' .. game .. ' --export-runtime-clips "' .. tsv .. '" 2>nul"'))
   for line in p:lines() do
     local status, file, why = line:match("^(%a+)\t([^\t]+)\t?(.*)$")

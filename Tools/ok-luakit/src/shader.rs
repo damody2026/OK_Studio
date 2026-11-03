@@ -198,7 +198,7 @@ pub fn unity_raw(args: &[String]) -> Res<Value> {
         let Ok(serialized) = parse_serialized_file(fb) else { continue; };
         if let Some(info) = serialized.objects.iter().find(|o| o.path_id == id) {
             let bytes = serialized.object_bytes(info).map_err(|e| format!("{e}"))?;
-            write_output(out, bytes)?;
+            write_output(out, &bytes)?;
             return Ok(json!({ "bytes": bytes.len(), "class_id": info.type_id, "unity_version": serialized.unity_version }));
         }
     }

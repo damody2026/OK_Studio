@@ -1,6 +1,7 @@
 //! ok-luakit: heavy helpers for the repository's Lua scripts.
 //! Every subcommand prints exactly one JSON value on stdout; errors go to
 //! stderr with a non-zero exit code. See README.md for the command list.
+mod archive;
 mod codec;
 mod hashmany;
 mod image_ops;
@@ -76,6 +77,8 @@ fn run(args: &[String]) -> Res<Value> {
         "file-id" => misc::file_id(rest),
         "disk-free" => misc::disk_free(rest),
         "zip-read" => misc::zip_read(rest),
+        "zip-create" => archive::create(rest),
+        "zip-extract" => archive::extract(rest),
         "zip-read-many" => misc::zip_read_many(rest),
         "font-metrics" => misc::font_metrics(rest),
         "proc-list" => procs::list(rest),

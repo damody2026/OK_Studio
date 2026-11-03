@@ -1,0 +1,81 @@
+conversation_male.okanim	action/animator/00.unity3d|mc_m_stand_00_00
+conversation_neutral.okanim	action/animator/00.unity3d|f_tachi_00_00
+conversation_open.okanim	action/animator/00.unity3d|f_talk_00_03_00
+conversation_reserved.okanim	action/animator/00.unity3d|f_talk_00_07_00
+conversation_wait_00.okanim	states:studio@5B2273747564696F2F616E696D652F30302E756E6974793364222C2274616C6B222C22222C22225D|talk / [Studio layer 0] Base Layer.f_talk_00_00_00
+conversation_wait_02.okanim	states:studio@5B2273747564696F2F616E696D652F30302E756E6974793364222C2274616C6B222C22222C22225D|talk / [Studio layer 0] Base Layer.f_talk_00_01_00
+conversation_wait_04.okanim	states:studio@5B2273747564696F2F616E696D652F30302E756E6974793364222C2274616C6B222C22222C22225D|talk / [Studio layer 0] Base Layer.f_talk_00_02_00
+conversation_wait_06.okanim	states:studio@5B2273747564696F2F616E696D652F30302E756E6974793364222C2274616C6B222C22222C22225D|talk / [Studio layer 0] Base Layer.f_talk_00_03_00
+conversation_wait_08.okanim	states:studio@5B2273747564696F2F616E696D652F30302E756E6974793364222C2274616C6B222C22222C22225D|talk / [Studio layer 0] Base Layer.f_talk_00_04_00
+conversation_wait_10.okanim	states:studio@5B2273747564696F2F616E696D652F30302E756E6974793364222C2274616C6B222C22222C22225D|talk / [Studio layer 0] Base Layer.f_talk_00_05_00
+conversation_wait_14.okanim	states:studio@5B2273747564696F2F616E696D652F30302E756E6974793364222C2274616C6B222C22222C22225D|talk / [Studio layer 0] Base Layer.f_talk_00_07_00
+conversation_wait_20.okanim	states:studio@5B2273747564696F2F616E696D652F30302E756E6974793364222C2274616C6B222C22222C22225D|talk / [Studio layer 0] Base Layer.f_talk_00_10_00
+conversation_wait_24.okanim	states:studio@5B2273747564696F2F616E696D652F30302E756E6974793364222C2274616C6B222C22222C22225D|talk / [Studio layer 0] Base Layer.f_talk_00_12_00
+conversation_wait_26.okanim	states:studio@5B2273747564696F2F616E696D652F30302E756E6974793364222C2274616C6B222C22222C22225D|talk / [Studio layer 0] Base Layer.f_talk_00_13_00
+drink_standing.okanim	action/animator/00.unity3d|f_tachi_00_10
+facility_eat.okanim	action/animator/00.unity3d|f_eat_00_00_M
+facility_esthetic.okanim	action/animator/00.unity3d|ks_f_esthetic_00_00
+facility_sleep.okanim	action/animator/00.unity3d|f_sleep_00_00
+groom_standing.okanim	action/animator/00.unity3d|f_tachi_00_14
+lover_hand_male.okanim	studio/anime/00.unity3d|mc_m_stand_00_00
+lover_hand_shy.okanim	studio/anime/00.unity3d|f_reaction_00_09_M
+lover_hold_female.okanim	action/animator/00.unity3d|f_twoshot_00_03
+lover_hold_male.okanim	action/animator/00.unity3d|m_twoshot_00_00
+lover_kiss_female.okanim	action/animator/00.unity3d|f_twoshot_00_kiss
+lover_kiss_male.okanim	action/animator/00.unity3d|m_twoshot_00_kiss
+lover_shy_1.okanim	studio/anime/00.unity3d|f_reaction_00_00_M
+lover_shy_2.okanim	studio/anime/00.unity3d|f_reaction_00_01_M
+lover_shy_3.okanim	studio/anime/00.unity3d|f_reaction_00_02_M
+lover_wave.okanim	studio/anime/00.unity3d|f_action_00_03
+phone_standing.okanim	action/animator/00.unity3d|f_tachi_00_04
+photo_female_00.okanim	action/animator/00.unity3d|f_twoshot_00_00
+photo_female_01.okanim	action/animator/00.unity3d|f_twoshot_00_01
+photo_female_02.okanim	action/animator/00.unity3d|f_twoshot_00_02
+photo_female_03.okanim	action/animator/00.unity3d|f_twoshot_00_03
+photo_female_04.okanim	action/animator/00.unity3d|f_twoshot_00_04
+photo_female_05.okanim	action/animator/00.unity3d|f_twoshot_00_05
+photo_female_06.okanim	action/animator/00.unity3d|f_twoshot_00_06
+photo_female_07.okanim	action/animator/00.unity3d|f_twoshot_00_07
+photo_female_08.okanim	action/animator/00.unity3d|f_twoshot_00_08
+photo_female_kiss.okanim	action/animator/00.unity3d|f_twoshot_00_kiss
+photo_male.okanim	action/animator/00.unity3d|m_twoshot_00_00
+photo_male_kiss.okanim	action/animator/00.unity3d|m_twoshot_00_kiss
+run_female.okanim	action/animator/00.unity3d|f_aruki_00_01_01
+run_male.okanim	action/animator/00.unity3d|ks_m_run
+seated_female_chair.okanim	action/animator/00.unity3d|f_suwari_00_00_M
+seated_male.okanim	studio/anime/00.unity3d|m_suwari_00_03
+selfie_standing.okanim	action/animator/00.unity3d|f_tachi_00_07_00
+splash_female_receive.okanim	studio/anime/00.unity3d|f_action_01 [summer]
+splash_female_throw.okanim	studio/anime/00.unity3d|f_action_00 [summer]
+splash_male_receive.okanim	studio/anime/00.unity3d|m_action_03
+splash_male_throw.okanim	studio/anime/00.unity3d|m_action_02
+street_onani_mloop1.okanim	states:controller@5B22682F616E696D2F66656D616C652F30335F30315F30302E756E6974793364222C226B68745F665F3032222C22222C22225D|kht_f_02 / [Controller layer 0] Base Layer.M_MLoop1
+street_onani_oloop.okanim	states:controller@5B22682F616E696D2F66656D616C652F30335F30315F30302E756E6974793364222C226B68745F665F3032222C22222C22225D|kht_f_02 / [Controller layer 0] Base Layer.M_OLoop
+street_onani_orgasm.okanim	states:controller@5B22682F616E696D2F66656D616C652F30335F30315F30302E756E6974793364222C226B68745F665F3032222C22222C22225D|kht_f_02 / [Controller layer 0] Base Layer.M_Orgasm
+street_onani_orgasm_a.okanim	states:controller@5B22682F616E696D2F66656D616C652F30335F30315F30302E756E6974793364222C226B68745F665F3032222C22222C22225D|kht_f_02 / [Controller layer 0] Base Layer.M_Orgasm_A
+street_onani_orgasm_b.okanim	states:controller@5B22682F616E696D2F66656D616C652F30335F30315F30302E756E6974793364222C226B68745F665F3032222C22222C22225D|kht_f_02 / [Controller layer 0] Base Layer.M_Orgasm_B
+street_onani_sloop.okanim	states:controller@5B22682F616E696D2F66656D616C652F30335F30315F30302E756E6974793364222C226B68745F665F3032222C22222C22225D|kht_f_02 / [Controller layer 0] Base Layer.M_SLoop
+street_onani_wloop.okanim	states:controller@5B22682F616E696D2F66656D616C652F30335F30315F30302E756E6974793364222C226B68745F665F3032222C22222C22225D|kht_f_02 / [Controller layer 0] Base Layer.M_WLoop
+talk_gesture_00.okanim	action/animator/00.unity3d|f_talk_00_00_00
+talk_gesture_03.okanim	action/animator/00.unity3d|f_talk_00_03_00
+talk_gesture_07.okanim	action/animator/00.unity3d|f_talk_00_07_00
+talk_gesture_12.okanim	action/animator/00.unity3d|f_talk_00_12_00
+touch_cheek.okanim	adv/motion/controller/adv/00.unity3d|f_reaction_00_08_M
+touch_chest.okanim	adv/motion/controller/adv/00.unity3d|f_reaction_00_05_M
+touch_hand.okanim	adv/motion/controller/adv/00.unity3d|f_reaction_00_09_M
+touch_head.okanim	adv/motion/controller/adv/00.unity3d|f_reaction_00_02_M
+venue_drink_seated.okanim	action/animator/00.unity3d|f_suwari_00_08_00_M
+venue_observe.okanim	action/animator/00.unity3d|ks_f_kansatsu_00_00
+venue_onsen.okanim	action/animator/00.unity3d|ks_f_onsen_00_00
+venue_phone_seated.okanim	action/animator/00.unity3d|f_suwari_00_09_00_M
+venue_pray_male.okanim	action/animator/00.unity3d|ks_m_action_03
+venue_read_seated.okanim	action/animator/00.unity3d|f_suwari_00_04_00_M
+venue_shopping.okanim	action/animator/00.unity3d|ks_f_shopping_00_00
+venue_sky.okanim	action/animator/00.unity3d|ks_f_sora_00_00_A_loop
+venue_soine_female.okanim	adv/motion/controller/adv/00.unity3d|f_soine_00_02_M
+venue_soine_male.okanim	adv/motion/controller/adv/00.unity3d|m_soine_00_02_M
+venue_stretch.okanim	action/animator/00.unity3d|f_undou_00_00
+venue_study_seated.okanim	action/animator/00.unity3d|f_suwari_00_03_00_M
+venue_vending_male.okanim	action/animator/00.unity3d|ks_m_action_02
+watermelon_observe.okanim	action/animator/00.unity3d|ks_f_tachi_06
+watermelon_strike.okanim	action/animator/00.unity3d|ks_f_tachi_04_M

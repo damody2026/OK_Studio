@@ -9,6 +9,17 @@
 
 local CARD_DIRS = { "^Content/CharacterCards/", "^UserData/chara/", "_cards/", "^UserData/Studio/scene/" }
 local IMAGE = { png = true, apng = true }
+-- Original game and zipmod data stays out of git (Tools/original_data.lua, .gitignore block of the same name).
+local ORIGINAL = {
+  "^Content/IndependentResources/base_v1/", "^Content/IndependentResources/RuntimeAnimations/",
+  "^Content/IndependentResources/RuntimeVoices/", "^Content/IndependentResources/BodyInteractions/",
+  "^Content/IndependentResources/MotionCatalogue/", "^Content/IndependentResources/StreetSocialData/ja_ogg/",
+  "^Content/IndependentResources/StreetSocialData/zh_ogg/", "^Content/IndependentResources/StreetSocialData/RuntimeV%d",
+  "^Content/IndependentResources/StreetSocialData/TestFixtures/", "^Content/IndependentResources/StreetSocialData/Localization/[^/]+/dialogue%.json$",
+  "^Content/Koikatsu/Data/", "^Content/KKPreview/", "^Content/Scenes/CrowdRoom/SharedWalk/Shared_", "^Content/Scenes/CrowdRoom/BehaviorR1Curves/Shared_",
+  "^UserData/Studio/scene/", "^UserData/Studio/screenshot/", "^Docs/images/OKStudio/",
+}
+local ORIGINAL_FILES = { catalogue = true, invitations = true, gaps = true, rules = true, summary = true, h_poses = true, audio_manifest = true }
 
 local function lines(cmd)
   local p = assert(io.popen(cmd, "r"))
@@ -41,6 +52,11 @@ for _, f in ipairs(files) do
     if f:find(d) and IMAGE[(f:match("%.([%w]+)$") or ""):lower()] then why = "角色卡資料夾"; break end
   end
   if not why and IMAGE[(f:match("%.([%w]+)$") or ""):lower()] then why = card_kind(f) end
+  if not why and not all then
+    for _, d in ipairs(ORIGINAL) do if f:find(d) then why = "原作資料（Tools/original_data.lua）"; break end end
+    local top = f:match("^Content/IndependentResources/StreetSocialData/([%w_]+)%.json$")
+    if f == "Content/IndependentResources/StreetSocialData/player_context_zh.tsv" or (top and ORIGINAL_FILES[top]) then why = "原作資料（Tools/original_data.lua）" end
+  end
   if why then bad[#bad + 1] = ("  %s（%s）"):format(f, why) end
 end
 
