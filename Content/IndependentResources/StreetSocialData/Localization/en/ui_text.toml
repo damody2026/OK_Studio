@@ -429,6 +429,7 @@ you_are_label = "You are"
 
 [ui.economy]
 treat_paid_back = "he said it was his treat and gave you back the ¥{amount} you had just paid yourself"
+nothing_to_eat_fact = "there is nothing to eat at hand; you did not eat or share any food just now"
 buy_for_self_button = "Buy"
 too_full_to_order = "(The {item} you meant to order was not ordered: you are already full. It is not coming, so do not say it is; you can simply say you could not eat it. You can still order a drink.)"
 gift_not_carried = "(The {item} he said he was giving you was not given: he does not have one and none is sold here. You did not receive it, so do not say you took it.)"

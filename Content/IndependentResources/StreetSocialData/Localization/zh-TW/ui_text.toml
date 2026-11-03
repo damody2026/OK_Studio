@@ -429,6 +429,7 @@ you_are_label = "你是"
 
 [ui.economy]
 treat_paid_back = "他說要請客，把你剛才自己付的 ¥{amount} 還給你了"
+nothing_to_eat_fact = "你們手上沒有吃的，剛才沒有吃東西，也沒有分著吃"
 buy_for_self_button = "買下"
 too_full_to_order = "（你說要點的{item}沒有點成：你其實已經吃飽了。{item}不會上桌，別再說它會來，可以照實說吃不下了；想喝的話可以點飲料。）"
 gift_not_carried = "（他說要送你的{item}其實沒有送出：他身上沒有這樣東西，這裡也買不到。你沒有收到{item}，別說已經收下了。）"

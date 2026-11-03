@@ -624,7 +624,13 @@ FString AOKStreetSocialScene::DishTableText() const{
 bool AOKStreetSocialScene::EatActBlocked(int32 Girl,const FString& Act){
  auto& S=*State;
  if(Act!=TEXT("eat")&&Act!=TEXT("share_food")&&Act!=TEXT("feed"))return false;
- if(S.Table.IsEmpty())return false;
+ // Nothing to eat at all: no dish here and no meal or drink they are having (a menu meal bills at its end, the machine's
+ // drink is the activity). Scattering fish food with Raiden at the pond was shown as "you share food" (R6-158).
+ if(S.Table.IsEmpty()){
+  if(S.Pair.Partner==Girl&&(S.Pair.Meal||S.Pair.Drink))return false;
+  if(S.SoloGirl==Girl&&!S.SoloId.IsEmpty())if(const FOKStreetActivity* A=OKStreetFindActivity(S.SoloId);A&&A->Anchor&&FCString::Strcmp(A->Anchor,TEXT("vending"))==0)return false;
+  S.TellHer.AddUnique(OKMsg(TEXT("ui.scene.game_fact_note"),{{TEXT("fact"),OKT(TEXT("ui.economy.nothing_to_eat_fact"))}}));
+  UE_LOG(LogTemp,Display,TEXT("Street meal: %s skipped, there is nothing to eat"),*Act);return true;}
  for(const auto& D:S.Table)if(D.Served)return false;
  const double Now=SceneTime();double Wait=0;for(const auto& P:S.Serves)Wait=FMath::Max(Wait,P.At-Now);
  S.FreeTalkNotice=OKT(TEXT("ui.economy.not_served_yet"));

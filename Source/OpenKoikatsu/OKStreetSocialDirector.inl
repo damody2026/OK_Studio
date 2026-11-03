@@ -59,7 +59,14 @@ FString AOKStreetSocialScene::TodayText(int32 Character) const{
  if(const FOKStreetPlace* P=OKStreetFindPlace(TEXT("boys_dorm")))Parts.Add(OKMsg(TEXT("ui.director.his_home_line"),{{TEXT("place"),FString(P->Name)}}));
  // What her own day still holds (the plan she follows): what she says she has to do comes from here.
  if(const auto* Plan=S.Plans.Find(Character)){TArray<FString> Next;const int32 Minute=int32(Now%1440);
-  for(const auto& B:*Plan)if(B.End>Minute&&Next.Num()<4&&B.Kind!=TEXT("sleep")){const FOKStreetPlace* P=OKStreetFindPlace(B.Place);
+  // Back-to-back blocks of the same thing at the same place are one: the staggered walk to class (12:49 "class" at T1,
+  // then the 13:30 class) made Jeanne say her class began at 12:45 (R6-157). Two classes in a row there start with the
+  // later one, the class itself; a meal or a stay just runs on.
+  TArray<FOKStreetPlanBlock> Shown;
+  for(const auto& B:*Plan)if(B.End>Minute&&B.Kind!=TEXT("sleep")){
+   if(Shown.Num()&&Shown.Last().Kind==B.Kind&&Shown.Last().Place==B.Place&&Shown.Last().End>=B.Start-1){if(B.Kind==TEXT("class"))Shown.Last()=B;else Shown.Last().End=B.End;}
+   else Shown.Add(B);}
+  for(const auto& B:Shown)if(Next.Num()<4){const FOKStreetPlace* P=OKStreetFindPlace(B.Place);
    // On the hour or the quarter as people say it ("快十点"), not the staggered 09:44 she once repeated word for word.
    const int32 Said=(B.Start+7)/15*15;
    const FString Block=OKMsg(TEXT("ui.director.plan_block"),{{TEXT("doing"),OKPhoneDoingWord(B.Kind)},{TEXT("place"),P?FString(P->Name):B.Place}});
