@@ -46,6 +46,9 @@ pub struct Activity {
     pub yields: Vec<String>,
     #[serde(default)]
     pub once_per_day: bool,
+    /// Not while she is pregnant and knows it (H_SCENE_ADDITIONS_PLAN 8): drinking, a hot bath, swimming, running.
+    #[serde(default)]
+    pub strenuous: bool,
     /// Only on this festival (events.toml id): Halloween's night walk, the Christmas lights.
     #[serde(default)]
     pub event: String,
@@ -143,6 +146,9 @@ fn blocked(a: &Activity, c: &Catalog, r: &Value) -> Option<(String, String)> {
             return Some(("event".into(), crate::tr::m("activity.not_event_day", &[("what", crate::tr::a(crate::events::name_of(&a.event)))])));
         }
     }
+    if a.strenuous && pregnant_knowing(r) {
+        return Some(("pregnant".into(), crate::tr::t("activity.pregnant").into()));
+    }
     if a.once_per_day && list(r, "done_today").contains(&a.id) {
         return Some(("once".into(), crate::tr::t("activity.done_today").into()));
     }
@@ -159,6 +165,17 @@ fn blocked(a: &Activity, c: &Catalog, r: &Value) -> Option<(String, String)> {
         }
     }
     None
+}
+
+/// She is pregnant and knows it (pregnancy.rs, from the request's ext and day).
+pub fn pregnant_knowing(r: &Value) -> bool {
+    let girl = r.get("girl").and_then(|g| g.get("id")).and_then(Value::as_str).unwrap_or("");
+    let day = r.get("day").and_then(Value::as_i64).unwrap_or(-1);
+    if girl.is_empty() || day < 0 {
+        return false;
+    }
+    let p = crate::pregnancy::on_day(r.get("ext").unwrap_or(&Value::Null), girl, day);
+    crate::pregnancy::view(&p, girl, day)["knows"] == true
 }
 
 /// The shop's name as Unreal sent it (place_names {id: name}), else its id.

@@ -1897,3 +1897,7 @@
 - 2026-11-03 e-galgame H 補充：cargo build／test ok-rules 沒有加 `-j 8`，用滿了核心；使用者因 ok-extract 太吃資源手動關掉它，規定 ok 系列程式與其 cargo 一律最多 8 個執行緒（`-j 8`、`RAYON_NUM_THREADS=8`）。另外啟動遊戲沒加 -Sandbox，與同一工作樹的另一個 session 搶同一個控制埠 47970、寫同一份預設存檔。修正：之後 cargo 一律 `-j 8`，同工作樹有別的 session 時一律 `-Sandbox <名稱> -PortBase N` 並設 `OK_CONTROL_PORT`。
 
 - 2026-11-03 e-galgame 只提交自己的 hunk：用 `git diff -U0` 抽出自己的 hunk，再 `git apply --unidiff-zero` 套到 E:\OKHeadBuild 的 HEAD 上組提交。工作樹裡別人新增了很多行，行號和 HEAD 對不上，純新增的 hunk 沒有上下文可核對，就照行號插進了錯的地方：a2f8e5ec9 的 `TickAfter();` 跑進 RunContactsProbe、書籤事實與事後狀態跑到 PrepareFreeTalk 組好訊息之後（等於沒作用）、對話面板的書籤按鈕插進別的註解底下；下一次的 OKHServiceSpent 還插進了函式裡面（這次編譯失敗才發現）。能編譯、實測又是跑工作樹，所以沒測出來。修正：在 HEAD 上逐一移回正確位置另行提交。教訓：抽 hunk 要帶上下文（`git diff -U3` 配一般的 `git apply`，或 `git apply --recount`），套完逐段看 `git diff` 的上下文對不對；實測要測組出來的那份程式（或至少比對 HEAD 與工作樹兩邊的位置）。
+
+- 2026-11-03 e-galgame 啊嘿顏：把視線設成上翻後，看截圖就說「眼睛有動」，其實所有截圖眼珠位置都沒變（使用者指出）。街區角色的眼睛由 KKRuntimePose 共用母材質畫，UV 在建 mesh 時烘死，`SetEyeGaze` 只改到看不見的 session UV。之後改視覺效果，先確認畫面上那個元件（`{"parts":true}`）的材質真的吃這個參數，再用同一個鏡頭、同一個時間點的前後截圖並排比對。也誤把原作 Eye ID（`cha_eyeset` 清單）當成 FBS 眼型編號用（25 號變成單眼眨），要先查 `ChangeEyesPtn`。
+
+- 2026-11-03 e-galgame（H 補充、啊嘿顏測試）：一整個下午反覆用 `game_launch` 開沙盒 EAdd／EAdd2 的遊戲（Add3～Add13，至少 8 次），一次都沒有先 `unreal_slot.lua claim`，以為 slot3 的 e-galgame（其實是 E 主線 EMain 的）也算我。全機變成 4 個 Unreal，GPU 用到 31/32.6 GB，c-conquest 掉到 1.6 FPS，協調者提醒了四次。規則：每次開遊戲前自己 `claim e-galgame "e-fork <做什麼>" --wait`，拿到 slot 才開；測完一段、等建置時馬上 `game_stop` 並 `release`，不要讓遊戲一直開著。

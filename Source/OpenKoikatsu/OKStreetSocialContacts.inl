@@ -359,6 +359,18 @@ void AOKStreetSocialScene::ShowHResult(int32 Girl,const FJsonObject& Answer){
  const TSharedPtr<FJsonObject>* Preg=nullptr;bool bConceived=false;(*Result)->TryGetBoolField(TEXT("conceived"),bConceived);
  if((*Result)->TryGetObjectField(TEXT("pregnancy"),Preg)&&(*Preg)->GetBoolField(TEXT("pregnant")))
   Line(bConceived?OKT(TEXT("ui.hresult.conceived")):OKMsg(TEXT("ui.hresult.pregnant"),{{TEXT("week"),int32((*Preg)->GetNumberField(TEXT("week")))}}),FLinearColor(1.f,.55f,.85f),14);
+ // What was done (H_SCENE_ADDITIONS_PLAN 14): how long, her climaxes, where he came, her spray and milk, the poses.
+ const TSharedPtr<FJsonObject>* H=nullptr;
+ if(S.HighPrivateResult.IsValid()&&S.HighPrivateResult->TryGetObjectField(TEXT("h"),H)&&(*H)->HasField(TEXT("counts"))){
+  const auto C=(*H)->GetObjectField(TEXT("counts"));auto N=[&](const TCHAR* K){double V=0;C->TryGetNumberField(K,V);return int32(V);};
+  const int32 Seconds=int32(S.HighPrivateResult->HasField(TEXT("seconds"))?S.HighPrivateResult->GetNumberField(TEXT("seconds")):0.);
+  const FLinearColor Grey(.8f,.8f,.88f);
+  Line(OKMsg(TEXT("ui.hresult.stats_time"),{{TEXT("minutes"),FMath::Max(1,Seconds/60)},{TEXT("orgasms"),N(TEXT("her_orgasms"))}}),Grey,14);
+  Line(OKMsg(TEXT("ui.hresult.stats_his"),{{TEXT("n"),N(TEXT("his_finishes"))},{TEXT("raw"),N(TEXT("his_inside_raw"))},{TEXT("condom"),N(TEXT("his_condom"))},{TEXT("outside"),N(TEXT("his_outside"))},{TEXT("mouth"),N(TEXT("his_mouth"))},{TEXT("swallowed"),N(TEXT("swallowed"))}}),Grey,14);
+  Line(OKMsg(TEXT("ui.hresult.stats_her"),{{TEXT("drips"),N(TEXT("her_drip_times"))},{TEXT("milk"),N(TEXT("her_milk_times"))}}),Grey,14);
+  const TArray<TSharedPtr<FJsonValue>>* Played=nullptr;TArray<FString> Names;
+  if((*H)->TryGetArrayField(TEXT("poses"),Played))for(const auto& V:*Played)Names.AddUnique(V->AsString());
+  if(Names.Num())Line(OKMsg(TEXT("ui.hresult.stats_poses"),{{TEXT("poses"),FString::Join(Names,OKT(TEXT("ui.memory.list_separator")))}}),Grey,14);}
  Rows->AddSlot().AutoHeight().HAlign(HAlign_Right).Padding(FMargin(0,10,0,0))
   [SNew(SButton).ButtonStyle(OKStreetGlassButton()).ContentPadding(FMargin(18,6)).Text(FText::FromString(OKT(TEXT("ui.hresult.close"))))
    .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid()&&Weak->State&&Weak->State->HResultPanel.IsValid()&&GEngine&&GEngine->GameViewport){GEngine->GameViewport->RemoveViewportWidgetContent(Weak->State->HResultPanel.ToSharedRef());Weak->State->HResultPanel.Reset();}return FReply::Handled();})];
@@ -396,7 +408,8 @@ void AOKStreetSocialScene::FinishPrivate(){
   if(S.HighPrivateResult->TryGetObjectField(TEXT("h"),H)&&(*H)->HasField(TEXT("counts"))){
    // She comes out of the room as wet as she ran in it (until she sleeps or bathes).
    if(Girl>0&&Girl<OKStreetCastCount){const auto C=(*H)->GetObjectField(TEXT("counts"));double Drips=0,Milk=0;C->TryGetNumberField(TEXT("her_drips"),Drips);C->TryGetNumberField(TEXT("her_milk"),Milk);
-    S.ArousalWetCrotch[Girl]+=int32(Drips);S.ArousalWetMilk[Girl]+=int32(Milk);}
+    S.ArousalWetCrotch[Girl]+=int32(Drips);S.ArousalWetMilk[Girl]+=int32(Milk);
+    const TArray<TSharedPtr<FJsonValue>>* On=nullptr;if(C->TryGetArrayField(TEXT("siru"),On))for(int32 A=0;A<On->Num()&&A<5;++A)if((*On)[A]->AsNumber()>0)S.SemenOn[Girl]|=1<<A;}
    const FString Id=OKStreetStableId(S.Manifest.Characters[Girl]);auto Request=OKRulesHeroineRequest(S,TEXT("h_session_end"),Id);
    Request->SetStringField(TEXT("girl"),Id);Request->SetNumberField(TEXT("day"),S.Store.CalendarDay);Request->SetStringField(TEXT("place"),PlaceHere(S.Male));Request->SetNumberField(TEXT("minute"),double(OKStreetMindNow(S)));Request->SetObjectField(TEXT("counts"),(*H)->GetObjectField(TEXT("counts")));{const TArray<TSharedPtr<FJsonValue>>* Poses=nullptr;if((*H)->TryGetArrayField(TEXT("poses"),Poses))Request->SetArrayField(TEXT("poses"),*Poses);}OKRulesPutExt(S,Request);
    if(const TSharedPtr<FJsonObject> Answer=OKRulesEval(S,Request)){auto Candidate=S.Store;OKRulesTakeExt(Candidate,*Answer);ApplyRulesEffects(Candidate,*Answer);if(CommitStore(MoveTemp(Candidate)))FlushRulesEffects();OKStreetApplyHerExtras(S,Id);

@@ -116,6 +116,7 @@ private:
  // Bookmarks and the time after an H scene (OKStreetSocialBookmarks.inl).
  void Bookmark(int32 Girl);FString BookmarkFacts(int32 Character,const FString& Said) const;TSharedRef<SWidget> BuildBookmarks(int32 Girl);TSharedRef<SWidget> BookmarkButton(int32 Girl);
  void BeginAfter(int32 Girl,const TSharedPtr<class FJsonObject>& Answer);void EndAfter(bool bShowResult);void TickAfter();
+ void PregnancyDay();void TickPregnancy(); // OKStreetSocialPregnancy.inl
  bool TickPrivate(double Now);
  void TickContacts(float Dt,double Now);
  void RunContactsProbe(double Now);

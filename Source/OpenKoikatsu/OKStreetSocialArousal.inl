@@ -45,10 +45,13 @@ static FString OKStreetBodyWetStatus(const FOKStreetSceneState& S,int32 Girl,int
  const bool Leak=Desire>OKArousal::DesireMilk&&S.HerCard[Girl].Bust>OKArousal::BustMilk;
  return OKMsg(TEXT("ui.mind.body_wet_status"),{{TEXT("crotch"),Crotch},{TEXT("discharge"),White&&Red?TEXT("both"):White?TEXT("white"):Red?TEXT("red"):TEXT("none")},
   {TEXT("milk"),Leak?TEXT("leaking"):S.ArousalWetMilk[Girl]>0?TEXT("wet"):TEXT("none")},
-  {TEXT("any"),FCString::Strcmp(Crotch,TEXT("none"))||White||Red||Leak||S.ArousalWetMilk[Girl]>0?TEXT("yes"):TEXT("no")}});
+  {TEXT("any"),FCString::Strcmp(Crotch,TEXT("none"))||White||Red||Leak||S.ArousalWetMilk[Girl]>0?TEXT("yes"):TEXT("no")}})
+  // His semen still on her body (a one-on-one, until she bathes or sleeps).
+  +(S.SemenOn[Girl]?OKMsg(TEXT("ui.mind.semen_on_status"),{{TEXT("face"),S.SemenOn[Girl]&1?TEXT("yes"):TEXT("no")},{TEXT("front"),S.SemenOn[Girl]&6?TEXT("yes"):TEXT("no")},{TEXT("back"),S.SemenOn[Girl]&24?TEXT("yes"):TEXT("no")}}):FString());
 }
 
 void AOKStreetSocialScene::TickArousal(float Dt){
+ TickPregnancy();
  auto& S=*State;const int32 Cast=FMath::Min(S.Manifest.Characters.Num(),OKStreetCastCount);
  const double Wall=FPlatformTime::Seconds();const int64 Minute=OKStreetMindNow(S);
  // Twice a second: her flush follows her desire (the mind's own face look keeps it as a floor, StreetMind face), and
@@ -67,7 +70,7 @@ void AOKStreetSocialScene::TickArousal(float Dt){
    const bool Washing=(B&&(B->Kind==TEXT("sleep")||B->Kind==TEXT("bath")))||S.SleepGirl==Girl||S.SleepGirl2==Girl||(S.Pair.Partner==Girl&&S.Pair.Bath);
    if((Washing&&!S.ArousalWashing[Girl])||NewDay){S.ArousalDrops.ClearMarks(Girl);
     if(S.ArousalWetCrotch[Girl]||S.ArousalWetMilk[Girl])UE_LOG(LogTemp,Display,TEXT("Street arousal: actor=%d %s, dry again"),Girl,NewDay?TEXT("a new day"):Washing&&B?*B->Kind:TEXT("asleep or bathing"));
-    S.ArousalWetCrotch[Girl]=S.ArousalWetMilk[Girl]=0;}
+    S.ArousalWetCrotch[Girl]=S.ArousalWetMilk[Girl]=0;S.SemenOn[Girl]=0;}
    S.ArousalWashing[Girl]=Washing;
    const float Desire=OKStreetViewRelation(S.Store,OKStreetStableId(S.Manifest.Characters[Girl]),S.Manifest.TalkBudget).SexDesire;
    S.ArousalDesire[Girl]=Desire;const float Bl=OKArousal::Blush(Desire);

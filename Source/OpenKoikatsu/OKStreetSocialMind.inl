@@ -355,6 +355,7 @@ void AOKStreetSocialScene::FillMindStatus(int32 Character,FOKFreeTalkStatus& Sta
  {const FString Band=OKStreetMoodBand(MoodNow(Character));if(Band!=TEXT("usual"))Status.Needs+=OKMsg(TEXT("ui.mind.spirits_status"),{{TEXT("band"),Band}});}
  // What runs out of her and how wet she is (OKStreetSocialArousal.inl): she feels it, so he may say so and she knows.
  if(!Apart)Status.Needs+=OKStreetBodyWetStatus(S,Character,OKStreetMindNow(S));
+ Status.Needs+=OKStreetPregnancyStatus(S,Character); // pregnant, sick, heavy, a birth (OKStreetSocialPregnancy.inl)
  if(const FString* Recent=S.MindRecent.Find(Id)){Status.Recent=*Recent;S.MindRecent.Remove(Id);}
  TArray<FOKStreetPendingChoice> Mine;for(const auto& C:S.Choices)if(C.Heroine==Character)Mine.Add(C);
  Status.Choices=OKStreetChoiceBlock(Mine,SceneTime());

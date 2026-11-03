@@ -18,6 +18,10 @@ pub const NIPPLE: usize = 5;
 /// Climaxes in a day after which each one raises her libido (hexp libido_gain).
 const LIBIDO_AFTER: i32 = 10;
 const AREA_KEYS: [&str; 6] = ["kiss", "chest", "crotch", "anal", "butt", "nipple"];
+/// The rest of her he touches and kisses (H_SCENE_ADDITIONS_PLAN 3, user 2026-11-03: each grows of its own), with what
+/// her relation must be at least for a touch and for a kiss there (stage_index; developed past 30 one less).
+pub const BODY_KEYS: [&str; 5] = ["head", "hand", "thigh", "calf", "foot"];
+const BODY_NEED: [(i32, i32); 5] = [(0, 0), (0, 0), (1, 1), (0, 1), (1, 2)];
 /// How deep (AlignDeep, 0..100) counts as all the way in: her top is 90 once that place is developed to 100.
 const DEEPEST: f64 = 85.0;
 
@@ -53,11 +57,15 @@ pub struct HExp {
     /// He has gone all the way into her vagina / anus once (counts.crotch.deepest past DEEPEST): a memory the first time.
     pub crotch_deep: bool,
     pub anal_deep: bool,
+    /// The poses played with her (their shown names; H_SCENE_ADDITIONS_PLAN 5): the rest are marked New.
+    pub poses: Vec<String>,
+    /// Her head, hands, thighs, calves and feet, 0..100 (BODY_KEYS): half a point a second touched or kissed.
+    pub body: std::collections::BTreeMap<String, f32>,
 }
 
 impl Default for HExp {
     fn default() -> Self {
-        HExp { count: 0, kissed: false, areas: [0.0; 6], crotch_h: 0.0, anal_h: 0.0, service: 0.0, service_count: 0, oral: 0.0, raw_count: 0, virgin: true, anal_virgin: true, today_day: -1, today_orgasms: 0, today_service: 0, today_anal_refused: false, libido_gain: 0, white_until: -1, red_until: -1, crotch_deep: false, anal_deep: false }
+        HExp { count: 0, kissed: false, areas: [0.0; 6], crotch_h: 0.0, anal_h: 0.0, service: 0.0, service_count: 0, oral: 0.0, raw_count: 0, virgin: true, anal_virgin: true, today_day: -1, today_orgasms: 0, today_service: 0, today_anal_refused: false, libido_gain: 0, white_until: -1, red_until: -1, crotch_deep: false, anal_deep: false, poses: Vec::new(), body: Default::default() }
     }
 }
 
@@ -118,6 +126,16 @@ pub fn climax_wanted(sex_desire: f32) -> i32 {
     (sex_desire.clamp(0.0, crate::relation::SEX_DESIRE_MAX) / 10.0).round() as i32
 }
 
+fn body_name(k: &str) -> &'static str {
+    match k {
+        "head" => crate::tr::t("hexp.area_head"),
+        "hand" => crate::tr::t("hexp.area_hand"),
+        "thigh" => crate::tr::t("hexp.area_thigh"),
+        "calf" => crate::tr::t("hexp.area_calf"),
+        _ => crate::tr::t("hexp.area_foot"),
+    }
+}
+
 fn area_name(i: usize) -> &'static str {
     match i {
         KISS => crate::tr::t("hexp.area_kiss"),
@@ -166,7 +184,18 @@ fn experience(r: &Value) -> Result<Value, String> {
     let preg = crate::pregnancy::on_day(r.get("ext").unwrap_or(&Value::Null), girl, day.max(0));
     let mut areas: serde_json::Map<String, Value> = AREA_KEYS.iter().enumerate().map(|(i, k)| (k.to_string(), json!(h.area(i)))).collect();
     areas.insert("oral".into(), json!(h.oral.min(100.0)));
+    // What she lets him touch and kiss of the rest of her (and her lips: as close as a kiss).
+    let stage = rel.as_ref().map_or(0, |r| r.stage_index());
+    let mut touch_ok = serde_json::Map::new();
+    for (i, k) in BODY_KEYS.iter().enumerate() {
+        let d = h.body.get(*k).copied().unwrap_or(0.0).min(100.0);
+        areas.insert(k.to_string(), json!(d));
+        let less = i32::from(d >= 30.0);
+        touch_ok.insert(k.to_string(), json!({"touch": stage >= BODY_NEED[i].0 - less, "kiss": stage >= BODY_NEED[i].1 - less}));
+    }
+    touch_ok.insert("lips".into(), json!({"touch": stage >= 1 - i32::from(h.area(KISS) >= 30.0), "kiss": kiss_ok}));
     Ok(json!({
+        "touch_ok": touch_ok,
         "level": level, "level_name": level_name(level), "areas": areas, "count": h.count, "virgin": h.virgin, "anal_virgin": h.anal_virgin,
         "raw_ok": raw_ok,
         "anal_chance": anal_chance,
@@ -190,6 +219,7 @@ fn experience(r: &Value) -> Result<Value, String> {
         "chastity": chaste,
         "used": level >= 2,
         "kissed": h.kissed,
+        "poses_played": h.poses,
         "pregnancy": crate::pregnancy::view(&preg, girl, day.max(0)),
     }))
 }
@@ -244,6 +274,11 @@ fn session_end(r: &Value) -> Result<Value, String> {
 
     // Only what they did leaves a mark: opening the room and leaving at once is no intimate time.
     let played = flag(&c, "played");
+    for pose in c.get("poses").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+        if !h.poses.iter().any(|p| p == pose) {
+            h.poses.push(pose.to_string());
+        }
+    }
     if played {
         fx.note_at(&rel.id, "intimacy", crate::tr::t("shop.private_room_time"), place, 0.9);
         rel.add_liking(5.0);
@@ -255,6 +290,13 @@ fn session_end(r: &Value) -> Result<Value, String> {
         for i in CHEST..=NIPPLE {
             let secs = num(&areas, AREA_KEYS[i]).clamp(0.0, 200.0) as f32;
             h.areas[i] = (h.areas[i] + secs * 0.5).min(100.0);
+        }
+        for k in BODY_KEYS {
+            let secs = num(&areas, k).clamp(0.0, 200.0) as f32;
+            if secs > 0.0 {
+                let d = h.body.entry(k.to_string()).or_insert(0.0);
+                *d = (*d + secs * 0.5).min(100.0);
+            }
         }
         let kiss = num(&c, "kiss").max(num(&areas, "kiss")).clamp(0.0, 100.0) as f32;
         if kiss > 0.0 {
@@ -344,7 +386,9 @@ fn session_end(r: &Value) -> Result<Value, String> {
     // Each place past 30 (she starts to feel it), 60 (sensitive to him) and 100 (used to him), her mouth too
     // (H_DEVELOPMENT_EXPERIENCE_PLAN P3): only the highest crossed this time.
     let steps = [(100.0, "hexp.area_used_to", 0.7), (60.0, "hexp.area_sensitive", 0.6), (30.0, "hexp.area_feels", 0.5)];
-    let places = (CHEST..=NIPPLE).map(|i| (was.area(i), h.area(i), area_name(i))).chain(std::iter::once((was.oral, h.oral, crate::tr::t("hexp.area_mouth"))));
+    let body = |x: &HExp, k: &str| x.body.get(k).copied().unwrap_or(0.0).min(100.0);
+    let places = (CHEST..=NIPPLE).map(|i| (was.area(i), h.area(i), area_name(i))).chain(std::iter::once((was.oral, h.oral, crate::tr::t("hexp.area_mouth"))))
+        .chain(BODY_KEYS.iter().map(|k| (body(&was, k), body(&h, k), body_name(k))));
     for (before, after, name) in places {
         if let Some(&(_, id, importance)) = steps.iter().find(|&&(at, _, _)| before < at && after >= at) {
             fx.note_at(&rel.id, "h_area", &crate::tr::m(id, &[("area", crate::tr::a(name))]), place, importance);
@@ -357,6 +401,7 @@ fn session_end(r: &Value) -> Result<Value, String> {
         .iter()
         .map(|&(i, key)| json!({"area": key, "name": area_name(i), "before": was.area(i).round(), "after": h.area(i).round()}))
         .chain(std::iter::once(json!({"area": "oral", "name": crate::tr::t("hexp.area_mouth"), "before": was.oral.round(), "after": h.oral.round()})))
+        .chain(BODY_KEYS.iter().map(|k| json!({"area": k, "name": body_name(k), "before": body(&was, k).round(), "after": body(&h, k).round()})))
         .collect();
     let firsts: Vec<&str> = [
         (was.count == 0 && h.count > 0, "hexp.first_time"),

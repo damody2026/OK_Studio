@@ -14,6 +14,7 @@
 // happened is counted for her experience (Tools/ok-rules/src/hexp.rs). Replaces the card reader's test panel when the
 // street opens the scene (UOKCharacterController::bHScene).
 class UOKCharacterController;
+class AKKPreviewActor;
 class UOKHScenePanel;
 class UTextBlock;
 class UVerticalBox;
@@ -112,6 +113,8 @@ public:
         TabHand=10,TabMouth=11,TabBreast=12,TabSonyu=20,TabClothes=30,TabAibu=40,
         AibuBase=500,
         TouchChest=2101,TouchCrotch=2102,TouchAnal=2103,TouchButt=2104,TouchNipple=2105,Kiss=2106,Release=2107,
+        TouchHead=2130,TouchHand=2131,TouchThigh=2132,TouchCalf=2133,TouchFoot=2134,TouchLips=2135,LickToggle=2136, // H_SCENE_ADDITIONS_PLAN 3
+        Afterglow=2137, // H_SCENE_ADDITIONS_PLAN 12
         PoseBase=1000,
         Faster=2001,Slower=2002,Toggle=2003,Inside=2004,Outside=2005,Drink=2006,Vomit=2007,Again=2008,Insert=2009,InsertAnal=2010,Pull=2011,Condom=2012,Stop=2014,Continue=2015,ToggleMale=2016,LockHer=2017,LockHis=2018,MaleBottom=2019,PenisXRayToggle=2020,PhysicsNext=2021,GrayRoomToggle=2022,PenisPanelToggle=2023,PenisReset=2024,
         ClothesBase=3000,RoomBase=3200,OutfitBase=3300,CoordinateToggle=3310,CoordinateAccessories=3311,CoordinateBase=3400,
@@ -123,7 +126,17 @@ private:
     TMap<FString,FString> SoloKeys;      // state -> clip key of the active caress pose
     FString SoloState;double SoloStarted=0.;
     int32 ActiveAibu=INDEX_NONE,PendingAibu=INDEX_NONE,AibuGeneration=0,TouchArea=INDEX_NONE;
-    float AreaSeconds[6]={};            // kiss, chest, crotch, anal, butt, nipples (hAreaExps order)
+    float AreaSeconds[11]={};           // kiss, chest, crotch, anal, butt, nipples (hAreaExps order); head, hand, thigh, calf, foot
+    // Touching or kissing (bLickMode) the rest of her (H_SCENE_ADDITIONS_PLAN 3): her lips touched (bLipsTouch, area 0
+    // without the kiss), and the flinch of the touched part as the original's HitReaction.
+    bool bLickMode=false,bLipsTouch=false,bAfterglow=false; // afterglow: done, lying with him, talking (12)
+    void TouchBody(int32 Area);void Flinch(int32 Area);bool BodyTouching() const;
+    void TickAhegao();bool bAhegaoPose=false; // her double peace (TickAhegao)
+    void TickCameraLight(bool bEnd);bool bCameraLit=false; // their key light from the camera
+    TMap<TWeakObjectPtr<class UMaterialInstanceDynamic>,FLinearColor> CameraLightWas;FVector CameraLightShown=FVector::ZeroVector;
+    TWeakObjectPtr<AKKPreviewActor> AheGazeFor;float AheGazeSet=0.f;int32 AheMouthSet=INDEX_NONE;bool bAheManualWas=false; // her rolled-up gaze given (TickAhegao)
+    bool bAheEyeLook=false,bAheEyeFollow=false;int32 AheEyePattern=1;FVector AheEyeTarget=FVector::ZeroVector; // her look, given back after it
+    double FlinchUntil=0.,FlinchNext=0.;FString FlinchBone;FVector FlinchTurn=FVector::ZeroVector;
     bool bAibuLoaded=false;
     void LoadAibuPoses();
     void SelectAibu(int32 Index);
@@ -220,7 +233,7 @@ public:
     // What runs out of her in the room (her desire past 100, OKArousalDrops.h): the drops, her next one at her crotch and
     // at a nipple, which nipple, and how many came (into the result: she leaves the room as wet).
     void TickDrips(float Delta);float HerDesire() const;FOKArousalDrops Drips;FOKTears Tears;uint8 TearsWanted=0;void SpawnTears(class AKKPreviewActor* Girl);void AimIntoMouth(class AKKPreviewActor* Girl,class AKKPreviewActor* Him);void HideInMouth(class AKKPreviewActor* Girl,class AKKPreviewActor* Him);
-    TWeakObjectPtr<class AKKPreviewActor> MouthClipHim;int32 MouthClipPart=INDEX_NONE;int32 MouthClipVerts=0;bool bMouthAimed=false;FVector MouthAim=FVector::ZeroVector;float MouthTurned=0.f;FVector MouthDbg=FVector::ZeroVector;double DripAt=0,MilkAt=0,SquirtAt=0,ClimaxUntil=0,ClimaxLoopFor=0;bool bTrembling=false,bVaginaLogged=false;void Tremble(double Now);bool StreetOnani() const;int32 MilkTurn=0,HerDrips=0,HerMilk=0;
+    TWeakObjectPtr<class AKKPreviewActor> MouthClipHim;int32 MouthClipPart=INDEX_NONE;int32 MouthClipVerts=0;bool bMouthAimed=false;FVector MouthAim=FVector::ZeroVector;float MouthTurned=0.f;FVector MouthDbg=FVector::ZeroVector;double DripAt=0,MilkAt=0,SquirtAt=0,ClimaxUntil=0,ClimaxLoopFor=0;bool bTrembling=false,bVaginaLogged=false;void Tremble(double Now);bool StreetOnani() const;int32 MilkTurn=0,HerDrips=0,HerMilk=0;int32 HerDripTimes=0,HerMilkTimes=0;double DripBoutAt=-100.,MilkBoutAt=-100.; // drops, and the times she ran (a pause of 3 s starts another; the result shows these)
     void ClearLine();
     // Her line asked for before a climax, a finish or a new pose comes back after it ("don't stop" once he had come):
     // it is not shown or spoken. LineEpoch moves at those; SentEpoch is the epoch her last line was asked in.
@@ -240,7 +253,7 @@ public:
     // /hscene {"preg":{"belly":0..1,"body":0..1}} holds them for testing (-1 back to hers).
     float PregBellyTest=-1.f,PregBodyTest=-1.f;
     void ApplyPregnancy(double Now);double PregCheckAt=0.;float PregBellyShown=0.f;TWeakObjectPtr<class AKKPreviewActor> PregActor;int32 PregOutfit=-1;
-    float PregBelly() const;float PregNipples() const;
+    float PregBelly() const;float PregNipples() const;float PregBust() const;bool PregLocks(const FOKHPose& Pose) const;
     // /hscene {"penis_green":true}: his penis flat pure green, depth-tested, so any of it out of her skin shows (testing).
     void SetPenisGreen(bool bOn);bool bPenisGreen=false;UPROPERTY() TArray<TObjectPtr<UMaterialInterface>> GreenKept;TArray<TWeakObjectPtr<UMeshComponent>> GreenComps;
     float BlushTest=-1.f; // /hscene {"blush":v}: hold her blush at v (0..1) to compare shots; -1 follows her
@@ -285,8 +298,6 @@ private:
     void CoverClothes(class AKKPreviewActor* Girl);TArray<uint32> WrapIdxShown;TArray<FVector3f> WrapDShown,WrapNShown;TWeakObjectPtr<class AKKPreviewActor> ClothGirl;TSet<int32> ClothShown;TMap<int32,double> ClothCpuUntil;int32 ClothVerts=0;float ClothMs=0.f;
     // His penis out through her back folded under her skin (ReadBulge, penis.clip): his part with that morph, whether it is moved now.
     TWeakObjectPtr<class AKKPreviewActor> ClipHim;int32 ClipPart=INDEX_NONE;bool bClipShown=false;int32 ClipVerts=0;float BackExitCm=-1.f;float ClipLastTip=-1.f,ClipLeadCm=0.f;
-    // The girl whose shoes were taken off on coming into her room (NativeTick): once each, she may put them back on.
-    TWeakObjectPtr<class AKKPreviewActor> ShoesOffFor;
     // The game's coordinate cards (UserData/coordinate and its folders), listed in the clothes tab when opened.
     bool bCoordinateList=false;TArray<FString> CoordinateCards;void FindCoordinateCards();
 public:
@@ -294,6 +305,8 @@ public:
     bool bCoordinateAccessories=false;
 private:
     class AOKInteractionMode* Interaction() const;
+    // The girl whose shoes were taken off on coming into her room (NativeTick): once each, she may put them back on.
+    TWeakObjectPtr<class AKKPreviewActor> ShoesOffFor;
     // His glans from his penis root, from his session (the end of his penis mesh; J_dan109 draws in as he goes in): kept
     // between reads.
     FVector GlansFromRoot=FVector::ZeroVector;bool bGlans=false;
@@ -355,6 +368,9 @@ private:
     // How deep he went in each (AlignDeep while they move, 0..100): her first time all the way in is a memory (hexp.rs).
     float CrotchDeepest=0.f,AnalDeepest=0.f;
     TArray<FString> PosesPlayed,Events;
+    // Her body fluids by the water gun (TickFluids; H_SCENE_ADDITIONS_PLAN 1, 2, 9).
+    UPROPERTY() TObjectPtr<class AOKPaintSprayer> Fluid;void TickFluids(float Delta);void Spurt(int32 Pulses);
+    double SpurtAt=0.,LeakUntil=0.,LeakFor=1.,MouthSpillUntil=0.,MouthDribbleUntil=0.,DroolAt=0.,DroolOnUntil=0.;int32 SpurtLeft=0,LeakPending=0;bool bLeakAnal=false,bKissTongue=false,DroolTurn=false;
 };
 
 // The see-through material for his penis inside her (M_PreviewXRay): the translucent preview parent with the depth

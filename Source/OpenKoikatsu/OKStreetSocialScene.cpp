@@ -222,6 +222,11 @@ struct FOKStreetSceneState {
  float ArousalBlush[OKStreetCastCount]={},ArousalDesire[OKStreetCastCount]={};double ArousalDripAt[OKStreetCastCount]={},ArousalCheckAt=0;
  int64 ArousalWhiteUntil[OKStreetCastCount]={},ArousalRedUntil[OKStreetCastCount]={};uint32 ArousalExtHash=0,ArousalTurn[OKStreetCastCount]={};FOKStreetHerCard HerCard[OKStreetCastCount];double ArousalNippleAt[OKStreetCastCount]={}; // after a scene: until when she runs white / red (hexp)
  FOKArousalDrops ArousalDrops;int32 ArousalWetCrotch[OKStreetCastCount]={},ArousalWetMilk[OKStreetCastCount]={};bool ArousalWashing[OKStreetCastCount]={};int32 ArousalDay=-1;
+ // Her pregnancy today (OKStreetSocialPregnancy.inl: rules preg_day each new day) and today's sick spells.
+ // Where his semen still is on her after a one-on-one (bits: face, front top, front bottom, back top, back bottom),
+ // until she bathes or sleeps (OKStreetSocialArousal.inl; H_SCENE_ADDITIONS_PLAN 2).
+ uint8 SemenOn[OKStreetCastCount]={};
+ TSharedPtr<FJsonObject> PregView[OKStreetCastCount];int32 PregSickAt[OKStreetCastCount]={},PregSickDone[OKStreetCastCount]={};
  int32 AmbientActor=INDEX_NONE,AmbientCursor=0,AmbientPhase=0,AmbientAction=0,AmbientNextAction=0;FString AmbientPlaceClip;
  bool AmbientDrinkOnlyTest=false,AmbientSelfieOnlyTest=false,AmbientGroomOnlyTest=false;
  double AmbientRequested=0,AmbientPlaying=0,AmbientDuration=0;FOKStreetAgentSim AmbientSaved;
@@ -385,14 +390,14 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  int64 FreeTalkReplayShown=0;int32 FreeTalkReplayShownSlot=INDEX_NONE,FreeTalkReplaySceneSlot=INDEX_NONE;FString FreeTalkReplayShownText;bool FreeTalkReplayShownVoiced=false;double FreeTalkReplayHold=0;
  bool TopicsOpen=false;TArray<TSharedPtr<SSlider>> StatSliders;TArray<TSharedPtr<SCheckBox>> RelationChecks;int32 RelationControlsVerified=0;bool RelationControlsSync=false;TMap<int32,double> RunUntil,RunNext;
  bool ContactsOpen=false,ActivitiesOpen=false,TouchOpen=false,ContactsUI=false,ContactsOnlyTest=false,ContactsChecked=false;int32 ContactSelection=INDEX_NONE,ContactRows=0,ContactActions=0;
+ // The time after an H scene (OKStreetSocialBookmarks.inl): who with, the result waiting for "leave", its buttons; the
+ // bookmark open on the phone page.
+ int32 AfterGirl=INDEX_NONE,BookmarkOpen=INDEX_NONE;TSharedPtr<FJsonObject> AfterAnswer;TSharedPtr<SWidget> AfterBar;
  TArray<FString> HighCards;TArray<int32> HighOutfits;TWeakObjectPtr<AOKInteractionMode> PrivateMode;TSharedPtr<SWidget> PrivateLeave;TSharedPtr<SWidget> HResultPanel; /* what the last one-on-one left on her (h_session_end result), until closed */ /* the one-on-one scene's own leave button (R3-228) */FString HighPrivateReport;double HighPrivateAt=0,PrivatePausedSeconds=0;bool PrivateClockFrozen=false; /* the street clock stood still for the private scene (it runs again on leaving, by the real minutes spent) */bool HighPrivateSeenReady=false;TSharedPtr<FJsonObject> HighPrivateResult;TArray<FOKStreetAgentSim> HighPrivateAgents;TArray<FRotator> HighPrivateRotations;FVector HighPrivateMale;
  TMap<int32,double> CommutePausedUntil; // a girl he walked up to stops her walk for a moment (StepNavigation)
  // PrivateInPlace: the one-on-one is where she stands on the street (user, 2026-11-01: no change of scene); the street
  // goes on around them and their street figures are kept out of sight under it (OKStreetOffstage).
  bool PrivateInPlace=false;
- // The time after an H scene (OKStreetSocialBookmarks.inl): who with, the result waiting for "leave", its buttons; the
- // bookmark open on the phone page.
- int32 AfterGirl=INDEX_NONE,BookmarkOpen=INDEX_NONE;TSharedPtr<FJsonObject> AfterAnswer;TSharedPtr<SWidget> AfterBar;
  int32 NavGirl=INDEX_NONE,PrivateGirl=INDEX_NONE,ContactsProbePhase=0;FOKStreetLiftRide NavRide; // the navigation riding an elevator (PlanNavLift)
  double NavAt=0,ContactsProbeAt=0;
  int32 ContactsProbeGreeting=0;TArray<TSharedPtr<FJsonValue>> ContactsVoiceEvidence;TArray<FVector> NavPath;
@@ -614,6 +619,7 @@ FString VoicePickDescription,VoicePickNotice,TtsVoiceInstruct;int32 VoicePickTar
 // Every system below asks the game rules through these (ok_rules.dll, Tools/ok-rules).
 #include "OKStreetSocialRulesGlue.inl"
 #include "OKStreetSocialLocale.inl"
+#include "OKStreetSocialPregnancy.inl"
 
 AOKStreetSocialScene::AOKStreetSocialScene(){PrimaryActorTick.bCanEverTick=true;}
 AOKStreetSocialScene::~AOKStreetSocialScene()=default;
@@ -2940,13 +2946,13 @@ static int64 OKStreetMindNow(const FOKStreetSceneState& S);
 #include "OKStreetSocialFinanceApps.inl"
 #include "OKStreetSocialGalgame.inl"
 #include "OKStreetSocialPhotos.inl" // after the finance apps (their panel widgets), before the phone (its pictures)
+#include "OKStreetSocialBookmarks.inl" // after the photos (their picture brush), before the phone (its bookmarks page)
 #include "OKStreetSocialPhoneInbox.inl"
 #include "OKStreetSocialCompanyWorld.inl"
 #include "OKStreetSocialCompany.inl"
 #include "OKStreetSocialHeroCompany.inl"
 #include "OKStreetSocialCompanyApp.inl"
 #include "OKStreetSocialAccountsApp.inl"
-#include "OKStreetSocialBookmarks.inl" // after the photos (their picture brush), before the phone (its bookmarks page)
 #include "OKStreetSocialVenture.inl"
 #include "OKStreetSocialCampus.inl"
 #include "OKStreetSocialBank.inl"
@@ -3949,8 +3955,9 @@ void AOKStreetSocialScene::Tick(float Dt){
  for(auto& Agent:S.Agents){
   if(!S.SelfTest&&!S.RunNext.Contains(Agent.Slot))S.RunNext.Add(Agent.Slot,Now+S.Random.FRandRange(8,22));
   if(!S.SelfTest&&!Agent.Held&&Agent.Dwell<=0&&Now>=S.RunNext[Agent.Slot]){S.RunUntil.Add(Agent.Slot,Now+S.Random.FRandRange(2.5f,5.f));S.RunNext[Agent.Slot]=Now+S.Random.FRandRange(18,35);}
-  const bool Running=!Agent.Held&&Agent.Dwell<=0&&((S.PresentationOnlyTest&&S.PresentationPhase==2)||Now<S.RunUntil.FindRef(Agent.Slot));
-  const float TravelSpeed=Running?OKStreetFemaleRunSpeed:OKStreetWalkSpeed;
+  // Pregnant and knowing it she does not run; heavy (week 28 on) she walks slower (OKStreetSocialPregnancy.inl).
+  const bool Running=!Agent.Held&&Agent.Dwell<=0&&!OKStreetPregFlag(S,Agent.Slot,TEXT("knows"))&&((S.PresentationOnlyTest&&S.PresentationPhase==2)||Now<S.RunUntil.FindRef(Agent.Slot));
+  const float TravelSpeed=Running?OKStreetFemaleRunSpeed:OKStreetWalkSpeed*(OKStreetPregFlag(S,Agent.Slot,TEXT("heavy"))?.75f:1.f);
   // Free on the street walk while her day has her somewhere (a talk ended during her shift: its walk to the counter had
   // been dropped and the talk let her go): back to the schedule, which puts her there. Raiden was walked out of the cafe
   // on her shift by the rules below (R3-214).

@@ -186,6 +186,13 @@ fn interact(acts: &ActsTuning, places: &PlacesTuning, request: &Value) -> Result
         out.insert("why".into(), json!("remote"));
         return Ok(Value::Object(out));
     }
+    // Pregnant and knowing it (the street sends pregnant, pregnancy.rs): she does not drink (H_SCENE_ADDITIONS_PLAN 8).
+    if act_id == "alcohol" && b("pregnant") {
+        out.insert("refused".into(), json!(true));
+        out.insert("why".into(), json!("pregnant"));
+        out.insert("recent".into(), json!(crate::tr::t("heroine.pregnant_no_alcohol")));
+        return Ok(Value::Object(out));
+    }
     let c = Ctx::from_request(request)?;
     if !gate(&c.rel, a) {
         out.insert("refused".into(), json!(true));

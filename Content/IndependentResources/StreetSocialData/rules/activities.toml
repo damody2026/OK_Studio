@@ -657,6 +657,7 @@ anchor = "wait"
 
 [[activity]]
 id = "pool"
+strenuous = true
 name = "在飯店泳池玩水"
 place = "hotel"
 kind = "pair"
@@ -665,6 +666,7 @@ anchor = "pool"
 
 [[activity]]
 id = "hotel_bar"
+strenuous = true
 name = "在飯店大廳酒吧喝一杯"
 place = "hotel"
 kind = "pair"
@@ -702,6 +704,7 @@ code = 1
 
 [[activity]]
 id = "onsen"
+strenuous = true
 name = "一起泡露天溫泉"
 place = "onsen"
 kind = "pair"
@@ -711,6 +714,7 @@ female_clip = "venue_onsen.okanim"
 
 [[activity]]
 id = "splash"
+strenuous = true
 name = "在操場向她潑水"
 place = "playground"
 kind = "pair"
@@ -719,6 +723,7 @@ anchor = "field"
 
 [[activity]]
 id = "splash_her"
+strenuous = true
 name = "在操場讓她向你潑水"
 place = "playground"
 kind = "pair"
@@ -727,6 +732,7 @@ anchor = "field"
 
 [[activity]]
 id = "watermelon"
+strenuous = true
 name = "在操場一起打西瓜（你揮棒）"
 place = "playground"
 kind = "pair"
@@ -735,6 +741,7 @@ anchor = "field"
 
 [[activity]]
 id = "watermelon_her"
+strenuous = true
 name = "在操場一起打西瓜（她揮棒）"
 place = "playground"
 kind = "pair"
@@ -832,6 +839,7 @@ feed = { fun = 12 }
 
 [[activity]]
 id = "park_exercise"
+strenuous = true
 name = "在公園一起晨練、站樁"
 place = "park"
 kind = "solo"
@@ -844,6 +852,7 @@ feed = { fun = 5, energy = -5 }
 
 [[activity]]
 id = "park_jog"
+strenuous = true
 name = "在公園一起跑步"
 place = "park"
 kind = "walk"
@@ -855,6 +864,7 @@ feed = { fun = 8, social = 6, energy = -15 }
 [[activity]]
 # 在操場跑步（說「繞操場跑一圈」時只有公園的慢跑，兩人走去公園跑，R5-5）
 id = "field_jog"
+strenuous = true
 name = "在操場一起跑步"
 place = "playground"
 kind = "walk"
