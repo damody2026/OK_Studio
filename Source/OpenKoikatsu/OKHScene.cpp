@@ -903,6 +903,12 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     AlignHim(Delta); // measures while the pair plays; a new pose or mode puts them back
     const double Now=FPlatformTime::Seconds();
     auto* Playback=Gallery->PairedPlayback.Get();
+    // The scene opens on the pair list's first pose (a hand service): the original opens on the first caress that fits the
+    // place (HSceneProc LoadAnimationListInfo, lstUseAnimInfo[0] first). Once the room is ready (its loading screen waits
+    // for the pair to play), still on that opening pose. Not when he found her touching herself on the street.
+    if(!bOpeningChecked){AOKInteractionMode* M=Interaction();
+        if(M&&M->IsReady()){bOpeningChecked=true;
+            if(Mode==1&&PendingPose==INDEX_NONE&&PendingAibu==INDEX_NONE&&!StreetOnani()){if(!bAibuLoaded)LoadAibuPoses();if(AibuPoses.Num()>0){Tab=TabAibu;SelectAibu(0);}}}}
     // The pose actually playing: the one he picked once it starts, or the one the scene opened with.
     const int32 Playing=Gallery->SelectedPairCatalogueIndex();
     if((Mode!=0||PendingPose!=INDEX_NONE)&&Playback&&!Gallery->bPairPreparing&&Gallery->PairStateCombo&&Gallery->PairStateCombo->GetOptionCount()>1){

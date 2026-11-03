@@ -144,6 +144,7 @@ private:
     void PoseClothes(const FOKHPose& Pose);
     // His penis drawn through her (ApplyMaleLook) only in a pose where he is in her: as it was last applied.
     bool XRayInHer() const;bool bXRayInHer=false;
+    bool bOpeningChecked=false; // the scene moved from its opening pose to the first caress, once (NativeTick)
     void Want(const FString& State);
     void Chain(const TArray<FString>& States);
     bool Has(const FString& State) const;
