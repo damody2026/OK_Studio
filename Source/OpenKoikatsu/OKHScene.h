@@ -334,7 +334,7 @@ private:
     // nothing happens by itself); he still finishes with the buttons.
     bool bLockHer=false,bLockHis=false;
     // A moment she reacts to in her own words (her character, how she feels now): sent as a game note, the latest only.
-    void React(const FString& Event);
+    void React(const FString& Event,const FString& Extra=FString());
     void CaressBreath();
     FString Context() const;
     FString StateWords(const FString& Base) const;

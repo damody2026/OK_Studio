@@ -399,7 +399,9 @@ void UOKHScenePanel::Finish(const TCHAR* Kind){
             if(Kind==1){Chain({TEXT("IN_Start"),TEXT("IN_Loop"),TEXT("Oral_Idle_IN"),TEXT("Oral_Idle")});OralIdleSince=0.;}
             else Chain({TEXT("IN_Start"),TEXT("IN_Loop"),Has(TEXT("IN_A"))?TEXT("IN_A"):TEXT("OUT_A")});
             if(Kind==2)AddSiru(1); // on her chest
-            Note(OKT(Kind==1?TEXT("ui.hscene.event_service_inside"):Kind==2?TEXT("ui.hscene.event_service_chest"):TEXT("ui.hscene.event_service_hand"))+OKDevStep(TEXT("oral"),OralBefore,Dev(TEXT("oral"))));}
+            const FString Event=OKT(Kind==1?TEXT("ui.hscene.event_service_inside"):Kind==2?TEXT("ui.hscene.event_service_chest"):TEXT("ui.hscene.event_service_hand"))+OKDevStep(TEXT("oral"),OralBefore,Dev(TEXT("oral")));
+            // In her mouth: he picks swallow or spit next, so her line now must not say she already did either.
+            if(Kind==1){Note(Event,false);React(Event,OKT(TEXT("ui.hscene.mouth_full_note")));}else Note(Event);}
         else{const bool Mouth=Poses.IsValidIndex(ActivePose)&&Poses[ActivePose].KindHoushi==1;Chain({TEXT("M_OUT_Start"),TEXT("M_OUT_Loop"),TEXT("OUT_A")});AddSiru(Mouth?0:1);
             // Out of her mouth it lands on her face (she said "my mouth is full" to a plain "outside").
             Note(OKT(Mouth?TEXT("ui.hscene.event_service_face"):TEXT("ui.hscene.event_service_outside")));}
@@ -437,7 +439,9 @@ void UOKHScenePanel::Finish(const TCHAR* Kind){
     else if(K==TEXT("orgS"))States.Append({P(TEXT("SF_IN_Start")),P(TEXT("SF_IN_Loop")),P(TEXT("SS_IN_A"))});
     else States.Append({P(TEXT("SS_IN_Start")),P(TEXT("SS_IN_Loop")),P(TEXT("SS_IN_A"))});
     Chain(States);
-    Note(OKT(Org?TEXT("ui.hscene.event_her_orgasm"):Same?TEXT("ui.hscene.event_together"):K==TEXT("inside")?(bCondom?TEXT("ui.hscene.event_inside_condom"):TEXT("ui.hscene.event_inside")):TEXT("ui.hscene.event_outside"))+OKDevStep(DevArea,DevBefore,Dev(DevArea)));
+    const FString Event=OKT(Org?TEXT("ui.hscene.event_her_orgasm"):Same?TEXT("ui.hscene.event_together"):K==TEXT("inside")?(bCondom?TEXT("ui.hscene.event_inside_condom"):TEXT("ui.hscene.event_inside")):TEXT("ui.hscene.event_outside"))+OKDevStep(DevArea,DevBefore,Dev(DevArea));
+    // In a condom it stays in the condom: her line must not feel it flowing into her.
+    if(!Org&&bInsideFinished&&bCondom){Note(Event,false);React(Event,OKT(TEXT("ui.hscene.condom_finish_note")));}else Note(Event);
 }
 
 // Her service_rounds for the scene (hexp.rs, with what she already did today) are used up: she will not start another
@@ -1039,10 +1043,10 @@ bool UOKHScenePanel::TakeLine(FString& Text,FString& Out,bool& System){
     if(!System&&Caption&&Gallery)Caption->SetText(FText::FromString(Gallery->HPlayerName+TEXT("：")+Text));
     return true;
 }
-void UOKHScenePanel::React(const FString& Event){
+void UOKHScenePanel::React(const FString& Event,const FString& Extra){
     if(Event.IsEmpty()||CannotAnswer())return;
     Outbox.RemoveAll([](const FHLine& L){return L.System;});
-    Outbox.Add({OKMsg(TEXT("ui.hscene.react_note"),{{TEXT("event"),Event}}),FString(),true});
+    Outbox.Add({OKMsg(TEXT("ui.hscene.react_note"),{{TEXT("event"),Event}}),Extra,true});
 }
 // Her original breathing for the caress (HVoiceCtrl breath, mode 0): moving while his hands are on her.
 void UOKHScenePanel::CaressBreath(){
