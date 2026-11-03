@@ -1929,3 +1929,7 @@
 - 2026-11-03 e-galgame（H 補充、啊嘿顏測試）：一整個下午反覆用 `game_launch` 開沙盒 EAdd／EAdd2 的遊戲（Add3～Add13，至少 8 次），一次都沒有先 `unreal_slot.lua claim`，以為 slot3 的 e-galgame（其實是 E 主線 EMain 的）也算我。全機變成 4 個 Unreal，GPU 用到 31/32.6 GB，c-conquest 掉到 1.6 FPS，協調者提醒了四次。規則：每次開遊戲前自己 `claim e-galgame "e-fork <做什麼>" --wait`，拿到 slot 才開；測完一段、等建置時馬上 `game_stop` 並 `release`，不要讓遊戲一直開著。
 
 - 2026-11-03 e-galgame 提早暫存，被別的 session 的提交帶走：我先 `git add` 了檢查表三列，接著花二十多分鐘在 OKHeadBuild 建置；這段時間另一個 session 提交 c84154466（unreal_slot 加 e-fork），共用同一個 index，把我已暫存的檢查表一起提交了。內容沒錯，但出現在別人的提交裡。另外 HEAD 在我建置期間前進了兩次，第一次差點用舊 HEAD 為底的檔案蓋掉 6029f8b4c 的改動（暫存後看 --stat 出現大量刪除才發現）。教訓：等驗證完、要提交的那一刻才暫存，暫存後立刻提交；用 OKHeadBuild 的檔案暫存前先確認 HEAD 沒變（`git log -1` 與驗證樹的底一致），變了就在新 HEAD 上重套重建。
+
+- 2026-11-03 e-galgame 開發度場景內和結束時不一致：場景內 `Dev()` 每次高潮 +10，結束時 `hexp.rs` 的 `area()` 卻再加上原作的 countKokanH／countAnalH（插入一次 +5 加 15/10/5/1 的遞減），結果畫面、記憶門檻（30/60/100）與下一場的起點都比場景內大。協調者 11-03 代決定 A，使用者回來可改：照 H_DEVELOPMENT_EXPERIENCE_PLAN，開發度只算 +10×高潮；`crotch_h`／`anal_h` 只用來判斷經驗等級（不慣れ／慣れ，`level()`），不加進開發度、結果列、記憶門檻與 `anal_chance`。刻意相加的測試一起改掉。
+
+- 2026-11-03 e-galgame 肛交噴水：第 11 節倍率表把「肛交噴水」寫成用肛門開發度 `Dev(anal)`，程式也照這樣算噴射間隔。使用者更正：肛交時噴水指的是陰道噴水，不是屁眼噴水。噴的位置本來就是 `J_Kokan`，改成噴射間隔一律用 `Dev(crotch)`；高潮持續時間照舊取當下插入的那一處。教訓：規格寫「某情境的某效果」時，先確認效果出自身體哪一處，再決定用哪一處的開發度。
