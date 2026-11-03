@@ -32,12 +32,12 @@ def _ls_hit(world,a,b,ignore=[]):
  return h if h[0] else None
 def _ls_floor(world,x,y,z):
  h=_ls_hit(world,unreal.Vector(x,y,z+120),unreal.Vector(x,y,z-150));return h[4].z if h else None
-def _ls_fits(world,c,yaw,w,d,h,z):
+def _ls_fits(world,c,yaw,w,d,h,z,tol=8):
  # floor under centre and corners, then an empty box from 3 cm above the floor
  a=math.radians(yaw);fx,fy=math.cos(a),math.sin(a);rx,ry=-fy,fx
  for u,v in [(0,0),(w/2,d/2),(-w/2,d/2),(w/2,-d/2),(-w/2,-d/2)]:
   q=_ls_floor(world,c.x+rx*u+fx*v,c.y+ry*u+fy*v,z)
-  if q is None or abs(q-z)>8:return False
+  if q is None or abs(q-z)>tol:return False
  mid=unreal.Vector(c.x,c.y,z+3+h/2)
  hit=unreal.SystemLibrary.box_trace_single(world,mid,mid+unreal.Vector(0,0,1),unreal.Vector(d/2,w/2,h/2),unreal.Rotator(roll=0,pitch=0,yaw=yaw),unreal.TraceTypeQuery.TRACE_TYPE_QUERY1,True,[],unreal.DrawDebugTrace.NONE,True)
  t=hit.to_tuple() if hit else [False]
@@ -45,7 +45,8 @@ def _ls_fits(world,c,yaw,w,d,h,z):
 def _ls_wall_behind(world,c,yaw,d,z):
  a=math.radians(yaw);back=unreal.Vector(-math.cos(a),-math.sin(a),0);p=unreal.Vector(c.x,c.y,z+100)
  return _ls_hit(world,p,p+back*(d/2+40)) is not None
-def _ls_search(world,hint,z,w,d,h,yaws,rmin=0,rmax=1200,avoid=[],wall=False,region=None,step=25):
+def _ls_search(world,hint,z,w,d,h,yaws,rmin=0,rmax=1200,avoid=[],wall=False,region=None,step=25,tol=8,follow=False):
+ # follow: outdoors the ground slopes, so each candidate is tested at its own floor height instead of the hint's
  # spiral of 25 cm rings; first spot (optionally with a wall behind) wins, else the nearest free spot
  best=None
  for r in range(int(rmin),int(rmax)+1,step):
@@ -54,9 +55,15 @@ def _ls_search(world,hint,z,w,d,h,yaws,rmin=0,rmax=1200,avoid=[],wall=False,regi
    t=2*math.pi*k/n;c=unreal.Vector(hint.x+r*math.cos(t),hint.y+r*math.sin(t),z)
    if region and not(region[0][0]<=c.x<=region[1][0] and region[0][1]<=c.y<=region[1][1]):continue
    if any((c-unreal.Vector(p.x,p.y,z)).length()<160+max(w,d)/2 for p in avoid):continue
+   cz=z
+   if follow:
+    g=_ls_hit(world,unreal.Vector(c.x,c.y,z+600),unreal.Vector(c.x,c.y,z-600))
+    if g is None:continue
+    cz=g[4].z
+    c=unreal.Vector(c.x,c.y,cz)
    for yaw in yaws:
-    if not _ls_fits(world,c,yaw,w,d,h,z):continue
-    if wall and not _ls_wall_behind(world,c,yaw,d,z):
+    if not _ls_fits(world,c,yaw,w,d,h,cz,tol):continue
+    if wall and not _ls_wall_behind(world,c,yaw,d,cz):
      best=best or (c,yaw);continue
     return c,yaw
   if best and not wall:return best
@@ -102,9 +109,17 @@ def motel_world_lover_spots_install():
   g=gp.get(pid);door=aqua_door if pid=='aquarium' else (g or {}).get('door')
   if not door:skipped.append(dict(place=pid,reason='no door'));continue
   d=V(door);z=_ls_floor(world,d.x,d.y,d.z)
-  if z is None:skipped.append(dict(place=pid,reason='no floor at door'));continue
+  if z is None:
+   # door sits over water or a drop (the lodge door is at a pool suite): start from the place's first anchor instead
+   an=sorted((g or {}).get('anchors') or [],key=lambda a:a['name'].startswith('bed'))  # lounge / seat before a suite bed
+   for a in an:
+    d=V(a['pos']);z=_ls_floor(world,d.x,d.y,d.z)
+    if z is not None:break
+  if z is None:skipped.append(dict(place=pid,reason='no floor at door or anchors'));continue
   got=_ls_search(world,d,z,100,80,190,[0,90,180,270],rmin=200,rmax=1000,avoid=[d],wall=True)
-  if not got:skipped.append(dict(place=pid,reason='no free spot within 10 m'));continue
+  # outdoors (park, playground) the lawn slopes: follow the ground, look further, allow 15 cm across the footprint
+  if not got:got=_ls_search(world,d,z,100,80,190,[0,90,180,270],rmin=200,rmax=2500,avoid=[d],wall=True,step=50,tol=15,follow=True)
+  if not got:skipped.append(dict(place=pid,reason='no free spot within 25 m'));continue
   c,yaw=got;lab=_ls_vending(i,c,yaw,M);front=_ls_off(c,yaw,110)
   items.append(dict(place=pid,anchor='vending',pos=num(front),yaw=yaw-90,actor=lab))
   views.append(dict(id='LS-vend-'+pid,eye=num(_ls_off(c,yaw,420,120,160)),target=num(_ls_off(c,yaw,0,0,100)),fov=70,hour=15))
@@ -113,17 +128,20 @@ def motel_world_lover_spots_install():
  if g:
   lo,hi=g['rooms'][0]['min'],g['rooms'][0]['max'];d=V(g['door']);z=lo[2]
   ctr=V([(lo[0]+hi[0])/2,(lo[1]+hi[1])/2,z])
-  got=_ls_search(world,ctr,z,240,110,110,[0,90,180,270],rmax=900,avoid=[d],wall=True,region=([lo[0]+50,lo[1]+50],[hi[0]-50,hi[1]-50]))
+  # full 3-stool counter inside, then a 2-stool one inside, then the 3-stool one on the pavement outside the shop front
+  span=240;got=_ls_search(world,ctr,z,240,110,110,[0,90,180,270],rmax=900,avoid=[d],wall=True,region=([lo[0]+50,lo[1]+50],[hi[0]-50,hi[1]-50]))
+  if not got:span=160;got=_ls_search(world,ctr,z,160,100,110,[0,90,180,270],rmax=900,avoid=[d],wall=True,step=15,region=([lo[0]+40,lo[1]+40],[hi[0]-40,hi[1]-40]))
+  if not got:span=240;got=_ls_search(world,d,z,240,110,110,[0,90,180,270],rmin=150,rmax=800,avoid=[d],wall=True,follow=True,tol=10)
   if got:
    c,yaw=got;back=_ls_off(c,yaw,-30)
-   _ls_box('LoverSpot_EatIn_Counter',_ls_off(back,yaw,0,0,100),yaw,(50,240,5),M['counter'])
-   for k,s in enumerate((-80,0,80)):
+   _ls_box('LoverSpot_EatIn_Counter',_ls_off(back,yaw,0,0,100),yaw,(50,span,5),M['counter'])
+   for k,s in enumerate((-80,0,80) if span>200 else (-40,40)):
     _ls_box('LoverSpot_EatIn_Leg_%d'%k,back,yaw,(6,6,100),M['steel'])
     st=_ls_off(c,yaw,25,s);_ls_cyl('LoverSpot_EatIn_StoolPost_%d'%k,st,4,68,M['steel']);_ls_cyl('LoverSpot_EatIn_StoolSeat_%d'%k,_ls_off(st,yaw,0,0,68),18,7,M['cushion'])
    items.append(dict(place='conveni',anchor='seat',pos=num(_ls_off(c,yaw,25,-40)),yaw=yaw+180-90,actor='LoverSpot_EatIn_StoolSeat_0'))
    items.append(dict(place='conveni',anchor='table',pos=num(_ls_off(c,yaw,25,0)),yaw=yaw+180-90,actor='LoverSpot_EatIn_Counter'))
    views.append(dict(id='LS-conveni-eatin',eye=num(_ls_off(c,yaw,320,60,160)),target=num(_ls_off(c,yaw,-20,0,90)),fov=75,hour=15))
-  else:skipped.append(dict(place='conveni',reason='no free 2.4 x 1.1 m spot in S06-0101'))
+  else:skipped.append(dict(place='conveni',reason='no free 2.4 x 1.1 or 1.6 x 1.0 m spot in S06-0101 nor outside its door'))
  # 3. dorm visitor lounges: sofa (210 x 95) facing a TV cabinet 260 cm away, TV and a console on the cabinet
  for pid in ('girls_dorm','boys_dorm'):
   g=gp.get(pid);la=next((a for a in (g or {}).get('anchors',[]) if a['name']=='lounge'),None)
@@ -161,7 +179,8 @@ def motel_world_lover_spots_install():
  g=gp.get('park');hint=V(g['door']) if g else None
  if hint:
   z=_ls_floor(world,hint.x,hint.y,hint.z) or hint.z
-  got=_ls_search(world,hint,z,500,900,420,[0,90,180,270],rmin=1500,rmax=6000,step=100)
+  got=_ls_search(world,hint,z,500,900,420,[0,90,180,270],rmin=1500,rmax=6000,step=100,follow=True,tol=20)
+  if not got:got=_ls_search(world,hint,z,400,800,420,[0,90,180,270],rmin=6000,rmax=15000,step=150,follow=True,tol=25)
   if got:
    c,yaw=got;st=_ls_off(c,yaw,-400)  # path runs along +yaw from the torii (st) to the hokora
    for s in (-170,170):_ls_cyl('LoverSpot_Shrine_ToriiPost%+d'%s,_ls_off(st,yaw,0,s),17,350,M['vermilion'])
@@ -179,7 +198,7 @@ def motel_world_lover_spots_install():
    items.append(dict(place='shrine',anchor='torii',pos=num(_ls_off(st,yaw,-150)),yaw=yaw-90,actor='LoverSpot_Shrine_ToriiKasagi'))
    items.append(dict(place='shrine',anchor='pray',pos=num(_ls_off(ho,yaw,-170)),yaw=yaw-90,actor='LoverSpot_Shrine_OfferingBox'))
    views.append(dict(id='LS-shrine',eye=num(_ls_off(st,yaw,-700,150,170)),target=num(_ls_off(c,yaw,0,0,150)),fov=75,hour=15))
-  else:skipped.append(dict(place='shrine',reason='no flat 5 x 9 m lawn 15-60 m from the park'))
+  else:skipped.append(dict(place='shrine',reason='no 5 x 9 m lawn (20 cm slope) 15-60 m nor 4 x 8 m 60-150 m from the park'))
  # 5. aquarium in S28 (毛孩選物, a pet-shop clone): a 3.6 m tank wall with koi against a wall, a bench 2.2 m in front
  acts={a.get_actor_label():a for a in SUB.get_all_level_actors()};sh=acts.get('S28_F01')
  if sh and aqua_door:

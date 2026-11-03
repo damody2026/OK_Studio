@@ -1884,3 +1884,15 @@
 - 2026-11-03 c-street-city ok 系列程式（ok-extract 等）預設用滿所有核心，吃掉整台機器，使用者只好手動關掉 ok-extract。修正：ok 系列程式（ok-extract、ok-rules、ok-game-mcp、ok-city-props、ok-mind 等），包括 cargo build／test 和它們執行的工作，一律不超過 8 個執行緒。cargo 要加 `-j 8`；用到 rayon 或執行緒池時，要設 `RAYON_NUM_THREADS=8` 或在程式裡限制。我自己這邊：`ok-city-props` 是單執行緒的；街道城市的 Lua 與 chain 腳本沒有呼叫 cargo 或 rayon；道具索引文件裡的 `cargo test` 已經改成 `-j 8`。
 - 2026-11-03 c-street-city chain10 的戀人地點安裝（`world_lover_spots_install`）在編輯器裡出錯。原因是 `Tools/street_city_lover_spots_payload.lua` 對 `unreal.Vector` 呼叫 `.size()`，但 UE Python 的 Vector 只有 `.length()`。腳本只印出 job 的最後一行，沒有檢查 result 的 `status`，所以安裝失敗後照樣進入驗收和排隊，空等了大約一小時。修正：兩處改成 `.length()`；安裝的 job 回 `failed` 時，chain 腳本立刻結束。新寫的 payload 用到的 unreal API，要先和跑成功過的 payload 對照一遍。
 - 2026-11-03 c-street-city 我用 TaskStop 停掉背景的 chain bash，但它的子程序沒有一起結束：chain10 的驗收（`run_street_city_motel_acceptance.lua`）和 chain11 的編輯器 worker（`street_city_motel_native.lua serve` 和 UnrealEditor）都留了下來。結果兩個編輯器同時在跑，而且都沒有占 slot，還互相覆寫 `serve-ready.json`。我照 PID、命令列和父程序一一確認是自己的之後，才把它們停掉。修正：要停 chain，先停掉它的子程序（驗收、serve、編輯器），再停 bash。之後查 `Get-CimInstance Win32_Process`，確認沒有留下 `motel_native.lua serve` 或我的 UnrealEditor，才可以重開。
+- 2026-11-03 c-street-city chain12 送出 quit 之後，我的 UnrealEditor（PID 91900）還在跑，但驗收的 yield 已經把 slot3 交給 E 組，等於沒占 slot 在用 Unreal，全機 3 個上限把 E 組擋在外面。另外我在舊 chain 還沒完全結束時就刪掉 chain.lock，所以兩條 chain 同時在跑（戀人地點安裝被排了兩次）。修正：quit 之後要等到 `motel_native.lua serve` 和 StreetSocialCityProduction 的 UnrealEditor 都結束（最多等 3 分鐘，沒結束就整條 chain 停下來），才進入會 yield 的步驟；確認沒有 chain 進程之前，不刪鎖。
+- 2026-11-03 c-street-city 戀人地點安裝有 5 處被略過：
+  - 公園和遊樂場的販賣機：10 m 內找不到位置。
+  - 汽車旅館交誼區（lodge）：門口量不到地板。
+  - 便利商店內用座：店內找不到 2.4 × 1.1 m 的空位。
+  - 神社：公園外 15～60 m 找不到 5 × 9 m 的平坦草地。
+  原因：搜尋時一律用起點（門口）的地板高度，戶外草地有坡度，四個角一高一低就判定不合格。修正：
+  - `_ls_search` 加上 `follow`（每個候選點用它自己的地板高度）和 `tol`（容許的高低差）。
+  - 販賣機找不到時，改到 25 m 內、容許 15 cm 高低差再找一次。
+  - lodge 改從自己的錨點起找。
+  - 內用座依序退到 1.6 m 兩人座、店門外。
+  - 神社容許 20 cm 坡度，找不到就退到 60～150 m 內的 4 × 8 m。
