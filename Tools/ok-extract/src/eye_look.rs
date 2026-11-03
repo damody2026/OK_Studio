@@ -108,9 +108,24 @@ pub(crate) struct Runtime {
     pub reference:[V3;2],pub up:[V3;2],pub original:[Quat;2],pub angles:[[f32;2];2],
     pub dir_up:[V3;2],pub fixed:[Quat;2],pub rates:[f32;3],pub target:V3,
 }
+/// The eyes past the source's limits (user 2026-11-03: "解除眼睛的限制"; `ok_set_eye_look_unlimited`, on by default):
+/// the look keeps following a target past the pattern's angles instead of turning ahead, the angles are not held to
+/// the pattern's range, and the rates and the iris offset go on past ±1 in proportion (eye_gaze::IrisRuntime::st).
+/// Tests keep the source's limits: they compare against native captures.
+static UNLIMITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(!cfg!(test));
+/// How far past the source's limit the unlimited eyes go, in rates (1 the limit): pushed on freely the iris left the
+/// eye at 70 degrees and looked past the camera at 45 (2026-11-03), so it stops at this.
+static MOST_BITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3FA6_6666); // 1.3
+pub fn set_unlimited(on: bool) {UNLIMITED.store(on,std::sync::atomic::Ordering::Relaxed);}
+pub fn unlimited() -> bool {UNLIMITED.load(std::sync::atomic::Ordering::Relaxed)}
+pub fn set_most(most: f32) {if most.is_finite()&&most>=1. {MOST_BITS.store(most.to_bits(),std::sync::atomic::Ordering::Relaxed);}}
+/// The most rate the eyes take: 1 with the source's limits, `set_most` without them.
+pub fn most() -> f32 {if unlimited() {f32::from_bits(MOST_BITS.load(std::sync::atomic::Ordering::Relaxed))}else{1.}}
 fn clamp(x:f32,a:f32,b:f32)->f32 {if x<a {a}else if x>b {b}else{x}}
 fn lerp(a:f32,b:f32,t:f32)->f32 {a+(b-a)*clamp(t,0.,1.)}
 fn inverse(a:f32,b:f32,x:f32)->f32 {if a==b {0.}else{clamp((x-a)/(b-a),0.,1.)}}
+/// `inverse` without holding the result to 0..1 (the unlimited eyes).
+fn inverse_free(a:f32,b:f32,x:f32)->f32 {if a==b {0.}else{(x-a)/(b-a)}}
 fn sign(x:f32)->f32 {if x<0. {-1.}else{1.}}
 fn angle(a:V3,b:V3)->f32 {let den=(vdot(a,a)*vdot(b,b)).sqrt();if den<1e-15 {0.}else{clamp(vdot(a,b)/den,-1.,1.).acos().to_degrees()}}
 fn around(a:V3,b:V3,axis:V3)->f32 {let a=vsub(a,vproject(a,axis));let b=vsub(b,vproject(b,axis));angle(a,b)*sign(vdot(axis,vcross(a,b)))}
@@ -167,7 +182,7 @@ impl Runtime {
             let mut v=vsub(target,b.root);
             if kind!=1&&vlen(v)<s[7] {v=vmul(vnorm(v),s[7]);target=vadd(b.root,v);}
             let forward=qrot(b.rotation,[0.,0.,1.]);
-            if angle([v[0],forward[1],v[2]],forward)>s[10]||angle([forward[0],v[1],v[2]],forward)>s[11] {kind=3;}
+            if !unlimited()&&(angle([v[0],forward[1],v[2]],forward)>s[10]||angle([forward[0],v[1],v[2]],forward)>s[11]) {kind=3;}
             if kind==3 {target=vadd(b.root,vmul(qrot(qmul(b.rotation,qangle_axis(5.,[1.,0.,0.])),[0.,0.,1.]),s[9]));}
             if let Some(t)=control.as_deref_mut() {if kind==4 {target=towards(b.root,*t,s[9]);}*t=towards(b.root,target,c.control_distance);}
             let mut targets=[target;2];
@@ -187,7 +202,7 @@ impl Runtime {
                 let bend=|f:f32| ((f.abs()-s[0]).max(0.)*s[1].abs()).max(f.abs()-s[2])*sign(f)*sign(s[1]);
                 h=bend(h);v=bend(v);
                 let (min,max)=if c.eyes[i].lr==1 {(-s[4],-s[3])}else{(s[3],s[4])};
-                h=clamp(h,min,max);v=clamp(v,s[5],s[6]);
+                if !unlimited() {h=clamp(h,min,max);v=clamp(v,s[5],s[6]);}
                 if kind==2 {
                     if shared==-1. {
                         let mut previous=lerp(-1.,1.,inverse(-s[4],-s[3],self.angles[i][0]));
@@ -209,9 +224,10 @@ impl Runtime {
             }
             self.target=target;
         }
-        for i in 0..2 {let (min,max)=if c.eyes[i].lr==1 {(-s[4],-s[3])}else{(s[3],s[4])};self.rates[i]=lerp(-1.,1.,inverse(min,max,self.angles[i][0]));}
+        let free=unlimited();let m=most();let inv=|a:f32,b:f32,x:f32| if free {inverse_free(a,b,x)}else{inverse(a,b,x)};
+        for i in 0..2 {let (min,max)=if c.eyes[i].lr==1 {(-s[4],-s[3])}else{(s[3],s[4])};self.rates[i]=clamp(-1.+2.*inv(min,max,self.angles[i][0]),-m,m);}
         let v=self.angles[0][1];let (positive,negative)=if s[6]<=s[5] {(s[5],s[6])}else{(s[6],s[5])};
-        self.rates[2]=if v>=0. {-inverse(0.,positive,v)}else{inverse(0.,negative,v)};
+        self.rates[2]=clamp(if v>=0. {-inv(0.,positive,v)}else{inv(0.,negative,v)},-m,m);
         true
     }
 }

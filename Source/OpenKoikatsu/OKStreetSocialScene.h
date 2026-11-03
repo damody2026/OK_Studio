@@ -221,7 +221,7 @@ private:
  TSharedRef<class SWidget> BuildSaveMenu();
  TSharedPtr<FJsonObject> FinWallet(const TCHAR* Dir,const FString& Op,const TSharedPtr<FJsonObject>& Value) const;
  FString CardTableOuting(const FString& Said); // the activity to walk to for cards agreed on outdoors (bluff.rs card_table_place) // the place he names in what he said (social.rs place_named), "" if none // Who (0: him) has one of these (a meal, a drink) on the table, unfinished, or in the cart
- void BuyForGift(const FString& ItemId);
+ void BuyForGift(const FString& ItemId);void HerBuys(int32 Her,const FString& ItemId);
  void StartGift(const FString& ItemId);
  void FinishGift(int32 Her,const FString& ItemId,const FString& Option,float Score);
  // The clinics and the salon (OKStreetSocialClinic.inl): offered to her, done when she says yes; her restyled card.

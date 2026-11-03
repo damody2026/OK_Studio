@@ -360,8 +360,31 @@ pub fn eval(c: &Catalog, acts: &ActivitiesTuning, kind: &str, r: &Value) -> Opti
         "items_facts" => facts(c, r),
         "items_view" => view(c, r),
         "items_owns_today" => owns_today(r),
+        "items_her_buy" => her_buy(c, r),
         _ => return None,
     }))
+}
+
+/// She buys a thing for herself where they stand (user 2026-11-03: condoms, one of which she gives him in the room when
+/// he has none). Request: girl, relation, ext, day, item, price (the till's, in her wallet's money). Answer: ok; when she
+/// could pay, ext (it is hers) and effects (her wallet, her note of it).
+fn her_buy(c: &Catalog, r: &Value) -> Value {
+    let (girl, item) = (s(r, "girl").to_string(), s(r, "item").to_string());
+    let price = r.get("price").and_then(Value::as_i64).unwrap_or(0);
+    let Ok(mut rel) = serde_json::from_value::<crate::relation::Relation>(r.get("relation").cloned().unwrap_or(Value::Null)) else {
+        return json!({"ok": false});
+    };
+    if girl.is_empty() || item.is_empty() || price <= 0 || rel.funds() < price {
+        return json!({"ok": false});
+    }
+    let before = rel.clone();
+    rel.pay(price);
+    let mut st = state(r);
+    give_to_her(&mut st, &girl, &item, "", "own", day(r));
+    let mut fx = crate::effects::Effects::default();
+    fx.relation(&rel, &before);
+    fx.note_at(&rel.id, "money", &crate::tr::m("items.she_bought", &[("item", crate::tr::a(&name_of(c, &item, "")))]), "", 0.4);
+    json!({"ok": true, "ext": with_state(r, st), "effects": fx.into_value()})
 }
 
 /// For other rules: give her a thing (a saving goal she bought, a drawing she made). ext in, ext out.
@@ -490,5 +513,20 @@ mod tests {
         let back = judge(&c, &json!({"ext": v["ext"], "girl": "k", "day": 2, "she_returns_item": "傘"}));
         assert_eq!(back["his_add"], json!(["cv_umbrella"]));
         assert_eq!(back["ext"]["items"]["her_borrowed"], json!([]));
+    }
+
+    #[test]
+    fn she_buys_a_thing_with_her_own_money() {
+        let c = Catalog::default();
+        let mut rel = crate::relation::Relation::default();
+        rel.id = "k".into();
+        rel.cash = 30;
+        let rel = serde_json::to_value(&rel).unwrap();
+        let ok = her_buy(&c, &json!({"girl": "k", "relation": rel, "ext": {}, "day": 2, "item": "cv_condom", "price": 20}));
+        assert_eq!(ok["ok"], true);
+        assert_eq!(ok["ext"]["items"]["owned"]["k"][0]["item"], "cv_condom");
+        assert!(ok["effects"].as_array().unwrap().iter().any(|e| e["op"] == "relation"));
+        let broke = her_buy(&c, &json!({"girl": "k", "relation": rel, "ext": {}, "day": 2, "item": "cv_condom", "price": 40}));
+        assert_eq!(broke["ok"], false);
     }
 }

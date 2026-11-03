@@ -55,6 +55,7 @@ struct FOKHPose {
     int32 Pair=INDEX_NONE;      // index in the controller's NativePairs
     int32 Mode=0;               // 1 service, 2 intercourse (AnimationInfo_XX)
     int32 KindHoushi=0;         // service: 0 hand, 1 mouth, 2 breasts
+    int32 SysTaii=0;            // sysTaii: 0 hand or breasts only, 1 licking, 2 him in her mouth (咥え)
     bool Anal=false;
     bool FemaleLead=false;      // isFemaleInitiative: her lines are the voice table's rows 38 on (HSonyu num2)
     int32 IsExperience=0;       // 1: needs her used to it (慣れ)
@@ -126,6 +127,7 @@ private:
     TMap<FString,FString> SoloKeys;      // state -> clip key of the active caress pose
     FString SoloState;double SoloStarted=0.;
     int32 ActiveAibu=INDEX_NONE,PendingAibu=INDEX_NONE,AibuGeneration=0,TouchArea=INDEX_NONE;
+    int32 AreaClimaxes[11]={};          // her climaxes from his touch or kiss there (AreaSeconds order; hexp climaxes)
     float AreaSeconds[11]={};           // kiss, chest, crotch, anal, butt, nipples (hAreaExps order); head, hand, thigh, calf, foot
     // Touching or kissing (bLickMode) the rest of her (H_SCENE_ADDITIONS_PLAN 3): her lips touched (bLipsTouch, area 0
     // without the kiss), and the flinch of the touched part as the original's HitReaction.
@@ -143,6 +145,7 @@ private:
     void PlaySolo(const FString& State);
     void Touch(int32 Area);
     float AreaExperience(int32 Area) const;
+    bool NeverHad(int32 Area) const;
     // Her development there, 0..1 (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md): chest, nipple, crotch, anal or oral, as she
     // came in plus ten points for each climax there this scene (crotch, anal) or each time he came in her mouth (oral).
     float Dev(const TCHAR* Area) const;
@@ -157,6 +160,7 @@ private:
     void PoseClothes(const FOKHPose& Pose);
     // His penis drawn through her (ApplyMaleLook) only in a pose where he is in her: as it was last applied.
     bool XRayInHer() const;bool bXRayInHer=false;
+    bool FinishInMouth() const;
     bool bOpeningChecked=false; // the scene moved from its opening pose to the first caress, once (NativeTick)
     void Want(const FString& State);
     void Chain(const TArray<FString>& States);
@@ -177,7 +181,7 @@ private:
     // She has come as many times as she will this scene (climax_limit): she wants it to stop, the panel offers no more
     // touching, moving or entering her.
     bool HadEnough() const;
-    void CountHerOrgasm();
+    void CountHerOrgasm();FString History() const;
 
     UPROPERTY() TObjectPtr<UTextBlock> Title;
     UPROPERTY() TObjectPtr<UTextBlock> Status;
@@ -192,7 +196,7 @@ private:
     UPROPERTY() TObjectPtr<class USizeBox> HalfInner;UPROPERTY() TObjectPtr<class USizeBox> PanelWidth;
     UPROPERTY() TObjectPtr<USlider> LengthSlider;
     UPROPERTY() TObjectPtr<USlider> AnkleSlider;UPROPERTY() TObjectPtr<USlider> ThighSliders[2];UPROPERTY() TObjectPtr<class UComboBoxString> HandCombos[2];
-    float AnkleTurn=0.f,ThighOpen[2]={0.f,0.f};int32 HandPattern[2]={-1,-1},HandShown[2]={-1,-1},HandOptions=-1;TWeakObjectPtr<class AKKPreviewActor> HandGirl;FVector4f HerPoseShown=FVector4f(0.f,0.f,0.f,0.f);
+    float AnkleTurn=0.f,ThighOpen[2]={0.f,0.f};int32 HandPattern[2]={-1,-1},HandShown[2]={-1,-1},HandOptions=-1;TWeakObjectPtr<class AKKPreviewActor> HandGirl,EyesCameraGirl;void TickEyesCamera();FVector4f HerPoseShown=FVector4f(0.f,0.f,0.f,0.f);
     // Her FK this frame: her trembling (Tremble) and the pose he set, together (her session holds one FK list).
     void ApplyHerFk(class AKKPreviewActor* Girl,TArray<FString>& Names,TArray<FVector>& Turns);void TickHands();
     double PaizuriMilkAt=0;
@@ -352,6 +356,16 @@ private:
     FString Context() const;
     FString StateWords(const FString& Base) const;
     bool bRawAsked=false,bRawPressed=false;
+    // Condoms (user 2026-11-03): none on unless one of them has one. Put on this scene, his and hers; the one on is not yet
+    // in her (Fresh: taken off, it goes back), is hers, or he has finished in it (Spent: off once he pulls out).
+    int32 CondomsHis=0,CondomsHer=0;bool bCondomFresh=false,bCondomHers=false,bCondomSpent=false;
+    int32 CondomsLeft(bool bHers) const;void DropSpentCondom();
+    // Out of condoms (user 2026-11-03): he says so, and her answer (her character, how much she wants it, her libido) is
+    // read by the H judge like his question when she is pregnant (lets_raw): she may say let's do it without.
+    bool bNoCondomAsked=false;void AskNoCondoms();
+    // Pregnant and she knows (user 2026-11-03): whether he may go without is hers to say by her character. He asks her,
+    // the H judge reads her answer (lets_raw): 1 yes, -1 no, 0 not answered.
+    int32 RawLet=0;bool bRawAskedPregnant=false;bool PregnantKnows() const;
     int32 HisInside=0,HisOutside=0,HisMouth=0,Swallowed=0;
     int32 HisInsideRaw=0,HisCondom=0,HisInsideVaginaRaw=0; // in her: his finishes inside without a condom, and any with one (discharge); in her vagina without one (pregnancy)
     TArray<FOKHPose> Poses;
@@ -361,7 +375,7 @@ private:
     TArray<FString> Queue;      // states still to play, in order (a finish, the insertion)
     double StateSeen=0.,LastRequest=0.,OralIdleSince=0.;
     float Her=0.f,His=0.f,SpeedValue=.35f;
-    bool bStrong=false,bAnalPlay=false,bCondom=true,bInsertedNow=false,bInsideFinished=false,bAnalRefused=false,bAnalAsked=false,bServiceRefused=false,bSaidEnough=false; // bServiceRefused: she has served him as many times as she will this scene (service_rounds)
+    bool bStrong=false,bAnalPlay=false,bCondom=false,bInsertedNow=false,bInsideFinished=false,bAnalRefused=false,bAnalAsked=false,bServiceRefused=false,bSaidEnough=false; // bServiceRefused: she has served him as many times as she will this scene (service_rounds)
     // Counts for her experience.
     bool bPlayed=false,bService=false,bRaw=false,bCrotch=false,bAnal=false;
     int32 ServiceFinishes=0,CrotchClimaxes=0,AnalClimaxes=0,HerOrgasms=0,HisFinishes=0;

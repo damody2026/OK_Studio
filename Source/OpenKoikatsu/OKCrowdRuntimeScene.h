@@ -107,11 +107,13 @@ bool OKResetCrowdRuntimeFaceExpression(AActor* Owner,int32 Character,FString& Er
 struct FOKRuntimeFaceLook {float Blush=-1.f,Sweat=-1.f;FVector2D Gaze=FVector2D::ZeroVector;int32 Highlight=-1,Tears=-1;float FadeScale=-1.f;};
 bool OKSetCrowdRuntimeFaceLook(AActor* Owner,int32 Character,const FOKRuntimeFaceLook& Look,FString& Error);
 // The look drawn now (Tears: the level most shown, its visibility in TearShown) and whether it is still easing.
-struct FOKRuntimeFaceLookNow {float Blush=0.f,Sweat=0.f,Highlight=1.f,TearShown=0.f;FVector2D Gaze=FVector2D::ZeroVector;int32 Tears=0;bool Fading=false;};
+struct FOKRuntimeFaceLookNow {float Blush=0.f,Sweat=0.f,Highlight=1.f,TearShown=0.f;FVector2D Gaze=FVector2D::ZeroVector,Follow=FVector2D::ZeroVector;int32 Tears=0;bool Fading=false;};
 bool OKGetCrowdRuntimeFaceLook(AActor* Owner,int32 Character,FOKRuntimeFaceLookNow& Now);
 // Her head turns to a world point (her neck and head over whatever clip plays, within a natural range), easing in and
 // out; Enabled false lets her head follow the clip again.
 bool OKSetCrowdRuntimeHeadLook(AActor* Owner,int32 Character,bool Enabled,const FVector& World);
+// Where her eyes go while she looks at someone: -1 as ok.EyeFollow, 0 ahead, 1 whom she looks at, 2 the camera.
+bool OKSetCrowdRuntimeEyeFollow(AActor* Owner,int32 Character,int32 Mode);
 // Her outline shells drawn or not (a capture that must not see them, e.g. the galgame portrait's coverage); the change
 // reaches the renderer in order with the captures queued between two calls.
 void OKSetCrowdRuntimeOutlinesShown(AActor* Owner,int32 Character,bool Shown);

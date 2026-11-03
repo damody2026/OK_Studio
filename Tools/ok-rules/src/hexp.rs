@@ -32,7 +32,8 @@ pub struct HExp {
     pub count: i32,
     pub kissed: bool,
     pub areas: [f32; 6],
-    /// Added to the crotch and anal areas when judging (countKokanH, countAnalH).
+    /// The original's countKokanH and countAnalH: added to the crotch and anal areas only when judging her experience
+    /// level (level()), never to her development (coordinator 2026-11-03, option A).
     pub crotch_h: f32,
     pub anal_h: f32,
     pub service: f32,
@@ -64,17 +65,30 @@ pub struct HExp {
     pub poses: Vec<String>,
     /// Her head, hands, thighs, calves and feet, 0..100 (BODY_KEYS): half a point a second touched or kissed.
     pub body: std::collections::BTreeMap<String, f32>,
+    /// How many times she has come in all, and where (user 2026-11-03): AREA_KEYS and BODY_KEYS, a climax from his touch
+    /// or kiss there, crotch and anal with him in her too.
+    pub orgasms: i32,
+    pub climaxes: std::collections::BTreeMap<String, i32>,
+    /// How many times they have had sex (a scene he was in her: vaginal, anal, either).
+    pub sex_count: i32,
+    pub vaginal_count: i32,
+    pub anal_count: i32,
 }
 
 impl Default for HExp {
     fn default() -> Self {
-        HExp { count: 0, kissed: false, areas: [0.0; 6], crotch_h: 0.0, anal_h: 0.0, service: 0.0, service_count: 0, oral: 0.0, raw_count: 0, virgin: true, anal_virgin: true, hymen_restored: false, today_day: -1, today_orgasms: 0, today_service: 0, today_anal_refused: false, libido_gain: 0, white_until: -1, red_until: -1, crotch_deep: false, anal_deep: false, poses: Vec::new(), body: Default::default() }
+        HExp { count: 0, kissed: false, areas: [0.0; 6], crotch_h: 0.0, anal_h: 0.0, service: 0.0, service_count: 0, oral: 0.0, raw_count: 0, virgin: true, anal_virgin: true, hymen_restored: false, today_day: -1, today_orgasms: 0, today_service: 0, today_anal_refused: false, libido_gain: 0, white_until: -1, red_until: -1, crotch_deep: false, anal_deep: false, poses: Vec::new(), body: Default::default(), orgasms: 0, climaxes: Default::default(), sex_count: 0, vaginal_count: 0, anal_count: 0 }
     }
 }
 
 impl HExp {
-    /// An area as the original judges it: crotch and anal count their intercourse too.
+    /// An area's development, 0..100: ten points each climax there (H_DEVELOPMENT_EXPERIENCE_PLAN), the same number the
+    /// scene shows and grows (OKHScene Dev()).
     pub fn area(&self, i: usize) -> f32 {
+        self.areas[i].min(100.0)
+    }
+    /// An area as the original judges her experience level: crotch and anal count their intercourse too.
+    fn judged(&self, i: usize) -> f32 {
         let extra = match i {
             CROTCH => self.crotch_h,
             ANAL => self.anal_h,
@@ -88,12 +102,20 @@ impl HExp {
             0
         } else if lewdness >= 100.0 {
             3
-        } else if (CHEST..=NIPPLE).any(|i| self.area(i) < 100.0) {
+        } else if (CHEST..=NIPPLE).any(|i| self.judged(i) < 100.0) {
             1
         } else {
             2
         }
     }
+}
+
+/// The catalog's condom (the convenience store sells them; user 2026-11-03: none put on unless one of them has one).
+pub const CONDOM: &str = "cv_condom";
+
+/// How many condoms she has of her own (ext.items.owned, bought herself or given).
+fn her_condoms(ext: &Value, girl: &str) -> usize {
+    ext.get("items").and_then(|i| i.get("owned")).and_then(|o| o.get(girl)).and_then(Value::as_array).map_or(0, |a| a.iter().filter(|e| e.get("item").and_then(Value::as_str) == Some(CONDOM)).count())
 }
 
 pub fn of(ext: &Value, girl: &str) -> HExp {
@@ -203,6 +225,8 @@ fn experience(r: &Value) -> Result<Value, String> {
         "level": level, "level_name": level_name(level), "areas": areas, "count": h.count, "virgin": h.virgin || h.hymen_restored, "anal_virgin": h.anal_virgin,
         "hymen_restored": h.hymen_restored,
         "raw_ok": raw_ok,
+        // Condoms of hers she can give him for it (his own are his bag's, the street adds them as his_condoms).
+        "her_condoms": her_condoms(r.get("ext").unwrap_or(&Value::Null), girl),
         "anal_chance": anal_chance,
         "service_rounds": service_rounds,
         "climax_limit": climax_limit,
@@ -225,6 +249,11 @@ fn experience(r: &Value) -> Result<Value, String> {
         "used": level >= 2,
         "kissed": h.kissed,
         "poses_played": h.poses,
+        "orgasms": h.orgasms,
+        "climaxes": h.climaxes,
+        "sex_count": h.sex_count,
+        "vaginal_count": h.vaginal_count,
+        "anal_count": h.anal_count,
         "pregnancy": crate::pregnancy::view(&preg, girl, day.max(0)),
     }))
 }
@@ -336,6 +365,22 @@ fn session_end(r: &Value) -> Result<Value, String> {
         if flag(&c, "raw") {
             h.raw_count = (h.raw_count + 1).min(1000);
         }
+        // Her climaxes in all and where (counts.climax_areas: from his touch and kiss; crotch and anal add those with
+        // him in her), and the times they had sex.
+        h.orgasms = (h.orgasms + num(&c, "her_orgasms").clamp(0.0, 100.0) as i32).min(100_000);
+        let by_touch = c.get("climax_areas").cloned().unwrap_or_else(|| json!({}));
+        for k in AREA_KEYS.iter().chain(BODY_KEYS.iter()) {
+            let inside = if *k == "crotch" || *k == "anal" { num(c.get(*k).unwrap_or(&Value::Null), "climaxes") } else { 0.0 };
+            let n = (num(&by_touch, k) + inside).clamp(0.0, 100.0) as i32;
+            if n > 0 {
+                let e = h.climaxes.entry(k.to_string()).or_insert(0);
+                *e = (*e + n).min(100_000);
+            }
+        }
+        let (vaginal, anal) = (flag(c.get("crotch").unwrap_or(&Value::Null), "inserted"), flag(c.get("anal").unwrap_or(&Value::Null), "inserted"));
+        h.vaginal_count += i32::from(vaginal);
+        h.anal_count += i32::from(anal);
+        h.sex_count += i32::from(vaginal || anal);
         h.count = (h.count + 1).min(10000);
         // Lewdness: the original's result table adds a few points a scene, more when she came; anal play adds to it.
         let orgasms = num(&c, "her_orgasms").clamp(0.0, 3.0) as f32;
@@ -410,7 +455,7 @@ fn session_end(r: &Value) -> Result<Value, String> {
     }
     let level_after = h.level(rel.lewdness);
     // The result shown when the scene ends (HSceneResult): each place before and after, in the panel's order, as the scene
-    // shows them (area(): crotch and anal with their intercourse), and the firsts of this time.
+    // shows them (area(): development only), and the firsts of this time.
     let rows: Vec<Value> = [(KISS, "kiss"), (CHEST, "chest"), (NIPPLE, "nipple"), (BUTT, "butt"), (CROTCH, "crotch"), (ANAL, "anal")]
         .iter()
         .map(|&(i, key)| json!({"area": key, "name": area_name(i), "before": was.area(i).round(), "after": h.area(i).round()}))
@@ -440,7 +485,9 @@ fn session_end(r: &Value) -> Result<Value, String> {
         crate::pregnancy::store(&mut ext, girl, &preg);
     }
     let pregnancy = crate::pregnancy::view(&preg, girl, day.max(0));
-    let result = json!({"areas": rows, "firsts": firsts, "level_before_name": level_name(level_before), "played": played, "pregnancy": pregnancy, "conceived": conceived});
+    // Her totals after this time (the result screen's line).
+    let totals = json!({"orgasms": h.orgasms, "climaxes": h.climaxes, "sex_count": h.sex_count, "vaginal_count": h.vaginal_count, "anal_count": h.anal_count, "count": h.count});
+    let result = json!({"areas": rows, "firsts": firsts, "level_before_name": level_name(level_before), "played": played, "pregnancy": pregnancy, "conceived": conceived, "totals": totals});
     if level_after != level_before && level_after > 0 {
         fx.note_at(&rel.id, "h_level", &crate::tr::m("hexp.level_changed", &[("level", crate::tr::a(level_name(level_after)))]), place, 0.85);
     }
@@ -449,7 +496,17 @@ fn session_end(r: &Value) -> Result<Value, String> {
         ext["hexp"] = json!({});
     }
     ext["hexp"][girl] = serde_json::to_value(&h).map_err(|e| e.to_string())?;
-    Ok(json!({"ext": ext, "effects": fx.into_value(), "level_before": level_before, "level_after": level_after, "level_name": level_name(level_after), "hexp": h, "result": result}))
+    // The condoms put on in the scene are used up: his from his bag (his_remove), hers from what she owns.
+    let his_used = num(&c, "condoms_his").clamp(0.0, 50.0) as usize;
+    let mut her_used = num(&c, "condoms_her").clamp(0.0, 50.0) as usize;
+    if let Some(owned) = ext.get_mut("items").and_then(|i| i.get_mut("owned")).and_then(|o| o.get_mut(girl)).and_then(Value::as_array_mut) {
+        owned.retain(|e| {
+            let used = her_used > 0 && e.get("item").and_then(Value::as_str) == Some(CONDOM);
+            her_used -= usize::from(used);
+            !used
+        });
+    }
+    Ok(json!({"ext": ext, "effects": fx.into_value(), "level_before": level_before, "level_after": level_after, "level_name": level_name(level_after), "hexp": h, "result": result, "his_remove": vec![CONDOM; his_used]}))
 }
 
 pub fn eval(kind: &str, r: &Value) -> Option<Result<Value, String>> {
@@ -486,6 +543,23 @@ mod tests {
     }
 
     #[test]
+    fn her_climaxes_by_place_and_the_times_they_had_sex_add_up() {
+        let ext = json!({"hexp": {"g": {"count": 2, "virgin": false, "orgasms": 3, "climaxes": {"crotch": 2, "chest": 1}, "sex_count": 1, "vaginal_count": 1}}});
+        let counts = json!({"played": true, "her_orgasms": 4, "climax_areas": {"chest": 1, "kiss": 1}, "crotch": {"inserted": true, "climaxes": 2}, "anal": {"inserted": true, "climaxes": 0}});
+        let out = session_end(&json!({"girl": "g", "relation": rel(10.0), "ext": ext, "counts": counts})).unwrap();
+        let h = &out["hexp"];
+        assert_eq!(h["orgasms"], 7);
+        assert_eq!(h["climaxes"], json!({"chest": 2, "crotch": 4, "kiss": 1}));
+        assert_eq!((h["sex_count"].as_i64(), h["vaginal_count"].as_i64(), h["anal_count"].as_i64()), (Some(2), Some(2), Some(1)));
+        assert_eq!(out["result"]["totals"]["sex_count"], 2);
+        let e = experience(&json!({"girl": "g", "relation": rel(10.0), "ext": out["ext"]})).unwrap();
+        assert_eq!((e["orgasms"].as_i64(), e["climaxes"]["crotch"].as_i64(), e["sex_count"].as_i64()), (Some(7), Some(4), Some(2)));
+        // Only caressed: she came, but they did not have sex.
+        let out = session_end(&json!({"girl": "g", "relation": rel(10.0), "ext": out["ext"], "counts": {"played": true, "her_orgasms": 1, "climax_areas": {"nipple": 1}}})).unwrap();
+        assert_eq!((out["hexp"]["sex_count"].as_i64(), out["hexp"]["climaxes"]["nipple"].as_i64()), (Some(2), Some(1)));
+    }
+
+    #[test]
     fn climaxes_in_her_and_his_mouth_develop_her() {
         let ext = json!({"hexp": {"g": {"count": 1, "areas": [0, 0, 30, 95, 0, 0], "oral": 40}}});
         let out = session_end(&json!({"girl": "g", "relation": rel(0.0), "ext": ext, "counts": {"played": true,
@@ -494,9 +568,9 @@ mod tests {
         assert_eq!(h.areas[CROTCH], 50.0);
         assert_eq!(h.areas[ANAL], 100.0);
         assert_eq!(h.oral, 70.0);
-        // Her anal past 100, her mouth past 60 and her crotch past 60 (its intercourse counted in) are remembered.
+        // Her anal past 100 and her mouth past 60 are remembered; her crotch (30 -> 50, its intercourse not counted) crosses none.
         let areas = out["effects"].as_array().unwrap().iter().filter(|e| e.get("act").and_then(Value::as_str) == Some("h_area")).count();
-        assert_eq!(areas, 3);
+        assert_eq!(areas, 2);
         let e = experience(&json!({"girl": "g", "relation": rel(0.0), "ext": out["ext"]})).unwrap();
         assert_eq!(e["areas"]["oral"], json!(70.0));
     }
@@ -506,7 +580,9 @@ mod tests {
         let ext = json!({"hexp": {"g": {"count": 1, "virgin": false, "areas": [0, 0, 20, 0, 0, 0], "crotch_h": 30}}});
         let out = session_end(&json!({"girl": "g", "relation": rel(0.0), "ext": ext, "counts": {"played": true}})).unwrap();
         let crotch = out["result"]["areas"].as_array().unwrap().iter().find(|a| a["area"] == "crotch").unwrap().clone();
-        assert_eq!(crotch["before"], json!(50.0), "20 touched + 30 intercourse, as the scene's panel and experience() show");
+        assert_eq!(crotch["before"], json!(20.0), "development only, as the scene's panel and experience() show (not the 30 intercourse)");
+        let e = experience(&json!({"girl": "g", "relation": rel(0.0), "ext": ext})).unwrap();
+        assert_eq!(e["areas"]["crotch"], json!(20.0));
     }
 
     #[test]
@@ -643,6 +719,18 @@ mod tests {
     }
 
     #[test]
+    fn condoms_put_on_are_used_up_his_and_hers() {
+        let ext = json!({"items": {"owned": {"g": [{"item": "cv_condom", "from": "own", "day": 1}, {"item": "cv_tea", "from": "own", "day": 1}, {"item": "cv_condom", "from": "own", "day": 2}]}}});
+        let e = experience(&json!({"girl": "g", "relation": rel(0.0), "ext": ext})).unwrap();
+        assert_eq!(e["her_condoms"], 2);
+        let out = session_end(&json!({"girl": "g", "relation": rel(0.0), "ext": ext, "counts": {"played": true, "condoms_his": 2, "condoms_her": 1}})).unwrap();
+        assert_eq!(out["his_remove"], json!(["cv_condom", "cv_condom"]));
+        let left: Vec<&str> = out["ext"]["items"]["owned"]["g"].as_array().unwrap().iter().filter_map(|e| e["item"].as_str()).collect();
+        assert_eq!(left, ["cv_tea", "cv_condom"]);
+        assert_eq!(experience(&json!({"girl": "g", "relation": rel(0.0), "ext": out["ext"]})).unwrap()["her_condoms"], 1);
+    }
+
+    #[test]
     fn nothing_played_changes_no_experience() {
         let out = session_end(&json!({"girl": "g", "relation": rel(0.0), "ext": {}, "counts": {}})).unwrap();
         assert_eq!(out["ext"]["hexp"]["g"]["count"], 0);
@@ -651,9 +739,9 @@ mod tests {
 
     #[test]
     fn raw_and_anal_follow_experience() {
-        let e = experience(&json!({"girl": "g", "relation": rel(0.0), "ext": {"hexp": {"g": {"count": 1, "anal_h": 30, "areas": [0, 0, 0, 20, 0, 0]}}}})).unwrap();
+        let e = experience(&json!({"girl": "g", "relation": rel(0.0), "ext": {"hexp": {"g": {"count": 1, "anal_h": 30, "areas": [0, 0, 0, 50, 0, 0]}}}})).unwrap();
         assert_eq!(e["raw_ok"], false);
-        assert!((e["anal_chance"].as_f64().unwrap() - 0.5).abs() < 1e-6);
+        assert!((e["anal_chance"].as_f64().unwrap() - 0.5).abs() < 1e-6, "her anal development 50; its intercourse (anal_h) only judges her level");
         assert_eq!(e["kiss_ok"], false);
         assert_eq!(ladder(5), 32.0);
     }

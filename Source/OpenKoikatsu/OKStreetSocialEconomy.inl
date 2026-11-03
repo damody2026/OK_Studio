@@ -808,6 +808,19 @@ void AOKStreetSocialScene::BuyForGift(const FString& ItemId){
  if(CommitStore(MoveTemp(Candidate))){S.FreeTalkNotice=OKMsg(TEXT("ui.economy.bought_item_line"), {{TEXT("item_name"), *Item->Name}, {TEXT("price"), Price}});RefreshUI();}
 }
 
+// She buys it with her own money and keeps it (ok-rules items_her_buy); a condom of hers she gives him in the room.
+void AOKStreetSocialScene::HerBuys(int32 Her,const FString& ItemId){
+ auto& S=*State;const auto* Item=S.Catalog.Find(ItemId);if(!Item||!S.Manifest.Characters.IsValidIndex(Her))return;
+ const FString Id=OKStreetStableId(S.Manifest.Characters[Her]);auto Ask=OKRulesHeroineRequest(S,TEXT("items_her_buy"),Id);
+ Ask->SetStringField(TEXT("girl"),Id);Ask->SetStringField(TEXT("item"),ItemId);Ask->SetNumberField(TEXT("price"),Item->PriceOf(Item->DefaultSize()));OKRulesPutExt(S,Ask);
+ const TSharedPtr<FJsonObject> Answer=OKRulesEval(S,Ask);if(!Answer.IsValid())return;
+ if(!Answer->GetBoolField(TEXT("ok"))){S.FreeTalkNotice=OKMsg(TEXT("ui.economy.she_cannot_buy"),{{TEXT("item_name"),*Item->Name}});RefreshUI();return;}
+ auto Candidate=S.Store;OKRulesTakeExt(Candidate,*Answer);ApplyRulesEffects(Candidate,*Answer);if(CommitStore(MoveTemp(Candidate)))FlushRulesEffects();
+ UE_LOG(LogTemp,Display,TEXT("Street shop: actor=%d bought %s herself"),Her,*ItemId);
+ S.FreeTalkNotice=OKMsg(TEXT("ui.economy.she_bought_item"),{{TEXT("item_name"),*Item->Name}});
+ S.TellHer.Add(OKMsg(TEXT("ui.economy.she_bought_tell"),{{TEXT("item_name"),*Item->Name}}));RefreshUI();
+}
+
 void AOKStreetSocialScene::StartGift(const FString& ItemId){
  auto& S=*State;const int32 Her=FreeTalkPartner();const auto* Item=S.Catalog.Find(ItemId);
  if(Her==INDEX_NONE||!Item||!S.Store.Inventory.Contains(ItemId))return;
@@ -962,6 +975,8 @@ TSharedRef<SWidget> AOKStreetSocialScene::BuildMenuCard(const FString& Title,int
   else if(Item->Consumable)Row->AddSlot().AutoWidth().Padding(2,0)[Button(OKT(TEXT("ui.economy.takeaway_label")),[Weak,Id](){Weak->BuyForGift(Id);})];
   // Goods for himself (an umbrella, a comic, a notebook): bought into his bag.
   else if(Item->Category==TEXT("goods"))Row->AddSlot().AutoWidth().Padding(2,0)[Button(OKT(TEXT("ui.economy.buy_for_self_button")),[Weak,Id](){Weak->BuyForGift(Id);})];
+  // What she can buy herself with him there (tag she_buys: condoms, user 2026-11-03), kept on her (items_her_buy).
+  if(Her!=INDEX_NONE&&Item->Tags.Contains(TEXT("she_buys")))Row->AddSlot().AutoWidth().Padding(2,0)[Button(OKT(TEXT("ui.economy.she_buys_button")),[Weak,Id,Her](){Weak->HerBuys(Her,Id);})];
   List->AddSlot().AutoHeight().Padding(0,3)[Row];
  }
  // As tall as the screen allows; a long menu scrolls inside the card.

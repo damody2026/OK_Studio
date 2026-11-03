@@ -364,6 +364,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Koikatsu|Expression")
 	bool SetEyeGaze(float LeftHorizontal, float RightHorizontal, float Vertical);
 	float EyeGaze[3] = {0.f,0.f,0.f};
+	// SetEyeGaze through the iris tiling of the shared display materials: each one's card tiling, kept the first time.
+	TMap<TWeakObjectPtr<UMaterialInstanceDynamic>,FLinearColor> EyeTilingBase;
+	bool bEyeTilingSaid = false;
 	UFUNCTION(BlueprintCallable, Category="Koikatsu|Face")
 	bool SetEyeLookTarget(FVector WorldTarget, int32 Pattern, bool Enabled = true);
 	UFUNCTION(BlueprintCallable, Category="Koikatsu|Face")

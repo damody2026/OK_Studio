@@ -3,6 +3,37 @@
 #[allow(unused_imports)] use crate::gamefs::GamePath as _;
 use super::*;
 
+/// How the bust and the hips move (process-wide, `ok_set_body_part_physics`; user 2026-11-03: set apart, the original's
+/// verlet by default, the hips springy like the bust but firmer, and a pudding wobble).
+/// Mode 0 the original: the bust by its BustSoft table and the card's softness; the hips by the same table at their own
+/// softness (default 0.12, firmer than a usual bust's 0.26). Mode 1 pudding: little damping and pull back, so it keeps
+/// wobbling after a move. Mode 2 (hips) the prefab's own values untouched, as the game ships them.
+/// Softness below 0: the card's (the bust) or the default (the hips).
+#[derive(Clone,Copy,Debug,PartialEq)]
+pub struct PartPhysics { pub mode: i32, pub softness: f32 }
+static PART_PHYSICS: std::sync::Mutex<[PartPhysics;2]> = std::sync::Mutex::new([PartPhysics{mode:0,softness:-1.0},PartPhysics{mode:0,softness:-1.0}]);
+pub const HIP_SOFTNESS: f32 = 0.12;
+pub fn set_part_physics(part: usize, value: PartPhysics) -> bool {
+    if part>1||!(0..=2).contains(&value.mode)||!value.softness.is_finite() {return false;}
+    PART_PHYSICS.lock().map(|mut p|p[part]=value).is_ok()
+}
+pub fn part_physics(part: usize) -> PartPhysics { PART_PHYSICS.lock().map(|p|p[part.min(1)]).unwrap_or(PartPhysics{mode:0,softness:-1.0}) }
+/// The tuning of one chain's pattern by its kind (0/1 bust, 2/3 hips) and the settings above.
+fn tune_pattern(kind: Option<usize>, pattern: &mut Pattern, softness: f32, weight: f32, size: f32) {
+    let (part,bust)=match kind {Some(0|1)=>(0,true),Some(2|3)=>(1,false),_=>return};
+    let set=part_physics(part);
+    if !bust&&set.mode==2 {return;}
+    let rate=if bust {if set.softness>=0.0 {set.softness.clamp(0.0,1.0)} else {(softness*size+0.01).clamp(0.0,1.0)}}
+        else if set.softness>=0.0 {set.softness.clamp(0.0,1.0)} else {HIP_SOFTNESS};
+    let tree=|v:[f32;3]|if rate<0.5 {v[0]+(v[1]-v[0])*rate*2.0}else{v[1]+(v[2]-v[1])*(rate-0.5)*2.0};
+    let lerp=|a:f32,b:f32|a+(b-a)*rate;
+    for p in &mut pattern.params {
+        if set.mode==1 {p.damping=lerp(0.06,0.02);p.elasticity=lerp(0.12,0.04);p.stiffness=lerp(0.05,0.0);}
+        else {p.damping=tree([0.2,0.1,0.1]);p.elasticity=tree([0.2,0.15,0.05]);p.stiffness=tree([1.0,0.1,0.01]);}
+    }
+    if bust {pattern.gravity=[0.0,-0.005*weight.clamp(0.0,1.0)*size*softness*0.5,0.0];}
+}
+
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct BodyDynamicSet { components: Vec<Component> }
 
@@ -148,10 +179,7 @@ impl BodyDynamicSet {
             // refresh_breast_references finds the first fresh matching chain.
             let Some((c,_,ids))=valid.iter().find(|(c,root,_)|*root==chain.root&&c.kind==chain.kind) else {continue;};
             let mut pattern=c.patterns[0].clone();if pattern.params.len()!=chain.particles.len(){continue;}
-            let rate=(softness*size+0.01).clamp(0.0,1.0);
-            let tree=|v:[f32;3]|if rate<0.5 {v[0]+(v[1]-v[0])*rate*2.0}else{v[1]+(v[2]-v[1])*(rate-0.5)*2.0};
-            for p in &mut pattern.params {p.damping=tree([0.2,0.1,0.1]);p.elasticity=tree([0.2,0.15,0.05]);p.stiffness=tree([1.0,0.1,0.01]);}
-            pattern.gravity=[0.0,-0.005*weight.clamp(0.0,1.0)*size*softness*0.5,0.0];
+            tune_pattern(c.kind,&mut pattern,softness,weight,size);
             let mut reference_pose=scratch.take().unwrap_or_else(||skel.clone());
             for id in previous_targets.drain(..) {if let (Some(target),Some(source))=(reference_pose.tfs.get_mut(&id),skel.tfs.get(&id)){target.pos=source.pos;target.rot=source.rot;target.scale=source.scale;}}
             for (id,p) in ids.iter().zip(&pattern.params) {
@@ -197,16 +225,7 @@ impl BodyDynamicSet {
             let Some(ids) = c.bones.iter().map(|n| names.get(n).copied()).collect::<Option<Vec<_>>>() else { continue; };
             // Awake always selects pattern 0; serialized PtnNo is not the initial pattern.
             let mut pattern = c.patterns[0].clone();
-            if matches!(c.kind, Some(0 | 1)) {
-                let rate = (softness * size + 0.01).clamp(0.0, 1.0);
-                let tree = |v: [f32; 3]| if rate < 0.5 { v[0] + (v[1] - v[0]) * rate * 2.0 }
-                    else { v[1] + (v[2] - v[1]) * (rate - 0.5) * 2.0 };
-                for p in &mut pattern.params {
-                    p.damping = tree([0.2, 0.1, 0.1]); p.elasticity = tree([0.2, 0.15, 0.05]);
-                    p.stiffness = tree([1.0, 0.1, 0.01]);
-                }
-                pattern.gravity = [0.0, -0.005 * weight.clamp(0.0, 1.0) * size * softness * 0.5, 0.0];
-            }
+            tune_pattern(c.kind, &mut pattern, softness, weight, size);
             let mut particles = Vec::new();
             let mut reference_pose = if reuse_references {reference_scratch.take().unwrap_or_else(||skel.clone())}else{skel.clone()};
             // Only these local transforms were changed by the previous chain.

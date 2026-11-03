@@ -20,7 +20,7 @@ pub(crate) fn source_eye_draw(game:&Path,vanilla:&ChaListCatalog,mods:&ChaListCa
     let mut mesh=raw.clone();
     apply_me_shader(game,Some(&card.me_shader),0,"head",None,&mut mesh);
     apply_me_floats(&card.me_float,0,"head",None,&mut mesh);
-    if !head_uses_eye_draw(&mesh) {return None;}
+    if !head_uses_eye_draw(&mesh) {eprintln!("ok-extract: eye draw none {} shader={}",raw.name,mesh.mat.as_ref().map_or("",|m|m.shader.as_str()));return None;}
     let mat=mesh.mat.as_ref()?;
     let kind=if mat.shader.eq_ignore_ascii_case("Shader Forge/toon_eye_lod0") {2}else{1};
     let lerp=|a:f32,b:f32,t:f32|a+(b-a)*t.clamp(0.,1.);

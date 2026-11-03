@@ -310,6 +310,8 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character){
  {const FString Id=OKStreetStableId(S.Manifest.Characters[Character]);auto Ask=OKRulesHeroineRequest(S,TEXT("h_experience"),Id);Ask->SetStringField(TEXT("girl"),Id);Ask->SetNumberField(TEXT("day"),S.Store.CalendarDay);OKRulesPutExt(S,Ask);
   // With her desire and bust: past 100 she runs and her nipples leak in the room too (OKHScene drips).
   TSharedPtr<FJsonObject> Experience=OKRulesEval(S,Ask);if(Experience.IsValid()){Experience->SetNumberField(TEXT("sex_desire"),OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget).SexDesire);Experience->SetNumberField(TEXT("bust"),OKStreetHerCard(S,Character).Bust);
+   // His condoms (the H panel puts one on only when he or she has one; hers are hexp's her_condoms).
+   Experience->SetNumberField(TEXT("his_condoms"),S.Store.Inventory.FilterByPredicate([](const FString& I){return I==TEXT("cv_condom");}).Num());
    // Taken from touching herself on the street: she wants it, raw and all (OKStreetSocialOnani.inl).
    if(S.OnaniPrivate==Character){Experience->SetBoolField(TEXT("street_onani"),true);Experience->SetBoolField(TEXT("raw_ok"),true);Experience->SetBoolField(TEXT("kiss_ok"),true);Experience->SetBoolField(TEXT("resentful"),false);}}
   Mode->BeginHScene(S.Manifest.Characters[Character].Name,OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget).Stage,Experience,S.Manifest.Characters[0].Name);}
@@ -371,6 +373,14 @@ void AOKStreetSocialScene::ShowHResult(int32 Girl,const FJsonObject& Answer){
   const TArray<TSharedPtr<FJsonValue>>* Played=nullptr;TArray<FString> Names;
   if((*H)->TryGetArrayField(TEXT("poses"),Played))for(const auto& V:*Played)Names.AddUnique(V->AsString());
   if(Names.Num())Line(OKMsg(TEXT("ui.hresult.stats_poses"),{{TEXT("poses"),FString::Join(Names,OKT(TEXT("ui.memory.list_separator")))}}),Grey,14);}
+ // Her totals so far (hexp: the times they had sex, her climaxes and where).
+ const TSharedPtr<FJsonObject>* Totals=nullptr;
+ if((*Result)->TryGetObjectField(TEXT("totals"),Totals)){static const TCHAR* Keys[]={TEXT("kiss"),TEXT("chest"),TEXT("nipple"),TEXT("butt"),TEXT("crotch"),TEXT("anal"),TEXT("head"),TEXT("hand"),TEXT("thigh"),TEXT("calf"),TEXT("foot")};
+  const TSharedPtr<FJsonObject>* By=nullptr;(*Totals)->TryGetObjectField(TEXT("climaxes"),By);TArray<FString> Where;
+  for(const TCHAR* K:Keys){double V=0;if(By)(*By)->TryGetNumberField(K,V);if(V>0)Where.Add(OKMsg(TEXT("ui.hscene.history_place"),{{TEXT("place"),OKT(*(FString(TEXT("ui.hscene.part_"))+(FCString::Strcmp(K,TEXT("kiss"))==0?TEXT("lips"):K)))},{TEXT("n"),int32(V)}}));}
+  auto T=[&](const TCHAR* K){double V=0;(*Totals)->TryGetNumberField(K,V);return int32(V);};
+  Line(OKMsg(TEXT("ui.hresult.stats_total"),{{TEXT("sex"),T(TEXT("sex_count"))},{TEXT("vaginal"),T(TEXT("vaginal_count"))},{TEXT("anal"),T(TEXT("anal_count"))},{TEXT("orgasms"),T(TEXT("orgasms"))}}),FLinearColor(.95f,.85f,.6f),14);
+  if(Where.Num())Line(OKMsg(TEXT("ui.hresult.stats_where"),{{TEXT("where"),FString::Join(Where,OKT(TEXT("ui.memory.list_separator")))}}),FLinearColor(.95f,.85f,.6f),14);}
  Rows->AddSlot().AutoHeight().HAlign(HAlign_Right).Padding(FMargin(0,10,0,0))
   [SNew(SButton).ButtonStyle(OKStreetGlassButton()).ContentPadding(FMargin(18,6)).Text(FText::FromString(OKT(TEXT("ui.hresult.close"))))
    .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid()&&Weak->State&&Weak->State->HResultPanel.IsValid()&&GEngine&&GEngine->GameViewport){GEngine->GameViewport->RemoveViewportWidgetContent(Weak->State->HResultPanel.ToSharedRef());Weak->State->HResultPanel.Reset();}return FReply::Handled();})];
