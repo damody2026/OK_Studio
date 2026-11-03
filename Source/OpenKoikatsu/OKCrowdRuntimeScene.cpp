@@ -1757,7 +1757,6 @@ void OKSetCrowdRuntimeOutlinesShown(AActor* Owner,int32 Character,bool Shown){
  if(!State||State->Stopped||!State->Entries.IsValidIndex(Character))return;
  for(const auto& M:State->Entries[Character]->OutlineMaterials)if(auto* I=M.Get())I->SetScalarParameterValue(TEXT("__OK_RuntimeRevealOverride"),Shown?-1.f:0.f);
 }
-}
 bool OKGetCrowdRuntimeFaceLook(AActor* Owner,int32 Character,FOKRuntimeFaceLookNow& Now){
  check(IsInGameThread());const auto* Weak=OKRuntimeScene::ActiveScenes.Find(Owner);const auto State=Weak?Weak->Pin():nullptr;
  if(!State||State->Stopped||!State->Entries.IsValidIndex(Character))return false;const auto& E=*State->Entries[Character];const auto& L=E.LookNow;
