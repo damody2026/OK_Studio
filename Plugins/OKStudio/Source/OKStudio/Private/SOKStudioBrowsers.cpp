@@ -643,8 +643,14 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 		FOKScenePost& Post = Game->Document->Post;
 		if (Game->Document->Map >= 0 && !Post.bSky && !OKStudioMapSky(Game->Document->Map, Post.SunType, MapPattern)) { Post.bSky = true; Post.SkyPattern = FMath::Clamp(Post.SunType, 0, 3); }
 		Changed();
+		// With nobody in the scene yet the view goes to the map's origin, where Studio stands its characters (U147).
+		if (!Game->Document->Objects.ContainsByPredicate([](const FOKSceneObject& O) { return O.Kind == EOKSceneObjectKind::Character; })) Game->ViewPreset(5);
 		FOKStudioSettings::Get().UseRecent(FString::Printf(TEXT("map:%d"), Game->Document->Map));
-		SetStatus(TEXT("地圖：") + (FOKStudioCatalog::Get().FindMap(Game->Document->Map) ? FOKStudioCatalog::Get().FindMap(Game->Document->Map)->Name : FString(TEXT("無"))));
+		FString Note = TEXT("地圖：") + (FOKStudioCatalog::Get().FindMap(Game->Document->Map) ? FOKStudioCatalog::Get().FindMap(Game->Document->Map)->Name : FString(TEXT("無")));
+		// The characters are carried over: those left over nothing or in a wall of the new map move to its ground (U146).
+		Game->SyncDocumentNow();
+		if (const int32 Moved = Game->SettleCharactersOnMap()) { Changed(); Note += FString::Printf(TEXT("；%d 個角色移到地圖的地面上"), Moved); }
+		SetStatus(Note);
 	};
 	// A double click loads the map at once (U126), as a card's adds it.
 	auto MapRow = [this, LoadMap](const FString& Text, int32 No)

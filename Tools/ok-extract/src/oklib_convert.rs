@@ -419,4 +419,33 @@ mod uv_padding_scan {
         eprintln!("UVCHANGED total sources={} of {}", changed.len(), sources.len());
         if let Ok(out) = std::env::var("OK_UV_SCAN_OUT") { std::fs::write(out, changed.join("\n") + "\n").unwrap(); }
     }
+
+    // Lists the sources whose decoded vertices change with the channel-dimension mask of `decoded_from_object` (U143:
+    // flag bits above the low four read as dimension). OK_DIM_SCAN_OUT=<file>: one label per line, the
+    // `OKLIB_REFRESH=meshes_for_maindata,decode_all,base_bundle convert <lib> 8 @<file>` list that re-records them.
+    #[test]
+    #[ignore = "game oracle: reads every library source of the KKS installation (set OK_TEST_GAME_ROOT)"]
+    fn sources_with_flagged_channel_dimensions() {
+        use rayon::prelude::*;
+        let game = crate::test_support::game();
+        let sources = super::inventory(&game);
+        let changed: Vec<String> = sources.par_iter().filter_map(|source| {
+            let bytes = super::read_source(source)?;
+            if !crate::oklib::is_unity_bundle(&bytes) { return None; }
+            let decode = |unmasked: bool| {
+                crate::unity::CHANNEL_DIM_UNMASKED.with(|f| f.set(unmasked));
+                let meshes = crate::unity::meshes_from_memory(bytes.clone());
+                crate::unity::clear_bundle_cache();
+                crate::unity::CHANNEL_DIM_UNMASKED.with(|f| f.set(false));
+                meshes.into_iter().map(|m| (m.name, m.positions, m.normals, m.uvs)).collect::<Vec<_>>()
+            };
+            let (old, new) = (decode(true), decode(false));
+            let names: Vec<String> = old.iter().zip(&new).filter(|(a, b)| a != b).map(|(a, _)| a.0.clone()).collect();
+            if names.is_empty() { return None; }
+            eprintln!("DIMCHANGED {} meshes={} {}", source.label, names.len(), names.iter().take(6).cloned().collect::<Vec<_>>().join(","));
+            Some(source.label.clone())
+        }).collect();
+        eprintln!("DIMCHANGED total sources={} of {}", changed.len(), sources.len());
+        if let Ok(out) = std::env::var("OK_DIM_SCAN_OUT") { std::fs::write(out, changed.join("\n") + "\n").unwrap(); }
+    }
 }

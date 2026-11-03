@@ -413,6 +413,55 @@ void UOKStudioGame::Stop()
 	RemoveFromRoot();
 }
 
+// A map part's top face under the feet and within a step of them: ground to stand on (U146: the courtyard's origin is
+// just off its paving, over nothing).
+static bool OKStandsOnMap(const TArray<FBox>& Parts, const FVector& W)
+{
+	return Parts.ContainsByPredicate([&W](const FBox& B)
+		{ return W.X >= B.Min.X && W.X <= B.Max.X && W.Y >= B.Min.Y && W.Y <= B.Max.Y && FMath::Abs(B.Max.Z - W.Z) <= 25.; });
+}
+
+// The map's parts that stand between the ankles and the head (not the floor, not the walls and ceiling of a room, whose
+// bounds hold all of it).
+static void OKMapFurniture(const TArray<FBox>& Parts, TArray<FBox>& Out)
+{
+	for (const FBox& B : Parts)
+		if (B.GetSize().X < 400. && B.GetSize().Y < 400. && B.Max.Z > 15. && B.Min.Z < 150.) Out.Add(B);
+}
+
+int32 UOKStudioGame::SettleCharactersOnMap()
+{
+	if (!SceneActor || !Document || Document->Map < 0) return 0;
+	TArray<FBox> Parts, Furniture;
+	SceneActor->MapPartBounds(Parts);
+	if (Parts.IsEmpty()) return 0;
+	OKMapFurniture(Parts, Furniture);
+	const FTransform Scene = SceneActor->GetActorTransform();
+	TArray<FVector> Taken;
+	auto Good = [&](const FVector& P)
+	{
+		if (Taken.ContainsByPredicate([&P](const FVector& T) { return FVector::Dist2D(T, P) < 60.f; })) return false;
+		const FVector W = Scene.TransformPosition(P);
+		const FBox Body(W + FVector(-22.f, -22.f, 15.f), W + FVector(22.f, 22.f, 150.f));
+		return OKStandsOnMap(Parts, W) && !Furniture.ContainsByPredicate([&Body](const FBox& B) { return B.Intersect(Body); });
+	};
+	int32 Moved = 0;
+	for (FOKSceneObject& O : Document->Objects)
+	{
+		if (O.Kind != EOKSceneObjectKind::Character || O.Parent >= 0) continue;
+		const FVector P = O.Transform.GetLocation();
+		FVector At = P;
+		bool bFound = Good(P);
+		for (int32 Ring = 1; Ring <= 25 && !bFound; ++Ring)
+			for (int32 A = 0; A < 24 && !bFound; ++A) { At = P + FRotator(0.f, A * 15.f, 0.f).Vector() * (40.f * Ring); bFound = Good(At); }
+		if (!bFound) At = P;
+		else if (!At.Equals(P)) { O.Transform.SetLocation(At); ++Moved; }
+		Taken.Add(At);
+	}
+	if (Moved) Document->NotifyChanged();
+	return Moved;
+}
+
 int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 {
 	const int32 Id = Add(EOKSceneObjectKind::Character);
@@ -429,14 +478,14 @@ int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 		// focus, by the bounds of the map's parts that stand between the ankles and the head (not the floor, not the
 		// walls and ceiling of the room, whose bounds hold all of it).
 		const FVector Right = FRotationMatrix(FRotator(0.f, Yaw, 0.f)).GetUnitAxis(EAxis::Y);
-		TArray<FBox> Furniture;
+		TArray<FBox> Furniture, MapParts;
 		if (SceneActor)
 		{
-			TArray<FBox> Parts;
-			SceneActor->MapPartBounds(Parts);
-			for (const FBox& B : Parts)
-				if (B.GetSize().X < 400. && B.GetSize().Y < 400. && B.Max.Z > 15. && B.Min.Z < 150.) Furniture.Add(B);
+			SceneActor->MapPartBounds(MapParts);
+			OKMapFurniture(MapParts, Furniture);
 		}
+		// Where some spot has ground under it, a spot without is no spot (U146); a map with none found keeps the old rule.
+		bool bNeedGround = MapParts.Num() > 0;
 		const FTransform Scene = SceneActor ? SceneActor->GetActorTransform() : FTransform::Identity;
 		// The characters already there take the room their bones span, and the new one is taken to stand as wide as the
 		// widest of them (U134: 60 cm apart, a T-posed man's arm went through her head).
@@ -450,8 +499,9 @@ int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 			HalfWidth = FMath::Max(HalfWidth, float(FMath::Max(B.GetExtent().X, B.GetExtent().Y)));
 		}
 		HalfWidth = FMath::Min(HalfWidth, 120.f);
-		auto Free = [this, Id, &Furniture, &People, &Scene, HalfWidth](const FVector& P)
+		auto Free = [this, Id, &Furniture, &People, &Scene, HalfWidth, &MapParts, &bNeedGround](const FVector& P)
 		{
+			if (bNeedGround && !OKStandsOnMap(MapParts, Scene.TransformPosition(P))) return false;
 			if (Document->Objects.ContainsByPredicate([this, Id, &P](const FOKSceneObject& X)
 				{ return X.Id != Id && X.Kind == EOKSceneObjectKind::Character && FVector::Dist2D(Document->WorldTransform(X.Id).GetLocation(), P) < 50.f; })) return false;
 			const FVector W = Scene.TransformPosition(P);
@@ -495,6 +545,15 @@ int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 		{
 			const double C = Cost(P);
 			if (C < Best && Free(P)) { Best = C; At = P; bFound = true; }
+		}
+		if (!bFound && bNeedGround)
+		{
+			bNeedGround = false;
+			for (const FVector& P : Spots)
+			{
+				const double C = Cost(P);
+				if (C < Best && Free(P)) { Best = C; At = P; bFound = true; }
+			}
 		}
 		if (!bFound) At = Start;
 		bLastAddBlocked = !bFound;
@@ -1263,6 +1322,7 @@ FString UOKStudioGame::ExportFrames(float Fps, int32 Width, int32 Height, bool b
 	bExportMp4 = bMp4;
 	LastMovie.Reset();
 	LastMovieError.Reset();
+	LastMovieNote.Reset();
 	ExportFps = FMath::Clamp(Fps, 1.f, 120.f);
 	ExportWidth = Width; ExportHeight = Height;
 	ExportFrom = FMath::Clamp(From, 0.f, Document->Duration);
@@ -1298,13 +1358,14 @@ void UOKStudioGame::TickExport()
 				if (const FString Bgm = BgmFile(); S.bBgmPlay && FPaths::FileExists(Bgm)) Audio.Add({ Bgm, S.bBgmRepeat });
 				if (const FString Outside = OutsideSoundFile(); S.bOutsidePlay && FPaths::FileExists(Outside)) Audio.Add({ Outside, S.bOutsideRepeat });
 			}
+			if (bExportAudio && Audio.IsEmpty()) LastMovieNote = TEXT("沒有播放中的音樂或外部音源，影片無聲");
 			bool bMovie = EncodeMp4(ExportDir, ExportFps, Movie, Encoder, LastMovieError, Audio, ExportTotal / ExportFps);
 			// A sound ffmpeg cannot read still leaves the picture.
 			if (!bMovie && !Audio.IsEmpty())
 			{
 				UE_LOG(LogTemp, Warning, TEXT("OK studio: movie with sound not written (%s), again without"), *LastMovieError);
 				bMovie = EncodeMp4(ExportDir, ExportFps, Movie, Encoder, LastMovieError);
-				if (bMovie) Encoder += TEXT(", no sound");
+				if (bMovie) { Encoder += TEXT(", no sound"); LastMovieNote = TEXT("音樂讀不進來，影片無聲"); }
 			}
 			if (bMovie)
 			{

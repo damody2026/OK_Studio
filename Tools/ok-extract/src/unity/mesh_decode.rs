@@ -802,6 +802,10 @@ pub(crate) fn decoded_from_object(
         Ok(mesh)=>mesh,
         Err(error)=>{eprintln!("ok-extract: mesh decode failed name={} path={} error={error}",object.name().unwrap_or_default(),object.path_id());return None;}
     };
+    // A channel's dimension is its low four bits; later Unity versions keep flags above them (Sunshine's lighthouse fence
+    // has a Float16 normal of dimension 0x34): read whole, the stride came out 116 bytes instead of 32 and every vertex
+    // after the first was garbage (U143).
+    if !CHANNEL_DIM_UNMASKED.with(|f| f.get()) { for c in &mut mesh.vertex_data.channels { c.dimension &= 0x0F; } }
     let authored_tangents = decode_tangents(&mesh);
     let compressed_tangents = object.class.properties().get("m_CompressedMesh")
         .and_then(|v| match v { unity_asset_core::UnityValue::Object(fields) => fields.get("m_Tangents"), _ => None })

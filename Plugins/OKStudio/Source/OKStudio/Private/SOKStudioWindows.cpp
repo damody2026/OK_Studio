@@ -417,7 +417,7 @@ TSharedPtr<SWidget> SOKStudioPanel::TreeContextMenu()
 		{ TEXT("改名"), TEXT("edit.rename") }, { TEXT("拷貝"), TEXT("edit.copy") }, { TEXT("貼上"), TEXT("edit.paste") }, { TEXT("複製物件"), TEXT("edit.duplicate") },
 		{ TEXT("刪除"), TEXT("edit.delete") }, { TEXT("隱藏／顯示"), TEXT("edit.hide") }, { TEXT("移到根層"), TEXT("edit.root") }, { TEXT("設為其他選取的父物件"), TEXT("edit.parent") },
 		{ TEXT("聚焦"), TEXT("camera.focus") }, { TEXT("選取存成場景"), TEXT("edit.saveas") }, { TEXT("複製變換"), TEXT("transform.copy") }, { TEXT("貼上變換"), TEXT("transform.paste") },
-		{ TEXT("複製姿勢"), TEXT("pose.copy") }, { TEXT("貼上姿勢"), TEXT("pose.paste") }, { TEXT("打 key"), TEXT("timeline.key") },
+		{ TEXT("複製姿勢"), TEXT("pose.copy") }, { TEXT("貼上姿勢"), TEXT("pose.paste") }, { TEXT("打 key"), TEXT("timeline.key") }, { TEXT("面向對方"), TEXT("transform.face") },
 	};
 	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
 	for (const FItem& I : Items)
@@ -2188,7 +2188,8 @@ TSharedRef<SWidget> SOKStudioPanel::BuildExport()
 		{
 			if (!Game.IsValid()) return FText::GetEmpty();
 			if (Game->IsExporting()) return FText::FromString(FString::Printf(TEXT("輸出中 %d / %d 幀"), Game->ExportFrameIndex(), Game->ExportFrameCount()));
-			if (!Game->LastMovie.IsEmpty()) return FText::FromString(TEXT("完成：") + Game->LastMovie);
+			// The note before the path: the line is cut at the window's edge.
+			if (!Game->LastMovie.IsEmpty()) return FText::FromString(Game->LastMovieNote.IsEmpty() ? TEXT("完成：") + Game->LastMovie : TEXT("完成（") + Game->LastMovieNote + TEXT("）：") + Game->LastMovie);
 			if (!Game->LastMovieError.IsEmpty()) return FText::FromString(TEXT("沒有影片：") + Game->LastMovieError);
 			return FText::FromString(Game->ExportFolder().IsEmpty() ? FString() : TEXT("上次輸出：") + Game->ExportFolder());
 		}), 10.f, TextSoft())]

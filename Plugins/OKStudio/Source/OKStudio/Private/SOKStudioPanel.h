@@ -407,6 +407,8 @@ public:
 				Game->Document->Duration = 10.f; Game->bTimelinePlaying = false; Game->TimelineTime = Game->Document->Playhead = 0.f; Game->LoopStart = Game->LoopEnd = 0.f;
 				SaveAsName = FDateTime::Now().ToString(TEXT("scene_%Y%m%d_%H%M%S")); // not the last scene's name to overwrite
 				Game->Add(EOKSceneObjectKind::Light); Game->Document->NotifyChanged();
+				// The view starts over too (U147: it stayed on the last map's far view, a new character a speck in it).
+				Game->ViewPreset(5);
 				Game->ResetHistory(); Game->bDirty = false;
 			});
 		});
@@ -731,6 +733,7 @@ public:
 			return true;
 		});
 		Simple(TEXT("transform.reset"), TEXT("重設變換"), [this] { for (int32 Id : Game->Selection) if (FOKSceneObject* O = Game->Document->Find(Id)) O->Transform = FTransform::Identity; Changed(); });
+		Simple(TEXT("transform.face"), TEXT("面向對方"), [this] { FaceEachOther(); });
 		// Timeline.
 		Simple(TEXT("timeline.key"), TEXT("打 key"), [this] { if (TimelineView) TimelineView->KeySelection(); else for (int32 Id : Game->Selection) Game->Document->SetKey(Id, Game->TimelineTime); });
 		Simple(TEXT("timeline.scenekey"), TEXT("場景 key"), [this]
@@ -1355,6 +1358,11 @@ public:
 				+ SVerticalBox::Slot().AutoHeight()[Button(FText::FromString(TEXT("複製變換")), Cmd(TEXT("transform.copy")), 70.f, 16.f, false, 10.f)]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)[Button(FText::FromString(TEXT("貼上變換")), Cmd(TEXT("transform.paste")), 70.f, 16.f, false, 10.f)]
 				+ SVerticalBox::Slot().AutoHeight()[Button(FText::FromString(TEXT("重設變換")), Cmd(TEXT("transform.reset")), 70.f, 16.f, false, 10.f)]
+			]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 0.f, 0.f)
+			[
+				SNew(SBox).ToolTipText(FText::FromString(TEXT("所選角色轉向最近的另一個角色；選兩個角色時兩人面對面")))
+				[Button(FText::FromString(TEXT("面向\n對方")), Cmd(TEXT("transform.face")), 34.f, 52.f, false, 10.f)]
 			]
 			+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 0.f, 0.f)
 			[
@@ -3252,6 +3260,49 @@ public:
 			return B.Kind == A->Kind && B.Category == A->Category && B.No == A->No && B.Name == A->Name && B.Sex != 0 && B.Sex != A->Sex && !B.File.IsEmpty();
 		});
 	}
+	/** Turns the selected characters to face each other (two selected), or the selected one to the nearest other
+	 *  character (U145: facing two people meant working out yaw angles by hand). A character looks along +Y at yaw 0. */
+	void FaceEachOther()
+	{
+		if (!Game.IsValid()) return;
+		UOKSceneDocument* Doc = Game->Document;
+		TArray<int32> Chars;
+		for (const int32 Id : Game->Selection)
+			if (const FOKSceneObject* S = Doc->Find(Id); S && S->Kind == EOKSceneObjectKind::Character) Chars.Add(Id);
+		if (Chars.IsEmpty()) { SetStatus(TEXT("先選一個角色")); return; }
+		if (Chars.Num() == 1)
+		{
+			const FVector At = Doc->WorldTransform(Chars[0]).GetLocation();
+			int32 Near = -1;
+			double Best = TNumericLimits<double>::Max();
+			for (const FOKSceneObject& S : Doc->Objects)
+			{
+				if (S.Id == Chars[0] || S.Kind != EOKSceneObjectKind::Character) continue;
+				const double D = FVector::DistSquared2D(Doc->WorldTransform(S.Id).GetLocation(), At);
+				if (D < Best) { Best = D; Near = S.Id; }
+			}
+			if (Near < 0) { SetStatus(TEXT("場景裡沒有另一個角色")); return; }
+			Chars.Add(Near);
+		}
+		// Each of the first two looks at the other (only the selected one turns when one was selected).
+		const int32 Turning = Game->Selection.Contains(Chars[1]) ? 2 : 1;
+		for (int32 K = 0; K < Turning; ++K)
+		{
+			FOKSceneObject* O = Doc->Find(Chars[K]);
+			const FTransform World = Doc->WorldTransform(Chars[K]);
+			const FVector To = Doc->WorldTransform(Chars[1 - K]).GetLocation() - World.GetLocation();
+			if (!O || To.SizeSquared2D() < 1.) continue;
+			const FRotator Turned(0.f, float(FMath::RadiansToDegrees(FMath::Atan2(To.Y, To.X))) - 90.f, 0.f);
+			const FQuat Local = O->Parent >= 0 ? Doc->WorldTransform(O->Parent).GetRotation().Inverse() * Turned.Quaternion() : Turned.Quaternion();
+			O->Transform.SetRotation(Local);
+		}
+		const FOKSceneObject* A = Doc->Find(Chars[0]);
+		const FOKSceneObject* B = Doc->Find(Chars[1]);
+		SetStatus(Turning == 2 ? FString::Printf(TEXT("%s 與 %s 面對面"), A ? *A->Name : TEXT(""), B ? *B->Name : TEXT(""))
+			: FString::Printf(TEXT("%s 轉向 %s"), A ? *A->Name : TEXT(""), B ? *B->Name : TEXT("")));
+		Changed();
+	}
+
 	/** Puts the partner motion on the other character (another selected one, else the nearest), at the selected
 	 *  character's place (a pair is authored on one origin), with the same controls; both start together. */
 	bool PairAnim()

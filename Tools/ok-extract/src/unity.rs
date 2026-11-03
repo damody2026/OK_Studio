@@ -2243,6 +2243,8 @@ static BUNDLE_CACHE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic
 thread_local! { static BUNDLE_CACHE_SEEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
 // The old main-UV scan also tried offset+8 inside interleaved records; set only by the scan that lists what it changed.
 thread_local! { pub(crate) static UV_LEGACY_PADDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+// Channel dimensions read whole, flag bits included (for listing the sources the 0x0F mask changes, U143).
+thread_local! { pub(crate) static CHANNEL_DIM_UNMASKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 // The old rule without the tiled-UV fallback in `decode_uvs` (for listing the sources it changes).
 thread_local! { pub(crate) static UV_NO_TILED_FALLBACK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 fn sync_bundle_cache() {

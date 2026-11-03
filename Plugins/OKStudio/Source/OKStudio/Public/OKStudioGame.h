@@ -112,6 +112,9 @@ public:
 	void RequestStop() { bStopRequested = true; }
 	/** Adds a character object for a card (OK card or KKS card) and selects it. */
 	int32 AddCharacter(const FString& Card, int32 Outfit);
+	/** After a map change: the characters at the scene's root with no map ground under them, or inside the map's
+	 *  furniture, move to the nearest spot that has ground (U146). Returns how many moved. */
+	int32 SettleCharactersOnMap();
 
 	/** Adds an object under the selected folder (or next to the selected object) and selects it. */
 	int32 Add(EOKSceneObjectKind Kind);
@@ -254,8 +257,9 @@ public:
 	bool bExportAudio = true;
 	/** The ffmpeg the movie export uses (not under version control; downloaded into Tools/ffmpeg). */
 	static FString FfmpegPath();
-	/** Movie export: the last mp4 written, or why it was not. */
-	FString LastMovie, LastMovieError;
+	/** Movie export: the last mp4 written, or why it was not; LastMovieNote says when it came out without sound though
+	 *  sound was asked for (U148: nothing playing gave a silent movie without a word). */
+	FString LastMovie, LastMovieError, LastMovieNote;
 	bool IsExporting() const { return ExportFrame >= 0; }
 	int32 ExportFrameCount() const { return ExportTotal; }
 
