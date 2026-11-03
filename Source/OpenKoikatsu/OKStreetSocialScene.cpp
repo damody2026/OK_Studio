@@ -2669,6 +2669,17 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
   Mark(TEXT("song"));BuildSongRow(Box);
   Mark(TEXT("look2"));
  }
+ // Her eyes, to try by hand (user 2026-11-03): where they go (ok.EyeFollow: the camera, whom she talks to, ahead) and
+ // the source's limits on them (ok.EyeUnlimited). The label reads the setting, so a console change shows too.
+ {auto Cvar=[](const TCHAR* Name){return IConsoleManager::Get().FindConsoleVariable(Name);};
+  auto Row=SNew(SHorizontalBox);
+  Row->AddSlot().AutoWidth().Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton())
+   .Text_Lambda([Cvar](){const auto* V=Cvar(TEXT("ok.EyeFollow"));const int32 M=V?V->GetInt():2;return FText::FromString(OKT(M==2?TEXT("ui.eyes.follow_camera"):M==1?TEXT("ui.eyes.follow_him"):TEXT("ui.eyes.follow_ahead")));})
+   .OnClicked_Lambda([Cvar](){if(auto* V=Cvar(TEXT("ok.EyeFollow"))){const int32 M=V->GetInt();V->Set(M==2?1:M==1?0:2,ECVF_SetByConsole);}return FReply::Handled();})];
+  Row->AddSlot().AutoWidth().Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton())
+   .Text_Lambda([Cvar](){const auto* V=Cvar(TEXT("ok.EyeUnlimited"));return FText::FromString(OKT(!V||V->GetInt()?TEXT("ui.eyes.unlimited_on"):TEXT("ui.eyes.unlimited_off")));})
+   .OnClicked_Lambda([Cvar](){if(auto* V=Cvar(TEXT("ok.EyeUnlimited")))V->Set(V->GetInt()?0:1,ECVF_SetByConsole);return FReply::Handled();})];
+  Box->AddSlot().AutoHeight().HAlign(HAlign_Left)[Row];}
  if(!S.TtsNotice.IsEmpty())Box->AddSlot().AutoHeight().Padding(8)[SNew(STextBlock).Text(FText::FromString(S.TtsNotice)).AutoWrapText(true).WrapTextAt(360)];
  Box->AddSlot().AutoHeight().Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(S.ShowDebug?OKT(TEXT("ui.scene.collapse_heroine_stats")):OKT(TEXT("ui.scene.heroine_stats_view_edit")))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid()){Weak->State->ShowDebug=!Weak->State->ShowDebug;Weak->RefreshUI();}return FReply::Handled();})];
  Box->AddSlot().AutoHeight().Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(S.ContactsOpen?OKT(TEXT("ui.scene.collapse_girl_list")):OKT(TEXT("ui.scene.girl_list_nav")))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid()){Weak->State->ContactsOpen=!Weak->State->ContactsOpen;Weak->RefreshUI();}return FReply::Handled();})];

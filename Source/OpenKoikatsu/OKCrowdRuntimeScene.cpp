@@ -374,6 +374,11 @@ struct FEntry {
  // reference pose), and this frame's turns of neck and head (in their parents' frames), shared by GPU and CPU poses.
  FVector LookAt=FVector::ZeroVector;bool Looking=false;float LookWeight=0;int32 LookNeck=-2,LookHead=-2;FVector HeadFace=FVector::ZeroVector;
  FQuat NeckTurn=FQuat::Identity,HeadTurn=FQuat::Identity;bool Turned=false;
+ // Her eyes on what she looks at (OKSetCrowdRuntimeEyeFollow; -1 ok.EyeFollow): the iris takes what her turned head
+ // still misses of it (the source's EyeLookController), in gaze units, while her gaze is not set elsewhere (away, down).
+ int32 EyeFollow=-1;bool EyeFollowing=false;FVector2D FollowGaze=FVector2D::ZeroVector;
+ // Her head toward the camera while her eyes are on it and she looks at no one (eases 0..1, ok.HeadFollowCamera).
+ float CameraLookWeight=0;
  // The card's own values of what OKSetCrowdRuntimeFaceLook moves (blush, gloss, iris offset, highlight), by material
  // and parameter, so every look is applied from the card and not on top of the last one.
  TMap<FString,FLinearColor> LookBase;
@@ -461,9 +466,41 @@ FTransform ClipComponent(const FEntry& E,const FOKGpuPosePlayback& P,int32 Bone)
 // (a turn in the world, written as a turn in each bone's parent frame). Most of the clip's own head motion is replaced
 // while she looks (a fifth stays, so she is not frozen); the turn eases in and out over half a second.
 static TAutoConsoleVariable<int32> CVarOKHeadLook(TEXT("ok.HeadLook"),1,TEXT("1: a girl turns her head to whom she talks to (OKSetCrowdRuntimeHeadLook); 0: her head follows the clip."));
-void ApplyHeadLook(FEntry& E,FOKGpuPosePlayback& P,float Dt){
+// Her eyes on the camera all the while on the street (user 2026-11-03, as the source's eyes follow the camera), not
+// only as she talks; within ok.EyeFollowRange of it. 1 keeps them on whom she looks at while she talks.
+static TAutoConsoleVariable<int32> CVarOKEyeFollow(TEXT("ok.EyeFollow"),2,TEXT("A girl's eyes: 2 on the camera (always, within ok.EyeFollowRange), 1 on whom she looks at while she talks (ok.HeadLook), 0 ahead (OKSetCrowdRuntimeEyeFollow overrides per girl)."));
+static TAutoConsoleVariable<float> CVarOKHeadFollowCamera(TEXT("ok.HeadFollowCamera"),1.f,TEXT("How much of the way a girl's head turns to the camera while her eyes are on it (ok.EyeFollow 2) and she looks at no one; 0 her head keeps the clip's."));
+static TAutoConsoleVariable<float> CVarOKEyeFollowRange(TEXT("ok.EyeFollowRange"),1000.f,TEXT("cm from the camera within which a girl's eyes follow it (ok.EyeFollow 2)."));
+static TAutoConsoleVariable<FString> CVarOKEyeFollowAngles(TEXT("ok.EyeFollowAngles"),TEXT("25,20"),TEXT("Degrees across and up / down her eyes turn for one gaze unit (a negative one turns that way round)."));
+static TAutoConsoleVariable<float> CVarOKEyeFollowMost(TEXT("ok.EyeFollowMost"),1.3f,TEXT("Most gaze units her eyes turn to follow (1: the source's limit; user 2026-11-03 lifted it, freely the iris left the eye)."));
+// What her head still misses of the point her eyes are on, as gaze (x across, y down), eased in by Weight.
+static void FollowEyes(FEntry& E,const FTransform& Head,const FVector& Face,const FVector& Eyes,float Weight){
+ const FVector To=(E.Transform.InverseTransformPosition(Eyes)-Head.GetTranslation()).GetSafeNormal();
+ const FVector Right=FVector::CrossProduct(FVector::UpVector,Face).GetSafeNormal(),Up=FVector::CrossProduct(Face,Right).GetSafeNormal();
+ FVector2D Want=FVector2D::ZeroVector;
+ if(Weight>0&&!To.IsNearlyZero()&&!Right.IsNearlyZero()){TArray<FString> A;CVarOKEyeFollowAngles.GetValueOnGameThread().ParseIntoArray(A,TEXT(","));
+  const float AX=A.Num()>0?FCString::Atof(*A[0]):25.f,AY=A.Num()>1?FCString::Atof(*A[1]):20.f,Most=FMath::Max(CVarOKEyeFollowMost.GetValueOnGameThread(),0.f);
+  const float Yaw=FMath::RadiansToDegrees(FMath::Atan2(FVector::DotProduct(To,Right),FVector::DotProduct(To,Face))),Pitch=FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(FVector::DotProduct(To,Up),-1.f,1.f)));
+  if(FVector::DotProduct(To,Face)>0.f&&!FMath::IsNearlyZero(AX)&&!FMath::IsNearlyZero(AY))Want=FVector2D(FMath::Clamp(Yaw/AX,-Most,Most),FMath::Clamp(-Pitch/AY,-Most,Most))*FMath::SmoothStep(0.f,1.f,Weight);}
+ const bool Following=!Want.IsNearlyZero(.01f);
+ // Against what her eyes show, not the last goal: a camera or head moving slowly changes the goal by less than any
+ // step each frame, and the eyes stopped where they were (惠惠 looked past the camera; 2026-11-03).
+ if(Following||E.EyeFollowing){const FVector2D Target=E.LookGoal.Gaze.IsNearlyZero()?Want:E.LookGoal.Gaze;
+  if(!Target.Equals(E.LookNow.Gaze,.005f)||Following!=E.EyeFollowing)E.LookFading=true;E.FollowGaze=Want;E.EyeFollowing=Following;}
+}
+static void StopEyes(FEntry& E){if(E.EyeFollowing){E.FollowGaze=FVector2D::ZeroVector;E.EyeFollowing=false;E.LookFading=true;}}
+void ApplyHeadLook(FEntry& E,FOKGpuPosePlayback& P,float Dt,const FVector& View){
  E.LookWeight=FMath::FInterpConstantTo(E.LookWeight,E.Looking&&CVarOKHeadLook.GetValueOnGameThread()?1.f:0.f,Dt,2.f);E.Turned=false;
- if(E.LookWeight<=0||!E.CpuKeys.IsValid()||!E.Clips.IsValidIndex(P.ClipA)||!E.Clips.IsValidIndex(P.ClipB))return;
+ const int32 EyeMode=E.EyeFollow>=0?E.EyeFollow:CVarOKEyeFollow.GetValueOnGameThread();
+ // Eyes on the camera: an iris to move and the camera near. Her head turns part of the way to it too (the clip's head
+ // alone was turned so far that the eyes could not reach the camera and she seemed to look away; user 2026-11-03).
+ const bool CameraEyes=EyeMode==2&&E.LookKinds.Contains(uint8(3))&&FVector::DistSquared(E.Transform.GetLocation(),View)<FMath::Square(CVarOKEyeFollowRange.GetValueOnGameThread());
+ // Also while she looks at someone: her head on him, the eyes alone (about 30 degrees) did not reach a camera turned
+ // round to her side, and she showed her profile looking past it (雷電將軍, 胡桃; 2026-11-03).
+ E.CameraLookWeight=FMath::FInterpConstantTo(E.CameraLookWeight,CameraEyes&&CVarOKHeadLook.GetValueOnGameThread()?1.f:0.f,Dt,2.f);
+ const bool ByCamera=E.CameraLookWeight>0.f&&E.CameraLookWeight>=E.LookWeight;const float Weight=FMath::Max(E.LookWeight,E.CameraLookWeight);
+ const float HeadShare=ByCamera?FMath::Clamp(CVarOKHeadFollowCamera.GetValueOnGameThread(),0.f,1.f):1.f;
+ if((Weight<=0&&!CameraEyes)||!E.CpuKeys.IsValid()||!E.Clips.IsValidIndex(P.ClipA)||!E.Clips.IsValidIndex(P.ClipB)){StopEyes(E);return;}
  if(E.LookNeck==-2){
   E.LookNeck=E.Bones.IndexOfByPredicate([](const auto& B){return B.Name==FName(TEXT("cf_j_neck"))||B.Name==FName(TEXT("cm_j_neck"));});
   E.LookHead=E.Bones.IndexOfByPredicate([](const auto& B){return B.Name==FName(TEXT("cf_j_head"))||B.Name==FName(TEXT("cm_j_head"));});
@@ -472,18 +509,20 @@ void ApplyHeadLook(FEntry& E,FOKGpuPosePlayback& P,float Dt){
   else{FQuat Ref=FQuat::Identity;for(int32 B=E.LookHead,Steps=0;B!=INDEX_NONE&&++Steps<=E.Bones.Num();B=E.Bones[B].Parent)Ref=E.Bones[B].Reference.GetRotation()*Ref;E.HeadFace=Ref.Inverse().RotateVector(FVector(0,1,0)).GetSafeNormal();}
   UE_LOG(LogTemp,Display,TEXT("Runtime head look %s: neck=%d head=%d face=(%.2f,%.2f,%.2f)"),*E.Id,E.LookNeck,E.LookHead,E.HeadFace.X,E.HeadFace.Y,E.HeadFace.Z);
  }
- if(E.LookNeck==INDEX_NONE||E.LookHead==INDEX_NONE)return;
+ if(E.LookNeck==INDEX_NONE||E.LookHead==INDEX_NONE){StopEyes(E);return;}
  const FTransform Head=ClipComponent(E,P,E.LookHead);
+ if(Weight<=0||HeadShare<=0){FollowEyes(E,Head,Head.GetRotation().RotateVector(E.HeadFace).GetSafeNormal(),View,1.f);return;}
  const FQuat NeckParent=ClipComponent(E,P,E.Bones[E.LookNeck].Parent).GetRotation(),HeadParent=ClipComponent(E,P,E.Bones[E.LookHead].Parent).GetRotation();
- const FVector Face=Head.GetRotation().RotateVector(E.HeadFace).GetSafeNormal(),To=(E.Transform.InverseTransformPosition(E.LookAt)-Head.GetTranslation()).GetSafeNormal();
+ const FVector Face=Head.GetRotation().RotateVector(E.HeadFace).GetSafeNormal(),To=(E.Transform.InverseTransformPosition(ByCamera?View:E.LookAt)-Head.GetTranslation()).GetSafeNormal();
  if(Face.IsNearlyZero()||To.IsNearlyZero())return;
  // The body faces +Y in her component, up is +Z.
  const float Yaw=FMath::Clamp(FMath::RadiansToDegrees(FMath::Atan2(To.X,To.Y)),-60.f,60.f),Pitch=FMath::Clamp(FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(To.Z,-1.f,1.f))),-25.f,30.f);
  const float Cp=FMath::Cos(FMath::DegreesToRadians(Pitch));
  const FVector Want(FMath::Sin(FMath::DegreesToRadians(Yaw))*Cp,FMath::Cos(FMath::DegreesToRadians(Yaw))*Cp,FMath::Sin(FMath::DegreesToRadians(Pitch)));
- const float W=FMath::SmoothStep(0.f,1.f,E.LookWeight)*.8f;
+ const float W=FMath::SmoothStep(0.f,1.f,Weight)*.8f*HeadShare;
  const FQuat Turn=FQuat::Slerp(FQuat::Identity,FQuat::FindBetweenNormals(Face,Want),W),Neck=FQuat::Slerp(FQuat::Identity,Turn,.4f),HeadTurn=Turn*Neck.Inverse();
  const FQuat HeadParentNow=Neck*HeadParent;
+ if(EyeMode>0)FollowEyes(E,Head,Turn.RotateVector(Face).GetSafeNormal(),EyeMode==2?View:E.LookAt,ByCamera?1.f:E.LookWeight);else StopEyes(E);
  E.NeckTurn=(NeckParent.Inverse()*Neck*NeckParent).GetNormalized();E.HeadTurn=(HeadParentNow.Inverse()*HeadTurn*HeadParentNow).GetNormalized();E.Turned=true;
  P.LookNeck=uint32(E.LookNeck);P.LookHead=uint32(E.LookHead);
  P.NeckRotation=FVector4f(E.NeckTurn.X,E.NeckTurn.Y,E.NeckTurn.Z,E.NeckTurn.W);P.HeadRotation=FVector4f(E.HeadTurn.X,E.HeadTurn.Y,E.HeadTurn.Z,E.HeadTurn.W);
@@ -1239,7 +1278,7 @@ auto& T=Timings[GpuWindow?1:0];T.Frame.Add((Now-LastWall)*1000);T.Game.Add(FPlat
      OKNoteRuntimeFaceUpload(E.FacePlay,Plan);if(MouthMoved||GainChanged)++E.MouthUpdates;if(BlinkMoved)++E.BlinkUpdates;E.LastBlinkClosure=Blink;E.BlinkPeak=FMath::Max(E.BlinkPeak,Blink);E.LastMouthOpening=MouthOpening;E.LastMouthGain=MouthGain;E.LastMouthBucket=MouthBucket;E.MouthPeak=FMath::Max(E.MouthPeak,MouthOpening);
     }
    }
-   if(ExternalControl)E.Behavior.Speed=E.ExternalSpeed;else if(A==0)E.Behavior.Speed=InputMove.Size();else if(E.ActionOverride==INDEX_NONE){const bool Changed=E.Behavior.Step(Dt);if(Installed&&Changed&&E.Behavior.State==FOKCrowdBehavior::EState::Look&&E.Clips.Num()>2&&E.PendingAction==INDEX_NONE&&!ActionSlotBusy(A)&&(AutoActionStreaming||E.ClipSources[2]!=INDEX_NONE)){const int32 Source=AutoActionStreaming?WalkSources+(A+E.Behavior.Transitions)%(Curves.Num()-WalkSources):E.ClipSources[2];if(!ClipLoops[Source]){FString ActionError;OKPlayCrowdRuntimeAction(Owner.Get(),A,ClipIds[Source],ActionError);}}}const int32 Clip=E.ActionOverride!=INDEX_NONE?E.ActionOverride:(E.Behavior.Speed<.001?(E.ConversationIdle&&E.ConversationSlot!=INDEX_NONE?E.ConversationSlot:E.IdleVariantSlots.IsValidIndex(E.IdleVariant)?E.IdleVariantSlots[E.IdleVariant]:!E.ReadingAllowed&&E.StandSlot!=INDEX_NONE?E.StandSlot:0):(E.Running&&E.RunSlot!=INDEX_NONE?E.RunSlot:1));if(Clip!=E.LastClip){E.Clock.RequestClip(Clip,.3,0,Error);E.LastClip=Clip;}E.Clock.Advance(Dt,Error);auto P=E.Clock.Parameters();if(E.ActionOverride!=INDEX_NONE&&!ClipLoops[E.ClipSources[E.ActionOverride]]&&!E.Clock.IsTransitioning()&&P.ClipA==uint32(E.ActionOverride)&&P.Times.X>=E.Clips[E.ActionOverride].Duration-1e-5f){E.ActionOverride=INDEX_NONE;++E.ActionCompletions;}P.Times.X=FMath::FloorToFloat(P.Times.X*60)/60;P.Times.Y=FMath::FloorToFloat(P.Times.Y*60)/60;ApplyHeadLook(E,P,Dt);Play.Add(P);if(E.Stage==5&&CVarOKCrowdWalkTrace.GetValueOnGameThread()){const FVector L=E.Transform.GetLocation();WalkTrace.Add(FString::Printf(TEXT("%.4f\t%d\t%u\t%u\t%.5f\t%.5f\t%.4f\t%.3f\t%.3f\t%.3f\t%.3f"),SceneTime,A,P.ClipA,P.ClipB,P.Times.X,P.Times.Y,P.Times.Z,L.X,L.Y,L.Z,E.Transform.Rotator().Yaw));}
+   if(ExternalControl)E.Behavior.Speed=E.ExternalSpeed;else if(A==0)E.Behavior.Speed=InputMove.Size();else if(E.ActionOverride==INDEX_NONE){const bool Changed=E.Behavior.Step(Dt);if(Installed&&Changed&&E.Behavior.State==FOKCrowdBehavior::EState::Look&&E.Clips.Num()>2&&E.PendingAction==INDEX_NONE&&!ActionSlotBusy(A)&&(AutoActionStreaming||E.ClipSources[2]!=INDEX_NONE)){const int32 Source=AutoActionStreaming?WalkSources+(A+E.Behavior.Transitions)%(Curves.Num()-WalkSources):E.ClipSources[2];if(!ClipLoops[Source]){FString ActionError;OKPlayCrowdRuntimeAction(Owner.Get(),A,ClipIds[Source],ActionError);}}}const int32 Clip=E.ActionOverride!=INDEX_NONE?E.ActionOverride:(E.Behavior.Speed<.001?(E.ConversationIdle&&E.ConversationSlot!=INDEX_NONE?E.ConversationSlot:E.IdleVariantSlots.IsValidIndex(E.IdleVariant)?E.IdleVariantSlots[E.IdleVariant]:!E.ReadingAllowed&&E.StandSlot!=INDEX_NONE?E.StandSlot:0):(E.Running&&E.RunSlot!=INDEX_NONE?E.RunSlot:1));if(Clip!=E.LastClip){E.Clock.RequestClip(Clip,.3,0,Error);E.LastClip=Clip;}E.Clock.Advance(Dt,Error);auto P=E.Clock.Parameters();if(E.ActionOverride!=INDEX_NONE&&!ClipLoops[E.ClipSources[E.ActionOverride]]&&!E.Clock.IsTransitioning()&&P.ClipA==uint32(E.ActionOverride)&&P.Times.X>=E.Clips[E.ActionOverride].Duration-1e-5f){E.ActionOverride=INDEX_NONE;++E.ActionCompletions;}P.Times.X=FMath::FloorToFloat(P.Times.X*60)/60;P.Times.Y=FMath::FloorToFloat(P.Times.Y*60)/60;ApplyHeadLook(E,P,Dt,Pc&&Pc->PlayerCameraManager?Pc->PlayerCameraManager->GetCameraLocation():Camera.IsValid()?Camera->GetActorLocation():E.LookAt);Play.Add(P);if(E.Stage==5&&CVarOKCrowdWalkTrace.GetValueOnGameThread()){const FVector L=E.Transform.GetLocation();WalkTrace.Add(FString::Printf(TEXT("%.4f\t%d\t%u\t%u\t%.5f\t%.5f\t%.4f\t%.3f\t%.3f\t%.3f\t%.3f"),SceneTime,A,P.ClipA,P.ClipB,P.Times.X,P.Times.Y,P.Times.Z,L.X,L.Y,L.Z,E.Transform.Rotator().Yaw));}
    const int32 Columns=FMath::CeilToInt(FMath::Sqrt(float(Entries.Num()))),Rows=FMath::DivideAndRoundUp(Entries.Num(),Columns);const double Phase=E.Behavior.RouteTime*.8+A*.47;const FVector Pos((A%Columns-(Columns-1)*.5)*210+FMath::Sin(Phase)*75,(A/Columns-(Rows-1)*.5)*210+FMath::Cos(Phase)*75,0);E.Transform=FTransform(FRotator(0,-90-FMath::RadiansToDegrees(Phase)+E.Behavior.LookYaw(),0),Pos);
    if(A==0&&!ExternalControl){if(!PlayerPositionInitialized){PlayerPosition=Pos;PlayerPositionInitialized=true;}const FRotator Rotation=InputMove.IsNearlyZero()?E.Cpu->GetComponentRotation():FRotator(0,FMath::RadiansToDegrees(FMath::Atan2(InputMove.Y,InputMove.X))-90,0);E.Transform=FTransform(Rotation,PlayerPosition);}
    if(ExternalControl){E.Transform=E.ExternalTransform;if(A==0)PlayerPosition=E.Transform.GetTranslation();}
@@ -1686,7 +1725,7 @@ void TickFaceLook(FEntry& E,float Dt){
  auto Ease=[&](float& Now,float Goal,float Tau){const float D=Goal-Now;if(FMath::Abs(D)<.002f){Now=Goal;return;}Now+=D*(1.f-FMath::Exp(-FMath::Min(Dt,.25f)/(Tau*Scale)));Moving=true;};
  auto& N=E.LookNow;const auto& G=E.LookGoal;
  Ease(N.Blush,G.Blush,.35f);Ease(N.Sweat,G.Sweat,.5f);Ease(N.Highlight,G.Highlight,.12f);
- {float X=float(N.Gaze.X),Y=float(N.Gaze.Y);Ease(X,float(G.Gaze.X),.08f);Ease(Y,float(G.Gaze.Y),.08f);N.Gaze=FVector2D(X,Y);}for(int32 L=1;L<=3;++L)Ease(N.Tear[L],G.Tear[L],.3f);
+ {const FVector2D To=E.EyeFollowing&&G.Gaze.IsNearlyZero()?E.FollowGaze:G.Gaze;float X=float(N.Gaze.X),Y=float(N.Gaze.Y);Ease(X,float(To.X),.08f);Ease(Y,float(To.Y),.08f);N.Gaze=FVector2D(X,Y);}for(int32 L=1;L<=3;++L)Ease(N.Tear[L],G.Tear[L],.3f);
  ApplyFaceLook(E);E.LookFading=Moving;
 }
 }
@@ -1712,11 +1751,16 @@ void OKSetCrowdRuntimeOutlinesShown(AActor* Owner,int32 Character,bool Shown){
  check(IsInGameThread());const auto* Weak=OKRuntimeScene::ActiveScenes.Find(Owner);const auto State=Weak?Weak->Pin():nullptr;
  if(!State||State->Stopped||!State->Entries.IsValidIndex(Character))return;
  for(const auto& M:State->Entries[Character]->OutlineMaterials)if(auto* I=M.Get())I->SetScalarParameterValue(TEXT("__OK_RuntimeRevealOverride"),Shown?-1.f:0.f);
+bool OKSetCrowdRuntimeEyeFollow(AActor* Owner,int32 Character,int32 Mode){
+ check(IsInGameThread());const auto* Weak=OKRuntimeScene::ActiveScenes.Find(Owner);const auto State=Weak?Weak->Pin():nullptr;
+ if(!State||State->Stopped||!State->Entries.IsValidIndex(Character))return false;
+ auto& E=*State->Entries[Character];E.EyeFollow=FMath::Clamp(Mode,-1,2);E.LookFading=true;return true;
+}
 }
 bool OKGetCrowdRuntimeFaceLook(AActor* Owner,int32 Character,FOKRuntimeFaceLookNow& Now){
  check(IsInGameThread());const auto* Weak=OKRuntimeScene::ActiveScenes.Find(Owner);const auto State=Weak?Weak->Pin():nullptr;
  if(!State||State->Stopped||!State->Entries.IsValidIndex(Character))return false;const auto& E=*State->Entries[Character];const auto& L=E.LookNow;
- Now.Blush=L.Blush;Now.Sweat=L.Sweat;Now.Highlight=L.Highlight;Now.Gaze=L.Gaze;Now.Fading=E.LookFading;
+ Now.Blush=L.Blush;Now.Sweat=L.Sweat;Now.Highlight=L.Highlight;Now.Gaze=L.Gaze;Now.Fading=E.LookFading;Now.Follow=E.EyeFollowing?E.FollowGaze:FVector2D::ZeroVector;
  for(int32 Level=1;Level<=3;++Level)if(L.Tear[Level]>Now.TearShown){Now.TearShown=L.Tear[Level];Now.Tears=Level;}
  return true;
 }

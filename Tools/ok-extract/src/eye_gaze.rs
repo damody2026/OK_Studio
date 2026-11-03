@@ -160,19 +160,33 @@ mod tests {
 impl IrisRuntime {
     pub fn st(&self,h:f32,v:f32)->[f32;4] {
         let s=&self.settings;
+        // Unlimited (eye_look::unlimited): no circle on the look, no hold on the offset, the look's line carried on.
+        let free=crate::eye_look::unlimited();
         let mut xy=[h+s[10],v+s[11]];
         let mag=(xy[0]*xy[0]+xy[1]*xy[1]).sqrt();
-        if mag>1. {xy[0]/=mag;xy[1]/=mag;}
+        if mag>1.&&!free {xy[0]/=mag;xy[1]/=mag;}
         let lerp=|a:f32,b:f32,t:f32| a+(b-a)*t.clamp(0.,1.);
-        let x=lerp(s[1],s[2],(xy[0]+1.)*0.5)*(s[9]*lerp(1.,5.,s[12]));
-        let y=lerp(s[4],s[3],(xy[1]+1.)*0.5)*(s[9]*lerp(1.,5.,s[13]));
+        let line=|a:f32,b:f32,t:f32| if free {a+(b-a)*t}else{lerp(a,b,t)};
+        let x=line(s[1],s[2],(xy[0]+1.)*0.5)*(s[9]*lerp(1.,5.,s[12]));
+        let y=line(s[4],s[3],(xy[1]+1.)*0.5)*(s[9]*lerp(1.,5.,s[13]));
         // Mathf.Clamp also defines reversed limits; Rust f32::clamp panics.
-        let clamp=|value:f32,min:f32,max:f32| if value<min {min}else if value>max {max}else{value};
+        let clamp=|value:f32,min:f32,max:f32| if free {value}else if value<min {min}else if value>max {max}else{value};
         let sx=1.+s[12];let sy=1.+s[13];
         [sx,sy,clamp(x,s[5],s[6])+(1.-sx)*0.5,clamp(y,s[7],s[8])+(1.-sy)*0.5]
     }
+    /// `st` with `v` past ±1 rolling the iris on past the material's limit (an H-scene ahegao's whites): what is past
+    /// 1 moves the texture offset's y on unclamped, the way `v` moves it (from s[4] at -1 towards s[3] at 1), as the
+    /// original KKS_Ahegao's Eye Roll Amount does (0.25 on the offset after the look); at most 1 past.
+    pub fn st_rolled(&self,h:f32,v:f32)->[f32;4] {
+        let mut st=self.st(h,v.clamp(-1.,1.));
+        let past=(v.abs()-1.).clamp(0.,1.);
+        if past>0. {st[3]+=(self.settings[3]-self.settings[4]).signum()*v.signum()*past;}
+        st
+    }
     pub fn apply(&self,uvs:&mut [[f32;2]],h:f32,v:f32) {
-        let st=self.st(h,v);
+        self.apply_st(uvs,self.st(h,v));
+    }
+    pub fn apply_st(&self,uvs:&mut [[f32;2]],st:[f32;4]) {
         for (uv,raw) in uvs.iter_mut().zip(&self.raw_uvs) {
             *uv=[raw[0]*st[0]+st[2],raw[1]*st[1]+st[3]];
         }

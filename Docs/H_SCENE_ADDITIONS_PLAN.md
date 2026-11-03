@@ -138,7 +138,7 @@
 | 高潮持續 | ×(1+d)，d 取當下插入的那一處 | `ClimaxUntil=Now+(原長)·(1+Dev(anal 或 crotch))`，只在插入（Mode 2）時乘 | ×1 → ×2；愛撫、奉仕時高潮不乘 | ✅ |
 | 乳頭高潮多噴 | 6·d乳 秒 | `NippleUntil=ClimaxUntil+6·Dev(nipple)` | 0 → 6 秒 | ✅ |
 | 高潮噴水量 | 「陰部噴的水量 200%」 | 噴射間隔 `.05/(1+d)`，再加上持續時間 ×(1+d) | 每秒噴量 ×2、持續 ×2，總量 ×4 | ⚠️ 見下 |
-| 肛交噴水 | 用 d肛 | 插入屁眼時 `Dev(anal)` | — | ✅ |
+| 肛交噴水 | 噴的是陰道，用 d陰（使用者 11-03 更正：不是屁眼噴水） | 從 `J_Kokan` 噴，噴射間隔一律用 `Dev(crotch)`；高潮持續仍照插入的那一處 | — | ✅ |
 | 街上自慰後 | ×2（使用者 11-03） | `More=2` 除在所有間隔上 | — | ✅ |
 
 ⚠️ 高潮噴水的總量：每秒的噴量和持續時間各乘一次 (1+d)，所以開發 100 時總量是 4 倍，不是 2 倍。如果規格的 200% 是指總量，就要把噴射間隔的 `/(1+d)` 拿掉。這次沒有改，等使用者決定。**使用者 11-03 決定：要 ×4**（維持現狀，不改）。
@@ -242,7 +242,7 @@
 - **原作**：使用者遊戲裡的 KKS_Ahegao 外掛（`D:\KoikatuSunshine\kks_decomp\plugins\KKS_Ahegao\`，設定 `D:\KoikatuSunshine\BepInEx\config\KKS_Ahegao.cfg`）：Ahegao Count 4、Minimum Speed 66、Eye ID 25、Eyebrow ID 2、Mouth ID 24、Eye Roll Amount 0.25；只在愛撫與插入，Loop（Loop1/2、OLoop、IN_*）播放中、速度超過 66% 時才出現，接吻中不出現，其他時候是一般表情。
 - **條件**：這一場高潮滿 4 次（`ok.HScene.AhegaoClimaxes`），而且照原作在 Loop 中、速度 ≥ 66%（`ok.HScene.AhegaoSpeed`）、不在接吻；插入時看 WLoop／SLoop／OLoop／IN_*，愛撫時看是否正在摸。另外沿用 11-01 的「今天已到高潮上限（`HadEnough`）就一直顯示」。「討厭」反應時不顯示。測試用 `ok.HScene.AhegaoTest 1`。
 - **眼睛與眉毛**：原作的 Eye ID 是 `cha_eyeset` 清單的編號，不是 FBS 眼型編號。25 號在基礎庫的清單是 FBS 眼型 2（笑眼）加表情貼圖 `cf_t_expression_00`；用 `ok_eye_set_json` 換成 FBS 眼型（`ok.HScene.AhegaoFace`，預設 `25,2,43`）。表情貼圖要換零件，即時改不了，目前沒有。
-- **翻白眼（未完成）**：街區角色的眼睛由 KKRuntimePose 的共用母材質（`/Game/IndependentResources/RuntimeMaterials/StreetDisplay26`）畫，眼睛 UV 在建 mesh 時就烘死，沒有即時視線的參數，所以設視線不會改到畫面。要做得重新產生並 cook 這些共用材質（整合等級的改動）。另外實測這組眼睛 -1 是往上、+1 是往下，`ok.HScene.AhegaoGaze` 預設 -1。
+- **翻白眼**：畫面上的眼睛是共用顯示材質 `M_ForgeEye_Flat`，它有視線的 rows 參數但不會照它移動瞳孔，rows 也寫在另一個實例上；改寫該材質的瞳孔貼圖 tiling（`_MainTex_ST`），見第 16 節。-1 往上、+1 往下，超過 -1 的部分照原作 Eye Roll Amount 繼續上翻；`ok.HScene.AhegaoGaze` 預設 -1.25。
 - **吐舌頭**：嘴型用 SexFaces 加的啊嘿顏 43（臉用笑嘴，舌頭用 TongueOut，遊戲裝了 SexFaces 才有）；沒有就退回原作的 24（`name02`，這裡看不太到舌頭），再退回名稱含 `_sita`／`_name` 的嘴型。嘴的最低張開度固定 0.85（`ok.HScene.AhegaoMouthOpen`）。H 喘息每句都會照原作表情清單換嘴型，所以啊嘿顏期間鎖住嘴型（`bManualSpeechPattern`），結束後還原。
 - **流口水**：啊黑顏期間用水槍從嘴角往下滴，量至少等於接吻開發 80%。
 - **雙手比 ya**：兩手都用 Studio 手型 2 號（V，`ok.HScene.AhegaoHand`）。用 Studio IK 把兩手舉到臉旁（頭往兩側 13 cm、往前 9 cm、往下 1 cm，`ok.HScene.AhegaoReach`），每幀重新給；`ok.HScene.AhegaoArms 0` 只換手型不舉手。結束後放開 IK，手型回到面板設定。
@@ -250,6 +250,27 @@
 - 控制通道 `/hscene` 的回應多了 `orgasms`（這一場的高潮次數）和 `ahegao`（目前是否顯示）；`{"faces":true}` 另列出 `mouths`（嘴型名稱）。
 - **光從鏡頭照向她**（使用者 2026-11-03）：街區的 RuntimePose 材質用場景光 `_WorldSpaceLightPos0`，舉到臉旁的手會落在暗面。H 場景裡每幀改成鏡頭方向（`ok.HScene.CameraLight`，預設 1），結束時還原每個材質原本的值。
 - **實機**（2026-11-03，貞德，沙盒 EAdd2）：愛撫摸頭、頭部開發 100，第 4 次高潮後 `ahegao` 變 true；雙手 V、伸舌、口水有出現，眼睛沒有翻上（原因見上）。截圖 `E:\OpenKoikatsu\Saved\StreetSocial\Play-20261103T151251\control_shots\`、`E:\OpenKoikatsu\Saved\StreetSocial\Play-20261103T154903\control_shots\shot.0005.png`。
+
+## 16. 眼睛盯鏡頭、胸與臀的物理（使用者 2026-11-03 新增）
+
+- **視線寫到畫面上的材質**（`AKKPreviewActor::SetEyeGaze`）：session 算出新的瞳孔 UV，擬合成每個 UV 通道的仿射 rows，再寫到該部件所有元件實際用的眼睛材質。共用顯示材質用瞳孔 tiling `_MainTex_ST`（`ok.EyeGazeVia 1`，預設）；兩軸都和 mesh 同向（`ok.EyeGazeSTFlipU/V 0`；U 翻轉時兩眼會各自往外看，使用者指出）。`ok.EyeGazeLog 1` 印出每次寫入的值。
+- **H 場景眼睛盯鏡頭**：進 H 時預設開啟原作的 EyeLook 跟隨鏡頭（`ok.HScene.EyesCamera 1`），面板的視線勾選框可以關；啊黑顏期間暫停、結束後還原。
+- **解除眼睛限制**（`ok.EyeUnlimited 1`）：鏡頭超出原作角度時不再轉回正前方，角度不再夾在原作範圍內，瞳孔位移照比例繼續推，最多到原作上限的 `ok.EyeUnlimitedMost`（1.3）倍。完全不設上限時，45 度看過頭、70 度瞳孔會跑出眼睛。
+- **街區平時**：街上的女主在鏡頭 10 m 內（`ok.EyeFollowRange`）眼睛一直看鏡頭（`ok.EyeFollow 2`），不只在對話時；沒在看別人時頭也照對話時的幅度朝鏡頭轉（`ok.HeadFollowCamera 1`；只有眼睛跟時，idle 動畫把頭轉開的女主看起來是別開視線，使用者指出），頭沒轉到的部分由眼睛補，最多 1.3 單位（`ok.EyeFollowMost`）。心智給「別開／往下／往上」視線時以那個為準。控制通道 `/face` 的 `eyes_follow`（-1／0／1／2）可以逐人改，`look_now` 多了 `follow_x/y`。
+- **胸與臀的物理分開**（`dbone/ver02.rs` `PartPhysics`）：`ok.Physics.BustMode`（0 原作 verlet、1 布丁）、`ok.Physics.HipMode`（0 原作 verlet 照胸部的 BustSoft 表、硬度 0.12，比一般胸部的 0.26 硬；1 布丁；2 prefab 原值）、`BustSoftness`／`HipSoftness`。改設定時重建她的身體動態（原本的即時刷新只更新胸部，而且只在身形變了才跑，所以切換看不出差別）。
+- **實機**（2026-11-03，貞德／刻晴，沙盒 EAdd2，Eye11～Eye15）：
+  - 翻白眼 `E:\OpenKoikatsu\Saved\StreetSocial\Play-20261103T191924\control_shots\shot.0004.png`
+  - H 正面兩眼對焦 `E:\OpenKoikatsu\Saved\StreetSocial\Play-20261103T201510\control_shots\shot.0004.png`，左右 45 度 `shot.0005.png`、`shot.0006.png`
+  - 街區沒在對話的刻晴，頭也轉向鏡頭（Eye16，`ok.HeadFollowCamera 1`）：左右 40 度 `E:\OpenKoikatsu\Saved\StreetSocial\Play-20261103T205624\control_shots\shot.0006.png`、`shot.0007.png`，正面 `shot.0010.png`（Eye15 只有眼睛跟的 201510 `shot.0002／0003` 是別開視線，不算通過）
+  - 物理（正常位 WLoop，相對腰／胸椎的晃動範圍）：臀 `j_siri_L` 模式 2 前後 9.2 mm、模式 0 5.6 mm、模式 1 左右 3.5 mm（模式 0 是 0.4 mm）；胸 `d_bust03_L` 布丁 5.0 mm、原作 3.1 mm（布丁約多 1.6 倍，差別不大）。
+- **全卡檢查（讀卡模式先，使用者 2026-11-03）**：`ok.VerifyEyeCamera`（`Source/OpenKoikatsu/OKEyeCameraAudit.cpp`）逐張載入讀卡器清單的卡、開「眼睛看鏡頭」，鏡頭放在她眼睛前方左 35°／正面／右 35°，各拍一張跟鏡頭、一張固定看前方的圖。判定條件：兩側眼睛附近的畫面有變化、兩眼轉向同一邊、左右兩側方向相反，而且眼睛零件沒有被隱藏。截圖存在 `Saved/Tests/EyeCamera/<時間>/`（每張卡一條：上排跟鏡頭、下排固定前方）。可用的環境變數：`OK_EYE_AUDIT_FIRST`／`COUNT`（範圍）、`OK_EYE_AUDIT_HIDE=acc`（藏配件）、`OK_EYE_AUDIT_EXIT=1`（跑完就關）。
+  - CrowdAPNG 100 張全部通過。C011 的臉被頭盔配件擋住，加 `OK_EYE_AUDIT_HIDE=acc` 後通過。
+  - C094（龍捲）的卡用 MaterialEditor 把虹膜換成 `main_item_emission`，沒有眼睛 shader，修正後才動：有視線資料但沒有 eye draw 的虹膜改用 CPU 網格，由 `SetEyeGaze` 直接改 UV。另外修了第一個 CPU 頭部零件被放進已隱藏的 `HeadMesh` 的問題，原本她左眼的虹膜是白的。
+  - 街區女主 10 位在讀卡模式全部通過：`E:\OpenKoikatsu\Saved\Tests\EyeCamera\20261103-230734\`。
+- **移植到街區（Eye20）**：
+  - `FollowEyes` 原本只在目標變化超過 0.01 時才喚醒漸變；鏡頭慢慢移動時每一幀變化都更小，眼睛就停在半途（惠惠），改成跟目前顯示的 gaze 比較。
+  - `ok.EyeFollow 2` 時，頭在她看著別人時也轉向鏡頭；原本只靠眼睛轉不到側邊的鏡頭（雷電將軍、胡桃露出側臉）。
+  - 10 位各從 55°／90°／125° 拍，顯示的 gaze 都追上目標，看得到眼睛的截圖都看著鏡頭：`E:\OpenKoikatsu\Saved\StreetSocial\Play-20261103T232527\control_shots\`。
 
 ## 進度（2026-11-03）
 
@@ -262,7 +283,8 @@
 | 1／2／9 水槍體液 | ✅ OKHScene `TickFluids`、`Spurt`；原作 `_liquid*` 貼圖改由 `ok.HScene.SiruTexture` 才開；回街上後 `SemenOn` 讓她知道身上還有，洗澡或睡覺後清掉 | ✅ | ⬜ |
 | 3 摸與親 | ✅ kind 2130～2136（摸／親切換、10 個部位）；hexp.rs `body` 開發度、`touch_ok`；被碰的部位用 FK 偏移輕彈（`Flinch`） | ✅ | ⬜ |
 | 12 場景認知 | 不做：使用者之後整合 `ok-city-props`；房間描述已拿掉，只留 H 面板「結束，事後溫存」（Afterglow 2137） | ✅ | — |
-| 15 啊黑顏 | ✅ 見第 15 節；翻白眼待共用眼睛材質支援即時視線 | ✅ | 雙手 V、伸舌、口水 ✅；翻白眼 ❌ |
+| 15 啊黑顏 | ✅ 見第 15 節 | ✅ | 雙手 V、伸舌、口水、翻白眼 ✅（Eye11） |
+| 16 眼睛盯鏡頭、胸臀物理 | ✅ 見第 16 節 | ✅ | 眼睛 ✅（Eye15）；臀 ✅；胸布丁差別小 |
 | 12 事後時間（街上）、13 書籤 | 另一個 session（[E組] 一對一）同時在做（`OKStreetSocialBookmarks.inl`、`BeginAfter`），這邊停下，交給對方 | — | — |
 
 - **水槍**：街上走路的角色是 GPU 人群，身上留不住水槍的膜，所以只有一對一房間裡看得到；回街上後靠 `SemenOn` 讓她知道並在對話中提起。

@@ -2115,6 +2115,14 @@ she_sent_photo = "{name} sent a photo: {caption}"
 [ui.reading]
 read_hour_button = "Read {book} for an hour"
 
+# Her eyes, tried by hand on the right panel (OKStreetSocialScene.cpp, ok.EyeFollow / ok.EyeUnlimited).
+[ui.eyes]
+follow_camera = "Eyes: on the camera"
+follow_him = "Eyes: on whom she talks to"
+follow_ahead = "Eyes: ahead"
+unlimited_on = "Eye limits: lifted"
+unlimited_off = "Eye limits: original"
+
 # Heroine songs (OKStreetSocialSong.inl).
 [ui.song]
 enabled = "Heroine songs: on (she prepares a song in the background)"

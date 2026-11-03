@@ -1,4 +1,5 @@
 #include "OKInteractionMode.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "OKCharacterController.h"
 #include "OKInteractionScene.h"
 #include "OKHScene.h"
@@ -301,7 +302,10 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
         TArray<TSharedPtr<FJsonValue>> L;TInlineComponentArray<UMeshComponent*> Components;Controller->PreviewActor->GetComponents(Components);
         for(UMeshComponent* C:Components){int32 Index=INDEX_NONE;for(const FName& Tag:C->ComponentTags)if(Tag.ToString().StartsWith(TEXT("KKSessionPart_")))Index=FCString::Atoi(*Tag.ToString().Mid(14));
             FString PartRole;OkMeshView V{};if(Index!=INDEX_NONE&&Controller->PreviewActor->Session.PartAt(Index,V)&&V.role)PartRole=UTF8_TO_TCHAR(V.role);
-            L.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("%d %s %s vis=%d hig=%d main=%d parent=%s"),Index,*PartRole,*C->GetClass()->GetName(),C->IsVisible(),C->bHiddenInGame,C->bRenderInMainPass,C->GetAttachParent()?*C->GetAttachParent()->GetName():TEXT("-"))));}
+            // Each slot's material: its name, d for a dynamic instance, st when it has the iris tiling (_MainTex_ST), rows when gaze rows.
+            FString Mats;for(int32 S=0;S<C->GetNumMaterials();++S)if(UMaterialInterface* M=C->GetMaterial(S)){FLinearColor P;
+                Mats+=FString::Printf(TEXT(" %s%s%s%s"),*M->GetName(),M->IsA<UMaterialInstanceDynamic>()?TEXT(":d"):TEXT(""),M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex_ST")),P)?TEXT(":st"):TEXT(""),M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("KKEyeUV0Row0")),P)?TEXT(":rows"):TEXT(""));}
+            L.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("%d %s %s %s vis=%d hig=%d main=%d parent=%s mats=%s"),Index,*PartRole,*C->GetClass()->GetName(),*C->GetName(),C->IsVisible(),C->bHiddenInGame,C->bRenderInMainPass,C->GetAttachParent()?*C->GetAttachParent()->GetName():TEXT("-"),*Mats)));}
         View->SetArrayField(TEXT("parts"),L);}
     // {"his_parts":true}: the same for him, with each part's renderer name (the penis is o_dankon / cm_o_dan00).
     bool HisDump=false;if(View.IsValid()&&Body.IsValid()&&Body->TryGetBoolField(TEXT("his_parts"),HisDump)&&HisDump&&IsValid(Controller->PartnerActor)){
@@ -316,6 +320,14 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
         auto Dump=[&](AKKPreviewActor* A,const TCHAR* Field,const TCHAR* P){if(!IsValid(A)||!A->BodySkel)return;auto O=MakeShared<FJsonObject>();
             for(const TCHAR* B:{TEXT("j_hips"),TEXT("j_hand_L"),TEXT("j_hand_R"),TEXT("j_foot_L"),TEXT("j_foot_R"),TEXT("j_head"),TEXT("j_spine02")}){const FName Name(FString(P)+B);
                 if(A->BodySkel->GetBoneIndex(Name)==INDEX_NONE)continue;const FVector L=A->BodySkel->GetBoneLocation(Name);O->SetStringField(B,FString::Printf(TEXT("%.0f %.0f %.0f"),L.X,L.Y,L.Z));}
+            // Her soft parts (bust and hip dynamics, ok.Physics.*): where each sits in the frame of the bone it hangs from (mm):
+            // the hips in her waist's, the bust in her upper spine's, so the clip's own motion of her body drops out.
+            auto Soft=[&](const TCHAR* Frame,std::initializer_list<const TCHAR*> Bones){const int32 W=A->BodySkel->GetBoneIndex(FName(FString(P)+Frame));if(W==INDEX_NONE)return;
+                const FTransform WT=A->BodySkel->GetBoneTransform(W);
+                for(const TCHAR* B:Bones){const int32 I=A->BodySkel->GetBoneIndex(FName(FString(P)+B));if(I==INDEX_NONE)continue;
+                    const FVector L=WT.InverseTransformPosition(A->BodySkel->GetBoneTransform(I).GetLocation())*10.;O->SetStringField(B,FString::Printf(TEXT("%.1f %.1f %.1f"),L.X,L.Y,L.Z));}};
+            Soft(TEXT("j_waist02"),{TEXT("d_siri_L"),TEXT("d_siri_R"),TEXT("j_siri_L"),TEXT("j_siri_R")});
+            Soft(TEXT("j_spine03"),{TEXT("j_bust03_L"),TEXT("j_bust03_R"),TEXT("d_bust03_L"),TEXT("d_bnip01_L")});
             O->SetStringField(TEXT("actor"),A->GetActorLocation().ToCompactString());View->SetObjectField(Field,O);};
         Dump(Controller->PreviewActor,TEXT("her_bones"),TEXT("cf_"));Dump(Controller->PartnerActor,TEXT("his_bones"),TEXT("cm_"));}
     return View;

@@ -5,6 +5,7 @@
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "Components/ButtonSlot.h"
+#include "Components/CheckBox.h"
 #include "HAL/IConsoleManager.h"
 #include "OKCharacterController.h"
 #include "OKInteractionMode.h"
@@ -1007,7 +1008,7 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     if(HalfInner&&PanelWidth){const float High=2.f*float(PanelWidth->GetCachedGeometry().GetLocalSize().Y);if(High>10.f&&!FMath::IsNearlyEqual(High,HalfInner->GetHeightOverride(),1.f))HalfInner->SetHeightOverride(High);}
     if(!Gallery)return;
     if(Poses.IsEmpty()&&!Gallery->NativePairs.IsEmpty()){LoadPoses();BuildList();}
-    TickDrips(Delta);TickFluids(Delta);TickAhegao();TickCameraLight(false);Tremble(FPlatformTime::Seconds());TickHands();TickSounds();SwellBust(Delta);ApplyPregnancy(FPlatformTime::Seconds());
+    TickDrips(Delta);TickFluids(Delta);TickAhegao();TickCameraLight(false);Tremble(FPlatformTime::Seconds());TickHands();TickEyesCamera();TickSounds();SwellBust(Delta);ApplyPregnancy(FPlatformTime::Seconds());
     // Her breathing as the original picks it (HVoiceCtrl): her gauge past 50 and his fast motion (voice.speedMotion,
     // with its own up and down marks) change the cries, her experience the bank. A change starts the matching set
     // (user, 2026-11-01: in her it kept the first, quiet set the caress also uses).
@@ -1269,8 +1270,8 @@ void UOKHScenePanel::ClearLine(){++LineEpoch;if(Caption)Caption->SetText(FText::
 // The original's ahegao is the KKS_Ahegao plugin (D:\KoikatuSunshine\BepInEx\config\KKS_Ahegao.cfg, user 2026-11-03): after
 // 4 climaxes (caress or insertion; Ahegao Count 4), only while a loop plays (Loop1/2, OLoop, IN_*) faster than 66% (Speed
 // Toggle, Minimum Speed 66) and not while kissing; eyes 25, brows 2, mouth 24, and her eyes rolled up 0.25 past her look
-// (not here yet: the street draws eyes with runtime materials that take no live gaze).
-static TAutoConsoleVariable<float> CVarHAhegaoGaze(TEXT("ok.HScene.AhegaoGaze"),-1.f,TEXT("Ahegao: her gaze, -1 up on these eyes (+1 down). The street's runtime eye materials take no live gaze yet: there it does not show"));
+// (the street's display materials have no gaze rows: the eye mesh's own coordinates take it, OKUpdateSkeletalMeshUVs).
+static TAutoConsoleVariable<float> CVarHAhegaoGaze(TEXT("ok.HScene.AhegaoGaze"),-1.25f,TEXT("Ahegao: her gaze, -1 up on these eyes (+1 down); past it the iris rolls on past its limit (the original's Eye Roll Amount 0.25)"));
 static TAutoConsoleVariable<float> CVarHAhegaoSpeed(TEXT("ok.HScene.AhegaoSpeed"),.66f,TEXT("Ahegao after her climaxes: only faster than this (the original's Minimum Speed 66; 0 always)"));
 // The original's eyes pattern is a cha_eyeset row (ChaControl.ChangeEyesPtn): its FaceBlendShape eye pattern is the row's
 // eyes_ptn (as OK Studio reads it, OKStudioCatalog::EyeSet), from the base library's lists; -1 when they have none.
@@ -1474,8 +1475,8 @@ void UOKHScenePanel::TickDrips(float Delta){
     if(TearsWanted&&!IsValid(Gallery->PairedPlayback.Get()))SpawnTears(Girl);
     {FVector Eye=FVector::ZeroVector;if(auto* PC=GetOwningPlayer();PC&&PC->PlayerCameraManager)Eye=PC->PlayerCameraManager->GetCameraLocation();Tears.Tick(Delta,Eye);}
     // As she comes (her cry, ClimaxUntil; user 2026-11-01): her crotch squirts and both nipples spray, shot out from her,
-    // whatever her desire.
-    if(IsValid(Girl)&&Now<FMath::Max(ClimaxUntil,NippleUntil)&&Now>=SquirtAt){SquirtAt=Now+.05/(1.f+(Mode==2?Dev(bAnalPlay?TEXT("anal"):TEXT("crotch")):0.f))/More;
+    // whatever her desire. In her anus too it is her vagina that squirts, as much as her crotch is developed (user 2026-11-03).
+    if(IsValid(Girl)&&Now<FMath::Max(ClimaxUntil,NippleUntil)&&Now>=SquirtAt){SquirtAt=Now+.05/(1.f+(Mode==2?Dev(TEXT("crotch")):0.f))/More;
         FVector Kokan,Hips,Chest,L,R;
         auto Floor=[&](const FVector& At){return HBone(Girl,TEXT("j_foot_L"),L)&&HBone(Girl,TEXT("j_foot_R"),R)?FMath::Min(L.Z,R.Z)-3.f:At.Z-80.f;};
         auto Shoot=[&](const FVector& At,const FVector& Out,float Speed,uint8 Colour){const FVector V=(Out+FMath::VRand()*.3f).GetSafeNormal()*Speed*FMath::FRandRange(.7f,1.2f);
@@ -1567,6 +1568,16 @@ void UOKHScenePanel::ApplyHerFk(AKKPreviewActor* Girl,TArray<FString>& Names,TAr
 void UOKHScenePanel::TickHands(){
     AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl))return;
     const int32 Count=Girl->GetHandShapeCount();
+// As in the source's H, her eyes are on the camera (user 2026-11-03): set once for each self of hers that is shown, so
+// unticking it on the panel (the eye look box) leaves them; the ahegao keeps and gives back what it found.
+static TAutoConsoleVariable<int32> CVarHEyesCamera(TEXT("ok.HScene.EyesCamera"),1,TEXT("1: in H her eyes follow the camera from the start (the panel's eye look box can turn it off)"));
+void UOKHScenePanel::TickEyesCamera(){
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl)||EyesCameraGirl.Get()==Girl||!CVarHEyesCamera.GetValueOnGameThread()||!Girl->StudioCam)return;
+    EyesCameraGirl=Girl;if(bAhegaoShown||Girl->bEyeLookTracking)return;
+    const bool On=Girl->FollowEyeLookCamera(Girl->Session.EyeLookPatternCount()>1?1:0);
+    if(On&&Gallery->EyeLookCameraCheck)Gallery->EyeLookCameraCheck->SetIsChecked(true);
+    UE_LOG(LogTemp,Display,TEXT("H scene: her eyes on the camera %s"),On?TEXT("on"):TEXT("unavailable"));
+}
     if(Count!=HandOptions)for(int32 Side=0;Side<2;++Side)if(UComboBoxString* C=HandCombos[Side]){
         C->ClearOptions();C->AddOption(OKT(TEXT("ui.hscene.hand_follow")));for(int32 P=0;P<Count;++P)C->AddOption(OKMsg(TEXT("ui.hscene.hand_pattern"),{{TEXT("n"),P}}));
         HandPattern[Side]=FMath::Clamp(HandPattern[Side],-1,Count-1);C->SetSelectedIndex(HandPattern[Side]+1);}

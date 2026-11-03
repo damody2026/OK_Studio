@@ -1503,6 +1503,7 @@ bool FOkSession::ApplyEditorModsAndShape(const FString& Json,int32 Coordinate,co
 bool FOkSession::ApplyEditorMods(const FString& Json,int32 Coordinate,bool* GeometryChanged){if(!Handle)return false;const int32 Result=ok_editor_apply_mods(Handle,TCHAR_TO_UTF8(*Json),Coordinate);if(GeometryChanged)*GeometryChanged=Result==2;return Result>=0;}
 
 bool FOkSession::ApplyBodyPhysics(float Softness,float Weight){return Handle&&ok_editor_body_physics(Handle,Softness,Weight)==0;}
+bool FOkSession::RefreshBodyPhysics(){return Handle&&ok_session_refresh_body_physics(Handle)==0;}
 
 extern "C" int32_t ok_appearance_request(const char*,const char*,const char*,char*,int32_t);
 extern "C" int32_t ok_clothes_file(int32_t,const char*,const char*,int32_t,const char*,char*,int32_t);

@@ -2606,6 +2606,7 @@ fn base_bundles_stage(game_root: &Path, parsed_card: &Option<CardInfo>, vanilla:
     head_face_settings[3]=if parsed_card.as_ref().map_or(true,|card|card.eyes_blink) {1.}else{0.};
     head_face_settings[11]=if head_has_eye_controller {1.}else{0.};
     let head_eye_materials=parsed_head.eye_material_settings(&head_main);
+    eprintln!("ok-extract: head eye look materials {:?}",head_eye_materials.iter().map(|(k,v)|(k.as_str(),v[0],v[9])).collect::<Vec<_>>());
     // Emitted material passes may have a different display name but retain
     // the source renderer's entire FBS controller identity.
     let mut head_fbs_sources = std::collections::HashMap::<String, String>::new();

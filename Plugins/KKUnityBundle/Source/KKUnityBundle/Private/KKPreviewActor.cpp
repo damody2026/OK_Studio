@@ -40,6 +40,7 @@
 #include "Animation/AnimData/IAnimationDataModel.h"
 #include "KKCharAnimInstance.h"
 #include "ok_extract.h"
+#include "UObject/UObjectIterator.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "KKRuntimeSkinBounds.h"
 #include "KKRuntimeMaterial.h"
@@ -125,6 +126,27 @@ void AKKPreviewActor::ReleaseSceneCaches()
 static TAutoConsoleVariable<int32> CVarOkFacePruneInactiveMorphs(
     TEXT("ok.Face.PruneInactiveMorphs"),1,
     TEXT("Skip copying raw morph arrays with no change from the native baseline (0 = reference path)."));
+// The bust and the hips set apart (user 2026-11-03; dbone/ver02.rs PartPhysics): both the original's DynamicBone_Ver02
+// verlet by default, the hips springy like the bust but firmer; 1 pudding (keeps wobbling). A change goes to every
+// character now (their body dynamics built again).
+static void OKApplyBodyPartPhysics(IConsoleVariable*);
+static TAutoConsoleVariable<int32> CVarOkBustMode(TEXT("ok.Physics.BustMode"),0,TEXT("Bust physics: 0 the original verlet (card softness), 1 pudding"),FConsoleVariableDelegate::CreateStatic(&OKApplyBodyPartPhysics));
+static TAutoConsoleVariable<float> CVarOkBustSoftness(TEXT("ok.Physics.BustSoftness"),-1.f,TEXT("Bust softness 0..1 (below 0: the card's)"),FConsoleVariableDelegate::CreateStatic(&OKApplyBodyPartPhysics));
+static TAutoConsoleVariable<int32> CVarOkHipMode(TEXT("ok.Physics.HipMode"),0,TEXT("Hip physics: 0 the original verlet, springy like the bust but firmer; 1 pudding; 2 the prefab's own values"),FConsoleVariableDelegate::CreateStatic(&OKApplyBodyPartPhysics));
+static TAutoConsoleVariable<float> CVarOkHipSoftness(TEXT("ok.Physics.HipSoftness"),-1.f,TEXT("Hip softness 0..1 (below 0: 0.12, firmer than a usual bust's 0.26)"),FConsoleVariableDelegate::CreateStatic(&OKApplyBodyPartPhysics));
+// The eyes past the source's limits (user 2026-11-03: "解除眼睛的限制"; eye_look.rs): on by default in both.
+static void OKApplyEyeUnlimited(IConsoleVariable*);
+static TAutoConsoleVariable<int32> CVarOkEyeUnlimited(TEXT("ok.EyeUnlimited"),1,TEXT("1: eyes follow past the source's angles and the iris moves on past its limits (up to ok.EyeUnlimitedMost); 0: the source's limits"),
+	FConsoleVariableDelegate::CreateStatic(&OKApplyEyeUnlimited));
+static TAutoConsoleVariable<float> CVarOkEyeUnlimitedMost(TEXT("ok.EyeUnlimitedMost"),1.3f,TEXT("How far past the source's limit the unlimited eyes go (1 the limit; freely the iris left the eye)"),
+	FConsoleVariableDelegate::CreateStatic(&OKApplyEyeUnlimited));
+static void OKApplyEyeUnlimited(IConsoleVariable*){ok_set_eye_look_unlimited(CVarOkEyeUnlimited.GetValueOnGameThread(),CVarOkEyeUnlimitedMost.GetValueOnGameThread());}
+static void OKApplyBodyPartPhysics(IConsoleVariable*){
+	ok_set_body_part_physics(0,CVarOkBustMode.GetValueOnGameThread(),CVarOkBustSoftness.GetValueOnGameThread());
+	ok_set_body_part_physics(1,CVarOkHipMode.GetValueOnGameThread(),CVarOkHipSoftness.GetValueOnGameThread());
+	int32 Count=0;for(TObjectIterator<AKKPreviewActor> It;It;++It)if(IsValid(*It)&&!It->IsTemplate()&&It->Session.IsOpen()&&It->Session.RefreshBodyPhysics())++Count;
+	UE_LOG(LogTemp,Display,TEXT("OK body physics bust=%d/%.2f hip=%d/%.2f characters=%d"),CVarOkBustMode.GetValueOnGameThread(),CVarOkBustSoftness.GetValueOnGameThread(),CVarOkHipMode.GetValueOnGameThread(),CVarOkHipSoftness.GetValueOnGameThread(),Count);
+}
 static TAutoConsoleVariable<int32> CVarOkFaceFrameBatch(TEXT("ok.Face.FrameBatch"),1,TEXT("Publish speech, pose, gaze and blink morph display once per actor tick; 0 retains independent submissions."));
 static TAutoConsoleVariable<int32> CVarOkExactLeader(TEXT("ok.Animation.LeaderPoseReuse"),1,TEXT("Share compatible immutable runtime poseable meshes for opted-in single pose publishers; 0 original path"));
 static TAutoConsoleVariable<int32> CVarOkFacePreparedPalette(TEXT("ok.Face.PreparedPalette"),1,TEXT("Convert immutable native palette once for all face vertices; 0 retains per-influence conversion."));
@@ -5816,11 +5838,15 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 		// skeleton (GPUSkin.md §4). skel_kind is 0 for hair today, so the
 		// kind check already excludes it; do not socket-attach world-baked
 		// hair verts.
-		const bool bCanSkel = OKSkelMeshEnabled() && SharedSkel != nullptr
+		// An iris the look moves but not drawn by the eye shader (a Material Editor shader on it, as C094's glowing
+		// main_item_emission eyes; 2026-11-03): only its own UVs move it, so it stays a CPU mesh, which SetEyeGaze rewrites.
+		const bool bIrisWithoutEyeDraw = !View.eye_draw && Source.EyeMaterialSetting(i, -1) != 0.f;
+		if (bIrisWithoutEyeDraw) UE_LOG(LogTemp, Display, TEXT("OK iris without eye draw %s: CPU mesh for the look"), *Name);
+		const bool bCanSkel = OKSkelMeshEnabled() && SharedSkel != nullptr && !bIrisWithoutEyeDraw
 			&& View.rest_positions && View.weights && View.bone_idx
 			&& (View.skel_kind == 1 || View.skel_kind == 2 || View.skel_kind == 3);
 		const bool bSlotAcc = OKSkelMeshEnabled() && BodySkel != nullptr && !ParentBone.IsEmpty()
-			&& !bCanSkel;
+			&& !bCanSkel && !bIrisWithoutEyeDraw;
 		const FString BakedFollowBone = View.rigid_follow_bone
 			? UTF8_TO_TCHAR(View.rigid_follow_bone) : FString();
 		// Runtime accessories already contain the animated socket transform in
@@ -5853,7 +5879,9 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 		}
 		else if (bHead && PartRole.Equals(TEXT("head")) && HeadMesh && !HeadMesh->GetNumSections() && !Output.bStage)
 		{
+			// A GPU head part before it emptied and hid it (C094's left iris, a CPU mesh after the face, never showed).
 			Comp = HeadMesh;
+			Comp->SetVisibility(true);
 		}
 		else
 		{
@@ -8904,6 +8932,14 @@ float AKKPreviewActor::EffectiveFaceRate(int32 Control) const
         Control==1?BlinkEyeRate:BlinkBrowRate);
 }
 
+// The iris tiling's axes against the mesh's coordinates, as measured in H (2026-11-03): both the same way (U mirrored
+// made her eyes look apart, each out to its own side, when the look turned them in; user 2026-11-03).
+static TAutoConsoleVariable<int32> CVarOKEyeGazeSTFlipV(TEXT("ok.EyeGazeSTFlipV"),0,TEXT("1: an eye's gaze written to its iris tiling (_MainTex_ST) with V mirrored; 0: as the mesh's."));
+static TAutoConsoleVariable<int32> CVarOKEyeGazeSTFlipU(TEXT("ok.EyeGazeSTFlipU"),0,TEXT("1: an eye's gaze written to its iris tiling (_MainTex_ST) with U mirrored; 0: as the mesh's."));
+// M_ForgeEye_Flat (the shared display eye, street and H) has the gaze rows but does not move the iris by them; its
+// tiling does (2026-11-03: rows of -0.38 on V showed nothing, the tiling rolled her eyes up).
+static TAutoConsoleVariable<int32> CVarOKEyeGazeVia(TEXT("ok.EyeGazeVia"),1,TEXT("An eye's gaze on a material with gaze rows: 0 the rows, 1 the iris tiling (_MainTex_ST) instead where it has one, 2 both"));
+static TAutoConsoleVariable<int32> CVarOKEyeGazeLog(TEXT("ok.EyeGazeLog"),0,TEXT("1: log each eye's gaze rows as SetEyeGaze writes them"));
 bool AKKPreviewActor::SetEyeGaze(float LeftHorizontal,float RightHorizontal,float Vertical)
 {
     if(!FMath::IsFinite(LeftHorizontal)||!FMath::IsFinite(RightHorizontal)||!FMath::IsFinite(Vertical)) return false;
@@ -8926,13 +8962,48 @@ bool AKKPreviewActor::SetEyeGaze(float LeftHorizontal,float RightHorizontal,floa
             }
         }
         // Keep source positions, normals, winding and independent UV1/2.
-		if(Part.GpuEyeMaterial){
-			const TArray<FVector2D>* Target[]={&Part.UVs,&Part.UV4,&Part.UV2}; FLinearColor Rows[3][2];
-			for(int32 Channel=0;Channel<3;++Channel) if(!FitEyeUVRows(Part.GpuEyeUV[Channel],*Target[Channel],Rows[Channel])) {
+		// The gaze as rows of each UV channel (iris, two highlights), for the material built with the part and for every eye
+		// material its components draw with: the display swaps in its own instance (M_ForgeEye_Flat on the street and in H),
+		// and rows written only to the built one never showed (no ahegao roll, no look at the camera; 2026-11-03).
+		FLinearColor Rows3[3][2];bool bRows=false;
+		if(!Part.GpuEyeUV[0].IsEmpty()){
+			const TArray<FVector2D>* Target[]={&Part.UVs,&Part.UV4,&Part.UV2};
+			for(int32 Channel=0;Channel<3;++Channel) if(!FitEyeUVRows(Part.GpuEyeUV[Channel],*Target[Channel],Rows3[Channel])) {
 				UE_LOG(LogTemp,Error,TEXT("GPU eye gaze is not affine part=%d channel=%d"),Part.SessionIndex,Channel); return false;
 			}
-			for(int32 Channel=0;Channel<3;++Channel)for(int32 Axis=0;Axis<2;++Axis)
-				Part.GpuEyeMaterial->SetVectorParameterValue(*FString::Printf(TEXT("KKEyeUV%dRow%d"),Channel,Axis),Rows[Channel][Axis]);
+			bRows=true;
+		}
+		auto WriteRows=[&](UMaterialInstanceDynamic* M){for(int32 Channel=0;Channel<3;++Channel)for(int32 Axis=0;Axis<2;++Axis)
+			M->SetVectorParameterValue(*FString::Printf(TEXT("KKEyeUV%dRow%d"),Channel,Axis),Rows3[Channel][Axis]);};
+		// ok.EyeGazeVia: 0 the rows, 1 the iris tiling (rows left still), 2 both.
+		const int32 Via=CVarOKEyeGazeVia.GetValueOnGameThread();
+		FLinearColor Still[3][2];for(int32 C=0;C<3;++C){Still[C][0]=FLinearColor(1,0,0,0);Still[C][1]=FLinearColor(0,1,0,0);}
+		auto WriteStill=[&](UMaterialInstanceDynamic* M){for(int32 Channel=0;Channel<3;++Channel)for(int32 Axis=0;Axis<2;++Axis)
+			M->SetVectorParameterValue(*FString::Printf(TEXT("KKEyeUV%dRow%d"),Channel,Axis),Still[Channel][Axis]);};
+		auto HasTiling=[](UMaterialInstanceDynamic* M){FLinearColor V;return M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex_ST")),V);};
+		if(Part.GpuEyeMaterial&&bRows){if(Via==1&&HasTiling(Part.GpuEyeMaterial))WriteStill(Part.GpuEyeMaterial);else WriteRows(Part.GpuEyeMaterial);}
+		// A drawn material without rows: her gaze moves the iris texture's tiling and offset instead (_MainTex_ST, as the
+		// street's eyes do and the source's eye look does), its axes turned to the tiling's (ok.EyeGazeSTFlipU / FlipV).
+		if(bRows){const FLinearColor* Rows=Rows3[0];
+			const bool bFlipV=CVarOKEyeGazeSTFlipV.GetValueOnGameThread()!=0;
+			const bool bFlipU=CVarOKEyeGazeSTFlipU.GetValueOnGameThread()!=0;
+			const float Su=Rows[0].R,Ou=bFlipU?1.f-Rows[0].R-Rows[0].B:Rows[0].B,Sv=Rows[1].G,Ov=bFlipV?1.f-Rows[1].G-Rows[1].B:Rows[1].B;
+			const FName PartTags[]={*FString::Printf(TEXT("KKSessionPart_%d"),Part.SessionIndex),*FString::Printf(TEXT("KKMorphPart_%d"),Part.SessionIndex)};
+			TInlineComponentArray<UMeshComponent*> Meshes(this);int32 Set=0,RowsSet=0;
+			for(UMeshComponent* Drawn:Meshes)if(Drawn&&(Drawn->ComponentHasTag(PartTags[0])||Drawn->ComponentHasTag(PartTags[1])))
+				for(int32 Slot=0;Slot<Drawn->GetNumMaterials();++Slot)if(auto* M=Cast<UMaterialInstanceDynamic>(Drawn->GetMaterial(Slot))){
+					FLinearColor Probe;if(M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("KKEyeUV0Row0")),Probe)){if(M!=Part.GpuEyeMaterial){if(Via==1&&HasTiling(M))WriteStill(M);else WriteRows(M);++RowsSet;}if(Via==0)continue;}
+					// The card's own tiling, kept the first time, so each gaze is set from it and not on top of the last.
+					const FLinearColor* Base=EyeTilingBase.Find(M);
+					if(!Base){FLinearColor V;if(!M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex_ST")),V))continue;
+						float A=0.f;if(M->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex_ST__A")),A))V.A=A;Base=&EyeTilingBase.Add(M,V);}
+					const FLinearColor ST(Su*Base->R,Sv*Base->G,Ou*Base->R+Base->B,Ov*Base->G+Base->A);
+					M->SetVectorParameterValue(TEXT("_MainTex_ST"),ST);M->SetScalarParameterValue(TEXT("_MainTex_ST__A"),ST.A);++Set;}
+			if(CVarOKEyeGazeLog.GetValueOnGameThread()){FLinearColor Shown;const bool Has=Part.GpuEyeMaterial&&Part.GpuEyeMaterial->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("KKEyeUV0Row1")),Shown);
+				UE_LOG(LogTemp,Display,TEXT("Eye gaze part=%d gaze=(%.3f,%.3f,%.3f) iris rows u=(%.4f,%.4f,%.4f) v=(%.4f,%.4f,%.4f) uv0=(%.4f,%.4f) base0=(%.4f,%.4f) built=%s shown_v=(%.4f,%.4f,%.4f) drawn rows=%d tiling=%d"),
+					Part.SessionIndex,EyeGaze[0],EyeGaze[1],EyeGaze[2],Rows[0].R,Rows[0].G,Rows[0].B,Rows[1].R,Rows[1].G,Rows[1].B,Part.UVs.IsEmpty()?0.:Part.UVs[0].X,Part.UVs.IsEmpty()?0.:Part.UVs[0].Y,
+					Part.GpuEyeUV[0][0].X,Part.GpuEyeUV[0][0].Y,Part.GpuEyeMaterial?*Part.GpuEyeMaterial->GetName():TEXT("-"),Has?Shown.R:0.f,Has?Shown.G:0.f,Has?Shown.B:0.f,RowsSet,Set);}
+			if(!bEyeTilingSaid&&(Set||RowsSet)){bEyeTilingSaid=true;UE_LOG(LogTemp,Display,TEXT("Eye gaze part=%d drawn: %d with rows, %d through the iris tiling"),Part.SessionIndex,RowsSet,Set);}
 		}
         if(!Part.Comp) continue;
         for(int32 Section=0;Section<Part.Comp->GetNumSections();++Section)

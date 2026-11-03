@@ -2116,6 +2116,14 @@ she_sent_photo = "{name}傳來一張照片：{caption}"
 [ui.reading]
 read_hour_button = "讀{book}一小時"
 
+# Her eyes, tried by hand on the right panel (OKStreetSocialScene.cpp, ok.EyeFollow / ok.EyeUnlimited).
+[ui.eyes]
+follow_camera = "眼睛：看鏡頭"
+follow_him = "眼睛：看對話的人"
+follow_ahead = "眼睛：看前方"
+unlimited_on = "眼睛限制：解除"
+unlimited_off = "眼睛限制：原作"
+
 # Heroine songs (OKStreetSocialSong.inl).
 [ui.song]
 enabled = "女主唱歌：開（她會在背景準備歌曲）"

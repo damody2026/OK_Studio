@@ -482,6 +482,14 @@ void* ok_lowpoly_capture(OkSession* s,char* err,int32_t cap);
 int32_t ok_lowpoly_export(const void* source,const char* card,int32_t budget,char* summary,int32_t summary_cap,char* err,int32_t cap);
 void ok_lowpoly_free(void* source);
 int32_t ok_editor_body_physics(OkSession* session,float softness,float weight);
+/* How the bust (part 0) or the hips (part 1) move for every character: mode 0 the original verlet, 1 pudding,
+ * 2 (hips) the prefab's own values; softness < 0 the card's (bust) or the default (hips). Built in on the next
+ * ok_session_refresh_body_physics, load or shape change. 0 on success. */
+int32_t ok_set_body_part_physics(int32_t part,int32_t mode,float softness);
+int32_t ok_session_refresh_body_physics(OkSession* session);
+/* The eyes past the source's limits for every character (on by default): the look follows past the pattern's
+ * angles and the iris moves on in proportion, up to most (in rates, 1 the source's limit); 0 keeps the limits. */
+int32_t ok_set_eye_look_unlimited(int32_t enabled,float most);
 int32_t ok_editor_decode_mods(const uint8_t* data,int32_t len,uint8_t* out,int32_t cap);
 int32_t ok_editor_encode_mods(const uint8_t* data,int32_t len,const char* json,uint8_t* out,int32_t cap);
 int32_t ok_editor_apply_mods(OkSession* session,const char* json,int32_t coordinate);

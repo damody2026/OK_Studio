@@ -176,6 +176,8 @@ public:
 	static FString DecodeEditorMods(const TArray<uint8>& Extended);
  static bool EncodeEditorMods(const TArray<uint8>& Extended,const FString& Json,TArray<uint8>& Out);
  bool ApplyBodyPhysics(float Softness,float Weight);
+ // Its body dynamics built again with the bust / hip settings now (ok.Physics.Bust*, ok.Physics.Hip*).
+ bool RefreshBodyPhysics();
  bool ApplyEditorMods(const FString& Json,int32 Coordinate,bool* GeometryChanged=nullptr);
  // ApplyEditorMods followed by ApplyShape(Body,Face), the shape built once (a card's load: its mods, then its sliders).
  bool ApplyEditorModsAndShape(const FString& Json,int32 Coordinate,const TArray<float>& Body,const TArray<float>& Face,bool* GeometryChanged=nullptr);

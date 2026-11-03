@@ -1666,10 +1666,13 @@ pub(crate) unsafe extern "C" fn set_eye_gaze(s:*mut OkSession,left:f32,right:f32
     let Some(session)=sess_ref(s) else{return 1;};
     for part in &mut session.parts {
         if let Some(runtime)=part.iris_runtime.as_ref() {
+            // Vertical past ±1 rolls her eyes on past the limit (IrisRuntime::st_rolled); the look's rates stay in -1..1.
             let h=if runtime.settings[0]==1. {right}else{left};
-            runtime.apply(&mut part.uvs,h.clamp(-1.,1.),vertical.clamp(-1.,1.));
+            let most=crate::eye_look::most();
+            let st=runtime.st_rolled(h.clamp(-most,most),vertical.clamp(-2.,2.));
+            runtime.apply_st(&mut part.uvs,st);
             if let Some(draw)=part.eye_draw.as_mut() {
-                draw.apply(runtime.st(h.clamp(-1.,1.),vertical.clamp(-1.,1.)),&runtime.raw_uvs,&mut part.uv2,&mut part.uv3);
+                draw.apply(st,&runtime.raw_uvs,&mut part.uv2,&mut part.uv3);
             }
         }
     }
@@ -2555,6 +2558,25 @@ pub unsafe extern "C" fn ok_editor_apply_mods_shape(s:*mut OkSession,json:*const
     crate::editor_mods::apply_with_shape(sess,&mods,&body,&face)
 }
 
+/// How the bust (part 0) or the hips (part 1) move, for every character (dbone::ver02::PartPhysics): mode 0 the
+/// original verlet, 1 pudding, 2 (hips) the prefab's values; softness < 0 the card's or the default. Takes effect when a
+/// character's body dynamics are built again (`ok_session_refresh_body_physics`, a load or a shape change).
+#[no_mangle]
+pub extern "C" fn ok_set_body_part_physics(part:i32,mode:i32,softness:f32)->i32 {
+ if !(0..=1).contains(&part){return -1;}
+ if crate::dbone::ver02::set_part_physics(part as usize,crate::dbone::ver02::PartPhysics{mode,softness}){0}else{-1}
+}
+/// The eyes past the source's limits for every character (eye_look::set_unlimited; on by default): the look follows
+/// past the pattern's angles and the iris moves on past them in proportion. 0 keeps the source's limits.
+#[no_mangle]
+pub extern "C" fn ok_set_eye_look_unlimited(enabled:i32,most:f32)->i32 {crate::eye_look::set_unlimited(enabled!=0);crate::eye_look::set_most(most);0}
+/// Builds this character's body dynamics again with the settings now (ok_set_body_part_physics).
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_refresh_body_physics(s:*mut OkSession)->i32 {
+ // Built again on the next step from the new settings (the live shape refresh only renews the bust's references, and
+ // only when the shape changed: the modes showed no difference in H, 2026-11-03).
+ let Some(s)=sess_ref(s)else{return -1;};s.body_dynamic_runtime=None;0
+}
 #[no_mangle]
 pub unsafe extern "C" fn ok_editor_body_physics(s:*mut OkSession,softness:f32,weight:f32)->i32 {
  let Some(s)=sess_ref(s)else{return -1;};if !softness.is_finite()||!weight.is_finite(){return -1;}
