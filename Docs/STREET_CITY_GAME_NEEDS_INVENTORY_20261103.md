@@ -212,7 +212,148 @@ c-street-city 的逐項回答在 `Docs/STREET_CITY_PLACES_INVENTORY_20261103.md`
   - 街上的群眾模型要等下次開遊戲才換：群眾的角色一次載入、共用 GPU bank，沒有單人重載。
 - 街上即時換色另外要做兩件事：群眾材質裡頭髮的參數分類，以及不和別人共用的材質實體。
 
-## 8. 下一步
+## 8. 完整的生活場景盤點（使用者 11-03：場景之後不會再改，要一次做完）
+
+使用者的例子：
+- 看牙要牙醫，吃飯要餐廳。
+- 帶女孩子買衣服、買泳裝都要有對應的店。
+- 海邊可以游泳，也要有香蕉船、可以打西瓜。
+
+原則是一座大學城裡兩個人會去、會做的事，都要有地方和道具。
+
+城市現有 123 棟：教學 8 棟、行政、圖書館、學生中心、運動館、宿舍 4 棟、百貨、O01–O03 辦公、R1–R2 公寓、H1 旅館、CV、TR 車站、PK 公園。96 間店面其實是 18 種店各重複 4–5 間（咖啡、茶飲、麵包、家常菜、水果、便利店、書店、寵物、花店、服飾、髮廊、唱片、桌遊、相館、單車、藥妝、洗衣、彩券）。
+
+**建議**：重複的店（約 S49–S96）改建成下面缺的種類，不一定要蓋新樓；戶外的大型場景（海水浴場、遊樂園、河湖）另外做。
+
+### 8.1 程式碼已經在用、城市還缺的道具（子代理逐檔查過）
+
+| 需要 | 程式依據 | 城市要補 |
+|---|---|---|
+| H 姿勢的道具 | `h_poses.json` 類別（`OKHScene.cpp:96-117`）：椅子 2–5、長椅 12、沙發 1201、跨坐椅 1200、桌子 6–7、箱子 1009、桌球桌 1301、牆 8／1302、書架 1002、圍欄 1006、網子 1300、泳池 1004、香蕉船 1303、馬桶 2003、淋浴 2004 | 私密房間（旅館、民宿、男宿、公寓）要有：真的椅子、沙發、書桌、能靠的平整牆、淋浴間、馬桶。<br>校內要有：桌球桌、屋頂或操場的圍欄、球網。<br>海邊要有：香蕉船、泳池 |
+| 生活動作依地點 | `motions.toml` 有 `beach`、`pool`、`street` 三列 | 要有 game id 是 `beach`、`pool` 的地點 |
+| 洗澡作息 | `SpotFor` 的 bath 找 `bath*` 錨點（`OKStreetSocialSchedule.inl`） | 女宿房間的淋浴旁加 `bath*`（現在只有 `shower*`） |
+| 雨天與戶外 | 遊戲還沒有「戶外」旗標，公園等開放地點被當成室內 | 每個 game_place 標 `outdoor: true/false` |
+| 撲克牌桌 | 要在地點室內的活動錨點 | 已有（各店的 `table*`） |
+| 一起洗澡 | 能坐進去的水，有 30 cm 台階（`OKStreetOnsenLift`） | S19 池子確認有台階、水深適合坐 |
+
+### 8.2 缺的生活場所（城市端要建模）
+
+每項都附 game id 建議和錨點。
+
+**醫療、健康**
+
+| game id | 場所 | 錨點／道具 | 用途 |
+|---|---|---|---|
+| `dentist` | 牙醫診所 | `counter`、`seat*`（候診）、`dental_chair*`（診療椅＋燈）、`wait` | 看牙、洗牙，陪她去 |
+| `clinic_general` | 家醫科診所＋藥局櫃台 | `counter`、`seat*`、`doctor`、`bed_exam`、`pharmacy` | 感冒、受傷、陪她看病 |
+| `optician` | 眼鏡行 | `counter`、`mirror`、`try*`（試戴位） | 配眼鏡、挑鏡框 |
+| `gym` | 健身房 | `treadmill*`、`bike*`、`weights`、`mat*`（瑜伽墊）、`mirror`、`shower`、`locker` | 一起運動、瑜伽 |
+| `pool` | 室內溫水游泳池（SP 運動健康館內） | `swim*`、`poolside*`（池邊座）、`ladder`、`shower`、`changing_women`、`changing_men` | 游泳、泳池 H 姿勢 |
+
+**購物（買衣服、泳裝）**
+
+| game id | 場所 | 錨點／道具 | 用途 |
+|---|---|---|---|
+| `swimwear` | 泳裝店 | `rack*`、`fitting*`（試衣間，有簾子）、`mirror`、`counter` | 帶她買泳裝、試穿 |
+| `lingerie` | 內衣店 | `rack*`、`fitting*`、`mirror`、`counter` | 買內衣 |
+| `clothing`（現有 S10、S30、S46、S58、S76、S94） | 服飾店 | 每間加 `fitting*`（試衣間）、`mirror`、`rack*` | 現在的服飾店沒有試衣間 |
+| `jewelry` | 飾品、珠寶店 | `case*`（展示櫃）、`counter`、`mirror` | 買戒指、項鍊當禮物，求婚 |
+| `supermarket` | 超市 | `aisle*`、`cart`、`checkout`、`fresh`（生鮮） | 一起買菜，回家做飯 |
+| `yukata` | 和服、浴衣租借 | `rack*`、`fitting*`、`mirror`、`counter` | 夏日祭典、煙火大會穿浴衣 |
+| `photo_studio` | 寫真館（S34 相館可改） | `backdrop`、`camera`、`seat*`、`changing` | 拍情侶照、紀念照 |
+| `nail` | 美甲店 | `nail_table*`、`seat*`、`counter` | 陪她做指甲 |
+
+**餐飲**
+
+| game id | 場所 | 錨點／道具 |
+|---|---|---|
+| `ramen` | 拉麵店 | 吧台座 `counter_seat*`、`table*`、點餐機 `ticket` |
+| `yakiniku` | 燒肉店 | 有烤爐的桌 `grill_table*` |
+| `sushi` | 迴轉壽司 | 迴轉檯座 `conveyor_seat*`、`booth*` |
+| `izakaya` | 居酒屋、酒吧 | `counter_seat*`、`booth*`、`bar` |
+| `crepe` | 可麗餅、冰淇淋攤 | `counter`、`bench*` |
+| `fastfood` | 速食店 | `counter`、`table*` |
+| `cat_cafe` | 貓咪咖啡廳 | `seat*`、`cats`（貓跳台、地墊） |
+
+**娛樂、約會**
+
+| game id | 場所 | 錨點／道具 | 依據 |
+|---|---|---|---|
+| `cinema` | 電影院 | `ticket`、`concession`（爆米花）、`seat*`（成對的座位，一排排）、`screen` | 試玩兩次約電影院（R3-92、R6-113） |
+| `arcade` | 遊戲中心 | `claw*`（夾娃娃機）、`photobooth`（拍貼機，半私密）、`rhythm*`、`racing*`、`counter` | 試玩約過遊戲中心（R6-116） |
+| `bowling` | 保齡球館 | `lane*`、`seat*`、`counter`，旁邊有撞球台 `billiards*` | |
+| `manga_cafe` | 漫畫網咖 | 情侶包廂 `booth*`（半私密）、`shelf*`、`counter` | |
+| `batting` | 打擊練習場 | `cage*`、`bench` | |
+| `amusement` | 遊樂園 | 摩天輪車廂 `ferris*`（密閉，可接吻）、雲霄飛車上車處 `coaster`、旋轉木馬 `carousel`、鬼屋 `haunted`、攤販 `stall*`、`bench*` | |
+| `museum` | 美術館、博物館 | `exhibit*`、`bench*`、`shop` | |
+| `planetarium` | 天文館 | 可躺的雙人座 `seat*`、`dome` | |
+| `observation` | 展望台 | 夜景窗邊 `view*`、望遠鏡 `telescope` | |
+
+**海邊（使用者指名）**
+
+| game id | 錨點／道具 |
+|---|---|
+| `beach` | 游泳區 `swim*`（水深及腰）、香蕉船 `banana_boat`（船＋拖船；可坐兩人以上，也是 H 姿勢 1303）、打西瓜 `watermelon`（沙地空位、西瓜、蒙眼棒）、沙灘排球 `volleyball`（網子）、堆沙堡 `sandcastle`、遮陽傘 `parasol*`（現有躺椅 84 張旁）、救生員台 `lifeguard`、淋浴 `shower`、更衣室 `changing_women`／`changing_men`、置物櫃 `locker`、浮板／游泳圈出租 `rental` |
+| `beach_house` | 海之家：`counter`、`table*`（刨冰、炒麵）、`shower` |
+| `jetski` | 水上摩托車碼頭：`dock`、`jetski` |
+
+**河、湖、戶外**
+
+| game id | 錨點／道具 |
+|---|---|
+| `boat` | 天鵝船碼頭：`dock`、`swan_boat*`（兩人座） |
+| `fishing` | 釣魚台：`fishing*`、`bench` |
+| `bbq` | 烤肉露營區：`grill*`、`table*`、`tent*` |
+| `flower_field` | 花海、植物園：`path*`、`bench*`、拍照點 `photo` |
+| `hill` | 小山觀景點：`view`、`bench` |
+| `skating` | 冬季溜冰場（廣場改）：`rink`、`bench*`、`rental` |
+
+**校園**
+
+| game id | 錨點／道具 | 用途 |
+|---|---|---|
+| `infirmary` | 保健室：`bed*`、`desk`、`curtain` | 身體不舒服時休息 |
+| `rooftop` | 屋頂：`fence*`（圍欄）、`bench*` | 午餐、告白；圍欄是 H 姿勢 1006 |
+| `club_room` | 社團教室：`table*`、`seat*`、`shelf` | |
+| `gym_hall` | 體育館：`court`、`net`（球網是 H 姿勢 1300）、`pingpong*`（桌球桌是 H 姿勢 1301）、`bleacher*` | |
+| `art_room` | 美術教室：`easel*`、`seat*` | 和寫生活動接上 |
+
+**節日**
+
+| game id | 錨點／道具 |
+|---|---|
+| `festival` | 神社或公園的夏日祭攤位：`goldfish`（撈金魚）、`shooting`（射擊）、`yoyo`、`takoyaki`、`cotton_candy`、`stall*`、`lantern`。夜市 ACTSPACE-03 可共用 |
+| `xmas_tree` | 聖誕樹廣場：`tree`、`bench*`；燈飾可開關 |
+
+**住家**
+
+| game id | 錨點／道具 | 用途 |
+|---|---|---|
+| R1、R2 公寓，男宿 | 廚房 `kitchen`、`stove`、`sink`、`dining*`（餐桌） | 一起做飯 |
+| 女宿 | 公共廚房 `kitchen`、`stove` | 一起做飯 |
+| 各房間 | 浴缸 `bath*` | 洗澡作息、一起泡澡 |
+
+**服務**
+
+| game id | 場所 |
+|---|---|
+| `post` | 郵局：`counter`、`seat*` |
+| `bank` | 銀行：`counter*`、`atm`、`seat*`。現在 ATM 只在便利商店 |
+| `phone_shop` | 手機行：`counter`、`display*` |
+
+### 8.3 遊戲端之後要做（我負責，換城市整合時）
+
+- 每個新地點的活動（`activities.toml`）、商品與營業時間（`catalog.json`）、`places.toml` 規範、三語文字。
+- `motions.toml` 的 `beach`、`pool` 要能接上新的地點 id。
+- 戶外旗標接到雨天、雨傘、撲克牌桌和視線判斷。
+- `hotel` 的 privacy 是 1，`TickIntimacy` 在飯店永遠不會觸發（子代理發現）。要改成 2，或給飯店一個私人房間的子地點。
+- 寫死在舊地圖座標的東西要換掉：
+  - 女主走路的路線點、休息點、看風景點（`OKStreetSocialRules.h:1809-1831`）。
+  - 出生點（`OKStreetMaleSpawn`）。
+  - 街道裝飾。
+  - 設施房間座標 (7000, y, 0)（`OKStreetSocialScene.cpp:3773-3790`）。
+
+## 9. 下一步
 
 1. c-street-city 依第 2 節（C1–C11）補場景與 `places.json`，重跑 `build_street_city_places.lua`。
 2. c-conquest 重跑比對腳本確認沒有缺漏。
