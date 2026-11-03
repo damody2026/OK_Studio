@@ -2156,6 +2156,7 @@ pub unsafe extern "C" fn ok_register_bindings(
     if out_rust.is_null() {
         return 1;
     }
+    crate::limit_threads();
     if let Ok(mut g) = UNREAL.lock() {
         *g = unreal;
     }

@@ -2433,7 +2433,8 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             if std::env::var_os("OK_CARDS_IN_PROCESS").is_none() {
                 let cards: Vec<String> = list.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_owned).collect();
                 let workers = std::env::var("OK_CARDS_WORKERS").ok().and_then(|v| v.parse().ok())
-                    .unwrap_or_else(|| (std::thread::available_parallelism().map_or(8, |n| n.get()) / 2).clamp(1, 16)).clamp(1, cards.len().max(1));
+                    .unwrap_or_else(|| (std::thread::available_parallelism().map_or(8, |n| n.get()) / 2).clamp(1, 16)).clamp(1, cards.len().max(1))
+                    .min(crate::MAX_THREADS / 2); // with two threads each, the workers together stay within MAX_THREADS
                 let exe = std::env::current_exe().map_err(|e| e.to_string())?;
                 // The workers share the machine: each one's pools get its part of the hardware threads.
                 let threads = (crate::cpu_threads() / workers).max(2);

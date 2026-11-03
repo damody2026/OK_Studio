@@ -5,6 +5,7 @@ use std::path::PathBuf;
 static ALLOC: ok_extract::recycle_alloc::RecyclingAlloc = ok_extract::recycle_alloc::RecyclingAlloc;
 
 fn main() {
+    ok_extract::limit_threads();
     std::panic::set_hook(Box::new(|info| {
         eprintln!("ok-extract error: {info}");
     }));

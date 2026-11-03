@@ -38,7 +38,8 @@ rem No +crt-static: Unreal links ok_extract.lib with the dynamic CRT (/MD); crt-
 rem and the game link failed with LNK2038 (RuntimeLibrary MT_StaticRelease vs MD_DynamicRelease).
 set "RUSTFLAGS=%RUSTFLAGS% -C linker-flavor=lld-link --cap-lints allow"
 rem Without default features: the Studio sound conversion (fsbex) brings a second libvorbis / libogg (see Cargo.toml).
-"%CARGO%" build --release --lib --no-default-features --quiet --manifest-path "%~dp0Cargo.toml"
+rem -j 8: ok tools never use more than 8 threads (the user's machine-wide rule, 2026-11-03).
+"%CARGO%" build --release --lib --no-default-features --quiet -j 8 --manifest-path "%~dp0Cargo.toml"
 if errorlevel 1 (
 	popd
 	echo [ok-extract] cargo build --release --lib failed

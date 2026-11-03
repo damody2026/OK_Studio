@@ -107,7 +107,7 @@ pub fn ensure_in_background(game: PathBuf, lib: PathBuf) {
         if busy { return; }
         crate::ffi::ffi_log(0, &format!("OK shader states: reading {} game bundles and zipmods again (version {} -> {VERSION})", items.len(), current.version));
         let _ = std::fs::write(&lock, std::process::id().to_string());
-        let threads = std::thread::available_parallelism().map_or(2, |n| (n.get() / 4).max(1));
+        let threads = std::thread::available_parallelism().map_or(2, |n| (n.get() / 4).max(1)).min(crate::MAX_THREADS);
         let message = match convert(&game, &lib, threads) {
             Ok((bundles, shaders, _)) => format!("OK shader states read again: bundles={bundles} shaders={shaders}"),
             Err(e) => format!("OK shader states: {e}"),

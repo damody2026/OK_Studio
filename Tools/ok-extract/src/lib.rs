@@ -1018,9 +1018,15 @@ fn below_normal_priority() {
         unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL); }
     }
 }
+/// The most threads an ok tool may use (the user's machine-wide rule, 2026-11-03: ok-extract once filled every core).
+pub const MAX_THREADS: usize = 8;
 pub fn cpu_threads() -> usize {
     std::env::var("OK_THREADS").ok().and_then(|v| v.parse().ok()).filter(|&n: &usize| n > 0)
-        .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| n.get()))
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| n.get())).min(MAX_THREADS)
+}
+/// rayon's global pool (every bare par_iter) at MAX_THREADS; once, at the entry points. Already built: left as it is.
+pub fn limit_threads() {
+    let _ = rayon::ThreadPoolBuilder::new().num_threads(MAX_THREADS).build_global();
 }
 
 /// `f` with these garment states requested for the opens it makes (tools: ok-card-open-bench).

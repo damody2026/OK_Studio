@@ -407,7 +407,7 @@ local function main()
   local rules_source = (sandbox and o.rulesdll) and path.abs(o.rulesdll) or path.join(rules_crate, "target/release/ok_rules.dll")
   local rules_dll = path.join(sandbox or path.join(root, "Saved/StreetSocial/Build"), "ok-rules/ok_rules.dll")
   if proc.which("cargo") and not sandbox then
-    local r = proc.run({ "cargo", "build", "--release", "--quiet" }, { cwd = rules_crate, capture = true })
+    local r = proc.run({ "cargo", "build", "--release", "--quiet", "-j", "8" }, { cwd = rules_crate, capture = true })
     if not r.ok then say("Game rules build failed; using the previous build if there is one") end
   end
   if path.is_file(rules_source) then
@@ -420,7 +420,7 @@ local function main()
   local story_source = path.join(story_crate, "target/release/ok_story.dll")
   local story_dll = path.join(root, "Saved/StreetSocial/Build/ok-story/ok_story.dll")
   if proc.which("cargo") then
-    local r = proc.run({ "cargo", "build", "--release", "--quiet" }, { cwd = story_crate, capture = true })
+    local r = proc.run({ "cargo", "build", "--release", "--quiet", "-j", "8" }, { cwd = story_crate, capture = true })
     if not r.ok then say("Conversation presenter build failed; using the previous build if there is one") end
   end
   if path.is_file(story_source) then
