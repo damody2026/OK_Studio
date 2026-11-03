@@ -121,6 +121,10 @@ pub fn private_chance(r: &Relation, t: &Traits, charm: f32) -> (f32, f32, String
     if r.stage == "lover" {
         return (-1.0, 0.0, String::new());
     }
+    // She hates him (resentment 90 and up, hexp's "hates him"): not alone with him in a locked room, however charming.
+    if r.resentment >= 90.0 {
+        return (0.0, 100.0, crate::tr::t("heroine.resents_him_alone").to_string());
+    }
     let friend = r.stage == "friend";
     let resistance = (0.6 * chastity(r, t) + 0.4 * t.charm_resistance as f32 - if friend { 10.0 } else { 0.0 }).clamp(0.0, 100.0);
     let mut chance = 0.0f32;
@@ -449,7 +453,10 @@ mod tests {
         assert!(barely < 0.1, "charm a hair past her resistance is not one in two: {barely}");
         let friend = Relation { stage: "friend".into(), favor: 150.0, ..chaste.clone() };
         assert!(private_chance(&friend, &t, 0.0).0 >= 0.8);
-        assert_eq!(private_chance(&Relation { favor: 90.0, ..friend }, &t, 0.0).0, 0.0);
+        assert_eq!(private_chance(&Relation { favor: 90.0, ..friend.clone() }, &t, 0.0).0, 0.0);
+        let (hates, _, why) = private_chance(&Relation { resentment: 95.0, ..friend.clone() }, &t, 200.0);
+        assert!(hates == 0.0 && !why.is_empty(), "a friend at favor 150 who hates him still says no");
+        assert!(private_chance(&Relation { resentment: 60.0, ..friend }, &t, 0.0).0 >= 0.8, "resentful but not hating: as before");
         assert!((chastity(&Relation::default(), &t) - 50.0).abs() < 1e-4);
         assert_eq!(stranger_cap(&Traits { difficulty: 5, ..t.clone() }), 10);
         assert_eq!(stranger_cap(&Traits { difficulty: 80, ..t.clone() }), 80);
