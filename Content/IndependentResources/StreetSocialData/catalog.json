@@ -2231,6 +2231,22 @@
    "consumable": false
   },
   {
+   "id": "cv_condom",
+   "place": "conveni",
+   "name": "保險套",
+   "category": "goods",
+   "price": {
+    "": 4
+   },
+   "season": null,
+   "tags": ["she_buys"],
+   "prop": "none",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false
+  },
+  {
    "id": "cv_magazine",
    "place": "conveni",
    "name": "雜誌",

@@ -384,7 +384,7 @@ void UOKHScenePanel::SelectPose(int32 Index){
     if(Option==INDEX_NONE){Note(OKT(TEXT("ui.hscene.pose_missing")),false);return;}
     if(Gallery->PartnerActor)Gallery->PartnerActor->SetActorHiddenInGame(false);
     ++AibuGeneration;PendingAibu=INDEX_NONE;TouchArea=INDEX_NONE;
-    PendingPose=Index;Queue.Reset();Wanted.Reset();bAnalPlay=false;bInsideFinished=false;bStrong=false;
+    DropSpentCondom();PendingPose=Index;Queue.Reset();Wanted.Reset();bAnalPlay=false;bInsideFinished=false;bStrong=false;
     // Already the list's choice (the scene opens with its first pose there, or he picks the one playing): setting it again
     // fires nothing and the pose stayed pending for good, so load it as a new choice.
     if(Gallery->PairCombo->GetSelectedIndex()==Option+1)Gallery->OnPairSelected(Gallery->PairCombo->GetSelectedOption(),ESelectInfo::OnMouseClick);
@@ -444,6 +444,31 @@ bool UOKHScenePanel::FinishInMouth() const{
     if(!Poses.IsValidIndex(ActivePose))return true;const FOKHPose& P=Poses[ActivePose];
     return P.KindHoushi==1||P.SysTaii==2&&Has(TEXT("Oral_Idle"));
 }
+bool UOKHScenePanel::PregnantKnows() const{
+    const TSharedPtr<FJsonObject>* P=nullptr;bool Pregnant=false,Knows=false;
+    if(Gallery&&Gallery->HExperience.IsValid()&&Gallery->HExperience->TryGetObjectField(TEXT("pregnancy"),P)){(*P)->TryGetBoolField(TEXT("pregnant"),Pregnant);(*P)->TryGetBoolField(TEXT("knows"),Knows);}
+    return Pregnant&&Knows;
+}
+// His condoms (his bag, the street's his_condoms) or hers (hexp her_condoms) not yet put on this scene.
+int32 UOKHScenePanel::CondomsLeft(bool bHers) const{
+    double N=0;if(Gallery&&Gallery->HExperience.IsValid())Gallery->HExperience->TryGetNumberField(bHers?TEXT("her_condoms"):TEXT("his_condoms"),N);
+    return FMath::Max(0,int32(N)-(bHers?CondomsHer:CondomsHis));
+}
+// Out of her once it has been in her (user 2026-11-03: used is used, whether he came or not): the condom comes off and the
+// next time needs a new one; with none left he says so (AskNoCondoms).
+void UOKHScenePanel::DropSpentCondom(){
+    if(bCondom&&!bCondomFresh)bCondomSpent=true;
+    if(!bCondomSpent)return;
+    bCondom=bCondomSpent=bCondomFresh=false;ActionsKey.Reset();
+    if(Mode==2&&CondomsLeft(false)+CondomsLeft(true)<=0)AskNoCondoms();
+}
+// He tells her there are no condoms (his line, so the H judge reads her answer); once a scene.
+void UOKHScenePanel::AskNoCondoms(){
+    if(bNoCondomAsked)return;bNoCondomAsked=true;
+    Note(OKT(TEXT("ui.hscene.condoms_out")),false);
+    if(Gallery)Gallery->NoteAction(TEXT("said"),OKT(TEXT("ui.hscene.ask_no_condoms")));
+    Outbox.Add({OKT(TEXT("ui.hscene.ask_no_condoms")),OKT(TEXT("ui.hscene.no_condoms_note"))});
+}
 void UOKHScenePanel::Finish(const TCHAR* Kind){
     const FString K=Kind;++LineEpoch;
     JustCameAt=FPlatformTime::Seconds();JustCame=K.StartsWith(TEXT("org"))?1:K.StartsWith(TEXT("same"))?2:0;
@@ -471,7 +496,7 @@ void UOKHScenePanel::Finish(const TCHAR* Kind){
     // Only a climax with him in her opens that place (H_DEVELOPMENT_EXPERIENCE_PLAN: 每在陰道／肛門內高潮一次), not one
     // from his fingers.
     if(Org||Same){if(Mode==2)++(bAnalPlay?AnalClimaxes:CrotchClimaxes);Her=0.f;}
-    if(Same||K==TEXT("inside")||K==TEXT("outside")){++HisFinishes;His=0.f;++(K==TEXT("outside")?HisOutside:HisInside);if(Mode==2){if(bCondom)++HisCondom;else if(K!=TEXT("outside")){++HisInsideRaw;if(!bAnalPlay)++HisInsideVaginaRaw;}}}
+    if(Same||K==TEXT("inside")||K==TEXT("outside")){++HisFinishes;His=0.f;++(K==TEXT("outside")?HisOutside:HisInside);if(Mode==2){if(bCondom){++HisCondom;bCondomSpent=true;}else if(K!=TEXT("outside")){++HisInsideRaw;if(!bAnalPlay)++HisInsideVaginaRaw;}}}
     if(Org||Same){ReleaseHeld();CountHerOrgasm();
         // Her cry as she comes (HSonyu: 325 in the slow loop, 326 in the fast one, from her experience bank; user 2026-11-01:
         // the breathing went on through it). The breathing comes back once she is quiet (bTalkSpoken).
@@ -593,15 +618,29 @@ void UOKHScenePanel::Click(int32 Kind){
         // Once more only while she is willing: past her service_rounds for the scene she says no (and the panel stops offering it).
         if(OKHServiceSpent(ServiceFinishes,X)){bServiceRefused=true;Note(OKT(TEXT("ui.hscene.again_refused")));BuildList();break;}
         Want(TEXT("WLoop"));bStrong=false;break;
-    case Condom:bCondom=!bCondom;Note(OKT(bCondom?TEXT("ui.hscene.condom_on"):TEXT("ui.hscene.condom_off")),false);break;
+    case Condom:
+        // Taken off before it was in her: back in the box.
+        if(bCondom){if(bCondomFresh)--(bCondomHers?CondomsHer:CondomsHis);bCondom=bCondomFresh=bCondomSpent=false;Note(OKT(TEXT("ui.hscene.condom_off")),false);break;}
+        // His first, else one of hers she hands him; with none she says what she makes of it (go and buy some, or not).
+        if(CondomsLeft(false)>0||CondomsLeft(true)>0){bCondomHers=CondomsLeft(false)<=0;++(bCondomHers?CondomsHer:CondomsHis);bCondom=bCondomFresh=true;bCondomSpent=false;
+            Note(OKT(bCondomHers?TEXT("ui.hscene.condom_hers"):TEXT("ui.hscene.condom_on")),false);break;}
+        if(bNoCondomAsked){const FString Event=OKT(TEXT("ui.hscene.condom_none"));Note(Event,false);React(Event,OKT(TEXT("ui.hscene.condom_none_note")));}else AskNoCondoms();break;
     case Insert:
         // Raw only when she lets him (NamaInsertCheck): otherwise she has him put one on (the original's voice 302).
-        if(!bCondom&&!(X.IsValid()&&X->GetBoolField(TEXT("raw_ok")))){
-            if(!bRawAsked){bRawAsked=true;Note(OKT(TEXT("ui.hscene.wants_condom")));break;}
+        if(!bCondom&&!(X.IsValid()&&X->GetBoolField(TEXT("raw_ok")))&&RawLet<=0){
+            // Pregnant and she knows: he asks her, and her answer (the H judge) decides; pressing again does not wear her down.
+            if(PregnantKnows()||RawLet<0){
+                if(RawLet==0&&!bRawAskedPregnant){bRawAskedPregnant=true;Note(OKT(TEXT("ui.hscene.asked_raw_pregnant")),false);Say(OKT(TEXT("ui.hscene.ask_raw_pregnant")));break;}
+                if(RawLet==0){Note(OKT(TEXT("ui.hscene.raw_answer_waiting")),false);break;}
+                if(CondomsLeft(false)+CondomsLeft(true)>0)Note(OKT(TEXT("ui.hscene.wants_condom")));else if(bNoCondomAsked)Note(OKT(TEXT("ui.hscene.wants_condom_none")));else AskNoCondoms();
+                break;}
+            if(!bRawAsked){bRawAsked=true;
+                if(CondomsLeft(false)+CondomsLeft(true)>0)Note(OKT(TEXT("ui.hscene.wants_condom")));else if(bNoCondomAsked)Note(OKT(TEXT("ui.hscene.wants_condom_none")));else AskNoCondoms();
+                break;}
             bRawPressed=true;Note(OKT(TEXT("ui.hscene.raw_after_asking")));}
         // Her line as he enters her (HSonyu 307, user 2026-11-01: a virgin, an unused, a used and a lewd girl each say
         // their own): the bank is her experience, the first one until she has had it there (GetStateSelect).
-        bAnalPlay=false;Chain({TEXT("Insert"),TEXT("InsertIdle")});PlayHVoice(7);Note(OKT(bCondom?TEXT("ui.hscene.event_insert"):TEXT("ui.hscene.event_insert_raw")),false);break;
+        bCondomFresh=false;bAnalPlay=false;Chain({TEXT("Insert"),TEXT("InsertIdle")});PlayHVoice(7);Note(OKT(bCondom?TEXT("ui.hscene.event_insert"):TEXT("ui.hscene.event_insert_raw")),false);break;
     case InsertAnal:{
         // Asked once a scene: her anal experience is the chance she agrees (isAnalInsertOK), more for a lover or a lewd girl.
         // Already said no today (another scene): still no, not asked again.
@@ -610,13 +649,20 @@ void UOKHScenePanel::Click(int32 Kind){
             const bool Resentful=X.IsValid()&&X->HasField(TEXT("resentful"))&&X->GetBoolField(TEXT("resentful")); // she resents him: no
             bAnalRefused=Resentful||FMath::FRand()>=FMath::Max(Chance,.1f);}
         if(bAnalRefused){Note(OKT(TEXT("ui.hscene.anal_refused")));break;}
-        bAnalPlay=true;Chain({TEXT("A_Insert"),TEXT("A_InsertIdle")});PlayHVoice(7);Note(OKT(TEXT("ui.hscene.event_insert_anal")),false);break;}
+        bCondomFresh=false;bAnalPlay=true;Chain({TEXT("A_Insert"),TEXT("A_InsertIdle")});PlayHVoice(7);Note(OKT(TEXT("ui.hscene.event_insert_anal")),false);break;}
     case Pull:
         if(HBase(Current())==TEXT("InsertIdle"))PlayHVoice(bAnalPlay?6:3); // HSonyu: pulled out while still, 303 / 306
         if(bInsideFinished)Chain({P(TEXT("Pull")),P(TEXT("Drop")),P(TEXT("OUT_A"))});else Chain({P(TEXT("Pull")),P(TEXT("Idle"))});
         if(Queue.IsEmpty())Want(P(TEXT("Idle")));
-        bInsideFinished=false;break;
-    case Continue:Want(P(TEXT("InsertIdle")));break;
+        bInsideFinished=false;DropSpentCondom();break;
+    case Continue:
+        // One condom for each time he comes (user 2026-11-03): going on in her after coming in one takes a new one, his
+        // first, else hers; with none left he does not go on in the used one.
+        if(bCondomSpent){
+            if(CondomsLeft(false)+CondomsLeft(true)<=0){if(bNoCondomAsked)Note(OKT(TEXT("ui.hscene.condom_none_more")));else AskNoCondoms();break;}
+            bCondomHers=CondomsLeft(false)<=0;++(bCondomHers?CondomsHer:CondomsHis);bCondomSpent=bCondomFresh=false;
+            Note(OKT(bCondomHers?TEXT("ui.hscene.condom_new_hers"):TEXT("ui.hscene.condom_new")),false);}
+        Want(P(TEXT("InsertIdle")));break;
     default:break;
     }
     ActionsKey.Reset();
@@ -1088,7 +1134,8 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
         if(Mode==1){His+=Delta*(2.5f+8.f*Rate)*Strong;if(bLockHis)His=FMath::Min(His,69.f);Her=FMath::Min(69.f,Her+Delta*.8f);if(His>=70.f&&Wanted.IsEmpty())Want(TEXT("OLoop"));}
         else{His+=Delta*(1.2f+3.5f*Rate)*Strong;Her+=Delta*(1.5f+6.f*Rate)*Strong*HerByLevel[FMath::Clamp(Level(),0,3)];
             if(bLockHer)Her=FMath::Min(Her,95.f);if(bLockHis)His=FMath::Min(His,95.f);
-            if(Her>=100.f)Finish(His>=70.f?(Strong>1.f?TEXT("sameS"):TEXT("sameW")):(Strong>1.f?TEXT("orgS"):TEXT("orgW")));
+            // Locked, he does not come with her (as she does not come with him locked: the line below).
+            if(Her>=100.f)Finish(His>=70.f&&!bLockHis?(Strong>1.f?TEXT("sameS"):TEXT("sameW")):(Strong>1.f?TEXT("orgS"):TEXT("orgW")));
             else if(His>=100.f)Finish(!bCondom?TEXT("outside"):Her>=70.f&&!bLockHer?(Strong>1.f?TEXT("sameS"):TEXT("sameW")):TEXT("inside"));}
     }else if(Queue.IsEmpty()&&Base==TEXT("OLoop")&&Mode==1){His=FMath::Min(bLockHis?95.f:100.f,His+Delta*3.f);if(His>=100.f)Finish(Poses.IsValidIndex(ActivePose)&&FinishInMouth()?TEXT("inside"):TEXT("outside"));}
     else if(Queue.IsEmpty()){Her=FMath::Max(0.f,Her-Delta*3.f);His=FMath::Max(0.f,His-Delta*3.f);}
@@ -1184,6 +1231,10 @@ bool UOKHScenePanel::ApplyTalk(const TSharedPtr<FJsonObject>& V){
     bool bStop=false,bPull=false,bEnd=false,bAgrees=true;FString Pose,Pace,Where,Why;
     V->TryGetBoolField(TEXT("stop"),bStop);V->TryGetBoolField(TEXT("pull"),bPull);V->TryGetBoolField(TEXT("end"),bEnd);V->TryGetBoolField(TEXT("she_agrees"),bAgrees);
     V->TryGetStringField(TEXT("pose"),Pose);V->TryGetStringField(TEXT("speed"),Pace);V->TryGetStringField(TEXT("finish"),Where);V->TryGetStringField(TEXT("why"),Why);
+    // Her answer to going without a condom, taken while she is pregnant and knows (otherwise raw_ok and asking twice decide).
+    {FString Let;V->TryGetStringField(TEXT("lets_raw"),Let);
+     if((PregnantKnows()||bNoCondomAsked)&&(Let==TEXT("yes")||Let==TEXT("no"))){RawLet=Let==TEXT("yes")?1:-1;if(RawLet>0)Note(OKT(TEXT("ui.hscene.raw_let_pregnant")),false);
+      UE_LOG(LogTemp,Display,TEXT("H talk judge: going without a condom: %s"),*Let);}}
     UE_LOG(LogTemp,Display,TEXT("H talk judge: stop=%d pull=%d end=%d pose=\"%s\" agrees=%d speed=\"%s\" finish=\"%s\"; %s"),bStop,bPull,bEnd,*Pose,bAgrees,*Pace,*Where,*Why);
     if(bEnd)return true;
     ActionsKey.Reset();BuildActions();
@@ -2462,7 +2513,7 @@ TSharedRef<FJsonObject> UOKHScenePanel::Result() const{
     {static const TCHAR* Keys[]={TEXT("kiss"),TEXT("chest"),TEXT("crotch"),TEXT("anal"),TEXT("butt"),TEXT("nipple"),TEXT("head"),TEXT("hand"),TEXT("thigh"),TEXT("calf"),TEXT("foot")};auto Areas=MakeShared<FJsonObject>();
      for(int32 I=0;I<11;++I)Areas->SetNumberField(Keys[I],FMath::RoundToDouble(AreaSeconds[I]));Counts->SetObjectField(TEXT("areas"),Areas);Counts->SetNumberField(TEXT("kiss"),FMath::RoundToDouble(AreaSeconds[0]));}
     Counts->SetBoolField(TEXT("raw"),bRaw);Counts->SetBoolField(TEXT("raw_pressed"),bRawPressed&&bRaw);
-    Counts->SetNumberField(TEXT("his_inside"),HisInside);Counts->SetNumberField(TEXT("his_inside_raw"),HisInsideRaw);Counts->SetNumberField(TEXT("his_inside_vagina_raw"),HisInsideVaginaRaw);Counts->SetBoolField(TEXT("street_onani"),StreetOnani());Counts->SetNumberField(TEXT("his_condom"),HisCondom);Counts->SetNumberField(TEXT("her_drips"),HerDrips);Counts->SetNumberField(TEXT("her_milk"),HerMilk);Counts->SetNumberField(TEXT("her_drip_times"),HerDripTimes);Counts->SetNumberField(TEXT("her_milk_times"),HerMilkTimes);Counts->SetNumberField(TEXT("his_outside"),HisOutside);Counts->SetNumberField(TEXT("his_mouth"),HisMouth);Counts->SetNumberField(TEXT("swallowed"),Swallowed);Counts->SetNumberField(TEXT("her_orgasms"),HerOrgasms);Counts->SetNumberField(TEXT("his_finishes"),HisFinishes);
+    Counts->SetNumberField(TEXT("his_inside"),HisInside);Counts->SetNumberField(TEXT("his_inside_raw"),HisInsideRaw);Counts->SetNumberField(TEXT("his_inside_vagina_raw"),HisInsideVaginaRaw);Counts->SetBoolField(TEXT("street_onani"),StreetOnani());Counts->SetNumberField(TEXT("his_condom"),HisCondom);Counts->SetNumberField(TEXT("condoms_his"),CondomsHis-int32(bCondomFresh&&!bCondomHers));Counts->SetNumberField(TEXT("condoms_her"),CondomsHer-int32(bCondomFresh&&bCondomHers)); // one on but never in her goes backCounts->SetNumberField(TEXT("her_drips"),HerDrips);Counts->SetNumberField(TEXT("her_milk"),HerMilk);Counts->SetNumberField(TEXT("her_drip_times"),HerDripTimes);Counts->SetNumberField(TEXT("her_milk_times"),HerMilkTimes);Counts->SetNumberField(TEXT("his_outside"),HisOutside);Counts->SetNumberField(TEXT("his_mouth"),HisMouth);Counts->SetNumberField(TEXT("swallowed"),Swallowed);Counts->SetNumberField(TEXT("her_orgasms"),HerOrgasms);Counts->SetNumberField(TEXT("his_finishes"),HisFinishes);
     auto Out=MakeShared<FJsonObject>();Out->SetObjectField(TEXT("counts"),Counts);
     TArray<TSharedPtr<FJsonValue>> P,E;for(const FString& S:PosesPlayed)P.Add(MakeShared<FJsonValueString>(S));for(const FString& S:Events)E.Add(MakeShared<FJsonValueString>(S));
     Counts->SetArrayField(TEXT("poses"),P); // kept with her: the ones never played are marked New (hexp.rs poses_played)

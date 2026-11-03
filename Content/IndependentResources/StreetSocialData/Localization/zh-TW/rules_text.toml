@@ -596,6 +596,7 @@ only_some = "這不是她會做的事"
 needs_item = "需要{item}（{place}有賣），你們手上都沒有"
 
 [items]
+she_bought = "你自己買了{item}"
 drawing_words = "畫|画|寫生|写生|素描|drawing|sketch|painting"
 separator = "、"
 fact_separator = "；"

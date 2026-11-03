@@ -596,6 +596,7 @@ only_some = "This is not something she does"
 needs_item = "It needs {item} (sold at {place}); neither of you has one"
 
 [items]
+she_bought = "You bought {item} yourself"
 drawing_words = "畫|画|寫生|写生|素描|drawing|sketch|painting"
 separator = ", "
 fact_separator = "; "

@@ -99,6 +99,14 @@ impl HExp {
     }
 }
 
+/// The catalog's condom (the convenience store sells them; user 2026-11-03: none put on unless one of them has one).
+pub const CONDOM: &str = "cv_condom";
+
+/// How many condoms she has of her own (ext.items.owned, bought herself or given).
+fn her_condoms(ext: &Value, girl: &str) -> usize {
+    ext.get("items").and_then(|i| i.get("owned")).and_then(|o| o.get(girl)).and_then(Value::as_array).map_or(0, |a| a.iter().filter(|e| e.get("item").and_then(Value::as_str) == Some(CONDOM)).count())
+}
+
 fn of(ext: &Value, girl: &str) -> HExp {
     ext.get("hexp").and_then(|h| h.get(girl)).and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default()
 }
@@ -204,6 +212,8 @@ fn experience(r: &Value) -> Result<Value, String> {
         "touch_ok": touch_ok,
         "level": level, "level_name": level_name(level), "areas": areas, "count": h.count, "virgin": h.virgin, "anal_virgin": h.anal_virgin,
         "raw_ok": raw_ok,
+        // Condoms of hers she can give him for it (his own are his bag's, the street adds them as his_condoms).
+        "her_condoms": her_condoms(r.get("ext").unwrap_or(&Value::Null), girl),
         "anal_chance": anal_chance,
         "service_rounds": service_rounds,
         "climax_limit": climax_limit,
@@ -440,7 +450,17 @@ fn session_end(r: &Value) -> Result<Value, String> {
         ext["hexp"] = json!({});
     }
     ext["hexp"][girl] = serde_json::to_value(&h).map_err(|e| e.to_string())?;
-    Ok(json!({"ext": ext, "effects": fx.into_value(), "level_before": level_before, "level_after": level_after, "level_name": level_name(level_after), "hexp": h, "result": result}))
+    // The condoms put on in the scene are used up: his from his bag (his_remove), hers from what she owns.
+    let his_used = num(&c, "condoms_his").clamp(0.0, 50.0) as usize;
+    let mut her_used = num(&c, "condoms_her").clamp(0.0, 50.0) as usize;
+    if let Some(owned) = ext.get_mut("items").and_then(|i| i.get_mut("owned")).and_then(|o| o.get_mut(girl)).and_then(Value::as_array_mut) {
+        owned.retain(|e| {
+            let used = her_used > 0 && e.get("item").and_then(Value::as_str) == Some(CONDOM);
+            her_used -= usize::from(used);
+            !used
+        });
+    }
+    Ok(json!({"ext": ext, "effects": fx.into_value(), "level_before": level_before, "level_after": level_after, "level_name": level_name(level_after), "hexp": h, "result": result, "his_remove": vec![CONDOM; his_used]}))
 }
 
 pub fn eval(kind: &str, r: &Value) -> Option<Result<Value, String>> {
@@ -633,6 +653,18 @@ mod tests {
         let next_day = session_end(&json!({"girl": "g", "relation": r, "ext": again["ext"], "day": 4, "counts": {"played": true, "her_orgasms": 4}})).unwrap();
         assert_eq!(next_day["ext"]["hexp"]["g"]["libido_gain"], 3, "kept; a new day counts from zero");
         assert_eq!(experience(&json!({"girl": "g", "relation": r, "ext": next_day["ext"], "day": 4})).unwrap()["libido_gain"], 3);
+    }
+
+    #[test]
+    fn condoms_put_on_are_used_up_his_and_hers() {
+        let ext = json!({"items": {"owned": {"g": [{"item": "cv_condom", "from": "own", "day": 1}, {"item": "cv_tea", "from": "own", "day": 1}, {"item": "cv_condom", "from": "own", "day": 2}]}}});
+        let e = experience(&json!({"girl": "g", "relation": rel(0.0), "ext": ext})).unwrap();
+        assert_eq!(e["her_condoms"], 2);
+        let out = session_end(&json!({"girl": "g", "relation": rel(0.0), "ext": ext, "counts": {"played": true, "condoms_his": 2, "condoms_her": 1}})).unwrap();
+        assert_eq!(out["his_remove"], json!(["cv_condom", "cv_condom"]));
+        let left: Vec<&str> = out["ext"]["items"]["owned"]["g"].as_array().unwrap().iter().filter_map(|e| e["item"].as_str()).collect();
+        assert_eq!(left, ["cv_tea", "cv_condom"]);
+        assert_eq!(experience(&json!({"girl": "g", "relation": rel(0.0), "ext": out["ext"]})).unwrap()["her_condoms"], 1);
     }
 
     #[test]

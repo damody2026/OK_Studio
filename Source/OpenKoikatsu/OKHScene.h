@@ -355,6 +355,16 @@ private:
     FString Context() const;
     FString StateWords(const FString& Base) const;
     bool bRawAsked=false,bRawPressed=false;
+    // Condoms (user 2026-11-03): none on unless one of them has one. Put on this scene, his and hers; the one on is not yet
+    // in her (Fresh: taken off, it goes back), is hers, or he has finished in it (Spent: off once he pulls out).
+    int32 CondomsHis=0,CondomsHer=0;bool bCondomFresh=false,bCondomHers=false,bCondomSpent=false;
+    int32 CondomsLeft(bool bHers) const;void DropSpentCondom();
+    // Out of condoms (user 2026-11-03): he says so, and her answer (her character, how much she wants it, her libido) is
+    // read by the H judge like his question when she is pregnant (lets_raw): she may say let's do it without.
+    bool bNoCondomAsked=false;void AskNoCondoms();
+    // Pregnant and she knows (user 2026-11-03): whether he may go without is hers to say by her character. He asks her,
+    // the H judge reads her answer (lets_raw): 1 yes, -1 no, 0 not answered.
+    int32 RawLet=0;bool bRawAskedPregnant=false;bool PregnantKnows() const;
     int32 HisInside=0,HisOutside=0,HisMouth=0,Swallowed=0;
     int32 HisInsideRaw=0,HisCondom=0,HisInsideVaginaRaw=0; // in her: his finishes inside without a condom, and any with one (discharge); in her vagina without one (pregnancy)
     TArray<FOKHPose> Poses;
@@ -364,7 +374,7 @@ private:
     TArray<FString> Queue;      // states still to play, in order (a finish, the insertion)
     double StateSeen=0.,LastRequest=0.,OralIdleSince=0.;
     float Her=0.f,His=0.f,SpeedValue=.35f;
-    bool bStrong=false,bAnalPlay=false,bCondom=true,bInsertedNow=false,bInsideFinished=false,bAnalRefused=false,bAnalAsked=false,bServiceRefused=false,bSaidEnough=false; // bServiceRefused: she has served him as many times as she will this scene (service_rounds)
+    bool bStrong=false,bAnalPlay=false,bCondom=false,bInsertedNow=false,bInsideFinished=false,bAnalRefused=false,bAnalAsked=false,bServiceRefused=false,bSaidEnough=false; // bServiceRefused: she has served him as many times as she will this scene (service_rounds)
     // Counts for her experience.
     bool bPlayed=false,bService=false,bRaw=false,bCrotch=false,bAnal=false;
     int32 ServiceFinishes=0,CrotchClimaxes=0,AnalClimaxes=0,HerOrgasms=0,HisFinishes=0;
