@@ -341,6 +341,47 @@ c-street-city 的逐項回答在 `Docs/STREET_CITY_PLACES_INVENTORY_20261103.md`
 | `bank` | 銀行：`counter*`、`atm`、`seat*`。現在 ATM 只在便利商店 |
 | `phone_shop` | 手機行：`counter`、`display*` |
 
+### 8.2.1 c-street-city 的回覆與分輪（11-03 晚）
+
+命名照第 8.2 節的 game id 和錨點名。
+
+- **第 1 輪：城市已有房間，只寫資料（今晚，不開 Unreal）**
+  - CV：
+    - 醫療：`dentist`（CV-0102）、`clinic_general`（CV-0103，藥局 CV-0105）；`clinic_gyn` 因此改成只用 CV-0101、CV-0104。
+    - 服務：`post`（CV-0201）、`bank`（CV-0202，補放 ATM）。
+    - 文化：`cinema`（CV-0402；SC-0404 電影社放映室當第二間）、`museum`（CV-0403、CV-0404）。
+  - SP：`gym`（SP-0403、0404、0501、0506）、`pool`（SP-0101～0103）、`gym_hall`（SP 球館，桌球用 SP-0108）。
+  - SC：`club_room`（SC-0202～0308）、`art_room`（SC-0401）。
+  - M1：
+    - 購物：`optician`、`jewelry`、`lingerie`、`clothing`（另加 S10 等 6 間）、`phone_shop`。
+    - 餐飲、娛樂：`ramen`、`arcade`、`observation`。
+  - 其他：
+    - `photo_studio`（S34）。
+    - `beach`：現有海灘，有躺椅、遮陽傘 60、救生員台 7、淋浴 9。
+    - 公寓和汽車旅館本來就有的 `kitchen`、`bath`（浴缸 61 個）補上錨點名。
+  - 每個 game_place 加 `outdoor`。
+  - `aquarium` 改指 CV-0301 海洋大水槽展廳和 CV-0302 水母展廳，比 S28 更像水族館（c-conquest 決定）。
+- **第 2 輪：室內改建（開 Unreal，用 payload 放家具）**
+  - 購物：
+    - M1 各店補衣架、試衣間、鏡子、櫃台、拉麵吧台座、夾娃娃機、拍貼機。
+    - 6 間服飾店加試衣間。
+  - 改建重複的店，做成：`swimwear`、`yukata`、`nail`、`supermarket`、`sushi`、`yakiniku`、`izakaya`、`crepe`、`fastfood`、`cat_cafe`、`manga_cafe`、`bowling`（含撞球）。
+  - 醫療：牙醫診療椅、家醫科診療床。
+  - 校園：`infirmary`（T1 一間教室改）、`rooftop`（T1 屋頂，樓梯接上）。
+  - `planetarium`（CV-0401 改）。
+  - 住家：女宿公共廚房、宿舍房間浴缸。
+  - 私密房間逐房補 H 姿勢道具。
+  - 確認 S19 池子有沒有台階。
+- **第 3 輪：戶外大場景**
+  - 海灘遊樂：`beach` 的游泳區、香蕉船、打西瓜、沙灘排球、沙堡、更衣小屋、置物櫃、出租；`beach_house`、`jetski`。
+  - 河湖戶外：`boat`、`fishing`、`bbq`、`flower_field`、`hill`、`skating`。
+  - 其他：`festival`（和夜市共用）、`xmas_tree`、`batting`。
+- **第 4 輪：`amusement` 遊樂園**
+  - 摩天輪、雲霄飛車、旋轉木馬、鬼屋。
+  - 遊樂設施與船用 Tripo，每個 30 點內。
+- **遊戲端要做**
+  - 搭乘遊樂設施、在水裡游的動作與水體：城市只給上下車錨點和範圍框，水域框標 `water`，動作由遊戲 C++ 做。
+
 ### 8.3 遊戲端之後要做（我負責，換城市整合時）
 
 - 每個新地點的活動（`activities.toml`）、商品與營業時間（`catalog.json`）、`places.toml` 規範、三語文字。
