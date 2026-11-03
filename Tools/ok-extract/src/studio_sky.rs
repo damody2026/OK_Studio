@@ -345,6 +345,81 @@ fn feature_status(profile: &UnityValue) -> BTreeMap<String, bool> {
     keys.into_iter().zip(values).collect()
 }
 
+/// A profile's keyframe groups at its first keyframe (the KKS profiles have one): numbers, colours, textures (path ids)
+/// and sphere points (horizontal, vertical rotation), by profile key.
+#[derive(Default)]
+struct ProfileValues {
+    numbers: BTreeMap<String, f32>,
+    colors: BTreeMap<String, [f32; 4]>,
+    textures: BTreeMap<String, i64>,
+    spheres: BTreeMap<String, [f32; 2]>,
+}
+
+fn profile_values(profile: &UnityValue) -> ProfileValues {
+    let mut out = ProfileValues::default();
+    let Some(groups) = obj(profile, "keyframeGroups") else { return out };
+    let group = |name: &str, each: &mut dyn FnMut(String, &UnityValue)| {
+        let Some(g) = obj(groups, name) else { return };
+        let (Some(UnityValue::Array(keys)), Some(UnityValue::Array(values))) = (obj(g, "m_Keys"), obj(g, "m_Values")) else { return };
+        for (k, v) in keys.iter().zip(values) {
+            let Some(UnityValue::Array(frames)) = obj(v, "keyframes") else { continue };
+            if let (Some(k), Some(first)) = (k.as_str(), frames.first()) { each(k.to_owned(), first); }
+        }
+    };
+    group("m_NumberGroup", &mut |k, f| { if let Some(x) = obj(f, "value").and_then(|x| x.as_f64()) { out.numbers.insert(k, x as f32); } });
+    group("m_ColorGroup", &mut |k, f| { if let Some(c) = obj(f, "color") { out.colors.insert(k, [f32_of(c, "r", 0.), f32_of(c, "g", 0.), f32_of(c, "b", 0.), f32_of(c, "a", 1.)]); } });
+    group("m_TextureGroup", &mut |k, f| { if let Some((_, id)) = pptr(obj(f, "texture")).filter(|p| p.1 != 0) { out.textures.insert(k, id); } });
+    group("m_SpherePointGroup", &mut |k, f| { if let Some(s) = obj(f, "spherePoint") { out.spheres.insert(k, [f32_of(s, "horizontalRotation", 0.), f32_of(s, "verticalRotation", 0.)]); } });
+    out
+}
+
+/// Profile colour keys and the skybox material colours the controller sets from them (TimeOfDayController
+/// .ApplySkyboxMaterial). Matched on the patterns whose saved material holds the profile's values; the material of a
+/// map's evening and night profiles (1005, 1006, 1011-1013) keeps the shader defaults instead (U159: their skies drew
+/// as daytime ones).
+const PROFILE_COLORS: &[(&str, &str)] = &[
+    ("SkyUpperColorKey", "_GradientSkyUpperColor"), ("SkyMiddleColorKey", "_GradientSkyMiddleColor"),
+    ("SkyLowerColorKey", "_GradientSkyLowerColor"), ("CloudColor1Key", "_CloudColor1"), ("CloudColor2Key", "_CloudColor2"),
+    ("FogColorKey", "_HorizonFogColor"), ("SunColorKey", "_SunColor"), ("MoonColorKey", "_MoonColor"),
+    ("Star1ColorKey", "_StarLayer1Color"), ("Star2ColorKey", "_StarLayer2Color"), ("Star3ColorKey", "_StarLayer3Color"),
+    ("StarBasicTintColorKey", "_StarBasicTintColor"), ("CloudCubemapTintColorKey", "_CloudCubemapTintColor"),
+    ("CloudCubemapNormalLitColorKey", "_CloudCubemapNormalLitColor"), ("CloudCubemapNormalShadowColorKey", "_CloudCubemapNormalShadowColor"),
+    ("CloudCubemapDoubleLayerTintColorKey", "_CloudCubemapDoubleLayerTintColor"),
+    ("CloudCubemapNormalDoubleLayerLitColorKey", "_CloudCubemapNormalDoubleLitColor"),
+    ("CloudCubemapNormalDoubleLayerShadowKey", "_CloudCubemapNormalDoubleShadowColor"),
+];
+/// Profile number keys set as they are. Densities, intensities and the star exponent the controller converts (the
+/// saved values differ from the profile's), so they keep the material's.
+const PROFILE_NUMBERS: &[(&str, &str)] = &[
+    ("SkyMiddleColorPosition", "_GradientFadeMiddlePosition"), ("HorizonTransitionStartKey", "_GradientFadeBegin"),
+    ("StarTransitionStartKey", "_StarFadeBegin"), ("HorizonStarScaleKey", "_HorizonScaleFactor"),
+    ("CloudDensityKey", "_CloudDensity"), ("CloudSpeedKey", "_CloudSpeed"), ("CloudDirectionKey", "_CloudDirection"),
+    ("CloudHeightKey", "_CloudHeight"), ("CloudFadePositionKey", "_CloudFadePosition"), ("CloudFadeAmountKey", "_CloudFadeAmount"),
+    ("CloudTextureTiling", "_CloudTextureTiling"), ("FogDensityKey", "_HorizonFogDensity"), ("FogLengthKey", "_HorizonFogLength"),
+    ("SunSizeKey", "_SunRadius"), ("SunEdgeFeatheringKey", "_SunEdgeFade"), ("MoonSizeKey", "_MoonRadius"),
+    ("MoonEdgeFeatheringKey", "_MoonEdgeFade"),
+];
+/// Profile textures for the material slots its saved material leaves empty.
+const PROFILE_TEXTURES: &[(&str, &str)] = &[("CloudNoiseTextureKey", "_CloudNoiseTexture"), ("MoonTextureKey", "_MoonTex"), ("SunTextureKey", "_SunTex")];
+
+/// The profile's values over the saved material's, as the controller applies them: only properties the material has.
+fn apply_profile(values: &ProfileValues, out: &mut SkyPattern) {
+    for (key, prop) in PROFILE_COLORS {
+        if let (Some(v), Some(c)) = (values.colors.get(*key), out.colors.get_mut(*prop)) { *c = *v; }
+    }
+    for (key, prop) in PROFILE_NUMBERS {
+        if let (Some(v), Some(f)) = (values.numbers.get(*key), out.floats.get_mut(*prop)) { *f = *v; }
+    }
+    // The fades' ends: start plus length.
+    for (start, length, end) in [("HorizonTransitionStartKey", "HorizonTransitionLengthKey", "_GradientFadeEnd"), ("StarTransitionStartKey", "StarTransitionLengthKey", "_StarFadeEnd")] {
+        if let (Some(s), Some(l), Some(f)) = (values.numbers.get(start), values.numbers.get(length), out.floats.get_mut(end)) { *f = s + l; }
+    }
+    // Sun and moon: a sphere point (horizontal, vertical rotation) as a direction.
+    for (key, prop) in [("SunPositionKey", "_SunPosition"), ("MoonPositionKey", "_MoonPosition")] {
+        if let (Some([h, v]), Some(c)) = (values.spheres.get(key), out.colors.get_mut(prop)) { *c = [v.cos() * h.cos(), v.sin(), v.cos() * h.sin(), 0.]; }
+    }
+}
+
 /// The sky patterns of the game's StudioSky lists (later bundles and sheets override earlier rows, as in the game).
 pub fn patterns(game: &Path) -> Vec<(i32, String, String, String)> {
     let dir = game.join("abdata/studio/info");
@@ -370,9 +445,9 @@ pub fn patterns(game: &Path) -> Vec<(i32, String, String, String)> {
 fn pattern(src: &Sources, lib: &Path, no: i32, name: &str, which: Profile) -> Result<SkyPattern, String> {
     let read = |o: &UnityObject| {
         let p = UnityValue::Object(o.class.properties().clone());
-        (o.name().unwrap_or_default(), pptr(obj(&p, "m_SkyboxMaterial")), feature_status(&p))
+        (o.name().unwrap_or_default(), pptr(obj(&p, "m_SkyboxMaterial")), feature_status(&p), profile_values(&p))
     };
-    let (profile, material, status) = match which {
+    let (profile, material, status, values) = match which {
         Profile::Named(n) => src.named(114, n, read),
         Profile::At(id) => src.at(114, id, |o, _| read(o)),
     }.ok_or_else(|| format!("{name}: sky profile not found"))?;
@@ -393,10 +468,7 @@ fn pattern(src: &Sources, lib: &Path, no: i32, name: &str, which: Profile) -> Re
     }
     let dir = lib.join(TEXTURE_DIR);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    for (k, v) in pairs(obj(&saved, "m_TexEnvs")) {
-        let Some((_, id)) = pptr(obj(&v, "m_Texture")).filter(|p| p.1 != 0) else { continue };
-        let st = [obj(&v, "m_Scale").map(|s| f32_of(s, "x", 1.)).unwrap_or(1.), obj(&v, "m_Scale").map(|s| f32_of(s, "y", 1.)).unwrap_or(1.),
-            obj(&v, "m_Offset").map(|s| f32_of(s, "x", 0.)).unwrap_or(0.), obj(&v, "m_Offset").map(|s| f32_of(s, "y", 0.)).unwrap_or(0.)];
+    let texture = |k: &str, id: i64, st: [f32; 4]| -> Result<SkyTexture, String> {
         let found = src.at(28, id, |o, files| {
             let p = o.class.properties();
             let settings = p.get("m_TextureSettings").cloned().unwrap_or(UnityValue::Null);
@@ -409,7 +481,20 @@ fn pattern(src: &Sources, lib: &Path, no: i32, name: &str, which: Profile) -> Re
         let file = format!("{TEXTURE_DIR}/{}_{:016x}.png", tex_name.replace(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_', "_"), id as u64);
         let target = lib.join(&file);
         if !std::fs::read(&target).is_ok_and(|old| old == png) { std::fs::write(&target, &png).map_err(|e| format!("{}: {e}", target.display()))?; }
-        out.textures.insert(k, SkyTexture { file, st, srgb, point, clamp });
+        Ok(SkyTexture { file, st, srgb, point, clamp })
+    };
+    for (k, v) in pairs(obj(&saved, "m_TexEnvs")) {
+        let Some((_, id)) = pptr(obj(&v, "m_Texture")).filter(|p| p.1 != 0) else { continue };
+        let st = [obj(&v, "m_Scale").map(|s| f32_of(s, "x", 1.)).unwrap_or(1.), obj(&v, "m_Scale").map(|s| f32_of(s, "y", 1.)).unwrap_or(1.),
+            obj(&v, "m_Offset").map(|s| f32_of(s, "x", 0.)).unwrap_or(0.), obj(&v, "m_Offset").map(|s| f32_of(s, "y", 0.)).unwrap_or(0.)];
+        let t = texture(&k, id, st)?;
+        out.textures.insert(k, t);
+    }
+    apply_profile(&values, &mut out);
+    for (key, prop) in PROFILE_TEXTURES {
+        if out.textures.contains_key(*prop) { continue; }
+        let Some(id) = values.textures.get(*key) else { continue };
+        out.textures.insert((*prop).to_owned(), texture(*prop, *id, [1., 1., 0., 0.])?);
     }
     for (body, matrix) in [("_MoonPosition", "_MoonWorldToLocalMat"), ("_SunPosition", "_SunWorldToLocalMat")] {
         if let Some(d) = out.colors.get(body) { out.matrices.insert(matrix.to_owned(), orbit_world_to_local([d[0], d[1], d[2]])); }

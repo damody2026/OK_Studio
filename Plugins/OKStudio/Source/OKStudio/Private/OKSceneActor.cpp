@@ -1053,6 +1053,11 @@ void AOKSceneActor::SyncMap()
 		// The map is on its own lighting channel: Studio's character light (it turns with the camera) does not light it.
 		TInlineComponentArray<UPrimitiveComponent*> Primitives(Actor);
 		for (UPrimitiveComponent* P : Primitives) P->SetLightingChannels(false, false, !P->ComponentHasTag(TEXT("OKSunExcluded")));
+		// The Funly sky's controller: Studio draws the sky from its skybox material (OKStudioSky); the meshes under the
+		// controller are its helpers, not scenery (U160: one drew as a black disc over the lighthouse's lawn, with a
+		// shadow). Its lights stay.
+		if (Root == TEXT("SkySystemController"))
+			for (UPrimitiveComponent* P : Primitives) { P->SetVisibility(false, true); P->SetCastShadow(false); }
 		ShownMapPreviews.Add(Actor);
 		AddMapLights(Actor, Entry->Model, Root);
 	}
