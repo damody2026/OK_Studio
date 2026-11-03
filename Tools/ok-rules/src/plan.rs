@@ -412,6 +412,10 @@ struct Heroine {
     /// Today's appointments with him: minute of the day and place.
     #[serde(default)]
     promises: Vec<Block>,
+    /// Her pregnancy today (pregnancy.rs view, the street asks preg_day first): heavy, she rests more; the day she
+    /// gives birth, she stays home.
+    #[serde(default)]
+    pregnancy: Value,
     #[serde(default)]
     company_place: String,
     #[serde(default)]
@@ -496,7 +500,7 @@ pub fn plan_all(c: &Catalog, r: &Value) -> Result<Value, String> {
             profile: &h.profile,
             weekday,
             money_stress: stress,
-            energy: h.relation.energy,
+            energy: if h.pregnancy["heavy"] == true { h.relation.energy.min(25.0) } else { h.relation.energy },
             satiety: h.relation.satiety,
             wealth: h.relation.cash.max(0) + h.relation.bank + h.invest_total,
             promises,
@@ -509,7 +513,11 @@ pub fn plan_all(c: &Catalog, r: &Value) -> Result<Value, String> {
             timetable,
             seed: day.wrapping_mul(7919).wrapping_add(h.actor.wrapping_mul(104729)),
         };
-        let plan = plan_day(&inputs, c);
+        let mut plan = plan_day(&inputs, c);
+        if h.pregnancy["days_since_birth"] == 0 {
+            let home = Some(pstr(&h.profile, None, "home_place_id")).filter(|x| !x.is_empty()).unwrap_or("girls_dorm").to_string();
+            plan = vec![block(0, 420, &home, "sleep", "template", "", 0), block(420, 1380, &home, "rest", "birth", "", 0), block(1380, 1440, &home, "sleep", "template", "", 0)];
+        }
         fx.log(format!("Street plan day {day} actor {}: {}", h.actor, summary(&plan)));
         plans.push((h.actor, plan));
     }

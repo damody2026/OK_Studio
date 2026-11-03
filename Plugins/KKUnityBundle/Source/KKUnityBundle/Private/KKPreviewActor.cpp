@@ -7719,7 +7719,7 @@ bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrep
   if(Reject){Part.PrivateGpuRejectedEpoch=Epoch;Part.PrivateGpuRejectedRevision=Session.PrivateSkinSourceRevision(Part.SessionIndex);UE_LOG(LogTemp,Warning,TEXT("OK private GPU retained CPU actor=%s part=%d reason=%s"),*GetName(),Part.SessionIndex,*Reason);}
   return false;
  };
- if(!CVarOkPrivateGpuStreams.GetValueOnGameThread()||!bUsePrivateGpuPlayback||!Component||!Part.bRuntimeAccessory||Part.bSlotAttached||Part.bFaceSphereNormals||Part.SessionIndex==INDEX_NONE||Session.MorphCount(Part.SessionIndex)!=0)
+ if(!CVarOkPrivateGpuStreams.GetValueOnGameThread()||!bUsePrivateGpuPlayback||!Component||!Part.bRuntimeAccessory||Part.bSlotAttached||Part.bFaceSphereNormals||Part.SessionIndex==INDEX_NONE||Session.MorphCount(Part.SessionIndex)!=0||CpuSkinnedParts.Contains(Part.SessionIndex))
   return Restore(FString(),false);
  if(Part.PrivateGpuDisplay&&Part.PrivateGpuDisplay->Epoch!=Epoch)Restore(FString(),false);
  if(!Epoch||Component->IsRenderStateDirty()||!Component->UsesAnimatedStreams()||Component->GetCollisionEnabled()!=ECollisionEnabled::NoCollision)return Restore(FString(),false);
@@ -8352,12 +8352,15 @@ void AKKPreviewActor::UpdateRigidFollowers()
 		return;
 	}
 	TMap<FName, FTransform> Deltas;
+	// The body moved under the actor (the H scene lowers her with her feet held, UOKHScenePanel::MoveParts): parts that
+	// follow a bone go with it (user, 2026-11-02: her hair stayed where her head had been).
+	const FTransform BodyOffset = BodySkel->GetRelativeTransform();
 	for (const TPair<FName, FTransform>& Entry : RigidNeutralBones)
 	{
 		const FTransform Current = BodySkel->GetSocketTransform(Entry.Key, RTS_Component);
 		// Procedural vertices are in component space: neutral bone inverse,
 		// followed by the current bone transform, preserves their pivot.
-		Deltas.Add(Entry.Key, Entry.Value.Inverse() * Current);
+		Deltas.Add(Entry.Key, Entry.Value.Inverse() * Current * BodyOffset);
 	}
 	for (FKKLoadedPart& Part : Parts)
 	{
@@ -9419,7 +9422,14 @@ bool AKKPreviewActor::SetWrapLine(bool bOn,const FVector& From,const FVector& To
 bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& Indices,const TArray<FVector3f>& UnityDeltas,const TArray<FVector3f>& UnityNormalDeltas)
 {
     const FOkMouthSlot* Slot=MouthSlots.FindByPredicate([PartIndex](const FOkMouthSlot& S){return S.SessionPartIndex==PartIndex;});
-    if(!Slot||Indices.Num()!=UnityDeltas.Num())return false;
+    if(Indices.Num()!=UnityDeltas.Num())return false;
+    // A part with no morph slot (her clothes, kept over her skin: belly_bulge::cover_deltas) takes it on its own renderers,
+    // the follower and its outline (tagged with the part).
+    TArray<USkinnedMeshComponent*,TInlineAllocator<2>> Meshes;
+    if(Slot){Meshes.Add(Slot->Comp);Meshes.Add(Slot->OutlineComp);}
+    else{const FName Tag(*FString::Printf(TEXT("KKSessionPart_%d"),PartIndex));
+        TInlineComponentArray<USkinnedMeshComponent*> All(this);for(USkinnedMeshComponent* C:All)if(C&&C->ComponentHasTag(Tag))Meshes.Add(C);
+        if(Meshes.IsEmpty())return false;}
     // A replaced set is still read by the skeletal mesh command pipe a frame or two later (it runs after the ordinary render
     // commands, so a release sent now came before the morph update that uses it and the set was skipped): released a few
     // frames on, then dropped once the render thread is past the release.
@@ -9428,7 +9438,7 @@ bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& In
         else if(R.Fence.IsFenceComplete())WrapReleases.RemoveAtSwap(P);}
     static constexpr int32 WrapSetId=0x4F4B5752; // 'OKWR'
     bool bAny=false;
-    for(USkeletalMeshComponent* Mesh:{Slot->Comp,Slot->OutlineComp}){
+    for(USkinnedMeshComponent* Mesh:Meshes){
         if(!Mesh||!Mesh->GetSkinnedAsset()||!Mesh->IsValidExternalMorphSetLODIndex(0))continue;
         FSkeletalMeshRenderData* Render=Mesh->GetSkinnedAsset()->GetResourceForRendering();
         if(!Render||Render->LODRenderData.IsEmpty())continue;

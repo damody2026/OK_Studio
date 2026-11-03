@@ -118,6 +118,13 @@
 - 手：吸吮時她的手若在陰莖 15 cm 內，用她的全身 IK（手腕效應器 5、6）把手掌中心放到露在嘴外那段陰莖上：靠嘴的手在 70%、另一隻在 35%，離中線 3 cm、在動畫原本那一側（`GripHim`；`ok.HScene.SuckGrip` 0 關）。只放手腕時手指會蓋到臉上，所以改成以掌心對齊。
 - 截圖（GalDev12～15，開發 100）：藏起來前 `E:\OpenKoikatsu\Saved\StreetSocial\Play-20261102T172323\control_shots\shot.0008.png`、之後 `E:\OpenKoikatsu\Saved\StreetSocial\Play-20261102T172705-1\control_shots\shot.0003.png`；手握住正面 `E:\OpenKoikatsu\Saved\StreetSocial\Play-20261102T174257\control_shots\shot.0010.png`、側面 `E:\OpenKoikatsu\Saved\StreetSocial\Play-20261102T174257\control_shots\shot.0014.png`。
 
+### P3 門檻與「第一次插到最深」（2026-11-03）
+
+- 記憶：`hexp.rs` 結束時各部位（含口）跨過 30／60／100 記一筆 `h_area`（只記這次跨過的最高一級），f9d2e750e。
+- 場景內：高潮（陰道或肛門）或射在她嘴裡讓開發度跨過 30／60／100 時，事件文字後面接一句（`ui.hscene.event_dev_step`，例如「她高潮了，她的下面被他開發得越來越敏感了」），她的反應依這句說話。
+- 第一次插到最深：場景回報每個洞抽送時的最深深度（`counts.crotch/anal.deepest`，`AlignDeep`），85 以上且以前沒到過時記一筆 `h_first`「第一次被他整根插到最深」（肛門另一句），也列進結束畫面的「第一次」；c549c75c0。
+- 實測（DevStep1，貞德）：開發度 100 正常位抽送，`/hscene` 回報 `crotch.deepest` 90，離開後結束畫面出現「★ 第一次被他整根插到最深」（`E:\OpenKoikatsu\Saved\StreetSocial\Play-20261103T090836\control_shots\shot.0001.png`）；第二場沒有再出現。口開發度 0 時射在她嘴裡三次，第三次事件是「他射在她嘴裡，她的嘴巴開始有感覺了」，結束畫面「口 0% → 30%（+30）」（`E:\OpenKoikatsu\Saved\StreetSocial\Play-20261103T090836\control_shots\shot.0003.png`）。
+
 ## 六、P4 全面驗收（2026-11-02，GalDev5）
 
 五種開發度同時設 0／50／100，各體位插入、開始抽送後量 6 秒內深度上限的最大值與胸部倍率；截圖在 `E:\OpenKoikatsu\Saved\StreetSocial\Play-20261102T164154\control_shots\`（shot.0005～0034，每列側面、正面各一張）。

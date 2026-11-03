@@ -1,4 +1,5 @@
 #include "OKStreetSocialScene.h"
+#include "OKStreetBacks.h"
 #include "OKStreetSocialText.h"
 #include "OKStreetSpokenText.h"
 #include "OKStreetSocialSpeakerText.h"
@@ -221,9 +222,17 @@ struct FOKStreetSceneState {
  float ArousalBlush[OKStreetCastCount]={},ArousalDesire[OKStreetCastCount]={};double ArousalDripAt[OKStreetCastCount]={},ArousalCheckAt=0;
  int64 ArousalWhiteUntil[OKStreetCastCount]={},ArousalRedUntil[OKStreetCastCount]={};uint32 ArousalExtHash=0,ArousalTurn[OKStreetCastCount]={};FOKStreetHerCard HerCard[OKStreetCastCount];double ArousalNippleAt[OKStreetCastCount]={}; // after a scene: until when she runs white / red (hexp)
  FOKArousalDrops ArousalDrops;int32 ArousalWetCrotch[OKStreetCastCount]={},ArousalWetMilk[OKStreetCastCount]={};bool ArousalWashing[OKStreetCastCount]={};int32 ArousalDay=-1;
+ // Her pregnancy today (OKStreetSocialPregnancy.inl: rules preg_day each new day) and today's sick spells.
+ // Where his semen still is on her after a one-on-one (bits: face, front top, front bottom, back top, back bottom),
+ // until she bathes or sleeps (OKStreetSocialArousal.inl; H_SCENE_ADDITIONS_PLAN 2).
+ uint8 SemenOn[OKStreetCastCount]={};
+ TSharedPtr<FJsonObject> PregView[OKStreetCastCount];int32 PregSickAt[OKStreetCastCount]={},PregSickDone[OKStreetCastCount]={};
  int32 AmbientActor=INDEX_NONE,AmbientCursor=0,AmbientPhase=0,AmbientAction=0,AmbientNextAction=0;FString AmbientPlaceClip;
  bool AmbientDrinkOnlyTest=false,AmbientSelfieOnlyTest=false,AmbientGroomOnlyTest=false;
  double AmbientRequested=0,AmbientPlaying=0,AmbientDuration=0;FOKStreetAgentSim AmbientSaved;
+ // Touching herself on the street (OKStreetSocialOnani.inl): who, which step of hers is playing since when, her hour's
+ // start (game minutes), her climaxes, her next drop; and who was taken from it into the room (street_onani).
+ int32 OnaniGirl=INDEX_NONE,OnaniStep=0,OnaniClimaxes=0,OnaniPrivate=INDEX_NONE;bool OnaniPlaying=false;double OnaniRequested=0,OnaniAskedAt=0,OnaniStepAt=0,OnaniCheckAt=0,OnaniSquirtAt=0;float OnaniStepSeconds=0;int64 OnaniStartMinute=0;FOKStreetAgentSim OnaniSaved;TMap<int32,double> OnaniCooldown;
  TMap<int32,double> AmbientCooldown;TArray<TWeakObjectPtr<AStaticMeshActor>> AmbientProps;
  bool AmbientOnlyTest=false,AmbientChecked=false;
  int32 AmbientVerified=0,AmbientProbePhase=0,AmbientPrepareCancels=0,AmbientInterrupts=0,AmbientSamples=0,AmbientNaturalCompletions=0;
@@ -381,7 +390,10 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  int64 FreeTalkReplayShown=0;int32 FreeTalkReplayShownSlot=INDEX_NONE,FreeTalkReplaySceneSlot=INDEX_NONE;FString FreeTalkReplayShownText;bool FreeTalkReplayShownVoiced=false;double FreeTalkReplayHold=0;
  bool TopicsOpen=false;TArray<TSharedPtr<SSlider>> StatSliders;TArray<TSharedPtr<SCheckBox>> RelationChecks;int32 RelationControlsVerified=0;bool RelationControlsSync=false;TMap<int32,double> RunUntil,RunNext;
  bool ContactsOpen=false,ActivitiesOpen=false,TouchOpen=false,ContactsUI=false,ContactsOnlyTest=false,ContactsChecked=false;int32 ContactSelection=INDEX_NONE,ContactRows=0,ContactActions=0;
- TArray<FString> HighCards;TArray<int32> HighOutfits;TWeakObjectPtr<AOKInteractionMode> PrivateMode;TSharedPtr<SWidget> PrivateLeave; /* the one-on-one scene's own leave button (R3-228) */FString HighPrivateReport;double HighPrivateAt=0,PrivatePausedSeconds=0;bool PrivateClockFrozen=false; /* the street clock stood still for the private scene (it runs again on leaving, by the real minutes spent) */bool HighPrivateSeenReady=false;TSharedPtr<FJsonObject> HighPrivateResult;TArray<FOKStreetAgentSim> HighPrivateAgents;TArray<FRotator> HighPrivateRotations;FVector HighPrivateMale;
+ // The time after an H scene (OKStreetSocialBookmarks.inl): who with, the result waiting for "leave", its buttons; the
+ // bookmark open on the phone page.
+ int32 AfterGirl=INDEX_NONE,BookmarkOpen=INDEX_NONE;TSharedPtr<FJsonObject> AfterAnswer;TSharedPtr<SWidget> AfterBar;
+ TArray<FString> HighCards;TArray<int32> HighOutfits;TWeakObjectPtr<AOKInteractionMode> PrivateMode;TSharedPtr<SWidget> PrivateLeave;TSharedPtr<SWidget> HResultPanel; /* what the last one-on-one left on her (h_session_end result), until closed */ /* the one-on-one scene's own leave button (R3-228) */FString HighPrivateReport;double HighPrivateAt=0,PrivatePausedSeconds=0;bool PrivateClockFrozen=false; /* the street clock stood still for the private scene (it runs again on leaving, by the real minutes spent) */bool HighPrivateSeenReady=false;TSharedPtr<FJsonObject> HighPrivateResult;TArray<FOKStreetAgentSim> HighPrivateAgents;TArray<FRotator> HighPrivateRotations;FVector HighPrivateMale;
  TMap<int32,double> CommutePausedUntil; // a girl he walked up to stops her walk for a moment (StepNavigation)
  // PrivateInPlace: the one-on-one is where she stands on the street (user, 2026-11-01: no change of scene); the street
  // goes on around them and their street figures are kept out of sight under it (OKStreetOffstage).
@@ -607,6 +619,7 @@ FString VoicePickDescription,VoicePickNotice,TtsVoiceInstruct;int32 VoicePickTar
 // Every system below asks the game rules through these (ok_rules.dll, Tools/ok-rules).
 #include "OKStreetSocialRulesGlue.inl"
 #include "OKStreetSocialLocale.inl"
+#include "OKStreetSocialPregnancy.inl"
 
 AOKStreetSocialScene::AOKStreetSocialScene(){PrimaryActorTick.bCanEverTick=true;}
 AOKStreetSocialScene::~AOKStreetSocialScene()=default;
@@ -898,6 +911,9 @@ bool AOKStreetSocialScene::BeginTalk(int32 Character){
  if(S.Pair.Partner!=INDEX_NONE||S.Facility!=INDEX_NONE||S.Companion!=INDEX_NONE)return false;
  if(S.PrivateGirl!=INDEX_NONE)return false; // the one-on-one scene is his conversation now; a street talk would close it
  if(!S.Agents.IsValidIndex(Character-1)||!S.Manifest.Characters.IsValidIndex(Character))return false;
+ // She is touching herself (OKStreetSocialOnani.inl; user 2026-11-03): spoken to, she goes into the one-on-one with him
+ // at once, whoever he is to her.
+ if(S.OnaniGirl==Character){StopOnani(false);S.OnaniPrivate=Character;BeginPrivate(Character);if(S.PrivateGirl!=Character)S.OnaniPrivate=INDEX_NONE;return true;}
  StopAmbientActivity();
  // He speaks to her while she (or he) is doing a one-person activity beside him (shopping at a shelf, watching the fish): that
  // activity ends first. Its action clips otherwise held the action slots and the greeting waited 60 s and was aborted.
@@ -1207,6 +1223,10 @@ bool AOKStreetSocialScene::PrepareFreeTalk(int32 Character,const FString& Text,F
  if(S.PrivateGirl==Character&&S.PrivateMode.IsValid()){Status.Doing=OKT(TEXT("ui.free_talk.private_doing"));Status.Nearby=OKT(TEXT("ui.free_talk.private_nearby"));} // the places around him are not around her on the phone
  {const double Hours=OKStreetClockHours(S.ClockStartHours,FPlatformTime::Seconds()-S.ClockStartWall);Status.Now=OKStreetFreeTalkDateTime(OKStreetCalendarDateTime(S.Store.CalendarDay,Hours));Status.StreetTime=OKStreetFreeTalkClock(Hours);}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkRecall);Status.Memories=MindRecallText(Id,Text);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkHistory);Status.Memories+=HistoryPromptText(Character);}
+ // The moments he bookmarked with her (bookmarks.rs): the last five, and the lines of one he asks about.
+ {const FString Marks=BookmarkFacts(Character,Text);if(!Marks.IsEmpty())Status.Memories+=(Status.Memories.IsEmpty()?FString():FString(OKT(TEXT("ui.economy.semicolon_mark"))))+Marks;}
+ // Just after a scene, still together (OKStreetSocialBookmarks.inl): the places around are the street's again.
+ if(S.AfterGirl==Character&&S.PrivateGirl==INDEX_NONE)Status.Doing=OKT(TEXT("ui.bookmarks.after_doing"));
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkMindStatus);FillMindStatus(Character,Status);}
  // The private room is not the street: no shop menu to order from, no open choices or invitations (her needs stay:
  // at satiety 23 she is hungry there too).
@@ -1918,7 +1938,10 @@ void AOKStreetSocialScene::RequestFreeTalkSegment(int32 Generation,int32 Index){
  // text must be 1..400 characters" notice; a longer one is cut at its last sentence end within 400 (R3-215).
  FString Spoken=OKStreetSpokenText(S.FreeTalkSpeechLines[Index]); // no stage directions (OKStreetSpokenText.h)
  {bool Speakable=false;for(const TCHAR C:Spoken)if(FChar::IsAlnum(C)||(C>=0x3040&&C<0xFF00)){Speakable=true;break;}
-  if(!Speakable){S.FreeTalkSpeechStreamed[Index]=2;if(S.FreeTalkSpeechReady[Index]==0)S.FreeTalkSpeechReady[Index]=2;return;}
+  // Silent on purpose (4), and the next line still asked for: returning here left every line after it unasked until the
+  // TTS timeout (her lines after a "……" waited half a minute, then went unvoiced).
+  if(!Speakable){S.FreeTalkSpeechStreamed[Index]=2;if(S.FreeTalkSpeechReady[Index]==0)S.FreeTalkSpeechReady[Index]=4;
+   if(S.FreeTalkSpeechStreamed.IsValidIndex(Index+1)&&S.FreeTalkSpeechStreamed[Index+1]==0)RequestFreeTalkSegment(Generation,Index+1);return;}
   if(Spoken.Len()>400){int32 Cut=400;for(int32 I=399;I>200;--I)if(FCString::Strchr(TEXT("。！？!?…"),Spoken[I])){Cut=I+1;break;}Spoken.LeftInline(Cut);}}
  // Same synth request as scripted lines, keyed by the personality voice.
  auto Body=MakeShared<FJsonObject>();Body->SetStringField(TEXT("text"),Spoken);Body->SetStringField(TEXT("personality"),FString::FromInt(S.Manifest.Characters[Character].PersonalityId));Body->SetNumberField(TEXT("age"),S.TtsAge);Body->SetStringField(TEXT("out_dir"),S.TtsCacheDir);
@@ -2020,9 +2043,10 @@ void AOKStreetSocialScene::TickFreeTalkSpeech(double Now){
  // the stream, which plays on the street actor.
  if(S.PrivateGirl==Character&&S.PrivateMode.IsValid()){
   if(S.PrivateMode->HSceneSpeaking())return;const int32 Index=S.FreeTalkSpeechPlayed;
-  if(S.FreeTalkSpeechPaths[Index].IsEmpty()&&S.FreeTalkSpeechReady[Index]!=2&&FPlatformTime::Seconds()-S.FreeTalkSpeechRepliedAt<S.TtsTimeout+5)return;
+  if(S.FreeTalkSpeechPaths[Index].IsEmpty()&&S.FreeTalkSpeechReady[Index]!=2&&S.FreeTalkSpeechReady[Index]!=4&&FPlatformTime::Seconds()-S.FreeTalkSpeechRepliedAt<S.TtsTimeout+5)return;
   ++S.FreeTalkSpeechPlayed;if(!S.FreeTalkSpeechPaths[Index].IsEmpty())S.PrivateMode->HSceneSpeak(S.FreeTalkSpeechPaths[Index]);
-  else UE_LOG(LogTemp,Warning,TEXT("H scene: her line %d is not voiced (no file %.1fs after the reply)"),Index,FPlatformTime::Seconds()-S.FreeTalkSpeechRepliedAt);
+  else if(S.FreeTalkSpeechReady[Index]==4){UE_LOG(LogTemp,Display,TEXT("H scene: her line %d has nothing to say aloud (shown silent)"),Index);}
+  else{UE_LOG(LogTemp,Warning,TEXT("H scene: her line %d is not voiced (no file %.1fs after the reply)"),Index,FPlatformTime::Seconds()-S.FreeTalkSpeechRepliedAt);}
   S.FreeTalkSpeechNext=Now+.1;return;
  }
  // Several of them (a party): one at a time. The next girl waits until whoever spoke before her is done, not only
@@ -2755,6 +2779,8 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
    FreeTalk->AddSlot().AutoHeight().Padding(2)[SNew(STextBlock).AutoWrapText(true).WrapTextAt(360).ColorAndOpacity(FLinearColor(1,.83f,.35f)).Text_Lambda([Weak=TWeakPtr<FOKStreetSceneState>(State)](){const auto L=Weak.Pin();if(!L)return FText::GetEmpty();
     if(!L->FreeTalkNotice.IsEmpty())return FText::FromString(L->FreeTalkNotice);
     return L->FreeTalkCaptionHer.IsEmpty()?FText::FromString(OKT(TEXT("ui.scene.free_talk_hint"))):FText::GetEmpty();})];
+   // Keep this moment with her (OKStreetSocialBookmarks.inl).
+   FreeTalk->AddSlot().AutoHeight().HAlign(HAlign_Right).Padding(2)[BookmarkButton(FreeTalkPartner())];
    FreeTalk->AddSlot().AutoHeight().Padding(2)[SNew(SEditableTextBox).Text(FText::FromString(S.FreeTalkDraft)).HintText(FText::FromString(OKT(TEXT("ui.scene.chat_input_hint")))).OnTextChanged_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](const FText& Text){if(Weak.IsValid()&&Weak->State){Weak->State->FreeTalkDraft=Text.ToString();Weak->State->SystemNote=false;}}).OnTextCommitted_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](const FText&,ETextCommit::Type Kind){if(Kind==ETextCommit::OnEnter&&Weak.IsValid())Weak->SendFreeTalk();})];
    // Opening free talk is the live conversation: the microphone listens by itself, no further button.
    FreeTalk->AddSlot().AutoHeight().Padding(2)[SNew(STextBlock).AutoWrapText(true).WrapTextAt(360).ColorAndOpacity(FLinearColor(.55f,1.f,.7f))
@@ -2916,6 +2942,7 @@ static FTransform OKStreetPhonePartTransform(const FTransform& Hand,int32 Part){
 }
 #include "OKStreetSocialPhone.inl"
 #include "OKStreetSocialAmbient.inl"
+#include "OKStreetSocialOnani.inl"
 #include "OKStreetSocialLiveTalk.inl"
 // Defined in OKStreetSocialMind.inl; the earlier .inl files use it too.
 static int64 OKStreetMindNow(const FOKStreetSceneState& S);
@@ -2944,6 +2971,7 @@ static int64 OKStreetMindNow(const FOKStreetSceneState& S);
 #include "OKStreetSocialFinanceApps.inl"
 #include "OKStreetSocialGalgame.inl"
 #include "OKStreetSocialPhotos.inl" // after the finance apps (their panel widgets), before the phone (its pictures)
+#include "OKStreetSocialBookmarks.inl" // after the photos (their picture brush), before the phone (its bookmarks page)
 #include "OKStreetSocialPhoneInbox.inl"
 #include "OKStreetSocialCompanyWorld.inl"
 #include "OKStreetSocialCompany.inl"
@@ -3837,7 +3865,9 @@ double AOKStreetSocialScene::SceneTime() const {
  return State?(State->PrivateGirl!=INDEX_NONE?State->HighPrivateAt:Wall)-State->PrivatePausedSeconds:Wall;
 }
 void AOKStreetSocialScene::Tick(float Dt){
- Super::Tick(Dt);if(!State||!State->Started||State->Reported)return;auto& S=*State;GOKStreetTalkLimit=S.SelfTest; // the self-tests check the budget arithmetic; normal play has no daily talk limit
+ Super::Tick(Dt);
+ // Walls, buildings and floors not drawn from behind (OKStreetBacks.h), in the street and in the room alike.
+ if(APlayerController* PC=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr;PC&&PC->PlayerCameraManager)OKHideStreetBacks(GetWorld(),PC->PlayerCameraManager->GetCameraLocation());if(!State||!State->Started||State->Reported)return;auto& S=*State;GOKStreetTalkLimit=S.SelfTest; // the self-tests check the budget arithmetic; normal play has no daily talk limit
  // Walking into or out of a shop, or its opening hours passing: the shop part of the right panel has to follow without waiting for
 // some other event to rebuild it.
  if(const double WallNow=FPlatformTime::Seconds();WallNow>=S.UiShopCheckAt){
@@ -3950,8 +3980,9 @@ void AOKStreetSocialScene::Tick(float Dt){
  for(auto& Agent:S.Agents){
   if(!S.SelfTest&&!S.RunNext.Contains(Agent.Slot))S.RunNext.Add(Agent.Slot,Now+S.Random.FRandRange(8,22));
   if(!S.SelfTest&&!Agent.Held&&Agent.Dwell<=0&&Now>=S.RunNext[Agent.Slot]){S.RunUntil.Add(Agent.Slot,Now+S.Random.FRandRange(2.5f,5.f));S.RunNext[Agent.Slot]=Now+S.Random.FRandRange(18,35);}
-  const bool Running=!Agent.Held&&Agent.Dwell<=0&&((S.PresentationOnlyTest&&S.PresentationPhase==2)||Now<S.RunUntil.FindRef(Agent.Slot));
-  const float TravelSpeed=Running?OKStreetFemaleRunSpeed:OKStreetWalkSpeed;
+  // Pregnant and knowing it she does not run; heavy (week 28 on) she walks slower (OKStreetSocialPregnancy.inl).
+  const bool Running=!Agent.Held&&Agent.Dwell<=0&&!OKStreetPregFlag(S,Agent.Slot,TEXT("knows"))&&((S.PresentationOnlyTest&&S.PresentationPhase==2)||Now<S.RunUntil.FindRef(Agent.Slot));
+  const float TravelSpeed=Running?OKStreetFemaleRunSpeed:OKStreetWalkSpeed*(OKStreetPregFlag(S,Agent.Slot,TEXT("heavy"))?.75f:1.f);
   // Free on the street walk while her day has her somewhere (a talk ended during her shift: its walk to the counter had
   // been dropped and the talk let her go): back to the schedule, which puts her there. Raiden was walked out of the cafe
   // on her shift by the rules below (R3-214).
@@ -4012,6 +4043,7 @@ void AOKStreetSocialScene::Tick(float Dt){
 
  }
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickAmbientActivity);TickAmbientActivity(Now);}
+ {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickOnani);TickOnani(Now);}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickReadingProps);TickReadingProps();}
  // Development: -StreetSocialNavWalk walks the auto navigation from the plaza to every place's door and logs it.
  if(S.AllReady&&FParse::Param(FCommandLine::Get(),TEXT("StreetSocialNavWalk"))){

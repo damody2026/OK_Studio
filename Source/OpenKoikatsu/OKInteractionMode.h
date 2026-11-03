@@ -29,6 +29,7 @@ public:
     void BeginHScene(const FString& Name,const FString& Stage,const TSharedPtr<FJsonObject>& Experience,const FString& Player);
     // The control channel's /hscene: {kind} presses a panel button, {pose} picks a pose by name, {speed} sets it; answers the panel's view.
     TSharedPtr<FJsonObject> HSceneControl(const TSharedPtr<FJsonObject>& Body,FString& Error);
+    void SetHPaused(bool bPaused); // the two of them stopped where they are (space key, control channel)
     // Talk in the H scene through the street (UOKHScenePanel::Say): his next line and what she is in the middle of;
     // her line to show; her spoken line on her high model.
     bool HSceneTakeLine(FString& Text,FString& Context,bool& System);
@@ -39,6 +40,22 @@ public:
     bool HSceneSpeak(const FString& Path);
     bool HSceneSpeaking() const;
     bool HSceneHasReaction() const;
+    // Her outfit changed in the H scene (the original's HSprite.OnClickCoordinateChange → ChangeCoordinateTypeAndReload):
+    // her card's outfit Outfit (KKS coordinate 0..6), or with Coordinate a game coordinate card (UserData/coordinate) worn
+    // as that outfit, as Studio loads one (a copy of her card is written under Saved/StreetSocial/HOutfits; hers stays as
+    // it was). She opens in the background, is swapped in when ready, and the pose starts again. False: one is already
+    // changing, or the scene is not ready.
+    // bWithAccessories: the coordinate card's accessories too (else only its clothes: her accessories, hair made of them
+    // among them, stay, as the maker loads one with accessories unticked).
+    bool ChangeOutfit(int32 Outfit,const FString& Coordinate=FString(),bool bWithAccessories=false);
+    bool IsChangingOutfit() const {return OutfitChanging||SwappingFemale!=nullptr;}
+    // A garment's next state as the original cycles it (on, half off where it has one, off), from the card she is opened
+    // from; ChangeClothesStates opens her again in states a garment's half off needs (visibility alone cannot show it).
+    bool ClothesTransition(int32 Kind,uint8 Out[9],FString& Why) const;
+    bool ChangeClothesStates(const uint8 States[9]);
+    bool bSwapClothesOnly=false; // the change in progress (or last) only opened her clothes in other states
+    FString OutfitError;     // the last change's failure (empty when it worked)
+    FString WornCoordinate;  // the coordinate card she wears now (empty: her card's own outfit)
     bool IsReady() const {return Ready;}
     bool IsFinished() const {return Finished;}
     FString Error;
@@ -56,6 +73,11 @@ private:
 #endif
     void Fail(const FString& Why);
     UPROPERTY() TObjectPtr<AKKPreviewActor> LoadingFemale;
+    UPROPERTY() TObjectPtr<AKKPreviewActor> SwappingFemale; // her in the new outfit, built hidden (ChangeOutfit)
+    bool OutfitChanging=false;int32 SwapOutfit=0;FString SwapCoordinate,SwapOpened,OpenedCard;uint8 SwapStates[9]{};
+    bool StartSwap(int32 Outfit,const FString& Coordinate,bool bWithAccessories,const uint8* States);
+    FString OpenedFemaleCard() const;FString OpenedRoot() const; // the card she is opened from now (a coordinate worn: that copy)
+    void TickOutfitSwap();
     UPROPERTY() TObjectPtr<AActor> PreviousView;
     FString MalePath;
     TSharedPtr<FThreadSafeBool,ESPMode::ThreadSafe> Cancelled;

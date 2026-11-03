@@ -36,6 +36,9 @@ pub unsafe extern "C" fn ok_clothes_file(op:i32,a:*const c_char,b:*const c_char,
                 // An OK card wearing new clothes is made again, so its models list and pack cover them.
                 if crate::oklib::is_library_card(out) {remake_card_in_place(out)?;}
                 Ok(summary)}
+            3=>{let b=cstr_opt(b).ok_or("okclothes: clothes path missing")?;let summary=crate::okclothes::file::wear_clothes_only_file(a,std::path::Path::new(&b),outfit?,out)?;
+                if crate::oklib::is_library_card(out) {remake_card_in_place(out)?;}
+                Ok(summary)}
             _=>Err(format!("okclothes: unknown op {op}")),
         }
     }).unwrap_or_else(|_|Err("okclothes: panic".into()));
@@ -167,6 +170,33 @@ pub unsafe extern "C" fn ok_belly_bone_deltas(s:*mut OkSession,at:*const f32,rad
     let moves=crate::belly_bulge::bone_deltas(s,from,to,up,radius);
     for (i,(j,d)) in moves.iter().take(max as usize).enumerate(){*out_idx.add(i)=*j;for k in 0..6{*out_d.add(i*6+k)=d[k];}}
     moves.len() as i32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ok_set_cover(s:*mut OkSession,on:i32,body_idx:*const u32,body_d:*const f32,n:u32,out_parts:*mut i32,max:u32)->i32 {
+    // Her garments with their own rig kept over her skin as they are skinned on the CPU (on 1), or no longer (0)
+    // (belly_bulge::set_cover). body_idx/body_d her body's skin moves now, as ok_belly_wrap_deltas gave them (n, may be 0).
+    // Writes up to max of the garments it moves (session part indices: to be drawn from their CPU vertices); returns how
+    // many there are, -1 on bad input.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if (n>0&&(body_idx.is_null()||body_d.is_null()))||(max>0&&out_parts.is_null()) {return -1;}
+    let moves:Vec<(u32,[f32;6])>=(0..n as usize).map(|i|(*body_idx.add(i),std::array::from_fn(|k|*body_d.add(i*6+k)))).collect();
+    let parts=crate::belly_bulge::set_cover(s,on!=0,moves);
+    for (i,p) in parts.iter().take(max as usize).enumerate(){*out_parts.add(i)=*p as i32;}
+    parts.len() as i32
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_cover_deltas(s:*mut OkSession,body_idx:*const u32,body_d:*const f32,n:u32,out_part:*mut u32,out_idx:*mut u32,out_d:*mut f32,max:u32)->i32 {
+    // Her clothes kept over her skin this frame (belly_bulge::cover_deltas): her body's skin moves as ok_belly_wrap_deltas
+    // gave them (n of them, may be 0). Writes up to max (session part index, vertex index, move in the mesh's own space,
+    // Unity metres: 3 floats each); returns how many there are, -1 on bad input.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if out_part.is_null()||out_idx.is_null()||out_d.is_null()||(n>0&&(body_idx.is_null()||body_d.is_null())) {return -1;}
+    let moves:Vec<(u32,[f32;6])>=(0..n as usize).map(|i|(*body_idx.add(i),std::array::from_fn(|k|*body_d.add(i*6+k)))).collect();
+    let mut k=0usize;
+    for (part,list) in crate::belly_bulge::cover_deltas(s,&moves){for (j,d) in list{
+        if k<max as usize{*out_part.add(k)=part as u32;*out_idx.add(k)=j;for a in 0..3{*out_d.add(k*3+a)=d[a];}}k+=1;}}
+    k as i32
 }
 #[no_mangle]
 pub unsafe extern "C" fn ok_back_exit(s:*mut OkSession,at:*const f32,out:*mut f32)->i32 {

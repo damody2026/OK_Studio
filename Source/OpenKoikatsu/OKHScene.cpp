@@ -7,6 +7,9 @@
 #include "Components/ButtonSlot.h"
 #include "HAL/IConsoleManager.h"
 #include "OKCharacterController.h"
+#include "OKInteractionMode.h"
+#include "KKGameRoot.h"
+#include "HAL/FileManager.h"
 #include "OKArousalDrops.h"
 #include "Misc/App.h"
 #include "OKStreetSocialText.h"
@@ -43,6 +46,9 @@
 #include "Framework/Application/SlateApplication.h"
 #include "Components/SizeBox.h"
 #include "Components/Border.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
+#include "Components/Spacer.h"
 #include "Components/ComboBoxString.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
@@ -58,6 +64,8 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Serialization/JsonSerializer.h"
+#include "OKPaintSprayer.h"
+#include "ok_extract.h"
 
 void UOKHSceneButton::HandleClick(){if(Owner)Owner->Click(Kind);}
 
@@ -80,9 +88,9 @@ int32 UOKHScenePanel::Level() const{return Gallery&&Gallery->HExperience.IsValid
 FString UOKHScenePanel::Current() const{if(Mode==0)return SoloState;return Gallery&&Gallery->PairedPlayback?Gallery->PairedPlayback->GetState():FString();}
 bool UOKHScenePanel::Has(const FString& State) const{if(Mode==0)return SoloKeys.Contains(State);return Gallery&&Gallery->PairStateCombo&&Gallery->PairStateCombo->FindOptionIndex(State)>0;}
 float UOKHScenePanel::AreaExperience(int32 Area) const{
-    static const TCHAR* Keys[]={TEXT("kiss"),TEXT("chest"),TEXT("crotch"),TEXT("anal"),TEXT("butt"),TEXT("nipple")};
+    static const TCHAR* Keys[]={TEXT("kiss"),TEXT("chest"),TEXT("crotch"),TEXT("anal"),TEXT("butt"),TEXT("nipple"),TEXT("head"),TEXT("hand"),TEXT("thigh"),TEXT("calf"),TEXT("foot")};
     const TSharedPtr<FJsonObject>* Areas=nullptr;double V=0;
-    if(Gallery&&Gallery->HExperience.IsValid()&&Gallery->HExperience->TryGetObjectField(TEXT("areas"),Areas)&&Area>=0&&Area<6)(*Areas)->TryGetNumberField(Keys[Area],V);
+    if(Gallery&&Gallery->HExperience.IsValid()&&Gallery->HExperience->TryGetObjectField(TEXT("areas"),Areas)&&Area>=0&&Area<11)(*Areas)->TryGetNumberField(Keys[Area],V);
     return float(V);
 }
 // The private room is a bare floor: a pose fits it when the original lets it play on the floor, a bed or standing
@@ -103,6 +111,9 @@ static int32 HPropKind(const FString& Category,int32 Id){
         if(K>0&&Kind<0)Kind=K;}
     return Kind;
 }
+// Her spoken lines in H (the original's Japanese voice table rows, her climax words, her TTS answers): off (user 2026-11-02:
+// only her cries, the breathing bank). 1 brings them back.
+TAutoConsoleVariable<int32> CVarHSpokenLines(TEXT("ok.HScene.SpokenLines"),0,TEXT("1: she speaks lines in H (voice table, climax words, TTS answers); 0: only her cries"));
 static bool HFitsRoom(const FString& Category,int32 Id){return CVarHAllPoses.GetValueOnGameThread()||HPropKind(Category,Id)>=0;}
 void UOKHScenePanel::LoadAibuPoses(){
     bAibuLoaded=true;AibuPoses.Reset();TArray<TSharedPtr<FJsonValue>> Rows;
@@ -140,6 +151,7 @@ void UOKHScenePanel::SelectAibu(int32 Index){
             UI->SoloKeys=MoveTemp(Keys);UI->ActiveAibu=UI->PendingAibu;UI->PendingAibu=INDEX_NONE;UI->ClearLine();UI->ActivePose=INDEX_NONE;UI->Mode=0;UI->SoloState.Reset();
             G->NoteAction(TEXT("pair"),UI->AibuPoses[UI->ActiveAibu].Name);
             UI->PlaySolo(TEXT("Idle"));UI->BuildList();if(UI->Hint)UI->Hint->SetText(FText::FromString(UI->AibuPoses[UI->ActiveAibu].Name)); // loaded: the hint no longer says loading
+            if(UI->bAfterglow){UI->Note(OKT(TEXT("ui.hscene.event_afterglow")));if(UI->Hint)UI->Hint->SetText(FText::FromString(OKT(TEXT("ui.hscene.afterglow_hint"))));}
         });
     });
 }
@@ -150,17 +162,51 @@ void UOKHScenePanel::PlaySolo(const FString& State){
 }
 void UOKHScenePanel::Touch(int32 Area){
     const TSharedPtr<FJsonObject> X=Gallery?Gallery->HExperience:nullptr;
+    if(Area>=6||(Area==0&&bLipsTouch)){TouchBody(Area);return;}
     if(Area==0){
         // A kiss she has not allowed yet (not his lover, never kissed) is refused (HandCtrl: voice 103).
         if(!(X.IsValid()&&X->GetBoolField(TEXT("kiss_ok")))){Note(OKT(TEXT("ui.hscene.kiss_refused")));Chain({TEXT("Front_Dislikes"),TEXT("Idle")});TouchArea=INDEX_NONE;return;}
-        TouchArea=0;Chain({TEXT("K_Touch"),TEXT("K_Loop")});Note(OKT(TEXT("ui.hscene.event_kiss")));return;
+        // Her first kiss ever (not this scene's first): she answers it as one, in her own words (TTS; user 2026-11-03:
+        // a first-time line by TTS, not the original's first bank).
+        const bool bFirst=!(X->HasField(TEXT("kissed"))&&X->GetBoolField(TEXT("kissed")))&&AreaSeconds[0]<=0.f;
+        TouchArea=0;Chain({TEXT("K_Touch"),TEXT("K_Loop")});Note(OKT(bFirst?TEXT("ui.hscene.event_first_kiss"):TEXT("ui.hscene.event_kiss")));return;
     }
     // Her anal untouched and him not her lover: she pulls away (anal_dislikes).
     if(Area==3&&AreaExperience(3)<=0.f&&Gallery->HHeroineStage!=TEXT("lover")){Note(OKT(TEXT("ui.hscene.anal_touch_refused")));Chain({TEXT("Back_Dislikes"),TEXT("Idle")});TouchArea=INDEX_NONE;return;}
     static const TCHAR* Prefix[]={TEXT(""),TEXT("M_"),TEXT("A_"),TEXT("S_"),TEXT("S_"),TEXT("M_")};
     static const TCHAR* TouchEvents[]={TEXT(""),TEXT("ui.hscene.event_touch_chest"),TEXT("ui.hscene.event_touch_crotch"),TEXT("ui.hscene.event_touch_anal"),TEXT("ui.hscene.event_touch_butt"),TEXT("ui.hscene.event_touch_nipple")};
-    if(TouchArea!=Area)Note(OKT(TouchEvents[Area]));
+    // A place she has never been touched (HVoiceCtrl GetStateSelect gives it her first-time bank): she answers it as her
+    // first time there, by TTS.
+    static const TCHAR* FirstEvents[]={TEXT(""),TEXT("ui.hscene.event_first_chest"),TEXT("ui.hscene.event_first_crotch"),TEXT("ui.hscene.event_first_anal"),TEXT("ui.hscene.event_first_butt"),TEXT("ui.hscene.event_first_nipple")};
+    // Kissed or licked there (bLickMode): the same caress of hers (the original's tongue item), said as his mouth.
+    if(TouchArea!=Area){const bool First=AreaExperience(Area)<.05f&&AreaSeconds[Area]<=0.f;
+        if(bLickMode){static const TCHAR* Parts[]={TEXT(""),TEXT("chest"),TEXT("crotch"),TEXT("anal"),TEXT("butt"),TEXT("nipple")};
+            Note(OKMsg(First?TEXT("ui.hscene.event_first_body"):TEXT("ui.hscene.event_body"),{{TEXT("how"),TEXT("kiss")},{TEXT("part"),OKT(*(FString(TEXT("ui.hscene.part_"))+Parts[Area]))}}));}
+        else Note(OKT(First?FirstEvents[Area]:TouchEvents[Area]));}
     TouchArea=Area;Chain({FString(Prefix[Area])+TEXT("Touch"),FString(Prefix[Area])+TEXT("Idle")});
+}
+// Her head, hand, thigh, calf, foot (or her lips) touched or kissed: no caress clip of hers in the original, which plays
+// its HitReaction there (HandCtrl reac_head / reac_arm / reac_leg): the part flinches, again every few seconds while he
+// keeps at it, less the more it is developed. Whether she lets him: hexp.rs touch_ok (her relation, the place developed).
+static const TCHAR* HBodyKey(int32 Area){static const TCHAR* K[]={TEXT("head"),TEXT("hand"),TEXT("thigh"),TEXT("calf"),TEXT("foot")};return Area==0?TEXT("lips"):Area>=6&&Area<11?K[Area-6]:TEXT("");}
+bool UOKHScenePanel::BodyTouching() const{return TouchArea>=6||(TouchArea==0&&bLipsTouch);}
+void UOKHScenePanel::TouchBody(int32 Area){
+    const TCHAR* Key=HBodyKey(Area);const TCHAR* How=bLickMode?TEXT("kiss"):TEXT("touch");
+    const FString Part=OKT(*(FString(TEXT("ui.hscene.part_"))+Key));
+    bool Ok=true;{const TSharedPtr<FJsonObject>* T=nullptr;const TSharedPtr<FJsonObject>* One=nullptr;
+     if(Gallery&&Gallery->HExperience.IsValid()&&Gallery->HExperience->TryGetObjectField(TEXT("touch_ok"),T)&&(*T)->TryGetObjectField(Key,One))(*One)->TryGetBoolField(How,Ok);}
+    if(!Ok){Note(OKMsg(TEXT("ui.hscene.event_body_refused"),{{TEXT("how"),How},{TEXT("part"),Part}}));Chain({TEXT("Front_Dislikes"),TEXT("Idle")});TouchArea=INDEX_NONE;bLipsTouch=false;return;}
+    if(TouchArea!=Area||(Area==0)){const bool First=Area!=0&&AreaExperience(Area)<.05f&&AreaSeconds[Area]<=0.f;
+        Note(OKMsg(First?TEXT("ui.hscene.event_first_body"):TEXT("ui.hscene.event_body"),{{TEXT("how"),How},{TEXT("part"),Part}}));}
+    TouchArea=Area;Flinch(Area);
+}
+void UOKHScenePanel::Flinch(int32 Area){
+    static const TCHAR* Bones[]={TEXT("cf_j_head"),TEXT("cf_j_forearm01_"),TEXT("cf_j_thigh00_"),TEXT("cf_j_leg01_"),TEXT("cf_j_leg03_")};
+    static const float Amp[]={7.f,14.f,6.f,9.f,12.f};
+    const int32 I=Area==0?0:FMath::Clamp(Area-6,0,4);const FString Side=I==0?FString():FString(FMath::RandBool()?TEXT("L"):TEXT("R"));
+    FlinchBone=FString(TEXT("+"))+Bones[I]+Side;
+    FlinchTurn=FVector(FMath::FRandRange(-1.f,1.f),FMath::FRandRange(-1.f,1.f),FMath::FRandRange(-1.f,1.f)).GetSafeNormal()*Amp[I]*(Area==0?.6f:1.f)*(1.f-.6f*Dev(Area==0?TEXT("kiss"):HBodyKey(Area)));
+    const double Now=FPlatformTime::Seconds();FlinchUntil=Now+.45;FlinchNext=Now+FMath::FRandRange(2.f,3.5f);
 }
 void UOKHScenePanel::Note(const FString& Text,bool bReact){Events.Add(Text);if(Gallery)Gallery->NoteAction(TEXT("h"),Text);if(bReact)React(Text);if(Hint)Hint->SetText(FText::FromString(Text));UE_LOG(LogTemp,Display,TEXT("H scene: %s"),*Text);}
 
@@ -194,7 +240,15 @@ TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
         auto* L=WidgetTree->ConstructWidget<UTextBlock>();L->SetText(FText::FromString(OKT(TEXT("ui.hscene.speed"))));L->SetColorAndOpacity(FSlateColor(FLinearColor::White));
         if(auto* S=Row->AddChildToHorizontalBox(L)){S->SetPadding(FMargin(0,0,8,0));S->SetVerticalAlignment(VAlign_Center);}
         Speed=WidgetTree->ConstructWidget<USlider>();Speed->SetMinValue(0.f);Speed->SetMaxValue(1.f);Speed->SetValue(SpeedValue);
-        if(auto* S=Row->AddChildToHorizontalBox(Speed))S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+        // The original's cover over the bar past 70% (HAibu SetSpriteDislikesis70): touched where she never was, faster
+        // than that and she pulls away.
+        UOverlay* Over=WidgetTree->ConstructWidget<UOverlay>();if(UOverlaySlot* O=Over->AddChildToOverlay(Speed)){O->SetHorizontalAlignment(HAlign_Fill);O->SetVerticalAlignment(VAlign_Center);}
+        UHorizontalBox* Marks=WidgetTree->ConstructWidget<UHorizontalBox>();Marks->SetVisibility(ESlateVisibility::HitTestInvisible);
+        if(auto* S=Marks->AddChildToHorizontalBox(WidgetTree->ConstructWidget<USpacer>())){FSlateChildSize Z(ESlateSizeRule::Fill);Z.Value=.7f;S->SetSize(Z);}
+        SpeedCover=WidgetTree->ConstructWidget<UBorder>();SpeedCover->SetBrushColor(FLinearColor(.85f,.1f,.15f,.45f));SpeedCover->SetVisibility(ESlateVisibility::Hidden);
+        if(auto* S=Marks->AddChildToHorizontalBox(SpeedCover)){FSlateChildSize Z(ESlateSizeRule::Fill);Z.Value=.3f;S->SetSize(Z);}
+        if(UOverlaySlot* O=Over->AddChildToOverlay(Marks)){O->SetHorizontalAlignment(HAlign_Fill);O->SetVerticalAlignment(VAlign_Fill);}
+        if(auto* S=Row->AddChildToHorizontalBox(Over))S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
         Box->AddChildToVerticalBox(Row)->SetPadding(FMargin(0,3));
     }
     {
@@ -210,6 +264,23 @@ TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
         RootPadWidget=CreateWidget<UOKHRootPad>(this,UOKHRootPad::StaticClass());RootPadWidget->Owner=this;RootPadWidget->Value=RootPad;
         if(auto* S=PenisBox->AddChildToVerticalBox(RootPadWidget)){S->SetHorizontalAlignment(HAlign_Center);S->SetPadding(FMargin(0,4));}
         Box->AddChildToVerticalBox(PenisBox)->SetPadding(FMargin(0,3));ShowPenis();
+    }
+    {   // Her pose (SetHerPose): ankles, each thigh, each hand.
+        auto Label=[&](UHorizontalBox* R,const TCHAR* Key){auto* L=WidgetTree->ConstructWidget<UTextBlock>();L->SetText(FText::FromString(OKT(Key)));L->SetColorAndOpacity(FSlateColor(FLinearColor(1.f,.85f,.9f)));
+            if(auto* S=R->AddChildToHorizontalBox(L)){S->SetPadding(FMargin(0,0,8,0));S->SetVerticalAlignment(VAlign_Center);}};
+        auto Row=[&](const TCHAR* Key,float Low,float High,float Value)->USlider*{UHorizontalBox* R=WidgetTree->ConstructWidget<UHorizontalBox>();Label(R,Key);
+            auto* S_=WidgetTree->ConstructWidget<USlider>();S_->SetMinValue(Low);S_->SetMaxValue(High);S_->SetStepSize(1.f);S_->SetValue(Value);
+            if(auto* S=R->AddChildToHorizontalBox(S_))S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));Box->AddChildToVerticalBox(R)->SetPadding(FMargin(0,1));return S_;};
+        Text(11.f,FLinearColor(1.f,.75f,.85f))->SetText(FText::FromString(OKT(TEXT("ui.hscene.her_pose"))));
+        AnkleSlider=Row(TEXT("ui.hscene.ankle"),-60.f,60.f,AnkleTurn);AnkleSlider->OnValueChanged.AddDynamic(this,&UOKHScenePanel::OnAnkle);
+        ThighSliders[0]=Row(TEXT("ui.hscene.thigh_l"),-30.f,60.f,ThighOpen[0]);ThighSliders[0]->OnValueChanged.AddDynamic(this,&UOKHScenePanel::OnThighL);
+        ThighSliders[1]=Row(TEXT("ui.hscene.thigh_r"),-30.f,60.f,ThighOpen[1]);ThighSliders[1]->OnValueChanged.AddDynamic(this,&UOKHScenePanel::OnThighR);
+        UHorizontalBox* R=WidgetTree->ConstructWidget<UHorizontalBox>();HandOptions=-1;
+        for(int32 Side=0;Side<2;++Side){Label(R,Side?TEXT("ui.hscene.hand_r"):TEXT("ui.hscene.hand_l"));
+            HandCombos[Side]=WidgetTree->ConstructWidget<UComboBoxString>();HandCombos[Side]->AddOption(OKT(TEXT("ui.hscene.hand_follow")));HandCombos[Side]->SetSelectedIndex(0);
+            if(Side)HandCombos[Side]->OnSelectionChanged.AddDynamic(this,&UOKHScenePanel::OnHandR);else HandCombos[Side]->OnSelectionChanged.AddDynamic(this,&UOKHScenePanel::OnHandL);
+            if(auto* S=R->AddChildToHorizontalBox(HandCombos[Side])){S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));S->SetPadding(FMargin(0,0,6,0));}}
+        Box->AddChildToVerticalBox(R)->SetPadding(FMargin(0,2));
     }
     Actions=WidgetTree->ConstructWidget<UWrapBox>();Actions->SetInnerSlotPadding(FVector2D(6,6));Box->AddChildToVerticalBox(Actions)->SetPadding(FMargin(0,8));
     Hint=Text(12.f,FLinearColor(1.f,.9f,.6f));
@@ -237,6 +308,7 @@ void UOKHScenePanel::LoadPoses(){
             Pose.KindHoushi=int32((*M)->GetNumberField(TEXT("kind_houshi")));Pose.Anal=(*M)->GetBoolField(TEXT("anal"));
             Pose.FemaleLead=(*M)->HasField(TEXT("female_initiative"))&&(*M)->GetBoolField(TEXT("female_initiative"));
             Pose.IsExperience=int32((*M)->GetNumberField(TEXT("is_experience")));Pose.StateRestriction=int32((*M)->GetNumberField(TEXT("state_restriction")));
+            Pose.UpperCloth=int32((*M)->GetNumberField(TEXT("upper_cloth")));Pose.LowerCloth=int32((*M)->GetNumberField(TEXT("lower_cloth")));
             const FString Named=(*M)->GetStringField(TEXT("name"));if(!Named.IsEmpty())Pose.Name=Named;
         }
         Pose.Prop=FMath::Max(0,HPropKind(Category,Id));
@@ -267,14 +339,29 @@ void UOKHScenePanel::BuildList(){
         auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;
         for(int32 K=0;K<9;++K)if(Girl&&Girl->HasClothingKind(K)&&Girl->DisplayClothesStates[K]!=3)
             Add(ClothesBase+K,FString::Printf(TEXT("%s：%s"),OKT(Parts[K]),OKT(States[FMath::Clamp<int32>(Gallery->ClothesStates[K],0,3)])),true,Gallery->ClothesStates[K]==3);
+        // Her outfits, as the original H scene's coordinate buttons, and the game's coordinate cards worn as the one on.
+        const AOKInteractionMode* M=Interaction();const bool Free=M&&M->IsReady()&&!M->IsChangingOutfit();
+        const FString Worn=M?M->WornCoordinate:FString();
+        for(int32 O=0;O<FMath::Min(Gallery->Selected.Outfits.Num(),10);++O)
+            Add(OutfitBase+O,OKMsg(TEXT("ui.hscene.outfit"),{{TEXT("name"),FString(OKT(*FString::Printf(TEXT("ui.hscene.outfit_%d"),FMath::Min(O,7))))}}),Free,Worn.IsEmpty()&&O==Gallery->OutfitIndex);
+        Add(CoordinateToggle,OKT(bCoordinateList?TEXT("ui.hscene.coordinate_close"):TEXT("ui.hscene.coordinate_open")),true,!Worn.IsEmpty());
+        if(bCoordinateList)Add(CoordinateAccessories,OKT(bCoordinateAccessories?TEXT("ui.hscene.coordinate_with_accessories"):TEXT("ui.hscene.coordinate_clothes_only")),true,bCoordinateAccessories);
+        if(bCoordinateList)for(int32 I=0;I<CoordinateCards.Num();++I)Add(CoordinateBase+I,FPaths::GetBaseFilename(CoordinateCards[I]),Free,FPaths::IsSamePath(CoordinateCards[I],Worn));
         return;
     }
-    if(Tab==TabAibu){if(!bAibuLoaded)LoadAibuPoses();for(int32 I=0;I<AibuPoses.Num();++I)Add(AibuBase+I,AibuPoses[I].Name,true,(I==ActiveAibu&&Mode==0)||I==PendingAibu);return;}
+    // Never played with her (hexp.rs poses_played, this scene's too): New (H_SCENE_ADDITIONS_PLAN 5).
+    TSet<FString> Played(PosesPlayed);{const TArray<TSharedPtr<FJsonValue>>* Had=nullptr;
+     if(Gallery&&Gallery->HExperience.IsValid()&&Gallery->HExperience->TryGetArrayField(TEXT("poses_played"),Had))for(const auto& V:*Had)Played.Add(V->AsString());}
+    auto Fresh=[&](const FString& Name){return Played.Contains(Name)?FString():OKT(TEXT("ui.hscene.new_mark"));};
+    if(Tab==TabAibu){if(!bAibuLoaded)LoadAibuPoses();for(int32 I=0;I<AibuPoses.Num();++I)Add(AibuBase+I,AibuPoses[I].Name+Fresh(AibuPoses[I].Name),true,(I==ActiveAibu&&Mode==0)||I==PendingAibu);return;}
     const bool Used=Gallery&&Gallery->HExperience.IsValid()&&Gallery->HExperience->GetBoolField(TEXT("used"));
     for(int32 I=0;I<Poses.Num();++I){const FOKHPose& Pose=Poses[I];
         const bool Shown=Tab==TabSonyu?Pose.Mode==2:Pose.Mode==1&&Pose.KindHoushi==Tab-TabHand;if(!Shown)continue;
-        const bool Locked=Pose.IsExperience==1&&!Used;
-        FString Label=Pose.Name;if(Pose.Anal)Label+=OKT(TEXT("ui.hscene.anal_mark"));if(Locked)Label+=OKT(TEXT("ui.hscene.locked_mark"));
+        const bool PregLocked=PregLocks(Pose);const bool Locked=Pose.IsExperience==1&&!Used||PregLocked;
+        FString Label=Pose.Name;if(Pose.Anal)Label+=OKT(TEXT("ui.hscene.anal_mark"));
+        // The room brings a seat, table or wall for it (PlaceProps).
+        if(Pose.Prop>=1&&Pose.Prop<=3)Label+=OKT(*FString::Printf(TEXT("ui.hscene.prop_mark_%d"),Pose.Prop));
+        if(Locked)Label+=OKT(PregLocked?TEXT("ui.hscene.preg_locked_mark"):TEXT("ui.hscene.locked_mark"));Label+=Fresh(Pose.Name);
         Add(PoseBase+I,Label,!Locked,(Mode!=0&&I==ActivePose)||I==PendingPose);
     }
 }
@@ -289,7 +376,29 @@ void UOKHScenePanel::SelectPose(int32 Index){
     PendingPose=Index;Queue.Reset();Wanted.Reset();bAnalPlay=false;bInsideFinished=false;bStrong=false;
     Gallery->PairCombo->SetSelectedIndex(Option+1);
     Gallery->NoteAction(TEXT("pair"),Poses[Index].Name);
+    PoseClothes(Poses[Index]);
     BuildList();
+}
+// As the original starts a pose (HSceneProc SetAllClothState from numFemaleUpper/LowerCloth): her top and bra, or her
+// bottom, panties and pantyhose, undone at least that far (1 shifted aside, 3 off), never put back on. Shifted is a piece's
+// half state where it has one (ClothesTransition, one press of its button), off where it has none; a half state opens her
+// again in it (as the clothes buttons), off only hides it.
+void UOKHScenePanel::PoseClothes(const FOKHPose& Pose){
+    auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;AOKInteractionMode* M=Interaction();if(!IsValid(Girl)||!M)return;
+    uint8* S=Gallery->ClothesStates;uint8 Next[9];FMemory::Memcpy(Next,S,9);
+    auto Undo=[&](std::initializer_list<int32> Parts,int32 State){
+        if(State<=0)return;
+        for(const int32 K:Parts){if(Next[K]>=State)continue;
+            uint8 Press[9];FString Why;
+            Next[K]=State>=3||!M->ClothesTransition(K,Press,Why)||Press[K]==0?3:Press[K];}
+    };
+    Undo({0,2},Pose.UpperCloth);Undo({1,3,5},Pose.LowerCloth);
+    if(FMemory::Memcmp(Next,S,9)==0)return;
+    bool Shown=true;for(int32 K=0;K<9;++K)Shown&=Next[K]==3||Next[K]==Girl->DisplayClothesStates[K];
+    if(!Shown&&M->ChangeClothesStates(Next)){FMemory::Memcpy(S,Next,9);Gallery->RefreshClothesStateLabels();return;}
+    // Opening her again is busy: off instead, so nothing goes through her clothes.
+    for(int32 K=0;K<9;++K)if(Next[K]!=S[K]&&Next[K]!=Girl->DisplayClothesStates[K])Next[K]=3;
+    FMemory::Memcpy(S,Next,9);Girl->SetClothingPartsHidden(S);Gallery->RefreshClothesStateLabels();
 }
 
 void UOKHScenePanel::Want(const FString& State){
@@ -307,11 +416,19 @@ void UOKHScenePanel::ApplySpeed(){
     if(!FMath::IsNearlyEqual(Gallery->PairedPlayback->GetSpeed(),Target,.01f))Gallery->OnPairSpeed(Target/4.f);
 }
 
+// A place of hers past 30 (she starts to feel it), 60 (sensitive) or 100 (used to him) with this climax or his coming in
+// her mouth (H_DEVELOPMENT_EXPERIENCE_PLAN P3): said with the event, so her reaction to it speaks of it.
+static FString OKDevStep(const TCHAR* Area,float Before,float After){
+    for(const int32 Step:{100,60,30})if(Before<Step/100.f-1e-4f&&After>=Step/100.f-1e-4f)
+        return OKMsg(TEXT("ui.hscene.event_dev_step"),{{TEXT("area"),OKT(*(FString(TEXT("ui.hscene.dev_area_"))+Area))},{TEXT("step"),Step}});
+    return FString();
+}
+
 void UOKHScenePanel::Finish(const TCHAR* Kind){
     const FString K=Kind;++LineEpoch;
     JustCameAt=FPlatformTime::Seconds();JustCame=K.StartsWith(TEXT("org"))?1:K.StartsWith(TEXT("same"))?2:0;
     if(Mode==1){
-        ++ServiceFinishes;++HisFinishes;His=0.f;
+        ++ServiceFinishes;++HisFinishes;His=0.f;const float OralBefore=Dev(TEXT("oral"));
         // In her mouth only for a mouth pose: on her chest or in her hand is outside her (not swallowed or spat).
         if(K==TEXT("inside")&&(!Poses.IsValidIndex(ActivePose)||Poses[ActivePose].KindHoushi==1))++HisMouth;else ++HisOutside;
         if(K==TEXT("inside")){const int32 Kind=Poses.IsValidIndex(ActivePose)?Poses[ActivePose].KindHoushi:1;
@@ -320,31 +437,39 @@ void UOKHScenePanel::Finish(const TCHAR* Kind){
             if(Kind==1){Chain({TEXT("IN_Start"),TEXT("IN_Loop"),TEXT("Oral_Idle_IN"),TEXT("Oral_Idle")});OralIdleSince=0.;}
             else Chain({TEXT("IN_Start"),TEXT("IN_Loop"),Has(TEXT("IN_A"))?TEXT("IN_A"):TEXT("OUT_A")});
             if(Kind==2)AddSiru(1); // on her chest
-            Note(OKT(Kind==1?TEXT("ui.hscene.event_service_inside"):Kind==2?TEXT("ui.hscene.event_service_chest"):TEXT("ui.hscene.event_service_hand")));}
-        else{const bool Mouth=Poses.IsValidIndex(ActivePose)&&Poses[ActivePose].KindHoushi==1;Chain({TEXT("M_OUT_Start"),TEXT("M_OUT_Loop"),TEXT("OUT_A")});AddSiru(Mouth?0:1);
+            if(Kind!=1)Spurt(5); // in her hand or between her breasts (in her mouth it stays in it)
+            const FString Event=OKT(Kind==1?TEXT("ui.hscene.event_service_inside"):Kind==2?TEXT("ui.hscene.event_service_chest"):TEXT("ui.hscene.event_service_hand"))+OKDevStep(TEXT("oral"),OralBefore,Dev(TEXT("oral")));
+            // In her mouth: he picks swallow or spit next, so her line now must not say she already did either.
+            if(Kind==1){Note(Event,false);React(Event,OKT(TEXT("ui.hscene.mouth_full_note")));}else Note(Event);}
+        else{const bool Mouth=Poses.IsValidIndex(ActivePose)&&Poses[ActivePose].KindHoushi==1;Chain({TEXT("M_OUT_Start"),TEXT("M_OUT_Loop"),TEXT("OUT_A")});AddSiru(Mouth?0:1);Spurt(5);
             // Out of her mouth it lands on her face (she said "my mouth is full" to a plain "outside").
             Note(OKT(Mouth?TEXT("ui.hscene.event_service_face"):TEXT("ui.hscene.event_service_outside")));}
         return;
     }
     const bool Org=K.StartsWith(TEXT("org")),Same=K.StartsWith(TEXT("same"));
-    if(Org||Same){++(bAnalPlay?AnalClimaxes:CrotchClimaxes);Her=0.f;}
-    if(Same||K==TEXT("inside")||K==TEXT("outside")){++HisFinishes;His=0.f;++(K==TEXT("outside")?HisOutside:HisInside);if(Mode==2){if(bCondom)++HisCondom;else if(K!=TEXT("outside"))++HisInsideRaw;}}
+    const TCHAR* DevArea=bAnalPlay?TEXT("anal"):TEXT("crotch");const float DevBefore=Dev(DevArea);
+    // Only a climax with him in her opens that place (H_DEVELOPMENT_EXPERIENCE_PLAN: 每在陰道／肛門內高潮一次), not one
+    // from his fingers.
+    if(Org||Same){if(Mode==2)++(bAnalPlay?AnalClimaxes:CrotchClimaxes);Her=0.f;}
+    if(Same||K==TEXT("inside")||K==TEXT("outside")){++HisFinishes;His=0.f;++(K==TEXT("outside")?HisOutside:HisInside);if(Mode==2){if(bCondom)++HisCondom;else if(K!=TEXT("outside")){++HisInsideRaw;if(!bAnalPlay)++HisInsideVaginaRaw;}}}
     if(Org||Same){ReleaseHeld();CountHerOrgasm();
         // Her cry as she comes (HSonyu: 325 in the slow loop, 326 in the fast one, from her experience bank; user 2026-11-01:
         // the breathing went on through it). The breathing comes back once she is quiet (bTalkSpoken).
         auto* Girl=Gallery->PreviewActor.Get();const int32 PairIndex=Gallery->PairCombo?Gallery->PairCombo->GetSelectedIndex()-1:-1;
         const int32 AnimId=Gallery->NativePairs.IsValidIndex(PairIndex)?int32(Gallery->NativePairs[PairIndex]->GetNumberField(TEXT("id"))):-1;
         TArray<FKKHBreathCue> Cries;FString Error;
-        if(IsValid(Girl)&&KKSpeech::CollectHVoice(UOKCharacterController::DefaultVoiceRoot(),Gallery->Selected.Personality,K.EndsWith(TEXT("S"))?26:25,AnimId,Gallery->HBreath,Cries,Error)){
+        // User 2026-11-02: no spoken lines in H, only her cries (the breathing goes on through her climax).
+        if(CVarHSpokenLines.GetValueOnGameThread()&&IsValid(Girl)&&KKSpeech::CollectHVoice(UOKCharacterController::DefaultVoiceRoot(),Gallery->Selected.Personality,K.EndsWith(TEXT("S"))?26:25,AnimId,Gallery->HBreath,Cries,Error)){
             const FKKHBreathCue& Cry=Cries[FMath::RandHelper(Cries.Num())];Girl->StopHBreath();
             if(Girl->PlaySpeechFile(Cry.Path,FMath::Lerp(.94f,1.06f,Gallery->Selected.VoiceRate),Error)){bTalkSpoken=true;ClimaxUntil=FPlatformTime::Seconds()+4.;UE_LOG(LogTemp,Display,TEXT("H scene: her climax cry %s"),*Cry.Name);}}
         if(!Error.IsEmpty())UE_LOG(LogTemp,Display,TEXT("H scene: no climax cry: %s"),*Error);
         ClimaxUntil=FMath::Max(ClimaxUntil,FPlatformTime::Seconds()+3.);
         // Developed there, she comes twice as long; her developed nipples spray six seconds more (H_DEVELOPMENT_EXPERIENCE_PLAN).
         if(Org||Same){const double Now=FPlatformTime::Seconds();ClimaxUntil=Now+(ClimaxUntil-Now)*(1.f+(Mode==2?Dev(bAnalPlay?TEXT("anal"):TEXT("crotch")):0.f));
-            NippleUntil=ClimaxUntil+6.*Dev(TEXT("nipple"));}}
+            NippleUntil=ClimaxUntil+6.*Dev(TEXT("nipple"));ClimaxLoopFor=ClimaxUntil-Now;}}
     bInsideFinished=Same||K==TEXT("inside");
-    if(K==TEXT("outside"))AddSiru(SiruSide()==0?1:3); // over the side of her he is on
+    if(K==TEXT("outside")){AddSiru(SiruSide()==0?1:3);Spurt(6);} // over the side of her he is on
+    else if(Mode==2&&(Same||K==TEXT("inside"))&&!bCondom){++LeakPending;bLeakAnal=bAnalPlay;}
     else if((Same||K==TEXT("inside"))&&!bCondom)AddSiru(bAnalPlay?4:2);
     TArray<FString> States={P(TEXT("OLoop"))};
     if(K==TEXT("outside"))States.Append({P(TEXT("M_OUT_Start")),P(TEXT("M_OUT_Loop")),P(TEXT("OUT_A"))});
@@ -354,17 +479,34 @@ void UOKHScenePanel::Finish(const TCHAR* Kind){
     else if(K==TEXT("orgS"))States.Append({P(TEXT("SF_IN_Start")),P(TEXT("SF_IN_Loop")),P(TEXT("SS_IN_A"))});
     else States.Append({P(TEXT("SS_IN_Start")),P(TEXT("SS_IN_Loop")),P(TEXT("SS_IN_A"))});
     Chain(States);
-    Note(OKT(Org?TEXT("ui.hscene.event_her_orgasm"):Same?TEXT("ui.hscene.event_together"):K==TEXT("inside")?(bCondom?TEXT("ui.hscene.event_inside_condom"):TEXT("ui.hscene.event_inside")):TEXT("ui.hscene.event_outside")));
+    const FString Event=OKT(Org?TEXT("ui.hscene.event_her_orgasm"):Same?TEXT("ui.hscene.event_together"):K==TEXT("inside")?(bCondom?TEXT("ui.hscene.event_inside_condom"):TEXT("ui.hscene.event_inside")):TEXT("ui.hscene.event_outside"))+OKDevStep(DevArea,DevBefore,Dev(DevArea));
+    // In a condom it stays in the condom: her line must not feel it flowing into her.
+    if(!Org&&bInsideFinished&&bCondom){Note(Event,false);React(Event,OKT(TEXT("ui.hscene.condom_finish_note")));}else Note(Event);
 }
 
+// Her service_rounds for the scene (hexp.rs, with what she already did today) are used up: she will not start another
+// hand, mouth or breast round, whether he asks once more or picks a new pose.
+static bool OKHServiceSpent(int32 Finishes,const TSharedPtr<FJsonObject>& X){
+ return Finishes+(X.IsValid()&&X->HasField(TEXT("today_service"))?int32(X->GetNumberField(TEXT("today_service"))):0)>=FMath::Max(1,X.IsValid()?int32(X->GetNumberField(TEXT("service_rounds"))):2);
+}
 void UOKHScenePanel::Click(int32 Kind){
     if(!Gallery)return;
+    // Done (H_SCENE_ADDITIONS_PLAN 12): she lies with him (the caress on her back, him out of the picture as in a
+    // caress) and they talk; any other action is the scene going on again.
+    if(Kind==Afterglow){const int32 Lying=AibuPoses.IndexOfByPredicate([](const FAibuPose& P){return P.Id==1;});
+        if(!bAibuLoaded)LoadAibuPoses();const int32 At=Lying!=INDEX_NONE?Lying:AibuPoses.IndexOfByPredicate([](const FAibuPose& P){return P.Id==1;});
+        bAfterglow=true;if(At!=INDEX_NONE)SelectAibu(At);else{Note(OKT(TEXT("ui.hscene.event_afterglow")));if(Hint)Hint->SetText(FText::FromString(OKT(TEXT("ui.hscene.afterglow_hint"))));}
+        return;}
+    if(Kind<TabHand||Kind>TabAibu)bAfterglow=false;
     const FString Base=Mode==0?Current():HBase(Current());
     if(Kind>=TabHand&&Kind<=TabAibu){Tab=Kind;BuildList();return;}
     if(Kind>=PoseBase&&Kind<PoseBase+1000){SelectPose(Kind-PoseBase);return;}
     if(Kind>=AibuBase&&Kind<PoseBase){SelectAibu(Kind-AibuBase);return;}
     if(Kind>=RoomBase&&Kind<=RoomBase+1){Room=Kind-RoomBase;PropKey.Reset();Note(OKT(Room==1?TEXT("ui.hscene.event_room_bed"):TEXT("ui.hscene.event_room_floor")),false);BuildList();return;}
-    if(Kind>=TouchChest&&Kind<=Kiss&&Mode==0){static const int32 Areas[]={1,2,3,4,5,0};Touch(Areas[Kind-TouchChest]);ActionsKey.Reset();return;}
+    if(Kind>=TouchChest&&Kind<=Kiss&&Mode==0){static const int32 Areas[]={1,2,3,4,5,0};bLipsTouch=false;Touch(Areas[Kind-TouchChest]);ActionsKey.Reset();return;}
+    if(Kind>=TouchHead&&Kind<=TouchFoot&&Mode==0){Touch(6+Kind-TouchHead);ActionsKey.Reset();return;}
+    if(Kind==TouchLips&&Mode==0){bLipsTouch=true;Touch(0);ActionsKey.Reset();return;}
+    if(Kind==LickToggle&&Mode==0){bLickMode=!bLickMode;ActionsKey.Reset();return;}
     if(Mode==0&&Kind>=Faster&&Kind<=Continue)return; // pair actions while caressing (a stale button or the control channel)
     // An action counts only when the panel offers it now (finishing outside at an empty gauge, inserting during a
     // service): the same rule for a click, a stale button and the control channel.
@@ -387,14 +529,26 @@ void UOKHScenePanel::Click(int32 Kind){
     if(Kind==ToggleMale){MaleView=(MaleView+1)%3;bMaleHidden=MaleView==2;ApplyMaleLook();BuildList();return;}
     if(Kind==MaleBottom){bMaleBottomOff=!bMaleBottomOff;ApplyMaleLook();BuildList();return;}
     if(Kind==Release&&Mode==0){TouchArea=INDEX_NONE;Chain({TEXT("Idle")});ActionsKey.Reset();return;}
+    if(Kind==CoordinateToggle){bCoordinateList=!bCoordinateList;if(bCoordinateList)FindCoordinateCards();BuildList();return;}
+    if(Kind==CoordinateAccessories){bCoordinateAccessories=!bCoordinateAccessories;BuildList();return;}
+    if(Kind>=OutfitBase&&Kind<OutfitBase+10){FString Why;if(!WearOutfit(Kind-OutfitBase,FString(),Why)&&Hint)Hint->SetText(FText::FromString(Why));return;}
+    if(Kind>=CoordinateBase){FString Why;if(CoordinateCards.IsValidIndex(Kind-CoordinateBase)&&!WearOutfit(Gallery->OutfitIndex,CoordinateCards[Kind-CoordinateBase],Why)&&Hint)Hint->SetText(FText::FromString(Why));return;}
     if(Kind>=ClothesBase){
         auto* Girl=Gallery->PreviewActor.Get();const int32 C=Kind-ClothesBase;if(!IsValid(Girl))return;
         static const TCHAR* Parts[]={TEXT("ui.hscene.cloth_top"),TEXT("ui.hscene.cloth_bottom"),TEXT("ui.hscene.cloth_bra"),TEXT("ui.hscene.cloth_shorts"),TEXT("ui.hscene.cloth_gloves"),TEXT("ui.hscene.cloth_pantyhose"),TEXT("ui.hscene.cloth_socks"),TEXT("ui.hscene.cloth_inner_shoes"),TEXT("ui.hscene.cloth_shoes")};
         uint8* S=Gallery->ClothesStates;FString Event;
-        if(C==100){for(int32 K=0;K<9;++K)S[K]=Girl->DisplayClothesStates[K];Event=OKT(TEXT("ui.hscene.event_dressed"));}
-        else if(C==102){for(int32 K=0;K<9;++K)S[K]=3;Event=OKT(TEXT("ui.hscene.event_undressed"));}
-        else if(C>=0&&C<9){const bool Off=S[C]!=3;S[C]=Off?3:Girl->DisplayClothesStates[C];Event=OKMsg(Off?TEXT("ui.hscene.event_part_off"):TEXT("ui.hscene.event_part_on"),{{TEXT("part"),OKT(Parts[C])}});}
+        // A piece goes on, half off (where it has a half), off, as the original's buttons (user, 2026-11-02: one press took
+        // it all off). Off is visibility; a state she is not opened in (half off, back on from half) opens her again in it.
+        uint8 Next[9];FMemory::Memcpy(Next,S,9);AOKInteractionMode* M=Interaction();
+        if(C==100){FMemory::Memzero(Next,9);Event=OKT(TEXT("ui.hscene.event_dressed"));}
+        else if(C==102){FMemory::Memset(Next,3,9);Event=OKT(TEXT("ui.hscene.event_undressed"));}
+        else if(C>=0&&C<9){FString Why;if(!M||!M->ClothesTransition(C,Next,Why)){UE_LOG(LogTemp,Warning,TEXT("H scene: clothes rule: %s"),*Why);Next[C]=S[C]!=3?3:0;}
+            Event=OKMsg(Next[C]==3?TEXT("ui.hscene.event_part_off"):Next[C]==0?TEXT("ui.hscene.event_part_on"):TEXT("ui.hscene.event_part_half"),{{TEXT("part"),OKT(Parts[C])}});}
         else return;
+        bool Shown=true;for(int32 K=0;K<9;++K)Shown&=Next[K]==3||Next[K]==Girl->DisplayClothesStates[K];
+        if(!Shown){if(!M||!M->ChangeClothesStates(Next)){if(Hint)Hint->SetText(FText::FromString(OKT(TEXT("ui.hscene.outfit_busy"))));return;}
+            FMemory::Memcpy(S,Next,9);Gallery->RefreshClothesStateLabels();Note(Event);BuildList();return;}
+        FMemory::Memcpy(S,Next,9);
         Girl->SetClothingPartsHidden(S);Gallery->RefreshClothesStateLabels();Note(Event);BuildList();return;
     }
     const auto& X=Gallery->HExperience;
@@ -414,10 +568,10 @@ void UOKHScenePanel::Click(int32 Kind){
     case Inside:Finish(Mode==2&&Her>=70.f&&!bLockHer?(bStrong?TEXT("sameS"):TEXT("sameW")):TEXT("inside"));break; // with her gauge locked she does not come with him
     case Outside:Finish(TEXT("outside"));break;
     case Drink:++Swallowed;Chain({TEXT("Drink_IN"),TEXT("Drink"),TEXT("Drink_A")});Note(OKT(TEXT("ui.hscene.event_drink")));break;
-    case Vomit:Chain({TEXT("Vomit_IN"),TEXT("Vomit"),TEXT("Vomit_A")});AddSiru(0);Note(OKT(TEXT("ui.hscene.event_vomit")));break; // spat out: on her mouth and chin
+    case Vomit:Chain({TEXT("Vomit_IN"),TEXT("Vomit"),TEXT("Vomit_A")});AddSiru(0);MouthSpillUntil=FPlatformTime::Seconds()+4.;Note(OKT(TEXT("ui.hscene.event_vomit")));break; // spat out: on her mouth and chin
     case Again:
         // Once more only while she is willing: past her service_rounds for the scene she says no (and the panel stops offering it).
-        if(ServiceFinishes+(X.IsValid()&&X->HasField(TEXT("today_service"))?int32(X->GetNumberField(TEXT("today_service"))):0)>=FMath::Max(1,X.IsValid()?int32(X->GetNumberField(TEXT("service_rounds"))):2)){bServiceRefused=true;Note(OKT(TEXT("ui.hscene.again_refused")));BuildList();break;}
+        if(OKHServiceSpent(ServiceFinishes,X)){bServiceRefused=true;Note(OKT(TEXT("ui.hscene.again_refused")));BuildList();break;}
         Want(TEXT("WLoop"));bStrong=false;break;
     case Condom:bCondom=!bCondom;Note(OKT(bCondom?TEXT("ui.hscene.condom_on"):TEXT("ui.hscene.condom_off")),false);break;
     case Insert:
@@ -502,6 +656,7 @@ void UOKHScenePanel::PlaySe(const FString& Clip){
     UGameplayStatics::PlaySound2D(this,Wave);
 }
 bool UOKHScenePanel::PlayHVoice(int32 Row){
+    if(!CVarHSpokenLines.GetValueOnGameThread())return false; // only her cries (user 2026-11-02): the breathing goes on
     AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl)||!Poses.IsValidIndex(ActivePose))return false;
     const FOKHPose& Pose=Poses[ActivePose];const int32 AnimId=Gallery->NativePairs.IsValidIndex(Pose.Pair)?int32(Gallery->NativePairs[Pose.Pair]->GetNumberField(TEXT("id"))):-1;
     TArray<FKKHBreathCue> Lines;FString Error;FKKHBreathContext Context=Gallery->HBreath;Context.bAnal=bAnalPlay;Context.bCondom=bCondom; // the panel may have just changed them
@@ -526,9 +681,58 @@ float UOKHScenePanel::Dev(const TCHAR* Area) const{
     const FString A=Area;V+=A==TEXT("crotch")?10.*CrotchClimaxes:A==TEXT("anal")?10.*AnalClimaxes:A==TEXT("oral")?10.*HisMouth:0.;
     return FMath::Clamp(float(V)/100.f,0.f,1.f);
 }
+// Her pregnancy as her experience carries it (pregnancy.rs view): the belly by stage, and her areolae larger and
+// nipples darker by her births and how far along she is (a pregnancy darkens them on its own).
+static TSharedPtr<FJsonObject> OKPregnancyOf(const TSharedPtr<FJsonObject>& X){const TSharedPtr<FJsonObject>* P=nullptr;return X.IsValid()&&X->TryGetObjectField(TEXT("pregnancy"),P)?*P:nullptr;}
+float UOKHScenePanel::PregBelly() const{
+    if(PregBellyTest>=0.f)return FMath::Clamp(PregBellyTest,0.f,1.f);
+    const auto P=OKPregnancyOf(Gallery?Gallery->HExperience:nullptr);double V=0;if(P.IsValid())P->TryGetNumberField(TEXT("belly"),V);return FMath::Clamp(float(V),0.f,1.f);
+}
+float UOKHScenePanel::PregBust() const{
+    if(PregBellyTest>=0.f)return .5f*FMath::Clamp(PregBellyTest,0.f,1.f);
+    const auto P=OKPregnancyOf(Gallery?Gallery->HExperience:nullptr);double V=0;if(P.IsValid())P->TryGetNumberField(TEXT("bust"),V);return FMath::Clamp(float(V),0.f,.5f);
+}
+// Lying on her front or pressed down on her belly: not from her 20th week (pregnancy.rs belly_locked).
+static TAutoConsoleVariable<FString> CVarHPregLocked(TEXT("ok.HScene.PregLockedPoses"),TEXT("寝バック,伏せ後背位,押し付けバック,種付けプレス,マングリ正常位"),TEXT("Poses (authored names, comma separated) she will not take from her 20th week of pregnancy"));
+bool UOKHScenePanel::PregLocks(const FOKHPose& Pose) const{
+    const auto P=OKPregnancyOf(Gallery?Gallery->HExperience:nullptr);bool B=false;if(!(P.IsValid()&&P->TryGetBoolField(TEXT("belly_locked"),B)&&B)&&!(PregBellyTest>=.5f))return false;
+    TArray<FString> Names;CVarHPregLocked.GetValueOnGameThread().ParseIntoArray(Names,TEXT(","));return Names.Contains(Pose.Raw)||Names.Contains(Pose.Name);
+}
+float UOKHScenePanel::PregNipples() const{
+    if(PregBodyTest>=0.f)return FMath::Clamp(PregBodyTest,0.f,1.f);
+    const auto P=OKPregnancyOf(Gallery?Gallery->HExperience:nullptr);double Body=0,Progress=0;if(P.IsValid()){P->TryGetNumberField(TEXT("body"),Body);P->TryGetNumberField(TEXT("progress"),Progress);}
+    return FMath::Clamp(FMath::Max(float(Body),.7f*float(Progress)),0.f,1.f);
+}
+static TAutoConsoleVariable<FString> CVarHPregNipple(TEXT("ok.HScene.PregNipple"),TEXT("0.85,0.42,0.24,0.2"),TEXT("Her areolae and nipples fully changed by pregnancy: areola size, then nipple colour r,g,b"));
+// The PregnancyPlus Standard preset (OKPregnancyPresets.h) the belly takes when her card has no shape of its own.
+static const TCHAR* OKPregStandard[][2]={{TEXT("inflationMultiplier"),TEXT("0.25")},{TEXT("inflationStretchX"),TEXT("-0.12")},{TEXT("inflationStretchY"),TEXT("-0.07")},{TEXT("inflationTaperY"),TEXT("-0.005")},{TEXT("inflationTaperZ"),TEXT("-0.003")},{TEXT("inflationRoundness"),TEXT("0.005")},{TEXT("inflationDrop"),TEXT("0.05")}};
+void UOKHScenePanel::ApplyPregnancy(double Now){
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl)||Now<PregCheckAt)return;PregCheckAt=Now+1.;
+    // Areolae and nipples: every second (an outfit change builds her materials again).
+    {TArray<FString> V;CVarHPregNipple.GetValueOnGameThread().ParseIntoArray(V,TEXT(","));const float Size=V.Num()>0?FCString::Atof(*V[0]):.85f;
+     const FLinearColor To(V.Num()>3?FCString::Atof(*V[1]):.42f,V.Num()>3?FCString::Atof(*V[2]):.24f,V.Num()>3?FCString::Atof(*V[3]):.2f,1.f);
+     const float Amount=PregNipples();if(Amount>0.f||!Girl->NippleBase.IsEmpty())Girl->SetNippleChange(Amount,Size,To);}
+    // The belly: her body sculpted again only when it changes (or she was built again).
+    const float Belly=PregBelly();
+    if(PregActor==Girl&&PregOutfit==Gallery->OutfitIndex&&FMath::IsNearlyEqual(Belly,PregBellyShown,.005f))return;
+    if(Belly<=0.f&&PregBellyShown<=0.f&&PregActor==Girl){PregOutfit=Gallery->OutfitIndex;return;}
+    TSharedPtr<FJsonObject> Mods;if(!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Gallery->EditorModsJson()),Mods)||!Mods.IsValid())return;
+    const TSharedPtr<FJsonObject>* Own=nullptr;TSharedPtr<FJsonObject> P=Mods->TryGetObjectField(TEXT("pregnancy"),Own)?*Own:MakeShared<FJsonObject>();
+    double Card=0;P->TryGetNumberField(TEXT("inflationSize"),Card);bool bShaped=P->HasField(TEXT("inflationMultiplier"));
+    if(!bShaped)for(const auto& KV:OKPregStandard)P->SetNumberField(KV[0],FCString::Atof(KV[1]));
+    P->SetBoolField(TEXT("GameplayEnabled"),true);P->SetNumberField(TEXT("inflationSize"),FMath::Max(Card,40.*Belly));Mods->SetObjectField(TEXT("pregnancy"),P);
+    FString Json;FJsonSerializer::Serialize(Mods.ToSharedRef(),TJsonWriterFactory<>::Create(&Json));bool Geometry=false;
+    if(!Girl->Session.ApplyEditorMods(Json,Gallery->OutfitIndex,&Geometry)){UE_LOG(LogTemp,Warning,TEXT("H scene: her pregnant belly %.2f not applied"),Belly);return;}
+    if(Geometry){const float Phase=Girl->AnimPhase;const int32 PoseMode=Girl->PoseMode;FString Error;if(!Girl->RefreshEditorGeometry())Girl->LoadSession(Error);Girl->AnimPhase=Phase;Girl->PoseMode=PoseMode;
+        Girl->ApplyShapes(Gallery->Selected.Face.ShapeValueFace,Gallery->Selected.Body.ShapeValueBody);}
+    UE_LOG(LogTemp,Display,TEXT("H scene: her pregnant belly %.2f (size %.1f, geometry %d)"),Belly,FMath::Max(Card,40.*Belly),Geometry?1:0);
+    PregBellyShown=Belly;PregActor=Girl;PregOutfit=Gallery->OutfitIndex;
+}
 void UOKHScenePanel::SwellBust(float Delta){
     AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl)||Gallery->Selected.Body.ShapeValueBody.Num()<=4)return;
-    const float Want=1.f+.5f*Dev(TEXT("chest"))*FMath::Clamp(Her/100.f,0.f,1.f);
+    // Her pregnancy adds to it, half again at term and going back over six months after (pregnancy.rs bust;
+    // H_SCENE_ADDITIONS_PLAN 8), at most twice her own.
+    const float Want=FMath::Min(2.f,1.f+PregBust()+.5f*Dev(TEXT("chest"))*FMath::Clamp(Her/100.f,0.f,1.f));
     BustSwell=FMath::FInterpTo(BustSwell,Want,Delta,1.5f);
     // Sucking him (set by AlignHim while he is in her mouth): as strong as her mouth is developed.
     OralSuck=FMath::FInterpTo(OralSuck,bSucking?Dev(TEXT("oral")):0.f,Delta,3.f);
@@ -691,10 +895,19 @@ void UOKHScenePanel::BuildActions(){
         auto* L=WidgetTree->ConstructWidget<UTextBlock>();L->SetText(FText::FromString(Gallery->PhysicsBackendCombo->GetSelectedOption()));B->SetContent(L);Actions->AddChildToWrapBox(B);};
     if(Mode==0&&ActiveAibu!=INDEX_NONE&&PendingAibu==INDEX_NONE&&!Busy){
         if(!Base.StartsWith(TEXT("Orgasm"))&&!Base.EndsWith(TEXT("Dislikes"))){
-            {Add(Kiss,TEXT("ui.hscene.act_kiss"));Add(TouchChest,TEXT("ui.hscene.act_touch_chest"));Add(TouchNipple,TEXT("ui.hscene.act_touch_nipple"));Add(TouchCrotch,TEXT("ui.hscene.act_touch_crotch"));Add(TouchButt,TEXT("ui.hscene.act_touch_butt"));Add(TouchAnal,TEXT("ui.hscene.act_touch_anal"));
+            // Touch or kiss (H_SCENE_ADDITIONS_PLAN 3): her mouth (her lips / a kiss), chest, nipples, head, butt, crotch,
+            // anus, the back of her hand, thigh, calf, foot.
+            {Add(LickToggle,bLickMode?TEXT("ui.hscene.act_mode_kiss"):TEXT("ui.hscene.act_mode_touch"));
+             if(bLickMode){Add(Kiss,TEXT("ui.hscene.act_kiss"));Add(TouchChest,TEXT("ui.hscene.act_kiss_chest"));Add(TouchNipple,TEXT("ui.hscene.act_kiss_nipple"));Add(TouchHead,TEXT("ui.hscene.act_kiss_head"));
+                 Add(TouchButt,TEXT("ui.hscene.act_kiss_butt"));Add(TouchCrotch,TEXT("ui.hscene.act_kiss_crotch"));Add(TouchAnal,TEXT("ui.hscene.act_kiss_anal"));
+                 Add(TouchHand,TEXT("ui.hscene.act_kiss_hand"));Add(TouchThigh,TEXT("ui.hscene.act_kiss_thigh"));Add(TouchCalf,TEXT("ui.hscene.act_kiss_calf"));Add(TouchFoot,TEXT("ui.hscene.act_kiss_foot"));}
+             else{Add(TouchLips,TEXT("ui.hscene.act_touch_lips"));Add(TouchChest,TEXT("ui.hscene.act_touch_chest"));Add(TouchNipple,TEXT("ui.hscene.act_touch_nipple"));Add(TouchHead,TEXT("ui.hscene.act_touch_head"));
+                 Add(TouchButt,TEXT("ui.hscene.act_touch_butt"));Add(TouchCrotch,TEXT("ui.hscene.act_touch_crotch"));Add(TouchAnal,TEXT("ui.hscene.act_touch_anal"));
+                 Add(TouchHand,TEXT("ui.hscene.act_touch_hand"));Add(TouchThigh,TEXT("ui.hscene.act_touch_thigh"));Add(TouchCalf,TEXT("ui.hscene.act_touch_calf"));Add(TouchFoot,TEXT("ui.hscene.act_touch_foot"));}
             }
             if(TouchArea!=INDEX_NONE)Add(Release,TEXT("ui.hscene.act_release"));
-            Add(LockHer,bLockHer?TEXT("ui.hscene.act_unlock_her"):TEXT("ui.hscene.act_lock_her"));}
+            Add(LockHer,bLockHer?TEXT("ui.hscene.act_unlock_her"):TEXT("ui.hscene.act_lock_her"));
+            if(bPlayed&&!bAfterglow)Add(Afterglow,TEXT("ui.hscene.act_afterglow"));}
         return;
     }
     if(Mode==0||ActivePose==INDEX_NONE||PendingPose!=INDEX_NONE||Busy||Cur.IsEmpty())return;
@@ -703,6 +916,7 @@ void UOKHScenePanel::BuildActions(){
     // A check box always there (user, 2026-11-01): the part of him in her drawn half see-through, on and off at any time.
     Add(PenisXRayToggle,bPenisXRay?TEXT("ui.hscene.xray_on"):TEXT("ui.hscene.xray_off"));AddPhysics();
     Add(GrayRoomToggle,bGrayRoom?TEXT("ui.hscene.gray_room_on"):TEXT("ui.hscene.gray_room_off"));
+    if(bPlayed)Add(Afterglow,TEXT("ui.hscene.act_afterglow"));
     Add(PenisPanelToggle,bPenisPanel?TEXT("ui.hscene.penis_panel_on"):TEXT("ui.hscene.penis_panel_off"));
     if(bPenisPanel)Add(PenisReset,TEXT("ui.hscene.penis_reset"));
     if(Mode==1){
@@ -727,7 +941,7 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     if(HalfInner&&PanelWidth){const float High=2.f*float(PanelWidth->GetCachedGeometry().GetLocalSize().Y);if(High>10.f&&!FMath::IsNearlyEqual(High,HalfInner->GetHeightOverride(),1.f))HalfInner->SetHeightOverride(High);}
     if(!Gallery)return;
     if(Poses.IsEmpty()&&!Gallery->NativePairs.IsEmpty()){LoadPoses();BuildList();}
-    TickDrips(Delta);Tremble(FPlatformTime::Seconds());TickSounds();SwellBust(Delta);
+    TickDrips(Delta);TickFluids(Delta);TickAhegao();TickCameraLight(false);Tremble(FPlatformTime::Seconds());TickHands();TickSounds();SwellBust(Delta);ApplyPregnancy(FPlatformTime::Seconds());
     // Her breathing as the original picks it (HVoiceCtrl): her gauge past 50 and his fast motion (voice.speedMotion,
     // with its own up and down marks) change the cries, her experience the bank. A change starts the matching set
     // (user, 2026-11-01: in her it kept the first, quiet set the caress also uses).
@@ -766,10 +980,16 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     // Only once the pair plays: while his parts and materials are still being prepared, hiding his clothes or swapping his
     // materials keeps that preparation from ever finishing (the room timed out).
     const bool PairPlaying=Gallery->PairedPlayback&&Gallery->PairedPlayback->GetElapsed()>0.f;
-    if(Mode!=0&&PairPlaying&&Gallery->PartnerActor&&MaleLookFor!=Gallery->PartnerActor.Get())ApplyMaleLook(); // he was (re)made for the pair
+    if(Mode!=0&&PairPlaying&&Gallery->PartnerActor&&(MaleLookFor!=Gallery->PartnerActor.Get()||bXRayInHer!=XRayInHer()))ApplyMaleLook(); // he was (re)made for the pair, or he went into her / out of her
     AlignHim(Delta); // measures while the pair plays; a new pose or mode puts them back
     const double Now=FPlatformTime::Seconds();
     auto* Playback=Gallery->PairedPlayback.Get();
+    // The scene opens on the pair list's first pose (a hand service): the original opens on the first caress that fits the
+    // place (HSceneProc LoadAnimationListInfo, lstUseAnimInfo[0] first). Once the room is ready (its loading screen waits
+    // for the pair to play), still on that opening pose. Not when he found her touching herself on the street.
+    if(!bOpeningChecked){AOKInteractionMode* M=Interaction();
+        if(M&&M->IsReady()){bOpeningChecked=true;
+            if(Mode==1&&PendingPose==INDEX_NONE&&PendingAibu==INDEX_NONE&&!StreetOnani()){if(!bAibuLoaded)LoadAibuPoses();if(AibuPoses.Num()>0){Tab=TabAibu;SelectAibu(0);}}}}
     // The pose actually playing: the one he picked once it starts, or the one the scene opened with.
     const int32 Playing=Gallery->SelectedPairCatalogueIndex();
     if((Mode!=0||PendingPose!=INDEX_NONE)&&Playback&&!Gallery->bPairPreparing&&Gallery->PairStateCombo&&Gallery->PairStateCombo->GetOptionCount()>1){
@@ -777,11 +997,14 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
         if(Found!=INDEX_NONE&&(Found!=ActivePose||PendingPose==Found)){
             ActivePose=Found;PendingPose=INDEX_NONE;Mode=Poses[Found].Mode;ClearLine();Queue.Reset();Wanted.Reset();bAnalPlay=false;bInsideFinished=false;bStrong=false;
             if(Has(TEXT("Idle")))Want(TEXT("Idle"));
+            // A new service pose past her rounds: she says no as to "once more" (the panel then offers no start).
+            if(Mode==1&&!bServiceRefused&&OKHServiceSpent(ServiceFinishes,Gallery->HExperience)){bServiceRefused=true;Note(OKT(TEXT("ui.hscene.again_refused")));}
             if(Mode==1&&Poses[Found].KindHoushi==2)BareChest();
             Tab=Mode==2?TabSonyu:TabHand+Poses[Found].KindHoushi;BuildList();if(Hint)Hint->SetText(FText::FromString(Mode==1&&bServiceRefused?OKT(TEXT("ui.hscene.again_refused")):Poses[Found].Name)); // the new pose (or why she will not start it), not the last one's event
         }
     }
     const FString Cur=Current(),Base=Mode==0?Cur:HBase(Cur);
+    if(Mode==2&&Base.Contains(TEXT("Loop"))){float& Deepest=Cur.StartsWith(TEXT("A_"))?AnalDeepest:CrotchDeepest;Deepest=FMath::Max(Deepest,AlignDeep);}
     if(Cur!=LastState){
         const FString Before=HBase(LastState);
         LastState=Cur;StateSeen=Now;
@@ -798,14 +1021,18 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
         }
         if(Base==TEXT("Oral_Idle"))OralIdleSince=Now;
     }
-    // The queued flow: a one-shot state moves on when it has played once; a finish's own loop after two rounds.
+    // The queued flow: a one-shot state moves on when it has played once; a finish's own loop after two rounds, and the
+    // loop of her climax (WF/WS/SF/SS_IN_Loop, her body shaking in it) for as long as she comes, from when the loop
+    // starts (OLoop plays first), as HSonyu holds it while her climax voice plays (user 2026-11-03: the original shaking,
+    // not a made-up one).
     if(!Queue.IsEmpty()&&(Playback||Mode==0)){
         if(Cur==Queue[0]){
             if(Queue.Num()==1)Queue.Reset();
             else{
                 const float Elapsed=Mode==0?float(Now-SoloStarted):Playback->GetElapsed(),Length=FMath::Max(.2f,Gallery->PreviewActor?Gallery->PreviewActor->AnimDuration:1.f);
                 const bool LoopLike=Base.EndsWith(TEXT("_Loop"))||Base==TEXT("OLoop")||Base==TEXT("Oral_Idle_IN");
-                if(Elapsed>=(LoopLike?FMath::Max(Length*2.f,2.5f):Length*.98f)){Queue.RemoveAt(0);Want(Queue[0]);}
+                const bool HerClimax=Mode==2&&(Base.EndsWith(TEXT("F_IN_Loop"))||Base.EndsWith(TEXT("S_IN_Loop")));
+                if(HerClimax?Elapsed>=ClimaxLoopFor&&!(bTalkSpoken&&Gallery->PreviewActor&&Gallery->PreviewActor->IsSpeaking()):Elapsed>=(LoopLike?FMath::Max(Length*2.f,2.5f):Length*.98f)){Queue.RemoveAt(0);Want(Queue[0]);}
             }
         }else if(Wanted!=Queue[0])Want(Queue[0]);
     }
@@ -819,13 +1046,22 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     // Gauges (HFlag gaugeFemale / gaugeMale): they rise with the movement, faster when strong; hers by her experience.
     if(Speed)SpeedValue=Speed->GetValue();
     const float Rate=SpeedValue,Strong=Base==TEXT("SLoop")?1.25f:1.f;
+    if(SpeedCover){const bool bCover=Mode==0&&TouchArea!=INDEX_NONE&&TouchArea!=0&&AreaExperience(TouchArea)<=0.f;
+        const ESlateVisibility Want=bCover?ESlateVisibility::HitTestInvisible:ESlateVisibility::Hidden;if(SpeedCover->GetVisibility()!=Want)SpeedCover->SetVisibility(Want);}
     static const float HerByLevel[]={.55f,.8f,1.f,1.35f};
     // Caress (HAibu): resting on a place she is being touched; her gauge by how used to it she is, and too hard on a
     // place she has never been touched there makes her pull away (JudgeDislikesis70).
-    if(Mode==0&&Queue.IsEmpty()&&TouchArea!=INDEX_NONE&&(Base.EndsWith(TEXT("_Idle"))||Base==TEXT("K_Loop"))){
+    if(Mode==0&&Queue.IsEmpty()&&TouchArea!=INDEX_NONE&&BodyTouching()&&!Base.EndsWith(TEXT("Dislikes"))&&!Base.StartsWith(TEXT("Orgasm"))){
+        bPlayed=true;AreaSeconds[TouchArea]+=Delta;if(FPlatformTime::Seconds()>=FlinchNext)Flinch(TouchArea);
+        Her+=Delta*(1.f+Dev(TouchArea==0?TEXT("kiss"):HBodyKey(TouchArea)));if(bLockHer)Her=FMath::Min(Her,95.f);
+        if(Her>=100.f){Her=0.f;TouchArea=INDEX_NONE;bLipsTouch=false;ReleaseHeld();Chain({TEXT("Orgasm_Start"),TEXT("Orgasm_Loop"),TEXT("Orgasm_A"),TEXT("Idle")});Note(OKT(TEXT("ui.hscene.event_her_orgasm")));CountHerOrgasm();}
+    }
+    else if(Mode==0&&Queue.IsEmpty()&&TouchArea!=INDEX_NONE&&(Base.EndsWith(TEXT("_Idle"))||Base==TEXT("K_Loop"))){
         bPlayed=true;AreaSeconds[TouchArea]+=Delta;
         const float Used=FMath::Clamp(AreaExperience(TouchArea)/100.f,0.f,1.f);
-        Her+=Delta*(1.5f+5.f*Rate)*(.6f+.6f*Used)*HerByLevel[FMath::Clamp(Level(),0,3)];if(bLockHer)Her=FMath::Min(Her,95.f);
+        // The original's rate (HandCtrl: FemaleGaugeUp(deltaTime * rateClickGauge), rateClickGauge 2 in the H scene's HFlag,
+        // level8): two points a second, fifty seconds to her climax.
+        Her+=Delta*2.f;if(bLockHer)Her=FMath::Min(Her,95.f);
         if(Rate>=.7f&&Used<=0.f&&TouchArea!=0){Note(OKT(TEXT("ui.hscene.too_hard")));Chain({TouchArea>=3&&TouchArea<=4?TEXT("Back_Dislikes"):TEXT("Front_Dislikes"),TEXT("Idle")});TouchArea=INDEX_NONE;}
         else if(Her>=100.f){Her=0.f;TouchArea=INDEX_NONE;ReleaseHeld();Chain({TEXT("Orgasm_Start"),TEXT("Orgasm_Loop"),TEXT("Orgasm_A"),TEXT("Idle")});Note(OKT(TEXT("ui.hscene.event_her_orgasm")));CountHerOrgasm();}
     }else if(Queue.IsEmpty()&&HIsLoop(Base)){
@@ -843,13 +1079,21 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     // Her spoken answer is over: her breathing goes on (the line stopped it).
     if(bTalkSpoken&&Gallery->PreviewActor&&!Gallery->PreviewActor->IsSpeaking()){bTalkSpoken=false;if(Mode!=0&&Gallery->PairedPlayback)Gallery->StartPairBreath();}
     if(HerGauge)HerGauge->SetPercent(Her/100.f);if(HisGauge)HisGauge->SetPercent(His/100.f);
-    // Her five developments as the scene uses them, each climax there (his finish in her mouth) shown as it adds 10
-    // (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md P3).
+    // Her developments as the scene uses them, each climax there (his finish in her mouth) shown as it adds 10
+    // (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md P3); kissing and her caressed places with what this scene's touch adds when it
+    // ends (hexp h_session_end: a second of kissing a point, of touch half a point; user 2026-11-03: kiss and butt shown).
     if(DevLine){auto Pct=[this](const TCHAR* A){return int32(FMath::RoundToFloat(Dev(A)*100.f));};
         auto Gain=[](int32 N){return N>0?OKMsg(TEXT("ui.hscene.dev_gain"),{{TEXT("n"),N}}):FString();};
-        DevLine->SetText(FText::FromString(OKMsg(TEXT("ui.hscene.dev_line"),{{TEXT("chest"),Pct(TEXT("chest"))},{TEXT("nipple"),Pct(TEXT("nipple"))},
+        auto Touch=[&](int32 Area,float PerSecond){const float Was=AreaExperience(Area);return Gain(int32(FMath::Min(100.f,Was+AreaSeconds[Area]*PerSecond))-int32(Was));};
+        DevLine->SetText(FText::FromString(OKMsg(TEXT("ui.hscene.dev_line"),{{TEXT("kiss"),Pct(TEXT("kiss"))},{TEXT("kiss_gain"),Touch(0,1.f)},
+            {TEXT("chest"),Pct(TEXT("chest"))},{TEXT("chest_gain"),Touch(1,.5f)},{TEXT("nipple"),Pct(TEXT("nipple"))},{TEXT("nipple_gain"),Touch(5,.5f)},
+            {TEXT("butt"),Pct(TEXT("butt"))},{TEXT("butt_gain"),Touch(4,.5f)},
             {TEXT("crotch"),Pct(TEXT("crotch"))},{TEXT("crotch_gain"),Gain(10*CrotchClimaxes)},{TEXT("anal"),Pct(TEXT("anal"))},{TEXT("anal_gain"),Gain(10*AnalClimaxes)},
-            {TEXT("oral"),Pct(TEXT("oral"))},{TEXT("oral_gain"),Gain(10*HisMouth)}})));}
+            {TEXT("oral"),Pct(TEXT("oral"))},{TEXT("oral_gain"),Gain(10*HisMouth)},
+            // The rest of her (H_SCENE_ADDITIONS_PLAN 3).
+            {TEXT("head"),Pct(TEXT("head"))},{TEXT("head_gain"),Touch(6,.5f)},{TEXT("hand"),Pct(TEXT("hand"))},{TEXT("hand_gain"),Touch(7,.5f)},
+            {TEXT("thigh"),Pct(TEXT("thigh"))},{TEXT("thigh_gain"),Touch(8,.5f)},{TEXT("calf"),Pct(TEXT("calf"))},{TEXT("calf_gain"),Touch(9,.5f)},
+            {TEXT("foot"),Pct(TEXT("foot"))},{TEXT("foot_gain"),Touch(10,.5f)}})));}
     if(Title){FString Name=Gallery->HHeroineName;const FString LevelName=Gallery->HExperience.IsValid()?Gallery->HExperience->GetStringField(TEXT("level_name")):FString();
         Title->SetText(FText::FromString(LevelName.IsEmpty()?Name:FString::Printf(TEXT("%s · %s"),*Name,*LevelName)));}
     if(Status){
@@ -880,10 +1124,10 @@ bool UOKHScenePanel::TakeLine(FString& Text,FString& Out,bool& System){
     if(!System&&Caption&&Gallery)Caption->SetText(FText::FromString(Gallery->HPlayerName+TEXT("：")+Text));
     return true;
 }
-void UOKHScenePanel::React(const FString& Event){
+void UOKHScenePanel::React(const FString& Event,const FString& Extra){
     if(Event.IsEmpty()||CannotAnswer())return;
     Outbox.RemoveAll([](const FHLine& L){return L.System;});
-    Outbox.Add({OKMsg(TEXT("ui.hscene.react_note"),{{TEXT("event"),Event}}),FString(),true});
+    Outbox.Add({OKMsg(TEXT("ui.hscene.react_note"),{{TEXT("event"),Event}}),Extra,true});
 }
 // Her original breathing for the caress (HVoiceCtrl breath, mode 0): moving while his hands are on her.
 void UOKHScenePanel::CaressBreath(){
@@ -951,6 +1195,89 @@ bool UOKHScenePanel::ApplyTalk(const TSharedPtr<FJsonObject>& V){
 void UOKHScenePanel::ClearLine(){++LineEpoch;if(Caption)Caption->SetText(FText::GetEmpty());}
 // Standard face patterns (eye_face.f00_*, mayuge.mayu00_*): eyes 1 closed, 4 smile, 7 setunai, 8 tere, 12 kurusi,
 // 13 keno, 24 gyu (squeezed shut); brows 0 default, 1 oko, 2 koma, 11 huan.
+// The original's ahegao is the KKS_Ahegao plugin (D:\KoikatuSunshine\BepInEx\config\KKS_Ahegao.cfg, user 2026-11-03): after
+// 4 climaxes (caress or insertion; Ahegao Count 4), only while a loop plays (Loop1/2, OLoop, IN_*) faster than 66% (Speed
+// Toggle, Minimum Speed 66) and not while kissing; eyes 25, brows 2, mouth 24, and her eyes rolled up 0.25 past her look
+// (not here yet: the street draws eyes with runtime materials that take no live gaze).
+static TAutoConsoleVariable<float> CVarHAhegaoGaze(TEXT("ok.HScene.AhegaoGaze"),-1.f,TEXT("Ahegao: her gaze, -1 up on these eyes (+1 down). The street's runtime eye materials take no live gaze yet: there it does not show"));
+static TAutoConsoleVariable<float> CVarHAhegaoSpeed(TEXT("ok.HScene.AhegaoSpeed"),.66f,TEXT("Ahegao after her climaxes: only faster than this (the original's Minimum Speed 66; 0 always)"));
+// The original's eyes pattern is a cha_eyeset row (ChaControl.ChangeEyesPtn): its FaceBlendShape eye pattern is the row's
+// eyes_ptn (as OK Studio reads it, OKStudioCatalog::EyeSet), from the base library's lists; -1 when they have none.
+static int32 HEyeSetBlend(int32 Ptn){
+    static TMap<int32,int32> Cache;if(const int32* Hit=Cache.Find(Ptn))return *Hit;
+    const FString Configured=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_BASE_LIBRARY"));
+    const FTCHARToUTF8 Lib(*(Configured.IsEmpty()?FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir()/TEXT("IndependentResources/base_v1")):Configured));
+    int32 Blend=-1;const int32 Size=ok_eye_set_json(Lib.Get(),Ptn,nullptr,0);
+    if(Size>0){TArray<uint8> Bytes;Bytes.SetNumZeroed(Size+1);ok_eye_set_json(Lib.Get(),Ptn,Bytes.GetData(),Size);
+        const FString Json=UTF8_TO_TCHAR(reinterpret_cast<const char*>(Bytes.GetData()));TSharedPtr<FJsonObject> Root;
+        if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Root)&&Root){double V=-1;Root->TryGetNumberField(TEXT("eyes_ptn"),V);Blend=int32(V);}
+        UE_LOG(LogTemp,Display,TEXT("H scene: eye set %d: %s"),Ptn,*Json);}
+    Cache.Add(Ptn,Blend);return Blend;
+}
+static TAutoConsoleVariable<FString> CVarHAhegaoFace(TEXT("ok.HScene.AhegaoFace"),TEXT("25,2,43"),TEXT("Ahegao: eye set, brow and mouth patterns (the original's Eye ID 25, Eyebrow ID 2; mouth 43 SexFaces' ahegao, the original's 24 when it lacks)"));
+static TAutoConsoleVariable<int32> CVarHAhegaoClimaxes(TEXT("ok.HScene.AhegaoClimaxes"),4,TEXT("Her climaxes in one scene after which she shows the ahegao (0 only when worn out for the day)"));
+static TAutoConsoleVariable<int32> CVarHAhegaoTest(TEXT("ok.HScene.AhegaoTest"),0,TEXT("1: the ahegao now (testing)"));
+// The double peace of her ahegao: both hands up by her face (Studio FBBIK hand effectors 5 left, 6 right, at her head
+// plus out to each side, a little forward and down), fingers in the V (ok.HScene.AhegaoHand, the hand-shape key).
+// Given every tick while it shows; let go when it ends, her hands back to the animation (or as set on the panel).
+static TAutoConsoleVariable<int32> CVarHAhegaoHand(TEXT("ok.HScene.AhegaoHand"),2,TEXT("Ahegao: the hand-shape key of the V sign (-1 no hand shape)"));
+static TAutoConsoleVariable<FString> CVarHAhegaoReach(TEXT("ok.HScene.AhegaoReach"),TEXT("13,9,-1"),TEXT("Ahegao: her hands from her head, cm: out to the side, forward, up"));
+static TAutoConsoleVariable<float> CVarHAhegaoMouthOpen(TEXT("ok.HScene.AhegaoMouthOpen"),.85f,TEXT("Ahegao: how far her mouth stays open (her tongue out)"));
+static TAutoConsoleVariable<int32> CVarHAhegaoArms(TEXT("ok.HScene.AhegaoArms"),1,TEXT("Ahegao: 1 her hands up by her face (Studio IK), 0 only the V"));
+static bool HChestForward(AKKPreviewActor* A,FVector& Out);
+void UOKHScenePanel::TickAhegao(){
+    auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl)||!Girl->Session.IsOpen())return;
+    const bool bWant=bAhegaoShown;
+    if(!bWant){if(bAhegaoPose){bAhegaoPose=false;Girl->Session.SetStudioIk({},{});Girl->SetMouthOpenFloor(0.f);AheGazeFor=nullptr;Girl->bManualSpeechPattern=bAheManualWas;
+            if(bAheEyeLook){bAheEyeLook=false;if(bAheEyeFollow)Girl->FollowEyeLookCamera(AheEyePattern);else Girl->SetEyeLookTarget(AheEyeTarget,AheEyePattern,true);}
+            for(int32 Side=0;Side<2;++Side){const int32 P=HandPattern[Side];Girl->SetHandShape(Side,P>=0,FMath::Max(0,P),FMath::Max(0,P),0.f);HandShown[Side]=P;}
+            Girl->bHeadLookPoseDirty=true;UE_LOG(LogTemp,Display,TEXT("H scene: ahegao over, her hands back"));}
+        return;}
+    const int32 V=CVarHAhegaoHand.GetValueOnGameThread();
+    if(!bAhegaoPose){bAhegaoPose=true;bAheManualWas=Girl->bManualSpeechPattern;
+        if(V>=0)for(int32 Side=0;Side<2;++Side){Girl->SetHandShape(Side,true,V,V,0.f);HandShown[Side]=HandPattern[Side];}
+        UE_LOG(LogTemp,Display,TEXT("H scene: ahegao, double peace (hand shape %d)"),V);}
+    // Her eyes stay rolled up: her look at the camera would set her gaze again every frame; and her mouth open, the
+    // tongue pattern is closed lips at mouth-open 0 (def_cl → name_op).
+    if(Girl->bEyeLookTracking){bAheEyeLook=true;bAheEyeFollow=Girl->bEyeLookFollowCamera;AheEyePattern=Girl->EyeLookPattern;AheEyeTarget=Girl->EyeLookWorldTarget;Girl->StopEyeLookTracking();}
+    // Her gaze up, kept here (the actor holds only -1..1); given again whenever another look (her eye tracking, started
+    // again elsewhere) has set her gaze since.
+    const float Gaze=CVarHAhegaoGaze.GetValueOnGameThread();if(AheGazeFor.Get()!=Girl||AheGazeSet!=Gaze||!FMath::IsNearlyEqual(Girl->EyeGaze[2],FMath::Clamp(Gaze,-1.f,1.f),.001f)){if(Girl->SetEyeGaze(0.f,0.f,Gaze)){AheGazeFor=Girl;AheGazeSet=Gaze;}}
+    Girl->SetMouthOpenFloor(CVarHAhegaoMouthOpen.GetValueOnGameThread());
+    // Her breathing lines change her mouth by the original's face list; her tongue stays out (and comes back after them).
+    if(AheMouthSet!=INDEX_NONE){Girl->bManualSpeechPattern=true;Girl->SavedMouthPattern=AheMouthSet;if(Girl->MouthPattern!=AheMouthSet)Girl->SetMouthPattern(AheMouthSet);}
+    if(!CVarHAhegaoArms.GetValueOnGameThread())return;
+    if(!Girl->bStudioIkReady){FString Error;if(!Girl->Session.PrepareStudioIk(Error)){UE_LOG(LogTemp,Warning,TEXT("H scene: no IK for her double peace: %s"),*Error);CVarHAhegaoArms->Set(0);return;}Girl->bStudioIkReady=true;}
+    FVector Head,Hips,L,R,Front;
+    if(!HBone(Girl,TEXT("j_head"),Head)||!HBone(Girl,TEXT("j_hips"),Hips)||!HBone(Girl,TEXT("j_shoulder_L"),L)||!HBone(Girl,TEXT("j_shoulder_R"),R))return;
+    const FVector Up=(Head-Hips).GetSafeNormal();FVector Side=(L-R);Side-=Up*FVector::DotProduct(Side,Up);Side.Normalize();
+    if(!HChestForward(Girl,Front)){Front=FVector::CrossProduct(Up,(R-L).GetSafeNormal());}
+    Front-=Up*FVector::DotProduct(Front,Up);Front.Normalize();
+    TArray<FString> P;CVarHAhegaoReach.GetValueOnGameThread().ParseIntoArray(P,TEXT(","));const float Out=P.IsValidIndex(0)?FCString::Atof(*P[0]):13.f,Fwd=P.IsValidIndex(1)?FCString::Atof(*P[1]):9.f,Rise=P.IsValidIndex(2)?FCString::Atof(*P[2]):-1.f;
+    const FTransform& T=Girl->GetActorTransform();
+    const FVector AtL=Head+Side*Out+Front*Fwd+Up*Rise,AtR=Head-Side*Out+Front*Fwd+Up*Rise;
+    Girl->Session.SetStudioIk({5,6},{AKKPreviewActor::ActorLocalToUnity(T.InverseTransformPosition(AtL)),AKKPreviewActor::ActorLocalToUnity(T.InverseTransformPosition(AtR))});
+    Girl->bHeadLookPoseDirty=true;
+}
+// The light comes from the camera at them (user 2026-11-03): in the street their runtime materials light from the
+// street's light (her raised hand fell in its dark band); in the H scene from the camera instead.
+static TAutoConsoleVariable<int32> CVarHCameraLight(TEXT("ok.HScene.CameraLight"),1,TEXT("1: in the H scene their key light comes from the camera; 0: the street's light"));
+void UOKHScenePanel::TickCameraLight(bool bEnd){
+    APlayerCameraManager* Camera=GetOwningPlayer()?GetOwningPlayer()->PlayerCameraManager.Get():nullptr;
+    const bool bOn=!bEnd&&Camera&&CVarHCameraLight.GetValueOnGameThread()!=0;
+    const FVector ToLight=bOn?-Camera->GetCameraRotation().Vector():FVector::ZeroVector;
+    // Their runtime materials light by _WorldSpaceLightPos0 (Unity to-light: UE (x,y,z) is Unity (-x,z,y)), the street's
+    // light: set from the camera while it moves, each material's own value given back at the end.
+    if(bOn){const FLinearColor Unity(-ToLight.X,ToLight.Z,ToLight.Y,0.f);const bool bMoved=!ToLight.Equals(CameraLightShown,1e-4f);CameraLightShown=ToLight;
+        for(AKKPreviewActor* A:{Gallery?Gallery->PreviewActor.Get():nullptr,Gallery?Gallery->PartnerActor.Get():nullptr})if(IsValid(A)){
+            TInlineComponentArray<UMeshComponent*> Meshes(A);
+            for(UMeshComponent* Mesh:Meshes)for(int32 MatSlot=0;MatSlot<Mesh->GetNumMaterials();++MatSlot)if(auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(MatSlot))){
+                const bool bKnown=CameraLightWas.Contains(M);if(!bKnown){FLinearColor Was;if(!M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("_WorldSpaceLightPos0")),Was))continue;CameraLightWas.Add(M,Was);}
+                if(bMoved||!bKnown)M->SetVectorParameterValue(TEXT("_WorldSpaceLightPos0"),Unity);}}}
+    else if(bEnd){for(const auto& Was:CameraLightWas)if(UMaterialInstanceDynamic* M=Was.Key.Get())M->SetVectorParameterValue(TEXT("_WorldSpaceLightPos0"),Was.Value);
+        CameraLightWas.Reset();CameraLightShown=FVector::ZeroVector;}
+    bCameraLit=bOn;
+}
 void UOKHScenePanel::UpdateFace(){
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl)||Girl->GetFacePatternCount(1)<25||Girl->GetFacePatternCount(2)<12)return;
     const FString Cur=Current(),Base=Mode==0?Cur:HBase(Cur);const int32 L=Level();
@@ -958,14 +1285,26 @@ void UOKHScenePanel::UpdateFace(){
     // Worn out (her climaxes today at her limit) and still going: ahegao (user, 2026-11-01), her eyes half open and rolled
     // up, brows raised, mouth open with her tongue out. The card has no such eye pattern; it is the tere eyes with her
     // gaze up and the mouth pattern whose name has the tongue (name / sita).
-    const bool bAhegao=HadEnough()&&!Cur.Contains(TEXT("Dislikes"));
-    if(bAhegao!=bAhegaoShown){bAhegaoShown=bAhegao;
-        if(bAhegao){Girl->SetEyeGaze(0.f,0.f,1.f);
-            if(AhegaoMouth==INDEX_NONE)for(int32 P=0;P<Girl->GetMouthPatternCount();++P){const FString M=Girl->GetMouthPatternLabel(P).ToLower();if(M.Contains(TEXT("_name"))||M.Contains(TEXT("_sita"))){AhegaoMouth=P;break;}}
-            if(AhegaoMouth!=INDEX_NONE)Girl->SetMouthPattern(AhegaoMouth);
-            UE_LOG(LogTemp,Display,TEXT("H scene: she is worn out, ahegao (mouth %d %s)"),AhegaoMouth,AhegaoMouth!=INDEX_NONE?*Girl->GetMouthPatternLabel(AhegaoMouth):TEXT("none"));}
+    // Or four climaxes in this scene (user 2026-11-03: 高潮 4 次後啊黑顏，雙手比 ya、流口水、翻白眼、吐舌頭; TickAhegao).
+    const int32 AheAt=CVarHAhegaoClimaxes.GetValueOnGameThread();
+    // After her climaxes as the original: in a loop going fast, caress or insertion, not kissing (she has her normal face
+    // between). Worn out for the day it shows whenever she is not refusing (user 2026-11-01).
+    const bool bKiss=Mode==0&&(Base==TEXT("K_Loop")||Base==TEXT("K_Touch"));
+    const bool bLoop=Mode==2?(HIsLoop(Base)||Base==TEXT("OLoop")||Base.Contains(TEXT("IN_"))):Mode==0&&TouchArea!=INDEX_NONE&&Queue.IsEmpty();
+    const bool bAheHold=AheAt>0&&HerOrgasms>=AheAt&&!bKiss&&bLoop&&SpeedValue>=CVarHAhegaoSpeed.GetValueOnGameThread();
+    const bool bAhegao=(HadEnough()||bAheHold||CVarHAhegaoTest.GetValueOnGameThread())&&!Cur.Contains(TEXT("Dislikes"));
+    TArray<FString> AF;CVarHAhegaoFace.GetValueOnGameThread().ParseIntoArray(AF,TEXT(","));
+    auto AheId=[&](int32 I,int32 Def,int32 Count){const int32 V=AF.IsValidIndex(I)?FCString::Atoi(*AF[I]):Def;return V>=0&&V<Count?V:INDEX_NONE;};
+    // Her tongue out: SexFaces' ahegao mouth (43: smile with TongueOut, installed with the game), else the original's mouth 24 (its
+    // tongue hardly shows here), else 舌出し (_sita), else 舐める (_name); given again when it changes.
+    int32 Tongue=INDEX_NONE;
+    if(bAhegao){Tongue=AheId(2,43,Girl->GetMouthPatternCount());if(Tongue==INDEX_NONE&&24<Girl->GetMouthPatternCount())Tongue=24;if(Tongue==INDEX_NONE)for(const TCHAR* Word:{TEXT("_sita"),TEXT("_name")}){for(int32 P=0;P<Girl->GetMouthPatternCount()&&Tongue==INDEX_NONE;++P)if(Girl->GetMouthPatternLabel(P).ToLower().Contains(Word))Tongue=P;if(Tongue!=INDEX_NONE)break;}}
+    if(bAhegao!=bAhegaoShown||(bAhegao&&Tongue!=AheMouthSet)){bAhegaoShown=bAhegao;AheMouthSet=Tongue;
+        if(bAhegao){if(Tongue!=INDEX_NONE)Girl->SetMouthPattern(Tongue);
+            UE_LOG(LogTemp,Display,TEXT("H scene: ahegao (mouth %d %s)"),Tongue,Tongue!=INDEX_NONE?*Girl->GetMouthPatternLabel(Tongue):TEXT("none"));}
         else{Girl->SetEyeGaze(0.f,0.f,0.f);Girl->SetMouthPattern(0);}}
-    if(bAhegao){Eye=8;Brow=11;Open=.6f;}
+    if(bAhegao){const int32 Set=AF.IsValidIndex(0)?FCString::Atoi(*AF[0]):25;const int32 Blend=HEyeSetBlend(Set);
+        const int32 E=Blend>=0&&Blend<Girl->GetFacePatternCount(1)?Blend:INDEX_NONE,B=AheId(1,2,Girl->GetFacePatternCount(2));Eye=E!=INDEX_NONE?E:8;Brow=B!=INDEX_NONE?B:11;Open=E!=INDEX_NONE?1.f:.6f;}
     else if(Cur.Contains(TEXT("Dislikes"))){Eye=13;Brow=1;Open=.9f;}
     // Sucking him (her mouth developed, Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md): her eyes roll up under lids that fall
     // the harder she sucks (her gaze up alone hardly showed, 2026-11-02); in steps, not every frame.
@@ -1031,20 +1370,32 @@ float UOKHScenePanel::HerDesire() const{const auto& X=Gallery?Gallery->HExperien
 // Her desire for him past 100 (user, 2026-11-01): all through the scene her crotch runs clear and both nipples leak
 // milk, more the higher her desire, the nipples more the bigger her bust. They fall to whatever is under her (bed,
 // floor; past her and him) and lie there until the room closes.
+bool UOKHScenePanel::StreetOnani() const{bool On=false;return Gallery&&Gallery->HExperience.IsValid()&&Gallery->HExperience->TryGetBoolField(TEXT("street_onani"),On)&&On;}
 void UOKHScenePanel::TickDrips(float Delta){
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;
     auto Where=[Girl](int32,FName Bone,FVector& At){return IsValid(Girl)&&HBone(Girl,*Bone.ToString(),At);};
     const float Desire=HerDesire();const double Now=FPlatformTime::Seconds();
+    const AActor* Ignore[]={Girl,Gallery?Gallery->PartnerActor.Get():nullptr};
+    // Taken from touching herself on the street (her desire at 200, OKStreetSocialOnani.inl; user 2026-11-03): her breasts
+    // and crotch run and spray twice as much.
+    const float More=StreetOnani()?2.f:1.f;
+    auto Drop=[&](const TCHAR* Bone,uint8 Colour){FVector At,L,R;if(!HBone(Girl,Bone,At))return false;
+        // Nothing under her: her lowest foot is the floor.
+        const float Floor=HBone(Girl,TEXT("j_foot_L"),L)&&HBone(Girl,TEXT("j_foot_R"),R)?FMath::Min(L.Z,R.Z)-3.f:At.Z-80.f;
+        return Drips.Spawn(Girl,0,Bone,At,FOKArousalDrops::GroundBelow(Girl,At-FVector(0,0,4.f),Ignore,Floor),Colour);};
+    // Between her breasts (the chest service, user 2026-11-02): her nipples run milk as he rubs, whatever her desire,
+    // the more the more they are developed: none undeveloped, a drop every 2.4 s at 5, eight a second at 100 (both
+    // nipples together), quicker the faster they move.
+    const FString Base=HBase(Current());
+    const bool bPaizuri=Mode==1&&Poses.IsValidIndex(ActivePose)&&Poses[ActivePose].KindHoushi==2&&Gallery->PairedPlayback&&Gallery->PairedPlayback->GetElapsed()>0.f&&(HIsLoop(Base)||Base==TEXT("OLoop"));
+    if(IsValid(Girl)&&bPaizuri&&!bCovered&&Dev(TEXT("nipple"))>=.05f&&Now>=PaizuriMilkAt){
+        PaizuriMilkAt=Now+.12f/Dev(TEXT("nipple"))/FMath::Clamp(.6f+.4f*PlaybackSpeed(),.6f,2.f)/More*FMath::FRandRange(.8f,1.2f);
+        if(Drop(++MilkTurn%2?TEXT("j_bnip02_L"):TEXT("j_bnip02_R"),OKArousal::White)){++HerMilk;if(Now-MilkBoutAt>3.)++HerMilkTimes;MilkBoutAt=Now;}}
     if(IsValid(Girl)&&Desire>OKArousal::DesireFlush&&!bCovered){
         const auto& X=Gallery->HExperience;double Bust=0;if(X.IsValid())X->TryGetNumberField(TEXT("bust"),Bust);
-        const AActor* Ignore[]={Girl,Gallery->PartnerActor.Get()};
-        auto Drop=[&](const TCHAR* Bone,uint8 Colour){FVector At,L,R;if(!HBone(Girl,Bone,At))return false;
-            // Nothing under her: her lowest foot is the floor.
-            const float Floor=HBone(Girl,TEXT("j_foot_L"),L)&&HBone(Girl,TEXT("j_foot_R"),R)?FMath::Min(L.Z,R.Z)-3.f:At.Z-80.f;
-            return Drips.Spawn(Girl,0,Bone,At,FOKArousalDrops::GroundBelow(Girl,At-FVector(0,0,4.f),Ignore,Floor),Colour);};
         // Developed, more of it (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md): her crotch up to twice, her nipples three times.
-        if(Now>=DripAt){DripAt=Now+OKArousal::CrotchInterval(Desire)/(1.f+Dev(TEXT("crotch")))*FMath::FRandRange(.8f,1.2f);if(Drop(TEXT("J_Kokan"),OKArousal::Clear))++HerDrips;}
-        if(Now>=MilkAt){MilkAt=Now+OKArousal::NippleInterval(Desire,float(Bust))*.5f/(1.f+2.f*Dev(TEXT("nipple")))*FMath::FRandRange(.8f,1.2f);if(Drop(++MilkTurn%2?TEXT("j_bnip02_L"):TEXT("j_bnip02_R"),OKArousal::White))++HerMilk;}
+        if(Now>=DripAt){DripAt=Now+OKArousal::CrotchInterval(Desire)/(1.f+Dev(TEXT("crotch")))/More*FMath::FRandRange(.8f,1.2f);if(Drop(TEXT("J_Kokan"),OKArousal::Clear)){++HerDrips;if(Now-DripBoutAt>3.)++HerDripTimes;DripBoutAt=Now;}}
+        if(Now>=MilkAt){MilkAt=Now+OKArousal::NippleInterval(Desire,float(Bust))*.5f/(1.f+2.f*Dev(TEXT("nipple")))/More*FMath::FRandRange(.8f,1.2f);if(Drop(++MilkTurn%2?TEXT("j_bnip02_L"):TEXT("j_bnip02_R"),OKArousal::White)){++HerMilk;if(Now-MilkBoutAt>3.)++HerMilkTimes;MilkBoutAt=Now;}}
     }
     // Sucking him, tears run down her cheeks, the more the more her mouth is developed (H_DEVELOPMENT_EXPERIENCE_PLAN):
     // one eye then the other. Their way down her face is read from her session while it is idle (SpawnTears).
@@ -1053,35 +1404,121 @@ void UOKHScenePanel::TickDrips(float Delta){
     {FVector Eye=FVector::ZeroVector;if(auto* PC=GetOwningPlayer();PC&&PC->PlayerCameraManager)Eye=PC->PlayerCameraManager->GetCameraLocation();Tears.Tick(Delta,Eye);}
     // As she comes (her cry, ClimaxUntil; user 2026-11-01): her crotch squirts and both nipples spray, shot out from her,
     // whatever her desire.
-    if(IsValid(Girl)&&Now<FMath::Max(ClimaxUntil,NippleUntil)&&Now>=SquirtAt){SquirtAt=Now+.05/(1.f+(Mode==2?Dev(bAnalPlay?TEXT("anal"):TEXT("crotch")):0.f));
-        const AActor* Ignore[]={Girl,Gallery->PartnerActor.Get()};FVector Kokan,Hips,Chest,L,R;
+    if(IsValid(Girl)&&Now<FMath::Max(ClimaxUntil,NippleUntil)&&Now>=SquirtAt){SquirtAt=Now+.05/(1.f+(Mode==2?Dev(bAnalPlay?TEXT("anal"):TEXT("crotch")):0.f))/More;
+        FVector Kokan,Hips,Chest,L,R;
         auto Floor=[&](const FVector& At){return HBone(Girl,TEXT("j_foot_L"),L)&&HBone(Girl,TEXT("j_foot_R"),R)?FMath::Min(L.Z,R.Z)-3.f:At.Z-80.f;};
         auto Shoot=[&](const FVector& At,const FVector& Out,float Speed,uint8 Colour){const FVector V=(Out+FMath::VRand()*.3f).GetSafeNormal()*Speed*FMath::FRandRange(.7f,1.2f);
             return Drips.Squirt(Girl,0,At,V,FOKArousalDrops::GroundBelow(Girl,At-FVector(0,0,4.f),Ignore,Floor(At)),Colour);};
-        if(Now<ClimaxUntil&&HBone(Girl,TEXT("J_Kokan"),Kokan)&&HBone(Girl,TEXT("j_hips"),Hips)&&Shoot(Kokan,(Kokan-Hips).GetSafeNormal(),200.f,OKArousal::Clear))++HerDrips;
+        if(Now<ClimaxUntil&&HBone(Girl,TEXT("J_Kokan"),Kokan)&&HBone(Girl,TEXT("j_hips"),Hips)&&Shoot(Kokan,(Kokan-Hips).GetSafeNormal(),200.f,OKArousal::Clear)){++HerDrips;if(Now-DripBoutAt>3.)++HerDripTimes;DripBoutAt=Now;}
         if(HBone(Girl,TEXT("j_spine03"),Chest))for(const TCHAR* Nipple:{TEXT("j_bnip02_L"),TEXT("j_bnip02_R")}){FVector At;
-            if(HBone(Girl,Nipple,At)&&Shoot(At,(At-Chest).GetSafeNormal(),110.f,OKArousal::White))++HerMilk;}
+            if(HBone(Girl,Nipple,At)&&Shoot(At,(At-Chest).GetSafeNormal(),110.f,OKArousal::White)){++HerMilk;if(Now-MilkBoutAt>3.)++HerMilkTimes;MilkBoutAt=Now;}}
     }
     Drips.Tick(Delta,Where);
 }
-// Her body trembling as she comes (user, 2026-11-01): her waist, spine and thighs shake fast on top of the animation
-// (her FK with '+' names, session.rs apply_user_fk_locals), three degrees, easing out over its last second.
+// What runs on her body by the water gun (AOKPaintSprayer: it sticks, runs down her and drips to the floor;
+// Docs/H_SCENE_ADDITIONS_PLAN.md 1, 2, 9), one stream at a time, the first that has something to say:
+//  1. his coming outside her or on her (Spurt: pulses from his glans along him);
+//  2. out of her after he came in her without a condom, once he is out of her (more the more times, each less);
+//  3. what she spits out of her mouth (Vomit);
+//  4. kissing, her saliva from a corner of her mouth, more the more her kissing is developed.
+// Her tongue comes out kissing past 40% of it (the mouth pattern with the tongue, as the worn-out face).
+static TAutoConsoleVariable<int32> CVarHSiruTexture(TEXT("ok.HScene.SiruTexture"),0,TEXT("1: the original's semen textures on her (_liquid*) as well as the water gun"));
+static TAutoConsoleVariable<FString> CVarHFluid(TEXT("ok.HScene.Fluid"),TEXT("520,40,0.35,0.17,40,5,1.5"),TEXT("Water gun: spurt speed, spurt flow, pulse seconds, gap seconds, leak seconds first time, leak flow, drool flow"));
+void UOKHScenePanel::Spurt(int32 Pulses){SpurtLeft=FMath::Max(SpurtLeft,Pulses);SpurtAt=FMath::Min(SpurtAt,FPlatformTime::Seconds());
+    UE_LOG(LogTemp,Display,TEXT("H scene: he spurts %d times (water gun)"),Pulses);}
+void UOKHScenePanel::TickFluids(float Delta){
+    auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;auto* Him=Gallery?Gallery->PartnerActor.Get():nullptr;if(!IsValid(Girl)||!GetWorld())return;
+    TArray<float> F;{TArray<FString> P;CVarHFluid.GetValueOnGameThread().ParseIntoArray(P,TEXT(","));for(const FString& S:P)F.Add(FCString::Atof(*S));}
+    while(F.Num()<7)F.Add(0.f);
+    const double Now=FPlatformTime::Seconds();const FString Base=HBase(Current());
+    if(!IsValid(Fluid)){Fluid=GetWorld()->SpawnActor<AOKPaintSprayer>();if(!IsValid(Fluid))return;Fluid->SetControlsVisible(false);Fluid->SetActorTickEnabled(true);
+        UE_LOG(LogTemp,Display,TEXT("H scene: water gun ready for her fluids"));}
+    // Out of her: his semen she held runs out of where he came, starting as he is out of her.
+    const bool In=Mode==2&&(Base.StartsWith(TEXT("Insert"))||HIsLoop(Base)||Base==TEXT("OLoop")||Base.Contains(TEXT("_IN"))||Base.EndsWith(TEXT("_Start"))||Base.EndsWith(TEXT("_Loop"))||Base==TEXT("IN_A"));
+    if(LeakPending>0&&!In){const double For=F[4]*(1.+.6*(LeakPending-1));LeakUntil=FMath::Max(LeakUntil,Now)+For;LeakFor=For;LeakPending=0;
+        UE_LOG(LogTemp,Display,TEXT("H scene: his semen runs out of her %s for %.0f s"),bLeakAnal?TEXT("anus"):TEXT("vagina"),For);}
+    FVector O,D;float JetV=0.f,Flow=0.f;FLinearColor Colour(.96f,.96f,.92f,1.f);bool On=false;
+    FVector Root,Tip;
+    if(SpurtLeft>0&&Now>=SpurtAt&&IsValid(Him)&&HBone(Him,TEXT("J_dan100_00"),Root)){
+        Tip=Root+(bGlans?GlansFromRoot:FVector(0,0,0));FVector T;if(!bGlans&&HBone(Him,TEXT("J_dan109_00"),T))Tip=T;
+        if(Now>=SpurtAt+F[2]){--SpurtLeft;SpurtAt=Now+F[3];}
+        else{O=Tip;D=(Tip-Root).GetSafeNormal();if(D.IsNearlyZero())D=FVector(0,0,-1);JetV=F[0];Flow=F[1];On=true;}
+    }
+    if(!On&&Now<LeakUntil&&!In){FVector Out,Hips;
+        if(HBone(Girl,bLeakAnal?TEXT("J_Ana"):TEXT("J_Kokan"),Out)&&HBone(Girl,TEXT("j_hips"),Hips)){
+            const float Left=float((LeakUntil-Now)/FMath::Max(1.,LeakFor));
+            O=Out;D=((Out-Hips).GetSafeNormal()*.3f+FVector(0,0,-1)).GetSafeNormal();JetV=35.f;Flow=F[5]*FMath::Clamp(Left,.25f,1.f);On=true;}}
+    if(!On&&Now<MouthSpillUntil){FVector M;if(HBone(Girl,TEXT("J_MouthCavity"),M)||HBone(Girl,TEXT("J_MouthBase_s"),M)){O=M;D=FVector(0,0,-1);JetV=25.f;Flow=F[5]*1.5f;On=true;}}
+    // Kissing: her tongue and saliva.
+    const bool bKissing=Mode==0&&(Base==TEXT("K_Loop")||Base==TEXT("K_Touch"));const float DK=Dev(TEXT("kiss"));
+    const bool bTongue=bKissing&&DK>=.4f&&!bAhegaoShown;
+    if(bTongue!=bKissTongue){bKissTongue=bTongue;
+        if(bTongue){if(AhegaoMouth==INDEX_NONE)for(int32 P=0;P<Girl->GetMouthPatternCount();++P){const FString M=Girl->GetMouthPatternLabel(P).ToLower();if(M.Contains(TEXT("_name"))||M.Contains(TEXT("_sita"))){AhegaoMouth=P;break;}}
+            if(AhegaoMouth!=INDEX_NONE)Girl->SetMouthPattern(AhegaoMouth);Girl->SetMouthOpenFloor(FMath::Lerp(.2f,.6f,DK));}
+        else{if(!bAhegaoShown)Girl->SetMouthPattern(0);Girl->SetMouthOpenFloor(0.f);
+            // Drawn apart from a kiss of hers developed past half: a string of saliva between them.
+            if(DK>=.5f&&!bKissing)MouthDribbleUntil=Now+.6;}
+        UE_LOG(LogTemp,Display,TEXT("H scene: kissing, her tongue %s (kiss %.0f%%)"),bTongue?TEXT("out"):TEXT("back"),DK*100.f);}
+    if(!On&&((bKissing&&DK>=.05f)||bAhegaoShown||Now<MouthDribbleUntil)){
+        const float DR=bAhegaoShown?FMath::Max(DK,.8f):DK;
+        if(Now>=DroolAt){DroolAt=Now+.6/FMath::Max(.05f,DR)*FMath::FRandRange(.8f,1.2f);DroolOnUntil=Now+.15;DroolTurn=!DroolTurn;}
+        FVector M;if(Now<DroolOnUntil||Now<MouthDribbleUntil)if(HBone(Girl,DroolTurn?TEXT("J_Mouth_L"):TEXT("J_Mouth_R"),M)){
+            O=M;D=FVector(0,0,-1);JetV=15.f;Flow=F[6]*FMath::Max(.3f,DR);Colour=FLinearColor(.85f,.88f,.92f,.6f);On=true;}}
+    if(On){Fluid->Settings.JetSpeed=FMath::Max(10.f,JetV);Fluid->Settings.Flow=Flow;Fluid->Settings.Color=Colour;Fluid->SetSpray(true,O,D);}
+    else if(Fluid->IsSpraying())Fluid->StopSpray();
+}
+// Her body shaking as she comes is her climax loop's own animation (user 2026-11-03: not the shake once made up here on
+// top of it); left here, the pose he set on her (ApplyHerFk).
 void UOKHScenePanel::Tremble(double Now){
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl))return;
     // Once: what of her could open around him (her body's vagina bones and morphs), for opening her with him.
     if(!bVaginaLogged&&Girl->BodySkel){bVaginaLogged=true;TArray<FString> Found;
         for(int32 I=0;I<Girl->BodySkel->GetNumBones();++I){const FString N=Girl->BodySkel->GetBoneName(I).ToString();if(N.Contains(TEXT("agina"))||N.Contains(TEXT("okan"))||N.Contains(TEXT("Ana")))Found.Add(N);}
         UE_LOG(LogTemp,Display,TEXT("H scene: her vagina bones: %s"),*FString::Join(Found,TEXT(" ")));}
-    const double Left=ClimaxUntil-Now;
-    if(Left>0.){static const TCHAR* Bones[]={TEXT("+cf_j_waist01"),TEXT("+cf_j_spine01"),TEXT("+cf_j_spine02"),TEXT("+cf_j_thigh00_L"),TEXT("+cf_j_thigh00_R")};
-        const float A=3.f*FMath::Min(1.f,float(Left));TArray<FString> Names;TArray<FVector> Turns;
-        for(int32 I=0;I<UE_ARRAY_COUNT(Bones);++I){Names.Add(Bones[I]);const double T=Now*UE_DOUBLE_TWO_PI;
-            Turns.Add(FVector(float(FMath::Sin(T*11.+I*1.3))*A,float(FMath::Sin(T*13.+I*.7))*A*.6f,float(FMath::Sin(T*9.+I*2.1))*A*.4f));}
-        Girl->Session.SetFk(Names,Turns);bTrembling=true;}
+    TArray<FString> Names;TArray<FVector> Turns;
+    ApplyHerFk(Girl,Names,Turns);
+}
+// The pose he set on her, after her trembling (both '+': on top of the animation). Set every frame while there is any,
+// so a new self of hers (outfit change) or a new pair keeps it.
+void UOKHScenePanel::ApplyHerFk(AKKPreviewActor* Girl,TArray<FString>& Names,TArray<FVector>& Turns){
+    {const double Now=FPlatformTime::Seconds();if(Now<FlinchUntil&&!FlinchBone.IsEmpty()){const float T=1.f-float((FlinchUntil-Now)/.45);
+        Names.Add(FlinchBone);Turns.Add(FlinchTurn*FMath::Sin(T*PI));Girl->bHeadLookPoseDirty=true;}}
+    if(!FMath::IsNearlyZero(AnkleTurn))for(const TCHAR* Bone:{TEXT("+cf_j_leg03_L"),TEXT("+cf_j_leg03_R")}){Names.Add(Bone);Turns.Add(FVector(AnkleTurn,0.f,0.f));}
+    // Opening is out to her own side: the left thigh turns one way about its forward axis, the right the other.
+    if(!FMath::IsNearlyZero(ThighOpen[0])){Names.Add(TEXT("+cf_j_thigh00_L"));Turns.Add(FVector(0.f,0.f,-ThighOpen[0]));}
+    if(!FMath::IsNearlyZero(ThighOpen[1])){Names.Add(TEXT("+cf_j_thigh00_R"));Turns.Add(FVector(0.f,0.f,ThighOpen[1]));}
+    // Changed while the pair is paused: the paused pair solves one more frame (it only does for a reason to).
+    const FVector4f Set(AnkleTurn,ThighOpen[0],ThighOpen[1],0.f);if(Set!=HerPoseShown){HerPoseShown=Set;Girl->bHeadLookPoseDirty=true;}
+    if(!Names.IsEmpty()){Girl->Session.SetFk(Names,Turns);bTrembling=true;}
     else if(bTrembling){Girl->Session.SetFk({},{});bTrembling=false;}
 }
+// Her hands as he set them: given again to whichever self of hers is shown (an outfit change makes a new one).
+void UOKHScenePanel::TickHands(){
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl))return;
+    const int32 Count=Girl->GetHandShapeCount();
+    if(Count!=HandOptions)for(int32 Side=0;Side<2;++Side)if(UComboBoxString* C=HandCombos[Side]){
+        C->ClearOptions();C->AddOption(OKT(TEXT("ui.hscene.hand_follow")));for(int32 P=0;P<Count;++P)C->AddOption(OKMsg(TEXT("ui.hscene.hand_pattern"),{{TEXT("n"),P}}));
+        HandPattern[Side]=FMath::Clamp(HandPattern[Side],-1,Count-1);C->SetSelectedIndex(HandPattern[Side]+1);}
+    HandOptions=Count;
+    const bool bNew=HandGirl.Get()!=Girl;HandGirl=Girl;
+    for(int32 Side=0;Side<2;++Side)if(bNew?HandPattern[Side]>=0:HandShown[Side]!=HandPattern[Side]){const int32 P=HandPattern[Side];
+        if(Girl->SetHandShape(Side,P>=0,FMath::Max(0,P),FMath::Max(0,P),0.f)){HandShown[Side]=P;Girl->bHeadLookPoseDirty=true;}}
+}
+void UOKHScenePanel::SetHerPose(const float* Ankle,const float* ThighL,const float* ThighR,const int32* HandL,const int32* HandR){
+    if(Ankle){AnkleTurn=FMath::Clamp(*Ankle,-60.f,60.f);if(AnkleSlider)AnkleSlider->SetValue(AnkleTurn);}
+    if(ThighL){ThighOpen[0]=FMath::Clamp(*ThighL,-30.f,60.f);if(ThighSliders[0])ThighSliders[0]->SetValue(ThighOpen[0]);}
+    if(ThighR){ThighOpen[1]=FMath::Clamp(*ThighR,-30.f,60.f);if(ThighSliders[1])ThighSliders[1]->SetValue(ThighOpen[1]);}
+    const int32* Hands[2]={HandL,HandR};
+    for(int32 Side=0;Side<2;++Side)if(Hands[Side]){HandPattern[Side]=FMath::Max(-1,*Hands[Side]);if(HandOptions>=0)HandPattern[Side]=FMath::Min(HandPattern[Side],HandOptions-1);
+        if(HandCombos[Side])HandCombos[Side]->SetSelectedIndex(HandPattern[Side]+1);}
+}
+void UOKHScenePanel::OnAnkle(float Value){AnkleTurn=Value;}
+void UOKHScenePanel::OnThighL(float Value){ThighOpen[0]=Value;}
+void UOKHScenePanel::OnThighR(float Value){ThighOpen[1]=Value;}
+void UOKHScenePanel::OnHandL(FString,ESelectInfo::Type How){if(How!=ESelectInfo::Direct&&HandCombos[0])HandPattern[0]=HandCombos[0]->GetSelectedIndex()-1;}
+void UOKHScenePanel::OnHandR(FString,ESelectInfo::Type How){if(How!=ESelectInfo::Direct&&HandCombos[1])HandPattern[1]=HandCombos[1]->GetSelectedIndex()-1;}
 void UOKHScenePanel::AddSiru(int32 Area){
-    if(Area<0||Area>4)return;Siru[Area]=FMath::Min(2,Siru[Area]+1);ApplySiru();
+    if(Area<0||Area>4)return;Siru[Area]=FMath::Min(2,Siru[Area]+1);if(CVarHSiruTexture.GetValueOnGameThread())ApplySiru();
     UE_LOG(LogTemp,Display,TEXT("H scene: semen on her %d (levels %d %d %d %d %d)"),Area,Siru[0],Siru[1],Siru[2],Siru[3],Siru[4]);
 }
 void UOKHScenePanel::ApplySiru(){
@@ -1264,6 +1701,7 @@ void UOKHScenePanel::FrameCamera(){
     UE_LOG(LogTemp,Display,TEXT("H camera: facing (%.2f,%.2f) shot from (%.2f,%.2f) pitch %.0f distance %.0f"),Facing.X,Facing.Y,Dir.X,Dir.Y,Pitch,Girl->OrbitDistance);
     HideWallsInTheWay();
 }
+bool UOKHScenePanel::XRayInHer() const{return Mode==2||(Mode==1&&Poses.IsValidIndex(ActivePose)&&Poses[ActivePose].KindHoushi==1);}
 void UOKHScenePanel::ApplyMaleLook(){
     auto* Him=Gallery?Gallery->PartnerActor.Get():nullptr;if(!IsValid(Him)||Mode==0||Him->IsHidden()||!Gallery->PairedPlayback)return;MaleLookFor=Him;
     // His bottom and briefs (the original takes them off in H): off shows the body under them, the penis with it. His
@@ -1285,7 +1723,9 @@ void UOKHScenePanel::ApplyMaleLook(){
     TInlineComponentArray<UMeshComponent*> All;Him->GetComponents(All);
     auto IsGenital=[Him](UMeshComponent* Comp){for(const FName& Tag:Comp->ComponentTags){const FString T=Tag.ToString();const int32 PartIdx=HTagPart(T);if(PartIdx==INDEX_NONE)continue;
         OkMeshView V{};if(Him->Session.PartAt(PartIdx,V)&&V.name){const FString N=FString(UTF8_TO_TCHAR(V.name)).ToLower();return N==TEXT("o_dankon")||N==TEXT("cm_o_dan00");}}return false;};
-    UMaterialInterface* XRayParent=bPenisXRay&&MaleView!=2&&bMaleBottomOff?LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/IndependentResources/PreviewMaterials/M_PreviewXRay.M_PreviewXRay"),nullptr,LOAD_NoWarn):nullptr;
+    // Only where he is in her (intercourse, her mouth): in her hands or between her breasts it would be drawn over them.
+    bXRayInHer=XRayInHer();
+    UMaterialInterface* XRayParent=bPenisXRay&&bXRayInHer&&MaleView!=2&&bMaleBottomOff?LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/IndependentResources/PreviewMaterials/M_PreviewXRay.M_PreviewXRay"),nullptr,LOAD_NoWarn):nullptr;
     if(XRayParent&&!PenisXRay){PenisXRay=UMaterialInstanceDynamic::Create(XRayParent,this);PenisXRay->SetVectorParameterValue(TEXT("PreviewTint"),FLinearColor(1.f,.35f,.75f,.45f));}
     int32 Shown=0;for(UMeshComponent* Comp:All)if(IsGenital(Comp)){Comp->SetOverlayMaterial(XRayParent?PenisXRay.Get():nullptr);Shown+=XRayParent?1:0;}
     if(XRayParent)UE_LOG(LogTemp,Display,TEXT("H scene: penis drawn through her: %d parts%s"),Shown,XRayParent?TEXT(""):TEXT(" (no M_PreviewXRay)"));
@@ -1359,6 +1799,7 @@ void UOKHScenePanel::GripHim(AKKPreviewActor* Girl,AKKPreviewActor* Him,const FV
 }
 void UOKHScenePanel::RestoreAlign(){
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;auto* Him=Gallery?Gallery->PartnerActor.Get():nullptr;
+    WrapIdxShown.Reset();WrapDShown.Reset();WrapNShown.Reset();if(AKKPreviewActor* Was=ClothGirl.Get()){for(int32 Part:ClothShown)Was->SetPartWrapDeltas(Part,{},{});TArray<int32> None;Was->Session.SetClothCover(false,{},{},{},None);Was->CpuSkinnedParts.Reset();}ClothGirl=nullptr;ClothCpuUntil.Reset();ClothShown.Reset();ClothVerts=0;
     if(IsValid(Girl)&&(BustSwellSet!=1.f||OralSuckSet!=0.f))Girl->MarkShapeDirty(Gallery->Selected.Face.ShapeValueFace,Gallery->Selected.Body.ShapeValueBody); // her own bust and face again
     if(IsValid(Girl)&&OralGazeSet!=0.f&&!bAhegaoShown)Girl->SetEyeGaze(0.f,0.f,0.f);
     BustSwell=BustSwellSet=1.f;OralSuck=OralSuckSet=OralGazeSet=OralPull=OralPullSet=0.f;bSucking=false;if(IsValid(Girl)){Girl->HiddenMouthInside=0;Girl->SetMouthOpenFloor(0.f);}
@@ -1380,7 +1821,7 @@ void UOKHScenePanel::BulgeBelly(AKKPreviewActor* Girl,const FVector* Tip,float O
     // Where his tip is against her skin now: read when the pair playback has the sessions idle (ReadPairSessions); with
     // none, here.
     FVector Kokan;
-    if(!Tip){BulgeTarget=NAME_None;if(bWrapShown&&IsValid(Girl)){Girl->SetPartWrapDeltas(BulgePart,{},{});bWrapShown=false;}
+    if(!Tip){BulgeTarget=NAME_None;WrapIdxShown.Reset();WrapDShown.Reset();WrapNShown.Reset();if(bWrapShown&&IsValid(Girl)){Girl->SetPartWrapDeltas(BulgePart,{},{});bWrapShown=false;}
         if(bClipShown&&ClipHim.IsValid()){ClipHim->SetPartWrapDeltas(ClipPart,{},{});bClipShown=false;ClipVerts=0;}if(bWrapLineShown&&IsValid(Girl)){Girl->SetWrapLine(false,FVector::ZeroVector,FVector::ZeroVector,0.f,FString());bWrapLineShown=false;}}
     else if(!IsValid(Gallery?Gallery->PairedPlayback.Get():nullptr))ReadBulge(Girl,*Tip);
     // Once his tip is past her skin (inside, the margin swelled her where he does not show), out by how far and 2.5 cm
@@ -1469,7 +1910,7 @@ void UOKHScenePanel::ReadBulge(AKKPreviewActor* Girl,const FVector& Tip,const FV
      // 3: her belly bones (BetterPenetration's way, the bones added to her body here) pushed by him, the skin with them.
      if(!E.IsZero()&&(WrapMode==1||WrapMode==3)&&TipInside>=6.f)Girl->Session.BellyWrapDeltas(ToUnity(E),ToUnity(Tip),Front.IsZero()?FVector::ZeroVector:(ToUnity(Kokan+Front*10.)-ToUnity(Kokan)).GetSafeNormal(),(Radius+.5f)/100.f,Idx,D,&N,WrapMode==3);
      if(const float Test=CVarHWrapTest.GetValueOnGameThread();Test!=0.f)for(FVector3f& V:D)V=FVector3f(0.f,Test,0.f);
-     if(D.Num()||bWrapShown){Girl->SetPartWrapDeltas(BulgePart,Idx,D,N);bWrapShown=D.Num()>0;}WrapVerts=D.Num();
+     if(D.Num()||bWrapShown){Girl->SetPartWrapDeltas(BulgePart,Idx,D,N);bWrapShown=D.Num()>0;}WrapVerts=D.Num();WrapIdxShown=Idx;WrapDShown=D;WrapNShown=N;
      // ok.HScene.Wrap 2 (the material route, to compare): her skin parents with the wrap offset push her skin off the
      // segment from her entrance to his glans, his radius and half a centimetre (as above) out; nothing while he is in
      // her entrance alone.
@@ -1580,11 +2021,36 @@ void UOKHScenePanel::HideInMouth(AKKPreviewActor* Girl,AKKPreviewActor* Him){
         for(int32 I=D.Num()-1;I>=0;--I)if(D[I].SizeSquared()<1e-8f){D.RemoveAtSwap(I);Idx.RemoveAtSwap(I);}}
     if(D.Num()||MouthClipVerts){Him->SetPartWrapDeltas(MouthClipPart,Idx,D);MouthClipVerts=D.Num();}
 }
+// Her clothes kept over her skin (user, 2026-11-02: her nipples, her swollen bust and her belly lifted over his penis came
+// through her clothes): each frame her breasts and the skin lifted over him push her garments out over them
+// (belly_bulge::cover_deltas), drawn as a morph of each garment. ok.HScene.ClothCover 0 leaves her clothes as they are.
+static TAutoConsoleVariable<int32> CVarHClothCover(TEXT("ok.HScene.ClothCover"),1,TEXT("1: her clothes are pushed out over her breasts and her belly lifted over his penis (belly_bulge::cover_deltas); 0 off"));
+void UOKHScenePanel::CoverClothes(AKKPreviewActor* Girl){
+    if(ClothGirl.Get()!=Girl){if(AKKPreviewActor* Was=ClothGirl.Get()){for(int32 Part:ClothShown)Was->SetPartWrapDeltas(Part,{},{});TArray<int32> None;Was->Session.SetClothCover(false,{},{},{},None);Was->CpuSkinnedParts.Reset();}ClothShown.Reset();ClothCpuUntil.Reset();ClothGirl=Girl;}
+    if(!IsValid(Girl))return;
+    // Her garments with their own rig, as they are skinned on the CPU in her next frame (drawn from those vertices then:
+    // the private GPU route skins its own copy of the rest mesh); those on her body skeleton below, as a morph.
+    // Kept there two seconds after it last reached her pushing skin: switching a garment between the routes each frame
+    // rebuilt its GPU display every time.
+    {TArray<int32> Cpu;Girl->Session.SetClothCover(CVarHClothCover.GetValueOnGameThread()!=0,WrapIdxShown,WrapDShown,WrapNShown,Cpu);
+     const double Now=FPlatformTime::Seconds();for(int32 Part:Cpu)ClothCpuUntil.Add(Part,Now+2.);
+     for(auto It=ClothCpuUntil.CreateIterator();It;++It)if(It.Value()<Now||Cpu.IsEmpty()&&CVarHClothCover.GetValueOnGameThread()==0)It.RemoveCurrent();
+     TSet<int32> Keep;ClothCpuUntil.GetKeys(Keep);if(!Keep.Includes(Girl->CpuSkinnedParts)||!Girl->CpuSkinnedParts.Includes(Keep))Girl->CpuSkinnedParts=MoveTemp(Keep);}
+    const double T0=FPlatformTime::Seconds();TArray<int32> Parts;TArray<uint32> Idx;TArray<FVector3f> D;
+    if(CVarHClothCover.GetValueOnGameThread()!=0)Girl->Session.ClothCoverDeltas(WrapIdxShown,WrapDShown,WrapNShown,Parts,Idx,D);
+    TMap<int32,TPair<TArray<uint32>,TArray<FVector3f>>> ByPart;
+    // Moves under a tenth of a millimetre dropped: a set of only those has no morph batches and the engine asserts.
+    for(int32 I=0;I<Parts.Num();++I)if(D[I].SizeSquared()>=1e-8f){auto& P=ByPart.FindOrAdd(Parts[I]);P.Key.Add(Idx[I]);P.Value.Add(D[I]);}
+    for(auto It=ClothShown.CreateIterator();It;++It)if(!ByPart.Contains(*It)){Girl->SetPartWrapDeltas(*It,{},{});It.RemoveCurrent();}
+    ClothVerts=0;for(const auto& P:ByPart)if(Girl->SetPartWrapDeltas(P.Key,P.Value.Key,P.Value.Value)){ClothShown.Add(P.Key);ClothVerts+=P.Value.Key.Num();}
+    ClothMs=float((FPlatformTime::Seconds()-T0)*1000.);
+}
 void UOKHScenePanel::ReadPairSessions(){
     // Both sessions are idle and show this frame (AKKPairedPlayback::OnSessionsIdle). Reading them at any other time while
     // the pair plays meant either a crash (the solve was writing them) or values several frames old: a tick almost never
     // finds the background solve finished, and the swell missed his glans coming out.
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;auto* Him=Gallery?Gallery->PartnerActor.Get():nullptr;FVector P0,Glans;
+    ON_SCOPE_EXIT{CoverClothes(Girl);};
     if(TearsWanted)SpawnTears(Girl);AimIntoMouth(Girl,Him);HideInMouth(Girl,Him);
     if(IsValid(Him)&&(PenisSetLength!=PenisLength||PenisSetScale!=PenisScale)&&Him->Session.SetPenisSize(PenisLength,PenisScale)){PenisSetLength=PenisLength;PenisSetScale=PenisScale;
         UE_LOG(LogTemp,Display,TEXT("H scene: his penis length x%.2f size x%.2f"),PenisLength,PenisScale);}
@@ -1794,11 +2260,14 @@ void UOKHScenePanel::HideWallsInTheWay(){
         if(E.Z>90.f)for(const FVector& To:Seen)Blocks|=FMath::LineBoxIntersection(FBox(O-E,O+E),Eye,To,To-Eye);A->SetActorHiddenInGame(Blocks);}
 }
 void UOKHScenePanel::ClearProps(){for(AStaticMeshActor* A:Props)if(IsValid(A))A->Destroy();Props.Reset();}
-void UOKHScenePanel::NativeDestruct(){if(Siru[0]+Siru[1]+Siru[2]+Siru[3]+Siru[4]>0){FMemory::Memzero(Siru);ApplySiru();}if(bCovered)Cover(false,FPlatformTime::Seconds());ClearProps();RestoreBlush();
-    if(bAhegaoShown){bAhegaoShown=false;if(auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl)){Girl->SetEyeGaze(0.f,0.f,0.f);Girl->SetMouthPattern(0);}} // her eyes and mouth back from ahegao
+void UOKHScenePanel::NativeDestruct(){if(IsValid(Fluid)){Fluid->StopSpray();Fluid->Destroy();Fluid=nullptr;}if(Siru[0]+Siru[1]+Siru[2]+Siru[3]+Siru[4]>0){FMemory::Memzero(Siru);ApplySiru();}if(bCovered)Cover(false,FPlatformTime::Seconds());ClearProps();RestoreBlush();
+    if(bAhegaoShown){bAhegaoShown=false;TickAhegao();if(auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl)){Girl->SetEyeGaze(0.f,0.f,0.f);Girl->SetMouthPattern(0);}} // her eyes, mouth and hands back from ahegao
+    TickCameraLight(true);
     SetGrayRoom(false);Drips.Reset();Tears.Reset();RestoreAlign();Super::NativeDestruct();}
+// Off for now (user, 2026-11-02: the box, table and chair hid the bugs being looked at): ok.HScene.Props 1 sets them again.
+static TAutoConsoleVariable<int32> CVarHProps(TEXT("ok.HScene.Props"),0,TEXT("1: a box, table or chair under her for the poses that lean on one; 0: none"));
 void UOKHScenePanel::PlaceProps(int32 Kind){
-    ClearProps();bPropsTable=false;auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl)||!Girl->BodySkel||!GetWorld())return;
+    ClearProps();bPropsTable=false;auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl)||!Girl->BodySkel||!GetWorld()||!CVarHProps.GetValueOnGameThread())return;
     auto* Him=Mode!=0&&Gallery->PartnerActor&&!bMaleHidden?Gallery->PartnerActor.Get():nullptr;
     auto Bone=HBone;
     TArray<FVector> Hers;FVector HerHips,HisHips,P;
@@ -1944,8 +2413,9 @@ TSharedRef<FJsonObject> UOKHScenePanel::Describe() const{
     O->SetNumberField(TEXT("blush"),BlushMats.IsEmpty()?-1.f:BlushShown);
     O->SetStringField(TEXT("state"),Current());O->SetStringField(TEXT("wanted"),Wanted);O->SetNumberField(TEXT("mode"),Mode);
     TArray<TSharedPtr<FJsonValue>> Q;for(const FString& S:Queue)Q.Add(MakeShared<FJsonValueString>(S));O->SetArrayField(TEXT("queue"),Q);
-    O->SetNumberField(TEXT("playback_speed"),PlaybackSpeed());if(Gallery&&Gallery->PreviewActor)O->SetNumberField(TEXT("breath_rate"),Gallery->PreviewActor->SpeechTempo);O->SetBoolField(TEXT("hooked"),Hooked());O->SetNumberField(TEXT("oral_suck"),OralSuckSet);O->SetNumberField(TEXT("oral_pull"),OralPullSet);O->SetNumberField(TEXT("mouth_turned"),bMouthAimed?MouthTurned:0.f);O->SetStringField(TEXT("mouth_dbg"),MouthDbg.ToString());O->SetNumberField(TEXT("mouth_hidden_verts"),MouthClipVerts);O->SetNumberField(TEXT("bust_swell"),BustSwellSet);O->SetNumberField(TEXT("depth_top"),AlignDeep);O->SetNumberField(TEXT("belly_out"),BulgeTarget.IsNone()?-1.f:BulgePast);O->SetNumberField(TEXT("belly_allow"),FMath::Max(0.f,BulgeMoves-2.5f));O->SetNumberField(TEXT("pullback"),BellyPullback);O->SetNumberField(TEXT("tip_inside"),TipInside);O->SetNumberField(TEXT("aim_relax"),AimRelax);O->SetNumberField(TEXT("skin_out"),SkinOutMost);O->SetNumberField(TEXT("skin_under"),SkinUnderMost);O->SetNumberField(TEXT("skin_worst"),SkinWorst);O->SetNumberField(TEXT("skin_rest"),SkinRest);O->SetNumberField(TEXT("skin_along"),SkinWorstAlong);O->SetNumberField(TEXT("root_dodge"),RootDodge.Size());O->SetNumberField(TEXT("depth_cap"),DepthCap);{auto Wr=MakeShared<FJsonObject>();for(const auto& W:Bulge)if(W.Value>1.f)Wr->SetNumberField(W.Key.ToString(),FMath::RoundToFloat(W.Value));O->SetObjectField(TEXT("swells"),Wr);O->SetNumberField(TEXT("swells_refused"),BulgeRefused);O->SetNumberField(TEXT("wrap_ms"),WrapMs);O->SetNumberField(TEXT("wrap_verts"),WrapVerts);O->SetNumberField(TEXT("clip_verts"),ClipVerts);O->SetNumberField(TEXT("back_exit"),BackExitCm);O->SetNumberField(TEXT("clip_lead"),ClipLeadCm);O->SetNumberField(TEXT("swell_ms"),SwellMs);O->SetNumberField(TEXT("swell_part"),BulgePart);}O->SetNumberField(TEXT("skin_facing"),SkinFacing);O->SetBoolField(TEXT("belly_side"),bBellySide);if(Gallery&&Gallery->PreviewActor){const FTransform& HerT=Gallery->PreviewActor->GetActorTransform();auto Vec=[&](const TCHAR* Name,const FVector& V){FVector U=AKKPreviewActor::ActorLocalToUnity(HerT.InverseTransformVectorNoScale(V))*100.;float K[16];if(Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_j_kokan"),K)||Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_J_Kokan"),K)){const FVector X(K[0],K[4],K[8]),Y(K[1],K[5],K[9]),Z(K[2],K[6],K[10]);U=FVector(U|X.GetSafeNormal(),U|Y.GetSafeNormal(),U|Z.GetSafeNormal());}TArray<TSharedPtr<FJsonValue>> A;A.Add(MakeShared<FJsonValueNumber>(U.X));A.Add(MakeShared<FJsonValueNumber>(U.Y));A.Add(MakeShared<FJsonValueNumber>(U.Z));O->SetArrayField(Name,A);};Vec(TEXT("dodge_her"),RootDodge);Vec(TEXT("skin_normal_her"),SkinNormal);Vec(TEXT("front_her"),BellyFront);}O->SetNumberField(TEXT("root_scale"),RootPadScale);O->SetBoolField(TEXT("xray"),bPenisXRay);if(Gallery&&Gallery->PairedPlayback)O->SetNumberField(TEXT("pair_rate"),Gallery->PairedPlayback->GetSpeed());O->SetNumberField(TEXT("held"),Held.Num());O->SetStringField(TEXT("caption"),Caption?Caption->GetText().ToString():FString());
-    O->SetNumberField(TEXT("her"),Her);O->SetNumberField(TEXT("his"),His);
+    O->SetNumberField(TEXT("playback_speed"),PlaybackSpeed());if(Gallery&&Gallery->PreviewActor)O->SetNumberField(TEXT("breath_rate"),Gallery->PreviewActor->SpeechTempo);O->SetBoolField(TEXT("hooked"),Hooked());O->SetNumberField(TEXT("oral_suck"),OralSuckSet);O->SetNumberField(TEXT("oral_pull"),OralPullSet);O->SetNumberField(TEXT("mouth_turned"),bMouthAimed?MouthTurned:0.f);O->SetStringField(TEXT("mouth_dbg"),MouthDbg.ToString());O->SetNumberField(TEXT("mouth_hidden_verts"),MouthClipVerts);O->SetNumberField(TEXT("bust_swell"),BustSwellSet);O->SetNumberField(TEXT("preg_belly"),PregBellyShown);O->SetNumberField(TEXT("preg_nipples"),PregNipples());O->SetNumberField(TEXT("depth_top"),AlignDeep);O->SetNumberField(TEXT("belly_out"),BulgeTarget.IsNone()?-1.f:BulgePast);O->SetNumberField(TEXT("belly_allow"),FMath::Max(0.f,BulgeMoves-2.5f));O->SetNumberField(TEXT("pullback"),BellyPullback);O->SetNumberField(TEXT("tip_inside"),TipInside);O->SetNumberField(TEXT("aim_relax"),AimRelax);O->SetNumberField(TEXT("skin_out"),SkinOutMost);O->SetNumberField(TEXT("skin_under"),SkinUnderMost);O->SetNumberField(TEXT("skin_worst"),SkinWorst);O->SetNumberField(TEXT("skin_rest"),SkinRest);O->SetNumberField(TEXT("skin_along"),SkinWorstAlong);O->SetNumberField(TEXT("root_dodge"),RootDodge.Size());O->SetNumberField(TEXT("depth_cap"),DepthCap);{auto Wr=MakeShared<FJsonObject>();for(const auto& W:Bulge)if(W.Value>1.f)Wr->SetNumberField(W.Key.ToString(),FMath::RoundToFloat(W.Value));O->SetObjectField(TEXT("swells"),Wr);O->SetNumberField(TEXT("swells_refused"),BulgeRefused);O->SetNumberField(TEXT("wrap_ms"),WrapMs);O->SetNumberField(TEXT("wrap_verts"),WrapVerts);O->SetNumberField(TEXT("cloth_verts"),ClothVerts);O->SetNumberField(TEXT("cloth_ms"),ClothMs);O->SetNumberField(TEXT("clip_verts"),ClipVerts);O->SetNumberField(TEXT("back_exit"),BackExitCm);O->SetNumberField(TEXT("clip_lead"),ClipLeadCm);O->SetNumberField(TEXT("swell_ms"),SwellMs);O->SetNumberField(TEXT("swell_part"),BulgePart);}O->SetNumberField(TEXT("skin_facing"),SkinFacing);O->SetBoolField(TEXT("belly_side"),bBellySide);if(Gallery&&Gallery->PreviewActor){const FTransform& HerT=Gallery->PreviewActor->GetActorTransform();auto Vec=[&](const TCHAR* Name,const FVector& V){FVector U=AKKPreviewActor::ActorLocalToUnity(HerT.InverseTransformVectorNoScale(V))*100.;float K[16];if(Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_j_kokan"),K)||Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_J_Kokan"),K)){const FVector X(K[0],K[4],K[8]),Y(K[1],K[5],K[9]),Z(K[2],K[6],K[10]);U=FVector(U|X.GetSafeNormal(),U|Y.GetSafeNormal(),U|Z.GetSafeNormal());}TArray<TSharedPtr<FJsonValue>> A;A.Add(MakeShared<FJsonValueNumber>(U.X));A.Add(MakeShared<FJsonValueNumber>(U.Y));A.Add(MakeShared<FJsonValueNumber>(U.Z));O->SetArrayField(Name,A);};Vec(TEXT("dodge_her"),RootDodge);Vec(TEXT("skin_normal_her"),SkinNormal);Vec(TEXT("front_her"),BellyFront);}O->SetNumberField(TEXT("root_scale"),RootPadScale);O->SetBoolField(TEXT("xray"),bPenisXRay);if(Gallery&&Gallery->PairedPlayback)O->SetNumberField(TEXT("pair_rate"),Gallery->PairedPlayback->GetSpeed());O->SetNumberField(TEXT("held"),Held.Num());O->SetStringField(TEXT("caption"),Caption?Caption->GetText().ToString():FString());
+    O->SetNumberField(TEXT("her"),Her);O->SetNumberField(TEXT("his"),His);O->SetNumberField(TEXT("orgasms"),HerOrgasms);O->SetBoolField(TEXT("ahegao"),bAhegaoShown);
+    {auto P=MakeShared<FJsonObject>();P->SetNumberField(TEXT("ankle"),AnkleTurn);P->SetNumberField(TEXT("thigh_l"),ThighOpen[0]);P->SetNumberField(TEXT("thigh_r"),ThighOpen[1]);P->SetNumberField(TEXT("hand_l"),HandPattern[0]);P->SetNumberField(TEXT("hand_r"),HandPattern[1]);P->SetNumberField(TEXT("hand_patterns"),HandOptions);O->SetObjectField(TEXT("her_pose"),P);}
     // Her development as the scene uses it now (her own plus this scene's climaxes), and how long her climax and her
     // nipples' spray have left (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md).
     {auto D=MakeShared<FJsonObject>();for(const TCHAR* A:{TEXT("crotch"),TEXT("anal"),TEXT("oral"),TEXT("chest"),TEXT("nipple")})D->SetNumberField(A,FMath::RoundToFloat(Dev(A)*100.f));O->SetObjectField(TEXT("dev"),D);
@@ -1967,14 +2437,17 @@ void UOKHScenePanel::SetSpeed(float Value){SpeedValue=FMath::Clamp(Value,0.f,1.f
 TSharedRef<FJsonObject> UOKHScenePanel::Result() const{
     auto Counts=MakeShared<FJsonObject>();
     Counts->SetBoolField(TEXT("anal_refused"),bAnalAsked&&bAnalRefused);Counts->SetBoolField(TEXT("played"),bPlayed);Counts->SetBoolField(TEXT("service"),bService);Counts->SetNumberField(TEXT("service_finishes"),ServiceFinishes);
-    auto Part=[](bool Inserted,int32 Climaxes){auto O=MakeShared<FJsonObject>();O->SetBoolField(TEXT("inserted"),Inserted);O->SetNumberField(TEXT("climaxes"),Climaxes);return O;};
-    Counts->SetObjectField(TEXT("crotch"),Part(bCrotch,CrotchClimaxes));Counts->SetObjectField(TEXT("anal"),Part(bAnal,AnalClimaxes));
-    {static const TCHAR* Keys[]={TEXT("kiss"),TEXT("chest"),TEXT("crotch"),TEXT("anal"),TEXT("butt"),TEXT("nipple")};auto Areas=MakeShared<FJsonObject>();
-     for(int32 I=0;I<6;++I)Areas->SetNumberField(Keys[I],FMath::RoundToDouble(AreaSeconds[I]));Counts->SetObjectField(TEXT("areas"),Areas);Counts->SetNumberField(TEXT("kiss"),FMath::RoundToDouble(AreaSeconds[0]));}
+    auto Part=[](bool Inserted,int32 Climaxes,float Deepest){auto O=MakeShared<FJsonObject>();O->SetBoolField(TEXT("inserted"),Inserted);O->SetNumberField(TEXT("climaxes"),Climaxes);O->SetNumberField(TEXT("deepest"),FMath::RoundToFloat(Deepest));return O;};
+    Counts->SetObjectField(TEXT("crotch"),Part(bCrotch,CrotchClimaxes,CrotchDeepest));Counts->SetObjectField(TEXT("anal"),Part(bAnal,AnalClimaxes,AnalDeepest));
+    {static const TCHAR* Keys[]={TEXT("kiss"),TEXT("chest"),TEXT("crotch"),TEXT("anal"),TEXT("butt"),TEXT("nipple"),TEXT("head"),TEXT("hand"),TEXT("thigh"),TEXT("calf"),TEXT("foot")};auto Areas=MakeShared<FJsonObject>();
+     for(int32 I=0;I<11;++I)Areas->SetNumberField(Keys[I],FMath::RoundToDouble(AreaSeconds[I]));Counts->SetObjectField(TEXT("areas"),Areas);Counts->SetNumberField(TEXT("kiss"),FMath::RoundToDouble(AreaSeconds[0]));}
     Counts->SetBoolField(TEXT("raw"),bRaw);Counts->SetBoolField(TEXT("raw_pressed"),bRawPressed&&bRaw);
-    Counts->SetNumberField(TEXT("his_inside"),HisInside);Counts->SetNumberField(TEXT("his_inside_raw"),HisInsideRaw);Counts->SetNumberField(TEXT("his_condom"),HisCondom);Counts->SetNumberField(TEXT("her_drips"),HerDrips);Counts->SetNumberField(TEXT("her_milk"),HerMilk);Counts->SetNumberField(TEXT("his_outside"),HisOutside);Counts->SetNumberField(TEXT("his_mouth"),HisMouth);Counts->SetNumberField(TEXT("swallowed"),Swallowed);Counts->SetNumberField(TEXT("her_orgasms"),HerOrgasms);Counts->SetNumberField(TEXT("his_finishes"),HisFinishes);
+    Counts->SetNumberField(TEXT("his_inside"),HisInside);Counts->SetNumberField(TEXT("his_inside_raw"),HisInsideRaw);Counts->SetNumberField(TEXT("his_inside_vagina_raw"),HisInsideVaginaRaw);Counts->SetBoolField(TEXT("street_onani"),StreetOnani());Counts->SetNumberField(TEXT("his_condom"),HisCondom);Counts->SetNumberField(TEXT("her_drips"),HerDrips);Counts->SetNumberField(TEXT("her_milk"),HerMilk);Counts->SetNumberField(TEXT("her_drip_times"),HerDripTimes);Counts->SetNumberField(TEXT("her_milk_times"),HerMilkTimes);Counts->SetNumberField(TEXT("his_outside"),HisOutside);Counts->SetNumberField(TEXT("his_mouth"),HisMouth);Counts->SetNumberField(TEXT("swallowed"),Swallowed);Counts->SetNumberField(TEXT("her_orgasms"),HerOrgasms);Counts->SetNumberField(TEXT("his_finishes"),HisFinishes);
     auto Out=MakeShared<FJsonObject>();Out->SetObjectField(TEXT("counts"),Counts);
     TArray<TSharedPtr<FJsonValue>> P,E;for(const FString& S:PosesPlayed)P.Add(MakeShared<FJsonValueString>(S));for(const FString& S:Events)E.Add(MakeShared<FJsonValueString>(S));
+    Counts->SetArrayField(TEXT("poses"),P); // kept with her: the ones never played are marked New (hexp.rs poses_played)
+    // Where his semen is on her (face, front top, front bottom, back top, back bottom; AddSiru): she goes out with it.
+    {TArray<TSharedPtr<FJsonValue>> On;for(int32 A=0;A<5;++A)On.Add(MakeShared<FJsonValueNumber>(Siru[A]));Counts->SetArrayField(TEXT("siru"),On);}
     Out->SetArrayField(TEXT("poses"),P);Out->SetArrayField(TEXT("events"),E);
     return Out;
 }
@@ -1997,4 +2470,51 @@ int32 UOKBuildHXRayMaterialCommandlet::Main(const FString& Params){
 #else
     return 1;
 #endif
+}
+
+// ---------------------------------------------------------------------------------------------- her outfit
+AOKInteractionMode* UOKHScenePanel::Interaction() const{
+    if(!Gallery||!GetWorld())return nullptr;
+    for(TActorIterator<AOKInteractionMode> It(GetWorld());It;++It)if(It->Controller==Gallery&&!It->IsFinished())return *It;
+    return nullptr;
+}
+void UOKHScenePanel::FindCoordinateCards(){
+    CoordinateCards.Reset();const UKKGameRoot* Root=UKKGameRoot::Get();if(!Root||Root->Root.IsEmpty())return;
+    IFileManager::Get().FindFilesRecursive(CoordinateCards,*(Root->Root/TEXT("UserData/coordinate")),TEXT("*.png"),true,false);
+    CoordinateCards.Sort();if(CoordinateCards.Num()>500)CoordinateCards.SetNum(500);
+}
+bool UOKHScenePanel::WearOutfit(int32 Outfit,const FString& Coordinate,FString& Why){
+    AOKInteractionMode* M=Interaction();if(!M||!M->IsReady()){Why=OKT(TEXT("ui.hscene.outfit_not_ready"));return false;}
+    if(M->IsChangingOutfit()){Why=OKT(TEXT("ui.hscene.outfit_busy"));return false;}
+    FString Card=Coordinate;
+    if(!Card.IsEmpty()&&!FPaths::FileExists(Card)){
+        // A file name (with or without .png) among the game's coordinate cards.
+        if(CoordinateCards.IsEmpty())FindCoordinateCards();
+        const FString Want=FPaths::GetBaseFilename(Card);const FString* Found=CoordinateCards.FindByPredicate([&](const FString& P){return FPaths::GetBaseFilename(P).Equals(Want,ESearchCase::IgnoreCase);});
+        if(!Found){Why=OKMsg(TEXT("ui.hscene.coordinate_missing"),{{TEXT("name"),Coordinate}});return false;}
+        Card=*Found;
+    }
+    if(Card.IsEmpty()&&Outfit==Gallery->OutfitIndex&&M->WornCoordinate.IsEmpty()){Why=OKT(TEXT("ui.hscene.outfit_same"));return false;}
+    if(!M->ChangeOutfit(Outfit,Card,bCoordinateAccessories)){Why=OKT(TEXT("ui.hscene.outfit_none"));return false;}
+    if(Hint)Hint->SetText(FText::FromString(OKT(TEXT("ui.hscene.outfit_loading"))));
+    BuildList();return true;
+}
+void UOKHScenePanel::OutfitChanged(bool bOk){
+    AOKInteractionMode* M=Interaction();
+    if(!bOk){if(Hint)Hint->SetText(FText::FromString(OKMsg(TEXT("ui.hscene.outfit_failed"),{{TEXT("error"),M?M->OutfitError:FString()}})));BuildList();return;}
+    const FString Worn=M?M->WornCoordinate:FString();
+    if(!M||!M->bSwapClothesOnly)Note(Worn.IsEmpty()?OKMsg(TEXT("ui.hscene.event_outfit"),{{TEXT("name"),FString(OKT(*FString::Printf(TEXT("ui.hscene.outfit_%d"),FMath::Clamp(Gallery->OutfitIndex,0,7))))}})
+        :OKMsg(TEXT("ui.hscene.event_coordinate"),{{TEXT("name"),FPaths::GetBaseFilename(Worn)}}));
+    // Her new self starts the pose again where it was chosen: a caress state on her own, or the pair from its start.
+    AKKPreviewActor* Girl=Gallery->PreviewActor.Get();
+    if(Mode==0&&AibuPoses.IsValidIndex(ActiveAibu)&&IsValid(Girl)){
+        if(Gallery->PartnerActor)Gallery->PartnerActor->SetActorHiddenInGame(true);
+        Girl->SetGameSceneMode(3,false);PlaySolo(SoloState.IsEmpty()?FString(TEXT("Idle")):SoloState);
+    }else if(Poses.IsValidIndex(ActivePose)&&Gallery->PairCombo&&!Gallery->PairedPlayback&&!Gallery->bPairPreparing){
+        // The pair goes on in the state it was in (AOKInteractionMode::TickOutfitSwap); when it could not, from the start.
+        const int32 Pose=ActivePose;SelectPose(Pose);
+        // The same pose is still chosen in the list: its selection does not fire again.
+        if(PendingPose==Pose&&Gallery->PairCombo->GetSelectedIndex()>0)Gallery->OnPairSelected(Gallery->PairCombo->GetSelectedOption(),ESelectInfo::OnMouseClick);
+    }
+    BuildList();
 }

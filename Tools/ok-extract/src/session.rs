@@ -1718,6 +1718,8 @@ impl OkSession {
         crate::okanim::prof::add(18,t_prepare);
         let t_parts=std::time::Instant::now();
         let skinned=std::sync::atomic::AtomicU64::new(0);
+        // Her clothes kept over her skin while the H scene has it on (belly_bulge::CoverField).
+        let cover=crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body);let cover=&cover;
         let update=|(index,part):(usize,&mut SessionPart)| {
             if leader_of[index].is_some() {return;}
             let Some(runtime) = &mut part.runtime_accessory else { return; };
@@ -1741,8 +1743,9 @@ impl OkSession {
                 slot.0+=1;slot.1+=t_part.elapsed().as_micros() as u64;
                 if slot.0%every==0 {eprintln!("OK acc part session={group:x} index={index} role={} name={} avg_us={}",part.role,part.name,slot.1/every as u64);slot.1=0;}
             }
-            if let Some((positions, normals,tangents)) = rendered {
+            if let Some((mut positions, normals,tangents)) = rendered {
                 skinned.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
+                if let Some(cover)=cover {cover.cover(index,part,&mut positions);}
                 part.positions = positions;
                 part.normals = normals;
                 part.rest_tangents=tangents;
@@ -1780,8 +1783,9 @@ impl OkSession {
                         runtime.update_render_impl(source,head,colliders,flags,dt,emit,frame.as_ref(),policy,assigned)
                     }
                 };
-                if let Some((positions,normals,tangents))=rendered {
+                if let Some((mut positions,normals,tangents))=rendered {
                     skinned.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
+                    if let Some(cover)=cover {cover.cover(index,part,&mut positions);}
                     part.positions=positions;part.normals=normals;part.rest_tangents=tangents;
                     if let Some(observer)=observer{observer.emit(index,part);}
                 }
@@ -1815,11 +1819,13 @@ impl OkSession {
         let head=self.head_full_posed.as_ref().or(self.head_skel.as_ref());
         let assigned_body=AssignedWorldFrame::prepare(body,&self.parts,false);
         let assigned_clothes=AssignedWorldFrame::prepare(clothes,&self.parts,true);
+        let cover=crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body);
         let render=|(index,part):(usize,&mut SessionPart)| {
             if excluded.binary_search(&index).is_ok(){return;}
             let Some(runtime)=part.runtime_accessory.as_ref() else{return;};
             let assigned=if runtime.coordinated{assigned_clothes.as_ref()}else{assigned_body.as_ref()};
-            if let Some((positions,normals,tangents))=runtime.render_solved(if runtime.coordinated{clothes}else{body},head,policy,assigned) {
+            if let Some((mut positions,normals,tangents))=runtime.render_solved(if runtime.coordinated{clothes}else{body},head,policy,assigned) {
+                if let Some(cover)=&cover {cover.cover(index,part,&mut positions);}
                 part.positions=positions;part.normals=normals;part.rest_tangents=tangents;
                 if let Some(observer)=observer{observer.emit(index,part);}
             }

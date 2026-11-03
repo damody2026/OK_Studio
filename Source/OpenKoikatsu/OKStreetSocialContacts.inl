@@ -2,6 +2,7 @@
 #include "OKStreetSocialPrivateEnv.h"
 bool AOKStreetSocialScene::ContactReady(int32 Character) const {
  if(!State||!State->Agents.IsValidIndex(Character-1)||!State->Manifest.Characters.IsValidIndex(Character))return false;
+ if(State->OnaniGirl==Character)return false; // touching herself on the street: nobody calls her or brings her over (OKStreetSocialOnani.inl)
  FOKRuntimeCharacterStatus M,N;return OKGetCrowdRuntimeCharacterStatus(const_cast<AOKStreetSocialScene*>(this),0,M)&&OKGetCrowdRuntimeCharacterStatus(const_cast<AOKStreetSocialScene*>(this),Character,N)&&M.Visible&&N.Visible&&N.ActionsReady&&M.Error.IsEmpty()&&N.Error.IsEmpty();
 }
 bool AOKStreetSocialScene::ContactLover(int32 Character) const {return State&&State->Manifest.Characters.IsValidIndex(Character)&&OKStreetViewRelation(State->Store,OKStreetStableId(State->Manifest.Characters[Character]),State->Manifest.TalkBudget).Stage==TEXT("lover");}
@@ -308,12 +309,17 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character){
  // Her experience (hexp.rs) gates the poses, raw insertion and anal in the H panel.
  {const FString Id=OKStreetStableId(S.Manifest.Characters[Character]);auto Ask=OKRulesHeroineRequest(S,TEXT("h_experience"),Id);Ask->SetStringField(TEXT("girl"),Id);Ask->SetNumberField(TEXT("day"),S.Store.CalendarDay);OKRulesPutExt(S,Ask);
   // With her desire and bust: past 100 she runs and her nipples leak in the room too (OKHScene drips).
-  TSharedPtr<FJsonObject> Experience=OKRulesEval(S,Ask);if(Experience.IsValid()){Experience->SetNumberField(TEXT("sex_desire"),OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget).SexDesire);Experience->SetNumberField(TEXT("bust"),OKStreetHerCard(S,Character).Bust);}
+  TSharedPtr<FJsonObject> Experience=OKRulesEval(S,Ask);if(Experience.IsValid()){Experience->SetNumberField(TEXT("sex_desire"),OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget).SexDesire);Experience->SetNumberField(TEXT("bust"),OKStreetHerCard(S,Character).Bust);
+   // Taken from touching herself on the street: she wants it, raw and all (OKStreetSocialOnani.inl).
+   if(S.OnaniPrivate==Character){Experience->SetBoolField(TEXT("street_onani"),true);Experience->SetBoolField(TEXT("raw_ok"),true);Experience->SetBoolField(TEXT("kiss_ok"),true);Experience->SetBoolField(TEXT("resentful"),false);}}
   Mode->BeginHScene(S.Manifest.Characters[Character].Name,OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget).Stage,Experience,S.Manifest.Characters[0].Name);}
  S.PrivateShownLine=S.FreeTalkCaptionHer; // what was on screen before is not shown in the scene
  // The street clock runs about 24 times real time: an hour in the room would be a whole night gone (she said the sun was
  // up after one scene). It stands still while they are in there and moves on by the real time spent when they leave.
  if(!S.ClockPaused){const double Wall=FPlatformTime::Seconds();S.ClockStartHours=OKStreetClockHours(S.ClockStartHours,Wall-S.ClockStartWall);S.ClockStartWall=Wall;S.ClockPaused=true;S.PrivateClockFrozen=true;}
+ // The last scene's result still open (or still waiting for the time after it to end) does not stay over this one.
+ EndAfter(false);
+ if(S.HResultPanel.IsValid()){if(GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(S.HResultPanel.ToSharedRef());S.HResultPanel.Reset();}
  S.PrivateGirl=Character;S.HighPrivateAt=FPlatformTime::Seconds();S.HighPrivateSeenReady=false;S.HighPrivateResult.Reset();S.PrivateMouse=S.MouseUI;S.PrivateMode=Mode;
  const FString Directory=FPaths::GetPath(S.Manifest.SocialReport)/TEXT("HighInteraction")/FGuid::NewGuid().ToString(EGuidFormats::Digits);IFileManager::Get().MakeDirectory(*Directory,true);
  S.HighPrivateReport=Directory/TEXT("result.json");Mode->ReportPath=S.HighPrivateReport;
@@ -326,14 +332,57 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character){
  // at the top of a long scrolled list, and the control channel cannot reach it).
  if(GEngine&&GEngine->GameViewport){
   S.PrivateLeave=SNew(SBox).HAlign(HAlign_Right).VAlign(VAlign_Top).Padding(FMargin(0,16,24,0))
-   [SNew(SButton).ButtonStyle(OKStreetGlassButton()).ContentPadding(FMargin(18,8))
+   [SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().Padding(0,0,8,0)[BookmarkButton(Character)] // this moment kept (OKStreetSocialBookmarks.inl)
+    +SHorizontalBox::Slot().AutoWidth()[SNew(SButton).ButtonStyle(OKStreetGlassButton()).ContentPadding(FMargin(18,8))
     .Text(FText::FromString(OKT(TEXT("ui.contacts.leave_one_on_one"))))
-    .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->FinishPrivate();return FReply::Handled();})];
+    .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->FinishPrivate();return FReply::Handled();})]];
   GEngine->GameViewport->AddViewportWidgetContent(S.PrivateLeave.ToSharedRef(),20);}
+}
+// The original's result after an H scene (HSceneResult): her level then and now, each place's development before and
+// after (what grew in green), and this time's firsts; on the street until he closes it or another one-on-one ends.
+void AOKStreetSocialScene::ShowHResult(int32 Girl,const FJsonObject& Answer){
+ auto& S=*State;const TSharedPtr<FJsonObject>* Result=nullptr;
+ if(S.HResultPanel.IsValid()){if(GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(S.HResultPanel.ToSharedRef());S.HResultPanel.Reset();}
+ if(!Answer.TryGetObjectField(TEXT("result"),Result)||!(*Result)->GetBoolField(TEXT("played"))||!GEngine||!GEngine->GameViewport)return;
+ TSharedRef<SVerticalBox> Rows=SNew(SVerticalBox);
+ auto Line=[&](const FString& Text,const FLinearColor& Color,int32 Size){Rows->AddSlot().AutoHeight().Padding(FMargin(0,2))[SNew(STextBlock).Text(FText::FromString(Text)).ColorAndOpacity(FSlateColor(Color)).Font(FCoreStyle::GetDefaultFontStyle("Regular",Size))];};
+ Line(OKMsg(TEXT("ui.hresult.title"),{{TEXT("name"),SpokenName(Girl)}}),FLinearColor::White,18);
+ const FString Was=(*Result)->GetStringField(TEXT("level_before_name")),Now=Answer.GetStringField(TEXT("level_name"));
+ Line(Was==Now?OKMsg(TEXT("ui.hresult.level"),{{TEXT("level"),Now}}):OKMsg(TEXT("ui.hresult.level_up"),{{TEXT("before"),Was},{TEXT("after"),Now}}),Was==Now?FLinearColor(.85f,.85f,.9f):FLinearColor(1.f,.75f,.3f),15);
+ const TArray<TSharedPtr<FJsonValue>>* Areas=nullptr;
+ if((*Result)->TryGetArrayField(TEXT("areas"),Areas))for(const auto& V:*Areas){const auto O=V->AsObject();if(!O)continue;
+  const int32 B=int32(O->GetNumberField(TEXT("before"))),A=int32(O->GetNumberField(TEXT("after")));
+  Line(OKMsg(A>B?TEXT("ui.hresult.area_up"):TEXT("ui.hresult.area"),{{TEXT("name"),O->GetStringField(TEXT("name"))},{TEXT("before"),B},{TEXT("after"),A},{TEXT("n"),A-B}}),A>B?FLinearColor(.55f,1.f,.6f):FLinearColor(.8f,.8f,.85f),14);}
+ const TArray<TSharedPtr<FJsonValue>>* Firsts=nullptr;
+ if((*Result)->TryGetArrayField(TEXT("firsts"),Firsts))for(const auto& V:*Firsts)Line(OKMsg(TEXT("ui.hresult.first"),{{TEXT("text"),V->AsString()}}),FLinearColor(1.f,.6f,.75f),14);
+ // Her pregnancy (pregnancy.rs): conceived this time, or how far along.
+ const TSharedPtr<FJsonObject>* Preg=nullptr;bool bConceived=false;(*Result)->TryGetBoolField(TEXT("conceived"),bConceived);
+ if((*Result)->TryGetObjectField(TEXT("pregnancy"),Preg)&&(*Preg)->GetBoolField(TEXT("pregnant")))
+  Line(bConceived?OKT(TEXT("ui.hresult.conceived")):OKMsg(TEXT("ui.hresult.pregnant"),{{TEXT("week"),int32((*Preg)->GetNumberField(TEXT("week")))}}),FLinearColor(1.f,.55f,.85f),14);
+ // What was done (H_SCENE_ADDITIONS_PLAN 14): how long, her climaxes, where he came, her spray and milk, the poses.
+ const TSharedPtr<FJsonObject>* H=nullptr;
+ if(S.HighPrivateResult.IsValid()&&S.HighPrivateResult->TryGetObjectField(TEXT("h"),H)&&(*H)->HasField(TEXT("counts"))){
+  const auto C=(*H)->GetObjectField(TEXT("counts"));auto N=[&](const TCHAR* K){double V=0;C->TryGetNumberField(K,V);return int32(V);};
+  const int32 Seconds=int32(S.HighPrivateResult->HasField(TEXT("seconds"))?S.HighPrivateResult->GetNumberField(TEXT("seconds")):0.);
+  const FLinearColor Grey(.8f,.8f,.88f);
+  Line(OKMsg(TEXT("ui.hresult.stats_time"),{{TEXT("minutes"),FMath::Max(1,Seconds/60)},{TEXT("orgasms"),N(TEXT("her_orgasms"))}}),Grey,14);
+  Line(OKMsg(TEXT("ui.hresult.stats_his"),{{TEXT("n"),N(TEXT("his_finishes"))},{TEXT("raw"),N(TEXT("his_inside_raw"))},{TEXT("condom"),N(TEXT("his_condom"))},{TEXT("outside"),N(TEXT("his_outside"))},{TEXT("mouth"),N(TEXT("his_mouth"))},{TEXT("swallowed"),N(TEXT("swallowed"))}}),Grey,14);
+  Line(OKMsg(TEXT("ui.hresult.stats_her"),{{TEXT("drips"),N(TEXT("her_drip_times"))},{TEXT("milk"),N(TEXT("her_milk_times"))}}),Grey,14);
+  const TArray<TSharedPtr<FJsonValue>>* Played=nullptr;TArray<FString> Names;
+  if((*H)->TryGetArrayField(TEXT("poses"),Played))for(const auto& V:*Played)Names.AddUnique(V->AsString());
+  if(Names.Num())Line(OKMsg(TEXT("ui.hresult.stats_poses"),{{TEXT("poses"),FString::Join(Names,OKT(TEXT("ui.memory.list_separator")))}}),Grey,14);}
+ Rows->AddSlot().AutoHeight().HAlign(HAlign_Right).Padding(FMargin(0,10,0,0))
+  [SNew(SButton).ButtonStyle(OKStreetGlassButton()).ContentPadding(FMargin(18,6)).Text(FText::FromString(OKT(TEXT("ui.hresult.close"))))
+   .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid()&&Weak->State&&Weak->State->HResultPanel.IsValid()&&GEngine&&GEngine->GameViewport){GEngine->GameViewport->RemoveViewportWidgetContent(Weak->State->HResultPanel.ToSharedRef());Weak->State->HResultPanel.Reset();}return FReply::Handled();})];
+ TSharedRef<SBorder> Panel=SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(FLinearColor(.05f,.04f,.08f,.88f)).Padding(FMargin(28,20));
+ Panel->SetContent(Rows);
+ S.HResultPanel=SNew(SBox).HAlign(HAlign_Center).VAlign(VAlign_Center)[Panel];
+ GEngine->GameViewport->AddViewportWidgetContent(S.HResultPanel.ToSharedRef(),25);
+ UE_LOG(LogTemp,Display,TEXT("Street private: result shown (%s -> %s, %d places)"),*Was,*Now,Areas?Areas->Num():0);
 }
 void AOKStreetSocialScene::FinishPrivate(){
  if(!State||State->PrivateGirl==INDEX_NONE)return;auto& S=*State;
- auto Mode=S.PrivateMode;const int32 Girl=S.PrivateGirl;S.PrivateMode.Reset();S.PrivateGirl=INDEX_NONE;
+ auto Mode=S.PrivateMode;const int32 Girl=S.PrivateGirl;S.PrivateMode.Reset();S.PrivateGirl=INDEX_NONE;S.OnaniPrivate=INDEX_NONE;
  // Left from the street's own leave button (or the control channel): the scene still hands back what happened, or her
  // memory and experience of it were lost (only the scene's own return kept them).
  if(Mode.IsValid()&&!Mode->IsFinished()){TWeakObjectPtr<AOKStreetSocialScene> Weak(this);Mode->Returned=[Weak](TSharedRef<FJsonObject> Result){if(Weak.IsValid()&&Weak->State)Weak->State->HighPrivateResult=Result;};Mode->Exit(false);}
@@ -359,11 +408,16 @@ void AOKStreetSocialScene::FinishPrivate(){
   if(S.HighPrivateResult->TryGetObjectField(TEXT("h"),H)&&(*H)->HasField(TEXT("counts"))){
    // She comes out of the room as wet as she ran in it (until she sleeps or bathes).
    if(Girl>0&&Girl<OKStreetCastCount){const auto C=(*H)->GetObjectField(TEXT("counts"));double Drips=0,Milk=0;C->TryGetNumberField(TEXT("her_drips"),Drips);C->TryGetNumberField(TEXT("her_milk"),Milk);
-    S.ArousalWetCrotch[Girl]+=int32(Drips);S.ArousalWetMilk[Girl]+=int32(Milk);}
+    S.ArousalWetCrotch[Girl]+=int32(Drips);S.ArousalWetMilk[Girl]+=int32(Milk);
+    const TArray<TSharedPtr<FJsonValue>>* On=nullptr;if(C->TryGetArrayField(TEXT("siru"),On))for(int32 A=0;A<On->Num()&&A<5;++A)if((*On)[A]->AsNumber()>0)S.SemenOn[Girl]|=1<<A;}
    const FString Id=OKStreetStableId(S.Manifest.Characters[Girl]);auto Request=OKRulesHeroineRequest(S,TEXT("h_session_end"),Id);
    Request->SetStringField(TEXT("girl"),Id);Request->SetNumberField(TEXT("day"),S.Store.CalendarDay);Request->SetStringField(TEXT("place"),PlaceHere(S.Male));Request->SetNumberField(TEXT("minute"),double(OKStreetMindNow(S)));Request->SetObjectField(TEXT("counts"),(*H)->GetObjectField(TEXT("counts")));{const TArray<TSharedPtr<FJsonValue>>* Poses=nullptr;if((*H)->TryGetArrayField(TEXT("poses"),Poses))Request->SetArrayField(TEXT("poses"),*Poses);}OKRulesPutExt(S,Request);
    if(const TSharedPtr<FJsonObject> Answer=OKRulesEval(S,Request)){auto Candidate=S.Store;OKRulesTakeExt(Candidate,*Answer);ApplyRulesEffects(Candidate,*Answer);if(CommitStore(MoveTemp(Candidate)))FlushRulesEffects();OKStreetApplyHerExtras(S,Id);
-    UE_LOG(LogTemp,Display,TEXT("Street private: experience %d -> %d (%s)"),int32(Answer->GetNumberField(TEXT("level_before"))),int32(Answer->GetNumberField(TEXT("level_after"))),*Answer->GetStringField(TEXT("level_name")));}
+    UE_LOG(LogTemp,Display,TEXT("Street private: experience %d -> %d (%s)"),int32(Answer->GetNumberField(TEXT("level_before"))),int32(Answer->GetNumberField(TEXT("level_after"))),*Answer->GetStringField(TEXT("level_name")));
+    // With her beside him they stay a while first and talk (the time after); the result waits for "leave".
+    const TSharedPtr<FJsonObject>* Played=nullptr;
+    if(S.Agents.IsValidIndex(Girl-1)&&FVector::Dist2D(S.Agents[Girl-1].Position,S.Male)<400.f&&Answer->TryGetObjectField(TEXT("result"),Played)&&(*Played)->GetBoolField(TEXT("played")))BeginAfter(Girl,Answer);
+    else ShowHResult(Girl,*Answer);}
   }
  }
  // Back on the street with her beside him: they go on talking (the scene started from their talk, which it ended).
@@ -396,6 +450,7 @@ bool AOKStreetSocialScene::TickPrivate(double Now){
 void AOKStreetSocialScene::TickContacts(float Dt,double Now){
  auto& S=*State;
  if(S.PrivateGirl!=INDEX_NONE&&!ContactReady(S.PrivateGirl)){FinishPrivate();return;}
+ TickAfter();
  // Her route is redrawn as she moves; not while the navigation is on its way to (or in) an elevator, or with her upstairs.
  if(S.NavGirl!=INDEX_NONE&&Now-S.NavAt>.75&&S.NavRide.Elevator==INDEX_NONE&&S.Agents.IsValidIndex(S.NavGirl-1)&&!NavNeedsLift(S.Agents[S.NavGirl-1].Position)){if(!ContactReady(S.NavGirl)){S.NavGirl=INDEX_NONE;S.NavPath.Reset();S.ContactsNotice=OKT(TEXT("ui.contacts.nav_target_unavailable"));RefreshUI();}else{S.NavAt=Now;S.NavPath=ContactRoute(S.Male,NavApproachSpot(S.Agents[S.NavGirl-1].Position));S.NavStep=1;}}
 }

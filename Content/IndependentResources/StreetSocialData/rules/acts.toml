@@ -379,6 +379,13 @@ text = "%s"
 memory = -1
 
 [[act]]
+id = "pregnancy"
+cat = "activity"
+history = "intimacy"
+text = "%s"
+memory = -1
+
+[[act]]
 id = "h_area"
 cat = "activity"
 history = "intimacy"

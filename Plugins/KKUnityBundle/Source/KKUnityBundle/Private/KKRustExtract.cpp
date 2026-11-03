@@ -260,6 +260,26 @@ bool FOkSession::BackExit(const FVector& From,const FVector& To,const FVector& U
 	const float At[9]={float(From.X),float(From.Y),float(From.Z),float(To.X),float(To.Y),float(To.Z),float(Up.X),float(Up.Y),float(Up.Z)};
 	float Out[6];if(ok_back_exit(Handle,At,Out)!=0)return false;
 	OutAt=FVector(Out[0],Out[1],Out[2]);OutNormal=FVector(Out[3],Out[4],Out[5]);return true; }
+bool FOkSession::SetClothCover(bool bOn,const TArray<uint32>& BodyIndices,const TArray<FVector3f>& BodyDeltas,const TArray<FVector3f>& BodyNormalDeltas,TArray<int32>& OutParts){
+	OutParts.Reset();if(!Handle||BodyIndices.Num()!=BodyDeltas.Num())return false;
+	TArray<float> In;In.SetNumZeroed(BodyIndices.Num()*6);
+	for(int32 I=0;I<BodyIndices.Num();++I){In[I*6]=BodyDeltas[I].X;In[I*6+1]=BodyDeltas[I].Y;In[I*6+2]=BodyDeltas[I].Z;
+		if(BodyNormalDeltas.IsValidIndex(I)){In[I*6+3]=BodyNormalDeltas[I].X;In[I*6+4]=BodyNormalDeltas[I].Y;In[I*6+5]=BodyNormalDeltas[I].Z;}}
+	OutParts.SetNumZeroed(64);
+	const int32 N=ok_set_cover(Handle,bOn?1:0,BodyIndices.GetData(),In.GetData(),uint32(BodyIndices.Num()),OutParts.GetData(),uint32(OutParts.Num()));
+	if(N<0){OutParts.Reset();return false;}OutParts.SetNum(FMath::Min(N,OutParts.Num()));return true; }
+bool FOkSession::ClothCoverDeltas(const TArray<uint32>& BodyIndices,const TArray<FVector3f>& BodyDeltas,const TArray<FVector3f>& BodyNormalDeltas,TArray<int32>& OutParts,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas) const {
+	OutParts.Reset();OutIndices.Reset();OutDeltas.Reset();if(!Handle||BodyIndices.Num()!=BodyDeltas.Num())return false;
+	TArray<float> In;In.SetNumZeroed(BodyIndices.Num()*6);
+	for(int32 I=0;I<BodyIndices.Num();++I){In[I*6]=BodyDeltas[I].X;In[I*6+1]=BodyDeltas[I].Y;In[I*6+2]=BodyDeltas[I].Z;
+		if(BodyNormalDeltas.IsValidIndex(I)){In[I*6+3]=BodyNormalDeltas[I].X;In[I*6+4]=BodyNormalDeltas[I].Y;In[I*6+5]=BodyNormalDeltas[I].Z;}}
+	TArray<uint32> Part,Idx;TArray<float> D;Part.SetNumUninitialized(16384);Idx.SetNumUninitialized(16384);D.SetNumUninitialized(16384*3);
+	int32 N=ok_cover_deltas(Handle,BodyIndices.GetData(),In.GetData(),uint32(BodyIndices.Num()),Part.GetData(),Idx.GetData(),D.GetData(),uint32(Idx.Num()));
+	if(N<0)return false;
+	if(N>Idx.Num()){Part.SetNumUninitialized(N);Idx.SetNumUninitialized(N);D.SetNumUninitialized(N*3);
+		N=ok_cover_deltas(Handle,BodyIndices.GetData(),In.GetData(),uint32(BodyIndices.Num()),Part.GetData(),Idx.GetData(),D.GetData(),uint32(Idx.Num()));if(N<0)return false;}
+	for(int32 I=0;I<N;++I){OutParts.Add(int32(Part[I]));OutIndices.Add(Idx[I]);OutDeltas.Add(FVector3f(D[I*3],D[I*3+1],D[I*3+2]));}
+	return true; }
 bool FOkSession::PenisClipDeltas(const FVector& At,const FVector& Normal,const FVector& Axis,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,float InsetM) const {
 	OutIndices.Reset();OutDeltas.Reset();if(!Handle)return false;
 	const float In[10]={float(At.X),float(At.Y),float(At.Z),float(Normal.X),float(Normal.Y),float(Normal.Z),float(Axis.X),float(Axis.Y),float(Axis.Z),InsetM};
@@ -1493,6 +1513,7 @@ static bool OKClothesFile(int32 Op,const FString& A,const FString& B,int32 Outfi
 bool FOkSession::ClothesImport(const FString& CoordinateCard,const FString& Out,FString& Summary){return OKClothesFile(0,CoordinateCard,FString(),0,Out,Summary);}
 bool FOkSession::ClothesExport(const FString& Card,int32 Outfit,const FString& Out,FString& Summary){return OKClothesFile(1,Card,FString(),Outfit,Out,Summary);}
 bool FOkSession::ClothesWear(const FString& Card,const FString& OkClothes,int32 Outfit,const FString& Out,FString& Summary){OKPrepareCardEnvironment();return OKClothesFile(2,Card,OkClothes,Outfit,Out,Summary);}
+bool FOkSession::ClothesWearClothesOnly(const FString& Card,const FString& OkClothes,int32 Outfit,const FString& Out,FString& Summary){OKPrepareCardEnvironment();return OKClothesFile(3,Card,OkClothes,Outfit,Out,Summary);}
 bool FOkSession::MakeOkCard(const FString& Card,const FString& Out,FString& Summary){
  OKPrepareCardEnvironment();char Buffer[2048]{};
  const int32 Result=ok_okcard_make(nullptr,TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Card)),TCHAR_TO_UTF8(*FPaths::ConvertRelativePathToFull(Out)),Buffer,UE_ARRAY_COUNT(Buffer));

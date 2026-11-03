@@ -310,6 +310,26 @@ int32 AKKPreviewActor::SetMaterialOverrides(const TArray<FOKMaterialOverride>& O
  return ApplyMaterialOverrides(OutUnapplied);
 }
 
+int32 AKKPreviewActor::SetNippleChange(float Amount,float SizeTo,const FLinearColor& ColorTo){
+ static const FName Size(TEXT("_nipsize")),Color(TEXT("_overcolor1"));Amount=FMath::Clamp(Amount,0.f,1.f);int32 Writes=0;
+ TInlineComponentArray<UMeshComponent*> Components;GetComponents(Components);
+ for(auto* Component:Components){
+  const int32 Index=PartIndex(this,Component);if(Index==INDEX_NONE)continue;
+  const auto* Part=PartFor(this,Component);FString PartRole=Part?Part->Role:FString();
+  if(PartRole.IsEmpty()){OkMeshView View{};if(Session.PartAt(Index,View)&&View.role)PartRole=UTF8_TO_TCHAR(View.role);}
+  if(PartRole!=TEXT("body"))continue;
+  for(int32 Slot=0;Slot<Component->GetNumMaterials();++Slot){
+   UMaterialInterface* Material=Component->GetMaterial(Slot);float Was=0.f;FLinearColor WasColor;
+   if(!Material||!Material->GetScalarParameterValue(FMaterialParameterInfo(Size),Was)||!Material->GetVectorParameterValue(FMaterialParameterInfo(Color),WasColor))continue;
+   auto* Dynamic=Cast<UMaterialInstanceDynamic>(Material);if(!Dynamic){Dynamic=UMaterialInstanceDynamic::Create(Material,this);Component->SetMaterial(Slot,Dynamic);}
+   const auto& Base=NippleBase.FindOrAdd(Dynamic,TPair<float,FLinearColor>(Was,WasColor));
+   Dynamic->SetScalarParameterValue(Size,FMath::Lerp(Base.Key,FMath::Max(Base.Key,SizeTo),Amount));
+   const FLinearColor To(ColorTo.R,ColorTo.G,ColorTo.B,Base.Value.A);Dynamic->SetVectorParameterValue(Color,FMath::Lerp(Base.Value,To,Amount));++Writes;
+  }
+ }
+ return Writes;
+}
+
 int32 AKKPreviewActor::ApplyMaterialOverrides(TArray<FString>* OutUnapplied){
  if(OutUnapplied)OutUnapplied->Reset();
  if(MaterialOverrides.IsEmpty())return 0;

@@ -6,6 +6,7 @@ pub mod motions;
 pub mod bank;
 pub mod bias;
 pub mod bluff;
+pub mod bookmarks;
 pub mod icu;
 pub mod items;
 pub mod locale;
@@ -24,6 +25,8 @@ pub mod events;
 pub mod games;
 pub mod heroine;
 pub mod hexp;
+mod hexp_edges;
+pub mod pregnancy;
 pub mod invite;
 pub mod mind;
 pub mod needs;
@@ -164,6 +167,7 @@ impl Rules {
                     .or_else(|| invite::eval(tuning.places_in(locale::lang(&request)), &kind, &request))
                     .or_else(|| mind::eval(&kind, &request))
                     .or_else(|| hexp::eval(&kind, &request))
+                    .or_else(|| pregnancy::eval(&kind, &request))
                     .or_else(|| day::eval(&kind, &request))
                     .or_else(|| bank::eval(&kind, &request))
                     .or_else(|| campus::eval(&kind, &request))
@@ -181,6 +185,7 @@ impl Rules {
                     .or_else(|| activities::eval(tuning.activities_in(locale::lang(&request)), &tuning.activities, tuning.catalog_in(locale::region(&request), locale::lang(&request)), &kind, &request))
                     .or_else(|| motions::eval(&tuning.motions, &kind, &request))
                     .or_else(|| photos::eval(&kind, &request))
+                    .or_else(|| bookmarks::eval(&kind, &request))
                     .or_else(|| work::eval(&kind, &request))
                     .or_else(|| series::eval(&kind, &request))
                     .or_else(|| weather::eval(&kind, &request))

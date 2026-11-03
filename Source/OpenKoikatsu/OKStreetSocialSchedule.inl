@@ -5,7 +5,8 @@ bool AOKStreetSocialScene::BusyWithPlayer(int32 I) const{
  const auto& S=*State;
  return S.Target==I||S.Companion==I||S.OutingGirl==I||S.Pair.Partner==I||(S.Facility!=INDEX_NONE&&S.FacilityCharacter==I)||S.PrivateGirl==I
   ||S.ApproachGirl==I||S.ArriveAfterLift.Contains(I)||S.SleepGirl==I||S.SleepGirl2==I||S.RestroomGirl==I||S.SoloGirl==I||S.PendingIntimacy==I||S.Party.Contains(I)
-  ||S.InspectSlot==I; // in the inspection room (OKStreetSocialInspect.inl)
+  ||S.InspectSlot==I // in the inspection room (OKStreetSocialInspect.inl)
+  ||S.OnaniGirl==I; // touching herself on the street (OKStreetSocialOnani.inl): her schedule waits
 }
 
 // Where she stands in a place: an anchor that suits what she is doing, spread out so heroines do not overlap.
@@ -73,6 +74,7 @@ void AOKStreetSocialScene::MakeRoomAround(int32 Partner){
 // morning and pace, errands, friends meeting, leaving in time, rain, pickups. Here only the facts go in and the plans,
 // the best friends' shared morning, pickup appointments and texts come back.
 void AOKStreetSocialScene::PlanAll(){
+ PregnancyDay(); // her pregnancy today goes into her plan (the birth, heavy)
  auto& S=*State;S.PlanDay=S.Store.CalendarDay;S.PlanBlock.Reset();S.PlanEaten.Reset();S.MorningPair={INDEX_NONE,INDEX_NONE};S.LifePairRoute.Reset();
  // His most frequented place (for jealous heroines who "happen" to be there).
  FString Haunt;int32 Most=0;for(const auto& P:S.PlayerPlaceMinutes)if(P.Value>Most){Most=P.Value;Haunt=P.Key;}
@@ -84,6 +86,7 @@ void AOKStreetSocialScene::PlanAll(){
   auto H=MakeShared<FJsonObject>();H->SetNumberField(TEXT("actor"),I);H->SetStringField(TEXT("id"),Id);H->SetStringField(TEXT("name"),S.Manifest.Characters[I].Name);
   const TSharedPtr<FJsonObject> Profile=S.MindProfiles.FindRef(Id);H->SetObjectField(TEXT("profile"),Profile.IsValid()?Profile.ToSharedRef():MakeShared<FJsonObject>());
   H->SetObjectField(TEXT("relation"),OKRulesRelationJson(OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget)));
+  if(I<OKStreetCastCount&&S.PregView[I].IsValid())H->SetObjectField(TEXT("pregnancy"),S.PregView[I]);
   H->SetNumberField(TEXT("invest_total"),double(S.HerInvestTotal.FindRef(Id)));H->SetStringField(TEXT("intent"),S.Intents.FindRef(Id));
   if(const auto* A=S.Store.Academics.Find(Id))H->SetObjectField(TEXT("academic"),OKStreetAcademicJson(*A));
   TArray<TSharedPtr<FJsonValue>> Promises;

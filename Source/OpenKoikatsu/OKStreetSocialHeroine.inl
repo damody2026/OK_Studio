@@ -221,6 +221,7 @@ FOKHeroineResult AOKStreetSocialScene::Interact(int32 Girl,const FString& ActId,
  Request->SetStringField(TEXT("detail"),Args.Detail);Request->SetStringField(TEXT("rumor_detail"),Args.RumorDetail);Request->SetNumberField(TEXT("importance"),Args.Importance);
  Request->SetStringField(TEXT("name"),S.Manifest.Characters[Girl].Name);
  Request->SetBoolField(TEXT("remote"),!Args.RecordOnly&&RemoteWith(Girl));Request->SetBoolField(TEXT("penalty_ready"),SceneTime()-S.GatePenaltyAt>20.0);
+ Request->SetBoolField(TEXT("pregnant"),OKStreetPregFlag(S,Girl,TEXT("knows"))); // she does not drink (heroine.rs)
  Request->SetStringField(TEXT("place"),Here);Request->SetStringField(TEXT("place_name"),HerePlace?HerePlace->Name:OKT(TEXT("ui.etiquette.street_location")));Request->SetNumberField(TEXT("hours"),Now.GetHour()+Now.GetMinute()/60.0);
  // Game minutes since he last did this with her (the rules give a touch again soon nothing new; R6-146).
  const FString ActKey=Id+TEXT("|")+ActId;const int64 NowMinute=Now.GetTicks()/ETimespan::TicksPerMinute;
@@ -241,6 +242,7 @@ FOKHeroineResult AOKStreetSocialScene::Interact(int32 Girl,const FString& ActId,
  if(A->TryGetBoolField(TEXT("refused"),Refused)&&Refused){
   Out.Refused=true;
   if(A->HasField(TEXT("gate")))HeroineRefuseGate(Girl,ActId,*A);
+  else if(Out.Why==TEXT("pregnant")){FString Recent;if(A->TryGetStringField(TEXT("recent"),Recent))S.MindRecent.FindOrAdd(Id)+=Recent;UE_LOG(LogTemp,Display,TEXT("Street heroine: actor=%d %s refused (pregnant)"),Girl,*ActId);}
   else UE_LOG(LogTemp,Display,TEXT("Street heroine gate: actor=%d %s not done (her idea, relationship too new)"),Girl,*ActId);
   return Out;
  }

@@ -440,6 +440,7 @@ TSharedRef<SWidget> AOKStreetSocialScene::BuildPhoneApp(){
   +SHorizontalBox::Slot().AutoWidth().Padding(2)[OKFinButton(Weak,OKT(TEXT("ui.phone_inbox.messages_tab")),[Weak](){Weak->State->PhoneTab=TEXT("msg");Weak->RefreshUI();},true,Log?FLinearColor::White:FLinearColor(1,.85f,.3f))]
   +SHorizontalBox::Slot().AutoWidth().Padding(2)[OKFinButton(Weak,OKT(TEXT("ui.phone_inbox.her_record_label")),[Weak](){Weak->State->PhoneTab=TEXT("log");Weak->RefreshUI();},true,Log?FLinearColor(1,.85f,.3f):FLinearColor::White)]
   +SHorizontalBox::Slot().AutoWidth().Padding(2)[OKFinButton(Weak,OKT(TEXT("ui.photos.album_tab")),[Weak](){Weak->State->PhoneTab=TEXT("album");Weak->RefreshUI();},true,S.PhoneTab==TEXT("album")?FLinearColor(1,.85f,.3f):FLinearColor::White)]
+  +SHorizontalBox::Slot().AutoWidth().Padding(2)[OKFinButton(Weak,OKT(TEXT("ui.bookmarks.tab")),[Weak](){Weak->State->PhoneTab=TEXT("bookmarks");Weak->RefreshUI();},true,S.PhoneTab==TEXT("bookmarks")?FLinearColor(1,.85f,.3f):FLinearColor::White)]
   +SHorizontalBox::Slot().FillWidth(1)[SNullWidget::NullWidget]
   +SHorizontalBox::Slot().AutoWidth().Padding(2)[OKFinButton(Weak,S.RemoteMode==2&&S.RemotePeer==Girl?FString(OKT(TEXT("ui.phone_inbox.hang_up_button"))):FString(OKT(TEXT("ui.phone_inbox.call_button"))),[Weak,Girl](){if(Weak->State->RemoteMode==2)Weak->PhoneHangUp();else Weak->PhoneCall(Girl);},true,FLinearColor(.5f,1,.5f))];
  auto Input=SNew(SHorizontalBox)
@@ -448,7 +449,7 @@ TSharedRef<SWidget> AOKStreetSocialScene::BuildPhoneApp(){
    .OnTextCommitted_Lambda([Weak](const FText& T,ETextCommit::Type How){if(Weak.IsValid()&&How==ETextCommit::OnEnter){Weak->State->PhoneDraft=T.ToString();Weak->PhoneSend();}})]
   +SHorizontalBox::Slot().AutoWidth().Padding(4,0)[OKFinButton(Weak,S.FreeTalkBusy&&S.RemotePeer==Girl?FString(OKT(TEXT("ui.phone_inbox.peer_typing"))):FString(OKT(TEXT("ui.phone_inbox.send_button"))),[Weak](){Weak->PhoneSend();},!S.FreeTalkBusy)];
  // The thread opens at its newest message. The album tab shows his photos instead (send one to her from there).
- TSharedRef<SScrollBox> Scroll=SNew(SScrollBox).ScrollBarAlwaysVisible(true)+SScrollBox::Slot()[S.PhoneTab==TEXT("album")?BuildPhotoAlbum(Girl):StaticCastSharedRef<SWidget>(Lines)];if(!Log&&S.PhoneTab!=TEXT("album")){Scroll->ScrollToEnd();
+ TSharedRef<SScrollBox> Scroll=SNew(SScrollBox).ScrollBarAlwaysVisible(true)+SScrollBox::Slot()[S.PhoneTab==TEXT("album")?BuildPhotoAlbum(Girl):S.PhoneTab==TEXT("bookmarks")?BuildBookmarks(Girl):StaticCastSharedRef<SWidget>(Lines)];if(!Log&&S.PhoneTab!=TEXT("album")&&S.PhoneTab!=TEXT("bookmarks")){Scroll->ScrollToEnd();
   // Once more after the first layout: the bubbles wrap only then, and the newest one was left below the fold.
   TWeakPtr<SScrollBox> WeakScroll=Scroll;Scroll->RegisterActiveTimer(0.05f,FWidgetActiveTimerDelegate::CreateLambda([WeakScroll](double,float){if(const auto P=WeakScroll.Pin())P->ScrollToEnd();return EActiveTimerReturnType::Stop;}));}
  return SNew(SHorizontalBox)

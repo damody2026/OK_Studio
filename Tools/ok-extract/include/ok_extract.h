@@ -121,6 +121,12 @@ int32_t ok_belly_bulge_past(OkSession* s,const float* tip,float* out,char* targe
    (her skeleton space, metres, 9 floats; that way zero: read off her skin), radius his and a margin. Writes up to max (body vertex index, move in the mesh's own space, Unity
    metres, then the turn of its normal there: 6 floats each); returns how many there are, -1 on bad input. */
 int32_t ok_belly_wrap_deltas(OkSession* s,const float* at,float radius,uint32_t* out_idx,float* out_d,uint32_t max);
+/* Her clothes kept over her skin this frame (belly_bulge::cover_deltas): body_idx/body_d her body's skin moves as
+   ok_belly_wrap_deltas gave them (n, may be 0). Writes up to max (part index, vertex index, move: 3 floats); returns the count. */
+/* Her garments with their own rig kept over her skin as they are skinned on the CPU (on 1) or not (belly_bulge::set_cover);
+   body moves as for ok_cover_deltas. Writes up to max of the garments it moves (part indices); returns the count. */
+int32_t ok_set_cover(OkSession* s,int32_t on,const uint32_t* body_idx,const float* body_d,uint32_t n,int32_t* out_parts,uint32_t max);
+int32_t ok_cover_deltas(OkSession* s,const uint32_t* body_idx,const float* body_d,uint32_t n,uint32_t* out_part,uint32_t* out_idx,float* out_d,uint32_t max);
 /* As ok_belly_wrap_deltas, her skin moved by her belly bones, pushed by his penis as BetterPenetration's colliders push
    its belly DynamicBone (belly_bulge::bone_deltas). Same input and output. */
 int32_t ok_belly_bone_deltas(OkSession* s,const float* at,float radius,uint32_t* out_idx,float* out_d,uint32_t max);
