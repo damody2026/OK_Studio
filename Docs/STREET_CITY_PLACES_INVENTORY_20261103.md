@@ -92,6 +92,11 @@
   - 203（`imore-cda5d5e2dcb9`）的床在 (寬 × 0.14, 4.7)。
   - 位置照 `Tools/build_street_city_motel_sample_rooms.lua` 的擺法寫進 `build_street_city_places.lua` 和 `street_city_bed_mirrors_payload.lua`，`places.json` 的床錨點已經更新。
   - 床邊鏡原本也用預設位置去找：209 往下打到地板，所以被略過；203 在錯的位置找牆。這兩間要等 chain12 重裝床邊鏡後才會有鏡子。
+- **戀人地點安裝（11-03 16:58 整合暫停時）**：
+  - `lover-spots-install-20261103-150420.json` 已裝好 24 處，沒有略過；地圖 sha 是 `3b918b72…`。
+  - `places.json`、`props.json` 已經重建，`game_places` 不缺錨點。
+  - 驗收 TRIAL DONE（16:34），實走 slice 0 通過。
+  - 還沒做：實走 slice 1～3，以及 `world-edge-v1/lover-spots-views.json` 的截圖檢查（斜坡上的神社、販賣機）。
 - **沒有鏡子的房間**：`imore-6f5e5a7cdf7b`、`imore-345b250913f7`、`wego-linsen-3480fecda6b2`。床邊沒有平整的牆，天花板也不平。
 - **宿舍 1 樓 16 張床**：沒有實測資料可以對照。其餘 400 張和地圖實測相差都在 10 cm 內。
 - **門口**：室內地點的 `door` 目前是家具範圍的中心，不是真正的房門；汽車旅館用的是真正的入口。
