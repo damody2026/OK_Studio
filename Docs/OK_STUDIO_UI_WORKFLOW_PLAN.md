@@ -1587,6 +1587,26 @@ U143～U148 完成紀錄（2026-11-03，控制通道實測）：
     - 灯台的柵欄、步道、樓梯、路牌都回到原位。
     - 水族館（57）入口完全正常。
     - 剩下的植物 LOD 與貼圖、海面問題另列 U149、U150。
+- U143 整合時的基礎庫重錄（C、E 都要做）：
+  - 這筆改了共用的 `ok-extract` 網格解碼。基礎庫 okmodel 存的是解碼後的網格，只換程式不會變，要重錄受影響的來源。否則 C／E／F 的基礎庫會不一致。
+  - F 本機重錄的 89 個來源：[`Tools/oklib_rerecord/u143_channel_dimension.txt`](../Tools/oklib_rerecord/u143_channel_dimension.txt)。
+    - 遊戲 80 個：`abdata/chara` 34、`abdata/studio` 16、`abdata/studio/map` 30。
+    - mod 9 個（F 的 mods 資料夾裡的地圖與服裝 zipmod）。
+  - mods 每台不同，C、E 先在自己的環境掃出清單，再重錄：
+
+    ```powershell
+    # 1. 掃出受影響的來源（約 50 分鐘，讀遊戲與 mods 的全部來源）
+    $env:OK_TEST_GAME_ROOT='<遊戲目錄>'; $env:OK_DIM_SCAN_OUT="$PWD\Saved\u143_sources.txt"
+    cargo test --release --manifest-path Tools\ok-extract\Cargo.toml --lib sources_with_flagged_channel_dimensions -- --ignored --nocapture
+    # 2. 重錄（新的紀錄附加在 okmodel 後面，讀取時以後面的為準）
+    cargo build --release --manifest-path Tools\ok-extract\Cargo.toml
+    $env:OKLIB_REFRESH='meshes_for_maindata,meshes_for_maindata_including_disabled,decode_all,base_bundle'
+    .\Tools\ok-extract\target\release\ok-extract.exe <遊戲目錄> --oklib convert Content\IndependentResources\base_v1 8 "@$PWD\Saved\u143_sources.txt"
+    ```
+
+  - 只想對齊遊戲本體的部分時，可以直接用 F 的清單：mod 那 9 行在沒有該 mod 的環境會被略過。
+  - F 的重錄沒有提交（base_v1 不是 F 組提交的檔案）。由負責基礎庫的人提交，並照規定在乾淨 clone 跑 `kks-verify` 與 `okcard-check`（U151）。
+  - 用到那 34 個角色部件的 OK 卡，卡內資源包也是舊的解碼結果，要重轉。
 - U144 時段光照的實景對照：植物與海面還不對，改到 U152。
 - U145 兩個角色面對面：
   - 變換列新增「面向對方」，也加到物件清單的右鍵選單（指令 `transform.face`）。
