@@ -1564,10 +1564,6 @@ void UOKHScenePanel::ApplyHerFk(AKKPreviewActor* Girl,TArray<FString>& Names,TAr
     if(!Names.IsEmpty()){Girl->Session.SetFk(Names,Turns);bTrembling=true;}
     else if(bTrembling){Girl->Session.SetFk({},{});bTrembling=false;}
 }
-// Her hands as he set them: given again to whichever self of hers is shown (an outfit change makes a new one).
-void UOKHScenePanel::TickHands(){
-    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl))return;
-    const int32 Count=Girl->GetHandShapeCount();
 // As in the source's H, her eyes are on the camera (user 2026-11-03): set once for each self of hers that is shown, so
 // unticking it on the panel (the eye look box) leaves them; the ahegao keeps and gives back what it found.
 static TAutoConsoleVariable<int32> CVarHEyesCamera(TEXT("ok.HScene.EyesCamera"),1,TEXT("1: in H her eyes follow the camera from the start (the panel's eye look box can turn it off)"));
@@ -1578,6 +1574,10 @@ void UOKHScenePanel::TickEyesCamera(){
     if(On&&Gallery->EyeLookCameraCheck)Gallery->EyeLookCameraCheck->SetIsChecked(true);
     UE_LOG(LogTemp,Display,TEXT("H scene: her eyes on the camera %s"),On?TEXT("on"):TEXT("unavailable"));
 }
+// Her hands as he set them: given again to whichever self of hers is shown (an outfit change makes a new one).
+void UOKHScenePanel::TickHands(){
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl))return;
+    const int32 Count=Girl->GetHandShapeCount();
     if(Count!=HandOptions)for(int32 Side=0;Side<2;++Side)if(UComboBoxString* C=HandCombos[Side]){
         C->ClearOptions();C->AddOption(OKT(TEXT("ui.hscene.hand_follow")));for(int32 P=0;P<Count;++P)C->AddOption(OKMsg(TEXT("ui.hscene.hand_pattern"),{{TEXT("n"),P}}));
         HandPattern[Side]=FMath::Clamp(HandPattern[Side],-1,Count-1);C->SetSelectedIndex(HandPattern[Side]+1);}

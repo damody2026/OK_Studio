@@ -1742,6 +1742,11 @@ bool OKSetCrowdRuntimeFaceLook(AActor* Owner,int32 Character,const FOKRuntimeFac
   UE_LOG(LogTemp,Display,TEXT("Runtime face look %s: materials face=%d skin=%d iris=%d tears=%d; goal blush=%.2f sweat=%.2f gaze=(%.2f,%.2f) tears=%d highlight=%.0f%s"),*E.Id,K[1],K[2],K[3],E.Tears.Num(),G.Blush,G.Sweat,G.Gaze.X,G.Gaze.Y,Look.Tears,G.Highlight,*Trace);}
  return true;
 }
+bool OKSetCrowdRuntimeEyeFollow(AActor* Owner,int32 Character,int32 Mode){
+ check(IsInGameThread());const auto* Weak=OKRuntimeScene::ActiveScenes.Find(Owner);const auto State=Weak?Weak->Pin():nullptr;
+ if(!State||State->Stopped||!State->Entries.IsValidIndex(Character))return false;
+ auto& E=*State->Entries[Character];E.EyeFollow=FMath::Clamp(Mode,-1,2);E.LookFading=true;return true;
+}
 bool OKSetCrowdRuntimeHeadLook(AActor* Owner,int32 Character,bool Enabled,const FVector& World){
  check(IsInGameThread());const auto* Weak=OKRuntimeScene::ActiveScenes.Find(Owner);const auto State=Weak?Weak->Pin():nullptr;
  if(!State||State->Stopped||!State->Entries.IsValidIndex(Character)||(Enabled&&World.ContainsNaN()))return false;
@@ -1751,10 +1756,6 @@ void OKSetCrowdRuntimeOutlinesShown(AActor* Owner,int32 Character,bool Shown){
  check(IsInGameThread());const auto* Weak=OKRuntimeScene::ActiveScenes.Find(Owner);const auto State=Weak?Weak->Pin():nullptr;
  if(!State||State->Stopped||!State->Entries.IsValidIndex(Character))return;
  for(const auto& M:State->Entries[Character]->OutlineMaterials)if(auto* I=M.Get())I->SetScalarParameterValue(TEXT("__OK_RuntimeRevealOverride"),Shown?-1.f:0.f);
-bool OKSetCrowdRuntimeEyeFollow(AActor* Owner,int32 Character,int32 Mode){
- check(IsInGameThread());const auto* Weak=OKRuntimeScene::ActiveScenes.Find(Owner);const auto State=Weak?Weak->Pin():nullptr;
- if(!State||State->Stopped||!State->Entries.IsValidIndex(Character))return false;
- auto& E=*State->Entries[Character];E.EyeFollow=FMath::Clamp(Mode,-1,2);E.LookFading=true;return true;
 }
 }
 bool OKGetCrowdRuntimeFaceLook(AActor* Owner,int32 Character,FOKRuntimeFaceLookNow& Now){
