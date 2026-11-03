@@ -19,6 +19,7 @@
 #include "Engine/GameViewportClient.h"
 #include "Types/ISlateMetaData.h"
 #include "Widgets/Input/SEditableText.h"
+#include "Widgets/Input/SSpinBox.h"
 
 namespace
 {
@@ -801,6 +802,10 @@ namespace
 				// from an earlier press would take the release: start from no capture, as a fresh press does. (A tree click
 				// once only moved the highlight, 2026-11-01; not seen again, the log says whether a capture was released.)
 				if (App.HasAnyMouseCaptor()) { UE_LOG(LogTemp, Display, TEXT("OK studio control: click released a stale mouse capture")); App.ReleaseAllPointerCapture(); }
+				// The row takes the press only with the capture, which Slate gives only in front (see "mouse").
+				const bool bWasHandlingInactive = App.GetHandleDeviceInputWhenApplicationNotActive();
+				App.SetHandleDeviceInputWhenApplicationNotActive(true);
+				ON_SCOPE_EXIT { App.SetHandleDeviceInputWhenApplicationNotActive(bWasHandlingInactive); };
 				App.ProcessMouseButtonDownEvent(nullptr, FPointerEvent(0, 0, At, At, TSet<FKey>{ EKeys::LeftMouseButton }, EKeys::LeftMouseButton, 0.f, FModifierKeysState()));
 				App.ProcessMouseButtonUpEvent(FPointerEvent(0, 0, At, At, TSet<FKey>(), EKeys::LeftMouseButton, 0.f, FModifierKeysState()));
 			}
@@ -832,6 +837,12 @@ namespace
 			const bool bDrag = J->TryGetArrayField(TEXT("to"), ToJson) && ToJson->Num() == 2;
 			if (bDrag) To = Window->GetPositionInScreen() + FVector2D((*ToJson)[0]->AsNumber(), (*ToJson)[1]->AsNumber());
 			const int32 Steps = FMath::Clamp(ReadId(J, TEXT("steps"), 10), 1, 200);
+			// Slate gives a press the mouse capture only while the application is in front: with the studio window behind
+			// another one, a button went pressed but never clicked (only the hover moved, U83, U86, U94). These presses are
+			// meant for the studio wherever its window is.
+			const bool bWasHandlingInactive = App.GetHandleDeviceInputWhenApplicationNotActive();
+			App.SetHandleDeviceInputWhenApplicationNotActive(true);
+			ON_SCOPE_EXIT { App.SetHandleDeviceInputWhenApplicationNotActive(bWasHandlingInactive); };
 			const FModifierKeysState Mods;
 			const uint32 User = App.GetUserIndexForMouse();
 			// The real mouse's pointer index (0 is a touch's), so these presses and the real mouse's moves are one pointer.
@@ -845,12 +856,31 @@ namespace
 				App.ReleaseAllPointerCapture();
 			}
 			App.ProcessMouseMoveEvent(FPointerEvent(User, Pointer, At, At, TSet<FKey>(), EKeys::Invalid, 0.f, Mods));
+			// "wheel": wheel notches at the point instead of a click (positive scrolls up), as the real wheel turns: a
+			// panel's lower part, a list, the view's zoom.
+			double Wheel = 0.;
+			if (J->TryGetNumberField(TEXT("wheel"), Wheel))
+			{
+				const bool bWheelHandled = App.ProcessMouseWheelOrGestureEvent(FPointerEvent(User, Pointer, At, At, TSet<FKey>(), EKeys::MouseWheelAxis, float(Wheel), Mods), nullptr);
+				TSharedRef<FJsonObject> O = Result(true);
+				O->SetBoolField(TEXT("handled"), bWheelHandled);
+				return O;
+			}
 			// What is under the point and whether the press was taken: a click that only moves the hover shows why here.
 			const FWidgetPath Under = App.LocateWindowUnderMouse(At, App.GetInteractiveTopLevelWindows(), false, User);
 			const FString UnderType = Under.IsValid() ? Under.GetLastWidget()->GetTypeAsString() : FString(TEXT("none"));
-			const bool bPressHandled = App.ProcessMouseButtonDownEvent(Window->GetNativeWindow(), FPointerEvent(User, Pointer, At, At, TSet<FKey>({ Key }), Key, 0.f, Mods));
+			// No platform window: these presses are not the OS mouse, so Slate takes no OS capture for them.
+			const bool bPressHandled = App.ProcessMouseButtonDownEvent(nullptr, FPointerEvent(User, Pointer, At, At, TSet<FKey>({ Key }), Key, 0.f, Mods));
 			const TSharedPtr<SWidget> Captor = App.GetCursorUser().IsValid() ? App.GetCursorUser()->GetCursorCaptor() : nullptr;
-			const FString CaptorType = Captor.IsValid() ? Captor->GetTypeAsString() : FString(TEXT("none"));
+			FString CaptorType = Captor.IsValid() ? Captor->GetTypeAsString() : FString(TEXT("none"));
+			// The button under the point, pressed or not after the press (diagnostic for clicks that do nothing).
+			FString PathTypes;
+			for (int32 I = Under.IsValid() ? Under.Widgets.Num() - 1 : -1, N = 0; I >= 0 && N < 8; --I, ++N)
+			{
+				const TSharedRef<SWidget> W = Under.Widgets[I].Widget;
+				PathTypes += (N ? TEXT(" < ") : TEXT("")) + W->GetTypeAsString();
+				if (W->GetType() == TEXT("SButton")) { PathTypes += StaticCastSharedRef<SButton>(W)->IsPressed() ? TEXT("(pressed)") : TEXT("(not pressed)"); break; }
+			}
 			FVector2D Last = At;
 			for (int32 I = 1; bDrag && I <= Steps; ++I)
 			{
@@ -859,12 +889,20 @@ namespace
 				Last = Now;
 			}
 			App.ProcessMouseButtonUpEvent(FPointerEvent(User, Pointer, To, Last, TSet<FKey>(), Key, 0.f, Mods));
+			// "double": true makes it a double click, as the OS sends one: press, release, double click, release.
+			bool bDouble = false;
+			if (J->TryGetBoolField(TEXT("double"), bDouble) && bDouble && !bDrag)
+			{
+				App.ProcessMouseButtonDoubleClickEvent(nullptr, FPointerEvent(User, Pointer, At, At, TSet<FKey>({ Key }), Key, 0.f, Mods));
+				App.ProcessMouseButtonUpEvent(FPointerEvent(User, Pointer, At, At, TSet<FKey>(), Key, 0.f, Mods));
+			}
 			TSharedRef<FJsonObject> O = Result(true);
 			O->SetArrayField(TEXT("screen"), { MakeShared<FJsonValueNumber>(At.X), MakeShared<FJsonValueNumber>(At.Y) });
 			O->SetBoolField(TEXT("menu_open"), App.AnyMenusVisible());
 			O->SetStringField(TEXT("under"), UnderType);
 			O->SetBoolField(TEXT("handled"), bPressHandled);
 			O->SetStringField(TEXT("captor"), CaptorType);
+			O->SetStringField(TEXT("path"), PathTypes);
 			return O;
 		}
 		// A key press through Slate inside the process, as the keyboard sends it: the studio's shortcuts (Delete, Ctrl+Z, F,
@@ -939,6 +977,8 @@ namespace
 		}
 		// Types into a text field as the keyboard would: the field whose hint (or text) contains "field" takes keyboard
 		// focus, Ctrl+A and Backspace clear it, each character is a key press and "enter" commits (its own handlers run).
+		// A number box (spin box) matches by its value or by the label left of it in its row ("到" in the export
+		// window): its text field shows only while typing, so it is focused as Tab would focus it (U164).
 		if (Op == TEXT("type"))
 		{
 			FString Field, Text;
@@ -949,22 +989,41 @@ namespace
 			bool bEnter = false;
 			J->TryGetBoolField(TEXT("enter"), bEnter);
 			if (Field.IsEmpty() || !FSlateApplication::IsInitialized()) return Result(false, TEXT("field required"));
-			TArray<TSharedRef<SEditableText>> Found;
-			TFunction<void(const TSharedRef<SWidget>&)> Walk = [&](const TSharedRef<SWidget>& W)
+			TArray<TSharedRef<SWidget>> Found;
+			// A row's label: its first slot is (or wraps) a text block holding "field".
+			auto Labels = [&Field](const TSharedRef<SWidget>& Row)
+			{
+				FChildren* Slots = Row->GetChildren();
+				TSharedPtr<SWidget> First = Slots && Slots->Num() > 1 ? Slots->GetChildAt(0) : TSharedPtr<SWidget>();
+				while (First && First->GetType() != TEXT("STextBlock") && First->GetChildren() && First->GetChildren()->Num() == 1) First = First->GetChildren()->GetChildAt(0);
+				return First && First->GetType() == TEXT("STextBlock") && static_cast<const STextBlock&>(*First).GetText().ToString().Contains(Field);
+			};
+			auto IsSpin = [](const SWidget& W) { return W.GetType() == TEXT("SSpinBox<float>") || W.GetType() == TEXT("SOKSpinBox"); };
+			TFunction<void(const TSharedRef<SWidget>&, bool)> Walk = [&](const TSharedRef<SWidget>& W, bool bLabelled)
 			{
 				if (!W->GetVisibility().IsVisible()) return;
+				if (IsSpin(*W))
+				{
+					// Its value as typed or as the box shows it (one decimal: -68.06 shows -68.1).
+					const float Value = static_cast<const SSpinBox<float>&>(*W).GetValue();
+					if (bLabelled || FString::Printf(TEXT("%g"), Value).Contains(Field) || FString::Printf(TEXT("%.1f"), Value).Contains(Field)) Found.Add(W);
+					return;
+				}
 				if (W->GetType() == TEXT("SEditableText"))
 				{
-					const TSharedRef<SEditableText> E = StaticCastSharedRef<SEditableText>(W);
-					if (E->GetHintText().ToString().Contains(Field) || E->GetText().ToString().Contains(Field)) Found.Add(E);
+					const SEditableText& E = static_cast<const SEditableText&>(*W);
+					if (bLabelled || E.GetHintText().ToString().Contains(Field) || E.GetText().ToString().Contains(Field)) Found.Add(W);
 				}
+				if (W->GetType() == TEXT("SHorizontalBox") && Labels(W)) bLabelled = true;
 				FChildren* Children = W->GetChildren();
-				for (int32 I = 0; Children && I < Children->Num(); ++I) Walk(Children->GetChildAt(I));
+				for (int32 I = 0; Children && I < Children->Num(); ++I) Walk(Children->GetChildAt(I), bLabelled);
 			};
-			for (const TSharedRef<SWindow>& Window : UiWindows()) Walk(Window);
+			for (const TSharedRef<SWindow>& Window : UiWindows()) Walk(Window, false);
 			if (!Found.IsValidIndex(Index)) return Result(false, FString::Printf(TEXT("%d fields match"), Found.Num()));
 			FSlateApplication& App = FSlateApplication::Get();
-			App.SetKeyboardFocus(Found[Index], EFocusCause::Mouse);
+			const bool bSpin = IsSpin(*Found[Index]);
+			// The spin box enters its text mode on a direct focus and hands the focus to its text field.
+			App.SetKeyboardFocus(Found[Index], bSpin ? EFocusCause::SetDirectly : EFocusCause::Mouse);
 			auto Key = [&App](const FKey& K, bool bCtrl)
 			{
 				const FModifierKeysState Mods(false, false, bCtrl, false, false, false, false, false, false);
@@ -977,7 +1036,8 @@ namespace
 			if (bEnter) Key(EKeys::Enter, false);
 			TSharedRef<FJsonObject> O = Result(true);
 			O->SetNumberField(TEXT("matches"), Found.Num());
-			O->SetStringField(TEXT("text"), Found[Index]->GetText().ToString());
+			O->SetStringField(TEXT("text"), bSpin ? FString::Printf(TEXT("%g"), static_cast<const SSpinBox<float>&>(*Found[Index]).GetValue())
+				: static_cast<const SEditableText&>(*Found[Index]).GetText().ToString());
 			return O;
 		}
 		// A console command on the game world (cvars, show flags, stat), for diagnosing what the studio draws.
@@ -995,6 +1055,9 @@ namespace
 		{
 			FString Match;
 			J->TryGetStringField(TEXT("match"), Match);
+			// "exact": the part of that name only ("Part_1" alone, not Part_10..19 too).
+			bool bExact = false;
+			J->TryGetBoolField(TEXT("exact"), bExact);
 			bool bHide = false;
 			const bool bSet = J->TryGetBoolField(TEXT("hide"), bHide);
 			// "has_param": only parts whose first material has that parameter; "params": true lists the material's
@@ -1015,7 +1078,7 @@ namespace
 				TInlineComponentArray<UMeshComponent*> Meshes(*It);
 				for (UMeshComponent* Mesh : Meshes)
 				{
-					if (!Match.IsEmpty() && !Mesh->GetName().Contains(Match)) continue;
+					if (!Match.IsEmpty() && (bExact ? Mesh->GetName() != Match : !Mesh->GetName().Contains(Match))) continue;
 					UMaterialInterface* Material = Mesh->GetNumMaterials() ? Mesh->GetMaterial(0) : nullptr;
 					TArray<FMaterialParameterInfo> Scalars, Vectors, Textures;
 					TArray<FGuid> Ids;
@@ -1040,6 +1103,7 @@ namespace
 					X->SetStringField(TEXT("center"), B.Origin.ToString());
 					X->SetNumberField(TEXT("radius"), B.SphereRadius);
 					X->SetBoolField(TEXT("visible"), Mesh->IsVisible());
+					X->SetBoolField(TEXT("main_pass"), Mesh->bRenderInMainPass);
 					if (bParams && Material)
 					{
 						X->SetStringField(TEXT("material"), Material->GetPathName());
@@ -1341,6 +1405,7 @@ namespace
 			O->SetNumberField(TEXT("yaw"), G->Yaw);
 			O->SetNumberField(TEXT("pitch"), G->Pitch);
 			O->SetNumberField(TEXT("distance"), G->Distance);
+			O->SetArrayField(TEXT("clear_view"), { MakeShared<FJsonValueNumber>(G->ClearView.Min.X), MakeShared<FJsonValueNumber>(G->ClearView.Min.Y), MakeShared<FJsonValueNumber>(G->ClearView.Max.X), MakeShared<FJsonValueNumber>(G->ClearView.Max.Y) });
 			return O;
 		}
 		if (Op == TEXT("capture"))

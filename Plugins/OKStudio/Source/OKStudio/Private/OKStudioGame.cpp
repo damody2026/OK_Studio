@@ -291,6 +291,7 @@ void UOKStudioGame::ResetHistory()
 	UndoSelections.Reset();
 	RedoSelections.Reset();
 	HistoryState = Document ? Document->ToJson() : FString();
+	SavedState = HistoryState;
 	HistorySelection = Selection;
 	bHistoryDirty = false;
 }
@@ -353,7 +354,8 @@ void UOKStudioGame::Undo()
 	TArray<int32> Keep;
 	for (int32 Id : EditSelection) if (Document->Find(Id)) Keep.Add(Id);
 	if (Keep.Num()) SelectMany(Keep, Keep.Last());
-	bDirty = true;
+	// Back at the saved document: nothing to save (U130: an add undone still asked to save).
+	bDirty = HistoryState != SavedState;
 }
 
 void UOKStudioGame::Redo()
@@ -365,7 +367,7 @@ void UOKStudioGame::Redo()
 	HistoryState = RedoStack.Pop();
 	HistorySelection = RedoSelections.Num() ? RedoSelections.Pop() : TArray<int32>();
 	RestoreHistory(HistoryState);
-	bDirty = true;
+	bDirty = HistoryState != SavedState;
 }
 
 void UOKStudioGame::Stop()
@@ -411,6 +413,94 @@ void UOKStudioGame::Stop()
 	RemoveFromRoot();
 }
 
+// A map part's top face under the feet and within a step of them: ground to stand on (U146: the courtyard's origin is
+// just off its paving, over nothing).
+static bool OKStandsOnMap(const TArray<FBox>& Parts, const FVector& W)
+{
+	return Parts.ContainsByPredicate([&W](const FBox& B)
+		{ return W.X >= B.Min.X && W.X <= B.Max.X && W.Y >= B.Min.Y && W.Y <= B.Max.Y && FMath::Abs(B.Max.Z - W.Z) <= 25.; });
+}
+
+// The map's parts that stand between the ankles and the head (not the floor, not the walls and ceiling of a room, whose
+// bounds hold all of it).
+static void OKMapFurniture(const TArray<FBox>& Parts, TArray<FBox>& Out)
+{
+	for (const FBox& B : Parts)
+		if (B.GetSize().X < 400. && B.GetSize().Y < 400. && B.Max.Z > 15. && B.Min.Z < 150.) Out.Add(B);
+}
+
+int32 UOKStudioGame::SettleCharactersOnMap()
+{
+	if (!SceneActor || !Document || Document->Map < 0) return 0;
+	TArray<FBox> Parts, Furniture;
+	SceneActor->MapPartBounds(Parts);
+	if (Parts.IsEmpty()) return 0;
+	OKMapFurniture(Parts, Furniture);
+	const FTransform Scene = SceneActor->GetActorTransform();
+	TArray<FVector> Taken;
+	auto Good = [&](const FVector& P)
+	{
+		if (Taken.ContainsByPredicate([&P](const FVector& T) { return FVector::Dist2D(T, P) < 60.f; })) return false;
+		const FVector W = Scene.TransformPosition(P);
+		const FBox Body(W + FVector(-22.f, -22.f, 15.f), W + FVector(22.f, 22.f, 150.f));
+		return OKStandsOnMap(Parts, W) && !Furniture.ContainsByPredicate([&Body](const FBox& B) { return B.Intersect(Body); });
+	};
+	int32 Moved = 0;
+	for (FOKSceneObject& O : Document->Objects)
+	{
+		if (O.Kind != EOKSceneObjectKind::Character || O.Parent >= 0) continue;
+		const FVector P = O.Transform.GetLocation();
+		FVector At = P;
+		bool bFound = Good(P);
+		for (int32 Ring = 1; Ring <= 25 && !bFound; ++Ring)
+			for (int32 A = 0; A < 24 && !bFound; ++A) { At = P + FRotator(0.f, A * 15.f, 0.f).Vector() * (40.f * Ring); bFound = Good(At); }
+		if (!bFound) At = P;
+		else if (!At.Equals(P)) { O.Transform.SetLocation(At); ++Moved; }
+		Taken.Add(At);
+	}
+	if (Moved) Document->NotifyChanged();
+	return Moved;
+}
+
+bool UOKStudioGame::FrameMapStart()
+{
+	// The map's origin, where Studio stands its characters and the first view looks, can be taken: the lighthouse's crow
+	// stands on it (U156: the view opened on the crow's face, the first character beside it). The view then goes to the
+	// nearest free ground, which is also where AddCharacter starts, from a side whose line of sight passes no furniture.
+	if (!SceneActor || !Document || Document->Map < 0) return false;
+	TArray<FBox> Parts, Furniture;
+	SceneActor->MapPartBounds(Parts);
+	if (Parts.IsEmpty()) return false;
+	OKMapFurniture(Parts, Furniture);
+	auto Good = [&](const FVector& W)
+	{
+		const FBox Body(W + FVector(-22.f, -22.f, 15.f), W + FVector(22.f, 22.f, 150.f));
+		return OKStandsOnMap(Parts, W) && !Furniture.ContainsByPredicate([&Body](const FBox& B) { return B.Intersect(Body); });
+	};
+	const FVector P(Focus.X, Focus.Y, 0.f);
+	if (Good(P)) return false;
+	FVector At = P;
+	bool bFound = false;
+	for (int32 Ring = 1; Ring <= 25 && !bFound; ++Ring)
+		for (int32 A = 0; A < 24 && !bFound; ++A) { At = P + FRotator(0.f, A * 15.f, 0.f).Vector() * (40.f * Ring); bFound = Good(At); }
+	if (!bFound) return false;
+	Focus = FVector(At.X, At.Y, Focus.Z);
+	// Seen from the first side whose sight lines to the spot's middle and to its knees cross no furniture.
+	const float Base = Yaw;
+	for (const float Turn : { 0.f, 45.f, -45.f, 90.f, -90.f, 135.f, -135.f, 180.f })
+	{
+		const FVector Eye = Focus - FRotator(Pitch, Base + Turn, 0.f).Vector() * Distance;
+		const FVector Knee(Focus.X, Focus.Y, 40.f);
+		if (!Furniture.ContainsByPredicate([&](const FBox& B)
+			{ return FMath::LineBoxIntersection(B, Eye, Focus, Focus - Eye) || FMath::LineBoxIntersection(B, Eye, Knee, Knee - Eye); }))
+		{
+			Yaw = Base + Turn;
+			break;
+		}
+	}
+	return true;
+}
+
 int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 {
 	const int32 Id = Add(EOKSceneObjectKind::Character);
@@ -422,17 +512,101 @@ int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 		O->Character.FkPartsOff = (1 << 2) | (1 << 3);
 		O->Name = FPaths::GetBaseFilename(Card);
 		// It stands on the floor under the view's focus, beside the characters already there (not inside them): three
-		// cards added in a row are three people side by side, each one moved on from where it came.
+		// cards added in a row are three people side by side, each one moved on from where it came. On a map it also
+		// keeps out of the map's furniture (U127: 教室1-1's origin is inside a desk): the nearest free spot around the
+		// focus, by the bounds of the map's parts that stand between the ankles and the head (not the floor, not the
+		// walls and ceiling of the room, whose bounds hold all of it).
 		const FVector Right = FRotationMatrix(FRotator(0.f, Yaw, 0.f)).GetUnitAxis(EAxis::Y);
-		FVector At(Focus.X, Focus.Y, 0.f);
-		for (int32 Step = 0; Step < 16; ++Step)
+		TArray<FBox> Furniture, MapParts;
+		if (SceneActor)
 		{
-			const bool bTaken = Document->Objects.ContainsByPredicate([this, Id, &At](const FOKSceneObject& X)
-				{ return X.Id != Id && X.Kind == EOKSceneObjectKind::Character && FVector::Dist2D(Document->WorldTransform(X.Id).GetLocation(), At) < 50.f; });
-			if (!bTaken) break;
-			At += Right * 60.f;
+			SceneActor->MapPartBounds(MapParts);
+			OKMapFurniture(MapParts, Furniture);
 		}
+		// Where some spot has ground under it, a spot without is no spot (U146); a map with none found keeps the old rule.
+		bool bNeedGround = MapParts.Num() > 0;
+		const FTransform Scene = SceneActor ? SceneActor->GetActorTransform() : FTransform::Identity;
+		// The characters already there take the room their bones span, and the new one is taken to stand as wide as the
+		// widest of them (U134: 60 cm apart, a T-posed man's arm went through her head).
+		TArray<FBox> People;
+		float HalfWidth = 25.f;
+		for (const FOKSceneObject& X : Document->Objects)
+		{
+			FBox B;
+			if (X.Id == Id || X.Kind != EOKSceneObjectKind::Character || !WorldBounds(X.Id, B)) continue;
+			People.Add(B);
+			HalfWidth = FMath::Max(HalfWidth, float(FMath::Max(B.GetExtent().X, B.GetExtent().Y)));
+		}
+		HalfWidth = FMath::Min(HalfWidth, 120.f);
+		auto Free = [this, Id, &Furniture, &People, &Scene, HalfWidth, &MapParts, &bNeedGround](const FVector& P)
+		{
+			if (bNeedGround && !OKStandsOnMap(MapParts, Scene.TransformPosition(P))) return false;
+			if (Document->Objects.ContainsByPredicate([this, Id, &P](const FOKSceneObject& X)
+				{ return X.Id != Id && X.Kind == EOKSceneObjectKind::Character && FVector::Dist2D(Document->WorldTransform(X.Id).GetLocation(), P) < 50.f; })) return false;
+			const FVector W = Scene.TransformPosition(P);
+			const FBox Reach(W - FVector(HalfWidth, HalfWidth, 0.f), W + FVector(HalfWidth, HalfWidth, 0.f));
+			if (People.ContainsByPredicate([&Reach](const FBox& B) { return B.Min.X < Reach.Max.X && B.Max.X > Reach.Min.X && B.Min.Y < Reach.Max.Y && B.Max.Y > Reach.Min.Y; })) return false;
+			const FBox Body(W + FVector(-22.f, -22.f, 15.f), W + FVector(22.f, 22.f, 150.f));
+			return !Furniture.ContainsByPredicate([&Body](const FBox& B) { return B.Intersect(Body); });
+		};
+		const FVector Start(Focus.X, Focus.Y, 0.f);
+		// Spots beside the others (side by side as before, then rings round each character already there) and rings round
+		// the focus; the free one nearest to both the focus and the nearest character wins (U139: with desks in the way of
+		// the row, the first free step of the row was 7 m off, at the far end of the classroom).
+		TArray<FVector> Others;
+		for (const FOKSceneObject& X : Document->Objects)
+			if (X.Id != Id && X.Kind == EOKSceneObjectKind::Character) Others.Add(Document->WorldTransform(X.Id).GetLocation() * FVector(1.f, 1.f, 0.f));
+		TArray<FVector> Spots;
+		const float Gap = HalfWidth * 2.f + 10.f;
+		for (int32 Step = 0; Step < 6; ++Step) Spots.Add(Start + Right * (Gap * Step));
+		for (const FVector& C : Others)
+			for (int32 Ring = 0; Ring < 8; ++Ring)
+				for (int32 A = 0; A < 16; ++A) Spots.Add(C + FRotator(0.f, Yaw + 90.f + A * 22.5f, 0.f).Vector() * (Gap + 25.f * Ring));
+		for (int32 Ring = 1; Ring <= 10; ++Ring)
+			for (int32 A = 0; A < 16; ++A) Spots.Add(Start + FRotator(0.f, Yaw + 90.f + A * 22.5f, 0.f).Vector() * (40.f * Ring));
+		// In front of or behind the nearest character (along the view) costs extra: one would hide the other (U142).
+		const FVector Ahead = FRotationMatrix(FRotator(0.f, Yaw, 0.f)).GetUnitAxis(EAxis::X);
+		auto Cost = [&Start, &Others, &Ahead](const FVector& P)
+		{
+			double Near = 0., Behind = 0.;
+			if (Others.Num())
+			{
+				Near = TNumericLimits<double>::Max();
+				for (const FVector& C : Others)
+					if (FVector::Dist2D(C, P) < Near) { Near = FVector::Dist2D(C, P); Behind = FMath::Abs(FVector::DotProduct(P - C, Ahead)); }
+			}
+			return FVector::Dist2D(Start, P) + Near + 2. * Behind;
+		};
+		FVector At = Start;
+		bool bFound = false;
+		double Best = TNumericLimits<double>::Max();
+		for (const FVector& P : Spots)
+		{
+			const double C = Cost(P);
+			if (C < Best && Free(P)) { Best = C; At = P; bFound = true; }
+		}
+		if (!bFound && bNeedGround)
+		{
+			bNeedGround = false;
+			for (const FVector& P : Spots)
+			{
+				const double C = Cost(P);
+				if (C < Best && Free(P)) { Best = C; At = P; bFound = true; }
+			}
+		}
+		if (!bFound) At = Start;
+		bLastAddBlocked = !bFound;
 		O->Transform.SetLocation(O->Parent >= 0 ? Document->WorldTransform(O->Parent).InverseTransformPosition(At) : At);
+		// Out of sight (beside the others, past the view's edge or behind a panel): the view moves onto it (halfway left it
+		// out of the picture when the room put it metres away).
+		if (APlayerController* PC = SceneActor && SceneActor->GetWorld() ? SceneActor->GetWorld()->GetFirstPlayerController() : nullptr)
+		{
+			FVector2D Screen, Size(1.0, 1.0);
+			if (GEngine && GEngine->GameViewport) GEngine->GameViewport->GetViewportSize(Size);
+			const bool bShown = PC->ProjectWorldLocationToScreen(Scene.TransformPosition(At + FVector(0.f, 0.f, 90.f)), Screen) && Size.X > 1.0 && Size.Y > 1.0
+				&& ClearView.IsInside(FVector2D(Screen.X / Size.X, Screen.Y / Size.Y));
+			if (!bShown) { Focus.X = At.X; Focus.Y = At.Y; Document->ActiveCamera = -1; }
+		}
 		if (Panel) Panel->RefreshRows();
 		Document->NotifyChanged();
 	}
@@ -512,6 +686,10 @@ bool UOKStudioGame::Save(const FString& Path, FString& OutError)
 	else if (!Document->SaveToFile(Path, OutError)) return false;
 	File = Path;
 	FOKStudioSettings::Get().UseScene(Path);
+	// The history takes the edits made since its last step first: undoing an edit made after saving comes back to
+	// exactly this state (U130: a step not yet recorded at the save left the undo short of it, still unsaved).
+	if (bHistoryDirty) CommitHistory();
+	SavedState = HistoryState;
 	bDirty = false;
 	return true;
 }
@@ -1130,7 +1308,8 @@ FString UOKStudioGame::FfmpegPath()
 	return FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("Tools/ffmpeg/ffmpeg.exe"));
 }
 
-bool UOKStudioGame::EncodeMp4(const FString& FramesDir, float Fps, const FString& OutFile, FString& OutEncoder, FString& OutError)
+bool UOKStudioGame::EncodeMp4(const FString& FramesDir, float Fps, const FString& OutFile, FString& OutEncoder, FString& OutError,
+	const TArray<TPair<FString, bool>>& Audio, float Seconds)
 {
 	const FString Ffmpeg = FfmpegPath();
 	if (!FPaths::FileExists(Ffmpeg)) { OutError = TEXT("ffmpeg 不在 ") + Ffmpeg + TEXT("（第三方工具不進版控：請放一份 LGPL 版 ffmpeg.exe 到 Tools/ffmpeg）"); return false; }
@@ -1143,11 +1322,22 @@ bool UOKStudioGame::EncodeMp4(const FString& FramesDir, float Fps, const FString
 		{ TEXT("libopenh264"), TEXT("-b:v 16M") },
 	};
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(OutFile), true);
+	// The sounds: one input each (looped ones repeat), mixed into one AAC track as long as the frames.
+	FString AudioIn, AudioOut;
+	for (const TPair<FString, bool>& A : Audio) AudioIn += FString::Printf(TEXT(" %s-i \"%s\""), A.Value ? TEXT("-stream_loop -1 ") : TEXT(""), *A.Key);
+	if (Audio.Num() == 1) AudioOut = TEXT(" -map 0:v -map 1:a -c:a aac -b:a 192k");
+	else if (Audio.Num() > 1)
+	{
+		FString Inputs;
+		for (int32 I = 0; I < Audio.Num(); ++I) Inputs += FString::Printf(TEXT("[%d:a]"), I + 1);
+		AudioOut = FString::Printf(TEXT(" -filter_complex \"%samix=inputs=%d:duration=longest[a]\" -map 0:v -map \"[a]\" -c:a aac -b:a 192k"), *Inputs, Audio.Num());
+	}
+	if (!Audio.IsEmpty() && Seconds > 0.f) AudioOut += FString::Printf(TEXT(" -t %.3f"), Seconds);
 	FString Tried;
 	for (const FEncoder& E : Encoders)
 	{
-		const FString Args = FString::Printf(TEXT("-hide_banner -loglevel error -y -framerate %g -i \"%s\" -vf \"pad=ceil(iw/2)*2:ceil(ih/2)*2\" -c:v %s %s -pix_fmt yuv420p -movflags +faststart \"%s\""),
-			Fps, *(FramesDir / TEXT("frame_%05d.png")), E.Name, E.Options, *OutFile);
+		const FString Args = FString::Printf(TEXT("-hide_banner -loglevel error -y -framerate %g -i \"%s\"%s -vf \"pad=ceil(iw/2)*2:ceil(ih/2)*2\" -c:v %s %s -pix_fmt yuv420p%s -movflags +faststart \"%s\""),
+			Fps, *(FramesDir / TEXT("frame_%05d.png")), *AudioIn, E.Name, E.Options, *AudioOut, *OutFile);
 		int32 Code = -1;
 		FString Out, Err;
 		FPlatformProcess::ExecProcess(*Ffmpeg, *Args, &Code, &Out, &Err);
@@ -1163,6 +1353,7 @@ void UOKStudioGame::CancelExport()
 	if (ExportFrame < 0) return;
 	UE_LOG(LogTemp, Display, TEXT("OK studio: export cancelled after %d of %d frames (%s)"), ExportFrame, ExportTotal, *ExportDir);
 	ExportFrame = -1;
+	SetTimelineTime(ExportReturnTime);
 	LastMovieError = TEXT("cancelled");
 }
 
@@ -1171,6 +1362,7 @@ FString UOKStudioGame::ExportFrames(float Fps, int32 Width, int32 Height, bool b
 	bExportMp4 = bMp4;
 	LastMovie.Reset();
 	LastMovieError.Reset();
+	LastMovieNote.Reset();
 	ExportFps = FMath::Clamp(Fps, 1.f, 120.f);
 	ExportWidth = Width; ExportHeight = Height;
 	ExportFrom = FMath::Clamp(From, 0.f, Document->Duration);
@@ -1183,6 +1375,7 @@ FString UOKStudioGame::ExportFrames(float Fps, int32 Width, int32 Height, bool b
 	ExportFrame = 0;
 	bExportShotPending = false;
 	bTimelinePlaying = false;
+	ExportReturnTime = TimelineTime;
 	return ExportDir;
 }
 
@@ -1193,13 +1386,31 @@ void UOKStudioGame::TickExport()
 	if (ExportFrame >= ExportTotal)
 	{
 		ExportFrame = -1;
+		// The playhead goes back to where it was (U158: left at the end, a save kept it there and reopened at 9.97 s).
+		SetTimelineTime(ExportReturnTime);
 		UE_LOG(LogTemp, Display, TEXT("OK studio: exported %d frames to %s"), ExportTotal, *ExportDir);
 		if (bExportMp4)
 		{
 			// The frames become one mp4 beside their folder; the folder goes once the movie is written.
 			const FString Movie = ExportDir + TEXT(".mp4");
 			FString Encoder;
-			if (EncodeMp4(ExportDir, ExportFps, Movie, Encoder, LastMovieError))
+			TArray<TPair<FString, bool>> Audio;
+			if (bExportAudio)
+			{
+				const FOKSceneSound& S = Document->Sound;
+				if (const FString Bgm = BgmFile(); S.bBgmPlay && FPaths::FileExists(Bgm)) Audio.Add({ Bgm, S.bBgmRepeat });
+				if (const FString Outside = OutsideSoundFile(); S.bOutsidePlay && FPaths::FileExists(Outside)) Audio.Add({ Outside, S.bOutsideRepeat });
+			}
+			if (bExportAudio && Audio.IsEmpty()) LastMovieNote = TEXT("沒有播放中的音樂或外部音源，影片無聲");
+			bool bMovie = EncodeMp4(ExportDir, ExportFps, Movie, Encoder, LastMovieError, Audio, ExportTotal / ExportFps);
+			// A sound ffmpeg cannot read still leaves the picture.
+			if (!bMovie && !Audio.IsEmpty())
+			{
+				UE_LOG(LogTemp, Warning, TEXT("OK studio: movie with sound not written (%s), again without"), *LastMovieError);
+				bMovie = EncodeMp4(ExportDir, ExportFps, Movie, Encoder, LastMovieError);
+				if (bMovie) { Encoder += TEXT(", no sound"); LastMovieNote = TEXT("音樂讀不進來，影片無聲"); }
+			}
+			if (bMovie)
 			{
 				LastMovie = Movie;
 				IFileManager::Get().DeleteDirectory(*ExportDir, false, true);
@@ -1213,11 +1424,16 @@ void UOKStudioGame::TickExport()
 	SetTimelineTime(FrameTime);
 	SyncNow();
 	for (const FOKSceneObject& O : Document->Objects) if (O.Kind == EOKSceneObjectKind::Character) SceneActor->SetAnimationTime(O.Id, FrameTime);
+	// What the scene's tick does after this one: items on posed hands and the characters' light for this frame's
+	// keys (U131: each frame showed the light of the one before; the first, of where the playhead had been).
+	SceneActor->PlaceAttached();
+	SceneActor->UpdateItemLighting();
 	FString Error;
 	if (!CaptureToPng(ExportDir / FString::Printf(TEXT("frame_%05d.png"), ExportFrame), ExportWidth, ExportHeight, Error))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("OK studio: frame %d not exported: %s"), ExportFrame, *Error);
 		ExportFrame = -1;
+		SetTimelineTime(ExportReturnTime);
 		return;
 	}
 	++ExportFrame;

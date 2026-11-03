@@ -46,6 +46,8 @@
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeExit.h"
+#include "Styling/StyleDefaults.h"
 #include "OKSceneActor.h"
 #include "OKStudioCatalog.h"
 #include "OKStudioSky.h"
@@ -93,6 +95,48 @@
 #include "Engine/SkinnedAsset.h"
 #include "Components/SkeletalMeshComponent.h"
 
+/**
+ * Number box whose drag suits the field (HS2Studio6's sliders and number fields). SSpinBox spreads a bounded range over
+ * the box's width, at a tenth of that for ranges up to 10: dragging the full width moved a 0~1 weight by a tenth. Here
+ * such a range spans the width (drag to where you want it), after the drag threshold so a click still enters the number.
+ * A range much wider than its step is left unbounded and linear instead (SOKStudioPanel::Spin): one step a pixel.
+ */
+class SOKSpinBox : public SSpinBox<float>
+{
+public:
+	virtual FReply OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override
+	{
+		Travelled = 0.f;
+		// SSpinBox drops the first commit of a drag when the value differs from the one it last saw (it takes that for an
+		// outside change), and it only looks again when it commits: after the selection, an undo or the gizmo changed the
+		// value, the first frame of a drag was lost (and the whole drag when it all comes in one frame, as the control
+		// channel's does). Look at the value now.
+		ResetCachedValueString();
+		return SSpinBox<float>::OnMouseButtonDown(MyGeometry, MouseEvent);
+	}
+	virtual FReply OnMouseMove(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override
+	{
+		// SSpinBox's step for ranges up to 10.
+		constexpr float SmallStep = 0.1f;
+		const float Range = GetMaxValue() - GetMinValue();
+		const FVector2f Moved = MouseEvent.GetCursorDelta();
+		// The move that crosses the threshold goes through as it is, so SSpinBox's own threshold (the same distance) starts its drag.
+		const bool bBefore = Travelled <= FSlateApplication::Get().GetDragTriggerDistance();
+		Travelled += FMath::Abs(Moved.X);
+		if (!HasMouseCapture() || Range <= 0.f || Range > 10.f || bBefore)
+		{
+			return SSpinBox<float>::OnMouseMove(MyGeometry, MouseEvent);
+		}
+		const FVector2f At = MouseEvent.GetScreenSpacePosition();
+		const FPointerEvent Scaled(MouseEvent.GetUserIndex(), MouseEvent.GetPointerIndex(), At, At - Moved / SmallStep,
+			MouseEvent.GetPressedButtons(), MouseEvent.GetEffectingButton(), 0.f, MouseEvent.GetModifierKeys());
+		return SSpinBox<float>::OnMouseMove(MyGeometry, Scaled);
+	}
+
+private:
+	float Travelled = 0.f;
+};
+
 namespace OKStudioPanelText
 {
 	inline const TCHAR* KindTag(EOKSceneObjectKind Kind)
@@ -116,6 +160,15 @@ namespace OKStudioPanelText
 
 	inline const TCHAR* ClothesStateName(uint8 S) { return S == 0 ? TEXT("穿") : (S == 1 ? TEXT("半脫") : TEXT("脫")); }
 }
+
+/** One original card's mods that its open would not find (U102), read off the game thread. */
+struct FOKAbsentModsCheck
+{
+	std::atomic<bool> bDone{false};
+	bool bOk = false;
+	TArray<FString> Absent;
+	FString Error;
+};
 
 class SOKStudioPanel;
 
@@ -274,7 +327,8 @@ public:
 						[Tagged(TEXT("PoseLibraryButton"), IconButton(TEXT("pose"), Tip(TEXT("姿勢庫"), TEXT("app.poselibrary")), Cmd(TEXT("app.poselibrary")), 33.f, 33.f, TAttribute<bool>::CreateLambda([this] { return IsFloatOpen(TEXT("poselib")); })))]
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(0.f, 0.f)).Offset(FMargin(4.f, 458.f, 33.f, 33.f))
 						[Tagged(TEXT("QuickSearchButton"), IconButton(TEXT("search"), Tip(TEXT("快搜"), TEXT("app.quicksearch")), Cmd(TEXT("app.quicksearch")), 33.f, 33.f, TAttribute<bool>::CreateLambda([this] { return IsFloatOpen(TEXT("quick")); })))]
-					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(1.f, 0.f)).Offset(FMargin(Right(1448.9f), 7.f, 313.f, 33.f))[Tagged(TEXT("TopTools"), MakeTopTools())]
+					// One tool wider than HS2Studio6's row: the timeline toggle beside MMD 導演 (U111).
+					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(1.f, 0.f)).Offset(FMargin(Right(1408.9f), 7.f, 353.f, 33.f))[Tagged(TEXT("TopTools"), MakeTopTools())]
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(1.f, 0.f)).Offset(FMargin(Right(1284.9f), 47.f, 240.f, 429.f))
 						[Tagged(TEXT("CharacterGroupPanel"), SNew(SBox).Visibility_Lambda([this] { return bShowGroups ? EVisibility::Visible : EVisibility::Collapsed; })[MakeGroupPanel()])]
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(1.f, 0.f)).Offset(FMargin(Right(1528.9f), 47.f, 240.f, 429.f))
@@ -292,6 +346,7 @@ public:
 			]
 		];
 		RegisterFloats();
+		RegisterActiveTimer(0.25f, FWidgetActiveTimerDelegate::CreateLambda([this](double, float) { UpdateClearView(); return EActiveTimerReturnType::Continue; }));
 		LoadLayout();
 		RebuildSubMenu();
 		RebuildDetailBody();
@@ -350,8 +405,12 @@ public:
 				Game->Document->Map = -1; Game->Document->Post = FOKScenePost(); Game->Document->Sound = FOKSceneSound(); Game->Document->FreeView = FOKSceneCamera(); Game->File.Reset();
 				// The timeline starts over too (the playhead stayed where the last scene was paused).
 				Game->Document->Duration = 10.f; Game->bTimelinePlaying = false; Game->TimelineTime = Game->Document->Playhead = 0.f; Game->LoopStart = Game->LoopEnd = 0.f;
-				SaveAsName = FDateTime::Now().ToString(TEXT("scene_%Y%m%d_%H%M%S")); // not the last scene's name to overwrite
+				// Not the last scene's name to overwrite; the save window names it by the time it opens (U165: a scene
+				// saved minutes later was named by the time it was made).
+				SaveAsName.Reset();
 				Game->Add(EOKSceneObjectKind::Light); Game->Document->NotifyChanged();
+				// The view starts over too (U147: it stayed on the last map's far view, a new character a speck in it).
+				Game->ViewPreset(5);
 				Game->ResetHistory(); Game->bDirty = false;
 			});
 		});
@@ -360,7 +419,8 @@ public:
 			if (Arg.IsEmpty() && !Game->File.IsEmpty() && FOKSceneCard::Kind(Game->File) != FOKSceneCard::EKind::KStudio) { FString E; const bool bOk = Game->Save(Game->File, E); SetStatus(bOk ? TEXT("已存 ") + Game->File : E); return bOk; }
 			return SaveNamed(Arg.IsEmpty() ? FDateTime::Now().ToString(TEXT("scene_%Y%m%d_%H%M%S")) : Arg);
 		});
-		Simple(TEXT("scene.saveas"), TEXT("另存新檔"), [this] { bSceneSaveMode = true; OpenFloat(TEXT("scenes")); });
+		// Save as starts from a new name (the time now), so saving twice keeps both (U165).
+		Simple(TEXT("scene.saveas"), TEXT("另存新檔"), [this] { bSceneSaveMode = true; SaveAsName = FDateTime::Now().ToString(TEXT("scene_%Y%m%d_%H%M%S")); OpenFloat(TEXT("scenes")); });
 		Simple(TEXT("scene.browser"), TEXT("開啟場景"), [this] { bSceneSaveMode = false; OpenFloat(TEXT("scenes"), true); });
 		AddCommand(TEXT("scene.load"), TEXT("讀取"), [this](const FString& Arg) { return !Arg.IsEmpty() && LoadFile(Arg); });
 		AddCommand(TEXT("scene.merge"), TEXT("疊加"), [this](const FString& Arg) { return !Arg.IsEmpty() && OpenScene(Arg, true); });
@@ -510,9 +570,25 @@ public:
 			{
 				O->Light.Type = Arg == TEXT("spot") ? EOKSceneLightType::Spot : Arg == TEXT("point") ? EOKSceneLightType::Point : Arg == TEXT("area") ? EOKSceneLightType::Area : EOKSceneLightType::Directional;
 				O->Name = Arg == TEXT("spot") ? TEXT("聚光") : Arg == TEXT("point") ? TEXT("點光") : Arg == TEXT("area") ? TEXT("面光") : TEXT("方向光");
+				// A light with a place comes in front of the view, a little above what it looks at and aimed at it (U109: it
+				// stood at (0, 0, 300), out of sight and away from the character). A directional light keeps its sun angle.
+				if (O->Light.Type != EOKSceneLightType::Directional)
+				{
+					const FVector Dir = FRotator(Game->Pitch, Game->Yaw, 0.f).Vector();
+					const FVector At = Game->Focus - Dir * FMath::Min(Game->Distance * 0.5f, 150.f) + FVector(0.f, 0.f, 60.f);
+					const FTransform Parent = O->Parent >= 0 ? Game->Document->WorldTransform(O->Parent) : FTransform::Identity;
+					O->Transform = FTransform(Parent.InverseTransformRotation((Game->Focus - At).Rotation().Quaternion()), Parent.InverseTransformPosition(At));
+				}
+				// A point or spot light as Studio adds one (intensity 1, which an imported scene's lights become as 800): the
+				// directional light's 4 (UOKStudioGame::Add) left it too weak to light a map at all (U115).
+				if (O->Light.Type == EOKSceneLightType::Point || O->Light.Type == EOKSceneLightType::Spot) O->Light.Intensity = 800.f;
 				Game->Document->NotifyChanged();
 			}
 			AddedStatus();
+			// Toon characters take one directional light only (KKS's character shaders have no ForwardAdd pass): say so,
+			// since nothing on the character changes when one of these is added (U115).
+			if (const FOKSceneObject* O = Obj(); O && O->Light.Type != EOKSceneLightType::Directional)
+				SetStatus(FString::Printf(TEXT("加入燈光 %s（照地圖；角色與卡通道具和原作一樣只受方向光影響）"), *O->Name));
 			return true;
 		});
 		Simple(TEXT("add.camera"), TEXT("相機"), [this] { Game->CameraFromView(); AddedStatus(); });
@@ -660,6 +736,7 @@ public:
 			return true;
 		});
 		Simple(TEXT("transform.reset"), TEXT("重設變換"), [this] { for (int32 Id : Game->Selection) if (FOKSceneObject* O = Game->Document->Find(Id)) O->Transform = FTransform::Identity; Changed(); });
+		Simple(TEXT("transform.face"), TEXT("面向對方"), [this] { FaceEachOther(); });
 		// Timeline.
 		Simple(TEXT("timeline.key"), TEXT("打 key"), [this] { if (TimelineView) TimelineView->KeySelection(); else for (int32 Id : Game->Selection) Game->Document->SetKey(Id, Game->TimelineTime); });
 		Simple(TEXT("timeline.scenekey"), TEXT("場景 key"), [this]
@@ -667,6 +744,21 @@ public:
 			Game->Document->SetKey(UOKSceneDocument::SceneTrackId, Game->TimelineTime);
 			const FOKSceneObject* Cam = Game->Document->Find(Game->Document->ActiveCamera);
 			SetStatus(FString::Printf(TEXT("場景 key %.2f 秒：曝光、對焦距離、鏡頭（%s）"), Game->TimelineTime, Cam ? *Cam->Name : TEXT("自由視角")));
+		});
+		// A cut in one step (U120): a scene key at the play head that cuts to this view (-1 free view, a camera id), and the
+		// view goes there. It took 選相機、用此相機、場景 key for each cut.
+		AddCommand(TEXT("timeline.cutkey"), TEXT("在播放頭切鏡頭"), [this](const FString& Arg)
+		{
+			const int32 Camera = FCString::Atoi(*Arg);
+			const FOKSceneObject* Cam = Game->Document->Find(Camera);
+			if (Camera < -1 || (Camera >= 0 && (!Cam || Cam->Kind != EOKSceneObjectKind::Camera))) return false;
+			Game->Document->ActiveCamera = Camera;
+			Game->Document->SetKey(UOKSceneDocument::SceneTrackId, Game->TimelineTime);
+			if (FOKSceneKey* K = Game->Document->KeyAt(UOKSceneDocument::SceneTrackId, Game->TimelineTime)) K->Camera = Camera;
+			Changed();
+			Game->SetTimelineTime(Game->TimelineTime);
+			SetStatus(FString::Printf(TEXT("%.2f 秒切到 %s"), Game->TimelineTime, Cam ? *Cam->Name : TEXT("自由視角")));
+			return true;
 		});
 		// The view the selected scene keys cut to (else the scene key at the play head): -2 none, -1 free view, a camera id.
 		AddCommand(TEXT("timeline.cut"), TEXT("鏡頭 key"), [this](const FString& Arg)
@@ -890,7 +982,7 @@ public:
 			if (!W->GetVisibility().IsVisible()) return;
 			const TSharedPtr<FTagMetaData> Tag = W->GetMetaData<FTagMetaData>();
 			const FName Type = W->GetType();
-			const bool bLeaf = Type == TEXT("SButton") || Type == TEXT("STextBlock") || Type == TEXT("SSpinBox<float>") || Type == TEXT("SEditableTextBox") || Type == TEXT("SCheckBox") || Type.ToString().StartsWith(TEXT("SListView"));
+			const bool bLeaf = Type == TEXT("SButton") || Type == TEXT("STextBlock") || Type == TEXT("SSpinBox<float>") || Type == TEXT("SOKSpinBox") || Type == TEXT("SEditableTextBox") || Type == TEXT("SCheckBox") || Type.ToString().StartsWith(TEXT("SListView"));
 			FString Here = Path;
 			if (Tag) Here = Path.IsEmpty() ? Tag->Tag.ToString() : Path + TEXT("/") + Tag->Tag.ToString();
 			if (Tag || bLeaf)
@@ -903,7 +995,7 @@ public:
 					N->SetStringField(TEXT("path"), Tag ? Here : Here + TEXT("/") + Type.ToString());
 					N->SetNumberField(TEXT("d"), Depth);
 					const FString Kind = Type == TEXT("SButton") ? TEXT("Button") : Type == TEXT("STextBlock") ? TEXT("Text") : Type == TEXT("SCheckBox") ? TEXT("Toggle")
-						: Type == TEXT("SEditableTextBox") || Type == TEXT("SSpinBox<float>") ? TEXT("InputField") : Type.ToString().StartsWith(TEXT("SListView")) ? TEXT("ScrollRect") : TEXT("Rect");
+						: Type == TEXT("SEditableTextBox") || Type == TEXT("SSpinBox<float>") || Type == TEXT("SOKSpinBox") ? TEXT("InputField") : Type.ToString().StartsWith(TEXT("SListView")) ? TEXT("ScrollRect") : TEXT("Rect");
 					N->SetStringField(TEXT("kind"), Kind);
 					TArray<TSharedPtr<FJsonValue>> R;
 					for (double V : { P.X, P.Y, S.X, S.Y }) R.Add(MakeShared<FJsonValueNumber>(FMath::RoundToDouble(V * 10.) / 10.));
@@ -999,13 +1091,14 @@ public:
 		struct FTool { const TCHAR* Label; const TCHAR* Command; TFunction<bool()> On; const TCHAR* Icon; };
 		const FTool Tools[] = {
 			{ TEXT("角色分組"), TEXT("toggle.groups"), [this] { return bShowGroups; }, TEXT("groups") },
-			{ TEXT("MMD 導演／設定"), TEXT("toggle.mmd"), [this] { return IsFloatOpen(TEXT("mmd")); }, TEXT("play") },
+			{ TEXT("MMD 導演／設定"), TEXT("toggle.mmd"), [this] { return IsFloatOpen(TEXT("mmd")); }, TEXT("mmd") },
+			{ TEXT("時間軸"), TEXT("toggle.timeline"), [this] { return IsFloatOpen(TEXT("timeline")); }, TEXT("timeline") },
 			{ TEXT("主選單"), TEXT("toggle.root"), [this] { return bShowRoot; }, TEXT("menu") },
 			{ TEXT("工作區"), TEXT("toggle.workspace"), [this] { return bShowWorkspace; }, TEXT("tree") },
 			{ TEXT("變換列"), TEXT("toggle.transform"), [this] { return bShowTransform; }, TEXT("move") },
 			{ TEXT("畫面設定"), TEXT("page.scene"), [this] { return Page == EPage::Scene; }, TEXT("color") },
 			{ TEXT("屬性"), TEXT("page.object"), [this] { return Page == EPage::Object; }, TEXT("options") },
-			{ TEXT("相機"), TEXT("page.camera"), [this] { return Page == EPage::Camera; }, TEXT("camera") },
+			{ TEXT("相機設定"), TEXT("page.camera"), [this] { return Page == EPage::Camera; }, TEXT("camera") },
 		};
 		TSharedRef<SHorizontalBox> Box = SNew(SHorizontalBox);
 		for (int32 I = 0; I < UE_ARRAY_COUNT(Tools); ++I)
@@ -1025,9 +1118,10 @@ public:
 		using namespace OKStudioStyle;
 		struct FTool { const TCHAR* Icon; const TCHAR* Label; const TCHAR* Command; };
 		const FTool Row1[] = { { TEXT("root"), TEXT("移到根層"), TEXT("edit.root") }, { TEXT("copy"), TEXT("複製物件"), TEXT("edit.duplicate") }, { TEXT("delete"), TEXT("刪除"), TEXT("edit.delete") },
-			{ TEXT("folder"), TEXT("加資料夾"), TEXT("add.folder") }, { TEXT("camera"), TEXT("從視角建相機"), TEXT("camera.fromview") }, { TEXT("frame"), TEXT("用此相機"), TEXT("camera.use") }, { TEXT("options"), TEXT("屬性"), TEXT("page.object") } };
+			{ TEXT("folder_add"), TEXT("加資料夾物件（把物件分組；開場景檔是旁邊的「開啟場景」）"), TEXT("add.folder") }, { TEXT("open"), TEXT("開啟場景"), TEXT("scene.browser") }, { TEXT("camera_add"), TEXT("加入相機（從目前視角）"), TEXT("camera.fromview") }, { TEXT("frame"), TEXT("用此相機"), TEXT("camera.use") }, { TEXT("options"), TEXT("屬性"), TEXT("page.object") } };
 		TSharedRef<SHorizontalBox> Tools = SNew(SHorizontalBox);
-		for (const FTool& T : Row1) Tools->AddSlot().AutoWidth().Padding(0.f, 0.f, 4.f, 0.f)[IconButton(T.Icon, Tip(T.Label, T.Command), Cmd(T.Command), 28.f, 28.f)];
+		// Eight tools in the 240 wide panel (U130 added 開啟場景): 26 + 3 each.
+		for (const FTool& T : Row1) Tools->AddSlot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)[IconButton(T.Icon, Tip(T.Label, T.Command), Cmd(T.Command), 26.f, 26.f)];
 		static const TCHAR* FilterIcons[] = { TEXT("tree"), TEXT("folder"), TEXT("chara"), TEXT("frame"), TEXT("light"), TEXT("camera"), TEXT("effect") };
 		return SNew(SBorder).BorderImage(Brush(Panel())).Padding(0.f)
 		[
@@ -1139,7 +1233,7 @@ public:
 				[SNew(SEditableTextBox).Font(Font(10.f)).HintText(FText::FromString(TEXT("搜尋分組／部位"))).OnTextChanged_Lambda([this](const FText& T) { GroupSearch = T.ToString(); DeferGroups(); })]
 			]
 			+ SVerticalBox::Slot().AutoHeight().Padding(7.f, 3.f, 0.f, 0.f)
-			[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("10 個分組 · %d 個部位；先選道具再選部位"), FOKStudioCatalog::Get().AccessoryPoints.Num())), 10.f, TextHint())]
+			[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("10 個分組 · %d 個部位；選道具後雙擊部位掛上"), FOKStudioCatalog::Get().AccessoryPoints.Num())), 10.f, TextHint())]
 		];
 	}
 
@@ -1192,7 +1286,18 @@ public:
 					[
 						OKStudioStyle::Fill(TAttribute<bool>::CreateLambda([this, Key] { return GroupPoint == Key; }), FLinearColor::Transparent, SNew(SButton).ButtonStyle(&OKStudioStyle::FlatButton()).ContentPadding(FMargin(4.f, 0.f))
 						.OnClicked_Lambda([this, Key] { GroupPoint = GroupPoint == Key ? FString() : Key; return FReply::Handled(); })
-						[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("%s（%s）"), *P->Name, *P->Key)), 10.f, TextSoft())])
+						[
+							// A double click hangs the selected object there at once (U114: pick the part, then 掛到所選部位).
+							SNew(SBorder).BorderImage(FStyleDefaults::GetNoBrush()).Padding(0.f)
+							.OnMouseDoubleClick_Lambda([this, Key](const FGeometry&, const FPointerEvent& E)
+							{
+								if (E.GetEffectingButton() != EKeys::LeftMouseButton) return FReply::Unhandled();
+								GroupPoint = Key;
+								if (!AttachToPoint(Key)) SetStatus(TEXT("先選要掛的道具（或燈光、相機），再雙擊部位"));
+								return FReply::Handled();
+							})
+							[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("%s（%s）"), *P->Name, *P->Key)), 10.f, TextSoft())]
+						])
 					]
 				];
 			}
@@ -1230,7 +1335,8 @@ public:
 				[
 					SNew(SBox).WidthOverride(51.f).HeightOverride(15.f)
 					[
-						SNew(SSpinBox<float>).Style(&SpinStyle()).Font(Font(11.f)).MinValue(Row == 2 ? 0.01f : -100000.f).MaxValue(100000.f).Delta(Row == 1 ? 1.f : (Row == 2 ? 0.01f : 1.f))
+						// Unbounded and linear: 1 cm, 1 degree, 0.01 a pixel (SetTransformValue keeps the scale above 0).
+						SNew(SOKSpinBox).Style(&SpinStyle()).Font(Font(11.f)).LinearDeltaSensitivity(1).Delta(Row == 1 ? 1.f : (Row == 2 ? 0.01f : 1.f))
 						// Nothing selected: the identity (scale 1, as HS2Studio6 shows), not editable.
 						.Value_Lambda([this, Row, Axis] { const FOKSceneObject* O = Obj(); return O ? TransformValue(O->Transform, Row, Axis) : (Row == 2 ? 1.f : 0.f); })
 						.IsEnabled_Lambda([this] { return Obj() != nullptr; })
@@ -1255,6 +1361,11 @@ public:
 				+ SVerticalBox::Slot().AutoHeight()[Button(FText::FromString(TEXT("複製變換")), Cmd(TEXT("transform.copy")), 70.f, 16.f, false, 10.f)]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)[Button(FText::FromString(TEXT("貼上變換")), Cmd(TEXT("transform.paste")), 70.f, 16.f, false, 10.f)]
 				+ SVerticalBox::Slot().AutoHeight()[Button(FText::FromString(TEXT("重設變換")), Cmd(TEXT("transform.reset")), 70.f, 16.f, false, 10.f)]
+			]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 0.f, 0.f)
+			[
+				SNew(SBox).ToolTipText(FText::FromString(TEXT("所選角色轉向最近的另一個角色；選兩個角色時兩人面對面")))
+				[Button(FText::FromString(TEXT("面向\n對方")), Cmd(TEXT("transform.face")), 34.f, 52.f, false, 10.f)]
 			]
 			+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 0.f, 0.f)
 			[
@@ -1314,7 +1425,8 @@ public:
 		case EPage::State: return FMargin(134.f, 7.f, 252.f, 326.f);
 		case EPage::Bones: return FMargin(134.f, 7.f, 320.f, 390.f);
 		case EPage::Anim: return FMargin(135.f, 10.f, 446.f, 370.f);
-		case EPage::ItemAdd: return FMargin(134.f, 7.f, 274.f, 234.f);
+		// Larger than HS2Studio6's 274 x 234 (U137: the third column cut every item name).
+		case EPage::ItemAdd: return FMargin(134.f, 7.f, 440.f, 400.f);
 		case EPage::LightAdd: return FMargin(142.f, 36.f, 210.f, 192.f);
 		case EPage::CharLoader: case EPage::Files: return FMargin(142.f, 36.f, 620.f, 420.f);
 		case EPage::Scene: return FMargin(142.f, 36.f, 480.f, 326.f);
@@ -1367,7 +1479,7 @@ public:
 	{
 		using namespace OKStudioStyle;
 		if (!DetailBody) return;
-		TSharedRef<SWidget> Area = SNew(SScrollBox).ScrollBarThickness(FVector2D(4.f, 4.f)) + SScrollBox::Slot().Padding(3.f, 0.f)[SAssignNew(Props, SVerticalBox)];
+		TSharedRef<SWidget> Area = SAssignNew(PropsScroll, SScrollBox).ScrollBarThickness(FVector2D(4.f, 4.f)) + SScrollBox::Slot().Padding(3.f, 0.f)[SAssignNew(Props, SVerticalBox)];
 		if (Page == EPage::Scene)
 		{
 			// 畫面設定: tabs down the left (camera, environment / sky, fog, bloom, depth of field, tone / LUT, vignette, background / frame).
@@ -1407,6 +1519,22 @@ public:
 	double LayoutSavedAt = 0.;
 	void AddFloat(const FString& Id, const FString& Title, const FMargin& Rect, TFunction<TSharedRef<SWidget>()> Build);
 	void RegisterFloats();
+	/** The scene's time of day: the scene's own sky (the 0..3 time skies) follows it, and the status line says what it
+	 *  does on the map (U128). */
+	void SetSunType(int32 Time)
+	{
+		if (!Game.IsValid()) return;
+		FOKScenePost& P = Game->Document->Post;
+		P.SunType = Time;
+		if (P.bSky && P.SkyPattern >= 0 && P.SkyPattern <= 3) P.SkyPattern = FMath::Clamp(Time, 0, 3);
+		Changed();
+		Game->SyncDocumentNow();
+		static const TCHAR* Names[] = { TEXT("朝"), TEXT("昼"), TEXT("夕"), TEXT("夜") };
+		const FString Note = Game->SceneActor ? Game->SceneActor->MapTimeNote() : FString();
+		SetStatus(FString::Printf(TEXT("時段：%s"), Names[FMath::Clamp(Time, 0, 3)]) + (Note.IsEmpty() ? FString() : TEXT("（") + Note + TEXT("）")));
+	}
+	/** Tells the game the largest part of the view no panel covers (framing centres there, U123). */
+	void UpdateClearView();
 	void OpenFloat(const FString& Id, bool bToggle = false);
 	void CloseFloat(const FString& Id);
 	/** The add lists open in one place beside the menus (HS2Studio6 shows one at a time): a new one replaces the others. */
@@ -1514,6 +1642,7 @@ public:
 	/** The card browser's path row (U50): folders visited before and after the current one. */
 	TArray<FString> CardBack, CardForward;
 	void GoCardFolder(const FString& Folder);
+	TArray<FString> RecentCardFolders() const;
 	TArray<FString> CardRoots() const;
 	void ScanCardFolder();
 	TSharedRef<SWidget> BuildCardBrowser();
@@ -1567,10 +1696,13 @@ public:
 	bool IkPartOn(int32 Part) const { const FOKSceneObject* O = Obj(); return !O || O->Character.IkPartOn(Part); }
 	FString BoneSearch;
 	TSet<FString> OpenBones;
-	struct FPosePoint { FVector2D At = FVector2D::ZeroVector; int32 Ik = -1; FString Bone; bool bParent = false; FVector2D Parent = FVector2D::ZeroVector; bool bOn = false; };
+	/** Rank: an FK point's weight (FkPointRank): 2 a limb, 1 the trunk, neck or head, 0 the rest (fingers, hair, skirt...). */
+	struct FPosePoint { FVector2D At = FVector2D::ZeroVector; int32 Ik = -1; FString Bone; bool bParent = false; FVector2D Parent = FVector2D::ZeroVector; bool bOn = false; int32 Rank = 2; };
+	static int32 FkPointRank(const FString& Bone);
 	bool IsPoseMode() const;
 	bool PosePoints(TArray<FPosePoint>& Out) const;
-	bool PickPosePoint(const FVector2D& At);
+	/** Picks the pose point under At (within Within pixels; below 0: the point size). */
+	bool PickPosePoint(const FVector2D& At, double Within = -1.);
 	bool LookPointScreen(FVector2D& Out) const;
 	void DragLookPoint(const FVector2D& Delta);
 	bool MirrorPose(FOKSceneObject& X, int32 Mode);
@@ -1612,8 +1744,14 @@ public:
 	TSharedPtr<SOKStudioTimeline> TimelineView;
 	TSharedRef<SWidget> BuildTimeline();
 	void ShowEaseMenu(const FVector2D& At);
+	/** The views a cut at the play head can go to (timeline.cutkey). */
+	void ShowCutMenu(const FVector2D& At);
 	float ExportFromT = 0.f, ExportToT = -1.f, ExportFpsV = 30.f;
 	int32 ExportW = 1920, ExportH = 1080, ExportKind = 0;
+	/** The export window's choices kept in the settings (U136). */
+	bool bExportChoicesRead = false;
+	void ReadExportChoices();
+	void WriteExportChoices();
 	FString ExportFolderText;
 	TSharedRef<SWidget> BuildExport();
 	TSharedRef<SWidget> BuildMmdDirector();
@@ -1626,6 +1764,10 @@ public:
 	bool bResourcesSelectedOnly = false;
 	/** The resource check's lines as last built (the control channel's ui.resources). */
 	TArray<FString> ResourcesShown;
+	/** The resource check's per-card answer of which named mods are missing (FOkSession::AbsentCardMods), by card path;
+	 *  dropped by 重新檢查. Waiting: some check is still running and the window is rebuilt when it finishes. */
+	TMap<FString, TSharedPtr<FOKAbsentModsCheck, ESPMode::ThreadSafe>> AbsentModChecks;
+	bool bAbsentModsWaiting = false;
 	/** The scene browser's page (100 scenes a page). */
 	int32 ScenePage = 0;
 	int32 SceneSort = 0;
@@ -1690,6 +1832,7 @@ public:
 	/** The selected item's exports: "uv" (the picked renderer's UV layout PNG), "obj" (every renderer), "textures". */
 	bool ExportMaterial(const FString& What);
 	TPair<int32, int32> MaterialShown = { -2, 0 }; // selection and its part count the window shows
+	const AKKPreviewActor* MaterialShownActor = nullptr; // the item build it shows (a shader edit or reset builds a new one)
 	FString AnimCtlShown; // selection and animation parameters the animation controller shows
 	int32 VoiceGroupPick = 0, VoiceCategoryPick = 0, VoiceListPick = -1; // the voice window's browsed personality / category and picked list entry
 	FString VoiceShown; // what the voice window shows (selection, browsing, the list)
@@ -1711,6 +1854,36 @@ public:
 	TSharedPtr<SVerticalBox> GroupList;
 	EPage Page = EPage::None;
 	int32 BonePage = 0;
+	/** The detail window's scroll box, and what it showed when last rebuilt (RebuildProperties keeps its offset). */
+	TSharedPtr<SScrollBox> PropsScroll;
+	FString PropsScrollKey;
+	/** A clicked list row kept in place across the rebuild it causes: its key, its top in the scroll box before, and the
+	 *  row built again for that key. Rows above it can change height (U113), so the offset alone did not keep it. */
+	FString PlacedRowKey;
+	float PlacedRowTop = -1.f;
+	TWeakPtr<SWidget> PlacedRow;
+	void RememberRowPlace(const TSharedPtr<SWidget>& Row, const FString& Key)
+	{
+		if (!Row || !PropsScroll) return;
+		PlacedRowKey = Key;
+		PlacedRowTop = PropsScroll->GetCachedGeometry().AbsoluteToLocal(Row->GetCachedGeometry().GetAbsolutePosition()).Y;
+		// Two frames on, the new row has been laid out: scroll by how far it moved.
+		TSharedRef<int32> Frames = MakeShared<int32>(0);
+		RegisterActiveTimer(0.f, FWidgetActiveTimerDelegate::CreateLambda([this, Frames](double, float)
+		{
+			if (++*Frames < 3) return EActiveTimerReturnType::Continue;
+			const TSharedPtr<SWidget> Now = PlacedRow.Pin();
+			if (Now && PropsScroll && PlacedRowTop >= 0.f)
+			{
+				const float Top = PropsScroll->GetCachedGeometry().AbsoluteToLocal(Now->GetCachedGeometry().GetAbsolutePosition()).Y;
+				PropsScroll->SetScrollOffset(PropsScroll->GetScrollOffset() + Top - PlacedRowTop);
+			}
+			PlacedRowKey.Reset();
+			PlacedRowTop = -1.f;
+			PlacedRow.Reset();
+			return EActiveTimerReturnType::Stop;
+		}));
+	}
 	int32 RootMenu = -1;
 	int32 LoaderCard = 0;
 	int32 LastCharacter = -1;
@@ -1978,11 +2151,16 @@ public:
 		return Help;
 	}
 	/** Number box in the theme: drag to change, click to type. Dragging counts as one undo step. */
+	/** Many more steps than the box has pixels (positions, distances): SSpinBox spreads a bounded range over the width, so
+	 *  such a field jumps hundreds a pixel. Unbounded with a linear sensitivity it moves one step a pixel; the setter clamps. */
+	static bool WideRange(float Min, float Max, float Delta) { return Delta > 0.f && Max - Min > 400.f * Delta; }
 	TSharedRef<SWidget> Spin(TFunction<float()> Get, TFunction<void(float)> Set, float Min, float Max, float Delta)
 	{
-		return SNew(SSpinBox<float>).Style(&OKStudioStyle::SpinStyle()).Font(OKStudioStyle::Font(10.f)).MinValue(Min).MaxValue(Max).Delta(Delta).MaxFractionalDigits(3)
+		const bool bWide = WideRange(Min, Max, Delta);
+		return SNew(SOKSpinBox).Style(&OKStudioStyle::SpinStyle()).Font(OKStudioStyle::Font(10.f)).Delta(Delta).MaxFractionalDigits(3)
+			.MinValue(bWide ? TOptional<float>() : TOptional<float>(Min)).MaxValue(bWide ? TOptional<float>() : TOptional<float>(Max)).LinearDeltaSensitivity(bWide ? 1 : 0)
 			.Value_Lambda([Get] { return Get(); })
-			.OnValueChanged_Lambda([Set](float V) { Set(V); })
+			.OnValueChanged_Lambda([Set, Min, Max](float V) { Set(FMath::Clamp(V, Min, Max)); })
 			.OnBeginSliderMovement_Lambda([this] { if (Game.IsValid()) Game->bUserDragging = true; })
 			.OnEndSliderMovement_Lambda([this](float) { if (Game.IsValid()) Game->bUserDragging = false; });
 	}
@@ -2106,9 +2284,11 @@ public:
 		if (!NamedOptions.Contains(ListName)) NamedOptions.Add(ListName, MakeShared<TArray<TSharedPtr<int32>>>());
 		TArray<TSharedPtr<int32>>& Options = NamedOptions[ListName].Get();
 		if (Options.Num() != Count + 1) { Options.Reset(); for (int32 I = -1; I < Count; ++I) Options.Add(MakeShared<int32>(I)); }
-		Row(Name, Combo(&Options, Show, [this, Get] { FOKSceneObject* O = Obj(); return O ? Get(*O) : -1; }, [this, Set](int32 V) { if (FOKSceneObject* O = Obj()) { Set(*O, V); Changed(); } }));
+		// The status line says what was set (U119: the face is often out of sight).
+		auto Report = [this, Name, Show](const FOKSceneObject& O, int32 V) { SetStatus(FString::Printf(TEXT("%s %s：%s"), *O.Name, *Name, *Show(V))); };
+		Row(Name, Combo(&Options, Show, [this, Get] { FOKSceneObject* O = Obj(); return O ? Get(*O) : -1; }, [this, Set, Report](int32 V) { if (FOKSceneObject* O = Obj()) { Set(*O, V); Report(*O, V); Changed(); } }));
 		// HS2Studio6's pattern pages: previous / next (wrapping, -1 is the card's or animation's own) and "current / total".
-		auto Step = [this, Get, Set, Count](int32 By) { if (FOKSceneObject* O = Obj()) { Set(*O, (Get(*O) + 1 + By + Count + 1) % (Count + 1) - 1); Changed(); } };
+		auto Step = [this, Get, Set, Count, Report](int32 By) { if (FOKSceneObject* O = Obj()) { const int32 V = (Get(*O) + 1 + By + Count + 1) % (Count + 1) - 1; Set(*O, V); Report(*O, V); Changed(); } };
 		Props->AddSlot().AutoHeight().Padding(0.f, 1.f)
 		[
 			SNew(SHorizontalBox)
@@ -2124,6 +2304,23 @@ public:
 	void RebuildProperties()
 	{
 		if (!Props) return;
+		// The rows stay where they were scrolled while the page and the selection are the same (U108: picking a bone far
+		// down the list rebuilt the rows and showed the top again); another page or object starts at the top.
+		const FString ScrollKey = FString::Printf(TEXT("%d|%d|%d|%d"), int32(Page), BonePage, SceneTab, Game.IsValid() ? Game->SelectedId : -1);
+		const float KeepScroll = PropsScroll && ScrollKey == PropsScrollKey ? PropsScroll->GetScrollOffset() : 0.f;
+		PropsScrollKey = ScrollKey;
+		// Set again a frame later: the scroll box clamps the offset to the rows it measured last, fewer while rebuilding.
+		ON_SCOPE_EXIT
+		{
+			if (!PropsScroll) return;
+			PropsScroll->SetScrollOffset(KeepScroll);
+			if (KeepScroll <= 0.f) return;
+			RegisterActiveTimer(0.f, FWidgetActiveTimerDelegate::CreateLambda([Weak = TWeakPtr<SScrollBox>(PropsScroll), KeepScroll](double, float)
+			{
+				if (const TSharedPtr<SScrollBox> Box = Weak.Pin()) Box->SetScrollOffset(KeepScroll);
+				return EActiveTimerReturnType::Stop;
+			}));
+		};
 		Props->ClearChildren();
 		switch (Page)
 		{
@@ -2596,7 +2793,7 @@ public:
 		[
 			SNew(SBox).HeightOverride(18.f)
 			[
-				SNew(SEditableTextBox).Style(&TextBoxStyle()).HintText(FText::FromString(TEXT("搜尋道具（空格＝且，-詞＝排除）"))).Text(FText::FromString(ItemSearch))
+				SNew(SEditableTextBox).Style(&TextBoxStyle()).HintText(FText::FromString(TEXT("搜尋道具（Enter；空格＝且，-詞＝排除）"))).Text(FText::FromString(ItemSearch))
 				.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type) { ItemSearch = T.ToString(); DeferRebuild(); })
 			]
 		];
@@ -2620,7 +2817,7 @@ public:
 		else for (const FOKStudioCatalogItem* I : C.ItemsIn(BrowseGroup, BrowseCategory)) ItemOptions.Add(MakeShared<int32>(int32(I - C.Items.GetData())));
 		auto Column = [this](float Width, TArray<TSharedPtr<int32>>* Options, TFunction<FString(int32)> Name, TFunction<bool(int32)> IsOn, TFunction<void(int32)> Pick)
 		{
-			return SNew(SBox).WidthOverride(Width).HeightOverride(176.f)
+			return SNew(SBox).WidthOverride(Width).HeightOverride(330.f)
 			[
 				SNew(SBorder).BorderImage(Brush(ListArea())).Padding(1.f)
 				[
@@ -2641,7 +2838,7 @@ public:
 		auto GroupName = [](int32 Id) { const FOKStudioCatalogGroup* G = FOKStudioCatalog::Get().Groups.FindByPredicate([Id](const FOKStudioCatalogGroup& X) { return X.Id == Id; }); return G ? G->Name : FString(); };
 		auto CategoryName = [this](int32 Id) { const int32 Group = BrowseGroup; const FOKStudioCatalogGroup* G = FOKStudioCatalog::Get().Categories.FindByPredicate([Id, Group](const FOKStudioCatalogGroup& X) { return X.Id == Id && X.Group == Group; }); return G ? G->Name : FString(); };
 		// The item column: hover for the name and a picture, left click adds, middle click adds under the selection.
-		TSharedRef<SWidget> Items = SNew(SBox).WidthOverride(ItemSearch.IsEmpty() ? 102.f : 264.f).HeightOverride(176.f)
+		TSharedRef<SWidget> Items = SNew(SBox).WidthOverride(ItemSearch.IsEmpty() ? 226.f : 420.f).HeightOverride(330.f)
 		[
 			SNew(SBorder).BorderImage(Brush(ListArea())).Padding(1.f)
 			[
@@ -2665,7 +2862,7 @@ public:
 						[
 							SNew(SVerticalBox)
 							+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("%s　[%d/%d/%d]"), *I.Name, G, Ca, N)), 11.f)]
-							+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(TEXT("左鍵加入（選著道具時替換）；中鍵加到所選物件底下")), 9.f, TextHint())]
+							+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(TEXT("左鍵加入；Shift＋左鍵替換所選道具；中鍵加到所選物件底下")), 9.f, TextHint())]
 							+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f)
 							[
 								SNew(SBox).WidthOverride(256.f).HeightOverride(144.f)
@@ -2682,8 +2879,11 @@ public:
 							.OnUnhovered_Lambda([this] { HoverItem = FIntVector(-1); })
 							.OnClicked_Lambda([this, G, Ca, N]
 							{
+								// A click adds, as in HS2Studio6 (adding selects the new item, so replacing on a plain click
+								// turned a second click into a swap, U97); Shift+click puts it in place of the selected item.
 								const FOKSceneObject* X = Obj();
-								if (!X || X->Kind != EOKSceneObjectKind::Item) AddItemTo(G, Ca, N, false);
+								const bool bReplace = FSlateApplication::Get().GetModifierKeys().IsShiftDown();
+								if (!bReplace || !X || X->Kind != EOKSceneObjectKind::Item) AddItemTo(G, Ca, N, false);
 								else { PickItem(G, Ca, N); FOKStudioSettings::Get().UseRecent(ItemKey(G, Ca, N)); }
 								return FReply::Handled();
 							})
@@ -2697,8 +2897,8 @@ public:
 			Props->AddSlot().AutoHeight()
 			[
 				SNew(SHorizontalBox)
-				+ SHorizontalBox::Slot().AutoWidth()[Column(80.f, &GroupOptions, GroupName, [this](int32 V) { return V == BrowseGroup; }, [this](int32 V) { BrowseGroup = V; BrowseCategory = -1; DeferRebuild(); })]
-				+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f)[Column(80.f, &CategoryOptions, CategoryName, [this](int32 V) { return V == BrowseCategory; }, [this](int32 V) { BrowseCategory = V; DeferRebuild(); })]
+				+ SHorizontalBox::Slot().AutoWidth()[Column(90.f, &GroupOptions, GroupName, [this](int32 V) { return V == BrowseGroup; }, [this](int32 V) { BrowseGroup = V; BrowseCategory = -1; DeferRebuild(); })]
+				+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f)[Column(100.f, &CategoryOptions, CategoryName, [this](int32 V) { return V == BrowseCategory; }, [this](int32 V) { BrowseCategory = V; DeferRebuild(); })]
 				+ SHorizontalBox::Slot().AutoWidth()[Items]
 			];
 		else Props->AddSlot().AutoHeight()[Items];
@@ -2919,7 +3119,7 @@ private:
 		if (Current && AnimSyncedTo != Current) { AnimKind = Current->Kind; AnimGroup = Current->Group; AnimCategory = Current->Category; }
 		AnimSyncedTo = Current;
 		// Groups and categories that have converted motions of this kind (and of the picked sex: either-sex motions show in every tab but 共用 shows only them).
-		auto Shown = [this](const FOKStudioAnim& A) { return A.Kind == AnimKind && !A.File.IsEmpty() && (AnimSex < 0 || A.Sex == AnimSex || (AnimSex > 0 && A.Sex == 0)); };
+		auto Shown = [this](const FOKStudioAnim& A) { return A.Kind == AnimKind && !A.File.IsEmpty() && (AnimSex < 0 || A.Sex == AnimSex || (AnimSex > 0 && A.Sex == 0)) && (!bAnimPairsOnly || HasPartner(A)); };
 		TSet<int32> Groups;
 		for (const FOKStudioAnim& A : C.Anims) if (Shown(A)) Groups.Add(A.Group);
 		if (!Groups.Contains(AnimGroup) && Groups.Num()) AnimGroup = *Groups.CreateConstIterator();
@@ -2960,8 +3160,9 @@ private:
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[OKStudioStyle::Button(FText::FromString(TEXT("定位當前")), [this] { LocateAnim(); }, 0.f, 18.f, false, 10.f)]
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[OKStudioStyle::Button(FText::FromString(TEXT("動畫控制器")), [this] { RunCommand(TEXT("app.animcontrol")); }, 0.f, 18.f, TAttribute<bool>::CreateLambda([this] { return IsFloatOpen(TEXT("animctl")); }), 10.f)]
 			// The H partner in one click: the other sex's motion on the other character, at this one's place.
+			// Pressable whenever a character is selected (U117): when it cannot pair, the status line says why (it was grey without a word).
 			+ SHorizontalBox::Slot().FillWidth(1.f)[OKStudioStyle::Button(FText::FromString(TEXT("配給對方")), [this] { RunCommand(TEXT("anim.partner")); }, 0.f, 18.f, false, 10.f, OKStudioStyle::ButtonFill(),
-				TAttribute<bool>::CreateLambda([this] { const FOKSceneObject* X = Obj(); return X && X->Kind == EOKSceneObjectKind::Character && PartnerAnim(X->Character); }))]
+				TAttribute<bool>::CreateLambda([this] { const FOKSceneObject* X = Obj(); return X && X->Kind == EOKSceneObjectKind::Character; }))]
 		];
 		{
 			TSharedRef<SHorizontalBox> Tabs = SNew(SHorizontalBox);
@@ -2970,9 +3171,10 @@ private:
 				Tabs->AddSlot().FillWidth(1.f).Padding(0.f, 0.f, S < 2 ? 1.f : 0.f, 0.f)[OKStudioStyle::Button(FText::FromString(SexNames[S + 1]), [this, S] { AnimSex = S; DeferRebuild(); }, 0.f, 18.f, AnimSex == S, 10.f)];
 			Props->AddSlot().AutoHeight().Padding(0.f, 1.f)[Tabs];
 		}
+		if (AnimKind == 1) Props->AddSlot().AutoHeight().Padding(0.f, 1.f)[CheckBox(TEXT("只看雙人（有對方動作，清單標「（雙人）」）"), [this] { return bAnimPairsOnly; }, [this](bool B) { bAnimPairsOnly = B; DeferRebuild(); })];
 		Props->AddSlot().AutoHeight().Padding(0.f, 1.f)
 		[
-			SNew(SEditableTextBox).Style(&OKStudioStyle::TextBoxStyle()).HintText(FText::FromString(TEXT("搜尋動作（空格＝且，-詞＝排除）"))).Text(FText::FromString(AnimSearch))
+			SNew(SEditableTextBox).Style(&OKStudioStyle::TextBoxStyle()).HintText(FText::FromString(TEXT("搜尋動作（Enter；空格＝且，-詞＝排除）"))).Text(FText::FromString(AnimSearch))
 			.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type) { AnimSearch = T.ToString(); DeferRebuild(); })
 		];
 		Props->AddSlot().AutoHeight().Padding(0.f, 1.f)[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("%d 個動作%s"), AnimOptions.Num(), AnimSearch.IsEmpty() ? TEXT("") : TEXT("（搜尋結果，跨分組）"))), 10.f, OKStudioStyle::TextHint())];
@@ -3001,7 +3203,10 @@ private:
 				const bool bCurrent = X && X->Character.StudioAnimeNo == A.No && X->Character.StudioAnimeKind == A.Kind && X->Character.StudioAnimeGroup == A.Group && X->Character.StudioAnimeCategory == A.Category;
 				// Search hits come from every group: each says where it is.
 				const FString Where = AnimSearch.IsEmpty() ? FString() : FString::Printf(TEXT("　· %s／%s"), *GroupLabel(A.Group), *CategoryLabel(A.Group, A.Category));
-				return SNew(STableRow<TSharedPtr<int32>>, Owner)[SNew(STextBlock).ColorAndOpacity(bCurrent ? FLinearColor::Yellow : FLinearColor::White).Text(FText::FromString(A.Name + Where))];
+				// A motion that has the other sex's side is marked (U117): 配給對方 works from it.
+				const TCHAR* Pair = A.Kind == 1 && HasPartner(A) ? TEXT("（雙人）") : TEXT("");
+				// The same 10 pt as the other lists (U124: it took the default, a size larger).
+				return SNew(STableRow<TSharedPtr<int32>>, Owner)[SNew(STextBlock).Font(OKStudioStyle::Font(10.f)).ColorAndOpacity(bCurrent ? FLinearColor::Yellow : FLinearColor::White).Text(FText::FromString(A.Name + Pair + Where))];
 			})
 			.OnMouseButtonClick_Lambda([this](TSharedPtr<int32> I) { if (I) PickAnim(*I); })
 		];
@@ -3026,10 +3231,29 @@ public:
 		X->Character.Time = 0.f;
 		Changed();
 		DeferRebuild();
+		// The status line says what was applied (U106): it kept 「加入角色 …」 from before.
+		SetStatus(FString::Printf(TEXT("%s 套用動作 %s"), *X->Name, *A.Name));
 		return true;
 	}
 	/** The other side of the selected character's H motion (女H挿入／騎乗位／弱ループ → 男H挿入／騎乗位／弱ループ): the
 	 *  catalogue motion of the same category, number and name for the other sex. */
+	/** Whether a motion has the other sex's side (PartnerAnim's rule), from an index of the catalogue built once. */
+	static bool HasPartner(const FOKStudioAnim& A)
+	{
+		if (A.Sex == 0) return false;
+		static TMap<FString, int32> Sexes;
+		static int32 Built = -1;
+		const TArray<FOKStudioAnim>& All = FOKStudioCatalog::Get().Anims;
+		auto Key = [](const FOKStudioAnim& X) { return FString::Printf(TEXT("%d|%d|%d|%s"), X.Kind, X.Category, X.No, *X.Name); };
+		if (Built != All.Num())
+		{
+			Sexes.Reset();
+			for (const FOKStudioAnim& X : All) if (X.Sex != 0 && !X.File.IsEmpty()) Sexes.FindOrAdd(Key(X)) |= 1 << FMath::Clamp(X.Sex, 0, 7);
+			Built = All.Num();
+		}
+		const int32* Mask = Sexes.Find(Key(A));
+		return Mask && (*Mask & ~(1 << FMath::Clamp(A.Sex, 0, 7))) != 0;
+	}
 	static const FOKStudioAnim* PartnerAnim(const FOKSceneCharacter& C)
 	{
 		const FOKStudioAnim* A = C.StudioAnimeNo >= 0 ? FOKStudioCatalog::Get().FindAnim(C.StudioAnimeKind, C.StudioAnimeGroup, C.StudioAnimeCategory, C.StudioAnimeNo) : nullptr;
@@ -3039,13 +3263,63 @@ public:
 			return B.Kind == A->Kind && B.Category == A->Category && B.No == A->No && B.Name == A->Name && B.Sex != 0 && B.Sex != A->Sex && !B.File.IsEmpty();
 		});
 	}
+	/** Turns the selected characters to face each other (two selected), or the selected one to the nearest other
+	 *  character (U145: facing two people meant working out yaw angles by hand). A character looks along +Y at yaw 0. */
+	void FaceEachOther()
+	{
+		if (!Game.IsValid()) return;
+		UOKSceneDocument* Doc = Game->Document;
+		TArray<int32> Chars;
+		for (const int32 Id : Game->Selection)
+			if (const FOKSceneObject* S = Doc->Find(Id); S && S->Kind == EOKSceneObjectKind::Character) Chars.Add(Id);
+		if (Chars.IsEmpty()) { SetStatus(TEXT("先選一個角色")); return; }
+		if (Chars.Num() == 1)
+		{
+			const FVector At = Doc->WorldTransform(Chars[0]).GetLocation();
+			int32 Near = -1;
+			double Best = TNumericLimits<double>::Max();
+			for (const FOKSceneObject& S : Doc->Objects)
+			{
+				if (S.Id == Chars[0] || S.Kind != EOKSceneObjectKind::Character) continue;
+				const double D = FVector::DistSquared2D(Doc->WorldTransform(S.Id).GetLocation(), At);
+				if (D < Best) { Best = D; Near = S.Id; }
+			}
+			if (Near < 0) { SetStatus(TEXT("場景裡沒有另一個角色")); return; }
+			Chars.Add(Near);
+		}
+		// Each of the first two looks at the other (only the selected one turns when one was selected).
+		const int32 Turning = Game->Selection.Contains(Chars[1]) ? 2 : 1;
+		for (int32 K = 0; K < Turning; ++K)
+		{
+			FOKSceneObject* O = Doc->Find(Chars[K]);
+			const FTransform World = Doc->WorldTransform(Chars[K]);
+			const FVector To = Doc->WorldTransform(Chars[1 - K]).GetLocation() - World.GetLocation();
+			if (!O || To.SizeSquared2D() < 1.) continue;
+			const FRotator Turned(0.f, float(FMath::RadiansToDegrees(FMath::Atan2(To.Y, To.X))) - 90.f, 0.f);
+			const FQuat Local = O->Parent >= 0 ? Doc->WorldTransform(O->Parent).GetRotation().Inverse() * Turned.Quaternion() : Turned.Quaternion();
+			O->Transform.SetRotation(Local);
+		}
+		const FOKSceneObject* A = Doc->Find(Chars[0]);
+		const FOKSceneObject* B = Doc->Find(Chars[1]);
+		SetStatus(Turning == 2 ? FString::Printf(TEXT("%s 與 %s 面對面"), A ? *A->Name : TEXT(""), B ? *B->Name : TEXT(""))
+			: FString::Printf(TEXT("%s 轉向 %s"), A ? *A->Name : TEXT(""), B ? *B->Name : TEXT("")));
+		Changed();
+	}
+
 	/** Puts the partner motion on the other character (another selected one, else the nearest), at the selected
 	 *  character's place (a pair is authored on one origin), with the same controls; both start together. */
 	bool PairAnim()
 	{
 		FOKSceneObject* X = Obj();
 		const FOKStudioAnim* B = X && X->Kind == EOKSceneObjectKind::Character ? PartnerAnim(X->Character) : nullptr;
-		if (!B || !Game.IsValid()) return false;
+		if (!Game.IsValid() || !X || X->Kind != EOKSceneObjectKind::Character) return false;
+		if (!B)
+		{
+			const FOKStudioAnim* A = X->Character.StudioAnimeNo >= 0 ? FOKStudioCatalog::Get().FindAnim(X->Character.StudioAnimeKind, X->Character.StudioAnimeGroup, X->Character.StudioAnimeCategory, X->Character.StudioAnimeNo) : nullptr;
+			SetStatus(!A ? FString(TEXT("先在 H 動作選一個標「（雙人）」的動作，再配給對方"))
+				: FString::Printf(TEXT("「%s」沒有對方的動作：請選標「（雙人）」的動作（可勾「只看雙人」）"), *A->Name));
+			return false;
+		}
 		FOKSceneObject* Y = nullptr;
 		for (const int32 Id : Game->Selection)
 			if (FOKSceneObject* S = Game->Document->Find(Id); S && S != X && S->Kind == EOKSceneObjectKind::Character) { Y = S; break; }
@@ -3072,6 +3346,15 @@ public:
 		Game->Document->Reparent(YId, Parent);
 		if (FOKSceneObject* Z = Game->Document->Find(YId)) { Z->AttachBone = Bone; Z->Transform = Place; SetStatus(FString::Printf(TEXT("%s 配上 %s：%s"), *Z->Name, *Name, *B->Name)); }
 		Changed();
+		// Both in view, from their side turned a little to the selected one's front (U118: the view stayed behind the
+		// partner; from the front the partner hid her). The partner has just moved: the scene is built first, so the bounds
+		// are where the two are now.
+		const int32 XId = Game->SelectedId;
+		Game->Yaw = float(Game->Document->WorldTransform(XId).Rotator().Yaw) - 90.f + 100.f;
+		Game->Pitch = -10.f;
+		Game->SelectMany({ XId, YId }, XId);
+		Game->SyncDocumentNow();
+		Game->FocusSelection();
 		DeferRebuild();
 		return true;
 	}
@@ -3080,6 +3363,7 @@ private:
 	int32 AnimKind = 0, AnimGroup = -1, AnimCategory = -1;
 	FString AnimSearch;
 	int32 AnimSex = -1;
+	bool bAnimPairsOnly = false;
 	/** The pose page's place in the Studio pose files (-1: none loaded by stepping). */
 	int32 PoseStep = -1;
 	const FOKStudioAnim* AnimSyncedTo = nullptr;
@@ -3226,9 +3510,9 @@ private:
 				+ SHorizontalBox::Slot().FillWidth(0.4f).VAlign(VAlign_Center)[SNew(STextBlock).Text(FText::FromString(Name)).ColorAndOpacity(FLinearColor::White)]
 				+ SHorizontalBox::Slot().FillWidth(0.6f)
 				[
-					SNew(SSpinBox<float>).MinValue(Min).MaxValue(Max).Delta(Delta)
+					SNew(SOKSpinBox).Delta(Delta).MinValue(WideRange(Min, Max, Delta) ? TOptional<float>() : TOptional<float>(Min)).MaxValue(WideRange(Min, Max, Delta) ? TOptional<float>() : TOptional<float>(Max)).LinearDeltaSensitivity(WideRange(Min, Max, Delta) ? 1 : 0)
 					.Value_Lambda([Doc, Field] { FOKScenePost* P = Doc(); return P ? P->*Field : 0.f; })
-					.OnValueChanged_Lambda([this, Doc, Field](float V) { if (FOKScenePost* P = Doc()) { P->*Field = V; Changed(); } })
+					.OnValueChanged_Lambda([this, Doc, Field, Min, Max](float V) { if (FOKScenePost* P = Doc()) { P->*Field = FMath::Clamp(V, Min, Max); Changed(); } })
 				]
 			];
 		};
@@ -3276,7 +3560,7 @@ private:
 			[
 				SNew(SComboBox<TSharedPtr<int32>>).OptionsSource(&SunOptions)
 				.OnGenerateWidget_Lambda([SunName](TSharedPtr<int32> T) { return SNew(STextBlock).Text(FText::FromString(SunName(*T))); })
-				.OnSelectionChanged_Lambda([this, Doc](TSharedPtr<int32> T, ESelectInfo::Type) { if (FOKScenePost* P = Doc(); P && T) { P->SunType = *T; Changed(); } })
+				.OnSelectionChanged_Lambda([this, Doc](TSharedPtr<int32> T, ESelectInfo::Type) { if (Doc() && T) SetSunType(*T); })
 				[SNew(STextBlock).Text_Lambda([Doc, SunName] { FOKScenePost* P = Doc(); return FText::FromString(P ? SunName(P->SunType) : FString()); })]
 			]
 		];

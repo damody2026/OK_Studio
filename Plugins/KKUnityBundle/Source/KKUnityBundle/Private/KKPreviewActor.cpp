@@ -3843,6 +3843,10 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 	Vector(TEXT("_FresnelColor"), FLinearColor(0.26f, 0.72f, 1.f, 0.272f));
 	Vector(TEXT("_LightColor0"), FLinearColor::White);
 	Vector(TEXT("_OKAmbient"), FLinearColor(0.2f, 0.2f, 0.2f, 1.f));
+	// A scene light (Unity space, towards the light, w 1), set by OK Studio to the map's sun; w 0: the mod's
+	// camera-parented light. The program's L is the way the light travels (the camera's forward), so it takes the
+	// opposite (U166: lit from the view, the sea did not change with the time of day).
+	Vector(TEXT("_OKLightDir"), FLinearColor(0.f, 0.f, 0.f, 0.f));
 	Scalar(TEXT("_RimSize"), 0.75f); Scalar(TEXT("_Tiling"), 0.9f); Scalar(TEXT("_RefractionAmount"), 0.055f);
 	Scalar(TEXT("_Transparency"), 0.35f); Scalar(TEXT("_Wavesspeed"), 0.5f); Scalar(TEXT("_Glossiness"), 0.5f);
 	Scalar(TEXT("_Depth"), 15.f); Scalar(TEXT("_Depthdarkness"), 0.15f); Scalar(TEXT("_Rimtiling"), 1.f);
@@ -3878,7 +3882,7 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 		"float3 wp = float3(-Pos.x, Pos.z, Pos.y) * 0.01, cam = float3(-Cam.x, Cam.z, Cam.y) * 0.01;\n"
 		"float3 v3 = float3(-N.x, N.z, N.y), v4 = float3(-T.x, T.z, T.y), v5 = normalize(float3(-B.x, B.z, B.y));\n"
 		"float2 v1 = float2(Uv.x, 1.0 - Uv.y);\n"
-		"float3 L = normalize(float3(ResolvedView.ViewForward.x, -ResolvedView.ViewForward.z, -ResolvedView.ViewForward.y));\n"
+		"float3 L = OKLightDir.w > 0.5 ? -normalize(OKLightDir.xyz) : normalize(float3(ResolvedView.ViewForward.x, -ResolvedView.ViewForward.z, -ResolvedView.ViewForward.y));\n"
 		"float4 r0, r1, r2, r3, r4, r5, r6, r7; float4 s;\n"
 		"r0.x = Time * (Wavesspeed * 0.1);\n"
 		"r0 = r0.xxxx * float4(0.0, 1.0, 0.9, 0.0);\n"
@@ -6738,25 +6742,50 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 					UE_LOG(LogTemp, Display, TEXT("OK glitch part=%s"), *Name);
 				}
 		// StylizedWater/Desktop (a mod water shader): its own graph, with the material's values and textures.
-		if (Comp && !bBody && !bFaceDraw && Source.MaterialShaderName(i).Equals(TEXT("StylizedWater/Desktop"), ESearchCase::IgnoreCase))
+		// Lux Water/WaterSurface (the KKS lighthouse sea, U150) has no graph of its own: it takes the same water with its
+		// translucency colour as the water, its underwater reflection as the fresnel tint, its foam as the rim and its
+		// _BumpMap as the normals (two scrolling samples, tiled per metre like its _BumpTiling).
+		const bool bLuxWater = Source.MaterialShaderName(i).StartsWith(TEXT("Lux Water/"), ESearchCase::IgnoreCase);
+		if (Comp && !bBody && !bFaceDraw && (bLuxWater || Source.MaterialShaderName(i).Equals(TEXT("StylizedWater/Desktop"), ESearchCase::IgnoreCase)))
 			if (UMaterialInterface* WaterMat = OKStylizedWaterMaterial())
 				if (UMaterialInstanceDynamic* Dynamic = UMaterialInstanceDynamic::Create(WaterMat, Comp))
 				{
 					const auto Linear = [](float C) { return C <= .04045f ? C / 12.92f : FMath::Pow((C + .055f) / 1.055f, 2.4f); };
 					FLinearColor V;
-					for (const TCHAR* Property : { TEXT("_WaterColor"), TEXT("_RimColor"), TEXT("_FresnelColor") })
-						if (Source.MaterialValue(i, TCHAR_TO_UTF8(Property), V)) Dynamic->SetVectorParameterValue(Property, FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), V.A));
-					for (const TCHAR* Property : { TEXT("_RimSize"), TEXT("_Tiling"), TEXT("_RefractionAmount"), TEXT("_Transparency"), TEXT("_Wavesspeed"),
-						TEXT("_Glossiness"), TEXT("_Depth"), TEXT("_Depthdarkness"), TEXT("_Rimtiling"), TEXT("_Worldspacetiling"), TEXT("_Rimfalloff"),
-						TEXT("_SurfaceHighlight"), TEXT("_Surfacehightlightsize"), TEXT("_SurfaceHightlighttiling"), TEXT("_Fresnelexponent") })
-						if (Source.MaterialValue(i, TCHAR_TO_UTF8(Property), V)) Dynamic->SetScalarParameterValue(Property, V.R);
+					if (bLuxWater)
+					{
+						const auto Color = [&](const char* From, const TCHAR* To, float Alpha)
+						{
+							if (Source.MaterialValue(i, From, V)) Dynamic->SetVectorParameterValue(To, FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), Alpha));
+						};
+						Color("_TranslucencyColor", TEXT("_WaterColor"), 1.f);
+						Color("_UnderWaterReflCol", TEXT("_FresnelColor"), .35f);
+						Color("_FoamColor", TEXT("_RimColor"), .25f);
+						if (Source.MaterialValue(i, "_BumpTiling", V)) Dynamic->SetScalarParameterValue(TEXT("_Tiling"), 1.f - FMath::Clamp(V.G, .02f, .9f));
+						if (Source.MaterialValue(i, "_DepthAtten", V) && V.G > 0.f) Dynamic->SetScalarParameterValue(TEXT("_Depth"), V.G);
+						Dynamic->SetScalarParameterValue(TEXT("_Transparency"), .55f);
+						Dynamic->SetScalarParameterValue(TEXT("_Glossiness"), .8f);
+						Dynamic->SetScalarParameterValue(TEXT("_RefractionAmount"), .03f);
+						Dynamic->SetScalarParameterValue(TEXT("_RimSize"), .4f);
+						Dynamic->SetScalarParameterValue(TEXT("_SurfaceHighlight"), 0.f);
+					}
+					else
+					{
+						for (const TCHAR* Property : { TEXT("_WaterColor"), TEXT("_RimColor"), TEXT("_FresnelColor") })
+							if (Source.MaterialValue(i, TCHAR_TO_UTF8(Property), V)) Dynamic->SetVectorParameterValue(Property, FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), V.A));
+						for (const TCHAR* Property : { TEXT("_RimSize"), TEXT("_Tiling"), TEXT("_RefractionAmount"), TEXT("_Transparency"), TEXT("_Wavesspeed"),
+							TEXT("_Glossiness"), TEXT("_Depth"), TEXT("_Depthdarkness"), TEXT("_Rimtiling"), TEXT("_Worldspacetiling"), TEXT("_Rimfalloff"),
+							TEXT("_SurfaceHighlight"), TEXT("_Surfacehightlightsize"), TEXT("_SurfaceHightlighttiling"), TEXT("_Fresnelexponent") })
+							if (Source.MaterialValue(i, TCHAR_TO_UTF8(Property), V)) Dynamic->SetScalarParameterValue(Property, V.R);
+					}
 					// Both textures are data (normals, masks): sampled linear.
 					for (const TCHAR* Property : { TEXT("_Normals"), TEXT("_Shadermap") })
 					{
 						const uint8* Bytes = nullptr; int32 Length = 0;
-						if (!Source.ShaderTexture(i, TCHAR_TO_UTF8(Property), Bytes, Length)) continue;
+						const TCHAR* From = bLuxWater && FCString::Strcmp(Property, TEXT("_Normals")) == 0 ? TEXT("_BumpMap") : Property;
+						if (!Source.ShaderTexture(i, TCHAR_TO_UTF8(From), Bytes, Length)) continue;
 						OkTextureSettings Settings{ 1, 0, 0, 0, 0 };
-						if (Source.TextureSettings(i, TCHAR_TO_UTF8(Property), Settings)) Settings.srgb = 0;
+						if (Source.TextureSettings(i, TCHAR_TO_UTF8(From), Settings)) Settings.srgb = 0;
 						if (UTexture2D* Texture = TextureFromPngBytes(Bytes, Length, false, &Settings, true))
 						{
 							Texture->AddToRoot(); Output.Textures.Add(Texture);
@@ -6780,7 +6809,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 					// The water writes Unity's depth texture itself (queue 2500 with a shadow caster): it reads its own
 					// depth there (native probe: hiding it moves the depth behind it), so it is in the stand-in too.
 					DepthTexturePresentParts.Add(Comp);
-					UE_LOG(LogTemp, Display, TEXT("OK stylized water part=%s"), *Name);
+					UE_LOG(LogTemp, Display, TEXT("OK stylized water part=%s lux=%d"), *Name, bLuxWater ? 1 : 0);
 				}
 		// A mirror (FX/MirrorReflection): the scene gives "_ReflectionTex" a capture mirrored in the part's plane.
 		if (Comp && !bBody && !bFaceDraw && Source.MaterialShaderName(i).StartsWith(TEXT("FX/MirrorReflection")))

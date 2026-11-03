@@ -71,6 +71,9 @@ public:
   *  its models list and pack match the card data). Summary gets "digest parts pack" or the error. */
  static bool MakeOkCard(const FString& Card,const FString& Out,FString& Summary);
  static bool MakeOkCardForOutfit(const FString& Card,const FString& Out,int32 Outfit,FString& Summary);
+ /** The mods an original card names that opening it would not find (base library, zipmods beside the card, the KKS
+  *  installation). Empty for OK cards. Reads manifests: call off the game thread. */
+ static bool AbsentCardMods(const FString& Card,TArray<FString>& Absent,FString& Error);
  static bool CopyPortableClothingStates(const FString& Source,const FString& Output,FString& Error);
  static TArray<FString> AnimationSourceNames(const FString& Root,const FString& Source);
  static bool PrepareStudioAnimation(const FString& Root,const FString& Key,const FString& Source,const FString& Owner);

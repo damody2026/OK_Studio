@@ -8,7 +8,9 @@
 #include "Blueprint/WidgetLayoutLibrary.h"
 #include "Camera/CameraComponent.h"
 #include "Components/PoseableMeshComponent.h"
+#include "AnimationRuntime.h"
 #include "Components/PrimitiveComponent.h"
+#include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/FileManager.h"
@@ -132,13 +134,53 @@ int32 UOKStudioGame::PickObject(const FVector2D& Position) const
 
 void UOKStudioGame::FocusSelection(bool bFace)
 {
+	// Frames Target in the part of the view the panels leave open (U123: the left windows, the right panels and the
+	// timeline hid half of what was framed at the middle). The distance fits the box of half size Extent around Target
+	// there, by its width and height as the view sees them (a bounding sphere left a T-posed figure small in a narrow gap).
+	auto Frame = [this](const FVector& Target, const FVector& Extent)
+	{
+		FVector2D Size(16.0, 9.0);
+		if (GEngine && GEngine->GameViewport) GEngine->GameViewport->GetViewportSize(Size);
+		const float Aspect = Size.Y > 1.0 ? float(Size.X / Size.Y) : 16.f / 9.f;
+		FBox2D Clear = ClearView;
+		if (!Clear.bIsValid || Clear.GetSize().X < 0.2 || Clear.GetSize().Y < 0.2) Clear = FBox2D(FVector2D(0.f, 0.f), FVector2D(1.f, 1.f));
+		const float TanX = FMath::Tan(FMath::DegreesToRadians(FMath::Clamp(Document->FreeView.Fov, 5.f, 170.f) * 0.5f)), TanY = TanX / Aspect;
+		const FRotationMatrix M(FRotator(Pitch, Yaw, 0.f));
+		auto Across = [&Extent](const FVector& Axis) { return float(FMath::Abs(Axis.X) * Extent.X + FMath::Abs(Axis.Y) * Extent.Y + FMath::Abs(Axis.Z) * Extent.Z); };
+		const float HalfW = Across(M.GetScaledAxis(EAxis::Y)) * 1.1f, HalfH = Across(M.GetScaledAxis(EAxis::Z)) * 1.1f, Deep = Across(M.GetScaledAxis(EAxis::X));
+		const float W = float(Clear.GetSize().X), H = float(Clear.GetSize().Y);
+		Distance = FMath::Clamp(FMath::Max(HalfW / (TanX * W), HalfH / (TanY * H)) + Deep, 20.f, 5000.f);
+		if (Document->FreeView.bOrtho) Document->FreeView.OrthoWidth = FMath::Max(HalfW / W, HalfH * Aspect / H) * 2.f;
+		// Move the orbit centre so the target shows at the open area's centre.
+		const FVector2D Off((Clear.GetCenter().X - 0.5) * 2.0, (0.5 - Clear.GetCenter().Y) * 2.0);
+		const float HalfX = Document->FreeView.bOrtho ? Document->FreeView.OrthoWidth * 0.5f : Distance * TanX;
+		const float HalfY = Document->FreeView.bOrtho ? HalfX / Aspect : Distance * TanY;
+		Focus = Target - M.GetScaledAxis(EAxis::Y) * float(Off.X) * HalfX - M.GetScaledAxis(EAxis::Z) * float(Off.Y) * HalfY;
+	};
 	const FOKSceneObject* One = Selection.Num() == 1 ? Document->Find(Selection[0]) : nullptr;
 	FTransform Head;
-	if (bFace && One && One->Kind == EOKSceneObjectKind::Character && SceneActor && OKStudioGameInternal::BoneWorld(SceneActor->PreviewOf(One->Id), TEXT("cf_j_head"), Head))
+	const AKKPreviewActor* Shown = One && SceneActor ? SceneActor->PreviewOf(One->Id) : nullptr;
+	if (bFace && One && One->Kind == EOKSceneObjectKind::Character && OKStudioGameInternal::BoneWorld(Shown, TEXT("cf_j_head"), Head))
 	{
-		// The head bone sits at the top of the neck: the face is a hand above it.
-		Focus = Head.GetLocation() + FVector(0.f, 0.f, 8.f);
-		Distance = 90.f;
+		// Where the face looks now (U119: a kneeling or turned character was framed at the neck, from behind her partner):
+		// the head's turn from its rest pose applied to the character's front (+Y at yaw 0) and up. The view comes from 40°
+		// to the side of the face, so a partner right in front of it does not fill the view.
+		const float Yaw0 = float(Document->WorldTransform(One->Id).Rotator().Yaw);
+		FVector Front = FRotator(0.f, Yaw0 + 90.f, 0.f).Vector(), Up = FVector::UpVector;
+		UPoseableMeshComponent* Mesh = Shown->BodySkel ? Shown->BodySkel.Get() : (Shown->SkelFollowers.Num() ? Shown->SkelFollowers[0].Get() : nullptr);
+		const int32 Bone = Mesh && Mesh->GetSkinnedAsset() ? Mesh->GetBoneIndex(TEXT("cf_j_head")) : INDEX_NONE;
+		if (Bone != INDEX_NONE)
+		{
+			const FQuat Rest = Mesh->GetComponentQuat() * FAnimationRuntime::GetComponentSpaceTransformRefPose(Mesh->GetSkinnedAsset()->GetRefSkeleton(), Bone).GetRotation();
+			const FQuat Turn = Head.GetRotation() * Rest.Inverse();
+			Front = Turn.RotateVector(Front);
+			Up = Turn.RotateVector(Up);
+		}
+		// The head bone sits at the top of the neck: the face is a hand above it and a little forward.
+		const FRotator Look = (-Front).Rotation();
+		Yaw = float(Look.Yaw) + 40.f;
+		Pitch = FMath::Clamp(float(Look.Pitch), -45.f, 30.f);
+		Frame(Head.GetLocation() + Up * 8.f + Front * 3.f, FVector(12.f));
 		Document->ActiveCamera = -1;
 		return;
 	}
@@ -146,10 +188,7 @@ void UOKStudioGame::FocusSelection(bool bFace)
 	for (int32 Id : Selection) { FBox B; if (WorldBounds(Id, B)) All += B; }
 	if (!All.IsValid || !SceneActor) return;
 	// Back into the scene's own frame (the orbit focus is in world space, the scene actor sits at the origin).
-	Focus = All.GetCenter();
-	const float Radius = FMath::Max(float(All.GetExtent().Size()), 10.f);
-	Distance = FMath::Clamp(Radius / FMath::Tan(FMath::DegreesToRadians(FMath::Clamp(Document->FreeView.Fov, 5.f, 170.f) * 0.5f)) * 1.15f, 20.f, 5000.f);
-	if (Document->FreeView.bOrtho) Document->FreeView.OrthoWidth = Radius * 2.3f;
+	Frame(All.GetCenter(), All.GetExtent().ComponentMax(FVector(5.f)));
 	Document->ActiveCamera = -1;
 }
 

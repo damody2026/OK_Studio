@@ -89,6 +89,11 @@ public:
 	/** Points the free view at the selection, far enough to see all of it; bFace: at one character's face, close up (the
 	 *  look, neck and expression pages edit what the face shows). */
 	void FocusSelection(bool bFace = false);
+	/** The part of the view no panel covers, as fractions of the view (0..1, y down); the panel keeps it current. Framing
+	 *  centres there and sizes the distance to it. */
+	FBox2D ClearView = FBox2D(FVector2D(0.f, 0.f), FVector2D(1.f, 1.f));
+	/** The last AddCharacter found no free spot near the view (on a map full of furniture): it stands at the focus. */
+	bool bLastAddBlocked = false;
 	/** Free view presets: 0 front, 1 right side, 2 top, 3 back, 4 left side, 5 the view a new scene opens with. */
 	void ViewPreset(int32 Preset);
 	/** View bookmarks 0..9 (kept in the scene). */
@@ -107,6 +112,11 @@ public:
 	void RequestStop() { bStopRequested = true; }
 	/** Adds a character object for a card (OK card or KKS card) and selects it. */
 	int32 AddCharacter(const FString& Card, int32 Outfit);
+	/** After a map change: the characters at the scene's root with no map ground under them, or inside the map's
+	 *  furniture, move to the nearest spot that has ground (U146). Returns how many moved. */
+	int32 SettleCharactersOnMap();
+	/** With nobody in the scene: the view's focus off the map's furniture onto free ground, seen past it (U156). */
+	bool FrameMapStart();
 
 	/** Adds an object under the selected folder (or next to the selected object) and selects it. */
 	int32 Add(EOKSceneObjectKind Kind);
@@ -241,12 +251,17 @@ public:
 	 *  (returns the file; empty on failure). */
 	FString ExportOkAnim(int32 Id, float Fps, FString& OutError);
 	/** Encodes a PNG frame folder (frame_00000.png…) into an H.264 mp4 with Tools/ffmpeg (the first encoder that works:
-	 *  NVENC, AMF, Media Foundation, OpenH264). OutEncoder: the encoder used. */
-	static bool EncodeMp4(const FString& FramesDir, float Fps, const FString& OutFile, FString& OutEncoder, FString& OutError);
+	 *  NVENC, AMF, Media Foundation, OpenH264). OutEncoder: the encoder used. Audio: sound files mixed in from the
+	 *  movie's start (true: looped), cut at Seconds. */
+	static bool EncodeMp4(const FString& FramesDir, float Fps, const FString& OutFile, FString& OutEncoder, FString& OutError,
+		const TArray<TPair<FString, bool>>& Audio = {}, float Seconds = 0.f);
+	/** A movie export takes the scene's BGM and outside sound that play (U129: the mp4 had no sound). */
+	bool bExportAudio = true;
 	/** The ffmpeg the movie export uses (not under version control; downloaded into Tools/ffmpeg). */
 	static FString FfmpegPath();
-	/** Movie export: the last mp4 written, or why it was not. */
-	FString LastMovie, LastMovieError;
+	/** Movie export: the last mp4 written, or why it was not; LastMovieNote says when it came out without sound though
+	 *  sound was asked for (U148: nothing playing gave a silent movie without a word). */
+	FString LastMovie, LastMovieError, LastMovieNote;
 	bool IsExporting() const { return ExportFrame >= 0; }
 	int32 ExportFrameCount() const { return ExportTotal; }
 
@@ -317,6 +332,8 @@ private:
 	/** Earlier document states (oldest first), undone states, and the state the history last recorded. */
 	TArray<FString> UndoStack, RedoStack;
 	FString HistoryState;
+	/** The document as last saved or opened: undoing back to it leaves the scene unchanged (U130). */
+	FString SavedState;
 	/** The selection each history state was left with (restored with it; the view is not). */
 	TArray<TArray<int32>> UndoSelections, RedoSelections;
 	TArray<int32> HistorySelection;
@@ -337,6 +354,7 @@ private:
 	FString ExportDir;
 	float ExportFps = 30.f;
 	float ExportFrom = 0.f;
+	float ExportReturnTime = 0.f;
 	int32 ExportFrame = -1, ExportTotal = 0, ExportWidth = 1920, ExportHeight = 1080;
 	bool bExportMp4 = false;
 	bool bExportShotPending = false;

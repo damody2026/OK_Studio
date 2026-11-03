@@ -6,6 +6,7 @@ use serde_json::{Value as J,json};
 use rmpv::Value;
 use sha2::{Digest,Sha256};
 mod properties;
+pub(crate) use properties::{patch_paths,list_paths};
 mod extra;
 pub(crate) mod live_head;
 pub(crate) mod timings;

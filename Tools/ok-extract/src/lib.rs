@@ -68,6 +68,7 @@ mod skin_source;
 mod clothes_gpu;
 mod sqlcache;
 pub mod oklib;
+pub mod okchara;
 pub mod okphysics;
 pub mod gamefs;
 pub mod okclothes;

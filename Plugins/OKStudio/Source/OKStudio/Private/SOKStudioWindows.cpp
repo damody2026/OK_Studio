@@ -7,6 +7,7 @@
 #include "ImageUtils.h"
 #include "Misc/Base64.h"
 #include "Algo/Find.h"
+#include "Async/Async.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Widgets/SToolTip.h"
@@ -80,6 +81,72 @@ void SOKStudioPanel::AddFloat(const FString& Id, const FString& Title, const FMa
 	F.Slot = Slot;
 }
 
+void SOKStudioPanel::UpdateClearView()
+{
+	if (!Game.IsValid() || !View || !Canvas) return;
+	const FSlateRect ViewRect = View->GetCachedGeometry().GetLayoutBoundingRect();
+	const FVector2D ViewSize = ViewRect.GetSize();
+	if (ViewSize.X < 10.f || ViewSize.Y < 10.f) return;
+	TArray<FSlateRect> Panels;
+	if (!bHideUi)
+	{
+		FArrangedChildren Parts(EVisibility::Visible);
+		Canvas->ArrangeChildren(Canvas->GetCachedGeometry(), Parts);
+		for (int32 I = 0; I < Parts.Num(); ++I)
+		{
+			// The status line is a line of text over the view, not a panel.
+			if (Parts[I].Widget == Status) continue;
+			const FSlateRect R = Parts[I].Geometry.GetLayoutBoundingRect().IntersectionWith(ViewRect);
+			if (R.GetSize().X > 1.f && R.GetSize().Y > 1.f) Panels.Add(R);
+		}
+	}
+	// The best open rectangle: every pair of panel edges across, the tallest gap between the panels in that span.
+	TArray<float> Xs = { ViewRect.Left, ViewRect.Right };
+	for (const FSlateRect& R : Panels) { Xs.AddUnique(R.Left); Xs.AddUnique(R.Right); }
+	Xs.Sort();
+	FSlateRect Best(ViewRect);
+	double BestArea = Panels.IsEmpty() ? 1e30 : -1.;
+	for (int32 A = 0; A < Xs.Num() && !Panels.IsEmpty(); ++A)
+		for (int32 B = A + 1; B < Xs.Num(); ++B)
+		{
+			TArray<FVector2f> Blocked;
+			for (const FSlateRect& R : Panels) if (R.Left < Xs[B] - 0.5f && R.Right > Xs[A] + 0.5f) Blocked.Add(FVector2f(R.Top, R.Bottom));
+			Blocked.Sort([](const FVector2f& L, const FVector2f& R) { return L.X < R.X; });
+			float From = ViewRect.Top;
+			auto Try = [&](float To)
+			{
+				// Scored by the shorter side first: a wide strip under the timeline holds less of a standing figure than a
+				// narrower, taller column beside it.
+				const double W = Xs[B] - Xs[A], H = To - From, Area = FMath::Min(W, H) * FMath::Sqrt(W * H);
+				if (To > From && Area > BestArea) { BestArea = Area; Best = FSlateRect(Xs[A], From, Xs[B], To); }
+			};
+			for (const FVector2f& Y : Blocked) { Try(Y.X); From = FMath::Max(From, Y.Y); }
+			Try(ViewRect.Bottom);
+		}
+	Game->ClearView = FBox2D(FVector2D((Best.Left - ViewRect.Left) / ViewSize.X, (Best.Top - ViewRect.Top) / ViewSize.Y),
+		FVector2D((Best.Right - ViewRect.Left) / ViewSize.X, (Best.Bottom - ViewRect.Top) / ViewSize.Y));
+}
+
+void SOKStudioPanel::ReadExportChoices()
+{
+	// "kind;from;to;fps;width;height;sound;folder" (FOKStudioSettings::ExportChoices).
+	TArray<FString> P;
+	FOKStudioSettings::Get().ExportChoices.ParseIntoArray(P, TEXT(";"), false);
+	if (P.Num() < 8) return;
+	ExportKind = FMath::Clamp(FCString::Atoi(*P[0]), 0, 2);
+	ExportFromT = FCString::Atof(*P[1]); ExportToT = FCString::Atof(*P[2]); ExportFpsV = FMath::Clamp(FCString::Atof(*P[3]), 1.f, 120.f);
+	ExportW = FMath::Clamp(FCString::Atoi(*P[4]), 16, 8192); ExportH = FMath::Clamp(FCString::Atoi(*P[5]), 16, 8192);
+	if (Game.IsValid()) Game->bExportAudio = P[6] != TEXT("0");
+	ExportFolderText = P[7];
+}
+
+void SOKStudioPanel::WriteExportChoices()
+{
+	FOKStudioSettings& S = FOKStudioSettings::Get();
+	S.ExportChoices = FString::Printf(TEXT("%d;%g;%g;%g;%d;%d;%d;%s"), ExportKind, ExportFromT, ExportToT, ExportFpsV, ExportW, ExportH, Game.IsValid() && !Game->bExportAudio ? 0 : 1, *ExportFolderText.Replace(TEXT(";"), TEXT("")));
+	S.Save();
+}
+
 void SOKStudioPanel::RegisterFloats()
 {
 	// Default places: HS2Studio6's (layout spec) where it has the window, else beside the menus.
@@ -148,6 +215,20 @@ void SOKStudioPanel::OpenFloat(const FString& Id, bool bToggle)
 	if (Id == TEXT("cards") && CardFiles.IsEmpty()) ScanCardFolder();
 	if (Id == TEXT("scenes")) ScanScenes();
 	if (Id == TEXT("quick")) RunQuickSearch();
+	if (Id == TEXT("export"))
+	{
+		// The last choices (U136: every new session opened on PNG 序列 to the end), and beside the timeline rather than
+		// on it: the window covered the keys it exports.
+		if (!bExportChoicesRead) { bExportChoicesRead = true; ReadExportChoices(); }
+		const FFloat* T = Floats.Find(TEXT("timeline"));
+		if (T && T->bOpen && Canvas && FBox2D(F->Pos, F->Pos + F->Size).Intersect(FBox2D(T->Pos, T->Pos + T->Size)))
+		{
+			const FVector2D Area = Canvas->GetCachedGeometry().GetLocalSize();
+			if (T->Pos.X + T->Size.X + 4.f + F->Size.X <= Area.X) F->Pos = FVector2D(T->Pos.X + T->Size.X + 4.f, T->Pos.Y);
+			else if (T->Pos.Y - F->Size.Y - 4.f >= 40.f) F->Pos = FVector2D(T->Pos.X, T->Pos.Y - F->Size.Y - 4.f);
+			else if (T->Pos.X - F->Size.X - 4.f >= 40.f) F->Pos = FVector2D(T->Pos.X - F->Size.X - 4.f, T->Pos.Y);
+		}
+	}
 	if (Id == TEXT("dialog") && Canvas)
 	{
 		const FVector2D Area = Canvas->GetCachedGeometry().GetLocalSize();
@@ -251,12 +332,19 @@ void SOKStudioPanel::TickUi(float DeltaTime)
 	if (!Game->GuideReadout.IsEmpty()) SetStatus(Game->GuideReadout);
 	// The colour window is bound to the object it was opened for.
 	if (IsFloatOpen(TEXT("color")) && ColorKey.StartsWith(TEXT("obj")) && FCString::Atoi(*ColorKey.Mid(3)) != Game->SelectedId) CloseFloat(TEXT("color"));
-	// The material editor follows the selection, and fills in once the item has built.
+	// The material editor follows the selection, and fills in once the item has built (again after a shader edit).
 	if (IsFloatOpen(TEXT("material")))
 	{
 		const AKKPreviewActor* Shown = Game->SceneActor ? Game->SceneActor->PreviewOf(Game->SelectedId) : nullptr;
 		const TPair<int32, int32> Now(Game->SelectedId, Shown ? Shown->Session.PartCount() : 0);
-		if (Now != MaterialShown) { if (Now.Key != MaterialShown.Key) MaterialPart = 0; MaterialShown = Now; DeferFloat(TEXT("material")); }
+		if (Now != MaterialShown || Shown != MaterialShownActor) { if (Now.Key != MaterialShown.Key) MaterialPart = 0; MaterialShown = Now; MaterialShownActor = Shown; DeferFloat(TEXT("material")); }
+	}
+	// The resource check fills in each original card's missing mods once its background check is done.
+	if (bAbsentModsWaiting)
+	{
+		bool bAll = true;
+		for (const auto& C : AbsentModChecks) bAll &= C.Value->bDone.load();
+		if (bAll) { bAbsentModsWaiting = false; if (IsFloatOpen(TEXT("resources"))) DeferFloat(TEXT("resources")); }
 	}
 	// The animation controller lists the Studio controls of the selected character's motion, which change with it.
 	if (IsFloatOpen(TEXT("animctl")))
@@ -329,7 +417,7 @@ TSharedPtr<SWidget> SOKStudioPanel::TreeContextMenu()
 		{ TEXT("改名"), TEXT("edit.rename") }, { TEXT("拷貝"), TEXT("edit.copy") }, { TEXT("貼上"), TEXT("edit.paste") }, { TEXT("複製物件"), TEXT("edit.duplicate") },
 		{ TEXT("刪除"), TEXT("edit.delete") }, { TEXT("隱藏／顯示"), TEXT("edit.hide") }, { TEXT("移到根層"), TEXT("edit.root") }, { TEXT("設為其他選取的父物件"), TEXT("edit.parent") },
 		{ TEXT("聚焦"), TEXT("camera.focus") }, { TEXT("選取存成場景"), TEXT("edit.saveas") }, { TEXT("複製變換"), TEXT("transform.copy") }, { TEXT("貼上變換"), TEXT("transform.paste") },
-		{ TEXT("複製姿勢"), TEXT("pose.copy") }, { TEXT("貼上姿勢"), TEXT("pose.paste") }, { TEXT("打 key"), TEXT("timeline.key") },
+		{ TEXT("複製姿勢"), TEXT("pose.copy") }, { TEXT("貼上姿勢"), TEXT("pose.paste") }, { TEXT("打 key"), TEXT("timeline.key") }, { TEXT("面向對方"), TEXT("transform.face") },
 	};
 	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
 	for (const FItem& I : Items)
@@ -746,12 +834,23 @@ TSharedRef<SWidget> SOKStudioPanel::BuildSceneBrowser()
 					SNew(SButton).ButtonStyle(&FlatButton()).ContentPadding(FMargin(2.f)).ToolTipText(FText::FromString(F))
 					.OnClicked_Lambda([this, F] { ScenePick = F; SceneNewName = FPaths::GetBaseFilename(F); DeferFloat(TEXT("scenes")); return FReply::Handled(); })
 					[
+						// A double click opens the scene (U126), as 覆蓋（開啟） does.
+						SNew(SBorder).BorderImage(FStyleDefaults::GetNoBrush()).Padding(0.f)
+						.OnMouseDoubleClick_Lambda([this, F](const FGeometry&, const FPointerEvent& E)
+						{
+							if (E.GetEffectingButton() != EKeys::LeftMouseButton) return FReply::Unhandled();
+							ScenePick = F;
+							OpenScene(F, false);
+							return FReply::Handled();
+						})
+						[
 						SNew(SVerticalBox)
 						+ SVerticalBox::Slot().FillHeight(1.f)
 						[
 							SNew(SImage).Image_Lambda([F, bPng] { const FSlateBrush* B = bPng ? FOKStudioThumbnails::Get().File(F, 96) : nullptr; return B ? B : Brush(Input()); })
 						]
 						+ SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Font(Font(9.f)).ColorAndOpacity(OKStudioStyle::Text()).OverflowPolicy(ETextOverflowPolicy::Ellipsis).AddMetaData<FTagMetaData>(TEXT("Ellipsis")).Text(FText::FromString(KindTag + FPaths::GetBaseFilename(F)))]
+						]
 					])
 			]
 		];
@@ -789,6 +888,8 @@ TSharedRef<SWidget> SOKStudioPanel::BuildSceneBrowser()
 				.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type C) { SaveAsName = T.ToString(); if (C == ETextCommit::OnEnter) SaveNamed(SaveAsName); })]]
 			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f)[Button(FText::FromString(bSceneSaveMode ? TEXT("另存") : TEXT("儲存")), [this]
 			{
+				// An empty name (a new scene while this window stayed open) is the time now.
+				if (SaveAsName.TrimStartAndEnd().IsEmpty()) SaveAsName = FDateTime::Now().ToString(TEXT("scene_%Y%m%d_%H%M%S"));
 				const FString Path = UOKStudioGame::SceneDirectory() / FPaths::MakeValidFileName(SaveAsName.TrimStartAndEnd()) + TEXT(".png");
 				if (FPaths::FileExists(Path) && (!Game.IsValid() || Game->File != Path))
 					Confirm(TEXT("已有同名場景，要覆蓋嗎？"), { { TEXT("覆蓋"), [this] { SaveNamed(SaveAsName); } }, { TEXT("取消"), nullptr } });
@@ -832,15 +933,29 @@ TSharedRef<SWidget> SOKStudioPanel::BuildBackups()
 				SNew(SVerticalBox)
 				+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString((When + (FDateTime::Now() - FDateTime::UtcNow())).ToString(TEXT("%Y-%m-%d %H:%M:%S"))), 11.f)]
 				+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(FPaths::GetCleanFilename(F)), 9.f, TextHint())]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f)[Button(FText::FromString(TEXT("恢復這份")), [this, F]
-				{
-					GuardUnsaved([this, F]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f)
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot().AutoWidth()[Button(FText::FromString(TEXT("恢復這份")), [this, F]
 					{
-						// A backup opens as an unsaved scene: saving asks for a name, the backup stays as it is.
-						if (LoadFile(F) && Game.IsValid()) { Game->File.Reset(); Game->bDirty = true; }
-						CloseFloat(TEXT("backups"));
-					});
-				}, 90.f, 20.f)]
+						GuardUnsaved([this, F]
+						{
+							// A backup opens as an unsaved scene: saving asks for a name, the backup stays as it is.
+							if (LoadFile(F) && Game.IsValid()) { Game->File.Reset(); Game->bDirty = true; }
+							CloseFloat(TEXT("backups"));
+						});
+					}, 90.f, 20.f)]
+					+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("刪除")), [this, F, Picture]
+					{
+						Confirm(FString::Printf(TEXT("刪除備份 %s？"), *FPaths::GetCleanFilename(F)), { { TEXT("刪除"), [this, F, Picture]
+						{
+							IFileManager::Get().Delete(*F);
+							if (Picture != F) IFileManager::Get().Delete(*Picture);
+							SetStatus(TEXT("已刪除備份 ") + FPaths::GetCleanFilename(F));
+							DeferFloat(TEXT("backups"));
+						} }, { TEXT("取消"), nullptr } });
+					}, 50.f, 20.f)]
+				]
 			]
 		];
 	}
@@ -892,13 +1007,25 @@ TSharedRef<SWidget> SOKStudioPanel::BuildRecent()
 				+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(FPaths::GetBaseFilename(F) + (bThere ? TEXT("") : TEXT("（檔案不在了）"))), 11.f)]
 				+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(FPaths::GetPath(F)), 9.f, TextHint())]
 			]
-			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[Button(FText::FromString(TEXT("開啟")), [this, F] { if (OpenScene(F, false)) CloseFloat(TEXT("recent")); }, 50.f, 20.f, false, 10.f, ButtonFill(), bThere)]
+			// A scene whose file is gone comes off the list (U112: it stayed there for good).
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[bThere
+				? Button(FText::FromString(TEXT("開啟")), [this, F] { if (OpenScene(F, false)) CloseFloat(TEXT("recent")); }, 50.f, 20.f, false, 10.f)
+				: Button(FText::FromString(TEXT("移除")), [this, F] { FOKStudioSettings::Get().RecentScenes.Remove(F); FOKStudioSettings::Get().SaveFavorites(); DeferFloat(TEXT("recent")); }, 50.f, 20.f, false, 10.f)]
 		];
 	}
 	if (FOKStudioSettings::Get().RecentScenes.IsEmpty()) Box->AddSlot().AutoHeight()[OKStudioStyle::Label(FText::FromString(TEXT("還沒有開啟或儲存過場景。")), 10.f, TextHint())];
-	return SNew(SVerticalBox)
+	const int32 Gone = FOKStudioSettings::Get().RecentScenes.FilterByPredicate([](const FString& F) { return !FPaths::FileExists(F); }).Num();
+	TSharedRef<SVerticalBox> Out = SNew(SVerticalBox)
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 4.f)[OKStudioStyle::Label(FText::FromString(Stats), 10.f)]
 		+ SVerticalBox::Slot().FillHeight(1.f)[SNew(SBorder).BorderImage(Brush(ListArea())).Padding(3.f)[SNew(SScrollBox) + SScrollBox::Slot()[Box]]];
+	if (Gone > 0)
+		Out->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)[Button(FText::FromString(FString::Printf(TEXT("清除不存在的場景（%d）"), Gone)), [this]
+		{
+			FOKStudioSettings::Get().RecentScenes.RemoveAll([](const FString& F) { return !FPaths::FileExists(F); });
+			FOKStudioSettings::Get().SaveFavorites();
+			DeferFloat(TEXT("recent"));
+		}, 0.f, 20.f)];
+	return Out;
 }
 
 TSharedRef<SWidget> SOKStudioPanel::BuildBgm()
@@ -916,7 +1043,9 @@ TSharedRef<SWidget> SOKStudioPanel::BuildBgm()
 		const bool bThere = !C.BgmSound(No).IsEmpty();
 		Missing += bThere ? 0 : 1;
 		SoundRows->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)
-			[Button(FText::FromString(FString::Printf(TEXT("%02d %s"), No, *B.Name)), [this, Sound, No] { if (FOKSceneSound* S = Sound()) { S->Bgm = No; Changed(); } }, 0.f, 18.f,
+			// A double click plays the piece (U126); a click only picks it.
+			[RowButton(FText::FromString(FString::Printf(TEXT("%02d %s"), No, *B.Name)), [this, Sound, No] { if (FOKSceneSound* S = Sound()) { S->Bgm = No; Changed(); } },
+				[this, Sound, No] { if (FOKSceneSound* S = Sound()) { S->Bgm = No; S->bBgmPlay = true; Changed(); } }, 18.f,
 				TAttribute<bool>::CreateLambda([Sound, No] { const FOKSceneSound* S = Sound(); return S && S->Bgm == No; }), 10.f, ButtonFill(), bThere)];
 	}
 	const FString Note = C.Bgm.IsEmpty() ? TEXT("基礎庫沒有 BGM 清單：執行 ok-extract <遊戲> --oklib studio-sounds <基礎庫>。")
@@ -1765,11 +1894,10 @@ TSharedRef<SWidget> SOKStudioPanel::BuildResources()
 		}
 		if (!bSelectedOnly && Game->SceneActor && !Game->SceneActor->MapError.IsEmpty()) Lines.Add(TEXT("地圖：") + Game->SceneActor->MapError);
 	}
-	const int32 Count = Lines.Num();
-	if (bSelectedOnly && !Game->Document->Objects.ContainsByPredicate(Listed)) Lines.Add(TEXT("請先選取物件。"));
-	else if (Lines.IsEmpty()) Lines.Add(TEXT("沒有缺少的資源。"));
 	// Each character (HS2Studio6 资源检查): its card's kind, whether it shows, and the mods an original card names (what
 	// to install before 重新讀取角色). An OK card carries its own parts.
+	// Its missing zipmods also count as missing resources (the list above).
+	TArray<FString> Chars;
 	if (Game.IsValid())
 	{
 		const FString Project = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
@@ -1777,7 +1905,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildResources()
 		for (const FOKSceneObject& O : Game->Document->Objects)
 		{
 			if (O.Kind != EOKSceneObjectKind::Character || !Listed(O)) continue;
-			if (!bHeading) { Lines.Add(TEXT("── 角色 ──")); bHeading = true; }
+			if (!bHeading) { Chars.Add(TEXT("── 角色 ──")); bHeading = true; }
 			const FString Card = FPaths::IsRelative(O.Character.Card) ? Project / O.Character.Card : O.Character.Card;
 			const bool bShown = Game->SceneActor && Game->SceneActor->PreviewOf(O.Id);
 			FString Kind;
@@ -1792,12 +1920,40 @@ TSharedRef<SWidget> SOKStudioPanel::BuildResources()
 				if (UKKCardReader::LoadFromFile(Card, File, Error)) { for (const FKKResolveInfo& R : File.Resolves) if (!R.ModID.IsEmpty()) Mods.AddUnique(R.ModID); }
 				else Kind += TEXT("，讀不出：") + Error;
 			}
-			Lines.Add(FString::Printf(TEXT("#%d %s：%s，%s%s"), O.Id, *O.Name, *Kind, bShown ? TEXT("已顯示") : TEXT("未顯示"),
-				Mods.IsEmpty() ? TEXT("") : *FString::Printf(TEXT("，卡片指名 %d 個 mod"), Mods.Num())));
-			Mods.Sort();
-			for (const FString& M : Mods) Lines.Add(FString::Printf(TEXT("#%d 　　%s"), O.Id, *M));
+			// Which of them the open finds in no zipmod (base library, beside the card, the KKS installation): asked once per
+			// card in the background, the window rebuilt when the answer is in (HS2Studio6 资源检查 lists the missing ones).
+			const FOKAbsentModsCheck* Check = nullptr;
+			if (!Mods.IsEmpty())
+			{
+				TSharedPtr<FOKAbsentModsCheck, ESPMode::ThreadSafe>& Slot = AbsentModChecks.FindOrAdd(Card);
+				if (!Slot.IsValid())
+				{
+					Slot = MakeShared<FOKAbsentModsCheck, ESPMode::ThreadSafe>();
+					Async(EAsyncExecution::ThreadPool, [Load = Slot, Card] { Load->bOk = FOkSession::AbsentCardMods(Card, Load->Absent, Load->Error); Load->bDone = true; });
+					bAbsentModsWaiting = true;
+				}
+				if (Slot->bDone.load()) Check = Slot.Get();
+			}
+			FString ModsNote;
+			if (!Mods.IsEmpty())
+			{
+				ModsNote = FString::Printf(TEXT("，卡片指名 %d 個 mod"), Mods.Num());
+				if (!Check) ModsNote += TEXT("（檢查中…）");
+				else if (!Check->bOk) ModsNote += TEXT("（檢查失敗：") + Check->Error + TEXT("）");
+				else ModsNote += Check->Absent.IsEmpty() ? FString(TEXT("，都找得到")) : FString::Printf(TEXT("，缺 %d 個"), Check->Absent.Num());
+			}
+			Chars.Add(FString::Printf(TEXT("#%d %s：%s，%s%s"), O.Id, *O.Name, *Kind, bShown ? TEXT("已顯示") : TEXT("未顯示"), *ModsNote));
+			if (Check && Check->bOk && !Check->Absent.IsEmpty()) Lines.Add(FString::Printf(TEXT("#%d %s：缺 zipmod %s"), O.Id, *O.Name, *FString::Join(Check->Absent, TEXT("、"))));
+			// Missing ones first, marked; then the ones found.
+			const auto Missing = [Check](const FString& M) { return Check && Check->bOk && Check->Absent.ContainsByPredicate([&M](const FString& A) { return A.Equals(M, ESearchCase::IgnoreCase); }); };
+			Mods.Sort([&Missing](const FString& A, const FString& B) { const bool MA = Missing(A), MB = Missing(B); return MA != MB ? MA : A < B; });
+			for (const FString& M : Mods) Chars.Add(FString::Printf(TEXT("#%d 　　%s%s"), O.Id, Missing(M) ? TEXT("缺少　") : TEXT(""), *M));
 		}
 	}
+	const int32 Count = Lines.Num();
+	if (bSelectedOnly && !Game->Document->Objects.ContainsByPredicate(Listed)) Lines.Add(TEXT("請先選取物件。"));
+	else if (Lines.IsEmpty()) Lines.Add(TEXT("沒有缺少的資源。"));
+	Lines.Append(Chars);
 	ResourcesShown = Lines;
 	return SNew(SVerticalBox)
 		+ SVerticalBox::Slot().AutoHeight()
@@ -1811,7 +1967,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildResources()
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("複製清單")), [Lines] { FPlatformApplicationMisc::ClipboardCopy(*FString::Join(Lines, TEXT("\n"))); }, 0.f, 20.f)]
-			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("重新檢查")), [this] { DeferFloat(TEXT("resources")); }, 0.f, 20.f)]
+			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("重新檢查")), [this] { AbsentModChecks.Reset(); DeferFloat(TEXT("resources")); }, 0.f, 20.f)]
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 3.f, 0.f)[Button(FText::FromString(TEXT("重新讀取角色")), Cmd(TEXT("scene.reloadcharacters")), 0.f, 20.f)]
 			// HS2Studio6 资源检查's 资源目录: the settings page where card, sound, pose and picture folders are added.
 			+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("資源目錄")), [this]
@@ -1926,6 +2082,22 @@ void SOKStudioPanel::ShowEaseMenu(const FVector2D& At)
 	FSlateApplication::Get().PushMenu(AsShared(), FWidgetPath(), MenuScaled(SNew(SBorder).BorderImage(Brush(Panel())).Padding(4.f)[Box]), At, FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));
 }
 
+void SOKStudioPanel::ShowCutMenu(const FVector2D& At)
+{
+	if (!Game.IsValid()) return;
+	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
+	TArray<TPair<int32, FString>> Views = { { -1, TEXT("自由視角") } };
+	for (const FOKSceneObject& O : Game->Document->Objects) if (O.Kind == EOKSceneObjectKind::Camera) Views.Add({ O.Id, O.Name });
+	if (Views.Num() == 1) Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)[OKStudioStyle::Label(FText::FromString(TEXT("場景裡沒有相機（工作區下方的相機鈕可從目前視角加入）")), 10.f, TextHint())];
+	for (const TPair<int32, FString>& V : Views)
+		Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)[Button(FText::FromString(V.Value), [this, Camera = V.Key]
+		{
+			FSlateApplication::Get().DismissAllMenus();
+			RunCommand(TEXT("timeline.cutkey"), FString::FromInt(Camera));
+		}, 120.f, 18.f, false, 10.f)];
+	FSlateApplication::Get().PushMenu(AsShared(), FWidgetPath(), MenuScaled(SNew(SBorder).BorderImage(Brush(Panel())).Padding(4.f)[Box]), At, FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));
+}
+
 TSharedRef<SWidget> SOKStudioPanel::BuildTimeline()
 {
 	auto Icon = [this](FName I, const FString& Label, const FString& Command) { return IconButton(I, Tip(Label, Command), Cmd(Command), 22.f, 20.f); };
@@ -1942,11 +2114,23 @@ TSharedRef<SWidget> SOKStudioPanel::BuildTimeline()
 		+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f)[SNew(SBox).WidthOverride(48.f).HeightOverride(18.f)[Spin([this] { return Game.IsValid() ? Game->Document->Duration : 10.f; }, [this](float V) { if (Game.IsValid()) { Game->Document->Duration = FMath::Max(V, 0.1f); Changed(); } }, 0.1f, 3600.f, 0.1f)]]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[OKStudioStyle::Label(FText::FromString(TEXT("速度")), 10.f)]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f)[SNew(SBox).WidthOverride(40.f).HeightOverride(18.f)[Spin([this] { return Game.IsValid() ? Game->TimelineSpeed : 1.f; }, [this](float V) { if (Game.IsValid()) Game->TimelineSpeed = FMath::Clamp(V, 0.05f, 8.f); }, 0.05f, 8.f, 0.05f)]];
+	// The cut menu opens under its button (U122: at the system cursor it opened elsewhere for keyboard and simulated clicks).
+	TSharedRef<TWeakPtr<SWidget>> CutSelf = MakeShared<TWeakPtr<SWidget>>();
+	TSharedRef<SWidget> CutButton = Button(FText::FromString(TEXT("切鏡頭 ▼")), [this, CutSelf]
+	{
+		const TSharedPtr<SWidget> W = CutSelf->Pin();
+		const FGeometry& G = W ? W->GetCachedGeometry() : FGeometry();
+		ShowCutMenu(W ? FVector2D(G.LocalToAbsolute(FVector2f(0.f, G.GetLocalSize().Y))) : FSlateApplication::Get().GetCursorPos());
+	}, 56.f, 20.f, false, 10.f);
+	*CutSelf = CutButton;
 	TSharedRef<SWidget> Row2 = SNew(SHorizontalBox)
-		+ SHorizontalBox::Slot().AutoWidth()[IconButton(TEXT("key"), Tip(TEXT("為選取物件打 key"), TEXT("timeline.key")), Cmd(TEXT("timeline.key")), 22.f, 20.f)]
-		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(FText::FromString(TEXT("刪 key")), Cmd(TEXT("timeline.delete")), 40.f, 20.f, false, 10.f)]
+		// 打 key first, with its name and the "on" colour; 刪 key small and grey beside it (U135: the bare ◇ was taken for
+		// something else and 刪 key, the one with a name, was clicked instead).
+		+ SHorizontalBox::Slot().AutoWidth()[SNew(SBox).ToolTipText(FText::FromString(Tip(TEXT("為選取物件打 key"), TEXT("timeline.key"))))[Button(FText::FromString(TEXT("◆ 打 key")), Cmd(TEXT("timeline.key")), 50.f, 20.f, false, 10.f, On())]]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[SNew(SBox).ToolTipText(FText::FromString(Tip(TEXT("刪除播放頭上的 key"), TEXT("timeline.delete"))))[Button(FText::FromString(TEXT("刪 key")), Cmd(TEXT("timeline.delete")), 36.f, 20.f, false, 9.f, Input())]]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(FText::FromString(TEXT("場景 key")), Cmd(TEXT("timeline.scenekey")), 52.f, 20.f, false, 10.f)]
-		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(FText::FromString(TEXT("清空軌道")), Cmd(TEXT("timeline.clear")), 52.f, 20.f, false, 10.f)]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[CutButton]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[SNew(SBox).ToolTipText(FText::FromString(TEXT("清空所選物件的軌道")))[Button(FText::FromString(TEXT("清空")), Cmd(TEXT("timeline.clear")), 32.f, 20.f, false, 10.f)]]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(TAttribute<FText>::CreateLambda([this]
 		{
 			const FOKSceneTrack* T = Game.IsValid() ? Game->Document->TrackOf(Game->SelectedId) : nullptr;
@@ -1996,6 +2180,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildExport()
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[Line(TEXT("寬"), Spin([this] { return float(ExportW); }, [this](float V) { ExportW = FMath::Clamp(FMath::RoundToInt(V), 16, 8192); }, 16.f, 8192.f, 1.f))]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[Line(TEXT("高"), Spin([this] { return float(ExportH); }, [this](float V) { ExportH = FMath::Clamp(FMath::RoundToInt(V), 16, 8192); }, 16.f, 8192.f, 1.f))]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[Line(TEXT("輸出資料夾"), TextBox([this] { return ExportFolderText; }, [this](const FString& V) { ExportFolderText = V.TrimStartAndEnd().TrimQuotes(); }, TEXT("UserData/Studio/movie")))]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[CheckBox(TEXT("mp4 含音樂（播放中的 BGM 與外部音源）"), [this] { return Game.IsValid() && Game->bExportAudio; }, [this](bool B) { if (Game.IsValid()) Game->bExportAudio = B; })]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
 		[
 			SNew(SBox).HeightOverride(14.f)
@@ -2005,7 +2190,8 @@ TSharedRef<SWidget> SOKStudioPanel::BuildExport()
 		{
 			if (!Game.IsValid()) return FText::GetEmpty();
 			if (Game->IsExporting()) return FText::FromString(FString::Printf(TEXT("輸出中 %d / %d 幀"), Game->ExportFrameIndex(), Game->ExportFrameCount()));
-			if (!Game->LastMovie.IsEmpty()) return FText::FromString(TEXT("完成：") + Game->LastMovie);
+			// The note before the path: the line is cut at the window's edge.
+			if (!Game->LastMovie.IsEmpty()) return FText::FromString(Game->LastMovieNote.IsEmpty() ? TEXT("完成：") + Game->LastMovie : TEXT("完成（") + Game->LastMovieNote + TEXT("）：") + Game->LastMovie);
 			if (!Game->LastMovieError.IsEmpty()) return FText::FromString(TEXT("沒有影片：") + Game->LastMovieError);
 			return FText::FromString(Game->ExportFolder().IsEmpty() ? FString() : TEXT("上次輸出：") + Game->ExportFolder());
 		}), 10.f, TextSoft())]
@@ -2015,6 +2201,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildExport()
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 2.f, 0.f)[Button(FText::FromString(TEXT("開始")), [this]
 			{
 				if (!Game.IsValid() || Game->IsExporting()) return;
+				WriteExportChoices();
 				if (ExportKind == 2)
 				{
 					FString Error;

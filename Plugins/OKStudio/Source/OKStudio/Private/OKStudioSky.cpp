@@ -60,6 +60,24 @@ namespace
 		return nullptr;
 	}
 
+	// A texture a pattern names without its file: the library recorded no textures for five patterns (1005, 1006,
+	// 1011-1013) whose material takes them from another bundle. KKS's skies share their cloud noise and moon, so the
+	// same-named texture of another pattern stands in (U154: the lighthouse's evening and night skies were black).
+	const TSharedPtr<FJsonObject>* SharedSkyTexture(const TCHAR* Name)
+	{
+		const TSharedPtr<FJsonObject> Catalog = LoadCatalog();
+		const TArray<TSharedPtr<FJsonValue>>* Patterns = nullptr;
+		if (!Catalog.IsValid() || !Catalog->TryGetArrayField(TEXT("patterns"), Patterns)) return nullptr;
+		for (const TSharedPtr<FJsonValue>& P : *Patterns)
+		{
+			const TSharedPtr<FJsonObject> O = P->AsObject();
+			const TSharedPtr<FJsonObject>* Textures = nullptr;
+			const TSharedPtr<FJsonObject>* Info = nullptr;
+			if (O.IsValid() && O->TryGetObjectField(TEXT("textures"), Textures) && (*Textures)->TryGetObjectField(Name, Info)) return Info;
+		}
+		return nullptr;
+	}
+
 	/** Unity's GammaToLinearSpace (the exact sRGB curve): what a colour property becomes in Studio's linear space. */
 	float ToLinear(float V) { return V <= 0.04045f ? V / 12.92f : FMath::Pow((V + 0.055f) / 1.055f, 2.4f); }
 
@@ -391,7 +409,8 @@ UMaterialInterface* OKStudioSkyMaterial(int32 No, FString& OutError)
 		const FOKSkyTexture& T = Program->Textures[I];
 		UTexture2D* Texture = nullptr;
 		const TSharedPtr<FJsonObject>* Info = nullptr;
-		if (Textures.IsValid() && Textures->TryGetObjectField(T.Name, Info))
+		if (!Textures.IsValid() || !Textures->TryGetObjectField(T.Name, Info)) Info = SharedSkyTexture(T.Name);
+		if (Info)
 			Texture = LoadTexture(AOKSceneActor::LibraryDirectory() / (*Info)->GetStringField(TEXT("file")), (*Info)->GetBoolField(TEXT("srgb")),
 				(*Info)->GetBoolField(TEXT("point")), (*Info)->GetBoolField(TEXT("clamp")));
 		if (!Texture) { OutError = FString::Printf(TEXT("sky pattern %d: texture %s missing"), No, T.Name); return nullptr; }

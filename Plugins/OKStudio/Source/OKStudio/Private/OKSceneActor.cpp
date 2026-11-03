@@ -1053,6 +1053,11 @@ void AOKSceneActor::SyncMap()
 		// The map is on its own lighting channel: Studio's character light (it turns with the camera) does not light it.
 		TInlineComponentArray<UPrimitiveComponent*> Primitives(Actor);
 		for (UPrimitiveComponent* P : Primitives) P->SetLightingChannels(false, false, !P->ComponentHasTag(TEXT("OKSunExcluded")));
+		// The Funly sky's controller: Studio draws the sky from its skybox material (OKStudioSky); the meshes under the
+		// controller are its helpers, not scenery (U160: one drew as a black disc over the lighthouse's lawn, with a
+		// shadow). Its lights stay.
+		if (Root == TEXT("SkySystemController"))
+			for (UPrimitiveComponent* P : Primitives) { P->SetVisibility(false, true); P->SetCastShadow(false); }
 		ShownMapPreviews.Add(Actor);
 		AddMapLights(Actor, Entry->Model, Root);
 	}
@@ -1085,6 +1090,9 @@ void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
 	FLinearColor Lightmapping;
 	const bool bBakedSun = Map && Map->Session.MaterialValue(0, "_OKSunLightmapping", Lightmapping) && FMath::RoundToInt(Lightmapping.R) == 2;
 	const bool bSun = Time >= 0 && !bBakedSun && CVarOkStudioMapSun.GetValueOnGameThread() != 0;
+	MapTimes = 0;
+	for (int32 T = 0; T < 4; ++T) { FLinearColor Probe; if (Value(TEXT("Color"), T, Probe)) MapTimes |= 1 << T; }
+	bMapSunBaked = bBakedSun;
 	if (Time == ShownMapTime && Components == ShownMapComponents && (MapSun != nullptr) == bSun && (!bSun || ShownMapSunPlace.Equals(GetActorTransform()))) return;
 	ShownMapTime = Time;
 	ShownMapComponents = Components;
@@ -1150,6 +1158,25 @@ void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
 	const FVector Towards = FVector(SunForward.X, -SunForward.Z, -SunForward.Y).GetSafeNormal();
 	MapSunItemDirection = FLinearColor(Towards.X, Towards.Y, Towards.Z, 0.f);
 	MapSunItemColor = FLinearColor(Irradiance.R, Irradiance.G, Irradiance.B, 1.f);
+	// The map's water (StylizedWater, the lighthouse's Lux Water sea) is lit by the map's sun as Unity's ForwardBase
+	// gives it: _LightColor0 the sun's colour times intensity, from the sun's direction (U166: the sea kept the same
+	// colour at every time).
+	for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews)
+	{
+		if (!P.IsValid()) continue;
+		TInlineComponentArray<UMeshComponent*> Meshes(P.Get());
+		for (UMeshComponent* Mesh : Meshes)
+			for (int32 Slot = 0; Slot < Mesh->GetNumMaterials(); ++Slot)
+			{
+				UMaterialInstanceDynamic* Water = Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot));
+				float Speed = 0.f;
+				if (Water && Water->GetScalarParameterValue(FMaterialParameterInfo(TEXT("_Wavesspeed")), Speed))
+				{
+					Water->SetVectorParameterValue(TEXT("_LightColor0"), MapSunItemColor);
+					Water->SetVectorParameterValue(TEXT("_OKLightDir"), FLinearColor(MapSunItemDirection.R, MapSunItemDirection.G, MapSunItemDirection.B, 1.f));
+				}
+			}
+	}
 	UE_LOG(LogTemp, Display, TEXT("OK studio: map time %d sun angle=(%.1f,%.1f,%.1f) colour=(%.2f,%.2f,%.2f) intensity=%.2f"), Time, Angle.R, Angle.G, Angle.B, Color.R, Color.G, Color.B, Color.A);
 }
 
@@ -1364,6 +1391,34 @@ TArray<AActor*> AOKSceneActor::ObjectPreviews() const
 	TArray<AActor*> Out;
 	for (const auto& Pair : Shown) if (AKKPreviewActor* P = Pair.Value.Preview.Get()) Out.Add(P);
 	return Out;
+}
+
+FString AOKSceneActor::MapTimeNote() const
+{
+	if (!Document || Document->Map < 0 || !MapPreview()) return FString();
+	static const TCHAR* Names[] = { TEXT("朝"), TEXT("昼"), TEXT("夕"), TEXT("夜") };
+	const int32 Want = FMath::Clamp(Document->Post.SunType, 0, 3);
+	TArray<FString> Notes;
+	if (!MapTimes) Notes.Add(TEXT("地圖沒有時段資料"));
+	else if (!((MapTimes >> Want) & 1) && ShownMapTime >= 0 && ShownMapTime < 4) Notes.Add(FString::Printf(TEXT("地圖沒有「%s」，顯示「%s」"), Names[Want], Names[ShownMapTime]));
+	if (bMapSunBaked) Notes.Add(TEXT("光照烘焙在地圖貼圖裡，時段只換顯示的物件與天空"));
+	else if (MapSun)
+	{
+		const FColor C = MapSun->GetLightColor().ToFColor(true);
+		Notes.Add(FString::Printf(TEXT("太陽仰角 %.0f°、顏色 #%02X%02X%02X"), -MapSun->GetComponentRotation().Pitch, C.R, C.G, C.B));
+	}
+	return FString::Join(Notes, TEXT("；"));
+}
+
+void AOKSceneActor::MapPartBounds(TArray<FBox>& Out) const
+{
+	for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews)
+	{
+		if (!P.IsValid()) continue;
+		TInlineComponentArray<UPrimitiveComponent*> Primitives(P.Get());
+		for (const UPrimitiveComponent* C : Primitives)
+			if (C && C->IsRegistered() && C->IsVisible()) Out.Add(C->Bounds.GetBox());
+	}
 }
 
 AKKPreviewActor* AOKSceneActor::PreviewOf(int32 Id) const

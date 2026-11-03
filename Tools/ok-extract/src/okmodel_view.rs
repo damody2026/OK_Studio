@@ -155,6 +155,20 @@ fn assign_reflection_probes(meshes: &mut [ExtractedMesh], probes: &crate::unity:
 /// (Unity axes, metres): `_OKRTCamPos` (position, vertical fov), `_OKRTCamFwd` (+Z, near), `_OKRTCamUp` (+Y, far),
 /// `_OKRTCamSize` (RenderTexture width, height, orthographic 0/1, orthographic size), `_OKRTCamClear` (background
 /// colour, clear flags). A camera Unity never runs (disabled or inactive) is left out.
+/// A map's SunLightInfo with its times numbered as Sunshine numbers them (0 morning, 1 day, 2 evening, 3 night). A
+/// Koikatsu-era map (the school: `mo_koi_*`) has exactly types 0, 1, 2 meaning day, evening, night (`mo_koi_sky_hiru`,
+/// `_yu`, `_yo`; `*_glass_e`, `*_glass_n`): read as Sunshine's they put the evening sun at noon and the night at dusk
+/// (U138). They move up one, and morning is the day's.
+fn scene_times(mut sun: crate::unity::PrefabSunLight) -> crate::unity::PrefabSunLight {
+    let mut kinds: Vec<i32> = sun.infos.iter().map(|i| i.kind).collect();
+    kinds.sort_unstable();
+    if kinds == [0, 1, 2] {
+        for i in &mut sun.infos { i.kind += 1; }
+        if let Some(day) = sun.infos.iter().find(|i| i.kind == 1).cloned() { sun.infos.insert(0, crate::unity::PrefabSunInfo { kind: 0, ..day }); }
+    }
+    sun
+}
+
 /// The times of day (a bit per SunLightInfo.Info.Type) whose `visibleList` holds this node or one above it; 0: shown
 /// whatever the time.
 fn sun_mask(sun: &crate::unity::PrefabSunLight, h: &crate::pose::PrefabHierarchy, node: i32) -> u32 {
@@ -391,7 +405,7 @@ impl ModelView {
     pub fn prefab_lightmap_directions(&self, prefab: &str) -> crate::unity::PrefabLightmaps { self.parsed.prefab_lightmap_directions(prefab) }
     pub fn prefab_renderer_settings(&self, prefab: &str) -> Vec<(i32,i32,i32,bool)> { self.parsed.prefab_renderer_settings(prefab) }
     /// A map's SunLightInfo (recorded by `studio-nodes`).
-    pub fn parsed_sun_light(&self, prefab: &str) -> crate::unity::PrefabSunLight { self.parsed.prefab_sun_light(prefab) }
+    pub fn parsed_sun_light(&self, prefab: &str) -> crate::unity::PrefabSunLight { scene_times(self.parsed.prefab_sun_light(prefab)) }
 
     /// Bones a prefab's shown skinned meshes follow: what Studio item FK can turn.
     /// The enabled cameras of a prefab drawing into a RenderTexture (a Studio camera item), with their node's
@@ -411,7 +425,7 @@ impl ModelView {
     /// mask, shadow type and the times of day it shows at (`sun_mask`, 0: always).
     pub fn map_lights(&self, prefab: &str) -> Vec<serde_json::Value> {
         let h = self.hierarchy(prefab);
-        let sun = self.parsed.prefab_sun_light(prefab);
+        let sun = scene_times(self.parsed.prefab_sun_light(prefab));
         let modes = self.parsed.prefab_light_modes(prefab);
         h.lights.iter().filter(|l| l.enabled && l.node != sun.light_node).filter_map(|l| {
             let mode = modes.iter().find(|m| m.node == l.node)?;
@@ -493,7 +507,7 @@ impl ModelView {
         }
         // Studio map times of day (SunLightInfo): what a time shows may be inactive in the prefab, so those meshes come in
         // too; every part under a time's list is marked with the times it shows at (mark_sun_visible).
-        let sun = self.parsed.prefab_sun_light(prefab);
+        let sun = scene_times(self.parsed.prefab_sun_light(prefab));
         let renderers = self.parsed.prefab_renderer_settings(prefab);
         let renderer_visibility = self.parsed.prefab_renderer_visibility(prefab);
         let has_time_parts = sun.infos.iter().any(|i| !i.visible.is_empty());
@@ -544,7 +558,18 @@ impl ModelView {
         let render_textures = self.parsed.prefab_render_textures(prefab);
         let animated = self.parsed.prefab_animated_materials(prefab);
         let mark_renderer = |m: &mut ExtractedMesh, node: i32| {
-            if let (Some(mat), Some((_, casting, layer, enabled))) = (m.mat.as_mut(), renderers.iter().find(|r| r.0 == node)) {
+            // A shadow-only or switched-off renderer whose material is in another bundle still has to carry its flags, or
+            // it is drawn.
+            if m.mat.is_none() && renderers.iter().any(|r| r.0 == node && (r.1 == 3 || !r.3)) { m.mat = Some(crate::unity::MeshMaterial::default()); }
+            let renderer = renderers.iter().find(|r| r.0 == node);
+            // A mesh on a node with no Renderer (a MeshFilter kept for a collider) is never drawn: the classroom's
+            // `o_koi_map08_tkabe00/01` walls (a grey "Cube" box round the room) hid every window (U132).
+            if renderer.is_none() && !renderers.is_empty() && !m.uses_skin_renderer() {
+                let mat = m.mat.get_or_insert_with(crate::unity::MeshMaterial::default);
+                mat.floats.insert("_OKRendererShadowMode".into(), 0.);
+                mat.floats.insert("_OKRendererEnabled".into(), 0.);
+            }
+            if let (Some(mat), Some((_, casting, layer, enabled))) = (m.mat.as_mut(), renderer) {
                 mat.floats.insert("_OKRendererShadowMode".into(), *casting as f32);
                 mat.floats.insert("_OKRendererLayer".into(), *layer as f32);
                 mat.floats.insert("_OKRendererEnabled".into(), u8::from(*enabled && renderer_visibility.iter().find(|(n, _)| *n == node).is_none_or(|(_, v)| *v)) as f32);
@@ -574,6 +599,22 @@ impl ModelView {
             if let Some((_, node)) = h.mesh_nodes.iter().find(|(id, _)| *id == m.path_id) { mark_renderer(m, *node); }
         }
         meshes.extend(instances);
+        // A LODGroup draws one level at a time; the parts of every level drawn at once stacked the lighthouse's plants
+        // three deep (U149). Levels above 0 go where the mesh's LOD0 is in the prefab (Unity's `<name>_LOD<n>` naming).
+        let lod = |name: &str| -> Option<(String, u32)> {
+            let base = name.split('#').next().unwrap_or(name);
+            let (stem, level) = base.rsplit_once("_LOD")?;
+            Some((stem.to_owned(), level.parse().ok()?))
+        };
+        let has_lod0: BTreeSet<String> = meshes.iter().filter_map(|m| lod(&m.name)).filter(|(_, l)| *l == 0).map(|(s, _)| s).collect();
+        meshes.retain(|m| lod(&m.name).is_none_or(|(stem, level)| level == 0 || !has_lod0.contains(&stem)));
+        // Unity's SpeedTree shader clips its leaf cards at _Cutoff; drawn opaque, their atlas's clear texels showed as
+        // white and dark sheets (U149). Its bark has opaque alpha, so the clip leaves it whole.
+        for mat in meshes.iter_mut().filter_map(|m| m.mat.as_mut()) {
+            if mat.shader.to_ascii_lowercase().starts_with("nature/speedtree") && !mat.keywords.iter().any(|k| k == "_ALPHATEST_ON") {
+                mat.keywords.push("_ALPHATEST_ON".into());
+            }
+        }
         // The map's sun for each time of day (Unity Euler angle, colour, intensity) and its culling mask, on every part
         // (the renderer reads them from any part of the map).
         if !sun.infos.is_empty() {

@@ -182,6 +182,7 @@ void FOKStudioSettings::Load()
 		J->TryGetStringField(TEXT("default_card_male"), DefaultCards[0]);
 		J->TryGetStringField(TEXT("default_card_female"), DefaultCards[1]);
 		J->TryGetStringField(TEXT("material_export_root"), MaterialExportRoot);
+		J->TryGetStringField(TEXT("export_choices"), ExportChoices);
 		const TSharedPtr<FJsonObject>* B = nullptr;
 		if (J->TryGetObjectField(TEXT("bindings"), B)) for (const auto& P : (*B)->Values) Bindings.Add(FString(*P.Key), P.Value->AsString());
 		const TArray<TSharedPtr<FJsonValue>>* Colors = nullptr;
@@ -209,6 +210,7 @@ void FOKStudioSettings::Save() const
 	J->SetNumberField(TEXT("master_volume"), MasterVolume); J->SetBoolField(TEXT("run_in_background"), bRunInBackground);
 	J->SetBoolField(TEXT("merge_keep_directional"), bMergeKeepDirectional);
 	J->SetNumberField(TEXT("vsync"), VSync); J->SetNumberField(TEXT("max_fps"), MaxFps);
+	J->SetStringField(TEXT("export_choices"), ExportChoices);
 	auto Paths = [&J](const TCHAR* Key, const TArray<FString>& List)
 	{
 		TArray<TSharedPtr<FJsonValue>> Roots;
