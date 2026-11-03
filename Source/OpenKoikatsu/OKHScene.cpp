@@ -277,6 +277,7 @@ void UOKHScenePanel::LoadPoses(){
             Pose.KindHoushi=int32((*M)->GetNumberField(TEXT("kind_houshi")));Pose.Anal=(*M)->GetBoolField(TEXT("anal"));
             Pose.FemaleLead=(*M)->HasField(TEXT("female_initiative"))&&(*M)->GetBoolField(TEXT("female_initiative"));
             Pose.IsExperience=int32((*M)->GetNumberField(TEXT("is_experience")));Pose.StateRestriction=int32((*M)->GetNumberField(TEXT("state_restriction")));
+            Pose.UpperCloth=int32((*M)->GetNumberField(TEXT("upper_cloth")));Pose.LowerCloth=int32((*M)->GetNumberField(TEXT("lower_cloth")));
             const FString Named=(*M)->GetStringField(TEXT("name"));if(!Named.IsEmpty())Pose.Name=Named;
         }
         Pose.Prop=FMath::Max(0,HPropKind(Category,Id));
@@ -337,7 +338,29 @@ void UOKHScenePanel::SelectPose(int32 Index){
     PendingPose=Index;Queue.Reset();Wanted.Reset();bAnalPlay=false;bInsideFinished=false;bStrong=false;
     Gallery->PairCombo->SetSelectedIndex(Option+1);
     Gallery->NoteAction(TEXT("pair"),Poses[Index].Name);
+    PoseClothes(Poses[Index]);
     BuildList();
+}
+// As the original starts a pose (HSceneProc SetAllClothState from numFemaleUpper/LowerCloth): her top and bra, or her
+// bottom, panties and pantyhose, undone at least that far (1 shifted aside, 3 off), never put back on. Shifted is a piece's
+// half state where it has one (ClothesTransition, one press of its button), off where it has none; a half state opens her
+// again in it (as the clothes buttons), off only hides it.
+void UOKHScenePanel::PoseClothes(const FOKHPose& Pose){
+    auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;AOKInteractionMode* M=Interaction();if(!IsValid(Girl)||!M)return;
+    uint8* S=Gallery->ClothesStates;uint8 Next[9];FMemory::Memcpy(Next,S,9);
+    auto Undo=[&](std::initializer_list<int32> Parts,int32 State){
+        if(State<=0)return;
+        for(const int32 K:Parts){if(Next[K]>=State)continue;
+            uint8 Press[9];FString Why;
+            Next[K]=State>=3||!M->ClothesTransition(K,Press,Why)||Press[K]==0?3:Press[K];}
+    };
+    Undo({0,2},Pose.UpperCloth);Undo({1,3,5},Pose.LowerCloth);
+    if(FMemory::Memcmp(Next,S,9)==0)return;
+    bool Shown=true;for(int32 K=0;K<9;++K)Shown&=Next[K]==3||Next[K]==Girl->DisplayClothesStates[K];
+    if(!Shown&&M->ChangeClothesStates(Next)){FMemory::Memcpy(S,Next,9);Gallery->RefreshClothesStateLabels();return;}
+    // Opening her again is busy: off instead, so nothing goes through her clothes.
+    for(int32 K=0;K<9;++K)if(Next[K]!=S[K]&&Next[K]!=Girl->DisplayClothesStates[K])Next[K]=3;
+    FMemory::Memcpy(S,Next,9);Girl->SetClothingPartsHidden(S);Gallery->RefreshClothesStateLabels();
 }
 
 void UOKHScenePanel::Want(const FString& State){
@@ -384,7 +407,9 @@ void UOKHScenePanel::Finish(const TCHAR* Kind){
     }
     const bool Org=K.StartsWith(TEXT("org")),Same=K.StartsWith(TEXT("same"));
     const TCHAR* DevArea=bAnalPlay?TEXT("anal"):TEXT("crotch");const float DevBefore=Dev(DevArea);
-    if(Org||Same){++(bAnalPlay?AnalClimaxes:CrotchClimaxes);Her=0.f;}
+    // Only a climax with him in her opens that place (H_DEVELOPMENT_EXPERIENCE_PLAN: 每在陰道／肛門內高潮一次), not one
+    // from his fingers.
+    if(Org||Same){if(Mode==2)++(bAnalPlay?AnalClimaxes:CrotchClimaxes);Her=0.f;}
     if(Same||K==TEXT("inside")||K==TEXT("outside")){++HisFinishes;His=0.f;++(K==TEXT("outside")?HisOutside:HisInside);if(Mode==2){if(bCondom)++HisCondom;else if(K!=TEXT("outside")){++HisInsideRaw;if(!bAnalPlay)++HisInsideVaginaRaw;}}}
     if(Org||Same){ReleaseHeld();CountHerOrgasm();
         // Her cry as she comes (HSonyu: 325 in the slow loop, 326 in the fast one, from her experience bank; user 2026-11-01:

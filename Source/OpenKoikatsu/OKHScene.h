@@ -58,6 +58,7 @@ struct FOKHPose {
     bool FemaleLead=false;      // isFemaleInitiative: her lines are the voice table's rows 38 on (HSonyu num2)
     int32 IsExperience=0;       // 1: needs her used to it (慣れ)
     int32 StateRestriction=0;
+    int32 UpperCloth=0,LowerCloth=0; // numFemaleUpper/LowerCloth: her top / bottom at least this undone for it (SetAllClothState)
     FString Name,Raw;          // shown (OKMotionLabelDisplay) and authored
     int32 Prop=0;              // what the private room adds for it: 0 none (floor), 1 seat, 2 table, 3 wall
 };
@@ -140,6 +141,7 @@ private:
     void BuildList();
     void BuildActions();
     void SelectPose(int32 PoseIndex);
+    void PoseClothes(const FOKHPose& Pose);
     void Want(const FString& State);
     void Chain(const TArray<FString>& States);
     bool Has(const FString& State) const;
