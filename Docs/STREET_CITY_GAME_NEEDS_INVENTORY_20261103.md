@@ -128,8 +128,8 @@ c-street-city 的逐項回答在 `Docs/STREET_CITY_PLACES_INVENTORY_20261103.md`
 
 | 活動 | 名稱寫的樓層 | 錨點實際高度 | 誰處理 |
 |---|---|---|---|
-| `school_class2`（學校二樓教室） | 2 樓 | `school.class2` z=1248，是 1 樓（`lift1` 1200、`lift2` 1600） | c-street-city 把 `class2` 移到 T1 2 樓的教室 |
-| `sleep_dorm`（男宿三樓寢室） | 3 樓 | `boys_dorm.bed3_0` z=1200，是 1 樓 | c-street-city 把 `bed3_0` 移到 D2 3 樓的房間 |
+| `school_class2`（學校二樓教室） | 2 樓 | 原本 z=1248（1 樓） | 已修：移到 T1-0201，z=1648（2 樓） |
+| `sleep_dorm`（男宿三樓寢室） | 3 樓 | 原本 z=1200（1 樓） | 已修：移到 D2-0301 的床，z=1980（3 樓） |
 | `hotel_room6`、`sleep_hotel`（飯店六樓景觀客房） | 6 樓 | `room6` z=1871、`bed6_1` z=1761，是 2 樓；H1 只有 5 層 | 整合時改活動名稱（H1 沒有 6 樓） |
 
 **整合時要處理的（c-street-city 回答，不改 C++，記在這裡）**
