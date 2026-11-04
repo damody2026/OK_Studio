@@ -1321,7 +1321,10 @@ void AOKSceneActor::AddMapLights(AKKPreviewActor* Map, const FString& Model, con
 		bool bCookie = false;
 		L->TryGetBoolField(TEXT("cookie"), bCookie);
 		const FLinearColor Irradiance = OKStudioLinearLightColor(FLinearColor(C[0], C[1], C[2], 1), float(L->GetNumberField(TEXT("intensity"))));
-		if (L->GetStringField(TEXT("name")).Contains(TEXT("_water"))) MapWaterLights.Emplace(Irradiance, uint32(L->GetNumberField(TEXT("times"))));
+		// Lit from its height (Unity forward y, Unity's light shines along +Z), against the lighthouse's by day (0.6): the
+		// night's low light gave its sea too much blue, map 50's high one too little foam.
+		const float Height = FMath::Max(2.f * (R[3] * R[0] - R[1] * R[2]), 0.f) / .6f;
+		if (L->GetStringField(TEXT("name")).Contains(TEXT("_water"))) MapWaterLights.Emplace(Irradiance * Height, uint32(L->GetNumberField(TEXT("times"))));
 		// A directional light's cookie lights one tile of the map; there is no cookie here, and without it the whole map
 		// got the light (map 50's night ground, far over native's).
 		if (Kind == 1 && bCookie) continue;
@@ -1777,7 +1780,7 @@ void AOKSceneActor::UpdateItemLighting()
 	// The sky's ambient (Studio's ambient mode is Skybox: the sky controller updates the ambient probe) on the
 	// scene renderers' unity_SHA*. Without a map or sky, native Studio's
 	// empty environment is zero, rather than the Maker display environment.
-	if (SkyShown != AmbientSky || Document->Map != AmbientMap) { AmbientSky = SkyShown; AmbientMap = Document->Map; AmbientLit.Reset(); }
+	if (SkyShown != AmbientSky || Document->Map != AmbientMap || ShownMapTime != AmbientTime) { AmbientSky = SkyShown; AmbientMap = Document->Map; AmbientTime = ShownMapTime; AmbientLit.Reset(); }
 	FLinearColor SH[3];
 	TArray<FLinearColor> Higher = { FLinearColor(0,0,0,0), FLinearColor(0,0,0,0), FLinearColor(0,0,0,0), FLinearColor(0,0,0,1) };
 	// A loaded map's scene is the active one: its RenderSettings give the ambient. Only with ambient mode Skybox does the
@@ -1788,7 +1791,9 @@ void AOKSceneActor::UpdateItemLighting()
 	TArray<FLinearColor> MapHigher = Higher;
 	const bool bMapAmbient = Document->Map >= 0 && OKStudioMapAmbient(Document->Map, MapSH[0], MapSH[1], MapSH[2], &MapHigher, &MapMode);
 	const bool bSkyLit = AmbientSky >= 0 && !(bMapAmbient && (MapMode == 1 || MapMode == 3));
-	if (!bSkyLit && bMapAmbient) { for (int32 I = 0; I < 3; ++I) SH[I] = MapSH[I]; Higher = MapHigher; }
+	// A Trilight map's colours change with the time of day (SunLightInfo sets them; U176: one colour at every time).
+	if (bMapAmbient && MapMode == 1 && OKStudioMapTimeTrilight(Document->Map, ShownMapTime, SH[0], SH[1], SH[2])) {}
+	else if (!bSkyLit && bMapAmbient) { for (int32 I = 0; I < 3; ++I) SH[I] = MapSH[I]; Higher = MapHigher; }
 	else if (!(bSkyLit && OKStudioSkyAmbient(AmbientSky, SH[0], SH[1], SH[2]))
 		&& !OKStudioMapAmbient(Document->Map, SH[0], SH[1], SH[2], &Higher))
 	{

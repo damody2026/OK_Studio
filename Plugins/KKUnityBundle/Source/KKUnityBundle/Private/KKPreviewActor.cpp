@@ -4006,8 +4006,10 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 		"float overlay = alpha > 0.5 ? 1.0 - (1.0 - 2.0 * (alpha - 0.5)) * (1.0 - deep) : 2.0 * alpha * deep;\n"
 		"GrabOffset = r4.xz;\n"
 		"if (OKLux > 0.5) {\n"
-		"float ripple = 1.0 + 0.5 * (n.x + n.z);\n"
-		"float foam = saturate(length(n.xz) * 3.0);\n"
+		// Lux's _FarBumpSampleParams: its normals are gone by 300 m (without it the far sea was noise).
+		"float nearW = saturate(1.0 - distance(cam, wp) / 300.0);\n"
+		"float ripple = 1.0 + 0.5 * (n.x + n.z) * nearW;\n"
+		"float foam = lerp(0.25, saturate(length(n.xz) * 4.0), nearW);\n"
 		"foam *= foam * OKDeepFoam.a * OKDeepFoam.a * OKDeepFoam.a;\n"
 		"return float4(WaterColor.rgb * (OKAmbient.rgb + 0.2 * diffuse * LightColor0.rgb) * ripple + (0.25 * OKScatter.rgb + foam * OKDeepFoam.rgb) * OKWaterLight.rgb + OKSkyLight.rgb + pow(nh, 256.0) * LightColor0.rgb, saturate(deep * 4.0 + 0.5));\n"
 		"}\n"
@@ -6879,7 +6881,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 						if (Source.MaterialValue(i, "_DeepFoamColor", V)) Dynamic->SetVectorParameterValue(TEXT("_OKDeepFoam"), FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), V.A));
 						Color("_UnderWaterReflCol", TEXT("_FresnelColor"), .35f);
 						Color("_FoamColor", TEXT("_RimColor"), .25f);
-						if (Source.MaterialValue(i, "_BumpTiling", V)) Dynamic->SetScalarParameterValue(TEXT("_Tiling"), 1.f - FMath::Clamp(V.R * 2.f, .02f, .9f));
+						if (Source.MaterialValue(i, "_BumpTiling", V)) Dynamic->SetScalarParameterValue(TEXT("_Tiling"), 1.f - FMath::Clamp(V.R, .01f, .9f));
 						if (Source.MaterialValue(i, "_DepthAtten", V) && V.G > 0.f) Dynamic->SetScalarParameterValue(TEXT("_Depth"), V.G);
 						Dynamic->SetScalarParameterValue(TEXT("_Transparency"), .55f);
 						Dynamic->SetScalarParameterValue(TEXT("_Glossiness"), .8f);

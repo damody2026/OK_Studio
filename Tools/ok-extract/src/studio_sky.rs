@@ -169,6 +169,11 @@ pub struct MapSky {
     /// Each of those times' ambient sky colour (SunLightInfo.Info.ambientSkyColor, as stored).
     #[serde(default)]
     pub ambient: Vec<[f32; 3]>,
+    /// The same times' ambientEquatorColor and ambientGroundColor: a Trilight map's ambient changes with them (U176).
+    #[serde(default)]
+    pub ambient_equator: Vec<[f32; 3]>,
+    #[serde(default)]
+    pub ambient_ground: Vec<[f32; 3]>,
     pub skies: Vec<MapSkyEntry>,
 }
 
@@ -530,6 +535,7 @@ fn map_skies(game: &Path, lib: &Path, patterns: &mut Vec<SkyPattern>) -> Result<
         let mut skies: Vec<Vec<(Option<(i64, i64)>, Vec<String>, Vec<String>)>> = Vec::new();
         let mut suns: Vec<Vec<i32>> = Vec::new();
         let mut ambients: Vec<Vec<[f32; 3]>> = Vec::new();
+        let (mut equators, mut grounds): (Vec<Vec<[f32; 3]>>, Vec<Vec<[f32; 3]>>) = (Vec::new(), Vec::new());
         src.bundles[0].with_serialized(|files| for f in files {
             let names: BTreeMap<i64, String> = f.objects_of_type(1).into_iter()
                 .filter_map(|i| UnityObject::from_serialized_file(f, &i).ok().and_then(|o| o.name()).map(|n| (i.path_id, n))).collect();
@@ -547,10 +553,14 @@ fn map_skies(game: &Path, lib: &Path, patterns: &mut Vec<SkyPattern>) -> Result<
                     }).collect());
                 } else {
                     suns.push(infos.iter().filter_map(|i| obj(i, "type").and_then(|t| t.as_i64())).map(|t| t as i32).collect());
+                    let colours = |name: &str| -> Vec<[f32; 3]> { infos.iter().filter(|i| obj(i, "type").is_some()).filter_map(|i| obj(i, name))
+                        .map(|c| [f32_of(c, "r", 1.), f32_of(c, "g", 1.), f32_of(c, "b", 1.)]).collect() };
                     ambients.push(infos.iter().filter(|i| obj(i, "type").is_some()).map(|i| match obj(i, "ambientSkyColor") {
                         Some(c) => [f32_of(c, "r", 1.), f32_of(c, "g", 1.), f32_of(c, "b", 1.)],
                         None => [1., 1., 1.],
                     }).collect());
+                    equators.push(colours("ambientEquatorColor"));
+                    grounds.push(colours("ambientGroundColor"));
                 }
             }
         });
@@ -577,7 +587,8 @@ fn map_skies(game: &Path, lib: &Path, patterns: &mut Vec<SkyPattern>) -> Result<
             };
             entries.push(MapSkyEntry { pattern: pattern_no, actives, inactives });
         }
-        out.push(MapSky { map: map.no, sun_types: suns.into_iter().next().unwrap_or_default(), ambient: ambients.into_iter().next().unwrap_or_default(), skies: entries });
+        out.push(MapSky { map: map.no, sun_types: suns.into_iter().next().unwrap_or_default(), ambient: ambients.into_iter().next().unwrap_or_default(),
+            ambient_equator: equators.into_iter().next().unwrap_or_default(), ambient_ground: grounds.into_iter().next().unwrap_or_default(), skies: entries });
     }
     Ok(out)
 }

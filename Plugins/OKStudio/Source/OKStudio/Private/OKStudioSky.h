@@ -31,6 +31,10 @@ bool OKStudioMapSky(int32 Map, int32 SunType, int32& OutPattern);
  * studio/sky.json is older than this field or the map has no such time. */
 bool OKStudioMapTimeAmbient(int32 Map, int32 SunType, FLinearColor& OutSky);
 
+/** Map `Map`'s Trilight ambient at time `SunType` (SunLightInfo sets sky, equator and ground per time) as unity_SHA*.
+ * False when the library's studio/sky.json is older than these fields or the map has no such time. */
+bool OKStudioMapTimeTrilight(int32 Map, int32 SunType, FLinearColor& OutSHAr, FLinearColor& OutSHAg, FLinearColor& OutSHAb);
+
 /** Sky pattern `No`'s controller Lights (its sun and moon when the pattern draws them), linear colour times intensity.
  * Black when the library's studio/sky.json is older than these fields. */
 FLinearColor OKStudioSkyLight(int32 No);

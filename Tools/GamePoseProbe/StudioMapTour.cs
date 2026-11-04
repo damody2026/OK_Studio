@@ -73,6 +73,7 @@ public sealed partial class GamePoseProbe {
                     }
                 }
             }
+            writer.WriteLine("ambient_probe\t" + RenderSettings.ambientEquatorColor.ToString("R") + "\t" + RenderSettings.ambientGroundColor.ToString("R") + "\t" + RenderSettings.ambientProbe[0, 0].ToString("R") + "\t" + RenderSettings.ambientProbe[1, 0].ToString("R") + "\t" + RenderSettings.ambientProbe[2, 0].ToString("R") + "\t" + RenderSettings.ambientProbe[0, 1].ToString("R") + "\t" + RenderSettings.ambientProbe[1, 1].ToString("R") + "\t" + RenderSettings.ambientProbe[2, 1].ToString("R"));
             writer.WriteLine("quality\tpixel_lights=" + QualitySettings.pixelLightCount + " shadow_distance=" + QualitySettings.shadowDistance);
             writer.WriteLine("ambient\t" + RenderSettings.ambientMode + "\t" + RenderSettings.ambientIntensity.ToString("R") + "\t" + RenderSettings.ambientLight.ToString("R") + "\t" + RenderSettings.ambientSkyColor.ToString("R"));
             writer.WriteLine("fog\t" + RenderSettings.fog + "\t" + RenderSettings.fogMode + "\t" + RenderSettings.fogColor.ToString("R") + "\t" + RenderSettings.fogDensity.ToString("R"));

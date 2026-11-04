@@ -249,6 +249,40 @@ bool OKStudioMapTimeAmbient(int32 Map, int32 SunType, FLinearColor& OutSky)
 	return false;
 }
 
+bool OKStudioMapTimeTrilight(int32 Map, int32 SunType, FLinearColor& OutSHAr, FLinearColor& OutSHAg, FLinearColor& OutSHAb)
+{
+	const TSharedPtr<FJsonObject> Catalog = LoadCatalog();
+	const TArray<TSharedPtr<FJsonValue>>* Maps = nullptr;
+	if (!Catalog.IsValid() || !Catalog->TryGetArrayField(TEXT("maps"), Maps)) return false;
+	for (const TSharedPtr<FJsonValue>& V : *Maps)
+	{
+		const TSharedPtr<FJsonObject> M = V->AsObject();
+		const TArray<TSharedPtr<FJsonValue>>* Sky = nullptr;
+		const TArray<TSharedPtr<FJsonValue>>* Equator = nullptr;
+		const TArray<TSharedPtr<FJsonValue>>* Ground = nullptr;
+		if (!M.IsValid() || int32(M->GetNumberField(TEXT("map"))) != Map || !M->TryGetArrayField(TEXT("ambient"), Sky)
+			|| !M->TryGetArrayField(TEXT("ambient_equator"), Equator) || !M->TryGetArrayField(TEXT("ambient_ground"), Ground)) continue;
+		const TArray<TSharedPtr<FJsonValue>>& Types = M->GetArrayField(TEXT("sun_types"));
+		for (int32 I = 0; I < Types.Num() && I < Sky->Num() && I < Equator->Num() && I < Ground->Num(); ++I)
+		{
+			if (int32(Types[I]->AsNumber()) != SunType) continue;
+			auto Colour = [I](const TArray<TSharedPtr<FJsonValue>>* List)
+			{
+				const TArray<TSharedPtr<FJsonValue>>& C = (*List)[I]->AsArray();
+				return FLinearColor(ToLinear(C[0]->AsNumber()), ToLinear(C[1]->AsNumber()), ToLinear(C[2]->AsNumber()), 0.f);
+			};
+			const FLinearColor Top = Colour(Sky), Middle = Colour(Equator), Bottom = Colour(Ground);
+			// Sky above, ground below, equator between, linear in the height y: the integrals of OKStudioSkyAmbient.
+			const FLinearColor Constant = (Top + Middle * 2.f + Bottom) * .25f, Up = (Top - Bottom) * (1.f / 3.f);
+			OutSHAr = FLinearColor(0.f, Up.R, 0.f, Constant.R);
+			OutSHAg = FLinearColor(0.f, Up.G, 0.f, Constant.G);
+			OutSHAb = FLinearColor(0.f, Up.B, 0.f, Constant.B);
+			return true;
+		}
+	}
+	return false;
+}
+
 FLinearColor OKStudioSkyLight(int32 No)
 {
 	FLinearColor Light = FLinearColor::Black;

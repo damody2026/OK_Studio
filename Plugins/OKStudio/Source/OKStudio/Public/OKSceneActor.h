@@ -123,6 +123,7 @@ public:
 	 *  character display's own) and the characters that have it. */
 	int32 AmbientSky = -1;
 	int32 AmbientMap = -1;
+	int32 AmbientTime = -2;
 	TSet<TWeakObjectPtr<AKKPreviewActor>> AmbientLit;
 	TMap<FName, FLinearColor> AppliedShaderGlobals;
 	TSet<TWeakObjectPtr<AKKPreviewActor>> ShaderGlobalsLit;
