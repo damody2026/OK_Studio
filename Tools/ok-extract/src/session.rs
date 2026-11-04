@@ -908,7 +908,7 @@ impl SessionPart {
                     let is_kkuss=matches!(hair_shader_name.as_str(),"kkussitem"|"kkuss");
                     // The character shaders' liquid (ChaControl siruLv, the H scene's semen) samples its region mask
                     // `_liquidmask`, pattern `_Texture2` and (Forge) normal `_Texture3`: kept so the skin and clothes show it.
-                    textures.retain(|name,_|(standard_normal && name=="_BumpMap") || (emits && name=="_EmissionMap") || (metal_map && name=="_MetallicGlossMap") || name=="_OKLightmap" || name=="_OKLightmapDirection" || name=="_OKReflection" || name=="_OKSkyCube" || name=="_expression"
+                    textures.retain(|name,_|name=="_DetailAlbedoMap" || (standard_normal && name=="_BumpMap") || (emits && name=="_EmissionMap") || (metal_map && name=="_MetallicGlossMap") || name=="_OKLightmap" || name=="_OKLightmapDirection" || name=="_OKReflection" || name=="_OKSkyCube" || name=="_expression"
                         || matches!(name.as_str(),"_liquidmask"|"_Texture2"|"_Texture3")
                         || (is_kkuss && matches!(name.as_str(),"_NormalMapDetail"|"_overtex1"|"_overtex2"|"_overtex3"))
                         || (stage && matches!(name.as_str(),"_color"|"_mask"|"_Emission"|"_MaskFast"|"_MaskSlow"|"_MaskFull")));

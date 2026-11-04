@@ -45,7 +45,7 @@ public sealed partial class GamePoseProbe {
                 MeshFilter filter = renderer.GetComponent<MeshFilter>();
                 foreach (Material material in renderer.sharedMaterials) {
                     if (material == null) continue;
-                    writer.WriteLine("renderer\t" + PathOf(renderer.transform) + "\t" + (filter == null || filter.sharedMesh == null ? "" : filter.sharedMesh.name) + "\t" + material.name + "\t" + material.shader.name + "\t" + renderer.lightmapIndex + "\t" + renderer.lightmapScaleOffset.ToString("R") + "\t" + renderer.bounds.center.ToString("R") + "\t" + renderer.bounds.size.ToString("R"));
+                    writer.WriteLine("renderer\t" + PathOf(renderer.transform) + "\t" + (filter == null || filter.sharedMesh == null ? "" : filter.sharedMesh.name) + "\t" + material.name + "\t" + material.shader.name + "\t" + renderer.lightmapIndex + "\t" + renderer.lightmapScaleOffset.ToString("R") + "\t" + renderer.bounds.center.ToString("R") + "\t" + renderer.bounds.size.ToString("R") + "\tlayer=" + renderer.gameObject.layer);
                     if (!seen.Add(material)) continue;
                     writer.WriteLine("material\t" + material.name + "\t" + material.shader.name + "\t" + material.renderQueue + "\t" + String.Join(",", material.shaderKeywords));
                     for (int p = 0; p < material.shader.GetPropertyCount(); ++p)
@@ -73,11 +73,12 @@ public sealed partial class GamePoseProbe {
                     }
                 }
             }
+            writer.WriteLine("quality\tpixel_lights=" + QualitySettings.pixelLightCount + " shadow_distance=" + QualitySettings.shadowDistance);
             writer.WriteLine("ambient\t" + RenderSettings.ambientMode + "\t" + RenderSettings.ambientIntensity.ToString("R") + "\t" + RenderSettings.ambientLight.ToString("R") + "\t" + RenderSettings.ambientSkyColor.ToString("R"));
             writer.WriteLine("fog\t" + RenderSettings.fog + "\t" + RenderSettings.fogMode + "\t" + RenderSettings.fogColor.ToString("R") + "\t" + RenderSettings.fogDensity.ToString("R"));
             foreach (Light light in UnityEngine.Object.FindObjectsOfType<Light>())
                 if (light.enabled && light.gameObject.activeInHierarchy)
-                    writer.WriteLine("light\t" + PathOf(light.transform) + "\t" + light.type + "\t" + light.color.ToString("R") + "\t" + light.intensity.ToString("R") + "\t" + light.transform.forward.ToString("R"));
+                    writer.WriteLine("light\t" + PathOf(light.transform) + "\t" + light.type + "\t" + light.color.ToString("R") + "\t" + light.intensity.ToString("R") + "\t" + light.transform.forward.ToString("R") + "\tenabled=" + light.enabled + " mask=" + light.cullingMask + " render=" + light.renderMode + " baked=" + light.bakingOutput.lightmapBakeType + " shadows=" + light.shadows);
             foreach (Renderer renderer in UnityEngine.Object.FindObjectsOfType<Renderer>()) {
                 if (!renderer.enabled || !renderer.gameObject.activeInHierarchy) continue;
                 foreach (Material material in renderer.sharedMaterials) {

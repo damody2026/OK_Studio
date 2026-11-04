@@ -419,6 +419,13 @@ fn apply_profile(values: &ProfileValues, out: &mut SkyPattern) {
     for (key, prop) in PROFILE_NUMBERS {
         if let (Some(v), Some(f)) = (values.numbers.get(*key), out.floats.get_mut(*prop)) { *f = *v; }
     }
+    // The controller's own sun and moon Lights (not the material's): Lux Water takes them (U173).
+    for (key, prop) in [("SunLightColorKey", "_OKSunLightColor"), ("MoonLightColorKey", "_OKMoonLightColor")] {
+        if let Some(v) = values.colors.get(key) { out.colors.insert(prop.into(), *v); }
+    }
+    for (key, prop) in [("SunLightIntensityKey", "_OKSunLightIntensity"), ("MoonLightIntensityKey", "_OKMoonLightIntensity")] {
+        if let Some(v) = values.numbers.get(key) { out.floats.insert(prop.into(), *v); }
+    }
     // The fades' ends: start plus length.
     for (start, length, end) in [("HorizonTransitionStartKey", "HorizonTransitionLengthKey", "_GradientFadeEnd"), ("StarTransitionStartKey", "StarTransitionLengthKey", "_StarFadeEnd")] {
         if let (Some(s), Some(l), Some(f)) = (values.numbers.get(start), values.numbers.get(length), out.floats.get_mut(end)) { *f = s + l; }

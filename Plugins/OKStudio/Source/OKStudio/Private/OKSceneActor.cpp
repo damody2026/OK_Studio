@@ -1134,6 +1134,7 @@ void AOKSceneActor::SyncMap()
 	ShownMapTime = -2;
 	for (const TPair<TWeakObjectPtr<ULightComponent>, uint32>& L : MapLights) if (L.Key.IsValid()) L.Key->DestroyComponent();
 	MapLights.Reset();
+	MapWaterLights.Reset();
 	for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews) if (P.IsValid()) { P->Destroy(); ReleasedSinceCollect += 32; }
 	ShownMapPreviews.Reset();
 	ShownMap = Document->Map;
@@ -1265,6 +1266,11 @@ void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
 	// colour at every time). Lux Water also takes the time's ambient (U169).
 	FLinearColor Ambient;
 	const bool bAmbient = OKStudioMapTimeAmbient(Document->Map, Time, Ambient);
+	int32 SkyPattern = -1;
+	const FLinearColor SkyLight = OKStudioMapSky(Document->Map, Time, SkyPattern) ? OKStudioSkyLight(SkyPattern) : FLinearColor::Black;
+	FLinearColor WaterLight = FLinearColor::Black;
+	for (const TPair<FLinearColor, uint32>& L : MapWaterLights)
+		if (L.Value == 0 || (Time >= 0 && ((L.Value >> Time) & 1) != 0)) WaterLight += L.Key;
 	for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews)
 	{
 		if (!P.IsValid()) continue;
@@ -1279,6 +1285,8 @@ void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
 					Water->SetVectorParameterValue(TEXT("_LightColor0"), MapSunItemColor);
 					Water->SetVectorParameterValue(TEXT("_OKLightDir"), FLinearColor(MapSunItemDirection.R, MapSunItemDirection.G, MapSunItemDirection.B, 1.f));
 					if (bAmbient) Water->SetVectorParameterValue(TEXT("_OKAmbient"), Ambient);
+					Water->SetVectorParameterValue(TEXT("_OKWaterLight"), WaterLight);
+					Water->SetVectorParameterValue(TEXT("_OKSkyLight"), SkyLight);
 				}
 			}
 	}
@@ -1310,6 +1318,13 @@ void AOKSceneActor::AddMapLights(AKKPreviewActor* Map, const FString& Model, con
 		};
 		const TArray<float> P = Floats(TEXT("pos"), 3), R = Floats(TEXT("rot"), 4), C = Floats(TEXT("color"), 4);
 		const int32 Kind = L->GetIntegerField(TEXT("kind"));
+		bool bCookie = false;
+		L->TryGetBoolField(TEXT("cookie"), bCookie);
+		const FLinearColor Irradiance = OKStudioLinearLightColor(FLinearColor(C[0], C[1], C[2], 1), float(L->GetNumberField(TEXT("intensity"))));
+		if (L->GetStringField(TEXT("name")).Contains(TEXT("_water"))) MapWaterLights.Emplace(Irradiance, uint32(L->GetNumberField(TEXT("times"))));
+		// A directional light's cookie lights one tile of the map; there is no cookie here, and without it the whole map
+		// got the light (map 50's night ground, far over native's).
+		if (Kind == 1 && bCookie) continue;
 		const float Range = float(L->GetNumberField(TEXT("range"))) * 100.f;
 		ULightComponent* Light = nullptr;
 		if (Kind == 1) { UDirectionalLightComponent* Sun = NewObject<UDirectionalLightComponent>(Map); Sun->ForwardShadingPriority = DirectionalPriority++; Light = Sun; }
@@ -1334,7 +1349,6 @@ void AOKSceneActor::AddMapLights(AKKPreviewActor* Map, const FString& Model, con
 		const FQuat Node = FQuat(-R[0], R[2], R[1], R[3]).GetNormalized();
 		Light->SetRelativeLocation(FVector(-P[0], P[2], P[1]) * 100.0);
 		Light->SetRelativeRotation(Node * FRotationMatrix::MakeFromXZ(FVector(0, 1, 0), FVector(0, 0, 1)).ToQuat());
-		const FLinearColor Irradiance = OKStudioLinearLightColor(FLinearColor(C[0], C[1], C[2], 1), float(L->GetNumberField(TEXT("intensity"))));
 		const float Energy = FMath::Max3(Irradiance.R, Irradiance.G, Irradiance.B);
 		Light->SetLightColor(Energy > 0 ? FLinearColor(Irradiance.R / Energy, Irradiance.G / Energy, Irradiance.B / Energy, 1) : FLinearColor::Black);
 		Light->SetIntensity(Energy * UE_PI);

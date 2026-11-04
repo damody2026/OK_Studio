@@ -249,6 +249,27 @@ bool OKStudioMapTimeAmbient(int32 Map, int32 SunType, FLinearColor& OutSky)
 	return false;
 }
 
+FLinearColor OKStudioSkyLight(int32 No)
+{
+	FLinearColor Light = FLinearColor::Black;
+	const TSharedPtr<FJsonObject> Pattern = FindPattern(No);
+	if (!Pattern.IsValid()) return Light;
+	const TSharedPtr<FJsonObject> Colors = Pattern->GetObjectField(TEXT("colors"));
+	const TSharedPtr<FJsonObject> Floats = Pattern->GetObjectField(TEXT("floats"));
+	TSet<FString> Keywords;
+	for (const TSharedPtr<FJsonValue>& K : Pattern->GetArrayField(TEXT("keywords"))) Keywords.Add(K->AsString());
+	auto Add = [&](const TCHAR* Keyword, const TCHAR* Color, const TCHAR* Intensity)
+	{
+		const TArray<TSharedPtr<FJsonValue>>* C = nullptr;
+		double I = 0.0;
+		if (!Keywords.Contains(Keyword) || !Colors->TryGetArrayField(Color, C) || C->Num() < 3 || !Floats->TryGetNumberField(Intensity, I)) return;
+		Light += FLinearColor(ToLinear((*C)[0]->AsNumber()), ToLinear((*C)[1]->AsNumber()), ToLinear((*C)[2]->AsNumber()), 0.f) * float(I);
+	};
+	Add(TEXT("SUN"), TEXT("_OKSunLightColor"), TEXT("_OKSunLightIntensity"));
+	Add(TEXT("MOON"), TEXT("_OKMoonLightColor"), TEXT("_OKMoonLightIntensity"));
+	return Light;
+}
+
 bool OKStudioSkyAmbient(int32 No, FLinearColor& OutSHAr, FLinearColor& OutSHAg, FLinearColor& OutSHAb)
 {
 	const TSharedPtr<FJsonObject> Pattern = FindPattern(No);

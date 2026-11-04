@@ -260,6 +260,8 @@ private:
 	uint32 MapSunMask = 0;
 	/** The map's own realtime lamps (ok_okmodel_map_lights) with the times of day they show at (0: always). */
 	TArray<TPair<TWeakObjectPtr<class ULightComponent>, uint32>> MapLights;
+	// The map's "..._water" lights (their linear colour and SunLightInfo times): they light Lux Water only.
+	TArray<TPair<FLinearColor, uint32>> MapWaterLights;
 	void AddMapLights(class AKKPreviewActor* Map, const FString& Model, const FString& Root);
 	int32 ShownMapComponents = 0;
 	FTransform ShownMapSunPlace;

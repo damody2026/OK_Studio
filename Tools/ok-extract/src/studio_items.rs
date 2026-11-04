@@ -686,7 +686,12 @@ pub fn record_hierarchies(game: &Path, lib: &Path, threads: usize) -> Result<(),
                 for (_, mat) in parsed.prefab_water_materials(p) {
                     if let Some(bump) = mat.slot("_BumpMap") { parsed.texture_png_named(bump); parsed.texture_sampling_named(bump); }
                 }
-                parsed.prefab_render_textures(p); parsed.prefab_reflection_probes(p); parsed.prefab_animated_materials(p); parsed.prefab_renderer_visibility(p); parsed.prefab_sun_light(p); parsed.prefab_light_modes(p);
+                for (_, mat) in parsed.prefab_standard_materials(p) {
+                    for slot in crate::okmodel_view::STANDARD_NODE_SLOTS.iter().chain(["_MainTex"].iter()) {
+                        if let Some(name) = mat.slot(slot) { parsed.texture_png_named(name); parsed.texture_sampling_named(name); }
+                    }
+                }
+                parsed.prefab_render_textures(p); parsed.prefab_reflection_probes(p); parsed.prefab_animated_materials(p); parsed.prefab_renderer_visibility(p); parsed.prefab_sun_light(p); parsed.prefab_light_modes(p); parsed.prefab_light_cookies(p);
                 // The prefab's meshes, where already recorded: OKLIB_REFRESH=meshes_for_maindata records them again
                 // after a decoding fix (main UV: TexCoord0 over the lightmap's TexCoord1).
                 for disabled in [false, true] {

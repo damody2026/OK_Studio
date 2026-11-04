@@ -721,6 +721,9 @@ struct FOKToonShadowParameters
 	FLinearColor EmissionColor = FLinearColor::Black;
 	// Unity Standard-family _Color (linear), multiplied into the albedo; white for other shaders.
 	FLinearColor StandardAlbedoTint = FLinearColor::White;
+	// Unity Standard's detail albedo (keyword _DETAIL_MULX2) and its _DetailAlbedoMap_ST.
+	UTexture2D* StandardDetailTex = nullptr;
+	FLinearColor StandardDetailST = FLinearColor(1.f, 1.f, 0.f, 0.f);
 	// Baked lightmap (RGBM, linear sampling) of a map part, on TEXCOORD1; Lightmaps keeps each index's texture for the
 	// later parts of the same load (only the first part using a lightmap carries it).
 	UTexture2D* LightmapTex = nullptr;
@@ -2463,6 +2466,27 @@ return diffuse * (light * (1.0 - shadow) + shadow) * faceScale * lightLift;
 			Mat->GetExpressionCollection().AddExpression(Tinted);
 			ColorOut = Tinted;
 		}
+		// _DETAIL_MULX2: albedo x detail x unity_ColorSpaceDouble (4.59479 in linear colour space).
+		if (Shadow && Shadow->StandardDetailTex)
+		{
+			UMaterialExpressionTextureSample* Detail = NewObject<UMaterialExpressionTextureSample>(Mat);
+			Detail->Material = Mat;
+			Detail->Texture = Shadow->StandardDetailTex;
+			Detail->SamplerType = Shadow->StandardDetailTex->SRGB ? SAMPLERTYPE_Color : SAMPLERTYPE_LinearColor;
+			Detail->Coordinates.Expression = MakeUnityMaskUVParameter(Mat, TEXT("_DetailAlbedoMap_ST"), Shadow->StandardDetailST);
+			Mat->GetExpressionCollection().AddExpression(Detail);
+			UMaterialExpressionMultiply* Doubled = NewObject<UMaterialExpressionMultiply>(Mat);
+			Doubled->Material = Mat;
+			Doubled->A.Expression = Detail;
+			Doubled->ConstB = 4.59479f;
+			Mat->GetExpressionCollection().AddExpression(Doubled);
+			UMaterialExpressionMultiply* Detailed = NewObject<UMaterialExpressionMultiply>(Mat);
+			Detailed->Material = Mat;
+			Detailed->A.Expression = ColorOut;
+			Detailed->B.Expression = Doubled;
+			Mat->GetExpressionCollection().AddExpression(Detailed);
+			ColorOut = Detailed;
+		}
 		// Maker CustomScene's measured interpolated light probe is blue above,
 		// neutral below, and identical in the four horizontal directions. Add
 		// that scene irradiance to this IBL pass; the grey UE backdrop does not
@@ -3873,6 +3897,11 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 	// reflects no sky: its planar reflection texture is null in Studio (native lighthouse: the sea takes no colour from it).
 	Scalar(TEXT("_OKLux"), 0.f);
 	Vector(TEXT("_OKScatter"), FLinearColor::Black);
+	// The map's lights only for the water ("Directional Light_water": 3.5 by day) and the deep foam they light.
+	Vector(TEXT("_OKWaterLight"), FLinearColor::Black);
+	Vector(TEXT("_OKDeepFoam"), FLinearColor(0.f, 0.f, 0.f, 0.f));
+	// The sky controller's sun or moon Light: the lighthouse's evening sea is brown from it (measured, not Lux Water's terms).
+	Vector(TEXT("_OKSkyLight"), FLinearColor::Black);
 	Scalar(TEXT("_RimSize"), 0.75f); Scalar(TEXT("_Tiling"), 0.9f); Scalar(TEXT("_RefractionAmount"), 0.055f);
 	Scalar(TEXT("_Transparency"), 0.35f); Scalar(TEXT("_Wavesspeed"), 0.5f); Scalar(TEXT("_Glossiness"), 0.5f);
 	Scalar(TEXT("_Depth"), 15.f); Scalar(TEXT("_Depthdarkness"), 0.15f); Scalar(TEXT("_Rimtiling"), 1.f);
@@ -3978,7 +4007,9 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 		"GrabOffset = r4.xz;\n"
 		"if (OKLux > 0.5) {\n"
 		"float ripple = 1.0 + 0.5 * (n.x + n.z);\n"
-		"return float4(WaterColor.rgb * (1.5 * OKAmbient.rgb + OKScatter.rgb + 0.2 * diffuse * LightColor0.rgb) * ripple + pow(nh, 256.0) * LightColor0.rgb, saturate(deep * 4.0 + 0.5));\n"
+		"float foam = saturate(length(n.xz) * 3.0);\n"
+		"foam *= foam * OKDeepFoam.a * OKDeepFoam.a * OKDeepFoam.a;\n"
+		"return float4(WaterColor.rgb * (OKAmbient.rgb + 0.2 * diffuse * LightColor0.rgb) * ripple + (0.25 * OKScatter.rgb + foam * OKDeepFoam.rgb) * OKWaterLight.rgb + OKSkyLight.rgb + pow(nh, 256.0) * LightColor0.rgb, saturate(deep * 4.0 + 0.5));\n"
 		"}\n"
 		"return float4(lit, saturate(overlay) + high);");
 	Add(Program);
@@ -6032,6 +6063,9 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 		if (ShadowParams.LightmapTex || bReflected || (bSourceMapShading))
 		{
 			const FString Shader = Source.MaterialShaderName(i);
+			// Nature/SpeedTree is a linear-space Lambert: Standard's path with no specular (the gamma path overexposed the trees).
+			const bool bSpeedTree = Shader.StartsWith(TEXT("Nature/SpeedTree"), ESearchCase::IgnoreCase);
+			if (bSpeedTree) { ShadowParams.bStandardLinear = true; ShadowParams.StandardSmoothness = 0.f; }
 			if (Shader.StartsWith(TEXT("Standard"), ESearchCase::IgnoreCase))
 			{
 				ShadowParams.bStandardLinear = true;
@@ -6102,13 +6136,27 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 			}
 		}
 		ShadowParams.StandardAlbedoTint = FLinearColor::White;
-		if (!ShadowParams.bItemDraw && Source.MaterialShaderName(i).StartsWith(TEXT("Standard"), ESearchCase::IgnoreCase))
+		if (!ShadowParams.bItemDraw && (Source.MaterialShaderName(i).StartsWith(TEXT("Standard"), ESearchCase::IgnoreCase)
+			|| Source.MaterialShaderName(i).StartsWith(TEXT("Nature/SpeedTree"), ESearchCase::IgnoreCase)))
 		{
 			FLinearColor Tint;
 			if (Source.MaterialValue(i, "_Color", Tint))
 			{
 				auto Linear = [](float V) { return V <= .04045f ? V / 12.92f : FMath::Pow((V + .055f) / 1.055f, 2.4f); };
 				ShadowParams.StandardAlbedoTint = FLinearColor(Linear(Tint.R), Linear(Tint.G), Linear(Tint.B), 1.f);
+			}
+		}
+		ShadowParams.StandardDetailTex = nullptr;
+		if (!ShadowParams.bItemDraw && Source.MaterialKeyword(i, "_DETAIL_MULX2"))
+		{
+			const uint8* Bytes = nullptr;
+			int32 Length = 0;
+			if (Source.ShaderTexture(i, "_DetailAlbedoMap", Bytes, Length))
+			{
+				ShadowParams.StandardDetailTex = TextureFromPngBytes(Bytes, Length);
+				if (ShadowParams.StandardDetailTex) { ShadowParams.StandardDetailTex->AddToRoot(); Output.Textures.Add(ShadowParams.StandardDetailTex); }
+				ShadowParams.StandardDetailST = FLinearColor(1.f, 1.f, 0.f, 0.f);
+				Source.MaterialValue(i, "_DetailAlbedoMap_ST", ShadowParams.StandardDetailST);
 			}
 		}
 		// Unity Standard-family emission (keyword _EMISSION): _EmissionColor (gamma, may exceed 1) times _EmissionMap.
@@ -6827,7 +6875,8 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 						// _TranslucencyIntensity 5.78 at the lighthouse's evening, 0.04 by day: what makes that sea brown.
 						FLinearColor Intensity(0.f, 0.f, 0.f, 0.f);
 						if (Source.MaterialValue(i, "_TranslucencyColor", V) && Source.MaterialValue(i, "_TranslucencyIntensity", Intensity))
-							Dynamic->SetVectorParameterValue(TEXT("_OKScatter"), FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), 1.f) * (Intensity.R * .07f));
+							Dynamic->SetVectorParameterValue(TEXT("_OKScatter"), FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), 1.f) * Intensity.R);
+						if (Source.MaterialValue(i, "_DeepFoamColor", V)) Dynamic->SetVectorParameterValue(TEXT("_OKDeepFoam"), FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), V.A));
 						Color("_UnderWaterReflCol", TEXT("_FresnelColor"), .35f);
 						Color("_FoamColor", TEXT("_RimColor"), .25f);
 						if (Source.MaterialValue(i, "_BumpTiling", V)) Dynamic->SetScalarParameterValue(TEXT("_Tiling"), 1.f - FMath::Clamp(V.R * 2.f, .02f, .9f));
