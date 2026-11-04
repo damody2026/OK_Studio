@@ -25,12 +25,6 @@
    "sha256": "b1e808cb057eb04e43a96a55ac0d6c10f37bd88e9e64cb4141ffd04195e5f57e"
   },
   {
-   "bytes": 1234,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/actions.manifest.json",
-   "sha256": "3229678b07b1019d3e5dd5dd242a5906101fa0e17dbb8b2120e824dd5020b772"
-  },
-  {
    "bytes": 268963,
    "group": "runtime-clips",
    "path": "Content/IndependentResources/RuntimeAnimations/conversation_male.okanim",
@@ -115,22 +109,10 @@
    "sha256": "c55d1c37cab00cb5bcabd435acd2743b361740482362224c0b3e7876b19c32d4"
   },
   {
-   "bytes": 724,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/drink.manifest.json",
-   "sha256": "fc977035076896052133579bdf8106782fbbf9690ccd355f2a0c22f4b4672707"
-  },
-  {
    "bytes": 305035,
    "group": "runtime-clips",
    "path": "Content/IndependentResources/RuntimeAnimations/drink_standing.okanim",
    "sha256": "307bfac856489dc4f6bb913a3df1d3d112484d00aac102c13d7777076ff1df04"
-  },
-  {
-   "bytes": 1276,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/facilities.manifest.json",
-   "sha256": "2a3cfa5193d29cca3544c5831485de30c28a9ef44068cf3e6ae764c70faeadc1"
   },
   {
    "bytes": 308419,
@@ -149,12 +131,6 @@
    "group": "runtime-clips",
    "path": "Content/IndependentResources/RuntimeAnimations/facility_sleep.okanim",
    "sha256": "f1505e5d6bf8717840216072e0f5bbee1d6fc147c15143668cf768c574bb2ba8"
-  },
-  {
-   "bytes": 724,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/groom.manifest.json",
-   "sha256": "a6eff40fb0b144ac971542241f8d46e976b58abc5dd5753e53b419724d0679f9"
   },
   {
    "bytes": 433403,
@@ -5413,18 +5389,6 @@
    "sha256": "ad7ac2667dee1abbcead182ba7b7af5e2c9dd6211776e68dee6cc0ebf6b92a92"
   },
   {
-   "bytes": 6479,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/locomotion.manifest.json",
-   "sha256": "2282bc5631d7c63fd230730bf5e5c772c06b07ee1740816182d442169b42ff05"
-  },
-  {
-   "bytes": 4015,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/lover.manifest.json",
-   "sha256": "b404b5ca7c6d98fbdd2eac610a349d75ecd13144883390fad0ed73e303410e01"
-  },
-  {
    "bytes": 336799,
    "group": "runtime-clips",
    "path": "Content/IndependentResources/RuntimeAnimations/lover_hand_male.okanim",
@@ -5485,34 +5449,10 @@
    "sha256": "bf3070bcf0f0166edcd4140563c37b9cde6ce233c36274b706a2db46987a85a2"
   },
   {
-   "bytes": 599,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/manifest.json",
-   "sha256": "3174fbdce4d06ccf0da43827de34bf8dd5d1217832b98d4a99436a631ccd8d4b"
-  },
-  {
-   "bytes": 3126,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/onani.manifest.json",
-   "sha256": "5dcc576977295a3036f234b6a1daade52c7cebdf3fe4e47e86de6b8708376297"
-  },
-  {
-   "bytes": 1097,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/phone.manifest.json",
-   "sha256": "62ca76118f7ddcbac43193a90d46a4a683cdfa4c91c7a992437f79c702a6d9f0"
-  },
-  {
    "bytes": 349939,
    "group": "runtime-clips",
    "path": "Content/IndependentResources/RuntimeAnimations/phone_standing.okanim",
    "sha256": "e75f9011c53eeb42eb26adc760a792f04a92b8943c91573fabe9c210884ff681"
-  },
-  {
-   "bytes": 2788,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/photo.manifest.json",
-   "sha256": "1c4f042ab9b1f0ff78d6064cbdfd5926cad20f1e89df9762c7edae0daab5abee"
   },
   {
    "bytes": 157267,
@@ -5587,12 +5527,6 @@
    "sha256": "01a18fa72e37a6a15d6dca841f11501d8a34b6a34e71fb1ee2ee483849ca5f87"
   },
   {
-   "bytes": 1914,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/photo_poses.manifest.json",
-   "sha256": "0c29a1e5244833dc5be9ac78bba9a8cc1914569015e02d8cbc500dd9339949ee"
-  },
-  {
    "bytes": 173187,
    "group": "runtime-clips",
    "path": "Content/IndependentResources/RuntimeAnimations/run_female.okanim",
@@ -5603,12 +5537,6 @@
    "group": "runtime-clips",
    "path": "Content/IndependentResources/RuntimeAnimations/run_male.okanim",
    "sha256": "68ce06df0e5d0b98d31c01dd705a3f0e9a1cdcdfc6db7c30cdf8b0d5b56af8ed"
-  },
-  {
-   "bytes": 1085,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/seated.manifest.json",
-   "sha256": "b95dcec49da7325d96ebcca11fccc233ab0a0fcb1b265e8dadb4f3d689f71cd7"
   },
   {
    "bytes": 576115,
@@ -5623,22 +5551,10 @@
    "sha256": "753629f67dc2e2f477fc0fd83debc90558e1d827533889b37b877c830a687cb5"
   },
   {
-   "bytes": 1097,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/selfie.manifest.json",
-   "sha256": "692f1798918263475c17508c0468efc23c779560d23580ec937b004e5ba3215b"
-  },
-  {
    "bytes": 307587,
    "group": "runtime-clips",
    "path": "Content/IndependentResources/RuntimeAnimations/selfie_standing.okanim",
    "sha256": "40fb6666ea3343dadff5fa95e1dce89d793dc2f24fcb5a1f2cc74dd3b5c492d2"
-  },
-  {
-   "bytes": 2306,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/splash.manifest.json",
-   "sha256": "05d049eafabb937a200143137542203256cc08225ab8c2fb5dd214cca1bcbc04"
   },
   {
    "bytes": 388523,
@@ -5731,12 +5647,6 @@
    "sha256": "9493a493e5b4e9bc722b19a9305aee038e188549dd94bba5beac782ae8307186"
   },
   {
-   "bytes": 2039,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/touch.manifest.json",
-   "sha256": "56d3be4002393506b99ac68eb1159807f03ac84835d1f474eee85549e09b51e2"
-  },
-  {
    "bytes": 691727,
    "group": "runtime-clips",
    "path": "Content/IndependentResources/RuntimeAnimations/touch_cheek.okanim",
@@ -5759,12 +5669,6 @@
    "group": "runtime-clips",
    "path": "Content/IndependentResources/RuntimeAnimations/touch_head.okanim",
    "sha256": "94ea0a2a97210009dfd3a2fa2f6a372843f25dea4451979d75e2a28702254ebf"
-  },
-  {
-   "bytes": 5226,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/venue.manifest.json",
-   "sha256": "1ff282b9bb52712c85f56dedf75ef036905c3aa9b88760984a84a9608faf8de9"
   },
   {
    "bytes": 270543,
@@ -5849,24 +5753,6 @@
    "group": "runtime-clips",
    "path": "Content/IndependentResources/RuntimeAnimations/walk_01.okanim",
    "sha256": "a98180071cd5e6ef10e79d985016ae9bfd2933d1d36a97b81ff878ae34a1bdf4"
-  },
-  {
-   "bytes": 1349,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/watermelon.contact.json",
-   "sha256": "8dcacccb944e1d2318b467cc862130e5b66fd0ba160db4fe72f3e720015b7c1e"
-  },
-  {
-   "bytes": 1282,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/watermelon.manifest.json",
-   "sha256": "73ecd04a3f252022383ebd0672555bacbe4f1d65b6954a1e1978ce8e8c16049f"
-  },
-  {
-   "bytes": 875327,
-   "group": "runtime-clips",
-   "path": "Content/IndependentResources/RuntimeAnimations/watermelon_alternate.okanim",
-   "sha256": "e503f3db984fcabc266e5027f9427741deae1b104875526d5db8323d855458b2"
   },
   {
    "bytes": 791935,
@@ -866359,12 +866245,6 @@
    "sha256": "7efcab346c7fa2659a3a273df2264e26eca8705e58c66981ad4a6fd3de3dc011"
   },
   {
-   "bytes": 2450905,
-   "group": "base-models",
-   "path": "Content/IndependentResources/base_v1/models/02/02d03d00000000001e08e11f4f4b4331.okmodel",
-   "sha256": "94f07e9bf02154342bb0bbf76e2d25ad1a9f2e463e58f9b836a4a9e867b9b581"
-  },
-  {
    "bytes": 529358,
    "group": "base-models",
    "path": "Content/IndependentResources/base_v1/models/03/03642e0000000000f5f4f86a4f4b4331.okmodel",
@@ -867091,12 +866971,6 @@
    "sha256": "e3b272b95473de92bc3f2bd315dddde249623815e4dbdd583a39a3f648ea7ee6"
   },
   {
-   "bytes": 1016214,
-   "group": "base-models",
-   "path": "Content/IndependentResources/base_v1/models/36/364e330200000000f0227d744f4b4331.okmodel",
-   "sha256": "32bbec5a1fa53eb6a512f9230080f615826e3bae9e31d0633b7fab4d26b5fbc8"
-  },
-  {
    "bytes": 9619887,
    "group": "base-models",
    "path": "Content/IndependentResources/base_v1/models/36/365cc30000000000dcc086974f4b4331.okmodel",
@@ -867359,12 +867233,6 @@
    "group": "base-models",
    "path": "Content/IndependentResources/base_v1/models/48/48740000000000004ac7790a4f4b4331.okmodel",
    "sha256": "ef034bde20e8e603cef4158e545239b997117e8aaa26040ed88acd462ce73c50"
-  },
-  {
-   "bytes": 2880161,
-   "group": "base-models",
-   "path": "Content/IndependentResources/base_v1/models/49/4940470000000000da8343924f4b4331.okmodel",
-   "sha256": "99f8499e8322e7e9331410db895101fa3c567ecc3e52457393a83914f420fada"
   },
   {
    "bytes": 13550,
@@ -867865,12 +867733,6 @@
    "sha256": "3de8c561bf282c8e480305440676be893e2d0b01c07f0f7280cb5bb4437dde3f"
   },
   {
-   "bytes": 2474339,
-   "group": "base-models",
-   "path": "Content/IndependentResources/base_v1/models/67/67501b00000000009d9f63984f4b4331.okmodel",
-   "sha256": "8e19cb709f4a86e54a4e66d0b3ab82ac14564a4beb6b5ad57c89d1695dd11661"
-  },
-  {
    "bytes": 3140161,
    "group": "base-models",
    "path": "Content/IndependentResources/base_v1/models/67/67bab30000000000656d6bff4f4b4331.okmodel",
@@ -867935,12 +867797,6 @@
    "group": "base-models",
    "path": "Content/IndependentResources/base_v1/models/69/69af000000000000213e298d4f4b4331.okmodel",
    "sha256": "d3284979701d8f15a045d64d05437e98f4e5d15967fef1ab2db1d1e9a3299a16"
-  },
-  {
-   "bytes": 2015629,
-   "group": "base-models",
-   "path": "Content/IndependentResources/base_v1/models/6a/6a801e0000000000d7f9a1514f4b4331.okmodel",
-   "sha256": "36acae134bd609160c2b61dc0f3450273f848296abca3a6dacb0661d8347aaa0"
   },
   {
    "bytes": 9551474,
@@ -869023,12 +868879,6 @@
    "sha256": "82aab3418c7704537d00f9b5705d805f36d0fc287f106771792e128b3147f2f5"
   },
   {
-   "bytes": 2343018,
-   "group": "base-models",
-   "path": "Content/IndependentResources/base_v1/models/ad/ad931e0000000000ac64ae4d4f4b4331.okmodel",
-   "sha256": "95ced2f10db1c91f4524f2e8d62a0da43dabce3eb2620d0cbebfbaf0d496070a"
-  },
-  {
    "bytes": 11183580,
    "group": "base-models",
    "path": "Content/IndependentResources/base_v1/models/ad/adf15200000000005fc50c204f4b4331.okmodel",
@@ -869219,12 +869069,6 @@
    "group": "base-models",
    "path": "Content/IndependentResources/base_v1/models/bb/bb02050100000000773d2a3d4f4b4331.okmodel",
    "sha256": "8a4513291deb5677292adb56160e94dead3c72d33ee15fda4dff653f38802612"
-  },
-  {
-   "bytes": 274837,
-   "group": "base-models",
-   "path": "Content/IndependentResources/base_v1/models/bc/bc16260000000000ae2f2d984f4b4331.okmodel",
-   "sha256": "969db811e26d3c77811557428bbe841df5df06e0acfb12c77db959d5f11b2e11"
   },
   {
    "bytes": 22605,
@@ -869497,12 +869341,6 @@
    "sha256": "e379e0a627ade5306790a73914cf4b1032e3ba983676934fb68ddebcb0860def"
   },
   {
-   "bytes": 3156119,
-   "group": "base-models",
-   "path": "Content/IndependentResources/base_v1/models/d4/d4952a000000000023b0a28e4f4b4331.okmodel",
-   "sha256": "2808e263c4d061c09a7387453369775bb37642eb4e4272ee4e4466de7955eb53"
-  },
-  {
    "bytes": 18126035,
    "group": "base-models",
    "path": "Content/IndependentResources/base_v1/models/d5/d5c70e02000000007b208ee14f4b4331.okmodel",
@@ -869567,12 +869405,6 @@
    "group": "base-models",
    "path": "Content/IndependentResources/base_v1/models/dc/dc1c0000000000007312631d4f4b4331.okmodel",
    "sha256": "0f29e44cd7fe4bf7831d1ad17bfe9405ac721e7fd39a4202d4af2407befe97db"
-  },
-  {
-   "bytes": 438214,
-   "group": "base-models",
-   "path": "Content/IndependentResources/base_v1/models/dc/dc2d2000000000009f9f5af04f4b4331.okmodel",
-   "sha256": "7f883462a15a416293133614961a3a396cac1be987db397fc65801d1418c490f"
   },
   {
    "bytes": 3303992,

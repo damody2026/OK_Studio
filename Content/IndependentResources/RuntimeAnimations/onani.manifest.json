@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "card_specific": false,
+  "runtime_private_pose_required": true,
+  "actions": [
+    {
+      "id": "street_onani_wloop.okanim",
+      "file": "street_onani_wloop.okanim",
+      "source": "states:controller@5B22682F616E696D2F66656D616C652F30335F30315F30302E756E6974793364222C226B68745F665F3032222C22222C22225D|kht_f_02 / [Controller layer 0] Base Layer.M_WLoop",
+      "loop": true,
+      "sha256": "cd3676319aa3ce438ccf166f20b66ee93020e98549142776f62d61fe4f4ca71f",
+      "bytes": 221515
+    }
+    ,
+    {
+      "id": "street_onani_mloop1.okanim",
+      "file": "street_onani_mloop1.okanim",
+      "source": "states:controller@5B22682F616E696D2F66656D616C652F30335F30315F30302E756E6974793364222C226B68745F665F3032222C22222C22225D|kht_f_02 / [Controller layer 0] Base Layer.M_MLoop1",
+      "loop": true,
+      "sha256": "fc5690a7975e62fea08d1d2309c2d1c63f06f3008ec496adde0ec4cbaa8c0545",
+      "bytes": 218695
+    }
+    ,
+    {
+      "id": "street_onani_sloop.okanim",
+      "file": "street_onani_sloop.okanim",
+      "source": "states:controller@5B22682F616E696D2F66656D616C652F30335F30315F30302E756E6974793364222C226B68745F665F3032222C22222C22225D|kht_f_02 / [Controller layer 0] Base Layer.M_SLoop",
+      "loop": true,
+      "sha256": "7e1967e293155250cf57708fc7dd5700b245d70f76469effa555301f3ac5dc57",
+      "bytes": 222891
+    }
+    ,
+    {
+      "id": "street_onani_oloop.okanim",
+      "file": "street_onani_oloop.okanim",
+      "source": "states:controller@5B22682F616E696D2F66656D616C652F30335F30315F30302E756E6974793364222C226B68745F665F3032222C22222C22225D|kht_f_02 / [Controller layer 0] Base Layer.M_OLoop",
+      "loop": true,
+      "sha256": "c2f9f1626d5085d87a3a5eb997a1c1abe88eef1b1416c2db3bfa7bdc813a6920",
+      "bytes": 223543
+    }
+    ,
+    {
+      "id": "street_onani_orgasm.okanim",
+      "file": "street_onani_orgasm.okanim",
+      "source": "states:controller@5B22682F616E696D2F66656D616C652F30335F30315F30302E756E6974793364222C226B68745F665F3032222C22222C22225D|kht_f_02 / [Controller layer 0] Base Layer.M_Orgasm",
+      "loop": false,
+      "sha256": "62daf9cb7320fd88c0fc07c25fcf14d270371c110f22c90a2526fcf397a0f58d",
+      "bytes": 330283
+    }
+    ,
+    {
+      "id": "street_onani_orgasm_a.okanim",
+      "file": "street_onani_orgasm_a.okanim",
+      "source": "states:controller@5B22682F616E696D2F66656D616C652F30335F30315F30302E756E6974793364222C226B68745F665F3032222C22222C22225D|kht_f_02 / [Controller layer 0] Base Layer.M_Orgasm_A",
+      "loop": true,
+      "sha256": "f08c053aaea546fa589544c1dacb880b224bd839b4a67cf750b12ad9efcfb1f1",
+      "bytes": 213567
+    }
+    ,
+    {
+      "id": "street_onani_orgasm_b.okanim",
+      "file": "street_onani_orgasm_b.okanim",
+      "source": "states:controller@5B22682F616E696D2F66656D616C652F30335F30315F30302E756E6974793364222C226B68745F665F3032222C22222C22225D|kht_f_02 / [Controller layer 0] Base Layer.M_Orgasm_B",
+      "loop": true,
+      "sha256": "710178ac26837861a8af967766bc7332601dc09134cb25c109d48e055d6c92fb",
+      "bytes": 208759
+    }
+  ]
+}

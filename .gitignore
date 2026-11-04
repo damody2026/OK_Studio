@@ -139,9 +139,15 @@ deepseek.json
 
 # Original game and zipmod data: not versioned (Docs/ORIGINAL_DATA_OUT_OF_GIT_PLAN_20261104.md).
 # Tools/original_data_manifest.json lists every file; restore with
-#   Tools\lua\lua.exe Tools\original_data.lua restore --game <install> --archive <zip>
+#   Tools\lua\lua.exe Tools\original_data.lua restore --game <install> [--archive <zip>] [--h-voices <zip>]
 /Content/IndependentResources/base_v1/
-/Content/IndependentResources/RuntimeAnimations/
+# The street clips are converted; their lists (clip names, files, hashes: the street's own data) are versioned,
+# except library.manifest.json, which the conversion writes.
+/Content/IndependentResources/RuntimeAnimations/*
+!/Content/IndependentResources/RuntimeAnimations/*.manifest.json
+!/Content/IndependentResources/RuntimeAnimations/*.contact.json
+!/Content/IndependentResources/RuntimeAnimations/manifest.json
+/Content/IndependentResources/RuntimeAnimations/library.manifest.json
 /Content/IndependentResources/RuntimeVoices/
 /Content/IndependentResources/BodyInteractions/
 /Content/IndependentResources/MotionCatalogue/

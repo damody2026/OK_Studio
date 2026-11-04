@@ -4198,3 +4198,9 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - **推到 OpenKoikatsu 卡在等帳號**（2026-11-04，協調者）：推送網址沒帶帳號名，Git Credential Manager 等待帳號選擇，背景指令一直沒有回應。改用 `https://damody2026@github.com/...` 並設 `GIT_TERMINAL_PROMPT=0` 後立即成功。
 - **把原作模型當成 mod 模型從 manifest 拿掉**（2026-11-04，協調者，移除非共用 mod）：刪 `mishiki_tight2.zipmod|abdata/chara/mishiki_suit.unity3d` 時，順手把它的模型 `835549…` 從 manifest 刪了，沒先查 `converted.tsv`：原作 `abdata/chara/mishiki_suit.unity3d` 轉出的也是同一個模型，它是原作資源。重新跑 `shared-ignore` 看到它仍算共用才發現，已加回。往後從共用資源移除模型前，先查那個模型 id 的全部來源，只要有一個是原作或共用 mod 就留。
 - **從遊戲還原不會產生 `models/.gitignore`、`shared_mods.txt`**（2026-11-04，協調者）：這兩個檔是 OK 卡嚴格開卡要讀的非共用模型清單與共用 mod 清單，列在 manifest，但 `original_data.lua restore` 的 models 步驟只跑 `convert`，乾淨 clone 會缺它們。models 步驟補上 `--oklib shared-ignore`。
+- **只靠遊戲還原，乾淨 clone 缺 5 類檔案**（2026-11-04，協調者，`C:\portable\OKGameOnly` 跑 `restore --game D:/KoikatuSunshine`，109 分鐘）：
+  - `studio-standard-textures` 遇到一張找不到的貼圖（`minsyukulobby_studio` / `t_ks_r08_outview`）就整步回傳錯誤，Studio 的子動畫、圖片、天空、反射、shader 狀態都沒轉（缺 102 檔）。改成印警告、計數後繼續（`studio_items.rs`）。
+  - manifest 裡有 9 個第三方 mod 的模型（BlackHeart 系列、比基尼、一個 `p_cf_head_00`），來源索引早已查不到它們、C 的非共用清單也早就列著它們，卻因 10-20 從追蹤檔建 manifest 時被當成共用資源，還打進了開發資源 zip。已從 manifest 拿掉。往後建 manifest 時要排除 `models/.gitignore` 列的模型。
+  - 街區片段的 `*.manifest.json`、`watermelon.contact.json` 是自己寫的清單，轉換產生不出來；改成進版控。`idle_02`、`walk_01` 的來源寫在 `id` 欄位，轉換清單只收 `source`，補進 `runtime_clips.tsv`（轉出的檔案與 C 的逐位元組相同）。`watermelon_alternate.okanim` 沒人用，從 manifest 拿掉。
+  - `missing.txt`、`edits.stamp` 是轉換在單一機器留下的紀錄，改成不需要。
+- **`ok-ramps` 讀不到任何 mod 的陰影 ramp**（2026-11-04，協調者，同一次乾淨 clone 測試）：遊戲從 `C:\portable\KoikatuSunshine` 複製到 `D:\KoikatuSunshine` 時連 `.ok_cache.sqlite` 一起帶過去。mod 清單簽名只看檔名、大小、時間，複製後不變，所以舊索引被當成有效；`zip_guid` 表裡 7,291 筆舊路徑和新路徑並存，同一 GUID 查到舊的、不存在的檔案，`ok-ramps` 只轉出原作的 13 個（少了共用 mod 的 36 個）。`sqlcache.rs` 改成：索引記下建立時的 mods 資料夾，換位置就重新整理；每次載入時刪掉不屬於任何現存 mod 檔的 GUID／清單／覆蓋資料（比對忽略大小寫與斜線方向，`zip_file` 是空的就不刪）。修正後轉出 49 個，像素與 C 的逐一相同（PNG 位元組因壓縮方式不同而不同）。

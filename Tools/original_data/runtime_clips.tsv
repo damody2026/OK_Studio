@@ -17,6 +17,7 @@ facility_eat.okanim	action/animator/00.unity3d|f_eat_00_00_M
 facility_esthetic.okanim	action/animator/00.unity3d|ks_f_esthetic_00_00
 facility_sleep.okanim	action/animator/00.unity3d|f_sleep_00_00
 groom_standing.okanim	action/animator/00.unity3d|f_tachi_00_14
+idle_02.okanim	studio/anime/00.unity3d|f_tachi_00_02
 lover_hand_male.okanim	studio/anime/00.unity3d|mc_m_stand_00_00
 lover_hand_shy.okanim	studio/anime/00.unity3d|f_reaction_00_09_M
 lover_hold_female.okanim	action/animator/00.unity3d|f_twoshot_00_03
@@ -77,5 +78,6 @@ venue_soine_male.okanim	adv/motion/controller/adv/00.unity3d|m_soine_00_02_M
 venue_stretch.okanim	action/animator/00.unity3d|f_undou_00_00
 venue_study_seated.okanim	action/animator/00.unity3d|f_suwari_00_03_00_M
 venue_vending_male.okanim	action/animator/00.unity3d|ks_m_action_02
+walk_01.okanim	studio/anime/00.unity3d|f_aruki_00_00_01
 watermelon_observe.okanim	action/animator/00.unity3d|ks_f_tachi_06
 watermelon_strike.okanim	action/animator/00.unity3d|ks_f_tachi_04_M

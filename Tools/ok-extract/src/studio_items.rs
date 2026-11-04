@@ -631,7 +631,7 @@ pub fn record_standard_map_textures(game: &Path, lib: &Path, filter: Option<&str
             for root in &map.roots {bundles.entry(map.bundle.clone()).or_default().insert(root.clone());}
         }
         if bundles.is_empty(){return Err("no matching source map bundles".into());}
-        let mut total=0;
+        let (mut total,mut missing)=(0,0);
         for (bundle,_roots) in bundles {
             let bytes=crate::gamefs::read(game.join(&bundle)).map_err(|e|format!("{bundle}: {e}"))?;
             let id=crate::oklib::content_id(&bytes);let parsed=crate::unity::parse_bundle_cached(bytes);parsed.configure_game_references(game);
@@ -639,11 +639,13 @@ pub fn record_standard_map_textures(game: &Path, lib: &Path, filter: Option<&str
             // streams or decoding every old mesh texture during metadata work.
             let names=parsed.standard_material_texture_dependencies();
             let mut found=0;
-            for name in names {if parsed.texture_png_named(&name).is_some(){parsed.texture_sampling_named(&name);found+=1;}else{return Err(format!("Standard map texture missing: {bundle} / {name}"));}}
+            // A texture this install lacks (one outside view of a map, say) leaves that material unsampled; the rest of
+            // the maps are still recorded.
+            for name in names {if parsed.texture_png_named(&name).is_some(){parsed.texture_sampling_named(&name);found+=1;}else{eprintln!("oklib: Standard map texture missing (skipped): {bundle} / {name}");missing+=1;}}
             println!("STANDARD MAP TEXTURES {bundle}: {found}");total+=found;
             store.forget_model(&id);
         }
-        println!("STANDARD MAP TEXTURES total={total}");Ok(())
+        println!("STANDARD MAP TEXTURES total={total} missing={missing}");Ok(())
     })();
     store.flush();let saved=crate::gamefs::save(lib);crate::unity::clear_bundle_cache();crate::oklib::deactivate();crate::gamefs::deactivate();
     crate::oklib::CONVERTING.store(was_converting,std::sync::atomic::Ordering::Relaxed);

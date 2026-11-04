@@ -282,6 +282,37 @@ fn same_zip_stamp(old_len: i64, old_mt: i64, len: i64, mt: i64) -> bool {
         || (old_mt >= 0 && old_mt < 10_000_000_000 && old_mt == mt / 1_000_000))
 }
 
+/// A mods folder as stored in the index's meta: forward slashes, lower case, no `\\?\` prefix or trailing slash.
+fn dir_identity(dir: &Path) -> String {
+    let value = dir.to_string_lossy().replace('\\', "/").to_ascii_lowercase();
+    value.trim_start_matches("//?/").trim_end_matches('/').to_owned()
+}
+
+/// Rows of GUIDs, list entries and overrides whose archive the index no longer has (zip_file): left by a seed from an
+/// index file written at another place (the game folder copied with its .ok_cache.sqlite), they named archives that
+/// do not exist and shadowed the real ones of the same GUID. Paths compare without case or slash direction.
+fn drop_orphan_rows(conn: &Connection) {
+    const KNOWN: &str = "(SELECT lower(replace(path,'\\','/')) FROM zip_file)";
+    // No archive rows at all (a list-only seed): nothing to tell orphans by.
+    let archives: i64 = conn.query_row("SELECT COUNT(*) FROM zip_file", [], |r| r.get(0)).unwrap_or(0);
+    if archives == 0 { return; }
+    let mut dropped = 0;
+    for (table, column) in [("zip_guid", "path"), ("list_entry", "zip_path"), ("override_ab", "zip_path")] {
+        let sql = format!("DELETE FROM {table} WHERE {column}<>'' AND lower(replace({column},'\\','/')) NOT IN {KNOWN}");
+        match conn.execute(&sql, []) {
+            Ok(n) => dropped += n,
+            Err(error) => eprintln!("ok-extract: sql mods cleanup of {table} failed: {error}"),
+        }
+    }
+    if dropped > 0 { eprintln!("ok-extract: sql mods index dropped {dropped} rows of archives it no longer lists"); }
+}
+
+/// The index lists archives outside `dir` (an identity from dir_identity): it was built for another folder.
+fn stale_paths(conn: &Connection, dir: &str) -> bool {
+    let first: Option<String> = conn.query_row("SELECT path FROM zip_file LIMIT 1", [], |r| r.get(0)).ok();
+    first.is_some_and(|p| !dir_identity(Path::new(&p)).starts_with(&format!("{dir}/")))
+}
+
 fn zip_path_identity(path: &Path) -> String {
     let value=path.to_string_lossy();
     #[cfg(windows)]
@@ -666,7 +697,17 @@ fn ensure_mods(mods_dir: &Path) -> Arc<ModsMem> {
     let game_root = game_root_of_mods(mods_dir);
     let mem = with_db(&game_root, |conn| {
         let stored = meta_get(conn, "mods_sig");
-        if stored.as_deref() != Some(sig.as_str()) {
+        // The signature holds names, sizes and times only: a game folder copied elsewhere (its .ok_cache.sqlite with it)
+        // keeps it while every stored path still names the old place. The folder the index was built for is checked
+        // too, and a different one refreshes it (incremental drops the old paths, reads the archives at the new ones).
+        let dir = dir_identity(mods_dir);
+        let moved = match meta_get(conn, "mods_dir") {
+            Some(d) => d != dir,
+            // An index from before the folder was stored: stale when its archives are not under this folder.
+            None => stored.is_some() && stale_paths(conn, &dir),
+        };
+        if moved { eprintln!("ok-extract: sql mods index was built for another folder; refreshing it for {}", mods_dir.display()); }
+        if stored.as_deref() != Some(sig.as_str()) || moved {
             if stored.is_none() && try_seed(conn, mods_dir, &stamps) {
                 eprintln!("ok-extract: sql mods seeded, sig={sig}");
             } else {
@@ -681,6 +722,8 @@ fn ensure_mods(mods_dir: &Path) -> Arc<ModsMem> {
             }
             meta_set(conn, "mods_sig", &sig);
         }
+        if meta_get(conn, "mods_dir").as_deref() != Some(dir.as_str()) { meta_set(conn, "mods_dir", &dir); }
+        drop_orphan_rows(conn);
         let n: i64 = conn
             .query_row("SELECT COUNT(*) FROM list_entry", [], |r| r.get(0))
             .unwrap_or(0);

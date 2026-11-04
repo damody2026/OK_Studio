@@ -35,7 +35,9 @@ local SSD = "Content/IndependentResources/StreetSocialData"
 -- part: the zip a group is packed into ("main" when not given; the H voices are a separate download).
 local GROUPS = {
   { name = "base-models", need = "game", step = "models", paths = { LIB .. "/models/" } },
-  { name = "base-index", need = "game", step = "models", paths = { LIB .. "/sources.okidx", LIB .. "/converted.tsv", LIB .. "/missing.txt", LIB .. "/oklib.json", LIB .. "/edits.stamp", LIB .. "/shared_mods.txt" } },
+  { name = "base-index", need = "game", step = "models", paths = { LIB .. "/sources.okidx", LIB .. "/converted.tsv", LIB .. "/oklib.json", LIB .. "/shared_mods.txt" } },
+  -- What a conversion leaves behind on one machine: the coverage gaps it saw, the time models were last edited.
+  { name = "base-byproducts", need = "no", step = "archive", paths = { LIB .. "/missing.txt", LIB .. "/edits.stamp" } },
   { name = "base-studio", need = "game", step = "studio", paths = { LIB .. "/studio_items.json", LIB .. "/studio_child_animations.json", LIB .. "/shader_states.json", LIB .. "/studio/bg/", LIB .. "/studio/frame/", LIB .. "/studio/sky/", LIB .. "/studio/sky.json", LIB .. "/studio/reflections/", LIB .. "/studio/map_environments.json", LIB .. "/studio/map_reflections.json", LIB .. "/studio/samples/" } },
   { name = "h-voices", need = "optional", step = "h-voices", part = "h-voices", paths = { LIB .. "/h/voice/" } },
   { name = "base-sounds", need = "game", step = "sounds", paths = { LIB .. "/studio/voice/", LIB .. "/studio_voices.json", LIB .. "/studio/bgm/", LIB .. "/h/" } },
@@ -214,8 +216,10 @@ local function cmd_manifest()
   for _, mf in ipairs(path.glob(ROOT .. "/" .. RA, "*.manifest.json")) do
     local function walk(v)
       if type(v) ~= "table" then return end
-      if type(v.source) == "string" and type(v.file) == "string" and v.source:find("|", 1, true) and not v.file:find("/", 1, true) then
-        clips[v.file] = v.source
+      -- The source key is "source", or "id" in the oldest list (manifest.json: idle_02, walk_01).
+      local src = type(v.source) == "string" and v.source or type(v.id) == "string" and v.id or nil
+      if src and type(v.file) == "string" and src:find("|", 1, true) and not v.file:find("/", 1, true) then
+        clips[v.file] = src
       end
       for _, x in pairs(v) do walk(x) end
     end

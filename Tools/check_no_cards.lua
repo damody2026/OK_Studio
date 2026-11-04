@@ -11,7 +11,9 @@ local CARD_DIRS = { "^Content/CharacterCards/", "^UserData/chara/", "_cards/", "
 local IMAGE = { png = true, apng = true }
 -- Original game and zipmod data stays out of git (Tools/original_data.lua, .gitignore block of the same name).
 local ORIGINAL = {
-  "^Content/IndependentResources/base_v1/", "^Content/IndependentResources/RuntimeAnimations/",
+  -- The street clips and the converted library's list; the clip lists (*.manifest.json, *.contact.json) are versioned.
+  "^Content/IndependentResources/base_v1/", "^Content/IndependentResources/RuntimeAnimations/.*%.okanim$",
+  "^Content/IndependentResources/RuntimeAnimations/library",
   "^Content/IndependentResources/RuntimeVoices/", "^Content/IndependentResources/BodyInteractions/",
   "^Content/IndependentResources/MotionCatalogue/", "^Content/IndependentResources/StreetSocialData/ja_ogg/",
   "^Content/IndependentResources/StreetSocialData/zh_ogg/", "^Content/IndependentResources/StreetSocialData/RuntimeV%d",
