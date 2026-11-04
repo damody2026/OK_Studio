@@ -261,6 +261,10 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
         double BlushValue;if(Body->TryGetNumberField(TEXT("blush"),BlushValue))Panel->BlushTest=float(BlushValue);
         // {"siru":[face,ftop,fbot,btop,bbot]}: set the liquid levels (0..2) directly, to look at how they draw.
         const TArray<TSharedPtr<FJsonValue>>* SiruLevels=nullptr;if(Body->TryGetArrayField(TEXT("siru"),SiruLevels)&&SiruLevels->Num()==5){int32 L[5];for(int32 A=0;A<5;++A)L[A]=int32((*SiruLevels)[A]->AsNumber());Panel->SetSiruTest(L);}
+        // {"leave":true}: the scene ends as the leave button ends it.
+        bool Leave=false;if(Body->TryGetBoolField(TEXT("leave"),Leave)&&Leave){Exit();Why=TEXT("left");return nullptr;}
+        // {"dev_set":{"oral":55,...}}: as the left panel's sliders, kept with her when the scene ends.
+        const TSharedPtr<FJsonObject>* Sets=nullptr;if(Body->TryGetObjectField(TEXT("dev_set"),Sets))for(const auto& D:(*Sets)->Values)Panel->SetDev(*D.Key,float(D.Value->AsNumber()));
         // {"dev":{"oral":100,...}}: her development there, for testing (0..100; -1 back to hers).
         const TSharedPtr<FJsonObject>* Devs=nullptr;if(Body->TryGetObjectField(TEXT("dev"),Devs))for(const auto& D:(*Devs)->Values){const double V=D.Value->AsNumber();if(V<0.)Panel->DevTest.Remove(FString(D.Key));else Panel->DevTest.Add(FString(D.Key),float(V));}
         bool Green=false;if(Body->TryGetBoolField(TEXT("penis_green"),Green))Panel->SetPenisGreen(Green);
@@ -337,9 +341,9 @@ bool AOKInteractionMode::HSceneHear(const FString& Text,FString& Context){return
 void AOKInteractionMode::HSceneShowLine(const FString& Text){if(Controller&&Controller->HPanel)Controller->HPanel->ShowLine(Text);}
 FString AOKInteractionMode::HSceneJudgeFacts() const{return Controller&&Controller->HPanel?Controller->HPanel->JudgeFacts():FString();}
 bool AOKInteractionMode::HSceneApplyTalk(const TSharedPtr<FJsonObject>& Verdict){return Controller&&Controller->HPanel&&Controller->HPanel->ApplyTalk(Verdict);}
-extern TAutoConsoleVariable<int32> CVarHSpokenLines; // OKHScene.cpp
+extern TAutoConsoleVariable<int32> CVarHTtsLines; // OKHScene.cpp
 bool AOKInteractionMode::HSceneSpeak(const FString& Path){
-    if(!CVarHSpokenLines.GetValueOnGameThread())return false; // her answer shown, not spoken: only her cries in H (user 2026-11-02)
+    if(!CVarHTtsLines.GetValueOnGameThread())return false;
     if(!Controller||!IsValid(Controller->PreviewActor))return false;auto* Her=Controller->PreviewActor.Get();
     if(Controller->HPanel&&Controller->HPanel->LineIsStale())return false; // said to what happened before (UOKHScenePanel::ShowLine)
     Her->StopHBreath();FString Why;const bool Ok=Her->PlaySpeechFile(Path,1.f,Why);

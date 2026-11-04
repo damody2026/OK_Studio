@@ -273,6 +273,19 @@ fn session_end(r: &Value) -> Result<Value, String> {
     let flag = |v: &Value, k: &str| v.get(k).and_then(Value::as_bool).unwrap_or(false);
     let before = rel.clone();
     let mut h = of(&ext, girl);
+    // Her development as the player set it on the scene's left panel (user 2026-11-04): what this scene adds comes on top.
+    if let Some(set) = c.get("dev_set").and_then(Value::as_object) {
+        for (k, v) in set {
+            let v = v.as_f64().unwrap_or(0.0).clamp(0.0, 100.0) as f32;
+            if let Some(i) = AREA_KEYS.iter().position(|a| a == k) {
+                h.areas[i] = v;
+            } else if k == "oral" {
+                h.oral = v;
+            } else if BODY_KEYS.contains(&k.as_str()) {
+                h.body.insert(k.clone(), v);
+            }
+        }
+    }
     let was = h.clone();
     let level_before = h.level(rel.lewdness);
     let mut fx = Effects::default();
@@ -402,14 +415,14 @@ fn session_end(r: &Value) -> Result<Value, String> {
                 rel.favor = (rel.favor + cap * inside).min(cap);
             }
         }
-        // He asked again for no condom and she gave in: how she takes it is her chastity and her character (a proud
-        // girl minds, one who worships him or is already lewd less so).
+        // She said no to going without a condom and he did anyway: 1 to 5 favor (user 2026-11-04), by her chastity and her
+        // character (a proud girl minds, one who worships him or is already lewd less so).
         if flag(&c, "raw_pressed") {
             let t = crate::traits::Traits::from_profile(r.get("profile").unwrap_or(&Value::Null));
             let chaste = crate::heroine::chastity(&rel, &t);
-            let delta = ((40.0 - chaste) / 10.0 - (t.self_esteem as f32 - 50.0) / 25.0 + (t.worship as f32 - 50.0) / 25.0 + rel.lewdness / 50.0).clamp(-8.0, 4.0);
-            rel.add_liking(delta);
-            fx.note_at(&rel.id, "h_first", crate::tr::t(if delta < 0.0 { "hexp.raw_pressed_upset" } else { "hexp.raw_pressed_ok" }), place, 0.85);
+            let minds = (chaste - 40.0) / 10.0 + (t.self_esteem as f32 - 50.0) / 25.0 - (t.worship as f32 - 50.0) / 25.0 - rel.lewdness / 50.0;
+            rel.favor = (rel.favor - (3.0 + minds).round().clamp(1.0, 5.0)).max(0.0);
+            fx.note_at(&rel.id, "h_first", crate::tr::t("hexp.raw_pressed_upset"), place, 0.85);
         }
         // The whole time in one memory she can be asked about ("how many times did you come?").
         let int = |k: &str| crate::tr::a(&(num(&c, k) as i64).to_string());
@@ -560,6 +573,15 @@ mod tests {
     }
 
     #[test]
+    fn development_set_on_the_panel_is_kept_with_what_the_scene_adds() {
+        let ext = json!({"hexp": {"g": {"count": 1, "areas": [0, 0, 30, 0, 0, 0]}}});
+        let out = session_end(&json!({"girl": "g", "relation": rel(0.0), "ext": ext, "counts": {"played": false,
+            "dev_set": {"crotch": 80, "oral": 55, "foot": 40, "nothing": 9, "chest": 300}}})).unwrap();
+        let h: HExp = serde_json::from_value(out["ext"]["hexp"]["g"].clone()).unwrap();
+        assert_eq!((h.areas[CROTCH], h.areas[1], h.oral, h.body["foot"]), (80.0, 100.0, 55.0, 40.0));
+    }
+
+    #[test]
     fn climaxes_in_her_and_his_mouth_develop_her() {
         let ext = json!({"hexp": {"g": {"count": 1, "areas": [0, 0, 30, 95, 0, 0], "oral": 40}}});
         let out = session_end(&json!({"girl": "g", "relation": rel(0.0), "ext": ext, "counts": {"played": true,
@@ -625,6 +647,15 @@ mod tests {
         easy.favor = 50.0;
         let fine = session_end(&json!({"girl": "g", "relation": easy, "ext": {}, "counts": {"played": true, "raw_pressed": true}})).unwrap();
         assert!(favor(&pressed) < favor(&fine), "chaste {} vs easy {}", favor(&pressed), favor(&fine));
+        let unpressed: Relation = { let mut r: Relation = serde_json::from_value(rel(0.0)).unwrap(); r.chastity = 90.0; r.favor = 50.0; r };
+        let plain = favor(&session_end(&json!({"girl": "g", "relation": unpressed, "ext": {}, "counts": {"played": true}})).unwrap());
+        assert_eq!(plain - favor(&pressed), 5.0, "a chaste girl minds the most");
+        let mut lewd: Relation = serde_json::from_value(rel(0.0)).unwrap();
+        lewd.chastity = 0.0;
+        lewd.lewdness = 400.0;
+        lewd.favor = 50.0;
+        let cost = favor(&session_end(&json!({"girl": "g", "relation": lewd.clone(), "ext": {}, "counts": {"played": true}})).unwrap()) - favor(&session_end(&json!({"girl": "g", "relation": lewd, "ext": {}, "counts": {"played": true, "raw_pressed": true}})).unwrap());
+        assert_eq!(cost, 1.0, "it always costs her something");
     }
 
     #[test]

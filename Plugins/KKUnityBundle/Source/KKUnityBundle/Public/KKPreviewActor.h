@@ -297,6 +297,11 @@ public:
 	// Her mouth at least this open whatever her pattern or voice says (sucking him: OKHScene); 0 none.
 	void SetMouthOpenFloor(float Open01);
 	float MouthOpenFloor=0.f;
+	// Her mouth held at exactly this, over her breathing and speech (her tongue out with how deep he is, OKHScene); below 0: free.
+	void SetMouthOpenHeld(float Open01);
+	void SetTongueLength(float Length); // how far her tongue's morphs go, 1 as the card has it
+	float TongueLength=1.f;
+	float MouthOpenHeld=-1.f;
 	UFUNCTION(BlueprintCallable, Category="Koikatsu|Speech")
 	bool LoadGeneralSpeech(const FString& VoiceRoot,int32 Personality,float VoicePitch,FString& Error);
 	UFUNCTION(BlueprintCallable, Category="Koikatsu|Speech")

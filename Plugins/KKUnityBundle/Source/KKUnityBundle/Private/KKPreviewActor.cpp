@@ -8768,6 +8768,19 @@ void AKKPreviewActor::SetMouthOpenFloor(float Open01)
 	ApplyMouth();
 }
 
+void AKKPreviewActor::SetTongueLength(float Length)
+{
+	if (FMath::IsNearlyEqual(Length, TongueLength, .001f)) return;
+	TongueLength = Length;
+	ApplyMouth();
+}
+void AKKPreviewActor::SetMouthOpenHeld(float Open01)
+{
+	if (FMath::IsNearlyEqual(Open01, MouthOpenHeld, .01f)) return;
+	MouthOpenHeld = Open01;
+	ApplyMouth();
+}
+
 void AKKPreviewActor::SetMouthPattern(int32 Pattern, bool bBlend)
 {
 	MouthPattern = FMath::Clamp(Pattern, 0, GetMouthPatternCount() - 1);
@@ -9129,6 +9142,7 @@ void AKKPreviewActor::ForceBlink()
 
 float AKKPreviewActor::EffectiveFaceRate(int32 Control) const
 {
+    if(Control==0&&MouthOpenHeld>=0.f) return MouthOpenHeld;
     if(Control==0) return FMath::Max(MouthOpenFloor,bSpeechActive&&bSpeechDrivesMouth?FMath::Lerp(SpeechOpenMin,1.f,SpeechOpen):MouthOpen01);
     const int32 Index=Control-1;
     if(bManualFaceControl[Index]) return FaceOpen01[Index];
@@ -9683,8 +9697,11 @@ void AKKPreviewActor::ApplyMouth()
 
         for (const FName& Aux : {Slot.MouthCornerUp, Slot.MouthCornerDown})
             if (!Aux.IsNone()) Desired.Add(Aux, 0.f);
-        const bool bCompoundMouth = !bSpeechActive && (!Slot.Patterns.IsEmpty())
-            && ((MouthWeight < 0.999f && MouthPattern > 0) || MouthCornerUp > 1.e-4f || MouthCornerDown > 1.e-4f);
+        // Held: the pattern itself goes with it, over her breathing. A keep-open pattern (SexFaces' tongue out) has no closed
+        // shape, so the open rate alone does not move it.
+        const bool bHeldMouth = MouthOpenHeld >= 0.f && MouthPattern > 0;
+        const bool bCompoundMouth = (!Slot.Patterns.IsEmpty()) && (bHeldMouth || (!bSpeechActive
+            && ((MouthWeight < 0.999f && MouthPattern > 0) || MouthCornerUp > 1.e-4f || MouthCornerDown > 1.e-4f)));
         if (bCompoundMouth)
         {
             for (const auto& Pair : Slot.Patterns)
@@ -9694,7 +9711,7 @@ void AKKPreviewActor::ApplyMouth()
             }
             const int32 MPtn = FMath::Clamp(MouthPattern, 0, Slot.Patterns.Num() - 1);
             const float MOpen = FMath::Clamp(EffectiveFaceRate(0), 0.f, 1.f);
-            const float MW = FMath::Clamp(MouthWeight, 0.f, 1.f);
+            const float MW = FMath::Clamp(bHeldMouth ? MouthOpenHeld : MouthWeight, 0.f, 1.f);
             const float CUp = FMath::Clamp(MouthCornerUp, 0.f, 1.f);
             const float CDown = FMath::Clamp(MouthCornerDown, 0.f, 1.f);
             const float CSum = FMath::Min(1.f, CUp + CDown);
@@ -9722,6 +9739,8 @@ void AKKPreviewActor::ApplyMouth()
         {
             OKFbsWriteTransition(Desired, Slot.Patterns, FaceTransitions[0], EffectiveFaceRate(0));
         }
+        // Her tongue has no bones: longer is its morphs past 100.
+        if ((Slot.InsideBit & 4) && TongueLength != 1.f) for (auto& Weight : Desired) Weight.Value *= TongueLength;
         if(const auto* Overrides=PartMorphWeights.Find(Slot.SessionPartIndex))
             for(const auto& Weight:*Overrides) Desired.Add(Weight.Key,Weight.Value);
         if (Slot.CpuComp && Parts.IsValidIndex(Slot.PartArrayIndex))

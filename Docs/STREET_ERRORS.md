@@ -1963,6 +1963,13 @@
 - 2026-11-04 e-galgame `SetHandShape` 沒同步：H 面板換手型時，配對播放的背景執行緒還在用同一個 Session，遊戲偶爾直接消失（game.log 沒有 Fatal、Windows 也沒紀錄），一開始還以為是別的 session 關掉的。修正：呼叫前 `SyncPair()`。教訓：在 H 面板改 Session 的東西都要先 SyncPair。
 - 2026-11-04 e-galgame 腳本錨點失敗沒看到：`grip.py` 的錨點多了 4 個空白，斷言失敗什麼都沒改，又因同一條指令多打 `cat > /dev/null` 卡住，輸出被吃掉，拍了兩輪才發現手型根本沒套上。之後 python 腳本接 `&& echo applied`，看到再往下做。
 - 2026-11-04 e-galgame：H 裡換衣服閃退（19:36、20:56 兩次，同一原因）：新部件還沒有 MeshObject，`AOKPaintSprayer::Tick` → `FOKPaintPose::Prepare` 同一幀呼叫 `GetCPUSkinnedVertices` 觸發 assert。第一版只擋在 `Unsupported` 分支，改成 `Prepare` 開頭檢查 `IsRegistered()` 與 `GetMeshObject()`，這幀跳過、下一幀重試；`KKPreviewActor` 量外框與 `OKCardPreviewCapture` 也加同樣檢查。壓力測試：H 場景連續換衣、半脫、換體位 36 次沒有閃退（`Saved/StreetSocial/Play-20261104T211309`）；測試沒有同時按住噴射，舊版也未重跑對照。
+- 2026-11-04 e-galgame：更正上一列的壓力測試：那 36 次換衣時大部分沒有油漆表面（`Tick` 在 `Surfaces` 為空時直接返回），不算壓到崩潰路徑。重跑時用啊嘿顏的流口水讓噴射持續：`EGalEight4` 50 次操作（實際換裝 46 次、表面失效重建 2231 次）沒有閃退（`Saved/StreetSocial/Play-20261104T221556`）；舊版 `EGalSet2` 40 次操作（換裝 21 次、1060 次）也沒有閃退（`Play-20261104T221027`），所以沒有重現，修法是依當機報告的呼叫堆疊判斷，尚未以對照證明。
+- 2026-11-04 e-galgame：把使用者回報的問題當成新版的問題：20:56 的閃退與「舌頭沒跟深度」都發生在舊的 `EGalSet2`（19:29 開到 20:56，當機報告在該 stage 的 `Saved/Crashes`）。回報時先看當機報告與 game.log 是哪個 stage。
+- 2026-11-04 e-galgame：啊嘿顏雙手上下跳：`HoldFeet`（站姿壓低時的雙腳）與 `TickAhegao`（雙手）都呼叫 `SetStudioIk`，而它會整組取代，兩邊每幀互相蓋掉。改成雙手放進 `HoldFeet` 的同一組目標；`TickAhegao` 原本沒先 `SyncPair` 就設，也一併改掉。
+- 2026-11-04 e-galgame：啊嘿顏時頭上閃黑色長方體：H 的體液借用 `AOKPaintSprayer`，`SetSpray` 會顯示水槍模型，流口水向下噴，槍身立在頭上，斷續噴就閃。`bShowGun` 關掉。
+- 2026-11-04 e-galgame：新增文字鍵前沒查重：`cloth_all_half` 已存在，重複的鍵讓 TOML 解析失敗，ok-rules 189 項測試一起失敗。
+- 2026-11-04 e-galgame：測試時用 `game_click` 會把自己的遊戲視窗拉到最前面（`Win->BringToFront`），使用者正在玩時點擊可能落到測試視窗。使用者在玩時不要用 `game_click`，改用 `/hscene` 的 kind 或截圖。
+- 2026-11-04 e-galgame：舌頭變白先往材質想，其實是流口水的白色塗料蓋在舌頭上：不流口水時是紅的。現在 H 的體液不畫在舌頭上（`bSkipTongue`，`ok.HScene.FluidTongue` 預設 0），流 40 秒後舌頭還是紅的（`Play-20261104T223655`）。
 - 2026-11-04 e-fork 眼睛上下顛倒，只測左右沒發現：`ok.VerifyEyeCamera` 第一版只繞左右轉，100 張全過，但走 `_MainTex_ST` 的 GPU 眼睛垂直方向是反的（鏡頭在下，虹膜往上翻；Rows 的 V 和貼圖 tiling 的 V 差一個翻轉）。`ok.EyeGazeSTFlipV` 預設改 1。e-fork-2 那天把口交上翻改成負值，以及 `ok.HScene.AhegaoGaze` 的 -1.25，都是在補這個反向，一併改回 +1 向上。教訓：跟隨類功能的驗收要含上下，方向要用量到的位移判定。
 - 2026-11-04 e-fork 跟鏡頭的轉動量每張卡差很多：同樣轉 35°，畫面上 15°～55°，C097 虹膜跑出眼睛，C018 向下被下眼皮切掉。兩個原因：(1) rate 換算成固定的貼圖位移，卡片虹膜尺寸（settings 12、13）越大移得越多，和眼睛寬度無關；(2) 解除限制後垂直 rate 超過 ±1 時走了 `st_rolled` 的翻白眼路徑，位移突然加大。修正：跟隨目標時改用 `IrisRuntime::st_look`，直接以眼睛寬高的比例移動，rate 只留給其他用途。
 - 2026-11-04 e-fork 稽核誤判三次：(1) 用影像比對虹膜位移，虹膜環紋重複加上陰影不動，C000 量到 -5（實際約 -15），改成換白底黑點貼圖量；(2) 髮絲蓋到黑點會拉偏重心，量點時隱藏頭髮與配件；(3) 側看時用正面的眼寬當半徑，近眼 47°、遠眼 31°，看起來像兩眼不一致，實際是遠眼被壓扁，改用每個視角自己量到的眼寬。教訓：量測模型先對截圖核對，數字不對時先懷疑量法。

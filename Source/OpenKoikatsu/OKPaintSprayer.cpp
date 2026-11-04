@@ -186,7 +186,7 @@ void AOKPaintSprayer::SetSpray(bool Enabled,FVector Origin,FVector Dir)
  if(Enabled&&!Spraying)GeometryTime=1.;
  Spraying=Enabled && !Dir.IsNearlyZero() && !Dir.ContainsNaN() && !Origin.ContainsNaN();Nozzle=Origin;Direction=Dir.GetSafeNormal();
  SetActorLocation(Nozzle);SetActorRotation(Direction.Rotation());
- if(Gun)Gun->SetVisibility(Spraying);
+ if(Gun)Gun->SetVisibility(Spraying&&bShowGun);
  if(JetFX){const bool Changed=VisualFlow!=Settings.Flow||VisualSpeed!=Settings.JetSpeed||VisualParticleLimit!=Settings.MaxJetParticles;VisualParticleLimit=Settings.MaxJetParticles;VisualFlow=Settings.Flow;VisualSpeed=Settings.JetSpeed;JetFX->SetVariableFloat(TEXT("User.JetSpeed"),Settings.JetSpeed);JetFX->SetVariableFloat(TEXT("User.Flow"),FMath::Min(Settings.Flow*200.f,float(FMath::Clamp(Settings.MaxJetParticles,32,4096))/3.1f/1.1f));JetFX->SetVariableFloat(TEXT("User.DropletFlow"),FMath::Min(Settings.Flow*20.f,float(FMath::Clamp(Settings.MaxJetParticles,32,4096))/3.1f/11.f));FLinearColor JetColor=Settings.Color;JetColor.A*=FMath::Clamp(Settings.JetOpacity,0.f,1.f);JetFX->SetVariableLinearColor(TEXT("User.PaintColor"),JetColor);if(Spraying&&(!JetFX->IsActive()||Changed))JetFX->Activate(true);else if(!Spraying&&JetFX->IsActive())JetFX->Deactivate();}
 }
 bool AOKPaintSprayer::PrepareGeometry(FSurface& S)
@@ -329,6 +329,7 @@ void AOKPaintSprayer::DiscoverSurfaces(const FVector& A,const FVector& B,bool So
     // skeletal display component carrying its own dynamic material instance.
     const bool MorphSurface=Preview->MouthSlots.ContainsByPredicate([C](const auto& Slot){return Slot.Comp==C||Slot.CpuComp==C;});
     if(!PartSurface&&!MorphSurface)continue;
+    if(bSkipTongue&&Preview->MouthSlots.ContainsByPredicate([C](const auto& Slot){return (Slot.InsideBit&4)&&(Slot.Comp==C||Slot.CpuComp==C);}))continue;
    }
    if(!Cast<USkinnedMeshComponent>(C)&&!(Cast<UProceduralMeshComponent>(C)&&(It->IsA<AKKPreviewActor>()||It->ActorHasTag(TEXT("OKPaintable")))))continue;
    auto* Procedural=Cast<UProceduralMeshComponent>(C);

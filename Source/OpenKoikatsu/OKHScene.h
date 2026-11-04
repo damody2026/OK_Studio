@@ -2,6 +2,7 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "Components/Button.h"
+#include "Components/Slider.h"
 #include "Dom/JsonObject.h"
 #include "Commandlets/Commandlet.h"
 #include "OKArousalDrops.h"
@@ -30,6 +31,19 @@ public:
     int32 Kind=INDEX_NONE;
     UPROPERTY() TObjectPtr<UOKHScenePanel> Owner;
     UFUNCTION() void HandleClick();
+};
+
+// A row of the settings panel on the left: a console variable (UOKHScenePanel, HSettings).
+UCLASS()
+class OPENKOIKATSU_API UOKHSettingSlider : public USlider {
+    GENERATED_BODY()
+public:
+    int32 Row=INDEX_NONE;
+    UPROPERTY() TObjectPtr<UTextBlock> Shown;
+    UPROPERTY() TObjectPtr<UOKHScenePanel> Owner;
+    void Show();
+    UFUNCTION() void HandleValue(float NewValue);
+    UFUNCTION() void HandleDone();
 };
 
 // Where his penis root goes (user, 2026-11-02): a point in a circle, dragged; its edge is the farthest that way
@@ -105,6 +119,7 @@ public:
     // Held every frame through the pair's animation (her FK with '+' names, ApplyHerFk; her session's hand shapes).
     void SetHerPose(const float* Ankle,const float* ThighL,const float* ThighR,const int32* HandL,const int32* HandR);
     UFUNCTION() void OnAnkle(float Value);
+    UFUNCTION() void OnTongueLength(float Value);
     UFUNCTION() void OnThighL(float Value);
     UFUNCTION() void OnThighR(float Value);
     UFUNCTION() void OnHandL(FString Option,ESelectInfo::Type How);
@@ -116,6 +131,8 @@ public:
         TouchChest=2101,TouchCrotch=2102,TouchAnal=2103,TouchButt=2104,TouchNipple=2105,Kiss=2106,Release=2107,
         TouchHead=2130,TouchHand=2131,TouchThigh=2132,TouchCalf=2133,TouchFoot=2134,TouchLips=2135,LickToggle=2136, // H_SCENE_ADDITIONS_PLAN 3
         Afterglow=2137, // H_SCENE_ADDITIONS_PLAN 12
+        SettingsToggle=2300,SettingsReset=2301, // the settings panel on the left
+        HeadCameraToggle=2302,EyesCameraToggle=2303, // her head, her eyes on the camera
         PoseBase=1000,
         Faster=2001,Slower=2002,Toggle=2003,Inside=2004,Outside=2005,Drink=2006,Vomit=2007,Again=2008,Insert=2009,InsertAnal=2010,Pull=2011,Condom=2012,Stop=2014,Continue=2015,ToggleMale=2016,LockHer=2017,LockHis=2018,MaleBottom=2019,PenisXRayToggle=2020,PhysicsNext=2021,GrayRoomToggle=2022,PenisPanelToggle=2023,PenisReset=2024,
         ClothesBase=3000,RoomBase=3200,OutfitBase=3300,CoordinateToggle=3310,CoordinateAccessories=3311,CoordinateBase=3400,
@@ -195,7 +212,7 @@ private:
     // Half size: the inner box twice the panel high (NativeTick, from the panel as laid out), drawn at half.
     UPROPERTY() TObjectPtr<class USizeBox> HalfInner;UPROPERTY() TObjectPtr<class USizeBox> PanelWidth;
     UPROPERTY() TObjectPtr<USlider> LengthSlider;
-    UPROPERTY() TObjectPtr<USlider> AnkleSlider;UPROPERTY() TObjectPtr<USlider> ThighSliders[2];UPROPERTY() TObjectPtr<class UComboBoxString> HandCombos[2];
+    UPROPERTY() TObjectPtr<USlider> TongueSlider;UPROPERTY() TObjectPtr<USlider> AnkleSlider;UPROPERTY() TObjectPtr<USlider> ThighSliders[2];UPROPERTY() TObjectPtr<class UComboBoxString> HandCombos[2];
     float AnkleTurn=0.f,ThighOpen[2]={0.f,0.f};int32 HandPattern[2]={-1,-1},HandShown[2]={-1,-1},HandOptions=-1;TWeakObjectPtr<class AKKPreviewActor> HandGirl,EyesCameraGirl;void TickEyesCamera();FVector4f HerPoseShown=FVector4f(0.f,0.f,0.f,0.f);
     // Her FK this frame: her trembling (Tremble) and the pose he set, together (her session holds one FK list).
     void ApplyHerFk(class AKKPreviewActor* Girl,TArray<FString>& Names,TArray<FVector>& Turns);void TickHands();
@@ -207,6 +224,13 @@ private:
     // Twice the 8 cm it was (user, 2026-11-02: the pad's edge reaches where (0,2) did).
     static constexpr float RootReach=16.f;
     void ShowPenis();
+    UPROPERTY() TObjectPtr<class USizeBox> SettingsBox;UPROPERTY() TArray<TObjectPtr<UOKHSettingSlider>> SettingSliders;bool bSettingsOpen=false;
+    TMap<FString,float> DevSet; // her development as set on the panel (Result)
+    UPROPERTY() TObjectPtr<class USizeBox> CoordSides[2];UPROPERTY() TObjectPtr<UWrapBox> CoordWraps[2];
+    UPROPERTY() TArray<TObjectPtr<UOKHSceneButton>> CoordButtons;UPROPERTY() TArray<TObjectPtr<class UImage>> CoordImages;UPROPERTY() TArray<TObjectPtr<class UTexture2D>> CoordTextures;int32 CoordNext=0;
+    UPROPERTY() TObjectPtr<UTextBlock> CoordAccessories;void ShowCoordinates();void ShowAccessories();void MarkCoordinate();void TickCoordinates();
+    bool bHeadCamera=false;TWeakObjectPtr<AKKPreviewActor> HeadCameraGirl;bool HEyesOnCamera() const;
+    TArray<FVector> AheHandAt; // where her double peace puts her hands (HoldFeet gives them)
     UPROPERTY() TObjectPtr<UWrapBox> Actions;
     UPROPERTY() TObjectPtr<UWrapBox> Tabs;
     UPROPERTY() TObjectPtr<UScrollBox> List;
@@ -237,8 +261,9 @@ public:
     // What runs out of her in the room (her desire past 100, OKArousalDrops.h): the drops, her next one at her crotch and
     // at a nipple, which nipple, and how many came (into the result: she leaves the room as wet).
     void TickDrips(float Delta);float HerDesire() const;FOKArousalDrops Drips;FOKTears Tears;uint8 TearsWanted=0;void SpawnTears(class AKKPreviewActor* Girl);void AimIntoMouth(class AKKPreviewActor* Girl,class AKKPreviewActor* Him);void HideInMouth(class AKKPreviewActor* Girl,class AKKPreviewActor* Him);
-    TWeakObjectPtr<class AKKPreviewActor> MouthClipHim;int32 MouthClipPart=INDEX_NONE;int32 MouthClipVerts=0;bool bMouthAimed=false;FVector MouthAim=FVector::ZeroVector;float MouthTurned=0.f;FVector MouthDbg=FVector::ZeroVector;double DripAt=0,MilkAt=0,SquirtAt=0,ClimaxUntil=0,ClimaxLoopFor=0;bool bTrembling=false,bVaginaLogged=false;void Tremble(double Now);bool StreetOnani() const;int32 MilkTurn=0,HerDrips=0,HerMilk=0;int32 HerDripTimes=0,HerMilkTimes=0;double DripBoutAt=-100.,MilkBoutAt=-100.; // drops, and the times she ran (a pause of 3 s starts another; the result shows these)
+    TWeakObjectPtr<class AKKPreviewActor> MouthClipHim;int32 MouthClipPart=INDEX_NONE;int32 MouthClipVerts=0;bool bMouthAimed=false;FVector MouthAim=FVector::ZeroVector;float MouthTurned=0.f;FVector MouthDbg=FVector::ZeroVector;double DripAt=0,MilkAt=0,NippleSprayAt=0,SquirtAt=0,ClimaxUntil=0,ClimaxLoopFor=0;bool bTrembling=false,bVaginaLogged=false;void Tremble(double Now);bool StreetOnani() const;int32 MilkTurn=0,HerDrips=0,HerMilk=0;int32 HerDripTimes=0,HerMilkTimes=0;double DripBoutAt=-100.,MilkBoutAt=-100.; // drops, and the times she ran (a pause of 3 s starts another; the result shows these)
     void ClearLine();
+    void TickDeepFace(float Delta);void EndDeepFace(class AKKPreviewActor* Girl);float DeepFace=0.f,DeepGazeSet=0.f;bool bDeepFace=false,bDeepManualWas=false,bAheDepth=false; // her eyes and tongue with how deep he is (TickDeepFace)
     // Her line asked for before a climax, a finish or a new pose comes back after it ("don't stop" once he had come):
     // it is not shown or spoken. LineEpoch moves at those; SentEpoch is the epoch her last line was asked in.
     int32 LineEpoch=0,SentEpoch=0;bool bStaleLine=false;
@@ -253,6 +278,7 @@ public:
     void LookAtCrotch(float Distance,float Pitch=15.f,float Turn=0.f,bool bFront=false); // /hscene {"crotch_cam":cm} or {distance, pitch, turn}: where they join, from beside her body // /hscene {"face_cam":cm}: the camera in front of her face, to see what is on it
     void SetSiruTest(const int32 (&Levels)[5]); // /hscene {"siru":[...]}: set her liquid levels directly
     TMap<FString,float> DevTest; // /hscene {"dev":{...}}: her development, for testing (Dev)
+    float DevOf(const TCHAR* Area) const;void SetDev(const TCHAR* Area,float Value); // the left panel's rows
     // Her pregnancy (ok-rules pregnancy.rs, in her experience): belly and changed areolae shown in the scene.
     // /hscene {"preg":{"belly":0..1,"body":0..1}} holds them for testing (-1 back to hers).
     float PregBellyTest=-1.f,PregBodyTest=-1.f;
