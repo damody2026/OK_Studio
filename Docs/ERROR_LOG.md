@@ -4209,3 +4209,4 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - **`mapped_index_matches_loaded_index` 換掉全程序的 `INDEX_MAP`**（2026-11-05，e-fork-2）：測試改寫共用狀態，同時間跑的其他測試讀 `Entry::Mapped` 會讀錯。改用測試專用的 thread-local。
 - **把 4 個測試失敗說成「本機卡片或 fixture 資料問題」**（2026-11-05，e-fork-2）：`697054214` 的驗證行這樣寫，但沒有單獨跑過就下結論。實際上 appearance 兩個、clothing_rules、editor_mods 單跑都過，失敗來自上面兩條的併發干擾，其中一條是產品問題。失敗要先單跑與循序跑，再歸類。
 - **改檔腳本半途中止，只改到一部分**（2026-11-05，e-fork-2）：一支腳本依序改多個檔案，改完 `oklib.rs` 後在 `appearance.rs` 的斷言中止，另一半沒套用，之後靠重跑另一支腳本補上。腳本要先檢查全部檔案再一起寫入。
+- **別的 session 在建置時開編輯器，佔著槽位空等**（2026-11-05，e-fork-2）：`E:\OKForkBuild`、`E:\OKHeadBuild` 正在用 E 引擎建置，`CardReaderDevelopment` 的編輯器啟動後卡在 UBT 鎖，6 分鐘只用 5 秒 CPU。開編輯器前先看 E 引擎有沒有 `Build.bat`／UBT 在跑；街區測試用打包版 `.stage`，不走這條路。

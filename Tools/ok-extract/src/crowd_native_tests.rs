@@ -37,7 +37,7 @@ fn crowd_march_native_palette() {
 #[test]
 #[ignore = "real-card diagnostic"]
 fn head_snapshot_matches_session() {
-    let card = std::env::var("OK_HEAD_PROBE_CARD").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines/fin_elysia.png".into());
+    let card = std::env::var("OK_HEAD_PROBE_CARD").unwrap_or_else(|_| crate::test_support::project_path!("Content/CharacterCards/StreetHeroines/fin_elysia.png").into());
     let card_c = std::ffi::CString::new(card.clone()).unwrap();let game = std::ffi::CString::new(std::env::var("OK_HEAD_PROBE_GAME").unwrap_or_default()).unwrap();
     let mut raw: *mut crate::session::OkSession = std::ptr::null_mut();let mut err = [0i8; 2048];
     let status = unsafe { crate::ffi::session_open(game.as_ptr(), card_c.as_ptr(), 0, &mut raw, err.as_mut_ptr(), err.len() as i32) };
@@ -81,13 +81,13 @@ fn head_snapshot_matches_session() {
 #[test]
 #[ignore = "real-card diagnostic"]
 fn head_snapshot_matches_session_over_time() {
-    let card = std::env::var("OK_HEAD_PROBE_CARD").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines/fin_elysia.png".into());
+    let card = std::env::var("OK_HEAD_PROBE_CARD").unwrap_or_else(|_| crate::test_support::project_path!("Content/CharacterCards/StreetHeroines/fin_elysia.png").into());
     let card_c = std::ffi::CString::new(card).unwrap();let game = std::ffi::CString::new("").unwrap();
     let mut raw: *mut crate::session::OkSession = std::ptr::null_mut();let mut err = [0i8; 2048];
     assert_eq!(unsafe { crate::ffi::session_open(game.as_ptr(), card_c.as_ptr(), 0, &mut raw, err.as_mut_ptr(), err.len() as i32) }, 0);
     let a = unsafe { &mut *raw };
     let mut b = crate::session::OkSession::from_animation_bytes(&a.to_animation_bytes().unwrap()).unwrap();
-    let clip = std::fs::read(std::env::var("OK_HEAD_PROBE_CLIP").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations/conversation_neutral.okanim".into())).unwrap();
+    let clip = std::fs::read(std::env::var("OK_HEAD_PROBE_CLIP").unwrap_or_else(|_| crate::test_support::project_path!("Content/IndependentResources/RuntimeAnimations/conversation_neutral.okanim").into())).unwrap();
     for s in [&mut *a, &mut b] { assert_eq!(unsafe { crate::ffi::ok_session_install_shared_clip(s as *mut _, clip.as_ptr(), clip.len() as i32) }, 0); }
     let head_local = |s: &crate::session::OkSession, p: &[f32; 3]| -> [f32; 3] {
         let sk = s.body_skel.as_ref().unwrap(); let i = sk.names.iter().position(|n| n == "cf_j_head").unwrap();
@@ -119,7 +119,7 @@ fn head_snapshot_matches_session_over_time() {
 #[ignore = "real-card diagnostic"]
 fn card_tpose_extents() {
     std::env::set_var("OK_NOPOSE", "1");
-    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines/jeanne.png".into());
+    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| crate::test_support::project_path!("Content/CharacterCards/StreetHeroines/jeanne.png").into());
     let card_c = std::ffi::CString::new(card).unwrap();let game = std::ffi::CString::new(std::env::var("OK_DUMP_PROBE_GAME").unwrap_or_default()).unwrap();
     let mut raw: *mut crate::session::OkSession = std::ptr::null_mut();let mut err = [0i8; 2048];
     let status = unsafe { crate::ffi::session_open(game.as_ptr(), card_c.as_ptr(), 0, &mut raw, err.as_mut_ptr(), err.len() as i32) };
@@ -150,7 +150,7 @@ fn card_tpose_extents() {
 #[ignore = "real-card diagnostic"]
 fn card_head_attach_scale() {
     std::env::set_var("OK_NOPOSE", "1");
-    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines/jeanne.png".into());
+    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| crate::test_support::project_path!("Content/CharacterCards/StreetHeroines/jeanne.png").into());
     let card_c = std::ffi::CString::new(card).unwrap();let game = std::ffi::CString::new("").unwrap();
     let mut raw: *mut crate::session::OkSession = std::ptr::null_mut();let mut err = [0i8; 2048];
     assert_eq!(unsafe { crate::ffi::session_open(game.as_ptr(), card_c.as_ptr(), 0, &mut raw, err.as_mut_ptr(), err.len() as i32) }, 0);
@@ -171,7 +171,7 @@ fn card_head_attach_scale() {
 #[ignore = "real-card diagnostic"]
 fn card_face_bind() {
     std::env::set_var("OK_NOPOSE", "1");
-    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines/jeanne.png".into());
+    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| crate::test_support::project_path!("Content/CharacterCards/StreetHeroines/jeanne.png").into());
     let card_c = std::ffi::CString::new(card).unwrap();let game = std::ffi::CString::new("").unwrap();
     let mut raw: *mut crate::session::OkSession = std::ptr::null_mut();let mut err = [0i8; 2048];
     assert_eq!(unsafe { crate::ffi::session_open(game.as_ptr(), card_c.as_ptr(), 0, &mut raw, err.as_mut_ptr(), err.len() as i32) }, 0);
@@ -190,7 +190,7 @@ fn card_face_bind() {
 #[ignore = "real-card diagnostic"]
 fn card_part_vs_dump_obj() {
     std::env::set_var("OK_NOPOSE", "1");
-    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines/jeanne.png".into());
+    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| crate::test_support::project_path!("Content/CharacterCards/StreetHeroines/jeanne.png").into());
     let obj = std::env::var("OK_DUMP_PROBE_OBJ").unwrap_or_else(|_| crate::test_support::game_path("/mesh_dump/Jeanne V1.11.png/outfit0/mesh_3_cf_O_face.obj").to_string_lossy().into_owned());
     let name = std::env::var("OK_DUMP_PROBE_PART").unwrap_or_else(|_| "cf_O_face".into());
     let game: Vec<[f32; 3]> = std::fs::read_to_string(&obj).unwrap().lines().filter_map(|l| l.strip_prefix("v ")).map(|l| { let v: Vec<f32> = l.split_whitespace().map(|x| x.parse().unwrap()).collect(); [v[0], v[1], v[2]] }).collect();
@@ -226,7 +226,7 @@ fn card_part_vs_dump_obj() {
 #[ignore = "real-card diagnostic"]
 fn card_gpu_palette_vs_cpu() {
     std::env::set_var("OK_NOPOSE", "1");
-    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines/jeanne.png".into());
+    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| crate::test_support::project_path!("Content/CharacterCards/StreetHeroines/jeanne.png").into());
     let card_c = std::ffi::CString::new(card).unwrap();let gc = std::ffi::CString::new("").unwrap();
     let mut raw: *mut crate::session::OkSession = std::ptr::null_mut();let mut err = [0i8; 2048];
     assert_eq!(unsafe { crate::ffi::session_open(gc.as_ptr(), card_c.as_ptr(), 0, &mut raw, err.as_mut_ptr(), err.len() as i32) }, 0);
@@ -263,7 +263,7 @@ fn card_gpu_palette_vs_cpu() {
 #[ignore = "real-card diagnostic"]
 fn card_part_materials() {
     std::env::set_var("OK_NOPOSE", "1");
-    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines/jeanne.png".into());
+    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| crate::test_support::project_path!("Content/CharacterCards/StreetHeroines/jeanne.png").into());
     let out = std::env::var("OK_DUMP_PROBE_OUT").ok();
     let card_c = std::ffi::CString::new(card).unwrap();let gc = std::ffi::CString::new("").unwrap();
     let mut raw: *mut crate::session::OkSession = std::ptr::null_mut();let mut err = [0i8; 2048];
@@ -284,7 +284,7 @@ fn card_part_materials() {
 #[ignore = "real-card diagnostic"]
 fn card_scalp_vs_hair() {
     std::env::set_var("OK_NOPOSE", "1");
-    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines/jeanne.png".into());
+    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| crate::test_support::project_path!("Content/CharacterCards/StreetHeroines/jeanne.png").into());
     let card_c = std::ffi::CString::new(card).unwrap();let gc = std::ffi::CString::new("").unwrap();
     let mut raw: *mut crate::session::OkSession = std::ptr::null_mut();let mut err = [0i8; 2048];
     assert_eq!(unsafe { crate::ffi::session_open(gc.as_ptr(), card_c.as_ptr(), 0, &mut raw, err.as_mut_ptr(), err.len() as i32) }, 0);
@@ -316,7 +316,7 @@ fn card_scalp_vs_hair() {
 #[ignore = "real-card diagnostic"]
 fn card_part_error_regions() {
     std::env::set_var("OK_NOPOSE", "1");
-    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines/jeanne.png".into());
+    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| crate::test_support::project_path!("Content/CharacterCards/StreetHeroines/jeanne.png").into());
     let obj = std::env::var("OK_DUMP_PROBE_OBJ").unwrap();
     let name = std::env::var("OK_DUMP_PROBE_PART").unwrap();
     let game: Vec<[f32; 3]> = std::fs::read_to_string(&obj).unwrap().lines().filter_map(|l| l.strip_prefix("v ")).map(|l| { let v: Vec<f32> = l.split_whitespace().map(|x| x.parse().unwrap()).collect(); [v[0], v[1], v[2]] }).collect();
@@ -354,7 +354,7 @@ fn card_me_textures() {
 #[test]
 #[ignore = "real-card diagnostic"]
 fn card_face_alpha_mask() {
-    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines/jeanne.png".into());
+    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| crate::test_support::project_path!("Content/CharacterCards/StreetHeroines/jeanne.png").into());
     let card_c = std::ffi::CString::new(card).unwrap();let gc = std::ffi::CString::new("").unwrap();
     let mut raw: *mut crate::session::OkSession = std::ptr::null_mut();let mut err = [0i8; 2048];
     assert_eq!(unsafe { crate::ffi::session_open(gc.as_ptr(), card_c.as_ptr(), 0, &mut raw, err.as_mut_ptr(), err.len() as i32) }, 0);
@@ -373,7 +373,7 @@ fn card_face_alpha_mask() {
 #[ignore = "real-card diagnostic"]
 fn card_part_settle() {
     std::env::set_var("OK_NOPOSE", "1");
-    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines/jeanne.png".into());
+    let card = std::env::var("OK_DUMP_PROBE_CARD").unwrap_or_else(|_| crate::test_support::project_path!("Content/CharacterCards/StreetHeroines/jeanne.png").into());
     let name = std::env::var("OK_DUMP_PROBE_PART").unwrap_or_else(|_| "hair.002_0.001".into());
     let card_c = std::ffi::CString::new(card).unwrap();let gc = std::ffi::CString::new("").unwrap();
     let mut raw: *mut crate::session::OkSession = std::ptr::null_mut();let mut err = [0i8; 2048];
@@ -402,7 +402,7 @@ fn card_part_settle() {
 #[test]
 #[ignore = "diagnostic: runtime palette slots per street heroine (pose key budget, R3-10)"]
 fn heroine_palette_slots() {
-    let dir = std::path::Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines");
+    let dir = std::path::Path::new(crate::test_support::project_path!("Content/CharacterCards/StreetHeroines"));
     let only = std::env::var("PROBE_CARD").ok();
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
@@ -434,13 +434,13 @@ fn heroine_palette_slots() {
 #[test]
 #[ignore = "real-card diagnostic"]
 fn body_snapshot_matches_session_over_time() {
-    let card = std::env::var("OK_BODY_PROBE_CARD").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines/raiden_shogun.png".into());
+    let card = std::env::var("OK_BODY_PROBE_CARD").unwrap_or_else(|_| crate::test_support::project_path!("Content/CharacterCards/StreetHeroines/raiden_shogun.png").into());
     let card_c = std::ffi::CString::new(card).unwrap();let game = std::ffi::CString::new(std::env::var("OK_BODY_PROBE_GAME").unwrap_or_default()).unwrap();
     let mut raw: *mut crate::session::OkSession = std::ptr::null_mut();let mut err = [0i8; 2048];
     assert_eq!(unsafe { crate::ffi::session_open(game.as_ptr(), card_c.as_ptr(), 0, &mut raw, err.as_mut_ptr(), err.len() as i32) }, 0);
     let a = unsafe { &mut *raw };
     let mut b = crate::session::OkSession::from_animation_bytes(&a.to_animation_bytes().unwrap()).unwrap();
-    let clip = std::fs::read(std::env::var("OK_BODY_PROBE_CLIP").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations/walk_01.okanim".into())).unwrap();
+    let clip = std::fs::read(std::env::var("OK_BODY_PROBE_CLIP").unwrap_or_else(|_| crate::test_support::project_path!("Content/IndependentResources/RuntimeAnimations/walk_01.okanim").into())).unwrap();
     for s in [&mut *a, &mut b] { assert_eq!(unsafe { crate::ffi::ok_session_install_shared_clip(s as *mut _, clip.as_ptr(), clip.len() as i32) }, 0); }
     for frame in 0..=180 {
         let t = frame as f32 / 60.;
@@ -470,7 +470,7 @@ fn body_snapshot_matches_session_over_time() {
 #[test]
 #[ignore = "real-card diagnostic"]
 fn bust_shape_survives_shared_clip() {
-    let card = std::env::var("OK_BODY_PROBE_CARD").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines/raiden_shogun.png".into());
+    let card = std::env::var("OK_BODY_PROBE_CARD").unwrap_or_else(|_| crate::test_support::project_path!("Content/CharacterCards/StreetHeroines/raiden_shogun.png").into());
     let card_c = std::ffi::CString::new(card).unwrap();let game = std::ffi::CString::new(std::env::var("OK_BODY_PROBE_GAME").unwrap_or_default()).unwrap();
     let mut raw: *mut crate::session::OkSession = std::ptr::null_mut();let mut err = [0i8; 2048];
     assert_eq!(unsafe { crate::ffi::session_open(game.as_ptr(), card_c.as_ptr(), 0, &mut raw, err.as_mut_ptr(), err.len() as i32) }, 0);
@@ -495,7 +495,7 @@ fn bust_shape_survives_shared_clip() {
         }
     };
     a.apply_anim_frame(0., 0.); a.skin_all(); report("native", a);
-    let clip = std::fs::read(std::env::var("OK_BODY_PROBE_CLIP").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations/walk_01.okanim".into())).unwrap();
+    let clip = std::fs::read(std::env::var("OK_BODY_PROBE_CLIP").unwrap_or_else(|_| crate::test_support::project_path!("Content/IndependentResources/RuntimeAnimations/walk_01.okanim").into())).unwrap();
     assert_eq!(unsafe { crate::ffi::ok_session_install_shared_clip(a as *mut _, clip.as_ptr(), clip.len() as i32) }, 0);
     a.apply_anim_frame(0., 0.); a.skin_all(); report("shared", a);
 }
@@ -505,8 +505,8 @@ fn bust_shape_survives_shared_clip() {
 #[test]
 #[ignore = "real-card diagnostic"]
 fn print_session_cache_key() {
-    let card = std::env::var("OK_BODY_PROBE_CARD").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines/raiden_shogun.png".into());
-    let lib = std::path::PathBuf::from("C:/portable/OpenKoikatsu/Content/IndependentResources/base_v1");
+    let card = std::env::var("OK_BODY_PROBE_CARD").unwrap_or_else(|_| crate::test_support::project_path!("Content/CharacterCards/StreetHeroines/raiden_shogun.png").into());
+    let lib = std::path::PathBuf::from(crate::test_support::project_path!("Content/IndependentResources/base_v1"));
     for outfit in 0..3 { eprintln!("SESSION_KEY outfit={outfit} key={:?}", crate::oklib::session_cache_key(&lib, std::path::Path::new(&card), outfit)); }
 }
 
@@ -516,7 +516,7 @@ fn print_session_cache_key() {
 #[test]
 #[ignore = "real-card diagnostic"]
 fn parallel_opens_match_single() {
-    let dir = std::path::PathBuf::from("C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines");
+    let dir = std::path::PathBuf::from(crate::test_support::project_path!("Content/CharacterCards/StreetHeroines"));
     let cards: Vec<String> = ["jeanne_alter", "raiden_shogun", "march_7th", "keqing", "hu_tao", "hayase_yuuka", "jeanne", "alice", "megumin", "encore"]
         .iter().map(|n| dir.join(format!("{n}.png")).to_string_lossy().into_owned()).collect();
     let open = |card: &str| -> Vec<(String, usize)> {
@@ -560,14 +560,14 @@ fn parallel_opens_match_single() {
 #[test]
 #[ignore = "real-card diagnostic"]
 fn street_bake_jitter() {
-    let card = std::env::var("OK_JITTER_CARD").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines/march_7th.png".into());
+    let card = std::env::var("OK_JITTER_CARD").unwrap_or_else(|_| crate::test_support::project_path!("Content/CharacterCards/StreetHeroines/march_7th.png").into());
     let card_c = std::ffi::CString::new(card).unwrap();let game = std::ffi::CString::new(std::env::var("OK_JITTER_GAME").unwrap_or_default()).unwrap();
     let mut raw: *mut crate::session::OkSession = std::ptr::null_mut();let mut err = [0i8; 2048];
     let status = unsafe { crate::ffi::session_open(game.as_ptr(), card_c.as_ptr(), 0, &mut raw, err.as_mut_ptr(), err.len() as i32) };
     assert!(status == 0 && !raw.is_null(), "open failed: {}", unsafe { std::ffi::CStr::from_ptr(err.as_ptr()) }.to_string_lossy());
     let a = unsafe { &mut *raw };
     let mut b = crate::session::OkSession::from_animation_bytes(&a.to_animation_bytes().unwrap()).unwrap();
-    let clip_path = std::env::var("OK_JITTER_CLIP").unwrap_or_else(|_| "C:/portable/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations/conversation_wait_04.okanim".into());
+    let clip_path = std::env::var("OK_JITTER_CLIP").unwrap_or_else(|_| crate::test_support::project_path!("Content/IndependentResources/RuntimeAnimations/conversation_wait_04.okanim").into());
     let clip = std::fs::read(clip_path).unwrap();
     assert_eq!(unsafe { crate::ffi::ok_session_install_shared_clip(&mut b as *mut _, clip.as_ptr(), clip.len() as i32) }, 0);
     let frames = 240usize;

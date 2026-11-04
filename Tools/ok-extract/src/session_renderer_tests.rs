@@ -2,7 +2,7 @@
 #[test]
 #[ignore="read-only published p202 SkinPlus inputs; no shader or cache mutations"]
 fn cached_skinplus_source_inputs() {
-    let root=Path::new("C:/portable/OpenKoikatsu");
+    let root=Path::new(crate::test_support::project_path!(""));
     let directory=root.join("Saved/Tests/Skin325/CachedInputs");std::fs::create_dir_all(&directory).unwrap();
     let comparison:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(root.join("Saved/Logs/Texture324SessionComparison.json")).unwrap()).unwrap();
     let wanted:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(root.join("Saved/Tests/Skin325/WantedNativeInputs.json")).unwrap()).unwrap();
@@ -48,7 +48,7 @@ fn cached_skinplus_source_inputs() {
 fn cached_clothing_counterexample_inputs() {
     let db=rusqlite::Connection::open_with_flags(crate::test_support::game_path("/.ok_cache.sqlite"),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let bytes:Vec<u8>=db.query_row("SELECT payload FROM session_blob WHERE card_key LIKE '%/兔田佩克拉.png|%' AND card_key LIKE '%|p199|%' AND card_key LIKE '%OK_GPU_SKIN=1|%' AND card_key LIKE '%OK_NOPOSE=1|%' ORDER BY card_key DESC LIMIT 1",[],|r|r.get(0)).unwrap();
-    let s:SessionBlob=bincode::deserialize(&bytes).unwrap();let root=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/Hair322ClothingInputs");std::fs::create_dir_all(root).unwrap();let mut rows=Vec::new();
+    let s:SessionBlob=bincode::deserialize(&bytes).unwrap();let root=Path::new(crate::test_support::project_path!("Saved/Tests/Hair322ClothingInputs"));std::fs::create_dir_all(root).unwrap();let mut rows=Vec::new();
     for (i,p) in s.parts.iter().enumerate() {
         let png=root.join(format!("part{i}.png"));if let Some(bytes)=&p.png{std::fs::write(&png,bytes).unwrap();}
         rows.push(serde_json::json!({"part":i,"name":p.name,"role":p.role,"shader_kind":p.shader_kind,"visible":p.render_visible,"material":p.source_material,"png":png,"runtime_textures":p.runtime_textures,"blend":p.blend,"uvs":p.uvs,"uv2":p.uv2}));
@@ -98,7 +98,7 @@ fn compare_footwear_visibility_session_caches() {
         part.runtime_accessory=runtime;
         bytes
     }
-    let root=Path::new("C:/portable/OpenKoikatsu");
+    let root=Path::new(crate::test_support::project_path!(""));
     let db=rusqlite::Connection::open_with_flags(crate::test_support::game_path("/.ok_cache.sqlite"),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let inventory:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(root.join("Saved/Logs/Hair323Inventory.json")).unwrap()).unwrap();
     let mut rows=Vec::new();
@@ -129,7 +129,7 @@ fn compare_footwear_visibility_session_caches() {
 #[test]
 #[ignore="read-only p200/p202 integration; run after all requested captures"]
 fn compare_material_editor_texture_transform_caches() {
-    let root=Path::new("C:/portable/OpenKoikatsu");
+    let root=Path::new(crate::test_support::project_path!(""));
     let db=rusqlite::Connection::open_with_flags(crate::test_support::game_path("/.ok_cache.sqlite"),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let inventory:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(root.join("Saved/Logs/Hair323Inventory.json")).unwrap()).unwrap();
     let names:Vec<String>=std::env::var("OK_TEXTURE_ST_COMPARE_NAMES").ok().map(|s|serde_json::from_str(&s).unwrap())
@@ -211,7 +211,7 @@ fn compare_material_editor_texture_transform_caches() {
 #[test]
 #[ignore="installed source-only replay for ambiguous same-mesh accessory slots"]
 fn trace_texture_transform_source_identities() {
-    let root=Path::new("C:/portable/OpenKoikatsu");let game=&crate::test_support::game_path("");
+    let root=Path::new(crate::test_support::project_path!(""));let game=&crate::test_support::game_path("");
     let names:Vec<String>=serde_json::from_str(&std::env::var("OK_TEXTURE_ST_IDENTITY_NAMES").unwrap()).unwrap();
     let dir=root.join("Saved/Tests/Texture324SourceIdentity");std::fs::create_dir_all(&dir).unwrap();
     let db=rusqlite::Connection::open_with_flags(game.join(".ok_cache.sqlite"),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
@@ -260,7 +260,7 @@ fn trace_texture_transform_source_identities() {
 #[test]
 #[ignore="read-only installed p197/p199 complete legacy regression caches"]
 fn compare_hair_source_session_caches() {
-    let root=Path::new("C:/portable/OpenKoikatsu");
+    let root=Path::new(crate::test_support::project_path!(""));
     let db=rusqlite::Connection::open_with_flags(crate::test_support::game_path("/.ok_cache.sqlite"),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let inventory:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(root.join("Saved/Logs/DumpFourViewsInventory.json")).unwrap()).unwrap();
     let mut rows=Vec::new();
@@ -299,9 +299,9 @@ fn compare_eyeline_slot_session_caches() {
     let vanilla=crate::list::load_characustom_dir(&game.join("abdata/list/characustom"));
     let mods=crate::list::load_mods_catalog(&game.join("mods"));let guids=crate::mods::find_guids(&game.join("mods"),None);
     let db=rusqlite::Connection::open_with_flags(game.join(".ok_cache.sqlite"),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    let inventory:serde_json::Value=serde_json::from_slice(&crate::gamefs::read("C:/portable/OpenKoikatsu/Saved/Logs/DumpFourViewsInventory.json").unwrap()).unwrap();
-    let directory=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/Brow321CachedSlots");std::fs::create_dir_all(directory).unwrap();
-    let native:serde_json::Value=serde_json::from_slice(&crate::gamefs::read("C:/portable/OpenKoikatsu/Saved/Tests/Brow321SlotInputs/inputs.json").unwrap()).unwrap();
+    let inventory:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(crate::test_support::project_path!("Saved/Logs/DumpFourViewsInventory.json")).unwrap()).unwrap();
+    let directory=Path::new(crate::test_support::project_path!("Saved/Tests/Brow321CachedSlots"));std::fs::create_dir_all(directory).unwrap();
+    let native:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(crate::test_support::project_path!("Saved/Tests/Brow321SlotInputs/inputs.json")).unwrap()).unwrap();
     let mut rows=Vec::new();let mut slot_rows=Vec::new();
     for item in inventory.as_array().unwrap() {
         let name=item["card"].as_str().unwrap();let card=crate::card::parse_card(&game.join("UserData/chara/female").join(name)).unwrap();
@@ -332,12 +332,12 @@ fn compare_eyeline_slot_session_caches() {
             }
             slot_rows.push(source);
         }
-        if name=="KK_381623.png" {std::fs::write("C:/portable/OpenKoikatsu/Saved/Tests/EyeRim320Inputs/final321_cached_face.png",new.parts.iter().find(|p|p.name=="cf_O_face").unwrap().png.as_ref().unwrap()).unwrap();}
+        if name=="KK_381623.png" {std::fs::write(crate::test_support::project_path!("Saved/Tests/EyeRim320Inputs/final321_cached_face.png"),new.parts.iter().find(|p|p.name=="cf_O_face").unwrap().png.as_ref().unwrap()).unwrap();}
         rows.push(serde_json::json!({"card":name,"keys":keys,"changed_pngs":changes,"parts":new.parts.len()}));
     }
     assert_eq!(rows.len(),17);assert_eq!(slot_rows.len(),6);
     std::fs::write(directory.join("inputs.json"),serde_json::to_vec_pretty(&slot_rows).unwrap()).unwrap();
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Logs/Brow321SessionComparison.json",serde_json::to_vec_pretty(&serde_json::json!({"passed":true,"cases":rows,"scope":"all17 UV/index/shader textures/overlay/positions/normals unchanged; every changed main PNG re-resolved from source material and selected catalog"})).unwrap()).unwrap();
+    std::fs::write(crate::test_support::project_path!("Saved/Logs/Brow321SessionComparison.json"),serde_json::to_vec_pretty(&serde_json::json!({"passed":true,"cases":rows,"scope":"all17 UV/index/shader textures/overlay/positions/normals unchanged; every changed main PNG re-resolved from source material and selected catalog"})).unwrap()).unwrap();
 }
 
 #[test]
@@ -345,7 +345,7 @@ fn compare_eyeline_slot_session_caches() {
 fn native_eyeline_slot_inputs() {
     let game=&crate::test_support::game_path("");let vanilla=crate::list::load_characustom_dir(&game.join("abdata/list/characustom"));
     let mods=crate::list::load_mods_catalog(&game.join("mods"));let guids=crate::mods::find_guids(&game.join("mods"),None);
-    let directory=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/Brow321SlotInputs");std::fs::create_dir_all(directory).unwrap();let mut rows=Vec::new();
+    let directory=Path::new(crate::test_support::project_path!("Saved/Tests/Brow321SlotInputs"));std::fs::create_dir_all(directory).unwrap();let mut rows=Vec::new();
     for (i,(name,native)) in [
         ("KK_226176.png","Eyeline320KK226176Native/Card0.json"),
         ("KK_381623.png","Eyeline320Native/Card0.json"),
@@ -371,7 +371,7 @@ fn native_eyeline_slot_inputs() {
             let path=directory.join(format!("Card{i}.{}.png",mesh.name));std::fs::write(&path,mesh.texture_png.as_ref().unwrap()).unwrap();
             parts.push(serde_json::json!({"name":mesh.name,"material_slot":slot,"material":mesh.mat.as_ref().unwrap().name,"png":path,"uvs":mesh.uvs}));
         }
-        rows.push(serde_json::json!({"card":name,"native":format!("C:/portable/OpenKoikatsu/Saved/Tests/{native}"),"parts":parts}));
+        rows.push(serde_json::json!({"card":name,"native":format!("{}/../../Saved/Tests/{native}",env!("CARGO_MANIFEST_DIR")),"parts":parts}));
     }
     std::fs::write(directory.join("inputs.json"),serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
 }
@@ -382,14 +382,14 @@ fn cached_legacy_face_texture_inputs() {
     let db=rusqlite::Connection::open_with_flags(crate::test_support::game_path("/.ok_cache.sqlite"),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let bytes:Vec<u8>=db.query_row("SELECT payload FROM session_blob WHERE card_key LIKE '%/KK_381623.png|%' AND card_key LIKE '%|p196|%' AND card_key LIKE '%OK_GPU_SKIN=1|%' AND card_key LIKE '%OK_NOPOSE=1|%' ORDER BY card_key DESC LIMIT 1",[],|r|r.get(0)).unwrap();
     let s:SessionBlob=bincode::deserialize(&bytes).unwrap();let p=s.parts.iter().find(|p|p.name=="cf_O_face").unwrap();
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Tests/EyeRim320Inputs/final_cached_face.png",p.png.as_ref().unwrap()).unwrap();
+    std::fs::write(crate::test_support::project_path!("Saved/Tests/EyeRim320Inputs/final_cached_face.png"),p.png.as_ref().unwrap()).unwrap();
 }
 
 #[test]
 #[ignore="strict installed p195/p196 legacy overlay cache comparison"]
 fn compare_legacy_overlay_session_caches() {
     let db=rusqlite::Connection::open_with_flags(crate::test_support::game_path("/.ok_cache.sqlite"),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    let inventory:serde_json::Value=serde_json::from_slice(&crate::gamefs::read("C:/portable/OpenKoikatsu/Saved/Logs/DumpFourViewsInventory.json").unwrap()).unwrap();
+    let inventory:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(crate::test_support::project_path!("Saved/Logs/DumpFourViewsInventory.json")).unwrap()).unwrap();
     let mut rows=Vec::new();let mut changed=0;
     for item in inventory.as_array().unwrap() {
         let name=item["card"].as_str().unwrap();let card=crate::card::parse_card(&&crate::test_support::game_path("/UserData/chara/female").join(name)).unwrap();
@@ -408,26 +408,26 @@ fn compare_legacy_overlay_session_caches() {
                 let expected=crate::composite_overlay(a.png.as_ref().unwrap(),&overlay).unwrap();
                 assert_eq!(crate::teximg::load_from_memory(&expected).unwrap().into_rgba8(),crate::teximg::load_from_memory(b.png.as_ref().unwrap()).unwrap().into_rgba8(),"changed face must derive exactly from existing generic overlay kernel");
                 png_changes.push(b.name.clone());changed+=1;
-                std::fs::write("C:/portable/OpenKoikatsu/Saved/Tests/EyeRim320Inputs/final_cached_face.png",b.png.as_ref().unwrap()).unwrap();
+                std::fs::write(crate::test_support::project_path!("Saved/Tests/EyeRim320Inputs/final_cached_face.png"),b.png.as_ref().unwrap()).unwrap();
             }
             assert_eq!(a.positions.len(),b.positions.len());for (a,b) in a.positions.iter().zip(&b.positions) {position_max=position_max.max(a.iter().zip(b).map(|(a,b)|(a-b).powi(2)).sum::<f32>().sqrt());}
         }
         rows.push(serde_json::json!({"card":name,"keys":keys,"parts":new.parts.len(),"png_changes":png_changes,"position_max_m":position_max}));
     }
     assert_eq!(rows.len(),17);assert_eq!(changed,1);
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Logs/EyeRim320SessionComparison.json",serde_json::to_vec_pretty(&serde_json::json!({"passed":true,"cases":rows,"scope":"exact UV/topology/shader/overtex preservation and source-derived face composite; geometry deltas separately reported"})).unwrap()).unwrap();
+    std::fs::write(crate::test_support::project_path!("Saved/Logs/EyeRim320SessionComparison.json"),serde_json::to_vec_pretty(&serde_json::json!({"passed":true,"cases":rows,"scope":"exact UV/topology/shader/overtex preservation and source-derived face composite; geometry deltas separately reported"})).unwrap()).unwrap();
 }
 
 #[test]
 #[ignore="installed legacy overlay source inventory"]
 fn legacy_overlay_source_inventory() {
-    let inventory:serde_json::Value=serde_json::from_slice(&crate::gamefs::read("C:/portable/OpenKoikatsu/Saved/Logs/DumpFourViewsInventory.json").unwrap()).unwrap();
+    let inventory:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(crate::test_support::project_path!("Saved/Logs/DumpFourViewsInventory.json")).unwrap()).unwrap();
     let mut rows=Vec::new();
     for item in inventory.as_array().unwrap() {
         let name=item["card"].as_str().unwrap();let card=crate::card::parse_card(&&crate::test_support::game_path("/UserData/chara/female").join(name)).unwrap();
         rows.push(serde_json::json!({"card":name,"overlays":card.ksox.iter().map(|(k,p)|(k,p.len())).collect::<Vec<_>>() }));
     }
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Logs/EyeRim320OverlayInventory.json",serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
+    std::fs::write(crate::test_support::project_path!("Saved/Logs/EyeRim320OverlayInventory.json"),serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
 }
 
 use super::*;
@@ -439,7 +439,7 @@ fn native_face_texture_inputs() {
     let db=rusqlite::Connection::open_with_flags(crate::test_support::game_path("/.ok_cache.sqlite"),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let mut st=db.prepare("SELECT card_key,payload FROM session_blob WHERE card_key LIKE '%/KK_381623.png|%' AND card_key LIKE '%|p195|%' AND card_key LIKE '%OK_GPU_SKIN=1|%' AND card_key LIKE '%OK_NOPOSE=1|%' ORDER BY card_key DESC LIMIT 1").unwrap();
     let (key,bytes):(String,Vec<u8>)=st.query_row([],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();let s:SessionBlob=bincode::deserialize(&bytes).unwrap();
-    let directory=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/EyeRim320Inputs");std::fs::create_dir_all(directory).unwrap();let mut rows=Vec::new();
+    let directory=Path::new(crate::test_support::project_path!("Saved/Tests/EyeRim320Inputs"));std::fs::create_dir_all(directory).unwrap();let mut rows=Vec::new();
     for p in s.parts.iter().filter(|p|p.name=="cf_O_face"||p.name=="cf_Ohitomi_L"||p.name=="cf_Ohitomi_R") {
         std::fs::write(directory.join(format!("{}.png",p.name)),p.png.as_ref().unwrap()).unwrap();
         rows.push(serde_json::json!({"name":p.name,"uvs":p.uvs,"positions":p.positions,"material":p.source_material,"main_tex_st":p.main_tex_st}));
@@ -458,7 +458,7 @@ fn native_face_line_source_provenance() {
     let game=&crate::test_support::game_path("");let vanilla=crate::list::load_characustom_dir(&game.join("abdata/list/characustom"));
     let mods=crate::list::load_mods_catalog(&game.join("mods"));let guids=crate::mods::find_guids(&game.join("mods"),None);
     let db=rusqlite::Connection::open_with_flags(crate::test_support::game_path("/.ok_cache.sqlite"),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    let directory=std::env::var("OK_FACE_LINE_INPUT_DIR").unwrap_or_else(|_|"C:/portable/OpenKoikatsu/Saved/Tests/Eyeline320Inputs".into());let directory=Path::new(&directory);std::fs::create_dir_all(directory).unwrap();let mut rows=Vec::new();
+    let directory=std::env::var("OK_FACE_LINE_INPUT_DIR").unwrap_or_else(|_|crate::test_support::project_path!("Saved/Tests/Eyeline320Inputs").into());let directory=Path::new(&directory);std::fs::create_dir_all(directory).unwrap();let mut rows=Vec::new();
     let names=std::env::var("OK_FACE_LINE_CARD_NAMES").unwrap_or_else(|_|"KK_381623.png;弹丸论破 - 江之岛盾子2.png;Hayase_yuuka_keiyuu_V1_02 For KKS.png;KK_388205.png;KK_384283.png".into());
     for (i,name) in names.split(';').enumerate() {
         let card=crate::card::parse_card(&game.join("UserData/chara/female").join(name)).unwrap();
@@ -480,8 +480,8 @@ fn native_face_line_source_provenance() {
 fn native_brow_source_provenance() {
     let game=&crate::test_support::game_path("");let vanilla=crate::list::load_characustom_dir(&game.join("abdata/list/characustom"));
     let mods=crate::list::load_mods_catalog(&game.join("mods"));let guids=crate::mods::find_guids(&game.join("mods"),None);
-    let directory=std::env::var("OK_BROW_PROVENANCE_DIR").unwrap_or_else(|_|"C:/portable/OpenKoikatsu/Saved/Tests/Brow319Provenance".into());let directory=Path::new(&directory);std::fs::create_dir_all(directory).unwrap();
-    let resolved=std::env::var("OK_BROW_RESOLVED_DIR").unwrap_or_else(|_|"C:/portable/OpenKoikatsu/Saved/Tests/Brow319ResolvedInputs".into());let resolved=Path::new(&resolved);std::fs::create_dir_all(resolved).unwrap();
+    let directory=std::env::var("OK_BROW_PROVENANCE_DIR").unwrap_or_else(|_|crate::test_support::project_path!("Saved/Tests/Brow319Provenance").into());let directory=Path::new(&directory);std::fs::create_dir_all(directory).unwrap();
+    let resolved=std::env::var("OK_BROW_RESOLVED_DIR").unwrap_or_else(|_|crate::test_support::project_path!("Saved/Tests/Brow319ResolvedInputs").into());let resolved=Path::new(&resolved);std::fs::create_dir_all(resolved).unwrap();
     let db=rusqlite::Connection::open_with_flags(crate::test_support::game_path("/.ok_cache.sqlite"),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let mut rows=Vec::new();
     let mut resolved_rows=Vec::new();
@@ -509,7 +509,7 @@ fn native_brow_source_provenance() {
 fn cached_brow_sampling_inputs() {
     let db=rusqlite::Connection::open_with_flags(crate::test_support::game_path("/.ok_cache.sqlite"),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let pipeline=std::env::var("OK_BROW_PIPELINE").unwrap_or_else(|_|"192".into());
-    let directory=std::env::var("OK_BROW_INPUT_DIR").unwrap_or_else(|_|"C:/portable/OpenKoikatsu/Saved/Tests/Brow319CachedInputs".into());
+    let directory=std::env::var("OK_BROW_INPUT_DIR").unwrap_or_else(|_|crate::test_support::project_path!("Saved/Tests/Brow319CachedInputs").into());
     let directory=Path::new(&directory);std::fs::create_dir_all(directory).unwrap();
     let mut rows=Vec::new();
     let names=std::env::var("OK_BROW_CARD_NAMES").unwrap_or_else(|_|"弹丸论破 - 江之岛盾子2.png;Hayase_yuuka_keiyuu_V1_02 For KKS.png;KK_381623.png;KK_388205.png".into());
@@ -528,7 +528,7 @@ fn cached_brow_sampling_inputs() {
 #[ignore="read-only complete p192/p195 socket and brow regression cache comparison"]
 fn compare_socket_brow_session_caches() {
     let db=rusqlite::Connection::open_with_flags(crate::test_support::game_path("/.ok_cache.sqlite"),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    let inventory:serde_json::Value=serde_json::from_slice(&crate::gamefs::read("C:/portable/OpenKoikatsu/Saved/Logs/DumpFourViewsInventory.json").unwrap()).unwrap();
+    let inventory:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(crate::test_support::project_path!("Saved/Logs/DumpFourViewsInventory.json")).unwrap()).unwrap();
     let mut rows=Vec::new();
     let signature=|key:&str|key.split('|').filter(|s|!matches!(*s,"p192"|"p195")
         && !["colliders=","uncensor=","materialeditor="].iter().any(|prefix|s.starts_with(prefix))).collect::<Vec<_>>().join("|");
@@ -561,7 +561,7 @@ fn compare_socket_brow_session_caches() {
         rows.push(serde_json::json!({"card":card,"key":key,"prior_key":old_key,"signature_differences":signature_differences,"parts":new.parts.len(),"changes":changes,"dynamic_attachments":chains}));
     }
     assert_eq!(rows.len(),17);
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Logs/Brow319SessionComparison.json",serde_json::to_vec_pretty(&serde_json::json!({"passed":true,"cases":rows,"scope":"actual cached buffers without physics rehydration; all UV/topology/shader textures identical; only changed PNGs are exact brow row reversals; geometry/normal deltas and config mtime differences reported"})).unwrap()).unwrap();
+    std::fs::write(crate::test_support::project_path!("Saved/Logs/Brow319SessionComparison.json"),serde_json::to_vec_pretty(&serde_json::json!({"passed":true,"cases":rows,"scope":"actual cached buffers without physics rehydration; all UV/topology/shader textures identical; only changed PNGs are exact brow row reversals; geometry/normal deltas and config mtime differences reported"})).unwrap()).unwrap();
 }
 
 #[test]
@@ -579,14 +579,14 @@ fn cached_accessory_physics_inputs() {
             rows.push(serde_json::json!({"card":card,"mesh":name,"source_skeleton":r.source.smr_skel,"dynamics":r.source.deferred_dbones,"placement":crate::pose::mat_mul_pub(&parent,&r.local_placement),"attachment_chain":crate::attachment_transform_chain(s.body_skel.as_ref(),s.head_skel.as_ref(),&r.parent_key,&r.local_placement),"parent_key":r.parent_key}));
         }
     }
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Logs/Accessory318CachedInputs.json",serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
+    std::fs::write(crate::test_support::project_path!("Saved/Logs/Accessory318CachedInputs.json"),serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
 }
 
 #[test]
 #[ignore="independent partial-hair native palette diagnostic"]
 fn native_partial_hair_move_control() {
     let db=rusqlite::Connection::open_with_flags(crate::test_support::game_path("/.ok_cache.sqlite"),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    let native:serde_json::Value=serde_json::from_slice(&crate::gamefs::read("C:/portable/OpenKoikatsu/Saved/Tests/Neck317YuukaNative/Card0.json.mesh29.json").unwrap()).unwrap();
+    let native:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(crate::test_support::project_path!("Saved/Tests/Neck317YuukaNative/Card0.json.mesh29.json")).unwrap()).unwrap();
     let mut rows=Vec::new();
     for pipeline in [190,191,192] {
         let mut st=db.prepare("SELECT card_key,payload FROM session_blob WHERE card_key LIKE '%/Hayase_yuuka_keiyuu_V1_02 For KKS.png|%' AND card_key LIKE ?1 AND card_key LIKE '%OK_GPU_SKIN=1|%' AND card_key LIKE '%OK_NOPOSE=1|%' ORDER BY card_key DESC LIMIT 1").unwrap();
@@ -609,7 +609,7 @@ fn native_partial_hair_move_control() {
         rows.push(serde_json::json!({"pipeline":pipeline,"key":key,"static_max_m":error(&static_positions),"cached_max_m":error(&p.positions),
             "bones":bones,"tfs":skel.tfs,"moves":r.source.move_nodes,"dynamic":r.source.deferred_dbones}));
     }
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Logs/Neck317PartialHairControlR2.json",serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
+    std::fs::write(crate::test_support::project_path!("Saved/Logs/Neck317PartialHairControlR2.json"),serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
 }
 
 #[test]
@@ -650,7 +650,7 @@ fn compare_accessory_hierarchy_session_caches() {
             "parts":new.parts.len(),"changes":parts}));
     }
     assert!(!rows.is_empty());
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Logs/Neck317SessionComparisonR2.json",
+    std::fs::write(crate::test_support::project_path!("Saved/Logs/Neck317SessionComparisonR2.json"),
         serde_json::to_vec_pretty(&serde_json::json!({"passed":true,"cases":rows,
             "scope":"cached geometry/normal deltas; identical UVs/indices/PNG/shader texture inputs; not live physics or final pixel parity"})).unwrap()).unwrap();
 }
@@ -660,7 +660,7 @@ fn compare_accessory_hierarchy_session_caches() {
 fn native_accessory_move_hierarchy() {
     let game=&crate::test_support::game_path("");
     let session=open(game,Some(&game.join("UserData/chara/female/弹丸论破 - 江之岛盾子2.png")),0).unwrap();
-    let fixtures=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/Neck317NativeR2");
+    let fixtures=Path::new(crate::test_support::project_path!("Saved/Tests/Neck317NativeR2"));
     let mut rows=Vec::new();
     for filename in ["Card0.json.mesh35.json","Card0.json.mesh36.json"] {
         let native:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(fixtures.join(filename)).unwrap()).unwrap();
@@ -698,7 +698,7 @@ fn native_accessory_move_hierarchy() {
         rows.push(serde_json::json!({"mesh":name,"vertices":vertices.len(),"fixed_vertices":fixed_count,
             "fixed_max_m":fixed_max,"native_palette_lbs_max_m":oracle_max,"settled_physics_max_m":full_max}));
     }
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Logs/Accessory318NativeHierarchyAudit.json",
+    std::fs::write(crate::test_support::project_path!("Saved/Logs/Accessory318NativeHierarchyAudit.json"),
         serde_json::to_vec_pretty(&serde_json::json!({"passed":true,"rows":rows,
             "scope":"fixed skin branches, raw geometry/binds, native-palette LBS; settled physics difference recorded without parity claim"})).unwrap()).unwrap();
 }
@@ -736,7 +736,7 @@ fn diagnose_native_clothes_maintex_inputs() {
             "flip_y_mean_rgba":flip_sum.map(|v|v as f64/n)});
         eprintln!("native clothes input {row}");rows.push(row);
     }
-    let output=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/MainItem310ClothesInputs172.json");
+    let output=Path::new(crate::test_support::project_path!("Saved/Tests/MainItem310ClothesInputs172.json"));
     std::fs::write(output,serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
 }
 
@@ -751,7 +751,7 @@ fn native_item_material_matches_game_dump() {
     let parts:Vec<_>=session.parts.iter().filter(|p|p.name==dump["mesh"].as_str().unwrap()).collect();
     assert_eq!(parts.len(),1);let p=parts[0];assert_eq!(p.shader_kind,9);assert_eq!(p.blend,"masked");
     let mat=p.source_material.as_ref().unwrap();assert_eq!(mat.shader,dump["materials"][0]["shader"].as_str().unwrap());
-    let declaration:serde_json::Value=serde_json::from_slice(&crate::gamefs::read("C:/portable/OpenKoikatsu/Saved/ShaderDxbcVanillaPlus310/MainItemPlus/parsed.json").unwrap()).unwrap();
+    let declaration:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(crate::test_support::project_path!("Saved/ShaderDxbcVanillaPlus310/MainItemPlus/parsed.json")).unwrap()).unwrap();
     let all=dump["materials"][0]["properties"].as_array().unwrap();
     let mut rows=Vec::new();let mut maximum=0f64;
     for expected in all.iter().filter(|v|v.get("value").is_some()) {
@@ -774,7 +774,7 @@ fn native_item_material_matches_game_dump() {
     let normal=dump["materials"][0]["properties"].as_array().unwrap().iter().find(|v|v["name"]=="_NormalMap").unwrap();
     assert_eq!(normal["texture"]["graphicsFormat"],"R8G8B8A8_SRGB");
     assert_eq!(p.runtime_textures.get("_NormalMap"),Some(&[1,0,0,1,1]));
-    let native_dir=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/MainItem310HatTexturesFull171");
+    let native_dir=Path::new(crate::test_support::project_path!("Saved/Tests/MainItem310HatTexturesFull171"));
     let mut native_texture_max=std::collections::BTreeMap::new();
     for property in ["_ColorMask","_DetailMask","_NormalMap"] {
         let native_rt=native_dir.join(format!("Card0.json.renderer124.mat0.{property}.png"));
@@ -824,7 +824,7 @@ fn native_item_material_matches_game_dump() {
             native_bounds_error=native_bounds_error.max((actual as f64-native_mesh["manualSkinnedWorldBounds"][kind][key].as_f64().unwrap()).abs());
         }
     }
-    let textures=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/MainItemPlus310/MaterialTextures167");
+    let textures=Path::new(crate::test_support::project_path!("Saved/Tests/MainItemPlus310/MaterialTextures167"));
     std::fs::create_dir_all(textures).unwrap();
     for (name,png) in &p.shader_textures {std::fs::write(textures.join(format!("{name}.png")),png).unwrap();}
     std::fs::write(textures.join("geometry.json"),serde_json::to_vec(&serde_json::json!({
@@ -835,7 +835,7 @@ fn native_item_material_matches_game_dump() {
         "native_texture_max":native_texture_max
     })).unwrap()).unwrap();
     assert!(native_bounds_error<0.002,"independent game manual skin bounds max={native_bounds_error} m");
-    let output=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/MainItemPlus310/NativeMaterial167.json");
+    let output=Path::new(crate::test_support::project_path!("Saved/Tests/MainItemPlus310/NativeMaterial167.json"));
     std::fs::create_dir_all(output.parent().unwrap()).unwrap();
     std::fs::write(output,serde_json::to_vec_pretty(&serde_json::json!({"passed":true,"native":native,"properties":rows,"maximum":maximum,"shader_kind":p.shader_kind,
         "scope":"Independent game material values and raw mask preservation, not visual parity"})).unwrap()).unwrap();
@@ -868,7 +868,7 @@ fn shared_mesh_rigid_accessory_matches_native_world_vertices() {
     let report = serde_json::json!({"vertices":vertices.len(),"maximum_m":maximum,
         "mean_component_m":total/(vertices.len()*3) as f64,"native":native,
         "scope":"Rigid renderer world positions from independent game dump; not shader acceptance"});
-    let output = Path::new("C:/portable/OpenKoikatsu/Saved/Tests/NewCards309SharedMesh166.json");
+    let output = Path::new(crate::test_support::project_path!("Saved/Tests/NewCards309SharedMesh166.json"));
     std::fs::write(output,serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     eprintln!("Native shared mesh renderer {report}");
     assert!(maximum < 0.00001,"selected prefab renderer differs from native world positions: {report}");
@@ -878,7 +878,7 @@ fn shared_mesh_rigid_accessory_matches_native_world_vertices() {
 #[ignore="installed boot create texture against independent native draw albedo"]
 fn native_mod_boot_clothes_albedo() {
     let game=&crate::test_support::game_path("");
-    let output=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/SkinHsv307");
+    let output=Path::new(crate::test_support::project_path!("Saved/Tests/SkinHsv307"));
     let card=crate::card::parse_card(&game.join("UserData/chara/female/弹丸论破 - 江之岛盾子2.png")).unwrap();
     let zip=game.join("mods/KKSImportedMods/付费作者系列含mod/SamCosmyson/mod/[[OMEGA]] HS2 port to KK v1.8.1.zipmod");
     let catalog=crate::list::catalog_from_zipmod(&zip);
@@ -890,7 +890,7 @@ fn native_mod_boot_clothes_albedo() {
     let png=crate::flip_runtime_blit_v(baked[0].clone().unwrap());
     std::fs::write(output.join("BootAlbedoAfter.png"),&png).unwrap();
     let a=crate::teximg::load_from_memory(&png).unwrap().into_rgba8();
-    let b=image::open("C:/portable/OpenKoikatsu/Saved/Tests/SkinHsv307BootNative/Card0.json.renderer58.mat0._MainTex.png").unwrap().to_rgba8();
+    let b=image::open(crate::test_support::project_path!("Saved/Tests/SkinHsv307BootNative/Card0.json.renderer58.mat0._MainTex.png")).unwrap().to_rgba8();
     assert_eq!(a.dimensions(),b.dimensions());
     let maximum=a.as_raw().iter().zip(b.as_raw()).map(|(x,y)|x.abs_diff(*y)).max().unwrap();
     let mean=a.as_raw().iter().zip(b.as_raw()).map(|(x,y)|x.abs_diff(*y) as f64).sum::<f64>()/a.as_raw().len() as f64;
@@ -906,7 +906,7 @@ fn native_partial_override_accessory_colors() {
     let game=&crate::test_support::game_path("");
     let card=crate::card::parse_card(&game.join("UserData/chara/female/KK_346095.png")).unwrap();
     let catalog=crate::list::load_characustom_dir(&game.join("abdata/list/characustom"));
-    let native=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/NewCards306CollarNative");
+    let native=Path::new(crate::test_support::project_path!("Saved/Tests/NewCards306CollarNative"));
     for (slot,row) in [(24usize,46),(25,0),(26,1)] {
         let acc=&card.accessory[slot];let entry=catalog.get(acc.type_id,acc.id).unwrap();
         let property=format!("outfit0.accessory{slot}");
@@ -1010,7 +1010,7 @@ fn native_rigid_and_clothes_geometry() {
         assert_eq!(part.positions,part.rest_positions,"first frame must preserve placement");
         metrics.push(serde_json::json!({"fixture":filename,"vertices":source.len(),"max_m":max,"rms_m":rms}));
     }
-    let root=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/NewCards306SourceWorld");
+    let root=Path::new(crate::test_support::project_path!("Saved/Tests/NewCards306SourceWorld"));
     let mut body=s.body_skel.as_ref().unwrap().clone();
     let transforms=crate::gamefs::read_to_string(root.join("Card0.json.transforms.tsv")).unwrap();
     let parse=|s:&str|s.trim_matches(|c|c=='('||c==')').split(',').map(|s|s.trim().parse::<f32>().unwrap()).collect::<Vec<_>>();
@@ -1031,7 +1031,7 @@ fn native_rigid_and_clothes_geometry() {
         metrics.push(serde_json::json!({"fixture":file,"vertices":vertices.len(),"slots":148,"max_m":max}));
     }
     assert_eq!(metrics.len(),6);
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Logs/NewCards306NativeRigidClothes.json",serde_json::to_vec_pretty(&metrics).unwrap()).unwrap();
+    std::fs::write(crate::test_support::project_path!("Saved/Logs/NewCards306NativeRigidClothes.json"),serde_json::to_vec_pretty(&metrics).unwrap()).unwrap();
 }
 
 #[test]
@@ -1040,7 +1040,7 @@ fn native_assigned_accessory_vertices() {
     let game=&crate::test_support::game_path("");
     let mut s=open(game,Some(&game.join("UserData/chara/female/弹丸论破 - 江之岛盾子2.png")),0).unwrap();
     s.ensure_skel_export();
-    let root=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/NewCards306SourceWorld");
+    let root=Path::new(crate::test_support::project_path!("Saved/Tests/NewCards306SourceWorld"));
     let mut body=s.body_skel.as_ref().unwrap().clone();
     let transforms=crate::gamefs::read_to_string(root.join("Card2.json.transforms.tsv")).unwrap();
     let parse=|s:&str|s.trim_matches(|c|c=='('||c==')').split(',').map(|s|s.trim().parse::<f32>().unwrap()).collect::<Vec<_>>();
@@ -1080,7 +1080,7 @@ fn native_assigned_accessory_vertices() {
         eprintln!("native assigned accessory {name}: vertices={} max={max} rms={rms}",vertices.len());
         metrics.push(serde_json::json!({"mesh":name,"vertices":vertices.len(),"max_m":max,"rms_m":rms,"source_pose_local_count":assigned}));
     }
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Logs/NewCards306NativeAccessoryVertices.json",serde_json::to_vec_pretty(&metrics).unwrap()).unwrap();
+    std::fs::write(crate::test_support::project_path!("Saved/Logs/NewCards306NativeAccessoryVertices.json"),serde_json::to_vec_pretty(&metrics).unwrap()).unwrap();
 }
 
 #[test]
@@ -1095,13 +1095,13 @@ fn installed_accessory_material_inputs() {
     for mesh in &meshes {assert!(mesh.mat.is_some() && mesh.texture_png.is_some(),"selected prefab authored material/texture: {}",mesh.name);}
     for mesh in meshes.iter().filter(|mesh|mesh.name.contains("kamiZ")) {eprintln!("Source mesh={} png={:?} mat={:?}",mesh.name,mesh.texture_png.as_ref().map(Vec::len),mesh.mat);}
     let png=crate::unity::named_png_from_bytes(bytes,&["kuma_1024"]).expect("authored RGB24 MainTex");
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Tests/NewCards306Overlays/BearSource.png",png.1).unwrap();
+    std::fs::write(crate::test_support::project_path!("Saved/Tests/NewCards306Overlays/BearSource.png"),png.1).unwrap();
 }
 
 #[test]
 #[ignore="native eye renderer fixtures; compares actual GPU create RT and KSOX output"]
 fn native_eye_create_and_overlays() {
-    let root=PathBuf::from(std::env::var("OK_EYE_NATIVE_ROOT").unwrap_or_else(|_|"C:/portable/OpenKoikatsu/Saved/Tests/NewCards306EyeNative2".into()));
+    let root=PathBuf::from(std::env::var("OK_EYE_NATIVE_ROOT").unwrap_or_else(|_|crate::test_support::project_path!("Saved/Tests/NewCards306EyeNative2").into()));
     let sources:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(root.join("Sources.json")).unwrap()).unwrap();
     let mut metrics=Vec::new();
     for (index,row) in sources.as_array().unwrap().iter().enumerate() {
@@ -1217,7 +1217,7 @@ fn native_clothes_overlay_mask() {
     let s=open(game,Some(&card_path),0).unwrap();
     let body=s.parts.iter().find(|p|p.role=="body").unwrap();
     let image=crate::teximg::load_from_memory(body.alpha_mask.as_ref().expect("KCOX mask")).unwrap().into_rgba8();
-    let fixtures=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/NewCards306BodyMaskNative");
+    let fixtures=Path::new(crate::test_support::project_path!("Saved/Tests/NewCards306BodyMaskNative"));
     let native=crate::gamefs::read_dir(fixtures).unwrap().filter_map(Result::ok)
         .map(|e|e.path()).find(|p|p.file_name().unwrap().to_string_lossy().ends_with("._AlphaMask.png")).unwrap();
     let expected=image::open(native).unwrap().to_rgba8();
@@ -1234,7 +1234,7 @@ fn native_clothes_overlay_mask() {
 #[ignore="installed actual p199 hair inputs and additive keyword ABI"]
 fn cached_native_hair_family_inputs() {
     let db=rusqlite::Connection::open_with_flags(crate::test_support::game_path("/.ok_cache.sqlite"),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    let root=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/Hair322CachedInputs");std::fs::create_dir_all(root).unwrap();let mut rows=Vec::new();
+    let root=Path::new(crate::test_support::project_path!("Saved/Tests/Hair322CachedInputs"));std::fs::create_dir_all(root).unwrap();let mut rows=Vec::new();
     for name in ["KK_380982.png","Komazoku Megumin (2).png"] {
         let (key,bytes):(String,Vec<u8>)=db.query_row("SELECT card_key,payload FROM session_blob WHERE card_key LIKE ?1 AND card_key LIKE '%|p199|%' AND card_key LIKE '%OK_GPU_SKIN=1|%' AND card_key LIKE '%OK_NOPOSE=1|%' ORDER BY card_key DESC LIMIT 1",[format!("%/{name}|%")],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
         let blob:SessionBlob=bincode::deserialize(&bytes).unwrap();let mut s=blob.into_session();
@@ -1265,8 +1265,8 @@ fn cached_native_hair_family_inputs() {
 #[test]
 #[ignore="read-only C019 runtime versus CardReader appearance diagnostic"]
 fn street_c019_appearance_diagnostic() {
-    let path=Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C019.png");
-    let output=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/StreetAppearance01");
+    let path=Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C019.png"));
+    let output=Path::new(crate::test_support::project_path!("Saved/Tests/StreetAppearance01"));
     std::fs::create_dir_all(output).unwrap();let mut s=crate::portable::load(path).unwrap();let mut rows=Vec::new();
     fn record(s:&OkSession,tag:&str)->serde_json::Value {
         let parts:Vec<_>=s.parts.iter().enumerate().map(|(i,p)|{
@@ -1276,7 +1276,7 @@ fn street_c019_appearance_diagnostic() {
         }).collect();serde_json::json!({"tag":tag,"parts":parts,"shape_body":s.shape_body,"shape_face":s.shape_face,"shadow_depth":s.shadow_depth,"line_width":s.line_width,"line_depth":s.line_depth})
     }
     let game=&crate::test_support::game_path("");let source=game.join("UserData/chara/female/KK_384914.png");for key in ["OK_GPU_SKIN","OK_SKELMESH","OK_NOPOSE","OK_UE_ANIM","OK_HEAD_GPUSKIN"] { std::env::set_var(key,"1"); } let fresh=crate::extract_session(game,Some(&source),0,None).unwrap();rows.push(record(&fresh,"source_original"));rows.push(record(&s,"apng_open"));s.apply_shape(&s.shape_body.clone(),&s.shape_face.clone());s.skin_all();rows.push(record(&s,"cardreader_shape"));
-    let curves=crate::gamefs::read("C:/portable/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations/conversation_female.okanim").unwrap_or_else(|_|crate::gamefs::read("C:/portable/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations/walk_01.okanim").unwrap());
+    let curves=crate::gamefs::read(crate::test_support::project_path!("Content/IndependentResources/RuntimeAnimations/conversation_female.okanim")).unwrap_or_else(|_|crate::gamefs::read(crate::test_support::project_path!("Content/IndependentResources/RuntimeAnimations/walk_01.okanim")).unwrap());
     unsafe{assert_eq!(crate::ffi::ok_session_install_shared_clip(&mut s,curves.as_ptr(),curves.len() as i32),0);}
     s.apply_anim_frame(0.,0.);s.skin_all();rows.push(record(&s,"shared_pose_shape"));let mut raw=crate::portable::load(path).unwrap();
     unsafe{assert_eq!(crate::ffi::ok_session_install_shared_clip(&mut raw,curves.as_ptr(),curves.len() as i32),0);}

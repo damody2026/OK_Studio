@@ -102,7 +102,7 @@ pub(super) fn apply(original: &[u8], card: &[u8], outfit: usize, edits: &[(Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    const CARD: &str = "C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C000.png";
+    const CARD: &str = crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png");
 
     #[test]
     fn rows_cover_hair_body_clothes_and_filled_accessory_slots() {

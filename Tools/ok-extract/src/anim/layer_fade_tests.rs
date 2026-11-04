@@ -8,7 +8,7 @@ use std::ffi::CString;
 #[derive(Deserialize)]#[serde(rename_all="camelCase")]struct Layer{layer:usize,state:String,weight:f32,start_time:f32,start_phase:f32}
 #[derive(Deserialize)]#[serde(rename_all="camelCase")]struct Frame{bundle:String,controller:String,base_state:String,layer:usize,start:f32,elapsed:f32,blend:f32,offset:f32,source_length:f32,base_length:f32,to_normalized:f32,transition_normalized:f32,transitioning:bool,parameters:Vec<Float>,layers:Vec<Layer>,bones:Vec<Bone>}
 const CARDS:[&str;5]=["[Card] March_7th_keiyuu","Alice_keiyuu","Hayase_yuuka_keiyuu_V1_02 For KKS","KK_091207","KK_384283"];
-fn frames(card:&str)->Vec<Frame>{let s:String=card.chars().map(|c|if c.is_ascii_alphanumeric()||c=='_'{c}else{'_'}).collect();serde_json::from_slice(&crate::gamefs::read(format!("C:/portable/OpenKoikatsu/Saved/Tests/AnimatorLayerFade302/{s}AnimatorLayerFade302.json.layer-fade.json")).unwrap()).unwrap()}
+fn frames(card:&str)->Vec<Frame>{let s:String=card.chars().map(|c|if c.is_ascii_alphanumeric()||c=='_'{c}else{'_'}).collect();serde_json::from_slice(&crate::gamefs::read(format!("{}/../../Saved/Tests/AnimatorLayerFade302/{s}AnimatorLayerFade302.json.layer-fade.json",env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap()}
 fn key(f:&Frame)->String {
     let hex=|v:&serde_json::Value|serde_json::to_vec(v).unwrap().iter().map(|b|format!("{b:02X}")).collect::<String>();
     let source=format!("controller@{}",hex(&serde_json::json!([f.bundle,f.controller,"",""])));

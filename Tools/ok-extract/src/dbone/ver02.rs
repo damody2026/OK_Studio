@@ -790,7 +790,7 @@ mod tests {
         for card in ["[Card] March_7th_keiyuu","Alice_keiyuu","Hayase_yuuka_keiyuu_V1_02 For KKS","KK_091207","KK_384283"] {
             if std::env::var("OK_TEST_YURE_MARCH").is_ok()&&card!="[Card] March_7th_keiyuu" {continue;}
             let stem:String=card.chars().map(|c|if c.is_ascii_alphanumeric()||c=='_' {c}else{'_'}).collect();
-            let prefix=format!("C:/portable/OpenKoikatsu/Saved/Tests/Studio294/{stem}Studio294.json");
+            let prefix=format!("{}/../../Saved/Tests/Studio294/{stem}Studio294.json",env!("CARGO_MANIFEST_DIR"));
             let mut sk=parsed.skeleton_for_prefab_name("p_cf_body_bone").unwrap();let set=parsed.body_dynamics_for_skeleton(&sk);
             apply_dump(&mut sk,&format!("{prefix}.yure-baseline.tsv"));let baseline=sk.clone();
             let live=crate::gamefs::read_to_string(format!("{prefix}.yure-setup.tsv")).unwrap();

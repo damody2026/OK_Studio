@@ -4452,7 +4452,7 @@ mod tests {
     #[ignore="prepared local APNG; verifies backwards-compatible slot provenance, run alone"]
     fn part_origins_survive_cache_and_split_resources_without_name_identity() {
         use super::*;
-        let path=std::path::Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C000.png");
+        let path=std::path::Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png"));
         let mut source=crate::portable::load(path).unwrap();
         assert!(source.parts.len()>2);
         // Identical renderer names must remain independently addressable.
@@ -7243,7 +7243,7 @@ fn part_resource_split_preserves_full_renderer_contract(){
     let game=&crate::test_support::game_path("");
     let card=game.join("UserData/chara/female/19重绘爱莉希雅女仆v1.1.png");
     for key in ["OK_GPU_SKIN","OK_SKELMESH","OK_NOPOSE","OK_UE_ANIM","OK_HEAD_GPUSKIN"]{std::env::set_var(key,"1");}
-    std::env::set_var("OK_BUILTIN_RESOURCES","C:/portable/OpenKoikatsu/Content/IndependentResources/v1");
+    std::env::set_var("OK_BUILTIN_RESOURCES",crate::test_support::project_path!("Content/IndependentResources/v1"));
     let mut source=open(game,Some(&card),0).unwrap();let info=crate::card::parse_card_outfit(&card,0).unwrap();
     assert!(source.accessory_context.is_some()&&source.body_rest.is_some()&&!source.parts.is_empty());
     let mut full=Vec::new();let start=std::time::Instant::now();

@@ -14,7 +14,7 @@ fn studio_initialization_reaches_session_palette() {
         actual.apply_anim_frame(0.,0.);actual.ensure_skel_export();let mut expected=SessionBlob::from_session(&actual).into_session();
         expected.apply_anim_frame(0.,0.);expected.ensure_skel_export();
         let stem:String=card.chars().map(|c|if c.is_ascii_alphanumeric()||c=='_'{c}else{'_'}).collect();
-        let native:Vec<serde_json::Value>=serde_json::from_slice(&crate::gamefs::read(format!("C:/portable/OpenKoikatsu/Saved/Tests/Studio293/{stem}Studio293.json.studio.json")).unwrap()).unwrap();
+        let native:Vec<serde_json::Value>=serde_json::from_slice(&crate::gamefs::read(format!("{}/../../Saved/Tests/Studio293/{stem}Studio293.json.studio.json",env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap();
         assert_eq!(native.len(),27);let mut max_bone=0f32;let mut max_vertex=0f32;
         for f in native {
             let data=[f["source"].as_str().unwrap(),f["owner"].as_str().unwrap(),f["overlaySource"].as_str().unwrap(),f["overlayOwner"].as_str().unwrap()];
@@ -82,9 +82,9 @@ fn animator_clock_reaches_session_palette() {
         let mut expected=SessionBlob::from_session(&actual).into_session();
         expected.apply_anim_frame(0.,0.);expected.ensure_skel_export();
         let stem:String=card.chars().map(|c|if c.is_ascii_alphanumeric()||c=='_' {c} else {'_'}).collect();
-        let mut native:Vec<ClockFrame>=serde_json::from_slice(&crate::gamefs::read(format!("C:/portable/OpenKoikatsu/Saved/Tests/Animator292/{stem}Animator292.json.animator-clock.json")).unwrap()).unwrap();
+        let mut native:Vec<ClockFrame>=serde_json::from_slice(&crate::gamefs::read(format!("{}/../../Saved/Tests/Animator292/{stem}Animator292.json.animator-clock.json",env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap();
         assert_eq!(native.len(),24);let mut max_bone=0f32;let mut max_vertex=0f32;let mut invalid=0;
-        let layer:Vec<ClockFrame>=serde_json::from_slice(&crate::gamefs::read(format!("C:/portable/OpenKoikatsu/Saved/Tests/Animator292/{stem}Animator292Layer.json.animator-clock.json")).unwrap()).unwrap();
+        let layer:Vec<ClockFrame>=serde_json::from_slice(&crate::gamefs::read(format!("{}/../../Saved/Tests/Animator292/{stem}Animator292Layer.json.animator-clock.json",env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap();
         assert_eq!(layer.len(),12);native.extend(layer);
         for f in native {
             let key=if f.layer==0 {format!("states:action/animator/00.unity3d|base / {}",f.state)} else {format!("states:studio/anime/00.unity3d|{} / {}",f.controller,f.state)};
@@ -142,7 +142,7 @@ fn animator_parameters_reach_session_palette() {
         let stem:String=card.chars().map(|c|if c.is_ascii_alphanumeric()||c=='_' {c} else {'_'}).collect();
         let mut count=0usize;let mut changed=0usize;let mut max_bone=0f32;let mut max_vertex=0f32;
         for (stage,suffix,two_d) in [(289,"animator-blend",false),(290,"animator-2d",true)] {
-            let data=crate::gamefs::read(format!("C:/portable/OpenKoikatsu/Saved/Tests/Animator{stage}/{stem}Animator{stage}.json.{suffix}.json")).unwrap();
+            let data=crate::gamefs::read(format!("{}/../../Saved/Tests/Animator{stage}/{stem}Animator{stage}.json.{suffix}.json",env!("CARGO_MANIFEST_DIR"))).unwrap();
             let control:Vec<Frame>=serde_json::from_slice(&data).unwrap();
             assert_eq!(control.len(),if two_d {144} else {60});
             for f in control {
