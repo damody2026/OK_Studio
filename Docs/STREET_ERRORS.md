@@ -1971,6 +1971,8 @@
 - 2026-11-04 e-galgame：測試時用 `game_click` 會把自己的遊戲視窗拉到最前面（`Win->BringToFront`），使用者正在玩時點擊可能落到測試視窗。使用者在玩時不要用 `game_click`，改用 `/hscene` 的 kind 或截圖。
 - 2026-11-04 e-galgame：舌頭變白先往材質想，其實是流口水的白色塗料蓋在舌頭上：不流口水時是紅的。現在 H 的體液不畫在舌頭上（`bSkipTongue`，`ok.HScene.FluidTongue` 預設 0），流 40 秒後舌頭還是紅的（`Play-20261104T223655`）。
 - 2026-11-05 e-galgame：頭看鏡頭、眼睛追鏡頭兩個按鈕加在愛撫分支 `return` 之後，進場景的愛撫畫面看不到，只有插入才出現。之前用 kind 直接呼叫沒發現。改到 `BuildActions` 分支之前。
+- 2026-11-05 e-galgame：建置結果看錯：用 Git Bash 的 `cmd //c` 呼叫 `Build.bat` 只開了 cmd 就結束，回傳 0，差點當成連結成功。發現是因為 log 裡沒有 `Result: Succeeded`。改用 PowerShell，並一律看 log 的 `Result:`。
+- 2026-11-05 e-galgame：`/activity` 第一版傳 `at_end=true`，規則在活動結束時不擋任何條件，所以懷孕的她全部回可以，差點記成規則壞了。改成直接問 `activity_check`。
 - 2026-11-05 e-galgame：測試把值留在共用的 `%LOCALAPPDATA%\OpenKoikatsu\HSettings.ini`：`AhegaoClimaxes=1` 是我測試設的，按面板按鈕時一起存下來，使用者的遊戲也讀同一檔，一次高潮就啊嘿顏；這次測試的 `EyesCamera=0` 也一樣。兩個都已改回 4 與 1。測試用 console 改設定後，測完要改回，再按會存檔的按鈕。
 - 2026-11-04 e-fork 眼睛上下顛倒，只測左右沒發現：`ok.VerifyEyeCamera` 第一版只繞左右轉，100 張全過，但走 `_MainTex_ST` 的 GPU 眼睛垂直方向是反的（鏡頭在下，虹膜往上翻；Rows 的 V 和貼圖 tiling 的 V 差一個翻轉）。`ok.EyeGazeSTFlipV` 預設改 1。e-fork-2 那天把口交上翻改成負值，以及 `ok.HScene.AhegaoGaze` 的 -1.25，都是在補這個反向，一併改回 +1 向上。教訓：跟隨類功能的驗收要含上下，方向要用量到的位移判定。
 - 2026-11-04 e-fork 跟鏡頭的轉動量每張卡差很多：同樣轉 35°，畫面上 15°～55°，C097 虹膜跑出眼睛，C018 向下被下眼皮切掉。兩個原因：(1) rate 換算成固定的貼圖位移，卡片虹膜尺寸（settings 12、13）越大移得越多，和眼睛寬度無關；(2) 解除限制後垂直 rate 超過 ±1 時走了 `st_rolled` 的翻白眼路徑，位移突然加大。修正：跟隨目標時改用 `IrisRuntime::st_look`，直接以眼睛寬高的比例移動，rate 只留給其他用途。

@@ -188,7 +188,9 @@ static const FHSetting HSettings[]={
     {TEXT("Props"),TEXT("ui.hscene.set_props"),0.f,1.f,1.f,0.f},
 };
 static IConsoleVariable* HSettingVar(const TCHAR* Name){return IConsoleManager::Get().FindConsoleVariable(*(FString(TEXT("ok.HScene."))+Name));}
-static FString HSettingsFile(){return FPaths::Combine(FPlatformProcess::UserSettingsDir(),TEXT("OpenKoikatsu"),TEXT("HSettings.ini"));}
+// A test run keeps its own (-OKSettingsDir, Tools/run_street_social_development.lua): the player's game reads the shared one.
+static FString HSettingsFile(){FString Own;if(FParse::Value(FCommandLine::Get(),TEXT("-OKSettingsDir="),Own))return FPaths::Combine(Own,TEXT("HSettings.ini"));
+    return FPaths::Combine(FPlatformProcess::UserSettingsDir(),TEXT("OpenKoikatsu"),TEXT("HSettings.ini"));}
 static void HSettingSet(const TCHAR* Name,float Value){if(auto* Var=HSettingVar(Name))Var->Set(*FString::Printf(TEXT("%g"),Value),ECVF_SetByConsole);}
 // The panel's light rows, kept with the settings.
 static const TCHAR* const HLightVars[]={TEXT("LightFrom"),TEXT("LightTint"),TEXT("LightRamp")};
@@ -1778,13 +1780,13 @@ void UOKHScenePanel::TickDrips(float Delta){
 //  4. kissing, her saliva from a corner of her mouth, more the more her kissing is developed.
 // Her tongue comes out kissing past 40% of it (the mouth pattern with the tongue, as the worn-out face).
 static TAutoConsoleVariable<int32> CVarHSiruTexture(TEXT("ok.HScene.SiruTexture"),0,TEXT("1: the original's semen textures on her (_liquid*) as well as the water gun"));
-static TAutoConsoleVariable<FString> CVarHFluid(TEXT("ok.HScene.Fluid"),TEXT("520,40,0.35,0.17,40,5,1.5"),TEXT("Water gun: spurt speed, spurt flow, pulse seconds, gap seconds, leak seconds first time, leak flow, drool flow"));
+static TAutoConsoleVariable<FString> CVarHFluid(TEXT("ok.HScene.Fluid"),TEXT("520,40,0.35,0.17,40,5,1.5,0.7"),TEXT("Water gun: spurt speed, spurt flow, pulse seconds, gap seconds, leak seconds first time, leak flow, drool flow, drool brush cm"));
 void UOKHScenePanel::Spurt(int32 Pulses){SpurtLeft=FMath::Max(SpurtLeft,Pulses);SpurtAt=FMath::Min(SpurtAt,FPlatformTime::Seconds());
     UE_LOG(LogTemp,Display,TEXT("H scene: he spurts %d times (water gun)"),Pulses);}
 void UOKHScenePanel::TickFluids(float Delta){
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;auto* Him=Gallery?Gallery->PartnerActor.Get():nullptr;if(!IsValid(Girl)||!GetWorld())return;
     TArray<float> F;{TArray<FString> P;CVarHFluid.GetValueOnGameThread().ParseIntoArray(P,TEXT(","));for(const FString& S:P)F.Add(FCString::Atof(*S));}
-    while(F.Num()<7)F.Add(0.f);
+    while(F.Num()<8)F.Add(1.f);
     const double Now=FPlatformTime::Seconds();const FString Base=HBase(Current());
     if(!IsValid(Fluid)){Fluid=GetWorld()->SpawnActor<AOKPaintSprayer>();if(!IsValid(Fluid))return;Fluid->SetControlsVisible(false);Fluid->bShowGun=false;Fluid->bSkipTongue=!CVarHFluidTongue.GetValueOnGameThread();Fluid->SetActorTickEnabled(true);
         UE_LOG(LogTemp,Display,TEXT("H scene: water gun ready for her fluids"));}
@@ -1792,7 +1794,7 @@ void UOKHScenePanel::TickFluids(float Delta){
     const bool In=Mode==2&&(Base.StartsWith(TEXT("Insert"))||HIsLoop(Base)||Base==TEXT("OLoop")||Base.Contains(TEXT("_IN"))||Base.EndsWith(TEXT("_Start"))||Base.EndsWith(TEXT("_Loop"))||Base==TEXT("IN_A"));
     if(LeakPending>0&&!In){const double For=F[4]*(1.+.6*(LeakPending-1));LeakUntil=FMath::Max(LeakUntil,Now)+For;LeakFor=For;LeakPending=0;
         UE_LOG(LogTemp,Display,TEXT("H scene: his semen runs out of her %s for %.0f s"),bLeakAnal?TEXT("anus"):TEXT("vagina"),For);}
-    FVector O,D;float JetV=0.f,Flow=0.f;FLinearColor Colour(.96f,.96f,.92f,1.f);bool On=false;
+    FVector O,D;float JetV=0.f,Flow=0.f;FLinearColor Colour(.96f,.96f,.92f,1.f);bool On=false,bThin=false; // thin: saliva, a line down her chin
     FVector Root,Tip;
     if(SpurtLeft>0&&Now>=SpurtAt&&IsValid(Him)&&HBone(Him,TEXT("J_dan100_00"),Root)){
         Tip=Root+(bGlans?GlansFromRoot:FVector(0,0,0));FVector T;if(!bGlans&&HBone(Him,TEXT("J_dan109_00"),T))Tip=T;
@@ -1818,8 +1820,10 @@ void UOKHScenePanel::TickFluids(float Delta){
         const float DR=bAhegaoShown?FMath::Max(DK,.8f):DK;
         if(Now>=DroolAt){DroolAt=Now+.6/FMath::Max(.05f,DR)*FMath::FRandRange(.8f,1.2f);DroolOnUntil=Now+.15;DroolTurn=!DroolTurn;}
         FVector M;if(Now<DroolOnUntil||Now<MouthDribbleUntil)if(HBone(Girl,DroolTurn?TEXT("J_Mouth_L"):TEXT("J_Mouth_R"),M)){
-            O=M;D=FVector(0,0,-1);JetV=15.f;Flow=F[6]*FMath::Max(.3f,DR);Colour=FLinearColor(.85f,.88f,.92f,.6f);On=true;}}
-    if(On){Fluid->Settings.JetSpeed=FMath::Max(10.f,JetV);Fluid->Settings.Flow=Flow;Fluid->Settings.Color=Colour;Fluid->SetSpray(true,O,D);}
+            // Over her lip and down her chin, the way nose to mouth runs: straight down from the bone it never touched her.
+            FVector Cavity,Nose;O=M;D=FVector(0,0,-1);if(HBone(Girl,TEXT("J_MouthCavity"),Cavity)&&HBone(Girl,TEXT("J_Nose_tip"),Nose)){O=M+(M-Cavity).GetSafeNormal()*.6f;D=(M-Nose).GetSafeNormal();}
+            JetV=15.f;Flow=F[6]*FMath::Max(.3f,DR);Colour=FLinearColor(.85f,.88f,.92f,.6f);On=bThin=true;}}
+    if(On){Fluid->Settings.BrushRadius=bThin?F[7]:2.f;Fluid->Settings.JetSpeed=FMath::Max(10.f,JetV);Fluid->Settings.Flow=Flow;Fluid->Settings.Color=Colour;Fluid->SetSpray(true,O,D);}
     else if(Fluid->IsSpraying())Fluid->StopSpray();
 }
 // Her body shaking as she comes is her climax loop's own animation (user 2026-11-03: not the shake once made up here on

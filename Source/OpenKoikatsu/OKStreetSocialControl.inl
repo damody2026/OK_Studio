@@ -438,6 +438,13 @@ void AOKStreetSocialScene::StartControlServer(){
    S.Song.NextCheck=0;RefreshUI();Action=TEXT("state");}
   OKControlReply(Done,SongControl(Action,Girl));
  });
+ // {girl:1..10, id}: would she go? The check every invitation asks (nothing is bought or used up here).
+ Bind(TEXT("/activity"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
+  auto& S=*State;const auto B=OKControlBody(Req);double Girl=-1;FString Id;B->TryGetNumberField(TEXT("girl"),Girl);B->TryGetStringField(TEXT("id"),Id);
+  if(Girl<1||!S.Manifest.Characters.IsValidIndex(int32(Girl))||Id.IsEmpty()){OKControlReply(Done,OKControlResult(false,TEXT("girl and id required")));return;}
+  auto Request=ActivityContext(int32(Girl),TEXT("activity_check"));Request->SetStringField(TEXT("id"),Id);Request->SetStringField(TEXT("here"),PlaceHere(S.Male));Request->SetNumberField(TEXT("player_cash"),double(S.Store.PlayerCash));
+  const TSharedPtr<FJsonObject> Answer=OKRulesEval(S,Request);auto O=OKControlResult(Answer.IsValid());if(Answer.IsValid())O->SetObjectField(TEXT("answer"),Answer);OKControlReply(Done,O);});
+
  Bind(TEXT("/rules"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   auto& S=*State;const TSharedRef<FJsonObject> Body=OKControlBody(Req);FString Action=TEXT("status");Body->TryGetStringField(TEXT("action"),Action);
   if(!S.Rules){OKControlReply(Done,OKControlResult(false,TEXT("rules not open")));return;}

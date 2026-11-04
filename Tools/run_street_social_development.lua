@@ -491,6 +491,14 @@ local function main()
   if o.selftest then for _, a in ipairs({ "-StreetSocialSelfTest", "-unattended", "-RenderOffscreen" }) do game[#game + 1] = a end end
   -- Development control channel (http://127.0.0.1:<port>: state, say, click, key, navigate, screenshot); never on by default.
   if o.control then game[#game + 1] = "-StreetSocialControl"; game[#game + 1] = "-StreetSocialControlPort=" .. control_port end
+  -- A sandbox or a controlled run never writes the player's H settings: it starts from a copy and keeps its own.
+  local settings_dir = sandbox or (o.control and path.join(root, "Saved/StreetSocial/ControlSettings"))
+  if settings_dir then
+    path.mkdir(settings_dir, true)
+    local shared, own = path.join(os.getenv("LOCALAPPDATA") or "", "OpenKoikatsu/HSettings.ini"), path.join(settings_dir, "HSettings.ini")
+    if not path.exists(own) and path.is_file(shared) then path.copy(shared, own) end
+    game[#game + 1] = "-OKSettingsDir=" .. settings_dir
+  end
   if o.inspect then game[#game + 1] = "-StreetSocialInspect=" .. o.inspect end
   if o.clock then game[#game + 1] = "-StreetSocialClock=" .. o.clock end
   say("StreetSocial: one male + up to ten heroines. WASD move, Shift run, mouse camera, Ctrl/middle UI cursor, wheel zoom, E talk, 1/2/3 topics, Esc cancel, L Chinese/Japanese voices, V built-in/TTS voice, N skip to 07:00 next morning; friendship/confession results save automatically after dialogue; F9 CPU/GPU; conversation buttons: shared walk/explore, photo (P save), seated talk, drinks, splash either direction; Esc ends activity. Reading uses a hand-held book.")
