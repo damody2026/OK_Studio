@@ -340,7 +340,7 @@ public:
 							[SNew(SFrontArea).OnFront([this] { BringToFront(DetailSlot); })
 								[Window(TAttribute<FText>::CreateLambda([this] { return FText::FromString(PageTitle()); }), SAssignNew(DetailBody, SBox), [this] { SetPage(EPage::None); }, Panel(),
 									[this](const FVector2D& D) { DetailOffsets.FindOrAdd(uint8(Page)) += D; bLayoutDirty = true; })]])]
-					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(0.f, 1.f)).Offset(FMargin(490.f, -20.f, 900.f, 18.f)).ZOrder(1000.f)
+					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(0.f, 1.f)).Offset(FMargin(515.f, -20.f, 900.f, 18.f)).ZOrder(1000.f)
 						[SAssignNew(Status, STextBlock).Font(Font(10.f)).ColorAndOpacity(TextHint()).ShadowOffset(FVector2D(1.f, 1.f))]
 				]
 			]
@@ -1441,7 +1441,7 @@ public:
 		{
 		case EPage::State: return FMargin(134.f, 7.f, 252.f, 326.f);
 		case EPage::Bones: return FMargin(134.f, 7.f, 320.f, 390.f);
-		case EPage::Anim: return FMargin(135.f, 10.f, 446.f, 370.f);
+		case EPage::Anim: return FMargin(135.f, 10.f, 446.f, 560.f);
 		// Larger than HS2Studio6's 274 x 234 (U137: the third column cut every item name).
 		case EPage::ItemAdd: return FMargin(134.f, 7.f, 440.f, 400.f);
 		case EPage::LightAdd: return FMargin(142.f, 36.f, 210.f, 192.f);
@@ -2372,7 +2372,15 @@ public:
 			Row(TEXT("卡片"), OKStudioStyle::Button(TAttribute<FText>::CreateLambda([this] { FOKSceneObject* X = Obj(); return FText::FromString(X ? FPaths::GetCleanFilename(X->Character.Card) : FString()); }),
 				[this] { OpenFloat(TEXT("cards")); }, 0.f, 18.f, false, 10.f, OKStudioStyle::Input()), 0.3f);
 			Choice(TEXT("服裝組"), { TEXT("1"), TEXT("2"), TEXT("3"), TEXT("4"), TEXT("5"), TEXT("6"), TEXT("7") }, [](FOKSceneObject& X) { return X.Character.Outfit; }, [](FOKSceneObject& X, int32 V) { X.Character.Outfit = V; });
-			Label(TEXT("狀態、骨骼、動畫在「角色」選單"));
+			// U179: this line was only text, and finding the 角色 menu took five clicks.
+			{
+				TSharedRef<SHorizontalBox> Pages = SNew(SHorizontalBox);
+				const TPair<const TCHAR*, const TCHAR*> Links[] = { { TEXT("狀態"), TEXT("page.state") }, { TEXT("骨骼"), TEXT("page.bones") }, { TEXT("動畫"), TEXT("page.anim") },
+					{ TEXT("姿勢庫"), TEXT("app.poselibrary") }, { TEXT("語音"), TEXT("app.voice") } };
+				for (const TPair<const TCHAR*, const TCHAR*>& Link : Links)
+					Pages->AddSlot().FillWidth(1.f).Padding(1.f, 0.f)[OKStudioStyle::Button(FText::FromString(Link.Key), Cmd(Link.Value), 0.f, 20.f, false, 10.f)];
+				Row(TEXT("編輯"), Pages, 0.3f);
+			}
 			break;
 		}
 		case EOKSceneObjectKind::Item:
@@ -3262,7 +3270,8 @@ private:
 			Combo(&AnimGroupOptions, GroupName, [this] { return AnimGroup; }, [this](int32 V) { AnimGroup = V; AnimCategory = -1; DeferRebuild(); });
 			Combo(&AnimCategoryOptions, CategoryName, [this] { return AnimCategory; }, [this](int32 V) { AnimCategory = V; DeferRebuild(); });
 		}
-		Props->AddSlot().AutoHeight().MaxHeight(220.f).Padding(0.f, 2.f)
+		// U182: eleven rows of 12 px in a window with the whole height free.
+		Props->AddSlot().AutoHeight().MaxHeight(325.f).Padding(0.f, 2.f)
 		[
 			SAssignNew(AnimList, SListView<TSharedPtr<int32>>).ListItemsSource(&AnimOptions).SelectionMode(ESelectionMode::Single)
 			.OnGenerateRow_Lambda([this, GroupLabel, CategoryLabel](TSharedPtr<int32> I, const TSharedRef<STableViewBase>& Owner)
@@ -3275,7 +3284,7 @@ private:
 				// A motion that has the other sex's side is marked (U117): 配給對方 works from it.
 				const TCHAR* Pair = A.Kind == 1 && HasPartner(A) ? TEXT("（雙人）") : TEXT("");
 				// The same 10 pt as the other lists (U124: it took the default, a size larger).
-				return SNew(STableRow<TSharedPtr<int32>>, Owner)[SNew(STextBlock).Font(OKStudioStyle::Font(10.f)).ColorAndOpacity(bCurrent ? FLinearColor::Yellow : FLinearColor::White).Text(FText::FromString(A.Name + Pair + Where))];
+				return SNew(STableRow<TSharedPtr<int32>>, Owner).Padding(FMargin(2.f, 3.f))[SNew(STextBlock).Font(OKStudioStyle::Font(10.f)).ColorAndOpacity(bCurrent ? FLinearColor::Yellow : FLinearColor::White).Text(FText::FromString(A.Name + Pair + Where))];
 			})
 			.OnMouseButtonClick_Lambda([this](TSharedPtr<int32> I) { if (I) PickAnim(*I); })
 		];

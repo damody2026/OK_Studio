@@ -156,7 +156,7 @@ check(dist(fk_world("cf_j_head"), head0) < 0.5, "neck part off: the head follows
 click("頸", 0); wait(20)
 check(dist(fk_world("cf_j_head"), head1) < 0.5, "neck part on: the kept FK value shows again")
 local function neck_set() for _, b in ipairs(bones().fk or {}) do if b.bone == "cf_j_neck" then return b.set end end end
-check(click("頸", 1).ok and not neck_set(), "復位 頸 drops the neck's FK")
+check(click("頸", 2).ok and not neck_set(), "復位 頸 drops the neck's FK")
 
 -- U20: IK parts, 全部, weights, FK←IK (IK tab).
 call("cmd", { id = "bones.page", arg = "1" }); wait(20)
@@ -208,7 +208,7 @@ check(math.abs(mid - 20) < 2, ("at 1 s the neck is half way (%.1f°)"):format(mi
 call("timeline", { time = 2 }); wait(5)
 check(click("骨骼刪 key").ok and (keys()[2] or {}).fk_bones == 0, "骨骼刪 key drops the neck from the 2 s key")
 call("cmd", { id = "toggle.timeline" }); wait(30)
-check(click("清空軌道").ok and #keys() == 0, "清空軌道 removes the track")
+check(click("清空").ok and #keys() == 0, "清空 removes the track")
 call("cmd", { id = "toggle.timeline" }); wait(10)
 click("清除 FK")
 

@@ -155,7 +155,7 @@ void SOKStudioPanel::RegisterFloats()
 	AddFloat(TEXT("cards"), TEXT("角色卡"), FMargin(142.f, 36.f, 620.f, 420.f), [this] { return BuildCardBrowser(); });
 	AddFloat(TEXT("scenes"), TEXT("場景檔"), FMargin(142.f, 36.f, 620.f, 420.f), [this] { return BuildSceneBrowser(); });
 	AddFloat(TEXT("quick"), TEXT("快搜"), FMargin(140.f, 40.f, 360.f, 590.f), [this] { return BuildQuickSearch(); });
-	AddFloat(TEXT("poselib"), TEXT("姿勢庫"), FMargin(140.f, 40.f, 360.f, 368.f), [this] { return BuildPoseLibrary(); });
+	AddFloat(TEXT("poselib"), TEXT("姿勢庫"), FMargin(590.f, 10.f, 360.f, 368.f), [this] { return BuildPoseLibrary(); });
 	AddFloat(TEXT("effects"), TEXT("特效"), FMargin(142.f, 36.f, 280.f, 380.f), [this] { return BuildEffectList(); });
 	AddFloat(TEXT("maps"), TEXT("地圖"), FMargin(142.f, 36.f, 320.f, 400.f), [this] { return BuildMapBrowser(); });
 	AddFloat(TEXT("color"), TEXT("顏色"), FMargin(470.f, 60.f, 260.f, 330.f), [this] { return BuildColorPicker(); });
@@ -2110,6 +2110,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildTimeline()
 		+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f).VAlign(VAlign_Center)
 		[OKStudioStyle::Label(TAttribute<FText>::CreateLambda([this] { return FText::FromString(Game.IsValid() ? FString::Printf(TEXT("%.2f 秒 / 幀 %d"), Game->TimelineTime, FMath::RoundToInt(Game->TimelineTime * 30.f)) : FString()); }), 10.f)]
 		+ SHorizontalBox::Slot().FillWidth(1.f)
+		+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 6.f, 0.f)[Button(FText::FromString(TEXT("輸出…")), Cmd(TEXT("timeline.export")), 50.f, 20.f, false, 10.f)]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[OKStudioStyle::Label(FText::FromString(TEXT("時長")), 10.f)]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f)[SNew(SBox).WidthOverride(48.f).HeightOverride(18.f)[Spin([this] { return Game.IsValid() ? Game->Document->Duration : 10.f; }, [this](float V) { if (Game.IsValid()) { Game->Document->Duration = FMath::Max(V, 0.1f); Changed(); } }, 0.1f, 3600.f, 0.1f)]]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[OKStudioStyle::Label(FText::FromString(TEXT("速度")), 10.f)]
@@ -2141,8 +2142,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildTimeline()
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[SNew(SBox).WidthOverride(40.f).HeightOverride(18.f)[Spin([this] { return Game.IsValid() ? Game->LoopStart : 0.f; }, [this](float V) { if (Game.IsValid()) Game->LoopStart = FMath::Max(V, 0.f); }, 0.f, 3600.f, 0.1f)]]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[SNew(SBox).WidthOverride(40.f).HeightOverride(18.f)[Spin([this] { return Game.IsValid() ? Game->LoopEnd : 0.f; }, [this](float V) { if (Game.IsValid()) Game->LoopEnd = FMath::Max(V, 0.f); }, 0.f, 3600.f, 0.1f)]]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 1.f, 0.f).VAlign(VAlign_Center)[CheckBox(TEXT("30fps 吸附"), [this] { return !TimelineView || TimelineView->SnapFps > 0.f; }, [this](bool B) { if (TimelineView) TimelineView->SnapFps = B ? 30.f : 0.f; })]
-		+ SHorizontalBox::Slot().FillWidth(1.f)
-		+ SHorizontalBox::Slot().AutoWidth()[Button(FText::FromString(TEXT("輸出…")), Cmd(TEXT("timeline.export")), 50.f, 20.f, false, 10.f)];
+		+ SHorizontalBox::Slot().FillWidth(1.f);
 	// Bone keys without the FK page (HS2Studio6's bone search, 打骨骼帧 / 删骨骼帧).
 	TSharedRef<SWidget> Row3 = SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 3.f, 0.f)[OKStudioStyle::Label(FText::FromString(TEXT("骨骼")), 10.f)]

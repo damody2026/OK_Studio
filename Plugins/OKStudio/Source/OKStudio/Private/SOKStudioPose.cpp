@@ -1008,7 +1008,9 @@ TSharedRef<SWidget> SOKStudioPanel::BuildPoseLibrary()
 			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("刷新")), Cmd(TEXT("poselib.refresh")), 44.f, 20.f, false, 10.f)]
 		]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)[Preview]
-		+ SVerticalBox::Slot().FillHeight(1.f)[SNew(SBorder).BorderImage(Brush(ListArea())).Padding(2.f)[SNew(SScrollBox) + SScrollBox::Slot()[Grid]]]
+		+ SVerticalBox::Slot().FillHeight(1.f)[SNew(SBorder).BorderImage(Brush(ListArea())).Padding(2.f)[SNew(SScrollBox) + SScrollBox::Slot()[Files.IsEmpty()
+			? StaticCastSharedRef<SWidget>(OKStudioStyle::Label(FText::FromString(PoseSearch.IsEmpty() ? TEXT("還沒有姿勢：擺好角色後，在下方輸入名稱，按「存目前姿勢」") : TEXT("沒有符合的姿勢")), 10.f, TextHint()))
+			: StaticCastSharedRef<SWidget>(Grid)]]]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f, 0.f, 0.f)
 		[
 			SNew(SHorizontalBox)
