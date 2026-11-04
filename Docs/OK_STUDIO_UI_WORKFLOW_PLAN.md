@@ -1554,6 +1554,16 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
 | U171 新角色站進課桌 | U168 教室加第三個角色（Male01）時，找空位把他放在兩排課桌之間，身體和桌子重疊。U146 的找空位要把課桌、椅子這類低家具也當成障礙 |
 | U172 UI 截圖縮放不一 | U168 中途 `studio_ui_shot` 有幾張是 1136×625、有幾張是 1600×900，滑鼠座標要跟著換算。查截圖尺寸為什麼會變（視窗大小或 DPI），讓截圖固定用視窗的實際像素 |
 
+U170 星星紀錄（2026-11-04，同一批對照）：
+
+- 不是 8 位元精度：原作的 `StarData` 本來就是 RGBA32。真正原因有三個：
+  - `StarData` 的列由南到北存放，是查表用的資料；OK 當成影像做了 V 翻轉，查到的星星全部不對。
+  - `shader_program_codegen.lua` 把 `sincos r0.x, r1.x, r0.x` 譯成先寫 sin 再算 cos，cos 吃到 sin 的結果，星星只出現在天空一小塊。
+  - `sky.json` 沒有套用 profile 的星星數值（大小、閃爍、旋轉、邊緣、亮度），星星偏大。月亮亮度同時補上。
+- 結果：灯台夜晚的星星大小與密度接近原作，原作的紅色星星比 OK 多。地圖 60 的漸層重拍後與原作一致。
+- 別的 checkout 要跑 `ok-extract <遊戲> --oklib studio-sky <base_v1>` 才會拿到星星數值。
+- `_nopost` 現在真的關掉 Amplify Color，`run_map_tour.lua` 另外寫 `.materials.tsv`（每個 renderer 的材質、lightmap 與屬性）。
+
 U169、U170 紀錄（2026-11-04，用原作 Studio 實拍對照，原作截圖只留在 `Saved/Tests/`）：
 
 - 工具：`Tools/GamePoseProbe/run_map_tour.lua` 讓原作 Studio 依 `地圖:時段` 自動換地圖、拍固定視角，並錄執行時的天空、燈光與水面材質。OK 的 FOV 是水平，原作垂直 60 等於 OK 的 91.5。

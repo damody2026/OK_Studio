@@ -400,7 +400,13 @@ const PROFILE_NUMBERS: &[(&str, &str)] = &[
     ("CloudHeightKey", "_CloudHeight"), ("CloudFadePositionKey", "_CloudFadePosition"), ("CloudFadeAmountKey", "_CloudFadeAmount"),
     ("CloudTextureTiling", "_CloudTextureTiling"), ("FogDensityKey", "_HorizonFogDensity"), ("FogLengthKey", "_HorizonFogLength"),
     ("SunSizeKey", "_SunRadius"), ("SunEdgeFeatheringKey", "_SunEdgeFade"), ("MoonSizeKey", "_MoonRadius"),
-    ("MoonEdgeFeatheringKey", "_MoonEdgeFade"),
+    ("MoonEdgeFeatheringKey", "_MoonEdgeFade"), ("MoonColorIntensityKey", "_MoonHDRBoost"),
+    ("Star1SizeKey", "_StarLayer1MaxRadius"), ("Star2SizeKey", "_StarLayer2MaxRadius"), ("Star3SizeKey", "_StarLayer3MaxRadius"),
+    ("Star1TwinkleAmountKey", "_StarLayer1TwinkleAmount"), ("Star2TwinkleAmountKey", "_StarLayer2TwinkleAmount"), ("Star3TwinkleAmountKey", "_StarLayer3TwinkleAmount"),
+    ("Star1TwinkleSpeedKey", "_StarLayer1TwinkleSpeed"), ("Star2TwinkleSpeedKey", "_StarLayer2TwinkleSpeed"), ("Star3TwinkleSpeedKey", "_StarLayer3TwinkleSpeed"),
+    ("Star1RotationSpeed", "_StarLayer1RotationSpeed"), ("Star2RotationSpeed", "_StarLayer2RotationSpeed"), ("Star3RotationSpeed", "_StarLayer3RotationSpeed"),
+    ("Star1EdgeFeathering", "_StarLayer1EdgeFade"), ("Star2EdgeFeathering", "_StarLayer2EdgeFade"), ("Star3EdgeFeathering", "_StarLayer3EdgeFade"),
+    ("Star1ColorIntensityKey", "_StarLayer1HDRBoost"), ("Star2ColorIntensityKey", "_StarLayer2HDRBoost"), ("Star3ColorIntensityKey", "_StarLayer3HDRBoost"),
 ];
 /// Profile textures for the material slots its saved material leaves empty.
 const PROFILE_TEXTURES: &[(&str, &str)] = &[("CloudNoiseTextureKey", "_CloudNoiseTexture"), ("MoonTextureKey", "_MoonTex"), ("SunTextureKey", "_SunTex")];

@@ -14,6 +14,48 @@ public sealed partial class GamePoseProbe {
         new[] { 0f, 20f }, new[] { 90f, 20f }, new[] { 180f, 20f }, new[] { 270f, 20f }, new[] { 0f, 70f },
         new[] { 0f, -15f }, new[] { 90f, -15f }, new[] { 180f, -15f }, new[] { 270f, -15f } };
 
+    // GetMethod does not return a base class's private method (AmplifyColorBase.OnRenderImage).
+    private static bool DrawsImage(Type type) {
+        for (; type != null && type != typeof(MonoBehaviour); type = type.BaseType)
+            if (type.GetMethod("OnRenderImage", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly) != null) return true;
+        return false;
+    }
+
+    private static string MaterialValue(Material material, Shader shader, int property) {
+        string name = shader.GetPropertyName(property);
+        switch (shader.GetPropertyType(property)) {
+            case UnityEngine.Rendering.ShaderPropertyType.Color: return material.GetColor(name).ToString("R");
+            case UnityEngine.Rendering.ShaderPropertyType.Vector: return material.GetVector(name).ToString("R");
+            case UnityEngine.Rendering.ShaderPropertyType.Texture: {
+                Texture t = material.GetTexture(name);
+                return t == null ? "null" : t.name + ":" + t.width + ":" + t.height + ":" + t.GetType().Name;
+            }
+            default: return material.GetFloat(name).ToString("R");
+        }
+    }
+
+    // Everything drawn at this stop: renderers with their lightmaps, each material's properties once, and terrains.
+    private static void WriteTourMaterials(string file) {
+        var seen = new System.Collections.Generic.HashSet<Material>();
+        using (var writer = new StreamWriter(file)) {
+            foreach (Terrain terrain in UnityEngine.Object.FindObjectsOfType<Terrain>())
+                writer.WriteLine("terrain\t" + PathOf(terrain.transform) + "\t" + terrain.terrainData.size.ToString("R") + "\t" + terrain.lightmapIndex);
+            foreach (Renderer renderer in UnityEngine.Object.FindObjectsOfType<Renderer>()) {
+                if (!renderer.enabled || !renderer.gameObject.activeInHierarchy) continue;
+                MeshFilter filter = renderer.GetComponent<MeshFilter>();
+                foreach (Material material in renderer.sharedMaterials) {
+                    if (material == null) continue;
+                    writer.WriteLine("renderer\t" + PathOf(renderer.transform) + "\t" + (filter == null || filter.sharedMesh == null ? "" : filter.sharedMesh.name) + "\t" + material.name + "\t" + material.shader.name + "\t" + renderer.lightmapIndex + "\t" + renderer.lightmapScaleOffset.ToString("R") + "\t" + renderer.bounds.center.ToString("R") + "\t" + renderer.bounds.size.ToString("R"));
+                    if (!seen.Add(material)) continue;
+                    writer.WriteLine("material\t" + material.name + "\t" + material.shader.name + "\t" + material.renderQueue + "\t" + String.Join(",", material.shaderKeywords));
+                    for (int p = 0; p < material.shader.GetPropertyCount(); ++p)
+                        writer.WriteLine("material_prop\t" + material.name + "\t" + material.shader.GetPropertyName(p) + "\t" + MaterialValue(material, material.shader, p));
+                }
+            }
+            writer.WriteLine("lightmaps\t" + LightmapSettings.lightmaps.Length + "\t" + LightmapSettings.lightmapsMode);
+        }
+    }
+
     private static void WriteTourStop(Studio.Map map, string file) {
         using (var writer = new StreamWriter(file)) {
             writer.WriteLine("map\t" + map.no + "\tsun\t" + (int)map.sunType + "\tsky_info\t" + map.isSkyInfo);
@@ -83,6 +125,7 @@ public sealed partial class GamePoseProbe {
             yield return new WaitForEndOfFrame();
             string name = output + ".map" + no + "_sun" + sun;
             WriteTourStop(map, name + ".tsv");
+            WriteTourMaterials(name + ".materials.tsv");
             Camera main = Camera.main;
             Vector3 position = main.transform.position; Quaternion rotation = main.transform.rotation; float fov = main.fieldOfView;
             try {
@@ -97,7 +140,7 @@ public sealed partial class GamePoseProbe {
                 using (var writer = new StreamWriter(name + ".post.tsv"))
                     foreach (Behaviour effect in main.GetComponents<Behaviour>()) {
                         writer.WriteLine("effect\t" + effect.GetType().FullName + "\t" + effect.enabled);
-                        if (effect.enabled && effect.GetType().GetMethod("OnRenderImage", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic) != null) effects.Add(effect);
+                        if (effect.enabled && DrawsImage(effect.GetType())) effects.Add(effect);
                         var grade = effect as AmplifyColorBase;
                         if (grade != null) writer.WriteLine("grade\t" + (grade.LutTexture == null ? "null" : grade.LutTexture.name) + "\t" + (grade.LutBlendTexture == null ? "null" : grade.LutBlendTexture.name) + "\t" + grade.BlendAmount.ToString("R") + "\t" + grade.Exposure.ToString("R") + "\t" + grade.Tonemapper);
                     }

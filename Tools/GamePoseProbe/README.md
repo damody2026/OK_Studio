@@ -535,5 +535,4 @@ Lookup. Captures are diagnostics, never production asset inputs.
 `map:sun` stop, CharaStudio loads the map and writes nine fixed views from (0, height, 0) (vertical FOV 60), the same
 views without image effects (`_nopost`), and a `.tsv` with the runtime sky material, lights and water material
 properties. The pictures contain original game content: they stay in `Saved/Tests/<tag>` and are never committed.
-OK Studio's FOV is horizontal: vertical 60 at 16:9 is 91.5 there. `_nopost` does not turn Amplify Color off yet:
-`GetMethod` does not find the private `OnRenderImage` of its base class.
+OK Studio's FOV is horizontal: vertical 60 at 16:9 is 91.5 there.

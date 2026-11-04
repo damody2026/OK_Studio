@@ -445,6 +445,14 @@ UMaterialInterface* OKStudioSkyMaterial(int32 No, FString& OutError)
 		Input(FString::Printf(TEXT("Texture%d"), T.Index), Add(Object));
 		// Each texture with its own sampler state (filter and wrap of its Unity import settings).
 		Pixel.ReplaceInline(*FString::Printf(TEXT("Sampler%d,"), T.Sampler), *FString::Printf(TEXT("Texture%dSampler,"), T.Index));
+		// Star data is a table, read by the direction's latitude: its rows are stored south to north and are not an image to flip.
+		if (FString(T.Name).EndsWith(TEXT("DataTex")))
+			for (int32 At = Pixel.Find(FString::Printf(TEXT("Texture%d.SampleLevel("), T.Index)); At != INDEX_NONE;
+				At = Pixel.Find(FString::Printf(TEXT("Texture%d.SampleLevel("), T.Index), ESearchCase::CaseSensitive, ESearchDir::FromStart, At + 1))
+			{
+				const int32 Flip = Pixel.Find(TEXT("UVFlip"), ESearchCase::CaseSensitive, ESearchDir::FromStart, At);
+				if (Flip != INDEX_NONE) Pixel = Pixel.Left(Flip) + TEXT("0.0000") + Pixel.Mid(Flip + 6);
+			}
 	}
 	Hlsl += Program->Vertex;
 	Hlsl += Program->Glue;
