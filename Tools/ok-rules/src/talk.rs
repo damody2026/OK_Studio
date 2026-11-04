@@ -1,10 +1,10 @@
-//! The original talk core (KKS dialogue rows): which voiced lines she may say now, the topic branches and their
+//! The original talk core (KKS dialogue rows): which lines she may say now (TTS speaks them), the topic branches and their
 //! outcomes, what a finished line writes into the relationship (favor under the stage cap, lewdness, what was talked
 //! about, cooldowns, flags), the caps by stage (rules.json step-up), becoming friends, confessing, invitations, and the
 //! collected topics (what an answer is worth, a dialogue dropping a topic, a daily pickup).
 //!
 //! The catalogues are game data the rules read themselves (`talk_load` names the files; reloaded with the tuning).
-//! Unreal keeps its own copy of the lines for what it shows and plays (text, voices); every decision is here, and lines
+//! Unreal keeps its own copy of the lines for what it shows and speaks (text); every decision is here, and lines
 //! are named by their id.
 use crate::relation::Relation;
 use crate::rng::RandomStream;
@@ -53,9 +53,7 @@ pub struct Node {
     pub group: String,
     pub condition_id: i32,
     pub conditions: Vec<String>,
-    pub voice_complete: bool,
-    pub voice_reason: String,
-    /// It has voice files to play (a complete, non-empty sequence).
+    /// She says it (a row the original game voiced, with text); TTS speaks it, the original voice files are not used.
     pub voiced: bool,
     pub effect: Effect,
     pub choices: Vec<Choice>,
@@ -266,32 +264,11 @@ fn condition_object(c: Option<&Value>, out: &mut Vec<String>) -> Result<i32, Str
     Ok(id)
 }
 
-/// The voice sequence is complete: every slot matched, indices 0..n without holes, each with a file.
-fn voice_sequence(source: &Value, node: &Value) -> (bool, bool, String) {
-    let Some(rows) = source.get("voice_sequence").and_then(Value::as_array) else { return (false, false, "voice_sequence_missing".into()) };
-    if rows.is_empty() {
-        return (true, false, "voice_sequence_empty".into());
-    }
-    let mut slots: Vec<(i32, String, bool)> = Vec::new();
-    for r in rows {
-        let Some(i) = jint(r.get("index")) else { return (false, false, "voice_sequence_incomplete:bad_index".into()) };
-        let has = r.get("path").and_then(Value::as_str).map(|s| !s.is_empty()).unwrap_or(false) || r.get("zh_ogg").and_then(Value::as_str).map(|s| !s.is_empty()).unwrap_or(false);
-        slots.push((i, r.get("status").and_then(Value::as_str).unwrap_or("").to_string(), has));
-    }
-    slots.sort_by_key(|s| s.0);
-    if slots.iter().enumerate().any(|(k, s)| s.0 != k as i32) {
-        return (false, false, "voice_sequence_incomplete:index_hole".into());
-    }
-    let refs: Vec<i32> = node.get("audio_slots").and_then(Value::as_array).into_iter().flatten().filter(|a| a.get("zh_ref").or(a.get("path")).and_then(Value::as_str).map(|s| !s.is_empty()).unwrap_or(false)).filter_map(|a| jint(a.get("index"))).collect();
-    for (i, status, has) in &slots {
-        if status != "matched" {
-            return (false, false, format!("voice_sequence_incomplete:{}", if status.is_empty() { "missing_status" } else { status }));
-        }
-        if !has && !refs.contains(i) {
-            return (false, false, "voice_sequence_incomplete:missing_path".into());
-        }
-    }
-    (true, true, "voice_sequence_matched".into())
+/// She says this line: the original game voiced the row (`spoken` in a runtime catalogue, else a non-empty
+/// `source.voice_sequence`; an unvoiced row is the player's prompt or a silent row) and it has text. TTS speaks it.
+fn spoken(node: &Value, source: &Value) -> bool {
+    let voiced = node.get("spoken").and_then(Value::as_bool).unwrap_or_else(|| source.get("voice_sequence").and_then(Value::as_array).is_some_and(|v| !v.is_empty()));
+    voiced && ["text_jp", "text_zh"].iter().any(|k| node.get(*k).and_then(Value::as_str).is_some_and(|s| !s.trim().is_empty()))
 }
 
 fn parse_catalogue(root: &Value, data: &mut TalkData) -> Result<(), String> {
@@ -376,10 +353,7 @@ fn parse_catalogue(root: &Value, data: &mut TalkData) -> Result<(), String> {
         if let Some(d) = jint(o.get("cooldown_days")).filter(|d| *d > 0) {
             n.effect.cooldown_days = d;
         }
-        let (complete, voiced, reason) = voice_sequence(src, o);
-        n.voice_complete = complete;
-        n.voiced = voiced;
-        n.voice_reason = reason;
+        n.voiced = spoken(o, src);
         if let Some(cs) = o.get("choices") {
             let Some(cs) = cs.as_array() else { warn(data, format!("bad_choices:{id}")); continue };
             let mut ok = true;
@@ -703,9 +677,6 @@ fn line_eligible(n: &Node, r: &Relation, who: &Who) -> Result<(), String> {
     if !n.generic() {
         return Err(format!("branch_role_unsupported:{}", n.roles.first().map(String::as_str).unwrap_or("missing")));
     }
-    if !n.voice_complete {
-        return Err(if n.voice_reason.is_empty() { "voice_sequence_incomplete".into() } else { n.voice_reason.clone() });
-    }
     if n.once && r.talked.contains(&n.effect.memory) {
         return Err("once_already_talked".into());
     }
@@ -723,7 +694,7 @@ fn line_eligible(n: &Node, r: &Relation, who: &Who) -> Result<(), String> {
 
 /// A line already said or cooling down may be said again once a category is used up (a new round).
 fn line_eligible_new_round(n: &Node, r: &Relation, who: &Who) -> bool {
-    eval_conditions(&n.conditions, r, &who.personality, &n.category).is_ok() && n.generic() && n.voice_complete && n.voiced && !(n.names_him && r.stage == "stranger") && !(who.talk_limit && talk_cost(&n.category) > r.talks_remaining)
+    eval_conditions(&n.conditions, r, &who.personality, &n.category).is_ok() && n.generic() && n.voiced && !(n.names_him && r.stage == "stranger") && !(who.talk_limit && talk_cost(&n.category) > r.talks_remaining)
 }
 
 // ------------------------------------------------------------------------------------------------ caps and commits
@@ -859,7 +830,7 @@ fn finish(data: &TalkData, r: &Relation, who: &Who, b: &Branch, chosen: i32, d: 
     d.role = if n.roles.len() == 1 { n.roles[0].clone() } else { b.indexer[chosen as usize].role.clone() };
     d.refusal = d.role == "failure" || d.role == "no_interested";
     d.effect = n.effect.clone();
-    d.playable = n.voice_complete && eval_conditions(&n.conditions, r, &who.personality, &n.category).is_ok();
+    d.playable = eval_conditions(&n.conditions, r, &who.personality, &n.category).is_ok();
 }
 
 /// A branch's outcome: by her preference axes, by weights, or by talk temper.
@@ -935,7 +906,7 @@ pub fn topic(data: &TalkData, r: &Value) -> Result<Value, String> {
                 continue;
             }
             let complete = (ignore_cooling || !topic_cooling(&rel, &b.id))
-                && b.indexer.iter().all(|m| m.node.map(|n| data.nodes[n].voice_complete && eval_conditions(&data.nodes[n].conditions, &rel, &who.personality, &data.nodes[n].category).is_ok()).unwrap_or(false));
+                && b.indexer.iter().all(|m| m.node.map(|n| eval_conditions(&data.nodes[n].conditions, &rel, &who.personality, &data.nodes[n].category).is_ok()).unwrap_or(false));
             if complete {
                 let d = resolve_branch(data, &rel, &who, b, 0);
                 if d.decided && d.playable {
@@ -1013,7 +984,7 @@ pub fn farewell_lines(data: &TalkData, r: &Relation, who: &Who) -> Vec<usize> {
     let mut best = f32::MIN;
     let mut out = Vec::new();
     for (k, n) in data.nodes.iter().enumerate() {
-        if n.category != "farewell" || n.group != "EndConversation" || n.personality != who.personality_id || n.stage != stage_index(&r.stage) || !n.generic() || !n.voice_complete {
+        if n.category != "farewell" || n.group != "EndConversation" || n.personality != who.personality_id || n.stage != stage_index(&r.stage) || !n.generic() {
             continue;
         }
         let budget = who.budget as f32;
@@ -1156,7 +1127,7 @@ pub fn friendship(data: &TalkData, r: &Relation, who: &Who) -> EventResult {
     if let Some(b) = best {
         let n = &data.nodes[b];
         res.line = n.id.clone();
-        res.playable = n.voice_complete && eval_conditions(&n.conditions, r, &who.personality, &n.category).is_ok();
+        res.playable = eval_conditions(&n.conditions, r, &who.personality, &n.category).is_ok();
     }
     if data.rules.step_up.is_none() {
         res.reason = "stepup_limit_missing".into();
@@ -1343,8 +1314,16 @@ fn effect_of(v: Option<&Value>) -> Result<Effect, String> {
     Ok(e)
 }
 
+/// Without the original dialogue catalogue (original game data, not versioned; Tools/original_data.lua) she talks through
+/// free talk only: no lines, and the original step-up caps (abdata/action/list/stepup limits 0:75, 1:100, 2:150, 3:150).
+fn without_catalogue() -> &'static TalkData {
+    static EMPTY: std::sync::OnceLock<TalkData> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(|| TalkData { rules: TalkRules { step_up: Some([75, 100, 150]), beyond: Some(150), ..TalkRules::default() }, ..TalkData::default() })
+}
+
 pub fn eval(data: Option<&TalkData>, kind: &str, r: &Value) -> Option<Result<Value, String>> {
-    let need = || data.ok_or_else(|| "talk_not_loaded".to_string());
+    let data: &TalkData = match data { Some(d) => d, None => without_catalogue() };
+    let need = || -> Result<&TalkData, String> { Ok(data) };
     Some((|| -> Result<Value, String> {
         match kind {
             "favor_limit" => {

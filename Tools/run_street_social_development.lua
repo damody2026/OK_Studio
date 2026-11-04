@@ -246,7 +246,8 @@ local function main()
     say("Heroine only: " .. card)
   end
   -- The patch is not an input check outside -Strict: it was rebuilt above when missing (it carries the material roots).
-  local inputs = { build.executable, build.catalogue, o.selectionfile, o.malecard }
+  -- The original dialogue catalogue is optional (original game data, Tools/original_data.lua): without it, free talk only.
+  local inputs = { build.executable, o.selectionfile, o.malecard }
   if o.strict then inputs[#inputs + 1] = build.patch end
   for _, p in ipairs(inputs) do if not exists(p) then error("Missing StreetSocial input: " .. tostring(p), 0) end end
   if o.strict then strict_inputs(build) end

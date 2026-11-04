@@ -18,7 +18,7 @@
 // Missing step-up rules disable the event. Hotel, prayer, and map 9 are not added.
 // Success and failure share one transaction. Dry-run does not change the store.
 // Topic cooldowns are street state, not a KKS day rule. Schema 1 saves still load without them.
-// voice_sequence is playable only when every slot is matched. Holes are not shortened.
+// Her lines are spoken by TTS; the original voice files are not read.
 // Favor clamps use rules.json stepup limits 0:75, 1:100, 2:150. There is no 100-point cap.
 // Lewdness 0..100 matches the documented GameAssist clamp. Talk cost 1 is not claimed as KKS.
 // Absent hotel, prayer, player stats, map 9, and attribute custom offsets contribute 0.
@@ -117,7 +117,7 @@ struct FOKStreetChoice {
 
 struct FOKStreetNode {
  FString Id, Personality, Category, TextJp, TextZh, Source,FacialExpression;
- TArray<FString> VoiceFiles, Conditions;
+ TArray<FString> Conditions;
  float Priority = 0.f;
  bool Once = false;
  FOKStreetEffect Effect;
@@ -126,8 +126,9 @@ struct FOKStreetNode {
  int32 StageIndex = INDEX_NONE;
  int32 ConditionId = INDEX_NONE;
  bool EffectsDefined = false;
- bool VoiceSequenceComplete = false;
- FString VoiceSequenceReason, GameSpeakFilter, StreetSupport;
+ FString GameSpeakFilter, StreetSupport;
+ // She says it: the original game voiced the row (an unvoiced row is the player's prompt or silent). TTS speaks it.
+ bool Spoken = false;
  TArray<FString> Roles;
  int32 PartIndex = 0;
  int32 Command = INDEX_NONE;
@@ -399,7 +400,6 @@ struct FOKStreetListItem {
  int32 Choice = INDEX_NONE;
  bool Eligible = false;
  FString Label, Reason;
- TArray<FString> VoiceFiles;
 };
 
 struct FOKStreetBranchQuery {
@@ -963,11 +963,6 @@ inline int32 OKStreetRelationIndex(FOKStreetStore& Store, const FString& Id, int
 
 
 
-inline void OKStreetPlaybackFiles(const FOKStreetNode& Node, TArray<FString>& Out) {
- Out.Reset();
- for (const FString& File : Node.VoiceFiles) if (!File.IsEmpty()) Out.Add(File);
-}
-
 inline void OKStreetWarn(FOKStreetCatalogue& Catalogue, const FString& Warning) {
  ++Catalogue.Skipped;
  if (Catalogue.Warnings.Num() < 32) Catalogue.Warnings.Add(Warning);
@@ -1029,50 +1024,6 @@ inline bool OKStreetReadChoice(const TSharedPtr<FJsonObject>& Object, FOKStreetC
  if (!OKStreetReadEffect(Object, Choice.Effect, Error)) return false;
  Choice.Effect.TalkCost = 0;
  Choice.Effect.Memory = Choice.Id;
- return true;
-}
-
-inline bool OKStreetReadVoiceSequence(const TSharedPtr<FJsonObject>& Source, FOKStreetNode& Node, const FString& CatalogueFile, const TSharedPtr<FJsonObject>& NodeObject = nullptr) {
- const TArray<TSharedPtr<FJsonValue>>* Rows = nullptr;
- if (!Source.IsValid() || !Source->TryGetArrayField(TEXT("voice_sequence"), Rows) || !Rows) { Node.VoiceSequenceReason = TEXT("voice_sequence_missing"); return false; }
- if (Rows->Num() == 0) { Node.VoiceSequenceComplete = true; Node.VoiceSequenceReason = TEXT("voice_sequence_empty"); return true; }
- struct FSlot { int32 Index = INDEX_NONE; FString Status, Path, Zh; };
- TArray<FSlot> Slots;
- for (const TSharedPtr<FJsonValue>& Row : *Rows) {
-  const TSharedPtr<FJsonObject> SlotObject = Row.IsValid() ? Row->AsObject() : nullptr;
-  if (!SlotObject.IsValid()) { Node.VoiceSequenceReason = TEXT("voice_sequence_incomplete:bad_slot"); return false; }
-  FSlot Slot;
-  if (!OKStreetJsonInt(SlotObject->TryGetField(TEXT("index")), Slot.Index)) { Node.VoiceSequenceReason = TEXT("voice_sequence_incomplete:bad_index"); return false; }
-  SlotObject->TryGetStringField(TEXT("status"), Slot.Status);
-  FString Path, Zh;
-  if (SlotObject->TryGetStringField(TEXT("path"), Path)) Slot.Path = Path;
-  if (SlotObject->TryGetStringField(TEXT("zh_ogg"), Zh)) Slot.Zh = OKStreetResolveAgainst(CatalogueFile, Zh);
-  Slots.Add(Slot);
- }
- Slots.Sort([](const FSlot& A, const FSlot& B) { return A.Index < B.Index; });
- for (int32 Index = 0; Index < Slots.Num(); ++Index) if (Slots[Index].Index != Index) { Node.VoiceSequenceReason = TEXT("voice_sequence_incomplete:index_hole"); return false; }
- TMap<int32, FString> AudioRef;
- if (NodeObject.IsValid()) {
-  const TArray<TSharedPtr<FJsonValue>>* Audio = nullptr;
-  if (NodeObject->TryGetArrayField(TEXT("audio_slots"), Audio) && Audio) {
-   for (const TSharedPtr<FJsonValue>& AudioRow : *Audio) {
-    const TSharedPtr<FJsonObject> AudioObject = AudioRow.IsValid() ? AudioRow->AsObject() : nullptr;
-    int32 AudioIndex = INDEX_NONE;
-    FString Ref;
-    if (!AudioObject.IsValid() || !OKStreetJsonInt(AudioObject->TryGetField(TEXT("index")), AudioIndex)) continue;
-    if (!AudioObject->TryGetStringField(TEXT("zh_ref"), Ref) || Ref.IsEmpty()) AudioObject->TryGetStringField(TEXT("path"), Ref);
-    if (!Ref.IsEmpty()) AudioRef.Add(AudioIndex, OKStreetResolveAgainst(CatalogueFile, Ref));
-   }
-  }
- }
- for (FSlot& Slot : Slots) {
-  if (Slot.Status != TEXT("matched")) { Node.VoiceSequenceReason = TEXT("voice_sequence_incomplete:") + (Slot.Status.IsEmpty() ? TEXT("missing_status") : Slot.Status); return false; }
-  if (Slot.Path.IsEmpty() && Slot.Zh.IsEmpty()) { if (const FString* Ref = AudioRef.Find(Slot.Index)) Slot.Zh = *Ref; }
-  if (Slot.Path.IsEmpty() && Slot.Zh.IsEmpty()) { Node.VoiceSequenceReason = TEXT("voice_sequence_incomplete:missing_path"); return false; }
- }
- for (const FSlot& Slot : Slots) Node.VoiceFiles.Add(Slot.Zh.IsEmpty() ? OKStreetResolveAgainst(CatalogueFile,Slot.Path) : Slot.Zh);
- Node.VoiceSequenceComplete = true;
- Node.VoiceSequenceReason = TEXT("voice_sequence_matched");
  return true;
 }
 
@@ -1193,17 +1144,7 @@ inline FOKStreetCatalogue OKStreetParseCatalogue(const FString& Json, const FStr
   int32 CooldownDays = 0;
   if (OKStreetJsonInt(Object->TryGetField(TEXT("cooldown_days")), CooldownDays) && CooldownDays > 0) Node.Effect.CooldownDays = CooldownDays;
   Node.Source = FString::Printf(TEXT("stage=%d;priority=%d;role=%s;effects=%d"), Node.StageIndex, Priority, Node.Roles.Num() ? *FString::Join(Node.Roles, TEXT("+")) : TEXT("missing"), Node.EffectsDefined ? 1 : 0);
-  OKStreetReadVoiceSequence(*Source, Node, CatalogueFile, Object);
-  // The runtime manifest generator selects one complete language sequence.
-  // Preserve that choice after validating the original slot order and holes.
-  const TArray<TSharedPtr<FJsonValue>>* SelectedVoices=nullptr;
-  if(Node.VoiceSequenceComplete && Object->TryGetArrayField(TEXT("voice_files"),SelectedVoices) && SelectedVoices && SelectedVoices->Num()==Node.VoiceFiles.Num()){
-   TArray<FString> Selected;bool Valid=true;
-   for(const auto& Value:*SelectedVoices){FString Path;if(!Value.IsValid()||!Value->TryGetString(Path)||Path.IsEmpty()){Valid=false;break;}Selected.Add(OKStreetResolveAgainst(CatalogueFile,Path));}
-   // Original source catalogues use Japanese; only runtime selections have an
-   // explicit language marker. Raw catalogue tests continue to prefer Chinese.
-   if(Valid && Object->HasField(TEXT("voice_language")))Node.VoiceFiles=MoveTemp(Selected);
-  }
+  if (!Object->TryGetBoolField(TEXT("spoken"), Node.Spoken)) { const TArray<TSharedPtr<FJsonValue>>* Sequence = nullptr; Node.Spoken = (*Source)->TryGetArrayField(TEXT("voice_sequence"), Sequence) && Sequence && Sequence->Num() > 0; }
   if (Object->HasField(TEXT("choices"))) {
    const TArray<TSharedPtr<FJsonValue>>* Choices = nullptr;
    if (!Object->TryGetArrayField(TEXT("choices"), Choices) || !Choices) { OKStreetWarn(Catalogue, TEXT("bad_choices:") + Node.Id); continue; }
@@ -2271,20 +2212,13 @@ inline void OKStreetCheckCatalogue(TArray<FString>& Failures) {
  OKStreetExpect(Failures, Catalogue.Error.IsEmpty() && !Catalogue.ById.Contains(TEXT("stringpers")) && !Catalogue.ById.Contains(TEXT("badsource")) && Catalogue.Skipped >= 2, TEXT("string personality and string source are rejected"));
  const FOKStreetNode& Low = Catalogue.Nodes[Catalogue.ById[TEXT("low")]];
  const FOKStreetNode& High = Catalogue.Nodes[Catalogue.ById[TEXT("high")]];
- const FOKStreetNode& Hole = Catalogue.Nodes[Catalogue.ById[TEXT("hole")]];
  const FOKStreetNode& Branch = Catalogue.Nodes[Catalogue.ById[TEXT("branch")]];
  const FOKStreetNode& Never = Catalogue.Nodes[Catalogue.ById[TEXT("never")]];
  const FOKStreetNode& Other = Catalogue.Nodes[Catalogue.ById[TEXT("otherid")]];
  const FOKStreetNode& NoFx = Catalogue.Nodes[Catalogue.ById[TEXT("nofx")]];
- const FOKStreetNode& Lover = Catalogue.Nodes[Catalogue.ById[TEXT("loverline")]];
  OKStreetExpect(Failures, Low.Personality == TEXT("0") && Low.PersonalityId == 0 && Low.StageIndex == 0 && Low.ConditionId == -1 && Low.EffectsDefined && Low.Priority == 1.f && Low.Effect.Favor == 10.f && Low.Effect.Lewdness == 120.f && Low.Effect.RelationEvent.IsEmpty(), TEXT("supported node keeps integer personality, stage, effects, and priority"));
- OKStreetExpect(Failures, Low.VoiceSequenceComplete && Low.VoiceFiles.Num() == 2 && Low.VoiceFiles[0] == TEXT("C:/v/zh_a.ogg") && Low.VoiceFiles[1] == TEXT("C:/v/zh_b.ogg"), TEXT("complete sequence plays every Chinese slot in order"));
- OKStreetExpect(Failures, !Hole.VoiceSequenceComplete && Hole.VoiceFiles.Num() == 0 && Hole.VoiceSequenceReason == TEXT("voice_sequence_incomplete:missing_ogg"), TEXT("callName or missing slots are not shortened away"));
- TArray<FString> HolePlay;
- OKStreetPlaybackFiles(Hole, HolePlay);
- OKStreetExpect(Failures, HolePlay.Num() == 0 && !Hole.VoiceFiles.Contains(TEXT("C:/v/zh_keep.ogg")), TEXT("playback does not keep the surviving clip"));
  OKStreetExpect(Failures, !NoFx.EffectsDefined && NoFx.Effect.Favor == 0.f && NoFx.Effect.Lewdness == 0.f, TEXT("effects_defined false contributes no favor or lewdness"));
- OKStreetExpect(Failures, Lover.VoiceSequenceComplete && Lover.VoiceSequenceReason == TEXT("voice_sequence_empty") && !Branch.Roles.IsEmpty() && Never.ConditionId == 0 && Other.ConditionId == 2 && High.Priority == 9.f, TEXT("parsed lines keep what the rules read (talk.rs decides who may say them)"));
+ OKStreetExpect(Failures, !Branch.Roles.IsEmpty() && Never.ConditionId == 0 && Other.ConditionId == 2 && High.Priority == 9.f, TEXT("parsed lines keep what the rules read (talk.rs decides who may say them)"));
 }
 
 inline void OKStreetCheckRoutes(TArray<FString>& Failures) {

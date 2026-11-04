@@ -59,11 +59,6 @@ fn shipped_lines_and_events() {
     if let Some(i) = find(&d, "p0_r15_daily") {
         assert_eq!(i["reason"], "branch_role_unsupported:success");
     }
-    // A hole in the voice sequence keeps the line out (friend stage line).
-    let f = lines("greeting", &json!({"id": "heroine", "stage": "friend", "talks_remaining": 5}));
-    if let Some(i) = find(&f, "p0_r421_greeting") {
-        assert_eq!(i["reason"], "voice_sequence_incomplete:missing_ogg");
-    }
     // Each talk category has something to say.
     for c in ["daily", "romance", "intimacy"] {
         let v = ask(&rules, json!({"kind": "talk_topic", "category": c, "relation": stranger, "personality": "0", "personality_id": 0, "budget": 5, "seed": 7}));

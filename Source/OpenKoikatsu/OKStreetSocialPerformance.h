@@ -179,25 +179,6 @@ inline const TCHAR* OKStreetGestureForState(const TCHAR* State)
 	return nullptr;
 }
 
-// Content-relative ogg ref. Drive letters, KKS roots, and parent segments are rejected.
-inline bool OKStreetIsPortableAudioRef(const TCHAR* Ref)
-{
-	if (!Ref || !*Ref)
-	{
-		return false;
-	}
-	if (Ref[0] == TEXT('/') || Ref[0] == TEXT('\\'))
-	{
-		return false;
-	}
-	const FString Text(Ref);
-	if (Text.Contains(TEXT(":")) || Text.Contains(TEXT("..")) || Text.Contains(TEXT("KoikatuSunshine")) || Text.Contains(TEXT("voice_extract")))
-	{
-		return false;
-	}
-	return (Text.StartsWith(TEXT("zh_ogg/")) || Text.StartsWith(TEXT("ja_ogg/"))) && Text.EndsWith(TEXT(".ogg"));
-}
-
 // TalkScene buttonEventContents[6] -> CommandFunc(11) -> GetEventADV command 6.
 inline constexpr int32 OKStreetConfessionButtonIndex = 6;
 inline constexpr int32 OKStreetConfessionCommandFunc = 11;

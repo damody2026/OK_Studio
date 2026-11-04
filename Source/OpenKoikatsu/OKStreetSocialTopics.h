@@ -25,9 +25,8 @@ inline bool OKStreetReadTopicParts(const TArray<TSharedPtr<FJsonValue>>& Values,
  FString Male;
  for(const auto& V:Values){const auto Obj=V->AsObject();if(!Obj){Error=TEXT("topic_part_invalid");return false;}FString Speaker,Text,TextZh;Obj->TryGetStringField(TEXT("speaker"),Speaker);Obj->TryGetStringField(TEXT("text_jp"),Text);Obj->TryGetStringField(TEXT("text_zh"),TextZh);
   if(Speaker==TEXT("male")){Male=OKStreetLineLabel(TextZh,Text,TEXT(""));continue;}
-  FOKStreetTopicPart Part;Part.MaleText=MoveTemp(Male);Part.Line.TextJp=Text;Part.Line.TextZh=TextZh;Part.Line.PersonalityId=Personality;Part.Line.Category=TEXT("daily");Part.Line.VoiceSequenceComplete=true;Obj->TryGetStringField(TEXT("face"),Part.Line.FacialExpression);
-  if(Speaker!=TEXT("female")||!OKStreetReadStringArray(Obj,TEXT("voices"),Part.Line.VoiceFiles)||Part.Line.VoiceFiles.IsEmpty()){Error=TEXT("topic_voice_incomplete");return false;}
-  for(const auto& Voice:Part.Line.VoiceFiles)if(!FPaths::IsRelative(Voice)&&!IFileManager::Get().FileExists(*Voice)){Error=TEXT("topic_voice_missing");return false;}
+  FOKStreetTopicPart Part;Part.MaleText=MoveTemp(Male);Part.Line.TextJp=Text;Part.Line.TextZh=TextZh;Part.Line.PersonalityId=Personality;Part.Line.Category=TEXT("daily");Part.Line.Spoken=true;Obj->TryGetStringField(TEXT("face"),Part.Line.FacialExpression);
+  if(Speaker!=TEXT("female")){Error=TEXT("topic_speaker_invalid");return false;}
   Out.Add(MoveTemp(Part));
  }
  if(!Male.IsEmpty()){FOKStreetTopicPart Trailing;Trailing.MaleText=MoveTemp(Male);Out.Add(MoveTemp(Trailing));}

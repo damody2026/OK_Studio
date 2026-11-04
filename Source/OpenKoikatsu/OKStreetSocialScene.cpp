@@ -489,7 +489,7 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  TArray<TWeakObjectPtr<AStaticMeshActor>> FacilityProps;
  TArray<TPair<TWeakObjectPtr<AStaticMeshActor>,FVector>> FacilityHandProps;
  FOKStreetManifestSocial Manifest;
- FOKStreetCatalogue Catalogue;FString TopicCataloguePath;float CollectedDesire=0;mutable TMap<FString,int32> FavorLimitCache;bool LineInterrupted=false;TMap<uint64,TFunction<void(bool,const FString&,const FString&)>> MindChats;
+ FOKStreetCatalogue Catalogue;FString TopicCataloguePath;float CollectedDesire=0;mutable TMap<FString,int32> FavorLimitCache;bool LineInterrupted=false;bool SilentLine=false;double SilentLineUntil=0;TMap<uint64,TFunction<void(bool,const FString&,const FString&)>> MindChats;
  TArray<FOKStreetInvitation> Invitations;
  bool InvitationActive=false,InvitationAccepted=false,InvitationOnlyTest=false;
  int32 InvitationCommand=INDEX_NONE,InvitationQueued=INDEX_NONE,InvitationGirl=INDEX_NONE;
@@ -836,10 +836,13 @@ void AOKStreetSocialScene::BeginPlay(){
  }
  if(S.Manifest.Characters.Num()<2||S.Manifest.Characters.Num()>OKStreetCastCount||S.Manifest.Characters[0].SexKind!=EOKStreetSex::Male){S.Errors.Add(FString::Printf(TEXT("Expected one male and 1..%d female APNGs"),OKStreetFemaleCount));WriteReport(false);return;}
  for(int32 I=1;I<S.Manifest.Characters.Num();++I)if(!OKStreetIsFemaleTarget(I,S.Manifest.Characters[I])){S.Errors.Add(TEXT("Female metadata validation failed"));WriteReport(false);return;}
- FString Body;
- if(!FFileHelper::LoadFileToString(Body,*S.Manifest.DialogueCatalogue)){S.Errors.Add(TEXT("Missing dialogue catalogue"));WriteReport(false);return;}
- S.Catalogue=OKStreetParseCatalogue(Body,S.Manifest.DialogueCatalogue);
- if(!S.Catalogue.Error.IsEmpty()||S.Catalogue.Nodes.IsEmpty()){S.Errors.Add(TEXT("Catalogue rejected: ")+S.Catalogue.Error);WriteReport(false);return;}
+ // The original dialogue catalogue is optional (original game data, Tools/original_data.lua): without it she talks through
+ // free talk only.
+ if(!S.Manifest.DialogueCatalogue.IsEmpty()){FString Body;
+  if(!FFileHelper::LoadFileToString(Body,*S.Manifest.DialogueCatalogue)){S.Errors.Add(TEXT("Missing dialogue catalogue"));WriteReport(false);return;}
+  S.Catalogue=OKStreetParseCatalogue(Body,S.Manifest.DialogueCatalogue);
+  if(!S.Catalogue.Error.IsEmpty()||S.Catalogue.Nodes.IsEmpty()){S.Errors.Add(TEXT("Catalogue rejected: ")+S.Catalogue.Error);WriteReport(false);return;}
+ }else UE_LOG(LogTemp,Display,TEXT("Street: no original dialogue catalogue, free talk only"));
  {TSharedPtr<FJsonObject> ManifestObject;FString JapanesePath,JapaneseBody;
   if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),ManifestObject)&&ManifestObject.IsValid()&&ManifestObject->TryGetStringField(TEXT("dialogue_catalogue_ja"),JapanesePath)&&FFileHelper::LoadFileToString(JapaneseBody,*JapanesePath))S.OtherLanguage=OKStreetParseCatalogue(JapaneseBody,JapanesePath);
   LoadVoiceSettings(ManifestObject);
@@ -853,7 +856,7 @@ void AOKStreetSocialScene::BeginPlay(){
  // rules.json (favor caps, preferences, confession chance) is read by the rules with the dialogue catalogue (talk.rs).
  {TSharedPtr<FJsonObject> M;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),M)&&M)M->TryGetStringField(TEXT("topic_catalogue"),S.TopicCataloguePath);}
  StartCalendarAndMind();
- {TSharedPtr<FJsonObject> ManifestObject;FString Path,ExpressionBody;bool Enabled=false;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),ManifestObject)&&ManifestObject.IsValid()){ManifestObject->TryGetBoolField(TEXT("enable_face_patterns"),Enabled);if(ManifestObject->TryGetStringField(TEXT("expression_catalogue"),Path)&&FFileHelper::LoadFileToString(ExpressionBody,*Path))S.Expressions=OKStreetParseExpressions(ExpressionBody);else if(Enabled)S.Expressions.Error=TEXT("Enabled facial expressions require the common expression catalogue");if(!S.Expressions.Error.IsEmpty()){S.Errors.Add(S.Expressions.Error);WriteReport(false);return;}}}
+ {TSharedPtr<FJsonObject> ManifestObject;FString Path,ExpressionBody;bool Enabled=false;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),ManifestObject)&&ManifestObject.IsValid()){ManifestObject->TryGetBoolField(TEXT("enable_face_patterns"),Enabled);if(ManifestObject->TryGetStringField(TEXT("expression_catalogue"),Path)&&FFileHelper::LoadFileToString(ExpressionBody,*Path))S.Expressions=OKStreetParseExpressions(ExpressionBody);else if(Enabled&&!Path.IsEmpty())S.Expressions.Error=TEXT("Enabled facial expressions require the common expression catalogue");if(!S.Expressions.Error.IsEmpty()){S.Errors.Add(S.Expressions.Error);WriteReport(false);return;}}}
  if(S.Manifest.IdentityRetargets.Num()>0||S.RetargetSelfTest){
   if(S.RetargetSelfTest&&S.Manifest.IdentityRetargets.Num()==0){S.IdentityRetargetRejected=1;S.Errors.Add(TEXT("Identity retarget self-test has no explicit requests"));WriteReport(false);return;}
   TArray<FString> Females,Actors;for(int32 Index=0;Index<S.Manifest.Characters.Num();++Index){const FString Id=OKStreetStableId(S.Manifest.Characters[Index]);Actors.Add(Id);if(Index>0)Females.Add(Id);}
@@ -868,7 +871,7 @@ void AOKStreetSocialScene::BeginPlay(){
  {TSharedPtr<FJsonObject> M;FString TopicPath,TopicBody;
   if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),M)&&M&&M->TryGetStringField(TEXT("topic_catalogue"),TopicPath)){
    if(!FFileHelper::LoadFileToString(TopicBody,*TopicPath)||!OKStreetReadTopics(TopicBody,S.CollectedTopics,Error)){S.Errors.Add(TEXT("Collected topic catalogue rejected: ")+Error);WriteReport(false);return;}NameCollectedTopics();
-   auto AddParts=[&](TArray<FOKStreetTopicPart>& Parts){for(auto& Part:Parts){if(Part.Line.VoiceFiles.IsEmpty())continue;Part.Line.Id=FString::Printf(TEXT("collected-p%d-%d"),Part.Line.PersonalityId,S.Catalogue.Nodes.Num());Part.Node=S.Catalogue.Nodes.Add(Part.Line);if(!S.OtherLanguage.Nodes.IsEmpty())S.OtherLanguage.Nodes.Add(Part.Line);}};
+   auto AddParts=[&](TArray<FOKStreetTopicPart>& Parts){for(auto& Part:Parts){if(!Part.Line.Spoken)continue;Part.Line.Id=FString::Printf(TEXT("collected-p%d-%d"),Part.Line.PersonalityId,S.Catalogue.Nodes.Num());Part.Node=S.Catalogue.Nodes.Add(Part.Line);if(!S.OtherLanguage.Nodes.IsEmpty())S.OtherLanguage.Nodes.Add(Part.Line);}};
    for(auto& Profile:S.CollectedTopics.Profiles){for(auto& L:Profile.Listen){AddParts(L.Intro);AddParts(L.Success);AddParts(L.Normal);AddParts(L.Failure);}for(auto& Entry:Profile.Offers)for(auto& Seq:Entry.Value)AddParts(Seq);for(auto& T:Profile.Touch)AddParts(T.Parts);}
   }
  }
@@ -932,7 +935,8 @@ bool AOKStreetSocialScene::BeginTalk(int32 Character){
  S.Yaw=(Agent.Position-S.Male).Rotation().Yaw;S.Pitch=-8;
  S.Rotations[Character]=OKStreetFacingMovement(S.Male-Agent.Position,S.Rotations[Character]);
  S.Rotations[0]=OKStreetFacingMovement(Agent.Position-S.Male,S.Rotations[0]);
- S.Message=OKT(TEXT("ui.scene.topic_choice_prompt"));RefreshUI();
+ // Without the original dialogue catalogue there are no topic lines: he just talks to her (free talk).
+ S.Message=OKT(S.Catalogue.Nodes.IsEmpty()?TEXT("ui.scene.free_talk_prompt"):TEXT("ui.scene.topic_choice_prompt"));RefreshUI();
  const bool Quiet=S.QuietTalk;
  // They meet as agreed (a date with her kept in the last two hours, or due within the hour): not a stranger's "oh, you
  // want to talk to me?" line; she greets him as the meeting it is, in her own words.
@@ -959,6 +963,7 @@ void AOKStreetSocialScene::Topic(const FString& Category){
  if(!State||State->Target==INDEX_NONE||State->Node!=INDEX_NONE||State->RelationshipPending||State->CollectedActive)return;auto& S=*State;
  // Her answer is on its way (she spoke up after his silence): his topic waits for it (TickFreeTalkLive), or her "you went
  // quiet again" arrived right after his question.
+ if(S.Catalogue.Nodes.IsEmpty()){S.Message=OKT(TEXT("ui.scene.free_talk_only_hint"));RefreshUI();return;}
  if(S.FreeTalkBusy){S.PendingTopic=Category;UE_LOG(LogTemp,Display,TEXT("Street topic %s waits for her answer in progress"),*Category);return;}
  S.BranchLine=false;S.RelationshipPending=false;S.PlayerLine.Reset();
  const auto& Meta=S.Manifest.Characters[S.Target];
@@ -1073,15 +1078,13 @@ bool AOKStreetSocialScene::QueueNode(int32 Chosen,const FString& Category,const 
  auto& S=*State;if(!S.Catalogue.Nodes.IsValidIndex(Chosen)){FailTalk(TEXT("Dialogue node is unavailable"));return false;}
  // A scripted line takes the bottom box back from free talk.
  S.FreeTalkReplay.Reset();S.FreeTalkReplayParts.Reset();S.FreeTalkReplayHold=0;S.FreeTalkSpeechPlayed=S.FreeTalkSpeechLines.Num();S.FreeTalkCaptionPlayer.Reset();S.FreeTalkCaptionHer.Reset();
- TArray<FString> Voices;
- for(const auto& File:S.Catalogue.Nodes[Chosen].VoiceFiles){FString Id,Error;if(!OKAdmitCrowdRuntimeVoice(this,File,Id,Error)){FailTalk(TEXT("Dialogue voice admission failed: ")+Error);return false;}Voices.Add(Id);}
- if(Voices.IsEmpty()){FailTalk(TEXT("Dialogue has no admitted voice sequence"));return false;}
  // Every replacement line revokes the previous invitation transaction.
  if(Category!=TEXT("invitation")){S.InvitationActive=false;S.InvitationSequence.Reset();S.InvitationGirl=INDEX_NONE;S.InvitationCommand=INDEX_NONE;if(Category!=TEXT("greeting"))S.InvitationQueued=INDEX_NONE;}
  // Her life pose (seated with her phone) ends before she speaks: ending it later resumes her behaviour, which
  // cancels the line just started ("Dialogue did not complete audio").
  if(InLifePose(S.Target))StopLifePose(S.Target);
- S.Node=Chosen;S.Voice=0;S.VoiceIds=MoveTemp(Voices);S.ClipStarted=false;S.LineStart=SceneTime();S.LineInterrupted=false;
+ // Her voice is TTS only (requested below); without one the line shows as a subtitle for a reading time (Tick).
+ S.Node=Chosen;S.Voice=0;S.VoiceIds.Reset();S.ClipStarted=false;S.LineStart=SceneTime();S.LineInterrupted=false;S.SilentLine=false;S.SilentLineUntil=0;
  S.ActiveCategory=Category;
  S.ActivePromptBranch=BranchId;SetSourcePlayerLine(OKStreetSourcePlayerPrompt(S.Catalogue,Chosen,BranchId));
  // A collected topic supplies the player's own line; it must be in place before the TTS requests below.
@@ -1094,7 +1097,7 @@ bool AOKStreetSocialScene::QueueNode(int32 Chosen,const FString& Category,const 
  // TTS: the player's line (male tone) first, then her reply; both play through the normal speech path.
  if(S.MaleTtsPending)OKStreetTtsCancel(S.TtsEndpoint,OKStreetMaleTtsChannel(this),S.MaleSerial+1);
  S.TtsPending=false;++S.TtsSerial;S.MaleTtsPending=false;++S.MaleSerial;S.MalePhase=0;S.MaleVoiceId.Reset();
- if(S.TtsEnabled&&!S.Japanese&&!S.TtsCacheDir.IsEmpty()&&S.Manifest.Characters.IsValidIndex(S.Target)){
+ if(S.TtsEnabled&&!S.TtsCacheDir.IsEmpty()&&S.Manifest.Characters.IsValidIndex(S.Target)){
   // Both sides call each other by name now and then: his first line of a talk always, then about half;
   // her greetings always, then about a third. Subtitles show the same text the voice reads. Not before they know
   // each other's names (strangers).
@@ -1127,7 +1130,9 @@ void AOKStreetSocialScene::FinishLine(){
  const EOKStreetAudioCompletion Completion=Known?OKStreetMapAudioCompletion(SpeechState):EOKStreetAudioCompletion::Idle;
  // He talked over her: the line ends where he cut in, counts as said, and the talk goes on.
  const bool Interrupted=S.LineInterrupted;S.LineInterrupted=false;
- if(!Interrupted&&!OKStreetVoicedTopicMayCommit(Completion)){FailTalk(TEXT("Dialogue did not complete audio: ")+SpeechError);return;}
+ // A subtitle-only line (no TTS voice) has no audio to complete.
+ const bool Silent=S.SilentLine;S.SilentLine=false;
+ if(!Interrupted&&!Silent&&!OKStreetVoicedTopicMayCommit(Completion)){FailTalk(TEXT("Dialogue did not complete audio: ")+SpeechError);return;}
  FString FaceError;OKResetCrowdRuntimeFaceExpression(this,S.Target,FaceError);
  if(S.InvitationActive){CompleteInvitation();return;}
  if(S.TouchActive){CompleteTouch();return;}
@@ -3296,7 +3301,7 @@ void AOKStreetSocialScene::RunDialogueContextProbe(double Now){
   const FString Id=OKStreetStableId(S.Manifest.Characters[S.Target]);const int32 I=OKStreetRelationIndex(S.Store,Id,S.Manifest.TalkBudget,true);S.Store.Relations[I].Stage=TEXT("stranger");S.Store.Relations[I].Favor=70;S.Store.Relations[I].TalksRemaining=5;
   const TCHAR* Categories[]={TEXT("daily"),TEXT("romance"),TEXT("intimacy")};
   if(S.ContextCategory<3)Topic(Categories[S.ContextCategory]);
-  else {int32 Generic=INDEX_NONE;for(int32 N=0;N<S.Catalogue.Nodes.Num();++N){const auto& L=S.Catalogue.Nodes[N];if(L.PersonalityId==S.Manifest.Characters[S.Target].PersonalityId&&L.StageIndex==0&&L.Category==TEXT("daily")&&L.VoiceSequenceComplete&&!OKStreetSourcePlayerPrompt(S.Catalogue,N).IsEmpty()){Generic=N;break;}}if(!Require(Generic!=INDEX_NONE,TEXT("Source generic pair unavailable")))return;QueueNode(Generic,TEXT("daily"));}
+  else {int32 Generic=INDEX_NONE;for(int32 N=0;N<S.Catalogue.Nodes.Num();++N){const auto& L=S.Catalogue.Nodes[N];if(L.PersonalityId==S.Manifest.Characters[S.Target].PersonalityId&&L.StageIndex==0&&L.Category==TEXT("daily")&&L.Spoken&&!OKStreetSourcePlayerPrompt(S.Catalogue,N).IsEmpty()){Generic=N;break;}}if(!Require(Generic!=INDEX_NONE,TEXT("Source generic pair unavailable")))return;QueueNode(Generic,TEXT("daily"));}
   if(S.Node==INDEX_NONE||S.PlayerLine.IsEmpty())UE_LOG(LogTemp,Warning,TEXT("Dialogue context miss: girl=%d category=%d node=%d player=%s message=%s"),S.ContextGirl,S.ContextCategory,S.Node,*S.PlayerLine,*S.Message);
   if(!Require(S.Node!=INDEX_NONE&&!S.PlayerLine.IsEmpty(),TEXT("Female reply lost its exact source question")))return;
   auto J=MakeShared<FJsonObject>();J->SetNumberField(TEXT("slot"),S.Target);J->SetStringField(TEXT("node"),S.Catalogue.Nodes[S.Node].Id);J->SetStringField(TEXT("branch"),S.ActivePromptBranch);J->SetStringField(TEXT("player"),S.PlayerLine);J->SetStringField(TEXT("female"),S.Message);S.ContextEvidence.Add(MakeShared<FJsonValueObject>(J));
@@ -4167,7 +4172,7 @@ void AOKStreetSocialScene::Tick(float Dt){
  if(S.TtsSmoke&&S.AllReady&&!S.TtsSmokeStarted&&Now-S.ReadyAt>3&&Now-S.TtsRequestedAt>2){S.TtsRequestedAt=Now;S.Agents[0].Position=S.Male+FVector(150,0,0);S.TtsSmokeStarted=BeginTalk(1);UE_LOG(LogTemp,Display,TEXT("Street TTS smoke: begin talk ok=%d"),S.TtsSmokeStarted?1:0);}
  if(S.TtsSmoke&&S.TtsSmokeTopics==25&&S.Target!=INDEX_NONE&&S.Node==INDEX_NONE){
   // Smoke only: one line with name tokens, to show what TTS is given.
-  ++S.TtsSmokeTopics;for(int32 N=0;N<S.Catalogue.Nodes.Num();++N){const auto& L=S.Catalogue.Nodes[N];if(L.PersonalityId==S.Manifest.Characters[S.Target].PersonalityId&&L.VoiceSequenceComplete&&!L.VoiceFiles.IsEmpty()&&L.TextZh.Contains(TEXT("あだ名]"))){QueueNode(N,TEXT("daily"));UE_LOG(LogTemp,Display,TEXT("Street TTS smoke: names line %s -> %s"),*L.TextZh,*OKStreetFillNames(L.TextZh,S.Manifest.Characters[S.Target].Name,S.Manifest.Characters[0].Name));break;}}
+  ++S.TtsSmokeTopics;for(int32 N=0;N<S.Catalogue.Nodes.Num();++N){const auto& L=S.Catalogue.Nodes[N];if(L.PersonalityId==S.Manifest.Characters[S.Target].PersonalityId&&L.Spoken&&L.TextZh.Contains(TEXT("あだ名]"))){QueueNode(N,TEXT("daily"));UE_LOG(LogTemp,Display,TEXT("Street TTS smoke: names line %s -> %s"),*L.TextZh,*OKStreetFillNames(L.TextZh,S.Manifest.Characters[S.Target].Name,S.Manifest.Characters[0].Name));break;}}
  }
  if(S.TtsSmoke&&S.TtsSmokeStarted&&S.TtsSmokeTopics<25&&S.Target!=INDEX_NONE&&S.Node==INDEX_NONE&&!S.CollectedActive&&!S.RelationshipPending){
   // Smoke only (copied save): keep the budget open and talk until every daily line has been used, to exercise the new round.
@@ -4209,6 +4214,11 @@ void AOKStreetSocialScene::Tick(float Dt){
   }else if(S.MalePhase==2&&!OKCrowdRuntimeSpeechActive(this,0)){S.MalePhase=3;if(S.TtsSmoke)UE_LOG(LogTemp,Display,TEXT("Street male voice completed: tone=%s"),*S.MaleTone);}
   if(S.MalePhase==1||S.MalePhase==2){}
   else if(!S.ClipStarted&&S.TtsPending){if(Now-S.TtsRequestedAt>S.TtsTimeout+1){S.TtsPending=false;++S.TtsFallbacks;S.TtsNotice=OKT(TEXT("ui.scene.tts_timeout_builtin"));RefreshUI();}}
+  else if(!S.ClipStarted&&S.VoiceIds.IsEmpty()){
+   // No voice (TTS off, failed or timed out): the subtitle stays for a reading time, then the line counts as said.
+   if(S.SilentLineUntil<=0)S.SilentLineUntil=Now+FMath::Clamp(1.5+0.12*S.Message.Len(),2.0,8.0);
+   else if(Now>=S.SilentLineUntil){S.SilentLineUntil=0;S.SilentLine=true;FinishLine();}
+  }
   else if(!S.ClipStarted){const bool WithGesture=S.Voice==0&&(!S.Pair.Conversation()||S.TouchActive);bool Played=WithGesture?OKSpeakCrowdRuntimeActionLine(this,S.Target,S.VoiceIds[S.Voice],S.ActiveGesture,Error):OKSpeakCrowdRuntimeLine(this,S.Target,S.VoiceIds[S.Voice],Error);
    // Her gesture could not be queued (her shy gesture from the line before still waiting to play): she says it without
    // it. The confession scene 惠惠 was to answer ended the whole talk, and her shift took her off unanswered (R4-19).
@@ -4585,7 +4595,7 @@ void AOKStreetSocialScene::RunRecoveryProbe(){
  const bool FileBefore=IFileManager::Get().FileExists(*S.Manifest.SavePath);
  if(FileBefore)FFileHelper::LoadFileToString(DiskBefore,*S.Manifest.SavePath);
  const int32 Transactions=S.Transactions.Num(),Effects=S.VoicedEffects.Num(),Lines=S.CompletedLines;
- const int32 Greetings=S.Greetings,Farewells=S.Farewells,Failures=S.ExpectedVoiceAdmissionFailures,Errors=S.Errors.Num();
+ const int32 Greetings=S.Greetings,Farewells=S.Farewells,Errors=S.Errors.Num();
  auto Check=[&](bool Pass,const TCHAR* Why){if(!Pass)S.Errors.Add(Why);};
  S.Male=OKStreetMaleSpawn();
  for(auto& Agent:S.Agents){Agent.Held=true;Agent.Position=FVector(0,4000+Agent.Slot*400,0);}
@@ -4593,22 +4603,9 @@ void AOKStreetSocialScene::RunRecoveryProbe(){
  const bool Admitted=BeginTalk(1)&&S.Target==1&&S.Catalogue.Nodes.IsValidIndex(S.Node);
  Check(Admitted,TEXT("Recovery probe could not admit a ready female and real greeting"));
  if(Admitted){
-  const int32 Node=S.Node;
   S.RelationshipPending=true;S.RelationshipVoiceRequired=true;S.RelationshipVoiceCompleted=false;
   ApplyRelationship();
   Check(OKStreetWriteSave(S.Store)==StoreBefore&&S.Transactions.Num()==Transactions,TEXT("Incomplete voiced relationship was allowed to save"));
-  const auto Voices=S.Catalogue.Nodes[Node].VoiceFiles;
-  S.Catalogue.Nodes[Node].VoiceFiles={FPaths::ProjectSavedDir()/TEXT("StreetSocial/IntentionalMissingVoice.ogg")};
-  S.ExpectedVoiceAdmissionFault=true;
-  const bool Queued=QueueNode(Node,TEXT("relationship"));
-  S.ExpectedVoiceAdmissionFault=false;
-  S.Catalogue.Nodes[Node].VoiceFiles=Voices;
-  Check(!Queued&&S.ExpectedVoiceAdmissionFailures==Failures+1,TEXT("Recovery probe did not reject the intentional invalid voice"));
-  Check(S.Target==INDEX_NONE&&S.Node==INDEX_NONE&&!S.RelationshipPending&&!S.RelationshipVoiceRequired&&!S.RelationshipVoiceCompleted&&!S.BranchLine&&!S.Agents[0].Held,TEXT("Failed voice admission left a relationship or actor reserved"));
-  Check(!S.TalkFailureNotice.IsEmpty(),TEXT("Voice failure did not retain its independent retry notice"));
-  ApplyRelationship();
-  Check(OKStreetWriteSave(S.Store)==StoreBefore&&S.Transactions.Num()==Transactions,TEXT("Failed voiced relationship could still save after abort"));
-  Check(BeginTalk(1)&&S.Target==1&&S.Node!=INDEX_NONE&&S.TalkFailureNotice.IsEmpty(),TEXT("Aborted conversation could not retry with its original voice"));
  }
  EndTalk();
  Check(S.CompletedLines==Lines&&S.VoicedEffects.Num()==Effects&&S.Greetings==Greetings&&S.Farewells==Farewells&&S.Transactions.Num()==Transactions&&OKStreetWriteSave(S.Store)==StoreBefore,TEXT("Admission failure or cancelled retry changed dialogue rewards"));

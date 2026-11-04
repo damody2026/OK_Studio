@@ -98,6 +98,8 @@ bool AOKStreetSocialScene::SkipToNextMorning(){
 // Writes the clock into the save without touching anything else, so a quit keeps the time of day.
 void AOKStreetSocialScene::SaveCalendar(){
  if(!State||State->SelfTest||State->Manifest.SavePath.IsEmpty())return;auto& S=*State;
+ // A scene that stopped while starting (a rejected input) has no one placed yet: nothing of it is saved.
+ if(S.Rotations.IsEmpty())return;
  auto Candidate=S.Store;
  // Where he stands: outside the room of a facility he is in (it puts him in a set), not while riding an elevator.
  if(ElevatorWithMale()==INDEX_NONE&&S.LiftRide.Elevator==INDEX_NONE){Candidate.HasPlayerSpot=true;Candidate.PlayerSpot=S.FacilityEntered?S.FacilitySavedMale:S.Male;Candidate.PlayerYaw=S.FacilityEntered?S.FacilitySavedMaleRotation.Yaw:S.Rotations[0].Yaw;Candidate.ViewYaw=S.FacilityEntered?S.FacilitySavedYaw:S.Yaw;S.SpotSavedMale=Candidate.PlayerSpot;S.SpotSavedAt=FPlatformTime::Seconds();}

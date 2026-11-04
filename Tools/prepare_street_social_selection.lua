@@ -10,7 +10,6 @@ local function read_json(p) return json.decode(path.read_text(p)) end
 local function get(t, k, d) local v = t[k]; if v == nil then return d end; return v end
 -- str(Path(p)) on Windows.
 local function win(p) return (path.norm(p):gsub("/+", "/"):gsub("/", "\\")) end
-local function isabs(p) p = path.norm(p); return p:match("^%a:/") ~= nil or p:match("^//") ~= nil end
 -- str.strip() for names (ASCII and ideographic spaces).
 local function strip(s)
   local changed = true
@@ -126,29 +125,13 @@ function M.locomotion_metadata(sex, personality, id)
     { "run_clip", sex == 0 and "run_male.okanim" or "run_female.okanim" } })
 end
 
--- os.path.commonpath on Windows paths (case-insensitive compare, first path's spelling).
-local function commonpath(paths)
-  local split = {}
-  for i, p in ipairs(paths) do split[i] = util.split(win(p), "\\") end
-  local first = split[1]
-  local n = #first
-  for i = 2, #split do
-    local s = split[i]
-    local k = 0
-    while k < n and k < #s and first[k + 1]:lower() == s[k + 1]:lower() do k = k + 1 end
-    n = k
-  end
-  if n == 0 then fail("Paths don't have the same drive") end
-  local parts = util.slice(first, 1, n)
-  if n == 1 then return parts[1] .. "\\" end
-  return table.concat(parts, "\\")
-end
-
 function M.main(argv)
   local parser = ok.args.parser()
   parser:opt("--male", { required = true })
   parser:opt("--selection", { required = true })
-  parser:opt("--catalogue", { required = true })
+  -- The original dialogue catalogue is optional (it is original game data, not versioned): without it she talks through
+  -- free talk only. Her voice is always TTS; the catalogue's original voice files are not used.
+  parser:opt("--catalogue", { default = "" })
   parser:opt("--materials", { required = true })
   parser:opt("--output", { required = true })
   parser:opt("--root", { default = (ok.root:gsub("/", "\\")) })
@@ -187,86 +170,63 @@ function M.main(argv)
   if not T(materials.passed) or not T(materials.runtime_reveal_supported) then
     fail("Verified common material library required")
   end
-  local catalogue_path = path.abs(args.catalogue)
-  local catalogue = read_json(catalogue_path)
-  if not json.is_array(catalogue.nodes) or #catalogue.nodes == 0 then
-    fail("Nonempty common dialogue catalogue required")
+  local catalogue_path = T(args.catalogue) and path.abs(args.catalogue) or nil
+  local catalogue = nil
+  if catalogue_path and path.is_file(catalogue_path) then
+    catalogue = read_json(catalogue_path)
+    if not json.is_array(catalogue.nodes) or #catalogue.nodes == 0 then fail("Dialogue catalogue has no lines: " .. catalogue_path) end
+  elseif catalogue_path then
+    print("No original dialogue catalogue (" .. catalogue_path .. "): free talk only")
+    catalogue_path = nil
   end
   -- Common exact translations cover unvoiced male lines as well as reactions.
-  -- Apply before either language catalogue is copied, preserving source audio.
-  local localization_path = path.with_name(catalogue_path, "zh_tw.json")
-  local topic_source_path = path.with_name(catalogue_path, "topics.json")
   local localized_topics = nil
-  if path.is_file(localization_path) and path.is_file(topic_source_path) then
-    local loc = require "build_street_social_localization"
-    localized_topics = read_json(topic_source_path)
-    loc.apply_overlay(catalogue, localized_topics, read_json(localization_path))
-  end
-  -- Common packs may use relative references. Resolve once during selection,
-  -- never during an NPC's per-frame update.
-  local declared_audio_root = get(catalogue, "audio_root", path.parent(catalogue_path))
-  if not isabs(declared_audio_root) then declared_audio_root = path.join(root, declared_audio_root) end
-  local audio_base = path.abs(declared_audio_root)
-  local function resolve_audio(value)
-    local p = isabs(value) and value or path.join(audio_base, value)
-    return win(path.abs(p))
-  end
-  for _, node in ipairs(catalogue.nodes) do
-    for _, field in ipairs({ "voice_files", "voice_files_zh", "voice_files_jp" }) do
-      if node[field] ~= nil then node[field] = util.map(node[field], resolve_audio) end
-    end
-    local src = get(node, "source", {})
-    for _, part in ipairs(get(src, "voice_sequence", {})) do
-      for _, field in ipairs({ "path", "zh_ogg" }) do
-        if T(part[field]) then part[field] = resolve_audio(part[field]) end
-      end
+  if catalogue then
+    local localization_path = path.with_name(catalogue_path, "zh_tw.json")
+    local topic_source_path = path.with_name(catalogue_path, "topics.json")
+    if path.is_file(localization_path) and path.is_file(topic_source_path) then
+      local loc = require "build_street_social_localization"
+      localized_topics = read_json(topic_source_path)
+      loc.apply_overlay(catalogue, localized_topics, read_json(localization_path))
     end
   end
-  local japanese_catalogue = util.deepcopy(catalogue)
-  for _, node in ipairs(japanese_catalogue.nodes) do node.voice_language = "ja" end
-  -- Select a complete matching Chinese sequence; partial translations never
-  -- remove/reorder segments. Keep the original catalogue immutable.
-  for _, node in ipairs(catalogue.nodes) do
-    local original = get(node, "voice_files", {})
-    local chinese = get(node, "voice_files_zh", {})
-    node.voice_language = "ja"
-    if T(chinese) and #chinese == #original and util.all(chinese, function(p) return path.is_file(p) and path.suffix(p):lower() == ".ogg" end) then
-      node.voice_files_jp = original
-      node.voice_files = chinese
-      node.voice_language = "zh"
-    end
-  end
-  local voices = {}
-  for _, c in ipairs({ catalogue, japanese_catalogue }) do
-    for _, n in ipairs(c.nodes) do
-      for _, p in ipairs(get(n, "voice_files", {})) do voices[#voices + 1] = path.parent(path.abs(p)) end
-    end
-  end
-  if #voices == 0 then fail("Catalogue has no matched audio") end
-  local voice_root = commonpath(voices)
   local output = path.abs(args.output)
   local out_dir = path.parent(output)
   path.mkdir(out_dir)
-  local runtime_catalogue = path.join(out_dir, "dialogue.runtime.json")
-  path.write_text(runtime_catalogue, json.encode(catalogue, { ensure_ascii = false }))
-  local runtime_japanese = path.join(out_dir, "dialogue.runtime.ja.json")
-  path.write_text(runtime_japanese, json.encode(japanese_catalogue, { ensure_ascii = false }))
-  -- Original relation limits are common rules, not card-derived assets.
-  local rules = path.with_name(catalogue_path, "rules.json")
-  if not path.is_file(rules) then fail("Original common dialogue rules are required") end
-  local runtime_rules = read_json(rules)
-  if runtime_rules.preference_for_exported_personalities ~= nil then
-    runtime_rules.preference = runtime_rules.preference_for_exported_personalities
-  end
-  if runtime_rules.communication_condition_probability ~= nil then
-    local chance = json.object()
-    for _, r in ipairs(runtime_rules.communication_condition_probability) do
-      local function int(v) return math.tointeger(v) or math.tointeger(v >= 0 and math.floor(v) or math.ceil(v)) end
-      chance[util.str(r.stage) .. ":" .. util.str(r.condition)] = json.object({ { "min", int(r.min) }, { "max", int(r.max) } })
+  local runtime_catalogue, runtime_japanese
+  if catalogue then
+    -- Her lines are spoken by TTS: the original voice references are dropped. A row the original game voiced is one she
+    -- says ("spoken"); an unvoiced row is the player's prompt or a silent row.
+    for _, node in ipairs(catalogue.nodes) do
+      node.voice_files, node.voice_files_zh, node.voice_files_jp, node.audio_slots, node.voice_language = nil, nil, nil, nil, nil
+      local src = get(node, "source", {})
+      if type(src) == "table" then
+        if node.spoken == nil then node.spoken = #get(src, "voice_sequence", {}) > 0 end
+        src.voice_sequence = nil
+      end
     end
-    runtime_rules.communication_chance = chance
+    runtime_catalogue = path.join(out_dir, "dialogue.runtime.json")
+    path.write_text(runtime_catalogue, json.encode(catalogue, { ensure_ascii = false }))
+    -- The Japanese mode reads the same lines (text_jp).
+    runtime_japanese = path.join(out_dir, "dialogue.runtime.ja.json")
+    path.write_text(runtime_japanese, json.encode(catalogue, { ensure_ascii = false }))
+    -- Original relation limits are common rules, not card-derived assets.
+    local rules = path.with_name(catalogue_path, "rules.json")
+    if not path.is_file(rules) then fail("Original common dialogue rules are required beside the catalogue") end
+    local runtime_rules = read_json(rules)
+    if runtime_rules.preference_for_exported_personalities ~= nil then
+      runtime_rules.preference = runtime_rules.preference_for_exported_personalities
+    end
+    if runtime_rules.communication_condition_probability ~= nil then
+      local chance = json.object()
+      for _, r in ipairs(runtime_rules.communication_condition_probability) do
+        local function int(v) return math.tointeger(v) or math.tointeger(v >= 0 and math.floor(v) or math.ceil(v)) end
+        chance[util.str(r.stage) .. ":" .. util.str(r.condition)] = json.object({ { "min", int(r.min) }, { "max", int(r.max) } })
+      end
+      runtime_rules.communication_chance = chance
+    end
+    path.write_text(path.join(out_dir, "rules.json"), json.encode(runtime_rules, { ensure_ascii = false }))
   end
-  path.write_text(path.join(out_dir, "rules.json"), json.encode(runtime_rules, { ensure_ascii = false }))
   local anim_dir = path.join(root, "Content/IndependentResources/RuntimeAnimations")
   local actions = read_json(path.join(anim_dir, "actions.manifest.json"))
   -- Shared source curves only; each selected APNG's private pose is prepared
@@ -295,9 +255,9 @@ function M.main(argv)
       if path.is_file(path.join(anim_dir, action.file)) then table.insert(actions.actions, action) end
     end
   end
-  local topic_path = path.with_name(catalogue_path, "topics.json")
+  local topic_path = catalogue_path and path.with_name(catalogue_path, "topics.json")
   local runtime_topics = nil
-  if path.is_file(topic_path) then
+  if topic_path and path.is_file(topic_path) then
     local topic_data = localized_topics or read_json(topic_path)
     if localized_topics == nil then
       -- No overlay beside this pack: the topic names still show in Chinese (the 48 names are the same everywhere).
@@ -319,22 +279,20 @@ function M.main(argv)
       end
       for _, row in ipairs(get(profile, "touch", {})) do sequences[#sequences + 1] = row.parts end
       for _, sequence in ipairs(sequences) do
-        for _, part in ipairs(sequence) do part.voices = util.map(part.voices, resolve_audio) end
+        for _, part in ipairs(sequence) do part.voices = nil end
       end
     end
     runtime_topics = path.join(out_dir, "topics.runtime.json")
     path.write_text(runtime_topics, json.encode(topic_data, { ensure_ascii = false }))
   end
-  local relationship_path = path.with_name(catalogue_path, "relationships.json")
+  local relationship_path = catalogue_path and path.with_name(catalogue_path, "relationships.json")
   local runtime_relationships = nil
-  if path.is_file(relationship_path) then
+  if relationship_path and path.is_file(relationship_path) then
     local relationship_data = read_json(relationship_path)
-    local refs = json.keys(relationship_data.source_voice_sha256)
-    check_hashes(util.map(refs, resolve_audio), util.map(refs, function(r) return relationship_data.source_voice_sha256[r] end),
-      "Relationship source voice hash mismatch")
+    relationship_data.source_voice_sha256 = nil
     for _, profile in ipairs(relationship_data.profiles) do
       for _, sequence in ipairs({ profile.accept, profile.refuse }) do
-        for _, part in ipairs(sequence) do part.voices = util.map(part.voices, resolve_audio) end
+        for _, part in ipairs(sequence) do part.voices = nil end
       end
     end
     runtime_relationships = path.join(out_dir, "relationships.runtime.json")
@@ -368,14 +326,8 @@ function M.main(argv)
   if T(materials.hg_root) then manifest.hg_material_root = materials.hg_root end
   if T(materials.wrap_root) then manifest.wrap_material_root = materials.wrap_root end
   for _, kv in ipairs({
-    -- The game's shadow ramps for the render-style picker (Tools/ok-extract ok-ramps).
-    { "ramp_catalogue", win(path.join(root, "Content/KKPreview/Ramps/ramps.json")) },
-    { "display_lut", win(path.join(root, "Content/KKPreview/KKSDefaultSaturationLUT16.png")) },
-    { "external_control", true }, { "dialogue_catalogue", win(runtime_catalogue) },
-    { "dialogue_catalogue_ja", win(runtime_japanese) }, { "voice_root", voice_root },
+    { "external_control", true },
     { "generated_voice_root", win(path.join(root, "Saved/StreetSocial/TTSCache")) },
-    { "invitation_catalogue", win(path.join(root, "Content/IndependentResources/StreetSocialData/invitations.json")) },
-    { "expression_catalogue", win(path.join(root, "Content/IndependentResources/StreetSocialData/RuntimeV2/expressions.json")) },
     { "enable_face_patterns", true },
     { "save_path", win(path.join(root, "Saved/StreetSocial/relationships.json")) },
     { "social_report", win(path.join(out_dir, "social.validation.json")) }, { "report", win(path.join(out_dir, "runtime.json")) },
@@ -398,7 +350,20 @@ function M.main(argv)
     end
     manifest.shared_splash = s
   end
-  manifest.source_dialogue_catalogue = win(catalogue_path)
+  -- Original game data (Tools/original_data.lua): only what this checkout has.
+  if runtime_catalogue then
+    manifest.dialogue_catalogue = win(runtime_catalogue)
+    manifest.dialogue_catalogue_ja = win(runtime_japanese)
+    manifest.source_dialogue_catalogue = win(catalogue_path)
+  end
+  -- The game's shadow ramps for the render-style picker (Tools/ok-extract ok-ramps) and the KKS display colour transform
+  -- (ok-extract --oklib saturation-lut, from the BetterColorPicker plugin): used when this checkout has them.
+  for _, kv in ipairs({ { "ramp_catalogue", "Content/KKPreview/Ramps/ramps.json" }, { "display_lut", "Content/KKPreview/KKSDefaultSaturationLUT16.png" },
+    { "invitation_catalogue", "Content/IndependentResources/StreetSocialData/invitations.json" },
+    { "expression_catalogue", "Content/IndependentResources/StreetSocialData/RuntimeV2/expressions.json" } }) do
+    local file = path.join(root, kv[2])
+    if path.is_file(file) then manifest[kv[1]] = win(file) end
+  end
   if runtime_relationships then
     manifest.relationship_catalogue = win(runtime_relationships)
     manifest.source_relationship_catalogue = win(relationship_path)
