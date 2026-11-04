@@ -1,6 +1,8 @@
-# OpenKoikatsu
+# OK Studio（OpenKoikatsu）
 
-歡迎加入 QQ 群 **1127259437** 討論。
+歡迎加入 QQ 群 **1127259437** 討論、下載開發資源、一起開發。
+
+原始碼：<https://github.com/damody2026/OK_Studio>（舊網址 `damody2026/OpenKoikatsu` 只留說明，請改從這裡下載）。
 
 用 **Unreal Engine 5.8、C++ 與 Rust** 做的非官方 Koikatsu Sunshine 人物卡 3D 工具：讀取 KKS 人物卡，依卡片組出 3D 角色，還原身形、服裝、材質、表情、動畫與動態骨骼。
 
@@ -19,9 +21,18 @@
 
 ## 倉庫裡有什麼
 
-**本專案不含任何角色卡**：沒有原作卡、OK 卡，也沒有 Studio 場景裡的角色。要顯示角色，請用你自己的卡片。
+倉庫只有**程式碼與專案自己做的內容**，不含任何版權物：沒有原作（Koikatsu Sunshine）的模型、動畫、語音、貼圖、台詞，沒有第三方 mod 轉出的資料，也沒有角色卡。要顯示角色，請用你自己的卡片。
 
-倉庫只有程式碼與**共用資源**：原作轉出的模型、UncensorSelector 身體、全域 mod（修正、陰影 ramp、Material Editor shader 等，清單在 [`Tools/base_library_shared_mods.txt`](Tools/base_library_shared_mods.txt)）。其他第三方 mod 也不在倉庫內，卡片需要時請自備 zipmod。大型檔案用 Git LFS。
+## 取得共用資源（必做）
+
+程式需要的原作資料（基礎模型庫 `base_v1`、Studio 目錄與動畫、配對動作、H 語音、街區動作片段、陰影 ramp 等）叫做「共用資源」，不在倉庫內。擇一取得：
+
+| 方式 | 做法 |
+|---|---|
+| 有自己的 Koikatsu Sunshine | 指定遊戲安裝位置，由腳本轉換產生：`Tools\lua\lua.exe Tools\original_data.lua restore --game D:/KoikatuSunshine`。遊戲 `mods/` 裡有 [`Tools/base_library_shared_mods.txt`](Tools/base_library_shared_mods.txt) 列的共用 mod 時一併轉換 |
+| 進 QQ 群 1127259437 | 下載開發資源 zip，`Tools\lua\lua.exe Tools\original_data.lua restore --archive <zip 路徑>` |
+
+步驟、需要的工具、會產生哪些檔案與疑難排解見 [取得共用資源](Docs/SHARED_RESOURCES_SETUP.md)；這份說明寫成可以直接交給 AI 照著執行。街區 demo 的台詞與語音由 AI 對話與 TTS 產生，不需要原作台詞與語音。
 
 ## 怎麼讀角色卡
 
@@ -36,13 +47,6 @@
 
 在 Unreal 裡開啟讀卡器（`UnrealEditor -game`）。左側是卡片清單，選卡後顯示卡片資料；按「載入 3D（人物編輯器）」組出 3D 角色，可調身體與臉部滑桿、換服裝與穿脫、播放遊戲動作、另存新卡或 APNG 卡。
 
-![讀卡器：選卡、載入 3D、播放走路動作](Docs/images/card-reader-demo.gif)
-
-完整短片：[card-reader-demo.mp4](Docs/videos/card-reader-demo.mp4)（19 秒，無聲）
-
-![讀卡器：卡片清單](Docs/images/card-reader-list.jpg)
-
-![讀卡器：3D 人物編輯器](Docs/images/card-reader-3d.jpg)
 
 ```powershell
 .\CardReaderDevelopment.cmd -CardDirectory <OK 卡資料夾>
@@ -54,13 +58,6 @@
 
 獨立製作的一男五女街區：在街上走動、靠近女角按 E 用文字或語音自由對話（AI 依角色性格回應，TTS 配音），還有好感度、約定、手機、一起吃飯購物、觸碰互動與一對一場景。
 
-![街區：走進書店與女角對話](Docs/images/street-social-demo.gif)
-
-完整短片：[street-social-demo.mp4](Docs/videos/street-social-demo.mp4)（33 秒，無聲；對話以字幕顯示）
-
-![街區：在街上與女角相遇](Docs/images/street-social-walk.jpg)
-
-![街區：與女角對話](Docs/images/street-social-talk.jpg)
 
 ```powershell
 .\StreetSocial.cmd -SelectionFile <女角清單.json>
@@ -72,9 +69,6 @@
 
 把一段真人影片轉成角色動作（`.okanim`），在讀卡器的「影片動作（自行匯入）」選單播放。轉換由 `Tools/ok-video`（Rust、CUDA）完成，會自動修復並逐幀驗證，詳見 [影片動作](Docs/VIDEO_MOTION.md)。
 
-![影片動作：網球示範](Docs/images/video-motion-tennis.gif)
-
-完整短片：[video-motion-tennis.mp4](Docs/videos/video-motion-tennis.mp4)（13 秒，無聲）
 
 倉庫只附一個示範動作「網球示範」（`Content/IndependentResources/VideoMotionDemos/`，讀卡器啟動時自動複製到 `Saved/VideoMotions/`）；原始影片與其他自行轉出的動作（含雙人影片的動作）不在倉庫內。
 
@@ -82,7 +76,6 @@
 .\Tools\ok-video\target\release\ok-video.exe import <影片.mp4> --name <動作名稱> -s
 ```
 
-以上截圖與短片使用 Koikatsu Sunshine 原作內建的預設角色（`DefaultData/chara/female` 的お嬢様、ギャル、ボーイッシュ、ミステリアス、ミーハー）在本機轉成的 OK 卡；這些卡片不在倉庫內。
 
 ## 匯入角色
 
@@ -105,7 +98,6 @@
 | Unreal Engine | 5.8.4 原始碼版，[`UE5.8-physX-5.11-ok`](https://github.com/damody2026/UnrealEngineOK/tree/UE5.8-physX-5.11-ok) 分支（GameWorks Flex／PhysX 5.11），並套用 [`Tools/EnginePatches/README.md`](Tools/EnginePatches/README.md) 列出的補丁；`OpenKoikatsu.Build.cs` 會檢查補丁是否存在 |
 | Visual Studio 2022 | 「使用 C++ 的遊戲開發」與 Windows SDK |
 | Rust | stable，MSVC 工具鏈（`cargo` 在 PATH 或 `%USERPROFILE%\.cargo\bin`） |
-| Git LFS | 共用資源是 LFS 檔案 |
 | CUDA 12.8 以上（選用） | 影片動作轉換（`Tools/ok-video`）與語音（`Tools/ok-tts`、`Tools/ok-asr`）需要 |
 
 ### 步驟
@@ -113,10 +105,11 @@
 1. 取得專案：
 
    ```powershell
-   git lfs install
-   git clone https://github.com/damody2026/OpenKoikatsu.git
-   cd OpenKoikatsu
+   git clone https://github.com/damody2026/OK_Studio.git
+   cd OK_Studio
    ```
+
+   再照上面的「取得共用資源」產生 `Content/IndependentResources/base_v1/` 等共用資源。
 
 2. 取得並建置引擎 [damody2026/UnrealEngineOK](https://github.com/damody2026/UnrealEngineOK/tree/UE5.8-physX-5.11-ok) 的 `UE5.8-physX-5.11-ok` 分支：
 
@@ -134,7 +127,7 @@
    {"engine": "D:/PhysX/UE5.8"}
    ```
 
-4. `OpenKoikatsu.uproject` 啟用了本機的商用 Editor 外掛 `BpGeneratorUltimate`（不在倉庫內）。沒有這個外掛時，把 `.uproject` 裡它的 `"Enabled"` 改成 `false`。
+4. `OpenKoikatsu.uproject` 把商用 Editor 外掛 `BpGeneratorUltimate` 列為選用（`"Optional": true`，不在倉庫內）；沒有這個外掛也能建置。
 
 5. 建置 Editor（Rust 函式庫 `Tools/ok-extract` 會由建置前步驟自動編譯）：
 

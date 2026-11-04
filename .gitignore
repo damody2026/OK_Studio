@@ -169,3 +169,12 @@ deepseek.json
 /UserData/Studio/scene/
 /UserData/Studio/screenshot/
 /Docs/images/OKStudio/
+# Not published (2026-11-04, public repo damody2026/OK_Studio): a commercial Fab plugin, downloaded third-party
+# reference documents, and screenshots / videos that show original-game characters.
+/Plugins/UECP-Windows-UE5.8-v2.0.6.zip
+/Docs/StreetSocialCity/references/
+/Docs/videos/
+/Docs/images/card-reader-*
+/Docs/images/street-social-*
+/Docs/images/video-motion-*
+/Docs/StreetSocialCity/production/floor-models/S01/chrome-export-check.png
