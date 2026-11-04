@@ -378,6 +378,7 @@ void UOKHScenePanel::BuildList(){
     }
 }
 
+static TAutoConsoleVariable<float> CVarHCondomMouthSeconds(TEXT("ok.HScene.CondomMouthSeconds"),6.f,TEXT("How long she is at it when she puts the condom on him with her mouth."));
 void UOKHScenePanel::SelectPose(int32 Index){
     if(!Gallery||!Poses.IsValidIndex(Index)||!Gallery->PairCombo)return;
     int32 Option=Gallery->PairVisibleIndices.Find(Poses[Index].Pair);
@@ -454,6 +455,17 @@ bool UOKHScenePanel::PregnantKnows() const{
 int32 UOKHScenePanel::CondomsLeft(bool bHers) const{
     double N=0;if(Gallery&&Gallery->HExperience.IsValid())Gallery->HExperience->TryGetNumberField(bHers?TEXT("her_condoms"):TEXT("his_condoms"),N);
     return FMath::Max(0,int32(N)-(bHers?CondomsHer:CondomsHis));
+}
+void UOKHScenePanel::PutCondomOn(){bCondomHers=CondomsLeft(false)<=0;++(bCondomHers?CondomsHer:CondomsHis);bCondom=bCondomFresh=true;bCondomSpent=false;}
+// She takes it in her mouth and rolls it on him, past 100 favor; false when she does not (he puts it on himself).
+bool UOKHScenePanel::StartCondomMouth(){
+    double Favor=0.;if(!Gallery||!Gallery->HExperience.IsValid()||!Gallery->HExperience->TryGetNumberField(TEXT("favor"),Favor)||Favor<=100.)return false;
+    int32 Found=INDEX_NONE;
+    for(const TCHAR* Raw:{TEXT("両手フェラ"),TEXT("立ち両手フェラ"),TEXT("椅子両手フェラ")}){Found=Poses.IndexOfByPredicate([Raw](const FOKHPose& Pose){return Pose.Raw==Raw;});if(Found!=INDEX_NONE)break;}
+    if(Found==INDEX_NONE)return false;
+    const int32 From=ActivePose;SelectPose(Found);if(PendingPose!=Found)return false;
+    CondomMouthFrom=From;CondomMouthPose=Found;CondomMouthAt=0.;
+    return true;
 }
 // Out of her once it has been in her (user 2026-11-03: used is used, whether he came or not): the condom comes off and the
 // next time needs a new one; with none left he says so (AskNoCondoms).
@@ -625,7 +637,7 @@ void UOKHScenePanel::Click(int32 Kind){
         // Taken off before it was in her: back in the box.
         if(bCondom){if(bCondomFresh)--(bCondomHers?CondomsHer:CondomsHis);bCondom=bCondomFresh=bCondomSpent=false;Note(OKT(TEXT("ui.hscene.condom_off")),false);break;}
         // His first, else one of hers she hands him; with none she says what she makes of it (go and buy some, or not).
-        if(CondomsLeft(false)>0||CondomsLeft(true)>0){bCondomHers=CondomsLeft(false)<=0;++(bCondomHers?CondomsHer:CondomsHis);bCondom=bCondomFresh=true;bCondomSpent=false;
+        if(CondomsLeft(false)>0||CondomsLeft(true)>0){if(StartCondomMouth())break;PutCondomOn();
             Note(OKT(bCondomHers?TEXT("ui.hscene.condom_hers"):TEXT("ui.hscene.condom_on")),false);break;}
         if(bNoCondomAsked){const FString Event=OKT(TEXT("ui.hscene.condom_none"));Note(Event,false);React(Event,OKT(TEXT("ui.hscene.condom_none_note")));}else AskNoCondoms();break;
     case Insert:
@@ -662,6 +674,8 @@ void UOKHScenePanel::Click(int32 Kind){
         // One condom for each time he comes (user 2026-11-03): going on in her after coming in one takes a new one, his
         // first, else hers; with none left he does not go on in the used one.
         if(bCondomSpent){
+            // None left and she said do it without: the used one comes off and he goes on in her bare.
+            if(CondomsLeft(false)+CondomsLeft(true)<=0&&RawLet>0){bCondom=bCondomSpent=bCondomFresh=false;Note(OKT(TEXT("ui.hscene.condom_off_go_raw")),false);Want(P(TEXT("InsertIdle")));break;}
             if(CondomsLeft(false)+CondomsLeft(true)<=0){if(bNoCondomAsked)Note(OKT(TEXT("ui.hscene.condom_none_more")));else AskNoCondoms();break;}
             bCondomHers=CondomsLeft(false)<=0;++(bCondomHers?CondomsHer:CondomsHis);bCondomSpent=bCondomFresh=false;
             Note(OKT(bCondomHers?TEXT("ui.hscene.condom_new_hers"):TEXT("ui.hscene.condom_new")),false);}
@@ -979,7 +993,7 @@ void UOKHScenePanel::BuildActions(){
             if(bPlayed&&!bAfterglow)Add(Afterglow,TEXT("ui.hscene.act_afterglow"));}
         return;
     }
-    if(Mode==0||ActivePose==INDEX_NONE||PendingPose!=INDEX_NONE||Busy||Cur.IsEmpty())return;
+    if(Mode==0||ActivePose==INDEX_NONE||PendingPose!=INDEX_NONE||Busy||Cur.IsEmpty()||CondomMouthFrom!=INDEX_NONE)return;
     const FOKHPose& Pose=Poses[ActivePose];
     Add(LockHer,bLockHer?TEXT("ui.hscene.act_unlock_her"):TEXT("ui.hscene.act_lock_her"));Add(LockHis,bLockHis?TEXT("ui.hscene.act_unlock_his"):TEXT("ui.hscene.act_lock_his"));
     // A check box always there (user, 2026-11-01): the part of him in her drawn half see-through, on and off at any time.
@@ -1066,12 +1080,20 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
         if(Found!=INDEX_NONE&&(Found!=ActivePose||PendingPose==Found)){
             ActivePose=Found;PendingPose=INDEX_NONE;Mode=Poses[Found].Mode;ClearLine();Queue.Reset();Wanted.Reset();bAnalPlay=false;bInsideFinished=false;bStrong=false;
             if(Has(TEXT("Idle")))Want(TEXT("Idle"));
+            // At the condom with her mouth; another pose picked meanwhile ends it, nothing used.
+            const bool bMouthing=CondomMouthFrom!=INDEX_NONE&&Found==CondomMouthPose;if(!bMouthing)CondomMouthFrom=INDEX_NONE;
+            if(bMouthing){Want(TEXT("WLoop"));CondomMouthAt=Now+CVarHCondomMouthSeconds.GetValueOnGameThread();}
             // A new service pose past her rounds: she says no as to "once more" (the panel then offers no start).
-            if(Mode==1&&!bServiceRefused&&OKHServiceSpent(ServiceFinishes,Gallery->HExperience)){bServiceRefused=true;Note(OKT(TEXT("ui.hscene.again_refused")));}
+            if(Mode==1&&!bMouthing&&!bServiceRefused&&OKHServiceSpent(ServiceFinishes,Gallery->HExperience)){bServiceRefused=true;Note(OKT(TEXT("ui.hscene.again_refused")));}
             if(Mode==1&&Poses[Found].KindHoushi==2)BareChest();
             Tab=Mode==2?TabSonyu:TabHand+Poses[Found].KindHoushi;BuildList();if(Hint)Hint->SetText(FText::FromString(Mode==1&&bServiceRefused?OKT(TEXT("ui.hscene.again_refused")):Poses[Found].Name)); // the new pose (or why she will not start it), not the last one's event
+            // Her mouth is full until she has it on: what she says comes back in the pose.
+            if(bMouthing)Note(OKT(TEXT("ui.hscene.condom_mouth")),false);
+            if(bCondomMouthBack){bCondomMouthBack=false;const FString Event=OKT(TEXT("ui.hscene.condom_mouth_done"));Note(Event,false);React(Event,OKT(TEXT("ui.hscene.condom_mouth_note")));}
         }
     }
+    if(CondomMouthFrom!=INDEX_NONE&&PendingPose==INDEX_NONE&&CondomMouthAt>0.&&Now>=CondomMouthAt){
+        const int32 Back=CondomMouthFrom;CondomMouthFrom=INDEX_NONE;CondomMouthAt=0.;PutCondomOn();bCondomMouthBack=true;SelectPose(Back);}
     const FString Cur=Current(),Base=Mode==0?Cur:HBase(Cur);
     if(Mode==2&&Base.Contains(TEXT("Loop"))){float& Deepest=Cur.StartsWith(TEXT("A_"))?AnalDeepest:CrotchDeepest;Deepest=FMath::Max(Deepest,AlignDeep);}
     if(Cur!=LastState){

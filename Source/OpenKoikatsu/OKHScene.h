@@ -359,6 +359,9 @@ private:
     // Condoms (user 2026-11-03): none on unless one of them has one. Put on this scene, his and hers; the one on is not yet
     // in her (Fresh: taken off, it goes back), is hers, or he has finished in it (Spent: off once he pulls out).
     int32 CondomsHis=0,CondomsHer=0;bool bCondomFresh=false,bCondomHers=false,bCondomSpent=false;
+    // Past 100 favor she puts it on him with her mouth (user 2026-11-04): the two-handed blowjob plays a few seconds, then
+    // back to the pose he was in, condom on. From: that pose, INDEX_NONE when she is not at it; At: when she has it on.
+    int32 CondomMouthFrom=INDEX_NONE,CondomMouthPose=INDEX_NONE;double CondomMouthAt=0.;bool bCondomMouthBack=false;bool StartCondomMouth();void PutCondomOn();
     int32 CondomsLeft(bool bHers) const;void DropSpentCondom();
     // Out of condoms (user 2026-11-03): he says so, and her answer (her character, how much she wants it, her libido) is
     // read by the H judge like his question when she is pregnant (lets_raw): she may say let's do it without.

@@ -1959,3 +1959,4 @@
 - 2026-11-04 協調者整合：c-street-city 回報「背景鏈已停、slot 已釋放」，實際 chain21（run_street_city_motel_physics.lua）還在跑，沒拿 slot 開著 StreetSocialCity 實走；協調者以 taskkill /T 停掉該 bash 樹。規則：回報停止前用 Get-CimInstance 確認沒有自己的 chain bash／lua／Unreal 程序。
 - 2026-11-04（e-fork-2）：口交「眼睛上翻」實際是往下看：`TickFace` 傳 `SetEyeGaze(0,0,+強度)`，這組眼睛 -1 才是往上（`ok.HScene.AhegaoGaze` 的 -1.25 就是負的）。11-02 只看到眼皮半閉就記成上翻。近拍（距離 12）才看出虹膜貼著下眼皮；修正：改傳負值。教訓：方向類的效果要拍到能分辨方向的距離再判定，不能用「有變化」代替。
 - 2026-11-04（e-fork-2）：`TickDrips` 的流水、乳汁、噴水都是一幀最多一滴，機器忙到 15 FPS 時開發度 100 和 0 噴一樣多（兩者都是每幀一滴），平時乳汁也只有 ×2.65。11-02 在高 FPS 量到 ×2、×3 就算通過。修正：`Due` 把上一幀到期的份補出來（一幀最多 4 滴）。教訓：以時間間隔控制的數量要在低 FPS 也量一次。
+- 2026-11-04 e-galgame 實測前改存檔：回報「放進 EMain 存檔的保險套啟動後被清空」，以為是遊戲的問題。實際是 `game_stop` 用不帶 `/F` 的 taskkill，指令回傳時遊戲還在關閉，結束時存檔（`relationships.json`、`Saves/auto`）把我剛改的內容蓋掉。之後改存檔一律等遊戲行程結束再改，不要接在 game_stop 後面。
