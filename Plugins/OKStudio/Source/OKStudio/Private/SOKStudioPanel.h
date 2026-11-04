@@ -639,8 +639,9 @@ public:
 		Simple(TEXT("edit.rename"), TEXT("改名"), [this] { BeginRename(); });
 		Simple(TEXT("edit.selectall"), TEXT("全選"), [this] { TArray<int32> All; for (const FOKSceneObject& O : Game->Document->Objects) All.Add(O.Id); Game->SelectMany(All, Game->SelectedId); });
 		Simple(TEXT("edit.saveas"), TEXT("選取存成場景"), [this] { const FString F = SaveSelectionAsScene(); SetStatus(F.IsEmpty() ? FString(TEXT("沒有選取")) : TEXT("已存 ") + F); });
-		Simple(TEXT("edit.undo"), TEXT("復原"), [this] { Game->Undo(); });
-		Simple(TEXT("edit.redo"), TEXT("重做"), [this] { Game->Redo(); });
+		// U199: the status line answers; a step that changed something off screen looked like a key that did nothing.
+		Simple(TEXT("edit.undo"), TEXT("復原"), [this] { const bool bCan = Game->CanUndo(); Game->Undo(); SetStatus(bCan ? TEXT("已復原") : TEXT("沒有可復原的操作")); });
+		Simple(TEXT("edit.redo"), TEXT("重做"), [this] { const bool bCan = Game->CanRedo(); Game->Redo(); SetStatus(bCan ? TEXT("已重做") : TEXT("沒有可重做的操作")); });
 		AddCommand(TEXT("select"), TEXT("選取"), [this](const FString& Arg)
 		{
 			TArray<FString> P; Arg.ParseIntoArray(P, TEXT(" "));
@@ -1364,7 +1365,8 @@ public:
 						// Unbounded and linear: 1 cm, 1 degree, 0.01 a pixel (SetTransformValue keeps the scale above 0).
 						SNew(SOKSpinBox).Style(&SpinStyle()).Font(Font(11.f)).LinearDeltaSensitivity(1).Delta(Row == 1 ? 1.f : (Row == 2 ? 0.01f : 1.f))
 						// Nothing selected: the identity (scale 1, as HS2Studio6 shows), not editable.
-						.Value_Lambda([this, Row, Axis] { const FOKSceneObject* O = Obj(); return O ? TransformValue(O->Transform, Row, Axis) : (Row == 2 ? 1.f : 0.f); })
+						// U196: what rounds to zero is shown as 0.0, it read "-0.0".
+						.Value_Lambda([this, Row, Axis] { const FOKSceneObject* O = Obj(); const float V = O ? TransformValue(O->Transform, Row, Axis) : (Row == 2 ? 1.f : 0.f); return FMath::Abs(V) < (Row == 2 ? 0.005f : 0.05f) ? 0.f : V; })
 						.IsEnabled_Lambda([this] { return Obj() != nullptr; })
 						// The field holds about seven characters (-2412.5): 1 mm and 0.1 degree, scale to 0.01.
 						.MaxFractionalDigits(Row == 2 ? 2 : 1)
@@ -1462,13 +1464,14 @@ public:
 	FString PageTitle() const
 	{
 		const FOKSceneObject* O = Obj();
+		const int32 Characters = SelectedCharacters();
 		const FString Who = O ? O->Name : FString();
 		switch (Page)
 		{
 		case EPage::Object: return O ? FString::Printf(TEXT("%s #%d"), OKStudioPanelText::KindTag(O->Kind), O->Id) : TEXT("屬性");
 		case EPage::State: return TEXT("狀態　") + Who;
 		case EPage::Bones: return TEXT("骨骼　") + Who;
-		case EPage::Anim: return TEXT("動畫　") + Who;
+		case EPage::Anim: return TEXT("動畫　") + (Characters > 1 ? FString::Printf(TEXT("%d 個角色"), Characters) : Who);
 		case EPage::Scene: return TEXT("畫面設定");
 		case EPage::Files: return TEXT("場景檔");
 		case EPage::CharLoader: return TEXT("角色載入器");
@@ -2638,13 +2641,29 @@ public:
 						[Slot](FOKSceneObject& X, bool bOn) { if (X.Character.AccessoriesShown.IsValidIndex(Slot)) X.Character.AccessoriesShown[Slot] = bOn ? 1 : 0; });
 	}
 
+	/** The selected characters: what the 動畫 page does goes to all of them (U192). */
+	int32 SelectedCharacters() const
+	{
+		int32 N = 0;
+		if (Game.IsValid()) for (int32 Id : Game->Selection) { const FOKSceneObject* O = Game->Document->Find(Id); N += O && O->Kind == EOKSceneObjectKind::Character; }
+		return N;
+	}
+	void EachSelectedCharacter(TFunctionRef<void(FOKSceneObject&)> Do)
+	{
+		for (int32 Id : Game->Selection) if (FOKSceneObject* O = Game->Document->Find(Id)) if (O->Kind == EOKSceneObjectKind::Character) Do(*O);
+	}
+	/** Float, written to every selected character. */
+	void CharactersFloat(const FString& Name, TFunction<float(FOKSceneObject&)> Get, TFunction<void(FOKSceneObject&, float)> Set, float Min, float Max, float Delta)
+	{
+		Row(Name, Spin([this, Get] { FOKSceneObject* O = Obj(); return O ? Get(*O) : 0.f; }, [this, Set](float V) { EachSelectedCharacter([&Set, V](FOKSceneObject& X) { Set(X, V); }); Changed(); }, Min, Max, Delta));
+	}
 	/** 動畫: speed and the Studio animation browser. */
 	void CharacterAnim(FOKSceneObject* O)
 	{
-			Float(TEXT("動畫速度（0 定格）"), [](FOKSceneObject& X) { return X.Character.Speed; }, [](FOKSceneObject& X, float V) { X.Character.Speed = FMath::Max(V, 0.f); }, 0.f, 4.f, 0.05f);
+			CharactersFloat(TEXT("動畫速度（0 定格）"), [](FOKSceneObject& X) { return X.Character.Speed; }, [](FOKSceneObject& X, float V) { X.Character.Speed = FMath::Max(V, 0.f); }, 0.f, 4.f, 0.05f);
 			// The animation's time: with speed 0 the character holds this frame (the timeline keys it as 動畫時間).
 			const FOKStudioAnim* Playing = O->Character.StudioAnimeNo >= 0 ? FOKStudioCatalog::Get().FindAnim(O->Character.StudioAnimeKind, O->Character.StudioAnimeGroup, O->Character.StudioAnimeCategory, O->Character.StudioAnimeNo) : nullptr;
-			Float(TEXT("動畫時間 秒"), [](FOKSceneObject& X) { return X.Character.Time; }, [](FOKSceneObject& X, float V) { X.Character.Time = FMath::Max(V, 0.f); X.Character.Speed = 0.f; },
+			CharactersFloat(TEXT("動畫時間 秒"), [](FOKSceneObject& X) { return X.Character.Time; }, [](FOKSceneObject& X, float V) { X.Character.Time = FMath::Max(V, 0.f); X.Character.Speed = 0.f; },
 				0.f, Playing && Playing->Duration > 0.f ? Playing->Duration : 60.f, 0.01f);
 			AnimBrowser(*O);
 			VideoMotionList(*O);
@@ -3238,7 +3257,7 @@ private:
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[OKStudioStyle::Button(FText::FromString(TEXT("Studio 動作")), [this] { AnimKind = 0; DeferRebuild(); }, 0.f, 18.f, AnimKind == 0, 10.f)]
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[OKStudioStyle::Button(FText::FromString(TEXT("H 動作")), [this] { AnimKind = 1; DeferRebuild(); }, 0.f, 18.f, AnimKind == 1, 10.f)]
-			+ SHorizontalBox::Slot().FillWidth(1.f)[OKStudioStyle::Button(FText::FromString(TEXT("停止動畫")), [this] { if (FOKSceneObject* X = Obj()) { X->Character.StudioAnimeNo = -1; Changed(); DeferRebuild(); } }, 0.f, 18.f, false, 10.f)]
+			+ SHorizontalBox::Slot().FillWidth(1.f)[OKStudioStyle::Button(FText::FromString(TEXT("停止動畫")), [this] { if (Obj()) { EachSelectedCharacter([](FOKSceneObject& X) { X.Character.StudioAnimeNo = -1; }); Changed(); DeferRebuild(); } }, 0.f, 18.f, false, 10.f)]
 		];
 		Props->AddSlot().AutoHeight().Padding(0.f, 1.f)
 		[
@@ -3314,12 +3333,21 @@ public:
 		const FOKStudioCatalog& C = FOKStudioCatalog::Get();
 		if (!X || X->Kind != EOKSceneObjectKind::Character || !C.Anims.IsValidIndex(Index) || C.Anims[Index].File.IsEmpty()) return false;
 		const FOKStudioAnim& A = C.Anims[Index];
-		X->Character.StudioAnimeKind = A.Kind; X->Character.StudioAnimeGroup = A.Group; X->Character.StudioAnimeCategory = A.Category; X->Character.StudioAnimeNo = A.No; X->Character.AnimFile.Reset();
-		X->Character.Time = 0.f;
+		int32 Applied = 0;
+		bool bHeld = false;
+		EachSelectedCharacter([&A, &Applied, &bHeld](FOKSceneObject& Y)
+		{
+			Y.Character.StudioAnimeKind = A.Kind; Y.Character.StudioAnimeGroup = A.Group; Y.Character.StudioAnimeCategory = A.Category; Y.Character.StudioAnimeNo = A.No; Y.Character.AnimFile.Reset();
+			Y.Character.Time = 0.f;
+			bHeld |= Y.Character.Speed <= 0.f;
+			++Applied;
+		});
 		Changed();
 		DeferRebuild();
-		// The status line says what was applied (U106): it kept 「加入角色 …」 from before.
-		SetStatus(FString::Printf(TEXT("%s 套用動作 %s"), *X->Name, *A.Name));
+		// The status line says what was applied (U106): it kept 「加入角色 …」 from before. U193: an imported scene's
+		// characters are often at speed 0, and the new motion then looked as if it had not taken.
+		const FString Who = Applied > 1 ? FString::Printf(TEXT("%d 個角色"), Applied) : X->Name;
+		SetStatus(FString::Printf(TEXT("%s 套用動作 %s%s"), *Who, *A.Name, bHeld ? TEXT("（動畫速度 0，定格在第一幀）") : TEXT("")));
 		return true;
 	}
 	/** The other side of the selected character's H motion (女H挿入／騎乗位／弱ループ → 男H挿入／騎乗位／弱ループ): the

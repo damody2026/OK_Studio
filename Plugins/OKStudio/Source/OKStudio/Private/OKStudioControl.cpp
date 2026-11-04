@@ -867,7 +867,10 @@ namespace
 			const bool bWasHandlingInactive = App.GetHandleDeviceInputWhenApplicationNotActive();
 			App.SetHandleDeviceInputWhenApplicationNotActive(true);
 			ON_SCOPE_EXIT { App.SetHandleDeviceInputWhenApplicationNotActive(bWasHandlingInactive); };
-			const FModifierKeysState Mods;
+			// "ctrl", "shift": held during the press (U198: a tree's multi-select), as in "key".
+			bool bCtrl = false, bShift = false;
+			J->TryGetBoolField(TEXT("ctrl"), bCtrl); J->TryGetBoolField(TEXT("shift"), bShift);
+			const FModifierKeysState Mods(bShift, false, bCtrl, false, false, false, false, false, false);
 			const uint32 User = App.GetUserIndexForMouse();
 			// The real mouse's pointer index (0 is a touch's), so these presses and the real mouse's moves are one pointer.
 			const uint32 Pointer = FSlateApplication::CursorPointerIndex;

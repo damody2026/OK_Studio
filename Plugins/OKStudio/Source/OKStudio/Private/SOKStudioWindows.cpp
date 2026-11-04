@@ -877,12 +877,17 @@ TSharedRef<SWidget> SOKStudioPanel::BuildSceneBrowser()
 		Pick->AddSlot().AutoHeight().Padding(0.f, 2.f)[Button(FText::FromString(TEXT("覆蓋（開啟）")), [this, F] { OpenScene(F, false); }, 0.f, 20.f)];
 		Pick->AddSlot().AutoHeight().Padding(0.f, 2.f)[Button(FText::FromString(TEXT("疊加到目前場景")), [this, F] { OpenScene(F, true); }, 0.f, 20.f)];
 		Pick->AddSlot().AutoHeight().Padding(0.f, 2.f)[Button(FText::FromString(TEXT("取消")), [this] { ScenePick.Reset(); DeferFloat(TEXT("scenes")); }, 0.f, 20.f)];
+		// U195: the game's own scenes are read here, never renamed or deleted (this would move them out of the game folder).
+		const FString GameScenes = KStudioFolder();
+		if (GameScenes.IsEmpty() || !FPaths::IsUnderDirectory(F, GameScenes))
+		{
 		Pick->AddSlot().AutoHeight().Padding(0.f, 6.f, 0.f, 2.f)[SNew(SBox).HeightOverride(18.f)[SNew(SEditableTextBox).Style(&TextBoxStyle()).Text(FText::FromString(SceneNewName)).OnTextChanged_Lambda([this](const FText& T) { SceneNewName = T.ToString(); })]];
 		Pick->AddSlot().AutoHeight().Padding(0.f, 2.f)[Button(FText::FromString(TEXT("改名")), [this, F] { RenameScene(F, SceneNewName); }, 0.f, 20.f)];
 		Pick->AddSlot().AutoHeight().Padding(0.f, 2.f)[Button(FText::FromString(TEXT("刪除（移到 Trash）")), [this, F]
 		{
 			Confirm(FString::Printf(TEXT("把 %s 移到 Saved/OKStudio/Trash？"), *FPaths::GetCleanFilename(F)), { { TEXT("移到 Trash"), [this, F] { DeleteScene(F); } }, { TEXT("取消"), nullptr } });
 		}, 0.f, 20.f)];
+		}
 	}
 	else
 	{
@@ -2198,15 +2203,16 @@ TSharedRef<SWidget> SOKStudioPanel::BuildExport()
 			SNew(SBox).HeightOverride(14.f)
 			[SNew(SProgressBar).Percent_Lambda([this] { return Game.IsValid() && Game->IsExporting() ? TOptional<float>(float(Game->ExportFrameIndex()) / FMath::Max(1, Game->ExportFrameCount())) : TOptional<float>(0.f); })]
 		]
-		+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(TAttribute<FText>::CreateLambda([this]
+		+ SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Font(Font(10.f)).ColorAndOpacity(TextSoft()).AutoWrapText(true).Text_Lambda([this]
 		{
 			if (!Game.IsValid()) return FText::GetEmpty();
 			if (Game->IsExporting()) return FText::FromString(FString::Printf(TEXT("輸出中 %d / %d 幀"), Game->ExportFrameIndex(), Game->ExportFrameCount()));
-			// The note before the path: the line is cut at the window's edge.
-			if (!Game->LastMovie.IsEmpty()) return FText::FromString(Game->LastMovieNote.IsEmpty() ? TEXT("完成：") + Game->LastMovie : TEXT("完成（") + Game->LastMovieNote + TEXT("）：") + Game->LastMovie);
+			// U197: the file's name, wrapped (開資料夾 is next to it); the full path ran off the window.
+			const FString Movie = FPaths::GetCleanFilename(Game->LastMovie);
+			if (!Game->LastMovie.IsEmpty()) return FText::FromString(Game->LastMovieNote.IsEmpty() ? TEXT("完成：") + Movie : TEXT("完成（") + Game->LastMovieNote + TEXT("）：") + Movie);
 			if (!Game->LastMovieError.IsEmpty()) return FText::FromString(TEXT("沒有影片：") + Game->LastMovieError);
 			return FText::FromString(Game->ExportFolder().IsEmpty() ? FString() : TEXT("上次輸出：") + Game->ExportFolder());
-		}), 10.f, TextSoft())]
+		})]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
 		[
 			SNew(SHorizontalBox)
@@ -2223,7 +2229,8 @@ TSharedRef<SWidget> SOKStudioPanel::BuildExport()
 				}
 				if (ExportKind == 1 && !FPaths::FileExists(UOKStudioGame::FfmpegPath())) { SetStatus(TEXT("找不到 Tools/ffmpeg/ffmpeg.exe（第三方工具不進版控）")); return; }
 				const FString Dir = Game->ExportFrames(ExportFpsV, ExportW, ExportH, ExportKind == 1, ExportFromT, ExportToT, ExportFolderText);
-				SetStatus(TEXT("輸出到 ") + Dir);
+				// An mp4's frames folder goes away when the file is made: the window says where it ended up.
+				SetStatus(ExportKind == 1 ? FString(TEXT("開始輸出 mp4")) : TEXT("輸出到 ") + Dir);
 				DeferFloat(TEXT("export"));
 			}, 0.f, 22.f, false, 11.f, ButtonFill(), !bRunning)]
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 2.f, 0.f)[Button(FText::FromString(TEXT("取消")), [this] { if (Game.IsValid()) Game->CancelExport(); DeferFloat(TEXT("export")); }, 0.f, 22.f, false, 11.f, ButtonFill(), bRunning)]

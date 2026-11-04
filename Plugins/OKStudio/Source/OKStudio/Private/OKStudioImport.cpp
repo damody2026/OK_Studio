@@ -1,6 +1,7 @@
 #include "OKStudioImport.h"
 #include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
+#include "KKCardReader.h"
 #include "KKRustExtract.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -453,6 +454,15 @@ namespace
 					}
 				}
 				if (bCard) ++Report->CharacterCards; else Report->Notes.Add(FString::Printf(TEXT("character %d: no OK card (%s)"), Key, *Summary));
+				// U194: the name in the tree is the card's; "Character 171" said nothing.
+				FString CharacterName = FString::Printf(TEXT("Character %d"), Key);
+				FKKCharacterFile CardFile;
+				FString CardError;
+				if (!KksCard.IsEmpty() && UKKCardReader::LoadFromFile(KksCard, CardFile, CardError))
+				{
+					const FString Full = (CardFile.LastName + TEXT(" ") + CardFile.FirstName).TrimStartAndEnd();
+					if (!Full.IsEmpty()) CharacterName = Full;
+				}
 				// A card that did not convert stays beside the scene's cards (char_<key>.kks.png) to reproduce the failure.
 				if (bCard) IFileManager::Get().Delete(*KksCard);
 				FString OkAnimPath;
@@ -476,7 +486,7 @@ namespace
 							Key, *Name, bHere ? TEXT("found") : TEXT("not on this machine")));
 					}
 				}
-				const int32 Id = Add(EOKSceneObjectKind::Character, FString::Printf(TEXT("Character %d"), Key), Parent, O);
+				const int32 Id = Add(EOKSceneObjectKind::Character, CharacterName, Parent, O);
 				FOKSceneCharacter& C = Doc->Find(Id)->Character;
 				C.EyesLook = EOKSceneLook::Animation;
 				C.Card = bCard ? OkCard : KksCard;
