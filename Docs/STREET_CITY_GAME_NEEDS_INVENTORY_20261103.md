@@ -424,7 +424,7 @@ c-street-city 的逐項回答在 `Docs/STREET_CITY_PLACES_INVENTORY_20261103.md`
 - `motions.toml` 的 `beach`、`pool` 要能接上新的地點 id。
 - 戶外旗標接到雨天、雨傘、撲克牌桌和視線判斷。
 - 坐的錨點有 `seat_pos` 時用真椅子：不生成 `SpawnLifeProps` 的方塊椅，坐姿高度依 `seat_pos`（第 10.2 節）。
-- 買衣試衣與換裝（第 10.4 節）：目前遊戲沒有這個功能。`catalog.json` 沒有衣服和鞋子的商品類別，服裝只有開場選的 `HighOutfits`（卡片內的服裝編號），街上群眾換裝和換臉一樣要下次啟動才生效。
+- 買衣試衣與換裝（第 10.4 節）：11-04 已做。`catalog.json` 有 `clothes` 商品（百貨、服飾、內衣、泳裝、浴衣店），帶她到店裡可以試穿、買給她、換穿（`OKStreetSocialWardrobe.inl`、ok-rules `wardrobe.rs`）。還沒做：試穿走到 `fitting`／`fitting_show` 錨點（現在是原地進一對一高模）、住處 `closet` 換衣、男裝。街上群眾換裝和換臉一樣要下次啟動才生效。
 - `hotel` 的 privacy 是 1，`TickIntimacy` 在飯店永遠不會觸發（子代理發現）。要改成 2，或給飯店一個私人房間的子地點。
 - 寫死在舊地圖座標的東西要換掉：
   - 女主走路的路線點、休息點、看風景點（`OKStreetSocialRules.h:1809-1831`）。

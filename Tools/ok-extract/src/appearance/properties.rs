@@ -116,6 +116,36 @@ pub(crate) fn restyle(card:&[u8],donor:Option<&[u8]>,rgb:Option<[f32;3]>)->Resul
  patch_paths(card,0,&edits)
 }
 
+/// The street's clothes (ok-rules wardrobe.rs, user 2026-11-04): `card` wearing each (outfit, part, list id, main colour)
+/// of the original game's clothes; id 0 takes the part off. The new piece's patterns are cleared, its colours otherwise
+/// stay what that part had. Bottoms given to her over a one-piece would not show (the game's rule), so that top becomes a
+/// plain T-shirt. No game: the base library has the models, the card stays an OK card.
+pub(crate) fn dress(card:&[u8],pieces:&[(usize,usize,i32,Option<[f32;3]>)])->Result<Vec<u8>,String>{
+ const PLAIN_TOP:(i32,[f32;3])=(38,[0.95,0.95,0.95]);
+ let mut out=card.to_vec();
+ for &(outfit,part,id,rgb) in pieces {out=put_on(&out,outfit,part,id,rgb)?;}
+ let mut with_bottoms:Vec<usize>=pieces.iter().filter(|p|p.1==1&&p.2!=0).map(|p|p.0).collect();with_bottoms.sort_unstable();with_bottoms.dedup();
+ for outfit in with_bottoms {if one_piece(&out,outfit)?{out=put_on(&out,outfit,0,PLAIN_TOP.0,Some(PLAIN_TOP.1))?;}}
+ crate::tree_answers::with_plain_bundles(&out)
+}
+fn put_on(card:&[u8],outfit:usize,part:usize,id:i32,rgb:Option<[f32;3]>)->Result<Vec<u8>,String>{
+ let key=format!("clothes{part}");let t=super::targets().into_iter().find(|t|t.key==key).ok_or("沒有這個服裝部位")?;
+ let item=(id!=0).then(||super::Item{key:String::new(),guid:String::new(),source:String::new(),entry:crate::list::ListEntry{category_no:t.category,id,..Default::default()}});
+ let out=super::patch(card,&t,item.as_ref(),outfit)?;
+ if id==0 {return Ok(out);}
+ let mut edits:Vec<(String,J)>=(0..3).map(|c|(format!("clothes.parts.{part}.colorInfo.{c}.pattern"),json!(0))).collect();
+ if let Some(c)=rgb {edits.push((format!("clothes.parts.{part}.colorInfo.0.baseColor"),json!([c[0],c[1],c[2],1.0])));}
+ patch_paths(&out,outfit,&edits)
+}
+/// Whether the outfit's top hides bottoms. Not knowing (a mod's top the library cannot answer for) is no.
+fn one_piece(card:&[u8],outfit:usize)->Result<bool,String>{
+ static N:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+ let tmp=std::env::temp_dir().join(format!("ok-dress-{}-{}.png",std::process::id(),N.fetch_add(1,std::sync::atomic::Ordering::Relaxed)));
+ fs::write(&tmp,card).map_err(|e|e.to_string())?;
+ let rules=crate::clothing_rules::load(Path::new(""),&tmp,outfit as i32);let _=fs::remove_file(&tmp);
+ Ok(rules.is_ok_and(|r|r.hides_bottoms()))
+}
+
 /// Every scalar field of the card's face/body/hair/outfit sections as (path, value text): what `patch_paths` can set.
 pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String)>,String>{
  fn flat(v:&Value,path:&str,out:&mut Vec<(String,String)>){match v {
@@ -149,6 +179,44 @@ pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String
   // Everything else of hers is untouched (her eyes, her head type, her clothes).
   for (k,v) in &mine {if !k.starts_with("face.shapeValueFace.")&&!k.starts_with("hair.parts."){assert_eq!(got.iter().find(|(g,_)|g==k).map(|(_,x)|x),Some(v),"{k}");}}
   let before=blocks_from_card(&card).unwrap();let after=blocks_from_card(&out).unwrap();for(name,bytes)in before{if name!="Custom"{assert_eq!(after[&name],bytes,"{name}");}}
+ }
+ #[test]fn dress_puts_the_shops_clothes_on_her_without_the_game(){
+  let path="C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines/alice.png";if !Path::new(path).exists(){return;}
+  let card=crate::gamefs::read(path).unwrap();
+  let out=dress(&card,&[(0,0,56,Some([0.2,0.4,0.8])),(0,1,0,None),(0,7,11,None),(0,8,11,None),(3,2,8,None)]).unwrap();
+  let (got,mine)=(list_paths(&out,0).unwrap(),list_paths(&card,0).unwrap());
+  let at=|l:&[(String,String)],k:&str|l.iter().find(|(p,_)|p==k).map(|(_,v)|v.clone());
+  assert_eq!(at(&got,"clothes.parts.0.id").as_deref(),Some("56"));assert_eq!(at(&got,"clothes.parts.1.id").as_deref(),Some("0"));assert_eq!(at(&got,"clothes.parts.8.id").as_deref(),Some("11"));
+  assert!((at(&got,"clothes.parts.0.colorInfo.0.baseColor.2").unwrap().parse::<f32>().unwrap()-0.8).abs()<1e-4);
+  assert_eq!(at(&list_paths(&out,3).unwrap(),"clothes.parts.2.id").as_deref(),Some("8"),"her swimsuit goes in her swimming outfit");
+  // Only what she was given changed: her body, face and hair are hers.
+  for(k,v)in &mine {if !k.starts_with("clothes."){assert_eq!(at(&got,k).as_ref(),Some(v),"{k}");}}
+  let tmp=std::env::temp_dir().join(format!("ok-dress-{}.png",std::process::id()));fs::write(&tmp,&out).unwrap();
+  let opened=crate::oklib::open_test_card(&tmp,0);let _=fs::remove_file(&tmp);
+  assert!(opened.unwrap().parts.iter().any(|p|p.role.starts_with("clothes")),"the new clothes are on her");
+ }
+ /// Every piece the street sells opens and shows on every heroine (the base library has it). Run by hand after changing the stock.
+ #[test]#[ignore="opens one card for each piece of catalog.json's clothes on each heroine, ten minutes"]fn every_clothes_item_opens(){
+  let catalog:J=serde_json::from_slice(&fs::read("C:/portable/OpenKoikatsu/Content/IndependentResources/StreetSocialData/catalog.json").unwrap()).unwrap();
+  if std::env::var_os("OK_BASE_LIBRARY").is_none(){std::env::set_var("OK_BASE_LIBRARY",Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Content/IndependentResources/base_v1"));}
+  let roles=["top","bot","bra","shorts","gloves","panst","socks","shoes","shoes"];
+  let mut failed=Vec::new();let mut count=0;
+  for card in fs::read_dir("C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines").unwrap().flatten().map(|e|e.path()).filter(|p|p.extension().is_some_and(|e|e=="png")) {
+   let bytes=crate::gamefs::read(card.to_str().unwrap()).unwrap();let mut seen=std::collections::BTreeSet::new();
+   for item in catalog["items"].as_array().unwrap() {
+    if item["category"]!="clothes"{continue;}
+    let wear=&item["clothes"];let outfit=wear["outfit"].as_i64().unwrap_or(-1).max(0) as usize;if !seen.insert(wear["parts"].to_string()){continue;}
+    let pieces:Vec<_>=wear["parts"].as_array().unwrap().iter().map(|p|(outfit,p[0].as_u64().unwrap() as usize,p[1].as_i64().unwrap() as i32,None)).collect();
+    let tmp=std::env::temp_dir().join(format!("ok-stock-{}.png",std::process::id()));fs::write(&tmp,dress(&bytes,&pieces).unwrap()).unwrap();count+=1;
+    let at=format!("{} on {}",item["id"],card.display());
+    match crate::oklib::open_test_card(&tmp,outfit as i32){
+     Ok(s)=>{let on:std::collections::BTreeSet<_>=s.parts.iter().filter(|p|p.role.starts_with("clothes")).map(|p|format!("{}:{}",p.role,p.name)).collect();eprintln!("stock {at} {on:?}");
+      for &(_,part,id,_) in &pieces {if id!=0&&part!=3&&!on.iter().any(|r|r.starts_with(&format!("clothes_{}:",roles[part]))){failed.push(format!("{at}: part {part} not shown"));}}}
+     Err(e)=>failed.push(format!("{at}: {e}"))}
+    let _=fs::remove_file(&tmp);
+   }
+  }
+  eprintln!("stock pieces opened {count}");assert!(failed.is_empty(),"{failed:#?}");
  }
  #[test]fn properties_real_card_roundtrip_and_untouched_sections(){
   let original=crate::gamefs::read("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C000.png").unwrap();

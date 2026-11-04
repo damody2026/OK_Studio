@@ -76,7 +76,7 @@ pub(crate) fn apply_strip_all_migrations(game:&Path,card:&mut crate::card::CardI
     let mut question:Vec<&str>=card.resolves.iter().map(|r|r.mod_id.trim()).collect();
     question.sort_unstable();question.dedup();
     let question=question.join("\n");
-    let stripped:HashSet<String>=match crate::tree_answers::lookup::<Vec<String>>("strip-all",question.as_bytes()) {
+    let stripped:HashSet<String>=match crate::tree_answers::lookup_within::<Vec<String>>("strip-all",question.as_bytes()) {
         Some(answer)=>answer.into_iter().collect(),
         None if crate::tree_answers::unanswered("strip-all",question.as_bytes())=>HashSet::new(),
         None=>{
@@ -264,8 +264,8 @@ pub fn find_guids(mods_dir: &Path, wanted: Option<&std::collections::HashSet<Str
     names.sort();
     // An OK card's answer (tree_answers.rs): which archive declares each GUID, without the tree's manifests.
     let question = names.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n");
-    if let Some(rows) = crate::tree_answers::lookup::<Vec<(String, String)>>("guids", question.as_bytes()) {
-        return rows.into_iter().map(|(guid, zip)| (guid, crate::tree_answers::rebase(mods_dir, &zip))).collect();
+    if let Some(rows) = crate::tree_answers::lookup_within::<Vec<(String, String)>>("guids", question.as_bytes()) {
+        return rows.into_iter().filter(|(guid, _)| w.contains(guid)).map(|(guid, zip)| (guid, crate::tree_answers::rebase(mods_dir, &zip))).collect();
     }
     if crate::tree_answers::unanswered("guids", question.as_bytes()) { return HashMap::new(); }
     let found = crate::okstrict::scanning(|| find_guids_wanted(mods_dir, w, &names));
@@ -600,6 +600,7 @@ fn override_lookup(mods_dir:&Path,want:&str)->Option<PathBuf> {
     if let Some(answer)=crate::tree_answers::lookup::<Option<String>>("override",want.as_bytes()) {
         return answer.map(|zip|crate::tree_answers::rebase(mods_dir,&zip));
     }
+    if crate::tree_answers::plain_bundles() { return None; }
     if crate::tree_answers::unanswered("override",want.as_bytes()) { return None; }
     let found=crate::okstrict::scanning(||override_lookup_in_tree(mods_dir,want));
     if crate::tree_answers::recording() {

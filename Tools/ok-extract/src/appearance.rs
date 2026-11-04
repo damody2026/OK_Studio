@@ -416,13 +416,19 @@ fn export_edited(root:&Path,r:&J,raw:&[u8],output:&Path)->Result<J,String>{
 pub fn request(root:&Path,path:&Path)->Result<J,String>{
  let r:J=serde_json::from_slice(&crate::gamefs::read(path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
  // The street's clinics and salon: a copy of her card with someone else's face shape and/or dyed hair (properties::restyle).
- // No game root or cache: the card alone. Request: card, output, donor (a card path, optional), hair_rgb ("#rrggbb", optional).
+ // No game root or cache: the card alone. Request: card, output, donor (a card path, optional), hair_rgb ("#rrggbb", optional),
+ // dress ([{outfit, part, id, color}], the shops' clothes, properties::dress; outfit -1 is `outfit`, the one she goes out in).
  if text(&r,"action")?=="restyle"{
   let card=crate::gamefs::read(text(&r,"card")?).map_err(|e|e.to_string())?;
   let donor=match r["donor"].as_str().filter(|d|!d.is_empty()){Some(d)=>Some(crate::gamefs::read(d).map_err(|e|e.to_string())?),None=>None};
-  let rgb=match r["hair_rgb"].as_str().filter(|h|!h.is_empty()){Some(h)=>{let h=h.trim_start_matches('#');if h.len()!=6||!h.is_ascii(){return Err("髮色格式錯誤".into());}
-   let c=|i:usize|u8::from_str_radix(&h[i..i+2],16).map(|v|v as f32/255.0).map_err(|_|"髮色格式錯誤".to_string());Some([c(0)?,c(2)?,c(4)?])},None=>None};
-  let out=properties::restyle(&card,donor.as_deref(),rgb)?;
+  let hex=|h:&str|->Result<[f32;3],String>{let h=h.trim_start_matches('#');if h.len()!=6||!h.is_ascii(){return Err("顏色格式錯誤".into());}
+   let c=|i:usize|u8::from_str_radix(&h[i..i+2],16).map(|v|v as f32/255.0).map_err(|_|"顏色格式錯誤".to_string());Ok([c(0)?,c(2)?,c(4)?])};
+  let rgb=match r["hair_rgb"].as_str().filter(|h|!h.is_empty()){Some(h)=>Some(hex(h)?),None=>None};
+  let mut out=properties::restyle(&card,donor.as_deref(),rgb)?;
+  if let Some(list)=r["dress"].as_array(){let worn=r["outfit"].as_u64().unwrap_or(0) as usize;let mut pieces=Vec::new();
+   for p in list {let outfit=p["outfit"].as_i64().filter(|o|*o>=0).map_or(worn,|o|o as usize);let color=match p["color"].as_str().filter(|c|!c.is_empty()){Some(c)=>Some(hex(c)?),None=>None};
+    pieces.push((outfit,p["part"].as_u64().ok_or("缺少服裝部位")? as usize,p["id"].as_i64().ok_or("缺少服裝編號")? as i32,color));}
+   out=properties::dress(&out,&pieces)?;}
   let output=Path::new(text(&r,"output")?);if let Some(dir)=output.parent(){std::fs::create_dir_all(dir).map_err(|e|e.to_string())?;}
   std::fs::write(output,&out).map_err(|e|e.to_string())?;
   return Ok(json!({"valid":true,"output":output.to_string_lossy(),"bytes":out.len()}));

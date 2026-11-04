@@ -48,6 +48,11 @@ fn native(game:&Path,path:&Path,outfit:i32)->Result<Rules,String> {
     Ok(Rules{types,not_bot,not_shorts})
 }
 
+impl Rules {
+    /// Her top is a one-piece: no bottoms show with it.
+    pub(crate) fn hides_bottoms(&self)->bool {self.not_bot}
+}
+
 #[derive(Serialize,Deserialize)]
 struct Prepared {schema:u32,resource_sha256:String,rules:Rules}
 pub(crate) fn validate(bytes:&[u8],digest:&str)->Result<Rules,String>{

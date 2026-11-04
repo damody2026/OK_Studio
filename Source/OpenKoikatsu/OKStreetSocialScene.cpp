@@ -397,7 +397,7 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  TMap<int32,double> CommutePausedUntil; // a girl he walked up to stops her walk for a moment (StepNavigation)
  // PrivateInPlace: the one-on-one is where she stands on the street (user, 2026-11-01: no change of scene); the street
  // goes on around them and their street figures are kept out of sight under it (OKStreetOffstage).
- bool PrivateInPlace=false;
+ bool PrivateInPlace=false;bool PrivateTryOn=false; /* she is trying clothes on: no H scene, no memory of a session */
  int32 NavGirl=INDEX_NONE,PrivateGirl=INDEX_NONE,ContactsProbePhase=0;FOKStreetLiftRide NavRide; // the navigation riding an elevator (PlanNavLift)
  double NavAt=0,ContactsProbeAt=0;
  int32 ContactsProbeGreeting=0;TArray<TSharedPtr<FJsonValue>> ContactsVoiceEvidence;TArray<FVector> NavPath;
@@ -3003,6 +3003,7 @@ static int64 OKStreetMindNow(const FOKStreetSceneState& S);
 #include "OKStreetSocialUiProbe.inl"
 #include "OKStreetSocialControl.inl"
 #include "OKStreetSocialClinic.inl"
+#include "OKStreetSocialWardrobe.inl"
 void AOKStreetSocialScene::BeginPhoto(int32 Character){BeginPair(Character,false);}
 void AOKStreetSocialScene::BeginPair(int32 Character,int32 Kind){
  const bool PhoneUse=Kind==8,Watermelon=Kind==6||Kind==7,FemaleStrikes=Kind==7,Meal=Kind==5,Bath=Kind==9,Read=Kind==10,NoProps=Kind==11,Seated=Kind==1||Bath||NoProps,Drink=Kind==2,Splash=Kind==3||Kind==4,FemaleThrows=Kind==4;

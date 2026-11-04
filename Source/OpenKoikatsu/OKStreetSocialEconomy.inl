@@ -955,6 +955,7 @@ TSharedRef<SWidget> AOKStreetSocialScene::BuildMenuCard(const FString& Title,int
  TArray<const FOKStreetCatalogItem*> Items=ItemsHere(S.ShopPlace);
  Items.StableSort([&Rank](const FOKStreetCatalogItem& A,const FOKStreetCatalogItem& B){return Rank(A.Category)<Rank(B.Category);});
  auto List=SNew(SVerticalBox);FString Section;
+ if(Items.ContainsByPredicate([](const FOKStreetCatalogItem* I){return I->Category==TEXT("clothes");}))AddWardrobeRows(List,Her);
  for(const auto* Item:Items){
   if(Item->Category!=Section||List->NumSlots()==0){Section=Item->Category;
    const FString Key=TEXT("ui.economy.menu_section_")+Section;const FString Name=OKT(*Key);
@@ -968,6 +969,8 @@ TSharedRef<SWidget> AOKStreetSocialScene::BuildMenuCard(const FString& Title,int
   Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(0,0,10,0)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold",15)).ColorAndOpacity(Ink).Text(FText::FromString(Money(Item->PriceOf(Item->DefaultSize()))))];
   // A treatment at the clinics and the salon is done for her when she says yes, not put in the cart.
   if(Item->Category==TEXT("clinic")){List->AddSlot().AutoHeight().Padding(0,3)[Row];AddClinicRows(List,*Item,Her);continue;}
+  // Clothes are tried on and bought for her (OKStreetSocialWardrobe.inl).
+  if(Item->Category==TEXT("clothes")){List->AddSlot().AutoHeight().Padding(0,3)[Row];AddClothesRows(List,*Item,Her);continue;}
   if(Item->Consumable||Item->UsedOnTheSpot())
    Row->AddSlot().AutoWidth().Padding(2,0)[Button(OKT(TEXT("ui.economy.i_want_button")),[Weak,Id](){Weak->AddToCart(Id,false);})];
   if(Her!=INDEX_NONE&&Item->Consumable)Row->AddSlot().AutoWidth().Padding(2,0)[Button(OKT(TEXT("ui.economy.order_for_her_button")),[Weak,Id](){Weak->AddToCart(Id,true);})];

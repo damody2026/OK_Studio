@@ -754,3 +754,9 @@ hair_cherry_pink = "cherry-blossom pink"
 hair_lavender = "lavender"
 hair_navy_blue = "navy blue"
 hair_mint_green = "mint green"
+
+[wardrobe]
+bought_note = "He bought me {item} and I put it on"
+bought_fact = "He just bought you {item}, and you have put it on."
+refused_already_owned = "She already has this one."
+refused_not_owned = "She does not have this one."

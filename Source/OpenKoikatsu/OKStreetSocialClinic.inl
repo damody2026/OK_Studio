@@ -67,24 +67,27 @@ void AOKStreetSocialScene::FinishClinic(int32 Her,const FString& ItemId,const FS
  RefreshUI();
 }
 
-// Her card as she looks now (ext.appearance): her own card, or a copy with someone's face shape and/or her dyed hair,
-// made once for each look and kept in Saved/StreetSocial/Appearance. Empty (with Error) when it could not be made.
-FString AOKStreetSocialScene::RestyledCard(int32 Her,FString& Error){
+// Her card as she looks now (ext.appearance, ext.wardrobe): her own card, or a copy with someone's face shape, her dyed
+// hair and/or the clothes she has on (with Trying, that piece too), made once for each look and kept in
+// Saved/StreetSocial/Appearance. Empty (with Error) when it could not be made.
+FString AOKStreetSocialScene::RestyledCard(int32 Her,FString& Error,const FOKStreetCatalogItem* Trying){
  auto& S=*State;if(!S.BaseCards.IsValidIndex(Her)||!S.Manifest.Characters.IsValidIndex(Her)){Error=TEXT("no card");return FString();}
  const FString Own=S.BaseCards[Her],Girl=OKStreetStableId(S.Manifest.Characters[Her]);
  auto Request=OKRulesRequest(TEXT("appearance_of"));OKRulesPutExt(S,Request);Request->SetStringField(TEXT("girl"),Girl);
  const TSharedPtr<FJsonObject> Look=OKRulesEval(S,Request);if(!Look){Error=TEXT("appearance_of failed");return FString();}
  const FString FaceFrom=Look->GetStringField(TEXT("face_from")),Hair=Look->GetStringField(TEXT("hair_rgb"));
- if(FaceFrom.IsEmpty()&&Hair.IsEmpty())return Own;
+ TArray<TSharedPtr<FJsonValue>> Dress;if(const TSharedPtr<FJsonObject> Has=WardrobeOf(Her,Trying)){const TArray<TSharedPtr<FJsonValue>>* List=nullptr;if(Has->TryGetArrayField(TEXT("dress"),List))Dress=*List;}
+ if(FaceFrom.IsEmpty()&&Hair.IsEmpty()&&Dress.IsEmpty())return Own;
+ const int32 Outfit=S.HighOutfits.IsValidIndex(Her)?S.HighOutfits[Her]:0;FString DressKey;{auto W=TJsonWriterFactory<>::Create(&DressKey);FJsonSerializer::Serialize(Dress,W);}
  FString Donor;
  if(!FaceFrom.IsEmpty())for(int32 I=0;I<S.Manifest.Characters.Num();++I)if(OKStreetStableId(S.Manifest.Characters[I])==FaceFrom&&S.BaseCards.IsValidIndex(I))Donor=S.BaseCards[I];
  if(!FaceFrom.IsEmpty()&&Donor.IsEmpty()){Error=TEXT("whose face she has is not in this street: ")+FaceFrom;return FString();}
  // One file for each look of hers: the same look again reuses it (and the crowd's disk cache keyed by the card).
- const FString Key=FMD5::HashAnsiString(*FString::Printf(TEXT("%s|%s|%s"),*Own,*Donor,*Hair)).Left(12);
+ const FString Key=FMD5::HashAnsiString(*FString::Printf(TEXT("%s|%s|%s|%d|%s"),*Own,*Donor,*Hair,Outfit,*DressKey)).Left(12);
  const FString Out=OKStreetClinic::Dir()/FString::Printf(TEXT("%s-%s.png"),*Girl.Right(16),*Key);
  if(IFileManager::Get().FileExists(*Out))return Out;
  auto Json=MakeShared<FJsonObject>();Json->SetStringField(TEXT("action"),TEXT("restyle"));Json->SetStringField(TEXT("card"),Own);Json->SetStringField(TEXT("output"),Out);
- Json->SetStringField(TEXT("donor"),Donor);Json->SetStringField(TEXT("hair_rgb"),Hair);
+ Json->SetStringField(TEXT("donor"),Donor);Json->SetStringField(TEXT("hair_rgb"),Hair);Json->SetArrayField(TEXT("dress"),Dress);Json->SetNumberField(TEXT("outfit"),Outfit);
  FString Body;{auto W=TJsonWriterFactory<>::Create(&Body);FJsonSerializer::Serialize(Json,W);}
  const FString RequestPath=OKStreetClinic::Dir()/TEXT("restyle.request.json"),Report=OKStreetClinic::Dir()/TEXT("restyle.report.json");
  IFileManager::Get().MakeDirectory(*OKStreetClinic::Dir(),true);

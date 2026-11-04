@@ -754,3 +754,9 @@ hair_cherry_pink = "樱花粉"
 hair_lavender = "薰衣草紫"
 hair_navy_blue = "藏青色"
 hair_mint_green = "薄荷绿"
+
+[wardrobe]
+bought_note = "他买了{item}给我，我穿上了"
+bought_fact = "他刚买了{item}给你，你已经换上了。"
+refused_already_owned = "她已经有这件了。"
+refused_not_owned = "她没有这件。"

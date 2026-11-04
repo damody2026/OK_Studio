@@ -296,7 +296,7 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
  if(FVector::Dist2D(S.Male,S.NavPath.IsValidIndex(S.NavStep)?S.NavPath[S.NavStep]:Goal)<60)S.NavReplans=0;
  return OKStreetMaleRunSpeed/OKStreetWalkSpeed;
 }
-void AOKStreetSocialScene::BeginPrivate(int32 Character){
+void AOKStreetSocialScene::BeginPrivate(int32 Character,const FString& TryCard,int32 TryOutfit){
  if(!ContactReady(Character)||!ContactIdle()||!State->HighCards.IsValidIndex(Character)||State->HighCards.IsEmpty())return;
  auto& S=*State;StopAmbientActivity();EndTalk();GalgameHideForPrivate();
  OKStreetPrivateEnvSave(); // its high models change the extraction environment the crowd reads (OKStreetSocialPrivateEnv.cpp)
@@ -304,10 +304,12 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character){
  // scene): her high model takes her place, his is set by the pair; the street goes on around them.
  const FOKStreetAgentSim* Her=S.Agents.FindByPredicate([Character](const FOKStreetAgentSim& A){return A.Slot==Character;});
  const FTransform There(FRotator(0.,S.RenderedRotations.IsValidIndex(Character)?S.RenderedRotations[Character].Yaw:0.,0.),Her?Her->Position:S.Male);
- auto* Mode=AOKInteractionMode::EnterCards(GetWorld()->GetFirstPlayerController(),S.HighCards[Character],S.HighCards[0],S.HighOutfits.IsValidIndex(Character)?S.HighOutfits[Character]:0,&There);
+ const bool TryOn=!TryCard.IsEmpty();const int32 Worn=S.HighOutfits.IsValidIndex(Character)?S.HighOutfits[Character]:0;
+ auto* Mode=AOKInteractionMode::EnterCards(GetWorld()->GetFirstPlayerController(),TryOn?TryCard:S.HighCards[Character],S.HighCards[0],TryOn&&TryOutfit>=0?TryOutfit:Worn,&There);
  if(!Mode){OKStreetPrivateEnvRestore();S.ContactsNotice=OKT(TEXT("ui.contacts.interaction_load_failed"));RefreshUI();return;}
  // Her experience (hexp.rs) gates the poses, raw insertion and anal in the H panel.
- {const FString Id=OKStreetStableId(S.Manifest.Characters[Character]);auto Ask=OKRulesHeroineRequest(S,TEXT("h_experience"),Id);Ask->SetStringField(TEXT("girl"),Id);Ask->SetNumberField(TEXT("day"),S.Store.CalendarDay);OKRulesPutExt(S,Ask);
+ S.PrivateTryOn=TryOn;
+ if(!TryOn){const FString Id=OKStreetStableId(S.Manifest.Characters[Character]);auto Ask=OKRulesHeroineRequest(S,TEXT("h_experience"),Id);Ask->SetStringField(TEXT("girl"),Id);Ask->SetNumberField(TEXT("day"),S.Store.CalendarDay);OKRulesPutExt(S,Ask);
   // With her desire and bust: past 100 she runs and her nipples leak in the room too (OKHScene drips).
   TSharedPtr<FJsonObject> Experience=OKRulesEval(S,Ask);if(Experience.IsValid()){Experience->SetNumberField(TEXT("sex_desire"),OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget).SexDesire);Experience->SetNumberField(TEXT("bust"),OKStreetHerCard(S,Character).Bust);
    // His condoms (the H panel puts one on only when he or she has one; hers are hexp's her_condoms).
@@ -336,7 +338,7 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character){
   S.PrivateLeave=SNew(SBox).HAlign(HAlign_Right).VAlign(VAlign_Top).Padding(FMargin(0,16,24,0))
    [SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().Padding(0,0,8,0)[BookmarkButton(Character)] // this moment kept (OKStreetSocialBookmarks.inl)
     +SHorizontalBox::Slot().AutoWidth()[SNew(SButton).ButtonStyle(OKStreetGlassButton()).ContentPadding(FMargin(18,8))
-    .Text(FText::FromString(OKT(TEXT("ui.contacts.leave_one_on_one"))))
+    .Text(FText::FromString(OKT(TryOn?TEXT("ui.clothes.try_done"):TEXT("ui.contacts.leave_one_on_one"))))
     .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->FinishPrivate();return FReply::Handled();})]];
   GEngine->GameViewport->AddViewportWidgetContent(S.PrivateLeave.ToSharedRef(),20);}
 }
@@ -404,7 +406,7 @@ void AOKStreetSocialScene::FinishPrivate(){
  if(S.Overlay)S.Overlay->SetVisibility(EVisibility::Visible);
  if(S.PrivateLeave.IsValid()){if(GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(S.PrivateLeave.ToSharedRef());S.PrivateLeave.Reset();}
  // Her memory of the session: when it started (the memory's own time), how long, and every thing they did, in order.
- if(S.HighPrivateResult.IsValid()&&S.Manifest.Characters.IsValidIndex(Girl)){
+ if(S.HighPrivateResult.IsValid()&&!S.PrivateTryOn&&S.Manifest.Characters.IsValidIndex(Girl)){
   const TArray<TSharedPtr<FJsonValue>>* Acts=nullptr;TArray<FString> Done;
   if(S.HighPrivateResult->TryGetArrayField(TEXT("actions"),Acts))for(const auto& V:*Acts){const auto O=V->AsObject();if(!O)continue;
    const int32 Sec=int32(O->GetNumberField(TEXT("seconds")));FString Label=O->GetStringField(TEXT("label"));
@@ -430,6 +432,7 @@ void AOKStreetSocialScene::FinishPrivate(){
     else ShowHResult(Girl,*Answer);}
   }
  }
+ S.PrivateTryOn=false;
  // Back on the street with her beside him: they go on talking (the scene started from their talk, which it ended).
  // Without this she went straight back to her schedule and walked off from the lunch he had just paid for. Opened from
  // the contacts with her elsewhere, there is nobody beside him to go on with.
