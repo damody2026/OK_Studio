@@ -1294,6 +1294,9 @@ pub(crate) struct FaceRuntimeState {
     pub iris_small_rate: f32,
     pub last_eye_gaze: [f32; 3],
     pub blush_rate: Option<f32>,
+    /// The rates `step_eye_look` gave and where its unlimited look puts the irises for them: they are given back to
+    /// `set_eye_gaze_rates` to be drawn, and past ±1 they would roll her eyes.
+    pub eye_look_shown: Option<([f32; 3], [f32; 3])>,
 }
 
 impl OkSession {
@@ -1301,6 +1304,7 @@ impl OkSession {
         if !left.is_finite() || !right.is_finite() || !vertical.is_finite() {
             return false;
         }
+        let look = self.face_runtime.eye_look_shown.filter(|(rates, _)| *rates == [left, right, vertical]).map(|(_, look)| look);
         // Vertical past ±1 rolls her eyes on past the limit (IrisRuntime::st_rolled); the look's rates stay in -1..1.
         let most = crate::eye_look::most();
         let lh = left.clamp(-most, most);
@@ -1309,8 +1313,9 @@ impl OkSession {
         self.face_runtime.last_eye_gaze = [lh, rh, v];
         for part in &mut self.parts {
             if let Some(runtime) = part.iris_runtime.as_ref() {
-                let h = if runtime.settings[0] == 1.0 { rh } else { lh };
-                let st = runtime.st_rolled(h, v);
+                let right_eye = runtime.settings[0] == 1.0;
+                let h = if right_eye { rh } else { lh };
+                let st = look.map_or_else(|| runtime.st_rolled(h, v), |l| runtime.st_look(l[right_eye as usize], l[2]));
                 runtime.apply_st(&mut part.uvs, st);
                 if let Some(draw) = part.eye_draw.as_mut() {
                     draw.apply(st, &runtime.raw_uvs, &mut part.uv2, &mut part.uv3);
@@ -1975,6 +1980,7 @@ impl OkSession {
             }
             crate::pose::assigned_weights_remap(head);
         }
+        self.face_runtime.eye_look_shown=runtime.look().map(|look|(runtime.rates,look));
         Some(runtime.rates)
     }
     /// Clothes thickness per body capsule for the clothed collision layer; recomputed only when the worn meshes change.

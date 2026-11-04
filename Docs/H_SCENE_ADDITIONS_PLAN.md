@@ -255,7 +255,7 @@
 
 ## 16. 眼睛盯鏡頭、胸與臀的物理（使用者 2026-11-03 新增）
 
-- **視線寫到畫面上的材質**（`AKKPreviewActor::SetEyeGaze`）：session 算出新的瞳孔 UV，擬合成每個 UV 通道的仿射 rows，再寫到該部件所有元件實際用的眼睛材質。共用顯示材質用瞳孔 tiling `_MainTex_ST`（`ok.EyeGazeVia 1`，預設）；兩軸都和 mesh 同向（`ok.EyeGazeSTFlipU/V 0`；U 翻轉時兩眼會各自往外看，使用者指出）。`ok.EyeGazeLog 1` 印出每次寫入的值。
+- **視線寫到畫面上的材質**（`AKKPreviewActor::SetEyeGaze`）：session 算出新的瞳孔 UV，擬合成每個 UV 通道的仿射 rows，再寫到該部件所有元件實際用的眼睛材質。共用顯示材質用瞳孔 tiling `_MainTex_ST`（`ok.EyeGazeVia 1`，預設）；U 和 mesh 同向（`ok.EyeGazeSTFlipU 0`；翻轉時兩眼會各自往外看，使用者指出），V 要翻轉（`ok.EyeGazeSTFlipV 1`；Rows 的 V 和 tiling 的 V 差一個翻轉，0 時鏡頭在下虹膜往上翻，2026-11-04）。`ok.EyeGazeLog 1` 印出每次寫入的值。
 - **H 場景眼睛盯鏡頭**：進 H 時預設開啟原作的 EyeLook 跟隨鏡頭（`ok.HScene.EyesCamera 1`），面板的視線勾選框可以關；啊黑顏期間暫停、結束後還原。
 - **解除眼睛限制**（`ok.EyeUnlimited 1`）：鏡頭超出原作角度時不再轉回正前方，角度不再夾在原作範圍內，瞳孔位移照比例繼續推，最多到原作上限的 `ok.EyeUnlimitedMost`（1.3）倍。完全不設上限時，45 度看過頭、70 度瞳孔會跑出眼睛。
 - **街區平時**：街上的女主在鏡頭 10 m 內（`ok.EyeFollowRange`）眼睛一直看鏡頭（`ok.EyeFollow 2`），不只在對話時；沒在看別人時頭也照對話時的幅度朝鏡頭轉（`ok.HeadFollowCamera 1`；只有眼睛跟時，idle 動畫把頭轉開的女主看起來是別開視線，使用者指出），頭沒轉到的部分由眼睛補，最多 1.3 單位（`ok.EyeFollowMost`）。心智給「別開／往下／往上」視線時以那個為準。控制通道 `/face` 的 `eyes_follow`（-1／0／1／2）可以逐人改，`look_now` 多了 `follow_x/y`。
@@ -269,6 +269,10 @@
   - CrowdAPNG 100 張全部通過。C011 的臉被頭盔配件擋住，加 `OK_EYE_AUDIT_HIDE=acc` 後通過。
   - C094（龍捲）的卡用 MaterialEditor 把虹膜換成 `main_item_emission`，沒有眼睛 shader，修正後才動：有視線資料但沒有 eye draw 的虹膜改用 CPU 網格，由 `SetEyeGaze` 直接改 UV。另外修了第一個 CPU 頭部零件被放進已隱藏的 `HeadMesh` 的問題，原本她左眼的虹膜是白的。
   - 街區女主 10 位在讀卡模式全部通過：`E:\OpenKoikatsu\Saved\Tests\EyeCamera\20261103-230734\`。
+- **依眼睛比例移動（2026-11-04）**：跟隨目標時虹膜不再用 rate 換算固定貼圖位移。`eye_look::Runtime::look` 從雙眼中點到目標的方向算出角度，`IrisRuntime::st_look` 以眼睛網格寬高的比例移動（`LOOK_REACH` 水平 0.315、垂直 0.42，乘 sin 角度，最多 50°），兩眼同一個水平量。舊做法同樣轉 35° 時各卡畫面上 15°～55°，垂直 rate 超過 ±1 還走翻白眼路徑。rate 照舊輸出給眼皮修正等用途；`set_eye_gaze_rates` 收到 `step_eye_look` 給的同一組 rate 時才畫 look。視線正負號：+1 向上，`ok.HScene.AhegaoGaze` 預設 1.25，口交上翻傳正值。
+- **讀卡器眼睛視角按鈕**：動作欄的「眼睛：面向前方／看鼠標／看 Camera」循環切換（`UOKCharacterController::OnEyeModeNext`），勾選框「眼睛跟隨鏡頭」保留（Interaction 借用）。
+- **`ok.VerifyEyeCamera` 第二版（2026-11-04）**：每套服裝都測，只拍最左、最右兩個角度（左右 35°，使用者決定）。虹膜換成白底黑點貼圖量實際位移（藏頭髮與配件），換成全黑量每個視角自己的眼寬，算出視線和鏡頭方向的水平角度差，上限 12°（`OK_EYE_AUDIT_RADIUS` 0.84 倍半眼寬）；上下不計，眼皮和高光會切掉黑點，把中心往下拉。狀態：`pass`／`fail`／`occluded`（穿戴時眼睛被擋，無法判定，不算通過）／`load_failed`。`OK_EYE_AUDIT_OUTFITS` 限制每張卡的套數。每批寫 `result.json`，每張卡一張 `sheet_<序號>_<卡>.png`（一套一列，綠通過、紅失敗、黃無法判定）。
+- **普查結果（2026-11-04）**：五個視角的舊版跑到 65 張卡、449 套服裝後停掉（使用者決定不再跑完）：通過 342、無法判定 30、失敗 77。失敗的 11 張卡（C006、C010、C022、C032、C051、C052、C054、C055、C063、C064、C067）看截圖視線都對著鏡頭，誤差來自黑點被眼皮或高光切掉，水平誤差都在 10° 內，沒有改程式。C013～C019、C072～C099 沒測到，改成只拍左右後也沒有重跑；使用者看過畫面後確認正確。
 - **移植到街區（Eye20）**：
   - `FollowEyes` 原本只在目標變化超過 0.01 時才喚醒漸變；鏡頭慢慢移動時每一幀變化都更小，眼睛就停在半途（惠惠），改成跟目前顯示的 gaze 比較。
   - `ok.EyeFollow 2` 時，頭在她看著別人時也轉向鏡頭；原本只靠眼睛轉不到側邊的鏡頭（雷電將軍、胡桃露出側臉）。

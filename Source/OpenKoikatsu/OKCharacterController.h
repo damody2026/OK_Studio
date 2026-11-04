@@ -386,6 +386,17 @@ public:
 	void UpdateGaze();
 	UFUNCTION()
 	void OnEyeLookCamera(bool Enabled);
+	// Where her eyes go in the reader (user 2026-11-04): 0 ahead, 1 the mouse, 2 the camera; the button cycles them and the
+	// choice stays from card to card. EyeMousePixel >= 0 stands in for the cursor (the eye audit).
+	UFUNCTION()
+	void OnEyeModeNext();
+	void SetEyeMode(int32 Mode);
+	void TickEyeMode();
+	int32 EyeMode=0;
+	FVector2D EyeMousePixel=FVector2D(-1,-1);
+	TWeakObjectPtr<AKKPreviewActor> EyeModeActor;
+	UPROPERTY()
+	TObjectPtr<class UTextBlock> EyeModeLabel;
 	// The face pressed flat along the view (ok.FaceFlatten, ok.FaceFlattenLock): its strength, and the direction held
 	// still so the camera can turn round and see that it is flat.
 	UFUNCTION()

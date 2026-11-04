@@ -1963,3 +1963,9 @@
 - 2026-11-04 e-galgame `SetHandShape` 沒同步：H 面板換手型時，配對播放的背景執行緒還在用同一個 Session，遊戲偶爾直接消失（game.log 沒有 Fatal、Windows 也沒紀錄），一開始還以為是別的 session 關掉的。修正：呼叫前 `SyncPair()`。教訓：在 H 面板改 Session 的東西都要先 SyncPair。
 - 2026-11-04 e-galgame 腳本錨點失敗沒看到：`grip.py` 的錨點多了 4 個空白，斷言失敗什麼都沒改，又因同一條指令多打 `cat > /dev/null` 卡住，輸出被吃掉，拍了兩輪才發現手型根本沒套上。之後 python 腳本接 `&& echo applied`，看到再往下做。
 - 2026-11-04 e-galgame：H 裡換衣服閃退（19:36、20:56 兩次，同一原因）：新部件還沒有 MeshObject，`AOKPaintSprayer::Tick` → `FOKPaintPose::Prepare` 同一幀呼叫 `GetCPUSkinnedVertices` 觸發 assert。第一版只擋在 `Unsupported` 分支，改成 `Prepare` 開頭檢查 `IsRegistered()` 與 `GetMeshObject()`，這幀跳過、下一幀重試；`KKPreviewActor` 量外框與 `OKCardPreviewCapture` 也加同樣檢查。壓力測試：H 場景連續換衣、半脫、換體位 36 次沒有閃退（`Saved/StreetSocial/Play-20261104T211309`）；測試沒有同時按住噴射，舊版也未重跑對照。
+- 2026-11-04 e-fork 眼睛上下顛倒，只測左右沒發現：`ok.VerifyEyeCamera` 第一版只繞左右轉，100 張全過，但走 `_MainTex_ST` 的 GPU 眼睛垂直方向是反的（鏡頭在下，虹膜往上翻；Rows 的 V 和貼圖 tiling 的 V 差一個翻轉）。`ok.EyeGazeSTFlipV` 預設改 1。e-fork-2 那天把口交上翻改成負值，以及 `ok.HScene.AhegaoGaze` 的 -1.25，都是在補這個反向，一併改回 +1 向上。教訓：跟隨類功能的驗收要含上下，方向要用量到的位移判定。
+- 2026-11-04 e-fork 跟鏡頭的轉動量每張卡差很多：同樣轉 35°，畫面上 15°～55°，C097 虹膜跑出眼睛，C018 向下被下眼皮切掉。兩個原因：(1) rate 換算成固定的貼圖位移，卡片虹膜尺寸（settings 12、13）越大移得越多，和眼睛寬度無關；(2) 解除限制後垂直 rate 超過 ±1 時走了 `st_rolled` 的翻白眼路徑，位移突然加大。修正：跟隨目標時改用 `IrisRuntime::st_look`，直接以眼睛寬高的比例移動，rate 只留給其他用途。
+- 2026-11-04 e-fork 稽核誤判三次：(1) 用影像比對虹膜位移，虹膜環紋重複加上陰影不動，C000 量到 -5（實際約 -15），改成換白底黑點貼圖量；(2) 髮絲蓋到黑點會拉偏重心，量點時隱藏頭髮與配件；(3) 側看時用正面的眼寬當半徑，近眼 47°、遠眼 31°，看起來像兩眼不一致，實際是遠眼被壓扁，改用每個視角自己量到的眼寬。教訓：量測模型先對截圖核對，數字不對時先懷疑量法。
+- 2026-11-04 e-fork 同時開了 4 個 Unreal：`Tools/run_card_reader_development.lua` 啟動後馬上回傳（只印 PID），批次腳本以為跑完了，連開 4 個又放掉名額，約 15 秒後才發現並關掉。之後批次一律等 PID 結束才放名額。
+- 2026-11-04 e-fork 普查連續當掉 5 次（TAsync 的 EXCEPTION_ACCESS_VIOLATION，結果是空的）：別的 session 在共用工作樹只重建了一部分，`ok_extract.h` 和 Rust 函式表不一致。每次開測前先完整建置一次編輯器。
+- 2026-11-04 e-fork 眼睛稽核把 11 張好卡判失敗：角度差把上下也算進去，黑點貼近眼角時被眼皮或高光切掉，中心往下偏，遠側眼睛算出 12°～21°。看截圖視線是對的，水平誤差都在 10° 內。修正：只拍最左、最右，只算水平。另外先前拍五個視角、每張卡七套，一輪要好幾個小時，使用者指出不用拍那麼多。

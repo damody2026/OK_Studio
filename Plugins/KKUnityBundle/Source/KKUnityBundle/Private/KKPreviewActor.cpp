@@ -9151,7 +9151,7 @@ float AKKPreviewActor::EffectiveFaceRate(int32 Control) const
 
 // The iris tiling's axes against the mesh's coordinates, as measured in H (2026-11-03): both the same way (U mirrored
 // made her eyes look apart, each out to its own side, when the look turned them in; user 2026-11-03).
-static TAutoConsoleVariable<int32> CVarOKEyeGazeSTFlipV(TEXT("ok.EyeGazeSTFlipV"),0,TEXT("1: an eye's gaze written to its iris tiling (_MainTex_ST) with V mirrored; 0: as the mesh's."));
+static TAutoConsoleVariable<int32> CVarOKEyeGazeSTFlipV(TEXT("ok.EyeGazeSTFlipV"),1,TEXT("1: an eye's gaze written to its iris tiling (_MainTex_ST) with V mirrored, the tiling works on the source's V and the rows on the flipped one (0 rolled her eyes up for a camera below; 2026-11-04)."));
 static TAutoConsoleVariable<int32> CVarOKEyeGazeSTFlipU(TEXT("ok.EyeGazeSTFlipU"),0,TEXT("1: an eye's gaze written to its iris tiling (_MainTex_ST) with U mirrored; 0: as the mesh's."));
 // M_ForgeEye_Flat (the shared display eye, street and H) has the gaze rows but does not move the iris by them; its
 // tiling does (2026-11-03: rows of -0.38 on V showed nothing, the tiling rolled her eyes up).

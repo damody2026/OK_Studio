@@ -183,12 +183,38 @@ impl IrisRuntime {
         if past>0. {st[3]+=(self.settings[3]-self.settings[4]).signum()*v.signum()*past;}
         st
     }
+    /// `st` looking `x` of the width of her eye across and `y` of its height up from straight on (the unlimited look:
+    /// the raw UVs cross the whole eye, so this is the same part of every eye; the texture is drawn `st[0]`, `st[1]` over
+    /// them, which the offset is in).
+    pub fn st_look(&self,x:f32,y:f32)->[f32;4] {
+        let s=&self.settings;
+        let span=|i:usize| {let (mut low,mut high)=(f32::MAX,f32::MIN);for uv in &self.raw_uvs {low=low.min(uv[i]);high=high.max(uv[i]);}(high-low).max(0.)};
+        let mut st=self.st(0.,0.);
+        st[2]+=x*(s[2]-s[1]).signum()*st[0]*span(0);
+        st[3]+=y*(s[3]-s[4]).signum()*st[1]*span(1);
+        st
+    }
     pub fn apply(&self,uvs:&mut [[f32;2]],h:f32,v:f32) {
         self.apply_st(uvs,self.st(h,v));
     }
     pub fn apply_st(&self,uvs:&mut [[f32;2]],st:[f32;4]) {
         for (uv,raw) in uvs.iter_mut().zip(&self.raw_uvs) {
             *uv=[raw[0]*st[0]+st[2],raw[1]*st[1]+st[3]];
+        }
+    }
+}
+#[cfg(test)]
+mod look_tests {
+    use super::IrisRuntime;
+    // A look is the same part of the eye whatever the size of the iris: the drawn raw UVs move by x of their width.
+    #[test]
+    fn st_look_is_a_part_of_the_eye() {
+        for size in [0.,0.8] {
+            let mut settings=[0.;14];settings[1]=-100.;settings[2]=100.;settings[3]=-100.;settings[4]=100.;settings[5]=-100.;settings[6]=100.;settings[7]=-80.;settings[8]=80.;settings[9]=0.001;settings[12]=size;settings[13]=size;
+            let iris=IrisRuntime {settings,raw_uvs:vec![[0.2,0.3],[0.8,0.7]]};
+            let (still,look)=(iris.st_look(0.,0.),iris.st_look(0.25,-0.5));
+            assert!(((look[2]-still[2])/still[0]-0.25*0.6).abs()<1e-5,"across {look:?}");
+            assert!(((look[3]-still[3])/still[1]-0.5*0.4).abs()<1e-5,"up {look:?}");
         }
     }
 }
