@@ -423,6 +423,7 @@ c-street-city 的逐項回答在 `Docs/STREET_CITY_PLACES_INVENTORY_20261103.md`
 - 每個新地點的活動（`activities.toml`）、商品與營業時間（`catalog.json`）、`places.toml` 規範、三語文字。
 - `motions.toml` 的 `beach`、`pool` 要能接上新的地點 id。
 - 戶外旗標接到雨天、雨傘、撲克牌桌和視線判斷。
+- 坐的錨點有 `seat_pos` 時用真椅子：不生成 `SpawnLifeProps` 的方塊椅，坐姿高度依 `seat_pos`（第 10.2 節）。
 - `hotel` 的 privacy 是 1，`TickIntimacy` 在飯店永遠不會觸發（子代理發現）。要改成 2，或給飯店一個私人房間的子地點。
 - 寫死在舊地圖座標的東西要換掉：
   - 女主走路的路線點、休息點、看風景點（`OKStreetSocialRules.h:1809-1831`）。
@@ -555,7 +556,8 @@ c-street-city 的逐項回答在 `Docs/STREET_CITY_PLACES_INVENTORY_20261103.md`
 |---|---|
 | `id` | 全地圖唯一，`<place>.<name>` |
 | `name`、`place`、`building`、`room`、`floor` | 既有名稱不改，活動和打工仍用 `name` 查 |
-| `pos`、`yaw` | 既有規則不變；坐的錨點 `pos` 是座面中央的臀部落點 |
+| `pos`、`yaw` | 既有規則不變：`pos` 是地面上角色的腳底點，遊戲讓人走到這裡（`Agents[].Position`），坐姿動畫和椅子道具都從地面算起（`SpawnLifeProps` 座面約 41 cm）。**不能改成座面高度** |
+| `seat_pos` | 坐的錨點才有：實測的臀部落點（座面中央）。遊戲用它和 `pos` 的高度差調整坐姿，並在有真椅子時不生成方塊椅 |
 | `kinds` | 第 10.1 節的種類，可多個 |
 | `slots` | 多人時每人的 `pos`、`yaw`。`seat_pair` 兩筆，`seat_face` 隔桌兩筆 |
 | `privacy` | 這個點自己的隱私：0 公開、1 半隱蔽（角落、視線被擋）、2 私人（鎖門）。不寫就用地點的值 |
