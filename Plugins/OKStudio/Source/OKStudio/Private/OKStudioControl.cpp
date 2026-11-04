@@ -422,6 +422,23 @@ namespace
 			}
 			TSharedRef<FJsonObject> O = Result(true);
 			O->SetArrayField(TEXT("objects"), Out);
+			// The boxes the map's parts take, as finding a free spot sees them.
+			bool bMap = false;
+			J->TryGetBoolField(TEXT("map"), bMap);
+			if (bMap && G.SceneActor)
+			{
+				TArray<FBox> Parts;
+				G.SceneActor->MapPartBounds(Parts);
+				TArray<TSharedPtr<FJsonValue>> MapOut;
+				for (const FBox& B : Parts)
+				{
+					TSharedRef<FJsonObject> M = MakeShared<FJsonObject>();
+					M->SetArrayField(TEXT("min"), Vec(B.Min));
+					M->SetArrayField(TEXT("max"), Vec(B.Max));
+					MapOut.Add(MakeShared<FJsonValueObject>(M));
+				}
+				O->SetArrayField(TEXT("map"), MapOut);
+			}
 			return O;
 		}
 		if (Op == TEXT("catalog"))
@@ -722,6 +739,13 @@ namespace
 			FScreenshotRequest::RequestScreenshot(File, true, false);
 			TSharedRef<FJsonObject> O = Result(true);
 			O->SetStringField(TEXT("file"), File);
+			// The picture is the window at its actual pixels, which are also studio_mouse's coordinates (U172).
+			if (const TSharedPtr<SWindow> Window = GEngine && GEngine->GameViewport ? GEngine->GameViewport->GetWindow() : nullptr)
+			{
+				O->SetNumberField(TEXT("width"), Window->GetClientSizeInScreen().X);
+				O->SetNumberField(TEXT("height"), Window->GetClientSizeInScreen().Y);
+				O->SetNumberField(TEXT("dpi_scale"), Window->GetDPIScaleFactor());
+			}
 			return O;
 		}
 		// Leaves the studio (as its close button: the mode that started it comes back, its UI restored). The channel

@@ -538,7 +538,11 @@ int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 			HalfWidth = FMath::Max(HalfWidth, float(FMath::Max(B.GetExtent().X, B.GetExtent().Y)));
 		}
 		HalfWidth = FMath::Min(HalfWidth, 120.f);
-		auto Free = [this, Id, &Furniture, &People, &Scene, HalfWidth, &MapParts, &bNeedGround](const FVector& P)
+		// Room kept from the furniture: a person's shoulders and hips, so that the 56 cm slit between a desk and the next
+		// chair is no spot while the aisle is (U171: he stood in the slit, touching both). Where nothing has that much room,
+		// the body alone.
+		float Clearance = 35.f;
+		auto Free = [this, Id, &Furniture, &People, &Scene, HalfWidth, &MapParts, &bNeedGround, &Clearance](const FVector& P)
 		{
 			if (bNeedGround && !OKStandsOnMap(MapParts, Scene.TransformPosition(P))) return false;
 			if (Document->Objects.ContainsByPredicate([this, Id, &P](const FOKSceneObject& X)
@@ -546,7 +550,7 @@ int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 			const FVector W = Scene.TransformPosition(P);
 			const FBox Reach(W - FVector(HalfWidth, HalfWidth, 0.f), W + FVector(HalfWidth, HalfWidth, 0.f));
 			if (People.ContainsByPredicate([&Reach](const FBox& B) { return B.Min.X < Reach.Max.X && B.Max.X > Reach.Min.X && B.Min.Y < Reach.Max.Y && B.Max.Y > Reach.Min.Y; })) return false;
-			const FBox Body(W + FVector(-22.f, -22.f, 15.f), W + FVector(22.f, 22.f, 150.f));
+			const FBox Body(W + FVector(-Clearance, -Clearance, 15.f), W + FVector(Clearance, Clearance, 150.f));
 			return !Furniture.ContainsByPredicate([&Body](const FBox& B) { return B.Intersect(Body); });
 		};
 		const FVector Start(Focus.X, Focus.Y, 0.f);
@@ -580,20 +584,17 @@ int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 		FVector At = Start;
 		bool bFound = false;
 		double Best = TNumericLimits<double>::Max();
-		for (const FVector& P : Spots)
+		auto Search = [&]()
 		{
-			const double C = Cost(P);
-			if (C < Best && Free(P)) { Best = C; At = P; bFound = true; }
-		}
-		if (!bFound && bNeedGround)
-		{
-			bNeedGround = false;
 			for (const FVector& P : Spots)
 			{
 				const double C = Cost(P);
 				if (C < Best && Free(P)) { Best = C; At = P; bFound = true; }
 			}
-		}
+		};
+		Search();
+		if (!bFound) { Clearance = 22.f; Search(); }
+		if (!bFound && bNeedGround) { bNeedGround = false; Search(); }
 		if (!bFound) At = Start;
 		bLastAddBlocked = !bFound;
 		O->Transform.SetLocation(O->Parent >= 0 ? Document->WorldTransform(O->Parent).InverseTransformPosition(At) : At);

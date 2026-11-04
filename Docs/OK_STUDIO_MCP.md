@@ -45,14 +45,14 @@
 | `studio_patch` | `patch` | `id`、`fields`（深層合併進物件 JSON，即 `studio_inspect` 的 `object`；物件逐鍵合併、陣列與純值取代；`id`／`kind`／`parent` 不能改，改父物件用 `studio_reparent`） | `{object}` |
 | `studio_scene` | `scene` | `post?`（深層合併：bloom、景深、霧、天空、濾鏡、背景…，鍵同回傳的 `post`）、`map?`（-1 = 無）、`map_transform?{location,rotation,scale}`、`duration?`（秒）、`active_camera?`（-1 = 自由視角）、`sound?`（音效選單：`Bgm`、`bBgmPlay`、`bBgmRepeat`、`Outside`、`bOutsidePlay`、`bOutsideRepeat`，深層合併）；全不給只讀取 | `{post,map,map_transform,duration,active_camera,bookmarks}` |
 | `studio_bones` | `bones` | `id`（角色） | `{fk[{bone,name,part,euler,set,world}], ik[{effector,name,enabled,position,world}], look_point, accessory_points[{key,name,group,world}]}` |
-| `studio_bounds` | `bounds` | `ids?`（預設全部） | `{objects[{id,min,max,center,size}]}`（世界座標 cm） |
+| `studio_bounds` | `bounds` | `ids?`（預設全部）、`map?` | `{objects[{id,min,max,center,size}]}`（世界座標 cm）；`map` 為 true 時另有 `map[{min,max}]`（地圖各部件的框） |
 | `studio_catalog` | `catalog` | `kind`（`item map effect anim filter sky accessory_point`）、`group?`、`category?`、`anim_kind?` | `{groups?, categories?, entries[...]}`；文字搜尋仍用 `studio_catalog_search` |
 | `studio_keys` | `keys` | `id`（物件；-2 = 場景本身的軌道）、`action`（`list set remove move ease clear smooth`）、`time?`、`to?`、`ease?`（`linear ease_in_out ease_in ease_out step`）、`smooth?` | `{keys[{time,ease,...}], duration}` |
 | `studio_duplicate` | `duplicate` | `ids` | `{ids}`（新複本） |
 | `studio_export` | `export` | `kind`（`png mp4 okanim`）、`fps?`、`width?`、`height?`、`from?`、`to?`、`folder?`、`id?`（okanim 的角色） | `{folder}` 或 `{file}`；進度看 `studio_state` 的 `export{running,frame,frames,last_movie,error}` |
 | `studio_scenes` | `scenes` | `folder?` | `{folder, files[{path,name,kind,modified}]}`，給 `studio_load` 開 |
 | `studio_report` | `report` | 無 | `{load[...], missing[...]}`：上次開檔沒能顯示的內容、場景缺的資源 |
-| `studio_ui_shot` | `ui_shot` | `name?` | `{file}`，含 UI 面板的整個視窗截圖（晚一兩幀寫出，最多等 15 秒），並附上圖片預覽 |
+| `studio_ui_shot` | `ui_shot` | `name?` | `{file,width,height,dpi_scale}`，含 UI 面板的整個視窗截圖（晚一兩幀寫出，最多等 15 秒），並附上圖片預覽；寬高是視窗實際像素，`studio_mouse` 用同一組座標 |
 | （只有控制通道） | `ui_fit` | `open?`、`close?`、`page?`＋`bones?` | 開關浮窗或詳情頁；不帶參數時回 `{view, shown, problems}`：超出視窗的元件、被截斷的文字、跑出畫面的視窗（`Tools/ok_studio_ui_fit.lua` 逐窗跑） |
 
 ## 範例：加角色、擺姿勢、拍照、存檔
