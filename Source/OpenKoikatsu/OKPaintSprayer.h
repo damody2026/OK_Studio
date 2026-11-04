@@ -124,7 +124,7 @@ private:
  void DiscoverSurfaces(const FVector& A,const FVector& B,bool SourceCone=true);
  void RefreshGeometry(FSurface& Surface);
  bool PrepareGeometry(FSurface& Surface);
- void RefreshGeometries();
+ void RefreshGeometries(bool OnlyPainted=false);bool bGeometryOnlyPainted=false;
  void RefreshGeometryJobs();
  bool InitializeCoating(FSurface& Surface);
  struct FAtlasChartWrite {FFloat16Color* Pixels;const TArray<float>* Heights;int32 PageSize,Edge;FIntPoint Origin;double Scale;FVector2D Flow;};

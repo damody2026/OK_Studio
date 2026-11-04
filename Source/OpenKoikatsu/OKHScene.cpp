@@ -71,6 +71,7 @@
 #include "Misc/Paths.h"
 #include "Serialization/JsonSerializer.h"
 #include "OKPaintSprayer.h"
+#include "Components/InvalidationBox.h"
 #include "ok_extract.h"
 
 void UOKHSceneButton::HandleClick(){if(Owner)Owner->Click(Kind);}
@@ -343,7 +344,9 @@ TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
                 if(auto* S=Top->AddChildToHorizontalBox(B))S->SetPadding(FMargin(0,0,6,0));return T;};
             Bar(CoordinateToggle,TEXT("ui.hscene.coordinate_close"));CoordAccessories=Bar(CoordinateAccessories,TEXT("ui.hscene.coordinate_clothes_only"));
             Column->AddChildToVerticalBox(Top)->SetPadding(FMargin(0,0,0,6));}
-        UScrollBox* Scroll=WidgetTree->ConstructWidget<UScrollBox>();Scroll->SetAlwaysShowScrollbar(true);Scroll->SetScrollbarThickness(FVector2D(14.f,14.f));Column->AddChildToVerticalBox(Scroll)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+        UScrollBox* Scroll=WidgetTree->ConstructWidget<UScrollBox>();Scroll->SetAlwaysShowScrollbar(true);Scroll->SetScrollbarThickness(FVector2D(14.f,14.f));
+        // Up to 500 tiles: painted once and kept (36 ms a frame otherwise), not walked every frame.
+        UInvalidationBox* Cached=WidgetTree->ConstructWidget<UInvalidationBox>();Cached->SetContent(Scroll);Column->AddChildToVerticalBox(Cached)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
         CoordWraps[Side]=WidgetTree->ConstructWidget<UWrapBox>();CoordWraps[Side]->SetInnerSlotPadding(FVector2D(6,6));CoordWraps[Side]->SetExplicitWrapSize(true);CoordWraps[Side]->SetWrapSize(424.f);Scroll->AddChild(CoordWraps[Side]);};
     CoordSide(0);
     USizeBox* Space=WidgetTree->ConstructWidget<USizeBox>();Space->SetVisibility(ESlateVisibility::HitTestInvisible);Root->AddChildToHorizontalBox(Space)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
@@ -2026,10 +2029,10 @@ static bool HChestForward(AKKPreviewActor* A,FVector& Out){
     // Her face says it best when the face rig is on this skeleton: head to the tip of her nose.
     FVector Nose;const FName NoseBone=A->BodySkel->GetBoneIndex(TEXT("cf_J_Nose_tip"))!=INDEX_NONE?FName(TEXT("cf_J_Nose_tip")):FName(TEXT("cm_J_Nose_tip"));
     if(A->BodySkel->GetBoneIndex(NoseBone)!=INDEX_NONE){Nose=A->BodySkel->GetBoneLocation(NoseBone);Out=Nose-Head;Out.Z=0;
-        if(Out.Normalize()){UE_LOG(LogTemp,Display,TEXT("H camera: her front from her nose (%.2f,%.2f)"),Out.X,Out.Y);return true;}}
+        if(Out.Normalize()){UE_LOG(LogTemp,Verbose,TEXT("H camera: her front from her nose (%.2f,%.2f)"),Out.X,Out.Y);return true;}}
     // The converted skeleton is mirrored (its _L shoulder is on her right in UE): up × (R − L) is her front.
     FVector Right=R-L;Right.Z=0;Out=FVector::CrossProduct(FVector::UpVector,Right);Out.Z=0;
-    UE_LOG(LogTemp,Display,TEXT("H camera: her front from her shoulders (%.2f,%.2f)"),Out.X,Out.Y);return Out.Normalize();
+    UE_LOG(LogTemp,Verbose,TEXT("H camera: her front from her shoulders (%.2f,%.2f)"),Out.X,Out.Y);return Out.Normalize();
 }
 // Where their body is now, from the bones (the component bounds can still be the standing pose's after a sit or a lie).
 static FBox HBodyBox(AKKPreviewActor* A){

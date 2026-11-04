@@ -332,7 +332,18 @@
 - 開發度：摸屁眼 12 秒，開發度維持 65。
 - FPS（遊戲執行緒受限，GPU 約 2～3 ms）：進場 74～86；愛撫約 50；雙人模式 27～40（遊戲 20～35 ms）；服裝卡畫面約 15（80 ms，原因沒查）。
 - 8 秒 trace（約 50 FPS，每幀 26 ms）：`KK_PairAdvance` 15.3 ms（`KK_PairNative` 7.9、`KK_PairRoleDisplay` 3.3）、`OK_PaintTick` 6.8 ms（玩家與 H 液體兩個水槍都在跑）、`WorldTick` 3.7 ms、Slate 約 3.5 ms。變慢是進入雙人模式加上水槍，不是時間累積的洩漏。
-- 沒解釋的一次死亡：`Play-20261105T055401` 的遊戲在 06:08:15 消失，`game.log` 停在換體位後的 `OKPhysXSecondary settle 0.50 s`，剛做完 trace。沒有 WER 事件也沒有 dump，同樣步驟重跑沒有再現。
+- 遊戲消失三次，崩潰的那次已查到根因：`Play-20261105T070627` 留下 `EXCEPTION_ACCESS_VIOLATION reading 0x580059`，在水槍的 `QueryPrivateSkinGeometryBatch` 裡讀骨架名字。配對動畫的背景解算 `PendingSolve` 會改兩個 Session，`FOkSessionHandle::Sync` 卻只等自己的 `Async`，身上有塗料時水槍就和它同時碰同一個 Session。現在 `SetSharedSolve` 讓 Session 的每次使用都等這個 task。換體位腳本修正前兩輪內崩潰，修正後跑 24 輪、16 次換體位沒有崩潰。
+- 另外兩次（`Play-20261105T055401` 06:08:15、`Play-20261105T065624` 07:02:19）沒有 crash 報告，都在換體位前後，推測同一原因，沒有證實。
+
+修正後（`EGalRound8`，服裝卡快取與水槍只更新有塗料的表面，另有一個 Unreal 在跑）：
+
+| 畫面 | 修正前（只有這個 Unreal） | 修正後 |
+|---|---|---|
+| 雙人循環 | 21～25 FPS（遊戲 33～47 ms） | 38～45 FPS（遊戲 18～26 ms） |
+| 服裝卡（圖載完） | 載圖中 17～20 FPS，載完未量 | 79～96 FPS |
+| 服裝卡（載圖中） | 17～20 FPS | 24～29 FPS（`EGalRound7`） |
+
+`KK_PairNative` 的 Rust 解算約 13 ms 沒有動，是雙人循環剩下最大的一塊。
 
 ## 實作順序
 

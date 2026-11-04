@@ -206,17 +206,21 @@ bool AOKPaintSprayer::PrepareGeometry(FSurface& S)
  S.PreparedValid=true;return true;
 }
 void AOKPaintSprayer::RefreshGeometry(FSurface& S){if(PrepareGeometry(S))S.RefreshCapturedGeometry(CVarPaintGeometryParallel.GetValueOnGameThread()!=0);}
-void AOKPaintSprayer::RefreshGeometries(){
+void AOKPaintSprayer::RefreshGeometries(bool OnlyPainted){
  TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintRefreshGeometries);
+ // Nothing in the air: only what paint lies on has to follow the body. Tick refreshes everything before the next packet flies.
+ TSet<const FSurface*> Skip;
+ if(OnlyPainted){for(const auto& S:Surfaces)if(S->Film.Volume()<=0&&!S->HasRenderedPaint)Skip.Add(S.Get());
+  for(const auto& D:Attached)if(Surfaces.IsValidIndex(D.Target))Skip.Remove(Surfaces[D.Target].Get());}
  // Capture UObjects once while the game thread owns the frame. The blocking
  // parallel operation cannot overlap animation or mutate another surface.
  TSet<UPrimitiveComponent*> SkinnedComponents;SkinnedGeometrySurfaces=0;
  TMap<AKKPreviewActor*,TArray<UProceduralMeshComponent*>> PrivateQueries;
- for(const auto& S:Surfaces)if(auto* P=Cast<UProceduralMeshComponent>(S->Component.Get()))if(auto* Actor=Cast<AKKPreviewActor>(P->GetOwner())){
+ for(const auto& S:Surfaces)if(!Skip.Contains(S.Get()))if(auto* P=Cast<UProceduralMeshComponent>(S->Component.Get()))if(auto* Actor=Cast<AKKPreviewActor>(P->GetOwner())){
   FKKPrivateGpuSurfaceView View;if(CVarPaintResidentGeometry.GetValueOnGameThread()==0||!Actor->CapturePrivateGpuSurface(P,S->Section,View))PrivateQueries.FindOrAdd(Actor).AddUnique(P);
  }
  for(auto& Entry:PrivateQueries)Entry.Key->PreparePrivateGpuQueryGeometry(Entry.Value);
- for(auto& S:Surfaces){PrepareGeometry(*S);if(S->PreparedSkinned&&S->PreparedValid){++SkinnedGeometrySurfaces;SkinnedComponents.Add(S->Component.Get());}}SkinnedGeometryComponents=SkinnedComponents.Num();
+ for(auto& S:Surfaces){if(Skip.Contains(S.Get())){S->PreparedValid=false;continue;}PrepareGeometry(*S);if(S->PreparedSkinned&&S->PreparedValid){++SkinnedGeometrySurfaces;SkinnedComponents.Add(S->Component.Get());}}SkinnedGeometryComponents=SkinnedComponents.Num();
  if(CVarPaintGeometryJobs.GetValueOnGameThread()!=0){RefreshGeometryJobs();return;}
  const int32 Mode=CVarPaintSurfaceParallel.GetValueOnGameThread();const bool Parallel=Mode==2||(Mode!=0&&Surfaces.Num()>=8);
  const bool VertexParallel=!Parallel&&CVarPaintGeometryParallel.GetValueOnGameThread()!=0;
@@ -672,7 +676,7 @@ void AOKPaintSprayer::Tick(float Dt)
  if(!Spraying&&Surfaces.IsEmpty()&&Packets.IsEmpty())return;
  if(Spraying&&JetFX){JetFX->SetWorldRotation(Direction.Rotation());int32 Target,Face;double T;FVector Bary;const bool Hit=FindPaintHit(Nozzle,Nozzle+Direction*5000,.3,Target,Face,Bary,T);JetFX->SetVariableFloat(TEXT("User.JetLife"),FMath::Clamp(float(Hit?T*5000/FMath::Max(10.f,Settings.JetSpeed):.5),.01f,3.f));}
  const double GeometryStart=FPlatformTime::Seconds();GeometryTime+=Dt;const double Interval=1./FMath::Clamp(Settings.SurfaceHz,5.f,60.f);
- const bool UpdateGeometry=GeometryTime>=Interval;
+ const bool Flying=Spraying||!Packets.IsEmpty();const bool UpdateGeometry=GeometryTime>=Interval||(Flying&&bGeometryOnlyPainted);
  if(UpdateGeometry){GeometryTime=FMath::Fmod(GeometryTime,Interval);
   for(int32 Index=Surfaces.Num()-1;Index>=0;--Index){auto& S=*Surfaces[Index];auto* C=S.Component.Get();bool Changed=!C;
    if(auto* K=Cast<USkinnedMeshComponent>(C))Changed|=K->GetSkinnedAsset()!=S.Asset.Get();
@@ -683,7 +687,7 @@ void AOKPaintSprayer::Tick(float Dt)
    const int32 Last=Surfaces.Num()-1;for(int32 I=Attached.Num()-1;I>=0;--I){auto& D=Attached[I];if(D.Target==Index){Escaped+=D.Volume;if(D.Visual.IsValid()){Overlays.Remove(D.Visual.Get());D.Visual->DestroyComponent();}Attached.RemoveAtSwap(I);}else if(D.Target==Last)D.Target=Index;}Surfaces.RemoveAtSwap(Index);
   }
   if(Spraying||!Packets.IsEmpty())DiscoverSurfaces(Nozzle,Nozzle+Direction*(5*FMath::Clamp(Settings.JetSpeed,10.f,10000.f)));
-  RefreshGeometries();}
+  bGeometryOnlyPainted=!Flying;RefreshGeometries(bGeometryOnlyPainted);}
  // Fixed 120Hz integrator. A hitch is retained as backlog, never converted
  // into a larger unstable step or discarded volume/time.
  GeometryUpdateMs=(FPlatformTime::Seconds()-GeometryStart)*1000;const double SimulationStart=FPlatformTime::Seconds();

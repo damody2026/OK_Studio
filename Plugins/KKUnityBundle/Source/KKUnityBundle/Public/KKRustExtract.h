@@ -35,6 +35,8 @@ struct KKUNITYBUNDLE_API FOkSessionHandle
 {
 	OkSession* Raw = nullptr;
 	mutable UE::Tasks::TTask<bool> Async;
+	/** A solve of several sessions together (the pair frame): waited for the same way, except inside FOkSharedSolveScope. */
+	mutable UE::Tasks::FTask Shared;
 	FOkSessionHandle() = default;
 	FOkSessionHandle(OkSession* P) : Raw(P) {}
 	FOkSessionHandle(const FOkSessionHandle& Other) : Raw(Other.Get()) {}
@@ -45,9 +47,18 @@ struct KKUNITYBUNDLE_API FOkSessionHandle
 	void Sync() const;
 };
 
+/** Around the work of a shared solve: this thread is the one using the sessions. */
+struct KKUNITYBUNDLE_API FOkSharedSolveScope
+{
+	FOkSharedSolveScope();
+	~FOkSharedSolveScope();
+};
+
 class KKUNITYBUNDLE_API FOkSession
 {
 public:
+	/** Task has this session in a solve with others: from here every use of the session waits for it. */
+	void SetSharedSolve(const UE::Tasks::FTask& Task) { Handle.Shared = Task; }
 	/** Solve the game-animation frame at Time on a worker; the game thread keeps drawing meanwhile. The next use of
 	 *  this session waits for it; FinishAsyncAnimFrame takes its result (false: none pending, or the frame failed). */
 	void LaunchAsyncAnimFrame(float Time, float DeltaSeconds);

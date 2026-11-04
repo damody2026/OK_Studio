@@ -731,8 +731,16 @@ bool FOkModel::TexturePng(const FString& Library, const FString& ModelId, const 
 }
 
 namespace { std::atomic<int32> GBackgroundCloses{0}; thread_local const FOkSessionHandle* GSolvingHandle = nullptr; }
+namespace { thread_local int32 GSharedSolve = 0; }
+FOkSharedSolveScope::FOkSharedSolveScope() { ++GSharedSolve; }
+FOkSharedSolveScope::~FOkSharedSolveScope() { --GSharedSolve; }
 void FOkSessionHandle::Sync() const
 {
+	if (!GSharedSolve && Shared.IsValid() && !Shared.IsCompleted())
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(KK_SessionSharedWait);
+		Shared.Wait();
+	}
 	if (Async.IsValid() && GSolvingHandle != this && !Async.IsCompleted())
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(KK_SessionAsyncWait);
