@@ -25,7 +25,7 @@
 
 ## OK 卡重封
 
-移除 mizuha 後幾乎所有 OK 卡都開不了（它覆蓋原版的 `mt_mask_body_00`、`mt_mask_bra_00`，見 `Docs/ERROR_LOG.md`）。三組的 `Content/CharacterCards/StreetHeroines`、`Demo`、`CrowdAPNG` 與 `output/StreetSocialAPNG/Male01.png` 都已重封；`UserData/Studio/import`、`UserData/Studio/scene` 的 `*_cards` 由協調者在背景封，新卡會直接覆蓋舊檔。原卡備份在 `C:\portable\OpenKoikatsu\Saved\Integration20261104\cards-before-seal\`（街區、Demo、CrowdAPNG；Studio 匯入卡沒備份，可由場景重新匯入）。
+移除 mizuha 後幾乎所有 OK 卡都開不了（它覆蓋原版的 `mt_mask_body_00`、`mt_mask_bra_00`，見 `Docs/ERROR_LOG.md`）。三組的 `Content/CharacterCards/StreetHeroines`、`Demo`、`CrowdAPNG`、`output/StreetSocialAPNG/Male01.png` 與 `UserData/Studio/import`、`UserData/Studio/scene` 的 `*_cards` 都已處理，全部通過 strict 驗證：497 組用 `seal` 補齊，650 張 `seal` 補不了的用 `ok-extract D:/KoikatuSunshine --oklib card <base_v1> <OK 卡> <輸出>` 從遊戲重轉（保留身分）。後者多是 10 月的舊匯入卡，缺基礎庫裡沒有的第三方 mod 資料或 `skel:bone_implants`。報告在 `C:\portable\OpenKoikatsu\Saved\Integration20261104\verify-sealed.txt`、`verify-remade.txt`。原卡備份在 `C:\portable\OpenKoikatsu\Saved\Integration20261104\cards-before-seal\`（街區、Demo、CrowdAPNG；Studio 卡沒備份）。
 
 ## 已知未解
 
