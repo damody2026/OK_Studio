@@ -83,9 +83,25 @@ restore 的步驟：`tools`（建 ok-extract `--features studio-sounds` 與 ok-p
 ## 五、新 checkout 的準備
 
 ```text
-git clone https://github.com/damody2026/OpenKoikatsu.git
-Tools\lua\lua.exe Tools\original_data.lua restore --archive F:/backup/OKOriginalData_20261104.zip
-（可選）Tools\lua\lua.exe Tools\original_data.lua restore --game D:/KoikatuSunshine --archive F:/backup/OKOriginalData_20261104.zip
+git clone https://github.com/damody2026/OK_Studio.git
+Tools\lua\lua.exe Tools\original_data.lua restore --game <原作>
+（或）Tools\lua\lua.exe Tools\original_data.lua restore --archive <開發資源 zip> [--h-voices <H 語音 zip>]
 ```
 
 另外需要本機的：`Plugins/BpGeneratorUltimate`、`Tools/engine.local.json`、街區用的角色卡（`Content/CharacterCards/StreetHeroines/`、`output/StreetSocialAPNG/Male01.png`），以及 `Tools/ok-rules` 的建置。
+
+## 六、C／E／F 同步到新歷史（2026-11-04 下午）
+
+公開倉庫改成 `damody2026/OK_Studio`，E、F 的 `duo2` 已 reset 到新歷史，檔案都留在磁碟上。交接見 [AGENTS_HANDOFF_20261104B.md](AGENTS_HANDOFF_20261104B.md)。
+
+| 測試 | 結果 |
+|---|---|
+| 乾淨 clone＋只用遊戲（`--game D:/KoikatuSunshine`）＋zip | 還原完成，0 缺檔；修掉 5 類缺檔（Studio 缺貼圖中斷、`.ok_cache.sqlite` 舊路徑、街區片段清單、`shared-ignore`、manifest 裡的孤兒模型） |
+| 開發資源 zip、H 語音 zip | `test-archive` 通過（15,906 檔、121,565 檔） |
+| 乾淨 clone 的 `kks-verify`、`okcard-verify`（5 張原作卡） | 各 4/5 相同，`okcard-verify` gaps=0 |
+| `Relife - 日代千鹤.png` | 乾淨 clone 與完整本機庫都 DIFFERENT：卡片用到沒有指名的 zipmod（`[cbr95810] pubic hair v1.0`），不是這次造成的 |
+| C 完整本機庫的 `kks-verify`（同 5 張，對 `D:/KoikatuSunshine`） | 5 張都 DIFFERENT，原因沒查出來。這份庫留著舊的非共用模型（misses 比乾淨 clone 少幾百個），原始來源 `C:\portable\KoikatuSunshine` 已不存在，無法對照。只影響在 C 用本機庫把原作卡轉成新 OK 卡；既有 OK 卡只讀共用資源，不受影響 |
+| C `Int1104NC`、E `Int1104NE` 完整打包 | cook 0 錯，修卡後沙盒啟動 11/11、0 個缺件 |
+| F `verify_ok_studio --tag Int1104NF` | 全部通過 |
+
+只靠遊戲還原還有兩件事沒做到：16 個只在 zip 裡的檔案沒有轉換器；沒有 H 語音時 H 場景無聲這件事只看過程式，沒有實際跑過。Gallery 的一般語音仍讀 `voice_extract`。
