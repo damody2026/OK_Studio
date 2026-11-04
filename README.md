@@ -1,8 +1,10 @@
 # OK Studio（OpenKoikatsu）
 
-歡迎加入 QQ 群 **1127259437** 討論、下載開發資源、一起開發。
+歡迎加入 QQ 群 **1127259437** 討論。
 
 原始碼：<https://github.com/damody2026/OK_Studio>（舊網址 `damody2026/OpenKoikatsu` 只留說明，請改從這裡下載）。
+
+> **本倉庫不含任何原作資源。** clone 下來只有程式碼與專案自製的內容。執行前請先依下方「[取得共用資源](#取得共用資源必做)」從你自己的遊戲轉換。
 
 用 **Unreal Engine 5.8、C++ 與 Rust** 做的非官方 Koikatsu Sunshine 人物卡 3D 工具：讀取 KKS 人物卡，依卡片組出 3D 角色，還原身形、服裝、材質、表情、動畫與動態骨骼。
 
@@ -21,16 +23,25 @@
 
 ## 倉庫裡有什麼
 
-倉庫只有**程式碼與專案自己做的內容**，不含任何版權物：沒有原作（Koikatsu Sunshine）的模型、動畫、語音、貼圖、台詞，沒有第三方 mod 轉出的資料，也沒有角色卡。要顯示角色，請用你自己的卡片。
+倉庫只有**程式碼與專案自己做的內容**，不含任何版權物：
+
+| 有 | 沒有 |
+|---|---|
+| C++／Rust／Lua 原始碼、Unreal 專案設定與自製地圖、材質、UI | 原作的模型、動畫、語音、貼圖、台詞、Studio 道具與地圖 |
+| 轉換腳本與清單（`Tools/original_data.lua`、`Tools/original_data_manifest.json`：只記路徑、大小與 sha256，不含資料本身） | 第三方 mod 轉出的資料、商用外掛 |
+| 專案自製的示範內容 | 角色卡（原作卡、OK 卡）、拍到原作角色的截圖或影片 |
+
+原作資料由使用者在自己的電腦上產生（見下一節），不會再提交進倉庫；`.gitignore` 與 commit 前的 hook（`Tools/check_no_cards.lua`）會擋下這些檔案。要顯示角色，請用你自己的卡片。
 
 ## 取得共用資源（必做）
 
-程式需要的原作資料（基礎模型庫 `base_v1`、Studio 目錄與動畫、配對動作、H 語音、街區動作片段、陰影 ramp 等）叫做「共用資源」，不在倉庫內。擇一取得：
+程式需要的原作資料（基礎模型庫 `base_v1`、Studio 目錄與動畫、配對動作、H 語音、街區動作片段、陰影 ramp 等）叫做「共用資源」，不在倉庫內。用自己的 Koikatsu Sunshine，指定遊戲安裝位置，由腳本轉換產生：
 
-| 方式 | 做法 |
-|---|---|
-| 有自己的 Koikatsu Sunshine | 指定遊戲安裝位置，由腳本轉換產生：`Tools\lua\lua.exe Tools\original_data.lua restore --game D:/KoikatuSunshine`。遊戲 `mods/` 裡有 [`Tools/base_library_shared_mods.txt`](Tools/base_library_shared_mods.txt) 列的共用 mod 時一併轉換 |
-| 進 QQ 群 1127259437 | 下載開發資源 zip，`Tools\lua\lua.exe Tools\original_data.lua restore --archive <zip 路徑>` |
+```powershell
+.\Tools\lua\lua.exe Tools\original_data.lua restore --game D:/KoikatuSunshine
+```
+
+遊戲 `mods/` 裡有 [`Tools/base_library_shared_mods.txt`](Tools/base_library_shared_mods.txt) 列的共用 mod 時一併轉換。
 
 步驟、需要的工具、會產生哪些檔案與疑難排解見 [取得共用資源](Docs/SHARED_RESOURCES_SETUP.md)；這份說明寫成可以直接交給 AI 照著執行。街區 demo 的台詞與語音由 AI 對話與 TTS 產生，不需要原作台詞與語音。
 
@@ -39,7 +50,7 @@
 ![讀卡流程](Docs/images/card-reading-flow.svg)
 
 1. 讀取人物卡（原作 PNG 或 OK 卡 APNG）裡的身形、服裝、飾品、Material Editor 等資料，以及卡片指名的 mod GUID。
-2. 每個部件依序找資源：倉庫內的基礎庫有就直接用；沒有就讀卡片旁的 zipmod 或遊戲 `mods/` 裡的實體檔；都找不到就列出缺少哪些 zipmod。
+2. 每個部件依序找資源：本機共用資源裡的基礎庫（`base_v1`，由上一節產生）有就直接用；沒有就讀卡片旁的 zipmod 或遊戲 `mods/` 裡的實體檔；都找不到就列出缺少哪些 zipmod。
 3. Rust（`Tools/ok-extract`）組出網格、骨架、材質、貼圖、表情與動態骨骼，經 C ABI 交給 Unreal 顯示。
 4. 原作卡可以轉成 OK 卡：卡片用到的 mod 資料錄進卡內，之後只要基礎庫就能還原。
 

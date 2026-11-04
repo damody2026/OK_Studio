@@ -1,12 +1,12 @@
 # 取得共用資源
 
-OK Studio 的倉庫不含任何版權物。程式需要的原作資料（以下叫「共用資源」）要在你自己的電腦上產生，或從 QQ 群 **1127259437** 下載開發資源。這份說明寫給人看，也可以整份交給 AI（Claude Code、Codex 等）照著執行。
+OK Studio 的倉庫不含任何版權物。程式需要的原作資料（以下叫「共用資源」）要用你自己的遊戲在電腦上產生。這份說明寫給人看，也可以整份交給 AI（Claude Code、Codex 等）照著執行。
 
 ## 給 AI 的執行步驟
 
 > 你在 OK Studio 的 checkout（`OpenKoikatsu.uproject` 所在的資料夾）裡工作，系統是 Windows。請照下面的步驟產生共用資源，每一步確認成功再做下一步。不要把產生的檔案提交到 git（`.gitignore` 與 pre-commit hook 已經擋住）。
 
-1. **問使用者 Koikatsu Sunshine 的安裝位置**：資料夾裡要有 `abdata/`（例如 `D:/KoikatuSunshine`，注意拼字是 Koikatu）。沒有遊戲、改用 QQ 群的開發資源 zip 時，跳到步驟 5。
+1. **問使用者 Koikatsu Sunshine 的安裝位置**：資料夾裡要有 `abdata/`（例如 `D:/KoikatuSunshine`，注意拼字是 Koikatu）。
 2. **確認工具**：
    - `cargo --version` 能執行（Rust stable、MSVC 工具鏈；沒有就到 <https://rustup.rs> 安裝）。
    - Lua 已附在倉庫：`Tools\lua\lua.exe`，不必另外安裝。
@@ -35,30 +35,21 @@ OK Studio 的倉庫不含任何版權物。程式需要的原作資料（以下�
    - `restore done: everything converted from the game is in place`：成功。
    - `differ`（內容和開發者那份不完全相同）是正常的：轉換時間、你的 `mods/` 清單、音訊重新編碼都會讓 bytes 不同，功能一樣。
    - `not needed ...`：不需要的資料（見下方），可以忽略。
-   - `only in the development resources zip ...`：還沒有轉換工具、只在開發資源 zip 裡的資料，列出缺了它們會少哪些功能（見下方）。
+   - `only in the development resources zip ...`：還沒有轉換工具的資料，列出缺了它們會少哪些功能（見下方），可以忽略。
    - `missing from the game conversion ...` 或某一步印出 `FAILED`：把 `restore.log` 最後幾十行貼給使用者，再單獨重跑那一步，例如 `restore --game D:/KoikatuSunshine --only studio`。
-5. **用 QQ 群的開發資源 zip**（沒有遊戲，或要補齊只在 zip 裡的資料）：
-
-   ```powershell
-   .\Tools\lua\lua.exe Tools\original_data.lua restore --archive D:/Downloads/OKOriginalData.zip
-   # 有遊戲也有 zip：能轉換的從遊戲轉，其餘從 zip 解
-   .\Tools\lua\lua.exe Tools\original_data.lua restore --game D:/KoikatuSunshine --archive D:/Downloads/OKOriginalData.zip
-   ```
-
-   zip 內每個檔案都有 sha256，解出後會逐一核對。
-6. **之後隨時檢查**：`.\Tools\lua\lua.exe Tools\original_data.lua verify`。
+5. **之後隨時檢查**：`.\Tools\lua\lua.exe Tools\original_data.lua verify`。
 
 ## 不需要的東西
 
-以下資料不轉換、也不在開發資源 zip 裡：
+以下資料不轉換：
 
 - **街區 demo 的原作台詞、語音與翻譯**：女角的對話由 AI 產生，聲音一律由 TTS 產生（沒有 TTS 時只顯示字幕），不使用原作台詞與語音檔。H 場景的語音不在此列，由上面的 `sounds` 步驟轉換。
 - **Studio 樣本場景與截圖**（`UserData/Studio/scene/` 等）：只是開發時的測試資料。
 - **角色卡**：倉庫沒有任何卡片，請用你自己的卡（原作卡、OK 卡）。
 
-## 目前只在開發資源 zip 裡的資料
+## 還沒有轉換工具的資料
 
-以下幾項還沒有轉換工具，沒有開發資源 zip 時對應的功能會關閉，其他功能照常：
+以下幾項還不能從遊戲轉換，對應的功能會關閉，其他功能照常：
 
 | 檔案 | 沒有時少掉的功能 |
 |---|---|
