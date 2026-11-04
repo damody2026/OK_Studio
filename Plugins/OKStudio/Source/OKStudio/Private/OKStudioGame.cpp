@@ -344,8 +344,10 @@ void UOKStudioGame::Undo()
 {
 	if (bHistoryDirty) CommitHistory();
 	if (UndoStack.IsEmpty()) return;
-	// The objects the undone edit was made on stay selected (when they are still there).
+	// The objects the undone edit was made on stay selected (when they are still there), the primary one too
+	// (U209: it became the last of the list, and the pages changed to another character).
 	const TArray<int32> EditSelection = HistorySelection;
+	const int32 Primary = SelectedId;
 	RedoStack.Add(MoveTemp(HistoryState));
 	RedoSelections.Add(HistorySelection);
 	HistoryState = UndoStack.Pop();
@@ -353,7 +355,7 @@ void UOKStudioGame::Undo()
 	RestoreHistory(HistoryState);
 	TArray<int32> Keep;
 	for (int32 Id : EditSelection) if (Document->Find(Id)) Keep.Add(Id);
-	if (Keep.Num()) SelectMany(Keep, Keep.Last());
+	if (Keep.Num()) SelectMany(Keep, Primary);
 	// Back at the saved document: nothing to save (U130: an add undone still asked to save).
 	bDirty = HistoryState != SavedState;
 }
@@ -362,11 +364,13 @@ void UOKStudioGame::Redo()
 {
 	if (bHistoryDirty) CommitHistory();
 	if (RedoStack.IsEmpty()) return;
+	const int32 Primary = SelectedId;
 	UndoStack.Add(MoveTemp(HistoryState));
 	UndoSelections.Add(HistorySelection);
 	HistoryState = RedoStack.Pop();
 	HistorySelection = RedoSelections.Num() ? RedoSelections.Pop() : TArray<int32>();
 	RestoreHistory(HistoryState);
+	if (Selection.Contains(Primary)) { const TArray<int32> Kept = Selection; SelectMany(Kept, Primary); }
 	bDirty = HistoryState != SavedState;
 }
 
