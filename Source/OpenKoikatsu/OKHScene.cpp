@@ -484,7 +484,9 @@ void UOKHScenePanel::Finish(const TCHAR* Kind){
             else Chain({TEXT("IN_Start"),TEXT("IN_Loop"),Has(TEXT("IN_A"))?TEXT("IN_A"):TEXT("OUT_A")});
             if(Kind==2)AddSiru(1); // on her chest
             if(Kind!=1)Spurt(5); // in her hand or between her breasts (in her mouth it stays in it)
-            const FString Event=OKT(Kind==1?TEXT("ui.hscene.event_service_inside"):Kind==2?TEXT("ui.hscene.event_service_chest"):TEXT("ui.hscene.event_service_hand"))+OKDevStep(TEXT("oral"),OralBefore,Dev(TEXT("oral")));
+            // A foot job (足コキ, a hand service in the original) ends on her feet, not in her hand.
+            const bool Feet=Kind==0&&Poses.IsValidIndex(ActivePose)&&Poses[ActivePose].Raw.Contains(TEXT("足コキ"));
+            const FString Event=OKT(Kind==1?TEXT("ui.hscene.event_service_inside"):Kind==2?TEXT("ui.hscene.event_service_chest"):Feet?TEXT("ui.hscene.event_service_feet"):TEXT("ui.hscene.event_service_hand"))+OKDevStep(TEXT("oral"),OralBefore,Dev(TEXT("oral")));
             // In her mouth: he picks swallow or spit next, so her line now must not say she already did either.
             if(Kind==1){Note(Event,false);React(Event,OKT(TEXT("ui.hscene.mouth_full_note")));}else Note(Event);}
         else{const bool Mouth=Poses.IsValidIndex(ActivePose)&&FinishInMouth();Chain({TEXT("M_OUT_Start"),TEXT("M_OUT_Loop"),TEXT("OUT_A")});AddSiru(Mouth?0:1);Spurt(5);
@@ -989,7 +991,7 @@ void UOKHScenePanel::BuildActions(){
     if(Mode==1){
         if((Base==TEXT("Idle")||Base==TEXT("Stop_Idle"))&&!bServiceRefused)Add(Faster,TEXT("ui.hscene.act_start"));
         else if(HIsLoop(Base)){Add(Faster,TEXT("ui.hscene.act_faster"));Add(Slower,TEXT("ui.hscene.act_slower"));Add(Toggle,TEXT("ui.hscene.act_toggle"));Add(Stop,TEXT("ui.hscene.act_stop"));}
-        else if(Base==TEXT("OLoop")){Add(Inside,FinishInMouth()?TEXT("ui.hscene.act_in_mouth"):Pose.KindHoushi==2?TEXT("ui.hscene.act_on_chest"):TEXT("ui.hscene.act_in_hand"));Add(Outside,TEXT("ui.hscene.act_outside"));}
+        else if(Base==TEXT("OLoop")){Add(Inside,FinishInMouth()?TEXT("ui.hscene.act_in_mouth"):Pose.KindHoushi==2?TEXT("ui.hscene.act_on_chest"):Pose.Raw.Contains(TEXT("足コキ"))?TEXT("ui.hscene.act_on_feet"):TEXT("ui.hscene.act_in_hand"));Add(Outside,TEXT("ui.hscene.act_outside"));}
         else if(Base==TEXT("Oral_Idle")){Add(Drink,TEXT("ui.hscene.act_drink"));Add(Vomit,TEXT("ui.hscene.act_vomit"));}
         else if(Base.EndsWith(TEXT("_A"))){if(!bServiceRefused)Add(Again,TEXT("ui.hscene.act_again"));Add(Stop,TEXT("ui.hscene.act_rest"));}
         return;
