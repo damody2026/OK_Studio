@@ -435,3 +435,154 @@ c-street-city 的逐項回答在 `Docs/STREET_CITY_PLACES_INVENTORY_20261103.md`
 1. c-street-city 依第 2 節（C1–C11）補場景與 `places.json`，重跑 `build_street_city_places.lua`。
 2. c-conquest 重跑比對腳本確認沒有缺漏。
 3. 第 3 節等使用者整合大學城時，由 c-conquest 補規則與活動。
+
+## 10. 生活與戀人互動的錨點（使用者 11-04：盤點完設定到 Rust，可以快速查詢）
+
+第 8 節盤點「地點和家具」，這一節盤點「人在那裡做什麼、站在哪裡」。對照的是 11-04 的 `places.json`：`game_places` 91 個、錨點 849 個。
+
+現況三個問題：
+
+- **錨點沒有分類**：只有名稱和位置（`name`、`pos`、`yaw`、`source`）。要找「附近能兩人並坐的地方」，只能靠名稱前綴猜。
+- **只有室內場所有錨點**：戶外的散步、看風景、告白、接吻地點幾乎沒有。`public_seats` 目前 0 筆。
+- **隱私等級太粗**：`privacy` 是整個地點一個值，同一個地點裡的角落和大廳分不出來。
+
+### 10.1 錨點種類（`kind`）
+
+一個錨點可以有多個種類，例如公園長椅同時是 `seat_pair` 和 `lap_pillow`。「現況」只算 `places.json` 裡查得到的。
+
+**姿勢：所有活動共用**
+
+| kind | 做什麼 | 人數 | 要放在 | 現況 |
+|---|---|---:|---|---|
+| `seat` | 單人坐下 | 1 | 所有椅子、凳子、吧台椅、候診椅（見 11-04 給 c-street-city 的座位要求） | 部分（`seat` 54、`chair` 3） |
+| `seat_pair` | 兩人並坐 | 2 | 長椅、沙發、堤防、階梯、看台、電影院情侶座 | 部分（`bench` 9、`sofa` 1） |
+| `seat_face` | 隔桌面對面坐 | 2 | 餐廳、咖啡店、學生餐廳、圖書館、自習室的桌子 | 部分（`table` 14，沒有分兩個座位） |
+| `seat_ground` | 坐在地上、草地、沙灘 | 2 | 草地、野餐墊、沙灘、屋頂 | 沒有 |
+| `lie` | 單人躺下 | 1 | 床、沙灘躺椅、天文館躺椅、保健室床 | 部分（`bed` 22、`lounger` 2） |
+| `lie_pair` | 兩人並躺 | 2 | 雙人床、草地、沙灘墊、屋頂、帳篷 | 部分（只有床） |
+| `lean` | 靠牆、靠欄杆站 | 1–2 | 平整的牆面、欄杆、販賣機旁 | 沒有 |
+| `stand_pair` | 兩人並肩站 | 2 | 展示櫃、水槽、櫥窗、欄杆前 | 部分（`tank`、`exhibit`） |
+| `queue` | 排隊 | 多人 | 櫃台、售票機、遊樂設施入口 | 沒有 |
+
+**戀人：`acts.toml` 的行為與約會**
+
+| kind | 做什麼 | 要放在 | 現況 |
+|---|---|---|---|
+| `meet` | 約會碰面 | 校門、車站前、噴水池、鐘塔、大型招牌下 | 部分（`gate`、`fountain`） |
+| `goodbye` | 送她回家、門口道別 | 女宿、男宿、民宿、公寓門口 | 沒有 |
+| `stroll` | 牽手散步（`hold_hands`），一條路線的依序路線點 | 校園林蔭道、河堤、海岸步道、商店街、公園環道 | 沒有 |
+| `confess` | 告白、分手談話 | 屋頂欄杆、大樹下、校舍後、海邊、神社 | 沒有 |
+| `kiss` | 接吻、擁抱（`kiss`、`hug`），要旁人看不太到 | 路燈下、樓梯間、校舍後、書架間、橋上、摩天輪車廂 | 沒有 |
+| `wall_pin` | 壁咚 | 走廊死角、巷子、書架間 | 沒有 |
+| `lap_pillow` | 膝枕、一起午睡（`lap_pillow`、`nap_together`） | 草地、長椅、沙發、沙灘墊 | 沒有（可由 `seat_pair` 加種類） |
+| `feed` | 互相餵食、分食（`feed`、`share_food`） | 餐桌、便當長椅、野餐墊 | 沒有（可由 `seat_face`、`seat_pair` 加種類） |
+| `picnic` | 野餐 | 公園、河堤、海邊草地 | 沒有 |
+| `view_sunset` | 看夕陽 | 海堤、屋頂、展望台 | 沒有 |
+| `view_night` | 看夜景 | 展望台、摩天輪、飯店窗邊、屋頂 | 部分（`view` 1） |
+| `stargaze` | 看星星 | 草地、屋頂、海邊 | 沒有 |
+| `fireworks` | 看煙火、跨年倒數 | 河堤、海灘、屋頂、祭典廣場 | 沒有 |
+| `blossom` | 賞櫻、賞楓（依季節開放） | 櫻花樹、楓樹下 | 沒有 |
+| `shelter` | 躲雨、共撐一把傘等雨停 | 屋簷、公車亭、涼亭、騎樓 | 沒有 |
+| `selfie` | 兩人自拍、合照 | 地標前、花海、拍貼機 | 部分（`photobooth`、`fountain`） |
+| `ride_pair` | 雙人共乘 | 摩天輪車廂、旋轉木馬、雲霄飛車座位、天鵝船、香蕉船、協力車 | 部分（只有設施本體，沒有座位點） |
+| `gift` | 送禮、交換戒指、求婚 | 珠寶店、展望台、海邊、餐廳窗邊 | 部分（`case`） |
+| `wedding` | 婚紗照、教堂誓言 | 拍照棚、教堂 | 部分（`backdrop`），教堂未查到 |
+
+**同居與日常：住處都要有**（女宿房間、男宿、民宿、飯店、公寓，以及 `lots` 蓋好的自宅）
+
+| kind | 做什麼 | 現況 |
+|---|---|---|
+| `entry` | 玄關：回家、換鞋、迎接 | 沒有 |
+| `cook` | 一起做飯：`stove`、水槽、冰箱前 | 部分（`stove` 2、`kitchen` 2，只有女宿與少數地方） |
+| `dining` | 家裡的餐桌，對坐吃飯 | 沒有 |
+| `tv_sofa` | 沙發看電視、打電動 | 部分（`lounge`、`game`） |
+| `desk_study` | 書桌讀書、用電腦 | 部分（`desk` 18） |
+| `vanity` | 梳妝、吹頭髮 | 部分（`mirror`） |
+| `bath` | 浴缸、一起泡澡 | 沒有（飯店 `pool`、溫泉另算） |
+| `shower` | 淋浴 | 部分（`girls_dorm_rooms` 的 `showers`、海灘與健身房） |
+| `toilet` | 馬桶 | 只有公廁地點，沒有座位點 |
+| `laundry` | 洗衣機前、曬衣處 | 沒有（地點名稱有「洗衣」6 處，沒有錨點） |
+| `balcony` | 陽台吹風、抽菸、講電話（`phone_call`） | 沒有 |
+| `closet` | 換衣服、挑衣服 | 沒有 |
+
+**校園戀愛**
+
+| kind | 做什麼 | 要放在 | 現況 |
+|---|---|---|---|
+| `shoe_locker` | 鞋櫃塞情書 | 校舍入口 | 沒有 |
+| `empty_class` | 放學後的空教室 | 校舍各層（`class*` 可加種類） | 部分 |
+| `rooftop_lunch` | 屋頂吃便當 | 校舍屋頂 | 沒有，第 8.2 節的 `rooftop` 未查到 |
+| `stair_landing` | 樓梯間說悄悄話 | 校舍樓梯轉角（`stair*` 是走路用，要另外放） | 沒有 |
+| `storage_room` | 體育倉庫：跳箱、軟墊 | 體育館 | 沒有 |
+| `infirmary_bed` | 保健室布簾床 | `infirmary` | 部分（`bed_exam`） |
+| `music_piano` | 音樂教室鋼琴 | 校舍 | 部分（`music`） |
+
+**生活服務**
+
+| kind | 要放在 | 現況 |
+|---|---|---|
+| `bus_stop`、`station` | 公車站、車站月台、剪票口 | `ticket_gate` 1，地點名稱查不到車站、公車 |
+| `bike_rack` | 校舍、宿舍、車站 | 沒有 |
+| `mailbox` | 宿舍、郵局前 | 沒有 |
+| `trash`、`water_fountain`、`notice_board` | 校舍、公園 | 沒有 |
+| `staff_room` | 打工換衣、休息 | 沒有 |
+| `ultrasound`、`crib` | 懷孕回診（`pregnancy.rs`）、新生兒 | 沒有 |
+
+**H 姿勢（`h_poses.json` 的類別，放在隱私足夠或刻意冒險的地方）**
+
+| kind | 類別 | 姿勢例 | 要放在 |
+|---|---|---|---|
+| `h_floor` | 0、1、9、1008、1014、1100、1102、1012 | 地板、站姿 | 所有私人房間，以及倉庫、保健室、海灘角落 |
+| `h_chair` | 2–5、1003、1011、1101、1200 | 椅子 | 私人房間、空教室、社團教室 |
+| `h_bench` | 12 | 長椅 | 公園深處、更衣室 |
+| `h_sofa` | 1201 | 沙發 | 私人房間、KTV 包廂、漫畫網咖包廂 |
+| `h_desk` | 6、7、1010、1305 | 書桌、桌角 | 教室、辦公室、私人房間 |
+| `h_box` | 1009 | 跳箱 | 體育倉庫 |
+| `h_pingpong` | 1301 | 桌球桌 | `gym_hall`、宿舍交誼廳 |
+| `h_wall` | 8、1302、1304 | 靠牆 | 私人房間、巷子、樓梯間 |
+| `h_bookshelf` | 1002 | 書架 | 圖書館深處、書店 |
+| `h_fence` | 1006 | 圍欄 | 屋頂、操場 |
+| `h_net` | 1015、1300 | 球網 | `gym_hall`、操場 |
+| `h_pool` | 1004 | 泳池邊 | `pool`、飯店泳池 |
+| `h_boat` | 1303 | 香蕉船 | 海灘 |
+| `h_toilet` | 2000、2003 | 廁所 | 公廁、宿舍、飯店 |
+| `h_shower` | 2001、2004 | 淋浴 | 宿舍、飯店、健身房、海灘 |
+| `h_group` | 3000、3001 | 三人 | 私人房間 |
+
+### 10.2 每個錨點的欄位
+
+| 欄位 | 說明 |
+|---|---|
+| `id` | 全地圖唯一，`<place>.<name>` |
+| `name`、`place`、`building`、`room`、`floor` | 既有名稱不改，活動和打工仍用 `name` 查 |
+| `pos`、`yaw` | 既有規則不變；坐的錨點 `pos` 是座面中央的臀部落點 |
+| `kinds` | 第 10.1 節的種類，可多個 |
+| `slots` | 多人時每人的 `pos`、`yaw`。`seat_pair` 兩筆，`seat_face` 隔桌兩筆 |
+| `privacy` | 這個點自己的隱私：0 公開、1 半隱蔽（角落、視線被擋）、2 私人（鎖門）。不寫就用地點的值 |
+| `outdoor` | 不寫就用地點的值 |
+| `tags` | `sunset`、`night_view`、`shade`、`sheltered`（下雨不會淋濕）、`water`、`spring`、`autumn`、`festival` |
+
+### 10.3 Rust 查詢
+
+**資料**：`build_street_city_places.lua` 除了 `places.json`，另外產生 `Content/IndependentResources/StreetSocialData/city_anchors.json`。`output/` 不隨遊戲發佈，所以要放在 Content。
+
+**程式**：新增 `Tools/ok-rules/src/anchors.rs`，掛進 `lib.rs` 的 `eval`。規則表載入時（含 `reload`）讀一次，建好索引：`id`、`place`、`kind`，以及以 10 公尺為一格的空間格。查詢時不讀檔、不掃全表。
+
+| 查詢 | 參數 | 回傳 |
+|---|---|---|
+| `anchor_find` | `kinds`（任一符合）；選填 `place`、`near`、`radius`、`floor`、`privacy_min`、`privacy_max`、`outdoor`、`tags`、`capacity`、`exclude`（已被占用的 `id`）、`limit` | 依距離排序的錨點，含 `slots` |
+| `anchors_of_place` | `place`、選填 `kinds` | 這個地點的錨點 |
+| `anchor_get` | `id` | 單一錨點 |
+| `anchor_for_act` | `act`（`acts.toml` 的 id 或 H 類別編號），其他同 `anchor_find` | 這個行為能用的錨點；對應表放 `rules/anchor_kinds.toml` |
+| `anchor_kinds` | 無 | 所有種類和每種的數量 |
+
+占用狀態由遊戲傳 `exclude`，ok-rules 仍然不保存狀態。
+
+**測試**（放在 `anchors.rs`）：
+
+- `activities.toml` 每個 `anchor`、`catalog.json` 每個打工 `stations` 都查得到。
+- 第 10.1 節每個種類至少一筆；`h_poses.json` 每個類別至少對應一個 `kind`。
+- `id` 不重複；`slots` 數量和人數相符；`floor` 和高度相符。
+- 全表 `anchor_find` 一次要在 0.1 ms 內。
+
+改到 `Tools/ok-rules` 要照 `AGENTS.md` 的共用程式碼規則：`cargo test -j 8 --release`、`cargo check -j 8 --release --no-default-features`，並確認遊戲和編輯器連結成功。C++ 接上查詢由 c-conquest 做。
