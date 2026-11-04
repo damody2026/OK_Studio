@@ -1444,6 +1444,7 @@ void UOKStudioGame::TickExport()
 	if (!CaptureToPng(ExportDir / FString::Printf(TEXT("frame_%05d.png"), ExportFrame), ExportWidth, ExportHeight, Error))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("OK studio: frame %d not exported: %s"), ExportFrame, *Error);
+		LastMovieError = Error;
 		ExportFrame = -1;
 		SetTimelineTime(ExportReturnTime);
 		return;

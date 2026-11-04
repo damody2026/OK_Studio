@@ -637,6 +637,8 @@ public:
 		Simple(TEXT("edit.delete"), TEXT("刪除"), [this] { DeleteSelection(); });
 		Simple(TEXT("edit.hide"), TEXT("隱藏／顯示"), [this] { HideSelection(); });
 		Simple(TEXT("edit.rename"), TEXT("改名"), [this] { BeginRename(); });
+		// U207: the rows that go to every selected character want these more often than everything in the scene.
+		Simple(TEXT("edit.selectchars"), TEXT("全選角色"), [this] { TArray<int32> All; for (const FOKSceneObject& O : Game->Document->Objects) if (O.Kind == EOKSceneObjectKind::Character) All.Add(O.Id); if (!All.IsEmpty()) Game->SelectMany(All, All.Contains(Game->SelectedId) ? Game->SelectedId : All[0]); SetStatus(FString::Printf(TEXT("選取 %d 個角色"), All.Num())); });
 		Simple(TEXT("edit.selectall"), TEXT("全選"), [this] { TArray<int32> All; for (const FOKSceneObject& O : Game->Document->Objects) All.Add(O.Id); Game->SelectMany(All, Game->SelectedId); });
 		Simple(TEXT("edit.saveas"), TEXT("選取存成場景"), [this] { const FString F = SaveSelectionAsScene(); SetStatus(F.IsEmpty() ? FString(TEXT("沒有選取")) : TEXT("已存 ") + F); });
 		// U199: the status line answers; a step that changed something off screen looked like a key that did nothing.
@@ -1363,20 +1365,29 @@ public:
 					SNew(SBox).WidthOverride(51.f).HeightOverride(15.f)
 					[
 						// Unbounded and linear: 1 cm, 1 degree, 0.01 a pixel (SetTransformValue keeps the scale above 0).
-						SNew(SOKSpinBox).Style(&SpinStyle()).Font(Font(11.f)).LinearDeltaSensitivity(1).Delta(Row == 1 ? 1.f : (Row == 2 ? 0.01f : 1.f))
+						SNew(SOKSpinBox).Style(&SpinStyle()).Font(Font(11.f)).ClearKeyboardFocusOnCommit(true).LinearDeltaSensitivity(1).Delta(Row == 1 ? 1.f : (Row == 2 ? 0.01f : 1.f))
 						// Nothing selected: the identity (scale 1, as HS2Studio6 shows), not editable.
 						// U196: what rounds to zero is shown as 0.0, it read "-0.0".
 						.Value_Lambda([this, Row, Axis] { const FOKSceneObject* O = Obj(); const float V = O ? TransformValue(O->Transform, Row, Axis) : (Row == 2 ? 1.f : 0.f); return FMath::Abs(V) < (Row == 2 ? 0.005f : 0.05f) ? 0.f : V; })
 						.IsEnabled_Lambda([this] { return Obj() != nullptr; })
 						// The field holds about seven characters (-2412.5): 1 mm and 0.1 degree, scale to 0.01.
 						.MaxFractionalDigits(Row == 2 ? 2 : 1)
-						.OnValueChanged_Lambda([this, Row, Axis](float V) { if (FOKSceneObject* O = Obj()) { SetTransformValue(O->Transform, Row, Axis, V); Changed(); } })
+						// U205: the rest of a selection moves by the same amount.
+						.OnValueChanged_Lambda([this, Row, Axis](float V)
+						{
+							FOKSceneObject* O = Obj();
+							if (!O) return;
+							const float By = V - TransformValue(O->Transform, Row, Axis);
+							for (int32 Id : Game->SelectionRoots()) if (FOKSceneObject* X = Game->Document->Find(Id)) if (X != O) SetTransformValue(X->Transform, Row, Axis, TransformValue(X->Transform, Row, Axis) + By);
+							SetTransformValue(O->Transform, Row, Axis, V);
+							Changed();
+						})
 						.OnBeginSliderMovement_Lambda([this] { if (Game.IsValid()) Game->bUserDragging = true; })
 						.OnEndSliderMovement_Lambda([this](float) { if (Game.IsValid()) Game->bUserDragging = false; })
 					]
 				];
 			}
-			Line->AddSlot().AutoWidth().VAlign(VAlign_Center)[Button(FText::FromString(TEXT("重設")), [this, Row] { if (FOKSceneObject* O = Obj()) { ResetTransformRow(O->Transform, Row); Changed(); } }, 30.f, 15.f, false, 10.f)];
+			Line->AddSlot().AutoWidth().VAlign(VAlign_Center)[Button(FText::FromString(TEXT("重設")), [this, Row] { for (int32 Id : Game->Selection) if (FOKSceneObject* O = Game->Document->Find(Id)) ResetTransformRow(O->Transform, Row); Changed(); }, 30.f, 15.f, false, 10.f)];
 			Rows3->AddSlot().AutoHeight().Padding(0.f, Row ? 3.f : 0.f, 0.f, 0.f)[Line];
 		}
 		return SNew(SBorder).BorderImage(Brush(Panel())).Padding(FMargin(5.f, 4.f, 4.f, 4.f))
@@ -1469,7 +1480,7 @@ public:
 		switch (Page)
 		{
 		case EPage::Object: return O ? FString::Printf(TEXT("%s #%d"), OKStudioPanelText::KindTag(O->Kind), O->Id) : TEXT("屬性");
-		case EPage::State: return TEXT("狀態　") + Who;
+		case EPage::State: return TEXT("狀態　") + (Characters > 1 ? FString::Printf(TEXT("%d 個角色"), Characters) : Who);
 		case EPage::Bones: return TEXT("骨骼　") + Who;
 		case EPage::Anim: return TEXT("動畫　") + (Characters > 1 ? FString::Printf(TEXT("%d 個角色"), Characters) : Who);
 		case EPage::Scene: return TEXT("畫面設定");
@@ -1583,6 +1594,9 @@ public:
 	void SaveLayout() const;
 	/** Per frame: thumbnails, the item preview, the status line, the window title, saving the layout now and then. */
 	void TickUi(float DeltaTime);
+	/** What the last export came to, for the export window and the status line. */
+	FString ExportResult() const;
+	bool bWasExporting = false;
 
 	// --- Dialog and the unsaved-changes guard (U7-4). ---
 	FString DialogText;
@@ -2187,7 +2201,8 @@ public:
 	TSharedRef<SWidget> Spin(TFunction<float()> Get, TFunction<void(float)> Set, float Min, float Max, float Delta)
 	{
 		const bool bWide = WideRange(Min, Max, Delta);
-		return SNew(SOKSpinBox).Style(&OKStudioStyle::SpinStyle()).Font(OKStudioStyle::Font(10.f)).Delta(Delta).MaxFractionalDigits(3)
+		// U208: Enter leaves the field, or Ctrl+Z went to its text and the scene kept the value.
+		return SNew(SOKSpinBox).Style(&OKStudioStyle::SpinStyle()).Font(OKStudioStyle::Font(10.f)).ClearKeyboardFocusOnCommit(true).Delta(Delta).MaxFractionalDigits(3)
 			.MinValue(bWide ? TOptional<float>() : TOptional<float>(Min)).MaxValue(bWide ? TOptional<float>() : TOptional<float>(Max)).LinearDeltaSensitivity(bWide ? 1 : 0)
 			.Value_Lambda([Get] { return Get(); })
 			.OnValueChanged_Lambda([Set, Min, Max](float V) { Set(FMath::Clamp(V, Min, Max)); })
@@ -2196,7 +2211,7 @@ public:
 	}
 	void Float(const FString& Name, TFunction<float(FOKSceneObject&)> Get, TFunction<void(FOKSceneObject&, float)> Set, float Min, float Max, float Delta)
 	{
-		Row(Name, Spin([this, Get] { FOKSceneObject* O = Obj(); return O ? Get(*O) : 0.f; }, [this, Set](float V) { if (FOKSceneObject* O = Obj()) { Set(*O, V); Changed(); } }, Min, Max, Delta));
+		Row(Name, Spin([this, Get] { FOKSceneObject* O = Obj(); return O ? Get(*O) : 0.f; }, [this, Set, bAll = bRowsToAll](float V) { WriteRow(bAll, [&Set, V](FOKSceneObject& X) { Set(X, V); }); }, Min, Max, Delta));
 	}
 	TSharedRef<SWidget> CheckBox(const FString& Name, TFunction<bool()> Get, TFunction<void(bool)> Set)
 	{
@@ -2234,7 +2249,15 @@ public:
 	void Cycle(const FString& Name, TFunction<FString(FOKSceneObject&)> Show, TFunction<void(FOKSceneObject&)> Next)
 	{
 		Row(Name, OKStudioStyle::Button(TAttribute<FText>::CreateLambda([this, Show] { FOKSceneObject* O = Obj(); return FText::FromString(O ? Show(*O) : FString()); }),
-			[this, Next] { if (FOKSceneObject* O = Obj()) { Next(*O); Changed(); } }, 0.f, 18.f, false, 10.f, OKStudioStyle::Input()));
+			[this, Show, Next, bAll = bRowsToAll]
+			{
+				FOKSceneObject* O = Obj();
+				if (!O) return;
+				Next(*O);
+				// The others step until they show what this one shows: each stepping on its own would keep them apart.
+				if (bAll) EachSelectedCharacter([O, &Show, &Next](FOKSceneObject& X) { for (int32 Step = 0; &X != O && Step < 8 && Show(X) != Show(*O); ++Step) Next(X); });
+				Changed();
+			}, 0.f, 18.f, false, 10.f, OKStudioStyle::Input()));
 	}
 	/** A button that changes how many rows the object shows (adds or removes entries): the panel rebuilds after it. */
 	void Action(const FString& Name, TFunction<FString(FOKSceneObject&)> Show, TFunction<void(FOKSceneObject&)> Do)
@@ -2249,7 +2272,7 @@ public:
 		for (int32 I = 0; I < Options.Num(); ++I)
 			Box->AddSlot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)
 			[
-				OKStudioStyle::Button(FText::FromString(Options[I]), [this, Set, I] { if (FOKSceneObject* O = Obj()) { Set(*O, I); Changed(); } }, 0.f, 18.f,
+				OKStudioStyle::Button(FText::FromString(Options[I]), [this, Set, I, bAll = bRowsToAll] { WriteRow(bAll, [&Set, I](FOKSceneObject& X) { Set(X, I); }); }, 0.f, 18.f,
 					TAttribute<bool>::CreateLambda([this, Get, I] { FOKSceneObject* O = Obj(); return O && Get(*O) == I; }), 10.f)
 			];
 		Row(Name, Box, Options.Num() > 3 ? 0.25f : 0.4f);
@@ -2315,10 +2338,11 @@ public:
 		TArray<TSharedPtr<int32>>& Options = NamedOptions[ListName].Get();
 		if (Options.Num() != Count + 1) { Options.Reset(); for (int32 I = -1; I < Count; ++I) Options.Add(MakeShared<int32>(I)); }
 		// The status line says what was set (U119: the face is often out of sight).
-		auto Report = [this, Name, Show](const FOKSceneObject& O, int32 V) { SetStatus(FString::Printf(TEXT("%s %s：%s"), *O.Name, *Name, *Show(V))); };
-		Row(Name, Combo(&Options, Show, [this, Get] { FOKSceneObject* O = Obj(); return O ? Get(*O) : -1; }, [this, Set, Report](int32 V) { if (FOKSceneObject* O = Obj()) { Set(*O, V); Report(*O, V); Changed(); } }));
+		const bool bAll = bRowsToAll;
+		auto Report = [this, Name, Show, bAll](const FOKSceneObject& O, int32 V) { const int32 N = bAll ? SelectedCharacters() : 1; SetStatus(FString::Printf(TEXT("%s %s：%s"), N > 1 ? *FString::Printf(TEXT("%d 個角色"), N) : *O.Name, *Name, *Show(V))); };
+		Row(Name, Combo(&Options, Show, [this, Get] { FOKSceneObject* O = Obj(); return O ? Get(*O) : -1; }, [this, Set, Report, bAll](int32 V) { if (FOKSceneObject* O = Obj()) { Report(*O, V); WriteRow(bAll, [&Set, V](FOKSceneObject& X) { Set(X, V); }); } }));
 		// HS2Studio6's pattern pages: previous / next (wrapping, -1 is the card's or animation's own) and "current / total".
-		auto Step = [this, Get, Set, Count, Report](int32 By) { if (FOKSceneObject* O = Obj()) { const int32 V = (Get(*O) + 1 + By + Count + 1) % (Count + 1) - 1; Set(*O, V); Report(*O, V); Changed(); } };
+		auto Step = [this, Get, Set, Count, Report, bAll](int32 By) { if (FOKSceneObject* O = Obj()) { const int32 V = (Get(*O) + 1 + By + Count + 1) % (Count + 1) - 1; Report(*O, V); WriteRow(bAll, [&Set, V](FOKSceneObject& X) { Set(X, V); }); } };
 		Props->AddSlot().AutoHeight().Padding(0.f, 1.f)
 		[
 			SNew(SHorizontalBox)
@@ -2580,6 +2604,8 @@ public:
 	/** 狀態: card, outfit, clothes, fluids, accessories. */
 	void CharacterState(FOKSceneObject* O)
 	{
+			MultiNote(TEXT("同時改 {n} 個角色：服裝、風格、狀態。卡片與飾品每張卡不同，只改 {who}。"));
+			bRowsToAll = true; // the card row below is a button of its own
 			Label(TEXT("角色"));
 			Row(TEXT("卡片"), OKStudioStyle::Button(TAttribute<FText>::CreateLambda([this] { FOKSceneObject* X = Obj(); return FText::FromString(X ? FPaths::GetCleanFilename(X->Character.Card) : FString()); }),
 				[this] { OpenFloat(TEXT("cards")); }, 0.f, 18.f, false, 10.f, OKStudioStyle::Input()), 0.3f);
@@ -2587,7 +2613,7 @@ public:
 			Label(TEXT("風格"));
 			Float(TEXT("風格（-1 寫實、1 Q 版）"), [](FOKSceneObject& X) { return X.Character.Style; }, [](FOKSceneObject& X, float V) { X.Character.Style = FMath::Clamp(V, -1.f, 1.f); }, -1.f, 1.f, 0.05f);
 			{
-				auto Style = [this](float V) { return [this, V] { if (FOKSceneObject* X = Obj()) { X->Character.Style = V; Changed(); } }; };
+				auto Style = [this](float V) { return [this, V] { WriteRow(true, [V](FOKSceneObject& X) { X.Character.Style = V; }); }; };
 				Props->AddSlot().AutoHeight().Padding(0.f, 2.f)
 				[
 					SNew(SHorizontalBox)
@@ -2599,7 +2625,7 @@ public:
 		Label(TEXT("服裝狀態"));
 			{
 				// HS2Studio6's one-click 全穿 / 半脫 / 全裸: every part to the game's state 0, 1 or 3.
-				auto All = [this](uint8 State) { return [this, State] { if (FOKSceneObject* X = Obj()) { X->Character.ClothesStates.Init(State, 9); Changed(); DeferRebuild(); } }; };
+				auto All = [this](uint8 State) { return [this, State] { WriteRow(true, [State](FOKSceneObject& X) { X.Character.ClothesStates.Init(State, 9); }); DeferRebuild(); }; };
 				Props->AddSlot().AutoHeight().Padding(0.f, 2.f)
 				[
 					SNew(SHorizontalBox)
@@ -2626,6 +2652,7 @@ public:
 					Cycle(FluidParts[Part], [Part](FOKSceneObject& X) { return X.Character.Fluids.IsValidIndex(Part) ? FString::FromInt(X.Character.Fluids[Part]) : FString(TEXT("照卡片")); },
 						[Part](FOKSceneObject& X) { if (X.Character.Fluids.Num() != 5) { X.Character.Fluids.Init(0, 5); return; } X.Character.Fluids[Part] = (X.Character.Fluids[Part] + 1) % 3; });
 			}
+			bRowsToAll = false;
 			Cycle(TEXT("飾品"), [](FOKSceneObject& X)
 				{
 					if (X.Character.AccessoriesShown.Num() != 21) return FString(TEXT("照卡片"));
@@ -2633,8 +2660,10 @@ public:
 					return FString::Printf(TEXT("顯示 %d／20"), Shown);
 				},
 				[](FOKSceneObject& X) { if (X.Character.AccessoriesShown.Num() != 21) X.Character.AccessoriesShown.Init(0, 21); else X.Character.AccessoriesShown.Reset(); });
+			bRowsToAll = true;
 			Cycle(TEXT("隱形身體"), [](FOKSceneObject& X) { return FString(X.Character.InvisibleBody < 0 ? TEXT("照卡片") : X.Character.InvisibleBody ? TEXT("只顯示衣服與飾品") : TEXT("顯示")); },
 				[](FOKSceneObject& X) { X.Character.InvisibleBody = X.Character.InvisibleBody < 0 ? 1 : X.Character.InvisibleBody == 1 ? 0 : -1; });
+			bRowsToAll = false;
 			if (O->Character.AccessoriesShown.Num() == 21)
 				for (int32 Slot = 0; Slot < 21; ++Slot)
 					Check(Slot < 20 ? FString::Printf(TEXT("飾品 %d"), Slot + 1) : FString(TEXT("擴充飾品（MoreAccessories）")), [Slot](FOKSceneObject& X) { return X.Character.AccessoriesShown.IsValidIndex(Slot) && X.Character.AccessoriesShown[Slot] != 0; },
@@ -2652,19 +2681,36 @@ public:
 	{
 		for (int32 Id : Game->Selection) if (FOKSceneObject* O = Game->Document->Find(Id)) if (O->Kind == EOKSceneObjectKind::Character) Do(*O);
 	}
-	/** Float, written to every selected character. */
-	void CharactersFloat(const FString& Name, TFunction<float(FOKSceneObject&)> Get, TFunction<void(FOKSceneObject&, float)> Set, float Min, float Max, float Delta)
+	/** While on, the rows being built write to every selected character (U203), not only the primary one. */
+	bool bRowsToAll = false;
+	void WriteRow(bool bAll, TFunctionRef<void(FOKSceneObject&)> Do)
 	{
-		Row(Name, Spin([this, Get] { FOKSceneObject* O = Obj(); return O ? Get(*O) : 0.f; }, [this, Set](float V) { EachSelectedCharacter([&Set, V](FOKSceneObject& X) { Set(X, V); }); Changed(); }, Min, Max, Delta));
+		FOKSceneObject* O = Obj();
+		if (!O) return;
+		if (bAll) EachSelectedCharacter(Do); else Do(*O);
+		Changed();
+	}
+	/** What a page does with several characters selected, shown only then ({n} their number, {who} the primary one). */
+	void MultiNote(const FString& Format)
+	{
+		Props->AddSlot().AutoHeight().Padding(0.f, 1.f, 0.f, 3.f)
+		[
+			SNew(STextBlock).Font(OKStudioStyle::Font(10.f)).ColorAndOpacity(FLinearColor::Yellow).AutoWrapText(true)
+			.Text_Lambda([this, Format] { const FOKSceneObject* O = Obj(); return FText::FromString(Format.Replace(TEXT("{n}"), *FString::FromInt(SelectedCharacters())).Replace(TEXT("{who}"), O ? *O->Name : TEXT(""))); })
+			.Visibility_Lambda([this] { return SelectedCharacters() > 1 ? EVisibility::Visible : EVisibility::Collapsed; })
+		];
 	}
 	/** 動畫: speed and the Studio animation browser. */
 	void CharacterAnim(FOKSceneObject* O)
 	{
-			CharactersFloat(TEXT("動畫速度（0 定格）"), [](FOKSceneObject& X) { return X.Character.Speed; }, [](FOKSceneObject& X, float V) { X.Character.Speed = FMath::Max(V, 0.f); }, 0.f, 4.f, 0.05f);
+			MultiNote(TEXT("動作、速度、時間同時改 {n} 個角色。"));
+			bRowsToAll = true;
+			Float(TEXT("動畫速度（0 定格）"), [](FOKSceneObject& X) { return X.Character.Speed; }, [](FOKSceneObject& X, float V) { X.Character.Speed = FMath::Max(V, 0.f); }, 0.f, 4.f, 0.05f);
 			// The animation's time: with speed 0 the character holds this frame (the timeline keys it as 動畫時間).
 			const FOKStudioAnim* Playing = O->Character.StudioAnimeNo >= 0 ? FOKStudioCatalog::Get().FindAnim(O->Character.StudioAnimeKind, O->Character.StudioAnimeGroup, O->Character.StudioAnimeCategory, O->Character.StudioAnimeNo) : nullptr;
-			CharactersFloat(TEXT("動畫時間 秒"), [](FOKSceneObject& X) { return X.Character.Time; }, [](FOKSceneObject& X, float V) { X.Character.Time = FMath::Max(V, 0.f); X.Character.Speed = 0.f; },
+			Float(TEXT("動畫時間 秒"), [](FOKSceneObject& X) { return X.Character.Time; }, [](FOKSceneObject& X, float V) { X.Character.Time = FMath::Max(V, 0.f); X.Character.Speed = 0.f; },
 				0.f, Playing && Playing->Duration > 0.f ? Playing->Duration : 60.f, 0.01f);
+			bRowsToAll = false;
 			AnimBrowser(*O);
 			VideoMotionList(*O);
 	}
@@ -3199,13 +3245,15 @@ public:
 		if (bOk) DeferRebuild();
 		return bOk;
 	}
-	/** Applies a KK Studio pose file to the selected character. */
+	/** Applies a KK Studio pose file to the selected characters (U206). */
 	bool LoadPose(const FString& Path)
 	{
 		FOKSceneObject* X = Obj();
 		FString E, Name;
 		const bool bOk = X && X->Kind == EOKSceneObjectKind::Character && FOKStudioPose::Load(Path, X->Character, E, &Name);
-		SetStatus(bOk ? FString::Printf(TEXT("已套用姿勢 %s（%d 根 FK 骨骼）"), *Name, X->Character.Fk.Num()) : (E.IsEmpty() ? FString(TEXT("請選一個角色")) : E));
+		int32 Others = 0;
+		if (bOk) EachSelectedCharacter([X, &Path, &Others](FOKSceneObject& Y) { FString Error; Others += &Y != X && FOKStudioPose::Load(Path, Y.Character, Error, nullptr); });
+		SetStatus(bOk ? (Others ? FString::Printf(TEXT("%d 個角色套用姿勢 %s"), Others + 1, *Name) : FString::Printf(TEXT("已套用姿勢 %s（%d 根 FK 骨骼）"), *Name, X->Character.Fk.Num())) : (E.IsEmpty() ? FString(TEXT("請選一個角色")) : E));
 		if (bOk) { Changed(); DeferRebuild(); }
 		return bOk;
 	}
@@ -3625,7 +3673,7 @@ private:
 				+ SHorizontalBox::Slot().FillWidth(0.4f).VAlign(VAlign_Center)[SNew(STextBlock).Text(FText::FromString(Name)).ColorAndOpacity(FLinearColor::White)]
 				+ SHorizontalBox::Slot().FillWidth(0.6f)
 				[
-					SNew(SOKSpinBox).Delta(Delta).MinValue(WideRange(Min, Max, Delta) ? TOptional<float>() : TOptional<float>(Min)).MaxValue(WideRange(Min, Max, Delta) ? TOptional<float>() : TOptional<float>(Max)).LinearDeltaSensitivity(WideRange(Min, Max, Delta) ? 1 : 0)
+					SNew(SOKSpinBox).ClearKeyboardFocusOnCommit(true).Delta(Delta).MinValue(WideRange(Min, Max, Delta) ? TOptional<float>() : TOptional<float>(Min)).MaxValue(WideRange(Min, Max, Delta) ? TOptional<float>() : TOptional<float>(Max)).LinearDeltaSensitivity(WideRange(Min, Max, Delta) ? 1 : 0)
 					.Value_Lambda([Doc, Field] { FOKScenePost* P = Doc(); return P ? P->*Field : 0.f; })
 					.OnValueChanged_Lambda([this, Doc, Field, Min, Max](float V) { if (FOKScenePost* P = Doc()) { P->*Field = FMath::Clamp(V, Min, Max); Changed(); } })
 				]

@@ -592,6 +592,7 @@ void SOKStudioPanel::HandleSizes()
 
 void SOKStudioPanel::FkPage(FOKSceneObject& O)
 {
+	MultiNote(TEXT("FK 只改 {who}。要一起改用姿勢庫或貼上姿勢。"));
 	const FOKStudioCatalog& C = FOKStudioCatalog::Get();
 	Label(FString::Printf(TEXT("FK（%d 根骨骼有設定）"), O.Character.Fk.Num()));
 	if (C.FkBones.IsEmpty()) { Label(TEXT("基礎庫沒有 FK 骨骼清單")); return; }
@@ -663,6 +664,7 @@ void SOKStudioPanel::FkPage(FOKSceneObject& O)
 
 void SOKStudioPanel::IkPage(FOKSceneObject& O)
 {
+	MultiNote(TEXT("IK 只改 {who}。要一起改用姿勢庫或貼上姿勢。"));
 	static const TCHAR* Names[13] = { TEXT("身體"), TEXT("左肩"), TEXT("右肩"), TEXT("左大腿"), TEXT("右大腿"), TEXT("左手"), TEXT("右手"), TEXT("左腳"), TEXT("右腳"),
 		TEXT("左手肘"), TEXT("右手肘"), TEXT("左膝"), TEXT("右膝") };
 	static const TCHAR* Parts[] = { TEXT("身體"), TEXT("左手"), TEXT("右手"), TEXT("左腳"), TEXT("右腳") };
@@ -778,6 +780,8 @@ void SOKStudioPanel::IkPage(FOKSceneObject& O)
 
 void SOKStudioPanel::LookPage(FOKSceneObject& O, bool bNeck)
 {
+	MultiNote(TEXT("這頁同時改 {n} 個角色。"));
+	TGuardValue<bool> ToAll(bRowsToAll, true);
 	Label(bNeck ? TEXT("頸部") : TEXT("視線"));
 	const bool bFixed = bNeck ? O.Character.FixedNeck.Num() == 2 : O.Character.FixedEyes.Num() == 12;
 	const TArray<EOKSceneLook> Modes = LookModes(bFixed);
@@ -792,15 +796,19 @@ void SOKStudioPanel::LookPage(FOKSceneObject& O, bool bNeck)
 	// HS2Studio6: take the view's position as the look point (and look there), or go back to following the view.
 	auto TakeView = [this, bNeck]
 	{
-		FOKSceneObject* X = Obj();
 		APlayerController* PC = ViewController(Game.Get());
-		const AKKPreviewActor* P = X && Game.IsValid() && Game->SceneActor ? Game->SceneActor->PreviewOf(X->Id) : nullptr;
-		if (!X || !PC || !PC->PlayerCameraManager || !P) return;
-		X->Character.LookPoint = P->GetActorTransform().InverseTransformPosition(PC->PlayerCameraManager->GetCameraLocation());
-		(bNeck ? X->Character.NeckLook : X->Character.EyesLook) = EOKSceneLook::Point;
-		Changed(); DeferRebuild();
+		if (!PC || !PC->PlayerCameraManager || !Game.IsValid() || !Game->SceneActor) return;
+		const FVector View = PC->PlayerCameraManager->GetCameraLocation();
+		WriteRow(true, [this, bNeck, View](FOKSceneObject& X)
+		{
+			const AKKPreviewActor* P = Game->SceneActor->PreviewOf(X.Id);
+			if (!P) return;
+			X.Character.LookPoint = P->GetActorTransform().InverseTransformPosition(View);
+			(bNeck ? X.Character.NeckLook : X.Character.EyesLook) = EOKSceneLook::Point;
+		});
+		DeferRebuild();
 	};
-	auto BackToView = [this, bNeck] { if (FOKSceneObject* X = Obj()) { (bNeck ? X->Character.NeckLook : X->Character.EyesLook) = EOKSceneLook::Camera; Changed(); DeferRebuild(); } };
+	auto BackToView = [this, bNeck] { WriteRow(true, [bNeck](FOKSceneObject& X) { (bNeck ? X.Character.NeckLook : X.Character.EyesLook) = EOKSceneLook::Camera; }); DeferRebuild(); };
 	Props->AddSlot().AutoHeight().Padding(0.f, 3.f)
 	[
 		SNew(SHorizontalBox)
@@ -811,6 +819,8 @@ void SOKStudioPanel::LookPage(FOKSceneObject& O, bool bNeck)
 
 void SOKStudioPanel::ExpressionPage(FOKSceneObject& O)
 {
+	MultiNote(TEXT("表情同時改 {n} 個角色。"));
+	TGuardValue<bool> ToAll(bRowsToAll, true);
 	Label(TEXT("表情"));
 	// The view to the selected character's face (HS2Studio6's face close-up; U119: with a partner the face was hidden).
 	Props->AddSlot().AutoHeight().Padding(0.f, 1.f)[Button(FText::FromString(TEXT("看臉")), [this]
@@ -844,6 +854,8 @@ void SOKStudioPanel::ExpressionPage(FOKSceneObject& O)
 
 void SOKStudioPanel::HandPage(FOKSceneObject& O)
 {
+	MultiNote(TEXT("手型同時改 {n} 個角色。"));
+	TGuardValue<bool> ToAll(bRowsToAll, true);
 	Label(TEXT("手型"));
 	// Studio's hand patterns (HandAnime): the clip names, with a Chinese name for the common ones.
 	auto Show = [](int32 Side)
@@ -868,9 +880,9 @@ void SOKStudioPanel::HandPage(FOKSceneObject& O)
 	Props->AddSlot().AutoHeight().Padding(0.f, 3.f)
 	[
 		SNew(SHorizontalBox)
-		+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[Button(FText::FromString(TEXT("左→右")), [this] { if (FOKSceneObject* X = Obj()) { X->Character.HandRight = X->Character.HandLeft; Changed(); } }, 0.f, 18.f, false, 10.f)]
-		+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[Button(FText::FromString(TEXT("右→左")), [this] { if (FOKSceneObject* X = Obj()) { X->Character.HandLeft = X->Character.HandRight; Changed(); } }, 0.f, 18.f, false, 10.f)]
-		+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("復位")), [this] { if (FOKSceneObject* X = Obj()) { X->Character.HandLeft = X->Character.HandRight = -1; Changed(); } }, 0.f, 18.f, false, 10.f)]
+		+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[Button(FText::FromString(TEXT("左→右")), [this] { WriteRow(true, [](FOKSceneObject& X) { X.Character.HandRight = X.Character.HandLeft; }); }, 0.f, 18.f, false, 10.f)]
+		+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[Button(FText::FromString(TEXT("右→左")), [this] { WriteRow(true, [](FOKSceneObject& X) { X.Character.HandLeft = X.Character.HandRight; }); }, 0.f, 18.f, false, 10.f)]
+		+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("復位")), [this] { WriteRow(true, [](FOKSceneObject& X) { X.Character.HandLeft = X.Character.HandRight = -1; }); }, 0.f, 18.f, false, 10.f)]
 	];
 }
 
@@ -878,6 +890,7 @@ void SOKStudioPanel::HandPage(FOKSceneObject& O)
 
 void SOKStudioPanel::PoseFilesPage()
 {
+	MultiNote(TEXT("套用與復位同時改 {n} 個角色；存檔存的是 {who} 的姿勢。"));
 	Label(TEXT("姿勢檔（KK Studio 的 UserData/Studio/pose）"));
 	Props->AddSlot().AutoHeight().Padding(0.f, 2.f)[Button(FText::FromString(Tip(TEXT("開姿勢庫…"), TEXT("app.poselibrary"))), Cmd(TEXT("app.poselibrary")), 0.f, 22.f)];
 	// HS2Studio6's pose page (n / total, previous / next, back to the T-pose). KKS has no built-in pose presets: these
@@ -892,7 +905,9 @@ void SOKStudioPanel::PoseFilesPage()
 	};
 	auto TPose = [this]
 	{
-		if (FOKSceneObject* X = Obj()) { X->Character.Fk.Reset(); X->Character.Ik.Reset(); X->Character.StudioAnimeNo = -1; PoseStep = -1; Changed(); DeferRebuild(); }
+		WriteRow(true, [](FOKSceneObject& X) { X.Character.Fk.Reset(); X.Character.Ik.Reset(); X.Character.StudioAnimeNo = -1; });
+		PoseStep = -1;
+		DeferRebuild();
 	};
 	const int32 Total = FOKStudioPose::Files().Num();
 	Props->AddSlot().AutoHeight().Padding(0.f, 3.f)

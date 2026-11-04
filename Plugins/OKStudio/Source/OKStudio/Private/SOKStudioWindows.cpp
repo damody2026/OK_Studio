@@ -331,6 +331,14 @@ void SOKStudioPanel::SaveLayout() const
 	FFileHelper::SaveStringToFile(Out, *LayoutFile(), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 }
 
+FString SOKStudioPanel::ExportResult() const
+{
+	if (Game->LastMovieError == TEXT("cancelled")) return TEXT("已取消輸出");
+	if (!Game->LastMovieError.IsEmpty()) return TEXT("輸出失敗：") + Game->LastMovieError;
+	if (Game->LastMovie.IsEmpty()) return TEXT("輸出完成：") + Game->ExportFolder();
+	return (Game->LastMovieNote.IsEmpty() ? FString(TEXT("輸出完成：")) : TEXT("輸出完成（") + Game->LastMovieNote + TEXT("）：")) + Game->LastMovie;
+}
+
 void SOKStudioPanel::TickUi(float DeltaTime)
 {
 	if (!Game.IsValid()) return;
@@ -339,6 +347,11 @@ void SOKStudioPanel::TickUi(float DeltaTime)
 	if (ReportPending > 0 && --ReportPending == 0 && !Game->LoadReport().IsEmpty()) ShowLoadReport();
 	// The guide's drag readout on the status line.
 	if (!Game->GuideReadout.IsEmpty()) SetStatus(Game->GuideReadout);
+	// U200: an export's progress and result here too, for when its window is closed.
+	const bool bExporting = Game->IsExporting();
+	if (bExporting) SetStatus(FString::Printf(TEXT("輸出中 %d / %d 幀"), Game->ExportFrameIndex(), Game->ExportFrameCount()));
+	else if (bWasExporting) SetStatus(ExportResult());
+	bWasExporting = bExporting;
 	// The colour window is bound to the object it was opened for.
 	if (IsFloatOpen(TEXT("color")) && ColorKey.StartsWith(TEXT("obj")) && FCString::Atoi(*ColorKey.Mid(3)) != Game->SelectedId) CloseFloat(TEXT("color"));
 	// The material editor follows the selection, and fills in once the item has built (again after a shader edit).
@@ -424,7 +437,7 @@ TSharedPtr<SWidget> SOKStudioPanel::TreeContextMenu()
 	struct FItem { const TCHAR* Label; const TCHAR* Command; };
 	const FItem Items[] = {
 		{ TEXT("改名"), TEXT("edit.rename") }, { TEXT("拷貝"), TEXT("edit.copy") }, { TEXT("貼上"), TEXT("edit.paste") }, { TEXT("複製物件"), TEXT("edit.duplicate") },
-		{ TEXT("刪除"), TEXT("edit.delete") }, { TEXT("隱藏／顯示"), TEXT("edit.hide") }, { TEXT("移到根層"), TEXT("edit.root") }, { TEXT("設為其他選取的父物件"), TEXT("edit.parent") },
+		{ TEXT("全選角色"), TEXT("edit.selectchars") }, { TEXT("刪除"), TEXT("edit.delete") }, { TEXT("隱藏／顯示"), TEXT("edit.hide") }, { TEXT("移到根層"), TEXT("edit.root") }, { TEXT("設為其他選取的父物件"), TEXT("edit.parent") },
 		{ TEXT("聚焦"), TEXT("camera.focus") }, { TEXT("選取存成場景"), TEXT("edit.saveas") }, { TEXT("複製變換"), TEXT("transform.copy") }, { TEXT("貼上變換"), TEXT("transform.paste") },
 		{ TEXT("複製姿勢"), TEXT("pose.copy") }, { TEXT("貼上姿勢"), TEXT("pose.paste") }, { TEXT("打 key"), TEXT("timeline.key") }, { TEXT("面向對方"), TEXT("transform.face") },
 	};
@@ -2210,7 +2223,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildExport()
 			// U197: the file's name, wrapped (開資料夾 is next to it); the full path ran off the window.
 			const FString Movie = FPaths::GetCleanFilename(Game->LastMovie);
 			if (!Game->LastMovie.IsEmpty()) return FText::FromString(Game->LastMovieNote.IsEmpty() ? TEXT("完成：") + Movie : TEXT("完成（") + Game->LastMovieNote + TEXT("）：") + Movie);
-			if (!Game->LastMovieError.IsEmpty()) return FText::FromString(TEXT("沒有影片：") + Game->LastMovieError);
+			if (!Game->LastMovieError.IsEmpty()) return FText::FromString(ExportResult());
 			return FText::FromString(Game->ExportFolder().IsEmpty() ? FString() : TEXT("上次輸出：") + Game->ExportFolder());
 		})]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
@@ -2228,9 +2241,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildExport()
 					return;
 				}
 				if (ExportKind == 1 && !FPaths::FileExists(UOKStudioGame::FfmpegPath())) { SetStatus(TEXT("找不到 Tools/ffmpeg/ffmpeg.exe（第三方工具不進版控）")); return; }
-				const FString Dir = Game->ExportFrames(ExportFpsV, ExportW, ExportH, ExportKind == 1, ExportFromT, ExportToT, ExportFolderText);
-				// An mp4's frames folder goes away when the file is made: the window says where it ended up.
-				SetStatus(ExportKind == 1 ? FString(TEXT("開始輸出 mp4")) : TEXT("輸出到 ") + Dir);
+				Game->ExportFrames(ExportFpsV, ExportW, ExportH, ExportKind == 1, ExportFromT, ExportToT, ExportFolderText);
 				DeferFloat(TEXT("export"));
 			}, 0.f, 22.f, false, 11.f, ButtonFill(), !bRunning)]
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 2.f, 0.f)[Button(FText::FromString(TEXT("取消")), [this] { if (Game.IsValid()) Game->CancelExport(); DeferFloat(TEXT("export")); }, 0.f, 22.f, false, 11.f, ButtonFill(), bRunning)]
