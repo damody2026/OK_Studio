@@ -323,6 +323,17 @@
   - 口水有時完全看不到：水槍用第一滴的方向決定塗哪一面，第一滴從嘴裡往外穿時，整片膜塗到皮膚裡。現在看面朝外的多數決（`outward`），平的表面才看第一滴。臉 `outward=-0.81`。
   - 截圖 `E:\OpenKoikatsu\Saved\StreetSocial\Play-20261105T042406\control_shots\shot.0001.png`、`shot.0006.png`。
 
+## 2026-11-05 第六輪實測
+
+建置 `EGalRound5`／`EGalRound6`，沙盒 `EMain`，另有一個別組的 Unreal 同時在跑，所以 FPS 只能當參考。
+
+- 走過且 `game.log` 沒有 Error：換裝、服裝卡、設定、愛撫高潮、口交吞下、用嘴戴套、戴套射在裡面、繼續時換新套、不戴套硬插、她單獨高潮、事後、離開、戴套一起高潮。
+- 水槍：`/hscene {"spray":true}` 走玩家的 A＋左鍵那條路。鏡頭距離 220 噴 6 秒命中 143、附著 55.6，塗在朝外那面。距離 90 命中 0，原因沒查。`PaintDemo` 地圖本身沒有測。
+- 開發度：摸屁眼 12 秒，開發度維持 65。
+- FPS（遊戲執行緒受限，GPU 約 2～3 ms）：進場 74～86；愛撫約 50；雙人模式 27～40（遊戲 20～35 ms）；服裝卡畫面約 15（80 ms，原因沒查）。
+- 8 秒 trace（約 50 FPS，每幀 26 ms）：`KK_PairAdvance` 15.3 ms（`KK_PairNative` 7.9、`KK_PairRoleDisplay` 3.3）、`OK_PaintTick` 6.8 ms（玩家與 H 液體兩個水槍都在跑）、`WorldTick` 3.7 ms、Slate 約 3.5 ms。變慢是進入雙人模式加上水槍，不是時間累積的洩漏。
+- 沒解釋的一次死亡：`Play-20261105T055401` 的遊戲在 06:08:15 消失，`game.log` 停在換體位後的 `OKPhysXSecondary settle 0.50 s`，剛做完 trace。沒有 WER 事件也沒有 dump，同樣步驟重跑沒有再現。
+
 ## 實作順序
 
 1. 第 7／10、11、14 項：只需要確認和顯示。

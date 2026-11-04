@@ -96,7 +96,8 @@ bool UOKHScenePanel::Has(const FString& State) const{if(Mode==0)return SoloKeys.
 float UOKHScenePanel::AreaExperience(int32 Area) const{
     static const TCHAR* Keys[]={TEXT("kiss"),TEXT("chest"),TEXT("crotch"),TEXT("anal"),TEXT("butt"),TEXT("nipple"),TEXT("head"),TEXT("hand"),TEXT("thigh"),TEXT("calf"),TEXT("foot")};
     const TSharedPtr<FJsonObject>* Areas=nullptr;double V=0;
-    if(Gallery&&Gallery->HExperience.IsValid()&&Gallery->HExperience->TryGetObjectField(TEXT("areas"),Areas)&&Area>=0&&Area<11)(*Areas)->TryGetNumberField(Keys[Area],V);
+    // Her vagina and anus: what she is used to (their development counts only climaxes with him in her).
+    if(Gallery&&Gallery->HExperience.IsValid()&&Gallery->HExperience->TryGetObjectField(Area==2||Area==3?TEXT("used_to"):TEXT("areas"),Areas)&&Area>=0&&Area<11)(*Areas)->TryGetNumberField(Keys[Area],V);
     return float(V);
 }
 // Nothing ever done to her there: undeveloped (development counts only climaxes, hexp.rs) and, for her vagina and anus,

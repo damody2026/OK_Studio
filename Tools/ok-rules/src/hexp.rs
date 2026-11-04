@@ -209,6 +209,8 @@ fn experience(r: &Value) -> Result<Value, String> {
     let preg = crate::pregnancy::on_day(r.get("ext").unwrap_or(&Value::Null), girl, day.max(0));
     let mut areas: serde_json::Map<String, Value> = AREA_KEYS.iter().enumerate().map(|(i, k)| (k.to_string(), json!(h.area(i)))).collect();
     areas.insert("oral".into(), json!(h.oral.min(100.0)));
+    // Where she is used to being touched (intercourse and touching, not her development).
+    let used_to = json!({"crotch": h.judged(CROTCH), "anal": h.judged(ANAL)});
     // What she lets him touch and kiss of the rest of her (and her lips: as close as a kiss).
     let stage = rel.as_ref().map_or(0, |r| r.stage_index());
     let mut touch_ok = serde_json::Map::new();
@@ -220,6 +222,7 @@ fn experience(r: &Value) -> Result<Value, String> {
     }
     touch_ok.insert("lips".into(), json!({"touch": stage >= 1 - i32::from(h.area(KISS) >= 30.0), "kiss": kiss_ok}));
     Ok(json!({
+        "used_to": used_to,
         "touch_ok": touch_ok,
         // A rebuilt hymen plays as her first time in the scene (the insertion's pain, blood and reaction, OKHScene).
         "level": level, "level_name": level_name(level), "areas": areas, "count": h.count, "virgin": h.virgin || h.hymen_restored, "anal_virgin": h.anal_virgin,
@@ -337,9 +340,15 @@ fn session_end(r: &Value) -> Result<Value, String> {
         // Touching: selectAreas*0.1 a scene in the original, where one scene caps at 100; here a second of touch is
         // worth half a point, so a long caress of one place is a big step and five scenes of it make her used to it.
         let areas = c.get("areas").cloned().unwrap_or_else(|| json!({}));
+        // Her vagina and anus open only with climaxes with him in her (below; user 2026-11-02): touched, they count to
+        // what she is used to and not to her development. +45 in one scene was 25 of it from a 50 second caress.
         for i in CHEST..=NIPPLE {
-            let secs = num(&areas, AREA_KEYS[i]).clamp(0.0, 200.0) as f32;
-            h.areas[i] = (h.areas[i] + secs * 0.5).min(100.0);
+            let got = num(&areas, AREA_KEYS[i]).clamp(0.0, 200.0) as f32 * 0.5;
+            match i {
+                CROTCH => h.crotch_h = (h.crotch_h + got).min(1000.0),
+                ANAL => h.anal_h = (h.anal_h + got).min(1000.0),
+                _ => h.areas[i] = (h.areas[i] + got).min(100.0),
+            }
         }
         for k in BODY_KEYS {
             let secs = num(&areas, k).clamp(0.0, 200.0) as f32;
@@ -570,6 +579,16 @@ mod tests {
         // Only caressed: she came, but they did not have sex.
         let out = session_end(&json!({"girl": "g", "relation": rel(10.0), "ext": out["ext"], "counts": {"played": true, "her_orgasms": 1, "climax_areas": {"nipple": 1}}})).unwrap();
         assert_eq!((out["hexp"]["sex_count"].as_i64(), out["hexp"]["climaxes"]["nipple"].as_i64()), (Some(2), Some(1)));
+    }
+
+    #[test]
+    fn touching_her_vagina_or_anus_does_not_develop_them() {
+        let out = session_end(&json!({"girl": "g", "relation": rel(0.0), "ext": {}, "counts": {"played": true, "areas": {"crotch": 50, "anal": 20, "chest": 50}}})).unwrap();
+        let h: HExp = serde_json::from_value(out["ext"]["hexp"]["g"].clone()).unwrap();
+        assert_eq!((h.areas[CROTCH], h.areas[ANAL], h.areas[CHEST]), (0.0, 0.0, 25.0));
+        assert_eq!((h.crotch_h, h.anal_h), (25.0, 10.0), "she is used to it all the same");
+        let e = experience(&json!({"girl": "g", "relation": rel(0.0), "ext": out["ext"]})).unwrap();
+        assert_eq!((e["areas"]["crotch"].as_f64(), e["used_to"]["crotch"].as_f64()), (Some(0.0), Some(25.0)));
     }
 
     #[test]

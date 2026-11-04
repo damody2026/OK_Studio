@@ -14,6 +14,7 @@
 --       loaded; a save made with the full roster is not for it)
 --     [-Inspect [N]]  (straight into the inspection room with heroine N: her alone in an empty room, the camera round her
 --       by the arrow keys, wheel nearer/farther, PageUp/PageDown another heroine, End back to the street)
+-- -Control without -Sandbox runs as -Sandbox Control on this checkout's own ports; -MainSave keeps it on the main save.
 -- -Sandbox runs a second game beside one already playing from this checkout without touching it: its own ports
 -- (-PortBase, default 48060: TTS N, ASR N+1, control N+10), its own save, voice settings and free-talk logs in
 -- Saved/StreetSocial/Sandbox/NAME/ (copied from the main save the first time), voice servers started for it only (the
@@ -29,7 +30,7 @@ local json, path, proc, hash, util = ok.json, ok.path, ok.proc, ok.hash, ok.util
 local fs = require "okfs"
 local instance = require "ok_instance"
 
-local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, editor = true, nogpurig = true, gpurig = true }
+local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, mainsave = true, editor = true, nogpurig = true, gpurig = true }
 local VALUES = { selectionfile = true, malecard = true, retargetfile = true, renderscale = true, executable = true,
   controlport = true, clock = true, window = true, sandbox = true, portbase = true, rulesdll = true, exec = true, trace = true, gpucachedir = true,
   gameargs = true, gpurigverify = true, heroine = true }
@@ -181,6 +182,12 @@ end
 
 local function main()
   local o = parse(arg)
+  -- A controlled run is a test: it never touches the player's save, even for a moment (loading rewrites it). It takes
+  -- the sandbox Control on this checkout's own ports, so ok-game-mcp finds it. -MainSave is for when the save is the test.
+  if o.control and not o.sandbox and not o.mainsave then
+    o.sandbox = "Control"
+    o.portbase = o.portbase or tostring(instance.ports(ok.root).base)
+  end
   local root = ok.root
   local build, launch
   if o.strict then

@@ -12,6 +12,7 @@
 #include "KKCardWorkspace.h"
 #include "KKGameRoot.h"
 #include "OpenKoikatsuPlayerController.h"
+#include "OKPaintSprayer.h"
 #include "Async/Async.h"
 #include "Camera/CameraActor.h"
 #include "Engine/World.h"
@@ -259,6 +260,13 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
         if(Body->TryGetStringField(TEXT("coordinate"),Coordinate)&&!Coordinate.IsEmpty()&&!Panel->WearOutfit(Controller->OutfitIndex,Coordinate,OutfitWhy)){Why=OutfitWhy;return nullptr;}
         // {"height":{"her":0..1,"him":0..1}}: their height slider (ChaFile shapeBody[0]) for testing the pair at other sizes.
         double BlushValue;if(Body->TryGetNumberField(TEXT("blush"),BlushValue))Panel->BlushTest=float(BlushValue);
+#if !UE_BUILD_SHIPPING
+        // {"spray":true|false}: the player's water gun (A + left button) at the middle of her; game.log says what landed.
+        bool Spray=false;if(Body->TryGetBoolField(TEXT("spray"),Spray))if(auto* PC=Cast<AOpenKoikatsuPlayerController>(Controller->GetOwningPlayer())){
+            if(Spray&&Controller->PreviewActor)PC->ScriptedPaintAim=Controller->PreviewActor->GetComponentsBoundingBox().GetCenter();else PC->ScriptedPaintAim.Reset();
+            PC->bScriptedPaintFire=Spray;
+            UE_LOG(LogTemp,Display,TEXT("H control spray %d: preview=%d hits=%d deposited=%.3f"),Spray,PC->IsPaintPreviewActive(),PC->PaintSprayer?PC->PaintSprayer->HitCount:-1,PC->PaintSprayer?PC->PaintSprayer->Deposited:-1.);}
+#endif
         // {"siru":[face,ftop,fbot,btop,bbot]}: set the liquid levels (0..2) directly, to look at how they draw.
         const TArray<TSharedPtr<FJsonValue>>* SiruLevels=nullptr;if(Body->TryGetArrayField(TEXT("siru"),SiruLevels)&&SiruLevels->Num()==5){int32 L[5];for(int32 A=0;A<5;++A)L[A]=int32((*SiruLevels)[A]->AsNumber());Panel->SetSiruTest(L);}
         // {"leave":true}: the scene ends as the leave button ends it.

@@ -1971,6 +1971,8 @@
 - 2026-11-04 e-galgame：測試時用 `game_click` 會把自己的遊戲視窗拉到最前面（`Win->BringToFront`），使用者正在玩時點擊可能落到測試視窗。使用者在玩時不要用 `game_click`，改用 `/hscene` 的 kind 或截圖。
 - 2026-11-04 e-galgame：舌頭變白先往材質想，其實是流口水的白色塗料蓋在舌頭上：不流口水時是紅的。現在 H 的體液不畫在舌頭上（`bSkipTongue`，`ok.HScene.FluidTongue` 預設 0），流 40 秒後舌頭還是紅的（`Play-20261104T223655`）。
 - 2026-11-05 e-galgame：頭看鏡頭、眼睛追鏡頭兩個按鈕加在愛撫分支 `return` 之後，進場景的愛撫畫面看不到，只有插入才出現。之前用 kind 直接呼叫沒發現。改到 `BuildActions` 分支之前。
+- 2026-11-05 e-galgame：`-Control` 不帶 `-Sandbox` 時短暫啟動就改到主存檔（載入會重寫 `relationships.json`），靠手動備份還原。現在 `-Control` 一律走沙盒 `Control`（這個 checkout 自己的連接埠），`-MainSave` 才用主存檔。
+- 2026-11-05 e-galgame：開發度一場 +45：`CHEST..=NIPPLE` 的迴圈把陰部與屁眼也算進去，愛撫 50 秒 +25，再加兩次高潮 +20。規格是這兩處只靠在裡面高潮成長，`NeverHad` 的註解也這樣寫。現在摸這兩處只算習慣度（`crotch_h`／`anal_h`，`used_to`）。已經存進存檔的舊值沒有改。
 - 2026-11-05 e-galgame：上一輪把口水看不到判斷成「直直往下掉碰不到臉」和「筆刷 0.4 太小」，兩個都只對一半：0.4 那次是第一滴從裡面打到臉，膜塗到皮膚內側。只跑一次就下結論，沒比對 `Paint contact` 的 `side`。
 - 2026-11-05 e-galgame：`game_launch` 不指定 `-Executable` 會跑最新的 stage，別的 session 打包的也算，一輪測試因此跑在 `EForkGaps3` 上。要測指定版本一律帶 `-Executable`，並用行程路徑確認。
 - 2026-11-05 e-galgame：建置結果看錯：用 Git Bash 的 `cmd //c` 呼叫 `Build.bat` 只開了 cmd 就結束，回傳 0，差點當成連結成功。發現是因為 log 裡沒有 `Result: Succeeded`。改用 PowerShell，並一律看 log 的 `Result:`。
