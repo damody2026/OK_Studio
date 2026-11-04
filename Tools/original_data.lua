@@ -36,8 +36,9 @@ local SSD = "Content/IndependentResources/StreetSocialData"
 local GROUPS = {
   { name = "base-models", need = "game", step = "models", paths = { LIB .. "/models/" } },
   { name = "base-index", need = "game", step = "models", paths = { LIB .. "/sources.okidx", LIB .. "/converted.tsv", LIB .. "/oklib.json", LIB .. "/shared_mods.txt" } },
-  -- What a conversion leaves behind on one machine: the coverage gaps it saw, the time models were last edited.
-  { name = "base-byproducts", need = "no", step = "archive", paths = { LIB .. "/missing.txt", LIB .. "/edits.stamp" } },
+  -- What one machine has beside the conversion: the coverage gaps it saw, the time models were last edited, a test
+  -- scene that did not come with the game.
+  { name = "base-byproducts", need = "no", step = "archive", paths = { LIB .. "/missing.txt", LIB .. "/edits.stamp", LIB .. "/studio/samples/s4432nk.png" } },
   { name = "base-studio", need = "game", step = "studio", paths = { LIB .. "/studio_items.json", LIB .. "/studio_child_animations.json", LIB .. "/shader_states.json", LIB .. "/studio/bg/", LIB .. "/studio/frame/", LIB .. "/studio/sky/", LIB .. "/studio/sky.json", LIB .. "/studio/reflections/", LIB .. "/studio/map_environments.json", LIB .. "/studio/map_reflections.json", LIB .. "/studio/samples/" } },
   { name = "h-voices", need = "optional", step = "h-voices", part = "h-voices", paths = { LIB .. "/h/voice/" } },
   { name = "base-sounds", need = "game", step = "sounds", paths = { LIB .. "/studio/voice/", LIB .. "/studio_voices.json", LIB .. "/studio/bgm/", LIB .. "/h/" } },
@@ -422,7 +423,13 @@ local function main()
   if cmd == "manifest" then cmd_manifest()
   elseif cmd == "manifest-add" then cmd_manifest_add(o[1], { table.unpack(o, 2) })
   elseif cmd == "pack" then cmd_pack(o.out, o.part)
-  elseif cmd == "verify" then local r = verify(o.root or ROOT); return #r.missing == 0 and #r.differs == 0
+  elseif cmd == "verify" then
+    local r = verify(o.root or ROOT)
+    if o[1] == "--list" then
+      for _, p in ipairs(r.differs) do print("differs " .. p) end
+      for _, p in ipairs(r.missing) do print("missing " .. p) end
+    end
+    return #r.missing == 0 and #r.differs == 0
   elseif cmd == "test-archive" then cmd_test_archive(o[1], o[2], o.part)
   elseif cmd == "restore" then return cmd_restore(o)
   else error("usage: original_data.lua manifest | pack --out <zip> [--part main|h-voices] | verify [--root dir] | test-archive <zip> <dir> [--part ...] | restore --game <dir> [--archive <zip>] [--h-voices <zip>]") end
