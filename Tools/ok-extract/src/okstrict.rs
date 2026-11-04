@@ -4,8 +4,8 @@
 //! bundles) comes from its pack (`okLc`); what its open asks of the whole mods tree (merged item catalogue, GUID
 //! lookups, uncensor manifests...) from its answers (`okLt`, tree_answers.rs). The base library serves the original
 //! game and the shared mods (`shared_mods.txt`: uncensor bodies, global fixes, shadow ramps, MaterialEditor shaders)
-//! and nothing else: the third-party mods it records (`sources.okidx` knows ~7300 archives; their models stay out of
-//! version control, `models/.gitignore`) are never read, listed or scanned. Anything else the open would need is a
+//! and nothing else: the third-party mods it records (`sources.okidx` knows ~7300 archives; their models are not
+//! shared resources, listed in `models/.gitignore`) are never read, listed or scanned. Anything else the open would need is a
 //! gap, and the open fails naming it: nothing falls back to the tree.
 //!
 //! Sealing (`seal`): an OK card made before this, or on a library holding third-party models (which then never went
@@ -140,8 +140,8 @@ pub fn library_zip(zip: &str) -> bool { shared().is_some_and(|s| s.zip(zip)) }
 /// Under a strict open: the library may serve this model: it holds it, and not as one only third-party mods use.
 pub fn library_model(id: &Id) -> bool { shared().is_some_and(|s| !s.excluded.contains(id) && s.shared_present(id)) }
 
-/// The library's shared mods (`shared_mods.txt`) and the models that stay out of version control (`models/.gitignore`,
-/// both written by `--oklib shared-ignore`).
+/// The library's shared mods (`shared_mods.txt`) and its models that are not shared resources (`models/.gitignore`, an
+/// old file name: the library is not in version control), both written by `--oklib shared-ignore`.
 struct Shared { lines: Vec<String>, excluded: HashSet<Id>, lib: PathBuf, present: Mutex<HashMap<Id, bool>> }
 
 impl Shared {

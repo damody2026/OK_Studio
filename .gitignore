@@ -74,7 +74,8 @@ __pycache__/
 # Per-checkout ports / voice servers (Tools/ok_instance.ps1, Docs/DUAL_LINE_DEVELOPMENT.md)
 local-instance.json
 
-# OK shared library (base_v1): models / index in Git LFS (.gitattributes); work files and replay caches stay local
+# OK shared library (base_v1): the whole folder is original data and stays local (see the end of this file);
+# these older lines still cover its work files and replay caches
 Content/IndependentResources/base_v1/work/
 # The serialized-file index cache (unity/references.rs), rebuilt from the bundles when missing
 Content/IndependentResources/base_v1/.ok_serialized_index_v1.bin

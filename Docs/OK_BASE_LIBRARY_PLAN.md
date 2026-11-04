@@ -72,9 +72,9 @@
 | B10 | OK 服裝 `.okclothes` | 匯入／匯出／穿上；往返 MATCH；大小 1.0000 | ✅ 指令列（UE 介面未做；ABMX 服裝資料未轉） |
 | B11 | 文件與錯誤紀錄 | Plan／Errors 更新 | ✅ #77–#107 |
 
-## 版控裡的基礎庫（2026-10-20）
+## 基礎庫的共用資源（2026-10-20；2026-11-04 起整個基礎庫移出版控）
 
-版控只放共用資源：原作 `abdata` 轉出的模型、uncensor 身體、全域 mod（覆蓋原版路徑的 bundle、陰影 ramp、修正類），清單在 `Tools/base_library_shared_mods.txt`；`ok-extract <game> --oklib shared-ignore <lib>` 依 `sources.okidx` 產生 `models/.gitignore`。其他第三方 mod 的模型只留在本機，`sources.okidx` 仍記著它們：
+基礎庫只收共用資源：原作 `abdata` 轉出的模型、uncensor 身體、全域 mod（陰影 ramp、修正類、MaterialEditor shader），清單在 `Tools/base_library_shared_mods.txt`。2026-11-04 起基礎庫不進版控，由 `Tools/original_data.lua restore --game <原作>` 從遊戲轉換產生（[取得共用資源](SHARED_RESOURCES_SETUP.md)）。`ok-extract <game> --oklib shared-ignore <lib>` 依 `sources.okidx` 產生非共用模型清單 `models/.gitignore`（沿用舊檔名）。其他第三方 mod 的模型不算共用資源，`sources.okidx` 仍記著它們：
 
 - 有遊戲路徑時，這份 checkout 沒有的模型改讀遊戲 `mods/` 的實體 zipmod（`Fallback::installation`），基礎庫自己的模型優先；遊戲設定（`UserData/config/system.xml`、UncensorSelector 設定）也讀那個遊戲的。
 - 只有卡片＋zipmod 時，UncensorSelector 設定依序找卡片資料夾、專案 `Config/UncensorSelector.cfg`。
@@ -111,7 +111,7 @@
   - 開卡時只查卡內答案，整棵樹一個 zipmod 都不讀；卡片沒錄過的問題是缺口（見下一項），不再回頭問整棵樹。
   - 沒有 `okId` 的卡封卡時補上 `okId`，值是原本的身分，名字、存檔照常對得上。開卡快取的 key 不含 `okLt`。
   - `ok-card-open-bench --fresh-dump <lib> <目錄> <卡>...`：每套服裝都不經快取開一次，寫出 session 位元組，用來和舊版逐位元組對照。
-- OK 卡只靠自己開卡（2026-10-28，`Tools/ok-extract/src/okstrict.rs`）：開 OK 卡只用卡內資料（`okLc`、`okLt`）和基礎庫的共用資源（原作資源，以及 `shared_mods.txt` 列的共用 mod：uncensor 身體、全域修正、陰影 ramp、MaterialEditor shader）。基礎庫記錄的其他第三方 mod（`sources.okidx` 記著約 7300 個 zipmod，它們的模型不進版控，見 `models/.gitignore`）一律不讀、不列、不掃：
+- OK 卡只靠自己開卡（2026-10-28，`Tools/ok-extract/src/okstrict.rs`）：開 OK 卡只用卡內資料（`okLc`、`okLt`）和基礎庫的共用資源（原作資源，以及 `shared_mods.txt` 列的共用 mod：uncensor 身體、全域修正、陰影 ramp、MaterialEditor shader）。基礎庫記錄的其他第三方 mod（`sources.okidx` 記著約 7300 個 zipmod，它們的模型不算共用資源，見 `models/.gitignore`）一律不讀、不列、不掃：
   - `mods/` 底下的目錄列表一律只看卡內；第三方 zipmod 的清單、檔案、bundle 只從卡內 `okLc` 取；只有第三方 mod 用到的模型（`models/.gitignore` 列的）只從卡內取。
   - 任何缺的東西（卡內沒有、也不是共用資源）記成缺口，開卡失敗並列出缺什麼，不回頭掃、不現算。沒有 `okLt` 的舊卡直接報錯，訊息附上補救指令。
   - 轉卡給 zipmod 資料夾（名稱為 `mods`，例如 `D:/KoikatuSunshine/mods`）而不是遊戲目錄時，只從裡面取 zipmod，不讀遊戲的設定檔：陰影 ramp（`UserData/config/system.xml`）用基礎庫記錄的那份，UncensorSelector 設定用專案 `Config/UncensorSelector.cfg`（`oklib::zipmod_source`）。轉卡本來就不讀遊戲的 abdata（原作資源一律來自基礎庫）。

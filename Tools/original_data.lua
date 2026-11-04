@@ -5,15 +5,15 @@
 -- bytes, sha256, group); this script packs them into a zip, checks a tree against the manifest and
 -- restores them, regenerating from the game where a converter exists and taking the rest from the zip.
 --
---   Tools\lua\lua.exe Tools\original_data.lua restore --game D:/KoikatuSunshine [--archive F:/backup/OKOriginalData.zip] [--only <step,...>] [--skip <step,...>]
+--   Tools\lua\lua.exe Tools\original_data.lua restore --game D:/KoikatuSunshine [--archive <zip>] [--h-voices <zip>] [--only <step,...>] [--skip <step,...>]
 --   Tools\lua\lua.exe Tools\original_data.lua verify [--root <dir>]
---   Tools\lua\lua.exe Tools\original_data.lua pack --out F:/backup/OKOriginalData.zip
---   Tools\lua\lua.exe Tools\original_data.lua test-archive <zip> <empty dir>
+--   Tools\lua\lua.exe Tools\original_data.lua pack --out <zip> [--part main|h-voices]   (H voices are a separate zip)
+--   Tools\lua\lua.exe Tools\original_data.lua test-archive <zip> <empty dir> [--part main|h-voices]
 --   Tools\lua\lua.exe Tools\original_data.lua manifest            (maintainer: rebuild the manifest from tracked files)
 --
 --   Tools\lua\lua.exe Tools\original_data.lua manifest-add <group> <path...>   (maintainer: list generated files too)
 --
--- restore steps (in order): tools, models, studio, sounds, anims, paired, runtime-clips, preview, archive.
+-- restore steps (in order): tools, models, studio, sounds, h-voices, anims, paired, runtime-clips, preview, archive.
 -- Every group says where it comes from (GROUPS need): "game" groups are converted from the original install (--game),
 -- "zip" groups only come from the development resources zip (--archive; the features using them are off without it),
 -- "no" groups are not needed at all (the street's original lines, voices and translations: she talks through AI free
@@ -30,12 +30,14 @@ local RA = "Content/IndependentResources/RuntimeAnimations"
 local SSD = "Content/IndependentResources/StreetSocialData"
 
 -- Paths that are original or zipmod data. A trailing "/" is a folder, "*" matches inside one name. The first group a
--- path matches is its group. need: "game" (converted from the install), "zip" (development resources zip only), "no".
+-- path matches is its group. need: "game" (converted from the install), "zip" (development resources zip only),
+-- "optional" (converted from the install, or from its own zip; without it the feature is just quiet), "no".
+-- part: the zip a group is packed into ("main" when not given; the H voices are a separate download).
 local GROUPS = {
   { name = "base-models", need = "game", step = "models", paths = { LIB .. "/models/" } },
   { name = "base-index", need = "game", step = "models", paths = { LIB .. "/sources.okidx", LIB .. "/converted.tsv", LIB .. "/missing.txt", LIB .. "/oklib.json", LIB .. "/edits.stamp", LIB .. "/shared_mods.txt" } },
   { name = "base-studio", need = "game", step = "studio", paths = { LIB .. "/studio_items.json", LIB .. "/studio_child_animations.json", LIB .. "/shader_states.json", LIB .. "/studio/bg/", LIB .. "/studio/frame/", LIB .. "/studio/sky/", LIB .. "/studio/sky.json", LIB .. "/studio/reflections/", LIB .. "/studio/map_environments.json", LIB .. "/studio/map_reflections.json", LIB .. "/studio/samples/" } },
-  { name = "h-voices", need = "game", step = "sounds", paths = { LIB .. "/h/voice/" } },
+  { name = "h-voices", need = "optional", step = "h-voices", part = "h-voices", paths = { LIB .. "/h/voice/" } },
   { name = "base-sounds", need = "game", step = "sounds", paths = { LIB .. "/studio/voice/", LIB .. "/studio_voices.json", LIB .. "/studio/bgm/", LIB .. "/h/" } },
   { name = "base-anims", need = "game", step = "anims", paths = { LIB .. "/anims/", LIB .. "/studio_anims.json" } },
   { name = "base-paired", need = "game", step = "paired", paths = { LIB .. "/paired/" } },
@@ -88,16 +90,19 @@ end
 
 local function load_manifest() return ok.read_json(MANIFEST) end
 
--- A file the development resources zip carries: everything but the "no" groups (the street's original lines and voices,
--- Studio sample scenes are neither packed nor converted).
+-- A file some zip carries: everything but the "no" groups (the street's original lines and voices, Studio sample
+-- scenes are neither packed nor converted).
 local function packed(rel) local g = group_of(rel); return not (g and g.need == "no") end
+-- The zip a packed file goes into: "main" (the development resources) or the group's own part ("h-voices").
+local function part_of(rel) local g = group_of(rel); return g and g.part or "main" end
+local PARTS = { main = true, ["h-voices"] = true }
 
--- verify(root) -> {same=, differs={}, missing={}} against the manifest (only the packed files with packed_only).
-local function verify(root, quiet, packed_only)
+-- verify(root) -> {same=, differs={}, missing={}} against the manifest (only the files of the zip part with part).
+local function verify(root, quiet, part)
   local m = load_manifest()
-  if packed_only then
+  if part then
     local files = {}
-    for _, f in ipairs(m.files) do if packed(f.path) then files[#files + 1] = f end end
+    for _, f in ipairs(m.files) do if packed(f.path) and part_of(f.path) == part then files[#files + 1] = f end end
     m.files = files
   end
   local rels, present = {}, {}
@@ -222,14 +227,16 @@ local function cmd_manifest()
   print(("runtime clips: %d with a source key"):format(#rows))
 end
 
-local function cmd_pack(out)
-  assert(out, "pack --out <zip>")
+local function cmd_pack(out, part)
+  assert(out, "pack --out <zip> [--part main|h-voices]")
+  part = part or "main"
+  assert(PARTS[part], "unknown part " .. part)
   local m = load_manifest()
-  local report = verify(ROOT, false, true)
+  local report = verify(ROOT, false, part)
   assert(#report.missing == 0 and #report.differs == 0, "the tree does not match the manifest; pack refuses")
   -- The manifest goes first so a reader finds it cheaply; names are relative to the repository root.
   local names = { "Tools/original_data_manifest.json" }
-  for _, f in ipairs(m.files) do if packed(f.path) then names[#names + 1] = f.path end end
+  for _, f in ipairs(m.files) do if packed(f.path) and part_of(f.path) == part then names[#names + 1] = f.path end end
   path.mkdir(path.parent(out), true)
   local tmp = out .. ".partial"
   path.remove(tmp, true)
@@ -250,14 +257,15 @@ local function extract(archive, root, members)
   print(("extracted %d files from %s"):format(r.files, archive))
 end
 
-local function cmd_test_archive(archive, dir)
-  assert(archive and dir, "test-archive <zip> <empty dir>")
+local function cmd_test_archive(archive, dir, part)
+  assert(archive and dir, "test-archive <zip> <empty dir> [--part main|h-voices]")
+  part = part or "main"
   assert(not path.exists(dir) or #path.list(dir) == 0, dir .. " is not empty")
   extract(archive, dir)
   local inner = ok.read_json(dir .. "/Tools/original_data_manifest.json")
   local outer = load_manifest()
   assert(#inner.files == #outer.files, "archive manifest differs from Tools/original_data_manifest.json")
-  local report = verify(dir, false, true)
+  local report = verify(dir, false, part)
   if #report.missing > 0 or #report.differs > 0 then error("archive test failed") end
   print("archive test passed: every file matches its sha256")
 end
@@ -277,7 +285,7 @@ local function run_logged(log, args)
   if not r.ok then error(("failed (%d), see %s"):format(r.code, log)) end
 end
 
-local STEPS = { "tools", "models", "studio", "sounds", "anims", "paired", "runtime-clips", "preview", "archive" }
+local STEPS = { "tools", "models", "studio", "sounds", "h-voices", "anims", "paired", "runtime-clips", "preview", "archive" }
 
 local function cmd_restore(o)
   local game = o.game and o.game:gsub("\\", "/"):gsub("/+$", "")
@@ -285,7 +293,7 @@ local function cmd_restore(o)
   local function want(s) return (not o.only or only[s]) and not skip[s] end
   if not game then
     for _, s in ipairs(STEPS) do if s ~= "archive" then skip[s] = true end end
-    assert(o.archive, "give --game <original install>, --archive <zip>, or both")
+    assert(o.archive or o["h-voices"], "give --game <original install>, --archive <zip>, --h-voices <zip>, or several")
   else
     assert(path.is_dir(game .. "/abdata"), game .. ": no abdata folder")
   end
@@ -311,13 +319,19 @@ local function cmd_restore(o)
     local good, err = pcall(fn)
     if not good then failed[name] = true; print(("[%s] FAILED: %s; its files will come from the archive"):format(name, tostring(err))) end
   end
-  step("models", "base library models from the game and its mods/", function() x("convert", lib, "8", "@" .. MODEL_SOURCES) end)
+  step("models", "base library models from the game and its mods/", function()
+    x("convert", lib, "8", "@" .. MODEL_SOURCES)
+    -- The library's list of models that are not shared (models/.gitignore) and its shared_mods.txt, which an OK card's
+    -- strict open reads (okstrict.rs).
+    x("shared-ignore", lib)
+  end)
   step("studio", "Studio catalogs, images, sky, reflections, shader states", function()
     x("studio-catalog", lib); x("studio-names", lib); x("studio-nodes", lib, "8"); x("studio-standard-textures", lib)
     x("studio-child-anims", lib); x("studio-images", lib); x("studio-sky", lib); x("studio-environments", lib)
     x("studio-reflections", lib); x("shader-states", lib, "8")
   end)
-  step("sounds", "Studio voices, BGM, H sound effects and H voices", function() x("studio-sounds", lib); x("studio-voices", lib); x("h-sounds", lib); x("h-voices", lib) end)
+  step("sounds", "Studio voices, BGM, H sound effects", function() x("studio-sounds", lib); x("studio-voices", lib); x("h-sounds", lib) end)
+  step("h-voices", "H voices (about 13 GB; --skip h-voices leaves H scenes silent)", function() x("h-voices", lib) end)
   step("anims", "Studio animations and H motion variants", function() x("anim-convert", lib, "-", "all", "8"); x("anim-pack", lib) end)
   step("paired", "pair motions, poses and IK, the H scene's pose list", function()
     local src = work .. "/PairedAnimations"
@@ -359,15 +373,18 @@ local function cmd_restore(o)
     else print("  no [Augh] Minimalist Shadows zipmod under mods/: no Minimalist ramp") end
   end)
   local report = verify(ROOT, true)
-  if want("archive") and o.archive then
-    local members, seen = {}, {}
-    for _, p in ipairs(report.missing) do if packed(p) then members[#members + 1] = p; seen[p] = true end end
-    for _, p in ipairs(report.differs) do
-      local g = group_of(p)
-      if g and failed[g.step] and not seen[p] then members[#members + 1] = p end
+  -- Each zip gives the files of its part that are missing, or that a failed step left behind.
+  for _, a in ipairs({ { part = "main", zip = o.archive }, { part = "h-voices", zip = o["h-voices"] } }) do
+    if want("archive") and a.zip then
+      local members, seen = {}, {}
+      for _, p in ipairs(report.missing) do if packed(p) and part_of(p) == a.part then members[#members + 1] = p; seen[p] = true end end
+      for _, p in ipairs(report.differs) do
+        local g = group_of(p)
+        if g and failed[g.step] and part_of(p) == a.part and not seen[p] then members[#members + 1] = p end
+      end
+      print(("[archive] %d files from %s"):format(#members, a.zip))
+      if #members > 0 then extract(a.zip, ROOT, members) end
     end
-    print(("[archive] %d files from %s"):format(#members, o.archive))
-    if #members > 0 then extract(o.archive, ROOT, members) end
   end
   local names = ok.util.sorted_keys(failed)
   if #names > 0 then print("steps that failed on this install (restored from the archive where given): " .. table.concat(names, ", ")) end
@@ -375,8 +392,11 @@ local function cmd_restore(o)
   local need = report.missing_need
   if need.no then print("not needed (AI free talk and TTS; Studio sample scenes): " .. table.concat(ok.util.sorted_keys(need.no), ", ")) end
   if need.zip then
-    print("only in the development resources zip (QQ group 1127259437; restore --archive <zip>):")
+    print("no converter yet, only in the development resources zip (restore --archive <zip>); these features are off:")
     for _, g in ipairs(ok.util.sorted_keys(need.zip)) do print(("  %s (%d files): %s"):format(g, need.zip[g], ZIP_USE[g] or "")) end
+  end
+  if need.optional and need.optional["h-voices"] then
+    print("no H voices: H scenes are silent (convert with restore --game <dir> --only h-voices, or restore --h-voices <zip>)")
   end
   if need.game then
     print("missing from the game conversion: " .. table.concat(ok.util.sorted_keys(need.game), ", ") .. "; see " .. log)
@@ -391,17 +411,17 @@ local function main()
   local o, i = {}, 2
   while arg[i] do
     local a = arg[i]
-    if a == "--game" or a == "--archive" or a == "--out" or a == "--root" then o[a:sub(3)] = arg[i + 1]; i = i + 2
+    if a == "--game" or a == "--archive" or a == "--h-voices" or a == "--out" or a == "--root" or a == "--part" then o[a:sub(3)] = arg[i + 1]; i = i + 2
     elseif a == "--only" or a == "--skip" then o[a:sub(3)] = ok.util.split(arg[i + 1], ","); i = i + 2
     else o[#o + 1] = a; i = i + 1 end
   end
   if cmd == "manifest" then cmd_manifest()
   elseif cmd == "manifest-add" then cmd_manifest_add(o[1], { table.unpack(o, 2) })
-  elseif cmd == "pack" then cmd_pack(o.out)
+  elseif cmd == "pack" then cmd_pack(o.out, o.part)
   elseif cmd == "verify" then local r = verify(o.root or ROOT); return #r.missing == 0 and #r.differs == 0
-  elseif cmd == "test-archive" then cmd_test_archive(o[1], o[2])
+  elseif cmd == "test-archive" then cmd_test_archive(o[1], o[2], o.part)
   elseif cmd == "restore" then return cmd_restore(o)
-  else error("usage: original_data.lua manifest | pack --out <zip> | verify [--root dir] | test-archive <zip> <dir> | restore --game <dir> [--archive <zip>]") end
+  else error("usage: original_data.lua manifest | pack --out <zip> [--part main|h-voices] | verify [--root dir] | test-archive <zip> <dir> [--part ...] | restore --game <dir> [--archive <zip>] [--h-voices <zip>]") end
 end
 
 if ok.is_main() then ok.main(main) end

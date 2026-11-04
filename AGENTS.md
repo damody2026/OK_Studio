@@ -6,14 +6,14 @@
 
 - **回覆語言**：一律用繁體中文；程式碼、識別名稱、路徑、指令保持原文。
 - **照使用者的決定做**：使用者做出的決定或指出的錯誤，直接照辦，不質疑、不反問、不二度確認；使用者說錯就是錯。
-- **版控只放共用資源**（[Docs/BASE_LIBRARY_SHARED_RESOURCES_PLAN.md](Docs/BASE_LIBRARY_SHARED_RESOURCES_PLAN.md)）：
-  - **原作資料不進版控**（2026-11-04 起，[Docs/ORIGINAL_DATA_OUT_OF_GIT_PLAN_20261104.md](Docs/ORIGINAL_DATA_OUT_OF_GIT_PLAN_20261104.md)）：`base_v1/`、`RuntimeAnimations/`、街區語音與台詞等原作／mod 衍生資料列在 `Tools/original_data_manifest.json`，新 checkout 用 `Tools\lua\lua.exe Tools\original_data.lua restore --archive <zip> [--game <原作>]` 還原；zip 在 `F:\backup\OKOriginalData_20261104.zip`。歷史已改寫（2026-11-04），舊 checkout 要 reset 到新的 origin，不能 merge 舊歷史。
-  - 角色卡（`Content/CharacterCards/`、`UserData/Studio/scene/*_cards/`、含角色的 Studio 樣本場景）與第三方 mod 轉出的模型只留本機，不要 `git add -f`。
+- **版控只放程式碼與自製內容**：
+  - **原作資料不進版控**（2026-11-04 起，[Docs/ORIGINAL_DATA_OUT_OF_GIT_PLAN_20261104.md](Docs/ORIGINAL_DATA_OUT_OF_GIT_PLAN_20261104.md)）：基礎庫 `base_v1/`（含共用 mod 轉出的模型）、`RuntimeAnimations/`、`KKPreview/` 等原作／mod 衍生資料一律不提交，清單在 `Tools/original_data_manifest.json`。新 checkout 用 `Tools\lua\lua.exe Tools\original_data.lua restore --game <原作>` 從遊戲轉換，或 `restore --archive <開發資源 zip> [--h-voices <H 語音 zip>]` 還原（[Docs/SHARED_RESOURCES_SETUP.md](Docs/SHARED_RESOURCES_SETUP.md)）。歷史已改寫（2026-11-04），舊 checkout 要 reset 到新的 origin，不能 merge 舊歷史。
+  - 角色卡（`Content/CharacterCards/`、`UserData/Studio/scene/*_cards/`、含角色的 Studio 樣本場景）只留本機，不要 `git add -f`。
   - commit 前的 hook 會擋下角色卡、OK 卡與含角色的 Studio 場景（`Tools/check_no_cards.lua`；新 checkout 先執行 `Tools/lua/lua.exe Tools/install_git_hooks.lua`，`--all` 可檢查全部已追蹤檔）。私有卡與測試卡只留本機。
-  - 共用 mod 清單在 `Tools/base_library_shared_mods.txt`。轉換新 mod 後執行 `ok-extract <遊戲> --oklib shared-ignore <base_v1>` 重新產生 `Content/IndependentResources/base_v1/models/.gitignore` 再提交。
+  - 共用 mod 清單 `Tools/base_library_shared_mods.txt`（進版控，只有路徑）決定哪些 mod 轉進基礎庫、轉 OK 卡時不錄進卡內。改了清單或轉換新 mod 後執行 `ok-extract <遊戲> --oklib shared-ignore <base_v1>`，重新產生基礎庫的非共用模型清單 `base_v1/models/.gitignore`（沿用舊檔名，不進版控）與 `shared_mods.txt`，再用 `original_data.lua manifest-add` 更新 manifest。
   - 改動基礎庫或 `gamefs`／`oklib` 後，在乾淨 clone 跑 `kks-verify` 與 `okcard-check ... live`，並和完整本機基礎庫的結果對照。
 - **StreetSocialCity**：`StreetSocialCity/` 是使用者建模中的另一個 UE 專案，不進版控，也不要去動它。
-- **遠端**：`origin` 是 `https://github.com/damody2026/OK_Studio.git`（公開倉庫，2026-11-04 起；`damody2026/OpenKoikatsu` 只留一份指向它的說明）；引擎分支 `UE5.8-physX-5.11-ok` 在 `https://github.com/damody2026/UnrealEngineOK.git`（引擎 checkout 的 remote `ok`，推送用 damody2026 帳號）；公開倉庫不能有版權物：原作與 mod 資料、角色卡、商用外掛、從網路下載的參考文件、拍到原作角色的截圖或影片都不提交。單次推送超過 2 GB 會被 GitHub 拒絕。
+- **遠端**：`origin` 是 `https://github.com/damody2026/OK_Studio.git`（公開倉庫）；引擎分支 `UE5.8-physX-5.11-ok` 在 `https://github.com/damody2026/UnrealEngineOK.git`（引擎 checkout 的 remote `ok`，推送用 damody2026 帳號）；公開倉庫不能有版權物：原作與 mod 資料、角色卡、商用外掛、從網路下載的參考文件、拍到原作角色的截圖或影片都不提交。單次推送超過 2 GB 會被 GitHub 拒絕。
 - **雙線開發**：C（`C:\portable\OpenKoikatsu`，`master`，引擎 `D:\PhysX\UE5.8`）做大世界；E（`E:\OpenKoikatsu`，`duo2`，引擎 `E:\PhysX\UE5.8`）做 1 對 1 互動與 OK Studio。規則見 [Docs/DUAL_LINE_DEVELOPMENT.md](Docs/DUAL_LINE_DEVELOPMENT.md)。
 - **腳本與工具**：專案腳本用 Lua（`Tools\lua\lua.exe`），不新增 `.py`／`.ps1`；交付的工具用 Rust。
 - **錯誤紀錄**：做錯的事與修正寫進 `Docs/ERROR_LOG.md`（街頭相關寫 `Docs/STREET_ERRORS.md`），兩邊合併時兩邊的列都保留。
@@ -36,18 +36,16 @@
 
 女角清單用 `-SelectionFile <json>`（`{"cards": [OK 卡路徑...]}`）。同一個 checkout 已有遊戲在跑（例如別的 session）時，加 `-Sandbox <名稱> [-PortBase N]` 另開一個：自己的連接埠（預設 48060 起，控制埠 N+10，ok-game-mcp 用 `OK_CONTROL_PORT` 指定）、存檔在 `Saved/StreetSocial/Sandbox/<名稱>/`，不停掉別人的語音伺服器。
 
-## 倉庫內容與匯入角色（2026-10-20）
+## 倉庫內容與匯入角色
 
-倉庫：`https://github.com/damody2026/OK_Studio`（`master`）。以下表格是 2026-10-20 的歷史紀錄；2026-11-04 起原作資料（含 `base_v1/`）已全部移出版控，見上方「原作資料不進版控」。
+倉庫：`https://github.com/damody2026/OK_Studio`（`master`）。倉庫只有程式碼與自製內容，原作與 mod 衍生的資料都不在倉庫內，由 `Tools/original_data.lua restore` 在本機產生（見上方「原作資料不進版控」）：
 
-**版控只放共用資源**，角色卡與第三方 mod 轉出的模型不在倉庫內：
-
-| 內容 | 在倉庫內 | 說明 |
+| 內容 | 在哪裡 | 說明 |
 |---|---|---|
-| 原作轉出的 OK 模型、paired 動作、Studio 動畫與道具清單 | ✅ | `Content/IndependentResources/base_v1/`（Git LFS） |
-| UncensorSelector 身體、全域 mod | ✅ | `KKS_UncensorSelector`、`KK_UncensorSelector`、`BetterPenetration`、`KKS_Fixes`、覆蓋原版路徑的 bundle、陰影 ramp、Material Editor 的 shader 包；清單在 [`Tools/base_library_shared_mods.txt`](Tools/base_library_shared_mods.txt) |
-| 角色卡（原作卡、OK 卡、Studio 場景拆出的角色） | ❌ | 例如 `Content/CharacterCards/`、`UserData/Studio/scene/*_cards/` 只留在本機 |
-| 其他第三方 mod（Sideloader Modpack、卡片包附帶的 mod）轉出的模型 | ❌ | `sources.okidx` 仍記著它們；開卡時改讀真正的 zipmod |
+| 原作轉出的 OK 模型、paired 動作、Studio 動畫與道具清單 | 本機 `Content/IndependentResources/base_v1/`（共用資源） | `restore --game` 從遊戲轉換 |
+| UncensorSelector 身體、全域 mod | 本機 `base_v1/`（共用資源） | `KKS_UncensorSelector`、`KK_UncensorSelector`、`BetterPenetration`、`KKS_Fixes`、陰影 ramp、Material Editor 的 shader 包；清單在 [`Tools/base_library_shared_mods.txt`](Tools/base_library_shared_mods.txt) |
+| 角色卡（原作卡、OK 卡、Studio 場景拆出的角色） | 只在本機 | 例如 `Content/CharacterCards/`、`UserData/Studio/scene/*_cards/` |
+| 其他第三方 mod（Sideloader Modpack、卡片包附帶的 mod）轉出的模型 | 不算共用資源 | 本機基礎庫若有，`models/.gitignore` 列為非共用；`sources.okidx` 仍記著它們，開卡時改讀真正的 zipmod |
 
 需要角色時，用自己的原作卡＋zipmod 匯入：
 
@@ -69,7 +67,7 @@
 .\Tools\ok-extract\target\release\ok-extract.exe X:/NoGame --oklib card .\Content\IndependentResources\base_v1 <卡片資料夾\原作卡.png> <輸出.png>
 ```
 
-新增或轉換 mod 後，以 `ok-extract <遊戲> --oklib shared-ignore <基礎庫>` 重新產生 `base_v1/models/.gitignore`，再提交。驗收方式與結果見 [基礎庫共用資源與版控計畫](Docs/BASE_LIBRARY_SHARED_RESOURCES_PLAN.md)；基礎庫格式見 [OK 基礎模型庫](Docs/OK_BASE_LIBRARY_PLAN.md)。下方「共用資源、快取與打包」一節的 `v1`／`native_v1` 盤點是 2026-10-11 的歷史紀錄。
+新增或轉換 mod 後，以 `ok-extract <遊戲> --oklib shared-ignore <基礎庫>` 重新產生非共用模型清單 `base_v1/models/.gitignore`（不進版控）。共用與非共用的劃分見 [基礎庫共用資源計畫](Docs/BASE_LIBRARY_SHARED_RESOURCES_PLAN.md)（2026-10-20 的版控規劃，基礎庫後來整個移出版控）；基礎庫格式見 [OK 基礎模型庫](Docs/OK_BASE_LIBRARY_PLAN.md)。下方「共用資源、快取與打包」一節的 `v1`／`native_v1` 盤點是 2026-10-11 的歷史紀錄。
 
 ## 目前可用的功能
 

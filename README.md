@@ -1,8 +1,8 @@
-# OK Studio（OpenKoikatsu）
+# OK Studio
 
 歡迎加入 QQ 群 **1127259437** 討論。
 
-原始碼：<https://github.com/damody2026/OK_Studio>（舊網址 `damody2026/OpenKoikatsu` 只留說明，請改從這裡下載）。
+原始碼：<https://github.com/damody2026/OK_Studio>。
 
 > **本倉庫不含任何原作資源。** clone 下來只有程式碼與專案自製的內容。執行前請先依下方「[取得共用資源](#取得共用資源必做)」從你自己的遊戲轉換。
 
@@ -41,7 +41,7 @@
 .\Tools\lua\lua.exe Tools\original_data.lua restore --game D:/KoikatuSunshine
 ```
 
-遊戲 `mods/` 裡有 [`Tools/base_library_shared_mods.txt`](Tools/base_library_shared_mods.txt) 列的共用 mod 時一併轉換。
+遊戲 `mods/` 裡有 [`Tools/base_library_shared_mods.txt`](Tools/base_library_shared_mods.txt) 列的共用 mod 時一併轉換。H 語音（約 13 GB）是選用的，加 `--skip h-voices` 就不轉，H 場景只是沒有聲音。
 
 步驟、需要的工具、會產生哪些檔案與疑難排解見 [取得共用資源](Docs/SHARED_RESOURCES_SETUP.md)；這份說明寫成可以直接交給 AI 照著執行。街區 demo 的台詞與語音由 AI 對話與 TTS 產生，不需要原作台詞與語音。
 

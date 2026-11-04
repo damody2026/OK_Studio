@@ -23,7 +23,8 @@ OK Studio 的倉庫不含任何版權物。程式需要的原作資料（以下�
    |---|---|---|
    | `models` | `Content/IndependentResources/base_v1/models/`、`sources.okidx` 等索引 | 遊戲 `abdata/chara`，以及遊戲 `mods/` 裡 [`Tools/base_library_shared_mods.txt`](../Tools/base_library_shared_mods.txt) 列的共用 mod |
    | `studio` | Studio 目錄、道具名稱、圖片、天空、反射、shader 狀態 | `abdata/studio` |
-   | `sounds` | Studio 語音與 BGM、H 音效、**H 語音**（`base_v1/h/voice/`，約 12 萬段、13 GB） | `abdata/studio/sound`、`abdata/sound` |
+   | `sounds` | Studio 語音與 BGM、H 音效 | `abdata/studio/sound`、`abdata/sound` |
+   | `h-voices` | **H 語音**（`base_v1/h/voice/`，約 12 萬段、13 GB）；選用，見下方「H 語音」 | `abdata/sound/data/pcm` |
    | `anims` | Studio 動畫與 H 動作 | `abdata/studio/anime`、`abdata/h` |
    | `paired` | 雙人配對動作、姿勢與 IK、H 場景的姿勢清單 `StreetSocialData/h_poses.json` | `abdata/h` |
    | `runtime-clips` | 街區用的動作片段 `Content/IndependentResources/RuntimeAnimations/` | `abdata` |
@@ -35,15 +36,26 @@ OK Studio 的倉庫不含任何版權物。程式需要的原作資料（以下�
    - `restore done: everything converted from the game is in place`：成功。
    - `differ`（內容和開發者那份不完全相同）是正常的：轉換時間、你的 `mods/` 清單、音訊重新編碼都會讓 bytes 不同，功能一樣。
    - `not needed ...`：不需要的資料（見下方），可以忽略。
-   - `only in the development resources zip ...`：還沒有轉換工具的資料，列出缺了它們會少哪些功能（見下方），可以忽略。
+   - `no converter yet ...`：還沒有轉換工具的資料，列出缺了它們會少哪些功能（見下方），可以忽略。
+   - `no H voices ...`：沒有 H 語音（用了 `--skip h-voices`），H 場景沒有聲音，其他照常。
    - `missing from the game conversion ...` 或某一步印出 `FAILED`：把 `restore.log` 最後幾十行貼給使用者，再單獨重跑那一步，例如 `restore --game D:/KoikatuSunshine --only studio`。
 5. **之後隨時檢查**：`.\Tools\lua\lua.exe Tools\original_data.lua verify`。
+
+## H 語音（選用）
+
+H 語音約 13 GB，只有 H 場景用得到。不需要的話轉換時加 `--skip h-voices`，磁碟少用 13 GB，H 場景照常進行，只是沒有聲音：
+
+```powershell
+.\Tools\lua\lua.exe Tools\original_data.lua restore --game D:/KoikatuSunshine --skip h-voices
+# 之後想要時再單獨轉換
+.\Tools\lua\lua.exe Tools\original_data.lua restore --game D:/KoikatuSunshine --only h-voices
+```
 
 ## 不需要的東西
 
 以下資料不轉換：
 
-- **街區 demo 的原作台詞、語音與翻譯**：女角的對話由 AI 產生，聲音一律由 TTS 產生（沒有 TTS 時只顯示字幕），不使用原作台詞與語音檔。H 場景的語音不在此列，由上面的 `sounds` 步驟轉換。
+- **街區 demo 的原作台詞、語音與翻譯**：女角的對話由 AI 產生，聲音一律由 TTS 產生（沒有 TTS 時只顯示字幕），不使用原作台詞與語音檔。H 場景的語音不在此列，見上方「H 語音」。
 - **Studio 樣本場景與截圖**（`UserData/Studio/scene/` 等）：只是開發時的測試資料。
 - **角色卡**：倉庫沒有任何卡片，請用你自己的卡（原作卡、OK 卡）。
 
@@ -59,7 +71,7 @@ OK Studio 的倉庫不含任何版權物。程式需要的原作資料（以下�
 
 ## 給維護者
 
-- 哪些檔案算共用資源：[`Tools/original_data_manifest.json`](../Tools/original_data_manifest.json)（路徑、大小、sha256、類別）；每一類的來源（遊戲、zip、不需要）寫在 `Tools/original_data.lua` 的 `GROUPS`。
+- 哪些檔案算共用資源：[`Tools/original_data_manifest.json`](../Tools/original_data_manifest.json)（路徑、大小、sha256、類別）；每一類的來源（遊戲、zip、選用、不需要）與打進哪個 zip（`part`）寫在 `Tools/original_data.lua` 的 `GROUPS`。
 - 新增轉換產物（不在 git 裡）到 manifest：`Tools\lua\lua.exe Tools\original_data.lua manifest-add <類別> <路徑...>`。
-- 打包開發資源 zip：`Tools\lua\lua.exe Tools\original_data.lua pack --out <zip>`；測試：`test-archive <zip> <空資料夾>`。
+- 打包開發資源 zip：`Tools\lua\lua.exe Tools\original_data.lua pack --out <zip>`（不含 H 語音）；H 語音另外一包：`pack --part h-voices --out <zip>`。測試：`test-archive <zip> <空資料夾> [--part h-voices]`。還原時 `restore --archive <主 zip> [--h-voices <H 語音 zip>]`。
 - 設計與驗證紀錄：[原作資料移出版控](ORIGINAL_DATA_OUT_OF_GIT_PLAN_20261104.md)。

@@ -1,17 +1,19 @@
-# 基礎庫共用資源與版控計畫（2026-10-20）
+# 基礎庫共用資源計畫（2026-10-20）
 
-目標：版控只放「共用資源」，角色卡與卡片用的 mod 留在本機；任何人 clone 後都能用原卡＋zipmod 匯入角色，OK 卡只靠共用資源就能還原。
+> **現況（2026-11-04 起）**：基礎庫 `base_v1/` 整個移出版控，倉庫不含任何原作與 mod 資料。下面的「共用資源」分類仍然有效，只是不再提交到 git，而是每台電腦用 `Tools/original_data.lua restore --game <原作>` 從遊戲轉換產生（[取得共用資源](SHARED_RESOURCES_SETUP.md)、[原作資料移出版控](ORIGINAL_DATA_OUT_OF_GIT_PLAN_20261104.md)）。文中寫「版控」「進版控」的地方，現在都讀作「收進基礎庫的共用資源」；`models/.gitignore` 沿用舊檔名，現在只是基礎庫的非共用模型清單。
+
+目標：基礎庫只放「共用資源」，角色卡與卡片用的 mod 留在本機；任何人產生共用資源後都能用原卡＋zipmod 匯入角色，OK 卡只靠共用資源就能還原。
 
 ## 一、資源分類
 
-| 分類 | 內容 | 進版控 | 錄進 OK 卡（`okLc`） |
+| 分類 | 內容 | 收進基礎庫（共用資源） | 錄進 OK 卡（`okLc`） |
 |---|---|---|---|
 | 共用資源（基礎庫） | 原作 `abdata` 轉出的模型、paired、Studio 動畫與道具清單；全部 uncensor 身體（`KKS_UncensorSelector`、`KK_UncensorSelector`、`BetterPenetration`）；全域 mod（卡片不指名、Sideloader 對所有角色套用，例如 `[minih] headmod`、覆蓋原版 `abdata` 路徑的 mod） | ✅ | ❌ |
-| 記錄索引 | `sources.okidx`、`converted.tsv`（也記著不在版控的 mod 對應哪個模型） | ✅ | — |
+| 記錄索引 | `sources.okidx`、`converted.tsv`（也記著非共用 mod 對應哪個模型） | ✅ | — |
 | 卡片用的 mod | 卡片以 GUID 指名、不在共用資源裡的 zipmod（角色專屬或共用） | ❌ 只留本機 | ✅ |
 | 角色卡 | 原作卡、OK 卡 | ❌ 只留本機 | — |
 
-共用 mod 的清單在 `Tools/base_library_shared_mods.txt`；`Tools/gen_base_library_ignore.lua` 依 `converted.tsv` 的來源產生 `base_v1/models/.gitignore`：任一來源是原作 `abdata` 或白名單 mod 就收，其餘排除。
+共用 mod 的清單在 `Tools/base_library_shared_mods.txt`；`ok-extract <game> --oklib shared-ignore <lib>` 依 `sources.okidx` 的來源產生非共用模型清單 `base_v1/models/.gitignore`：任一來源是原作 `abdata` 或白名單 mod 就算共用，其餘列入清單。2026-11-04 起覆蓋原版路徑的服裝 mod（`[a-fan] mizuha clothes`、`[a-fan-gt9797] cleavage shirt short sleeves`、`mishiki_tight2`）不再算共用 mod。
 
 ### 本機庫：第三方 mod 的模型不放在共用庫（2026-10-30，F）
 

@@ -1,6 +1,8 @@
-# OK 基礎庫的共用 mod（進版控、不錄進 OK 卡）。
+# OK 基礎庫的共用 mod：從遊戲轉換進基礎庫（Tools/original_data.lua restore 的 models 步驟），轉 OK 卡時不錄進卡內。
+# 其他 mod 的模型不算共用資源：卡片用到時讀實體 zipmod，轉 OK 卡時錄進卡內。
 # 每行一個：以 / 結尾是整個資料夾；含 | 的是單一 bundle（zipmod|abdata/...）；其餘是整個 zipmod。
-# 路徑相對於遊戲根目錄、小寫，和 converted.tsv 的來源一致。`ok-extract <game> --oklib shared-ignore <lib>` 依此產生 models/.gitignore
+# 路徑相對於遊戲根目錄、小寫，和 converted.tsv 的來源一致。`ok-extract <game> --oklib shared-ignore <lib>` 依此產生
+# 基礎庫的非共用模型清單 models/.gitignore（沿用舊檔名；整個基礎庫已不進版控）與 shared_mods.txt
 # （另外：原作來源、以及任何 zipmod 裡 abdata/list/ 下的 bundle 一律算共用，因為每張卡建項目目錄都會讀）。
 
 # uncensor 身體與對所有角色生效的修正
@@ -10,11 +12,6 @@ mods/sideloader modpack - kk_uncensorselector/
 mods/betterpenetration/
 
 # 覆蓋原版 abdata 路徑的 bundle（Sideloader 對所有角色套用）
-mods/kksimportedmods/付费作者系列含mod/samcosmyson/mod/[a-fan] mizuha clothes v5.4.zipmod|abdata/chara/mt_mask_body_00.unity3d
-mods/kksimportedmods/付费作者系列含mod/samcosmyson/mod/[a-fan] mizuha clothes v5.4.zipmod|abdata/chara/mt_mask_bra_00.unity3d
-mods/kksimportedmods/作者系列含mod1/bygin26/mod/[a-fan-gt9797] cleavage shirt short sleeves v1.0.zipmod|abdata/chara/mt_mask_body_00.unity3d
-mods/kksimportedmods/作者系列含mod1/bygin26/mod/[a-fan-gt9797] cleavage shirt short sleeves v1.0.zipmod|abdata/chara/mt_mask_bra_00.unity3d
-mods/kksimportedmods/虚子/虚子往期合集25及以前/mod/mishiki_tight2.zipmod|abdata/chara/mishiki_suit.unity3d
 mods/sideloader modpack - exclusive kks/augh/[augh] augh body outline fixes v1.1.0.zipmod|abdata/chara/mm_base.unity3d
 mods/sideloader modpack - exclusive kks/stinger722/[stinger722] [stinger722]unc_outline v1.1.zipmod|abdata/chara/mm_base.unity3d
 mods/sideloader modpack/aaabbb/[aaabbb] kimon_fixed.zipmod|abdata/chara/mt_mask_body_00.unity3d

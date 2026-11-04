@@ -1,4 +1,4 @@
--- Pre-commit guard: character cards never go into the repository (AGENTS.md "版控只放共用資源").
+-- Pre-commit guard: character cards never go into the repository (AGENTS.md "版控只放程式碼與自製內容").
 --
 --   Tools\lua\lua.exe Tools\check_no_cards.lua [--all]
 --
