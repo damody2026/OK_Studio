@@ -589,7 +589,7 @@ void UOKSceneDocument::SetKey(int32 Id, float Time)
 		K.Fk = C.Fk;
 		K.bCharacterState = true;
 		K.EyebrowPattern = C.EyebrowPattern; K.EyesPattern = C.EyesPattern; K.MouthPattern = C.MouthPattern; K.MouthOpen = C.MouthOpen;
-		K.HandLeft = C.HandLeft; K.HandRight = C.HandRight; K.ClothesStates = C.ClothesStates;
+		K.HandLeft = C.HandLeft; K.HandRight = C.HandRight; K.ClothesStates = C.ClothesStates; K.Style = C.Style;
 		// A stopped animation keys its frame (the timeline then scrubs it); a playing one runs on its own.
 		K.AnimTime = C.Speed == 0.f ? C.Time : -1.f;
 	}
@@ -675,9 +675,10 @@ bool UOKSceneDocument::RemoveKey(int32 Id, float Time)
 namespace
 {
 	/** A key's face, hands and clothes onto a character (the mouth opening given separately, it blends). */
-	void ApplyCharacterKey(FOKSceneCharacter& C, const FOKSceneKey& K, float MouthOpen)
+	void ApplyCharacterKey(FOKSceneCharacter& C, const FOKSceneKey& K, float MouthOpen, float Style)
 	{
 		if (!K.bCharacterState) return;
+		if (Style >= -1.f) C.Style = Style;
 		C.EyebrowPattern = K.EyebrowPattern; C.EyesPattern = K.EyesPattern; C.MouthPattern = K.MouthPattern; C.MouthOpen = MouthOpen;
 		C.HandLeft = K.HandLeft; C.HandRight = K.HandRight;
 		// Clothes only change when they differ (a change rebuilds the character).
@@ -907,8 +908,8 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 		FTransform X;
 		float V;
 		const bool bCharacter = O->Kind == EOKSceneObjectKind::Character;
-		if (Next == INDEX_NONE) { const FOKSceneKey& K = T.Keys.Last(); X = K.Transform; V = K.Value; if (bCharacter) { O->Character.Fk = SampleTrackFk(T, Time); ApplyCharacterKey(O->Character, K, K.MouthOpen); } }
-		else if (Next == 0) { const FOKSceneKey& K = T.Keys[0]; X = K.Transform; V = K.Value; if (bCharacter) { O->Character.Fk = SampleTrackFk(T, Time); ApplyCharacterKey(O->Character, K, K.MouthOpen); } }
+		if (Next == INDEX_NONE) { const FOKSceneKey& K = T.Keys.Last(); X = K.Transform; V = K.Value; if (bCharacter) { O->Character.Fk = SampleTrackFk(T, Time); ApplyCharacterKey(O->Character, K, K.MouthOpen, K.Style); } }
+		else if (Next == 0) { const FOKSceneKey& K = T.Keys[0]; X = K.Transform; V = K.Value; if (bCharacter) { O->Character.Fk = SampleTrackFk(T, Time); ApplyCharacterKey(O->Character, K, K.MouthOpen, K.Style); } }
 		else
 		{
 			const FOKSceneKey& A = T.Keys[Next - 1];
@@ -931,7 +932,7 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 				O->Character.Fk = SampleTrackFk(T, Time);
 				// Patterns hold the earlier key's; the mouth opening blends when both keys set it.
 				const float Mouth = A.MouthOpen >= 0.f && B.MouthOpen >= 0.f ? FMath::Lerp(A.MouthOpen, B.MouthOpen, U) : A.MouthOpen;
-				ApplyCharacterKey(O->Character, A, Mouth);
+				ApplyCharacterKey(O->Character, A, Mouth, A.Style >= -1.f && B.Style >= -1.f ? FMath::Lerp(A.Style, B.Style, U) : A.Style);
 			}
 		}
 		O->Transform = X;

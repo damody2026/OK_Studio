@@ -223,6 +223,7 @@ private:
 		TArray<FString> BlendControls;
 		TArray<float> BlendDefaults, AppliedBlend;
 		int32 AppliedHands[2] = { -1, -1 };
+		float AppliedStyle = 0.f;
 		bool bEyesTracking = false;
 		bool bFixedEyesApplied = false;
 		TArray<float> AppliedFixedEyes;

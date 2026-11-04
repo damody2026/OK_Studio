@@ -37,6 +37,7 @@
 #include "OKAnimationAssets.h"
 #include "KKOkAnimation.h"
 #include "OKStudioCatalog.h"
+#include "OKStudioCharacterStyle.h"
 #include "OKStudioSky.h"
 #include "OKHGShading.h"
 #include "KKRuntimeDisplayProfile.h"
@@ -842,6 +843,14 @@ void AOKSceneActor::ApplyCharacterState(const FOKSceneObject& Object, FShown& It
 	if (!InitCurves.Contains(TEXT("face.blush")) && C.Blush >= 0.f && !FMath::IsNearlyEqual(C.Blush, Actor->BlushRate, 1.e-3f))
 	{
 		Actor->SetBlush(C.Blush);
+	}
+	// The style is the card's sliders moved: the shown character takes them on its next pose, as the maker's sliders.
+	if (!FMath::IsNearlyEqual(C.Style, Item.AppliedStyle, 1.e-3f))
+	{
+		TArray<float> Body = Actor->ShapeBody, Face = Actor->ShapeFace;
+		OKStudioStyleSliders(C.Style, Body, Face);
+		Actor->MarkShapeDirty(Face, Body);
+		Item.AppliedStyle = C.Style;
 	}
 	if (bHasAnimFace) { if (Actor->bAutomaticBlink) Actor->SetAutomaticBlink(false); } else if (C.Blink >= 0 && Actor->bAutomaticBlink != (C.Blink == 1)) Actor->SetAutomaticBlink(C.Blink == 1);
 	// Studio controls of a blended H motion (option 1 height, option 2 breast, pattern): the scene's value, else the

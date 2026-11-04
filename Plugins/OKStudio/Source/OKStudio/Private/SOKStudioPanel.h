@@ -2564,6 +2564,18 @@ public:
 			Row(TEXT("卡片"), OKStudioStyle::Button(TAttribute<FText>::CreateLambda([this] { FOKSceneObject* X = Obj(); return FText::FromString(X ? FPaths::GetCleanFilename(X->Character.Card) : FString()); }),
 				[this] { OpenFloat(TEXT("cards")); }, 0.f, 18.f, false, 10.f, OKStudioStyle::Input()), 0.3f);
 			Choice(TEXT("服裝組"), { TEXT("1"), TEXT("2"), TEXT("3"), TEXT("4"), TEXT("5"), TEXT("6"), TEXT("7") }, [](FOKSceneObject& X) { return X.Character.Outfit; }, [](FOKSceneObject& X, int32 V) { X.Character.Outfit = V; });
+			Label(TEXT("風格"));
+			Float(TEXT("風格（-1 寫實、1 Q 版）"), [](FOKSceneObject& X) { return X.Character.Style; }, [](FOKSceneObject& X, float V) { X.Character.Style = FMath::Clamp(V, -1.f, 1.f); }, -1.f, 1.f, 0.05f);
+			{
+				auto Style = [this](float V) { return [this, V] { if (FOKSceneObject* X = Obj()) { X->Character.Style = V; Changed(); } }; };
+				Props->AddSlot().AutoHeight().Padding(0.f, 2.f)
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[OKStudioStyle::Button(FText::FromString(TEXT("寫實")), Style(-1.f), 0.f, 18.f, false, 10.f)]
+					+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[OKStudioStyle::Button(FText::FromString(TEXT("照卡片")), Style(0.f), 0.f, 18.f, false, 10.f)]
+					+ SHorizontalBox::Slot().FillWidth(1.f)[OKStudioStyle::Button(FText::FromString(TEXT("Q 版")), Style(1.f), 0.f, 18.f, false, 10.f)]
+				];
+			}
 		Label(TEXT("服裝狀態"));
 			{
 				// HS2Studio6's one-click 全穿 / 半脫 / 全裸: every part to the game's state 0, 1 or 3.
