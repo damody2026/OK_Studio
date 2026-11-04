@@ -600,7 +600,7 @@ fn override_lookup(mods_dir:&Path,want:&str)->Option<PathBuf> {
     if let Some(answer)=crate::tree_answers::lookup::<Option<String>>("override",want.as_bytes()) {
         return answer.map(|zip|crate::tree_answers::rebase(mods_dir,&zip));
     }
-    if crate::tree_answers::plain_bundles() { return None; }
+    if crate::okstrict::active().is_some() && crate::tree_answers::plain_bundles() { return None; }
     if crate::tree_answers::unanswered("override",want.as_bytes()) { return None; }
     let found=crate::okstrict::scanning(||override_lookup_in_tree(mods_dir,want));
     if crate::tree_answers::recording() {

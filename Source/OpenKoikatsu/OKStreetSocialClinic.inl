@@ -11,7 +11,7 @@ namespace OKStreetClinic {
 inline const TCHAR* KindOf(const FString& ItemId){
  return ItemId==TEXT("gyn_hymen_repair")?TEXT("hymen_restore"):ItemId==TEXT("beauty_face_swap")?TEXT("face_swap"):ItemId==TEXT("beauty_face_restore")?TEXT("face_restore"):ItemId==TEXT("salon_dye")?TEXT("hair_dye"):nullptr;
 }
-inline FString Dir(){return FPaths::ProjectSavedDir()/TEXT("StreetSocial/Appearance");}
+inline FString Dir(){return FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir())/TEXT("StreetSocial/Appearance");} // full: the crowd resolves relative paths against the project
 }
 
 TSharedPtr<FJsonObject> AOKStreetSocialScene::ClinicRequest(int32 Her,const FString& ItemId,const FString& From,const FString& Color){

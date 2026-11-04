@@ -308,7 +308,7 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character,const FString& TryCard,i
  auto* Mode=AOKInteractionMode::EnterCards(GetWorld()->GetFirstPlayerController(),TryOn?TryCard:S.HighCards[Character],S.HighCards[0],TryOn&&TryOutfit>=0?TryOutfit:Worn,&There);
  if(!Mode){OKStreetPrivateEnvRestore();S.ContactsNotice=OKT(TEXT("ui.contacts.interaction_load_failed"));RefreshUI();return;}
  // Her experience (hexp.rs) gates the poses, raw insertion and anal in the H panel.
- S.PrivateTryOn=TryOn;
+ S.PrivateTryOn=TryOn;Mode->bFitting=TryOn;
  if(!TryOn){const FString Id=OKStreetStableId(S.Manifest.Characters[Character]);auto Ask=OKRulesHeroineRequest(S,TEXT("h_experience"),Id);Ask->SetStringField(TEXT("girl"),Id);Ask->SetNumberField(TEXT("day"),S.Store.CalendarDay);OKRulesPutExt(S,Ask);
   // With her desire and bust: past 100 she runs and her nipples leak in the room too (OKHScene drips).
   TSharedPtr<FJsonObject> Experience=OKRulesEval(S,Ask);if(Experience.IsValid()){Experience->SetNumberField(TEXT("sex_desire"),OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget).SexDesire);Experience->SetNumberField(TEXT("bust"),OKStreetHerCard(S,Character).Bust);
@@ -336,7 +336,7 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character,const FString& TryCard,i
  // at the top of a long scrolled list, and the control channel cannot reach it).
  if(GEngine&&GEngine->GameViewport){
   S.PrivateLeave=SNew(SBox).HAlign(HAlign_Right).VAlign(VAlign_Top).Padding(FMargin(0,16,24,0))
-   [SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().Padding(0,0,8,0)[BookmarkButton(Character)] // this moment kept (OKStreetSocialBookmarks.inl)
+   [SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().Padding(0,0,8,0)[TryOn?SNullWidget::NullWidget:BookmarkButton(Character)] // this moment kept (OKStreetSocialBookmarks.inl)
     +SHorizontalBox::Slot().AutoWidth()[SNew(SButton).ButtonStyle(OKStreetGlassButton()).ContentPadding(FMargin(18,8))
     .Text(FText::FromString(OKT(TryOn?TEXT("ui.clothes.try_done"):TEXT("ui.contacts.leave_one_on_one"))))
     .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->FinishPrivate();return FReply::Handled();})]];

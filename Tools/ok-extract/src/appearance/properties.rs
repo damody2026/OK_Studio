@@ -118,14 +118,20 @@ pub(crate) fn restyle(card:&[u8],donor:Option<&[u8]>,rgb:Option<[f32;3]>)->Resul
 
 /// The street's clothes (ok-rules wardrobe.rs, user 2026-11-04): `card` wearing each (outfit, part, list id, main colour)
 /// of the original game's clothes; id 0 takes the part off. The new piece's patterns are cleared, its colours otherwise
-/// stay what that part had. Bottoms given to her over a one-piece would not show (the game's rule), so that top becomes a
-/// plain T-shirt. No game: the base library has the models, the card stays an OK card.
+/// stay what that part had. An outfit without bottoms is a one-piece (a mod's top the library cannot answer for included):
+/// bottoms given to her would not show over it (the game's rule), so that top becomes a plain T-shirt, and a top given to
+/// her alone comes with plain trousers. No game: the base library has the models, the card stays an OK card.
 pub(crate) fn dress(card:&[u8],pieces:&[(usize,usize,i32,Option<[f32;3]>)])->Result<Vec<u8>,String>{
- const PLAIN_TOP:(i32,[f32;3])=(38,[0.95,0.95,0.95]);
+ const PLAIN_TOP:(i32,[f32;3])=(38,[0.95,0.95,0.95]);const PLAIN_BOTTOM:(i32,[f32;3])=(3,[0.18,0.2,0.25]);
  let mut out=card.to_vec();
  for &(outfit,part,id,rgb) in pieces {out=put_on(&out,outfit,part,id,rgb)?;}
- let mut with_bottoms:Vec<usize>=pieces.iter().filter(|p|p.1==1&&p.2!=0).map(|p|p.0).collect();with_bottoms.sort_unstable();with_bottoms.dedup();
- for outfit in with_bottoms {if one_piece(&out,outfit)?{out=put_on(&out,outfit,0,PLAIN_TOP.0,Some(PLAIN_TOP.1))?;}}
+ let mut outfits:Vec<usize>=pieces.iter().map(|p|p.0).collect();outfits.sort_unstable();outfits.dedup();
+ for outfit in outfits {
+  let given=|part:usize|pieces.iter().find(|p|p.0==outfit&&p.1==part).map(|p|p.2);
+  let bare=list_paths(card,outfit)?.iter().find(|(p,_)|p=="clothes.parts.1.id").is_none_or(|(_,v)|v=="0");
+  if given(0).is_none()&&given(1).is_some_and(|id|id!=0)&&(bare||one_piece(&out,outfit)?){out=put_on(&out,outfit,0,PLAIN_TOP.0,Some(PLAIN_TOP.1))?;}
+  if given(0).is_some_and(|id|id!=0)&&given(1).is_none()&&bare{out=put_on(&out,outfit,1,PLAIN_BOTTOM.0,Some(PLAIN_BOTTOM.1))?;}
+ }
  crate::tree_answers::with_plain_bundles(&out)
 }
 fn put_on(card:&[u8],outfit:usize,part:usize,id:i32,rgb:Option<[f32;3]>)->Result<Vec<u8>,String>{

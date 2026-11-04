@@ -1959,3 +1959,7 @@
 - 2026-11-04 協調者整合：c-street-city 回報「背景鏈已停、slot 已釋放」，實際 chain21（run_street_city_motel_physics.lua）還在跑，沒拿 slot 開著 StreetSocialCity 實走；協調者以 taskkill /T 停掉該 bash 樹。規則：回報停止前用 Get-CimInstance 確認沒有自己的 chain bash／lua／Unreal 程序。
 - 2026-11-04 c-conquest 坐的錨點規格寫錯：第 10.2 節把 `pos` 寫成臀部落點，但 `Agents[].Position` 是地面腳底點，坐姿動畫和 `SpawnLifeProps` 的椅子都從地面算。修正：`pos` 維持地面腳底點，臀部落點放新欄位 `seat_pos`（37bb9a023），在 c-street-city 寫入前改正，資料沒有寫錯。
 - 2026-11-04 c-conquest 換裝只測一張卡：第一版 `dress` 只在 alice 上開卡，上面 39 件有 15 件開不了卡，原因是拿掉 mod 部件後 `okLt` 的 guids／strip-all 問題清單變短，以及卡片沒問過的原作 bundle 沒有 override 答案。修正：`tree_answers::lookup_within`、`with_plain_bundles`。改成全部商品穿到全部女主角卡上驗證後，又抓到 3 張卡穿連身上衣時下身不顯示，`dress` 改為此時把上衣換成素色 T 恤。
+- 2026-11-04 c-conquest 換裝後遊戲開不起來：`OKStreetSocialClinic.inl` 的 `Dir()` 用相對的 `ProjectSavedDir()`，存進 selection 的卡路徑下次啟動找不到（`Selected APNG missing`），換臉、染髮也一樣。改成完整路徑。只在同一次遊戲裡測換裝看不出來，要重開一次才測得到。
+- 2026-11-04 c-conquest 雷電的上衣在街上不見：`with_plain_bundles` 回答「沒有 override」在有遊戲 mods 的非嚴格開卡也生效，她的 mod 上衣 bundle 查不到，上身裸露。改成只在 strict 開卡時回答。測開卡通過不代表街上對：測試是 strict，遊戲不是。
+- 2026-11-04 c-conquest 試穿掉進雙人 H 姿勢：試穿直接沿用一對一模式，載男方、預設姿勢和面板都跟著來。加 `bFitting` 只留她一人站著。
+- 2026-11-04 c-conquest 試穿 T-pose 打包了兩次才查到：先以為卡在 `AreInteractionStreamsReady`，拿掉後 log 仍是 `the standing clip did not play`。OK 卡的 session 是 portable，`studio/anime/00.unity3d|f_tachi_00_00` 這種鍵只有遊戲來源認得，要用基礎庫 `okpaired.json` 裡的 `states:studio@...` 鍵。動畫鍵要先在 okpaired.json 查過再寫死。

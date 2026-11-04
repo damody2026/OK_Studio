@@ -48,9 +48,10 @@ fn encode(table: Table) -> Result<Vec<u8>, String> {
     zstd::stream::encode_all(&raw[..], 19).map_err(|e| e.to_string())
 }
 
-/// `card` (an OK card; any other stays as it is) answering that no mod overrides a bundle it was never asked about: it
-/// now wears the original game's clothes its open never read (appearance/properties.rs `dress`), from bundles the
-/// recording could not know, and those come from the base library as they are.
+/// `card` (an OK card; any other stays as it is) answering, in a strict open, that no mod overrides a bundle it was never
+/// asked about: it now wears the original game's clothes its open never read (appearance/properties.rs `dress`), from
+/// bundles the recording could not know. With the game's mods at hand they are asked as ever: a mod's top she keeps
+/// lives in a bundle of its own (raiden_shogun's baal_clothes went missing when this answered there too).
 pub fn with_plain_bundles(card: &[u8]) -> Result<Vec<u8>, String> {
     let Some(table) = parse(card) else { return Ok(card.to_vec()) };
     let mut table = (*table).clone();

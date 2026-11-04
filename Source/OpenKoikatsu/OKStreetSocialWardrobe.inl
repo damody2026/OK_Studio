@@ -63,8 +63,8 @@ FString AOKStreetSocialScene::DressedCard(int32 Her){
  return OKT(TEXT("ui.clothes.street_next_start"));
 }
 
-// She changes into a piece and he sees her in it: the one-on-one's high model right where she stands, from a copy of her
-// card with the piece on, without the H scene. Leaving it she is back in what she wore.
+// She changes into a piece and he sees her in it: her high model alone right where she stands, from a copy of her card with
+// the piece on (AOKInteractionMode::bFitting: no partner, no pose, no panel). Leaving it she is back in what she wore.
 void AOKStreetSocialScene::TryClothes(int32 Her,const FString& ItemId){
  auto& S=*State;const auto* Item=S.Catalog.Find(ItemId);if(!Item||Her==INDEX_NONE)return;
  FString Error;const FString Card=RestyledCard(Her,Error,Item);

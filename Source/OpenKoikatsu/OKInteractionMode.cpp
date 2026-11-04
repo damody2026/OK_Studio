@@ -60,7 +60,7 @@ AOKInteractionMode* AOKInteractionMode::Enter(UOKCharacterController* Input,cons
     if(GEngine&&GEngine->GameViewport){
         TWeakObjectPtr<AOKInteractionMode> Weak(Mode);
         Mode->PreparingOverlay=SNew(SBorder).HAlign(HAlign_Center).VAlign(VAlign_Center).BorderBackgroundColor(FLinearColor(.015f,.025f,.04f,.92f))[
-            SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Text(FText::FromString(TEXT("正在準備男女高模與雙人動作…")))]
+            SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Text(FText::FromString(TEXT("正在準備高模…")))]
             +SVerticalBox::Slot().AutoHeight().Padding(0,20)[SNew(SButton).Text(FText::FromString(TEXT("取消並返回"))).OnClicked_Lambda([Weak](){if(Weak.IsValid())Weak->Exit(true);return FReply::Handled();})]];
         GEngine->GameViewport->AddViewportWidgetContent(Mode->PreparingOverlay.ToSharedRef(),120);
     }
@@ -380,9 +380,16 @@ void AOKInteractionMode::Tick(float Delta){
         Controller->InteractionReturnLabel=ReturnLabel;Controller->ActivateInteraction();
         if(!Controller->InteractionWidget)return;
         Activated=true;OriginalPosition=Controller->PreviewActor->GetActorLocation();
-        if(!MalePath.IsEmpty())Controller->LoadPartnerFromPath(MalePath);
+        if(bFitting){Controller->InteractionWidget->SetVisibility(ESlateVisibility::Collapsed);if(auto* PC=Cast<AOpenKoikatsuPlayerController>(Controller->GetOwningPlayer()))PC->SetPaintPreviewActive(false);}
+        else if(!MalePath.IsEmpty())Controller->LoadPartnerFromPath(MalePath);
     }
     UpdatePairPhysics();
+    if(bFitting&&!Ready&&IsValid(Controller->PreviewActor)&&Controller->PreviewActor->PreparePlaybackMaterials(false)){
+        auto* Her=Controller->PreviewActor.Get();
+        if(!Her->SetGameSceneMode(3,false)||!Her->SetGameAnimation(TEXT("states:studio@5B2273747564696F2F616E696D652F30302E756E6974793364222C227461636869222C22222C22225D|tachi / [Studio layer 0] Base Layer.f_tachi_00_00")))UE_LOG(LogTemp,Warning,TEXT("Fitting: the standing clip did not play"));
+        if(PreparingOverlay&&GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(PreparingOverlay.ToSharedRef());PreparingOverlay.Reset();
+        Ready=true;ReadyAt=FPlatformTime::Seconds();Evidence=MakeShared<FJsonObject>();Evidence->SetStringField(TEXT("state"),TEXT("ready"));
+    }
     const bool Both=IsValid(Controller->PreviewActor)&&IsValid(Controller->PartnerActor)&&Controller->PartnerActor->Session.IsOpen();
     if(!Ready&&Both&&Controller->PairedPlayback&&Controller->PairedPlayback->GetElapsed()>0&&Controller->PreviewActor->AreInteractionStreamsReady()&&Controller->PartnerActor->AreInteractionStreamsReady()){
         if(PreparingOverlay&&GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(PreparingOverlay.ToSharedRef());PreparingOverlay.Reset();

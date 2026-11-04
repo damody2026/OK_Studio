@@ -25,6 +25,8 @@ public:
     virtual void Tick(float Delta) override;
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;
     void Exit(bool Cancelled=false);
+    // The street's fitting (OKStreetSocialWardrobe.inl): she alone, standing, to be looked at: no partner, no pose, no panel.
+    bool bFitting=false;
     // The street's one-on-one: the H scene panel for her (name, relation stage, ok-rules h_experience answer).
     void BeginHScene(const FString& Name,const FString& Stage,const TSharedPtr<FJsonObject>& Experience,const FString& Player);
     // The control channel's /hscene: {kind} presses a panel button, {pose} picks a pose by name, {speed} sets it; answers the panel's view.
