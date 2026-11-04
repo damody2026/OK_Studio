@@ -371,6 +371,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Koikatsu|Expression")
 	bool SetEyeGaze(float LeftHorizontal, float RightHorizontal, float Vertical);
 	float EyeGaze[3] = {0.f,0.f,0.f};
+	// The gaze as asked (EyeGaze is kept within 1, past it her eyes roll): what SetEyeDull draws again.
+	float EyeGazeAsked[3] = {0.f,0.f,0.f};
+	/** Her pupils PupilScale times as large and her eye highlights off (a yandere's, or worn out); 1 and false: her card's. */
+	bool SetEyeDull(float PupilScale, bool bHideHighlight);
+	/** Her pupils drawn off their place, in iris texture units (a tremble); 0 is where they belong. */
+	bool SetPupilOffset(float X, float Y);
+	float EyePupilScale = 1.f;
+	bool bEyeHighlightHidden = false;
+	// Each eye material's own _isHighLight and the alphas of its highlight layers.
+	TMap<TWeakObjectPtr<UMaterialInstanceDynamic>,FVector4f> EyeHighlightBase;
+	// And its own iris, which may hold highlights of its own (OKIrisWithoutHighlights).
+	TMap<TWeakObjectPtr<UMaterialInstanceDynamic>,TWeakObjectPtr<UTexture>> EyeIrisBase;
 	// SetEyeGaze through the iris tiling of the shared display materials: each one's card tiling, kept the first time.
 	TMap<TWeakObjectPtr<UMaterialInstanceDynamic>,FLinearColor> EyeTilingBase;
 	bool bEyeTilingSaid = false;

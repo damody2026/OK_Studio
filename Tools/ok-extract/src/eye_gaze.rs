@@ -55,6 +55,14 @@ impl EyeDraw {
 mod tests {
     use super::*;
     #[test]
+    fn enlarged_keeps_the_middle_of_the_iris_where_it_is() {
+        let st=[1.2,0.8,-0.1,0.13];let big=enlarged(st,1.3);
+        let middle=[(0.5-st[2])/st[0],(0.5-st[3])/st[1]];
+        assert!((big[0]-st[0]/1.3).abs()<1e-6&&(big[1]-st[1]/1.3).abs()<1e-6);
+        for c in 0..2 {assert!((middle[c]*big[c]+big[2+c]-0.5).abs()<1e-6);}
+        assert_eq!(enlarged(st,1.),st);assert_eq!(enlarged(st,0.),st);
+    }
+    #[test]
     fn expression_varying_ignores_pupil_and_eyelook_transforms() {
         let mut draw=EyeDraw {kind:2,textures:[None,None],colors:[[1.;4];2],offsets:[[0.;2];2],rotations:[0.25,0.5,0.5],color:[1.;4],enabled:1.,raw_uvs:[vec![],vec![]],texcoord_st:[[1.,1.,0.,0.];2],main_texcoord_st:[2.,3.,0.125,-0.25],sample_uvs:vec![]};
         let raw=[0.2,0.7];let mut up=vec![];let mut down=vec![];
@@ -156,6 +164,12 @@ mod tests {
         assert_eq!(transforms,750);assert_eq!(uv_count,5370);
         eprintln!("EYE_DRAW_NATIVE cards=5 eyes=10 transforms={transforms} raw_uv_vertices={uv_count}");
     }
+}
+/// A tiling with her pupil drawn `scale` times as large, about the middle of the iris texture: wherever the look puts
+/// the pupil it stays, only less of the texture fills the eye.
+pub(crate) fn enlarged(st:[f32;4],scale:f32)->[f32;4] {
+    if scale<=0.||scale==1. {return st;}
+    [st[0]/scale,st[1]/scale,0.5-(0.5-st[2])/scale,0.5-(0.5-st[3])/scale]
 }
 impl IrisRuntime {
     pub fn st(&self,h:f32,v:f32)->[f32;4] {

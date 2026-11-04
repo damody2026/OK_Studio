@@ -10,6 +10,10 @@
 #include "Misc/ScopeLock.h"
 #include "UObject/ObjectKey.h"
 #include "ok_raw_texture.h"
+#include "KKRustExtract.h"
+#include "RenderingThread.h"
+#include "RHICommandList.h"
+#include "TextureResource.h"
 
 static void ExtendEncodedMipChain(TArray<FOKEncodedMip>& Mips);
 TArray<FOKEncodedMip> OKBuildEncodedMipChain(const TArray<uint8>& BGRA, int32 Width, int32 Height)
@@ -84,6 +88,41 @@ static UTexture2D* CreatePreparedTexture(const TArray<FOKEncodedMip>& Mips,
         FMemory::Memcpy(Data,Mips[I].Bytes.GetData(),Mips[I].Bytes.Num());Mip->BulkData.Unlock();
     }
     OKApplyRuntimeTextureSettings(Tex,Settings,bFallbackClamp);return Tex;
+}
+
+// The pixels come back from the GPU: a runtime texture keeps none here, on the street nothing else holds them either.
+UTexture* OKIrisWithoutHighlights(UTexture* Iris)
+{
+    check(IsInGameThread());
+    static TMap<TObjectKey<UTexture>,TStrongObjectPtr<UTexture>> Made;
+    if(!Iris)return nullptr;
+    if(const auto* Known=Made.Find(Iris))return Known->Get();
+    UTexture2D* Source=Cast<UTexture2D>(Iris);FTextureResource* Resource=Iris->GetResource();
+    if(!Source||!Resource)return Iris;
+    const int32 Width=Source->GetSizeX(),Height=Source->GetSizeY();TArray<FColor> Pixels;
+    FlushRenderingCommands();
+    ENQUEUE_RENDER_COMMAND(OKReadIris)([Resource,Width,Height,&Pixels](FRHICommandListImmediate& Commands){
+        if(FRHITexture* Texture=Resource->GetTexture2DRHI())Commands.ReadSurfaceData(Texture,FIntRect(0,0,Width,Height),Pixels,FReadSurfaceDataFlags(RCM_UNorm));});
+    FlushRenderingCommands();
+    UE_LOG(LogTemp,Display,TEXT("Iris highlights: %s %dx%d format=%d read=%d"),*Iris->GetName(),Width,Height,int32(Source->GetPixelFormat()),Pixels.Num());
+    if(Pixels.Num()!=Width*Height)return Iris;
+    UTexture* Result=Iris;
+    const bool bPainted=ok_iris_without_highlights(reinterpret_cast<uint8_t*>(Pixels.GetData()),Width,Height)!=0;
+    UE_LOG(LogTemp,Display,TEXT("Iris highlights: %s painted out=%d"),*Iris->GetName(),int32(bPainted));
+    if(bPainted){
+        TArray<uint8> BGRA;BGRA.Append(reinterpret_cast<const uint8*>(Pixels.GetData()),Pixels.Num()*sizeof(FColor));
+        const TArray<FOKEncodedMip> Mips=OKBuildEncodedMipChain(BGRA,Width,Height);
+        if(UTexture2D* Clean=CreatePreparedTexture(Mips,nullptr,true)){Clean->SRGB=Source->SRGB;Clean->Filter=Source->Filter;Clean->AddressX=Source->AddressX;Clean->AddressY=Source->AddressY;Clean->UpdateResource();Result=Clean;}
+    }
+    Made.Add(Iris,TStrongObjectPtr<UTexture>(Result));return Result;
+}
+
+UTexture* OKClearEyeLayer()
+{
+    check(IsInGameThread());
+    static TStrongObjectPtr<UTexture> Clear;
+    if(!Clear){TArray<uint8> Pixel;Pixel.SetNumZeroed(4);Clear.Reset(OKCreateRuntimeTexture(Pixel,1,1,nullptr,true));}
+    return Clear.Get();
 }
 
 UTexture2D* OKCreateRuntimeTexture(const TArray<uint8>& BGRA,int32 Width,int32 Height,

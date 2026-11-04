@@ -596,6 +596,9 @@ int32_t ok_okmodel_texture_png(const char* library, const char* id_hex, const ch
 int32_t ok_session_has_game_root(OkSession* s);
 int32_t ok_session_set_blush(OkSession* s, float rate);
 int32_t ok_session_set_iris_small(OkSession* s, float rate);
+int32_t ok_session_set_pupil_scale(OkSession* s, float scale);
+int32_t ok_session_set_pupil_offset(OkSession* s, float x, float y);
+int32_t ok_iris_without_highlights(uint8_t* pixels, int32_t width, int32_t height);
 
 #ifdef __cplusplus
 }

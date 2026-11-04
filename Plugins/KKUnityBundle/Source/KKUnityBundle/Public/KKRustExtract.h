@@ -13,6 +13,13 @@ struct OkMorphView;
 struct OkBodyPose;
 struct FReferenceSkeleton;
 class UAnimSequence;
+class UTexture;
+
+/** This iris texture with the highlights painted into it taken out (a card's overlay can hold them; the eye material's own
+ *  gate does not reach those). Iris itself when it has none. Made once per texture, on the game thread. */
+KKUNITYBUNDLE_API UTexture* OKIrisWithoutHighlights(UTexture* Iris);
+/** One clear pixel: an eye layer with nothing on it. */
+KKUNITYBUNDLE_API UTexture* OKClearEyeLayer();
 
 bool KKUNITYBUNDLE_API OKExtractCard(
 	const FString& GameRoot,
@@ -259,6 +266,10 @@ public:
 	bool SetEyeGaze(float LeftH, float RightH, float Vertical);
 	bool SetBlush(float Rate);
 	bool SetIrisSmall(float Rate);
+	/** Her pupils drawn Scale times as large; 1 is as on her card. */
+	bool SetPupilScale(float Scale);
+	/** Her pupils drawn off their place, in iris texture units. */
+	bool SetPupilOffset(float X, float Y);
 	int32 EyeLookPatternCount() const;
 	bool StepEyeLook(const FVector& UnityTarget, int32 Pattern, float DeltaSeconds, bool Enabled, float* Rates);
 	bool ApplyAnimTime(float Time);

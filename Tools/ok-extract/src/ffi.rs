@@ -2996,6 +2996,26 @@ pub unsafe extern "C" fn ok_session_set_blush(s: *mut OkSession, rate: f32) -> i
     if session.set_blush(rate) { 0 } else { 1 }
 }
 
+/// `paint_out_iris_highlights` on an image of `width` x `height` four-byte pixels: 1 when it changed anything.
+#[no_mangle]
+pub unsafe extern "C" fn ok_iris_without_highlights(pixels: *mut u8, width: i32, height: i32) -> i32 {
+    if pixels.is_null() || width <= 0 || height <= 0 { return 0; }
+    let (w, h) = (width as usize, height as usize);
+    i32::from(crate::texture_bake::paint_out_iris_highlights(std::slice::from_raw_parts_mut(pixels, w * h * 4), w, h))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_set_pupil_offset(s: *mut OkSession, x: f32, y: f32) -> i32 {
+    let Some(session) = sess_ref(s) else { return 1; };
+    if session.set_pupil_offset(x, y) { 0 } else { 1 }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_set_pupil_scale(s: *mut OkSession, scale: f32) -> i32 {
+    let Some(session) = sess_ref(s) else { return 1; };
+    if session.set_pupil_scale(scale) { 0 } else { 1 }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ok_session_set_iris_small(s: *mut OkSession, rate: f32) -> i32 {
     let Some(session) = sess_ref(s) else { return 1; };

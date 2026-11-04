@@ -1134,6 +1134,16 @@ bool FOkSession::SetBlush(float Rate)
 {
 	return Handle && ok_session_set_blush(Handle, Rate) == 0;
 }
+bool FOkSession::SetPupilOffset(float X, float Y)
+{
+	return Handle && ok_session_set_pupil_offset(Handle, X, Y) == 0;
+}
+
+bool FOkSession::SetPupilScale(float Scale)
+{
+	return Handle && ok_session_set_pupil_scale(Handle, Scale) == 0;
+}
+
 bool FOkSession::SetIrisSmall(float Rate)
 {
 	return Handle && ok_session_set_iris_small(Handle, Rate) == 0;

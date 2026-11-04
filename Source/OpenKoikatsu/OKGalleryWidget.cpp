@@ -1972,6 +1972,8 @@ void UOKCharacterController::FinishPreparedPreview(AKKPreviewActor* Actor,bool b
 	}
 	if (bOk)
 	{
+        // A yandere's eyes: pupils 1.1 times as large, no highlight (user 2026-11-04).
+        if(Selected.Personality==KKPersonalityYandere)Actor->SetEyeDull(1.1f,true);
         // LoadSession already displays the card's saved shape. Reapplying the
         // identical values rebuilds every GPU follower for no visible change.
         if(Selected.Face.ShapeValueFace!=Actor->Session.ShapeFace() || Selected.Body.ShapeValueBody!=Actor->Session.ShapeBody()){

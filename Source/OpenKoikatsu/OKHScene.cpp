@@ -135,6 +135,10 @@ static TAutoConsoleVariable<float> CVarHHisRate(TEXT("ok.HScene.HisRate"),1.f,TE
 static TAutoConsoleVariable<float> CVarHTongueLength(TEXT("ok.HScene.TongueLength"),1.f,TEXT("How long her tongue comes out, 1 as the card has it"));
 static TAutoConsoleVariable<int32> CVarHDrool(TEXT("ok.HScene.Drool"),1,TEXT("1: she drools (kissing, ahegao); 0 not"));
 static TAutoConsoleVariable<int32> CVarHFluidTongue(TEXT("ok.HScene.FluidTongue"),0,TEXT("1: what comes out of her coats her tongue too; 0 it does not (her drool turned it white)"));
+static TAutoConsoleVariable<float> CVarHPupilSize(TEXT("ok.HScene.PupilSize"),1.f,TEXT("Her pupils, times as large as they would be"));
+static TAutoConsoleVariable<int32> CVarHPupilHighlight(TEXT("ok.HScene.PupilHighlight"),1,TEXT("0: no highlight in her eyes whatever her state"));
+static TAutoConsoleVariable<float> CVarHPupilShake(TEXT("ok.HScene.PupilShake"),0.f,TEXT("How far her pupils tremble, percent of the iris texture; 0 they hold still"));
+static TAutoConsoleVariable<float> CVarHPupilShakeRate(TEXT("ok.HScene.PupilShakeRate"),8.f,TEXT("New places her trembling pupils go to, per second"));
 static TAutoConsoleVariable<float> CVarHCondomMouthFavor(TEXT("ok.HScene.CondomMouthFavor"),100.f,TEXT("Past this favor she puts the condom on him with her mouth"));
 // What the player can set in the panel on the left (user 2026-11-04): console variables, kept between runs in the user's
 // settings folder (the stage changes, so not under Saved). A row with no variable is a heading; 0..1 by 1 is on and off.
@@ -172,6 +176,11 @@ static const FHSetting HSettings[]={
     {TEXT("CondomMouthFavor"),TEXT("ui.hscene.set_condom_favor"),0.f,500.f,10.f,100.f},
     {TEXT("CondomMouthSeconds"),TEXT("ui.hscene.set_condom_seconds"),2.f,20.f,1.f,6.f},
     {TEXT("SuckGrip"),TEXT("ui.hscene.set_suck_grip"),0.f,1.f,1.f,1.f},
+    {nullptr,TEXT("ui.hscene.set_pupil")},
+    {TEXT("PupilSize"),TEXT("ui.hscene.set_pupil_size"),.5f,2.f,.05f,1.f},
+    {TEXT("PupilHighlight"),TEXT("ui.hscene.set_pupil_highlight"),0.f,1.f,1.f,1.f},
+    {TEXT("PupilShake"),TEXT("ui.hscene.set_pupil_shake"),0.f,10.f,.1f,0.f},
+    {TEXT("PupilShakeRate"),TEXT("ui.hscene.set_pupil_shake_rate"),1.f,30.f,1.f,8.f},
     {nullptr,TEXT("ui.hscene.set_view")},
     {TEXT("EyesCamera"),TEXT("ui.hscene.set_eyes_camera"),0.f,1.f,1.f,1.f},
     {TEXT("CameraLight"),TEXT("ui.hscene.set_camera_light"),0.f,1.f,1.f,1.f},
@@ -1171,7 +1180,7 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     if(HalfInner&&PanelWidth){const float High=2.f*float(PanelWidth->GetCachedGeometry().GetLocalSize().Y);if(High>10.f&&!FMath::IsNearlyEqual(High,HalfInner->GetHeightOverride(),1.f))HalfInner->SetHeightOverride(High);}
     if(!Gallery)return;
     if(Poses.IsEmpty()&&!Gallery->NativePairs.IsEmpty()){LoadPoses();BuildList();}
-    TickDrips(Delta);TickFluids(Delta);TickDeepFace(Delta);TickAhegao();TickCameraLight(false);Tremble(FPlatformTime::Seconds());TickHands();TickEyesCamera();TickCoordinates();TickSounds();SwellBust(Delta);ApplyPregnancy(FPlatformTime::Seconds());
+    TickDrips(Delta);TickFluids(Delta);TickEyeDull(Delta);TickDeepFace(Delta);TickAhegao();TickCameraLight(false);Tremble(FPlatformTime::Seconds());TickHands();TickEyesCamera();TickCoordinates();TickSounds();SwellBust(Delta);ApplyPregnancy(FPlatformTime::Seconds());
     // Her breathing as the original picks it (HVoiceCtrl): her gauge past 50 and his fast motion (voice.speedMotion,
     // with its own up and down marks) change the cries, her experience the bank. A change starts the matching set
     // (user, 2026-11-01: in her it kept the first, quiet set the caress also uses).
@@ -1485,6 +1494,25 @@ void UOKHScenePanel::EndDeepFace(AKKPreviewActor* Girl){
     if(bAhegaoShown)return;
     Girl->SetEyeGaze(0.f,0.f,0.f);Girl->SetMouthPattern(0);Girl->SetMouthOpenFloor(0.f);
     if(bAheEyeLook){bAheEyeLook=false;if(bAheEyeFollow)Girl->FollowEyeLookCamera(AheEyePattern);else Girl->SetEyeLookTarget(AheEyeTarget,AheEyePattern,true);}
+}
+// A yandere's eyes are as on the street, pupils 1.1 times as large and no highlight; once she has climaxed today with her
+// stamina or hunger under 50, whoever she is, 1.3 times and no highlight (user 2026-11-04). The pupils ease there.
+void UOKHScenePanel::TickEyeDull(float Delta){
+    auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl))return;
+    const auto& X=Gallery->HExperience;auto Num=[&X](const TCHAR* Key,double Default){double V=Default;if(X.IsValid())X->TryGetNumberField(Key,V);return V;};
+    const bool bSpent=HerOrgasms+int32(Num(TEXT("today_orgasms"),0.))>=1&&(Num(TEXT("energy"),100.)<50.||Num(TEXT("satiety"),100.)<50.);
+    const float Want=bSpent?1.3f:int32(Num(TEXT("personality"),0.))==KKPersonalityYandere?1.1f:1.f;
+    // The panel on the left: her size on top of that, the highlight off whatever her state, and a tremble that goes to a
+    // new place in the iris PupilShakeRate times a second.
+    const float Range=CVarHPupilShake.GetValueOnGameThread()/100.f,Rate=CVarHPupilShakeRate.GetValueOnGameThread();
+    if(Range>0.f&&Rate>0.f){PupilShakeClock+=Delta*Rate;
+        if(PupilShakeClock>=1.f){PupilShakeClock=FMath::Fractional(PupilShakeClock);PupilShakeFrom=PupilShakeTo;PupilShakeTo=FVector2f(FMath::RandPointInCircle(Range));}
+        PupilShakeNow=FMath::Lerp(PupilShakeFrom,PupilShakeTo,PupilShakeClock);Girl->SetPupilOffset(PupilShakeNow.X,PupilShakeNow.Y);}
+    else if(!PupilShakeNow.IsZero()){PupilShakeNow=PupilShakeFrom=PupilShakeTo=FVector2f::ZeroVector;Girl->SetPupilOffset(0.f,0.f);}
+    const bool bHide=Want>1.f||CVarHPupilHighlight.GetValueOnGameThread()==0;const float Sized=Want*CVarHPupilSize.GetValueOnGameThread();
+    const float Now=EyeDullScale>0.f?FMath::FInterpConstantTo(EyeDullScale,Sized,Delta,.3f):Sized;
+    if(Now==EyeDullScale&&bHide==bEyeDullHidden)return;
+    EyeDullScale=Now;bEyeDullHidden=bHide;Girl->SetEyeDull(Now,bHide);
 }
 void UOKHScenePanel::TickDeepFace(float Delta){
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl))return;
@@ -2778,7 +2806,7 @@ TSharedRef<FJsonObject> UOKHScenePanel::Describe() const{
     TArray<TSharedPtr<FJsonValue>> Q;for(const FString& S:Queue)Q.Add(MakeShared<FJsonValueString>(S));O->SetArrayField(TEXT("queue"),Q);
     O->SetNumberField(TEXT("playback_speed"),PlaybackSpeed());if(Gallery&&Gallery->PreviewActor)O->SetNumberField(TEXT("breath_rate"),Gallery->PreviewActor->SpeechTempo);O->SetBoolField(TEXT("hooked"),Hooked());O->SetNumberField(TEXT("oral_suck"),OralSuckSet);O->SetNumberField(TEXT("oral_pull"),OralPullSet);O->SetNumberField(TEXT("mouth_turned"),bMouthAimed?MouthTurned:0.f);O->SetStringField(TEXT("mouth_dbg"),MouthDbg.ToString());O->SetNumberField(TEXT("mouth_hidden_verts"),MouthClipVerts);O->SetNumberField(TEXT("bust_swell"),BustSwellSet);O->SetNumberField(TEXT("preg_belly"),PregBellyShown);O->SetNumberField(TEXT("preg_nipples"),PregNipples());O->SetNumberField(TEXT("depth_top"),AlignDeep);O->SetNumberField(TEXT("belly_out"),BulgeTarget.IsNone()?-1.f:BulgePast);O->SetNumberField(TEXT("belly_allow"),FMath::Max(0.f,BulgeMoves-2.5f));O->SetNumberField(TEXT("pullback"),BellyPullback);O->SetNumberField(TEXT("tip_inside"),TipInside);O->SetNumberField(TEXT("aim_relax"),AimRelax);O->SetNumberField(TEXT("skin_out"),SkinOutMost);O->SetNumberField(TEXT("skin_under"),SkinUnderMost);O->SetNumberField(TEXT("skin_worst"),SkinWorst);O->SetNumberField(TEXT("skin_rest"),SkinRest);O->SetNumberField(TEXT("skin_along"),SkinWorstAlong);O->SetNumberField(TEXT("root_dodge"),RootDodge.Size());O->SetNumberField(TEXT("depth_cap"),DepthCap);{auto Wr=MakeShared<FJsonObject>();for(const auto& W:Bulge)if(W.Value>1.f)Wr->SetNumberField(W.Key.ToString(),FMath::RoundToFloat(W.Value));O->SetObjectField(TEXT("swells"),Wr);O->SetNumberField(TEXT("swells_refused"),BulgeRefused);O->SetNumberField(TEXT("wrap_ms"),WrapMs);O->SetNumberField(TEXT("wrap_verts"),WrapVerts);O->SetNumberField(TEXT("cloth_verts"),ClothVerts);O->SetNumberField(TEXT("cloth_ms"),ClothMs);O->SetNumberField(TEXT("clip_verts"),ClipVerts);O->SetNumberField(TEXT("back_exit"),BackExitCm);O->SetNumberField(TEXT("clip_lead"),ClipLeadCm);O->SetNumberField(TEXT("swell_ms"),SwellMs);O->SetNumberField(TEXT("swell_part"),BulgePart);}O->SetNumberField(TEXT("skin_facing"),SkinFacing);O->SetBoolField(TEXT("belly_side"),bBellySide);if(Gallery&&Gallery->PreviewActor){const FTransform& HerT=Gallery->PreviewActor->GetActorTransform();auto Vec=[&](const TCHAR* Name,const FVector& V){FVector U=AKKPreviewActor::ActorLocalToUnity(HerT.InverseTransformVectorNoScale(V))*100.;float K[16];if(Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_j_kokan"),K)||Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_J_Kokan"),K)){const FVector X(K[0],K[4],K[8]),Y(K[1],K[5],K[9]),Z(K[2],K[6],K[10]);U=FVector(U|X.GetSafeNormal(),U|Y.GetSafeNormal(),U|Z.GetSafeNormal());}TArray<TSharedPtr<FJsonValue>> A;A.Add(MakeShared<FJsonValueNumber>(U.X));A.Add(MakeShared<FJsonValueNumber>(U.Y));A.Add(MakeShared<FJsonValueNumber>(U.Z));O->SetArrayField(Name,A);};Vec(TEXT("dodge_her"),RootDodge);Vec(TEXT("skin_normal_her"),SkinNormal);Vec(TEXT("front_her"),BellyFront);}O->SetNumberField(TEXT("root_scale"),RootPadScale);O->SetBoolField(TEXT("xray"),bPenisXRay);if(Gallery&&Gallery->PairedPlayback)O->SetNumberField(TEXT("pair_rate"),Gallery->PairedPlayback->GetSpeed());O->SetNumberField(TEXT("held"),Held.Num());O->SetStringField(TEXT("caption"),Caption?Caption->GetText().ToString():FString());
     {const TSharedPtr<FJsonObject>* Areas=nullptr;if(Gallery&&Gallery->HExperience.IsValid()&&Gallery->HExperience->TryGetObjectField(TEXT("areas"),Areas))O->SetObjectField(TEXT("areas"),*Areas);}
-    O->SetNumberField(TEXT("her"),Her);O->SetNumberField(TEXT("his"),His);O->SetNumberField(TEXT("orgasms"),HerOrgasms);O->SetBoolField(TEXT("ahegao"),bAhegaoShown);O->SetNumberField(TEXT("deep_face"),DeepFace);
+    O->SetNumberField(TEXT("her"),Her);O->SetNumberField(TEXT("his"),His);O->SetNumberField(TEXT("orgasms"),HerOrgasms);O->SetNumberField(TEXT("pupil_shake_x"),PupilShakeNow.X);O->SetNumberField(TEXT("pupil_shake_y"),PupilShakeNow.Y);O->SetBoolField(TEXT("ahegao"),bAhegaoShown);O->SetNumberField(TEXT("deep_face"),DeepFace);
     {auto P=MakeShared<FJsonObject>();P->SetNumberField(TEXT("ankle"),AnkleTurn);P->SetNumberField(TEXT("thigh_l"),ThighOpen[0]);P->SetNumberField(TEXT("thigh_r"),ThighOpen[1]);P->SetNumberField(TEXT("hand_l"),HandPattern[0]);P->SetNumberField(TEXT("hand_r"),HandPattern[1]);P->SetNumberField(TEXT("hand_patterns"),HandOptions);O->SetObjectField(TEXT("her_pose"),P);}
     // Her development as the scene uses it now (her own plus this scene's climaxes), and how long her climax and her
     // nipples' spray have left (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md).

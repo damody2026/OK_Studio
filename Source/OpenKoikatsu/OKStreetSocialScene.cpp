@@ -221,6 +221,7 @@ struct FOKStreetSceneState {
  // her next drop; the drops and the wet marks they left (OKArousalDrops.h); how wet she is (drops from her crotch and
  // her nipples since she last slept or bathed, a scene with him included) and whether she was asleep or bathing.
  float ArousalBlush[OKStreetCastCount]={},ArousalDesire[OKStreetCastCount]={};double ArousalDripAt[OKStreetCastCount]={},ArousalCheckAt=0;
+ float ArousalPupil[OKStreetCastCount]={};int64 ArousalClimaxDay[OKStreetCastCount]={}; // her eyes (TickArousal), the day she last climaxed
  int64 ArousalWhiteUntil[OKStreetCastCount]={},ArousalRedUntil[OKStreetCastCount]={};uint32 ArousalExtHash=0,ArousalTurn[OKStreetCastCount]={};FOKStreetHerCard HerCard[OKStreetCastCount];double ArousalNippleAt[OKStreetCastCount]={}; // after a scene: until when she runs white / red (hexp)
  FOKArousalDrops ArousalDrops;int32 ArousalWetCrotch[OKStreetCastCount]={},ArousalWetMilk[OKStreetCastCount]={};bool ArousalWashing[OKStreetCastCount]={};int32 ArousalDay=-1;
  // Her pregnancy today (OKStreetSocialPregnancy.inl: rules preg_day each new day) and today's sick spells.
@@ -1287,7 +1288,8 @@ void AOKStreetSocialScene::SendFreeTalk(){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_
  // A note the game wrote for her (a till note, "you are on shift till three"): in the group prompt the model writes
  // every girl's lines, so its "you" is named; Encore took Alice's shift for his. His line goes to the galgame box first
  // (FreeTalkCaptionPlayer, set below only for one girl): in a group talk his question never showed.
- if(S.Party.ContainsByPredicate([Character](int32 G){return G!=Character;})&&RemoteKind(Character)==0){if(His)S.FreeTalkCaptionPlayer=S.Manifest.Characters[0].Name+OKT(TEXT("ui.party.speech_open_quote"))+Text+OKT(TEXT("ui.party.closing_quote_mark"));
+ // In the room with him she is alone with him: those following him stay outside and answer nothing.
+ if(S.Party.ContainsByPredicate([Character](int32 G){return G!=Character;})&&RemoteKind(Character)==0&&!(S.PrivateGirl==Character&&S.PrivateMode.IsValid())){if(His)S.FreeTalkCaptionPlayer=S.Manifest.Characters[0].Name+OKT(TEXT("ui.party.speech_open_quote"))+Text+OKT(TEXT("ui.party.closing_quote_mark"));
   // The wheel rolled back in a group: every girl in it goes back to before that line; then each one's point to return to.
   if(His){TArray<int32> In={Character};for(const int32 Member:S.Party)In.AddUnique(Member);TArray<FString> Ids;for(const int32 Member:In)Ids.Add(OKStreetStableId(S.Manifest.Characters[Member]));
    GalgameRollBack(Ids);if(!OKStreetFreeTalkIsNudge(Text))for(int32 K=0;K<In.Num();++K)GalgameCheckpoint(In[K],Ids[K]);}

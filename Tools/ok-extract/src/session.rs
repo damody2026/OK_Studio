@@ -1293,10 +1293,14 @@ pub(crate) struct FaceRuntimeState {
     pub iris_base_settings: Vec<(usize, [f32; 2])>,
     pub iris_small_rate: f32,
     pub last_eye_gaze: [f32; 3],
-    pub blush_rate: Option<f32>,
     /// The rates `step_eye_look` gave and where its unlimited look puts the irises for them: they are given back to
     /// `set_eye_gaze_rates` to be drawn, and past ±1 they would roll her eyes.
     pub eye_look_shown: Option<([f32; 3], [f32; 3])>,
+    /// How many times as large her pupils are drawn (0 and 1: as on her card; `set_pupil_scale`).
+    pub pupil_scale: f32,
+    /// Where her pupils are drawn off their place, in iris texture units (`set_pupil_offset`).
+    pub pupil_offset: [f32; 2],
+    pub blush_rate: Option<f32>,
 }
 
 impl OkSession {
@@ -1311,11 +1315,16 @@ impl OkSession {
         let rh = right.clamp(-most, most);
         let v = vertical.clamp(-2.0, 2.0);
         self.face_runtime.last_eye_gaze = [lh, rh, v];
+        let pupil = self.face_runtime.pupil_scale;
+        let [pupil_x, pupil_y] = self.face_runtime.pupil_offset;
         for part in &mut self.parts {
             if let Some(runtime) = part.iris_runtime.as_ref() {
                 let right_eye = runtime.settings[0] == 1.0;
                 let h = if right_eye { rh } else { lh };
                 let st = look.map_or_else(|| runtime.st_rolled(h, v), |l| runtime.st_look(l[right_eye as usize], l[2]));
+                let mut st = crate::eye_gaze::enlarged(st, pupil);
+                st[2] += pupil_x;
+                st[3] += pupil_y;
                 runtime.apply_st(&mut part.uvs, st);
                 if let Some(draw) = part.eye_draw.as_mut() {
                     draw.apply(st, &runtime.raw_uvs, &mut part.uv2, &mut part.uv3);
@@ -1323,6 +1332,26 @@ impl OkSession {
             }
         }
         true
+    }
+
+    /// Her pupils drawn `scale` times as large as they look now. Not `set_iris_small`: that scales the card's pupil
+    /// width, which is capped at 1 and is not the size seen.
+    pub fn set_pupil_offset(&mut self, x: f32, y: f32) -> bool {
+        if !x.is_finite() || !y.is_finite() {
+            return false;
+        }
+        self.face_runtime.pupil_offset = [x.clamp(-0.25, 0.25), y.clamp(-0.25, 0.25)];
+        let [lh, rh, v] = self.face_runtime.last_eye_gaze;
+        self.set_eye_gaze_rates(lh, rh, v)
+    }
+
+    pub fn set_pupil_scale(&mut self, scale: f32) -> bool {
+        if !scale.is_finite() || scale <= 0.0 {
+            return false;
+        }
+        self.face_runtime.pupil_scale = scale.clamp(0.5, 2.0);
+        let [lh, rh, v] = self.face_runtime.last_eye_gaze;
+        self.set_eye_gaze_rates(lh, rh, v)
     }
 
     /// KKS MMDD `get_iris_size_kk` / `set_iris_size_kk` (`瞳小` / `瞳大`):

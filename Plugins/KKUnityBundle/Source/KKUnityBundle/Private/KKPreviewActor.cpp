@@ -1412,8 +1412,8 @@ static UMaterialInterface* MakePartMaterial(UTexture2D* Tex, const FString& Blen
 			}
 			auto* Color = NewObject<UMaterialExpressionConstant3Vector>(Mat);
 			Color->Constant = Shadow->EyeColor; Mat->GetExpressionCollection().AddExpression(Color); Add(TEXT("Color"), Color);
-			auto* Enabled = NewObject<UMaterialExpressionConstant>(Mat);
-			Enabled->R = Shadow->EyeHighlight; Mat->GetExpressionCollection().AddExpression(Enabled); Add(TEXT("Enabled"), Enabled);
+			auto* Enabled = NewObject<UMaterialExpressionScalarParameter>(Mat);
+			Enabled->ParameterName = TEXT("_isHighLight"); Enabled->DefaultValue = Shadow->EyeHighlight; Mat->GetExpressionCollection().AddExpression(Enabled); Add(TEXT("Enabled"), Enabled);
 			for (int32 Layer = 0; Layer < 2; ++Layer) {
 				auto* Col = NewObject<UMaterialExpressionConstant4Vector>(Mat);
 				Col->Constant = Shadow->EyeColors[Layer]; Mat->GetExpressionCollection().AddExpression(Col);
@@ -9175,6 +9175,7 @@ bool AKKPreviewActor::SetEyeGaze(float LeftHorizontal,float RightHorizontal,floa
 {
     if(!FMath::IsFinite(LeftHorizontal)||!FMath::IsFinite(RightHorizontal)||!FMath::IsFinite(Vertical)) return false;
     if(!Session.SetEyeGaze(LeftHorizontal,RightHorizontal,Vertical)) return false;
+    EyeGazeAsked[0]=LeftHorizontal;EyeGazeAsked[1]=RightHorizontal;EyeGazeAsked[2]=Vertical;
     EyeGaze[0]=FMath::Clamp(LeftHorizontal,-1.f,1.f);
     EyeGaze[1]=FMath::Clamp(RightHorizontal,-1.f,1.f);
     EyeGaze[2]=FMath::Clamp(Vertical,-1.f,1.f);
@@ -9255,6 +9256,35 @@ bool AKKPreviewActor::SetEyeGaze(float LeftHorizontal,float RightHorizontal,floa
     return true;
 }
 
+// The pupils go through the session's tiling, so SetEyeGaze draws them on each kind of eye. The highlights go on every eye
+// material her components draw with (the display swaps in its own instance), the card's values kept to come back to: the gate
+// and the layers' alphas; what a card painted into its iris goes with the iris swapped (2026-11-04, 38 of 70 reader cards
+// had them only there).
+bool AKKPreviewActor::SetPupilOffset(float X,float Y)
+{
+    return Session.SetPupilOffset(X,Y)&&SetEyeGaze(EyeGazeAsked[0],EyeGazeAsked[1],EyeGazeAsked[2]);
+}
+bool AKKPreviewActor::SetEyeDull(float PupilScale,bool bHideHighlight)
+{
+    if(!Session.SetPupilScale(PupilScale)) return false;
+    EyePupilScale=PupilScale;bEyeHighlightHidden=bHideHighlight;
+    const bool bDrawn=SetEyeGaze(EyeGazeAsked[0],EyeGazeAsked[1],EyeGazeAsked[2]);
+    static const TCHAR* const HighlightLayers[]={TEXT("_overcolor1"),TEXT("_overcolor2"),TEXT("_overcolor3")};
+    auto Gate=[&](UMaterialInstanceDynamic* M){if(!M)return;const FVector4f* Card=EyeHighlightBase.Find(M);
+        if(!Card){float Gated=0.f;if(!M->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("_isHighLight")),Gated))return;FVector4f Kept(Gated,0.f,0.f,0.f);
+            for(int32 I=0;I<3;++I){FLinearColor V;float A=0.f;if(M->GetVectorParameterValue(FHashedMaterialParameterInfo(HighlightLayers[I]),V))Kept[I+1]=M->GetScalarParameterValue(FHashedMaterialParameterInfo(*(FString(HighlightLayers[I])+TEXT("__A"))),A)?A:V.A;}
+            Card=&EyeHighlightBase.Add(M,Kept);
+            UTexture* Iris=nullptr;if(M->GetTextureParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex")),Iris))EyeIrisBase.Add(M,Iris);}
+        M->SetScalarParameterValue(TEXT("_isHighLight"),bHideHighlight?0.f:Card->X);
+        if(const auto* Iris=EyeIrisBase.Find(M))if(UTexture* Own=Iris->Get())M->SetTextureParameterValue(TEXT("_MainTex"),bHideHighlight?OKIrisWithoutHighlights(Own):Own);
+        for(int32 I=0;I<3;++I){FLinearColor V;if(!M->GetVectorParameterValue(FHashedMaterialParameterInfo(HighlightLayers[I]),V))continue;V.A=bHideHighlight?0.f:(*Card)[I+1];M->SetVectorParameterValue(HighlightLayers[I],V);M->SetScalarParameterValue(*(FString(HighlightLayers[I])+TEXT("__A")),V.A);}};
+    TInlineComponentArray<UMeshComponent*> Meshes(this);
+    for(const auto& Part:Parts){if(Session.EyeMaterialSetting(Part.SessionIndex,-1)==0.f)continue;Gate(Part.GpuEyeMaterial);
+        const FName PartTags[]={*FString::Printf(TEXT("KKSessionPart_%d"),Part.SessionIndex),*FString::Printf(TEXT("KKMorphPart_%d"),Part.SessionIndex)};
+        for(UMeshComponent* Drawn:Meshes)if(Drawn&&(Drawn==Part.Comp||Drawn->ComponentHasTag(PartTags[0])||Drawn->ComponentHasTag(PartTags[1])))
+            for(int32 Slot=0;Slot<Drawn->GetNumMaterials();++Slot)Gate(Cast<UMaterialInstanceDynamic>(Drawn->GetMaterial(Slot)));}
+    return bDrawn;
+}
 bool AKKPreviewActor::SetEyeLookTarget(FVector Target,int32 Pattern,bool Enabled)
 {
     if(Target.ContainsNaN() || Pattern<0 || Pattern>=Session.EyeLookPatternCount()) return false;

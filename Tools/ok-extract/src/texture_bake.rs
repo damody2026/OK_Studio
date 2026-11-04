@@ -195,6 +195,115 @@ pub(crate) fn iris_lut_bake_matches_reference(){
     }
 }
 
+/// Paints out the highlights a card drew into its iris (a KSOX overlay holds them, so the eye's highlight layers and gate do
+/// not reach them): pure white shapes, or pale ones far above what is around them, small and solid (a white ring about the
+/// pupil, a pale lower iris stay). Each is filled in from its edge; what stuck out of the iris's oval goes. Pixels are four
+/// bytes each, the alpha last, the colours in either order. False when she has none.
+pub fn paint_out_iris_highlights(px:&mut [u8],w:usize,h:usize)->bool {
+    let n=w*h;
+    if n==0||px.len()<n*4 {return false;}
+    let valid:Vec<bool>=(0..n).map(|i|px[i*4+3]>127).collect();
+    let area=valid.iter().filter(|v|**v).count();
+    if area<50 {return false;}
+    let least:Vec<f32>=(0..n).map(|i|px[i*4].min(px[i*4+1]).min(px[i*4+2]) as f32/255.).collect();
+    // What is around each pixel, by summed tables over the iris.
+    let stride=w+1;let (mut sum,mut count)=(vec![0f64;stride*(h+1)],vec![0f64;stride*(h+1)]);
+    for y in 0..h {for x in 0..w {let i=y*w+x;let at=(y+1)*stride+x+1;let on=f64::from(u8::from(valid[i]));
+        sum[at]=on*least[i] as f64+sum[at-1]+sum[at-stride]-sum[at-stride-1];
+        count[at]=on+count[at-1]+count[at-stride]-count[at-stride-1];}}
+    let reach=(w*28/512).max(1);
+    let seed:Vec<bool>=(0..n).map(|i|{
+        if !valid[i] {return false;}
+        let (x,y)=(i%w,i/w);let (x0,x1,y0,y1)=(x.saturating_sub(reach),(x+reach+1).min(w),y.saturating_sub(reach),(y+reach+1).min(h));
+        let box_of=|t:&[f64]|t[y1*stride+x1]-t[y0*stride+x1]-t[y1*stride+x0]+t[y0*stride+x0];
+        let around=(box_of(&sum)/box_of(&count).max(1.)) as f32;
+        least[i]>=0.955||(least[i]>=0.68&&least[i]-around>=0.30)}).collect();
+    let mut seen=vec![false;n];let mut gone=vec![false;n];let mut any=false;let mut stack=Vec::new();
+    for start in 0..n {
+        if !seed[start]||seen[start] {continue;}
+        seen[start]=true;stack.push(start);let mut shape=Vec::new();
+        let (mut x0,mut x1,mut y0,mut y1)=(w,0,h,0);
+        while let Some(i)=stack.pop() {
+            shape.push(i);let (x,y)=(i%w,i/w);x0=x0.min(x);x1=x1.max(x);y0=y0.min(y);y1=y1.max(y);
+            for (near,inside) in [(i.wrapping_sub(1),x>0),(i+1,x+1<w),(i.wrapping_sub(w),y>0),(i+w,y+1<h)] {
+                if inside&&seed[near]&&!seen[near] {seen[near]=true;stack.push(near);}}
+        }
+        let bounds=(x1-x0+1)*(y1-y0+1);
+        if shape.len()>=4&&shape.len() as f32<=0.07*area as f32&&shape.len() as f32>=0.4*bounds as f32 {
+            any=true;for i in shape {gone[i]=true;}}
+    }
+    if !any {return false;}
+    // Its soft edge with it.
+    for _ in 0..(6*w/512).max(1) {
+        let was=gone.clone();
+        for i in 0..n {if was[i] {continue;}let (x,y)=(i%w,i/w);
+            gone[i]=(x>0&&was[i-1])||(x+1<w&&was[i+1])||(y>0&&was[i-w])||(y+1<h&&was[i+w]);}
+    }
+    for i in 0..n {gone[i]&=valid[i];}
+    let mut known:Vec<bool>=(0..n).map(|i|valid[i]&&!gone[i]).collect();
+    let (mut rows,mut columns)=(vec![0usize;h],vec![0usize;w]);let mut left=0usize;
+    for i in 0..n {if known[i] {rows[i/w]+=1;columns[i%w]+=1;left+=1;}}
+    if left==0 {return false;}
+    let span=|t:&[usize]|{let (mut low,mut seen_so_far,mut high)=(None,0usize,0usize);
+        for (at,c) in t.iter().enumerate() {seen_so_far+=c;if low.is_none()&&seen_so_far*100>=left {low=Some(at);}
+            if seen_so_far*100<=left*99 {high=at;}}
+        (low.unwrap_or(0) as f32,high as f32)};
+    let ((top,bottom),(first,last))=(span(&rows),span(&columns));
+    let (cy,cx,ry,rx)=((top+bottom)/2.,(first+last)/2.,(bottom-top)/2.+2.,(last-first)/2.+2.);
+    let mut todo:Vec<usize>=(0..n).filter(|i|gone[*i]).collect();
+    for i in &todo {let (x,y)=((i%w) as f32,(i/w) as f32);
+        if ((y-cy)/ry).powi(2)+((x-cx)/rx).powi(2)>1. {px[i*4+3]=0;}}
+    while !todo.is_empty() {
+        let mut filled=Vec::new();let mut waiting=Vec::new();
+        for &i in &todo {
+            let (x,y)=(i%w,i/w);let mut total=[0u32;3];let mut neighbours=0u32;
+            for dy in -1i32..=1 {for dx in -1i32..=1 {
+                let (nx,ny)=(x as i32+dx,y as i32+dy);
+                if (dx==0&&dy==0)||nx<0||ny<0||nx>=w as i32||ny>=h as i32 {continue;}
+                let at=ny as usize*w+nx as usize;
+                if known[at] {neighbours+=1;for c in 0..3 {total[c]+=px[at*4+c] as u32;}}}}
+            if neighbours>0 {filled.push((i,total.map(|t|((t+neighbours/2)/neighbours) as u8)));}else{waiting.push(i);}
+        }
+        if filled.is_empty() {break;}
+        for (i,color) in filled {px[i*4..i*4+3].copy_from_slice(&color);known[i]=true;}
+        todo=waiting;
+    }
+    true
+}
+
+#[cfg(test)]
+mod iris_highlight_tests {
+    use super::paint_out_iris_highlights;
+    fn iris(n:usize)->Vec<u8> {
+        let mut px=vec![0u8;n*n*4];let c=n as f32/2.;
+        for y in 0..n {for x in 0..n {let i=(y*n+x)*4;
+            if ((x as f32-c).powi(2)+(y as f32-c).powi(2)).sqrt()<c*0.8 {px[i..i+4].copy_from_slice(&[60,70,120,255]);}}}
+        px
+    }
+    fn disc(px:&mut [u8],n:usize,cx:f32,cy:f32,r:f32,color:[u8;3]) {
+        for y in 0..n {for x in 0..n {if ((x as f32-cx).powi(2)+(y as f32-cy).powi(2)).sqrt()<r {px[(y*n+x)*4..(y*n+x)*4+3].copy_from_slice(&color);}}}
+    }
+    #[test]
+    fn a_painted_highlight_goes_and_the_iris_stays() {
+        let n=512;let mut px=iris(n);disc(&mut px,n,200.,200.,20.,[255,255,255]);disc(&mut px,n,300.,320.,8.,[250,225,235]);
+        assert!(paint_out_iris_highlights(&mut px,n,n));
+        for (x,y) in [(200,200),(300,320)] {let i=(y*n+x)*4;assert!(px[i]<90&&px[i+1]<100&&px[i+2]<150,"{:?}",&px[i..i+4]);}
+    }
+    #[test]
+    fn a_ring_about_the_pupil_and_a_plain_iris_stay() {
+        let n=512;let plain=iris(n);let mut px=plain.clone();
+        assert!(!paint_out_iris_highlights(&mut px,n,n));assert!(px==plain);
+        disc(&mut px,n,256.,256.,60.,[255,255,255]);disc(&mut px,n,256.,256.,50.,[0,0,0]);let ringed=px.clone();
+        assert!(!paint_out_iris_highlights(&mut px,n,n));assert!(px==ringed);
+    }
+    #[test]
+    fn what_stuck_out_of_the_iris_goes() {
+        let n=512;let mut px=iris(n);disc(&mut px,n,256.-205.,256.,22.,[255,255,255]);
+        for y in 0..n {for x in 0..n {let i=(y*n+x)*4;if px[i]==255 {px[i+3]=255;}}}
+        assert!(paint_out_iris_highlights(&mut px,n,n));assert_eq!(px[(256*n+40)*4+3],0);
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn bake_iris_with_space_reference(
     png:&[u8],pupil:&crate::card::PupilInfo,grad:Option<&[u8]>,
