@@ -1240,6 +1240,16 @@ pub unsafe extern "C" fn ok_common_interaction_poses(root:*const c_char,out:*mut
     let Ok(Ok(json))=std::panic::catch_unwind(||serde_json::to_string(&crate::h_playback::interaction_poses(std::path::Path::new(&root))))else{return -1;};
     if out.is_null()||cap<=0{return json.len() as i32+1;}if cap as usize<=json.len(){return -1;}write_err(out,cap,&json);0
 }
+// Every outfit's gaps as JSON (outfit_gaps.rs). Reads her card again: for a background thread. A failure goes to the
+// game's log (stderr does not reach it).
+#[no_mangle]
+pub unsafe extern "C" fn ok_card_outfit_gaps(game:*const c_char,card:*const c_char,out:*mut c_char,cap:i32)->i32 {
+    let (Some(game),Some(card))=(cstr_opt(game),cstr_opt(card)) else{return -1;};
+    let scanned=crate::run_no_panic(||crate::outfit_gaps::scan(std::path::Path::new(&game),std::path::Path::new(&card)));
+    let outfits=match scanned {Ok(outfits)=>outfits,Err(e)=>{ffi_log(0,&format!("ok-extract: ERROR outfit gaps {card}: {e}"));return -1;}};
+    let Ok(json)=serde_json::to_string(&outfits) else{return -1;};
+    if out.is_null()||cap<=0||cap as usize<=json.len(){return -1;}write_err(out,cap,&json);0
+}
 #[no_mangle]
 pub unsafe extern "C" fn ok_common_animation_pair_clip(root:*const c_char,key:*const c_char,layer:i32,out:*mut c_char,cap:i32)->i32 {
     let (Some(root),Some(key))=(cstr_opt(root),cstr_opt(key)) else{return -1;};

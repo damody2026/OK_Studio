@@ -2988,6 +2988,20 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             }
             if failed > 0 { return Err(format!("{failed} card(s) failed")); }
         }
+        "outfit-gaps" => {
+            // outfit-gaps <lib> <card>...: what each outfit names and nothing provides (outfit_gaps.rs). Prints
+            //   OKGAPS <severe|minor> card outfit count parts; OKGAPS ok card when no outfit lacks anything.
+            let lib = lib.ok_or("library directory required")?;
+            for card in args[2..].iter().map(PathBuf::from) {
+                let outfits = crate::outfit_gaps::scan(&lib, &card)?;
+                let lacking: Vec<_> = outfits.iter().filter(|o| !o.gaps.is_empty()).collect();
+                if lacking.is_empty() { println!("OKGAPS ok\t{}", card.display()); }
+                for o in lacking {
+                    let parts: Vec<String> = o.gaps.iter().map(|g| format!("{}:{}", g.part, g.id)).collect();
+                    println!("OKGAPS {}\t{}\t{}\t{}\t{}", if o.severe { "severe" } else { "minor" }, card.display(), o.outfit, o.gaps.len(), parts.join(" "));
+                }
+            }
+        }
         "crowd-check" => {
             // crowd-check <lib> <card>...: whether the hundred-girl room can use each card's outfit 0 (dressed, every drawn
             // material supported): OKCROWD lines (oklib/crowd_check.rs).

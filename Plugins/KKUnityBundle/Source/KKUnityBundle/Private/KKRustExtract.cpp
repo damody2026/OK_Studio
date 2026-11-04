@@ -171,6 +171,11 @@ FString FOkSession::CommonInteractionPoses(){
  if(ok_common_interaction_poses(Path.Get(),Bytes.GetData(),Size)!=0)return FString();return UTF8_TO_TCHAR(Bytes.GetData());
 }
 
+FString FOkSession::CardOutfitGaps(const FString& Root,const FString& Card){
+ TArray<ANSICHAR> Bytes;Bytes.SetNumZeroed(1024*1024);
+ if(ok_card_outfit_gaps(TCHAR_TO_UTF8(*Root),TCHAR_TO_UTF8(*Card),Bytes.GetData(),Bytes.Num())!=0)return FString();return UTF8_TO_TCHAR(Bytes.GetData());
+}
+
 FString FOkSession::PairClipForRoot(const FString& Root,const FString& Key,int32 Layer){
  if(Root.IsEmpty())return FString();const int32 Size=ok_common_animation_pair_clip(TCHAR_TO_UTF8(*Root),TCHAR_TO_UTF8(*Key),Layer,nullptr,0);
  if(Size<=0||Size>1024*1024)return FString();TArray<ANSICHAR> Bytes;Bytes.SetNumZeroed(Size);

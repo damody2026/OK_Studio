@@ -10,6 +10,7 @@ pub use anim::prepare_animation_clip;
 pub use anim::prepare_animation_batch;
 mod abmx;
 mod accessory_extract;
+pub mod outfit_gaps;
 mod editor_mods;
 mod clothing_rules;
 mod pregnancy;

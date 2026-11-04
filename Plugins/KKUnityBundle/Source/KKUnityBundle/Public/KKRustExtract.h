@@ -104,6 +104,8 @@ public:
   /** Call between scene loads with no source open/prepare jobs running. Keeps live sessions and disk caches. */
   static void ReleaseSourceCaches();
  static FString CommonInteractionPoses();
+ // What each outfit of her card asks for and nothing provides, as JSON (outfit_gaps.rs). Slow: not on the game thread.
+ static FString CardOutfitGaps(const FString& Root,const FString& Card);
  bool PrepareBodyReaction(const TArray<uint8>& Definition,FString& Error);
  bool BodyReactionHit(int32 Id,TConstArrayView<FVector3f> Forces,float Weight,uint8 ReleaseMask=0);
  void ClearBodyReaction();

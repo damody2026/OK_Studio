@@ -281,6 +281,17 @@
   - `ok.EyeFollow 2` 時，頭在她看著別人時也轉向鏡頭；原本只靠眼睛轉不到側邊的鏡頭（雷電將軍、胡桃露出側臉）。
   - 10 位各從 55°／90°／125° 拍，顯示的 gaze 都追上目標，看得到眼睛的截圖都看著鏡頭：`E:\OpenKoikatsu\Saved\StreetSocial\Play-20261103T232527\control_shots\`。
 
+## 17. 服裝缺件（2026-11-05）
+
+卡片指名、但裝好的 mod 和內建清單都沒有的物品，開卡時那一格就是空的。`jeanne_alter` 第 1 套缺 8 件（`Jeanne_Alter_Cetol` v1.1.0 沒有），穿上去沒衣服也沒白髮。不隱藏這些服裝：缺的是本機的 mod，補上就恢復。
+
+- **規則**（`Tools/ok-extract/src/outfit_gaps.rs`）：逐套對照服裝 9 格、上衣子部件、髮型、配件（指向 mod 的和內建的都算），查法與開卡相同。嚴重＝上衣缺而且下裝也缺或沒要下裝，或髮型、頭髮類配件缺。
+- **紀錄**：開卡時穿的那套每個缺件寫一行 `item missing`，到 stderr 也到遊戲 log。以前服裝槽位沒有 mod 解析紀錄又不在清單時完全不寫（`megumin` 第 3 套手套 877）。
+- **一對一服裝按鈕**：背景掃整張卡（`ok_card_outfit_gaps`），有缺件的按鈕加「（缺件）」。嚴重的第一次按只提示，再按一次才換；中間按別套要重新提示。
+- **自動選服裝**：`Tools/prepare_street_social_selection.lua` 選女主平常穿的那套時跳過嚴重的。女主不會在遊戲中自己換到別的編號，其他自動換裝路徑沒有。
+- **檢查**：`Tools\lua\lua.exe Tools\ok_cards.lua verify <卡資料夾>` 同時列出 `severe`／`minor`，不算驗證失敗。CLI 是 `ok-extract X:/NoGame --oklib outfit-gaps <基礎庫> <卡>...`。
+- **限制**：頭髮類配件靠卡內 `hair_acc` 或物品名稱含 hair 判斷，`jeanne_alter` 配件 7421537 被當一般配件。基礎庫下的原作卡看不到 zipmod，不回報。
+
 ## 進度（2026-11-03）
 
 | 項目 | 程式 | 建置 | 實機 |

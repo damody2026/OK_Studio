@@ -467,6 +467,18 @@ void UOKHScenePanel::LoadPoses(){
 }
 
 static bool OKHServiceSpent(int32 Finishes,const TSharedPtr<FJsonObject>& X);
+void UOKHScenePanel::ReadOutfitGaps(){
+    const AOKInteractionMode* M=Interaction();if(!M)return;FString Root,Card;M->OpenedSource(Root,Card);if(Card==OutfitGapCard)return;
+    OutfitGapCard=Card;OutfitGaps.Reset();OutfitWarned=INDEX_NONE;
+    Async(EAsyncExecution::Thread,[Weak=TWeakObjectPtr<UOKHScenePanel>(this),Root,Card]{
+        const FString Json=FOkSession::CardOutfitGaps(Root,Card);
+        AsyncTask(ENamedThreads::GameThread,[Weak,Card,Json]{UOKHScenePanel* Panel=Weak.Get();if(!Panel||Panel->OutfitGapCard!=Card)return;
+            TArray<TSharedPtr<FJsonValue>> Rows;if(!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Rows)){UE_LOG(LogTemp,Warning,TEXT("H scene outfit gaps: nothing read for %s"),*Card);return;}
+            for(const auto& V:Rows){const auto Row=V->AsObject();const TArray<TSharedPtr<FJsonValue>>* Gaps=nullptr;if(!Row||!Row->TryGetArrayField(TEXT("gaps"),Gaps)||Gaps->IsEmpty())continue;
+                FOutfitGap& Gap=Panel->OutfitGaps.Add(Row->GetIntegerField(TEXT("outfit")));Gap.Count=Gaps->Num();Gap.bSevere=Row->GetBoolField(TEXT("severe"));}
+            UE_LOG(LogTemp,Display,TEXT("H scene outfit gaps: %d of her outfits lack something"),Panel->OutfitGaps.Num());
+            if(Panel->OutfitGaps.Num()&&Panel->Tab==TabClothes)Panel->BuildList();});});
+}
 void UOKHScenePanel::BuildList(){
     if(!List||!WidgetTree)return;List->ClearChildren();
     if(bCoordinateList&&Tab!=TabClothes){bCoordinateList=false;ShowCoordinates();}
@@ -492,8 +504,9 @@ void UOKHScenePanel::BuildList(){
         // Her outfits, as the original H scene's coordinate buttons, and the game's coordinate cards worn as the one on.
         const AOKInteractionMode* M=Interaction();const bool Free=M&&M->IsReady()&&!M->IsChangingOutfit();
         const FString Worn=M?M->WornCoordinate:FString();
-        for(int32 O=0;O<FMath::Min(Gallery->Selected.Outfits.Num(),10);++O)
-            Add(OutfitBase+O,OKMsg(TEXT("ui.hscene.outfit"),{{TEXT("name"),FString(OKT(*FString::Printf(TEXT("ui.hscene.outfit_%d"),FMath::Min(O,7))))}}),Free,Worn.IsEmpty()&&O==Gallery->OutfitIndex);
+        ReadOutfitGaps();
+        for(int32 O=0;O<FMath::Min(Gallery->Selected.Outfits.Num(),10);++O){const FOutfitGap* Gap=OutfitGaps.Find(O);
+            Add(OutfitBase+O,OKMsg(TEXT("ui.hscene.outfit"),{{TEXT("name"),FString(OKT(*FString::Printf(TEXT("ui.hscene.outfit_%d"),FMath::Min(O,7))))}})+(Gap?FString(OKT(TEXT("ui.hscene.outfit_gap_tag"))):FString()),Free,Worn.IsEmpty()&&O==Gallery->OutfitIndex);}
         Add(CoordinateToggle,OKT(bCoordinateList?TEXT("ui.hscene.coordinate_close"):TEXT("ui.hscene.coordinate_open")),true,!Worn.IsEmpty());
         return;
     }
@@ -740,7 +753,9 @@ void UOKHScenePanel::Click(int32 Kind){
         else{if(Gallery->EyeLookCameraCheck)Gallery->EyeLookCameraCheck->SetIsChecked(On);Gallery->OnEyeLookCamera(On);}
         ActionsKey.Reset();return;}
     if(Kind==CoordinateAccessories){bCoordinateAccessories=!bCoordinateAccessories;ShowAccessories();BuildList();return;}
-    if(Kind>=OutfitBase&&Kind<OutfitBase+10){FString Why;if(!WearOutfit(Kind-OutfitBase,FString(),Why)&&Hint)Hint->SetText(FText::FromString(Why));return;}
+    if(Kind>=OutfitBase&&Kind<OutfitBase+10){const int32 Outfit=Kind-OutfitBase;const FOutfitGap* Gap=OutfitGaps.Find(Outfit);
+        if(Gap&&Gap->bSevere&&OutfitWarned!=Outfit){OutfitWarned=Outfit;if(Hint)Hint->SetText(FText::FromString(OKMsg(TEXT("ui.hscene.outfit_gap_warn"),{{TEXT("count"),Gap->Count}})));return;}
+        OutfitWarned=INDEX_NONE;FString Why;if(!WearOutfit(Outfit,FString(),Why)&&Hint)Hint->SetText(FText::FromString(Why));return;}
     if(Kind>=CoordinateBase){FString Why;if(CoordinateCards.IsValidIndex(Kind-CoordinateBase)&&!WearOutfit(Gallery->OutfitIndex,CoordinateCards[Kind-CoordinateBase],Why)&&Hint)Hint->SetText(FText::FromString(Why));return;}
     if(Kind>=ClothesBase){
         auto* Girl=Gallery->PreviewActor.Get();const int32 C=Kind-ClothesBase;if(!IsValid(Girl))return;

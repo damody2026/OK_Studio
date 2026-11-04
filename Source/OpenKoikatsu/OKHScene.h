@@ -155,6 +155,10 @@ private:
     TMap<TWeakObjectPtr<class UMaterialInstanceDynamic>,FLinearColor> CameraLightWas;FVector CameraLightShown=FVector::ZeroVector;
     // The panel's light rows: their shadow ramp and the colour of the light, each material's own given back when they go.
     void TickLightChoice(bool bEnd);
+    // Her outfits with something missing (outfit_gaps.rs, read in the background): marked on their buttons; a severe one
+    // says so at the first press and is worn at the second.
+    struct FOutfitGap{int32 Count=0;bool bSevere=false;};
+    TMap<int32,FOutfitGap> OutfitGaps;FString OutfitGapCard;int32 OutfitWarned=INDEX_NONE;void ReadOutfitGaps();
     TMap<TWeakObjectPtr<class UMaterialInstanceDynamic>,TWeakObjectPtr<class UTexture>> RampWas;TMap<TWeakObjectPtr<class UMaterialInstanceDynamic>,FLinearColor> LightColorWas;
     FString RampShown;int32 TintShown=0;TArray<FString> LightRampKeys;
     UPROPERTY() TObjectPtr<class UComboBoxString> LightCombos[3];
