@@ -418,6 +418,29 @@ c-street-city 的逐項回答在 `Docs/STREET_CITY_PLACES_INVENTORY_20261103.md`
     - 其他：`festival`、`xmas_tree`、`batting`。
   - 第 4 輪：`amusement`。
 
+### 8.2.3 第 2 輪比對（11-05，`city_anchors.json` 23745 列）
+
+c-street-city 回報第 8、10 節做完一輪（9d20bdf1e、c59d2378a、8f5abb346）。我直接數 `city_anchors.json`：
+
+- 23745 列都有 `pos`，1380 個地點；`places.json` 98 個 game_place。
+- `anchor_kinds.toml` 的 82 個種類都不是 0。
+- 坐的錨點：`seat_pos` 12636 個，加上 `seat_face` 109 個放在 `slots` 裡，共 12745。`seat_ground` 165 個坐地上，沒有椅面，不用 `seat_pos`。約 3400 個是推算值，不是逐一實測（c-street-city 回報，我沒有另外查）。
+- 第 10.4 節：`browse` 51、`fitting` 25、`fitting_wait` 84、`fitting_show` 24、`checkout` 22、`try_shoes` 7、`shoe_rack` 10、`closet` 1928、`shoe_change` 483、`changing` 79。`department` 有 `browse` 17、`fitting` 5、`checkout` 6、`try_shoes` 7、`shoe_rack` 10。鞋店用百貨鞋區。
+
+還缺、已交回 c-street-city：
+
+| 項目 | 現況 |
+|---|---|
+| 真浴缸 | 女宿與公寓沒有，`bath` 放在淋浴同一點 |
+| 真陽台 | `balcony` 197 個都是窗邊錨點 |
+| 屋頂 | 只有 T1 走得上去，其他 5 棟有 `rooftop_lunch` 但沒有路 |
+| 數量太少的種類 | `h_bench` 1、`crib` 1、`ultrasound` 1、`infirmary_bed` 2、`h_box` 2、`h_net` 2、`station` 2、`wedding` 2 |
+| `campus_sports.field` | z 924.8，比地面低約 3 公尺，要改 1205 |
+| S19 池子 | 台階與水深只看過畫面，沒有量 |
+| 世界缺口 | 沙灘草、礁石、蘆葦、睡蓮、室內 Tripo 家具、路燈夜間發光 |
+
+`swim` 的 `pos` 是水面高度，游泳動作是遊戲端的事，排在第 8.3 節之後。
+
 ### 8.3 遊戲端之後要做（我負責，換城市整合時）
 
 - 每個新地點的活動（`activities.toml`）、商品與營業時間（`catalog.json`）、`places.toml` 規範、三語文字。
