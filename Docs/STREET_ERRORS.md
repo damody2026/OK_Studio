@@ -1985,3 +1985,4 @@
 - 2026-11-05 e-fork-2：街區隱藏高光只換虹膜 `_MainTex`，高光還在：街區的卡片高光是分開綁在 `_overtex1/2/3` 的圖層，和讀卡模式、H 場景不同。`dull` 時連這些圖層一起換成透明貼圖（`OKClearEyeLayer`）。
 - 2026-11-05 e-fork-2：把 game.log 沒有那幾行當成程式沒跑到；log 有緩衝，`game_stop` 會丟掉尾巴。讀 log 前先 `game_exec flushlog`。
 - 2026-11-05 e-fork-2：打包背景工作回傳 exit 0 就當成打包成功，其實 `EFork2h` 編譯失敗（`RandPointInCircle` 回傳 `FVector2D`，指定給 `FVector2f` 要明確轉換），worktree 的 fix15 也因 HEAD 不同而中途停止。背景工作要看 log 裡的 `Result:`，不是看退出碼。
+- 2026-11-05 e-fork 把讀卡器正常啟動當成卡死：UE 啟動時 UBT AutoSDK 要跑 5～6 分鐘，log 這段完全不動，我先猜是在等別的建置，又用 150 秒的看門狗把它關掉一次。對照昨晚的正常 log 才看到同一段也停了 5 分 40 秒。修正：看門狗改 15 分鐘，判斷前先比對正常 log。

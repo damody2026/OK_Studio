@@ -409,7 +409,7 @@ TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
         TongueSlider=Row(TEXT("ui.hscene.tongue_length"),0.f,2.f,CVarHTongueLength.GetValueOnGameThread());TongueSlider->SetStepSize(.05f);TongueSlider->OnValueChanged.AddDynamic(this,&UOKHScenePanel::OnTongueLength);
         UHorizontalBox* R=WidgetTree->ConstructWidget<UHorizontalBox>();HandOptions=-1;
         for(int32 Side=0;Side<2;++Side){Label(R,Side?TEXT("ui.hscene.hand_r"):TEXT("ui.hscene.hand_l"));
-            HandCombos[Side]=WidgetTree->ConstructWidget<UComboBoxString>();HandCombos[Side]->AddOption(OKT(TEXT("ui.hscene.hand_follow")));HandCombos[Side]->SetSelectedIndex(0);
+            HandCombos[Side]=WidgetTree->ConstructWidget<UOKComboBoxString>();HandCombos[Side]->AddOption(OKT(TEXT("ui.hscene.hand_follow")));HandCombos[Side]->SetSelectedIndex(0);
             if(Side)HandCombos[Side]->OnSelectionChanged.AddDynamic(this,&UOKHScenePanel::OnHandR);else HandCombos[Side]->OnSelectionChanged.AddDynamic(this,&UOKHScenePanel::OnHandL);
             if(auto* S=R->AddChildToHorizontalBox(HandCombos[Side])){S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));S->SetPadding(FMargin(0,0,6,0));}}
         Box->AddChildToVerticalBox(R)->SetPadding(FMargin(0,2));
