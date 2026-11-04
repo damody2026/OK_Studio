@@ -51,6 +51,8 @@
 #include "Components/OverlaySlot.h"
 #include "Components/Spacer.h"
 #include "Components/ComboBoxString.h"
+#include "OKComboBox.h"
+#include "OKHGShading.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/ProgressBar.h"
@@ -179,12 +181,16 @@ static const FHSetting HSettings[]={
 static IConsoleVariable* HSettingVar(const TCHAR* Name){return IConsoleManager::Get().FindConsoleVariable(*(FString(TEXT("ok.HScene."))+Name));}
 static FString HSettingsFile(){return FPaths::Combine(FPlatformProcess::UserSettingsDir(),TEXT("OpenKoikatsu"),TEXT("HSettings.ini"));}
 static void HSettingSet(const TCHAR* Name,float Value){if(auto* Var=HSettingVar(Name))Var->Set(*FString::Printf(TEXT("%g"),Value),ECVF_SetByConsole);}
+// The panel's light rows, kept with the settings.
+static const TCHAR* const HLightVars[]={TEXT("LightFrom"),TEXT("LightTint"),TEXT("LightRamp")};
 static void HSettingsLoad(){
     TArray<FString> Lines;FFileHelper::LoadFileToStringArray(Lines,*HSettingsFile());
-    for(const FString& Line:Lines){FString Name,Value;if(Line.Split(TEXT("="),&Name,&Value))for(const FHSetting& S:HSettings)if(S.Var&&Name==S.Var)HSettingSet(S.Var,FCString::Atof(*Value));}
+    for(const FString& Line:Lines){FString Name,Value;if(Line.Split(TEXT("="),&Name,&Value)){for(const FHSetting& S:HSettings)if(S.Var&&Name==S.Var)HSettingSet(S.Var,FCString::Atof(*Value));
+        for(const TCHAR* Light:HLightVars)if(Name==Light)if(auto* Var=HSettingVar(Light))Var->Set(*Value,ECVF_SetByConsole);}}
 }
 static void HSettingsSave(){
     FString Out;for(const FHSetting& S:HSettings)if(S.Var)if(auto* Var=HSettingVar(S.Var))Out+=FString::Printf(TEXT("%s=%g\n"),S.Var,Var->GetFloat());
+    for(const TCHAR* Light:HLightVars)if(auto* Var=HSettingVar(Light))Out+=FString::Printf(TEXT("%s=%s\n"),Light,*Var->GetString());
     FFileHelper::SaveStringToFile(Out,*HSettingsFile());
 }
 void UOKHSettingSlider::Show(){
@@ -398,6 +404,20 @@ TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
             if(Side)HandCombos[Side]->OnSelectionChanged.AddDynamic(this,&UOKHScenePanel::OnHandR);else HandCombos[Side]->OnSelectionChanged.AddDynamic(this,&UOKHScenePanel::OnHandL);
             if(auto* S=R->AddChildToHorizontalBox(HandCombos[Side])){S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));S->SetPadding(FMargin(0,0,6,0));}}
         Box->AddChildToVerticalBox(R)->SetPadding(FMargin(0,2));
+    }
+    {   // Light and shadow (user 2026-11-04): their ramp, where the light comes from, its colour. HG is not here: it starts the map again.
+        Text(11.f,FLinearColor(1.f,.75f,.85f))->SetText(FText::FromString(OKT(TEXT("ui.hscene.light"))));
+        auto Row=[&](int32 I,const TCHAR* Key){UHorizontalBox* R=WidgetTree->ConstructWidget<UHorizontalBox>();
+            auto* L=WidgetTree->ConstructWidget<UTextBlock>();L->SetText(FText::FromString(OKT(Key)));L->SetColorAndOpacity(FSlateColor(FLinearColor(1.f,.85f,.9f)));
+            if(auto* S=R->AddChildToHorizontalBox(L)){S->SetPadding(FMargin(0,0,8,0));S->SetVerticalAlignment(VAlign_Center);}
+            LightCombos[I]=WidgetTree->ConstructWidget<UOKComboBoxString>();if(auto* S=R->AddChildToHorizontalBox(LightCombos[I]))S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+            Box->AddChildToVerticalBox(R)->SetPadding(FMargin(0,2));return LightCombos[I].Get();};
+        UComboBoxString* Style=Row(0,TEXT("ui.hscene.light_style"));Style->AddOption(OKT(TEXT("ui.hscene.light_style_card")));LightRampKeys.Reset();
+        for(const FOKRenderRamp& Ramp:OKRenderRamps()){const FString Id=TEXT("ui.settings.ramp_")+Ramp.Key;const FString Name=OKT(*Id);Style->AddOption(Name==Id?Ramp.Name:Name);LightRampKeys.Add(Ramp.Key);}
+        UComboBoxString* From=Row(1,TEXT("ui.hscene.light_from"));for(const TCHAR* Key:{TEXT("ui.hscene.light_from_camera"),TEXT("ui.hscene.light_from_left"),TEXT("ui.hscene.light_from_right"),TEXT("ui.hscene.light_from_above"),TEXT("ui.hscene.light_from_below"),TEXT("ui.hscene.light_from_behind"),TEXT("ui.hscene.light_from_street")})From->AddOption(OKT(Key));
+        UComboBoxString* Tint=Row(2,TEXT("ui.hscene.light_tint"));for(const TCHAR* Key:{TEXT("ui.hscene.light_tint_white"),TEXT("ui.hscene.light_tint_warm"),TEXT("ui.hscene.light_tint_cold"),TEXT("ui.hscene.light_tint_dusk"),TEXT("ui.hscene.light_tint_night")})Tint->AddOption(OKT(Key));
+        Style->SetSelectedIndex(0);From->SetSelectedIndex(0);Tint->SetSelectedIndex(0);
+        Style->OnSelectionChanged.AddDynamic(this,&UOKHScenePanel::OnLightStyle);From->OnSelectionChanged.AddDynamic(this,&UOKHScenePanel::OnLightFrom);Tint->OnSelectionChanged.AddDynamic(this,&UOKHScenePanel::OnLightTint);
     }
     Actions=WidgetTree->ConstructWidget<UWrapBox>();Actions->SetInnerSlotPadding(FVector2D(6,6));Box->AddChildToVerticalBox(Actions)->SetPadding(FMargin(0,8));
     Hint=Text(12.f,FLinearColor(1.f,.9f,.6f));
@@ -1527,10 +1547,46 @@ void UOKHScenePanel::TickAhegao(){
 // The light comes from the camera at them (user 2026-11-03): in the street their runtime materials light from the
 // street's light (her raised hand fell in its dark band); in the H scene from the camera instead.
 static TAutoConsoleVariable<int32> CVarHCameraLight(TEXT("ok.HScene.CameraLight"),1,TEXT("1: in the H scene their key light comes from the camera; 0: the street's light"));
+// The panel's light rows (user 2026-11-04).
+static TAutoConsoleVariable<int32> CVarHLightFrom(TEXT("ok.HScene.LightFrom"),0,TEXT("Their key light, by the camera: 0 from it, 1 left, 2 right, 3 above, 4 below, 5 behind them"));
+static TAutoConsoleVariable<int32> CVarHLightTint(TEXT("ok.HScene.LightTint"),0,TEXT("The colour of their light: 0 white, 1 warm, 2 cold, 3 dusk, 4 night"));
+static TAutoConsoleVariable<FString> CVarHLightRamp(TEXT("ok.HScene.LightRamp"),TEXT(""),TEXT("Their shadow ramp in the H scene (a key of OKRenderRamps); empty: as they came in"));
+constexpr int32 HLightFromStreet=6;
+void UOKHScenePanel::TickLightChoice(bool bEnd){
+    static const FLinearColor Tints[]={FLinearColor::White,FLinearColor(1.f,.84f,.62f),FLinearColor(.68f,.8f,1.f),FLinearColor(1.f,.58f,.42f),FLinearColor(.3f,.36f,.62f)};
+    const FString Ramp=bEnd?FString():CVarHLightRamp.GetValueOnGameThread();const int32 Tint=bEnd?0:FMath::Clamp(CVarHLightTint.GetValueOnGameThread(),0,int32(UE_ARRAY_COUNT(Tints))-1);
+    auto Show=[](UComboBoxString* Combo,int32 Index){if(Combo&&Combo->GetSelectedIndex()!=Index)Combo->SetSelectedIndex(Index);};
+    Show(LightCombos[0],LightRampKeys.IndexOfByKey(Ramp)+1);Show(LightCombos[1],CVarHCameraLight.GetValueOnGameThread()?FMath::Clamp(CVarHLightFrom.GetValueOnGameThread(),0,HLightFromStreet-1):HLightFromStreet);Show(LightCombos[2],Tint);
+    FString Error;UTexture2D* RampTexture=Ramp.IsEmpty()?nullptr:OKLoadRenderRamp(Ramp,Error);
+    const bool bRampMoved=Ramp!=RampShown,bTintMoved=Tint!=TintShown;RampShown=Ramp;TintShown=Tint;
+    if(bRampMoved&&!RampTexture){for(const auto& Was:RampWas)if(UMaterialInstanceDynamic* M=Was.Key.Get())if(UTexture* Own=Was.Value.Get())M->SetTextureParameterValue(TEXT("_RampG"),Own);RampWas.Reset();}
+    if(bTintMoved&&!Tint){for(const auto& Was:LightColorWas)if(UMaterialInstanceDynamic* M=Was.Key.Get())M->SetVectorParameterValue(TEXT("_LightColor0"),Was.Value);LightColorWas.Reset();}
+    if(!RampTexture&&!Tint)return;
+    // Every tick: a change of clothes brings new materials.
+    for(AKKPreviewActor* A:{Gallery?Gallery->PreviewActor.Get():nullptr,Gallery?Gallery->PartnerActor.Get():nullptr})if(IsValid(A)){
+        TInlineComponentArray<UMeshComponent*> Meshes(A);
+        for(UMeshComponent* Mesh:Meshes)for(int32 MatSlot=0;MatSlot<Mesh->GetNumMaterials();++MatSlot)if(auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(MatSlot))){
+            if(RampTexture){const bool bKnown=RampWas.Contains(M);UTexture* Own=nullptr;if(bKnown||M->GetTextureParameterValue(FHashedMaterialParameterInfo(TEXT("_RampG")),Own)){if(!bKnown)RampWas.Add(M,Own);if(bRampMoved||!bKnown)M->SetTextureParameterValue(TEXT("_RampG"),RampTexture);}}
+            if(Tint){const bool bKnown=LightColorWas.Contains(M);FLinearColor Own;if(bKnown||M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("_LightColor0")),Own)){if(!bKnown)LightColorWas.Add(M,Own);if(bTintMoved||!bKnown)M->SetVectorParameterValue(TEXT("_LightColor0"),Tints[Tint]);}}}}
+}
+void UOKHScenePanel::OnLightStyle(FString,ESelectInfo::Type How){
+    if(How==ESelectInfo::Direct||!LightCombos[0])return;const int32 I=LightCombos[0]->GetSelectedIndex()-1;
+    if(auto* Var=HSettingVar(TEXT("LightRamp")))Var->Set(LightRampKeys.IsValidIndex(I)?*LightRampKeys[I]:TEXT(""),ECVF_SetByConsole);HSettingsSave();
+}
+void UOKHScenePanel::OnLightFrom(FString,ESelectInfo::Type How){
+    if(How==ESelectInfo::Direct||!LightCombos[1])return;const int32 I=LightCombos[1]->GetSelectedIndex();
+    HSettingSet(TEXT("CameraLight"),I==HLightFromStreet?0.f:1.f);if(I!=HLightFromStreet)HSettingSet(TEXT("LightFrom"),I);HSettingsSave();
+    for(UOKHSettingSlider* Slider:SettingSliders)if(Slider)Slider->Show();
+}
+void UOKHScenePanel::OnLightTint(FString,ESelectInfo::Type How){if(How!=ESelectInfo::Direct&&LightCombos[2]){HSettingSet(TEXT("LightTint"),LightCombos[2]->GetSelectedIndex());HSettingsSave();}}
 void UOKHScenePanel::TickCameraLight(bool bEnd){
+    TickLightChoice(bEnd);
     APlayerCameraManager* Camera=GetOwningPlayer()?GetOwningPlayer()->PlayerCameraManager.Get():nullptr;
     const bool bOn=!bEnd&&Camera&&CVarHCameraLight.GetValueOnGameThread()!=0;
-    const FVector ToLight=bOn?-Camera->GetCameraRotation().Vector():FVector::ZeroVector;
+    FVector ToLight=FVector::ZeroVector;
+    if(bOn){const FRotationMatrix View(Camera->GetCameraRotation());const FVector Ahead=View.GetUnitAxis(EAxis::X),Right=View.GetUnitAxis(EAxis::Y),Up=View.GetUnitAxis(EAxis::Z);
+        switch(CVarHLightFrom.GetValueOnGameThread()){case 1:ToLight=-Ahead-Right;break;case 2:ToLight=-Ahead+Right;break;case 3:ToLight=-Ahead*.5f+Up;break;case 4:ToLight=-Ahead*.5f-Up;break;case 5:ToLight=Ahead+Up*.3f;break;default:ToLight=-Ahead;}
+        ToLight=ToLight.GetSafeNormal();}
     // Their runtime materials light by _WorldSpaceLightPos0 (Unity to-light: UE (x,y,z) is Unity (-x,z,y)), the street's
     // light: set from the camera while it moves, each material's own value given back at the end.
     if(bOn){const FLinearColor Unity(-ToLight.X,ToLight.Z,ToLight.Y,0.f);const bool bMoved=!ToLight.Equals(CameraLightShown,1e-4f);CameraLightShown=ToLight;
@@ -1539,7 +1595,7 @@ void UOKHScenePanel::TickCameraLight(bool bEnd){
             for(UMeshComponent* Mesh:Meshes)for(int32 MatSlot=0;MatSlot<Mesh->GetNumMaterials();++MatSlot)if(auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(MatSlot))){
                 const bool bKnown=CameraLightWas.Contains(M);if(!bKnown){FLinearColor Was;if(!M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("_WorldSpaceLightPos0")),Was))continue;CameraLightWas.Add(M,Was);}
                 if(bMoved||!bKnown)M->SetVectorParameterValue(TEXT("_WorldSpaceLightPos0"),Unity);}}}
-    else if(bEnd){for(const auto& Was:CameraLightWas)if(UMaterialInstanceDynamic* M=Was.Key.Get())M->SetVectorParameterValue(TEXT("_WorldSpaceLightPos0"),Was.Value);
+    else if(CameraLightWas.Num()){for(const auto& Was:CameraLightWas)if(UMaterialInstanceDynamic* M=Was.Key.Get())M->SetVectorParameterValue(TEXT("_WorldSpaceLightPos0"),Was.Value);
         CameraLightWas.Reset();CameraLightShown=FVector::ZeroVector;}
     bCameraLit=bOn;
 }

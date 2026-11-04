@@ -229,6 +229,22 @@ void AOKStreetSocialScene::StartControlServer(){
   FString Why;const bool Ok=ProbePress(Label,Why,int32(Nth));OKControlReply(Done,OKControlResult(Ok,Why));
  });
 
+ // {x, y}: a left click at these viewport pixels, for what has no label to press by (a dropdown and its list).
+ Bind(TEXT("/mouse"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
+  auto& S=*State;auto B=OKControlBody(Req);double X=0,Y=0;B->TryGetNumberField(TEXT("x"),X);B->TryGetNumberField(TEXT("y"),Y);
+  UGameViewportClient* Client=GEngine?GEngine->GameViewport.Get():nullptr;const TSharedPtr<SViewport> Widget=Client?Client->GetGameViewportWidget():nullptr;
+  if(!Widget){OKControlReply(Done,OKControlResult(false,TEXT("no viewport")));return;}
+  if(!S.MouseUI){GControlRestoreMouse=true;S.MouseUI=true;ApplyMouseMode(true);}
+  GControlRestoreMouseAt=FPlatformTime::Seconds()+5.0;
+  if(TSharedPtr<SWindow> Win=Client->GetWindow())Win->BringToFront(true);
+  FVector2D Size;Client->GetViewportSize(Size);const FGeometry Geo=Widget->GetCachedGeometry();const FVector2D P=Geo.LocalToAbsolute(FVector2D(X,Y)*Geo.GetLocalSize()/Size);
+  FSlateApplication& App=FSlateApplication::Get();App.SetCursorPos(P);TSet<FKey> Pressed;Pressed.Add(EKeys::LeftMouseButton);
+  App.ProcessMouseMoveEvent(FPointerEvent(App.CursorPointerIndex,P,P,TSet<FKey>(),FKey(),0,FModifierKeysState()));
+  App.ProcessMouseButtonDownEvent(nullptr,FPointerEvent(App.CursorPointerIndex,P,P,Pressed,EKeys::LeftMouseButton,0,FModifierKeysState()));
+  App.ProcessMouseButtonUpEvent(FPointerEvent(App.CursorPointerIndex,P,P,TSet<FKey>(),EKeys::LeftMouseButton,0,FModifierKeysState()));
+  OKControlReply(Done,OKControlResult(true));
+ });
+
  // Cursor mode on/off (what Ctrl or the middle mouse button toggles): off lets WASD and E work again.
  // Development money for testing what needs it (a company, a bankruptcy): through the books like any cash, so the
  // journal stays reconciled; a negative amount takes money away.

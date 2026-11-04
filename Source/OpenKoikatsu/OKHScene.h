@@ -153,6 +153,14 @@ private:
     void TickAhegao();bool bAhegaoPose=false; // her double peace (TickAhegao)
     void TickCameraLight(bool bEnd);bool bCameraLit=false; // their key light from the camera
     TMap<TWeakObjectPtr<class UMaterialInstanceDynamic>,FLinearColor> CameraLightWas;FVector CameraLightShown=FVector::ZeroVector;
+    // The panel's light rows: their shadow ramp and the colour of the light, each material's own given back when they go.
+    void TickLightChoice(bool bEnd);
+    TMap<TWeakObjectPtr<class UMaterialInstanceDynamic>,TWeakObjectPtr<class UTexture>> RampWas;TMap<TWeakObjectPtr<class UMaterialInstanceDynamic>,FLinearColor> LightColorWas;
+    FString RampShown;int32 TintShown=0;TArray<FString> LightRampKeys;
+    UPROPERTY() TObjectPtr<class UComboBoxString> LightCombos[3];
+    UFUNCTION() void OnLightStyle(FString Option,ESelectInfo::Type How);
+    UFUNCTION() void OnLightFrom(FString Option,ESelectInfo::Type How);
+    UFUNCTION() void OnLightTint(FString Option,ESelectInfo::Type How);
     TWeakObjectPtr<AKKPreviewActor> AheGazeFor;float AheGazeSet=0.f;int32 AheMouthSet=INDEX_NONE;bool bAheManualWas=false; // her rolled-up gaze given (TickAhegao)
     bool bAheEyeLook=false,bAheEyeFollow=false;int32 AheEyePattern=1;FVector AheEyeTarget=FVector::ZeroVector; // her look, given back after it
     double FlinchUntil=0.,FlinchNext=0.;FString FlinchBone;FVector FlinchTurn=FVector::ZeroVector;
