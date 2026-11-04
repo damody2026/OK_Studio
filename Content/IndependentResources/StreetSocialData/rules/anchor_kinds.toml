@@ -1,0 +1,149 @@
+# 錨點種類（Tools/ok-rules/src/anchors.rs）：city_anchors.json 每個錨點的 kinds 來自這張表。
+# [kinds]：name 中文名，people 這個種類的人數（2 表示有 slots 時至少兩個位置）。
+# [acts]：acts.toml 的 id 能用哪些種類；[h]：h_poses.json 的類別編號能用哪些種類。anchor_for_act 查這兩張表。
+# 規格見 Docs/STREET_CITY_GAME_NEEDS_INVENTORY_20261103.md 第 10 節。
+
+[kinds]
+seat = { name = "單人座", people = 1 }
+seat_pair = { name = "兩人並坐", people = 2 }
+seat_face = { name = "隔桌對坐", people = 2 }
+seat_ground = { name = "席地而坐", people = 2 }
+lie = { name = "單人躺下", people = 1 }
+lie_pair = { name = "兩人並躺", people = 2 }
+lean = { name = "靠牆靠欄杆", people = 1 }
+stand_pair = { name = "兩人並肩站", people = 2 }
+queue = { name = "排隊", people = 1 }
+meet = { name = "約會碰面", people = 2 }
+goodbye = { name = "門口道別", people = 2 }
+stroll = { name = "牽手散步", people = 2 }
+confess = { name = "告白", people = 2 }
+kiss = { name = "接吻擁抱", people = 2 }
+wall_pin = { name = "壁咚", people = 2 }
+lap_pillow = { name = "膝枕午睡", people = 2 }
+feed = { name = "互相餵食", people = 2 }
+picnic = { name = "野餐", people = 2 }
+view_sunset = { name = "看夕陽", people = 2 }
+view_night = { name = "看夜景", people = 2 }
+stargaze = { name = "看星星", people = 2 }
+fireworks = { name = "看煙火", people = 2 }
+blossom = { name = "賞櫻賞楓", people = 2 }
+shelter = { name = "躲雨", people = 2 }
+selfie = { name = "合照自拍", people = 2 }
+ride_pair = { name = "雙人共乘", people = 2 }
+gift = { name = "送禮求婚", people = 2 }
+wedding = { name = "婚紗誓言", people = 2 }
+entry = { name = "玄關", people = 1 }
+cook = { name = "做飯", people = 1 }
+dining = { name = "家裡餐桌", people = 2 }
+tv_sofa = { name = "沙發看電視", people = 2 }
+desk_study = { name = "書桌", people = 1 }
+vanity = { name = "梳妝", people = 1 }
+bath = { name = "浴缸", people = 1 }
+shower = { name = "淋浴", people = 1 }
+toilet = { name = "馬桶", people = 1 }
+laundry = { name = "洗衣曬衣", people = 1 }
+balcony = { name = "陽台", people = 1 }
+closet = { name = "在家選衣服", people = 1 }
+browse = { name = "挑衣服", people = 2 }
+fitting = { name = "試衣間", people = 2 }
+fitting_wait = { name = "等人試衣", people = 1 }
+fitting_show = { name = "換好給他看", people = 2 }
+try_shoes = { name = "試穿鞋子", people = 1 }
+shoe_rack = { name = "挑鞋子", people = 2 }
+checkout = { name = "結帳", people = 1 }
+changing = { name = "換裝", people = 1 }
+shoe_change = { name = "脫鞋換鞋", people = 1 }
+shoe_locker = { name = "鞋櫃", people = 1 }
+empty_class = { name = "空教室", people = 2 }
+rooftop_lunch = { name = "屋頂吃便當", people = 2 }
+stair_landing = { name = "樓梯間", people = 2 }
+storage_room = { name = "體育倉庫", people = 2 }
+infirmary_bed = { name = "保健室床", people = 1 }
+music_piano = { name = "音樂教室鋼琴", people = 1 }
+bus_stop = { name = "公車站", people = 1 }
+station = { name = "車站", people = 1 }
+bike_rack = { name = "單車架", people = 1 }
+mailbox = { name = "信箱", people = 1 }
+trash = { name = "垃圾桶", people = 1 }
+water_fountain = { name = "飲水機", people = 1 }
+notice_board = { name = "公告欄", people = 1 }
+staff_room = { name = "員工休息室", people = 1 }
+ultrasound = { name = "超音波", people = 1 }
+crib = { name = "嬰兒床", people = 1 }
+h_floor = { name = "地板站姿", people = 2 }
+h_chair = { name = "椅子", people = 2 }
+h_bench = { name = "長椅", people = 2 }
+h_sofa = { name = "沙發", people = 2 }
+h_desk = { name = "書桌桌角", people = 2 }
+h_box = { name = "跳箱", people = 2 }
+h_pingpong = { name = "桌球桌", people = 2 }
+h_wall = { name = "靠牆", people = 2 }
+h_bookshelf = { name = "書架", people = 2 }
+h_fence = { name = "圍欄", people = 2 }
+h_net = { name = "球網", people = 2 }
+h_pool = { name = "泳池邊", people = 2 }
+h_boat = { name = "香蕉船", people = 2 }
+h_toilet = { name = "廁所", people = 2 }
+h_shower = { name = "淋浴", people = 2 }
+h_group = { name = "三人", people = 3 }
+
+[acts]
+hold_hands = ["stroll"]
+head_pat = ["seat_pair", "stand_pair", "stroll"]
+feed = ["feed", "seat_face", "seat_pair", "dining"]
+share_food = ["feed", "seat_face", "seat_pair", "dining"]
+hug = ["kiss"]
+kiss = ["kiss"]
+lap_pillow = ["lap_pillow", "seat_pair", "tv_sofa"]
+lie_down = ["lie", "lie_pair", "seat_ground"]
+eat = ["seat_face", "dining", "seat", "seat_pair"]
+phone_call = ["balcony", "lean", "seat"]
+confession = ["confess"]
+breakup = ["confess"]
+gift = ["gift", "meet"]
+date = ["meet"]
+outing = ["meet"]
+nap_together = ["lap_pillow", "lie_pair"]
+sleep_together = ["lie_pair"]
+intimacy = ["h_floor", "h_chair", "h_bench", "h_sofa", "h_desk", "h_wall"]
+
+[h]
+0 = ["h_floor"]
+1 = ["h_floor"]
+2 = ["h_chair"]
+3 = ["h_chair"]
+4 = ["h_chair"]
+5 = ["h_chair"]
+6 = ["h_desk"]
+7 = ["h_desk"]
+8 = ["h_wall"]
+9 = ["h_floor"]
+12 = ["h_bench"]
+1002 = ["h_bookshelf"]
+1003 = ["h_chair"]
+1004 = ["h_pool"]
+1006 = ["h_fence"]
+1008 = ["h_floor"]
+1009 = ["h_box"]
+1010 = ["h_desk"]
+1011 = ["h_chair"]
+1012 = ["h_floor"]
+1014 = ["h_floor"]
+1015 = ["h_net"]
+1100 = ["h_floor"]
+1101 = ["h_chair"]
+1102 = ["h_floor"]
+1200 = ["h_chair"]
+1201 = ["h_sofa"]
+1300 = ["h_net"]
+1301 = ["h_pingpong"]
+1302 = ["h_wall"]
+1303 = ["h_boat"]
+1304 = ["h_wall"]
+1305 = ["h_desk"]
+2000 = ["h_toilet"]
+2001 = ["h_shower"]
+2003 = ["h_toilet"]
+2004 = ["h_shower"]
+3000 = ["h_group"]
+3001 = ["h_group"]

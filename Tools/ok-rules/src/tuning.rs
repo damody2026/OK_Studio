@@ -20,9 +20,11 @@ const ACTS_BUILTIN: &str = include_str!("../../../Content/IndependentResources/S
 const EVENTS_BUILTIN: &str = include_str!("../../../Content/IndependentResources/StreetSocialData/rules/events.toml");
 const MOTIONS_BUILTIN: &str = include_str!("../../../Content/IndependentResources/StreetSocialData/rules/motions.toml");
 const ACTIVITIES_BUILTIN: &str = include_str!("../../../Content/IndependentResources/StreetSocialData/rules/activities.toml");
+const ANCHOR_KINDS_BUILTIN: &str = include_str!("../../../Content/IndependentResources/StreetSocialData/rules/anchor_kinds.toml");
 // The property market lives beside the rules folder (it is game data the scene also reads for its displays).
 const CATALOG_BUILTIN: &str = include_str!("../../../Content/IndependentResources/StreetSocialData/catalog.json");
 const PROPERTY_BUILTIN: &str = include_str!("../../../Content/IndependentResources/StreetSocialData/property.json");
+const CITY_ANCHORS_BUILTIN: &str = include_str!("../../../Content/IndependentResources/StreetSocialData/city_anchors.json");
 
 pub struct Tuning {
     pub bonds: BondTuning,
@@ -35,6 +37,8 @@ pub struct Tuning {
     pub events: EventsTuning,
     /// What the heroines' bodies do with the game's animations (motions.toml).
     pub motions: crate::motions::MotionsTuning,
+    /// Where people stand, sit and lie in the city, indexed once (anchors.rs).
+    pub anchors: crate::anchors::AnchorIndex,
     /// The base data in yuan (Regions/CN) and, per region, the same converted to its money (region.rs).
     pub property: PropertyData,
     pub catalog: Catalog,
@@ -62,6 +66,7 @@ impl Tuning {
         let activities: ActivitiesTuning = load_into(dir, "activities", ACTIVITIES_BUILTIN, &mut sources)?;
         let events: EventsTuning = load_into(dir, "events", EVENTS_BUILTIN, &mut sources)?;
         let motions: crate::motions::MotionsTuning = load_into(dir, "motions", MOTIONS_BUILTIN, &mut sources)?;
+        let anchors = crate::anchors::AnchorIndex::new(load_data(dir, "city_anchors.json", CITY_ANCHORS_BUILTIN, &mut sources)?, load_into(dir, "anchor_kinds", ANCHOR_KINDS_BUILTIN, &mut sources)?)?;
         let property_json = load_property(dir, &mut sources)?;
         let property = PropertyData::parse(&property_json);
         let catalog = Catalog::parse(&load_data(dir, "catalog.json", CATALOG_BUILTIN, &mut sources)?);
@@ -105,7 +110,7 @@ impl Tuning {
             }
             bonds_by_lang.insert(lang.to_string(), b);
         }
-        Ok(Tuning { bonds, needs, places, acts, activities, events, motions, activities_by_lang, property, catalog, regions, properties, catalogs, places_by_lang, property_jsons, acts_by_lang, bonds_by_lang, texts, sources })
+        Ok(Tuning { bonds, needs, places, acts, activities, events, motions, anchors, activities_by_lang, property, catalog, regions, properties, catalogs, places_by_lang, property_jsons, acts_by_lang, bonds_by_lang, texts, sources })
     }
 
     /// The catalog / property market in a region's money (the request's region: locale::region).

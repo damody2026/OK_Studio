@@ -2,6 +2,7 @@
 //! The rules keep no game state: every call carries the facts it needs, so the DLL can be swapped while the game runs.
 pub mod academics;
 pub mod activities;
+pub mod anchors;
 pub mod motions;
 pub mod bank;
 pub mod bias;
@@ -164,6 +165,7 @@ impl Rules {
             }
             _ => {
                 let routed = needs::eval(&tuning.needs, &kind, &request)
+                    .or_else(|| anchors::eval(&tuning.anchors, &kind, &request))
                     .or_else(|| places::eval(tuning.places_in(locale::lang(&request)), &kind, &request))
                     .or_else(|| heroine::eval(tuning.acts_in(locale::lang(&request)), tuning.places_in(locale::lang(&request)), &kind, &request))
                     .or_else(|| invite::eval(tuning.places_in(locale::lang(&request)), &kind, &request))

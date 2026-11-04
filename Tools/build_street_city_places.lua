@@ -904,8 +904,12 @@ do
       g.anchors[#g.anchors + 1] = A(it.anchor, it.pos, it.yaw, it.actor); g.furnished = true
     end
   end
+  -- the department store's zones (c-conquest 10.4) keep the store's own anchor names free: women_rack, shoes_try_shoes, ...
+  for _, k in ipairs(keys) do local it = newitems[k]; local zone = it.place:match('^dept_(%a+)$')
+    if zone and it.anchor ~= 'door' and byid.department then local an = byid.department.anchors; an[#an + 1] = A(zone .. '_' .. it.anchor, it.pos, it.yaw, it.actor) end
+  end
   -- every game place: outdoor when it has no building (park, playground, shrine, campus gate, beach); the sports field too
-  for _, g in ipairs(GAME_PLACES) do if g.outdoor == nil then g.outdoor = g.building == nil end end
+  for _, g in ipairs(GAME_PLACES) do if g.outdoor == nil then g.outdoor = type(g.building) ~= 'string' or g.id == 'rooftop' end; if g.furnished == false and #g.anchors > 0 then g.furnished = true end end
   table.sort(GAME_PLACES, function(a, b) return a.id < b.id end)
 end
 -- kitchens and baths in the homes (c-conquest 8.2 住家): every lockable room gets kitchen / stove / bath anchors from
@@ -920,6 +924,68 @@ do
       end
     end
   end
+end
+-- every seat in the city (c-conquest 11-04): places-v1/seats-fit.json from Tools/street_city_seats_fit_payload.lua, one row
+-- per person: pos = the foot point on the floor, seat = the hips. A seat in a game place becomes seat, seat2, ...; an
+-- existing seat-like anchor on the same seat keeps its name and pos and gains seat_pos. Everything else goes to public_seats.
+local PUBLIC_SEATS, SEAT_COUNT = {}, {}
+if exists(root .. 'places-v1/seats-fit.json') then
+  local function box(r) if r.min then return r.min, r.max end
+    if r.center then local c, s = r.center, r.size; return { c[1] - s[1] / 2, c[2] - s[2] / 2, c[3] - s[3] / 2 }, { c[1] + s[1] / 2, c[2] + s[2] / 2, c[3] + s[3] / 2 } end end
+  local B = {}
+  for _, g in ipairs(GAME_PLACES) do
+    for _, r in ipairs(g.rooms or {}) do local lo, hi = box(r)
+      if lo then B[#B + 1] = { g = g, lo = lo, hi = hi, v = (hi[1] - lo[1]) * (hi[2] - lo[2]) } end end
+  end
+  table.sort(B, function(a, b) return a.v < b.v end)
+  local function owner(p)
+    for _, b in ipairs(B) do if p[1] >= b.lo[1] and p[1] <= b.hi[1] and p[2] >= b.lo[2] and p[2] <= b.hi[2] and p[3] >= b.lo[3] - 30 and p[3] <= b.hi[3] + 30 then return b.g end end
+    for _, g in ipairs(GAME_PLACES) do if g.outdoor and not (g.rooms and #g.rooms > 0) and g.door then
+      if math.sqrt((g.door[1] - p[1]) ^ 2 + (g.door[2] - p[2]) ^ 2) < 4000 then return g end end end
+  end
+  local SEATLIKE = { 'seat', 'bench', 'chair', 'sofa', 'stool', 'lounge' }
+  local function seatlike(n) for _, s in ipairs(SEATLIKE) do if n:find(s, 1, true) then return true end end end
+  local used = {}
+  local function wrap(v) v = r1(v); while v > 180 do v = v - 360 end; while v <= -180 do v = v + 360 end; return v end
+  -- two people on one object: neighbours on a bench or sofa, opposite sides of a table
+  local rows = load('places-v1/seats-fit.json').rows
+  local bygrp = {}; for _, r in ipairs(rows) do bygrp[r.grp] = bygrp[r.grp] or {}; table.insert(bygrp[r.grp], r) end
+  for _, list in pairs(bygrp) do
+    local across = list[1].kind == 'picnic_table' or list[1].kind == 'cafe_set'
+    for i, r in ipairs(list) do
+      if not r.mate then
+        for k = i + 1, #list do local o = list[k]
+          local d = math.abs(wrap(r.face - o.face))
+          if not o.mate and ((across and d > 120) or (not across and d < 45)) then r.pair, o.mate = o, r; r.mate = o; break end
+        end
+      end
+    end
+  end
+  for _, row in ipairs(rows) do
+    local yaw = wrap(row.face - 90)
+    local slots = row.pair and { { pos = row.pos, seat_pos = row.seat, yaw = yaw }, { pos = row.pair.pos, seat_pos = row.pair.seat, yaw = wrap(row.pair.face - 90) } } or nil
+    local g = owner(row.pos)
+    if g then
+      SEAT_COUNT[g.id] = (SEAT_COUNT[g.id] or 0) + 1
+      local same
+      for _, a in ipairs(g.anchors) do if seatlike(a.name) and not used[a] and math.abs(a.pos[1] - row.seat[1]) < 45 and math.abs(a.pos[2] - row.seat[2]) < 45 and (a.pos[3] < 100 or math.abs(a.pos[3] - row.seat[3]) < 120) then same = a; break end end
+      -- some older anchors never got a height (z 0): the measured foot point replaces theirs
+      if same and same.pos[3] < 100 then same.pos = row.pos end
+      if same then same.seat_pos, same.yaw = row.seat, yaw; same.seat_kind = row.kind; same.pair = slots; used[same] = true
+      else
+        local n = 1; local have = {}; for _, a in ipairs(g.anchors) do have[a.name] = true end
+        g.seat_next = g.seat_next or 1; n = g.seat_next
+        while have[n == 1 and 'seat' or 'seat' .. n] do n = n + 1 end
+        g.seat_next = n + 1
+        local a = A(n == 1 and 'seat' or 'seat' .. n, row.pos, yaw, row.src); a.seat_pos = row.seat; a.seat_kind = row.kind; a.pair = slots; g.anchors[#g.anchors + 1] = a; used[a] = true
+      end
+    else
+      PUBLIC_SEATS[#PUBLIC_SEATS + 1] = { name = 'seat' .. (#PUBLIC_SEATS + 1), position = row.pos, seat_pos = row.seat, yaw = yaw, kind = row.kind, area = type(row.a) == 'number' and area[row.a + 1] and area[row.a + 1].id or nil, fit = row.fit, pair = slots }
+    end
+  end
+  for _, g in ipairs(GAME_PLACES) do g.seat_next = nil end
+  local l = {}; for k, v in pairs(SEAT_COUNT) do l[#l + 1] = k .. '=' .. v end; table.sort(l)
+  print('seats in game places', table.concat(l, ' ')); print('public seats', #PUBLIC_SEATS)
 end
 local OFFICE_UNITS = {}
 for unit, rid in pairs({ dept_office = 'o01-0201', hotel_business = 'h1-0107', lodge_office = 'o01-0102', school_club = 'sc-0202' }) do
@@ -953,8 +1019,88 @@ for _, p in ipairs(places) do
     dorm_rooms[#dorm_rooms + 1] = { place = p.id, room = p.room_id or p.id, floor = p.floor or (mrooms[(p.room_id or ''):upper()] or {}).floor, beds = beds, showers = showers, door = p.door }
   end
 end
+-- 6. StreetSocialData/city_anchors.json for the rules' anchor queries (Tools/ok-rules/src/anchors.rs): every anchor of the
+-- game places, the rooms and the public seats, with its kinds and where it is. Doc section 10.2 lists the fields.
+do
+  local K = dofile('Tools/street_city_anchor_kinds.lua')
+  local roomsa = {}; for _, a in ipairs(area) do if a.kind == 'room' and a.min and a.max then roomsa[#roomsa + 1] = a end end
+  local function roomof(p)
+    for _, a in ipairs(roomsa) do
+      if p[1] >= a.min[1] and p[1] <= a.max[1] and p[2] >= a.min[2] and p[2] <= a.max[2] and p[3] >= a.min[3] - 30 and p[3] <= a.max[3] + 30 then return a end
+    end
+  end
+  local rows, ids = {}, {}
+  local function emit(place, a, privacy, outdoor, building)
+    if type(a.pos) ~= 'table' then return end
+    local name = a.name; local n = 2
+    while ids[place .. '.' .. name] do name = a.name .. '__' .. n; n = n + 1 end
+    ids[place .. '.' .. name] = true
+    local kinds, tags = K.classify(a, { privacy = privacy, outdoor = outdoor, place = place })
+    -- a fitting room: first inside the curtain (the anchor), second just outside it, looking in
+    if K.base(a.name):match('fitting$') and not a.slots then
+      local f = math.rad((a.yaw or 0) + 90); local q = { r1(a.pos[1] - math.cos(f) * 120), r1(a.pos[2] - math.sin(f) * 120), a.pos[3] }
+      a.slots = { { pos = a.pos, yaw = a.yaw or 0 }, { pos = q, yaw = r1((a.yaw or 0) + 180) } }
+    end
+    for _, t in ipairs(a.tags or {}) do tags[#tags + 1] = t end
+    for _, k in ipairs(a.kinds or {}) do local dup; for _, q in ipairs(kinds) do dup = dup or q == k end; if not dup then kinds[#kinds + 1] = k end end
+    local r = not outdoor and roomof(a.pos) or nil
+    rows[#rows + 1] = { id = place .. '.' .. name, name = name, place = place, building = (type(building) == 'string' and building) or (r and r.building) or nil, room = r and r.id or nil,
+      floor = r and r.floor or nil, pos = a.pos, seat_pos = a.seat_pos, yaw = a.yaw or 0, kinds = kinds, slots = a.pair or a.slots, privacy = a.privacy or privacy, outdoor = outdoor, tags = #tags > 0 and tags or nil }
+  end
+  for _, g in ipairs(GAME_PLACES) do
+    local outdoor = type(g.building) ~= 'string' and not g.indoor
+    for _, a in ipairs(g.anchors or {}) do emit(g.id, a, g.privacy or 0, outdoor, g.building) end
+  end
+  local gid = {}; for _, g in ipairs(GAME_PLACES) do gid[g.id] = true end
+  for _, p in ipairs(places) do
+    if not gid[p.id] then for _, a in ipairs(p.anchors or {}) do emit(p.id, a, p.privacy or 0, type(p.building) ~= 'string', p.building) end end
+  end
+  -- a bench among the groves is out of sight: the quiet ones a couple can use
+  local groves = {}; for _, a in ipairs(area) do if a.kind == 'place' and a.type == 'grove' then groves[#groves + 1] = a.door end end
+  local function secluded(p) for _, g in ipairs(groves) do if math.abs(g[1] - p[1]) < 3000 and math.abs(g[2] - p[2]) < 3000 then return true end end end
+  for _, s in ipairs(PUBLIC_SEATS) do
+    emit('public', { name = s.name, pos = s.position, seat_pos = s.seat_pos, yaw = s.yaw, seat_kind = s.kind, pair = s.pair }, (s.kind == 'bench' and s.area == nil and secluded(s.position)) and 1 or 0, (s.area == nil), nil)
+  end
+  local function bcentre(b) local q = bfl[b]; return q and { (q[1] + q[4]) / 2, (q[2] + q[5]) / 2, q[3] } or nil end
+  local fit = exists(root .. 'places-v1/anchor-fit.json') and load('places-v1/anchor-fit.json').rows or nil
+  for _, r in ipairs(dofile('Tools/street_city_new_anchors.lua')({ game_places = GAME_PLACES, props = kept, area = area, entry = entry, bcentre = bcentre, fit = fit, items = newitems })) do
+    local outdoor = r.outdoor; if outdoor == nil then outdoor = true end
+    emit(r.place, { name = r.name, pos = { r1(r.pos[1]), r1(r.pos[2]), r1(r.pos[3]) }, yaw = r1(r.yaw), seat_pos = r.seat_pos, kinds = r.kinds, tags = r.tags, slots = r.slots, privacy = r.privacy }, r.privacy or 0, outdoor, r.building)
+  end
+  table.sort(rows, function(a, b) return a.id < b.id end)
+  -- every place to sit has hips (c-conquest 10.2): the nearest measured seat of the same floor, else the usual chair height
+  do
+    local SIT = { seat = true, seat_pair = true, seat_face = true, fitting_wait = true, try_shoes = true }
+    local grid = {}; local function cell(x, y) return math.floor(x / 200) .. ',' .. math.floor(y / 200) end
+    if exists(root .. 'places-v1/seats-fit.json') then
+      for _, s in ipairs(load('places-v1/seats-fit.json').rows) do local k = cell(s.seat[1], s.seat[2]); grid[k] = grid[k] or {}; table.insert(grid[k], s) end
+    end
+    local function near(p)
+      local best, bd = nil, 160 * 160
+      local cx, cy = math.floor(p[1] / 200), math.floor(p[2] / 200)
+      for i = cx - 1, cx + 1 do for j = cy - 1, cy + 1 do for _, s in ipairs(grid[i .. ',' .. j] or {}) do
+        local d = (s.seat[1] - p[1]) ^ 2 + (s.seat[2] - p[2]) ^ 2
+        if d < bd and math.abs(s.seat[3] - p[3]) < 150 then best, bd = s, d end
+      end end end
+      return best
+    end
+    for _, r in ipairs(rows) do
+      local sit = false; for _, k in ipairs(r.kinds or {}) do if SIT[k] then sit = true end end
+      if sit and not r.seat_pos then
+        local has = false; for _, q in ipairs(r.slots or {}) do if q.seat_pos then has = true end end
+        if not has then local s = near(r.pos); r.seat_pos = s and s.seat or { r.pos[1], r.pos[2], r.pos[3] + 45 } end
+      end
+    end
+  end
+  local f = assert(io.open('Content/IndependentResources/StreetSocialData/city_anchors.json', 'wb'))
+  f:write(json.encode({ schema = 1, map_sha256 = actors.map_sha256, frame = 'UE cm, +X north, +Y east; a character on an anchor faces yaw + 90', anchors = rows })); f:close()
+  local c = {}; for _, r in ipairs(rows) do for _, k in ipairs(r.kinds) do c[k] = (c[k] or 0) + 1 end end
+  local l = {}; for k, v in pairs(c) do l[#l + 1] = k .. '=' .. v end; table.sort(l)
+  print('city_anchors', #rows, table.concat(l, ' '))
+end
+for _, s in ipairs(PUBLIC_SEATS) do s.pair = nil end
 local out = assert(io.open(root .. 'places-v1/places.json', 'wb'))
-out:write(json.encode({ schema = 1, map_sha256 = actors.map_sha256, frame = 'UE cm, +X north, +Y east; anchor yaw: character faces yaw+90', mirrors_from = latest, places = places, game_places = GAME_PLACES, girls_dorm_rooms = dorm_rooms, lots = LOTS, office_units = OFFICE_UNITS }))
+out:write(json.encode({ schema = 1, map_sha256 = actors.map_sha256, frame = 'UE cm, +X north, +Y east; anchor yaw: character faces yaw+90', mirrors_from = latest, places = places, game_places = GAME_PLACES, girls_dorm_rooms = dorm_rooms, lots = LOTS, office_units = OFFICE_UNITS, public_seats = PUBLIC_SEATS }))
 out:close()
 local count = {}; for _, p in ipairs(places) do count[p.kind] = (count[p.kind] or 0) + 1 end
 for k, v in pairs(count) do print(k, v) end
