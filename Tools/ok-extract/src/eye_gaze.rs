@@ -76,6 +76,7 @@ mod tests {
         assert_eq!(draw.expression_uv([f32::NAN,0.]),None);draw.kind=0;assert_eq!(draw.expression_uv(raw),None);
     }
     #[test]
+    #[ignore = "needs Saved/Tests/EyeGaze284: tables a game probe writes, kept nowhere"]
     fn native_eye_material_transforms() {
         let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Saved/Tests/EyeGaze284");
         let mut count=0;

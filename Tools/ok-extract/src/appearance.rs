@@ -466,9 +466,10 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
 
 #[cfg(test)]mod tests{
  use super::*;
+ fn c001()->std::path::PathBuf{Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Content/CharacterCards/CrowdAPNG/C001.png")}
  #[test]
  fn head_texture_commit_preserves_live_state_and_rejects_geometry(){
-  let path=Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C001.png");if !path.ok_exists(){return;}
+  let path=c001();let path=path.as_path();if !path.ok_exists(){return;}
   let mut source=crate::oklib::open_test_card(path,0).unwrap();
   let mut live=crate::session::OkSession::from_cache_bytes(&source.to_cache_bytes().unwrap()).unwrap();
   let index=source.parts.iter().position(|p|p.name.to_ascii_lowercase().contains("mayuge")).unwrap();
@@ -483,7 +484,7 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
  }
  #[test]
  fn head_texture_rejects_transparency_change_on_opaque_main_alpha(){
-  let path=Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C001.png");
+  let path=c001();let path=path.as_path();
   let mut live=crate::oklib::open_test_card(path,0).unwrap();
   let index=live.parts.iter().position(|p|p.role=="head"&&p.shader_kind==11).unwrap();
   let opaque=crate::unity::solid_png([1.;4],1,1).unwrap();
@@ -505,7 +506,7 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
  #[ignore="game oracle: reads the original KKS installation (set OK_TEST_GAME_ROOT)"]
  fn restoring_legacy_appearance_sources_preserves_current_editor_modifiers(){
   let root=&crate::test_support::game_path("");
-  let path=Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C001.png");if !root.ok_exists()||!path.ok_exists(){return;}
+  let path=c001();let path=path.as_path();if !root.ok_exists()||!path.ok_exists(){return;}
   let raw=crate::gamefs::read(path).unwrap();let before=blocks_from_card(&raw).unwrap();
   let current=crate::editor_mods::decode(before.get("KKEx").map(Vec::as_slice).unwrap_or(&[])).unwrap();
   let restored=original_metadata(root,Path::new("C:/portable/OpenKoikatsu/Saved/AppearanceEditor/cache"),&raw).unwrap().unwrap();
@@ -574,7 +575,7 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
  }
  #[test]
  fn eye_gradient_lookup_does_not_use_the_other_eyes_mod(){
-  let path=Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C001.png");if !path.ok_exists(){return;}
+  let path=c001();let path=path.as_path();if !path.ok_exists(){return;}
   let mut card=crate::card::parse_card_bytes_mode(&crate::gamefs::read(path).unwrap(),0,false).unwrap();
   card.resolves=vec![crate::card::ResolveInfo{mod_id:"other.eye.mod".into(),slot:999,local_slot:1,property:"ChaFileFace.PupilGradient2".into(),category_no:409,name:"right only".into()}];
   let mut vanilla=crate::list::ChaListCatalog::default();vanilla.insert_all(vec![crate::list::ListEntry{category_no:409,id:1,name:"vanilla left".into(),..Default::default()}]);
@@ -583,7 +584,7 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
  }
  #[test]
  fn every_image_selector_patches_and_resets_its_own_field(){
-  let path=Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C001.png");
+  let path=c001();let path=path.as_path();
   if !path.ok_exists(){return;}
   let original=crate::gamefs::read(path).unwrap();let mut failures=Vec::new();let mut checked=0;
   for t in targets(){

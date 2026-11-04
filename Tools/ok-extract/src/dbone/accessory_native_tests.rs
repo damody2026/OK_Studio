@@ -163,6 +163,9 @@ fn attached_ancestry_preserves_shear_and_particle_history() {
     exact.step(1./60.);assert!((exact.chains[0].particles[0].pos[0]-(-2f32.sqrt()+0.2)).abs()<1e-6);
     assert_eq!(source.rest,vec![ident();2],"attachment ancestry must not rewrite mesh binds/rest");
     let mut oracle=exact.clone();let mut deferred=exact.clone();
+    // Tfs is copied on write and the two clones above share it: exact's first write makes its own, and from then on
+    // no frame may allocate a name.
+    let _=&mut *exact.skel.tfs;
     let names:Vec<_>=exact.attachment_ids.iter().map(|id|exact.skel.tfs[id].name.as_ptr()).collect();
     for frame in 0..60 {
         chain[0].pos[0]=frame as f32*0.003;chain[1].sibling_index=Some(frame);
