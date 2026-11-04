@@ -1319,7 +1319,8 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
             His+=Both*CVarHHisRate.GetValueOnGameThread();Her+=Both*CVarHHerRate.GetValueOnGameThread();
             if(bLockHer)Her=FMath::Min(Her,95.f);if(bLockHis)His=FMath::Min(His,95.f);
             // Locked, he does not come with her (as she does not come with him locked: the line below).
-            if(Her>=100.f)Finish(His>=70.f&&!bLockHis?(Strong>1.f?TEXT("sameS"):TEXT("sameW")):(Strong>1.f?TEXT("orgS"):TEXT("orgW")));
+            // Nor without a condom in her vagina: he rises as fast as she does, so that would be every time and he never chose.
+            if(Her>=100.f)Finish(His>=70.f&&!bLockHis&&(bCondom||bAnalPlay)?(Strong>1.f?TEXT("sameS"):TEXT("sameW")):(Strong>1.f?TEXT("orgS"):TEXT("orgW")));
             else if(His>=100.f)Finish(!bCondom?TEXT("outside"):Her>=70.f&&!bLockHer?(Strong>1.f?TEXT("sameS"):TEXT("sameW")):TEXT("inside"));}
     }else if(Queue.IsEmpty()&&Base==TEXT("OLoop")&&Mode==1){His=FMath::Min(bLockHis?95.f:100.f,His+Delta*3.f);if(His>=100.f)Finish(Poses.IsValidIndex(ActivePose)&&FinishInMouth()?TEXT("inside"):TEXT("outside"));}
     else if(Queue.IsEmpty()){Her=FMath::Max(0.f,Her-Delta*3.f);His=FMath::Max(0.f,His-Delta*3.f);}

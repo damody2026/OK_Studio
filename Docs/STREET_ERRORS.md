@@ -1971,6 +1971,8 @@
 - 2026-11-04 e-galgame：測試時用 `game_click` 會把自己的遊戲視窗拉到最前面（`Win->BringToFront`），使用者正在玩時點擊可能落到測試視窗。使用者在玩時不要用 `game_click`，改用 `/hscene` 的 kind 或截圖。
 - 2026-11-04 e-galgame：舌頭變白先往材質想，其實是流口水的白色塗料蓋在舌頭上：不流口水時是紅的。現在 H 的體液不畫在舌頭上（`bSkipTongue`，`ok.HScene.FluidTongue` 預設 0），流 40 秒後舌頭還是紅的（`Play-20261104T223655`）。
 - 2026-11-05 e-galgame：頭看鏡頭、眼睛追鏡頭兩個按鈕加在愛撫分支 `return` 之後，進場景的愛撫畫面看不到，只有插入才出現。之前用 kind 直接呼叫沒發現。改到 `BuildActions` 分支之前。
+- 2026-11-05 e-galgame：上一輪把口水看不到判斷成「直直往下掉碰不到臉」和「筆刷 0.4 太小」，兩個都只對一半：0.4 那次是第一滴從裡面打到臉，膜塗到皮膚內側。只跑一次就下結論，沒比對 `Paint contact` 的 `side`。
+- 2026-11-05 e-galgame：`game_launch` 不指定 `-Executable` 會跑最新的 stage，別的 session 打包的也算，一輪測試因此跑在 `EForkGaps3` 上。要測指定版本一律帶 `-Executable`，並用行程路徑確認。
 - 2026-11-05 e-galgame：建置結果看錯：用 Git Bash 的 `cmd //c` 呼叫 `Build.bat` 只開了 cmd 就結束，回傳 0，差點當成連結成功。發現是因為 log 裡沒有 `Result: Succeeded`。改用 PowerShell，並一律看 log 的 `Result:`。
 - 2026-11-05 e-galgame：`/activity` 第一版傳 `at_end=true`，規則在活動結束時不擋任何條件，所以懷孕的她全部回可以，差點記成規則壞了。改成直接問 `activity_check`。
 - 2026-11-05 e-galgame：測試把值留在共用的 `%LOCALAPPDATA%\OpenKoikatsu\HSettings.ini`：`AhegaoClimaxes=1` 是我測試設的，按面板按鈕時一起存下來，使用者的遊戲也讀同一檔，一次高潮就啊嘿顏；這次測試的 `EyesCamera=0` 也一樣。兩個都已改回 4 與 1。測試用 console 改設定後，測完要改回，再按會存檔的按鈕。
