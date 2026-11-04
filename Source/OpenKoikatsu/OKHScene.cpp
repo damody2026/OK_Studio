@@ -806,7 +806,7 @@ void UOKHScenePanel::SwellBust(float Delta){
     // Sucking him (set by AlignHim while he is in her mouth): as strong as her mouth is developed.
     OralSuck=FMath::FInterpTo(OralSuck,bSucking?Dev(TEXT("oral")):0.f,Delta,3.f);
     // Her eyes roll up with it (not over her worn-out ahegao, which has its own).
-    {const float Gaze=bAhegaoShown?OralGazeSet:OralSuck>.05f?FMath::Min(1.f,1.2f*OralSuck):0.f;
+    {const float Gaze=bAhegaoShown?OralGazeSet:OralSuck>.05f?-FMath::Min(1.f,1.2f*OralSuck):0.f; // -1 is up on these eyes (ok.HScene.AhegaoGaze)
      if(!bAhegaoShown&&FMath::Abs(Gaze-OralGazeSet)>.03f){OralGazeSet=Gaze;Girl->SetEyeGaze(0.f,0.f,Gaze);}}
     const bool BustMoved=FMath::Abs(BustSwell-BustSwellSet)>=.01f||(BustSwellSet!=1.f&&FMath::Abs(BustSwell-1.f)<.01f);
     // Her lips hold him and her mouth and lower face are drawn out along him: six tenths all the while she sucks, the
@@ -1453,6 +1453,9 @@ void UOKHScenePanel::TickDrips(float Delta){
     // Taken from touching herself on the street (her desire at 200, OKStreetSocialOnani.inl; user 2026-11-03): her breasts
     // and crotch run and spray twice as much.
     const float More=StreetOnani()?2.f:1.f;
+    // What fell due since the last frame comes out now: at one drop a frame a slow frame caps every rate and her development
+    // does not show (at 15 FPS she squirted as much at 100 as at 0).
+    auto Due=[Now](double& At,auto Gap,auto Emit){for(int32 N=0;N<4&&Now>=At;++N){At=FMath::Max(At,Now-.1)+Gap();Emit();}};
     auto Drop=[&](const TCHAR* Bone,uint8 Colour){FVector At,L,R;if(!HBone(Girl,Bone,At))return false;
         // Nothing under her: her lowest foot is the floor.
         const float Floor=HBone(Girl,TEXT("j_foot_L"),L)&&HBone(Girl,TEXT("j_foot_R"),R)?FMath::Min(L.Z,R.Z)-3.f:At.Z-80.f;
@@ -1462,14 +1465,14 @@ void UOKHScenePanel::TickDrips(float Delta){
     // nipples together), quicker the faster they move.
     const FString Base=HBase(Current());
     const bool bPaizuri=Mode==1&&Poses.IsValidIndex(ActivePose)&&Poses[ActivePose].KindHoushi==2&&Gallery->PairedPlayback&&Gallery->PairedPlayback->GetElapsed()>0.f&&(HIsLoop(Base)||Base==TEXT("OLoop"));
-    if(IsValid(Girl)&&bPaizuri&&!bCovered&&Dev(TEXT("nipple"))>=.05f&&Now>=PaizuriMilkAt){
-        PaizuriMilkAt=Now+.12f/Dev(TEXT("nipple"))/FMath::Clamp(.6f+.4f*PlaybackSpeed(),.6f,2.f)/More*FMath::FRandRange(.8f,1.2f);
-        if(Drop(++MilkTurn%2?TEXT("j_bnip02_L"):TEXT("j_bnip02_R"),OKArousal::White)){++HerMilk;if(Now-MilkBoutAt>3.)++HerMilkTimes;MilkBoutAt=Now;}}
+    if(IsValid(Girl)&&bPaizuri&&!bCovered&&Dev(TEXT("nipple"))>=.05f)
+        Due(PaizuriMilkAt,[&]{return .12f/Dev(TEXT("nipple"))/FMath::Clamp(.6f+.4f*PlaybackSpeed(),.6f,2.f)/More*FMath::FRandRange(.8f,1.2f);},
+            [&]{if(Drop(++MilkTurn%2?TEXT("j_bnip02_L"):TEXT("j_bnip02_R"),OKArousal::White)){++HerMilk;if(Now-MilkBoutAt>3.)++HerMilkTimes;MilkBoutAt=Now;}});
     if(IsValid(Girl)&&Desire>OKArousal::DesireFlush&&!bCovered){
         const auto& X=Gallery->HExperience;double Bust=0;if(X.IsValid())X->TryGetNumberField(TEXT("bust"),Bust);
         // Developed, more of it (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md): her crotch up to twice, her nipples three times.
-        if(Now>=DripAt){DripAt=Now+OKArousal::CrotchInterval(Desire)/(1.f+Dev(TEXT("crotch")))/More*FMath::FRandRange(.8f,1.2f);if(Drop(TEXT("J_Kokan"),OKArousal::Clear)){++HerDrips;if(Now-DripBoutAt>3.)++HerDripTimes;DripBoutAt=Now;}}
-        if(Now>=MilkAt){MilkAt=Now+OKArousal::NippleInterval(Desire,float(Bust))*.5f/(1.f+2.f*Dev(TEXT("nipple")))/More*FMath::FRandRange(.8f,1.2f);if(Drop(++MilkTurn%2?TEXT("j_bnip02_L"):TEXT("j_bnip02_R"),OKArousal::White)){++HerMilk;if(Now-MilkBoutAt>3.)++HerMilkTimes;MilkBoutAt=Now;}}
+        Due(DripAt,[&]{return OKArousal::CrotchInterval(Desire)/(1.f+Dev(TEXT("crotch")))/More*FMath::FRandRange(.8f,1.2f);},[&]{if(Drop(TEXT("J_Kokan"),OKArousal::Clear)){++HerDrips;if(Now-DripBoutAt>3.)++HerDripTimes;DripBoutAt=Now;}});
+        Due(MilkAt,[&]{return OKArousal::NippleInterval(Desire,float(Bust))*.5f/(1.f+2.f*Dev(TEXT("nipple")))/More*FMath::FRandRange(.8f,1.2f);},[&]{if(Drop(++MilkTurn%2?TEXT("j_bnip02_L"):TEXT("j_bnip02_R"),OKArousal::White)){++HerMilk;if(Now-MilkBoutAt>3.)++HerMilkTimes;MilkBoutAt=Now;}});
     }
     // Sucking him, tears run down her cheeks, the more the more her mouth is developed (H_DEVELOPMENT_EXPERIENCE_PLAN):
     // one eye then the other. Their way down her face is read from her session while it is idle (SpawnTears).
@@ -1478,7 +1481,7 @@ void UOKHScenePanel::TickDrips(float Delta){
     {FVector Eye=FVector::ZeroVector;if(auto* PC=GetOwningPlayer();PC&&PC->PlayerCameraManager)Eye=PC->PlayerCameraManager->GetCameraLocation();Tears.Tick(Delta,Eye);}
     // As she comes (her cry, ClimaxUntil; user 2026-11-01): her crotch squirts and both nipples spray, shot out from her,
     // whatever her desire. In her anus too it is her vagina that squirts, as much as her crotch is developed (user 2026-11-03).
-    if(IsValid(Girl)&&Now<FMath::Max(ClimaxUntil,NippleUntil)&&Now>=SquirtAt){SquirtAt=Now+.05/(1.f+(Mode==2?Dev(TEXT("crotch")):0.f))/More;
+    if(IsValid(Girl)&&Now<FMath::Max(ClimaxUntil,NippleUntil))Due(SquirtAt,[&]{return .05/(1.f+(Mode==2?Dev(TEXT("crotch")):0.f))/More;},[&]{
         FVector Kokan,Hips,Chest,L,R;
         auto Floor=[&](const FVector& At){return HBone(Girl,TEXT("j_foot_L"),L)&&HBone(Girl,TEXT("j_foot_R"),R)?FMath::Min(L.Z,R.Z)-3.f:At.Z-80.f;};
         auto Shoot=[&](const FVector& At,const FVector& Out,float Speed,uint8 Colour){const FVector V=(Out+FMath::VRand()*.3f).GetSafeNormal()*Speed*FMath::FRandRange(.7f,1.2f);
@@ -1486,7 +1489,7 @@ void UOKHScenePanel::TickDrips(float Delta){
         if(Now<ClimaxUntil&&HBone(Girl,TEXT("J_Kokan"),Kokan)&&HBone(Girl,TEXT("j_hips"),Hips)&&Shoot(Kokan,(Kokan-Hips).GetSafeNormal(),200.f,OKArousal::Clear)){++HerDrips;if(Now-DripBoutAt>3.)++HerDripTimes;DripBoutAt=Now;}
         if(HBone(Girl,TEXT("j_spine03"),Chest))for(const TCHAR* Nipple:{TEXT("j_bnip02_L"),TEXT("j_bnip02_R")}){FVector At;
             if(HBone(Girl,Nipple,At)&&Shoot(At,(At-Chest).GetSafeNormal(),110.f,OKArousal::White)){++HerMilk;if(Now-MilkBoutAt>3.)++HerMilkTimes;MilkBoutAt=Now;}}
-    }
+    });
     Drips.Tick(Delta,Where);
 }
 // What runs on her body by the water gun (AOKPaintSprayer: it sticks, runs down her and drips to the floor;
