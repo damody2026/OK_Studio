@@ -10,31 +10,34 @@ OK Studio 的倉庫不含任何版權物。程式需要的原作資料（以下�
 2. **確認工具**：
    - `cargo --version` 能執行（Rust stable、MSVC 工具鏈；沒有就到 <https://rustup.rs> 安裝）。
    - Lua 已附在倉庫：`Tools\lua\lua.exe`，不必另外安裝。
-   - 磁碟空間：至少 20 GB。
+   - 磁碟空間：至少 40 GB（產生的資料約 30 GB）。
 3. **執行轉換**（在專案根目錄的 PowerShell）：
 
    ```powershell
    .\Tools\lua\lua.exe Tools\original_data.lua restore --game D:/KoikatuSunshine
    ```
 
-   腳本會先建置 `ok-extract` 與 `ok-paired-library`（`cargo build --release -j 8`，第一次約 10～20 分鐘），再依序轉換：
+   腳本會先建置 `ok-extract`、`ok-paired-library` 與 `ok-ramps`（`cargo build --release -j 8`，第一次約 10～20 分鐘），再依序轉換：
 
    | 步驟 | 產生 | 來源 |
    |---|---|---|
    | `models` | `Content/IndependentResources/base_v1/models/`、`sources.okidx` 等索引 | 遊戲 `abdata/chara`，以及遊戲 `mods/` 裡 [`Tools/base_library_shared_mods.txt`](../Tools/base_library_shared_mods.txt) 列的共用 mod |
    | `studio` | Studio 目錄、道具名稱、圖片、天空、反射、shader 狀態 | `abdata/studio` |
-   | `sounds` | Studio 語音與 BGM、H 音效 | `abdata/studio/sound`、`abdata/sound` |
+   | `sounds` | Studio 語音與 BGM、H 音效、**H 語音**（`base_v1/h/voice/`，約 12 萬段、13 GB） | `abdata/studio/sound`、`abdata/sound` |
    | `anims` | Studio 動畫與 H 動作 | `abdata/studio/anime`、`abdata/h` |
-   | `paired` | 雙人配對動作、姿勢與 IK | `abdata/h` |
+   | `paired` | 雙人配對動作、姿勢與 IK、H 場景的姿勢清單 `StreetSocialData/h_poses.json` | `abdata/h` |
    | `runtime-clips` | 街區用的動作片段 `Content/IndependentResources/RuntimeAnimations/` | `abdata` |
+   | `preview` | 陰影 ramp（`Content/KKPreview/Ramps/`）、色彩 LUT、Minimalist ramp | `abdata/chara`、遊戲 `mods/`、`BepInEx/plugins/KKS_BetterColorPicker.dll` |
 
-   轉換時 CPU 最多用 8 個執行緒，整個過程視電腦約 1～3 小時。過程記錄在 `Saved/OriginalData/restore.log`。
+   轉換時 CPU 最多用 8 個執行緒，整個過程視電腦約 1～3 小時。過程記錄在 `Saved/OriginalData/restore.log`。沒有 BetterColorPicker 外掛或 Minimalist Shadows mod 時，那一項會略過（畫面改用原本的顏色、沒有 Minimalist 陰影），不影響其他功能。
 
-4. **看結果**：最後一段會印出 `verify ...: N same, N differ, N missing`。
-   - `differ`（內容和開發者那份不完全相同）是正常的：轉換時的時間戳、你的 `mods/` 清單、音訊重新編碼都會讓 bytes 不同，功能一樣。
-   - 某一步印出 `FAILED` 時，把 `restore.log` 最後幾十行貼給使用者，再單獨重跑那一步，例如 `restore --game D:/KoikatuSunshine --only studio`。
-   - 列在 `missing` 的檔案，見下方「目前還不能從遊戲轉換的部分」。
-5. **用 QQ 群的開發資源 zip**（沒有遊戲，或要補齊 `missing`）：
+4. **看結果**：最後會印出 `verify ...: N same, N differ, N missing`，接著分成三段說明：
+   - `restore done: everything converted from the game is in place`：成功。
+   - `differ`（內容和開發者那份不完全相同）是正常的：轉換時間、你的 `mods/` 清單、音訊重新編碼都會讓 bytes 不同，功能一樣。
+   - `not needed ...`：不需要的資料（見下方），可以忽略。
+   - `only in the development resources zip ...`：還沒有轉換工具、只在開發資源 zip 裡的資料，列出缺了它們會少哪些功能（見下方）。
+   - `missing from the game conversion ...` 或某一步印出 `FAILED`：把 `restore.log` 最後幾十行貼給使用者，再單獨重跑那一步，例如 `restore --game D:/KoikatuSunshine --only studio`。
+5. **用 QQ 群的開發資源 zip**（沒有遊戲，或要補齊只在 zip 裡的資料）：
 
    ```powershell
    .\Tools\lua\lua.exe Tools\original_data.lua restore --archive D:/Downloads/OKOriginalData.zip
@@ -47,23 +50,25 @@ OK Studio 的倉庫不含任何版權物。程式需要的原作資料（以下�
 
 ## 不需要的東西
 
-- **街區 demo 的原作台詞、語音與翻譯**：女角的對話由 AI 產生，語音由 TTS 產生，不用原作台詞與語音。
+以下資料不轉換、也不在開發資源 zip 裡：
+
+- **街區 demo 的原作台詞、語音與翻譯**：女角的對話由 AI 產生，聲音一律由 TTS 產生（沒有 TTS 時只顯示字幕），不使用原作台詞與語音檔。H 場景的語音不在此列，由上面的 `sounds` 步驟轉換。
 - **Studio 樣本場景與截圖**（`UserData/Studio/scene/` 等）：只是開發時的測試資料。
 - **角色卡**：倉庫沒有任何卡片，請用你自己的卡（原作卡、OK 卡）。
 
-## 目前還不能從遊戲轉換的部分
+## 目前只在開發資源 zip 裡的資料
 
-以下幾項還沒有轉換工具（正在補），目前要從開發資源 zip 取得：
+以下幾項還沒有轉換工具，沒有開發資源 zip 時對應的功能會關閉，其他功能照常：
 
-| 檔案 | 用途 |
+| 檔案 | 沒有時少掉的功能 |
 |---|---|
-| `Content/KKPreview/`（陰影 ramp、色彩 LUT） | 角色上色風格 |
+| `Content/IndependentResources/BodyInteractions/`、`MotionCatalogue/` | 一對一互動的觸碰反應、雙人動作的名稱 |
 | `Content/Koikatsu/Data/*.uasset` | 讀卡器的動畫目錄 |
-| `Content/IndependentResources/BodyInteractions/`、`MotionCatalogue/` | 觸碰反應、雙人互動的動作名稱 |
 | `Content/Scenes/CrowdRoom/*/Shared_*.uasset` | 百人房間的共用走路曲線 |
 
 ## 給維護者
 
-- 哪些檔案算共用資源：[`Tools/original_data_manifest.json`](../Tools/original_data_manifest.json)（路徑、大小、sha256、類別）。
+- 哪些檔案算共用資源：[`Tools/original_data_manifest.json`](../Tools/original_data_manifest.json)（路徑、大小、sha256、類別）；每一類的來源（遊戲、zip、不需要）寫在 `Tools/original_data.lua` 的 `GROUPS`。
+- 新增轉換產物（不在 git 裡）到 manifest：`Tools\lua\lua.exe Tools\original_data.lua manifest-add <類別> <路徑...>`。
 - 打包開發資源 zip：`Tools\lua\lua.exe Tools\original_data.lua pack --out <zip>`；測試：`test-archive <zip> <空資料夾>`。
 - 設計與驗證紀錄：[原作資料移出版控](ORIGINAL_DATA_OUT_OF_GIT_PLAN_20261104.md)。

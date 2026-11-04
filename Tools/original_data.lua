@@ -11,11 +11,15 @@
 --   Tools\lua\lua.exe Tools\original_data.lua test-archive <zip> <empty dir>
 --   Tools\lua\lua.exe Tools\original_data.lua manifest            (maintainer: rebuild the manifest from tracked files)
 --
--- restore steps (in order): tools, models, studio, sounds, anims, paired, runtime-clips, archive.
--- With only --game every file a converter produces comes back; the rest (street voices and dialogue,
--- translations, KKPreview ramps, catalog DataTables, crowd curves, Studio scenes) needs --archive.
+--   Tools\lua\lua.exe Tools\original_data.lua manifest-add <group> <path...>   (maintainer: list generated files too)
+--
+-- restore steps (in order): tools, models, studio, sounds, anims, paired, runtime-clips, preview, archive.
+-- Every group says where it comes from (GROUPS need): "game" groups are converted from the original install (--game),
+-- "zip" groups only come from the development resources zip (--archive; the features using them are off without it),
+-- "no" groups are not needed at all (the street's original lines, voices and translations: she talks through AI free
+-- talk and TTS; Studio sample scenes). Docs/SHARED_RESOURCES_SETUP.md is the guide for users and their AI.
 -- Regenerated files can differ in bytes from the manifest (converted.tsv timings, sources.okidx lists
--- this machine's mods); verify reports them as "differs" and the archive step leaves them alone.
+-- this machine's mods, re-encoded audio); verify reports them as "differs" and the archive step leaves them alone.
 local ok = require "ok"
 local path, proc, json, kit = ok.path, ok.proc, ok.json, ok.kit
 
@@ -25,21 +29,31 @@ local LIB = "Content/IndependentResources/base_v1"
 local RA = "Content/IndependentResources/RuntimeAnimations"
 local SSD = "Content/IndependentResources/StreetSocialData"
 
--- Tracked paths that are original or zipmod data. A trailing "/" is a folder, "*" matches inside one name.
+-- Paths that are original or zipmod data. A trailing "/" is a folder, "*" matches inside one name. The first group a
+-- path matches is its group. need: "game" (converted from the install), "zip" (development resources zip only), "no".
 local GROUPS = {
-  { name = "base-models", step = "models", paths = { LIB .. "/models/" } },
-  { name = "base-index", step = "models", paths = { LIB .. "/sources.okidx", LIB .. "/converted.tsv", LIB .. "/missing.txt", LIB .. "/oklib.json", LIB .. "/edits.stamp", LIB .. "/shared_mods.txt" } },
-  { name = "base-studio", step = "studio", paths = { LIB .. "/studio_items.json", LIB .. "/studio_child_animations.json", LIB .. "/shader_states.json", LIB .. "/studio/bg/", LIB .. "/studio/frame/", LIB .. "/studio/sky/", LIB .. "/studio/sky.json", LIB .. "/studio/reflections/", LIB .. "/studio/map_environments.json", LIB .. "/studio/map_reflections.json", LIB .. "/studio/samples/" } },
-  { name = "base-sounds", step = "sounds", paths = { LIB .. "/studio/voice/", LIB .. "/studio_voices.json", LIB .. "/studio/bgm/", LIB .. "/h/" } },
-  { name = "base-anims", step = "anims", paths = { LIB .. "/anims/", LIB .. "/studio_anims.json" } },
-  { name = "base-paired", step = "paired", paths = { LIB .. "/paired/" } },
-  { name = "base-other", step = "archive", paths = { LIB .. "/" } },
-  { name = "runtime-clips", step = "runtime-clips", paths = { RA .. "/" } },
-  { name = "street-voices", step = "archive", paths = { SSD .. "/ja_ogg/", SSD .. "/zh_ogg/", SSD .. "/audio_manifest.json", "Content/IndependentResources/RuntimeVoices/" } },
-  { name = "street-dialogue", step = "archive", paths = { SSD .. "/RuntimeV2/", SSD .. "/RuntimeV3/", SSD .. "/RuntimeV4/", SSD .. "/RuntimeV5/", SSD .. "/RuntimeV5Base/", SSD .. "/TestFixtures/", SSD .. "/catalogue.json", SSD .. "/invitations.json", SSD .. "/gaps.json", SSD .. "/rules.json", SSD .. "/summary.json", SSD .. "/h_poses.json", SSD .. "/player_context_zh.tsv", SSD .. "/Localization/*/dialogue.json" } },
-  { name = "body-motion-data", step = "archive", paths = { "Content/IndependentResources/BodyInteractions/", "Content/IndependentResources/MotionCatalogue/" } },
-  { name = "unreal-catalog", step = "archive", paths = { "Content/Koikatsu/Data/", "Content/KKPreview/", "Content/Scenes/CrowdRoom/SharedWalk/Shared_0000.uasset", "Content/Scenes/CrowdRoom/BehaviorR1Curves/Shared_0000.uasset", "Content/Scenes/CrowdRoom/BehaviorR1Curves/Shared_0001.uasset" } },
-  { name = "studio-scenes", step = "archive", paths = { "UserData/Studio/scene/", "UserData/Studio/screenshot/", "Docs/images/OKStudio/" } },
+  { name = "base-models", need = "game", step = "models", paths = { LIB .. "/models/" } },
+  { name = "base-index", need = "game", step = "models", paths = { LIB .. "/sources.okidx", LIB .. "/converted.tsv", LIB .. "/missing.txt", LIB .. "/oklib.json", LIB .. "/edits.stamp", LIB .. "/shared_mods.txt" } },
+  { name = "base-studio", need = "game", step = "studio", paths = { LIB .. "/studio_items.json", LIB .. "/studio_child_animations.json", LIB .. "/shader_states.json", LIB .. "/studio/bg/", LIB .. "/studio/frame/", LIB .. "/studio/sky/", LIB .. "/studio/sky.json", LIB .. "/studio/reflections/", LIB .. "/studio/map_environments.json", LIB .. "/studio/map_reflections.json", LIB .. "/studio/samples/" } },
+  { name = "h-voices", need = "game", step = "sounds", paths = { LIB .. "/h/voice/" } },
+  { name = "base-sounds", need = "game", step = "sounds", paths = { LIB .. "/studio/voice/", LIB .. "/studio_voices.json", LIB .. "/studio/bgm/", LIB .. "/h/" } },
+  { name = "base-anims", need = "game", step = "anims", paths = { LIB .. "/anims/", LIB .. "/studio_anims.json" } },
+  { name = "base-paired", need = "game", step = "paired", paths = { LIB .. "/paired/" } },
+  { name = "h-poses", need = "game", step = "paired", paths = { SSD .. "/h_poses.json" } },
+  { name = "base-other", need = "zip", step = "archive", paths = { LIB .. "/" } },
+  { name = "runtime-clips", need = "game", step = "runtime-clips", paths = { RA .. "/" } },
+  { name = "preview", need = "game", step = "preview", paths = { "Content/KKPreview/" } },
+  { name = "street-voices", need = "no", step = "archive", paths = { SSD .. "/ja_ogg/", SSD .. "/zh_ogg/", SSD .. "/audio_manifest.json", "Content/IndependentResources/RuntimeVoices/" } },
+  { name = "street-dialogue", need = "no", step = "archive", paths = { SSD .. "/RuntimeV2/", SSD .. "/RuntimeV3/", SSD .. "/RuntimeV4/", SSD .. "/RuntimeV5/", SSD .. "/RuntimeV5Base/", SSD .. "/TestFixtures/", SSD .. "/catalogue.json", SSD .. "/invitations.json", SSD .. "/gaps.json", SSD .. "/rules.json", SSD .. "/summary.json", SSD .. "/player_context_zh.tsv", SSD .. "/Localization/*/dialogue.json" } },
+  { name = "body-motion-data", need = "zip", step = "archive", paths = { "Content/IndependentResources/BodyInteractions/", "Content/IndependentResources/MotionCatalogue/" } },
+  { name = "unreal-catalog", need = "zip", step = "archive", paths = { "Content/Koikatsu/Data/", "Content/Scenes/CrowdRoom/SharedWalk/Shared_0000.uasset", "Content/Scenes/CrowdRoom/BehaviorR1Curves/Shared_0000.uasset", "Content/Scenes/CrowdRoom/BehaviorR1Curves/Shared_0001.uasset" } },
+  { name = "studio-scenes", need = "no", step = "archive", paths = { "UserData/Studio/scene/", "UserData/Studio/screenshot/", "Docs/images/OKStudio/" } },
+}
+-- What a "zip" group is used for (the restore report says what is off without it).
+local ZIP_USE = {
+  ["body-motion-data"] = "one-on-one touch reactions and pair-motion names",
+  ["unreal-catalog"] = "the card reader's animation catalogue and the crowd room's shared walk curves",
+  ["base-other"] = "other base library files",
 }
 
 -- Name lists the converters read; versioned, they hold only source paths and keys.
@@ -74,9 +88,18 @@ end
 
 local function load_manifest() return ok.read_json(MANIFEST) end
 
--- verify(root) -> {same=, differs={}, missing={}} against the manifest.
-local function verify(root, quiet)
+-- A file the development resources zip carries: everything but the "no" groups (the street's original lines and voices,
+-- Studio sample scenes are neither packed nor converted).
+local function packed(rel) local g = group_of(rel); return not (g and g.need == "no") end
+
+-- verify(root) -> {same=, differs={}, missing={}} against the manifest (only the packed files with packed_only).
+local function verify(root, quiet, packed_only)
   local m = load_manifest()
+  if packed_only then
+    local files = {}
+    for _, f in ipairs(m.files) do if packed(f.path) then files[#files + 1] = f end end
+    m.files = files
+  end
   local rels, present = {}, {}
   for _, f in ipairs(m.files) do
     if path.is_file(root .. "/" .. f.path) then rels[#rels + 1] = f.path end
@@ -101,7 +124,47 @@ local function verify(root, quiet)
     end
     for _, k in ipairs(ok.util.sorted_keys(by)) do print(("  %-28s %d"):format(k, by[k])) end
   end
+  report.missing_need = {}
+  for _, p in ipairs(report.missing) do
+    local g = group_of(p); local need = g and g.need or "game"
+    report.missing_need[need] = report.missing_need[need] or {}
+    local t = report.missing_need[need]; t[g and g.name or "?"] = (t[g and g.name or "?"] or 0) + 1
+  end
   return report
+end
+
+-- manifest-add <group> <path...>: list generated files (not tracked in git) in the manifest, e.g. the H voices. Each
+-- file under the given paths gets its bytes and sha256; existing entries of those paths are replaced.
+local function cmd_manifest_add(group, paths)
+  assert(group and #paths > 0, "manifest-add <group> <path...>")
+  local g
+  for _, x in ipairs(GROUPS) do if x.name == group then g = x end end
+  assert(g, "unknown group " .. group)
+  local m = load_manifest()
+  local rels = {}
+  for _, rel in ipairs(paths) do
+    rel = rel:gsub("\\", "/"):gsub("/+$", "")
+    local abs = ROOT .. "/" .. rel
+    if path.is_file(abs) then rels[#rels + 1] = rel
+    else
+      assert(path.is_dir(abs), abs .. ": no such file or folder")
+      path.walk(abs, function(dir, _, files)
+        for _, name in ipairs(files) do rels[#rels + 1] = (dir .. "/" .. name):sub(#ROOT + 2):gsub("\\", "/") end
+      end)
+    end
+  end
+  table.sort(rels)
+  for _, rel in ipairs(rels) do assert(group_of(rel) == g, rel .. " is not in group " .. group) end
+  local digests = hash_files(ROOT, rels)
+  local index = {}
+  for i, f in ipairs(m.files) do index[f.path] = i end
+  for i, rel in ipairs(rels) do
+    local entry = { path = rel, bytes = path.size(ROOT .. "/" .. rel), sha256 = assert(digests[i], rel), group = group }
+    if index[rel] then m.files[index[rel]] = entry else m.files[#m.files + 1] = entry end
+  end
+  table.sort(m.files, function(a, b) return a.path < b.path end)
+  ok.write_json(MANIFEST, m, { indent = 1 })
+  print(("manifest: %d files of %s listed (%d in all)"):format(#rels, group, #m.files))
 end
 
 local function cmd_manifest()
@@ -111,6 +174,8 @@ local function cmd_manifest()
     if group_of(rel) then rels[#rels + 1] = rel end
   end
   table.sort(rels)
+  -- Since the data left git (2026-11-04) nothing is tracked: rebuilding would empty the manifest.
+  assert(#rels > 0, "no tracked original data: the manifest is kept as it is (add generated files with manifest-add)")
   local status = proc.output({ "git", "-C", ROOT, "status", "--porcelain", "--", table.unpack({ LIB, RA, SSD }) })
   if status:find("%S") then print("warning: working tree differs from HEAD under the listed folders:\n" .. status) end
   local digests = hash_files(ROOT, rels)
@@ -160,11 +225,11 @@ end
 local function cmd_pack(out)
   assert(out, "pack --out <zip>")
   local m = load_manifest()
-  local report = verify(ROOT)
+  local report = verify(ROOT, false, true)
   assert(#report.missing == 0 and #report.differs == 0, "the tree does not match the manifest; pack refuses")
   -- The manifest goes first so a reader finds it cheaply; names are relative to the repository root.
   local names = { "Tools/original_data_manifest.json" }
-  for _, f in ipairs(m.files) do names[#names + 1] = f.path end
+  for _, f in ipairs(m.files) do if packed(f.path) then names[#names + 1] = f.path end end
   path.mkdir(path.parent(out), true)
   local tmp = out .. ".partial"
   path.remove(tmp, true)
@@ -172,7 +237,7 @@ local function cmd_pack(out)
   assert(r.files == #names, "zip-create wrote " .. tostring(r.files) .. " members")
   path.remove(out, true)
   path.rename(tmp, out)
-  print(("packed %d files -> %s (%.2f GB)"):format(#m.files, out, path.size(out) / 1e9))
+  print(("packed %d files -> %s (%.2f GB)"):format(#names - 1, out, path.size(out) / 1e9))
 end
 
 -- Extract the named members (all when nil) of the archive into root.
@@ -192,7 +257,7 @@ local function cmd_test_archive(archive, dir)
   local inner = ok.read_json(dir .. "/Tools/original_data_manifest.json")
   local outer = load_manifest()
   assert(#inner.files == #outer.files, "archive manifest differs from Tools/original_data_manifest.json")
-  local report = verify(dir)
+  local report = verify(dir, false, true)
   if #report.missing > 0 or #report.differs > 0 then error("archive test failed") end
   print("archive test passed: every file matches its sha256")
 end
@@ -201,8 +266,9 @@ end
 local function build_tools(target)
   local env = { CARGO_TARGET_DIR = target, RAYON_NUM_THREADS = "8" }
   local manifest = ROOT .. "/Tools/ok-extract/Cargo.toml"
-  proc.run({ "cargo", "build", "--release", "-j", "8", "--manifest-path", manifest, "--features", "studio-sounds", "--bin", "ok-extract", "--bin", "ok-paired-library" }, { env = env, check = true })
-  return target .. "/release/ok-extract.exe", target .. "/release/ok-paired-library.exe"
+  proc.run({ "cargo", "build", "--release", "-j", "8", "--manifest-path", manifest, "--features", "studio-sounds", "--bin", "ok-extract", "--bin", "ok-paired-library", "--bin", "ok-ramps", "--bin", "ok-hposes" }, { env = env, check = true })
+  local bin = target .. "/release/"
+  return bin .. "ok-extract.exe", bin .. "ok-paired-library.exe", bin .. "ok-ramps.exe", bin .. "ok-hposes.exe"
 end
 
 local function run_logged(log, args)
@@ -211,7 +277,7 @@ local function run_logged(log, args)
   if not r.ok then error(("failed (%d), see %s"):format(r.code, log)) end
 end
 
-local STEPS = { "tools", "models", "studio", "sounds", "anims", "paired", "runtime-clips", "archive" }
+local STEPS = { "tools", "models", "studio", "sounds", "anims", "paired", "runtime-clips", "preview", "archive" }
 
 local function cmd_restore(o)
   local game = o.game and o.game:gsub("\\", "/"):gsub("/+$", "")
@@ -228,10 +294,12 @@ local function cmd_restore(o)
   local log = work .. "/restore.log"
   local lib = ROOT .. "/" .. LIB
   path.mkdir(lib, true)
-  local okx, paired_exe = ROOT .. "/Tools/ok-extract/target/release/ok-extract.exe", nil
-  if game and (want("tools") or want("models") or want("studio") or want("sounds") or want("anims") or want("paired") or want("runtime-clips")) then
-    print("[tools] building ok-extract (studio-sounds) and ok-paired-library")
-    okx, paired_exe = build_tools(work .. "/target")
+  local okx, paired_exe, ramps_exe, hposes_exe = ROOT .. "/Tools/ok-extract/target/release/ok-extract.exe", nil, nil, nil
+  local converting = false
+  for _, s in ipairs(STEPS) do if s ~= "archive" and want(s) then converting = true end end
+  if game and converting then
+    print("[tools] building ok-extract (studio-sounds), ok-paired-library, ok-ramps and ok-hposes")
+    okx, paired_exe, ramps_exe, hposes_exe = build_tools(work .. "/target")
   end
   local function x(...) run_logged(log, { okx, game, "--oklib", ... }) end
   -- A step that fails (this install lacks something the converter needs) is reported and its files come from the
@@ -249,9 +317,9 @@ local function cmd_restore(o)
     x("studio-child-anims", lib); x("studio-images", lib); x("studio-sky", lib); x("studio-environments", lib)
     x("studio-reflections", lib); x("shader-states", lib, "8")
   end)
-  step("sounds", "Studio voices, BGM, H sound effects", function() x("studio-sounds", lib); x("studio-voices", lib); x("h-sounds", lib) end)
+  step("sounds", "Studio voices, BGM, H sound effects and H voices", function() x("studio-sounds", lib); x("studio-voices", lib); x("h-sounds", lib); x("h-voices", lib) end)
   step("anims", "Studio animations and H motion variants", function() x("anim-convert", lib, "-", "all", "8"); x("anim-pack", lib) end)
-  step("paired", "pair motions, poses and IK", function()
+  step("paired", "pair motions, poses and IK, the H scene's pose list", function()
     local src = work .. "/PairedAnimations"
     local m = ok.read_json(PAIRED_SOURCES .. "/manifest.json")
     for _, f in ipairs(m.files) do
@@ -260,6 +328,8 @@ local function cmd_restore(o)
     end
     for _, n in ipairs({ "manifest.json", "editor-demos.json" }) do path.copy(PAIRED_SOURCES .. "/" .. n, src .. "/" .. n) end
     run_logged(log, { paired_exe, "convert", src, lib .. "/paired" })
+    -- The H scene's pose list (OKHScene.cpp).
+    run_logged(log, { hposes_exe, game, ROOT .. "/" .. SSD .. "/h_poses.json" })
   end)
   step("runtime-clips", "street animation clips", function()
     path.mkdir(ROOT .. "/" .. RA .. "/library", true)
@@ -273,10 +343,25 @@ local function cmd_restore(o)
     run_logged(log, { okx, game, "--export-runtime-clips", tsv })
     run_logged(log, { ok.lua_exe, ROOT .. "/Tools/export_street_animation_library.lua", "--game", game, "--exe", okx })
   end)
+  step("preview", "shadow ramps and the display colour transform (Content/KKPreview)", function()
+    local preview = ROOT .. "/Content/KKPreview"
+    run_logged(log, { ramps_exe, game, preview .. "/Ramps" })
+    -- The KKS display colour transform comes from the BetterColorPicker plugin; without it previews show the plain colours.
+    if path.is_file(game .. "/BepInEx/plugins/KKS_BetterColorPicker.dll") then x("saturation-lut", preview)
+    else print("  no BepInEx/plugins/KKS_BetterColorPicker.dll: no display colour transform (plain colours)") end
+    -- The Minimalist shadow ramp (Docs/CHARACTER_MINIMALIST_NO_SHADOW.md), from its zipmod when the game has it.
+    local zipmod
+    if path.is_dir(game .. "/mods") then path.walk(game .. "/mods", function(dir, _, files)
+      for _, n in ipairs(files) do if not zipmod and n:find("Minimalist Shadows", 1, true) and n:lower():match("%.zip") then zipmod = dir .. "/" .. n end end
+    end) end
+    if zipmod then
+      run_logged(log, { ok.lua_exe, ROOT .. "/Tools/extract_character_ramp.lua", "--zipmod", zipmod, "--bundle", "abdata/chara/Augh/minimalist_shadow.unity3d", "--texture", "minimalist", "--output", preview .. "/MinimalistRamp.png" })
+    else print("  no [Augh] Minimalist Shadows zipmod under mods/: no Minimalist ramp") end
+  end)
   local report = verify(ROOT, true)
   if want("archive") and o.archive then
     local members, seen = {}, {}
-    for _, p in ipairs(report.missing) do members[#members + 1] = p; seen[p] = true end
+    for _, p in ipairs(report.missing) do if packed(p) then members[#members + 1] = p; seen[p] = true end end
     for _, p in ipairs(report.differs) do
       local g = group_of(p)
       if g and failed[g.step] and not seen[p] then members[#members + 1] = p end
@@ -287,10 +372,17 @@ local function cmd_restore(o)
   local names = ok.util.sorted_keys(failed)
   if #names > 0 then print("steps that failed on this install (restored from the archive where given): " .. table.concat(names, ", ")) end
   report = verify(ROOT)
-  if #report.missing > 0 then
-    print("still missing; " .. (o.archive and "the archive does not have them" or "give --archive <zip> for the files no converter makes"))
+  local need = report.missing_need
+  if need.no then print("not needed (AI free talk and TTS; Studio sample scenes): " .. table.concat(ok.util.sorted_keys(need.no), ", ")) end
+  if need.zip then
+    print("only in the development resources zip (QQ group 1127259437; restore --archive <zip>):")
+    for _, g in ipairs(ok.util.sorted_keys(need.zip)) do print(("  %s (%d files): %s"):format(g, need.zip[g], ZIP_USE[g] or "")) end
+  end
+  if need.game then
+    print("missing from the game conversion: " .. table.concat(ok.util.sorted_keys(need.game), ", ") .. "; see " .. log)
     return false
   end
+  print("restore done: everything converted from the game is in place")
   return true
 end
 
@@ -304,6 +396,7 @@ local function main()
     else o[#o + 1] = a; i = i + 1 end
   end
   if cmd == "manifest" then cmd_manifest()
+  elseif cmd == "manifest-add" then cmd_manifest_add(o[1], { table.unpack(o, 2) })
   elseif cmd == "pack" then cmd_pack(o.out)
   elseif cmd == "verify" then local r = verify(o.root or ROOT); return #r.missing == 0 and #r.differs == 0
   elseif cmd == "test-archive" then cmd_test_archive(o[1], o[2])

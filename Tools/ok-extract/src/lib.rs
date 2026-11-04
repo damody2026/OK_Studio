@@ -65,6 +65,7 @@ mod portable_outfits;
 #[cfg(feature = "three-export")]
 pub use session::three_export;
 mod pv;
+mod saturation_lut;
 mod shape;
 mod skin_source;
 mod clothes_gpu;

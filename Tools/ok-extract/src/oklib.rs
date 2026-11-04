@@ -3187,6 +3187,9 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
         "studio-child-anims" => crate::studio_child_animation::convert(game, &lib.ok_or("library directory required")?)?,
         "studio-check" => crate::studio_items::check(&lib.ok_or("library directory required")?)?,
         "studio-images" => println!("OKCONVERT studio images copied={}", crate::studio_items::copy_user_images(game, &lib.ok_or("library directory required")?)?),
+        // saturation-lut <dir>: the KKS display colour transform (BetterColorPicker's table, inverted) as
+        // <dir>/KKSDefaultSaturationLUT.png and KKSDefaultSaturationLUT16.png (normally Content/KKPreview).
+        "saturation-lut" => println!("OKCONVERT saturation lut from={}", crate::saturation_lut::convert(game, &lib.ok_or("output directory required")?)?),
         "studio-sky" => println!("OKCONVERT studio sky patterns={}", crate::studio_sky::convert(game, &lib.ok_or("library directory required")?)?),
         #[cfg(feature = "studio-sounds")]
         "studio-sounds" => {
@@ -3205,6 +3208,13 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             // h-sounds <lib>: the original H sound effects (HSeCtrl) into h/se.json and each clip as h/se/<clip>.ogg.
             let (written, kept, failed) = crate::studio_sounds::convert_h_sounds(game, &lib.ok_or("library directory required")?)?;
             println!("OKCONVERT h sounds written={written} kept={kept} failed={failed}");
+        }
+        #[cfg(feature = "studio-sounds")]
+        "h-voices" => {
+            // h-voices <lib>: the H breathing and voice tables into h/voice/h_breath_index.json and every H voice clip as
+            // h/voice/audio/c<NN>/h/<clip>.ogg (the voice root KKHvoice.cpp reads).
+            let (written, kept, failed) = crate::studio_sounds::convert_h_voices(game, &lib.ok_or("library directory required")?)?;
+            println!("OKCONVERT h voices written={written} kept={kept} failed={failed}");
         }
         "studio-environments" => println!("OKCONVERT studio map environments={}", crate::studio_sky::convert_map_environments(game, &lib.ok_or("library directory required")?)?),
         "studio-reflections" => println!("OKCONVERT studio map reflections={}", crate::studio_sky::convert_map_reflections(game,&lib.ok_or("library directory required")?)?),

@@ -4192,3 +4192,7 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - **Windows 的 tar 打包含日文檔名的清單失敗**（2026-11-04，協調者，原作資料移出版控）：`tar -a -c -T <清單>` 先因 `-C` 和 `-T` 的相對路徑出錯（`Couldn't visit directory: `），改成從專案根目錄執行後又遇到 `Can't convert a path to a wchar_t string`。bsdtar 用系統代碼頁解讀清單，UTF-8 日文檔名轉不過去。改用 `ok-luakit zip-create`／`zip-extract`（Rust `zip` crate，Zip64、UTF-8 檔名）。往後打包含非 ASCII 檔名的資料不要用系統 tar。
 - **停錯 SceneEditor**（2026-11-04，協調者）：第一次啟動 SceneEditor 時沒帶 `-- -Control -StudioControlPort=47890`，重開後同時有兩個 UnrealEditor，我依 PID 猜哪個是舊的，結果停掉帶控制埠的新程序。往後先比對各程序的命令列（`-abslog` 的時間、有沒有 `-Control`）再停，只停自己確定的那個。
 - **master2 備份推送因本機已 prune 的舊 LFS 物件被拒**（2026-11-04，協調者）：`git lfs prune` 刪過本機舊版物件，推到新倉庫時 pre-push 一次只報一個 `(missing)`。先 `git lfs fetch origin --all` 把整段歷史缺的物件抓回來，再推一次就成功。不要用 `lfs.allowincompletepush` 跳過，否則備份會缺物件。
+
+- **公開用 clone 帶進了舊歷史的 tag**（2026-11-04，協調者，公開倉庫 OK_Studio）：從 C 做 `git clone --bare --single-branch` 再 filter-repo 時，本機的 `old-history-*` 備份 tag（指向含原作資料的舊歷史）也被帶進去，打包後有 10.96 GiB。推送前用 `git for-each-ref` 看到才刪掉 tag 並 `gc`（剩 98.81 MiB）。往後公開推送前一律先列出所有 ref，只推 `master`，絕不用 `--tags`／`--mirror`。
+- **刪原音欄位時漏改一處，遊戲建置失敗**（2026-11-04，協調者，街區只留 TTS）：搜尋 `VoiceSequenceComplete` 的用處時把輸出用 `cut -c1-200` 截斷，`OKStreetSocialInvitations.h` 第 23 行那處在第 433 欄，被截掉沒看到，建置時 C2039。往後找要刪的識別名稱用 `grep -o`（只印符合處），不截斷整行。
+- **推到 OpenKoikatsu 卡在等帳號**（2026-11-04，協調者）：推送網址沒帶帳號名，Git Credential Manager 等待帳號選擇，背景指令一直沒有回應。改用 `https://damody2026@github.com/...` 並設 `GIT_TERMINAL_PROMPT=0` 後立即成功。

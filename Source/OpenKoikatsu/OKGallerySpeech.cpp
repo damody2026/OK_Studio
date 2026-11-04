@@ -2,6 +2,7 @@
 #include "OKInteractionScene.h"
 #include "KKPreviewActor.h"
 #include "KKPairedPlayback.h"
+#include "KKCardWorkspace.h"
 #include "Dom/JsonObject.h"
 #include "Components/EditableTextBox.h"
 #include "Components/ComboBoxString.h"
@@ -87,6 +88,8 @@ void UOKCharacterController::OnStopSpeech() {
 FString UOKCharacterController::DefaultVoiceRoot(){
     static FString Found;if(!Found.IsEmpty())return Found;
     TArray<FString> Candidates;const FString Env=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_VOICE_ROOT"));if(!Env.IsEmpty())Candidates.Add(Env);
+    // The H voices converted into the base library (ok-extract --oklib h-voices, Tools/original_data.lua); a voice dump beside the game after it.
+    if(const FString Library=UKKCardWorkspace::LibraryRoot();!Library.IsEmpty())Candidates.Add(Library/TEXT("h/voice"));
     if(const UKKGameRoot* Game=UKKGameRoot::Get();Game&&!Game->Root.IsEmpty())Candidates.Add(Game->Root/TEXT("voice_extract"));
     Candidates.Append({TEXT("C:/portable/KoikatuSunshine/voice_extract"),TEXT("D:/KoikatuSunshine/voice_extract"),TEXT("E:/KoikatuSunshine/voice_extract")});
     for(const FString& C:Candidates)if(FPaths::FileExists(C/TEXT("h_breath_index.json"))){Found=C;break;}

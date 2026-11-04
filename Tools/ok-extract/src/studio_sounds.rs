@@ -12,6 +12,11 @@ pub const VOICE_DIR: &str = "studio/voice";
 
 /// The FSB5 banks of the AudioClips named in `clips` in a game bundle (`abdata/...`), loading the bundle once.
 fn clip_banks(game: &Path, bundle: &str, clips: &BTreeSet<&str>) -> Result<Vec<(String, Vec<u8>)>, String> {
+    clip_banks_where(game, bundle, &|n| clips.contains(n))
+}
+
+/// The FSB5 banks of the AudioClips whose name `keep` accepts in a game bundle, loading the bundle once.
+fn clip_banks_where(game: &Path, bundle: &str, keep: &dyn Fn(&str) -> bool) -> Result<Vec<(String, Vec<u8>)>, String> {
     use unity_asset_decode::object::UnityObject;
     let path = game.join(bundle);
     let ab = crate::unity::load_bundle_path_unbounded(&path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -23,7 +28,7 @@ fn clip_banks(game: &Path, bundle: &str, clips: &BTreeSet<&str>) -> Result<Vec<(
         for info in serialized.objects_of_type(83) {
             let Ok(obj) = UnityObject::from_serialized_file(&serialized, info) else { continue };
             let props = obj.class.properties();
-            let Some(name) = props.get("m_Name").and_then(|v| v.as_str()).filter(|n| clips.contains(n)) else { continue };
+            let Some(name) = props.get("m_Name").and_then(|v| v.as_str()).filter(|n| keep(n)) else { continue };
             let Some(r) = props.get("m_Resource").and_then(|v| v.as_object()) else { continue };
             let source = r.get("m_Source").and_then(|v| v.as_str()).unwrap_or_default();
             // "archive:/CAB-…/CAB-….resource": the bundle file of that name.
@@ -121,6 +126,51 @@ pub fn convert_h_sounds(game: &Path, lib: &Path) -> Result<(usize, usize, usize)
     }
     let wanted: BTreeMap<&str, BTreeSet<&str>> = wanted.iter().map(|(b, c)| (b.as_str(), c.iter().map(String::as_str).collect())).collect();
     write_clips(game, &dir, &wanted)
+}
+
+/// The library folder of the original H voices: the voice root KKHvoice.cpp reads (`h_breath_index.json`,
+/// `audio/c<NN>/h/<clip>.ogg`), in place of a voice dump beside the game.
+pub const H_VOICE_DIR: &str = "h/voice";
+
+/// Writes the H breathing and voice tables (h_playback::h_breath_table) as `<lib>/h/voice/h_breath_index.json` and every
+/// AudioClip of the game's H voice bundles (`abdata/sound/data/pcm/c<NN>/h/*.unity3d`) as
+/// `<lib>/h/voice/audio/c<NN>/h/<clip>.ogg` (existing files kept). Returns (written, already there, failed).
+pub fn convert_h_voices(game: &Path, lib: &Path) -> Result<(usize, usize, usize), String> {
+    use rayon::prelude::*;
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+    let root = lib.join(H_VOICE_DIR);
+    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("h_breath_index.json"), crate::h_playback::h_breath_table(game)).map_err(|e| e.to_string())?;
+    let pcm = game.join("abdata/sound/data/pcm");
+    let mut bundles: Vec<(String, String)> = Vec::new();
+    for voice in std::fs::read_dir(&pcm).map_err(|e| format!("{}: {e}", pcm.display()))?.flatten() {
+        let folder = voice.file_name().to_string_lossy().into_owned();
+        if !folder.starts_with('c') { continue; }
+        let Ok(files) = std::fs::read_dir(voice.path().join("h")) else { continue };
+        for f in files.flatten() {
+            let name = f.file_name().to_string_lossy().into_owned();
+            if name.ends_with(".unity3d") { bundles.push((folder.clone(), format!("abdata/sound/data/pcm/{folder}/h/{name}"))); }
+        }
+    }
+    if bundles.is_empty() { return Err(format!("{}: no H voice bundles (c<NN>/h/*.unity3d)", pcm.display())); }
+    let (written, kept, failed) = (AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0));
+    bundles.par_iter().for_each(|(folder, bundle)| {
+        let dir = root.join("audio").join(folder).join("h");
+        if let Err(e) = std::fs::create_dir_all(&dir) { eprintln!("h-voices: {}: {e}", dir.display()); return; }
+        let missing = |c: &str| { let have = dir.join(format!("{c}.ogg")).is_file(); if have { kept.fetch_add(1, Relaxed); } !have };
+        let banks = match clip_banks_where(game, bundle, &missing) {
+            Ok(b) => b,
+            Err(e) => { eprintln!("h-voices: {e}"); failed.fetch_add(1, Relaxed); return; }
+        };
+        for (clip, bank) in banks {
+            match bank_to_audio(&bank) {
+                Ok((bytes, "ogg")) if std::fs::write(dir.join(format!("{clip}.ogg")), &bytes).is_ok() => { written.fetch_add(1, Relaxed); }
+                Ok((_, ext)) => { eprintln!("h-voices: {clip} is {ext}, not Vorbis (skipped)"); failed.fetch_add(1, Relaxed); }
+                Err(e) => { eprintln!("h-voices: {clip}: {e}"); failed.fetch_add(1, Relaxed); }
+            }
+        }
+    });
+    Ok((written.into_inner(), kept.into_inner(), failed.into_inner()))
 }
 
 /// Writes the Studio voice lists as `<lib>/studio_voices.json` and every voice as `<lib>/studio/voice/<clip>.ogg`
