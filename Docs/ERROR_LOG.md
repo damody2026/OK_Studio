@@ -4210,3 +4210,5 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - **把 4 個測試失敗說成「本機卡片或 fixture 資料問題」**（2026-11-05，e-fork-2）：`697054214` 的驗證行這樣寫，但沒有單獨跑過就下結論。實際上 appearance 兩個、clothing_rules、editor_mods 單跑都過，失敗來自上面兩條的併發干擾，其中一條是產品問題。失敗要先單跑與循序跑，再歸類。
 - **改檔腳本半途中止，只改到一部分**（2026-11-05，e-fork-2）：一支腳本依序改多個檔案，改完 `oklib.rs` 後在 `appearance.rs` 的斷言中止，另一半沒套用，之後靠重跑另一支腳本補上。腳本要先檢查全部檔案再一起寫入。
 - **別的 session 在建置時開編輯器，佔著槽位空等**（2026-11-05，e-fork-2）：`E:\OKForkBuild`、`E:\OKHeadBuild` 正在用 E 引擎建置，`CardReaderDevelopment` 的編輯器啟動後卡在 UBT 鎖，6 分鐘只用 5 秒 CPU。開編輯器前先看 E 引擎有沒有 `Build.bat`／UBT 在跑；街區測試用打包版 `.stage`，不走這條路。
+- **沒拿到槽位就開了編輯器**（2026-11-05，e-fork-2）：`claim --wait` 外面包了 100 秒的 `timeout`，排隊逾時後沒有檢查結果就接著啟動讀卡模式，05:56～05:57 約一分鐘超過 2 個槽位的上限，當時 c-street-city、e-galgame 各佔一槽。啟動前要確認 claim 印出 slot 編號，沒拿到就不能開。
+- **修好的 bug 在舊 DLL 上重現，差點當成卡片問題**（2026-11-05，e-fork-2）：E 的編輯器 DLL 是 00:20 建的，塔和最中的 OK 卡開卡報缺 12306 件，內容全是 `GAMEFS read_dir mods`，也就是 `9871d2cea` 修掉的 `pack_scope` 誤算。用含修正的乾淨工作樹重建後同一張卡開卡通過。看到缺件數字異常大時，先比對 DLL 和修正提交的時間。

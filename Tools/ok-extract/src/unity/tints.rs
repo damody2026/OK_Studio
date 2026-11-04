@@ -284,8 +284,6 @@ pub fn overlay_overtex_mapped(
         }
     }
     eprintln!("ok-extract: overlay_mapped used={used} dst={dw}x{dh} src={sw}x{sh}");
-    let _ = std::fs::create_dir_all(r"C:\portable\OpenKoikatsu\Saved\Converted\_face_raw");
-    let _ = dst.save(r"C:\portable\OpenKoikatsu\Saved\Converted\_face_raw\overlay_mapped.png");
     if used < 8 {
         return None;
     }
