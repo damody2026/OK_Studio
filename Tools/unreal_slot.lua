@@ -1,4 +1,4 @@
--- Machine-wide Unreal slots shared by every agent and checkout (C:, E:, F:): at most three Unreal processes at once.
+-- Machine-wide Unreal slots shared by every agent and checkout (C:, E:, F:): at most two Unreal processes at once.
 -- slotN\owner.txt names who holds a slot (first word = agent), queue\<agent>.txt says who is waiting.
 --
 --   Tools\lua\lua.exe Tools\unreal_slot.lua claim <agent> "<what for>" [--wait]   take a free slot, else stay queued (exit 2)
@@ -6,14 +6,14 @@
 --   Tools\lua\lua.exe Tools\unreal_slot.lua yield <agent>                         exit 3 when someone of higher priority waits
 --   Tools\lua\lua.exe Tools\unreal_slot.lua status
 --
--- claim only succeeds when no agent of higher priority is queued, a slot is free and fewer than three Unreal processes
+-- claim only succeeds when no agent of higher priority is queued, a slot is free and fewer than two Unreal processes
 -- run. It re-reads owner.txt after writing (another agent may have written the same slot) and leaves the queue in the
 -- same step, so a stale queue file never makes a lower-priority agent wait for someone who already runs.
 local ok = require "ok"
 local path, proc = ok.path, ok.proc
 
 local ROOT = os.getenv("OK_UNREAL_SLOTS") or "C:/portable/OpenKoikatsu/Saved/UnrealSlots"
-local SLOTS = 3
+local SLOTS = 2
 -- Lower runs first; agents not listed rank after these.
 local PRIORITY = { ["e-galgame"] = 1, ["e-fork"] = 1, F = 2, ["c-conquest"] = 3, ["e-okcard"] = 3, ["c-street-city"] = 4 }
 
