@@ -341,7 +341,16 @@ public:
 								[Window(TAttribute<FText>::CreateLambda([this] { return FText::FromString(PageTitle()); }), SAssignNew(DetailBody, SBox), [this] { SetPage(EPage::None); }, Panel(),
 									[this](const FVector2D& D) { DetailOffsets.FindOrAdd(uint8(Page)) += D; bLayoutDirty = true; })]])]
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(0.f, 1.f)).Offset(FMargin(515.f, -20.f, 900.f, 18.f)).ZOrder(1000.f)
-						[SAssignNew(Status, STextBlock).Font(Font(10.f)).ColorAndOpacity(TextHint()).ShadowOffset(FVector2D(1.f, 1.f))]
+						// U187: on its own backing, or a bright map's floor swallows it.
+						[
+							SNew(SHorizontalBox)
+							+ SHorizontalBox::Slot().AutoWidth()
+							[
+								SNew(SBorder).BorderImage(Brush(Panel())).Padding(FMargin(6.f, 1.f))
+								.Visibility_Lambda([this] { return Status.IsValid() && !Status->GetText().IsEmpty() ? EVisibility::SelfHitTestInvisible : EVisibility::Collapsed; })
+								[SAssignNew(Status, STextBlock).Font(Font(10.f)).ColorAndOpacity(OKStudioStyle::Text())]
+							]
+						]
 				]
 			]
 		];
@@ -1072,7 +1081,7 @@ public:
 		case 3: return { { TEXT("新場景"), TEXT("scene.new"), nullptr }, { TEXT("開啟／儲存"), TEXT("scene.browser"), Win(TEXT("scenes")) }, { TEXT("另存新檔"), TEXT("scene.saveas"), nullptr },
 			{ TEXT("畫面設定"), TEXT("page.scene"), On(EPage::Scene) }, { TEXT("時間軸"), TEXT("toggle.timeline"), Win(TEXT("timeline")) }, { TEXT("MMD 導演"), TEXT("toggle.mmd"), Win(TEXT("mmd")) },
 			{ TEXT("截圖"), TEXT("app.screenshot"), Win(TEXT("shot")) },
-			{ TEXT("備份恢復"), TEXT("scene.backups"), Win(TEXT("backups")) }, { TEXT("資源檢查"), TEXT("scene.resources"), Win(TEXT("resources")) }, { TEXT("匯入 KStudio"), TEXT("scene.import"), nullptr },
+			{ TEXT("備份恢復"), TEXT("scene.backups"), Win(TEXT("backups")) }, { TEXT("資源檢查"), TEXT("scene.resources"), Win(TEXT("resources")) }, { TEXT("匯入原作"), TEXT("scene.import"), nullptr },
 			{ TEXT("播放故事"), TEXT("app.story"), Win(TEXT("stories")) }, { TEXT("設定"), TEXT("app.settings"), Win(TEXT("settings")) }, { TEXT("最近場景"), TEXT("scene.recent"), Win(TEXT("recent")) }, { TEXT("返回標題"), TEXT("app.quit"), nullptr } };
 		default: return {};
 		}
@@ -1443,7 +1452,7 @@ public:
 		case EPage::Bones: return FMargin(134.f, 7.f, 320.f, 390.f);
 		case EPage::Anim: return FMargin(135.f, 10.f, 446.f, 560.f);
 		// Larger than HS2Studio6's 274 x 234 (U137: the third column cut every item name).
-		case EPage::ItemAdd: return FMargin(134.f, 7.f, 440.f, 400.f);
+		case EPage::ItemAdd: return FMargin(134.f, 7.f, 440.f, 560.f);
 		case EPage::LightAdd: return FMargin(142.f, 36.f, 210.f, 192.f);
 		case EPage::CharLoader: case EPage::Files: return FMargin(142.f, 36.f, 620.f, 420.f);
 		case EPage::Scene: return FMargin(142.f, 36.f, 480.f, 326.f);
@@ -2894,7 +2903,7 @@ public:
 		else for (const FOKStudioCatalogItem* I : C.ItemsIn(BrowseGroup, BrowseCategory)) ItemOptions.Add(MakeShared<int32>(int32(I - C.Items.GetData())));
 		auto Column = [this](float Width, TArray<TSharedPtr<int32>>* Options, TFunction<FString(int32)> Name, TFunction<bool(int32)> IsOn, TFunction<void(int32)> Pick)
 		{
-			return SNew(SBox).WidthOverride(Width).HeightOverride(330.f)
+			return SNew(SBox).WidthOverride(Width).HeightOverride(470.f)
 			[
 				SNew(SBorder).BorderImage(Brush(ListArea())).Padding(1.f)
 				[
@@ -2915,7 +2924,7 @@ public:
 		auto GroupName = [](int32 Id) { const FOKStudioCatalogGroup* G = FOKStudioCatalog::Get().Groups.FindByPredicate([Id](const FOKStudioCatalogGroup& X) { return X.Id == Id; }); return G ? G->Name : FString(); };
 		auto CategoryName = [this](int32 Id) { const int32 Group = BrowseGroup; const FOKStudioCatalogGroup* G = FOKStudioCatalog::Get().Categories.FindByPredicate([Id, Group](const FOKStudioCatalogGroup& X) { return X.Id == Id && X.Group == Group; }); return G ? G->Name : FString(); };
 		// The item column: hover for the name and a picture, left click adds, middle click adds under the selection.
-		TSharedRef<SWidget> Items = SNew(SBox).WidthOverride(ItemSearch.IsEmpty() ? 226.f : 420.f).HeightOverride(330.f)
+		TSharedRef<SWidget> Items = SNew(SBox).WidthOverride(ItemSearch.IsEmpty() ? 226.f : 420.f).HeightOverride(470.f)
 		[
 			SNew(SBorder).BorderImage(Brush(ListArea())).Padding(1.f)
 			[

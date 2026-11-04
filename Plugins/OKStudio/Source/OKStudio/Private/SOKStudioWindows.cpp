@@ -279,7 +279,14 @@ void SOKStudioPanel::LoadLayout()
 			FFloat* F = Floats.Find(FString(*P.Key));
 			const TSharedPtr<FJsonObject> W = P.Value->AsObject();
 			if (!F || !W) continue;
-			F->Pos = FVector2D(W->GetNumberField(TEXT("x")), W->GetNumberField(TEXT("y")));
+			const FVector2D Saved(W->GetNumberField(TEXT("x")), W->GetNumberField(TEXT("y")));
+			// A window the person never moved takes today's default (U184). The file says which default it was saved
+			// under; older files do not, so a default that moved is listed here.
+			double DefaultX = 0.0, DefaultY = 0.0;
+			FVector2D SavedDefault = F->Default;
+			if (W->TryGetNumberField(TEXT("dx"), DefaultX) && W->TryGetNumberField(TEXT("dy"), DefaultY)) SavedDefault = FVector2D(DefaultX, DefaultY);
+			else if (FString(*P.Key) == TEXT("poselib")) SavedDefault = FVector2D(140.f, 40.f);
+			F->Pos = Saved.Equals(SavedDefault, 1.0) ? F->Default : Saved;
 			bool bOpen = false;
 			// The dialog and the colour window belong to what asked for them: they never reopen by themselves.
 			if (W->TryGetBoolField(TEXT("open"), bOpen) && bOpen && FString(*P.Key) != TEXT("dialog") && FString(*P.Key) != TEXT("color")) RegisterActiveTimer(0.f, FWidgetActiveTimerDelegate::CreateLambda([this, Id = FString(*P.Key)](double, float) { OpenFloat(Id); return EActiveTimerReturnType::Stop; }));
@@ -304,6 +311,8 @@ void SOKStudioPanel::SaveLayout() const
 		TSharedRef<FJsonObject> W = MakeShared<FJsonObject>();
 		W->SetNumberField(TEXT("x"), P.Value.Pos.X);
 		W->SetNumberField(TEXT("y"), P.Value.Pos.Y);
+		W->SetNumberField(TEXT("dx"), P.Value.Default.X);
+		W->SetNumberField(TEXT("dy"), P.Value.Default.Y);
 		W->SetBoolField(TEXT("open"), P.Value.bOpen);
 		Windows->SetObjectField(P.Key, W);
 	}
@@ -847,7 +856,10 @@ TSharedRef<SWidget> SOKStudioPanel::BuildSceneBrowser()
 						SNew(SVerticalBox)
 						+ SVerticalBox::Slot().FillHeight(1.f)
 						[
-							SNew(SImage).Image_Lambda([F, bPng] { const FSlateBrush* B = bPng ? FOKStudioThumbnails::Get().File(F, 96) : nullptr; return B ? B : Brush(Input()); })
+							SNew(SOverlay)
+							+ SOverlay::Slot()[SNew(SImage).Image_Lambda([F, bPng] { const FSlateBrush* B = bPng ? FOKStudioThumbnails::Get().File(F, 96) : nullptr; return B ? B : Brush(Input()); })]
+							// U190: a scene saved without a picture was a grey square, as if it had not loaded yet.
+							+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)[bPng ? SNullWidget::NullWidget : StaticCastSharedRef<SWidget>(OKStudioStyle::Label(FText::FromString(TEXT("無縮圖")), 9.f, TextHint()))]
 						]
 						+ SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Font(Font(9.f)).ColorAndOpacity(OKStudioStyle::Text()).OverflowPolicy(ETextOverflowPolicy::Ellipsis).AddMetaData<FTagMetaData>(TEXT("Ellipsis")).Text(FText::FromString(KindTag + FPaths::GetBaseFilename(F)))]
 						]
@@ -2141,7 +2153,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildTimeline()
 			[this](bool B) { if (!Game.IsValid()) return; if (B) { Game->LoopStart = 0.f; Game->LoopEnd = Game->Document->Duration; } else Game->LoopEnd = Game->LoopStart = 0.f; })]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[SNew(SBox).WidthOverride(40.f).HeightOverride(18.f)[Spin([this] { return Game.IsValid() ? Game->LoopStart : 0.f; }, [this](float V) { if (Game.IsValid()) Game->LoopStart = FMath::Max(V, 0.f); }, 0.f, 3600.f, 0.1f)]]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[SNew(SBox).WidthOverride(40.f).HeightOverride(18.f)[Spin([this] { return Game.IsValid() ? Game->LoopEnd : 0.f; }, [this](float V) { if (Game.IsValid()) Game->LoopEnd = FMath::Max(V, 0.f); }, 0.f, 3600.f, 0.1f)]]
-		+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 1.f, 0.f).VAlign(VAlign_Center)[CheckBox(TEXT("30fps 吸附"), [this] { return !TimelineView || TimelineView->SnapFps > 0.f; }, [this](bool B) { if (TimelineView) TimelineView->SnapFps = B ? 30.f : 0.f; })]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 1.f, 0.f).VAlign(VAlign_Center)[SNew(SBox).WidthOverride(84.f)[CheckBox(TEXT("30fps 吸附"), [this] { return !TimelineView || TimelineView->SnapFps > 0.f; }, [this](bool B) { if (TimelineView) TimelineView->SnapFps = B ? 30.f : 0.f; })]]
 		+ SHorizontalBox::Slot().FillWidth(1.f);
 	// Bone keys without the FK page (HS2Studio6's bone search, 打骨骼帧 / 删骨骼帧).
 	TSharedRef<SWidget> Row3 = SNew(SHorizontalBox)

@@ -356,6 +356,8 @@ void SOKStudioTimeline::SetEase(EOKSceneEase Ease)
 void SOKStudioTimeline::KeySelection()
 {
 	if (!Game.IsValid()) return;
+	// U191: with nothing selected it reported "0 objects keyed", which read like a failure with no reason.
+	if (Game->Selection.IsEmpty()) { if (OnStatus) OnStatus(TEXT("先選物件再打 key")); return; }
 	const float Time = Snap(Game->TimelineTime);
 	for (int32 Id : Game->Selection) Game->Document->SetKey(Id, Time);
 	if (OnStatus) OnStatus(FString::Printf(TEXT("在 %.2f 秒為 %d 個物件打 key"), Time, Game->Selection.Num()));

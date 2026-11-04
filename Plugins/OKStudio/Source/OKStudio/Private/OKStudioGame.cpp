@@ -629,7 +629,17 @@ int32 UOKStudioGame::Add(EOKSceneObjectKind Kind)
 	// A new item or effect comes where the view looks (its orbit focus), not at the world origin, which a map's
 	// furniture often hides (the 自室 table): what was added is in sight to move on from.
 	if (Kind == EOKSceneObjectKind::Item || Kind == EOKSceneObjectKind::Effect)
-		O->Transform.SetLocation(Parent >= 0 ? Document->WorldTransform(Parent).InverseTransformPosition(Focus) : Focus);
+	{
+		// U186: the focus is usually on a character, and the item came inside her, out of sight: a step towards the view.
+		FVector Spot = Focus;
+		for (const FOKSceneObject& X : Document->Objects)
+			if (X.Kind == EOKSceneObjectKind::Character && FVector::Dist2D(Document->WorldTransform(X.Id).GetLocation(), Spot) < 40.f)
+			{
+				Spot -= FRotator(0.f, Yaw, 0.f).Vector() * 50.f;
+				break;
+			}
+		O->Transform.SetLocation(Parent >= 0 ? Document->WorldTransform(Parent).InverseTransformPosition(Spot) : Spot);
+	}
 	if (Kind == EOKSceneObjectKind::Camera) O->Transform = FTransform(FRotator(Pitch, Yaw, 0.f), Focus - FRotator(Pitch, Yaw, 0.f).Vector() * Distance);
 	Select(Id);
 	return Id;
