@@ -424,6 +424,7 @@ c-street-city 的逐項回答在 `Docs/STREET_CITY_PLACES_INVENTORY_20261103.md`
 - `motions.toml` 的 `beach`、`pool` 要能接上新的地點 id。
 - 戶外旗標接到雨天、雨傘、撲克牌桌和視線判斷。
 - 坐的錨點有 `seat_pos` 時用真椅子：不生成 `SpawnLifeProps` 的方塊椅，坐姿高度依 `seat_pos`（第 10.2 節）。
+- 買衣試衣與換裝（第 10.4 節）：目前遊戲沒有這個功能。`catalog.json` 沒有衣服和鞋子的商品類別，服裝只有開場選的 `HighOutfits`（卡片內的服裝編號），街上群眾換裝和換臉一樣要下次啟動才生效。
 - `hotel` 的 privacy 是 1，`TickIntimacy` 在飯店永遠不會觸發（子代理發現）。要改成 2，或給飯店一個私人房間的子地點。
 - 寫死在舊地圖座標的東西要換掉：
   - 女主走路的路線點、休息點、看風景點（`OKStreetSocialRules.h:1809-1831`）。
@@ -588,3 +589,34 @@ c-street-city 的逐項回答在 `Docs/STREET_CITY_PLACES_INVENTORY_20261103.md`
 - 全表 `anchor_find` 一次要在 0.1 ms 內。
 
 改到 `Tools/ok-rules` 要照 `AGENTS.md` 的共用程式碼規則：`cargo test -j 8 --release`、`cargo check -j 8 --release --no-default-features`，並確認遊戲和編輯器連結成功。C++ 接上查詢由 c-conquest 做。
+
+### 10.4 換衣服、換鞋、買衣試衣（使用者 11-04）
+
+現況（`places.json`）：
+
+| 地點 | 有的錨點 | 缺 |
+|---|---|---|
+| `clothing`（M1 2F 女裝、3F 男裝） | `counter` 9、`fitting` 9、`mirror` 9、`rack` 18 | 試衣間外等人的座位、鞋區 |
+| `clothing_s10`、`s30`、`s46`、`s94` | `fitting`、`mirror` 各 1 | `rack`、`counter`、等人座位 |
+| `lingerie`、`swimwear`、`yukata` | `counter`、`fitting`、`mirror`、`rack` | 等人座位 |
+| `department` | `mirror` 2、`shoes` 1 | 百貨各樓的 `rack`、`fitting`、`counter`、鞋區全套 |
+| 鞋店 | 沒有這個地點，只有百貨的 `shoes` 1 個點 | 整間店，或百貨鞋區做完整 |
+
+新增的錨點種類：
+
+| kind | 做什麼 | 要放在 | 現況 |
+|---|---|---|---|
+| `browse` | 在衣架或貨架前挑衣服，兩人並肩 | 所有 `rack`、鞋架前 | `rack` 26 可加種類，百貨沒有 |
+| `fitting` | 進試衣間換衣服。`slots` 第 1 個在簾內，第 2 個在簾外 | 所有服裝店、內衣、泳裝、浴衣、百貨 | 有 `fitting` 20，百貨沒有 |
+| `fitting_wait` | 他坐著等她換好，看得到試衣間簾子 | 每組試衣間外 | 沒有 |
+| `fitting_show` | 換好出來給他看：全身鏡前，留得下轉一圈的空間 | 試衣間出口的鏡子前 | `mirror` 可加種類 |
+| `try_shoes` | 坐下試穿鞋子：試鞋凳和腳邊的地鏡 | 鞋店、百貨鞋區 | `shoes` 1 |
+| `shoe_rack` | 挑鞋子 | 鞋店、百貨鞋區 | 沒有 |
+| `checkout` | 結帳、包裝 | 所有賣衣服和鞋子的店 | `counter`、`checkout` 可加種類，百貨和 `clothing_s*` 沒有 |
+| `changing` | 換裝，不是試穿：換運動服、泳裝、制服、打工制服 | 校舍和體育館更衣室、`pool`、`beach`、`gym`、溫泉脫衣間、打工的員工室 | 部分（`changing_hut`、`changing_women`、`changing_men`） |
+| `closet` | 在家選衣服、換衣服（第 10.1 節） | 所有住處 | 沒有 |
+| `shoe_change` | 脫鞋、換鞋：玄關、校舍鞋櫃換室內鞋、溫泉、民宿、榻榻米包廂 | 住處 `entry`、校舍 `shoe_locker`、`onsen`、`minshuku`、`izakaya` | 沒有 |
+
+`fitting_wait`、`try_shoes` 都是坐的錨點，要照第 10.2 節放 `pos` 和 `seat_pos`。
+
+`department` 要補的樓層：女裝、男裝、鞋區、配件，每區都要 `browse`、`fitting`（鞋區是 `try_shoes`）、`fitting_wait`、`checkout`。既有活動用的 `mirror2`、`mirror3`、`shoes` 名稱不改。
