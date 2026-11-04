@@ -331,6 +331,57 @@ void SOKStudioPanel::SaveLayout() const
 	FFileHelper::SaveStringToFile(Out, *LayoutFile(), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 }
 
+void SOKStudioPanel::WatchUnkeyed()
+{
+	// A move on an object with keys is undone by the next change of time. It went without a word (U214).
+	FOKSceneObject* O = Game->Selection.Num() == 1 ? Obj() : nullptr;
+	const FOKSceneTrack* Track = O ? Game->Document->TrackOf(O->Id) : nullptr;
+	const bool bTracked = Track && !Track->Keys.IsEmpty();
+	if (!bTracked || O->Id != WatchId || Game->TimelineTime != WatchTime)
+	{
+		if (bUnkeyed && O && O->Id == WatchId) SetStatus(TEXT("剛才的改動沒打 key，已還原。改完先打 key（K）再換時間"));
+		bUnkeyed = false;
+		WatchId = bTracked ? O->Id : -1;
+		WatchTime = Game->TimelineTime;
+		if (bTracked) WatchTransform = O->Transform;
+		return;
+	}
+	const FOKSceneKey* Key = Game->Document->KeyAt(O->Id, WatchTime);
+	if (O->Transform.Equals(WatchTransform, 0.01) || (Key && O->Transform.Equals(Key->Transform, 0.01)))
+	{
+		bUnkeyed = false;
+		WatchTransform = O->Transform;
+		return;
+	}
+	if (!bUnkeyed) SetStatus(O->Name + TEXT(" 的改動還沒打 key（K）；換時間或播放會還原"));
+	bUnkeyed = true;
+}
+
+TSharedRef<SWidget> SOKStudioPanel::BuildStartHint()
+{
+	auto Start = [this](const TCHAR* Label, const TCHAR* Command) { return Button(FText::FromString(Label), Cmd(Command), 0.f, 26.f, false, 11.f); };
+	return SNew(SBorder).BorderImage(Brush(Panel())).Padding(FMargin(12.f, 10.f))
+		.Visibility_Lambda([this]
+		{
+			const bool bEmpty = Game.IsValid() && Game->File.IsEmpty() && Game->Document->Map < 0 && !Game->Document->Objects.ContainsByPredicate([](const FOKSceneObject& O)
+				{ return O.Kind == EOKSceneObjectKind::Character || O.Kind == EOKSceneObjectKind::Item; });
+			return bEmpty ? EVisibility::Visible : EVisibility::Collapsed;
+		})
+		[
+			SNew(SVerticalBox)
+			+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(TEXT("從這裡開始")), 13.f)]
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 6.f)
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 3.f, 0.f)[Start(TEXT("加入角色"), TEXT("page.charloader"))]
+				+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 3.f, 0.f)[Start(TEXT("選地圖"), TEXT("add.map"))]
+				+ SHorizontalBox::Slot().FillWidth(1.f)[Start(TEXT("開啟場景"), TEXT("page.files"))]
+			]
+			+ SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Font(Font(10.f)).ColorAndOpacity(OKStudioStyle::Text()).AutoWrapText(true)
+				.Text(FText::FromString(TEXT("做影片：加角色 → 左上人形圖示的「動畫」選動作 → 右上時間軸打 key → 時間軸的「輸出…」。原作場景在「開啟場景」的 KStudio 分頁。")))]
+		];
+}
+
 FString SOKStudioPanel::ExportResult() const
 {
 	if (Game->LastMovieError == TEXT("cancelled")) return TEXT("已取消輸出");
@@ -347,6 +398,7 @@ void SOKStudioPanel::TickUi(float DeltaTime)
 	if (ReportPending > 0 && --ReportPending == 0 && !Game->LoadReport().IsEmpty()) ShowLoadReport();
 	// The guide's drag readout on the status line.
 	if (!Game->GuideReadout.IsEmpty()) SetStatus(Game->GuideReadout);
+	WatchUnkeyed();
 	// U200: an export's progress and result here too, for when its window is closed.
 	const bool bExporting = Game->IsExporting();
 	if (bExporting) SetStatus(FString::Printf(TEXT("輸出中 %d / %d 幀"), Game->ExportFrameIndex(), Game->ExportFrameCount()));
@@ -2211,6 +2263,18 @@ TSharedRef<SWidget> SOKStudioPanel::BuildExport()
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[Line(TEXT("高"), Spin([this] { return float(ExportH); }, [this](float V) { ExportH = FMath::Clamp(FMath::RoundToInt(V), 16, 8192); }, 16.f, 8192.f, 1.f))]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[Line(TEXT("輸出資料夾"), TextBox([this] { return ExportFolderText; }, [this](const FString& V) { ExportFolderText = V.TrimStartAndEnd().TrimQuotes(); }, TEXT("UserData/Studio/movie")))]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[CheckBox(TEXT("mp4 含音樂（播放中的 BGM 與外部音源）"), [this] { return Game.IsValid() && Game->bExportAudio; }, [this](bool B) { if (Game.IsValid()) Game->bExportAudio = B; })]
+		// U215: the range is remembered from the last time, and a short one looked like a broken export.
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f, 0.f, 0.f)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)[OKStudioStyle::Label(TAttribute<FText>::CreateLambda([this]
+			{
+				if (!Game.IsValid()) return FText::GetEmpty();
+				const float End = Game->Document->Duration, From = FMath::Clamp(ExportFromT, 0.f, End), Until = ExportToT > From ? FMath::Min(ExportToT, End) : End;
+				return FText::FromString(FString::Printf(TEXT("將輸出 %.1f～%.1f 秒，共 %d 幀"), From, Until, FMath::Max(1, FMath::CeilToInt((Until - From) * ExportFpsV))));
+			}), 10.f)]
+			+ SHorizontalBox::Slot().AutoWidth()[Button(FText::FromString(TEXT("全長")), [this] { ExportFromT = 0.f; ExportToT = -1.f; }, 50.f, 18.f, false, 10.f)]
+		]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
 		[
 			SNew(SBox).HeightOverride(14.f)

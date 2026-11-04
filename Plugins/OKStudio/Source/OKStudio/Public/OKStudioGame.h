@@ -91,6 +91,8 @@ public:
 	/** Points the free view at the selection, far enough to see all of it; bFace: at one character's face, close up (the
 	 *  look, neck and expression pages edit what the face shows). */
 	void FocusSelection(bool bFace = false);
+	/** The whole figure of a character just added, while the view is still the initial one (U212). */
+	void FrameFirstCharacter(int32 Id);
 	/** The part of the view no panel covers, as fractions of the view (0..1, y down); the panel keeps it current. Framing
 	 *  centres there and sizes the distance to it. */
 	FBox2D ClearView = FBox2D(FVector2D(0.f, 0.f), FVector2D(1.f, 1.f));

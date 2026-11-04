@@ -1204,7 +1204,9 @@ namespace
 			// The timeline op itself may stop playback; buttons and fields work during playback as they do for the user
 			// (the stop button among them), and a capture only looks.
 			static const TSet<FString> WhilePlaying = { TEXT("timeline"), TEXT("click"), TEXT("type"), TEXT("capture") };
-			if (!Busy.IsEmpty() && !(Busy == TEXT("playing") && WhilePlaying.Contains(Op)))
+			// U210: the mouse works during an export as it does for the user (closing the window, 取消).
+			static const TSet<FString> WhileExporting = { TEXT("click"), TEXT("mouse") };
+			if (!Busy.IsEmpty() && !(Busy == TEXT("playing") && WhilePlaying.Contains(Op)) && !(Busy == TEXT("exporting") && WhileExporting.Contains(Op)))
 			{
 				TSharedRef<FJsonObject> O = Result(false, TEXT("busy: ") + Busy);
 				O->SetStringField(TEXT("busy"), Busy);

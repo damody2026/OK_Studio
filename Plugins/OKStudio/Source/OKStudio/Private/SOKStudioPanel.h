@@ -320,6 +320,7 @@ public:
 				.DPIScale_Lambda([this] { return UiDpiScale(); })
 				[
 					SAssignNew(Canvas, SConstraintCanvas).Visibility(EVisibility::SelfHitTestInvisible)
+					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.5f, 0.5f)).Anchors(FAnchors(0.5f, 0.5f)).Offset(FMargin(0.f, -60.f, 460.f, 106.f))[Tagged(TEXT("StartHint"), BuildStartHint())]
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(0.f, 0.f)).Offset(FMargin(7.f, 7.f, 35.f, 177.f))[Tagged(TEXT("RootToolbar"), MakeRootToolbar())]
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(0.f, 0.f)).Offset(TAttribute<FMargin>::CreateLambda([this] { return FMargin(47.f, 7.f, 80.f, SubMenuHeight()); }))
 						[Tagged(TEXT("SubMenu"), SNew(SBox).Visibility_Lambda([this] { return RootMenu >= 0 && bShowRoot ? EVisibility::Visible : EVisibility::Collapsed; })[SAssignNew(SubMenuBody, SBox)])]
@@ -1135,6 +1136,14 @@ public:
 			const FTool& T = Tools[I];
 			TFunction<bool()> On = T.On;
 			if (!T.Command) { Box->AddSlot().AutoWidth().Padding(0.f, 0.f, 7.f, 0.f)[SNew(SBox).WidthOverride(33.f)]; continue; }
+			// U213: a film slate reads as the timeline; the first thing tried for one opened this window.
+			if (FCString::Strcmp(T.Command, TEXT("toggle.mmd")) == 0)
+			{
+				Box->AddSlot().AutoWidth().Padding(0.f, 0.f, 7.f, 0.f)
+					[Tagged(*FString::Printf(TEXT("TopTool_%d"), I), SNew(SBox).ToolTipText(FText::FromString(Tip(T.Label, T.Command)))
+						[OKStudioStyle::Button(FText::FromString(TEXT("MMD")), Cmd(T.Command), 33.f, 33.f, TAttribute<bool>::CreateLambda([On] { return On(); }), 10.f)])];
+				continue;
+			}
 			Box->AddSlot().AutoWidth().Padding(0.f, 0.f, 7.f, 0.f)
 				[Tagged(*FString::Printf(TEXT("TopTool_%d"), I), IconButton(T.Icon, Tip(T.Label, T.Command), Cmd(T.Command), 33.f, 33.f, TAttribute<bool>::CreateLambda([On] { return On(); }), ButtonFill(), ToolOn()))];
 		}
@@ -1597,6 +1606,14 @@ public:
 	/** What the last export came to, for the export window and the status line. */
 	FString ExportResult() const;
 	bool bWasExporting = false;
+	/** U214: the selected object's transform when the playhead came to WatchTime, to notice a move that has no key. */
+	int32 WatchId = -1;
+	float WatchTime = -1.f;
+	FTransform WatchTransform;
+	bool bUnkeyed = false;
+	void WatchUnkeyed();
+	/** U211: what an empty scene shows, where to start. */
+	TSharedRef<SWidget> BuildStartHint();
 
 	// --- Dialog and the unsaved-changes guard (U7-4). ---
 	FString DialogText;

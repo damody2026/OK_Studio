@@ -1371,6 +1371,8 @@ void UOKStudioGame::CancelExport()
 	ExportFrame = -1;
 	SetTimelineTime(ExportReturnTime);
 	LastMovieError = TEXT("cancelled");
+	// U216: an mp4's frames are only its working files (a PNG sequence stays, what was made of it may be wanted).
+	if (bExportMp4) IFileManager::Get().DeleteDirectory(*ExportDir, false, true);
 }
 
 FString UOKStudioGame::ExportFrames(float Fps, int32 Width, int32 Height, bool bMp4, float From, float To, const FString& Folder)

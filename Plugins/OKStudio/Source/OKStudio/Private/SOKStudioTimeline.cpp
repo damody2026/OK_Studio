@@ -143,7 +143,7 @@ int32 SOKStudioTimeline::OnPaint(const FPaintArgs&, const FGeometry& G, const FS
 		const FVector2D A(FMath::Min(DragFrom.X, DragNow.X), FMath::Min(DragFrom.Y, DragNow.Y)), B(FMath::Max(DragFrom.X, DragNow.X), FMath::Max(DragFrom.Y, DragNow.Y));
 		Box(A.X, A.Y, B.X - A.X, B.Y - A.Y, FLinearColor(1.f, 1.f, 1.f, 0.12f), Layer + 5);
 	}
-	if (Rows.IsEmpty()) Text(LabelWidth + 8.f, RulerHeight + 6.f, TEXT("沒有關鍵幀：選物件後按「打 key」（K）"), TextHint(), 10.f, Layer + 2);
+	if (Rows.IsEmpty()) Text(LabelWidth + 8.f, RulerHeight + 6.f, TEXT("做一段動作：選物件打 key（K）→ 點上方尺規換時間 → 移動 → 再打 key → 播放"), TextHint(), 10.f, Layer + 2);
 	return Layer + 6;
 }
 

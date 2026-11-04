@@ -237,6 +237,15 @@ void UOKStudioGame::FocusSelection(bool bFace)
 	Document->ActiveCamera = -1;
 }
 
+void UOKStudioGame::FrameFirstCharacter(int32 Id)
+{
+	// The initial view shows 156 cm at the character's distance: head and feet were cut. Its bounds come only once the
+	// card has built, so this is a standing person's size, not FocusSelection.
+	if (Document->ActiveCamera >= 0 || Distance != InitialDistance || !Focus.Equals(InitialFocus)) return;
+	Focus = Document->WorldTransform(Id).GetLocation() + FVector(0.f, 0.f, 82.f);
+	Distance = 480.f;
+}
+
 void UOKStudioGame::ViewPreset(int32 Preset)
 {
 	Document->ActiveCamera = -1;
