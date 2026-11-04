@@ -48,6 +48,7 @@ bool FKKGpuStreamProxyTest::RunTest(const FString&)
  // every vertex, but must not invalidate primitive transforms/draw commands.
  World->SendAllEndOfFrameUpdates();FlushRenderingCommands();
  auto Contained=Mesh->SubmitGpuStreams(0,Request(false,1,FVector(2,.125,0)));
+ TestTrue(TEXT("Current bounds follow the latest publication while the render bounds keep the envelope"),Mesh->CurrentWorldBounds().Max.X<Mesh->Bounds.GetBox().Max.X-1.);
  TestFalse(TEXT("Contained GPU pose does not dirty render transform"),Mesh->IsRenderTransformDirty());
  VerifyReceipt(Contained,true,1);for(int32 I=0;I<Count;++I)Expected[I].Position=P[I]+FVector(2,.125,0);
  TestTrue(TEXT("Contained pose still updates actual GPU vertex streams"),Mesh->VerifyGpuRenderStreams(0,Expected,1));

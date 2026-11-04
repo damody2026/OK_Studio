@@ -4,6 +4,7 @@
 #include "OKStudioGameInternal.h"
 #include "OKStudioSettings.h"
 #include "OKSceneActor.h"
+#include "KKAffineProceduralMeshComponent.h"
 #include "KKPreviewActor.h"
 #include "Blueprint/WidgetLayoutLibrary.h"
 #include "Camera/CameraComponent.h"
@@ -59,15 +60,19 @@ bool UOKStudioGame::WorldBounds(int32 Id, FBox& Out) const
 	if (O->Kind == EOKSceneObjectKind::Character)
 	{
 		const AKKPreviewActor* Preview = SceneActor->PreviewOf(Id);
-		TArray<TPair<FVector, FVector>> Segments;
-		if (SkeletonSegments(Preview, Segments)) for (const TPair<FVector, FVector>& S : Segments) { Out += S.Key; Out += S.Value; }
 		if (Preview)
 		{
 			TInlineComponentArray<UMeshComponent*> Meshes(Preview);
 			for (const UMeshComponent* M : Meshes)
 				if (M && M->IsRegistered() && M->IsVisible() && M->bRenderInMainPass && !M->ComponentHasTag(TEXT("KKPreviewOutline")) && M->Bounds.SphereRadius > KINDA_SMALL_NUMBER)
-					Out += M->Bounds.GetBox();
+				{
+					const UKKAffineProceduralMeshComponent* Affine = Cast<UKKAffineProceduralMeshComponent>(M);
+					Out += Affine ? Affine->CurrentWorldBounds() : M->Bounds.GetBox();
+				}
 		}
+		// Nothing drawn (still loading, an invisible body): its bones.
+		TArray<TPair<FVector, FVector>> Segments;
+		if (!Out.IsValid && SkeletonSegments(Preview, Segments)) for (const TPair<FVector, FVector>& S : Segments) { Out += S.Key; Out += S.Value; }
 	}
 	else if (const AKKPreviewActor* Preview = SceneActor->PreviewOf(Id))
 	{

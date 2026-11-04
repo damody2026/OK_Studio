@@ -723,6 +723,7 @@ TSharedRef<FKKGpuStreamReceipt,ESPMode::ThreadSafe> UKKAffineProceduralMeshCompo
     if(!Box.IsValid||Box.Min.ContainsNaN()||Box.Max.ContainsNaN()||Box.Min.X>Box.Max.X||Box.Min.Y>Box.Max.Y||Box.Min.Z>Box.Max.Z)return Reject(TEXT("GPU publication requires finite conservative bounds"));
     // Expand before enqueueing; a failed/stale publication cannot shrink bounds
     // and cull the last valid GPU/CPU frame. No per-vertex GT walk on updates.
+    GpuSectionBounds.Add(Index,Box);
     if(ExpandGpuStreamBounds(GetProcMeshSection(Index)->SectionLocalBox,Box)){UpdateBounds();MarkRenderTransformDirty();}
     auto* Proxy=static_cast<FKKStreamSceneProxy*>(SceneProxy);const uint64 Epoch=GpuStreamProxyEpoch;
     ENQUEUE_RENDER_COMMAND(KK_PublishGpuStreams)([Proxy,Index,Request=MoveTemp(Request),Receipt,Epoch](FRHICommandListImmediate& Commands){
@@ -773,6 +774,7 @@ TSharedRef<FKKGpuStreamReceipt,ESPMode::ThreadSafe> UKKAffineProceduralMeshCompo
     TArray<FVector4f> Rows;if(!Request.Revision||!OKPrepareGpuDeformPalette(MakeArrayView(&Request.SourceToOverlay,1),Rows,Error))return Reject(TEXT("Coating revision/transform invalid"));
     const auto& Box=Request.ConservativeLocalBounds;
     if(!Box.IsValid||Box.Min.ContainsNaN()||Box.Max.ContainsNaN()||Box.Min.X>Box.Max.X||Box.Min.Y>Box.Max.Y||Box.Min.Z>Box.Max.Z)return Reject(TEXT("Coating bounds invalid"));
+    GpuSectionBounds.Add(Index,Box);
     if(ExpandGpuStreamBounds(TargetSection->SectionLocalBox,Box)){UpdateBounds();MarkRenderTransformDirty();}
     FKKGpuCoatingPacket Packet{static_cast<FKKStreamSceneProxy*>(SceneProxy),static_cast<FKKStreamSceneProxy*>(Source->SceneProxy),Index,SourceIndex,MoveTemp(Request),Receipt,this,Source};
     if(GCurrentGpuCoatingBatch)GCurrentGpuCoatingBatch->Append(MoveTemp(Packet));else{TArray<FKKGpuCoatingPacket> Packets;Packets.Add(MoveTemp(Packet));PublishGpuCoatingPackets(MoveTemp(Packets));}return Receipt;
@@ -829,6 +831,7 @@ void UKKAffineProceduralMeshComponent::SubmitGpuStreamsBatch(TArray<FKKGpuStream
         auto& Seen=Targets.FindOrAdd(C);if(Seen.Contains(Entry.Section)){Reject(TEXT("Duplicate GPU batch section"));continue;}Seen.Add(Entry.Section);
         const auto& Box=R.ConservativeLocalBounds;
         if(!Box.IsValid||Box.Min.ContainsNaN()||Box.Max.ContainsNaN()||Box.Min.X>Box.Max.X||Box.Min.Y>Box.Max.Y||Box.Min.Z>Box.Max.Z){Reject(TEXT("GPU batch bounds invalid"));continue;}
+        C->GpuSectionBounds.Add(Entry.Section,Box);
         if(ExpandGpuStreamBounds(Section->SectionLocalBox,Box))DirtyBounds.Add(C);
         const uint64 Generation=R.ExpectedGeneration;
         Packets.Add({static_cast<FKKStreamSceneProxy*>(C->SceneProxy),Entry.Section,MoveTemp(R),Entry.Receipt,Generation});
