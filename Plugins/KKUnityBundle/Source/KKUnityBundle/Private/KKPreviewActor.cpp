@@ -11234,7 +11234,7 @@ static void OkFitCaptureRig(AKKPreviewActor* Actor, FOkCamRig& Rig,AKKPreviewAct
 	DisplayActor->GetComponents(Skinned);
 	for (USkinnedMeshComponent* Component : Skinned)
 	{
-		if (!Component->IsVisible() || !Component->GetSkinnedAsset()) { continue; }
+		if (!Component->IsVisible() || !Component->GetSkinnedAsset() || !Component->GetMeshObject()) { continue; }
 		// Runtime skin bounds include current bone palettes and active morphs.
 		// Their conservative envelopes avoid a render flush/GPU vertex readback.
 		if(Realtime){AddBox(Component->CalcBounds(Component->GetComponentTransform()).GetBox());continue;}

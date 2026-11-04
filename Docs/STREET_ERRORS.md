@@ -1962,3 +1962,4 @@
 - 2026-11-04 e-galgame 實測前改存檔：回報「放進 EMain 存檔的保險套啟動後被清空」，以為是遊戲的問題。實際是 `game_stop` 用不帶 `/F` 的 taskkill，指令回傳時遊戲還在關閉，結束時存檔（`relationships.json`、`Saves/auto`）把我剛改的內容蓋掉。之後改存檔一律等遊戲行程結束再改，不要接在 game_stop 後面。
 - 2026-11-04 e-galgame `SetHandShape` 沒同步：H 面板換手型時，配對播放的背景執行緒還在用同一個 Session，遊戲偶爾直接消失（game.log 沒有 Fatal、Windows 也沒紀錄），一開始還以為是別的 session 關掉的。修正：呼叫前 `SyncPair()`。教訓：在 H 面板改 Session 的東西都要先 SyncPair。
 - 2026-11-04 e-galgame 腳本錨點失敗沒看到：`grip.py` 的錨點多了 4 個空白，斷言失敗什麼都沒改，又因同一條指令多打 `cat > /dev/null` 卡住，輸出被吃掉，拍了兩輪才發現手型根本沒套上。之後 python 腳本接 `&& echo applied`，看到再往下做。
+- 2026-11-04 e-galgame：H 裡換衣服閃退（19:36、20:56 兩次，同一原因）：新部件還沒有 MeshObject，`AOKPaintSprayer::Tick` → `FOKPaintPose::Prepare` 同一幀呼叫 `GetCPUSkinnedVertices` 觸發 assert。第一版只擋在 `Unsupported` 分支，改成 `Prepare` 開頭檢查 `IsRegistered()` 與 `GetMeshObject()`，這幀跳過、下一幀重試；`KKPreviewActor` 量外框與 `OKCardPreviewCapture` 也加同樣檢查。壓力測試：H 場景連續換衣、半脫、換體位 36 次沒有閃退（`Saved/StreetSocial/Play-20261104T211309`）；測試沒有同時按住噴射，舊版也未重跑對照。
