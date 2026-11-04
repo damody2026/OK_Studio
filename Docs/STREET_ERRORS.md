@@ -1972,3 +1972,10 @@
 - 2026-11-04 c-street-city 任務名稱 `world_round5_probe` 含數字被 `street_city_motel_job.lua` 的名稱檢查擋下，排隊等 slot 後才失敗，白佔一次 slot。修正：任務名只用小寫字母與底線，排隊前先在本機跑過名稱檢查。
 - 2026-11-05 c-street-city 第五輪第二次安裝又超過 30 分鐘：`dress` 的房間搜尋 `reach=4000` 用 25 cm 細格加靠牆條件，在 78 m 大廳幾十萬次方塊掃描；`unreal.log` 進度也沒進 log。修正：`_ls_search` 單次 60 秒、`dress` 每件 45 秒上限，大範圍改 75 cm 間距；進度改寫獨立檔 `world-edge-v1/lover-progress.txt`，每行關檔。
 - 2026-11-05 c-street-city 第五輪安裝連續四次沒進度：我把卡住的 job 強制停掉時，`jobs/` 留下沒有 result 的 request，新開的 worker 先撿最舊的那筆，一直在重跑 22:41 的舊 payload，新改的程式根本沒執行；我還猜了兩次搜尋太慢。協調者看 log 指出程式沒走到第 104 行才查到。修正：清掉無 result 的 request，chain 開 serve 前自動清。強制停 job 後一定要清 request；診斷先確認跑的是不是新程式。
+- 2026-11-05 c-street-city cook 空佔 slot：cook 啟動時的 `Build.bat -Mode=ValidatePlatforms` 要等引擎的 UBT 鎖，E 引擎上別組正在建置，cook 5 分鐘只用 4 秒 CPU 還佔著 slot，協調者發現。修正：關掉 cook，chain 改成等所有 UBT 結束才 claim。
+- 2026-11-05 c-street-city 校舍更衣間放在入口大廳：只看「靠牆有空位」，E1 的更衣間擋到既有走動路線，實走第一條射線就失敗。修正：改放各棟一樓房間，大廳保持淨空。
+- 2026-11-05 c-street-city 地面判斷不出馬路：`ground_ok` 只看碰撞面材質，部分馬路的碰撞面也是草地或鋪面材質，教堂、祭典攤位和 world-tripo 景觀件都壓在車道上。修正：改用 `world-ground-v1/ground-plan.json` 的道路中心線判斷（邊界再留 150 cm），已放下的景觀件逐一移除。
+- 2026-11-05 c-street-city 釣魚椅放進錦鯉池：改到街面高度後搜尋半徑仍從池邊開始，池子的碰撞面也算平地。修正：搜尋從池中心 6 m 外開始。
+- 2026-11-05 c-street-city Tripo 地被看起來像揉皺的鋁箔：`meadow_patch` 上限 1500 面，3 公尺大的東西只剩大三角面，散了約 400 個，從俯視圖看不出來，要看地面視角才發現。修正：全部移除，花海改用 Blender 組出的花叢。大面積又矮的東西不要用 Tripo。
+- 2026-11-05 c-street-city 驗收讓位後重跑又去 cook：打包 04:22 已完成且地圖沒變，`--yield` 退出後 chain 重跑整段驗收，又卡在 E 引擎 UBT 鎖。修正：先比對 `package.json` 的 `map_sha256`，相同就直接跑鏡面遷移、實走、重拍。
+- 2026-11-05 c-street-city 打擊機和小山壓到走動路線：挑位置時沒比對 physics plan 的路線，實走才一件一件爆。修正：用 plan 的 sweeps 與 actors.json 外框離線比對全部新物件，再挑離路線夠遠的草坪。
