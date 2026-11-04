@@ -226,6 +226,29 @@ bool OKStudioMapAmbient(int32 Map, FLinearColor& OutSHAr, FLinearColor& OutSHAg,
 	return true;
 }
 
+bool OKStudioMapTimeAmbient(int32 Map, int32 SunType, FLinearColor& OutSky)
+{
+	const TSharedPtr<FJsonObject> Catalog = LoadCatalog();
+	const TArray<TSharedPtr<FJsonValue>>* Maps = nullptr;
+	if (!Catalog.IsValid() || !Catalog->TryGetArrayField(TEXT("maps"), Maps)) return false;
+	for (const TSharedPtr<FJsonValue>& V : *Maps)
+	{
+		const TSharedPtr<FJsonObject> M = V->AsObject();
+		const TArray<TSharedPtr<FJsonValue>>* Ambient = nullptr;
+		if (!M.IsValid() || int32(M->GetNumberField(TEXT("map"))) != Map || !M->TryGetArrayField(TEXT("ambient"), Ambient)) continue;
+		const TArray<TSharedPtr<FJsonValue>>& Types = M->GetArrayField(TEXT("sun_types"));
+		for (int32 I = 0; I < Types.Num() && I < Ambient->Num(); ++I)
+		{
+			if (int32(Types[I]->AsNumber()) != SunType) continue;
+			const TArray<TSharedPtr<FJsonValue>>& C = (*Ambient)[I]->AsArray();
+			if (C.Num() < 3) return false;
+			OutSky = FLinearColor(ToLinear(C[0]->AsNumber()), ToLinear(C[1]->AsNumber()), ToLinear(C[2]->AsNumber()), 1.f);
+			return true;
+		}
+	}
+	return false;
+}
+
 bool OKStudioSkyAmbient(int32 No, FLinearColor& OutSHAr, FLinearColor& OutSHAg, FLinearColor& OutSHAb)
 {
 	const TSharedPtr<FJsonObject> Pattern = FindPattern(No);
@@ -240,7 +263,7 @@ bool OKStudioSkyAmbient(int32 No, FLinearColor& OutSHAr, FLinearColor& OutSHAg, 
 	};
 	auto Float = [&](const TCHAR* Name, double Default) { double V = Default; if (Floats.IsValid()) Floats->TryGetNumberField(Name, V); return float(V); };
 	const FLinearColor Upper = Color(TEXT("_GradientSkyUpperColor")), Middle = Color(TEXT("_GradientSkyMiddleColor")), Lower = Color(TEXT("_GradientSkyLowerColor"));
-	const float Mid = Float(TEXT("_GradientFadeMiddlePosition"), 0.5), Begin = Float(TEXT("_GradientFadeBegin"), -0.1), End = Float(TEXT("_GradientFadeEnd"), 1.0);
+	const float Mid = Float(TEXT("_GradientFadeMiddlePosition"), 0.5), Begin = Float(TEXT("_GradientFadeBegin"), -0.1), End = FMath::Min(Float(TEXT("_GradientFadeEnd"), 1.0), 1.f);
 	// The gradient of the sky program (Funly 3D Standard, GRADIENT_BACKGROUND): the height y of the view direction
 	// smooth-stepped from the lower to the middle colour below MidY = Begin + (End - Begin) Middle, then to the upper.
 	const float MidY = Begin + (End - Begin) * Mid;
@@ -387,6 +410,8 @@ UMaterialInterface* OKStudioSkyMaterial(int32 No, FString& OutError)
 			V = FLinearColor((*C)[0]->AsNumber(), (*C)[1]->AsNumber(), (*C)[2]->AsNumber(), (*C)[3]->AsNumber());
 		else if (Floats.IsValid() && Floats->TryGetNumberField(Name, F)) V = FLinearColor(float(F), 0, 0, 0);
 		else bKnown = false;
+		// The sky controller clamps the gradient's end to the top of the sky (native material: 1 where the profile says 1.5).
+		if (Name == TEXT("_GradientFadeEnd")) V.R = FMath::Min(V.R, 1.f);
 		if (!bKnown) UE_LOG(LogTemp, Warning, TEXT("OK studio sky %d: no value for %s (0)"), No, *Name);
 		// Studio renders in linear space: colour properties and [Gamma] values are linearised on upload.
 		if (U.Type == 0 || U.bGamma) { V.R = ToLinear(V.R); V.G = ToLinear(V.G); V.B = ToLinear(V.B); }

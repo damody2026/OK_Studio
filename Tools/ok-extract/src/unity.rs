@@ -2100,6 +2100,9 @@ impl ParsedBundle {
     }
     /// A map's SunLightInfo: times of day, what each shows, the sun (recorded by `studio-nodes`).
     pub fn prefab_sun_light(&self,prefab:&str)->PrefabSunLight {self.memo_prefab("prefab_sun_light",prefab,prefab,||self.prefab_sun_light_unity(prefab))}
+    /// Each Lux Water renderer's material by node (recorded by `studio-nodes`): a mesh shared by several renderers has one
+    /// entry in `meshes_for_maindata`, with one renderer's material (the lighthouse's four seas, one per time of day).
+    pub fn prefab_water_materials(&self,prefab:&str)->Vec<(i32,MeshMaterial)> {self.memo_prefab("prefab_water_materials",prefab,prefab,||self.prefab_water_materials_unity(prefab))}
     /// Baked reflection probes of a prefab and the scene's skybox reflection (recorded by `studio-nodes`).
     pub fn prefab_reflection_probes(&self,prefab:&str)->PrefabReflectionProbes {self.memo_prefab("prefab_reflection_probes",prefab,prefab,||self.prefab_reflection_probes_unity(prefab))}
     /// Converter-only read, independent of model/session memo formats.
@@ -2977,6 +2980,25 @@ impl ParsedBundle {
     }
     /// A Studio map's SunLightInfo (the MonoBehaviour with `_infos` and `_targetLight`, on the map root): the sun Light
     /// and each time of day's shown GameObjects and sun. Nodes are `prefab_hierarchy` numbering (inactive ones too).
+    fn prefab_water_materials_unity(&self, prefab:&str)->Vec<(i32,MeshMaterial)> {
+        let maps=self.resolved_material_maps();
+        let graphs=self.transform_graphs();
+        for (gi,graph) in graphs.iter().enumerate() {
+            let (h,go_node)=crate::pose::prefab_hierarchy_in(graph,prefab);
+            if h.nodes.is_empty() {continue;}
+            return self.with_serialized(|sers| {
+                let Some(ser)=sers.get(gi) else {return Vec::new();};
+                ser.objects_of_type(23).into_iter().filter_map(|info| {
+                    let obj=ser.scene_object(info).ok()?;
+                    let node=*go_node.get(&obj.class.properties().get("m_GameObject").and_then(uv_pptr)?)?;
+                    let mat=maps.1.get(&info.path_id)?.first()?;
+                    mat.shader.starts_with("Lux Water/").then(||(node,mat.clone()))
+                }).collect()
+            });
+        }
+        Vec::new()
+    }
+
     fn prefab_sun_light_unity(&self, prefab:&str)->PrefabSunLight {
         let graphs=self.transform_graphs();
         for (gi,graph) in graphs.iter().enumerate() {

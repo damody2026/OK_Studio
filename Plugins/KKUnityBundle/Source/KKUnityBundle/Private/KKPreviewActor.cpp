@@ -3869,6 +3869,10 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 	// camera-parented light. The program's L is the way the light travels (the camera's forward), so it takes the
 	// opposite (U166: lit from the view, the sea did not change with the time of day).
 	Vector(TEXT("_OKLightDir"), FLinearColor(0.f, 0.f, 0.f, 0.f));
+	// Lux Water (_OKLux 1, U169): its water colour under the time's ambient, the sun and what scatters through it. It
+	// reflects no sky: its planar reflection texture is null in Studio (native lighthouse: the sea takes no colour from it).
+	Scalar(TEXT("_OKLux"), 0.f);
+	Vector(TEXT("_OKScatter"), FLinearColor::Black);
 	Scalar(TEXT("_RimSize"), 0.75f); Scalar(TEXT("_Tiling"), 0.9f); Scalar(TEXT("_RefractionAmount"), 0.055f);
 	Scalar(TEXT("_Transparency"), 0.35f); Scalar(TEXT("_Wavesspeed"), 0.5f); Scalar(TEXT("_Glossiness"), 0.5f);
 	Scalar(TEXT("_Depth"), 15.f); Scalar(TEXT("_Depthdarkness"), 0.15f); Scalar(TEXT("_Rimtiling"), 1.f);
@@ -3972,6 +3976,10 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 		"lit += (diffuse * LightColor0.rgb + 2.0 * OKAmbient.rgb) * water;\n"
 		"float overlay = alpha > 0.5 ? 1.0 - (1.0 - 2.0 * (alpha - 0.5)) * (1.0 - deep) : 2.0 * alpha * deep;\n"
 		"GrabOffset = r4.xz;\n"
+		"if (OKLux > 0.5) {\n"
+		"float ripple = 1.0 + 0.5 * (n.x + n.z);\n"
+		"return float4(WaterColor.rgb * (1.5 * OKAmbient.rgb + OKScatter.rgb + 0.2 * diffuse * LightColor0.rgb) * ripple + pow(nh, 256.0) * LightColor0.rgb, saturate(deep * 4.0 + 0.5));\n"
+		"}\n"
 		"return float4(lit, saturate(overlay) + high);");
 	Add(Program);
 	auto* Lit = Add(NewObject<UMaterialExpressionComponentMask>(Mat));
@@ -6814,10 +6822,15 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 						{
 							if (Source.MaterialValue(i, From, V)) Dynamic->SetVectorParameterValue(To, FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), Alpha));
 						};
-						Color("_TranslucencyColor", TEXT("_WaterColor"), 1.f);
+						Color("_Color", TEXT("_WaterColor"), 1.f);
+						Dynamic->SetScalarParameterValue(TEXT("_OKLux"), 1.f);
+						// _TranslucencyIntensity 5.78 at the lighthouse's evening, 0.04 by day: what makes that sea brown.
+						FLinearColor Intensity(0.f, 0.f, 0.f, 0.f);
+						if (Source.MaterialValue(i, "_TranslucencyColor", V) && Source.MaterialValue(i, "_TranslucencyIntensity", Intensity))
+							Dynamic->SetVectorParameterValue(TEXT("_OKScatter"), FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), 1.f) * (Intensity.R * .07f));
 						Color("_UnderWaterReflCol", TEXT("_FresnelColor"), .35f);
 						Color("_FoamColor", TEXT("_RimColor"), .25f);
-						if (Source.MaterialValue(i, "_BumpTiling", V)) Dynamic->SetScalarParameterValue(TEXT("_Tiling"), 1.f - FMath::Clamp(V.G, .02f, .9f));
+						if (Source.MaterialValue(i, "_BumpTiling", V)) Dynamic->SetScalarParameterValue(TEXT("_Tiling"), 1.f - FMath::Clamp(V.R * 2.f, .02f, .9f));
 						if (Source.MaterialValue(i, "_DepthAtten", V) && V.G > 0.f) Dynamic->SetScalarParameterValue(TEXT("_Depth"), V.G);
 						Dynamic->SetScalarParameterValue(TEXT("_Transparency"), .55f);
 						Dynamic->SetScalarParameterValue(TEXT("_Glossiness"), .8f);
@@ -6865,7 +6878,11 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 					// The water writes Unity's depth texture itself (queue 2500 with a shadow caster): it reads its own
 					// depth there (native probe: hiding it moves the depth behind it), so it is in the stand-in too.
 					DepthTexturePresentParts.Add(Comp);
-					UE_LOG(LogTemp, Display, TEXT("OK stylized water part=%s lux=%d"), *Name, bLuxWater ? 1 : 0);
+					FLinearColor Sun(0.f, 0.f, 0.f, 0.f), Tint(-1.f, -1.f, -1.f, -1.f);
+					Source.MaterialValue(i, "_OKSunVisible", Sun);
+					Source.MaterialValue(i, "_Color", Tint);
+					const uint8* Bump = nullptr; int32 BumpLength = 0;
+					UE_LOG(LogTemp, Display, TEXT("OK stylized water part=%s lux=%d shown=%d color=(%.2f,%.2f,%.2f) bump=%d"), *Name, bLuxWater ? 1 : 0, int32(Sun.R), Tint.R, Tint.G, Tint.B, Source.ShaderTexture(i, "_BumpMap", Bump, BumpLength) ? BumpLength : 0);
 				}
 		// A mirror (FX/MirrorReflection): the scene gives "_ReflectionTex" a capture mirrored in the part's plane.
 		if (Comp && !bBody && !bFaceDraw && Source.MaterialShaderName(i).StartsWith(TEXT("FX/MirrorReflection")))

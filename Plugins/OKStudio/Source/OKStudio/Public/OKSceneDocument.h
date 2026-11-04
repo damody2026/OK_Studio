@@ -813,11 +813,11 @@ struct OKSTUDIO_API FOKScenePost
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Post")
 	float Exposure = 0.f;
 
-	/** Studio screen filter (Filter list number, -1: none): an Amplify Color LUT as colour grading, at this strength
+	/** Studio screen filter (Filter list number, -1: none; a new Studio scene has 0, aceNo): an Amplify Color LUT as colour grading, at this strength
 	 * (KStudio scenes: 1 - aceBlend). Like Studio, the rest of the strength is filter 0 (Lut_Amount), Studio's
 	 * blend target: strength 0 is Lut_Amount alone, not an ungraded picture. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Post")
-	int32 ColorFilter = -1;
+	int32 ColorFilter = 0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Post", meta = (ClampMin = "0", ClampMax = "1"))
 	float ColorFilterIntensity = 1.f;

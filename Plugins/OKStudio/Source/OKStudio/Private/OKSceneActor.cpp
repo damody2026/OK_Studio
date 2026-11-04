@@ -1262,7 +1262,9 @@ void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
 	MapSunItemColor = FLinearColor(Irradiance.R, Irradiance.G, Irradiance.B, 1.f);
 	// The map's water (StylizedWater, the lighthouse's Lux Water sea) is lit by the map's sun as Unity's ForwardBase
 	// gives it: _LightColor0 the sun's colour times intensity, from the sun's direction (U166: the sea kept the same
-	// colour at every time).
+	// colour at every time). Lux Water also takes the time's ambient (U169).
+	FLinearColor Ambient;
+	const bool bAmbient = OKStudioMapTimeAmbient(Document->Map, Time, Ambient);
 	for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews)
 	{
 		if (!P.IsValid()) continue;
@@ -1276,6 +1278,7 @@ void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
 				{
 					Water->SetVectorParameterValue(TEXT("_LightColor0"), MapSunItemColor);
 					Water->SetVectorParameterValue(TEXT("_OKLightDir"), FLinearColor(MapSunItemDirection.R, MapSunItemDirection.G, MapSunItemDirection.B, 1.f));
+					if (bAmbient) Water->SetVectorParameterValue(TEXT("_OKAmbient"), Ambient);
 				}
 			}
 	}

@@ -493,11 +493,13 @@ impl ModelView {
         // Shaders the renderer draws with their own graph (AKKPreviewActor) take their named textures the same way.
         const STANDARD: &[&str] = &["_MainTex", "_BumpMap", "_ParallaxMap", "_MetallicGlossMap", "_EmissionMap"];
         const STYLIZED_WATER: &[&str] = &["_Normals", "_Shadermap"];
+        const LUX_WATER: &[&str] = &["_BumpMap"];
         const GLASSES: &[&str] = &["_GlassRamp"];
         for mesh in &mut meshes {
             let Some(mat) = mesh.mat.as_ref() else { continue };
             let properties = if mat.shader == "Shader Forge/main_StandardMDK_studio" || mat.shader.starts_with("Standard") { STANDARD }
                 else if mat.shader == "StylizedWater/Desktop" { STYLIZED_WATER }
+                else if mat.shader.starts_with("Lux Water/") { LUX_WATER }
                 else if matches!(mat.shader.to_ascii_lowercase().as_str(), "koikano/main_clothes_item_glasses" | "shader forge/toon_glasses_lod0") { GLASSES }
                 else { continue };
             for &property in properties {
@@ -608,6 +610,16 @@ impl ModelView {
             }
             if let Some(n) = usize::try_from(node).ok().and_then(|i| h.nodes.get(i)) { if !m.renderer_names.contains(&n.name) { m.renderer_names.push(n.name.clone()); } edits.apply_renderer(m, &n.name); }
         };
+        // One mesh drawn by several renderers keeps one renderer's material: Lux Water takes its node's (U169: the lighthouse's
+        // four seas are one mesh, each time of day with its own material; the sea was the night's all day).
+        let node_materials: BTreeMap<i32, crate::unity::MeshMaterial> = if meshes.iter().any(|m| m.mat.as_ref().is_some_and(|mat| mat.shader.starts_with("Lux Water/"))) {
+            self.parsed.prefab_water_materials(prefab).into_iter().collect()
+        } else { BTreeMap::new() };
+        let node_material = |m: &mut ExtractedMesh, node: i32| {
+            let Some(own) = node_materials.get(&node) else { return };
+            if let Some(png) = own.slot("_BumpMap").and_then(|name| self.parsed.texture_png_named(name)) { m.shader_extra_textures.insert("_BumpMap".into(), png); }
+            m.mat = Some(own.clone());
+        };
         let mut instances: Vec<ExtractedMesh> = Vec::new();
         for m in meshes.iter_mut().filter(|m| !m.uses_skin_renderer()) {
             let nodes: Vec<(i32, crate::pose::Mat4)> = h.mesh_nodes.iter().filter(|(id, _)| *id == m.path_id)
@@ -615,6 +627,7 @@ impl ModelView {
             for (k, (node, w)) in nodes.iter().enumerate().skip(1) {
                 let mut extra = m.clone();
                 extra.name = format!("{}#{}", m.name, k + 1);
+                node_material(&mut extra, *node);
                 place(&mut extra, w);
                 bake_lightmap(&mut extra, &lightmaps, *node);
                 mark_render_texture(&mut extra, &render_textures, *node, &h, &worlds);
@@ -623,7 +636,7 @@ impl ModelView {
                 mark_renderer(&mut extra, *node);
                 instances.push(extra);
             }
-            if let Some((node, _)) = nodes.first() { bake_lightmap(m, &lightmaps, *node); mark_render_texture(m, &render_textures, *node, &h, &worlds); apply_animated_materials(m, &animated, *node); mark_sun_visible(m, &sun, &h, *node); mark_renderer(m, *node); }
+            if let Some((node, _)) = nodes.first() { node_material(m, *node); bake_lightmap(m, &lightmaps, *node); mark_render_texture(m, &render_textures, *node, &h, &worlds); apply_animated_materials(m, &animated, *node); mark_sun_visible(m, &sun, &h, *node); mark_renderer(m, *node); }
             let Some(w) = nodes.first().map(|(_, w)| *w).or(m.prefab_local) else { continue; };
             place(m, &w);
         }
