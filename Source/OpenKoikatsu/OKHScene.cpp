@@ -460,9 +460,9 @@ void UOKHScenePanel::PutCondomOn(){bCondomHers=CondomsLeft(false)<=0;++(bCondomH
 // She takes it in her mouth and rolls it on him, past 100 favor; false when she does not (he puts it on himself).
 bool UOKHScenePanel::StartCondomMouth(){
     double Favor=0.;if(!Gallery||!Gallery->HExperience.IsValid()||!Gallery->HExperience->TryGetNumberField(TEXT("favor"),Favor)||Favor<=100.)return false;
-    int32 Found=INDEX_NONE;
-    for(const TCHAR* Raw:{TEXT("両手フェラ"),TEXT("立ち両手フェラ"),TEXT("椅子両手フェラ")}){Found=Poses.IndexOfByPredicate([Raw](const FOKHPose& Pose){return Pose.Raw==Raw;});if(Found!=INDEX_NONE)break;}
-    if(Found==INDEX_NONE)return false;
+    TArray<int32> Mouth;for(int32 I=0;I<Poses.Num();++I)if(Poses[I].Mode==1&&Poses[I].KindHoushi==1&&!Poses[I].Raw.Contains(TEXT("玉舐め")))Mouth.Add(I); // licking his balls puts nothing on
+    if(Mouth.IsEmpty())return false;
+    const int32 Found=Mouth[FMath::RandHelper(Mouth.Num())]; // any of them (user 2026-11-04: all kinds of ways)
     const int32 From=ActivePose;SelectPose(Found);if(PendingPose!=Found)return false;
     CondomMouthFrom=From;CondomMouthPose=Found;CondomMouthAt=0.;
     return true;
@@ -1326,12 +1326,12 @@ void UOKHScenePanel::TickAhegao(){
     const bool bWant=bAhegaoShown;
     if(!bWant){if(bAhegaoPose){bAhegaoPose=false;Girl->Session.SetStudioIk({},{});Girl->SetMouthOpenFloor(0.f);AheGazeFor=nullptr;Girl->bManualSpeechPattern=bAheManualWas;
             if(bAheEyeLook){bAheEyeLook=false;if(bAheEyeFollow)Girl->FollowEyeLookCamera(AheEyePattern);else Girl->SetEyeLookTarget(AheEyeTarget,AheEyePattern,true);}
-            for(int32 Side=0;Side<2;++Side){const int32 P=HandPattern[Side];Girl->SetHandShape(Side,P>=0,FMath::Max(0,P),FMath::Max(0,P),0.f);HandShown[Side]=P;}
+            SyncPair();for(int32 Side=0;Side<2;++Side){const int32 P=HandPattern[Side];Girl->SetHandShape(Side,P>=0,FMath::Max(0,P),FMath::Max(0,P),0.f);HandShown[Side]=P;}
             Girl->bHeadLookPoseDirty=true;UE_LOG(LogTemp,Display,TEXT("H scene: ahegao over, her hands back"));}
         return;}
     const int32 V=CVarHAhegaoHand.GetValueOnGameThread();
     if(!bAhegaoPose){bAhegaoPose=true;bAheManualWas=Girl->bManualSpeechPattern;
-        if(V>=0)for(int32 Side=0;Side<2;++Side){Girl->SetHandShape(Side,true,V,V,0.f);HandShown[Side]=HandPattern[Side];}
+        SyncPair();if(V>=0)for(int32 Side=0;Side<2;++Side){Girl->SetHandShape(Side,true,V,V,0.f);HandShown[Side]=HandPattern[Side];}
         UE_LOG(LogTemp,Display,TEXT("H scene: ahegao, double peace (hand shape %d)"),V);}
     // Her eyes stay rolled up: her look at the camera would set her gaze again every frame; and her mouth open, the
     // tongue pattern is closed lips at mouth-open 0 (def_cl → name_op).
@@ -1602,6 +1602,7 @@ void UOKHScenePanel::TickEyesCamera(){
     UE_LOG(LogTemp,Display,TEXT("H scene: her eyes on the camera %s"),On?TEXT("on"):TEXT("unavailable"));
 }
 // Her hands as he set them: given again to whichever self of hers is shown (an outfit change makes a new one).
+static TAutoConsoleVariable<int32> CVarHSuckGripHand(TEXT("ok.HScene.SuckGripHand"),6,TEXT("The hand pattern of a hand holding him at a blowjob (the fingers closed round him; -1 as the motion)."));
 void UOKHScenePanel::TickHands(){
     AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl))return;
     const int32 Count=Girl->GetHandShapeCount();
@@ -1610,7 +1611,9 @@ void UOKHScenePanel::TickHands(){
         HandPattern[Side]=FMath::Clamp(HandPattern[Side],-1,Count-1);C->SetSelectedIndex(HandPattern[Side]+1);}
     HandOptions=Count;
     const bool bNew=HandGirl.Get()!=Girl;HandGirl=Girl;
-    for(int32 Side=0;Side<2;++Side)if(bNew?HandPattern[Side]>=0:HandShown[Side]!=HandPattern[Side]){const int32 P=HandPattern[Side];
+    const double Now=FPlatformTime::Seconds();
+    for(int32 Side=0;Side<2;++Side){const int32 P=HandPattern[Side]<0&&!bAhegaoPose&&Now<GripUntil[Side]?FMath::Min(CVarHSuckGripHand.GetValueOnGameThread(),Count-1):HandPattern[Side];if(bNew?P<0:HandShown[Side]==P)continue;
+        SyncPair(); // the pair's worker is on her session: setting a hand under it killed the game without a trace
         if(Girl->SetHandShape(Side,P>=0,FMath::Max(0,P),FMath::Max(0,P),0.f)){HandShown[Side]=P;Girl->bHeadLookPoseDirty=true;}}
 }
 void UOKHScenePanel::SetHerPose(const float* Ankle,const float* ThighL,const float* ThighR,const int32* HandL,const int32* HandR){
@@ -1904,7 +1907,7 @@ void UOKHScenePanel::GripHim(AKKPreviewActor* Girl,AKKPreviewActor* Him,const FV
     Hands.Sort([](const FHand& A,const FHand& B){return A.Along<B.Along;});
     for(int32 I=0;I<Hands.Num();++I){const FHand& H=Hands[I];const float At=Hands.Num()==1?.5f:I?.7f:.35f;
         const FVector Want=Root+Axis*(Outside*At)+H.Off.GetSafeNormal()*(3.f*PenisScale)+(H.Wrist-H.Palm);
-        HandEff.Add(5+H.Side);HandAt.Add(AKKPreviewActor::ActorLocalToUnity(T.InverseTransformPosition(Want-HerApplied)));}
+        GripUntil[H.Side]=FPlatformTime::Seconds()+2.;HandEff.Add(5+H.Side);HandAt.Add(AKKPreviewActor::ActorLocalToUnity(T.InverseTransformPosition(Want-HerApplied)));}
 }
 void UOKHScenePanel::RestoreAlign(){
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;auto* Him=Gallery?Gallery->PartnerActor.Get():nullptr;
