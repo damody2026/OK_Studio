@@ -922,6 +922,8 @@ do
       for _, t in ipairs(kept) do local base = t.a == areaid[p.id] - 1 and HK[t.k]
         if base and not have[base] then have[base] = true; p.anchors[#p.anchors + 1] = { name = base, pos = t.p, yaw = t.face and r1(t.face - 90) or 0, asset = t.k } end
       end
+      -- rooms with a shower and no tub wash there (c-conquest 8.1: the bath schedule looks for bath*)
+      if not have.bath then for _, a in ipairs(p.anchors) do if a.name:match('^shower') then have.bath = true; p.anchors[#p.anchors + 1] = { name = 'bath', pos = a.pos, yaw = a.yaw, asset = 'shower' }; break end end end
     end
   end
 end
