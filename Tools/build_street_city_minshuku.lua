@@ -11,7 +11,7 @@ local code = [====[
 import bpy,json,pathlib
 D=pathlib.Path(TASK['out'])
 bpy.ops.wm.read_factory_settings(use_empty=True)
-COL=dict(wall=(.86,.82,.72,.8,0),timber=(.24,.15,.09,.6,0),roof=(.16,.17,.2,.55,0),tatami=(.62,.62,.38,.9,0),tatami2=(.56,.57,.34,.9,0),edge=(.12,.16,.1,.8,0),deck=(.42,.28,.16,.6,0),tile=(.72,.74,.74,.35,0),shoji=(.93,.91,.84,.7,0),steel=(.05,.055,.06,.4,1))
+COL=dict(wall=(.86,.82,.72,.8,0),timber=(.24,.15,.09,.6,0),roof=(.16,.17,.2,.55,0),tatami=(.62,.62,.38,.9,0),tatami2=(.56,.57,.34,.9,0),edge=(.12,.16,.1,.8,0),deck=(.42,.28,.16,.6,0),tile=(.72,.74,.74,.35,0),shoji=(.93,.91,.84,.7,0),steel=(.05,.055,.06,.4,1),fusuma=(.8,.72,.55,.9,0),ceil=(.5,.34,.2,.8,0),noren=(.06,.1,.3,.9,0),rib=(.1,.07,.05,.9,0))
 names=list(COL)
 def build(name,fill):
  vs=[];fs=[];fm=[]
@@ -70,12 +70,41 @@ def inn(box,poly):
     x0=cx-3.85+ix*1.93;y0=YF+.15+iy*1.0
     box(x0,x0+1.9,y0,y0+.98,.03,.06,'tatami' if (ix+iy)%2 else 'tatami2');box(x0,x0+1.9,y0-.02,y0,.03,.062,'edge')
   box(cx-3.85,cx+.98,YS+.15,YB-.15,.03,.05,'tile');box(cx+1.15,cx+3.85,YS+.15,YB-.15,.03,.05,'tile')
+  # the room as a washitsu: pillars, nageshi and skirting along the walls, batten ceiling, shoji on the inside of the front wall
+  x0,x1,y0,y1=cx-3.85,cx+3.85,YF+T,YS
+  for x in (x0,cx-1.3,cx+1.3,x1-.12):box(x,x+.12,y1-.05,y1,.03,H,'timber')
+  for x in (x0,x1-.12):
+   for y in (y0,-1.,y1-.12):box(x,x+.12,y,y+.12,.03,H,'timber')
+  for a,b,c,d in ((x0,x1,y1-.06,y1),(x0,x0+.06,y0,y1),(x1-.06,x1,y0,y1)):
+   box(a,b,c,d,1.95,2.07,'timber');box(a,b,c,d,.03,.1,'timber')
+  box(x0,x1,y0,YB-.15,H-.05,H-.02,'ceil')
+  for k in range(17):box(x0+k*.48,x0+k*.48+.04,y0,y1,H-.09,H-.05,'timber')
+  for a,b in ((cx-3.8,cx-.85),(cx+.85,cx+3.8)):
+   box(a,b,YF+T,YF+T+.02,.1,1.95,'shoji')
+   for k in range(int((b-a)/.5)+1):box(a+k*.5-.012,a+k*.5+.012,YF+T+.02,YF+T+.04,.1,1.95,'timber')
+   for k in range(5):box(a,b,YF+T+.02,YF+T+.04,.1+k*.46-.012,.1+k*.46+.012,'timber')
+  # tokonoma between the two back doors: raised floor, corner post, a hanging scroll
+  box(cx-.95,cx+1.95,y1-.6,y1-.05,.03,.14,'timber');box(cx-.95,cx-.85,y1-.62,y1-.5,.03,H,'timber');box(cx-.95,cx+1.95,y1-.62,y1-.5,1.95,2.07,'timber')
+  box(cx+.2,cx+.9,y1-.08,y1-.06,.55,1.75,'shoji');box(cx+.16,cx+.94,y1-.09,y1-.06,1.75,1.78,'timber');box(cx+.16,cx+.94,y1-.09,y1-.06,.52,.55,'timber')
+  # oshiire on the side wall: two sliding fusuma in a frame, a shelf line above
+  ox=x1-.62;oy0,oy1=.75,2.4
+  box(ox,x1,oy0,oy1,.03,1.95,'timber');box(ox-.01,ox,oy0+.05,(oy0+oy1)/2,.08,1.9,'fusuma');box(ox-.02,ox-.01,(oy0+oy1)/2,oy1-.05,.08,1.9,'fusuma')
+  box(ox-.03,ox-.01,(oy0+oy1)/2+.06,(oy0+oy1)/2+.12,.9,1.0,'steel');box(ox-.02,ox,(oy0+oy1)/2-.12,(oy0+oy1)/2-.06,.9,1.0,'steel')
+  # wet rooms: tiled wainscot, noren in the doorways
+  for a,b in ((cx-3.85,cx+1.),(cx+1.15,cx+3.85)):
+   box(a,b,YB-.17,YB-.15,.05,1.1,'tile');box(a,a+.02,YS+.15,YB-.15,.05,1.1,'tile');box(b-.02,b,YS+.15,YB-.15,.05,1.1,'tile')
+  for a,b in ((cx-1.95,cx-1.05),(cx+2.05,cx+2.95)):
+   box(a,a+.42,YS-.01,YS,1.55,2.05,'noren');box(a+.48,b,YS-.01,YS,1.55,2.05,'noren')
  # hip roof over walls and veranda, a ridge along x
  e=7.4;f=7.6;r=3.0;t=H
  poly([(-18,-f,t),(18,-f,t),(14.5,0,t+r),(-14.5,0,t+r)],'roof');poly([(18,e,t),(-18,e,t),(-14.5,0,t+r),(14.5,0,t+r)],'roof')
  poly([(-18,e,t),(-18,-f,t),(-14.5,0,t+r)],'roof');poly([(18,-f,t),(18,e,t),(14.5,0,t+r)],'roof')
  poly([(-18,-f,t),(-18,e,t),(18,e,t),(18,-f,t)],'timber')
  box(-14.6,14.6,-.14,.14,t+r-.06,t+r+.12,'timber')
+ # rows of tile ribs on the long slopes
+ for k in range(84):
+  x=-14.4+k*.35
+  poly([(x,-f,t+.05),(x+.12,-f,t+.05),(x+.12,-.1,t+r+.03),(x,-.1,t+r+.03)],'rib');poly([(x+.12,e,t+.05),(x,e,t+.05),(x,.1,t+r+.03),(x+.12,.1,t+r+.03)],'rib')
 build('minshuku_annex',inn)
 (D/'minshuku-walls.json').write_text(json.dumps(dict(walls=walls,rooms=rooms,height=H)),'utf8')
 ]====]

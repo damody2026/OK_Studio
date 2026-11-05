@@ -2040,3 +2040,5 @@
 - 2026-11-05 e-fork `megumin` 第 3 套手套 877 沒有 log：`select_card_clothes` 在這格沒有 mod 解析紀錄、內建和 mod 清單都找不到時用 `?` 回 None，服裝槽位不經過 `lookup_entry`，所以安靜少一件。改由 `outfit_gaps.rs` 開卡時逐格對照並寫 `item missing`。
 - 2026-11-05 e-fork 把舊 stage 的結果當成新程式的結果：`OKHScene.cpp` 呼叫 private 的 `OpenedFemaleCard`，stage 編譯失敗，啟動器跑最新的舊 stage，我兩次看到「第一次按就換了、沒有缺件 log」就下結論說遊戲裡掃描失敗。實際上新程式根本沒建出來。實機測試前先看 `Rebuild-<tag>/build.log` 的 `Result:`，並用 `-Executable` 指定自己的 stage。
 - 2026-11-05 e-fork `eprintln!` 到不了遊戲 log（只有 `ffi_log` 會），只寫 stderr 的 Rust 紀錄在 `game.log` 永遠看不到；`outfit_gaps::log` 兩邊都寫。
+- 2026-11-05 c-street-city 民宿改了顏色畫面卻沒變：`_ls_mat` 看到已有版本標記的材質就直接回傳，同名材質的新顏色不會寫入，白白重打包一輪。修正：顏色改動時換材質名稱（`M_LS_Inn2_*`）。
+- 2026-11-05 c-street-city 民宿馬桶朝向錯兩次：換 Tripo 模型後沿用舊模型的朝向。Tripo 模型的正面方向不固定，換模型要重看畫面。

@@ -108,6 +108,7 @@ local L = {
   { 'chabudai', 'low round japanese wooden tea table with short legs and a small teapot and two cups on it', { 0.9, 0.9, 0.4 }, 2500, 'inn', 'minshuku', 4, 1, 6 },
   { 'zabuton', 'square japanese floor cushion, indigo cloth with corner tassels, flat', { 0.6, 0.6, 0.1 }, 1000, 'inn', 'minshuku', 16, 1, 6 },
   { 'toilet_room', 'white ceramic western toilet with a tank and a closed seat lid', { 0.45, 0.75, 0.8 }, 2000, 'inn', 'minshuku', 4, 1, 6 },
+  { 'tv_cabinet', 'flat screen television standing on a low japanese style dark wooden tv cabinet with two sliding doors', { 1.3, 0.45, 1.05 }, 2500, 'inn', 'minshuku', 4, 1, 6 },
 }
 -- world-tripo-v1 keys reused as they are (planned there; generated or still to generate there)
 local reuse = { treadmill = 'gym', dumbbell_rack = 'gym', locker_bank = 'gym beach', volleyball_net = 'gym_hall',

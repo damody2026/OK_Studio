@@ -1455,17 +1455,17 @@ def motel_world_lover_spots_install():
  ia=_ls_spawn('LoverSpot_R7_minshuku',im,V([IX,IY,gz]),0,[1,1,1],None,False)
  # the glTF factors come out cold and shiny under the sky light: the building's slots get matt project materials, the
  # roof and the wet-room floor warmer than they should read, the sky light turns them blue
- IM=dict(wall=((.78,.68,.5),.95),timber=((.2,.12,.07),.8),roof=((.17,.1,.06),1.),tatami2=((.5,.52,.24),.95),tatami=((.56,.56,.27),.95),edge=((.08,.11,.07),.9),deck=((.34,.21,.11),.8),tile=((.74,.6,.4),.8),shoji=((.9,.86,.74),.9))
+ IM=dict(wall=((.8,.6,.34),.95),timber=((.22,.12,.06),.8),roof=((.17,.1,.06),1.),tatami2=((.56,.46,.15),.95),tatami=((.62,.5,.16),.95),edge=((.1,.09,.04),.9),deck=((.38,.21,.09),.8),tile=((.72,.58,.36),.8),shoji=((.95,.84,.62),.9),fusuma=((.85,.68,.4),.9),ceil=((.5,.3,.14),.8),noren=((.08,.1,.24),.9),rib=((.1,.06,.04),.95),steel=((.05,.05,.05),.5))
  nslot=0
  for i,s_ in enumerate(im.get_editor_property('static_materials')):
   n_=(str(s_.material_slot_name)+' '+(s_.material_interface.get_name() if s_.material_interface else '')).lower()
   k_=next((k for k in IM if k in n_),None)
-  if k_:ia.static_mesh_component.set_material(i,_ls_mat('M_LS_Inn_'+k_,IM[k_][0],IM[k_][1]));nslot+=1
+  if k_:ia.static_mesh_component.set_material(i,_ls_mat('M_LS_Inn2_'+k_,IM[k_][0],IM[k_][1]));nslot+=1
  skipped.append(dict(place='minshuku',reason='%d material slots replaced'%nslot))
  w=_ls_box('LoverSpot_R7_minshuku_Floor',V([IX,IY,gz-40]),0,(3440,1240,43),M['counter']);w.static_mesh_component.set_visibility(False)
  for k,(x0,x1,y0,y1) in enumerate(wj['walls']):
   w=_ls_box('LoverSpot_R7_minshuku_Wall%02d'%k,L((x0+x1)/2,(y0+y1)/2),0,((x1-x0)*100,(y1-y0)*100,270),M['counter']);w.static_mesh_component.set_visibility(False)
- wood=_ls_mat('M_LS_InnWood',(.3,.2,.12),.6);paper=_ls_mat('M_LS_InnPaper',(.9,.88,.8),.7)
+ wood=_ls_mat('M_LS_InnWood',(.3,.2,.12),.6)
  def lay(t,key,x,y,along=None,yaw=0):
   # a Tripo piece on the floor, its long side along x or y of the building
   t='LoverSpot_R7_'+t;mesh=tripo_mesh(key)
@@ -1474,7 +1474,7 @@ def motel_world_lover_spots_install():
   if along:yaw=(0 if ex>=ey else 90) if along=='x' else (90 if ex>=ey else 0)
   place_mesh(t,key,L(x,y),yaw);return t+'_Tripo'
  def lamp(t,x,y):
-  l_=SUB.spawn_actor_from_class(unreal.PointLight,L(x,y,fz+235),unreal.Rotator());l_.set_actor_label('LoverSpot_R7_Light_'+t);l_.tags=[unreal.Name('LoverSpot')];l_.set_folder_path('UniversityCity/LoverSpotsV1');c=l_.light_component;c.set_mobility(unreal.ComponentMobility.MOVABLE);c.set_editor_property('intensity_units',unreal.LightUnits.LUMENS);c.set_intensity(30000);c.set_temperature(3000);c.set_editor_property('use_temperature',True);c.set_editor_property('attenuation_radius',800);c.set_editor_property('source_radius',12);c.set_cast_shadows(False)
+  l_=SUB.spawn_actor_from_class(unreal.PointLight,L(x,y,fz+235),unreal.Rotator());l_.set_actor_label('LoverSpot_R7_Light_'+t);l_.tags=[unreal.Name('LoverSpot')];l_.set_folder_path('UniversityCity/LoverSpotsV1');c=l_.light_component;c.set_mobility(unreal.ComponentMobility.MOVABLE);c.set_editor_property('intensity_units',unreal.LightUnits.LUMENS);c.set_intensity(4000);c.set_temperature(3000);c.set_editor_property('use_temperature',True);c.set_editor_property('attenuation_radius',800);c.set_editor_property('source_radius',12);c.set_cast_shadows(False)
  BACK=90*SY;FRONT=-90*SY;rr=[]
  def rb(x0,x1,y0,y1):
   a,b=L(x0,y0),L(x1,y1);rr.append(dict(min=[min(a.x,b.x),min(a.y,b.y),fz-30],max=[max(a.x,b.x),max(a.y,b.y),fz+300]))
@@ -1485,15 +1485,13 @@ def motel_world_lover_spots_install():
   t=lay(g+'_chabudai','chabudai',cx+1.4,-1.4);A2('minshuku','chabudai',L(cx+1.4,-1.4),0,t)
   for k,(dx,dy,yw_) in enumerate(((-1,0,0),(1,0,180),(0,-1,BACK),(0,1,FRONT))):
    t=lay('%s_zabuton%d'%(g,k),'zabuton',cx+1.4+dx,-1.4+dy);A2('minshuku','zabuton',L(cx+1.4+dx,-1.4+dy),yw_,t)
-  # television on a low stand against the side wall, watched from the far cushion; oshiire beside the toilet door
-  _ls_box('LoverSpot_R7_%s_TvStand'%g,L(cx+3.55,-1.4),0,(45,130,40),wood,False);_ls_box('LoverSpot_R7_%s_Tv'%g,L(cx+3.6,-1.4,fz+40),0,(6,110,65),M['dark'],False)
-  A2('minshuku','inn_tv',L(cx+.4,-1.4),0,'LoverSpot_R7_%s_Tv'%g)
-  _ls_box('LoverSpot_R7_%s_Oshiire'%g,L(cx+3.5,1.6),0,(60,160,200),paper,False);_ls_box('LoverSpot_R7_%s_OshiireFrame'%g,L(cx+3.18,1.6),0,(4,6,200),wood,False)
-  A2('minshuku','inn_closet',L(cx+2.8,1.6),0,'LoverSpot_R7_%s_Oshiire'%g)
+  # television cabinet against the side wall, watched from the far cushion; the oshiire is part of the building
+  t=lay(g+'_tv','tv_cabinet',cx+3.45,-1.4,None,90);A2('minshuku','inn_tv',L(cx+.4,-1.4),0,t)
+  A2('minshuku','inn_closet',L(cx+2.6,1.6),0,'LoverSpot_R7_minshuku')
   t=lay(g+'_tub','bathtub',cx-2.6,4.4,'x');A2('minshuku','bath',L(cx-2.6,4.4),0,t)
   _ls_cyl('LoverSpot_R7_%s_ShowerPipe'%g,L(cx+.7,5.7),2,200,M['dark'],False);_ls_box('LoverSpot_R7_%s_ShowerHead'%g,L(cx+.7,5.5,fz+195),0,(16,16,4),M['dark'],False)
   A2('minshuku','inn_shower',L(cx+.3,5),BACK,'LoverSpot_R7_%s_ShowerPipe'%g)
-  t=lay(g+'_toilet','toilet_room',cx+2.5,5.3,None,FRONT+90);A2('minshuku','inn_toilet',L(cx+2.5,4.7),BACK,t)
+  t=lay(g+'_toilet','toilet_room',cx+2.5,5.3,None,FRONT-90);A2('minshuku','inn_toilet',L(cx+2.5,4.7),BACK,t)
   A2('minshuku','engawa',L(cx+2.2,-5.2),FRONT,'LoverSpot_R7_minshuku')
   lamp(g,cx,-1);lamp(g+'_bath',cx-1.5,4.2);lamp(g+'_wc',cx+2.5,4.2)
  rb(-17,-15,-4.5,6);rb(-17,17,-6,-4.5)
@@ -1503,7 +1501,10 @@ def motel_world_lover_spots_install():
  dp=L(-16,-6.9);dz=_ls_floor(world,dp.x,dp.y,1205)
  items.append(dict(place='minshuku',anchor='door',pos=num(V([dp.x,dp.y,dz if dz is not None else gz])),yaw=BACK,actor='LoverSpot_R7_minshuku',building=None,name='日式民宿',rooms=rr))
  views.append(dict(id='R7-minshuku-out',eye=num(L(-23,-15,fz+420)),target=num(L(-4,0,fz+100)),fov=70,hour=15))
- views.append(dict(id='R7-minshuku-room',eye=num(L(.6,-4,fz+165)),target=num(L(-1.6,1,fz+20)),fov=85,hour=15))
+ views.append(dict(id='R7-minshuku-room',eye=num(L(-.4,-3.9,fz+165)),target=num(L(-3,1.5,fz+60)),fov=85,hour=15))
+ views.append(dict(id='R7-minshuku-room2',eye=num(L(-6.4,-3.8,fz+165)),target=num(L(.6,1.2,fz+60)),fov=85,hour=15))
+ views.append(dict(id='R7-minshuku-room-night',eye=num(L(-.4,-3.9,fz+165)),target=num(L(-3,1.5,fz+60)),fov=85,hour=22))
+ views.append(dict(id='R7-minshuku-front',eye=num(L(0,-16,fz+420)),target=num(L(0,-2,fz+120)),fov=80,hour=15))
  views.append(dict(id='R7-minshuku-bath',eye=num(L(-2.4,2.9,fz+170)),target=num(L(-5.6,4.8,fz+30)),fov=90,hour=15))
  views.append(dict(id='R7-minshuku-wc',eye=num(L(-.5,2.85,fz+170)),target=num(L(-.5,5.3,fz+20)),fov=90,hour=15))
  views.append(dict(id='R7-stair-T2',eye=num(V([72200,69450,2000])),target=num(V([74400,69450,1900])),fov=75,hour=15))
