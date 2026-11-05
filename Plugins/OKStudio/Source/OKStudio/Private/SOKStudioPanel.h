@@ -667,7 +667,7 @@ public:
 		Simple(TEXT("gizmo.snap"), TEXT("吸附"), [this] { Game->bSnap = !Game->bSnap; SetStatus(Game->bSnap ? TEXT("吸附：開") : TEXT("吸附：關（按住 Ctrl 也會吸附）")); });
 		// View and cameras.
 		Simple(TEXT("camera.use"), TEXT("用此相機"), [this] { const FOKSceneObject* O = Obj(); Game->Document->ActiveCamera = O && O->Kind == EOKSceneObjectKind::Camera ? O->Id : -1; });
-		Simple(TEXT("camera.free"), TEXT("自由視角"), [this] { Game->bLockActiveCamera = false; Game->Document->ActiveCamera = -1; SetStatus(TEXT("視角：自由視角（已解除鏡頭鎖定）")); });
+		Simple(TEXT("camera.free"), TEXT("自由視角"), [this] { Game->bLockActiveCamera = false; Game->Document->ActiveCamera = -1; ViewCamera = -1; SetStatus(TEXT("視角：自由視角（已解除鏡頭鎖定）")); });
 		Simple(TEXT("camera.mmd"), TEXT("MMD 系統鏡頭"), [this]
 		{
 			const int32 CamId = Game->FindMmdCameraId(false);
@@ -757,6 +757,14 @@ public:
 		Simple(TEXT("transform.reset"), TEXT("重設變換"), [this] { for (int32 Id : Game->Selection) if (FOKSceneObject* O = Game->Document->Find(Id)) O->Transform = FTransform::Identity; Changed(); });
 		Simple(TEXT("transform.face"), TEXT("面向對方"), [this] { FaceEachOther(); });
 		// Timeline.
+		// A camera key from the view (U238): the two steps were easy to halve, and 打 key alone keeps the camera where it was.
+		Simple(TEXT("timeline.viewkey"), TEXT("視角打 key"), [this]
+		{
+			if (!Game->StoreViewInCamera(Game->SelectedId)) { SetStatus(TEXT("先選一個相機")); return; }
+			const float Time = TimelineView ? TimelineView->Snap(Game->TimelineTime) : Game->TimelineTime;
+			Game->Document->SetKey(Game->SelectedId, Time);
+			SetStatus(FString::Printf(TEXT("%.2f 秒用目前視角打 key"), Time));
+		});
 		Simple(TEXT("timeline.key"), TEXT("打 key"), [this] { if (TimelineView) TimelineView->KeySelection(); else for (int32 Id : Game->Selection) Game->Document->SetKey(Id, Game->TimelineTime); });
 		Simple(TEXT("timeline.scenekey"), TEXT("場景 key"), [this]
 		{
@@ -1964,6 +1972,7 @@ public:
 	TPair<int32, int32> MaterialShown = { -2, 0 }; // selection and its part count the window shows
 	const AKKPreviewActor* MaterialShownActor = nullptr; // the item build it shows (a shader edit or reset builds a new one)
 	FString AnimCtlShown; // selection and animation parameters the animation controller shows
+	int32 ViewCamera = -1; // the camera the view looked through last frame
 	int32 VoiceGroupPick = 0, VoiceCategoryPick = 0, VoiceListPick = -1; // the voice window's browsed personality / category and picked list entry
 	FString VoiceShown; // what the voice window shows (selection, browsing, the list)
 	/** HS2Studio6's animation controller window (speed, time, motion variation, play/pause/stop). */

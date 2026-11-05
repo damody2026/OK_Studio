@@ -441,6 +441,14 @@ void SOKStudioPanel::TickUi(float DeltaTime)
 		if (Game->SceneActor) for (const TPair<FString, float>& P : Game->SceneActor->BlendControlsOf(Game->SelectedId)) Now += TEXT("|") + P.Key;
 		if (Now != AnimCtlShown) { AnimCtlShown = Now; DeferFloat(TEXT("animctl")); }
 	}
+	// Orbiting leaves the camera silently (U238): the keys then seem to do nothing, so say what happened.
+	if (Game->Document)
+	{
+		const int32 Active = Game->Document->ActiveCamera;
+		const FOKSceneObject* Left = ViewCamera >= 0 && Active < 0 ? Game->Document->Find(ViewCamera) : nullptr;
+		if (Left) SetStatus(FString::Printf(TEXT("離開「%s」的視角：自由視角看不到鏡頭 key 的移動，按「用此相機」回去"), *Left->Name));
+		ViewCamera = Active;
+	}
 	// The voice window shows the selected character's list and what it browses.
 	if (IsFloatOpen(TEXT("voice")))
 	{
@@ -2252,6 +2260,14 @@ TSharedRef<SWidget> SOKStudioPanel::BuildTimeline()
 		ShowCutMenu(W ? FVector2D(G.LocalToAbsolute(FVector2f(0.f, G.GetLocalSize().Y))) : FSlateApplication::Get().GetCursorPos());
 	}, 56.f, 20.f, false, 10.f);
 	*CutSelf = CutButton;
+	auto CameraOnly = [this](bool bCamera)
+	{
+		return [this, bCamera]
+		{
+			const FOKSceneObject* O = Game.IsValid() ? Game->Document->Find(Game->SelectedId) : nullptr;
+			return (O && O->Kind == EOKSceneObjectKind::Camera) == bCamera ? EVisibility::Visible : EVisibility::Collapsed;
+		};
+	};
 	TSharedRef<SWidget> Row2 = SNew(SHorizontalBox)
 		// 打 key first, with its name and the "on" colour; 刪 key small and grey beside it (U135: the bare ◇ was taken for
 		// something else and 刪 key, the one with a name, was clicked instead).
@@ -2282,8 +2298,10 @@ TSharedRef<SWidget> SOKStudioPanel::BuildTimeline()
 				const FOKStudioFkBone* B = FOKStudioCatalog::Get().FindFkBone(FkBone);
 				return FText::FromString(B ? FString::Printf(TEXT("%s %s"), *B->Name, *B->Bone) : FString(TEXT("未選骨骼（搜尋或在 FK 頁點選）")));
 			})]
-		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(FText::FromString(TEXT("打骨骼 key")), Cmd(TEXT("timeline.bonekey")), 64.f, 20.f, false, 10.f)]
-		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(FText::FromString(TEXT("刪骨骼 key")), Cmd(TEXT("timeline.boneunkey")), 64.f, 20.f, false, 10.f)];
+		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[SNew(SBox).Visibility_Lambda(CameraOnly(false))[Button(FText::FromString(TEXT("打骨骼 key")), Cmd(TEXT("timeline.bonekey")), 64.f, 20.f, false, 10.f)]]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[SNew(SBox).Visibility_Lambda(CameraOnly(false))[Button(FText::FromString(TEXT("刪骨骼 key")), Cmd(TEXT("timeline.boneunkey")), 64.f, 20.f, false, 10.f)]]
+		// A camera has no bones: its row holds the key from the view (U238).
+		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[SNew(SBox).Visibility_Lambda(CameraOnly(true)).ToolTipText(FText::FromString(TEXT("把目前視角存進所選相機，並在播放頭打 key")))[Button(FText::FromString(TEXT("視角打 key")), Cmd(TEXT("timeline.viewkey")), 80.f, 20.f, false, 10.f)]];
 	return SNew(SVerticalBox)
 		+ SVerticalBox::Slot().AutoHeight()[Row1]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)[Row2]
