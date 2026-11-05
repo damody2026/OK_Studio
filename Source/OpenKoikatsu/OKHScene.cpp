@@ -150,6 +150,10 @@ static TAutoConsoleVariable<float> CVarHPupilHeight(TEXT("ok.HScene.PupilHeight"
 static TAutoConsoleVariable<float> CVarHPupilHue(TEXT("ok.HScene.PupilHue"),0.f,TEXT("Her iris's hue turned, degrees"));
 static TAutoConsoleVariable<float> CVarHPupilSaturation(TEXT("ok.HScene.PupilSaturation"),1.f,TEXT("Her iris's saturation, times as much"));
 static TAutoConsoleVariable<float> CVarHPupilValue(TEXT("ok.HScene.PupilValue"),1.f,TEXT("Her iris's value, times as much"));
+static TAutoConsoleVariable<float> CVarHPupilMark(TEXT("ok.HScene.PupilMark"),0.f,TEXT("A mark of ours over the middle of her iris: 0 none, 1 circle, 2 cat's slit, 3 diamond, 4 heart, 5 star"));
+static TAutoConsoleVariable<float> CVarHPupilMarkWidth(TEXT("ok.HScene.PupilMarkWidth"),25.f,TEXT("The mark's width, percent of the iris texture"));
+static TAutoConsoleVariable<float> CVarHPupilMarkHeight(TEXT("ok.HScene.PupilMarkHeight"),25.f,TEXT("The mark's height, percent of the iris texture"));
+static TAutoConsoleVariable<float> CVarHPupilMarkOpacity(TEXT("ok.HScene.PupilMarkOpacity"),100.f,TEXT("How much the mark covers, percent"));
 static TAutoConsoleVariable<float> CVarHEyeFrame(TEXT("ok.HScene.EyeFrame"),0.f,TEXT("Her eyelids: up to 100 rounder, down to -100 flatter and sharper"));
 static TAutoConsoleVariable<FString> CVarHEyeFrameRound(TEXT("ok.HScene.EyeFrameRound"),TEXT("34=.35,25=.5,28=-.5,35=-.1"),TEXT("Face sliders added at EyeFrame 100: index=amount, comma separated"));
 static TAutoConsoleVariable<FString> CVarHEyeFrameSharp(TEXT("ok.HScene.EyeFrameSharp"),TEXT("34=-.3,25=-.4,28=.4,33=.3,35=.15"),TEXT("Face sliders added at EyeFrame -100: index=amount, comma separated"));
@@ -200,6 +204,10 @@ static const FHSetting HSettings[]={
     {TEXT("PupilHue"),TEXT("ui.hscene.set_pupil_hue"),-180.f,180.f,1.f,0.f},
     {TEXT("PupilSaturation"),TEXT("ui.hscene.set_pupil_saturation"),0.f,2.f,.05f,1.f},
     {TEXT("PupilValue"),TEXT("ui.hscene.set_pupil_value"),0.f,2.f,.05f,1.f},
+    {TEXT("PupilMark"),TEXT("ui.hscene.set_pupil_mark"),0.f,5.f,1.f,0.f},
+    {TEXT("PupilMarkWidth"),TEXT("ui.hscene.set_pupil_mark_width"),2.f,100.f,1.f,25.f},
+    {TEXT("PupilMarkHeight"),TEXT("ui.hscene.set_pupil_mark_height"),2.f,100.f,1.f,25.f},
+    {TEXT("PupilMarkOpacity"),TEXT("ui.hscene.set_pupil_mark_opacity"),0.f,100.f,1.f,100.f},
     {TEXT("EyeFrame"),TEXT("ui.hscene.set_eye_frame"),-100.f,100.f,1.f,0.f},
     {nullptr,TEXT("ui.hscene.set_view")},
     {TEXT("EyesCamera"),TEXT("ui.hscene.set_eyes_camera"),0.f,1.f,1.f,1.f},
@@ -230,7 +238,7 @@ void UOKHSettingSlider::Show(){
     auto* Var=HSettingVar(S.Var);if(!Var)return;const float V=Var->GetFloat();SetValue(V);
     if(Shown)Shown->SetText(FText::FromString(S.Low==0.f&&S.High==1.f&&S.Step==1.f?OKT(V>.5f?TEXT("ui.hscene.set_on"):TEXT("ui.hscene.set_off")):FString::Printf(TEXT("%g"),V)));
 }
-void UOKHSettingSlider::HandleValue(float NewValue){const TCHAR* Var=HSettings[Row].Var;if(Var[0]==TEXT('@')){if(Owner)Owner->SetDev(Var+1,NewValue);}else HSettingSet(Var,NewValue);Show();}
+void UOKHSettingSlider::HandleValue(float NewValue){const TCHAR* Var=HSettings[Row].Var;if(Var[0]==TEXT('@')){if(Owner)Owner->SetDev(Var+1,NewValue);}else HSettingSet(Var,FMath::GridSnap(NewValue,HSettings[Row].Step));Show();}
 void UOKHSettingSlider::HandleDone(){HSettingsSave();}
 static bool HFitsRoom(const FString& Category,int32 Id){return CVarHAllPoses.GetValueOnGameThread()||HPropKind(Category,Id)>=0;}
 void UOKHScenePanel::LoadAibuPoses(){
@@ -1558,12 +1566,15 @@ void UOKHScenePanel::TickEyeDull(float Delta){
 // The panel's pupil shape and colour and her eyelids, on her as she is shown only: the card keeps its own. A slider drags
 // through many values, so a new iris image or face goes out at most ten times a second.
 void UOKHScenePanel::TickEyeLook(AKKPreviewActor* Girl,float Delta){
-    if(EyeLookActor!=Girl){EyeLookActor=Girl;PupilStretchShown=FVector2f(1.f,1.f);IrisHsvShown=FVector3f(0.f,1.f,1.f);EyeFrameShown=0.f;}
+    if(EyeLookActor!=Girl){EyeLookActor=Girl;PupilStretchShown=FVector2f(1.f,1.f);IrisHsvShown=FVector3f(0.f,1.f,1.f);PupilMarkShown=FVector4f(0.f,0.f,0.f,0.f);EyeFrameShown=0.f;}
     const FVector2f Stretch(CVarHPupilWidth.GetValueOnGameThread(),CVarHPupilHeight.GetValueOnGameThread());
     if(Stretch!=PupilStretchShown&&Girl->SetPupilStretch(Stretch.X,Stretch.Y))PupilStretchShown=Stretch;
     EyeLookWait-=Delta;if(EyeLookWait>0.f)return;
     const FVector3f Hsv(CVarHPupilHue.GetValueOnGameThread(),CVarHPupilSaturation.GetValueOnGameThread(),CVarHPupilValue.GetValueOnGameThread());
     if(Hsv!=IrisHsvShown){IrisHsvShown=Hsv;EyeLookWait=.1f;Girl->SetIrisHsv(Hsv.X,Hsv.Y,Hsv.Z);}
+    const float MarkShape=FMath::RoundToFloat(CVarHPupilMark.GetValueOnGameThread());
+    const FVector4f Mark=MarkShape>0.f?FVector4f(MarkShape,CVarHPupilMarkWidth.GetValueOnGameThread()/100.f,CVarHPupilMarkHeight.GetValueOnGameThread()/100.f,CVarHPupilMarkOpacity.GetValueOnGameThread()/100.f):FVector4f(0.f,0.f,0.f,0.f);
+    if(Mark!=PupilMarkShown){PupilMarkShown=Mark;EyeLookWait=.1f;Girl->SetPupilMark(Mark);}
     const float Frame=CVarHEyeFrame.GetValueOnGameThread()/100.f;
     if(Frame!=EyeFrameShown){EyeFrameShown=Frame;EyeLookWait=.1f;TArray<float> Face=Gallery->Selected.Face.ShapeValueFace;
         TArray<FString> Rows;(Frame>0.f?CVarHEyeFrameRound:CVarHEyeFrameSharp).GetValueOnGameThread().ParseIntoArray(Rows,TEXT(","));
@@ -1574,6 +1585,7 @@ void UOKHScenePanel::RestoreEyeLook(){
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl)||EyeLookActor!=Girl)return;
     if(PupilStretchShown!=FVector2f(1.f,1.f))Girl->SetPupilStretch(1.f,1.f);
     if(IrisHsvShown!=FVector3f(0.f,1.f,1.f))Girl->SetIrisHsv(0.f,1.f,1.f);
+    if(PupilMarkShown.X>0.f)Girl->SetPupilMark(FVector4f(0.f,0.f,0.f,0.f));
     if(EyeFrameShown!=0.f)Girl->MarkShapeDirty(Gallery->Selected.Face.ShapeValueFace,Gallery->Selected.Body.ShapeValueBody);
 }
 void UOKHScenePanel::TickDeepFace(float Delta){
@@ -2873,7 +2885,7 @@ TSharedRef<FJsonObject> UOKHScenePanel::Describe() const{
     TArray<TSharedPtr<FJsonValue>> Q;for(const FString& S:Queue)Q.Add(MakeShared<FJsonValueString>(S));O->SetArrayField(TEXT("queue"),Q);
     O->SetNumberField(TEXT("playback_speed"),PlaybackSpeed());if(Gallery&&Gallery->PreviewActor)O->SetNumberField(TEXT("breath_rate"),Gallery->PreviewActor->SpeechTempo);O->SetBoolField(TEXT("hooked"),Hooked());O->SetNumberField(TEXT("oral_suck"),OralSuckSet);O->SetNumberField(TEXT("oral_pull"),OralPullSet);O->SetNumberField(TEXT("mouth_turned"),bMouthAimed?MouthTurned:0.f);O->SetStringField(TEXT("mouth_dbg"),MouthDbg.ToString());O->SetNumberField(TEXT("mouth_hidden_verts"),MouthClipVerts);O->SetNumberField(TEXT("bust_swell"),BustSwellSet);O->SetNumberField(TEXT("preg_belly"),PregBellyShown);O->SetNumberField(TEXT("preg_nipples"),PregNipples());O->SetNumberField(TEXT("depth_top"),AlignDeep);O->SetNumberField(TEXT("belly_out"),BulgeTarget.IsNone()?-1.f:BulgePast);O->SetNumberField(TEXT("belly_allow"),FMath::Max(0.f,BulgeMoves-2.5f));O->SetNumberField(TEXT("pullback"),BellyPullback);O->SetNumberField(TEXT("tip_inside"),TipInside);O->SetNumberField(TEXT("aim_relax"),AimRelax);O->SetNumberField(TEXT("skin_out"),SkinOutMost);O->SetNumberField(TEXT("skin_under"),SkinUnderMost);O->SetNumberField(TEXT("skin_worst"),SkinWorst);O->SetNumberField(TEXT("skin_rest"),SkinRest);O->SetNumberField(TEXT("skin_along"),SkinWorstAlong);O->SetNumberField(TEXT("root_dodge"),RootDodge.Size());O->SetNumberField(TEXT("depth_cap"),DepthCap);{auto Wr=MakeShared<FJsonObject>();for(const auto& W:Bulge)if(W.Value>1.f)Wr->SetNumberField(W.Key.ToString(),FMath::RoundToFloat(W.Value));O->SetObjectField(TEXT("swells"),Wr);O->SetNumberField(TEXT("swells_refused"),BulgeRefused);O->SetNumberField(TEXT("wrap_ms"),WrapMs);O->SetNumberField(TEXT("wrap_verts"),WrapVerts);O->SetNumberField(TEXT("cloth_verts"),ClothVerts);O->SetNumberField(TEXT("cloth_ms"),ClothMs);O->SetNumberField(TEXT("clip_verts"),ClipVerts);O->SetNumberField(TEXT("back_exit"),BackExitCm);O->SetNumberField(TEXT("clip_lead"),ClipLeadCm);O->SetNumberField(TEXT("swell_ms"),SwellMs);O->SetNumberField(TEXT("swell_part"),BulgePart);}O->SetNumberField(TEXT("skin_facing"),SkinFacing);O->SetBoolField(TEXT("belly_side"),bBellySide);if(Gallery&&Gallery->PreviewActor){const FTransform& HerT=Gallery->PreviewActor->GetActorTransform();auto Vec=[&](const TCHAR* Name,const FVector& V){FVector U=AKKPreviewActor::ActorLocalToUnity(HerT.InverseTransformVectorNoScale(V))*100.;float K[16];if(Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_j_kokan"),K)||Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_J_Kokan"),K)){const FVector X(K[0],K[4],K[8]),Y(K[1],K[5],K[9]),Z(K[2],K[6],K[10]);U=FVector(U|X.GetSafeNormal(),U|Y.GetSafeNormal(),U|Z.GetSafeNormal());}TArray<TSharedPtr<FJsonValue>> A;A.Add(MakeShared<FJsonValueNumber>(U.X));A.Add(MakeShared<FJsonValueNumber>(U.Y));A.Add(MakeShared<FJsonValueNumber>(U.Z));O->SetArrayField(Name,A);};Vec(TEXT("dodge_her"),RootDodge);Vec(TEXT("skin_normal_her"),SkinNormal);Vec(TEXT("front_her"),BellyFront);}O->SetNumberField(TEXT("root_scale"),RootPadScale);O->SetBoolField(TEXT("xray"),bPenisXRay);if(Gallery&&Gallery->PairedPlayback)O->SetNumberField(TEXT("pair_rate"),Gallery->PairedPlayback->GetSpeed());O->SetNumberField(TEXT("held"),Held.Num());O->SetStringField(TEXT("caption"),Caption?Caption->GetText().ToString():FString());
     {const TSharedPtr<FJsonObject>* Areas=nullptr;if(Gallery&&Gallery->HExperience.IsValid()&&Gallery->HExperience->TryGetObjectField(TEXT("areas"),Areas))O->SetObjectField(TEXT("areas"),*Areas);}
-    O->SetNumberField(TEXT("her"),Her);O->SetNumberField(TEXT("his"),His);O->SetNumberField(TEXT("orgasms"),HerOrgasms);O->SetNumberField(TEXT("pupil_width"),PupilStretchShown.X);O->SetNumberField(TEXT("pupil_height"),PupilStretchShown.Y);O->SetNumberField(TEXT("iris_hue"),IrisHsvShown.X);O->SetNumberField(TEXT("iris_saturation"),IrisHsvShown.Y);O->SetNumberField(TEXT("iris_value"),IrisHsvShown.Z);O->SetNumberField(TEXT("eye_frame"),EyeFrameShown);O->SetNumberField(TEXT("pupil_shake_x"),PupilShakeNow.X);O->SetNumberField(TEXT("pupil_shake_y"),PupilShakeNow.Y);O->SetBoolField(TEXT("ahegao"),bAhegaoShown);O->SetNumberField(TEXT("deep_face"),DeepFace);O->SetNumberField(TEXT("pupil"),EyeDullScale);O->SetBoolField(TEXT("highlight_hidden"),bEyeDullHidden);
+    O->SetNumberField(TEXT("her"),Her);O->SetNumberField(TEXT("his"),His);O->SetNumberField(TEXT("orgasms"),HerOrgasms);O->SetNumberField(TEXT("pupil_width"),PupilStretchShown.X);O->SetNumberField(TEXT("pupil_height"),PupilStretchShown.Y);O->SetNumberField(TEXT("iris_hue"),IrisHsvShown.X);O->SetNumberField(TEXT("iris_saturation"),IrisHsvShown.Y);O->SetNumberField(TEXT("iris_value"),IrisHsvShown.Z);O->SetNumberField(TEXT("eye_frame"),EyeFrameShown);O->SetNumberField(TEXT("pupil_mark"),PupilMarkShown.X);O->SetNumberField(TEXT("pupil_shake_x"),PupilShakeNow.X);O->SetNumberField(TEXT("pupil_shake_y"),PupilShakeNow.Y);O->SetBoolField(TEXT("ahegao"),bAhegaoShown);O->SetNumberField(TEXT("deep_face"),DeepFace);O->SetNumberField(TEXT("pupil"),EyeDullScale);O->SetBoolField(TEXT("highlight_hidden"),bEyeDullHidden);
     {auto P=MakeShared<FJsonObject>();P->SetNumberField(TEXT("ankle"),AnkleTurn);P->SetNumberField(TEXT("thigh_l"),ThighOpen[0]);P->SetNumberField(TEXT("thigh_r"),ThighOpen[1]);P->SetNumberField(TEXT("hand_l"),HandPattern[0]);P->SetNumberField(TEXT("hand_r"),HandPattern[1]);P->SetNumberField(TEXT("hand_patterns"),HandOptions);O->SetObjectField(TEXT("her_pose"),P);}
     // Her development as the scene uses it now (her own plus this scene's climaxes), and how long her climax and her
     // nipples' spray have left (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md).

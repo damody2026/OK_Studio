@@ -111,20 +111,21 @@ static UTexture* OKIrisLike(UTexture2D* Source,const TArray<FColor>& Pixels)
     if(Made){Made->SRGB=Source->SRGB;Made->Filter=Source->Filter;Made->AddressX=Source->AddressX;Made->AddressY=Source->AddressY;Made->UpdateResource();}
     return Made;
 }
-UTexture* OKIrisRecolored(UTexture* Iris,float Hue,float Saturation,float Value)
+UTexture* OKIrisRecolored(UTexture* Iris,float Hue,float Saturation,float Value,const FVector4f& Mark)
 {
     check(IsInGameThread());
-    struct FRecolored{TArray<FColor> Pixels;FVector3f Asked=FVector3f(0.f,1.f,1.f);TStrongObjectPtr<UTexture> Shown;};
+    struct FRecolored{TArray<FColor> Pixels;FVector3f Asked=FVector3f(0.f,1.f,1.f);FVector4f Marked=FVector4f(0.f,0.f,0.f,0.f);TStrongObjectPtr<UTexture> Shown;};
     static TMap<TObjectKey<UTexture>,FRecolored> Made;
     UTexture2D* Source=Cast<UTexture2D>(Iris);const FVector3f Asked(Hue,Saturation,Value);
-    if(!Source||Asked==FVector3f(0.f,1.f,1.f))return Iris;
+    if(!Source||(Asked==FVector3f(0.f,1.f,1.f)&&Mark.X<=0.f))return Iris;
     FRecolored& R=Made.FindOrAdd(Iris);
     if(R.Pixels.IsEmpty()&&!OKReadIris(Source,R.Pixels)){R.Pixels.Reset();return Iris;}
-    if(R.Shown&&R.Asked==Asked)return R.Shown.Get();
+    if(R.Shown&&R.Asked==Asked&&R.Marked==Mark)return R.Shown.Get();
     TArray<FColor> Pixels=R.Pixels;
     if(ok_iris_recolor(reinterpret_cast<uint8_t*>(Pixels.GetData()),Source->GetSizeX(),Source->GetSizeY(),Hue,Saturation,Value)!=0)return Iris;
+    if(Mark.X>0.f&&ok_iris_mark(reinterpret_cast<uint8_t*>(Pixels.GetData()),Source->GetSizeX(),Source->GetSizeY(),int32(Mark.X),Mark.Y,Mark.Z,Mark.W)!=0)return Iris;
     UTexture* Shown=OKIrisLike(Source,Pixels);if(!Shown)return Iris;
-    R.Asked=Asked;R.Shown.Reset(Shown);return Shown;
+    R.Asked=Asked;R.Marked=Mark;R.Shown.Reset(Shown);return Shown;
 }
 UTexture* OKIrisWithoutHighlights(UTexture* Iris)
 {

@@ -213,6 +213,32 @@ pub fn recolor_iris(px:&mut [u8],hue:f32,saturation:f32,value:f32) {
     }
 }
 
+/// A black mark of our own laid over the middle of BGRA pixels, nothing of the iris under it changed: 1 circle, 2 a cat's
+/// slit, 3 diamond, 4 heart, 5 star. `across` and `down` are its size in parts of the image, `opacity` how much it covers.
+pub fn mark_iris(px:&mut [u8],w:usize,h:usize,shape:i32,across:f32,down:f32,opacity:f32) {
+    if w==0||h==0||px.len()<w*h*4||across<=0.||down<=0. {return;}
+    let inside=|x:f32,y:f32|->bool {match shape { // x right, y up, both -1..1 across the mark
+        1=>x*x+y*y<=1.,
+        2=>x.abs()<=1.-y*y,
+        3=>x.abs()+y.abs()<=1.,
+        4=>{let (x,y)=(x*1.25,y*1.25+0.1);let a=x*x+y*y-1.;a*a*a-x*x*y*y*y<=0.}
+        5=>{let turn=std::f32::consts::TAU/5.;let a=x.atan2(y).rem_euclid(turn)/turn;let a=(a-0.5).abs()*2.;
+            (x*x+y*y).sqrt()<=0.42+0.58*a*a}
+        _=>false}};
+    let (half_x,half_y)=(across*w as f32*0.5,down*h as f32*0.5);let (mid_x,mid_y)=(w as f32*0.5,h as f32*0.5);
+    let x0=(mid_x-half_x-1.).max(0.) as usize;let x1=((mid_x+half_x+1.) as usize).min(w);
+    let y0=(mid_y-half_y-1.).max(0.) as usize;let y1=((mid_y+half_y+1.) as usize).min(h);
+    for py in y0..y1 {for px_x in x0..x1 {
+        let mut hits=0u32; // 4 x 4 samples a pixel, for a soft edge
+        for sy in 0..4 {for sx in 0..4 {
+            let x=(px_x as f32+(sx as f32+0.5)/4.-mid_x)/half_x;let y=(mid_y-py as f32-(sy as f32+0.5)/4.)/half_y;
+            hits+=u32::from(inside(x,y));}}
+        if hits==0 {continue;}
+        let keep=1.-hits as f32/16.*opacity.clamp(0.,1.);let p=&mut px[(py*w+px_x)*4..][..3];
+        for c in p {*c=(*c as f32*keep).round() as u8;}
+    }}
+}
+
 pub fn paint_out_iris_highlights(px:&mut [u8],w:usize,h:usize)->bool {
     let n=w*h;
     if n==0||px.len()<n*4 {return false;}
@@ -287,7 +313,19 @@ pub fn paint_out_iris_highlights(px:&mut [u8],w:usize,h:usize)->bool {
 
 #[cfg(test)]
 mod iris_highlight_tests {
-    use super::{paint_out_iris_highlights,recolor_iris};
+    use super::{mark_iris,paint_out_iris_highlights,recolor_iris};
+    #[test]
+    fn mark_covers_the_middle_and_leaves_the_rest() {
+        let n=64usize;let plain=vec![200u8;n*n*4];
+        for shape in 1..=5 {
+            let mut px=plain.clone();mark_iris(&mut px,n,n,shape,0.5,0.5,1.);
+            assert_eq!(px[(32*n+32)*4],0,"shape {shape}");
+            assert_eq!(px[(2*n+2)*4],200,"shape {shape}");assert_eq!(px[(32*n+32)*4+3],200,"shape {shape}");
+        }
+        let mut px=plain.clone();mark_iris(&mut px,n,n,0,0.5,0.5,1.);assert!(px==plain);
+        let mut px=plain.clone();mark_iris(&mut px,n,n,2,0.2,0.8,1.);
+        assert_eq!(px[(32*n+20)*4],200);assert_eq!(px[(16*n+32)*4],0); // a slit: narrow across, tall down
+    }
     #[test]
     fn recolor_turns_hue_and_scales_the_rest_keeping_alpha() {
         let mut px=[0u8,0,255,77];recolor_iris(&mut px,120.,1.,1.);assert_eq!(px,[0,255,0,77]); // red to green, BGRA

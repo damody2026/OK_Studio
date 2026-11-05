@@ -18,8 +18,9 @@ class UTexture;
 /** This iris texture with the highlights painted into it taken out (a card's overlay can hold them; the eye material's own
  *  gate does not reach those). Iris itself when it has none. Made once per texture, on the game thread. */
 KKUNITYBUNDLE_API UTexture* OKIrisWithoutHighlights(UTexture* Iris);
-/** Iris with its hue turned (degrees) and its saturation and value times as much; one image per iris, made again on a change. */
-KKUNITYBUNDLE_API UTexture* OKIrisRecolored(UTexture* Iris,float Hue,float Saturation,float Value);
+/** Iris with its hue turned (degrees), its saturation and value times as much, and Mark (shape, across, down, opacity; shape 0
+ *  none) laid over its middle; one image per iris, made again on a change, the iris itself left as it is. */
+KKUNITYBUNDLE_API UTexture* OKIrisRecolored(UTexture* Iris,float Hue,float Saturation,float Value,const FVector4f& Mark=FVector4f(0.f,0.f,0.f,0.f));
 /** One clear pixel: an eye layer with nothing on it. */
 KKUNITYBUNDLE_API UTexture* OKClearEyeLayer();
 
