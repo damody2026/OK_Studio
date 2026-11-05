@@ -1364,9 +1364,14 @@ bool UOKStudioGame::EncodeMp4(const FString& FramesDir, float Fps, const FString
 	if (Audio.Num() == 1) AudioOut = TEXT(" -map 0:v -map 1:a -c:a aac -b:a 192k");
 	else if (Audio.Num() > 1)
 	{
-		FString Inputs;
-		for (int32 I = 0; I < Audio.Num(); ++I) Inputs += FString::Printf(TEXT("[%d:a]"), I + 1);
-		AudioOut = FString::Printf(TEXT(" -filter_complex \"%samix=inputs=%d:duration=longest:normalize=0[a]\" -map 0:v -map \"[a]\" -c:a aac -b:a 192k"), *Inputs, Audio.Num());
+		// All stereo first: beside a mono input amix went mono, summing the stereo one's channels (3 dB louder, U237).
+		FString Format, Inputs;
+		for (int32 I = 0; I < Audio.Num(); ++I)
+		{
+			Format += FString::Printf(TEXT("[%d:a]aformat=channel_layouts=stereo[s%d];"), I + 1, I);
+			Inputs += FString::Printf(TEXT("[s%d]"), I);
+		}
+		AudioOut = FString::Printf(TEXT(" -filter_complex \"%s%samix=inputs=%d:duration=longest:normalize=0[a]\" -map 0:v -map \"[a]\" -c:a aac -b:a 192k"), *Format, *Inputs, Audio.Num());
 	}
 	if (!Audio.IsEmpty() && Seconds > 0.f) AudioOut += FString::Printf(TEXT(" -t %.3f"), Seconds);
 	FString Tried;
