@@ -196,6 +196,7 @@ pub fn tools() -> Vec<Value> {
                  "to": {"type": "number", "description": "move: the new time in seconds"},
                  "ease": {"type": "string", "enum": ["linear", "ease_in_out", "ease_in", "ease_out", "step"]},
                  "smooth": {"type": "boolean"},
+                 "orbit": {"type": "boolean", "description": "smooth on a camera: go round the point the keys look at"},
                  "camera": {"type": "integer", "description": "set on the scene track: the view from this key on (-1 free view, a camera id, -2 none)"}}), &["id", "action"]),
         t("studio_duplicate", "Copy objects (undoable), e.g. a row of chairs or a second character with the same card. Returns {ids} of the new copies.",
           json!({"ids": ids("object ids")}), &["ids"]),

@@ -1805,6 +1805,11 @@ bool UOKStudioGame::EnsureSceneAudioPcmLoaded()
 	return SceneAudioPcm && SceneAudioPcm->Channels > 0 && SceneAudioPcm->SampleRate > 0;
 }
 
+float UOKStudioGame::SceneSoundSeconds()
+{
+	return EnsureSceneAudioPcmLoaded() ? float(SceneAudioPcm->Samples.Num() / SceneAudioPcm->Channels) / SceneAudioPcm->SampleRate : 0.f;
+}
+
 void UOKStudioGame::PollSceneAudioHardwareClock()
 {
 	if (!AudioMasterClock.bAudioActive) return;

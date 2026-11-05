@@ -60,6 +60,22 @@ pub unsafe extern "C" fn ok_okanim_from_clip(s: *mut OkSession, key: *const c_ch
     })
 }
 
+/// A camera VMD's keys as a JSON array of `MmddCameraKeyEval` (Studio's default scales; the same keys a scene's MMDD camera gets).
+#[no_mangle]
+pub unsafe extern "C" fn ok_mmdd_camera_from_vmd(vmd_path: *const c_char, out: *mut u8, cap: i32) -> i32 {
+    let Some(path) = str_arg(vmd_path).filter(|p| !p.trim().is_empty()) else {
+        set_error("invalid vmd_path");
+        return -1;
+    };
+    cached(hash_args(&[b"vmd camera", path.as_bytes()]), out, cap, || {
+        let bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
+        let vmd = crate::vmd::VmdFile::parse(&bytes).map_err(|e| format!("{e:?}"))?;
+        let keys = crate::mmdd::evaluate_camera_vmd(&vmd, 0.0, 1.0, 0.079, 0.079, [0.0; 3], [0.0; 3]);
+        if keys.is_empty() { return Err("no camera keys in this VMD".to_string()); }
+        serde_json::to_vec(&keys).map_err(|e| e.to_string())
+    })
+}
+
 /// Solves a VMD file into OK animation bytes on `s`'s shaped character skeleton (`s` may be null for standard KK rest).
 /// `params_json` is optional JSON (`char_scale`, `obj_scale_y`, `playback_speed`, `delay`, `looping`, `high_heels_rot`, etc.).
 #[no_mangle]

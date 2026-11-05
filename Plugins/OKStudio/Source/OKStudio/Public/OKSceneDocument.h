@@ -1280,6 +1280,11 @@ struct OKSTUDIO_API FOKSceneTrack
 	/** The position follows a smooth curve through the keys (Catmull-Rom; a camera path) instead of straight segments. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
 	bool bSmoothPath = false;
+
+	/** A camera between keys swings round the point the two keys look at, which stays in the picture (U241); keys that
+	 *  look the same way, with no such point, go straight. Takes the place of bSmoothPath. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	bool bOrbitPath = false;
 };
 
 /**

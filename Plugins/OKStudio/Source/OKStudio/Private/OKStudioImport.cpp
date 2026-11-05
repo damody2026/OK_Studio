@@ -19,6 +19,9 @@
 
 namespace
 {
+	/** Studio cameras look along Unity Z, ours along X. */
+	FQuat MmddCamTurn() { return FQuat(FVector::UpVector, UE_HALF_PI); }
+
 	FVector Vec3(const TSharedPtr<FJsonObject>& O, const TCHAR* Key, const FVector& Default = FVector::ZeroVector)
 	{
 		const TArray<TSharedPtr<FJsonValue>>* A = nullptr;
@@ -721,6 +724,49 @@ FString FOKStudioImport::FReport::ToJson() const
 	return Out;
 }
 
+namespace
+{
+	/** A Unity camera key as ours: where it stands and looks, and MMD's vertical angle of view as a 16:9 horizontal one. */
+	void MmddCameraKey(const TSharedPtr<FJsonObject>& Kf, FTransform& OutTransform, float& OutFov)
+	{
+		OutTransform = FOKStudioImport::UnityToUe(Vec3(Kf, TEXT("world_pos")), Vec3(Kf, TEXT("rot")), FVector::OneVector);
+		OutTransform.SetRotation(OutTransform.GetRotation() * MmddCamTurn());
+		const double VertFov = FMath::DegreesToRadians(FMath::Clamp(Kf->GetNumberField(TEXT("fov")), 1.0, 170.0));
+		OutFov = float(FMath::RadiansToDegrees(2.0 * FMath::Atan(FMath::Tan(VertFov * 0.5) * 16.0 / 9.0)));
+	}
+}
+
+int32 FOKStudioImport::AddVmdCamera(UOKSceneDocument* Document, const FString& KeysJson, const FString& Name)
+{
+	TArray<TSharedPtr<FJsonValue>> Keys;
+	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(KeysJson), Keys) || Keys.IsEmpty()) return -1;
+	const FOKSceneObject* Old = Document->Objects.FindByPredicate([&Name](const FOKSceneObject& O) { return O.Kind == EOKSceneObjectKind::Camera && O.Name == Name; });
+	const int32 Id = Old ? Old->Id : Document->AddObject(EOKSceneObjectKind::Camera, Name, -1);
+	FOKSceneObject* Camera = Document->Find(Id);
+	Document->Tracks.RemoveAll([Id](const FOKSceneTrack& T) { return T.ObjectId == Id; });
+	FOKSceneTrack Track;
+	Track.ObjectId = Id;
+	for (const TSharedPtr<FJsonValue>& V : Keys)
+	{
+		const TSharedPtr<FJsonObject> Kf = V->AsObject();
+		if (!Kf) continue;
+		FOKSceneKey Key;
+		float Fov;
+		MmddCameraKey(Kf, Key.Transform, Fov);
+		Key.Time = float(Kf->GetNumberField(TEXT("time")));
+		Key.Ease = EOKSceneEase::Linear;
+		Key.Value = Fov;
+		if (Track.Keys.IsEmpty()) { Camera->Transform = Key.Transform; Camera->Camera.Fov = Fov; }
+		Document->Duration = FMath::Max(Document->Duration, Key.Time);
+		Track.Keys.Add(MoveTemp(Key));
+	}
+	Document->Tracks.Add(MoveTemp(Track));
+	Document->ActiveCamera = Id;
+	Document->Post.bDepthOfField = false;
+	Document->NotifyChanged();
+	return Id;
+}
+
 bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document, const FString& CardDirectory, FReport& Report, FString& OutError)
 {
 	if (!Document) { OutError = TEXT("no document"); return false; }
@@ -1141,18 +1187,16 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 				FOKSceneTrack LightTrack;
 				LightTrack.ObjectId = CharaLightId;
 				LightTrack.bSmoothPath = false;
-				const FQuat CamTurn(FVector::UpVector, UE_HALF_PI);
+				const FQuat CamTurn = MmddCamTurn();
 				const FQuat LightChild = UnityToUe(FVector::ZeroVector, FVector(40.f, 180.f, 0.f), FVector::OneVector).GetRotation();
 				for (int32 K = 0; K < Keyframes->Num(); ++K)
 				{
 					const TSharedPtr<FJsonObject> Kf = (*Keyframes)[K]->AsObject();
 					if (!Kf) continue;
-					const FVector WorldPos = Vec3(Kf, TEXT("world_pos"));
 					const FVector Rot = Vec3(Kf, TEXT("rot"));
-					FTransform T = UnityToUe(WorldPos, Rot, FVector::OneVector);
-					T.SetRotation(T.GetRotation() * CamTurn);
-					const double VertFov = FMath::DegreesToRadians(FMath::Clamp(Kf->GetNumberField(TEXT("fov")), 1.0, 170.0));
-					const float HorizFov = float(FMath::RadiansToDegrees(2.0 * FMath::Atan(FMath::Tan(VertFov * 0.5) * 16.0 / 9.0)));
+					FTransform T;
+					float HorizFov;
+					MmddCameraKey(Kf, T, HorizFov);
 					if (K == 0)
 					{
 						MmddCam->Transform = T;

@@ -95,4 +95,42 @@ bool FOKStudioVoiceTrackTest::RunTest(const FString&)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOKStudioCameraOrbitTest, "OKStudio.CameraOrbit", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ClientContext | EAutomationTestFlags::EngineFilter)
+
+bool FOKStudioCameraOrbitTest::RunTest(const FString&)
+{
+	// Two views of the point (0, 0, 100) from 300 cm and 100 cm, a quarter turn apart.
+	const FVector Focus(0.f, 0.f, 100.f);
+	auto Seen = [&Focus](const FVector& From) { return FTransform(FRotationMatrix::MakeFromXZ(Focus - From, FVector::UpVector).ToQuat(), From); };
+	UOKSceneDocument* Doc = NewObject<UOKSceneDocument>();
+	FOKSceneObject& Camera = Doc->Objects.AddDefaulted_GetRef();
+	Camera.Id = 5;
+	Camera.Kind = EOKSceneObjectKind::Camera;
+	FOKSceneTrack& T = Doc->Tracks.AddDefaulted_GetRef();
+	T.ObjectId = 5;
+	FOKSceneKey A, B;
+	A.Time = 0.f; A.Transform = Seen(Focus + FVector(300.f, 0.f, 0.f));
+	B.Time = 2.f; B.Transform = Seen(Focus + FVector(0.f, 100.f, 0.f));
+	T.Keys = { A, B };
+	Doc->Duration = 2.f;
+	auto At = [Doc](float Time) { Doc->EvaluateTimeline(Time); return Doc->Find(5)->Transform; };
+	auto AimOff = [&Focus](const FTransform& X) { return FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(double((Focus - X.GetLocation()).GetSafeNormal() | X.GetRotation().GetAxisX()), -1., 1.))); };
+
+	const FTransform Straight = At(1.f);
+	TestTrue(TEXT("the straight path loses the point"), AimOff(Straight) > 1.);
+	T.bOrbitPath = true;
+	const FTransform Mid = At(1.f);
+	TestTrue(TEXT("orbiting keeps looking at the point"), AimOff(Mid) < 0.1);
+	TestTrue(TEXT("the distance goes evenly"), FMath::IsNearlyEqual((Mid.GetLocation() - Focus).Size(), 200., 0.5));
+	TestTrue(TEXT("half the turn"), FMath::IsNearlyEqual(Mid.GetLocation().X, Mid.GetLocation().Y, 0.5));
+	TestTrue(TEXT("no roll"), FMath::Abs(Mid.GetRotation().GetAxisY().Z) < 1e-3);
+	TestTrue(TEXT("it lands on the first key"), At(0.f).GetLocation().Equals(A.Transform.GetLocation(), 0.01));
+	TestTrue(TEXT("just after it, still near"), At(0.01f).GetLocation().Equals(A.Transform.GetLocation(), 5.));
+	TestTrue(TEXT("it lands on the last key"), At(2.f).Equals(B.Transform, 0.01));
+	// Keys looking the same way have no point to go round: a straight dolly.
+	T.Keys[1].Transform = FTransform(A.Transform.GetRotation(), A.Transform.GetLocation() + FVector(-100.f, 0.f, 0.f));
+	TestTrue(TEXT("a dolly stays straight"), At(1.f).GetLocation().Equals(A.Transform.GetLocation() + FVector(-50.f, 0.f, 0.f), 0.01));
+	return true;
+}
+
 #endif

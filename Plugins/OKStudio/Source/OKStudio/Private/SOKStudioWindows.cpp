@@ -2279,8 +2279,20 @@ TSharedRef<SWidget> SOKStudioPanel::BuildTimeline()
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Button(TAttribute<FText>::CreateLambda([this]
 		{
 			const FOKSceneTrack* T = Game.IsValid() ? Game->Document->TrackOf(Game->SelectedId) : nullptr;
-			return FText::FromString(T && T->bSmoothPath ? TEXT("平滑路徑") : TEXT("直線路徑"));
-		}), [this] { if (FOKSceneTrack* T = Game.IsValid() ? Game->Document->TrackOf(Game->SelectedId) : nullptr) { T->bSmoothPath = !T->bSmoothPath; Changed(); } }, 56.f, 20.f, false, 10.f)]
+			return FText::FromString(T && T->bOrbitPath ? TEXT("繞焦點") : T && T->bSmoothPath ? TEXT("平滑路徑") : TEXT("直線路徑"));
+		}), [this]
+		{
+			FOKSceneTrack* T = Game.IsValid() ? Game->Document->TrackOf(Game->SelectedId) : nullptr;
+			if (!T) return;
+			// A camera has a third way (U241): straight, smooth, round what it looks at.
+			const FOKSceneObject* O = Game->Document->Find(Game->SelectedId);
+			const bool bCamera = O && O->Kind == EOKSceneObjectKind::Camera;
+			if (T->bOrbitPath) { T->bOrbitPath = false; T->bSmoothPath = false; }
+			else if (T->bSmoothPath) { T->bSmoothPath = false; T->bOrbitPath = bCamera; }
+			else T->bSmoothPath = true;
+			Changed();
+			Game->SetTimelineTime(Game->TimelineTime);
+		}, 56.f, 20.f, false, 10.f)]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 1.f, 0.f).VAlign(VAlign_Center)[CheckBox(TEXT("循環"), [this] { return Game.IsValid() && Game->LoopEnd > Game->LoopStart; },
 			[this](bool B) { if (!Game.IsValid()) return; if (B) { Game->LoopStart = 0.f; Game->LoopEnd = Game->Document->Duration; } else Game->LoopEnd = Game->LoopStart = 0.f; })]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[SNew(SBox).WidthOverride(40.f).HeightOverride(18.f)[Spin([this] { return Game.IsValid() ? Game->LoopStart : 0.f; }, [this](float V) { if (Game.IsValid()) Game->LoopStart = FMath::Max(V, 0.f); }, 0.f, 3600.f, 0.1f)]]
@@ -2734,13 +2746,15 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMmdDirector()
 			[
 				SNew(SEditableTextBox)
 				.Font(Font(9.5f))
-				.HintText(FText::FromString(TEXT("輸入 .vmd 檔案路徑，依角色專屬體型骨架即時求解…")))
+				.HintText(FText::FromString(TEXT("輸入 .vmd 檔案，或放動作、鏡頭、音樂的資料夾")))
 				.Text_Lambda([this] { return FText::FromString(MmdVmdPath); })
 				.OnTextChanged_Lambda([this](const FText& T) { MmdVmdPath = T.ToString(); })
 				.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type Commit)
 				{
 					MmdVmdPath = T.ToString();
-					if (Commit == ETextCommit::OnEnter) RunCommand(TEXT("mmd.vmd"));
+					// A folder lists what is in it below.
+					if (FPaths::DirectoryExists(MmdVmdPath.TrimStartAndEnd().TrimQuotes())) DeferFloat(TEXT("mmd"));
+					else if (Commit == ETextCommit::OnEnter) RunCommand(TEXT("mmd.vmd"));
 				})
 			]
 		]
@@ -2749,6 +2763,32 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMmdDirector()
 			Button(FText::FromString(TEXT("套用至選取")), Cmd(TEXT("mmd.vmd")), 80.f, 20.f, false, 9.5f)
 		]
 	];
+	// What a dance's folder holds, each file with what it can be (U240).
+	if (const FString Folder = MmdVmdPath.TrimStartAndEnd().TrimQuotes(); !Folder.IsEmpty() && FPaths::DirectoryExists(Folder))
+	{
+		TArray<FString> Files;
+		for (const TCHAR* Ext : { TEXT("*.vmd"), TEXT("*.wav"), TEXT("*.ogg") })
+		{
+			TArray<FString> Found;
+			IFileManager::Get().FindFiles(Found, *(Folder / Ext), true, false);
+			Files.Append(Found);
+		}
+		if (Files.IsEmpty()) Body->AddSlot().AutoHeight().Padding(2.f, 1.f)[OKStudioStyle::Label(FText::FromString(TEXT("這個資料夾沒有 .vmd、.wav、.ogg")), 9.5f, TextHint())];
+		for (const FString& Name : Files)
+		{
+			const FString Path = Folder / Name;
+			const bool bVmd = Name.EndsWith(TEXT(".vmd"), ESearchCase::IgnoreCase);
+			TSharedRef<SHorizontalBox> Row = SNew(SHorizontalBox);
+			Row->AddSlot().FillWidth(1.f).VAlign(VAlign_Center)[SNew(STextBlock).Font(Font(9.5f)).ColorAndOpacity(OKStudioStyle::Text()).OverflowPolicy(ETextOverflowPolicy::Ellipsis).Text(FText::FromString(Name))];
+			if (bVmd)
+			{
+				Row->AddSlot().AutoWidth().Padding(2.f, 0.f)[Button(FText::FromString(TEXT("當動作")), [this, Path] { RunCommand(TEXT("mmd.vmd"), Path); }, 52.f, 18.f, false, 9.f)];
+				Row->AddSlot().AutoWidth()[Button(FText::FromString(TEXT("當鏡頭")), [this, Path] { RunCommand(TEXT("mmd.camera"), Path); }, 52.f, 18.f, false, 9.f)];
+			}
+			else Row->AddSlot().AutoWidth()[Button(FText::FromString(TEXT("當音樂")), [this, Path] { RunCommand(TEXT("mmd.sound"), Path); }, 52.f, 18.f, false, 9.f)];
+			Body->AddSlot().AutoHeight().Padding(2.f, 1.f)[Row];
+		}
+	}
 	if (Game.IsValid() && Game->Document)
 	{
 		int32 CharCount = 0;

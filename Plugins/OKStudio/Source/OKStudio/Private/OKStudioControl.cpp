@@ -565,6 +565,7 @@ namespace
 				FOKSceneTrack* T = Doc->TrackOf(Id);
 				if (!T) return Result(false, TEXT("no keys yet"));
 				T->bSmoothPath = bSmooth;
+				J->TryGetBoolField(TEXT("orbit"), T->bOrbitPath);
 				Doc->NotifyChanged();
 			}
 			else if (Action != TEXT("list")) return Result(false, TEXT("action: list, set, remove, move, ease, clear or smooth"));
@@ -573,7 +574,7 @@ namespace
 			TSharedRef<FJsonObject> O = Result(true);
 			O->SetArrayField(TEXT("keys"), Keys);
 			O->SetNumberField(TEXT("duration"), Doc->Duration);
-			if (const FOKSceneTrack* T = Doc->TrackOf(Id)) O->SetBoolField(TEXT("smooth"), T->bSmoothPath);
+			if (const FOKSceneTrack* T = Doc->TrackOf(Id)) { O->SetBoolField(TEXT("smooth"), T->bSmoothPath); O->SetBoolField(TEXT("orbit"), T->bOrbitPath); }
 			return O;
 		}
 		if (Op == TEXT("duplicate"))

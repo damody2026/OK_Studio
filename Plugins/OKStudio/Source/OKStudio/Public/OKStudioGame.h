@@ -248,6 +248,8 @@ public:
 	bool IsOutsideSoundPlaying() const;
 	/** The voice list entry character `Id` is speaking (-1: none, still loading or ended). */
 	int32 VoicePlayingIndex(int32 Id) const;
+	/** How long the scene's sound runs (0: none, or it cannot be read). */
+	float SceneSoundSeconds();
 	/** Voices on the timeline (U233): the clip's sound file (empty: not there), its label and length (1 s until decoded). */
 	FString VoiceClipFile(const FOKSceneVoiceClip& Clip) const;
 	FString VoiceClipName(const FOKSceneVoiceClip& Clip) const;

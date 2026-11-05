@@ -193,7 +193,8 @@ FString UOKSceneDocument::ToJson() const
 	const bool bMotionKeys = Tracks.ContainsByPredicate([](const FOKSceneTrack& T) { return T.Keys.ContainsByPredicate([](const FOKSceneKey& K) { return K.AnimNo >= 0; }); });
 	const bool bFades = Tracks.ContainsByPredicate([](const FOKSceneTrack& T) { return T.Keys.ContainsByPredicate([](const FOKSceneKey& K) { return K.AnimBlend > 0.f; }); });
 	const bool bClips = Objects.ContainsByPredicate([](const FOKSceneObject& O) { return !O.Character.VoiceClips.IsEmpty(); });
-	Root->SetNumberField(TEXT("version"), bFades || bClips ? 3 : bMotionKeys ? 2 : 1);
+	const bool bOrbits = Tracks.ContainsByPredicate([](const FOKSceneTrack& T) { return T.bOrbitPath; });
+	Root->SetNumberField(TEXT("version"), bFades || bClips || bOrbits ? 3 : bMotionKeys ? 2 : 1);
 	Root->SetNumberField(TEXT("active_camera"), ActiveCamera);
 	Root->SetNumberField(TEXT("next_id"), NextId);
 	Root->SetNumberField(TEXT("map"), Map);
@@ -777,6 +778,38 @@ namespace
 		if (K.ClothesStates.Num() == C.ClothesStates.Num() && K.ClothesStates != C.ClothesStates) C.ClothesStates = K.ClothesStates;
 	}
 
+	/** Where the views of two camera keys meet: the middle of the closest points of their rays, both in front of the
+	 *  cameras. False for views that run side by side or apart. */
+	bool OrbitPoint(const FTransform& A, const FTransform& B, FVector& Out)
+	{
+		const FVector DA = A.GetRotation().GetAxisX(), DB = B.GetRotation().GetAxisX(), W = A.GetLocation() - B.GetLocation();
+		const double Dot = DA | DB, Den = 1. - Dot * Dot;
+		if (Den < 1e-3) return false;
+		const double D = DA | W, E = DB | W;
+		const double S = (Dot * E - D) / Den, T = (E - Dot * D) / Den;
+		if (S <= 1. || T <= 1.) return false;
+		Out = (A.GetLocation() + DA * S + B.GetLocation() + DB * T) * 0.5;
+		return true;
+	}
+
+	/** A camera at U between two keys, swung round where they look: the distance and the turn go evenly, and the keys'
+	 *  own aim off that point fades from one to the other, so it lands on each key exactly. */
+	bool OrbitBetween(const FTransform& A, const FTransform& B, float U, FTransform& Out)
+	{
+		FVector Focus;
+		if (!OrbitPoint(A, B, Focus)) return false;
+		const FVector VA = A.GetLocation() - Focus, VB = B.GetLocation() - Focus;
+		const double LA = VA.Size(), LB = VB.Size();
+		if (LA < 1. || LB < 1.) return false;
+		const FVector Dir = FQuat::Slerp(FQuat::Identity, FQuat::FindBetweenVectors(VA, VB), U).RotateVector(VA / LA);
+		if (FMath::Abs(Dir.Z) > 0.999 || FMath::Abs(VA.Z / LA) > 0.999 || FMath::Abs(VB.Z / LB) > 0.999) return false;
+		auto Look = [](const FVector& From) { return FRotationMatrix::MakeFromXZ(-From, FVector::UpVector).ToQuat(); };
+		const FQuat OffA = Look(VA / LA).Inverse() * A.GetRotation(), OffB = Look(VB / LB).Inverse() * B.GetRotation();
+		Out.SetLocation(Focus + Dir * FMath::Lerp(LA, LB, double(U)));
+		Out.SetRotation(Look(Dir) * FQuat::Slerp(OffA, OffB, U));
+		return true;
+	}
+
 	/** The motion a character track gives at Time: the last key at or before it that holds one (before the first, the
 	 *  first). It starts over at the first key of its run; the track's first motion starts where it was keyed. */
 	void ApplyMotionKeys(FOKSceneCharacter& C, const FOKSceneTrack& T, float Time)
@@ -1047,6 +1080,7 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 			else X.SetLocation(FMath::Lerp(A.Transform.GetLocation(), B.Transform.GetLocation(), U));
 			X.SetRotation(FQuat::Slerp(A.Transform.GetRotation(), B.Transform.GetRotation(), U));
 			X.SetScale3D(FMath::Lerp(A.Transform.GetScale3D(), B.Transform.GetScale3D(), U));
+			if (T.bOrbitPath && O->Kind == EOKSceneObjectKind::Camera) OrbitBetween(A.Transform, B.Transform, U, X);
 			V = FMath::Lerp(A.Value, B.Value, U);
 			if (bCharacter)
 			{

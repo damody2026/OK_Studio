@@ -520,6 +520,8 @@ typedef struct OkAnimPlayer OkAnimPlayer;
 int32_t ok_okanim_last_error(char* out, int32_t cap);
 int32_t ok_okanim_from_clip(OkSession* s, const char* key, float fps, uint8_t* out, int32_t cap);
 int32_t ok_okanim_from_vmd(const OkSession* s, const char* vmd_path, const char* params_json, uint8_t* out, int32_t cap);
+/* A camera VMD's keys as a JSON array (time, world_pos, rot, fov...). Null out/cap0 queries the size. */
+int32_t ok_mmdd_camera_from_vmd(const char* vmd_path, uint8_t* out, int32_t cap);
 int32_t ok_okanim_session_rest(OkSession* s, uint8_t* out, int32_t cap);
 int32_t ok_okanim_quality(const uint8_t* bytes, int32_t len, const char* header, uint8_t* out, int32_t cap);
 int32_t ok_okanim_set_posture(int32_t on);

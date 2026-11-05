@@ -906,6 +906,36 @@ public:
 		// Animation files and video motion pairs.
 		AddCommand(TEXT("anim.file"), TEXT("播放 OK 動畫檔"), [this](const FString& Arg) { FOKSceneObject* X = Obj(); return X && !Arg.IsEmpty() && PickAnimFile(*X, Arg); });
 		AddCommand(TEXT("anim.pair"), TEXT("雙人影片動作"), [this](const FString& Arg) { return PickVideoPair(Arg); });
+		// A dance from nothing (U240): the camera VMD and the music had no way in but a scene that names them.
+		AddCommand(TEXT("mmd.camera"), TEXT("載入鏡頭 VMD"), [this](const FString& Arg)
+		{
+			FString Json;
+			const FString File = (Arg.IsEmpty() ? MmdVmdPath : Arg).TrimStartAndEnd().TrimQuotes();
+			if (!FPaths::FileExists(File)) { SetStatus(TEXT("找不到鏡頭 VMD：") + File); return false; }
+			if (!FOkAnimBridge::CameraFromVmd(File, Json)) { SetStatus(TEXT("鏡頭 VMD 讀不了：") + FOkAnimBridge::LastError()); return false; }
+			const int32 Id = FOKStudioImport::AddVmdCamera(Game->Document, Json, TEXT("MMDD camera"));
+			if (Id < 0) { SetStatus(TEXT("這個 VMD 沒有鏡頭 key")); return false; }
+			Game->bLockActiveCamera = true;
+			Changed();
+			Game->SetTimelineTime(Game->TimelineTime);
+			DeferFloat(TEXT("mmd"));
+			const FOKSceneTrack* T = Game->Document->TrackOf(Id);
+			SetStatus(FString::Printf(TEXT("已載入鏡頭：%s（%d 個 key，時長 %.1f 秒）"), *FPaths::GetCleanFilename(File), T ? T->Keys.Num() : 0, Game->Document->Duration));
+			return true;
+		});
+		AddCommand(TEXT("mmd.sound"), TEXT("載入音樂"), [this](const FString& Arg)
+		{
+			const FString File = Arg.TrimStartAndEnd().TrimQuotes();
+			if (!File.IsEmpty() && !FPaths::FileExists(File)) { SetStatus(TEXT("找不到音樂檔：") + File); return false; }
+			Game->Document->SoundFile = File;
+			const float Seconds = File.IsEmpty() ? 0.f : Game->SceneSoundSeconds();
+			if (!File.IsEmpty() && Seconds <= 0.f) { Game->Document->SoundFile.Reset(); SetStatus(TEXT("音樂讀不了，只接受 WAV 與 Ogg：") + File); return false; }
+			Game->Document->Duration = FMath::Max(Game->Document->Duration, Game->Document->SoundDelay + Seconds);
+			Changed();
+			DeferFloat(TEXT("mmd"));
+			SetStatus(File.IsEmpty() ? FString(TEXT("已移除音樂")) : FString::Printf(TEXT("已載入音樂：%s（%.1f 秒）"), *FPaths::GetCleanFilename(File), Seconds));
+			return true;
+		});
 		AddCommand(TEXT("mmd.vmd"), TEXT("載入 VMD 動作"), [this](const FString& Arg)
 		{
 			int32 TargetId = Game.IsValid() ? Game->SelectedId : -1;
@@ -2935,6 +2965,12 @@ public:
 		const bool bWasSameFile = (X->Character.AnimFile == RelPath);
 		if (Game->SceneActor) Game->SceneActor->SetActiveVmdSource(CharId, FullPath, RelPath);
 		PickAnimFile(*X, RelPath);
+		// The timeline as long as the dance (U240: it stayed 10 s under a 3 minute motion, and the rest could not be reached).
+		FString Info;
+		TSharedPtr<FJsonObject> Fields;
+		double Seconds = 0.;
+		if (FOkAnimBridge::Info(AnimBytes, Info) && FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Info), Fields) && Fields->TryGetNumberField(TEXT("duration"), Seconds))
+			Game->Document->Duration = FMath::Max(Game->Document->Duration, float(Seconds));
 		if (bWasSameFile && Game->SceneActor) Game->SceneActor->Rebuild(CharId);
 		DeferFloat(TEXT("mmd"));
 		SetStatus(FString::Printf(TEXT("已載入 VMD（%s骨架）：#%d %s ← %s"),
