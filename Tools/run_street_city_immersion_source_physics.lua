@@ -1,0 +1,29 @@
+-- Uncooked Game-world iteration only; never substitutes for final staged D3D12 acceptance.
+package.path='Tools/lua/?.lua;'..package.path
+local ok=require('ok');local j=require('ok.json');local h=require('ok.hash')
+local root='C:/portable/OpenKoikatsu';local out=root..'/output/street-social-city-production/immersion-v1'
+local function read(p)local f=assert(io.open(p,'rb'));local x=j.decode(f:read('*a'));f:close();return x end
+local function write(p,x)local f=assert(io.open(p,'wb'));f:write(j.encode(x));f:close()end
+local seconds=tonumber(arg[1] or '0');assert(seconds and seconds>=0 and seconds<=7200)
+local build=read(out..'/native-audit-build/build.json');local plan=read(out..'/game-physics-plan.json');local audit=read(out..'/audit.json')
+local subset=arg[2];assert(not subset or subset=='stairs')
+if subset=='stairs' then local chosen={};for _,r in ipairs(plan.walk_routes)do if r.kind=='interior_stair'then chosen[#chosen+1]=r end end;assert(#chosen==34);plan.source_walk_routes_before_filter=#plan.walk_routes;plan.source_iteration_route_subset='school_stairs_up_and_down';plan.walk_routes=chosen end
+local map=root..'/StreetSocialCity/Content/UniversityCity/Maps/UniversityCity.umap';local before=h.sha256_file(map)
+assert(build.status=='passed' and build.engine=='E:/PhysX/UE5.8' and audit.status=='passed' and audit.map_sha256==before and plan.map_sha256==before and #plan.stem_render_links==1640)
+local host='E:/StreetSocialCityProduction/environment-packages/20261023-145531/HostProject';assert(build.host==host)
+for _,r in ipairs(build.source_files)do assert(h.sha256_file(root..'/StreetSocialCity/Plugins/CityEnvironment/Source/CityEnvironment/Private/'..r.file)==r.sha256)end
+local id=os.date('%Y%m%d-%H%M%S');local planpath=out..'/source-physics-'..id..'-plan.json';write(planpath,plan);local planhash=h.sha256_file(planpath)
+local receipt=out..'/source-physics-'..id..'.json';local log=out..'/source-physics-'..id..'.log'
+local args={build.engine..'/Engine/Binaries/Win64/UnrealEditor.exe',host..'/StreetSocialCity.uproject','/Game/UniversityCity/Maps/UniversityCity','-game',seconds>0 and '-d3d12' or '-nullrhi','-NoAsyncLoadingThread','-NoAsyncPostLoad','-CityImmersionAudit='..receipt,'-CityImmersionPlan='..planpath,'-CityImmersionSoakSeconds='..seconds,'-unattended','-nosplash','-nosound','-UserDir='..root..'/Saved/StreetSocialCityImmersionSourcePhysicsUser','-abslog='..log,'-DDC=(Local)','-LocalDataCachePath=E:/StreetSocialCityProduction/unreal-ddc/FileSystem','-ini:Engine:[ConsoleVariables]:Editor.AsyncAssetCompilationMaxMemoryUsage=6'}
+if seconds>0 then for _,v in ipairs({'-windowed','-ResX=1920','-ResY=1080','-NoVSync','-norhithread','-ExecCmds=t.MaxFPS 60'})do args[#args+1]=v end end
+write(out..'/source-physics-running.json',{status='running',run_id=id,map_sha256=before,native_receipt=receipt,log=log,soak_seconds=seconds,scope='Uncooked native Game physics and optional D3D12 actual-character route soak; source iteration only.'})
+local result=ok.proc.run(args,{hide=true,cwd=root,stdout_file=log..'.stdout',stderr_file=log..'.stderr',timeout=seconds+1200});local report=read(receipt);local unchanged=h.sha256_file(map)==before and h.sha256_file(planpath)==planhash
+local expects_input=false;for _,r in ipairs(build.source_files)do if r.file=='CityImmersionInputAudit.cpp'then expects_input=true end end
+local passed=result.code==0 and unchanged and report.status=='passed' and report.cooked_physics_passed and report.visible_stem_links_checked==1640 and report.solid_fixtures_checked==254 and report.supplied_plan_map_sha256==before and (not plan.player_start or report.player_start_passed) and (not expects_input or report.normal_input_smoke_passed)
+local length=0;for _,route in ipairs(plan.walk_routes)do for i=2,#route.points do local a,b=route.points[i-1],route.points[i];length=length+math.sqrt((a[1]-b[1])^2+(a[2]-b[2])^2)end end
+local expected_full=seconds>=length/140+300;local coverage_ok=not expected_full or (report.completed_walk_routes or 0)>=#plan.walk_routes
+local images={};for _,v in ipairs(report.soak_images or {})do local f=assert(io.open(v.path,'rb'),'Missing source native image');local header=f:read(24);f:close();assert(header:sub(1,8)=='\137PNG\r\n\26\n');local w,height=string.unpack('>I4I4',header,17);assert(w==1920 and height==1080);images[#images+1]={path=v.path,sha256=h.sha256_file(v.path),width=w,height=height}end
+passed=passed and coverage_ok and (seconds<=60 or #images>0)
+write(out..'/source-physics-'..id..'-images.json',{status='verified_native_files',map_sha256=before,images=images})
+local launch={status=passed and 'passed' or 'failed',run_id=id,map_sha256=before,source_unchanged=unchanged,engine=build.engine,host=host,native_receipt=receipt,log=log,exit_code=result.code,renderer=seconds>0 and 'D3D12' or 'NullRHI',runtime='Uncooked UnrealEditor -game; actual Game world',plan_sha256=planhash,soak_seconds=seconds,completed_walk_routes=report.completed_walk_routes,full_route_expected=expected_full,full_route_coverage_passed=coverage_ok,native_images_manifest=out..'/source-physics-'..id..'-images.json',native_image_count=#images,scope='Read-only source iteration: actual walking pawn/start,interior/support/capsule checks,1640 visible stem links and254 blocking fixtures. Optional real CharacterMovement route traversal. Final freshly cooked D3D12 replay remains required.'}
+write(out..'/source-physics-'..id..'-launch.json',launch);write(out..'/source-physics-launch-latest.json',launch);write(out..'/source-physics-running.json',{status=passed and 'completed' or 'failed',run_id=id,map_sha256=before,native_receipt=receipt,launch_receipt=out..'/source-physics-'..id..'-launch.json',soak_seconds=seconds});assert(passed,'Source physics/linkage replay failed; inspect '..receipt);print('Source Game physics/linkage iteration passed: '..receipt)

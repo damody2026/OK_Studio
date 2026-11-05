@@ -1,0 +1,11 @@
+-- Reuse the successful E code host; cook this material revision into a fresh stage.
+local f=assert(io.open('Tools/repackage_street_city_ground_pbr.lua','rb'));local source=f:read('*a');f:close()
+source=source:gsub('ground%-pbr%-v1','ground-pbr-v2')
+local start=assert(source:find("local audit=read(ground..'/audit.json')",1,true))
+local stop=assert(source:find('local host=prev.host;',start,true))
+source=source:sub(1,start-1)..[[local audit=read(ground..'/audit.json');local install=read(ground..'/install.json')
+assert(audit.status=='passed' and audit.map_sha256==install.map_sha256 and audit.all_1331_previous_changes_accounted and (prev.map_sha256==install.parent_map_sha256 or prev.map_sha256==install.map_sha256))
+]]..source:sub(stop)
+source=source:gsub("'StreetSocialCity/Content/UniversityCity/GroundPBRV1'","'StreetSocialCity/Content/UniversityCity/GroundPBRV1','StreetSocialCity/Content/UniversityCity/GroundPBRV2'")
+source=source:gsub("file:match%('%^StreetSocialCity/Content/UniversityCity/GroundPBRV1/'%)","file:match('^StreetSocialCity/Content/UniversityCity/GroundPBRV[12]/')")
+assert(load(source,'ground-revision-repackage'))()

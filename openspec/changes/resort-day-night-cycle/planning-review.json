@@ -1,0 +1,21 @@
+{
+  "status": "planning_complete_implementation_not_started",
+  "openspec_strict_validation": "passed",
+  "coverage_table_ids": 50,
+  "registry_table_match": true,
+  "spec_capabilities": 2,
+  "tasks": 23,
+  "map_sha_matches_coverage_observation": true,
+  "map_sha256": "af0f0e0553c3e5618ecbf78280401a5fe16d6364eafa2b7a916be04286f5fb36",
+  "native_editor_run": false,
+  "source_sha256": {
+    ".openspec.yaml": "0ad492a63d87e00a8bc135b0a1a2b19270dbb9ffd997a69b89fd4ab72015a944",
+    "coverage.json": "79cd1858bfb25153915e2474d13b62887b3593df2ce9811edf5236fab766c379",
+    "design.md": "96dfbaef99275881b2d7750511a3645f88e237e6bdfbbf535b59c6e674bc9a5c",
+    "outdoor-lighting-plan.md": "6e1006552c2b7b89adef0a041beac9e246934df6a4a3aa9564510bf7951c65b6",
+    "proposal.md": "134e6ba2a24e6b768bdd509c598ef9f717f79b69e3b3937c64b7c366ed4564ba",
+    "tasks.md": "fc6b356654eddfe3b65f9f7ec3db0bca2e183c414c506d293b7bdac0544d2e7a",
+    "specs/city-day-night-cycle/spec.md": "810a97109f30c11dd435f3a8f90317db19cb7002817780b6170b95e10c432f38",
+    "specs/outdoor-night-lighting/spec.md": "211b04563502c0404ceb4c3cba2ce5f4b9661a72db8dce267a7dc8f1fa2366e0"
+  }
+}

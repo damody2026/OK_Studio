@@ -29,6 +29,7 @@ p.add_argument('--smooth',type=int,default=2)
 p.add_argument('--smooth-shading',action='store_true',help='Use interpolated surface normals after geometric validation; geometry and UVs remain unchanged')
 p.add_argument('--threads',type=int,default=0,help='Explicit Rust solver worker count; zero uses tool default')
 p.add_argument('--recover-source-topology',action='store_true',help='Explicit reference-topology reconstruction after failed external extraction; preserves source features, records provenance')
+p.add_argument('--graft-thin-features',action='store_true',help='After remesh, splice back source triangles the result still misses (sub-voxel cords, twigs, wires) plus one overlapping ring; recorded per part')
 p.add_argument('--pin-source-extrema',nargs='+',choices=['x','y','z'],default=[],help='During explicit recovery, retain exact source vertices at these metric extrema for modular joins')
 a=p.parse_args(sys.argv[sys.argv.index('--')+1:])
 assert not a.dissolve_planes or a.box_panels,'Planar cleanup requires verified box panels'
@@ -92,8 +93,13 @@ for index,o in enumerate(objects):
     quad=a.box_panels or a.quad_mode
     command=[str(a.exe),'-d','-r','4' if quad else '6','-p','4' if quad else '6',*(['-D'] if quad else []),'-c','30','-b','-S',str(a.smooth),'-f',str(conditioned_target if a.box_panels else target),'-o',str(out),str(inp)]
     if a.threads:command[1:1]=['-t',str(a.threads)]
-    run=subprocess.run(command,capture_output=True,text=True,timeout=180)
-    (folder/'tool.log').write_text(run.stdout+'\n'+run.stderr,encoding='utf-8')
+    # instant-meshes-rs can stop at the final write ("Broken irregular face chain") for one particular face target while
+    # neighbouring targets extract fine (furniture 031, -f 42000 vs 36000..40000): retry 5 % and 10 % lower before failing.
+    fi=command.index('-f')+1;f0=int(command[fi]);logs=[]
+    for scale in (1.,.95,.9):
+     command[fi]=str(max(16,int(f0*scale)));run=subprocess.run(command,capture_output=True,text=True,timeout=180);logs.append('$ -f '+command[fi]+'\n'+run.stdout+'\n'+run.stderr)
+     if not run.returncode and out.exists():break
+    (folder/'tool.log').write_text('\n'.join(logs),encoding='utf-8')
     if run.returncode or not out.exists():
         records.append(dict(object=o.name,status='tool_failed',command=command));all_ok=False;continue
     newverts=[];faces=[]
@@ -226,6 +232,22 @@ for index,o in enumerate(objects):
             rlo=Vector(tuple(min(v.co[k] for v in newmesh.vertices) for k in range(3)));rhi=Vector(tuple(max(v.co[k] for v in newmesh.vertices) for k in range(3)))
             for v in newmesh.vertices:v.co=Vector(tuple(lo[k]+(v.co[k]-rlo[k])*dims[k]/(rhi[k]-rlo[k]) for k in range(3)))
             newmesh.update();invalid_mesh=newmesh.validate(verbose=False,clean_customdata=False)
+            # Collapse decimation and validate() can leave edges shared by 3+ faces, degenerate slivers or open seams.
+            # Remove the faces on such edges and re-close the resulting small loops.
+            bm=bmesh.new();bm.from_mesh(newmesh);fixed=0;bmesh.ops.dissolve_degenerate(bm,edges=list(bm.edges),dist=1e-7)
+            for attempt in range(20):
+                bad=[e for e in bm.edges if len(e.link_faces)>2 or (len(e.link_faces)==1)]
+                if not bad:break
+                over=[f for e in bad if len(e.link_faces)>2 for f in e.link_faces]
+                if over:bmesh.ops.delete(bm,geom=list(set(over)),context='FACES_ONLY');fixed+=len(set(over))
+                bmesh.ops.delete(bm,geom=[v for v in bm.verts if not v.link_faces],context='VERTS')
+                bmesh.ops.remove_doubles(bm,verts=list(bm.verts),dist=a.repair_solid*.25)
+                boundary=[e for e in bm.edges if e.is_boundary]
+                if boundary:bmesh.ops.holes_fill(bm,edges=boundary,sides=0)
+                bmesh.ops.triangulate(bm,faces=list(bm.faces))
+            bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));bm.to_mesh(newmesh);bm.free();newmesh.update()
+            repairs.append(dict(post_decimation_manifold_cleanup_faces=fixed))
+            invalid_mesh=invalid_mesh and newmesh.validate(verbose=False,clean_customdata=False)
             repairs.append(dict(solid_topology_voxel_m=a.repair_solid,feature_recovery='voxel union of external remesh and immutable source volume, followed by budget LOD'))
     if a.box_panels:
         bm=bmesh.new();bm.from_mesh(newmesh)
@@ -272,6 +294,28 @@ for index,o in enumerate(objects):
         invalid_mesh=newmesh.validate(verbose=False,clean_customdata=False)
         repairs.append(dict(reference_topology_recovery=True,connectivity_origin='normalized immutable source',position_field_origin=f'instant-meshes-rs result, bounded 1mm adoption where nearest distance <={a.tolerance:g}m; missing features restored from source',external_extraction_coverage_before_recovery_m=before_coverage,field_supported_vertices=trusted,reference_vertices=len(verts),unchanged_original_model=False))
         if a.pin_source_extrema:repairs.append(dict(exact_source_extrema_axes=a.pin_source_extrema,pinned_vertices=pinned,purpose='Deterministic modular seam contract; no arbitrary edge displacement'))
+    main_faces=len(newmesh.polygons);grafted=0
+    if a.graft_thin_features and not a.recover_source_topology:
+        # Features thinner than the field edge / repair voxel vanish (hanging cords,
+        # twig tips, wire meridians). Splice exactly those source triangles back,
+        # grown by one ring so the patch overlaps the remeshed surface.
+        gv=[v.co.copy() for v in newmesh.vertices];gf=[tuple(p.vertices) for p in newmesh.polygons]
+        gb=BVHTree.FromPolygons(gv,gf,all_triangles=False)
+        vfar=[gb.find_nearest(v)[3]>a.tolerance*.5 for v in verts]
+        miss={j for j,t in enumerate(tris) if any(vfar[i] for i in t) or gb.find_nearest(sum((verts[i] for i in t),Vector())/3)[3]>a.tolerance*.5}
+        if miss:
+            ring={i for j in miss for i in tris[j]}
+            miss|={j for j,t in enumerate(tris) if any(i in ring for i in t)}
+            remap={};nv=list(gv);nf=list(gf)
+            for j in sorted(miss):
+                for i in tris[j]:
+                    if i not in remap:remap[i]=len(nv);nv.append(verts[i].copy())
+                nf.append(tuple(remap[i] for i in tris[j]))
+            graftmesh=bpy.data.meshes.new(o.name+'-remesh-with-thin-feature-graft');graftmesh.from_pydata(nv,[],nf);graftmesh.update()
+            if a.smooth_shading:
+                for poly in graftmesh.polygons:poly.use_smooth=True
+            newmesh=graftmesh;grafted=len(miss)
+        repairs.append(dict(thin_feature_graft_source_triangles=grafted,graft_rule=f'source triangles farther than {a.tolerance*.5:g}m from the remesh, plus one overlapping ring; spliced unchanged'))
     newverts=[v.co.copy() for v in newmesh.vertices]
     faces=[tuple(p.vertices) for p in newmesh.polygons]
     for material in mesh.materials:newmesh.materials.append(material)
@@ -304,7 +348,8 @@ for index,o in enumerate(objects):
             repairs.append(dict(distance_validation='Certified identical-triangle correspondence; convex barycentric displacement bound in both directions',surface_displacement_upper_bound_m=bound,bvh_observed_source_to_result_m=coverage,bvh_observed_result_to_source_m=max_distance,reason='Avoid single-precision nearest-triangle cancellation on long, steep geographic triangles'))
             coverage=max_distance=bound
     edge_uses={}
-    for poly in newmesh.polygons:
+    # Grafted thin-feature patches are deliberately open overlays; judge manifoldness on the remeshed surface.
+    for poly in newmesh.polygons[:main_faces]:
         for edge in poly.edge_keys:edge_uses[edge]=edge_uses.get(edge,0)+1
     nonmanifold_edges=sum(n!=2 for n in edge_uses.values())
     source_edges={}
