@@ -427,7 +427,7 @@ public:
 		});
 		AddCommand(TEXT("scene.save"), TEXT("儲存"), [this](const FString& Arg)
 		{
-			if (Arg.IsEmpty() && !Game->File.IsEmpty() && FOKSceneCard::Kind(Game->File) != FOKSceneCard::EKind::KStudio) { FString E; const bool bOk = Game->Save(Game->File, E); SetStatus(bOk ? TEXT("已存 ") + Game->File : E); return bOk; }
+			if (Arg.IsEmpty() && !Game->File.IsEmpty() && FOKSceneCard::Kind(Game->File) != FOKSceneCard::EKind::KStudio) { FString E; const bool bOk = Game->Save(Game->File, E); FOKStudioThumbnails::Get().Forget(ScenePicture(Game->File)); SetStatus(bOk ? TEXT("已存 ") + Game->File : E); return bOk; }
 			return SaveNamed(Arg.IsEmpty() ? FDateTime::Now().ToString(TEXT("scene_%Y%m%d_%H%M%S")) : Arg);
 		});
 		// Save as starts from a new name, so saving twice keeps both (U165), and shows the folder it saves to (U221).
@@ -2745,19 +2745,21 @@ public:
 		Changed();
 	}
 	/** What a page does with several characters selected, shown only then ({n} their number, {who} the primary one). */
-	void MultiNote(const FString& Format)
+	void MultiNote(const FString& Format, bool bKeepPlace = false)
 	{
 		Props->AddSlot().AutoHeight().Padding(0.f, 1.f, 0.f, 3.f)
 		[
 			SNew(STextBlock).Font(OKStudioStyle::Font(10.f)).ColorAndOpacity(FLinearColor::Yellow).AutoWrapText(true)
 			.Text_Lambda([this, Format] { const FOKSceneObject* O = Obj(); return FText::FromString(Format.Replace(TEXT("{n}"), *FString::FromInt(SelectedCharacters())).Replace(TEXT("{who}"), O ? *O->Name : TEXT(""))); })
-			.Visibility_Lambda([this] { return SelectedCharacters() > 1 ? EVisibility::Visible : EVisibility::Collapsed; })
+			.Visibility_Lambda([this, bKeepPlace] { return SelectedCharacters() > 1 ? EVisibility::Visible : bKeepPlace ? EVisibility::Hidden : EVisibility::Collapsed; })
 		];
 	}
 	/** 動畫: speed and the Studio animation browser. */
 	void CharacterAnim(FOKSceneObject* O)
 	{
-			MultiNote(TEXT("動作、速度、時間同時改 {n} 個角色。"));
+			// Its line stays: the list moved up under the pointer going from two selected to one, and the click took the
+			// next motion (U229).
+			MultiNote(TEXT("動作、速度、時間同時改 {n} 個角色。"), true);
 			bRowsToAll = true;
 			Float(TEXT("動畫速度（0 定格）"), [](FOKSceneObject& X) { return X.Character.Speed; }, [](FOKSceneObject& X, float V) { X.Character.Speed = FMath::Max(V, 0.f); }, 0.f, 4.f, 0.05f);
 			// The animation's time: with speed 0 the character holds this frame (the timeline keys it as 動畫時間).
@@ -3525,6 +3527,8 @@ public:
 		SetStatus(Turning == 2 ? FString::Printf(TEXT("%s 與 %s 面對面"), A ? *A->Name : TEXT(""), B ? *B->Name : TEXT(""))
 			: FString::Printf(TEXT("%s 轉向 %s"), A ? *A->Name : TEXT(""), B ? *B->Name : TEXT("")));
 		Changed();
+		// Both in view: the view stayed on the last one added, the other under the page at the left (U228).
+		if (Turning == 2 && Doc->ActiveCamera < 0) { Game->SyncDocumentNow(); Game->FocusSelection(); }
 	}
 
 	/** Puts the partner motion on the other character (another selected one, else the nearest), at the selected

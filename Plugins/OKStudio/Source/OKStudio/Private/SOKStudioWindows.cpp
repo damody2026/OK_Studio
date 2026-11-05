@@ -162,7 +162,8 @@ void SOKStudioPanel::RegisterFloats()
 	AddFloat(TEXT("color"), TEXT("顏色"), FMargin(470.f, 60.f, 260.f, 330.f), [this] { return BuildColorPicker(); });
 	AddFloat(TEXT("settings"), TEXT("設定"), FMargin(260.f, 60.f, 640.f, 460.f), [this] { return BuildSettings(); });
 	AddFloat(TEXT("shot"), TEXT("截圖"), FMargin(470.f, 60.f, 300.f, 345.f), [this] { return BuildShot(); });
-	AddFloat(TEXT("export"), TEXT("輸出動畫"), FMargin(140.f, 60.f, 340.f, 330.f), [this] { return BuildExport(); });
+	// Right of the pages at the left, left of the object panel, above the timeline (U225).
+	AddFloat(TEXT("export"), TEXT("輸出動畫"), FMargin(1015.f, 60.f, 340.f, 330.f), [this] { return BuildExport(); });
 	AddFloat(TEXT("report"), TEXT("讀取報告"), FMargin(470.f, 60.f, 440.f, 320.f), [this] { return BuildReport(); });
 	AddFloat(TEXT("resources"), TEXT("資源檢查"), FMargin(470.f, 60.f, 440.f, 360.f), [this] { return BuildResources(); });
 	AddFloat(TEXT("backups"), TEXT("備份恢復"), FMargin(300.f, 60.f, 500.f, 400.f), [this] { return BuildBackups(); });
@@ -738,6 +739,8 @@ FString SOKStudioPanel::KStudioFolder()
 FString SOKStudioPanel::ScenePicture(const FString& File)
 {
 	if (File.EndsWith(TEXT(".png"))) return File;
+	const FString Own = UOKStudioGame::ScenePictureFile(File);
+	if (FPaths::FileExists(Own)) return Own;
 	const FString Folder = KStudioFolder();
 	if (Folder.IsEmpty()) return FString();
 	const FString Name = FPaths::GetBaseFilename(File);
@@ -827,6 +830,7 @@ bool SOKStudioPanel::DeleteScene(const FString& Path)
 	const FString Trash = FOKStudioSettings::Directory() / TEXT("Trash") / FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S_")) + FPaths::GetCleanFilename(Path);
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Trash), true);
 	const bool bOk = IFileManager::Get().Move(*Trash, *Path, false, true);
+	if (bOk && FPaths::FileExists(UOKStudioGame::ScenePictureFile(Path))) IFileManager::Get().Move(*UOKStudioGame::ScenePictureFile(Trash), *UOKStudioGame::ScenePictureFile(Path), false, true);
 	// A scene card's "<name>_cards" (the cards opening it took out; made again on the next open) goes along, unless the open
 	// scene still uses them. An .okscene's cards are what it refers to and stay.
 	const FString CardsDir = FPaths::GetPath(Path) / FPaths::GetBaseFilename(Path) + TEXT("_cards");
@@ -849,6 +853,7 @@ bool SOKStudioPanel::RenameScene(const FString& Path, const FString& NewName)
 	if (bOk)
 	{
 		if (Game.IsValid() && Game->File == Path) Game->File = To;
+		if (FPaths::FileExists(UOKStudioGame::ScenePictureFile(Path))) IFileManager::Get().Move(*UOKStudioGame::ScenePictureFile(To), *UOKStudioGame::ScenePictureFile(Path), false, true);
 		// Its "<name>_cards" follows the new name (else it is left as a folder of its own), and the open scene's characters
 		// that use them point there.
 		const FString CardsDir = FPaths::GetPath(Path) / FPaths::GetBaseFilename(Path) + TEXT("_cards"), NewCardsDir = FPaths::GetPath(To) / Clean + TEXT("_cards");

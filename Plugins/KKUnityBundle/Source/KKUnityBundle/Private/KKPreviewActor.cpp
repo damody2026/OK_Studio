@@ -9217,9 +9217,11 @@ float AKKPreviewActor::EffectiveFaceRate(int32 Control) const
         Control==1?BlinkEyeRate:BlinkBrowRate);
 }
 
-// The iris tiling's axes against the mesh's coordinates, as measured in H (2026-11-03): both the same way (U mirrored
-// made her eyes look apart, each out to its own side, when the look turned them in; user 2026-11-03).
-static TAutoConsoleVariable<int32> CVarOKEyeGazeSTFlipV(TEXT("ok.EyeGazeSTFlipV"),0,TEXT("1: an eye's gaze written to its iris tiling (_MainTex_ST) with V mirrored; 0: as the mesh's."));
+// The iris tiling's axes against the mesh's coordinates: U the same way (mirrored made her eyes look apart, each out to
+// its own side, when the look turned them in; user 2026-11-03). V mirrored: the rows are in UE's V, the tiling takes
+// Unity's offset and turns it round itself (MakeUnityMaskUVParameter), so as the mesh's the iris went the wrong way up
+// and left the eye on a look of -0.48 (U227, against CharaStudio: same rates, offset y +0.12 there).
+static TAutoConsoleVariable<int32> CVarOKEyeGazeSTFlipV(TEXT("ok.EyeGazeSTFlipV"),1,TEXT("1: an eye's gaze written to its iris tiling (_MainTex_ST) with V mirrored; 0: as the mesh's."));
 static TAutoConsoleVariable<int32> CVarOKEyeGazeSTFlipU(TEXT("ok.EyeGazeSTFlipU"),0,TEXT("1: an eye's gaze written to its iris tiling (_MainTex_ST) with U mirrored; 0: as the mesh's."));
 // M_ForgeEye_Flat (the shared display eye, street and H) has the gaze rows but does not move the iris by them; its
 // tiling does (2026-11-03: rows of -0.38 on V showed nothing, the tiling rolled her eyes up).
@@ -9285,8 +9287,8 @@ bool AKKPreviewActor::SetEyeGaze(float LeftHorizontal,float RightHorizontal,floa
 					const FLinearColor ST(Su*Base->R,Sv*Base->G,Ou*Base->R+Base->B,Ov*Base->G+Base->A);
 					M->SetVectorParameterValue(TEXT("_MainTex_ST"),ST);M->SetScalarParameterValue(TEXT("_MainTex_ST__A"),ST.A);++Set;}
 			if(CVarOKEyeGazeLog.GetValueOnGameThread()){FLinearColor Shown;const bool Has=Part.GpuEyeMaterial&&Part.GpuEyeMaterial->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("KKEyeUV0Row1")),Shown);
-				UE_LOG(LogTemp,Display,TEXT("Eye gaze part=%d gaze=(%.3f,%.3f,%.3f) iris rows u=(%.4f,%.4f,%.4f) v=(%.4f,%.4f,%.4f) uv0=(%.4f,%.4f) base0=(%.4f,%.4f) built=%s shown_v=(%.4f,%.4f,%.4f) drawn rows=%d tiling=%d"),
-					Part.SessionIndex,EyeGaze[0],EyeGaze[1],EyeGaze[2],Rows[0].R,Rows[0].G,Rows[0].B,Rows[1].R,Rows[1].G,Rows[1].B,Part.UVs.IsEmpty()?0.:Part.UVs[0].X,Part.UVs.IsEmpty()?0.:Part.UVs[0].Y,
+				UE_LOG(LogTemp,Display,TEXT("Eye gaze %s part=%d gaze=(%.3f,%.3f,%.3f) iris rows u=(%.4f,%.4f,%.4f) v=(%.4f,%.4f,%.4f) uv0=(%.4f,%.4f) base0=(%.4f,%.4f) built=%s shown_v=(%.4f,%.4f,%.4f) drawn rows=%d tiling=%d"),
+					*GetName(),Part.SessionIndex,EyeGaze[0],EyeGaze[1],EyeGaze[2],Rows[0].R,Rows[0].G,Rows[0].B,Rows[1].R,Rows[1].G,Rows[1].B,Part.UVs.IsEmpty()?0.:Part.UVs[0].X,Part.UVs.IsEmpty()?0.:Part.UVs[0].Y,
 					Part.GpuEyeUV[0][0].X,Part.GpuEyeUV[0][0].Y,Part.GpuEyeMaterial?*Part.GpuEyeMaterial->GetName():TEXT("-"),Has?Shown.R:0.f,Has?Shown.G:0.f,Has?Shown.B:0.f,RowsSet,Set);}
 			if(!bEyeTilingSaid&&(Set||RowsSet)){bEyeTilingSaid=true;UE_LOG(LogTemp,Display,TEXT("Eye gaze part=%d drawn: %d with rows, %d through the iris tiling"),Part.SessionIndex,RowsSet,Set);}
 		}

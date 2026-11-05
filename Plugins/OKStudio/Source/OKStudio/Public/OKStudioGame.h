@@ -134,6 +134,8 @@ public:
 	/** Scene files of the in-game list: UserData/Studio/scene/*.okscene, newest first. */
 	static FString SceneDirectory();
 	static TArray<FString> SceneFiles();
+	/** The picture saved beside an .okscene (a PNG without scene data, so the lists leave it out). */
+	static FString ScenePictureFile(const FString& Scene);
 
 	/** Guide object (gizmo) of the selection: 0 move, 1 rotate, 2 scale. */
 	int32 GuideMode = 0;

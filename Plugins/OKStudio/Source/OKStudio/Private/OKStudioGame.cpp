@@ -112,6 +112,11 @@ FString UOKStudioGame::SceneDirectory()
 	return FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("UserData/Studio/scene"));
 }
 
+FString UOKStudioGame::ScenePictureFile(const FString& Scene)
+{
+	return FPaths::GetPath(Scene) / FPaths::GetBaseFilename(Scene) + TEXT(".thumb.png");
+}
+
 TArray<FString> UOKStudioGame::SceneFiles()
 {
 	TArray<FString> Names;
@@ -698,7 +703,22 @@ bool UOKStudioGame::Save(const FString& Path, FString& OutError)
 		if (!FOKSceneCard::Write(Document, Views, Temp, OutError)) { IFileManager::Get().Delete(*Temp, false, true, true); return false; }
 		if (!UOKSceneDocument::ReplaceFile(Temp, Path, OutError)) return false;
 	}
-	else if (!Document->SaveToFile(Path, OutError)) return false;
+	else
+	{
+		if (!Document->SaveToFile(Path, OutError)) return false;
+		// The list shows this picture (U226). The scene is saved whether or not it could be taken.
+		if (Viewer && SceneActor)
+		{
+			UpdateViewer();
+			SyncNow();
+			const UCameraComponent* Camera = Viewer->GetCameraComponent();
+			TArray<TArray<uint8>> Views;
+			FString PictureError;
+			if (FOKSceneCard::CaptureViews(SceneActor, Camera->GetComponentTransform(), Camera->FieldOfView, &Camera->PostProcessSettings, Views, PictureError) && Views.Num() > 0)
+				FFileHelper::SaveArrayToFile(Views[0], *ScenePictureFile(Path));
+			else UE_LOG(LogTemp, Warning, TEXT("OK studio: no picture for %s: %s"), *Path, *PictureError);
+		}
+	}
 	File = Path;
 	FOKStudioSettings::Get().UseScene(Path);
 	// The history takes the edits made since its last step first: undoing an edit made after saving comes back to
