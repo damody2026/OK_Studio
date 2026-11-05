@@ -352,6 +352,7 @@
 - 每幀步數上限 `ok.Paint.MaxSteps` 預設 4：30 FPS 以下塗料變慢，不再讓幀更長。超過的時間丟掉，體積仍在液包裡。
 - 單純塗料多不會變慢：玩家水槍噴 25 秒（wet 2524）閒置 90 FPS、雙人循環 40～45 FPS，和沒塗料時一樣。
 - 塗料累積變貴的原因是濕面數：整輪走查後段 wet 約 9800，覆蓋層 16～20 ms、mask 6～9 ms、滴落 3～5 ms，都隨濕面數增加。`EGalRound10` 整輪走查後段 17～20 FPS（步數上限前 5～11，當時別組在編譯）。濕面超過 2500 時表面更新頻率跟著降，最低為四分之一（預設 20 Hz 降到 5 Hz）。畫面上的塗料仍每幀跟著身體。
+- `EGalRound11`（`bf3519e3e`）整輪走到離開：`game.log` 沒有 Error，後段 25～40 FPS，覆蓋層 4～7 ms、mask 約 4 ms。另有一個 Unreal 在跑，安靜機器沒量。保險套用完，這一輪是不戴套，戴套一起高潮最後在 `EGalRound5` 走過。
 - `PaintDemo`：`ok.PaintAudit` 在 `-game` 實跑，exit 0，噴出 42、守恆誤差 0，清除後剩餘 0。
 - `OpenKoikatsu.Paint.*` 六項通過。`Paint.Scene` 要有 RHI，加 `-NullRHI` 會在讀 render target 時當掉（舊版一樣）。
 
