@@ -5,11 +5,11 @@ use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
-const STUDIO_TOOLS: [&str; 30] = [
+const STUDIO_TOOLS: [&str; 33] = [
     "studio_launch", "studio_stop", "studio_state", "studio_inspect", "studio_catalog_search", "studio_spawn", "studio_transform",
     "studio_reparent", "studio_delete", "studio_select", "studio_pose", "studio_camera", "studio_capture", "studio_save", "studio_load",
     "studio_undo", "studio_redo", "studio_cmd", "studio_timeline", "studio_patch", "studio_scene", "studio_bones", "studio_bounds",
-    "studio_catalog", "studio_keys", "studio_duplicate", "studio_export", "studio_scenes", "studio_report", "studio_ui_shot",
+    "studio_catalog", "studio_keys", "studio_duplicate", "studio_export", "studio_scenes", "studio_report", "studio_ui_shot", "studio_combo", "studio_key", "studio_mouse",
 ];
 
 #[test]
