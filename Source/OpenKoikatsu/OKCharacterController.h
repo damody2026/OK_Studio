@@ -197,9 +197,10 @@ public:
  UFUNCTION() void OnEditorPanelWidthChanged(float Value);
  UFUNCTION() void OnEditorFontSizeChanged(float Value);
  UPROPERTY() TObjectPtr<class UScaleBox> EditorContentScale;
+ UPROPERTY() TObjectPtr<class UScaleBox> MotionContentScale;
  UPROPERTY() TObjectPtr<class USpinBox> EditorWidthInput;
  UPROPERTY() TObjectPtr<class USpinBox> EditorFontInput;
- float EditorPanelWidth=360.f,EditorFontSize=16.f;
+ float EditorPanelWidth=360.f,EditorFontSize=8.f;
  bool bEditorDisplayDirty=false;
  double EditorDisplayChangedAt=0.;
 	void BuildAnimationLookup();

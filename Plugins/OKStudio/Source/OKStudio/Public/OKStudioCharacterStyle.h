@@ -14,6 +14,7 @@ struct FOKStudioStyleTuning
 	float RealFace = 0.6f;		// how far the eyes, nose and mouth go towards the realistic end's
 	float RealChin = 0.15f;		// how far the realistic end rounds the tip of the chin
 	float ChibiChin = 0.15f;	// and the chibi end
+	float ChibiHead = 0.8f;		// the chibi end's head against what its head slider gives
 	float ChibiJaw = 0.1f;		// the most the chibi end widens the jaw sliders
 	float ArmGrowth = 0.7f;		// how much of the character's growth the arms keep
 	int32 Revision = 0;			// bumped on a change: shown characters take the numbers again

@@ -43,6 +43,7 @@ namespace
 		{ TEXT("real_face"), TEXT("寫實五官變化"), 0.f, 1.f, &T::RealFace },
 		{ TEXT("real_chin"), TEXT("寫實下巴尖圓度"), 0.f, 1.f, &T::RealChin },
 		{ TEXT("chibi_chin"), TEXT("Q 版下巴尖圓度"), 0.f, 1.f, &T::ChibiChin },
+		{ TEXT("chibi_head"), TEXT("Q 版頭大小"), 0.5f, 1.2f, &T::ChibiHead },
 		{ TEXT("chibi_jaw"), TEXT("Q 版下巴加寬上限"), 0.f, 0.6f, &T::ChibiJaw },
 	};
 	/** The sliders' numbers, kept between runs and readable from outside. */
