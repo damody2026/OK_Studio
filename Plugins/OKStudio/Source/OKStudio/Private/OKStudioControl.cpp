@@ -3,6 +3,7 @@
 // the reply is {"ok": true, ...} or {"ok": false, "error": ...}. Tools/ok-game-mcp's studio_* tools speak it
 // (Docs/OK_STUDIO_MCP.md). Edits wait while the user drags, a scene loads, the timeline plays or exports ("busy").
 #include "SOKStudioPanel.h"
+#include "OKStudioCharacterStyle.h"
 #include "OKStudioGameInternal.h"
 #include "OKControl.h"
 #include "HttpServerResponse.h"
@@ -397,6 +398,22 @@ namespace
 			O->SetNumberField(TEXT("hand_right"), X->Character.HandRight);
 			O->SetArrayField(TEXT("accessory_points"), Points);
 			O->SetStringField(TEXT("note"), TEXT("euler: Unity local degrees (as KK Studio FK); ik position: cm in the character's space (+Y ahead, +Z up); world: cm. A character with rotation [0,0,0] faces +Y (the front view looks at its face); yaw -90 faces +X, yaw 90 faces -X, yaw 180 faces away."));
+			return O;
+		}
+		if (Op == TEXT("style_tuning"))
+		{
+			FOKStudioStyleTuning& T = OKStudioStyleTuning();
+			const TPair<const TCHAR*, float*> Fields[] = { { TEXT("heads"), &T.Heads }, { TEXT("head_size"), &T.HeadSize }, { TEXT("hips"), &T.Hips }, { TEXT("shoulders"), &T.Shoulders },
+				{ TEXT("upper"), &T.Upper }, { TEXT("waist"), &T.Waist }, { TEXT("leg_length"), &T.LegLength }, { TEXT("upper_arm"), &T.UpperArm }, { TEXT("forearm"), &T.Forearm }, { TEXT("thigh"), &T.Thigh }, { TEXT("calf"), &T.Calf }, { TEXT("bust"), &T.Bust }, { TEXT("hem"), &T.Hem }, { TEXT("breast"), &T.Breast }, { TEXT("arm_growth"), &T.ArmGrowth }, { TEXT("real_jaw"), &T.RealJaw }, { TEXT("real_face"), &T.RealFace }, { TEXT("real_chin"), &T.RealChin }, { TEXT("chibi_chin"), &T.ChibiChin }, { TEXT("chibi_jaw"), &T.ChibiJaw } };
+			TSharedRef<FJsonObject> O = Result(true);
+			bool bChanged = false;
+			for (const TPair<const TCHAR*, float*>& F : Fields)
+			{
+				double V;
+				if (J->TryGetNumberField(F.Key, V)) { *F.Value = float(V); bChanged = true; }
+				O->SetNumberField(F.Key, *F.Value);
+			}
+			if (bChanged) { ++T.Revision; Doc->NotifyChanged(); }
 			return O;
 		}
 		if (Op == TEXT("bounds"))
@@ -1527,7 +1544,7 @@ namespace OKStudioControl
 		if (!OKControl::Listen(TEXT("studio"), 30, Port)) return;
 		static const TCHAR* Ops[] = { TEXT("state"), TEXT("inspect"), TEXT("catalog_search"), TEXT("spawn"), TEXT("transform"), TEXT("reparent"), TEXT("delete"), TEXT("select"),
 			TEXT("pose"), TEXT("camera"), TEXT("capture"), TEXT("save"), TEXT("load"), TEXT("undo"), TEXT("redo"), TEXT("cmd"), TEXT("timeline"),
-			TEXT("patch"), TEXT("scene"), TEXT("bones"), TEXT("bounds"), TEXT("catalog"), TEXT("keys"), TEXT("duplicate"), TEXT("export"), TEXT("scenes"), TEXT("report"), TEXT("ui_shot"), TEXT("ui_fit"), TEXT("click"), TEXT("mouse"), TEXT("key"), TEXT("combo"), TEXT("type"), TEXT("leave"), TEXT("exec"), TEXT("parts") };
+			TEXT("patch"), TEXT("style_tuning"), TEXT("scene"), TEXT("bones"), TEXT("bounds"), TEXT("catalog"), TEXT("keys"), TEXT("duplicate"), TEXT("export"), TEXT("scenes"), TEXT("report"), TEXT("ui_shot"), TEXT("ui_fit"), TEXT("click"), TEXT("mouse"), TEXT("key"), TEXT("combo"), TEXT("type"), TEXT("leave"), TEXT("exec"), TEXT("parts") };
 		for (const TCHAR* Op : Ops)
 		{
 			const FString Name = Op;

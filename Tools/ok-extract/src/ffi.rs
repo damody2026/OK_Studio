@@ -2626,6 +2626,7 @@ pub unsafe extern "C" fn ok_editor_apply_mods(s:*mut OkSession,json:*const c_cha
     let Ok(mut mods)=serde_json::from_slice::<crate::editor_mods::EditorMods>(CStr::from_ptr(json).to_bytes()) else{return -1;};
     if !crate::editor_mods::valid(&mods){return -1;}
     for b in &mut mods.abm {let active=b.for_coord(coordinate as usize);b.coord=vec![active];}
+    s.style_card_abm=None;
     if s.abm!=mods.abm{s.abm=mods.abm;let body=s.shape_body.clone();let face=s.shape_face.clone();s.apply_shape(&body,&face);}let changed=crate::pregnancy::apply(s,&mods.pregnancy);if changed{2}else{0}
 }
 
@@ -2644,6 +2645,15 @@ pub unsafe extern "C" fn ok_editor_apply_mods_shape(s:*mut OkSession,json:*const
     let body=slice(body,n_body,&sess.shape_body);let face=slice(face,n_face,&sess.shape_face);
     if body.iter().chain(&face).any(|v|!v.is_finite()){return -1;}
     crate::editor_mods::apply_with_shape(sess,&mods,&body,&face)
+}
+
+/// A style's bone modifiers on top of the card's (JSON list of abmx::AbmBone; empty gives the card's back). They take effect
+/// with the next shape or pose.
+#[no_mangle]
+pub unsafe extern "C" fn ok_set_style_bones(s:*mut OkSession,json:*const c_char)->i32 {
+    let Some(s)=sess_ref(s) else{return -1;};if json.is_null(){return -1;}
+    let Ok(bones)=serde_json::from_slice::<Vec<crate::abmx::AbmBone>>(CStr::from_ptr(json).to_bytes()) else{return -1;};
+    s.set_style_bones(&bones);0
 }
 
 /// How the bust (part 0) or the hips (part 1) move, for every character (dbone::ver02::PartPhysics): mode 0 the

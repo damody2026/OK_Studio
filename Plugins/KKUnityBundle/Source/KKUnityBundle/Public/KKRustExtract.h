@@ -179,6 +179,8 @@ public:
  // Its body dynamics built again with the bust / hip settings now (ok.Physics.Bust*, ok.Physics.Hip*).
  bool RefreshBodyPhysics();
  bool ApplyEditorMods(const FString& Json,int32 Coordinate,bool* GeometryChanged=nullptr);
+	// A style's bone modifiers on top of the card's, from the next shape or pose on (ok_set_style_bones).
+	bool SetStyleBones(const FString& Json);
  // ApplyEditorMods followed by ApplyShape(Body,Face), the shape built once (a card's load: its mods, then its sliders).
  bool ApplyEditorModsAndShape(const FString& Json,int32 Coordinate,const TArray<float>& Body,const TArray<float>& Face,bool* GeometryChanged=nullptr);
  bool ApplyShape(const TArray<float>& Body, const TArray<float>& Face);

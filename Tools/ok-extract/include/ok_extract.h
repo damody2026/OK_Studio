@@ -498,6 +498,8 @@ int32_t ok_set_eye_look_unlimited(int32_t enabled,float most);
 int32_t ok_editor_decode_mods(const uint8_t* data,int32_t len,uint8_t* out,int32_t cap);
 int32_t ok_editor_encode_mods(const uint8_t* data,int32_t len,const char* json,uint8_t* out,int32_t cap);
 int32_t ok_editor_apply_mods(OkSession* session,const char* json,int32_t coordinate);
+/* A style's bone modifiers on top of the card's (JSON list of bones; empty gives the card's back), from the next shape or pose on. */
+int32_t ok_set_style_bones(OkSession* session,const char* json);
 /* ok_editor_apply_mods, then the card's sliders (null/0 = the session's), building the shape once when possible. */
 int32_t ok_editor_apply_mods_shape(OkSession* session,const char* json,int32_t coordinate,const float* body,int32_t n_body,const float* face,int32_t n_face);
 

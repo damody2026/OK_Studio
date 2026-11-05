@@ -73,6 +73,7 @@ pub(crate) fn apply_then_shape(sess:&mut crate::session::OkSession,mods:&EditorM
 /// shaped body, so with one to apply the order above is kept). A card's load: ~0.12 s less.
 pub(crate) fn apply_with_shape(sess:&mut crate::session::OkSession,mods:&EditorMods,body:&[f32],face:&[f32])->i32{
     if !crate::pregnancy::is_noop(sess,&mods.pregnancy){return apply_then_shape(sess,mods,body,face);}
+    sess.style_card_abm=None;
     let abm_changed=sess.abm!=mods.abm;if abm_changed{sess.abm=mods.abm.clone();}
     crate::pregnancy::apply(sess,&mods.pregnancy);
     if abm_changed||sess.shape_body!=body||sess.shape_face!=face{sess.apply_shape(body,face);}

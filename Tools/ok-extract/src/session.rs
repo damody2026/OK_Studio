@@ -1237,6 +1237,8 @@ pub struct OkSession {
     pub shape_body: Vec<f32>,
     pub shape_face: Vec<f32>,
     pub abm: Vec<crate::abmx::AbmBone>,
+    /// The card's bone modifiers while a style's are on top of them (`set_style_bones`).
+    pub(crate) style_card_abm: Option<Vec<crate::abmx::AbmBone>>,
     pub parts: Vec<SessionPart>,
     /// Number of outfit coordinate slots in the card (>= 1).
     pub coordinate_count: usize,
@@ -2334,6 +2336,23 @@ impl OkSession {
         } else {self.parts.iter_mut().enumerate().for_each(render);}
     }
 
+    /// A style's bone modifiers on top of the card's (scales and lengths multiply, offsets add): they take effect with the
+    /// next shape or pose. Empty gives the card's back.
+    pub(crate) fn set_style_bones(&mut self,bones:&[crate::abmx::AbmBone]) {
+        let card=self.style_card_abm.get_or_insert_with(||self.abm.clone()).clone();
+        let mut merged=card;
+        for bone in bones {
+            let style=bone.for_coord(0);
+            if let Some(found)=merged.iter_mut().find(|b|b.name==bone.name) {
+                for data in &mut found.coord {
+                    for axis in 0..3 {data.scale[axis]*=style.scale[axis];data.pos[axis]+=style.pos[axis];data.rot[axis]+=style.rot[axis];}
+                    data.length*=style.length;
+                }
+            } else {merged.push(bone.clone());}
+        }
+        self.abm=merged;
+        if bones.is_empty() {self.style_card_abm=None;}
+    }
     pub fn apply_shape(&mut self, body: &[f32], face: &[f32]) {self.apply_shape_impl(body,face,false,false,true);}
 
     /// Maker live parameter edits do not call ResetDynamicBoneAll.
@@ -4075,6 +4094,7 @@ impl SessionBlob {
             shape_body: self.shape_body,
             shape_face: self.shape_face,
             abm: self.abm,
+            style_card_abm: None,
             parts: { let mut parts: Vec<SessionPart> = self.parts.into_iter().map(PartBlob::into_part).collect(); crate::assign_draw_layers(&mut parts); parts },
             coordinate_count: self.coordinate_count,
             skel_export: None,
