@@ -766,6 +766,67 @@ public:
 		});
 		// A cut in one step (U120): a scene key at the play head that cuts to this view (-1 free view, a camera id), and the
 		// view goes there. It took 選相機、用此相機、場景 key for each cut.
+		// A voice onto the timeline at the play head (U233): the voice window's picked entry, "group/category/no", or a file.
+		AddCommand(TEXT("voice.clip.add"), TEXT("語音放上時間軸"), [this](const FString& Arg)
+		{
+			const FOKSceneObject* O = Game->Document->Find(Game->SelectedId);
+			if (!O || O->Kind != EOKSceneObjectKind::Character) { SetStatus(TEXT("先選角色")); return false; }
+			FOKSceneVoiceClip Clip;
+			Clip.Start = TimelineView ? TimelineView->Snap(Game->TimelineTime) : Game->TimelineTime;
+			TArray<FString> Parts;
+			if (Arg.IsEmpty())
+			{
+				if (!O->Character.Voices.IsValidIndex(VoiceListPick)) { SetStatus(TEXT("先在右邊清單選一句")); return false; }
+				const FOKSceneVoice& V = O->Character.Voices[VoiceListPick];
+				Clip.Group = V.Group; Clip.Category = V.Category; Clip.No = V.No;
+			}
+			else if (Arg.ParseIntoArray(Parts, TEXT("/")) == 3 && Parts[0].IsNumeric() && Parts[1].IsNumeric() && Parts[2].IsNumeric())
+			{
+				Clip.Group = FCString::Atoi(*Parts[0]); Clip.Category = FCString::Atoi(*Parts[1]); Clip.No = FCString::Atoi(*Parts[2]);
+			}
+			else Clip.File = Arg;
+			if (Game->VoiceClipFile(Clip).IsEmpty()) { SetStatus(TEXT("找不到這句語音的檔案")); return false; }
+			Game->AddVoiceClip(O->Id, Clip);
+			if (TimelineView) TimelineView->Open.Add(O->Id);
+			SetStatus(FString::Printf(TEXT("%.2f 秒放上「%s」（%.1f 秒）"), Clip.Start, *Game->VoiceClipName(Clip), Game->VoiceClipSeconds(Clip)));
+			return true;
+		});
+		// "<index> <seconds>" of the selected character's clips.
+		AddCommand(TEXT("voice.clip.move"), TEXT("移動語音片段"), [this](const FString& Arg)
+		{
+			FOKSceneObject* O = Game->Document->Find(Game->SelectedId);
+			TArray<FString> Parts;
+			if (!O || Arg.ParseIntoArray(Parts, TEXT(" ")) != 2 || !O->Character.VoiceClips.IsValidIndex(FCString::Atoi(*Parts[0]))) return false;
+			FOKSceneVoiceClip& Clip = O->Character.VoiceClips[FCString::Atoi(*Parts[0])];
+			Clip.Start = FMath::Max(0.f, FCString::Atof(*Parts[1]));
+			Game->Document->Duration = FMath::Max(Game->Document->Duration, Clip.Start + Game->VoiceClipSeconds(Clip));
+			Changed();
+			return true;
+		});
+		AddCommand(TEXT("voice.clip.remove"), TEXT("刪除語音片段"), [this](const FString& Arg)
+		{
+			FOKSceneObject* O = Game->Document->Find(Game->SelectedId);
+			if (!O || !O->Character.VoiceClips.IsValidIndex(FCString::Atoi(*Arg))) return false;
+			O->Character.VoiceClips.RemoveAt(FCString::Atoi(*Arg));
+			Changed();
+			return true;
+		});
+		// Seconds the keyed motion fades in over (U236): the selected keys, else the selected objects' keys at the play head.
+		AddCommand(TEXT("key.motion_blend"), TEXT("動作過渡"), [this](const FString& Arg)
+		{
+			const float Seconds = FMath::Max(0.f, FCString::Atof(*Arg));
+			TArray<SOKStudioTimeline::FKeyRef> Keys;
+			if (TimelineView) Keys = TimelineView->Selected;
+			if (Keys.IsEmpty()) for (int32 Id : Game->Selection) Keys.Add({ Id, Game->TimelineTime });
+			int32 Set = 0;
+			for (const SOKStudioTimeline::FKeyRef& R : Keys)
+				if (FOKSceneKey* K = Game->Document->KeyAt(R.Track, R.Time); K && K->AnimNo >= 0) { K->AnimBlend = Seconds; ++Set; }
+			if (!Set) { SetStatus(TEXT("沒有帶動作的 key")); return false; }
+			Changed();
+			Game->SetTimelineTime(Game->TimelineTime);
+			SetStatus(Seconds > 0.f ? FString::Printf(TEXT("%d 個 key 的動作過渡 %.1f 秒"), Set, Seconds) : FString::Printf(TEXT("%d 個 key 的動作改回直接切換"), Set));
+			return true;
+		});
 		AddCommand(TEXT("timeline.cutkey"), TEXT("在播放頭切鏡頭"), [this](const FString& Arg)
 		{
 			const int32 Camera = FCString::Atoi(*Arg);

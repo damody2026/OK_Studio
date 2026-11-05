@@ -1358,6 +1358,8 @@ TSharedRef<SWidget> SOKStudioPanel::BuildVoice()
 					+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 2.f, 0.f)[Button(FText::FromString(TEXT("下移")), [Edit] { Edit([](TArray<FOKSceneVoice>& L, int32& P) { if (P >= 0 && P + 1 < L.Num()) { L.Swap(P, P + 1); ++P; } }); }, 0.f, 20.f, false, 10.f)]
 					+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("清空")), [Edit] { Edit([](TArray<FOKSceneVoice>& L, int32& P) { L.Reset(); P = -1; }); }, 0.f, 20.f, false, 10.f)]
 				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)
+				[Button(FText::FromString(TEXT("放上時間軸（播放頭）")), [this] { RunCommand(TEXT("voice.clip.add")); }, 0.f, 20.f, false, 10.f)]
 				+ SVerticalBox::Slot().FillHeight(1.f)[Column(ListRows)]
 			]
 		];
@@ -2181,6 +2183,17 @@ void SOKStudioPanel::ShowEaseMenu(const FVector2D& At)
 	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
 	for (int32 I = 0; I < 5; ++I)
 		Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)[Button(FText::FromString(Names[I]), [this, I] { FSlateApplication::Get().DismissAllMenus(); if (TimelineView) TimelineView->SetEase(EOKSceneEase(I)); }, 100.f, 18.f, false, 10.f)];
+	// Keys that hold a motion: how it comes in (U236).
+	if (TimelineView && Game.IsValid() && TimelineView->Selected.ContainsByPredicate([this](const SOKStudioTimeline::FKeyRef& R) { const FOKSceneKey* K = Game->Document->KeyAt(R.Track, R.Time); return K && K->AnimNo >= 0; }))
+	{
+		Box->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 1.f)[OKStudioStyle::Label(FText::FromString(TEXT("動作過渡")), 10.f, TextHint())];
+		for (const TPair<const TCHAR*, const TCHAR*>& B : TArray<TPair<const TCHAR*, const TCHAR*>>{ { TEXT("直接切換"), TEXT("0") }, { TEXT("0.2 秒"), TEXT("0.2") }, { TEXT("0.5 秒"), TEXT("0.5") }, { TEXT("1 秒"), TEXT("1") } })
+			Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)[Button(FText::FromString(B.Key), [this, Seconds = FString(B.Value)]
+			{
+				FSlateApplication::Get().DismissAllMenus();
+				RunCommand(TEXT("key.motion_blend"), Seconds);
+			}, 100.f, 18.f, false, 10.f)];
+	}
 	// Selected scene keys: the view they cut to (U64), changed here without going back to that view first.
 	if (TimelineView && Game.IsValid() && TimelineView->Selected.ContainsByPredicate([](const SOKStudioTimeline::FKeyRef& R) { return R.Track == UOKSceneDocument::SceneTrackId; }))
 	{
@@ -2298,7 +2311,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildExport()
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[CheckBox(TEXT("mp4 含音樂（播放中的 BGM 與外部音源）"), [this] { return Game.IsValid() && Game->bExportAudio; }, [this](bool B) { if (Game.IsValid()) Game->bExportAudio = B; })]
 		// U232: a scene with voice lists came out silent and with a still mouth, and nothing said so.
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[SNew(STextBlock).Font(Font(10.f)).ColorAndOpacity(FLinearColor::Yellow).AutoWrapText(true)
-			.Text(FText::FromString(TEXT("角色語音不會進影片。要有聲音用外部音源，嘴型用時間軸 key。")))
+			.Text(FText::FromString(TEXT("語音清單不會進影片。要進影片，在語音窗按「放上時間軸」，聲音和嘴型就會跟著輸出。")))
 			.Visibility_Lambda([this] { return Game.IsValid() && Game->Document->Objects.ContainsByPredicate([](const FOKSceneObject& O) { return O.Kind == EOKSceneObjectKind::Character && !O.Character.Voices.IsEmpty(); }) ? EVisibility::Visible : EVisibility::Collapsed; })]
 		// U215: the range is remembered from the last time, and a short one looked like a broken export.
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f, 0.f, 0.f)

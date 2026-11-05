@@ -248,6 +248,16 @@ public:
 	bool IsOutsideSoundPlaying() const;
 	/** The voice list entry character `Id` is speaking (-1: none, still loading or ended). */
 	int32 VoicePlayingIndex(int32 Id) const;
+	/** Voices on the timeline (U233): the clip's sound file (empty: not there), its label and length (1 s until decoded). */
+	FString VoiceClipFile(const FOKSceneVoiceClip& Clip) const;
+	FString VoiceClipName(const FOKSceneVoiceClip& Clip) const;
+	float VoiceClipSeconds(const FOKSceneVoiceClip& Clip) const;
+	/** How open the voice clips hold character `Id`'s mouth at Time: playback, scrubbing and exports all read this. */
+	float VoiceMouth(int32 Id, float Time) const;
+	/** Voice clips audible now. */
+	int32 VoiceClipsSounding() const;
+	/** Lays a clip on the character and lengthens the timeline to hold it. */
+	void AddVoiceClip(int32 Id, const FOKSceneVoiceClip& Clip);
 
 	/** Screenshot through the current view into UserData/Studio/screenshot (returns the file; empty on failure). */
 	FString Screenshot(int32 Width, int32 Height, bool bTransparent = false);
@@ -424,6 +434,21 @@ private:
 	};
 	TMap<int32, FCharacterVoice> CharacterVoices;
 	void UpdateCharacterVoices();
+	/** Voice clips: sounds by file and the file of each clip (kept across calls from const getters). */
+	mutable TMap<FString, TSharedPtr<struct FOKStudioVoiceSound, ESPMode::ThreadSafe>> VoiceSounds;
+	mutable TMap<FString, FString> VoiceClipPaths;
+	/** The clips sounding now, by character, start and file. */
+	TMap<FString, TWeakObjectPtr<class UAudioComponent>> VoiceClipAudio;
+	TSet<int32> VoiceMouthIds;
+	FString VoiceClipScene;
+	float VoiceClipTime = 0.f;
+	const struct FOKStudioVoiceSound* VoiceClipSound(const FOKSceneVoiceClip& Clip, bool bWait) const;
+	void UpdateVoiceClips();
+	void StopVoiceClipAudio();
+	void ApplyVoiceMouth(float Time);
+	void LoadVoiceClips() const;
+	/** The voice clips and the scene's sound over the export's range as a WAV (false: none sound there). */
+	bool WriteExportMix(const FString& Wav);
 	void UpdateViewer();
 	void SyncNow();
 	/** Whether a shown preview still draws stand-in materials or runtime shaders are compiling (pictures would miss it). */

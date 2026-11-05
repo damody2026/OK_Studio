@@ -68,7 +68,7 @@ public:
 	void Rebuild(int32 Id);
 	/** Plays another Studio animation (OK animation library) on a shown character in place, without building it again;
 	 *  the document object follows. */
-	bool SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int32 Category, int32 No, FString& OutError);
+	bool SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int32 Category, int32 No, FString& OutError, const FOKSceneMotionFade* Fade = nullptr);
 	/** Records an active live .vmd source for a character so rebuilding (outfit / shoe on-off) re-solves ShoesDetect. */
 	void SetActiveVmdSource(int32 Id, const FString& VmdFile, const FString& OkAnimRelPath);
 
@@ -193,6 +193,8 @@ private:
 	{
 		EOKSceneObjectKind Kind = EOKSceneObjectKind::Folder;
 		FOKSceneCharacter Character;
+		/** The fade its player is built with (U236). */
+		FOKSceneMotionFade Fade;
 		FOKSceneItem Item;
 		FOKSceneLight Light;
 		/** The shown effect's id (another id rebuilds it; speed, intensity and colour apply in place). */

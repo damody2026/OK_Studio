@@ -192,6 +192,43 @@ struct OKSTUDIO_API FOKSceneVoice
 	bool operator==(const FOKSceneVoice& O) const = default;
 };
 
+/** A voice laid on the timeline: said from Start on, with the mouth following it, in playback and in exports alike
+ *  (U233). A library voice (No >= 0) or a sound file (File; a relative one is looked for beside the scene). */
+USTRUCT(BlueprintType)
+struct OKSTUDIO_API FOKSceneVoiceClip
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice")
+	float Start = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice")
+	int32 Group = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice")
+	int32 Category = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice")
+	int32 No = -1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice")
+	FString File;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice", meta = (ClampMin = "0", ClampMax = "2"))
+	float Volume = 1.f;
+
+	bool operator==(const FOKSceneVoiceClip& O) const = default;
+};
+
+/** A character's motion fading in (U236): the motion it comes from, that motion's time at the key, and how long the fade
+ *  lasts on the new motion's own clock. Duration 0: no fade. */
+struct FOKSceneMotionFade
+{
+	int32 Kind = 0, Group = 0, Category = 0, No = -1;
+	float FromTime = 0.f, Duration = 0.f;
+	bool operator==(const FOKSceneMotionFade& O) const = default;
+};
+
 USTRUCT(BlueprintType)
 struct OKSTUDIO_API FOKSceneCharacter
 {
@@ -341,6 +378,10 @@ struct OKSTUDIO_API FOKSceneCharacter
 	/** Studio voice list (VoiceCtrl): played in order on the character, the mouth following the sound. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice")
 	TArray<FOKSceneVoice> Voices;
+
+	/** Voices on the timeline; the list above plays apart from it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice")
+	TArray<FOKSceneVoiceClip> VoiceClips;
 
 	/** 0 plays the list once, 1 repeats the whole list, 2 repeats the voice it starts from (Studio's None / All / Select). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice", meta = (ClampMin = "0", ClampMax = "2"))
@@ -968,6 +1009,10 @@ struct OKSTUDIO_API FOKSceneKey
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
 	float AnimStart = 0.f;
 
+	/** Seconds the motion before fades into this key's (0: it cuts). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	float AnimBlend = 0.f;
+
 	bool SameMotion(const FOKSceneKey& O) const { return AnimKind == O.AnimKind && AnimGroup == O.AnimGroup && AnimCategory == O.AnimCategory && AnimNo == O.AnimNo; }
 
 	/** The scene track (ObjectId SceneTrackId): exposure (EV) and depth of field focus distance (cm) at this key. */
@@ -1248,7 +1293,7 @@ class OKSTUDIO_API UOKSceneDocument : public UObject
 
 public:
 	/** 2: keys hold a motion (U230). A scene with no such key is still written as 1, and reads as it did. */
-	static constexpr int32 FormatVersion = 2;
+	static constexpr int32 FormatVersion = 3;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
 	TArray<FOKSceneObject> Objects;
@@ -1353,6 +1398,8 @@ public:
 	/** The key of the object at the time (within the key tolerance), or null. */
 	FOKSceneKey* KeyAt(int32 Id, float Time);
 	bool HasMotionKeys(int32 Id) const;
+	/** The fade a character's motion is in at Time (U236), read from its keys alone so every way to reach Time agrees. */
+	bool MotionFadeAt(int32 Id, float Time, FOKSceneMotionFade& Out) const;
 	/** What a key holds of the object (or holds in Key), as text to compare: a change here is lost without a key (U218). */
 	static FString KeyedState(const FOKSceneObject& O, bool bMotion);
 	static FString KeyedState(const FOKSceneObject& O, const FOKSceneKey& Key);

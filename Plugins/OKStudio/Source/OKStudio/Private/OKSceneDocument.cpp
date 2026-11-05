@@ -191,7 +191,9 @@ FString UOKSceneDocument::ToJson() const
 	TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
 	Root->SetStringField(TEXT("format"), TEXT("okscene"));
 	const bool bMotionKeys = Tracks.ContainsByPredicate([](const FOKSceneTrack& T) { return T.Keys.ContainsByPredicate([](const FOKSceneKey& K) { return K.AnimNo >= 0; }); });
-	Root->SetNumberField(TEXT("version"), bMotionKeys ? FormatVersion : 1);
+	const bool bFades = Tracks.ContainsByPredicate([](const FOKSceneTrack& T) { return T.Keys.ContainsByPredicate([](const FOKSceneKey& K) { return K.AnimBlend > 0.f; }); });
+	const bool bClips = Objects.ContainsByPredicate([](const FOKSceneObject& O) { return !O.Character.VoiceClips.IsEmpty(); });
+	Root->SetNumberField(TEXT("version"), bFades || bClips ? 3 : bMotionKeys ? 2 : 1);
 	Root->SetNumberField(TEXT("active_camera"), ActiveCamera);
 	Root->SetNumberField(TEXT("next_id"), NextId);
 	Root->SetNumberField(TEXT("map"), Map);
@@ -582,6 +584,47 @@ bool UOKSceneDocument::HasMotionKeys(int32 Id) const
 	return T && T->Keys.ContainsByPredicate([](const FOKSceneKey& K) { return K.AnimNo >= 0; });
 }
 
+bool UOKSceneDocument::MotionFadeAt(int32 Id, float Time, FOKSceneMotionFade& Out) const
+{
+	Out = FOKSceneMotionFade();
+	const FOKSceneTrack* T = Tracks.FindByPredicate([Id](const FOKSceneTrack& X) { return X.ObjectId == Id; });
+	if (!T) return false;
+	// The first key of the run of one motion that Index is in.
+	auto RunStart = [T](int32 Index)
+	{
+		int32 Start = Index;
+		for (int32 I = Index - 1; I >= 0; --I)
+		{
+			if (T->Keys[I].AnimNo < 0) continue;
+			if (!T->Keys[I].SameMotion(T->Keys[Index])) break;
+			Start = I;
+		}
+		return Start;
+	};
+	int32 First = INDEX_NONE, Last = INDEX_NONE;
+	for (int32 I = 0; I < T->Keys.Num(); ++I)
+	{
+		if (T->Keys[I].AnimNo < 0) continue;
+		if (First == INDEX_NONE) First = I;
+		if (T->Keys[I].Time <= Time) Last = I;
+	}
+	if (Last == INDEX_NONE) return false;
+	const int32 Start = RunStart(Last);
+	const FOKSceneKey& K = T->Keys[Start];
+	if (K.AnimBlend <= 0.f || K.AnimSpeed <= 0.f || K.AnimTime >= 0.f || Time >= K.Time + K.AnimBlend) return false;
+	int32 Before = INDEX_NONE;
+	for (int32 I = Start - 1; I >= 0 && Before == INDEX_NONE; --I) if (T->Keys[I].AnimNo >= 0) Before = I;
+	if (Before == INDEX_NONE) return false;
+	const FOKSceneKey& P = T->Keys[Before];
+	const int32 PStart = RunStart(Before);
+	// Where the old motion's clock stood at the key (ApplyMotionKeys' clock), or the frame it was held on.
+	const float Clock = PStart == First ? T->Keys[PStart].AnimStart : -T->Keys[PStart].Time * P.AnimSpeed;
+	Out.Kind = P.AnimKind; Out.Group = P.AnimGroup; Out.Category = P.AnimCategory; Out.No = P.AnimNo;
+	Out.FromTime = P.AnimTime >= 0.f ? P.AnimTime : Clock + K.Time * P.AnimSpeed;
+	Out.Duration = K.AnimBlend * K.AnimSpeed;
+	return true;
+}
+
 FString UOKSceneDocument::KeyedState(const FOKSceneObject& O, const FOKSceneKey& K)
 {
 	FString Text = KeyedText(K.Transform, K.Value, O.Kind == EOKSceneObjectKind::Character, K.Fk, K.EyebrowPattern, K.EyesPattern, K.MouthPattern, K.MouthOpen,
@@ -617,10 +660,12 @@ void UOKSceneDocument::SetKey(int32 Id, float Time)
 	// Re-keying keeps the key's curve.
 	const FOKSceneKey* Old = T->Keys.FindByPredicate([Time](const FOKSceneKey& K) { return FMath::Abs(K.Time - Time) < KeyTolerance; });
 	const EOKSceneEase Ease = Old ? Old->Ease : EOKSceneEase::Linear;
+	const float Blend = Old ? Old->AnimBlend : 0.f;
 	T->Keys.RemoveAll([Time](const FOKSceneKey& K) { return FMath::Abs(K.Time - Time) < KeyTolerance; });
 	FOKSceneKey K;
 	K.Time = FMath::Max(Time, 0.f);
 	K.Ease = Ease;
+	K.AnimBlend = Blend;
 	K.Transform = O->Transform;
 	K.Value = KeyValue(*O);
 	if (O->Kind == EOKSceneObjectKind::Character)

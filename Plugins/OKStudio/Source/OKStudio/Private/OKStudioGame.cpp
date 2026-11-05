@@ -1366,7 +1366,7 @@ bool UOKStudioGame::EncodeMp4(const FString& FramesDir, float Fps, const FString
 	{
 		FString Inputs;
 		for (int32 I = 0; I < Audio.Num(); ++I) Inputs += FString::Printf(TEXT("[%d:a]"), I + 1);
-		AudioOut = FString::Printf(TEXT(" -filter_complex \"%samix=inputs=%d:duration=longest[a]\" -map 0:v -map \"[a]\" -c:a aac -b:a 192k"), *Inputs, Audio.Num());
+		AudioOut = FString::Printf(TEXT(" -filter_complex \"%samix=inputs=%d:duration=longest:normalize=0[a]\" -map 0:v -map \"[a]\" -c:a aac -b:a 192k"), *Inputs, Audio.Num());
 	}
 	if (!Audio.IsEmpty() && Seconds > 0.f) AudioOut += FString::Printf(TEXT(" -t %.3f"), Seconds);
 	FString Tried;
@@ -1412,6 +1412,7 @@ FString UOKStudioGame::ExportFrames(float Fps, int32 Width, int32 Height, bool b
 	IFileManager::Get().MakeDirectory(*ExportDir, true);
 	ExportFrame = 0;
 	bExportShotPending = false;
+	LoadVoiceClips();
 	bTimelinePlaying = false;
 	ExportReturnTime = TimelineTime;
 	return ExportDir;
@@ -1437,7 +1438,8 @@ void UOKStudioGame::TickExport()
 			{
 				const FOKSceneSound& S = Document->Sound;
 				if (const FString Bgm = BgmFile(); S.bBgmPlay && FPaths::FileExists(Bgm)) Audio.Add({ Bgm, S.bBgmRepeat });
-				if (const FString Outside = OutsideSoundFile(); S.bOutsidePlay && FPaths::FileExists(Outside)) Audio.Add({ Outside, S.bOutsideRepeat });
+				if (const FString Outside = OutsideSoundFile(); S.bOutsidePlay && FPaths::FileExists(Outside) && !FPaths::IsSamePath(Outside, SceneSoundFile())) Audio.Add({ Outside, S.bOutsideRepeat });
+				if (const FString Mix = ExportDir / TEXT("voices.wav"); WriteExportMix(Mix)) Audio.Add({ Mix, false });
 			}
 			if (bExportAudio && Audio.IsEmpty()) LastMovieNote = TEXT("沒有播放中的音樂或外部音源，影片無聲");
 			bool bMovie = EncodeMp4(ExportDir, ExportFps, Movie, Encoder, LastMovieError, Audio, ExportTotal / ExportFps);
@@ -1461,6 +1463,7 @@ void UOKStudioGame::TickExport()
 	const float FrameTime = ExportFrom + ExportFrame / ExportFps;
 	SetTimelineTime(FrameTime);
 	SyncNow();
+	ApplyVoiceMouth(FrameTime);
 	for (const FOKSceneObject& O : Document->Objects) if (O.Kind == EOKSceneObjectKind::Character) SceneActor->SetAnimationTime(O.Id, FrameTime);
 	// What the scene's tick does after this one: items on posed hands and the characters' light for this frame's
 	// keys (U131: each frame showed the light of the one before; the first, of where the playhead had been).
@@ -1671,6 +1674,7 @@ void UOKStudioGame::StopStudioSounds()
 	for (TPair<int32, FCharacterVoice>& V : CharacterVoices)
 		if (V.Value.bStarted && V.Value.Speaker.IsValid()) V.Value.Speaker->StopSpeech();
 	CharacterVoices.Reset();
+	StopVoiceClipAudio();
 }
 
 int32 UOKStudioGame::VoicePlayingIndex(int32 Id) const
@@ -1892,6 +1896,7 @@ void UOKStudioGame::SetTimelineTime(float Time)
 	if (!bSteppingTimelineFromClock)
 	{
 		StopSceneAudio();
+		StopVoiceClipAudio();
 	}
 }
 
@@ -2055,6 +2060,7 @@ void UOKStudioGame::Tick(float DeltaTime)
 		UpdateStudioSound(StudioBgm, BgmFile(), Document->Sound.bBgmPlay, Document->Sound.bBgmRepeat);
 		UpdateStudioSound(StudioOutside, OutsideSound, Document->Sound.bOutsidePlay && !bDuplicateOutside, Document->Sound.bOutsideRepeat);
 		UpdateCharacterVoices();
+		UpdateVoiceClips();
 	}
 	// Auto backup every few minutes, not while something is moving or loading.
 	const int32 Minutes = FOKStudioSettings::Get().BackupMinutes;

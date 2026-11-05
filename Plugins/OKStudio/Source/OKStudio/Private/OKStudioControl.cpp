@@ -153,6 +153,8 @@ namespace
 				J->SetBoolField(TEXT("voice_play"), X.Character.bVoicePlay);
 				J->SetNumberField(TEXT("voice_repeat"), X.Character.VoiceRepeat);
 				J->SetNumberField(TEXT("voice_playing"), G.VoicePlayingIndex(X.Id));
+				J->SetNumberField(TEXT("voice_clips"), X.Character.VoiceClips.Num());
+				J->SetNumberField(TEXT("voice_mouth"), G.VoiceMouth(X.Id, G.TimelineTime));
 			}
 			if (X.Kind == EOKSceneObjectKind::Light)
 			{
@@ -180,6 +182,7 @@ namespace
 		O->SetObjectField(TEXT("timeline"), T);
 		TSharedRef<FJsonObject> E = MakeShared<FJsonObject>();
 		E->SetBoolField(TEXT("running"), G.IsExporting());
+		O->SetNumberField(TEXT("voice_sounding"), G.VoiceClipsSounding());
 		E->SetNumberField(TEXT("frame"), G.ExportFrameIndex());
 		E->SetNumberField(TEXT("frames"), G.ExportFrameCount());
 		E->SetStringField(TEXT("folder"), G.ExportFolder());
@@ -248,7 +251,7 @@ namespace
 		O->SetNumberField(TEXT("fk_bones"), K.Fk.Num());
 		O->SetBoolField(TEXT("character_state"), K.bCharacterState);
 		if (K.AnimTime >= 0.f) O->SetNumberField(TEXT("anim_time"), K.AnimTime);
-		if (K.AnimNo >= 0) { O->SetStringField(TEXT("anim"), FString::Printf(TEXT("%d/%d/%d/%d"), K.AnimKind, K.AnimGroup, K.AnimCategory, K.AnimNo)); O->SetNumberField(TEXT("anim_speed"), K.AnimSpeed); }
+		if (K.AnimNo >= 0) { O->SetStringField(TEXT("anim"), FString::Printf(TEXT("%d/%d/%d/%d"), K.AnimKind, K.AnimGroup, K.AnimCategory, K.AnimNo)); O->SetNumberField(TEXT("anim_speed"), K.AnimSpeed); O->SetNumberField(TEXT("anim_blend"), K.AnimBlend); }
 		if (K.Color.A >= 0.f) O->SetStringField(TEXT("color"), TEXT("#") + K.Color.ToFColor(false).ToHex());
 		O->SetNumberField(TEXT("exposure"), K.Exposure);
 		O->SetNumberField(TEXT("focal_distance"), K.FocalDistance);

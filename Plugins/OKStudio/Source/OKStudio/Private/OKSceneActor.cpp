@@ -156,6 +156,34 @@ namespace
 		return Player;
 	}
 
+	/** The motion To entered from the fade's old one, by the player's cross-fade (U236). Null when the old one cannot be
+	 *  read or is more than one clip (the change is then a cut). */
+	TSharedPtr<FOkAnimPlayer> StudioFadePlayer(const FOKSceneMotionFade& Fade, const UOKAnimSequence& To)
+	{
+		const FOKStudioAnim* Entry = FOKStudioCatalog::Get().FindAnim(Fade.Kind, Fade.Group, Fade.Category, Fade.No);
+		FString Error;
+		const UOKAnimSequence* From = Entry && !Entry->File.IsEmpty() ? UOKAnimationLibrary::LoadOkAnimFile(AOKSceneActor::LibraryDirectory() / Entry->File, nullptr, NAME_None, Error) : nullptr;
+		TArray<TArray<uint8>> Blobs, ToBlobs;
+		FString FromSpec, ToSpec;
+		if (!From || !From->BuildSpec(FromSpec, Blobs, Error) || !To.BuildSpec(ToSpec, ToBlobs, Error) || Blobs.Num() != 1 || ToBlobs.Num() != 1) return nullptr;
+		TSharedPtr<FJsonObject> FromNode, ToNode;
+		if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(FromSpec), FromNode) || !FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(ToSpec), ToNode)) return nullptr;
+		ToNode->SetNumberField(TEXT("anim"), 1);
+		Blobs.Add(MoveTemp(ToBlobs[0]));
+		TSharedRef<FJsonObject> J = MakeShared<FJsonObject>();
+		J->SetStringField(TEXT("type"), TEXT("crossfade"));
+		J->SetObjectField(TEXT("from"), FromNode);
+		J->SetObjectField(TEXT("to"), ToNode);
+		J->SetNumberField(TEXT("from_time"), Fade.FromTime);
+		J->SetNumberField(TEXT("duration"), Fade.Duration);
+		FString Spec;
+		FJsonSerializer::Serialize(J, TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Spec));
+		TSharedPtr<FOkAnimPlayer> Player = MakeShared<FOkAnimPlayer>();
+		if (!Player->Create(Spec, Blobs)) { UE_LOG(LogTemp, Warning, TEXT("OK studio: motion fade not built: %s"), *FOkAnimBridge::LastError()); return nullptr; }
+		UOKAnimationAsset::ApplyFamilyAliases(*Player);
+		return Player;
+	}
+
 	/** `Local` then `World` as matrices: FTransform's own product applies World's non-uniform scale before Local's
 	 *  rotation (the prefab root's -90 X of an FBX building took the item's Y scale as its height, 127 m instead of 37). */
 	FTransform Compose(const FTransform& Local, const FTransform& World)
@@ -1506,7 +1534,9 @@ void AOKSceneActor::SwapKeyedMotion(const FOKSceneObject& Object, FShown& Item)
 	if (Object.Kind != EOKSceneObjectKind::Character || Item.Kind != EOKSceneObjectKind::Character || Object.Character.StudioAnimeNo < 0) return;
 	const FOKSceneCharacter& C = Object.Character;
 	FOKSceneCharacter Was = Item.Character;
-	if (Was.StudioAnimeKind == C.StudioAnimeKind && Was.StudioAnimeGroup == C.StudioAnimeGroup && Was.StudioAnimeCategory == C.StudioAnimeCategory && Was.StudioAnimeNo == C.StudioAnimeNo) return;
+	FOKSceneMotionFade Fade;
+	Document->MotionFadeAt(Object.Id, Document->ItemAnimationSeconds, Fade);
+	if (Was.StudioAnimeKind == C.StudioAnimeKind && Was.StudioAnimeGroup == C.StudioAnimeGroup && Was.StudioAnimeCategory == C.StudioAnimeCategory && Was.StudioAnimeNo == C.StudioAnimeNo && Item.Fade == Fade) return;
 	// Only the motion differs: the timeline changing it, on the live character. Rebuilding stopped the picture for a moment.
 	Was.StudioAnimeKind = C.StudioAnimeKind; Was.StudioAnimeGroup = C.StudioAnimeGroup; Was.StudioAnimeCategory = C.StudioAnimeCategory; Was.StudioAnimeNo = C.StudioAnimeNo;
 	if (!Was.SameContent(C)) return;
@@ -1515,18 +1545,19 @@ void AOKSceneActor::SwapKeyedMotion(const FOKSceneObject& Object, FShown& Item)
 	if (!Entry || !Entry->Variants.IsEmpty()) return;
 	const float Time = C.Time, Speed = C.Speed;
 	FString Error;
-	if (!SetCharacterAnimation(Object.Id, C.StudioAnimeKind, C.StudioAnimeGroup, C.StudioAnimeCategory, C.StudioAnimeNo, Error))
+	if (!SetCharacterAnimation(Object.Id, C.StudioAnimeKind, C.StudioAnimeGroup, C.StudioAnimeCategory, C.StudioAnimeNo, Error, &Fade))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("OK studio: keyed motion of %s rebuilt: %s"), *Object.Name, *Error);
 		return;
 	}
+	Item.Fade = Fade;
 	// It starts its motion at 0; the key said when.
 	if (FOKSceneObject* Doc = Document->Find(Object.Id)) { Doc->Character.Time = Time; Doc->Character.Speed = Speed; }
 	Item.Character.Time = Time;
 	SetAnimationTime(Object.Id, Document->ItemAnimationSeconds);
 }
 
-bool AOKSceneActor::SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int32 Category, int32 No, FString& OutError)
+bool AOKSceneActor::SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int32 Category, int32 No, FString& OutError, const FOKSceneMotionFade* Fade)
 {
 	ActiveVmdSources.Remove(Id);
 	FShown* Item = Shown.Find(Id);
@@ -1536,7 +1567,8 @@ bool AOKSceneActor::SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int
 	const FOKStudioAnim* Entry = FOKStudioCatalog::Get().FindAnim(Kind, Group, Category, No);
 	if (!Entry || Entry->File.IsEmpty()) { OutError = FString::Printf(TEXT("studio animation %d/%d/%d/%d %s"), Kind, Group, Category, No, Entry ? TEXT("not converted") : TEXT("not in the library")); return false; }
 	UOKAnimSequence* Seq = UOKAnimationLibrary::LoadOkAnimFile(LibraryDirectory() / Entry->File, nullptr, NAME_None, OutError);
-	const TSharedPtr<FOkAnimPlayer> Player = Seq ? Seq->CreatePlayer(OutError) : nullptr;
+	TSharedPtr<FOkAnimPlayer> Player = Seq && Fade && Fade->Duration > 0.f ? StudioFadePlayer(*Fade, *Seq) : nullptr;
+	if (!Player && Seq) Player = Seq->CreatePlayer(OutError);
 	if (!Player || !Actor->SetOkAnimation(Player, true)) { if (OutError.IsEmpty()) OutError = TEXT("animation not playable"); return false; }
 	Actor->PoseMode = 3;
 	Item->StudioAnim.Reset(Seq);
