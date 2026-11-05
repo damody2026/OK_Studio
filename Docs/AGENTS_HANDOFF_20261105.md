@@ -13,7 +13,8 @@
 | E 街區 | stage `Int1105E`，base `Saved/StreetSocial/BaseInt1105E`（E: 引擎），11 位角色就緒，`game.log` 沒有 Error |
 | 讀卡 | C、E 的 `CardReaderDevelopment` 都開得起來，只有已知的 CommonUI 訊息 |
 | F OK Studio | `verify_ok_studio.lua --tag Int1105F` 六項全部通過 |
-| 基礎庫 | F 重產的 `studio/sky` 與 Studio 節點模型（142 個檔）已複製到 C、E，manifest 已更新，開發資源 zip 已重打 |
+| 基礎庫 | F 重產的 `studio/sky` 與 Studio 節點模型（142 個檔）已複製到 C、E，manifest 已更新 |
+| 開發資源 zip | `C:\portable\OKOriginalData_20261105.zip`（9.71 GiB，`test-archive` 全部相符，也複製到 `F:\backup`）、`C:\portable\OKHVoices_20261104b.zip`（沒變） |
 
 ## 恢復時要告訴 agent 的事
 
@@ -39,6 +40,11 @@
 
 - E 工作樹有一批沒有 agent 認領的修改（人群 GPU `OKResidentGpuPose`、`OKCrowdRuntime*`、`KKPreviewLoading.cpp`），不確定是否完成，所以沒有提交，已從工作樹移出。patch 在 `C:\portable\OpenKoikatsu\Saved\Integration20261105\E-wip-crowd-preview.patch`。`Docs/STREET_ERRORS.md` 的列順序差異另存在同目錄 `E-wip-street-errors-order.patch`，內容沒有增減。
 - C 根目錄的 `grok-media/` 與 `shop-1080p-all.png` 是圖片，沒有進版控，留在本機。
+
+## 清理
+
+- 刪除 F 的 worktree `F:\OKVerify`；C、E 的舊 stage、`BaseInt1104N*`、`Rebuild-*`、`Play-*`、整合測試沙盒。agent 自己的沙盒、存檔與 `C:\portable\OpenKoikatsu\Saved\Integration20261104\` 留著。
+- `F:\okx-u36`、`E:\okx_okcard`、`E:\OKRustTarget` 沒刪掉：工具擋下刪除磁碟根目錄下的資料夾，要使用者自己刪。
 
 ## 已知未解
 
