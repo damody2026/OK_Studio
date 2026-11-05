@@ -328,7 +328,7 @@
 建置 `EGalRound5`／`EGalRound6`，沙盒 `EMain`，另有一個別組的 Unreal 同時在跑，所以 FPS 只能當參考。
 
 - 走過且 `game.log` 沒有 Error：換裝、服裝卡、設定、愛撫高潮、口交吞下、用嘴戴套、戴套射在裡面、繼續時換新套、不戴套硬插、她單獨高潮、事後、離開、戴套一起高潮。
-- 水槍：`/hscene {"spray":true}` 走玩家的 A＋左鍵那條路。鏡頭距離 220 噴 6 秒命中 143、附著 55.6，塗在朝外那面。距離 90 命中 0，原因沒查。`PaintDemo` 地圖本身沒有測。
+- 水槍：`/hscene {"spray":true}` 走玩家的 A＋左鍵那條路。鏡頭距離 220 噴 6 秒命中 143、附著 55.6，塗在朝外那面。距離 90 命中 0 是控制的瞄準點錯了：`GetComponentsBoundingBox` 的中心在 Z=-1.2，也就是她腳邊，近距離打到地板，水槍本身沒問題。現在瞄鏡頭看的地方。
 - 開發度：摸屁眼 12 秒，開發度維持 65。
 - FPS（遊戲執行緒受限，GPU 約 2～3 ms）：進場 74～86；愛撫約 50；雙人模式 27～40（遊戲 20～35 ms）；服裝卡畫面約 15（80 ms，原因沒查）。
 - 8 秒 trace（約 50 FPS，每幀 26 ms）：`KK_PairAdvance` 15.3 ms（`KK_PairNative` 7.9、`KK_PairRoleDisplay` 3.3）、`OK_PaintTick` 6.8 ms（玩家與 H 液體兩個水槍都在跑）、`WorldTick` 3.7 ms、Slate 約 3.5 ms。變慢是進入雙人模式加上水槍，不是時間累積的洩漏。
@@ -346,6 +346,13 @@
 `KK_PairNative` 的 Rust 解算約 13 ms 沒有動，是雙人循環剩下最大的一塊。
 
 場景後段塗料累積後會再變慢：`EGalRound8` 整輪走查的最後 FPS 掉到 5～11（`hLate8.utrace`，每幀 83 ms）。其中 `OK_PaintTick` 50 ms，含 `OK_PaintStep` 23 ms（固定 120 Hz，幀越長每幀步數越多，這次每幀 10 步）、`OK_PaintCoating` 11 ms、貼圖上傳約 10 ms。當時別組正在編譯，CPU 96%，數字偏高，安靜機器的值沒有量。
+
+## 2026-11-05 水槍每幀步數與 PaintDemo
+
+- 每幀步數上限 `ok.Paint.MaxSteps` 預設 4：30 FPS 以下塗料變慢，不再讓幀更長。超過的時間丟掉，體積仍在液包裡。
+- 單純塗料多不會變慢：玩家水槍噴 25 秒（wet 2524）閒置 90 FPS、雙人循環 40～45 FPS，和沒塗料時一樣。
+- `PaintDemo`：`ok.PaintAudit` 在 `-game` 實跑，exit 0，噴出 42、守恆誤差 0，清除後剩餘 0。
+- `OpenKoikatsu.Paint.*` 六項通過。`Paint.Scene` 要有 RHI，加 `-NullRHI` 會在讀 render target 時當掉（舊版一樣）。
 
 ## 實作順序
 

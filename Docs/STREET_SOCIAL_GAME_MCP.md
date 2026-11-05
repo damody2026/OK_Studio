@@ -20,7 +20,7 @@ Tools/ok-game-mcp（Rust）
 - 註冊在專案根目錄 `.mcp.json`（`ok-game`，`cargo run --release` 啟動，第一次會自動編譯）。新開的 Claude Code session 會載入它。
 - 控制埠：`OK_CONTROL_PORT`，否則 `local-instance.json` 的 `port_base + 10`，預設 47870。沙盒遊戲（`-Sandbox`）用自己的埠，設 `OK_CONTROL_PORT` 指過去。
 - 存檔：`-Control` 一律不碰主存檔。沒給 `-Sandbox` 時走沙盒 `Control`（這個 checkout 自己的連接埠，不用另設 `OK_CONTROL_PORT`）；要測主存檔本身才加 `-MainSave`。
-- 水槍：H 場景裡 `/hscene {"spray": true}` 從鏡頭朝她身體中央噴，`false` 停，`game.log` 的 `H control spray` 記命中數與附著量。鏡頭太近可能打不到：`face_cam` 距離 90 命中 0，距離 220 命中 143，原因沒查。
+- 水槍：H 場景裡 `/hscene {"spray": true}` 從鏡頭朝鏡頭看的地方噴，`false` 停，`game.log` 的 `H control spray` 記命中數與附著量。
 - 沒有 MCP 的環境（例如已經開著、沒重新載入設定的 session）可以用同一套工具的命令列：
   `Tools/ok-game-mcp/target/release/ok-game-mcp.exe call <工具> '<JSON 參數>'`，`--check` 看找到的專案、埠號與遊戲是否在線。
 - 以前的 `Tools/street_play.lua`（curl 呼叫同一組端點）已移除，功能都在這裡。

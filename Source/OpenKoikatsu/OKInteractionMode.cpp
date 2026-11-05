@@ -261,9 +261,9 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
         // {"height":{"her":0..1,"him":0..1}}: their height slider (ChaFile shapeBody[0]) for testing the pair at other sizes.
         double BlushValue;if(Body->TryGetNumberField(TEXT("blush"),BlushValue))Panel->BlushTest=float(BlushValue);
 #if !UE_BUILD_SHIPPING
-        // {"spray":true|false}: the player's water gun (A + left button) at the middle of her; game.log says what landed.
+        // {"spray":true|false}: the player's water gun (A + left button) at what the camera looks at; game.log says what landed.
         bool Spray=false;if(Body->TryGetBoolField(TEXT("spray"),Spray))if(auto* PC=Cast<AOpenKoikatsuPlayerController>(Controller->GetOwningPlayer())){
-            if(Spray&&Controller->PreviewActor)PC->ScriptedPaintAim=Controller->PreviewActor->GetComponentsBoundingBox().GetCenter();else PC->ScriptedPaintAim.Reset();
+            if(Spray&&Controller->PreviewActor)PC->ScriptedPaintAim=Controller->PreviewActor->OrbitFocus;else PC->ScriptedPaintAim.Reset();
             PC->bScriptedPaintFire=Spray;
             UE_LOG(LogTemp,Display,TEXT("H control spray %d: preview=%d hits=%d deposited=%.3f"),Spray,PC->IsPaintPreviewActive(),PC->PaintSprayer?PC->PaintSprayer->HitCount:-1,PC->PaintSprayer?PC->PaintSprayer->Deposited:-1.);}
 #endif

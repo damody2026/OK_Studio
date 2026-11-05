@@ -49,6 +49,7 @@ static TAutoConsoleVariable<int32> CVarPaintPacketSweeps(TEXT("ok.Paint.PacketSw
 static TAutoConsoleVariable<int32> CVarPaintSparseUploads(TEXT("ok.Paint.SparseUploads"),1,TEXT("Upload dirty chart runs, bounded to 256 rectangles; 0 retains the original 4x4 block upload oracle."));
 static TAutoConsoleVariable<int32> CVarPaintSparseNormals(TEXT("ok.Paint.SparseNormals"),1,TEXT("Resolve coating normals only for consumed vertices from ordered incident faces; 0 retains full-surface normal oracle."));
 static TAutoConsoleVariable<int32> CVarPaintResidentGeometry(TEXT("ok.Paint.ResidentGeometry"),1,TEXT("Evaluate private collision positions from the current resident GPU source/palette; 0 uses the full native geometry query oracle."));
+static TAutoConsoleVariable<int32> CVarPaintMaxSteps(TEXT("ok.Paint.MaxSteps"),4,TEXT("Fixed 120 Hz steps one tick may run. Below 30 FPS the paint runs slower instead of making the frame longer still."));
 static TAutoConsoleVariable<int32> CVarPaintGeometryJobs(TEXT("ok.Paint.GeometryJobs"),0,TEXT("Batch current collision vertices/faces across surfaces into blocking jobs; 0 retains the measured faster surface-by-surface path, 2 forces jobs for regression."));
 
 struct AOKPaintSprayer::FSurface
@@ -688,11 +689,13 @@ void AOKPaintSprayer::Tick(float Dt)
   }
   if(Spraying||!Packets.IsEmpty())DiscoverSurfaces(Nozzle,Nozzle+Direction*(5*FMath::Clamp(Settings.JetSpeed,10.f,10000.f)));
   bGeometryOnlyPainted=!Flying;RefreshGeometries(bGeometryOnlyPainted);}
- // Fixed 120Hz integrator. A hitch is retained as backlog, never converted
- // into a larger unstable step or discarded volume/time.
+ // Fixed 120Hz integrator, never a larger unstable step. A long frame used to run all its steps (2.3 ms each), which made
+ // the next frame longer: 10 steps a frame at 11 FPS. Past the limit the time is dropped; volume stays in the packets.
  GeometryUpdateMs=(FPlatformTime::Seconds()-GeometryStart)*1000;const double SimulationStart=FPlatformTime::Seconds();
  BallisticMs=MaskTransportMs=FilmTransportMs=DripUpdateMs=0;
- Accumulator+=FMath::Max(0.f,Dt);int32 Steps=0;while(Accumulator+1.e-10>=1./120. && Steps<32){Step(1./120.);Accumulator-=1./120.;++Steps;}
+ Accumulator+=FMath::Max(0.f,Dt);int32 Steps=0;const int32 MaxSteps=FMath::Clamp(CVarPaintMaxSteps.GetValueOnGameThread(),1,32);
+ while(Accumulator+1.e-10>=1./120. && Steps<MaxSteps){Step(1./120.);Accumulator-=1./120.;++Steps;}
+ Accumulator=FMath::Min(Accumulator,1./120.);
  SimulationUpdateMs=(FPlatformTime::Seconds()-SimulationStart)*1000;const double CoatingStart=FPlatformTime::Seconds();
  for(auto& S:Surfaces){if(S->Overlay)S->Overlay->SetVisibility(S->IsDisplayed());}
  for(auto& D:Attached)if(D.Visual.IsValid())D.Visual->SetVisibility(Surfaces.IsValidIndex(D.Target)&&Surfaces[D.Target]->IsDisplayed());
