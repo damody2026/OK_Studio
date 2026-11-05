@@ -2041,3 +2041,4 @@
 - 2026-11-05 e-fork 把舊 stage 的結果當成新程式的結果：`OKHScene.cpp` 呼叫 private 的 `OpenedFemaleCard`，stage 編譯失敗，啟動器跑最新的舊 stage，我兩次看到「第一次按就換了、沒有缺件 log」就下結論說遊戲裡掃描失敗。實際上新程式根本沒建出來。實機測試前先看 `Rebuild-<tag>/build.log` 的 `Result:`，並用 `-Executable` 指定自己的 stage。
 - 2026-11-05 e-fork `eprintln!` 到不了遊戲 log（只有 `ffi_log` 會），只寫 stderr 的 Rust 紀錄在 `game.log` 永遠看不到；`outfit_gaps::log` 兩邊都寫。
 - 2026-11-05 e-galgame：`ok-extract` lib 測試偶發失敗，先把失敗的測試標成 ignore，下一輪換別的測試失敗才發現治標。實際原因是 `pack_parallel` 在沒有開卡的執行緒上走 rayon 全域執行緒池，全樹掃描被算成當時唯一在開的卡的缺口。修在 `pack_parallel`，ignore 已還原。另外 `eprintln!` 在 rayon 工作執行緒會落到別的測試的輸出裡，追蹤要加 `--nocapture`。教訓：偶發失敗先抓呼叫路徑再動手。
+- 2026-11-06 e-galgame：插入譯文時把 `\r` 留在行中間（比對到行尾前的 `[^\n]*` 含 `\r`，又補了 `\r\n`），`ui_text.toml` 解析失敗，規則載入不了，遊戲啟動 5 秒就退出。改 CRLF 檔案時比對要排除 `\r`；改完 toml 先跑規則測試再開遊戲。

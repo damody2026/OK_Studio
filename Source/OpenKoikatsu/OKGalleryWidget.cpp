@@ -2532,7 +2532,7 @@ void UOKCharacterController::RefreshPairs(){
     const bool Prepared=PendingLoadPairGeneration==LoadGeneration;
     const FString Json=Prepared?MoveTemp(PendingLoadPairJson):PreviewActor->Session.NativeAnimationPairs();
     PendingLoadPairGeneration=INDEX_NONE;
-    if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Rows)){for(const auto& Row:Rows){auto P=Row->AsObject();double Participants=0;if(!P||!P->TryGetNumberField(TEXT("participants"),Participants)||Participants!=2)continue;NativePairs.Add(P);}}
+    if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Rows)){for(const auto& Row:Rows){auto P=Row->AsObject();double Participants=0;if(!P||!P->TryGetNumberField(TEXT("participants"),Participants)||(Participants!=2&&!(bInteractionOnly&&Participants==3)))continue;NativePairs.Add(P);}}
     TMap<FString,int32> Counts;TArray<FString> Labels;Labels.Reserve(NativePairs.Num());
     for(const TSharedPtr<FJsonObject>& P:NativePairs){
         const FString Category=P->GetStringField(TEXT("category"));

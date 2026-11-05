@@ -92,6 +92,7 @@ fn sources_of(root: &Path) -> BTreeSet<String> {
     for p in crate::h_playback::pairs(root).iter().chain(crate::h_playback::interaction_poses(root).iter()) {
         for s in [&p.female_source, &p.male_source] { if !s.is_empty() { sources.insert(s.clone()); } }
     }
+    sources.extend(crate::h_playback::pose_role_sources(root));
     for b in bundles(root) {
         sources.insert(b.clone());
         let states = format!("states:{b}");

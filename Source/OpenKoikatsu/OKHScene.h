@@ -70,6 +70,7 @@ private:
 struct FOKHPose {
     int32 Pair=INDEX_NONE;      // index in the controller's NativePairs
     int32 Mode=0;               // 1 service, 2 intercourse (AnimationInfo_XX)
+    bool bThree=false;FString SecondSource;int32 SecondLayer=0; // 3P (AnimationInfo_06, _07): plays as its mode, with the second heroine
     int32 KindHoushi=0;         // service: 0 hand, 1 mouth, 2 breasts
     int32 SysTaii=0;            // sysTaii: 0 hand or breasts only, 1 licking, 2 him in her mouth (咥え)
     bool Anal=false;
@@ -128,7 +129,7 @@ public:
     UFUNCTION() void OnHandR(FString Option,ESelectInfo::Type How);
 
     enum EKind : int32 {
-        TabHand=10,TabMouth=11,TabBreast=12,TabSonyu=20,TabClothes=30,TabAibu=40,
+        TabHand=10,TabMouth=11,TabBreast=12,TabSonyu=20,TabClothes=30,TabAibu=40,TabSolo=41,TabPeep=42,TabGirls=43,Tab3P=44,
         AibuBase=500,
         TouchChest=2101,TouchCrotch=2102,TouchAnal=2103,TouchButt=2104,TouchNipple=2105,Kiss=2106,Release=2107,
         TouchHead=2130,TouchHand=2131,TouchThigh=2132,TouchCalf=2133,TouchFoot=2134,TouchLips=2135,LickToggle=2136, // H_SCENE_ADDITIONS_PLAN 3
@@ -137,14 +138,21 @@ public:
         HeadCameraToggle=2302,EyesCameraToggle=2303, // her head, her eyes on the camera
         PoseBase=1000,
         Faster=2001,Slower=2002,Toggle=2003,Inside=2004,Outside=2005,Drink=2006,Vomit=2007,Again=2008,Insert=2009,InsertAnal=2010,Pull=2011,Condom=2012,Stop=2014,Continue=2015,ToggleMale=2016,LockHer=2017,LockHis=2018,MaleBottom=2019,PenisXRayToggle=2020,PhysicsNext=2021,GrayRoomToggle=2022,PenisPanelToggle=2023,PenisReset=2024,
+        SecondChange=3690,SecondClothes=3691,SecondBase=3700, // the second heroine (lesbian, 3P)
         ClothesBase=3000,RoomBase=3200,OutfitBase=3300,CoordinateToggle=3310,CoordinateAccessories=3311,CoordinateBase=3400,
     };
 private:
     // Caress (AnimationInfo_00): her own animation, him hidden (HAibu); each state is prepared up front.
-    struct FAibuPose {FString Name,Source;int32 Layer=0,Id=-1,Prop=0;};
+    struct FAibuPose {FString Name,Source;int32 Layer=0,Id=-1,Prop=0,Info=0,Ctrl=0,SecondLayer=0;FString SecondSource;}; // Info: HFlag.EMode, 0 caress, 3 masturbation, 4 peeping, 5 lesbian
     TArray<FAibuPose> AibuPoses;
     TMap<FString,FString> SoloKeys;      // state -> clip key of the active caress pose
     FString SoloState;double SoloStarted=0.;
+    int32 SoloInfo=0;void TickSolo(float Delta); // she plays by herself (HMasturbation, HPeeping)
+    // The second heroine of the lesbian and 3P poses: her own actor at her place, on her clock, playing the pose's second role.
+    UPROPERTY() TObjectPtr<class AKKPreviewActor> Second;
+    TArray<float> SecondFace,SecondBody;TMap<FString,FString> SecondKeys;FString SecondState,SecondName;
+    int32 SecondGeneration=0;bool bSecondLoading=false,bSecondReady=false,bSecondBare=false;
+    void LoadSecond(int32 Index);void DropSecond();void TickSecond();void PlaySecond(const FString& State);void PrepareSecond(const FString& Source,int32 Layer);
     int32 ActiveAibu=INDEX_NONE,PendingAibu=INDEX_NONE,AibuGeneration=0,TouchArea=INDEX_NONE;
     int32 AreaClimaxes[11]={};          // her climaxes from his touch or kiss there (AreaSeconds order; hexp climaxes)
     float AreaSeconds[11]={};           // kiss, chest, crotch, anal, butt, nipples (hAreaExps order); head, hand, thigh, calf, foot

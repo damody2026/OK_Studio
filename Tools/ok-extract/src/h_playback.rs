@@ -31,6 +31,12 @@ fn role(row:&UnityValue,base:&str,param:&str)->Option<(String,String)> {
     let hex:String=payload.iter().map(|v|format!("{v:02X}")).collect();
     Some((format!("states:controller@{hex}"),if replacement.is_empty(){owner}else{replacement}))
 }
+fn plain_role(row:&UnityValue,base:&str,param:&str)->Option<String> {
+    let (bundle,owner)=(text(field(field(row,base)?,"assetpath")),text(field(field(row,base)?,"file")));
+    if text(field(field(field(row,param)?,"path")?,"file"))!=owner {return None;}
+    let hex:String=serde_json::to_vec(&[bundle,owner,String::new(),String::new()]).ok()?.iter().map(|v|format!("{v:02X}")).collect();
+    Some(format!("states:controller@{hex}"))
+}
 fn active_layer(row:&UnityValue,param:&str)->i32{field(field(row,param).unwrap_or(row),"lstIdLayer").and_then(|v|v.as_array()).and_then(|v|v.first()).and_then(|v|v.as_i64()).unwrap_or(-1)as i32}
 pub(crate) fn pairs(game:&Path)->Vec<Pair> {
     authored_poses(game,false)
@@ -1071,6 +1077,11 @@ pub fn h_se_table(game:&Path)->serde_json::Value {
     }
     serde_json::json!({"poses":poses.into_values().collect::<Vec<_>>(),"files":files})
 }
+/// What the poses outside the pair list play (solo, lesbian and 3P roles): the library converts these sources too.
+pub(crate) fn pose_role_sources(game:&Path)->Vec<String> {
+    let rows:Vec<serde_json::Value>=serde_json::from_str(&h_pose_table(game)).unwrap_or_default();
+    rows.iter().flat_map(|r|["female","male","second"].map(|k|r[k]["source"].as_str().map(str::to_owned))).flatten().collect()
+}
 pub fn h_pose_table(game:&Path)->String {
     let Ok(paths)=catalogue_paths(game) else{return "[]".into();};
     let int=|v:Option<&UnityValue>|v.and_then(|v|v.as_i64().or_else(||v.as_bool().map(i64::from))).unwrap_or(0);
@@ -1086,6 +1097,9 @@ pub fn h_pose_table(game:&Path)->String {
                 let Some(id)=field(row,"id").and_then(|v|v.as_i64()) else {continue;};
                 let female=field(row,"paramFemale");
                 let categories:Vec<i64>=field(row,"lstCategory").and_then(|v|v.as_array()).map(|a|a.iter().map(|c|int(field(c,"category"))).collect()).unwrap_or_default();
+                // Who plays what: solo poses have no male base, and only the lesbian and 3P poses a second character.
+                // (a pose naming its own controller as the override plays that controller: its source is the plain one)
+                let cast=|base:&str,param:&str|role(row,base,param).map(|(source,motion)|serde_json::json!({"source":plain_role(row,base,param).unwrap_or(source),"motion":motion,"layer":active_layer(row,param)}));
                 rows.insert((name.to_string(),id),serde_json::json!({
                     "category":name,"id":id,"name":text(field(row,"nameAnimation")),"mode":name.trim_start_matches("AnimationInfo_").parse::<i64>().unwrap_or(-1),
                     "kind_houshi":int(field(row,"kindHoushi")),"posture":int(field(row,"posture")),"is_experience":int(field(row,"isExperience")),
@@ -1094,6 +1108,8 @@ pub fn h_pose_table(game:&Path)->String {
                     "upper_cloth":int(field(row,"numFemaleUpperCloth")),"lower_cloth":int(field(row,"numFemaleLowerCloth")),
                     "use_desk":int(field(row,"useDesk"))!=0,"use_chair":int(field(row,"useChair"))!=0,"splash":int(field(row,"isSplash"))!=0,
                     "release":int(field(row,"isRelease"))!=0,"categories":categories,
+                    "female":cast("pathFemaleBase","paramFemale"),"male":cast("pathMaleBase","paramMale"),"second":cast("pathSecondChar","paramSecondChar"),
+                    "second_upper_cloth":int(field(row,"numFemaleUpperCloth1")),"second_lower_cloth":int(field(row,"numFemaleLowerCloth1")),
                 }));
             }
         }});
