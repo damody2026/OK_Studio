@@ -4229,3 +4229,6 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - **提交多出一個 `}`**（2026-11-05，F 組，U233）：從工作檔去掉 fork 的除錯區塊時，只刪到區塊最後一行 `dbg_h1`，沒刪它的結尾 `}`，又用 `sed` 改腳本沒確認改到，於是 `OKStudioControl.cpp` 帶著多餘的括號進了本機提交 `d899d013e`。比對上一版的差異才發現，未推送，改好後 amend 成 `cbb3c53db`，再做乾淨工作樹驗證。去掉別人的區塊後要逐行看和 HEAD 的差異。
 - **U237 的材質修法範圍太寬**（2026-11-05，F 組）：照 E 的 `a35ba8b74` 讓所有屬性都接受大小寫不同的鍵，舊著色器的小寫值（`_shadowcolor`）也被讀進來，頭髮影子會近黑。當時只看口內顏色，沒有和修之前比對頭髮。改成和 E 的 `ad47f1832` 相同，只有 `_Color` 取不到時讀 `_color`，並用同一張卡同角度和修之前比對。共用材質的改動要看其他部位有沒有變。
 - **`-ExecCmds` 用分號串兩個 `Automation RunTests`，第二個沒有跑**（2026-11-05，F 組）：log 只有 `Unknown Automation command`，新的 `OKStudio.CameraOrbit` 沒有執行，腳本只抓 `Test Completed` 所以看起來只是少一行。發現後單獨執行才通過。一次跑多個測試要用逗號或分開跑，結果要逐一對到測試名稱。
+- **測試時用 `/saves new` 洗掉 F 組街區的自動存檔**（2026-11-05，F 組）：只想關掉開始選單，順手送了新遊戲，`Saved/StreetSocial/` 的 relationships、songs 與 `Saves/auto` 都被重寫（舊的自動存檔是 10-27 的 2010/9/1 11:35、NT$5,000、無戀人）。手動欄位 5～9 沒動。實測用的呼叫不要帶會寫存檔的操作，要動存檔先用 `-Sandbox`。
+- **以為 Slate 樹走得到 UMG**（2026-11-05，F 組）：`/widgets` 從視窗往下走，只走到 20 個元件就斷了，玩家層裡的 UMG 全部不在，換 `GetInteractiveTopLevelWindows` 也一樣。改成用 `TObjectIterator<UWidget>` 找 UMG，自己沿父層判斷顯示，純 Slate 才走樹。
+- **把 `Box` 欄位加到靜態變數下面**（2026-11-05，F 組）：替換字串 ` TSharedPtr<FOKCharacterMCPBox> Box;` 開頭的空白也符合 `static TSharedPtr<...> Box;`，欄位落在函式裡，編譯才發現。文字替換要帶行首。

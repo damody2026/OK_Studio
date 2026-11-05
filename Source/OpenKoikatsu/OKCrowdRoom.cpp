@@ -1,4 +1,5 @@
 #include "OKCrowdRoom.h"
+#include "OKGameControl.h"
 #include "OKCrowdRuntimeScene.h"
 #include "Camera/CameraActor.h"
 #include "Camera/CameraComponent.h"
@@ -105,7 +106,7 @@ struct FRoom {
  }
 
  bool Tick(float Dt){
-  AActor* O=Owner.Get();if(!O||!O->GetWorld())return false;UWorld* World=O->GetWorld();Time+=Dt;FString Error;
+  AActor* O=Owner.Get();if(!O||!O->GetWorld()){OKGameControl::ClearMode();return false;}UWorld* World=O->GetWorld();Time+=Dt;FString Error;
   APlayerController* Pc=World->GetFirstPlayerController();
   // The demo camera: behind the girl it follows, eased toward her heading.
   if(Pc&&Agents.IsValidIndex(Follow)){
@@ -243,6 +244,11 @@ bool OKStartCrowdRoom(AActor* Owner,const FString& Manifest,FString& Error){
  if(auto* Camera=World->SpawnActor<ACameraActor>()){Camera->GetCameraComponent()->SetFieldOfView(70);OKApplyCrowdRuntimeDisplayProfile(Owner,Camera->GetCameraComponent()->PostProcessSettings);Camera->GetCameraComponent()->PostProcessBlendWeight=1;Camera->SetActorLocationAndRotation(Room->CamPos,Room->CamRot);Room->Camera=Camera;}
  FString Err;for(int32 I=0;I<Room->Agents.Num();++I)OKSetCrowdRuntimeCharacterMotion(Owner,I,FTransform(FRotator(0,Room->Agents[I].Yaw,0),Room->Agents[I].Pos),0,Err);
  UE_LOG(LogTemp,Display,TEXT("Crowd room: %d girls in a %.0f m room (benchmark %.0f s after a %.0f s warmup)"),Room->Agents.Num(),Room->Half*2/100,Room->BenchSeconds,Room->Warmup);
+ OKGameControl::SetMode(TEXT("crowd"),[Room](FJsonObject& O){
+   O.SetNumberField(TEXT("room_half_size"),Room->Half);O.SetNumberField(TEXT("floor_z"),Room->FloorZ);O.SetNumberField(TEXT("time"),Room->Time);
+   TArray<TSharedPtr<FJsonValue>> Rows;int32 Drawn=0;for(int32 I=0;I<Room->Agents.Num();++I){const auto& A=Room->Agents[I];Drawn+=A.Visible?1:0;auto G=MakeShared<FJsonObject>();G->SetNumberField(TEXT("index"),I);G->SetBoolField(TEXT("visible"),A.Visible);G->SetBoolField(TEXT("walking"),A.Walking);G->SetBoolField(TEXT("failed"),A.Failed);G->SetArrayField(TEXT("position"),{MakeShared<FJsonValueNumber>(A.Pos.X),MakeShared<FJsonValueNumber>(A.Pos.Y),MakeShared<FJsonValueNumber>(A.Pos.Z)});Rows.Add(MakeShared<FJsonValueObject>(G));}
+   O.SetNumberField(TEXT("girls"),Room->Agents.Num());O.SetNumberField(TEXT("drawn"),Drawn);O.SetArrayField(TEXT("agents"),Rows);
+  },[Room](const FVector& Location,const FRotator& Rotation){Room->CamPos=Location;Room->CamRot=Rotation;return true;});
  FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Room](float Dt){return Room->Tick(Dt);}));
  return true;
 }

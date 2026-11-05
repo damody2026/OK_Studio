@@ -1,11 +1,11 @@
-﻿// OK Studio control channel (-Control): POST http://127.0.0.1:<StudioControlPort, 47890>/studio/<op> with a JSON body;
+﻿// OK Studio control channel, open while a studio runs: POST http://127.0.0.1:<port>/studio/<op> with a JSON body (port:
+// -StudioControlPort, else port_base + 30, Saved/OKControl/<pid>.json);
 // the reply is {"ok": true, ...} or {"ok": false, "error": ...}. Tools/ok-game-mcp's studio_* tools speak it
 // (Docs/OK_STUDIO_MCP.md). Edits wait while the user drags, a scene loads, the timeline plays or exports ("busy").
 #include "SOKStudioPanel.h"
 #include "OKStudioGameInternal.h"
-#include "HttpServerModule.h"
+#include "OKControl.h"
 #include "HttpServerResponse.h"
-#include "IHttpRouter.h"
 #include "OKStudioSky.h"
 #include "OKStudioPost.h"
 #include "Camera/CameraComponent.h"
@@ -23,9 +23,6 @@
 
 namespace
 {
-	TSharedPtr<IHttpRouter> GRouter;
-	TArray<FHttpRouteHandle> GRoutes;
-
 	TSharedRef<FJsonObject> Result(bool bOk, const FString& Error = FString())
 	{
 		TSharedRef<FJsonObject> O = MakeShared<FJsonObject>();
@@ -1525,32 +1522,22 @@ namespace OKStudioControl
 {
 	void Start()
 	{
-		if (!FParse::Param(FCommandLine::Get(), TEXT("Control")) || GRouter.IsValid()) return;
-		int32 Port = 47890;
+		int32 Port = 0;
 		FParse::Value(FCommandLine::Get(), TEXT("StudioControlPort="), Port);
-		GRouter = FHttpServerModule::Get().GetHttpRouter(Port, true);
-		if (!GRouter.IsValid()) { UE_LOG(LogTemp, Warning, TEXT("OK studio control: could not open port %d"), Port); return; }
+		if (!OKControl::Listen(TEXT("studio"), 30, Port)) return;
 		static const TCHAR* Ops[] = { TEXT("state"), TEXT("inspect"), TEXT("catalog_search"), TEXT("spawn"), TEXT("transform"), TEXT("reparent"), TEXT("delete"), TEXT("select"),
 			TEXT("pose"), TEXT("camera"), TEXT("capture"), TEXT("save"), TEXT("load"), TEXT("undo"), TEXT("redo"), TEXT("cmd"), TEXT("timeline"),
 			TEXT("patch"), TEXT("scene"), TEXT("bones"), TEXT("bounds"), TEXT("catalog"), TEXT("keys"), TEXT("duplicate"), TEXT("export"), TEXT("scenes"), TEXT("report"), TEXT("ui_shot"), TEXT("ui_fit"), TEXT("click"), TEXT("mouse"), TEXT("key"), TEXT("combo"), TEXT("type"), TEXT("leave"), TEXT("exec"), TEXT("parts") };
 		for (const TCHAR* Op : Ops)
 		{
 			const FString Name = Op;
-			GRoutes.Add(GRouter->BindRoute(FHttpPath(TEXT("/studio/") + Name), EHttpServerRequestVerbs::VERB_POST | EHttpServerRequestVerbs::VERB_GET,
-				FHttpRequestHandler::CreateLambda([Name](const FHttpServerRequest& Req, const FHttpResultCallback& Done)
-				{
-					Reply(Done, Run(Name, Body(Req)));
-					return true;
-				})));
+			OKControl::Bind(TEXT("studio"), TEXT("/studio/") + Name, EHttpServerRequestVerbs::VERB_POST | EHttpServerRequestVerbs::VERB_GET,
+				[Name](const FHttpServerRequest& Req, const FHttpResultCallback& Done) { Reply(Done, Run(Name, Body(Req))); });
 		}
-		FHttpServerModule::Get().StartAllListeners();
-		UE_LOG(LogTemp, Display, TEXT("OK studio control: listening on 127.0.0.1:%d"), Port);
 	}
 
 	void Stop()
 	{
-		if (GRouter.IsValid()) for (const FHttpRouteHandle& Route : GRoutes) GRouter->UnbindRoute(Route);
-		GRoutes.Reset();
-		GRouter.Reset();
+		OKControl::Unbind(TEXT("studio"));
 	}
 }

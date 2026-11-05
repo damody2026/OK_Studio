@@ -19,7 +19,7 @@ namespace OKStudioGameInternal
 	float ComputeFocusSelectionDistance(const FBox& Bounds, const FRotator& ViewRotation, float HorizontalFovDegrees, float AspectRatio);
 }
 
-/** The studio's control channel (OKStudioControl.cpp): listens while a studio runs with -Control. */
+/** The studio's control channel (OKStudioControl.cpp): listens while a studio runs. */
 namespace OKStudioControl
 {
 	void Start();

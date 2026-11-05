@@ -1,8 +1,8 @@
 -- Clicks OK Studio's character-page buttons through the control channel's "click" op (the button's own handler runs)
--- and reads the result back ("bones" op), one check per line. Needs a studio started with -Control.
--- Tools/lua/lua.exe Tools/check_ok_studio_buttons.lua [--port 47890] [--card Content/CharacterCards/CrowdAPNG/C000.png]
+-- and reads the result back ("bones" op), one check per line. Needs a running studio.
+-- Tools/lua/lua.exe Tools/check_ok_studio_buttons.lua [--port N] [--card Content/CharacterCards/CrowdAPNG/C000.png]
 local json = require "ok.json"
-local port, card = "47890", "Content/CharacterCards/CrowdAPNG/C000.png"
+local port, card = tostring(require("ok_instance").ports().studio_control), "Content/CharacterCards/CrowdAPNG/C000.png"
 for i = 1, #arg, 2 do
   if arg[i] == "--port" then port = arg[i + 1] elseif arg[i] == "--card" then card = arg[i + 1] else error("unknown option " .. arg[i]) end
 end

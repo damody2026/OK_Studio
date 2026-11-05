@@ -2,7 +2,6 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
-#include "HttpRouteHandle.h"
 #include "OKInteractionPairGameMode.generated.h"
 
 // Loads one female card and one male card at startup and enters the shared one-to-one interaction scene (paired
@@ -57,16 +56,14 @@ private:
 	int32 PairAuditState = 0; // -PairAuditAllStates: 1-based PairStateCombo option being measured (0 = choose)
 	double PairAuditAt = 0.;
 	TWeakObjectPtr<class AOKInteractionMode> ActiveMode;
-	// -PairControl[=port] (default 47871; StreetSocial uses 47870; listeners bind 127.0.0.1, Config/DefaultEngine.ini):
+	// Always open on 127.0.0.1 (OKControl; -PairControl=port, else port_base + 11):
 	//   GET /exec?cmd=<console command>[;<command>...]   run console commands (CVars, OKPhysXSecondary.Shot ...)
 	//   GET /reset                                        restart the clipping/jitter and frame-time measurement
 	//   GET /stats                                        measurement since the last reset (same lines as the audit)
 	//   GET /pose?filter=<text>[&state=<n>]               switch the paired pose (first row containing the text)
 	void StartControl(int32 Port);
 	FString MeasurementLines(double Since) const;
-	TArray<FHttpRouteHandle> ControlRoutes;
-	TSharedPtr<class IHttpRouter> ControlRouter;
 	double MeasureSince = 0.;
-	bool bControl = false;
+	bool bControl = false; // the audit waits for /stats instead of a fixed time: -PairControl, or the first /pose
 	FTimerHandle StartTimer;
 };

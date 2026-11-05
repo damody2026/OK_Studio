@@ -1,5 +1,5 @@
 //! OK Studio (the scene editor, SceneEditor.cmd / Tools/run_scene_editor.lua): its control server is HTTP on 127.0.0.1,
-//! port OK_STUDIO_PORT (default 47890), open when the editor was started with -Control -StudioControlPort=<port>.
+//! open whenever a studio runs. Port: OK_STUDIO_PORT, else the running game's (Saved/OKControl), else port_base + 30.
 //! Every op is POST /studio/<op> with a JSON body; the reply is {"ok": true, ...} or {"ok": false, "error": "..."}
 //! (busy: {"busy": "<reason>"} while the user drags, a scene loads or the timeline plays/exports). Each studio_* tool
 //! passes its arguments through as the body. Docs/OK_STUDIO_MCP.md.
@@ -16,16 +16,22 @@ pub struct Studio {
 }
 
 impl Studio {
-    /// The same checkout as the street game; the port is OK_STUDIO_PORT, else 47890.
+    /// The same checkout as the street game.
     pub fn locate(root: &Path) -> Studio {
-        let port = std::env::var("OK_STUDIO_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(47890);
+        let default = std::fs::read_to_string(root.join("local-instance.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(t.trim_start_matches('\u{feff}')).ok())
+            .and_then(|v| v["port_base"].as_u64())
+            .unwrap_or(47860) as u16
+            + 30;
+        let port = std::env::var("OK_STUDIO_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or_else(|| crate::control::port(root, "studio", default));
         Studio { root: root.to_path_buf(), port }
     }
 
     /// POST /studio/<op>; the reply as it came (ok true or false). Loading, saving and capturing can take a while.
     pub fn call(&self, op: &str, body: &Value) -> Result<Value> {
         http(self.port, &format!("/studio/{op}"), Some(body), Duration::from_secs(180), || {
-            format!("OK Studio is not running on 127.0.0.1:{} (start it with studio_launch, or SceneEditor.cmd with -- -Control -StudioControlPort={})", self.port, self.port)
+            format!("OK Studio is not running on 127.0.0.1:{} (start it with studio_launch or SceneEditor.cmd)", self.port)
         })
     }
 

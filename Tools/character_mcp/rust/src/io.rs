@@ -127,7 +127,7 @@ impl Editor for Bridge {
         }
         if action == "progress" {
             let mut status = read_json(&self.root.join("status.json"), 8_000_000)
-                .context("Editor heartbeat unavailable; start the editor with -CharacterMCP")?;
+                .context("Editor heartbeat unavailable; is the card reader running on this mailbox (Saved/OKControl/<pid>.json)?")?;
             let age = (now() - status["heartbeat"].as_f64().unwrap_or(0.)).max(0.);
             status["heartbeat_age_seconds"] = age.into();
             status["responsive"] = (age < 2.).into();
@@ -166,7 +166,7 @@ impl Editor for Bridge {
                 thread::sleep(Duration::from_millis(25));
             }
             bail!(
-                "Editor timed out. Start character edit mode with -CharacterMCP and the matching mailbox directory. An already-started edit may finish; re-query state."
+                "Editor timed out. Start the card reader and use its mailbox directory (Saved/OKControl/<pid>.json). An already-started edit may finish; re-query state."
             )
         })();
         let _ = fs::remove_file(&request);

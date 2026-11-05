@@ -5,14 +5,15 @@
 ## 啟動與連接埠
 
 - 控制伺服器：`http://127.0.0.1:<port>/studio/<op>`，一律 `POST` JSON（可為 `{}`），回覆 `{"ok": true, ...}` 或 `{"ok": false, "error": "..."}`（HTTP 都是 200）。
-- 連接埠：環境變數 `OK_STUDIO_PORT`，預設 **47890**；MCP 伺服器與編輯器要用同一個值。
+- 控制伺服器在 Studio 開著時一律開啟（[控制通道](GAME_CONTROL_CHANNELS.md)），不需要參數。
+- 連接埠：環境變數 `OK_STUDIO_PORT`；沒設時用執行中遊戲登記的埠（`Saved/OKControl/<pid>.json`），再沒有用 `port_base`+30（預設 47890）。
 - `studio_launch` 會在 checkout 根目錄執行（detached）：
 
   ```text
   Tools\lua\lua.exe Tools\run_scene_editor.lua [scene] -- -Control -StudioControlPort=<port>
   ```
 
-  再等 `state` 回應（預設 120 秒），回傳啟動器 pid。手動啟動同理：`SceneEditor.cmd [scene] -- -Control -StudioControlPort=47890`。
+  再等 `state` 回應（預設 120 秒），回傳啟動器 pid。手動啟動：`SceneEditor.cmd [scene]`，MCP 自己會找到它。
 - 連不上（沒有開 Studio）時，工具回錯誤「OK Studio is not running ...」，請先 `studio_launch`。
 - 使用者正在拖曳、場景載入中、時間軸播放／匯出時，Studio 拒絕編輯：`{"ok":false,"error":"busy: <原因>","busy":"<原因>"}`，工具以錯誤回報 busy，稍後重試即可。
 - 每個工具的參數原樣當成 request body；MCP 端只做寬鬆檢查（必填參數、頂層 JSON 型別），其餘交給 Studio。

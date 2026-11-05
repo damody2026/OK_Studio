@@ -30,7 +30,7 @@ static FObject Number(const FString& Key,const FString& Label,double Value,doubl
  auto P=MakeShared<FJsonObject>();P->SetStringField(TEXT("key"),Key);P->SetStringField(TEXT("label"),Label.IsEmpty()?Key:Label);P->SetStringField(TEXT("kind"),TEXT("number"));
  P->SetNumberField(TEXT("value"),Value);P->SetNumberField(TEXT("min"),Min);P->SetNumberField(TEXT("max"),Max);P->SetNumberField(TEXT("default"),Default);P->SetBoolField(TEXT("supported"),true);P->SetBoolField(TEXT("requires_apply"),false);return P;
 }
-static FString Label(UWidget* W)
+FString Label(UWidget* W)
 {
  if(auto* C=Cast<UCheckBox>(W))if(auto* T=Cast<UTextBlock>(C->GetContent()))return T->GetText().ToString();
  if(auto* Parent=W->GetParent())if(Parent->GetChildrenCount()>0)if(auto* Box=Cast<USizeBox>(Parent->GetChildAt(0)))if(auto* T=Cast<UTextBlock>(Box->GetContent()))return T->GetText().ToString();

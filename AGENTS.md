@@ -32,7 +32,9 @@
 
 **完整流程只在整合時跑**：平常開發可以沿用既有的 base、只重編執行檔與 stage（`--skip-cook`／`--skip-base`）。整合 C／E 時一律跑完整流程（重新 cook 與 base，新 tag），兩邊的 `CardReaderDevelopment.cmd`、`StreetSocial.cmd` 都要編過並實際啟動確認，再刪掉舊的 stage、base 與 host。
 
-**街區遊戲 MCP**：AI 操作遊戲一律用 `Tools/ok-game-mcp`（`.mcp.json` 的 `ok-game`；說明見 [Docs/STREET_SOCIAL_GAME_MCP.md](Docs/STREET_SOCIAL_GAME_MCP.md)）。它以 `-Control` 啟動遊戲，透過本機控制通道（`OKStreetSocialControl.inl`）走路、按鍵、按按鈕、對話、等時間、截圖、存讀檔，並能下主控台指令與錄 Unreal Insights trace（`game_exec`、`game_trace_start/stop`）；MCP 沒載入的 session 用 `Tools/ok-game-mcp/target/release/ok-game-mcp.exe call <工具> '<JSON>'`。以前的 `Tools/street_play.lua` 已移除。效能分析：啟動器 `-Trace <頻道>` 錄 `trace.utrace`，`-Exec "t.HitchFrameTimeThreshold 60,stat dumphitches"` 把每個卡頓幀的耗時寫進 game.log。
+**遊戲 MCP**：所有模式啟動就開著控制通道，不需要參數，也沒有關閉開關；socket 與信箱在獨立執行緒（`OKControl`），只收本機程式的請求，見 [Docs/GAME_CONTROL_CHANNELS.md](Docs/GAME_CONTROL_CHANNELS.md)。AI 操作遊戲一律用 `Tools/ok-game-mcp`（`.mcp.json` 的 `ok-game`）：`game_instances` 列出執行中的遊戲，`ui_*` 操作任何模式畫面上的控制，`reader_call` 操作讀卡，`pair_call` 操作 1 對 1，`studio_*` 操作 OK Studio。新增的控制要讓 MCP 讀得到也改得到。
+
+**街區**（說明見 [Docs/STREET_SOCIAL_GAME_MCP.md](Docs/STREET_SOCIAL_GAME_MCP.md)）：`game_launch` 以 `-Control` 啟動遊戲（多了滑鼠不鎖、跳過開始選單），透過本機控制通道（`OKStreetSocialControl.inl`）走路、按鍵、按按鈕、對話、等時間、截圖、存讀檔，並能下主控台指令與錄 Unreal Insights trace（`game_exec`、`game_trace_start/stop`）；MCP 沒載入的 session 用 `Tools/ok-game-mcp/target/release/ok-game-mcp.exe call <工具> '<JSON>'`。以前的 `Tools/street_play.lua` 已移除。效能分析：啟動器 `-Trace <頻道>` 錄 `trace.utrace`，`-Exec "t.HitchFrameTimeThreshold 60,stat dumphitches"` 把每個卡頓幀的耗時寫進 game.log。
 
 女角清單用 `-SelectionFile <json>`（`{"cards": [OK 卡路徑...]}`）。同一個 checkout 已有遊戲在跑（例如別的 session）時，加 `-Sandbox <名稱> [-PortBase N]` 另開一個：自己的連接埠（預設 48060 起，控制埠 N+10，ok-game-mcp 用 `OK_CONTROL_PORT` 指定）、存檔在 `Saved/StreetSocial/Sandbox/<名稱>/`，不停掉別人的語音伺服器。
 
@@ -90,7 +92,7 @@
 | 配對與語音 | 雙角色共用時鐘／接觸求解、一般語音與配對呼吸、PCM 音量嘴型。 |
 | 百人房間 | `/Game/Scenes/CrowdRoom/CrowdRoom`：前 100 張女角依固定順序匯入、每張第 0 套服裝，以 60 Hz 烘焙行走片段與 GPU 群組動畫顯示；完整服裝 APNG 位於 `Content/CharacterCards/CrowdAPNG/`（目錄內 101 個 PNG）。見 [百人房間](Docs/CROWD_ROOM.md)、[完整服裝 APNG](Docs/CROWD_APNG.md)。 |
 | 街區交流 demo | `/Game/Scenes/StreetSocial/StreetSocial`：獨立製作的一男五女街區，含對話、語音、邀約、電話、觸碰與數個互動動作。以 `StreetSocial.cmd` 啟動，操作見 [街區交流操作](Docs/STREET_SOCIAL_PLAY_GUIDE.md)。這是 demo，不是完整遊戲。 |
-| 人物編輯 MCP | 啟動人物編輯器時加入 `-CharacterMCP`，外部 AI 可透過 Rust stdio server（31 個工具）查詢與調整參數，並拍攝正／側／背三視圖。見 [使用說明](Docs/CHARACTER_EDITOR_MCP_USAGE.md)。 |
+| 人物編輯 MCP | 信箱常開，外部 AI 可透過 Rust stdio server（31 個工具）或 `reader_call` 查詢與調整參數，並拍攝正／側／背三視圖。見 [使用說明](Docs/CHARACTER_EDITOR_MCP_USAGE.md)。 |
 | 油漆水槍示範 | `/Game/PaintDemo/PaintDemo`：以 1024×1024 雙 Render Target 遮罩將白色油漆噴在示範人物上，見 [Stage396](Docs/PAINT_SPRAY396.md)。 |
 
 以上支援限於已實作並驗證的來源路徑，不表示所有卡片、mod、controller 或 Studio 動作均可播放。
@@ -621,7 +623,7 @@ Editor Target 的 PreBuildSteps 與 `KKUnityBundle.Build.cs` 會呼叫 `Tools/ok
 - `StreetSocial.cmd`：街區交流 demo。
 - `CrowdRoom100.cmd`：百人房間（GPU 開發路徑），使用每張卡的 Instant Meshes 低模，見 [APNG 低模伴隨檔](Docs/APNG_LOWPOLY.md)。
 - `SceneEditor.cmd [場景檔]`：OK Studio 場景編輯器（只有 Studio 的 UI，不含讀卡畫面）；可開 .okscene、OK 場景卡或原作 KStudio 場景 PNG，見 [OK Studio 計畫](Docs/OK_STUDIO_PLAN.md) S2。
-- 人物編輯 MCP：`Tools/lua/lua.exe Tools/character_mcp/build.lua --test`，產物 `Tools/character_mcp/bin/ok-character-mcp.exe`；使用時須以 `-CharacterMCP` 啟動編輯器。
+- 人物編輯 MCP：`Tools/lua/lua.exe Tools/character_mcp/build.lua --test`，產物 `Tools/character_mcp/bin/ok-character-mcp.exe`。
 
 若需要 Visual Studio 專案檔：
 

@@ -489,8 +489,10 @@ local function main()
     game[#game + 1] = "-tracefile=" .. path.join(output, "trace.utrace"); game[#game + 1] = "-statnamedevents"
   end
   if o.selftest then for _, a in ipairs({ "-StreetSocialSelfTest", "-unattended", "-RenderOffscreen" }) do game[#game + 1] = a end end
-  -- Development control channel (http://127.0.0.1:<port>: state, say, click, key, navigate, screenshot); never on by default.
-  if o.control then game[#game + 1] = "-StreetSocialControl"; game[#game + 1] = "-StreetSocialControlPort=" .. control_port end
+  -- The control channel (http://127.0.0.1:<port>: state, say, click, key, navigate, screenshot) is always open: the game takes
+  -- port_base + 10 or the next free one (Saved/OKControl/<pid>.json). -Control: the driver's behaviour on that exact port.
+  if o.control then game[#game + 1] = "-StreetSocialControl" end
+  if o.control or sandbox then game[#game + 1] = "-StreetSocialControlPort=" .. control_port end
   if o.inspect then game[#game + 1] = "-StreetSocialInspect=" .. o.inspect end
   if o.clock then game[#game + 1] = "-StreetSocialClock=" .. o.clock end
   say("StreetSocial: one male + up to ten heroines. WASD move, Shift run, mouse camera, Ctrl/middle UI cursor, wheel zoom, E talk, 1/2/3 topics, Esc cancel, L Chinese/Japanese voices, V built-in/TTS voice, N skip to 07:00 next morning; friendship/confession results save automatically after dialogue; F9 CPU/GPU; conversation buttons: shared walk/explore, photo (P save), seated talk, drinks, splash either direction; Esc ends activity. Reading uses a hand-held book.")
