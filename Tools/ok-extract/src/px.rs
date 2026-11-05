@@ -27,6 +27,8 @@ pub const FLAG_AUDIT_ONLY: u32 = 4;
 pub const FLAG_SKIN: u32 = 16;
 /// Set on the root of tails (`PhysicsComponent::Tail`): the host makes them springier (OKPhysXSecondary.TailBounce).
 pub const FLAG_TAIL: u32 = 32;
+/// Set on the root of breast chains: the host leaves the partner's arms out of their collision unless ok.HScene.BustArmContact is on.
+pub const FLAG_BUST: u32 = 64;
 /// Root flag bits 8..11: the host solver this chain asks for, plus one (0 = not chosen: the host uses PhysX). The host
 /// follows it while OKPhysXSecondary.Backend is -1 (per component); 0..6 there force one solver on every chain.
 pub const FLAG_SOLVER_SHIFT: u32 = 8;
