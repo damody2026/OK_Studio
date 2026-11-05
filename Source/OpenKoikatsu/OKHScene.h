@@ -7,6 +7,7 @@
 #include "Commandlets/Commandlet.h"
 #include "OKArousalDrops.h"
 #include "OKTears.h"
+#include "KKRustExtract.h"
 #include "OKHScene.generated.h"
 
 // The street one-on-one as the original H scene (HSceneProc / HSprite, D:\KoikatuSunshine\H_scene.md): a menu of the
@@ -278,7 +279,7 @@ public:
     void ClearLine();
     void TickEyeDull(float Delta);float EyeDullScale=0.f;bool bEyeDullHidden=false; // her pupils and highlight (a yandere, or worn out)
     void TickEyeLook(AKKPreviewActor* Girl,float Delta);void RestoreEyeLook();TWeakObjectPtr<AKKPreviewActor> EyeLookActor;float EyeLookWait=0.f; // the panel's pupil shape and colour, her eyelids
-    FVector2f PupilStretchShown=FVector2f(1.f,1.f);FVector3f IrisHsvShown=FVector3f(0.f,1.f,1.f);FVector4f PupilMarkShown=FVector4f(0.f,0.f,0.f,0.f);float EyeFrameShown=0.f;
+    FVector2f PupilStretchShown=FVector2f(1.f,1.f);FVector3f IrisHsvShown=FVector3f(0.f,1.f,1.f);FOKIrisMarks PupilMarksShown;float EyeFrameShown=0.f;
     float PupilShakeClock=0.f;FVector2f PupilShakeFrom=FVector2f::ZeroVector,PupilShakeTo=FVector2f::ZeroVector,PupilShakeNow=FVector2f::ZeroVector; // her pupils' tremble
     void TickDeepFace(float Delta);void EndDeepFace(class AKKPreviewActor* Girl);float DeepFace=0.f,DeepGazeSet=0.f;bool bDeepFace=false,bDeepManualWas=false,bAheDepth=false; // her eyes and tongue with how deep he is (TickDeepFace)
     // Her line asked for before a climax, a finish or a new pose comes back after it ("don't stop" once he had come):

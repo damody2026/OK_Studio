@@ -207,15 +207,19 @@ pub fn recolor_iris(px:&mut [u8],hue:f32,saturation:f32,value:f32) {
         let h=if span<=0. {0.}else if top==r {(g-b)/span}else if top==g {(b-r)/span+2.}else{(r-g)/span+4.};
         let h=(h*60.+hue).rem_euclid(360.)/60.;
         let s=if top>0. {(span/top*saturation).clamp(0.,1.)}else{0.};let v=(top*value).clamp(0.,1.);
-        let c=v*s;let x=c*(1.-(h%2.-1.).abs());let m=v-c;
-        let (r,g,b)=match h as u32 {0=>(c,x,0.),1=>(x,c,0.),2=>(0.,c,x),3=>(0.,x,c),4=>(x,0.,c),_=>(c,0.,x)};
-        for (out,channel) in p.iter_mut().zip([b,g,r]) {*out=((channel+m)*255.).round() as u8;}
+        for (out,channel) in p.iter_mut().zip(hsv_to_bgr(h,s,v)) {*out=(channel*255.).round() as u8;}
     }
 }
+/// `h` in sixths of the circle, 0..6.
+fn hsv_to_bgr(h:f32,s:f32,v:f32)->[f32;3] {
+    let c=v*s;let x=c*(1.-(h%2.-1.).abs());let m=v-c;
+    let (r,g,b)=match h as u32 {0=>(c,x,0.),1=>(x,c,0.),2=>(0.,c,x),3=>(0.,x,c),4=>(x,0.,c),_=>(c,0.,x)};
+    [b+m,g+m,r+m]
+}
 
-/// A black mark of our own laid over the middle of BGRA pixels, nothing of the iris under it changed: 1 circle, 2 a cat's
-/// slit, 3 diamond, 4 heart, 5 star. `across` and `down` are its size in parts of the image, `opacity` how much it covers.
-pub fn mark_iris(px:&mut [u8],w:usize,h:usize,shape:i32,across:f32,down:f32,opacity:f32) {
+/// A mark of our own laid over the middle of BGRA pixels: 1 circle, 2 a cat's slit, 3 diamond, 4 heart, 5 star. `across` and
+/// `down` are its size in parts of the image, `opacity` how much it covers, `hsv` its colour (hue in degrees, the rest 0..1).
+pub fn mark_iris(px:&mut [u8],w:usize,h:usize,shape:i32,across:f32,down:f32,opacity:f32,hsv:[f32;3]) {
     if w==0||h==0||px.len()<w*h*4||across<=0.||down<=0. {return;}
     let inside=|x:f32,y:f32|->bool {match shape { // x right, y up, both -1..1 across the mark
         1=>x*x+y*y<=1.,
@@ -225,6 +229,7 @@ pub fn mark_iris(px:&mut [u8],w:usize,h:usize,shape:i32,across:f32,down:f32,opac
         5=>{let turn=std::f32::consts::TAU/5.;let a=x.atan2(y).rem_euclid(turn)/turn;let a=(a-0.5).abs()*2.;
             (x*x+y*y).sqrt()<=0.42+0.58*a*a}
         _=>false}};
+    let colour=hsv_to_bgr(hsv[0].rem_euclid(360.)/60.,hsv[1].clamp(0.,1.),hsv[2].clamp(0.,1.)).map(|c|c*255.);
     let (half_x,half_y)=(across*w as f32*0.5,down*h as f32*0.5);let (mid_x,mid_y)=(w as f32*0.5,h as f32*0.5);
     let x0=(mid_x-half_x-1.).max(0.) as usize;let x1=((mid_x+half_x+1.) as usize).min(w);
     let y0=(mid_y-half_y-1.).max(0.) as usize;let y1=((mid_y+half_y+1.) as usize).min(h);
@@ -235,7 +240,7 @@ pub fn mark_iris(px:&mut [u8],w:usize,h:usize,shape:i32,across:f32,down:f32,opac
             hits+=u32::from(inside(x,y));}}
         if hits==0 {continue;}
         let keep=1.-hits as f32/16.*opacity.clamp(0.,1.);let p=&mut px[(py*w+px_x)*4..][..3];
-        for c in p {*c=(*c as f32*keep).round() as u8;}
+        for (c,mark) in p.iter_mut().zip(colour) {*c=(*c as f32*keep+mark*(1.-keep)).round() as u8;}
     }}
 }
 
@@ -318,12 +323,13 @@ mod iris_highlight_tests {
     fn mark_covers_the_middle_and_leaves_the_rest() {
         let n=64usize;let plain=vec![200u8;n*n*4];
         for shape in 1..=5 {
-            let mut px=plain.clone();mark_iris(&mut px,n,n,shape,0.5,0.5,1.);
+            let mut px=plain.clone();mark_iris(&mut px,n,n,shape,0.5,0.5,1.,[0.,0.,0.]);
             assert_eq!(px[(32*n+32)*4],0,"shape {shape}");
             assert_eq!(px[(2*n+2)*4],200,"shape {shape}");assert_eq!(px[(32*n+32)*4+3],200,"shape {shape}");
         }
-        let mut px=plain.clone();mark_iris(&mut px,n,n,0,0.5,0.5,1.);assert!(px==plain);
-        let mut px=plain.clone();mark_iris(&mut px,n,n,2,0.2,0.8,1.);
+        let mut px=plain.clone();mark_iris(&mut px,n,n,0,0.5,0.5,1.,[0.,0.,0.]);assert!(px==plain);
+        let mut px=plain.clone();mark_iris(&mut px,n,n,1,0.5,0.5,1.,[120.,1.,1.]);assert_eq!(px[(32*n+32)*4..][..4],[0,255,0,200]);
+        let mut px=plain.clone();mark_iris(&mut px,n,n,2,0.2,0.8,1.,[0.,0.,0.]);
         assert_eq!(px[(32*n+20)*4],200);assert_eq!(px[(16*n+32)*4],0); // a slit: narrow across, tall down
     }
     #[test]

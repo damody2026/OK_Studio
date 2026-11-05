@@ -9273,9 +9273,9 @@ bool AKKPreviewActor::SetIrisHsv(float Hue,float Saturation,float Value)
     EyeIrisHsv=FVector3f(Hue,Saturation,Value);
     return SetEyeDull(EyePupilScale>0.f?EyePupilScale:1.f,bEyeHighlightHidden);
 }
-bool AKKPreviewActor::SetPupilMark(const FVector4f& Mark)
+bool AKKPreviewActor::SetPupilMarks(const FOKIrisMarks& Marks)
 {
-    EyePupilMark=Mark;
+    EyePupilMarks=Marks;
     return SetEyeDull(EyePupilScale>0.f?EyePupilScale:1.f,bEyeHighlightHidden);
 }
 bool AKKPreviewActor::SetEyeDull(float PupilScale,bool bHideHighlight)
@@ -9290,7 +9290,7 @@ bool AKKPreviewActor::SetEyeDull(float PupilScale,bool bHideHighlight)
             Card=&EyeHighlightBase.Add(M,Kept);
             UTexture* Iris=nullptr;if(M->GetTextureParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex")),Iris))EyeIrisBase.Add(M,Iris);}
         M->SetScalarParameterValue(TEXT("_isHighLight"),bHideHighlight?0.f:Card->X);
-        if(const auto* Iris=EyeIrisBase.Find(M))if(UTexture* Own=Iris->Get())M->SetTextureParameterValue(TEXT("_MainTex"),OKIrisRecolored(bHideHighlight?OKIrisWithoutHighlights(Own):Own,EyeIrisHsv.X,EyeIrisHsv.Y,EyeIrisHsv.Z,EyePupilMark));
+        if(const auto* Iris=EyeIrisBase.Find(M))if(UTexture* Own=Iris->Get())M->SetTextureParameterValue(TEXT("_MainTex"),OKIrisRecolored(bHideHighlight?OKIrisWithoutHighlights(Own):Own,EyeIrisHsv.X,EyeIrisHsv.Y,EyeIrisHsv.Z,EyePupilMarks));
         for(int32 I=0;I<3;++I){FLinearColor V;if(!M->GetVectorParameterValue(FHashedMaterialParameterInfo(HighlightLayers[I]),V))continue;V.A=bHideHighlight?0.f:(*Card)[I+1];M->SetVectorParameterValue(HighlightLayers[I],V);M->SetScalarParameterValue(*(FString(HighlightLayers[I])+TEXT("__A")),V.A);}};
     TInlineComponentArray<UMeshComponent*> Meshes(this);
     for(const auto& Part:Parts){if(Session.EyeMaterialSetting(Part.SessionIndex,-1)==0.f)continue;Gate(Part.GpuEyeMaterial);

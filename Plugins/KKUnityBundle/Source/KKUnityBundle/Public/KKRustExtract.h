@@ -18,9 +18,18 @@ class UTexture;
 /** This iris texture with the highlights painted into it taken out (a card's overlay can hold them; the eye material's own
  *  gate does not reach those). Iris itself when it has none. Made once per texture, on the game thread. */
 KKUNITYBUNDLE_API UTexture* OKIrisWithoutHighlights(UTexture* Iris);
-/** Iris with its hue turned (degrees), its saturation and value times as much, and Mark (shape, across, down, opacity; shape 0
- *  none) laid over its middle; one image per iris, made again on a change, the iris itself left as it is. */
-KKUNITYBUNDLE_API UTexture* OKIrisRecolored(UTexture* Iris,float Hue,float Saturation,float Value,const FVector4f& Mark=FVector4f(0.f,0.f,0.f,0.f));
+/** Marks of ours over the middle of an iris, the first under the second: Shape (x; 0 none), across, down, opacity, and each one's
+ *  Colour (hue in degrees, saturation, value). */
+struct FOKIrisMarks
+{
+	FVector4f Shape[2]={FVector4f(0.f,0.f,0.f,0.f),FVector4f(0.f,0.f,0.f,0.f)};
+	FVector3f Colour[2]={FVector3f(0.f,0.f,0.f),FVector3f(0.f,0.f,0.f)};
+	bool Any() const {return Shape[0].X>0.f||Shape[1].X>0.f;}
+	bool operator==(const FOKIrisMarks& O) const {return Shape[0]==O.Shape[0]&&Shape[1]==O.Shape[1]&&Colour[0]==O.Colour[0]&&Colour[1]==O.Colour[1];}
+};
+/** Iris with its hue turned (degrees), its saturation and value times as much, and Marks laid over it; one image per iris, made
+ *  again on a change, the iris itself left as it is. */
+KKUNITYBUNDLE_API UTexture* OKIrisRecolored(UTexture* Iris,float Hue,float Saturation,float Value,const FOKIrisMarks& Marks=FOKIrisMarks());
 /** One clear pixel: an eye layer with nothing on it. */
 KKUNITYBUNDLE_API UTexture* OKClearEyeLayer();
 

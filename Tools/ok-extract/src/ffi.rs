@@ -3027,12 +3027,12 @@ pub unsafe extern "C" fn ok_iris_recolor(pixels: *mut u8, width: i32, height: i3
 
 /// `mark_iris` on an image of `width` x `height` BGRA pixels.
 #[no_mangle]
-pub unsafe extern "C" fn ok_iris_mark(pixels: *mut u8, width: i32, height: i32, shape: i32, across: f32, down: f32, opacity: f32) -> i32 {
+pub unsafe extern "C" fn ok_iris_mark(pixels: *mut u8, width: i32, height: i32, shape: i32, across: f32, down: f32, opacity: f32, hue: f32, saturation: f32, value: f32) -> i32 {
     if pixels.is_null() || width <= 0 || height <= 0 {
         return 1;
     }
     let (w, h) = (width as usize, height as usize);
-    crate::texture_bake::mark_iris(std::slice::from_raw_parts_mut(pixels, w * h * 4), w, h, shape, across, down, opacity);
+    crate::texture_bake::mark_iris(std::slice::from_raw_parts_mut(pixels, w * h * 4), w, h, shape, across, down, opacity, [hue, saturation, value]);
     0
 }
 
