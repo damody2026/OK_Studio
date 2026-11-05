@@ -633,7 +633,7 @@ void AOKPaintSprayer::Step(double Dt)
  // Ballistic sweeps remain at 120 Hz. Surface transport uses its own fixed
  // clock; texture work must not be repeated for each projectile substep.
  BallisticMs+=(FPlatformTime::Seconds()-BallisticStart)*1000;
- SurfaceAccumulator+=Dt;const double SurfaceDt=1./FMath::Clamp(Settings.SurfaceHz,5.f,60.f);
+ SurfaceAccumulator+=Dt;const double SurfaceDt=SurfaceSeconds;
  while(SurfaceAccumulator+1.e-10>=SurfaceDt){AdvanceSurface(SurfaceDt);SurfaceAccumulator-=SurfaceDt;}
 }
 void AOKPaintSprayer::AdvanceSurface(double Dt)
@@ -676,7 +676,11 @@ void AOKPaintSprayer::Tick(float Dt)
  OwnedFX.RemoveAll([](const auto& FX){return !IsValid(FX)||!FX->IsRegistered();});while(OwnedFX.Num()>FMath::Clamp(Settings.MaxImpactEffects,1,64)){auto FX=OwnedFX.Pop();if(IsValid(FX))FX->DestroyComponent();}
  if(!Spraying&&Surfaces.IsEmpty()&&Packets.IsEmpty())return;
  if(Spraying&&JetFX){JetFX->SetWorldRotation(Direction.Rotation());int32 Target,Face;double T;FVector Bary;const bool Hit=FindPaintHit(Nozzle,Nozzle+Direction*5000,.3,Target,Face,Bary,T);JetFX->SetVariableFloat(TEXT("User.JetLife"),FMath::Clamp(float(Hit?T*5000/FMath::Max(10.f,Settings.JetSpeed):.5),.01f,3.f));}
- const double GeometryStart=FPlatformTime::Seconds();GeometryTime+=Dt;const double Interval=1./FMath::Clamp(Settings.SurfaceHz,5.f,60.f);
+ const double GeometryStart=FPlatformTime::Seconds();GeometryTime+=Dt;
+ // A surface update walks every wet face: at 9800 of them 30 ms a frame. Past 2500 it comes less often, down to a quarter.
+ int32 WetFaces=0;for(const auto& S:Surfaces)WetFaces+=S->Film.Active.Num();
+ SurfaceSeconds=1./FMath::Max(5.,FMath::Clamp(Settings.SurfaceHz,5.f,60.f)*FMath::Clamp(2500./FMath::Max(1,WetFaces),.25,1.));
+ const double Interval=SurfaceSeconds;
  const bool Flying=Spraying||!Packets.IsEmpty();const bool UpdateGeometry=GeometryTime>=Interval||(Flying&&bGeometryOnlyPainted);
  if(UpdateGeometry){GeometryTime=FMath::Fmod(GeometryTime,Interval);
   for(int32 Index=Surfaces.Num()-1;Index>=0;--Index){auto& S=*Surfaces[Index];auto* C=S.Component.Get();bool Changed=!C;
