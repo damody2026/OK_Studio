@@ -5406,6 +5406,7 @@ mod tests {
             shape_body: shape_body.clone(),
             shape_face: shape_face.clone(),
             abm,
+            style_card_abm: None,
             parts: Vec::new(),
             coordinate_count: 1,
             skel_export: None,

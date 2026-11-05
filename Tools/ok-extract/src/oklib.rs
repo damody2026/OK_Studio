@@ -1083,10 +1083,17 @@ pub fn pack_scope() -> Option<Arc<PackScope>> {
         }
     }
 }
-/// Runs parallel work of the current open (its rayon iterators) in its own pool, whose threads carry its pack; no
-/// open on this thread: as it is.
+/// Runs parallel work of the current open (its rayon iterators) in its own pool, whose threads carry its pack. No open on
+/// this thread: in a pool whose threads belong to no open. On rayon's global pool a scan of the whole tree was handed the
+/// only card opening at the time, whose strict open then failed on gaps that were not its own (a rayon thread stays).
 pub fn pack_parallel<R: Send>(work: impl FnOnce() -> R + Send) -> R {
-    let Some(scope) = own_scope() else { return work() };
+    let Some(scope) = own_scope() else {
+        if rayon::current_thread_index().is_some() { return work(); }
+        static OUTSIDE: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
+        let pool = OUTSIDE.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(crate::cpu_threads().clamp(2, 8))
+            .thread_name(|i| format!("OKOutsideOpens{i}")).start_handler(|_| mark_outside_opens()).build().ok());
+        return match pool { Some(pool) => pool.install(work), None => work() };
+    };
     let pool = scope.pool.get_or_init(|| {
         let weak = Arc::downgrade(&scope);
         let workers = crate::cpu_threads().clamp(2, 8);
