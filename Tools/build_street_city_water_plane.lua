@@ -56,8 +56,13 @@ mask=[[x,[[int(a),int(b)] for a,b in sorted({(y0,y1) for (y0,y1) in [(r[2],r[3])
 mask=[m for m in mask if m[1]]
 (O/'water-plane').mkdir(parents=True,exist_ok=True);(O/'water-plane/mask.json').write_text(json.dumps(dict(step_cm=100,rows=mask)),'utf8')
 bm=bmesh.new()
+# no quad longer than 16 m: Unreal's mesh build drops the 1 m x hundreds of metres slivers near the shore as degenerate,
+# which left sand-coloured stripes through the water at low eye heights (c-conquest 8.2.3)
 for x0,x1,y0,y1 in rects:
- bm.faces.new([bm.verts.new((a,b,11.0)) for a,b in ((x0,y0),(x1,y0),(x1,y1),(x0,y1))])
+ for ax in range(x0,x1,16):
+  for ay in range(y0,y1,16):
+   bx,by=min(ax+16,x1),min(ay+16,y1)
+   bm.faces.new([bm.verts.new((a,b,11.0)) for a,b in ((ax,ay),(bx,ay),(bx,by),(ax,by))])
 bmesh.ops.remove_doubles(bm,verts=bm.verts,dist=1e-4)
 for f in bm.faces:
  if f.normal.z<0:f.normal_flip()

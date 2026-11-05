@@ -922,8 +922,11 @@ do
       for _, t in ipairs(kept) do local base = t.a == areaid[p.id] - 1 and HK[t.k]
         if base and not have[base] then have[base] = true; p.anchors[#p.anchors + 1] = { name = base, pos = t.p, yaw = t.face and r1(t.face - 90) or 0, asset = t.k } end
       end
-      -- rooms with a shower and no tub wash there (c-conquest 8.1: the bath schedule looks for bath*)
-      if not have.bath then for _, a in ipairs(p.anchors) do if a.name:match('^shower') then have.bath = true; p.anchors[#p.anchors + 1] = { name = 'bath', pos = a.pos, yaw = a.yaw, asset = 'shower' }; break end end end
+      -- what the install added to this room: the tub, the crib, the balcony (round 3, c-conquest 8.2.3)
+      local mine = {}; for k, it in pairs(newitems) do if it.place == p.id and it.anchor ~= 'door' and it.anchor ~= 'balcony' then mine[#mine + 1] = k end end; table.sort(mine)
+      for _, k in ipairs(mine) do local it = newitems[k]
+        if not have[it.anchor] then have[it.anchor] = true; p.anchors[#p.anchors + 1] = { name = it.anchor, pos = it.pos, yaw = it.yaw, asset = it.actor } end
+      end
     end
   end
 end
@@ -1092,6 +1095,49 @@ do
         local has = false; for _, q in ipairs(r.slots or {}) do if q.seat_pos then has = true end end
         if not has then local s = near(r.pos); r.seat_pos = s and s.seat or { r.pos[1], r.pos[2], r.pos[3] + 45 } end
       end
+    end
+  end
+  -- anchors with no floor under them (mirror-height vanities, room-centre heights in the motel suites, stairwell landings):
+  -- the round 3 measurement gives each its floor. places-v1/anchor-ground.json keeps them, keyed by the spot before moving
+  do
+    local gp = root .. 'places-v1/anchor-ground.json'; local gf = io.open(gp, 'rb'); local ground = {}
+    if gf then for k, v in pairs(json.decode(gf:read('a'))) do if type(v) == 'table' and v[1] then ground[k] = v end end; gf:close() end
+    local key = function(p) return string.format('%.1f,%.1f,%.1f', p[1], p[2], p[3]) end
+    local mf = io.open(root .. 'places-v1/round6-measure.json', 'rb')
+    if mf then
+      local m = json.decode(mf:read('a')); mf:close()
+      for _, s in ipairs(m.sunk or {}) do
+        local water, z = (s.name or ''):match('swim') or (s.name or ''):match('boat') or (s.name or ''):match('firework'), s.pos[3]
+        for _, k in ipairs(s.kinds) do if k == 'swim' or k == 'h_pool' or k == 'swan_boat' or k == 'rowing_boat' or k == 'h_boat' or k == 'fireworks' then water = true end end
+        if not water then
+          local below, above
+          for _, c in ipairs(s.col) do if c[1] <= z + 5 then below = below or c[1] else above = c[1] end end
+          -- at most one storey down (mirror heights, room centres); a bigger drop is a hole in that floor: the nearest floor at this height
+          local near = type(s.near) == 'table' and s.near[1] and s.near
+          local stair = (s.name or ''):match('landing') or (s.name or ''):match('stair')
+          local to = (not stair and below and z - below <= 260 and { s.pos[1], s.pos[2], below }) or near or (not below and above and { s.pos[1], s.pos[2], above }) or (#s.col == 0 and z < 1190 and { s.pos[1], s.pos[2], 1198 })
+          if to then ground[key(s.pos)] = to end
+        end
+      end
+      local out = assert(io.open(gp, 'wb')); out:write(json.encode(ground)); out:close()
+    end
+    local moved = 0
+    for _, r in ipairs(rows) do for _ = 1, 3 do local to = ground[key(r.pos)]
+      if to and (to[1] ~= r.pos[1] or to[2] ~= r.pos[2] or to[3] ~= r.pos[3]) then
+        if r.seat_pos and math.abs(r.seat_pos[3] - r.pos[3] - 45) < .5 then r.seat_pos = { to[1], to[2], to[3] + 45 } end
+        r.pos[1], r.pos[2], r.pos[3] = to[1], to[2], to[3]; moved = moved + 1
+      end
+    end end
+    print('anchors moved to their floors', moved)
+  end
+  -- seats whose hip point was only estimated: the surface the measurement found; the rest stay listed in seat-measured.json
+  do
+    local sf = io.open(root .. 'places-v1/seat-measured.json', 'rb')
+    if sf then
+      local m = json.decode(sf:read('a')); sf:close(); local byid = {}
+      for _, s in ipairs(m.measured or {}) do byid[s.id] = s.seat end
+      local n = 0; for _, r in ipairs(rows) do if byid[r.id] then r.seat_pos = byid[r.id]; n = n + 1 end end
+      print('seats measured', n, 'unmeasured', #(m.unmeasured or {}))
     end
   end
   local f = assert(io.open('Content/IndependentResources/StreetSocialData/city_anchors.json', 'wb'))

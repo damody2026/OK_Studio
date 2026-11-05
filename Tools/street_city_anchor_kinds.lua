@@ -17,7 +17,7 @@ local BY_NAME = {
   wedding_chapel = { 'wedding', 'selfie', 'gift', 'confess', 'meet' }, ultrasound_cart = { 'ultrasound' },
   vending = { 'lean' }, fishing_spot = { 'seat_ground' }, pond = { 'stand_pair' },
   poolside = { 'seat_ground', 'lap_pillow' }, swim = { 'h_pool' }, swan_boat = { 'ride_pair', 'h_boat' }, rowing_boat = { 'ride_pair', 'h_boat' }, dock = { 'stand_pair' },
-  telescope = { 'stargaze', 'view_night' }, fence = { 'h_fence', 'lean', 'stand_pair' }, rink = { 'stand_pair' }, court = { 'stand_pair' }, bleacher = { 'seat_pair' },
+  telescope = { 'stargaze', 'view_night' }, fence = { 'h_fence', 'lean', 'stand_pair' }, rink = { 'stand_pair' }, court = { 'stand_pair', 'h_net' }, bleacher = { 'seat_pair' }, crib = { 'crib' }, wedding_aisle = { 'wedding', 'selfie' },
 }
 function M.base(name) return (name:gsub('[%d_]*$', '')) end
 local ZONES = { 'women_', 'men_', 'shoes_', 'accessory_' }
@@ -36,7 +36,8 @@ function M.classify(a, ctx)
   end
   for _, k in ipairs(BY_NAME[b] or {}) do add(out, seen, k) end
   if a.name:match('^bed') and not a.name:match('^bed_') then add(out, seen, 'lie') end
-  if ctx.place == 'infirmary' and b:match('^bed') then add(out, seen, 'infirmary_bed') end
+  if (ctx.place == 'infirmary' or ctx.place:match('^clinic_')) and (b:match('^bed') or b:match('^rest')) then add(out, seen, 'infirmary_bed') end
+  if ctx.place == 'tr' or ctx.place == 'station' then add(out, seen, 'station') end
   if b == 'shelf' and (ctx.place == 'library' or ctx.place == 'bookstore') then add(out, seen, 'h_bookshelf') end
   local sk = a.seat_kind
   if sk then
@@ -47,14 +48,14 @@ function M.classify(a, ctx)
     end
     if sk == 'picnic_table' then add(out, seen, 'picnic') end
     if sk == 'gazebo' or sk == 'bus_shelter' or sk == 'pergola' then add(out, seen, 'shelter'); tags[#tags + 1] = 'sheltered' end
-    if sk == 'bus_shelter' then add(out, seen, 'bus_stop') end
+    if sk == 'bus_shelter' then add(out, seen, 'bus_stop'); add(out, seen, 'station') end
     if sk == 'beach_lounger' or sk == 'lounger' then add(out, seen, 'lie') end
     if sk == 'stand' then add(out, seen, 'seat_pair'); add(out, seen, 'fireworks') end
   end
   local private = ctx.privacy >= 2
   if seen.seat and private then add(out, seen, 'h_chair') end
   if (seen.seat_pair or seen.tv_sofa) and ctx.privacy >= 1 and not ctx.outdoor then add(out, seen, 'h_sofa') end
-  if seen.seat_pair and ctx.outdoor and ctx.privacy >= 1 then add(out, seen, 'h_bench') end
+  if sk == 'bench' and ctx.outdoor and (ctx.privacy >= 1 or ctx.place ~= 'public') then add(out, seen, 'h_bench') end
   if seen.desk_study and ctx.privacy >= 1 then add(out, seen, 'h_desk') end
   if seen.lie and private then add(out, seen, 'lie_pair'); add(out, seen, 'h_floor'); add(out, seen, 'h_group') end
   if seen.empty_class then add(out, seen, 'h_desk'); add(out, seen, 'h_chair') end

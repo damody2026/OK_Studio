@@ -70,9 +70,9 @@ return function(ctx)
         local e = toward(a.door, c, 70); put('entry', e, yaw_to(a.door, c), { 'entry', 'shoe_change' }, { area = a, place = a.id, outdoor = false })
         put('wall', toward(a.door, c, 110), yaw_to(c, a.door), { 'h_wall', 'wall_pin', 'kiss' }, { area = a, place = a.id, outdoor = false, privacy = math.max(a.privacy or 0, 1) })
       end
-      -- no real balconies in the map: the window side of the room, the wall across from the door
+      -- the window side of the room, the wall across from the door; balcony rows come from the real slabs (room anchors)
       if a.type == 'apartment' or a.type == 'suite' or a.type == 'deluxe' or a.type == 'executive' then
-        put('window', toward(c, a.door, -(math.max(a.max[1] - a.min[1], a.max[2] - a.min[2]) / 2 - 90)), yaw_to(a.door, c), { 'balcony' }, { area = a, place = a.id, outdoor = false, tags = { 'window' } })
+        put('window', toward(c, a.door, -(math.max(a.max[1] - a.min[1], a.max[2] - a.min[2]) / 2 - 90)), yaw_to(a.door, c), { 'view_night' }, { area = a, place = a.id, outdoor = false, tags = { 'window' } })
       end
       local name = a.name or ''
       if name:find('員工', 1, true) then put('staff', c, 0, { 'staff_room', 'closet', 'changing' }, { area = a, outdoor = false }) end
@@ -103,11 +103,14 @@ return function(ctx)
   end
   -- single fixtures from the scene install
   local keys = {}; for k in pairs(ctx.items or {}) do keys[#keys + 1] = k end; table.sort(keys)
+  local areas = {}; for _, a in ipairs(ctx.area) do if a.id then areas[a.id] = a end end
   for _, k in ipairs(keys) do local it = ctx.items[k]
     if it.place == 'fixtures' then
-      local kind = it.anchor:match('^mailbox') and 'mailbox' or it.anchor:match('^crib') and 'crib'
-      if kind then put(kind, it.pos, it.yaw, { kind }, { outdoor = kind == 'mailbox', place = kind == 'crib' and 'clinic_gyn' or nil }) end
+      local kind = it.anchor:match('^mailbox') and 'mailbox' or it.anchor:match('^crib') and 'crib' or it.anchor:match('^ultrasound') and 'ultrasound'
+      if kind then put(kind, it.pos, it.yaw, { kind }, { outdoor = kind == 'mailbox', place = kind ~= 'mailbox' and 'clinic_gyn' or nil }) end
     end
+    -- real balconies (round 3): rows of their room, standing on the slab
+    if it.anchor == 'balcony' then put('balcony', it.pos, it.yaw, { 'balcony', 'view_night', 'stand_pair' }, { area = areas[it.place], place = it.place, outdoor = true, tags = { 'balcony' } }) end
     -- the school changing booths belong to their building, not to a game place
     local b = it.place:match('^fixtures_changing_(%w+)_')
     if b then put('changing', it.pos, it.yaw, { 'changing' }, { building = b, outdoor = false }) end
