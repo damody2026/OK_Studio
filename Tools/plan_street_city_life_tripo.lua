@@ -104,6 +104,10 @@ local L = {
   { 'ultrasound_cart', 'medical ultrasound machine cart with a monitor, keyboard and probe holder on wheels', { 0.6, 0.7, 1.5 }, 2500, 'clinic', 'clinic_gyn', 2, 1, 5 },
   { 'shoe_lockers', 'japanese school entrance shoe locker cabinet, grey steel, grid of small open compartments with indoor shoes', { 2.0, 0.4, 1.8 }, 2500, 'school', 'campus', 12, 1, 5 },
   { 'swan_boat', 'white swan shaped two seat pedal boat with a long curved neck, for a park lake', { 2.6, 1.5, 1.8 }, 3000, 'water', 'boat', 4, 1, 3 },
+  { 'futon_set', 'japanese futon bedding laid flat on the floor, thick white mattress with a folded floral quilt and a small pillow', { 2.0, 1.0, 0.25 }, 3000, 'inn', 'minshuku', 8, 1, 6 },
+  { 'chabudai', 'low round japanese wooden tea table with short legs and a small teapot and two cups on it', { 0.9, 0.9, 0.4 }, 2500, 'inn', 'minshuku', 4, 1, 6 },
+  { 'zabuton', 'square japanese floor cushion, indigo cloth with corner tassels, flat', { 0.6, 0.6, 0.1 }, 1000, 'inn', 'minshuku', 16, 1, 6 },
+  { 'toilet_room', 'white ceramic western toilet with a tank and a closed seat lid', { 0.45, 0.75, 0.8 }, 2000, 'inn', 'minshuku', 4, 1, 6 },
 }
 -- world-tripo-v1 keys reused as they are (planned there; generated or still to generate there)
 local reuse = { treadmill = 'gym', dumbbell_rack = 'gym', locker_bank = 'gym beach', volleyball_net = 'gym_hall',

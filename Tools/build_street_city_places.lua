@@ -480,6 +480,7 @@ local OVERRIDE = { ['aquarium:tank'] = true, ['aquarium:bench'] = true, ['lodge:
 local aq = newitems['aquarium:door']
 for _, g in ipairs(G) do
   if g.id == 'aquarium' and aq then g.building = aq.building; g.name = aq.name or '水族館（S28 改建）'; g.door = aq.pos; g.rooms = aq.rooms; g.note = nil end
+  if g.id == 'minshuku' and newitems['minshuku:door'] then local m = newitems['minshuku:door']; g.building = nil; g.name = m.name; g.door = m.pos; g.rooms = m.rooms end
   local have = {}; local an = {}
   for _, a in pairs(g.anchors) do if a then have[a.name] = true; an[#an + 1] = a end end
   for _, name in ipairs(wants[g.id] or {}) do
@@ -1136,29 +1137,37 @@ do
       end
     end end
     print('anchors moved to their floors', moved)
-    -- minshuku: S18 became the motel building, its floors are at 1206 / 1646 / 2086 and the west part of the old rooms is the
-    -- forecourt now. Anchors with no real floor under them go to the nearest walkable cell of their storey
-    if sites and sites.minshuku then
-      local levels = { 1206, 1646, 2086 }; local used, n = {}, 0
-      local function cell_near(lv, x, y, z)
-        local best, bd
-        for i, c in ipairs(sites.minshuku[tostring(lv)] or {}) do
-          if not used[lv .. ':' .. i] then local d = (c[1] - x) ^ 2 + (c[2] - y) ^ 2 + ((c[3] - z) * 3) ^ 2; if not bd or d < bd then best, bd = i, d end end
-        end
-        return best, bd
+    -- minshuku = the inn on the lawn (Tools/build_street_city_minshuku.lua): only its own rows stay, and S18 keeps its motel suites
+    -- without the rooms that were laid over its corridors and carport
+    local inn = newitems['minshuku:door']
+    if inn then
+      local x0, y0, x1, y1 = 1e9, 1e9, -1e9, -1e9
+      for _, m in ipairs(inn.rooms) do x0, y0, x1, y1 = math.min(x0, m.min[1]), math.min(y0, m.min[2]), math.max(x1, m.max[1]), math.max(y1, m.max[2]) end
+      local CORRIDOR = { ['s18-f01'] = true, ['s18-f02'] = true, ['s18-f03'] = true, ['s18-0201'] = true, ['s18-0301'] = true }
+      local n = 0
+      for i = #rows, 1, -1 do local r = rows[i]
+        local away = r.pos[1] < x0 - 300 or r.pos[1] > x1 + 300 or r.pos[2] < y0 - 300 or r.pos[2] > y1 + 300
+        if CORRIDOR[r.place] or (r.place == 'minshuku' and away) then table.remove(rows, i); n = n + 1 elseif r.place == 'minshuku' then r.floor = 1 end
       end
-      for _, r in ipairs(rows) do if r.place == 'minshuku' then
-        local lv = r.pos[3] < 1400 and 1206 or r.pos[3] < 1800 and 1646 or 2086
-        local i, d = cell_near(lv, r.pos[1], r.pos[2], r.pos[3])
-        if i and d > 70 ^ 2 then
-          local c = sites.minshuku[tostring(lv)][i]; used[lv .. ':' .. i] = true
-          if r.seat_pos then r.seat_pos = { c[1], c[2], c[3] + 45 } end
-          r.pos[1], r.pos[2], r.pos[3] = c[1], c[2], c[3]; n = n + 1
+      -- the names the inn activities and the helper job ask for (rules/activities, catalog)
+      for _, r in ipairs(rows) do if r.id == 'minshuku.futon' then r.id, r.name = 'minshuku.bed1_0', 'bed1_0' elseif r.id == 'minshuku.zabuton' then r.id, r.name = 'minshuku.seat', 'seat' end end
+      print('minshuku rows off S18', n)
+    end
+    -- spots with no free floor next to them (round6-sites.json), and laundromat machines the park's radius swept in: the
+    -- machines go to the shop around them, the one stacked on top of another goes
+    do
+      local GONE = {}
+      for _, id in ipairs({ 'beach_lounger_69.beach_lounger', 'public.blossom13', 's90-f02.aisle1_0', 's80-f02.counter2_0', 'building_s83.dryer2', 's84-f01.counter0_0', 's86-f01.counter0_0', 's26-f02.aisle1_0', 's43-f02.aisle1_0', 's34-f02.counter2_0', 's48-f01.counter0_0', 'park.dryer6', 'park.dryer5', 'building_s83.dryer', 's39-f01.counter0_0' }) do GONE[id] = true end
+      local n, moved = 0, 0
+      for i = #rows, 1, -1 do local r = rows[i]; local wash = r.place == 'park' and (r.name:match('^dryer') or r.name:match('^washer'))
+        if GONE[r.id] or (wash and r.pos[3] > 1250) then table.remove(rows, i); n = n + 1
+        elseif wash then
+          local best, bd
+          for _, q in ipairs(rows) do if q.place:match('^s%d+%-f01$') then local d = (q.pos[1] - r.pos[1]) ^ 2 + (q.pos[2] - r.pos[2]) ^ 2; if not bd or d < bd then best, bd = q, d end end end
+          if best and bd < 900 ^ 2 then r.place, r.id, r.privacy, r.outdoor = best.place, best.place .. '.' .. r.name, best.privacy, best.outdoor; moved = moved + 1 else table.remove(rows, i); n = n + 1 end
         end
-        for k, v in ipairs(levels) do if v == lv then r.floor = k end end
-      end end
-      for _, g in ipairs(GAME_PLACES) do if g.id == 'minshuku' then for k, room in ipairs(g.rooms) do room.min[3], room.max[3] = levels[k] - 30, levels[k] + 410 end end end
-      print('minshuku anchors moved', n)
+      end
+      print('spots removed', n, 'laundry back in its shop', moved)
     end
   end
   -- seats whose hip point was only estimated: the surface the measurement found; the rest stay listed in seat-measured.json

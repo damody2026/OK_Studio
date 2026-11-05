@@ -1986,3 +1986,6 @@
 - 2026-11-05 c-street-city 驗收讓位後 `--from-cook` 失敗：讓位發生在稽核之前，chain 卻一律帶 `--from-cook`。修正：看 acceptance log 有 `== cook` 才接續。
 - 2026-11-05 c-street-city 貼地修正把上層錨點貼到一樓：沒限制往下幾層，`s18-0301.entry` 掉到 z 1206，`cargo test anchor` 的樓層檢查才抓到。修正：最多往下一層，超過就找同高度 4.8 m 內的地板。
 - 2026-11-05 c-street-city 貼地後沒檢查人站不站得下：只確認腳下有地板，1492 個座標裡約 800 個貼著牆或被物件擋住，是 c-conquest 要求抽查才發現。修正：用人形碰撞盒檢查，擋到的移到 1.5 m 內的空位。
+- 2026-11-05 c-street-city 打包等待永遠不結束：組 chain51 時用 Python 文字模式讀寫腳本，`tr -d` 引號裡的 CR 被轉成 LF，PowerShell 輸出的 `0\r` 比不上 `"0"`，鏈空等兩小時，是協調者查出來的；我當時只查了條件範圍，沒查比對本身。第一次修正只確認 bytes 替換有寫入、沒實跑函式，空等到協調者再查出來；重點是改完要實跑 `ubt | od -c` 確認只有 `0`。修正：所有 chain 的 `tr -d` 改成 `'[:space:]'`，不放控制字元，實跑確認後從 acceptance 接續。
+- 2026-11-05 c-street-city 民宿刪掉舊錨點時連活動要用的名稱一起刪：`inn_tea`、`sleep_inn`、`inn_helper` 要 `minshuku.seat`、`minshuku.bed1_0`，`cargo test anchor` 才抓到。修正：第一張棉被和第一個坐墊沿用這兩個名稱。
+- 2026-11-05 c-street-city 移舊打包到 F 槽用 Git Bash `mv`：MSYS 把 `StreetSocialCity` 和 `StreetSocialCity.exe` 當成同名，三個都只複製一部分就失敗，鏈也在空間不足時先啟動。修正：改用 robocopy，確認剩餘空間後才重啟鏈。
