@@ -345,6 +345,8 @@
 
 `KK_PairNative` 的 Rust 解算約 13 ms 沒有動，是雙人循環剩下最大的一塊。
 
+場景後段塗料累積後會再變慢：`EGalRound8` 整輪走查的最後 FPS 掉到 5～11（`hLate8.utrace`，每幀 83 ms）。其中 `OK_PaintTick` 50 ms，含 `OK_PaintStep` 23 ms（固定 120 Hz，幀越長每幀步數越多，這次每幀 10 步）、`OK_PaintCoating` 11 ms、貼圖上傳約 10 ms。當時別組正在編譯，CPU 96%，數字偏高，安靜機器的值沒有量。
+
 ## 實作順序
 
 1. 第 7／10、11、14 項：只需要確認和顯示。
