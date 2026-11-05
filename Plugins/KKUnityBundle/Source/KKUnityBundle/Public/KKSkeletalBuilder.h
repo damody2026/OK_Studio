@@ -22,6 +22,8 @@ USkeletalMesh* OKBuildSkeletalMesh(FOkSession& Session, const OkMeshView& View, 
 struct FOKSkeletalMeshCacheStats { uint64 Hits=0; uint64 Misses=0; int32 Entries=0; };
 FOKSkeletalMeshCacheStats KKUNITYBUNDLE_API OKSkeletalMeshCacheStats();
 void KKUNITYBUNDLE_API OKClearSkeletalMeshCache();
+// The morph that stretches her tongue past its length, beside each of its own.
+inline FName OKTongueTipMorph(FName Morph){return FName(Morph,7777);}
 void OKApplySkelPose(UPoseableMeshComponent* Comp, FOkSession& Session);
 void KKUNITYBUNDLE_API OKBuildSkelPose(FOkSession& Session,TArray<FTransform>& Out);
 void KKUNITYBUNDLE_API OKApplySkelPose(UPoseableMeshComponent* Comp,const TArray<FTransform>& Pose);

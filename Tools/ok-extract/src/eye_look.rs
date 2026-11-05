@@ -31,7 +31,7 @@ mod tests {
             let trace:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(&path).unwrap()).unwrap();
             let c:Config=serde_json::from_value(trace["config"].clone()).expect("complete native config");
             let mut runtime=Runtime{reference:halves(&trace["reference"]),up:halves(&trace["up"]),original:halves(&trace["original"]),angles:[[0.;2];2],
-                dir_up:halves(&trace["up"]),fixed:halves(&trace["original"]),rates:[0.;3],target:[0.;3]};
+                dir_up:halves(&trace["up"]),fixed:halves(&trace["original"]),rates:[0.;3],target:[0.;3],turned:[0.;2],following:false};
             assert_eq!(trace["weighted_eye_slots"].as_i64(),Some(0),"native mesh binding changed: {}",path.display());
             let native_frames=trace["frames"].as_array().expect("nonempty native frames");assert_eq!(native_frames.len(),144);
             for (frame,f) in native_frames.iter().enumerate() {
@@ -107,6 +107,10 @@ pub(crate) struct Basis {pub root:V3,pub rotation:Quat,pub center:Mat4,pub cente
 pub(crate) struct Runtime {
     pub reference:[V3;2],pub up:[V3;2],pub original:[Quat;2],pub angles:[[f32;2];2],
     pub dir_up:[V3;2],pub fixed:[Quat;2],pub rates:[f32;3],pub target:V3,
+    /// Degrees from her face to the target, from between her eyes (across as the rates go, then up): what the unlimited
+    /// look draws (`look`). Not `angles`: the pattern's corrected targets put a near camera 35 degrees to the side past 50
+    /// (2026-11-04). `following` while a pattern has it follow a target.
+    pub turned:[f32;2],pub following:bool,
 }
 /// The eyes past the source's limits (user 2026-11-03: "解除眼睛的限制"; `ok_set_eye_look_unlimited`, on by default):
 /// the look keeps following a target past the pattern's angles instead of turning ahead, the angles are not held to
@@ -121,6 +125,12 @@ pub fn unlimited() -> bool {UNLIMITED.load(std::sync::atomic::Ordering::Relaxed)
 pub fn set_most(most: f32) {if most.is_finite()&&most>=1. {MOST_BITS.store(most.to_bits(),std::sync::atomic::Ordering::Relaxed);}}
 /// The most rate the eyes take: 1 with the source's limits, `set_most` without them.
 pub fn most() -> f32 {if unlimited() {f32::from_bits(MOST_BITS.load(std::sync::atomic::Ordering::Relaxed))}else{1.}}
+/// Of the width and height of her eye's mesh, how far the iris goes for a look straight to the side and up (sin 90), and
+/// the most angle it takes: the same part of every eye. As rates the iris went a set distance on the texture, whatever
+/// the size of her iris and her eye (2026-11-04, 100 cards: 15 to 55 degrees for one 35 degree turn). The mesh is a third
+/// wider than the eye seen.
+const LOOK_REACH:[f32;2]=[0.315,0.42];
+const LOOK_MOST:f32=50.;
 fn clamp(x:f32,a:f32,b:f32)->f32 {if x<a {a}else if x>b {b}else{x}}
 fn lerp(a:f32,b:f32,t:f32)->f32 {a+(b-a)*clamp(t,0.,1.)}
 fn inverse(a:f32,b:f32,x:f32)->f32 {if a==b {0.}else{clamp((x-a)/(b-a),0.,1.)}}
@@ -161,7 +171,13 @@ impl Runtime {
     pub fn new(c:&Config,rotation:Quat,parents:[Quat;2],original:[Quat;2])->Self {
         let reference=parents.map(|q|qrot(qinv(q),qrot(rotation,vnorm(c.look))));
         let up=parents.map(|q|qrot(qinv(q),qrot(rotation,vnorm(c.up))));
-        Self{reference,up,original,angles:[[0.;2];2],dir_up:up,fixed:original,rates:[0.;3],target:[0.;3]}
+        Self{reference,up,original,angles:[[0.;2];2],dir_up:up,fixed:original,rates:[0.;3],target:[0.;3],turned:[0.;2],following:false}
+    }
+    /// Where the unlimited look puts the irises, left and right across and up, as parts of her eye (IrisRuntime::st_look).
+    pub fn look(&self)->Option<[f32;3]> {
+        if !self.following||!unlimited() {return None;}
+        let part=|i:usize|clamp(self.turned[i],-LOOK_MOST,LOOK_MOST).to_radians().sin()*LOOK_REACH[i];
+        Some([part(0),part(0),part(1)])
     }
     pub fn init_from_skeleton(h:&Skeleton,c:&Config)->Option<Init> {
         let mut parents=[IDENTITY;2];let mut original=[IDENTITY;2];
@@ -178,6 +194,7 @@ impl Runtime {
         if !dt.is_finite()||dt<0.||target.iter().any(|v|!v.is_finite()) {return false;}
         if !enabled||dt==0. {return true;}
         let s=p.values;let mut kind=p.kind;
+        self.following=kind==1||kind==3||kind==4;
         if kind!=0 {
             let mut v=vsub(target,b.root);
             if kind!=1&&vlen(v)<s[7] {v=vmul(vnorm(v),s[7]);target=vadd(b.root,v);}
@@ -193,6 +210,13 @@ impl Runtime {
                 let horizontal=vnorm(vcross(vnorm(vcross([0.,1.,0.],normal)),[0.,1.,0.]));
                 let local_rotation=qmul(qinv(b.center_rotation),qlook_rotation(horizontal,[0.,1.,0.]));
                 for i in 0..2 {targets[i]=vadd(corrected,vector(&b.center,qrot(local_rotation,[if i==0 {-c.separation}else{c.separation},0.,0.])));}
+            }
+            {
+                let middle=vmul(vadd(b.positions[0],b.positions[1]),0.5);
+                let dir=qrot(qinv(b.rotation),vnorm(vsub(target,middle)));let (look,up)=(vnorm(c.look),vnorm(c.up));
+                let (h,v)=(around(look,dir,up),around(vsub(dir,vproject(dir,up)),dir,vcross(up,dir)));
+                let plain=[h*sign(s[1])*sign(s[4]-s[3]),-v*sign(s[1])];
+                self.turned=[lerp(self.turned[0],plain[0],dt*s[8]),lerp(self.turned[1],plain[1],dt*s[8])];
             }
             let mut shared=-1.;
             for i in 0..2 {

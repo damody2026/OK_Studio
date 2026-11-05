@@ -50,6 +50,8 @@ public:
     // bWithAccessories: the coordinate card's accessories too (else only its clothes: her accessories, hair made of them
     // among them, stay, as the maker loads one with accessories unticked).
     bool ChangeOutfit(int32 Outfit,const FString& Coordinate=FString(),bool bWithAccessories=false);
+    // The card she was opened from and its root, for what reads it again.
+    void OpenedSource(FString& Root,FString& Card) const{Root=OpenedRoot();Card=OpenedFemaleCard();}
     bool IsChangingOutfit() const {return OutfitChanging||SwappingFemale!=nullptr;}
     // A garment's next state as the original cycles it (on, half off where it has one, off), from the card she is opened
     // from; ChangeClothesStates opens her again in states a garment's half off needs (visibility alone cannot show it).

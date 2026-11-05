@@ -50,7 +50,7 @@ fn installed_body_articulation_sources() {
             "rebound_dynamic_components":rebound.len(),"secondary_bone_changes":moved,
             "morph_names":mesh.blend_shapes.iter().map(|(n,_)|n).collect::<Vec<_>>() }));
     }
-    let root=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/BodyArticulation347");
+    let root=Path::new(crate::test_support::project_path!("Saved/Tests/BodyArticulation347"));
     std::fs::create_dir_all(root).unwrap();
     std::fs::write(root.join("Sources.json"),serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
     eprintln!("{}",serde_json::to_string(&rows).unwrap());
@@ -73,7 +73,7 @@ fn installed_body_components_survive_session_and_cache() {
     let output=serde_json::json!({"passed":true,"dynamic_components":session.clothes_dynamics.len(),
         "cached_dynamic_components":cached.clothes_dynamics.len(),"frames":61,"nonfinite":0,
         "scope":"live session component retention and cache; not paired-contact native parity"});
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Tests/BodyArticulation347/LiveComponents.json",serde_json::to_vec_pretty(&output).unwrap()).unwrap();
+    std::fs::write(crate::test_support::project_path!("Saved/Tests/BodyArticulation347/LiveComponents.json"),serde_json::to_vec_pretty(&output).unwrap()).unwrap();
 }
 
 #[test]
@@ -98,6 +98,6 @@ fn body_morph_follows_live_palette() {
         for c in 0..3 {maximum=maximum.max((b[c]-expected[c]).abs());positive=positive.max(a[c].abs());}
     }
     assert!(positive>0.0001);assert!(maximum<1e-5,"live palette error {maximum}");
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Tests/BodyArticulation347/PaletteControl.json",
+    std::fs::write(crate::test_support::project_path!("Saved/Tests/BodyArticulation347/PaletteControl.json"),
         serde_json::to_vec_pretty(&serde_json::json!({"passed":true,"max_error":maximum,"positive_displacement":positive})).unwrap()).unwrap();
 }

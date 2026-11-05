@@ -841,9 +841,9 @@ mod studio_item_timing {
     #[test]
     #[ignore = "reads the OK base library and an OK card"]
     fn model_prefab_session_after_ok_card_is_fast() {
-        let lib = std::path::PathBuf::from("C:/portable/OpenKoikatsu/Content/IndependentResources/base_v1");
+        let lib = std::path::PathBuf::from(crate::test_support::project_path!("Content/IndependentResources/base_v1"));
         std::env::set_var("OK_BASE_LIBRARY", &lib);
-        let card = std::path::Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C002.png");
+        let card = std::path::Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C002.png"));
         let t = std::time::Instant::now();
         let s = crate::session::open(&crate::oklib::root_for_card(std::path::Path::new(""), Some(card)), Some(card), 0).unwrap();
         eprintln!("TIMING card open {:.1}s parts={}", t.elapsed().as_secs_f64(), s.parts.len());

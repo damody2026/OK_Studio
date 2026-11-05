@@ -983,9 +983,9 @@ mod tests {
     #[test]
     #[ignore="installed portable card export/cache determinism; owns process environment"]
     fn real_card_export_order_survives_independent_hashmaps_and_cache() {
-        std::env::set_var("OK_BUILTIN_RESOURCES","C:/portable/OpenKoikatsu/Content/IndependentResources/v1");
+        std::env::set_var("OK_BUILTIN_RESOURCES",crate::test_support::project_path!("Content/IndependentResources/v1"));
         for key in ["OK_GPU_SKIN","OK_SKELMESH","OK_NOPOSE","OK_UE_ANIM","OK_HEAD_GPUSKIN"]{std::env::set_var(key,"1");}
-        let path=PathBuf::from("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C000.png");
+        let path=PathBuf::from(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png"));
         let source=crate::portable::load_outfit(&path,0).unwrap();let bytes=source.to_cache_bytes().unwrap();let expected=build(&source);
         let identity=|e:&SkelExport|e.bones.iter().map(|b|(b.name.clone(),b.parent,b.rest_pos,b.rest_rot,b.rest_scl,b.pose_pos,b.pose_rot,b.pose_scl,b.pose_locked)).collect::<Vec<_>>();
         for _ in 0..4 {let restored=OkSession::from_cache_bytes(&bytes).unwrap();let actual=build(&restored);
@@ -1001,9 +1001,9 @@ mod tests {
     #[test]
     #[ignore="installed APNG morph roundtrip; owns process environment"]
     fn reader_gpu_morph_roundtrip_is_immutable() {
-        std::env::set_var("OK_BUILTIN_RESOURCES","C:/portable/OpenKoikatsu/Content/IndependentResources/v1");
+        std::env::set_var("OK_BUILTIN_RESOURCES",crate::test_support::project_path!("Content/IndependentResources/v1"));
         std::env::set_var("OK_GPU_SKIN","1");
-        let path=PathBuf::from("C:/portable/OpenKoikatsu/output/CrowdAPNG/C002.png");
+        let path=PathBuf::from(crate::test_support::project_path!("output/CrowdAPNG/C002.png"));
         let mut session=crate::portable::load_outfit(&path,0).unwrap();
         let before=session.parts.iter().map(|p|p.morph_dxyz.clone()).collect::<Vec<_>>();
         let first=session.ensure_skel_export().part_morphs.clone();
@@ -1022,11 +1022,11 @@ mod tests {
     #[test]
     #[ignore="installed portable GPU palette oracle; owns process environment"]
     fn reader_export_palette_matches_cpu() {
-        std::env::set_var("OK_BUILTIN_RESOURCES","C:/portable/OpenKoikatsu/Content/IndependentResources/v1");
+        std::env::set_var("OK_BUILTIN_RESOURCES",crate::test_support::project_path!("Content/IndependentResources/v1"));
         for key in ["OK_GPU_SKIN","OK_SKELMESH","OK_NOPOSE","OK_UE_ANIM","OK_HEAD_GPUSKIN"]{std::env::set_var(key,"1");}
         std::env::set_var("OK_CLOTHES_STATES","0,0,0,0,0,0,0,0,0");let mut rows=Vec::new();
         for (card,outfit) in [(0,0),(1,0),(2,0),(2,4),(50,3)] {
-            let path=PathBuf::from(format!("C:/portable/OpenKoikatsu/output/CrowdAPNG/C{card:03}.png"));
+            let path=PathBuf::from(format!("{}/../../output/CrowdAPNG/C{card:03}.png",env!("CARGO_MANIFEST_DIR")));
             let mut session=crate::portable::load_outfit(&path,outfit).unwrap();session.ensure_skel_export();
             let body=session.shape_body.clone();let face=session.shape_face.clone();session.apply_shape(&body,&face);
             let ex=build(&session);let mut rw=Vec::new();let mut pw=Vec::new();
@@ -1037,7 +1037,7 @@ mod tests {
                 let error=max_err(&gpu,&p.positions);rows.push(serde_json::json!({"card":card,"outfit":outfit,"part":p.name,"kind":p.skel_kind,"max_error_m":error}));
             }
         }
-        std::fs::write("C:/portable/OpenKoikatsu/Saved/Tests/Reader292ExportPalette.json",serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
+        std::fs::write(crate::test_support::project_path!("Saved/Tests/Reader292ExportPalette.json"),serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
     }
 
     #[test]

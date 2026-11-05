@@ -1412,8 +1412,8 @@ static UMaterialInterface* MakePartMaterial(UTexture2D* Tex, const FString& Blen
 			}
 			auto* Color = NewObject<UMaterialExpressionConstant3Vector>(Mat);
 			Color->Constant = Shadow->EyeColor; Mat->GetExpressionCollection().AddExpression(Color); Add(TEXT("Color"), Color);
-			auto* Enabled = NewObject<UMaterialExpressionConstant>(Mat);
-			Enabled->R = Shadow->EyeHighlight; Mat->GetExpressionCollection().AddExpression(Enabled); Add(TEXT("Enabled"), Enabled);
+			auto* Enabled = NewObject<UMaterialExpressionScalarParameter>(Mat);
+			Enabled->ParameterName = TEXT("_isHighLight"); Enabled->DefaultValue = Shadow->EyeHighlight; Mat->GetExpressionCollection().AddExpression(Enabled); Add(TEXT("Enabled"), Enabled);
 			for (int32 Layer = 0; Layer < 2; ++Layer) {
 				auto* Col = NewObject<UMaterialExpressionConstant4Vector>(Mat);
 				Col->Constant = Shadow->EyeColors[Layer]; Mat->GetExpressionCollection().AddExpression(Col);
@@ -8768,6 +8768,19 @@ void AKKPreviewActor::SetMouthOpenFloor(float Open01)
 	ApplyMouth();
 }
 
+void AKKPreviewActor::SetTongueLength(float Length)
+{
+	if (FMath::IsNearlyEqual(Length, TongueLength, .001f)) return;
+	TongueLength = Length;
+	ApplyMouth();
+}
+void AKKPreviewActor::SetMouthOpenHeld(float Open01)
+{
+	if (FMath::IsNearlyEqual(Open01, MouthOpenHeld, .01f)) return;
+	MouthOpenHeld = Open01;
+	ApplyMouth();
+}
+
 void AKKPreviewActor::SetMouthPattern(int32 Pattern, bool bBlend)
 {
 	MouthPattern = FMath::Clamp(Pattern, 0, GetMouthPatternCount() - 1);
@@ -9129,6 +9142,7 @@ void AKKPreviewActor::ForceBlink()
 
 float AKKPreviewActor::EffectiveFaceRate(int32 Control) const
 {
+    if(Control==0&&MouthOpenHeld>=0.f) return MouthOpenHeld;
     if(Control==0) return FMath::Max(MouthOpenFloor,bSpeechActive&&bSpeechDrivesMouth?FMath::Lerp(SpeechOpenMin,1.f,SpeechOpen):MouthOpen01);
     const int32 Index=Control-1;
     if(bManualFaceControl[Index]) return FaceOpen01[Index];
@@ -9151,7 +9165,7 @@ float AKKPreviewActor::EffectiveFaceRate(int32 Control) const
 
 // The iris tiling's axes against the mesh's coordinates, as measured in H (2026-11-03): both the same way (U mirrored
 // made her eyes look apart, each out to its own side, when the look turned them in; user 2026-11-03).
-static TAutoConsoleVariable<int32> CVarOKEyeGazeSTFlipV(TEXT("ok.EyeGazeSTFlipV"),0,TEXT("1: an eye's gaze written to its iris tiling (_MainTex_ST) with V mirrored; 0: as the mesh's."));
+static TAutoConsoleVariable<int32> CVarOKEyeGazeSTFlipV(TEXT("ok.EyeGazeSTFlipV"),1,TEXT("1: an eye's gaze written to its iris tiling (_MainTex_ST) with V mirrored, the tiling works on the source's V and the rows on the flipped one (0 rolled her eyes up for a camera below; 2026-11-04)."));
 static TAutoConsoleVariable<int32> CVarOKEyeGazeSTFlipU(TEXT("ok.EyeGazeSTFlipU"),0,TEXT("1: an eye's gaze written to its iris tiling (_MainTex_ST) with U mirrored; 0: as the mesh's."));
 // M_ForgeEye_Flat (the shared display eye, street and H) has the gaze rows but does not move the iris by them; its
 // tiling does (2026-11-03: rows of -0.38 on V showed nothing, the tiling rolled her eyes up).
@@ -9161,6 +9175,7 @@ bool AKKPreviewActor::SetEyeGaze(float LeftHorizontal,float RightHorizontal,floa
 {
     if(!FMath::IsFinite(LeftHorizontal)||!FMath::IsFinite(RightHorizontal)||!FMath::IsFinite(Vertical)) return false;
     if(!Session.SetEyeGaze(LeftHorizontal,RightHorizontal,Vertical)) return false;
+    EyeGazeAsked[0]=LeftHorizontal;EyeGazeAsked[1]=RightHorizontal;EyeGazeAsked[2]=Vertical;
     EyeGaze[0]=FMath::Clamp(LeftHorizontal,-1.f,1.f);
     EyeGaze[1]=FMath::Clamp(RightHorizontal,-1.f,1.f);
     EyeGaze[2]=FMath::Clamp(Vertical,-1.f,1.f);
@@ -9241,6 +9256,49 @@ bool AKKPreviewActor::SetEyeGaze(float LeftHorizontal,float RightHorizontal,floa
     return true;
 }
 
+// The pupils go through the session's tiling, so SetEyeGaze draws them on each kind of eye. The highlights go on every eye
+// material her components draw with (the display swaps in its own instance), the card's values kept to come back to: the gate
+// and the layers' alphas; what a card painted into its iris goes with the iris swapped (2026-11-04, 38 of 70 reader cards
+// had them only there).
+bool AKKPreviewActor::SetPupilOffset(float X,float Y)
+{
+    return Session.SetPupilOffset(X,Y)&&SetEyeGaze(EyeGazeAsked[0],EyeGazeAsked[1],EyeGazeAsked[2]);
+}
+bool AKKPreviewActor::SetPupilStretch(float Across,float Down)
+{
+    return Session.SetPupilStretch(Across,Down)&&SetEyeGaze(EyeGazeAsked[0],EyeGazeAsked[1],EyeGazeAsked[2]);
+}
+bool AKKPreviewActor::SetIrisHsv(float Hue,float Saturation,float Value)
+{
+    EyeIrisHsv=FVector3f(Hue,Saturation,Value);
+    return SetEyeDull(EyePupilScale>0.f?EyePupilScale:1.f,bEyeHighlightHidden);
+}
+bool AKKPreviewActor::SetPupilMarks(const FOKIrisMarks& Marks)
+{
+    EyePupilMarks=Marks;
+    return SetEyeDull(EyePupilScale>0.f?EyePupilScale:1.f,bEyeHighlightHidden);
+}
+bool AKKPreviewActor::SetEyeDull(float PupilScale,bool bHideHighlight)
+{
+    if(!Session.SetPupilScale(PupilScale)) return false;
+    EyePupilScale=PupilScale;bEyeHighlightHidden=bHideHighlight;
+    const bool bDrawn=SetEyeGaze(EyeGazeAsked[0],EyeGazeAsked[1],EyeGazeAsked[2]);
+    static const TCHAR* const HighlightLayers[]={TEXT("_overcolor1"),TEXT("_overcolor2"),TEXT("_overcolor3")};
+    auto Gate=[&](UMaterialInstanceDynamic* M){if(!M)return;const FVector4f* Card=EyeHighlightBase.Find(M);
+        if(!Card){float Gated=0.f;if(!M->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("_isHighLight")),Gated))return;FVector4f Kept(Gated,0.f,0.f,0.f);
+            for(int32 I=0;I<3;++I){FLinearColor V;float A=0.f;if(M->GetVectorParameterValue(FHashedMaterialParameterInfo(HighlightLayers[I]),V))Kept[I+1]=M->GetScalarParameterValue(FHashedMaterialParameterInfo(*(FString(HighlightLayers[I])+TEXT("__A"))),A)?A:V.A;}
+            Card=&EyeHighlightBase.Add(M,Kept);
+            UTexture* Iris=nullptr;if(M->GetTextureParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex")),Iris))EyeIrisBase.Add(M,Iris);}
+        M->SetScalarParameterValue(TEXT("_isHighLight"),bHideHighlight?0.f:Card->X);
+        if(const auto* Iris=EyeIrisBase.Find(M))if(UTexture* Own=Iris->Get())M->SetTextureParameterValue(TEXT("_MainTex"),OKIrisRecolored(bHideHighlight?OKIrisWithoutHighlights(Own):Own,EyeIrisHsv.X,EyeIrisHsv.Y,EyeIrisHsv.Z,EyePupilMarks));
+        for(int32 I=0;I<3;++I){FLinearColor V;if(!M->GetVectorParameterValue(FHashedMaterialParameterInfo(HighlightLayers[I]),V))continue;V.A=bHideHighlight?0.f:(*Card)[I+1];M->SetVectorParameterValue(HighlightLayers[I],V);M->SetScalarParameterValue(*(FString(HighlightLayers[I])+TEXT("__A")),V.A);}};
+    TInlineComponentArray<UMeshComponent*> Meshes(this);
+    for(const auto& Part:Parts){if(Session.EyeMaterialSetting(Part.SessionIndex,-1)==0.f)continue;Gate(Part.GpuEyeMaterial);
+        const FName PartTags[]={*FString::Printf(TEXT("KKSessionPart_%d"),Part.SessionIndex),*FString::Printf(TEXT("KKMorphPart_%d"),Part.SessionIndex)};
+        for(UMeshComponent* Drawn:Meshes)if(Drawn&&(Drawn==Part.Comp||Drawn->ComponentHasTag(PartTags[0])||Drawn->ComponentHasTag(PartTags[1])))
+            for(int32 Slot=0;Slot<Drawn->GetNumMaterials();++Slot)Gate(Cast<UMaterialInstanceDynamic>(Drawn->GetMaterial(Slot)));}
+    return bDrawn;
+}
 bool AKKPreviewActor::SetEyeLookTarget(FVector Target,int32 Pattern,bool Enabled)
 {
     if(Target.ContainsNaN() || Pattern<0 || Pattern>=Session.EyeLookPatternCount()) return false;
@@ -9683,8 +9741,11 @@ void AKKPreviewActor::ApplyMouth()
 
         for (const FName& Aux : {Slot.MouthCornerUp, Slot.MouthCornerDown})
             if (!Aux.IsNone()) Desired.Add(Aux, 0.f);
-        const bool bCompoundMouth = !bSpeechActive && (!Slot.Patterns.IsEmpty())
-            && ((MouthWeight < 0.999f && MouthPattern > 0) || MouthCornerUp > 1.e-4f || MouthCornerDown > 1.e-4f);
+        // Held: the pattern itself goes with it, over her breathing. A keep-open pattern (SexFaces' tongue out) has no closed
+        // shape, so the open rate alone does not move it.
+        const bool bHeldMouth = MouthOpenHeld >= 0.f && MouthPattern > 0;
+        const bool bCompoundMouth = (!Slot.Patterns.IsEmpty()) && (bHeldMouth || (!bSpeechActive
+            && ((MouthWeight < 0.999f && MouthPattern > 0) || MouthCornerUp > 1.e-4f || MouthCornerDown > 1.e-4f)));
         if (bCompoundMouth)
         {
             for (const auto& Pair : Slot.Patterns)
@@ -9694,7 +9755,7 @@ void AKKPreviewActor::ApplyMouth()
             }
             const int32 MPtn = FMath::Clamp(MouthPattern, 0, Slot.Patterns.Num() - 1);
             const float MOpen = FMath::Clamp(EffectiveFaceRate(0), 0.f, 1.f);
-            const float MW = FMath::Clamp(MouthWeight, 0.f, 1.f);
+            const float MW = FMath::Clamp(bHeldMouth ? MouthOpenHeld : MouthWeight, 0.f, 1.f);
             const float CUp = FMath::Clamp(MouthCornerUp, 0.f, 1.f);
             const float CDown = FMath::Clamp(MouthCornerDown, 0.f, 1.f);
             const float CSum = FMath::Min(1.f, CUp + CDown);
@@ -9721,6 +9782,17 @@ void AKKPreviewActor::ApplyMouth()
         else
         {
             OKFbsWriteTransition(Desired, Slot.Patterns, FaceTransitions[0], EffectiveFaceRate(0));
+        }
+        // Her tongue has no bones: shorter is less of its morphs, longer their tips on top (OKTongueTipMorph; a mesh without them scales).
+        if (Slot.InsideBit & 4)
+        {
+            TArray<TPair<FName, float>> Tips;
+            for (auto& Weight : Desired)
+            {
+                if (Slot.Comp) Tips.Emplace(OKTongueTipMorph(Weight.Key), (Weight.Value - Slot.BaselineWeights.FindRef(Weight.Key)) * FMath::Max(TongueLength - 1.f, 0.f));
+                if (TongueLength < 1.f || !Slot.Comp) Weight.Value *= TongueLength;
+            }
+            for (const auto& Tip : Tips) Desired.Add(Tip.Key, Tip.Value);
         }
         if(const auto* Overrides=PartMorphWeights.Find(Slot.SessionPartIndex))
             for(const auto& Weight:*Overrides) Desired.Add(Weight.Key,Weight.Value);
@@ -11234,7 +11306,7 @@ static void OkFitCaptureRig(AKKPreviewActor* Actor, FOkCamRig& Rig,AKKPreviewAct
 	DisplayActor->GetComponents(Skinned);
 	for (USkinnedMeshComponent* Component : Skinned)
 	{
-		if (!Component->IsVisible() || !Component->GetSkinnedAsset()) { continue; }
+		if (!Component->IsVisible() || !Component->GetSkinnedAsset() || !Component->GetMeshObject()) { continue; }
 		// Runtime skin bounds include current bone palettes and active morphs.
 		// Their conservative envelopes avoid a render flush/GPU vertex readback.
 		if(Realtime){AddBox(Component->CalcBounds(Component->GetComponentTransform()).GetBox());continue;}

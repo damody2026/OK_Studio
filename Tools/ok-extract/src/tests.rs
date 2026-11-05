@@ -61,7 +61,7 @@ fn stage333_alpha_source_diagnostics() {
     for (key,value) in [("OK_GPU_SKIN","1"),("OK_SKELMESH","1"),("OK_NOPOSE","1"),("OK_UE_ANIM","1"),("OK_POSE","f_aruki_00_00"),("OK_ME_TEX_DIAG","1")] {std::env::set_var(key,value);}
     let card_path=game.join("UserData/chara/female/一拳超人战栗的龙卷.png");
     let card=crate::card::parse_card(&card_path).unwrap();
-    let out=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/ForgeAlpha333/Source");
+    let out=Path::new(crate::test_support::project_path!("Saved/Tests/ForgeAlpha333/Source"));
     std::fs::create_dir_all(out).unwrap();
     let vanilla=load_characustom_dir(&game.join("abdata/list/characustom"));
     let mods=crate::list::load_mods_catalog(&game.join("mods"));
@@ -85,7 +85,7 @@ fn stage333_alpha_source_diagnostics() {
         if p.name=="o_inner_a" {
             assert_eq!(p.shader_kind,11);
             let actual=crate::teximg::load_from_memory(p.png.as_ref().unwrap()).unwrap().into_rgba8();
-            let native=image::open("C:/portable/OpenKoikatsu/Saved/Tests/Tatsumaki333Native/Card0.json.renderer30.mat0._MainTex.png").unwrap().to_rgba8();
+            let native=image::open(crate::test_support::project_path!("Saved/Tests/Tatsumaki333Native/Card0.json.renderer30.mat0._MainTex.png")).unwrap().to_rgba8();
             assert_eq!(actual.dimensions(),native.dimensions());
             let max=actual.as_raw().iter().zip(native.as_raw()).map(|(a,b)|a.abs_diff(*b)).max().unwrap();
             assert!(max<=1,"KCOX native albedo max byte error {max}");
@@ -111,7 +111,7 @@ fn stage334_pattern_resolve_provenance() {
     assert!(!card.resolves.iter().any(|r|r.category_no==430));
     let vanilla=load_characustom_dir(&game.join("abdata/list/characustom"));
     let mods=crate::list::load_mods_catalog(&game.join("mods"));let guids=crate::mods::find_guids(&game.join("mods"),None);
-    let out=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/Resolve334Source");std::fs::create_dir_all(out).unwrap();
+    let out=Path::new(crate::test_support::project_path!("Saved/Tests/Resolve334Source"));std::fs::create_dir_all(out).unwrap();
     let entry=vanilla.get(105,card.clothes_ids[0]).unwrap();
     for label in ["original","shift","alpha","combined"] {
         let mut p=build_clothes_patterns(game,&vanilla,&mods,&card,&guids,0,0,&[],&[],0);
@@ -137,7 +137,7 @@ fn stage332_source_diagnostics() {
     use super::*;
     let game=&crate::test_support::game_path("");
     for (key,value) in [("OK_GPU_SKIN","1"),("OK_SKELMESH","1"),("OK_NOPOSE","1"),("OK_UE_ANIM","1"),("OK_POSE","f_aruki_00_00")] {std::env::set_var(key,value);}
-    let out=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/Shore332Source");std::fs::create_dir_all(out).unwrap();
+    let out=Path::new(crate::test_support::project_path!("Saved/Tests/Shore332Source"));std::fs::create_dir_all(out).unwrap();
     let session=crate::session::open(game,Some(&game.join("UserData/chara/female/kks_守岸人_abmx修复.png")),0).unwrap();
     let mut rows=Vec::new();
     for (i,p) in session.parts.iter().enumerate() {
@@ -171,7 +171,7 @@ fn native_argb_clothes_source() {
     let entry=catalog.get(109,1883).unwrap();
     let raw=crate::mods::zipmod_bundle_named(&zip,"chara/_kero/co_NailGloves_NT_01.unity3d").unwrap();
     let parsed=crate::unity::parse_bundle_ref(&raw);
-    let output=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/Clothes331ArgbSource");std::fs::create_dir_all(output).unwrap();
+    let output=Path::new(crate::test_support::project_path!("Saved/Tests/Clothes331ArgbSource"));std::fs::create_dir_all(output).unwrap();
     for name in ["cf_body_00_t","cf_body_00_mc","cf_body_00_md","cf_body_00_t_low","cf_body_00_mc_low"] {
         let gpu=parsed.texture_gpu_named(name).unwrap();
         assert_eq!(gpu.format,29);assert!(gpu.mips>=1);
@@ -218,7 +218,7 @@ fn male_clothes_source_controls() {
     use super::*;
     let game=&crate::test_support::game_path("");
     let catalog=load_characustom_dir(&game.join("abdata/list/characustom"));
-    let folder=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/Clothes331Source");std::fs::create_dir_all(folder).unwrap();
+    let folder=Path::new(crate::test_support::project_path!("Saved/Tests/Clothes331Source"));std::fs::create_dir_all(folder).unwrap();
     let mut rows=Vec::new();
     for (i,relative) in ["UserData/chara/male/KK_224305.png","DefaultData/chara/male/ill_male_01.png","DefaultData/chara/male/ill_male_02.png"].iter().enumerate() {
         assert_eq!(clothes_gpu::quality(game),Some(2),"installed profile must resolve before GPU source control");
@@ -254,7 +254,7 @@ fn male_clothes_source_controls() {
         for m in &meshes {if let Some(png)=&m.texture_png {std::fs::write(folder.join(format!("card{i}_{}.png",m.name)),png).unwrap();}}
         rows.push(serde_json::json!({"card":relative,"id":entry.id,"main":entry.main_data,"ab":entry.main_ab,"MainTex":entry.info("MainTex"),"ColorMaskTex":entry.info("ColorMaskTex"),"used_mask":used_mask,"pattern_loaded":patterns.iter().map(|p|p.png.is_some()).collect::<Vec<_>>(),"meshes":before}));
     }
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Logs/Clothes331Sources.json",serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
+    std::fs::write(crate::test_support::project_path!("Saved/Logs/Clothes331Sources.json"),serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
 }
 
 #[test]
@@ -281,7 +281,7 @@ fn installed_male_card_source_controls() {
             let meshes=parsed.meshes_for_maindata(&selected.asset).0;
             (meshes.iter().find(|m|m.name=="o_body_a").unwrap().clone(),selected.asset,selected.guid)
         }else{(mesh.clone(),"p_cm_body_00".into(),"Default.Body.Male".into())};
-        let native_path=std::path::Path::new("C:/portable/OpenKoikatsu/Saved/Tests/Male330Native").join(format!("Card{index}.json.renderers.json"));
+        let native_path=std::path::Path::new(crate::test_support::project_path!("Saved/Tests/Male330Native")).join(format!("Card{index}.json.renderers.json"));
         let native:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(&native_path).unwrap()).unwrap();
         let native_body=native.as_array().unwrap().iter().find(|r|r["path"].as_str().is_some_and(|p|p.ends_with("/o_body_a"))).unwrap();
         assert_eq!(body.positions.len(),native_body["vertexCount"].as_u64().unwrap() as usize);
@@ -290,7 +290,7 @@ fn installed_male_card_source_controls() {
         assert_eq!(body.bone_names,names,"native male renderer order");
         rows.push(serde_json::json!({"card":path,"sex":card.sex,"head_id":card.head_id,"body_guid":guid,"prefab":prefab,"source_vertices":body.positions.len(),"bone_names":body.bone_names,"uv0":body.uvs,"uv1":body.uv2,"uv2":body.uv3,"uv3":body.uv4,"colors32":body.vertex_colors,"native_body":native_body,"native_dump":native_path,"draw_material":material.name,"detail_texture":material.slot("_DetailMask"),"top_patterns":card.clothes_patterns.first().map(|p|p.iter().map(|x|serde_json::json!({"id":x.pattern,"color":x.pattern_color,"tiling":x.tiling})).collect::<Vec<_>>())}));
     }
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Logs/Male330SourceControls.json",serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
+    std::fs::write(crate::test_support::project_path!("Saved/Logs/Male330SourceControls.json"),serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
 }
 
 #[test]
@@ -1327,8 +1327,8 @@ fn ffi_null_game_root_fails() {
 
 #[test]
 fn ffi_missing_abdata_fails() {
-    let game = CString::new("C:/portable/OpenKoikatsu/Saved/no_such_game").unwrap();
-    let out = CString::new("C:/portable/OpenKoikatsu/Saved/Converted/_ffi_missing").unwrap();
+    let game = CString::new(crate::test_support::project_path!("Saved/no_such_game")).unwrap();
+    let out = CString::new(crate::test_support::project_path!("Saved/Converted/_ffi_missing")).unwrap();
     let mut err = [0u8; 256];
     let rc = ok_extract_card(
         game.as_ptr(),
@@ -1801,7 +1801,7 @@ fn extract_outfit3_for_compare() {
         return;
     }
     let out = std::path::PathBuf::from(
-        r"C:\portable\OpenKoikatsu\Saved\Converted\_user_check_o3",
+        crate::test_support::project_path!("Saved/Converted/_user_check_o3"),
     );
     let _ = std::fs::create_dir_all(&out);
     let r = crate::extract_card_outfit(&game, Some(&card), &out, 3);
@@ -1898,7 +1898,7 @@ fn probe_extract_outfits() {
         .unwrap_or_else(|| vec![4, 5, 6]);
     for outfit in outfits {
         let out = std::path::PathBuf::from(format!(
-            r"C:\portable\OpenKoikatsu\Saved\Converted\_user_check{outfit}"
+            "{}/../../Saved/Converted/_user_check{outfit}",env!("CARGO_MANIFEST_DIR")
         ));
         match crate::extract_card_outfit(&game, Some(&card), &out, outfit) {
             Ok(p) => eprintln!("EXTRACT outfit={outfit} -> {}", p.display()),
@@ -2918,7 +2918,7 @@ fn accessory_colormask_mixed_source_rows() {
                 }),
                 ..Default::default()
             }];
-            color_accessory_meshes(Path::new("C:/portable/OpenKoikatsu/Saved/Tests/MixedTextureSource"),
+            color_accessory_meshes(Path::new(crate::test_support::project_path!("Saved/Tests/MixedTextureSource")),
                 None, &ListEntry::default(), &card, "accessory0", 0, &mut meshes, &[], &[], None);
             let mut output = meshes[0].texture_png.clone().unwrap();
             // Match the render boundary's source orientation convention.
@@ -3163,7 +3163,7 @@ fn clothes_create_slot_follows_rend_normal_groups() {
 #[ignore="manual snapshot comparison requires Saved/Converted/_user_check0..6 and native outfit0..6 fixtures"]
 fn clothes_rt_matches_dump_all_outfits() {
     use std::collections::HashSet;
-    let conv = std::path::Path::new(r"C:\portable\OpenKoikatsu\Saved\Converted");
+    let conv = std::path::Path::new(crate::test_support::project_path!("Saved/Converted"));
     let dump_root = &crate::test_support::game_path(r"\mesh_dump");
     let mut n_ok = 0usize;
     let mut n_bad = 0usize;
@@ -4351,7 +4351,7 @@ fn koikano_accessory_hair_retains_mask_and_null_main_default() {
                 shader:shader.into(),tex_slots:vec![("_MainTex".into(),String::new())],
                 colors:[("_Color".into(),[0.3,0.2,0.1,1.0]),("_Color2".into(),[0.05,0.05,0.05,1.0])].into(),
                 ..Default::default()}),..Default::default()}];
-        color_accessory_meshes(Path::new("C:/portable/OpenKoikatsu/Saved/Tests/MixedTextureSource"),None,
+        color_accessory_meshes(Path::new(crate::test_support::project_path!("Saved/Tests/MixedTextureSource")),None,
             &ListEntry::default(),&card,"accessory999",0,&mut meshes,&[],&[],None);
         assert_eq!(meshes[0].color_mask_png.as_ref(),Some(&mask));
         let image=crate::teximg::load_from_memory(meshes[0].texture_png.as_ref().unwrap()).unwrap().into_rgba8();
@@ -4384,8 +4384,8 @@ fn native_hair_accessory_component_provenance() {
         let fallback=entry.extra.get("__zip").map(PathBuf::from);
         let zip=zip.map(|p|p.as_path()).or(fallback.as_deref());
         let bytes=accessory_bundle_bytes(game,zip,&entry).unwrap();
-        std::fs::create_dir_all("C:/portable/OpenKoikatsu/Saved/Tests/Hair322Sources").unwrap();
-        std::fs::write(format!("C:/portable/OpenKoikatsu/Saved/Tests/Hair322Sources/slot{slot}.unity3d"),&bytes).unwrap();
+        std::fs::create_dir_all(crate::test_support::project_path!("Saved/Tests/Hair322Sources")).unwrap();
+        std::fs::write(format!("{}/../../Saved/Tests/Hair322Sources/slot{slot}.unity3d",env!("CARGO_MANIFEST_DIR")),&bytes).unwrap();
         let hint=crate::unity::accessory_color_use(&bytes,&entry.main_data);
         let (mut meshes,_)=meshes_for_accessory_entry(game,zip,&entry,&card,0,&format!("outfit0.accessory{slot}"));
         eprintln!("SLOT {slot} prefab={} HAC={:?} hint={hint:?}",entry.main_data,card.hair_acc.get(&(0,slot as i32)));
@@ -4399,7 +4399,7 @@ fn native_hair_accessory_component_provenance() {
                 assert!(!m.hair_gloss_png.is_some(),"absent HAC must not introduce gloss");
                 let img=crate::teximg::load_from_memory(m.texture_png.as_ref().unwrap()).unwrap().into_rgba8();
                 assert!(img.pixels().all(|p|p.0==[255;4]));
-                let native=crate::gamefs::read_to_string("C:/portable/OpenKoikatsu/Saved/Tests/Hair322NativeR2/Card0.json.materials.tsv").unwrap();
+                let native=crate::gamefs::read_to_string(crate::test_support::project_path!("Saved/Tests/Hair322NativeR2/Card0.json.materials.tsv")).unwrap();
                 for (key,color) in [("_Color",a.color),("_Color2",a.color2),("_Color3",a.color3)] {
                     let line=native.lines().find(|l|l.starts_with("color\t") && l.contains(&format!("/ca_slot{slot}/")) && l.contains(&format!("\t{key}\t"))).unwrap();
                     let numbers:Vec<f32>=line.split('\t').last().unwrap().trim_start_matches("RGBA").trim_matches(['(',')']).split(',').map(|v|v.trim().parse().unwrap()).collect();
@@ -4438,7 +4438,7 @@ fn main_item_plus_me_mask_replaces_source_sampling() {
         }),
         ..Default::default()
     }];
-    color_accessory_meshes(Path::new("C:/portable/OpenKoikatsu/Saved/Tests/MixedTextureSource"),
+    color_accessory_meshes(Path::new(crate::test_support::project_path!("Saved/Tests/MixedTextureSource")),
         None, &ListEntry::default(), &card, "accessory0", 0, &mut meshes, &[], &[], None);
     assert_eq!(meshes[0].color_mask_png.as_deref(), Some(replacement.as_slice()));
     // MaterialAPI preserves the replaced sampler's wrap, while the
@@ -4862,7 +4862,7 @@ fn real_card_body_keeps_texture_detail() {
     if !game.join("abdata").ok_is_dir() || !card.ok_exists() {
         return;
     }
-    let out = PathBuf::from(r"C:\portable\OpenKoikatsu\Saved\Converted\_user_check");
+    let out = PathBuf::from(crate::test_support::project_path!("Saved/Converted/_user_check"));
     extract_card(&game, Some(&card), &out).expect("extract");
     let obj = crate::gamefs::read_to_string(out.join("body.obj")).expect("body.obj");
     let mut mn = [f32::MAX; 3];
@@ -5642,7 +5642,7 @@ fn profile_shape_morph_speed() {
         mesh.positions.len()
     );
 
-    let out = PathBuf::from(r"C:\portable\OpenKoikatsu\Saved\Converted\_profile_shape");
+    let out = PathBuf::from(crate::test_support::project_path!("Saved/Converted/_profile_shape"));
     let _ = std::fs::remove_dir_all(&out);
     std::env::set_var("OK_PROFILE", "1");
     let t = Instant::now();
@@ -6404,8 +6404,8 @@ fn c019_crotch_gap_diagnostic() {
     } else {
         eprintln!("DUMP missing {}", dump_root.display());
     }
-    let c019 = std::path::Path::new(r"C:\portable\OpenKoikatsu\Content\CharacterCards\CrowdAPNG\C019.png");
-    let c000 = std::path::Path::new(r"C:\portable\OpenKoikatsu\Content\CharacterCards\CrowdAPNG\C000.png");
+    let c019 = std::path::Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C019.png"));
+    let c000 = std::path::Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png"));
     report_card("C019", c019);
     report_card("C000", c000);
     std::env::set_var("OK_PORTABLE_PROFILE", "1");
@@ -6781,7 +6781,7 @@ fn c019_crotch_gap_diagnostic() {
             trial.restore_from(&rest_skel);
             eprintln!("AFTER restore_from Vagina_B {:?}", vagina_local(&trial, "cf_J_Vagina_B"));
         }
-        let crowd = std::path::Path::new(r"C:\portable\OpenKoikatsu\Content\CharacterCards\CrowdAPNG");
+        let crowd = std::path::Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG"));
         fn island_edge(pos: &[[f32; 3]], uv: &[[f32; 2]], idx: &[u32]) -> f64 {
             let mut mark = vec![false; pos.len()];
             for (i, t) in uv.iter().enumerate() {
@@ -6858,7 +6858,7 @@ fn c019_crotch_gap_diagnostic() {
             assert_eq!(body.positions.len(), 9558, "C000 body topology changed");
             assert!((zmax - 0.0359).abs() < 0.002, "C000 genital island moved to {zmax}");
         }
-        let c009 = std::path::Path::new(r"C:\portable\OpenKoikatsu\Content\CharacterCards\CrowdAPNG\C009.png");
+        let c009 = std::path::Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C009.png"));
         if let (Ok(other), Some(rest)) = (crate::portable::load(c009), c019_rest.as_ref()) {
             if let Some(other_rest) = other.body_rest.as_ref() {
                 report("REST C019-vs-C009", &bone_map(rest), &bone_map(other_rest));
@@ -6910,7 +6910,7 @@ fn k091_tpose_body_shading_basis_matches_game_dump() {
 #[ignore="game oracle: reads the original KKS installation (set OK_TEST_GAME_ROOT)"]
 fn march_tpose_face_matches_manual_skin_without_renderer_scale_twice() {
     let game = &crate::test_support::game_path(r"");
-    let shot_card = std::path::Path::new(r"C:\portable\OpenKoikatsu\Saved\ShotInputThree\[Card] March_7th_keiyuu.png");
+    let shot_card = std::path::Path::new(crate::test_support::project_path!("Saved/ShotInputThree/[Card] March_7th_keiyuu.png"));
     let card = if shot_card.ok_exists() {
         shot_card.to_path_buf()
     } else {
@@ -6967,7 +6967,7 @@ fn march_tpose_face_matches_manual_skin_without_renderer_scale_twice() {
     eprintln!("March chin signed mean={:?} metres", chin_signed.map(|s| s / chin.0.max(1) as f64));
     assert!(mean[0] < 0.001 && mean[1] < 0.001 && mean[2] < 0.001,
         "face geometry differs from manual-skinned game head: mean={mean:?}, max={max:?}");
-    let runtime_normals = std::path::Path::new(r"C:\portable\OpenKoikatsu\Saved\DebugShots\[Card] March_7th_keiyuuFaceNormals.tsv");
+    let runtime_normals = std::path::Path::new(crate::test_support::project_path!("Saved/DebugShots/[Card] March_7th_keiyuuFaceNormals.tsv"));
     if runtime_normals.ok_exists() {
         let rows = crate::gamefs::read_to_string(runtime_normals).unwrap();
         let mut angle_sum = 0.0f64;

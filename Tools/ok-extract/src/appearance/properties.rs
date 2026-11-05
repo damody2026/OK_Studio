@@ -167,16 +167,16 @@ pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String
 #[cfg(test)] mod tests {
  use super::*;
  #[test]#[ignore="game oracle: reads the original KKS installation (set OK_TEST_GAME_ROOT)"]fn lean_card_property_request_recovers_original_mod_controls(){
-  let root=&crate::test_support::game_path("");let card="C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C000.png";
+  let root=&crate::test_support::game_path("");let card=crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png");
   let base=catalog_properties(&crate::gamefs::read(card).unwrap(),0).unwrap();
   let path=std::env::temp_dir().join(format!("ok-properties-{}-{}.json",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
-  fs::write(&path,serde_json::to_vec(&json!({"action":"properties","card":card,"outfit":0,"cache":"C:/portable/OpenKoikatsu/Saved/AppearanceEditor/cache"})).unwrap()).unwrap();
+  fs::write(&path,serde_json::to_vec(&json!({"action":"properties","card":card,"outfit":0,"cache":crate::test_support::project_path!("Saved/AppearanceEditor/cache")})).unwrap()).unwrap();
   let result=super::super::request(root,&path).unwrap();let props=result["properties"].as_array().unwrap();assert!(props.len()>base.len());assert!(props.iter().any(|p|p["key"].as_str().is_some_and(|k|k.starts_with("plugins."))));assert_eq!(result["parents"].as_array().unwrap().len(),55);assert!(props.iter().all(|p|!p["label"].as_str().unwrap().contains("進階設定（")));
-  fs::write(format!("C:/portable/OpenKoikatsu/Saved/Tests/EditorPropertiesRecoveredManifest-{}.json",std::process::id()),serde_json::to_vec_pretty(&result).unwrap()).unwrap();let _=fs::remove_file(path);
+  fs::write(format!("{}/../../Saved/Tests/EditorPropertiesRecoveredManifest-{}.json",env!("CARGO_MANIFEST_DIR"),std::process::id()),serde_json::to_vec_pretty(&result).unwrap()).unwrap();let _=fs::remove_file(path);
  }
  #[test]fn restyle_gives_her_the_donor_face_and_dyed_hair(){
-  let card=crate::gamefs::read("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C000.png").unwrap();
-  let donor=crate::gamefs::read("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C001.png").unwrap();
+  let card=crate::gamefs::read(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png")).unwrap();
+  let donor=crate::gamefs::read(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C001.png")).unwrap();
   let out=restyle(&card,Some(&donor),Some([0.9,0.56,0.66])).unwrap();
   let (got,want,mine)=(list_paths(&out,0).unwrap(),list_paths(&donor,0).unwrap(),list_paths(&card,0).unwrap());
   let face=|l:&[(String,String)]|l.iter().filter(|(k,_)|k.starts_with("face.shapeValueFace.")).cloned().collect::<Vec<_>>();
@@ -225,7 +225,7 @@ pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String
   eprintln!("stock pieces opened {count}");assert!(failed.is_empty(),"{failed:#?}");
  }
  #[test]fn properties_real_card_roundtrip_and_untouched_sections(){
-  let original=crate::gamefs::read("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C000.png").unwrap();
+  let original=crate::gamefs::read(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png")).unwrap();
   let props=catalog_properties(&original,0).unwrap();assert!(props.len()>300);
   assert!(props.iter().any(|p|p["key"]=="clothes.parts.0.colorInfo.0.tiling.0"&&p["kind"]=="number"));
   for key in ["hair.parts.0.baseColor.0","face.eyelineColor.0","face.pupil.0.baseColor.0","accessory.parts.0.parentKey"]{assert!(props.iter().any(|p|p["key"]==key),"missing {key}");}

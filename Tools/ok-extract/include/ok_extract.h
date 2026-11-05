@@ -33,6 +33,7 @@ int32_t ok_body_reaction_hit_with_release(OkSession*,int32_t id,const float* for
 int32_t ok_body_reaction_clear(OkSession*);
 int32_t ok_body_reaction_is_playing(OkSession*);
 int32_t ok_common_interaction_poses(const char* root,char* out,int32_t capacity);
+int32_t ok_card_outfit_gaps(const char* game,const char* card,char* out,int32_t capacity);
 int32_t ok_clothing_transition(const char* root,const char* card,int32_t outfit,const uint8_t* previous,int32_t kind,uint8_t* out,char* error,int32_t error_cap);
 /* OK clothes (.okclothes). op 0 import coordinate card a; 1 export outfit of card a; 2 wear okclothes b as outfit of card a. Writes out; summary or error in msg. */
 int32_t ok_clothes_file(int32_t op,const char* a,const char* b,int32_t outfit,const char* out,char* msg,int32_t msg_cap);
@@ -596,6 +597,12 @@ int32_t ok_okmodel_texture_png(const char* library, const char* id_hex, const ch
 int32_t ok_session_has_game_root(OkSession* s);
 int32_t ok_session_set_blush(OkSession* s, float rate);
 int32_t ok_session_set_iris_small(OkSession* s, float rate);
+int32_t ok_session_set_pupil_scale(OkSession* s, float scale);
+int32_t ok_session_set_pupil_offset(OkSession* s, float x, float y);
+int32_t ok_session_set_pupil_stretch(OkSession* s, float across, float down);
+int32_t ok_iris_recolor(uint8_t* pixels, int32_t width, int32_t height, float hue, float saturation, float value);
+int32_t ok_iris_mark(uint8_t* pixels, int32_t width, int32_t height, int32_t shape, float across, float down, float opacity, float hue, float saturation, float value);
+int32_t ok_iris_without_highlights(uint8_t* pixels, int32_t width, int32_t height);
 
 #ifdef __cplusplus
 }

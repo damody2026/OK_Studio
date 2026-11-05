@@ -10,6 +10,10 @@
 #include "Misc/ScopeLock.h"
 #include "UObject/ObjectKey.h"
 #include "ok_raw_texture.h"
+#include "KKRustExtract.h"
+#include "RenderingThread.h"
+#include "RHICommandList.h"
+#include "TextureResource.h"
 
 static void ExtendEncodedMipChain(TArray<FOKEncodedMip>& Mips);
 TArray<FOKEncodedMip> OKBuildEncodedMipChain(const TArray<uint8>& BGRA, int32 Width, int32 Height)
@@ -84,6 +88,68 @@ static UTexture2D* CreatePreparedTexture(const TArray<FOKEncodedMip>& Mips,
         FMemory::Memcpy(Data,Mips[I].Bytes.GetData(),Mips[I].Bytes.Num());Mip->BulkData.Unlock();
     }
     OKApplyRuntimeTextureSettings(Tex,Settings,bFallbackClamp);return Tex;
+}
+
+// The pixels come back from the GPU: a runtime texture keeps none here, on the street nothing else holds them either.
+static bool OKReadIris(UTexture2D* Source,TArray<FColor>& Pixels)
+{
+    FTextureResource* Resource=Source?Source->GetResource():nullptr;
+    if(!Resource)return false;
+    const int32 Width=Source->GetSizeX(),Height=Source->GetSizeY();
+    FlushRenderingCommands();
+    ENQUEUE_RENDER_COMMAND(OKReadIris)([Resource,Width,Height,&Pixels](FRHICommandListImmediate& Commands){
+        if(FRHITexture* Texture=Resource->GetTexture2DRHI())Commands.ReadSurfaceData(Texture,FIntRect(0,0,Width,Height),Pixels,FReadSurfaceDataFlags(RCM_UNorm));});
+    FlushRenderingCommands();
+    UE_LOG(LogTemp,Display,TEXT("Iris read: %s %dx%d format=%d read=%d"),*Source->GetName(),Width,Height,int32(Source->GetPixelFormat()),Pixels.Num());
+    return Pixels.Num()==Width*Height;
+}
+static UTexture* OKIrisLike(UTexture2D* Source,const TArray<FColor>& Pixels)
+{
+    TArray<uint8> BGRA;BGRA.Append(reinterpret_cast<const uint8*>(Pixels.GetData()),Pixels.Num()*sizeof(FColor));
+    const TArray<FOKEncodedMip> Mips=OKBuildEncodedMipChain(BGRA,Source->GetSizeX(),Source->GetSizeY());
+    UTexture2D* Made=CreatePreparedTexture(Mips,nullptr,true);
+    if(Made){Made->SRGB=Source->SRGB;Made->Filter=Source->Filter;Made->AddressX=Source->AddressX;Made->AddressY=Source->AddressY;Made->UpdateResource();}
+    return Made;
+}
+UTexture* OKIrisRecolored(UTexture* Iris,float Hue,float Saturation,float Value,const FOKIrisMarks& Marks)
+{
+    check(IsInGameThread());
+    struct FRecolored{TArray<FColor> Pixels;FVector3f Asked=FVector3f(0.f,1.f,1.f);FOKIrisMarks Marked;TStrongObjectPtr<UTexture> Shown;};
+    static TMap<TObjectKey<UTexture>,FRecolored> Made;
+    UTexture2D* Source=Cast<UTexture2D>(Iris);const FVector3f Asked(Hue,Saturation,Value);
+    if(!Source||(Asked==FVector3f(0.f,1.f,1.f)&&!Marks.Any()))return Iris;
+    FRecolored& R=Made.FindOrAdd(Iris);
+    if(R.Pixels.IsEmpty()&&!OKReadIris(Source,R.Pixels)){R.Pixels.Reset();return Iris;}
+    if(R.Shown&&R.Asked==Asked&&R.Marked==Marks)return R.Shown.Get();
+    TArray<FColor> Pixels=R.Pixels;
+    if(ok_iris_recolor(reinterpret_cast<uint8_t*>(Pixels.GetData()),Source->GetSizeX(),Source->GetSizeY(),Hue,Saturation,Value)!=0)return Iris;
+    for(int32 I=0;I<2;++I){const FVector4f& M=Marks.Shape[I];const FVector3f& C=Marks.Colour[I];
+        if(M.X>0.f&&ok_iris_mark(reinterpret_cast<uint8_t*>(Pixels.GetData()),Source->GetSizeX(),Source->GetSizeY(),int32(M.X),M.Y,M.Z,M.W,C.X,C.Y,C.Z)!=0)return Iris;}
+    UTexture* Shown=OKIrisLike(Source,Pixels);if(!Shown)return Iris;
+    R.Asked=Asked;R.Marked=Marks;R.Shown.Reset(Shown);return Shown;
+}
+UTexture* OKIrisWithoutHighlights(UTexture* Iris)
+{
+    check(IsInGameThread());
+    static TMap<TObjectKey<UTexture>,TStrongObjectPtr<UTexture>> Made;
+    if(!Iris)return nullptr;
+    if(const auto* Known=Made.Find(Iris))return Known->Get();
+    UTexture2D* Source=Cast<UTexture2D>(Iris);TArray<FColor> Pixels;
+    if(!OKReadIris(Source,Pixels))return Iris;
+    const int32 Width=Source->GetSizeX(),Height=Source->GetSizeY();
+    UTexture* Result=Iris;
+    const bool bPainted=ok_iris_without_highlights(reinterpret_cast<uint8_t*>(Pixels.GetData()),Width,Height)!=0;
+    UE_LOG(LogTemp,Display,TEXT("Iris highlights: %s painted out=%d"),*Iris->GetName(),int32(bPainted));
+    if(bPainted)if(UTexture* Clean=OKIrisLike(Source,Pixels))Result=Clean;
+    Made.Add(Iris,TStrongObjectPtr<UTexture>(Result));return Result;
+}
+
+UTexture* OKClearEyeLayer()
+{
+    check(IsInGameThread());
+    static TStrongObjectPtr<UTexture> Clear;
+    if(!Clear){TArray<uint8> Pixel;Pixel.SetNumZeroed(4);Clear.Reset(OKCreateRuntimeTexture(Pixel,1,1,nullptr,true));}
+    return Clear.Get();
 }
 
 UTexture2D* OKCreateRuntimeTexture(const TArray<uint8>& BGRA,int32 Width,int32 Height,

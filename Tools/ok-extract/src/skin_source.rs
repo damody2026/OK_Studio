@@ -217,7 +217,7 @@ mod tests {
     #[ignore="installed draw bundles and independently captured native bindings"]
     fn native_skinplus_authored_resource_transport() {
         use std::path::Path;
-        let root=Path::new("C:/portable/OpenKoikatsu");let game=&crate::test_support::game_path("");
+        let root=Path::new(crate::test_support::project_path!(""));let game=&crate::test_support::game_path("");
         let card=crate::card::parse_card(&game.join("UserData/chara/female/KK_380982.png")).unwrap();
         let (selected,_)=crate::mods::uncensor_body_for_card(game,card.body_guid.as_deref(),card.sex).unwrap();
         let body_bundle=crate::mods::uncensor_draw_bundle(game,&selected).unwrap();
@@ -311,7 +311,7 @@ mod tests {
     #[test]
     #[ignore="installed card and exact native material source replay"]
     fn native_skinplus_numeric_source_replay() {
-        let root=std::path::Path::new("C:/portable/OpenKoikatsu");
+        let root=std::path::Path::new(crate::test_support::project_path!(""));
         let inputs:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(root.join("Saved/Tests/Skin325/CachedInputs/inputs.json")).unwrap()).unwrap();
         let wanted:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(root.join("Saved/Tests/Skin325/WantedNativeInputs.json")).unwrap()).unwrap();
         let mut rows=Vec::new();

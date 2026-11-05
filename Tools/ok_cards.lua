@@ -6,7 +6,8 @@
 --     card, okstrict.rs). Zipmods come from DIR only (default D:/KoikatuSunshine/mods), never from a game.
 --   Tools\lua\lua.exe Tools\ok_cards.lua verify <card dir|list> [--jobs N] [--report FILE]
 --     Every card in a new process with an empty temporary folder and no disk cache: every outfit must open strictly
---     (okLc/okLt and shared resources only). A gap is a conversion bug. Do not run conversions meanwhile.
+--     (okLc/okLt and shared resources only). A gap is a conversion bug. Do not run conversions meanwhile. Also lists the
+--     outfits that name items nothing provides (outfit_gaps.rs: severe or minor); those do not fail it.
 --   Tools\lua\lua.exe Tools\ok_cards.lua cold <card dir|list> [--report FILE]
 --     Outfit 0 opened once per card in a new process (empty temporary folder, no cache), one card at a time: the cold
 --     read. Take both machine-wide slots first (C:\portable\OpenKoikatsu\Saved\UnrealSlots\slot1 and slot2, owner.txt
@@ -118,8 +119,21 @@ elseif cmd == "verify" and pos[1] then
     print(rows[#rows]:sub(1, 300)); io.stdout:flush()
   end)
   table.sort(rows)
+  -- What an outfit names and nothing provides: it opens all the same, so it is reported and fails nothing.
+  local lacking, severe = 0, 0
+  each(cards, jobs, function(card) return { opts.exe, "X:/NoGame", "--oklib", "outfit-gaps", lib, card } end, function(card, text)
+    for kind, line in text:gmatch("OKGAPS (%a+)\t([^\r\n]*)") do
+      if kind ~= "ok" then
+        lacking = lacking + 1
+        if kind == "severe" then severe = severe + 1 end
+        rows[#rows + 1] = kind .. "\t" .. path.name(card) .. "\t" .. line:gsub("^[^\t]*\t", "")
+        print(rows[#rows]:sub(1, 300)); io.stdout:flush()
+      end
+    end
+  end)
+  table.sort(rows)
   report(opts.report, "result\tcard\tgaps", rows)
-  print(("verify: %d cards, %d failed"):format(#cards, failed))
+  print(("verify: %d cards, %d failed, %d outfits lack items (%d severe)"):format(#cards, failed, lacking, severe))
   os.exit(failed == 0 and 0 or 1)
 elseif cmd == "cold" and pos[1] then
   local cards, rows, times = cards_of(pos[1]), {}, {}

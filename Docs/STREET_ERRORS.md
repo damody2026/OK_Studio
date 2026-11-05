@@ -1990,3 +1990,53 @@
 - 2026-11-05 c-street-city 打包等待永遠不結束：組 chain51 時用 Python 文字模式讀寫腳本，`tr -d` 引號裡的 CR 被轉成 LF，PowerShell 輸出的 `0\r` 比不上 `"0"`，鏈空等兩小時，是協調者查出來的；我當時只查了條件範圍，沒查比對本身。第一次修正只確認 bytes 替換有寫入、沒實跑函式，空等到協調者再查出來；重點是改完要實跑 `ubt | od -c` 確認只有 `0`。修正：所有 chain 的 `tr -d` 改成 `'[:space:]'`，不放控制字元，實跑確認後從 acceptance 接續。
 - 2026-11-05 c-street-city 民宿刪掉舊錨點時連活動要用的名稱一起刪：`inn_tea`、`sleep_inn`、`inn_helper` 要 `minshuku.seat`、`minshuku.bed1_0`，`cargo test anchor` 才抓到。修正：第一張棉被和第一個坐墊沿用這兩個名稱。
 - 2026-11-05 c-street-city 移舊打包到 F 槽用 Git Bash `mv`：MSYS 把 `StreetSocialCity` 和 `StreetSocialCity.exe` 當成同名，三個都只複製一部分就失敗，鏈也在空間不足時先啟動。修正：改用 robocopy，確認剩餘空間後才重啟鏈。
+- 2026-11-04 協調者整合：c-street-city 回報「背景鏈已停、slot 已釋放」，實際 chain21（run_street_city_motel_physics.lua）還在跑，沒拿 slot 開著 StreetSocialCity 實走；協調者以 taskkill /T 停掉該 bash 樹。規則：回報停止前用 Get-CimInstance 確認沒有自己的 chain bash／lua／Unreal 程序。
+- 2026-11-04（e-fork-2）：口交「眼睛上翻」實際是往下看：`TickFace` 傳 `SetEyeGaze(0,0,+強度)`，這組眼睛 -1 才是往上（`ok.HScene.AhegaoGaze` 的 -1.25 就是負的）。11-02 只看到眼皮半閉就記成上翻。近拍（距離 12）才看出虹膜貼著下眼皮；修正：改傳負值。教訓：方向類的效果要拍到能分辨方向的距離再判定，不能用「有變化」代替。
+- 2026-11-04（e-fork-2）：`TickDrips` 的流水、乳汁、噴水都是一幀最多一滴，機器忙到 15 FPS 時開發度 100 和 0 噴一樣多（兩者都是每幀一滴），平時乳汁也只有 ×2.65。11-02 在高 FPS 量到 ×2、×3 就算通過。修正：`Due` 把上一幀到期的份補出來（一幀最多 4 滴）。教訓：以時間間隔控制的數量要在低 FPS 也量一次。
+- 2026-11-04 e-galgame 實測前改存檔：回報「放進 EMain 存檔的保險套啟動後被清空」，以為是遊戲的問題。實際是 `game_stop` 用不帶 `/F` 的 taskkill，指令回傳時遊戲還在關閉，結束時存檔（`relationships.json`、`Saves/auto`）把我剛改的內容蓋掉。之後改存檔一律等遊戲行程結束再改，不要接在 game_stop 後面。
+- 2026-11-04 e-galgame `SetHandShape` 沒同步：H 面板換手型時，配對播放的背景執行緒還在用同一個 Session，遊戲偶爾直接消失（game.log 沒有 Fatal、Windows 也沒紀錄），一開始還以為是別的 session 關掉的。修正：呼叫前 `SyncPair()`。教訓：在 H 面板改 Session 的東西都要先 SyncPair。
+- 2026-11-04 e-galgame 腳本錨點失敗沒看到：`grip.py` 的錨點多了 4 個空白，斷言失敗什麼都沒改，又因同一條指令多打 `cat > /dev/null` 卡住，輸出被吃掉，拍了兩輪才發現手型根本沒套上。之後 python 腳本接 `&& echo applied`，看到再往下做。
+- 2026-11-04 e-galgame：H 裡換衣服閃退（19:36、20:56 兩次，同一原因）：新部件還沒有 MeshObject，`AOKPaintSprayer::Tick` → `FOKPaintPose::Prepare` 同一幀呼叫 `GetCPUSkinnedVertices` 觸發 assert。第一版只擋在 `Unsupported` 分支，改成 `Prepare` 開頭檢查 `IsRegistered()` 與 `GetMeshObject()`，這幀跳過、下一幀重試；`KKPreviewActor` 量外框與 `OKCardPreviewCapture` 也加同樣檢查。壓力測試：H 場景連續換衣、半脫、換體位 36 次沒有閃退（`Saved/StreetSocial/Play-20261104T211309`）；測試沒有同時按住噴射，舊版也未重跑對照。
+- 2026-11-04 e-galgame：更正上一列的壓力測試：那 36 次換衣時大部分沒有油漆表面（`Tick` 在 `Surfaces` 為空時直接返回），不算壓到崩潰路徑。重跑時用啊嘿顏的流口水讓噴射持續：`EGalEight4` 50 次操作（實際換裝 46 次、表面失效重建 2231 次）沒有閃退（`Saved/StreetSocial/Play-20261104T221556`）；舊版 `EGalSet2` 40 次操作（換裝 21 次、1060 次）也沒有閃退（`Play-20261104T221027`），所以沒有重現，修法是依當機報告的呼叫堆疊判斷，尚未以對照證明。
+- 2026-11-04 e-galgame：把使用者回報的問題當成新版的問題：20:56 的閃退與「舌頭沒跟深度」都發生在舊的 `EGalSet2`（19:29 開到 20:56，當機報告在該 stage 的 `Saved/Crashes`）。回報時先看當機報告與 game.log 是哪個 stage。
+- 2026-11-04 e-galgame：啊嘿顏雙手上下跳：`HoldFeet`（站姿壓低時的雙腳）與 `TickAhegao`（雙手）都呼叫 `SetStudioIk`，而它會整組取代，兩邊每幀互相蓋掉。改成雙手放進 `HoldFeet` 的同一組目標；`TickAhegao` 原本沒先 `SyncPair` 就設，也一併改掉。
+- 2026-11-04 e-galgame：啊嘿顏時頭上閃黑色長方體：H 的體液借用 `AOKPaintSprayer`，`SetSpray` 會顯示水槍模型，流口水向下噴，槍身立在頭上，斷續噴就閃。`bShowGun` 關掉。
+- 2026-11-04 e-galgame：新增文字鍵前沒查重：`cloth_all_half` 已存在，重複的鍵讓 TOML 解析失敗，ok-rules 189 項測試一起失敗。
+- 2026-11-04 e-galgame：測試時用 `game_click` 會把自己的遊戲視窗拉到最前面（`Win->BringToFront`），使用者正在玩時點擊可能落到測試視窗。使用者在玩時不要用 `game_click`，改用 `/hscene` 的 kind 或截圖。
+- 2026-11-04 e-galgame：舌頭變白先往材質想，其實是流口水的白色塗料蓋在舌頭上：不流口水時是紅的。現在 H 的體液不畫在舌頭上（`bSkipTongue`，`ok.HScene.FluidTongue` 預設 0），流 40 秒後舌頭還是紅的（`Play-20261104T223655`）。
+- 2026-11-05 e-galgame：頭看鏡頭、眼睛追鏡頭兩個按鈕加在愛撫分支 `return` 之後，進場景的愛撫畫面看不到，只有插入才出現。之前用 kind 直接呼叫沒發現。改到 `BuildActions` 分支之前。
+- 2026-11-05 e-galgame：`EGalRound15` 一啟動就崩潰。exe 是從乾淨工作樹複製的，那是用完整 `.uproject` 建的（400 MB，多 `AudioWidgets`、`Paper2D`），base 沒 cook 這些資源。要在工作樹編 stage 用的 exe，先換成 host 的 `.uproject`（315 MB）。打完 stage 先開一次才能給 tag。
+- 2026-11-05 e-galgame：host 的 `Tools` 是連到 E 的 junction，我對 host 路徑寫 `git show HEAD:ffi.rs`，蓋掉 e-fork-2 還沒提交的 `ffi.rs`，別組連結失敗。已從對方紀錄補回。host 裡只有 `Source`、`Plugins` 是自己的檔案，`Tools` 不能當暫存改。
+- 2026-11-05 e-galgame：`a35ba8b74` 的大小寫修法沒看影響範圍就對所有屬性生效，把舊著色器的小寫值也讀進來（頭髮影子近黑）。回報只說「沒看到變化」。動共用材質前先列出會改到哪些值。
+- 2026-11-05 e-galgame：建置失敗還照樣打 stage 和量測，舊執行檔跑出的數字差點當成新版結果。腳本要先看 `Result: Succeeded`。
+- 2026-11-05 e-galgame：舌頭顏色錯了很久，Material Editor 的屬性名小寫後蓋掉 `_Color`。`Material::color` 不分大小寫，所以 log 印的顏色是對的，著色器那邊分大小寫才取不到。查顏色要看實際綁到著色器的值，不能只看 log。
+- 2026-11-05 e-galgame：`EGalRound11` 回報把「射在外面」算成走過，其實 log 寫著 `action 2005 not offered now`，腳本只送了按鈕沒看有沒有效。走查腳本按之前要先確認按鈕可按，不能按就記下來。
+- 2026-11-05 e-galgame：舌頭拉長用整個 morph 權重放大，1～2 倍看不出來，舌根其實也在往外移，3 倍就離開嘴巴。沒有骨頭的東西要拉長，得固定一端。
+- 2026-11-05 e-galgame：水槍控制用 `GetComponentsBoundingBox().GetCenter()` 當她的中央，實際在腳邊（Z=-1.2），距離 90 打到地板，還記成「原因沒查」。記下瞄準點與命中後一次就看出來。
+- 2026-11-05 e-galgame：把遊戲消失記成「沒解釋、重跑沒再現」就要往下走。用 `Process.ExitCode` 等退出碼，換體位循環兩輪就重現，崩潰報告在 stage 的 `Saved/Crashes/`，`llvm-symbolizer` 配主機的 pdb 就能解出來。根因是配對背景解算與水槍查詢同時碰 Session。
+- 2026-11-05 e-galgame：`-Control` 不帶 `-Sandbox` 時短暫啟動就改到主存檔（載入會重寫 `relationships.json`），靠手動備份還原。現在 `-Control` 一律走沙盒 `Control`（這個 checkout 自己的連接埠），`-MainSave` 才用主存檔。
+- 2026-11-05 e-galgame：開發度一場 +45：`CHEST..=NIPPLE` 的迴圈把陰部與屁眼也算進去，愛撫 50 秒 +25，再加兩次高潮 +20。規格是這兩處只靠在裡面高潮成長，`NeverHad` 的註解也這樣寫。現在摸這兩處只算習慣度（`crotch_h`／`anal_h`，`used_to`）。已經存進存檔的舊值沒有改。
+- 2026-11-05 e-galgame：上一輪把口水看不到判斷成「直直往下掉碰不到臉」和「筆刷 0.4 太小」，兩個都只對一半：0.4 那次是第一滴從裡面打到臉，膜塗到皮膚內側。只跑一次就下結論，沒比對 `Paint contact` 的 `side`。
+- 2026-11-05 e-galgame：`game_launch` 不指定 `-Executable` 會跑最新的 stage，別的 session 打包的也算，一輪測試因此跑在 `EForkGaps3` 上。要測指定版本一律帶 `-Executable`，並用行程路徑確認。
+- 2026-11-05 e-galgame：建置結果看錯：用 Git Bash 的 `cmd //c` 呼叫 `Build.bat` 只開了 cmd 就結束，回傳 0，差點當成連結成功。發現是因為 log 裡沒有 `Result: Succeeded`。改用 PowerShell，並一律看 log 的 `Result:`。
+- 2026-11-05 e-galgame：`/activity` 第一版傳 `at_end=true`，規則在活動結束時不擋任何條件，所以懷孕的她全部回可以，差點記成規則壞了。改成直接問 `activity_check`。
+- 2026-11-05 e-galgame：測試把值留在共用的 `%LOCALAPPDATA%\OpenKoikatsu\HSettings.ini`：`AhegaoClimaxes=1` 是我測試設的，按面板按鈕時一起存下來，使用者的遊戲也讀同一檔，一次高潮就啊嘿顏；這次測試的 `EyesCamera=0` 也一樣。兩個都已改回 4 與 1。測試用 console 改設定後，測完要改回，再按會存檔的按鈕。
+- 2026-11-04 e-fork 眼睛上下顛倒，只測左右沒發現：`ok.VerifyEyeCamera` 第一版只繞左右轉，100 張全過，但走 `_MainTex_ST` 的 GPU 眼睛垂直方向是反的（鏡頭在下，虹膜往上翻；Rows 的 V 和貼圖 tiling 的 V 差一個翻轉）。`ok.EyeGazeSTFlipV` 預設改 1。e-fork-2 那天把口交上翻改成負值，以及 `ok.HScene.AhegaoGaze` 的 -1.25，都是在補這個反向，一併改回 +1 向上。教訓：跟隨類功能的驗收要含上下，方向要用量到的位移判定。
+- 2026-11-04 e-fork 跟鏡頭的轉動量每張卡差很多：同樣轉 35°，畫面上 15°～55°，C097 虹膜跑出眼睛，C018 向下被下眼皮切掉。兩個原因：(1) rate 換算成固定的貼圖位移，卡片虹膜尺寸（settings 12、13）越大移得越多，和眼睛寬度無關；(2) 解除限制後垂直 rate 超過 ±1 時走了 `st_rolled` 的翻白眼路徑，位移突然加大。修正：跟隨目標時改用 `IrisRuntime::st_look`，直接以眼睛寬高的比例移動，rate 只留給其他用途。
+- 2026-11-04 e-fork 稽核誤判三次：(1) 用影像比對虹膜位移，虹膜環紋重複加上陰影不動，C000 量到 -5（實際約 -15），改成換白底黑點貼圖量；(2) 髮絲蓋到黑點會拉偏重心，量點時隱藏頭髮與配件；(3) 側看時用正面的眼寬當半徑，近眼 47°、遠眼 31°，看起來像兩眼不一致，實際是遠眼被壓扁，改用每個視角自己量到的眼寬。教訓：量測模型先對截圖核對，數字不對時先懷疑量法。
+- 2026-11-04 e-fork 同時開了 4 個 Unreal：`Tools/run_card_reader_development.lua` 啟動後馬上回傳（只印 PID），批次腳本以為跑完了，連開 4 個又放掉名額，約 15 秒後才發現並關掉。之後批次一律等 PID 結束才放名額。
+- 2026-11-04 e-fork 普查連續當掉 5 次（TAsync 的 EXCEPTION_ACCESS_VIOLATION，結果是空的）：別的 session 在共用工作樹只重建了一部分，`ok_extract.h` 和 Rust 函式表不一致。每次開測前先完整建置一次編輯器。
+- 2026-11-04 e-fork 眼睛稽核把 11 張好卡判失敗：角度差把上下也算進去，黑點貼近眼角時被眼皮或高光切掉，中心往下偏，遠側眼睛算出 12°～21°。看截圖視線是對的，水平誤差都在 10° 內。修正：只拍最左、最右，只算水平。另外先前拍五個視角、每張卡七套，一輪要好幾個小時，使用者指出不用拍那麼多。
+- 2026-11-04 e-fork 光影選單的修改腳本改到一半失敗：`OKHScene.h` 已寫入、`OKHScene.cpp` 的錨點比對失敗，遊戲連結錯誤約一分鐘，共用工作樹的其他 session 也會受影響。修正：補上 cpp 後重建成功。之後要先比對全部錨點，再一次寫入所有檔案。
+- 2026-11-04 e-fork-2：跟著走的女主台詞漏進 H 字幕：隊伍閒聊的台詞走同一條字幕，H 場景沒有擋。H 場景裡只顯示場景內的她的台詞（隊伍 [9,8] 實測只有愛麗絲）。
+- 2026-11-04 e-fork-2：吐舌沒跟深度：嘴巴底值 .75～.85 把開口墊住，深度再淺也一樣張嘴。改用 `SetMouthOpenHeld` 依深度直接給開口。
+- 2026-11-04 e-fork-2：把隱藏高光失敗誤判成 `M_KoikanoEye_Flat` 的 `_isHighLight` 閘門沒作用。實際上閘門有效，失敗的卡高光畫在卡片 KSOX 虹膜疊圖裡（`hl_up`／`hl_down` 可能是空的）。先把資料（虹膜貼圖）倒出來看再下結論；改成從貼圖塗掉（`paint_out_iris_highlights`）。
+- 2026-11-05 e-fork-2：街區隱藏高光只換虹膜 `_MainTex`，高光還在：街區的卡片高光是分開綁在 `_overtex1/2/3` 的圖層，和讀卡模式、H 場景不同。`dull` 時連這些圖層一起換成透明貼圖（`OKClearEyeLayer`）。
+- 2026-11-05 e-fork-2：把 game.log 沒有那幾行當成程式沒跑到；log 有緩衝，`game_stop` 會丟掉尾巴。讀 log 前先 `game_exec flushlog`。
+- 2026-11-05 e-fork-2：打包背景工作回傳 exit 0 就當成打包成功，其實 `EFork2h` 編譯失敗（`RandPointInCircle` 回傳 `FVector2D`，指定給 `FVector2f` 要明確轉換），worktree 的 fix15 也因 HEAD 不同而中途停止。背景工作要看 log 裡的 `Result:`，不是看退出碼。
+- 2026-11-05 e-fork 把讀卡器正常啟動當成卡死：UE 啟動時 UBT AutoSDK 要跑 5～6 分鐘，log 這段完全不動，我先猜是在等別的建置，又用 150 秒的看門狗把它關掉一次。對照昨晚的正常 log 才看到同一段也停了 5 分 40 秒。修正：看門狗改 15 分鐘，判斷前先比對正常 log。
+- 2026-11-05 e-fork 11-04 讀卡器 `CopyBox` 閃退（`D3D12Texture.cpp:1551`，log `Saved/Logs/CardReader/20261104-193637-272007cb.log`）沒查明：斷言在 RHI 執行緒的 `GetStagingTexture`，時間是 C012 跑完、C013 載入後 3.5 秒，落在 `ok.VerifyEyeCamera` 第一次截圖前後，懷疑是 `FScreenshotRequest` 讀畫面的矩形超過 back buffer。沒有證據：log 沒有視窗改變大小的紀錄，C013 單獨開 7 套全過，C012 接 C013 的順序沒有重跑。再遇到先看遊戲執行緒當時在截哪一張。
+- 2026-11-05 e-fork `jeanne_alter.png` 第 1 套黑髮、沒穿衣服不是重封或程式問題：這張卡 10-29 之後沒動過，也不在 11-04 重封名單；原作卡 `D:/KoikatuSunshine/UserData/chara/female/Jeanne Alter V1.2.png` 轉出同樣 20 個部件、同樣 34 條 `KKEx entry missing`。第 1 套指向 `Jeanne_Alter_Cetol` 的 slot 7421135、7421162、5141、756537、7451711、7426537、7621167、7421537，已裝的 `[Cetol]Jeanne_Alter Mod.zipmod` v1.1.0 只有 722132、7421532、7621162、7421132。部分 ID 在 `[Cetol]JeanneV1.2.zipmod` 裡，但 GUID 是 `Jeanne_Cetol`，不能混用。其他 6 套沒有缺件。要補只能拿到含這些物品的 mod。
+- 2026-11-05 e-fork `megumin` 第 3 套手套 877 沒有 log：`select_card_clothes` 在這格沒有 mod 解析紀錄、內建和 mod 清單都找不到時用 `?` 回 None，服裝槽位不經過 `lookup_entry`，所以安靜少一件。改由 `outfit_gaps.rs` 開卡時逐格對照並寫 `item missing`。
+- 2026-11-05 e-fork 把舊 stage 的結果當成新程式的結果：`OKHScene.cpp` 呼叫 private 的 `OpenedFemaleCard`，stage 編譯失敗，啟動器跑最新的舊 stage，我兩次看到「第一次按就換了、沒有缺件 log」就下結論說遊戲裡掃描失敗。實際上新程式根本沒建出來。實機測試前先看 `Rebuild-<tag>/build.log` 的 `Result:`，並用 `-Executable` 指定自己的 stage。
+- 2026-11-05 e-fork `eprintln!` 到不了遊戲 log（只有 `ffi_log` 會），只寫 stderr 的 Rust 紀錄在 `game.log` 永遠看不到；`outfit_gaps::log` 兩邊都寫。

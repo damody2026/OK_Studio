@@ -17,7 +17,11 @@ pub fn set_part_physics(part: usize, value: PartPhysics) -> bool {
     if part>1||!(0..=2).contains(&value.mode)||!value.softness.is_finite() {return false;}
     PART_PHYSICS.lock().map(|mut p|p[part]=value).is_ok()
 }
-pub fn part_physics(part: usize) -> PartPhysics { PART_PHYSICS.lock().map(|p|p[part.min(1)]).unwrap_or(PartPhysics{mode:0,softness:-1.0}) }
+#[cfg(test)] thread_local!{static TEST_PART_PHYSICS: std::cell::Cell<Option<[PartPhysics;2]>> = const {std::cell::Cell::new(None)};}
+pub fn part_physics(part: usize) -> PartPhysics {
+    #[cfg(test)] if let Some(set)=TEST_PART_PHYSICS.with(|set|set.get()) {return set[part.min(1)];}
+    PART_PHYSICS.lock().map(|p|p[part.min(1)]).unwrap_or(PartPhysics{mode:0,softness:-1.0})
+}
 /// The tuning of one chain's pattern by its kind (0/1 bust, 2/3 hips) and the settings above.
 fn tune_pattern(kind: Option<usize>, pattern: &mut Pattern, softness: f32, weight: f32, size: f32) {
     let (part,bust)=match kind {Some(0|1)=>(0,true),Some(2|3)=>(1,false),_=>return};
@@ -624,6 +628,7 @@ mod tests {
     #[test]
     #[ignore = "requires local KKS bundle and controlled game probe output"]
     fn ver02_game_frozen_body_chains() {
+        let _prefab = prefab_hips();
         let parsed = crate::unity::parse_bundle_cached(crate::gamefs::read(crate::test_support::game_path(r"\abdata\chara\oo_base.unity3d")).unwrap());
         let mut skel = parsed.skeleton_for_prefab_name("p_cf_body_bone").unwrap();
         let set = parsed.body_dynamics_for_skeleton(&skel);
@@ -725,6 +730,15 @@ mod tests {
             "Ver02 controlled game differs: pos={max_pos}, rot={max_rotation}, scale={max_scale}");
     }
 
+    /// This test's thread on these settings, whatever the others run: the settings are process-wide.
+    struct PartPhysicsFor;
+    impl Drop for PartPhysicsFor {fn drop(&mut self) {TEST_PART_PHYSICS.with(|set|set.set(None));}}
+    fn part_physics_for(hips: PartPhysics) -> PartPhysicsFor {
+        TEST_PART_PHYSICS.with(|set|set.set(Some([PartPhysics{mode:0,softness:-1.0},hips])));PartPhysicsFor
+    }
+    /// The prefab's own hips, as the game ships them: what the game and the solver's arithmetic are compared on.
+    fn prefab_hips() -> PartPhysicsFor {part_physics_for(PartPhysics{mode:2,softness:-1.0})}
+
     fn fixture() -> (Skeleton, BodyDynamicSet) {
         let tfs = [(1, "root", None, [0.0; 3]), (2, "tip", Some(1), [0.0, 1.0, 0.0]),
             (3, "tip_reference", Some(1), [0.0, 1.0, 0.0])].into_iter().map(|(id, name, parent, pos)|
@@ -741,7 +755,21 @@ mod tests {
     }
 
     #[test]
+    fn hips_are_tuned_by_default_and_left_alone_in_mode_2() {
+        let (mut sk, set) = fixture();
+        let elasticity = |sk: &mut Skeleton| {let p = &set.runtime(sk, 1, 0.5, 0.5, 0.5).chains[0].particles[1].params;(p.damping, p.elasticity, p.stiffness)};
+        let tuned = {let _default = part_physics_for(PartPhysics{mode:0,softness:-1.0});elasticity(&mut sk)};
+        let rate = HIP_SOFTNESS * 2.0;
+        for (value, expected) in [(tuned.0, 0.2 - 0.1 * rate), (tuned.1, 0.2 - 0.05 * rate), (tuned.2, 1.0 - 0.9 * rate)] {
+            assert!((value - expected).abs() < 1e-6, "the BustSoft table at the hips' own softness: {value} {expected}");
+        }
+        let _prefab = prefab_hips();
+        assert_eq!(elasticity(&mut sk).1, 0.2, "mode 2 keeps the prefab's elasticity");
+    }
+
+    #[test]
     fn ver02_source_one_frame_and_sex_branch() {
+        let _prefab = prefab_hips();
         let (mut sk, set) = fixture();
         assert!(set.runtime(&mut sk, 0, 0.5, 0.5, 0.5).chains.is_empty(), "male hips disabled by preparation kind");
         let mut runtime = set.runtime(&mut sk, 1, 0.5, 0.5, 0.5);
@@ -756,12 +784,13 @@ mod tests {
     #[test]
     #[ignore="five installed cards; source OnEnable/OnDisable trace"]
     fn ver02_game_enable_transition_trace() {
+        let _prefab = prefab_hips();
         let parsed=crate::unity::parse_bundle_cached(crate::gamefs::read(crate::test_support::game_path("/abdata/chara/oo_base.unity3d")).unwrap());
         let mut global=0f32;let mut samples=0;let mut frames=0;
         for card in ["[Card] March_7th_keiyuu","Alice_keiyuu","Hayase_yuuka_keiyuu_V1_02 For KKS","KK_091207","KK_384283"] {
             if std::env::var("OK_TEST_YURE_MARCH").is_ok()&&card!="[Card] March_7th_keiyuu" {continue;}
             let stem:String=card.chars().map(|c|if c.is_ascii_alphanumeric()||c=='_' {c}else{'_'}).collect();
-            let prefix=format!("C:/portable/OpenKoikatsu/Saved/Tests/Studio294/{stem}Studio294.json");
+            let prefix=format!("{}/../../Saved/Tests/Studio294/{stem}Studio294.json",env!("CARGO_MANIFEST_DIR"));
             let mut sk=parsed.skeleton_for_prefab_name("p_cf_body_bone").unwrap();let set=parsed.body_dynamics_for_skeleton(&sk);
             apply_dump(&mut sk,&format!("{prefix}.yure-baseline.tsv"));let baseline=sk.clone();
             let live=crate::gamefs::read_to_string(format!("{prefix}.yure-setup.tsv")).unwrap();
@@ -838,6 +867,7 @@ mod tests {
 
     #[test]
     fn ver02_move_limit_crush_and_substep_clock() {
+        let _prefab = prefab_hips();
         let (mut sk, mut set) = fixture();
         let p = &mut set.components[0].patterns[0].params[1];
         p.move_limit = true; p.min = [0.0, -0.1, -0.1]; p.max = [0.03, 0.1, 0.1];

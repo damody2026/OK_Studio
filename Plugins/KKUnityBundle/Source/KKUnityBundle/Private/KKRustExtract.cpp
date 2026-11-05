@@ -171,6 +171,11 @@ FString FOkSession::CommonInteractionPoses(){
  if(ok_common_interaction_poses(Path.Get(),Bytes.GetData(),Size)!=0)return FString();return UTF8_TO_TCHAR(Bytes.GetData());
 }
 
+FString FOkSession::CardOutfitGaps(const FString& Root,const FString& Card){
+ TArray<ANSICHAR> Bytes;Bytes.SetNumZeroed(1024*1024);
+ if(ok_card_outfit_gaps(TCHAR_TO_UTF8(*Root),TCHAR_TO_UTF8(*Card),Bytes.GetData(),Bytes.Num())!=0)return FString();return UTF8_TO_TCHAR(Bytes.GetData());
+}
+
 FString FOkSession::PairClipForRoot(const FString& Root,const FString& Key,int32 Layer){
  if(Root.IsEmpty())return FString();const int32 Size=ok_common_animation_pair_clip(TCHAR_TO_UTF8(*Root),TCHAR_TO_UTF8(*Key),Layer,nullptr,0);
  if(Size<=0||Size>1024*1024)return FString();TArray<ANSICHAR> Bytes;Bytes.SetNumZeroed(Size);
@@ -726,8 +731,16 @@ bool FOkModel::TexturePng(const FString& Library, const FString& ModelId, const 
 }
 
 namespace { std::atomic<int32> GBackgroundCloses{0}; thread_local const FOkSessionHandle* GSolvingHandle = nullptr; }
+namespace { thread_local int32 GSharedSolve = 0; }
+FOkSharedSolveScope::FOkSharedSolveScope() { ++GSharedSolve; }
+FOkSharedSolveScope::~FOkSharedSolveScope() { --GSharedSolve; }
 void FOkSessionHandle::Sync() const
 {
+	if (!GSharedSolve && Shared.IsValid() && !Shared.IsCompleted())
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(KK_SessionSharedWait);
+		Shared.Wait();
+	}
 	if (Async.IsValid() && GSolvingHandle != this && !Async.IsCompleted())
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(KK_SessionAsyncWait);
@@ -1134,6 +1147,21 @@ bool FOkSession::SetBlush(float Rate)
 {
 	return Handle && ok_session_set_blush(Handle, Rate) == 0;
 }
+bool FOkSession::SetPupilOffset(float X, float Y)
+{
+	return Handle && ok_session_set_pupil_offset(Handle, X, Y) == 0;
+}
+
+bool FOkSession::SetPupilStretch(float Across, float Down)
+{
+	return Handle && ok_session_set_pupil_stretch(Handle, Across, Down) == 0;
+}
+
+bool FOkSession::SetPupilScale(float Scale)
+{
+	return Handle && ok_session_set_pupil_scale(Handle, Scale) == 0;
+}
+
 bool FOkSession::SetIrisSmall(float Rate)
 {
 	return Handle && ok_session_set_iris_small(Handle, Rate) == 0;

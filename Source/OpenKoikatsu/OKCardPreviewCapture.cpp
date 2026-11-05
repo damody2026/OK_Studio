@@ -142,7 +142,7 @@ static void Start(AKKPreviewActor* Actor,FComplete Complete,bool bBodyOnly)
     TSet<FName> FaceMeshes;
     for(const auto& P:Actor->Parts) if(P.bFaceSphereNormals) FaceMeshes.Add(*FString::Printf(TEXT("Skel_%d"),P.SessionIndex));
     TArray<FVector> Points;
-    for(UPoseableMeshComponent* Mesh:Actor->SkelFollowers) if(IsValid(Mesh)&&Mesh->IsVisible())
+    for(UPoseableMeshComponent* Mesh:Actor->SkelFollowers) if(IsValid(Mesh)&&Mesh->IsVisible()&&Mesh->GetMeshObject())
     {
         TArray<FFinalSkinVertex> Vertices;Mesh->GetCPUSkinnedVertices(Vertices,0);
         for(const auto& V:Vertices)

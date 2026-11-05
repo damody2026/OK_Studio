@@ -209,6 +209,8 @@ fn experience(r: &Value) -> Result<Value, String> {
     let preg = crate::pregnancy::on_day(r.get("ext").unwrap_or(&Value::Null), girl, day.max(0));
     let mut areas: serde_json::Map<String, Value> = AREA_KEYS.iter().enumerate().map(|(i, k)| (k.to_string(), json!(h.area(i)))).collect();
     areas.insert("oral".into(), json!(h.oral.min(100.0)));
+    // Where she is used to being touched (intercourse and touching, not her development).
+    let used_to = json!({"crotch": h.judged(CROTCH), "anal": h.judged(ANAL)});
     // What she lets him touch and kiss of the rest of her (and her lips: as close as a kiss).
     let stage = rel.as_ref().map_or(0, |r| r.stage_index());
     let mut touch_ok = serde_json::Map::new();
@@ -220,6 +222,7 @@ fn experience(r: &Value) -> Result<Value, String> {
     }
     touch_ok.insert("lips".into(), json!({"touch": stage >= 1 - i32::from(h.area(KISS) >= 30.0), "kiss": kiss_ok}));
     Ok(json!({
+        "used_to": used_to,
         "touch_ok": touch_ok,
         // A rebuilt hymen plays as her first time in the scene (the insertion's pain, blood and reaction, OKHScene).
         "level": level, "level_name": level_name(level), "areas": areas, "count": h.count, "virgin": h.virgin || h.hymen_restored, "anal_virgin": h.anal_virgin,
@@ -273,6 +276,19 @@ fn session_end(r: &Value) -> Result<Value, String> {
     let flag = |v: &Value, k: &str| v.get(k).and_then(Value::as_bool).unwrap_or(false);
     let before = rel.clone();
     let mut h = of(&ext, girl);
+    // Her development as the player set it on the scene's left panel (user 2026-11-04): what this scene adds comes on top.
+    if let Some(set) = c.get("dev_set").and_then(Value::as_object) {
+        for (k, v) in set {
+            let v = v.as_f64().unwrap_or(0.0).clamp(0.0, 100.0) as f32;
+            if let Some(i) = AREA_KEYS.iter().position(|a| a == k) {
+                h.areas[i] = v;
+            } else if k == "oral" {
+                h.oral = v;
+            } else if BODY_KEYS.contains(&k.as_str()) {
+                h.body.insert(k.clone(), v);
+            }
+        }
+    }
     let was = h.clone();
     let level_before = h.level(rel.lewdness);
     let mut fx = Effects::default();
@@ -324,9 +340,15 @@ fn session_end(r: &Value) -> Result<Value, String> {
         // Touching: selectAreas*0.1 a scene in the original, where one scene caps at 100; here a second of touch is
         // worth half a point, so a long caress of one place is a big step and five scenes of it make her used to it.
         let areas = c.get("areas").cloned().unwrap_or_else(|| json!({}));
+        // Her vagina and anus open only with climaxes with him in her (below; user 2026-11-02): touched, they count to
+        // what she is used to and not to her development. +45 in one scene was 25 of it from a 50 second caress.
         for i in CHEST..=NIPPLE {
-            let secs = num(&areas, AREA_KEYS[i]).clamp(0.0, 200.0) as f32;
-            h.areas[i] = (h.areas[i] + secs * 0.5).min(100.0);
+            let got = num(&areas, AREA_KEYS[i]).clamp(0.0, 200.0) as f32 * 0.5;
+            match i {
+                CROTCH => h.crotch_h = (h.crotch_h + got).min(1000.0),
+                ANAL => h.anal_h = (h.anal_h + got).min(1000.0),
+                _ => h.areas[i] = (h.areas[i] + got).min(100.0),
+            }
         }
         for k in BODY_KEYS {
             let secs = num(&areas, k).clamp(0.0, 200.0) as f32;
@@ -402,14 +424,14 @@ fn session_end(r: &Value) -> Result<Value, String> {
                 rel.favor = (rel.favor + cap * inside).min(cap);
             }
         }
-        // He asked again for no condom and she gave in: how she takes it is her chastity and her character (a proud
-        // girl minds, one who worships him or is already lewd less so).
+        // She said no to going without a condom and he did anyway: 1 to 5 favor (user 2026-11-04), by her chastity and her
+        // character (a proud girl minds, one who worships him or is already lewd less so).
         if flag(&c, "raw_pressed") {
             let t = crate::traits::Traits::from_profile(r.get("profile").unwrap_or(&Value::Null));
             let chaste = crate::heroine::chastity(&rel, &t);
-            let delta = ((40.0 - chaste) / 10.0 - (t.self_esteem as f32 - 50.0) / 25.0 + (t.worship as f32 - 50.0) / 25.0 + rel.lewdness / 50.0).clamp(-8.0, 4.0);
-            rel.add_liking(delta);
-            fx.note_at(&rel.id, "h_first", crate::tr::t(if delta < 0.0 { "hexp.raw_pressed_upset" } else { "hexp.raw_pressed_ok" }), place, 0.85);
+            let minds = (chaste - 40.0) / 10.0 + (t.self_esteem as f32 - 50.0) / 25.0 - (t.worship as f32 - 50.0) / 25.0 - rel.lewdness / 50.0;
+            rel.favor = (rel.favor - (3.0 + minds).round().clamp(1.0, 5.0)).max(0.0);
+            fx.note_at(&rel.id, "h_first", crate::tr::t("hexp.raw_pressed_upset"), place, 0.85);
         }
         // The whole time in one memory she can be asked about ("how many times did you come?").
         let int = |k: &str| crate::tr::a(&(num(&c, k) as i64).to_string());
@@ -560,6 +582,25 @@ mod tests {
     }
 
     #[test]
+    fn touching_her_vagina_or_anus_does_not_develop_them() {
+        let out = session_end(&json!({"girl": "g", "relation": rel(0.0), "ext": {}, "counts": {"played": true, "areas": {"crotch": 50, "anal": 20, "chest": 50}}})).unwrap();
+        let h: HExp = serde_json::from_value(out["ext"]["hexp"]["g"].clone()).unwrap();
+        assert_eq!((h.areas[CROTCH], h.areas[ANAL], h.areas[CHEST]), (0.0, 0.0, 25.0));
+        assert_eq!((h.crotch_h, h.anal_h), (25.0, 10.0), "she is used to it all the same");
+        let e = experience(&json!({"girl": "g", "relation": rel(0.0), "ext": out["ext"]})).unwrap();
+        assert_eq!((e["areas"]["crotch"].as_f64(), e["used_to"]["crotch"].as_f64()), (Some(0.0), Some(25.0)));
+    }
+
+    #[test]
+    fn development_set_on_the_panel_is_kept_with_what_the_scene_adds() {
+        let ext = json!({"hexp": {"g": {"count": 1, "areas": [0, 0, 30, 0, 0, 0]}}});
+        let out = session_end(&json!({"girl": "g", "relation": rel(0.0), "ext": ext, "counts": {"played": false,
+            "dev_set": {"crotch": 80, "oral": 55, "foot": 40, "nothing": 9, "chest": 300}}})).unwrap();
+        let h: HExp = serde_json::from_value(out["ext"]["hexp"]["g"].clone()).unwrap();
+        assert_eq!((h.areas[CROTCH], h.areas[1], h.oral, h.body["foot"]), (80.0, 100.0, 55.0, 40.0));
+    }
+
+    #[test]
     fn climaxes_in_her_and_his_mouth_develop_her() {
         let ext = json!({"hexp": {"g": {"count": 1, "areas": [0, 0, 30, 95, 0, 0], "oral": 40}}});
         let out = session_end(&json!({"girl": "g", "relation": rel(0.0), "ext": ext, "counts": {"played": true,
@@ -625,6 +666,15 @@ mod tests {
         easy.favor = 50.0;
         let fine = session_end(&json!({"girl": "g", "relation": easy, "ext": {}, "counts": {"played": true, "raw_pressed": true}})).unwrap();
         assert!(favor(&pressed) < favor(&fine), "chaste {} vs easy {}", favor(&pressed), favor(&fine));
+        let unpressed: Relation = { let mut r: Relation = serde_json::from_value(rel(0.0)).unwrap(); r.chastity = 90.0; r.favor = 50.0; r };
+        let plain = favor(&session_end(&json!({"girl": "g", "relation": unpressed, "ext": {}, "counts": {"played": true}})).unwrap());
+        assert_eq!(plain - favor(&pressed), 5.0, "a chaste girl minds the most");
+        let mut lewd: Relation = serde_json::from_value(rel(0.0)).unwrap();
+        lewd.chastity = 0.0;
+        lewd.lewdness = 400.0;
+        lewd.favor = 50.0;
+        let cost = favor(&session_end(&json!({"girl": "g", "relation": lewd.clone(), "ext": {}, "counts": {"played": true}})).unwrap()) - favor(&session_end(&json!({"girl": "g", "relation": lewd, "ext": {}, "counts": {"played": true, "raw_pressed": true}})).unwrap());
+        assert_eq!(cost, 1.0, "it always costs her something");
     }
 
     #[test]

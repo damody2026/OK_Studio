@@ -168,7 +168,7 @@ pub fn apply(session:&mut OkSession,settings:&Settings)->bool{
   assert_eq!(delta,session.parts.iter().map(|p|p.rest_positions.clone()).collect::<Vec<_>>());
   apply(&mut session,&Settings::default());
   for(p,o)in session.parts.iter().zip(&original){assert_eq!(p.rest_positions,o.0);assert_eq!(p.rest_normals,o.1);}
-  std::fs::create_dir_all("C:/portable/OpenKoikatsu/Saved/Tests/EditorMods").unwrap();
-  std::fs::write("C:/portable/OpenKoikatsu/Saved/Tests/EditorMods/belly.json",serde_json::to_vec_pretty(&serde_json::json!({"valid":true,"changes":changes,"exact_restore":true,"animation_preserves_source":true})).unwrap()).unwrap();
+  std::fs::create_dir_all(crate::test_support::project_path!("Saved/Tests/EditorMods")).unwrap();
+  std::fs::write(crate::test_support::project_path!("Saved/Tests/EditorMods/belly.json"),serde_json::to_vec_pretty(&serde_json::json!({"valid":true,"changes":changes,"exact_restore":true,"animation_preserves_source":true})).unwrap()).unwrap();
  }
 }

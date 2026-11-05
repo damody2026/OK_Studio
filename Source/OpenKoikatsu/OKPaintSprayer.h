@@ -55,6 +55,8 @@ public:
  UFUNCTION(BlueprintCallable,Category="Paint") void ClearPaint();
  UFUNCTION(BlueprintCallable,Category="Paint") void ClearPaintForActor(AActor* Actor);
  void SetControlsVisible(bool Visible);
+ bool bSkipTongue=false; // her tongue takes no coating
+ bool bShowGun=true; // the water gun drawn while it sprays; off for what comes out of her in H (it stood on her head as her drool ran)
  UFUNCTION(BlueprintCallable,Category="Paint") FString Statistics() const;
  bool FindPaintHit(const FVector& A,const FVector& B,double Radius,int32& Target,int32& Triangle,FVector& Bary,double& Time);
  double Deposited=0,Dripped=0,FloorVolume=0,Cleared=0,Escaped=0;
@@ -122,7 +124,7 @@ private:
  void DiscoverSurfaces(const FVector& A,const FVector& B,bool SourceCone=true);
  void RefreshGeometry(FSurface& Surface);
  bool PrepareGeometry(FSurface& Surface);
- void RefreshGeometries();
+ void RefreshGeometries(bool OnlyPainted=false);bool bGeometryOnlyPainted=false;double SurfaceSeconds=.05;
  void RefreshGeometryJobs();
  bool InitializeCoating(FSurface& Surface);
  struct FAtlasChartWrite {FFloat16Color* Pixels;const TArray<float>* Heights;int32 PageSize,Edge;FIntPoint Origin;double Scale;FVector2D Flow;};

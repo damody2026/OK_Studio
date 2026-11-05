@@ -196,7 +196,7 @@ void AOKStreetSocialScene::StartControlServer(){
   if(!Peek&&B->TryGetNumberField(TEXT("eyes_follow"),V))OKSetCrowdRuntimeEyeFollow(this,int32(Girl),int32(V));
   const bool Ok=Peek||OKSetCrowdRuntimeFaceLook(this,int32(Girl),Look,Error);auto O=OKControlResult(Ok,Error);
   // What her face shows this frame, easing toward the goal ({"peek": true} only reads it).
-  {FOKRuntimeFaceLookNow N;if(OKGetCrowdRuntimeFaceLook(this,int32(Girl),N)){auto J=MakeShared<FJsonObject>();J->SetNumberField(TEXT("blush"),N.Blush);J->SetNumberField(TEXT("sweat"),N.Sweat);J->SetNumberField(TEXT("gaze_x"),N.Gaze.X);J->SetNumberField(TEXT("gaze_y"),N.Gaze.Y);J->SetNumberField(TEXT("follow_x"),N.Follow.X);J->SetNumberField(TEXT("follow_y"),N.Follow.Y);J->SetNumberField(TEXT("tears"),N.Tears);J->SetNumberField(TEXT("tear_shown"),N.TearShown);J->SetNumberField(TEXT("highlight"),N.Highlight);J->SetBoolField(TEXT("fading"),N.Fading);O->SetObjectField(TEXT("look_now"),J);}}
+  {FOKRuntimeFaceLookNow N;if(OKGetCrowdRuntimeFaceLook(this,int32(Girl),N)){auto J=MakeShared<FJsonObject>();J->SetNumberField(TEXT("blush"),N.Blush);J->SetNumberField(TEXT("sweat"),N.Sweat);J->SetNumberField(TEXT("pupil"),N.Pupil);J->SetNumberField(TEXT("dull"),N.Dull);J->SetNumberField(TEXT("gaze_x"),N.Gaze.X);J->SetNumberField(TEXT("gaze_y"),N.Gaze.Y);J->SetNumberField(TEXT("follow_x"),N.Follow.X);J->SetNumberField(TEXT("follow_y"),N.Follow.Y);J->SetNumberField(TEXT("tears"),N.Tears);J->SetNumberField(TEXT("tear_shown"),N.TearShown);J->SetNumberField(TEXT("highlight"),N.Highlight);J->SetBoolField(TEXT("fading"),N.Fading);O->SetObjectField(TEXT("look_now"),J);}}
   // The shape cross-fades so far (mouth / eyes / brows, 0.15 s each as the source): started, frames drawn mid-way, done.
   {FOKRuntimeFaceStatus F;if(OKGetCrowdRuntimeFaceStatus(this,int32(Girl),F)){O->SetNumberField(TEXT("fades_started"),double(F.Started));O->SetNumberField(TEXT("fade_frames"),double(F.Intermediate));O->SetNumberField(TEXT("fades_completed"),double(F.Completed));}}
   // {"catch": candelas}: the catch light the lit tears shine with.
@@ -227,6 +227,22 @@ void AOKStreetSocialScene::StartControlServer(){
   // Slate drops synthetic mouse input while the game window is not the foreground window.
   if(GEngine&&GEngine->GameViewport){if(TSharedPtr<SWindow> Win=GEngine->GameViewport->GetWindow())Win->BringToFront(true);FSlateApplication::Get().SetAllUserFocusToGameViewport();}
   FString Why;const bool Ok=ProbePress(Label,Why,int32(Nth));OKControlReply(Done,OKControlResult(Ok,Why));
+ });
+
+ // {x, y}: a left click at these viewport pixels, for what has no label to press by (a dropdown and its list).
+ Bind(TEXT("/mouse"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
+  auto& S=*State;auto B=OKControlBody(Req);double X=0,Y=0;B->TryGetNumberField(TEXT("x"),X);B->TryGetNumberField(TEXT("y"),Y);
+  UGameViewportClient* Client=GEngine?GEngine->GameViewport.Get():nullptr;const TSharedPtr<SViewport> Widget=Client?Client->GetGameViewportWidget():nullptr;
+  if(!Widget){OKControlReply(Done,OKControlResult(false,TEXT("no viewport")));return;}
+  if(!S.MouseUI){GControlRestoreMouse=true;S.MouseUI=true;ApplyMouseMode(true);}
+  GControlRestoreMouseAt=FPlatformTime::Seconds()+5.0;
+  if(TSharedPtr<SWindow> Win=Client->GetWindow())Win->BringToFront(true);
+  FVector2D Size;Client->GetViewportSize(Size);const FGeometry Geo=Widget->GetCachedGeometry();const FVector2D P=Geo.LocalToAbsolute(FVector2D(X,Y)*Geo.GetLocalSize()/Size);
+  FSlateApplication& App=FSlateApplication::Get();App.SetCursorPos(P);TSet<FKey> Pressed;Pressed.Add(EKeys::LeftMouseButton);
+  App.ProcessMouseMoveEvent(FPointerEvent(App.CursorPointerIndex,P,P,TSet<FKey>(),FKey(),0,FModifierKeysState()));
+  App.ProcessMouseButtonDownEvent(nullptr,FPointerEvent(App.CursorPointerIndex,P,P,Pressed,EKeys::LeftMouseButton,0,FModifierKeysState()));
+  App.ProcessMouseButtonUpEvent(FPointerEvent(App.CursorPointerIndex,P,P,TSet<FKey>(),EKeys::LeftMouseButton,0,FModifierKeysState()));
+  OKControlReply(Done,OKControlResult(true));
  });
 
  // Cursor mode on/off (what Ctrl or the middle mouse button toggles): off lets WASD and E work again.
@@ -422,6 +438,13 @@ void AOKStreetSocialScene::StartControlServer(){
    S.Song.NextCheck=0;RefreshUI();Action=TEXT("state");}
   OKControlReply(Done,SongControl(Action,Girl));
  });
+ // {girl:1..10, id}: would she go? The check every invitation asks (nothing is bought or used up here).
+ Bind(TEXT("/activity"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
+  auto& S=*State;const auto B=OKControlBody(Req);double Girl=-1;FString Id;B->TryGetNumberField(TEXT("girl"),Girl);B->TryGetStringField(TEXT("id"),Id);
+  if(Girl<1||!S.Manifest.Characters.IsValidIndex(int32(Girl))||Id.IsEmpty()){OKControlReply(Done,OKControlResult(false,TEXT("girl and id required")));return;}
+  auto Request=ActivityContext(int32(Girl),TEXT("activity_check"));Request->SetStringField(TEXT("id"),Id);Request->SetStringField(TEXT("here"),PlaceHere(S.Male));Request->SetNumberField(TEXT("player_cash"),double(S.Store.PlayerCash));
+  const TSharedPtr<FJsonObject> Answer=OKRulesEval(S,Request);auto O=OKControlResult(Answer.IsValid());if(Answer.IsValid())O->SetObjectField(TEXT("answer"),Answer);OKControlReply(Done,O);});
+
  Bind(TEXT("/rules"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   auto& S=*State;const TSharedRef<FJsonObject> Body=OKControlBody(Req);FString Action=TEXT("status");Body->TryGetStringField(TEXT("action"),Action);
   if(!S.Rules){OKControlReply(Done,OKControlResult(false,TEXT("rules not open")));return;}

@@ -6,7 +6,7 @@ use std::ffi::CString;
 #[derive(Deserialize)]struct Bone{name:String,position:V3,rotation:Q4,scale:V3}
 #[derive(Deserialize)]#[serde(rename_all="camelCase")]struct Frame{bundle:String,controller:String,from_state:String,to_state:String,speed:f32,start:f32,elapsed:f32,blend:f32,offset:f32,from_length:f32,to_length:f32,to_normalized:f32,transition_normalized:f32,transitioning:bool,bones:Vec<Bone>}
 const CARDS:[&str;5]=["[Card] March_7th_keiyuu","Alice_keiyuu","Hayase_yuuka_keiyuu_V1_02 For KKS","KK_091207","KK_384283"];
-fn frames(card:&str)->Vec<Frame>{let s:String=card.chars().map(|c|if c.is_ascii_alphanumeric()||c=='_'{c}else{'_'}).collect();serde_json::from_slice(&crate::gamefs::read(format!("C:/portable/OpenKoikatsu/Saved/Tests/AnimatorCrossFade301/{s}AnimatorCrossFade301.json.crossfade.json")).unwrap()).unwrap()}
+fn frames(card:&str)->Vec<Frame>{let s:String=card.chars().map(|c|if c.is_ascii_alphanumeric()||c=='_'{c}else{'_'}).collect();serde_json::from_slice(&crate::gamefs::read(format!("{}/../../Saved/Tests/AnimatorCrossFade301/{s}AnimatorCrossFade301.json.crossfade.json",env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap()}
 fn key(f:&Frame,state:&str)->String{format!("states:{}|{} / {}",f.bundle,f.controller,state)}
 fn params(f:&Frame)->HashMap<String,f32>{HashMap::from([("MotionSpeed".into(),f.speed),("Speed".into(),0.37)])}
 fn error(tf:&crate::pose::Tf,b:&Bone)->[f32;3]{let p=[b.position.x,b.position.y,b.position.z];let s=[b.scale.x,b.scale.y,b.scale.z];let q=[b.rotation.x,b.rotation.y,b.rotation.z,b.rotation.w];[(0..3).map(|i|(tf.pos[i]-p[i]).abs()).fold(0.,f32::max),(0..4).map(|i|(tf.rot[i]-q[i]).abs()).fold(0.,f32::max).min((0..4).map(|i|(tf.rot[i]+q[i]).abs()).fold(0.,f32::max)),(0..3).map(|i|(tf.scale[i]-s[i]).abs()).fold(0.,f32::max)]}

@@ -56,7 +56,7 @@ fn native_studio_pv_animation_transforms() {
     let mut samples=0;let mut errors=[0f32;3];
     for card in cards {
         let stem:String=card.chars().map(|c|if c.is_ascii_alphanumeric()||c=='_'{c}else{'_'}).collect();
-        let native:Vec<Frame>=serde_json::from_slice(&crate::gamefs::read(format!("C:/portable/OpenKoikatsu/Saved/Tests/Studio293/{stem}Studio293.json.studio.json")).unwrap()).unwrap();
+        let native:Vec<Frame>=serde_json::from_slice(&crate::gamefs::read(format!("{}/../../Saved/Tests/Studio293/{stem}Studio293.json.studio.json",env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap();
         let mut session=crate::session::open(game,Some(&game.join(format!("UserData/chara/female/{card}.png"))),0).unwrap();
         session.apply_anim_frame(0.,0.);
         let baseline=session.body_shaped.as_ref().unwrap();let config=session.pv_config.as_ref().unwrap();
@@ -104,7 +104,7 @@ fn native_studio_load_graph_and_options() {
     let mut frames=0;let mut attrs_count=0;let mut errors=[0f32;3];let mut negative=0;
     for card in &cards {
         let stem:String=card.chars().map(|c|if c.is_ascii_alphanumeric()||c=='_'{c}else{'_'}).collect();
-        let native:Vec<Frame>=serde_json::from_slice(&crate::gamefs::read(format!("C:/portable/OpenKoikatsu/Saved/Tests/Studio293/{stem}Studio293.json.studio.json")).unwrap()).unwrap();
+        let native:Vec<Frame>=serde_json::from_slice(&crate::gamefs::read(format!("{}/../../Saved/Tests/Studio293/{stem}Studio293.json.studio.json",env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap();
         assert_eq!(native.len(),27);
         let mut session=crate::session::open(game,Some(&game.join(format!("UserData/chara/female/{card}.png"))),0).unwrap();
         session.apply_anim_frame(0.,0.);let baseline=session.body_shaped.as_ref().unwrap();

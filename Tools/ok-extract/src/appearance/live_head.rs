@@ -278,7 +278,7 @@ impl Context {
  /// thread, printing stage timings. Diagnostic only; UI timing is acceptance.
  #[test]#[ignore="installed sources and an explicit OK_GEOMETRY_BENCH_CARD"]
  fn geometry_preparation_benchmark(){
-  let project=Path::new("C:/portable/OpenKoikatsu");let root=&crate::test_support::game_path("");
+  let project=Path::new(crate::test_support::project_path!(""));let root=&crate::test_support::game_path("");
   let card=std::path::PathBuf::from(std::env::var("OK_GEOMETRY_BENCH_CARD").unwrap());
   let target=std::env::var("OK_GEOMETRY_BENCH_TARGET").unwrap_or("accessory1_124".into());
   let resources=project.join("Content/IndependentResources/v1");std::env::set_var("OK_BUILTIN_RESOURCES",&resources);
@@ -315,7 +315,7 @@ impl Context {
  }
  #[test]#[ignore="installed runtime head preparation and live-state acceptance"]
  fn sequential_runtime_head_preparation(){
-  let project=Path::new("C:/portable/OpenKoikatsu");let root=&crate::test_support::game_path("");
+  let project=Path::new(crate::test_support::project_path!(""));let root=&crate::test_support::game_path("");
   let base=project.join("Content/CharacterCards/CrowdAPNG/C001.png");
   let mut live=crate::portable::load(&base).unwrap();
   let mut context=Context::new(root,&base,&project.join("Content/IndependentResources/v1"),&project.join("Saved/AppearanceEditor/cache"),0).unwrap();

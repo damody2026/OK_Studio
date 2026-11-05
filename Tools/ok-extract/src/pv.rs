@@ -58,7 +58,7 @@ mod tests {
         let mut frames=0;let mut copies=0;let mut held=0;let mut positive=0;let mut max=0f32;
         for card in ["[Card] March_7th_keiyuu","Alice_keiyuu","Hayase_yuuka_keiyuu_V1_02 For KKS","KK_091207","KK_384283"] {
             let stem:String=card.chars().map(|c|if c.is_ascii_alphanumeric()||c=='_'{c}else{'_'}).collect();
-            let input:Vec<serde_json::Value>=serde_json::from_slice(&crate::gamefs::read(format!("C:/portable/OpenKoikatsu/Saved/Tests/Studio295/{stem}Studio295.json.pv.json")).unwrap()).unwrap();
+            let input:Vec<serde_json::Value>=serde_json::from_slice(&crate::gamefs::read(format!("{}/../../Saved/Tests/Studio295/{stem}Studio295.json.pv.json",env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap();
             assert_eq!(input.len(),15);let mut cardmax=0f32;
             for f in &input {
                 assert!(f["callback"].as_str().unwrap().contains("<Start>"));

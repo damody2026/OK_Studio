@@ -13,6 +13,25 @@ struct OkMorphView;
 struct OkBodyPose;
 struct FReferenceSkeleton;
 class UAnimSequence;
+class UTexture;
+
+/** This iris texture with the highlights painted into it taken out (a card's overlay can hold them; the eye material's own
+ *  gate does not reach those). Iris itself when it has none. Made once per texture, on the game thread. */
+KKUNITYBUNDLE_API UTexture* OKIrisWithoutHighlights(UTexture* Iris);
+/** Marks of ours over the middle of an iris, the first under the second: Shape (x; 0 none), across, down, opacity, and each one's
+ *  Colour (hue in degrees, saturation, value). */
+struct FOKIrisMarks
+{
+	FVector4f Shape[2]={FVector4f(0.f,0.f,0.f,0.f),FVector4f(0.f,0.f,0.f,0.f)};
+	FVector3f Colour[2]={FVector3f(0.f,0.f,0.f),FVector3f(0.f,0.f,0.f)};
+	bool Any() const {return Shape[0].X>0.f||Shape[1].X>0.f;}
+	bool operator==(const FOKIrisMarks& O) const {return Shape[0]==O.Shape[0]&&Shape[1]==O.Shape[1]&&Colour[0]==O.Colour[0]&&Colour[1]==O.Colour[1];}
+};
+/** Iris with its hue turned (degrees), its saturation and value times as much, and Marks laid over it; one image per iris, made
+ *  again on a change, the iris itself left as it is. */
+KKUNITYBUNDLE_API UTexture* OKIrisRecolored(UTexture* Iris,float Hue,float Saturation,float Value,const FOKIrisMarks& Marks=FOKIrisMarks());
+/** One clear pixel: an eye layer with nothing on it. */
+KKUNITYBUNDLE_API UTexture* OKClearEyeLayer();
 
 bool KKUNITYBUNDLE_API OKExtractCard(
 	const FString& GameRoot,
@@ -28,6 +47,8 @@ struct KKUNITYBUNDLE_API FOkSessionHandle
 {
 	OkSession* Raw = nullptr;
 	mutable UE::Tasks::TTask<bool> Async;
+	/** A solve of several sessions together (the pair frame): waited for the same way, except inside FOkSharedSolveScope. */
+	mutable UE::Tasks::FTask Shared;
 	FOkSessionHandle() = default;
 	FOkSessionHandle(OkSession* P) : Raw(P) {}
 	FOkSessionHandle(const FOkSessionHandle& Other) : Raw(Other.Get()) {}
@@ -38,9 +59,18 @@ struct KKUNITYBUNDLE_API FOkSessionHandle
 	void Sync() const;
 };
 
+/** Around the work of a shared solve: this thread is the one using the sessions. */
+struct KKUNITYBUNDLE_API FOkSharedSolveScope
+{
+	FOkSharedSolveScope();
+	~FOkSharedSolveScope();
+};
+
 class KKUNITYBUNDLE_API FOkSession
 {
 public:
+	/** Task has this session in a solve with others: from here every use of the session waits for it. */
+	void SetSharedSolve(const UE::Tasks::FTask& Task) { Handle.Shared = Task; }
 	/** Solve the game-animation frame at Time on a worker; the game thread keeps drawing meanwhile. The next use of
 	 *  this session waits for it; FinishAsyncAnimFrame takes its result (false: none pending, or the frame failed). */
 	void LaunchAsyncAnimFrame(float Time, float DeltaSeconds);
@@ -97,6 +127,8 @@ public:
   /** Call between scene loads with no source open/prepare jobs running. Keeps live sessions and disk caches. */
   static void ReleaseSourceCaches();
  static FString CommonInteractionPoses();
+ // What each outfit of her card asks for and nothing provides, as JSON (outfit_gaps.rs). Slow: not on the game thread.
+ static FString CardOutfitGaps(const FString& Root,const FString& Card);
  bool PrepareBodyReaction(const TArray<uint8>& Definition,FString& Error);
  bool BodyReactionHit(int32 Id,TConstArrayView<FVector3f> Forces,float Weight,uint8 ReleaseMask=0);
  void ClearBodyReaction();
@@ -259,6 +291,12 @@ public:
 	bool SetEyeGaze(float LeftH, float RightH, float Vertical);
 	bool SetBlush(float Rate);
 	bool SetIrisSmall(float Rate);
+	/** Her pupils drawn Scale times as large; 1 is as on her card. */
+	bool SetPupilScale(float Scale);
+	/** Her pupils drawn off their place, in iris texture units. */
+	bool SetPupilOffset(float X, float Y);
+	/** Her pupils across and down, on top of their scale. */
+	bool SetPupilStretch(float Across, float Down);
 	int32 EyeLookPatternCount() const;
 	bool StepEyeLook(const FVector& UnityTarget, int32 Pattern, float DeltaSeconds, bool Enabled, float* Rates);
 	bool ApplyAnimTime(float Time);

@@ -48,7 +48,7 @@ fn tuple<const N:usize>(s:&str)->[f32;N] {
     v.try_into().unwrap()
 }
 fn ids(s:&str)->Vec<i64> {if s.is_empty(){vec![]}else{s.split(',').map(|x|x.parse().unwrap()).collect()}}
-fn fixture_directory()->std::path::PathBuf {std::env::var_os("OK_ACCESSORY_PHYSICS_FIXTURE").map(std::path::PathBuf::from).unwrap_or_else(||"C:/portable/OpenKoikatsu/Saved/Tests/Accessory318Native".into())}
+fn fixture_directory()->std::path::PathBuf {std::env::var_os("OK_ACCESSORY_PHYSICS_FIXTURE").map(std::path::PathBuf::from).unwrap_or_else(||crate::test_support::project_path!("Saved/Tests/Accessory318Native").into())}
 fn quat_error(a:[f32;4],b:[f32;4])->f32 {
     let distance=|sign:f32|a.iter().zip(b).map(|(a,b)|(a-sign*b).abs()).fold(0.0f32,f32::max);
     distance(1.0).min(distance(-1.0))
@@ -57,7 +57,7 @@ fn quat_error(a:[f32;4],b:[f32;4])->f32 {
 #[test]
 #[ignore="requires cached asset inputs and native accessory SetupParticles coefficients"]
 fn native_accessory_asset_particle_parameters() {
-    let inputs:serde_json::Value=serde_json::from_slice(&crate::gamefs::read("C:/portable/OpenKoikatsu/Saved/Logs/Accessory318CachedInputs.json").unwrap()).unwrap();
+    let inputs:serde_json::Value=serde_json::from_slice(&crate::gamefs::read(crate::test_support::project_path!("Saved/Logs/Accessory318CachedInputs.json")).unwrap()).unwrap();
     let mut reports=Vec::new();
     let mut physics_reports=Vec::new();
     for (input,card) in inputs.as_array().unwrap().iter().zip([0,0,1]) {
@@ -135,9 +135,9 @@ fn native_accessory_asset_particle_parameters() {
         }
     }
     let passed=reports.iter().all(|r|r["coefficient_max"].as_f64().unwrap()<2e-5&&r["initial_world_max_m"].as_f64().unwrap()<2e-5&&r["init_local_max_m"].as_f64().unwrap()<2e-5&&r["init_rotation_max"].as_f64().unwrap()<2e-5);
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Logs/Accessory318AssetParametersAudit.json",serde_json::to_vec_pretty(&serde_json::json!({"passed":passed,"rows":reports,"scope":"actual decoded source graph/card placement and distribution coefficients versus installed SetupParticles; no simulation"})).unwrap()).unwrap();
+    std::fs::write(crate::test_support::project_path!("Saved/Logs/Accessory318AssetParametersAudit.json"),serde_json::to_vec_pretty(&serde_json::json!({"passed":passed,"rows":reports,"scope":"actual decoded source graph/card placement and distribution coefficients versus installed SetupParticles; no simulation"})).unwrap()).unwrap();
     let physics_passed=physics_reports.iter().all(|r|r["local_max_m"].as_f64().unwrap()<2e-5&&r["world_max_m"].as_f64().unwrap()<2e-5&&r["quaternion_component_max"].as_f64().unwrap()<2e-5);
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Logs/Accessory318SourcePhysicsAudit.json",serde_json::to_vec_pretty(&serde_json::json!({"passed":physics_passed,"rows":physics_reports,"scope":"decoded asset/card curves and complete socket Transform ancestry; actual native world collider controls; native steps 0/1/60/240; collider policy selection and free-running screenshot timing not covered"})).unwrap()).unwrap();
+    std::fs::write(crate::test_support::project_path!("Saved/Logs/Accessory318SourcePhysicsAudit.json"),serde_json::to_vec_pretty(&serde_json::json!({"passed":physics_passed,"rows":physics_reports,"scope":"decoded asset/card curves and complete socket Transform ancestry; actual native world collider controls; native steps 0/1/60/240; collider policy selection and free-running screenshot timing not covered"})).unwrap()).unwrap();
     assert_eq!(reports.len(),5,"two tie chains and three selected partial hair chains; unmatched names require investigation");
     assert!(passed,"source initial graph or distribution coefficients differ; inspect preserved report");
     assert!(physics_passed,"source fixed-step physics differs; inspect saved report");
@@ -163,6 +163,9 @@ fn attached_ancestry_preserves_shear_and_particle_history() {
     exact.step(1./60.);assert!((exact.chains[0].particles[0].pos[0]-(-2f32.sqrt()+0.2)).abs()<1e-6);
     assert_eq!(source.rest,vec![ident();2],"attachment ancestry must not rewrite mesh binds/rest");
     let mut oracle=exact.clone();let mut deferred=exact.clone();
+    // Tfs is copied on write and the two clones above share it: exact's first write makes its own, and from then on
+    // no frame may allocate a name.
+    let _=&mut *exact.skel.tfs;
     let names:Vec<_>=exact.attachment_ids.iter().map(|id|exact.skel.tfs[id].name.as_ptr()).collect();
     for frame in 0..60 {
         chain[0].pos[0]=frame as f32*0.003;chain[1].sibling_index=Some(frame);
@@ -241,7 +244,7 @@ fn native_accessory_fixed_step_solver() {
         }
     }
     let passed=reports.iter().all(|r|r["local_max_m"].as_f64().unwrap()<2e-5&&r["world_max_m"].as_f64().unwrap()<2e-5&&r["quaternion_component_max"].as_f64().unwrap()<2e-5);
-    let output=std::env::var("OK_ACCESSORY_SOLVER_REPORT").unwrap_or_else(|_|"C:/portable/OpenKoikatsu/Saved/Logs/Accessory318SolverAudit.json".into());
+    let output=std::env::var("OK_ACCESSORY_SOLVER_REPORT").unwrap_or_else(|_|crate::test_support::project_path!("Saved/Logs/Accessory318SolverAudit.json").into());
     std::fs::write(output,serde_json::to_vec_pretty(&serde_json::json!({"passed":passed,"rows":reports,"scope":"fixed native Transform graph, installed particle coefficients and collider refs; isolated ordinary solver; asset/card parameter parsing and free-running screenshot timing not covered"})).unwrap()).unwrap();
     assert!(passed,"actual accessory fixed-step solver exceeded unchanged 2e-5 gates; see saved audit");
 }

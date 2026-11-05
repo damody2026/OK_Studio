@@ -14,6 +14,7 @@
 --       loaded; a save made with the full roster is not for it)
 --     [-Inspect [N]]  (straight into the inspection room with heroine N: her alone in an empty room, the camera round her
 --       by the arrow keys, wheel nearer/farther, PageUp/PageDown another heroine, End back to the street)
+-- -Control without -Sandbox runs as -Sandbox Control on this checkout's own ports; -MainSave keeps it on the main save.
 -- -Sandbox runs a second game beside one already playing from this checkout without touching it: its own ports
 -- (-PortBase, default 48060: TTS N, ASR N+1, control N+10), its own save, voice settings and free-talk logs in
 -- Saved/StreetSocial/Sandbox/NAME/ (copied from the main save the first time), voice servers started for it only (the
@@ -29,7 +30,7 @@ local json, path, proc, hash, util = ok.json, ok.path, ok.proc, ok.hash, ok.util
 local fs = require "okfs"
 local instance = require "ok_instance"
 
-local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, editor = true, nogpurig = true, gpurig = true }
+local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, mainsave = true, editor = true, nogpurig = true, gpurig = true }
 local VALUES = { selectionfile = true, malecard = true, retargetfile = true, renderscale = true, executable = true,
   controlport = true, clock = true, window = true, sandbox = true, portbase = true, rulesdll = true, exec = true, trace = true, gpucachedir = true,
   gameargs = true, gpurigverify = true, heroine = true }
@@ -181,6 +182,12 @@ end
 
 local function main()
   local o = parse(arg)
+  -- A controlled run is a test: it never touches the player's save, even for a moment (loading rewrites it). It takes
+  -- the sandbox Control on this checkout's own ports, so ok-game-mcp finds it. -MainSave is for when the save is the test.
+  if o.control and not o.sandbox and not o.mainsave then
+    o.sandbox = "Control"
+    o.portbase = o.portbase or tostring(instance.ports(ok.root).base)
+  end
   local root = ok.root
   local build, launch
   if o.strict then
@@ -491,11 +498,20 @@ local function main()
   if o.selftest then for _, a in ipairs({ "-StreetSocialSelfTest", "-unattended", "-RenderOffscreen" }) do game[#game + 1] = a end end
   -- Development control channel (http://127.0.0.1:<port>: state, say, click, key, navigate, screenshot); never on by default.
   if o.control then game[#game + 1] = "-StreetSocialControl"; game[#game + 1] = "-StreetSocialControlPort=" .. control_port end
+  -- A sandbox or a controlled run never writes the player's H settings: it starts from a copy and keeps its own.
+  local settings_dir = sandbox or (o.control and path.join(root, "Saved/StreetSocial/ControlSettings"))
+  if settings_dir then
+    path.mkdir(settings_dir, true)
+    local shared, own = path.join(os.getenv("LOCALAPPDATA") or "", "OpenKoikatsu/HSettings.ini"), path.join(settings_dir, "HSettings.ini")
+    if not path.exists(own) and path.is_file(shared) then path.copy(shared, own) end
+    game[#game + 1] = "-OKSettingsDir=" .. settings_dir
+  end
   if o.inspect then game[#game + 1] = "-StreetSocialInspect=" .. o.inspect end
   if o.clock then game[#game + 1] = "-StreetSocialClock=" .. o.clock end
   say("StreetSocial: one male + up to ten heroines. WASD move, Shift run, mouse camera, Ctrl/middle UI cursor, wheel zoom, E talk, 1/2/3 topics, Esc cancel, L Chinese/Japanese voices, V built-in/TTS voice, N skip to 07:00 next morning; friendship/confession results save automatically after dialogue; F9 CPU/GPU; conversation buttons: shared walk/explore, photo (P save), seated talk, drinks, splash either direction; Esc ends activity. Reading uses a hand-held book.")
   if o.control then say(("Control channel: http://127.0.0.1:%d (Tools/ok-game-mcp finds it through local-instance.json)"):format(control_port)) end
   local pid = proc.spawn(game, { cwd = root, hide = o.selftest and true or nil })
+  print("game pid " .. pid);io.stdout:flush() -- ok-game-mcp watches it: this launcher leaves while the game runs
   path.write_text(path.join(output, "game.pid"), tostring(pid))
   local server_pids = {}
   for _, s in ipairs(servers) do

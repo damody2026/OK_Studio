@@ -281,7 +281,7 @@ fn skinplus_source_declared_vertex_attributes() {
     let face=meshes.iter().find(|m|m.name=="cf_O_face").unwrap();
     let rows:Vec<_>=[body,face].into_iter().map(|m|serde_json::json!({"mesh":m.name,
         "uv0":m.uvs,"uv1":m.uv2,"uv2":m.uv3,"uv3":m.uv4,"colors32":m.vertex_colors})).collect();
-    std::fs::write("C:/portable/OpenKoikatsu/Saved/Logs/Skin328SourceAttributes.json",serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
+    std::fs::write(crate::test_support::project_path!("Saved/Logs/Skin328SourceAttributes.json"),serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
     assert_eq!(body.uv4.len(),body.positions.len());
     assert!(body.uv4.iter().flatten().all(|v|v.is_finite()));
 }
@@ -339,7 +339,7 @@ fn oversized_texture_payload_uses_declared_array_after_long_name() {
 #[ignore="installed mod DXT5 payload / independent UnityPy image fixture"]
 fn native_mod_dxt5_texture_payload() {
     use unity_asset_decode::texture::TextureProcessor;
-    let fixture=std::path::Path::new("C:/portable/OpenKoikatsu/Saved/Tests/SkinHsv307");
+    let fixture=std::path::Path::new(crate::test_support::project_path!("Saved/Tests/SkinHsv307"));
     let zip=&crate::test_support::game_path("/mods/KKSImportedMods/付费作者系列含mod/SamCosmyson/mod/[[OMEGA]] HS2 port to KK v1.8.1.zipmod");
     let bytes=crate::mods::zipmod_bundle_named(zip,"chara/HS2-KK.unity3d").unwrap();
     let parsed=parse_bundle_ref(&bytes);
@@ -971,7 +971,7 @@ fn dump_tex_stats(label: &str, png: &[u8], out_dir: &std::path::Path) {
 
 #[test]
 fn dump_card_face_raw_textures() {
-    let out = PathBuf::from(r"C:\portable\OpenKoikatsu\Saved\Converted\_face_raw");
+    let out = PathBuf::from(crate::test_support::project_path!("Saved/Converted/_face_raw"));
     let zip_pairs: &[(&str, &str, &str, &str)] = &[
         (
             "mayuge",
@@ -1233,7 +1233,7 @@ fn dump_me_hair_dxbc() {
     let mut dumped = 0usize;
     let filter = std::env::var("OK_ME_SHADER_FILTER").unwrap_or_else(|_| "main_hair".into());
     let out_root = PathBuf::from(std::env::var("OK_ME_DXBC_ROOT")
-        .unwrap_or_else(|_| r"C:\portable\OpenKoikatsu\Saved\ShaderDxbc\EC_Shaders".into()));
+        .unwrap_or_else(|_| crate::test_support::project_path!("Saved/ShaderDxbc/EC_Shaders").into()));
     for file in &bundle.files {
         let Ok(fb) = bundle.extract_file_data(file) else { continue };
         let Ok(serialized) = parse_serialized_file(fb) else { continue };
@@ -1391,7 +1391,7 @@ fn eyeshadow_00f_alpha_at_dump_eye_uv() {
         m2 = mx[2],
         m3 = mx[3],
     );
-    let _ = std::fs::write(r"C:\portable\OpenKoikatsu\Saved\Converted\_face_raw\cw_t_eyeshadow_00f.png", &png);
+    let _ = std::fs::write(crate::test_support::project_path!("Saved/Converted/_face_raw/cw_t_eyeshadow_00f.png"), &png);
 }
 
 #[test]
@@ -1498,7 +1498,7 @@ fn face_uv4_matches_dump_range() {
 #[test]
 #[ignore="historical baked PNG and installed Ushiwakamaru face dump required"]
 fn baked_face_has_eyeshadow_at_eye_uv() {
-    let p = PathBuf::from(r"C:\portable\OpenKoikatsu\Saved\Converted\_user_check\head.png");
+    let p = PathBuf::from(crate::test_support::project_path!("Saved/Converted/_user_check/head.png"));
     if !p.ok_is_file() {
         return;
     }
@@ -1574,7 +1574,7 @@ fn dump_eyeshadow_00f_matches_dump_size() {
     let (w, h) = img.dimensions();
     assert_eq!(n, "cw_t_eyeshadow_00f");
     assert_eq!((w, h), (512, 256), "dump _overtex3 is 512x256");
-    let dir = PathBuf::from(r"C:\portable\OpenKoikatsu\Saved\Converted\_face_raw");
+    let dir = PathBuf::from(crate::test_support::project_path!("Saved/Converted/_face_raw"));
     let _ = std::fs::create_dir_all(&dir);
     let _ = std::fs::write(dir.join("cw_t_eyeshadow_00f.png"), &b);
     let c = [0.529f32, 0.230, 0.230, 0.65];
@@ -2033,7 +2033,7 @@ fn dump_body_skeleton_and_bindpose() {
             }
         }
     }
-    std::fs::write(r"C:\portable\OpenKoikatsu\Saved\spike\skeleton.txt", lines.join("\n")).ok();
+    std::fs::write(crate::test_support::project_path!("Saved/spike/skeleton.txt"), lines.join("\n")).ok();
     eprintln!("{}", lines.join("\n"));
     assert!(!lines.is_empty());
 }
@@ -2091,7 +2091,7 @@ fn dump_avatar_tos_and_clip_curves() {
             }
         }
     }
-    std::fs::write(r"C:\portable\OpenKoikatsu\Saved\spike\avatar_tos.txt", lines.join("\n")).ok();
+    std::fs::write(crate::test_support::project_path!("Saved/spike/avatar_tos.txt"), lines.join("\n")).ok();
     eprintln!("{}", lines.join("\n"));
     assert!(!lines.is_empty());
 }
@@ -2152,7 +2152,7 @@ fn dump_custom_pose_clips() {
             }
         }
     }
-    std::fs::write(r"C:\portable\OpenKoikatsu\Saved\spike\custom_pose.txt", lines.join("\n")).ok();
+    std::fs::write(crate::test_support::project_path!("Saved/spike/custom_pose.txt"), lines.join("\n")).ok();
     eprintln!("{}", lines.join("\n"));
     assert!(!lines.is_empty());
 }
@@ -2364,7 +2364,7 @@ fn dump_body_vertex_layout() {
             }
         }
     }
-    std::fs::write(r"C:\portable\OpenKoikatsu\Saved\spike\mesh_layout.txt", lines.join("\n")).ok();
+    std::fs::write(crate::test_support::project_path!("Saved/spike/mesh_layout.txt"), lines.join("\n")).ok();
     eprintln!("{}", lines.join("\n"));
     let mut texn = 0usize;
     let mut file_bytes = Vec::new();
@@ -2424,6 +2424,6 @@ fn dump_go_and_renderers() {
             }
         }
     }
-    std::fs::write(r"C:\portable\OpenKoikatsu\Saved\spike\go_dump.txt", lines.join("\n")).ok();
+    std::fs::write(crate::test_support::project_path!("Saved/spike/go_dump.txt"), lines.join("\n")).ok();
     eprintln!("{}", lines.join("\n"));
 }

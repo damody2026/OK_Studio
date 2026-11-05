@@ -49,6 +49,7 @@ static TAutoConsoleVariable<int32> CVarPaintPacketSweeps(TEXT("ok.Paint.PacketSw
 static TAutoConsoleVariable<int32> CVarPaintSparseUploads(TEXT("ok.Paint.SparseUploads"),1,TEXT("Upload dirty chart runs, bounded to 256 rectangles; 0 retains the original 4x4 block upload oracle."));
 static TAutoConsoleVariable<int32> CVarPaintSparseNormals(TEXT("ok.Paint.SparseNormals"),1,TEXT("Resolve coating normals only for consumed vertices from ordered incident faces; 0 retains full-surface normal oracle."));
 static TAutoConsoleVariable<int32> CVarPaintResidentGeometry(TEXT("ok.Paint.ResidentGeometry"),1,TEXT("Evaluate private collision positions from the current resident GPU source/palette; 0 uses the full native geometry query oracle."));
+static TAutoConsoleVariable<int32> CVarPaintMaxSteps(TEXT("ok.Paint.MaxSteps"),4,TEXT("Fixed 120 Hz steps one tick may run. Below 30 FPS the paint runs slower instead of making the frame longer still."));
 static TAutoConsoleVariable<int32> CVarPaintGeometryJobs(TEXT("ok.Paint.GeometryJobs"),0,TEXT("Batch current collision vertices/faces across surfaces into blocking jobs; 0 retains the measured faster surface-by-surface path, 2 forces jobs for regression."));
 
 struct AOKPaintSprayer::FSurface
@@ -186,7 +187,7 @@ void AOKPaintSprayer::SetSpray(bool Enabled,FVector Origin,FVector Dir)
  if(Enabled&&!Spraying)GeometryTime=1.;
  Spraying=Enabled && !Dir.IsNearlyZero() && !Dir.ContainsNaN() && !Origin.ContainsNaN();Nozzle=Origin;Direction=Dir.GetSafeNormal();
  SetActorLocation(Nozzle);SetActorRotation(Direction.Rotation());
- if(Gun)Gun->SetVisibility(Spraying);
+ if(Gun)Gun->SetVisibility(Spraying&&bShowGun);
  if(JetFX){const bool Changed=VisualFlow!=Settings.Flow||VisualSpeed!=Settings.JetSpeed||VisualParticleLimit!=Settings.MaxJetParticles;VisualParticleLimit=Settings.MaxJetParticles;VisualFlow=Settings.Flow;VisualSpeed=Settings.JetSpeed;JetFX->SetVariableFloat(TEXT("User.JetSpeed"),Settings.JetSpeed);JetFX->SetVariableFloat(TEXT("User.Flow"),FMath::Min(Settings.Flow*200.f,float(FMath::Clamp(Settings.MaxJetParticles,32,4096))/3.1f/1.1f));JetFX->SetVariableFloat(TEXT("User.DropletFlow"),FMath::Min(Settings.Flow*20.f,float(FMath::Clamp(Settings.MaxJetParticles,32,4096))/3.1f/11.f));FLinearColor JetColor=Settings.Color;JetColor.A*=FMath::Clamp(Settings.JetOpacity,0.f,1.f);JetFX->SetVariableLinearColor(TEXT("User.PaintColor"),JetColor);if(Spraying&&(!JetFX->IsActive()||Changed))JetFX->Activate(true);else if(!Spraying&&JetFX->IsActive())JetFX->Deactivate();}
 }
 bool AOKPaintSprayer::PrepareGeometry(FSurface& S)
@@ -206,17 +207,21 @@ bool AOKPaintSprayer::PrepareGeometry(FSurface& S)
  S.PreparedValid=true;return true;
 }
 void AOKPaintSprayer::RefreshGeometry(FSurface& S){if(PrepareGeometry(S))S.RefreshCapturedGeometry(CVarPaintGeometryParallel.GetValueOnGameThread()!=0);}
-void AOKPaintSprayer::RefreshGeometries(){
+void AOKPaintSprayer::RefreshGeometries(bool OnlyPainted){
  TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintRefreshGeometries);
+ // Nothing in the air: only what paint lies on has to follow the body. Tick refreshes everything before the next packet flies.
+ TSet<const FSurface*> Skip;
+ if(OnlyPainted){for(const auto& S:Surfaces)if(S->Film.Volume()<=0&&!S->HasRenderedPaint)Skip.Add(S.Get());
+  for(const auto& D:Attached)if(Surfaces.IsValidIndex(D.Target))Skip.Remove(Surfaces[D.Target].Get());}
  // Capture UObjects once while the game thread owns the frame. The blocking
  // parallel operation cannot overlap animation or mutate another surface.
  TSet<UPrimitiveComponent*> SkinnedComponents;SkinnedGeometrySurfaces=0;
  TMap<AKKPreviewActor*,TArray<UProceduralMeshComponent*>> PrivateQueries;
- for(const auto& S:Surfaces)if(auto* P=Cast<UProceduralMeshComponent>(S->Component.Get()))if(auto* Actor=Cast<AKKPreviewActor>(P->GetOwner())){
+ for(const auto& S:Surfaces)if(!Skip.Contains(S.Get()))if(auto* P=Cast<UProceduralMeshComponent>(S->Component.Get()))if(auto* Actor=Cast<AKKPreviewActor>(P->GetOwner())){
   FKKPrivateGpuSurfaceView View;if(CVarPaintResidentGeometry.GetValueOnGameThread()==0||!Actor->CapturePrivateGpuSurface(P,S->Section,View))PrivateQueries.FindOrAdd(Actor).AddUnique(P);
  }
  for(auto& Entry:PrivateQueries)Entry.Key->PreparePrivateGpuQueryGeometry(Entry.Value);
- for(auto& S:Surfaces){PrepareGeometry(*S);if(S->PreparedSkinned&&S->PreparedValid){++SkinnedGeometrySurfaces;SkinnedComponents.Add(S->Component.Get());}}SkinnedGeometryComponents=SkinnedComponents.Num();
+ for(auto& S:Surfaces){if(Skip.Contains(S.Get())){S->PreparedValid=false;continue;}PrepareGeometry(*S);if(S->PreparedSkinned&&S->PreparedValid){++SkinnedGeometrySurfaces;SkinnedComponents.Add(S->Component.Get());}}SkinnedGeometryComponents=SkinnedComponents.Num();
  if(CVarPaintGeometryJobs.GetValueOnGameThread()!=0){RefreshGeometryJobs();return;}
  const int32 Mode=CVarPaintSurfaceParallel.GetValueOnGameThread();const bool Parallel=Mode==2||(Mode!=0&&Surfaces.Num()>=8);
  const bool VertexParallel=!Parallel&&CVarPaintGeometryParallel.GetValueOnGameThread()!=0;
@@ -329,6 +334,7 @@ void AOKPaintSprayer::DiscoverSurfaces(const FVector& A,const FVector& B,bool So
     // skeletal display component carrying its own dynamic material instance.
     const bool MorphSurface=Preview->MouthSlots.ContainsByPredicate([C](const auto& Slot){return Slot.Comp==C||Slot.CpuComp==C;});
     if(!PartSurface&&!MorphSurface)continue;
+    if(bSkipTongue&&Preview->MouthSlots.ContainsByPredicate([C](const auto& Slot){return (Slot.InsideBit&4)&&(Slot.Comp==C||Slot.CpuComp==C);}))continue;
    }
    if(!Cast<USkinnedMeshComponent>(C)&&!(Cast<UProceduralMeshComponent>(C)&&(It->IsA<AKKPreviewActor>()||It->ActorHasTag(TEXT("OKPaintable")))))continue;
    auto* Procedural=Cast<UProceduralMeshComponent>(C);
@@ -607,7 +613,12 @@ void AOKPaintSprayer::Step(double Dt)
   int32 S,F;FVector Bary;double Time;bool PaintHit;
   if(BatchSweeps){const auto& R=Sweeps[I];S=R.Target;F=R.Face;Bary=R.Bary;Time=R.Time;PaintHit=R.Hit;}else PaintHit=FindPaintHit(P.P,Next,HitRadius,S,F,Bary,Time);
   if(PaintHit&&(!WorldHit||Time<Hit.Time)){auto& Surface=*Surfaces[S];Surface.EnsureFilmTopology();const FVector Point=Surface.Film.Faces[F].P[0]*Bary.X+Surface.Film.Faces[F].P[1]*Bary.Y+Surface.Film.Faces[F].P[2]*Bary.Z;
-   if(Surface.CoatingSide==0){const double Incoming=FVector::DotProduct(Surface.Film.Faces[F].Normal(),-P.V.GetSafeNormal());Surface.CoatingSide=Incoming>=0?1.:-1.;UE_LOG(LogTemp,Display,TEXT("Paint contact winding side=%.0f incoming_dot=%.6f component=%s"),Surface.CoatingSide,Incoming,*Surface.Component->GetPathName());}
+   if(Surface.CoatingSide==0){const double Incoming=FVector::DotProduct(Surface.Film.Faces[F].Normal(),-P.V.GetSafeNormal());
+    // The side facing away from the middle of the mesh: a first drop leaving her mouth struck her face from inside and
+    // the whole coat went under her skin. Only a flat surface, with no outside to tell, goes by the drop.
+    FVector Middle=FVector::ZeroVector;for(const auto& Face:Surface.Film.Faces)Middle+=Face.Center();Middle/=FMath::Max(1,Surface.Film.Faces.Num());
+    double Out=0,All=0;for(const auto& Face:Surface.Film.Faces){const double Away=FVector::DotProduct(Face.Normal(),(Face.Center()-Middle).GetSafeNormal());Out+=Away;All+=FMath::Abs(Away);}
+    Surface.CoatingSide=FMath::Abs(Out)>.2*All?(Out>0?1.:-1.):(Incoming>=0?1.:-1.);UE_LOG(LogTemp,Display,TEXT("Paint contact winding side=%.0f incoming_dot=%.6f outward=%.2f component=%s"),Surface.CoatingSide,Incoming,All>0?Out/All:0.,*Surface.Component->GetPathName());}
    TMap<int32,TArray<float>> Brushes;double Sum=0;const FVector N=Surface.Film.Faces[F].Normal();
    TArray<int32> Visit={F};TSet<int32> Seen;for(int32 Cursor=0;Cursor<Visit.Num();++Cursor){const int32 J=Visit[Cursor];if(Seen.Contains(J))continue;Seen.Add(J);const auto& Face=Surface.Film.Faces[J];const double Dist=FVector::Dist(FMath::ClosestPointOnTriangleToPoint(Point,Face.P[0],Face.P[1],Face.P[2]),Point);if(J!=F&&Dist>=Settings.BrushRadius)continue;if(FVector::DotProduct(Face.Normal(),N)>.25){auto Brush=Surface.Mask.Brush(Face,Point,Settings.BrushRadius);const double W=Surface.Mask.BrushArea(Face,Brush);if(W>1.e-12){Sum+=W;Brushes.Add(J,MoveTemp(Brush));}}for(int32 Other:Face.Neighbor)if(Other>=0&&!Seen.Contains(Other))Visit.Add(Other);}
    if(Sum>0){for(const auto& W:Brushes){const double Amount=P.Volume*Surface.Mask.BrushArea(Surface.Film.Faces[W.Key],W.Value)/Sum;Surface.Mask.Deposit(W.Key,Surface.Film.Faces[W.Key],W.Value,Amount);Surface.Film.AddVolume(W.Key,Amount);}}else{auto Brush=Surface.Mask.Brush(Surface.Film.Faces[F],Point,FMath::Max(1.f,Settings.BrushRadius));Surface.Mask.Deposit(F,Surface.Film.Faces[F],Brush,P.Volume);Surface.Film.AddVolume(F,P.Volume);}
@@ -622,7 +633,7 @@ void AOKPaintSprayer::Step(double Dt)
  // Ballistic sweeps remain at 120 Hz. Surface transport uses its own fixed
  // clock; texture work must not be repeated for each projectile substep.
  BallisticMs+=(FPlatformTime::Seconds()-BallisticStart)*1000;
- SurfaceAccumulator+=Dt;const double SurfaceDt=1./FMath::Clamp(Settings.SurfaceHz,5.f,60.f);
+ SurfaceAccumulator+=Dt;const double SurfaceDt=SurfaceSeconds;
  while(SurfaceAccumulator+1.e-10>=SurfaceDt){AdvanceSurface(SurfaceDt);SurfaceAccumulator-=SurfaceDt;}
 }
 void AOKPaintSprayer::AdvanceSurface(double Dt)
@@ -665,8 +676,12 @@ void AOKPaintSprayer::Tick(float Dt)
  OwnedFX.RemoveAll([](const auto& FX){return !IsValid(FX)||!FX->IsRegistered();});while(OwnedFX.Num()>FMath::Clamp(Settings.MaxImpactEffects,1,64)){auto FX=OwnedFX.Pop();if(IsValid(FX))FX->DestroyComponent();}
  if(!Spraying&&Surfaces.IsEmpty()&&Packets.IsEmpty())return;
  if(Spraying&&JetFX){JetFX->SetWorldRotation(Direction.Rotation());int32 Target,Face;double T;FVector Bary;const bool Hit=FindPaintHit(Nozzle,Nozzle+Direction*5000,.3,Target,Face,Bary,T);JetFX->SetVariableFloat(TEXT("User.JetLife"),FMath::Clamp(float(Hit?T*5000/FMath::Max(10.f,Settings.JetSpeed):.5),.01f,3.f));}
- const double GeometryStart=FPlatformTime::Seconds();GeometryTime+=Dt;const double Interval=1./FMath::Clamp(Settings.SurfaceHz,5.f,60.f);
- const bool UpdateGeometry=GeometryTime>=Interval;
+ const double GeometryStart=FPlatformTime::Seconds();GeometryTime+=Dt;
+ // A surface update walks every wet face: at 9800 of them 30 ms a frame. Past 2500 it comes less often, down to a quarter.
+ int32 WetFaces=0;for(const auto& S:Surfaces)WetFaces+=S->Film.Active.Num();
+ SurfaceSeconds=1./FMath::Max(5.,FMath::Clamp(Settings.SurfaceHz,5.f,60.f)*FMath::Clamp(2500./FMath::Max(1,WetFaces),.25,1.));
+ const double Interval=SurfaceSeconds;
+ const bool Flying=Spraying||!Packets.IsEmpty();const bool UpdateGeometry=GeometryTime>=Interval||(Flying&&bGeometryOnlyPainted);
  if(UpdateGeometry){GeometryTime=FMath::Fmod(GeometryTime,Interval);
   for(int32 Index=Surfaces.Num()-1;Index>=0;--Index){auto& S=*Surfaces[Index];auto* C=S.Component.Get();bool Changed=!C;
    if(auto* K=Cast<USkinnedMeshComponent>(C))Changed|=K->GetSkinnedAsset()!=S.Asset.Get();
@@ -677,12 +692,14 @@ void AOKPaintSprayer::Tick(float Dt)
    const int32 Last=Surfaces.Num()-1;for(int32 I=Attached.Num()-1;I>=0;--I){auto& D=Attached[I];if(D.Target==Index){Escaped+=D.Volume;if(D.Visual.IsValid()){Overlays.Remove(D.Visual.Get());D.Visual->DestroyComponent();}Attached.RemoveAtSwap(I);}else if(D.Target==Last)D.Target=Index;}Surfaces.RemoveAtSwap(Index);
   }
   if(Spraying||!Packets.IsEmpty())DiscoverSurfaces(Nozzle,Nozzle+Direction*(5*FMath::Clamp(Settings.JetSpeed,10.f,10000.f)));
-  RefreshGeometries();}
- // Fixed 120Hz integrator. A hitch is retained as backlog, never converted
- // into a larger unstable step or discarded volume/time.
+  bGeometryOnlyPainted=!Flying;RefreshGeometries(bGeometryOnlyPainted);}
+ // Fixed 120Hz integrator, never a larger unstable step. A long frame used to run all its steps (2.3 ms each), which made
+ // the next frame longer: 10 steps a frame at 11 FPS. Past the limit the time is dropped; volume stays in the packets.
  GeometryUpdateMs=(FPlatformTime::Seconds()-GeometryStart)*1000;const double SimulationStart=FPlatformTime::Seconds();
  BallisticMs=MaskTransportMs=FilmTransportMs=DripUpdateMs=0;
- Accumulator+=FMath::Max(0.f,Dt);int32 Steps=0;while(Accumulator+1.e-10>=1./120. && Steps<32){Step(1./120.);Accumulator-=1./120.;++Steps;}
+ Accumulator+=FMath::Max(0.f,Dt);int32 Steps=0;const int32 MaxSteps=FMath::Clamp(CVarPaintMaxSteps.GetValueOnGameThread(),1,32);
+ while(Accumulator+1.e-10>=1./120. && Steps<MaxSteps){Step(1./120.);Accumulator-=1./120.;++Steps;}
+ Accumulator=FMath::Min(Accumulator,1./120.);
  SimulationUpdateMs=(FPlatformTime::Seconds()-SimulationStart)*1000;const double CoatingStart=FPlatformTime::Seconds();
  for(auto& S:Surfaces){if(S->Overlay)S->Overlay->SetVisibility(S->IsDisplayed());}
  for(auto& D:Attached)if(D.Visual.IsValid())D.Visual->SetVisibility(Surfaces.IsValidIndex(D.Target)&&Surfaces[D.Target]->IsDisplayed());

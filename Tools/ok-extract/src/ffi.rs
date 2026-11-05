@@ -1240,6 +1240,16 @@ pub unsafe extern "C" fn ok_common_interaction_poses(root:*const c_char,out:*mut
     let Ok(Ok(json))=std::panic::catch_unwind(||serde_json::to_string(&crate::h_playback::interaction_poses(std::path::Path::new(&root))))else{return -1;};
     if out.is_null()||cap<=0{return json.len() as i32+1;}if cap as usize<=json.len(){return -1;}write_err(out,cap,&json);0
 }
+// Every outfit's gaps as JSON (outfit_gaps.rs). Reads her card again: for a background thread. A failure goes to the
+// game's log (stderr does not reach it).
+#[no_mangle]
+pub unsafe extern "C" fn ok_card_outfit_gaps(game:*const c_char,card:*const c_char,out:*mut c_char,cap:i32)->i32 {
+    let (Some(game),Some(card))=(cstr_opt(game),cstr_opt(card)) else{return -1;};
+    let scanned=crate::run_no_panic(||crate::outfit_gaps::scan(std::path::Path::new(&game),std::path::Path::new(&card)));
+    let outfits=match scanned {Ok(outfits)=>outfits,Err(e)=>{ffi_log(0,&format!("ok-extract: ERROR outfit gaps {card}: {e}"));return -1;}};
+    let Ok(json)=serde_json::to_string(&outfits) else{return -1;};
+    if out.is_null()||cap<=0||cap as usize<=json.len(){return -1;}write_err(out,cap,&json);0
+}
 #[no_mangle]
 pub unsafe extern "C" fn ok_common_animation_pair_clip(root:*const c_char,key:*const c_char,layer:i32,out:*mut c_char,cap:i32)->i32 {
     let (Some(root),Some(key))=(cstr_opt(root),cstr_opt(key)) else{return -1;};
@@ -2994,6 +3004,54 @@ pub unsafe extern "C" fn ok_okmodel_texture_png(lib: *const c_char, id: *const c
 pub unsafe extern "C" fn ok_session_set_blush(s: *mut OkSession, rate: f32) -> i32 {
     let Some(session) = sess_ref(s) else { return 1; };
     if session.set_blush(rate) { 0 } else { 1 }
+}
+
+/// `paint_out_iris_highlights` on an image of `width` x `height` four-byte pixels: 1 when it changed anything.
+#[no_mangle]
+pub unsafe extern "C" fn ok_iris_without_highlights(pixels: *mut u8, width: i32, height: i32) -> i32 {
+    if pixels.is_null() || width <= 0 || height <= 0 { return 0; }
+    let (w, h) = (width as usize, height as usize);
+    i32::from(crate::texture_bake::paint_out_iris_highlights(std::slice::from_raw_parts_mut(pixels, w * h * 4), w, h))
+}
+
+/// `recolor_iris` on an image of `width` x `height` BGRA pixels.
+#[no_mangle]
+pub unsafe extern "C" fn ok_iris_recolor(pixels: *mut u8, width: i32, height: i32, hue: f32, saturation: f32, value: f32) -> i32 {
+    if pixels.is_null() || width <= 0 || height <= 0 {
+        return 1;
+    }
+    let (w, h) = (width as usize, height as usize);
+    crate::texture_bake::recolor_iris(std::slice::from_raw_parts_mut(pixels, w * h * 4), hue, saturation, value);
+    0
+}
+
+/// `mark_iris` on an image of `width` x `height` BGRA pixels.
+#[no_mangle]
+pub unsafe extern "C" fn ok_iris_mark(pixels: *mut u8, width: i32, height: i32, shape: i32, across: f32, down: f32, opacity: f32, hue: f32, saturation: f32, value: f32) -> i32 {
+    if pixels.is_null() || width <= 0 || height <= 0 {
+        return 1;
+    }
+    let (w, h) = (width as usize, height as usize);
+    crate::texture_bake::mark_iris(std::slice::from_raw_parts_mut(pixels, w * h * 4), w, h, shape, across, down, opacity, [hue, saturation, value]);
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_set_pupil_stretch(s: *mut OkSession, across: f32, down: f32) -> i32 {
+    let Some(session) = sess_ref(s) else { return 1; };
+    if session.set_pupil_stretch(across, down) { 0 } else { 1 }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_set_pupil_offset(s: *mut OkSession, x: f32, y: f32) -> i32 {
+    let Some(session) = sess_ref(s) else { return 1; };
+    if session.set_pupil_offset(x, y) { 0 } else { 1 }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_set_pupil_scale(s: *mut OkSession, scale: f32) -> i32 {
+    let Some(session) = sess_ref(s) else { return 1; };
+    if session.set_pupil_scale(scale) { 0 } else { 1 }
 }
 
 #[no_mangle]

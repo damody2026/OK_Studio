@@ -16,7 +16,7 @@ use serde::Deserialize;
 const CARDS:[&str;5]=["[Card] March_7th_keiyuu","Alice_keiyuu","Hayase_yuuka_keiyuu_V1_02 For KKS","KK_091207","KK_384283"];
 fn frames(card:&str)->Vec<Frame> {
     let stem:String=card.chars().map(|c|if c.is_ascii_alphanumeric()||c=='_'{c}else{'_'}).collect();
-    serde_json::from_slice(&crate::gamefs::read(format!("C:/portable/OpenKoikatsu/Saved/Tests/AnimatorAdditive297/{stem}AnimatorAdditive297.json.additive.json")).unwrap()).unwrap()
+    serde_json::from_slice(&crate::gamefs::read(format!("{}/../../Saved/Tests/AnimatorAdditive297/{stem}AnimatorAdditive297.json.additive.json",env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap()
 }
 fn key(f:&Frame)->String {
     let payload=[f.bundle.as_str(),f.controller.as_str(),"",""];

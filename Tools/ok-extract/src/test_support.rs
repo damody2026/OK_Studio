@@ -4,6 +4,13 @@
 //! and read the installation from `OK_TEST_GAME_ROOT`; nothing names a machine's install path.
 use std::path::{Path, PathBuf};
 
+/// A path in this checkout, as a `&'static str` so a `const` or a `Path::new` can hold it. Data under `Saved/` is each
+/// checkout's own: a test that needs some another machine wrote says so through its `#[ignore]` or by skipping.
+macro_rules! project_path {
+    ($path:literal) => { concat!(env!("CARGO_MANIFEST_DIR"), "/../../", $path) };
+}
+pub(crate) use project_path;
+
 /// The project's OK shared resources.
 pub(crate) fn resources() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Content/IndependentResources")

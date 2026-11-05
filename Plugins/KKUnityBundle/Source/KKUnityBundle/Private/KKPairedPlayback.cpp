@@ -81,7 +81,8 @@ bool AKKPairedPlayback::Advance(float Delta,FString& Error)
   PendingNext=Next;PendingDelta=PhysicsDelta;PendingReactions[0]=Reactions[0];PendingReactions[1]=Reactions[1];
   TSharedPtr<FOkAnimPlayer> Player=OkPlayer;FOkSession* F=&FemaleActor->Session;FOkSession* M=&MaleActor->Session;const float T=float(Next),D=PendingDelta;
   bSolvePending=true;bPendingNative=false;
-  PendingSolve=UE::Tasks::Launch(UE_SOURCE_LOCATION,[this,Player,F,M,T,D]{bSolveOk=Player->ApplySessions({F,M},T,D,&PendingReport);});
+  PendingSolve=UE::Tasks::Launch(UE_SOURCE_LOCATION,[this,Player,F,M,T,D]{FOkSharedSolveScope Solving;bSolveOk=Player->ApplySessions({F,M},T,D,&PendingReport);});
+  F->SetSharedSolve(PendingSolve);M->SetSharedSolve(PendingSolve);
   return true;}
  if(OkPlayer){TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairOK);
   FemaleActor->PublishPhysicsFrame();MaleActor->PublishPhysicsFrame();
@@ -100,7 +101,9 @@ bool AKKPairedPlayback::Advance(float Delta,FString& Error)
    bSolvePending=true;bPendingNative=true;
    PendingSolve=UE::Tasks::Launch(UE_SOURCE_LOCATION,[this,F,M,T,D,State=StateName,FemaleMotion=FemaleIK,MaleMotion=MaleIK,
     FemaleParts=MoveTemp(FemaleParts),FemaleRevisions=MoveTemp(FemaleRevisions),MaleParts=MoveTemp(MaleParts),MaleRevisions=MoveTemp(MaleRevisions)]{
-    FString Report;bSolveOk=FOkSession::ApplyPairedFrameGpu(*F,*M,T,D,State,FemaleMotion,MaleMotion,FemaleParts,FemaleRevisions,MaleParts,MaleRevisions,Report);PendingReport=Report;});
+    FOkSharedSolveScope Solving;FString Report;bSolveOk=FOkSession::ApplyPairedFrameGpu(*F,*M,T,D,State,FemaleMotion,MaleMotion,FemaleParts,FemaleRevisions,MaleParts,MaleRevisions,Report);PendingReport=Report;});
+   // The paint on her asks these sessions for geometry from its own tick (that read a skeleton the worker was changing).
+   F->SetSharedSolve(PendingSolve);M->SetSharedSolve(PendingSolve);
    return true;}
   TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairNative);if(!AKKPreviewActor::ApplyPairedFrameWithDisplay(*FemaleActor,*MaleActor,float(Next),PhysicsDelta,StateName,FemaleIK,MaleIK,Error)) return false;}
 	Elapsed=Next;

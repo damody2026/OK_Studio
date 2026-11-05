@@ -16,6 +16,9 @@ struct FOKPaintPose {
   // Retain allocation, never retain pose/morph content. In particular Morph
   // must have count zero before SetNumZeroed or weights would accumulate.
   LOD=nullptr;Weights=nullptr;Matrices.Reset();Morph.Reset();Fallback.Reset();
+  // Not until it is on screen: a part just made or going (her outfit changed in H) has no mesh object, GetCPUSkinnedVertices
+  // asserts on it. The surface is left out this frame and asked again the next.
+  if(!C->IsRegistered()||!C->GetMeshObject())return false;
   Component=C;LocalToWorld=C->GetComponentTransform();auto* Mesh=Cast<USkeletalMesh>(C->GetSkinnedAsset());if(!Mesh||!Mesh->GetResourceForRendering()||Mesh->GetResourceForRendering()->LODRenderData.IsEmpty())return false;
   LOD=&Mesh->GetResourceForRendering()->LODRenderData[0];Weights=C->GetSkinWeightBuffer(0);
   if(!Weights||!Weights->GetDataVertexBuffer()->GetWeightData()||Weights->GetNumVertices()!=LOD->GetNumVertices()||!LOD->StaticVertexBuffers.PositionVertexBuffer.GetVertexData())return false;

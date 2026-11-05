@@ -1063,11 +1063,14 @@ thread_local! { static OUTSIDE_OPENS: std::cell::Cell<bool> = const { std::cell:
 pub fn mark_outside_opens() { OUTSIDE_OPENS.with(|o| o.set(true)); }
 /// Scopes of the opens running now (the fallback for a thread outside every open's pool).
 static ACTIVE_SCOPES: Mutex<Vec<std::sync::Weak<PackScope>>> = Mutex::new(Vec::new());
-/// The pack of the open this thread works for: its own, else the only one open (a worker outside every open's pool
-/// while one card opens). Several open and none on this thread: none, and said once.
+/// The pack of the open this thread works for: its own, else the only one open (a rayon worker outside every open's
+/// pool while one card opens). Several open and none on this thread: none, and said once. Any other thread works for no
+/// open, a job of one being handed its pack (enter_pack_scope): the game thread's clothes rules, scanning the whole tree
+/// while a card opened in the background, were counted as that card's reads, its strict open failed on gaps it did not
+/// have and the rules came from its pack (2026-11-05).
 pub fn pack_scope() -> Option<Arc<PackScope>> {
     if let Some(s) = own_scope() { return Some(s); }
-    if OUTSIDE_OPENS.with(|o| o.get()) { return None; }
+    if OUTSIDE_OPENS.with(|o| o.get()) || rayon::current_thread_index().is_none() { return None; }
     let mut active = ACTIVE_SCOPES.lock().unwrap_or_else(|e| e.into_inner());
     active.retain(|w| w.strong_count() > 0);
     match active.len() {
@@ -1095,6 +1098,25 @@ pub fn pack_parallel<R: Send>(work: impl FnOnce() -> R + Send) -> R {
         Some(pool) if pool.current_thread_index().is_some() => work(),
         Some(pool) => pool.install(work),
         None => work(),
+    }
+}
+
+#[cfg(test)]
+mod pack_scope_threads {
+    use super::*;
+    fn scope() -> PackScope {
+        PackScope { overlay: crate::gamefs::replay_overlay_of(Default::default()), store: None, identity: String::new(), mods_identity: String::new(),
+            fallback_used: AtomicBool::new(false), pool: std::sync::OnceLock::new(), tree: None, strict: None }
+    }
+    #[test]
+    fn a_thread_of_its_own_is_not_the_open_of_another() {
+        let mount = mount_scope(scope());
+        assert!(pack_scope().is_some_and(|s| Arc::ptr_eq(&s, &mount.scope)), "the opening thread has its own");
+        assert!(std::thread::spawn(|| pack_scope().is_none()).join().unwrap(), "a thread outside the open is handed nothing");
+        let handed = current_pack_scope();
+        let mine = mount.scope.clone();
+        assert!(std::thread::spawn(move || {let _pack = enter_pack_scope(handed);pack_scope().is_some_and(|s| Arc::ptr_eq(&s, &mine))}).join().unwrap(),
+            "a job the open starts is given its pack");
     }
 }
 
@@ -2965,6 +2987,20 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
                 }
             }
             if failed > 0 { return Err(format!("{failed} card(s) failed")); }
+        }
+        "outfit-gaps" => {
+            // outfit-gaps <lib> <card>...: what each outfit names and nothing provides (outfit_gaps.rs). Prints
+            //   OKGAPS <severe|minor> card outfit count parts; OKGAPS ok card when no outfit lacks anything.
+            let lib = lib.ok_or("library directory required")?;
+            for card in args[2..].iter().map(PathBuf::from) {
+                let outfits = crate::outfit_gaps::scan(&lib, &card)?;
+                let lacking: Vec<_> = outfits.iter().filter(|o| !o.gaps.is_empty()).collect();
+                if lacking.is_empty() { println!("OKGAPS ok\t{}", card.display()); }
+                for o in lacking {
+                    let parts: Vec<String> = o.gaps.iter().map(|g| format!("{}:{}", g.part, g.id)).collect();
+                    println!("OKGAPS {}\t{}\t{}\t{}\t{}", if o.severe { "severe" } else { "minor" }, card.display(), o.outfit, o.gaps.len(), parts.join(" "));
+                }
+            }
         }
         "crowd-check" => {
             // crowd-check <lib> <card>...: whether the hundred-girl room can use each card's outfit 0 (dressed, every drawn

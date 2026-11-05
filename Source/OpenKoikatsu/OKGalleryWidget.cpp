@@ -60,6 +60,8 @@
 #include "GameFramework/PlayerController.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Widgets/SViewport.h"
 #include "Engine/World.h"
 #include "UObject/UObjectIterator.h"
 #include "TimerManager.h"
@@ -781,6 +783,12 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 	GazeSliders[0]->OnValueChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnGazeLeft);
 	GazeSliders[1]->OnValueChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnGazeRight);
 	GazeSliders[2]->OnValueChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnGazeVertical);
+	{
+		UButton* EyeModeButton=WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(),TEXT("EyeMode"));
+		EyeModeLabel=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());EyeModeLabel->SetText(FText::FromString(TEXT("眼睛：面向前方")));
+		EyeModeButton->AddChild(EyeModeLabel);StyleMotionButton(EyeModeButton);MotionCol->AddChild(EyeModeButton);
+		EyeModeButton->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnEyeModeNext);
+	}
 	EyeLookCameraCheck=WidgetTree->ConstructWidget<UCheckBox>();
 	{
 		auto* Label=WidgetTree->ConstructWidget<UTextBlock>();Label->SetText(FText::FromString(TEXT("眼睛跟隨鏡頭")));
@@ -1578,6 +1586,7 @@ void UOKCharacterController::NativeTick(const FGeometry& Geometry,float DeltaSec
  // The shown character solves its next frame while this one draws; the interaction scene and paired playback pose it themselves.
  if(IsValid(PreviewActor))PreviewActor->bAsyncNativePose=!InteractionWidget&&!InteractionScene&&!PairedPlayback;
     OKNoteFrameGraph(this, DeltaSeconds);
+ TickEyeMode();
  TickCharacterMCP();
  TickCardListMetadata();
  // Coalesce input within a frame, never wait for the user to stop dragging.
@@ -1963,6 +1972,8 @@ void UOKCharacterController::FinishPreparedPreview(AKKPreviewActor* Actor,bool b
 	}
 	if (bOk)
 	{
+        // A yandere's eyes: pupils 1.1 times as large, no highlight (user 2026-11-04).
+        if(Selected.Personality==KKPersonalityYandere)Actor->SetEyeDull(1.1f,true);
         // LoadSession already displays the card's saved shape. Reapplying the
         // identical values rebuilds every GPU follower for no visible change.
         if(Selected.Face.ShapeValueFace!=Actor->Session.ShapeFace() || Selected.Body.ShapeValueBody!=Actor->Session.ShapeBody()){
@@ -2340,13 +2351,45 @@ void UOKCharacterController::OnEyeLookCamera(bool Enabled)
 {
     if(bSuppressFaceControls || !PreviewActor) return;
     if(Enabled) {
-        if(!PreviewActor->FollowEyeLookCamera(PreviewActor->Session.EyeLookPatternCount()>1?1:0)) EyeLookCameraCheck->SetIsChecked(false);
+        if(!PreviewActor->FollowEyeLookCamera(PreviewActor->Session.EyeLookPatternCount()>1?1:0)) {EyeLookCameraCheck->SetIsChecked(false);Enabled=false;}
     } else PreviewActor->StopEyeLookTracking();
+    EyeMode=Enabled?2:0;if(EyeModeLabel)EyeModeLabel->SetText(FText::FromString(Enabled?TEXT("眼睛：看 Camera"):TEXT("眼睛：面向前方")));
+}
+void UOKCharacterController::OnEyeModeNext() {SetEyeMode((EyeMode+1)%3);}
+void UOKCharacterController::SetEyeMode(int32 Mode)
+{
+    const TCHAR* Labels[]={TEXT("眼睛：面向前方"),TEXT("眼睛：看鼠標"),TEXT("眼睛：看 Camera")};
+    EyeMode=Mode;EyeModeActor=PreviewActor;if(EyeModeLabel)EyeModeLabel->SetText(FText::FromString(Labels[Mode]));
+    if(EyeLookCameraCheck)EyeLookCameraCheck->SetIsChecked(Mode==2);
+    if(!PreviewActor)return;
+    if(Mode==2)PreviewActor->FollowEyeLookCamera(PreviewActor->Session.EyeLookPatternCount()>1?1:0);
+    if(Mode==0){
+        PreviewActor->StopEyeLookTracking();PreviewActor->SetEyeGaze(0,0,0);
+        for(USlider* Slider:GazeSliders)Slider->SetValue(0.f);
+    }
+}
+void UOKCharacterController::TickEyeMode()
+{
+    if(!IsValid(PreviewActor))return;
+    // A new card or outfit is a new actor: the choice goes on with it.
+    if(PreviewActor!=EyeModeActor.Get()){if(EyeMode)SetEyeMode(EyeMode);else EyeModeActor=PreviewActor;}
+    if(EyeMode!=1)return;
+    APlayerController* PC=GetOwningPlayer();UGameViewportClient* Client=GEngine?GEngine->GameViewport:nullptr;if(!PC||!Client)return;
+    // The cursor from Slate: over the panels the viewport itself does not hear it move.
+    FVector2D Pixel=EyeMousePixel;
+    if(Pixel.X<0){const TSharedPtr<SViewport> Widget=Client->GetGameViewportWidget();FVector2D Size;Client->GetViewportSize(Size);if(!Widget||!FSlateApplication::IsInitialized())return;
+        const FGeometry& Geo=Widget->GetCachedGeometry();if(Geo.GetLocalSize().X<=0||Geo.GetLocalSize().Y<=0)return;
+        Pixel=Geo.AbsoluteToLocal(FSlateApplication::Get().GetCursorPos())*Size/Geo.GetLocalSize();}
+    FVector Origin,Direction;if(!UGameplayStatics::DeprojectScreenToWorld(PC,Pixel,Origin,Direction))return;
+    // Halfway to her along the cursor's ray: on her own plane a cursor over her eyes would sit inside them.
+    const float Distance=FVector::Dist(Origin,PreviewActor->OrbitFocus);
+    PreviewActor->SetEyeLookTarget(Origin+Direction*Distance*.5f,PreviewActor->Session.EyeLookPatternCount()>1?1:0,true);
 }
 void UOKCharacterController::UpdateGaze()
 {
     if(PreviewActor) PreviewActor->StopEyeLookTracking();
     if(EyeLookCameraCheck) EyeLookCameraCheck->SetIsChecked(false);
+    EyeMode=0;if(EyeModeLabel)EyeModeLabel->SetText(FText::FromString(TEXT("眼睛：面向前方")));
     if(PreviewActor && GazeSliders.Num()==3)
         PreviewActor->SetEyeGaze(GazeSliders[0]->GetValue(),GazeSliders[1]->GetValue(),GazeSliders[2]->GetValue());
 }

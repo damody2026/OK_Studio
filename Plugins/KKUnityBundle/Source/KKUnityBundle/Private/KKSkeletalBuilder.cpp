@@ -516,13 +516,14 @@ USkeletalMesh* OKBuildDummyLeaderMesh(USkeleton* Skeleton, UObject* Outer)
 	return Mesh;
 }
 
-static void OKAddMorphs(USkeletalMesh* Mesh, FOkSession& Session, int32 PartIndex, int32 NV)
+static void OKAddMorphs(USkeletalMesh* Mesh, FOkSession& Session, int32 PartIndex, int32 NV, const OkMeshView& View)
 {
 	if (!Mesh || PartIndex < 0 || NV <= 0)
 	{
 		return;
 	}
 	const int32 MC = Session.MorphCount(PartIndex);
+	const bool bTongue = View.name && FCStringAnsi::Stricmp(View.name, "o_tang") == 0;
 	for (int32 m = 0; m < MC; ++m)
 	{
 		OkMorphView Morph;
@@ -557,8 +558,39 @@ static void OKAddMorphs(USkeletalMesh* Mesh, FOkSession& Session, int32 PartInde
 		LOD.NumVertices = LOD.Vertices.Num();
 		LOD.NumBaseMeshVerts = NV;
 		LOD.SectionIndices.Add(0);
+		// Her tongue has no bones. Past its length it stretches: the same morph growing from nothing at its root to all of it
+		// at its tip (OKTongueTipMorph). The whole morph scaled would take her tongue's root out of her mouth too.
+		TArray<FMorphTargetDelta> Tip;
+		if (bTongue)
+		{
+			FVector3f Along = FVector3f::ZeroVector;
+			for (const FMorphTargetDelta& Delta : LOD.Vertices) Along += Delta.PositionDelta;
+			if (Along.Normalize())
+			{
+				auto Reach = [&](int32 V) { const float* P = View.rest_positions + V * 3; return FVector3f(OkToUePos(P[0], P[1], P[2])) | Along; };
+				float Low = UE_BIG_NUMBER, High = -UE_BIG_NUMBER;
+				for (int32 V = 0; V < NV; ++V) { Low = FMath::Min(Low, Reach(V)); High = FMath::Max(High, Reach(V)); }
+				for (const FMorphTargetDelta& Delta : LOD.Vertices)
+				{
+					Tip.Add(Delta);
+					Tip.Last().PositionDelta *= FMath::Clamp((Reach(int32(Delta.SourceIdx)) - Low) / FMath::Max(High - Low, .001f), 0.f, 1.f);
+				}
+			}
+		}
 		Target->GetMorphLODModels().Add(MoveTemp(LOD));
 		Mesh->RegisterMorphTarget(Target, false);
+		if (Tip.Num() > 0)
+		{
+			UMorphTarget* TipTarget = NewObject<UMorphTarget>(Mesh, OKTongueTipMorph(MorphName));
+			TipTarget->BaseSkelMesh = Mesh;
+			FMorphTargetLODModel TipLOD;
+			TipLOD.NumVertices = Tip.Num();
+			TipLOD.Vertices = MoveTemp(Tip);
+			TipLOD.NumBaseMeshVerts = NV;
+			TipLOD.SectionIndices.Add(0);
+			TipTarget->GetMorphLODModels().Add(MoveTemp(TipLOD));
+			Mesh->RegisterMorphTarget(TipTarget, false);
+		}
 	}
 	// RegisterMorphTarget(false) only appends to the target array. Build the
 	// name-to-index map once after batching, before components/RHI consume it.
@@ -930,7 +962,7 @@ static USkeletalMesh* OKBuildSkeletalMeshUncached(FOkSession& Session, const OkM
 	Mesh->SetImportedBounds(FBoxSphereBounds(Bound));
 
 	OKAssignSkelUsageMaterial(Mesh);
-	OKAddMorphs(Mesh, Session, PartIndex, NV);
+	OKAddMorphs(Mesh, Session, PartIndex, NV, View);
 	Mesh->InitResources();
 	UE_LOG(LogTemp, Display, TEXT("OK skel build verts=%d bones=%d boneMap=%d invRef=%d"),
 		NV, NumBones, BoneMap.Num(), Mesh->GetRefBasesInvMatrix().Num());

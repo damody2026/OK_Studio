@@ -1293,6 +1293,15 @@ pub(crate) struct FaceRuntimeState {
     pub iris_base_settings: Vec<(usize, [f32; 2])>,
     pub iris_small_rate: f32,
     pub last_eye_gaze: [f32; 3],
+    /// The rates `step_eye_look` gave and where its unlimited look puts the irises for them: they are given back to
+    /// `set_eye_gaze_rates` to be drawn, and past ±1 they would roll her eyes.
+    pub eye_look_shown: Option<([f32; 3], [f32; 3])>,
+    /// How many times as large her pupils are drawn (0 and 1: as on her card; `set_pupil_scale`).
+    pub pupil_scale: f32,
+    /// Where her pupils are drawn off their place, in iris texture units (`set_pupil_offset`).
+    pub pupil_offset: [f32; 2],
+    /// Her pupils across and down, on top of `pupil_scale` (`set_pupil_stretch`; 0 as 1).
+    pub pupil_stretch: [f32; 2],
     pub blush_rate: Option<f32>,
 }
 
@@ -1301,16 +1310,24 @@ impl OkSession {
         if !left.is_finite() || !right.is_finite() || !vertical.is_finite() {
             return false;
         }
+        let look = self.face_runtime.eye_look_shown.filter(|(rates, _)| *rates == [left, right, vertical]).map(|(_, look)| look);
         // Vertical past ±1 rolls her eyes on past the limit (IrisRuntime::st_rolled); the look's rates stay in -1..1.
         let most = crate::eye_look::most();
         let lh = left.clamp(-most, most);
         let rh = right.clamp(-most, most);
         let v = vertical.clamp(-2.0, 2.0);
         self.face_runtime.last_eye_gaze = [lh, rh, v];
+        let pupil = self.face_runtime.pupil_scale;
+        let [pupil_x, pupil_y] = self.face_runtime.pupil_offset;
+        let [across, down] = self.face_runtime.pupil_stretch;
         for part in &mut self.parts {
             if let Some(runtime) = part.iris_runtime.as_ref() {
-                let h = if runtime.settings[0] == 1.0 { rh } else { lh };
-                let st = runtime.st_rolled(h, v);
+                let right_eye = runtime.settings[0] == 1.0;
+                let h = if right_eye { rh } else { lh };
+                let st = look.map_or_else(|| runtime.st_rolled(h, v), |l| runtime.st_look(l[right_eye as usize], l[2]));
+                let mut st = crate::eye_gaze::stretched(crate::eye_gaze::enlarged(st, pupil), across, down);
+                st[2] += pupil_x;
+                st[3] += pupil_y;
                 runtime.apply_st(&mut part.uvs, st);
                 if let Some(draw) = part.eye_draw.as_mut() {
                     draw.apply(st, &runtime.raw_uvs, &mut part.uv2, &mut part.uv3);
@@ -1318,6 +1335,35 @@ impl OkSession {
             }
         }
         true
+    }
+
+    /// Her pupils drawn `scale` times as large as they look now. Not `set_iris_small`: that scales the card's pupil
+    /// width, which is capped at 1 and is not the size seen.
+    pub fn set_pupil_offset(&mut self, x: f32, y: f32) -> bool {
+        if !x.is_finite() || !y.is_finite() {
+            return false;
+        }
+        self.face_runtime.pupil_offset = [x.clamp(-0.25, 0.25), y.clamp(-0.25, 0.25)];
+        let [lh, rh, v] = self.face_runtime.last_eye_gaze;
+        self.set_eye_gaze_rates(lh, rh, v)
+    }
+
+    pub fn set_pupil_stretch(&mut self, across: f32, down: f32) -> bool {
+        if !across.is_finite() || !down.is_finite() || across <= 0.0 || down <= 0.0 {
+            return false;
+        }
+        self.face_runtime.pupil_stretch = [across.clamp(0.1, 3.0), down.clamp(0.1, 3.0)];
+        let [lh, rh, v] = self.face_runtime.last_eye_gaze;
+        self.set_eye_gaze_rates(lh, rh, v)
+    }
+
+    pub fn set_pupil_scale(&mut self, scale: f32) -> bool {
+        if !scale.is_finite() || scale <= 0.0 {
+            return false;
+        }
+        self.face_runtime.pupil_scale = scale.clamp(0.5, 2.0);
+        let [lh, rh, v] = self.face_runtime.last_eye_gaze;
+        self.set_eye_gaze_rates(lh, rh, v)
     }
 
     /// KKS MMDD `get_iris_size_kk` / `set_iris_size_kk` (`瞳小` / `瞳大`):
@@ -1975,6 +2021,7 @@ impl OkSession {
             }
             crate::pose::assigned_weights_remap(head);
         }
+        self.face_runtime.eye_look_shown=runtime.look().map(|look|(runtime.rates,look));
         Some(runtime.rates)
     }
     /// Clothes thickness per body capsule for the clothed collision layer; recomputed only when the worn meshes change.
@@ -4417,7 +4464,7 @@ mod tests {
     #[ignore="prepared local APNG; verifies backwards-compatible slot provenance, run alone"]
     fn part_origins_survive_cache_and_split_resources_without_name_identity() {
         use super::*;
-        let path=std::path::Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C000.png");
+        let path=std::path::Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png"));
         let mut source=crate::portable::load(path).unwrap();
         assert!(source.parts.len()>2);
         // Identical renderer names must remain independently addressable.
@@ -7208,7 +7255,7 @@ fn part_resource_split_preserves_full_renderer_contract(){
     let game=&crate::test_support::game_path("");
     let card=game.join("UserData/chara/female/19重绘爱莉希雅女仆v1.1.png");
     for key in ["OK_GPU_SKIN","OK_SKELMESH","OK_NOPOSE","OK_UE_ANIM","OK_HEAD_GPUSKIN"]{std::env::set_var(key,"1");}
-    std::env::set_var("OK_BUILTIN_RESOURCES","C:/portable/OpenKoikatsu/Content/IndependentResources/v1");
+    std::env::set_var("OK_BUILTIN_RESOURCES",crate::test_support::project_path!("Content/IndependentResources/v1"));
     let mut source=open(game,Some(&card),0).unwrap();let info=crate::card::parse_card_outfit(&card,0).unwrap();
     assert!(source.accessory_context.is_some()&&source.body_rest.is_some()&&!source.parts.is_empty());
     let mut full=Vec::new();let start=std::time::Instant::now();
