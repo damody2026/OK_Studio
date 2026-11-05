@@ -383,7 +383,7 @@ impl Chain {
             let p = &self.particles[i];
             if i == 0 {
                 let pos = p.id.map(|id| parts_pos(&skel.tfs, id)).unwrap_or(p.pos);
-                input.push(crate::px::OkPxParticle { parent: -1, flags: crate::px::FLAG_ROOT | crate::px::FLAG_BODY, pos, prev: p.pos, ..Default::default() });
+                input.push(crate::px::OkPxParticle { parent: -1, flags: crate::px::FLAG_ROOT | crate::px::FLAG_BODY | if matches!(self.kind,Some(0|1)) {crate::px::FLAG_BUST} else {0}, pos, prev: p.pos, ..Default::default() });
                 continue;
             }
             let Some(parent_id) = self.particles[i - 1].id else { return None };

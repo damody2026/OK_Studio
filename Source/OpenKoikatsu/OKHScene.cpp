@@ -230,6 +230,7 @@ static const FHSetting HSettings[]={
     {TEXT("CameraLight"),TEXT("ui.hscene.set_camera_light"),0.f,1.f,1.f,1.f},
     {TEXT("SiruTexture"),TEXT("ui.hscene.set_siru"),0.f,1.f,1.f,0.f},
     {TEXT("Props"),TEXT("ui.hscene.set_props"),0.f,1.f,1.f,0.f},
+    {TEXT("BustArmContact"),TEXT("ui.hscene.set_bust_arm"),0.f,1.f,1.f,0.f},
 };
 static IConsoleVariable* HSettingVar(const TCHAR* Name){return IConsoleManager::Get().FindConsoleVariable(*(FString(TEXT("ok.HScene."))+Name));}
 // A test run keeps its own (-OKSettingsDir, Tools/run_street_social_development.lua): the player's game reads the shared one.
