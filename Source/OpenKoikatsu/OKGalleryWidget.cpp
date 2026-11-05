@@ -2125,6 +2125,9 @@ void UOKCharacterController::FinishPreparedPreview(AKKPreviewActor* Actor,bool b
 	if(IsValid(PreviewActor)&&(!bOk||!GeometryOnly))PreviewActor->SetupStudioView();
 	if(bOk)Actor->SetActorHiddenInGame(false);
 	SetLoadBusy(false);
+	// Paint is armed inside SetModelLayout, which the load path calls while
+	// bLoadInFlight is still true, so the sprayer stays off and left-drag orbits.
+	SetModelLayout(bModelLayout);
 	RestorePairAfterReload();
     if(bOk)WarmClothingPreviews();
 	ProfileStep(TEXT("studio"));

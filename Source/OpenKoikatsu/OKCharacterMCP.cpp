@@ -53,6 +53,11 @@ struct FOKCharacterMCPState
  TWeakObjectPtr<AKKPreviewActor> CaptureActor;
  bool WasTicking=false,AutoLoadAttempted=false;
  float SavedYaw=0,SavedPitch=0;
+ struct FShapeRamp { int32 Index=INDEX_NONE; float From=0, To=0, Restore=0, Seconds=0; };
+ TArray<FShapeRamp> ShapeRamps;
+ double ShapeRampOrigin=0;
+ int32 ShapeRampIndex=-1, ShapeRampHoldIndex=-1;
+ float ShapeRampHoldValue=0;
 };
 namespace OKCharacterMCP
 {
@@ -144,6 +149,25 @@ static void Camera(UOKCharacterController* G,FOKCharacterMCPState& S)
 }
 }
 
+static void DriveShapeRamp(UOKCharacterController* G,FOKCharacterMCPState& S)
+{
+ const double Elapsed=FPlatformTime::Seconds()-S.ShapeRampOrigin;
+ auto Apply=[&](int32 Index,float Value){
+  if(S.ShapeRampHoldIndex==Index&&FMath::IsNearlyEqual(S.ShapeRampHoldValue,Value,0.00005f))return;
+  G->OnShapeChanged(true,Index,Value);S.ShapeRampHoldIndex=Index;S.ShapeRampHoldValue=Value;};
+ if(S.ShapeRamps.Num()==0){S.Phase=4;S.ReadyAt=0;return;}
+ if(Elapsed<0){Apply(S.ShapeRamps[0].Index,S.ShapeRamps[0].From);return;}
+ double Cursor=0;
+ for(int32 I=0;I<S.ShapeRamps.Num();++I){
+  const auto& R=S.ShapeRamps[I];
+  if(Elapsed<Cursor+R.Seconds){
+   if(S.ShapeRampIndex!=I){if(S.ShapeRampIndex>=0)Apply(S.ShapeRamps[S.ShapeRampIndex].Index,S.ShapeRamps[S.ShapeRampIndex].Restore);S.ShapeRampIndex=I;G->SyncShapeSliders();}
+   Apply(R.Index,FMath::Lerp(R.From,R.To,FMath::Clamp(float((Elapsed-Cursor)/R.Seconds),0.f,1.f)));return;}
+  Cursor+=R.Seconds;}
+ if(S.ShapeRampIndex>=0)Apply(S.ShapeRamps.Last().Index,S.ShapeRamps.Last().Restore);
+ G->SyncShapeSliders();S.ShapeRamps.Reset();S.ShapeRampIndex=-1;S.Phase=4;S.ReadyAt=0;
+}
+
 void UOKCharacterController::TickCharacterMCP()
 {
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_GalleryMCP);
@@ -159,6 +183,7 @@ void UOKCharacterController::TickCharacterMCP()
  if(!S.Request){TArray<FString> Files;IFileManager::Get().FindFiles(Files,*(S.Root/TEXT("requests")/TEXT("*.json")),true,false);Files.Sort();for(const FString& File:Files){const FString Id=FPaths::GetBaseFilename(File);FGuid Guid;if(Id.Len()!=32||!FGuid::ParseExact(Id,EGuidFormats::Digits,Guid))continue;const FString Path=S.Root/TEXT("requests")/File,Claim=Path+TEXT(".claimed");if(!IFileManager::Get().Move(*Claim,*Path,false))continue;FString Text;FMCPObject R;const bool Valid=IFileManager::Get().FileSize(*Claim)<=1048576&&FFileHelper::LoadFileToString(Text,*Claim)&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text),R);IFileManager::Get().Delete(*Claim);S.RequestId=Id;if(!Valid){Finish(S,nullptr,TEXT("Invalid request JSON"));return;}
    S.Request=R;if(!R->TryGetStringField(TEXT("action"),S.Action))S.Action.Empty();if(!R->TryGetNumberField(TEXT("deadline"),S.Deadline))S.Deadline=0;S.Selection=SelectedIndex;S.Outfit=OutfitIndex;S.Source=Source(this);S.BeforePath=Entries.IsValidIndex(SelectedIndex)?Entries[SelectedIndex].Path:FString();Refresh(this,S);break;}}
  if(!S.Request)return;if(!FMath::IsFinite(S.Deadline)||FDateTime::UtcNow().ToUnixTimestamp()>S.Deadline){Finish(S,nullptr,TEXT("Request expired; re-query state before retrying"));return;}
+ if(S.Phase==6){DriveShapeRamp(this,S);return;}
  if(S.Phase>0&&Busy(this)){S.ReadyAt=0;return;}
  if(!Entries.IsValidIndex(SelectedIndex)||!bModelLayout||!IsValid(PreviewActor)||InteractionWidget||InteractionScene||bEnterInteractionAfterLoad){Finish(S,nullptr,TEXT("Open character edit mode and load a 3D character first"));return;}
  if(S.Phase==0){FString Expected;S.Request->TryGetStringField(TEXT("session"),Expected);if(S.Action!=TEXT("state")&&Expected!=S.Session){Finish(S,nullptr,TEXT("Character changed; obtain a new session"));return;}static const TSet<FString> Mutations={TEXT("set"),TEXT("reset"),TEXT("control_set"),TEXT("apply"),TEXT("appearance"),TEXT("add_accessory"),TEXT("restore"),TEXT("camera"),TEXT("save"),TEXT("action"),TEXT("load"),TEXT("product_sweep")};if(Mutations.Contains(S.Action)){double Revision;if(!S.Request->TryGetNumberField(TEXT("revision"),Revision)||Revision!=S.Revision){Finish(S,nullptr,TEXT("Stale revision; re-query state"));return;}}}
@@ -209,6 +234,17 @@ void UOKCharacterController::TickCharacterMCP()
  if(S.Action==TEXT("restore")){FString Id;S.Request->TryGetStringField(TEXT("snapshot"),Id);auto* Snap=S.Snapshots.Find(Id);if(!Snap||Snap->Source!=Source(this)||Snap->Outfit!=OutfitIndex){Finish(S,nullptr,TEXT("Snapshot belongs to another source character or outfit"));return;}Selected=Snap->Card;bIndependentCards=Snap->Independent;SetWorkingCardPath(Snap->Path);EditorProperties.Reset();FMCPObject O;FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Snap->Properties),O);if(O)for(auto P:O->GetArrayField(TEXT("properties")))EditorProperties.Add(P->AsObject());O.Reset();FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Snap->Pending),O);PendingProperties.Reset();if(O)for(auto E:O->Values)PendingProperties.Add(FString(*E.Key),E.Value);PropertySource=Snap->Path;PropertyOutfit=OutfitIndex;PreviewResourceSignature.Empty();OnLoad3D();S.Phase=3;S.ReadyAt=0;return;}
  if(S.Action==TEXT("camera")){Camera(this,S);return;}
  if(S.Action==TEXT("product_sweep")){FString Key;S.Request->TryGetStringField(TEXT("ramp"),Key);double Seconds=5;S.Request->TryGetNumberField(TEXT("seconds"),Seconds);if(!FMath::IsFinite(Seconds)||Seconds<1||Seconds>20){Finish(S,nullptr,TEXT("seconds must be 1..20"));return;}UTexture2D* Ramp=nullptr;if(!Key.IsEmpty()){FString RampError;Ramp=OKLoadRenderRamp(Key,RampError);if(!Ramp){Finish(S,nullptr,RampError);return;}}SuspendClothingWarmForCapture();FString Error;if(!PreviewActor->BeginProductCloseup(Key,Ramp,float(Seconds),Error)){Finish(S,nullptr,Error);return;}++S.Revision;Finish(S,State(this,S));return;}
+ if(S.Action==TEXT("shape_ramp")){
+  const FMCPRows* Rows=nullptr;double Lead=0.35;S.Request->TryGetNumberField(TEXT("lead"),Lead);
+  if(!S.Request->TryGetArrayField(TEXT("ramps"),Rows)||!Rows||Rows->IsEmpty()||Rows->Num()>16||!FMath::IsFinite(Lead)||Lead<0||Lead>2){Finish(S,nullptr,TEXT("ramps requires 1..16 entries"));return;}
+  S.ShapeRamps.Reset();double Total=0;
+  for(auto V:*Rows){const FMCPObject* O=nullptr;if(!V->TryGetObject(O)||!O||!O->IsValid()){Finish(S,nullptr,TEXT("Invalid ramp"));return;}double Index,From,To,Seconds,Restore;if(!(*O)->TryGetNumberField(TEXT("index"),Index)||!(*O)->TryGetNumberField(TEXT("from"),From)||!(*O)->TryGetNumberField(TEXT("to"),To)||!(*O)->TryGetNumberField(TEXT("seconds"),Seconds)||Index!=FMath::FloorToDouble(Index)||Index<0||Index>43||!FMath::IsFinite(From)||!FMath::IsFinite(To)||From<-1||From>2||To<-1||To>2||!FMath::IsFinite(Seconds)||Seconds<0.05||Seconds>20){Finish(S,nullptr,TEXT("Ramp index, from, to or seconds is outside the body slider"));return;}if(!(*O)->TryGetNumberField(TEXT("restore"),Restore)||!FMath::IsFinite(Restore)||Restore<-1||Restore>2)Restore=From;FOKCharacterMCPState::FShapeRamp R;R.Index=int32(Index);R.From=float(From);R.To=float(To);R.Restore=float(Restore);R.Seconds=float(Seconds);Total+=Seconds;S.ShapeRamps.Add(R);}
+  if(Total>60){S.ShapeRamps.Reset();Finish(S,nullptr,TEXT("Ramp longer than 60s"));return;}
+  S.ShapeRampIndex=-1;S.ShapeRampHoldIndex=-1;S.ShapeRampOrigin=FPlatformTime::Seconds()+Lead;S.Phase=6;S.ReadyAt=0;
+  auto Mark=MakeShared<FJsonObject>();Mark->SetNumberField(TEXT("lead"),Lead);Mark->SetNumberField(TEXT("seconds"),Total);Mark->SetNumberField(TEXT("unix_ms"),double(FDateTime::UtcNow().ToUnixTimestamp())*1000.+FDateTime::UtcNow().GetMillisecond());
+  const FString MarkPath=S.Root/TEXT("ramp.json");if(FFileHelper::SaveStringToFile(Encode(Mark),*(MarkPath+TEXT(".tmp")),FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))IFileManager::Get().Move(*MarkPath,*(MarkPath+TEXT(".tmp")),true);
+  UE_LOG(LogTemp,Display,TEXT("Character MCP shape ramp count=%d seconds=%.2f lead=%.2f"),S.ShapeRamps.Num(),Total,Lead);
+  DriveShapeRamp(this,S);return;}
  if(S.Action==TEXT("screenshot")||S.Action==TEXT("views")){S.Phase=2;S.ReadyAt=0;S.View=0;return;}
  if(S.Action==TEXT("measure")||S.Action==TEXT("geometry")){if(!Settled(this,S))return;FString Error;auto Geometry=OKCharacterMCPGeometry(PreviewActor,Error);if(!Geometry){Finish(S,nullptr,Error);return;}auto R=State(this,S);Geometry->SetStringField(TEXT("session"),S.Session);Geometry->SetNumberField(TEXT("revision"),S.Revision);for(auto E:Geometry->Values)if(E.Key!=TEXT("meshes"))R->SetField(FString(*E.Key),E.Value);if(S.Action==TEXT("geometry")){const FString Directory=S.Root/TEXT("geometry");IFileManager::Get().MakeDirectory(*Directory,true);const FString Path=Directory/(S.RequestId+TEXT(".json"));if(!FFileHelper::SaveStringToFile(Encode(Geometry.ToSharedRef()),*(Path+TEXT(".tmp")),FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM)||!IFileManager::Get().Move(*Path,*(Path+TEXT(".tmp")),true)){Finish(S,nullptr,TEXT("Cannot save geometry"));return;}R->SetStringField(TEXT("geometry"),Path);}Finish(S,R);return;}
  if(S.Action==TEXT("save")){if(!PendingProperties.IsEmpty()){Finish(S,nullptr,TEXT("Apply staged properties before saving"));return;}FString Name;S.Request->TryGetStringField(TEXT("name"),Name);if(Name.IsEmpty()||Name.Len()>80){Finish(S,nullptr,TEXT("Invalid card name"));return;}for(TCHAR C:Name)if(!FChar::IsAlnum(C)&&C!=TEXT('_')&&C!=TEXT('-')&&C!=TEXT(' ')){Finish(S,nullptr,TEXT("Use letters, numbers, spaces, dash or underscore for card name"));return;}
