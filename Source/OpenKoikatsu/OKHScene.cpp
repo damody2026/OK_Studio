@@ -1990,7 +1990,10 @@ void UOKHScenePanel::LookAtFace(float Distance,float Turn){
     if(!IsValid(Girl)||!Girl->StudioCam||!HBone(Girl,TEXT("j_head"),Head)||!HBone(Girl,TEXT("J_Nose_tip"),Nose))return;
     FVector Dir=(Nose-Head).GetSafeNormal();if(Dir.IsNearlyZero())return;
     Girl->OrbitFocus=Nose;Girl->OrbitYaw=FMath::RadiansToDegrees(FMath::Atan2(Dir.X,Dir.Y))+Turn;Girl->OrbitPitch=FMath::Clamp(FMath::RadiansToDegrees(FMath::Asin(Dir.Z)),-70.f,70.f);
-    Girl->OrbitDistance=FMath::Clamp(Distance,15.f,650.f);Girl->ApplyOrbitCamera();
+    Girl->OrbitDistance=FMath::Clamp(Distance,15.f,650.f);
+    // Her face turned down (騎乘位) would put the camera under the floor: it stays above her feet's ground.
+    const float Lowest=(Girl->GetActorLocation().Z+10.f-Nose.Z)/Girl->OrbitDistance;
+    Girl->OrbitPitch=FMath::Max(Girl->OrbitPitch,FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(Lowest,-1.f,1.f))));Girl->ApplyOrbitCamera();
 }
 // Where he enters her: her anus, or her vagina a little below J_Kokan toward her anus (user, 2026-11-01: lower, so her
 // labia show above him).

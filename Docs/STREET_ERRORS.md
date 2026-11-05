@@ -1971,6 +1971,9 @@
 - 2026-11-04 e-galgame：測試時用 `game_click` 會把自己的遊戲視窗拉到最前面（`Win->BringToFront`），使用者正在玩時點擊可能落到測試視窗。使用者在玩時不要用 `game_click`，改用 `/hscene` 的 kind 或截圖。
 - 2026-11-04 e-galgame：舌頭變白先往材質想，其實是流口水的白色塗料蓋在舌頭上：不流口水時是紅的。現在 H 的體液不畫在舌頭上（`bSkipTongue`，`ok.HScene.FluidTongue` 預設 0），流 40 秒後舌頭還是紅的（`Play-20261104T223655`）。
 - 2026-11-05 e-galgame：頭看鏡頭、眼睛追鏡頭兩個按鈕加在愛撫分支 `return` 之後，進場景的愛撫畫面看不到，只有插入才出現。之前用 kind 直接呼叫沒發現。改到 `BuildActions` 分支之前。
+- 2026-11-05 e-galgame：host 的 `Tools` 是連到 E 的 junction，我對 host 路徑寫 `git show HEAD:ffi.rs`，蓋掉 e-fork-2 還沒提交的 `ffi.rs`，別組連結失敗。已從對方紀錄補回。host 裡只有 `Source`、`Plugins` 是自己的檔案，`Tools` 不能當暫存改。
+- 2026-11-05 e-galgame：`a35ba8b74` 的大小寫修法沒看影響範圍就對所有屬性生效，把舊著色器的小寫值也讀進來（頭髮影子近黑）。回報只說「沒看到變化」。動共用材質前先列出會改到哪些值。
+- 2026-11-05 e-galgame：建置失敗還照樣打 stage 和量測，舊執行檔跑出的數字差點當成新版結果。腳本要先看 `Result: Succeeded`。
 - 2026-11-05 e-galgame：舌頭顏色錯了很久，Material Editor 的屬性名小寫後蓋掉 `_Color`。`Material::color` 不分大小寫，所以 log 印的顏色是對的，著色器那邊分大小寫才取不到。查顏色要看實際綁到著色器的值，不能只看 log。
 - 2026-11-05 e-galgame：`EGalRound11` 回報把「射在外面」算成走過，其實 log 寫著 `action 2005 not offered now`，腳本只送了按鈕沒看有沒有效。走查腳本按之前要先確認按鈕可按，不能按就記下來。
 - 2026-11-05 e-galgame：舌頭拉長用整個 morph 權重放大，1～2 倍看不出來，舌根其實也在往外移，3 倍就離開嘴巴。沒有骨頭的東西要拉長，得固定一端。
