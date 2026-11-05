@@ -75,6 +75,7 @@ FRows Parameters(UOKCharacterController* G)
   else{Key=TEXT("pregnancy.")+S->PregnancyParameter;const FObject* Preg=nullptr;if(M&&M->TryGetObjectField(TEXT("pregnancy"),Preg))(*Preg)->TryGetNumberField(S->PregnancyParameter,V);}
   auto P=Number(Key,Label(S),V,S->GetMinValue(),S->GetMaxValue(),S->BodyParameter.IsEmpty()?0:.5);P->SetBoolField(TEXT("supported"),!S->BodyParameter.IsEmpty()||M.IsValid());Add(P);
  }
+ for(auto S:G->StyleSliders)if(S){auto P=Number(TEXT("style.")+S->StyleParameter,Label(S),S->GetValue(),S->GetMinValue(),S->GetMaxValue(),G->StyleDefault(S->StyleParameter));P->SetStringField(TEXT("category"),TEXT("style"));Add(P);}
  for(auto P:G->EditorProperties){auto Copy=MakeShared<FJsonObject>(*P);const FString Key=P->GetStringField(TEXT("key"));
   if(auto* Pending=G->PendingProperties.Find(Key))Copy->SetField(TEXT("value"),*Pending);
   const FString Kind=P->GetStringField(TEXT("kind"));if(Kind!=TEXT("bool")&&Kind!=TEXT("parent")){Copy->SetNumberField(TEXT("min"),Kind==TEXT("color")?0:-1000000);Copy->SetNumberField(TEXT("max"),Kind==TEXT("color")?1:1000000);}
@@ -119,6 +120,7 @@ bool SetParameters(UOKCharacterController* G,const FRows& Edits,FString& Error)
  for(auto E:Edits){auto O=E->AsObject();const FString Key=O->GetStringField(TEXT("key"));const auto V=O->TryGetField(TEXT("value"));
   if(Key.StartsWith(TEXT("shape."))){TArray<FString> Parts;Key.ParseIntoArray(Parts,TEXT("."));G->OnShapeChanged(Parts[1]==TEXT("body"),FCString::Atoi(*Parts[2]),V->AsNumber());}
   else if(Key.StartsWith(TEXT("physics.")))G->OnBodyPhysicsChanged(Key.Mid(8),V->AsNumber());
+  else if(Key.StartsWith(TEXT("style."))){for(auto S:G->StyleSliders)if(S&&S->StyleParameter==Key.Mid(6)){S->SetValue(V->AsNumber());S->OnSliderMoved(S->GetValue());}}
   else if(!Key.StartsWith(TEXT("bone."))&&!Key.StartsWith(TEXT("pregnancy.")))G->SetEditorProperty(Key,V);
  }
  G->ApplyPendingEditorMods();G->SyncShapeSliders();G->RebuildPropertyControls();return true;
