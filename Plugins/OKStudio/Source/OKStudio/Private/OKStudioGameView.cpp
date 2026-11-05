@@ -201,7 +201,9 @@ void UOKStudioGame::FocusSelection(bool bFace)
 		const float HalfX = Document->FreeView.bOrtho ? Document->FreeView.OrthoWidth * 0.5f : Distance * TanX;
 		const float HalfY = Document->FreeView.bOrtho ? HalfX / Aspect : Distance * TanY;
 		Focus = Target - M.GetScaledAxis(EAxis::Y) * float(Off.X) * HalfX - M.GetScaledAxis(EAxis::Z) * float(Off.Y) * HalfY;
+		FramedFocus = Focus; FramedDistance = Distance; FramedYaw = Yaw; FramedPitch = Pitch;
 	};
+	bFramedFace = bFace;
 	const FOKSceneObject* One = Selection.Num() == 1 ? Document->Find(Selection[0]) : nullptr;
 	FTransform Head;
 	const AKKPreviewActor* Shown = One && SceneActor ? SceneActor->PreviewOf(One->Id) : nullptr;
@@ -235,6 +237,12 @@ void UOKStudioGame::FocusSelection(bool bFace)
 	// Back into the scene's own frame (the orbit focus is in world space, the scene actor sits at the origin).
 	Frame(All.GetCenter(), All.GetExtent().ComponentMax(FVector(5.f)));
 	Document->ActiveCamera = -1;
+}
+
+bool UOKStudioGame::ViewStillFramed() const
+{
+	return Document->ActiveCamera < 0 && !Selection.IsEmpty() && FramedDistance > 0.f && Focus.Equals(FramedFocus, 0.01) && FMath::IsNearlyEqual(Distance, FramedDistance, 0.01f)
+		&& FMath::IsNearlyEqual(Yaw, FramedYaw, 0.01f) && FMath::IsNearlyEqual(Pitch, FramedPitch, 0.01f);
 }
 
 void UOKStudioGame::FrameFirstCharacter(int32 Id)

@@ -214,6 +214,14 @@ void SOKStudioPanel::OpenFloat(const FString& Id, bool bToggle)
 		if (Page == EPage::ItemAdd || Page == EPage::LightAdd) SetPage(EPage::None);
 	}
 	F->bOpen = true;
+	// What F framed stays clear of the timeline that just opened over it (U231), once the open area knows of the window.
+	if (Id == TEXT("timeline") && Game.IsValid() && Game->ViewStillFramed())
+		RegisterActiveTimer(0.1f, FWidgetActiveTimerDelegate::CreateLambda([this](double, float)
+		{
+			UpdateClearView();
+			if (Game.IsValid() && Game->ViewStillFramed()) Game->Reframe();
+			return EActiveTimerReturnType::Stop;
+		}));
 	if (Id == TEXT("cards") && CardFiles.IsEmpty()) ScanCardFolder();
 	if (Id == TEXT("scenes")) ScanScenes();
 	if (Id == TEXT("quick")) RunQuickSearch();
@@ -338,7 +346,7 @@ void SOKStudioPanel::SaveLayout() const
 void SOKStudioPanel::WatchUnkeyed()
 {
 	// A change to what keys hold (place, face, hands, clothes, style, FK, a held frame) is undone by the next change of
-	// time. It went without a word (U214, U218). The motion itself is not keyed and stays.
+	// time. It went without a word (U214, U218). The motion too once the track keys motions (U230).
 	FOKSceneObject* O = Game->Selection.Num() == 1 ? Obj() : nullptr;
 	const FOKSceneTrack* Track = O ? Game->Document->TrackOf(O->Id) : nullptr;
 	const bool bTracked = Track && !Track->Keys.IsEmpty();
@@ -348,10 +356,10 @@ void SOKStudioPanel::WatchUnkeyed()
 		bUnkeyed = false;
 		WatchId = bTracked ? O->Id : -1;
 		WatchTime = Game->TimelineTime;
-		if (bTracked) WatchState = UOKSceneDocument::KeyedState(*O);
+		if (bTracked) WatchState = UOKSceneDocument::KeyedState(*O, Game->Document->HasMotionKeys(O->Id));
 		return;
 	}
-	const FString State = UOKSceneDocument::KeyedState(*O);
+	const FString State = UOKSceneDocument::KeyedState(*O, Game->Document->HasMotionKeys(O->Id));
 	const FOKSceneKey* Key = Game->Document->KeyAt(O->Id, WatchTime);
 	if (State == WatchState || (Key && State == UOKSceneDocument::KeyedState(*O, *Key)))
 	{
@@ -2288,6 +2296,10 @@ TSharedRef<SWidget> SOKStudioPanel::BuildExport()
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[Line(TEXT("高"), Spin([this] { return float(ExportH); }, [this](float V) { ExportH = FMath::Clamp(FMath::RoundToInt(V), 16, 8192); }, 16.f, 8192.f, 1.f))]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[Line(TEXT("輸出資料夾"), TextBox([this] { return ExportFolderText; }, [this](const FString& V) { ExportFolderText = V.TrimStartAndEnd().TrimQuotes(); }, TEXT("UserData/Studio/movie")))]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[CheckBox(TEXT("mp4 含音樂（播放中的 BGM 與外部音源）"), [this] { return Game.IsValid() && Game->bExportAudio; }, [this](bool B) { if (Game.IsValid()) Game->bExportAudio = B; })]
+		// U232: a scene with voice lists came out silent and with a still mouth, and nothing said so.
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[SNew(STextBlock).Font(Font(10.f)).ColorAndOpacity(FLinearColor::Yellow).AutoWrapText(true)
+			.Text(FText::FromString(TEXT("角色語音不會進影片。要有聲音用外部音源，嘴型用時間軸 key。")))
+			.Visibility_Lambda([this] { return Game.IsValid() && Game->Document->Objects.ContainsByPredicate([](const FOKSceneObject& O) { return O.Kind == EOKSceneObjectKind::Character && !O.Character.Voices.IsEmpty(); }) ? EVisibility::Visible : EVisibility::Collapsed; })]
 		// U215: the range is remembered from the last time, and a short one looked like a broken export.
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f, 0.f, 0.f)
 		[

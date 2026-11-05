@@ -947,6 +947,29 @@ struct OKSTUDIO_API FOKSceneKey
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
 	float AnimTime = -1.f;
 
+	/** A character's Studio motion from this key on (AnimNo < 0: not keyed, as in scenes of format version 1): it changes
+	 *  at the key and starts over there. Keys in a row with one motion run on. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	int32 AnimKind = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	int32 AnimGroup = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	int32 AnimCategory = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	int32 AnimNo = -2;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	float AnimSpeed = 1.f;
+
+	/** The character's Time when keyed: where the first motion of the track starts from. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	float AnimStart = 0.f;
+
+	bool SameMotion(const FOKSceneKey& O) const { return AnimKind == O.AnimKind && AnimGroup == O.AnimGroup && AnimCategory == O.AnimCategory && AnimNo == O.AnimNo; }
+
 	/** The scene track (ObjectId SceneTrackId): exposure (EV) and depth of field focus distance (cm) at this key. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
 	float Exposure = 0.f;
@@ -1224,7 +1247,8 @@ class OKSTUDIO_API UOKSceneDocument : public UObject
 	GENERATED_BODY()
 
 public:
-	static constexpr int32 FormatVersion = 1;
+	/** 2: keys hold a motion (U230). A scene with no such key is still written as 1, and reads as it did. */
+	static constexpr int32 FormatVersion = 2;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
 	TArray<FOKSceneObject> Objects;
@@ -1328,8 +1352,9 @@ public:
 	bool ClearTrack(int32 Id);
 	/** The key of the object at the time (within the key tolerance), or null. */
 	FOKSceneKey* KeyAt(int32 Id, float Time);
+	bool HasMotionKeys(int32 Id) const;
 	/** What a key holds of the object (or holds in Key), as text to compare: a change here is lost without a key (U218). */
-	static FString KeyedState(const FOKSceneObject& O);
+	static FString KeyedState(const FOKSceneObject& O, bool bMotion);
 	static FString KeyedState(const FOKSceneObject& O, const FOKSceneKey& Key);
 	/** The eased blend (0..1) between two keys at fraction U of the way. */
 	static float EaseAlpha(EOKSceneEase Ease, float U);

@@ -248,6 +248,7 @@ namespace
 		O->SetNumberField(TEXT("fk_bones"), K.Fk.Num());
 		O->SetBoolField(TEXT("character_state"), K.bCharacterState);
 		if (K.AnimTime >= 0.f) O->SetNumberField(TEXT("anim_time"), K.AnimTime);
+		if (K.AnimNo >= 0) { O->SetStringField(TEXT("anim"), FString::Printf(TEXT("%d/%d/%d/%d"), K.AnimKind, K.AnimGroup, K.AnimCategory, K.AnimNo)); O->SetNumberField(TEXT("anim_speed"), K.AnimSpeed); }
 		if (K.Color.A >= 0.f) O->SetStringField(TEXT("color"), TEXT("#") + K.Color.ToFColor(false).ToHex());
 		O->SetNumberField(TEXT("exposure"), K.Exposure);
 		O->SetNumberField(TEXT("focal_distance"), K.FocalDistance);

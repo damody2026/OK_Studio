@@ -1,5 +1,6 @@
 ﻿#include "SOKStudioTimeline.h"
 #include "OKSceneActor.h"
+#include "OKStudioCatalog.h"
 #include "OKStudioStyle.h"
 #include "Fonts/FontMeasure.h"
 #include "Framework/Application/SlateApplication.h"
@@ -17,7 +18,7 @@ TArray<SOKStudioTimeline::FRowInfo> SOKStudioTimeline::RowInfos() const
 	TArray<FRowInfo> Rows;
 	if (!Game.IsValid()) return Rows;
 	const UOKSceneDocument* Doc = Game->Document;
-	static const TCHAR* Subs[] = { TEXT("變換"), TEXT("FK"), TEXT("狀態"), TEXT("數值") };
+	static const TCHAR* Subs[] = { TEXT("變換"), TEXT("FK"), TEXT("狀態"), TEXT("數值"), TEXT("動作") };
 	for (const FOKSceneTrack& T : Doc->Tracks)
 	{
 		const FOKSceneObject* O = Doc->Find(T.ObjectId);
@@ -26,9 +27,9 @@ TArray<SOKStudioTimeline::FRowInfo> SOKStudioTimeline::RowInfos() const
 		R.Label = T.ObjectId == UOKSceneDocument::SceneTrackId ? FString(TEXT("場景（畫面）")) : (O ? O->Name : FString::Printf(TEXT("#%d"), T.ObjectId));
 		Rows.Add(R);
 		if (!Open.Contains(T.ObjectId) || T.ObjectId == UOKSceneDocument::SceneTrackId) continue;
-		for (int32 S = 0; S < 4; ++S)
+		for (int32 S = 0; S < 5; ++S)
 		{
-			if ((S == 1 || S == 2) && (!O || O->Kind != EOKSceneObjectKind::Character)) continue;
+			if ((S == 1 || S == 2 || S == 4) && (!O || O->Kind != EOKSceneObjectKind::Character)) continue;
 			if (S == 3 && (!O || (O->Kind != EOKSceneObjectKind::Light && O->Kind != EOKSceneObjectKind::Camera && O->Kind != EOKSceneObjectKind::Effect))) continue;
 			FRowInfo Sub;
 			Sub.Track = T.ObjectId;
@@ -47,6 +48,7 @@ bool SOKStudioTimeline::SubHasKey(int32 Sub, const FOKSceneKey& K, const FOKScen
 	case 1: return K.Fk.Num() > 0;
 	case 2: return K.bCharacterState || K.AnimTime >= 0.f;
 	case 3: return O && (O->Kind == EOKSceneObjectKind::Light || O->Kind == EOKSceneObjectKind::Camera || O->Kind == EOKSceneObjectKind::Effect);
+	case 4: return K.AnimNo >= 0;
 	default: return true;
 	}
 }
@@ -122,15 +124,24 @@ int32 SOKStudioTimeline::OnPaint(const FPaintArgs&, const FGeometry& G, const FS
 			const FLinearColor C = bSel ? FLinearColor::Yellow : (K.Ease == EOKSceneEase::Step ? FLinearColor(1.f, .55f, .2f) : FLinearColor(.75f, .85f, 1.f));
 			const float H = R.Sub < 0 ? 5.f : 3.5f, CY = Y + RowHeight * 0.5f;
 			FSlateDrawElement::MakeLines(Out, Layer + 3, G.ToPaintGeometry(), { FVector2f(X, CY - H), FVector2f(X + H, CY), FVector2f(X, CY + H), FVector2f(X - H, CY), FVector2f(X, CY - H) }, ESlateDrawEffect::None, C, true, 2.f);
+			// Only as many characters as fit before the next key (about 6 px each at this size).
+			const FOKSceneKey* NextKey = T->Keys.FindByPredicate([&K](const FOKSceneKey& N) { return N.Time > K.Time; });
+			const float Room = (NextKey ? FMath::Min(TimeToX(G, NextKey->Time) - H, Size.X) : Size.X) - (X + H + 2.f);
 			// Scene keys name the view they cut to.
 			if (R.Track == UOKSceneDocument::SceneTrackId && K.Camera >= -1)
 			{
-				// Only as many characters as fit before the next key (about 6 px each at this size).
-				const FOKSceneKey* NextKey = T->Keys.FindByPredicate([&K](const FOKSceneKey& N) { return N.Time > K.Time; });
-				const float Room = (NextKey ? FMath::Min(TimeToX(G, NextKey->Time) - H, Size.X) : Size.X) - (X + H + 2.f);
 				const FOKSceneObject* Cam = Doc->Find(K.Camera);
 				const FString Name = K.Camera < 0 ? FString(TEXT("自由")) : (Cam ? Cam->Name : FString(TEXT("（已刪）")));
 				if (Room >= 12.f) Text(X + H + 2.f, Y + 1.f, Name.Left(FMath::Max(int32(Room / 6.f), 1)), TextHint(), 9.f, Layer + 3);
+			}
+			// A character's keys name the motion where it changes (U230), in its own colour.
+			if (K.AnimNo >= 0 && (R.Sub < 0 || R.Sub == 4) && Room >= 12.f)
+			{
+				const FOKSceneKey* Before = nullptr;
+				for (const FOKSceneKey& P : T->Keys) if (P.Time < K.Time && P.AnimNo >= 0) Before = &P;
+				const FOKStudioAnim* Anim = FOKStudioCatalog::Get().FindAnim(K.AnimKind, K.AnimGroup, K.AnimCategory, K.AnimNo);
+				if (Anim && (!Before || !Before->SameMotion(K)))
+					Text(X + H + 2.f, Y + 1.f, FOKStudioCatalog::ZhName(Anim->Name).Left(FMath::Max(int32(Room / 6.f), 1)), FLinearColor(.55f, .95f, .6f), 9.f, Layer + 3);
 			}
 		}
 	}

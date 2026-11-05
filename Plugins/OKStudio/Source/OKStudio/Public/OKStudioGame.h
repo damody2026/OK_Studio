@@ -91,6 +91,12 @@ public:
 	/** Points the free view at the selection, far enough to see all of it; bFace: at one character's face, close up (the
 	 *  look, neck and expression pages edit what the face shows). */
 	void FocusSelection(bool bFace = false);
+	/** The view is as FocusSelection left it (nobody moved it since): it can follow the open area. */
+	bool ViewStillFramed() const;
+	void Reframe() { FocusSelection(bFramedFace); }
+	FVector FramedFocus = FVector::ZeroVector;
+	float FramedDistance = -1.f, FramedYaw = 0.f, FramedPitch = 0.f;
+	bool bFramedFace = false;
 	/** The whole figure of a character just added, while the view is still the initial one (U212). */
 	void FrameFirstCharacter(int32 Id);
 	/** The part of the view no panel covers, as fractions of the view (0..1, y down); the panel keeps it current. Framing

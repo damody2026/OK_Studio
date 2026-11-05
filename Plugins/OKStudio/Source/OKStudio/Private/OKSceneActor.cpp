@@ -1006,6 +1006,7 @@ void AOKSceneActor::Sync()
 		// Content changes rebuild the object; transform and visibility only move it.
 		// An eyes pattern is set on the live face, unless its eye set changes parts (gag eyes): then it is built in.
 		auto PartsEyes = [](int32 Ptn) { return Ptn >= 0 && FOKStudioCatalog::Get().EyeSet(Ptn).bChangesParts ? Ptn : -1; };
+		if (Item) SwapKeyedMotion(Object, *Item);
 		const bool bSame = Item && Item->Kind == Object.Kind && Item->Character.SameContent(Object.Character) && Item->Item.SameContent(Object.Item) && Item->Light == Object.Light
 			&& (Object.Kind != EOKSceneObjectKind::Effect || Item->Effect == Object.Effect.Effect)
 			&& (Object.Kind != EOKSceneObjectKind::Character || PartsEyes(Item->Character.EyesPattern) == PartsEyes(Object.Character.EyesPattern));
@@ -1498,6 +1499,31 @@ void AOKSceneActor::SetActiveVmdSource(int32 Id, const FString& VmdFile, const F
 {
 	if (VmdFile.IsEmpty() || OkAnimRelPath.IsEmpty()) ActiveVmdSources.Remove(Id);
 	else ActiveVmdSources.Add(Id, FActiveVmdSource{ VmdFile, OkAnimRelPath });
+}
+
+void AOKSceneActor::SwapKeyedMotion(const FOKSceneObject& Object, FShown& Item)
+{
+	if (Object.Kind != EOKSceneObjectKind::Character || Item.Kind != EOKSceneObjectKind::Character || Object.Character.StudioAnimeNo < 0) return;
+	const FOKSceneCharacter& C = Object.Character;
+	FOKSceneCharacter Was = Item.Character;
+	if (Was.StudioAnimeKind == C.StudioAnimeKind && Was.StudioAnimeGroup == C.StudioAnimeGroup && Was.StudioAnimeCategory == C.StudioAnimeCategory && Was.StudioAnimeNo == C.StudioAnimeNo) return;
+	// Only the motion differs: the timeline changing it, on the live character. Rebuilding stopped the picture for a moment.
+	Was.StudioAnimeKind = C.StudioAnimeKind; Was.StudioAnimeGroup = C.StudioAnimeGroup; Was.StudioAnimeCategory = C.StudioAnimeCategory; Was.StudioAnimeNo = C.StudioAnimeNo;
+	if (!Was.SameContent(C)) return;
+	// An H motion with variants is blended at build.
+	const FOKStudioAnim* Entry = FOKStudioCatalog::Get().FindAnim(C.StudioAnimeKind, C.StudioAnimeGroup, C.StudioAnimeCategory, C.StudioAnimeNo);
+	if (!Entry || !Entry->Variants.IsEmpty()) return;
+	const float Time = C.Time, Speed = C.Speed;
+	FString Error;
+	if (!SetCharacterAnimation(Object.Id, C.StudioAnimeKind, C.StudioAnimeGroup, C.StudioAnimeCategory, C.StudioAnimeNo, Error))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OK studio: keyed motion of %s rebuilt: %s"), *Object.Name, *Error);
+		return;
+	}
+	// It starts its motion at 0; the key said when.
+	if (FOKSceneObject* Doc = Document->Find(Object.Id)) { Doc->Character.Time = Time; Doc->Character.Speed = Speed; }
+	Item.Character.Time = Time;
+	SetAnimationTime(Object.Id, Document->ItemAnimationSeconds);
 }
 
 bool AOKSceneActor::SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int32 Category, int32 No, FString& OutError)

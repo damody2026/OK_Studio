@@ -288,6 +288,8 @@ private:
 	TArray<TObjectPtr<class USceneCaptureComponent2D>> MirrorCaptures;
 	TArray<TWeakObjectPtr<class UMaterialInstanceDynamic>> MirrorCaptureMaterials;
 	void Release(FShown& Item);
+	/** A motion changed by the timeline, on the live character (U230); anything else the next step rebuilds. */
+	void SwapKeyedMotion(const FOKSceneObject& Object, FShown& Item);
 	void ApplyCharacterState(const FOKSceneObject& Object, FShown& Item);
 	void SolveConstraints();
 };
