@@ -83,9 +83,16 @@ def inn(box,poly):
    box(a,b,YF+T,YF+T+.02,.1,1.95,'shoji')
    for k in range(int((b-a)/.5)+1):box(a+k*.5-.012,a+k*.5+.012,YF+T+.02,YF+T+.04,.1,1.95,'timber')
    for k in range(5):box(a,b,YF+T+.02,YF+T+.04,.1+k*.46-.012,.1+k*.46+.012,'timber')
-  # tokonoma between the two back doors: raised floor, corner post, a hanging scroll
-  box(cx-.95,cx+1.95,y1-.6,y1-.05,.03,.14,'timber');box(cx-.95,cx-.85,y1-.62,y1-.5,.03,H,'timber');box(cx-.95,cx+1.95,y1-.62,y1-.5,1.95,2.07,'timber')
-  box(cx+.2,cx+.9,y1-.08,y1-.06,.55,1.75,'shoji');box(cx+.16,cx+.94,y1-.09,y1-.06,1.75,1.78,'timber');box(cx+.16,cx+.94,y1-.09,y1-.06,.52,.55,'timber')
+  # tokonoma between the two back doors: raised floor, a post at each end carrying the beam, a hanging scroll
+  # (the painting is minshuku_scroll.glb, placed by the install); the door stacks stand on either side of it
+  box(cx-.95,cx+1.05,y1-.6,y1-.05,.03,.14,'timber');box(cx-.95,cx-.85,y1-.62,y1-.5,.03,H,'timber');box(cx+.95,cx+1.05,y1-.62,y1-.5,.03,H,'timber');box(cx-.95,cx+1.05,y1-.62,y1-.5,1.95,2.07,'timber')
+  box(cx-.3,cx+.4,y1-.08,y1-.06,.55,1.75,'shoji');box(cx-.34,cx+.44,y1-.09,y1-.06,1.75,1.78,'timber');box(cx-.34,cx+.44,y1-.09,y1-.06,.52,.55,'timber')
+  # sliding doors of the bath and the toilet, drawn open against the wall on the room side
+  for a in (cx-2.85,cx+1.12):
+   box(a,a+.93,YS-.04,YS-.01,.05,2.03,'fusuma')
+   for z0,z1 in ((.05,.1),(1.98,2.03)):box(a,a+.93,YS-.05,YS-.01,z0,z1,'timber')
+   for x in (a,a+.88):box(x,x+.05,YS-.05,YS-.01,.05,2.03,'timber')
+   box(a+.8,a+.86,YS-.055,YS-.04,.92,1.04,'steel')
   # oshiire on the side wall: two sliding fusuma in a frame, a shelf line above
   ox=x1-.62;oy0,oy1=.75,2.4
   box(ox,x1,oy0,oy1,.03,1.95,'timber');box(ox-.01,ox,oy0+.05,(oy0+oy1)/2,.08,1.9,'fusuma');box(ox-.02,ox-.01,(oy0+oy1)/2,oy1-.05,.08,1.9,'fusuma')
@@ -106,6 +113,17 @@ def inn(box,poly):
   x=-14.4+k*.35
   poly([(x,-f,t+.05),(x+.12,-f,t+.05),(x+.12,-.1,t+r+.03),(x,-.1,t+r+.03)],'rib');poly([(x+.12,e,t+.05),(x,e,t+.05),(x,.1,t+r+.03),(x+.12,.1,t+r+.03)],'rib')
 build('minshuku_annex',inn)
+# the painting of the tokonoma: a thin panel with the image on both faces (Grok, hill-v1/scroll.jpg)
+o=None
+bpy.ops.mesh.primitive_cube_add(size=1,location=(0,0,.525));o=bpy.context.object;o.name='minshuku_scroll';o.scale=(.7,.01,1.05);bpy.ops.object.transform_apply(scale=True)
+m=bpy.data.materials.new('mk_scroll');m.use_nodes=True;n=m.node_tree;t=n.nodes.new('ShaderNodeTexImage');t.image=bpy.data.images.load(str(D/'scroll.jpg'));q=n.nodes['Principled BSDF'];n.links.new(t.outputs['Color'],q.inputs['Base Color']);q.inputs['Roughness'].default_value=.9
+o.data.materials.append(m);uv=o.data.uv_layers.active
+for p in o.data.polygons:
+ for li in p.loop_indices:
+  v=o.data.vertices[o.data.loops[li].vertex_index].co;uv.data[li].uv=(v.x/.7+.5,v.z/1.05)
+for x in bpy.context.scene.objects:x.select_set(x==o)
+bpy.ops.export_scene.gltf(filepath=str(D/'minshuku_scroll.glb'),export_format='GLB',use_selection=True,export_apply=True,export_image_format='JPEG')
+bpy.data.objects.remove(o);print('MESH minshuku_scroll',flush=True)
 (D/'minshuku-walls.json').write_text(json.dumps(dict(walls=walls,rooms=rooms,height=H)),'utf8')
 ]====]
 local path = out .. '/minshuku-payload.json'

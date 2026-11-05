@@ -1440,7 +1440,7 @@ def motel_world_lover_spots_install():
  # its own on the lawn between AD and T2: Tools/build_street_city_minshuku.lua, wall boxes from minshuku-walls.json.
  # L(x,y) = metres in the building's frame, front (veranda) at -y
  HV=ROOT/'output/street-social-city-production/hill-v1';ltr['minshuku_annex']=str(HV/'minshuku_annex.glb');im=tripo_mesh('minshuku_annex');wj=json.loads((HV/'minshuku-walls.json').read_text('utf8'))
- IX,IY=72000,74000;cut=0
+ ltr['minshuku_scroll']=str(HV/'minshuku_scroll.glb');IX,IY=72000,74000;cut=0
  for a_ in SUB.get_all_level_actors():
   if not a_.get_actor_label().startswith('WorldTripo_'):continue
   c_=a_.get_component_by_class(unreal.HierarchicalInstancedStaticMeshComponent)
@@ -1448,6 +1448,17 @@ def motel_world_lover_spots_install():
   for i in range(c_.get_instance_count()-1,-1,-1):
    t_=c_.get_instance_transform(i,True).translation
    if abs(t_.x-IX)<1900 and abs(t_.y-IY)<860:c_.remove_instance(i);cut+=1
+ # a street tree stood inside the first room, trunk proxy included: both go behind the building (motel_physics_plan moves them the same way)
+ moved=0
+ for a_ in SUB.get_all_level_actors():
+  for c_ in a_.get_components_by_class(unreal.HierarchicalInstancedStaticMeshComponent):
+   m_=c_.get_editor_property('static_mesh')
+   if not m_ or m_.get_name() not in ('SM_terminalia','tree_trunk_collision_LOD0'):continue
+   for i in range(c_.get_instance_count()):
+    t_=c_.get_instance_transform(i,True)
+    if abs(t_.translation.x-70776.66)<2 and abs(t_.translation.y-74056.24)<2:
+     t_.translation=t_.translation+unreal.Vector(600,-1200,0);assert c_.update_instance_transform(i,t_,True,True,True);moved+=1
+ assert moved in (0,2),moved;skipped.append(dict(place='minshuku',reason='tree and proxy moved: %d'%moved))
  qs=[_ls_floor(world,IX+i*400,IY+j*300,1205) for i in range(-4,5) for j in range(-2,3)];qs=[q for q in qs if q is not None];gz=max(qs);fz=gz+3
  _ls_note('R7: inn ground %.0f..%.0f, scatter cut %d'%(min(qs),gz,cut));skipped.append(dict(place='minshuku',reason='ground %.0f..%.0f, scatter cut %d'%(min(qs),gz,cut)))
  bb=im.get_bounding_box();SY=1 if bb.min.y+bb.max.y<0 else -1
@@ -1466,6 +1477,16 @@ def motel_world_lover_spots_install():
  for k,(x0,x1,y0,y1) in enumerate(wj['walls']):
   w=_ls_box('LoverSpot_R7_minshuku_Wall%02d'%k,L((x0+x1)/2,(y0+y1)/2),0,((x1-x0)*100,(y1-y0)*100,270),M['counter']);w.static_mesh_component.set_visibility(False)
  wood=_ls_mat('M_LS_InnWood',(.3,.2,.12),.6)
+ def scroll_mat():
+  # the glTF import of the scroll panel leaves its texture out and the slot shows the engine default, so the painting is imported here
+  path=LS_DIR+'/Materials/M_LS_InnScroll'
+  if EAL.does_asset_exist(path):return EAL.load_asset(path)
+  job=unreal.AssetImportTask();job.filename=str(HV/'scroll.jpg');job.destination_path=LS_DIR+'/Textures';job.destination_name='T_LS_InnScroll';job.automated=True;job.replace_existing=True;job.save=True;ATS.import_asset_tasks([job])
+  tex=EAL.load_asset(LS_DIR+'/Textures/T_LS_InnScroll');assert tex,'scroll texture'
+  m=ATS.create_asset('M_LS_InnScroll',LS_DIR+'/Materials',unreal.Material,unreal.MaterialFactoryNew())
+  n=MEL.create_material_expression(m,unreal.MaterialExpressionTextureSample);n.set_editor_property('texture',tex);MEL.connect_material_property(n,'RGB',unreal.MaterialProperty.MP_BASE_COLOR)
+  c=MEL.create_material_expression(m,unreal.MaterialExpressionConstant);c.set_editor_property('r',.9);MEL.connect_material_property(c,'',unreal.MaterialProperty.MP_ROUGHNESS)
+  MEL.recompile_material(m);assert EAL.save_loaded_asset(m,False);return m
  def lay(t,key,x,y,along=None,yaw=0):
   # a Tripo piece on the floor, its long side along x or y of the building
   t='LoverSpot_R7_'+t;mesh=tripo_mesh(key)
@@ -1489,9 +1510,14 @@ def motel_world_lover_spots_install():
   t=lay(g+'_tv','tv_cabinet',cx+3.45,-1.4,None,90);A2('minshuku','inn_tv',L(cx+.4,-1.4),0,t)
   A2('minshuku','inn_closet',L(cx+2.6,1.6),0,'LoverSpot_R7_minshuku')
   t=lay(g+'_tub','bathtub',cx-2.6,4.4,'x');A2('minshuku','bath',L(cx-2.6,4.4),0,t)
-  _ls_cyl('LoverSpot_R7_%s_ShowerPipe'%g,L(cx+.7,5.7),2,200,M['dark'],False);_ls_box('LoverSpot_R7_%s_ShowerHead'%g,L(cx+.7,5.5,fz+195),0,(16,16,4),M['dark'],False)
-  A2('minshuku','inn_shower',L(cx+.3,5),BACK,'LoverSpot_R7_%s_ShowerPipe'%g)
-  t=lay(g+'_toilet','toilet_room',cx+2.5,5.3,None,FRONT-90);A2('minshuku','inn_toilet',L(cx+2.5,4.7),BACK,t)
+  # shower column and washbasin on the back wall; the toilet off the line of its doorway, so the room does not look straight at it
+  t=lay(g+'_shower','shower_column',cx+.4,5.65,None,FRONT-90);A2('minshuku','inn_shower',L(cx+.4,5),BACK,t)
+  t=lay(g+'_sink','washbasin',cx-.9,5.55,None,FRONT-90);A2('minshuku','inn_sink',L(cx-.9,4.8),BACK,t)
+  t=lay(g+'_toilet','toilet_room',cx+1.75,5.3,None,FRONT-90);A2('minshuku','inn_toilet',L(cx+1.75,4.7),BACK,t)
+  t=lay(g+'_scroll','minshuku_scroll',cx+.05,2.405);
+  if t:
+   a_=next((x for x in SUB.get_all_level_actors() if x.get_actor_label()==t),None)
+   if a_:a_.set_actor_location(L(cx+.05,2.405,fz+60),False,False);a_.static_mesh_component.set_material(0,scroll_mat())
   A2('minshuku','engawa',L(cx+2.2,-5.2),FRONT,'LoverSpot_R7_minshuku')
   lamp(g,cx,-1);lamp(g+'_bath',cx-1.5,4.2);lamp(g+'_wc',cx+2.5,4.2)
  rb(-17,-15,-4.5,6);rb(-17,17,-6,-4.5)
@@ -1506,7 +1532,13 @@ def motel_world_lover_spots_install():
  views.append(dict(id='R7-minshuku-room-night',eye=num(L(-.4,-3.9,fz+165)),target=num(L(-3,1.5,fz+60)),fov=85,hour=22))
  views.append(dict(id='R7-minshuku-front',eye=num(L(0,-16,fz+420)),target=num(L(0,-2,fz+120)),fov=80,hour=15))
  views.append(dict(id='R7-minshuku-bath',eye=num(L(-2.4,2.9,fz+170)),target=num(L(-5.6,4.8,fz+30)),fov=90,hour=15))
- views.append(dict(id='R7-minshuku-wc',eye=num(L(-.5,2.85,fz+170)),target=num(L(-.5,5.3,fz+20)),fov=90,hour=15))
+ views.append(dict(id='R7-minshuku-room1',eye=num(L(-11,-3.9,fz+165)),target=num(L(-13,1.5,fz+60)),fov=95,hour=15))
+ views.append(dict(id='R7-minshuku-bath2',eye=num(L(-6.5,2.9,fz+165)),target=num(L(-3.2,5.7,fz+95)),fov=85,hour=15))
+ views.append(dict(id='R7-minshuku-wc',eye=num(L(.4,2.85,fz+170)),target=num(L(-1.25,5.3,fz+30)),fov=90,hour=15))
+ views.append(dict(id='R7-minshuku-wc-door',eye=num(L(-.9,-.4,fz+150)),target=num(L(-1.2,2.5,fz+95)),fov=80,hour=15))
+ views.append(dict(id='R7-minshuku-scroll',eye=num(L(-2.9,.1,fz+130)),target=num(L(-2.95,2.45,fz+115)),fov=60,hour=15))
+ views.append(dict(id='R7-minshuku-low',eye=num(L(31,-13,fz+140)),target=num(L(6,-5,fz+170)),fov=60,hour=15))
+ views.append(dict(id='R7-minshuku-high',eye=num(L(24,-20,fz+500)),target=num(L(0,-2,fz+120)),fov=66,hour=15))
  views.append(dict(id='R7-stair-T2',eye=num(V([72200,69450,2000])),target=num(V([74400,69450,1900])),fov=75,hour=15))
  _ls_note('R7: minshuku done, %d rooms'%len(rr))
  acts={a.get_actor_label():a for a in SUB.get_all_level_actors()}

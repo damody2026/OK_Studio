@@ -73,6 +73,10 @@ def motel_physics_plan():
   links=[r for r in p['stem_render_links'] if r['proxy_instance']==268 and abs(r['expected_root_cm'][0]-50840)<1];assert links
   for r in links:r['expected_root_cm'][0]+=1500
   p['bounded_branch_landscape_migration']=dict(receipt_sha256=sha(OUT/'branch-expansion.json'),proxy_instance=268,delta_cm=[1500,0,0],render_links=len(links),scope='Relocated tree and matching trunk proxy; original instance counts and all other collision tolerances retained.')
+ # the tree moved out of the inn by the lover spots install, and its trunk proxy
+ group=next(g for g in p['stem_groups'] if any(t['instance']==1431 and abs(t['center'][0]-70776.66)<1 for t in g['targets']));target=next(t for t in group['targets'] if t['instance']==1431);target['center'][0]+=600;target['center'][1]-=1200
+ links=[r for r in p['stem_render_links'] if r['proxy_instance']==1431 and abs(r['expected_root_cm'][0]-70776.66)<1];assert links
+ for r in links:r['expected_root_cm'][0]+=600;r['expected_root_cm'][1]-=1200
  write('game-physics-plan',p)
 
 def motel_migrate_mirror_expectations():

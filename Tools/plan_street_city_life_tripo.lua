@@ -109,6 +109,8 @@ local L = {
   { 'zabuton', 'square japanese floor cushion, indigo cloth with corner tassels, flat', { 0.6, 0.6, 0.1 }, 1000, 'inn', 'minshuku', 16, 1, 6 },
   { 'toilet_room', 'white ceramic western toilet with a tank and a closed seat lid', { 0.45, 0.75, 0.8 }, 2000, 'inn', 'minshuku', 4, 1, 6 },
   { 'tv_cabinet', 'flat screen television standing on a low japanese style dark wooden tv cabinet with two sliding doors', { 1.3, 0.45, 1.05 }, 2500, 'inn', 'minshuku', 4, 1, 6 },
+  { 'washbasin', 'white bathroom washbasin on a wooden vanity cabinet with a tall mirror on a back panel', { 0.8, 0.5, 1.9 }, 2500, 'inn', 'minshuku', 4, 1, 6 },
+  { 'shower_column', 'wall mounted chrome shower column with a rain head, a hand shower and a mixer', { 0.45, 0.35, 2.15 }, 2000, 'inn', 'minshuku', 4, 1, 6 },
 }
 -- world-tripo-v1 keys reused as they are (planned there; generated or still to generate there)
 local reuse = { treadmill = 'gym', dumbbell_rack = 'gym', locker_bank = 'gym beach', volleyball_net = 'gym_hall',

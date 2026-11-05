@@ -2042,3 +2042,5 @@
 - 2026-11-05 e-fork `eprintln!` 到不了遊戲 log（只有 `ffi_log` 會），只寫 stderr 的 Rust 紀錄在 `game.log` 永遠看不到；`outfit_gaps::log` 兩邊都寫。
 - 2026-11-05 c-street-city 民宿改了顏色畫面卻沒變：`_ls_mat` 看到已有版本標記的材質就直接回傳，同名材質的新顏色不會寫入，白白重打包一輪。修正：顏色改動時換材質名稱（`M_LS_Inn2_*`）。
 - 2026-11-05 c-street-city 民宿馬桶朝向錯兩次：換 Tripo 模型後沿用舊模型的朝向。Tripo 模型的正面方向不固定，換模型要重看畫面。
+- 2026-11-06 c-street-city 民宿掛軸顯示引擎預設貼圖：glTF 匯入把面板的貼圖丟了，匯入後沒檢查貼圖資產，看照片才發現。修正：`AssetImportTask` 直接匯入 `T_LS_InnScroll`，自建材質 `M_LS_InnScroll`。
+- 2026-11-06 c-street-city 民宿第一間客室裡有一棵街樹，樹冠穿出屋頂：蓋房子時只清了 WorldTripo 散布物件，沒清 `BP_StreetCluster` 的街樹，之前也只拍第二間，連續幾輪沒發現。修正：樹和樹幹碰撞一起移到建築後方，`motel_physics_plan` 同步，並新增 `R7-minshuku-room1` 視角。四間客室都要拍。

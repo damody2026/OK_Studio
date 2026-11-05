@@ -16,7 +16,7 @@ local BY_NAME = {
   try_shoes = { 'try_shoes', 'seat' }, shoe_rack = { 'shoe_rack' }, shoes = { 'try_shoes', 'shoe_rack' }, vault_box = { 'h_box', 'storage_room' }, gym_mat = { 'storage_room', 'h_floor', 'seat_ground', 'lie_pair' },
   wedding_chapel = { 'wedding', 'selfie', 'gift', 'confess', 'meet' }, ultrasound_cart = { 'ultrasound' },
   futon = { 'lie', 'lie_pair', 'h_floor', 'h_group' }, zabuton = { 'seat', 'h_chair', 'feed' }, chabudai = { 'seat_face', 'feed' }, engawa = { 'seat_ground', 'lap_pillow' },
-  inn_tv = { 'tv_sofa', 'h_sofa' }, inn_closet = { 'closet' }, inn_shower = { 'shower', 'h_shower' }, inn_toilet = { 'toilet', 'h_toilet' }, inn_shoes = { 'shoe_change' }, inn_trash = { 'trash' }, inn_lamp = { 'kiss', 'goodbye' },
+  inn_tv = { 'tv_sofa', 'h_sofa' }, inn_closet = { 'closet' }, inn_shower = { 'shower', 'h_shower' }, inn_sink = { 'vanity' }, inn_toilet = { 'toilet', 'h_toilet' }, inn_shoes = { 'shoe_change' }, inn_trash = { 'trash' }, inn_lamp = { 'kiss', 'goodbye' },
   vending = { 'lean' }, fishing_spot = { 'seat_ground' }, pond = { 'stand_pair' },
   poolside = { 'seat_ground', 'lap_pillow' }, swim = { 'h_pool' }, swan_boat = { 'ride_pair', 'h_boat' }, rowing_boat = { 'ride_pair', 'h_boat' }, dock = { 'stand_pair' },
   telescope = { 'stargaze', 'view_night' }, fence = { 'h_fence', 'lean', 'stand_pair' }, rink = { 'stand_pair' }, court = { 'stand_pair', 'h_net' }, bleacher = { 'seat_pair' }, crib = { 'crib' }, wedding_aisle = { 'wedding', 'selfie' },
