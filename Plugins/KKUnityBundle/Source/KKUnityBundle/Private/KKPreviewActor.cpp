@@ -9769,8 +9769,17 @@ void AKKPreviewActor::ApplyMouth()
         {
             OKFbsWriteTransition(Desired, Slot.Patterns, FaceTransitions[0], EffectiveFaceRate(0));
         }
-        // Her tongue has no bones: longer is its morphs past 100.
-        if ((Slot.InsideBit & 4) && TongueLength != 1.f) for (auto& Weight : Desired) Weight.Value *= TongueLength;
+        // Her tongue has no bones: shorter is less of its morphs, longer their tips on top (OKTongueTipMorph; a mesh without them scales).
+        if (Slot.InsideBit & 4)
+        {
+            TArray<TPair<FName, float>> Tips;
+            for (auto& Weight : Desired)
+            {
+                if (Slot.Comp) Tips.Emplace(OKTongueTipMorph(Weight.Key), (Weight.Value - Slot.BaselineWeights.FindRef(Weight.Key)) * FMath::Max(TongueLength - 1.f, 0.f));
+                if (TongueLength < 1.f || !Slot.Comp) Weight.Value *= TongueLength;
+            }
+            for (const auto& Tip : Tips) Desired.Add(Tip.Key, Tip.Value);
+        }
         if(const auto* Overrides=PartMorphWeights.Find(Slot.SessionPartIndex))
             for(const auto& Weight:*Overrides) Desired.Add(Weight.Key,Weight.Value);
         if (Slot.CpuComp && Parts.IsValidIndex(Slot.PartArrayIndex))

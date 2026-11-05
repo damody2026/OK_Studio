@@ -23,6 +23,7 @@ class UWrapBox;
 class UProgressBar;
 class USlider;
 class UScrollBox;
+struct FOKCoordLoad;
 
 UCLASS()
 class OPENKOIKATSU_API UOKHSceneButton : public UButton {
@@ -239,7 +240,7 @@ private:
     UPROPERTY() TObjectPtr<class USizeBox> SettingsBox;UPROPERTY() TArray<TObjectPtr<UOKHSettingSlider>> SettingSliders;bool bSettingsOpen=false;
     TMap<FString,float> DevSet; // her development as set on the panel (Result)
     UPROPERTY() TObjectPtr<class USizeBox> CoordSides[2];UPROPERTY() TObjectPtr<UWrapBox> CoordWraps[2];
-    UPROPERTY() TArray<TObjectPtr<UOKHSceneButton>> CoordButtons;UPROPERTY() TArray<TObjectPtr<class UImage>> CoordImages;UPROPERTY() TArray<TObjectPtr<class UTexture2D>> CoordTextures;int32 CoordNext=0;
+    UPROPERTY() TArray<TObjectPtr<UOKHSceneButton>> CoordButtons;UPROPERTY() TArray<TObjectPtr<class UImage>> CoordImages;UPROPERTY() TArray<TObjectPtr<class UTexture2D>> CoordTextures;TSharedPtr<FOKCoordLoad> CoordLoad;double CoordShown=0.;
     UPROPERTY() TObjectPtr<UTextBlock> CoordAccessories;void ShowCoordinates();void ShowAccessories();void MarkCoordinate();void TickCoordinates();
     bool bHeadCamera=false;TWeakObjectPtr<AKKPreviewActor> HeadCameraGirl;bool HEyesOnCamera() const;
     TArray<FVector> AheHandAt; // where her double peace puts her hands (HoldFeet gives them)

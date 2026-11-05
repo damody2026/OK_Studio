@@ -66,6 +66,10 @@
 #include "Components/EditableTextBox.h"
 #include "Components/Image.h"
 #include "ImageUtils.h"
+#include "IImageWrapper.h"
+#include "IImageWrapperModule.h"
+#include "Containers/Queue.h"
+#include <atomic>
 #include "KKCardWorkspace.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -173,7 +177,7 @@ static const FHSetting HSettings[]={
     {TEXT("AhegaoMouthOpen"),TEXT("ui.hscene.set_ahe_mouth"),0.f,1.f,.05f,.85f},
     {TEXT("AhegaoArms"),TEXT("ui.hscene.set_ahe_arms"),0.f,1.f,1.f,1.f},
     {TEXT("Drool"),TEXT("ui.hscene.set_drool"),0.f,1.f,1.f,1.f},
-    {TEXT("TongueLength"),TEXT("ui.hscene.tongue_length"),0.f,2.f,.05f,1.f},
+    {TEXT("TongueLength"),TEXT("ui.hscene.tongue_length"),0.f,4.f,.05f,1.f},
     {nullptr,TEXT("ui.hscene.set_service")},
     {TEXT("CondomMouthFavor"),TEXT("ui.hscene.set_condom_favor"),0.f,500.f,10.f,100.f},
     {TEXT("CondomMouthSeconds"),TEXT("ui.hscene.set_condom_seconds"),2.f,20.f,1.f,6.f},
@@ -313,7 +317,7 @@ void UOKHScenePanel::Note(const FString& Text,bool bReact){Events.Add(Text);if(G
 TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
     if(!WidgetTree)WidgetTree=NewObject<UWidgetTree>(this);
     UHorizontalBox* Root=WidgetTree->ConstructWidget<UHorizontalBox>();WidgetTree->RootWidget=Root;
-    {HSettingsLoad();SettingSliders.Reset();bCoordinateList=false;CoordButtons.Reset();CoordImages.Reset();CoordTextures.Reset();
+    {HSettingsLoad();SettingSliders.Reset();bCoordinateList=false;CoordButtons.Reset();CoordImages.Reset();CoordTextures.Reset();CoordLoad.Reset();
      auto Label=[&](const FString& Words,float Size,const FLinearColor& Color){auto* T=WidgetTree->ConstructWidget<UTextBlock>();FSlateFontInfo F=T->GetFont();F.Size=Size;T->SetFont(F);T->SetColorAndOpacity(FSlateColor(Color));T->SetText(FText::FromString(Words));return T;};
      auto Button=[&](int32 Kind,const TCHAR* Key){auto* B=WidgetTree->ConstructWidget<UOKHSceneButton>();B->Kind=Kind;B->Owner=this;B->OnClicked.AddDynamic(B,&UOKHSceneButton::HandleClick);B->SetContent(Label(OKT(Key),10.f,FLinearColor::Black));return B;};
      UVerticalBox* Left=WidgetTree->ConstructWidget<UVerticalBox>();
@@ -412,7 +416,7 @@ TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
         AnkleSlider=Row(TEXT("ui.hscene.ankle"),-60.f,60.f,AnkleTurn);AnkleSlider->OnValueChanged.AddDynamic(this,&UOKHScenePanel::OnAnkle);
         ThighSliders[0]=Row(TEXT("ui.hscene.thigh_l"),-30.f,60.f,ThighOpen[0]);ThighSliders[0]->OnValueChanged.AddDynamic(this,&UOKHScenePanel::OnThighL);
         ThighSliders[1]=Row(TEXT("ui.hscene.thigh_r"),-30.f,60.f,ThighOpen[1]);ThighSliders[1]->OnValueChanged.AddDynamic(this,&UOKHScenePanel::OnThighR);
-        TongueSlider=Row(TEXT("ui.hscene.tongue_length"),0.f,2.f,CVarHTongueLength.GetValueOnGameThread());TongueSlider->SetStepSize(.05f);TongueSlider->OnValueChanged.AddDynamic(this,&UOKHScenePanel::OnTongueLength);
+        TongueSlider=Row(TEXT("ui.hscene.tongue_length"),0.f,4.f,CVarHTongueLength.GetValueOnGameThread());TongueSlider->SetStepSize(.05f);TongueSlider->OnValueChanged.AddDynamic(this,&UOKHScenePanel::OnTongueLength);
         UHorizontalBox* R=WidgetTree->ConstructWidget<UHorizontalBox>();HandOptions=-1;
         for(int32 Side=0;Side<2;++Side){Label(R,Side?TEXT("ui.hscene.hand_r"):TEXT("ui.hscene.hand_l"));
             HandCombos[Side]=WidgetTree->ConstructWidget<UOKComboBoxString>();HandCombos[Side]->AddOption(OKT(TEXT("ui.hscene.hand_follow")));HandCombos[Side]->SetSelectedIndex(0);
@@ -2902,12 +2906,15 @@ void UOKHScenePanel::FindCoordinateCards(){
     IFileManager::Get().FindFilesRecursive(CoordinateCards,*(Root->Root/TEXT("UserData/coordinate")),TEXT("*.png"),true,false);
     CoordinateCards.Sort();if(CoordinateCards.Num()>500)CoordinateCards.SetNum(500);
 }
-// Down both sides, every other card on each: the tiles at once, their pictures one a tick (TickCoordinates).
+// The card pictures, decoded off the game thread. The worker goes on only while the panel holds this.
+struct FOKCoordPicture{int32 Index=0,Width=0,Height=0;TArray64<uint8> Pixels;};
+struct FOKCoordLoad{TQueue<FOKCoordPicture,EQueueMode::Spsc> Done;std::atomic<int32> Waiting{0};};
+// Down both sides, every other card on each: the tiles at once, their pictures as they come (TickCoordinates).
 void UOKHScenePanel::ShowCoordinates(){
     const ESlateVisibility Shown=bCoordinateList?ESlateVisibility::Visible:ESlateVisibility::Collapsed;
     for(int32 Side=0;Side<2;++Side){if(CoordSides[Side])CoordSides[Side]->SetVisibility(Shown);if(CoordWraps[Side])CoordWraps[Side]->ClearChildren();}
     if(PanelWidth)PanelWidth->SetVisibility(bCoordinateList?ESlateVisibility::Collapsed:ESlateVisibility::Visible);ShowAccessories(); // room for them (user 2026-11-04)
-    CoordButtons.Reset();CoordImages.Reset();CoordTextures.Reset();CoordNext=0;
+    CoordButtons.Reset();CoordImages.Reset();CoordTextures.Reset();CoordLoad.Reset();CoordShown=0.;
     if(!bCoordinateList||!WidgetTree||!CoordWraps[0]||!CoordWraps[1])return;
     for(int32 I=0;I<CoordinateCards.Num();++I){
         auto* B=WidgetTree->ConstructWidget<UOKHSceneButton>();B->Kind=CoordinateBase+I;B->Owner=this;B->OnClicked.AddDynamic(B,&UOKHSceneButton::HandleClick);
@@ -2919,6 +2926,20 @@ void UOKHScenePanel::ShowCoordinates(){
         Words->AddChild(Name);Tile->AddChildToVerticalBox(Words);B->SetContent(Tile);
         CoordWraps[I%2]->AddChildToWrapBox(B);CoordButtons.Add(B);CoordImages.Add(Picture);}
     MarkCoordinate();
+    IImageWrapperModule* Images=&FModuleManager::LoadModuleChecked<IImageWrapperModule>("ImageWrapper");
+    CoordLoad=MakeShared<FOKCoordLoad>();
+    Async(EAsyncExecution::ThreadPool,[Cards=CoordinateCards,Images,Weak=TWeakPtr<FOKCoordLoad>(CoordLoad)]{
+        for(int32 I=0;I<Cards.Num();){
+            TSharedPtr<FOKCoordLoad> Load=Weak.Pin();if(!Load)return;
+            if(Load->Waiting>=32){Load.Reset();FPlatformProcess::Sleep(.01f);continue;}
+            const int32 Index=I++;TArray<uint8> Card;if(!FFileHelper::LoadFileToArray(Card,*Cards[Index]))continue;
+            const TArray<uint8> Png=UKKCardWorkspace::PngPreviewBytes(Card);
+            TSharedPtr<IImageWrapper> Wrapper=Images->CreateImageWrapper(EImageFormat::PNG);FOKCoordPicture Picture;
+            if(!Wrapper||!Wrapper->SetCompressed(Png.GetData(),Png.Num())||!Wrapper->GetRaw(ERGBFormat::BGRA,8,Picture.Pixels))continue;
+            Picture.Index=Index;Picture.Width=int32(Wrapper->GetWidth());Picture.Height=int32(Wrapper->GetHeight());
+            ++Load->Waiting;Load->Done.Enqueue(MoveTemp(Picture));
+        }
+    });
 }
 void UOKHScenePanel::ShowAccessories(){if(CoordAccessories)CoordAccessories->SetText(FText::FromString(OKT(bCoordinateAccessories?TEXT("ui.hscene.coordinate_with_accessories"):TEXT("ui.hscene.coordinate_clothes_only"))));}
 void UOKHScenePanel::MarkCoordinate(){
@@ -2926,9 +2947,14 @@ void UOKHScenePanel::MarkCoordinate(){
     for(int32 I=0;I<CoordButtons.Num();++I)CoordButtons[I]->SetBackgroundColor(!Worn.IsEmpty()&&FPaths::IsSamePath(CoordinateCards[I],Worn)?FLinearColor(1.f,.45f,.7f):FLinearColor::White);
 }
 void UOKHScenePanel::TickCoordinates(){
-    if(CoordNext>=CoordImages.Num())return;const int32 I=CoordNext++;
-    TArray<uint8> Card;if(!FFileHelper::LoadFileToArray(Card,*CoordinateCards[I]))return;
-    if(UTexture2D* Texture=FImageUtils::ImportBufferAsTexture2D(UKKCardWorkspace::PngPreviewBytes(Card))){CoordTextures.Add(Texture);CoordImages[I]->SetColorAndOpacity(FLinearColor::White);CoordImages[I]->SetBrushFromTexture(Texture);}
+    if(!CoordLoad)return;
+    // A new picture repaints the whole cached list, so a batch of them five times a second, not one every frame.
+    const double Now=FPlatformTime::Seconds();if(Now-CoordShown<.2)return;CoordShown=Now;
+    FOKCoordPicture Picture;
+    for(int32 N=0;N<16&&CoordLoad->Done.Dequeue(Picture);++N){--CoordLoad->Waiting;
+        UTexture2D* Texture=CoordImages.IsValidIndex(Picture.Index)?UTexture2D::CreateTransient(Picture.Width,Picture.Height,PF_B8G8R8A8):nullptr;if(!Texture)continue;
+        FByteBulkData& Bulk=Texture->GetPlatformData()->Mips[0].BulkData;FMemory::Memcpy(Bulk.Lock(LOCK_READ_WRITE),Picture.Pixels.GetData(),Picture.Pixels.Num());Bulk.Unlock();Texture->UpdateResource();
+        CoordTextures.Add(Texture);CoordImages[Picture.Index]->SetColorAndOpacity(FLinearColor::White);CoordImages[Picture.Index]->SetBrushFromTexture(Texture);}
 }
 // Her development as the left panel sets it: seen in this scene at once, kept with her when it ends (hexp.rs dev_set).
 float UOKHScenePanel::DevOf(const TCHAR* Area) const{

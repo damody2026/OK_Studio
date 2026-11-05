@@ -1971,6 +1971,8 @@
 - 2026-11-04 e-galgame：測試時用 `game_click` 會把自己的遊戲視窗拉到最前面（`Win->BringToFront`），使用者正在玩時點擊可能落到測試視窗。使用者在玩時不要用 `game_click`，改用 `/hscene` 的 kind 或截圖。
 - 2026-11-04 e-galgame：舌頭變白先往材質想，其實是流口水的白色塗料蓋在舌頭上：不流口水時是紅的。現在 H 的體液不畫在舌頭上（`bSkipTongue`，`ok.HScene.FluidTongue` 預設 0），流 40 秒後舌頭還是紅的（`Play-20261104T223655`）。
 - 2026-11-05 e-galgame：頭看鏡頭、眼睛追鏡頭兩個按鈕加在愛撫分支 `return` 之後，進場景的愛撫畫面看不到，只有插入才出現。之前用 kind 直接呼叫沒發現。改到 `BuildActions` 分支之前。
+- 2026-11-05 e-galgame：`EGalRound11` 回報把「射在外面」算成走過，其實 log 寫著 `action 2005 not offered now`，腳本只送了按鈕沒看有沒有效。走查腳本按之前要先確認按鈕可按，不能按就記下來。
+- 2026-11-05 e-galgame：舌頭拉長用整個 morph 權重放大，1～2 倍看不出來，舌根其實也在往外移，3 倍就離開嘴巴。沒有骨頭的東西要拉長，得固定一端。
 - 2026-11-05 e-galgame：水槍控制用 `GetComponentsBoundingBox().GetCenter()` 當她的中央，實際在腳邊（Z=-1.2），距離 90 打到地板，還記成「原因沒查」。記下瞄準點與命中後一次就看出來。
 - 2026-11-05 e-galgame：把遊戲消失記成「沒解釋、重跑沒再現」就要往下走。用 `Process.ExitCode` 等退出碼，換體位循環兩輪就重現，崩潰報告在 stage 的 `Saved/Crashes/`，`llvm-symbolizer` 配主機的 pdb 就能解出來。根因是配對背景解算與水槍查詢同時碰 Session。
 - 2026-11-05 e-galgame：`-Control` 不帶 `-Sandbox` 時短暫啟動就改到主存檔（載入會重寫 `relationships.json`），靠手動備份還原。現在 `-Control` 一律走沙盒 `Control`（這個 checkout 自己的連接埠），`-MainSave` 才用主存檔。
