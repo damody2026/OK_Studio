@@ -23,8 +23,7 @@ bool FOKStudioCharacterStyleTest::RunTest(const FString&)
 
 	TArray<float> Real = CardBody, RealFace = CardFace;
 	OKStudioStyleSliders(-1.f, Real, RealFace);
-	TestTrue(TEXT("realistic: taller, smaller head, smaller eyes"), Real[0] > CardBody[0] && Real[1] < CardBody[1] && RealFace[34] < CardFace[34]);
-	TestEqual(TEXT("realistic keeps the card's breasts"), Real[4], CardBody[4]);
+	TestTrue(TEXT("realistic: taller, smaller head, bigger breasts, smaller eyes"), Real[0] > CardBody[0] && Real[1] < CardBody[1] && Real[4] > CardBody[4] && RealFace[34] < CardFace[34]);
 
 	TArray<float> Short, ShortFace;
 	OKStudioStyleSliders(1.f, Short, ShortFace);
