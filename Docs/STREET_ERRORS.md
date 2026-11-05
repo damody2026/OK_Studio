@@ -1971,6 +1971,7 @@
 - 2026-11-04 e-galgame：測試時用 `game_click` 會把自己的遊戲視窗拉到最前面（`Win->BringToFront`），使用者正在玩時點擊可能落到測試視窗。使用者在玩時不要用 `game_click`，改用 `/hscene` 的 kind 或截圖。
 - 2026-11-04 e-galgame：舌頭變白先往材質想，其實是流口水的白色塗料蓋在舌頭上：不流口水時是紅的。現在 H 的體液不畫在舌頭上（`bSkipTongue`，`ok.HScene.FluidTongue` 預設 0），流 40 秒後舌頭還是紅的（`Play-20261104T223655`）。
 - 2026-11-05 e-galgame：頭看鏡頭、眼睛追鏡頭兩個按鈕加在愛撫分支 `return` 之後，進場景的愛撫畫面看不到，只有插入才出現。之前用 kind 直接呼叫沒發現。改到 `BuildActions` 分支之前。
+- 2026-11-05 e-galgame：`EGalRound15` 一啟動就崩潰。exe 是從乾淨工作樹複製的，那是用完整 `.uproject` 建的（400 MB，多 `AudioWidgets`、`Paper2D`），base 沒 cook 這些資源。要在工作樹編 stage 用的 exe，先換成 host 的 `.uproject`（315 MB）。打完 stage 先開一次才能給 tag。
 - 2026-11-05 e-galgame：host 的 `Tools` 是連到 E 的 junction，我對 host 路徑寫 `git show HEAD:ffi.rs`，蓋掉 e-fork-2 還沒提交的 `ffi.rs`，別組連結失敗。已從對方紀錄補回。host 裡只有 `Source`、`Plugins` 是自己的檔案，`Tools` 不能當暫存改。
 - 2026-11-05 e-galgame：`a35ba8b74` 的大小寫修法沒看影響範圍就對所有屬性生效，把舊著色器的小寫值也讀進來（頭髮影子近黑）。回報只說「沒看到變化」。動共用材質前先列出會改到哪些值。
 - 2026-11-05 e-galgame：建置失敗還照樣打 stage 和量測，舊執行檔跑出的數字差點當成新版結果。腳本要先看 `Result: Succeeded`。
