@@ -213,6 +213,17 @@ public:
 	void SelectIndex(int32 Index);
  void BuildBoneControls();
  void BuildPregnancyControls();
+ void BuildStyleControls();
+ void OnStyleChanged(const FString& Parameter,float Value);
+ float StyleDefault(const FString& Parameter) const;
+ void OnStyleReset(UOKShapeSlider* Slider);
+ void ApplyCharacterStyle();
+ float CharacterStyle=0.f;
+ FVector StyledActorLocation=FVector::ZeroVector;
+ float StyledScale=1.f;
+ UPROPERTY() TObjectPtr<AKKPreviewActor> StyledActor;
+ UPROPERTY() TObjectPtr<UVerticalBox> StyleBox;
+ UPROPERTY() TArray<TObjectPtr<UOKShapeSlider>> StyleSliders;
  void OnBodyPhysicsChanged(const FString& Parameter,float Value);
  void OnPregnancyChanged(const FString& Parameter,float Value);
  UFUNCTION() void OnPregnancyEnabled(bool Value);

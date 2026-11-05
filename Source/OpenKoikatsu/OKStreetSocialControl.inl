@@ -1,12 +1,9 @@
-// Included by OKStreetSocialScene.cpp: the development control channel. With -StreetSocialControl (and optionally
-// -StreetSocialControlPort=47870) the game listens on 127.0.0.1 only and lets a developer (or a test driver) play it
-// from outside: read the full state, type to the heroine, press the buttons on screen by their label, press keys
+// Included by OKStreetSocialScene.cpp: the control channel, always open (OKControl: 127.0.0.1 only, port
+// -StreetSocialControlPort, else port_base + 10). It lets a developer or a test driver play the game from outside: read the full state, type to the heroine, press the buttons on screen by their label, press keys
 // (walking is real walking: the keys go through OKKeyDown/OKKeyPressed like a real keyboard), look around, start the
 // built-in navigation and take screenshots. Requests are answered on the game thread between ticks.
-// Never started without the command-line switch; the normal launcher does not pass it.
+// -StreetSocialControl (the launcher's -Control) adds what a driver wants and a player does not (OKVirtualInput().Driven).
 
-static TSharedPtr<IHttpRouter> GControlRouter;
-static TArray<FHttpRouteHandle> GControlRoutes;
 static bool GControlStarted=false,GControlRestoreMouse=false;
 static double GControlRestoreMouseAt=0;
 static int32 GControlShots=0;
@@ -36,8 +33,7 @@ static bool OKApplyControlCamera(AActor* Owner,ACameraActor* Camera,const TShare
 // The map ending (quit, or started again for a load or a new game): the routes point at this scene, so they go with it
 // and the next scene binds its own.
 static void OKControlStop(){
- if(GControlRouter.IsValid())for(const auto& Route:GControlRoutes)GControlRouter->UnbindRoute(Route);
- GControlRoutes.Reset();GControlStarted=false;
+ OKControl::Unbind(TEXT("street"));GControlStarted=false;
 }
 
 static void OKControlReply(const FHttpResultCallback& Done,const TSharedRef<FJsonObject>& Body,int32 Code=200){
@@ -55,10 +51,10 @@ static TSharedRef<FJsonObject> OKControlBody(const FHttpServerRequest& Req){
 }
 
 void AOKStreetSocialScene::StartControlServer(){
- int32 Port=47870;FParse::Value(FCommandLine::Get(),TEXT("StreetSocialControlPort="),Port);
- OKVirtualInput().Active=true;
- GControlRouter=FHttpServerModule::Get().GetHttpRouter(Port,true);
- if(!GControlRouter.IsValid()){UE_LOG(LogTemp,Warning,TEXT("Street control: could not open port %d"),Port);return;}
+ int32 Port=0;FParse::Value(FCommandLine::Get(),TEXT("StreetSocialControlPort="),Port);
+ OKVirtualInput().Active=true;OKVirtualInput().Driven|=FParse::Param(FCommandLine::Get(),TEXT("StreetSocialControl"));
+ Port=OKControl::Listen(TEXT("street"),10,Port);
+ if(!Port){UE_LOG(LogTemp,Warning,TEXT("Street control: no port"));return;}
 
  // The whole picture of the game for whoever is playing from outside.
  auto Build=[this]()->TSharedRef<FJsonObject>{
@@ -116,7 +112,7 @@ void AOKStreetSocialScene::StartControlServer(){
  };
 
  auto Bind=[&](const TCHAR* Path,EHttpServerRequestVerbs Verb,TFunction<void(const FHttpServerRequest&,const FHttpResultCallback&)> Fn){
-  GControlRoutes.Add(GControlRouter->BindRoute(FHttpPath(Path),Verb,FHttpRequestHandler::CreateLambda([Fn](const FHttpServerRequest& Req,const FHttpResultCallback& Done){Fn(Req,Done);return true;})));
+  OKControl::Bind(TEXT("street"),Path,Verb,MoveTemp(Fn));
  };
 
  Bind(TEXT("/health"),EHttpServerRequestVerbs::VERB_GET,[](const FHttpServerRequest&,const FHttpResultCallback& Done){OKControlReply(Done,OKControlResult(true));});
@@ -388,7 +384,7 @@ void AOKStreetSocialScene::StartControlServer(){
  Bind(TEXT("/key"),EHttpServerRequestVerbs::VERB_POST,[](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   auto B=OKControlBody(Req);FString Name;B->TryGetStringField(TEXT("key"),Name);double Seconds=0;B->TryGetNumberField(TEXT("seconds"),Seconds);
   const FKey Key(*Name);if(!Key.IsValid()){OKControlReply(Done,OKControlResult(false,TEXT("unknown key name (E, W, Escape, LeftShift, One, ...)")));return;}
-  auto& V=OKVirtualInput();V.Pending.Add(Key);if(Seconds>0)V.DownUntil.Add(Key,FPlatformTime::Seconds()+Seconds);
+  auto& V=OKVirtualInput();V.Driven=true;V.Pending.Add(Key);if(Seconds>0)V.DownUntil.Add(Key,FPlatformTime::Seconds()+Seconds);
   OKControlReply(Done,OKControlResult(true));
  });
 
@@ -538,14 +534,13 @@ void AOKStreetSocialScene::StartControlServer(){
   auto O=OKControlResult(true);O->SetStringField(TEXT("path"),File);OKControlReply(Done,O);
  });
 
- FHttpServerModule::Get().StartAllListeners();
  UE_LOG(LogTemp,Display,TEXT("Street control: listening on http://127.0.0.1:%d (state, say, buttons, click, key, look, navigate, rules, screenshot)"),Port);
 }
 
-// Every tick: start the channel once (when asked for on the command line), turn the keys asked for since the last tick into
+// Every tick: start the channel once, turn the keys asked for since the last tick into
 // "just pressed" for this one, and give the cursor back to the game a moment after a button was pressed through it.
 void AOKStreetSocialScene::TickControl(){
- if(!GControlStarted&&FParse::Param(FCommandLine::Get(),TEXT("StreetSocialControl"))){GControlStarted=true;StartControlServer();}
+ if(!GControlStarted){GControlStarted=true;StartControlServer();}
  auto& V=OKVirtualInput();if(!V.Active)return;
  V.Pressed=MoveTemp(V.Pending);V.Pending.Reset();
  if(GControlRestoreMouse&&FPlatformTime::Seconds()>=GControlRestoreMouseAt){GControlRestoreMouse=false;State->MouseUI=false;ApplyMouseMode(true);RefreshUI();}

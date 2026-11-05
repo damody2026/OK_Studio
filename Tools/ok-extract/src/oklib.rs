@@ -1280,7 +1280,10 @@ pub fn session_cache_location() -> Option<PathBuf> {
 /// 29: the geometry stays put again; parts carry their draw layer and the engine orders them (OpaqueSortPriority).
 /// 30-32: the skin and clothes keep their liquid textures (_liquidmask, _Texture2, _Texture3) for the H scene's semen.
 /// 33: native ForgeSkin/KKUSS draw settings, glasses _GlassRamp/V-flip, and character card plugins.
-const SESSION_CACHE_REVISION: u32 = 33;
+/// 34: Lux Water parts take their renderer's own material and _BumpMap (the lighthouse's sea per time of day).
+/// 36: Standard parts take their renderer's own material; Standard's _DetailAlbedoMap; an empty _MainTex is white.
+/// 37: Koikano/main_item_map parts are lit as Standard (the lighthouse's rocks).
+const SESSION_CACHE_REVISION: u32 = 37;
 /// What the library contributes to an open, by content (not file times): the same library in another clone, after a
 /// git checkout or a copy gives the same identity, so its cached opens stay valid there. Memoized per process.
 fn library_identity(lib: &Path) -> String {

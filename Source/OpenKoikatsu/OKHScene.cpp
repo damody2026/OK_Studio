@@ -1516,7 +1516,7 @@ void UOKHScenePanel::ClearLine(){++LineEpoch;if(Caption)Caption->SetText(FText::
 // 4 climaxes (caress or insertion; Ahegao Count 4), only while a loop plays (Loop1/2, OLoop, IN_*) faster than 66% (Speed
 // Toggle, Minimum Speed 66) and not while kissing; eyes 25, brows 2, mouth 24, and her eyes rolled up 0.25 past her look
 // (the street's display materials have no gaze rows: the eye mesh's own coordinates take it, OKUpdateSkeletalMeshUVs).
-static TAutoConsoleVariable<float> CVarHAhegaoGaze(TEXT("ok.HScene.AhegaoGaze"),1.25f,TEXT("Ahegao: her gaze, +1 up (-1 down); past it the iris rolls on past its limit (the original's Eye Roll Amount 0.25)"));
+static TAutoConsoleVariable<float> CVarHAhegaoGaze(TEXT("ok.HScene.AhegaoGaze"),1.25f,TEXT("Ahegao: her gaze, +1 up on these eyes (-1 down); past it the iris rolls on past its limit (the original's Eye Roll Amount 0.25)"));
 static TAutoConsoleVariable<float> CVarHAhegaoSpeed(TEXT("ok.HScene.AhegaoSpeed"),.66f,TEXT("Ahegao after her climaxes: only faster than this (the original's Minimum Speed 66; 0 always)"));
 // The original's eyes pattern is a cha_eyeset row (ChaControl.ChangeEyesPtn): its FaceBlendShape eye pattern is the row's
 // eyes_ptn (as OK Studio reads it, OKStudioCatalog::EyeSet), from the base library's lists; -1 when they have none.

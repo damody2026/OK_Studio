@@ -246,7 +246,7 @@
 - **原作**：使用者遊戲裡的 KKS_Ahegao 外掛（`D:\KoikatuSunshine\kks_decomp\plugins\KKS_Ahegao\`，設定 `D:\KoikatuSunshine\BepInEx\config\KKS_Ahegao.cfg`）：Ahegao Count 4、Minimum Speed 66、Eye ID 25、Eyebrow ID 2、Mouth ID 24、Eye Roll Amount 0.25；只在愛撫與插入，Loop（Loop1/2、OLoop、IN_*）播放中、速度超過 66% 時才出現，接吻中不出現，其他時候是一般表情。
 - **條件**：這一場高潮滿 4 次（`ok.HScene.AhegaoClimaxes`），而且照原作在 Loop 中、速度 ≥ 66%（`ok.HScene.AhegaoSpeed`）、不在接吻；插入時看 WLoop／SLoop／OLoop／IN_*，愛撫時看是否正在摸。另外沿用 11-01 的「今天已到高潮上限（`HadEnough`）就一直顯示」。「討厭」反應時不顯示。測試用 `ok.HScene.AhegaoTest 1`。
 - **眼睛與眉毛**：原作的 Eye ID 是 `cha_eyeset` 清單的編號，不是 FBS 眼型編號。25 號在基礎庫的清單是 FBS 眼型 2（笑眼）加表情貼圖 `cf_t_expression_00`；用 `ok_eye_set_json` 換成 FBS 眼型（`ok.HScene.AhegaoFace`，預設 `25,2,43`）。表情貼圖要換零件，即時改不了，目前沒有。
-- **翻白眼**：畫面上的眼睛是共用顯示材質 `M_ForgeEye_Flat`，它有視線的 rows 參數但不會照它移動瞳孔，rows 也寫在另一個實例上；改寫該材質的瞳孔貼圖 tiling（`_MainTex_ST`），見第 16 節。-1 往上、+1 往下，超過 -1 的部分照原作 Eye Roll Amount 繼續上翻；`ok.HScene.AhegaoGaze` 預設 -1.25。
+- **翻白眼**：畫面上的眼睛是共用顯示材質 `M_ForgeEye_Flat`，它有視線的 rows 參數但不會照它移動瞳孔，rows 也寫在另一個實例上；改寫該材質的瞳孔貼圖 tiling（`_MainTex_ST`），見第 16 節。+1 往上、-1 往下，超過 +1 的部分照原作 Eye Roll Amount 繼續上翻；`ok.HScene.AhegaoGaze` 預設 1.25（2026-11-05 U227 修正瞳孔上下方向後改號，畫面方向不變）。
 - **吐舌頭**：嘴型用 SexFaces 加的啊嘿顏 43（臉用笑嘴，舌頭用 TongueOut，遊戲裝了 SexFaces 才有）；沒有就退回原作的 24（`name02`，這裡看不太到舌頭），再退回名稱含 `_sita`／`_name` 的嘴型。嘴的最低張開度固定 0.85（`ok.HScene.AhegaoMouthOpen`）。H 喘息每句都會照原作表情清單換嘴型，所以啊嘿顏期間鎖住嘴型（`bManualSpeechPattern`），結束後還原。
 - **流口水**：啊黑顏期間用水槍從嘴角往下滴，量至少等於接吻開發 80%。
 - **雙手比 ya**：兩手都用 Studio 手型 2 號（V，`ok.HScene.AhegaoHand`）。用 Studio IK 把兩手舉到臉旁（頭往兩側 13 cm、往前 9 cm、往下 1 cm，`ok.HScene.AhegaoReach`），每幀重新給；`ok.HScene.AhegaoArms 0` 只換手型不舉手。結束後放開 IK，手型回到面板設定。

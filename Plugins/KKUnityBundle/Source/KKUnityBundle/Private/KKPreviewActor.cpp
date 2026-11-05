@@ -721,6 +721,9 @@ struct FOKToonShadowParameters
 	FLinearColor EmissionColor = FLinearColor::Black;
 	// Unity Standard-family _Color (linear), multiplied into the albedo; white for other shaders.
 	FLinearColor StandardAlbedoTint = FLinearColor::White;
+	// Unity Standard's detail albedo (keyword _DETAIL_MULX2) and its _DetailAlbedoMap_ST.
+	UTexture2D* StandardDetailTex = nullptr;
+	FLinearColor StandardDetailST = FLinearColor(1.f, 1.f, 0.f, 0.f);
 	// Baked lightmap (RGBM, linear sampling) of a map part, on TEXCOORD1; Lightmaps keeps each index's texture for the
 	// later parts of the same load (only the first part using a lightmap carries it).
 	UTexture2D* LightmapTex = nullptr;
@@ -2463,6 +2466,27 @@ return diffuse * (light * (1.0 - shadow) + shadow) * faceScale * lightLift;
 			Mat->GetExpressionCollection().AddExpression(Tinted);
 			ColorOut = Tinted;
 		}
+		// _DETAIL_MULX2: albedo x detail x unity_ColorSpaceDouble (4.59479 in linear colour space).
+		if (Shadow && Shadow->StandardDetailTex)
+		{
+			UMaterialExpressionTextureSample* Detail = NewObject<UMaterialExpressionTextureSample>(Mat);
+			Detail->Material = Mat;
+			Detail->Texture = Shadow->StandardDetailTex;
+			Detail->SamplerType = Shadow->StandardDetailTex->SRGB ? SAMPLERTYPE_Color : SAMPLERTYPE_LinearColor;
+			Detail->Coordinates.Expression = MakeUnityMaskUVParameter(Mat, TEXT("_DetailAlbedoMap_ST"), Shadow->StandardDetailST);
+			Mat->GetExpressionCollection().AddExpression(Detail);
+			UMaterialExpressionMultiply* Doubled = NewObject<UMaterialExpressionMultiply>(Mat);
+			Doubled->Material = Mat;
+			Doubled->A.Expression = Detail;
+			Doubled->ConstB = 4.59479f;
+			Mat->GetExpressionCollection().AddExpression(Doubled);
+			UMaterialExpressionMultiply* Detailed = NewObject<UMaterialExpressionMultiply>(Mat);
+			Detailed->Material = Mat;
+			Detailed->A.Expression = ColorOut;
+			Detailed->B.Expression = Doubled;
+			Mat->GetExpressionCollection().AddExpression(Detailed);
+			ColorOut = Detailed;
+		}
 		// Maker CustomScene's measured interpolated light probe is blue above,
 		// neutral below, and identical in the four horizontal directions. Add
 		// that scene irradiance to this IBL pass; the grey UE backdrop does not
@@ -3869,6 +3893,15 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 	// camera-parented light. The program's L is the way the light travels (the camera's forward), so it takes the
 	// opposite (U166: lit from the view, the sea did not change with the time of day).
 	Vector(TEXT("_OKLightDir"), FLinearColor(0.f, 0.f, 0.f, 0.f));
+	// Lux Water (_OKLux 1, U169): its water colour under the time's ambient, the sun and what scatters through it. It
+	// reflects no sky: its planar reflection texture is null in Studio (native lighthouse: the sea takes no colour from it).
+	Scalar(TEXT("_OKLux"), 0.f);
+	Vector(TEXT("_OKScatter"), FLinearColor::Black);
+	// The map's lights only for the water ("Directional Light_water": 3.5 by day) and the deep foam they light.
+	Vector(TEXT("_OKWaterLight"), FLinearColor::Black);
+	Vector(TEXT("_OKDeepFoam"), FLinearColor(0.f, 0.f, 0.f, 0.f));
+	// The sky controller's sun or moon Light: the lighthouse's evening sea is brown from it (measured, not Lux Water's terms).
+	Vector(TEXT("_OKSkyLight"), FLinearColor::Black);
 	Scalar(TEXT("_RimSize"), 0.75f); Scalar(TEXT("_Tiling"), 0.9f); Scalar(TEXT("_RefractionAmount"), 0.055f);
 	Scalar(TEXT("_Transparency"), 0.35f); Scalar(TEXT("_Wavesspeed"), 0.5f); Scalar(TEXT("_Glossiness"), 0.5f);
 	Scalar(TEXT("_Depth"), 15.f); Scalar(TEXT("_Depthdarkness"), 0.15f); Scalar(TEXT("_Rimtiling"), 1.f);
@@ -3972,6 +4005,14 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 		"lit += (diffuse * LightColor0.rgb + 2.0 * OKAmbient.rgb) * water;\n"
 		"float overlay = alpha > 0.5 ? 1.0 - (1.0 - 2.0 * (alpha - 0.5)) * (1.0 - deep) : 2.0 * alpha * deep;\n"
 		"GrabOffset = r4.xz;\n"
+		"if (OKLux > 0.5) {\n"
+		// Lux's _FarBumpSampleParams: its normals are gone by 300 m (without it the far sea was noise).
+		"float nearW = saturate(1.0 - distance(cam, wp) / 300.0);\n"
+		"float ripple = 1.0 + 0.5 * (n.x + n.z) * nearW;\n"
+		"float foam = lerp(0.25, saturate(length(n.xz) * 4.0), nearW);\n"
+		"foam *= foam * OKDeepFoam.a * OKDeepFoam.a * OKDeepFoam.a;\n"
+		"return float4(WaterColor.rgb * (OKAmbient.rgb + 0.2 * diffuse * LightColor0.rgb) * ripple + (0.25 * OKScatter.rgb + foam * OKDeepFoam.rgb) * OKWaterLight.rgb + OKSkyLight.rgb + pow(nh, 256.0) * LightColor0.rgb, saturate(deep * 4.0 + 0.5));\n"
+		"}\n"
 		"return float4(lit, saturate(overlay) + high);");
 	Add(Program);
 	auto* Lit = Add(NewObject<UMaterialExpressionComponentMask>(Mat));
@@ -6024,6 +6065,9 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 		if (ShadowParams.LightmapTex || bReflected || (bSourceMapShading))
 		{
 			const FString Shader = Source.MaterialShaderName(i);
+			// Nature/SpeedTree is a linear-space Lambert: Standard's path with no specular (the gamma path overexposed the trees).
+			const bool bSpeedTree = Shader.StartsWith(TEXT("Nature/SpeedTree"), ESearchCase::IgnoreCase);
+			if (bSpeedTree) { ShadowParams.bStandardLinear = true; ShadowParams.StandardSmoothness = 0.f; }
 			if (Shader.StartsWith(TEXT("Standard"), ESearchCase::IgnoreCase))
 			{
 				ShadowParams.bStandardLinear = true;
@@ -6094,13 +6138,27 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 			}
 		}
 		ShadowParams.StandardAlbedoTint = FLinearColor::White;
-		if (!ShadowParams.bItemDraw && Source.MaterialShaderName(i).StartsWith(TEXT("Standard"), ESearchCase::IgnoreCase))
+		if (!ShadowParams.bItemDraw && (Source.MaterialShaderName(i).StartsWith(TEXT("Standard"), ESearchCase::IgnoreCase)
+			|| Source.MaterialShaderName(i).StartsWith(TEXT("Nature/SpeedTree"), ESearchCase::IgnoreCase)))
 		{
 			FLinearColor Tint;
 			if (Source.MaterialValue(i, "_Color", Tint))
 			{
 				auto Linear = [](float V) { return V <= .04045f ? V / 12.92f : FMath::Pow((V + .055f) / 1.055f, 2.4f); };
 				ShadowParams.StandardAlbedoTint = FLinearColor(Linear(Tint.R), Linear(Tint.G), Linear(Tint.B), 1.f);
+			}
+		}
+		ShadowParams.StandardDetailTex = nullptr;
+		if (!ShadowParams.bItemDraw && Source.MaterialKeyword(i, "_DETAIL_MULX2"))
+		{
+			const uint8* Bytes = nullptr;
+			int32 Length = 0;
+			if (Source.ShaderTexture(i, "_DetailAlbedoMap", Bytes, Length))
+			{
+				ShadowParams.StandardDetailTex = TextureFromPngBytes(Bytes, Length);
+				if (ShadowParams.StandardDetailTex) { ShadowParams.StandardDetailTex->AddToRoot(); Output.Textures.Add(ShadowParams.StandardDetailTex); }
+				ShadowParams.StandardDetailST = FLinearColor(1.f, 1.f, 0.f, 0.f);
+				Source.MaterialValue(i, "_DetailAlbedoMap_ST", ShadowParams.StandardDetailST);
 			}
 		}
 		// Unity Standard-family emission (keyword _EMISSION): _EmissionColor (gamma, may exceed 1) times _EmissionMap.
@@ -6814,10 +6872,16 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 						{
 							if (Source.MaterialValue(i, From, V)) Dynamic->SetVectorParameterValue(To, FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), Alpha));
 						};
-						Color("_TranslucencyColor", TEXT("_WaterColor"), 1.f);
+						Color("_Color", TEXT("_WaterColor"), 1.f);
+						Dynamic->SetScalarParameterValue(TEXT("_OKLux"), 1.f);
+						// _TranslucencyIntensity 5.78 at the lighthouse's evening, 0.04 by day: what makes that sea brown.
+						FLinearColor Intensity(0.f, 0.f, 0.f, 0.f);
+						if (Source.MaterialValue(i, "_TranslucencyColor", V) && Source.MaterialValue(i, "_TranslucencyIntensity", Intensity))
+							Dynamic->SetVectorParameterValue(TEXT("_OKScatter"), FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), 1.f) * Intensity.R);
+						if (Source.MaterialValue(i, "_DeepFoamColor", V)) Dynamic->SetVectorParameterValue(TEXT("_OKDeepFoam"), FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), V.A));
 						Color("_UnderWaterReflCol", TEXT("_FresnelColor"), .35f);
 						Color("_FoamColor", TEXT("_RimColor"), .25f);
-						if (Source.MaterialValue(i, "_BumpTiling", V)) Dynamic->SetScalarParameterValue(TEXT("_Tiling"), 1.f - FMath::Clamp(V.G, .02f, .9f));
+						if (Source.MaterialValue(i, "_BumpTiling", V)) Dynamic->SetScalarParameterValue(TEXT("_Tiling"), 1.f - FMath::Clamp(V.R, .01f, .9f));
 						if (Source.MaterialValue(i, "_DepthAtten", V) && V.G > 0.f) Dynamic->SetScalarParameterValue(TEXT("_Depth"), V.G);
 						Dynamic->SetScalarParameterValue(TEXT("_Transparency"), .55f);
 						Dynamic->SetScalarParameterValue(TEXT("_Glossiness"), .8f);
@@ -6865,7 +6929,11 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 					// The water writes Unity's depth texture itself (queue 2500 with a shadow caster): it reads its own
 					// depth there (native probe: hiding it moves the depth behind it), so it is in the stand-in too.
 					DepthTexturePresentParts.Add(Comp);
-					UE_LOG(LogTemp, Display, TEXT("OK stylized water part=%s lux=%d"), *Name, bLuxWater ? 1 : 0);
+					FLinearColor Sun(0.f, 0.f, 0.f, 0.f), Tint(-1.f, -1.f, -1.f, -1.f);
+					Source.MaterialValue(i, "_OKSunVisible", Sun);
+					Source.MaterialValue(i, "_Color", Tint);
+					const uint8* Bump = nullptr; int32 BumpLength = 0;
+					UE_LOG(LogTemp, Display, TEXT("OK stylized water part=%s lux=%d shown=%d color=(%.2f,%.2f,%.2f) bump=%d"), *Name, bLuxWater ? 1 : 0, int32(Sun.R), Tint.R, Tint.G, Tint.B, Source.ShaderTexture(i, "_BumpMap", Bump, BumpLength) ? BumpLength : 0);
 				}
 		// A mirror (FX/MirrorReflection): the scene gives "_ReflectionTex" a capture mirrored in the part's plane.
 		if (Comp && !bBody && !bFaceDraw && Source.MaterialShaderName(i).StartsWith(TEXT("FX/MirrorReflection")))
@@ -9163,9 +9231,11 @@ float AKKPreviewActor::EffectiveFaceRate(int32 Control) const
         Control==1?BlinkEyeRate:BlinkBrowRate);
 }
 
-// The iris tiling's axes against the mesh's coordinates, as measured in H (2026-11-03): both the same way (U mirrored
-// made her eyes look apart, each out to its own side, when the look turned them in; user 2026-11-03).
-static TAutoConsoleVariable<int32> CVarOKEyeGazeSTFlipV(TEXT("ok.EyeGazeSTFlipV"),1,TEXT("1: an eye's gaze written to its iris tiling (_MainTex_ST) with V mirrored, the tiling works on the source's V and the rows on the flipped one (0 rolled her eyes up for a camera below; 2026-11-04)."));
+// The iris tiling's axes against the mesh's coordinates: U the same way (mirrored made her eyes look apart, each out to
+// its own side, when the look turned them in; user 2026-11-03). V mirrored: the rows are in UE's V, the tiling takes
+// Unity's offset and turns it round itself (MakeUnityMaskUVParameter), so as the mesh's the iris went the wrong way up
+// and left the eye on a look of -0.48 (U227, against CharaStudio: same rates, offset y +0.12 there).
+static TAutoConsoleVariable<int32> CVarOKEyeGazeSTFlipV(TEXT("ok.EyeGazeSTFlipV"),1,TEXT("1: an eye's gaze written to its iris tiling (_MainTex_ST) with V mirrored; 0: as the mesh's."));
 static TAutoConsoleVariable<int32> CVarOKEyeGazeSTFlipU(TEXT("ok.EyeGazeSTFlipU"),0,TEXT("1: an eye's gaze written to its iris tiling (_MainTex_ST) with U mirrored; 0: as the mesh's."));
 // M_ForgeEye_Flat (the shared display eye, street and H) has the gaze rows but does not move the iris by them; its
 // tiling does (2026-11-03: rows of -0.38 on V showed nothing, the tiling rolled her eyes up).
@@ -9232,8 +9302,8 @@ bool AKKPreviewActor::SetEyeGaze(float LeftHorizontal,float RightHorizontal,floa
 					const FLinearColor ST(Su*Base->R,Sv*Base->G,Ou*Base->R+Base->B,Ov*Base->G+Base->A);
 					M->SetVectorParameterValue(TEXT("_MainTex_ST"),ST);M->SetScalarParameterValue(TEXT("_MainTex_ST__A"),ST.A);++Set;}
 			if(CVarOKEyeGazeLog.GetValueOnGameThread()){FLinearColor Shown;const bool Has=Part.GpuEyeMaterial&&Part.GpuEyeMaterial->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("KKEyeUV0Row1")),Shown);
-				UE_LOG(LogTemp,Display,TEXT("Eye gaze part=%d gaze=(%.3f,%.3f,%.3f) iris rows u=(%.4f,%.4f,%.4f) v=(%.4f,%.4f,%.4f) uv0=(%.4f,%.4f) base0=(%.4f,%.4f) built=%s shown_v=(%.4f,%.4f,%.4f) drawn rows=%d tiling=%d"),
-					Part.SessionIndex,EyeGaze[0],EyeGaze[1],EyeGaze[2],Rows[0].R,Rows[0].G,Rows[0].B,Rows[1].R,Rows[1].G,Rows[1].B,Part.UVs.IsEmpty()?0.:Part.UVs[0].X,Part.UVs.IsEmpty()?0.:Part.UVs[0].Y,
+				UE_LOG(LogTemp,Display,TEXT("Eye gaze %s part=%d gaze=(%.3f,%.3f,%.3f) iris rows u=(%.4f,%.4f,%.4f) v=(%.4f,%.4f,%.4f) uv0=(%.4f,%.4f) base0=(%.4f,%.4f) built=%s shown_v=(%.4f,%.4f,%.4f) drawn rows=%d tiling=%d"),
+					*GetName(),Part.SessionIndex,EyeGaze[0],EyeGaze[1],EyeGaze[2],Rows[0].R,Rows[0].G,Rows[0].B,Rows[1].R,Rows[1].G,Rows[1].B,Part.UVs.IsEmpty()?0.:Part.UVs[0].X,Part.UVs.IsEmpty()?0.:Part.UVs[0].Y,
 					Part.GpuEyeUV[0][0].X,Part.GpuEyeUV[0][0].Y,Part.GpuEyeMaterial?*Part.GpuEyeMaterial->GetName():TEXT("-"),Has?Shown.R:0.f,Has?Shown.G:0.f,Has?Shown.B:0.f,RowsSet,Set);}
 			if(!bEyeTilingSaid&&(Set||RowsSet)){bEyeTilingSaid=true;UE_LOG(LogTemp,Display,TEXT("Eye gaze part=%d drawn: %d with rows, %d through the iris tiling"),Part.SessionIndex,RowsSet,Set);}
 		}

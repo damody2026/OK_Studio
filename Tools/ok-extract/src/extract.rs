@@ -2351,6 +2351,7 @@ pub(crate) fn extract_session_from_info(
         shape_body,
         shape_face,
         abm,
+        style_card_abm: None,
         parts: session_parts,
         coordinate_count: parsed_card
             .as_ref()

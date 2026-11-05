@@ -37,6 +37,7 @@
 #include "OKAnimationAssets.h"
 #include "KKOkAnimation.h"
 #include "OKStudioCatalog.h"
+#include "OKStudioCharacterStyle.h"
 #include "OKStudioSky.h"
 #include "OKHGShading.h"
 #include "KKRuntimeDisplayProfile.h"
@@ -151,6 +152,34 @@ namespace
 		FJsonSerializer::Serialize(Node(0, 0).ToSharedRef(), TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Spec));
 		TSharedPtr<FOkAnimPlayer> Player = MakeShared<FOkAnimPlayer>();
 		if (!Player->Create(Spec, Blobs)) { OutError = FOkAnimBridge::LastError(); return nullptr; }
+		UOKAnimationAsset::ApplyFamilyAliases(*Player);
+		return Player;
+	}
+
+	/** The motion To entered from the fade's old one, by the player's cross-fade (U236). Null when the old one cannot be
+	 *  read or is more than one clip (the change is then a cut). */
+	TSharedPtr<FOkAnimPlayer> StudioFadePlayer(const FOKSceneMotionFade& Fade, const UOKAnimSequence& To)
+	{
+		const FOKStudioAnim* Entry = FOKStudioCatalog::Get().FindAnim(Fade.Kind, Fade.Group, Fade.Category, Fade.No);
+		FString Error;
+		const UOKAnimSequence* From = Entry && !Entry->File.IsEmpty() ? UOKAnimationLibrary::LoadOkAnimFile(AOKSceneActor::LibraryDirectory() / Entry->File, nullptr, NAME_None, Error) : nullptr;
+		TArray<TArray<uint8>> Blobs, ToBlobs;
+		FString FromSpec, ToSpec;
+		if (!From || !From->BuildSpec(FromSpec, Blobs, Error) || !To.BuildSpec(ToSpec, ToBlobs, Error) || Blobs.Num() != 1 || ToBlobs.Num() != 1) return nullptr;
+		TSharedPtr<FJsonObject> FromNode, ToNode;
+		if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(FromSpec), FromNode) || !FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(ToSpec), ToNode)) return nullptr;
+		ToNode->SetNumberField(TEXT("anim"), 1);
+		Blobs.Add(MoveTemp(ToBlobs[0]));
+		TSharedRef<FJsonObject> J = MakeShared<FJsonObject>();
+		J->SetStringField(TEXT("type"), TEXT("crossfade"));
+		J->SetObjectField(TEXT("from"), FromNode);
+		J->SetObjectField(TEXT("to"), ToNode);
+		J->SetNumberField(TEXT("from_time"), Fade.FromTime);
+		J->SetNumberField(TEXT("duration"), Fade.Duration);
+		FString Spec;
+		FJsonSerializer::Serialize(J, TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Spec));
+		TSharedPtr<FOkAnimPlayer> Player = MakeShared<FOkAnimPlayer>();
+		if (!Player->Create(Spec, Blobs)) { UE_LOG(LogTemp, Warning, TEXT("OK studio: motion fade not built: %s"), *FOkAnimBridge::LastError()); return nullptr; }
 		UOKAnimationAsset::ApplyFamilyAliases(*Player);
 		return Player;
 	}
@@ -843,6 +872,19 @@ void AOKSceneActor::ApplyCharacterState(const FOKSceneObject& Object, FShown& It
 	{
 		Actor->SetBlush(C.Blush);
 	}
+	// The style is the card's sliders moved: the shown character takes them on its next pose, as the maker's sliders.
+	if (!FMath::IsNearlyEqual(C.Style, Item.AppliedStyle, 1.e-3f) || Item.AppliedStyleTuning != OKStudioStyleTuning().Revision)
+	{
+		TArray<float> Body = Actor->ShapeBody, Face = Actor->ShapeFace;
+		OKStudioStyleSliders(C.Style, Body, Face);
+		const float Scale = OKStudioStyleScale(C.Style, Actor->ShapeBody, Body);
+		Actor->Session.SetStyleBones(OKStudioStyleBones(C.Style, Scale));
+		Item.RenderCorrection.SetScale3D(FVector(Scale));
+		Item.RenderCorrection.SetTranslation(FVector(0.f, 0.f, OKStudioStyleLift(C.Style, Scale, Actor->ShapeBody.IsValidIndex(0) ? Actor->ShapeBody[0] : 0.5f)));
+		Actor->MarkShapeDirty(Face, Body);
+		Item.AppliedStyle = C.Style;
+		Item.AppliedStyleTuning = OKStudioStyleTuning().Revision;
+	}
 	if (bHasAnimFace) { if (Actor->bAutomaticBlink) Actor->SetAutomaticBlink(false); } else if (C.Blink >= 0 && Actor->bAutomaticBlink != (C.Blink == 1)) Actor->SetAutomaticBlink(C.Blink == 1);
 	// Studio controls of a blended H motion (option 1 height, option 2 breast, pattern): the scene's value, else the
 	// controller's own.
@@ -997,6 +1039,7 @@ void AOKSceneActor::Sync()
 		// Content changes rebuild the object; transform and visibility only move it.
 		// An eyes pattern is set on the live face, unless its eye set changes parts (gag eyes): then it is built in.
 		auto PartsEyes = [](int32 Ptn) { return Ptn >= 0 && FOKStudioCatalog::Get().EyeSet(Ptn).bChangesParts ? Ptn : -1; };
+		if (Item) SwapKeyedMotion(Object, *Item);
 		const bool bSame = Item && Item->Kind == Object.Kind && Item->Character.SameContent(Object.Character) && Item->Item.SameContent(Object.Item) && Item->Light == Object.Light
 			&& (Object.Kind != EOKSceneObjectKind::Effect || Item->Effect == Object.Effect.Effect)
 			&& (Object.Kind != EOKSceneObjectKind::Character || PartsEyes(Item->Character.EyesPattern) == PartsEyes(Object.Character.EyesPattern));
@@ -1134,6 +1177,7 @@ void AOKSceneActor::SyncMap()
 	ShownMapTime = -2;
 	for (const TPair<TWeakObjectPtr<ULightComponent>, uint32>& L : MapLights) if (L.Key.IsValid()) L.Key->DestroyComponent();
 	MapLights.Reset();
+	MapWaterLights.Reset();
 	for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews) if (P.IsValid()) { P->Destroy(); ReleasedSinceCollect += 32; }
 	ShownMapPreviews.Reset();
 	ShownMap = Document->Map;
@@ -1262,7 +1306,14 @@ void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
 	MapSunItemColor = FLinearColor(Irradiance.R, Irradiance.G, Irradiance.B, 1.f);
 	// The map's water (StylizedWater, the lighthouse's Lux Water sea) is lit by the map's sun as Unity's ForwardBase
 	// gives it: _LightColor0 the sun's colour times intensity, from the sun's direction (U166: the sea kept the same
-	// colour at every time).
+	// colour at every time). Lux Water also takes the time's ambient (U169).
+	FLinearColor Ambient;
+	const bool bAmbient = OKStudioMapTimeAmbient(Document->Map, Time, Ambient);
+	int32 SkyPattern = -1;
+	const FLinearColor SkyLight = OKStudioMapSky(Document->Map, Time, SkyPattern) ? OKStudioSkyLight(SkyPattern) : FLinearColor::Black;
+	FLinearColor WaterLight = FLinearColor::Black;
+	for (const TPair<FLinearColor, uint32>& L : MapWaterLights)
+		if (L.Value == 0 || (Time >= 0 && ((L.Value >> Time) & 1) != 0)) WaterLight += L.Key;
 	for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews)
 	{
 		if (!P.IsValid()) continue;
@@ -1276,6 +1327,9 @@ void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
 				{
 					Water->SetVectorParameterValue(TEXT("_LightColor0"), MapSunItemColor);
 					Water->SetVectorParameterValue(TEXT("_OKLightDir"), FLinearColor(MapSunItemDirection.R, MapSunItemDirection.G, MapSunItemDirection.B, 1.f));
+					if (bAmbient) Water->SetVectorParameterValue(TEXT("_OKAmbient"), Ambient);
+					Water->SetVectorParameterValue(TEXT("_OKWaterLight"), WaterLight);
+					Water->SetVectorParameterValue(TEXT("_OKSkyLight"), SkyLight);
 				}
 			}
 	}
@@ -1307,6 +1361,16 @@ void AOKSceneActor::AddMapLights(AKKPreviewActor* Map, const FString& Model, con
 		};
 		const TArray<float> P = Floats(TEXT("pos"), 3), R = Floats(TEXT("rot"), 4), C = Floats(TEXT("color"), 4);
 		const int32 Kind = L->GetIntegerField(TEXT("kind"));
+		bool bCookie = false;
+		L->TryGetBoolField(TEXT("cookie"), bCookie);
+		const FLinearColor Irradiance = OKStudioLinearLightColor(FLinearColor(C[0], C[1], C[2], 1), float(L->GetNumberField(TEXT("intensity"))));
+		// Lit from its height (Unity forward y, Unity's light shines along +Z), against the lighthouse's by day (0.6): the
+		// night's low light gave its sea too much blue, map 50's high one too little foam.
+		const float Height = FMath::Max(2.f * (R[3] * R[0] - R[1] * R[2]), 0.f) / .6f;
+		if (L->GetStringField(TEXT("name")).Contains(TEXT("_water"))) MapWaterLights.Emplace(Irradiance * Height, uint32(L->GetNumberField(TEXT("times"))));
+		// A directional light's cookie lights one tile of the map; there is no cookie here, and without it the whole map
+		// got the light (map 50's night ground, far over native's).
+		if (Kind == 1 && bCookie) continue;
 		const float Range = float(L->GetNumberField(TEXT("range"))) * 100.f;
 		ULightComponent* Light = nullptr;
 		if (Kind == 1) { UDirectionalLightComponent* Sun = NewObject<UDirectionalLightComponent>(Map); Sun->ForwardShadingPriority = DirectionalPriority++; Light = Sun; }
@@ -1331,7 +1395,6 @@ void AOKSceneActor::AddMapLights(AKKPreviewActor* Map, const FString& Model, con
 		const FQuat Node = FQuat(-R[0], R[2], R[1], R[3]).GetNormalized();
 		Light->SetRelativeLocation(FVector(-P[0], P[2], P[1]) * 100.0);
 		Light->SetRelativeRotation(Node * FRotationMatrix::MakeFromXZ(FVector(0, 1, 0), FVector(0, 0, 1)).ToQuat());
-		const FLinearColor Irradiance = OKStudioLinearLightColor(FLinearColor(C[0], C[1], C[2], 1), float(L->GetNumberField(TEXT("intensity"))));
 		const float Energy = FMath::Max3(Irradiance.R, Irradiance.G, Irradiance.B);
 		Light->SetLightColor(Energy > 0 ? FLinearColor(Irradiance.R / Energy, Irradiance.G / Energy, Irradiance.B / Energy, 1) : FLinearColor::Black);
 		Light->SetIntensity(Energy * UE_PI);
@@ -1471,7 +1534,35 @@ void AOKSceneActor::SetActiveVmdSource(int32 Id, const FString& VmdFile, const F
 	else ActiveVmdSources.Add(Id, FActiveVmdSource{ VmdFile, OkAnimRelPath });
 }
 
-bool AOKSceneActor::SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int32 Category, int32 No, FString& OutError)
+void AOKSceneActor::SwapKeyedMotion(const FOKSceneObject& Object, FShown& Item)
+{
+	if (Object.Kind != EOKSceneObjectKind::Character || Item.Kind != EOKSceneObjectKind::Character || Object.Character.StudioAnimeNo < 0) return;
+	const FOKSceneCharacter& C = Object.Character;
+	FOKSceneCharacter Was = Item.Character;
+	FOKSceneMotionFade Fade;
+	Document->MotionFadeAt(Object.Id, Document->ItemAnimationSeconds, Fade);
+	if (Was.StudioAnimeKind == C.StudioAnimeKind && Was.StudioAnimeGroup == C.StudioAnimeGroup && Was.StudioAnimeCategory == C.StudioAnimeCategory && Was.StudioAnimeNo == C.StudioAnimeNo && Item.Fade == Fade) return;
+	// Only the motion differs: the timeline changing it, on the live character. Rebuilding stopped the picture for a moment.
+	Was.StudioAnimeKind = C.StudioAnimeKind; Was.StudioAnimeGroup = C.StudioAnimeGroup; Was.StudioAnimeCategory = C.StudioAnimeCategory; Was.StudioAnimeNo = C.StudioAnimeNo;
+	if (!Was.SameContent(C)) return;
+	// An H motion with variants is blended at build.
+	const FOKStudioAnim* Entry = FOKStudioCatalog::Get().FindAnim(C.StudioAnimeKind, C.StudioAnimeGroup, C.StudioAnimeCategory, C.StudioAnimeNo);
+	if (!Entry || !Entry->Variants.IsEmpty()) return;
+	const float Time = C.Time, Speed = C.Speed;
+	FString Error;
+	if (!SetCharacterAnimation(Object.Id, C.StudioAnimeKind, C.StudioAnimeGroup, C.StudioAnimeCategory, C.StudioAnimeNo, Error, &Fade))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OK studio: keyed motion of %s rebuilt: %s"), *Object.Name, *Error);
+		return;
+	}
+	Item.Fade = Fade;
+	// It starts its motion at 0; the key said when.
+	if (FOKSceneObject* Doc = Document->Find(Object.Id)) { Doc->Character.Time = Time; Doc->Character.Speed = Speed; }
+	Item.Character.Time = Time;
+	SetAnimationTime(Object.Id, Document->ItemAnimationSeconds);
+}
+
+bool AOKSceneActor::SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int32 Category, int32 No, FString& OutError, const FOKSceneMotionFade* Fade)
 {
 	ActiveVmdSources.Remove(Id);
 	FShown* Item = Shown.Find(Id);
@@ -1481,7 +1572,8 @@ bool AOKSceneActor::SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int
 	const FOKStudioAnim* Entry = FOKStudioCatalog::Get().FindAnim(Kind, Group, Category, No);
 	if (!Entry || Entry->File.IsEmpty()) { OutError = FString::Printf(TEXT("studio animation %d/%d/%d/%d %s"), Kind, Group, Category, No, Entry ? TEXT("not converted") : TEXT("not in the library")); return false; }
 	UOKAnimSequence* Seq = UOKAnimationLibrary::LoadOkAnimFile(LibraryDirectory() / Entry->File, nullptr, NAME_None, OutError);
-	const TSharedPtr<FOkAnimPlayer> Player = Seq ? Seq->CreatePlayer(OutError) : nullptr;
+	TSharedPtr<FOkAnimPlayer> Player = Seq && Fade && Fade->Duration > 0.f ? StudioFadePlayer(*Fade, *Seq) : nullptr;
+	if (!Player && Seq) Player = Seq->CreatePlayer(OutError);
 	if (!Player || !Actor->SetOkAnimation(Player, true)) { if (OutError.IsEmpty()) OutError = TEXT("animation not playable"); return false; }
 	Actor->PoseMode = 3;
 	Item->StudioAnim.Reset(Seq);
@@ -1760,7 +1852,7 @@ void AOKSceneActor::UpdateItemLighting()
 	// The sky's ambient (Studio's ambient mode is Skybox: the sky controller updates the ambient probe) on the
 	// scene renderers' unity_SHA*. Without a map or sky, native Studio's
 	// empty environment is zero, rather than the Maker display environment.
-	if (SkyShown != AmbientSky || Document->Map != AmbientMap) { AmbientSky = SkyShown; AmbientMap = Document->Map; AmbientLit.Reset(); }
+	if (SkyShown != AmbientSky || Document->Map != AmbientMap || ShownMapTime != AmbientTime) { AmbientSky = SkyShown; AmbientMap = Document->Map; AmbientTime = ShownMapTime; AmbientLit.Reset(); }
 	FLinearColor SH[3];
 	TArray<FLinearColor> Higher = { FLinearColor(0,0,0,0), FLinearColor(0,0,0,0), FLinearColor(0,0,0,0), FLinearColor(0,0,0,1) };
 	// A loaded map's scene is the active one: its RenderSettings give the ambient. Only with ambient mode Skybox does the
@@ -1771,7 +1863,9 @@ void AOKSceneActor::UpdateItemLighting()
 	TArray<FLinearColor> MapHigher = Higher;
 	const bool bMapAmbient = Document->Map >= 0 && OKStudioMapAmbient(Document->Map, MapSH[0], MapSH[1], MapSH[2], &MapHigher, &MapMode);
 	const bool bSkyLit = AmbientSky >= 0 && !(bMapAmbient && (MapMode == 1 || MapMode == 3));
-	if (!bSkyLit && bMapAmbient) { for (int32 I = 0; I < 3; ++I) SH[I] = MapSH[I]; Higher = MapHigher; }
+	// A Trilight map's colours change with the time of day (SunLightInfo sets them; U176: one colour at every time).
+	if (bMapAmbient && MapMode == 1 && OKStudioMapTimeTrilight(Document->Map, ShownMapTime, SH[0], SH[1], SH[2])) {}
+	else if (!bSkyLit && bMapAmbient) { for (int32 I = 0; I < 3; ++I) SH[I] = MapSH[I]; Higher = MapHigher; }
 	else if (!(bSkyLit && OKStudioSkyAmbient(AmbientSky, SH[0], SH[1], SH[2]))
 		&& !OKStudioMapAmbient(Document->Map, SH[0], SH[1], SH[2], &Higher))
 	{

@@ -1,6 +1,7 @@
 #include "OKStudioImport.h"
 #include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
+#include "KKCardReader.h"
 #include "KKRustExtract.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -18,6 +19,9 @@
 
 namespace
 {
+	/** Studio cameras look along Unity Z, ours along X. */
+	FQuat MmddCamTurn() { return FQuat(FVector::UpVector, UE_HALF_PI); }
+
 	FVector Vec3(const TSharedPtr<FJsonObject>& O, const TCHAR* Key, const FVector& Default = FVector::ZeroVector)
 	{
 		const TArray<TSharedPtr<FJsonValue>>* A = nullptr;
@@ -453,6 +457,15 @@ namespace
 					}
 				}
 				if (bCard) ++Report->CharacterCards; else Report->Notes.Add(FString::Printf(TEXT("character %d: no OK card (%s)"), Key, *Summary));
+				// U194: the name in the tree is the card's; "Character 171" said nothing.
+				FString CharacterName = FString::Printf(TEXT("Character %d"), Key);
+				FKKCharacterFile CardFile;
+				FString CardError;
+				if (!KksCard.IsEmpty() && UKKCardReader::LoadFromFile(KksCard, CardFile, CardError))
+				{
+					const FString Full = (CardFile.LastName + TEXT(" ") + CardFile.FirstName).TrimStartAndEnd();
+					if (!Full.IsEmpty()) CharacterName = Full;
+				}
 				// A card that did not convert stays beside the scene's cards (char_<key>.kks.png) to reproduce the failure.
 				if (bCard) IFileManager::Get().Delete(*KksCard);
 				FString OkAnimPath;
@@ -476,7 +489,7 @@ namespace
 							Key, *Name, bHere ? TEXT("found") : TEXT("not on this machine")));
 					}
 				}
-				const int32 Id = Add(EOKSceneObjectKind::Character, FString::Printf(TEXT("Character %d"), Key), Parent, O);
+				const int32 Id = Add(EOKSceneObjectKind::Character, CharacterName, Parent, O);
 				FOKSceneCharacter& C = Doc->Find(Id)->Character;
 				C.EyesLook = EOKSceneLook::Animation;
 				C.Card = bCard ? OkCard : KksCard;
@@ -709,6 +722,49 @@ FString FOKStudioImport::FReport::ToJson() const
 	FString Out;
 	FJsonSerializer::Serialize(J, TJsonWriterFactory<>::Create(&Out));
 	return Out;
+}
+
+namespace
+{
+	/** A Unity camera key as ours: where it stands and looks, and MMD's vertical angle of view as a 16:9 horizontal one. */
+	void MmddCameraKey(const TSharedPtr<FJsonObject>& Kf, FTransform& OutTransform, float& OutFov)
+	{
+		OutTransform = FOKStudioImport::UnityToUe(Vec3(Kf, TEXT("world_pos")), Vec3(Kf, TEXT("rot")), FVector::OneVector);
+		OutTransform.SetRotation(OutTransform.GetRotation() * MmddCamTurn());
+		const double VertFov = FMath::DegreesToRadians(FMath::Clamp(Kf->GetNumberField(TEXT("fov")), 1.0, 170.0));
+		OutFov = float(FMath::RadiansToDegrees(2.0 * FMath::Atan(FMath::Tan(VertFov * 0.5) * 16.0 / 9.0)));
+	}
+}
+
+int32 FOKStudioImport::AddVmdCamera(UOKSceneDocument* Document, const FString& KeysJson, const FString& Name)
+{
+	TArray<TSharedPtr<FJsonValue>> Keys;
+	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(KeysJson), Keys) || Keys.IsEmpty()) return -1;
+	const FOKSceneObject* Old = Document->Objects.FindByPredicate([&Name](const FOKSceneObject& O) { return O.Kind == EOKSceneObjectKind::Camera && O.Name == Name; });
+	const int32 Id = Old ? Old->Id : Document->AddObject(EOKSceneObjectKind::Camera, Name, -1);
+	FOKSceneObject* Camera = Document->Find(Id);
+	Document->Tracks.RemoveAll([Id](const FOKSceneTrack& T) { return T.ObjectId == Id; });
+	FOKSceneTrack Track;
+	Track.ObjectId = Id;
+	for (const TSharedPtr<FJsonValue>& V : Keys)
+	{
+		const TSharedPtr<FJsonObject> Kf = V->AsObject();
+		if (!Kf) continue;
+		FOKSceneKey Key;
+		float Fov;
+		MmddCameraKey(Kf, Key.Transform, Fov);
+		Key.Time = float(Kf->GetNumberField(TEXT("time")));
+		Key.Ease = EOKSceneEase::Linear;
+		Key.Value = Fov;
+		if (Track.Keys.IsEmpty()) { Camera->Transform = Key.Transform; Camera->Camera.Fov = Fov; }
+		Document->Duration = FMath::Max(Document->Duration, Key.Time);
+		Track.Keys.Add(MoveTemp(Key));
+	}
+	Document->Tracks.Add(MoveTemp(Track));
+	Document->ActiveCamera = Id;
+	Document->Post.bDepthOfField = false;
+	Document->NotifyChanged();
+	return Id;
 }
 
 bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document, const FString& CardDirectory, FReport& Report, FString& OutError)
@@ -1131,18 +1187,16 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 				FOKSceneTrack LightTrack;
 				LightTrack.ObjectId = CharaLightId;
 				LightTrack.bSmoothPath = false;
-				const FQuat CamTurn(FVector::UpVector, UE_HALF_PI);
+				const FQuat CamTurn = MmddCamTurn();
 				const FQuat LightChild = UnityToUe(FVector::ZeroVector, FVector(40.f, 180.f, 0.f), FVector::OneVector).GetRotation();
 				for (int32 K = 0; K < Keyframes->Num(); ++K)
 				{
 					const TSharedPtr<FJsonObject> Kf = (*Keyframes)[K]->AsObject();
 					if (!Kf) continue;
-					const FVector WorldPos = Vec3(Kf, TEXT("world_pos"));
 					const FVector Rot = Vec3(Kf, TEXT("rot"));
-					FTransform T = UnityToUe(WorldPos, Rot, FVector::OneVector);
-					T.SetRotation(T.GetRotation() * CamTurn);
-					const double VertFov = FMath::DegreesToRadians(FMath::Clamp(Kf->GetNumberField(TEXT("fov")), 1.0, 170.0));
-					const float HorizFov = float(FMath::RadiansToDegrees(2.0 * FMath::Atan(FMath::Tan(VertFov * 0.5) * 16.0 / 9.0)));
+					FTransform T;
+					float HorizFov;
+					MmddCameraKey(Kf, T, HorizFov);
 					if (K == 0)
 					{
 						MmddCam->Transform = T;
@@ -1639,8 +1693,13 @@ bool FOKStudioImport::ImportToFile(const FString& ScenePng, FString& OutScene, F
 	const FString Dir = UOKStudioGame::SceneDirectory();
 	UOKSceneDocument* Document = NewObject<UOKSceneDocument>();
 	if (!Import(ScenePng, Document, Dir / (Name + TEXT("_cards")), Report, OutError)) return false;
-	OutScene = Dir / (Name + TEXT(".okscene"));
+	// The file of an earlier import may hold what was saved over it: opening the card again took those changes away
+	// without a word (U220). It stays, and this import goes to the next free name; an unchanged one is used again.
+	const FString Json = Document->ToJson();
+	FString Base = Name, Old;
+	for (int32 N = 2; FFileHelper::LoadFileToString(Old, *(Dir / (Base + TEXT(".okscene")))) && Old != Json; ++N) Base = FString::Printf(TEXT("%s_%d"), *Name, N);
+	OutScene = Dir / (Base + TEXT(".okscene"));
 	if (!Document->SaveToFile(OutScene, OutError)) return false;
-	FFileHelper::SaveStringToFile(Report.ToJson(), *(Dir / (Name + TEXT(".import.json"))), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+	FFileHelper::SaveStringToFile(Report.ToJson(), *(Dir / (Base + TEXT(".import.json"))), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 	return true;
 }

@@ -1583,6 +1583,7 @@ static void OKNoteFrameGraph(UOKCharacterController* Self, float DeltaSeconds)
 void UOKCharacterController::NativeTick(const FGeometry& Geometry,float DeltaSeconds)
 {
 	Super::NativeTick(Geometry,DeltaSeconds);
+	if(CharacterStyle!=0.f&&StyledActor!=PreviewActor)ApplyCharacterStyle();
  // The shown character solves its next frame while this one draws; the interaction scene and paired playback pose it themselves.
  if(IsValid(PreviewActor))PreviewActor->bAsyncNativePose=!InteractionWidget&&!InteractionScene&&!PairedPlayback;
     OKNoteFrameGraph(this, DeltaSeconds);
@@ -3525,7 +3526,8 @@ void UOKCharacterController::ApplyShapeValue(bool bBody, int32 Index, float Valu
 		}
 		Selected.Face.ShapeValueFace[Index] = Value;
 	}
-	if (PreviewActor && bModelLayout)
+	if (CharacterStyle != 0.f) ApplyCharacterStyle();
+	else if (PreviewActor && bModelLayout)
 	{
 		PreviewActor->MarkShapeDirty(Selected.Face.ShapeValueFace, Selected.Body.ShapeValueBody);
 	}

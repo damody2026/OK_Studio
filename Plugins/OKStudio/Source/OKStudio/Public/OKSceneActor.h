@@ -68,7 +68,7 @@ public:
 	void Rebuild(int32 Id);
 	/** Plays another Studio animation (OK animation library) on a shown character in place, without building it again;
 	 *  the document object follows. */
-	bool SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int32 Category, int32 No, FString& OutError);
+	bool SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int32 Category, int32 No, FString& OutError, const FOKSceneMotionFade* Fade = nullptr);
 	/** Records an active live .vmd source for a character so rebuilding (outfit / shoe on-off) re-solves ShoesDetect. */
 	void SetActiveVmdSource(int32 Id, const FString& VmdFile, const FString& OkAnimRelPath);
 
@@ -123,6 +123,7 @@ public:
 	 *  character display's own) and the characters that have it. */
 	int32 AmbientSky = -1;
 	int32 AmbientMap = -1;
+	int32 AmbientTime = -2;
 	TSet<TWeakObjectPtr<AKKPreviewActor>> AmbientLit;
 	TMap<FName, FLinearColor> AppliedShaderGlobals;
 	TSet<TWeakObjectPtr<AKKPreviewActor>> ShaderGlobalsLit;
@@ -192,6 +193,8 @@ private:
 	{
 		EOKSceneObjectKind Kind = EOKSceneObjectKind::Folder;
 		FOKSceneCharacter Character;
+		/** The fade its player is built with (U236). */
+		FOKSceneMotionFade Fade;
 		FOKSceneItem Item;
 		FOKSceneLight Light;
 		/** The shown effect's id (another id rebuilds it; speed, intensity and colour apply in place). */
@@ -222,6 +225,8 @@ private:
 		TArray<FString> BlendControls;
 		TArray<float> BlendDefaults, AppliedBlend;
 		int32 AppliedHands[2] = { -1, -1 };
+		float AppliedStyle = 0.f;
+		int32 AppliedStyleTuning = 0;
 		bool bEyesTracking = false;
 		bool bFixedEyesApplied = false;
 		TArray<float> AppliedFixedEyes;
@@ -260,6 +265,8 @@ private:
 	uint32 MapSunMask = 0;
 	/** The map's own realtime lamps (ok_okmodel_map_lights) with the times of day they show at (0: always). */
 	TArray<TPair<TWeakObjectPtr<class ULightComponent>, uint32>> MapLights;
+	// The map's "..._water" lights (their linear colour and SunLightInfo times): they light Lux Water only.
+	TArray<TPair<FLinearColor, uint32>> MapWaterLights;
 	void AddMapLights(class AKKPreviewActor* Map, const FString& Model, const FString& Root);
 	int32 ShownMapComponents = 0;
 	FTransform ShownMapSunPlace;
@@ -284,6 +291,8 @@ private:
 	TArray<TObjectPtr<class USceneCaptureComponent2D>> MirrorCaptures;
 	TArray<TWeakObjectPtr<class UMaterialInstanceDynamic>> MirrorCaptureMaterials;
 	void Release(FShown& Item);
+	/** A motion changed by the timeline, on the live character (U230); anything else the next step rebuilds. */
+	void SwapKeyedMotion(const FOKSceneObject& Object, FShown& Item);
 	void ApplyCharacterState(const FOKSceneObject& Object, FShown& Item);
 	void SolveConstraints();
 };

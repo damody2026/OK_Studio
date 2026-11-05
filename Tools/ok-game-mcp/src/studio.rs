@@ -1,5 +1,5 @@
 //! OK Studio (the scene editor, SceneEditor.cmd / Tools/run_scene_editor.lua): its control server is HTTP on 127.0.0.1,
-//! port OK_STUDIO_PORT (default 47890), open when the editor was started with -Control -StudioControlPort=<port>.
+//! open whenever a studio runs. Port: OK_STUDIO_PORT, else the running game's (Saved/OKControl), else port_base + 30.
 //! Every op is POST /studio/<op> with a JSON body; the reply is {"ok": true, ...} or {"ok": false, "error": "..."}
 //! (busy: {"busy": "<reason>"} while the user drags, a scene loads or the timeline plays/exports). Each studio_* tool
 //! passes its arguments through as the body. Docs/OK_STUDIO_MCP.md.
@@ -16,16 +16,22 @@ pub struct Studio {
 }
 
 impl Studio {
-    /// The same checkout as the street game; the port is OK_STUDIO_PORT, else 47890.
+    /// The same checkout as the street game.
     pub fn locate(root: &Path) -> Studio {
-        let port = std::env::var("OK_STUDIO_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(47890);
+        let default = std::fs::read_to_string(root.join("local-instance.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(t.trim_start_matches('\u{feff}')).ok())
+            .and_then(|v| v["port_base"].as_u64())
+            .unwrap_or(47860) as u16
+            + 30;
+        let port = std::env::var("OK_STUDIO_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or_else(|| crate::control::port(root, "studio", default));
         Studio { root: root.to_path_buf(), port }
     }
 
     /// POST /studio/<op>; the reply as it came (ok true or false). Loading, saving and capturing can take a while.
     pub fn call(&self, op: &str, body: &Value) -> Result<Value> {
         http(self.port, &format!("/studio/{op}"), Some(body), Duration::from_secs(180), || {
-            format!("OK Studio is not running on 127.0.0.1:{} (start it with studio_launch, or SceneEditor.cmd with -- -Control -StudioControlPort={})", self.port, self.port)
+            format!("OK Studio is not running on 127.0.0.1:{} (start it with studio_launch or SceneEditor.cmd)", self.port)
         })
     }
 
@@ -176,6 +182,8 @@ pub fn tools() -> Vec<Value> {
           json!({"time": {"type": "number"}, "play": {"type": "boolean"}, "key": {"type": "object", "properties": {"ids": ids("object ids")}, "required": ["ids"]}}), &[]),
         t("studio_patch", "Change any setting of one object by deep-merging `fields` into its JSON (the same JSON studio_inspect returns under `object`: objects merge key by key, arrays and plain values replace). For everything studio_transform / studio_pose do not cover (colours, light intensity, item patterns, character clothes state, visibility...); studio_inspect first to see the keys. id, kind and parent cannot change (use studio_reparent). Undoable, in the same undo history as the person's edits in the SceneEditor. Returns {object} after the change.",
           json!({"id": id("object id"), "fields": {"type": "object", "description": "partial object JSON to merge, e.g. {\"visible\": false}"}}), &["id", "fields"]),
+        t("studio_style_tuning", "The numbers of the character style slider's realistic end, live: shown characters take them at once, no rebuild. Widths are against the card's (1 = the card's): hips, shoulders, upper, waist, upper_arm, forearm, thigh, calf, bust, hem; head_size likewise; leg_length = the legs against what the growth gives them; heads = how many heads tall; breast = the breast size slider it pulls to; arm_growth = how much of the character's growth the arms keep; real_jaw = how far the jaw sliders go towards the realistic end, on a middling jaw; real_face = how far the eyes, nose and mouth go towards it; real_chin, chibi_chin = how far each end rounds the tip of the chin; chibi_jaw = the most the chibi end widens the jaw sliders. Only what is passed changes; returns them all. Kept until the studio closes.",
+          json!({"heads": {"type": "number"}, "head_size": {"type": "number"}, "hips": {"type": "number"}, "shoulders": {"type": "number"}, "upper": {"type": "number"}, "waist": {"type": "number"}, "leg_length": {"type": "number"}, "upper_arm": {"type": "number"}, "forearm": {"type": "number"}, "thigh": {"type": "number"}, "calf": {"type": "number"}, "bust": {"type": "number"}, "hem": {"type": "number"}, "breast": {"type": "number"}, "arm_growth": {"type": "number"}, "real_jaw": {"type": "number"}, "real_face": {"type": "number"}, "real_chin": {"type": "number"}, "chibi_chin": {"type": "number"}, "chibi_jaw": {"type": "number"}}), &[]),
         t("studio_scene", "The scene's look and global settings, for the first version's mood: post (bloom, depth of field, fog, sky, filter, background..., deep-merged like studio_patch; the keys are what this tool returns under post), the map (-1 none) and its transform, the timeline duration and the active camera (-1 free view). With no arguments it only reads. Returns {post, map, map_transform, duration, active_camera, bookmarks}.",
           json!({"post": {"type": "object", "description": "partial post settings to merge (keys as returned under post)"},
                  "map": {"type": "integer", "description": "map number (studio_catalog kind map), -1 none"},
@@ -184,8 +192,8 @@ pub fn tools() -> Vec<Value> {
                  "active_camera": id("camera object id to render through, -1 the free view")}), &[]),
         t("studio_bones", "A character's posing handles, read before studio_pose: FK bones [{bone, name, part, euler, set, world}] (euler: current rotation in degrees, set: holds an FK value, world: position cm), IK effectors [{effector, name, enabled, position, world}], look_point, and accessory_points [{key, name, group, world}] (bones to attach items to with studio_spawn / studio_reparent bone).",
           json!({"id": id("character id")}), &["id"]),
-        t("studio_bounds", "World-space bounding boxes in cm, to place objects on the floor, on top of or next to each other (e.g. move an item so its min z meets a table's max z). No ids: every object. Returns {objects [{id, min, max, center, size}]}.",
-          json!({"ids": ids("object ids (default: all)")}), &[]),
+        t("studio_bounds", "World-space bounding boxes in cm, to place objects on the floor, on top of or next to each other (e.g. move an item so its min z meets a table's max z). No ids: every object. Returns {objects [{id, min, max, center, size}]}; with map, also {map [{min, max}]}, the boxes of the map's parts.",
+          json!({"ids": ids("object ids (default: all)"), "map": {"type": "boolean", "description": "also list the map's parts"}}), &[]),
         t("studio_catalog", "Browse a catalogue by group and category (studio_catalog_search stays the text search). kind alone lists its groups; with group, its categories; with group + category, the entries (keys for studio_spawn item/effect, studio_scene map, post filter / sky, studio_pose anim, accessory point bones). anim_kind: which animation table for kind anim. Returns {groups?, categories?, entries [...]}.",
           json!({"kind": {"type": "string", "enum": ["item", "map", "effect", "anim", "video", "filter", "sky", "accessory_point"]},
                  "group": {"type": "integer"}, "category": {"type": "integer"}, "anim_kind": {"type": "integer", "description": "kind anim: the animation table"}}), &["kind"]),
@@ -196,6 +204,7 @@ pub fn tools() -> Vec<Value> {
                  "to": {"type": "number", "description": "move: the new time in seconds"},
                  "ease": {"type": "string", "enum": ["linear", "ease_in_out", "ease_in", "ease_out", "step"]},
                  "smooth": {"type": "boolean"},
+                 "orbit": {"type": "boolean", "description": "smooth on a camera: go round the point the keys look at"},
                  "camera": {"type": "integer", "description": "set on the scene track: the view from this key on (-1 free view, a camera id, -2 none)"}}), &["id", "action"]),
         t("studio_duplicate", "Copy objects (undoable), e.g. a row of chairs or a second character with the same card. Returns {ids} of the new copies.",
           json!({"ids": ids("object ids")}), &["ids"]),
@@ -209,7 +218,7 @@ pub fn tools() -> Vec<Value> {
           json!({"folder": {"type": "string"}}), &[]),
         t("studio_report", "What the last open could not show and which resources the scene lacks (cards, mods, items). Returns {load [lines], missing [lines]}.",
           json!({}), &[]),
-        t("studio_ui_shot", "Screenshot the whole studio window WITH its UI panels (studio_capture renders only the view), to see what the person sees in the SceneEditor. Written a frame or two later; waits up to 15 s for the file and shows it. Returns {file}.",
+        t("studio_ui_shot", "Screenshot the whole studio window WITH its UI panels (studio_capture renders only the view), to see what the person sees in the SceneEditor. Written a frame or two later; waits up to 15 s for the file and shows it. Returns {file, width, height, dpi_scale}: the window's actual pixels, which studio_mouse uses too.",
           json!({"name": {"type": "string", "description": "file name (never overwrites)"}}), &[]),
         t("studio_mouse", "A mouse click at a point of the studio window (pixels from its top-left, as in studio_ui_shot), sent through the UI inside the process (the real cursor does not move): right opens context menus such as a timeline key's; wheel turns the mouse wheel there instead (scrolls a panel or list). Returns {screen, under, handled, captor, path}.",
           json!({"x": {"type": "number"}, "y": {"type": "number"}, "button": {"type": "string", "enum": ["left", "right", "middle"]},

@@ -121,6 +121,34 @@ public sealed partial class GamePoseProbe {
             yield break;
         }
         for (int frame = 0; frame < 120; ++frame) yield return null;
+        // OK_PROBE_MOTION_SWEEP=group:category:first:last: the scene's first character through these motions, a picture
+        // and the iris offsets of each.
+        string sweep = Environment.GetEnvironmentVariable("OK_PROBE_MOTION_SWEEP");
+        if (!String.IsNullOrEmpty(sweep)) {
+            string[] range = sweep.Split(':');
+            Studio.OCIChar character = null;
+            int firstKey = int.MaxValue;
+            foreach (var pair in studio.dicObjectCtrl)
+                if (pair.Value is Studio.OCIChar && pair.Key < firstKey) { firstKey = pair.Key; character = (Studio.OCIChar)pair.Value; }
+            using (var writer = new StreamWriter(output + ".motion.tsv")) {
+                writer.WriteLine("no\teye\toffset_x\toffset_y\thead_x\thead_y\thead_z\tcamera_x\tcamera_y\tcamera_z\tlook_ptn\tangle_h\tangle_v");
+                for (int no = int.Parse(range[2]); no <= int.Parse(range[3]); ++no) {
+                    character.LoadAnime(int.Parse(range[0]), int.Parse(range[1]), no, 0f);
+                    for (int frame = 0; frame < 45; ++frame) yield return null;
+                    yield return new WaitForEndOfFrame();
+                    CaptureMain(Camera.main, output + ".motion" + no + ".png");
+                    Vector3 head = character.charInfo.objHeadBone.transform.position, eye = Camera.main.transform.position;
+                    for (int i = 0; i < character.charInfo.eyeLookMatCtrl.Length; ++i) {
+                        EyeLookMaterialControll control = character.charInfo.eyeLookMatCtrl[i];
+                        if (control == null) continue;
+                        Vector2 offset = control._renderer.material.GetTextureOffset("_MainTex");
+                        writer.WriteLine(no + "\t" + i + "\t" + offset.x.ToString("R") + "\t" + offset.y.ToString("R") + "\t" + head.x.ToString("R") + "\t" + head.y.ToString("R") + "\t" + head.z.ToString("R")
+                            + "\t" + eye.x.ToString("R") + "\t" + eye.y.ToString("R") + "\t" + eye.z.ToString("R")
+                            + "\t" + character.charInfo.eyeLookCtrl.ptnNo + "\t" + character.charInfo.eyeLookCtrl.eyeLookScript.GetAngleHRate((EYE_LR)i).ToString("R") + "\t" + character.charInfo.eyeLookCtrl.eyeLookScript.GetAngleVRate().ToString("R"));
+                    }
+                }
+            }
+        }
         // Studio's FK, face updates and attachment/dynamic-bone followers finish
         // in LateUpdate. A manual Camera.Render from a null-yield continuation
         // can observe the Animator's intermediate pose before those followers.

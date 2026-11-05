@@ -1,6 +1,5 @@
-//! The game side: the StreetSocial development control channel (HTTP on 127.0.0.1, only open when the game was started
-//! with -StreetSocialControl; Source/OpenKoikatsu/OKStreetSocialControl.inl), the checkout it belongs to, and starting or
-//! stopping that game.
+//! The game side: the StreetSocial control channel (HTTP on 127.0.0.1, always open; Source/OpenKoikatsu/OKStreetSocialControl.inl),
+//! the checkout it belongs to, and starting or stopping that game.
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::io::{Read, Write};
@@ -44,10 +43,16 @@ impl Game {
         Ok(Game { root, port })
     }
 
+    /// The running street game's port (OK_CONTROL_PORT fixes it; a game takes the next free one when another has it).
+    fn live_port(&self) -> u16 {
+        if std::env::var_os("OK_CONTROL_PORT").is_some() { self.port } else { crate::control::port(&self.root, "street", self.port) }
+    }
+
     /// GET (body None) or POST JSON to the control channel; the reply is JSON.
     pub fn call(&self, path: &str, body: Option<&Value>) -> Result<Value> {
-        http(self.port, path, body, Duration::from_secs(60), || {
-            format!("the game's control channel is not up on 127.0.0.1:{} (start it with game_launch)", self.port)
+        let port = self.live_port();
+        http(port, path, body, Duration::from_secs(60), || {
+            format!("the game's control channel is not up on 127.0.0.1:{port} (start it with game_launch)")
         })
     }
 
@@ -58,6 +63,12 @@ impl Game {
 
 /// GET (body None) or POST JSON to a local HTTP control server; the reply is JSON. down: the error when nothing listens.
 pub fn http(port: u16, path: &str, body: Option<&Value>, timeout: Duration, down: impl FnOnce() -> String) -> Result<Value> {
+    let text = http_text(port, path, body, timeout, down)?;
+    serde_json::from_str(&text).with_context(|| format!("{path}: reply is not JSON"))
+}
+
+/// The same, the reply as text.
+pub fn http_text(port: u16, path: &str, body: Option<&Value>, timeout: Duration, down: impl FnOnce() -> String) -> Result<String> {
     {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).with_context(down)?;
         stream.set_read_timeout(Some(timeout))?;
@@ -81,11 +92,11 @@ pub fn http(port: u16, path: &str, body: Option<&Value>, timeout: Duration, down
         if headers.contains("transfer-encoding: chunked") {
             data = unchunk(&data)?;
         }
-        let text = String::from_utf8_lossy(&data);
+        let text = String::from_utf8_lossy(&data).into_owned();
         if !(200..300).contains(&status) {
             bail!("{path}: HTTP {status}: {}", text.chars().take(400).collect::<String>());
         }
-        serde_json::from_str(&text).with_context(|| format!("{path}: reply is not JSON"))
+        Ok(text)
     }
 }
 
@@ -152,8 +163,9 @@ impl Game {
     fn port_pid(&self) -> Result<Option<String>> {
         let out = Command::new("netstat").args(["-ano", "-p", "TCP"]).output()?;
         let text = String::from_utf8_lossy(&out.stdout);
-        let local = format!("127.0.0.1:{}", self.port);
-        let any = format!("0.0.0.0:{}", self.port);
+        let port = self.live_port();
+        let local = format!("127.0.0.1:{port}");
+        let any = format!("0.0.0.0:{port}");
         Ok(text
             .lines()
             .map(|l| l.split_whitespace().collect::<Vec<_>>())

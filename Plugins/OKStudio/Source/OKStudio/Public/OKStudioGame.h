@@ -91,6 +91,14 @@ public:
 	/** Points the free view at the selection, far enough to see all of it; bFace: at one character's face, close up (the
 	 *  look, neck and expression pages edit what the face shows). */
 	void FocusSelection(bool bFace = false);
+	/** The view is as FocusSelection left it (nobody moved it since): it can follow the open area. */
+	bool ViewStillFramed() const;
+	void Reframe() { FocusSelection(bFramedFace); }
+	FVector FramedFocus = FVector::ZeroVector;
+	float FramedDistance = -1.f, FramedYaw = 0.f, FramedPitch = 0.f;
+	bool bFramedFace = false;
+	/** The whole figure of a character just added, while the view is still the initial one (U212). */
+	void FrameFirstCharacter(int32 Id);
 	/** The part of the view no panel covers, as fractions of the view (0..1, y down); the panel keeps it current. Framing
 	 *  centres there and sizes the distance to it. */
 	FBox2D ClearView = FBox2D(FVector2D(0.f, 0.f), FVector2D(1.f, 1.f));
@@ -132,6 +140,8 @@ public:
 	/** Scene files of the in-game list: UserData/Studio/scene/*.okscene, newest first. */
 	static FString SceneDirectory();
 	static TArray<FString> SceneFiles();
+	/** The picture saved beside an .okscene (a PNG without scene data, so the lists leave it out). */
+	static FString ScenePictureFile(const FString& Scene);
 
 	/** Guide object (gizmo) of the selection: 0 move, 1 rotate, 2 scale. */
 	int32 GuideMode = 0;
@@ -238,6 +248,18 @@ public:
 	bool IsOutsideSoundPlaying() const;
 	/** The voice list entry character `Id` is speaking (-1: none, still loading or ended). */
 	int32 VoicePlayingIndex(int32 Id) const;
+	/** How long the scene's sound runs (0: none, or it cannot be read). */
+	float SceneSoundSeconds();
+	/** Voices on the timeline (U233): the clip's sound file (empty: not there), its label and length (1 s until decoded). */
+	FString VoiceClipFile(const FOKSceneVoiceClip& Clip) const;
+	FString VoiceClipName(const FOKSceneVoiceClip& Clip) const;
+	float VoiceClipSeconds(const FOKSceneVoiceClip& Clip) const;
+	/** How open the voice clips hold character `Id`'s mouth at Time: playback, scrubbing and exports all read this. */
+	float VoiceMouth(int32 Id, float Time) const;
+	/** Voice clips audible now. */
+	int32 VoiceClipsSounding() const;
+	/** Lays a clip on the character and lengthens the timeline to hold it. */
+	void AddVoiceClip(int32 Id, const FOKSceneVoiceClip& Clip);
 
 	/** Screenshot through the current view into UserData/Studio/screenshot (returns the file; empty on failure). */
 	FString Screenshot(int32 Width, int32 Height, bool bTransparent = false);
@@ -414,6 +436,21 @@ private:
 	};
 	TMap<int32, FCharacterVoice> CharacterVoices;
 	void UpdateCharacterVoices();
+	/** Voice clips: sounds by file and the file of each clip (kept across calls from const getters). */
+	mutable TMap<FString, TSharedPtr<struct FOKStudioVoiceSound, ESPMode::ThreadSafe>> VoiceSounds;
+	mutable TMap<FString, FString> VoiceClipPaths;
+	/** The clips sounding now, by character, start and file. */
+	TMap<FString, TWeakObjectPtr<class UAudioComponent>> VoiceClipAudio;
+	TSet<int32> VoiceMouthIds;
+	FString VoiceClipScene;
+	float VoiceClipTime = 0.f;
+	const struct FOKStudioVoiceSound* VoiceClipSound(const FOKSceneVoiceClip& Clip, bool bWait) const;
+	void UpdateVoiceClips();
+	void StopVoiceClipAudio();
+	void ApplyVoiceMouth(float Time);
+	void LoadVoiceClips() const;
+	/** The voice clips and the scene's sound over the export's range as a WAV (false: none sound there). */
+	bool WriteExportMix(const FString& Wav);
 	void UpdateViewer();
 	void SyncNow();
 	/** Whether a shown preview still draws stand-in materials or runtime shaders are compiling (pictures would miss it). */

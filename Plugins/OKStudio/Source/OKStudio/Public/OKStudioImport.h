@@ -37,4 +37,8 @@ struct OKSTUDIO_API FOKStudioImport
 
 	/** Unity local transform (Studio ChangeAmount: position, Euler degrees, scale) as a UE transform (cm). */
 	static FTransform UnityToUe(const FVector& Position, const FVector& EulerDegrees, const FVector& Scale);
+
+	/** A camera VMD's keys (JSON array of FOkAnimBridge::CameraFromVmd) onto the scene's camera named Name, made if it is not
+	 *  there yet; its old keys go. Returns the camera's id (-1: no keys). */
+	static int32 AddVmdCamera(UOKSceneDocument* Document, const FString& KeysJson, const FString& Name);
 };

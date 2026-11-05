@@ -184,8 +184,16 @@ bool SOKStudioPanel::AddOrReplaceCard(const FString& Card, bool bReplace)
 	FOKSceneObject* X = Obj();
 	if (!bReplace || !X || X->Kind != EOKSceneObjectKind::Character)
 	{
-		Game->AddCharacter(Path, 0);
+		const bool bFirst = !Game->Document->Objects.ContainsByPredicate([](const FOKSceneObject& O) { return O.Kind == EOKSceneObjectKind::Character; });
+		const int32 Added = Game->AddCharacter(Path, 0);
 		SetStatus(TEXT("加入角色 ") + FPaths::GetBaseFilename(Path) + (Game->bLastAddBlocked ? TEXT("（附近沒有空地，放在視角中心，可能和地圖物件重疊）") : TEXT("")));
+		// U212: the first one is seen whole, the card window off her, and the status says what comes next.
+		if (bFirst)
+		{
+			Game->FrameFirstCharacter(Added);
+			CloseFloat(TEXT("cards"));
+			SetStatus(TEXT("加入角色 ") + FPaths::GetBaseFilename(Path) + TEXT("。下一步：左上人形圖示 →「動畫」選動作"));
+		}
 		return true;
 	}
 	// Replacing: a card that cannot be opened leaves the character as it was.

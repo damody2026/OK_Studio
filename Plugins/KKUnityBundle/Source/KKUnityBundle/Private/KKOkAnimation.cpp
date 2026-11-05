@@ -52,6 +52,15 @@ bool FOkAnimBridge::FromVmd(const FOkSession* Session, const FString& VmdFile, c
 	}, Out);
 }
 
+bool FOkAnimBridge::CameraFromVmd(const FString& VmdFile, FString& OutJson)
+{
+	const FTCHARToUTF8 V(*VmdFile);
+	TArray<uint8> Bytes;
+	if (!OkAnimReadBytes([&](uint8* Buf, int32 Cap) { return ok_mmdd_camera_from_vmd(V.Get(), Buf, Cap); }, Bytes)) return false;
+	OutJson = OkAnimUtf8(Bytes);
+	return true;
+}
+
 bool FOkAnimBridge::FromLocals(const FString& HeaderJson, const TArray<float>& Rotations, const TArray<float>& Hips, TArray<uint8>& Out)
 {
 	const FTCHARToUTF8 H(*HeaderJson);

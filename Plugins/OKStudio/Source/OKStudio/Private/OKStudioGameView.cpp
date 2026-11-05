@@ -4,6 +4,7 @@
 #include "OKStudioGameInternal.h"
 #include "OKStudioSettings.h"
 #include "OKSceneActor.h"
+#include "KKAffineProceduralMeshComponent.h"
 #include "KKPreviewActor.h"
 #include "Blueprint/WidgetLayoutLibrary.h"
 #include "Camera/CameraComponent.h"
@@ -59,15 +60,19 @@ bool UOKStudioGame::WorldBounds(int32 Id, FBox& Out) const
 	if (O->Kind == EOKSceneObjectKind::Character)
 	{
 		const AKKPreviewActor* Preview = SceneActor->PreviewOf(Id);
-		TArray<TPair<FVector, FVector>> Segments;
-		if (SkeletonSegments(Preview, Segments)) for (const TPair<FVector, FVector>& S : Segments) { Out += S.Key; Out += S.Value; }
 		if (Preview)
 		{
 			TInlineComponentArray<UMeshComponent*> Meshes(Preview);
 			for (const UMeshComponent* M : Meshes)
 				if (M && M->IsRegistered() && M->IsVisible() && M->bRenderInMainPass && !M->ComponentHasTag(TEXT("KKPreviewOutline")) && M->Bounds.SphereRadius > KINDA_SMALL_NUMBER)
-					Out += M->Bounds.GetBox();
+				{
+					const UKKAffineProceduralMeshComponent* Affine = Cast<UKKAffineProceduralMeshComponent>(M);
+					Out += Affine ? Affine->CurrentWorldBounds() : M->Bounds.GetBox();
+				}
 		}
+		// Nothing drawn (still loading, an invisible body): its bones.
+		TArray<TPair<FVector, FVector>> Segments;
+		if (!Out.IsValid && SkeletonSegments(Preview, Segments)) for (const TPair<FVector, FVector>& S : Segments) { Out += S.Key; Out += S.Value; }
 	}
 	else if (const AKKPreviewActor* Preview = SceneActor->PreviewOf(Id))
 	{
@@ -196,7 +201,9 @@ void UOKStudioGame::FocusSelection(bool bFace)
 		const float HalfX = Document->FreeView.bOrtho ? Document->FreeView.OrthoWidth * 0.5f : Distance * TanX;
 		const float HalfY = Document->FreeView.bOrtho ? HalfX / Aspect : Distance * TanY;
 		Focus = Target - M.GetScaledAxis(EAxis::Y) * float(Off.X) * HalfX - M.GetScaledAxis(EAxis::Z) * float(Off.Y) * HalfY;
+		FramedFocus = Focus; FramedDistance = Distance; FramedYaw = Yaw; FramedPitch = Pitch;
 	};
+	bFramedFace = bFace;
 	const FOKSceneObject* One = Selection.Num() == 1 ? Document->Find(Selection[0]) : nullptr;
 	FTransform Head;
 	const AKKPreviewActor* Shown = One && SceneActor ? SceneActor->PreviewOf(One->Id) : nullptr;
@@ -230,6 +237,21 @@ void UOKStudioGame::FocusSelection(bool bFace)
 	// Back into the scene's own frame (the orbit focus is in world space, the scene actor sits at the origin).
 	Frame(All.GetCenter(), All.GetExtent().ComponentMax(FVector(5.f)));
 	Document->ActiveCamera = -1;
+}
+
+bool UOKStudioGame::ViewStillFramed() const
+{
+	return Document->ActiveCamera < 0 && !Selection.IsEmpty() && FramedDistance > 0.f && Focus.Equals(FramedFocus, 0.01) && FMath::IsNearlyEqual(Distance, FramedDistance, 0.01f)
+		&& FMath::IsNearlyEqual(Yaw, FramedYaw, 0.01f) && FMath::IsNearlyEqual(Pitch, FramedPitch, 0.01f);
+}
+
+void UOKStudioGame::FrameFirstCharacter(int32 Id)
+{
+	// The initial view shows 156 cm at the character's distance: head and feet were cut. Its bounds come only once the
+	// card has built, so this is a standing person's size, not FocusSelection.
+	if (Document->ActiveCamera >= 0 || Distance != InitialDistance || !Focus.Equals(InitialFocus)) return;
+	Focus = Document->WorldTransform(Id).GetLocation() + FVector(0.f, 0.f, 82.f);
+	Distance = 480.f;
 }
 
 void UOKStudioGame::ViewPreset(int32 Preset)

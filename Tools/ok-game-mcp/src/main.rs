@@ -1,7 +1,9 @@
-//! ok-game-mcp: plays StreetSocial like a player through the game's development control channel (MCP over stdio).
-//! The game must run with -StreetSocialControl (game_launch does that). Everything goes through the paths a player
+//! ok-game-mcp: drives the game through its control channels (MCP over stdio), open in every mode without any switch.
+//! game_* play StreetSocial like a player, studio_* OK Studio, ui_* whatever is on screen in any mode, reader_call the card
+//! reader, pair_call the 1-on-1 scene; game_instances lists what runs. Everything goes through the paths a player
 //! uses: walking, keys, the UI's buttons, saying things to her, waiting with the clock running. Profiling: game_exec runs
 //! engine console commands, game_trace_start/stop record an Unreal Insights trace. Docs/STREET_SOCIAL_GAME_MCP.md.
+mod control;
 mod game;
 mod studio;
 
@@ -16,6 +18,7 @@ use std::time::{Duration, Instant};
 fn tools() -> Value {
     let mut all = street_tools();
     all.as_array_mut().expect("tool list").extend(studio::tools());
+    all.as_array_mut().expect("tool list").extend(control::tools());
     all
 }
 
@@ -142,6 +145,9 @@ fn end_talk(game: &Game) -> Result<()> {
 fn run(game: &Game, name: &str, a: &Value) -> Result<Value> {
     if name.starts_with("studio_") {
         return studio::run(&studio::Studio::locate(&game.root), name, a);
+    }
+    if matches!(name, "game_instances" | "game_select" | "reader_call" | "pair_call") || name.starts_with("ui_") {
+        return control::run(&game.root, name, a);
     }
     Ok(match name {
         "game_launch" => {
@@ -392,7 +398,7 @@ impl ServerHandler for App {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("ok-game", "0.1.0"))
-            .with_instructions("StreetSocial through its control channel. game_launch if game_state says the channel is not up. Keys act only while the clock runs (game_key does it). Talk: walk to her (game_goto girl), game_key E, then game_talk. Profiling: game_exec, game_trace_start/stop. OK Studio (SceneEditor): the studio_* tools on its own port (OK_STUDIO_PORT, default 47890); studio_launch when studio_state says it is not running; studio_state lists the objects and their ids.")
+            .with_instructions("Every mode of the game keeps its control channels open: game_instances lists the running games; ui_* act on any mode, reader_call on the card reader, pair_call on the 1-on-1 scene, studio_* on OK Studio, game_* on the street. StreetSocial through its control channel. game_launch if game_state says the channel is not up. Keys act only while the clock runs (game_key does it). Talk: walk to her (game_goto girl), game_key E, then game_talk. Profiling: game_exec, game_trace_start/stop. OK Studio (SceneEditor): the studio_* tools on its own port (OK_STUDIO_PORT, default 47890); studio_launch when studio_state says it is not running; studio_state lists the objects and their ids.")
     }
 }
 

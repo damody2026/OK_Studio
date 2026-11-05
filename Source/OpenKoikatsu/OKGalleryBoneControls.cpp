@@ -93,6 +93,7 @@ void UOKCharacterController::BuildBoneControls(){
   ShapeBox->AddChild(Row);BoneSliders.Add(Slider);Row->SetVisibility(ESlateVisibility::Collapsed);
  }
  BuildPregnancyControls();
+ BuildStyleControls();
  BoneCategoryCombo->SetSelectedIndex(0);BoneCategoryCombo->OnSelectionChanged.AddDynamic(this,&UOKCharacterController::OnBoneCategoryChanged);
 }
 void UOKCharacterController::OnBoneAxesChanged(bool Value){OnBoneCategoryChanged(FString(),ESelectInfo::Direct);}
@@ -110,6 +111,7 @@ void UOKCharacterController::OnBoneCategoryChanged(FString Value,ESelectInfo::Ty
   Slider->ModRow->SetVisibility(Show?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
  }
  if(PregnancyBox)PregnancyBox->SetVisibility(Category==TEXT("腹部形變")?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
+ if(StyleBox)StyleBox->SetVisibility(Category==TEXT("角色風格")?ESlateVisibility::Visible:ESlateVisibility::Collapsed);
  SyncBoneSliders();
 }
 void UOKCharacterController::SyncBoneSliders(){

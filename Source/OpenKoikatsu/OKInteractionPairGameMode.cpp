@@ -31,8 +31,7 @@
 #include "Components/SkinnedMeshComponent.h"
 #include "Camera/CameraActor.h"
 #include "Components/StaticMeshComponent.h"
-#include "HttpServerModule.h"
-#include "IHttpRouter.h"
+#include "OKControl.h"
 #include "HttpServerRequest.h"
 #include "HttpServerResponse.h"
 #include "GenericPlatform/GenericPlatformHttp.h"
@@ -123,10 +122,10 @@ void AOKInteractionPairGameMode::StartInteraction()
 		}
 		GetWorldTimerManager().SetTimer(StartTimer, this, &AOKInteractionPairGameMode::TickPairAudit, 0.5f, true);
 	}
-	if (FCString::Strifind(FCommandLine::Get(), TEXT("-PairControl")))
 	{
-		int32 Port = 47871;
+		int32 Port = 0;
 		FParse::Value(FCommandLine::Get(), TEXT("PairControl="), Port);
+		bControl = FCString::Strifind(FCommandLine::Get(), TEXT("-PairControl")) != nullptr;
 		StartControl(Port);
 	}
 	if (FParse::Param(FCommandLine::Get(), TEXT("DumpMotionCatalogue")))
@@ -430,15 +429,7 @@ void AOKInteractionPairGameMode::EnableHeadLook()
 
 void AOKInteractionPairGameMode::EndPlay(const EEndPlayReason::Type Reason)
 {
-	if (ControlRouter)
-	{
-		for (const FHttpRouteHandle& Handle : ControlRoutes)
-		{
-			ControlRouter->UnbindRoute(Handle);
-		}
-	}
-	ControlRoutes.Reset();
-	ControlRouter.Reset();
+	OKControl::Unbind(TEXT("pair"));
 	Super::EndPlay(Reason);
 }
 
@@ -476,13 +467,12 @@ FString AOKInteractionPairGameMode::MeasurementLines(double Since) const
 
 void AOKInteractionPairGameMode::StartControl(int32 Port)
 {
-	ControlRouter = FHttpServerModule::Get().GetHttpRouter(Port, /*bFailOnBindFailure*/ true);
-	if (!ControlRouter)
+	Port = OKControl::Listen(TEXT("pair"), 11, Port);
+	if (!Port)
 	{
-		UE_LOG(LogOKInteractionPair, Error, TEXT("PairControl: cannot listen on port %d"), Port);
+		UE_LOG(LogOKInteractionPair, Error, TEXT("PairControl: no port"));
 		return;
 	}
-	bControl = true;
 	TWeakObjectPtr<AOKInteractionPairGameMode> Weak(this);
 	auto Reply = [](const FHttpResultCallback& Done, const FString& Text)
 	{
@@ -494,8 +484,8 @@ void AOKInteractionPairGameMode::StartControl(int32 Port)
 		const FString* Value = Request.QueryParams.Find(Key);
 		return Value ? FGenericPlatformHttp::UrlDecode(*Value) : FString();
 	};
-	ControlRoutes.Add(ControlRouter->BindRoute(FHttpPath(TEXT("/exec")), EHttpServerRequestVerbs::VERB_GET,
-		FHttpRequestHandler::CreateLambda([Weak, Reply, Param](const FHttpServerRequest& Request, const FHttpResultCallback& Done)
+	OKControl::Bind(TEXT("pair"), TEXT("/exec"), EHttpServerRequestVerbs::VERB_GET,
+		[Weak, Reply, Param](const FHttpServerRequest& Request, const FHttpResultCallback& Done)
 		{
 			AOKInteractionPairGameMode* Self = Weak.Get();
 			if (!Self) return Reply(Done, TEXT("no game\n"));
@@ -512,9 +502,9 @@ void AOKInteractionPairGameMode::StartControl(int32 Port)
 				Text += FString::Printf(TEXT("%s %s %s\n"), bOk ? TEXT("ok") : TEXT("??"), *Command, *FString(Output).TrimStartAndEnd());
 			}
 			return Reply(Done, Text.IsEmpty() ? FString(TEXT("nothing to run\n")) : Text);
-		})));
-	ControlRoutes.Add(ControlRouter->BindRoute(FHttpPath(TEXT("/reset")), EHttpServerRequestVerbs::VERB_GET,
-		FHttpRequestHandler::CreateLambda([Weak, Reply](const FHttpServerRequest&, const FHttpResultCallback& Done)
+		});
+	OKControl::Bind(TEXT("pair"), TEXT("/reset"), EHttpServerRequestVerbs::VERB_GET,
+		[Weak, Reply](const FHttpServerRequest&, const FHttpResultCallback& Done)
 		{
 			AOKInteractionPairGameMode* Self = Weak.Get();
 			if (!Self) return Reply(Done, TEXT("no game\n"));
@@ -526,18 +516,18 @@ void AOKInteractionPairGameMode::StartControl(int32 Port)
 			}
 			Self->MeasureSince = FPlatformTime::Seconds();
 			return Reply(Done, TEXT("reset\n"));
-		})));
-	ControlRoutes.Add(ControlRouter->BindRoute(FHttpPath(TEXT("/stats")), EHttpServerRequestVerbs::VERB_GET,
-		FHttpRequestHandler::CreateLambda([Weak, Reply](const FHttpServerRequest&, const FHttpResultCallback& Done)
+		});
+	OKControl::Bind(TEXT("pair"), TEXT("/stats"), EHttpServerRequestVerbs::VERB_GET,
+		[Weak, Reply](const FHttpServerRequest&, const FHttpResultCallback& Done)
 		{
 			AOKInteractionPairGameMode* Self = Weak.Get();
 			if (!Self) return Reply(Done, TEXT("no game\n"));
 			const FString Lines = Self->MeasurementLines(Self->MeasureSince);
 			UE_LOG(LogOKInteractionPair, Display, TEXT("PairControl stats %s"), *Lines.Replace(TEXT("\n"), TEXT(" || ")));
 			return Reply(Done, Lines);
-		})));
-	ControlRoutes.Add(ControlRouter->BindRoute(FHttpPath(TEXT("/pose")), EHttpServerRequestVerbs::VERB_GET,
-		FHttpRequestHandler::CreateLambda([Weak, Reply, Param](const FHttpServerRequest& Request, const FHttpResultCallback& Done)
+		});
+	OKControl::Bind(TEXT("pair"), TEXT("/pose"), EHttpServerRequestVerbs::VERB_GET,
+		[Weak, Reply, Param](const FHttpServerRequest& Request, const FHttpResultCallback& Done)
 		{
 			AOKInteractionPairGameMode* Self = Weak.Get();
 			if (!Self) return Reply(Done, TEXT("no game\n"));
@@ -545,6 +535,7 @@ void AOKInteractionPairGameMode::StartControl(int32 Port)
 			// measuring until /stats.
 			Self->PairAuditFilter = Param(Request, TEXT("filter"));
 			Self->PairAuditKeys.Reset();
+			Self->bControl = true;
 			Self->PairAuditIndex = 1;
 			Self->PairAuditLast = 1;
 			Self->PairAuditPhase = 0;
@@ -556,8 +547,7 @@ void AOKInteractionPairGameMode::StartControl(int32 Port)
 				Self->GetWorldTimerManager().SetTimer(Self->StartTimer, Self, &AOKInteractionPairGameMode::TickPairAudit, 0.5f, true);
 			}
 			return Reply(Done, FString::Printf(TEXT("switching to the first pose containing '%s'\n"), *Self->PairAuditFilter));
-		})));
-	FHttpServerModule::Get().StartAllListeners();
+		});
 	UE_LOG(LogOKInteractionPair, Display, TEXT("PairControl listening on http://127.0.0.1:%d (/exec /reset /stats /pose)"), Port);
 }
 

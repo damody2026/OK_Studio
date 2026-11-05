@@ -16,7 +16,7 @@ Tools/lua/lua.exe Tools/character_mcp/build.lua --test
 
 ## 啟動
 
-啟動人物編輯器時加入 `-CharacterMCP`，載入角色的 3D 模型。例如：
+信箱在所有模式常開（`Docs/GAME_CONTROL_CHANNELS.md`），不需要參數；用 `CardReaderDevelopment.cmd` 開讀卡並載入角色的 3D 模型即可。手動啟動例如：
 
 ```powershell
 & E:/PhysX/UE5.8/Engine/Binaries/Win64/UnrealEditor.exe C:/portable/OpenKoikatsu/OpenKoikatsu.uproject /Engine/Maps/Entry -game -windowed -CharacterMCP

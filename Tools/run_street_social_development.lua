@@ -496,8 +496,10 @@ local function main()
     game[#game + 1] = "-tracefile=" .. path.join(output, "trace.utrace"); game[#game + 1] = "-statnamedevents"
   end
   if o.selftest then for _, a in ipairs({ "-StreetSocialSelfTest", "-unattended", "-RenderOffscreen" }) do game[#game + 1] = a end end
-  -- Development control channel (http://127.0.0.1:<port>: state, say, click, key, navigate, screenshot); never on by default.
-  if o.control then game[#game + 1] = "-StreetSocialControl"; game[#game + 1] = "-StreetSocialControlPort=" .. control_port end
+  -- The control channel (http://127.0.0.1:<port>: state, say, click, key, navigate, screenshot) is always open: the game takes
+  -- port_base + 10 or the next free one (Saved/OKControl/<pid>.json). -Control: the driver's behaviour on that exact port.
+  if o.control then game[#game + 1] = "-StreetSocialControl" end
+  if o.control or sandbox then game[#game + 1] = "-StreetSocialControlPort=" .. control_port end
   -- A sandbox or a controlled run never writes the player's H settings: it starts from a copy and keeps its own.
   local settings_dir = sandbox or (o.control and path.join(root, "Saved/StreetSocial/ControlSettings"))
   if settings_dir then

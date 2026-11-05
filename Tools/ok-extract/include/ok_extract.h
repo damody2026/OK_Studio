@@ -499,6 +499,8 @@ int32_t ok_set_eye_look_unlimited(int32_t enabled,float most);
 int32_t ok_editor_decode_mods(const uint8_t* data,int32_t len,uint8_t* out,int32_t cap);
 int32_t ok_editor_encode_mods(const uint8_t* data,int32_t len,const char* json,uint8_t* out,int32_t cap);
 int32_t ok_editor_apply_mods(OkSession* session,const char* json,int32_t coordinate);
+/* A style's bone modifiers on top of the card's (JSON list of bones; empty gives the card's back), from the next shape or pose on. */
+int32_t ok_set_style_bones(OkSession* session,const char* json);
 /* ok_editor_apply_mods, then the card's sliders (null/0 = the session's), building the shape once when possible. */
 int32_t ok_editor_apply_mods_shape(OkSession* session,const char* json,int32_t coordinate,const float* body,int32_t n_body,const float* face,int32_t n_face);
 
@@ -521,6 +523,8 @@ typedef struct OkAnimPlayer OkAnimPlayer;
 int32_t ok_okanim_last_error(char* out, int32_t cap);
 int32_t ok_okanim_from_clip(OkSession* s, const char* key, float fps, uint8_t* out, int32_t cap);
 int32_t ok_okanim_from_vmd(const OkSession* s, const char* vmd_path, const char* params_json, uint8_t* out, int32_t cap);
+/* A camera VMD's keys as a JSON array (time, world_pos, rot, fov...). Null out/cap0 queries the size. */
+int32_t ok_mmdd_camera_from_vmd(const char* vmd_path, uint8_t* out, int32_t cap);
 int32_t ok_okanim_session_rest(OkSession* s, uint8_t* out, int32_t cap);
 int32_t ok_okanim_quality(const uint8_t* bytes, int32_t len, const char* header, uint8_t* out, int32_t cap);
 int32_t ok_okanim_set_posture(int32_t on);

@@ -226,6 +226,84 @@ bool OKStudioMapAmbient(int32 Map, FLinearColor& OutSHAr, FLinearColor& OutSHAg,
 	return true;
 }
 
+bool OKStudioMapTimeAmbient(int32 Map, int32 SunType, FLinearColor& OutSky)
+{
+	const TSharedPtr<FJsonObject> Catalog = LoadCatalog();
+	const TArray<TSharedPtr<FJsonValue>>* Maps = nullptr;
+	if (!Catalog.IsValid() || !Catalog->TryGetArrayField(TEXT("maps"), Maps)) return false;
+	for (const TSharedPtr<FJsonValue>& V : *Maps)
+	{
+		const TSharedPtr<FJsonObject> M = V->AsObject();
+		const TArray<TSharedPtr<FJsonValue>>* Ambient = nullptr;
+		if (!M.IsValid() || int32(M->GetNumberField(TEXT("map"))) != Map || !M->TryGetArrayField(TEXT("ambient"), Ambient)) continue;
+		const TArray<TSharedPtr<FJsonValue>>& Types = M->GetArrayField(TEXT("sun_types"));
+		for (int32 I = 0; I < Types.Num() && I < Ambient->Num(); ++I)
+		{
+			if (int32(Types[I]->AsNumber()) != SunType) continue;
+			const TArray<TSharedPtr<FJsonValue>>& C = (*Ambient)[I]->AsArray();
+			if (C.Num() < 3) return false;
+			OutSky = FLinearColor(ToLinear(C[0]->AsNumber()), ToLinear(C[1]->AsNumber()), ToLinear(C[2]->AsNumber()), 1.f);
+			return true;
+		}
+	}
+	return false;
+}
+
+bool OKStudioMapTimeTrilight(int32 Map, int32 SunType, FLinearColor& OutSHAr, FLinearColor& OutSHAg, FLinearColor& OutSHAb)
+{
+	const TSharedPtr<FJsonObject> Catalog = LoadCatalog();
+	const TArray<TSharedPtr<FJsonValue>>* Maps = nullptr;
+	if (!Catalog.IsValid() || !Catalog->TryGetArrayField(TEXT("maps"), Maps)) return false;
+	for (const TSharedPtr<FJsonValue>& V : *Maps)
+	{
+		const TSharedPtr<FJsonObject> M = V->AsObject();
+		const TArray<TSharedPtr<FJsonValue>>* Sky = nullptr;
+		const TArray<TSharedPtr<FJsonValue>>* Equator = nullptr;
+		const TArray<TSharedPtr<FJsonValue>>* Ground = nullptr;
+		if (!M.IsValid() || int32(M->GetNumberField(TEXT("map"))) != Map || !M->TryGetArrayField(TEXT("ambient"), Sky)
+			|| !M->TryGetArrayField(TEXT("ambient_equator"), Equator) || !M->TryGetArrayField(TEXT("ambient_ground"), Ground)) continue;
+		const TArray<TSharedPtr<FJsonValue>>& Types = M->GetArrayField(TEXT("sun_types"));
+		for (int32 I = 0; I < Types.Num() && I < Sky->Num() && I < Equator->Num() && I < Ground->Num(); ++I)
+		{
+			if (int32(Types[I]->AsNumber()) != SunType) continue;
+			auto Colour = [I](const TArray<TSharedPtr<FJsonValue>>* List)
+			{
+				const TArray<TSharedPtr<FJsonValue>>& C = (*List)[I]->AsArray();
+				return FLinearColor(ToLinear(C[0]->AsNumber()), ToLinear(C[1]->AsNumber()), ToLinear(C[2]->AsNumber()), 0.f);
+			};
+			const FLinearColor Top = Colour(Sky), Middle = Colour(Equator), Bottom = Colour(Ground);
+			// Sky above, ground below, equator between, linear in the height y: the integrals of OKStudioSkyAmbient.
+			const FLinearColor Constant = (Top + Middle * 2.f + Bottom) * .25f, Up = (Top - Bottom) * (1.f / 3.f);
+			OutSHAr = FLinearColor(0.f, Up.R, 0.f, Constant.R);
+			OutSHAg = FLinearColor(0.f, Up.G, 0.f, Constant.G);
+			OutSHAb = FLinearColor(0.f, Up.B, 0.f, Constant.B);
+			return true;
+		}
+	}
+	return false;
+}
+
+FLinearColor OKStudioSkyLight(int32 No)
+{
+	FLinearColor Light = FLinearColor::Black;
+	const TSharedPtr<FJsonObject> Pattern = FindPattern(No);
+	if (!Pattern.IsValid()) return Light;
+	const TSharedPtr<FJsonObject> Colors = Pattern->GetObjectField(TEXT("colors"));
+	const TSharedPtr<FJsonObject> Floats = Pattern->GetObjectField(TEXT("floats"));
+	TSet<FString> Keywords;
+	for (const TSharedPtr<FJsonValue>& K : Pattern->GetArrayField(TEXT("keywords"))) Keywords.Add(K->AsString());
+	auto Add = [&](const TCHAR* Keyword, const TCHAR* Color, const TCHAR* Intensity)
+	{
+		const TArray<TSharedPtr<FJsonValue>>* C = nullptr;
+		double I = 0.0;
+		if (!Keywords.Contains(Keyword) || !Colors->TryGetArrayField(Color, C) || C->Num() < 3 || !Floats->TryGetNumberField(Intensity, I)) return;
+		Light += FLinearColor(ToLinear((*C)[0]->AsNumber()), ToLinear((*C)[1]->AsNumber()), ToLinear((*C)[2]->AsNumber()), 0.f) * float(I);
+	};
+	Add(TEXT("SUN"), TEXT("_OKSunLightColor"), TEXT("_OKSunLightIntensity"));
+	Add(TEXT("MOON"), TEXT("_OKMoonLightColor"), TEXT("_OKMoonLightIntensity"));
+	return Light;
+}
+
 bool OKStudioSkyAmbient(int32 No, FLinearColor& OutSHAr, FLinearColor& OutSHAg, FLinearColor& OutSHAb)
 {
 	const TSharedPtr<FJsonObject> Pattern = FindPattern(No);
@@ -240,7 +318,7 @@ bool OKStudioSkyAmbient(int32 No, FLinearColor& OutSHAr, FLinearColor& OutSHAg, 
 	};
 	auto Float = [&](const TCHAR* Name, double Default) { double V = Default; if (Floats.IsValid()) Floats->TryGetNumberField(Name, V); return float(V); };
 	const FLinearColor Upper = Color(TEXT("_GradientSkyUpperColor")), Middle = Color(TEXT("_GradientSkyMiddleColor")), Lower = Color(TEXT("_GradientSkyLowerColor"));
-	const float Mid = Float(TEXT("_GradientFadeMiddlePosition"), 0.5), Begin = Float(TEXT("_GradientFadeBegin"), -0.1), End = Float(TEXT("_GradientFadeEnd"), 1.0);
+	const float Mid = Float(TEXT("_GradientFadeMiddlePosition"), 0.5), Begin = Float(TEXT("_GradientFadeBegin"), -0.1), End = FMath::Min(Float(TEXT("_GradientFadeEnd"), 1.0), 1.f);
 	// The gradient of the sky program (Funly 3D Standard, GRADIENT_BACKGROUND): the height y of the view direction
 	// smooth-stepped from the lower to the middle colour below MidY = Begin + (End - Begin) Middle, then to the upper.
 	const float MidY = Begin + (End - Begin) * Mid;
@@ -387,6 +465,8 @@ UMaterialInterface* OKStudioSkyMaterial(int32 No, FString& OutError)
 			V = FLinearColor((*C)[0]->AsNumber(), (*C)[1]->AsNumber(), (*C)[2]->AsNumber(), (*C)[3]->AsNumber());
 		else if (Floats.IsValid() && Floats->TryGetNumberField(Name, F)) V = FLinearColor(float(F), 0, 0, 0);
 		else bKnown = false;
+		// The sky controller clamps the gradient's end to the top of the sky (native material: 1 where the profile says 1.5).
+		if (Name == TEXT("_GradientFadeEnd")) V.R = FMath::Min(V.R, 1.f);
 		if (!bKnown) UE_LOG(LogTemp, Warning, TEXT("OK studio sky %d: no value for %s (0)"), No, *Name);
 		// Studio renders in linear space: colour properties and [Gamma] values are linearised on upload.
 		if (U.Type == 0 || U.bGamma) { V.R = ToLinear(V.R); V.G = ToLinear(V.G); V.B = ToLinear(V.B); }
@@ -420,6 +500,14 @@ UMaterialInterface* OKStudioSkyMaterial(int32 No, FString& OutError)
 		Input(FString::Printf(TEXT("Texture%d"), T.Index), Add(Object));
 		// Each texture with its own sampler state (filter and wrap of its Unity import settings).
 		Pixel.ReplaceInline(*FString::Printf(TEXT("Sampler%d,"), T.Sampler), *FString::Printf(TEXT("Texture%dSampler,"), T.Index));
+		// Star data is a table, read by the direction's latitude: its rows are stored south to north and are not an image to flip.
+		if (FString(T.Name).EndsWith(TEXT("DataTex")))
+			for (int32 At = Pixel.Find(FString::Printf(TEXT("Texture%d.SampleLevel("), T.Index)); At != INDEX_NONE;
+				At = Pixel.Find(FString::Printf(TEXT("Texture%d.SampleLevel("), T.Index), ESearchCase::CaseSensitive, ESearchDir::FromStart, At + 1))
+			{
+				const int32 Flip = Pixel.Find(TEXT("UVFlip"), ESearchCase::CaseSensitive, ESearchDir::FromStart, At);
+				if (Flip != INDEX_NONE) Pixel = Pixel.Left(Flip) + TEXT("0.0000") + Pixel.Mid(Flip + 6);
+			}
 	}
 	Hlsl += Program->Vertex;
 	Hlsl += Program->Glue;

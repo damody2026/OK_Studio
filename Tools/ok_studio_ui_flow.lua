@@ -1,7 +1,7 @@
 -- Runs a scene workflow on OK Studio through the control channel, one step per line of a steps file, the way a person
 -- would: buttons, list rows and fields are operated through their own handlers ("click", "type").
--- Needs a studio started with -Control (Tools/run_scene_editor.lua -- -Control -StudioControlPort=47890).
---   Tools/lua/lua.exe Tools/ok_studio_ui_flow.lua <steps file> [--port 47890]
+-- Needs a running studio (Tools/run_scene_editor.lua).
+--   Tools/lua/lua.exe Tools/ok_studio_ui_flow.lua <steps file> [--port N]
 -- Steps (Tools/ok_studio_flows/*.txt):
 --   t:text[#i]   click the button / list row whose text is text (i-th match)      c:text[#i]  ... whose text contains text
 --   g:tag[#i]    ... by widget tag (picture buttons)                               p:text[#i]  icon button whose tooltip contains text
@@ -13,7 +13,7 @@
 -- Prints each step and its reply; exits 1 when a step failed.
 local ok = require "ok"
 local json, path = ok.json, ok.path
-local steps, port = nil, "47890"
+local steps, port = nil, tostring(require("ok_instance").ports().studio_control)
 local i = 1
 while i <= #arg do
   if arg[i] == "--port" then port = arg[i + 1]; i = i + 2 else steps = arg[i]; i = i + 1 end

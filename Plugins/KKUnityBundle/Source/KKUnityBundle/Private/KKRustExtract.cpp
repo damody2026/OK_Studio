@@ -1563,6 +1563,7 @@ bool FOkSession::ApplyEditorModsAndShape(const FString& Json,int32 Coordinate,co
  const int32 Result=ok_editor_apply_mods_shape(Handle,TCHAR_TO_UTF8(*Json),Coordinate,Body.GetData(),Body.Num(),Face.GetData(),Face.Num());
  if(GeometryChanged)*GeometryChanged=Result==2;return Result>=0;
 }
+bool FOkSession::SetStyleBones(const FString& Json){return Handle&&ok_set_style_bones(Handle,TCHAR_TO_UTF8(*Json))==0;}
 bool FOkSession::ApplyEditorMods(const FString& Json,int32 Coordinate,bool* GeometryChanged){if(!Handle)return false;const int32 Result=ok_editor_apply_mods(Handle,TCHAR_TO_UTF8(*Json),Coordinate);if(GeometryChanged)*GeometryChanged=Result==2;return Result>=0;}
 
 bool FOkSession::ApplyBodyPhysics(float Softness,float Weight){return Handle&&ok_editor_body_physics(Handle,Softness,Weight)==0;}

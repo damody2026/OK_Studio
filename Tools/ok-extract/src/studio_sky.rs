@@ -166,6 +166,14 @@ pub struct MapSky {
     pub map: i32,
     /// The times of day its SunLightInfo has (Map.RangeTimeZone picks the scene's when present, else the first).
     pub sun_types: Vec<i32>,
+    /// Each of those times' ambient sky colour (SunLightInfo.Info.ambientSkyColor, as stored).
+    #[serde(default)]
+    pub ambient: Vec<[f32; 3]>,
+    /// The same times' ambientEquatorColor and ambientGroundColor: a Trilight map's ambient changes with them (U176).
+    #[serde(default)]
+    pub ambient_equator: Vec<[f32; 3]>,
+    #[serde(default)]
+    pub ambient_ground: Vec<[f32; 3]>,
     pub skies: Vec<MapSkyEntry>,
 }
 
@@ -397,7 +405,13 @@ const PROFILE_NUMBERS: &[(&str, &str)] = &[
     ("CloudHeightKey", "_CloudHeight"), ("CloudFadePositionKey", "_CloudFadePosition"), ("CloudFadeAmountKey", "_CloudFadeAmount"),
     ("CloudTextureTiling", "_CloudTextureTiling"), ("FogDensityKey", "_HorizonFogDensity"), ("FogLengthKey", "_HorizonFogLength"),
     ("SunSizeKey", "_SunRadius"), ("SunEdgeFeatheringKey", "_SunEdgeFade"), ("MoonSizeKey", "_MoonRadius"),
-    ("MoonEdgeFeatheringKey", "_MoonEdgeFade"),
+    ("MoonEdgeFeatheringKey", "_MoonEdgeFade"), ("MoonColorIntensityKey", "_MoonHDRBoost"),
+    ("Star1SizeKey", "_StarLayer1MaxRadius"), ("Star2SizeKey", "_StarLayer2MaxRadius"), ("Star3SizeKey", "_StarLayer3MaxRadius"),
+    ("Star1TwinkleAmountKey", "_StarLayer1TwinkleAmount"), ("Star2TwinkleAmountKey", "_StarLayer2TwinkleAmount"), ("Star3TwinkleAmountKey", "_StarLayer3TwinkleAmount"),
+    ("Star1TwinkleSpeedKey", "_StarLayer1TwinkleSpeed"), ("Star2TwinkleSpeedKey", "_StarLayer2TwinkleSpeed"), ("Star3TwinkleSpeedKey", "_StarLayer3TwinkleSpeed"),
+    ("Star1RotationSpeed", "_StarLayer1RotationSpeed"), ("Star2RotationSpeed", "_StarLayer2RotationSpeed"), ("Star3RotationSpeed", "_StarLayer3RotationSpeed"),
+    ("Star1EdgeFeathering", "_StarLayer1EdgeFade"), ("Star2EdgeFeathering", "_StarLayer2EdgeFade"), ("Star3EdgeFeathering", "_StarLayer3EdgeFade"),
+    ("Star1ColorIntensityKey", "_StarLayer1HDRBoost"), ("Star2ColorIntensityKey", "_StarLayer2HDRBoost"), ("Star3ColorIntensityKey", "_StarLayer3HDRBoost"),
 ];
 /// Profile textures for the material slots its saved material leaves empty.
 const PROFILE_TEXTURES: &[(&str, &str)] = &[("CloudNoiseTextureKey", "_CloudNoiseTexture"), ("MoonTextureKey", "_MoonTex"), ("SunTextureKey", "_SunTex")];
@@ -409,6 +423,13 @@ fn apply_profile(values: &ProfileValues, out: &mut SkyPattern) {
     }
     for (key, prop) in PROFILE_NUMBERS {
         if let (Some(v), Some(f)) = (values.numbers.get(*key), out.floats.get_mut(*prop)) { *f = *v; }
+    }
+    // The controller's own sun and moon Lights (not the material's): Lux Water takes them (U173).
+    for (key, prop) in [("SunLightColorKey", "_OKSunLightColor"), ("MoonLightColorKey", "_OKMoonLightColor")] {
+        if let Some(v) = values.colors.get(key) { out.colors.insert(prop.into(), *v); }
+    }
+    for (key, prop) in [("SunLightIntensityKey", "_OKSunLightIntensity"), ("MoonLightIntensityKey", "_OKMoonLightIntensity")] {
+        if let Some(v) = values.numbers.get(key) { out.floats.insert(prop.into(), *v); }
     }
     // The fades' ends: start plus length.
     for (start, length, end) in [("HorizonTransitionStartKey", "HorizonTransitionLengthKey", "_GradientFadeEnd"), ("StarTransitionStartKey", "StarTransitionLengthKey", "_StarFadeEnd")] {
@@ -513,6 +534,8 @@ fn map_skies(game: &Path, lib: &Path, patterns: &mut Vec<SkyPattern>) -> Result<
         // The map bundle's own MonoBehaviours with _infos: MapSkyInfo has a _controller, SunLightInfo not.
         let mut skies: Vec<Vec<(Option<(i64, i64)>, Vec<String>, Vec<String>)>> = Vec::new();
         let mut suns: Vec<Vec<i32>> = Vec::new();
+        let mut ambients: Vec<Vec<[f32; 3]>> = Vec::new();
+        let (mut equators, mut grounds): (Vec<Vec<[f32; 3]>>, Vec<Vec<[f32; 3]>>) = (Vec::new(), Vec::new());
         src.bundles[0].with_serialized(|files| for f in files {
             let names: BTreeMap<i64, String> = f.objects_of_type(1).into_iter()
                 .filter_map(|i| UnityObject::from_serialized_file(f, &i).ok().and_then(|o| o.name()).map(|n| (i.path_id, n))).collect();
@@ -530,6 +553,14 @@ fn map_skies(game: &Path, lib: &Path, patterns: &mut Vec<SkyPattern>) -> Result<
                     }).collect());
                 } else {
                     suns.push(infos.iter().filter_map(|i| obj(i, "type").and_then(|t| t.as_i64())).map(|t| t as i32).collect());
+                    let colours = |name: &str| -> Vec<[f32; 3]> { infos.iter().filter(|i| obj(i, "type").is_some()).filter_map(|i| obj(i, name))
+                        .map(|c| [f32_of(c, "r", 1.), f32_of(c, "g", 1.), f32_of(c, "b", 1.)]).collect() };
+                    ambients.push(infos.iter().filter(|i| obj(i, "type").is_some()).map(|i| match obj(i, "ambientSkyColor") {
+                        Some(c) => [f32_of(c, "r", 1.), f32_of(c, "g", 1.), f32_of(c, "b", 1.)],
+                        None => [1., 1., 1.],
+                    }).collect());
+                    equators.push(colours("ambientEquatorColor"));
+                    grounds.push(colours("ambientGroundColor"));
                 }
             }
         });
@@ -556,7 +587,8 @@ fn map_skies(game: &Path, lib: &Path, patterns: &mut Vec<SkyPattern>) -> Result<
             };
             entries.push(MapSkyEntry { pattern: pattern_no, actives, inactives });
         }
-        out.push(MapSky { map: map.no, sun_types: suns.into_iter().next().unwrap_or_default(), skies: entries });
+        out.push(MapSky { map: map.no, sun_types: suns.into_iter().next().unwrap_or_default(), ambient: ambients.into_iter().next().unwrap_or_default(),
+            ambient_equator: equators.into_iter().next().unwrap_or_default(), ambient_ground: grounds.into_iter().next().unwrap_or_default(), skies: entries });
     }
     Ok(out)
 }

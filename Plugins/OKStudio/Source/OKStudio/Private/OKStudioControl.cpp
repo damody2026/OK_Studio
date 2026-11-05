@@ -1,11 +1,12 @@
-﻿// OK Studio control channel (-Control): POST http://127.0.0.1:<StudioControlPort, 47890>/studio/<op> with a JSON body;
+﻿// OK Studio control channel, open while a studio runs: POST http://127.0.0.1:<port>/studio/<op> with a JSON body (port:
+// -StudioControlPort, else port_base + 30, Saved/OKControl/<pid>.json);
 // the reply is {"ok": true, ...} or {"ok": false, "error": ...}. Tools/ok-game-mcp's studio_* tools speak it
 // (Docs/OK_STUDIO_MCP.md). Edits wait while the user drags, a scene loads, the timeline plays or exports ("busy").
 #include "SOKStudioPanel.h"
+#include "OKStudioCharacterStyle.h"
 #include "OKStudioGameInternal.h"
-#include "HttpServerModule.h"
+#include "OKControl.h"
 #include "HttpServerResponse.h"
-#include "IHttpRouter.h"
 #include "OKStudioSky.h"
 #include "OKStudioPost.h"
 #include "Camera/CameraComponent.h"
@@ -23,9 +24,6 @@
 
 namespace
 {
-	TSharedPtr<IHttpRouter> GRouter;
-	TArray<FHttpRouteHandle> GRoutes;
-
 	TSharedRef<FJsonObject> Result(bool bOk, const FString& Error = FString())
 	{
 		TSharedRef<FJsonObject> O = MakeShared<FJsonObject>();
@@ -153,6 +151,8 @@ namespace
 				J->SetBoolField(TEXT("voice_play"), X.Character.bVoicePlay);
 				J->SetNumberField(TEXT("voice_repeat"), X.Character.VoiceRepeat);
 				J->SetNumberField(TEXT("voice_playing"), G.VoicePlayingIndex(X.Id));
+				J->SetNumberField(TEXT("voice_clips"), X.Character.VoiceClips.Num());
+				J->SetNumberField(TEXT("voice_mouth"), G.VoiceMouth(X.Id, G.TimelineTime));
 			}
 			if (X.Kind == EOKSceneObjectKind::Light)
 			{
@@ -180,6 +180,7 @@ namespace
 		O->SetObjectField(TEXT("timeline"), T);
 		TSharedRef<FJsonObject> E = MakeShared<FJsonObject>();
 		E->SetBoolField(TEXT("running"), G.IsExporting());
+		O->SetNumberField(TEXT("voice_sounding"), G.VoiceClipsSounding());
 		E->SetNumberField(TEXT("frame"), G.ExportFrameIndex());
 		E->SetNumberField(TEXT("frames"), G.ExportFrameCount());
 		E->SetStringField(TEXT("folder"), G.ExportFolder());
@@ -248,6 +249,7 @@ namespace
 		O->SetNumberField(TEXT("fk_bones"), K.Fk.Num());
 		O->SetBoolField(TEXT("character_state"), K.bCharacterState);
 		if (K.AnimTime >= 0.f) O->SetNumberField(TEXT("anim_time"), K.AnimTime);
+		if (K.AnimNo >= 0) { O->SetStringField(TEXT("anim"), FString::Printf(TEXT("%d/%d/%d/%d"), K.AnimKind, K.AnimGroup, K.AnimCategory, K.AnimNo)); O->SetNumberField(TEXT("anim_speed"), K.AnimSpeed); O->SetNumberField(TEXT("anim_blend"), K.AnimBlend); }
 		if (K.Color.A >= 0.f) O->SetStringField(TEXT("color"), TEXT("#") + K.Color.ToFColor(false).ToHex());
 		O->SetNumberField(TEXT("exposure"), K.Exposure);
 		O->SetNumberField(TEXT("focal_distance"), K.FocalDistance);
@@ -398,6 +400,22 @@ namespace
 			O->SetStringField(TEXT("note"), TEXT("euler: Unity local degrees (as KK Studio FK); ik position: cm in the character's space (+Y ahead, +Z up); world: cm. A character with rotation [0,0,0] faces +Y (the front view looks at its face); yaw -90 faces +X, yaw 90 faces -X, yaw 180 faces away."));
 			return O;
 		}
+		if (Op == TEXT("style_tuning"))
+		{
+			FOKStudioStyleTuning& T = OKStudioStyleTuning();
+			const TPair<const TCHAR*, float*> Fields[] = { { TEXT("heads"), &T.Heads }, { TEXT("head_size"), &T.HeadSize }, { TEXT("hips"), &T.Hips }, { TEXT("shoulders"), &T.Shoulders },
+				{ TEXT("upper"), &T.Upper }, { TEXT("waist"), &T.Waist }, { TEXT("leg_length"), &T.LegLength }, { TEXT("upper_arm"), &T.UpperArm }, { TEXT("forearm"), &T.Forearm }, { TEXT("thigh"), &T.Thigh }, { TEXT("calf"), &T.Calf }, { TEXT("bust"), &T.Bust }, { TEXT("hem"), &T.Hem }, { TEXT("breast"), &T.Breast }, { TEXT("arm_growth"), &T.ArmGrowth }, { TEXT("real_jaw"), &T.RealJaw }, { TEXT("real_face"), &T.RealFace }, { TEXT("real_chin"), &T.RealChin }, { TEXT("chibi_chin"), &T.ChibiChin }, { TEXT("chibi_jaw"), &T.ChibiJaw } };
+			TSharedRef<FJsonObject> O = Result(true);
+			bool bChanged = false;
+			for (const TPair<const TCHAR*, float*>& F : Fields)
+			{
+				double V;
+				if (J->TryGetNumberField(F.Key, V)) { *F.Value = float(V); bChanged = true; }
+				O->SetNumberField(F.Key, *F.Value);
+			}
+			if (bChanged) { ++T.Revision; Doc->NotifyChanged(); }
+			return O;
+		}
 		if (Op == TEXT("bounds"))
 		{
 			TArray<int32> Ids = ReadIds(J, TEXT("ids"));
@@ -422,6 +440,23 @@ namespace
 			}
 			TSharedRef<FJsonObject> O = Result(true);
 			O->SetArrayField(TEXT("objects"), Out);
+			// The boxes the map's parts take, as finding a free spot sees them.
+			bool bMap = false;
+			J->TryGetBoolField(TEXT("map"), bMap);
+			if (bMap && G.SceneActor)
+			{
+				TArray<FBox> Parts;
+				G.SceneActor->MapPartBounds(Parts);
+				TArray<TSharedPtr<FJsonValue>> MapOut;
+				for (const FBox& B : Parts)
+				{
+					TSharedRef<FJsonObject> M = MakeShared<FJsonObject>();
+					M->SetArrayField(TEXT("min"), Vec(B.Min));
+					M->SetArrayField(TEXT("max"), Vec(B.Max));
+					MapOut.Add(MakeShared<FJsonValueObject>(M));
+				}
+				O->SetArrayField(TEXT("map"), MapOut);
+			}
 			return O;
 		}
 		if (Op == TEXT("catalog"))
@@ -544,6 +579,7 @@ namespace
 				FOKSceneTrack* T = Doc->TrackOf(Id);
 				if (!T) return Result(false, TEXT("no keys yet"));
 				T->bSmoothPath = bSmooth;
+				J->TryGetBoolField(TEXT("orbit"), T->bOrbitPath);
 				Doc->NotifyChanged();
 			}
 			else if (Action != TEXT("list")) return Result(false, TEXT("action: list, set, remove, move, ease, clear or smooth"));
@@ -552,7 +588,7 @@ namespace
 			TSharedRef<FJsonObject> O = Result(true);
 			O->SetArrayField(TEXT("keys"), Keys);
 			O->SetNumberField(TEXT("duration"), Doc->Duration);
-			if (const FOKSceneTrack* T = Doc->TrackOf(Id)) O->SetBoolField(TEXT("smooth"), T->bSmoothPath);
+			if (const FOKSceneTrack* T = Doc->TrackOf(Id)) { O->SetBoolField(TEXT("smooth"), T->bSmoothPath); O->SetBoolField(TEXT("orbit"), T->bOrbitPath); }
 			return O;
 		}
 		if (Op == TEXT("duplicate"))
@@ -722,6 +758,13 @@ namespace
 			FScreenshotRequest::RequestScreenshot(File, true, false);
 			TSharedRef<FJsonObject> O = Result(true);
 			O->SetStringField(TEXT("file"), File);
+			// The picture is the window at its actual pixels, which are also studio_mouse's coordinates (U172).
+			if (const TSharedPtr<SWindow> Window = GEngine && GEngine->GameViewport ? GEngine->GameViewport->GetWindow() : nullptr)
+			{
+				O->SetNumberField(TEXT("width"), Window->GetClientSizeInScreen().X);
+				O->SetNumberField(TEXT("height"), Window->GetClientSizeInScreen().Y);
+				O->SetNumberField(TEXT("dpi_scale"), Window->GetDPIScaleFactor());
+			}
 			return O;
 		}
 		// Leaves the studio (as its close button: the mode that started it comes back, its UI restored). The channel
@@ -843,7 +886,10 @@ namespace
 			const bool bWasHandlingInactive = App.GetHandleDeviceInputWhenApplicationNotActive();
 			App.SetHandleDeviceInputWhenApplicationNotActive(true);
 			ON_SCOPE_EXIT { App.SetHandleDeviceInputWhenApplicationNotActive(bWasHandlingInactive); };
-			const FModifierKeysState Mods;
+			// "ctrl", "shift": held during the press (U198: a tree's multi-select), as in "key".
+			bool bCtrl = false, bShift = false;
+			J->TryGetBoolField(TEXT("ctrl"), bCtrl); J->TryGetBoolField(TEXT("shift"), bShift);
+			const FModifierKeysState Mods(bShift, false, bCtrl, false, false, false, false, false, false);
 			const uint32 User = App.GetUserIndexForMouse();
 			// The real mouse's pointer index (0 is a touch's), so these presses and the real mouse's moves are one pointer.
 			const uint32 Pointer = FSlateApplication::CursorPointerIndex;
@@ -1177,7 +1223,9 @@ namespace
 			// The timeline op itself may stop playback; buttons and fields work during playback as they do for the user
 			// (the stop button among them), and a capture only looks.
 			static const TSet<FString> WhilePlaying = { TEXT("timeline"), TEXT("click"), TEXT("type"), TEXT("capture") };
-			if (!Busy.IsEmpty() && !(Busy == TEXT("playing") && WhilePlaying.Contains(Op)))
+			// U210: the mouse works during an export as it does for the user (closing the window, 取消).
+			static const TSet<FString> WhileExporting = { TEXT("click"), TEXT("mouse") };
+			if (!Busy.IsEmpty() && !(Busy == TEXT("playing") && WhilePlaying.Contains(Op)) && !(Busy == TEXT("exporting") && WhileExporting.Contains(Op)))
 			{
 				TSharedRef<FJsonObject> O = Result(false, TEXT("busy: ") + Busy);
 				O->SetStringField(TEXT("busy"), Busy);
@@ -1491,32 +1539,22 @@ namespace OKStudioControl
 {
 	void Start()
 	{
-		if (!FParse::Param(FCommandLine::Get(), TEXT("Control")) || GRouter.IsValid()) return;
-		int32 Port = 47890;
+		int32 Port = 0;
 		FParse::Value(FCommandLine::Get(), TEXT("StudioControlPort="), Port);
-		GRouter = FHttpServerModule::Get().GetHttpRouter(Port, true);
-		if (!GRouter.IsValid()) { UE_LOG(LogTemp, Warning, TEXT("OK studio control: could not open port %d"), Port); return; }
+		if (!OKControl::Listen(TEXT("studio"), 30, Port)) return;
 		static const TCHAR* Ops[] = { TEXT("state"), TEXT("inspect"), TEXT("catalog_search"), TEXT("spawn"), TEXT("transform"), TEXT("reparent"), TEXT("delete"), TEXT("select"),
 			TEXT("pose"), TEXT("camera"), TEXT("capture"), TEXT("save"), TEXT("load"), TEXT("undo"), TEXT("redo"), TEXT("cmd"), TEXT("timeline"),
-			TEXT("patch"), TEXT("scene"), TEXT("bones"), TEXT("bounds"), TEXT("catalog"), TEXT("keys"), TEXT("duplicate"), TEXT("export"), TEXT("scenes"), TEXT("report"), TEXT("ui_shot"), TEXT("ui_fit"), TEXT("click"), TEXT("mouse"), TEXT("key"), TEXT("combo"), TEXT("type"), TEXT("leave"), TEXT("exec"), TEXT("parts") };
+			TEXT("patch"), TEXT("style_tuning"), TEXT("scene"), TEXT("bones"), TEXT("bounds"), TEXT("catalog"), TEXT("keys"), TEXT("duplicate"), TEXT("export"), TEXT("scenes"), TEXT("report"), TEXT("ui_shot"), TEXT("ui_fit"), TEXT("click"), TEXT("mouse"), TEXT("key"), TEXT("combo"), TEXT("type"), TEXT("leave"), TEXT("exec"), TEXT("parts") };
 		for (const TCHAR* Op : Ops)
 		{
 			const FString Name = Op;
-			GRoutes.Add(GRouter->BindRoute(FHttpPath(TEXT("/studio/") + Name), EHttpServerRequestVerbs::VERB_POST | EHttpServerRequestVerbs::VERB_GET,
-				FHttpRequestHandler::CreateLambda([Name](const FHttpServerRequest& Req, const FHttpResultCallback& Done)
-				{
-					Reply(Done, Run(Name, Body(Req)));
-					return true;
-				})));
+			OKControl::Bind(TEXT("studio"), TEXT("/studio/") + Name, EHttpServerRequestVerbs::VERB_POST | EHttpServerRequestVerbs::VERB_GET,
+				[Name](const FHttpServerRequest& Req, const FHttpResultCallback& Done) { Reply(Done, Run(Name, Body(Req))); });
 		}
-		FHttpServerModule::Get().StartAllListeners();
-		UE_LOG(LogTemp, Display, TEXT("OK studio control: listening on 127.0.0.1:%d"), Port);
 	}
 
 	void Stop()
 	{
-		if (GRouter.IsValid()) for (const FHttpRouteHandle& Route : GRoutes) GRouter->UnbindRoute(Route);
-		GRoutes.Reset();
-		GRouter.Reset();
+		OKControl::Unbind(TEXT("studio"));
 	}
 }

@@ -21,11 +21,7 @@
 #include "OKStreetSocialDialogueContext.h"
 #include "OKStreetSocialFreeTalk.h"
 #include "OKStreetSocialControl.h"
-#include "HttpServerModule.h"
-#include "IHttpRouter.h"
-#include "HttpPath.h"
-#include "HttpRouteHandle.h"
-#include "HttpRequestHandler.h"
+#include "OKControl.h"
 #include "HttpResultCallback.h"
 #include "HttpServerRequest.h"
 #include "HttpServerResponse.h"
@@ -2440,7 +2436,7 @@ void AOKStreetSocialScene::ApplyMouseMode(bool Focused){
  const bool Foreground=S.SelfTest||S.RetargetSelfTest||(GEngine->GameViewport->Viewport&&GEngine->GameViewport->Viewport->IsForegroundWindow());
  // Played through the control channel (-Control: an AI or test driver sends the input), the mouse is never taken: the
  // person at the machine keeps using it while the game runs in front.
- const bool Show=S.MouseUI||!Focused||!Foreground||OKVirtualInput().Active;
+ const bool Show=S.MouseUI||!Focused||!Foreground||OKVirtualInput().Driven;
  PC->bShowMouseCursor=Show;PC->bEnableClickEvents=Show;PC->bEnableMouseOverEvents=Show;
  auto* Viewport=GEngine->GameViewport.Get();
  if(Show){FInputModeGameAndUI Input;Input.SetHideCursorDuringCapture(false);Input.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);PC->SetInputMode(Input);Viewport->SetMouseCaptureMode(EMouseCaptureMode::NoCapture);Viewport->SetMouseLockMode(EMouseLockMode::DoNotLock);}

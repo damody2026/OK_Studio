@@ -2100,6 +2100,11 @@ impl ParsedBundle {
     }
     /// A map's SunLightInfo: times of day, what each shows, the sun (recorded by `studio-nodes`).
     pub fn prefab_sun_light(&self,prefab:&str)->PrefabSunLight {self.memo_prefab("prefab_sun_light",prefab,prefab,||self.prefab_sun_light_unity(prefab))}
+    /// Each Lux Water renderer's material by node (recorded by `studio-nodes`): a mesh shared by several renderers has one
+    /// entry in `meshes_for_maindata`, with one renderer's material (the lighthouse's four seas, one per time of day).
+    pub fn prefab_water_materials(&self,prefab:&str)->Vec<(i32,MeshMaterial)> {self.memo_prefab("prefab_water_materials",prefab,prefab,||self.prefab_node_materials_unity(prefab,|mats|mats.first().filter(|mat|mat.shader.starts_with("Lux Water/"))))}
+    /// The same for single-material Standard renderers (map 50's grass and sand are one Plane mesh).
+    pub fn prefab_standard_materials(&self,prefab:&str)->Vec<(i32,MeshMaterial)> {self.memo_prefab("prefab_standard_materials",prefab,prefab,||self.prefab_node_materials_unity(prefab,|mats|if mats.len()==1 {mats.first().filter(|mat|mat.shader.starts_with("Standard"))} else {None}))}
     /// Baked reflection probes of a prefab and the scene's skybox reflection (recorded by `studio-nodes`).
     pub fn prefab_reflection_probes(&self,prefab:&str)->PrefabReflectionProbes {self.memo_prefab("prefab_reflection_probes",prefab,prefab,||self.prefab_reflection_probes_unity(prefab))}
     /// Converter-only read, independent of model/session memo formats.
@@ -2195,6 +2200,25 @@ impl ParsedBundle {
                             shadows: p.get("m_Shadows").and_then(|s| uv_obj(s, "m_Type")).map(uv_i32).unwrap_or(0), active: on });
                     }
                     out
+                });
+            }
+            Vec::new()
+        })
+    }
+    /// The nodes of a prefab's Lights with a cookie (recorded by `studio-nodes`; a library without the record: none).
+    pub fn prefab_light_cookies(&self, prefab: &str) -> Vec<i32> {
+        self.memo_prefab("prefab_light_cookies", prefab, prefab, || {
+            for (gi, graph) in self.transform_graphs().iter().enumerate() {
+                let (h, go_node) = crate::pose::prefab_hierarchy_in(graph, prefab);
+                if h.nodes.is_empty() { continue; }
+                return self.with_serialized(|sers| {
+                    let Some(ser) = sers.get(gi) else { return Vec::new(); };
+                    ser.objects_of_type(108).into_iter().filter_map(|info| {
+                        let obj = ser.scene_object(info).ok()?;
+                        let p = obj.class.properties();
+                        let node = p.get("m_GameObject").and_then(uv_pptr).and_then(|go| go_node.get(&go)).copied()?;
+                        p.get("m_Cookie").and_then(uv_pptr).filter(|id| *id != 0).map(|_| node as i32)
+                    }).collect()
                 });
             }
             Vec::new()
@@ -2977,6 +3001,24 @@ impl ParsedBundle {
     }
     /// A Studio map's SunLightInfo (the MonoBehaviour with `_infos` and `_targetLight`, on the map root): the sun Light
     /// and each time of day's shown GameObjects and sun. Nodes are `prefab_hierarchy` numbering (inactive ones too).
+    fn prefab_node_materials_unity(&self, prefab:&str, pick:impl Fn(&[MeshMaterial])->Option<&MeshMaterial>)->Vec<(i32,MeshMaterial)> {
+        let maps=self.resolved_material_maps();
+        let graphs=self.transform_graphs();
+        for (gi,graph) in graphs.iter().enumerate() {
+            let (h,go_node)=crate::pose::prefab_hierarchy_in(graph,prefab);
+            if h.nodes.is_empty() {continue;}
+            return self.with_serialized(|sers| {
+                let Some(ser)=sers.get(gi) else {return Vec::new();};
+                ser.objects_of_type(23).into_iter().filter_map(|info| {
+                    let obj=ser.scene_object(info).ok()?;
+                    let node=*go_node.get(&obj.class.properties().get("m_GameObject").and_then(uv_pptr)?)?;
+                    Some((node,pick(maps.1.get(&info.path_id)?)?.clone()))
+                }).collect()
+            });
+        }
+        Vec::new()
+    }
+
     fn prefab_sun_light_unity(&self, prefab:&str)->PrefabSunLight {
         let graphs=self.transform_graphs();
         for (gi,graph) in graphs.iter().enumerate() {
@@ -4927,7 +4969,7 @@ impl ParsedBundle {
     pub(crate) fn standard_material_texture_dependencies(&self) -> std::collections::BTreeSet<String> {
         let maps=self.resolved_material_maps();
         maps.1.values().flatten().filter(|m|m.shader.starts_with("Standard"))
-            .flat_map(|m|["_MainTex","_BumpMap","_MetallicGlossMap","_EmissionMap"].into_iter().filter_map(|slot|m.slot(slot).map(str::to_owned)))
+            .flat_map(|m|["_MainTex","_BumpMap","_MetallicGlossMap","_EmissionMap","_DetailAlbedoMap"].into_iter().filter_map(|slot|m.slot(slot).map(str::to_owned)))
             .collect()
     }
 

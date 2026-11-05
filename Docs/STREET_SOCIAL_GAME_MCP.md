@@ -1,3 +1,5 @@
+> 控制通道現在所有模式常開，不帶 `-Control` 也連得上；`-Control` 只再加上 AI 驅動的行為（滑鼠不鎖、跳過開始選單）。見 [控制通道](GAME_CONTROL_CHANNELS.md)。
+
 # 街區遊戲 MCP（ok-game-mcp）
 
 讓 AI 像玩家一樣操作 StreetSocial：走路、按鍵、按畫面上的按鈕、跟女主說話、等時間過去、截圖，另外能下引擎主控台指令與錄 Unreal Insights trace（效能分析）。

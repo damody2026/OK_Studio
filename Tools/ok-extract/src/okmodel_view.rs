@@ -96,6 +96,9 @@ impl ItemMaterialEdits {
 /// A lightmapped renderer instance (`lightmaps` entry of its hierarchy node): its lightmap UVs (Unity uv2, else uv,
 /// times the renderer's scale-offset) go to `uv4` (free for Standard-family parts) and its material names the
 /// lightmap (`_OKLightmapIndex`).
+/// What a Standard part's own material brings besides `_MainTex`.
+pub(crate) const STANDARD_NODE_SLOTS: &[&str] = &["_BumpMap", "_MetallicGlossMap", "_EmissionMap"];
+
 fn bake_lightmap(m: &mut ExtractedMesh, lightmaps: &crate::unity::PrefabLightmaps, node: i32) {
     let Some(&(_, index, st)) = lightmaps.renderers.iter().find(|(n, _, _)| *n == node) else { return; };
     if !m.uv4.is_empty() || lightmaps.textures.get(index as usize).is_none_or(|t| t.is_empty()) { return; }
@@ -447,13 +450,14 @@ impl ModelView {
         let h = self.hierarchy(prefab);
         let sun = scene_times(self.parsed.prefab_sun_light(prefab));
         let modes = self.parsed.prefab_light_modes(prefab);
+        let cookies = self.parsed.prefab_light_cookies(prefab);
         h.lights.iter().filter(|l| l.enabled && l.node != sun.light_node).filter_map(|l| {
             let mode = modes.iter().find(|m| m.node == l.node)?;
             if !mode.active || mode.lightmapping == 2 || l.intensity <= 0. { return None; }
             let (pos, rot, _) = h.node_world(l.node as usize)?;
             Some(serde_json::json!({"node": l.node, "name": h.nodes[l.node as usize].name, "kind": l.kind, "pos": pos, "rot": rot,
                 "color": l.color, "intensity": l.intensity, "range": l.range, "spot_angle": l.spot_angle,
-                "culling_mask": mode.culling_mask, "shadows": mode.shadows, "lightmapping": mode.lightmapping, "times": sun_mask(&sun, &h, l.node)}))
+                "culling_mask": mode.culling_mask, "shadows": mode.shadows, "lightmapping": mode.lightmapping, "cookie": cookies.contains(&l.node), "times": sun_mask(&sun, &h, l.node)}))
         }).collect()
     }
     pub fn fk_bones(&self, prefab: &str) -> Vec<String> {
@@ -493,11 +497,13 @@ impl ModelView {
         // Shaders the renderer draws with their own graph (AKKPreviewActor) take their named textures the same way.
         const STANDARD: &[&str] = &["_MainTex", "_BumpMap", "_ParallaxMap", "_MetallicGlossMap", "_EmissionMap"];
         const STYLIZED_WATER: &[&str] = &["_Normals", "_Shadermap"];
+        const LUX_WATER: &[&str] = &["_BumpMap"];
         const GLASSES: &[&str] = &["_GlassRamp"];
         for mesh in &mut meshes {
             let Some(mat) = mesh.mat.as_ref() else { continue };
             let properties = if mat.shader == "Shader Forge/main_StandardMDK_studio" || mat.shader.starts_with("Standard") { STANDARD }
                 else if mat.shader == "StylizedWater/Desktop" { STYLIZED_WATER }
+                else if mat.shader.starts_with("Lux Water/") { LUX_WATER }
                 else if matches!(mat.shader.to_ascii_lowercase().as_str(), "koikano/main_clothes_item_glasses" | "shader forge/toon_glasses_lod0") { GLASSES }
                 else { continue };
             for &property in properties {
@@ -608,6 +614,30 @@ impl ModelView {
             }
             if let Some(n) = usize::try_from(node).ok().and_then(|i| h.nodes.get(i)) { if !m.renderer_names.contains(&n.name) { m.renderer_names.push(n.name.clone()); } edits.apply_renderer(m, &n.name); }
         };
+        // One mesh drawn by several renderers keeps one renderer's material: Lux Water takes its node's (U169: the lighthouse's
+        // four seas are one mesh, each time of day with its own material; the sea was the night's all day).
+        let node_materials: BTreeMap<i32, crate::unity::MeshMaterial> = if meshes.iter().any(|m| m.mat.as_ref().is_some_and(|mat| mat.shader.starts_with("Lux Water/"))) {
+            self.parsed.prefab_water_materials(prefab).into_iter().collect()
+        } else { BTreeMap::new() };
+        // The same for Standard (U173): map 50's Planes are one mesh, grass and sand.
+        let standard_materials: BTreeMap<i32, crate::unity::MeshMaterial> = if meshes.iter().any(|m| m.mat.as_ref().is_some_and(|mat| mat.shader.starts_with("Standard"))) {
+            self.parsed.prefab_standard_materials(prefab).into_iter().collect()
+        } else { BTreeMap::new() };
+        let node_material = |m: &mut ExtractedMesh, node: i32| {
+            if let Some(own) = standard_materials.get(&node).filter(|own| m.mat.as_ref().is_some_and(|mat| mat.shader.starts_with("Standard") && mat.name != own.name)) {
+                m.texture_name = own.slot("_MainTex").unwrap_or_default().to_owned();
+                m.texture_png = own.slot("_MainTex").and_then(|name| self.parsed.texture_png_named(name));
+                for slot in STANDARD_NODE_SLOTS {
+                    m.shader_extra_textures.remove(*slot);
+                    if let Some(png) = own.slot(slot).and_then(|name| self.parsed.texture_png_named(name)) { m.shader_extra_textures.insert((*slot).into(), png); }
+                }
+                m.mat = Some(own.clone());
+                return;
+            }
+            let Some(own) = node_materials.get(&node) else { return };
+            if let Some(png) = own.slot("_BumpMap").and_then(|name| self.parsed.texture_png_named(name)) { m.shader_extra_textures.insert("_BumpMap".into(), png); }
+            m.mat = Some(own.clone());
+        };
         let mut instances: Vec<ExtractedMesh> = Vec::new();
         for m in meshes.iter_mut().filter(|m| !m.uses_skin_renderer()) {
             let nodes: Vec<(i32, crate::pose::Mat4)> = h.mesh_nodes.iter().filter(|(id, _)| *id == m.path_id)
@@ -615,6 +645,7 @@ impl ModelView {
             for (k, (node, w)) in nodes.iter().enumerate().skip(1) {
                 let mut extra = m.clone();
                 extra.name = format!("{}#{}", m.name, k + 1);
+                node_material(&mut extra, *node);
                 place(&mut extra, w);
                 bake_lightmap(&mut extra, &lightmaps, *node);
                 mark_render_texture(&mut extra, &render_textures, *node, &h, &worlds);
@@ -623,7 +654,7 @@ impl ModelView {
                 mark_renderer(&mut extra, *node);
                 instances.push(extra);
             }
-            if let Some((node, _)) = nodes.first() { bake_lightmap(m, &lightmaps, *node); mark_render_texture(m, &render_textures, *node, &h, &worlds); apply_animated_materials(m, &animated, *node); mark_sun_visible(m, &sun, &h, *node); mark_renderer(m, *node); }
+            if let Some((node, _)) = nodes.first() { node_material(m, *node); bake_lightmap(m, &lightmaps, *node); mark_render_texture(m, &render_textures, *node, &h, &worlds); apply_animated_materials(m, &animated, *node); mark_sun_visible(m, &sun, &h, *node); mark_renderer(m, *node); }
             let Some(w) = nodes.first().map(|(_, w)| *w).or(m.prefab_local) else { continue; };
             place(m, &w);
         }
@@ -631,6 +662,21 @@ impl ModelView {
             if let Some((_, node)) = h.mesh_nodes.iter().find(|(id, _)| *id == m.path_id) { mark_renderer(m, *node); }
         }
         meshes.extend(instances);
+        // Koikano/main_item_map (the lighthouse's rocks) has no program here: without light they kept one colour at every
+        // time. Standard's Lambert takes the map's sun, lamps and ambient.
+        for mat in meshes.iter_mut().filter_map(|m| m.mat.as_mut()).filter(|mat| mat.shader.eq_ignore_ascii_case("Koikano/main_item_map")) {
+            mat.shader = "Standard".into();
+            mat.floats.insert("_Glossiness".into(), 0.0);
+            mat.floats.insert("_Metallic".into(), 0.0);
+        }
+        // Standard's detail albedo (keyword _DETAIL_MULX2): map 50's sand has no _MainTex, only this.
+        // An empty _MainTex is white in Unity; the renderer draws a part without a texture with its default material.
+        for m in meshes.iter_mut() {
+            if m.texture_png.is_none() && m.mat.as_ref().is_some_and(|mat| mat.shader.starts_with("Standard")) { m.texture_png = crate::unity::solid_png([1.; 4], 1, 1); }
+            let detail = m.mat.as_ref().filter(|mat| mat.shader.starts_with("Standard") && mat.keywords.iter().any(|k| k == "_DETAIL_MULX2"))
+                .and_then(|mat| mat.slot("_DetailAlbedoMap")).and_then(|name| self.parsed.texture_png_named(name));
+            if let Some(png) = detail { m.shader_extra_textures.insert("_DetailAlbedoMap".into(), png); }
+        }
         // A LODGroup draws one level at a time; the parts of every level drawn at once stacked the lighthouse's plants
         // three deep (U149). Levels above 0 go where the mesh's LOD0 is in the prefab (Unity's `<name>_LOD<n>` naming).
         let lod = |name: &str| -> Option<(String, u32)> {
