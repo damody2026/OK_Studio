@@ -316,14 +316,14 @@ bool OKPrepareRuntimeSharedMaterialBinding(const FKKRuntimeMaterialPart& P,const
  }
  FKKRuntimeMaterialBinding B;B.Scalars.Add(TEXT("__OK_RuntimeMaterialSchema"),1);B.Scalars.Add(TEXT("__OK_RuntimeMaterialFamily"),float(Recipe)+(Outline?128:0));if(Outline)B.Scalars.Add(TEXT("__OK_OutlineApprox"),OKRuntimeOutlineApprox());
  // Cards lower-case MaterialEditor's property names, and writing one takes the real property's place (`_color` for
- // `_Color`), as OK cards have it saved. Exact spelling first, as Material::color does; the shader default only without either.
- TMap<FString,FString> OtherCase;for(const auto& Value:Values){FString& Spelled=OtherCase.FindOrAdd(Value.Key);if(Spelled.IsEmpty()||Value.Key.Compare(Spelled,ESearchCase::CaseSensitive)<0)Spelled=Value.Key;}
+ // `_Color` on her tongue), as OK cards have it saved. Only `_Color`: the other lower-case keys are old shaders' leftovers
+ // the game never reads (`_shadowcolor` drew hair's shadow near black).
  const bool bKoikanoTongue=P.Name.Equals(TEXT("o_tang"),ESearchCase::IgnoreCase)&&(Recipe==EKKRuntimeMaterialRecipe::KoikanoClothesItem||Recipe==EKKRuntimeMaterialRecipe::KoikanoClothesItemAlpha||Recipe==EKKRuntimeMaterialRecipe::KoikanoClothesItemTranslucent||Recipe==EKKRuntimeMaterialRecipe::KoikanoClothesItemAlphaTranslucent);
  for(const auto& U:Layout->Uniforms){
   if(U.Rows&&U.Name==TEXT("unity_ProbeVolumeWorldToObject")){if(U.Rows!=4)return Fail(TEXT("Probe volume matrix shape unsupported"));for(int32 Row=0;Row<4;++Row){const FString Name=U.Name+FString::Printf(TEXT("_Row%d"),Row);FLinearColor V(0,0,0,0);(&V.R)[Row]=1;if(const auto* Override=Scene.Uniforms.Find(*Name))V=*Override;for(int32 C=0;C<4;++C)if(!FMath::IsFinite((&V.R)[C]))return Fail(TEXT("Probe volume matrix nonfinite"));B.Vectors.Add(*Name,V);B.Scalars.Add(*(Name+TEXT("__A")),V.A);}continue;}
   if(Automatic(U))continue;FLinearColor V=U.Default;
   if(const auto* Authored=Values.Find(U.Name))V=Convert(*Authored,U.Gamma);
-  else if(const FString* Spelled=OtherCase.Find(U.Name))V=Convert(Values[*Spelled],U.Gamma);
+  else if(const auto* Lower=U.Name==TEXT("_Color")?Values.Find(TEXT("_color")):nullptr)V=Convert(*Lower,U.Gamma);
   else if(bKoikanoTongue&&U.Name==TEXT("_Color"))V=Convert(FLinearColor(.94f,.7551464f,.7179444f,1.f),U.Gamma); // the game's own tongue pink (user 2026-11-05), not the shader's white
   else if(U.Name.EndsWith(TEXT("_ST"))){const TCHAR* Axes[]={TEXT("x"),TEXT("y"),TEXT("z"),TEXT("w")};for(int32 C=0;C<4;++C)if(const auto* X=Values.Find(U.Name+TEXT("_")+Axes[C]))(&V.R)[C]=X->R;}
   if(U.Name==TEXT("_LightColor0"))V=Scene.Light;
