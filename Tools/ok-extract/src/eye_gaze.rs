@@ -55,6 +55,13 @@ impl EyeDraw {
 mod tests {
     use super::*;
     #[test]
+    fn stretched_goes_each_way_on_its_own() {
+        let st=super::stretched([1.,1.,0.,0.],0.5,2.);
+        assert_eq!(st,[2.,0.5,-0.5,0.25]);
+        assert_eq!(super::stretched([1.,1.,0.,0.],0.,0.),[1.,1.,0.,0.]);
+    }
+
+    #[test]
     fn enlarged_keeps_the_middle_of_the_iris_where_it_is() {
         let st=[1.2,0.8,-0.1,0.13];let big=enlarged(st,1.3);
         let middle=[(0.5-st[2])/st[0],(0.5-st[3])/st[1]];
@@ -168,9 +175,12 @@ mod tests {
 }
 /// A tiling with her pupil drawn `scale` times as large, about the middle of the iris texture: wherever the look puts
 /// the pupil it stays, only less of the texture fills the eye.
-pub(crate) fn enlarged(st:[f32;4],scale:f32)->[f32;4] {
-    if scale<=0.||scale==1. {return st;}
-    [st[0]/scale,st[1]/scale,0.5-(0.5-st[2])/scale,0.5-(0.5-st[3])/scale]
+pub(crate) fn enlarged(st:[f32;4],scale:f32)->[f32;4] {stretched(st,scale,scale)}
+/// `enlarged` with its own scale across and down (0: that way as it is): a narrow, tall pupil is a cat's.
+pub(crate) fn stretched(st:[f32;4],across:f32,down:f32)->[f32;4] {
+    let axis=|tiling:f32,offset:f32,scale:f32| if scale<=0.||scale==1. {(tiling,offset)}else{(tiling/scale,0.5-(0.5-offset)/scale)};
+    let (x,u)=axis(st[0],st[2],across);let (y,v)=axis(st[1],st[3],down);
+    [x,y,u,v]
 }
 impl IrisRuntime {
     pub fn st(&self,h:f32,v:f32)->[f32;4] {

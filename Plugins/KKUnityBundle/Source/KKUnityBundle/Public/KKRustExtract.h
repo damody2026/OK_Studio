@@ -18,6 +18,8 @@ class UTexture;
 /** This iris texture with the highlights painted into it taken out (a card's overlay can hold them; the eye material's own
  *  gate does not reach those). Iris itself when it has none. Made once per texture, on the game thread. */
 KKUNITYBUNDLE_API UTexture* OKIrisWithoutHighlights(UTexture* Iris);
+/** Iris with its hue turned (degrees) and its saturation and value times as much; one image per iris, made again on a change. */
+KKUNITYBUNDLE_API UTexture* OKIrisRecolored(UTexture* Iris,float Hue,float Saturation,float Value);
 /** One clear pixel: an eye layer with nothing on it. */
 KKUNITYBUNDLE_API UTexture* OKClearEyeLayer();
 
@@ -283,6 +285,8 @@ public:
 	bool SetPupilScale(float Scale);
 	/** Her pupils drawn off their place, in iris texture units. */
 	bool SetPupilOffset(float X, float Y);
+	/** Her pupils across and down, on top of their scale. */
+	bool SetPupilStretch(float Across, float Down);
 	int32 EyeLookPatternCount() const;
 	bool StepEyeLook(const FVector& UnityTarget, int32 Pattern, float DeltaSeconds, bool Enabled, float* Rates);
 	bool ApplyAnimTime(float Time);

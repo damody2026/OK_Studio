@@ -599,6 +599,8 @@ int32_t ok_session_set_blush(OkSession* s, float rate);
 int32_t ok_session_set_iris_small(OkSession* s, float rate);
 int32_t ok_session_set_pupil_scale(OkSession* s, float scale);
 int32_t ok_session_set_pupil_offset(OkSession* s, float x, float y);
+int32_t ok_session_set_pupil_stretch(OkSession* s, float across, float down);
+int32_t ok_iris_recolor(uint8_t* pixels, int32_t width, int32_t height, float hue, float saturation, float value);
 int32_t ok_iris_without_highlights(uint8_t* pixels, int32_t width, int32_t height);
 
 #ifdef __cplusplus

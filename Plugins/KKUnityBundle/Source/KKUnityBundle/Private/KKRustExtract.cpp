@@ -1152,6 +1152,11 @@ bool FOkSession::SetPupilOffset(float X, float Y)
 	return Handle && ok_session_set_pupil_offset(Handle, X, Y) == 0;
 }
 
+bool FOkSession::SetPupilStretch(float Across, float Down)
+{
+	return Handle && ok_session_set_pupil_stretch(Handle, Across, Down) == 0;
+}
+
 bool FOkSession::SetPupilScale(float Scale)
 {
 	return Handle && ok_session_set_pupil_scale(Handle, Scale) == 0;

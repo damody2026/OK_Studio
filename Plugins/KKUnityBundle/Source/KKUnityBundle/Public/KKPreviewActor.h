@@ -377,6 +377,11 @@ public:
 	bool SetEyeDull(float PupilScale, bool bHideHighlight);
 	/** Her pupils drawn off their place, in iris texture units (a tremble); 0 is where they belong. */
 	bool SetPupilOffset(float X, float Y);
+	/** Her pupils across and down, on top of SetEyeDull's scale; 1 is as they are. */
+	bool SetPupilStretch(float Across, float Down);
+	/** Her iris's hue turned (degrees), its saturation and value times as much; 0, 1, 1 is as on her card. */
+	bool SetIrisHsv(float Hue, float Saturation, float Value);
+	FVector3f EyeIrisHsv = FVector3f(0.f,1.f,1.f);
 	float EyePupilScale = 1.f;
 	bool bEyeHighlightHidden = false;
 	// Each eye material's own _isHighLight and the alphas of its highlight layers.

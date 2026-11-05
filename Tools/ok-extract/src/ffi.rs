@@ -3014,6 +3014,23 @@ pub unsafe extern "C" fn ok_iris_without_highlights(pixels: *mut u8, width: i32,
     i32::from(crate::texture_bake::paint_out_iris_highlights(std::slice::from_raw_parts_mut(pixels, w * h * 4), w, h))
 }
 
+/// `recolor_iris` on an image of `width` x `height` BGRA pixels.
+#[no_mangle]
+pub unsafe extern "C" fn ok_iris_recolor(pixels: *mut u8, width: i32, height: i32, hue: f32, saturation: f32, value: f32) -> i32 {
+    if pixels.is_null() || width <= 0 || height <= 0 {
+        return 1;
+    }
+    let (w, h) = (width as usize, height as usize);
+    crate::texture_bake::recolor_iris(std::slice::from_raw_parts_mut(pixels, w * h * 4), hue, saturation, value);
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_set_pupil_stretch(s: *mut OkSession, across: f32, down: f32) -> i32 {
+    let Some(session) = sess_ref(s) else { return 1; };
+    if session.set_pupil_stretch(across, down) { 0 } else { 1 }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ok_session_set_pupil_offset(s: *mut OkSession, x: f32, y: f32) -> i32 {
     let Some(session) = sess_ref(s) else { return 1; };

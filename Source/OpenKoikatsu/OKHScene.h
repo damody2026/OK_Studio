@@ -277,6 +277,8 @@ public:
     TWeakObjectPtr<class AKKPreviewActor> MouthClipHim;int32 MouthClipPart=INDEX_NONE;int32 MouthClipVerts=0;bool bMouthAimed=false;FVector MouthAim=FVector::ZeroVector;float MouthTurned=0.f;FVector MouthDbg=FVector::ZeroVector;double DripAt=0,MilkAt=0,NippleSprayAt=0,SquirtAt=0,ClimaxUntil=0,ClimaxLoopFor=0;bool bTrembling=false,bVaginaLogged=false;void Tremble(double Now);bool StreetOnani() const;int32 MilkTurn=0,HerDrips=0,HerMilk=0;int32 HerDripTimes=0,HerMilkTimes=0;double DripBoutAt=-100.,MilkBoutAt=-100.; // drops, and the times she ran (a pause of 3 s starts another; the result shows these)
     void ClearLine();
     void TickEyeDull(float Delta);float EyeDullScale=0.f;bool bEyeDullHidden=false; // her pupils and highlight (a yandere, or worn out)
+    void TickEyeLook(AKKPreviewActor* Girl,float Delta);void RestoreEyeLook();TWeakObjectPtr<AKKPreviewActor> EyeLookActor;float EyeLookWait=0.f; // the panel's pupil shape and colour, her eyelids
+    FVector2f PupilStretchShown=FVector2f(1.f,1.f);FVector3f IrisHsvShown=FVector3f(0.f,1.f,1.f);float EyeFrameShown=0.f;
     float PupilShakeClock=0.f;FVector2f PupilShakeFrom=FVector2f::ZeroVector,PupilShakeTo=FVector2f::ZeroVector,PupilShakeNow=FVector2f::ZeroVector; // her pupils' tremble
     void TickDeepFace(float Delta);void EndDeepFace(class AKKPreviewActor* Girl);float DeepFace=0.f,DeepGazeSet=0.f;bool bDeepFace=false,bDeepManualWas=false,bAheDepth=false; // her eyes and tongue with how deep he is (TickDeepFace)
     // Her line asked for before a climax, a finish or a new pose comes back after it ("don't stop" once he had come):

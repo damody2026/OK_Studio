@@ -1300,6 +1300,8 @@ pub(crate) struct FaceRuntimeState {
     pub pupil_scale: f32,
     /// Where her pupils are drawn off their place, in iris texture units (`set_pupil_offset`).
     pub pupil_offset: [f32; 2],
+    /// Her pupils across and down, on top of `pupil_scale` (`set_pupil_stretch`; 0 as 1).
+    pub pupil_stretch: [f32; 2],
     pub blush_rate: Option<f32>,
 }
 
@@ -1317,12 +1319,13 @@ impl OkSession {
         self.face_runtime.last_eye_gaze = [lh, rh, v];
         let pupil = self.face_runtime.pupil_scale;
         let [pupil_x, pupil_y] = self.face_runtime.pupil_offset;
+        let [across, down] = self.face_runtime.pupil_stretch;
         for part in &mut self.parts {
             if let Some(runtime) = part.iris_runtime.as_ref() {
                 let right_eye = runtime.settings[0] == 1.0;
                 let h = if right_eye { rh } else { lh };
                 let st = look.map_or_else(|| runtime.st_rolled(h, v), |l| runtime.st_look(l[right_eye as usize], l[2]));
-                let mut st = crate::eye_gaze::enlarged(st, pupil);
+                let mut st = crate::eye_gaze::stretched(crate::eye_gaze::enlarged(st, pupil), across, down);
                 st[2] += pupil_x;
                 st[3] += pupil_y;
                 runtime.apply_st(&mut part.uvs, st);
@@ -1341,6 +1344,15 @@ impl OkSession {
             return false;
         }
         self.face_runtime.pupil_offset = [x.clamp(-0.25, 0.25), y.clamp(-0.25, 0.25)];
+        let [lh, rh, v] = self.face_runtime.last_eye_gaze;
+        self.set_eye_gaze_rates(lh, rh, v)
+    }
+
+    pub fn set_pupil_stretch(&mut self, across: f32, down: f32) -> bool {
+        if !across.is_finite() || !down.is_finite() || across <= 0.0 || down <= 0.0 {
+            return false;
+        }
+        self.face_runtime.pupil_stretch = [across.clamp(0.1, 3.0), down.clamp(0.1, 3.0)];
         let [lh, rh, v] = self.face_runtime.last_eye_gaze;
         self.set_eye_gaze_rates(lh, rh, v)
     }

@@ -199,6 +199,20 @@ pub(crate) fn iris_lut_bake_matches_reference(){
 /// not reach them): pure white shapes, or pale ones far above what is around them, small and solid (a white ring about the
 /// pupil, a pale lower iris stay). Each is filled in from its edge; what stuck out of the iris's oval goes. Pixels are four
 /// bytes each, the alpha last, the colours in either order. False when she has none.
+/// BGRA pixels with their hue turned `hue` degrees and their saturation and value times as much; alpha stays.
+pub fn recolor_iris(px:&mut [u8],hue:f32,saturation:f32,value:f32) {
+    for p in px.chunks_exact_mut(4) {
+        let (b,g,r)=(p[0] as f32/255.,p[1] as f32/255.,p[2] as f32/255.);
+        let top=r.max(g).max(b);let span=top-r.min(g).min(b);
+        let h=if span<=0. {0.}else if top==r {(g-b)/span}else if top==g {(b-r)/span+2.}else{(r-g)/span+4.};
+        let h=(h*60.+hue).rem_euclid(360.)/60.;
+        let s=if top>0. {(span/top*saturation).clamp(0.,1.)}else{0.};let v=(top*value).clamp(0.,1.);
+        let c=v*s;let x=c*(1.-(h%2.-1.).abs());let m=v-c;
+        let (r,g,b)=match h as u32 {0=>(c,x,0.),1=>(x,c,0.),2=>(0.,c,x),3=>(0.,x,c),4=>(x,0.,c),_=>(c,0.,x)};
+        for (out,channel) in p.iter_mut().zip([b,g,r]) {*out=((channel+m)*255.).round() as u8;}
+    }
+}
+
 pub fn paint_out_iris_highlights(px:&mut [u8],w:usize,h:usize)->bool {
     let n=w*h;
     if n==0||px.len()<n*4 {return false;}
@@ -273,7 +287,14 @@ pub fn paint_out_iris_highlights(px:&mut [u8],w:usize,h:usize)->bool {
 
 #[cfg(test)]
 mod iris_highlight_tests {
-    use super::paint_out_iris_highlights;
+    use super::{paint_out_iris_highlights,recolor_iris};
+    #[test]
+    fn recolor_turns_hue_and_scales_the_rest_keeping_alpha() {
+        let mut px=[0u8,0,255,77];recolor_iris(&mut px,120.,1.,1.);assert_eq!(px,[0,255,0,77]); // red to green, BGRA
+        let mut px=[0u8,0,255,77];recolor_iris(&mut px,0.,0.,1.);assert_eq!(px,[255,255,255,77]);
+        let mut px=[0u8,0,200,77];recolor_iris(&mut px,0.,1.,0.5);assert_eq!(px,[0,0,100,77]);
+        let plain=[12u8,99,201,5];let mut px=plain;recolor_iris(&mut px,0.,1.,1.);assert_eq!(px,plain);
+    }
     fn iris(n:usize)->Vec<u8> {
         let mut px=vec![0u8;n*n*4];let c=n as f32/2.;
         for y in 0..n {for x in 0..n {let i=(y*n+x)*4;

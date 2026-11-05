@@ -91,29 +91,54 @@ static UTexture2D* CreatePreparedTexture(const TArray<FOKEncodedMip>& Mips,
 }
 
 // The pixels come back from the GPU: a runtime texture keeps none here, on the street nothing else holds them either.
+static bool OKReadIris(UTexture2D* Source,TArray<FColor>& Pixels)
+{
+    FTextureResource* Resource=Source?Source->GetResource():nullptr;
+    if(!Resource)return false;
+    const int32 Width=Source->GetSizeX(),Height=Source->GetSizeY();
+    FlushRenderingCommands();
+    ENQUEUE_RENDER_COMMAND(OKReadIris)([Resource,Width,Height,&Pixels](FRHICommandListImmediate& Commands){
+        if(FRHITexture* Texture=Resource->GetTexture2DRHI())Commands.ReadSurfaceData(Texture,FIntRect(0,0,Width,Height),Pixels,FReadSurfaceDataFlags(RCM_UNorm));});
+    FlushRenderingCommands();
+    UE_LOG(LogTemp,Display,TEXT("Iris read: %s %dx%d format=%d read=%d"),*Source->GetName(),Width,Height,int32(Source->GetPixelFormat()),Pixels.Num());
+    return Pixels.Num()==Width*Height;
+}
+static UTexture* OKIrisLike(UTexture2D* Source,const TArray<FColor>& Pixels)
+{
+    TArray<uint8> BGRA;BGRA.Append(reinterpret_cast<const uint8*>(Pixels.GetData()),Pixels.Num()*sizeof(FColor));
+    const TArray<FOKEncodedMip> Mips=OKBuildEncodedMipChain(BGRA,Source->GetSizeX(),Source->GetSizeY());
+    UTexture2D* Made=CreatePreparedTexture(Mips,nullptr,true);
+    if(Made){Made->SRGB=Source->SRGB;Made->Filter=Source->Filter;Made->AddressX=Source->AddressX;Made->AddressY=Source->AddressY;Made->UpdateResource();}
+    return Made;
+}
+UTexture* OKIrisRecolored(UTexture* Iris,float Hue,float Saturation,float Value)
+{
+    check(IsInGameThread());
+    struct FRecolored{TArray<FColor> Pixels;FVector3f Asked=FVector3f(0.f,1.f,1.f);TStrongObjectPtr<UTexture> Shown;};
+    static TMap<TObjectKey<UTexture>,FRecolored> Made;
+    UTexture2D* Source=Cast<UTexture2D>(Iris);const FVector3f Asked(Hue,Saturation,Value);
+    if(!Source||Asked==FVector3f(0.f,1.f,1.f))return Iris;
+    FRecolored& R=Made.FindOrAdd(Iris);
+    if(R.Pixels.IsEmpty()&&!OKReadIris(Source,R.Pixels)){R.Pixels.Reset();return Iris;}
+    if(R.Shown&&R.Asked==Asked)return R.Shown.Get();
+    TArray<FColor> Pixels=R.Pixels;
+    if(ok_iris_recolor(reinterpret_cast<uint8_t*>(Pixels.GetData()),Source->GetSizeX(),Source->GetSizeY(),Hue,Saturation,Value)!=0)return Iris;
+    UTexture* Shown=OKIrisLike(Source,Pixels);if(!Shown)return Iris;
+    R.Asked=Asked;R.Shown.Reset(Shown);return Shown;
+}
 UTexture* OKIrisWithoutHighlights(UTexture* Iris)
 {
     check(IsInGameThread());
     static TMap<TObjectKey<UTexture>,TStrongObjectPtr<UTexture>> Made;
     if(!Iris)return nullptr;
     if(const auto* Known=Made.Find(Iris))return Known->Get();
-    UTexture2D* Source=Cast<UTexture2D>(Iris);FTextureResource* Resource=Iris->GetResource();
-    if(!Source||!Resource)return Iris;
-    const int32 Width=Source->GetSizeX(),Height=Source->GetSizeY();TArray<FColor> Pixels;
-    FlushRenderingCommands();
-    ENQUEUE_RENDER_COMMAND(OKReadIris)([Resource,Width,Height,&Pixels](FRHICommandListImmediate& Commands){
-        if(FRHITexture* Texture=Resource->GetTexture2DRHI())Commands.ReadSurfaceData(Texture,FIntRect(0,0,Width,Height),Pixels,FReadSurfaceDataFlags(RCM_UNorm));});
-    FlushRenderingCommands();
-    UE_LOG(LogTemp,Display,TEXT("Iris highlights: %s %dx%d format=%d read=%d"),*Iris->GetName(),Width,Height,int32(Source->GetPixelFormat()),Pixels.Num());
-    if(Pixels.Num()!=Width*Height)return Iris;
+    UTexture2D* Source=Cast<UTexture2D>(Iris);TArray<FColor> Pixels;
+    if(!OKReadIris(Source,Pixels))return Iris;
+    const int32 Width=Source->GetSizeX(),Height=Source->GetSizeY();
     UTexture* Result=Iris;
     const bool bPainted=ok_iris_without_highlights(reinterpret_cast<uint8_t*>(Pixels.GetData()),Width,Height)!=0;
     UE_LOG(LogTemp,Display,TEXT("Iris highlights: %s painted out=%d"),*Iris->GetName(),int32(bPainted));
-    if(bPainted){
-        TArray<uint8> BGRA;BGRA.Append(reinterpret_cast<const uint8*>(Pixels.GetData()),Pixels.Num()*sizeof(FColor));
-        const TArray<FOKEncodedMip> Mips=OKBuildEncodedMipChain(BGRA,Width,Height);
-        if(UTexture2D* Clean=CreatePreparedTexture(Mips,nullptr,true)){Clean->SRGB=Source->SRGB;Clean->Filter=Source->Filter;Clean->AddressX=Source->AddressX;Clean->AddressY=Source->AddressY;Clean->UpdateResource();Result=Clean;}
-    }
+    if(bPainted)if(UTexture* Clean=OKIrisLike(Source,Pixels))Result=Clean;
     Made.Add(Iris,TStrongObjectPtr<UTexture>(Result));return Result;
 }
 
