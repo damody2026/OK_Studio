@@ -550,6 +550,35 @@ int32 UOKSceneDocument::MoveKey(int32 Id, int32 Index, float NewTime)
 	return T->Keys.IndexOfByPredicate([&K](const FOKSceneKey& X) { return X.Time == K.Time; });
 }
 
+namespace
+{
+	FString KeyedText(const FTransform& T, float Value, bool bCharacter, const TArray<FOKSceneFkBone>& Fk, int32 Eyebrow, int32 Eyes, int32 Mouth, float MouthOpen,
+		int32 HandLeft, int32 HandRight, const TArray<uint8>& Clothes, float Style, float AnimTime)
+	{
+		const FVector L = T.GetLocation(), S = T.GetScale3D();
+		const FRotator R = T.Rotator();
+		FString Text = FString::Printf(TEXT("%.2f %.2f %.2f %.2f %.2f %.2f %.3f %.3f %.3f %.3f"), L.X, L.Y, L.Z, R.Pitch, R.Yaw, R.Roll, S.X, S.Y, S.Z, Value);
+		if (!bCharacter) return Text;
+		Text += FString::Printf(TEXT(" %d %d %d %.3f %d %d %.3f %.3f"), Eyebrow, Eyes, Mouth, MouthOpen, HandLeft, HandRight, Style, AnimTime);
+		for (uint8 C : Clothes) Text += FString::Printf(TEXT(" c%d"), C);
+		for (const FOKSceneFkBone& B : Fk) Text += FString::Printf(TEXT(" %s %.2f %.2f %.2f"), *B.Bone, B.Euler.X, B.Euler.Y, B.Euler.Z);
+		return Text;
+	}
+}
+
+FString UOKSceneDocument::KeyedState(const FOKSceneObject& O)
+{
+	const FOKSceneCharacter& C = O.Character;
+	return KeyedText(O.Transform, KeyValue(O), O.Kind == EOKSceneObjectKind::Character, C.Fk, C.EyebrowPattern, C.EyesPattern, C.MouthPattern, C.MouthOpen,
+		C.HandLeft, C.HandRight, C.ClothesStates, C.Style, C.Speed == 0.f ? C.Time : -1.f);
+}
+
+FString UOKSceneDocument::KeyedState(const FOKSceneObject& O, const FOKSceneKey& K)
+{
+	return KeyedText(K.Transform, K.Value, O.Kind == EOKSceneObjectKind::Character, K.Fk, K.EyebrowPattern, K.EyesPattern, K.MouthPattern, K.MouthOpen,
+		K.HandLeft, K.HandRight, K.ClothesStates, K.Style, K.AnimTime);
+}
+
 void UOKSceneDocument::SetKey(int32 Id, float Time)
 {
 	if (Id == SceneTrackId)

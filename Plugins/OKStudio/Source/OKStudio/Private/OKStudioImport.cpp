@@ -1649,8 +1649,13 @@ bool FOKStudioImport::ImportToFile(const FString& ScenePng, FString& OutScene, F
 	const FString Dir = UOKStudioGame::SceneDirectory();
 	UOKSceneDocument* Document = NewObject<UOKSceneDocument>();
 	if (!Import(ScenePng, Document, Dir / (Name + TEXT("_cards")), Report, OutError)) return false;
-	OutScene = Dir / (Name + TEXT(".okscene"));
+	// The file of an earlier import may hold what was saved over it: opening the card again took those changes away
+	// without a word (U220). It stays, and this import goes to the next free name; an unchanged one is used again.
+	const FString Json = Document->ToJson();
+	FString Base = Name, Old;
+	for (int32 N = 2; FFileHelper::LoadFileToString(Old, *(Dir / (Base + TEXT(".okscene")))) && Old != Json; ++N) Base = FString::Printf(TEXT("%s_%d"), *Name, N);
+	OutScene = Dir / (Base + TEXT(".okscene"));
 	if (!Document->SaveToFile(OutScene, OutError)) return false;
-	FFileHelper::SaveStringToFile(Report.ToJson(), *(Dir / (Name + TEXT(".import.json"))), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+	FFileHelper::SaveStringToFile(Report.ToJson(), *(Dir / (Base + TEXT(".import.json"))), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 	return true;
 }

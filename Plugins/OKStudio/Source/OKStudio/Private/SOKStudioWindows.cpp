@@ -150,7 +150,8 @@ void SOKStudioPanel::WriteExportChoices()
 void SOKStudioPanel::RegisterFloats()
 {
 	// Default places: HS2Studio6's (layout spec) where it has the window, else beside the menus.
-	AddFloat(TEXT("timeline"), TEXT("時間軸"), FMargin(160.f, 458.f, 520.f, 260.f), [this] { return BuildTimeline(); });
+	// Under the object panel, off the characters at the middle of the view and the pages at the left (U219).
+	AddFloat(TEXT("timeline"), TEXT("時間軸"), FMargin(1070.f, 490.f, 520.f, 260.f), [this] { return BuildTimeline(); });
 	AddFloat(TEXT("mmd"), TEXT("MMD 導演／設定（MMDD / KKVMD）"), FMargin(140.f, 47.f, 430.f, 520.f), [this] { return BuildMmdDirector(); });
 	AddFloat(TEXT("cards"), TEXT("角色卡"), FMargin(142.f, 36.f, 620.f, 420.f), [this] { return BuildCardBrowser(); });
 	AddFloat(TEXT("scenes"), TEXT("場景檔"), FMargin(142.f, 36.f, 620.f, 420.f), [this] { return BuildSceneBrowser(); });
@@ -161,7 +162,7 @@ void SOKStudioPanel::RegisterFloats()
 	AddFloat(TEXT("color"), TEXT("顏色"), FMargin(470.f, 60.f, 260.f, 330.f), [this] { return BuildColorPicker(); });
 	AddFloat(TEXT("settings"), TEXT("設定"), FMargin(260.f, 60.f, 640.f, 460.f), [this] { return BuildSettings(); });
 	AddFloat(TEXT("shot"), TEXT("截圖"), FMargin(470.f, 60.f, 300.f, 345.f), [this] { return BuildShot(); });
-	AddFloat(TEXT("export"), TEXT("輸出動畫"), FMargin(470.f, 60.f, 340.f, 330.f), [this] { return BuildExport(); });
+	AddFloat(TEXT("export"), TEXT("輸出動畫"), FMargin(140.f, 60.f, 340.f, 330.f), [this] { return BuildExport(); });
 	AddFloat(TEXT("report"), TEXT("讀取報告"), FMargin(470.f, 60.f, 440.f, 320.f), [this] { return BuildReport(); });
 	AddFloat(TEXT("resources"), TEXT("資源檢查"), FMargin(470.f, 60.f, 440.f, 360.f), [this] { return BuildResources(); });
 	AddFloat(TEXT("backups"), TEXT("備份恢復"), FMargin(300.f, 60.f, 500.f, 400.f), [this] { return BuildBackups(); });
@@ -286,7 +287,9 @@ void SOKStudioPanel::LoadLayout()
 			FVector2D SavedDefault = F->Default;
 			if (W->TryGetNumberField(TEXT("dx"), DefaultX) && W->TryGetNumberField(TEXT("dy"), DefaultY)) SavedDefault = FVector2D(DefaultX, DefaultY);
 			else if (FString(*P.Key) == TEXT("poselib")) SavedDefault = FVector2D(140.f, 40.f);
-			F->Pos = Saved.Equals(SavedDefault, 1.0) ? F->Default : Saved;
+			// U219: where the timeline and the export window used to stand over the view; nobody chose these.
+			const bool bOldSpot = (FString(*P.Key) == TEXT("timeline") && Saved.Equals(FVector2D(460.f, 319.f), 1.0)) || (FString(*P.Key) == TEXT("export") && Saved.Equals(FVector2D(984.f, 319.f), 1.0));
+			F->Pos = bOldSpot || Saved.Equals(SavedDefault, 1.0) ? F->Default : Saved;
 			bool bOpen = false;
 			// The dialog and the colour window belong to what asked for them: they never reopen by themselves.
 			if (W->TryGetBoolField(TEXT("open"), bOpen) && bOpen && FString(*P.Key) != TEXT("dialog") && FString(*P.Key) != TEXT("color")) RegisterActiveTimer(0.f, FWidgetActiveTimerDelegate::CreateLambda([this, Id = FString(*P.Key)](double, float) { OpenFloat(Id); return EActiveTimerReturnType::Stop; }));
@@ -333,7 +336,8 @@ void SOKStudioPanel::SaveLayout() const
 
 void SOKStudioPanel::WatchUnkeyed()
 {
-	// A move on an object with keys is undone by the next change of time. It went without a word (U214).
+	// A change to what keys hold (place, face, hands, clothes, style, FK, a held frame) is undone by the next change of
+	// time. It went without a word (U214, U218). The motion itself is not keyed and stays.
 	FOKSceneObject* O = Game->Selection.Num() == 1 ? Obj() : nullptr;
 	const FOKSceneTrack* Track = O ? Game->Document->TrackOf(O->Id) : nullptr;
 	const bool bTracked = Track && !Track->Keys.IsEmpty();
@@ -343,14 +347,15 @@ void SOKStudioPanel::WatchUnkeyed()
 		bUnkeyed = false;
 		WatchId = bTracked ? O->Id : -1;
 		WatchTime = Game->TimelineTime;
-		if (bTracked) WatchTransform = O->Transform;
+		if (bTracked) WatchState = UOKSceneDocument::KeyedState(*O);
 		return;
 	}
+	const FString State = UOKSceneDocument::KeyedState(*O);
 	const FOKSceneKey* Key = Game->Document->KeyAt(O->Id, WatchTime);
-	if (O->Transform.Equals(WatchTransform, 0.01) || (Key && O->Transform.Equals(Key->Transform, 0.01)))
+	if (State == WatchState || (Key && State == UOKSceneDocument::KeyedState(*O, *Key)))
 	{
 		bUnkeyed = false;
-		WatchTransform = O->Transform;
+		WatchState = State;
 		return;
 	}
 	if (!bUnkeyed) SetStatus(O->Name + TEXT(" 的改動還沒打 key（K）；換時間或播放會還原"));
@@ -730,6 +735,20 @@ FString SOKStudioPanel::KStudioFolder()
 	return Root.IsEmpty() ? FString() : FPaths::ConvertRelativePathToFull(Root / TEXT("UserData/Studio/scene"));
 }
 
+FString SOKStudioPanel::ScenePicture(const FString& File)
+{
+	if (File.EndsWith(TEXT(".png"))) return File;
+	const FString Folder = KStudioFolder();
+	if (Folder.IsEmpty()) return FString();
+	const FString Name = FPaths::GetBaseFilename(File);
+	const FString Card = Folder / Name + TEXT(".png");
+	if (FPaths::FileExists(Card)) return Card;
+	// A later import of the card is <name>_2 (U220).
+	int32 Bar = INDEX_NONE;
+	const FString Earlier = Name.FindLastChar(TEXT('_'), Bar) && Name.Mid(Bar + 1).IsNumeric() ? Folder / Name.Left(Bar) + TEXT(".png") : FString();
+	return !Earlier.IsEmpty() && FPaths::FileExists(Earlier) ? Earlier : FString();
+}
+
 void SOKStudioPanel::ScanScenes()
 {
 	if (SceneFolder.IsEmpty()) SceneFolder = UOKStudioGame::SceneDirectory();
@@ -900,6 +919,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildSceneBrowser()
 		const bool bPng = F.EndsWith(TEXT(".png"));
 		const FOKSceneCard::EKind K = bPng ? FOKSceneCard::Kind(F) : FOKSceneCard::EKind::Json;
 		const FString KindTag = K == FOKSceneCard::EKind::KStudio ? TEXT("[KStudio] ") : (!bPng ? TEXT("[.okscene] ") : TEXT(""));
+		const FString Picture = ScenePicture(F);
 		Grid->AddSlot().Padding(2.f)
 		[
 			SNew(SBox).WidthOverride(92.f).HeightOverride(86.f)
@@ -922,9 +942,9 @@ TSharedRef<SWidget> SOKStudioPanel::BuildSceneBrowser()
 						+ SVerticalBox::Slot().FillHeight(1.f)
 						[
 							SNew(SOverlay)
-							+ SOverlay::Slot()[SNew(SImage).Image_Lambda([F, bPng] { const FSlateBrush* B = bPng ? FOKStudioThumbnails::Get().File(F, 96) : nullptr; return B ? B : Brush(Input()); })]
+							+ SOverlay::Slot()[SNew(SImage).Image_Lambda([Picture] { const FSlateBrush* B = Picture.IsEmpty() ? nullptr : FOKStudioThumbnails::Get().File(Picture, 96); return B ? B : Brush(Input()); })]
 							// U190: a scene saved without a picture was a grey square, as if it had not loaded yet.
-							+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)[bPng ? SNullWidget::NullWidget : StaticCastSharedRef<SWidget>(OKStudioStyle::Label(FText::FromString(TEXT("無縮圖")), 9.f, TextHint()))]
+							+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)[!Picture.IsEmpty() ? SNullWidget::NullWidget : StaticCastSharedRef<SWidget>(OKStudioStyle::Label(FText::FromString(TEXT("無縮圖")), 9.f, TextHint()))]
 						]
 						+ SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Font(Font(9.f)).ColorAndOpacity(OKStudioStyle::Text()).OverflowPolicy(ETextOverflowPolicy::Ellipsis).AddMetaData<FTagMetaData>(TEXT("Ellipsis")).Text(FText::FromString(KindTag + FPaths::GetBaseFilename(F)))]
 						]
@@ -937,7 +957,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildSceneBrowser()
 	if (!ScenePick.IsEmpty())
 	{
 		const FString F = ScenePick;
-		Pick->AddSlot().AutoHeight()[SNew(SBox).HeightOverride(96.f)[SNew(SImage).Image_Lambda([F] { const FSlateBrush* B = F.EndsWith(TEXT(".png")) ? FOKStudioThumbnails::Get().File(F, 256) : nullptr; return B ? B : Brush(Input()); })]];
+		Pick->AddSlot().AutoHeight()[SNew(SBox).HeightOverride(96.f)[SNew(SImage).Image_Lambda([Picture = ScenePicture(F)] { const FSlateBrush* B = Picture.IsEmpty() ? nullptr : FOKStudioThumbnails::Get().File(Picture, 256); return B ? B : Brush(Input()); })]];
 		Pick->AddSlot().AutoHeight().Padding(0.f, 2.f)[SNew(STextBlock).Font(Font(10.f)).ColorAndOpacity(OKStudioStyle::Text()).AutoWrapText(true).Text(FText::FromString(FPaths::GetCleanFilename(F)))];
 		Pick->AddSlot().AutoHeight().Padding(0.f, 2.f)[Button(FText::FromString(TEXT("覆蓋（開啟）")), [this, F] { OpenScene(F, false); }, 0.f, 20.f)];
 		Pick->AddSlot().AutoHeight().Padding(0.f, 2.f)[Button(FText::FromString(TEXT("疊加到目前場景")), [this, F] { OpenScene(F, true); }, 0.f, 20.f)];

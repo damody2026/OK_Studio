@@ -193,6 +193,8 @@ public:
 	TArray<FOKStudioAnim> Anims;
 	TArray<FOKStudioCatalogGroup> AnimGroups;
 	TArray<FOKStudioCatalogGroup> AnimCategories;
+	/** What a motion list shows for a catalogue name (U217); a name without a translation comes back as it is. */
+	static FString ZhName(const FString& Name);
 	const FOKStudioAnim* FindAnim(int32 Kind, int32 Group, int32 Category, int32 No) const;
 	/** Any kind (KStudio scenes key motions by group, category and no only). */
 	const FOKStudioAnim* FindAnimAnyKind(int32 Group, int32 Category, int32 No) const;

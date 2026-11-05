@@ -1328,6 +1328,9 @@ public:
 	bool ClearTrack(int32 Id);
 	/** The key of the object at the time (within the key tolerance), or null. */
 	FOKSceneKey* KeyAt(int32 Id, float Time);
+	/** What a key holds of the object (or holds in Key), as text to compare: a change here is lost without a key (U218). */
+	static FString KeyedState(const FOKSceneObject& O);
+	static FString KeyedState(const FOKSceneObject& O, const FOKSceneKey& Key);
 	/** The eased blend (0..1) between two keys at fraction U of the way. */
 	static float EaseAlpha(EOKSceneEase Ease, float U);
 	/** Poses every keyed object at Time (between keys: linear position and scale, slerped rotation). */

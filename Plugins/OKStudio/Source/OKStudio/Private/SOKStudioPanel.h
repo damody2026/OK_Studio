@@ -418,6 +418,7 @@ public:
 				// Not the last scene's name to overwrite; the save window names it by the time it opens (U165: a scene
 				// saved minutes later was named by the time it was made).
 				SaveAsName.Reset();
+				ForgetExport();
 				Game->Add(EOKSceneObjectKind::Light); Game->Document->NotifyChanged();
 				// The view starts over too (U147: it stayed on the last map's far view, a new character a speck in it).
 				Game->ViewPreset(5);
@@ -429,8 +430,13 @@ public:
 			if (Arg.IsEmpty() && !Game->File.IsEmpty() && FOKSceneCard::Kind(Game->File) != FOKSceneCard::EKind::KStudio) { FString E; const bool bOk = Game->Save(Game->File, E); SetStatus(bOk ? TEXT("已存 ") + Game->File : E); return bOk; }
 			return SaveNamed(Arg.IsEmpty() ? FDateTime::Now().ToString(TEXT("scene_%Y%m%d_%H%M%S")) : Arg);
 		});
-		// Save as starts from a new name (the time now), so saving twice keeps both (U165).
-		Simple(TEXT("scene.saveas"), TEXT("另存新檔"), [this] { bSceneSaveMode = true; SaveAsName = FDateTime::Now().ToString(TEXT("scene_%Y%m%d_%H%M%S")); OpenFloat(TEXT("scenes")); });
+		// Save as starts from a new name, so saving twice keeps both (U165), and shows the folder it saves to (U221).
+		Simple(TEXT("scene.saveas"), TEXT("另存新檔"), [this]
+		{
+			bSceneSaveMode = true; SaveAsName = NextSceneName();
+			SceneFolder = UOKStudioGame::SceneDirectory(); ScenePick.Reset(); ScenePage = 0; ScanScenes();
+			OpenFloat(TEXT("scenes"));
+		});
 		Simple(TEXT("scene.browser"), TEXT("開啟場景"), [this] { bSceneSaveMode = false; OpenFloat(TEXT("scenes"), true); });
 		AddCommand(TEXT("scene.load"), TEXT("讀取"), [this](const FString& Arg) { return !Arg.IsEmpty() && LoadFile(Arg); });
 		AddCommand(TEXT("scene.merge"), TEXT("疊加"), [this](const FString& Arg) { return !Arg.IsEmpty() && OpenScene(Arg, true); });
@@ -1606,10 +1612,10 @@ public:
 	/** What the last export came to, for the export window and the status line. */
 	FString ExportResult() const;
 	bool bWasExporting = false;
-	/** U214: the selected object's transform when the playhead came to WatchTime, to notice a move that has no key. */
+	/** U214, U218: what the selected object's keys hold when the playhead came to WatchTime, to notice a change without a key. */
 	int32 WatchId = -1;
 	float WatchTime = -1.f;
-	FTransform WatchTransform;
+	FString WatchState;
 	bool bUnkeyed = false;
 	void WatchUnkeyed();
 	/** U211: what an empty scene shows, where to start. */
@@ -1835,6 +1841,8 @@ public:
 	bool bSceneSaveMode = false;
 	TArray<FString> SceneList;
 	static FString KStudioFolder();
+	/** The PNG to show for a scene file: its own, or for an imported .okscene the card it came from (U223). Empty: none. */
+	static FString ScenePicture(const FString& File);
 	void ScanScenes();
 	TSharedRef<SWidget> BuildSceneBrowser();
 	bool OpenScene(const FString& Path, bool bMerge);
@@ -1971,16 +1979,43 @@ public:
 		FString E;
 		const bool bOk = Game->Save(Path, E);
 		SetStatus(bOk ? TEXT("已存 ") + Clean : E);
-		if (bOk) { FOKStudioThumbnails::Get().Forget(Path); ScanScenes(); DeferFloat(TEXT("scenes")); }
+		if (bOk)
+		{
+			// It went to this folder whichever one the window showed (U221); 另存 has done its work.
+			FOKStudioThumbnails::Get().Forget(Path);
+			SceneFolder = UOKStudioGame::SceneDirectory(); ScenePick.Reset(); ScanScenes();
+			if (bSceneSaveMode) { bSceneSaveMode = false; CloseFloat(TEXT("scenes")); }
+			else DeferFloat(TEXT("scenes"));
+		}
 		return bOk;
 	}
+	/** The open scene's name with the next free number (the time now for a scene without a file). */
+	FString NextSceneName() const
+	{
+		const FString Now = FDateTime::Now().ToString(TEXT("scene_%Y%m%d_%H%M%S"));
+		if (!Game.IsValid() || Game->File.IsEmpty()) return Now;
+		FString Base = FPaths::GetBaseFilename(Game->File);
+		const FString Dir = UOKStudioGame::SceneDirectory();
+		// a_2 goes on as a_3; the 04 of sample_04 is part of the name, there is no scene called sample.
+		int32 Bar = INDEX_NONE;
+		if (Base.FindLastChar(TEXT('_'), Bar) && Base.Mid(Bar + 1).IsNumeric()
+			&& (FPaths::FileExists(Dir / Base.Left(Bar) + TEXT(".png")) || FPaths::FileExists(Dir / Base.Left(Bar) + TEXT(".okscene")))) Base.LeftInline(Bar);
+		for (int32 N = 2; N < 1000; ++N)
+		{
+			const FString Name = FString::Printf(TEXT("%s_%d"), *Base, N);
+			if (!FPaths::FileExists(Dir / Name + TEXT(".png")) && !FPaths::FileExists(Dir / Name + TEXT(".okscene"))) return Name;
+		}
+		return Now;
+	}
+	/** The result line belongs to the scene it was made from: the next scene's export window showed 已取消輸出 (U222). */
+	void ForgetExport() { Game->LastMovie.Reset(); Game->LastMovieError.Reset(); Game->LastMovieNote.Reset(); }
 	bool LoadFile(const FString& Path)
 	{
 		if (!Game.IsValid()) return false;
 		FString E;
 		const bool bOk = Game->Load(Path, E);
 		SetStatus(bOk ? TEXT("已讀取 ") + FPaths::GetBaseFilename(Path) : E);
-		if (bOk) { ReportPending = 90; SaveAsName = FPaths::GetBaseFilename(Path); }
+		if (bOk) { ReportPending = 90; SaveAsName = FPaths::GetBaseFilename(Path); ForgetExport(); }
 		// A backup opens as an unsaved scene however it is opened (備份窗, scene browser, scene.load): saving asks for a
 		// name and the backup stays as it is.
 		if (bOk && FPaths::IsUnderDirectory(FPaths::ConvertRelativePathToFull(Path), FPaths::ConvertRelativePathToFull(UOKStudioGame::BackupDirectory())))
@@ -2003,8 +2038,10 @@ public:
 		SetStatus(TEXT("匯入中…"));
 		if (!FOKStudioImport::ImportToFile(Png, Scene, Report, E)) { SetStatus(TEXT("匯入失敗：") + E); return false; }
 		const bool bOk = LoadFile(Scene);
-		SetStatus(FString::Printf(TEXT("已匯入 %s：角色 %d（OK 卡 %d）、道具 %d（基礎庫 %d）、燈光 %d、相機 %d；%d 項說明見 .import.json"),
-			*FPaths::GetBaseFilename(Png), Report.Characters, Report.CharacterCards, Report.Items, Report.CatalogItems, Report.Lights, Report.Cameras, Report.Notes.Num()));
+		const FString Name = FPaths::GetBaseFilename(Png), Saved = FPaths::GetBaseFilename(Scene);
+		const FString Kept = Name == Saved ? FString() : FString::Printf(TEXT("；改過的 %s 留著，這次存成 %s"), *Name, *Saved);
+		SetStatus(FString::Printf(TEXT("已匯入 %s：角色 %d（OK 卡 %d）、道具 %d（基礎庫 %d）、燈光 %d、相機 %d；%d 項說明見 .import.json%s"),
+			*Name, Report.Characters, Report.CharacterCards, Report.Items, Report.CatalogItems, Report.Lights, Report.Cameras, Report.Notes.Num(), *Kept));
 		ScanScenes();
 		return bOk;
 	}
@@ -3283,7 +3320,7 @@ private:
 	{
 		const FOKStudioCatalog& C = FOKStudioCatalog::Get();
 		const FOKStudioAnim* Current = O.Character.StudioAnimeNo >= 0 ? C.FindAnim(O.Character.StudioAnimeKind, O.Character.StudioAnimeGroup, O.Character.StudioAnimeCategory, O.Character.StudioAnimeNo) : nullptr;
-		Label(TEXT("Studio 動畫：") + (Current ? Current->Name : FString(TEXT("（無）"))));
+		Label(TEXT("Studio 動畫：") + (Current ? FOKStudioCatalog::ZhName(Current->Name) : FString(TEXT("（無）"))));
 		if (C.Anims.IsEmpty()) { Label(TEXT("基礎庫沒有 Studio 動畫（studio_anims.json）")); return; }
 		// Show the playing motion's group when it changes (not on every rebuild: a kind or group picked by hand stays).
 		if (Current && AnimSyncedTo != Current) { AnimKind = Current->Kind; AnimGroup = Current->Group; AnimCategory = Current->Category; }
@@ -3300,8 +3337,8 @@ private:
 		AnimGroupOptions.Sort([](const TSharedPtr<int32>& A, const TSharedPtr<int32>& B) { return *A < *B; });
 		AnimCategoryOptions.Reset(); for (int32 K : Cats) AnimCategoryOptions.Add(MakeShared<int32>(K));
 		AnimCategoryOptions.Sort([](const TSharedPtr<int32>& A, const TSharedPtr<int32>& B) { return *A < *B; });
-		auto GroupLabel = [](int32 G) { const FOKStudioCatalogGroup* X = FOKStudioCatalog::Get().AnimGroups.FindByPredicate([G](const FOKStudioCatalogGroup& Y) { return Y.Id == G; }); return X ? X->Name : FString(); };
-		auto CategoryLabel = [](int32 G, int32 K) { const FOKStudioCatalogGroup* X = FOKStudioCatalog::Get().AnimCategories.FindByPredicate([G, K](const FOKStudioCatalogGroup& Y) { return Y.Group == G && Y.Id == K; }); return X ? X->Name : FString(); };
+		auto GroupLabel = [](int32 G) { const FOKStudioCatalogGroup* X = FOKStudioCatalog::Get().AnimGroups.FindByPredicate([G](const FOKStudioCatalogGroup& Y) { return Y.Id == G; }); return X ? FOKStudioCatalog::ZhName(X->Name) : FString(); };
+		auto CategoryLabel = [](int32 G, int32 K) { const FOKStudioCatalogGroup* X = FOKStudioCatalog::Get().AnimCategories.FindByPredicate([G, K](const FOKStudioCatalogGroup& Y) { return Y.Group == G && Y.Id == K; }); return X ? FOKStudioCatalog::ZhName(X->Name) : FString(); };
 		auto GroupName = [GroupLabel](int32 G) { const FString N = GroupLabel(G); return N.IsEmpty() ? FString::FromInt(G) : FString::Printf(TEXT("%d %s"), G, *N); };
 		auto CategoryName = [this, CategoryLabel](int32 K) { const FString N = CategoryLabel(AnimGroup, K); return N.IsEmpty() ? FString::FromInt(K) : FString::Printf(TEXT("%d %s"), K, *N); };
 		// A search (spaces: and; -word: exclude) runs over every motion of the kind, by its name and its group and category names.
@@ -3313,7 +3350,11 @@ private:
 			const FOKStudioAnim& A = C.Anims[I];
 			if (!Shown(A)) continue;
 			if (AnimSearch.IsEmpty()) { if (A.Group == AnimGroup && A.Category == AnimCategory) AnimOptions.Add(MakeShared<int32>(I)); continue; }
-			const FString Text = A.Name + TEXT(" ") + GroupLabel(A.Group) + TEXT(" ") + CategoryLabel(A.Group, A.Category);
+			// Both the name shown and the catalogue's (U217).
+			const FOKStudioCatalogGroup* RawGroup = C.AnimGroups.FindByPredicate([&A](const FOKStudioCatalogGroup& Y) { return Y.Id == A.Group; });
+			const FOKStudioCatalogGroup* RawCategory = C.AnimCategories.FindByPredicate([&A](const FOKStudioCatalogGroup& Y) { return Y.Group == A.Group && Y.Id == A.Category; });
+			const FString Text = A.Name + TEXT(" ") + FOKStudioCatalog::ZhName(A.Name) + TEXT(" ") + GroupLabel(A.Group) + TEXT(" ") + CategoryLabel(A.Group, A.Category)
+				+ TEXT(" ") + (RawGroup ? RawGroup->Name : FString()) + TEXT(" ") + (RawCategory ? RawCategory->Name : FString());
 			if (Include.ContainsByPredicate([&Text](const FString& W) { return !Text.Contains(W); }) || Exclude.ContainsByPredicate([&Text](const FString& W) { return Text.Contains(W); })) continue;
 			AnimOptions.Add(MakeShared<int32>(I));
 		}
@@ -3377,7 +3418,7 @@ private:
 				// A motion that has the other sex's side is marked (U117): 配給對方 works from it.
 				const TCHAR* Pair = A.Kind == 1 && HasPartner(A) ? TEXT("（雙人）") : TEXT("");
 				// The same 10 pt as the other lists (U124: it took the default, a size larger).
-				return SNew(STableRow<TSharedPtr<int32>>, Owner).Padding(FMargin(2.f, 3.f))[SNew(STextBlock).Font(OKStudioStyle::Font(10.f)).ColorAndOpacity(bCurrent ? FLinearColor::Yellow : FLinearColor::White).Text(FText::FromString(A.Name + Pair + Where))];
+				return SNew(STableRow<TSharedPtr<int32>>, Owner).Padding(FMargin(2.f, 3.f))[SNew(STextBlock).Font(OKStudioStyle::Font(10.f)).ColorAndOpacity(bCurrent ? FLinearColor::Yellow : FLinearColor::White).Text(FText::FromString(FOKStudioCatalog::ZhName(A.Name) + Pair + Where))];
 			})
 			.OnMouseButtonClick_Lambda([this](TSharedPtr<int32> I) { if (I) PickAnim(*I); })
 		];
@@ -3412,7 +3453,7 @@ public:
 		// The status line says what was applied (U106): it kept 「加入角色 …」 from before. U193: an imported scene's
 		// characters are often at speed 0, and the new motion then looked as if it had not taken.
 		const FString Who = Applied > 1 ? FString::Printf(TEXT("%d 個角色"), Applied) : X->Name;
-		SetStatus(FString::Printf(TEXT("%s 套用動作 %s%s"), *Who, *A.Name, bHeld ? TEXT("（動畫速度 0，定格在第一幀）") : TEXT("")));
+		SetStatus(FString::Printf(TEXT("%s 套用動作 %s%s"), *Who, *FOKStudioCatalog::ZhName(A.Name), bHeld ? TEXT("（動畫速度 0，定格在第一幀）") : TEXT("")));
 		return true;
 	}
 	/** The other side of the selected character's H motion (女H挿入／騎乗位／弱ループ → 男H挿入／騎乗位／弱ループ): the
