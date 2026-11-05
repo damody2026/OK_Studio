@@ -1971,6 +1971,7 @@
 - 2026-11-04 e-galgame：測試時用 `game_click` 會把自己的遊戲視窗拉到最前面（`Win->BringToFront`），使用者正在玩時點擊可能落到測試視窗。使用者在玩時不要用 `game_click`，改用 `/hscene` 的 kind 或截圖。
 - 2026-11-04 e-galgame：舌頭變白先往材質想，其實是流口水的白色塗料蓋在舌頭上：不流口水時是紅的。現在 H 的體液不畫在舌頭上（`bSkipTongue`，`ok.HScene.FluidTongue` 預設 0），流 40 秒後舌頭還是紅的（`Play-20261104T223655`）。
 - 2026-11-05 e-galgame：頭看鏡頭、眼睛追鏡頭兩個按鈕加在愛撫分支 `return` 之後，進場景的愛撫畫面看不到，只有插入才出現。之前用 kind 直接呼叫沒發現。改到 `BuildActions` 分支之前。
+- 2026-11-05 e-galgame：舌頭顏色錯了很久，Material Editor 的屬性名小寫後蓋掉 `_Color`。`Material::color` 不分大小寫，所以 log 印的顏色是對的，著色器那邊分大小寫才取不到。查顏色要看實際綁到著色器的值，不能只看 log。
 - 2026-11-05 e-galgame：`EGalRound11` 回報把「射在外面」算成走過，其實 log 寫著 `action 2005 not offered now`，腳本只送了按鈕沒看有沒有效。走查腳本按之前要先確認按鈕可按，不能按就記下來。
 - 2026-11-05 e-galgame：舌頭拉長用整個 morph 權重放大，1～2 倍看不出來，舌根其實也在往外移，3 倍就離開嘴巴。沒有骨頭的東西要拉長，得固定一端。
 - 2026-11-05 e-galgame：水槍控制用 `GetComponentsBoundingBox().GetCenter()` 當她的中央，實際在腳邊（Z=-1.2），距離 90 打到地板，還記成「原因沒查」。記下瞄準點與命中後一次就看出來。
