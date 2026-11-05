@@ -1097,6 +1097,7 @@ do
       end
     end
   end
+  for i = #rows, 1, -1 do if math.abs(rows[i].pos[1]) < 1 and math.abs(rows[i].pos[2]) < 1 then table.remove(rows, i) end end -- an actor with its pivot at the world origin
   -- anchors with no floor under them (mirror-height vanities, room-centre heights in the motel suites, stairwell landings):
   -- the round 3 measurement gives each its floor. places-v1/anchor-ground.json keeps them, keyed by the spot before moving
   do
@@ -1121,14 +1122,44 @@ do
       end
       local out = assert(io.open(gp, 'wb')); out:write(json.encode(ground)); out:close()
     end
+    -- the walkability check of these spots (Tools/street_city_round6_sites_payload.lua): a blocked one takes the clear spot next to it
+    local sites; do local sf = io.open(root .. 'places-v1/round6-sites.json', 'rb'); if sf then sites = json.decode(sf:read('a')); sf:close() end end
+    -- (not for anchors that belong on the furniture: tubs, beds, seats)
+    local fixes = {}; for _, w in ipairs(sites and sites.walk or {}) do if type(w.fix) == 'table' and w.fix[1] then fixes[w.key] = w.fix end end
+    local ON = { bath = true, lie = true, seat = true, seat_pair = true, seat_face = true, h_sofa = true, tv_sofa = true, h_chair = true }
     local moved = 0
-    for _, r in ipairs(rows) do for _ = 1, 3 do local to = ground[key(r.pos)]
+    for _, r in ipairs(rows) do for _ = 1, 3 do local k0 = key(r.pos); local to = ground[k0]
+      if to and fixes[k0] then local on = false; for _, k in ipairs(r.kinds) do on = on or ON[k] end; if not on then to = fixes[k0] end end
       if to and (to[1] ~= r.pos[1] or to[2] ~= r.pos[2] or to[3] ~= r.pos[3]) then
         if r.seat_pos and math.abs(r.seat_pos[3] - r.pos[3] - 45) < .5 then r.seat_pos = { to[1], to[2], to[3] + 45 } end
         r.pos[1], r.pos[2], r.pos[3] = to[1], to[2], to[3]; moved = moved + 1
       end
     end end
     print('anchors moved to their floors', moved)
+    -- minshuku: S18 became the motel building, its floors are at 1206 / 1646 / 2086 and the west part of the old rooms is the
+    -- forecourt now. Anchors with no real floor under them go to the nearest walkable cell of their storey
+    if sites and sites.minshuku then
+      local levels = { 1206, 1646, 2086 }; local used, n = {}, 0
+      local function cell_near(lv, x, y, z)
+        local best, bd
+        for i, c in ipairs(sites.minshuku[tostring(lv)] or {}) do
+          if not used[lv .. ':' .. i] then local d = (c[1] - x) ^ 2 + (c[2] - y) ^ 2 + ((c[3] - z) * 3) ^ 2; if not bd or d < bd then best, bd = i, d end end
+        end
+        return best, bd
+      end
+      for _, r in ipairs(rows) do if r.place == 'minshuku' then
+        local lv = r.pos[3] < 1400 and 1206 or r.pos[3] < 1800 and 1646 or 2086
+        local i, d = cell_near(lv, r.pos[1], r.pos[2], r.pos[3])
+        if i and d > 70 ^ 2 then
+          local c = sites.minshuku[tostring(lv)][i]; used[lv .. ':' .. i] = true
+          if r.seat_pos then r.seat_pos = { c[1], c[2], c[3] + 45 } end
+          r.pos[1], r.pos[2], r.pos[3] = c[1], c[2], c[3]; n = n + 1
+        end
+        for k, v in ipairs(levels) do if v == lv then r.floor = k end end
+      end end
+      for _, g in ipairs(GAME_PLACES) do if g.id == 'minshuku' then for k, room in ipairs(g.rooms) do room.min[3], room.max[3] = levels[k] - 30, levels[k] + 410 end end end
+      print('minshuku anchors moved', n)
+    end
   end
   -- seats whose hip point was only estimated: the surface the measurement found; the rest stay listed in seat-measured.json
   do
@@ -1138,6 +1169,14 @@ do
       for _, s in ipairs(m.measured or {}) do byid[s.id] = s.seat end
       local n = 0; for _, r in ipairs(rows) do if byid[r.id] then r.seat_pos = byid[r.id]; n = n + 1 end end
       print('seats measured', n, 'unmeasured', #(m.unmeasured or {}))
+      -- every seat whose height is only the kind's standard one (no collision to measure) joins the list
+      local ff = io.open(root .. 'places-v1/seats-fit.json', 'rb')
+      if ff then
+        local fit = json.decode(ff:read('a')); ff:close(); m.nominal = {}
+        for _, q in ipairs(fit.rows or fit) do if q.fit == 'nominal' then m.nominal[#m.nominal + 1] = { kind = q.kind, src = q.src, pos = q.pos, seat = q.seat } end end
+        local out = assert(io.open(root .. 'places-v1/seat-measured.json', 'wb')); out:write(json.encode(m)); out:close()
+        print('seats at standard height', #m.nominal)
+      end
     end
   end
   local f = assert(io.open('Content/IndependentResources/StreetSocialData/city_anchors.json', 'wb'))

@@ -123,6 +123,19 @@ return function(ctx)
       put('change', toward(g.door, c, 120), yaw_to(g.door, c), kinds, { place = id, outdoor = false })
     end end
   end
+  -- nets merged into the stadium and track meshes (height map world_round_courts): both sides of each tennis and volleyball
+  -- net, in front of the goals, and the far end of the beach net
+  for _, n in ipairs({ { 68500, 124600 }, { 68500, 129400 }, { 72700, 124600 }, { 72700, 129400 } }) do
+    put('tennis_net', { n[1] - 120, n[2], 1203 }, 90, { 'h_net', 'stand_pair' }, { place = 'campus_sports', outdoor = true })
+    put('tennis_net', { n[1] + 120, n[2], 1203 }, -90, { 'h_net', 'stand_pair' }, { place = 'campus_sports', outdoor = true })
+  end
+  for _, n in ipairs({ { 79700, 122400 }, { 79700, 131600 }, { 84300, 122400 }, { 84300, 131600 } }) do
+    put('volleyball_net', { n[1] - 120, n[2], 1202 }, 90, { 'h_net', 'stand_pair' }, { place = 'campus_sports', outdoor = true })
+    put('volleyball_net', { n[1] + 120, n[2], 1202 }, -90, { 'h_net', 'stand_pair' }, { place = 'campus_sports', outdoor = true })
+  end
+  put('soccer_goal', { 60600, 25700, 1225 }, -90, { 'h_net', 'stand_pair' }, { place = 'campus_sports', outdoor = true })
+  put('soccer_goal', { 60600, 34300, 1225 }, 90, { 'h_net', 'stand_pair' }, { place = 'campus_sports', outdoor = true })
+  put('volleyball_net', { 11795.8, 102156, 1212 }, 0, { 'h_net', 'stand_pair' }, { place = 'beach', outdoor = true })
   -- measured spots: routes, rooftops, shores, bridges (anchor-fit job)
   for _, r in ipairs(ctx.fit or {}) do put(r.name, r.pos, r.yaw, r.kinds, { place = r.place, tags = r.tags, privacy = r.privacy, outdoor = r.outdoor ~= false, building = r.building, slots = r.pair and pairs_at(r.pos, r.yaw, 40) or nil }) end
   return rows
