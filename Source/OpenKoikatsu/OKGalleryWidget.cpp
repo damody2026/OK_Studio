@@ -2812,7 +2812,9 @@ void UOKCharacterController::OnPairSelected(FString Item,ESelectInfo::Type Type)
     bSuppressPairControls=true;PairStateCombo->ClearOptions();PairStateCombo->AddOption(TEXT("選擇階段"));TArray<FString> States;FemalePairStates.GetKeys(States);States.Sort();for(const auto& State:States)if(MalePairStates.Contains(State))PairStateCombo->AddOption(State);PairStateCombo->SetSelectedIndex(0);bSuppressPairControls=false;
     if(PairStateCombo->GetOptionCount()<2){ShowPairStatus(TEXT("這個姿勢沒有雙方都有的動作階段。"),true);return;}
     FString State=PairStateCombo->FindOptionIndex(TEXT("WLoop"))>0?TEXT("WLoop"):PairStateCombo->FindOptionIndex(TEXT("Idle"))>0?TEXT("Idle"):PairStateCombo->GetOptionAtIndex(1);
-    if(ReadyPairs.IsValidIndex(Index)&&ReadyPairs[Index].IsValid()&&ReadyPairs[Index]->Progress&&ReadyPairs[Index]->Progress->StateOf(State)!=1){
+    // In the H scene the wanted state is waited for (OnPairStateSelected moves it to the front): started on the first one ready
+    // (A_Drop by name) the panel had no way on from it and the pose could not be played.
+    if(!bHScene&&ReadyPairs.IsValidIndex(Index)&&ReadyPairs[Index].IsValid()&&ReadyPairs[Index]->Progress&&ReadyPairs[Index]->Progress->StateOf(State)!=1){
         // States are still being prepared: start with one that is ready (the first one always is).
         for(int32 Option=1;Option<PairStateCombo->GetOptionCount();++Option)if(ReadyPairs[Index]->Progress->StateOf(PairStateCombo->GetOptionAtIndex(Option))==1){State=PairStateCombo->GetOptionAtIndex(Option);break;}
     }

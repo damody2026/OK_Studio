@@ -2298,6 +2298,7 @@ pub(crate) fn extract_session_from_info(
     }
     assign_draw_layers(&mut session_parts);
     Ok(crate::session::OkSession {
+        pair_third:None,
         accessory_context,
         editor_pregnancy:Default::default(),
         pv_config,pv_mask:15,pv_fk:false,

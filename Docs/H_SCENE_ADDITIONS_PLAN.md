@@ -323,12 +323,19 @@
 
 實測（`EGalReact5`，貞德加雷電將軍）：女女 0 到 100 約 50 秒，走完 `WLoop`→`MLoop`→`SLoop`→`OLoop`→`Orgasm`，第二位表情跟著換，次數 2，離開時 game.log 有 `was in it too, climaxes 2`。18 個 3P 姿勢逐一拍了側面與正面（`EGalReact2`、`EGalReact3`），角色位置都對得上。`game.log` 沒有 Error。
 
+**三人解算（11-06）**：3P 的 MotionIK 資料有指向第三人的目標（`khs3_m_01`、`_03`、`_04` 等，`sex`、`edit_no` 到 2），舊程式一遇到就報 `unsupported native IK binding`，那幾個姿勢一插入播放就停；換位姿勢裡「對方」也指錯人。現在第二位女角在配對幀裡一起解算：
+
+- `ok_animation_pair_set_third` 把她掛在主角的 session 上，`AKKPairedPlayback::SetThird` 管顯示。她和兩人同一幀取樣、解算、物理，背景解算時不再有人同時寫她。
+- `partner_order` 照 `MotionIK.SetPartners`：偶數姿勢順序是主角、男主、第二位，奇數是第二位、男主、主角。
+- 男主的 `height`、`height1` 照 `H3PSonyu`：前者是他在的那位，後者是另一位。女女照 `HLesbian` 傳 `height1`、`Breast1`。`SetAnimationFloat` 原本擋 portable session，所以上一版傳給她的身高其實沒生效，已拿掉。
+- 第二位逐件脫衣（`SecondPieces`），姿勢要哪幾件就脫哪幾件。滴液、噴液、乳汁也有，依她自己的開發度，結算帶回街上。
+- 插入中不能換人。H 場景選姿勢時等想要的狀態準備好，不再先播第一個準備好的（`A_Drop` 會卡住，插入按鈕出不來）。
+
+實測（`EGalThree2`～`4`）：全新存檔三月七當第二位，換位姿勢插入、中出，她的記憶有「第一次給了他」「第一次三個人一起做」，`vaginal_count` 1；陌生人顯示「還不熟，不會來」；結算畫面依序顯示每位（`/hresult_close`）。效能 1280×720：2P 抽插 50 FPS（遊戲執行緒 20.6 ms），3P 口交 46.6、3P 插入 43.5（遊戲執行緒 23 ms）；之前 3P 是 30～49。瓶頸還是整個 H 場景的遊戲執行緒，不是第三人。
+
 還沒做到：
 
-- 第二位女角和男主之間沒有接觸解算，IK 只算主角和男主兩人，身高差很大時可能對不準。
 - 道具沿用 `ok.HScene.Props`（預設關，使用者之前決定先不放），椅子、馬桶類別已對應好，開了才會出現；關著時人坐在空中。
-- 換位姿勢時男主的身高參數還是用主角的（原作傳被插入那位的 `height`），身高差大時對位偏。
-- 她身上的滴液、乳汁只有主角有。
 - 原作的雙男主（`houshi3PMMF`、`sonyu3PMMF`）沒做：街區只有一位男主。
 - C、F 和開發資源 zip 的基礎庫要更新才看得到自慰（舊基礎庫選了只會顯示缺姿勢，不會當掉）。
 

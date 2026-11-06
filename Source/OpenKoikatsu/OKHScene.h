@@ -70,7 +70,7 @@ private:
 struct FOKHPose {
     int32 Pair=INDEX_NONE;      // index in the controller's NativePairs
     int32 Mode=0;               // 1 service, 2 intercourse (AnimationInfo_XX)
-    bool bThree=false;bool bSecondUndone=false;FString SecondSource;int32 SecondLayer=0; // 3P (AnimationInfo_06, _07): plays as its mode, with the second heroine
+    bool bThree=false;int32 SecondUpper=0,SecondLower=0;FString SecondSource,SecondMotion;int32 SecondLayer=0; // 3P (AnimationInfo_06, _07): plays as its mode, with the second heroine
     int32 KindHoushi=0;         // service: 0 hand, 1 mouth, 2 breasts
     int32 SysTaii=0;            // sysTaii: 0 hand or breasts only, 1 licking, 2 him in her mouth (咥え)
     bool Anal=false;
@@ -143,7 +143,7 @@ public:
     };
 private:
     // Caress (AnimationInfo_00): her own animation, him hidden (HAibu); each state is prepared up front.
-    struct FAibuPose {FString Name,Source;int32 Layer=0,Id=-1,Prop=0,Info=0,Ctrl=0,SecondLayer=0,UpperCloth=0,LowerCloth=0;bool bSecondUndone=false;FString SecondSource;}; // Info: HFlag.EMode, 0 caress, 3 masturbation, 4 peeping, 5 lesbian
+    struct FAibuPose {FString Name,Source;int32 Layer=0,Id=-1,Prop=0,Info=0,Ctrl=0,SecondLayer=0,UpperCloth=0,LowerCloth=0,SecondUpper=0,SecondLower=0;FString SecondSource;}; // Info: HFlag.EMode, 0 caress, 3 masturbation, 4 peeping, 5 lesbian
     TArray<FAibuPose> AibuPoses;
     TMap<FString,FString> SoloKeys;      // state -> clip key of the active caress pose
     FString SoloState;double SoloStarted=0.;
@@ -160,11 +160,11 @@ private:
 public:
     struct FGroupRow {FString Category,Role;int32 Id=0;float Seconds=0.f;int32 Climaxes=0;};
 private:
-    struct FSecondRun {int32 Girl=0;FString Id,Name;int32 Orgasms=0;TArray<FString> Poses;FHLedger Ledger;TArray<FGroupRow> Rows;TSharedPtr<FJsonObject> Experience;};
+    struct FSecondRun {int32 Girl=0;FString Id,Name;int32 Orgasms=0,Drips=0,Milk=0;TArray<FString> Poses;FHLedger Ledger;TArray<FGroupRow> Rows;TSharedPtr<FJsonObject> Experience;};
     TArray<FGroupRow> MainRows;bool bSwapped=false,bGirlsPlayed=false;
     void SyncSwap(bool bWant);bool SecondReceives() const;bool GroupPose(FString& Category,int32& Id) const;static FGroupRow& GroupRow(TArray<FGroupRow>& Rows,const FString& Category,int32 Id,const FString& Role);void TickGroup(float Delta);
     const TSharedPtr<FJsonObject>& Exp() const; // what the heroine he is with now has been through (Gallery->HExperience, or the second's)
-    TArray<FSecondRun> SecondRuns;int32 SecondRun=INDEX_NONE,SecondPersonality=0,SecondLevel=0;float SecondVoiceRate=.5f;double SecondCameUntil=0.;FString SecondBreathKey,SecondFaceKey,SecondClothKey;
+    TArray<FSecondRun> SecondRuns;int32 SecondRun=INDEX_NONE,SecondPersonality=0,SecondLevel=0;float SecondVoiceRate=.5f;double SecondCameUntil=0.;FString SecondBreathKey,SecondFaceKey,SecondClothKey;uint8 SecondPieces[9]={};double SecondSquirtAt=0.,SecondMilkAt=0.,SecondDripAt=0.;void ApplySecondClothes();float SecondDev(const TCHAR* Area) const;
     void SecondReact();void SecondBreath(const FString& State);bool SecondHere() const;
     void LoadSecond(int32 Index);void DropSecond();void TickSecond(float Delta);void PlaySecond(const FString& State);void PrepareSecond(const FString& Source,int32 Layer);
     int32 ActiveAibu=INDEX_NONE,PendingAibu=INDEX_NONE,AibuGeneration=0,TouchArea=INDEX_NONE;

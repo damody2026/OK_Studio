@@ -264,10 +264,10 @@ fn factory_runtime_reference(session:&crate::session::OkSession,config:&crate::f
     Ok(PairIkRuntime{solver})
 }
 
-fn correct_frames(body:&mut crate::pose::Skeleton,config:&crate::finalik::PrefabIkConfig,active:&crate::finalik::MotionState,shapes:&[Vec<f32>;2],role:usize,after:bool)->Result<(),String>{
+fn correct_frames(body:&mut crate::pose::Skeleton,config:&crate::finalik::PrefabIkConfig,active:&crate::finalik::MotionState,shapes:&[Vec<f32>],partners:&[usize],after:bool)->Result<(),String>{
     for order in if after {vec![2]} else {vec![0,1]} {
         for frame in active.frames.iter().filter(|f|f.frame_no>=8&&config.frame_orders.get(f.frame_no as usize-8)==Some(&order)){
-            let partner=if frame.edit_no==0{role}else{1-role};let(pos,ang)=crate::finalik::correct_shape_values(&shapes[partner],Some(frame));
+            let partner=partners.get(frame.edit_no.max(0) as usize).copied().unwrap_or(partners[0]);let(pos,ang)=crate::finalik::correct_shape_values(&shapes[partner],Some(frame));
             let name=config.frame_bones[frame.frame_no as usize-8].as_deref().ok_or("FrameCorrect bone binding missing")?;
             let tf=body.tfs.values_mut().find(|t|t.name==name).ok_or("FrameCorrect live bone missing")?;
             for axis in 0..3{tf.pos[axis]+=pos[axis];}tf.rot=crate::finalik::qmul(tf.rot,crate::pose::euler_deg_to_quat(ang));
@@ -338,7 +338,7 @@ fn build_setup_from_index(index:&MotionIndex,motion:&str,state:&str)->Result<Opt
     // source index immutable; cloning every other state's frame/shape arrays
     // four times per paired frame was unnecessary runtime allocation.
     let value=match index.1.get(motion){Some(Ok(data))=>{let config=index.0.as_ref().ok_or("native FullBodyBipedIK config missing")?;match data.state(state){Some(active)=>Some((config.clone(),crate::finalik::MotionIkData{states:vec![active.clone()]})),None=>None}},Some(Err(error))=>return Err(error.clone()),None=>None};
-    if let Some((config,data))=&value{if let Some(active)=data.state(state){if config.effectors.len()!=9||config.references.root.is_none()||config.frame_orders.len()!=config.frame_bones.len()||config.frame_orders.iter().any(|v|!(0..=2).contains(v))||active.parts.iter().any(|p|!(0..=1).contains(&p.sex)){return Err("unsupported native IK binding".into());}if active.frames.iter().any(|f|f.frame_no<0||f.frame_no>=8&&f.frame_no as usize-8>=config.frame_bones.len()||!(0..=1).contains(&f.edit_no)){return Err("unsupported native FrameCorrect binding".into());}}else{return Ok(None);}}
+    if let Some((config,data))=&value{if let Some(active)=data.state(state){if config.effectors.len()!=9||config.references.root.is_none()||config.frame_orders.len()!=config.frame_bones.len()||config.frame_orders.iter().any(|v|!(0..=2).contains(v))||active.parts.iter().any(|p|!(0..=2).contains(&p.sex)){return Err("unsupported native IK binding".into());}if active.frames.iter().any(|f|f.frame_no<0||f.frame_no>=8&&f.frame_no as usize-8>=config.frame_bones.len()||!(0..=2).contains(&f.edit_no)){return Err("unsupported native FrameCorrect binding".into());}}else{return Ok(None);}}
     Ok(value)
 }
 // Selected setups are immutable. A solver clones only its mutable MotionIkData;
@@ -376,6 +376,29 @@ pub(crate) fn set_native_pair_parameters(female:&mut crate::session::OkSession,m
     // male as well; _isFemale1=false refers to the second female only.
     let height=female.shape_body.first().copied().unwrap_or(0.5);
     for role in [female,male]{role.anim_parameters.insert("height".into(),height);role.anim_parameters.entry("motion".into()).or_insert(0.);}
+}
+/// The second heroine of a 3P pose, solved in the pair's frame (ok_animation_pair_set_third). The handle stays valid until
+/// it is cleared: the caller clears it before closing that session, and frames run one at a time.
+#[derive(Clone)]
+pub(crate) struct PairThird {pub session:*mut crate::session::OkSession,pub motion:String,pub swapped:bool}
+unsafe impl Send for PairThird {}
+unsafe impl Sync for PairThird {}
+/// H3PSonyu: his clip blends on the height of the heroine he is with (id % 2) and of the other one; each heroine's on her own.
+pub(crate) fn set_third_pair_parameters(female:&mut crate::session::OkSession,male:&mut crate::session::OkSession,third:&mut crate::session::OkSession,swapped:bool){
+    let first=female.shape_body.first().copied().unwrap_or(0.5);let second=third.shape_body.first().copied().unwrap_or(0.5);
+    let (with,other)=if swapped{(second,first)}else{(first,second)};
+    male.anim_parameters.insert("height".into(),with);male.anim_parameters.insert("height1".into(),other);
+    third.anim_parameters.insert("height".into(),second);third.anim_parameters.entry("motion".into()).or_insert(0.);
+    if let Some(bust)=third.shape_body.get(4).copied(){third.anim_parameters.insert("Breast".into(),bust);}
+}
+pub(crate) fn third_setup(game:&Path,motion:&str,state:&str)->Result<Option<SharedSetup>,String>{
+    let index=setup_index(game)?;setup_from_index(&index,motion,state)
+}
+/// MotionIK.SetPartners: each role first, then the others in the pose's order. Part.sex and frame.edit_no index this list. The
+/// order is female, male, second heroine; an odd 3P pose starts from the second (HSceneProc).
+fn partner_order(role:usize,roles:usize,swapped:bool)->Vec<usize>{
+    let order:&[usize]=if roles==3{if swapped{&[2,1,0]}else{&[0,1,2]}}else{&[0,1]};
+    std::iter::once(role).chain(order.iter().copied().filter(|r|*r!=role)).collect()
 }
 pub(crate) fn validate_pair(female:&crate::session::OkSession,male:&crate::session::OkSession,state:&str,fm:&str,mm:&str)->Result<(),String>{
     validated_pair_setups(female,male,state,fm,mm).map(|_|())
@@ -436,35 +459,42 @@ pub(crate) fn apply_contacts_prepared(female:&mut crate::session::OkSession,male
     apply_contacts_prepared_with_policy(female,male,state,setups,publish_export,false,0.)
 }
 pub(crate) fn apply_contacts_prepared_with_policy(female:&mut crate::session::OkSession,male:&mut crate::session::OkSession,state:&str,setups:[Option<SharedSetup>;2],publish_export:bool,parallel:bool,dt:f32)->Result<usize,String>{
-    let shapes=[female.shape_body.clone(),male.shape_body.clone()];
-    let needs_factory=(setups[0].is_some()&&female.paired_ik_runtime.is_none())||(setups[1].is_some()&&male.paired_ik_runtime.is_none());
+    let [f,m]=setups;apply_contacts_roles(female,male,None,state,[f,m,None],false,publish_export,parallel,dt)
+}
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_contacts_roles(female:&mut crate::session::OkSession,male:&mut crate::session::OkSession,mut third:Option<&mut crate::session::OkSession>,state:&str,setups:[Option<SharedSetup>;3],swapped:bool,publish_export:bool,parallel:bool,dt:f32)->Result<usize,String>{
+    let mut shapes=vec![female.shape_body.clone(),male.shape_body.clone()];
+    if let Some(t)=third.as_deref(){shapes.push(t.shape_body.clone());}
+    let roles=shapes.len();let partners:Vec<Vec<usize>>=(0..roles).map(|r|partner_order(r,roles,swapped)).collect();
+    let needs_factory=(setups[0].is_some()&&female.paired_ik_runtime.is_none())||(setups[1].is_some()&&male.paired_ik_runtime.is_none())||(setups[2].is_some()&&third.as_deref().is_some_and(|t|t.paired_ik_runtime.is_none()));
     let prefab=if needs_factory{Some(factory_prefab(&female.game_root)?)}else{None};
-    for (role,setup) in setups.iter().enumerate() {
+    for (role,setup) in setups.iter().enumerate().take(roles) {
         let Some(setup)=setup else {continue;};let (config,data)=setup.as_ref();let active=data.state(state).unwrap();
-        let session=if role==0 {&mut *female}else{&mut *male};
+        let session=match role{0=>&mut *female,1=>&mut *male,_=>third.as_deref_mut().ok_or("third role missing")?};
         if session.paired_ik_runtime.is_none(){
             session.paired_ik_runtime=Some(factory_runtime_from_prefab(session,config,prefab.as_deref().ok_or("paired prefab not prepared")?)?);
         }
         let body=session.body_skel.as_mut().ok_or("body skeleton missing")?;
         let _trace=crate::native_profile::Scope::new(30);
-        correct_frames(body,config,active,&shapes,role,false)?;
+        correct_frames(body,config,active,&shapes,&partners[role],false)?;
     }
     // Sync target processors run before either solver. Never read a peer after
     // its solve: both roles must observe the same corrected animation sample.
     type FrozenTransform=([f32;3],[f32;4]);
-    let mut frozen_parts:[Vec<Option<FrozenTransform>>;2]=[vec![],vec![]];
-    let mut frozen_bends:[Vec<Option<FrozenTransform>>;2]=[vec![],vec![]];
-    let mut frozen_roots=[crate::finalik::IDENTITY;2];
+    let mut frozen_parts:Vec<Vec<Option<FrozenTransform>>>=vec![vec![];roles];
+    let mut frozen_bends:Vec<Vec<Option<FrozenTransform>>>=vec![vec![];roles];
+    let mut frozen_roots=vec![crate::finalik::IDENTITY;roles];
     {
         let _trace=crate::native_profile::Scope::new(31);
-        let sources=[female.body_skel.as_mut().ok_or("female skeleton missing")?,male.body_skel.as_mut().ok_or("male skeleton missing")?];
-        #[cfg(test)] let mut snapshots=[sources[0].clone(),sources[1].clone()];
-        let [female_source,male_source]=sources;
-        let mut reads=[crate::finalik::IkSkeleton::new_batched(female_source),crate::finalik::IkSkeleton::new_batched(male_source)];
-        for role in 0..2 {
+        let mut sources=vec![female.body_skel.as_mut().ok_or("female skeleton missing")?,male.body_skel.as_mut().ok_or("male skeleton missing")?];
+        if let Some(t)=third.as_deref_mut(){sources.push(t.body_skel.as_mut().ok_or("third skeleton missing")?);}
+        #[cfg(test)] let mut snapshots:Vec<crate::pose::Skeleton>=sources.iter().map(|s|(**s).clone()).collect();
+        let mut reads:Vec<_>=sources.into_iter().map(crate::finalik::IkSkeleton::new_batched).collect();
+        for role in 0..roles {
             let Some(setup)=&setups[role] else {continue;};let (_,data)=setup.as_ref();let active=data.state(state).unwrap();
             for part in &active.parts {
-                let partner=if part.sex==0{role}else{1-role};
+                // The second heroine's part with no second heroine in the frame: no target, as an empty one.
+                let Some(&partner)=partners[role].get(part.sex.max(0) as usize) else{frozen_parts[role].push(None);continue;};
                 let value=reads[partner].world_transform(&part.target);
                 #[cfg(test)] {let mut old=crate::finalik::IkSkeleton::new(&mut snapshots[partner]);assert_eq!(value,old.world_pos(&part.target).zip(old.world_rot(&part.target)),"frozen target must match original skeleton snapshot");}
                 frozen_parts[role].push(value);
@@ -486,8 +516,7 @@ pub(crate) fn apply_contacts_prepared_with_policy(female:&mut crate::session::Ok
         let (config,source_data)=setup.as_ref();let mut data=source_data.clone();
         let active=data.states.iter_mut().find(|s|s.name==state).unwrap();let post_corrections=active.clone();let mut proxies=Vec::new();
         for (i,part) in active.parts.iter_mut().enumerate() {
-            // SetPartners puts this role first, then the other role.
-            if !(0..=1).contains(&part.sex) {return Err("unsupported MotionIK partner index".into());}
+            // SetPartners puts this role first, then the others (frozen_parts read them by partner_order).
             let alias=format!("__ok_pair_target_{i}");
             if let Some((pos,rot))=frozen_parts[role][i] {proxies.push((alias.clone(),pos,rot));part.target=alias;} else {part.target.clear();}
         }
@@ -496,8 +525,7 @@ pub(crate) fn apply_contacts_prepared_with_policy(female:&mut crate::session::Ok
             if let Some((pos,rot))=frozen_bends[role][i] {proxies.push((alias.clone(),pos,rot));bend.chein=alias;} else {bend.chein.clear();}
         }
         for frame in &mut active.frames {
-            if !(0..=1).contains(&frame.edit_no) {return Err("unsupported shape partner index".into());}
-            let partner=if frame.edit_no==0 {role}else{1-role};
+            let partner=partners[role].get(frame.edit_no.max(0) as usize).copied().unwrap_or(role);
             let (pos,ang)=crate::finalik::correct_shape_values(&shapes[partner],Some(frame));
             frame.shapes=vec![crate::finalik::MotionShape{shape_no:0,small:Default::default(),large:crate::finalik::PosAng{pos,ang}}];
         }
@@ -540,20 +568,29 @@ pub(crate) fn apply_contacts_prepared_with_policy(female:&mut crate::session::Ok
         }
         for id in ids {body.tfs.remove(&id);}
         {let _trace=crate::native_profile::Scope::new(33);
-        correct_frames(body,&config,&post_corrections,&shapes,role,true)?;}
+        correct_frames(body,&config,&post_corrections,&shapes,&partners[role],true)?;}
         if body.tfs.values().any(|t|t.pos.iter().chain(t.rot.iter()).chain(t.scale.iter()).any(|v|!v.is_finite())) {return Err("non-finite paired IK pose".into());}
         if publish_export {if let Some(mut ex)=session.skel_export.take() {crate::skel_export::refresh_pose(session,&mut ex);session.skel_export=Some(ex);}}
         Ok(count)
     };
-    let [female_setup,male_setup]=setups;
-    let (female_result,male_result)=if parallel {
-        crate::session::native_parallel_work(||rayon::join(||solve(0,female,female_setup),||solve(1,male,male_setup)))
-    }else{(Ok(solve(0,female,female_setup)?),solve(1,male,male_setup))};
-    Ok(female_result?+male_result?)
+    let [female_setup,male_setup,third_setup]=setups;
+    let (female_result,(male_result,third_result))=if parallel {
+        crate::session::native_parallel_work(||rayon::join(||solve(0,female,female_setup),||rayon::join(||solve(1,male,male_setup),||third.map_or(Ok(0),|t|solve(2,t,third_setup)))))
+    }else{(Ok(solve(0,female,female_setup)?),(solve(1,male,male_setup),third.map_or(Ok(0),|t|solve(2,t,third_setup))))};
+    Ok(female_result?+male_result?+third_result?)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn partners_follow_the_pose_order() {
+        use super::partner_order as p;
+        assert_eq!(p(0,2,false),[0,1]);assert_eq!(p(1,2,false),[1,0]);
+        // Even 3P (female, male, second): HSceneProc adds them in that order.
+        assert_eq!(p(0,3,false),[0,1,2]);assert_eq!(p(1,3,false),[1,0,2]);assert_eq!(p(2,3,false),[2,0,1]);
+        // Odd: second, male, female.
+        assert_eq!(p(0,3,true),[0,2,1]);assert_eq!(p(1,3,true),[1,2,0]);assert_eq!(p(2,3,true),[2,1,0]);
+    }
     #[test]
     fn shared_setup_tracks_snapshot_state_and_mutation_isolation() {
         use std::sync::Arc;

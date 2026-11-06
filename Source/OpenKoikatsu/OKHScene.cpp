@@ -284,7 +284,7 @@ void UOKHScenePanel::LoadAibuPoses(){
     for(const auto& Pair:HPoseMeta()){const TSharedPtr<FJsonObject>& O=Pair.Value;const int32 Info=int32(O->GetNumberField(TEXT("mode")));
         const TSharedPtr<FJsonObject>* Female=nullptr;if(Info<3||Info>5||!O->TryGetObjectField(TEXT("female"),Female))continue;
         FAibuPose& Pose=AibuPoses.AddDefaulted_GetRef();Pose.Info=Info;Pose.Ctrl=int32(O->GetNumberField(TEXT("num_ctrl")));Pose.Id=int32(O->GetNumberField(TEXT("id")));Pose.Prop=FMath::Max(0,HPropKind(FString::Printf(TEXT("AnimationInfo_%02d"),Info),Pose.Id));
-        Pose.UpperCloth=int32(O->GetNumberField(TEXT("upper_cloth")));Pose.LowerCloth=int32(O->GetNumberField(TEXT("lower_cloth")));Pose.bSecondUndone=O->GetNumberField(TEXT("second_upper_cloth"))>0||O->GetNumberField(TEXT("second_lower_cloth"))>0;
+        Pose.UpperCloth=int32(O->GetNumberField(TEXT("upper_cloth")));Pose.LowerCloth=int32(O->GetNumberField(TEXT("lower_cloth")));Pose.SecondUpper=int32(O->GetNumberField(TEXT("second_upper_cloth")));Pose.SecondLower=int32(O->GetNumberField(TEXT("second_lower_cloth")));
         Pose.Source=(*Female)->GetStringField(TEXT("source"));Pose.Layer=int32((*Female)->GetNumberField(TEXT("layer")));Pose.Name=OKMotionLabelDisplay(O->GetStringField(TEXT("name")));
         const TSharedPtr<FJsonObject>* Other=nullptr;if(O->TryGetObjectField(TEXT("second"),Other)){Pose.SecondSource=(*Other)->GetStringField(TEXT("source"));Pose.SecondLayer=int32((*Other)->GetNumberField(TEXT("layer")));}}
     AibuPoses.StableSort([](const FAibuPose& A,const FAibuPose& B){return A.Info!=B.Info?A.Info<B.Info:A.Id<B.Id;});
@@ -535,8 +535,8 @@ void UOKHScenePanel::LoadPoses(){
             Pose.KindHoushi=int32((*M)->GetNumberField(TEXT("kind_houshi")));Pose.SysTaii=int32((*M)->GetNumberField(TEXT("sys_taii")));Pose.Anal=(*M)->GetBoolField(TEXT("anal"));
             Pose.FemaleLead=(*M)->HasField(TEXT("female_initiative"))&&(*M)->GetBoolField(TEXT("female_initiative"));
             Pose.IsExperience=int32((*M)->GetNumberField(TEXT("is_experience")));Pose.StateRestriction=int32((*M)->GetNumberField(TEXT("state_restriction")));
-            Pose.UpperCloth=int32((*M)->GetNumberField(TEXT("upper_cloth")));Pose.LowerCloth=int32((*M)->GetNumberField(TEXT("lower_cloth")));Pose.bSecondUndone=(*M)->GetNumberField(TEXT("second_upper_cloth"))>0||(*M)->GetNumberField(TEXT("second_lower_cloth"))>0;
-            const TSharedPtr<FJsonObject>* Other=nullptr;if((*M)->TryGetObjectField(TEXT("second"),Other)){Pose.SecondSource=(*Other)->GetStringField(TEXT("source"));Pose.SecondLayer=int32((*Other)->GetNumberField(TEXT("layer")));}
+            Pose.UpperCloth=int32((*M)->GetNumberField(TEXT("upper_cloth")));Pose.LowerCloth=int32((*M)->GetNumberField(TEXT("lower_cloth")));Pose.SecondUpper=int32((*M)->GetNumberField(TEXT("second_upper_cloth")));Pose.SecondLower=int32((*M)->GetNumberField(TEXT("second_lower_cloth")));
+            const TSharedPtr<FJsonObject>* Other=nullptr;if((*M)->TryGetObjectField(TEXT("second"),Other)){Pose.SecondSource=(*Other)->GetStringField(TEXT("source"));(*Other)->TryGetStringField(TEXT("motion"),Pose.SecondMotion);Pose.SecondLayer=int32((*Other)->GetNumberField(TEXT("layer")));}
             const FString Named=(*M)->GetStringField(TEXT("name"));if(!Named.IsEmpty())Pose.Name=Named;
         }
         Pose.Prop=FMath::Max(0,HPropKind(Category,Id));
@@ -602,7 +602,7 @@ void UOKHScenePanel::BuildList(){
                     bool bWilling=true;O->TryGetBoolField(TEXT("willing"),bWilling);bWilling|=CVarHSecondAnyone.GetValueOnGameThread()!=0;
                     Add(SecondBase+I,bWilling?O->GetStringField(TEXT("name")):OKMsg(TEXT("ui.hscene.second_unwilling"),{{TEXT("name"),O->GetStringField(TEXT("name"))}}),bWilling&&!bSecondLoading,false);}
             return;}
-        Add(SecondChange,OKMsg(TEXT("ui.hscene.second_change"),{{TEXT("name"),SecondName}}),true,false);Add(SecondClothes,OKT(bSecondBare?TEXT("ui.hscene.second_dress"):TEXT("ui.hscene.second_bare")),true,bSecondBare);
+        Add(SecondChange,OKMsg(TEXT("ui.hscene.second_change"),{{TEXT("name"),SecondName}}),!(Mode==2&&HBase(Current())!=TEXT("Idle")),false); // not with him in one of themAdd(SecondClothes,OKT(bSecondBare?TEXT("ui.hscene.second_dress"):TEXT("ui.hscene.second_bare")),true,bSecondBare);
     }
     if(Tab==TabAibu||Tab==TabSolo||Tab==TabPeep||Tab==TabGirls){if(!bAibuLoaded)LoadAibuPoses();const int32 Info=Tab==TabSolo?3:Tab==TabPeep?4:Tab==TabGirls?5:0;
         for(int32 I=0;I<AibuPoses.Num();++I)if(AibuPoses[I].Info==Info)Add(AibuBase+I,AibuPoses[I].Name+Fresh(AibuPoses[I].Name),true,(I==ActiveAibu&&Mode==0)||I==PendingAibu);return;}
@@ -810,7 +810,7 @@ void UOKHScenePanel::Click(int32 Kind){
     if(Kind>=TabHand&&Kind<=Tab3P){Tab=Kind;BuildList();return;}
     if(Kind>=SecondBase&&Kind<SecondBase+64){LoadSecond(Kind-SecondBase);return;}
     if(Kind==SecondChange){DropSecond();BuildList();return;}
-    if(Kind==SecondClothes){bSecondBare=!bSecondBare;if(IsValid(Second))Second->SetClothingHidden(bSecondBare);BuildList();return;}
+    if(Kind==SecondClothes){bSecondBare=!bSecondBare;if(!bSecondBare)FMemory::Memzero(SecondPieces,9);ApplySecondClothes();BuildList();return;}
     if(Mode==0&&SoloInfo&&Kind>=TouchChest&&Kind<=LickToggle)return; // his hands are not on her
     if(Kind>=PoseBase&&Kind<PoseBase+1000){SelectPose(Kind-PoseBase);return;}
     if(Kind>=AibuBase&&Kind<PoseBase){SelectAibu(Kind-AibuBase);return;}
@@ -1522,8 +1522,8 @@ void UOKHScenePanel::LoadSecond(int32 Index){
             UI->Second=Actor;UI->SecondFace=Job->Card.Face.ShapeValueFace;UI->SecondBody=Job->Card.Body.ShapeValueBody;UI->SecondPersonality=Job->Card.Personality;UI->SecondVoiceRate=Job->Card.VoiceRate;});});
 }
 void UOKHScenePanel::DropSecond(){
-    SyncSwap(false);
-    ++SecondGeneration;bSecondLoading=false;bSecondReady=false;bSecondBare=false;SecondState.Reset();SecondKeys.Reset();SecondRun=INDEX_NONE;SecondCameUntil=0.;SecondBreathKey.Reset();SecondFaceKey.Reset();SecondClothKey.Reset();
+    SyncSwap(false);if(Gallery&&Gallery->PairedPlayback)Gallery->PairedPlayback->SetThird(nullptr,FString(),false);
+    ++SecondGeneration;bSecondLoading=false;bSecondReady=false;bSecondBare=false;FMemory::Memzero(SecondPieces,9);SecondState.Reset();SecondKeys.Reset();SecondRun=INDEX_NONE;SecondCameUntil=0.;SecondBreathKey.Reset();SecondFaceKey.Reset();SecondClothKey.Reset();
     if(IsValid(Second))Second->Destroy();Second=nullptr;
 }
 // The second role's clips for a 3P pose, as SelectAibu prepares a lesbian pose's.
@@ -1542,10 +1542,14 @@ void UOKHScenePanel::PrepareSecond(const FString& Source,int32 Layer){
 }
 void UOKHScenePanel::PlaySecond(const FString& State){
     const FString* Key=SecondKeys.Find(State);if(!IsValid(Second)||!bSecondReady||!Key)return;
-    if(!Second->SetGameAnimation(*Key)){UE_LOG(LogTemp,Warning,TEXT("H scene: second heroine state %s did not play"),*State);return;}
+    if(Mode!=0)SyncPair(); // with him she is solved in the pair's frame (AKKPairedPlayback::SetThird), which may be running
+    if(!Second->SetGameAnimation(*Key,Mode==0)){UE_LOG(LogTemp,Warning,TEXT("H scene: second heroine state %s did not play"),*State);return;}
     SecondState=State;
-    // Her own height and bust on her own animator (HActionBase: SetAnimatorFloat(female1, "height", ...)): each clip's blend has one of these names.
-    if(SecondBody.Num()>1){for(const TCHAR* N:{TEXT("height"),TEXT("height1")})Second->SetGameAnimationFloat(N,SecondBody[0]);for(const TCHAR* N:{TEXT("Breast"),TEXT("Breast1"),TEXT("breast")})Second->SetGameAnimationFloat(N,SecondBody[1]);}
+    // HLesbian: height and Breast are each one's own, height1 and Breast1 the other's. With him the pair's frame sets these.
+    auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;const TArray<float>& Hers=Gallery->Selected.Body.ShapeValueBody;
+    if(Mode==0&&IsValid(Girl)&&SecondBody.Num()>4&&Hers.Num()>4){
+        Second->SetGameAnimationFloat(TEXT("height"),SecondBody[0]);Second->SetGameAnimationFloat(TEXT("Breast"),SecondBody[4]);Second->SetGameAnimationFloat(TEXT("height1"),Hers[0]);Second->SetGameAnimationFloat(TEXT("Breast1"),Hers[4]);
+        Girl->SetGameAnimationFloat(TEXT("height1"),SecondBody[0]);Girl->SetGameAnimationFloat(TEXT("Breast1"),SecondBody[4]);}
 }
 // The counters that are the second heroine's while he is in her (see FHLedger), and back.
 void UOKHScenePanel::SyncSwap(bool bWant){
@@ -1573,6 +1577,15 @@ void UOKHScenePanel::TickGroup(float Delta){
     const bool bSecondA=SecondReceives();
     GroupRow(MainRows,Category,Id,bSecondA?TEXT("b"):TEXT("a")).Seconds+=Delta;GroupRow(SecondRuns[SecondRun].Rows,Category,Id,bSecondA?TEXT("a"):TEXT("b")).Seconds+=Delta;
 }
+void UOKHScenePanel::ApplySecondClothes(){
+    if(!IsValid(Second))return;if(Mode!=0)SyncPair();
+    Second->SetClothingHidden(bSecondBare);if(!bSecondBare)Second->SetClothingPartsHidden(SecondPieces);
+}
+float UOKHScenePanel::SecondDev(const TCHAR* Area) const{
+    double V=0;const TSharedPtr<FJsonObject>* Areas=nullptr;
+    if(SecondRuns.IsValidIndex(SecondRun)&&SecondRuns[SecondRun].Experience.IsValid()&&SecondRuns[SecondRun].Experience->TryGetObjectField(TEXT("areas"),Areas))(*Areas)->TryGetNumberField(Area,V);
+    return FMath::Clamp(float(V)/100.f,0.f,1.f);
+}
 bool UOKHScenePanel::SecondHere() const{return IsValid(Second)&&bSecondReady&&(Mode==0?SoloInfo==5:Poses.IsValidIndex(ActivePose)&&Poses[ActivePose].bThree);}
 // Her breathing from the same tables as the first heroine's (HVoiceCtrl plays both, each in her own voice). A state with
 // no breathing of its own: she goes on as she was, as StartPairBreath does.
@@ -1583,7 +1596,7 @@ void UOKHScenePanel::SecondBreath(const FString& State){
     FKKHBreathContext Context;Context.Gauge=Her;Context.bFast=SpeedValue>.5f;Context.bMoving=bSolo||Gallery->bPairBreathMoving;Context.Experience=SecondLevel;Context.bHadVaginal=true;Context.bHadAnal=true;
     TArray<FKKHBreathCue> Cues;FString Error;
     if(!KKSpeech::CollectHBreath(UOKCharacterController::DefaultVoiceRoot(),SecondPersonality,Info,State,AnimId,Context,Cues,Error)||Cues.IsEmpty()){UE_LOG(LogTemp,Display,TEXT("H scene: no second heroine breath for %s: %s"),*State,*Error);return;}
-    const bool Ok=Second->BeginHBreath(Cues,FMath::Lerp(.94f,1.06f,SecondVoiceRate),Error);
+    if(Mode!=0)SyncPair();const bool Ok=Second->BeginHBreath(Cues,FMath::Lerp(.94f,1.06f,SecondVoiceRate),Error);
     UE_LOG(LogTemp,Display,TEXT("H scene: second heroine breath %s cues=%d %s"),*State,Cues.Num(),Ok?TEXT("playing"):*Error);
 }
 // Her face follows the one gauge and the state: spent at her climax, eyes shut and brows up past 70, half closed in the
@@ -1594,7 +1607,7 @@ void UOKHScenePanel::SecondReact(){
     int32 Eye=4,Brow=0;float Open=.9f;
     if(bCame){Eye=24;Brow=2;Open=0.f;}else if(bOrgasm||Her>=70.f){Eye=12;Brow=11;Open=.5f;}else if(bLoop){Eye=Her>=40.f?8:7;Brow=Her>=40.f?11:2;Open=Her>=40.f?.55f:.7f;}
     const FString Face=FString::Printf(TEXT("%d/%d/%.2f"),Eye,Brow,Open);
-    if(Face!=SecondFaceKey&&Second->GetFacePatternCount(1)>=25&&Second->GetFacePatternCount(2)>=12){SecondFaceKey=Face;Second->SetFaceControl(1,Eye,Open,true);Second->SetFaceControl(2,Brow,1.f,true);}
+    if(Face!=SecondFaceKey&&Second->GetFacePatternCount(1)>=25&&Second->GetFacePatternCount(2)>=12){SecondFaceKey=Face;if(Mode!=0)SyncPair();Second->SetFaceControl(1,Eye,Open,true);Second->SetFaceControl(2,Brow,1.f,true);}
     const FString Key=FString::Printf(TEXT("%s/%d/%d"),*State,Her>=50.f?1:0,Mode==0||Gallery->bPairBreathMoving?1:0);
     if(Key!=SecondBreathKey&&!State.IsEmpty()){SecondBreathKey=Key;SecondBreath(Mode==0?State:Current());}
 }
@@ -1606,15 +1619,21 @@ void UOKHScenePanel::TickSecond(float Delta){
         Second->ApplyShapes(SecondFace,SecondBody);Second->SetGameSceneMode(3,false);bSecondLoading=false;bSecondReady=true;BuildList();
         UE_LOG(LogTemp,Display,TEXT("H scene: second heroine %s ready"),*SecondName);}
     const bool bHere=Mode==0?SoloInfo==5:Poses.IsValidIndex(ActivePose)&&Poses[ActivePose].bThree;auto* Girl=Gallery->PreviewActor.Get();
-    if(Second->IsHidden()==bHere){Second->SetActorHiddenInGame(!bHere);Second->SetActorTickEnabled(bHere);if(!bHere){Second->StopHBreath();SecondBreathKey.Reset();}}
+    // With him she goes in the pair's frame: same clock, her own MotionIK against the two of them. Alone with the first heroine she ticks herself.
+    if(auto* Play=Gallery->PairedPlayback.Get()){if(bHere&&Mode!=0)Play->SetThird(Second,Poses[ActivePose].SecondMotion,SecondReceives());else if(Play->GetThird())Play->SetThird(nullptr,FString(),false);}
+    if(Second->IsHidden()==bHere){Second->SetActorHiddenInGame(!bHere);if(!bHere){SyncPair();Second->StopHBreath();SecondBreathKey.Reset();}}
+    if(Second->IsActorTickEnabled()!=(bHere&&Mode==0))Second->SetActorTickEnabled(bHere&&Mode==0);
     SyncSwap(bHere&&SecondReceives());
     if(!bHere||!IsValid(Girl))return;
     TickGroup(Delta);
     Second->SetActorTransform(Girl->GetActorTransform());
-    if(Mode!=0){const FString State=HBase(Current());if(State!=SecondState)PlaySecond(State);}
-    Second->AnimPhase=Girl->AnimPhase; // one clock (the pair's elapsed time, or her own)
+    if(Mode!=0){const FString Now=Current(),State=SecondKeys.Contains(Now)?Now:HBase(Now);if(State!=SecondState)PlaySecond(State);}
+    else Second->AnimPhase=Girl->AnimPhase; // one clock
     {const FString Cloth=FString::Printf(TEXT("%d|%d|%d"),Mode,ActivePose,ActiveAibu);
-     if(Cloth!=SecondClothKey){SecondClothKey=Cloth;if(!bSecondBare&&(Mode==0?AibuPoses.IsValidIndex(ActiveAibu)&&AibuPoses[ActiveAibu].bSecondUndone:Poses[ActivePose].bSecondUndone)){bSecondBare=true;Second->SetClothingHidden(true);BuildList();}}}
+     if(Cloth!=SecondClothKey){SecondClothKey=Cloth; // as PoseClothes: undone for the pose, never put back on
+         const int32 Upper=Mode==0?(AibuPoses.IsValidIndex(ActiveAibu)?AibuPoses[ActiveAibu].SecondUpper:0):Poses[ActivePose].SecondUpper,Lower=Mode==0?(AibuPoses.IsValidIndex(ActiveAibu)?AibuPoses[ActiveAibu].SecondLower:0):Poses[ActivePose].SecondLower;
+         uint8 Was[9];FMemory::Memcpy(Was,SecondPieces,9);if(Upper>0)for(const int32 K:{0,2})SecondPieces[K]=3;if(Lower>0)for(const int32 K:{1,3,5})SecondPieces[K]=3;
+         if(FMemory::Memcmp(Was,SecondPieces,9)!=0)ApplySecondClothes();}}
     SecondReact();
 }
 // She plays by herself: HMasturbation (her gauge walks the loops to her climax and back) and HPeeping (In, twice round the
@@ -2047,7 +2066,8 @@ float UOKHScenePanel::HerDesire() const{const auto& X=Gallery?Gallery->HExperien
 bool UOKHScenePanel::StreetOnani() const{bool On=false;return Gallery&&Gallery->HExperience.IsValid()&&Gallery->HExperience->TryGetBoolField(TEXT("street_onani"),On)&&On;}
 void UOKHScenePanel::TickDrips(float Delta){
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;
-    auto Where=[Girl](int32,FName Bone,FVector& At){return IsValid(Girl)&&HBone(Girl,*Bone.ToString(),At);};
+    auto* Two=SecondHere()?Second.Get():nullptr;
+    auto Where=[Girl,Two](int32 Who,FName Bone,FVector& At){AKKPreviewActor* A=Who==1?Two:Girl;return IsValid(A)&&HBone(A,*Bone.ToString(),At);};
     const float Desire=HerDesire();const double Now=FPlatformTime::Seconds();
     const AActor* Ignore[]={Girl,Gallery?Gallery->PartnerActor.Get():nullptr};
     // Taken from touching herself on the street (her desire at 200, OKStreetSocialOnani.inl; user 2026-11-03): her breasts
@@ -2092,6 +2112,18 @@ void UOKHScenePanel::TickDrips(float Delta){
         Due(NippleSprayAt,[&]{return .05/(1.f+2.f*Dev(TEXT("nipple")))/More;},[&]{
             if(HBone(Girl,TEXT("j_spine03"),Chest))for(const TCHAR* Nipple:{TEXT("j_bnip02_L"),TEXT("j_bnip02_R")}){FVector At;
                 if(HBone(Girl,Nipple,At)&&Shoot(At,(At-Chest).GetSafeNormal(),110.f,OKArousal::White)){++HerMilk;if(Now-MilkBoutAt>3.)++HerMilkTimes;MilkBoutAt=Now;}}});
+    }
+    // The second heroine, by her own development: wet past 70, and she sprays with her climax as the first does.
+    if(IsValid(Two)&&SecondRuns.IsValidIndex(SecondRun)){FSecondRun& Run=SecondRuns[SecondRun];FVector Kokan,Hips,Chest,L,R;
+        auto Floor=[&](const FVector& At){return HBone(Two,TEXT("j_foot_L"),L)&&HBone(Two,TEXT("j_foot_R"),R)?FMath::Min(L.Z,R.Z)-3.f:At.Z-80.f;};
+        auto Shoot=[&](const FVector& At,const FVector& Out,float Speed,uint8 Colour){const FVector V=(Out+FMath::VRand()*.3f).GetSafeNormal()*Speed*FMath::FRandRange(.7f,1.2f);
+            return Drips.Squirt(Two,1,At,V,FOKArousalDrops::GroundBelow(Two,At-FVector(0,0,4.f),Ignore,Floor(At)),Colour);};
+        if(Her>=70.f)Due(SecondDripAt,[&]{return .9/(1.f+SecondDev(TEXT("crotch")))*FMath::FRandRange(.8f,1.2f);},[&]{
+            if(HBone(Two,TEXT("J_Kokan"),Kokan)&&Drips.Spawn(Two,1,TEXT("J_Kokan"),Kokan,FOKArousalDrops::GroundBelow(Two,Kokan-FVector(0,0,4.f),Ignore,Floor(Kokan)),OKArousal::Clear))++Run.Drips;});
+        if(Now<SecondCameUntil){
+            Due(SecondSquirtAt,[&]{return .05/(1.f+SecondDev(TEXT("crotch")));},[&]{if(HBone(Two,TEXT("J_Kokan"),Kokan)&&HBone(Two,TEXT("j_hips"),Hips)&&Shoot(Kokan,(Kokan-Hips).GetSafeNormal(),200.f,OKArousal::Clear))++Run.Drips;});
+            if(SecondDev(TEXT("nipple"))>0.f)Due(SecondMilkAt,[&]{return .05/(1.f+2.f*SecondDev(TEXT("nipple")));},[&]{
+                if(HBone(Two,TEXT("j_spine03"),Chest))for(const TCHAR* Nipple:{TEXT("j_bnip02_L"),TEXT("j_bnip02_R")}){FVector At;if(HBone(Two,Nipple,At)&&Shoot(At,(At-Chest).GetSafeNormal(),110.f,OKArousal::White))++Run.Milk;}});}
     }
     Drips.Tick(Delta,Where);
 }
@@ -3182,14 +3214,15 @@ TSharedRef<FJsonObject> UOKHScenePanel::Result() const{
     {TArray<TSharedPtr<FJsonValue>> On;for(int32 A=0;A<5;++A)On.Add(MakeShared<FJsonValueNumber>(Siru[A]));Counts->SetArrayField(TEXT("siru"),On);}
     Out->SetArrayField(TEXT("poses"),P);Out->SetArrayField(TEXT("events"),E);
     // Who else was in it: each leaves with her own counts, read by the same h_session_end (OKStreetSocialContacts FinishPrivate).
-    {TArray<TSharedPtr<FJsonValue>> Others;TArray<FString> AllNames;for(const FSecondRun& R:SecondRuns)if(!R.Poses.IsEmpty())AllNames.Add(R.Name);
+    {TArray<TSharedPtr<FJsonValue>> Others;TArray<FString> AllNames;auto Joined=[](const FSecondRun& R){float Seconds=0.f;for(const FGroupRow& G:R.Rows)Seconds+=G.Seconds;return Seconds>0.f||R.Ledger.HisFinishes>0||R.Ledger.bCrotch||R.Ledger.bAnal;}; // she came and nothing moved: she was not in it
+     for(const FSecondRun& R:SecondRuns)if(Joined(R))AllNames.Add(R.Name);
      OKHGroupCounts(*Counts,MainRows,AllNames);
-     for(const FSecondRun& R:SecondRuns){if(R.Poses.IsEmpty())continue;const FHLedger& L=R.Ledger;auto O=MakeShared<FJsonObject>();O->SetNumberField(TEXT("girl"),R.Girl);O->SetStringField(TEXT("id"),R.Id);O->SetStringField(TEXT("name"),R.Name);
+     for(const FSecondRun& R:SecondRuns){if(!Joined(R))continue;const FHLedger& L=R.Ledger;auto O=MakeShared<FJsonObject>();O->SetNumberField(TEXT("girl"),R.Girl);O->SetStringField(TEXT("id"),R.Id);O->SetStringField(TEXT("name"),R.Name);
       TArray<TSharedPtr<FJsonValue>> Names;for(const FString& N:R.Poses)Names.Add(MakeShared<FJsonValueString>(N));O->SetArrayField(TEXT("poses"),Names);
       auto C=MakeShared<FJsonObject>();bool bHim=false;for(const FGroupRow& G:R.Rows)bHim|=G.Category!=TEXT("AnimationInfo_05");
       C->SetBoolField(TEXT("played"),true);C->SetBoolField(TEXT("with_him"),bHim);C->SetNumberField(TEXT("her_orgasms"),R.Orgasms);C->SetArrayField(TEXT("poses"),Names);C->SetBoolField(TEXT("service"),L.bService);C->SetNumberField(TEXT("service_finishes"),L.ServiceFinishes);
       C->SetObjectField(TEXT("crotch"),Part(L.bCrotch,L.CrotchClimaxes,L.CrotchDeepest));C->SetObjectField(TEXT("anal"),Part(L.bAnal,L.AnalClimaxes,L.AnalDeepest));C->SetBoolField(TEXT("raw"),L.bRaw);C->SetBoolField(TEXT("raw_pressed"),L.bRawPressed&&L.bRaw);
-      C->SetNumberField(TEXT("his_inside"),L.HisInside);C->SetNumberField(TEXT("his_inside_raw"),L.HisInsideRaw);C->SetNumberField(TEXT("his_inside_vagina_raw"),L.HisInsideVaginaRaw);C->SetNumberField(TEXT("his_condom"),L.HisCondom);C->SetNumberField(TEXT("his_outside"),L.HisOutside);C->SetNumberField(TEXT("his_mouth"),L.HisMouth);C->SetNumberField(TEXT("swallowed"),L.Swallowed);C->SetNumberField(TEXT("his_finishes"),L.HisFinishes);
+      C->SetNumberField(TEXT("his_inside"),L.HisInside);C->SetNumberField(TEXT("his_inside_raw"),L.HisInsideRaw);C->SetNumberField(TEXT("his_inside_vagina_raw"),L.HisInsideVaginaRaw);C->SetNumberField(TEXT("his_condom"),L.HisCondom);C->SetNumberField(TEXT("his_outside"),L.HisOutside);C->SetNumberField(TEXT("his_mouth"),L.HisMouth);C->SetNumberField(TEXT("swallowed"),L.Swallowed);C->SetNumberField(TEXT("his_finishes"),L.HisFinishes);C->SetNumberField(TEXT("her_drips"),R.Drips);C->SetNumberField(TEXT("her_milk"),R.Milk);
       {TArray<TSharedPtr<FJsonValue>> On;for(int32 A=0;A<5;++A)On.Add(MakeShared<FJsonValueNumber>(L.Siru[A]));C->SetArrayField(TEXT("siru"),On);}
       TArray<FString> With={Gallery?Gallery->HHeroineName:FString()};for(const FString& N:AllNames)if(N!=R.Name)With.Add(N);OKHGroupCounts(*C,R.Rows,With);
       O->SetObjectField(TEXT("counts"),C);Others.Add(MakeShared<FJsonValueObject>(O));}

@@ -168,6 +168,9 @@ void AOKStreetSocialScene::StartControlServer(){
  // highlight, tears, expr, fade_scale (dev: stretch the look's easing), peek (only read)}. Answers what the runtime did,
  // the look drawn now and the shape cross-fade counters.
  // The frame rate now, as the engine averages it (no FPS-chart folder per measurement): fps and ms per thread.
+ // The H result screen's close button; says whether one was open.
+ Bind(TEXT("/hresult_close"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest&,const FHttpResultCallback& Done){
+  const bool Open=State&&State->HResultPanel.IsValid();CloseHResult();auto O=OKControlResult(Open,Open?FString():TEXT("no result screen"));O->SetBoolField(TEXT("more"),State&&State->HResultPanel.IsValid());OKControlReply(Done,O);});
  Bind(TEXT("/fps"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest&,const FHttpResultCallback& Done){
   auto O=OKControlResult(true,FString());O->SetNumberField(TEXT("fps"),GAverageFPS);O->SetNumberField(TEXT("frame_ms"),GAverageFPS>0.f?1000.f/GAverageFPS:0.f);
   O->SetNumberField(TEXT("game_ms"),FPlatformTime::ToMilliseconds(GGameThreadTime));O->SetNumberField(TEXT("render_ms"),FPlatformTime::ToMilliseconds(GRenderThreadTime));

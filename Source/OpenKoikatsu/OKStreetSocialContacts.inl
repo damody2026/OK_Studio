@@ -351,6 +351,12 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character,const FString& TryCard,i
 }
 // The original's result after an H scene (HSceneResult): her level then and now, each place's development before and
 // after (what grew in green), and this time's firsts; on the street until he closes it or another one-on-one ends.
+// The result screen closed: the other heroines in the scene next, one after the other.
+void AOKStreetSocialScene::CloseHResult(){
+ if(!State||!State->HResultPanel.IsValid()||!GEngine||!GEngine->GameViewport)return;auto& S=*State;
+ GEngine->GameViewport->RemoveViewportWidgetContent(S.HResultPanel.ToSharedRef());S.HResultPanel.Reset();
+ if(S.HResultNext.Num()){const auto One=S.HResultNext[0];S.HResultNext.RemoveAt(0);ShowHResult(One.Key,*One.Value);}
+}
 void AOKStreetSocialScene::ShowHResult(int32 Girl,const FJsonObject& Answer){
  auto& S=*State;const TSharedPtr<FJsonObject>* Result=nullptr;
  if(S.HResultPanel.IsValid()){if(GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(S.HResultPanel.ToSharedRef());S.HResultPanel.Reset();}
@@ -392,9 +398,7 @@ void AOKStreetSocialScene::ShowHResult(int32 Girl,const FJsonObject& Answer){
   if(Where.Num())Line(OKMsg(TEXT("ui.hresult.stats_where"),{{TEXT("where"),FString::Join(Where,OKT(TEXT("ui.memory.list_separator")))}}),FLinearColor(.95f,.85f,.6f),14);}
  Rows->AddSlot().AutoHeight().HAlign(HAlign_Right).Padding(FMargin(0,10,0,0))
   [SNew(SButton).ButtonStyle(OKStreetGlassButton()).ContentPadding(FMargin(18,6)).Text(FText::FromString(OKT(TEXT("ui.hresult.close"))))
-   .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid()&&Weak->State&&Weak->State->HResultPanel.IsValid()&&GEngine&&GEngine->GameViewport){GEngine->GameViewport->RemoveViewportWidgetContent(Weak->State->HResultPanel.ToSharedRef());Weak->State->HResultPanel.Reset();
-     // The other heroines in the scene, one after the other.
-     auto& Next=Weak->State->HResultNext;if(Next.Num()){const auto One=Next[0];Next.RemoveAt(0);Weak->ShowHResult(One.Key,*One.Value);}}return FReply::Handled();})];
+   .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->CloseHResult();return FReply::Handled();})];
  TSharedRef<SBorder> Panel=SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(FLinearColor(.05f,.04f,.08f,.88f)).Padding(FMargin(28,20));
  Panel->SetContent(Rows);
  S.HResultPanel=SNew(SBox).HAlign(HAlign_Center).VAlign(VAlign_Center)[Panel];
@@ -432,7 +436,7 @@ void AOKStreetSocialScene::FinishPrivate(){
    if((*H)->TryGetArrayField(TEXT("second"),Joined))for(const auto& Row:*Joined){const auto R=Row->AsObject();if(!R)continue;
     const int32 Other=int32(R->GetNumberField(TEXT("girl")));const FString OtherId=R->GetStringField(TEXT("id"));const TSharedPtr<FJsonObject>* Hers=nullptr;if(Other<=0||OtherId.IsEmpty()||!R->TryGetObjectField(TEXT("counts"),Hers))continue;
     // As the first heroine below: what is on her, then the same h_session_end on her own counts.
-    if(Other<OKStreetCastCount){const TArray<TSharedPtr<FJsonValue>>* On=nullptr;if((*Hers)->TryGetArrayField(TEXT("siru"),On))for(int32 A=0;A<On->Num()&&A<5;++A)if((*On)[A]->AsNumber()>0)S.SemenOn[Other]|=1<<A;}
+    if(Other<OKStreetCastCount){const TArray<TSharedPtr<FJsonValue>>* On=nullptr;if((*Hers)->TryGetArrayField(TEXT("siru"),On))for(int32 A=0;A<On->Num()&&A<5;++A)if((*On)[A]->AsNumber()>0)S.SemenOn[Other]|=1<<A;double Drips=0,Milk=0;(*Hers)->TryGetNumberField(TEXT("her_drips"),Drips);(*Hers)->TryGetNumberField(TEXT("her_milk"),Milk);S.ArousalWetCrotch[Other]+=int32(Drips);S.ArousalWetMilk[Other]+=int32(Milk);}
     auto Request=OKRulesHeroineRequest(S,TEXT("h_session_end"),OtherId);Request->SetStringField(TEXT("girl"),OtherId);Request->SetNumberField(TEXT("day"),S.Store.CalendarDay);Request->SetStringField(TEXT("place"),PlaceHere(S.Male));Request->SetNumberField(TEXT("minute"),double(OKStreetMindNow(S)));Request->SetObjectField(TEXT("counts"),*Hers);{const TArray<TSharedPtr<FJsonValue>>* Names=nullptr;if(R->TryGetArrayField(TEXT("poses"),Names))Request->SetArrayField(TEXT("poses"),*Names);}OKRulesPutExt(S,Request);
     if(const TSharedPtr<FJsonObject> Answer=OKRulesEval(S,Request)){auto Candidate=S.Store;OKRulesTakeExt(Candidate,*Answer);ApplyRulesEffects(Candidate,*Answer);if(CommitStore(MoveTemp(Candidate)))FlushRulesEffects();OKStreetApplyHerExtras(S,OtherId);S.HResultNext.Add(TPair<int32,TSharedPtr<FJsonObject>>(Other,Answer));
      UE_LOG(LogTemp,Display,TEXT("Street private: %s was in it too, %d climaxes, level %s"),*R->GetStringField(TEXT("name")),int32((*Hers)->GetNumberField(TEXT("her_orgasms"))),*Answer->GetStringField(TEXT("level_name")));}}}

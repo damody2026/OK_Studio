@@ -328,6 +328,7 @@ public:
 	bool SetAnimSceneMode(int32 Mode);
 	int32 AnimationFloatCount() const;
 	bool AnimationFloatAt(int32 Index, FString& Name, float& Value, float& Min, float& Max) const;
+	bool SetPairThird(FOkSession* Third,const FString& Motion,bool bSwapped); // ok_animation_pair_set_third
 	bool SetAnimationFloat(const FString& Name, float Value);
 	TArray<FString> AnimationTriggers() const;
 	bool SetAnimationTrigger(const FString& Name);
