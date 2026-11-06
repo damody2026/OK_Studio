@@ -8514,8 +8514,13 @@ void AKKPreviewActor::UpdateRigidFollowers()
 	{
 		const FTransform Current = BodySkel->GetSocketTransform(Entry.Key, RTS_Component);
 		// Procedural vertices are in component space: neutral bone inverse,
-		// followed by the current bone transform, preserves their pivot.
-		Deltas.Add(Entry.Key, Entry.Value.Inverse() * Current * BodyOffset);
+		// followed by the current bone transform, preserves their pivot. Turning about the bone with one scale: a scale
+		// that differs by axis would act along the component's axes and throw vertices far from its origin away.
+		const FVector Ratio = Current.GetScale3D() * FTransform::GetSafeScaleReciprocal(Entry.Value.GetScale3D());
+		const double Scale = (Ratio.X + Ratio.Y + Ratio.Z) / 3.;
+		const FQuat Turn = Current.GetRotation() * Entry.Value.GetRotation().Inverse();
+		const FTransform Delta(Turn, Current.GetTranslation() - Turn.RotateVector(Entry.Value.GetTranslation() * Scale), FVector(Scale));
+		Deltas.Add(Entry.Key, Delta * BodyOffset);
 	}
 	for (FKKLoadedPart& Part : Parts)
 	{

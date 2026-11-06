@@ -45,7 +45,7 @@ bool FOKStudioCharacterStyleTest::RunTest(const FString&)
 	TestTrue(TEXT("a style scales the character"), OKStudioStyleScale(1.f, CardBody, Body) < 1.f && OKStudioStyleScale(-1.f, CardBody, Real) > 1.f && OKStudioStyleScale(0.f, CardBody, CardBody) == 1.f);
 	TestTrue(TEXT("no style, no bones"), OKStudioStyleBones(0.f, 1.f) == TEXT("[]") && OKStudioStyleBones(1.f, 0.8f).Contains(TEXT("cf_j_index02_L")) && OKStudioStyleBones(-1.f, 2.f).Contains(TEXT("cf_s_thigh01_L")));
 
-	TestTrue(TEXT("the chibi end takes a smaller head, a realistic wrist its accessory"), OKStudioStyleBones(1.f, 0.8f).Contains(TEXT("cf_s_head")) && OKStudioStyleBones(-1.f, 2.f).Contains(TEXT("a_n_wrist_L")) && OKStudioStyleBones(-1.f, 2.f).Contains(TEXT("cf_d_wrist_L")));
+	TestTrue(TEXT("the chibi end takes a smaller head, the arm's branches its length"), OKStudioStyleBones(1.f, 0.8f).Contains(TEXT("cf_s_head")) && OKStudioStyleBones(-1.f, 2.f).Contains(TEXT("cf_d_wrist_L")));
 
 	TArray<float> Short, ShortFace;
 	OKStudioStyleSliders(1.f, Short, ShortFace);

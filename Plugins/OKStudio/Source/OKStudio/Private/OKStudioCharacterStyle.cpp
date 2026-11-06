@@ -172,8 +172,6 @@ FString OKStudioStyleBones(float Style, float Scale)
 		// The cf_d_ branches hang off the same joints: left at their length, the skin and a wrist accessory stay behind the hand.
 		for (const TCHAR* Bone : { TEXT("cf_j_forearm01_L"), TEXT("cf_j_forearm01_R"), TEXT("cf_j_hand_L"), TEXT("cf_j_hand_R"), TEXT("cf_d_arm01_L"), TEXT("cf_d_arm01_R"), TEXT("cf_d_arm02_L"), TEXT("cf_d_arm02_R"), TEXT("cf_d_arm03_L"), TEXT("cf_d_arm03_R"), TEXT("cf_d_forearm02_L"), TEXT("cf_d_forearm02_R"), TEXT("cf_d_wrist_L"), TEXT("cf_d_wrist_R") }) Add(Bone, FVector::OneVector, Arm, 0.f);
 		for (const TCHAR* Bone : { TEXT("cf_j_leg01_L"), TEXT("cf_j_leg01_R"), TEXT("cf_j_leg03_L"), TEXT("cf_j_leg03_R") }) Add(Bone, FVector::OneVector, Leg, 0.f);
-		// What hangs on the wrist goes round the thicker wrist, and back up the arm to where the skin's wrist is now.
-		for (const TCHAR* Bone : { TEXT("a_n_wrist_L"), TEXT("a_n_wrist_R") }) Add(Bone, FVector(FMath::Lerp(1.f, Tuning.Forearm * 0.9f, -Style)), FMath::Lerp(1.f, 0.25f, -Style), 0.f);
 		Add(TEXT("cf_s_head"), FVector(FMath::Lerp(1.f, Tuning.HeadSize, -Style)), 1.f, 0.f);
 		// The thighs and arms come in with the width, or they would stand off the body.
 		Add(TEXT("cf_j_thigh00_L"), FVector::OneVector, 1.f, ThighX * (1.f - Thin * Tuning.Hips));
