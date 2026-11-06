@@ -1217,6 +1217,13 @@ namespace
 
 	TSharedRef<FJsonObject> RunOp(const FString& Op, const TSharedRef<FJsonObject>& J);
 
+	/** The commands that drop the opening scene: the menu reaches them while it opens (U255). */
+	bool LeavesScene(const FString& Op, const TSharedRef<FJsonObject>& J)
+	{
+		FString Id;
+		return Op == TEXT("cmd") && J->TryGetStringField(TEXT("id"), Id) && (Id == TEXT("scene.new") || Id == TEXT("app.quit"));
+	}
+
 	/** Runs one op on the studio (game thread). An op that edits is one undo step, as a command is. */
 	TSharedRef<FJsonObject> Run(const FString& Op, const TSharedRef<FJsonObject>& J)
 	{
@@ -1241,7 +1248,9 @@ namespace
 			static const TSet<FString> WhilePlaying = { TEXT("timeline"), TEXT("click"), TEXT("type"), TEXT("capture") };
 			// U210: the mouse works during an export as it does for the user (closing the window, 取消).
 			static const TSet<FString> WhileExporting = { TEXT("click"), TEXT("mouse") };
-			if (!Busy.IsEmpty() && !(Busy == TEXT("playing") && WhilePlaying.Contains(Op)) && !(Busy == TEXT("exporting") && WhileExporting.Contains(Op)))
+			// U255: a scene opens over many frames and the user can act meanwhile; what they can do, the tests must reach.
+			static const TSet<FString> WhileLoading = { TEXT("click"), TEXT("mouse"), TEXT("key"), TEXT("select"), TEXT("load"), TEXT("leave") };
+			if (!Busy.IsEmpty() && !(Busy == TEXT("playing") && WhilePlaying.Contains(Op)) && !(Busy == TEXT("exporting") && WhileExporting.Contains(Op)) && !(Busy == TEXT("loading") && (WhileLoading.Contains(Op) || LeavesScene(Op, J))))
 			{
 				TSharedRef<FJsonObject> O = Result(false, TEXT("busy: ") + Busy);
 				O->SetStringField(TEXT("busy"), Busy);

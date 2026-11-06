@@ -445,7 +445,7 @@ void SOKStudioPanel::StartNextVmd()
 void SOKStudioPanel::FinishVmd(FVmdTask& Task)
 {
 	// The answer belongs to the scene that asked; the character is looked up again, it may have gone meanwhile.
-	if (Task.SceneSerial != Game->SceneSerial) return;
+	if (Task.bCancelled || Task.SceneSerial != Game->SceneSerial) return;
 	++MmdQueueDone;
 	FOKSceneObject* X = Game->Document->Find(Task.CharId);
 	if (!X || X->Kind != EOKSceneObjectKind::Character || X->Character.Card != Task.Card) { ++MmdSkipped; return; }
@@ -477,6 +477,16 @@ void SOKStudioPanel::FinishVmd(FVmdTask& Task)
 	DeferFloat(TEXT("mmd"));
 	SetStatus(FString::Printf(TEXT("已載入 VMD（%s骨架）：#%d %s ← %s"),
 		Task.bShaped ? TEXT("角色體型") : TEXT("標準"), Task.CharId, *X->Name, *FPaths::GetCleanFilename(Task.Path)));
+}
+
+void SOKStudioPanel::CancelVmd()
+{
+	if (!VmdRunning()) return;
+	const int32 Applied = MmdQueueDone - MmdSkipped - MmdFailed;
+	MmdQueue.Reset();
+	if (VmdTask) VmdTask->bCancelled = true;
+	MmdQueueTotal = MmdQueueDone = MmdSkipped = MmdFailed = 0;
+	SetStatus(FString::Printf(TEXT("已取消套用 VMD（已完成 %d 個角色）"), Applied));
 }
 
 void SOKStudioPanel::TickVmdQueue()
@@ -549,6 +559,7 @@ void SOKStudioPanel::TickUi(float DeltaTime)
 	else if (bWasExporting) SetStatus(ExportResult());
 	bWasExporting = bExporting;
 	TickVmdQueue();
+	TickMapThumbs();
 	// U242: the MMD window lists the cast. Someone added, removed or given a motion while it is open shows up there.
 	if (IsFloatOpen(TEXT("mmd")))
 	{
@@ -2905,6 +2916,13 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMmdDirector()
 		+ SHorizontalBox::Slot().AutoWidth()
 		[
 			Button(FText::FromString(TEXT("套用至選取")), Cmd(TEXT("mmd.vmd")), 80.f, 20.f, false, 9.5f)
+		]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 0.f, 0.f)
+		[
+			SNew(SBox).Visibility_Lambda([this] { return VmdRunning() ? EVisibility::Visible : EVisibility::Collapsed; })
+			[
+				Button(FText::FromString(TEXT("取消")), Cmd(TEXT("mmd.vmd.cancel")), 44.f, 20.f, false, 9.5f)
+			]
 		]
 	];
 	// What a dance's folder holds, each file with what it can be (U240).

@@ -52,6 +52,8 @@ public:
 
 	/** Whether some document objects are not built yet (a large scene being built over several frames). */
 	bool HasPendingBuilds() const { return bBuildsPending; }
+	/** A scene being opened: its characters open on a worker and load a part a frame instead of stopping the picture. */
+	bool bProgressiveBuild = false;
 	/** Objects still waiting for their turn to build. */
 	int32 PendingBuilds() const { return BuildsLeft; }
 
@@ -105,6 +107,7 @@ public:
 
 	virtual void Destroyed() override;
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual bool ShouldTickIfViewportsOnly() const override { return true; }
@@ -279,6 +282,13 @@ private:
 	void ApplyMapTime(const FTransform& MapPlace);
 
 	bool Build(const FOKSceneObject& Object, FShown& Out, FString& OutError);
+	/** A character on its way in while a scene opens (U255). */
+	struct FPreparedCharacter;
+	TMap<int32, TSharedPtr<FPreparedCharacter>> Prepared;
+	void StartCharacterOpen(const FOKSceneObject& Object);
+	/** Takes the character a step further; true when Build can have it (or should try by itself). */
+	bool PrepareCharacter(const FOKSceneObject& Object);
+	void DropPrepared(int32 Id);
 	/** A Studio camera item (a camera drawing into a RenderTexture, e.g. HarvexARC's CH1-Camera): its capture as `Out.Component`. */
 	void AddRenderCamera(const FString& Model, const FString& Prefab, FShown& Out);
 	/** Gives each screen item showing a camera item's RenderTexture that camera's target (the first camera item of a

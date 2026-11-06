@@ -770,6 +770,7 @@ bool UOKStudioGame::Load(const FString& Path, FString& OutError)
 	// A KStudio scene is imported, not edited in place: saving writes an OK scene card beside it.
 	File = FOKSceneCard::Kind(Path) == FOKSceneCard::EKind::KStudio ? FString() : Path;
 	ReleaseSceneResources();
+	if (SceneActor) SceneActor->bProgressiveBuild = !bSyncBuildsAll;
 	TimelineTime = FMath::Clamp(Document->Playhead, 0.f, FMath::Max(Document->Duration, 0.f)); // where it was saved
 	LoopStart = 0.f;
 	LoopEnd = 0.f;
@@ -1990,6 +1991,49 @@ bool UOKStudioGame::CaptureToPng(const FString& Path, int32 Width, int32 Height,
 	if (!FOKSceneCard::Capture(SceneActor, Camera->GetComponentTransform(), Camera->FieldOfView, &Camera->PostProcessSettings, Width, Height, bTransparent, Pixels, OutError)) return false;
 	TArray64<uint8> Png;
 	FImageUtils::PNGCompressImageArray(Width, Height, TArrayView64<const FColor>(Pixels.GetData(), Pixels.Num()), Png);
+	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
+	if (Png.IsEmpty() || !FFileHelper::SaveArrayToFile(Png, *Path)) { OutError = TEXT("cannot write ") + Path; return false; }
+	return true;
+}
+
+bool UOKStudioGame::CaptureMapPicture(const FString& Path, FString& OutError)
+{
+	if (!Viewer || !SceneActor) { OutError = TEXT("studio not running"); return false; }
+	constexpr int32 Width = 320, Height = 180;
+	UpdateViewer();
+	UCameraComponent* Camera = Viewer->GetCameraComponent();
+	// How much of the picture shows anything: the start view of a closed room stands outside its walls (U256: 和室, 体育館).
+	const auto Seen = [](const TArray<FColor>& Pixels)
+	{
+		int32 Lit = 0;
+		for (const FColor& C : Pixels) Lit += C.R + C.G + C.B > 72;
+		return Pixels.IsEmpty() ? 0.f : float(Lit) / Pixels.Num();
+	};
+	TArray<FColor> Best;
+	float BestSeen = -1.f;
+	if (FOKSceneCard::Capture(SceneActor, Camera->GetComponentTransform(), Camera->FieldOfView, &Camera->PostProcessSettings, Width, Height, false, Best, OutError)) BestSeen = Seen(Best);
+	if (BestSeen < 0.35f)
+	{
+		TArray<FBox> Parts;
+		SceneActor->MapPartBounds(Parts);
+		FBox All(ForceInit);
+		for (const FBox& B : Parts) All += B;
+		if (All.IsValid)
+		{
+			const FVector Eye(All.GetCenter().X, All.GetCenter().Y, All.Min.Z + FMath::Min(150.f, All.GetSize().Z * 0.5f));
+			for (const float Turn : { 0.f, 90.f, 180.f, 270.f })
+			{
+				TArray<FColor> Pixels;
+				FString Error;
+				if (!FOKSceneCard::Capture(SceneActor, FTransform(FRotator(-5.f, Turn, 0.f), Eye), 70.f, &Camera->PostProcessSettings, Width, Height, false, Pixels, Error)) continue;
+				const float Amount = Seen(Pixels);
+				if (Amount > BestSeen) { BestSeen = Amount; Best = MoveTemp(Pixels); }
+			}
+		}
+	}
+	if (BestSeen < 0.f) return false;
+	TArray64<uint8> Png;
+	FImageUtils::PNGCompressImageArray(Width, Height, TArrayView64<const FColor>(Best.GetData(), Best.Num()), Png);
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
 	if (Png.IsEmpty() || !FFileHelper::SaveArrayToFile(Png, *Path)) { OutError = TEXT("cannot write ") + Path; return false; }
 	return true;

@@ -1,5 +1,7 @@
 #include "OKSceneActor.h"
+#include "Async/Async.h"
 #include "Async/ParallelFor.h"
+#include <atomic>
 #include "Tasks/Task.h"
 #include "HAL/IConsoleManager.h"
 #include "OKStudioImport.h"
@@ -372,7 +374,7 @@ namespace
 	}
 
 	AKKPreviewActor* SpawnPreview(UWorld* World, FOkSession&& Session, FString& OutError, const TArray<FLinearColor>& ItemColors = {}, const TArray<FOKMaterialOverride>& Overrides = {},
-		const FOKSceneItem* Item = nullptr, bool bMap = false, const TMap<FName, FLinearColor>& ShaderGlobals = {}, int32 Ramp = -1)
+		const FOKSceneItem* Item = nullptr, bool bMap = false, const TMap<FName, FLinearColor>& ShaderGlobals = {}, int32 Ramp = -1, bool bProgressive = false)
 	{
 		FActorSpawnParameters Params;
 		Params.ObjectFlags = RF_Transient;
@@ -424,13 +426,87 @@ namespace
 		}
 		// Before the session loads: the materials are made with these parameters (AKKPreviewActor::MaterialOverrides).
 		Actor->MaterialOverrides = Overrides;
-		if (!Actor->LoadSession(OutError)) { Actor->Destroy(); return nullptr; }
+		if (!(bProgressive ? Actor->BeginSessionLoad(OutError) : Actor->LoadSession(OutError))) { Actor->Destroy(); return nullptr; }
 		// The preview actor's own studio camera is not part of the scene.
 		TArray<UCameraComponent*> Cameras;
 		Actor->GetComponents(Cameras);
 		for (UCameraComponent* Cam : Cameras) Cam->DestroyComponent();
 		return Actor;
 	}
+}
+
+struct AOKSceneActor::FPreparedCharacter
+{
+	/** What it was opened for: a character changed meanwhile starts over. */
+	FString Key;
+	FOkSession Session;
+	FString Error;
+	bool bOpened = false;
+	std::atomic<bool> bDone{ false };
+	TFuture<void> Opening;
+	TWeakObjectPtr<AKKPreviewActor> Actor;
+};
+
+namespace
+{
+	FString PrepareKey(const FOKSceneCharacter& C)
+	{
+		return FString::Printf(TEXT("%s|%d|%s|%s"), *C.Card, C.Outfit, *BytesToHex(C.ClothesStates.GetData(), C.ClothesStates.Num()), *StatusJson(C));
+	}
+}
+
+void AOKSceneActor::StartCharacterOpen(const FOKSceneObject& Object)
+{
+	const FOKSceneCharacter& C = Object.Character;
+	TSharedPtr<FPreparedCharacter> P = MakeShared<FPreparedCharacter>();
+	P->Key = PrepareKey(C);
+	TArray<uint8> States = C.ClothesStates;
+	States.SetNumZeroed(9);
+	P->Opening = AsyncThread([P, Card = CardPath(C.Card), Outfit = C.Outfit, States = MoveTemp(States), Status = StatusJson(C)]
+	{
+		P->bOpened = P->Session.Open(FString(), Card, Outfit, P->Error, States.GetData(), Status);
+		// The material bytes as well, as the one-to-one scene does: on the game thread this was the 1 to 6 s frame left.
+		FString MaterialError;
+		if (P->bOpened && !P->Session.PrepareRuntimeMaterials(MaterialError, true)) UE_LOG(LogTemp, Warning, TEXT("OK studio: materials not prepared: %s"), *MaterialError);
+		P->bDone = true;
+	}, 16 * 1024 * 1024);
+	Prepared.Add(Object.Id, P);
+}
+
+void AOKSceneActor::DropPrepared(int32 Id)
+{
+	TSharedPtr<FPreparedCharacter> P;
+	if (!Prepared.RemoveAndCopyValue(Id, P)) return;
+	if (P->Opening.IsValid()) P->Opening.Wait();
+	if (AKKPreviewActor* Actor = P->Actor.Get()) Actor->Destroy();
+}
+
+bool AOKSceneActor::PrepareCharacter(const FOKSceneObject& Object)
+{
+	TSharedPtr<FPreparedCharacter> P = Prepared.FindRef(Object.Id);
+	if (P && P->Key != PrepareKey(Object.Character)) { DropPrepared(Object.Id); P.Reset(); }
+	if (!P)
+	{
+		// One at a time on the worker; the one waiting for it comes next.
+		for (const auto& Pair : Prepared) if (!Pair.Value->bDone) return false;
+		StartCharacterOpen(Object);
+		return false;
+	}
+	if (!P->bDone) return false;
+	FString Error;
+	AKKPreviewActor* Actor = P->Actor.Get();
+	if (P->bOpened && !Actor)
+	{
+		Actor = SpawnPreview(GetWorld(), MoveTemp(P->Session), Error, {}, {}, nullptr, false,
+			Document ? Document->Post.ShaderGlobals() : TMap<FName, FLinearColor>(), Document ? Document->Post.RampG : -1, true);
+		if (Actor) { Actor->SetActorHiddenInGame(true); P->Actor = Actor; }
+	}
+	// It did not open or start: Build tries by itself and says why.
+	if (!Actor) { DropPrepared(Object.Id); return true; }
+	const double Start = FPlatformTime::Seconds();
+	while (!Actor->IsSessionLoadComplete() && FPlatformTime::Seconds() - Start < .03)
+		if (!Actor->ContinueSessionLoad(Error)) { DropPrepared(Object.Id); return true; }
+	return Actor->IsSessionLoadComplete();
 }
 
 bool AOKSceneActor::ItemModel(const FOKSceneItem& Item, FString& OutModel, FString& OutPrefab, FString& OutError)
@@ -465,16 +541,28 @@ bool AOKSceneActor::Build(const FOKSceneObject& Object, FShown& Out, FString& Ou
 	case EOKSceneObjectKind::Character:
 	{
 		if (Object.Character.Card.IsEmpty()) { OutError = TEXT("no card"); return false; }
-		TArray<uint8> States = Object.Character.ClothesStates;
-		States.SetNumZeroed(9);
-		FOkSession Session;
-		// An OK card opens from the OK base library and its pack; an original KKS card from the library plus its zipmods.
-		const double OpenStart = FPlatformTime::Seconds();
-		if (!Session.Open(FString(), CardPath(Object.Character.Card), Object.Character.Outfit, OutError, States.GetData(), StatusJson(Object.Character))) return false;
-		UE_LOG(LogTemp, Display, TEXT("OK studio: %s session opened in %.2f s"), *Object.Name, FPlatformTime::Seconds() - OpenStart);
-		AKKPreviewActor* Actor = SpawnPreview(World, MoveTemp(Session), OutError, {}, {}, nullptr, false,
-			Document ? Document->Post.ShaderGlobals() : TMap<FName, FLinearColor>(), Document ? Document->Post.RampG : -1);
-		if (!Actor) return false;
+		AKKPreviewActor* Actor = nullptr;
+		const TSharedPtr<FPreparedCharacter> Ready = Prepared.FindRef(Object.Id);
+		if (Ready && Ready->Actor.IsValid() && Ready->Actor->IsSessionLoadComplete() && Ready->Key == PrepareKey(Object.Character))
+		{
+			Actor = Ready->Actor.Get();
+			Actor->SetActorHiddenInGame(false);
+			Prepared.Remove(Object.Id);
+		}
+		else
+		{
+			DropPrepared(Object.Id);
+			TArray<uint8> States = Object.Character.ClothesStates;
+			States.SetNumZeroed(9);
+			FOkSession Session;
+			// An OK card opens from the OK base library and its pack; an original KKS card from the library plus its zipmods.
+			const double OpenStart = FPlatformTime::Seconds();
+			if (!Session.Open(FString(), CardPath(Object.Character.Card), Object.Character.Outfit, OutError, States.GetData(), StatusJson(Object.Character))) return false;
+			UE_LOG(LogTemp, Display, TEXT("OK studio: %s session opened in %.2f s"), *Object.Name, FPlatformTime::Seconds() - OpenStart);
+			Actor = SpawnPreview(World, MoveTemp(Session), OutError, {}, {}, nullptr, false,
+				Document ? Document->Post.ShaderGlobals() : TMap<FName, FLinearColor>(), Document ? Document->Post.RampG : -1);
+			if (!Actor) return false;
+		}
 		Out.Preview = Actor;
 		// Private-rig parts (hair, skirts, accessories) skinned on the GPU as in the one-to-one interaction scene: their
 		// streams cost the game thread a third of the CPU path (OK_STUDIO_GPU_PLAYBACK=0 keeps the CPU path).
@@ -1033,6 +1121,7 @@ void AOKSceneActor::Sync()
 	// Objects are built a batch per frame: a scene of thousands built in one frame never lets the renderer upload and
 	// free what it queued (memory ran past 28 GB). The rest waits for the next Tick (bBuildsPending).
 	int32 Built = 0;
+	bool bPrepareBusy = false;
 	bBuildsPending = false;
 	BuildsLeft = 0;
 	TSet<int32> Present;
@@ -1047,6 +1136,21 @@ void AOKSceneActor::Sync()
 		const bool bSame = Item && Item->Kind == Object.Kind && Item->Character.SameContent(Object.Character) && Item->Item.SameContent(Object.Item) && Item->Light == Object.Light
 			&& (Object.Kind != EOKSceneObjectKind::Effect || Item->Effect == Object.Effect.Effect)
 			&& (Object.Kind != EOKSceneObjectKind::Character || PartsEyes(Item->Character.EyesPattern) == PartsEyes(Object.Character.EyesPattern));
+		// A scene opening: the character is got ready over the frames, Build only finishes it. The next one opens meanwhile.
+		if (!bSame && bProgressiveBuild && Object.Kind == EOKSceneObjectKind::Character)
+		{
+			if (bPrepareBusy)
+			{
+				bool bOpening = Prepared.Contains(Object.Id) || Prepared.Num() >= 2;
+				for (const auto& Pair : Prepared) bOpening = bOpening || !Pair.Value->bDone;
+				if (!bOpening) StartCharacterOpen(Object);
+			}
+			else if (!PrepareCharacter(Object))
+			{
+				bPrepareBusy = true;
+				Built = FMath::Max(Built, BuildsPerFrame);
+			}
+		}
 		if (!bSame && Built >= BuildsPerFrame)
 		{
 			// Over this frame's budget: an object already shown keeps its old look until its turn, a new one waits.
@@ -1160,6 +1264,10 @@ void AOKSceneActor::Sync()
 	{
 		if (!Present.Contains(It.Key())) { Release(It.Value()); Errors.Remove(It.Key()); It.RemoveCurrent(); }
 	}
+	TArray<int32> PreparedIds;
+	Prepared.GetKeys(PreparedIds);
+	for (int32 Id : PreparedIds) if (!bBuildsPending || !Present.Contains(Id)) DropPrepared(Id);
+	if (!bBuildsPending) bProgressiveBuild = false;
 	WireRenderTextures();
 	// A destroyed preview's meshes, textures and materials are freed by garbage collection, which the engine runs only
 	// now and then: after another scene is loaded (or many objects go) collect now, or scenes opened one after another
@@ -2619,6 +2727,14 @@ void AOKSceneActor::PlaceSky(const FTransform& View)
 	if (SkyDome.IsValid() && SkyShown >= 0) SkyDome->SetWorldLocation(View.GetLocation());
 }
 
+void AOKSceneActor::EndPlay(const EEndPlayReason::Type Reason)
+{
+	// Leaving while a scene opens: the card being opened on its thread must not outlive the world it was opened for.
+	for (const auto& Pair : Prepared) if (Pair.Value->Opening.IsValid()) Pair.Value->Opening.Wait();
+	Prepared.Reset();
+	Super::EndPlay(Reason);
+}
+
 void AOKSceneActor::BeginPlay()
 {
 	Super::BeginPlay();
@@ -2661,6 +2777,10 @@ void AOKSceneActor::ShowSequenceTime()
 
 void AOKSceneActor::ReleaseScene()
 {
+	TArray<int32> PreparedIds;
+	Prepared.GetKeys(PreparedIds);
+	for (int32 Id : PreparedIds) DropPrepared(Id);
+	bProgressiveBuild = false;
 	bSkyDomesDirty = true;
 	for (auto& Pair : Shown) Release(Pair.Value);
 	Shown.Reset();

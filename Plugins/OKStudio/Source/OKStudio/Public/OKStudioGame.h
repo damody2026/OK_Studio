@@ -273,6 +273,8 @@ public:
 	FString Screenshot(int32 Width, int32 Height, bool bTransparent = false);
 	/** Renders the current view (camera, FOV, scene post-processing) at a resolution and writes a PNG, synchronously. */
 	/** bTransparent: only the scene's characters and items, the rest (map, sky) transparent. */
+	/** A map's picture for the map window: the view as it stands, or from inside the map if that sees next to nothing. */
+	bool CaptureMapPicture(const FString& Path, FString& OutError);
 	bool CaptureToPng(const FString& Path, int32 Width, int32 Height, FString& OutError, bool bTransparent = false);
 
 	/** Exports the timeline as numbered PNG frames (UserData/Studio/movie/<time>/frame_00000.png), one per Tick. */

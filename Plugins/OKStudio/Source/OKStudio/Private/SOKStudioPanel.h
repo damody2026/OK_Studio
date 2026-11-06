@@ -431,7 +431,7 @@ public:
 		});
 		AddCommand(TEXT("scene.save"), TEXT("儲存"), [this](const FString& Arg)
 		{
-			if (Arg.IsEmpty() && !Game->File.IsEmpty() && FOKSceneCard::Kind(Game->File) != FOKSceneCard::EKind::KStudio) { FString E; const bool bOk = Game->Save(Game->File, E); FOKStudioThumbnails::Get().Forget(ScenePicture(Game->File)); SetStatus(bOk ? TEXT("已存 ") + Game->File : E); return bOk; }
+			if (Arg.IsEmpty() && !Game->File.IsEmpty() && FOKSceneCard::Kind(Game->File) != FOKSceneCard::EKind::KStudio) { FString E; PaintStatus(TEXT("儲存中…")); const bool bOk = Game->Save(Game->File, E); FOKStudioThumbnails::Get().Forget(ScenePicture(Game->File)); SetStatus(bOk ? TEXT("已存 ") + Game->File : E); return bOk; }
 			return SaveNamed(Arg.IsEmpty() ? FDateTime::Now().ToString(TEXT("scene_%Y%m%d_%H%M%S")) : Arg);
 		});
 		// Save as starts from a new name, so saving twice keeps both (U165), and shows the folder it saves to (U221).
@@ -625,6 +625,7 @@ public:
 		});
 		Float_(TEXT("add.map"), TEXT("地圖"), TEXT("maps"));
 		// HS2Studio6 地图窗 定位当前: the scene's map picked in the map window and scrolled to (the search cleared).
+		Simple(TEXT("map.thumbs"), TEXT("製作地圖縮圖"), [this] { ToggleMapThumbs(); });
 		AddCommand(TEXT("map.locate"), TEXT("地圖定位當前"), [this](const FString&)
 		{
 			if (!Game.IsValid()) return false;
@@ -960,6 +961,7 @@ public:
 			if (Cast.Num() > 1) return QueueVmd(Cast, Path);
 			return LoadVmdForCharacter(TargetId, Path);
 		});
+		Simple(TEXT("mmd.vmd.cancel"), TEXT("取消套用 VMD"), [this] { CancelVmd(); });
 		// Pose.
 		AddCommand(TEXT("pose.mirror"), TEXT("鏡像姿勢"), [this](const FString& Arg) { FOKSceneObject* X = Obj(); return X && MirrorPose(*X, Arg == TEXT("l2r") ? 1 : Arg == TEXT("r2l") ? 2 : 0); });
 		Simple(TEXT("pose.ikfromfk"), TEXT("IK←FK"), [this] { if (FOKSceneObject* X = Obj()) IkFromFk(*X); });
@@ -1744,6 +1746,7 @@ public:
 		TArray<uint8> Bytes;
 		FString Error;
 		double Seconds = 0.;
+		bool bCancelled = false;
 		std::atomic<bool> bDone{ false };
 	};
 	/** Characters waiting for the worker, with their file. */
@@ -1757,6 +1760,9 @@ public:
 	void TickVmdQueue();
 	void StartNextVmd();
 	void FinishVmd(FVmdTask& Task);
+	/** Stops the queue: what waits is dropped, what is on the worker finishes there and is thrown away. */
+	void CancelVmd();
+	bool VmdRunning() const { return !MmdQueue.IsEmpty() || (VmdTask && !VmdTask->bCancelled); }
 	mutable double FrameMaxMs = 0.;
 	/** What the status line counts to while a big scene builds (0: not building). */
 	int32 BuildTotal = 0;
@@ -1896,9 +1902,25 @@ public:
 	TSharedRef<SWidget> BuildQuickSearch();
 	TSharedRef<SWidget> BuildEffectList();
 	TSharedRef<SWidget> BuildMapBrowser();
+	void LoadPickedMap();
+	/** The picture a map left when it was shown (none of the sources has one). */
+	static FString MapThumbFile(int32 No);
+	int32 MissingMapThumbs(TArray<int32>* Out = nullptr) const;
+	void ToggleMapThumbs();
+	void StopMapThumbs(const FString& Note);
+	void TickMapThumbs();
 	int32 MapPick = -1;
 	/** 定位當前 (HS2Studio6 地图窗 定位当前): the next build scrolls the list to the picked map. */
 	bool bMapLocate = false;
+	int32 MapThumbMap = -1; // waiting for its picture
+	double MapThumbAt = 0.;
+	bool bMapThumbRun = false;
+	TArray<int32> MapThumbQueue;
+	int32 MapThumbTotal = 0;
+	int32 MapThumbSerial = 0;
+	int32 MapThumbBackMap = -1;
+	FOKScenePost MapThumbBackPost;
+	bool bMapThumbBackDirty = false;
 	FString EffectSearch, MapSearch;
 
 	// --- Pose (U5). ---
@@ -2114,6 +2136,16 @@ public:
 public:
 
 	void SetStatus(const FString& Text) { if (Status) Status->SetText(FText::FromString(Text)); }
+	/** The status line before something that holds the frame: painted now, or nobody sees it until it is over (U256). */
+	void PaintStatus(const FString& Text)
+	{
+		const TSharedPtr<SWindow> Window = FSlateApplication::IsInitialized() ? FSlateApplication::Get().FindWidgetWindow(AsShared()) : nullptr;
+		// Empty first: a shorter text painted straight over the old one left its tail (儲存中… C011).
+		SetStatus(FString());
+		if (Window) FSlateApplication::Get().ForceRedrawWindow(Window.ToSharedRef());
+		SetStatus(Text);
+		if (Window) FSlateApplication::Get().ForceRedrawWindow(Window.ToSharedRef());
+	}
 	/** What the status line says now (the reason a save or load failed). */
 	FString StatusText() const { return Status ? Status->GetText().ToString() : FString(); }
 	/** The status after adding an object: what came in (the selection), not the last character's line. */
@@ -2126,6 +2158,7 @@ public:
 		if (Clean.IsEmpty()) { SetStatus(TEXT("請輸入場景名稱")); return false; }
 		const FString Path = UOKStudioGame::SceneDirectory() / Clean + TEXT(".png");
 		FString E;
+		PaintStatus(TEXT("儲存中…"));
 		const bool bOk = Game->Save(Path, E);
 		SetStatus(bOk ? TEXT("已存 ") + Clean : E);
 		if (bOk)
@@ -2162,6 +2195,7 @@ public:
 	{
 		if (!Game.IsValid()) return false;
 		FString E;
+		PaintStatus(TEXT("開啟中…") + FPaths::GetBaseFilename(Path));
 		const bool bOk = Game->Load(Path, E);
 		SetStatus(bOk ? TEXT("已讀取 ") + FPaths::GetBaseFilename(Path) : E);
 		if (bOk) { ReportPending = 90; SaveAsName = FPaths::GetBaseFilename(Path); ForgetExport(); }
@@ -2993,7 +3027,7 @@ public:
 		if (FullPath.IsEmpty()) { SetStatus(TEXT("請輸入 .vmd 檔案路徑")); return false; }
 		if (FPaths::IsRelative(FullPath)) FullPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / FullPath);
 		if (!FPaths::FileExists(FullPath)) { SetStatus(TEXT("找不到 VMD 檔：") + FullPath); return false; }
-		if (MmdQueue.IsEmpty() && !VmdTask) { MmdQueueDone = MmdSkipped = MmdFailed = 0; MmdFailNote.Reset(); }
+		if (!VmdRunning()) { MmdQueueDone = MmdSkipped = MmdFailed = 0; MmdFailNote.Reset(); }
 		int32 Added = 0;
 		for (int32 Id : Ids)
 		{
@@ -3004,7 +3038,7 @@ public:
 			++Added;
 		}
 		if (Added == 0) { SetStatus(TEXT("請先選取一個角色")); return false; }
-		MmdQueueTotal = MmdQueueDone + MmdQueue.Num() + (VmdTask ? 1 : 0);
+		MmdQueueTotal = MmdQueueDone + MmdQueue.Num() + (VmdTask && !VmdTask->bCancelled ? 1 : 0);
 		VmdSerial = Game->SceneSerial;
 		VmdStatusAt = 0.;
 		return true;
