@@ -347,6 +347,11 @@ void AOKStreetSocialScene::FillMindStatus(int32 Character,FOKFreeTalkStatus& Sta
   // singing date with none ready, then stood silent and asked why he said nothing (R6-55).
   const EOKSongPhase Song=S.Song.Girl==Character?S.Song.Phase:EOKSongPhase::Idle;
   Status.Scene+=OKMsg(TEXT("ui.mind.song_status"),{{TEXT("state"),Song==EOKSongPhase::Ready||Song==EOKSongPhase::Offered?TEXT("ready"):Song>=EOKSongPhase::Intro&&Song<=EOKSongPhase::Outro?TEXT("singing"):Song==EOKSongPhase::Preparing?TEXT("preparing"):TEXT("none")}});}
+ // What she has on (ok-rules wardrobe.rs; her own clothes are in her persona): asked to change back into her cheongsam,
+ // 安可 said she had not worn one today, she had only what the shop had just sold her to go by.
+ {TArray<FString> Worn;const TArray<TSharedPtr<FJsonValue>>* Pieces=nullptr;
+  if(const TSharedPtr<FJsonObject> Has=WardrobeOf(Character);Has&&Has->TryGetArrayField(TEXT("owned"),Pieces))for(const auto& V:*Pieces)if(V->AsObject()->GetBoolField(TEXT("worn")))Worn.Add(V->AsObject()->GetStringField(TEXT("name")));
+  Status.Scene+=Worn.IsEmpty()?FString(OKT(TEXT("ui.mind.wearing_own"))):OKMsg(TEXT("ui.mind.wearing_bought"),{{TEXT("items"),*FString::Join(Worn,OKT(TEXT("ui.bank.list_separator")))}});}
  if(!Apart&&S.ShiftAppointment)if(const auto* Job=S.Catalog.FindJob(S.ShiftJob)){const FDateTime T=StreetNow();
   // Clock times and hours: told "505 minutes to the end of his shift", 优香 said "five hundred-odd minutes" — at
   // 22:35, before the 23:00 shift had even begun (R6-151).
@@ -524,6 +529,7 @@ void AOKStreetSocialScene::ApplyChoiceReply(int32 Character,const FOKFreeTalkRep
  for(auto O:Reply.Orders){
   O.Id=ResolveItemId(O.Id,Dest);
   const auto* Item=S.Catalog.Find(O.Id);
+  if(Item&&Item->Category==TEXT("clinic"))continue; // his offer and her yes, not an order (OfferClinic)
   const bool ForHer=O.ForHer; // whose it is: the AI's "for"
   // Ordered on the way to that shop ("let's go to the store: a tea egg and water"): carried until they get there.
   const FOKStreetActivity* Going=OKStreetFindActivity(Reply.Action);

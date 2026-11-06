@@ -131,6 +131,8 @@ pub(crate) fn dress(card:&[u8],pieces:&[(usize,usize,i32,Option<[f32;3]>)])->Res
   let bare=list_paths(card,outfit)?.iter().find(|(p,_)|p=="clothes.parts.1.id").is_none_or(|(_,v)|v=="0");
   if given(0).is_none()&&given(1).is_some_and(|id|id!=0)&&(bare||one_piece(&out,outfit)?){out=put_on(&out,outfit,0,PLAIN_TOP.0,Some(PLAIN_TOP.1))?;}
   if given(0).is_some_and(|id|id!=0)&&given(1).is_none()&&bare{out=put_on(&out,outfit,1,PLAIN_BOTTOM.0,Some(PLAIN_BOTTOM.1))?;}
+  // Her gloves and tights go with her top (爱丽丝's strapped pink sleeves and her pink body suit stayed on under the shop's dress).
+  for part in [4,5] {if given(0).is_some_and(|id|id!=0)&&given(part).is_none(){out=put_on(&out,outfit,part,0,None)?;out=overlays_off(&out,outfit,part)?;}}
   if given(0).is_some_and(|id|id!=0)||given(1).is_some_and(|id|id!=0){out=off_the_body(&out,outfit)?;}
  }
  crate::tree_answers::with_plain_bundles(&out)
@@ -142,6 +144,9 @@ fn put_on(card:&[u8],outfit:usize,part:usize,id:i32,rgb:Option<[f32;3]>)->Result
  if id==0 {return Ok(out);}
  let mut edits:Vec<(String,J)>=(0..3).map(|c|(format!("clothes.parts.{part}.colorInfo.{c}.pattern"),json!(0))).collect();
  if let Some(c)=rgb {edits.push((format!("clothes.parts.{part}.colorInfo.0.baseColor"),json!([c[0],c[1],c[2],1.0])));}
+ // A piece's other colour areas are the piece's, not those of what she wore there: the long coat of the floral dress came
+ // out in the pink of 爱丽丝's top, in 安可's white in hers. The shop sells one dress.
+ if part<=1 {for c in 1..3 {edits.push((format!("clothes.parts.{part}.colorInfo.{c}.baseColor"),json!([1.0,1.0,1.0,1.0])));}}
  patch_paths(&out,outfit,&edits)
 }
 /// A card's KoiClothesOverlay paints on the slot, not on the piece: 安可's red cheongsam was printed over the shop's floral
@@ -176,6 +181,13 @@ fn off_the_body(card:&[u8],outfit:usize)->Result<Vec<u8>,String>{
    // Through the slot's target: a mod's piece also has its sideloader record, which alone would bring it back.
    if let Some(t)=super::targets().into_iter().find(|t|t.key==format!("accessory{i}_{kind}")){out=super::patch(&out,&t,None,outfit)?;}
    edits.push((format!("accessory.parts.{i}.type"),json!(NONE)));}}
+ // The slots past the card's twenty (MoreAccessories), where 爱丽丝 keeps most of her jacket.
+ for(i,kind,parent)in super::extra::worn(&blocks_from_card(&out)?,outfit)? {
+  if KEEPS.iter().any(|k|parent.starts_with(k)){continue;}
+  // A slot of a type no target names (雷电将军's 109 on her waist) empties through any target of the slot.
+  let targets=super::extra::targets_for(&blocks_from_card(&out)?,outfit)?;let slot=format!("parts.{i}.id");
+  let t=targets.iter().find(|t|t.key==format!("accessory{i}_{kind}")).or_else(||targets.iter().find(|t|t.section=="accessory_extra"&&t.path==slot));
+  if let Some(t)=t{out=super::patch(&out,t,None,outfit)?;}}
  if edits.is_empty(){return Ok(out);}
  patch_paths(&out,outfit,&edits)
 }
@@ -242,7 +254,11 @@ pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String
   for e in fs::read_dir(dir).unwrap(){let path=e.unwrap().path();let card=crate::gamefs::read(path.to_str().unwrap()).unwrap();let mine=list_paths(&card,0).unwrap();let got=list_paths(&dress(&card,&[(0,0,55,None),(0,1,0,None)]).unwrap(),0).unwrap();
    let at=|l:&[(String,String)],k:&str|l.iter().find(|(p,_)|p==k).map(|(_,v)|v.trim_matches('"').to_string()).unwrap_or_default();
    for i in 0..20 {let k=format!("accessory.parts.{i}.type");let parent=at(&mine,&format!("accessory.parts.{i}.parentKey"));if at(&mine,&k)=="120"||at(&mine,&k).is_empty(){continue;}
-    assert_eq!(at(&got,&k)=="120",!(parent.starts_with("a_n_hair")||parent.starts_with("a_n_head")||parent.starts_with("a_n_ear")||parent.starts_with("a_n_megane")||parent.starts_with("a_n_nose")||parent.starts_with("a_n_mouth")||parent.starts_with("a_n_neck")||parent.starts_with("a_n_face")),"{k} {parent}");}}
+    assert_eq!(at(&got,&k)=="120",!(parent.starts_with("a_n_hair")||parent.starts_with("a_n_head")||parent.starts_with("a_n_ear")||parent.starts_with("a_n_megane")||parent.starts_with("a_n_nose")||parent.starts_with("a_n_mouth")||parent.starts_with("a_n_neck")||parent.starts_with("a_n_face")),"{k} {parent}");}
+   let dressed=dress(&card,&[(0,0,55,None),(0,1,0,None)]).unwrap();
+   for(i,_,parent)in super::super::extra::worn(&blocks_from_card(&dressed).unwrap(),0).unwrap(){assert!(parent.starts_with("a_n_head")||parent.starts_with("a_n_ear")||parent.starts_with("a_n_neck"),"extra slot {i} on {parent} stayed on");}
+   assert_eq!(at(&got,"clothes.parts.4.id"),"0","her gloves go with her top");assert_eq!(at(&got,"clothes.parts.5.id"),"0","her tights too");
+   for c in 1..3 {assert_eq!(at(&got,&format!("clothes.parts.0.colorInfo.{c}.baseColor.1")).parse::<f32>().unwrap(),1.,"the dress's own colour area {c}");}}
  }
  /// Every piece the street sells opens and shows on every heroine (the base library has it). Run by hand after changing the stock.
  #[test]#[ignore="opens one card for each piece of catalog.json's clothes on each heroine, ten minutes"]fn every_clothes_item_opens(){

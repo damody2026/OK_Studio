@@ -1809,7 +1809,10 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
   // activity that fails as "no such activity or place" (R3-114).
   if(!DoNow.IsEmpty()&&!DoNow.StartsWith(TEXT("go:"))&&DoNow!=TEXT("stroll")&&DoNow!=TEXT("leave")&&!OKStreetFindActivity(DoNow)&&!OKStreetFindPlace(DoNow)){
    const FString Here=Weak->OrderShopHere(Character);const FString ItemId=Here.IsEmpty()?FString():Weak->ResolveItemId(DoNow,Here);
-   if(const auto* Item=ItemId.IsEmpty()?nullptr:L->Catalog.Find(ItemId);Item&&Weak->SoldHere(*Item,Here)){
+   // A treatment is his offer and her yes (OfferClinic), never an order: 安可's hair dye was paid three times, once for
+   // her yes and twice more as two orders of the judge, and she waited at the counter for a dish.
+   if(const auto* Item=ItemId.IsEmpty()?nullptr:L->Catalog.Find(ItemId);Item&&Item->Category==TEXT("clinic"))DoNow.Reset();
+   else if(Item&&Weak->SoldHere(*Item,Here)){
     TArray<TSharedPtr<FJsonValue>> Orders;if(const TArray<TSharedPtr<FJsonValue>>* Had=nullptr;Verdict->TryGetArrayField(TEXT("orders"),Had))Orders=*Had;
     auto O=MakeShared<FJsonObject>();O->SetStringField(TEXT("id"),ItemId);O->SetStringField(TEXT("for"),TEXT("him"));Orders.Add(MakeShared<FJsonValueObject>(O));
     Verdict->SetArrayField(TEXT("orders"),Orders);UE_LOG(LogTemp,Display,TEXT("Street judge: do_now %s is on the menu here; ordered instead"),*DoNow);DoNow.Reset();}}
@@ -1834,7 +1837,7 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
    if(!Shop.IsEmpty()&&Verdict->TryGetArrayField(TEXT("orders"),Orders))for(const auto& V:*Orders){
     const TSharedPtr<FJsonObject> O=V.IsValid()?V->AsObject():nullptr;if(!O)continue;FString ItemId,For;O->TryGetStringField(TEXT("id"),ItemId);O->TryGetStringField(TEXT("for"),For);
     ItemId=Weak->ResolveItemId(ItemId,Shop);
-    const auto* Item=L->Catalog.Find(ItemId);if(!Item||(OnTheWay?Item->Place!=Shop:!Weak->SoldHere(*Item,Shop))||HerOrders.Contains(ItemId))continue; // her reply already ordered it
+    const auto* Item=L->Catalog.Find(ItemId);if(!Item||Item->Category==TEXT("clinic")||(OnTheWay?Item->Place!=Shop:!Weak->SoldHere(*Item,Shop))||HerOrders.Contains(ItemId))continue; // her reply already ordered it
     // Whoever it is for still has one of these (a meal, or a drink) in front of them or on its way: not a second one.
     const bool ForHer=For==TEXT("her");
     // Already on the table or on its way first: "too full, the braised pork rice was not ordered" about the bowl in

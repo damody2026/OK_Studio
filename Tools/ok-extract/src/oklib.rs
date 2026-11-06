@@ -1086,7 +1086,16 @@ pub fn pack_scope() -> Option<Arc<PackScope>> {
 /// Runs parallel work of the current open (its rayon iterators) in its own pool, whose threads carry its pack; no
 /// open on this thread: as it is.
 pub fn pack_parallel<R: Send>(work: impl FnOnce() -> R + Send) -> R {
-    let Some(scope) = own_scope() else { return work() };
+    let Some(scope) = own_scope() else {
+        // A thread of no open: on rayon's shared workers its scan of the whole mods tree counted as the reads of whichever
+        // card was opening alone, whose strict open then failed on thousands of gaps it did not have (the ok-extract tests,
+        // run in parallel, 2026-11-07). A worker of the shared pool stays: it may be a job of that open.
+        if rayon::current_thread_index().is_some() { return work(); }
+        static OUTSIDE: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
+        let pool = OUTSIDE.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(crate::cpu_threads().clamp(2, 8))
+            .thread_name(|i| format!("OKOutsideOpens{i}")).start_handler(|_| mark_outside_opens()).build().ok());
+        return match pool { Some(pool) => pool.install(work), None => work() };
+    };
     let pool = scope.pool.get_or_init(|| {
         let weak = Arc::downgrade(&scope);
         let workers = crate::cpu_threads().clamp(2, 8);
@@ -1117,6 +1126,13 @@ mod pack_scope_threads {
         let mine = mount.scope.clone();
         assert!(std::thread::spawn(move || {let _pack = enter_pack_scope(handed);pack_scope().is_some_and(|s| Arc::ptr_eq(&s, &mine))}).join().unwrap(),
             "a job the open starts is given its pack");
+    }
+    #[test]
+    fn parallel_work_of_no_open_is_not_the_open_of_another() {
+        let mount = mount_scope(scope());
+        let scan = std::thread::spawn(|| pack_parallel(|| { use rayon::prelude::*; (0..64).into_par_iter().map(|_| pack_scope().is_none()).all(|none| none) }));
+        assert!(scan.join().unwrap(), "a scan by a thread outside the open reads for nobody");
+        drop(mount);
     }
 }
 

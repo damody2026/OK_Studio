@@ -4664,7 +4664,7 @@
    "giftable": false,
    "consumable": false,
    "floor": 2,
-   "clothes": {"parts": [[0,55],[1,0]], "outfit": -1, "color": ""}
+   "clothes": {"parts": [[0,55],[1,0]], "outfit": -1, "color": "#ffffff"}
   },
   {
    "id": "dept_dress_tight",
@@ -5362,7 +5362,7 @@
    "effects": {},
    "giftable": false,
    "consumable": false,
-   "clothes": {"parts": [[0,55],[1,0]], "outfit": -1, "color": ""}
+   "clothes": {"parts": [[0,55],[1,0]], "outfit": -1, "color": "#ffffff"}
   },
   {
    "id": "cloth_dress_tight",
