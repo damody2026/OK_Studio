@@ -320,7 +320,8 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character,const FString& TryCard,i
    if(S.OnaniPrivate==Character){Experience->SetBoolField(TEXT("street_onani"),true);Experience->SetBoolField(TEXT("raw_ok"),true);Experience->SetBoolField(TEXT("kiss_ok"),true);Experience->SetBoolField(TEXT("resentful"),false);}}
   // The other heroines, for the lesbian and 3P poses (OKHScene LoadSecond).
   if(Experience.IsValid()){TArray<TSharedPtr<FJsonValue>> Others;for(int32 I=1;I<S.Manifest.Characters.Num();++I){const FString Card=OKStreetCardFor(S,I);if(I==Character||Card.IsEmpty())continue;
-    auto O=MakeShared<FJsonObject>();O->SetStringField(TEXT("name"),S.Manifest.Characters[I].Name);O->SetStringField(TEXT("card"),Card);O->SetNumberField(TEXT("girl"),I);{const FString OtherId=OKStreetStableId(S.Manifest.Characters[I]);O->SetStringField(TEXT("id"),OtherId);const FString Stage=OKStreetViewRelation(S.Store,OtherId,S.Manifest.TalkBudget).Stage;O->SetBoolField(TEXT("willing"),Stage!=TEXT("stranger"));O->SetNumberField(TEXT("level"),Stage==TEXT("lover")?2:Stage==TEXT("friend")?1:0);}Others.Add(MakeShared<FJsonValueObject>(O));}
+    auto O=MakeShared<FJsonObject>();O->SetStringField(TEXT("name"),S.Manifest.Characters[I].Name);O->SetStringField(TEXT("card"),Card);O->SetNumberField(TEXT("girl"),I);{const FString OtherId=OKStreetStableId(S.Manifest.Characters[I]);O->SetStringField(TEXT("id"),OtherId);const FString Stage=OKStreetViewRelation(S.Store,OtherId,S.Manifest.TalkBudget).Stage;O->SetBoolField(TEXT("willing"),Stage!=TEXT("stranger"));auto AskHer=OKRulesHeroineRequest(S,TEXT("h_experience"),OtherId);AskHer->SetStringField(TEXT("girl"),OtherId);AskHer->SetNumberField(TEXT("day"),S.Store.CalendarDay);OKRulesPutExt(S,AskHer);double Level=Stage==TEXT("lover")?2:Stage==TEXT("friend")?1:0;
+    if(const TSharedPtr<FJsonObject> Had=OKRulesEval(S,AskHer)){O->SetObjectField(TEXT("experience"),Had);Had->TryGetNumberField(TEXT("level"),Level);}O->SetNumberField(TEXT("level"),Level);}Others.Add(MakeShared<FJsonValueObject>(O));}
    Experience->SetArrayField(TEXT("others"),Others);}
   Mode->BeginHScene(S.Manifest.Characters[Character].Name,OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget).Stage,Experience,S.Manifest.Characters[0].Name);}
  S.PrivateShownLine=S.FreeTalkCaptionHer; // what was on screen before is not shown in the scene
@@ -391,7 +392,9 @@ void AOKStreetSocialScene::ShowHResult(int32 Girl,const FJsonObject& Answer){
   if(Where.Num())Line(OKMsg(TEXT("ui.hresult.stats_where"),{{TEXT("where"),FString::Join(Where,OKT(TEXT("ui.memory.list_separator")))}}),FLinearColor(.95f,.85f,.6f),14);}
  Rows->AddSlot().AutoHeight().HAlign(HAlign_Right).Padding(FMargin(0,10,0,0))
   [SNew(SButton).ButtonStyle(OKStreetGlassButton()).ContentPadding(FMargin(18,6)).Text(FText::FromString(OKT(TEXT("ui.hresult.close"))))
-   .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid()&&Weak->State&&Weak->State->HResultPanel.IsValid()&&GEngine&&GEngine->GameViewport){GEngine->GameViewport->RemoveViewportWidgetContent(Weak->State->HResultPanel.ToSharedRef());Weak->State->HResultPanel.Reset();}return FReply::Handled();})];
+   .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid()&&Weak->State&&Weak->State->HResultPanel.IsValid()&&GEngine&&GEngine->GameViewport){GEngine->GameViewport->RemoveViewportWidgetContent(Weak->State->HResultPanel.ToSharedRef());Weak->State->HResultPanel.Reset();
+     // The other heroines in the scene, one after the other.
+     auto& Next=Weak->State->HResultNext;if(Next.Num()){const auto One=Next[0];Next.RemoveAt(0);Weak->ShowHResult(One.Key,*One.Value);}}return FReply::Handled();})];
  TSharedRef<SBorder> Panel=SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(FLinearColor(.05f,.04f,.08f,.88f)).Padding(FMargin(28,20));
  Panel->SetContent(Rows);
  S.HResultPanel=SNew(SBox).HAlign(HAlign_Center).VAlign(VAlign_Center)[Panel];
@@ -427,13 +430,12 @@ void AOKStreetSocialScene::FinishPrivate(){
   // of hers, so her firsts stay as they were.
   if(S.HighPrivateResult->TryGetObjectField(TEXT("h"),H)){const TArray<TSharedPtr<FJsonValue>>* Joined=nullptr;
    if((*H)->TryGetArrayField(TEXT("second"),Joined))for(const auto& Row:*Joined){const auto R=Row->AsObject();if(!R)continue;
-    const int32 Other=int32(R->GetNumberField(TEXT("girl")));const FString OtherId=R->GetStringField(TEXT("id"));if(Other<=0||OtherId.IsEmpty())continue;
-    const FString MainName=S.Manifest.Characters.IsValidIndex(Girl)?S.Manifest.Characters[Girl].Name:FString();const int32 Came=int32(R->GetNumberField(TEXT("orgasms")));
-    MindObserve(Other,TEXT("private"),OKMsg(TEXT("ui.memory.private_with_other"),{{TEXT("name"),MainName},{TEXT("minutes"),FMath::Max(1,Seconds/60)},{TEXT("count"),Came}}),PlaceHere(S.Male),.8f);
-    MindObserve(Girl,TEXT("private"),OKMsg(TEXT("ui.memory.private_had_other"),{{TEXT("name"),R->GetStringField(TEXT("name"))}}),PlaceHere(S.Male),.8f);
-    auto Counts=MakeShared<FJsonObject>();Counts->SetBoolField(TEXT("played"),true);Counts->SetNumberField(TEXT("her_orgasms"),Came);const TArray<TSharedPtr<FJsonValue>>* Names=nullptr;if(R->TryGetArrayField(TEXT("poses"),Names))Counts->SetArrayField(TEXT("poses"),*Names);
-    auto Request=OKRulesHeroineRequest(S,TEXT("h_session_end"),OtherId);Request->SetStringField(TEXT("girl"),OtherId);Request->SetNumberField(TEXT("day"),S.Store.CalendarDay);Request->SetStringField(TEXT("place"),PlaceHere(S.Male));Request->SetNumberField(TEXT("minute"),double(OKStreetMindNow(S)));Request->SetObjectField(TEXT("counts"),Counts);OKRulesPutExt(S,Request);
-    if(const TSharedPtr<FJsonObject> Answer=OKRulesEval(S,Request)){auto Candidate=S.Store;OKRulesTakeExt(Candidate,*Answer);ApplyRulesEffects(Candidate,*Answer);if(CommitStore(MoveTemp(Candidate)))FlushRulesEffects();OKStreetApplyHerExtras(S,OtherId);UE_LOG(LogTemp,Display,TEXT("Street private: %s was in it too, climaxes %d"),*R->GetStringField(TEXT("name")),Came);}}}
+    const int32 Other=int32(R->GetNumberField(TEXT("girl")));const FString OtherId=R->GetStringField(TEXT("id"));const TSharedPtr<FJsonObject>* Hers=nullptr;if(Other<=0||OtherId.IsEmpty()||!R->TryGetObjectField(TEXT("counts"),Hers))continue;
+    // As the first heroine below: what is on her, then the same h_session_end on her own counts.
+    if(Other<OKStreetCastCount){const TArray<TSharedPtr<FJsonValue>>* On=nullptr;if((*Hers)->TryGetArrayField(TEXT("siru"),On))for(int32 A=0;A<On->Num()&&A<5;++A)if((*On)[A]->AsNumber()>0)S.SemenOn[Other]|=1<<A;}
+    auto Request=OKRulesHeroineRequest(S,TEXT("h_session_end"),OtherId);Request->SetStringField(TEXT("girl"),OtherId);Request->SetNumberField(TEXT("day"),S.Store.CalendarDay);Request->SetStringField(TEXT("place"),PlaceHere(S.Male));Request->SetNumberField(TEXT("minute"),double(OKStreetMindNow(S)));Request->SetObjectField(TEXT("counts"),*Hers);{const TArray<TSharedPtr<FJsonValue>>* Names=nullptr;if(R->TryGetArrayField(TEXT("poses"),Names))Request->SetArrayField(TEXT("poses"),*Names);}OKRulesPutExt(S,Request);
+    if(const TSharedPtr<FJsonObject> Answer=OKRulesEval(S,Request)){auto Candidate=S.Store;OKRulesTakeExt(Candidate,*Answer);ApplyRulesEffects(Candidate,*Answer);if(CommitStore(MoveTemp(Candidate)))FlushRulesEffects();OKStreetApplyHerExtras(S,OtherId);S.HResultNext.Add(TPair<int32,TSharedPtr<FJsonObject>>(Other,Answer));
+     UE_LOG(LogTemp,Display,TEXT("Street private: %s was in it too, %d climaxes, level %s"),*R->GetStringField(TEXT("name")),int32((*Hers)->GetNumberField(TEXT("her_orgasms"))),*Answer->GetStringField(TEXT("level_name")));}}}
   if(S.HighPrivateResult->TryGetObjectField(TEXT("h"),H)&&(*H)->HasField(TEXT("counts"))){
    // She comes out of the room as wet as she ran in it (until she sleeps or bathes).
    if(Girl>0&&Girl<OKStreetCastCount){const auto C=(*H)->GetObjectField(TEXT("counts"));double Drips=0,Milk=0;C->TryGetNumberField(TEXT("her_drips"),Drips);C->TryGetNumberField(TEXT("her_milk"),Milk);

@@ -29,6 +29,10 @@ const DEEPEST: f64 = 85.0;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct HExp {
+    /// Scenes with another heroine: just the two of them, and the three with him, and who with.
+    pub lesbian_count: i32,
+    pub three_count: i32,
+    pub partners: Vec<String>,
     pub count: i32,
     pub kissed: bool,
     pub areas: [f32; 6],
@@ -77,7 +81,7 @@ pub struct HExp {
 
 impl Default for HExp {
     fn default() -> Self {
-        HExp { count: 0, kissed: false, areas: [0.0; 6], crotch_h: 0.0, anal_h: 0.0, service: 0.0, service_count: 0, oral: 0.0, raw_count: 0, virgin: true, anal_virgin: true, hymen_restored: false, today_day: -1, today_orgasms: 0, today_service: 0, today_anal_refused: false, libido_gain: 0, white_until: -1, red_until: -1, crotch_deep: false, anal_deep: false, poses: Vec::new(), body: Default::default(), orgasms: 0, climaxes: Default::default(), sex_count: 0, vaginal_count: 0, anal_count: 0 }
+        HExp { lesbian_count: 0, three_count: 0, partners: Vec::new(), count: 0, kissed: false, areas: [0.0; 6], crotch_h: 0.0, anal_h: 0.0, service: 0.0, service_count: 0, oral: 0.0, raw_count: 0, virgin: true, anal_virgin: true, hymen_restored: false, today_day: -1, today_orgasms: 0, today_service: 0, today_anal_refused: false, libido_gain: 0, white_until: -1, red_until: -1, crotch_deep: false, anal_deep: false, poses: Vec::new(), body: Default::default(), orgasms: 0, climaxes: Default::default(), sex_count: 0, vaginal_count: 0, anal_count: 0 }
     }
 }
 
@@ -266,14 +270,68 @@ fn experience(r: &Value) -> Result<Value, String> {
 /// climaxes}, raw (inserted without a condom), her_orgasms, played (any pose at all)}. Answer: ext (ext.hexp.<girl>),
 /// effects (the relation and her memories: the time itself, firsts, an area she got used to, a new level), level_before,
 /// level_after, hexp.
+/// What each heroine has in a group pose, per second (AnimationInfo_05 lesbian, _06 service 3P, _07 intercourse 3P; odd ids
+/// are the same pose with the two swapped). `a` is the first (in 3P the one he is in, H3PSonyu id % 2), `b` the other.
+/// Places with a share of the second in it (the first climaxes there), and whether she serves him. The one he is in has
+/// no places in _07: the scene counts her insertion itself.
+fn group_role(category: &str, id: i64, role: &str) -> (&'static [(&'static str, f32)], bool) {
+    let a = role == "a";
+    match (category, id & !1) {
+        ("AnimationInfo_05", 0) => (&[("crotch", 1.0), ("thigh", 0.3)], false),
+        ("AnimationInfo_05", _) if id == 1 => (if a { &[("crotch", 1.2), ("thigh", 0.3)] } else { &[("head", 0.2)] }, false),
+        ("AnimationInfo_05", _) => (&[("crotch", 0.8), ("chest", 0.5), ("nipple", 0.3)], false),
+        ("AnimationInfo_06", 4) => (if a { &[("foot", 1.0)] } else { &[("hand", 1.0)] }, true),
+        ("AnimationInfo_06", _) => (&[], true),
+        ("AnimationInfo_07", _) if a => (&[], false),
+        ("AnimationInfo_07", _) => (&[("crotch", 1.0), ("thigh", 0.2)], false),
+        _ => (&[], false),
+    }
+}
+
+/// The group poses she was in, as what session_end reads: seconds on her places, her climaxes there, serving him.
+fn with_group(mut c: Value) -> Value {
+    let rows = c.get("group").and_then(Value::as_array).cloned().unwrap_or_default();
+    if !c.is_object() || rows.is_empty() {
+        return c;
+    }
+    for key in ["areas", "climax_areas"] {
+        if !c.get(key).is_some_and(Value::is_object) {
+            c[key] = json!({});
+        }
+    }
+    for row in &rows {
+        let n = |k: &str| row.get(k).and_then(Value::as_f64).unwrap_or(0.0);
+        let (category, role) = (row.get("category").and_then(Value::as_str).unwrap_or(""), row.get("role").and_then(Value::as_str).unwrap_or(""));
+        let (places, serves) = group_role(category, n("id") as i64, role);
+        for (place, rate) in places {
+            let had = c["areas"].get(*place).and_then(Value::as_f64).unwrap_or(0.0);
+            c["areas"][*place] = json!(had + n("seconds") * f64::from(*rate));
+        }
+        if let Some((place, _)) = places.first().filter(|_| n("climaxes") > 0.0) {
+            let had = c["climax_areas"].get(*place).and_then(Value::as_f64).unwrap_or(0.0);
+            c["climax_areas"][*place] = json!(had + n("climaxes"));
+        }
+        if serves && n("seconds") > 0.0 {
+            c["service"] = json!(true);
+        }
+    }
+    c
+}
+
 fn session_end(r: &Value) -> Result<Value, String> {
     let girl = r.get("girl").and_then(Value::as_str).ok_or("missing_field: girl")?;
     let mut rel: Relation = serde_json::from_value(r.get("relation").cloned().ok_or("missing_field: relation")?).map_err(|e| format!("relation: {e}"))?;
     let place = r.get("place").and_then(Value::as_str).unwrap_or("");
     let mut ext = r.get("ext").cloned().filter(Value::is_object).unwrap_or_else(|| json!({}));
-    let c = r.get("counts").cloned().unwrap_or_else(|| json!({}));
+    let c = with_group(r.get("counts").cloned().unwrap_or_else(|| json!({})));
     let num = |v: &Value, k: &str| v.get(k).and_then(Value::as_f64).unwrap_or(0.0);
     let flag = |v: &Value, k: &str| v.get(k).and_then(Value::as_bool).unwrap_or(false);
+    // Two heroines by themselves: he watched, so none of what is between her and him moves.
+    let with_him = c.get("with_him").and_then(Value::as_bool).unwrap_or(true);
+    let names: Vec<String> = c.get("with").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
+    let group_rows = c.get("group").and_then(Value::as_array).cloned().unwrap_or_default();
+    let in_category = |three: bool| group_rows.iter().any(|g| (g.get("category").and_then(Value::as_str) == Some("AnimationInfo_05")) != three);
+    let (lesbian, three) = (in_category(false), in_category(true));
     let before = rel.clone();
     let mut h = of(&ext, girl);
     // Her development as the player set it on the scene's left panel (user 2026-11-04): what this scene adds comes on top.
@@ -333,10 +391,19 @@ fn session_end(r: &Value) -> Result<Value, String> {
         }
     }
     if played {
-        fx.note_at(&rel.id, "intimacy", crate::tr::t("shop.private_room_time"), place, 0.9);
-        rel.add_liking(5.0);
-        rel.attraction = (rel.attraction + 5.0).min(100.0);
-        rel.dependency = (rel.dependency + 3.0).min(100.0);
+        if with_him {
+            fx.note_at(&rel.id, "intimacy", crate::tr::t("shop.private_room_time"), place, 0.9);
+            rel.add_liking(5.0);
+            rel.attraction = (rel.attraction + 5.0).min(100.0);
+            rel.dependency = (rel.dependency + 3.0).min(100.0);
+        }
+        h.lesbian_count += i32::from(lesbian);
+        h.three_count += i32::from(three);
+        for name in &names {
+            if !h.partners.contains(name) {
+                h.partners.push(name.clone());
+            }
+        }
         // Touching: selectAreas*0.1 a scene in the original, where one scene caps at 100; here a second of touch is
         // worth half a point, so a long caress of one place is a big step and five scenes of it make her used to it.
         let areas = c.get("areas").cloned().unwrap_or_else(|| json!({}));
@@ -403,18 +470,20 @@ fn session_end(r: &Value) -> Result<Value, String> {
         h.vaginal_count += i32::from(vaginal);
         h.anal_count += i32::from(anal);
         h.sex_count += i32::from(vaginal || anal);
-        h.count = (h.count + 1).min(10000);
+        h.count = (h.count + i32::from(with_him)).min(10000);
         // Lewdness: the original's result table adds a few points a scene, more when she came; anal play adds to it.
         let orgasms = num(&c, "her_orgasms").clamp(0.0, 3.0) as f32;
         let anal = if flag(c.get("anal").unwrap_or(&Value::Null), "inserted") { 2.0 } else { 0.0 };
         rel.lewdness = (rel.lewdness + 2.0 + 3.0 * orgasms + anal).min(crate::talk::LEWDNESS_CAP);
         // Every climax he gave her warms her to him.
         let climaxes = num(&c, "her_orgasms").clamp(0.0, 20.0) as f32;
-        if climaxes > 0.0 {
+        if climaxes > 0.0 && with_him {
             rel.add_liking(1.5 * climaxes);
         }
         // Each climax satisfies ten points of her desire for him; what is left she still wants (frustrated).
-        rel.sex_desire = (rel.sex_desire - 10.0 * climaxes).max(0.0);
+        if with_him {
+            rel.sex_desire = (rel.sex_desire - 10.0 * climaxes).max(0.0);
+        }
         // Found touching herself on the street (her desire at 200, OKStreetSocialOnani.inl) and taken there: each time he
         // came in her without a condom fills her favor for him by her whole stage (user 2026-11-03: 中出好感度 +100%).
         if flag(&c, "street_onani") {
@@ -437,7 +506,15 @@ fn session_end(r: &Value) -> Result<Value, String> {
         let int = |k: &str| crate::tr::a(&(num(&c, k) as i64).to_string());
         let poses = r.get("poses").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("、")).unwrap_or_default();
         let summary = crate::tr::m("hexp.session_summary", &[("orgasms", int("her_orgasms")), ("finishes", int("his_finishes")), ("inside", int("his_inside")), ("outside", int("his_outside")), ("mouth", int("his_mouth")), ("swallowed", int("swallowed")), ("poses", crate::tr::a(&poses))]);
-        fx.note_at(&rel.id, "h_level", &summary, place, 0.9);
+        let with = crate::tr::a(&names.join("、"));
+        if with_him {
+            fx.note_at(&rel.id, "h_level", &summary, place, 0.9);
+            if three {
+                fx.note_at(&rel.id, "h_level", &crate::tr::m("hexp.group_with", &[("with", with)]), place, 0.85);
+            }
+        } else {
+            fx.note_at(&rel.id, "h_level", &crate::tr::m("hexp.group_girls", &[("with", with), ("orgasms", int("her_orgasms")), ("poses", crate::tr::a(&poses))]), place, 0.85);
+        }
     }
 
     // Her memories of the firsts and of what changed in her.
@@ -447,6 +524,12 @@ fn session_end(r: &Value) -> Result<Value, String> {
     }
     if was.virgin && !h.virgin {
         first(&mut fx, "hexp.lost_virginity", 1.0);
+    }
+    if was.lesbian_count == 0 && h.lesbian_count > 0 {
+        first(&mut fx, "hexp.first_lesbian", 0.9);
+    }
+    if was.three_count == 0 && h.three_count > 0 {
+        first(&mut fx, "hexp.first_threesome", 0.9);
     }
     if was.hymen_restored && !h.hymen_restored {
         first(&mut fx, "hexp.restored_hymen_broken", 0.9);
@@ -487,6 +570,8 @@ fn session_end(r: &Value) -> Result<Value, String> {
     let firsts: Vec<&str> = [
         (was.count == 0 && h.count > 0, "hexp.first_time"),
         (was.virgin && !h.virgin, "hexp.lost_virginity"),
+        (was.lesbian_count == 0 && h.lesbian_count > 0, "hexp.first_lesbian"),
+        (was.three_count == 0 && h.three_count > 0, "hexp.first_threesome"),
         (was.hymen_restored && !h.hymen_restored, "hexp.restored_hymen_broken"),
         (was.anal_virgin && !h.anal_virgin, "hexp.first_anal"),
         (!was.kissed && h.kissed, "hexp.first_kiss"),
@@ -542,6 +627,39 @@ pub fn eval(kind: &str, r: &Value) -> Option<Result<Value, String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn two_girls_alone_develop_each_but_nothing_with_him_moves() {
+        let counts = json!({"played": true, "with_him": false, "her_orgasms": 1, "with": ["B"], "group": [{"category": "AnimationInfo_05", "id": 0, "role": "b", "seconds": 40.0, "climaxes": 1}]});
+        let out = session_end(&json!({"girl": "g", "relation": rel(0.0), "ext": {}, "counts": counts})).unwrap();
+        let h = &out["ext"]["hexp"]["g"];
+        assert_eq!(h["count"], 0);
+        assert_eq!(h["lesbian_count"], 1);
+        assert_eq!(h["virgin"], true);
+        assert_eq!(h["crotch_h"], 20.0);
+        assert_eq!(h["climaxes"]["crotch"], 1);
+        assert_eq!(h["partners"][0], "B");
+        assert!(out["result"]["firsts"].as_array().unwrap().len() == 1);
+    }
+
+    #[test]
+    fn the_one_he_is_not_in_gets_his_hands_and_the_one_he_is_in_her_own_counts() {
+        let row = |role: &str| json!([{"category": "AnimationInfo_07", "id": 3, "role": role, "seconds": 20.0, "climaxes": 1}]);
+        let other = session_end(&json!({"girl": "g", "relation": rel(0.0), "ext": {}, "counts": {"played": true, "her_orgasms": 1, "with": ["A"], "group": row("b")}})).unwrap();
+        assert_eq!(other["ext"]["hexp"]["g"]["virgin"], true);
+        assert_eq!(other["ext"]["hexp"]["g"]["crotch_h"], 10.0);
+        assert_eq!(other["ext"]["hexp"]["g"]["three_count"], 1);
+        let inserted = session_end(&json!({"girl": "g", "relation": rel(0.0), "ext": {}, "counts": {"played": true, "her_orgasms": 1, "with": ["A"], "crotch": {"inserted": true, "climaxes": 1}, "group": row("a")}})).unwrap();
+        assert_eq!(inserted["ext"]["hexp"]["g"]["virgin"], false);
+        assert_eq!(inserted["ext"]["hexp"]["g"]["climaxes"]["crotch"], 1);
+    }
+
+    #[test]
+    fn serving_him_together_counts_for_each() {
+        let out = session_end(&json!({"girl": "g", "relation": rel(0.0), "ext": {}, "counts": {"played": true, "with": ["A"], "group": [{"category": "AnimationInfo_06", "id": 5, "role": "b", "seconds": 10.0, "climaxes": 0}]}})).unwrap();
+        assert_eq!(out["ext"]["hexp"]["g"]["service_count"], 1);
+        assert_eq!(out["ext"]["hexp"]["g"]["body"]["hand"], 5.0);
+    }
 
     fn rel(lewd: f32) -> Value {
         let mut r = Relation { id: "g".into(), ..Relation::default() };

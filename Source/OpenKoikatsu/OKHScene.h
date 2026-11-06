@@ -153,10 +153,20 @@ private:
     TArray<float> SecondFace,SecondBody;TMap<FString,FString> SecondKeys;FString SecondState,SecondName;
     int32 SecondGeneration=0;bool bSecondLoading=false,bSecondReady=false,bSecondBare=false;
     // Her part of the scene: the original has one gauge for both (flags.gaugeFemale), so she climaxes when the first does.
-    struct FSecondRun {int32 Girl=0;FString Id,Name;int32 Orgasms=0;TArray<FString> Poses;};
+    // Who he is in: the original's 3P pose id % 2 picks the heroine (H3PSonyu num), so an odd pose (入れ替え) is the second's.
+    // There the scene's counters are hers: FHLedger holds whichever heroine's are not in use, swapped by SyncSwap.
+    struct FHLedger {bool bService=false,bRaw=false,bRawPressed=false,bCrotch=false,bAnal=false;int32 ServiceFinishes=0,CrotchClimaxes=0,AnalClimaxes=0,HisFinishes=0,HisInside=0,HisOutside=0,HisMouth=0,Swallowed=0,HisInsideRaw=0,HisCondom=0,HisInsideVaginaRaw=0,Siru[5]={0,0,0,0,0};float CrotchDeepest=0.f,AnalDeepest=0.f;};
+    // A group pose as one heroine had it: hexp.rs group_role turns the seconds into her development there.
+public:
+    struct FGroupRow {FString Category,Role;int32 Id=0;float Seconds=0.f;int32 Climaxes=0;};
+private:
+    struct FSecondRun {int32 Girl=0;FString Id,Name;int32 Orgasms=0;TArray<FString> Poses;FHLedger Ledger;TArray<FGroupRow> Rows;TSharedPtr<FJsonObject> Experience;};
+    TArray<FGroupRow> MainRows;bool bSwapped=false,bGirlsPlayed=false;
+    void SyncSwap(bool bWant);bool SecondReceives() const;bool GroupPose(FString& Category,int32& Id) const;static FGroupRow& GroupRow(TArray<FGroupRow>& Rows,const FString& Category,int32 Id,const FString& Role);void TickGroup(float Delta);
+    const TSharedPtr<FJsonObject>& Exp() const; // what the heroine he is with now has been through (Gallery->HExperience, or the second's)
     TArray<FSecondRun> SecondRuns;int32 SecondRun=INDEX_NONE,SecondPersonality=0,SecondLevel=0;float SecondVoiceRate=.5f;double SecondCameUntil=0.;FString SecondBreathKey,SecondFaceKey,SecondClothKey;
     void SecondReact();void SecondBreath(const FString& State);bool SecondHere() const;
-    void LoadSecond(int32 Index);void DropSecond();void TickSecond();void PlaySecond(const FString& State);void PrepareSecond(const FString& Source,int32 Layer);
+    void LoadSecond(int32 Index);void DropSecond();void TickSecond(float Delta);void PlaySecond(const FString& State);void PrepareSecond(const FString& Source,int32 Layer);
     int32 ActiveAibu=INDEX_NONE,PendingAibu=INDEX_NONE,AibuGeneration=0,TouchArea=INDEX_NONE;
     int32 AreaClimaxes[11]={};          // her climaxes from his touch or kiss there (AreaSeconds order; hexp climaxes)
     float AreaSeconds[11]={};           // kiss, chest, crotch, anal, butt, nipples (hAreaExps order); head, hand, thigh, calf, foot
