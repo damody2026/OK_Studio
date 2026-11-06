@@ -62,7 +62,7 @@ void AOKStreetSocialScene::FinishClinic(int32 Her,const FString& ItemId,const FS
  // Her face and hair: a new copy of her card for the one-on-one now; the street shows it from the next start.
  if(ItemId!=TEXT("gyn_hymen_repair")){FString Error;const FString Card=RestyledCard(Her,Error);
   if(Card.IsEmpty()){UE_LOG(LogTemp,Warning,TEXT("Street clinic: actor %d card not restyled: %s"),Her,*Error);}
-  else{if(S.HighCards.IsValidIndex(Her))S.HighCards[Her]=Card;Notice+=OKT(TEXT("ui.clinic.street_next_start"));}}
+  else{if(S.HighCards.IsValidIndex(Her))S.HighCards[Her]=Card;S.LookReloadPending=true;S.LookGirl=Her;Notice+=OKT(TEXT("ui.clinic.street_next_start"));}}
  S.FreeTalkNotice=Notice;
  RefreshUI();
 }

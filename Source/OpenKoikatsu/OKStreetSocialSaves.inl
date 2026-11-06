@@ -49,7 +49,7 @@ void AOKStreetSocialScene::ApplyPendingSave(){
  FString Body;TSharedPtr<FJsonObject> P;if(!FFileHelper::LoadFileToString(Body,*Pending))return;IFileManager::Get().Delete(*Pending);
  if(!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Body),P)||!P.IsValid())return;
  const FString Action=P->GetStringField(TEXT("action")),Slot=P->GetStringField(TEXT("slot"));
- State->SaveApplied=true;P->TryGetBoolField(TEXT("control_mic_ignored"),S.ControlMicIgnored);
+ State->SaveApplied=true;P->TryGetBoolField(TEXT("control_mic_ignored"),S.ControlMicIgnored);{double Look=INDEX_NONE;if(P->TryGetNumberField(TEXT("look_girl"),Look))S.LookGirl=int32(Look);}
  if(Action==TEXT("new")){OKStreetDeleteGame(Live);P->TryGetStringField(TEXT("region"),S.NewGameRegion);S.SaveNotice=OKT(TEXT("ui.saves.new_started"));UE_LOG(LogTemp,Display,TEXT("Street saves: new game (%s)"),*S.NewGameRegion);}
  else if(Action==TEXT("load")&&IFileManager::Get().FileExists(*(SaveSlotDir(Slot)/TEXT("relationships.json")))){
   const bool Ok=OKStreetCopyGame(SaveSlotDir(Slot),Live);S.SaveNotice=OKMsg(Ok?TEXT("ui.saves.loaded"):TEXT("ui.saves.load_failed"),{{TEXT("slot"),SaveSlotName(Slot)}});
@@ -140,6 +140,7 @@ void AOKStreetSocialScene::RestartWithSave(const FString& Action,const FString& 
  // The control channel's "the room microphone is not him" is the tester's setting, not the game's: it survives the map
  // starting again for a load or a new game.
  P->SetBoolField(TEXT("control_mic_ignored"),S.ControlMicIgnored);
+ if(S.LookGirl!=INDEX_NONE)P->SetNumberField(TEXT("look_girl"),S.LookGirl);
  FString Out;FJsonSerializer::Serialize(P,TJsonWriterFactory<>::Create(&Out));
  const FString Pending=FPaths::GetPath(S.Manifest.SavePath)/TEXT("Saves/pending.json");IFileManager::Get().MakeDirectory(*FPaths::GetPath(Pending),true);
  if(!FFileHelper::SaveStringToFile(Out,*Pending,FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))return;

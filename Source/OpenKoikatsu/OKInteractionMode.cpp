@@ -385,6 +385,20 @@ void AOKInteractionMode::Tick(float Delta){
         Controller->PreviewActor=LoadingFemale;LoadingFemale=nullptr;Controller->PreviewActor->SetActorTickEnabled(false);Controller->bLoadInFlight=false;
         Controller->PreviewActor->ApplyShapes(Controller->Selected.Face.ShapeValueFace,Controller->Selected.Body.ShapeValueBody);
         Controller->PreviewActor->SetupStudioView(true);Controller->PreviewActor->SetActorHiddenInGame(false);Controller->RefreshPairs();
+        // SetupStudioView stands her at the world's origin, which on the street is a square outdoors: she tried the shop's
+        // dress on in the open. A fitting stays where she was, in the shop, and the camera takes the side with the most room.
+        if(bFitting&&bInPlace){auto* Her=Controller->PreviewActor.Get();const FVector Feet=InPlaceAt.GetLocation();const FVector Chest=Feet+FVector(0.,0.,100.);
+            FCollisionQueryParams Query(SCENE_QUERY_STAT(OKFittingCamera),false,Her);float Yaw=0.f,Room=0.f;
+            for(int32 Side=0;Side<12;++Side){const float Angle=Side*30.f;const FVector Way(FMath::Sin(FMath::DegreesToRadians(Angle)),FMath::Cos(FMath::DegreesToRadians(Angle)),0.);
+                FHitResult Hit;float Clear=GetWorld()->LineTraceSingleByChannel(Hit,Chest,Chest+Way*450.,ECC_WorldStatic,Query)?Hit.Distance:450.f;
+                if(FittingRoom.IsValid){if(Way.X>.01)Clear=FMath::Min<float>(Clear,(FittingRoom.Max.X-Chest.X)/Way.X);else if(Way.X<-.01)Clear=FMath::Min<float>(Clear,(FittingRoom.Min.X-Chest.X)/Way.X);
+                    if(Way.Y>.01)Clear=FMath::Min<float>(Clear,(FittingRoom.Max.Y-Chest.Y)/Way.Y);else if(Way.Y<-.01)Clear=FMath::Min<float>(Clear,(FittingRoom.Min.Y-Chest.Y)/Way.Y);}
+                if(FittingRoom.IsValid){const FVector Middle=(FittingRoom.GetCenter()-Chest).GetSafeNormal2D();Clear*=1.f+float(FVector::DotProduct(Way,Middle));} // the wall behind her is not in the box: toward the room's middle
+                if(Clear>Room){Room=Clear;Yaw=Angle;}}
+            const float Distance=FMath::Clamp(Room-30.f,150.f,420.f);
+            const FVector Foot=Her->GetActorLocation();Her->SetActorLocationAndRotation(Feet+FVector(0.,0.,Foot.Z),FRotator(0.,-Yaw,0.));
+            Her->OrbitFocus=FVector(Feet.X,Feet.Y,Feet.Z+Her->OrbitFocus.Z);Her->OrbitYaw=Yaw;Her->OrbitPitch=0.f;Her->OrbitDistance=Distance;Her->ApplyOrbitCamera();
+            UE_LOG(LogTemp,Display,TEXT("Fitting: in place at %s, camera yaw %.0f at %.0f cm"),*Feet.ToCompactString(),Yaw,Distance);}
     }
     if(!OwnController)Controller->TickPreviewPreparation();
     if(!Activated){

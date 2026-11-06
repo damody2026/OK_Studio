@@ -2,8 +2,8 @@
 // category "clothes", each with the card parts it sets). With her beside him he has her try a piece on (she changes and
 // he sees her in it, nothing paid, nothing kept) or buys it for her (she says yes or no in her own words, as at the
 // clinics), and she keeps what he bought and changes between it and her own clothes. What she wears is written into the
-// same copy of her card as her face and hair (RestyledCard): the one-on-one shows it at once, the street crowd from the
-// next start of the game.
+// same copy of her card as her face and hair (RestyledCard): the one-on-one shows it at once, the street when it has
+// reloaded, as soon as the two have finished talking (LookReloadPending, TickAppointments).
 
 namespace OKStreetWardrobe {
 // What the rules keep of a piece: all they need, so they do not read the catalogue.
@@ -60,6 +60,7 @@ FString AOKStreetSocialScene::DressedCard(int32 Her){
  auto& S=*State;FString Error;const FString Card=RestyledCard(Her,Error);
  if(Card.IsEmpty()){UE_LOG(LogTemp,Warning,TEXT("Street clothes: actor %d card not dressed: %s"),Her,*Error);return FString();}
  if(S.HighCards.IsValidIndex(Her))S.HighCards[Her]=Card;
+ S.LookReloadPending=true;S.LookGirl=Her;
  return OKT(TEXT("ui.clothes.street_next_start"));
 }
 

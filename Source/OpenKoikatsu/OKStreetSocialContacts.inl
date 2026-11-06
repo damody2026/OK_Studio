@@ -309,6 +309,9 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character,const FString& TryCard,i
  if(!Mode){OKStreetPrivateEnvRestore();S.ContactsNotice=OKT(TEXT("ui.contacts.interaction_load_failed"));RefreshUI();return;}
  // Her experience (hexp.rs) gates the poses, raw insertion and anal in the H panel.
  S.PrivateTryOn=TryOn;Mode->bFitting=TryOn;
+ // Her street model stands right where the high one now does: 安可 tried the dress on inside her own cheongsam.
+ if(TryOn){FString Hidden;OKSetCrowdRuntimeCharacterMotion(this,Character,FTransform(There.GetRotation(),There.GetLocation()-FVector(0.,0.,100000.)),0.f,Hidden);}
+ if(TryOn){const FVector At=There.GetLocation();for(const auto& P:OKStreetPlaces())for(const FBox& Room:P.Rooms)if(At.X>=Room.Min.X&&At.X<=Room.Max.X&&At.Y>=Room.Min.Y&&At.Y<=Room.Max.Y&&At.Z>=Room.Min.Z-60.f&&At.Z<Room.Max.Z-60.f)Mode->FittingRoom=Room;}
  if(!TryOn){const FString Id=OKStreetStableId(S.Manifest.Characters[Character]);auto Ask=OKRulesHeroineRequest(S,TEXT("h_experience"),Id);Ask->SetStringField(TEXT("girl"),Id);Ask->SetNumberField(TEXT("day"),S.Store.CalendarDay);OKRulesPutExt(S,Ask);
   // With her desire and bust: past 100 she runs and her nipples leak in the room too (OKHScene drips).
   TSharedPtr<FJsonObject> Experience=OKRulesEval(S,Ask);if(Experience.IsValid()){Experience->SetNumberField(TEXT("sex_desire"),OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget).SexDesire);Experience->SetNumberField(TEXT("favor"),OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget).Favor);Experience->SetNumberField(TEXT("bust"),OKStreetHerCard(S,Character).Bust);

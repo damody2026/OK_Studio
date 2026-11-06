@@ -483,9 +483,12 @@ void AOKStreetSocialScene::ApplyChoiceReply(int32 Character,const FOKFreeTalkRep
  // goodbye ended the talk, or her words promised to pay, is judged by DeepSeek after the reply (JudgeFreeTalk).
  // A goodbye while he is still walking her somewhere waits for the door (the walk's end resumes the talk); walking off
  // ("leave") does not.
- const bool OnTheWay=S.OutingGirl==Character&&Reply.ActKind!=TEXT("leave");
+ // A stroll goes nowhere, so there is no door to wait for: 惠惠 said good night and they walked on for the rest of the loop.
+ const bool Strolling=S.OutingGirl==Character&&(S.OutingActivity==TEXT("stroll")||S.OutingActivity==TEXT("walk"));
+ const bool OnTheWay=S.OutingGirl==Character&&!Strolling&&Reply.ActKind!=TEXT("leave");
  if(OnTheWay&&(Reply.ActKind==TEXT("end_talk")||Reply.Action==TEXT("end_talk")||Reply.Action==TEXT("farewell")||Reply.Action==TEXT("goodbye"))){UE_LOG(LogTemp,Display,TEXT("Street farewell: actor=%d not on the way; the outing reaches %s first"),Character,*S.OutingPlace);}
  else if(Reply.ActKind==TEXT("end_talk")||Reply.ActKind==TEXT("leave")||Reply.Action==TEXT("end_talk")||Reply.Action==TEXT("farewell")||Reply.Action==TEXT("goodbye")){
+  if(Strolling)CancelOuting(FString());
   S.FarewellPending=true;S.FarewellFromTalk=true;S.FarewellAt=FPlatformTime::Seconds();UE_LOG(LogTemp,Display,TEXT("Street farewell: actor=%d the conversation ends after her last line (act=%s)"),Character,*Reply.ActKind);
  }
  if(Reply.ActKind==TEXT("promise_treat")&&OKStreetMindNow(S)-S.HerTreatKept.FindRef(Character,-100000)>=60){/* not again within the hour she paid one (R3-227) */S.HerTreatPromise.Add(Character,OKStreetMindNow(S)+6*60);UE_LOG(LogTemp,Display,TEXT("Street treat promise: actor=%d will pay for what he orders (act)"),Character);}
@@ -585,6 +588,9 @@ void AOKStreetSocialScene::ApplyChoiceReply(int32 Character,const FOKFreeTalkRep
  else if(Reply.ActKind==TEXT("entrust")){FString A,D;if(!Reply.ActArg.Split(TEXT("|"),&A,&D))A=Reply.ActArg;StartEntrust(Character,TEXT("entrust"),FCString::Atoi64(*A),D.IsEmpty()?30:FCString::Atoi(*D));}
  else if(Reply.ActKind==TEXT("follow_mode"))SetFollowMode(Reply.ActArg==TEXT("her_lead")?1:Reply.ActArg==TEXT("side_by_side")?2:0);
  else if(Reply.ActKind==TEXT("end_talk")||Reply.ActKind==TEXT("leave")||Reply.ActKind==TEXT("promise_treat")){} // handled above (the goodbye, the promise)
+ // A walk is the judge's (do_now, then): she said "let's walk when we've eaten" with act stroll while then=walk was already
+ // set, and the player read "惠惠 wants to do stroll, which cannot be done yet".
+ else if(Reply.ActKind==TEXT("stroll")||Reply.ActKind==TEXT("walk")){UE_LOG(LogTemp,Display,TEXT("Street act: %s is left to the judge's do_now and then"),*Reply.ActKind);}
  // "Let's go to the restaurant" with act eat: the eating is there, not here (she ate at the shrine and the keeper came
  // over, R3-126).
  // The meal they are already at ("cafeteria_meal" while eating at the cafeteria, she feeds him) is not somewhere else.

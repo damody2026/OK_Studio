@@ -292,6 +292,13 @@ void AOKStreetSocialScene::SetAsideAbsentMeetings(){
 void AOKStreetSocialScene::TickAppointments(){
  auto& S=*State;const int64 Now=OKStreetMindNow(S);
  if(Now==S.AppointmentTickMinute)return;S.AppointmentTickMinute=Now;
+ // Back from that load she is where he left her: 三月七 said goodbye in her new dress and was across town when the street came back.
+ if(!S.LookReloadPending&&S.AllReady&&S.LookGirl!=INDEX_NONE&&S.Agents.IsValidIndex(S.LookGirl-1)){const int32 G=S.LookGirl;S.LookGirl=INDEX_NONE;const float Angle=FMath::DegreesToRadians(S.Rotations[0].Yaw);
+  S.Agents[G-1].Position=S.Male+FVector(FMath::Cos(Angle),FMath::Sin(Angle),0)*170.f;S.Commutes.Remove(G);S.LiftWalks.Remove(G);S.Agents[G-1].Held=true;S.ScheduleHeld.Add(G);UE_LOG(LogTemp,Display,TEXT("Street clothes: actor %d is back beside him in her new look"),G);}
+ // The street's models are made from the cards when it loads: a new look shows once it loads again, as soon as he is on his
+ // own (a save and a load of it, about half a minute), not at the next start of the game.
+ if(S.LookReloadPending&&FreeTalkPartner()==INDEX_NONE&&S.Target==INDEX_NONE&&S.Companion==INDEX_NONE&&S.OutingGirl==INDEX_NONE&&S.Pair.Partner==INDEX_NONE&&S.PrivateGirl==INDEX_NONE&&S.ApproachGirl==INDEX_NONE&&S.Party.IsEmpty()){
+  S.LookReloadPending=false;UE_LOG(LogTemp,Display,TEXT("Street clothes: the street reloads for a new look"));SaveToSlot(TEXT("auto"));RestartWithSave(TEXT("load"),TEXT("auto"));return;}
  TickSeries();
  if(!S.bAbsentCastChecked){S.bAbsentCastChecked=true;SetAsideAbsentMeetings(); // the rules are open by now (not at load)
   // Saved while she was walking over: the meeting was already kept, her walk was not in the save, and 雷电将军 never came
