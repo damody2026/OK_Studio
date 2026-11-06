@@ -996,7 +996,9 @@ public:
 		if (Focus && TimelineView && Focus == TimelineView && (K == EKeys::Delete || (E.IsControlDown() && (K == EKeys::C || K == EKeys::V)))) return false;
 		if (K == EKeys::Escape)
 		{
-			if (IsFloatOpen(TEXT("dialog"))) CloseFloat(TEXT("dialog"));
+			// An open right-click menu goes first (U245: Esc closed the page behind it and left the menu up).
+			if (FSlateApplication::Get().AnyMenusVisible()) FSlateApplication::Get().DismissAllMenus();
+			else if (IsFloatOpen(TEXT("dialog"))) CloseFloat(TEXT("dialog"));
 			else if (Page != EPage::None) SetPage(EPage::None);
 			else if (RootMenu >= 0) { RootMenu = -1; DeferSubMenu(); }
 			else if (!OpenOrder.IsEmpty()) CloseFloat(OpenOrder.Last());
