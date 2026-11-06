@@ -523,6 +523,13 @@ typedef struct OkAnimPlayer OkAnimPlayer;
 int32_t ok_okanim_last_error(char* out, int32_t cap);
 int32_t ok_okanim_from_clip(OkSession* s, const char* key, float fps, uint8_t* out, int32_t cap);
 int32_t ok_okanim_from_vmd(const OkSession* s, const char* vmd_path, const char* params_json, uint8_t* out, int32_t cap);
+/* The same solve for a worker thread: new copies the character's rig out of the session on the session's thread (s may
+   be null), run solves on the first call and keeps the bytes (null out/cap0 queries the size; errors through
+   ok_okanim_last_error on that thread), free releases it. */
+typedef struct OkVmdJob OkVmdJob;
+OkVmdJob* ok_okanim_vmd_job_new(const OkSession* s, float obj_scale_y);
+int32_t ok_okanim_vmd_job_run(OkVmdJob* j, const char* vmd_path, const char* params_json, uint8_t* out, int32_t cap);
+void ok_okanim_vmd_job_free(OkVmdJob* j);
 /* A camera VMD's keys as a JSON array (time, world_pos, rot, fov...). Null out/cap0 queries the size. */
 int32_t ok_mmdd_camera_from_vmd(const char* vmd_path, uint8_t* out, int32_t cap);
 int32_t ok_okanim_session_rest(OkSession* s, uint8_t* out, int32_t cap);

@@ -469,7 +469,9 @@ bool AOKSceneActor::Build(const FOKSceneObject& Object, FShown& Out, FString& Ou
 		States.SetNumZeroed(9);
 		FOkSession Session;
 		// An OK card opens from the OK base library and its pack; an original KKS card from the library plus its zipmods.
+		const double OpenStart = FPlatformTime::Seconds();
 		if (!Session.Open(FString(), CardPath(Object.Character.Card), Object.Character.Outfit, OutError, States.GetData(), StatusJson(Object.Character))) return false;
+		UE_LOG(LogTemp, Display, TEXT("OK studio: %s session opened in %.2f s"), *Object.Name, FPlatformTime::Seconds() - OpenStart);
 		AKKPreviewActor* Actor = SpawnPreview(World, MoveTemp(Session), OutError, {}, {}, nullptr, false,
 			Document ? Document->Post.ShaderGlobals() : TMap<FName, FLinearColor>(), Document ? Document->Post.RampG : -1);
 		if (!Actor) return false;
@@ -1031,6 +1033,7 @@ void AOKSceneActor::Sync()
 	// free what it queued (memory ran past 28 GB). The rest waits for the next Tick (bBuildsPending).
 	int32 Built = 0;
 	bBuildsPending = false;
+	BuildsLeft = 0;
 	TSet<int32> Present;
 	for (const FOKSceneObject& Object : Document->Objects)
 	{
@@ -1047,22 +1050,26 @@ void AOKSceneActor::Sync()
 		{
 			// Over this frame's budget: an object already shown keeps its old look until its turn, a new one waits.
 			bBuildsPending = true;
+			++BuildsLeft;
 			if (!Item) continue;
 		}
 		else if (!bSame)
 		{
-			++Built;
+			// A character takes seconds: one a frame, so the status line can say how far the scene is (U251).
+			Built += Object.Kind == EOKSceneObjectKind::Character ? BuildsPerFrame : 1;
 			if (Item) Release(*Item);
 			FShown Fresh;
 			FString Error;
 			Errors.Remove(Object.Id);
 			UE_LOG(LogTemp, Display, TEXT("OK studio: building %s (%d)"), *Object.Name, Object.Id);
 			LastBuildFrame = GFrameCounter;
+			const double BuildStart = FPlatformTime::Seconds();
 			if (!Build(Object, Fresh, Error))
 			{
 				Errors.Add(Object.Id, Error);
 				UE_LOG(LogTemp, Warning, TEXT("OK studio: %s (%d) not shown: %s"), *Object.Name, Object.Id, *Error);
 			}
+			UE_LOG(LogTemp, Display, TEXT("OK studio: %s (%d) built in %.2f s"), *Object.Name, Object.Id, FPlatformTime::Seconds() - BuildStart);
 			Item = &Shown.Add(Object.Id, Fresh);
 			if (Object.Kind == EOKSceneObjectKind::Character) { ApplyCharacterState(Object, *Item); SetAnimationTime(Object.Id, 0.f); }
 		}
@@ -1560,6 +1567,27 @@ void AOKSceneActor::SwapKeyedMotion(const FOKSceneObject& Object, FShown& Item)
 	if (FOKSceneObject* Doc = Document->Find(Object.Id)) { Doc->Character.Time = Time; Doc->Character.Speed = Speed; }
 	Item.Character.Time = Time;
 	SetAnimationTime(Object.Id, Document->ItemAnimationSeconds);
+}
+
+bool AOKSceneActor::SetCharacterAnimFile(int32 Id, const FString& File, FString& OutError)
+{
+	FShown* Item = Shown.Find(Id);
+	FOKSceneObject* Object = Document ? Document->Find(Id) : nullptr;
+	AKKPreviewActor* Actor = Item ? Item->Preview.Get() : nullptr;
+	if (!Object || !Actor || Item->Kind != EOKSceneObjectKind::Character) { OutError = TEXT("no shown character"); return false; }
+	UOKAnimSequence* Seq = UOKAnimationLibrary::LoadOkAnimFile(FPaths::IsRelative(File) ? FPaths::ProjectDir() / File : File, nullptr, NAME_None, OutError);
+	const TSharedPtr<FOkAnimPlayer> Player = Seq ? Seq->CreatePlayer(OutError) : nullptr;
+	if (!Player || !Actor->SetOkAnimation(Player, true)) { if (OutError.IsEmpty()) OutError = TEXT("animation not playable"); return false; }
+	Actor->PoseMode = 3;
+	Item->StudioAnim.Reset(Seq);
+	Item->Time = 0.f;
+	Item->Fade = FOKSceneMotionFade();
+	// Both copies agree, so the next Sync keeps the character as it is.
+	for (FOKSceneCharacter* C : { &Object->Character, &Item->Character })
+	{
+		C->StudioAnimeNo = -1; C->Animation.Reset(); C->AnimFile = File; C->Time = 0.f;
+	}
+	return true;
 }
 
 bool AOKSceneActor::SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int32 Category, int32 No, FString& OutError, const FOKSceneMotionFade* Fade)

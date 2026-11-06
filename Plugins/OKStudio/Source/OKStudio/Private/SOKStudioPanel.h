@@ -6,6 +6,8 @@
 #include "OKStudioSettings.h"
 #include "OKStudioThumbnails.h"
 #include "SOKStudioTimeline.h"
+#include "Async/Async.h"
+#include <atomic>
 #include "Framework/Application/IInputProcessor.h"
 #include "Framework/Application/MenuStack.h"
 #include "Input/DragAndDrop.h"
@@ -297,6 +299,8 @@ public:
 	{
 		if (KeyProcessor && FSlateApplication::IsInitialized()) FSlateApplication::Get().UnregisterInputPreProcessor(KeyProcessor);
 		SaveLayout();
+		// The worker must not outlive the module its code is in.
+		if (VmdFuture.IsValid()) VmdFuture.Wait();
 		if (PreviewActor.IsValid()) PreviewActor->Destroy();
 	}
 
@@ -949,18 +953,11 @@ public:
 			if (TargetId < 0 && Game.IsValid() && Game->Document)
 				for (const FOKSceneObject& O : Game->Document->Objects)
 					if (O.Kind == EOKSceneObjectKind::Character) { TargetId = O.Id; break; }
-			// Several selected: all of them, one a frame so the status line can say how far it is (U249).
+			// Several selected: all of them, in turn on the worker thread (U249, U251).
 			TArray<int32> Cast;
 			if (Sep == INDEX_NONE && Game.IsValid())
 				for (int32 Id : Game->Selection) if (const FOKSceneObject* O = Game->Document->Find(Id); O && O->Kind == EOKSceneObjectKind::Character) Cast.Add(Id);
-			if (Cast.Num() > 1)
-			{
-				MmdQueue = Cast;
-				MmdQueuePath = Path;
-				MmdQueueTotal = Cast.Num();
-				SetStatus(FString::Printf(TEXT("套用 VMD 到 %d 個角色…"), Cast.Num()));
-				return true;
-			}
+			if (Cast.Num() > 1) return QueueVmd(Cast, Path);
 			return LoadVmdForCharacter(TargetId, Path);
 		});
 		// Pose.
@@ -1062,6 +1059,10 @@ public:
 		J->SetBoolField(TEXT("lock_camera"), Game.IsValid() && Game->bLockActiveCamera);
 		J->SetNumberField(TEXT("timeline_time"), Game.IsValid() ? Game->TimelineTime : 0.f);
 		J->SetNumberField(TEXT("frame_ms"), FApp::GetDeltaTime() * 1000.);
+		// The longest frame since the last time this was read, and the status line.
+		J->SetNumberField(TEXT("frame_max_ms"), FrameMaxMs);
+		FrameMaxMs = 0.;
+		J->SetStringField(TEXT("status"), StatusText());
 		J->SetBoolField(TEXT("timeline_playing"), Game.IsValid() && Game->bTimelinePlaying);
 		J->SetBoolField(TEXT("workspace"), bShowWorkspace);
 		J->SetBoolField(TEXT("groups"), bShowGroups);
@@ -1107,6 +1108,11 @@ public:
 		J->SetArrayField(TEXT("windows"), Open);
 		J->SetBoolField(TEXT("dirty"), Game.IsValid() && Game->bDirty);
 		J->SetStringField(TEXT("busy"), Game.IsValid() ? Game->BusyReason() : FString());
+		// Work going on behind the picture: the VMD queue and the objects still to build.
+		J->SetNumberField(TEXT("vmd_pending"), MmdQueue.Num() + (VmdTask ? 1 : 0));
+		J->SetNumberField(TEXT("vmd_done"), MmdQueueDone);
+		J->SetNumberField(TEXT("vmd_total"), MmdQueueTotal);
+		J->SetNumberField(TEXT("build_left"), Game.IsValid() && Game->SceneActor ? Game->SceneActor->PendingBuilds() : 0);
 		J->SetStringField(TEXT("dialog"), IsFloatOpen(TEXT("dialog")) ? DialogText : FString());
 		J->SetNumberField(TEXT("kind_filter"), KindFilter);
 		J->SetBoolField(TEXT("local_axes"), Game.IsValid() && Game->bLocalAxes);
@@ -1727,9 +1733,33 @@ public:
 	FString ExportResult() const;
 	bool bWasExporting = false;
 	uint32 MmdCast = 0;
-	TArray<int32> MmdQueue;
-	FString MmdQueuePath;
-	int32 MmdQueueTotal = 0;
+	/** U251: a character's VMD on its way through the worker thread. It holds a copy of the rig, never the session. */
+	struct FVmdTask
+	{
+		int32 CharId = -1;
+		int32 SceneSerial = 0;
+		FString Name, Card, Path, Params;
+		bool bShaped = false;
+		OkVmdJob* Job = nullptr;
+		TArray<uint8> Bytes;
+		FString Error;
+		double Seconds = 0.;
+		std::atomic<bool> bDone{ false };
+	};
+	/** Characters waiting for the worker, with their file. */
+	TArray<TPair<int32, FString>> MmdQueue;
+	TSharedPtr<FVmdTask> VmdTask;
+	TFuture<void> VmdFuture;
+	int32 MmdQueueTotal = 0, MmdQueueDone = 0, MmdSkipped = 0, MmdFailed = 0;
+	FString MmdFailNote;
+	int32 VmdSerial = 0;
+	double VmdStatusAt = 0.;
+	void TickVmdQueue();
+	void StartNextVmd();
+	void FinishVmd(FVmdTask& Task);
+	mutable double FrameMaxMs = 0.;
+	/** What the status line counts to while a big scene builds (0: not building). */
+	int32 BuildTotal = 0;
 	/** U214, U218: what the selected object's keys hold when the playhead came to WatchTime, to notice a change without a key. */
 	int32 WatchId = -1;
 	float WatchTime = -1.f;
@@ -2951,49 +2981,30 @@ public:
 		DeferRebuild();
 		return true;
 	}
-	/** Solves a .vmd file on the character's live shaped skeleton (`FOkAnimBridge::FromVmd`) and plays it. */
-	bool LoadVmdForCharacter(int32 CharId, const FString& VmdFile)
+	/** Solves a .vmd file on the character's live shaped skeleton and plays it (on the worker thread, see QueueVmd). */
+	bool LoadVmdForCharacter(int32 CharId, const FString& VmdFile) { return QueueVmd({ CharId }, VmdFile); }
+	/** Queues a .vmd for characters; TickVmdQueue takes them in turn. A character asked for again takes the newer file. */
+	bool QueueVmd(const TArray<int32>& Ids, const FString& VmdFile)
 	{
 		if (!Game.IsValid() || !Game->Document) return false;
-		FOKSceneObject* X = Game->Document->Find(CharId);
-		if (!X || X->Kind != EOKSceneObjectKind::Character) { SetStatus(TEXT("請先選取一個角色")); return false; }
 		FString FullPath = VmdFile.TrimStartAndEnd().TrimQuotes();
 		if (FullPath.IsEmpty()) { SetStatus(TEXT("請輸入 .vmd 檔案路徑")); return false; }
 		if (FPaths::IsRelative(FullPath)) FullPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / FullPath);
 		if (!FPaths::FileExists(FullPath)) { SetStatus(TEXT("找不到 VMD 檔：") + FullPath); return false; }
-		AKKPreviewActor* Preview = Game->SceneActor ? Game->SceneActor->PreviewOf(CharId) : nullptr;
-		const FOkSession* Sess = (Preview && Preview->Session.IsOpen()) ? &Preview->Session : nullptr;
-		const float ObjScaleY = FMath::Max(float(X->Transform.GetScale3D().Z), 0.001f);
-		const FString ParamsJson = FString::Printf(TEXT("{\"obj_scale_y\":%.6f}"), ObjScaleY);
-		TArray<uint8> AnimBytes;
-		if (!FOkAnimBridge::FromVmd(Sess, FullPath, ParamsJson, AnimBytes))
+		if (MmdQueue.IsEmpty() && !VmdTask) { MmdQueueDone = MmdSkipped = MmdFailed = 0; MmdFailNote.Reset(); }
+		int32 Added = 0;
+		for (int32 Id : Ids)
 		{
-			SetStatus(TEXT("VMD 轉換失敗：") + FOkAnimBridge::LastError());
-			return false;
+			const FOKSceneObject* X = Game->Document->Find(Id);
+			if (!X || X->Kind != EOKSceneObjectKind::Character) continue;
+			MmdQueue.RemoveAll([Id](const TPair<int32, FString>& Entry) { return Entry.Key == Id; });
+			MmdQueue.Emplace(Id, FullPath);
+			++Added;
 		}
-		FString Stem = FPaths::MakeValidFileName(FPaths::GetBaseFilename(FullPath));
-		if (Stem.IsEmpty()) Stem = TEXT("vmd");
-		const FString RelPath = FString::Printf(TEXT("UserData/Studio/anim/vmd_%d_%s.okanim"), CharId, *Stem);
-		const FString AbsOut = FPaths::ProjectDir() / RelPath;
-		IFileManager::Get().MakeDirectory(*FPaths::GetPath(AbsOut), true);
-		if (!FFileHelper::SaveArrayToFile(AnimBytes, *AbsOut))
-		{
-			SetStatus(TEXT("無法寫入動畫檔：") + AbsOut);
-			return false;
-		}
-		const bool bWasSameFile = (X->Character.AnimFile == RelPath);
-		if (Game->SceneActor) Game->SceneActor->SetActiveVmdSource(CharId, FullPath, RelPath);
-		PickAnimFile(*X, RelPath);
-		// The timeline as long as the dance (U240: it stayed 10 s under a 3 minute motion, and the rest could not be reached).
-		FString Info;
-		TSharedPtr<FJsonObject> Fields;
-		double Seconds = 0.;
-		if (FOkAnimBridge::Info(AnimBytes, Info) && FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Info), Fields) && Fields->TryGetNumberField(TEXT("duration"), Seconds))
-			Game->Document->Duration = FMath::Max(Game->Document->Duration, float(Seconds));
-		if (bWasSameFile && Game->SceneActor) Game->SceneActor->Rebuild(CharId);
-		DeferFloat(TEXT("mmd"));
-		SetStatus(FString::Printf(TEXT("已載入 VMD（%s骨架）：#%d %s ← %s"),
-			Sess ? TEXT("角色體型") : TEXT("標準"), CharId, *X->Name, *FPaths::GetCleanFilename(FullPath)));
+		if (Added == 0) { SetStatus(TEXT("請先選取一個角色")); return false; }
+		MmdQueueTotal = MmdQueueDone + MmdQueue.Num() + (VmdTask ? 1 : 0);
+		VmdSerial = Game->SceneSerial;
+		VmdStatusAt = 0.;
 		return true;
 	}
 	/** A video motion pair: the woman's motion on the primary character, the man's on the other selected character (or

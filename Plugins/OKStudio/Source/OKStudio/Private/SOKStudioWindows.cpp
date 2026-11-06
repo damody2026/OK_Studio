@@ -404,12 +404,141 @@ FString SOKStudioPanel::ExportResult() const
 	return (Game->LastMovieNote.IsEmpty() ? FString(TEXT("輸出完成：")) : TEXT("輸出完成（") + Game->LastMovieNote + TEXT("）：")) + Game->LastMovie;
 }
 
+void SOKStudioPanel::StartNextVmd()
+{
+	while (!MmdQueue.IsEmpty())
+	{
+		const TPair<int32, FString> Next = MmdQueue[0];
+		MmdQueue.RemoveAt(0);
+		const FOKSceneObject* X = Game->Document->Find(Next.Key);
+		if (!X || X->Kind != EOKSceneObjectKind::Character) { ++MmdQueueDone; ++MmdSkipped; continue; }
+		AKKPreviewActor* Preview = Game->SceneActor ? Game->SceneActor->PreviewOf(Next.Key) : nullptr;
+		const FOkSession* Sess = Preview && Preview->Session.IsOpen() ? &Preview->Session : nullptr;
+		const float ObjScaleY = FMath::Max(float(X->Transform.GetScale3D().Z), 0.001f);
+		TSharedPtr<FVmdTask> Task = MakeShared<FVmdTask>();
+		Task->CharId = Next.Key;
+		Task->SceneSerial = Game->SceneSerial;
+		Task->Name = X->Name;
+		Task->Card = X->Character.Card;
+		Task->Path = Next.Value;
+		Task->Params = FString::Printf(TEXT("{\"obj_scale_y\":%.6f}"), ObjScaleY);
+		Task->bShaped = Sess != nullptr;
+		Task->Job = FOkAnimBridge::VmdJobNew(Sess, ObjScaleY);
+		VmdTask = Task;
+		VmdFuture = AsyncThread([Task]
+		{
+			if (!FOkAnimBridge::VmdJobRun(Task->Job, Task->Path, Task->Params, Task->Bytes)) Task->Error = FOkAnimBridge::LastError();
+			else
+			{
+				FString Info;
+				TSharedPtr<FJsonObject> Fields;
+				if (FOkAnimBridge::Info(Task->Bytes, Info) && FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Info), Fields)) Fields->TryGetNumberField(TEXT("duration"), Task->Seconds);
+			}
+			FOkAnimBridge::VmdJobFree(Task->Job);
+			Task->Job = nullptr;
+			Task->bDone = true;
+		}, 16 * 1024 * 1024, TPri_BelowNormal);
+		return;
+	}
+}
+
+void SOKStudioPanel::FinishVmd(FVmdTask& Task)
+{
+	// The answer belongs to the scene that asked; the character is looked up again, it may have gone meanwhile.
+	if (Task.SceneSerial != Game->SceneSerial) return;
+	++MmdQueueDone;
+	FOKSceneObject* X = Game->Document->Find(Task.CharId);
+	if (!X || X->Kind != EOKSceneObjectKind::Character || X->Character.Card != Task.Card) { ++MmdSkipped; return; }
+	FString Stem = FPaths::MakeValidFileName(FPaths::GetBaseFilename(Task.Path));
+	if (Stem.IsEmpty()) Stem = TEXT("vmd");
+	const FString RelPath = FString::Printf(TEXT("UserData/Studio/anim/vmd_%d_%s.okanim"), Task.CharId, *Stem);
+	const FString AbsOut = FPaths::ProjectDir() / RelPath;
+	IFileManager::Get().MakeDirectory(*FPaths::GetPath(AbsOut), true);
+	if (Task.Error.IsEmpty() && !FFileHelper::SaveArrayToFile(Task.Bytes, *AbsOut)) Task.Error = TEXT("無法寫入動畫檔：") + AbsOut;
+	if (!Task.Error.IsEmpty())
+	{
+		++MmdFailed;
+		MmdFailNote = Task.Error;
+		return;
+	}
+	const bool bWasSameFile = X->Character.AnimFile == RelPath;
+	if (Game->SceneActor) Game->SceneActor->SetActiveVmdSource(Task.CharId, Task.Path, RelPath);
+	// On the live character: building it again took seconds of a frozen picture, and solved the VMD a second time.
+	FString Error;
+	if (Game->SceneActor && Game->SceneActor->SetCharacterAnimFile(Task.CharId, RelPath, Error)) { Changed(); DeferRebuild(); }
+	else
+	{
+		PickAnimFile(*X, RelPath);
+		if (bWasSameFile && Game->SceneActor) Game->SceneActor->Rebuild(Task.CharId);
+	}
+	// The timeline as long as the dance (U240: it stayed 10 s under a 3 minute motion, and the rest could not be reached).
+	Game->Document->Duration = FMath::Max(Game->Document->Duration, float(Task.Seconds));
+	DeferFloat(TEXT("mmd"));
+	SetStatus(FString::Printf(TEXT("已載入 VMD（%s骨架）：#%d %s ← %s"),
+		Task.bShaped ? TEXT("角色體型") : TEXT("標準"), Task.CharId, *X->Name, *FPaths::GetCleanFilename(Task.Path)));
+}
+
+void SOKStudioPanel::TickVmdQueue()
+{
+	if (!VmdTask && MmdQueue.IsEmpty()) return;
+	// The scene was replaced: what waits is dropped, what is on the worker finishes there and is thrown away.
+	if (VmdSerial != Game->SceneSerial)
+	{
+		VmdSerial = Game->SceneSerial;
+		MmdQueue.Reset();
+		MmdQueueTotal = MmdQueueDone = MmdSkipped = MmdFailed = 0;
+		if (StatusText().StartsWith(TEXT("套用 VMD"))) SetStatus(TEXT("場景已更換，未完成的 VMD 已取消"));
+	}
+	// Not under an export or a drag: the scene holds still for those.
+	const FString Busy = Game->BusyReason();
+	if (VmdTask && VmdTask->bDone && Busy != TEXT("exporting") && Busy != TEXT("dragging"))
+	{
+		VmdFuture.Wait();
+		VmdFuture = TFuture<void>();
+		const TSharedPtr<FVmdTask> Done = MoveTemp(VmdTask);
+		VmdTask.Reset();
+		FinishVmd(*Done);
+		VmdStatusAt = 0.;
+	}
+	// A character still building has no shaped skeleton to solve on yet.
+	if (!VmdTask && !MmdQueue.IsEmpty() && !(Game->SceneActor && Game->SceneActor->HasPendingBuilds())) StartNextVmd();
+	if (VmdTask || !MmdQueue.IsEmpty())
+	{
+		const double Now = FPlatformTime::Seconds();
+		if (MmdQueueTotal > 0 && Now - VmdStatusAt > 1.)
+		{
+			VmdStatusAt = Now;
+			SetStatus(FString::Printf(TEXT("套用 VMD %d / %d：%s 轉換中"), FMath::Min(MmdQueueDone + 1, MmdQueueTotal), MmdQueueTotal, VmdTask ? *VmdTask->Name : TEXT("等待")));
+		}
+		return;
+	}
+	if (MmdQueueTotal == 0) return;
+	// All through: one line for the lot. A single character keeps its own line unless it did not work.
+	const int32 Applied = MmdQueueTotal - MmdSkipped - MmdFailed;
+	FString Note = MmdQueueTotal > 1 || MmdSkipped + MmdFailed > 0 ? FString::Printf(TEXT("已套用 VMD 到 %d 個角色"), Applied) : FString();
+	if (MmdSkipped > 0) Note += FString::Printf(TEXT("，%d 個已不在場景中"), MmdSkipped);
+	if (MmdFailed > 0) Note += FString::Printf(TEXT("，%d 個失敗：%s"), MmdFailed, *MmdFailNote);
+	if (!Note.IsEmpty()) SetStatus(Note);
+}
+
 void SOKStudioPanel::TickUi(float DeltaTime)
 {
 	if (!Game.IsValid()) return;
+	FrameMaxMs = FMath::Max(FrameMaxMs, FApp::GetDeltaTime() * 1000.);
 	TickItemPreview();
 	// The open report once the scene's objects had their chance to build.
-	if (ReportPending > 0 && --ReportPending == 0 && !Game->LoadReport().IsEmpty()) ShowLoadReport();
+	if (ReportPending > 0 && !(Game->SceneActor && Game->SceneActor->HasPendingBuilds()) && --ReportPending == 0 && !Game->LoadReport().IsEmpty()) ShowLoadReport();
+	// U251: a big scene builds a character a frame; how far it is.
+	if (const int32 Left = Game->SceneActor ? Game->SceneActor->PendingBuilds() : 0)
+	{
+		BuildTotal = Game->Document->Objects.Num();
+		SetStatus(FString::Printf(TEXT("建置場景物件 %d / %d"), BuildTotal - Left, BuildTotal));
+	}
+	else if (BuildTotal > 0)
+	{
+		SetStatus(FString::Printf(TEXT("場景建置完成（%d 個物件）"), BuildTotal));
+		BuildTotal = 0;
+	}
 	// The guide's drag readout on the status line.
 	if (!Game->GuideReadout.IsEmpty()) SetStatus(Game->GuideReadout);
 	WatchUnkeyed();
@@ -418,13 +547,7 @@ void SOKStudioPanel::TickUi(float DeltaTime)
 	if (bExporting) SetStatus(FString::Printf(TEXT("輸出中 %d / %d 幀"), Game->ExportFrameIndex(), Game->ExportFrameCount()));
 	else if (bWasExporting) SetStatus(ExportResult());
 	bWasExporting = bExporting;
-	if (!MmdQueue.IsEmpty())
-	{
-		const int32 Id = MmdQueue[0];
-		MmdQueue.RemoveAt(0);
-		LoadVmdForCharacter(Id, MmdQueuePath);
-		SetStatus(MmdQueue.IsEmpty() ? FString::Printf(TEXT("已套用 VMD 到 %d 個角色"), MmdQueueTotal) : FString::Printf(TEXT("套用 VMD %d / %d"), MmdQueueTotal - MmdQueue.Num(), MmdQueueTotal));
-	}
+	TickVmdQueue();
 	// U242: the MMD window lists the cast. Someone added, removed or given a motion while it is open shows up there.
 	if (IsFloatOpen(TEXT("mmd")))
 	{

@@ -815,6 +815,7 @@ bool UOKStudioGame::Load(const FString& Path, FString& OutError)
 
 void UOKStudioGame::ReleaseSceneResources()
 {
+	++SceneSerial;
 	Select(-1);
 	StopSceneAudio();
 	StopStudioSounds();
@@ -1512,7 +1513,9 @@ void UOKStudioGame::SyncNow()
 {
 	bSyncPending = false;
 	// A few batches at once (small scenes are complete on return); a large scene goes on building over the next frames.
-	for (int32 Round = 0; SceneActor && Round < 8 && (Round == 0 || SceneActor->HasPendingBuilds()); ++Round) SceneActor->Sync();
+	// Not past a quarter second: eight characters in a row froze the picture for half a minute (U251).
+	const double Start = FPlatformTime::Seconds();
+	for (int32 Round = 0; SceneActor && (bSyncBuildsAll || Round < 8) && (Round == 0 || (SceneActor->HasPendingBuilds() && (bSyncBuildsAll || FPlatformTime::Seconds() - Start < .25))); ++Round) SceneActor->Sync();
 	if (Panel) Panel->RefreshRows();
 }
 

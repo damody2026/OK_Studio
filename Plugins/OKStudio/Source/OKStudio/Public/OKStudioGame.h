@@ -135,6 +135,10 @@ public:
 	bool Load(const FString& Path, FString& OutError);
 	/** Drop the current scene and its source/image caches before another independent load. */
 	void ReleaseSceneResources();
+	/** The self test reads what it just added: SyncNow builds everything before it returns. */
+	bool bSyncBuildsAll = false;
+	/** Goes up each time the scene is replaced: work started on the old scene must not land on the new one (U251). */
+	int32 SceneSerial = 0;
 	/** Cards the character picker offers (Content/CharacterCards). */
 	static TArray<FString> AvailableCards();
 	/** Scene files of the in-game list: UserData/Studio/scene/*.okscene, newest first. */

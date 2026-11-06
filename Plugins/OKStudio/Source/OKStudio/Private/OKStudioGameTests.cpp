@@ -984,6 +984,7 @@ void UOKStudioGame::RunEffectColorTest(bool bExit)
 
 void UOKStudioGame::RunSelfTest(bool bExit)
 {
+	bSyncBuildsAll = true;
 	TArray<FString> Lines;
 	int32 Failures = 0;
 	auto Step = [](const TCHAR* What) { UE_LOG(LogTemp, Display, TEXT("OK studio game selftest step: %s"), What); GLog->Flush(); };

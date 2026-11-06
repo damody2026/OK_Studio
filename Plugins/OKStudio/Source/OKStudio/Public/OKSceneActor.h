@@ -52,6 +52,8 @@ public:
 
 	/** Whether some document objects are not built yet (a large scene being built over several frames). */
 	bool HasPendingBuilds() const { return bBuildsPending; }
+	/** Objects still waiting for their turn to build. */
+	int32 PendingBuilds() const { return BuildsLeft; }
 
 	/** Advances character animations (seconds). */
 	UFUNCTION(BlueprintCallable, Category = "OK Studio")
@@ -68,6 +70,8 @@ public:
 	void Rebuild(int32 Id);
 	/** Plays another Studio animation (OK animation library) on a shown character in place, without building it again;
 	 *  the document object follows. */
+	/** Plays an .okanim file on the live character (no rebuild); false when it is not shown or the file does not play. */
+	bool SetCharacterAnimFile(int32 Id, const FString& File, FString& OutError);
 	bool SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int32 Category, int32 No, FString& OutError, const FOKSceneMotionFade* Fade = nullptr);
 	/** Records an active live .vmd source for a character so rebuilding (outfit / shoe on-off) re-solves ShoesDetect. */
 	void SetActiveVmdSource(int32 Id, const FString& VmdFile, const FString& OkAnimRelPath);
@@ -183,6 +187,7 @@ private:
 	FVector RankEye = FVector(NAN);
 	bool bSkyDomesDirty = true;
 	bool bBuildsPending = false;
+	int32 BuildsLeft = 0;
 	/** Previews destroyed since the last forced garbage collection. */
 	int32 ReleasedSinceCollect = 0;
 	float ShownSequenceTime = -1.f;
