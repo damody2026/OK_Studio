@@ -118,6 +118,15 @@ void AOKStreetSocialScene::StopLifePose(int32 Only){
 void AOKStreetSocialScene::StopStrayPoses(){
  if(!State)return;auto& S=*State;const double Wall=FPlatformTime::Seconds();
  if(Wall<S.StrayPoseAt)return;S.StrayPoseAt=Wall+0.5;
+ // SpotFor keeps her off the table he eats at only if he is at it when she is placed. 刻晴 had her meal at 18:50, 优香 and he
+ // sat down there at 19:04: her chair and table stood inside theirs (the "57-70 cm" neighbour). She moves to another table.
+ if(S.Pair.Partner!=INDEX_NONE&&(S.Pair.Meal||S.Pair.Drink)){const int32 Minute=int32(OKStreetMindNow(S)%1440);
+  for(const int32 I:S.ScheduleHeld.Array()){
+   if(I==S.Pair.Partner||S.Party.Contains(I)||!S.Agents.IsValidIndex(I-1)||S.Commutes.Contains(I)||BusyWithPlayer(I))continue;
+   const FVector At=S.Agents[I-1].Position;if(FVector::Dist2D(At,S.Male)>=250.f||FMath::Abs(At.Z-S.Male.Z)>100.f)continue;
+   const FOKStreetPlanBlock* B=LifeBlock(I,Minute);if(!B||B->Place!=PlaceHere(S.Male))continue; /* only a diner of this place: 雷电将军 walking past on her way to the bookshop was sent there at once */float Yaw=0;const FVector Spot=SpotFor(I,B->Place,B->Kind,Yaw);if(FVector::Dist2D(Spot,S.Male)<250.f)continue;
+   if(InLifePose(I))StopLifePose(I);S.Agents[I-1].Position=Spot;S.Rotations[I]=FRotator(0,Yaw,0);S.LifeCooldown.Add(I,SceneTime()+5.0);
+   UE_LOG(LogTemp,Display,TEXT("Street life: actor %d moves to another table, he sits at hers (%s)"),I,*Spot.ToCompactString());}}
  for(int32 I=1;I<=S.Agents.Num();++I){
   FOKRuntimeActionStreamStatus A;
   const bool Legit=InLifePose(I)||S.PartySeats.ContainsByPredicate([I](const FOKLifePose& P){return P.Actor==I;})||S.Pair.Partner==I||(S.Facility!=INDEX_NONE&&S.FacilityCharacter==I)||S.PrivateGirl==I||S.SleepGirl==I||S.SleepGirl2==I||S.SoloGirl==I
