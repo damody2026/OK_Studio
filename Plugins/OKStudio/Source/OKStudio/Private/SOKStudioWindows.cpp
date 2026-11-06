@@ -418,6 +418,13 @@ void SOKStudioPanel::TickUi(float DeltaTime)
 	if (bExporting) SetStatus(FString::Printf(TEXT("輸出中 %d / %d 幀"), Game->ExportFrameIndex(), Game->ExportFrameCount()));
 	else if (bWasExporting) SetStatus(ExportResult());
 	bWasExporting = bExporting;
+	if (!MmdQueue.IsEmpty())
+	{
+		const int32 Id = MmdQueue[0];
+		MmdQueue.RemoveAt(0);
+		LoadVmdForCharacter(Id, MmdQueuePath);
+		SetStatus(MmdQueue.IsEmpty() ? FString::Printf(TEXT("已套用 VMD 到 %d 個角色"), MmdQueueTotal) : FString::Printf(TEXT("套用 VMD %d / %d"), MmdQueueTotal - MmdQueue.Num(), MmdQueueTotal));
+	}
 	// U242: the MMD window lists the cast. Someone added, removed or given a motion while it is open shows up there.
 	if (IsFloatOpen(TEXT("mmd")))
 	{

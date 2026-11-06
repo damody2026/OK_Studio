@@ -949,6 +949,18 @@ public:
 			if (TargetId < 0 && Game.IsValid() && Game->Document)
 				for (const FOKSceneObject& O : Game->Document->Objects)
 					if (O.Kind == EOKSceneObjectKind::Character) { TargetId = O.Id; break; }
+			// Several selected: all of them, one a frame so the status line can say how far it is (U249).
+			TArray<int32> Cast;
+			if (Sep == INDEX_NONE && Game.IsValid())
+				for (int32 Id : Game->Selection) if (const FOKSceneObject* O = Game->Document->Find(Id); O && O->Kind == EOKSceneObjectKind::Character) Cast.Add(Id);
+			if (Cast.Num() > 1)
+			{
+				MmdQueue = Cast;
+				MmdQueuePath = Path;
+				MmdQueueTotal = Cast.Num();
+				SetStatus(FString::Printf(TEXT("套用 VMD 到 %d 個角色…"), Cast.Num()));
+				return true;
+			}
 			return LoadVmdForCharacter(TargetId, Path);
 		});
 		// Pose.
@@ -1049,6 +1061,7 @@ public:
 		J->SetNumberField(TEXT("active_camera"), Game.IsValid() && Game->Document ? Game->Document->ActiveCamera : -1);
 		J->SetBoolField(TEXT("lock_camera"), Game.IsValid() && Game->bLockActiveCamera);
 		J->SetNumberField(TEXT("timeline_time"), Game.IsValid() ? Game->TimelineTime : 0.f);
+		J->SetNumberField(TEXT("frame_ms"), FApp::GetDeltaTime() * 1000.);
 		J->SetBoolField(TEXT("timeline_playing"), Game.IsValid() && Game->bTimelinePlaying);
 		J->SetBoolField(TEXT("workspace"), bShowWorkspace);
 		J->SetBoolField(TEXT("groups"), bShowGroups);
@@ -1714,6 +1727,9 @@ public:
 	FString ExportResult() const;
 	bool bWasExporting = false;
 	uint32 MmdCast = 0;
+	TArray<int32> MmdQueue;
+	FString MmdQueuePath;
+	int32 MmdQueueTotal = 0;
 	/** U214, U218: what the selected object's keys hold when the playhead came to WatchTime, to notice a change without a key. */
 	int32 WatchId = -1;
 	float WatchTime = -1.f;

@@ -19,7 +19,10 @@ namespace
 	const uint8 PngSignature[8] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' };
 	/** okSc payload header: magic, format version. */
 	const uint8 PayloadMagic[4] = { 'O', 'K', 'S', 'C' };
-	constexpr uint32 PayloadVersion = 1;
+	constexpr int64 MaxCardBytes = (int64(1) << 31) - (int64(64) << 20);
+	// 2 (U249): only the scene's JSON is packed. Cards are compressed already: packing 680 MB of them froze the save for
+	// 15 seconds to take off 2.5%, and a load refused what a save wrote past 1 GiB.
+	constexpr uint32 PayloadVersion = 2;
 	/** Character card references inside the embedded scene JSON. */
 	const TCHAR* EmbeddedCardPrefix = TEXT("okscene-card:");
 
@@ -229,20 +232,30 @@ bool FOKSceneCard::Write(const UOKSceneDocument* Document, const TArray<TArray<u
 		O.Character.Card = FString::Printf(TEXT("%s%d"), EmbeddedCardPrefix, *Index);
 	}
 	const FTCHARToUTF8 Json(*Copy->ToJson());
-	TArray<uint8> Raw;
-	Put32(Raw, uint32(Json.Length()));
-	Raw.Append(reinterpret_cast<const uint8*>(Json.Get()), Json.Length());
-	Put32(Raw, uint32(Cards.Num()));
-	for (const TArray<uint8>& Card : Cards) { Put32(Raw, uint32(Card.Num())); Raw.Append(Card); }
-	int32 Packed = FCompression::CompressMemoryBound(NAME_Zlib, Raw.Num());
+	// One file is one array here and when it is read: past 2 GB it could be written by nothing and opened by nothing.
+	int64 Total = Json.Length();
+	for (const TArray<uint8>& Card : Cards) Total += Card.Num() + 4;
+	for (const TArray<uint8>& View : Views) Total += View.Num();
+	if (Total > MaxCardBytes)
+	{
+		OutError = FString::Printf(TEXT("這個場景的角色卡共 %.2f GB，場景卡上限 2 GB。請改存成 .okscene（不內嵌角色卡）"), double(Total) / double(1 << 30));
+		return false;
+	}
+	int32 Packed = FCompression::CompressMemoryBound(NAME_Zlib, Json.Length());
 	TArray<uint8> Payload;
+	Payload.Reserve(int32(Total) + 1024);
 	Payload.Append(PayloadMagic, 4);
 	Put32(Payload, PayloadVersion);
-	Put32(Payload, uint32(Raw.Num()));
+	Put32(Payload, uint32(Json.Length()));
+	const int32 PackedAt = Payload.Num();
+	Put32(Payload, 0);
 	const int32 Header = Payload.Num();
 	Payload.AddUninitialized(Packed);
-	if (!FCompression::CompressMemory(NAME_Zlib, Payload.GetData() + Header, Packed, Raw.GetData(), Raw.Num())) { OutError = TEXT("compressing the scene failed"); return false; }
+	if (!FCompression::CompressMemory(NAME_Zlib, Payload.GetData() + Header, Packed, Json.Get(), Json.Length())) { OutError = TEXT("compressing the scene failed"); return false; }
 	Payload.SetNum(Header + Packed);
+	for (int32 I = 0; I < 4; ++I) Payload[PackedAt + I] = uint8(uint32(Packed) >> (24 - 8 * I));
+	Put32(Payload, uint32(Cards.Num()));
+	for (const TArray<uint8>& Card : Cards) { Put32(Payload, uint32(Card.Num())); Payload.Append(Card); }
 	// The first view with the okSc chunk before IEND; the APNG keeps private chunks of its source image.
 	TArray<FChunk> List;
 	int64 End = 0;
@@ -268,7 +281,31 @@ bool FOKSceneCard::ReadPayload(const TArray<uint8>& Bytes, FString& OutSceneJson
 	const uint8* P = Bytes.GetData() + Chunk->Offset + 8;
 	if (PngCrc(Bytes.GetData() + Chunk->Offset + 4, 4 + int64(Chunk->Size)) != Be32(P + Chunk->Size)) { OutError = TEXT("the scene data is damaged (CRC)"); return false; }
 	if (Chunk->Size < 12 || FMemory::Memcmp(P, PayloadMagic, 4)) { OutError = TEXT("unknown scene data"); return false; }
-	if (Be32(P + 4) != PayloadVersion) { OutError = FString::Printf(TEXT("scene card version %u is newer than this build"), Be32(P + 4)); return false; }
+	if (Be32(P + 4) == PayloadVersion)
+	{
+		const uint8* At = P + 8;
+		const uint8* Limit = P + Chunk->Size;
+		auto Next = [&](uint32& V) { if (Limit - At < 4) return false; V = Be32(At); At += 4; return true; };
+		uint32 JsonSize = 0, Packed = 0, Count = 0;
+		if (!Next(JsonSize) || !Next(Packed) || JsonSize > 1u << 30 || Limit - At < int64(Packed)) { OutError = TEXT("scene data truncated"); return false; }
+		TArray<uint8> Json;
+		Json.SetNumUninitialized(int32(JsonSize));
+		if (!FCompression::UncompressMemory(NAME_Zlib, Json.GetData(), Json.Num(), At, int32(Packed))) { OutError = TEXT("the scene data cannot be unpacked"); return false; }
+		const FUTF8ToTCHAR Text(reinterpret_cast<const ANSICHAR*>(Json.GetData()), Json.Num());
+		OutSceneJson = FString(Text.Length(), Text.Get());
+		At += Packed;
+		if (!Next(Count) || Count > 4096) { OutError = TEXT("scene data truncated"); return false; }
+		OutCards.Reset();
+		for (uint32 I = 0; I < Count; ++I)
+		{
+			uint32 Size = 0;
+			if (!Next(Size) || Limit - At < int64(Size)) { OutError = TEXT("scene data truncated"); return false; }
+			OutCards.Emplace(At, int32(Size));
+			At += Size;
+		}
+		return true;
+	}
+	if (Be32(P + 4) != 1) { OutError = FString::Printf(TEXT("scene card version %u is newer than this build"), Be32(P + 4)); return false; }
 	const uint32 RawSize = Be32(P + 8);
 	if (RawSize > 1u << 30) { OutError = TEXT("scene data too large"); return false; }
 	TArray<uint8> Raw;
