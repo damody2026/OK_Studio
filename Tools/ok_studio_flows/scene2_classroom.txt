@@ -15,10 +15,12 @@ c:CrowdAPNG
 t:C002
 t:加入
 w:6
+# the card window closes on 加入 and remembers its folder
+?closed:cards t:角色
 t:C011
 t:加入
 w:6
-t:CharacterCards
+?closed:cards t:角色
 c:Demo
 t:Male01
 t:加入
@@ -52,11 +54,11 @@ s:{stamp}_02_face
 # ---- poses
 t:動畫
 t:C011
-t:立ち3
+t:站立 3
 t:C002
-t:立ち6
+t:站立 6
 t:Male01
-t:立ち1
+t:站立 1
 o:camera {"focus":[10,370,85],"yaw":90,"pitch":-4,"distance":420}
 w:3
 s:{stamp}_03_poses
@@ -67,8 +69,11 @@ t:道具
 y:搜尋道具=本!
 t:本1
 w:4
-c:分組：手
-c:右手（a_n_hand_R
+?groups=false o:cmd {"id":"toggle.groups"}
+w:1
+t:展開全部
+w:1
+c:a_n_hand_R
 t:掛到所選部位
 w:2
 s:{stamp}_04_book
@@ -97,10 +102,10 @@ w:1
 ?timeline=false p:時間軸
 t:Male01
 p:開頭
-p:為選取物件打 key
+c:打 key#0
 p:結尾
 o:transform {"id":4,"location":[110,220,0]}
-p:為選取物件打 key
+c:打 key#0
 p:開頭
 w:1
 p:播放／停止
@@ -125,7 +130,8 @@ w:8
 t:新場景
 w:4
 o:state {}
-# the scene window is still open from the save
+?closed:scenes t:開啟／儲存
+w:1
 c:教室三人_{stamp}
 c:覆蓋（開啟
 w:25

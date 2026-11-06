@@ -152,7 +152,7 @@ void SOKStudioPanel::RegisterFloats()
 	// Default places: HS2Studio6's (layout spec) where it has the window, else beside the menus.
 	// Under the object panel, off the characters at the middle of the view and the pages at the left (U219).
 	AddFloat(TEXT("timeline"), TEXT("時間軸"), FMargin(1070.f, 490.f, 520.f, 260.f), [this] { return BuildTimeline(); });
-	AddFloat(TEXT("mmd"), TEXT("MMD 導演／設定（MMDD / KKVMD）"), FMargin(140.f, 47.f, 430.f, 520.f), [this] { return BuildMmdDirector(); });
+	AddFloat(TEXT("mmd"), TEXT("MMD 導演／設定（MMDD / KKVMD）"), FMargin(140.f, 47.f, 430.f, 560.f), [this] { return BuildMmdDirector(); });
 	AddFloat(TEXT("cards"), TEXT("角色卡"), FMargin(142.f, 36.f, 620.f, 420.f), [this] { return BuildCardBrowser(); });
 	AddFloat(TEXT("scenes"), TEXT("場景檔"), FMargin(142.f, 36.f, 620.f, 420.f), [this] { return BuildSceneBrowser(); });
 	AddFloat(TEXT("quick"), TEXT("快搜"), FMargin(140.f, 40.f, 360.f, 590.f), [this] { return BuildQuickSearch(); });
@@ -2782,6 +2782,8 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMmdDirector()
 			Files.Append(Found);
 		}
 		if (Files.IsEmpty()) Body->AddSlot().AutoHeight().Padding(2.f, 1.f)[OKStudioStyle::Label(FText::FromString(TEXT("這個資料夾沒有 .vmd、.wav、.ogg")), 9.5f, TextHint())];
+		// Three rows and a bit: a full folder scrolls by itself and leaves the cast below in sight (U243).
+		TSharedRef<SScrollBox> FileList = SNew(SScrollBox);
 		for (const FString& Name : Files)
 		{
 			const FString Path = Folder / Name;
@@ -2794,8 +2796,9 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMmdDirector()
 				Row->AddSlot().AutoWidth()[Button(FText::FromString(TEXT("當鏡頭")), [this, Path] { RunCommand(TEXT("mmd.camera"), Path); }, 52.f, 18.f, false, 9.f)];
 			}
 			else Row->AddSlot().AutoWidth()[Button(FText::FromString(TEXT("當音樂")), [this, Path] { RunCommand(TEXT("mmd.sound"), Path); }, 52.f, 18.f, false, 9.f)];
-			Body->AddSlot().AutoHeight().Padding(2.f, 1.f)[Row];
+			FileList->AddSlot().Padding(2.f, 1.f)[Row];
 		}
+		if (!Files.IsEmpty()) Body->AddSlot().AutoHeight()[SNew(SBox).MaxDesiredHeight(70.f)[FileList]];
 	}
 	if (Game.IsValid() && Game->Document)
 	{

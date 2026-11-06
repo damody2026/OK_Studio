@@ -334,7 +334,7 @@ public:
 						[Tagged(TEXT("CharacterGroupPanel"), SNew(SBox).Visibility_Lambda([this] { return bShowGroups ? EVisibility::Visible : EVisibility::Collapsed; })[MakeGroupPanel()])]
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(1.f, 0.f)).Offset(FMargin(Right(1528.9f), 47.f, 240.f, 429.f))
 						[Tagged(TEXT("TreePanel"), SNew(SBox).Visibility_Lambda([this] { return bShowWorkspace ? EVisibility::Visible : EVisibility::Collapsed; })[MakeTreePanel()])]
-					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(0.f, 1.f)).Offset(FMargin(0.f, -60.f, 478.f, 60.f))
+					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(0.f, 1.f)).Offset(FMargin(0.f, -60.f, 506.f, 60.f))
 						[Tagged(TEXT("TransformBar"), SNew(SBox).Visibility_Lambda([this] { return bShowTransform ? EVisibility::Visible : EVisibility::Collapsed; })[MakeTransformBar()])]
 					+ SConstraintCanvas::Slot().Expose(DetailSlot).Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(0.f, 0.f)).Offset(TAttribute<FMargin>::CreateLambda([this] { return PageRect(); }))
 						[Tagged(TEXT("DetailWindow"), SNew(SBox).Visibility_Lambda([this] { return Page == EPage::None || !PageFitsSelection() ? EVisibility::Collapsed : EVisibility::Visible; })
