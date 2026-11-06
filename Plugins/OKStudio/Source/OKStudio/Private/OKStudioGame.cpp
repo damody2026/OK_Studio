@@ -2016,8 +2016,11 @@ bool UOKStudioGame::CaptureMapPicture(const FString& Path, FString& OutError)
 	{
 		TArray<FBox> Parts;
 		SceneActor->MapPartBounds(Parts);
+		// The sky box around a room is no part of it: with it the middle lay 14 m under the floor (U257: 体育館ライブ, 個室).
+		Parts.Sort([](const FBox& A, const FBox& B) { return A.GetVolume() > B.GetVolume(); });
 		FBox All(ForceInit);
-		for (const FBox& B : Parts) All += B;
+		for (int32 I = 1; I < Parts.Num(); ++I) All += Parts[I];
+		if (!Parts.IsEmpty() && !(All.IsValid && Parts[0].IsInside(All))) All += Parts[0];
 		if (All.IsValid)
 		{
 			const FVector Eye(All.GetCenter().X, All.GetCenter().Y, All.Min.Z + FMath::Min(150.f, All.GetSize().Z * 0.5f));

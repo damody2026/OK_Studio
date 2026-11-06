@@ -353,7 +353,10 @@ public:
 							[
 								SNew(SBorder).BorderImage(Brush(Panel())).Padding(FMargin(6.f, 1.f))
 								.Visibility_Lambda([this] { return Status.IsValid() && !Status->GetText().IsEmpty() ? EVisibility::SelfHitTestInvisible : EVisibility::Collapsed; })
-								[SAssignNew(Status, STextBlock).Font(Font(10.f)).ColorAndOpacity(OKStudioStyle::Text())]
+								[
+									SNew(SBox).MinDesiredWidth_Lambda([this] { return FOptionalSize(StatusMinWidth); })
+									[SAssignNew(Status, STextBlock).Font(Font(10.f)).ColorAndOpacity(OKStudioStyle::Text())]
+								]
 							]
 						]
 				]
@@ -2135,16 +2138,17 @@ public:
 
 public:
 
-	void SetStatus(const FString& Text) { if (Status) Status->SetText(FText::FromString(Text)); }
+	void SetStatus(const FString& Text) { StatusMinWidth = 0.f; if (Status) Status->SetText(FText::FromString(Text)); }
 	/** The status line before something that holds the frame: painted now, or nobody sees it until it is over (U256). */
 	void PaintStatus(const FString& Text)
 	{
 		const TSharedPtr<SWindow> Window = FSlateApplication::IsInitialized() ? FSlateApplication::Get().FindWidgetWindow(AsShared()) : nullptr;
-		// Empty first: a shorter text painted straight over the old one left its tail (儲存中… C011).
-		SetStatus(FString());
-		if (Window) FSlateApplication::Get().ForceRedrawWindow(Window.ToSharedRef());
+		// The frame is painted over what is on the window, with no new 3D view under it: only as wide a box covers the old text.
+		const float OldWidth = Status ? Status->GetDesiredSize().X : 0.f;
 		SetStatus(Text);
-		if (Window) FSlateApplication::Get().ForceRedrawWindow(Window.ToSharedRef());
+		StatusMinWidth = OldWidth;
+		// Twice: the window has two buffers, and either may be the one shown while the frame is held.
+		if (Window) { FSlateApplication::Get().ForceRedrawWindow(Window.ToSharedRef()); FSlateApplication::Get().ForceRedrawWindow(Window.ToSharedRef()); }
 	}
 	/** What the status line says now (the reason a save or load failed). */
 	FString StatusText() const { return Status ? Status->GetText().ToString() : FString(); }
@@ -4078,4 +4082,5 @@ private:
 	TSharedPtr<SListView<TSharedPtr<FRow>>> List;
 	TSharedPtr<SVerticalBox> Props;
 	TSharedPtr<STextBlock> Status;
+	float StatusMinWidth = 0.f;
 };

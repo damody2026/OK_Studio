@@ -1304,11 +1304,18 @@ void AOKSceneActor::SyncMap()
 	UE_LOG(LogTemp, Display, TEXT("OK studio: building map %s (%d) at %s"), *Entry->Name, ShownMap, *Document->MapTransform.ToString());
 	// A scene map shows each scene root that has meshes (controllers without renderers are skipped).
 	TArray<FString> Failed;
+	double OpenSeconds = 0, SpawnSeconds = 0;
+	const double MapStart = FPlatformTime::Seconds();
 	for (const FString& Root : Entry->Roots)
 	{
 		FOkSession Session;
 		FString Error;
-		AKKPreviewActor* Actor = Session.OpenOkModel(LibraryDirectory(), Entry->Model, Root, false, Error) ? SpawnPreview(GetWorld(), MoveTemp(Session), Error, {}, {}, nullptr, true) : nullptr;
+		const double RootStart = FPlatformTime::Seconds();
+		const bool bOpened = Session.OpenOkModel(LibraryDirectory(), Entry->Model, Root, false, Error);
+		const double Opened = FPlatformTime::Seconds();
+		OpenSeconds += Opened - RootStart;
+		AKKPreviewActor* Actor = bOpened ? SpawnPreview(GetWorld(), MoveTemp(Session), Error, {}, {}, nullptr, true) : nullptr;
+		SpawnSeconds += FPlatformTime::Seconds() - Opened;
 		if (!Actor) { Failed.Add(Root + TEXT(": ") + Error); continue; }
 		Actor->SetActorTransform(MapPlace);
         Actor->Tags.Add(FName(*(TEXT("OKStudioMapRoot=")+Root)));
@@ -1325,6 +1332,7 @@ void AOKSceneActor::SyncMap()
 	}
 	if (ShownMapPreviews.IsEmpty()) MapError = FString::Join(Failed, TEXT("; "));
 	ApplyMapTime(MapPlace);
+	UE_LOG(LogTemp, Display, TEXT("OK studio: map %d built in %.2f s (%d roots, open %.2f, spawn %.2f)"), ShownMap, FPlatformTime::Seconds() - MapStart, Entry->Roots.Num(), OpenSeconds, SpawnSeconds);
 }
 
 // Preserve the source renderer shadow policy, including invisible room occluders,
