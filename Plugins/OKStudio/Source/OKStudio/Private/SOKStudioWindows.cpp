@@ -2347,6 +2347,11 @@ TSharedRef<SWidget> SOKStudioPanel::BuildExport()
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[Line(TEXT("高"), Spin([this] { return float(ExportH); }, [this](float V) { ExportH = FMath::Clamp(FMath::RoundToInt(V), 16, 8192); }, 16.f, 8192.f, 1.f))]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[Line(TEXT("輸出資料夾"), TextBox([this] { return ExportFolderText; }, [this](const FString& V) { ExportFolderText = V.TrimStartAndEnd().TrimQuotes(); }, TEXT("UserData/Studio/movie")))]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[CheckBox(TEXT("mp4 含音樂（播放中的 BGM 與外部音源）"), [this] { return Game.IsValid() && Game->bExportAudio; }, [this](bool B) { if (Game.IsValid()) Game->bExportAudio = B; })]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)
+		[
+			SNew(SBox).Visibility_Lambda([this] { return ExportKind == 0 ? EVisibility::Visible : EVisibility::Collapsed; })
+			[CheckBox(TEXT("透明背景（只有角色與道具）"), [this] { return Game.IsValid() && Game->bExportTransparent; }, [this](bool B) { if (Game.IsValid()) Game->bExportTransparent = B; })]
+		]
 		// U232: a scene with voice lists came out silent and with a still mouth, and nothing said so.
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[SNew(STextBlock).Font(Font(10.f)).ColorAndOpacity(FLinearColor::Yellow).AutoWrapText(true)
 			.Text(FText::FromString(TEXT("語音清單不會進影片。要進影片，在語音窗按「放上時間軸」，聲音和嘴型就會跟著輸出。")))

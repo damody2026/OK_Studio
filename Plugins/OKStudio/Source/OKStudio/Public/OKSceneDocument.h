@@ -1386,6 +1386,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
 	TArray<FOKSceneBookmark> Bookmarks;
 
+	/** The free view when the scene was saved; opening it comes back there (U247). Not set in older files. */
+	UPROPERTY()
+	FOKSceneBookmark SavedView;
+
 	/** Keys the object's current transform and value at Time (replacing a key within 1/60 s). Id SceneTrackId keys the
 	 *  scene's exposure and focus distance. */
 	void SetKey(int32 Id, float Time);

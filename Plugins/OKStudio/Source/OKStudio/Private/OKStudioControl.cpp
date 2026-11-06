@@ -620,6 +620,8 @@ namespace
 			}
 			if (Kind != TEXT("png") && Kind != TEXT("mp4")) return Result(false, TEXT("kind: png, mp4 or okanim"));
 			if (Kind == TEXT("mp4") && !FPaths::FileExists(UOKStudioGame::FfmpegPath())) return Result(false, TEXT("no ffmpeg at ") + UOKStudioGame::FfmpegPath());
+			G.bExportTransparent = false;
+			J->TryGetBoolField(TEXT("transparent"), G.bExportTransparent);
 			O->SetStringField(TEXT("folder"), G.ExportFrames(float(Fps), int32(W), int32(H), Kind == TEXT("mp4"), float(From), float(To), Folder));
 			return O;
 		}
@@ -1035,6 +1037,30 @@ namespace
 			bool bEnter = false;
 			J->TryGetBoolField(TEXT("enter"), bEnter);
 			if (Field.IsEmpty() || !FSlateApplication::IsInitialized()) return Result(false, TEXT("field required"));
+			FSlateApplication& App = FSlateApplication::Get();
+			auto Key = [&App](const FKey& K, bool bCtrl)
+			{
+				const FModifierKeysState Mods(false, false, bCtrl, false, false, false, false, false, false);
+				App.ProcessKeyDownEvent(FKeyEvent(K, Mods, 0, false, 0, 0));
+				App.ProcessKeyUpEvent(FKeyEvent(K, Mods, 0, false, 0, 0));
+			};
+			auto TypeIn = [&]
+			{
+				Key(EKeys::A, true);
+				Key(EKeys::BackSpace, false);
+				for (const TCHAR Ch : Text) App.ProcessKeyCharEvent(FCharacterEvent(Ch, FModifierKeysState(), 0, false));
+				if (bEnter) Key(EKeys::Enter, false);
+			};
+			// "@focus": what has the keyboard now (a tree row being renamed, which the search below does not reach).
+			if (Field == TEXT("@focus"))
+			{
+				const TSharedPtr<SWidget> Focused = App.GetKeyboardFocusedWidget();
+				if (!Focused) return Result(false, TEXT("nothing has the keyboard"));
+				TSharedRef<FJsonObject> O = Result(true);
+				O->SetStringField(TEXT("widget"), Focused->GetType().ToString());
+				TypeIn();
+				return O;
+			}
 			TArray<TSharedRef<SWidget>> Found;
 			// A row's label: its first slot is (or wraps) a text block holding "field".
 			auto Labels = [&Field](const TSharedRef<SWidget>& Row)
@@ -1066,20 +1092,10 @@ namespace
 			};
 			for (const TSharedRef<SWindow>& Window : UiWindows()) Walk(Window, false);
 			if (!Found.IsValidIndex(Index)) return Result(false, FString::Printf(TEXT("%d fields match"), Found.Num()));
-			FSlateApplication& App = FSlateApplication::Get();
 			const bool bSpin = IsSpin(*Found[Index]);
 			// The spin box enters its text mode on a direct focus and hands the focus to its text field.
 			App.SetKeyboardFocus(Found[Index], bSpin ? EFocusCause::SetDirectly : EFocusCause::Mouse);
-			auto Key = [&App](const FKey& K, bool bCtrl)
-			{
-				const FModifierKeysState Mods(false, false, bCtrl, false, false, false, false, false, false);
-				App.ProcessKeyDownEvent(FKeyEvent(K, Mods, 0, false, 0, 0));
-				App.ProcessKeyUpEvent(FKeyEvent(K, Mods, 0, false, 0, 0));
-			};
-			Key(EKeys::A, true);
-			Key(EKeys::BackSpace, false);
-			for (const TCHAR Ch : Text) App.ProcessKeyCharEvent(FCharacterEvent(Ch, FModifierKeysState(), 0, false));
-			if (bEnter) Key(EKeys::Enter, false);
+			TypeIn();
 			TSharedRef<FJsonObject> O = Result(true);
 			O->SetNumberField(TEXT("matches"), Found.Num());
 			O->SetStringField(TEXT("text"), bSpin ? FString::Printf(TEXT("%g"), static_cast<const SSpinBox<float>&>(*Found[Index]).GetValue())

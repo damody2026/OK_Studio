@@ -235,6 +235,7 @@ FString UOKSceneDocument::ToJson() const
 		Root->SetStringField(TEXT("linked_light_base"), LinkedLightBase.ToString());
 		Root->SetStringField(TEXT("linked_camera_base"), LinkedCameraBase.ToString());
 	}
+	if (SavedView.bSet) if (TSharedPtr<FJsonObject> View = FJsonObjectConverter::UStructToJsonObject(SavedView)) Root->SetObjectField(TEXT("view"), View);
 	if (Bookmarks.ContainsByPredicate([](const FOKSceneBookmark& B) { return B.bSet; }))
 	{
 		TArray<TSharedPtr<FJsonValue>> MarkJson;
@@ -322,6 +323,7 @@ bool UOKSceneDocument::FromJson(const FString& Json, FString& OutError)
 			if (V->AsObject() && FJsonObjectConverter::JsonObjectToUStruct(V->AsObject().ToSharedRef(), &T) && (Ids.Contains(T.ObjectId) || T.ObjectId == SceneTrackId)) Tracks.Add(MoveTemp(T));
 		}
 	Bookmarks.Reset();
+	SavedView = FOKSceneBookmark();
 	Constraints.Reset();
 	const TArray<TSharedPtr<FJsonValue>>* ConJson = nullptr;
 	if (Root->TryGetArrayField(TEXT("constraints"), ConJson))
@@ -359,6 +361,8 @@ bool UOKSceneDocument::FromJson(const FString& Json, FString& OutError)
 	LinkedCameraBase = FVector2D::ZeroVector;
 	if (Root->TryGetStringField(TEXT("linked_light_base"), OrbitStr)) LinkedLightBase.InitFromString(OrbitStr);
 	if (Root->TryGetStringField(TEXT("linked_camera_base"), OrbitStr)) LinkedCameraBase.InitFromString(OrbitStr);
+	const TSharedPtr<FJsonObject>* ViewJson = nullptr;
+	if (Root->TryGetObjectField(TEXT("view"), ViewJson)) FJsonObjectConverter::JsonObjectToUStruct(ViewJson->ToSharedRef(), &SavedView);
 	const TArray<TSharedPtr<FJsonValue>>* MarkJson = nullptr;
 	if (Root->TryGetArrayField(TEXT("bookmarks"), MarkJson))
 		for (const TSharedPtr<FJsonValue>& V : *MarkJson)

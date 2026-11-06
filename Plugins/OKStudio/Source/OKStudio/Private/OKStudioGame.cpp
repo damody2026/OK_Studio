@@ -690,6 +690,11 @@ TArray<int32> UOKStudioGame::SelectionRoots() const
 bool UOKStudioGame::Save(const FString& Path, FString& OutError)
 {
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
+	Document->SavedView.bSet = true;
+	Document->SavedView.Focus = Focus;
+	Document->SavedView.Yaw = Yaw;
+	Document->SavedView.Pitch = Pitch;
+	Document->SavedView.Distance = Distance;
 	if (FPaths::GetExtension(Path).Equals(TEXT("png"), ESearchCase::IgnoreCase))
 	{
 		// OK scene card: the current view and the three views, with the scene and its character cards inside. Written beside
@@ -771,6 +776,22 @@ bool UOKStudioGame::Load(const FString& Path, FString& OutError)
 	MmdCameraOffset = FVector::ZeroVector;
 	MmdCameraYawOffset = 0.f;
 	MmdCameraFovOffset = 0.f;
+	// The view it was saved in (U247: the last scene's view stayed, and a character away from the middle was not in the
+	// picture). An older file has none: its first character, as when one is added to an empty scene.
+	if (Document->SavedView.bSet)
+	{
+		Focus = Document->SavedView.Focus;
+		Yaw = Document->SavedView.Yaw;
+		Pitch = Document->SavedView.Pitch;
+		Distance = Document->SavedView.Distance;
+	}
+	else if (!File.IsEmpty())
+	{
+		const int32 Camera = Document->ActiveCamera;
+		ViewPreset(5);
+		Document->ActiveCamera = Camera;
+		if (const FOKSceneObject* First = Document->Objects.FindByPredicate([](const FOKSceneObject& O) { return O.Kind == EOKSceneObjectKind::Character; })) FrameFirstCharacter(First->Id);
+	}
 	const int32 MmdCamId = FindMmdCameraId(true);
 	if (MmdCamId >= 0)
 	{
@@ -1476,7 +1497,7 @@ void UOKStudioGame::TickExport()
 	SceneActor->PlaceAttached();
 	SceneActor->UpdateItemLighting();
 	FString Error;
-	if (!CaptureToPng(ExportDir / FString::Printf(TEXT("frame_%05d.png"), ExportFrame), ExportWidth, ExportHeight, Error))
+	if (!CaptureToPng(ExportDir / FString::Printf(TEXT("frame_%05d.png"), ExportFrame), ExportWidth, ExportHeight, Error, bExportTransparent && !bExportMp4))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("OK studio: frame %d not exported: %s"), ExportFrame, *Error);
 		LastMovieError = Error;

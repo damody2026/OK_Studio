@@ -1314,9 +1314,9 @@ void UOKStudioGame::RunSelfTest(bool bExit)
 	}
 	const FString Path = FPaths::ProjectSavedDir() / TEXT("OKStudio/game_selftest.okscene");
 	FString Error;
-	const FString Before = Document->ToJson();
 	Step(TEXT("save"));
 	const bool bSaved = Save(Path, Error);
+	const FString Before = Document->ToJson(); // after saving: the save records the view
 	Document->Objects.Reset();
 	SyncNow();
 	Check(!SceneActor->PreviewOf(A), TEXT("clearing the scene removes its characters"));
@@ -2082,8 +2082,8 @@ void UOKStudioGame::RunSelfTest(bool bExit)
 		const FString Named = SceneDirectory() / TEXT("_selftest_scene.png");
 		const FString Current = Document->ToJson();
 		auto WithoutCards = [](UOKSceneDocument* D) { UOKSceneDocument* C = DuplicateObject(D, GetTransientPackage()); for (FOKSceneObject& O : C->Objects) O.Character.Card.Reset(); return C->ToJson(); };
-		const FString Expected = WithoutCards(Document);
 		const bool bNamed = Panel && Panel->SaveNamed(TEXT("_selftest_scene"));
+		const FString Expected = WithoutCards(Document);
 		Check(bNamed && SceneFiles().Contains(Named) && Panel->ListedFiles() == SceneFiles().Num(), FString::Printf(TEXT("scene list shows the saved scene (%d files)"), SceneFiles().Num()));
 		Document->Objects.Reset();
 		SyncNow();

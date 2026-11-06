@@ -213,6 +213,7 @@ pub fn tools() -> Vec<Value> {
                  "fps": {"type": "number"}, "width": {"type": "integer"}, "height": {"type": "integer"},
                  "from": {"type": "number", "description": "start time s"}, "to": {"type": "number", "description": "end time s"},
                  "folder": {"type": "string", "description": "output folder"},
+                 "transparent": {"type": "boolean", "description": "png: only the characters and items, the rest transparent"},
                  "id": id("okanim: the character")}), &["kind"]),
         t("studio_scenes", "List scene files to open with studio_load (default: the studio's scene folder). Returns {folder, files [{path, name, kind, modified}]}.",
           json!({"folder": {"type": "string"}}), &[]),

@@ -284,6 +284,8 @@ public:
 		const TArray<TPair<FString, bool>>& Audio = {}, float Seconds = 0.f);
 	/** A movie export takes the scene's BGM and outside sound that play (U129: the mp4 had no sound). */
 	bool bExportAudio = true;
+	/** A PNG sequence with only the characters and items, the rest transparent (U247; a movie has no alpha). */
+	bool bExportTransparent = false;
 	/** The ffmpeg the movie export uses (not under version control; downloaded into Tools/ffmpeg). */
 	static FString FfmpegPath();
 	/** Movie export: the last mp4 written, or why it was not; LastMovieNote says when it came out without sound though
