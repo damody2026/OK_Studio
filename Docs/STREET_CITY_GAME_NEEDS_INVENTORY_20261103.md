@@ -488,6 +488,51 @@ c-conquest 核對第 8.2.5 節後要收的三項。地圖重裝、打包 `202611
 - 四段實走全過，但第 0 段第一次失敗、重試才過：`imore-491f7709b202-pool-entry-and-exit` 第 28 段，泳池階梯，離民宿約 400 m，與這輪改動無關。chain70 也在另一座泳池卡過一次（`imore-cda5d5e2dcb9`，第 24 段），是偶發，原因未查明。
 - 照片在 `shop-survey-v1/captures-20261106-043454`：`R7-minshuku-room1`、`room`、`bath2`、`wc-door`、`scroll`、`low`、`high`。
 
+### 8.2.7 第 4 輪盤點（11-06，`city_anchors.json` 24590 列）
+
+c-conquest 重新對照 `activities.toml`、`acts.toml`、`events.toml`、`places.json` 與錨點種類。`activities.toml` 每個活動的地點和錨點都查得到，85 個種類都不是 0。下面三類是還缺的，新地點的遊戲端規則仍排在第 8.3 節之後。
+
+**A. 資料對不起來**
+
+| 項目 | 現況 | 要做 |
+|---|---|---|
+| `balcony` | 只有 20 個，全在 D1–D4（各 5）。第 8.2.4 節寫 178 個實體陽台，R1／R2 64 個，商店街住宅也有 | 每個實體陽台都要有錨點，查清楚少掉的原因 |
+| R1／R2 公寓 | `cook` 各 40，`dining` 0；`h_sofa` 各 40，`tv_sofa` 0；`laundry`、`mailbox` 都是 0 | 補餐桌、電視、洗衣機（每層或頂樓曬衣處）、一樓信箱與對應錨點 |
+| 其他住處的 `tv_sofa` | 飯店 0，汽車旅館 0，商店街住宅 0 | 房間有電視的補上；沒有電視的補電視 |
+| `church` | 只有外觀模型和 5 個 `wedding*` 錨點，沒有 `seat` | 確認走得進去；做出內部、長椅、祭壇，補 `seat`、`seat_pair` |
+| 溫泉池 | 池內深度 25 cm（第 8.2.4 節），坐下去水只到腰 | 加深到約 55 cm，或把坐的位置做低，一起泡湯要泡得到肩下 |
+| `mailbox` | 郵局沒有 | 郵局門口加郵筒 |
+| `places.json` | `s18-f01`～`f03`、`s18-0201`、`s18-0301` 還是「日式民宿」 | 改成現在的用途，免得和新民宿混淆 |
+
+**B. 活動要用、場景沒有**
+
+| 活動 | 缺什麼 |
+|---|---|
+| `restaurant_room`（餐廳包廂） | `restaurant` 沒有包廂，要做一間有門的包廂，錨點 `private_room` |
+| `hotel_spa`、`spa`（精油護理室） | 飯店與 `lodge` 沒有護理室，要有護理床、毛巾櫃，錨點 `spa_bed` |
+| 新年、參拜（`new_year`、`shrine_pray`） | 神社只有 `torii`、`pray`、`seat`。要有賽錢箱、手水舍、籤筒 `omikuji`、繪馬架 `ema`、授與所 `charm` |
+| `ride_pair`（第 10.1 節的協力車） | 沒有協力車。單車行 S35／S81 放協力車與 `bike_rental`，沿河堤或公園環道放 `ride_pair` |
+| 買票、紀念品 | 水族館沒有 `ticket`、`shop`；天文館、KTV 沒有 `counter`；遊樂園沒有 `shop` |
+
+**C. 還沒有的地點**
+
+室內優先改建重複的店面（書店、便利店、寵物店、花店、唱片行都有 3 間以上），每種至少留兩間。
+
+| game id | 場所 | 錨點／道具 | 用途 |
+|---|---|---|---|
+| `district_office` | 區公所、戶政窗口 | `counter*`、`seat*`、`photo`（登記紀念板） | 結婚登記、遷戶口 |
+| `bridal` | 婚紗禮服店 | `rack*`、`fitting*`、`fitting_show`、`mirror`、`counter` | 試婚紗，接教堂與寫真館 |
+| `police` | 派出所 | `counter`、`seat*` | 失物招領、問路 |
+| `realty` | 租屋仲介 | `counter`、`seat*`、`display*` | 一起找房子、同居 |
+| `nursery` | 親子館、托兒所 | `play*`、`seat*`、`crib*` | 孩子出生後（`pregnancy.rs`）的去處 |
+| `craft` | 手作教室 | `work_table*`、`seat*`、`kiln` | 陶藝、蠟燭、料理課 |
+| `fortune` | 占卜店 | `fortune_table`、`seat*` | 情侶占卜 |
+| `breakfast` | 早餐店 | `counter`、`table*`、`seat*` | 上課前一起吃早餐 |
+| `auditorium` | 大學禮堂 | `stage`、`seat*`、`seat_pair` | 開學、畢業、表演 |
+| `zoo` | 小型動物園 | `enclosure*`、`feed_animal*`、`bench*`、`ticket`、`shop` | 戶外約會，放在公園或西側空地 |
+| `orchard` | 採果農園 | `pick*`、`bench*`、`counter` | 戶外約會 |
+| `waterpark` | 滑水道（海邊或泳池旁） | `slide`、`swim*`、`seat*`、`shower` | 夏天約會 |
+
 ### 8.3 遊戲端之後要做（我負責，換城市整合時）
 
 - 每個新地點的活動（`activities.toml`）、商品與營業時間（`catalog.json`）、`places.toml` 規範、三語文字。
