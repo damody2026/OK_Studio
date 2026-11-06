@@ -2044,3 +2044,11 @@
 - 2026-11-05 c-street-city 民宿馬桶朝向錯兩次：換 Tripo 模型後沿用舊模型的朝向。Tripo 模型的正面方向不固定，換模型要重看畫面。
 - 2026-11-06 c-street-city 民宿掛軸顯示引擎預設貼圖：glTF 匯入把面板的貼圖丟了，匯入後沒檢查貼圖資產，看照片才發現。修正：`AssetImportTask` 直接匯入 `T_LS_InnScroll`，自建材質 `M_LS_InnScroll`。
 - 2026-11-06 c-street-city 民宿第一間客室裡有一棵街樹，樹冠穿出屋頂：蓋房子時只清了 WorldTripo 散布物件，沒清 `BP_StreetCluster` 的街樹，之前也只拍第二間，連續幾輪沒發現。修正：樹和樹幹碰撞一起移到建築後方，`motel_physics_plan` 同步，並新增 `R7-minshuku-room1` 視角。四間客室都要拍。
+
+- 2026-11-06 c-street-city 海灘越裝越多（116 間小屋、成堆沙堡與西瓜，多了 2934 個物件，含欄杆、步道、陽傘）：重裝時用 `{label: actor}` 字典找舊物件，同名的只留一個，每次重裝只刪掉一個又多放一批。修正：刪除時直接走 `get_all_level_actors()` 的清單。同名物件不能用字典收。
+- 2026-11-06 c-street-city 陽台從 178 個實體掉到 20 個錨點：重裝時用上一輪的 `balcony` 種類挑住處，而 `build_street_city_places.lua` 會把不是陽台的窗改成 `view_night`，掉出去的住處下次就不再被挑到。修正：改看房間有沒有窗（`window` tag），不靠上一輪的結果。
+- 2026-11-06 c-street-city 草地上一堆銀色碎片：把 26 萬面的 Tripo 植栽直接減到約 1500 面，葉子碎成浮空三角片，又吃到 `M_WorldTripoPBR` 預設的金屬感。修正：`Tools/build_street_city_foliage.lua` 先包體素外殼再減面、烘貼圖，來源的金屬度先關掉。
+- 2026-11-06 c-street-city 救生員 5、6 號站在草地上，海灘用品跟著放到草皮：`outdoor` 迴圈沒排除它們。修正：沙灘物件只用救生員 1–4 號。
+- 2026-11-06 c-street-city 把泳池階梯失敗寫成「原因未查明」，也這樣告訴 c-conquest：本檔 11-01 就查過，是 CharacterWalk 懸空檢查在階緣的誤判（中心射線差 121.85 cm，門檻 120），不是卡住，修法要動 StreetSocialCity 的 C++。寫文件前要先搜這份紀錄。第 8.2.6 節已更正。
+- 2026-11-06 c-street-city 站在販賣機、洗衣機、信箱前的錨點都背對機器：角色朝向是 yaw+90，「站在正面看物件」要用 `face()` 的 yaw+90，我照沙發的寫法填 yaw-90。沙發是朝前坐，機器是回頭看，不能抄。修正：三處都改，販賣機的舊錯也一起修。
+- 2026-11-06 c-street-city 改建的店招牌還是舊店名（保齡球館掛「聚友桌遊店」）：之前的改建只放家具，沒看外觀。修正：`Tools/build_street_city_signs.lua` 產生招牌圖，重裝時換掉 `ShopSign_<id>_H/V` 材質槽。改店要連招牌一起看。

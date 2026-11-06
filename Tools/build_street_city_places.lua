@@ -48,7 +48,7 @@ for _, r in ipairs(install.rooms) do
   for _, m in ipairs(mirrors[r.id] or {}) do ms[#ms + 1] = { kind = m.kind, side = m.side, face = m.face, normal = m.normal, width_cm = m.width_cm, height_cm = m.height_cm } end
   add({
     id = 'motel_' .. r.room_number .. '_' .. r.id, game_place = 'hotel', building = r.building, floor = r.floor,
-    name = (r.building == 'S18' and '日式民宿 ' or '星澄汽車旅館 ') .. r.room_number .. ' ' .. (r.source_name or ''),
+    name = (r.building == 'S18' and '星澄別館 ' or '星澄汽車旅館 ') .. r.room_number .. ' ' .. (r.source_name or ''),
     kind = q.is_pool_suite and 'motel_pool_suite' or 'motel_suite', privacy = 2, lockable = true,
     door = r.entry,
     room = { center = W(0, 0, q.size_m[3] / 2), size = P(w * 100, d * 100, q.size_m[3] * 100), yaw = q.yaw },
@@ -926,7 +926,7 @@ do
       -- what the install added to this room: the tub, the crib, the balcony (round 3, c-conquest 8.2.3)
       local mine = {}; for k, it in pairs(newitems) do if it.place == p.id and it.anchor ~= 'door' and it.anchor ~= 'balcony' then mine[#mine + 1] = k end end; table.sort(mine)
       for _, k in ipairs(mine) do local it = newitems[k]
-        if not have[it.anchor] then have[it.anchor] = true; p.anchors[#p.anchors + 1] = { name = it.anchor, pos = it.pos, yaw = it.yaw, asset = it.actor } end
+        if not have[it.anchor] then have[it.anchor] = true; p.anchors[#p.anchors + 1] = { name = it.anchor, pos = it.pos, yaw = it.yaw, asset = it.actor, seat_pos = it.seat } end
       end
     end
   end
@@ -1042,6 +1042,8 @@ do
     while ids[place .. '.' .. name] do name = a.name .. '__' .. n; n = n + 1 end
     ids[place .. '.' .. name] = true
     local kinds, tags = K.classify(a, { privacy = privacy, outdoor = outdoor, place = place })
+    -- a seat fixed by the install (pews, the low seat in the baths): the hips come with the item
+    local fixed = newitems[place .. ':' .. a.name]; if fixed and fixed.seat and not a.seat_pos then a.seat_pos = fixed.seat end
     -- a fitting room: first inside the curtain (the anchor), second just outside it, looking in
     if K.base(a.name):match('fitting$') and not a.slots then
       local f = math.rad((a.yaw or 0) + 90); local q = { r1(a.pos[1] - math.cos(f) * 120), r1(a.pos[2] - math.sin(f) * 120), a.pos[3] }
@@ -1196,6 +1198,8 @@ do
 end
 for _, s in ipairs(PUBLIC_SEATS) do s.pair = nil end
 local out = assert(io.open(root .. 'places-v1/places.json', 'wb'))
+-- S18 is the motel's annex now; the house with the name is the minshuku on the lawn
+for _, p in ipairs(places) do if p.id:match('^s18%-') and p.name then p.name = p.name:gsub('日式民宿', '星澄別館') end end
 out:write(json.encode({ schema = 1, map_sha256 = actors.map_sha256, frame = 'UE cm, +X north, +Y east; anchor yaw: character faces yaw+90', mirrors_from = latest, places = places, game_places = GAME_PLACES, girls_dorm_rooms = dorm_rooms, lots = LOTS, office_units = OFFICE_UNITS, public_seats = PUBLIC_SEATS }))
 out:close()
 local count = {}; for _, p in ipairs(places) do count[p.kind] = (count[p.kind] or 0) + 1 end

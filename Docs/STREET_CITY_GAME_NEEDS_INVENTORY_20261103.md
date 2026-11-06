@@ -485,7 +485,7 @@ c-conquest 核對第 8.2.5 節後要收的三項。地圖重裝、打包 `202611
 - 11-05 補拍後依 c-conquest 的意見再修一輪，打包 `20261105-222511`，四段實走全過：客房之間本來就是到天花板的牆，上次是相機架在牆裡；每間加了木柱、長押、竿緣天井、內側障子、床之間與掛軸，壁櫥改成有拉門的 `oshiire`，電視換成 Tripo 的電視櫃，浴廁加了腰壁與暖簾，屋頂有瓦條。畫面在 `shop-survey-v1/captures-20261105-231526`。
 - 客房 `R7-minshuku-room`、`room2`、`room-night`，浴廁 `bath`、`wc`，外觀 `out`、`front` 都看過；浴室地板日間仍偏冷，是天光造成的，留著。
 - 11-06 c-conquest 最後一輪補齊，打包 `20261106-033433`，`city_anchors.json` 24590 列，地板與人形空間重測 1492 個（其他 0），`cargo test anchor` 6 項通過：淋浴換 Tripo 真淋浴柱（`inn_shower` 名稱不變），四間浴室加洗手台（`inn_sink`），浴室和廁所都加了開著的拉門，床之間改窄、兩端有柱撐住長押，掛軸是 Grok 水墨畫。第一間客室裡原有一棵街樹穿出屋頂，連同樹幹碰撞移到建築後方，`motel_physics_plan` 同步。
-- 四段實走全過，但第 0 段第一次失敗、重試才過：`imore-491f7709b202-pool-entry-and-exit` 第 28 段，泳池階梯，離民宿約 400 m，與這輪改動無關。chain70 也在另一座泳池卡過一次（`imore-cda5d5e2dcb9`，第 24 段），是偶發，原因未查明。
+- 四段實走全過，但第 0 段第一次失敗、重試才過：`imore-491f7709b202-pool-entry-and-exit` 第 28 段，泳池階梯，離民宿約 400 m，與這輪改動無關。chain70 也在另一座泳池出現過一次（`imore-cda5d5e2dcb9`，第 24 段）。這不是卡住：是 CharacterWalk 懸空檢查在階緣的誤判（中心射線差 121.85 cm，門檻 120），`Docs/STREET_ERRORS.md` 11-01 已記錄，修法要動 StreetSocialCity 的 C++，所以用重跑處理。
 - 照片在 `shop-survey-v1/captures-20261106-043454`：`R7-minshuku-room1`、`room`、`bath2`、`wc-door`、`scroll`、`low`、`high`。
 
 ### 8.2.7 第 4 輪盤點（11-06，`city_anchors.json` 24590 列）
@@ -532,6 +532,10 @@ c-conquest 重新對照 `activities.toml`、`acts.toml`、`events.toml`、`place
 | `zoo` | 小型動物園 | `enclosure*`、`feed_animal*`、`bench*`、`ticket`、`shop` | 戶外約會，放在公園或西側空地 |
 | `orchard` | 採果農園 | `pick*`、`bench*`、`counter` | 戶外約會 |
 | `waterpark` | 滑水道（海邊或泳池旁） | `slide`、`swim*`、`seat*`、`shower` | 夏天約會 |
+
+**A 段結果（chain74，11-06）：** `balcony` 178；住處的 `tv_sofa` 132 處、`dining` 132 處、`laundry` 88 處，種類列數分別是 154、189、98；`mailbox` 6 處（兩座公寓、郵局、飯店、兩棟宿舍）；教堂 29 個錨點，`seat` 24、`seat_pair` 12；溫泉 `soak` 10 個，種類是 `bath`＋`seat`；S18 改名星澄別館。四段行走通過，w2 others 0。
+
+這輪有兩件事留到 chain75：站在洗衣機、信箱、販賣機前的錨點朝向是反的（第 3 列錯誤紀錄），R1、R2 住處與信箱的驗收視角拍到牆上，物件本身沒有照到。
 
 ### 8.3 遊戲端之後要做（我負責，換城市整合時）
 
