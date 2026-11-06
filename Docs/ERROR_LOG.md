@@ -4258,3 +4258,4 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - **U242 回報按鈕檢查前腳本其實沒跑到**（2026-11-06，F 組）：整合後 Studio 埠變成 48490，第一輪腳本用 47890 判定 Studio 沒開；`check_ok_studio_buttons.lua` 又因 `ok_instance` 路徑失敗，要看輸出才知道。批次腳本的埠要用 `ok_instance` 取得，工具失敗不能只看最後的計數。
 - **U245 把 `type` 失敗記成中文編碼問題**（2026-11-06，F 組）：改用 UTF-8 檔案送出後一樣回 0 個欄位，真正原因是 `type` 走訪不到樹列改名的輸入框。紀錄原因前要先驗證。
 - **`verify_ok_studio.lua` 用 `PASS\| FAIL` 計數**（2026-11-06，F 組）：U247 第一輪腳本把 PASS 和 FAIL 一起算，六項裡有 FAIL 也印 6，下一輪才看到 `GameSelfTest` 沒過。計數只算 ` PASS`，或直接看每一項的結果。
+- **`sed -i` 把 CRLF 檔整份改成 LF**（2026-11-06，F 組）：U247 用 `sed` 改 `OKStudioGame.cpp`，提交變成 4700 行差異，`git show --stat` 才看到。還原 CRLF 後修正提交。改 CRLF 檔用 `ap.lua`，提交後看行數是否合理。
