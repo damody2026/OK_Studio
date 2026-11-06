@@ -743,8 +743,8 @@ public:
 		Simple(TEXT("tree.locate"), TEXT("定位當前"), [this] { LocateSelection(); });
 		AddCommand(TEXT("tree.filter"), TEXT("依種類篩選"), [this](const FString& Arg) { KindFilter = Arg.IsEmpty() ? (KindFilter >= 5 ? -1 : KindFilter + 1) : FCString::Atoi(*Arg); RefreshRows(); return true; });
 		AddCommand(TEXT("group.attach"), TEXT("掛到所選部位"), [this](const FString& Arg) { return AttachToPoint(Arg.IsEmpty() ? GroupPoint : Arg); });
-		Simple(TEXT("transform.copy"), TEXT("複製變換"), [this] { if (const FOKSceneObject* O = Obj()) { CopiedTransform = O->Transform; bHasCopiedTransform = true; } });
-		Simple(TEXT("transform.paste"), TEXT("貼上變換"), [this] { if (!bHasCopiedTransform) return; for (int32 Id : Game->Selection) if (FOKSceneObject* O = Game->Document->Find(Id)) O->Transform = CopiedTransform; Changed(); });
+		Simple(TEXT("transform.copy"), TEXT("複製變換"), [this] { if (const FOKSceneObject* O = Obj()) { CopiedTransform = Game->Document->WorldTransform(O->Id); bHasCopiedTransform = true; } });
+		Simple(TEXT("transform.paste"), TEXT("貼上變換"), [this] { if (!bHasCopiedTransform) return; for (int32 Id : Game->Selection) if (FOKSceneObject* O = Game->Document->Find(Id)) O->Transform = O->Parent >= 0 ? CopiedTransform.GetRelativeTransform(Game->Document->WorldTransform(O->Parent)) : CopiedTransform; Changed(); });
 		AddCommand(TEXT("transform.move"), TEXT("移動（x y z cm）"), [this](const FString& Arg)
 		{
 			TArray<FString> P; Arg.ParseIntoArrayWS(P);
