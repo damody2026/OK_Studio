@@ -42,6 +42,7 @@ namespace
 		{ TEXT("hem"), TEXT("衣服下擺寬"), 0.6f, 1.5f, &T::Hem },
 		{ TEXT("real_jaw"), TEXT("寫實下巴變化"), 0.f, 1.f, &T::RealJaw },
 		{ TEXT("real_face"), TEXT("寫實五官變化"), 0.f, 1.f, &T::RealFace },
+		{ TEXT("real_eye"), TEXT("寫實眼睛上移"), 0.f, 1.f, &T::RealEye },
 		{ TEXT("real_chin"), TEXT("寫實下巴尖圓度"), 0.f, 1.f, &T::RealChin },
 		{ TEXT("chibi_chin"), TEXT("Q 版下巴尖圓度"), 0.f, 1.f, &T::ChibiChin },
 		{ TEXT("chibi_head"), TEXT("Q 版頭大小"), 0.5f, 1.2f, &T::ChibiHead },

@@ -218,8 +218,9 @@ void OKStudioStyleSliders(float Style, float FaceLook, TArray<float>& Body, TArr
 			for (int32 Index : { 0, 5, 6, 8, 9, 16, 17, 18 })
 				if (Face.IsValidIndex(Index)) Face[Index] = FMath::Lerp(CardFace[Index], Face[Index], Strength);
 			// Eyes going up and shrinking leave a longer face under them, which reads as a sharper chin.
-			for (int32 Index : { 30, 33, 34, 35, 38, 40, 42 })
+			for (int32 Index : { 33, 34, 35, 38, 40, 42 })
 				if (Face.IsValidIndex(Index)) Face[Index] = FMath::Lerp(CardFace[Index], Face[Index], Tuning.RealFace);
+			if (Face.IsValidIndex(30)) Face[30] = FMath::Lerp(CardFace[30], Face[30], Tuning.RealEye);
 		}
 		else
 		{

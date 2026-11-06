@@ -27,6 +27,15 @@ bool FOKStudioCharacterStyleTest::RunTest(const FString&)
 	OKStudioStyleSliders(-1.f, -1.f, Real, RealFace);
 	TestTrue(TEXT("realistic: smaller head, bigger breasts, smaller eyes"), Real[1] < CardBody[1] && Real[4] > CardBody[4] && RealFace[34] < CardFace[34]);
 
+	// The eyes' height has its own number, the nose and mouth stay with the other.
+	FOKStudioStyleTuning& EyeTuning = OKStudioStyleTuning();
+	const float EyeKept = EyeTuning.RealEye;
+	EyeTuning.RealEye = 0.f;
+	TArray<float> EyeBody = CardBody, EyeFace = CardFace;
+	OKStudioStyleSliders(-1.f, -1.f, EyeBody, EyeFace);
+	EyeTuning.RealEye = EyeKept;
+	TestTrue(TEXT("real_eye moves the eyes' height alone"), FMath::IsNearlyEqual(EyeFace[30], CardFace[30]) && FMath::IsNearlyEqual(EyeFace[38], RealFace[38]) && FMath::IsNearlyEqual(EyeFace[42], RealFace[42]));
+
 	TArray<float> Tall = CardBody, TallFace = CardFace;
 	Tall[0] = 1.f;
 	OKStudioStyleSliders(-1.f, -1.f, Tall, TallFace);
