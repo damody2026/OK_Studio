@@ -247,6 +247,17 @@ void AOKStreetSocialScene::StartControlServer(){
  // Cursor mode on/off (what Ctrl or the middle mouse button toggles): off lets WASD and E work again.
  // Development money for testing what needs it (a company, a bankruptcy): through the books like any cash, so the
  // journal stays reconciled; a negative amount takes money away.
+ // {girl, ovulate?}: her pregnancy as it stands; ovulate true makes any finish inside take, false puts her back on her cycle.
+ Bind(TEXT("/pregnancy"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
+  auto& S=*State;auto B=OKControlBody(Req);double Girl=0;B->TryGetNumberField(TEXT("girl"),Girl);const int32 Index=int32(Girl);
+  if(Index<1||Index>=OKStreetCastCount||!S.Manifest.Characters.IsValidIndex(Index)){OKControlReply(Done,OKControlResult(false,TEXT("girl")));return;}
+  auto Request=OKRulesRequest(TEXT("preg_ovulate"));OKRulesPutExt(S,Request);Request->SetStringField(TEXT("girl"),OKStreetStableId(S.Manifest.Characters[Index]));
+  bool On=false;const bool Set=B->TryGetBoolField(TEXT("ovulate"),On);if(Set)Request->SetBoolField(TEXT("on"),On);
+  const TSharedPtr<FJsonObject> A=OKRulesEval(S,Request);const TSharedPtr<FJsonObject>* View=nullptr;
+  if(!A.IsValid()||!A->TryGetObjectField(TEXT("pregnancy"),View)){OKControlReply(Done,OKControlResult(false,TEXT("rules")));return;}
+  bool Ok=true;if(Set){auto Candidate=S.Store;OKRulesTakeExt(Candidate,*A);Ok=CommitStore(MoveTemp(Candidate));if(Ok)S.PregView[Index]=*View;}
+  auto O=OKControlResult(Ok);O->SetStringField(TEXT("name"),S.Manifest.Characters[Index].Name);O->SetObjectField(TEXT("pregnancy"),*View);OKControlReply(Done,O);
+ });
  Bind(TEXT("/money"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   auto& S=*State;double Amount=0;OKControlBody(Req)->TryGetNumberField(TEXT("amount"),Amount);
   auto Candidate=S.Store;OKCash(Candidate,int64(Amount),TEXT("adjust"),OKT(TEXT("ui.control.test_add_money_control")));const bool Ok=CommitStore(MoveTemp(Candidate));
