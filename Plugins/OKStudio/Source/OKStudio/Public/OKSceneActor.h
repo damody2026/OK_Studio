@@ -292,6 +292,8 @@ private:
 	/** A character on its way in while a scene opens (U255). */
 	struct FPreparedMap;
 	TSharedPtr<FPreparedMap> PreparedMap;
+	/** The opening scene's map is not ready yet: Sync goes on next frame. */
+	bool bMapPending = false;
 	/** Given up while their thread still opens: only the thread holds them up, not the frame. */
 	TArray<TSharedPtr<FPreparedMap>> DroppedMaps;
 	struct FPreparedCharacter;

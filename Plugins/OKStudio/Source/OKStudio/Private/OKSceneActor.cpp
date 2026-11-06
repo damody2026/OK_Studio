@@ -1348,6 +1348,7 @@ void AOKSceneActor::Sync()
 	TArray<int32> PreparedIds;
 	Prepared.GetKeys(PreparedIds);
 	for (int32 Id : PreparedIds) if (!bBuildsPending || !Present.Contains(Id)) DropPrepared(Id);
+	bBuildsPending |= bMapPending;
 	if (!bBuildsPending) bProgressiveBuild = false;
 	WireRenderTextures();
 	// A destroyed preview's meshes, textures and materials are freed by garbage collection, which the engine runs only
@@ -1370,6 +1371,13 @@ void AOKSceneActor::SyncMap()
 			if (P.IsValid() && !P->GetActorTransform().Equals(MapPlace)) P->SetActorTransform(MapPlace);
 		ApplyMapTime(MapPlace);
 		return;
+	}
+	// A scene opens over many frames, its map with it: the biggest held one frame 28 s (U259).
+	bMapPending = false;
+	if (bProgressiveBuild && Document->Map >= 0)
+	{
+		if (PreparingMap() != Document->Map) PrepareMap(Document->Map);
+		if (PreparingMap() == Document->Map && !ContinueMapPrepare()) { bMapPending = true; return; }
 	}
 	// Built ahead for this map, or for one nobody wants any more.
 	TSharedPtr<FPreparedMap> Ready;
@@ -2880,6 +2888,7 @@ void AOKSceneActor::ReleaseScene()
 	Prepared.GetKeys(PreparedIds);
 	for (int32 Id : PreparedIds) DropPrepared(Id);
 	StopMapPrepare();
+	bMapPending = false;
 	bProgressiveBuild = false;
 	bSkyDomesDirty = true;
 	for (auto& Pair : Shown) Release(Pair.Value);

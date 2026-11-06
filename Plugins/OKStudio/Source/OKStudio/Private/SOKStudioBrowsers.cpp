@@ -641,28 +641,37 @@ void SOKStudioPanel::LoadPickedMap()
 	if (!Game.IsValid() || MapPick == -1) return;
 	const int32 Map = MapPick == -2 ? -1 : MapPick;
 	// The biggest maps took 28 s in one frame: they build behind the shown map, which goes when the new one is ready (U258).
-	if (!bMapThumbRun && Map >= 0 && Map != Game->Document->Map && Game->SceneActor)
+	// A scene still opening takes the new map the same way by itself.
+	const bool bOpening = Game->SceneActor && Game->SceneActor->bProgressiveBuild;
+	if (!bMapThumbRun && !bOpening && Map >= 0 && Map != Game->Document->Map && Game->SceneActor)
 	{
 		Game->SceneActor->PrepareMap(Map);
 		if (Game->SceneActor->PreparingMap() == Map)
 		{
 			MapPrepareSerial = Game->SceneSerial;
+			bMapPrepareByPick = true;
 			SetStatus(TEXT("讀取地圖中…") + FOKStudioCatalog::Get().FindMap(Map)->Name);
 			return;
 		}
 	}
-	if (Game->SceneActor) Game->SceneActor->StopMapPrepare();
+	if (Game->SceneActor && !bOpening) Game->SceneActor->StopMapPrepare();
+	bMapPrepareByPick = false;
 	ShowPickedMap(Map);
 }
 
 void SOKStudioPanel::TickMapPrepare()
 {
+	if (!bMapPrepareByPick) return;
 	AOKSceneActor* Actor = Game->SceneActor;
 	const int32 Map = Actor ? Actor->PreparingMap() : -1;
 	// Given up by a new scene: the line must not go on saying it is loading.
-	if (Map < 0) { if (StatusText().StartsWith(TEXT("讀取地圖中…"))) SetStatus(TEXT("場景已更換，地圖沒有讀取")); return; }
-	if (MapPrepareSerial != Game->SceneSerial) { Actor->StopMapPrepare(); return; }
-	if (Actor->ContinueMapPrepare()) ShowPickedMap(Map);
+	if (Map < 0 || MapPrepareSerial != Game->SceneSerial)
+	{
+		bMapPrepareByPick = false;
+		if (StatusText().StartsWith(TEXT("讀取地圖中…"))) SetStatus(TEXT("場景已更換，地圖沒有讀取"));
+		return;
+	}
+	if (Actor->ContinueMapPrepare()) { bMapPrepareByPick = false; ShowPickedMap(Map); }
 }
 
 void SOKStudioPanel::ShowPickedMap(int32 Map)
