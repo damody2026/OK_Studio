@@ -260,6 +260,10 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
         if(Body->TryGetStringField(TEXT("coordinate"),Coordinate)&&!Coordinate.IsEmpty()&&!Panel->WearOutfit(Controller->OutfitIndex,Coordinate,OutfitWhy)){Why=OutfitWhy;return nullptr;}
         // {"height":{"her":0..1,"him":0..1}}: their height slider (ChaFile shapeBody[0]) for testing the pair at other sizes.
         double BlushValue;if(Body->TryGetNumberField(TEXT("blush"),BlushValue))Panel->BlushTest=float(BlushValue);
+        // {"orbit":[yaw,pitch,distance]}: the camera round her hips, turned from where she faces (pose checks from the side and the front).
+        const TArray<TSharedPtr<FJsonValue>>* Orbit=nullptr;if(Body->TryGetArrayField(TEXT("orbit"),Orbit)&&Orbit->Num()==3&&IsValid(Controller->PreviewActor)){auto* Girl=Controller->PreviewActor.Get();
+            FVector Hips=Girl->GetActorLocation();if(Girl->BodySkel){const int32 Bone=Girl->BodySkel->GetBoneIndex(TEXT("j_hips"));if(Bone!=INDEX_NONE)Hips=Girl->BodySkel->GetBoneTransform(Bone).GetLocation();}
+            Girl->OrbitFocus=Hips;Girl->OrbitYaw=float((*Orbit)[0]->AsNumber())+Girl->GetActorRotation().Yaw;Girl->OrbitPitch=float((*Orbit)[1]->AsNumber());Girl->OrbitDistance=float((*Orbit)[2]->AsNumber());Girl->ApplyOrbitCamera();}
 #if !UE_BUILD_SHIPPING
         // {"spray":true|false}: the player's water gun (A + left button) at what the camera looks at; game.log says what landed.
         bool Spray=false;if(Body->TryGetBoolField(TEXT("spray"),Spray))if(auto* PC=Cast<AOpenKoikatsuPlayerController>(Controller->GetOwningPlayer())){

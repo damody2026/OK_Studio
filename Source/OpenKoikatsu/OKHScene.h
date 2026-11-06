@@ -70,7 +70,7 @@ private:
 struct FOKHPose {
     int32 Pair=INDEX_NONE;      // index in the controller's NativePairs
     int32 Mode=0;               // 1 service, 2 intercourse (AnimationInfo_XX)
-    bool bThree=false;FString SecondSource;int32 SecondLayer=0; // 3P (AnimationInfo_06, _07): plays as its mode, with the second heroine
+    bool bThree=false;bool bSecondUndone=false;FString SecondSource;int32 SecondLayer=0; // 3P (AnimationInfo_06, _07): plays as its mode, with the second heroine
     int32 KindHoushi=0;         // service: 0 hand, 1 mouth, 2 breasts
     int32 SysTaii=0;            // sysTaii: 0 hand or breasts only, 1 licking, 2 him in her mouth (咥え)
     bool Anal=false;
@@ -143,7 +143,7 @@ public:
     };
 private:
     // Caress (AnimationInfo_00): her own animation, him hidden (HAibu); each state is prepared up front.
-    struct FAibuPose {FString Name,Source;int32 Layer=0,Id=-1,Prop=0,Info=0,Ctrl=0,SecondLayer=0;FString SecondSource;}; // Info: HFlag.EMode, 0 caress, 3 masturbation, 4 peeping, 5 lesbian
+    struct FAibuPose {FString Name,Source;int32 Layer=0,Id=-1,Prop=0,Info=0,Ctrl=0,SecondLayer=0,UpperCloth=0,LowerCloth=0;bool bSecondUndone=false;FString SecondSource;}; // Info: HFlag.EMode, 0 caress, 3 masturbation, 4 peeping, 5 lesbian
     TArray<FAibuPose> AibuPoses;
     TMap<FString,FString> SoloKeys;      // state -> clip key of the active caress pose
     FString SoloState;double SoloStarted=0.;
@@ -152,6 +152,10 @@ private:
     UPROPERTY() TObjectPtr<class AKKPreviewActor> Second;
     TArray<float> SecondFace,SecondBody;TMap<FString,FString> SecondKeys;FString SecondState,SecondName;
     int32 SecondGeneration=0;bool bSecondLoading=false,bSecondReady=false,bSecondBare=false;
+    // Her part of the scene: the original has one gauge for both (flags.gaugeFemale), so she climaxes when the first does.
+    struct FSecondRun {int32 Girl=0;FString Id,Name;int32 Orgasms=0;TArray<FString> Poses;};
+    TArray<FSecondRun> SecondRuns;int32 SecondRun=INDEX_NONE,SecondPersonality=0,SecondLevel=0;float SecondVoiceRate=.5f;double SecondCameUntil=0.;FString SecondBreathKey,SecondFaceKey,SecondClothKey;
+    void SecondReact();void SecondBreath(const FString& State);bool SecondHere() const;
     void LoadSecond(int32 Index);void DropSecond();void TickSecond();void PlaySecond(const FString& State);void PrepareSecond(const FString& Source,int32 Layer);
     int32 ActiveAibu=INDEX_NONE,PendingAibu=INDEX_NONE,AibuGeneration=0,TouchArea=INDEX_NONE;
     int32 AreaClimaxes[11]={};          // her climaxes from his touch or kiss there (AreaSeconds order; hexp climaxes)
@@ -196,7 +200,7 @@ private:
     void BuildList();
     void BuildActions();
     void SelectPose(int32 PoseIndex);
-    void PoseClothes(const FOKHPose& Pose);
+    void PoseClothes(int32 Upper,int32 Lower);
     // His penis drawn through her (ApplyMaleLook) only in a pose where he is in her: as it was last applied.
     bool XRayInHer() const;bool bXRayInHer=false;
     bool FinishInMouth() const;
