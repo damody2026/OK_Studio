@@ -1,4 +1,5 @@
 #include "OKSceneCard.h"
+#include "Async/ParallelFor.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
@@ -13,6 +14,7 @@
 #include "OKSceneDocument.h"
 #include "OKStudioImport.h"
 #include "TextureResource.h"
+#include <atomic>
 
 namespace
 {
@@ -431,18 +433,24 @@ bool FOKSceneCard::Open(const FString& Path, UOKSceneDocument* Document, FString
 		if (!FFileHelper::LoadFileToArray(Bytes, *Path) || !ReadPayload(Bytes, Json, Cards, OutError, &Extras)) { if (OutError.IsEmpty()) OutError = TEXT("cannot read ") + Path; return false; }
 		IFileManager::Get().MakeDirectory(*CardDirectory, true);
 		TArray<FString> Files;
-		for (int32 I = 0; I < Cards.Num(); ++I)
-		{
-			Files.Add(CardDirectory / FString::Printf(TEXT("card_%d.png"), I));
-			if (!FFileHelper::SaveArrayToFile(Cards[I], *Files.Last())) { OutError = TEXT("cannot write ") + Files.Last(); return false; }
-		}
+		for (int32 I = 0; I < Cards.Num(); ++I) Files.Add(CardDirectory / FString::Printf(TEXT("card_%d.png"), I));
 		TArray<FString> ExtraFiles;
-		for (int32 I = 0; I < Extras.Num(); ++I)
+		// The name came from the card: nothing of it but the file name is used.
+		for (int32 I = 0; I < Extras.Num(); ++I) ExtraFiles.Add(CardDirectory / FString::Printf(TEXT("file_%d_%s"), I, *FPaths::MakeValidFileName(FPaths::GetCleanFilename(Extras[I].Key))));
+		// This holds the frame: side by side, and what a former opening left is not written again (U260).
+		TArray<const TArray<uint8>*> Contents;
+		TArray<FString> Targets = Files;
+		for (const TArray<uint8>& Card : Cards) Contents.Add(&Card);
+		Targets.Append(ExtraFiles);
+		for (const TPair<FString, TArray<uint8>>& Extra : Extras) Contents.Add(&Extra.Value);
+		std::atomic<int32> Failed{ INDEX_NONE };
+		ParallelFor(Targets.Num(), [&](int32 I)
 		{
-			// The name came from the card: nothing of it but the file name is used.
-			ExtraFiles.Add(CardDirectory / FString::Printf(TEXT("file_%d_%s"), I, *FPaths::MakeValidFileName(FPaths::GetCleanFilename(Extras[I].Key))));
-			if (!FFileHelper::SaveArrayToFile(Extras[I].Value, *ExtraFiles.Last())) { OutError = TEXT("cannot write ") + ExtraFiles.Last(); return false; }
-		}
+			TArray<uint8> Old;
+			if (IFileManager::Get().FileSize(*Targets[I]) == Contents[I]->Num() && FFileHelper::LoadFileToArray(Old, *Targets[I]) && Old == *Contents[I]) return;
+			if (!FFileHelper::SaveArrayToFile(*Contents[I], *Targets[I])) Failed = I;
+		});
+		if (Failed != INDEX_NONE) { OutError = TEXT("cannot write ") + Targets[Failed.load()]; return false; }
 		if (!Document->FromJson(Json, OutError)) return false;
 		auto Unpack = [&ExtraFiles](FString& Ref)
 		{

@@ -764,12 +764,15 @@ int32 UOKStudioGame::FindMmdCameraId(bool bOnlyMmdScene) const
 bool UOKStudioGame::Load(const FString& Path, FString& OutError)
 {
 	FString Note;
+	const double OpenStart = FPlatformTime::Seconds();
 	if (!FOKSceneCard::Open(Path, Document, OutError, &Note)) return false;
-	UE_LOG(LogTemp, Display, TEXT("OK studio: opened %s: %s"), *Path, *Note);
+	const double Opened = FPlatformTime::Seconds();
+	UE_LOG(LogTemp, Display, TEXT("OK studio: opened %s in %.2f s: %s"), *Path, Opened - OpenStart, *Note);
 	FOKStudioSettings::Get().UseScene(Path);
 	// A KStudio scene is imported, not edited in place: saving writes an OK scene card beside it.
 	File = FOKSceneCard::Kind(Path) == FOKSceneCard::EKind::KStudio ? FString() : Path;
 	ReleaseSceneResources();
+	UE_LOG(LogTemp, Display, TEXT("OK studio: last scene released in %.2f s"), FPlatformTime::Seconds() - Opened);
 	if (SceneActor) SceneActor->bProgressiveBuild = !bSyncBuildsAll;
 	TimelineTime = FMath::Clamp(Document->Playhead, 0.f, FMath::Max(Document->Duration, 0.f)); // where it was saved
 	LoopStart = 0.f;
