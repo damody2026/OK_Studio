@@ -219,7 +219,7 @@ public:
  float StyleDefault(const FString& Parameter) const;
  void OnStyleReset(UOKShapeSlider* Slider);
  void ApplyCharacterStyle();
- float CharacterStyle=0.f;
+ float CharacterStyle=0.f,CharacterFaceStyle=0.f;
  FVector StyledActorLocation=FVector::ZeroVector;
  float StyledScale=1.f;
  UPROPERTY() TObjectPtr<AKKPreviewActor> StyledActor;

@@ -428,9 +428,15 @@ struct OKSTUDIO_API FOKSceneCharacter
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State")
 	TArray<uint8> AccessoriesShown;
 
-	/** Style of the character's shape: -1 realistic, 0 the card's, 1 chibi. Changes the shown character without a rebuild. */
+	/** Style of the character's body: -1 realistic, 0 the card's, 1 chibi. Changes the shown character without a rebuild. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State")
 	float Style = 0.f;
+
+	/** Style of the face, on its own (below -1: the body's, as scenes from before it was separate have). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State")
+	float FaceStyle = -2.f;
+
+	float ShownFaceStyle() const { return FaceStyle < -1.f ? Style : FaceStyle; }
 
 	/** Invisible Body (KK_InvisibleBody): -1 the card's, 0 shown, 1 only clothes and accessories drawn. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State")
@@ -978,6 +984,12 @@ struct OKSTUDIO_API FOKSceneKey
 	/** A character's style at this key (below -1: not keyed); it blends between keys. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
 	float Style = -2.f;
+
+	/** The face's style at this key (below -1: the key's Style). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	float FaceStyle = -2.f;
+
+	float ShownFaceStyle() const { return FaceStyle < -1.f ? Style : FaceStyle; }
 
 	/** A light's colour at this key (alpha < 0: not keyed). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")

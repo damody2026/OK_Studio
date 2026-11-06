@@ -26,7 +26,7 @@ OKSTUDIO_API FOKStudioStyleTuning& OKStudioStyleTuning();
  * value towards the style's, so the card still shows through. `Body` and `Face` are the card's sliders and are changed in
  * place. Out of 0..1 the values are what SliderUnlocker's cards use (shape.rs get_info extrapolates them).
  */
-OKSTUDIO_API void OKStudioStyleSliders(float Style, TArray<float>& Body, TArray<float>& Face);
+OKSTUDIO_API void OKStudioStyleSliders(float Style, float FaceLook, TArray<float>& Body, TArray<float>& Face);
 
 /** The whole character's size at style `Style`, from the card's sliders and the styled ones. The height slider itself keeps head,
  * hands and torso at their size while the rest grows (cf_a_height_aid), so a style scales the character instead. The realistic

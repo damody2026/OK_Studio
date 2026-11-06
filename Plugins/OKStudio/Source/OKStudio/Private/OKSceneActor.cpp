@@ -875,16 +875,17 @@ void AOKSceneActor::ApplyCharacterState(const FOKSceneObject& Object, FShown& It
 		Actor->SetBlush(C.Blush);
 	}
 	// The style is the card's sliders moved: the shown character takes them on its next pose, as the maker's sliders.
-	if (!FMath::IsNearlyEqual(C.Style, Item.AppliedStyle, 1.e-3f) || Item.AppliedStyleTuning != OKStudioStyleTuning().Revision)
+	if (!FMath::IsNearlyEqual(C.Style, Item.AppliedStyle, 1.e-3f) || !FMath::IsNearlyEqual(C.ShownFaceStyle(), Item.AppliedFaceStyle, 1.e-3f) || Item.AppliedStyleTuning != OKStudioStyleTuning().Revision)
 	{
 		TArray<float> Body = Actor->ShapeBody, Face = Actor->ShapeFace;
-		OKStudioStyleSliders(C.Style, Body, Face);
+		OKStudioStyleSliders(C.Style, C.ShownFaceStyle(), Body, Face);
 		const float Scale = OKStudioStyleScale(C.Style, Actor->ShapeBody, Body);
 		Actor->Session.SetStyleBones(OKStudioStyleBones(C.Style, Scale));
 		Item.RenderCorrection.SetScale3D(FVector(Scale));
 		Item.RenderCorrection.SetTranslation(FVector(0.f, 0.f, OKStudioStyleLift(C.Style, Scale, Actor->ShapeBody.IsValidIndex(0) ? Actor->ShapeBody[0] : 0.5f)));
 		Actor->MarkShapeDirty(Face, Body);
 		Item.AppliedStyle = C.Style;
+		Item.AppliedFaceStyle = C.ShownFaceStyle();
 		Item.AppliedStyleTuning = OKStudioStyleTuning().Revision;
 	}
 	if (bHasAnimFace) { if (Actor->bAutomaticBlink) Actor->SetAutomaticBlink(false); } else if (C.Blink >= 0 && Actor->bAutomaticBlink != (C.Blink == 1)) Actor->SetAutomaticBlink(C.Blink == 1);

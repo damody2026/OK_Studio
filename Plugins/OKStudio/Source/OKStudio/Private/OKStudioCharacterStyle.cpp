@@ -200,38 +200,42 @@ FString OKStudioStyleBones(float Style, float Scale)
 	return TEXT("[") + Json + TEXT("]");
 }
 
-void OKStudioStyleSliders(float Style, TArray<float>& Body, TArray<float>& Face)
+void OKStudioStyleSliders(float Style, float FaceLook, TArray<float>& Body, TArray<float>& Face)
 {
 	Style = FMath::Clamp(Style, -1.f, 1.f);
-	if (Style == 0.f) return;
-	const TArray<float> CardFace = Face;
-	Pulled(Style, BodyStyle, Body);
-	Pulled(Style, FaceStyle, Face);
-	// The jaw keeps the card's shape: the realistic end only goes part of the way, the chibi end widens a narrow jaw and leaves a wide one.
+	FaceLook = FMath::Clamp(FaceLook, -1.f, 1.f);
 	const FOKStudioStyleTuning& Tuning = OKStudioStyleTuning();
-	if (Style < 0.f)
+	if (FaceLook != 0.f)
 	{
-		// A narrow jaw is already sharp and takes little of it, a wide one takes more (chin width and cheek width, the card's).
-		const float Jaw = Face.IsValidIndex(16) ? (CardFace[9] + CardFace[16]) * 0.5f : 0.f;
-		const float Strength = FMath::Clamp(Tuning.RealJaw + 0.74f * (Jaw - 0.04f), 0.1f, 0.7f);
-		for (int32 Index : { 0, 5, 6, 8, 9, 16, 17, 18 })
-			if (Face.IsValidIndex(Index)) Face[Index] = FMath::Lerp(CardFace[Index], Face[Index], Strength);
-		// Eyes going up and shrinking leave a longer face under them, which reads as a sharper chin.
-		for (int32 Index : { 30, 33, 34, 35, 38, 40, 42 })
-			if (Face.IsValidIndex(Index)) Face[Index] = FMath::Lerp(CardFace[Index], Face[Index], Tuning.RealFace);
+		const TArray<float> CardFace = Face;
+		Pulled(FaceLook, FaceStyle, Face);
+		// The jaw keeps the card's shape: the realistic end only goes part of the way, the chibi end widens a narrow jaw and leaves a wide one.
+		if (FaceLook < 0.f)
+		{
+			// A narrow jaw is already sharp and takes little of it, a wide one takes more (chin width and cheek width, the card's).
+			const float Jaw = Face.IsValidIndex(16) ? (CardFace[9] + CardFace[16]) * 0.5f : 0.f;
+			const float Strength = FMath::Clamp(Tuning.RealJaw + 0.74f * (Jaw - 0.04f), 0.1f, 0.7f);
+			for (int32 Index : { 0, 5, 6, 8, 9, 16, 17, 18 })
+				if (Face.IsValidIndex(Index)) Face[Index] = FMath::Lerp(CardFace[Index], Face[Index], Strength);
+			// Eyes going up and shrinking leave a longer face under them, which reads as a sharper chin.
+			for (int32 Index : { 30, 33, 34, 35, 38, 40, 42 })
+				if (Face.IsValidIndex(Index)) Face[Index] = FMath::Lerp(CardFace[Index], Face[Index], Tuning.RealFace);
+		}
+		else
+		{
+			for (int32 Index : { 0, 5, 9, 16 })
+				if (Face.IsValidIndex(Index)) Face[Index] = FMath::Min(Face[Index], FMath::Max(CardFace[Index], CardFace[Index] + FaceLook * Tuning.ChibiJaw));
+		}
+		// The bottom of the chin rounds off at both ends, from the card's own: lowering the tip blunts it far more than widening it does.
+		if (Face.IsValidIndex(13))
+		{
+			const float Round = FMath::Abs(FaceLook) * (FaceLook < 0.f ? Tuning.RealChin : Tuning.ChibiChin);
+			Face[11] = CardFace[11] - Round;
+			Face[13] = CardFace[13] + Round * 2.f;
+		}
 	}
-	else
-	{
-		for (int32 Index : { 0, 5, 9, 16 })
-			if (Face.IsValidIndex(Index)) Face[Index] = FMath::Min(Face[Index], FMath::Max(CardFace[Index], CardFace[Index] + Style * Tuning.ChibiJaw));
-	}
-	// The bottom of the chin rounds off at both ends, from the card's own: lowering the tip blunts it far more than widening it does.
-	if (Face.IsValidIndex(13))
-	{
-		const float Round = FMath::Abs(Style) * (Style < 0.f ? Tuning.RealChin : Tuning.ChibiChin);
-		Face[11] = CardFace[11] - Round;
-		Face[13] = CardFace[13] + Round * 2.f;
-	}
+	if (Style == 0.f) return;
+	Pulled(Style, BodyStyle, Body);
 	// The chibi end takes at most half of the card's breasts away.
 	if (Body.IsValidIndex(4)) Body[4] = Style > 0.f ? FMath::Lerp(Body[4], FMath::Max(Body[4] * 0.5f, FMath::Min(Body[4], ChibiBreast)), Style) : Body[4] - Style * Pull * (OKStudioStyleTuning().Breast - Body[4]);
 	if (Body.IsValidIndex(1)) Body[1] = Style > 0.f ? FMath::Lerp(Body[1], ChibiHead, Style * Pull) : FMath::Lerp(Body[1], FMath::Min(Body[1], RealHead(Body[0])), -Style);

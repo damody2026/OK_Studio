@@ -231,6 +231,7 @@ private:
 		TArray<float> BlendDefaults, AppliedBlend;
 		int32 AppliedHands[2] = { -1, -1 };
 		float AppliedStyle = 0.f;
+		float AppliedFaceStyle = 0.f;
 		int32 AppliedStyleTuning = 0;
 		bool bEyesTracking = false;
 		bool bFixedEyesApplied = false;

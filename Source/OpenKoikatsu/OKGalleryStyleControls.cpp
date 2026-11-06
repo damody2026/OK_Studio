@@ -23,7 +23,8 @@ namespace
 	using T = FOKStudioStyleTuning;
 	struct FStyleControl { const TCHAR* Key; const TCHAR* Label; float Min; float Max; float T::* Field; };
 	const FStyleControl StyleControls[] = {
-		{ TEXT("style"), TEXT("風格（-1 寫實、1 Q 版）"), -1.f, 1.f, nullptr },
+		{ TEXT("style"), TEXT("身體風格（-1 寫實、1 Q 版）"), -1.f, 1.f, nullptr },
+		{ TEXT("face_style"), TEXT("臉風格（-1 寫實、1 Q 版）"), -1.f, 1.f, nullptr },
 		{ TEXT("heads"), TEXT("頭身"), 7.f, 15.f, &T::Heads },
 		{ TEXT("head_size"), TEXT("頭大小"), 0.8f, 1.5f, &T::HeadSize },
 		{ TEXT("shoulders"), TEXT("肩寬"), 0.7f, 2.f, &T::Shoulders },
@@ -138,11 +139,18 @@ void UOKCharacterController::BuildStyleControls()
 	}
 	ShapeBox->AddChild(StyleBox);
 	StyleBox->SetVisibility(ESlateVisibility::Collapsed);
+	// The body's start moves the face too unless the face has its own.
 	float Start = 0.f;
 	if (FParse::Value(FCommandLine::Get(), TEXT("-CharacterStyle="), Start))
 	{
 		StyleSliders[0]->SetValue(Start);
-		CharacterStyle = Start;
+		StyleSliders[1]->SetValue(Start);
+		CharacterStyle = CharacterFaceStyle = Start;
+	}
+	if (FParse::Value(FCommandLine::Get(), TEXT("-CharacterFaceStyle="), Start))
+	{
+		StyleSliders[1]->SetValue(Start);
+		CharacterFaceStyle = Start;
 	}
 }
 
@@ -157,7 +165,7 @@ void UOKCharacterController::OnStyleChanged(const FString& Parameter, float Valu
 		++OKStudioStyleTuning().Revision;
 		SaveTuning();
 	}
-	else CharacterStyle = Value;
+	else (Parameter == TEXT("face_style") ? CharacterFaceStyle : CharacterStyle) = Value;
 	ApplyCharacterStyle();
 }
 
@@ -184,7 +192,7 @@ void UOKCharacterController::ApplyCharacterStyle()
 	}
 	StyledActor = PreviewActor;
 	TArray<float> Body = Selected.Body.ShapeValueBody, Face = Selected.Face.ShapeValueFace;
-	OKStudioStyleSliders(CharacterStyle, Body, Face);
+	OKStudioStyleSliders(CharacterStyle, CharacterFaceStyle, Body, Face);
 	const float Scale = OKStudioStyleScale(CharacterStyle, Selected.Body.ShapeValueBody, Body);
 	PreviewActor->Session.SetStyleBones(OKStudioStyleBones(CharacterStyle, Scale));
 	PreviewActor->SetActorScale3D(FVector(Scale));
@@ -199,7 +207,7 @@ void UOKCharacterController::ApplyCharacterStyle()
 	PreviewActor->ApplyOrbitCamera();
 }
 
-static FAutoConsoleCommand GalleryStyleCmd(TEXT("ok.GalleryStyle"), TEXT("ok.GalleryStyle <key> <value>: a slider of the card reader's 角色風格 (keys: style, heads, hips, ...)"),
+static FAutoConsoleCommand GalleryStyleCmd(TEXT("ok.GalleryStyle"), TEXT("ok.GalleryStyle <key> <value>: a slider of the card reader's 角色風格 (keys: style, face_style, heads, hips, ...)"),
 	FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
 	{
 		if (Args.Num() < 2) return;
