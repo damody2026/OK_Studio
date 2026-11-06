@@ -731,7 +731,9 @@ fn order_second_dish(r: &Value) -> Value {
     let has_like = r.get("has_like").and_then(Value::as_bool).unwrap_or(false);
     let same = r.get("same_dish").and_then(Value::as_bool).unwrap_or(false);
     let starving = r.get("for_her").and_then(Value::as_bool).unwrap_or(false) && r.get("satiety").and_then(Value::as_f64).unwrap_or(100.0) < 40.0;
-    json!({"order": !has_like || (starving && !same)})
+    // Most of the same dish gone: "one more" is one more, whoever it is for.
+    let nearly_gone = r.get("nearly_gone").and_then(Value::as_bool).unwrap_or(false);
+    json!({"order": !has_like || (starving && !same) || nearly_gone})
 }
 
 /// Her reply's give_money and the judge's he_lends about the same exchange: a loan the judge read is the loan, not a gift
@@ -942,6 +944,7 @@ mod tests {
         assert_eq!(order_second_dish(&json!({"has_like": true, "for_her": true, "satiety": 80.0}))["order"], false);
         assert_eq!(order_second_dish(&json!({"has_like": true, "for_her": true, "satiety": 20.0}))["order"], true);
         assert_eq!(order_second_dish(&json!({"has_like": true, "same_dish": true, "for_her": true, "satiety": 20.0}))["order"], false);
+        assert_eq!(order_second_dish(&json!({"has_like": true, "same_dish": true, "nearly_gone": true}))["order"], true);
     }
 
     #[test]

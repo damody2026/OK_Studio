@@ -303,5 +303,8 @@ bool AOKStreetSocialScene::SecondDishOk(int32 Her,bool bForHer,const FString& It
  auto Request=OKRulesRequest(TEXT("order_second_dish"));Request->SetBoolField(TEXT("has_like"),true);Request->SetBoolField(TEXT("for_her"),bForHer);
  Request->SetNumberField(TEXT("satiety"),OKStreetViewRelation(S.Store,OKStreetStableId(S.Manifest.Characters[Her]),S.Manifest.TalkBudget).Satiety);
  Request->SetBoolField(TEXT("same_dish"),S.Table.ContainsByPredicate([&](const FOKStreetDish& D){return D.ForHer==bForHer&&(!bForHer||D.Her==Her)&&D.ItemId==ItemId&&D.Percent>0;}));
+ // The same dish well started ("one more", half the tea egg eaten): a second one, not "you still have one". Not one still
+ // coming or untouched: that is the same order said again.
+ Request->SetBoolField(TEXT("nearly_gone"),S.Table.ContainsByPredicate([&](const FOKStreetDish& D){return D.ForHer==bForHer&&(!bForHer||D.Her==Her)&&D.ItemId==ItemId&&D.Served&&D.Percent>0&&D.Percent<=75.f;}));
  const TSharedPtr<FJsonObject> Out=OKRulesEval(S,Request);return Out.IsValid()&&Out->GetBoolField(TEXT("order"));
 }

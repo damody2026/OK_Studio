@@ -539,6 +539,8 @@ void AOKStreetSocialScene::ApplyChoiceReply(int32 Character,const FOKFreeTalkRep
   // were dropped without a word, and she ate a strawberry cake while his soup never came, R4-28).
   if(!Item||!SoldHere(*Item,Place)){UE_LOG(LogTemp,Display,TEXT("Street order rejected: %s at %s"),*O.Id,*Place);
    S.TellHer.Add(OKMsg(TEXT("ui.economy.not_sold_here_order"),{{TEXT("item"),Item?Item->Name:O.Id}}));continue;}
+  // Clothes for her go to her wardrobe, not onto a bill (as the judge's orders).
+  if(ForHer&&Item->Category==TEXT("clothes")){S.ShopPlace=Place;FinishClothes(Character,O.Id,TEXT("accept"));continue;}
   // Whoever it is for still has one of these on the table or on its way ("then a tea" again, the tea she ordered a
   // moment ago still coming): not a second one (as for the judge's orders).
   bool HadBefore=false;{const TArray<FOKStreetCartLine> Mine(S.Cart.GetData()+CartBefore,S.Cart.Num()-CartBefore);S.Cart.SetNum(CartBefore);HadBefore=HasDishLike(ForHer?Character:0,*Item);S.Cart.Append(Mine);}

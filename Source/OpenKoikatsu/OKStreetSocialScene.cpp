@@ -375,7 +375,7 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  TWeakObjectPtr<class UPointLightComponent> CatchLight;
  int64 SaidToHerAt=0; // game minute of his last line to her: lines from a talk hours ago (same girl) are not this conversation
  double FreeTalkQuietUntil=0; // she asked him to keep quiet (judge): his silence is what she wanted until then
- bool ControlMicIgnored=false; // control channel: what the room microphone hears is not his (a tester talking nearby)
+ double FreeTalkLiveResyncAt=0;bool ControlMicIgnored=false; // control channel: what the room microphone hears is not his (a tester talking nearby)
  bool FreeTalkMicPausedClock=false,FreeTalkMicOpen=false,FreeTalkLiveReady=false,FreeTalkLiveStarting=false,FreeTalkLeavePending=false;double FreeTalkSilenceSince=0,FreeTalkNudgeAt=0,FreeTalkLiveTickAt=0;int32 FreeTalkSilencePenalties=0;float FreeTalkSilenceScale=1;int32 LiveTestPhase=-1,LiveTestNudges=0,LiveTestPenalties=0;float LiveTestFavor=0;bool LiveTestLeft=false,LiveTestInterrupted=false,LiveTestHerReply=false;double LiveTestAt=0;FString LiveTestWav;double FreeTalkLiveRetryAt=0;int32 FreeTalkLivePollFails=0;float FreeTalkMicLevel=0;FString FreeTalkMic;TArray<FString> FreeTalkMics;
  FString OutingActivity,OutingPlace;TArray<FVector> OutingRoute;int32 OutingStep=0;double OutingProgressAt=0;bool OutingWaitDoor=false;bool OutingRun=false;FString StrollActivity;int64 StrollStartMinute=0;bool QuietTalk=false;TArray<TWeakObjectPtr<AActor>> PlaceActors;TArray<TWeakObjectPtr<ADirectionalLight>> PlaceFills;float NextPairYaw=0;FString NextPairFemaleClip,NextPairMaleClip;int32 SoloGirl=INDEX_NONE,SoloPhase=0,SoloMinutes=0;double SoloAt=0;int64 SoloStartMinute=0;FVector SoloSpot=FVector::ZeroVector;float SoloYaw=0;FString SoloFemale,SoloMale,SoloWhat,SoloId;bool SleepPaired=false;int32 SleepPhase=0,SleepGirl=INDEX_NONE;double SleepAt=0;FVector SleepBed=FVector::ZeroVector,SleepGirlBed=FVector::ZeroVector;float SleepYaw=0,SleepGirlYaw=0;FString SleepPlace;int32 RestroomGirl=INDEX_NONE;double RestroomUntil=0;FString RestroomPlace;double RestroomBlockedAt=0;struct FPlaceLayers {int32 Place=INDEX_NONE;TWeakObjectPtr<UPrimitiveComponent> Roof;TMap<int32,TWeakObjectPtr<UPrimitiveComponent>> Levels;};TArray<FPlaceLayers> PlaceRoofs;FString PlaceTourDir;int32 PlaceTourIndex=-1;double PlaceTourAt=0;bool PlaceTourShot=false;TMap<int32,FVector> CommuteShown;
  TArray<FString> FreeTalkSpeechLines,FreeTalkSpeechPaths,FreeTalkReplayParts;TArray<uint8> FreeTalkSpeechReady,FreeTalkSpeechStreamed;TArray<TSharedPtr<FKKRuntimeSpeechStream,ESPMode::ThreadSafe>> FreeTalkSpeechStreams;int32 FreeTalkSpeechGeneration=0,FreeTalkSpeechCharacter=INDEX_NONE,FreeTalkSpeechPlayed=0,FreeTalkSpeechFiles=0;int64 FreeTalkSpeechSerial=0;double FreeTalkSpeechNext=0,FreeTalkSpeechRepliedAt=0;FString FreeTalkSpeechChannel;TArray<double> FreeTalkSpeechSentAt;
@@ -437,6 +437,8 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  double SplashCycleSeconds=10.0/3.0;
  FOKStreetPairSession SplashProbeSession;
  TArray<TWeakObjectPtr<AStaticMeshActor>> PairProps;
+ // The food on their plates at a meal table: drawn from what is served (TickMeal), not picked when they sit down.
+ TFunction<void(int32,float)> MealDishDraw;TArray<TWeakObjectPtr<AStaticMeshActor>> MealDishProps;FString MealDishShown;
  TMap<int32,TArray<TWeakObjectPtr<AStaticMeshActor>>> ReadingProps;
  int32 ReadingActorsVerified=0,ReadingProbePhase=0,ReadingForceWalk=INDEX_NONE;
  FOKStreetAgentSim ReadingSavedAgent;double ReadingProbeAt=0;FString ReadingProbeSave;
@@ -1602,6 +1604,9 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
    if(L->ChatOrderAwaitsJudge.Remove(Character)>0&&!L->Cart.IsEmpty())Weak->PlaceChatOrder(Character,Her);
    Weak->ExecuteFreeTalkAction(Character,Id,HerAction);return;}
   FString DoNow,Why;Verdict->TryGetStringField(TEXT("do_now"),DoNow);Verdict->TryGetStringField(TEXT("why"),Why);
+  // She tries it on now: the same as the menu's button. 贞德 went to "the fitting room" and the floor's photo pose came up.
+  {FString TryOn;if(Verdict->TryGetStringField(TEXT("try_on"),TryOn)&&!TryOn.IsEmpty()){const FString Worn=Weak->ResolveItemId(TryOn,L->ShopPlace);
+    if(const auto* Item=L->Catalog.Find(Worn);Item&&Item->Category==TEXT("clothes")){UE_LOG(LogTemp,Display,TEXT("Street judge: actor=%d tries on %s"),Character,*Worn);DoNow.Reset();Weak->TryClothes(Character,Worn);}}}
   // His words answered her offer to sing ("sure, sing for me"), asked for her waiting song now, or asked her to sing
   // her last song again: the same as the panel's buttons.
   {FString Song;if(Verdict->TryGetStringField(TEXT("song_answer"),Song)){const auto& SG=L->Song;
@@ -1619,6 +1624,12 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
   // became a stroll waiting for his noodles, and set off ten minutes later just as he said he had to run to class (R6-161).
   if(DoNow.StartsWith(TEXT("go:"))&&DoNow.Mid(3)==Weak->PlaceHere(L->Male)&&((L->Pair.Partner==Character&&(L->Pair.Meal||L->Pair.Drink))||(!L->Table.IsEmpty()&&L->MealPlace==DoNow.Mid(3)))){
    UE_LOG(LogTemp,Display,TEXT("Street judge: do_now %s is where they sit at their table; nothing to start"),*DoNow);DoNow.Reset();}
+  // A walk with food still on their table waits until it is eaten: "after we eat we'll go" came as do_now walk, and 惠惠 and
+  // he got up four minutes into their lunch with the plates full (R6-161).
+  if((DoNow==TEXT("walk")||DoNow==TEXT("stroll"))&&L->Pair.Partner==Character&&(L->Pair.Meal||L->Pair.Drink)&&L->Table.ContainsByPredicate([](const FOKStreetDish& D){return D.Percent>0.f;})){
+   UE_LOG(LogTemp,Display,TEXT("Street judge: do_now %s waits until they have eaten"),*DoNow);
+   if(L->ThenAction.IsEmpty()){L->ThenAction=DoNow;L->ThenGirl=Character;L->ThenUntil=OKStreetMindNow(*L)+120;L->ThenReadyAt=0;L->ThenStayMinutes=0;}
+   DoNow.Reset();}
   if(DoNow.StartsWith(TEXT("go:"))&&DoNow.Mid(3)==Weak->PlaceHere(L->Male)){UE_LOG(LogTemp,Display,TEXT("Street judge: do_now %s is where he is; a stroll here"),*DoNow);DoNow=TEXT("stroll");}
   const TSharedPtr<FJsonObject>* Promise=nullptr;FString Day,Time,Place,What;bool PayForPromise=false;
   if(Verdict->TryGetObjectField(TEXT("promise"),Promise)&&Promise&&(*Promise).IsValid()){(*Promise)->TryGetStringField(TEXT("day"),Day);(*Promise)->TryGetStringField(TEXT("time"),Time);(*Promise)->TryGetStringField(TEXT("place"),Place);(*Promise)->TryGetStringField(TEXT("what"),What);}
@@ -1836,6 +1847,8 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
     if(!Item->Consumable&&!Item->UsedOnTheSpot()){const int64* At=L->RecentBought.Find(ItemId+(ForHer?TEXT("|her"):TEXT("|him")));
      if(At&&OKStreetMindNow(*L)-*At<=15){L->TellHer.Add(OKMsg(TEXT("ui.economy.already_bought_order"),{{TEXT("for"),ForHer?TEXT("her"):TEXT("him")},{TEXT("item"),Item->Name}}));UE_LOG(LogTemp,Display,TEXT("Street judge order skipped: %s, bought for %s %lld min ago"),*Item->Name,ForHer?TEXT("her"):TEXT("him"),OKStreetMindNow(*L)-*At);continue;}}
     if(ForHer&&Weak->TooFullFor(Character,*Item)){L->TellHer.Add(OKMsg(TEXT("ui.economy.too_full_to_order"),{{TEXT("item"),Item->Name}}));UE_LOG(LogTemp,Display,TEXT("Street judge order skipped: %s, she is full"),*Item->Name);continue;}
+    // Clothes he buys for her are hers to wear, not a line on a bill: ¥399 was paid for 贞德's dress and it was never in her wardrobe.
+    if(ForHer&&Item->Category==TEXT("clothes")){L->ShopPlace=Shop;Weak->FinishClothes(Character,ItemId,TEXT("accept"));continue;}
     FOKStreetCartLine Line;Line.ItemId=ItemId;Line.ForHer=ForHer;Line.Size=Item->DefaultSize();
     // As he asked for it ("a pearl milk tea, half sugar less ice"): the judge's sweetness and ice, as the shop makes them.
     if(!Item->Options.IsEmpty()){FString Sweet,Ice,Refused;O->TryGetStringField(TEXT("sweetness"),Sweet);O->TryGetStringField(TEXT("ice"),Ice);Weak->SetDrinkOptions(Line,Sweet,Ice,&Refused);
@@ -3067,6 +3080,7 @@ void AOKStreetSocialScene::FinishPhoto(bool bKeepTalking){
  if(P.Conversation()&&S.ActGirl==P.Partner)S.ActTimeCut=true;
  const auto Before=P;P=FOKStreetPairSession();if(Before.Conversation())EndTalk();
  for(auto& Prop:S.PairProps)DestroyLater(Prop.Get());S.PairProps.Reset();S.MealHandProps.Reset();
+ for(auto& Prop:S.MealDishProps)DestroyLater(Prop.Get());S.MealDishProps.Reset();S.MealDishDraw=nullptr;S.MealDishShown.Reset();
  const auto& Restore=Before;FString Error;ResumeBehavior(0,Error);ResumeBehavior(Restore.Partner,Error);
  S.PairRestoredFrame=GFrameCounter;S.PairRestoredActor=Restore.Partner;
  {auto& Agent=S.Agents[Restore.Partner-1];Agent.Held=false;Agent.Mode=EOKStreetMove::Walking;Agent.Stuck=0;}S.Yaw=Restore.SavedYaw;S.Pitch=Restore.SavedPitch;S.Distance=Restore.SavedDistance;S.MouseUI=Restore.SavedMouseUI;ApplyMouseMode(S.ViewportFocused);
@@ -3109,13 +3123,14 @@ void AOKStreetSocialScene::TickPhoto(double Now){
    // Tinted shapes (the engine's BasicShapeMaterial takes any colour), so every meal and book looks different.
    UMaterialInterface* Tint=LoadObject<UMaterialInterface>(nullptr,TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
    auto Srgb=[](uint8 R,uint8 G,uint8 B){return FLinearColor(FColor(R,G,B));};
-   auto Shape=[&](const TCHAR* Mesh,FVector Position,FVector Size,FLinearColor Colour,float Yaw=0.f,float Roll=0.f){
+   // By value: the dishes are drawn later, when they come (MealDishDraw).
+   auto Shape=[this,Tint,PairFacing,Origin=S.Male](const TCHAR* Mesh,FVector Position,FVector Size,FLinearColor Colour,float Yaw=0.f,float Roll=0.f){
     const FString Path=FString::Printf(TEXT("/Game/Scenes/StreetSocial/Meshes/%s.%s"),Mesh,Mesh);auto* M=LoadObject<UStaticMesh>(nullptr,*Path);if(!M)return;
-    auto* A=GetWorld()->SpawnActor<AStaticMeshActor>(S.Male+PairFacing.RotateVector(Position),PairFacing+FRotator(0,Yaw,Roll));if(!A)return;A->SetOwner(this);A->SetActorScale3D(Size/100.f);
+    auto* A=GetWorld()->SpawnActor<AStaticMeshActor>(Origin+PairFacing.RotateVector(Position),PairFacing+FRotator(0,Yaw,Roll));if(!A)return;A->SetOwner(this);A->SetActorScale3D(Size/100.f);
     auto* C=A->GetStaticMeshComponent();C->SetMobility(EComponentMobility::Movable);C->SetStaticMesh(M);C->SetCollisionEnabled(ECollisionEnabled::NoCollision);C->SetCastShadow(false);C->SetLightingChannels(true,true,false); // the indoor fill lights too
-    if(Tint){auto* D=UMaterialInstanceDynamic::Create(Tint,A);D->SetVectorParameterValue(TEXT("Color"),Colour);C->SetMaterial(0,D);}S.PairProps.Add(A);};
+    if(Tint){auto* D=UMaterialInstanceDynamic::Create(Tint,A);D->SetVectorParameterValue(TEXT("Color"),Colour);C->SetMaterial(0,D);}State->PairProps.Add(A);};
    // One dish on a plate whose top is at Z (table frame: X across the table, Y from him to her).
-   auto Dish=[&](int32 Kind,float Y,float Z){
+   auto Dish=[Shape,Srgb](int32 Kind,float Y,float Z){
     switch(Kind){
     case 0: // curry rice
      Shape(TEXT("StreetSphere"),FVector(-3,Y-3,Z),FVector(15,10,5),Srgb(250,248,240));Shape(TEXT("StreetSphere"),FVector(3,Y+3,Z),FVector(13,11,3.5f),Srgb(150,90,30));
@@ -3167,11 +3182,10 @@ void AOKStreetSocialScene::TickPhoto(double Now){
     }
    }
    if(P.Meal){
-    const int32 MealKind=FMath::RandHelper(9);
+    S.MealDishDraw=[Dish](int32 Kind,float PlateY){Dish(Kind,PlateY,74.f);};S.MealDishShown.Reset();
     for(int32 Participant=0;Participant<2;++Participant){
      const float PlateY=Participant==0?60.f:110.f;
      Part(FVector(0,PlateY,73),FVector(30,25,2),3);
-     Dish(Participant==0||FMath::RandBool()?MealKind:FMath::RandHelper(9),PlateY,74.f); // often the same as his, sometimes her own
      for(int32 Piece=0;Piece<2;++Piece){const int32 Before=S.PairProps.Num();Part(FVector::ZeroVector,Piece==0?FVector(.8f,13,.8f):FVector(3,4,.6f));if(S.PairProps.Num()!=Before+1){UE_LOG(LogTemp,Display,TEXT("Street pair: ended at Scene.cpp:%d (phase %d)"),__LINE__,S.Pair.Phase);FinishPhoto();return;}auto* Prop=S.PairProps.Last().Get();Prop->SetActorHiddenInGame(true);if(auto* Material=LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/Scenes/StreetSocial/Materials/StreetMaterial11.StreetMaterial11")))Prop->GetStaticMeshComponent()->SetMaterial(0,Material);S.MealHandProps.Add({Prop,FVector(0,Piece==0?5.f:12.f,0)});}
     }
    }

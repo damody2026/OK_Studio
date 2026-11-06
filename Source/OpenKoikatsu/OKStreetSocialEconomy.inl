@@ -509,8 +509,34 @@ void AOKStreetSocialScene::TickPlaceClosing(){
 
 // Eating at the table: once a dish is served she (and he, his own) eats it down over OKStreetEatSeconds, one dish at a time,
 // and what she eats fills her needs in proportion. When she is full she stops and says so; stop_eating stops her earlier.
+// Which of the table's drawn dishes (MealDishDraw's kinds, Scene.cpp) a catalog item looks like.
+static int32 OKStreetDishKind(const FString& Id){
+ auto Any=[&](std::initializer_list<const TCHAR*> Words){for(const TCHAR* W:Words)if(Id.Contains(W))return true;return false;};
+ if(Any({TEXT("pasta"),TEXT("carbonara")}))return 4;
+ if(Any({TEXT("omurice")}))return 6;
+ if(Any({TEXT("steak"),TEXT("hamburg"),TEXT("cutlet"),TEXT("teriyaki"),TEXT("porkchop"),TEXT("drumstick"),TEXT("teppanyaki"),TEXT("bbq"),TEXT("_set"),TEXT("platter")}))return 5;
+ if(Any({TEXT("noodle"),TEXT("ramen"),TEXT("soup"),TEXT("oden")}))return 1;
+ if(Any({TEXT("curry"),TEXT("bento"),TEXT("luroufan"),TEXT("bibimbap"),TEXT("buffet")}))return 0;
+ if(Any({TEXT("caesar"),TEXT("fr_")}))return 7;
+ if(Any({TEXT("fries"),TEXT("nuggets"),TEXT("hotdog"),TEXT("panini")}))return 2;
+ if(Any({TEXT("dumplings"),TEXT("onigiri")}))return 3;
+ return 8;
+}
+
 void AOKStreetSocialScene::TickMeal(float Dt){
- auto& S=*State;if(S.Table.IsEmpty())return;const double Wall=FPlatformTime::Seconds();
+ auto& S=*State;
+ // What is on their plates is what was served: 惠惠's hamburger steak came as a slice of cake and a cup, and he had a plate
+ // of food without ordering, as the dishes were picked at random on sitting down.
+ if(S.MealDishDraw){const FOKStreetDish* Top[2]={nullptr,nullptr};
+  for(const auto& D:S.Table)if(D.Served&&D.Percent>0.f)if(const auto* I=S.Catalog.Find(D.ItemId);I&&!I->IsDrink()){const FOKStreetDish*& T=Top[D.ForHer?1:0];
+   const auto* Was=T?S.Catalog.Find(T->ItemId):nullptr;if(!T||(I->Category==TEXT("meal")&&Was&&Was->Category!=TEXT("meal")))T=&D;}
+  const FString Shown=(Top[0]?Top[0]->ItemId:FString())+TEXT("|")+(Top[1]?Top[1]->ItemId:FString());
+  if(Shown!=S.MealDishShown){S.MealDishShown=Shown;for(auto& Prop:S.MealDishProps)DestroyLater(Prop.Get());S.MealDishProps.Reset();
+   const int32 Before=S.PairProps.Num();
+   if(Top[0])S.MealDishDraw(OKStreetDishKind(Top[0]->ItemId),60.f);
+   if(Top[1])S.MealDishDraw(OKStreetDishKind(Top[1]->ItemId),110.f);
+   for(int32 K=Before;K<S.PairProps.Num();++K)S.MealDishProps.Add(S.PairProps[K]);S.PairProps.SetNum(Before);}}
+ if(S.Table.IsEmpty())return;const double Wall=FPlatformTime::Seconds();
  // The meal is with the girl the dishes were ordered with (each dish keeps her): talking to another one at the table
  // (the drink one girl bought him, then he turns to her friend) does not make it the new one's meal.
  const int32 Talking=FreeTalkPartner();
