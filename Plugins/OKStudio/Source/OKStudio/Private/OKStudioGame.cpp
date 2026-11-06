@@ -615,7 +615,8 @@ int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 			if (GEngine && GEngine->GameViewport) GEngine->GameViewport->GetViewportSize(Size);
 			const bool bShown = PC->ProjectWorldLocationToScreen(Scene.TransformPosition(At + FVector(0.f, 0.f, 90.f)), Screen) && Size.X > 1.0 && Size.Y > 1.0
 				&& ClearView.IsInside(FVector2D(Screen.X / Size.X, Screen.Y / Size.Y));
-			if (!bShown) { Focus.X = At.X; Focus.Y = At.Y; Document->ActiveCamera = -1; }
+			// A locked camera stays (U242): the dance's camera is what is being watched.
+			if (!bShown && !bLockActiveCamera) { Focus.X = At.X; Focus.Y = At.Y; Document->ActiveCamera = -1; }
 		}
 		if (Panel) Panel->RefreshRows();
 		Document->NotifyChanged();

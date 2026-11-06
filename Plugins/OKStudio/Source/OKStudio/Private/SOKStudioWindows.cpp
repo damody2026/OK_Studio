@@ -418,6 +418,14 @@ void SOKStudioPanel::TickUi(float DeltaTime)
 	if (bExporting) SetStatus(FString::Printf(TEXT("輸出中 %d / %d 幀"), Game->ExportFrameIndex(), Game->ExportFrameCount()));
 	else if (bWasExporting) SetStatus(ExportResult());
 	bWasExporting = bExporting;
+	// U242: the MMD window lists the cast. Someone added, removed or given a motion while it is open shows up there.
+	if (IsFloatOpen(TEXT("mmd")))
+	{
+		uint32 Cast = 0;
+		for (const FOKSceneObject& O : Game->Document->Objects)
+			if (O.Kind == EOKSceneObjectKind::Character) Cast = HashCombine(HashCombine(Cast, GetTypeHash(O.Id)), HashCombine(GetTypeHash(O.Name), GetTypeHash(O.Character.AnimFile)));
+		if (Cast != MmdCast) { MmdCast = Cast; DeferFloat(TEXT("mmd")); }
+	}
 	// The colour window is bound to the object it was opened for.
 	if (IsFloatOpen(TEXT("color")) && ColorKey.StartsWith(TEXT("obj")) && FCString::Atoi(*ColorKey.Mid(3)) != Game->SelectedId) CloseFloat(TEXT("color"));
 	// The material editor follows the selection, and fills in once the item has built (again after a shader edit).

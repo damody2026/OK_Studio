@@ -13,6 +13,7 @@
 -- Prints each step and its reply; exits 1 when a step failed.
 local ok = require "ok"
 local json, path = ok.json, ok.path
+package.path = (arg[0]:match("^(.*)[/\\]") or ".") .. "/?.lua;" .. package.path
 local steps, port = nil, tostring(require("ok_instance").ports().studio_control)
 local i = 1
 while i <= #arg do

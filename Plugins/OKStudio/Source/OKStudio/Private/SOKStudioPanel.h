@@ -1711,6 +1711,7 @@ public:
 	/** What the last export came to, for the export window and the status line. */
 	FString ExportResult() const;
 	bool bWasExporting = false;
+	uint32 MmdCast = 0;
 	/** U214, U218: what the selected object's keys hold when the playhead came to WatchTime, to notice a change without a key. */
 	int32 WatchId = -1;
 	float WatchTime = -1.f;

@@ -5,6 +5,7 @@
 -- Saved/OKStudio/mcp_ui/<tag>_<name>.png. Exits 1 when anything does not fit.
 -- Tools/lua/lua.exe Tools/ok_studio_ui_fit.lua --scene <.okscene with a character> [--tag fit] [--port N]
 local ok = require "ok"
+package.path = (arg[0]:match("^(.*)[/\\]") or ".") .. "/?.lua;" .. package.path
 local json = require "ok.json"
 local p = ok.args.parser("OK Studio window fit check")
 p:opt("--scene", { required = true })
