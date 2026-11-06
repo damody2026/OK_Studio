@@ -1983,7 +1983,8 @@ void AOKStreetSocialScene::RequestFreeTalkSegment(int32 Generation,int32 Index){
     UE_LOG(LogTemp,Display,TEXT("Free talk: TTS gave no answer to line %d, the rest of this reply is text only"),Index);
     OKStreetTtsCancel(L.TtsEndpoint,L.FreeTalkSpeechChannel,uint32(Generation)+1);
     for(int32 I=Index;I<L.FreeTalkSpeechReady.Num();++I)if(L.FreeTalkSpeechReady[I]==0){L.FreeTalkSpeechStreamed[I]=2;L.FreeTalkSpeechReady[I]=2;L.FreeTalkSpeechStreams[I].Reset();}
-    L.FreeTalkNotice=FString(OKT(TEXT("ui.scene.tts_failed_text_only")))+OKT(TEXT("ui.scene.tts_connect_failed"));return;}
+    L.FreeTalkNotice=FString(OKT(TEXT("ui.scene.tts_failed_text_only")))+OKT(TEXT("ui.scene.tts_connect_failed"));
+    ProbeTtsServer(39);return;} // one health check: the panel kept saying the server was ready after it had gone
    if(!Ok){L.FreeTalkSpeechStreamed[Index]=2;if(L.FreeTalkSpeechReady[Index]==0)L.FreeTalkSpeechStreams[Index].Reset();UE_LOG(LogTemp,Display,TEXT("Free talk: TTS stream failed (%d), using the file"),Response.IsValid()?Response->GetResponseCode():0);}
    // The streamed line's file for the log (the server answers once it is written, without generating it again),
    // and the next line's stream right away instead of after that file.

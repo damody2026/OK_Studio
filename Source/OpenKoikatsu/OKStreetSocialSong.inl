@@ -202,6 +202,11 @@ void AOKStreetSocialScene::SongCallOver(double Now){
  if(Now<G.CallOverAt||S.ApproachGirl!=INDEX_NONE||S.Target!=INDEX_NONE||S.FreeTalkBusy||S.RemoteMode!=0||S.OutingGirl!=INDEX_NONE||S.Pair.Partner!=INDEX_NONE
     ||S.Facility!=INDEX_NONE||S.SoloGirl!=INDEX_NONE||S.SleepPhase!=0||S.PrivateGirl!=INDEX_NONE||S.RingGirl!=INDEX_NONE)return;
  G.CallOverAt=Now+60;
+ // They just said goodbye, or this is no place to sing: she walked back 2 s after his goodbye, could not sing there and
+ // opened another talk instead, again and again. The same wait as any other approach (TickApproach), and the song's own
+ // check before she sets out, not after she has arrived.
+ if(const double* Parted=S.PartedAt.Find(I);Parted&&FPlatformTime::Seconds()-*Parted<180.0)return;
+ if(!SongAtEase(I))return;
  if(!S.Agents.IsValidIndex(I-1)||S.Companion==I||!ContactReady(I)){UE_LOG(LogTemp,Display,TEXT("Street song: actor %d cannot come over yet (not ready)"),I);return;}
  // Her song is her own reason to leave what she is doing (a walk, a rest, a meal), not class, work, a promise or sleep:
  // then she comes once that is over.
