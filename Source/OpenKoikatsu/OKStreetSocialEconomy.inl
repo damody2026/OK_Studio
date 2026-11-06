@@ -542,7 +542,9 @@ void AOKStreetSocialScene::TickMeal(float Dt){
   FreeTalkLeave(OKMsg(TEXT("ui.party.you_said_goodbye"),{{TEXT("name"),*S.Manifest.Characters[Talking].Name}}));return;}
  // One who has gone from the table (not talking with him, not in the group, a few steps off) has left hers: 安可 said
  // goodbye with her soup half drunk, and it sat on the table for 胡桃, who came for lunch half an hour later.
- auto Gone=[&S,Talking](const FOKStreetDish& D){return D.Her!=Talking&&S.Agents.IsValidIndex(D.Her-1)&&!S.Party.Contains(D.Her)&&FVector::Dist2D(S.Agents[D.Her-1].Position,S.Male)>300.f;};
+ // Walking off or out of the place, that is: him stepping a few metres from where she still sits is not her going. 安可's
+ // macchiato and tart were cleared as he stood up and walked towards the door, she in her seat with them.
+ auto Gone=[this,&S,Talking](const FOKStreetDish& D){return D.Her!=Talking&&S.Agents.IsValidIndex(D.Her-1)&&!S.Party.Contains(D.Her)&&FVector::Dist2D(S.Agents[D.Her-1].Position,S.Male)>300.f&&(S.Commutes.Contains(D.Her)||PlaceHere(S.Agents[D.Her-1].Position)!=S.MealPlace);};
  if(There&&S.Table.ContainsByPredicate([&](const FOKStreetDish& D){return D.ForHer&&Gone(D);})){
   auto Candidate=S.Store;TArray<FString> Packed;SettleHers(Candidate,Packed,Gone);CommitStore(MoveTemp(Candidate));
   const int32 Before=S.Table.Num();S.Table.RemoveAll([&](const FOKStreetDish& D){return D.ForHer&&Gone(D);});
@@ -743,7 +745,7 @@ void AOKStreetSocialScene::FinishCheckout(const FString& Option,int32 Her,const 
  // Something to eat or drink paid for here: what a meal's or a drink's end is not billed again for (Life.inl
  // bought_at_counter). Not the fish food: ¥2 of it in the park made the drinks at the park's machine free (R4-17).
  const auto Edible=[&S](const FOKStreetCartLine& L){const auto* I=S.Catalog.Find(L.ItemId);return I&&I->Consumable&&(I->IsDrink()||I->Effects.Contains(TEXT("satiety")));};
- if(S.Cart.ContainsByPredicate(Edible))S.LastCheckoutMinute=OKStreetMindNow(S);
+ if(S.Cart.ContainsByPredicate(Edible)){S.LastCheckoutMinute=OKStreetMindNow(S);S.LastCheckoutPlace=S.ShopPlace;}
  ApplyRulesEffects(Candidate,*Answer);
  // What is not eaten (a plush, a keyring, a notebook) is his to carry: into the backpack. Bought for her and giftable:
  // he gives it to her next, the gift as the gift rules take it (StartGift), not a dish served.

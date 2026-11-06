@@ -157,7 +157,8 @@ void AOKStreetSocialScene::YandereComes(int32 Girl){
 
 void AOKStreetSocialScene::StepApproach(){
  auto& S=*State;const int32 I=S.ApproachGirl;auto& A=S.Agents[I-1];
- auto Stop=[&](){A.Held=false;S.ApproachGirl=INDEX_NONE;S.ApproachPath.Reset();S.ApproachBlockedNear=false;S.ApproachJoin=false;S.ApproachSong=false;S.ApproachPrivate=false;};
+ auto Stop=[&](){if(S.ApproachAppointment&&S.Manifest.Characters.IsValidIndex(I)){const FString Her=OKStreetStableId(S.Manifest.Characters[I]);for(auto& Ap:S.Store.Appointments)if(Ap.Heroine==Her)Ap.ComingAt=-1;}
+  A.Held=false;S.ApproachGirl=INDEX_NONE;S.ApproachPath.Reset();S.ApproachBlockedNear=false;S.ApproachJoin=false;S.ApproachSong=false;S.ApproachPrivate=false;};
  // On her way to a meeting she was held up step after step (a park exit: 40 cm every 8 s) and ran out of time: the meeting
  // used to vanish. Once more on a fresh route; out of his sight (25 m) she is already further along it.
  // Him talking with someone meanwhile is no reason to stop: 惠惠, coming to their breakfast, stuck behind a wall while

@@ -115,7 +115,8 @@ void AOKStreetSocialScene::TickJobs(){
  // The place closes on him (the day off, closing time): the shift is over, not left early.
  {FString Why;if(PlaceClosedNow(Job->Place,Why)){UE_LOG(LogTemp,Display,TEXT("Street shift: %s is closed (%s); the shift ends"),*Job->Place,*Why);EndShift(false);return;}}
  // Held at the workplace (plan §8.6.2): out of the shop for more than five game minutes is leaving early.
- if(PlaceHere(S.Male)!=Job->Place){if(S.ShiftAwaySince<0)S.ShiftAwaySince=Now;else if(Now-S.ShiftAwaySince>5)EndShift(true);}
+ // Not before it starts: he came at 16:33 for a 17:00 shift, stepped out, and that was "left early, worked 0 minutes".
+ if(PlaceHere(S.Male)!=Job->Place&&Now>=S.ShiftStart){if(S.ShiftAwaySince<0)S.ShiftAwaySince=Now;else if(Now-S.ShiftAwaySince>5)EndShift(true);}
  else S.ShiftAwaySince=-1;
 }
 
@@ -133,6 +134,9 @@ void AOKStreetSocialScene::EndShift(bool Early){
  S.PayslipNote=WithholdPlayerWage(Candidate,Pay,Worked); // 五險一金 and income tax (OKStreetSocialCompany.inl)
  Candidate.JobRating.Add(S.ShiftJob,int32(Answer->GetNumberField(TEXT("rating"))));
  if(Answer->GetBoolField(TEXT("fired"))){Candidate.PlayerJobs.Remove(S.ShiftJob);S.FreeTalkNotice=OKT(TEXT("ui.jobs.fired_notice"));}
+ // This shift is over for good: left early it still read "done" and inside its hours, so it started again where he stood
+ // (the convenience store, for a drink-shop shift) and he left early again every six minutes, paid and marked down each time.
+ for(auto& Mine:Candidate.Appointments)if(Mine.Id==S.ShiftAppointment)Mine.Status=TEXT("worked");
  CommitStore(MoveTemp(Candidate));
  if(S.FreeTalkNotice.IsEmpty()||!S.FreeTalkNotice.Contains(OKT(TEXT("ui.jobs.fired_label"))))S.FreeTalkNotice=OKMsg(TEXT("ui.jobs.shift_summary"), {{TEXT("ending"), Early?OKT(TEXT("ui.jobs.leave_early_label")):OKT(TEXT("ui.jobs.end_shift"))}, {TEXT("minutes"), Worked}, {TEXT("pay"), Pay}, {TEXT("rating"), S.Store.JobRating.FindRef(S.ShiftJob)}});
  S.FreeTalkNotice+=S.PayslipNote;

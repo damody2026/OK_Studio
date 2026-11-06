@@ -407,12 +407,14 @@ void AOKStreetSocialScene::ActivityAftermath(const FString& ActivityId,int32 Gir
  // A meal or a drink not paid at the counter comes from the menu. Paid at the counter means during it, or ordered just
  // before sitting down (she ordered on the way in: "my treat, a donut"); that bill is this meal's, not another one.
  // The order could not be paid, or he took it back: they ate nothing, not "a meal from the menu" billed at the end.
- Request->SetBoolField(TEXT("menu"),!S.ActCutShort&&A&&(A->Code==5||A->Code==2)&&A->Kind==EOKStreetActivityKind::Pair&&P&&S.LastCheckoutMinute<StartMinute-30&&S.OrderDroppedMinute<StartMinute-30
+ // Paid here, not anywhere: 雷电's rice ball at the convenience store made the park machine's drinks free ten minutes later.
+ const bool CheckedOutHere=S.LastCheckoutMinute>=StartMinute-30&&S.LastCheckoutPlace==PlaceId;
+ Request->SetBoolField(TEXT("menu"),!S.ActCutShort&&A&&(A->Code==5||A->Code==2)&&A->Kind==EOKStreetActivityKind::Pair&&P&&!CheckedOutHere&&S.OrderDroppedMinute<StartMinute-30
   // Dishes ordered there for this visit (within three hours: a private-room hour skipped in between made the half-hour
   // window miss them and the soup and tea were billed again as a set dinner).
   &&!(S.OrderedAtPlace.Contains(PlaceId)&&S.OrderedAtPlace[PlaceId]>=StartMinute-180));
  // What it is about (the machine's drink) bought from the menu and settled during it or just before: no fee on top (R3-240).
- Request->SetBoolField(TEXT("bought_at_counter"),S.LastCheckoutMinute>=StartMinute-30||(S.OrderedAtPlace.Contains(PlaceId)&&S.OrderedAtPlace[PlaceId]>=StartMinute-30));
+ Request->SetBoolField(TEXT("bought_at_counter"),CheckedOutHere||(S.OrderedAtPlace.Contains(PlaceId)&&S.OrderedAtPlace[PlaceId]>=StartMinute-30));
  // At the machine, what they ordered here just before is the drink they had there: not still being made afterwards (it
  // is only served inside, and they drank at the door). 刻晴's tea, paid by chat, stayed "being made" after their machine
  // drink, to be "left behind" later (R5-2, R4-24).
