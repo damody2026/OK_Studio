@@ -1977,6 +1977,13 @@ void AOKStreetSocialScene::RequestFreeTalkSegment(int32 Generation,int32 Index){
    const bool Ok=Connected&&Response.IsValid()&&Response->GetResponseCode()==200&&Stream->Num()>0;
    Stream->Finish();
    if(!State||Generation!=State->FreeTalkSpeechGeneration)return;auto& L=*State;
+   // The server did not answer at all (timed out, usually a GPU full of other work): a file request would wait as long
+   // again, line after line, and her reply crawled out 86 s late with the clock running. This reply goes on as text.
+   if(!Ok&&Stream->Num()==0&&L.FreeTalkSpeechReady[Index]==0&&(!Connected||!Response.IsValid()||Response->GetResponseCode()==0)){
+    UE_LOG(LogTemp,Display,TEXT("Free talk: TTS gave no answer to line %d, the rest of this reply is text only"),Index);
+    OKStreetTtsCancel(L.TtsEndpoint,L.FreeTalkSpeechChannel,uint32(Generation)+1);
+    for(int32 I=Index;I<L.FreeTalkSpeechReady.Num();++I)if(L.FreeTalkSpeechReady[I]==0){L.FreeTalkSpeechStreamed[I]=2;L.FreeTalkSpeechReady[I]=2;L.FreeTalkSpeechStreams[I].Reset();}
+    L.FreeTalkNotice=FString(OKT(TEXT("ui.scene.tts_failed_text_only")))+OKT(TEXT("ui.scene.tts_connect_failed"));return;}
    if(!Ok){L.FreeTalkSpeechStreamed[Index]=2;if(L.FreeTalkSpeechReady[Index]==0)L.FreeTalkSpeechStreams[Index].Reset();UE_LOG(LogTemp,Display,TEXT("Free talk: TTS stream failed (%d), using the file"),Response.IsValid()?Response->GetResponseCode():0);}
    // The streamed line's file for the log (the server answers once it is written, without generating it again),
    // and the next line's stream right away instead of after that file.
@@ -2670,7 +2677,8 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
    .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item){return SNew(STextBlock).Text(FText::FromString(Item.IsValid()?*Item:FString()));})
    .OnSelectionChanged_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](TSharedPtr<FString> Item,ESelectInfo::Type Info){if(!Weak.IsValid()||!Item.IsValid()||Info==ESelectInfo::Direct)return;const int32 I=Weak->State->MaleToneOptions.IndexOfByKey(Item);if(I!=INDEX_NONE)Weak->SetMaleTone(I);})
    [SNew(STextBlock).Text_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){return FText::FromString(OKT(TEXT("ui.scene.his_tone_label"))+(Weak.IsValid()?Weak->MaleToneLabel():FString()));})]];
-  if(S.Target!=INDEX_NONE&&!S.TtsVoiceInfo.IsEmpty())Box->AddSlot().AutoHeight().Padding(8,2)[SNew(STextBlock).Text(FText::FromString(S.TtsVoiceInfo)).AutoWrapText(true).WrapTextAt(360).Font(FCoreStyle::GetDefaultFontStyle("Regular",11))];
+  // The raw voice instruction: only with the stats panel (F10).
+  if(S.ShowDebug&&S.Target!=INDEX_NONE&&!S.TtsVoiceInfo.IsEmpty())Box->AddSlot().AutoHeight().Padding(8,2)[SNew(STextBlock).Text(FText::FromString(S.TtsVoiceInfo)).AutoWrapText(true).WrapTextAt(360).Font(FCoreStyle::GetDefaultFontStyle("Regular",11))];
   Mark(TEXT("voicepick"));AddVoicePickUI(Box);
   Mark(TEXT("song"));BuildSongRow(Box);
   Mark(TEXT("look2"));
