@@ -135,6 +135,10 @@ public:
 	bool Load(const FString& Path, FString& OutError);
 	/** Drop the current scene and its source/image caches before another independent load. */
 	void ReleaseSceneResources();
+	/** Whether the scene's clock follows the timeline (else motions run on their own, as Studio's do). */
+	void UpdateTimelineDriven();
+	/** The timeline was used in this scene: from then on a file motion (a VMD) stays where it put it. */
+	bool bTimelineUsed = false;
 	/** The self test reads what it just added: SyncNow builds everything before it returns. */
 	bool bSyncBuildsAll = false;
 	/** Goes up each time the scene is replaced: work started on the old scene must not land on the new one (U251). */

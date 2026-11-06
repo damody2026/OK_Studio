@@ -816,6 +816,7 @@ bool UOKStudioGame::Load(const FString& Path, FString& OutError)
 void UOKStudioGame::ReleaseSceneResources()
 {
 	++SceneSerial;
+	bTimelineUsed = false;
 	Select(-1);
 	StopSceneAudio();
 	StopStudioSounds();
@@ -1912,12 +1913,21 @@ void UOKStudioGame::UpdateSceneAudio()
 	}
 }
 
+void UOKStudioGame::UpdateTimelineDriven()
+{
+	if (!SceneActor || !Document) return;
+	// Paused on a frame of a dance it stays on that frame; Studio's own motions keep running as they do there.
+	SceneActor->bTimelineDriven = bTimelinePlaying || !Document->SoundFile.IsEmpty()
+		|| (bTimelineUsed && Document->Objects.ContainsByPredicate([](const FOKSceneObject& O) { return O.Kind == EOKSceneObjectKind::Character && !O.Character.AnimFile.IsEmpty(); }));
+}
+
 void UOKStudioGame::SetTimelineTime(float Time)
 {
 	TimelineTime = FMath::Clamp(Time, 0.f, FMath::Max(Document->Duration, 0.01f));
 	Document->ItemAnimationSeconds = TimelineTime;
 	Document->Playhead = TimelineTime; // saved with the scene
-	if (SceneActor) SceneActor->bTimelineDriven = bTimelinePlaying || !Document->SoundFile.IsEmpty();
+	bTimelineUsed = true;
+	UpdateTimelineDriven();
 	// Posing the scene for a time is not an edit (no undo step, no unsaved mark).
 	TGuardValue<bool> Evaluating(bEvaluatingTimeline, true);
 	Document->EvaluateTimeline(TimelineTime);
@@ -2039,7 +2049,7 @@ void UOKStudioGame::Tick(float DeltaTime)
 		Document->ActiveCamera = -1;
 	}
 	TickExport();
-	if (SceneActor && Document) SceneActor->bTimelineDriven = bTimelinePlaying || !Document->SoundFile.IsEmpty();
+	UpdateTimelineDriven();
 	if (bTimelinePlaying && Document && !IsExporting())
 	{
 		bool bJustStartedAudio = false;

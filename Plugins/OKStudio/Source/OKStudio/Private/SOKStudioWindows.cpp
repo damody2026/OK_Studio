@@ -451,7 +451,8 @@ void SOKStudioPanel::FinishVmd(FVmdTask& Task)
 	if (!X || X->Kind != EOKSceneObjectKind::Character || X->Character.Card != Task.Card) { ++MmdSkipped; return; }
 	FString Stem = FPaths::MakeValidFileName(FPaths::GetBaseFilename(Task.Path));
 	if (Stem.IsEmpty()) Stem = TEXT("vmd");
-	const FString RelPath = FString::Printf(TEXT("UserData/Studio/anim/vmd_%d_%s.okanim"), Task.CharId, *Stem);
+	// Named by what it holds: "#2 動作" of one scene overwrote "#2 動作" of another, which then danced the wrong dance.
+	const FString RelPath = FString::Printf(TEXT("UserData/Studio/anim/vmd_%d_%s_%08x.okanim"), Task.CharId, *Stem, FCrc::MemCrc32(Task.Bytes.GetData(), Task.Bytes.Num()));
 	const FString AbsOut = FPaths::ProjectDir() / RelPath;
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(AbsOut), true);
 	if (Task.Error.IsEmpty() && !FFileHelper::SaveArrayToFile(Task.Bytes, *AbsOut)) Task.Error = TEXT("無法寫入動畫檔：") + AbsOut;
