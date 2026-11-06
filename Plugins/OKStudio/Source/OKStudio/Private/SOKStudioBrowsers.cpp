@@ -639,7 +639,35 @@ TSharedRef<SWidget> SOKStudioPanel::BuildEffectList()
 void SOKStudioPanel::LoadPickedMap()
 {
 	if (!Game.IsValid() || MapPick == -1) return;
-	Game->Document->Map = MapPick == -2 ? -1 : MapPick;
+	const int32 Map = MapPick == -2 ? -1 : MapPick;
+	// The biggest maps took 28 s in one frame: they build behind the shown map, which goes when the new one is ready (U258).
+	if (!bMapThumbRun && Map >= 0 && Map != Game->Document->Map && Game->SceneActor)
+	{
+		Game->SceneActor->PrepareMap(Map);
+		if (Game->SceneActor->PreparingMap() == Map)
+		{
+			MapPrepareSerial = Game->SceneSerial;
+			SetStatus(TEXT("讀取地圖中…") + FOKStudioCatalog::Get().FindMap(Map)->Name);
+			return;
+		}
+	}
+	if (Game->SceneActor) Game->SceneActor->StopMapPrepare();
+	ShowPickedMap(Map);
+}
+
+void SOKStudioPanel::TickMapPrepare()
+{
+	AOKSceneActor* Actor = Game->SceneActor;
+	const int32 Map = Actor ? Actor->PreparingMap() : -1;
+	// Given up by a new scene: the line must not go on saying it is loading.
+	if (Map < 0) { if (StatusText().StartsWith(TEXT("讀取地圖中…"))) SetStatus(TEXT("場景已更換，地圖沒有讀取")); return; }
+	if (MapPrepareSerial != Game->SceneSerial) { Actor->StopMapPrepare(); return; }
+	if (Actor->ContinueMapPrepare()) ShowPickedMap(Map);
+}
+
+void SOKStudioPanel::ShowPickedMap(int32 Map)
+{
+	Game->Document->Map = Map;
 	// A map without its own sky gets the scene's sky, for its time of day (U128: the classroom's windows were black).
 	int32 MapPattern = -1;
 	FOKScenePost& Post = Game->Document->Post;

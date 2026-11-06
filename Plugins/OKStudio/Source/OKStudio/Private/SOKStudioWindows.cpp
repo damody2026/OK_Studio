@@ -559,6 +559,7 @@ void SOKStudioPanel::TickUi(float DeltaTime)
 	else if (bWasExporting) SetStatus(ExportResult());
 	bWasExporting = bExporting;
 	TickVmdQueue();
+	TickMapPrepare();
 	TickMapThumbs();
 	// U242: the MMD window lists the cast. Someone added, removed or given a motion while it is open shows up there.
 	if (IsFloatOpen(TEXT("mmd")))

@@ -455,6 +455,87 @@ namespace
 	}
 }
 
+struct AOKSceneActor::FPreparedMap
+{
+	struct FRoot
+	{
+		FString Root, Error;
+		FOkSession Session;
+		bool bOpened = false;
+		TWeakObjectPtr<AKKPreviewActor> Actor;
+	};
+	int32 No = -1;
+	TArray<FRoot> Roots;
+	/** The roots opened so far, in order: the frame builds one while the thread opens the next. */
+	std::atomic<int32> Opened{ 0 };
+	std::atomic<bool> bStop{ false };
+	std::atomic<bool> bDone{ false };
+	TFuture<void> Opening;
+	int32 Next = 0;
+};
+
+int32 AOKSceneActor::PreparingMap() const { return PreparedMap ? PreparedMap->No : -1; }
+
+void AOKSceneActor::PrepareMap(int32 No)
+{
+	if (PreparingMap() == No) return;
+	StopMapPrepare();
+	const FOKStudioCatalogMap* Entry = FOKStudioCatalog::Get().FindMap(No);
+	if (!Entry) return;
+	TSharedPtr<FPreparedMap> M = MakeShared<FPreparedMap>();
+	M->No = No;
+	for (const FString& Root : Entry->Roots) M->Roots.AddDefaulted_GetRef().Root = Root;
+	M->Opening = AsyncThread([M, Library = LibraryDirectory(), Model = Entry->Model]
+	{
+		for (int32 I = 0; I < M->Roots.Num() && !M->bStop; ++I)
+		{
+			FPreparedMap::FRoot& R = M->Roots[I];
+			R.bOpened = R.Session.OpenOkModel(Library, Model, R.Root, false, R.Error);
+			M->Opened = I + 1;
+		}
+		M->bDone = true;
+	}, 16 * 1024 * 1024);
+	PreparedMap = M;
+}
+
+void AOKSceneActor::StopMapPrepare()
+{
+	if (!PreparedMap) return;
+	PreparedMap->bStop = true;
+	for (FPreparedMap::FRoot& R : PreparedMap->Roots) if (R.Actor.IsValid()) R.Actor->Destroy();
+	if (!PreparedMap->bDone) DroppedMaps.Add(PreparedMap);
+	PreparedMap.Reset();
+}
+
+bool AOKSceneActor::ContinueMapPrepare()
+{
+	DroppedMaps.RemoveAll([](const TSharedPtr<FPreparedMap>& M) { return M->bDone.load(); });
+	if (!PreparedMap) return false;
+	FPreparedMap& M = *PreparedMap;
+	const double Start = FPlatformTime::Seconds();
+	while (M.Next < M.Opened.load())
+	{
+		FPreparedMap::FRoot& R = M.Roots[M.Next];
+		FString Error;
+		if (R.bOpened && !R.Actor.IsValid())
+		{
+			AKKPreviewActor* Spawned = SpawnPreview(GetWorld(), MoveTemp(R.Session), Error, {}, {}, nullptr, true, {}, -1, true);
+			R.bOpened = Spawned != nullptr;
+			if (Spawned) { Spawned->SetActorHiddenInGame(true); R.Actor = Spawned; }
+		}
+		// A root that did not open or start: SyncMap tries it by itself and says why.
+		AKKPreviewActor* Actor = R.Actor.Get();
+		while (Actor && !Actor->IsSessionLoadComplete())
+		{
+			if (FPlatformTime::Seconds() - Start >= .03) return false;
+			if (!Actor->ContinueSessionLoad(Error)) { Actor->Destroy(); R.Actor = nullptr; Actor = nullptr; R.bOpened = false; }
+		}
+		++M.Next;
+		if (FPlatformTime::Seconds() - Start >= .03) break;
+	}
+	return M.bDone && M.Next == M.Roots.Num();
+}
+
 void AOKSceneActor::StartCharacterOpen(const FOKSceneObject& Object)
 {
 	const FOKSceneCharacter& C = Object.Character;
@@ -1290,6 +1371,10 @@ void AOKSceneActor::SyncMap()
 		ApplyMapTime(MapPlace);
 		return;
 	}
+	// Built ahead for this map, or for one nobody wants any more.
+	TSharedPtr<FPreparedMap> Ready;
+	if (PreparedMap && PreparedMap->No == Document->Map && PreparedMap->bDone && PreparedMap->Next == PreparedMap->Roots.Num()) Ready = MoveTemp(PreparedMap);
+	else StopMapPrepare();
 	ShownMapTime = -2;
 	for (const TPair<TWeakObjectPtr<ULightComponent>, uint32>& L : MapLights) if (L.Key.IsValid()) L.Key->DestroyComponent();
 	MapLights.Reset();
@@ -1311,10 +1396,13 @@ void AOKSceneActor::SyncMap()
 		FOkSession Session;
 		FString Error;
 		const double RootStart = FPlatformTime::Seconds();
-		const bool bOpened = Session.OpenOkModel(LibraryDirectory(), Entry->Model, Root, false, Error);
+		const FPreparedMap::FRoot* Built = Ready ? Ready->Roots.FindByPredicate([&](const FPreparedMap::FRoot& R) { return R.Root == Root && R.Actor.IsValid(); }) : nullptr;
+		AKKPreviewActor* Actor = Built ? Built->Actor.Get() : nullptr;
+		if (Actor) Actor->SetActorHiddenInGame(false);
+		const bool bOpened = Actor || Session.OpenOkModel(LibraryDirectory(), Entry->Model, Root, false, Error);
 		const double Opened = FPlatformTime::Seconds();
 		OpenSeconds += Opened - RootStart;
-		AKKPreviewActor* Actor = bOpened ? SpawnPreview(GetWorld(), MoveTemp(Session), Error, {}, {}, nullptr, true) : nullptr;
+		if (!Actor && bOpened) Actor = SpawnPreview(GetWorld(), MoveTemp(Session), Error, {}, {}, nullptr, true);
 		SpawnSeconds += FPlatformTime::Seconds() - Opened;
 		if (!Actor) { Failed.Add(Root + TEXT(": ") + Error); continue; }
 		Actor->SetActorTransform(MapPlace);
@@ -2740,6 +2828,9 @@ void AOKSceneActor::EndPlay(const EEndPlayReason::Type Reason)
 	// Leaving while a scene opens: the card being opened on its thread must not outlive the world it was opened for.
 	for (const auto& Pair : Prepared) if (Pair.Value->Opening.IsValid()) Pair.Value->Opening.Wait();
 	Prepared.Reset();
+	StopMapPrepare();
+	for (const TSharedPtr<FPreparedMap>& M : DroppedMaps) if (M->Opening.IsValid()) M->Opening.Wait();
+	DroppedMaps.Reset();
 	Super::EndPlay(Reason);
 }
 
@@ -2788,6 +2879,7 @@ void AOKSceneActor::ReleaseScene()
 	TArray<int32> PreparedIds;
 	Prepared.GetKeys(PreparedIds);
 	for (int32 Id : PreparedIds) DropPrepared(Id);
+	StopMapPrepare();
 	bProgressiveBuild = false;
 	bSkyDomesDirty = true;
 	for (auto& Pair : Shown) Release(Pair.Value);

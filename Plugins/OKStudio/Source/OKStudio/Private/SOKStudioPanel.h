@@ -1906,6 +1906,9 @@ public:
 	TSharedRef<SWidget> BuildEffectList();
 	TSharedRef<SWidget> BuildMapBrowser();
 	void LoadPickedMap();
+	void ShowPickedMap(int32 Map);
+	void TickMapPrepare();
+	int32 MapPrepareSerial = 0;
 	/** The picture a map left when it was shown (none of the sources has one). */
 	static FString MapThumbFile(int32 No);
 	int32 MissingMapThumbs(TArray<int32>* Out = nullptr) const;

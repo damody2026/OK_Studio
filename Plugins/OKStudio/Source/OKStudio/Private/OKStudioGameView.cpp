@@ -322,7 +322,7 @@ FString UOKStudioGame::BusyReason() const
 	if (IsExporting()) return TEXT("exporting");
 	if (bTimelinePlaying) return TEXT("playing");
 	if (DragAxis >= 0 || bUserDragging) return TEXT("dragging");
-	if (SceneActor && SceneActor->HasPendingBuilds()) return TEXT("loading");
+	if (SceneActor && (SceneActor->HasPendingBuilds() || SceneActor->PreparingMap() >= 0)) return TEXT("loading");
 	if (bStoryMode) return TEXT("story");
 	return FString();
 }

@@ -52,6 +52,13 @@ public:
 
 	/** Whether some document objects are not built yet (a large scene being built over several frames). */
 	bool HasPendingBuilds() const { return bBuildsPending; }
+	/** Builds map No over the next frames, hidden, with the shown map still up; SyncMap then shows it at once (U258). */
+	void PrepareMap(int32 No);
+	/** A slice of that; true when the map is ready for Document->Map. */
+	bool ContinueMapPrepare();
+	void StopMapPrepare();
+	/** The map being prepared, or -1. */
+	int32 PreparingMap() const;
 	/** A scene being opened: its characters open on a worker and load a part a frame instead of stopping the picture. */
 	bool bProgressiveBuild = false;
 	/** Objects still waiting for their turn to build. */
@@ -283,6 +290,10 @@ private:
 
 	bool Build(const FOKSceneObject& Object, FShown& Out, FString& OutError);
 	/** A character on its way in while a scene opens (U255). */
+	struct FPreparedMap;
+	TSharedPtr<FPreparedMap> PreparedMap;
+	/** Given up while their thread still opens: only the thread holds them up, not the frame. */
+	TArray<TSharedPtr<FPreparedMap>> DroppedMaps;
 	struct FPreparedCharacter;
 	TMap<int32, TSharedPtr<FPreparedCharacter>> Prepared;
 	void StartCharacterOpen(const FOKSceneObject& Object);
