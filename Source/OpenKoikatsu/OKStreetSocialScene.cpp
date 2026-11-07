@@ -27,6 +27,8 @@
 #include "HttpServerResponse.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "OKStreetSocialPlaces.h"
+#include "Components/PlanarReflectionComponent.h"
+#include "Engine/PlanarReflection.h"
 #include "OKStreetSocialCalendar.h"
 #include "OKStreetMind.h"
 #include "OKStreetRules.h"
@@ -889,6 +891,7 @@ void AOKStreetSocialScene::BeginPlay(){
  if(!OKStartCrowdRuntimeScene(this,CrowdSelection,Error)){S.Errors.Add(Error);WriteReport(false);return;}
  if(!OKStreetCreateRuntimeBackdrop(GetWorld(),this,S,Error)){S.Errors.Add(Error);WriteReport(false);return;}
  SpawnStreetPlaces();
+ if(OKStreetCityMode())OKStreetCityCheckRoads(GetWorld());
  OKSetCrowdRuntimeCharacterMotion(this,0,FTransform(FRotator::ZeroRotator,S.Male),0,Error);
  for(const auto& Agent:S.Agents)OKSetCrowdRuntimeCharacterMotion(this,Agent.Slot,FTransform(FRotator::ZeroRotator,Agent.Position),0,Error);
  auto* Camera=GetWorld()->SpawnActor<ACameraActor>();S.Camera=Camera;
@@ -3915,8 +3918,23 @@ double AOKStreetSocialScene::SceneTime() const {
  const double Wall=FPlatformTime::Seconds();
  return State?(State->PrivateGirl!=INDEX_NONE?State->HighPrivateAt:Wall)-State->PrivatePausedSeconds:Wall;
 }
+// The city's mirrors (1162 planar reflections in the map): only the two nearest he can see in are drawn, as in the city's
+// own walk-through (CityImmersionWalker). Every one of them on would stop the game.
+static void OKStreetCityMirrors(UWorld* World,const FVector& Eye,float Dt){
+ static TArray<TWeakObjectPtr<UPlanarReflectionComponent>> Mirrors;static TWeakObjectPtr<UWorld> For;static float Wait=0;
+ if(For!=World){For=World;Mirrors.Reset();Wait=0;
+  for(TActorIterator<APlanarReflection> It(World);It;++It)if(auto* R=It->FindComponentByClass<UPlanarReflectionComponent>()){R->ScreenPercentage=75;R->PrefilterRoughness=0.f;R->SetVisibility(false);Mirrors.Add(R);}
+  UE_LOG(LogTemp,Display,TEXT("Street city: %d mirrors"),Mirrors.Num());}
+ Wait-=Dt;if(Wait>0)return;Wait=.2f;
+ TArray<TPair<double,UPlanarReflectionComponent*>> Near;
+ for(const auto& Weak:Mirrors)if(auto* R=Weak.Get()){const FVector Offset=Eye-R->GetComponentLocation();if(FMath::Abs(Offset.Z)<300.f&&FVector::DotProduct(Offset,R->GetUpVector())>2.f&&Offset.SizeSquared()<FMath::Square(2200.f))Near.Emplace(Offset.SizeSquared(),R);}
+ Near.Sort([](const TPair<double,UPlanarReflectionComponent*>& A,const TPair<double,UPlanarReflectionComponent*>& B){return A.Key<B.Key;});
+ for(const auto& Weak:Mirrors)if(auto* R=Weak.Get()){const bool On=(Near.Num()>0&&Near[0].Value==R)||(Near.Num()>1&&Near[1].Value==R);if(R->IsVisible()!=On)R->SetVisibility(On);}
+}
+
 void AOKStreetSocialScene::Tick(float Dt){
  Super::Tick(Dt);
+ if(OKStreetCityMode()&&State)OKStreetCityMirrors(GetWorld(),State->Male+FVector(0,0,150),Dt);
  // Walls, buildings and floors not drawn from behind (OKStreetBacks.h), in the street and in the room alike.
  if(APlayerController* PC=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr;PC&&PC->PlayerCameraManager)OKHideStreetBacks(GetWorld(),PC->PlayerCameraManager->GetCameraLocation());if(!State||!State->Started||State->Reported)return;auto& S=*State;GOKStreetTalkLimit=S.SelfTest; // the self-tests check the budget arithmetic; normal play has no daily talk limit
  // Walking into or out of a shop, or its opening hours passing: the shop part of the right panel has to follow without waiting for

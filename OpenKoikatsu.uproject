@@ -12,6 +12,14 @@
 	],
 	"Plugins": [
 		{
+			"Name": "Interchange",
+			"Enabled": true
+		},
+		{
+			"Name": "InterchangeAssets",
+			"Enabled": true
+		},
+		{
 			"Name": "CityLocalization",
 			"Enabled": true
 		},

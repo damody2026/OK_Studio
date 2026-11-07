@@ -104,6 +104,7 @@ private:
  bool SeatedWith(int32 Girl) const;
  bool ContactLover(int32 Character) const;
  TArray<FVector> ContactRoute(const FVector& From,const FVector& To) const;
+ TArray<FVector> CityRoute(const FVector& From,const FVector& To) const;
  void SelectContact(int32 Character);
  void NavigateGirl(int32 Character);
  void NavigatePoint(const FVector& Goal,const FString& Name);

@@ -9,8 +9,17 @@ bool AOKStreetSocialScene::ContactLover(int32 Character) const {return State&&St
 bool AOKStreetSocialScene::ContactIdle() const {if(!State)return false;const auto& S=*State;return S.PrivateGirl==INDEX_NONE&&S.Pair.Partner==INDEX_NONE&&S.Facility==INDEX_NONE&&S.Companion==INDEX_NONE&&!OKStreetConversationBusy(S.Node!=INDEX_NONE,S.CollectedActive,S.RelationshipPending,S.TouchActive);}
 // Only sitting and talking with this girl in the way of a contact: nothing else going on (a photo being taken, a meal).
 bool AOKStreetSocialScene::SeatedWith(int32 Girl) const {if(!State)return false;const auto& S=*State;return S.Pair.Partner==Girl&&S.Pair.Conversation()&&!S.Pair.CapturePending&&S.PrivateGirl==INDEX_NONE&&S.Facility==INDEX_NONE&&S.Companion==INDEX_NONE&&!OKStreetConversationBusy(S.Node!=INDEX_NONE,S.CollectedActive,S.RelationshipPending,S.TouchActive);}
+// The city's long way: the road graph between, the fine grid out of the building he is in and into the one he is going to
+// (the graph has no points indoors).
+TArray<FVector> AOKStreetSocialScene::CityRoute(const FVector& From,const FVector& To) const{
+ TArray<FVector> Route=OKStreetCityRoute(From,To);if(Route.Num()<3)return Route;
+ if(!OKStreetCityClear(GetWorld(),From,Route[1],18.f)){TArray<FVector> Out=GridRoute(From,Route[1]);if(Out.Num()>=2){Route.RemoveAt(0,2);Out.Append(Route);Route=MoveTemp(Out);}}
+ const int32 Last=Route.Num()-1;
+ if(Last>=1&&!OKStreetCityClear(GetWorld(),Route[Last-1],To,18.f)){TArray<FVector> In=GridRoute(Route[Last-1],To);if(In.Num()>=2){Route.RemoveAt(Last-1,2);Route.Append(In);}}
+ return Route;
+}
 TArray<FVector> AOKStreetSocialScene::ContactRoute(const FVector& From,const FVector& To) const {
- if(OKStreetCityMode()&&(OKStreetCityFar(From,To)||FMath::Abs(From.Z-To.Z)>=150.f))return OKStreetCityRoute(From,To);
+ if(OKStreetCityMode()&&(OKStreetCityFar(From,To)||FMath::Abs(From.Z-To.Z)>=150.f))return CityRoute(From,To);
  if(FMath::Abs(From.Z-To.Z)<150.f){auto Grid=GridRoute(From,To);if(Grid.Num()>=2)return Grid;}
  TArray<FOKStreetPointData> Shared;OKStreetWaypoints(Shared);TArray<FVector> Points;for(const auto& P:Shared)Points.Add(P.Position);
  return OKStreetContactRoute(From,To,Points,[&](const FVector& A,const FVector& B){
@@ -31,7 +40,7 @@ void AOKStreetSocialScene::NavigatePoint(const FVector& Spot,const FString& Name
  // On his floor the street grid is searched a slice a frame (TickNavSearch, 3 ms each): a long route held the frame
  // 6-8 ms. Another floor: the place graph (doors and corridors), at once.
  S.NavSearch.Reset();
- if(OKStreetCityMode()&&OKStreetCityFar(S.Male,Goal)){NavigatePointAlong(Goal,Name,OKStreetCityRoute(S.Male,Goal));return;}
+ if(OKStreetCityMode()&&OKStreetCityFar(S.Male,Goal)){NavigatePointAlong(Goal,Name,CityRoute(S.Male,Goal));return;}
  if(FMath::Abs(S.Male.Z-Goal.Z)<150.f){S.NavSearch=MakeShared<FOKStreetGridSearch>();S.NavSearch->From=S.Male;S.NavSearch->To=Goal;S.NavSearchGoal=Goal;S.NavSearchName=Name;return;}
  NavigatePointAlong(Goal,Name,PlaceRouteWaypoints(S.Male,Goal));
 }
@@ -261,8 +270,9 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
  if(Moved==S.Male){
   // Blocked: find a new way from where he stands before giving up.
   if(Now-S.NavProgressAt>1.0){
-   if(S.NavReplans>=6){StopNavigation(OKT(TEXT("ui.contacts.path_blocked_stop")));return 0;} // each try learns a blocked cell, so a few more find the way round
+   if(S.NavReplans>=(OKStreetCityMode()?30:6)){StopNavigation(OKT(TEXT("ui.contacts.path_blocked_stop")));return 0;} // each try learns a blocked cell, so a few more find the way round
    ++S.NavReplans;S.NavProgressAt=Now;
+   if(OKStreetCityMode())OKStreetCityBlocked(S.NavPath.IsValidIndex(S.NavStep-1)?S.NavPath[S.NavStep-1]:S.Male,Next); // the road graph learns it too
    // Stopped by something solid the grid did not see: the cell ahead is known blocked from now on.
    {const FVector Ahead=S.Male+Delta/Distance*OKStreetNavCell;const FIntPoint Cell(FMath::RoundToInt(Ahead.X/OKStreetNavCell),FMath::RoundToInt(Ahead.Y/OKStreetNavCell));
     const FIntPoint Here(FMath::RoundToInt(S.Male.X/OKStreetNavCell),FMath::RoundToInt(S.Male.Y/OKStreetNavCell));
@@ -293,7 +303,7 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
    {
     // What is in the way: the clearance gap on his side, and the first thing a body-sized sweep toward the next point hits.
     FString Hit=TEXT("none");FCollisionQueryParams Q(SCENE_QUERY_STAT(StreetNavWhy),false,this);FHitResult H;const FVector Dir=Delta/Distance;
-    if(GetWorld()->SweepSingleByChannel(H,S.Male+FVector(0,0,85),S.Male+Dir*Step+FVector(0,0,85),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(28,78),Q))Hit=FString::Printf(TEXT("%s pen=%d"),*GetNameSafe(H.GetActor()),H.bStartPenetrating?1:0);
+    if(GetWorld()->SweepSingleByChannel(H,S.Male+FVector(0,0,OKStreetBodyLift()),S.Male+Dir*Step+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(28,OKStreetBodyHalf()),Q))Hit=FString::Printf(TEXT("%s/%s at %s pen=%d"),*GetNameSafe(H.GetActor()),*GetNameSafe(H.GetComponent()),*H.ImpactPoint.ToCompactString(),H.bStartPenetrating?1:0);
     UE_LOG(LogTemp,Display,TEXT("Street navigation: blocked why: next=%s gap_here=%.0f gap_ahead=%.0f sweep=%s"),*Next.ToCompactString(),OKStreetObstacleGap(S.Male),OKStreetObstacleGap(S.Male+Dir*Step),*Hit);
    }
    UE_LOG(LogTemp,Display,TEXT("Street navigation: blocked at %s, replanned %d (points=%d)"),*S.Male.ToCompactString(),S.NavReplans,S.NavPath.Num());

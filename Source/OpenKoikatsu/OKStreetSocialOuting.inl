@@ -402,7 +402,7 @@ TArray<FVector> AOKStreetSocialScene::PlaceRoute(const FVector& From,const FVect
  return PlaceRouteWaypoints(From,To);
 }
 TArray<FVector> AOKStreetSocialScene::PlaceRouteWaypoints(const FVector& From,const FVector& To) const{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_PlaceRouteWaypoints);
- if(OKStreetCityMode())return OKStreetCityRoute(From,To);
+ if(OKStreetCityMode())return CityRoute(From,To);
  TArray<FOKStreetPointData> Shared;OKStreetWaypoints(Shared);TArray<FVector> Points;for(const auto& P:Shared)Points.Add(P.Position);
  Points.Append(OKStreetPlaceRoutePoints());
  return OKStreetContactRoute(From,To,Points,[&](const FVector& A,const FVector& B){

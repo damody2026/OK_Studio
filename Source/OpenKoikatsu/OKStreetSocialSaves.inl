@@ -147,7 +147,7 @@ void AOKStreetSocialScene::RestartWithSave(const FString& Action,const FString& 
  UE_LOG(LogTemp,Display,TEXT("Street saves: restarting the map for %s %s"),*Action,*Slot);
  S.SaveRestarting=true;S.SaveNotice=OKT(TEXT("ui.saves.restarting"));RefreshUI();
  // The map package this scene lives in, started again (the command line, the manifest and -Control stay).
- UGameplayStatics::OpenLevel(this,FName(*GetWorld()->GetOutermost()->GetName()));
+ UGameplayStatics::OpenLevel(this,FName(*GetWorld()->GetOutermost()->GetName()),true,OKStreetCityMode()?TEXT("game=/Script/OpenKoikatsu.OKCrowdGameMode"):TEXT("")); // the city's map has no game mode of its own
 }
 
 void AOKStreetSocialScene::OpenSaveMenu(const FString& Mode){

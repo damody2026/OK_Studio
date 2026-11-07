@@ -66,7 +66,7 @@ end
 -- The walking graph for long walks: a point every LATTICE cells of world-edge-v1/road-raster.json (2 m a cell: 'r' road,
 -- 'g' grass, 'o' buildings and water), a link where the straight line between two neighbours stays on road or grass (the
 -- roads alone are thin lines that do not meet). The biggest connected part is kept.
-local LATTICE, GROUND_Z = 10, 1200
+local LATTICE, GROUND_Z = 3, 1200 -- 6 m: fine enough to find the gates in the fences
 local raster = json.decode(read(ROOT .. 'output/street-social-city-production/world-edge-v1/road-raster.json'))
 local rows, step, ox, oy = raster.rows, raster.step_cm, raster.origin[1], raster.origin[2]
 local function road(k, i) local row = rows[i]; if not row then return false end; local c = row:sub(k, k); return c == 'r' or c == 'g' end
@@ -128,7 +128,7 @@ for order, index in ipairs(biggest) do
 end
 local walk, walked, queue, head = {}, { [biggest[start]] = true }, { biggest[start] }, 1
 while head <= #queue and #walk < 26 do
-  if (head - 1) % 4 == 0 then walk[#walk + 1] = keep[queue[head]] end
+  if (head - 1) % 40 == 0 then walk[#walk + 1] = keep[queue[head]] end
   for _, next_ in ipairs(nodes[queue[head]].links) do if not walked[next_] then walked[next_] = true; queue[#queue + 1] = next_ end end
   head = head + 1
 end
