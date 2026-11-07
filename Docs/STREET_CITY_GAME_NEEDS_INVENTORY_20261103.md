@@ -488,7 +488,7 @@ c-conquest 核對第 8.2.5 節後要收的三項。地圖重裝、打包 `202611
 - 四段實走全過，但第 0 段第一次失敗、重試才過：`imore-491f7709b202-pool-entry-and-exit` 第 28 段，泳池階梯，離民宿約 400 m，與這輪改動無關。chain70 也在另一座泳池出現過一次（`imore-cda5d5e2dcb9`，第 24 段）。這不是卡住：是 CharacterWalk 懸空檢查在階緣的誤判（中心射線差 121.85 cm，門檻 120），`Docs/STREET_ERRORS.md` 11-01 已記錄，修法要動 StreetSocialCity 的 C++，所以用重跑處理。
 - 照片在 `shop-survey-v1/captures-20261106-043454`：`R7-minshuku-room1`、`room`、`bath2`、`wc-door`、`scroll`、`low`、`high`。
 
-### 8.2.7 第 4 輪盤點（11-06，`city_anchors.json` 24590 列）
+### 8.2.7 第 4 輪盤點（11-06 盤點時 24590 列，11-07 做完後 25376 列）
 
 c-conquest 重新對照 `activities.toml`、`acts.toml`、`events.toml`、`places.json` 與錨點種類。`activities.toml` 每個活動的地點和錨點都查得到，85 個種類都不是 0。下面三類是還缺的，新地點的遊戲端規則仍排在第 8.3 節之後。
 
@@ -537,7 +537,9 @@ c-conquest 重新對照 `activities.toml`、`acts.toml`、`events.toml`、`place
 
 這輪有兩件事留到 chain75：站在洗衣機、信箱、販賣機前的錨點朝向是反的（第 3 列錯誤紀錄），R1、R2 住處與信箱的驗收視角拍到牆上，物件本身沒有照到。
 
-**B、C 段與六項補件結果（第 84 輪，11-07）：** `city_anchors.json` 25373 列；`cargo test anchor` 6 項通過；地板與人形空間重測 1504 個通過，607 個留原位，66 個在家具上（本來就要坐的），其他 0。四段實走都過，第 2 段第一次在 `wego-linsen-918b0413ed68-actual-player-entry` 回報 `native_soak_walk_obstructed`，同一份打包重試就過，還沒查出原因。照片在 `shop-survey-v1/captures-20261107-074614`（陽台另在 `captures-20261107-081741`）。
+**B、C 段與六項補件結果（第 84 輪，11-07）：** `city_anchors.json` 25373 列；`cargo test anchor` 6 項通過；地板與人形空間重測 1504 個通過，607 個留原位，66 個在家具上（本來就要坐的），其他 0。四段實走都過。第 2 段第一次在 `imore-8ed9ae8ccd08-pool-entry-and-exit` 第 28 段回報 `native_soak_walk_obstructed`，同一份打包重試就過：這是泳池入水台階下行第一階的懸空誤判（`STREET_ERRORS.md` 2026-10-31 條），和這輪的家具無關，修法要改 StreetSocialCity 的 C++，不在場景工作範圍內。照片在 `shop-survey-v1/captures-20261107-074614`（陽台另在 `captures-20261107-081741`）。
+
+算法：「實體」是 `places-v1/actors.json` 裡用該模型的 actor 數。「錨點」用 `count_street_city_pieces.lua` 算，來源是最新的 `lover-spots-install-*.json`（這次安裝寫入的項目），依 `anchor` 名稱去掉結尾數字和底線分組，所以不含 `city_anchors.json` 裡安裝以外的列，也不等於 `name` 欄或 `kinds` 欄的計數。全表的列數看下一段。
 
 | 項目 | 做法 | 實體 | 錨點 |
 |---|---|---:|---:|
@@ -566,11 +568,11 @@ R1／R2 每戶的家具都按房間檢查過（用掃描資料切房間，見錯
 - 溫泉 `soak` 的坐姿只驗了數字：錨點 1265、座面 1240、池底 1200，約 25 公分水深。
 - 招牌只有中文，單一語言。
 - 飯店的護理室在禮賓服務室角落，用屏風隔開。`lodge` 沒有自己的護理室，錨點指到同一間，護理床 4 張也是兩邊共用。
-- s39-0301、s84-0301、s86-0301 沒有床：放完沙發、餐桌後找不到 225×175 的空地，下一輪補。
+- s39-0301、s84-0301、s86-0301 原本沒有床：放完沙發和電視後找不到 225×175 的空地。第 85 輪放寬間距後已補上，`shop_homes` 床 47／47，`bed` 錨點 51，`city_anchors.json` 25376 列，四段實走第一次就全過。第 85 輪因整合停在拍照前，這三張床沒有照片，只核對了位置和數量。
 - `R8-private-out` 照片大半是牆和門邊，包廂本身看 `R8-private-in`。
 - R 住家的廚房站位在流理台中間。
 
-**沒放的項目（`skipped` 清單）：** 屋頂 T4、LI、D1、D2 各有一座樓梯找不到空地，放在第一個位置。`balcony: 178 of 194`：194 是有陽台或窗戶錨點的住處，其中 16 處放不出陽台，只有窗。`shop_homes` 床 44／47：見上一段。`suites_tv` 的 `sofa 48`、`bed 6`、`foot 3` 是看電視的位置落在沙發、床邊或床尾的數量，不是缺件。`homes` 的 `miss`、`tv_blocked`、`dining_tight`、`dining_hall` 和 `sofa_facing_wall` 是重試次數，最後都有放好（電視 134、餐桌 80、洗衣機 80）。
+**沒放的項目（`skipped` 清單）：** 屋頂 T4、LI、D1、D2 各有一座樓梯找不到空地，放在第一個位置。`balcony: 178 of 194`：194 是有陽台或窗戶錨點的住處，其中 16 處放不出陽台，只有窗。`shop_homes` 床第 84 輪 44／47，第 85 輪補到 47／47。`suites_tv` 的 `sofa 48`、`bed 6`、`foot 3` 是看電視的位置落在沙發、床邊或床尾的數量，不是缺件。`homes` 的 `miss`、`tv_blocked`、`dining_tight`、`dining_hall` 和 `sofa_facing_wall` 是重試次數，最後都有放好（電視 134、餐桌 80、洗衣機 80）。
 
 ### 8.3 遊戲端之後要做（我負責，換城市整合時）
 

@@ -1960,7 +1960,7 @@ def motel_world_lover_spots_install():
    if g2:
     c2=g2[0];t='LoverSpot_R8_tv_'+rid;place_mesh(t,'tv_cabinet',c2,snap(c.x-c2.x,c.y-c2.y)-90);ns['tv']+=1
     homev[rid]=dict(homev.get(rid,{}),tv=(s_,c2));sight[rid]=(s_,c2)
-  got=clear(rid,a,mid,225,175,100,0,520,True)
+  got=clear(rid,a,mid,225,175,100,0,520,True) or clear(rid,a,mid,225,175,100,0,700,True,pad=100) or clear(rid,a,mid,225,175,100,0,700,True,pad=60)
   if got:
    c,fy=got;t='LoverSpot_R8_bed_'+rid;place_mesh(t,'bed_double',c,fy);items.append(dict(place=rid,anchor=nm(rid,'bed'),pos=num(V([c.x,c.y,z_])),yaw=fy-90,actor=t+'_Tripo',seat=[c.x,c.y,z_+55]));ns['bed']+=1
   got=clear(rid,a,mid,120,60,100,0,520,True)
