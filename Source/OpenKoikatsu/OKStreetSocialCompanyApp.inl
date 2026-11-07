@@ -26,7 +26,7 @@ TSharedRef<SWidget> AOKStreetSocialScene::BuildCompanyApp(){
    auto Row=SNew(SWrapBox).UseAllottedSize(true);
    if(C.PlayerJobs.Contains(TEXT("hc_")+H.Owner)){Row->AddSlot().Padding(2)[OKFinText(OKMsg(TEXT("ui.company_app.part_time_offer_note"), {{TEXT("hourly_wage"), H.OfferWage}}),FLinearColor(.6f,1,.7f))];
     Row->AddSlot().Padding(2)[OKFinButton(Weak,OKT(TEXT("ui.company_app.quit_job_button")),[Weak,OwnerId](){Weak->HeroJobQuit(OwnerId);})];}
-   else if(H.OfferUntil>=Day){Row->AddSlot().Padding(2)[OKFinText(OKMsg(TEXT("ui.company_app.job_offer_summary"), {{TEXT("hourly_wage"), H.OfferWage}, {TEXT("reply_by_date"), *OKStreetCalendarLabel(H.OfferUntil,12.0)}}),FLinearColor(1,.85f,.3f))];
+   else if(H.OfferUntil>=Day){Row->AddSlot().Padding(2)[OKFinText(OKMsg(TEXT("ui.company_app.job_offer_summary"), {{TEXT("hourly_wage"), H.OfferWage}, {TEXT("reply_by_date"), *OKStreetCalendarDateTime(H.OfferUntil,8.0).ToString(TEXT("%Y/%m/%d"))}}),FLinearColor(1,.85f,.3f))];
     Row->AddSlot().Padding(2)[OKFinButton(Weak,OKT(TEXT("ui.company_app.accept_button")),[Weak,OwnerId](){Weak->HeroOfferAnswer(OwnerId,true);},true,FLinearColor(.5f,1,.5f))];
     Row->AddSlot().Padding(2)[OKFinButton(Weak,OKT(TEXT("ui.company_app.decline_button")),[Weak,OwnerId](){Weak->HeroOfferAnswer(OwnerId,false);},true,FLinearColor(1,.5f,.5f))];}
    if(Hq){const FString Place=HoldingPlace(*Hq);Row->AddSlot().Padding(2)[OKFinButton(Weak,OKT(TEXT("ui.company_app.navigate_there_button")),[Weak,Place](){if(const auto* P=OKStreetFindPlace(Place)){Weak->CloseApp();Weak->NavigatePoint(P->Door,P->Name);}})];}
@@ -47,7 +47,7 @@ TSharedRef<SWidget> AOKStreetSocialScene::BuildCompanyApp(){
   int64 Revenue=0,Costs=0,Wages=0;for(const auto& H:E.Holdings){Revenue+=HNum(H.Unit,TEXT("revenue"));Costs+=HNum(H.Unit,TEXT("costs"));}
   for(const auto& W:E.Workers)Wages+=W.Pay;for(const auto& St:Co.Staff)Wages+=St.Pay;
   int32 Cap=0,Head=E.Workers.Num()+Co.Staff.Num();for(const auto& H:E.Holdings)Cap+=int32(HNum(H.Unit,TEXT("capacity")));
-  Line(OKFinText(OKMsg(TEXT("ui.company_app.company_founded_line"), {{TEXT("company_name"), *Co.Name}, {TEXT("founded_date"), *OKStreetCalendarLabel(Co.Founded,12.0)}, {TEXT("reputation"), E.Reputation}}),FLinearColor(1,.85f,.3f),15,true));
+  Line(OKFinText(OKMsg(TEXT("ui.company_app.company_founded_line"), {{TEXT("company_name"), *Co.Name}, {TEXT("founded_date"), *OKStreetCalendarDateTime(Co.Founded,8.0).ToString(TEXT("%Y/%m/%d"))}, {TEXT("reputation"), E.Reputation}}),FLinearColor(1,.85f,.3f),15,true));
   Line(OKFinText(OKMsg(TEXT("ui.company_app.company_finance_summary"), {{TEXT("cash"), *Money(E.Cash)}, {TEXT("owner_loan"), *Money(E.OwnerLoan)}, {TEXT("retained"), *Money(E.Retained)}, {TEXT("capital"), *Money(E.Capital)}, {TEXT("last_profit"), *Money(Co.LastProfit)}}),FLinearColor(1,.85f,.3f),12,true));
   Line(OKFinText(OKMsg(TEXT("ui.company_app.personal_funds_line"), {{TEXT("bank_balance"), *Money(C.PlayerBank)}, {TEXT("cash_balance"), *Money(C.PlayerCash)}}),FLinearColor(.75f,.75f,.8f),10));
   // Money between him and the company: only under a name, each with its tax (Docs/STREET_ACCOUNTING_PLAN_20261012.md).
@@ -111,7 +111,7 @@ TSharedRef<SWidget> AOKStreetSocialScene::BuildCompanyApp(){
     Row->AddSlot().Padding(2)[OKFinButton(Weak,OKMsg(TEXT("ui.company_app.hire_at_ask_button"), {{TEXT("ask_pay"), *Money(Ask)}}),[Weak,Wid,Unit,Ask](){Weak->CompanyHire(Wid,Ask,Unit);})];}
    Line(Row);}
   Line(OKFinText(OKT(TEXT("ui.company_app.active_staff_header")),FLinearColor(1,.85f,.3f),13,true));
-  for(const auto& St:Co.Staff){const int32 I=CharacterOf(St.Heroine);Line(OKFinText(OKMsg(TEXT("ui.company_app.heroine_staff_row"), {{TEXT("name"), I!=INDEX_NONE?*S.Manifest.Characters[I].Name:*St.Heroine}, {TEXT("role"), *St.Role}, {TEXT("pay"), *Money(St.Pay)}}),FLinearColor(1,.7f,.85f)));}
+  for(const auto& St:Co.Staff){const int32 I=CharacterOf(St.Heroine);Line(OKFinText(OKMsg(TEXT("ui.company_app.heroine_staff_row"), {{TEXT("name"), I!=INDEX_NONE?*S.Manifest.Characters[I].Name:*St.Heroine}, {TEXT("role"), *OKStaffRole(St.Role)}, {TEXT("pay"), *Money(St.Pay)}}),FLinearColor(1,.7f,.85f)));}
   for(const auto& W:E.Workers){const FString Wid=W.Id;const auto* R=D.Role(W.Role);auto Row=SNew(SWrapBox).UseAllottedSize(true);
    Row->AddSlot().Padding(2)[OKFinText(OKMsg(TEXT("ui.company_app.employee_row"), {{TEXT("worker_name"), *W.Name}, {TEXT("role_name"), R?*R->Name:*W.Role}, {TEXT("skill"), W.Skill}, {TEXT("morale"), W.Morale}, {TEXT("low_morale_note"), W.Morale<35?OKT(TEXT("ui.company_app.wants_to_leave_label")):TEXT("")}, {TEXT("pay"), *Money(W.Pay)}, {TEXT("unit_name"), *UnitOf(W.Holding).Name}}),W.Morale<35?FLinearColor(1,.6f,.5f):FLinearColor::White)];
    Row->AddSlot().Padding(2)[OKFinButton(Weak,OKT(TEXT("ui.company_app.raise_to_above_button")),[Weak,Wid](){Weak->CompanyRaise(Wid,FCString::Atoi64(*Weak->State->CompanyAmount));})];
@@ -123,7 +123,7 @@ TSharedRef<SWidget> AOKStreetSocialScene::BuildCompanyApp(){
   Line(OKFinButton(Weak,OKT(TEXT("ui.company_app.open_ledger_book_button")),[Weak](){Weak->State->AccBook=TEXT("company");Weak->OpenApp(TEXT("accounts"),false);},true,FLinearColor(1,.85f,.3f)));
   Line(OKFinText(FString(OKT(TEXT("ui.company_app.ledger_hint"))),FLinearColor(1,.85f,.3f),13,true));
   for(int32 K=E.Ledger.Num()-1;K>=0&&K>=E.Ledger.Num()-40;--K){const auto& L=E.Ledger[K];
-   Line(OKFinText(OKMsg(TEXT("ui.company_app.ledger_entry_row"), {{TEXT("day_label"), *OKStreetCalendarLabel(L.Day,12.0)}, {TEXT("note"), *L.Note}, {TEXT("amount"), *Money(L.Amount)}}),L.Amount<0?FLinearColor(1,.6f,.5f):FLinearColor(.6f,1,.6f),10));}
+   Line(OKFinText(OKMsg(TEXT("ui.company_app.ledger_entry_row"), {{TEXT("day_label"), *OKStreetCalendarDateTime(L.Day,8.0).ToString(TEXT("%Y/%m/%d"))}, {TEXT("note"), *L.Note}, {TEXT("amount"), *Money(L.Amount)}}),L.Amount<0?FLinearColor(1,.6f,.5f):FLinearColor(.6f,1,.6f),10));}
  }
  return SNew(SScrollBox)+SScrollBox::Slot()[Box];
 }

@@ -50,9 +50,9 @@ void AOKStreetSocialScene::ApplyPendingSave(){
  if(!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Body),P)||!P.IsValid())return;
  const FString Action=P->GetStringField(TEXT("action")),Slot=P->GetStringField(TEXT("slot"));
  State->SaveApplied=true;P->TryGetBoolField(TEXT("control_mic_ignored"),S.ControlMicIgnored);{double Look=INDEX_NONE;if(P->TryGetNumberField(TEXT("look_girl"),Look))S.LookGirl=int32(Look);}
- if(Action==TEXT("new")){OKStreetDeleteGame(Live);P->TryGetStringField(TEXT("region"),S.NewGameRegion);S.SaveNotice=OKT(TEXT("ui.saves.new_started"));UE_LOG(LogTemp,Display,TEXT("Street saves: new game (%s)"),*S.NewGameRegion);}
+ if(Action==TEXT("new")){OKStreetDeleteGame(Live);P->TryGetStringField(TEXT("region"),S.NewGameRegion);S.SaveNoticeId=TEXT("ui.saves.new_started");UE_LOG(LogTemp,Display,TEXT("Street saves: new game (%s)"),*S.NewGameRegion);}
  else if(Action==TEXT("load")&&IFileManager::Get().FileExists(*(SaveSlotDir(Slot)/TEXT("relationships.json")))){
-  const bool Ok=OKStreetCopyGame(SaveSlotDir(Slot),Live);S.SaveNotice=OKMsg(Ok?TEXT("ui.saves.loaded"):TEXT("ui.saves.load_failed"),{{TEXT("slot"),SaveSlotName(Slot)}});
+  const bool Ok=OKStreetCopyGame(SaveSlotDir(Slot),Live);S.SaveNoticeId=Ok?TEXT("ui.saves.loaded"):TEXT("ui.saves.load_failed");S.SaveNoticeSlot=Slot;
   UE_LOG(LogTemp,Display,TEXT("Street saves: loaded slot %s (%s)"),*Slot,Ok?TEXT("ok"):TEXT("incomplete"));}
 }
 
@@ -168,7 +168,9 @@ void AOKStreetSocialScene::TickSaves(){
  // skip it unless OK_STREET_START_MENU=1; OK_STREET_START_MENU=0 skips it for anyone.
  if(!S.StartMenuDecided){S.StartMenuDecided=true;const FString Env=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_STREET_START_MENU"));
   const bool Show=Env==TEXT("1")||(Env!=TEXT("0")&&!FParse::Param(FCommandLine::Get(),TEXT("StreetSocialControl")));
-  if(S.SaveApplied){S.Message=S.SaveNotice;RefreshUI();}else if(Show&&S.LiveTestPhase<0)OpenSaveMenu(TEXT("start"));}
+  if(!S.SaveApplied&&Show&&S.LiveTestPhase<0)OpenSaveMenu(TEXT("start"));}
+ // What the start did, in words once the rules that hold the words are up (before that the menu showed ui.saves.loaded).
+ if(!S.SaveNoticeId.IsEmpty()&&S.Rules){S.SaveNotice=OKMsg(*S.SaveNoticeId,{{TEXT("slot"),SaveSlotName(S.SaveNoticeSlot)}});S.SaveNoticeId.Reset();S.Message=S.SaveNotice;RefreshUI();}
  if(!S.NewGameRegion.IsEmpty()&&S.Rules){const FString Region=S.NewGameRegion;S.NewGameRegion.Reset();ChangeRegion(Region);SaveCalendar();}
  const double Now=FPlatformTime::Seconds();
  if(S.NextAutoSave<=0)S.NextAutoSave=Now+OKStreetAutoSaveSeconds;

@@ -115,8 +115,18 @@ pub fn text(id: &str, args: &icu::Args) -> String {
 /// A message with named arguments in the current language.
 pub fn m(id: &'static str, args: &[(&str, Arg)]) -> String {
     let pattern = with_table(|t| t.get(id).map(|m| m.0)).unwrap_or(id);
-    let map: icu::Args = args.iter().map(|(k, v)| (*k, v.clone())).collect();
+    let map: icu::Args = args.iter().map(|(k, v)| (*k, match v { Arg::Str(s) if k.contains("name") => Arg::Str(script_name(s, lang())), other => other.clone() })).collect();
     icu::format(pattern, lang(), &map)
+}
+
+/// A name (a card's, a worker's) in the script of this language: a Simplified game's notices said 录用了張思妤 where its
+/// lists said 张思妤.
+pub fn script_name(name: &str, lang: &str) -> String {
+    match lang {
+        "zh-CN" => zhconv::zhconv(name, zhconv::Variant::ZhCN),
+        "zh-TW" => zhconv::zhconv(name, zhconv::Variant::ZhTW),
+        _ => name.to_string(),
+    }
 }
 
 /// Whether what the player said has one of the words of a hear list ("hear.control_hint": "Esc|WASD|..."), in the
@@ -207,6 +217,14 @@ impl<T: Amount + Copy> Amount for &T {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_in_a_message_follow_the_language() {
+        let _g = scope("zh-CN", "CN");
+        assert_eq!(m("{name}", &[("name", a("張思妤"))]), "张思妤");
+        let _g = scope("zh-TW", "TW");
+        assert_eq!(m("{name}", &[("name", a("张思妤"))]), "張思妤");
+    }
 
     #[test]
     fn messages_by_id() {

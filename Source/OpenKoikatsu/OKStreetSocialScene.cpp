@@ -575,7 +575,7 @@ FString VoicePickDescription,VoicePickNotice,TtsVoiceInstruct;int32 VoicePickTar
  FVector SpotSavedMale=OKStreetMaleSpawn();double SpotSavedAt=0; // his position in the save, and when it was written (SaveCalendar)
  float Yaw=90,Pitch=-12,Distance=350,PeakMouth=0;TArray<TWeakObjectPtr<UPrimitiveComponent>> CameraHidden; // CameraHidden: whoever the follow camera is pressed into, left out of the view
  bool MouseUI=false,ViewportFocused=false,MouseToggleRequested=false,MouseModeChecked=false;
- FString SaveMenu,SaveNotice,NewGameRegion;bool SaveConfirmNew=false,SaveMenuPausedClock=false,SaveRestarting=false,StartMenuDecided=false,SaveApplied=false;double NextAutoSave=0; // OKStreetSocialSaves.inl
+ FString SaveMenu,SaveNotice,SaveNoticeId,SaveNoticeSlot,NewGameRegion;bool SaveConfirmNew=false,SaveMenuPausedClock=false,SaveRestarting=false,StartMenuDecided=false,SaveApplied=false;double NextAutoSave=0; // OKStreetSocialSaves.inl
  int32 FacingChecks=0;
  TSet<int32> FacingActorsChecked;
  TSharedPtr<FOKStreetMouseModeInput> MouseInput;
