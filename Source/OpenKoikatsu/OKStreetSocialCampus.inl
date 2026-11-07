@@ -141,8 +141,44 @@ void AOKStreetSocialScene::TakeStairs(int32 Dir){
  S.Message=OKMsg(TEXT("ui.campus.walk_stairs_to"), {{TEXT("floor"), Floor+Dir}});S.StairKey=-1;RefreshUI();
 }
 
+// A shop with rooms upstairs but neither lift nor stair anchors (the bookstore's 3F): the girls sat there and he could not
+// follow, "she is on another floor, no way there". The place At is in, if it is one.
+static const FOKStreetPlace* OKStreetShopWithFloors(const FVector& At){
+ for(const auto& P:OKStreetPlaces()){
+  if(!OKStreetInsidePlace(P,At)||!P.RoomLevels.ContainsByPredicate([](int32 L){return L>1;}))continue;
+  if(!OKStreetPlaceLifts(P).IsEmpty()||P.Anchors.ContainsByPredicate([](const FOKStreetModelAnchor& A){return A.Name.StartsWith(TEXT("stair"));}))return nullptr;
+  return &P;}
+ return nullptr;
+}
+// Where he comes out on that floor of such a shop: a free anchor there; the ground floor, failing that, its door.
+static bool OKStreetShopFloorSpot(const FOKStreetPlace& P,int32 Floor,FVector& Spot){
+ for(const auto& A:P.Anchors)if(OKStreetPlaceFloor(P,A.Position)==Floor&&!OKStreetBlockedPoint(A.Position,30)){Spot=A.Position;return true;}
+ if(Floor==1){Spot=P.Door;return true;}
+ return false;
+}
+// The stairs of such a shop, as the campus's: a short fade, and whoever walks with him comes along.
+void AOKStreetSocialScene::MoveFloor(const FVector& To){
+ auto& S=*State;const FVector From=S.Male;S.Male=To;
+ if(APlayerController* Pc=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr)if(Pc->PlayerCameraManager)Pc->PlayerCameraManager->StartCameraFade(1.f,0.f,0.7f,FLinearColor::Black,false,false);
+ for(const int32 I:{S.Companion,S.OutingGirl})if(S.Agents.IsValidIndex(I-1)&&FVector::Dist(S.Agents[I-1].Position,From)<500)S.Agents[I-1].Position=To+(S.Agents[I-1].Position-From);
+ S.StairKey=-1;RefreshUI();
+}
+// The navigation through such a shop: true while it has a way. He goes on from where this leaves him.
+bool AOKStreetSocialScene::NavByShopStairs(const FVector& Goal){
+ auto& S=*State;const FOKStreetPlace* Mine=OKStreetShopWithFloors(S.Male);const FOKStreetPlace* Hers=OKStreetShopWithFloors(Goal);
+ if(Mine&&Mine==Hers){MoveFloor(Goal);S.ManualReplan=true;return true;} // the same shop: her floor
+ if(Mine&&OKStreetUpstairs(S.Male)){MoveFloor(Mine->Door);S.ManualReplan=true;return true;} // going elsewhere: down and out of its door
+ if(!Hers||!OKStreetUpstairs(Goal))return false;
+ if(FVector::Dist2D(S.Male,Hers->Door)<120.f){MoveFloor(Goal);S.ManualReplan=true;return true;} // at her shop: up
+ if(S.NavPath.Num()>=2&&FVector::Dist2D(S.NavPath.Last(),Hers->Door)<5.f)return true; // on the way to its door
+ TArray<FVector> Path=PlaceRoute(S.Male,Hers->Door);if(Path.Num()<2)return false;
+ S.NavPath=MoveTemp(Path);S.NavStep=1;S.NavReplans=0;S.NavProgressAt=SceneTime();return true;
+}
+
 void AOKStreetSocialScene::TickCampusProximity(){
- auto& S=*State;int32 P=INDEX_NONE,F=0;const int32 Stair=StairHere(P,F)?P*10+F:-1;
+ auto& S=*State;int32 P=INDEX_NONE,F=0;int32 Stair=StairHere(P,F)?P*10+F:-1;
+ // In a shop with floors: its stair buttons change with the floor.
+ if(Stair==-1)if(const FOKStreetPlace* Shop=OKStreetShopWithFloors(S.Male))Stair=-2-int32(Shop-OKStreetPlaces().GetData())*16-OKStreetPlaceFloor(*Shop,S.Male);
  const FString Office=OfficeHere();
  if(Stair!=S.StairKey||Office!=S.OfficeKey){S.StairKey=Stair;S.OfficeKey=Office;RefreshUI();}
 }
@@ -184,6 +220,9 @@ void AOKStreetSocialScene::BuildCampusRows(const TSharedRef<SVerticalBox>& Panel
   if(Has(F+1))Row->AddSlot().Padding(2)[OKFinButton(Weak,OKMsg(TEXT("ui.campus.stairs_up_to"), {{TEXT("floor"), F+1}}),[Weak](){Weak->TakeStairs(1);})];
   if(Has(F-1))Row->AddSlot().Padding(2)[OKFinButton(Weak,OKMsg(TEXT("ui.campus.stairs_down_to"), {{TEXT("floor"), F-1}}),[Weak](){Weak->TakeStairs(-1);})];
  }
+ if(const FOKStreetPlace* Shop=OKStreetShopWithFloors(S.Male)){const int32 Here=OKStreetPlaceFloor(*Shop,S.Male);
+  for(const int32 Dir:{1,-1}){FVector Spot;if(!OKStreetShopFloorSpot(*Shop,Here+Dir,Spot))continue;
+   Row->AddSlot().Padding(2)[OKFinButton(Weak,OKMsg(Dir>0?TEXT("ui.campus.stairs_up_to"):TEXT("ui.campus.stairs_down_to"),{{TEXT("floor"),Here+Dir}}),[Weak,Spot,Here,Dir](){Weak->MoveFloor(Spot);Weak->State->Message=OKMsg(TEXT("ui.campus.walk_stairs_to"),{{TEXT("floor"),Here+Dir}});})];}}
  const FString Office=OfficeHere();
  if(!Office.IsEmpty()){const auto* D=OKStreetFindDept(Office);
   Row->AddSlot().Padding(2)[OKFinButton(Weak,OKCampusOfficeName(Office),[Weak,Office](){Weak->State->DeptOffice=Office;Weak->OpenApp(TEXT("dept"),false);},true,FLinearColor(1,.85f,.3f))];}

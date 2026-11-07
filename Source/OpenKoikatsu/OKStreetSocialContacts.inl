@@ -244,7 +244,7 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
   else if(S.NavRide.Elevator==INDEX_NONE){auto Path=S.NavPointActive?PlaceRoute(S.Male,Goal):ContactRoute(S.Male,Goal);if(Path.Num()>=2){S.NavPath=MoveTemp(Path);S.NavStep=1;}}
   return 0;}
  // On another floor: to an elevator first, then the ride (the route there is the plan's).
- if(S.NavRide.Elevator==INDEX_NONE&&NavNeedsLift(Goal)&&!PlanNavLift(Goal)){StopNavigation(OKT(TEXT("ui.contacts.other_floor_no_path")));return 0;}
+ if(S.NavRide.Elevator==INDEX_NONE&&NavNeedsLift(Goal)&&!PlanNavLift(Goal)&&!NavByShopStairs(Goal)){StopNavigation(OKT(TEXT("ui.contacts.other_floor_no_path")));return 0;}
  if(S.NavRide.Elevator!=INDEX_NONE&&S.NavStep>=S.NavPath.Num()){
   float Rate=0;const int32 Done=AdvanceLiftRide(S.NavRide,Dt,Rate);
   if(Done==2){StopNavigation(OKT(TEXT("ui.contacts.path_blocked_stop")));return 0;}

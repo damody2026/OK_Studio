@@ -472,6 +472,8 @@ private:
  FVector NavApproachSpot(const FVector& Her) const; // OKStreetSocialContacts.inl
  FVector PlaceInsideSpot(const struct FOKStreetPlace& Place) const; // OKStreetSocialOuting.inl
  bool NavNeedsLift(const FVector& Goal) const;
+ bool NavByShopStairs(const FVector& Goal); // OKStreetSocialCampus.inl: upstairs in a shop with no lift
+ void MoveFloor(const FVector& To);
  // Lover moments (OKStreetSocialLover.inl): DoAct's kiss / embrace / hand / head pat, shown.
  void PlayLoverAct(int32 Girl,const FString& Act,int32 Reaction);
  // OKStreetSocialLover.inl: a gesture of motions.toml with her words; her next two-shot pose (empty: the next one).

@@ -2133,4 +2133,6 @@
 - 2026-11-08 c-conquest 女角從樓上走向他時飄在空中：走過來的路線是街道路線（Z 1198），她跳到下一點時只換 X、Y，高度留在三樓 1960，每個點都沒地面踩、卡 8 秒。走出門和重排路線的兩個跳點也一樣。三處都改用路線點或門的高度。
 - 2026-11-08 c-conquest 校園各棟和兩棟宿舍 2F 以上走不出電梯：場景的電梯門模型在 landing 外 20 公分，是實體，遊戲的門在 centre+75，landing 夾在兩扇門中間；只在樓層間移動的測試看不出來（昨天的電梯驗證都沒走出門廳）。hotel、department 正常。要改場景資料，已交 c-street-city。
 - 2026-11-08 c-conquest 探電梯口時女角中途搭話，對話中 W 不生效，hotel、lecture、school 被我測成 0 並傳給 c-street-city，事後更正。批次探測要先做對照，並確認每筆都不在對話中。另外別的 session 也在跑遊戲時，MCP 的 game_* 會打到它的端口，要用 OK_CONTROL_PORT 走自己的。
-- 2026-11-08 c-conquest 量 120 FPS 時把別的 Unreal 的影響當成瓶頸：cafe 90 度同一設定，另一個 Unreal 在跑時 51～58 FPS（render 17～19 ms，GPU 7～9 ms，render 多半在等工作執行緒），它結束後升到 95，只剩較輕的迴歸測試時 109～146（100% 解析度 118～132）。之前的 render 10 ms 和「靠近建築就慢」都不算數。量之前先列 Unreal 程序，量完再列一次。
+- 2026-11-08 c-conquest 靠近建築只有 60 FPS：街區為了省 GPU 等待關了 r.AllowOcclusionQueries，大學城牆後的房間和家具全部照畫，render thread 16 ms。城市模式改回開著，同一位置 cafe 60 -> 153、conveni 71 -> 153、campus_ee 68 -> 190，其他位置沒變慢。我一度把這個慢歸給別的 Unreal 搶資源，還寫進紀錄和回報：那輪在同一個遊戲裡切過 show flag 和這個開關，切回 1 後就一直快，我誤以為是對方結束造成的。量 A/B 時切過的設定要還原成啟動時的值再量；開關切回去不等於回到原狀。
+- 2026-11-08 c-conquest 商店 2F 以上去不了：有座位 anchor，女角會坐上去，卻沒有電梯和樓梯，導航報「她在别的楼层，找不到路过去」。沒有電梯也沒有 stair anchor 的店，導航改成走到門口後淡出換層，下樓同樣；店內面板加上下樓按鈕。
+- 2026-11-08 c-conquest 打包版 -CitySource 是來源地圖，不是 World Partition，不讀烘好的 city_roads.json，電梯門模型也是 cook 前的。路網和場景的驗證要用編輯器模式 -Editor -City，打包版走得過或走不過都不算數。

@@ -824,7 +824,9 @@ void AOKStreetSocialScene::BeginPlay(){
  // No hardware occlusion queries: the render thread waited on the GPU for last frame's results (~5 ms a frame in the
  // girls' dorm, GPUBound_WaitingForGPUForOcclusionQueries), worst when another game shares the GPU. Drawing what they
  // would have culled costs the GPU ~1 ms (it idles at 3-4 ms); 127 -> 150 and 151 -> 177 FPS in the dorm, A/B in place.
- Quality(TEXT("r.AllowOcclusionQueries"),0);
+ // Not in the city: everything behind its walls was drawn, and beside a building the render thread took 16 ms (61 FPS at the
+ // cafe, 136 with the queries on).
+ if(!OKStreetCityMode())Quality(TEXT("r.AllowOcclusionQueries"),0);
  int32 ResX=0,ResY=0;
  if(FParse::Value(FCommandLine::Get(),TEXT("ResX="),ResX)&&FParse::Value(FCommandLine::Get(),TEXT("ResY="),ResY)&&ResX>=640&&ResY>=360){if(auto* Settings=GEngine->GetGameUserSettings()){Settings->SetScreenResolution(FIntPoint(ResX,ResY));Settings->SetFullscreenMode(EWindowMode::Windowed);Settings->ApplyResolutionSettings(false);}}
  FString ManifestPath,Json,Error;
