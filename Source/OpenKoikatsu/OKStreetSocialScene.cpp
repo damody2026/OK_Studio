@@ -4208,7 +4208,13 @@ void AOKStreetSocialScene::Tick(float Dt){
   if((S.Pair.Conversation()||S.Pair.Splash)&&S.Pair.Phase==1){FVector A,B;if((OKGetCrowdRuntimeBonePosition(this,0,TEXT("cm_j_head"),A)||OKGetCrowdRuntimeBonePosition(this,0,TEXT("cf_j_head"),A))&&OKGetCrowdRuntimeBonePosition(this,S.Pair.Partner,TEXT("cf_j_head"),B)&&!A.ContainsNaN()&&!B.ContainsNaN()){Focus=(A+B)*.5f-FVector(0,0,25);Pivot=Focus;}}
   if(S.Pair.Watermelon&&S.Pair.Phase==1){Focus=(S.Male+S.Agents[S.Pair.Partner-1].Position)*.5f+FVector(0,35,80);Pivot=Focus;}
   GalgameWalkFocus(Focus,Pivot); // walking and talking: between him and her (OKStreetSocialGalgame.inl)
-  const FRotator View(S.Pitch,S.Yaw,0);const FVector Wanted=Pivot-View.Vector()*S.Distance+(S.Target!=INDEX_NONE?FRotationMatrix(View).GetUnitAxis(EAxis::Y)*(S.Pair.Conversation()?-120.f:110.f):FVector::ZeroVector);FHitResult Hit;FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetCamera),false,this);const bool Blocked=GetWorld()->SweepSingleByChannel(Hit,Pivot,Wanted,FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeSphere(8),Query);S.Camera->SetActorLocation(Blocked?Hit.Location:Wanted);S.Camera->SetActorRotation((Focus-S.Camera->GetActorLocation()).Rotation());
+  const FRotator View(S.Pitch,S.Yaw,0);const FVector Wanted=Pivot-View.Vector()*S.Distance+(S.Target!=INDEX_NONE?FRotationMatrix(View).GetUnitAxis(EAxis::Y)*(S.Pair.Conversation()?-120.f:110.f):FVector::ZeroVector);FHitResult Hit;FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetCamera),false,this);const bool Blocked=GetWorld()->SweepSingleByChannel(Hit,Pivot,Wanted,FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeSphere(8),Query);FVector Shot=Blocked?Hit.Location:Wanted;
+  // The city's street is full of posts, fences and trees, and its ground has kerbs: a lens that jumps to whatever it touches shook
+  // him all the way down the road. It closes in fast and backs out slowly, and his height is followed, not copied.
+  if(OKStreetCityMode()&&S.Target==INDEX_NONE){static float Reach=-1.f,Height=0.f;const float Full=float(FVector::Dist(Pivot,Wanted)),Free=float(FVector::Dist(Pivot,Shot));const float RawZ=float(Pivot.Z);
+   if(Reach<0.f||FMath::Abs(RawZ-Height)>150.f){Reach=Free;Height=RawZ;}Reach=FMath::FInterpTo(Reach,Free,Dt,Free<Reach?14.f:3.f);Height=FMath::FInterpTo(Height,RawZ,Dt,8.f);
+   const FVector Lift(0,0,Height-RawZ);Shot=Pivot+Lift+(Wanted-Pivot).GetSafeNormal()*Reach;Focus+=Lift;}
+  S.Camera->SetActorLocation(Shot);S.Camera->SetActorRotation((Focus-S.Camera->GetActorLocation()).Rotation());
    // Right in front of the lens (in the lift she stood between the camera and him, under a metre from it: her back and
    // hair filled the view): she is left out of the view until the camera has room again; her portrait still shows her.
    // Not him (he is who is walked). Only for the street's own follow camera: the scene's shots hide what is in their way

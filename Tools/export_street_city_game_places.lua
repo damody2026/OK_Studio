@@ -114,19 +114,27 @@ if #biggest < 50 then problem('the road graph has only ' .. #biggest .. ' connec
 -- A part beside the main one is usually the raster's mistake: 'o' cells are coarse, and the map lets him through there (checked
 -- on foot for three of them, all within 6 m). Tie it on at its closest point; the game sweeps every link against the map when it
 -- loads and drops the ones a wall really blocks.
-local BRIDGE_CELLS, BRIDGE_MIN_POINTS = 5, 20
+local BRIDGE_CELLS, BRIDGE_MIN_POINTS, BRIDGE_TIES = 5, 20, 12
 for p = 2, #parts do
   local part = parts[p]
   if #part >= BRIDGE_MIN_POINTS then
-    local near, a, b = (BRIDGE_CELLS + 1) ^ 2
+    -- Several ties, the closest few from different points: the game drops the ones a fence blocks, so one is not enough.
+    local near = {}
     for _, x in ipairs(part) do
+      local best, y_best = (BRIDGE_CELLS + 1) ^ 2
       for _, y in ipairs(biggest) do
         local d = (nodes[x].k - nodes[y].k) ^ 2 + (nodes[x].i - nodes[y].i) ^ 2
-        if d < near then near, a, b = d, x, y end
+        if d < best then best, y_best = d, y end
       end
+      if y_best then near[#near + 1] = { d = best, a = x, b = y_best } end
+    end
+    table.sort(near, function(l, r) return l.d < r.d end)
+    local a
+    for n = 1, math.min(#near, BRIDGE_TIES) do
+      local tie = near[n]; a = a or tie.a
+      nodes[tie.a].links[#nodes[tie.a].links + 1] = tie.b; nodes[tie.b].links[#nodes[tie.b].links + 1] = tie.a
     end
     if a then
-      nodes[a].links[#nodes[a].links + 1] = b; nodes[b].links[#nodes[b].links + 1] = a
       for _, x in ipairs(part) do biggest[#biggest + 1] = x end
       print(('road graph: tied a part of %d points on at %.0f,%.0f'):format(#part, ox + (nodes[a].k - 1) * step, oy + (nodes[a].i - 1) * step))
     end

@@ -1591,6 +1591,9 @@ bool OKSetCrowdRuntimeCharacterMotion(AActor* Owner,int32 Character,const FTrans
  if(!State||State->Stopped||!State->ExternalControl||!State->Entries.IsValidIndex(Character)){Error=TEXT("External runtime control is unavailable");return false;}
  if(Transform.ContainsNaN()||!Transform.IsValid()||!FMath::IsFinite(Speed)||Speed<0||Speed>10){Error=TEXT("Invalid external character transform/speed");return false;}
  auto& E=*State->Entries[Character];E.ExternalTransform=Transform;E.ExternalSpeed=Speed;E.Transform=Transform;
+ // The scene's own tick runs after this frame is drawn (the core ticker comes after GEngine->Tick), and the camera moves in the
+ // game's tick: left to it, everyone is drawn a frame behind the lens, by as much as that frame took: a walker shakes.
+ if(!(Character==0&&State->LoadingCaptured)){OKRuntimeScene::OKCrowdSetTransform(E.Gpu.Get(),Transform);OKRuntimeScene::OKCrowdSetTransform(E.ShadowGpu.Get(),Transform);OKRuntimeScene::OKCrowdSetTransform(E.DepthGpu.Get(),Transform);OKRuntimeScene::OKCrowdSetTransform(E.FrontGpu.Get(),Transform);OKRuntimeScene::OKCrowdSetTransform(E.OccluderGpu.Get(),Transform);if(auto* C=E.Cpu.Get();C&&C->IsVisible())OKRuntimeScene::OKCrowdSetTransform(C,Transform);}
  if(Character==0){State->PlayerPosition=Transform.GetTranslation();State->PlayerPositionInitialized=true;}Error.Reset();return true;
 }
 float OKGetCrowdRuntimeWalkSpeedNow(AActor* Owner,int32 Character,FVector2f* Pivot){

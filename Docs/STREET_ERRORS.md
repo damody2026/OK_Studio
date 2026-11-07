@@ -2114,3 +2114,4 @@
 - 2026-11-07 c-conquest 以為 D3D12 residency 上限崩潰只發生在未 cook 的編輯器模式，打包版沒事：City1107Fps1（點光與聚光仍有陰影）開場第 3 幀就崩潰，重開一次又過了，是偶發。關掉本地燈陰影的版本連開 4 次沒遇到，但沒有證明已經解決；要留意 `D3D12.ResidencyManagement` 或引擎的 MAX_NUM_CONCURRENT_CMD_LISTS。
 - 2026-11-07 c-conquest 只在男宿前面對圍欄、720p、時鐘暫停時量大學城 FPS，看到 183 FPS 差點當成達標；換到街上、店內與 1080p 才看到 50～60 FPS。FPS 要量幾個代表地點與方向，解析度用實際遊玩的。
 - 2026-11-07 c-conquest 叢集光照的 ensure 沒確認就在 6b4f695a9 的訊息寫「已修掉」，其實改 ECVF 旗標沒用：原因是 `r.UseClusteredDeferredShading` 在 5.7 改名成 `r.UseClusteredDeferredShading_ToBeRemoved`，用舊名會 ensure。修法之後才算數；提交訊息只寫在 log 裡確認過的事。
+- 2026-11-07 c-conquest 走路一直抖：先猜鏡頭碰撞，量了才知道大跳只有 12 次（1982 幀）。真正原因是角色元件在 FTSTicker 更新，而 core ticker 在 GEngine->Tick 之後跑，所有角色都比鏡頭晚一幀畫，落差等於這一幀走的距離，幀時間不穩就來回晃。`OKSetCrowdRuntimeCharacterMotion` 改成當場更新元件。
