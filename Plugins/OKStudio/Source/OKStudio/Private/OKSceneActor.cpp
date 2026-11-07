@@ -1864,13 +1864,9 @@ void AOKSceneActor::MapPartBounds(TArray<FBox>& Out) const
 	}
 }
 
-bool AOKSceneActor::ChairBack(const FBox& Chair, FVector2D& Out) const
+void AOKSceneActor::ChairMesh(const FBox& Box, int32 Item, TArray<FVector>& Out) const
 {
-	// Only a backrest reaches the top quarter of a chair.
-	const FBox Around = Chair.ExpandBy(1.);
-	const double Top = Chair.Min.Z + Chair.GetSize().Z * .75;
-	FVector2D Sum(0., 0.);
-	int64 Count = 0;
+	const FBox Around = Box.ExpandBy(1.);
 	const auto Read = [&](const AKKPreviewActor* Preview)
 	{
 		TInlineComponentArray<UProceduralMeshComponent*> Meshes(Preview);
@@ -1880,18 +1876,12 @@ bool AOKSceneActor::ChairBack(const FBox& Chair, FVector2D& Out) const
 			const FMatrix ToWorld = M->GetRenderMatrix();
 			for (int32 I = 0; I < M->GetNumSections(); ++I)
 				if (const FProcMeshSection* Section = M->GetProcMeshSection(I))
-					for (const FProcMeshVertex& V : Section->ProcVertexBuffer)
-					{
-						const FVector P = ToWorld.TransformPosition(V.Position);
-						if (P.Z >= Top) { Sum += FVector2D(P.X, P.Y); ++Count; }
-					}
+					for (const uint32 Index : Section->ProcIndexBuffer)
+						if (Section->ProcVertexBuffer.IsValidIndex(Index)) Out.Add(ToWorld.TransformPosition(Section->ProcVertexBuffer[Index].Position));
 		}
 	};
-	for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews) if (P.IsValid()) Read(P.Get());
-	for (const TPair<int32, FShown>& Item : Shown) if (Item.Value.Preview.IsValid()) Read(Item.Value.Preview.Get());
-	if (!Count) return false;
-	Out = Sum / double(Count) - FVector2D(Chair.GetCenter().X, Chair.GetCenter().Y);
-	return Out.Size() > 4.;
+	if (Item >= 0) { if (const AKKPreviewActor* Preview = PreviewOf(Item)) Read(Preview); }
+	else for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews) if (P.IsValid()) Read(P.Get());
 }
 
 AKKPreviewActor* AOKSceneActor::PreviewOf(int32 Id) const

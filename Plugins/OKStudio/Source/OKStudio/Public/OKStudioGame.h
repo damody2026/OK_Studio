@@ -38,6 +38,19 @@ public:
 	AOKStudioViewer(const FObjectInitializer& Initializer);
 };
 
+/** A seat found in the scene (U264): read from its mesh, map parts have no names to go by. */
+struct FOKChair
+{
+	FBox Box = FBox(ForceInit);
+	int32 Item = -1;
+	/** The height of the seat's top; where the hips go on it; the way a person on it looks. */
+	double SeatZ = 0.;
+	FVector2D Hips = FVector2D::ZeroVector;
+	double Yaw = 0.;
+	/** A backrest told Yaw; without one, nothing but an item's turn or a desk beside it says. */
+	bool bFacing = false;
+};
+
 /**
  * OK Studio inside the game: the shared scene tree shown in the running world, an orbit viewer camera and a Slate
  * panel (outliner, object properties, scene files). Started by `OKStudio.Play [scene.okscene]`.
@@ -105,14 +118,14 @@ public:
 	void NoteStartView() { StartFocus = Focus; StartDistance = Distance; }
 	/** Pans the free view so object Id stands in the open part of it, when Covered (0..1 of the view) hides it (U263). */
 	bool KeepInOpenView(int32 Id, const FBox2D& Covered);
-	/** The chair-sized boxes of the map and the scene's items (map parts have no names to go by). */
+	/** The boxes of the map and the scene's items a seat could be in. */
 	void FindChairs(TArray<FBox>& Out, TArray<int32>* OutItems = nullptr) const;
-	/** The chair at a point of the view, the nearest of several. */
-	bool ChairAt(const FVector2D& Position, FBox& Out, int32* OutItem = nullptr) const;
-	/** Stands character Id at a chair, facing the desk or table beside it if there is one. */
-	bool SeatAt(int32 Id, const FBox& Chair, int32 Item = -1);
-	/** With its sitting motion on: the hips over the chair, wherever the motion has them. */
-	bool HipsOver(int32 Id, const FBox& Chair, int32 Item = -1, bool* OutBehindDesk = nullptr);
+	/** The seat at a point of the view, the nearest of several: on a sofa or bench the place clicked. */
+	bool ChairAt(const FVector2D& Position, FOKChair& Out) const;
+	/** Stands character Id at a seat, looking the way it does. */
+	bool SeatAt(int32 Id, const FOKChair& Chair);
+	/** With its sitting motion on: the hips on the seat, wherever the motion has them. */
+	bool HipsOver(int32 Id, const FOKChair& Chair, bool* OutBehindDesk = nullptr);
 	/** The selected items and characters go onto the surface seen behind them, along the line of sight; how many moved. */
 	int32 DropOnSurface();
 	/** The part of the view no panel covers, as fractions of the view (0..1, y down); the panel keeps it current. Framing

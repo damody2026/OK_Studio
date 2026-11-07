@@ -144,7 +144,7 @@ void SOKStudioPanel::TickSit()
 	// One step with the move to the chair: the first Ctrl+Z left her beside it.
 	Game->EndHistoryStep();
 	bool bBehindDesk = false;
-	if (Game->HipsOver(SitId, SitChair, SitItem, &bBehindDesk)) { Changed(); Game->AmendHistory(); }
+	if (Game->HipsOver(SitId, SitChair, &bBehindDesk)) { Changed(); Game->AmendHistory(); }
 	const FOKSceneObject* X = Game->Document->Find(SitId);
 	SetStatus((X ? X->Name : FString()) + (bBehindDesk ? TEXT(" 坐在桌緣後方：這張椅子推在桌下，拉不出來") : TEXT(" 坐到椅子上")));
 	SitId = -1;

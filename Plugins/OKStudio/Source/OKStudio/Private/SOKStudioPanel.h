@@ -1934,8 +1934,7 @@ public:
 	int32 AxesChecked = -1;
 	bool bChairPick = false;
 	int32 SitId = -1;
-	int32 SitItem = -1;
-	FBox SitChair = FBox(ForceInit);
+	FOKChair SitChair;
 	double SitAt = 0.;
 	void TickSit();
 	/** From and to belong to a scene: a remembered 4 s cut a 30 s work (U262). */
@@ -3664,11 +3663,10 @@ public:
 	{
 		bChairPick = false;
 		const FOKSceneObject* X = Obj();
-		FBox Chair;
-		int32 Item = -1;
+		FOKChair Chair;
 		if (!X || X->Kind != EOKSceneObjectKind::Character) { SetStatus(TEXT("先選一個角色")); return; }
-		if (!Game->ChairAt(Position, Chair, &Item)) { SetStatus(TEXT("這裡沒有認得的椅子：地圖的椅子要是獨立的部件，也可以加椅子道具")); return; }
-		if (!Game->SeatAt(X->Id, Chair, Item)) { SetStatus(TEXT("這個角色動不了（鎖定中？）")); return; }
+		if (!Game->ChairAt(Position, Chair)) { SetStatus(TEXT("這裡沒有認得的座位：地圖的椅子要是獨立的部件，也可以加椅子、沙發道具")); return; }
+		if (!Game->SeatAt(X->Id, Chair)) { SetStatus(TEXT("這個角色動不了（鎖定中？）")); return; }
 		// A motion of the chair category stays; anything else takes the first sitting motion there.
 		const FOKStudioCatalog& C = FOKStudioCatalog::Get();
 		const auto InChair = [&C](const FOKStudioAnim& A)
@@ -3685,7 +3683,6 @@ public:
 		else Changed();
 		SitId = X->Id;
 		SitChair = Chair;
-		SitItem = Item;
 		SitAt = FPlatformTime::Seconds() + 0.5; // the motion is on by then
 	}
 	/** Plays catalogue animation `Index` on the selected character. */

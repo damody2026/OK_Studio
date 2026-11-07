@@ -396,6 +396,25 @@ if #chairs > 0 then
   check(math.sqrt((at[1] - cx) ^ 2 + (at[2] - cy) ^ 2) < 40, ("坐下 puts the character at the chair (%.0f,%.0f by %.0f,%.0f)"):format(at[1], at[2], cx, cy))
 end
 
+-- U264: a sofa, read from its mesh: on the place clicked, the hips on the seat, with no map around.
+call("scene", { map = -1 }); idle(); wait(30)
+local known = objects()
+call("cmd", { id = "add.item", arg = "2/13/79" }); idle(); wait(30)
+local sofa = nil
+for oid, o in pairs(objects()) do if not known[oid] and o.kind == "item" then sofa = o end end
+check(sofa ~= nil, "a sofa to sit on")
+if sofa then
+  call("transform", { id = sofa.id, location = { 300, 0, 0 }, rotation = { 0, 0, 0 } }); wait(30)
+  call("select", { ids = { id } }); wait(10)
+  call("camera", { focus = { 300, 0, 50 }, yaw = 90, pitch = -20, distance = 300 }); wait(30)
+  local shot = call("ui_shot", { name = "button_check_sofa.png" })
+  check(click("坐下").ok, "坐下 clicked for the sofa")
+  call("mouse", { x = (shot.width or 1600) / 2, y = (shot.height or 900) / 2 + 50 }); wait(120)
+  local me = objects()[id]
+  local at = me and me.location or { 1e9, 1e9, 1e9 }
+  check(math.abs(at[1] - 300) < 40 and math.abs(at[2]) < 30 and math.abs(at[3]) < 8, ("坐下 sits on the sofa (%.0f,%.0f,%.0f)"):format(at[1], at[2], at[3]))
+end
+
 local wav = "UserData/audio/_button_check.wav"
 local f = assert(io.open(wav, "wb"))
 f:write("RIFF", string.pack("<I4", 36 + 8000), "WAVEfmt ", string.pack("<I4I2I2I4I4I2I2", 16, 1, 1, 8000, 8000, 1, 8), "data", string.pack("<I4", 8000), string.rep("\128", 8000))
