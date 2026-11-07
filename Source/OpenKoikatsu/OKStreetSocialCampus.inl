@@ -166,10 +166,14 @@ void AOKStreetSocialScene::MoveFloor(const FVector& To){
 // The navigation through such a shop: true while it has a way. He goes on from where this leaves him.
 bool AOKStreetSocialScene::NavByShopStairs(const FVector& Goal){
  auto& S=*State;const FOKStreetPlace* Mine=OKStreetShopWithFloors(S.Male);const FOKStreetPlace* Hers=OKStreetShopWithFloors(Goal);
- if(Mine&&Mine==Hers){MoveFloor(Goal);S.ManualReplan=true;return true;} // the same shop: her floor
+ // Beside her on her floor's ground: her spot is at the height of her seat, and he came out on top of her.
+ auto Beside=[&Goal](const FOKStreetPlace& P){FVector Floor;const float Z=OKStreetShopFloorSpot(P,OKStreetPlaceFloor(P,Goal),Floor)?Floor.Z:Goal.Z;
+  for(int32 A=0;A<8;++A){const float Angle=A*45.f*PI/180.f;const FVector Near=FVector(Goal.X,Goal.Y,Z)+FVector(FMath::Cos(Angle),FMath::Sin(Angle),0)*120.f;if(OKStreetInsidePlace(P,Near)&&!OKStreetBlockedPoint(Near,30))return Near;}
+  return FVector(Goal.X,Goal.Y,Z);};
+ if(Mine&&Mine==Hers){MoveFloor(Beside(*Hers));S.ManualReplan=true;return true;} // the same shop: her floor
  if(Mine&&OKStreetUpstairs(S.Male)){MoveFloor(Mine->Door);S.ManualReplan=true;return true;} // going elsewhere: down and out of its door
  if(!Hers||!OKStreetUpstairs(Goal))return false;
- if(FVector::Dist2D(S.Male,Hers->Door)<120.f){MoveFloor(Goal);S.ManualReplan=true;return true;} // at her shop: up
+ if(FVector::Dist2D(S.Male,Hers->Door)<120.f){MoveFloor(Beside(*Hers));S.ManualReplan=true;return true;} // at her shop: up
  if(S.NavPath.Num()>=2&&FVector::Dist2D(S.NavPath.Last(),Hers->Door)<5.f)return true; // on the way to its door
  TArray<FVector> Path=PlaceRoute(S.Male,Hers->Door);if(Path.Num()<2)return false;
  S.NavPath=MoveTemp(Path);S.NavStep=1;S.NavReplans=0;S.NavProgressAt=SceneTime();return true;
