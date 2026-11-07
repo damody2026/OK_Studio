@@ -8,6 +8,7 @@
 #include "Engine/Engine.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
+#include "UnrealClient.h"
 
 void AOKHUD::BeginPlay()
 {
@@ -41,6 +42,8 @@ void AOKHUD::DrawHUD()
 	// The card reader's camera follows a character's style, so a ruler beside the character shows the height: real centimetres
 	// from the ground in the character's plane, drawn here to stay out of the card captures.
 	APlayerController* PC = GetOwningPlayerController();
+	// A screenshot without the UI is the character alone: the character MCP's images are measured.
+	if (FScreenshotRequest::IsScreenshotRequested() && !FScreenshotRequest::ShouldShowUI()) return;
 	if (!Canvas || !Gallery || !PC || !PC->PlayerCameraManager || !Gallery->bModelLayout || Gallery->bOkStudioOpen || Gallery->InteractionWidget || Gallery->InteractionScene) return;
 	const AKKPreviewActor* Actor = Gallery->PreviewActor;
 	if (!IsValid(Actor) || !Actor->Session.IsOpen()) return;
