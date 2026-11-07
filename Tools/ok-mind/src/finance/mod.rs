@@ -396,11 +396,14 @@ impl Finance {
         let mut out = self.dispatch(&mut b, op, q).map_err(|e| words(&e))?;
         // A Simplified game reads Simplified names: the data's names are Traditional first (貴州茅臺 -> 贵州茅台).
         if zh_cn || sign != "NT$" {
-            fn walk(v: &mut Value, words: &dyn Fn(&str) -> String) {
+            fn walk(v: &mut Value, words: &dyn Fn(&str) -> String, western: bool) {
                 match v {
                     Value::Object(m) => {
                         for (k, x) in m.iter_mut() {
-                            if let (true, Value::String(s)) = (k == "name" || k.ends_with("_name") || k == "label" || k == "comp_label" || k == "text" || k == "note" || k == "message", &*x) {
+                            // Issue numbers start with the ROC year; only Taiwan counts years that way (a Mainland game read 第 99011 期).
+                            if let (true, Value::String(s)) = (western && k == "issue", &*x) {
+                                *x = Value::String(lottery::issue_western(s));
+                            } else if let (true, Value::String(s)) = (k == "name" || k.ends_with("_name") || k == "label" || k == "comp_label" || k == "text" || k == "note" || k == "message", &*x) {
                                 *x = Value::String(words(s));
                             } else if let (true, Value::Array(names)) = (k == "names", &mut *x) {
                                 for n in names.iter_mut() {
@@ -409,15 +412,15 @@ impl Finance {
                                     }
                                 }
                             } else {
-                                walk(x, words);
+                                walk(x, words, western);
                             }
                         }
                     }
-                    Value::Array(a) => a.iter_mut().for_each(|x| walk(x, words)),
+                    Value::Array(a) => a.iter_mut().for_each(|x| walk(x, words, western)),
                     _ => {}
                 }
             }
-            walk(&mut out, &words);
+            walk(&mut out, &words, sign != "NT$");
         }
         let mutating = !matches!(op, "summary" | "sports_board" | "lotto_info" | "quote" | "quotes" | "chart" | "fundamentals" | "search" | "account" | "notebook" | "tickets" | "movers" | "session" | "ledger" | "resolve" | "alerts");
         if mutating || b.next_id != before {
