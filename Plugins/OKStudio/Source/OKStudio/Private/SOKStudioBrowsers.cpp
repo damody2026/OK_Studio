@@ -171,6 +171,8 @@ void SOKStudioPanel::GoCardFolder(const FString& Folder)
 	CardForward.Reset();
 	CardFolder = Folder;
 	CardPage = 0;
+	// The card of the last folder stayed in the preview, and 加入 added it (U262).
+	CardPreview.Reset();
 }
 
 bool SOKStudioPanel::AddOrReplaceCard(const FString& Card, bool bReplace)
@@ -636,33 +638,162 @@ TSharedRef<SWidget> SOKStudioPanel::BuildEffectList()
 		+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("%d 個特效；選著特效物件時是替換"), C.Effects.Num())), 9.f, TextHint())];
 }
 
+void SOKStudioPanel::LoadPickedMap()
+{
+	if (!Game.IsValid() || MapPick == -1) return;
+	const int32 Map = MapPick == -2 ? -1 : MapPick;
+	// The biggest maps took 28 s in one frame: they build behind the shown map, which goes when the new one is ready (U258).
+	// A scene still opening takes the new map the same way by itself.
+	const bool bOpening = Game->SceneActor && Game->SceneActor->bProgressiveBuild;
+	if (!bMapThumbRun && !bOpening && Map >= 0 && Map != Game->Document->Map && Game->SceneActor)
+	{
+		Game->SceneActor->PrepareMap(Map);
+		if (Game->SceneActor->PreparingMap() == Map)
+		{
+			MapPrepareSerial = Game->SceneSerial;
+			bMapPrepareByPick = true;
+			SetStatus(TEXT("讀取地圖中…") + FOKStudioCatalog::Get().FindMap(Map)->Name);
+			return;
+		}
+	}
+	if (Game->SceneActor && !bOpening) Game->SceneActor->StopMapPrepare();
+	bMapPrepareByPick = false;
+	ShowPickedMap(Map);
+}
+
+void SOKStudioPanel::TickMapPrepare()
+{
+	if (!bMapPrepareByPick) return;
+	AOKSceneActor* Actor = Game->SceneActor;
+	const int32 Map = Actor ? Actor->PreparingMap() : -1;
+	// Given up by a new scene: the line must not go on saying it is loading.
+	if (Map < 0 || MapPrepareSerial != Game->SceneSerial)
+	{
+		bMapPrepareByPick = false;
+		if (StatusText().StartsWith(TEXT("讀取地圖中…"))) SetStatus(TEXT("場景已更換，地圖沒有讀取"));
+		return;
+	}
+	if (Actor->ContinueMapPrepare()) { bMapPrepareByPick = false; ShowPickedMap(Map); }
+}
+
+void SOKStudioPanel::ShowPickedMap(int32 Map)
+{
+	Game->Document->Map = Map;
+	// A map without its own sky gets the scene's sky, for its time of day (U128: the classroom's windows were black).
+	int32 MapPattern = -1;
+	FOKScenePost& Post = Game->Document->Post;
+	if (Game->Document->Map >= 0 && !Post.bSky && !OKStudioMapSky(Game->Document->Map, Post.SunType, MapPattern)) { Post.bSky = true; Post.SkyPattern = FMath::Clamp(Post.SunType, 0, 3); }
+	Changed();
+	// With nobody in the scene yet the view goes to the map's origin, where Studio stands its characters (U147).
+	const bool bNobody = !Game->Document->Objects.ContainsByPredicate([](const FOKSceneObject& O) { return O.Kind == EOKSceneObjectKind::Character; });
+	if (bNobody) Game->ViewPreset(5);
+	if (!bMapThumbRun) FOKStudioSettings::Get().UseRecent(FString::Printf(TEXT("map:%d"), Game->Document->Map));
+	FString Note = TEXT("地圖：") + (FOKStudioCatalog::Get().FindMap(Game->Document->Map) ? FOKStudioCatalog::Get().FindMap(Game->Document->Map)->Name : FString(TEXT("無")));
+	// The big maps hold the frame 5 to 14 s here.
+	if (!bMapThumbRun) PaintStatus(TEXT("讀取地圖中…"));
+	// The characters are carried over: those left over nothing or in a wall of the new map move to its ground (U146).
+	Game->SyncDocumentNow();
+	// The origin taken by the map's own things: the view (and the next character) goes to free ground beside it (U156).
+	if (bNobody && Game->FrameMapStart()) Note += TEXT("；原點有地圖物件，視角移到旁邊的空地");
+	if (bNobody) Game->NoteStartView();
+	if (const int32 Moved = Game->SettleCharactersOnMap()) { Changed(); Note += FString::Printf(TEXT("；%d 個角色移到地圖的地面上"), Moved); }
+	SetStatus(Note);
+	// Nobody stands in the way of the picture: the map leaves its own, for the list (U256).
+	if (bNobody && Game->Document->Map >= 0 && !FPaths::FileExists(MapThumbFile(Game->Document->Map)))
+	{
+		MapThumbMap = Game->Document->Map;
+		MapThumbAt = FPlatformTime::Seconds() + 1.5; // the textures come in over the next frames
+	}
+}
+
+FString SOKStudioPanel::MapThumbFile(int32 No)
+{
+	return FOKStudioSettings::Directory() / TEXT("MapThumbnails") / FString::Printf(TEXT("%d.png"), No);
+}
+
+int32 SOKStudioPanel::MissingMapThumbs(TArray<int32>* Out) const
+{
+	int32 Count = 0;
+	for (const FOKStudioCatalogMap& M : FOKStudioCatalog::Get().Maps)
+		if (!FPaths::FileExists(MapThumbFile(M.No))) { ++Count; if (Out) Out->Add(M.No); }
+	return Count;
+}
+
+void SOKStudioPanel::ToggleMapThumbs()
+{
+	if (bMapThumbRun) { StopMapThumbs(TEXT("已停止製作地圖縮圖")); return; }
+	if (Game->Document->Objects.ContainsByPredicate([](const FOKSceneObject& O) { return O.Kind == EOKSceneObjectKind::Character; }))
+	{
+		SetStatus(TEXT("製作地圖縮圖要在沒有角色的場景做"));
+		return;
+	}
+	MapThumbQueue.Reset();
+	MissingMapThumbs(&MapThumbQueue);
+	if (MapThumbQueue.IsEmpty()) { SetStatus(TEXT("每張地圖都有縮圖了")); return; }
+	bMapThumbRun = true;
+	MapThumbTotal = MapThumbQueue.Num();
+	MapThumbSerial = Game->SceneSerial;
+	MapThumbBackMap = Game->Document->Map;
+	MapThumbBackPost = Game->Document->Post;
+	bMapThumbBackDirty = Game->bDirty;
+	DeferFloat(TEXT("maps"));
+}
+
+void SOKStudioPanel::StopMapThumbs(const FString& Note)
+{
+	const int32 Made = MapThumbTotal - MapThumbQueue.Num() - (MapThumbMap >= 0 ? 1 : 0);
+	bMapThumbRun = false;
+	MapThumbQueue.Reset();
+	MapThumbMap = -1;
+	MapPick = MapThumbBackMap < 0 ? -2 : MapThumbBackMap;
+	// Back to the map it was on, as if nothing had been walked through; not onto a scene opened meanwhile.
+	if (MapThumbSerial == Game->SceneSerial)
+	{
+		Game->Document->Map = MapThumbBackMap;
+		Game->Document->Post = MapThumbBackPost;
+		Changed();
+		Game->SyncDocumentNow();
+		if (!bMapThumbBackDirty) { Game->ResetHistory(); Game->bDirty = false; }
+	}
+	SetStatus(FString::Printf(TEXT("%s（做好 %d 張）"), *Note, Made));
+	if (IsFloatOpen(TEXT("maps"))) DeferFloat(TEXT("maps"));
+}
+
+void SOKStudioPanel::TickMapThumbs()
+{
+	if (MapThumbMap >= 0)
+	{
+		// The user went on to another map or a character came: not this picture.
+		const bool bNobody = !Game->Document->Objects.ContainsByPredicate([](const FOKSceneObject& O) { return O.Kind == EOKSceneObjectKind::Character; });
+		if (Game->Document->Map != MapThumbMap || !bNobody) MapThumbMap = -1;
+		else if (FPlatformTime::Seconds() >= MapThumbAt && !(Game->SceneActor && Game->SceneActor->HasPendingBuilds()))
+		{
+			const FString File = MapThumbFile(MapThumbMap);
+			FString Error;
+			if (Game->CaptureMapPicture(File, Error)) FOKStudioThumbnails::Get().Forget(File);
+			else UE_LOG(LogTemp, Warning, TEXT("OK studio: map %d picture: %s"), MapThumbMap, *Error);
+			const bool bShown = MapPick == MapThumbMap;
+			MapThumbMap = -1;
+			if (bShown && !bMapThumbRun && IsFloatOpen(TEXT("maps"))) DeferFloat(TEXT("maps"));
+		}
+	}
+	if (!bMapThumbRun || MapThumbMap >= 0) return;
+	if (MapThumbSerial != Game->SceneSerial) { StopMapThumbs(TEXT("場景已更換，地圖縮圖停止製作")); return; }
+	if (Game->Document->Objects.ContainsByPredicate([](const FOKSceneObject& O) { return O.Kind == EOKSceneObjectKind::Character; })) { StopMapThumbs(TEXT("場景加了角色，地圖縮圖停止製作")); return; }
+	if (MapThumbQueue.IsEmpty()) { StopMapThumbs(TEXT("地圖縮圖製作完成")); return; }
+	MapPick = MapThumbQueue[0];
+	MapThumbQueue.RemoveAt(0);
+	LoadPickedMap();
+	SetStatus(FString::Printf(TEXT("製作地圖縮圖 %d / %d"), MapThumbTotal - MapThumbQueue.Num(), MapThumbTotal));
+}
+
 TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 {
 	const FOKStudioCatalog& C = FOKStudioCatalog::Get();
 	if (MapPick == -1 && Game.IsValid()) MapPick = Game->Document->Map;
 	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
 	TSharedPtr<SWidget> PickedRow;
-	auto LoadMap = [this]
-	{
-		if (!Game.IsValid() || MapPick == -1) return;
-		Game->Document->Map = MapPick == -2 ? -1 : MapPick;
-		// A map without its own sky gets the scene's sky, for its time of day (U128: the classroom's windows were black).
-		int32 MapPattern = -1;
-		FOKScenePost& Post = Game->Document->Post;
-		if (Game->Document->Map >= 0 && !Post.bSky && !OKStudioMapSky(Game->Document->Map, Post.SunType, MapPattern)) { Post.bSky = true; Post.SkyPattern = FMath::Clamp(Post.SunType, 0, 3); }
-		Changed();
-		// With nobody in the scene yet the view goes to the map's origin, where Studio stands its characters (U147).
-		const bool bNobody = !Game->Document->Objects.ContainsByPredicate([](const FOKSceneObject& O) { return O.Kind == EOKSceneObjectKind::Character; });
-		if (bNobody) Game->ViewPreset(5);
-		FOKStudioSettings::Get().UseRecent(FString::Printf(TEXT("map:%d"), Game->Document->Map));
-		FString Note = TEXT("地圖：") + (FOKStudioCatalog::Get().FindMap(Game->Document->Map) ? FOKStudioCatalog::Get().FindMap(Game->Document->Map)->Name : FString(TEXT("無")));
-		// The characters are carried over: those left over nothing or in a wall of the new map move to its ground (U146).
-		Game->SyncDocumentNow();
-		// The origin taken by the map's own things: the view (and the next character) goes to free ground beside it (U156).
-		if (bNobody && Game->FrameMapStart()) Note += TEXT("；原點有地圖物件，視角移到旁邊的空地");
-		if (const int32 Moved = Game->SettleCharactersOnMap()) { Changed(); Note += FString::Printf(TEXT("；%d 個角色移到地圖的地面上"), Moved); }
-		SetStatus(Note);
-	};
+	auto LoadMap = [this] { LoadPickedMap(); };
 	// A double click loads the map at once (U126), as a card's adds it.
 	auto MapRow = [this, LoadMap](const FString& Text, int32 No)
 	{
@@ -693,6 +824,8 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 	for (const FOKStudioCatalogMap& M : C.Maps)
 		if (!C.MapCategories.ContainsByPredicate([&M](const FOKStudioCatalogGroup& G) { return G.Id == M.Category; })) AddMap(M);
 	const FOKStudioCatalogMap* Picked = C.FindMap(MapPick);
+	const FString PickedPicture = Picked && FPaths::FileExists(MapThumbFile(Picked->No)) ? MapThumbFile(Picked->No) : FString();
+	const int32 MapsWithout = MissingMapThumbs();
 	TSharedRef<SScrollBox> MapList = SNew(SScrollBox) + SScrollBox::Slot()[Box];
 	// 定位當前: scrolled once the rows are laid out (a request made now, before the first layout, finds no row).
 	if (bMapLocate && PickedRow.IsValid())
@@ -711,6 +844,14 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("定位當前")), Cmd(TEXT("map.locate")), 64.f, 20.f, false, 10.f)]
 		]
 		+ SVerticalBox::Slot().FillHeight(1.f).Padding(0.f, 3.f)[SNew(SBorder).BorderImage(Brush(ListArea())).Padding(2.f)[MapList]]
+		// The picture of the picked map, once it has been shown (U256).
+		+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(0.f, 0.f, 0.f, 3.f)
+		[
+			SNew(SBox).WidthOverride(176.f).HeightOverride(99.f).Visibility(PickedPicture.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible)
+			[
+				SNew(SImage).Image_Lambda([PickedPicture] { const FSlateBrush* B = PickedPicture.IsEmpty() ? nullptr : FOKStudioThumbnails::Get().File(PickedPicture, 256); return B ? B : Brush(ListArea()); })
+			]
+		]
 		+ SVerticalBox::Slot().AutoHeight()[OKStudioStyle::Label(FText::FromString(MapPick == -2 ? FString(TEXT("選擇：無地圖")) : Picked ? TEXT("選擇：") + Picked->Name : FString(TEXT("點一張地圖再按「讀取」，或雙擊它"))), 10.f, TextSoft())]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f, 0.f, 0.f)
 		[
@@ -721,6 +862,14 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMapBrowser()
 			]
 			// Studio's map window "設置": the map's position, rotation, time of day and sky (畫面設定's map tab).
 			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("設定")), Cmd(TEXT("scene.tab"), TEXT("1")), 60.f, 22.f)]
+		]
+		// Walks every map without a picture, on a scene with nobody in it; a click stops it (U256).
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f, 0.f, 0.f)
+		[
+			SNew(SBox).Visibility(MapsWithout > 0 || bMapThumbRun ? EVisibility::Visible : EVisibility::Collapsed)
+			[
+				Button(FText::FromString(bMapThumbRun ? FString(TEXT("停止製作縮圖")) : FString::Printf(TEXT("製作縮圖（還有 %d 張）"), MapsWithout)), Cmd(TEXT("map.thumbs")), 0.f, 20.f, false, 10.f)
+			]
 		];
 }
 

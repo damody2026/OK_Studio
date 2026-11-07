@@ -203,7 +203,12 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 	MotionScroll->AddChild(MotionCol);
 	MotionFrame->AddChildToVerticalBox(MotionScroll)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 	MotionBorder->AddChild(MotionFrame);
-	MotionPanel->AddChild(MotionBorder);
+	MotionContentScale=WidgetTree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass(),TEXT("MotionContentScale"));
+	MotionContentScale->SetStretch(EStretch::UserSpecified);
+	auto* MotionScaleSlot=CastChecked<UScaleBoxSlot>(MotionContentScale->AddChild(MotionBorder));
+	MotionScaleSlot->SetHorizontalAlignment(HAlign_Fill);
+	MotionScaleSlot->SetVerticalAlignment(VAlign_Fill);
+	MotionPanel->AddChild(MotionContentScale);
 	UHorizontalBox* PoseNav = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("PoseNav"));
 	auto StylePoseButton = [](UButton* Btn)
 	{
@@ -583,11 +588,11 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
  BuildEditorDisplayControls(EditorColumn);
  EditorContentScale=WidgetTree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass(),TEXT("EditorContentScale"));
  EditorContentScale->SetStretch(EStretch::UserSpecified);
- auto* EditorScaleSlot=CastChecked<UScaleBoxSlot>(EditorContentScale->AddChild(ShapeBorder));
+ EditorColumn->AddChildToVerticalBox(ShapeBorder)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+ auto* EditorScaleSlot=CastChecked<UScaleBoxSlot>(EditorContentScale->AddChild(EditorColumn));
  EditorScaleSlot->SetHorizontalAlignment(HAlign_Fill);
  EditorScaleSlot->SetVerticalAlignment(VAlign_Fill);
- EditorColumn->AddChildToVerticalBox(EditorContentScale)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
- ShapeSize->AddChild(EditorColumn);
+ ShapeSize->AddChild(EditorContentScale);
  ApplyEditorDisplaySettings();
 
 	CardListView = WidgetTree->ConstructWidget<UOKCardListView>(UOKCardListView::StaticClass(), TEXT("CardListView"));
@@ -1583,7 +1588,7 @@ static void OKNoteFrameGraph(UOKCharacterController* Self, float DeltaSeconds)
 void UOKCharacterController::NativeTick(const FGeometry& Geometry,float DeltaSeconds)
 {
 	Super::NativeTick(Geometry,DeltaSeconds);
-	if(CharacterStyle!=0.f&&StyledActor!=PreviewActor)ApplyCharacterStyle();
+	if((CharacterStyle!=0.f||CharacterFaceStyle!=0.f)&&StyledActor!=PreviewActor)ApplyCharacterStyle();
  // The shown character solves its next frame while this one draws; the interaction scene and paired playback pose it themselves.
  if(IsValid(PreviewActor))PreviewActor->bAsyncNativePose=!InteractionWidget&&!InteractionScene&&!PairedPlayback;
     OKNoteFrameGraph(this, DeltaSeconds);
@@ -3526,7 +3531,7 @@ void UOKCharacterController::ApplyShapeValue(bool bBody, int32 Index, float Valu
 		}
 		Selected.Face.ShapeValueFace[Index] = Value;
 	}
-	if (CharacterStyle != 0.f) ApplyCharacterStyle();
+	if (CharacterStyle != 0.f || CharacterFaceStyle != 0.f) ApplyCharacterStyle();
 	else if (PreviewActor && bModelLayout)
 	{
 		PreviewActor->MarkShapeDirty(Selected.Face.ShapeValueFace, Selected.Body.ShapeValueBody);

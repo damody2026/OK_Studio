@@ -169,7 +169,8 @@ FString OKStudioStyleBones(float Style, float Scale)
 				Add(FString(W.Name) + (W.bBothSides ? Side : TEXT("")), Size, W.bArm ? Arm : W.bLeg ? Leg : 1.f, 0.f);
 				if (!W.bBothSides) break;
 			}
-		for (const TCHAR* Bone : { TEXT("cf_j_forearm01_L"), TEXT("cf_j_forearm01_R"), TEXT("cf_j_hand_L"), TEXT("cf_j_hand_R") }) Add(Bone, FVector::OneVector, Arm, 0.f);
+		// The cf_d_ branches hang off the same joints: left at their length, the skin and a wrist accessory stay behind the hand.
+		for (const TCHAR* Bone : { TEXT("cf_j_forearm01_L"), TEXT("cf_j_forearm01_R"), TEXT("cf_j_hand_L"), TEXT("cf_j_hand_R"), TEXT("cf_d_arm01_L"), TEXT("cf_d_arm01_R"), TEXT("cf_d_arm02_L"), TEXT("cf_d_arm02_R"), TEXT("cf_d_arm03_L"), TEXT("cf_d_arm03_R"), TEXT("cf_d_forearm02_L"), TEXT("cf_d_forearm02_R"), TEXT("cf_d_wrist_L"), TEXT("cf_d_wrist_R") }) Add(Bone, FVector::OneVector, Arm, 0.f);
 		for (const TCHAR* Bone : { TEXT("cf_j_leg01_L"), TEXT("cf_j_leg01_R"), TEXT("cf_j_leg03_L"), TEXT("cf_j_leg03_R") }) Add(Bone, FVector::OneVector, Leg, 0.f);
 		Add(TEXT("cf_s_head"), FVector(FMath::Lerp(1.f, Tuning.HeadSize, -Style)), 1.f, 0.f);
 		// The thighs and arms come in with the width, or they would stand off the body.
@@ -177,6 +178,11 @@ FString OKStudioStyleBones(float Style, float Scale)
 		Add(TEXT("cf_j_thigh00_R"), FVector::OneVector, 1.f, -ThighX * (1.f - Thin * Tuning.Hips));
 		Add(TEXT("cf_j_arm00_L"), FVector::OneVector, 1.f, ArmX * (1.f - Thin * Tuning.Shoulders));
 		Add(TEXT("cf_j_arm00_R"), FVector::OneVector, 1.f, -ArmX * (1.f - Thin * Tuning.Shoulders));
+	}
+	if (Style > 0.f)
+	{
+		const float Head = FMath::Lerp(1.f, OKStudioStyleTuning().ChibiHead, Style);
+		Json += FString::Printf(TEXT("%s{\"name\":\"cf_s_head\",\"location\":0,\"coord\":[{\"scale\":[%f,%f,%f],\"length\":1,\"pos\":[0,0,0],\"rot\":[0,0,0]}]}"), Json.IsEmpty() ? TEXT("") : TEXT(","), Head, Head, Head);
 	}
 	if (Style != 0.f)
 		for (const FStyleBone& B : BoneStyle)
@@ -194,38 +200,43 @@ FString OKStudioStyleBones(float Style, float Scale)
 	return TEXT("[") + Json + TEXT("]");
 }
 
-void OKStudioStyleSliders(float Style, TArray<float>& Body, TArray<float>& Face)
+void OKStudioStyleSliders(float Style, float FaceLook, TArray<float>& Body, TArray<float>& Face)
 {
 	Style = FMath::Clamp(Style, -1.f, 1.f);
-	if (Style == 0.f) return;
-	const TArray<float> CardFace = Face;
-	Pulled(Style, BodyStyle, Body);
-	Pulled(Style, FaceStyle, Face);
-	// The jaw keeps the card's shape: the realistic end only goes part of the way, the chibi end widens a narrow jaw and leaves a wide one.
+	FaceLook = FMath::Clamp(FaceLook, -1.f, 1.f);
 	const FOKStudioStyleTuning& Tuning = OKStudioStyleTuning();
-	if (Style < 0.f)
+	if (FaceLook != 0.f)
 	{
-		// A narrow jaw is already sharp and takes little of it, a wide one takes more (chin width and cheek width, the card's).
-		const float Jaw = Face.IsValidIndex(16) ? (CardFace[9] + CardFace[16]) * 0.5f : 0.f;
-		const float Strength = FMath::Clamp(Tuning.RealJaw + 0.74f * (Jaw - 0.04f), 0.1f, 0.7f);
-		for (int32 Index : { 0, 5, 6, 8, 9, 16, 17, 18 })
-			if (Face.IsValidIndex(Index)) Face[Index] = FMath::Lerp(CardFace[Index], Face[Index], Strength);
-		// Eyes going up and shrinking leave a longer face under them, which reads as a sharper chin.
-		for (int32 Index : { 30, 33, 34, 35, 38, 40, 42 })
-			if (Face.IsValidIndex(Index)) Face[Index] = FMath::Lerp(CardFace[Index], Face[Index], Tuning.RealFace);
+		const TArray<float> CardFace = Face;
+		Pulled(FaceLook, FaceStyle, Face);
+		// The jaw keeps the card's shape: the realistic end only goes part of the way, the chibi end widens a narrow jaw and leaves a wide one.
+		if (FaceLook < 0.f)
+		{
+			// A narrow jaw is already sharp and takes little of it, a wide one takes more (chin width and cheek width, the card's).
+			const float Jaw = Face.IsValidIndex(16) ? (CardFace[9] + CardFace[16]) * 0.5f : 0.f;
+			const float Strength = FMath::Clamp(Tuning.RealJaw + 0.74f * (Jaw - 0.04f), 0.1f, 0.7f);
+			for (int32 Index : { 0, 5, 6, 8, 9, 16, 17, 18 })
+				if (Face.IsValidIndex(Index)) Face[Index] = FMath::Lerp(CardFace[Index], Face[Index], Strength);
+			// Eyes going up and shrinking leave a longer face under them, which reads as a sharper chin.
+			for (int32 Index : { 33, 34, 35, 38, 40, 42 })
+				if (Face.IsValidIndex(Index)) Face[Index] = FMath::Lerp(CardFace[Index], Face[Index], Tuning.RealFace);
+			if (Face.IsValidIndex(30)) Face[30] = FMath::Lerp(CardFace[30], Face[30], Tuning.RealEye);
+		}
+		else
+		{
+			for (int32 Index : { 0, 5, 9, 16 })
+				if (Face.IsValidIndex(Index)) Face[Index] = FMath::Min(Face[Index], FMath::Max(CardFace[Index], CardFace[Index] + FaceLook * Tuning.ChibiJaw));
+		}
+		// The bottom of the chin rounds off at both ends, from the card's own: lowering the tip blunts it far more than widening it does.
+		if (Face.IsValidIndex(13))
+		{
+			const float Round = FMath::Abs(FaceLook) * (FaceLook < 0.f ? Tuning.RealChin : Tuning.ChibiChin);
+			Face[11] = CardFace[11] - Round;
+			Face[13] = CardFace[13] + Round * 2.f;
+		}
 	}
-	else
-	{
-		for (int32 Index : { 0, 5, 9, 16 })
-			if (Face.IsValidIndex(Index)) Face[Index] = FMath::Min(Face[Index], FMath::Max(CardFace[Index], CardFace[Index] + Style * Tuning.ChibiJaw));
-	}
-	// The bottom of the chin rounds off at both ends, from the card's own: lowering the tip blunts it far more than widening it does.
-	if (Face.IsValidIndex(13))
-	{
-		const float Round = FMath::Abs(Style) * (Style < 0.f ? Tuning.RealChin : Tuning.ChibiChin);
-		Face[11] = CardFace[11] - Round;
-		Face[13] = CardFace[13] + Round * 2.f;
-	}
+	if (Style == 0.f) return;
+	Pulled(Style, BodyStyle, Body);
 	// The chibi end takes at most half of the card's breasts away.
 	if (Body.IsValidIndex(4)) Body[4] = Style > 0.f ? FMath::Lerp(Body[4], FMath::Max(Body[4] * 0.5f, FMath::Min(Body[4], ChibiBreast)), Style) : Body[4] - Style * Pull * (OKStudioStyleTuning().Breast - Body[4]);
 	if (Body.IsValidIndex(1)) Body[1] = Style > 0.f ? FMath::Lerp(Body[1], ChibiHead, Style * Pull) : FMath::Lerp(Body[1], FMath::Min(Body[1], RealHead(Body[0])), -Style);

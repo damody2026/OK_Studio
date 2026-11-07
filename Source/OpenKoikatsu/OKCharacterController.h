@@ -197,9 +197,10 @@ public:
  UFUNCTION() void OnEditorPanelWidthChanged(float Value);
  UFUNCTION() void OnEditorFontSizeChanged(float Value);
  UPROPERTY() TObjectPtr<class UScaleBox> EditorContentScale;
+ UPROPERTY() TObjectPtr<class UScaleBox> MotionContentScale;
  UPROPERTY() TObjectPtr<class USpinBox> EditorWidthInput;
  UPROPERTY() TObjectPtr<class USpinBox> EditorFontInput;
- float EditorPanelWidth=360.f,EditorFontSize=16.f;
+ float EditorPanelWidth=360.f,EditorFontSize=8.f;
  bool bEditorDisplayDirty=false;
  double EditorDisplayChangedAt=0.;
 	void BuildAnimationLookup();
@@ -218,7 +219,7 @@ public:
  float StyleDefault(const FString& Parameter) const;
  void OnStyleReset(UOKShapeSlider* Slider);
  void ApplyCharacterStyle();
- float CharacterStyle=0.f;
+ float CharacterStyle=0.f,CharacterFaceStyle=0.f;
  FVector StyledActorLocation=FVector::ZeroVector;
  float StyledScale=1.f;
  UPROPERTY() TObjectPtr<AKKPreviewActor> StyledActor;

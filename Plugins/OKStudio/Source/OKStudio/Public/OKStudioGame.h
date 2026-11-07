@@ -69,6 +69,8 @@ public:
 	float Pitch = -8.f;
 	float OrbitFov = 40.f;
 	float Distance = 380.f;
+	FVector StartFocus = FVector::ZeroVector;
+	float StartDistance = -1.f;
 
 	FString File;
 	/** The primary selection: the guide's pivot and the object the detail windows show (also in Selection). */
@@ -99,6 +101,10 @@ public:
 	bool bFramedFace = false;
 	/** The whole figure of a character just added, while the view is still the initial one (U212). */
 	void FrameFirstCharacter(int32 Id);
+	/** The view a map just opened with: the first character may still reframe it (U262: head and feet were cut). */
+	void NoteStartView() { StartFocus = Focus; StartDistance = Distance; }
+	/** The selected items and characters go onto the surface seen behind them, along the line of sight; how many moved. */
+	int32 DropOnSurface();
 	/** The part of the view no panel covers, as fractions of the view (0..1, y down); the panel keeps it current. Framing
 	 *  centres there and sizes the distance to it. */
 	FBox2D ClearView = FBox2D(FVector2D(0.f, 0.f), FVector2D(1.f, 1.f));
@@ -135,6 +141,14 @@ public:
 	bool Load(const FString& Path, FString& OutError);
 	/** Drop the current scene and its source/image caches before another independent load. */
 	void ReleaseSceneResources();
+	/** Whether the scene's clock follows the timeline (else motions run on their own, as Studio's do). */
+	void UpdateTimelineDriven();
+	/** The timeline was used in this scene: from then on a file motion (a VMD) stays where it put it. */
+	bool bTimelineUsed = false;
+	/** The self test reads what it just added: SyncNow builds everything before it returns. */
+	bool bSyncBuildsAll = false;
+	/** Goes up each time the scene is replaced: work started on the old scene must not land on the new one (U251). */
+	int32 SceneSerial = 0;
 	/** Cards the character picker offers (Content/CharacterCards). */
 	static TArray<FString> AvailableCards();
 	/** Scene files of the in-game list: UserData/Studio/scene/*.okscene, newest first. */
@@ -265,6 +279,8 @@ public:
 	FString Screenshot(int32 Width, int32 Height, bool bTransparent = false);
 	/** Renders the current view (camera, FOV, scene post-processing) at a resolution and writes a PNG, synchronously. */
 	/** bTransparent: only the scene's characters and items, the rest (map, sky) transparent. */
+	/** A map's picture for the map window: the view as it stands, or from inside the map if that sees next to nothing. */
+	bool CaptureMapPicture(const FString& Path, FString& OutError);
 	bool CaptureToPng(const FString& Path, int32 Width, int32 Height, FString& OutError, bool bTransparent = false);
 
 	/** Exports the timeline as numbered PNG frames (UserData/Studio/movie/<time>/frame_00000.png), one per Tick. */
@@ -284,6 +300,8 @@ public:
 		const TArray<TPair<FString, bool>>& Audio = {}, float Seconds = 0.f);
 	/** A movie export takes the scene's BGM and outside sound that play (U129: the mp4 had no sound). */
 	bool bExportAudio = true;
+	/** A PNG sequence with only the characters and items, the rest transparent (U247; a movie has no alpha). */
+	bool bExportTransparent = false;
 	/** The ffmpeg the movie export uses (not under version control; downloaded into Tools/ffmpeg). */
 	static FString FfmpegPath();
 	/** Movie export: the last mp4 written, or why it was not; LastMovieNote says when it came out without sound though

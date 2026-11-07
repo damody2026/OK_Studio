@@ -11,9 +11,11 @@ struct FOKStudioStyleTuning
 	float LegLength = 1.f;		// the legs against what the character's growth gives them
 	float Breast = 0.85f;		// the breast size slider it pulls to
 	float RealJaw = 0.33f;		// how far the jaw sliders go towards the realistic end's, on a middling jaw
-	float RealFace = 0.6f;		// how far the eyes, nose and mouth go towards the realistic end's
+	float RealFace = 0.6f;		// how far the eye shape, nose and mouth go towards the realistic end's
+	float RealEye = 0.2f;		// and how far the eyes go up: further than this they go under the fringe
 	float RealChin = 0.15f;		// how far the realistic end rounds the tip of the chin
 	float ChibiChin = 0.15f;	// and the chibi end
+	float ChibiHead = 0.8f;		// the chibi end's head against what its head slider gives
 	float ChibiJaw = 0.1f;		// the most the chibi end widens the jaw sliders
 	float ArmGrowth = 0.7f;		// how much of the character's growth the arms keep
 	int32 Revision = 0;			// bumped on a change: shown characters take the numbers again
@@ -25,7 +27,7 @@ OKSTUDIO_API FOKStudioStyleTuning& OKStudioStyleTuning();
  * value towards the style's, so the card still shows through. `Body` and `Face` are the card's sliders and are changed in
  * place. Out of 0..1 the values are what SliderUnlocker's cards use (shape.rs get_info extrapolates them).
  */
-OKSTUDIO_API void OKStudioStyleSliders(float Style, TArray<float>& Body, TArray<float>& Face);
+OKSTUDIO_API void OKStudioStyleSliders(float Style, float FaceLook, TArray<float>& Body, TArray<float>& Face);
 
 /** The whole character's size at style `Style`, from the card's sliders and the styled ones. The height slider itself keeps head,
  * hands and torso at their size while the rest grows (cf_a_height_aid), so a style scales the character instead. The realistic

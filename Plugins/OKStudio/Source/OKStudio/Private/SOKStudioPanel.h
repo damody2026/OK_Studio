@@ -6,6 +6,8 @@
 #include "OKStudioSettings.h"
 #include "OKStudioThumbnails.h"
 #include "SOKStudioTimeline.h"
+#include "Async/Async.h"
+#include <atomic>
 #include "Framework/Application/IInputProcessor.h"
 #include "Framework/Application/MenuStack.h"
 #include "Input/DragAndDrop.h"
@@ -297,6 +299,8 @@ public:
 	{
 		if (KeyProcessor && FSlateApplication::IsInitialized()) FSlateApplication::Get().UnregisterInputPreProcessor(KeyProcessor);
 		SaveLayout();
+		// The worker must not outlive the module its code is in.
+		if (VmdFuture.IsValid()) VmdFuture.Wait();
 		if (PreviewActor.IsValid()) PreviewActor->Destroy();
 	}
 
@@ -334,7 +338,7 @@ public:
 						[Tagged(TEXT("CharacterGroupPanel"), SNew(SBox).Visibility_Lambda([this] { return bShowGroups ? EVisibility::Visible : EVisibility::Collapsed; })[MakeGroupPanel()])]
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(1.f, 0.f)).Offset(FMargin(Right(1528.9f), 47.f, 240.f, 429.f))
 						[Tagged(TEXT("TreePanel"), SNew(SBox).Visibility_Lambda([this] { return bShowWorkspace ? EVisibility::Visible : EVisibility::Collapsed; })[MakeTreePanel()])]
-					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(0.f, 1.f)).Offset(FMargin(0.f, -60.f, 478.f, 60.f))
+					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(0.f, 1.f)).Offset(FMargin(0.f, -60.f, 506.f, 60.f))
 						[Tagged(TEXT("TransformBar"), SNew(SBox).Visibility_Lambda([this] { return bShowTransform ? EVisibility::Visible : EVisibility::Collapsed; })[MakeTransformBar()])]
 					+ SConstraintCanvas::Slot().Expose(DetailSlot).Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(0.f, 0.f)).Offset(TAttribute<FMargin>::CreateLambda([this] { return PageRect(); }))
 						[Tagged(TEXT("DetailWindow"), SNew(SBox).Visibility_Lambda([this] { return Page == EPage::None || !PageFitsSelection() ? EVisibility::Collapsed : EVisibility::Visible; })
@@ -349,7 +353,10 @@ public:
 							[
 								SNew(SBorder).BorderImage(Brush(Panel())).Padding(FMargin(6.f, 1.f))
 								.Visibility_Lambda([this] { return Status.IsValid() && !Status->GetText().IsEmpty() ? EVisibility::SelfHitTestInvisible : EVisibility::Collapsed; })
-								[SAssignNew(Status, STextBlock).Font(Font(10.f)).ColorAndOpacity(OKStudioStyle::Text())]
+								[
+									SNew(SBox).MinDesiredWidth_Lambda([this] { return FOptionalSize(StatusMinWidth); })
+									[SAssignNew(Status, STextBlock).Font(Font(10.f)).ColorAndOpacity(OKStudioStyle::Text())]
+								]
 							]
 						]
 				]
@@ -427,7 +434,7 @@ public:
 		});
 		AddCommand(TEXT("scene.save"), TEXT("儲存"), [this](const FString& Arg)
 		{
-			if (Arg.IsEmpty() && !Game->File.IsEmpty() && FOKSceneCard::Kind(Game->File) != FOKSceneCard::EKind::KStudio) { FString E; const bool bOk = Game->Save(Game->File, E); FOKStudioThumbnails::Get().Forget(ScenePicture(Game->File)); SetStatus(bOk ? TEXT("已存 ") + Game->File : E); return bOk; }
+			if (Arg.IsEmpty() && !Game->File.IsEmpty() && FOKSceneCard::Kind(Game->File) != FOKSceneCard::EKind::KStudio) { FString E; PaintStatus(TEXT("儲存中…")); const bool bOk = Game->Save(Game->File, E); FOKStudioThumbnails::Get().Forget(ScenePicture(Game->File)); SetStatus(bOk ? TEXT("已存 ") + Game->File : E); return bOk; }
 			return SaveNamed(Arg.IsEmpty() ? FDateTime::Now().ToString(TEXT("scene_%Y%m%d_%H%M%S")) : Arg);
 		});
 		// Save as starts from a new name, so saving twice keeps both (U165), and shows the folder it saves to (U221).
@@ -621,6 +628,7 @@ public:
 		});
 		Float_(TEXT("add.map"), TEXT("地圖"), TEXT("maps"));
 		// HS2Studio6 地图窗 定位当前: the scene's map picked in the map window and scrolled to (the search cleared).
+		Simple(TEXT("map.thumbs"), TEXT("製作地圖縮圖"), [this] { ToggleMapThumbs(); });
 		AddCommand(TEXT("map.locate"), TEXT("地圖定位當前"), [this](const FString&)
 		{
 			if (!Game.IsValid()) return false;
@@ -743,8 +751,8 @@ public:
 		Simple(TEXT("tree.locate"), TEXT("定位當前"), [this] { LocateSelection(); });
 		AddCommand(TEXT("tree.filter"), TEXT("依種類篩選"), [this](const FString& Arg) { KindFilter = Arg.IsEmpty() ? (KindFilter >= 5 ? -1 : KindFilter + 1) : FCString::Atoi(*Arg); RefreshRows(); return true; });
 		AddCommand(TEXT("group.attach"), TEXT("掛到所選部位"), [this](const FString& Arg) { return AttachToPoint(Arg.IsEmpty() ? GroupPoint : Arg); });
-		Simple(TEXT("transform.copy"), TEXT("複製變換"), [this] { if (const FOKSceneObject* O = Obj()) { CopiedTransform = O->Transform; bHasCopiedTransform = true; } });
-		Simple(TEXT("transform.paste"), TEXT("貼上變換"), [this] { if (!bHasCopiedTransform) return; for (int32 Id : Game->Selection) if (FOKSceneObject* O = Game->Document->Find(Id)) O->Transform = CopiedTransform; Changed(); });
+		Simple(TEXT("transform.copy"), TEXT("複製變換"), [this] { if (const FOKSceneObject* O = Obj()) { CopiedTransform = Game->Document->WorldTransform(O->Id); bHasCopiedTransform = true; } });
+		Simple(TEXT("transform.paste"), TEXT("貼上變換"), [this] { if (!bHasCopiedTransform) return; for (int32 Id : Game->Selection) if (FOKSceneObject* O = Game->Document->Find(Id)) O->Transform = O->Parent >= 0 ? CopiedTransform.GetRelativeTransform(Game->Document->WorldTransform(O->Parent)) : CopiedTransform; Changed(); });
 		AddCommand(TEXT("transform.move"), TEXT("移動（x y z cm）"), [this](const FString& Arg)
 		{
 			TArray<FString> P; Arg.ParseIntoArrayWS(P);
@@ -756,6 +764,12 @@ public:
 		});
 		Simple(TEXT("transform.reset"), TEXT("重設變換"), [this] { for (int32 Id : Game->Selection) if (FOKSceneObject* O = Game->Document->Find(Id)) O->Transform = FTransform::Identity; Changed(); });
 		Simple(TEXT("transform.face"), TEXT("面向對方"), [this] { FaceEachOther(); });
+		Simple(TEXT("transform.drop"), TEXT("放到下方表面"), [this]
+		{
+			const int32 Moved = Game->DropOnSurface();
+			if (Moved) Changed();
+			SetStatus(Moved ? FString::Printf(TEXT("%d 個物件放到下方表面"), Moved) : FString(TEXT("沒有移動：要選道具或角色，正下方要有桌面或地面")));
+		});
 		// Timeline.
 		// A camera key from the view (U238): the two steps were easy to halve, and 打 key alone keeps the camera where it was.
 		Simple(TEXT("timeline.viewkey"), TEXT("視角打 key"), [this]
@@ -925,15 +939,8 @@ public:
 		});
 		AddCommand(TEXT("mmd.sound"), TEXT("載入音樂"), [this](const FString& Arg)
 		{
-			const FString File = Arg.TrimStartAndEnd().TrimQuotes();
-			if (!File.IsEmpty() && !FPaths::FileExists(File)) { SetStatus(TEXT("找不到音樂檔：") + File); return false; }
-			Game->Document->SoundFile = File;
-			const float Seconds = File.IsEmpty() ? 0.f : Game->SceneSoundSeconds();
-			if (!File.IsEmpty() && Seconds <= 0.f) { Game->Document->SoundFile.Reset(); SetStatus(TEXT("音樂讀不了，只接受 WAV 與 Ogg：") + File); return false; }
-			Game->Document->Duration = FMath::Max(Game->Document->Duration, Game->Document->SoundDelay + Seconds);
-			Changed();
+			if (!SetSceneMusic(Arg.TrimStartAndEnd().TrimQuotes(), true)) return false;
 			DeferFloat(TEXT("mmd"));
-			SetStatus(File.IsEmpty() ? FString(TEXT("已移除音樂")) : FString::Printf(TEXT("已載入音樂：%s（%.1f 秒）"), *FPaths::GetCleanFilename(File), Seconds));
 			return true;
 		});
 		AddCommand(TEXT("mmd.vmd"), TEXT("載入 VMD 動作"), [this](const FString& Arg)
@@ -949,8 +956,14 @@ public:
 			if (TargetId < 0 && Game.IsValid() && Game->Document)
 				for (const FOKSceneObject& O : Game->Document->Objects)
 					if (O.Kind == EOKSceneObjectKind::Character) { TargetId = O.Id; break; }
+			// Several selected: all of them, in turn on the worker thread (U249, U251).
+			TArray<int32> Cast;
+			if (Sep == INDEX_NONE && Game.IsValid())
+				for (int32 Id : Game->Selection) if (const FOKSceneObject* O = Game->Document->Find(Id); O && O->Kind == EOKSceneObjectKind::Character) Cast.Add(Id);
+			if (Cast.Num() > 1) return QueueVmd(Cast, Path);
 			return LoadVmdForCharacter(TargetId, Path);
 		});
+		Simple(TEXT("mmd.vmd.cancel"), TEXT("取消套用 VMD"), [this] { CancelVmd(); });
 		// Pose.
 		AddCommand(TEXT("pose.mirror"), TEXT("鏡像姿勢"), [this](const FString& Arg) { FOKSceneObject* X = Obj(); return X && MirrorPose(*X, Arg == TEXT("l2r") ? 1 : Arg == TEXT("r2l") ? 2 : 0); });
 		Simple(TEXT("pose.ikfromfk"), TEXT("IK←FK"), [this] { if (FOKSceneObject* X = Obj()) IkFromFk(*X); });
@@ -996,7 +1009,9 @@ public:
 		if (Focus && TimelineView && Focus == TimelineView && (K == EKeys::Delete || (E.IsControlDown() && (K == EKeys::C || K == EKeys::V)))) return false;
 		if (K == EKeys::Escape)
 		{
-			if (IsFloatOpen(TEXT("dialog"))) CloseFloat(TEXT("dialog"));
+			// An open right-click menu goes first (U245: Esc closed the page behind it and left the menu up).
+			if (FSlateApplication::Get().AnyMenusVisible()) FSlateApplication::Get().DismissAllMenus();
+			else if (IsFloatOpen(TEXT("dialog"))) CloseFloat(TEXT("dialog"));
 			else if (Page != EPage::None) SetPage(EPage::None);
 			else if (RootMenu >= 0) { RootMenu = -1; DeferSubMenu(); }
 			else if (!OpenOrder.IsEmpty()) CloseFloat(OpenOrder.Last());
@@ -1047,6 +1062,11 @@ public:
 		J->SetNumberField(TEXT("active_camera"), Game.IsValid() && Game->Document ? Game->Document->ActiveCamera : -1);
 		J->SetBoolField(TEXT("lock_camera"), Game.IsValid() && Game->bLockActiveCamera);
 		J->SetNumberField(TEXT("timeline_time"), Game.IsValid() ? Game->TimelineTime : 0.f);
+		J->SetNumberField(TEXT("frame_ms"), FApp::GetDeltaTime() * 1000.);
+		// The longest frame since the last time this was read, and the status line.
+		J->SetNumberField(TEXT("frame_max_ms"), FrameMaxMs);
+		FrameMaxMs = 0.;
+		J->SetStringField(TEXT("status"), StatusText());
 		J->SetBoolField(TEXT("timeline_playing"), Game.IsValid() && Game->bTimelinePlaying);
 		J->SetBoolField(TEXT("workspace"), bShowWorkspace);
 		J->SetBoolField(TEXT("groups"), bShowGroups);
@@ -1092,6 +1112,11 @@ public:
 		J->SetArrayField(TEXT("windows"), Open);
 		J->SetBoolField(TEXT("dirty"), Game.IsValid() && Game->bDirty);
 		J->SetStringField(TEXT("busy"), Game.IsValid() ? Game->BusyReason() : FString());
+		// Work going on behind the picture: the VMD queue and the objects still to build.
+		J->SetNumberField(TEXT("vmd_pending"), MmdQueue.Num() + (VmdTask ? 1 : 0));
+		J->SetNumberField(TEXT("vmd_done"), MmdQueueDone);
+		J->SetNumberField(TEXT("vmd_total"), MmdQueueTotal);
+		J->SetNumberField(TEXT("build_left"), Game.IsValid() && Game->SceneActor ? Game->SceneActor->PendingBuilds() : 0);
 		J->SetStringField(TEXT("dialog"), IsFloatOpen(TEXT("dialog")) ? DialogText : FString());
 		J->SetNumberField(TEXT("kind_filter"), KindFilter);
 		J->SetBoolField(TEXT("local_axes"), Game.IsValid() && Game->bLocalAxes);
@@ -1517,8 +1542,17 @@ public:
 			]
 			+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 0.f, 0.f)
 			[
-				SNew(SBox).ToolTipText(FText::FromString(TEXT("所選角色轉向最近的另一個角色；選兩個角色時兩人面對面")))
-				[Button(FText::FromString(TEXT("面向\n對方")), Cmd(TEXT("transform.face")), 34.f, 52.f, false, 10.f)]
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					SNew(SBox).ToolTipText(FText::FromString(TEXT("所選角色轉向最近的另一個角色；選兩個角色時兩人面對面")))
+					[Button(FText::FromString(TEXT("面向")), Cmd(TEXT("transform.face")), 34.f, 25.f, false, 10.f)]
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f, 0.f, 0.f)
+				[
+					SNew(SBox).ToolTipText(FText::FromString(TEXT("所選道具或角色落到畫面上看到的桌面或地面：沿視線往下找")))
+					[Button(FText::FromString(TEXT("放下")), Cmd(TEXT("transform.drop")), 34.f, 25.f, false, 10.f)]
+				]
 			]
 			+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 0.f, 0.f)
 			[
@@ -1711,6 +1745,38 @@ public:
 	/** What the last export came to, for the export window and the status line. */
 	FString ExportResult() const;
 	bool bWasExporting = false;
+	uint32 MmdCast = 0;
+	/** U251: a character's VMD on its way through the worker thread. It holds a copy of the rig, never the session. */
+	struct FVmdTask
+	{
+		int32 CharId = -1;
+		int32 SceneSerial = 0;
+		FString Name, Card, Path, Params;
+		bool bShaped = false;
+		OkVmdJob* Job = nullptr;
+		TArray<uint8> Bytes;
+		FString Error;
+		double Seconds = 0.;
+		bool bCancelled = false;
+		std::atomic<bool> bDone{ false };
+	};
+	/** Characters waiting for the worker, with their file. */
+	TArray<TPair<int32, FString>> MmdQueue;
+	TSharedPtr<FVmdTask> VmdTask;
+	TFuture<void> VmdFuture;
+	int32 MmdQueueTotal = 0, MmdQueueDone = 0, MmdSkipped = 0, MmdFailed = 0;
+	FString MmdFailNote;
+	int32 VmdSerial = 0;
+	double VmdStatusAt = 0.;
+	void TickVmdQueue();
+	void StartNextVmd();
+	void FinishVmd(FVmdTask& Task);
+	/** Stops the queue: what waits is dropped, what is on the worker finishes there and is thrown away. */
+	void CancelVmd();
+	bool VmdRunning() const { return !MmdQueue.IsEmpty() || (VmdTask && !VmdTask->bCancelled); }
+	mutable double FrameMaxMs = 0.;
+	/** What the status line counts to while a big scene builds (0: not building). */
+	int32 BuildTotal = 0;
 	/** U214, U218: what the selected object's keys hold when the playhead came to WatchTime, to notice a change without a key. */
 	int32 WatchId = -1;
 	float WatchTime = -1.f;
@@ -1847,9 +1913,32 @@ public:
 	TSharedRef<SWidget> BuildQuickSearch();
 	TSharedRef<SWidget> BuildEffectList();
 	TSharedRef<SWidget> BuildMapBrowser();
+	void LoadPickedMap();
+	void ShowPickedMap(int32 Map);
+	void TickMapPrepare();
+	int32 MapPrepareSerial = 0;
+	/** From and to belong to a scene: a remembered 4 s cut a 30 s work (U262). */
+	int32 ExportRangeSerial = 0;
+	/** The map being prepared is the one picked in the map window, not the opening scene's. */
+	bool bMapPrepareByPick = false;
+	/** The picture a map left when it was shown (none of the sources has one). */
+	static FString MapThumbFile(int32 No);
+	int32 MissingMapThumbs(TArray<int32>* Out = nullptr) const;
+	void ToggleMapThumbs();
+	void StopMapThumbs(const FString& Note);
+	void TickMapThumbs();
 	int32 MapPick = -1;
 	/** 定位當前 (HS2Studio6 地图窗 定位当前): the next build scrolls the list to the picked map. */
 	bool bMapLocate = false;
+	int32 MapThumbMap = -1; // waiting for its picture
+	double MapThumbAt = 0.;
+	bool bMapThumbRun = false;
+	TArray<int32> MapThumbQueue;
+	int32 MapThumbTotal = 0;
+	int32 MapThumbSerial = 0;
+	int32 MapThumbBackMap = -1;
+	FOKScenePost MapThumbBackPost;
+	bool bMapThumbBackDirty = false;
 	FString EffectSearch, MapSearch;
 
 	// --- Pose (U5). ---
@@ -2064,7 +2153,30 @@ public:
 
 public:
 
-	void SetStatus(const FString& Text) { if (Status) Status->SetText(FText::FromString(Text)); }
+	/** The music of the timeline (it follows the playhead and goes into the mp4). bLengthen: the scene grows to hold all of it. */
+	bool SetSceneMusic(const FString& File, bool bLengthen)
+	{
+		if (!File.IsEmpty() && !FPaths::FileExists(File)) { SetStatus(TEXT("找不到音樂檔：") + File); return false; }
+		Game->Document->SoundFile = File;
+		const float Seconds = File.IsEmpty() ? 0.f : Game->SceneSoundSeconds();
+		if (!File.IsEmpty() && Seconds <= 0.f) { Game->Document->SoundFile.Reset(); SetStatus(TEXT("音樂讀不了，只接受 WAV 與 Ogg：") + File); return false; }
+		if (bLengthen) Game->Document->Duration = FMath::Max(Game->Document->Duration, Game->Document->SoundDelay + Seconds);
+		Changed();
+		SetStatus(File.IsEmpty() ? FString(TEXT("已移除音樂")) : FString::Printf(TEXT("已載入音樂：%s（%.1f 秒）"), *FPaths::GetCleanFilename(File), Seconds));
+		return true;
+	}
+	void SetStatus(const FString& Text) { StatusMinWidth = 0.f; if (Status) Status->SetText(FText::FromString(Text)); }
+	/** The status line before something that holds the frame: painted now, or nobody sees it until it is over (U256). */
+	void PaintStatus(const FString& Text)
+	{
+		const TSharedPtr<SWindow> Window = FSlateApplication::IsInitialized() ? FSlateApplication::Get().FindWidgetWindow(AsShared()) : nullptr;
+		// The frame is painted over what is on the window, with no new 3D view under it: only as wide a box covers the old text.
+		const float OldWidth = Status ? Status->GetDesiredSize().X : 0.f;
+		SetStatus(Text);
+		StatusMinWidth = OldWidth;
+		// Twice: the window has two buffers, and either may be the one shown while the frame is held.
+		if (Window) { FSlateApplication::Get().ForceRedrawWindow(Window.ToSharedRef()); FSlateApplication::Get().ForceRedrawWindow(Window.ToSharedRef()); }
+	}
 	/** What the status line says now (the reason a save or load failed). */
 	FString StatusText() const { return Status ? Status->GetText().ToString() : FString(); }
 	/** The status after adding an object: what came in (the selection), not the last character's line. */
@@ -2077,6 +2189,7 @@ public:
 		if (Clean.IsEmpty()) { SetStatus(TEXT("請輸入場景名稱")); return false; }
 		const FString Path = UOKStudioGame::SceneDirectory() / Clean + TEXT(".png");
 		FString E;
+		PaintStatus(TEXT("儲存中…"));
 		const bool bOk = Game->Save(Path, E);
 		SetStatus(bOk ? TEXT("已存 ") + Clean : E);
 		if (bOk)
@@ -2113,6 +2226,7 @@ public:
 	{
 		if (!Game.IsValid()) return false;
 		FString E;
+		PaintStatus(TEXT("開啟中…") + FPaths::GetBaseFilename(Path));
 		const bool bOk = Game->Load(Path, E);
 		SetStatus(bOk ? TEXT("已讀取 ") + FPaths::GetBaseFilename(Path) : E);
 		if (bOk) { ReportPending = 90; SaveAsName = FPaths::GetBaseFilename(Path); ForgetExport(); }
@@ -2764,10 +2878,12 @@ public:
 			Row(TEXT("卡片"), OKStudioStyle::Button(TAttribute<FText>::CreateLambda([this] { FOKSceneObject* X = Obj(); return FText::FromString(X ? FPaths::GetCleanFilename(X->Character.Card) : FString()); }),
 				[this] { OpenFloat(TEXT("cards")); }, 0.f, 18.f, false, 10.f, OKStudioStyle::Input()), 0.3f);
 			Choice(TEXT("服裝組"), { TEXT("1"), TEXT("2"), TEXT("3"), TEXT("4"), TEXT("5"), TEXT("6"), TEXT("7") }, [](FOKSceneObject& X) { return X.Character.Outfit; }, [](FOKSceneObject& X, int32 V) { X.Character.Outfit = V; });
-			Label(TEXT("風格"));
-			Float(TEXT("風格（-1 寫實、1 Q 版）"), [](FOKSceneObject& X) { return X.Character.Style; }, [](FOKSceneObject& X, float V) { X.Character.Style = FMath::Clamp(V, -1.f, 1.f); }, -1.f, 1.f, 0.05f);
+			Label(TEXT("風格（-1 寫實、1 Q 版）"));
+			// Moving one leaves the other where it shows: a face still following the body stops following it here.
+			Float(TEXT("身體"), [](FOKSceneObject& X) { return X.Character.Style; }, [](FOKSceneObject& X, float V) { X.Character.FaceStyle = X.Character.ShownFaceStyle(); X.Character.Style = FMath::Clamp(V, -1.f, 1.f); }, -1.f, 1.f, 0.05f);
+			Float(TEXT("臉"), [](FOKSceneObject& X) { return X.Character.ShownFaceStyle(); }, [](FOKSceneObject& X, float V) { X.Character.FaceStyle = FMath::Clamp(V, -1.f, 1.f); }, -1.f, 1.f, 0.05f);
 			{
-				auto Style = [this](float V) { return [this, V] { WriteRow(true, [V](FOKSceneObject& X) { X.Character.Style = V; }); }; };
+				auto Style = [this](float V) { return [this, V] { WriteRow(true, [V](FOKSceneObject& X) { X.Character.Style = V; X.Character.FaceStyle = V; }); }; };
 				Props->AddSlot().AutoHeight().Padding(0.f, 2.f)
 				[
 					SNew(SHorizontalBox)
@@ -2932,49 +3048,30 @@ public:
 		DeferRebuild();
 		return true;
 	}
-	/** Solves a .vmd file on the character's live shaped skeleton (`FOkAnimBridge::FromVmd`) and plays it. */
-	bool LoadVmdForCharacter(int32 CharId, const FString& VmdFile)
+	/** Solves a .vmd file on the character's live shaped skeleton and plays it (on the worker thread, see QueueVmd). */
+	bool LoadVmdForCharacter(int32 CharId, const FString& VmdFile) { return QueueVmd({ CharId }, VmdFile); }
+	/** Queues a .vmd for characters; TickVmdQueue takes them in turn. A character asked for again takes the newer file. */
+	bool QueueVmd(const TArray<int32>& Ids, const FString& VmdFile)
 	{
 		if (!Game.IsValid() || !Game->Document) return false;
-		FOKSceneObject* X = Game->Document->Find(CharId);
-		if (!X || X->Kind != EOKSceneObjectKind::Character) { SetStatus(TEXT("請先選取一個角色")); return false; }
 		FString FullPath = VmdFile.TrimStartAndEnd().TrimQuotes();
 		if (FullPath.IsEmpty()) { SetStatus(TEXT("請輸入 .vmd 檔案路徑")); return false; }
 		if (FPaths::IsRelative(FullPath)) FullPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / FullPath);
 		if (!FPaths::FileExists(FullPath)) { SetStatus(TEXT("找不到 VMD 檔：") + FullPath); return false; }
-		AKKPreviewActor* Preview = Game->SceneActor ? Game->SceneActor->PreviewOf(CharId) : nullptr;
-		const FOkSession* Sess = (Preview && Preview->Session.IsOpen()) ? &Preview->Session : nullptr;
-		const float ObjScaleY = FMath::Max(float(X->Transform.GetScale3D().Z), 0.001f);
-		const FString ParamsJson = FString::Printf(TEXT("{\"obj_scale_y\":%.6f}"), ObjScaleY);
-		TArray<uint8> AnimBytes;
-		if (!FOkAnimBridge::FromVmd(Sess, FullPath, ParamsJson, AnimBytes))
+		if (!VmdRunning()) { MmdQueueDone = MmdSkipped = MmdFailed = 0; MmdFailNote.Reset(); }
+		int32 Added = 0;
+		for (int32 Id : Ids)
 		{
-			SetStatus(TEXT("VMD 轉換失敗：") + FOkAnimBridge::LastError());
-			return false;
+			const FOKSceneObject* X = Game->Document->Find(Id);
+			if (!X || X->Kind != EOKSceneObjectKind::Character) continue;
+			MmdQueue.RemoveAll([Id](const TPair<int32, FString>& Entry) { return Entry.Key == Id; });
+			MmdQueue.Emplace(Id, FullPath);
+			++Added;
 		}
-		FString Stem = FPaths::MakeValidFileName(FPaths::GetBaseFilename(FullPath));
-		if (Stem.IsEmpty()) Stem = TEXT("vmd");
-		const FString RelPath = FString::Printf(TEXT("UserData/Studio/anim/vmd_%d_%s.okanim"), CharId, *Stem);
-		const FString AbsOut = FPaths::ProjectDir() / RelPath;
-		IFileManager::Get().MakeDirectory(*FPaths::GetPath(AbsOut), true);
-		if (!FFileHelper::SaveArrayToFile(AnimBytes, *AbsOut))
-		{
-			SetStatus(TEXT("無法寫入動畫檔：") + AbsOut);
-			return false;
-		}
-		const bool bWasSameFile = (X->Character.AnimFile == RelPath);
-		if (Game->SceneActor) Game->SceneActor->SetActiveVmdSource(CharId, FullPath, RelPath);
-		PickAnimFile(*X, RelPath);
-		// The timeline as long as the dance (U240: it stayed 10 s under a 3 minute motion, and the rest could not be reached).
-		FString Info;
-		TSharedPtr<FJsonObject> Fields;
-		double Seconds = 0.;
-		if (FOkAnimBridge::Info(AnimBytes, Info) && FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Info), Fields) && Fields->TryGetNumberField(TEXT("duration"), Seconds))
-			Game->Document->Duration = FMath::Max(Game->Document->Duration, float(Seconds));
-		if (bWasSameFile && Game->SceneActor) Game->SceneActor->Rebuild(CharId);
-		DeferFloat(TEXT("mmd"));
-		SetStatus(FString::Printf(TEXT("已載入 VMD（%s骨架）：#%d %s ← %s"),
-			Sess ? TEXT("角色體型") : TEXT("標準"), CharId, *X->Name, *FPaths::GetCleanFilename(FullPath)));
+		if (Added == 0) { SetStatus(TEXT("請先選取一個角色")); return false; }
+		MmdQueueTotal = MmdQueueDone + MmdQueue.Num() + (VmdTask && !VmdTask->bCancelled ? 1 : 0);
+		VmdSerial = Game->SceneSerial;
+		VmdStatusAt = 0.;
 		return true;
 	}
 	/** A video motion pair: the woman's motion on the primary character, the man's on the other selected character (or
@@ -4012,4 +4109,5 @@ private:
 	TSharedPtr<SListView<TSharedPtr<FRow>>> List;
 	TSharedPtr<SVerticalBox> Props;
 	TSharedPtr<STextBlock> Status;
+	float StatusMinWidth = 0.f;
 };

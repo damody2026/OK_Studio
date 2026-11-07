@@ -1,4 +1,5 @@
 #include "OKSceneCard.h"
+#include "Async/ParallelFor.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
@@ -13,15 +14,23 @@
 #include "OKSceneDocument.h"
 #include "OKStudioImport.h"
 #include "TextureResource.h"
+#include <atomic>
 
 namespace
 {
 	const uint8 PngSignature[8] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' };
 	/** okSc payload header: magic, format version. */
 	const uint8 PayloadMagic[4] = { 'O', 'K', 'S', 'C' };
-	constexpr uint32 PayloadVersion = 1;
+	constexpr int64 MaxCardBytes = (int64(1) << 31) - (int64(64) << 20);
+	// 2 (U249): only the scene's JSON is packed. Cards are compressed already: packing 680 MB of them froze the save for
+	// 15 seconds to take off 2.5%, and a load refused what a save wrote past 1 GiB.
+	constexpr uint32 PayloadVersion = 2;
+	// 3 (U254): version 2 followed by the files the scene plays. A scene that plays none stays version 2.
+	constexpr uint32 PayloadVersionFiles = 3;
 	/** Character card references inside the embedded scene JSON. */
 	const TCHAR* EmbeddedCardPrefix = TEXT("okscene-card:");
+	/** References to embedded motion and sound files inside the embedded scene JSON. */
+	const TCHAR* EmbeddedFilePrefix = TEXT("okscene-file:");
 
 	uint32 Be32(const uint8* P) { return (uint32(P[0]) << 24) | (uint32(P[1]) << 16) | (uint32(P[2]) << 8) | uint32(P[3]); }
 	void Put32(TArray<uint8>& Out, uint32 V) { Out.Add(uint8(V >> 24)); Out.Add(uint8(V >> 16)); Out.Add(uint8(V >> 8)); Out.Add(uint8(V)); }
@@ -228,21 +237,76 @@ bool FOKSceneCard::Write(const UOKSceneDocument* Document, const TArray<TArray<u
 		}
 		O.Character.Card = FString::Printf(TEXT("%s%d"), EmbeddedCardPrefix, *Index);
 	}
+	// What the scene plays goes along: a card opened on another machine lost its dance and music (U254). A file not found
+	// here keeps its path, the load report says so there; a video motion only plays from its own folder and stays too.
+	TArray<TPair<FString, TArray<uint8>>> Extras;
+	TMap<FString, int32> ExtraIndex;
+	auto Embed = [&](FString& Ref)
+	{
+		if (Ref.IsEmpty() || Ref.StartsWith(EmbeddedFilePrefix)) return;
+		FString Full = Ref;
+		if (FPaths::IsRelative(Ref))
+		{
+			Full = FPaths::GetPath(Path) / Ref;
+			if (!FPaths::FileExists(Full)) Full = FPaths::ProjectDir() / Ref;
+		}
+		Full = FPaths::ConvertRelativePathToFull(Full);
+		int32* Index = ExtraIndex.Find(Full);
+		if (!Index)
+		{
+			TArray<uint8> Bytes;
+			if (!FFileHelper::LoadFileToArray(Bytes, *Full, FILEREAD_Silent)) return;
+			if (Bytes.Num() >= 8 && !FMemory::Memcmp(Bytes.GetData(), "OKCLIP01", 8)) return;
+			Index = &ExtraIndex.Add(Full, Extras.Emplace(FPaths::GetCleanFilename(Full), MoveTemp(Bytes)));
+		}
+		Ref = FString::Printf(TEXT("%s%d"), EmbeddedFilePrefix, *Index);
+	};
+	for (FOKSceneObject& O : Copy->Objects)
+	{
+		if (O.Kind != EOKSceneObjectKind::Character) continue;
+		Embed(O.Character.AnimFile);
+		for (FOKSceneVoiceClip& Clip : O.Character.VoiceClips) if (Clip.No < 0) Embed(Clip.File);
+	}
+	Embed(Copy->SoundFile);
+	Embed(Copy->Sound.Outside);
 	const FTCHARToUTF8 Json(*Copy->ToJson());
-	TArray<uint8> Raw;
-	Put32(Raw, uint32(Json.Length()));
-	Raw.Append(reinterpret_cast<const uint8*>(Json.Get()), Json.Length());
-	Put32(Raw, uint32(Cards.Num()));
-	for (const TArray<uint8>& Card : Cards) { Put32(Raw, uint32(Card.Num())); Raw.Append(Card); }
-	int32 Packed = FCompression::CompressMemoryBound(NAME_Zlib, Raw.Num());
+	// One file is one array here and when it is read: past 2 GB it could be written by nothing and opened by nothing.
+	int64 Total = Json.Length();
+	for (const TArray<uint8>& Card : Cards) Total += Card.Num() + 4;
+	for (const TPair<FString, TArray<uint8>>& Extra : Extras) Total += Extra.Value.Num() + 1024;
+	for (const TArray<uint8>& View : Views) Total += View.Num();
+	if (Total > MaxCardBytes)
+	{
+		OutError = FString::Printf(TEXT("這個場景的角色卡與動作、音樂共 %.2f GB，場景卡上限 2 GB。請改存成 .okscene（不內嵌角色卡）"), double(Total) / double(1 << 30));
+		return false;
+	}
+	int32 Packed = FCompression::CompressMemoryBound(NAME_Zlib, Json.Length());
 	TArray<uint8> Payload;
+	Payload.Reserve(int32(Total) + 1024);
 	Payload.Append(PayloadMagic, 4);
-	Put32(Payload, PayloadVersion);
-	Put32(Payload, uint32(Raw.Num()));
+	Put32(Payload, Extras.IsEmpty() ? PayloadVersion : PayloadVersionFiles);
+	Put32(Payload, uint32(Json.Length()));
+	const int32 PackedAt = Payload.Num();
+	Put32(Payload, 0);
 	const int32 Header = Payload.Num();
 	Payload.AddUninitialized(Packed);
-	if (!FCompression::CompressMemory(NAME_Zlib, Payload.GetData() + Header, Packed, Raw.GetData(), Raw.Num())) { OutError = TEXT("compressing the scene failed"); return false; }
+	if (!FCompression::CompressMemory(NAME_Zlib, Payload.GetData() + Header, Packed, Json.Get(), Json.Length())) { OutError = TEXT("compressing the scene failed"); return false; }
 	Payload.SetNum(Header + Packed);
+	for (int32 I = 0; I < 4; ++I) Payload[PackedAt + I] = uint8(uint32(Packed) >> (24 - 8 * I));
+	Put32(Payload, uint32(Cards.Num()));
+	for (const TArray<uint8>& Card : Cards) { Put32(Payload, uint32(Card.Num())); Payload.Append(Card); }
+	if (!Extras.IsEmpty())
+	{
+		Put32(Payload, uint32(Extras.Num()));
+		for (const TPair<FString, TArray<uint8>>& Extra : Extras)
+		{
+			const FTCHARToUTF8 Name(*Extra.Key);
+			Put32(Payload, uint32(Name.Length()));
+			Payload.Append(reinterpret_cast<const uint8*>(Name.Get()), Name.Length());
+			Put32(Payload, uint32(Extra.Value.Num()));
+			Payload.Append(Extra.Value);
+		}
+	}
 	// The first view with the okSc chunk before IEND; the APNG keeps private chunks of its source image.
 	TArray<FChunk> List;
 	int64 End = 0;
@@ -258,7 +322,7 @@ bool FOKSceneCard::Write(const UOKSceneDocument* Document, const TArray<TArray<u
 	return true;
 }
 
-bool FOKSceneCard::ReadPayload(const TArray<uint8>& Bytes, FString& OutSceneJson, TArray<TArray<uint8>>& OutCards, FString& OutError)
+bool FOKSceneCard::ReadPayload(const TArray<uint8>& Bytes, FString& OutSceneJson, TArray<TArray<uint8>>& OutCards, FString& OutError, TArray<TPair<FString, TArray<uint8>>>* OutFiles)
 {
 	TArray<FChunk> List;
 	int64 End = 0;
@@ -268,7 +332,47 @@ bool FOKSceneCard::ReadPayload(const TArray<uint8>& Bytes, FString& OutSceneJson
 	const uint8* P = Bytes.GetData() + Chunk->Offset + 8;
 	if (PngCrc(Bytes.GetData() + Chunk->Offset + 4, 4 + int64(Chunk->Size)) != Be32(P + Chunk->Size)) { OutError = TEXT("the scene data is damaged (CRC)"); return false; }
 	if (Chunk->Size < 12 || FMemory::Memcmp(P, PayloadMagic, 4)) { OutError = TEXT("unknown scene data"); return false; }
-	if (Be32(P + 4) != PayloadVersion) { OutError = FString::Printf(TEXT("scene card version %u is newer than this build"), Be32(P + 4)); return false; }
+	if (Be32(P + 4) == PayloadVersion || Be32(P + 4) == PayloadVersionFiles)
+	{
+		const uint8* At = P + 8;
+		const uint8* Limit = P + Chunk->Size;
+		auto Next = [&](uint32& V) { if (Limit - At < 4) return false; V = Be32(At); At += 4; return true; };
+		uint32 JsonSize = 0, Packed = 0, Count = 0;
+		if (!Next(JsonSize) || !Next(Packed) || JsonSize > 1u << 30 || Limit - At < int64(Packed)) { OutError = TEXT("scene data truncated"); return false; }
+		TArray<uint8> Json;
+		Json.SetNumUninitialized(int32(JsonSize));
+		if (!FCompression::UncompressMemory(NAME_Zlib, Json.GetData(), Json.Num(), At, int32(Packed))) { OutError = TEXT("the scene data cannot be unpacked"); return false; }
+		const FUTF8ToTCHAR Text(reinterpret_cast<const ANSICHAR*>(Json.GetData()), Json.Num());
+		OutSceneJson = FString(Text.Length(), Text.Get());
+		At += Packed;
+		if (!Next(Count) || Count > 4096) { OutError = TEXT("scene data truncated"); return false; }
+		OutCards.Reset();
+		for (uint32 I = 0; I < Count; ++I)
+		{
+			uint32 Size = 0;
+			if (!Next(Size) || Limit - At < int64(Size)) { OutError = TEXT("scene data truncated"); return false; }
+			OutCards.Emplace(At, int32(Size));
+			At += Size;
+		}
+		if (Be32(P + 4) == PayloadVersionFiles)
+		{
+			uint32 FileCount = 0;
+			if (!Next(FileCount) || FileCount > 65536) { OutError = TEXT("scene data truncated"); return false; }
+			for (uint32 I = 0; I < FileCount; ++I)
+			{
+				uint32 NameSize = 0, Size = 0;
+				if (!Next(NameSize) || Limit - At < int64(NameSize)) { OutError = TEXT("scene data truncated"); return false; }
+				const FUTF8ToTCHAR Name(reinterpret_cast<const ANSICHAR*>(At), int32(NameSize));
+				const FString FileName(Name.Length(), Name.Get());
+				At += NameSize;
+				if (!Next(Size) || Limit - At < int64(Size)) { OutError = TEXT("scene data truncated"); return false; }
+				if (OutFiles) OutFiles->Emplace(FileName, TArray<uint8>(At, int32(Size)));
+				At += Size;
+			}
+		}
+		return true;
+	}
+	if (Be32(P + 4) != 1) { OutError = FString::Printf(TEXT("scene card version %u is newer than this build"), Be32(P + 4)); return false; }
 	const uint32 RawSize = Be32(P + 8);
 	if (RawSize > 1u << 30) { OutError = TEXT("scene data too large"); return false; }
 	TArray<uint8> Raw;
@@ -325,23 +429,48 @@ bool FOKSceneCard::Open(const FString& Path, UOKSceneDocument* Document, FString
 		TArray<uint8> Bytes;
 		FString Json;
 		TArray<TArray<uint8>> Cards;
-		if (!FFileHelper::LoadFileToArray(Bytes, *Path) || !ReadPayload(Bytes, Json, Cards, OutError)) { if (OutError.IsEmpty()) OutError = TEXT("cannot read ") + Path; return false; }
+		TArray<TPair<FString, TArray<uint8>>> Extras;
+		if (!FFileHelper::LoadFileToArray(Bytes, *Path) || !ReadPayload(Bytes, Json, Cards, OutError, &Extras)) { if (OutError.IsEmpty()) OutError = TEXT("cannot read ") + Path; return false; }
 		IFileManager::Get().MakeDirectory(*CardDirectory, true);
 		TArray<FString> Files;
-		for (int32 I = 0; I < Cards.Num(); ++I)
+		for (int32 I = 0; I < Cards.Num(); ++I) Files.Add(CardDirectory / FString::Printf(TEXT("card_%d.png"), I));
+		TArray<FString> ExtraFiles;
+		// The name came from the card: nothing of it but the file name is used.
+		for (int32 I = 0; I < Extras.Num(); ++I) ExtraFiles.Add(CardDirectory / FString::Printf(TEXT("file_%d_%s"), I, *FPaths::MakeValidFileName(FPaths::GetCleanFilename(Extras[I].Key))));
+		// This holds the frame: side by side, and what a former opening left is not written again (U260).
+		TArray<const TArray<uint8>*> Contents;
+		TArray<FString> Targets = Files;
+		for (const TArray<uint8>& Card : Cards) Contents.Add(&Card);
+		Targets.Append(ExtraFiles);
+		for (const TPair<FString, TArray<uint8>>& Extra : Extras) Contents.Add(&Extra.Value);
+		std::atomic<int32> Failed{ INDEX_NONE };
+		ParallelFor(Targets.Num(), [&](int32 I)
 		{
-			Files.Add(CardDirectory / FString::Printf(TEXT("card_%d.png"), I));
-			if (!FFileHelper::SaveArrayToFile(Cards[I], *Files.Last())) { OutError = TEXT("cannot write ") + Files.Last(); return false; }
-		}
+			TArray<uint8> Old;
+			if (IFileManager::Get().FileSize(*Targets[I]) == Contents[I]->Num() && FFileHelper::LoadFileToArray(Old, *Targets[I]) && Old == *Contents[I]) return;
+			if (!FFileHelper::SaveArrayToFile(*Contents[I], *Targets[I])) Failed = I;
+		});
+		if (Failed != INDEX_NONE) { OutError = TEXT("cannot write ") + Targets[Failed.load()]; return false; }
 		if (!Document->FromJson(Json, OutError)) return false;
+		auto Unpack = [&ExtraFiles](FString& Ref)
+		{
+			if (!Ref.StartsWith(EmbeddedFilePrefix)) return;
+			const int32 Index = FCString::Atoi(*Ref.RightChop(FCString::Strlen(EmbeddedFilePrefix)));
+			Ref = ExtraFiles.IsValidIndex(Index) ? ExtraFiles[Index] : FString();
+		};
 		for (FOKSceneObject& O : Document->Objects)
 		{
-			if (O.Kind != EOKSceneObjectKind::Character || !O.Character.Card.StartsWith(EmbeddedCardPrefix)) continue;
+			if (O.Kind != EOKSceneObjectKind::Character) continue;
+			Unpack(O.Character.AnimFile);
+			for (FOKSceneVoiceClip& Clip : O.Character.VoiceClips) Unpack(Clip.File);
+			if (!O.Character.Card.StartsWith(EmbeddedCardPrefix)) continue;
 			const int32 Index = FCString::Atoi(*O.Character.Card.RightChop(FCString::Strlen(EmbeddedCardPrefix)));
 			O.Character.Card = Files.IsValidIndex(Index) ? Files[Index] : FString();
 		}
+		Unpack(Document->SoundFile);
+		Unpack(Document->Sound.Outside);
 		Document->NotifyChanged();
-		if (OutNote) *OutNote = FString::Printf(TEXT("OK scene card (%d character cards)"), Cards.Num());
+		if (OutNote) *OutNote = FString::Printf(TEXT("OK scene card (%d character cards, %d files)"), Cards.Num(), Extras.Num());
 		return true;
 	}
 	default:

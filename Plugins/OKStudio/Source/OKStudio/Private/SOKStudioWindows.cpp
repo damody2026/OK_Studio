@@ -134,7 +134,7 @@ void SOKStudioPanel::ReadExportChoices()
 	FOKStudioSettings::Get().ExportChoices.ParseIntoArray(P, TEXT(";"), false);
 	if (P.Num() < 8) return;
 	ExportKind = FMath::Clamp(FCString::Atoi(*P[0]), 0, 2);
-	ExportFromT = FCString::Atof(*P[1]); ExportToT = FCString::Atof(*P[2]); ExportFpsV = FMath::Clamp(FCString::Atof(*P[3]), 1.f, 120.f);
+	ExportFpsV = FMath::Clamp(FCString::Atof(*P[3]), 1.f, 120.f);
 	ExportW = FMath::Clamp(FCString::Atoi(*P[4]), 16, 8192); ExportH = FMath::Clamp(FCString::Atoi(*P[5]), 16, 8192);
 	if (Game.IsValid()) Game->bExportAudio = P[6] != TEXT("0");
 	ExportFolderText = P[7];
@@ -152,7 +152,7 @@ void SOKStudioPanel::RegisterFloats()
 	// Default places: HS2Studio6's (layout spec) where it has the window, else beside the menus.
 	// Under the object panel, off the characters at the middle of the view and the pages at the left (U219).
 	AddFloat(TEXT("timeline"), TEXT("時間軸"), FMargin(1070.f, 490.f, 520.f, 260.f), [this] { return BuildTimeline(); });
-	AddFloat(TEXT("mmd"), TEXT("MMD 導演／設定（MMDD / KKVMD）"), FMargin(140.f, 47.f, 430.f, 520.f), [this] { return BuildMmdDirector(); });
+	AddFloat(TEXT("mmd"), TEXT("MMD 導演／設定（MMDD / KKVMD）"), FMargin(140.f, 47.f, 430.f, 560.f), [this] { return BuildMmdDirector(); });
 	AddFloat(TEXT("cards"), TEXT("角色卡"), FMargin(142.f, 36.f, 620.f, 420.f), [this] { return BuildCardBrowser(); });
 	AddFloat(TEXT("scenes"), TEXT("場景檔"), FMargin(142.f, 36.f, 620.f, 420.f), [this] { return BuildSceneBrowser(); });
 	AddFloat(TEXT("quick"), TEXT("快搜"), FMargin(140.f, 40.f, 360.f, 590.f), [this] { return BuildQuickSearch(); });
@@ -404,12 +404,152 @@ FString SOKStudioPanel::ExportResult() const
 	return (Game->LastMovieNote.IsEmpty() ? FString(TEXT("輸出完成：")) : TEXT("輸出完成（") + Game->LastMovieNote + TEXT("）：")) + Game->LastMovie;
 }
 
+void SOKStudioPanel::StartNextVmd()
+{
+	while (!MmdQueue.IsEmpty())
+	{
+		const TPair<int32, FString> Next = MmdQueue[0];
+		MmdQueue.RemoveAt(0);
+		const FOKSceneObject* X = Game->Document->Find(Next.Key);
+		if (!X || X->Kind != EOKSceneObjectKind::Character) { ++MmdQueueDone; ++MmdSkipped; continue; }
+		AKKPreviewActor* Preview = Game->SceneActor ? Game->SceneActor->PreviewOf(Next.Key) : nullptr;
+		const FOkSession* Sess = Preview && Preview->Session.IsOpen() ? &Preview->Session : nullptr;
+		const float ObjScaleY = FMath::Max(float(X->Transform.GetScale3D().Z), 0.001f);
+		TSharedPtr<FVmdTask> Task = MakeShared<FVmdTask>();
+		Task->CharId = Next.Key;
+		Task->SceneSerial = Game->SceneSerial;
+		Task->Name = X->Name;
+		Task->Card = X->Character.Card;
+		Task->Path = Next.Value;
+		Task->Params = FString::Printf(TEXT("{\"obj_scale_y\":%.6f}"), ObjScaleY);
+		Task->bShaped = Sess != nullptr;
+		Task->Job = FOkAnimBridge::VmdJobNew(Sess, ObjScaleY);
+		VmdTask = Task;
+		VmdFuture = AsyncThread([Task]
+		{
+			if (!FOkAnimBridge::VmdJobRun(Task->Job, Task->Path, Task->Params, Task->Bytes)) Task->Error = FOkAnimBridge::LastError();
+			else
+			{
+				FString Info;
+				TSharedPtr<FJsonObject> Fields;
+				if (FOkAnimBridge::Info(Task->Bytes, Info) && FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Info), Fields)) Fields->TryGetNumberField(TEXT("duration"), Task->Seconds);
+			}
+			FOkAnimBridge::VmdJobFree(Task->Job);
+			Task->Job = nullptr;
+			Task->bDone = true;
+		}, 16 * 1024 * 1024, TPri_BelowNormal);
+		return;
+	}
+}
+
+void SOKStudioPanel::FinishVmd(FVmdTask& Task)
+{
+	// The answer belongs to the scene that asked; the character is looked up again, it may have gone meanwhile.
+	if (Task.bCancelled || Task.SceneSerial != Game->SceneSerial) return;
+	++MmdQueueDone;
+	FOKSceneObject* X = Game->Document->Find(Task.CharId);
+	if (!X || X->Kind != EOKSceneObjectKind::Character || X->Character.Card != Task.Card) { ++MmdSkipped; return; }
+	FString Stem = FPaths::MakeValidFileName(FPaths::GetBaseFilename(Task.Path));
+	if (Stem.IsEmpty()) Stem = TEXT("vmd");
+	// Named by what it holds: "#2 動作" of one scene overwrote "#2 動作" of another, which then danced the wrong dance.
+	const FString RelPath = FString::Printf(TEXT("UserData/Studio/anim/vmd_%d_%s_%08x.okanim"), Task.CharId, *Stem, FCrc::MemCrc32(Task.Bytes.GetData(), Task.Bytes.Num()));
+	const FString AbsOut = FPaths::ProjectDir() / RelPath;
+	IFileManager::Get().MakeDirectory(*FPaths::GetPath(AbsOut), true);
+	if (Task.Error.IsEmpty() && !FFileHelper::SaveArrayToFile(Task.Bytes, *AbsOut)) Task.Error = TEXT("無法寫入動畫檔：") + AbsOut;
+	if (!Task.Error.IsEmpty())
+	{
+		++MmdFailed;
+		MmdFailNote = Task.Error;
+		return;
+	}
+	const bool bWasSameFile = X->Character.AnimFile == RelPath;
+	if (Game->SceneActor) Game->SceneActor->SetActiveVmdSource(Task.CharId, Task.Path, RelPath);
+	// On the live character: building it again took seconds of a frozen picture, and solved the VMD a second time.
+	FString Error;
+	if (Game->SceneActor && Game->SceneActor->SetCharacterAnimFile(Task.CharId, RelPath, Error)) { Changed(); DeferRebuild(); }
+	else
+	{
+		PickAnimFile(*X, RelPath);
+		if (bWasSameFile && Game->SceneActor) Game->SceneActor->Rebuild(Task.CharId);
+	}
+	// The timeline as long as the dance (U240: it stayed 10 s under a 3 minute motion, and the rest could not be reached).
+	Game->Document->Duration = FMath::Max(Game->Document->Duration, float(Task.Seconds));
+	DeferFloat(TEXT("mmd"));
+	SetStatus(FString::Printf(TEXT("已載入 VMD（%s骨架）：#%d %s ← %s"),
+		Task.bShaped ? TEXT("角色體型") : TEXT("標準"), Task.CharId, *X->Name, *FPaths::GetCleanFilename(Task.Path)));
+}
+
+void SOKStudioPanel::CancelVmd()
+{
+	if (!VmdRunning()) return;
+	const int32 Applied = MmdQueueDone - MmdSkipped - MmdFailed;
+	MmdQueue.Reset();
+	if (VmdTask) VmdTask->bCancelled = true;
+	MmdQueueTotal = MmdQueueDone = MmdSkipped = MmdFailed = 0;
+	SetStatus(FString::Printf(TEXT("已取消套用 VMD（已完成 %d 個角色）"), Applied));
+}
+
+void SOKStudioPanel::TickVmdQueue()
+{
+	if (!VmdTask && MmdQueue.IsEmpty()) return;
+	// The scene was replaced: what waits is dropped, what is on the worker finishes there and is thrown away.
+	if (VmdSerial != Game->SceneSerial)
+	{
+		VmdSerial = Game->SceneSerial;
+		MmdQueue.Reset();
+		MmdQueueTotal = MmdQueueDone = MmdSkipped = MmdFailed = 0;
+		if (StatusText().StartsWith(TEXT("套用 VMD"))) SetStatus(TEXT("場景已更換，未完成的 VMD 已取消"));
+	}
+	// Not under an export or a drag: the scene holds still for those.
+	const FString Busy = Game->BusyReason();
+	if (VmdTask && VmdTask->bDone && Busy != TEXT("exporting") && Busy != TEXT("dragging"))
+	{
+		VmdFuture.Wait();
+		VmdFuture = TFuture<void>();
+		const TSharedPtr<FVmdTask> Done = MoveTemp(VmdTask);
+		VmdTask.Reset();
+		FinishVmd(*Done);
+		VmdStatusAt = 0.;
+	}
+	// A character still building has no shaped skeleton to solve on yet.
+	if (!VmdTask && !MmdQueue.IsEmpty() && !(Game->SceneActor && Game->SceneActor->HasPendingBuilds())) StartNextVmd();
+	if (VmdTask || !MmdQueue.IsEmpty())
+	{
+		const double Now = FPlatformTime::Seconds();
+		if (MmdQueueTotal > 0 && Now - VmdStatusAt > 1.)
+		{
+			VmdStatusAt = Now;
+			SetStatus(FString::Printf(TEXT("套用 VMD %d / %d：%s 轉換中"), FMath::Min(MmdQueueDone + 1, MmdQueueTotal), MmdQueueTotal, VmdTask ? *VmdTask->Name : TEXT("等待")));
+		}
+		return;
+	}
+	if (MmdQueueTotal == 0) return;
+	// All through: one line for the lot. A single character keeps its own line unless it did not work.
+	const int32 Applied = MmdQueueTotal - MmdSkipped - MmdFailed;
+	FString Note = MmdQueueTotal > 1 || MmdSkipped + MmdFailed > 0 ? FString::Printf(TEXT("已套用 VMD 到 %d 個角色"), Applied) : FString();
+	if (MmdSkipped > 0) Note += FString::Printf(TEXT("，%d 個已不在場景中"), MmdSkipped);
+	if (MmdFailed > 0) Note += FString::Printf(TEXT("，%d 個失敗：%s"), MmdFailed, *MmdFailNote);
+	if (!Note.IsEmpty()) SetStatus(Note);
+}
+
 void SOKStudioPanel::TickUi(float DeltaTime)
 {
 	if (!Game.IsValid()) return;
+	FrameMaxMs = FMath::Max(FrameMaxMs, FApp::GetDeltaTime() * 1000.);
 	TickItemPreview();
 	// The open report once the scene's objects had their chance to build.
-	if (ReportPending > 0 && --ReportPending == 0 && !Game->LoadReport().IsEmpty()) ShowLoadReport();
+	if (ReportPending > 0 && !(Game->SceneActor && Game->SceneActor->HasPendingBuilds()) && --ReportPending == 0 && !Game->LoadReport().IsEmpty()) ShowLoadReport();
+	// U251: a big scene builds a character a frame; how far it is.
+	if (const int32 Left = Game->SceneActor ? Game->SceneActor->PendingBuilds() : 0)
+	{
+		BuildTotal = Game->Document->Objects.Num();
+		SetStatus(FString::Printf(TEXT("建置場景物件 %d / %d"), BuildTotal - Left, BuildTotal));
+	}
+	else if (BuildTotal > 0)
+	{
+		SetStatus(FString::Printf(TEXT("場景建置完成（%d 個物件）"), BuildTotal));
+		BuildTotal = 0;
+	}
 	// The guide's drag readout on the status line.
 	if (!Game->GuideReadout.IsEmpty()) SetStatus(Game->GuideReadout);
 	WatchUnkeyed();
@@ -418,6 +558,18 @@ void SOKStudioPanel::TickUi(float DeltaTime)
 	if (bExporting) SetStatus(FString::Printf(TEXT("輸出中 %d / %d 幀"), Game->ExportFrameIndex(), Game->ExportFrameCount()));
 	else if (bWasExporting) SetStatus(ExportResult());
 	bWasExporting = bExporting;
+	TickVmdQueue();
+	TickMapPrepare();
+	TickMapThumbs();
+	if (ExportRangeSerial != Game->SceneSerial) { ExportRangeSerial = Game->SceneSerial; ExportFromT = 0.f; ExportToT = -1.f; }
+	// U242: the MMD window lists the cast. Someone added, removed or given a motion while it is open shows up there.
+	if (IsFloatOpen(TEXT("mmd")))
+	{
+		uint32 Cast = 0;
+		for (const FOKSceneObject& O : Game->Document->Objects)
+			if (O.Kind == EOKSceneObjectKind::Character) Cast = HashCombine(HashCombine(Cast, GetTypeHash(O.Id)), HashCombine(GetTypeHash(O.Name), GetTypeHash(O.Character.AnimFile)));
+		if (Cast != MmdCast) { MmdCast = Cast; DeferFloat(TEXT("mmd")); }
+	}
 	// The colour window is bound to the object it was opened for.
 	if (IsFloatOpen(TEXT("color")) && ColorKey.StartsWith(TEXT("obj")) && FCString::Atoi(*ColorKey.Mid(3)) != Game->SelectedId) CloseFloat(TEXT("color"));
 	// The material editor follows the selection, and fills in once the item has built (again after a shader edit).
@@ -513,7 +665,7 @@ TSharedPtr<SWidget> SOKStudioPanel::TreeContextMenu()
 		{ TEXT("改名"), TEXT("edit.rename") }, { TEXT("拷貝"), TEXT("edit.copy") }, { TEXT("貼上"), TEXT("edit.paste") }, { TEXT("複製物件"), TEXT("edit.duplicate") },
 		{ TEXT("全選角色"), TEXT("edit.selectchars") }, { TEXT("刪除"), TEXT("edit.delete") }, { TEXT("隱藏／顯示"), TEXT("edit.hide") }, { TEXT("移到根層"), TEXT("edit.root") }, { TEXT("設為其他選取的父物件"), TEXT("edit.parent") },
 		{ TEXT("聚焦"), TEXT("camera.focus") }, { TEXT("選取存成場景"), TEXT("edit.saveas") }, { TEXT("複製變換"), TEXT("transform.copy") }, { TEXT("貼上變換"), TEXT("transform.paste") },
-		{ TEXT("複製姿勢"), TEXT("pose.copy") }, { TEXT("貼上姿勢"), TEXT("pose.paste") }, { TEXT("打 key"), TEXT("timeline.key") }, { TEXT("面向對方"), TEXT("transform.face") },
+		{ TEXT("複製姿勢"), TEXT("pose.copy") }, { TEXT("貼上姿勢"), TEXT("pose.paste") }, { TEXT("打 key"), TEXT("timeline.key") }, { TEXT("面向對方"), TEXT("transform.face") }, { TEXT("放到下方表面"), TEXT("transform.drop") },
 	};
 	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
 	for (const FItem& I : Items)
@@ -1237,7 +1389,8 @@ TSharedRef<SWidget> SOKStudioPanel::BuildOutsideSound()
 		const FOKSceneSound* S = Sound();
 		if (!S || !Game.IsValid()) return FText();
 		const FString Name = S->Outside.IsEmpty() ? FString(TEXT("（未選檔）")) : FPaths::GetCleanFilename(S->Outside) + (Game->OutsideSoundFile().IsEmpty() ? TEXT("（找不到檔案）") : TEXT(""));
-		return FText::FromString(Name + (Game->IsOutsideSoundPlaying() ? TEXT("：播放中") : S->bOutsidePlay ? TEXT("：準備中／已播完") : TEXT("：停止")));
+		const FString Music = Game->Document->SoundFile.IsEmpty() ? FString() : TEXT("\n時間軸音樂：") + FPaths::GetCleanFilename(Game->Document->SoundFile);
+		return FText::FromString(Name + (Game->IsOutsideSoundPlaying() ? TEXT("：播放中") : S->bOutsidePlay ? TEXT("：準備中／已播完") : TEXT("：停止")) + Music);
 	}), 10.f);
 	State->SetAutoWrapText(true);
 	return SNew(SVerticalBox)
@@ -1251,6 +1404,20 @@ TSharedRef<SWidget> SOKStudioPanel::BuildOutsideSound()
 			+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)[CheckBox(TEXT("循環"), [Sound] { const FOKSceneSound* S = Sound(); return S && S->bOutsideRepeat; }, [this, Sound](bool B) { if (FOKSceneSound* S = Sound()) { S->bOutsideRepeat = B; Changed(); } })]
 			// HS2Studio6 重新扫描: list the folders again without closing the window.
 			+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("重新掃描")), [this] { DeferFloat(TEXT("outside")); }, 0.f, 20.f, false, 10.f)]
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 3.f)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 2.f, 0.f)[Button(FText::FromString(TEXT("開啟資料夾")), [Folder] { IFileManager::Get().MakeDirectory(*Folder, true); FPlatformProcess::ExploreFolder(*Folder); }, 0.f, 20.f, false, 10.f)]
+			// Played here it runs by itself; on the timeline it starts and stops with the playhead (U262).
+			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 2.f, 0.f)[Button(FText::FromString(TEXT("配到時間軸")), [this, Sound]
+			{
+				FOKSceneSound* S = Sound();
+				if (!S || Game->OutsideSoundFile().IsEmpty()) { SetStatus(TEXT("先在下面點一個音檔")); return; }
+				S->bOutsidePlay = false;
+				SetSceneMusic(Game->OutsideSoundFile(), false);
+			}, 0.f, 20.f, false, 10.f)]
+			+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("移除配樂")), [this] { SetSceneMusic(FString(), false); }, 0.f, 20.f, false, 10.f)]
 		]
 		+ SVerticalBox::Slot().FillHeight(1.f)[SNew(SBorder).BorderImage(Brush(ListArea())).Padding(3.f)[SNew(SScrollBox) + SScrollBox::Slot()[SoundRows]]];
 }
@@ -2338,7 +2505,12 @@ TSharedRef<SWidget> SOKStudioPanel::BuildExport()
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[Line(TEXT("寬"), Spin([this] { return float(ExportW); }, [this](float V) { ExportW = FMath::Clamp(FMath::RoundToInt(V), 16, 8192); }, 16.f, 8192.f, 1.f))]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[Line(TEXT("高"), Spin([this] { return float(ExportH); }, [this](float V) { ExportH = FMath::Clamp(FMath::RoundToInt(V), 16, 8192); }, 16.f, 8192.f, 1.f))]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[Line(TEXT("輸出資料夾"), TextBox([this] { return ExportFolderText; }, [this](const FString& V) { ExportFolderText = V.TrimStartAndEnd().TrimQuotes(); }, TEXT("UserData/Studio/movie")))]
-		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[CheckBox(TEXT("mp4 含音樂（播放中的 BGM 與外部音源）"), [this] { return Game.IsValid() && Game->bExportAudio; }, [this](bool B) { if (Game.IsValid()) Game->bExportAudio = B; })]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[CheckBox(TEXT("mp4 含音樂（時間軸音樂、播放中的 BGM 與外部音源）"), [this] { return Game.IsValid() && Game->bExportAudio; }, [this](bool B) { if (Game.IsValid()) Game->bExportAudio = B; })]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)
+		[
+			SNew(SBox).Visibility_Lambda([this] { return ExportKind == 0 ? EVisibility::Visible : EVisibility::Collapsed; })
+			[CheckBox(TEXT("透明背景（只有角色與道具）"), [this] { return Game.IsValid() && Game->bExportTransparent; }, [this](bool B) { if (Game.IsValid()) Game->bExportTransparent = B; })]
+		]
 		// U232: a scene with voice lists came out silent and with a still mouth, and nothing said so.
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[SNew(STextBlock).Font(Font(10.f)).ColorAndOpacity(FLinearColor::Yellow).AutoWrapText(true)
 			.Text(FText::FromString(TEXT("語音清單不會進影片。要進影片，在語音窗按「放上時間軸」，聲音和嘴型就會跟著輸出。")))
@@ -2762,6 +2934,13 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMmdDirector()
 		[
 			Button(FText::FromString(TEXT("套用至選取")), Cmd(TEXT("mmd.vmd")), 80.f, 20.f, false, 9.5f)
 		]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 0.f, 0.f)
+		[
+			SNew(SBox).Visibility_Lambda([this] { return VmdRunning() ? EVisibility::Visible : EVisibility::Collapsed; })
+			[
+				Button(FText::FromString(TEXT("取消")), Cmd(TEXT("mmd.vmd.cancel")), 44.f, 20.f, false, 9.5f)
+			]
+		]
 	];
 	// What a dance's folder holds, each file with what it can be (U240).
 	if (const FString Folder = MmdVmdPath.TrimStartAndEnd().TrimQuotes(); !Folder.IsEmpty() && FPaths::DirectoryExists(Folder))
@@ -2774,6 +2953,8 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMmdDirector()
 			Files.Append(Found);
 		}
 		if (Files.IsEmpty()) Body->AddSlot().AutoHeight().Padding(2.f, 1.f)[OKStudioStyle::Label(FText::FromString(TEXT("這個資料夾沒有 .vmd、.wav、.ogg")), 9.5f, TextHint())];
+		// Three rows and a bit: a full folder scrolls by itself and leaves the cast below in sight (U243).
+		TSharedRef<SScrollBox> FileList = SNew(SScrollBox);
 		for (const FString& Name : Files)
 		{
 			const FString Path = Folder / Name;
@@ -2786,8 +2967,9 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMmdDirector()
 				Row->AddSlot().AutoWidth()[Button(FText::FromString(TEXT("當鏡頭")), [this, Path] { RunCommand(TEXT("mmd.camera"), Path); }, 52.f, 18.f, false, 9.f)];
 			}
 			else Row->AddSlot().AutoWidth()[Button(FText::FromString(TEXT("當音樂")), [this, Path] { RunCommand(TEXT("mmd.sound"), Path); }, 52.f, 18.f, false, 9.f)];
-			Body->AddSlot().AutoHeight().Padding(2.f, 1.f)[Row];
+			FileList->AddSlot().Padding(2.f, 1.f)[Row];
 		}
+		if (!Files.IsEmpty()) Body->AddSlot().AutoHeight()[SNew(SBox).MaxDesiredHeight(70.f)[FileList]];
 	}
 	if (Game.IsValid() && Game->Document)
 	{

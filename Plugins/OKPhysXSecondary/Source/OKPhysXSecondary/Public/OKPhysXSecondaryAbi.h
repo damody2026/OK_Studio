@@ -5,7 +5,7 @@
 struct FOKPxParticle
 {
 	int32 Parent;
-	uint32 Flags;       // 1 = root (kinematic, follows the animated pose); root only: 2 body/soft tissue, 4 audit only, 8 worn over clothes, 16 skin chain (no body capsules), 32 tail (OKPhysXSecondary.TailBounce); bits 8..11 solver + 1
+	uint32 Flags;       // 1 = root (kinematic, follows the animated pose); root only: 2 body/soft tissue, 4 audit only, 8 worn over clothes, 16 skin chain (no body capsules), 32 tail (OKPhysXSecondary.TailBounce), 64 breasts (ok.HScene.BustArmContact); bits 8..11 solver + 1
 	float Radius;
 	float Damping;
 	float Elasticity;

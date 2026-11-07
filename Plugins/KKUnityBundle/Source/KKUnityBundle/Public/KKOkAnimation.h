@@ -5,6 +5,7 @@
 class FOkSession;
 class AKKPreviewActor;
 struct OkAnimPlayer;
+struct OkVmdJob;
 
 /**
  * OK animation bridge: the skeleton-agnostic animation system (ok_extract src/okanim) for other modules.
@@ -19,6 +20,11 @@ public:
 	static bool FromClip(FOkSession& Session, const FString& Key, float Fps, TArray<uint8>& Out);
 	/** MMD VMD motion solved on `Session`'s shaped character skeleton (`Session` may be null for standard KK rest) -> OK animation bytes. */
 	static bool FromVmd(const FOkSession* Session, const FString& VmdFile, const FString& ParamsJson, TArray<uint8>& Out);
+	/** `FromVmd` for a worker thread: VmdJobNew copies the character's rig on the thread that owns `Session` (may be null);
+	 *  VmdJobRun then needs no session (LastError on that same thread); VmdJobFree releases the job. */
+	static OkVmdJob* VmdJobNew(const FOkSession* Session, float ObjScaleY);
+	static bool VmdJobRun(OkVmdJob* Job, const FString& VmdFile, const FString& ParamsJson, TArray<uint8>& Out);
+	static void VmdJobFree(OkVmdJob* Job);
 	/** A camera VMD's keys as a JSON array (time, world_pos, rot, fov...). */
 	static bool CameraFromVmd(const FString& VmdFile, FString& OutJson);
 	/** Absolute locals of any named skeleton (header JSON: family, fps, frames, looping, scene, bones[name,parent,rest_local,rest_world,rest_pos], hips). */

@@ -1,5 +1,7 @@
 #include "OKSceneActor.h"
+#include "Async/Async.h"
 #include "Async/ParallelFor.h"
+#include <atomic>
 #include "Tasks/Task.h"
 #include "HAL/IConsoleManager.h"
 #include "OKStudioImport.h"
@@ -372,7 +374,7 @@ namespace
 	}
 
 	AKKPreviewActor* SpawnPreview(UWorld* World, FOkSession&& Session, FString& OutError, const TArray<FLinearColor>& ItemColors = {}, const TArray<FOKMaterialOverride>& Overrides = {},
-		const FOKSceneItem* Item = nullptr, bool bMap = false, const TMap<FName, FLinearColor>& ShaderGlobals = {}, int32 Ramp = -1)
+		const FOKSceneItem* Item = nullptr, bool bMap = false, const TMap<FName, FLinearColor>& ShaderGlobals = {}, int32 Ramp = -1, bool bProgressive = false)
 	{
 		FActorSpawnParameters Params;
 		Params.ObjectFlags = RF_Transient;
@@ -424,13 +426,168 @@ namespace
 		}
 		// Before the session loads: the materials are made with these parameters (AKKPreviewActor::MaterialOverrides).
 		Actor->MaterialOverrides = Overrides;
-		if (!Actor->LoadSession(OutError)) { Actor->Destroy(); return nullptr; }
+		if (!(bProgressive ? Actor->BeginSessionLoad(OutError) : Actor->LoadSession(OutError))) { Actor->Destroy(); return nullptr; }
 		// The preview actor's own studio camera is not part of the scene.
 		TArray<UCameraComponent*> Cameras;
 		Actor->GetComponents(Cameras);
 		for (UCameraComponent* Cam : Cameras) Cam->DestroyComponent();
 		return Actor;
 	}
+}
+
+struct AOKSceneActor::FPreparedCharacter
+{
+	/** What it was opened for: a character changed meanwhile starts over. */
+	FString Key;
+	FOkSession Session;
+	FString Error;
+	bool bOpened = false;
+	std::atomic<bool> bDone{ false };
+	TFuture<void> Opening;
+	TWeakObjectPtr<AKKPreviewActor> Actor;
+};
+
+namespace
+{
+	FString PrepareKey(const FOKSceneCharacter& C)
+	{
+		return FString::Printf(TEXT("%s|%d|%s|%s"), *C.Card, C.Outfit, *BytesToHex(C.ClothesStates.GetData(), C.ClothesStates.Num()), *StatusJson(C));
+	}
+}
+
+struct AOKSceneActor::FPreparedMap
+{
+	struct FRoot
+	{
+		FString Root, Error;
+		FOkSession Session;
+		bool bOpened = false;
+		TWeakObjectPtr<AKKPreviewActor> Actor;
+	};
+	int32 No = -1;
+	TArray<FRoot> Roots;
+	/** The roots opened so far, in order: the frame builds one while the thread opens the next. */
+	std::atomic<int32> Opened{ 0 };
+	std::atomic<bool> bStop{ false };
+	std::atomic<bool> bDone{ false };
+	TFuture<void> Opening;
+	int32 Next = 0;
+};
+
+int32 AOKSceneActor::PreparingMap() const { return PreparedMap ? PreparedMap->No : -1; }
+
+void AOKSceneActor::PrepareMap(int32 No)
+{
+	if (PreparingMap() == No) return;
+	StopMapPrepare();
+	const FOKStudioCatalogMap* Entry = FOKStudioCatalog::Get().FindMap(No);
+	if (!Entry) return;
+	TSharedPtr<FPreparedMap> M = MakeShared<FPreparedMap>();
+	M->No = No;
+	for (const FString& Root : Entry->Roots) M->Roots.AddDefaulted_GetRef().Root = Root;
+	M->Opening = AsyncThread([M, Library = LibraryDirectory(), Model = Entry->Model]
+	{
+		for (int32 I = 0; I < M->Roots.Num() && !M->bStop; ++I)
+		{
+			FPreparedMap::FRoot& R = M->Roots[I];
+			R.bOpened = R.Session.OpenOkModel(Library, Model, R.Root, false, R.Error);
+			M->Opened = I + 1;
+		}
+		M->bDone = true;
+	}, 16 * 1024 * 1024);
+	PreparedMap = M;
+}
+
+void AOKSceneActor::StopMapPrepare()
+{
+	if (!PreparedMap) return;
+	PreparedMap->bStop = true;
+	for (FPreparedMap::FRoot& R : PreparedMap->Roots) if (R.Actor.IsValid()) R.Actor->Destroy();
+	if (!PreparedMap->bDone) DroppedMaps.Add(PreparedMap);
+	PreparedMap.Reset();
+}
+
+bool AOKSceneActor::ContinueMapPrepare()
+{
+	DroppedMaps.RemoveAll([](const TSharedPtr<FPreparedMap>& M) { return M->bDone.load(); });
+	if (!PreparedMap) return false;
+	FPreparedMap& M = *PreparedMap;
+	const double Start = FPlatformTime::Seconds();
+	while (M.Next < M.Opened.load())
+	{
+		FPreparedMap::FRoot& R = M.Roots[M.Next];
+		FString Error;
+		if (R.bOpened && !R.Actor.IsValid())
+		{
+			AKKPreviewActor* Spawned = SpawnPreview(GetWorld(), MoveTemp(R.Session), Error, {}, {}, nullptr, true, {}, -1, true);
+			R.bOpened = Spawned != nullptr;
+			if (Spawned) { Spawned->SetActorHiddenInGame(true); R.Actor = Spawned; }
+		}
+		// A root that did not open or start: SyncMap tries it by itself and says why.
+		AKKPreviewActor* Actor = R.Actor.Get();
+		while (Actor && !Actor->IsSessionLoadComplete())
+		{
+			if (FPlatformTime::Seconds() - Start >= .03) return false;
+			if (!Actor->ContinueSessionLoad(Error)) { Actor->Destroy(); R.Actor = nullptr; Actor = nullptr; R.bOpened = false; }
+		}
+		++M.Next;
+		if (FPlatformTime::Seconds() - Start >= .03) break;
+	}
+	return M.bDone && M.Next == M.Roots.Num();
+}
+
+void AOKSceneActor::StartCharacterOpen(const FOKSceneObject& Object)
+{
+	const FOKSceneCharacter& C = Object.Character;
+	TSharedPtr<FPreparedCharacter> P = MakeShared<FPreparedCharacter>();
+	P->Key = PrepareKey(C);
+	TArray<uint8> States = C.ClothesStates;
+	States.SetNumZeroed(9);
+	P->Opening = AsyncThread([P, Card = CardPath(C.Card), Outfit = C.Outfit, States = MoveTemp(States), Status = StatusJson(C)]
+	{
+		P->bOpened = P->Session.Open(FString(), Card, Outfit, P->Error, States.GetData(), Status);
+		// The material bytes as well, as the one-to-one scene does: on the game thread this was the 1 to 6 s frame left.
+		FString MaterialError;
+		if (P->bOpened && !P->Session.PrepareRuntimeMaterials(MaterialError, true)) UE_LOG(LogTemp, Warning, TEXT("OK studio: materials not prepared: %s"), *MaterialError);
+		P->bDone = true;
+	}, 16 * 1024 * 1024);
+	Prepared.Add(Object.Id, P);
+}
+
+void AOKSceneActor::DropPrepared(int32 Id)
+{
+	TSharedPtr<FPreparedCharacter> P;
+	if (!Prepared.RemoveAndCopyValue(Id, P)) return;
+	if (P->Opening.IsValid()) P->Opening.Wait();
+	if (AKKPreviewActor* Actor = P->Actor.Get()) Actor->Destroy();
+}
+
+bool AOKSceneActor::PrepareCharacter(const FOKSceneObject& Object)
+{
+	TSharedPtr<FPreparedCharacter> P = Prepared.FindRef(Object.Id);
+	if (P && P->Key != PrepareKey(Object.Character)) { DropPrepared(Object.Id); P.Reset(); }
+	if (!P)
+	{
+		// One at a time on the worker; the one waiting for it comes next.
+		for (const auto& Pair : Prepared) if (!Pair.Value->bDone) return false;
+		StartCharacterOpen(Object);
+		return false;
+	}
+	if (!P->bDone) return false;
+	FString Error;
+	AKKPreviewActor* Actor = P->Actor.Get();
+	if (P->bOpened && !Actor)
+	{
+		Actor = SpawnPreview(GetWorld(), MoveTemp(P->Session), Error, {}, {}, nullptr, false,
+			Document ? Document->Post.ShaderGlobals() : TMap<FName, FLinearColor>(), Document ? Document->Post.RampG : -1, true);
+		if (Actor) { Actor->SetActorHiddenInGame(true); P->Actor = Actor; }
+	}
+	// It did not open or start: Build tries by itself and says why.
+	if (!Actor) { DropPrepared(Object.Id); return true; }
+	const double Start = FPlatformTime::Seconds();
+	while (!Actor->IsSessionLoadComplete() && FPlatformTime::Seconds() - Start < .03)
+		if (!Actor->ContinueSessionLoad(Error)) { DropPrepared(Object.Id); return true; }
+	return Actor->IsSessionLoadComplete();
 }
 
 bool AOKSceneActor::ItemModel(const FOKSceneItem& Item, FString& OutModel, FString& OutPrefab, FString& OutError)
@@ -465,14 +622,28 @@ bool AOKSceneActor::Build(const FOKSceneObject& Object, FShown& Out, FString& Ou
 	case EOKSceneObjectKind::Character:
 	{
 		if (Object.Character.Card.IsEmpty()) { OutError = TEXT("no card"); return false; }
-		TArray<uint8> States = Object.Character.ClothesStates;
-		States.SetNumZeroed(9);
-		FOkSession Session;
-		// An OK card opens from the OK base library and its pack; an original KKS card from the library plus its zipmods.
-		if (!Session.Open(FString(), CardPath(Object.Character.Card), Object.Character.Outfit, OutError, States.GetData(), StatusJson(Object.Character))) return false;
-		AKKPreviewActor* Actor = SpawnPreview(World, MoveTemp(Session), OutError, {}, {}, nullptr, false,
-			Document ? Document->Post.ShaderGlobals() : TMap<FName, FLinearColor>(), Document ? Document->Post.RampG : -1);
-		if (!Actor) return false;
+		AKKPreviewActor* Actor = nullptr;
+		const TSharedPtr<FPreparedCharacter> Ready = Prepared.FindRef(Object.Id);
+		if (Ready && Ready->Actor.IsValid() && Ready->Actor->IsSessionLoadComplete() && Ready->Key == PrepareKey(Object.Character))
+		{
+			Actor = Ready->Actor.Get();
+			Actor->SetActorHiddenInGame(false);
+			Prepared.Remove(Object.Id);
+		}
+		else
+		{
+			DropPrepared(Object.Id);
+			TArray<uint8> States = Object.Character.ClothesStates;
+			States.SetNumZeroed(9);
+			FOkSession Session;
+			// An OK card opens from the OK base library and its pack; an original KKS card from the library plus its zipmods.
+			const double OpenStart = FPlatformTime::Seconds();
+			if (!Session.Open(FString(), CardPath(Object.Character.Card), Object.Character.Outfit, OutError, States.GetData(), StatusJson(Object.Character))) return false;
+			UE_LOG(LogTemp, Display, TEXT("OK studio: %s session opened in %.2f s"), *Object.Name, FPlatformTime::Seconds() - OpenStart);
+			Actor = SpawnPreview(World, MoveTemp(Session), OutError, {}, {}, nullptr, false,
+				Document ? Document->Post.ShaderGlobals() : TMap<FName, FLinearColor>(), Document ? Document->Post.RampG : -1);
+			if (!Actor) return false;
+		}
 		Out.Preview = Actor;
 		// Private-rig parts (hair, skirts, accessories) skinned on the GPU as in the one-to-one interaction scene: their
 		// streams cost the game thread a third of the CPU path (OK_STUDIO_GPU_PLAYBACK=0 keeps the CPU path).
@@ -873,16 +1044,17 @@ void AOKSceneActor::ApplyCharacterState(const FOKSceneObject& Object, FShown& It
 		Actor->SetBlush(C.Blush);
 	}
 	// The style is the card's sliders moved: the shown character takes them on its next pose, as the maker's sliders.
-	if (!FMath::IsNearlyEqual(C.Style, Item.AppliedStyle, 1.e-3f) || Item.AppliedStyleTuning != OKStudioStyleTuning().Revision)
+	if (!FMath::IsNearlyEqual(C.Style, Item.AppliedStyle, 1.e-3f) || !FMath::IsNearlyEqual(C.ShownFaceStyle(), Item.AppliedFaceStyle, 1.e-3f) || Item.AppliedStyleTuning != OKStudioStyleTuning().Revision)
 	{
 		TArray<float> Body = Actor->ShapeBody, Face = Actor->ShapeFace;
-		OKStudioStyleSliders(C.Style, Body, Face);
+		OKStudioStyleSliders(C.Style, C.ShownFaceStyle(), Body, Face);
 		const float Scale = OKStudioStyleScale(C.Style, Actor->ShapeBody, Body);
 		Actor->Session.SetStyleBones(OKStudioStyleBones(C.Style, Scale));
 		Item.RenderCorrection.SetScale3D(FVector(Scale));
 		Item.RenderCorrection.SetTranslation(FVector(0.f, 0.f, OKStudioStyleLift(C.Style, Scale, Actor->ShapeBody.IsValidIndex(0) ? Actor->ShapeBody[0] : 0.5f)));
 		Actor->MarkShapeDirty(Face, Body);
 		Item.AppliedStyle = C.Style;
+		Item.AppliedFaceStyle = C.ShownFaceStyle();
 		Item.AppliedStyleTuning = OKStudioStyleTuning().Revision;
 	}
 	if (bHasAnimFace) { if (Actor->bAutomaticBlink) Actor->SetAutomaticBlink(false); } else if (C.Blink >= 0 && Actor->bAutomaticBlink != (C.Blink == 1)) Actor->SetAutomaticBlink(C.Blink == 1);
@@ -1030,7 +1202,9 @@ void AOKSceneActor::Sync()
 	// Objects are built a batch per frame: a scene of thousands built in one frame never lets the renderer upload and
 	// free what it queued (memory ran past 28 GB). The rest waits for the next Tick (bBuildsPending).
 	int32 Built = 0;
+	bool bPrepareBusy = false;
 	bBuildsPending = false;
+	BuildsLeft = 0;
 	TSet<int32> Present;
 	for (const FOKSceneObject& Object : Document->Objects)
 	{
@@ -1043,26 +1217,45 @@ void AOKSceneActor::Sync()
 		const bool bSame = Item && Item->Kind == Object.Kind && Item->Character.SameContent(Object.Character) && Item->Item.SameContent(Object.Item) && Item->Light == Object.Light
 			&& (Object.Kind != EOKSceneObjectKind::Effect || Item->Effect == Object.Effect.Effect)
 			&& (Object.Kind != EOKSceneObjectKind::Character || PartsEyes(Item->Character.EyesPattern) == PartsEyes(Object.Character.EyesPattern));
+		// A scene opening: the character is got ready over the frames, Build only finishes it. The next one opens meanwhile.
+		if (!bSame && bProgressiveBuild && Object.Kind == EOKSceneObjectKind::Character)
+		{
+			if (bPrepareBusy)
+			{
+				bool bOpening = Prepared.Contains(Object.Id) || Prepared.Num() >= 2;
+				for (const auto& Pair : Prepared) bOpening = bOpening || !Pair.Value->bDone;
+				if (!bOpening) StartCharacterOpen(Object);
+			}
+			else if (!PrepareCharacter(Object))
+			{
+				bPrepareBusy = true;
+				Built = FMath::Max(Built, BuildsPerFrame);
+			}
+		}
 		if (!bSame && Built >= BuildsPerFrame)
 		{
 			// Over this frame's budget: an object already shown keeps its old look until its turn, a new one waits.
 			bBuildsPending = true;
+			++BuildsLeft;
 			if (!Item) continue;
 		}
 		else if (!bSame)
 		{
-			++Built;
+			// A character takes seconds: one a frame, so the status line can say how far the scene is (U251).
+			Built += Object.Kind == EOKSceneObjectKind::Character ? BuildsPerFrame : 1;
 			if (Item) Release(*Item);
 			FShown Fresh;
 			FString Error;
 			Errors.Remove(Object.Id);
 			UE_LOG(LogTemp, Display, TEXT("OK studio: building %s (%d)"), *Object.Name, Object.Id);
 			LastBuildFrame = GFrameCounter;
+			const double BuildStart = FPlatformTime::Seconds();
 			if (!Build(Object, Fresh, Error))
 			{
 				Errors.Add(Object.Id, Error);
 				UE_LOG(LogTemp, Warning, TEXT("OK studio: %s (%d) not shown: %s"), *Object.Name, Object.Id, *Error);
 			}
+			UE_LOG(LogTemp, Display, TEXT("OK studio: %s (%d) built in %.2f s"), *Object.Name, Object.Id, FPlatformTime::Seconds() - BuildStart);
 			Item = &Shown.Add(Object.Id, Fresh);
 			if (Object.Kind == EOKSceneObjectKind::Character) { ApplyCharacterState(Object, *Item); SetAnimationTime(Object.Id, 0.f); }
 		}
@@ -1152,6 +1345,11 @@ void AOKSceneActor::Sync()
 	{
 		if (!Present.Contains(It.Key())) { Release(It.Value()); Errors.Remove(It.Key()); It.RemoveCurrent(); }
 	}
+	TArray<int32> PreparedIds;
+	Prepared.GetKeys(PreparedIds);
+	for (int32 Id : PreparedIds) if (!bBuildsPending || !Present.Contains(Id)) DropPrepared(Id);
+	bBuildsPending |= bMapPending;
+	if (!bBuildsPending) bProgressiveBuild = false;
 	WireRenderTextures();
 	// A destroyed preview's meshes, textures and materials are freed by garbage collection, which the engine runs only
 	// now and then: after another scene is loaded (or many objects go) collect now, or scenes opened one after another
@@ -1174,6 +1372,17 @@ void AOKSceneActor::SyncMap()
 		ApplyMapTime(MapPlace);
 		return;
 	}
+	// A scene opens over many frames, its map with it: the biggest held one frame 28 s (U259).
+	bMapPending = false;
+	if (bProgressiveBuild && Document->Map >= 0)
+	{
+		if (PreparingMap() != Document->Map) PrepareMap(Document->Map);
+		if (PreparingMap() == Document->Map && !ContinueMapPrepare()) { bMapPending = true; return; }
+	}
+	// Built ahead for this map, or for one nobody wants any more.
+	TSharedPtr<FPreparedMap> Ready;
+	if (PreparedMap && PreparedMap->No == Document->Map && PreparedMap->bDone && PreparedMap->Next == PreparedMap->Roots.Num()) Ready = MoveTemp(PreparedMap);
+	else StopMapPrepare();
 	ShownMapTime = -2;
 	for (const TPair<TWeakObjectPtr<ULightComponent>, uint32>& L : MapLights) if (L.Key.IsValid()) L.Key->DestroyComponent();
 	MapLights.Reset();
@@ -1188,11 +1397,21 @@ void AOKSceneActor::SyncMap()
 	UE_LOG(LogTemp, Display, TEXT("OK studio: building map %s (%d) at %s"), *Entry->Name, ShownMap, *Document->MapTransform.ToString());
 	// A scene map shows each scene root that has meshes (controllers without renderers are skipped).
 	TArray<FString> Failed;
+	double OpenSeconds = 0, SpawnSeconds = 0;
+	const double MapStart = FPlatformTime::Seconds();
 	for (const FString& Root : Entry->Roots)
 	{
 		FOkSession Session;
 		FString Error;
-		AKKPreviewActor* Actor = Session.OpenOkModel(LibraryDirectory(), Entry->Model, Root, false, Error) ? SpawnPreview(GetWorld(), MoveTemp(Session), Error, {}, {}, nullptr, true) : nullptr;
+		const double RootStart = FPlatformTime::Seconds();
+		const FPreparedMap::FRoot* Built = Ready ? Ready->Roots.FindByPredicate([&](const FPreparedMap::FRoot& R) { return R.Root == Root && R.Actor.IsValid(); }) : nullptr;
+		AKKPreviewActor* Actor = Built ? Built->Actor.Get() : nullptr;
+		if (Actor) Actor->SetActorHiddenInGame(false);
+		const bool bOpened = Actor || Session.OpenOkModel(LibraryDirectory(), Entry->Model, Root, false, Error);
+		const double Opened = FPlatformTime::Seconds();
+		OpenSeconds += Opened - RootStart;
+		if (!Actor && bOpened) Actor = SpawnPreview(GetWorld(), MoveTemp(Session), Error, {}, {}, nullptr, true);
+		SpawnSeconds += FPlatformTime::Seconds() - Opened;
 		if (!Actor) { Failed.Add(Root + TEXT(": ") + Error); continue; }
 		Actor->SetActorTransform(MapPlace);
         Actor->Tags.Add(FName(*(TEXT("OKStudioMapRoot=")+Root)));
@@ -1209,6 +1428,7 @@ void AOKSceneActor::SyncMap()
 	}
 	if (ShownMapPreviews.IsEmpty()) MapError = FString::Join(Failed, TEXT("; "));
 	ApplyMapTime(MapPlace);
+	UE_LOG(LogTemp, Display, TEXT("OK studio: map %d built in %.2f s (%d roots, open %.2f, spawn %.2f)"), ShownMap, FPlatformTime::Seconds() - MapStart, Entry->Roots.Num(), OpenSeconds, SpawnSeconds);
 }
 
 // Preserve the source renderer shadow policy, including invisible room occluders,
@@ -1560,6 +1780,27 @@ void AOKSceneActor::SwapKeyedMotion(const FOKSceneObject& Object, FShown& Item)
 	if (FOKSceneObject* Doc = Document->Find(Object.Id)) { Doc->Character.Time = Time; Doc->Character.Speed = Speed; }
 	Item.Character.Time = Time;
 	SetAnimationTime(Object.Id, Document->ItemAnimationSeconds);
+}
+
+bool AOKSceneActor::SetCharacterAnimFile(int32 Id, const FString& File, FString& OutError)
+{
+	FShown* Item = Shown.Find(Id);
+	FOKSceneObject* Object = Document ? Document->Find(Id) : nullptr;
+	AKKPreviewActor* Actor = Item ? Item->Preview.Get() : nullptr;
+	if (!Object || !Actor || Item->Kind != EOKSceneObjectKind::Character) { OutError = TEXT("no shown character"); return false; }
+	UOKAnimSequence* Seq = UOKAnimationLibrary::LoadOkAnimFile(FPaths::IsRelative(File) ? FPaths::ProjectDir() / File : File, nullptr, NAME_None, OutError);
+	const TSharedPtr<FOkAnimPlayer> Player = Seq ? Seq->CreatePlayer(OutError) : nullptr;
+	if (!Player || !Actor->SetOkAnimation(Player, true)) { if (OutError.IsEmpty()) OutError = TEXT("animation not playable"); return false; }
+	Actor->PoseMode = 3;
+	Item->StudioAnim.Reset(Seq);
+	Item->Time = 0.f;
+	Item->Fade = FOKSceneMotionFade();
+	// Both copies agree, so the next Sync keeps the character as it is.
+	for (FOKSceneCharacter* C : { &Object->Character, &Item->Character })
+	{
+		C->StudioAnimeNo = -1; C->Animation.Reset(); C->AnimFile = File; C->Time = 0.f;
+	}
+	return true;
 }
 
 bool AOKSceneActor::SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int32 Category, int32 No, FString& OutError, const FOKSceneMotionFade* Fade)
@@ -2590,6 +2831,17 @@ void AOKSceneActor::PlaceSky(const FTransform& View)
 	if (SkyDome.IsValid() && SkyShown >= 0) SkyDome->SetWorldLocation(View.GetLocation());
 }
 
+void AOKSceneActor::EndPlay(const EEndPlayReason::Type Reason)
+{
+	// Leaving while a scene opens: the card being opened on its thread must not outlive the world it was opened for.
+	for (const auto& Pair : Prepared) if (Pair.Value->Opening.IsValid()) Pair.Value->Opening.Wait();
+	Prepared.Reset();
+	StopMapPrepare();
+	for (const TSharedPtr<FPreparedMap>& M : DroppedMaps) if (M->Opening.IsValid()) M->Opening.Wait();
+	DroppedMaps.Reset();
+	Super::EndPlay(Reason);
+}
+
 void AOKSceneActor::BeginPlay()
 {
 	Super::BeginPlay();
@@ -2632,6 +2884,12 @@ void AOKSceneActor::ShowSequenceTime()
 
 void AOKSceneActor::ReleaseScene()
 {
+	TArray<int32> PreparedIds;
+	Prepared.GetKeys(PreparedIds);
+	for (int32 Id : PreparedIds) DropPrepared(Id);
+	StopMapPrepare();
+	bMapPending = false;
+	bProgressiveBuild = false;
 	bSkyDomesDirty = true;
 	for (auto& Pair : Shown) Release(Pair.Value);
 	Shown.Reset();

@@ -14,7 +14,7 @@ namespace { constexpr const TCHAR* DisplaySection=TEXT("OpenKoikatsu.EditorDispl
 void UOKCharacterController::BuildEditorDisplayControls(UVerticalBox* Parent)
 {
  GConfig->GetFloat(DisplaySection,TEXT("PanelWidth"),EditorPanelWidth,GGameUserSettingsIni);
- GConfig->GetFloat(DisplaySection,TEXT("FontSize"),EditorFontSize,GGameUserSettingsIni);
+ GConfig->GetFloat(DisplaySection,TEXT("PanelFontSize"),EditorFontSize,GGameUserSettingsIni);
  auto Row=[&](const TCHAR* Label,const TCHAR* Name,float Minimum,float Maximum,float Value){
   UHorizontalBox* Box=WidgetTree->ConstructWidget<UHorizontalBox>();
   UTextBlock* Text=WidgetTree->ConstructWidget<UTextBlock>();
@@ -27,7 +27,7 @@ void UOKCharacterController::BuildEditorDisplayControls(UVerticalBox* Parent)
   Input->SetMinDesiredWidth(100.f);Box->AddChild(Input);Parent->AddChild(Box);return Input;
  };
  EditorWidthInput=Row(TEXT("編輯欄寬度"),TEXT("EditorPanelWidth"),320,960,EditorPanelWidth);
- EditorFontInput=Row(TEXT("顯示字級"),TEXT("EditorFontSize"),12,24,EditorFontSize);
+ EditorFontInput=Row(TEXT("顯示字級"),TEXT("EditorFontSize"),6,24,EditorFontSize);
  EditorWidthInput->OnValueChanged.AddDynamic(this,&UOKCharacterController::OnEditorPanelWidthChanged);
  EditorFontInput->OnValueChanged.AddDynamic(this,&UOKCharacterController::OnEditorFontSizeChanged);
  EditorFontInput->SetToolTipText(FText::FromString(TEXT("同步調整文字與操作元件大小；字級較大時會保留欄位所需的最小寬度。")));
@@ -35,13 +35,14 @@ void UOKCharacterController::BuildEditorDisplayControls(UVerticalBox* Parent)
 
 void UOKCharacterController::ApplyEditorDisplaySettings()
 {
- EditorFontSize=FMath::IsFinite(EditorFontSize)?FMath::Clamp(EditorFontSize,12.f,24.f):16.f;
+ EditorFontSize=FMath::IsFinite(EditorFontSize)?FMath::Clamp(EditorFontSize,6.f,24.f):8.f;
  const float Scale=EditorFontSize/16.f;
  EditorPanelWidth=FMath::IsFinite(EditorPanelWidth)?FMath::Clamp(EditorPanelWidth,320.f*FMath::Max(1.f,Scale),960.f):360.f;
  if(ShapePanel)ShapePanel->SetWidthOverride(EditorPanelWidth);
  // Layout scaling also scales hit targets, wrapping, row heights and popup anchors.
  // The scroll box receives the inverse-scaled available height and remains scrollable.
  if(EditorContentScale)EditorContentScale->SetUserSpecifiedScale(Scale);
+ if(MotionContentScale)MotionContentScale->SetUserSpecifiedScale(Scale);
  if(EditorWidthInput&&!FMath::IsNearlyEqual(EditorWidthInput->GetValue(),EditorPanelWidth))EditorWidthInput->SetValue(EditorPanelWidth);
  if(EditorFontInput&&!FMath::IsNearlyEqual(EditorFontInput->GetValue(),EditorFontSize))EditorFontInput->SetValue(EditorFontSize);
 }
@@ -61,6 +62,6 @@ void UOKCharacterController::OnEditorFontSizeChanged(float Value)
 void UOKCharacterController::SaveEditorDisplaySettings()
 {
  GConfig->SetFloat(DisplaySection,TEXT("PanelWidth"),EditorPanelWidth,GGameUserSettingsIni);
- GConfig->SetFloat(DisplaySection,TEXT("FontSize"),EditorFontSize,GGameUserSettingsIni);
+ GConfig->SetFloat(DisplaySection,TEXT("PanelFontSize"),EditorFontSize,GGameUserSettingsIni);
  GConfig->Flush(false,GGameUserSettingsIni);bEditorDisplayDirty=false;
 }

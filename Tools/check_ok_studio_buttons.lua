@@ -1,6 +1,7 @@
 -- Clicks OK Studio's character-page buttons through the control channel's "click" op (the button's own handler runs)
 -- and reads the result back ("bones" op), one check per line. Needs a running studio.
 -- Tools/lua/lua.exe Tools/check_ok_studio_buttons.lua [--port N] [--card Content/CharacterCards/CrowdAPNG/C000.png]
+package.path = (arg[0]:match("^(.*)[/\\]") or ".") .. "/?.lua;" .. package.path
 local json = require "ok.json"
 local port, card = tostring(require("ok_instance").ports().studio_control), "Content/CharacterCards/CrowdAPNG/C000.png"
 for i = 1, #arg, 2 do
