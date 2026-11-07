@@ -94,6 +94,8 @@ public:
 
 	/** The game owns the sun, the sky light and the exposure and feeds SetHour: this keeps the lamps, the signs and the sky dome. */
 	void UseGameClock();
+	/** A level that streamed in after BeginPlay: its lamps and signs join the registry; what is there stays. */
+	void RegisterLevel(ULevel* Level);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="City|Environment")
 	FDateTime LocalDateTime;
@@ -178,6 +180,7 @@ protected:
 
 private:
 	bool bGameClock = false;
+	ULevel* RegistryLevel = nullptr; // set during RegisterLevel: RefreshRegistry looks at this level only and adds to what it has
 	float GameClockLampScale = 0.125f; // the lamps' lumens are physical; the game's exposure is fixed at 1
 	FVector LightingViewOverride = FVector::ZeroVector;
 	bool bLightingViewOverride = false;

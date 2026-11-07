@@ -28,11 +28,13 @@ TArray<FVector> AOKStreetSocialScene::ContactRoute(const FVector& From,const FVe
  });
 }
 void AOKStreetSocialScene::SelectContact(int32 Character){if(!State||!State->Agents.IsValidIndex(Character-1))return;State->ContactSelection=Character;RefreshUI(OKStreetUi::Right|OKStreetUi::Debug);}
-void AOKStreetSocialScene::NavigateGirl(int32 Character){if(!ContactReady(Character)||State->PrivateGirl!=INDEX_NONE)return;auto& S=*State;
+void AOKStreetSocialScene::NavigateGirl(int32 Character){
+ // Not ContactReady: it asks for her being drawn, and across the city she is not, so the button did nothing. Her place is enough.
+ if(!State||!State->Agents.IsValidIndex(Character-1)||State->OnaniGirl==Character||State->PrivateGirl!=INDEX_NONE)return;auto& S=*State;
  // Talking or in an activity he cannot walk off: say so (as the map does) instead of accepting a route he never walks.
  if(S.Target!=INDEX_NONE||S.Pair.Partner!=INDEX_NONE||S.OutingGirl!=INDEX_NONE||S.Facility!=INDEX_NONE){S.Message=OKT(TEXT("ui.contacts.end_activity_before_nav"));S.ContactsNotice=S.Message;return;}
  // She is on another floor: the navigation takes the elevator (PlanNavLift, in StepNavigation).
- S.NavRide=FOKStreetLiftRide();S.NavGirl=Character;S.NavPointActive=false;S.NavAt=0;S.NavStep=1;S.NavReplans=0;S.NavProgressAt=SceneTime();S.NavPath=ContactRoute(S.Male,S.Agents[Character-1].Position);S.ContactsNotice=OKT(TEXT("ui.contacts.auto_travel_to_her_hint"));}
+ S.NavAround.Reset();S.NavRide=FOKStreetLiftRide();S.NavGirl=Character;S.NavPointActive=false;S.NavAt=0;S.NavStep=1;S.NavReplans=0;S.NavProgressAt=SceneTime();S.NavPath=ContactRoute(S.Male,S.Agents[Character-1].Position);S.ContactsNotice=OKT(TEXT("ui.contacts.auto_travel_to_her_hint"));}
 void AOKStreetSocialScene::NavigatePoint(const FVector& Spot,const FString& Name){
  if(!State)return;auto& S=*State;
  FVector Goal=Spot;if(OKStreetCityMode()&&Goal.Z==0.f)Goal.Z=S.Male.Z; // a spot on the big map has no height
@@ -63,12 +65,12 @@ void AOKStreetSocialScene::NavigatePointAlong(const FVector& Goal,const FString&
  const bool Floors=NavNeedsLift(Goal);
  if(Path.IsEmpty()&&!Floors){S.Message=OKT(TEXT("ui.contacts.unreachable_try_elsewhere"));return;}
  if(Path.IsEmpty())Path={S.Male};
- S.NavRide=FOKStreetLiftRide();S.NavGirl=INDEX_NONE;S.NavPointActive=true;S.NavPoint=Floors?Target:FVector(Target.X,Target.Y,S.Male.Z);S.NavPointName=Name;S.NavPath=MoveTemp(Path);S.NavStep=1;S.NavReplans=0;S.NavAt=SceneTime();S.NavProgressAt=S.NavAt;
+ S.NavAround.Reset();S.NavRide=FOKStreetLiftRide();S.NavGirl=INDEX_NONE;S.NavPointActive=true;S.NavPoint=Floors?Target:FVector(Target.X,Target.Y,S.Male.Z);S.NavPointName=Name;S.NavPath=MoveTemp(Path);S.NavStep=1;S.NavReplans=0;S.NavAt=SceneTime();S.NavProgressAt=S.NavAt;
  S.Message=OKT(TEXT("ui.contacts.auto_travel_button"))+(Name.IsEmpty()?FString(OKT(TEXT("ui.contacts.map_selected_spot"))):Name)+OKT(TEXT("ui.contacts.wasd_cancel_nav_suffix"));
  if(S.BigMapOpen)ToggleBigMap(); // navigation, its notice and the message are bound to state: no rebuild
 }
 void AOKStreetSocialScene::StopNavigation(const FString& Notice){
- if(!State)return;auto& S=*State;S.NavSearch.Reset();S.NavGirl=INDEX_NONE;S.NavPointActive=false;S.NavPath.Reset();S.NavRide=FOKStreetLiftRide();S.ContactsNotice.Reset();
+ if(!State)return;auto& S=*State;S.NavSearch.Reset();S.NavAround.Reset();S.NavGirl=INDEX_NONE;S.NavPointActive=false;S.NavPath.Reset();S.NavRide=FOKStreetLiftRide();S.ContactsNotice.Reset();
  if(!Notice.IsEmpty())S.Message=Notice;
 }
 void AOKStreetSocialScene::ToggleBigMap(){
@@ -92,7 +94,9 @@ bool AOKStreetSocialScene::NavCellFree(const FIntPoint& Cell,float Z) const{
  Grid.Add(Cell,Free);return Free;
 }
 TArray<FVector> AOKStreetSocialScene::GridRoute(const FVector& From,const FVector& To) const{
- FOKStreetGridSearch G;G.From=From;G.To=To;GridSearchStep(G,TNumericLimits<double>::Max());return MoveTemp(G.Route);
+ // In the city a walled-in search ran through 60000 cells in one frame (300 ms). 4 ms, then no route: the caller falls back to
+ // its other way, and the cells tested stay known, so the next try gets further.
+ FOKStreetGridSearch G;G.From=From;G.To=To;GridSearchStep(G,OKStreetCityMode()?FPlatformTime::Seconds()+.004:TNumericLimits<double>::Max());return MoveTemp(G.Route);
 }
 bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline) const{
  if(G.Phase==2)return true;
@@ -200,8 +204,11 @@ FVector AOKStreetSocialScene::StreetStep(const FVector& From,const FVector& Dire
  // Straight on, else slide along the obstacle: either axis, then 45 degrees either way (corners, posts, trees).
  const FVector Tries[]={D,FVector(FMath::Sign(D.X),0,0),FVector(0,FMath::Sign(D.Y),0),D.RotateAngleAxis(45,FVector::UpVector),D.RotateAngleAxis(-45,FVector::UpVector)};
  for(const FVector& T:Tries){if(T.IsNearlyZero()||FVector::DotProduct(T,D)<.3f)continue;FVector To=From+T*Distance;
-  // The city's ground: he goes up and down with it, and where there is none he does not go.
-  if(OKStreetCityMode()){float GroundZ=From.Z;if(!OKStreetGroundZ(GetWorld(),To,GroundZ,this))continue;To.Z=GroundZ;}
+  // The city's ground: he goes up and down with it, and where there is none he does not go. A lift's car and doorway are no ground of the
+  // map's and its shaft has no floor above the first: from the second floor up nobody could step out of the car.
+  if(OKStreetCityMode()){bool Lift=false;for(int32 I=0;I<State->Elevators.Num()&&!Lift;++I)Lift=InElevatorCar(I,From)||InElevatorCar(I,To)||ElevatorLanding(I,From)!=INDEX_NONE;
+   float GroundZ=From.Z;const bool Ground=OKStreetGroundZ(GetWorld(),To,GroundZ,this);if(!Ground&&!Lift)continue;
+   To.Z=Lift&&(!Ground||FMath::Abs(GroundZ-From.Z)>60.f)?From.Z:GroundZ;}
   if(Free(To))return To;}
  return From;
 }
@@ -227,7 +234,15 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
  const FVector Her=S.NavPointActive?S.NavPoint:S.Agents[S.NavGirl-1].Position;
  const FVector Goal=S.NavPointActive?S.NavPoint:NavApproachSpot(Her);
  // He is walking himself: the autopilot waits, then goes on from where he is.
- if(SceneTime()-S.ManualMoveAt<3.0)return 0;
+ if(SceneTime()-S.ManualMoveAt<3.0){S.NavAround.Reset();return 0;}
+ // The way around what stopped him, searched a slice a frame while he stands there.
+ if(S.NavAround){
+  if(!GridSearchStep(*S.NavAround,FPlatformTime::Seconds()+.003))return 0;
+  TArray<FVector> Around=MoveTemp(S.NavAround->Route);const FVector To=S.NavAround->To;S.NavAround.Reset();S.NavProgressAt=SceneTime();
+  if(Around.Num()>=2){if(S.NavPath.IsValidIndex(S.NavStep)&&To==S.NavPath[S.NavStep])S.NavPath.RemoveAt(0,S.NavStep+1);else S.NavPath.Reset();
+   Around.Append(S.NavPath);S.NavPath=MoveTemp(Around);S.NavStep=1;}
+  else if(S.NavRide.Elevator==INDEX_NONE){auto Path=S.NavPointActive?PlaceRoute(S.Male,Goal):ContactRoute(S.Male,Goal);if(Path.Num()>=2){S.NavPath=MoveTemp(Path);S.NavStep=1;}}
+  return 0;}
  // On another floor: to an elevator first, then the ride (the route there is the plan's).
  if(S.NavRide.Elevator==INDEX_NONE&&NavNeedsLift(Goal)&&!PlanNavLift(Goal)){StopNavigation(OKT(TEXT("ui.contacts.other_floor_no_path")));return 0;}
  if(S.NavRide.Elevator!=INDEX_NONE&&S.NavStep>=S.NavPath.Num()){
@@ -268,6 +283,8 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
  const double Now=SceneTime();
  const FVector Moved=StreetStep(S.Male,Delta/Distance,Step);
  if(Moved==S.Male){
+  // On his way to a lift and stopped at its landing: he is there, standing there calls the car.
+  if(S.NavRide.Elevator!=INDEX_NONE&&ElevatorLanding(S.NavRide.Elevator,S.Male)!=INDEX_NONE){S.NavStep=S.NavPath.Num();return 0;}
   // Blocked: find a new way from where he stands before giving up.
   if(Now-S.NavProgressAt>1.0){
    if(S.NavReplans>=(OKStreetCityMode()?30:6)){StopNavigation(OKT(TEXT("ui.contacts.path_blocked_stop")));return 0;} // each try learns a blocked cell, so a few more find the way round
@@ -295,10 +312,8 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
    }
    // First around what is in the way, to the next point only (the grid keeps the body's clearance; the same route again
    // would run into the same wall); the whole way again only when that finds nothing.
-   TArray<FVector> Around=S.NavReplans==1?GridRoute(S.Male,Next):TArray<FVector>();
-   if(Around.Num()>=2){if(S.NavPath.IsValidIndex(S.NavStep)&&Next==S.NavPath[S.NavStep])S.NavPath.RemoveAt(0,S.NavStep+1);else S.NavPath.Reset();
-    Around.Append(S.NavPath);S.NavPath=MoveTemp(Around);S.NavStep=1;}
-   else{auto Path=S.NavPointActive?PlaceRoute(S.Male,Goal):ContactRoute(S.Male,Goal);
+   if(S.NavReplans==1){S.NavAround=MakeShared<FOKStreetGridSearch>();S.NavAround->From=S.Male;S.NavAround->To=Next;}
+   else if(S.NavRide.Elevator==INDEX_NONE){auto Path=S.NavPointActive?PlaceRoute(S.Male,Goal):ContactRoute(S.Male,Goal);
     if(Path.Num()>=2){S.NavPath=MoveTemp(Path);S.NavStep=1;}}
    {
     // What is in the way: the clearance gap on his side, and the first thing a body-sized sweep toward the next point hits.
@@ -509,7 +524,9 @@ void AOKStreetSocialScene::TickContacts(float Dt,double Now){
  if(S.PrivateGirl!=INDEX_NONE&&!ContactReady(S.PrivateGirl)){FinishPrivate();return;}
  TickAfter();
  // Her route is redrawn as she moves; not while the navigation is on its way to (or in) an elevator, or with her upstairs.
- if(S.NavGirl!=INDEX_NONE&&Now-S.NavAt>.75&&S.NavRide.Elevator==INDEX_NONE&&S.Agents.IsValidIndex(S.NavGirl-1)&&!NavNeedsLift(S.Agents[S.NavGirl-1].Position)){if(!ContactReady(S.NavGirl)){S.NavGirl=INDEX_NONE;S.NavPath.Reset();S.ContactsNotice=OKT(TEXT("ui.contacts.nav_target_unavailable"));RefreshUI();}else{S.NavAt=Now;S.NavPath=ContactRoute(S.Male,NavApproachSpot(S.Agents[S.NavGirl-1].Position));S.NavStep=1;}}
+ // Across the city the route is drawn again every 5 s, not 0.75: each new one started him off from its first point, and he paced
+ // back and forth on the street. She may not be drawn from there (ContactReady): only gone from the street ends it.
+ if(S.NavGirl!=INDEX_NONE&&S.Agents.IsValidIndex(S.NavGirl-1)&&Now-S.NavAt>(OKStreetCityMode()&&OKStreetCityFar(S.Male,S.Agents[S.NavGirl-1].Position)?5.:.75)&&S.NavRide.Elevator==INDEX_NONE&&!NavNeedsLift(S.Agents[S.NavGirl-1].Position)){if(S.OnaniGirl==S.NavGirl){S.NavGirl=INDEX_NONE;S.NavPath.Reset();S.ContactsNotice=OKT(TEXT("ui.contacts.nav_target_unavailable"));RefreshUI();}else{S.NavAt=Now;S.NavPath=ContactRoute(S.Male,NavApproachSpot(S.Agents[S.NavGirl-1].Position));S.NavStep=1;}}
 }
 void AOKStreetSocialScene::RunContactsProbe(double Now){
  auto& S=*State;if(S.ContactsChecked){if(S.ContactsOnlyTest)WriteReport(S.Errors.IsEmpty());return;}

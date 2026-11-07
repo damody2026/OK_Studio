@@ -830,6 +830,20 @@ void ACityEnvironmentController::SetAuthority(bool bInAuthority)
 	}
 }
 
+void ACityEnvironmentController::RegisterLevel(ULevel* Level)
+{
+	if (!Level)
+	{
+		return;
+	}
+	// What streamed out is gone from the lists now.
+	Lights.RemoveAll([](const FManagedLight& Item) { return !Item.Component.IsValid(); });
+	Signs.RemoveAll([](const FManagedSign& Item) { return !Item.Component.IsValid(); });
+	RegistryLevel = Level;
+	RefreshRegistry();
+	RegistryLevel = nullptr;
+}
+
 void ACityEnvironmentController::RefreshRegistry()
 {
 	UWorld* World = GetWorld();
@@ -838,19 +852,32 @@ void ACityEnvironmentController::RefreshRegistry()
 		return;
 	}
 	UCityEnvironmentClockSubsystem* Clock = ResolveClock();
-	TArray<FManagedLight> PreviousLights = MoveTemp(Lights);
-	TArray<FManagedSign> PreviousSigns = MoveTemp(Signs);
-	TArray<FManagedAtmosphere> PreviousAtmospheres = MoveTemp(Atmospheres);
-	TArray<FManagedMesh> PreviousMeshes = MoveTemp(Meshes);
-	Lights.Reset();
-	Signs.Reset();
-	Atmospheres.Reset();
-	Meshes.Reset();
-	bSunBound = false;
-	bMoonBound = false;
-	bFillBound = false;
-	bSkyBound = false;
-	bBounceBound = false;
+	TArray<FManagedLight> PreviousLights;
+	TArray<FManagedSign> PreviousSigns;
+	TArray<FManagedAtmosphere> PreviousAtmospheres;
+	TArray<FManagedMesh> PreviousMeshes;
+	TSet<const UObject*> HadLights, HadSigns;
+	if (RegistryLevel)
+	{
+		for (const FManagedLight& Item : Lights) { HadLights.Add(Item.Component.Get()); }
+		for (const FManagedSign& Item : Signs) { HadSigns.Add(Item.Component.Get()); }
+	}
+	else
+	{
+		PreviousLights = MoveTemp(Lights);
+		PreviousSigns = MoveTemp(Signs);
+		PreviousAtmospheres = MoveTemp(Atmospheres);
+		PreviousMeshes = MoveTemp(Meshes);
+		Lights.Reset();
+		Signs.Reset();
+		Atmospheres.Reset();
+		Meshes.Reset();
+		bSunBound = false;
+		bMoonBound = false;
+		bFillBound = false;
+		bSkyBound = false;
+		bBounceBound = false;
+	}
 
 	auto FindLight = [&PreviousLights](const ULightComponentBase* Component) -> const FManagedLight*
 	{
@@ -865,7 +892,7 @@ void ACityEnvironmentController::RefreshRegistry()
 	};
 	auto RememberLight = [&](ULightComponentBase* Light, ECityLightKind Kind, ECityLampGroup Group, bool bOverride, float Lumens)
 	{
-		if (!Light)
+		if (!Light || HadLights.Contains(Light))
 		{
 			return;
 		}
@@ -971,9 +998,20 @@ void ACityEnvironmentController::RefreshRegistry()
 		Lights.Add(Managed);
 	};
 
-	for (TActorIterator<AActor> It(World); It; ++It)
+	TArray<AActor*> Scanned;
+	if (RegistryLevel)
 	{
-		AActor* Actor = *It;
+		Scanned.Append(RegistryLevel->Actors);
+	}
+	else
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			Scanned.Add(*It);
+		}
+	}
+	for (AActor* Actor : Scanned)
+	{
 		if (!IsValid(Actor) || Actor == this)
 		{
 			continue;
@@ -1075,7 +1113,7 @@ void ACityEnvironmentController::RefreshRegistry()
 		TInlineComponentArray<UPrimitiveComponent*> Primitives(Actor);
 		for (UPrimitiveComponent* Primitive : Primitives)
 		{
-			if (!Primitive)
+			if (!Primitive || HadSigns.Contains(Primitive))
 			{
 				continue;
 			}
@@ -1131,6 +1169,10 @@ void ACityEnvironmentController::RefreshRegistry()
 				Signs.Add(Sign);
 			}
 		}
+	}
+	if (RegistryLevel)
+	{
+		return; // the atmosphere and the sky's meshes are the whole map's, found once
 	}
 
 	for (TActorIterator<AActor> It(World); It; ++It)
