@@ -86,6 +86,7 @@ UCLASS()
 class OPENKOIKATSU_API UOKHScenePanel : public UUserWidget {
     GENERATED_BODY()
 public:
+    void PoseFailed(const FString& Why); // the pair player would not start it
     UPROPERTY() TObjectPtr<UOKCharacterController> Gallery;
     virtual TSharedRef<SWidget> RebuildWidget() override;
     virtual void NativeTick(const FGeometry& Geometry,float Delta) override;
@@ -370,7 +371,7 @@ private:
     // Her clothes kept over her skin (CoverClothes): her skin's wrap moves this frame, the garments moved, the time it took.
     void CoverClothes(class AKKPreviewActor* Girl);TArray<uint32> WrapIdxShown;TArray<FVector3f> WrapDShown,WrapNShown;TWeakObjectPtr<class AKKPreviewActor> ClothGirl;TSet<int32> ClothShown;TMap<int32,double> ClothCpuUntil;int32 ClothVerts=0;float ClothMs=0.f;
     // His penis out through her back folded under her skin (ReadBulge, penis.clip): his part with that morph, whether it is moved now.
-    TWeakObjectPtr<class AKKPreviewActor> ClipHim;int32 ClipPart=INDEX_NONE;bool bClipShown=false;int32 ClipVerts=0;float BackExitCm=-1.f;float ClipLastTip=-1.f,ClipLeadCm=0.f;
+    TWeakObjectPtr<class AKKPreviewActor> ClipHim;int32 ClipPart=INDEX_NONE;bool bClipShown=false;int32 ClipVerts=0;float BackExitCm=-1.f;float ClipLastTip=-1.f,ClipLeadCm=0.f;bool bAlignByGlans=false;double AlignNoLineLog=0.;
     // The game's coordinate cards (UserData/coordinate and its folders), listed in the clothes tab when opened.
     bool bCoordinateList=false;TArray<FString> CoordinateCards;void FindCoordinateCards();
 public:

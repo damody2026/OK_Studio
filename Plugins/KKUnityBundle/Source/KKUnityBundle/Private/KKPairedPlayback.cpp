@@ -19,7 +19,7 @@ bool AKKPairedPlayback::Start(AKKPreviewActor* Female,AKKPreviewActor* Male,cons
 	const FString& State,const FString& FemaleMotion,const FString& MaleMotion,FString& Error)
 {
 	if(!IsValid(Female)||!IsValid(Male)||Female==Male||Female->GetWorld()!=Male->GetWorld()
-		||!Female->GetActorTransform().Equals(Male->GetActorTransform(),.01f))
+		||!Female->PairFrame().Equals(Male->PairFrame(),.01f))
 	{Error=TEXT("配對角色需要共同場景與原點");return false;}
 	Stop();FemaleActor=Female;MaleActor=Male;FemaleClip=FemaleKey;MaleClip=MaleKey;StateName=State;FemaleIK=FemaleMotion;MaleIK=MaleMotion;
 	OldFemaleTick=Female->IsActorTickEnabled();OldMaleTick=Male->IsActorTickEnabled();

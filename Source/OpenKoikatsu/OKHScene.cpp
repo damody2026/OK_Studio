@@ -1234,6 +1234,13 @@ void UOKHScenePanel::CountHerOrgasm(){
             if(GroupPose(Category,Id)){const bool bSecondA=SecondReceives();++GroupRow(MainRows,Category,Id,bSecondA?TEXT("b"):TEXT("a")).Climaxes;++GroupRow(SecondRuns[SecondRun].Rows,Category,Id,bSecondA?TEXT("a"):TEXT("b")).Climaxes;}}Note(OKMsg(TEXT("ui.hscene.event_second_orgasm"),{{TEXT("name"),SecondName}}),false);}
     if(HadEnough()&&!bSaidEnough){bSaidEnough=true;Note(OKT(Hooked()?TEXT("ui.hscene.she_hooked"):TEXT("ui.hscene.she_had_enough")));ActionsKey.Reset();}
 }
+// It stays on what was playing and says so: left waiting, nothing on screen told why the pose never came (2026-11-06).
+void UOKHScenePanel::PoseFailed(const FString& Why){
+    UE_LOG(LogTemp,Warning,TEXT("H scene: pose did not start: %s"),*Why);
+    if(PendingPose==INDEX_NONE)return;PendingPose=INDEX_NONE;
+    if(Mode==0&&Gallery&&Gallery->PartnerActor)Gallery->PartnerActor->SetActorHiddenInGame(true);
+    Note(OKT(TEXT("ui.hscene.pose_missing")),false);ActionsKey.Reset();BuildList();
+}
 void UOKHScenePanel::BuildActions(){
     if(!Actions||!WidgetTree)return;
     const FString Cur=Current(),Base=Mode==0?Cur:HBase(Cur);
@@ -1245,11 +1252,13 @@ void UOKHScenePanel::BuildActions(){
     auto AddPhysics=[this](){if(!Gallery||!Gallery->PhysicsBackendCombo||Gallery->PhysicsBackendCombo->GetOptionCount()==0)return;Offered.Add(PhysicsNext);
         auto* B=WidgetTree->ConstructWidget<UOKHSceneButton>();B->Kind=PhysicsNext;B->Owner=this;B->OnClicked.AddDynamic(B,&UOKHSceneButton::HandleClick);
         auto* L=WidgetTree->ConstructWidget<UTextBlock>();L->SetText(FText::FromString(Gallery->PhysicsBackendCombo->GetSelectedOption()));B->SetContent(L);Actions->AddChildToWrapBox(B);};
-    // In every mode (the caress branch below returns).
+    // In every interaction, also while one loads (user, 2026-11-06: each shows its own menu, none loses these).
     Add(HeadCameraToggle,bHeadCamera?TEXT("ui.hscene.head_camera_on"):TEXT("ui.hscene.head_camera_off"));Add(EyesCameraToggle,HEyesOnCamera()?TEXT("ui.hscene.eyes_camera_on"):TEXT("ui.hscene.eyes_camera_off"));
-    if(Mode==0&&SoloInfo&&ActiveAibu!=INDEX_NONE&&PendingAibu==INDEX_NONE&&!Busy){if(SoloInfo==3)Add(LockHer,bLockHer?TEXT("ui.hscene.act_unlock_her"):TEXT("ui.hscene.act_lock_her"));return;}
-    if(Mode==0&&ActiveAibu!=INDEX_NONE&&PendingAibu==INDEX_NONE&&!Busy){
-        if(!Base.StartsWith(TEXT("Orgasm"))&&!Base.EndsWith(TEXT("Dislikes"))){
+    AddPhysics();Add(GrayRoomToggle,bGrayRoom?TEXT("ui.hscene.gray_room_on"):TEXT("ui.hscene.gray_room_off"));
+    // By herself, or the two women: only her gauge to hold. Peeping has none.
+    if(Mode==0&&SoloInfo&&ActiveAibu!=INDEX_NONE&&PendingAibu==INDEX_NONE){if(SoloInfo!=4)Add(LockHer,bLockHer?TEXT("ui.hscene.act_unlock_her"):TEXT("ui.hscene.act_lock_her"));return;}
+    if(Mode==0&&ActiveAibu!=INDEX_NONE&&PendingAibu==INDEX_NONE){
+        if(!Busy&&!Base.StartsWith(TEXT("Orgasm"))&&!Base.EndsWith(TEXT("Dislikes"))){
             // Touch or kiss (H_SCENE_ADDITIONS_PLAN 3): her mouth (her lips / a kiss), chest, nipples, head, butt, crotch,
             // anus, the back of her hand, thigh, calf, foot.
             {Add(LickToggle,bLickMode?TEXT("ui.hscene.act_mode_kiss"):TEXT("ui.hscene.act_mode_touch"));
@@ -1260,20 +1269,21 @@ void UOKHScenePanel::BuildActions(){
                  Add(TouchButt,TEXT("ui.hscene.act_touch_butt"));Add(TouchCrotch,TEXT("ui.hscene.act_touch_crotch"));Add(TouchAnal,TEXT("ui.hscene.act_touch_anal"));
                  Add(TouchHand,TEXT("ui.hscene.act_touch_hand"));Add(TouchThigh,TEXT("ui.hscene.act_touch_thigh"));Add(TouchCalf,TEXT("ui.hscene.act_touch_calf"));Add(TouchFoot,TEXT("ui.hscene.act_touch_foot"));}
             }
-            if(TouchArea!=INDEX_NONE)Add(Release,TEXT("ui.hscene.act_release"));
-            Add(LockHer,bLockHer?TEXT("ui.hscene.act_unlock_her"):TEXT("ui.hscene.act_lock_her"));
-            if(bPlayed&&!bAfterglow)Add(Afterglow,TEXT("ui.hscene.act_afterglow"));}
+            if(TouchArea!=INDEX_NONE)Add(Release,TEXT("ui.hscene.act_release"));}
+        Add(LockHer,bLockHer?TEXT("ui.hscene.act_unlock_her"):TEXT("ui.hscene.act_lock_her"));
+        if(bPlayed&&!bAfterglow)Add(Afterglow,TEXT("ui.hscene.act_afterglow"));
         return;
     }
-    if(Mode==0||ActivePose==INDEX_NONE||PendingPose!=INDEX_NONE||Busy||Cur.IsEmpty()||CondomMouthFrom!=INDEX_NONE)return;
+    if(Mode==0||ActivePose==INDEX_NONE)return;
     const FOKHPose& Pose=Poses[ActivePose];
     Add(LockHer,bLockHer?TEXT("ui.hscene.act_unlock_her"):TEXT("ui.hscene.act_lock_her"));Add(LockHis,bLockHis?TEXT("ui.hscene.act_unlock_his"):TEXT("ui.hscene.act_lock_his"));
     // A check box always there (user, 2026-11-01): the part of him in her drawn half see-through, on and off at any time.
-    Add(PenisXRayToggle,bPenisXRay?TEXT("ui.hscene.xray_on"):TEXT("ui.hscene.xray_off"));AddPhysics();
-    Add(GrayRoomToggle,bGrayRoom?TEXT("ui.hscene.gray_room_on"):TEXT("ui.hscene.gray_room_off"));
-    if(bPlayed)Add(Afterglow,TEXT("ui.hscene.act_afterglow"));
+    Add(PenisXRayToggle,bPenisXRay?TEXT("ui.hscene.xray_on"):TEXT("ui.hscene.xray_off"));
+    if(bPlayed&&CondomMouthFrom==INDEX_NONE)Add(Afterglow,TEXT("ui.hscene.act_afterglow"));
     Add(PenisPanelToggle,bPenisPanel?TEXT("ui.hscene.penis_panel_on"):TEXT("ui.hscene.penis_panel_off"));
     if(bPenisPanel)Add(PenisReset,TEXT("ui.hscene.penis_reset"));
+    // What only fits the state he is in waits until the pose has settled.
+    if(PendingPose!=INDEX_NONE||Busy||Cur.IsEmpty()||CondomMouthFrom!=INDEX_NONE)return;
     if(Mode==1){
         if((Base==TEXT("Idle")||Base==TEXT("Stop_Idle"))&&!bServiceRefused)Add(Faster,TEXT("ui.hscene.act_start"));
         else if(HIsLoop(Base)){Add(Faster,TEXT("ui.hscene.act_faster"));Add(Slower,TEXT("ui.hscene.act_slower"));Add(Toggle,TEXT("ui.hscene.act_toggle"));Add(Stop,TEXT("ui.hscene.act_stop"));}
@@ -1829,6 +1839,7 @@ void UOKHScenePanel::ApplyStyle(FHStyled& S,float Style){
     const float Scale=OKStudioStyleScale(Style,S.CardBody,S.Body);
     SyncPair();A->Session.SetStyleBones(OKStudioStyleBones(Style,Scale));A->SetActorScale3D(FVector(Scale));
     A->SetActorLocation(S.Base+FVector(0.f,0.f,OKStudioStyleLift(Style,Scale,S.CardBody.IsValidIndex(0)?S.CardBody[0]:.5f)));
+    A->bPairOriginSet=Style!=0.f;A->PairOrigin=FTransform(A->GetActorRotation(),S.Base); // a pose still starts on the two of them
     A->MarkShapeDirty(S.Face,S.Body);S.Shown=Style;
 }
 void UOKHScenePanel::TickStyle(float Delta){
@@ -2883,9 +2894,15 @@ void UOKHScenePanel::AlignHim(float Delta){
         Read(Him,HisFeet,bHisStands);Read(Girl,HerFeet,bHerStands);bFeetRead=true;
         UE_LOG(LogTemp,Display,TEXT("H align: %s he %s, she %s"),*Cur,bHisStands?TEXT("stands"):TEXT("does not stand"),bHerStands?TEXT("stands"):TEXT("does not stand"));
     }
+    const double Now0=FPlatformTime::Seconds();
     FVector E,P0,P1;
     if(In&&(bOral?HBone(Girl,TEXT("J_MouthCavity"),E)||HBone(Girl,TEXT("J_MouthBase_s"),E):HEntrance(Girl,Cur.StartsWith(TEXT("A_")),E))&&HBone(Him,TEXT("J_dan100_00"),P0)&&HBone(Him,TEXT("J_dan109_00"),P1)){
-        const FVector Axis=(P1-P0).GetSafeNormal();const float Len=float((P1-P0).Size());
+        // Sat right down on him the dan bones draw in on each other (背面騎乘位 SLoop): under 2 cm they give no line, and all of
+        // this was skipped, her skin not wrapped and his penis out through her belly (2026-11-06). His root to his glans then.
+        const float BoneLen=float((P1-P0).Size());const bool bByGlans=BoneLen<=2.f&&bGlans&&GlansFromRoot.Size()>2.f;
+        const FVector Axis=bByGlans?GlansFromRoot.GetSafeNormal():(P1-P0).GetSafeNormal();const float Len=bByGlans?float(GlansFromRoot.Size()):BoneLen;
+        if(bByGlans!=bAlignByGlans){bAlignByGlans=bByGlans;UE_LOG(LogTemp,Display,TEXT("H align: %s line from his %s (bones %.1f cm)"),*Cur,bByGlans?TEXT("glans"):TEXT("bones"),BoneLen);}
+        if(Len<=2.f&&Now0>=AlignNoLineLog){AlignNoLineLog=Now0+5.;UE_LOG(LogTemp,Display,TEXT("H align: %s no line, bones %.1f cm, glans read %d"),*Cur,BoneLen,bGlans?1:0);}
         if(Len>2.f){
             const FVector D=E-P0;const float Along=float(D|Axis);const FVector Fix=D-Axis*Along; // onto the line of the penis
             AlignOff=float(Fix.Size());AlignAt=100.f*Along/Len;AlignLen=Len;

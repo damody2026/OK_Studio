@@ -221,7 +221,7 @@ void AOKInteractionMode::TickOutfitSwap(){
     Controller->CancelPairPreparation();
     if(Controller->PairedPlayback){Controller->PairedPlayback->Stop();Controller->PairedPlayback->Destroy();Controller->PairedPlayback=nullptr;}
     Old->StopSpeech();Old->StopHBreath();
-    New->SetActorTransform(Old->GetActorTransform());
+    New->SetActorTransform(Old->GetActorTransform());New->bPairOriginSet=Old->bPairOriginSet;New->PairOrigin=Old->PairOrigin;
     New->ApplyShapes(Controller->Selected.Face.ShapeValueFace,Controller->Selected.Body.ShapeValueBody);
     New->SpeechLines=Old->SpeechLines;New->SpeechPitch=Old->SpeechPitch;New->bSpeechDrivesMouth=Old->bSpeechDrivesMouth;
     // The view stays where the player had it.
