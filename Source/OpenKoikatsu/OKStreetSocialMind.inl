@@ -11,7 +11,8 @@ void AOKStreetSocialScene::StartCalendarAndMind(){
   else{S.Rules.Reset();OKStreetRulesFatal(Error);return;}}
  LoadCatalog();
  // A saved game continues where he was (the start place below, a development switch, still wins).
- if(S.Store.HasPlayerSpot&&!S.SelfTest){S.Male=S.Store.PlayerSpot;if(S.Rotations.IsValidIndex(0))S.Rotations[0]=FRotator(0,S.Store.PlayerYaw,0);S.Yaw=S.Store.ViewYaw;S.SpotSavedMale=S.Male;
+ // A save written in the inspection room (z 20000, no street there) starts him at the spawn instead.
+ if(S.Store.HasPlayerSpot&&!S.SelfTest){S.Male=S.Store.PlayerSpot.Z>=10000.f?OKStreetMaleSpawn():S.Store.PlayerSpot;if(S.Rotations.IsValidIndex(0))S.Rotations[0]=FRotator(0,S.Store.PlayerYaw,0);S.Yaw=S.Store.ViewYaw;S.SpotSavedMale=S.Male;
   UE_LOG(LogTemp,Display,TEXT("Street start: where he was saved, %s yaw %.0f"),*S.Male.ToCompactString(),S.Store.PlayerYaw);
   for(const auto& W:S.Store.WithHim)S.ResumeWithHim.Add(W.Id,W); // put back by TickSchedules once her plan is there
   // Their table as it was (a dish still being made is on it now): eaten on when he talks with her there (TickMeal).
@@ -101,8 +102,9 @@ void AOKStreetSocialScene::SaveCalendar(){
  // A scene that stopped while starting (a rejected input) has no one placed yet: nothing of it is saved.
  if(S.Rotations.IsEmpty())return;
  auto Candidate=S.Store;
- // Where he stands: outside the room of a facility he is in (it puts him in a set), not while riding an elevator.
- if(ElevatorWithMale()==INDEX_NONE&&S.LiftRide.Elevator==INDEX_NONE){Candidate.HasPlayerSpot=true;Candidate.PlayerSpot=S.FacilityEntered?S.FacilitySavedMale:S.Male;Candidate.PlayerYaw=S.FacilityEntered?S.FacilitySavedMaleRotation.Yaw:S.Rotations[0].Yaw;Candidate.ViewYaw=S.FacilityEntered?S.FacilitySavedYaw:S.Yaw;S.SpotSavedMale=Candidate.PlayerSpot;S.SpotSavedAt=FPlatformTime::Seconds();}
+ // Where he stands: outside the room of a facility he is in (it puts him in a set), back on the street while the inspection
+ // room holds him, not while riding an elevator.
+ if(ElevatorWithMale()==INDEX_NONE&&S.LiftRide.Elevator==INDEX_NONE){Candidate.HasPlayerSpot=true;Candidate.PlayerSpot=S.FacilityEntered?S.FacilitySavedMale:S.InspectSlot!=INDEX_NONE?S.InspectMaleBack:S.Male;Candidate.PlayerYaw=S.FacilityEntered?S.FacilitySavedMaleRotation.Yaw:S.Rotations[0].Yaw;Candidate.ViewYaw=S.FacilityEntered?S.FacilitySavedYaw:S.Yaw;S.SpotSavedMale=Candidate.PlayerSpot;S.SpotSavedAt=FPlatformTime::Seconds();}
  Candidate.CalendarMinute=FMath::Clamp(FMath::FloorToInt32(OKStreetClockHours(S.ClockStartHours,FPlatformTime::Seconds()-S.ClockStartWall)*60.0),0,24*60-1);
  // Who is with him (R3-238): walking or out with him follows him again after a load; sitting, talking or in a set with
  // him waits beside him. Not put back yet from the last load: kept as it was saved.

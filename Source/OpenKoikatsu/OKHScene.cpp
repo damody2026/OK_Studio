@@ -1835,7 +1835,7 @@ const TArray<float>& UOKHScenePanel::HerFace() const{return Styled[0].Shown!=0.f
 const TArray<float>& UOKHScenePanel::HerBody() const{return Styled[0].Shown!=0.f?Styled[0].Body:Gallery->Selected.Body.ShapeValueBody;}
 void UOKHScenePanel::ApplyStyle(FHStyled& S,float Style){
     AKKPreviewActor* A=S.Actor.Get();if(!IsValid(A)||!A->Session.IsOpen())return;
-    S.Face=S.CardFace;S.Body=S.CardBody;OKStudioStyleSliders(Style,S.Body,S.Face);
+    S.Face=S.CardFace;S.Body=S.CardBody;OKStudioStyleSliders(Style,Style,S.Body,S.Face);
     const float Scale=OKStudioStyleScale(Style,S.CardBody,S.Body);
     SyncPair();A->Session.SetStyleBones(OKStudioStyleBones(Style,Scale));A->SetActorScale3D(FVector(Scale));
     A->SetActorLocation(S.Base+FVector(0.f,0.f,OKStudioStyleLift(Style,Scale,S.CardBody.IsValidIndex(0)?S.CardBody[0]:.5f)));

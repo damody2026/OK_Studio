@@ -341,6 +341,10 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character,const FString& TryCard,i
  TWeakObjectPtr<AOKStreetSocialScene> Weak(this);
  Mode->Returned=[Weak](TSharedRef<FJsonObject> Result){if(Weak.IsValid()&&Weak->State){Weak->State->HighPrivateResult=Result;Weak->State->HighPrivateSeenReady=Result->HasField(TEXT("partner_ready"))&&Result->GetBoolField(TEXT("partner_ready"));Weak->FinishPrivate();if(Weak->State->SelfTest&&!Weak->State->Reported)Weak->RunContactsProbe(Weak->SceneTime());}};
  S.PrivateInPlace=true;S.MouseToggleRequested=false;S.ContactsNotice=OKT(TEXT("ui.contacts.loading_one_on_one"));RefreshUI();
+ // What the street figures hold would stay hanging in the air: their ticks stop with the street's (TickPrivate).
+ {auto Hide=[&S](AActor* A){if(A&&!A->IsHidden()){A->SetActorHiddenInGame(true);S.PrivateHiddenProps.Add(A);}};
+  for(auto& Held:S.ReadingProps)for(auto& P:Held.Value)Hide(P.Get());for(auto& P:S.MealHandProps)Hide(P.Key.Get());for(auto& P:S.FacilityHandProps)Hide(P.Key.Get());
+  for(auto& P:S.PairProps)Hide(P.Get());for(auto& P:S.AmbientProps)Hide(P.Get());Hide(S.Umbrella.Get());}
  if(S.Overlay)S.Overlay->SetVisibility(EVisibility::Collapsed);
  // A leave button of the street's own, top right over the scene: back to the street at any time (its panel's return is
  // at the top of a long scrolled list, and the control channel cannot reach it).
@@ -418,6 +422,7 @@ void AOKStreetSocialScene::FinishPrivate(){
  if(S.PrivateClockFrozen&&S.ClockPaused){const double Wall=FPlatformTime::Seconds();S.ClockStartHours=FMath::Fmod(S.ClockStartHours+FMath::Max(0.,Wall-S.HighPrivateAt)/3600.,24.);S.ClockStartWall=Wall;S.ClockPaused=false;RefreshUI();}S.PrivateClockFrozen=false; // (someone ran the clock meanwhile: it already moved)
  S.PrivatePausedSeconds+=FMath::Max(0.,FPlatformTime::Seconds()-S.HighPrivateAt);S.LastWall=0;
  OKSuspendCrowdRuntimeScene(this,false);S.PrivateInPlace=false;S.MouseUI=S.PrivateMouse;S.MouseToggleRequested=false;
+ for(const auto& P:S.PrivateHiddenProps)if(AActor* A=P.Get())A->SetActorHiddenInGame(false);S.PrivateHiddenProps.Reset();
  if(auto* PC=GetWorld()->GetFirstPlayerController())PC->SetViewTarget(S.Camera.Get());
  if(S.Overlay)S.Overlay->SetVisibility(EVisibility::Visible);
  if(S.PrivateLeave.IsValid()){if(GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(S.PrivateLeave.ToSharedRef());S.PrivateLeave.Reset();}
@@ -468,6 +473,10 @@ void AOKStreetSocialScene::FinishPrivate(){
 }
 bool AOKStreetSocialScene::TickPrivate(double Now){
  auto& S=*State;if(S.PrivateGirl==INDEX_NONE)return false;
+ // Tick stops at this function for the whole one-on-one, so the street's own motion never runs: every street figure goes
+ // out of sight from here, and Tick puts them back after it (he and she are the high models meanwhile).
+ {FString Hidden;OKSetCrowdRuntimeCharacterMotion(this,0,FTransform(S.Rotations[0],S.Male+OKStreetOffstage),0.f,Hidden);
+  for(const auto& Agent:S.Agents)OKSetCrowdRuntimeCharacterMotion(this,Agent.Slot,FTransform(S.RenderedRotations[Agent.Slot],Agent.Position+OKStreetOffstage),0.f,Hidden);}
  // Esc leaves it like the leave button (the scene's own Esc check sees only real keys, not the control channel's).
  if(S.PrivateMode.IsValid()&&OKKeyPressed(GetWorld()->GetFirstPlayerController(),EKeys::Escape)){FinishPrivate();return true;}
  if(S.PrivateMode.IsValid()){
