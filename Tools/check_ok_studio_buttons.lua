@@ -425,11 +425,24 @@ local other = nil
 for oid, o in pairs(objects()) do if not known2[oid] and o.kind == "character" then other = o end end
 check(other ~= nil, "a second character to look at")
 if other then
+  local function neck(oid) return ((call("inspect", { id = oid }).object or {}).character or {}).neckLook end
+  call("timeline", { time = 0 }); wait(5)
+  local before = neck(id)
+  call("timeline", { key = { ids = { id } } }); wait(5)
+  call("timeline", { time = 2 }); wait(5)
   call("select", { ids = { id, other.id } }); wait(10)
   check(call("cmd", { id = "transform.look" }).ok, "看對方 runs")
   wait(30)
-  local function neck(oid) return ((call("inspect", { id = oid }).object or {}).character or {}).neckLook end
   check(neck(id) == "Point" and neck(other.id) == "Point", ("看對方 turns both to a look point (%s, %s)"):format(tostring(neck(id)), tostring(neck(other.id))))
+  -- U266: a key holds the look: as it was at 0 s, on the other from 2 s.
+  call("timeline", { key = { ids = { id } } }); wait(5)
+  call("timeline", { time = 0 }); wait(20)
+  local early = neck(id)
+  call("timeline", { time = 2 }); wait(20)
+  local late = neck(id)
+  check(early == before and late == "Point", ("keys hold the look (%s at 0 s, %s at 2 s)"):format(tostring(early), tostring(late)))
+  call("keys", { id = id, action = "clear" }); wait(5)
+  call("timeline", { time = 0 }); wait(5)
   call("select", { ids = { other.id } }); wait(10); call("cmd", { id = "edit.delete" }); wait(20)
   call("select", { ids = { id } }); wait(10)
 end

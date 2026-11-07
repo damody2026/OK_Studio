@@ -580,6 +580,7 @@ FString UOKSceneDocument::KeyedState(const FOKSceneObject& O, bool bMotion)
 	FString Text = KeyedText(O.Transform, KeyValue(O), O.Kind == EOKSceneObjectKind::Character, C.Fk, C.EyebrowPattern, C.EyesPattern, C.MouthPattern, C.MouthOpen,
 		C.HandLeft, C.HandRight, C.ClothesStates, C.Style, C.ShownFaceStyle(), C.Speed == 0.f ? C.Time : -1.f);
 	if (bMotion && C.StudioAnimeNo >= 0) Text += FString::Printf(TEXT(" m%d/%d/%d/%d %.3f"), C.StudioAnimeKind, C.StudioAnimeGroup, C.StudioAnimeCategory, C.StudioAnimeNo, C.Speed);
+	if (O.Kind == EOKSceneObjectKind::Character) Text += FString::Printf(TEXT(" l%d %d %.1f %.1f %.1f"), int32(C.EyesLook), int32(C.NeckLook), C.LookPoint.X, C.LookPoint.Y, C.LookPoint.Z);
 	return Text;
 }
 
@@ -635,6 +636,14 @@ FString UOKSceneDocument::KeyedState(const FOKSceneObject& O, const FOKSceneKey&
 	FString Text = KeyedText(K.Transform, K.Value, O.Kind == EOKSceneObjectKind::Character, K.Fk, K.EyebrowPattern, K.EyesPattern, K.MouthPattern, K.MouthOpen,
 		K.HandLeft, K.HandRight, K.ClothesStates, K.Style, K.ShownFaceStyle(), K.AnimTime);
 	if (K.AnimNo >= 0) Text += FString::Printf(TEXT(" m%d/%d/%d/%d %.3f"), K.AnimKind, K.AnimGroup, K.AnimCategory, K.AnimNo, K.AnimSpeed);
+	// A key from before U266 says nothing about the look: whatever it is now is as keyed.
+	if (O.Kind == EOKSceneObjectKind::Character)
+	{
+		const FOKSceneCharacter& C = O.Character;
+		const bool bKeyed = K.LookEyes >= 0;
+		const FVector P = bKeyed ? K.LookPoint : C.LookPoint;
+		Text += FString::Printf(TEXT(" l%d %d %.1f %.1f %.1f"), bKeyed ? K.LookEyes : int32(C.EyesLook), bKeyed ? K.LookNeck : int32(C.NeckLook), P.X, P.Y, P.Z);
+	}
 	return Text;
 }
 
@@ -680,6 +689,7 @@ void UOKSceneDocument::SetKey(int32 Id, float Time)
 		K.bCharacterState = true;
 		K.EyebrowPattern = C.EyebrowPattern; K.EyesPattern = C.EyesPattern; K.MouthPattern = C.MouthPattern; K.MouthOpen = C.MouthOpen;
 		K.HandLeft = C.HandLeft; K.HandRight = C.HandRight; K.ClothesStates = C.ClothesStates; K.Style = C.Style; K.FaceStyle = C.FaceStyle;
+		K.LookEyes = int32(C.EyesLook); K.LookNeck = int32(C.NeckLook); K.LookPoint = C.LookPoint;
 		// A stopped animation keys its frame (the timeline then scrubs it); a playing one runs on its own.
 		K.AnimTime = C.Speed == 0.f ? C.Time : -1.f;
 		// The motion too (U230): one person talking, then the other, needs it to change on the timeline. A motion that is
@@ -778,6 +788,7 @@ namespace
 		if (Style >= -1.f) { C.Style = Style; C.FaceStyle = FaceStyle; }
 		C.EyebrowPattern = K.EyebrowPattern; C.EyesPattern = K.EyesPattern; C.MouthPattern = K.MouthPattern; C.MouthOpen = MouthOpen;
 		C.HandLeft = K.HandLeft; C.HandRight = K.HandRight;
+		if (K.LookEyes >= 0) { C.EyesLook = EOKSceneLook(K.LookEyes); C.NeckLook = EOKSceneLook(K.LookNeck); C.LookPoint = K.LookPoint; }
 		// Clothes only change when they differ (a change rebuilds the character).
 		if (K.ClothesStates.Num() == C.ClothesStates.Num() && K.ClothesStates != C.ClothesStates) C.ClothesStates = K.ClothesStates;
 	}
@@ -1093,6 +1104,8 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 				const float Mouth = A.MouthOpen >= 0.f && B.MouthOpen >= 0.f ? FMath::Lerp(A.MouthOpen, B.MouthOpen, U) : A.MouthOpen;
 				const bool bStyles = A.Style >= -1.f && B.Style >= -1.f;
 				ApplyCharacterKey(O->Character, A, Mouth, bStyles ? FMath::Lerp(A.Style, B.Style, U) : A.Style, bStyles ? FMath::Lerp(A.ShownFaceStyle(), B.ShownFaceStyle(), U) : A.FaceStyle);
+				// A look point moves from key to key: two points, the head turns between them.
+				if (A.LookEyes >= 0 && B.LookEyes >= 0 && A.LookNeck == B.LookNeck && A.LookEyes == B.LookEyes) O->Character.LookPoint = FMath::Lerp(A.LookPoint, B.LookPoint, U);
 			}
 		}
 		O->Transform = X;

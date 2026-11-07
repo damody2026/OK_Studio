@@ -981,6 +981,16 @@ struct OKSTUDIO_API FOKSceneKey
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
 	TArray<uint8> ClothesStates;
 
+	/** Where a character's eyes and neck look from this key on (U266; < 0: not keyed, as in older scenes), and the look point. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	int32 LookEyes = -1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	int32 LookNeck = -1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	FVector LookPoint = FVector::ZeroVector;
+
 	/** A character's style at this key (below -1: not keyed); it blends between keys. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
 	float Style = -2.f;
