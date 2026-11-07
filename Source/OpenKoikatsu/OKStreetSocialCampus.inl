@@ -174,6 +174,19 @@ bool AOKStreetSocialScene::NavByShopStairs(const FVector& Goal){
   return FVector(Goal.X,Goal.Y,Z);};
  if(Mine&&Mine==Hers){MoveFloor(Beside(*Hers));S.ManualReplan=true;return true;} // the same shop: her floor
  if(Mine&&OKStreetUpstairs(S.Male)){MoveFloor(Mine->Door);S.ManualReplan=true;return true;} // going elsewhere: down and out of its door
+ // The rooftop: no lift goes above 5F ("she is on another floor, no way there" two seconds after he set off). Its stairs
+ // from the street, as a shop's: down them from a roof; to a roof, to the foot of its stairs and up beside her.
+ {const FBox* MyRoof=nullptr;const FBox* HerRoof=nullptr;
+  if(const FOKStreetPlace* Roof=OKStreetStairRoof(S.Male,&MyRoof)){MoveFloor(OKStreetRoofStairFoot(*Roof,*MyRoof));S.ManualReplan=true;return true;}
+  if(const FOKStreetPlace* Roof=OKStreetStairRoof(Goal,&HerRoof)){
+   if(OKStreetUpstairs(S.Male))return false; // upstairs in a building: its lift down first
+   const FVector Foot=OKStreetRoofStairFoot(*Roof,*HerRoof);
+   if(FVector::Dist2D(S.Male,Foot)<120.f){const float Z=HerRoof->Min.Z+20.f;FVector Up(Goal.X,Goal.Y,Z);
+    for(int32 A=0;A<8;++A){const float Angle=A*45.f*PI/180.f;const FVector Near=FVector(Goal.X,Goal.Y,Z)+FVector(FMath::Cos(Angle),FMath::Sin(Angle),0)*120.f;if(OKStreetInsidePlace(*Roof,Near)&&!OKStreetBlockedPoint(Near,30)){Up=Near;break;}}
+    MoveFloor(Up);S.Message=OKT(TEXT("ui.contacts.resume_auto_travel"));S.ManualReplan=true;return true;}
+   if(S.NavPath.Num()>=2&&FVector::Dist2D(S.NavPath.Last(),Foot)<5.f)return true; // on the way to the stairs
+   TArray<FVector> Path=PlaceRoute(S.Male,Foot);if(Path.Num()<2)return false;
+   S.NavPath=MoveTemp(Path);S.NavStep=1;S.NavReplans=0;S.NavProgressAt=SceneTime();return true;}}
  if(!Hers||!OKStreetUpstairs(Goal))return false;
  if(FVector::Dist2D(S.Male,Hers->Door)<120.f){MoveFloor(Beside(*Hers));S.ManualReplan=true;return true;} // at her shop: up
  if(S.NavPath.Num()>=2&&FVector::Dist2D(S.NavPath.Last(),Hers->Door)<5.f)return true; // on the way to its door

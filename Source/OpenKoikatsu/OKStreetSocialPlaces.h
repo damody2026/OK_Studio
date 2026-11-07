@@ -193,6 +193,31 @@ inline bool OKStreetInsidePlace(const FOKStreetPlace& Place, const FVector& Poin
  return false;
 }
 
+// A roof reached by its own stairs from the street (the campus rooftop: no lift goes above 5F, only the stairs at each
+// building's wall, anchors "stair_bottom..." on the ground). The place At is on, if it is one, and the room (roof) it is on.
+inline const TArray<FOKStreetPlace>& OKStreetPlaces();
+inline const FOKStreetPlace* OKStreetStairRoof(const FVector& At, const FBox** Roof = nullptr) {
+ for (const auto& P : OKStreetPlaces()) {
+  if (P.Anchors.ContainsByPredicate([](const FOKStreetModelAnchor& A) { return A.Name.StartsWith(TEXT("lift")); })) continue;
+  if (!P.Anchors.ContainsByPredicate([](const FOKStreetModelAnchor& A) { return A.Name.StartsWith(TEXT("stair_bottom")); })) continue;
+  for (const FBox& Room : P.Rooms) if (At.X >= Room.Min.X && At.X <= Room.Max.X && At.Y >= Room.Min.Y && At.Y <= Room.Max.Y && At.Z >= Room.Min.Z - 60.f && At.Z < Room.Max.Z - 60.f) {
+   if (Roof) *Roof = &Room;
+   return &P;
+  }
+ }
+ return nullptr;
+}
+// The foot of the stairs up to that roof: the stair_bottom closest to the roof (each roof has its own at its wall).
+inline FVector OKStreetRoofStairFoot(const FOKStreetPlace& Place, const FBox& Roof) {
+ FVector Best = Place.Door; double BestSq = TNumericLimits<double>::Max();
+ for (const auto& A : Place.Anchors) {
+  if (!A.Name.StartsWith(TEXT("stair_bottom"))) continue;
+  const double Dx = FMath::Max3(Roof.Min.X - A.Position.X, 0.0, A.Position.X - Roof.Max.X), Dy = FMath::Max3(Roof.Min.Y - A.Position.Y, 0.0, A.Position.Y - Roof.Max.Y);
+  if (Dx * Dx + Dy * Dy < BestSq) { BestSq = Dx * Dx + Dy * Dy; Best = A.Position; }
+ }
+ return Best;
+}
+
 enum class EOKStreetActivityKind : uint8 { Pair, Photo, Facility, Walk, Restroom, Sleep, Solo };
 
 struct FOKStreetActivity {

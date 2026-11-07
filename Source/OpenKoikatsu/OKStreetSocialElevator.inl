@@ -298,8 +298,14 @@ float AOKStreetSocialScene::StepLiftRide(float Dt){
 bool AOKStreetSocialScene::NavNeedsLift(const FVector& Goal) const{
  const auto& S=*State;if(FMath::Abs(Goal.Z-S.Male.Z)>=150.f)return true;
  if(!OKStreetUpstairs(S.Male))return false;
- for(const auto& P:OKStreetPlaces())if(OKStreetInsidePlace(P,S.Male))return !OKStreetInsidePlace(P,Goal);
- return false;
+ // On a roof: each roof is its own, joined to the others only by its stairs down to the street.
+ const FBox* Mine=nullptr;const FBox* Hers=nullptr;
+ if(OKStreetStairRoof(S.Male,&Mine))return OKStreetStairRoof(Goal,&Hers)==nullptr||Hers!=Mine;
+ // The same floor when any place has them both: the department store's 4F holds the optician too, and the first place
+ // that held him was compared alone (with the optician's door elsewhere, "she is on another floor, no way there").
+ bool In=false;
+ for(const auto& P:OKStreetPlaces())if(OKStreetInsidePlace(P,S.Male)){In=true;if(OKStreetInsidePlace(P,Goal))return false;}
+ return In;
 }
 
 bool AOKStreetSocialScene::PlanNavLift(const FVector& Goal){
