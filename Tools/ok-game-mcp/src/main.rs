@@ -47,6 +47,8 @@ fn street_tools() -> Value {
         t("game_clock", "Pause or run the game clock.", json!({"paused": {"type": "boolean"}}), &["paused"]),
         t("game_ovulate", "Her pregnancy state (girl: slot 1..10). on true: she ovulates, any finish inside takes whatever the day, until she conceives; on false: back on her cycle; omitted: only reads.",
           json!({"girl": {"type": "integer"}, "on": {"type": "boolean"}}), &["girl"]),
+        t("game_warp", "Put him at a spot at once (cm; for a test at a place no walk reaches soon). Nothing checks the spot: a point behind a wall leaves him behind it.",
+          json!({"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}}), &["x", "y", "z"]),
         t("game_look", "Point the camera (yaw degrees, pitch -50..15).", json!({"yaw": {"type": "number"}, "pitch": {"type": "number"}}), &["yaw"]),
         t("game_phone", "Type into the open phone thread and send.", json!({"text": {"type": "string"}}), &["text"]),
         t("game_screenshot", "A screenshot of the game window (with UI). scale 2..4: a high-resolution shot without UI.", json!({"scale": {"type": "number"}}), &[]),
@@ -331,6 +333,7 @@ fn run(game: &Game, name: &str, a: &Value) -> Result<Value> {
             let r = game.log(a["lines"].as_u64().unwrap_or(60) as usize, a["contains"].as_str())?;
             text(format!("{}\n{}", s(&r["file"]), s(&r["lines"])))
         }
+        "game_warp" => json_text(game.call("/warp", Some(&json!({"x": a["x"], "y": a["y"], "z": a["z"]})))?),
         "game_exec" => json_text(game.call("/exec", Some(&json!({"command": a["command"]})))?),
         "game_trace_start" => {
             let dir = game.root.join("Saved/Profiling");

@@ -41,6 +41,7 @@ Tools/ok-game-mcp（Rust）
 | `game_goto` | 先結束對話，再自動導航到女主（編號 1–10）或地點 id，時鐘走到抵達或有人搭話為止。 |
 | `game_wait` | 讓時鐘走：幾秒、到某個遊戲時間（`until: "15:00"`）、或到同行結束（`outing: true`）。 |
 | `game_ovulate` | 讀女角的懷孕狀態（`girl` 1～10）。`on: true` 強制排卵：不管週期，下一次裡面射精（沒戴套）必定受孕，受孕後自動解除；`on: false` 回到她的週期。走控制通道 `/pregnancy {girl, ovulate?}`。 |
+| `game_warp` | 立刻把他放到某座標（公分，測試用）。不檢查該點，放在牆另一側就在牆另一側。 |
 | `game_clock` / `game_look` / `game_phone` | 時鐘暫停／繼續、轉鏡頭、在開著的手機對話裡打字送出。 |
 | `game_screenshot` | 截圖（含 UI），直接回傳圖片；`scale` 2–4 是不含 UI 的高解析截圖。 |
 | `game_inspect` | 把女主（`girl` 1–10）帶進高空的檢視房間（只有灰地板），鏡頭繞著她：`yaw` 0 是正面、90／180 是側面／背面，`pitch` 俯仰、`distance` 遠近（60–900 cm），回傳截圖；`off: true` 讓她回到原本的行程。她在房間裡時行程暫停。啟動時直接進：`game_launch {options: ["-Inspect", "N"]}`，或 `StreetSocial.cmd -Inspect N`（←→ 轉圈、↑↓ 俯仰、滾輪遠近、PageUp／PageDown 換人、Home 重置、End 離開）。 |
