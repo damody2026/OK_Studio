@@ -5,6 +5,19 @@
 
 [kinds]
 seat = { name = "單人座", people = 1 }
+private_room = { name = "餐廳包廂", people = 2 }
+feed_animal = { name = "餵動物", people = 2 }
+pick = { name = "採果", people = 1 }
+play = { name = "親子遊戲", people = 2 }
+work_table = { name = "手作桌", people = 1 }
+kiln = { name = "窯", people = 1 }
+fortune_table = { name = "占卜桌", people = 2 }
+spa_bed = { name = "護理床", people = 1 }
+temizu = { name = "手水舍", people = 1 }
+omikuji = { name = "抽籤", people = 1 }
+ema = { name = "繪馬架", people = 1 }
+charm = { name = "授與所", people = 1 }
+bike_rental = { name = "協力車出租", people = 1 }
 seat_pair = { name = "兩人並坐", people = 2 }
 seat_face = { name = "隔桌對坐", people = 2 }
 seat_ground = { name = "席地而坐", people = 2 }

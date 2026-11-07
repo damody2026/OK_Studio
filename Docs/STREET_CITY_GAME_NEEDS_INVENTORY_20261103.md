@@ -537,6 +537,41 @@ c-conquest 重新對照 `activities.toml`、`acts.toml`、`events.toml`、`place
 
 這輪有兩件事留到 chain75：站在洗衣機、信箱、販賣機前的錨點朝向是反的（第 3 列錯誤紀錄），R1、R2 住處與信箱的驗收視角拍到牆上，物件本身沒有照到。
 
+**B、C 段與六項補件結果（第 84 輪，11-07）：** `city_anchors.json` 25373 列；`cargo test anchor` 6 項通過；地板與人形空間重測 1504 個通過，607 個留原位，66 個在家具上（本來就要坐的），其他 0。四段實走都過，第 2 段第一次在 `wego-linsen-918b0413ed68-actual-player-entry` 回報 `native_soak_walk_obstructed`，同一份打包重試就過，還沒查出原因。照片在 `shop-survey-v1/captures-20261107-074614`（陽台另在 `captures-20261107-081741`）。
+
+| 項目 | 做法 | 實體 | 錨點 |
+|---|---|---:|---:|
+| 餐桌 `dining_set` | Tripo | 128 | `dining` 177（127 在地圖，50 是現成場景物件） |
+| 電視櫃 `tv_cabinet` | Tripo（既有模型） | 185 | `tv_sofa` 239（181 在地圖，58 是現成場景物件） |
+| 洗衣機 `washer` | Tripo | 80 | `laundry` 80 |
+| 嬰兒床 `baby_crib` | Tripo | 85 | `crib` 85 |
+| 護理床 `spa_bed` | Tripo | 4 | `spa_bed` 4 |
+| 協力車 `tandem_bike` | Tripo | 8 | `bike_rental` 4，`ride_pair` 19 |
+| 毛巾櫃 `towel_cabinet` | Tripo | 1 | 2（`hotel`、`lodge` 共用同一間護理室和同一座櫃子） |
+| 信箱 `mailbox_bank`、郵筒 `post_box` | Tripo | 2＋4 | `mailbox` 6 |
+| `fruit_display` | Tripo | 1 | 採果農園 |
+| `snack_kiosk` | Tripo | 2 | 遊樂園、動物園的 `shop` |
+| `notice_board`、`beach_shower` | Blender（原計畫的 facility） | 3、1 | 依所在地點 |
+
+依種類算的列數比上表多，因為別的名稱也帶同一種類：`tv_sofa` 259（含 `tv` 19、`inn_tv` 4、`lounge` 3、`game` 2），`dining` 282，`laundry` 98（含 `dryer` 8、`washer` 6），`mailbox` 6。安裝時缺模型一律失敗，`count_street_city_pieces.lua` 的 missing 全部 0。
+
+R1／R2 每戶的家具都按房間檢查過（用掃描資料切房間，見錯誤紀錄）：餐桌廚房 18、玄關大廳 62；冰箱廚房 70、玄關 10；嬰兒床玄關 80；書櫃 80 都不在濕區；電視 80 都在沙發那間，同房間沒有衛浴。
+
+**做不到或和原要求不同的地方：**
+
+- R1／R2 多數戶的餐桌在玄關大廳，因為廚房那間已被原有家具占滿，放不下 190 公分的桌椅。r1-0101 這型在大廳的凹角，桌椅幾乎填滿，能走但偏擠。
+- R1／R2 的電視是獨立擺放，對著沙發，不靠牆；s05 也一樣。
+- R1／R2 的陽台離房間約 19.5 公尺，房間內沒有窗。窗外看不到房間，外牆玻璃不透明。
+- 水族館的玻璃水槽是空的，模型烘焙在 `OfficeDecorV1_City_CV_F03`，這輪沒動。
+- 溫泉 `soak` 的坐姿只驗了數字：錨點 1265、座面 1240、池底 1200，約 25 公分水深。
+- 招牌只有中文，單一語言。
+- 飯店的護理室在禮賓服務室角落，用屏風隔開。`lodge` 沒有自己的護理室，錨點指到同一間，護理床 4 張也是兩邊共用。
+- s39-0301、s84-0301、s86-0301 沒有床：放完沙發、餐桌後找不到 225×175 的空地，下一輪補。
+- `R8-private-out` 照片大半是牆和門邊，包廂本身看 `R8-private-in`。
+- R 住家的廚房站位在流理台中間。
+
+**沒放的項目（`skipped` 清單）：** 屋頂 T4、LI、D1、D2 各有一座樓梯找不到空地，放在第一個位置。`balcony: 178 of 194`：194 是有陽台或窗戶錨點的住處，其中 16 處放不出陽台，只有窗。`shop_homes` 床 44／47：見上一段。`suites_tv` 的 `sofa 48`、`bed 6`、`foot 3` 是看電視的位置落在沙發、床邊或床尾的數量，不是缺件。`homes` 的 `miss`、`tv_blocked`、`dining_tight`、`dining_hall` 和 `sofa_facing_wall` 是重試次數，最後都有放好（電視 134、餐桌 80、洗衣機 80）。
+
 ### 8.3 遊戲端之後要做（我負責，換城市整合時）
 
 - 每個新地點的活動（`activities.toml`）、商品與營業時間（`catalog.json`）、`places.toml` 規範、三語文字。

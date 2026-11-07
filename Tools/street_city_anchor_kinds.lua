@@ -17,6 +17,8 @@ local BY_NAME = {
   wedding_chapel = { 'wedding', 'selfie', 'gift', 'confess', 'meet' }, ultrasound_cart = { 'ultrasound' },
   futon = { 'lie', 'lie_pair', 'h_floor', 'h_group' }, zabuton = { 'seat', 'h_chair', 'feed' }, chabudai = { 'seat_face', 'feed' }, engawa = { 'seat_ground', 'lap_pillow' },
   inn_tv = { 'tv_sofa', 'h_sofa' }, inn_closet = { 'closet' }, inn_shower = { 'shower', 'h_shower' }, inn_sink = { 'vanity' }, inn_toilet = { 'toilet', 'h_toilet' }, inn_shoes = { 'shoe_change' }, inn_trash = { 'trash' }, inn_lamp = { 'kiss', 'goodbye' },
+  feed_animal = { 'feed_animal', 'stand_pair' }, enclosure = { 'stand_pair' }, pick = { 'pick' }, slide = { 'ride_pair' }, play = { 'play' }, work_table = { 'work_table' }, kiln = { 'kiln' }, fortune_table = { 'fortune_table' }, photo = { 'selfie' }, fitting_show = { 'fitting_show' },
+  private_room = { 'private_room', 'seat_face', 'feed' }, spa_bed = { 'spa_bed', 'lie' }, temizu = { 'temizu' }, omikuji = { 'omikuji' }, ema = { 'ema' }, charm = { 'charm', 'queue' }, bike_rental = { 'bike_rental', 'queue' }, tandem = { 'ride_pair' }, shop = { 'queue' },
   pew = { 'seat', 'seat_pair' }, soak = { 'bath', 'seat' }, tv_sofa = { 'tv_sofa', 'h_sofa', 'seat_pair' }, dining = { 'dining', 'seat_face', 'feed' }, laundry = { 'laundry' }, mailbox = { 'mailbox' },
   vending = { 'lean' }, fishing_spot = { 'seat_ground' }, pond = { 'stand_pair' },
   poolside = { 'seat_ground', 'lap_pillow' }, swim = { 'h_pool' }, swan_boat = { 'ride_pair', 'h_boat' }, rowing_boat = { 'ride_pair', 'h_boat' }, dock = { 'stand_pair' },
@@ -24,7 +26,7 @@ local BY_NAME = {
 }
 function M.base(name) return (name:gsub('[%d_]*$', '')) end
 local ZONES = { 'women_', 'men_', 'shoes_', 'accessory_' }
-local WEAR = { clothing = true, lingerie = true, swimwear = true, yukata = true, department = true, clothing_s10 = true, clothing_s30 = true, clothing_s46 = true, clothing_s94 = true }
+local WEAR = { bridal = true, clothing = true, lingerie = true, swimwear = true, yukata = true, department = true, clothing_s10 = true, clothing_s30 = true, clothing_s46 = true, clothing_s94 = true }
 local function add(t, seen, k) if not seen[k] then seen[k] = true; t[#t + 1] = k end end
 -- a: the anchor; ctx: { privacy, outdoor, place }
 function M.classify(a, ctx)

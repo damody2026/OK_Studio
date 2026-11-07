@@ -21,6 +21,8 @@ def build(name,fill):
  def poly(p,m):
   i=len(V);V.extend(p);F.append(tuple(range(i,i+len(p))));M.append(names.index(m))
  fill(box,poly)
+ # the import mirrors Y: a front built on Blender -Y lands on Unreal +Y; the placements of these two expect -Y
+ if name in ('washer','mailbox_bank'):V=[(x,-y,z) for x,y,z in V];F=[tuple(reversed(f)) for f in F]
  me=bpy.data.meshes.new(name);me.from_pydata(V,[],F);me.update()
  for n in names:
   m=bpy.data.materials.new('fx_'+n);m.use_nodes=True;q=m.node_tree.nodes['Principled BSDF'];c=COL[n];q.inputs['Base Color'].default_value=(c[0],c[1],c[2],1);q.inputs['Roughness'].default_value=c[3];me.materials.append(m)

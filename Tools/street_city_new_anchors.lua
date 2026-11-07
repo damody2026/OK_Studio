@@ -64,7 +64,8 @@ return function(ctx)
   end
   -- homes: the entrance inside the door, a wall spot beside it; rooms named for staff or laundry
   for _, a in ipairs(ctx.area) do
-    if a.kind == 'room' and a.door and a.min then
+    -- H1 floors 2-5 are the motel suites now: the old room boxes are still in the area list, but nothing stands there
+    if a.kind == 'room' and a.door and a.min and not (a.building == 'H1' and (a.floor or 0) >= 2) then
       local c = centre(a)
       if HOME[a.type] then
         local e = toward(a.door, c, 70); put('entry', e, yaw_to(a.door, c), { 'entry', 'shoe_change' }, { area = a, place = a.id, outdoor = false })
