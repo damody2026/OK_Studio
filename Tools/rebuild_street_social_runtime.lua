@@ -76,8 +76,11 @@ local function main()
   if not a.skip_cook then
     step("cook (main project -> host Saved/Cooked)")
     local cooked = path.join(host_dir, "Saved/Cooked/[Platform]")
+    -- The university city goes in once its content is in the project (-City at launch plays it).
+    local maps = "/Game/Scenes/StreetSocial/StreetSocial"
+    if path.exists(path.join(root, "Content/UniversityCity/Maps/UniversityCity.umap")) then maps = maps .. "+/Game/UniversityCity/Maps/UniversityCity" end
     local cook_args = { '"' .. win(root) .. '/OpenKoikatsu.uproject"', "-run=Cook", "-TargetPlatform=Windows",
-      "-MAP=/Game/Scenes/StreetSocial/StreetSocial", "-SkipZenStore", "-CustomConfig=CrowdCookSM6",
+      "-MAP=" .. maps, "-SkipZenStore", "-CustomConfig=CrowdCookSM6",
       "-DisablePlugins=BpGeneratorUltimate", "-unattended", "-nosound", "-NoSplash", "-corelimit=24",
       "-PACKAGE=/Engine/EngineMaterials/FastBlueNoise_scalar_128x128x64+/Engine/EngineMaterials/FastBlueNoise_vec2_128x128x64+/Engine/EngineMaterials/FastBlueNoise_scalar_128x128x8+/Engine/EngineMaterials/Hair/Hair_DualScattering+/Engine/EngineMaterials/Hair/Hair_DirectionalAlbedo+/Engine/EngineMaterials/Hair/Hair_Coverage",
       '-OutputDir="' .. win(cooked) .. '"', '-abslog="' .. win(path.join(logs, "cook.log")) .. '"' }
