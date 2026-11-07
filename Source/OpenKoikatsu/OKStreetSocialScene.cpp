@@ -3940,7 +3940,7 @@ static void OKStreetCityDress(ULevel* Level){
 static void OKStreetCityMirrors(UWorld* World,const FVector& Eye,const FVector& CameraAt,const FVector& CameraForward,float Dt){
  auto& Mirrors=GOKStreetCityMirrors;static TWeakObjectPtr<UWorld> For;static float Wait=0;
  if(For!=World){For=World;Mirrors.Reset();Wait=0;
-  if(IConsoleVariable* Clustered=IConsoleManager::Get().FindConsoleVariable(TEXT("r.UseClusteredDeferredShading")))Clustered->Set(1,ECVF_SetByConsole);
+  if(IConsoleVariable* Clustered=IConsoleManager::Get().FindConsoleVariable(TEXT("r.UseClusteredDeferredShading_ToBeRemoved")))Clustered->Set(1,ECVF_SetByConsole);
   for(ULevel* Level:World->GetLevels())if(Level&&Level->bIsVisible)OKStreetCityDress(Level);
   static FDelegateHandle Added;if(!Added.IsValid())Added=FWorldDelegates::LevelAddedToWorld.AddLambda([](ULevel* Level,UWorld* In){if(Level&&In==For.Get())OKStreetCityDress(Level);});
   UE_LOG(LogTemp,Display,TEXT("Street city: %d mirrors at the start"),Mirrors.Num());}
