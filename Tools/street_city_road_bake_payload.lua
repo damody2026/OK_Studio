@@ -2,7 +2,7 @@
 --   lua Tools/street_city_motel_job.lua world_road_bake Tools/street_city_road_bake_payload.lua
 -- The game's own bake (-CityBakeRoads) takes each point's height from 4 m above it, so a point under a roof or a canopy landed on top
 -- and its links were tested up there, over the walls he then walked into. Here:
---   points  a point above the street goes back to the ground under it; no ground, and its links go
+--   points  a point above the street goes back to the ground under it, except on the hill, which is ground; no ground, and its links go
 --   links   every link touching a moved point or climbing more than 40 cm is walked in 1 m steps: ground within 40 cm of the last step,
 --           room for a 35 cm body at knee and chest height
 --   parts   a part cut off from the biggest one is joined by a 1 m flood over the same test, its path added as new points every 6 m
@@ -11,7 +11,7 @@ return [====[
 def motel_world_road_bake():
  import collections,math
  world=unreal.EditorLevelLibrary.get_editor_world();V=unreal.Vector;Q=unreal.TraceTypeQuery.TRACE_TYPE_QUERY1;NONE=unreal.DrawDebugTrace.NONE
- STREET=1300.;STEP=40.;MIN_PART=3;FLOOD_S=60
+ STREET=1300.;STEP=40.;MIN_PART=2;FLOOD_S=60
  def hit(a,b):
   r=unreal.SystemLibrary.line_trace_single(world,a,b,Q,True,[],NONE,True);h=r.to_tuple() if r else [False]
   return h if h and h[0] else None
@@ -34,12 +34,17 @@ def motel_world_road_bake():
    x,y,z=nx,ny,g
   return abs(z-b[2])<=STEP
  path=ROOT/'Content/IndependentResources/StreetSocialData/city_roads.json'
- data=json.loads(path.read_text('utf8'));nodes=[list(n) for n in data['nodes']];links=[tuple(l) for l in data['links']]
+ # always from the game's own bake (copied here when it is made), so a rerun does not work on its own output
+ source=ROOT/'output/street-social-city-production/places-v1/city_roads-before-bake.json'
+ data=json.loads(source.read_text('utf8'));nodes=[list(n) for n in data['nodes']];links=[tuple(l) for l in data['links']]
  # after the lattice come the doors and gates, some of them up a floor on purpose: they keep their height and their links
  lattice=len(json.loads((ROOT/'Content/IndependentResources/StreetSocialData/city_places.json').read_text('utf8'))['road']['nodes'])
- moved=set();gone=set()
+ moved=set();gone=set();hills=set()
  for i,n in enumerate(nodes[:lattice]):
   if n[2]<=STREET:continue
+  # the hill is the one thing above the street that is ground: under its surface lies the old flat ground
+  h=hit(V(n[0],n[1],n[2]+60),V(n[0],n[1],n[2]-60))
+  if h and h[9] and h[9].get_actor_label().startswith('LoverSpot_R5_hill'):n[2]=h[4].z;hills.add(i);continue
   g=ground(n[0],n[1],1200.)
   if g is None:gone.add(i)
   else:n[2]=g;moved.add(i)
@@ -88,6 +93,6 @@ def motel_world_road_bake():
  ps=parts()
  row=lambda n:'[%.1f,%.1f,%.1f]'%tuple(n)
  path.write_text('{"nodes":['+','.join(row(n) for n in nodes)+'],"links":['+','.join('[%d,%d]'%l for l in kept)+']}\n','utf8')
- r=dict(status='passed',points=len(nodes),moved=len(moved),gone=len(gone),links=len(kept),tested=tested,cut=cut,parts_before=before,joined=joined,failed=failed[:40],failed_count=len(failed),parts_after=[len(p) for p in ps[:8]],highest=max(n[2] for n in nodes))
+ r=dict(status='passed',points=len(nodes),moved=len(moved),hill=len(hills),gone=len(gone),links=len(kept),tested=tested,cut=cut,parts_before=before,joined=joined,failed=failed[:40],failed_count=len(failed),parts_after=[len(p) for p in ps[:8]],highest=max(n[2] for n in nodes))
  (ROOT/'output/street-social-city-production/places-v1/road-bake.json').write_text(json.dumps(r,indent=1),'utf8');return r
 ]====]
