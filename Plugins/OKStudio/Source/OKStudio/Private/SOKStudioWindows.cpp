@@ -125,6 +125,26 @@ void SOKStudioPanel::UpdateClearView()
 		}
 	Game->ClearView = FBox2D(FVector2D((Best.Left - ViewRect.Left) / ViewSize.X, (Best.Top - ViewRect.Top) / ViewSize.Y),
 		FVector2D((Best.Right - ViewRect.Left) / ViewSize.X, (Best.Bottom - ViewRect.Top) / ViewSize.Y));
+	// The timeline stands over the bottom right: an object chosen in the list, or there when it opened, had its axes behind
+	// it (U263). The view moves then, and only then, as far as it takes.
+	const FFloat* Timeline = Floats.Find(TEXT("timeline"));
+	const int32 Selected = Timeline && Timeline->bOpen ? Game->SelectedId : -1;
+	if (Selected != AxesChecked)
+	{
+		AxesChecked = Selected;
+		const FVector2D Area = Canvas->GetCachedGeometry().GetLocalSize();
+		if (Selected >= 0 && Game->BusyReason().IsEmpty() && Area.X > 1. && Area.Y > 1.)
+			Game->KeepInOpenView(Selected, FBox2D(Timeline->Pos / Area, (Timeline->Pos + Timeline->Size) / Area));
+	}
+}
+
+void SOKStudioPanel::TickSit()
+{
+	if (SitId < 0 || FPlatformTime::Seconds() < SitAt) return;
+	if (Game->HipsOver(SitId, SitChair)) Changed();
+	const FOKSceneObject* X = Game->Document->Find(SitId);
+	SetStatus((X ? X->Name : FString()) + TEXT(" 坐到椅子上；地圖的椅子推在桌下時會坐在桌緣後方"));
+	SitId = -1;
 }
 
 void SOKStudioPanel::ReadExportChoices()
@@ -561,6 +581,7 @@ void SOKStudioPanel::TickUi(float DeltaTime)
 	TickVmdQueue();
 	TickMapPrepare();
 	TickMapThumbs();
+	TickSit();
 	if (ExportRangeSerial != Game->SceneSerial) { ExportRangeSerial = Game->SceneSerial; ExportFromT = 0.f; ExportToT = -1.f; }
 	// U242: the MMD window lists the cast. Someone added, removed or given a motion while it is open shows up there.
 	if (IsFloatOpen(TEXT("mmd")))
@@ -665,7 +686,7 @@ TSharedPtr<SWidget> SOKStudioPanel::TreeContextMenu()
 		{ TEXT("改名"), TEXT("edit.rename") }, { TEXT("拷貝"), TEXT("edit.copy") }, { TEXT("貼上"), TEXT("edit.paste") }, { TEXT("複製物件"), TEXT("edit.duplicate") },
 		{ TEXT("全選角色"), TEXT("edit.selectchars") }, { TEXT("刪除"), TEXT("edit.delete") }, { TEXT("隱藏／顯示"), TEXT("edit.hide") }, { TEXT("移到根層"), TEXT("edit.root") }, { TEXT("設為其他選取的父物件"), TEXT("edit.parent") },
 		{ TEXT("聚焦"), TEXT("camera.focus") }, { TEXT("選取存成場景"), TEXT("edit.saveas") }, { TEXT("複製變換"), TEXT("transform.copy") }, { TEXT("貼上變換"), TEXT("transform.paste") },
-		{ TEXT("複製姿勢"), TEXT("pose.copy") }, { TEXT("貼上姿勢"), TEXT("pose.paste") }, { TEXT("打 key"), TEXT("timeline.key") }, { TEXT("面向對方"), TEXT("transform.face") }, { TEXT("放到下方表面"), TEXT("transform.drop") },
+		{ TEXT("複製姿勢"), TEXT("pose.copy") }, { TEXT("貼上姿勢"), TEXT("pose.paste") }, { TEXT("打 key"), TEXT("timeline.key") }, { TEXT("面向對方"), TEXT("transform.face") }, { TEXT("放到下方表面"), TEXT("transform.drop") }, { TEXT("坐到椅子上"), TEXT("transform.sit") },
 	};
 	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
 	for (const FItem& I : Items)

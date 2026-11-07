@@ -85,9 +85,13 @@ FReply SOKStudioView::OnMouseButtonUp(const FGeometry&, const FPointerEvent& Eve
 		// A left click (no drag) picks the object under the mouse; Ctrl / Shift add it to the selection or take it out.
 		if (Button == EKeys::LeftMouseButton && DragAxis < 0 && !bLookDrag && Moved < 4.)
 		{
-			const int32 Id = Game->PickObject(PressAt);
-			if (Event.IsControlDown() || Event.IsShiftDown()) { if (Id >= 0) Game->ToggleSelect(Id); }
-			else Game->Select(Id);
+			if (Owner && Owner->ChairPicking()) Owner->PickChairAt(PressAt);
+			else
+			{
+				const int32 Id = Game->PickObject(PressAt);
+				if (Event.IsControlDown() || Event.IsShiftDown()) { if (Id >= 0) Game->ToggleSelect(Id); }
+				else Game->Select(Id);
+			}
 		}
 		if (DragAxis >= 0) Game->EndGuideDrag();
 		Game->bFlying = false;

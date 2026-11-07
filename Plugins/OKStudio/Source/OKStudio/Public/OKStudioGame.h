@@ -103,6 +103,16 @@ public:
 	void FrameFirstCharacter(int32 Id);
 	/** The view a map just opened with: the first character may still reframe it (U262: head and feet were cut). */
 	void NoteStartView() { StartFocus = Focus; StartDistance = Distance; }
+	/** Pans the free view so object Id stands in the open part of it, when Covered (0..1 of the view) hides it (U263). */
+	bool KeepInOpenView(int32 Id, const FBox2D& Covered);
+	/** The chair-sized boxes of the map and the scene's items (map parts have no names to go by). */
+	void FindChairs(TArray<FBox>& Out, TArray<int32>* OutItems = nullptr) const;
+	/** The chair at a point of the view, the nearest of several. */
+	bool ChairAt(const FVector2D& Position, FBox& Out, int32* OutItem = nullptr) const;
+	/** Stands character Id at a chair, facing the desk or table beside it if there is one. */
+	bool SeatAt(int32 Id, const FBox& Chair, int32 Item = -1);
+	/** With its sitting motion on: the hips over the chair, wherever the motion has them. */
+	bool HipsOver(int32 Id, const FBox& Chair);
 	/** The selected items and characters go onto the surface seen behind them, along the line of sight; how many moved. */
 	int32 DropOnSurface();
 	/** The part of the view no panel covers, as fractions of the view (0..1, y down); the panel keeps it current. Framing

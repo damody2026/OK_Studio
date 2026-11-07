@@ -360,5 +360,52 @@ local function near(a, b) return a and math.abs(((a - b + 180) % 360) - 180) < 0
 check(near(r[1], 10) and near(r[2], -20) and near(r[3], -30), ("左→右 puts the left arm's rotation on the right arm, mirrored (%s)"):format(table.concat(r, ",")))
 click("清除 FK")
 
+-- U262, U263: 放下, 坐下 (on a map's chair), 配到時間軸, 移除配樂. 開啟資料夾 opens Explorer and is left out.
+local function idle() for _ = 1, 240 do if (call("state").busy or "") == "" then return end wait(30) end end
+local function status() return (call("state").status or "") end
+call("scene", { map = 4 }); idle(); wait(60)
+call("cmd", { id = "add.item" }); wait(30)
+call("type", { field = "搜尋道具", text = "見開き", enter = true }); wait(30)
+click("見開き本1"); idle(); wait(30)
+call("cmd", { id = "window.close", arg = "items" }); wait(10)
+local function item() for _, o in ipairs(call("state").objects or {}) do if o.kind == "item" then return o end end end
+local book = item()
+check(book ~= nil, "a book to put down")
+call("camera", { focus = { 0, 0, 70 }, yaw = -110, pitch = -30, distance = 300 }); wait(20)
+local z0 = book and book.location[3] or 0
+check(click("放下").ok, "放下 clicked")
+wait(30)
+local down = item()
+check(down and down.location[3] < z0 - 1, ("放下 brings the book down (%s to %s)"):format(tostring(z0), tostring(down and down.location[3])))
+
+local chairs = {}
+for _, b in ipairs(call("bounds", { map = true, ids = {} }).map or {}) do
+  local w, l, h = b.max[1] - b.min[1], b.max[2] - b.min[2], b.max[3] - b.min[3]
+  if math.min(w, l) >= 30 and math.max(w, l) <= 65 and h >= 55 and h <= 115 then chairs[#chairs + 1] = b end
+end
+check(#chairs > 0, ("the classroom has chairs (%d)"):format(#chairs))
+if #chairs > 0 then
+  local c = chairs[1]
+  local cx, cy = (c.min[1] + c.max[1]) / 2, (c.min[2] + c.max[2]) / 2
+  call("select", { ids = { id } }); wait(10)
+  call("camera", { focus = { cx, cy, 40 }, yaw = 0, pitch = -50, distance = 250 }); wait(30)
+  local shot = call("ui_shot", { name = "button_check_chair.png" })
+  check(click("坐下").ok and status():find("椅子", 1, true) ~= nil, "坐下 asks for a chair")
+  call("mouse", { x = (shot.width or 1600) / 2, y = (shot.height or 900) / 2 }); wait(120)
+  local me = objects()[id]
+  local at = me and me.location or { 1e9, 1e9, 0 }
+  check(math.sqrt((at[1] - cx) ^ 2 + (at[2] - cy) ^ 2) < 40, ("坐下 puts the character at the chair (%.0f,%.0f by %.0f,%.0f)"):format(at[1], at[2], cx, cy))
+end
+
+local wav = "UserData/audio/_button_check.wav"
+local f = assert(io.open(wav, "wb"))
+f:write("RIFF", string.pack("<I4", 36 + 8000), "WAVEfmt ", string.pack("<I4I2I2I4I4I2I2", 16, 1, 1, 8000, 8000, 1, 8), "data", string.pack("<I4", 8000), string.rep("\128", 8000))
+f:close()
+call("cmd", { id = "window.open", arg = "outside" }); wait(30)
+click("_button_check.wav")
+check(click("配到時間軸").ok and status():find("已載入音樂", 1, true) ~= nil, "配到時間軸 puts the file on the timeline")
+check(click("移除配樂").ok and status():find("已移除音樂", 1, true) ~= nil, "移除配樂 takes it off")
+os.remove(wav)
+
 print(("BUTTONS %d/%d"):format(passed, passed + failed))
 os.exit(failed == 0 and 0 or 1)

@@ -764,6 +764,14 @@ public:
 		});
 		Simple(TEXT("transform.reset"), TEXT("重設變換"), [this] { for (int32 Id : Game->Selection) if (FOKSceneObject* O = Game->Document->Find(Id)) O->Transform = FTransform::Identity; Changed(); });
 		Simple(TEXT("transform.face"), TEXT("面向對方"), [this] { FaceEachOther(); });
+		Simple(TEXT("transform.sit"), TEXT("坐到椅子上"), [this]
+		{
+			const FOKSceneObject* X = Obj();
+			if (bChairPick) { bChairPick = false; SetStatus(TEXT("已取消坐下")); return; }
+			if (!X || X->Kind != EOKSceneObjectKind::Character) { SetStatus(TEXT("先選一個角色")); return; }
+			bChairPick = true;
+			SetStatus(TEXT("點畫面上的椅子（再按一次「坐下」取消）"));
+		});
 		Simple(TEXT("transform.drop"), TEXT("放到下方表面"), [this]
 		{
 			const int32 Moved = Game->DropOnSurface();
@@ -1546,12 +1554,17 @@ public:
 				+ SVerticalBox::Slot().AutoHeight()
 				[
 					SNew(SBox).ToolTipText(FText::FromString(TEXT("所選角色轉向最近的另一個角色；選兩個角色時兩人面對面")))
-					[Button(FText::FromString(TEXT("面向")), Cmd(TEXT("transform.face")), 34.f, 25.f, false, 10.f)]
+					[Button(FText::FromString(TEXT("面向")), Cmd(TEXT("transform.face")), 34.f, 16.f, false, 10.f)]
 				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f, 0.f, 0.f)
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
 				[
 					SNew(SBox).ToolTipText(FText::FromString(TEXT("所選道具或角色落到畫面上看到的桌面或地面：沿視線往下找")))
-					[Button(FText::FromString(TEXT("放下")), Cmd(TEXT("transform.drop")), 34.f, 25.f, false, 10.f)]
+					[Button(FText::FromString(TEXT("放下")), Cmd(TEXT("transform.drop")), 34.f, 16.f, false, 10.f)]
+				]
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					SNew(SBox).ToolTipText(FText::FromString(TEXT("按一下再點畫面上的椅子：所選角色坐上去，還沒有坐姿就換一個")))
+					[Button(FText::FromString(TEXT("坐下")), Cmd(TEXT("transform.sit")), 34.f, 16.f, TAttribute<bool>::CreateLambda([this] { return bChairPick; }), 10.f)]
 				]
 			]
 			+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 0.f, 0.f)
@@ -1917,6 +1930,13 @@ public:
 	void ShowPickedMap(int32 Map);
 	void TickMapPrepare();
 	int32 MapPrepareSerial = 0;
+	/** The last selection looked at for the timeline hiding its axes (-1: none, or the timeline closed). */
+	int32 AxesChecked = -1;
+	bool bChairPick = false;
+	int32 SitId = -1;
+	FBox SitChair = FBox(ForceInit);
+	double SitAt = 0.;
+	void TickSit();
 	/** From and to belong to a scene: a remembered 4 s cut a 30 s work (U262). */
 	int32 ExportRangeSerial = 0;
 	/** The map being prepared is the one picked in the map window, not the opening scene's. */
@@ -3637,6 +3657,35 @@ private:
 	}
 
 public:
+	bool ChairPicking() const { return bChairPick; }
+	/** The click after 坐下: the selected character onto the chair there. */
+	void PickChairAt(const FVector2D& Position)
+	{
+		bChairPick = false;
+		const FOKSceneObject* X = Obj();
+		FBox Chair;
+		int32 Item = -1;
+		if (!X || X->Kind != EOKSceneObjectKind::Character) { SetStatus(TEXT("先選一個角色")); return; }
+		if (!Game->ChairAt(Position, Chair, &Item)) { SetStatus(TEXT("這裡沒有認得的椅子：地圖的椅子要是獨立的部件，也可以加椅子道具")); return; }
+		if (!Game->SeatAt(X->Id, Chair, Item)) { SetStatus(TEXT("這個角色動不了（鎖定中？）")); return; }
+		// A motion of the chair category stays; anything else takes the first sitting motion there.
+		const FOKStudioCatalog& C = FOKStudioCatalog::Get();
+		const auto InChair = [&C](const FOKStudioAnim& A)
+		{
+			const FOKStudioCatalogGroup* K = C.AnimCategories.FindByPredicate([&A](const FOKStudioCatalogGroup& Y) { return Y.Group == A.Group && Y.Id == A.Category; });
+			return K && K->Name.Contains(TEXT("椅子"));
+		};
+		const FOKStudioAnim* Playing = X->Character.StudioAnimeNo >= 0 ? C.FindAnim(X->Character.StudioAnimeKind, X->Character.StudioAnimeGroup, X->Character.StudioAnimeCategory, X->Character.StudioAnimeNo) : nullptr;
+		int32 Sitting = INDEX_NONE;
+		if (!Playing || !InChair(*Playing))
+			for (int32 I = 0; I < C.Anims.Num() && Sitting == INDEX_NONE; ++I)
+				if (C.Anims[I].Kind == 0 && C.Anims[I].Sex == 0 && !C.Anims[I].File.IsEmpty() && InChair(C.Anims[I])) Sitting = I;
+		if (Sitting != INDEX_NONE) PickAnim(Sitting);
+		else Changed();
+		SitId = X->Id;
+		SitChair = Chair;
+		SitAt = FPlatformTime::Seconds() + 0.5; // the motion is on by then
+	}
 	/** Plays catalogue animation `Index` on the selected character. */
 	bool PickAnim(int32 Index)
 	{

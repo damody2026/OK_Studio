@@ -245,6 +245,139 @@ bool UOKStudioGame::ViewStillFramed() const
 		&& FMath::IsNearlyEqual(Yaw, FramedYaw, 0.01f) && FMath::IsNearlyEqual(Pitch, FramedPitch, 0.01f);
 }
 
+bool UOKStudioGame::KeepInOpenView(int32 Id, const FBox2D& Covered)
+{
+	APlayerController* PC = SceneActor && SceneActor->GetWorld() ? SceneActor->GetWorld()->GetFirstPlayerController() : nullptr;
+	if (!PC || !PC->PlayerCameraManager || !Document || Document->ActiveCamera >= 0 || !Document->Find(Id)) return false;
+	FVector2D Size(16.0, 9.0);
+	if (GEngine && GEngine->GameViewport) GEngine->GameViewport->GetViewportSize(Size);
+	const FBox2D Clear = ClearView;
+	if (!Clear.bIsValid || Clear.GetSize().X < 0.2 || Clear.GetSize().Y < 0.2 || Size.X < 1. || Size.Y < 1.) return false;
+	const FVector At = (Document->WorldTransform(Id) * SceneActor->GetActorTransform()).GetLocation();
+	FVector2D Pixel;
+	if (!PC->ProjectWorldLocationToScreen(At, Pixel)) return false;
+	const FVector2D Now(Pixel.X / Size.X, Pixel.Y / Size.Y);
+	if (!Covered.IsInside(Now)) return false;
+	// As far as it takes: into the open part, a tenth of it from the edge.
+	const FVector2D Margin = Clear.GetSize() * 0.1;
+	const FVector2D Want(FMath::Clamp(Now.X, Clear.Min.X + Margin.X, Clear.Max.X - Margin.X), FMath::Clamp(Now.Y, Clear.Min.Y + Margin.Y, Clear.Max.Y - Margin.Y));
+	const FRotationMatrix M(FRotator(Pitch, Yaw, 0.f));
+	const float Depth = float(FVector::DotProduct(At - PC->PlayerCameraManager->GetCameraLocation(), M.GetScaledAxis(EAxis::X)));
+	if (Depth <= 1.f) return false;
+	const float Aspect = float(Size.X / Size.Y);
+	const float TanX = FMath::Tan(FMath::DegreesToRadians(FMath::Clamp(Document->FreeView.Fov, 5.f, 170.f) * 0.5f));
+	const float HalfX = Document->FreeView.bOrtho ? Document->FreeView.OrthoWidth * 0.5f : Depth * TanX;
+	const float HalfY = HalfX / Aspect;
+	Focus += M.GetScaledAxis(EAxis::Y) * float(Now.X - Want.X) * 2.f * HalfX - M.GetScaledAxis(EAxis::Z) * float(Now.Y - Want.Y) * 2.f * HalfY;
+	return true;
+}
+
+void UOKStudioGame::FindChairs(TArray<FBox>& Out, TArray<int32>* OutItems) const
+{
+	if (!SceneActor || !Document) return;
+	TArray<FBox> Boxes;
+	SceneActor->MapPartBounds(Boxes);
+	TArray<int32> Items;
+	Items.Init(-1, Boxes.Num());
+	for (const FOKSceneObject& O : Document->Objects)
+	{
+		FBox B;
+		if (O.Kind == EOKSceneObjectKind::Item && Document->IsShown(O.Id) && WorldBounds(O.Id, B)) { Boxes.Add(B); Items.Add(O.Id); }
+	}
+	for (int32 I = 0; I < Boxes.Num(); ++I)
+	{
+		const FVector S = Boxes[I].GetSize();
+		if (FMath::Min(S.X, S.Y) < 30. || FMath::Max(S.X, S.Y) > 65. || S.Z < 55. || S.Z > 115.) continue;
+		Out.Add(Boxes[I]);
+		if (OutItems) OutItems->Add(Items[I]);
+	}
+}
+
+bool UOKStudioGame::ChairAt(const FVector2D& Position, FBox& Out, int32* OutItem) const
+{
+	APlayerController* PC = SceneActor && SceneActor->GetWorld() ? SceneActor->GetWorld()->GetFirstPlayerController() : nullptr;
+	if (!PC || !PC->PlayerCameraManager) return false;
+	const FVector Eye = PC->PlayerCameraManager->GetCameraLocation();
+	TArray<FBox> Chairs;
+	TArray<int32> Items;
+	FindChairs(Chairs, &Items);
+	double Best = TNumericLimits<double>::Max();
+	for (int32 I = 0; I < Chairs.Num(); ++I)
+	{
+		const FBox& Box = Chairs[I];
+		FBox2D Screen(ForceInit);
+		for (int32 C = 0; C < 8; ++C)
+		{
+			const FVector Corner((C & 1) ? Box.Max.X : Box.Min.X, (C & 2) ? Box.Max.Y : Box.Min.Y, (C & 4) ? Box.Max.Z : Box.Min.Z);
+			FVector2D S;
+			if (UWidgetLayoutLibrary::ProjectWorldLocationToWidgetPosition(PC, Corner, S, true)) Screen += S;
+		}
+		const double Depth = FVector::Distance(Eye, Box.GetCenter());
+		if (Screen.bIsValid && Screen.IsInside(Position) && Depth < Best) { Best = Depth; Out = Box; if (OutItem) *OutItem = Items[I]; }
+	}
+	return Best < TNumericLimits<double>::Max();
+}
+
+/** The desk or table a chair belongs to: the nearest box of that size, up to 90 cm off. */
+static bool OKDeskBy(const TArray<FBox>& Boxes, const FBox& Chair, FBox& Out)
+{
+	double Nearest = 90.;
+	for (const FBox& B : Boxes)
+	{
+		const FVector S = B.GetSize();
+		const FVector Off = B.GetCenter() - Chair.GetCenter();
+		const double Reach = FVector2D(Off.X, Off.Y).Size();
+		if (FMath::Min(S.X, S.Y) >= 40. && FMath::Max(S.X, S.Y) >= 66. && FMath::Max(S.X, S.Y) <= 220. && S.Z >= 50. && S.Z <= 110. && Reach > 3. && Reach < Nearest) { Nearest = Reach; Out = B; }
+	}
+	return Nearest < 90.;
+}
+
+bool UOKStudioGame::SeatAt(int32 Id, const FBox& Chair, int32 Item)
+{
+	FOKSceneObject* O = Document ? Document->Find(Id) : nullptr;
+	if (!O || O->Kind != EOKSceneObjectKind::Character || O->bLocked) return false;
+	FTransform World = Document->WorldTransform(Id);
+	const FVector Seat(Chair.GetCenter().X, Chair.GetCenter().Y, Chair.Min.Z);
+	World.SetLocation(Seat);
+	// A chair item looks where it is turned, front +Y as a character's. The bounds of a map's do not say; the desk beside it
+	// does (a classroom's chairs stand half under theirs).
+	TArray<FBox> Boxes;
+	SceneActor->MapPartBounds(Boxes);
+	FBox Desk;
+	if (Document->Find(Item)) World.SetRotation(FRotator(0., Document->WorldTransform(Item).Rotator().Yaw, 0.).Quaternion());
+	else if (OKDeskBy(Boxes, Chair, Desk))
+	{
+		const FVector Off = Desk.GetCenter() - Chair.GetCenter();
+		World.SetRotation(FRotator(0., FMath::RadiansToDegrees(FMath::Atan2(Off.Y, Off.X)) - 90., 0.).Quaternion());
+	}
+	O->Transform = O->Parent >= 0 ? World.GetRelativeTransform(Document->WorldTransform(O->Parent)) : World;
+	return true;
+}
+
+bool UOKStudioGame::HipsOver(int32 Id, const FBox& Chair)
+{
+	FOKSceneObject* O = Document ? Document->Find(Id) : nullptr;
+	FTransform Hips;
+	if (!O || !SceneActor || !OKStudioGameInternal::BoneWorld(SceneActor->PreviewOf(Id), TEXT("cf_j_hips"), Hips)) return false;
+	FTransform World = Document->WorldTransform(Id);
+	FVector Seat = Chair.GetCenter();
+	// A classroom's chairs stand pushed in, the seat under the desk: on it she sat through the desk top. The map's chair cannot
+	// be pulled out, so she sits where it would be, a body's depth behind the desk's edge.
+	TArray<FBox> Boxes;
+	SceneActor->MapPartBounds(Boxes);
+	FBox Desk;
+	if (OKDeskBy(Boxes, Chair, Desk) && Desk.Intersect(Chair))
+	{
+		const FVector Front = FRotator(0., World.Rotator().Yaw + 90., 0.).Vector();
+		const FVector Half = Desk.GetExtent();
+		const double Edge = FVector::DotProduct(Desk.GetCenter() - Chair.GetCenter(), Front) - FMath::Abs(Front.X) * Half.X - FMath::Abs(Front.Y) * Half.Y;
+		if (Edge < 14.) Seat += Front * (Edge - 14.);
+	}
+	World.AddToTranslation(FVector(Seat.X - Hips.GetLocation().X, Seat.Y - Hips.GetLocation().Y, 0.));
+	O->Transform = O->Parent >= 0 ? World.GetRelativeTransform(Document->WorldTransform(O->Parent)) : World;
+	return true;
+}
+
 int32 UOKStudioGame::DropOnSurface()
 {
 	if (!SceneActor || !Document) return 0;
