@@ -173,11 +173,13 @@ FString OKStudioStyleBones(float Style, float Scale)
 		for (const TCHAR* Bone : { TEXT("cf_j_forearm01_L"), TEXT("cf_j_forearm01_R"), TEXT("cf_j_hand_L"), TEXT("cf_j_hand_R"), TEXT("cf_d_arm01_L"), TEXT("cf_d_arm01_R"), TEXT("cf_d_arm02_L"), TEXT("cf_d_arm02_R"), TEXT("cf_d_arm03_L"), TEXT("cf_d_arm03_R"), TEXT("cf_d_forearm02_L"), TEXT("cf_d_forearm02_R"), TEXT("cf_d_wrist_L"), TEXT("cf_d_wrist_R") }) Add(Bone, FVector::OneVector, Arm, 0.f);
 		for (const TCHAR* Bone : { TEXT("cf_j_leg01_L"), TEXT("cf_j_leg01_R"), TEXT("cf_j_leg03_L"), TEXT("cf_j_leg03_R") }) Add(Bone, FVector::OneVector, Leg, 0.f);
 		Add(TEXT("cf_s_head"), FVector(FMath::Lerp(1.f, Tuning.HeadSize, -Style)), 1.f, 0.f);
-		// The thighs and arms come in with the width, or they would stand off the body.
-		Add(TEXT("cf_j_thigh00_L"), FVector::OneVector, 1.f, ThighX * (1.f - Thin * Tuning.Hips));
-		Add(TEXT("cf_j_thigh00_R"), FVector::OneVector, 1.f, -ThighX * (1.f - Thin * Tuning.Hips));
-		Add(TEXT("cf_j_arm00_L"), FVector::OneVector, 1.f, ArmX * (1.f - Thin * Tuning.Shoulders));
-		Add(TEXT("cf_j_arm00_R"), FVector::OneVector, 1.f, -ArmX * (1.f - Thin * Tuning.Shoulders));
+		// The thighs and arms come in with the width, or they would stand off the body. The width grows with the style like the
+		// skin's: at its full number from the start, the legs and arms jumped out as the style left 0.
+		const float Hips = FMath::Lerp(1.f, Tuning.Hips, -Style), Shoulders = FMath::Lerp(1.f, Tuning.Shoulders, -Style);
+		Add(TEXT("cf_j_thigh00_L"), FVector::OneVector, 1.f, ThighX * (1.f - Thin * Hips));
+		Add(TEXT("cf_j_thigh00_R"), FVector::OneVector, 1.f, -ThighX * (1.f - Thin * Hips));
+		Add(TEXT("cf_j_arm00_L"), FVector::OneVector, 1.f, ArmX * (1.f - Thin * Shoulders));
+		Add(TEXT("cf_j_arm00_R"), FVector::OneVector, 1.f, -ArmX * (1.f - Thin * Shoulders));
 	}
 	if (Style > 0.f)
 	{

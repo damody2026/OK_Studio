@@ -13,6 +13,15 @@ bool FOKStudioCharacterStyleTest::RunTest(const FString&)
 	OKStudioStyleSliders(0.f, 0.f, Body, Face);
 	TestTrue(TEXT("style 0 is the card"), Body == CardBody && Face == CardFace);
 
+	// Just off 0 the joints barely move: they follow the style, not the realistic end's full width.
+	const FString Near = OKStudioStyleBones(-0.01f, 1.f);
+	for (const TCHAR* Bone : { TEXT("cf_j_thigh00_L"), TEXT("cf_j_arm00_L") })
+	{
+		const int32 At = Near.Find(FString::Printf(TEXT("\"name\":\"%s\""), Bone));
+		const int32 Pos = At == INDEX_NONE ? INDEX_NONE : Near.Find(TEXT("\"pos\":["), ESearchCase::CaseSensitive, ESearchDir::FromStart, At);
+		TestTrue(FString::Printf(TEXT("%s stays put just off style 0"), Bone), Pos != INDEX_NONE && FMath::Abs(FCString::Atof(*Near.Mid(Pos + 7, 12))) < 0.001f);
+	}
+
 	OKStudioStyleSliders(1.f, 1.f, Body, Face);
 	TestTrue(TEXT("chibi: bigger head, smaller breasts"), Body[1] > CardBody[1] && Body[4] < CardBody[4]);
 	TestTrue(TEXT("chibi: wider face, bigger eyes"), Face[0] > CardFace[0] && Face[34] > CardFace[34]);
