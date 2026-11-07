@@ -147,6 +147,8 @@ static const FOKStreetPlace* OKStreetShopWithFloors(const FVector& At){
  for(const auto& P:OKStreetPlaces()){
   if(!OKStreetInsidePlace(P,At)||!P.RoomLevels.ContainsByPredicate([](int32 L){return L>1;}))continue;
   if(!OKStreetPlaceLifts(P).IsEmpty()||P.Anchors.ContainsByPredicate([](const FOKStreetModelAnchor& A){return A.Name.StartsWith(TEXT("stair"));}))return nullptr;
+  // Its door upstairs: the ramen shop on the department store's 11F is reached by that building's lift.
+  if(OKStreetUpstairs(P.Door))return nullptr;
   return &P;}
  return nullptr;
 }
