@@ -970,6 +970,7 @@ def motel_world_lover_spots_install():
  if pp:
   for s in json.loads(open(pp[-1],encoding='utf8').read()).get('sweeps',[]):
    if s.get('kind')=='open_door_player_capsule':opendoors+=[V(s['start']),V(s['end'])]
+ placed={}
  def dress(place,where,plan,newplace=None,reach=1600):
   _ls_note('dress %s %s'%(place,[k for k,n in plan]))
   if not where:skipped.append(dict(place=place,reason='room not found'));return
@@ -989,13 +990,15 @@ def motel_world_lover_spots_install():
       if not(reg[0][0]<=c.x<=reg[1][0] and reg[0][1]<=c.y<=reg[1][1]):continue
       if any((c-unreal.Vector(p.x,p.y,z)).length()<rr+max(w,dd)*.45 for p,rr in res):continue
       for yaw in (0,90,180,270):
+       hx,hy=(dd/2,w/2) if yaw%180==0 else (w/2,dd/2)
+       if any(abs(c.x-q[0])<hx+q[2] and abs(c.y-q[1])<hy+q[3] for q in placed.get(place,[])):continue
        if not _ls_fits(world,c,yaw,w,dd,h,z,10):continue
        if wall and not _ls_wall_behind(world,c,yaw,dd,z):continue
        best=(c,yaw);break
       if best:break
      if best:break
     if not best:skipped.append(dict(place=place,reason='no spot for %s #%d'%(key,k+1)));break
-    c,yaw=best;res.append((c,max(w,dd)*.45));t='LoverSpot_R2_%s_%s%d'%(place,key,cnt.get((place,'_'+key),0)+1);cnt[(place,'_'+key)]=cnt.get((place,'_'+key),0)+1
+    c,yaw=best;res.append((c,max(w,dd)*.45));placed.setdefault(place,[]).append((c.x,c.y)+((dd/2,w/2) if yaw%180==0 else (w/2,dd/2)));t='LoverSpot_R2_%s_%s%d'%(place,key,cnt.get((place,'_'+key),0)+1);cnt[(place,'_'+key)]=cnt.get((place,'_'+key),0)+1
     key2=PLACE_TRIPO.get((key,place),TRIPO.get(key));_LS_REC[0]=[] if key2 else None
     try:fn(t,c,yaw,place)
     finally:spawned=_LS_REC[0];_LS_REC[0]=None
@@ -1510,7 +1513,7 @@ def motel_world_lover_spots_install():
    hr_=_ls_home_rooms(rid_,z);no_=set(hr_['wet'])|({hr_['kitchen']} if key=='baby_crib' else set());yes_={hr_['kitchen'],hr_['hall']}-hr_['wet'] if key=='fridge' else None
    in_room=lambda c_:(lambda r_:r_ is not None and r_ not in no_ and (yes_ is None or r_ in yes_))(_ls_room_of(c_.x,c_.y,z))
   if key in ('bookcase_full','fridge','wardrobe','baby_crib','potted_monstera'):
-   g=_ls_search(world,V([start[0],start[1],z]),z,ex,ey,min(ez,110),[0,90,180,270],rmin=0,rmax=max(rings),wall=True,region=((lo[0]+30,lo[1]+30),(hi[0]-30,hi[1]-30)),avoid=held+[V([door[0],door[1],z])],test=in_room)
+   g=_ls_search(world,V([start[0],start[1],z]),z,ex,ey,min(ez,110),[0,90,180,270],rmin=rings[0],rmax=max(rings),wall=True,region=((lo[0]+30,lo[1]+30),(hi[0]-30,hi[1]-30)),avoid=held+[V([door[0],door[1],z])],test=in_room)
    if g:
     c,fy=g;t='LoverSpot_R6_%s_%s'%(key,p['id']);place_mesh(t,key,c,fy-90);A2(p['id'],base,_ls_off(c,fy,ey/2+45),fy+90,t+'_Tripo');held.append(c);return True
   for r in rings:
@@ -1655,9 +1658,9 @@ def motel_world_lover_spots_install():
     hr_=_ls_home_rooms(rid,kz_)
     same_=lambda c_:_ls_room_of(c_.x,c_.y,kz_)==hr_['kitchen'] and hr_['kitchen'] not in hr_['wet']
     hall_=lambda c_:_ls_room_of(c_.x,c_.y,kz_)==hr_['hall'] and hr_['hall'] not in hr_['wet']
-    got=spot(rid,a,V([kx_,ky_,kz_]),220,220,100,100,560,pad=40,test=same_)
-    if not got:nh['dining_tight']=nh.get('dining_tight',0)+1;got=spot(rid,a,V([kx_,ky_,kz_]),190,190,100,100,560,pad=20,test=same_)
-    if not got:nh['dining_hall']=nh.get('dining_hall',0)+1;got=spot(rid,a,V([kx_,ky_,kz_]),190,190,100,100,1500,pad=20,test=hall_)
+    got=spot(rid,a,V([kx_,ky_,kz_]),220,220,100,170,560,pad=40,test=same_)
+    if not got:nh['dining_tight']=nh.get('dining_tight',0)+1;got=spot(rid,a,V([kx_,ky_,kz_]),190,190,100,155,560,pad=20,test=same_)
+    if not got:nh['dining_hall']=nh.get('dining_hall',0)+1;got=spot(rid,a,V([kx_,ky_,kz_]),190,190,100,155,1500,pad=20,test=hall_)
     if got:
      c=got[0];t='LoverSpot_R8_dining_'+rid;place_mesh(t,'dining_set',c,0);A2(rid,'dining',V([c.x,c.y-100,c.z]),0,t+'_Tripo');nh['dining']+=1;homev[rid]=dict(homev.get(rid,{}),dine=c)
    if wet:
@@ -1951,7 +1954,8 @@ def motel_world_lover_spots_install():
   if b in ('R1','R2'):plan=[('fridge','fridge',(an.get('kitchen') or {}).get('pos') or cx_),('bookcase_full','bookcase',cx_),('potted_monstera','plant',cx_)]
   elif p.get('kind')=='room_dorm':plan=[('wardrobe','wardrobe',cx_),('dorm_desk','desk',cx_)]
   for key,base,st in plan:
-   if fit_home(p,key,base,st,range(0,620,50)):nf+=1
+   # the search starts at the cook's spot for the fridge: keep off it, or the fridge stands in front of the counter
+   if fit_home(p,key,base,st,range(130 if key=='fridge' else 0,620,50)):nf+=1
  for rid,key,n in (('t1-0201','lectern',1),('t1-0202','lectern',1),('t2-0201','lectern',1),('t4-0201','lectern',1),('t1-0201','student_desk',4),('t2-0201','student_desk',4),('ad-0201','workstation',4),('ad-0201','office_chair',4),('ad-0202','workstation',4),('ad-0202','monitor_set',2),('ad-0101','sofa_three',2),('ad-0101','potted_monstera',3)):
   a=ar.get(rid)
   if not a or 'min' not in a:skipped.append(dict(place=rid,reason='no room for '+key));continue
@@ -1982,7 +1986,7 @@ def motel_world_lover_spots_install():
   a=ar[rid]
   ns['rooms']+=1;z_=a['min'][2];mid=V([(a['min'][0]+a['max'][0])/2,(a['min'][1]+a['max'][1])/2,z_])
   if a.get('door'):hv.setdefault(rid,[]).append(V([a['door'][0],a['door'][1],z_]))
-  n0=len(hv.setdefault(rid,[]));got=None
+  n0=len(hv.setdefault(rid,[]));got=None;sofa_=None
   for k in range(8):
    g=spot(rid,a,mid,215,100,90,0,460,True)
    if not g:break
@@ -1990,7 +1994,7 @@ def motel_world_lover_spots_install():
    ns['sofa_facing_wall']=ns.get('sofa_facing_wall',0)+1
   if not got:del hv[rid][n0:]
   if got:
-   c,fy=got;t='LoverSpot_R8_sofa_'+rid;place_mesh(t,'sofa_three',c,fy-90);s_=_ls_off(c,fy,15)
+   c,fy=got;sofa_=(c,fy);t='LoverSpot_R8_sofa_'+rid;place_mesh(t,'sofa_three',c,fy-90);s_=_ls_off(c,fy,15)
    seat_at(rid,'sofa',s_,fy,t+'_Tripo');seat_at(rid,'tv_sofa',s_,fy,t+'_Tripo');ns['sofa']+=1
    g2=seen(rid,a,s_,_ls_off(c,fy,300),140,60,110,0,320,True)
    if g2:
@@ -2004,9 +2008,17 @@ def motel_world_lover_spots_install():
    c,fy=got;t='LoverSpot_R8_kitchen_'+rid;place_mesh(t,'kitchen_unit',c,fy-90);A2(rid,'kitchen',_ls_off(c,fy,70),fy+90,t+'_Tripo');ns['kitchen']+=1
    g2=spot(rid,a,c,70,75,120,0,300,True)
    if g2:t='LoverSpot_R8_fridge_'+rid;place_mesh(t,'fridge',g2[0],g2[1]-90);ns['fridge']+=1
-  got=clear(rid,a,mid,195,195,100,0,460) or clear(rid,a,mid,195,195,100,0,520,pad=100)
+  got=clear(rid,a,mid,195,195,100,0,460) or clear(rid,a,mid,195,195,100,0,700,pad=135) or clear(rid,a,mid,195,195,100,0,700,pad=120) or clear(rid,a,mid,195,195,100,0,520,pad=100)
   if got:
-   c=got[0];t='LoverSpot_R8_dining_'+rid;place_mesh(t,'dining_set',c,0);A2(rid,'dining',V([c.x,c.y-100,z_]),0,t+'_Tripo');ns['dining']+=1;homev[rid]=dict(homev.get(rid,{}),dine=c)
+   c=got[0]
+   if sofa_:
+    # a table that sinks into the sofa slides straight out of it, along the axis with the shorter way out
+    sc,sy_=sofa_;hx,hy=(50,108) if sy_%180==0 else (108,50);dx,dy=c.x-sc.x,c.y-sc.y;ox,oy=112+hx-abs(dx),112+hy-abs(dy)
+    if ox>0 and oy>0:
+     for mx,my in sorted([(math.copysign(ox+6,dx),0),(0,math.copysign(oy+6,dy))],key=lambda m:abs(m[0])+abs(m[1])):
+      c2=V([c.x+mx,c.y+my,z_])
+      if a['min'][0]+40<=c2.x<=a['max'][0]-40 and a['min'][1]+40<=c2.y<=a['max'][1]-40 and _ls_fits(world,c2,0,195,195,100,z_,8):c=c2;ns['dining_slid']=ns.get('dining_slid',0)+1;break
+   t='LoverSpot_R8_dining_'+rid;place_mesh(t,'dining_set',c,0);A2(rid,'dining',V([c.x,c.y-100,z_]),0,t+'_Tripo');ns['dining']+=1;homev[rid]=dict(homev.get(rid,{}),dine=c)
  _ls_note('R8 shop homes: %s'%ns);skipped.append(dict(place='shop_homes',reason=str(ns)))
  for rid in ('r1-0301','r2-0201','s05-0301','s30-0301','s73-0301'):
   h_=homev.get(rid) or {};z_=ar[rid]['min'][2]
@@ -2070,7 +2082,7 @@ def motel_world_lover_spots_install():
   w_=next((i_ for i_ in items if i_['place']==rid and i_['anchor']=='balcony'),None)
   if w_:f_=math.radians(w_.get('yaw',0)+90);views.append(dict(id='R9-window-'+rid,eye=num(V([w_['pos'][0]+math.cos(f_)*1130,w_['pos'][1]+math.sin(f_)*1130,w_['pos'][2]+380])),target=num(V([w_['pos'][0],w_['pos'][1],w_['pos'][2]+80])),fov=60,hour=15))
  # shop counters: the anchor stood on the counter top before the build moved it to the floor (anchor-ground.json keeps that height)
- gf=ROOT/'output/street-social-city-production/places-v1/anchor-ground.json';top={}
+ gf=ROOT/'output/street-social-city-production/places-v1/anchor-ground.json';top={};tills=set()
  if gf.is_file():
   for s_,to in json.loads(gf.read_text('utf8')).items():
    q=[float(v) for v in s_.split(',')];top[(round(to[0]),round(to[1]))]=q[2]
@@ -2079,7 +2091,10 @@ def motel_world_lover_spots_install():
    if not a.get('pos'):continue
    z_=top.get((round(a['pos'][0]),round(a['pos'][1])),a['pos'][2])
    if a['name'].startswith('counter') and str(p.get('building') or '').startswith('S') and z_-(p.get('room') or {}).get('min',[0,0,1200])[2]>70:
-    k+=1;place_mesh('LoverSpot_R6_register%d'%k,'cash_register',V([a['pos'][0],a['pos'][1],z_]),a.get('yaw',0))
+    # two places can share one counter: one register
+    key_=(round(a['pos'][0]),round(a['pos'][1]))
+    if key_ in tills:continue
+    tills.add(key_);k+=1;place_mesh('LoverSpot_R6_register%d'%k,'cash_register',V([a['pos'][0],a['pos'][1],z_]),a.get('yaw',0))
  # lit heads on the Tripo street lamps: opal spheres follow the day-night LampGlowWeight
  opal=EAL.load_asset('/Game/UniversityCity/EnvironmentV1/Materials/M_EnvironmentOpal_01');sph=EAL.load_asset('/Engine/BasicShapes/Sphere');nlamp=0
  for a_ in SUB.get_all_level_actors():
@@ -2228,6 +2243,10 @@ def motel_world_lover_spots_install():
  views.append(dict(id='R7-stair-T2',eye=num(V([72200,69450,2000])),target=num(V([74400,69450,1900])),fov=75,hour=15))
  _ls_note('R7: minshuku done, %d rooms'%len(rr))
  acts={a.get_actor_label():a for a in SUB.get_all_level_actors()}
+ # 160 rect lights with shadows cost about 65 ms of render thread in the packaged game (c-conquest 11-07)
+ rects=[a for a in acts.values() if isinstance(a,unreal.RectLight)]
+ for a in rects:a.light_component.set_editor_property('cast_shadows',False)
+ _ls_note('rect lights without shadows: %d'%len(rects))
  acts.get('CityEnvironmentController') and acts['CityEnvironmentController'].prepare_for_save()
  faulthandler.cancel_dump_traceback_later();_ls_note('saving map')
  assert unreal.EditorLevelLibrary.save_current_level();new=sha(MAPFILE)

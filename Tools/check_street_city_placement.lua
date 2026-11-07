@@ -12,7 +12,7 @@ local j = require('ok.json')
 local base = 'output/street-social-city-production/places-v1/'
 local function read(p) local f = assert(io.open(p, 'rb')); local s = f:read('*a'); f:close(); return j.decode((s:gsub('^\239\187\191', ''))) end
 local all = arg[1] == '--all'
-local SKIP = { 'LoverSpot_R5_', 'LoverSpot_R6_', 'LoverSpot_R9_zoo_pen', 'LoverSpot_R9_waterpark', 'Rail', '_Cloth', 'Reflection', 'balcony', 'Balcony', '_Fish', '_Weed', '_Rock', '_Sand', '_Water', '_Sign', '_Glow', '_Light', '_Screen', '_Rug', '_Mat', 'Aqua_' }
+local SKIP = { 'LoverSpot_R5_', 'LoverSpot_R6_reed', 'LoverSpot_R6_flower', 'LoverSpot_R6_lamp', 'LoverSpot_R9_zoo_pen', 'LoverSpot_R9_waterpark', 'Rail', '_Cloth', 'Reflection', 'balcony', 'Balcony', '_Fish', '_Weed', '_Rock', '_Sand', '_Water', '_Sign', '_Glow', '_Light', '_Screen', '_Rug', '_Mat', 'Aqua_' }
 local function skip(l) for _, s in ipairs(SKIP) do if l:find(s, 1, true) then return true end end end
 local groups, tripo = {}, {}
 local actors = read(base .. 'actors.json')
@@ -55,7 +55,8 @@ local areas = read(base .. 'props.json').areas
 local byid = {}
 for _, r in ipairs(areas) do byid[r.id] = r
   local d = r.door
-  if d and r.kind ~= 'building' then
+  -- retail rooms are open floors: their door is a nominal point, the shop door is what people use
+  if d and r.kind ~= 'building' and r.type ~= 'retail' then
     local k = {}
     for x = -1, 1 do for y = -1, 1 do local c = grid[key(d[1] + x * CELL, d[2] + y * CELL)]; if c then for i in pairs(c) do k[i] = true end end end end
     for i in pairs(k) do local b = boxes[i]
@@ -87,16 +88,19 @@ for place, t in pairs(byplace) do
   end
 end
 bad.stand = {}
+bad.floor = {}
 for _, a in ipairs(anchors) do
+  local r = byid[a.place]
+  if r and r.min and r.max and (a.pos[3] < r.min[3] - 40 or a.pos[3] > r.max[3] + 40) then bad.floor[#bad.floor + 1] = a.id .. ' is not on the floor of ' .. a.place end
   if a.name == 'kitchen' or a.name == 'stove' then
     for _, b in ipairs(boxes) do
-      if math.abs(a.pos[1] - b.c[1]) < b.e[1] + 15 and math.abs(a.pos[2] - b.c[2]) < b.e[2] + 15 and math.abs(b.c[3] - a.pos[3] - 90) < b.e[3] + 90 and not b.l:find('kitchen', 1, true) then
+      if math.abs(a.pos[1] - b.c[1]) < b.e[1] + 45 and math.abs(a.pos[2] - b.c[2]) < b.e[2] + 45 and math.abs(b.c[3] - a.pos[3] - 90) < b.e[3] + 90 and not b.l:find('kitchen', 1, true) then
         bad.stand[#bad.stand + 1] = a.id .. ' stands in ' .. b.l end
     end
   end
 end
 local n = 0
-for _, kind in ipairs({ 'overlap', 'door', 'room', 'tv', 'stand' }) do
+for _, kind in ipairs({ 'overlap', 'door', 'room', 'tv', 'stand', 'floor' }) do
   table.sort(bad[kind]); n = n + #bad[kind]
   print(kind, #bad[kind])
   for i = 1, all and #bad[kind] or math.min(#bad[kind], 12) do print('  ' .. bad[kind][i]) end

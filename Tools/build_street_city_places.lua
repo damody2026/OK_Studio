@@ -679,7 +679,10 @@ local function areaof(p, b, floor, owner)
   b = b or bldof(p)
   if b then
     for _, id in ipairs(byfloor[b .. ':' .. tostring(floor)] or {}) do if inbox(id, p) then return areaid[id:lower()] end end
-    if not floor then for k, list in pairs(byfloor) do if k:match('^' .. b .. ':') then for _, id in ipairs(list) do if inbox(id, p) then return areaid[id:lower()] end end end end end
+    -- no floor given: floors stack, so the height has to match too (pairs order is random, the first box in plan was any floor)
+    if not floor then for k, list in pairs(byfloor) do if k:match('^' .. b .. ':') then for _, id in ipairs(list) do
+      local q = area[areaid[id:lower()]]
+      if inbox(id, p) and (not q.min or (p[3] >= q.min[3] - 40 and p[3] <= q.max[3] + 40)) then return areaid[id:lower()] end end end end end
     return areaid['building_' .. b:lower()]
   end
   local best, bd
