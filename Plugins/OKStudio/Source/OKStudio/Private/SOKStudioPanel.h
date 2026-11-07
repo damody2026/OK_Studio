@@ -764,6 +764,7 @@ public:
 		});
 		Simple(TEXT("transform.reset"), TEXT("重設變換"), [this] { for (int32 Id : Game->Selection) if (FOKSceneObject* O = Game->Document->Find(Id)) O->Transform = FTransform::Identity; Changed(); });
 		Simple(TEXT("transform.face"), TEXT("面向對方"), [this] { FaceEachOther(); });
+		Simple(TEXT("transform.look"), TEXT("看對方"), [this] { LookEachOther(); });
 		Simple(TEXT("transform.sit"), TEXT("坐到椅子上"), [this]
 		{
 			const FOKSceneObject* X = Obj();
@@ -1937,6 +1938,11 @@ public:
 	FOKChair SitChair;
 	double SitAt = 0.;
 	void TickSit();
+	/** The item just added, until it is built and on the floor; someone moving it first has the last word. */
+	int32 LandId = -1;
+	double LandUntil = 0.;
+	FVector LandFrom = FVector::ZeroVector;
+	void TickLand();
 	/** From and to belong to a scene: a remembered 4 s cut a 30 s work (U262). */
 	int32 ExportRangeSerial = 0;
 	/** The map being prepared is the one picked in the map window, not the opening scene's. */
@@ -3739,6 +3745,44 @@ public:
 	}
 	/** Turns the selected characters to face each other (two selected), or the selected one to the nearest other
 	 *  character (U145: facing two people meant working out yaw angles by hand). A character looks along +Y at yaw 0. */
+	/** Eyes and neck on the other one's head, from where they are: the point stays when the other moves. */
+	void LookEachOther()
+	{
+		if (!Game.IsValid() || !Game->SceneActor) return;
+		UOKSceneDocument* Doc = Game->Document;
+		TArray<int32> Chars;
+		for (const int32 Id : Game->Selection)
+			if (const FOKSceneObject* S = Doc->Find(Id); S && S->Kind == EOKSceneObjectKind::Character) Chars.Add(Id);
+		if (Chars.IsEmpty()) { SetStatus(TEXT("先選一個角色")); return; }
+		const int32 Turning = FMath::Min(Chars.Num(), 2);
+		if (Chars.Num() == 1)
+		{
+			const FVector At = Doc->WorldTransform(Chars[0]).GetLocation();
+			int32 Near = -1;
+			double Best = TNumericLimits<double>::Max();
+			for (const FOKSceneObject& S : Doc->Objects)
+			{
+				if (S.Id == Chars[0] || S.Kind != EOKSceneObjectKind::Character) continue;
+				const double D = FVector::DistSquared2D(Doc->WorldTransform(S.Id).GetLocation(), At);
+				if (D < Best) { Best = D; Near = S.Id; }
+			}
+			if (Near < 0) { SetStatus(TEXT("場景裡沒有另一個角色")); return; }
+			Chars.Add(Near);
+		}
+		for (int32 K = 0; K < Turning; ++K)
+		{
+			FOKSceneObject* X = Doc->Find(Chars[K]);
+			const AKKPreviewActor* Preview = Game->SceneActor->PreviewOf(Chars[K]);
+			FVector Head;
+			if (!X || !Preview || !Game->BoneAt(Chars[1 - K], TEXT("cf_j_head"), Head)) { SetStatus(TEXT("角色還沒建好")); return; }
+			X->Character.LookPoint = Preview->GetActorTransform().InverseTransformPosition(Head);
+			X->Character.EyesLook = X->Character.NeckLook = EOKSceneLook::Point;
+		}
+		Changed();
+		DeferRebuild();
+		SetStatus(Doc->Find(Chars[0])->Name + TEXT(" 看向 ") + Doc->Find(Chars[1])->Name + TEXT("；對方移動後要再按一次"));
+	}
+
 	void FaceEachOther()
 	{
 		if (!Game.IsValid()) return;

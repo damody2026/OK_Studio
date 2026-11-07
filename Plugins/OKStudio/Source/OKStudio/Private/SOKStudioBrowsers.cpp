@@ -374,6 +374,12 @@ bool SOKStudioPanel::AddItemTo(int32 Group, int32 Category, int32 No, bool bAsCh
 	PickItem(Group, Category, No);
 	FOKStudioSettings::Get().UseRecent(ItemKey(Group, Category, No));
 	AddedStatus();
+	if (Parent < 0)
+	{
+		LandId = Id;
+		LandUntil = FPlatformTime::Seconds() + 10.;
+		if (const FOKSceneObject* O = Game->Document->Find(Id)) LandFrom = O->Transform.GetLocation();
+	}
 	return true;
 }
 

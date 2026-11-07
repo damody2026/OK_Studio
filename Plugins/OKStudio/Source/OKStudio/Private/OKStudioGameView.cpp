@@ -411,6 +411,7 @@ bool UOKStudioGame::ChairAt(const FVector2D& Position, FOKChair& Out) const
 			bSeat = true;
 		}
 		Chair.Hips = Middle + Side * Along + Front * (First + FMath::Min(16., (Last - First) / 2.));
+		Chair.Edge = FVector2D::DotProduct(Middle, Front) + Last;
 		Out = Chair;
 		return true;
 	}
@@ -457,6 +458,23 @@ bool UOKStudioGame::HipsOver(int32 Id, const FOKChair& Chair, bool* OutBehindDes
 	if (!O || !SceneActor || !OKStudioGameInternal::BoneWorld(SceneActor->PreviewOf(Id), TEXT("cf_j_hips"), Hips)) return false;
 	FTransform World = Document->WorldTransform(Id);
 	FVector2D Seat = Chair.Hips;
+	// On a deep sofa thighs end on the seat and the shins went down through it (U265): forward until knees and ankles are past
+	// the edge, as far as the hips stay on the seat. A sitting motion can draw the feet back behind the knees.
+	if (Chair.bFacing || Document->Find(Chair.Item))
+	{
+		const FVector Ahead3 = FRotator(0., World.Rotator().Yaw + 90., 0.).Vector();
+		const FVector2D Ahead(Ahead3.X, Ahead3.Y);
+		double Reach = TNumericLimits<double>::Max();
+		for (const TCHAR* Bone : { TEXT("cf_j_leg01_L"), TEXT("cf_j_leg01_R"), TEXT("cf_j_foot_L"), TEXT("cf_j_foot_R") })
+		{
+			FTransform Leg;
+			if (OKStudioGameInternal::BoneWorld(SceneActor->PreviewOf(Id), Bone, Leg))
+				Reach = FMath::Min(Reach, FVector::DotProduct(Leg.GetLocation() - Hips.GetLocation(), Ahead3));
+		}
+		const double At = FVector2D::DotProduct(Seat, Ahead);
+		const double Forward = FMath::Min(Chair.Edge + 4. - (At + Reach), Chair.Edge - 14. - At);
+		if (Reach < TNumericLimits<double>::Max() && Forward > 0.) Seat += Ahead * Forward;
+	}
 	// A classroom's chairs stand pushed in, the seat under the desk: on it she sat through the desk top. The map's chair cannot
 	// be pulled out, so she sits where it would be, a body's depth behind the desk's edge.
 	TArray<FBox> Boxes;
@@ -473,6 +491,14 @@ bool UOKStudioGame::HipsOver(int32 Id, const FOKChair& Chair, bool* OutBehindDes
 	constexpr double HipsOverSeat = 23.6;
 	World.AddToTranslation(FVector(Seat.X - Hips.GetLocation().X, Seat.Y - Hips.GetLocation().Y, Chair.SeatZ + HipsOverSeat - Hips.GetLocation().Z));
 	O->Transform = O->Parent >= 0 ? World.GetRelativeTransform(Document->WorldTransform(O->Parent)) : World;
+	return true;
+}
+
+bool UOKStudioGame::BoneAt(int32 Id, const TCHAR* Bone, FVector& Out) const
+{
+	FTransform World;
+	if (!SceneActor || !OKStudioGameInternal::BoneWorld(SceneActor->PreviewOf(Id), Bone, World)) return false;
+	Out = World.GetLocation();
 	return true;
 }
 
@@ -497,9 +523,12 @@ int32 UOKStudioGame::DropOnSurface()
 		// The first top the line of sight through its foot meets: where it looks to be. Straight below it was not: at 82 cm over
 		// the aisle a book looked to lie on the desk behind and fell to the floor (U262). A view from level or below looks down nowhere.
 		const FVector Foot(Box.GetCenter().X, Box.GetCenter().Y, Box.Min.Z);
+		// Furniture falls straight down: along the sight a sofa flew 2 m onto the TV stand behind it (U265).
+		const bool bBig = FMath::Max(Box.GetSize().X, Box.GetSize().Y) >= 40.;
 		const FVector Sight = (Foot - Eye).GetSafeNormal();
-		const FVector Down = Sight.Z < -0.05 ? Sight : FVector(0., 0., -1.);
-		const FVector From = Sight.Z < -0.05 ? Eye : Foot + FVector(0., 0., 30.);
+		const bool bAlong = !bBig && Sight.Z < -0.05;
+		const FVector Down = bAlong ? Sight : FVector(0., 0., -1.);
+		const FVector From = bAlong ? Eye : Foot + FVector(0., 0., 1.);
 		double Nearest = UE_BIG_NUMBER;
 		for (const FBox& S : Surfaces)
 		{

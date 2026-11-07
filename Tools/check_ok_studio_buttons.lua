@@ -404,6 +404,8 @@ local sofa = nil
 for oid, o in pairs(objects()) do if not known[oid] and o.kind == "item" then sofa = o end end
 check(sofa ~= nil, "a sofa to sit on")
 if sofa then
+  wait(120)
+  check(math.abs(objects()[sofa.id].location[3]) < 1, ("a new sofa lands on the floor (%.1f)"):format(objects()[sofa.id].location[3]))
   call("transform", { id = sofa.id, location = { 300, 0, 0 }, rotation = { 0, 0, 0 } }); wait(30)
   call("select", { ids = { id } }); wait(10)
   call("camera", { focus = { 300, 0, 50 }, yaw = 90, pitch = -20, distance = 300 }); wait(30)
@@ -413,6 +415,23 @@ if sofa then
   local me = objects()[id]
   local at = me and me.location or { 1e9, 1e9, 1e9 }
   check(math.abs(at[1] - 300) < 40 and math.abs(at[2]) < 30 and math.abs(at[3]) < 8, ("坐下 sits on the sofa (%.0f,%.0f,%.0f)"):format(at[1], at[2], at[3]))
+end
+
+-- U265: 看對方, both looking at the other's head.
+local card = (((call("inspect", { id = id }).object or {}).character or {}).card) or ""
+local known2 = objects()
+call("spawn", { kind = "character", card = card }); idle(); wait(60)
+local other = nil
+for oid, o in pairs(objects()) do if not known2[oid] and o.kind == "character" then other = o end end
+check(other ~= nil, "a second character to look at")
+if other then
+  call("select", { ids = { id, other.id } }); wait(10)
+  check(call("cmd", { id = "transform.look" }).ok, "看對方 runs")
+  wait(30)
+  local function neck(oid) return ((call("inspect", { id = oid }).object or {}).character or {}).neckLook end
+  check(neck(id) == "Point" and neck(other.id) == "Point", ("看對方 turns both to a look point (%s, %s)"):format(tostring(neck(id)), tostring(neck(other.id))))
+  call("select", { ids = { other.id } }); wait(10); call("cmd", { id = "edit.delete" }); wait(20)
+  call("select", { ids = { id } }); wait(10)
 end
 
 local wav = "UserData/audio/_button_check.wav"

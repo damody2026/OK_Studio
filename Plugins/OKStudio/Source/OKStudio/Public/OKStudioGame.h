@@ -47,6 +47,8 @@ struct FOKChair
 	double SeatZ = 0.;
 	FVector2D Hips = FVector2D::ZeroVector;
 	double Yaw = 0.;
+	/** How far along the way it looks the seat ends: knees go past it. */
+	double Edge = 0.;
 	/** A backrest told Yaw; without one, nothing but an item's turn or a desk beside it says. */
 	bool bFacing = false;
 };
@@ -126,7 +128,11 @@ public:
 	bool SeatAt(int32 Id, const FOKChair& Chair);
 	/** With its sitting motion on: the hips on the seat, wherever the motion has them. */
 	bool HipsOver(int32 Id, const FOKChair& Chair, bool* OutBehindDesk = nullptr);
-	/** The selected items and characters go onto the surface seen behind them, along the line of sight; how many moved. */
+	/** Where a bone of a character is now. */
+	bool BoneAt(int32 Id, const TCHAR* Bone, FVector& Out) const;
+	/** A new item the size of furniture goes down onto the floor and out of what stands there (U265). False while it is not built. */
+	bool LandFurniture(int32 Id, bool& bMoved);
+	/** The selected items and characters go onto the surface seen behind them, along the line of sight; furniture straight down. How many moved. */
 	int32 DropOnSurface();
 	/** The part of the view no panel covers, as fractions of the view (0..1, y down); the panel keeps it current. Framing
 	 *  centres there and sizes the distance to it. */
