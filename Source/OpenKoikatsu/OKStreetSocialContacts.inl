@@ -100,7 +100,10 @@ bool AOKStreetSocialScene::NavCellFree(const FIntPoint& Cell,float Z) const{
 TArray<FVector> AOKStreetSocialScene::GridRoute(const FVector& From,const FVector& To) const{
  // In the city a walled-in search ran through 60000 cells in one frame (300 ms). 4 ms, then no route: the caller falls back to
  // its other way, and the cells tested stay known, so the next try gets further.
- FOKStreetGridSearch G;G.From=From;G.To=To;GridSearchStep(G,OKStreetCityMode()?FPlatformTime::Seconds()+.004:TNumericLimits<double>::Max());return MoveTemp(G.Route);
+ // Upstairs 25 ms: the floors are small and walled, and every caller falls back to a straight line, which from the optician
+ // on the department store's 4F went through the shop's wall to the lift ("the way is blocked") or across the atrium.
+ const double Budget=!OKStreetCityMode()?TNumericLimits<double>::Max():OKStreetUpstairs(From)?.025:.004;
+ FOKStreetGridSearch G;G.From=From;G.To=To;GridSearchStep(G,FPlatformTime::Seconds()+Budget);return MoveTemp(G.Route);
 }
 bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline) const{
  if(G.Phase==2)return true;
