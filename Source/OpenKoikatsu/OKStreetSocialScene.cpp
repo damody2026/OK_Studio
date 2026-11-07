@@ -719,7 +719,12 @@ static int32 OKStreetNormalizeFloorFinishes(UWorld* World){
  return Count;
 }
 
+// The two functions OKStreetSocialRules.h declares for the city.
+FVector OKStreetCitySpawn(){const auto* Dorm=OKStreetFindPlace(TEXT("boys_dorm"));return Dorm?Dorm->Door:FVector::ZeroVector;}
+FVector OKStreetCityWalkPoint(int32 Index){const auto& City=OKStreetCity();if(City.Walk.IsEmpty())return OKStreetCitySpawn();const int32 Node=City.Walk[Index%City.Walk.Num()];return City.Nodes.IsValidIndex(Node)?City.Nodes[Node]:OKStreetCitySpawn();}
+
 static bool OKStreetCreateRuntimeBackdrop(UWorld* World,AActor* Owner,FOKStreetSceneState& State,FString& Error){
+ if(OKStreetCityMode())return true; // the city has its own ground and sky
  UStaticMeshComponent* Ground=nullptr;
  for(TActorIterator<AStaticMeshActor> It(World);It;++It){
   auto* Component=It->GetStaticMeshComponent();
@@ -3815,7 +3820,7 @@ void AOKStreetSocialScene::BeginFacility(int32 Kind,int32 Character){
  EndTalk();S.Facility=Kind;S.FacilityCharacter=Character;S.FacilitySavedAgent=S.Agents[Character-1];S.FacilitySavedRotation=S.Rotations[Character];S.FacilitySavedMaleRotation=S.Rotations[0];S.FacilitySavedMale=S.Male;S.FacilitySavedYaw=S.Yaw;S.FacilitySavedPitch=S.Pitch;S.FacilitySavedDistance=S.Distance;S.FacilityRequestedAt=SceneTime();S.FacilityStartedAt=0;S.FacilityEntered=false;S.FacilitySavedMouse=S.MouseUI;S.NavGirl=INDEX_NONE;S.NavPath.Reset();
  // In a place: right where they stand, facing his way, with the props only (no room shell, no collision). Elsewhere
  // (and in the self-test probes) the independent authored room off the map.
- const bool InPlace=!S.SelfTest&&!PlaceHere(S.Male).IsEmpty();
+ const bool InPlace=!S.SelfTest&&(OKStreetCityMode()||!PlaceHere(S.Male).IsEmpty()); // the off-map room would stand under the city
  S.FacilityInPlace=InPlace;S.FacilityRotation=InPlace?FRotator(0,S.Rotations[0].Yaw,0):FRotator::ZeroRotator;
  S.FacilityOrigin=InPlace?FVector(S.Male.X,S.Male.Y,OKStreetFloorZ(S.Male)):FVector(7000.f,Kind*1600.f,0);
  const FVector Origin=S.FacilityOrigin;const FRotator Turn=S.FacilityRotation;
@@ -4053,6 +4058,7 @@ void AOKStreetSocialScene::Tick(float Dt){
     UE_LOG(LogTemp,Display,TEXT("Street walk: actor %d is inside %s, a wall before her next stop %s: out on the grid"),Agent.Slot,P.Id,*Stop.ToCompactString());
     break;}
   const FVector Before=Agent.Position;if(Agent.Slot!=S.PairRestoredActor||GFrameCounter!=S.PairRestoredFrame)OKStreetStepAgent(Agent,FMath::Min(Dt,.05f),Snapshot,TravelSpeed);
+  if(OKStreetCityMode()){float GroundZ=Agent.Position.Z;if(OKStreetGroundZ(GetWorld(),Agent.Position,GroundZ,this))Agent.Position.Z=GroundZ;}
   // Her street walk heads straight for its next stop; a building in between (the block across from the dorm door) held
   // her walking at its wall, and the stuck rule only turned her to the next stop behind it too. Held up 1.5 s, she
   // walks round to that stop on the grid (its cells tested against the buildings), then the street walk goes on (R3-211).

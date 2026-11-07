@@ -1,0 +1,24 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "1.0",
+  "FriendlyName": "City Environment",
+  "Description": "Runtime civil clock, topocentric sun and moon, and resort night lighting for the university city. No editor or Python dependency.",
+  "Category": "Environment",
+  "CreatedBy": "OpenKoikatsu",
+  "CanContainContent": false,
+  "EnabledByDefault": true,
+  "Modules": [
+    {
+      "Name": "CityEnvironment",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "CityLocalization",
+      "Enabled": true
+    }
+  ]
+}

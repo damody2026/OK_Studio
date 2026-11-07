@@ -1,4 +1,6 @@
 #include "OKCrowdScene.h"
+#include "EngineUtils.h"
+#include "OKStreetSocialScene.h"
 #ifndef OK_CROWD_RUNTIME_APNG
 #define OK_CROWD_RUNTIME_APNG 0
 #endif
@@ -196,6 +198,10 @@ void ConfigureLowFollowers(AKKImportedCharacterActor* Actor,bool IsLow){
 }
 
 AOKCrowdGameMode::AOKCrowdGameMode(){DefaultPawnClass=ASpectatorPawn::StaticClass();PlayerControllerClass=AOKCrowdController::StaticClass();HUDClass=nullptr;}
+void AOKCrowdGameMode::StartPlay(){
+ Super::StartPlay();
+ if(FParse::Param(FCommandLine::Get(),TEXT("StreetCity"))&&!TActorIterator<AOKStreetSocialScene>(GetWorld()))GetWorld()->SpawnActor<AOKStreetSocialScene>();
+}
 void UOKCrowdRenderSkin::RefreshBoneTransforms(FActorComponentTickFunction* TickFunction){
  if(GpuAnimationClockOwned)return;
  // TickAnimation keeps advancing every frame. Forced initialization and phase

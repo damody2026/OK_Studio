@@ -1,0 +1,17 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "1.0",
+  "FriendlyName": "City Runtime Localization",
+  "Description": "Shared runtime language control for the assembled university city.",
+  "Category": "Localization",
+  "CanContainContent": false,
+  "EnabledByDefault": true,
+  "Modules": [
+    {
+      "Name": "CityLocalization",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ]
+}

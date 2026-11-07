@@ -288,7 +288,7 @@ void AOKStreetSocialScene::TickSchedules(){
    A.Held=true;S.ScheduleHeld.Add(I);
    // Seen by him: she walks there. Out of sight: she is simply there (plan §6.3).
    // An upper floor: she walks to the building's door, then goes up (no walking through floors).
-   const auto* Dest=OKStreetFindPlace(Block->Place);const bool Upstairs=Spot.Z>100&&Dest;
+   const auto* Dest=OKStreetFindPlace(Block->Place);const bool Upstairs=OKStreetUpstairs(Spot)&&Dest;
    // The day's first block (the game just started) puts her there directly too: no crowd leaving at once.
    if(!Fresh&&FVector::Dist2D(A.Position,S.Male)<4000){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_BlockQueueWalk);QueueHeroineWalk(I,A.Position,Upstairs?Dest->Door:Spot,false,Upstairs,Spot,Spot,Yaw,Block->Place);continue;} // routed a slice a frame
    S.PendingMoves.Remove(I);
@@ -345,7 +345,7 @@ void AOKStreetSocialScene::QueueHeroineWalk(int32 I,const FVector& From,const FV
  if(FMath::Abs(From.Z-To.Z)>=150.f){TArray<FVector> Path=PlaceRouteWaypoints(From,To);
   // Upstairs with no route down (雷电将军 on the department store's 8F, 1.3 m from him, off to the park): she was put in
   // the park at once, gone before his eyes (R6-101). Seen by him, she rides the lift down to the door, then walks on.
-  if(Path.Num()<2&&!Leave&&From.Z>100.f){const FString Here=PlaceHere(From);
+  if(Path.Num()<2&&!Leave&&OKStreetUpstairs(From)){const FString Here=PlaceHere(From);
    if(const FOKStreetPlace* P=Here.IsEmpty()?nullptr:OKStreetFindPlace(Here);P&&FMath::Abs(P->Door.Z-From.Z)>100.f&&StartNpcLift(I,P->Door,Here)){
     auto& L=S.NpcLifts[I];L.Onward=true;L.OnTo=To;L.OnHasFinal=HasFinal;L.OnFinal=Final;L.OnFallback=Fallback;L.OnYaw=Yaw;L.OnPlace=Place;
     UE_LOG(LogTemp,Display,TEXT("Street plan: actor %d rides down from %s before walking to %s"),I,*Here,*Place);return;}}

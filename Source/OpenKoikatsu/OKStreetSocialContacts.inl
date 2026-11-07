@@ -10,6 +10,7 @@ bool AOKStreetSocialScene::ContactIdle() const {if(!State)return false;const aut
 // Only sitting and talking with this girl in the way of a contact: nothing else going on (a photo being taken, a meal).
 bool AOKStreetSocialScene::SeatedWith(int32 Girl) const {if(!State)return false;const auto& S=*State;return S.Pair.Partner==Girl&&S.Pair.Conversation()&&!S.Pair.CapturePending&&S.PrivateGirl==INDEX_NONE&&S.Facility==INDEX_NONE&&S.Companion==INDEX_NONE&&!OKStreetConversationBusy(S.Node!=INDEX_NONE,S.CollectedActive,S.RelationshipPending,S.TouchActive);}
 TArray<FVector> AOKStreetSocialScene::ContactRoute(const FVector& From,const FVector& To) const {
+ if(OKStreetCityMode()&&(OKStreetCityFar(From,To)||FMath::Abs(From.Z-To.Z)>=150.f))return OKStreetCityRoute(From,To);
  if(FMath::Abs(From.Z-To.Z)<150.f){auto Grid=GridRoute(From,To);if(Grid.Num()>=2)return Grid;}
  TArray<FOKStreetPointData> Shared;OKStreetWaypoints(Shared);TArray<FVector> Points;for(const auto& P:Shared)Points.Add(P.Position);
  return OKStreetContactRoute(From,To,Points,[&](const FVector& A,const FVector& B){
@@ -23,12 +24,14 @@ void AOKStreetSocialScene::NavigateGirl(int32 Character){if(!ContactReady(Charac
  if(S.Target!=INDEX_NONE||S.Pair.Partner!=INDEX_NONE||S.OutingGirl!=INDEX_NONE||S.Facility!=INDEX_NONE){S.Message=OKT(TEXT("ui.contacts.end_activity_before_nav"));S.ContactsNotice=S.Message;return;}
  // She is on another floor: the navigation takes the elevator (PlanNavLift, in StepNavigation).
  S.NavRide=FOKStreetLiftRide();S.NavGirl=Character;S.NavPointActive=false;S.NavAt=0;S.NavStep=1;S.NavReplans=0;S.NavProgressAt=SceneTime();S.NavPath=ContactRoute(S.Male,S.Agents[Character-1].Position);S.ContactsNotice=OKT(TEXT("ui.contacts.auto_travel_to_her_hint"));}
-void AOKStreetSocialScene::NavigatePoint(const FVector& Goal,const FString& Name){
+void AOKStreetSocialScene::NavigatePoint(const FVector& Spot,const FString& Name){
  if(!State)return;auto& S=*State;
+ FVector Goal=Spot;if(OKStreetCityMode()&&Goal.Z==0.f)Goal.Z=S.Male.Z; // a spot on the big map has no height
  if(S.Target!=INDEX_NONE||S.PrivateGirl!=INDEX_NONE||S.Pair.Partner!=INDEX_NONE||S.OutingGirl!=INDEX_NONE||S.Facility!=INDEX_NONE){S.Message=OKT(TEXT("ui.contacts.end_activity_before_map_nav"));return;}
  // On his floor the street grid is searched a slice a frame (TickNavSearch, 3 ms each): a long route held the frame
  // 6-8 ms. Another floor: the place graph (doors and corridors), at once.
  S.NavSearch.Reset();
+ if(OKStreetCityMode()&&OKStreetCityFar(S.Male,Goal)){NavigatePointAlong(Goal,Name,OKStreetCityRoute(S.Male,Goal));return;}
  if(FMath::Abs(S.Male.Z-Goal.Z)<150.f){S.NavSearch=MakeShared<FOKStreetGridSearch>();S.NavSearch->From=S.Male;S.NavSearch->To=Goal;S.NavSearchGoal=Goal;S.NavSearchName=Name;return;}
  NavigatePointAlong(Goal,Name,PlaceRouteWaypoints(S.Male,Goal));
 }
@@ -74,7 +77,9 @@ bool AOKStreetSocialScene::NavCellFree(const FIntPoint& Cell,float Z) const{
  QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_NavCellTest);
  const FVector P(Cell.X*OKStreetNavCell,Cell.Y*OKStreetNavCell,Z);
  bool Free=OKStreetObstacleGap(P,30.f)>30.f;
- if(Free){FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetNavCell),false,this);Free=!GetWorld()->OverlapAnyTestByChannel(P+FVector(0,0,85),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(40,78),Query);} // wider than his 28: a cell beside an awning or a sign is not a way
+ // The city's ground is not flat: a cell needs ground near this height, and the body is tested above a step's height.
+ float GroundZ=Z;if(Free&&OKStreetCityMode())Free=OKStreetGroundZ(GetWorld(),P,GroundZ,this);
+ if(Free){FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetNavCell),false,this);Free=!GetWorld()->OverlapAnyTestByChannel(FVector(P.X,P.Y,GroundZ)+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(40,OKStreetBodyHalf()),Query);} // wider than his 28: a cell beside an awning or a sign is not a way
  Grid.Add(Cell,Free);return Free;
 }
 TArray<FVector> AOKStreetSocialScene::GridRoute(const FVector& From,const FVector& To) const{
@@ -148,7 +153,7 @@ bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline
   for(int32 I=1;I<N;++I)if(!Passable(ToCell(FMath::Lerp(A,B,float(I)/N))))return false;
   FHitResult Hit;
   // Starting against a wall counts as clear only when the line leads away from it (as StreetStep backs out of one).
-  if(GetWorld()->SweepSingleByChannel(Hit,FVector(A.X,A.Y,Z)+FVector(0,0,85),FVector(B.X,B.Y,Z)+FVector(0,0,85),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(30,78),SweepQuery)&&(!Hit.bStartPenetrating||FVector::DotProduct((B-A).GetSafeNormal2D(),Hit.Normal)<=0.f))return false;
+  if(GetWorld()->SweepSingleByChannel(Hit,FVector(A.X,A.Y,Z)+FVector(0,0,OKStreetBodyLift()),FVector(B.X,B.Y,Z)+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(30,OKStreetBodyHalf()),SweepQuery)&&(!Hit.bStartPenetrating||FVector::DotProduct((B-A).GetSafeNormal2D(),Hit.Normal)<=0.f))return false;
   return true;};
  QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_GridPull);
  // A slice at a time too: out of time between two tries, it goes on from the same corner and cell next slice.
@@ -180,12 +185,15 @@ FVector AOKStreetSocialScene::StreetStep(const FVector& From,const FVector& Dire
    if(A.Slot==State->Companion||A.Slot==State->OutingGirl||A.Slot==State->Pair.Partner)continue;const float Near=float(FVector::Dist2D(To,A.Position));
    if(Near<OKStreetHeroineBody&&Near<float(FVector::Dist2D(From,A.Position)))return false;}
   FHitResult Hit;
-  if(GetWorld()->SweepSingleByChannel(Hit,From+FVector(0,0,85),To+FVector(0,0,85),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(28,78),Query))
+  if(GetWorld()->SweepSingleByChannel(Hit,From+FVector(0,0,OKStreetBodyLift()),To+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(28,OKStreetBodyHalf()),Query))
    if(!Hit.bStartPenetrating||FVector::DotProduct((To-From).GetSafeNormal2D(),Hit.Normal)<=0.f)return false;
   return true;};
  // Straight on, else slide along the obstacle: either axis, then 45 degrees either way (corners, posts, trees).
  const FVector Tries[]={D,FVector(FMath::Sign(D.X),0,0),FVector(0,FMath::Sign(D.Y),0),D.RotateAngleAxis(45,FVector::UpVector),D.RotateAngleAxis(-45,FVector::UpVector)};
- for(const FVector& T:Tries){if(T.IsNearlyZero()||FVector::DotProduct(T,D)<.3f)continue;const FVector To=From+T*Distance;if(Free(To))return To;}
+ for(const FVector& T:Tries){if(T.IsNearlyZero()||FVector::DotProduct(T,D)<.3f)continue;FVector To=From+T*Distance;
+  // The city's ground: he goes up and down with it, and where there is none he does not go.
+  if(OKStreetCityMode()){float GroundZ=From.Z;if(!OKStreetGroundZ(GetWorld(),To,GroundZ,this))continue;To.Z=GroundZ;}
+  if(Free(To))return To;}
  return From;
 }
 // Where to walk to speak to her: where she is, or, when she sits among furniture (a sofa, a bench by a table), the

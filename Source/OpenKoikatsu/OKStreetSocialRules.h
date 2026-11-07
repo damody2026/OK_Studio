@@ -1739,7 +1739,13 @@ inline bool OKStreetReadManifestSocial(const FString& ManifestPath, const FStrin
  return true;
 }
 
-inline FVector OKStreetMaleSpawn() { return FVector(0.f, -700.f, 0.f); }
+// The university city (/Game/UniversityCity/Maps/UniversityCity) in place of the built street: -StreetCity. Its buildings and
+// ground are in the map, its places in StreetSocialData/city_places.json, and the ground is not at z=0.
+inline bool OKStreetCityMode() { static const bool City = FParse::Param(FCommandLine::Get(), TEXT("StreetCity")); return City; }
+FVector OKStreetCitySpawn(); // OKStreetSocialScene.cpp: at the boys' dorm
+FVector OKStreetCityWalkPoint(int32 Index); // OKStreetSocialScene.cpp: the street walks' stops, on the roads
+
+inline FVector OKStreetMaleSpawn() { return OKStreetCityMode() ? OKStreetCitySpawn() : FVector(0.f, -700.f, 0.f); }
 
 inline void OKStreetAddPoint(TArray<FOKStreetPointData>& Points, float X, float Y, EOKStreetPoint Kind) {
  FOKStreetPointData Point;
@@ -1762,6 +1768,7 @@ inline void OKStreetWaypoints(TArray<FOKStreetPointData>& Points) {
  OKStreetAddPoint(Points, 450, 720, EOKStreetPoint::Seat);
  OKStreetAddPoint(Points, 0, 1800, EOKStreetPoint::Walk);
  OKStreetAddPoint(Points, 0, 2350, EOKStreetPoint::Look);
+ if (OKStreetCityMode()) for (int32 I = 0; I < Points.Num(); ++I) Points[I].Position = OKStreetCityWalkPoint(I); // same routes, on the city's roads
 }
 
 inline void OKStreetRoutes(TArray<TArray<int32>>& Routes) {
@@ -1807,6 +1814,7 @@ inline void OKStreetMakeAgents(TArray<FOKStreetAgentSim>& Agents, int32 Females 
 
 inline void OKStreetProps(TArray<FOKStreetProp>& Props) {
  Props.Reset();
+ if (OKStreetCityMode()) return; // the city's things are in its map, with collision
  auto Add = [&](EOKStreetPropKind Kind, EOKStreetMesh Mesh, EOKStreetMaterial Material, FVector Center, FVector Size, float Yaw = 0.f) {
   FOKStreetProp Prop;
   Prop.Kind = Kind;
@@ -2136,7 +2144,7 @@ inline void OKStreetStepAgent(FOKStreetAgentSim& Agent, float Dt, const TArray<F
  Step.Z = 0.f;
  const FVector Proposed = Agent.Position + Step;
  if (!OKStreetBlockedPoint(Proposed, 20.f)) Agent.Position = Proposed;
- Agent.Position.Z = 0.f;
+ if (!OKStreetCityMode()) Agent.Position.Z = 0.f; // the city's ground: the scene sets her height (OKStreetGroundZ)
  OKStreetAccumulateStuck(Agent, FVector::Dist2D(Before, Agent.Position), Dt, Routes);
  if (Agent.Dwell <= 0.f) Agent.Mode = EOKStreetMove::Walking;
 }

@@ -12,6 +12,14 @@
 	],
 	"Plugins": [
 		{
+			"Name": "CityLocalization",
+			"Enabled": true
+		},
+		{
+			"Name": "CityEnvironment",
+			"Enabled": true
+		},
+		{
 			"Name": "KKRuntimePose",
 			"Enabled": true
 		},

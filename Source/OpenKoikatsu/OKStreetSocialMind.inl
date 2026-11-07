@@ -11,6 +11,8 @@ void AOKStreetSocialScene::StartCalendarAndMind(){
   else{S.Rules.Reset();OKStreetRulesFatal(Error);return;}}
  LoadCatalog();
  // A saved game continues where he was (the start place below, a development switch, still wins).
+ // A save from the other map: the spot means nothing here, he starts at the dorm, and who was with him goes on from her day.
+ if(S.Store.HasPlayerSpot&&OKStreetCityMode()!=(S.Store.PlayerSpot.Z>500.f)){UE_LOG(LogTemp,Display,TEXT("Street start: the saved spot %s is on the other map"),*S.Store.PlayerSpot.ToCompactString());S.Store.HasPlayerSpot=false;S.Store.WithHim.Reset();}
  if(S.Store.HasPlayerSpot&&!S.SelfTest){S.Male=S.Store.PlayerSpot;if(S.Rotations.IsValidIndex(0))S.Rotations[0]=FRotator(0,S.Store.PlayerYaw,0);S.Yaw=S.Store.ViewYaw;S.SpotSavedMale=S.Male;
   UE_LOG(LogTemp,Display,TEXT("Street start: where he was saved, %s yaw %.0f"),*S.Male.ToCompactString(),S.Store.PlayerYaw);
   for(const auto& W:S.Store.WithHim)S.ResumeWithHim.Add(W.Id,W); // put back by TickSchedules once her plan is there
@@ -28,7 +30,7 @@ void AOKStreetSocialScene::StartCalendarAndMind(){
  // Development: OK_STREET_START_PLACE=<place id> starts the player inside that place (first anchor, else room, else door).
  {FString Start=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_STREET_START_PLACE")),Anchor;Start.Split(TEXT("@"),&Start,&Anchor);if(Start.IsEmpty())Start=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_STREET_START_PLACE"));
   if(!Start.IsEmpty()&&!S.SelfTest)if(const auto* P=OKStreetFindPlace(Start)){const FOKStreetModelAnchor* A=Anchor.IsEmpty()?(P->Anchors.Num()?&P->Anchors[0]:nullptr):P->Anchors.FindByPredicate([&](const FOKStreetModelAnchor& X){return X.Name==Anchor;});
-   S.Male=A?A->Position:P->Rooms.Num()?P->Rooms[0].GetCenter():P->Door;if(!A)S.Male.Z=0;UE_LOG(LogTemp,Display,TEXT("Street start place: %s %s"),*Start,A?*A->Name:TEXT("(room)"));}}
+   S.Male=A?A->Position:P->Rooms.Num()?P->Rooms[0].GetCenter():P->Door;if(!A)S.Male.Z=OKStreetCityMode()?P->Door.Z:0;UE_LOG(LogTemp,Display,TEXT("Street start place: %s %s"),*Start,A?*A->Name:TEXT("(room)"));}}
  {FString Body;TSharedPtr<FJsonObject> Player;double Base=50;const FString PlayerFile=FPaths::GetPath(S.Manifest.SavePath)/TEXT("player.json");
   if(FFileHelper::LoadFileToString(Body,*PlayerFile)&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Body),Player)&&Player.IsValid()){
    if(Player->TryGetNumberField(TEXT("appearance_base"),Base))S.PlayerLookBase=FMath::Clamp(float(Base),0.f,100.f);

@@ -30,7 +30,7 @@ local json, path, proc, hash, util = ok.json, ok.path, ok.proc, ok.hash, ok.util
 local fs = require "okfs"
 local instance = require "ok_instance"
 
-local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, mainsave = true, editor = true, nogpurig = true, gpurig = true }
+local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, mainsave = true, editor = true, nogpurig = true, gpurig = true, city = true }
 local VALUES = { selectionfile = true, malecard = true, retargetfile = true, renderscale = true, executable = true,
   controlport = true, clock = true, window = true, sandbox = true, portbase = true, rulesdll = true, exec = true, trace = true, gpucachedir = true,
   gameargs = true, gpurigverify = true, heroine = true }
@@ -468,11 +468,14 @@ local function main()
 
   local win_w, win_h = (o.window or "1920x1080"):match("^(%d+)[xX](%d+)$")
   if not win_w then error("-Window takes WxH, e.g. 1280x720", 0) end
-  local game = { build.executable, "/Game/Scenes/StreetSocial/StreetSocial", "-D3D12", "-SM6", "-windowed", "-ResX=" .. win_w, "-ResY=" .. win_h, "-WinX=40", "-WinY=40",
+  -- -City: the university city in place of the built street (Docs/STREET_CITY_PLACES_INVENTORY_20261103.md).
+  local map = o.city and "/Game/UniversityCity/Maps/UniversityCity?game=/Script/OpenKoikatsu.OKCrowdGameMode" or "/Game/Scenes/StreetSocial/StreetSocial"
+  local game = { build.executable, map, "-D3D12", "-SM6", "-windowed", "-ResX=" .. win_w, "-ResY=" .. win_h, "-WinX=40", "-WinY=40",
     "-StreetSocialManifest=" .. manifest }
   -- The editor reads the project's uncooked content: the project goes first, and the cooked patch is not mounted.
   if o.editor then table.insert(game, 2, path.join(root, "OpenKoikatsu.uproject")); game[#game + 1] = "-game"
   elseif path.exists(build.patch) then game[#game + 1] = "-pakdir=" .. build.patch end
+  if o.city then game[#game + 1] = "-StreetCity" end
   game[#game + 1] = "-abslog=" .. path.join(output, "game.log")
   game[#game + 1] = "-RuntimeGpuCacheMiB=4096"
   -- The GPU rig's shaders are verified at startup only when asked for (OKGpuRig.cpp): with gpu_rig on, the patch has them.

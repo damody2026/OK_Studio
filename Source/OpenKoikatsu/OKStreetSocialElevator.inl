@@ -295,7 +295,7 @@ float AOKStreetSocialScene::StepLiftRide(float Dt){
 // height in two buildings is two floors, joined only through the street).
 bool AOKStreetSocialScene::NavNeedsLift(const FVector& Goal) const{
  const auto& S=*State;if(FMath::Abs(Goal.Z-S.Male.Z)>=150.f)return true;
- if(S.Male.Z<=100.f)return false;
+ if(!OKStreetUpstairs(S.Male))return false;
  for(const auto& P:OKStreetPlaces())if(OKStreetInsidePlace(P,S.Male))return !OKStreetInsidePlace(P,Goal);
  return false;
 }
@@ -311,16 +311,16 @@ bool AOKStreetSocialScene::PlanNavLift(const FVector& Goal){
   UE_LOG(LogTemp,Display,TEXT("Street navigation: by the elevator of %s to floor %d (%d points to the landing)"),Places[PlaceIx].Id,Floor,S.NavPath.Num());
   return true;};
  // Upstairs in the girls' dorm is their rooms: said before any ride.
- if(Goal.Z>100.f)if(const FOKStreetPlace* Dorm=OKStreetFindPlace(TEXT("girls_dorm")))if(OKStreetInsidePlace(*Dorm,Goal)){StopNavigation(OKT(TEXT("ui.elevator.dorm_upstairs_restricted")));return true;}
+ if(OKStreetUpstairs(Goal))if(const FOKStreetPlace* Dorm=OKStreetFindPlace(TEXT("girls_dorm")))if(OKStreetInsidePlace(*Dorm,Goal)){StopNavigation(OKT(TEXT("ui.elevator.dorm_upstairs_restricted")));return true;}
  // Upstairs: down (or across floors in the same building).
- if(S.Male.Z>100.f)for(int32 P=0;P<Places.Num();++P){
+ if(OKStreetUpstairs(S.Male))for(int32 P=0;P<Places.Num();++P){
   if(!OKStreetInsidePlace(Places[P],S.Male))continue;const auto Lifts=OKStreetPlaceLifts(Places[P]);if(Lifts.IsEmpty()||ElevatorOfPlace(P)==INDEX_NONE)continue;
   const int32 From=FloorOf(Lifts,S.Male.Z);const bool Same=OKStreetInsidePlace(Places[P],Goal);const int32 To=Same?FloorOf(Lifts,Goal.Z):0;
   if(From==To)return false;
   return Ride(P,To,!Same,GridRoute(S.Male,Lifts[From]->Position));
  }
  // On the ground: up in the building she (or the spot) is in.
- if(Goal.Z>100.f)for(int32 P=0;P<Places.Num();++P){
+ if(OKStreetUpstairs(Goal))for(int32 P=0;P<Places.Num();++P){
   if(!OKStreetInsidePlace(Places[P],Goal))continue;const auto Lifts=OKStreetPlaceLifts(Places[P]);if(Lifts.IsEmpty()||ElevatorOfPlace(P)==INDEX_NONE)continue;
   TArray<FVector> Walk;
   if(OKStreetInsidePlace(Places[P],S.Male))Walk=GridRoute(S.Male,Lifts[0]->Position);
