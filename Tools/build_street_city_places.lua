@@ -378,7 +378,9 @@ do
   local lodges = {}
   for _, p in ipairs(places) do if p.kind == 'motel_pool_suite' then lodges[#lodges + 1] = p end end
   local l = lodges[1]
-  if l then def('lodge', { building = 'H1', name = '泳池套房（' .. l.name .. '）', door = l.door, rooms = { { center = l.room.center, size = l.room.size, yaw = l.room.yaw } },
+  -- its door on the floor of the suite: the doorstep is 165 cm above the hotel's 2F landing, and the game counts 150 as
+  -- another floor, so it rode the lift and stopped there (11-08)
+  if l then def('lodge', { building = 'H1', name = '泳池套房（' .. l.name .. '）', door = P(l.door[1], l.door[2], l.room.center[3] - l.room.size[3] / 2), rooms = { { center = l.room.center, size = l.room.size, yaw = l.room.yaw } },
     anchors = { A('bed2_0', l.anchors[1].pos, l.anchors[1].yaw, l.id), A('seat', l.anchors[3].pos, 0, l.id), A('lounge2', l.room.center, 0, l.id) }, privacy = 2, alternates = (function() local o = {}; for k = 2, #lodges do o[#o + 1] = lodges[k].id end; return o end)() }) end
 end
 do -- minshuku = S18, onsen = S19
@@ -458,7 +460,10 @@ do
   end
   -- the other multi-storey game places (department 9F/10F, hotel 6F, school 2F/3F, dorms) get the same, plus 'hall':
   -- the ground-floor lobby point 2 m out from the lift landing that the outing route walks through to the lift
-  local multi = { girls_dorm = true, boys_dorm = true, department = true, hotel = true, school = true, lecture = true }
+  -- SC, SP, LI and CV have the same lift shafts: without anchors the game could not take him to the club rooms, the gym, the
+  -- aquarium or the cinema upstairs ("on another floor, no way there", 11-08). CV had no place for the whole building: 'civic'.
+  def('civic', { building = 'CV', name = bname.CV or '市民中心', door = entry.CV, rooms = { bbox('CV') }, anchors = {}, privacy = 0 })
+  local multi = { girls_dorm = true, boys_dorm = true, department = true, hotel = true, school = true, lecture = true, cafeteria = true, campus_sports = true, library = true, civic = true }
   for _, g in ipairs(G) do
     if multi[g.id] or (g.id:match('^campus_') and g.building) then
       if multi[g.id] then cores(g.building, g.anchors) end

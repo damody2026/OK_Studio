@@ -30,6 +30,28 @@ local function problem(text) problems[#problems + 1] = text end
 local places = data.game_places
 table.sort(places, function(a, b) return a.id < b.id end)
 local anchors, rooms = 0, 0
+-- the lift stops of each multi-storey place, to number the floor of a room inside it that has none
+local stops = {}
+for _, p in ipairs(places) do
+  local z = {}
+  for _, an in ipairs(p.anchors or {}) do local k = an.name:match('^lift(%d+):'); if k then z[tonumber(k)] = an.pos[3] end end
+  if #z > 1 then
+    local box; for _, room in ipairs(p.rooms or {}) do if room.min then box = box or room end end
+    if box then stops[#stops + 1] = { box = box, z = z } end
+  end
+end
+local function floorof(room)
+  local cx, cy, z0 = (room.min[1] + room.max[1]) / 2, (room.min[2] + room.max[2]) / 2, room.min[3]
+  for _, s in ipairs(stops) do
+    local b = s.box
+    if cx >= b.min[1] and cx <= b.max[1] and cy >= b.min[2] and cy <= b.max[2] then
+      local best, d = 1, math.huge
+      for k, z in ipairs(s.z) do if math.abs(z - z0) < d then best, d = k, math.abs(z - z0) end end
+      return best
+    end
+  end
+  return math.max(2, 1 + math.floor((z0 - 1200) / 400 + .5))
+end
 for _, p in ipairs(places) do
   if not p.door or #p.door ~= 3 then problem(p.id .. ': no door') end
   if not p.rooms or #p.rooms == 0 then problem(p.id .. ': no rooms') end
@@ -43,7 +65,13 @@ for _, p in ipairs(places) do
       room.max = { room.center[1] + hx, room.center[2] + hy, room.center[3] + hz }
     end
     if not room.min or not room.max then problem(p.id .. ': a room without min/max')
-    else r[#r + 1] = '{"min":' .. vec(room.min) .. ',"max":' .. vec(room.max) .. ',"floor":' .. num(room.floor or 1) .. '}'; rooms = rooms + 1 end
+    else
+      -- a room up in a building without a floor number was taken for the ground floor, so the game walked to the gym storage
+      -- on the street instead of taking the lift (11-08): above 14.5 m it is numbered by the nearest lift stop of the building
+      -- it is in, else 4 m a floor
+      local floor = room.floor or (room.min[3] >= 1450 and floorof(room) or 1)
+      r[#r + 1] = '{"min":' .. vec(room.min) .. ',"max":' .. vec(room.max) .. ',"floor":' .. num(floor) .. '}'; rooms = rooms + 1
+    end
   end
   local a, seen = {}, {}
   for _, anchor in ipairs(p.anchors or {}) do

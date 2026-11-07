@@ -1,5 +1,6 @@
 -- Native job: open the closed lift doors of the campus and dorm floors above the ground floor.
 --   lua Tools/street_city_motel_job.lua world_lift_doors Tools/street_city_lift_doors_payload.lua
+-- Floors already opened have nothing left in the box and are skipped, so a rerun takes only new ones (SC, SP, LI, CV came 11-08).
 -- The floors were modelled with the lift door shut above 1F; the game draws its own doors at the shaft, so the landing was walled in
 -- 28 cm in front. On 1F the same place is an open passage 120 cm wide. The door goes from both meshes of a floor: what is drawn, and
 -- ComplexCollisionMesh, the older mesh its collision comes from. The assets are edited where they are, so the map and its streaming
@@ -57,7 +58,7 @@ def motel_world_lift_doors():
     for key,mesh in (('drawn',m),('solid',src)):
      if not mesh:continue
      d=load(mesh);s=pick(d,lo,hi);row[key]=str(SEL.get_mesh_selection_info(s));row[key+'_all']=QF.get_num_triangle_i_ds(d)
-     if APPLY:
+     if APPLY and SEL.get_mesh_selection_info(s)[1]>0:
       ED.delete_selected_triangles_from_mesh(d,s);save(d,mesh)
     if APPLY and src:
      m.set_editor_property('complex_collision_mesh',src);assert unreal.EditorAssetLibrary.save_loaded_asset(m,False)

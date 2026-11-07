@@ -581,6 +581,8 @@ R1／R2 每戶的家具都按房間檢查過（用掃描資料切房間，見錯
 - 重建要先把舊的 `__ExternalActors__`、`__ExternalObjects__` 和 WP 地圖檔移走，否則舊 actor 會和新的並存。`Content/` 那份也一樣，複製前先移走舊的。
 - 量測（1080p、編輯器模式，地圖沒 cook）：cafe、`campus_ee`、conveni 各四個方向多數 105～150 FPS，最低 69～91（conveni 90 度、cafe 90 度、`campus_ee` 180 度，render 10～13 ms，原因未定，量到時人可能還在走）。走路 24 分鐘「路被擋住」2 行 log（改前 5 分鐘 107 行）。≥60 ms 的卡頓 47 次，除一次 222 ms 外最高 100 ms，主要是 StaticMesh 同步建置、GC 和 shader map，前者和後者只有編輯器模式才有，GC 要等打包版確認。
 - 電梯門（11-08）：九棟校舍和兩棟宿舍 2F 以上的電梯門原本建模時就是關的，電梯口前 28 cm 是門板。`Tools/street_city_lift_doors_payload.lua` 從 46 層的外觀模型和碰撞模型（`ComplexCollisionMesh`）刪掉門板，門框留著，開口寬 120 cm、和 1F 一樣。資產原地修改，地圖和 WP 不用重建，錨點和遊戲端不用改；改前的 92 個模型在 `E:\OpenKoikatsuWorkspace\lift-doors-before-1108`。之後重新產生這些樓層模型要再跑一次（`places-v1/lift-doors-apply.txt` 寫 1 才會存檔）。`Tools/street_city_lift_probe_payload.lua` 掃電梯口周圍的空間。
+- 樓上地點（11-08 下午）：SC（`cafeteria`）、SP（`campus_sports`）、LI（`library`）補電梯錨點，CV 新增涵蓋整棟的地點 `civic`（市民中心）放電梯；這四棟 2F 以上的電梯門也已挖開（再 28 個模型，備份同上）。泳池套房門口改到套房地板高度（1871 → 1706）。匯出時 14.5 m 以上沒樓層號的房間，依所在建築的電梯停靠高度編號。實走：CV 的銀行、電影院、美術館、天文館、郵局、水族館，SC 美術教室、社團教室，SP 健身房、體育倉庫，泳池套房、牙醫、保健室都到得了。還不通的有屋頂（要走樓梯，遊戲端）和眼鏡行（搭到 4F 後同層判斷，遊戲端）。
+- 路網加密（11-08）：`city_roads.json` 重烘時，空的 6 m 格只要有地面就加點（4442 點），9 m 內相鄰點雙向實走後連線（11929 條）。主路網 24790 點，百貨走到 MA 從 156,774 cm 降到 57,150 cm，實走 143 秒抵達；地點兩兩繞路超過 2 倍的從 2127 對降到 647 對。重烘的輸入是遊戲自己的烘焙結果 `places-v1/city_roads-before-bake.json`。
 
 ### 8.3 遊戲端之後要做（我負責，換城市整合時）
 

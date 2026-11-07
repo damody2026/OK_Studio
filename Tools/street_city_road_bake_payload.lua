@@ -5,13 +5,15 @@
 --   points  a point above the street goes back to the ground under it, except on the hill, which is ground; no ground, and its links go
 --   links   every link touching a moved point or climbing more than 40 cm is walked in 1 m steps: ground within 40 cm of the last step,
 --           room for a 35 cm body at knee and chest height
+--   dense   every empty 6 m lattice cell with street-height ground and room to stand gets a point (squares, courtyards)
+--   fill    every unlinked pair within 9 m is walked both ways and linked when clear (courtyards the road picture missed)
 --   parts   a part cut off from the biggest one is joined by a 1 m flood over the same test, its path added as new points every 6 m
 -- Point numbers stay, new ones go at the end. Output: city_roads.json, and places-v1/road-bake.json for the numbers.
 return [====[
 def motel_world_road_bake():
  import collections,math
  world=unreal.EditorLevelLibrary.get_editor_world();V=unreal.Vector;Q=unreal.TraceTypeQuery.TRACE_TYPE_QUERY1;NONE=unreal.DrawDebugTrace.NONE
- STREET=1300.;STEP=40.;MIN_PART=2;FLOOD_S=60
+ STREET=1300.;STEP=40.;MIN_PART=2;FLOOD_S=60;FILL_S=6000
  def hit(a,b):
   r=unreal.SystemLibrary.line_trace_single(world,a,b,Q,True,[],NONE,True);h=r.to_tuple() if r else [False]
   return h if h and h[0] else None
@@ -55,6 +57,38 @@ def motel_world_road_bake():
    tested+=1
    if not walk(nodes[a],nodes[b]):cut+=1;continue
   kept.append((a,b))
+ # the picture of the roads draws the campus squares and courtyards as buildings, so neighbours there never got a link and
+ # the walk from the department store to MA went round by the southern road, five times the straight line (c-conquest 11-08):
+ # every pair of points within 9 m that is not linked is walked, and linked when he gets through
+ # and the points themselves: where the picture saw a building or a square there is no point at all. Every empty 6 m cell of
+ # the lattice with ground at street height (11.5-13.1 m) and room to stand gets one; walls and closed rooms fail the walk below
+ ras=json.loads((ROOT/'output/street-social-city-production/world-edge-v1/road-raster.json').read_text('utf8'))
+ ox,oy,st=ras['origin'][0],ras['origin'][1],ras['step_cm']*3;nx_,ny_=len(ras['rows'][0])*ras['step_cm'],len(ras['rows'])*ras['step_cm']
+ taken={(round((n[0]-ox)/st),round((n[1]-oy)/st)) for i,n in enumerate(nodes) if i not in gone}
+ dense=0
+ for gi in range(int(nx_//st)+1):
+  for gj in range(int(ny_//st)+1):
+   if (gi,gj) in taken:continue
+   x,y=ox+gi*st,oy+gj*st;h=hit(V(x,y,1370.),V(x,y,1100.))
+   if not h or not(1150<=h[4].z<=1310):continue
+   z=h[4].z
+   if body(V(x,y,z+60),V(x,y,z+61)) or body(V(x,y,z+140),V(x,y,z+141)):continue
+   nodes.append([x,y,z]);dense+=1
+ grid=collections.defaultdict(list)
+ for i,n in enumerate(nodes):
+  if i not in gone:grid[(int(n[0]//900),int(n[1]//900))].append(i)
+ have={(min(a,b),max(a,b)) for a,b in kept};added=0;tried=0;stop=time.time()+FILL_S
+ for i,n in enumerate(nodes):
+  if i in gone or time.time()>stop:continue
+  gx,gy=int(n[0]//900),int(n[1]//900)
+  for dx in(-1,0,1):
+   for dy in(-1,0,1):
+    for j in grid[(gx+dx,gy+dy)]:
+     if j<=i or (i,j) in have:continue
+     m=nodes[j];d=math.hypot(m[0]-n[0],m[1]-n[1])
+     if d<1 or d>900 or abs(m[2]-n[2])>120:continue
+     tried+=1
+     if walk(n,m) and walk(m,n):kept.append((i,j));have.add((i,j));added+=1
  def parts():
   adj=collections.defaultdict(list)
   for a,b in kept:adj[a].append(b);adj[b].append(a)
@@ -93,6 +127,6 @@ def motel_world_road_bake():
  ps=parts()
  row=lambda n:'[%.1f,%.1f,%.1f]'%tuple(n)
  path.write_text('{"nodes":['+','.join(row(n) for n in nodes)+'],"links":['+','.join('[%d,%d]'%l for l in kept)+']}\n','utf8')
- r=dict(status='passed',points=len(nodes),moved=len(moved),hill=len(hills),gone=len(gone),links=len(kept),tested=tested,cut=cut,parts_before=before,joined=joined,failed=failed[:40],failed_count=len(failed),parts_after=[len(p) for p in ps[:8]],highest=max(n[2] for n in nodes))
+ r=dict(status='passed',points=len(nodes),moved=len(moved),hill=len(hills),gone=len(gone),links=len(kept),tested=tested,cut=cut,dense=dense,fill_tried=tried,filled=added,fill_finished=time.time()<=stop,parts_before=before,joined=joined,failed=failed[:40],failed_count=len(failed),parts_after=[len(p) for p in ps[:8]],highest=max(n[2] for n in nodes))
  (ROOT/'output/street-social-city-production/places-v1/road-bake.json').write_text(json.dumps(r,indent=1),'utf8');return r
 ]====]
