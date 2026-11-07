@@ -1052,6 +1052,42 @@ def motel_world_lover_spots_install():
   dress('aquarium',roomreg('cv-0301'),[('tank',1),('bench',1),('vend',1)])
   items.append(dict(place='aquarium',anchor='door',pos=a1['door'],yaw=0,actor='CV-0301',building='CV',name='海洋水族館（CV 3F 大水槽展廳、水母展廳）',rooms=[dict(min=a1['min'],max=[a1['max'][0],a1['max'][1],a1['min'][2]+420]),dict(min=a2['min'],max=[a2['max'][0],a2['max'][1],a2['min'][2]+420])]))
   dress('aquarium',roomreg('cv-0302'),[('jelly',2),('bench',1)])
+  def aqua_fill():
+   import random
+   # the four CV glass tanks (baked in City_CV_F03, 3.9 x 2.4 m inside, floor 35 cm up) only had a water skin at 2.25 m and
+   # three fish each, so they read as empty: fill each with a water volume, sand, rocks, weed and a school of fish
+   ltr.setdefault('reef_fish',str(ROOT/'output/street-social-city-production/world-completion-v1/components/fish/remesh/remeshed-candidate.glb'))
+   def tank_water():
+    path=LS_DIR+'/Materials/M_LS_TankWater'
+    if EAL.does_asset_exist(path):return EAL.load_asset(path)
+    m=ATS.create_asset('M_LS_TankWater',LS_DIR+'/Materials',unreal.Material,unreal.MaterialFactoryNew());m.set_editor_property('blend_mode',unreal.BlendMode.BLEND_TRANSLUCENT);m.set_editor_property('two_sided',True)
+    n=MEL.create_material_expression(m,unreal.MaterialExpressionConstant3Vector);n.set_editor_property('constant',unreal.LinearColor(.03,.3,.5,1));MEL.connect_material_property(n,'',unreal.MaterialProperty.MP_BASE_COLOR)
+    e=MEL.create_material_expression(m,unreal.MaterialExpressionConstant3Vector);e.set_editor_property('constant',unreal.LinearColor(.01,.09,.15,1));MEL.connect_material_property(e,'',unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+    o=MEL.create_material_expression(m,unreal.MaterialExpressionConstant);o.set_editor_property('r',.38);MEL.connect_material_property(o,'',unreal.MaterialProperty.MP_OPACITY)
+    MEL.recompile_material(m);assert EAL.save_loaded_asset(m,False);return m
+   def fit(label,key,x,y,z,yaw,hgt,span):
+    # bottom of the model on z, scaled to hgt but never wider than span
+    mesh=tripo_mesh(key)
+    if not mesh:skipped.append(dict(place='aquarium',reason='no model '+key));return
+    bb=mesh.get_bounding_box();lo,hi=bb.min,bb.max;s=min(hgt/max(hi.z-lo.z,1),span/max(hi.x-lo.x,hi.y-lo.y,1));a=math.radians(yaw);cx,cy=(lo.x+hi.x)/2,(lo.y+hi.y)/2
+    _ls_spawn(label,mesh,unreal.Vector(x-(cx*math.cos(a)-cy*math.sin(a))*s,y-(cx*math.sin(a)+cy*math.cos(a))*s,z-lo.z*s),yaw,[s,s,s],None,False)
+   rnd=random.Random(20261107);wat=tank_water();sand=_ls_mat('M_LS_TankSand',(.72,.66,.5),.9);FLOOR,TOP=2055,2245
+   for n_,(tx,ty) in enumerate([(32265,58293.3),(32615,58293.3),(32265,60400),(32615,60400)]):
+    t='LoverSpot_Aqua_CV%d'%n_;c_=unreal.Vector(tx,ty,FLOOR)
+    _ls_box(t+'_Sand',c_,0,(236,386,6),sand,False)
+    fit(t+'_Rock0','coastal_rocks',tx+rnd.uniform(-30,30),ty-115,FLOOR+4,rnd.uniform(0,360),75,150)
+    fit(t+'_Rock1','boulder_a',tx+rnd.uniform(-40,40),ty+120,FLOOR+4,rnd.uniform(0,360),55,110)
+    fit(t+'_Rock2','boulder_b',tx+rnd.uniform(-60,60),ty+15,FLOOR+4,rnd.uniform(0,360),30,70)
+    for k in range(4):fit(t+'_Weed%d'%k,'reeds_a' if k%2 else 'reeds_b',tx+rnd.uniform(-90,90),ty+(-170,-45,70,165)[k],FLOOR+4,rnd.uniform(0,360),rnd.uniform(70,120),60)
+    for k in range(12):fit(t+'_Fish%d'%k,'reef_fish',tx+rnd.uniform(-95,95),ty+rnd.uniform(-165,165),rnd.uniform(FLOOR+45,TOP-35),rnd.choice((90,-90))+rnd.uniform(-30,30),rnd.uniform(12,20),60)
+    _ls_box(t+'_Water',unreal.Vector(tx,ty,FLOOR+6),0,(234,384,TOP-FLOOR-7),wat,False)
+    views.append(dict(id='R86-tank-%d'%n_,eye=[tx+(-260 if n_%2==0 else 260),ty-330,2190],target=[tx,ty,2130],fov=80,hour=15))
+   # the Tripo wall tank has open windows and nothing behind them: same water behind the windows
+   wt=next((a for a in SUB.get_all_level_actors() if a.get_actor_label()=='LoverSpot_R2_aquarium_tank1_Tripo'),None)
+   if wt:
+    o_,e_=wt.get_actor_bounds(False);_ls_box('LoverSpot_Aqua_Wall_Water',unreal.Vector(o_.x,o_.y,o_.z-e_.z+48),0,(e_.x*2-22,e_.y*2-22,e_.z*2-96),wat,False)
+    views.append(dict(id='R86-tank-wall',eye=[o_.x-330,o_.y-60,2180],target=[o_.x,o_.y,2120],fov=80,hour=15))
+  aqua_fill()
  else:skipped.append(dict(place='aquarium',reason='cv-0301 / cv-0302 not in props areas'))
  # water checks for round 2: the SP pools and the S19 onsen bath (views only)
  for rid in ('sp-0101','s19-0101'):

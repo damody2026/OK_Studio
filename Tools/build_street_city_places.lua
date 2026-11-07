@@ -921,7 +921,11 @@ do
     if areaid[p.id] and p.anchors and (p.kind == 'room_apartment' or p.kind == 'room_dorm' or p.kind == 'motel_suite' or p.kind == 'motel_pool_suite' or p.kind == 'room_inn') then
       local have = {}; for _, a in ipairs(p.anchors) do have[a.name] = true end
       for _, t in ipairs(kept) do local base = t.a == areaid[p.id] - 1 and HK[t.k]
-        if base and not have[base] then have[base] = true; p.anchors[#p.anchors + 1] = { name = base, pos = t.p, yaw = t.face and r1(t.face - 90) or 0, asset = t.k } end
+        if base and not have[base] then have[base] = true
+          -- t.p is the middle of the counter: whoever cooks stands 70 cm out from its front
+          local pos = t.p
+          if base ~= 'bath' and t.face then local f = math.rad(t.face); pos = { t.p[1] + 70 * math.cos(f), t.p[2] + 70 * math.sin(f), t.p[3] } end
+          p.anchors[#p.anchors + 1] = { name = base, pos = pos, yaw = t.face and r1(t.face - 90) or 0, asset = t.k } end
       end
       -- what the install added to this room: the tub, the crib, the balcony (round 3, c-conquest 8.2.3)
       local mine = {}; for k, it in pairs(newitems) do if it.place == p.id and it.anchor ~= 'door' and it.anchor ~= 'balcony' then mine[#mine + 1] = k end end; table.sort(mine)
