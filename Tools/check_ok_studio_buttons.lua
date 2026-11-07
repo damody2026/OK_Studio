@@ -362,12 +362,11 @@ click("清除 FK")
 
 -- U262, U263: 放下, 坐下 (on a map's chair), 配到時間軸, 移除配樂. 開啟資料夾 opens Explorer and is left out.
 local function idle() for _ = 1, 240 do if (call("state").busy or "") == "" then return end wait(30) end end
-local function status() return (call("state").status or "") end
+local function status() return ((call("state").ui or {}).status or "") end
 call("scene", { map = 4 }); idle(); wait(60)
 call("cmd", { id = "add.item" }); wait(30)
 call("type", { field = "搜尋道具", text = "見開き", enter = true }); wait(30)
 click("見開き本1"); idle(); wait(30)
-call("cmd", { id = "window.close", arg = "items" }); wait(10)
 local function item() for _, o in ipairs(call("state").objects or {}) do if o.kind == "item" then return o end end end
 local book = item()
 check(book ~= nil, "a book to put down")

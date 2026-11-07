@@ -339,12 +339,19 @@ bool UOKStudioGame::SeatAt(int32 Id, const FBox& Chair, int32 Item)
 	FTransform World = Document->WorldTransform(Id);
 	const FVector Seat(Chair.GetCenter().X, Chair.GetCenter().Y, Chair.Min.Z);
 	World.SetLocation(Seat);
-	// A chair item looks where it is turned, front +Y as a character's. The bounds of a map's do not say; the desk beside it
-	// does (a classroom's chairs stand half under theirs).
+	// She sits with her back to the backrest, square with the chair. A stool has none: an item keeps its turn, a map's looks at
+	// the desk beside it (a classroom's chairs stand half under theirs).
 	TArray<FBox> Boxes;
 	SceneActor->MapPartBounds(Boxes);
 	FBox Desk;
-	if (Document->Find(Item)) World.SetRotation(FRotator(0., Document->WorldTransform(Item).Rotator().Yaw, 0.).Quaternion());
+	FVector2D Back;
+	const double Turn = Document->Find(Item) ? Document->WorldTransform(Item).Rotator().Yaw : 0.;
+	if (SceneActor->ChairBack(Chair, Back))
+	{
+		const double Facing = FMath::RadiansToDegrees(FMath::Atan2(-Back.Y, -Back.X)) - 90.;
+		World.SetRotation(FRotator(0., Turn + FMath::RoundToDouble(FMath::FindDeltaAngleDegrees(Turn, Facing) / 90.) * 90., 0.).Quaternion());
+	}
+	else if (Document->Find(Item)) World.SetRotation(FRotator(0., Turn, 0.).Quaternion());
 	else if (OKDeskBy(Boxes, Chair, Desk))
 	{
 		const FVector Off = Desk.GetCenter() - Chair.GetCenter();
@@ -354,7 +361,7 @@ bool UOKStudioGame::SeatAt(int32 Id, const FBox& Chair, int32 Item)
 	return true;
 }
 
-bool UOKStudioGame::HipsOver(int32 Id, const FBox& Chair)
+bool UOKStudioGame::HipsOver(int32 Id, const FBox& Chair, int32 Item, bool* OutBehindDesk)
 {
 	FOKSceneObject* O = Document ? Document->Find(Id) : nullptr;
 	FTransform Hips;
@@ -366,12 +373,12 @@ bool UOKStudioGame::HipsOver(int32 Id, const FBox& Chair)
 	TArray<FBox> Boxes;
 	SceneActor->MapPartBounds(Boxes);
 	FBox Desk;
-	if (OKDeskBy(Boxes, Chair, Desk) && Desk.Intersect(Chair))
+	if (!Document->Find(Item) && OKDeskBy(Boxes, Chair, Desk) && Desk.Intersect(Chair))
 	{
 		const FVector Front = FRotator(0., World.Rotator().Yaw + 90., 0.).Vector();
 		const FVector Half = Desk.GetExtent();
 		const double Edge = FVector::DotProduct(Desk.GetCenter() - Chair.GetCenter(), Front) - FMath::Abs(Front.X) * Half.X - FMath::Abs(Front.Y) * Half.Y;
-		if (Edge < 14.) Seat += Front * (Edge - 14.);
+		if (Edge < 14.) { Seat += Front * (Edge - 14.); if (OutBehindDesk) *OutBehindDesk = true; }
 	}
 	World.AddToTranslation(FVector(Seat.X - Hips.GetLocation().X, Seat.Y - Hips.GetLocation().Y, 0.));
 	O->Transform = O->Parent >= 0 ? World.GetRelativeTransform(Document->WorldTransform(O->Parent)) : World;

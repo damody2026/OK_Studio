@@ -1934,6 +1934,7 @@ public:
 	int32 AxesChecked = -1;
 	bool bChairPick = false;
 	int32 SitId = -1;
+	int32 SitItem = -1;
 	FBox SitChair = FBox(ForceInit);
 	double SitAt = 0.;
 	void TickSit();
@@ -3684,6 +3685,7 @@ public:
 		else Changed();
 		SitId = X->Id;
 		SitChair = Chair;
+		SitItem = Item;
 		SitAt = FPlatformTime::Seconds() + 0.5; // the motion is on by then
 	}
 	/** Plays catalogue animation `Index` on the selected character. */

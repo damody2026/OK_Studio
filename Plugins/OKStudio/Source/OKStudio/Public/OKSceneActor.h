@@ -107,6 +107,8 @@ public:
 	int32 MapPartCount() const;
 	/** World bounds of every shown part of the map (its desks, shelves, walls), to keep new characters out of them. */
 	void MapPartBounds(TArray<FBox>& Out) const;
+	/** Which way the backrest of the chair in `Chair` stands from its centre, read from the meshes in it. False for a stool. */
+	bool ChairBack(const FBox& Chair, FVector2D& Out) const;
 	/** What the scene's time of day does on this map, for the status line: a time the map lacks, a lightmapped map, the
 	 *  sun's height and colour (U128: picking 夕 showed no change and said nothing). Empty without a map. */
 	FString MapTimeNote() const;

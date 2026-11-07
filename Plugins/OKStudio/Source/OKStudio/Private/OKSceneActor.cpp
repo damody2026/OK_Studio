@@ -1,4 +1,5 @@
 #include "OKSceneActor.h"
+#include "ProceduralMeshComponent.h"
 #include "Async/Async.h"
 #include "Async/ParallelFor.h"
 #include <atomic>
@@ -1861,6 +1862,36 @@ void AOKSceneActor::MapPartBounds(TArray<FBox>& Out) const
 		for (const UPrimitiveComponent* C : Primitives)
 			if (C && C->IsRegistered() && C->IsVisible()) Out.Add(C->Bounds.GetBox());
 	}
+}
+
+bool AOKSceneActor::ChairBack(const FBox& Chair, FVector2D& Out) const
+{
+	// Only a backrest reaches the top quarter of a chair.
+	const FBox Around = Chair.ExpandBy(1.);
+	const double Top = Chair.Min.Z + Chair.GetSize().Z * .75;
+	FVector2D Sum(0., 0.);
+	int64 Count = 0;
+	const auto Read = [&](const AKKPreviewActor* Preview)
+	{
+		TInlineComponentArray<UProceduralMeshComponent*> Meshes(Preview);
+		for (UProceduralMeshComponent* M : Meshes)
+		{
+			if (!M || !M->IsRegistered() || !M->IsVisible() || !Around.IsInside(M->Bounds.GetBox())) continue;
+			const FMatrix ToWorld = M->GetRenderMatrix();
+			for (int32 I = 0; I < M->GetNumSections(); ++I)
+				if (const FProcMeshSection* Section = M->GetProcMeshSection(I))
+					for (const FProcMeshVertex& V : Section->ProcVertexBuffer)
+					{
+						const FVector P = ToWorld.TransformPosition(V.Position);
+						if (P.Z >= Top) { Sum += FVector2D(P.X, P.Y); ++Count; }
+					}
+		}
+	};
+	for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews) if (P.IsValid()) Read(P.Get());
+	for (const TPair<int32, FShown>& Item : Shown) if (Item.Value.Preview.IsValid()) Read(Item.Value.Preview.Get());
+	if (!Count) return false;
+	Out = Sum / double(Count) - FVector2D(Chair.GetCenter().X, Chair.GetCenter().Y);
+	return Out.Size() > 4.;
 }
 
 AKKPreviewActor* AOKSceneActor::PreviewOf(int32 Id) const

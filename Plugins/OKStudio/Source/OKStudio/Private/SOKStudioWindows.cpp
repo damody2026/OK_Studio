@@ -141,9 +141,12 @@ void SOKStudioPanel::UpdateClearView()
 void SOKStudioPanel::TickSit()
 {
 	if (SitId < 0 || FPlatformTime::Seconds() < SitAt) return;
-	if (Game->HipsOver(SitId, SitChair)) Changed();
+	// One step with the move to the chair: the first Ctrl+Z left her beside it.
+	Game->EndHistoryStep();
+	bool bBehindDesk = false;
+	if (Game->HipsOver(SitId, SitChair, SitItem, &bBehindDesk)) { Changed(); Game->AmendHistory(); }
 	const FOKSceneObject* X = Game->Document->Find(SitId);
-	SetStatus((X ? X->Name : FString()) + TEXT(" 坐到椅子上；地圖的椅子推在桌下時會坐在桌緣後方"));
+	SetStatus((X ? X->Name : FString()) + (bBehindDesk ? TEXT(" 坐在桌緣後方：這張椅子推在桌下，拉不出來") : TEXT(" 坐到椅子上")));
 	SitId = -1;
 }
 

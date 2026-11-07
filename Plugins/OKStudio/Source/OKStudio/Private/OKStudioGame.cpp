@@ -319,6 +319,14 @@ void UOKStudioGame::CommitHistory()
 	while (UndoStack.Num() > 1 && (UndoStack.Num() > 100 || Bytes > (int64(256) << 20))) { Bytes -= UndoStack[0].Len() * sizeof(TCHAR); UndoStack.RemoveAt(0); UndoSelections.RemoveAt(0); }
 }
 
+void UOKStudioGame::AmendHistory()
+{
+	if (!Document) return;
+	bHistoryDirty = false;
+	HistoryState = Document->ToJson();
+	HistorySelection = Selection;
+}
+
 void UOKStudioGame::RestoreHistory(const FString& State)
 {
 	const TArray<int32> Keep = HistorySelection;

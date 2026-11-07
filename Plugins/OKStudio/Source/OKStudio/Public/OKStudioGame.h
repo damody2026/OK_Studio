@@ -112,7 +112,7 @@ public:
 	/** Stands character Id at a chair, facing the desk or table beside it if there is one. */
 	bool SeatAt(int32 Id, const FBox& Chair, int32 Item = -1);
 	/** With its sitting motion on: the hips over the chair, wherever the motion has them. */
-	bool HipsOver(int32 Id, const FBox& Chair);
+	bool HipsOver(int32 Id, const FBox& Chair, int32 Item = -1, bool* OutBehindDesk = nullptr);
 	/** The selected items and characters go onto the surface seen behind them, along the line of sight; how many moved. */
 	int32 DropOnSurface();
 	/** The part of the view no panel covers, as fractions of the view (0..1, y down); the panel keeps it current. Framing
@@ -340,6 +340,8 @@ public:
 	int32 UndoSteps() const { return UndoStack.Num() + (bHistoryDirty ? 1 : 0); }
 	/** Records a pending change now (otherwise done on the next still tick). */
 	void CommitHistory();
+	/** What changed since the last step belongs to that step: one Ctrl+Z takes both back. */
+	void AmendHistory();
 	/** Ends the undo step a pending change is in, so a command or control op is a step of its own (changes within 0.4 s
 	 *  otherwise join one step, which a drag needs). */
 	void EndHistoryStep() { if (bHistoryDirty) CommitHistory(); }
