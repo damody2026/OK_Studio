@@ -69,6 +69,8 @@ public:
 	float Pitch = -8.f;
 	float OrbitFov = 40.f;
 	float Distance = 380.f;
+	FVector StartFocus = FVector::ZeroVector;
+	float StartDistance = -1.f;
 
 	FString File;
 	/** The primary selection: the guide's pivot and the object the detail windows show (also in Selection). */
@@ -99,6 +101,10 @@ public:
 	bool bFramedFace = false;
 	/** The whole figure of a character just added, while the view is still the initial one (U212). */
 	void FrameFirstCharacter(int32 Id);
+	/** The view a map just opened with: the first character may still reframe it (U262: head and feet were cut). */
+	void NoteStartView() { StartFocus = Focus; StartDistance = Distance; }
+	/** The selected items and characters go onto the surface seen behind them, along the line of sight; how many moved. */
+	int32 DropOnSurface();
 	/** The part of the view no panel covers, as fractions of the view (0..1, y down); the panel keeps it current. Framing
 	 *  centres there and sizes the distance to it. */
 	FBox2D ClearView = FBox2D(FVector2D(0.f, 0.f), FVector2D(1.f, 1.f));

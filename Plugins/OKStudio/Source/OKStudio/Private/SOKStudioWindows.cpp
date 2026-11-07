@@ -134,7 +134,7 @@ void SOKStudioPanel::ReadExportChoices()
 	FOKStudioSettings::Get().ExportChoices.ParseIntoArray(P, TEXT(";"), false);
 	if (P.Num() < 8) return;
 	ExportKind = FMath::Clamp(FCString::Atoi(*P[0]), 0, 2);
-	ExportFromT = FCString::Atof(*P[1]); ExportToT = FCString::Atof(*P[2]); ExportFpsV = FMath::Clamp(FCString::Atof(*P[3]), 1.f, 120.f);
+	ExportFpsV = FMath::Clamp(FCString::Atof(*P[3]), 1.f, 120.f);
 	ExportW = FMath::Clamp(FCString::Atoi(*P[4]), 16, 8192); ExportH = FMath::Clamp(FCString::Atoi(*P[5]), 16, 8192);
 	if (Game.IsValid()) Game->bExportAudio = P[6] != TEXT("0");
 	ExportFolderText = P[7];
@@ -561,6 +561,7 @@ void SOKStudioPanel::TickUi(float DeltaTime)
 	TickVmdQueue();
 	TickMapPrepare();
 	TickMapThumbs();
+	if (ExportRangeSerial != Game->SceneSerial) { ExportRangeSerial = Game->SceneSerial; ExportFromT = 0.f; ExportToT = -1.f; }
 	// U242: the MMD window lists the cast. Someone added, removed or given a motion while it is open shows up there.
 	if (IsFloatOpen(TEXT("mmd")))
 	{
@@ -664,7 +665,7 @@ TSharedPtr<SWidget> SOKStudioPanel::TreeContextMenu()
 		{ TEXT("改名"), TEXT("edit.rename") }, { TEXT("拷貝"), TEXT("edit.copy") }, { TEXT("貼上"), TEXT("edit.paste") }, { TEXT("複製物件"), TEXT("edit.duplicate") },
 		{ TEXT("全選角色"), TEXT("edit.selectchars") }, { TEXT("刪除"), TEXT("edit.delete") }, { TEXT("隱藏／顯示"), TEXT("edit.hide") }, { TEXT("移到根層"), TEXT("edit.root") }, { TEXT("設為其他選取的父物件"), TEXT("edit.parent") },
 		{ TEXT("聚焦"), TEXT("camera.focus") }, { TEXT("選取存成場景"), TEXT("edit.saveas") }, { TEXT("複製變換"), TEXT("transform.copy") }, { TEXT("貼上變換"), TEXT("transform.paste") },
-		{ TEXT("複製姿勢"), TEXT("pose.copy") }, { TEXT("貼上姿勢"), TEXT("pose.paste") }, { TEXT("打 key"), TEXT("timeline.key") }, { TEXT("面向對方"), TEXT("transform.face") },
+		{ TEXT("複製姿勢"), TEXT("pose.copy") }, { TEXT("貼上姿勢"), TEXT("pose.paste") }, { TEXT("打 key"), TEXT("timeline.key") }, { TEXT("面向對方"), TEXT("transform.face") }, { TEXT("放到下方表面"), TEXT("transform.drop") },
 	};
 	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
 	for (const FItem& I : Items)
@@ -1388,7 +1389,8 @@ TSharedRef<SWidget> SOKStudioPanel::BuildOutsideSound()
 		const FOKSceneSound* S = Sound();
 		if (!S || !Game.IsValid()) return FText();
 		const FString Name = S->Outside.IsEmpty() ? FString(TEXT("（未選檔）")) : FPaths::GetCleanFilename(S->Outside) + (Game->OutsideSoundFile().IsEmpty() ? TEXT("（找不到檔案）") : TEXT(""));
-		return FText::FromString(Name + (Game->IsOutsideSoundPlaying() ? TEXT("：播放中") : S->bOutsidePlay ? TEXT("：準備中／已播完") : TEXT("：停止")));
+		const FString Music = Game->Document->SoundFile.IsEmpty() ? FString() : TEXT("\n時間軸音樂：") + FPaths::GetCleanFilename(Game->Document->SoundFile);
+		return FText::FromString(Name + (Game->IsOutsideSoundPlaying() ? TEXT("：播放中") : S->bOutsidePlay ? TEXT("：準備中／已播完") : TEXT("：停止")) + Music);
 	}), 10.f);
 	State->SetAutoWrapText(true);
 	return SNew(SVerticalBox)
@@ -1402,6 +1404,20 @@ TSharedRef<SWidget> SOKStudioPanel::BuildOutsideSound()
 			+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)[CheckBox(TEXT("循環"), [Sound] { const FOKSceneSound* S = Sound(); return S && S->bOutsideRepeat; }, [this, Sound](bool B) { if (FOKSceneSound* S = Sound()) { S->bOutsideRepeat = B; Changed(); } })]
 			// HS2Studio6 重新扫描: list the folders again without closing the window.
 			+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("重新掃描")), [this] { DeferFloat(TEXT("outside")); }, 0.f, 20.f, false, 10.f)]
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 3.f)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 2.f, 0.f)[Button(FText::FromString(TEXT("開啟資料夾")), [Folder] { IFileManager::Get().MakeDirectory(*Folder, true); FPlatformProcess::ExploreFolder(*Folder); }, 0.f, 20.f, false, 10.f)]
+			// Played here it runs by itself; on the timeline it starts and stops with the playhead (U262).
+			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 2.f, 0.f)[Button(FText::FromString(TEXT("配到時間軸")), [this, Sound]
+			{
+				FOKSceneSound* S = Sound();
+				if (!S || Game->OutsideSoundFile().IsEmpty()) { SetStatus(TEXT("先在下面點一個音檔")); return; }
+				S->bOutsidePlay = false;
+				SetSceneMusic(Game->OutsideSoundFile(), false);
+			}, 0.f, 20.f, false, 10.f)]
+			+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("移除配樂")), [this] { SetSceneMusic(FString(), false); }, 0.f, 20.f, false, 10.f)]
 		]
 		+ SVerticalBox::Slot().FillHeight(1.f)[SNew(SBorder).BorderImage(Brush(ListArea())).Padding(3.f)[SNew(SScrollBox) + SScrollBox::Slot()[SoundRows]]];
 }
@@ -2489,7 +2505,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildExport()
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[Line(TEXT("寬"), Spin([this] { return float(ExportW); }, [this](float V) { ExportW = FMath::Clamp(FMath::RoundToInt(V), 16, 8192); }, 16.f, 8192.f, 1.f))]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[Line(TEXT("高"), Spin([this] { return float(ExportH); }, [this](float V) { ExportH = FMath::Clamp(FMath::RoundToInt(V), 16, 8192); }, 16.f, 8192.f, 1.f))]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[Line(TEXT("輸出資料夾"), TextBox([this] { return ExportFolderText; }, [this](const FString& V) { ExportFolderText = V.TrimStartAndEnd().TrimQuotes(); }, TEXT("UserData/Studio/movie")))]
-		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[CheckBox(TEXT("mp4 含音樂（播放中的 BGM 與外部音源）"), [this] { return Game.IsValid() && Game->bExportAudio; }, [this](bool B) { if (Game.IsValid()) Game->bExportAudio = B; })]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)[CheckBox(TEXT("mp4 含音樂（時間軸音樂、播放中的 BGM 與外部音源）"), [this] { return Game.IsValid() && Game->bExportAudio; }, [this](bool B) { if (Game.IsValid()) Game->bExportAudio = B; })]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 1.f)
 		[
 			SNew(SBox).Visibility_Lambda([this] { return ExportKind == 0 ? EVisibility::Visible : EVisibility::Collapsed; })

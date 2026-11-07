@@ -245,11 +245,54 @@ bool UOKStudioGame::ViewStillFramed() const
 		&& FMath::IsNearlyEqual(Yaw, FramedYaw, 0.01f) && FMath::IsNearlyEqual(Pitch, FramedPitch, 0.01f);
 }
 
+int32 UOKStudioGame::DropOnSurface()
+{
+	if (!SceneActor || !Document) return 0;
+	TArray<FBox> Surfaces;
+	SceneActor->MapPartBounds(Surfaces);
+	for (const FOKSceneObject& O : Document->Objects)
+	{
+		FBox B;
+		if (O.Kind == EOKSceneObjectKind::Item && !Selection.Contains(O.Id) && Document->IsShown(O.Id) && WorldBounds(O.Id, B)) Surfaces.Add(B);
+	}
+	APlayerController* PC = SceneActor->GetWorld() ? SceneActor->GetWorld()->GetFirstPlayerController() : nullptr;
+	const FVector Eye = PC && PC->PlayerCameraManager ? PC->PlayerCameraManager->GetCameraLocation() : FVector::ZeroVector;
+	int32 Moved = 0;
+	for (const int32 Id : Selection)
+	{
+		FOKSceneObject* O = Document->Find(Id);
+		FBox Box;
+		if (!O || O->bLocked || !O->AttachBone.IsEmpty() || (O->Kind != EOKSceneObjectKind::Item && O->Kind != EOKSceneObjectKind::Character) || !WorldBounds(Id, Box)) continue;
+		// The first top the line of sight through its foot meets: where it looks to be. Straight below it was not: at 82 cm over
+		// the aisle a book looked to lie on the desk behind and fell to the floor (U262). A view from level or below looks down nowhere.
+		const FVector Foot(Box.GetCenter().X, Box.GetCenter().Y, Box.Min.Z);
+		const FVector Sight = (Foot - Eye).GetSafeNormal();
+		const FVector Down = Sight.Z < -0.05 ? Sight : FVector(0., 0., -1.);
+		const FVector From = Sight.Z < -0.05 ? Eye : Foot + FVector(0., 0., 30.);
+		double Nearest = UE_BIG_NUMBER;
+		for (const FBox& S : Surfaces)
+		{
+			const double T = (S.Max.Z - From.Z) / Down.Z;
+			const FVector Hit = From + Down * T;
+			if (T > 0. && T < Nearest && Hit.X >= S.Min.X && Hit.X <= S.Max.X && Hit.Y >= S.Min.Y && Hit.Y <= S.Max.Y) Nearest = T;
+		}
+		if (Nearest >= UE_BIG_NUMBER) continue;
+		const FVector Move = From + Down * Nearest - Foot;
+		if (Move.IsNearlyZero(0.01)) continue;
+		FTransform World = Document->WorldTransform(Id);
+		World.AddToTranslation(Move);
+		O->Transform = O->Parent >= 0 ? World.GetRelativeTransform(Document->WorldTransform(O->Parent)) : World;
+		++Moved;
+	}
+	return Moved;
+}
+
 void UOKStudioGame::FrameFirstCharacter(int32 Id)
 {
 	// The initial view shows 156 cm at the character's distance: head and feet were cut. Its bounds come only once the
 	// card has built, so this is a standing person's size, not FocusSelection.
-	if (Document->ActiveCamera >= 0 || Distance != InitialDistance || !Focus.Equals(InitialFocus)) return;
+	const bool bStartView = (Distance == InitialDistance && Focus.Equals(InitialFocus)) || (Distance == StartDistance && Focus.Equals(StartFocus));
+	if (Document->ActiveCamera >= 0 || !bStartView) return;
 	Focus = Document->WorldTransform(Id).GetLocation() + FVector(0.f, 0.f, 82.f);
 	Distance = 480.f;
 }

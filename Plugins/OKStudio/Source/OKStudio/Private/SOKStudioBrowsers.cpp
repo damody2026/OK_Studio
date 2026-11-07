@@ -171,6 +171,8 @@ void SOKStudioPanel::GoCardFolder(const FString& Folder)
 	CardForward.Reset();
 	CardFolder = Folder;
 	CardPage = 0;
+	// The card of the last folder stayed in the preview, and 加入 added it (U262).
+	CardPreview.Reset();
 }
 
 bool SOKStudioPanel::AddOrReplaceCard(const FString& Card, bool bReplace)
@@ -693,6 +695,7 @@ void SOKStudioPanel::ShowPickedMap(int32 Map)
 	Game->SyncDocumentNow();
 	// The origin taken by the map's own things: the view (and the next character) goes to free ground beside it (U156).
 	if (bNobody && Game->FrameMapStart()) Note += TEXT("；原點有地圖物件，視角移到旁邊的空地");
+	if (bNobody) Game->NoteStartView();
 	if (const int32 Moved = Game->SettleCharactersOnMap()) { Changed(); Note += FString::Printf(TEXT("；%d 個角色移到地圖的地面上"), Moved); }
 	SetStatus(Note);
 	// Nobody stands in the way of the picture: the map leaves its own, for the list (U256).

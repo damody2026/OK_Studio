@@ -1245,7 +1245,7 @@ namespace
 			const FString Busy = G->BusyReason();
 			// The timeline op itself may stop playback; buttons and fields work during playback as they do for the user
 			// (the stop button among them), and a capture only looks.
-			static const TSet<FString> WhilePlaying = { TEXT("timeline"), TEXT("click"), TEXT("type"), TEXT("capture") };
+			static const TSet<FString> WhilePlaying = { TEXT("timeline"), TEXT("click"), TEXT("mouse"), TEXT("type"), TEXT("capture") };
 			// U210: the mouse works during an export as it does for the user (closing the window, 取消).
 			static const TSet<FString> WhileExporting = { TEXT("click"), TEXT("mouse") };
 			// U255: a scene opens over many frames and the user can act meanwhile; what they can do, the tests must reach.
@@ -1545,8 +1545,9 @@ namespace
 		{
 			bool bPlay = false;
 			double D;
-			if (J->TryGetBoolField(TEXT("play"), bPlay)) G->bTimelinePlaying = bPlay;
+			// In this order: scrubbing pauses, so {"time":0,"play":true} never played.
 			if (J->TryGetNumberField(TEXT("time"), D)) P->ScrubTo(float(D));
+			if (J->TryGetBoolField(TEXT("play"), bPlay)) G->bTimelinePlaying = bPlay;
 			const TSharedPtr<FJsonObject>* Key = nullptr;
 			if (J->TryGetObjectField(TEXT("key"), Key)) for (int32 Id : ReadIds((*Key).ToSharedRef(), TEXT("ids"))) Doc->SetKey(Id, G->TimelineTime);
 			TSharedRef<FJsonObject> O = Result(true);

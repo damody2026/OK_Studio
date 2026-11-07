@@ -764,6 +764,12 @@ public:
 		});
 		Simple(TEXT("transform.reset"), TEXT("重設變換"), [this] { for (int32 Id : Game->Selection) if (FOKSceneObject* O = Game->Document->Find(Id)) O->Transform = FTransform::Identity; Changed(); });
 		Simple(TEXT("transform.face"), TEXT("面向對方"), [this] { FaceEachOther(); });
+		Simple(TEXT("transform.drop"), TEXT("放到下方表面"), [this]
+		{
+			const int32 Moved = Game->DropOnSurface();
+			if (Moved) Changed();
+			SetStatus(Moved ? FString::Printf(TEXT("%d 個物件放到下方表面"), Moved) : FString(TEXT("沒有移動：要選道具或角色，正下方要有桌面或地面")));
+		});
 		// Timeline.
 		// A camera key from the view (U238): the two steps were easy to halve, and 打 key alone keeps the camera where it was.
 		Simple(TEXT("timeline.viewkey"), TEXT("視角打 key"), [this]
@@ -933,15 +939,8 @@ public:
 		});
 		AddCommand(TEXT("mmd.sound"), TEXT("載入音樂"), [this](const FString& Arg)
 		{
-			const FString File = Arg.TrimStartAndEnd().TrimQuotes();
-			if (!File.IsEmpty() && !FPaths::FileExists(File)) { SetStatus(TEXT("找不到音樂檔：") + File); return false; }
-			Game->Document->SoundFile = File;
-			const float Seconds = File.IsEmpty() ? 0.f : Game->SceneSoundSeconds();
-			if (!File.IsEmpty() && Seconds <= 0.f) { Game->Document->SoundFile.Reset(); SetStatus(TEXT("音樂讀不了，只接受 WAV 與 Ogg：") + File); return false; }
-			Game->Document->Duration = FMath::Max(Game->Document->Duration, Game->Document->SoundDelay + Seconds);
-			Changed();
+			if (!SetSceneMusic(Arg.TrimStartAndEnd().TrimQuotes(), true)) return false;
 			DeferFloat(TEXT("mmd"));
-			SetStatus(File.IsEmpty() ? FString(TEXT("已移除音樂")) : FString::Printf(TEXT("已載入音樂：%s（%.1f 秒）"), *FPaths::GetCleanFilename(File), Seconds));
 			return true;
 		});
 		AddCommand(TEXT("mmd.vmd"), TEXT("載入 VMD 動作"), [this](const FString& Arg)
@@ -1543,8 +1542,17 @@ public:
 			]
 			+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 0.f, 0.f)
 			[
-				SNew(SBox).ToolTipText(FText::FromString(TEXT("所選角色轉向最近的另一個角色；選兩個角色時兩人面對面")))
-				[Button(FText::FromString(TEXT("面向\n對方")), Cmd(TEXT("transform.face")), 34.f, 52.f, false, 10.f)]
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					SNew(SBox).ToolTipText(FText::FromString(TEXT("所選角色轉向最近的另一個角色；選兩個角色時兩人面對面")))
+					[Button(FText::FromString(TEXT("面向")), Cmd(TEXT("transform.face")), 34.f, 25.f, false, 10.f)]
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f, 0.f, 0.f)
+				[
+					SNew(SBox).ToolTipText(FText::FromString(TEXT("所選道具或角色落到畫面上看到的桌面或地面：沿視線往下找")))
+					[Button(FText::FromString(TEXT("放下")), Cmd(TEXT("transform.drop")), 34.f, 25.f, false, 10.f)]
+				]
 			]
 			+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 0.f, 0.f)
 			[
@@ -1909,6 +1917,8 @@ public:
 	void ShowPickedMap(int32 Map);
 	void TickMapPrepare();
 	int32 MapPrepareSerial = 0;
+	/** From and to belong to a scene: a remembered 4 s cut a 30 s work (U262). */
+	int32 ExportRangeSerial = 0;
 	/** The map being prepared is the one picked in the map window, not the opening scene's. */
 	bool bMapPrepareByPick = false;
 	/** The picture a map left when it was shown (none of the sources has one). */
@@ -2143,6 +2153,18 @@ public:
 
 public:
 
+	/** The music of the timeline (it follows the playhead and goes into the mp4). bLengthen: the scene grows to hold all of it. */
+	bool SetSceneMusic(const FString& File, bool bLengthen)
+	{
+		if (!File.IsEmpty() && !FPaths::FileExists(File)) { SetStatus(TEXT("找不到音樂檔：") + File); return false; }
+		Game->Document->SoundFile = File;
+		const float Seconds = File.IsEmpty() ? 0.f : Game->SceneSoundSeconds();
+		if (!File.IsEmpty() && Seconds <= 0.f) { Game->Document->SoundFile.Reset(); SetStatus(TEXT("音樂讀不了，只接受 WAV 與 Ogg：") + File); return false; }
+		if (bLengthen) Game->Document->Duration = FMath::Max(Game->Document->Duration, Game->Document->SoundDelay + Seconds);
+		Changed();
+		SetStatus(File.IsEmpty() ? FString(TEXT("已移除音樂")) : FString::Printf(TEXT("已載入音樂：%s（%.1f 秒）"), *FPaths::GetCleanFilename(File), Seconds));
+		return true;
+	}
 	void SetStatus(const FString& Text) { StatusMinWidth = 0.f; if (Status) Status->SetText(FText::FromString(Text)); }
 	/** The status line before something that holds the frame: painted now, or nobody sees it until it is over (U256). */
 	void PaintStatus(const FString& Text)
