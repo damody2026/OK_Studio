@@ -90,6 +90,10 @@ bool AOKStreetSocialScene::NavCellFree(const FIntPoint& Cell,float Z) const{
  bool Free=OKStreetObstacleGap(P,30.f)>30.f;
  // The city's ground is not flat: a cell needs ground near this height, and the body is tested above a step's height.
  float GroundZ=Z;if(Free&&OKStreetCityMode())Free=OKStreetGroundZ(GetWorld(),P,GroundZ,this);
+ // Upstairs the floor is flat, and ground 1.2 m down is the floor below: the department store's 4F atrium has no rail on
+ // most of its edge, the trace hit the 3F escalator 1-2 m under it, and the route to the optician led him into the void
+ // (2460 -> 2303, "she is on another floor"). The street keeps its slopes.
+ if(Free&&OKStreetCityMode()&&GroundZ<Z-60.f&&OKStreetUpstairs(P))Free=false;
  if(Free){FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetNavCell),false,this);Free=!GetWorld()->OverlapAnyTestByChannel(FVector(P.X,P.Y,GroundZ)+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(40,OKStreetBodyHalf()),Query);} // wider than his 28: a cell beside an awning or a sign is not a way
  Grid.Add(Cell,Free);return Free;
 }
@@ -253,8 +257,12 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
    // Off the car: on this floor the grid; down on the street the place graph. Still another floor away: plan again.
    const FVector Now=S.NavPointActive?S.NavPoint:S.Agents[S.NavGirl-1].Position;
    const bool More=NavNeedsLift(Now);
-   TArray<FVector> Rest=More?TArray<FVector>{S.Male}:Down?(S.NavPointActive?PlaceRoute(S.Male,Now):ContactRoute(S.Male,Now)):GridRoute(S.Male,Now);
-   if(Rest.Num()<2&&!More)Rest={S.Male,Now};
+   // Up on her floor: the grid searched a slice a frame till it is done (NavAround). GridRoute gives the city 4 ms, and
+   // with no route in that time the straight line led across the department store's 4F atrium into the void.
+   const bool Search=!More&&!Down&&OKStreetCityMode();
+   TArray<FVector> Rest=More||Search?TArray<FVector>{S.Male}:Down?(S.NavPointActive?PlaceRoute(S.Male,Now):ContactRoute(S.Male,Now)):GridRoute(S.Male,Now);
+   if(Search){S.NavAround=MakeShared<FOKStreetGridSearch>();S.NavAround->From=S.Male;S.NavAround->To=Now;}
+   else if(Rest.Num()<2&&!More)Rest={S.Male,Now};
    if(S.NavPointActive&&!More)S.NavPoint.Z=S.Male.Z; // still another floor away: the goal keeps its height
    S.NavPath=MoveTemp(Rest);S.NavStep=1;S.NavReplans=0;S.NavProgressAt=SceneTime();}
   return Rate;
