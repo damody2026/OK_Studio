@@ -168,7 +168,7 @@ void AOKStreetSocialScene::BuildJobRows(const TSharedRef<SVerticalBox>& Panel){
   for(int32 Shift=0;Shift<Job.Shifts.Num();++Shift){FString Why;if(PlaceClosedAt(Job.Place,OKStreetCalendarDateTime(S.Store.CalendarDay+1,Job.Shifts[Shift].X+0.25),Why))continue;++Open;// Over one of his classes: said on the button (academics.rs class_clash); booking it is still his choice.
    FString Clash;{auto Ask=OKRulesRequest(TEXT("class_clash"));Ask->SetObjectField(TEXT("player"),OKStreetAcademicJson(S.Store.PlayerAcademic));Ask->SetNumberField(TEXT("day"),S.Store.CalendarDay+1);Ask->SetNumberField(TEXT("from"),Job.Shifts[Shift].X);Ask->SetNumberField(TEXT("to"),Job.Shifts[Shift].Y);
     if(const TSharedPtr<FJsonObject> Out=OKRulesEval(S,Ask)){const FString Course=Out->GetStringField(TEXT("course"));if(!Course.IsEmpty())Clash=OKMsg(TEXT("ui.jobs.class_clash_suffix"),{{TEXT("course"),Course}});}}
-   Row->AddSlot().Padding(1)[Button(OKMsg(TEXT("ui.jobs.schedule_tomorrow_shift"), {{TEXT("job_title"), *Job.Title}, {TEXT("start_hour"), Job.Shifts[Shift].X}, {TEXT("end_hour"), Job.Shifts[Shift].Y}})+Clash,[Weak,Id,Shift](){Weak->BookShift(Id,Shift);})];}
+   Row->AddSlot().Padding(1)[Button(OKMsg(TEXT("ui.jobs.schedule_tomorrow_shift"), {{TEXT("job_title"), *Job.Title}, {TEXT("start_hour"), Job.Shifts[Shift].X}, {TEXT("end_hour"), int32(Job.Shifts[Shift].Y)%24}})+Clash,[Weak,Id,Shift](){Weak->BookShift(Id,Shift);})];}
   if(Open==0&&!Job.Shifts.IsEmpty()){FString Why;PlaceClosedAt(Job.Place,OKStreetCalendarDateTime(S.Store.CalendarDay+1,Job.Shifts[0].X+0.25),Why);
    Row->AddSlot().Padding(4)[SNew(STextBlock).Text(FText::FromString(OKMsg(TEXT("ui.jobs.closed_tomorrow_note"), {{TEXT("why"), *Why}})))];}
  }

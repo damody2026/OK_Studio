@@ -389,32 +389,35 @@ impl Finance {
         let mut b = self.book.lock().unwrap();
         let before = b.next_id;
         let zh_cn = q["lang"].as_str() == Some("zh-CN");
+        // The book writes NT$ into its notes; the game shows the money of its region (a Mainland game read 刮刮卡中 NT$50).
+        let sign = match q["region"].as_str() { Some("CN") => "¥", Some("US") => "$", _ => "NT$" };
+        let words = |s: &str| (if zh_cn { crate::deepseek::localize(s, "zh-CN") } else { s.to_string() }).replace("NT$", sign);
         // Its own words (休市，下次開市…, an order refused) in the game's script too.
-        let mut out = self.dispatch(&mut b, op, q).map_err(|e| if zh_cn { crate::deepseek::localize(&e, "zh-CN") } else { e })?;
+        let mut out = self.dispatch(&mut b, op, q).map_err(|e| words(&e))?;
         // A Simplified game reads Simplified names: the data's names are Traditional first (貴州茅臺 -> 贵州茅台).
-        if q["lang"].as_str() == Some("zh-CN") {
-            fn walk(v: &mut Value) {
+        if zh_cn || sign != "NT$" {
+            fn walk(v: &mut Value, words: &dyn Fn(&str) -> String) {
                 match v {
                     Value::Object(m) => {
                         for (k, x) in m.iter_mut() {
-                            if let (true, Value::String(s)) = (k == "name" || k.ends_with("_name") || k == "comp_label" || k == "text" || k == "note" || k == "message", &*x) {
-                                *x = Value::String(crate::deepseek::localize(s, "zh-CN"));
+                            if let (true, Value::String(s)) = (k == "name" || k.ends_with("_name") || k == "label" || k == "comp_label" || k == "text" || k == "note" || k == "message", &*x) {
+                                *x = Value::String(words(s));
                             } else if let (true, Value::Array(names)) = (k == "names", &mut *x) {
                                 for n in names.iter_mut() {
                                     if let Value::String(s) = n {
-                                        *n = Value::String(crate::deepseek::localize(s, "zh-CN"));
+                                        *n = Value::String(words(s));
                                     }
                                 }
                             } else {
-                                walk(x);
+                                walk(x, words);
                             }
                         }
                     }
-                    Value::Array(a) => a.iter_mut().for_each(walk),
+                    Value::Array(a) => a.iter_mut().for_each(|x| walk(x, words)),
                     _ => {}
                 }
             }
-            walk(&mut out);
+            walk(&mut out, &words);
         }
         let mutating = !matches!(op, "summary" | "sports_board" | "lotto_info" | "quote" | "quotes" | "chart" | "fundamentals" | "search" | "account" | "notebook" | "tickets" | "movers" | "session" | "ledger" | "resolve" | "alerts");
         if mutating || b.next_id != before {

@@ -155,7 +155,7 @@ public:
    for (int32 I = 0; I < 9; ++I) {
     const FVector2D C = Origin + FVector2D((I % 3 + .5f) * Area.X / 3, (I / 3 + .5f) * Area.Y / 3);
     const bool Winning = Card->Win > 0 && Card->Cells[I] == Card->Win;
-    FSlateDrawElement::MakeText(Out, Layer + 2, G.ToPaintGeometry(FVector2D(160, 40), FSlateLayoutTransform(C - FVector2D(60, 18))), FString::Printf(TEXT("$%lld"), Card->Cells[I]), FCoreStyle::GetDefaultFontStyle("Bold", 22), ESlateDrawEffect::None, Winning ? FLinearColor(.85f, .1f, .1f) : FLinearColor(.2f, .2f, .25f));
+    FSlateDrawElement::MakeText(Out, Layer + 2, G.ToPaintGeometry(FVector2D(160, 40), FSlateLayoutTransform(C - FVector2D(60, 18))), OKStreetMoneyText(Card->Cells[I]), FCoreStyle::GetDefaultFontStyle("Bold", 22), ESlateDrawEffect::None, Winning ? FLinearColor(.85f, .1f, .1f) : FLinearColor(.2f, .2f, .25f));
    }
   if (Card.IsValid())
    for (int32 Y = 0; Y < CH; ++Y) for (int32 X = 0; X < CW; ++X) if (Card->Cover[Y * CW + X]) {
