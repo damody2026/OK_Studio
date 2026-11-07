@@ -4428,6 +4428,8 @@ fn open_unconfigured(game: &Path, card: Option<&Path>, outfit: i32) -> Result<Ok
         }
         let mut sess = made?;
         sess.game_root = std::path::PathBuf::new();
+        // Dyed hair, before the open cache stores the session.
+        if let Some(bytes) = card.and_then(|c| crate::card::card_file_bytes(c).ok()) { crate::hair_dye::apply(&mut sess, &bytes); }
         log_shader_inputs(&sess);
         // The key covers the library, the card (and its pack) and the zipmods the fallback can serve.
         // An open that read installed zipmods is only valid while they are unchanged (checked on load).

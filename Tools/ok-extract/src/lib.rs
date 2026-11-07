@@ -51,6 +51,7 @@ mod eye_gaze;
 mod eye_look;
 mod head_look;
 mod hit_reaction;
+mod hair_dye;
 mod session;
 pub mod okanim;
 #[cfg(test)]

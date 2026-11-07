@@ -418,6 +418,11 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
  // The street's clinics and salon: a copy of her card with someone else's face shape and/or dyed hair (properties::restyle).
  // No game root or cache: the card alone. Request: card, output, donor (a card path, optional), hair_rgb ("#rrggbb", optional),
  // dress ([{outfit, part, id, color}], the shops' clothes, properties::dress; outfit -1 is `outfit`, the one she goes out in).
+ // Whether the salon can dye this card's hair (hair_dye.rs). Request: card.
+ if text(&r,"action")?=="hair_dyeable"{
+  let card=Path::new(text(&r,"card")?);let session=crate::session::open(&crate::oklib::root_for_card(root,Some(card)),Some(card),0)?;
+  return Ok(json!({"valid":true,"dyeable":crate::hair_dye::dyeable(&session)}));
+ }
  if text(&r,"action")?=="restyle"{
   let card=crate::gamefs::read(text(&r,"card")?).map_err(|e|e.to_string())?;
   let donor=match r["donor"].as_str().filter(|d|!d.is_empty()){Some(d)=>Some(crate::gamefs::read(d).map_err(|e|e.to_string())?),None=>None};

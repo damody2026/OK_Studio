@@ -113,7 +113,9 @@ pub(crate) fn restyle(card:&[u8],donor:Option<&[u8]>,rgb:Option<[f32;3]>)->Resul
   if !edits.iter().any(|(k,_)|k.starts_with("hair.")){return Err("卡片沒有頭髮顏色欄位".into());}
  }
  if edits.is_empty(){return Ok(card.to_vec());}
- patch_paths(card,0,&edits)
+ let out=patch_paths(card,0,&edits)?;
+ // Hair painted into its texture takes no colour from the card: the open recolours it (hair_dye.rs).
+ match rgb {Some(c)=>crate::cardbake::with_chunk(&out,crate::hair_dye::CHUNK,&c.map(|v|(v.clamp(0.0,1.0)*255.0+0.5) as u8)),None=>Ok(out)}
 }
 
 /// The street's clothes (ok-rules wardrobe.rs, user 2026-11-04): `card` wearing each (outfit, part, list id, main colour)
@@ -152,7 +154,9 @@ fn put_on(card:&[u8],outfit:usize,part:usize,id:i32,rgb:Option<[f32;3]>)->Result
 /// A card's KoiClothesOverlay paints on the slot, not on the piece: 安可's red cheongsam was printed over the shop's floral
 /// dress. A new piece in a slot starts without what was painted on the old one.
 fn overlays_off(card:&[u8],outfit:usize,part:usize)->Result<Vec<u8>,String>{
- const SLOTS:[&[&str];9]=[&["ct_clothesTop","ct_top_parts_A","ct_top_parts_B","ct_top_parts_C"],&["ct_clothesBot"],&["ct_bra"],&["ct_shorts"],&["ct_gloves"],&["ct_panst"],&["ct_socks"],&["ct_shoes_inner"],&["ct_shoes_outer"]];
+ // With the top go the masks painted for it: 爱丽丝's BodyMask was made for her body suit, under the shop's dress the mask of
+ // the dress never applied and her skin came through it.
+ const SLOTS:[&[&str];9]=[&["ct_clothesTop","ct_top_parts_A","ct_top_parts_B","ct_top_parts_C","BodyMask","BraMask","InnerMask"],&["ct_clothesBot"],&["ct_bra"],&["ct_shorts"],&["ct_gloves"],&["ct_panst"],&["ct_socks"],&["ct_shoes_inner"],&["ct_shoes_outer"]];
  fn field<'a>(v:&'a mut Value,key:&str)->Option<&'a mut Value>{match v {Value::Map(m)=>m.iter_mut().find(|(k,_)|k.as_str()==Some(key)).map(|(_,v)|v),_=>None}}
  let Some(names)=SLOTS.get(part)else{return Ok(card.to_vec())};
  let mut blocks=blocks_from_card(card)?;let Some(raw)=blocks.get("KKEx").cloned()else{return Ok(card.to_vec())};
@@ -249,6 +253,14 @@ pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String
   let opened=crate::oklib::open_test_card(&tmp,0);let _=fs::remove_file(&tmp);
   assert!(opened.unwrap().parts.iter().any(|p|p.role.starts_with("clothes")),"the new clothes are on her");
  }
+ #[test]fn every_heroine_takes_the_dye_even_with_hair_painted_into_its_texture(){
+  let dir="C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines";if !Path::new(dir).exists(){return;}
+  let green=|p:&[u8]|{let i=crate::teximg::load_from_memory(p).unwrap().into_rgba8();let (mut r,mut g,mut n)=(0u64,0u64,0u64);for p in i.pixels(){if p[3]>128{r+=p[0] as u64;g+=p[1] as u64;n+=1;}}n==0||r==g||g>r};
+  for e in fs::read_dir(dir).unwrap(){let path=e.unwrap().path();let card=crate::gamefs::read(path.to_str().unwrap()).unwrap();
+   let tmp=std::env::temp_dir().join(format!("ok-dye-{}-{}",std::process::id(),path.file_name().unwrap().to_string_lossy()));fs::write(&tmp,restyle(&card,None,Some([0.2,0.9,0.3])).unwrap()).unwrap();
+   let s=crate::oklib::open_test_card(&tmp,0).unwrap();let _=fs::remove_file(&tmp);assert!(crate::hair_dye::dyeable(&s),"{path:?}");
+   for i in crate::hair_dye::hair_parts(&s){let p=&s.parts[i];assert!(p.png.as_ref().is_none_or(|p|green(p)),"{path:?} {}",p.name);}}
+ }
  #[test]fn dress_takes_off_what_she_wears_as_accessories(){
   let dir="C:/portable/OpenKoikatsu/Content/CharacterCards/StreetHeroines";if !Path::new(dir).exists(){return;}
   for e in fs::read_dir(dir).unwrap(){let path=e.unwrap().path();let card=crate::gamefs::read(path.to_str().unwrap()).unwrap();let mine=list_paths(&card,0).unwrap();let got=list_paths(&dress(&card,&[(0,0,55,None),(0,1,0,None)]).unwrap(),0).unwrap();
@@ -257,6 +269,7 @@ pub(crate) fn list_paths(original:&[u8],outfit:usize)->Result<Vec<(String,String
     assert_eq!(at(&got,&k)=="120",!(parent.starts_with("a_n_hair")||parent.starts_with("a_n_head")||parent.starts_with("a_n_ear")||parent.starts_with("a_n_megane")||parent.starts_with("a_n_nose")||parent.starts_with("a_n_mouth")||parent.starts_with("a_n_neck")||parent.starts_with("a_n_face")),"{k} {parent}");}
    let dressed=dress(&card,&[(0,0,55,None),(0,1,0,None)]).unwrap();
    for(i,_,parent)in super::super::extra::worn(&blocks_from_card(&dressed).unwrap(),0).unwrap(){assert!(parent.starts_with("a_n_head")||parent.starts_with("a_n_ear")||parent.starts_with("a_n_neck"),"extra slot {i} on {parent} stayed on");}
+   let parsed=crate::card::parse_card_bytes(&dressed,0).unwrap();assert!(!parsed.clothes_masks.keys().any(|k|k.0==0),"the masks painted for her old top go with it");
    assert_eq!(at(&got,"clothes.parts.4.id"),"0","her gloves go with her top");assert_eq!(at(&got,"clothes.parts.5.id"),"0","her tights too");
    for c in 1..3 {assert_eq!(at(&got,&format!("clothes.parts.0.colorInfo.{c}.baseColor.1")).parse::<f32>().unwrap(),1.,"the dress's own colour area {c}");}}
  }

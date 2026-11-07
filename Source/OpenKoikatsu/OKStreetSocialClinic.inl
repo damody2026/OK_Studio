@@ -31,6 +31,9 @@ void AOKStreetSocialScene::OfferClinic(int32 Her,const FString& ItemId,const FSt
  // Asked first with nothing changed: what cannot be done (she is still a virgin, that is her face already) is said now.
  const TSharedPtr<FJsonObject> Try=ClinicRequest(Her,ItemId,From,Color);if(!Try)return;
  if(!Try->GetBoolField(TEXT("ok"))){S.FreeTalkNotice=Try->GetStringField(TEXT("fact"));RefreshUI();return;}
+ // Hair that cannot take a dye (hair_dye.rs): nothing is paid, and she is the one who says so.
+ if(ItemId==TEXT("salon_dye")&&!HairDyeable(Her)){UE_LOG(LogTemp,Display,TEXT("Street clinic: actor %d's hair cannot be dyed"),Her);
+  S.FreeTalkNotice=OKT(TEXT("ui.clinic.hair_cannot_dye_notice"));S.DeferredNotes.Add(OKMsg(TEXT("ui.scene.game_fact_note"),{{TEXT("fact"),OKT(TEXT("ui.clinic.hair_cannot_dye_fact"))}}));RefreshUI();return;}
  FString What=Item->Name;
  if(!From.IsEmpty())for(const auto& C:S.Manifest.Characters)if(OKStreetStableId(C)==From)What=OKMsg(TEXT("ui.clinic.face_of"),{{TEXT("name"),C.Name}});
  if(!Color.IsEmpty())if(const TSharedPtr<FJsonObject> Chart=OKRulesEval(S,OKRulesRequest(TEXT("hair_colors")))){const TArray<TSharedPtr<FJsonValue>>* Colors=nullptr;
@@ -95,6 +98,18 @@ FString AOKStreetSocialScene::RestyledCard(int32 Her,FString& Error,const FOKStr
  if(!FOkSession::AppearanceRequest(FString(),RequestPath,Report,Error)||!IFileManager::Get().FileExists(*Out))return FString();
  UE_LOG(LogTemp,Display,TEXT("Street clinic: %s restyled to %s (face of %s, hair %s)"),*Girl,*Out,*FaceFrom,*Hair);
  return Out;
+}
+
+// Whether the salon can dye her hair (ok-extract appearance.rs "hair_dyeable"). Not known (no answer): it can, as it always did.
+bool AOKStreetSocialScene::HairDyeable(int32 Her){
+ auto& S=*State;if(!S.BaseCards.IsValidIndex(Her))return true;
+ auto Json=MakeShared<FJsonObject>();Json->SetStringField(TEXT("action"),TEXT("hair_dyeable"));Json->SetStringField(TEXT("card"),S.BaseCards[Her]);
+ FString Body,Error,Text;{auto W=TJsonWriterFactory<>::Create(&Body);FJsonSerializer::Serialize(Json,W);}
+ const FString RequestPath=OKStreetClinic::Dir()/TEXT("dyeable.request.json"),Report=OKStreetClinic::Dir()/TEXT("dyeable.report.json");
+ IFileManager::Get().MakeDirectory(*OKStreetClinic::Dir(),true);
+ if(!FFileHelper::SaveStringToFile(Body,*RequestPath,FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM)||!FOkSession::AppearanceRequest(FString(),RequestPath,Report,Error)||!FFileHelper::LoadFileToString(Text,*Report)){UE_LOG(LogTemp,Warning,TEXT("Street clinic: no answer on dyeing actor %d: %s"),Her,*Error);return true;}
+ TSharedPtr<FJsonObject> Answer;bool Dyeable=true;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text),Answer)&&Answer)Answer->TryGetBoolField(TEXT("dyeable"),Dyeable);
+ return Dyeable;
 }
 
 // At the start, before the crowd loads: each girl with a changed face or hair is loaded from her restyled card (the

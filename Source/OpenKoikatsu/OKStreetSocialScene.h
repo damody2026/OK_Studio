@@ -229,6 +229,7 @@ private:
  void OfferClinic(int32 Her,const FString& ItemId,const FString& From,const FString& Color);
  void FinishClinic(int32 Her,const FString& ItemId,const FString& Option,const FString& From,const FString& Color);
  FString RestyledCard(int32 Her,FString& Error,const struct FOKStreetCatalogItem* Trying=nullptr);
+ bool HairDyeable(int32 Her);
  FString ApplyAppearanceToSelection(const FString& ManifestPath,const FString& Json);
  void AddClinicRows(const TSharedRef<class SVerticalBox>& List,const struct FOKStreetCatalogItem& Item,int32 Her);
  // Her clothes (OKStreetSocialWardrobe.inl).
