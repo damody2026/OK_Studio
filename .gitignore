@@ -188,3 +188,5 @@ deepseek.json
 
 # UniversityCity copied from StreetSocialCity by Tools/migrate_street_city_content.lua: generated models stay local
 /Content/UniversityCity/
+/Content/__ExternalActors__/
+/Content/__ExternalObjects__/

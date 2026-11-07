@@ -27,6 +27,21 @@ for _, p in ipairs(c.packages) do
   end
   if not found then missing[#missing + 1] = p end
 end
+-- the World Partition copy: its map, HLOD layers and one file per actor, which the map's own dependency list does not name
+local function walk(dir, fn) for n in lfs.dir(dir) do if n ~= '.' and n ~= '..' then local p = dir .. '/' .. n
+  if lfs.attributes(p, 'mode') == 'directory' then walk(p, fn) else fn(p) end end end end
+local stream = 0
+local function sync(src)
+  local a = lfs.attributes(src); local dst = 'Content/' .. src:gsub('^StreetSocialCity/Content/', ''); local b = lfs.attributes(dst)
+  total = total + a.size; stream = stream + 1
+  if b and b.size == a.size and b.modification >= a.modification then skipped = skipped + 1 else copy(src, dst); copied = copied + 1; bytes = bytes + a.size end
+end
+for _, d in ipairs({ '__ExternalActors__', '__ExternalObjects__' }) do
+  local p = 'StreetSocialCity/Content/' .. d .. '/UniversityCity/Maps/UniversityCityWP'
+  if lfs.attributes(p) then walk(p, sync) end
+end
+for n in lfs.dir('StreetSocialCity/Content/UniversityCity/Maps') do if n:find('^UniversityCityWP') and not n:find('%.ini$') then sync('StreetSocialCity/Content/UniversityCity/Maps/' .. n) end end
+print('World Partition files', stream)
 print(string.format('packages %d, files copied %d, unchanged %d, copied %.2f GB, total %.2f GB', #c.packages, copied, skipped, bytes / 2 ^ 30, total / 2 ^ 30))
 print('missing', #missing); for i = 1, math.min(#missing, 20) do print('  ' .. missing[i]) end
 print('clash', #clash); for i = 1, math.min(#clash, 20) do print('  ' .. clash[i]) end
