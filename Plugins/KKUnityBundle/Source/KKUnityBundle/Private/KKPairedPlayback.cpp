@@ -19,7 +19,7 @@ bool AKKPairedPlayback::Start(AKKPreviewActor* Female,AKKPreviewActor* Male,cons
 	const FString& State,const FString& FemaleMotion,const FString& MaleMotion,FString& Error)
 {
 	if(!IsValid(Female)||!IsValid(Male)||Female==Male||Female->GetWorld()!=Male->GetWorld()
-		||!Female->GetActorTransform().Equals(Male->GetActorTransform(),.01f))
+		||!Female->PairFrame().Equals(Male->PairFrame(),.01f))
 	{Error=TEXT("配對角色需要共同場景與原點");return false;}
 	Stop();FemaleActor=Female;MaleActor=Male;FemaleClip=FemaleKey;MaleClip=MaleKey;StateName=State;FemaleIK=FemaleMotion;MaleIK=MaleMotion;
 	OldFemaleTick=Female->IsActorTickEnabled();OldMaleTick=Male->IsActorTickEnabled();
@@ -51,6 +51,16 @@ bool AKKPairedPlayback::Restart(FString& Error)
 	// A new pose can put hair/cloth inside the bodies: settle the chains first (generic, every pose and state).
 	OKPhysXSecondary::Settle();
 	if(!Advance(0.f,Error)){Stop();return false;}return true;
+}
+void AKKPairedPlayback::SetThird(AKKPreviewActor* Actor,const FString& Motion,bool bSwapped)
+{
+	if(ThirdActor==Actor&&(!Actor||(ThirdMotion==Motion&&bThirdSwapped==bSwapped)))return;
+	SyncAsync();
+	if(!IsValid(FemaleActor)||(Actor&&(OkPlayer.IsValid()||!bActive)))Actor=nullptr; // the OK player has two roles
+	if(IsValid(ThirdActor)&&ThirdActor!=Actor)ThirdActor->SetCoordinatedPlayback(false);
+	ThirdActor=Actor;ThirdMotion=Motion;bThirdSwapped=bSwapped;
+	if(IsValid(FemaleActor))FemaleActor->Session.SetPairThird(Actor?&Actor->Session:nullptr,Motion,bSwapped);
+	if(Actor){Actor->SetCoordinatedPlayback(true);Actor->SetActorTickEnabled(false);}
 }
 bool AKKPairedPlayback::SetSpeed(float Value) {if(!FMath::IsFinite(Value)||Value<0.f||Value>4.f) return false;Speed=Value;return true;}
 bool AKKPairedPlayback::Advance(float Delta,FString& Error)
@@ -95,7 +105,7 @@ bool AKKPairedPlayback::Advance(float Delta,FString& Error)
   TArray<int32> FemaleParts,MaleParts;TArray<uint64> FemaleRevisions,MaleRevisions;
   if(CVarPairAsync.GetValueOnGameThread()!=0&&Delta>0.f&&AKKPreviewActor::PairedFrameGpuParts(*FemaleActor,*MaleActor,FemaleParts,FemaleRevisions,MaleParts,MaleRevisions)){
    TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairNativeAsync);
-   FemaleActor->PublishPhysicsFrame();MaleActor->PublishPhysicsFrame();
+   FemaleActor->PublishPhysicsFrame();MaleActor->PublishPhysicsFrame();if(IsValid(ThirdActor))ThirdActor->PublishPhysicsFrame();
    PendingNext=Next;PendingDelta=PhysicsDelta;PendingReactions[0]=Reactions[0];PendingReactions[1]=Reactions[1];
    FOkSession* F=&FemaleActor->Session;FOkSession* M=&MaleActor->Session;const float T=float(Next),D=PendingDelta;
    bSolvePending=true;bPendingNative=true;
@@ -103,8 +113,9 @@ bool AKKPairedPlayback::Advance(float Delta,FString& Error)
     FemaleParts=MoveTemp(FemaleParts),FemaleRevisions=MoveTemp(FemaleRevisions),MaleParts=MoveTemp(MaleParts),MaleRevisions=MoveTemp(MaleRevisions)]{
     FOkSharedSolveScope Solving;FString Report;bSolveOk=FOkSession::ApplyPairedFrameGpu(*F,*M,T,D,State,FemaleMotion,MaleMotion,FemaleParts,FemaleRevisions,MaleParts,MaleRevisions,Report);PendingReport=Report;});
    // The paint on her asks these sessions for geometry from its own tick (that read a skeleton the worker was changing).
-   F->SetSharedSolve(PendingSolve);M->SetSharedSolve(PendingSolve);
+   F->SetSharedSolve(PendingSolve);M->SetSharedSolve(PendingSolve);if(IsValid(ThirdActor))ThirdActor->Session.SetSharedSolve(PendingSolve);
    return true;}
+  if(IsValid(ThirdActor))ThirdActor->PublishPhysicsFrame();
   TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairNative);if(!AKKPreviewActor::ApplyPairedFrameWithDisplay(*FemaleActor,*MaleActor,float(Next),PhysicsDelta,StateName,FemaleIK,MaleIK,Error)) return false;}
 	Elapsed=Next;
 	return ShowFrame(Delta,Reactions,Error);
@@ -113,12 +124,13 @@ bool AKKPairedPlayback::ShowFrame(float Delta,const bool Reactions[2],FString& E
 {
 
  FKKGpuStreamBatchScope GpuFrame;
-	for(AKKPreviewActor* PreviewRole : {FemaleActor.Get(),MaleActor.Get()}) {
+	for(AKKPreviewActor* PreviewRole : {FemaleActor.Get(),MaleActor.Get(),ThirdActor.Get()}) {
+  if(!IsValid(PreviewRole))continue;
   TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairRoleDisplay);
 		PreviewRole->BeginFaceDisplayUpdate();
 		PreviewRole->bHeadLookPoseDirty=false;
         const int32 BodyRoleIndex=PreviewRole==FemaleActor?0:1;
-        PreviewRole->bBodyReactionPoseDirty=Reactions[BodyRoleIndex]&&!PreviewRole->Session.IsBodyReactionPlaying();
+        if(PreviewRole!=ThirdActor)PreviewRole->bBodyReactionPoseDirty=Reactions[BodyRoleIndex]&&!PreviewRole->Session.IsBodyReactionPlaying();
 		PreviewRole->AnimPhase=float(Elapsed);PreviewRole->AnimDuration=PreviewRole->Session.AnimDuration();PreviewRole->RefreshSkinnedDisplay();
   {TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairFace);
 		PreviewRole->AdvanceEyeLook(Delta);PreviewRole->AdvanceFaceAnimation(Delta);
@@ -146,6 +158,7 @@ void AKKPairedPlayback::Tick(float DeltaSeconds) {
 }
 void AKKPairedPlayback::Stop() {
 	SyncAsync();
+	SetThird(nullptr,FString(),false);
 	if(bPairPhysics){if(IsValid(FemaleActor))FemaleActor->RemovePairPhysics();if(IsValid(MaleActor))MaleActor->RemovePairPhysics();bPairPhysics=false;}
 	if(bActive) {if(IsValid(FemaleActor)){FemaleActor->SetCoordinatedPlayback(false);FemaleActor->CloseVaginaOpening();FemaleActor->SetActorTickEnabled(OldFemaleTick);}if(IsValid(MaleActor)){MaleActor->SetCoordinatedPlayback(false);MaleActor->SetActorTickEnabled(OldMaleTick);}}
 	bVaginaRange=false;

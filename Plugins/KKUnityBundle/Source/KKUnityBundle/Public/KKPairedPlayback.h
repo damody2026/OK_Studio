@@ -37,6 +37,9 @@ public:
     const FString& GetFemaleMotion() const {return FemaleIK;}
     const FString& GetMaleMotion() const {return MaleIK;}
 	bool Advance(float Delta,FString& Error);
+	/** The second heroine of a 3P pose: solved and shown with the pair. Null takes her out; do that before destroying her. */
+	void SetThird(AKKPreviewActor* Actor,const FString& Motion,bool bSwapped);
+	AKKPreviewActor* GetThird() const {return ThirdActor.Get();}
 	/** Whether this state plays through its converted OK group (ok.Anim.UseOK and Saved/OKAnim/Pairs has it). */
 	bool IsUsingOK() const {return OkPlayer.IsValid();}
 	/** Waits for the frame being solved in the background (ok.Anim.AsyncPair) and shows it: call before touching the
@@ -49,6 +52,8 @@ public:
 	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 	UPROPERTY() TObjectPtr<AKKPreviewActor> FemaleActor;
 	UPROPERTY() TObjectPtr<AKKPreviewActor> MaleActor;
+	UPROPERTY() TObjectPtr<AKKPreviewActor> ThirdActor;
+	FString ThirdMotion;bool bThirdSwapped=false;
 private:
 	TSharedPtr<class FOkAnimPlayer> OkPlayer;
 	FString FemaleClip,MaleClip,StateName,FemaleIK,MaleIK;

@@ -45,6 +45,8 @@ fn street_tools() -> Value {
         t("game_wait", "Let the clock run: for seconds, until a game time (HH:MM), or until the walk/outing with her ends; then pause. Returns the state summary.",
           json!({"seconds": {"type": "number"}, "until": {"type": "string"}, "outing": {"type": "boolean"}, "timeout_s": {"type": "number"}}), &[]),
         t("game_clock", "Pause or run the game clock.", json!({"paused": {"type": "boolean"}}), &["paused"]),
+        t("game_ovulate", "Her pregnancy state (girl: slot 1..10). on true: she ovulates, any finish inside takes whatever the day, until she conceives; on false: back on her cycle; omitted: only reads.",
+          json!({"girl": {"type": "integer"}, "on": {"type": "boolean"}}), &["girl"]),
         t("game_look", "Point the camera (yaw degrees, pitch -50..15).", json!({"yaw": {"type": "number"}, "pitch": {"type": "number"}}), &["yaw"]),
         t("game_phone", "Type into the open phone thread and send.", json!({"text": {"type": "string"}}), &["text"]),
         t("game_screenshot", "A screenshot of the game window (with UI). scale 2..4: a high-resolution shot without UI.", json!({"scale": {"type": "number"}}), &[]),
@@ -293,6 +295,11 @@ fn run(game: &Game, name: &str, a: &Value) -> Result<Value> {
             text(summary(&game.call("/state", None)?, 5))
         }
         "game_clock" => json_text(game.call("/clock", Some(&json!({"paused": a["paused"] != false})))?),
+        "game_ovulate" => {
+            let mut body = json!({"girl": a["girl"]});
+            if let Some(on) = a["on"].as_bool() { body["ovulate"] = json!(on); }
+            json_text(game.call("/pregnancy", Some(&body))?)
+        }
         "game_look" => {
             let mut body = json!({"yaw": arg_f(a, "yaw", 0.0)});
             if let Some(p) = a["pitch"].as_f64() {

@@ -392,10 +392,10 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  // The time after an H scene (OKStreetSocialBookmarks.inl): who with, the result waiting for "leave", its buttons; the
  // bookmark open on the phone page.
  int32 AfterGirl=INDEX_NONE,BookmarkOpen=INDEX_NONE;TSharedPtr<FJsonObject> AfterAnswer;TSharedPtr<SWidget> AfterBar;
- TArray<FString> HighCards;TArray<FString> BaseCards; /* her own card (HighCards may be her clinic/salon copy, OKStreetSocialClinic.inl) */TArray<int32> HighOutfits;TWeakObjectPtr<AOKInteractionMode> PrivateMode;TSharedPtr<SWidget> PrivateLeave;TSharedPtr<SWidget> HResultPanel; /* what the last one-on-one left on her (h_session_end result), until closed */ /* the one-on-one scene's own leave button (R3-228) */FString HighPrivateReport;double HighPrivateAt=0,PrivatePausedSeconds=0;bool PrivateClockFrozen=false; /* the street clock stood still for the private scene (it runs again on leaving, by the real minutes spent) */bool HighPrivateSeenReady=false;TSharedPtr<FJsonObject> HighPrivateResult;TArray<FOKStreetAgentSim> HighPrivateAgents;TArray<FRotator> HighPrivateRotations;FVector HighPrivateMale;
+ TArray<TPair<int32,TSharedPtr<FJsonObject>>> HResultNext; /* the other heroines' results, after the first's */TArray<FString> HighCards;TArray<FString> BaseCards; /* her own card (HighCards may be her clinic/salon copy, OKStreetSocialClinic.inl) */TArray<int32> HighOutfits;TWeakObjectPtr<AOKInteractionMode> PrivateMode;TSharedPtr<SWidget> PrivateLeave;TSharedPtr<SWidget> HResultPanel; /* what the last one-on-one left on her (h_session_end result), until closed */ /* the one-on-one scene's own leave button (R3-228) */FString HighPrivateReport;double HighPrivateAt=0,PrivatePausedSeconds=0;bool PrivateClockFrozen=false; /* the street clock stood still for the private scene (it runs again on leaving, by the real minutes spent) */bool HighPrivateSeenReady=false;TSharedPtr<FJsonObject> HighPrivateResult;TArray<FOKStreetAgentSim> HighPrivateAgents;TArray<FRotator> HighPrivateRotations;FVector HighPrivateMale;
  TMap<int32,double> CommutePausedUntil; // a girl he walked up to stops her walk for a moment (StepNavigation)
  // PrivateInPlace: the one-on-one is where she stands on the street (user, 2026-11-01: no change of scene); the street
- // goes on around them and their street figures are kept out of sight under it (OKStreetOffstage).
+ // goes on around them and every street figure is kept out of sight under it (OKStreetOffstage; user, 2026-11-06: nobody else shows in a one-on-one).
  bool PrivateInPlace=false;bool PrivateTryOn=false; /* she is trying clothes on: no H scene, no memory of a session */
  int32 NavGirl=INDEX_NONE,PrivateGirl=INDEX_NONE,ContactsProbePhase=0;FOKStreetLiftRide NavRide; // the navigation riding an elevator (PlanNavLift)
  double NavAt=0,ContactsProbeAt=0;
@@ -4084,7 +4084,7 @@ void AOKStreetSocialScene::Tick(float Dt){
    if(Rate>15.f&&Rate<600.f)ShownWalk=Rate/OKStreetWalkSpeed;
   }
   S.LastShown.Add(Agent.Slot,Shown);
- OKSetCrowdRuntimeCharacterMotion(this,Agent.Slot,FTransform(S.RenderedRotations[Agent.Slot],S.PrivateInPlace&&Agent.Slot==S.PrivateGirl?OKStreetOffstage:Shown),S.ReadingForceWalk==Agent.Slot?1.f:ShownWalk,Error);
+ OKSetCrowdRuntimeCharacterMotion(this,Agent.Slot,FTransform(S.RenderedRotations[Agent.Slot],S.PrivateInPlace?OKStreetOffstage:Shown),S.ReadingForceWalk==Agent.Slot?1.f:ShownWalk,Error);
   if(S.SelfTest&&Agent.Position!=Before&&!S.FacingActorsChecked.Contains(Agent.Slot)){FOKRuntimeCharacterStatus Submitted;const float BeforeError=FMath::Abs(FMath::FindDeltaAngleDegrees(PreviousFacing.Yaw,S.Rotations[Agent.Slot].Yaw));const float AfterError=FMath::Abs(FMath::FindDeltaAngleDegrees(S.RenderedRotations[Agent.Slot].Yaw,S.Rotations[Agent.Slot].Yaw));if(OKGetCrowdRuntimeCharacterStatus(this,Agent.Slot,Submitted)&&Submitted.Transform.Rotator().Equals(S.RenderedRotations[Agent.Slot],.01f)&&Turn<=OKStreetFemaleTurnDegreesPerSecond*FMath::Max(0.f,Dt)+.001f&&AfterError<=BeforeError+.001f){S.FacingActorsChecked.Add(Agent.Slot);++S.FacingChecks;}else S.Errors.Add(TEXT("NPC submitted facing exceeded turn limit or turned away from movement"));}
 
  }

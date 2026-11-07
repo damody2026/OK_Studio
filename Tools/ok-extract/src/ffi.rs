@@ -1298,20 +1298,27 @@ unsafe fn animation_pair_frame_impl(female:*mut OkSession,male:*mut OkSession,ti
     let (Some(state),Some(fm),Some(mm))=(cstr_opt(state),cstr_opt(female_motion),cstr_opt(male_motion)) else {write_err(err,cap,"invalid UTF-8 pair identity");return 1;};
     let female=&mut *female;let male=&mut *male;
     if female.sex!=1||male.sex!=0||female.game_root!=male.game_root {write_err(err,cap,"pair needs opposite roles from the same game");return 1;}
+    // The second heroine of a 3P pose: set with ok_animation_pair_set_third, a third distinct session.
+    let third_link=female.pair_third.clone();
+    let mut third:Option<&mut OkSession>=third_link.as_ref().filter(|t|!t.session.is_null()&&!std::ptr::eq(t.session,&*female)&&!std::ptr::eq(t.session,&*male)).map(|t|&mut *t.session);
     let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let profile=std::env::var("OK_ANIM_PROFILE").ok().as_deref()==Some("1");let start=std::time::Instant::now();
         let setups={let _trace=crate::native_profile::Scope::new(0);crate::h_playback::validated_pair_setups(female,male,&state,&fm,&mm)?};
+        let third_setup=match (&third,&third_link){(Some(_),Some(link))=>crate::h_playback::third_setup(&female.game_root,&link.motion,&state)?,_=>None};
+        let swapped=third_link.as_ref().is_some_and(|l|l.swapped);
         let validated=start.elapsed();
         // Keep the established stage barriers/dispatch: an outer worker
         // transaction did not improve complete-frame measurements.
         let work=||{
         {let _trace=crate::native_profile::Scope::new(1);
         crate::h_playback::set_native_pair_parameters(female,male);
+        if let Some(t)=third.as_deref_mut(){crate::h_playback::set_third_pair_parameters(female,male,t,swapped);}
         crate::session::native_parallel_work(||rayon::join(
             ||{let _trace=crate::native_profile::Scope::new(14);female.sample_paired_frame(time)},
-            ||{let _trace=crate::native_profile::Scope::new(14);male.sample_paired_frame(time)}));}
+            ||rayon::join(||{let _trace=crate::native_profile::Scope::new(14);male.sample_paired_frame(time)},
+                ||if let Some(t)=third.as_deref_mut(){t.sample_paired_frame(time)})));}
         let sampled=start.elapsed();
-        let contacts={let _trace=crate::native_profile::Scope::new(2);crate::h_playback::apply_contacts_prepared_with_policy(female,male,&state,setups,false,true,dt)?};
+        let contacts={let _trace=crate::native_profile::Scope::new(2);{let [f,m]=setups;crate::h_playback::apply_contacts_roles(female,male,third.as_deref_mut(),&state,[f,m,third_setup],swapped,false,true,dt)?}};
         // Studio IK once more after the contacts: MotionIK solves the whole body again and took back the knees that held
         // feet bend (one-on-one fitting of different heights keeps the taller one's feet on the floor).
         // His FK (his penis root turned toward her belly, belly_bulge::aim_penis) and hers (her body trembling as she comes,
@@ -1329,7 +1336,8 @@ unsafe fn animation_pair_frame_impl(female:*mut OkSession,male:*mut OkSession,ti
         // Contact solving is a barrier: both sampled actors must be visible
         // to the coupled solver before either actor advances private physics.
         {let _trace=crate::native_profile::Scope::new(3);crate::session::native_parallel_work(||rayon::join(
-            ||female.finish_paired_dynamics_filtered(dt,observer,excluded.0),||male.finish_paired_dynamics_filtered(dt,observer.map(|o|PrivateSkinObserver{role:1,..o}),excluded.1)));}
+            ||female.finish_paired_dynamics_filtered(dt,observer,excluded.0),||rayon::join(||male.finish_paired_dynamics_filtered(dt,observer.map(|o|PrivateSkinObserver{role:1,..o}),excluded.1),
+                ||if let Some(t)=third.as_deref_mut(){t.finish_paired_dynamics_filtered(dt,None,&[])})));}
         if profile{eprintln!("OK animation pair validate_ms={:.3} sample_ms={:.3} contacts_ms={:.3} dynamics_ms={:.3}",validated.as_secs_f64()*1000.,(sampled-validated).as_secs_f64()*1000.,(contacted-sampled).as_secs_f64()*1000.,(start.elapsed()-contacted).as_secs_f64()*1000.);}
         Ok::<usize,String>(contacts)
         };
@@ -1337,6 +1345,15 @@ unsafe fn animation_pair_frame_impl(female:*mut OkSession,male:*mut OkSession,ti
         work()
     }));
     match result {Ok(Ok(_))=>0,Ok(Err(message))=>{write_err(err,cap,&message);1},Err(_)=>{write_err(err,cap,"paired playback failed");1}}
+}
+
+/// The second heroine of a 3P pose: solved in the frames of the pair `female` is in, with her MotionIK `motion`; `swapped`
+/// is an odd pose (the one he is with is her). A null `third` clears it, which the caller must do before closing that session.
+#[no_mangle]
+pub unsafe extern "C" fn ok_animation_pair_set_third(female:*mut OkSession,third:*mut OkSession,motion:*const c_char,swapped:i32)->i32 {
+    if female.is_null()||female==third {return 1;}
+    let female=&mut *female;
+    female.pair_third=if third.is_null(){None}else{let Some(motion)=cstr_opt(motion) else{return 1;};Some(crate::h_playback::PairThird{session:third,motion,swapped:swapped!=0})};0
 }
 
 #[no_mangle]

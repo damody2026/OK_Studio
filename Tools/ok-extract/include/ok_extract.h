@@ -429,6 +429,7 @@ int32_t ok_select_common_animation(OkSession* s,const char* root,const char* key
 /* Optional profiling only. Register once; callback must outlive the module.
    event identifies a fixed native scope; begin is 1, end is 0. */
 int32_t ok_set_cpu_trace_callback(void (*callback)(uint32_t event,int32_t begin));
+int32_t ok_animation_pair_set_third(OkSession* female,OkSession* third,const char* motion,int32_t swapped);
 int32_t ok_animation_pair_frame(OkSession* female, OkSession* male, float time, float dt,
     const char* state, const char* female_motion, const char* male_motion, char* err, int32_t cap);
 // 2 = ownership rejected before any solver advancement; 1 = frame failure.

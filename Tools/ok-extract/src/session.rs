@@ -1156,6 +1156,8 @@ impl SessionPart {
 }
 
 pub struct OkSession {
+    /// On the female of a pair: the second heroine solved in the same frame (3P).
+    pub(crate) pair_third:Option<crate::h_playback::PairThird>,
     pub(crate) accessory_context:Option<std::sync::Arc<crate::accessory_extract::Context>>,
     pub editor_pregnancy:crate::pregnancy::Runtime,
     pub(crate) pv_config:Option<crate::pv::Config>,
@@ -4093,6 +4095,7 @@ impl SessionBlob {
             pv_config:self.pv_config,pv_mask:15,pv_fk:false,
             eye_look_config:self.eye_look_config,
             eye_look_runtime:None,
+            pair_third:None,
             head_look:crate::head_look::HeadLook::default(),
             physx_secondary:false,
             external_animation:None,

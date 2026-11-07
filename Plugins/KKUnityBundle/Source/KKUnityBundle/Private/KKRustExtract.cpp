@@ -186,6 +186,9 @@ FString FOkSession::NativePairClip(const FString& Key,int32 Layer)const{
     if(!Handle)return FString();int32 Size=ok_animation_pair_clip(Handle,TCHAR_TO_UTF8(*Key),Layer,nullptr,0);if(Size<=0||Size>1024*1024)return FString();TArray<ANSICHAR> Bytes;Bytes.SetNumZeroed(Size);if(ok_animation_pair_clip(Handle,TCHAR_TO_UTF8(*Key),Layer,Bytes.GetData(),Size)!=0)return FString();return UTF8_TO_TCHAR(Bytes.GetData());
 }
 
+bool FOkSession::SetPairThird(FOkSession* Third,const FString& Motion,bool bSwapped){
+	return Handle&&ok_animation_pair_set_third(Handle,Third?Third->Handle:nullptr,TCHAR_TO_UTF8(*Motion),bSwapped?1:0)==0;
+}
 bool FOkSession::ApplyPairedFrame(FOkSession& Female,FOkSession& Male,float Time,float Delta,
 	const FString& State,const FString& FemaleMotion,const FString& MaleMotion,FString& Error,FOkPrivateSkinCallback Callback,void* Context)
 {
@@ -1202,8 +1205,6 @@ bool FOkSession::AnimationFloatAt(int32 Index,FString& Name,float& Value,float& 
 }
 bool FOkSession::SetAnimationFloat(const FString& Name,float Value)
 {
-	if (bPortable) return false;
-
     FTCHARToUTF8 Utf8(*Name);
     return Handle&&GRust.set_anim_float&&GRust.set_anim_float(Handle,Utf8.Get(),Value)==0;
 }

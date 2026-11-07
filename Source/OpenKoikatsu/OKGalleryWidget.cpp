@@ -1,4 +1,5 @@
 #include "OKGalleryWidget.h"
+#include "OKHScene.h"
 #include "OKComboBox.h"
 #include "HAL/IConsoleManager.h"
 #include "OKInteractionScene.h"
@@ -2532,7 +2533,7 @@ void UOKCharacterController::RefreshPairs(){
     const bool Prepared=PendingLoadPairGeneration==LoadGeneration;
     const FString Json=Prepared?MoveTemp(PendingLoadPairJson):PreviewActor->Session.NativeAnimationPairs();
     PendingLoadPairGeneration=INDEX_NONE;
-    if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Rows)){for(const auto& Row:Rows){auto P=Row->AsObject();double Participants=0;if(!P||!P->TryGetNumberField(TEXT("participants"),Participants)||Participants!=2)continue;NativePairs.Add(P);}}
+    if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Rows)){for(const auto& Row:Rows){auto P=Row->AsObject();double Participants=0;if(!P||!P->TryGetNumberField(TEXT("participants"),Participants)||(Participants!=2&&!(bInteractionOnly&&Participants==3)))continue;NativePairs.Add(P);}}
     TMap<FString,int32> Counts;TArray<FString> Labels;Labels.Reserve(NativePairs.Num());
     for(const TSharedPtr<FJsonObject>& P:NativePairs){
         const FString Category=P->GetStringField(TEXT("category"));
@@ -2812,7 +2813,9 @@ void UOKCharacterController::OnPairSelected(FString Item,ESelectInfo::Type Type)
     bSuppressPairControls=true;PairStateCombo->ClearOptions();PairStateCombo->AddOption(TEXT("選擇階段"));TArray<FString> States;FemalePairStates.GetKeys(States);States.Sort();for(const auto& State:States)if(MalePairStates.Contains(State))PairStateCombo->AddOption(State);PairStateCombo->SetSelectedIndex(0);bSuppressPairControls=false;
     if(PairStateCombo->GetOptionCount()<2){ShowPairStatus(TEXT("這個姿勢沒有雙方都有的動作階段。"),true);return;}
     FString State=PairStateCombo->FindOptionIndex(TEXT("WLoop"))>0?TEXT("WLoop"):PairStateCombo->FindOptionIndex(TEXT("Idle"))>0?TEXT("Idle"):PairStateCombo->GetOptionAtIndex(1);
-    if(ReadyPairs.IsValidIndex(Index)&&ReadyPairs[Index].IsValid()&&ReadyPairs[Index]->Progress&&ReadyPairs[Index]->Progress->StateOf(State)!=1){
+    // In the H scene the wanted state is waited for (OnPairStateSelected moves it to the front): started on the first one ready
+    // (A_Drop by name) the panel had no way on from it and the pose could not be played.
+    if(!bHScene&&ReadyPairs.IsValidIndex(Index)&&ReadyPairs[Index].IsValid()&&ReadyPairs[Index]->Progress&&ReadyPairs[Index]->Progress->StateOf(State)!=1){
         // States are still being prepared: start with one that is ready (the first one always is).
         for(int32 Option=1;Option<PairStateCombo->GetOptionCount();++Option)if(ReadyPairs[Index]->Progress->StateOf(PairStateCombo->GetOptionAtIndex(Option))==1){State=PairStateCombo->GetOptionAtIndex(Option);break;}
     }
@@ -2883,7 +2886,7 @@ void UOKCharacterController::OnPairStateSelected(FString Item,ESelectInfo::Type 
     }
     const double CommitStart=FPlatformTime::Seconds();
     if(!PairedPlayback)PairedPlayback=GetWorld()->SpawnActor<AKKPairedPlayback>();if(!PairedPlayback){ShowPairStatus(TEXT("無法開始雙人播放。"),true);return;}FString Error;
-    if(!PairedPlayback->Start(Selected.Sex==1?PreviewActor.Get():PartnerActor.Get(),Selected.Sex==0?PreviewActor.Get():PartnerActor.Get(),FemaleKey,MaleKey,Item,P->GetStringField(TEXT("female_motion")),P->GetStringField(TEXT("male_motion")),Error)){ShowPairStatus(Error.IsEmpty()?TEXT("這個姿勢播放失敗。"):Error,true);PairedPlayback->Destroy();PairedPlayback=nullptr;return;}
+    if(!PairedPlayback->Start(Selected.Sex==1?PreviewActor.Get():PartnerActor.Get(),Selected.Sex==0?PreviewActor.Get():PartnerActor.Get(),FemaleKey,MaleKey,Item,P->GetStringField(TEXT("female_motion")),P->GetStringField(TEXT("male_motion")),Error)){ShowPairStatus(Error.IsEmpty()?TEXT("這個姿勢播放失敗。"):Error,true);PairedPlayback->Destroy();PairedPlayback=nullptr;if(HPanel)HPanel->PoseFailed(Error);return;}
     const double PlaybackDone=FPlatformTime::Seconds();
     ActiveBodyPairKey=FString::Printf(TEXT("%s:%d"),*P->GetStringField(TEXT("category")),P->GetIntegerField(TEXT("id")));
     OnPairSpeed(PairSpeedSlider?PairSpeedSlider->GetValue():.25f);

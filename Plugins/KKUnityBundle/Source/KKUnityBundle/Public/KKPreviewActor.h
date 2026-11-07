@@ -776,6 +776,9 @@ public:
 
 	bool bLoadBodyHeadOnly = false;
     bool bPreserveSourceWorld=false;
+    // Shown scaled or lifted by a style (the H scene): the two of a pair still share this origin. Unset, the actor itself.
+    bool bPairOriginSet=false;FTransform PairOrigin;
+    FTransform PairFrame() const{return bPairOriginSet?PairOrigin:GetActorTransform();}
 
 	UPROPERTY()
 	TArray<FKKLoadedPart> Parts;

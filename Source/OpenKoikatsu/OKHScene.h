@@ -70,6 +70,7 @@ private:
 struct FOKHPose {
     int32 Pair=INDEX_NONE;      // index in the controller's NativePairs
     int32 Mode=0;               // 1 service, 2 intercourse (AnimationInfo_XX)
+    bool bThree=false;int32 SecondUpper=0,SecondLower=0;FString SecondSource,SecondMotion;int32 SecondLayer=0; // 3P (AnimationInfo_06, _07): plays as its mode, with the second heroine
     int32 KindHoushi=0;         // service: 0 hand, 1 mouth, 2 breasts
     int32 SysTaii=0;            // sysTaii: 0 hand or breasts only, 1 licking, 2 him in her mouth (咥え)
     bool Anal=false;
@@ -85,6 +86,7 @@ UCLASS()
 class OPENKOIKATSU_API UOKHScenePanel : public UUserWidget {
     GENERATED_BODY()
 public:
+    void PoseFailed(const FString& Why); // the pair player would not start it
     UPROPERTY() TObjectPtr<UOKCharacterController> Gallery;
     virtual TSharedRef<SWidget> RebuildWidget() override;
     virtual void NativeTick(const FGeometry& Geometry,float Delta) override;
@@ -128,7 +130,7 @@ public:
     UFUNCTION() void OnHandR(FString Option,ESelectInfo::Type How);
 
     enum EKind : int32 {
-        TabHand=10,TabMouth=11,TabBreast=12,TabSonyu=20,TabClothes=30,TabAibu=40,
+        TabHand=10,TabMouth=11,TabBreast=12,TabSonyu=20,TabClothes=30,TabAibu=40,TabSolo=41,TabPeep=42,TabGirls=43,Tab3P=44,
         AibuBase=500,
         TouchChest=2101,TouchCrotch=2102,TouchAnal=2103,TouchButt=2104,TouchNipple=2105,Kiss=2106,Release=2107,
         TouchHead=2130,TouchHand=2131,TouchThigh=2132,TouchCalf=2133,TouchFoot=2134,TouchLips=2135,LickToggle=2136, // H_SCENE_ADDITIONS_PLAN 3
@@ -137,14 +139,35 @@ public:
         HeadCameraToggle=2302,EyesCameraToggle=2303, // her head, her eyes on the camera
         PoseBase=1000,
         Faster=2001,Slower=2002,Toggle=2003,Inside=2004,Outside=2005,Drink=2006,Vomit=2007,Again=2008,Insert=2009,InsertAnal=2010,Pull=2011,Condom=2012,Stop=2014,Continue=2015,ToggleMale=2016,LockHer=2017,LockHis=2018,MaleBottom=2019,PenisXRayToggle=2020,PhysicsNext=2021,GrayRoomToggle=2022,PenisPanelToggle=2023,PenisReset=2024,
+        SecondChange=3690,SecondClothes=3691,SecondBase=3700, // the second heroine (lesbian, 3P)
         ClothesBase=3000,RoomBase=3200,OutfitBase=3300,CoordinateToggle=3310,CoordinateAccessories=3311,CoordinateBase=3400,
     };
 private:
     // Caress (AnimationInfo_00): her own animation, him hidden (HAibu); each state is prepared up front.
-    struct FAibuPose {FString Name,Source;int32 Layer=0,Id=-1,Prop=0;};
+    struct FAibuPose {FString Name,Source;int32 Layer=0,Id=-1,Prop=0,Info=0,Ctrl=0,SecondLayer=0,UpperCloth=0,LowerCloth=0,SecondUpper=0,SecondLower=0;FString SecondSource;}; // Info: HFlag.EMode, 0 caress, 3 masturbation, 4 peeping, 5 lesbian
     TArray<FAibuPose> AibuPoses;
     TMap<FString,FString> SoloKeys;      // state -> clip key of the active caress pose
     FString SoloState;double SoloStarted=0.;
+    int32 SoloInfo=0;void TickSolo(float Delta); // she plays by herself (HMasturbation, HPeeping)
+    // The second heroine of the lesbian and 3P poses: her own actor at her place, on her clock, playing the pose's second role.
+    UPROPERTY() TObjectPtr<class AKKPreviewActor> Second;
+    TArray<float> SecondFace,SecondBody;TMap<FString,FString> SecondKeys;FString SecondState,SecondName;
+    int32 SecondGeneration=0;bool bSecondLoading=false,bSecondReady=false,bSecondBare=false;
+    // Her part of the scene: the original has one gauge for both (flags.gaugeFemale), so she climaxes when the first does.
+    // Who he is in: the original's 3P pose id % 2 picks the heroine (H3PSonyu num), so an odd pose (入れ替え) is the second's.
+    // There the scene's counters are hers: FHLedger holds whichever heroine's are not in use, swapped by SyncSwap.
+    struct FHLedger {bool bService=false,bRaw=false,bRawPressed=false,bCrotch=false,bAnal=false;int32 ServiceFinishes=0,CrotchClimaxes=0,AnalClimaxes=0,HisFinishes=0,HisInside=0,HisOutside=0,HisMouth=0,Swallowed=0,HisInsideRaw=0,HisCondom=0,HisInsideVaginaRaw=0,Siru[5]={0,0,0,0,0};float CrotchDeepest=0.f,AnalDeepest=0.f;};
+    // A group pose as one heroine had it: hexp.rs group_role turns the seconds into her development there.
+public:
+    struct FGroupRow {FString Category,Role;int32 Id=0;float Seconds=0.f;int32 Climaxes=0;};
+private:
+    struct FSecondRun {int32 Girl=0;FString Id,Name;int32 Orgasms=0,Drips=0,Milk=0;TArray<FString> Poses;FHLedger Ledger;TArray<FGroupRow> Rows;TSharedPtr<FJsonObject> Experience;};
+    TArray<FGroupRow> MainRows;bool bSwapped=false,bGirlsPlayed=false;
+    void SyncSwap(bool bWant);bool SecondReceives() const;bool GroupPose(FString& Category,int32& Id) const;static FGroupRow& GroupRow(TArray<FGroupRow>& Rows,const FString& Category,int32 Id,const FString& Role);void TickGroup(float Delta);
+    const TSharedPtr<FJsonObject>& Exp() const; // what the heroine he is with now has been through (Gallery->HExperience, or the second's)
+    TArray<FSecondRun> SecondRuns;int32 SecondRun=INDEX_NONE,SecondPersonality=0,SecondLevel=0;float SecondVoiceRate=.5f;double SecondCameUntil=0.;FString SecondBreathKey,SecondFaceKey,SecondClothKey;uint8 SecondPieces[9]={};double SecondSquirtAt=0.,SecondMilkAt=0.,SecondDripAt=0.;void ApplySecondClothes();float SecondDev(const TCHAR* Area) const;
+    void SecondReact();void SecondBreath(const FString& State);bool SecondHere() const;
+    void LoadSecond(int32 Index);void DropSecond();void TickSecond(float Delta);void PlaySecond(const FString& State);void PrepareSecond(const FString& Source,int32 Layer);
     int32 ActiveAibu=INDEX_NONE,PendingAibu=INDEX_NONE,AibuGeneration=0,TouchArea=INDEX_NONE;
     int32 AreaClimaxes[11]={};          // her climaxes from his touch or kiss there (AreaSeconds order; hexp climaxes)
     float AreaSeconds[11]={};           // kiss, chest, crotch, anal, butt, nipples (hAreaExps order); head, hand, thigh, calf, foot
@@ -188,7 +211,7 @@ private:
     void BuildList();
     void BuildActions();
     void SelectPose(int32 PoseIndex);
-    void PoseClothes(const FOKHPose& Pose);
+    void PoseClothes(int32 Upper,int32 Lower);
     // His penis drawn through her (ApplyMaleLook) only in a pose where he is in her: as it was last applied.
     bool XRayInHer() const;bool bXRayInHer=false;
     bool FinishInMouth() const;
@@ -279,6 +302,9 @@ public:
     void ClearLine();
     void TickEyeDull(float Delta);float EyeDullScale=0.f;bool bEyeDullHidden=false; // her pupils and highlight (a yandere, or worn out)
     void TickEyeLook(AKKPreviewActor* Girl,float Delta);void RestoreEyeLook();TWeakObjectPtr<AKKPreviewActor> EyeLookActor;float EyeLookWait=0.f; // the panel's pupil shape and colour, her eyelids
+    struct FHStyled{TWeakObjectPtr<class AKKPreviewActor> Actor;float Shown=0.f;FVector Base=FVector::ZeroVector;TArray<float> CardFace,CardBody,Face,Body;};
+    FHStyled Styled[2];float StyleWait=0.f;bool bStyleOpen=false; // her, him
+    void TickStyle(float Delta);void ApplyStyle(FHStyled& S,float Style);void RestoreStyle();const TArray<float>& HerFace() const;const TArray<float>& HerBody() const;
     FVector2f PupilStretchShown=FVector2f(1.f,1.f);FVector3f IrisHsvShown=FVector3f(0.f,1.f,1.f);FOKIrisMarks PupilMarksShown;float EyeFrameShown=0.f;
     float PupilShakeClock=0.f;FVector2f PupilShakeFrom=FVector2f::ZeroVector,PupilShakeTo=FVector2f::ZeroVector,PupilShakeNow=FVector2f::ZeroVector; // her pupils' tremble
     void TickDeepFace(float Delta);void EndDeepFace(class AKKPreviewActor* Girl);float DeepFace=0.f,DeepGazeSet=0.f;bool bDeepFace=false,bDeepManualWas=false,bAheDepth=false; // her eyes and tongue with how deep he is (TickDeepFace)
@@ -345,7 +371,7 @@ private:
     // Her clothes kept over her skin (CoverClothes): her skin's wrap moves this frame, the garments moved, the time it took.
     void CoverClothes(class AKKPreviewActor* Girl);TArray<uint32> WrapIdxShown;TArray<FVector3f> WrapDShown,WrapNShown;TWeakObjectPtr<class AKKPreviewActor> ClothGirl;TSet<int32> ClothShown;TMap<int32,double> ClothCpuUntil;int32 ClothVerts=0;float ClothMs=0.f;
     // His penis out through her back folded under her skin (ReadBulge, penis.clip): his part with that morph, whether it is moved now.
-    TWeakObjectPtr<class AKKPreviewActor> ClipHim;int32 ClipPart=INDEX_NONE;bool bClipShown=false;int32 ClipVerts=0;float BackExitCm=-1.f;float ClipLastTip=-1.f,ClipLeadCm=0.f;
+    TWeakObjectPtr<class AKKPreviewActor> ClipHim;int32 ClipPart=INDEX_NONE;bool bClipShown=false;int32 ClipVerts=0;float BackExitCm=-1.f;float ClipLastTip=-1.f,ClipLeadCm=0.f;bool bAlignByGlans=false;double AlignNoLineLog=0.;
     // The game's coordinate cards (UserData/coordinate and its folders), listed in the clothes tab when opened.
     bool bCoordinateList=false;TArray<FString> CoordinateCards;void FindCoordinateCards();
 public:

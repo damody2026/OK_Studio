@@ -112,7 +112,7 @@ private:
  void ToggleBigMap();
  void BeginPrivate(int32 Character,const FString& TryCard=FString(),int32 TryOutfit=-1); // TryCard: a piece being tried on, the high model only, no H scene (OKStreetSocialWardrobe.inl)
  void FinishPrivate();
- void ShowHResult(int32 Girl,const class FJsonObject& Answer); // OKStreetSocialContacts.inl
+ void ShowHResult(int32 Girl,const class FJsonObject& Answer);void CloseHResult(); // OKStreetSocialContacts.inl
  // Bookmarks and the time after an H scene (OKStreetSocialBookmarks.inl).
  void Bookmark(int32 Girl);FString BookmarkFacts(int32 Character,const FString& Said) const;TSharedRef<SWidget> BuildBookmarks(int32 Girl);TSharedRef<SWidget> BookmarkButton(int32 Girl);
  void BeginAfter(int32 Girl,const TSharedPtr<class FJsonObject>& Answer);void EndAfter(bool bShowResult);void TickAfter();

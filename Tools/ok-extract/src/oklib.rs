@@ -1083,8 +1083,9 @@ pub fn pack_scope() -> Option<Arc<PackScope>> {
         }
     }
 }
-/// Runs parallel work of the current open (its rayon iterators) in its own pool, whose threads carry its pack; no
-/// open on this thread: as it is.
+/// Runs parallel work of the current open (its rayon iterators) in its own pool, whose threads carry its pack. No open on
+/// this thread: in a pool whose threads belong to no open. On rayon's global pool a scan of the whole tree was handed the
+/// only card opening at the time, whose strict open then failed on gaps that were not its own (a rayon thread stays).
 pub fn pack_parallel<R: Send>(work: impl FnOnce() -> R + Send) -> R {
     let Some(scope) = own_scope() else {
         // A thread of no open: on rayon's shared workers its scan of the whole mods tree counted as the reads of whichever
