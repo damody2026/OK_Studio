@@ -96,7 +96,7 @@ for index, a in ipairs(nodes) do
     if other and clear(a, nodes[other]) then a.links[#a.links + 1] = other; nodes[other].links[#nodes[other].links + 1] = index end
   end
 end
-local seen, biggest = {}, {}
+local seen, parts = {}, {}
 for index in ipairs(nodes) do
   if not seen[index] then
     local part, head = { index }, 1
@@ -105,10 +105,33 @@ for index in ipairs(nodes) do
       for _, next_ in ipairs(nodes[part[head]].links) do if not seen[next_] then seen[next_] = true; part[#part + 1] = next_ end end
       head = head + 1
     end
-    if #part > #biggest then biggest = part end
+    parts[#parts + 1] = part
   end
 end
+table.sort(parts, function(a, b) return #a > #b end)
+local biggest = parts[1] or {}
 if #biggest < 50 then problem('the road graph has only ' .. #biggest .. ' connected points') end
+-- A part beside the main one is usually the raster's mistake: 'o' cells are coarse, and the map lets him through there (checked
+-- on foot for three of them, all within 6 m). Tie it on at its closest point; the game sweeps every link against the map when it
+-- loads and drops the ones a wall really blocks.
+local BRIDGE_CELLS, BRIDGE_MIN_POINTS = 5, 20
+for p = 2, #parts do
+  local part = parts[p]
+  if #part >= BRIDGE_MIN_POINTS then
+    local near, a, b = (BRIDGE_CELLS + 1) ^ 2
+    for _, x in ipairs(part) do
+      for _, y in ipairs(biggest) do
+        local d = (nodes[x].k - nodes[y].k) ^ 2 + (nodes[x].i - nodes[y].i) ^ 2
+        if d < near then near, a, b = d, x, y end
+      end
+    end
+    if a then
+      nodes[a].links[#nodes[a].links + 1] = b; nodes[b].links[#nodes[b].links + 1] = a
+      for _, x in ipairs(part) do biggest[#biggest + 1] = x end
+      print(('road graph: tied a part of %d points on at %.0f,%.0f'):format(#part, ox + (nodes[a].k - 1) * step, oy + (nodes[a].i - 1) * step))
+    end
+  end
+end
 local keep = {}
 for order, index in ipairs(biggest) do keep[index] = order - 1 end
 local node_rows, link_rows = {}, {}

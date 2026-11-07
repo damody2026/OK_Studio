@@ -29,6 +29,8 @@
 #include "OKStreetSocialPlaces.h"
 #include "Components/PlanarReflectionComponent.h"
 #include "Engine/PlanarReflection.h"
+#include "Components/LocalLightComponent.h"
+#include "UObject/UObjectIterator.h"
 #include "OKStreetSocialCalendar.h"
 #include "OKStreetMind.h"
 #include "OKStreetRules.h"
@@ -3920,21 +3922,30 @@ double AOKStreetSocialScene::SceneTime() const {
 }
 // The city's mirrors (1162 planar reflections in the map): only the two nearest he can see in are drawn, as in the city's
 // own walk-through (CityImmersionWalker). Every one of them on would stop the game.
-static void OKStreetCityMirrors(UWorld* World,const FVector& Eye,float Dt){
+static void OKStreetCityMirrors(UWorld* World,const FVector& Eye,const FVector& CameraAt,const FVector& CameraForward,float Dt){
  static TArray<TWeakObjectPtr<UPlanarReflectionComponent>> Mirrors;static TWeakObjectPtr<UWorld> For;static float Wait=0;
  if(For!=World){For=World;Mirrors.Reset();Wait=0;
-  for(TActorIterator<APlanarReflection> It(World);It;++It)if(auto* R=It->FindComponentByClass<UPlanarReflectionComponent>()){R->ScreenPercentage=75;R->PrefilterRoughness=0.f;R->SetVisibility(false);Mirrors.Add(R);}
-  UE_LOG(LogTemp,Display,TEXT("Street city: %d mirrors"),Mirrors.Num());}
+  for(TActorIterator<APlanarReflection> It(World);It;++It)if(auto* R=It->FindComponentByClass<UPlanarReflectionComponent>()){R->ScreenPercentage=75;R->PrefilterRoughness=0.f;R->MaxViewDistanceOverride=2500.f;R->ShowFlags.SetDynamicShadows(false);R->SetVisibility(false);Mirrors.Add(R);}
+  // The map's 3400 local lights cast shadows: measured 65 of the 80 ms the render thread spent on a frame for the rect lights,
+  // 9 of 15 ms on the street for the point and spot lights. Only the sun casts here; the rest are drawn in one clustered pass.
+  int32 Lights=0;for(ULocalLightComponent* Light:TObjectRange<ULocalLightComponent>())if(Light->GetWorld()==World){Light->MaxDrawDistance=12000.f;Light->MaxDistanceFadeRange=2000.f;Light->MarkRenderStateDirty();if(Light->CastShadows)Light->SetCastShadows(false);++Lights;}
+  if(IConsoleVariable* Clustered=IConsoleManager::Get().FindConsoleVariable(TEXT("r.UseClusteredDeferredShading")))Clustered->Set(1,ECVF_SetByCode);
+  // Nothing in the map has a cull distance, so all 35000 draws of a frame were tried at any range: the smaller, the sooner it goes.
+  int32 Culled=0;for(UStaticMeshComponent* Mesh:TObjectRange<UStaticMeshComponent>())if(Mesh->GetWorld()==World&&Mesh->LDMaxDrawDistance<=0.f){const float Radius=Mesh->Bounds.SphereRadius;const float Far=Radius<100.f?6000.f:Radius<300.f?15000.f:Radius<1000.f?40000.f:0.f;if(Far>0.f){Mesh->SetCullDistance(Far);++Culled;}}
+  UE_LOG(LogTemp,Display,TEXT("Street city: %d mirrors, %d local lights without shadows, %d meshes with a cull distance"),Mirrors.Num(),Lights,Culled);}
  Wait-=Dt;if(Wait>0)return;Wait=.2f;
  TArray<TPair<double,UPlanarReflectionComponent*>> Near;
- for(const auto& Weak:Mirrors)if(auto* R=Weak.Get()){const FVector Offset=Eye-R->GetComponentLocation();if(FMath::Abs(Offset.Z)<300.f&&FVector::DotProduct(Offset,R->GetUpVector())>2.f&&Offset.SizeSquared()<FMath::Square(2200.f))Near.Emplace(Offset.SizeSquared(),R);}
+ for(const auto& Weak:Mirrors)if(auto* R=Weak.Get()){const FVector Offset=Eye-R->GetComponentLocation();if(FMath::Abs(Offset.Z)<300.f&&FVector::DotProduct(Offset,R->GetUpVector())>2.f&&Offset.SizeSquared()<FMath::Square(1000.f))Near.Emplace(Offset.SizeSquared(),R);}
  Near.Sort([](const TPair<double,UPlanarReflectionComponent*>& A,const TPair<double,UPlanarReflectionComponent*>& B){return A.Key<B.Key;});
- for(const auto& Weak:Mirrors)if(auto* R=Weak.Get()){const bool On=(Near.Num()>0&&Near[0].Value==R)||(Near.Num()>1&&Near[1].Value==R);if(R->IsVisible()!=On)R->SetVisibility(On);}
+ // A mirror draws the scene a second time, so only the nearest one in front of the camera with nothing between it and him is drawn.
+ UPlanarReflectionComponent* Seen=nullptr;
+ for(const auto& Candidate:Near){const FVector Face=Candidate.Value->GetComponentLocation()+Candidate.Value->GetUpVector()*10.f;if(FVector::DotProduct((Face-CameraAt).GetSafeNormal(),CameraForward)<.3f)continue;FHitResult Hit;if(!World->LineTraceSingleByChannel(Hit,Eye,Face,ECC_Visibility)){Seen=Candidate.Value;break;}}
+ for(const auto& Weak:Mirrors)if(auto* R=Weak.Get()){const bool On=R==Seen;if(R->IsVisible()!=On)R->SetVisibility(On);}
 }
 
 void AOKStreetSocialScene::Tick(float Dt){
  Super::Tick(Dt);
- if(OKStreetCityMode()&&State)OKStreetCityMirrors(GetWorld(),State->Male+FVector(0,0,150),Dt);
+ if(APlayerController* Eyes=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr;OKStreetCityMode()&&State&&Eyes&&Eyes->PlayerCameraManager)OKStreetCityMirrors(GetWorld(),State->Male+FVector(0,0,150),Eyes->PlayerCameraManager->GetCameraLocation(),Eyes->PlayerCameraManager->GetCameraRotation().Vector(),Dt);
  // Walls, buildings and floors not drawn from behind (OKStreetBacks.h), in the street and in the room alike.
  if(APlayerController* PC=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr;PC&&PC->PlayerCameraManager)OKHideStreetBacks(GetWorld(),PC->PlayerCameraManager->GetCameraLocation());if(!State||!State->Started||State->Reported)return;auto& S=*State;GOKStreetTalkLimit=S.SelfTest; // the self-tests check the budget arithmetic; normal play has no daily talk limit
  // Walking into or out of a shop, or its opening hours passing: the shop part of the right panel has to follow without waiting for
