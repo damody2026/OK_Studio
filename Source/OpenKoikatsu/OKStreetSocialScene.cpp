@@ -3922,17 +3922,28 @@ double AOKStreetSocialScene::SceneTime() const {
 }
 // The city's mirrors (1162 planar reflections in the map): only the two nearest he can see in are drawn, as in the city's
 // own walk-through (CityImmersionWalker). Every one of them on would stop the game.
+static TArray<TWeakObjectPtr<UPlanarReflectionComponent>> GOKStreetCityMirrors;
+// What a piece of the map needs before it is drawn, done as each piece comes in (the world streams around him).
+// The map's 3400 local lights cast shadows: measured 65 of the 80 ms the render thread spent on a frame for the rect lights,
+// 9 of 15 ms on the street for the point and spot lights. Only the sun casts here; the rest are drawn in one clustered pass.
+// Nothing in the map has a cull distance: the smaller a mesh, the sooner it goes. An instanced component spans hundreds of
+// metres, so its own bounds cull nothing: each instance goes by the size of the mesh it draws.
+static void OKStreetCityDress(ULevel* Level){
+ auto FarFor=[](float Radius){return Radius<100.f?6000.f:Radius<300.f?15000.f:Radius<1000.f?40000.f:0.f;};
+ TInlineComponentArray<UActorComponent*> Parts;
+ for(AActor* Actor:Level->Actors)if(Actor){Actor->GetComponents(Parts);for(UActorComponent* Part:Parts){
+  if(auto* Mirror=Cast<UPlanarReflectionComponent>(Part)){Mirror->ScreenPercentage=75;Mirror->PrefilterRoughness=0.f;Mirror->MaxViewDistanceOverride=2500.f;Mirror->ShowFlags.SetDynamicShadows(false);Mirror->SetVisibility(false);GOKStreetCityMirrors.Add(Mirror);}
+  else if(auto* Light=Cast<ULocalLightComponent>(Part)){Light->MaxDrawDistance=12000.f;Light->MaxDistanceFadeRange=2000.f;Light->MarkRenderStateDirty();if(Light->CastShadows)Light->SetCastShadows(false);}
+  else if(auto* Instanced=Cast<UInstancedStaticMeshComponent>(Part)){if(Instanced->GetStaticMesh()&&Instanced->InstanceEndCullDistance<=0){const float Far=FarFor(Instanced->GetStaticMesh()->GetBounds().SphereRadius);if(Far>0.f)Instanced->SetCullDistances(int32(Far*.9f),int32(Far));}}
+  else if(auto* Mesh=Cast<UStaticMeshComponent>(Part)){if(Mesh->LDMaxDrawDistance<=0.f){const float Far=FarFor(Mesh->Bounds.SphereRadius);if(Far>0.f)Mesh->SetCullDistance(Far);}}}}
+}
 static void OKStreetCityMirrors(UWorld* World,const FVector& Eye,const FVector& CameraAt,const FVector& CameraForward,float Dt){
- static TArray<TWeakObjectPtr<UPlanarReflectionComponent>> Mirrors;static TWeakObjectPtr<UWorld> For;static float Wait=0;
+ auto& Mirrors=GOKStreetCityMirrors;static TWeakObjectPtr<UWorld> For;static float Wait=0;
  if(For!=World){For=World;Mirrors.Reset();Wait=0;
-  for(TActorIterator<APlanarReflection> It(World);It;++It)if(auto* R=It->FindComponentByClass<UPlanarReflectionComponent>()){R->ScreenPercentage=75;R->PrefilterRoughness=0.f;R->MaxViewDistanceOverride=2500.f;R->ShowFlags.SetDynamicShadows(false);R->SetVisibility(false);Mirrors.Add(R);}
-  // The map's 3400 local lights cast shadows: measured 65 of the 80 ms the render thread spent on a frame for the rect lights,
-  // 9 of 15 ms on the street for the point and spot lights. Only the sun casts here; the rest are drawn in one clustered pass.
-  int32 Lights=0;for(ULocalLightComponent* Light:TObjectRange<ULocalLightComponent>())if(Light->GetWorld()==World){Light->MaxDrawDistance=12000.f;Light->MaxDistanceFadeRange=2000.f;Light->MarkRenderStateDirty();if(Light->CastShadows)Light->SetCastShadows(false);++Lights;}
-  if(IConsoleVariable* Clustered=IConsoleManager::Get().FindConsoleVariable(TEXT("r.UseClusteredDeferredShading")))Clustered->Set(1,ECVF_SetByCode);
-  // Nothing in the map has a cull distance, so all 35000 draws of a frame were tried at any range: the smaller, the sooner it goes.
-  int32 Culled=0;for(UStaticMeshComponent* Mesh:TObjectRange<UStaticMeshComponent>())if(Mesh->GetWorld()==World&&Mesh->LDMaxDrawDistance<=0.f){const float Radius=Mesh->Bounds.SphereRadius;const float Far=Radius<100.f?6000.f:Radius<300.f?15000.f:Radius<1000.f?40000.f:0.f;if(Far>0.f){Mesh->SetCullDistance(Far);++Culled;}}
-  UE_LOG(LogTemp,Display,TEXT("Street city: %d mirrors, %d local lights without shadows, %d meshes with a cull distance"),Mirrors.Num(),Lights,Culled);}
+  if(IConsoleVariable* Clustered=IConsoleManager::Get().FindConsoleVariable(TEXT("r.UseClusteredDeferredShading")))Clustered->Set(1,ECVF_SetByConsole);
+  for(ULevel* Level:World->GetLevels())if(Level&&Level->bIsVisible)OKStreetCityDress(Level);
+  static FDelegateHandle Added;if(!Added.IsValid())Added=FWorldDelegates::LevelAddedToWorld.AddLambda([](ULevel* Level,UWorld* In){if(Level&&In==For.Get())OKStreetCityDress(Level);});
+  UE_LOG(LogTemp,Display,TEXT("Street city: %d mirrors at the start"),Mirrors.Num());}
  Wait-=Dt;if(Wait>0)return;Wait=.2f;
  TArray<TPair<double,UPlanarReflectionComponent*>> Near;
  for(const auto& Weak:Mirrors)if(auto* R=Weak.Get()){const FVector Offset=Eye-R->GetComponentLocation();if(FMath::Abs(Offset.Z)<300.f&&FVector::DotProduct(Offset,R->GetUpVector())>2.f&&Offset.SizeSquared()<FMath::Square(1000.f))Near.Emplace(Offset.SizeSquared(),R);}
@@ -3940,6 +3951,7 @@ static void OKStreetCityMirrors(UWorld* World,const FVector& Eye,const FVector& 
  // A mirror draws the scene a second time, so only the nearest one in front of the camera with nothing between it and him is drawn.
  UPlanarReflectionComponent* Seen=nullptr;
  for(const auto& Candidate:Near){const FVector Face=Candidate.Value->GetComponentLocation()+Candidate.Value->GetUpVector()*10.f;if(FVector::DotProduct((Face-CameraAt).GetSafeNormal(),CameraForward)<.3f)continue;FHitResult Hit;if(!World->LineTraceSingleByChannel(Hit,Eye,Face,ECC_Visibility)){Seen=Candidate.Value;break;}}
+ Mirrors.RemoveAll([](const TWeakObjectPtr<UPlanarReflectionComponent>& Weak){return !Weak.IsValid();});
  for(const auto& Weak:Mirrors)if(auto* R=Weak.Get()){const bool On=R==Seen;if(R->IsVisible()!=On)R->SetVisibility(On);}
 }
 

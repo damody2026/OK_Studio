@@ -356,8 +356,23 @@ inline void OKStreetCityCheckRoads(UWorld* World) {
  FOKStreetCityData& City = OKStreetCity();
  City.World = World;
  const double Started = FPlatformTime::Seconds();
+ // A streamed map has only his surroundings loaded, so nothing can be checked here: it reads what the whole map said
+ // (a run on the source map with -CityBakeRoads writes city_roads.json).
+ const FString BakedPath = FPaths::GetPath(OKStreetPlaceModelDir()) / TEXT("city_roads.json");
+ const bool Bake = FParse::Param(FCommandLine::Get(), TEXT("CityBakeRoads"));
+ bool Baked = false;
+ if (World->GetWorldPartition()) {
+  FString Body; TSharedPtr<FJsonObject> Root; const TArray<TSharedPtr<FJsonValue>>* Rows = nullptr;
+  if (FFileHelper::LoadFileToString(Body, *BakedPath) && FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Body), Root) && Root && Root->TryGetArrayField(TEXT("nodes"), Rows)) {
+   City.Nodes.Reset(); for (const auto& V : *Rows) { const auto& P = V->AsArray(); City.Nodes.Add(FVector(P[0]->AsNumber(), P[1]->AsNumber(), P[2]->AsNumber())); }
+   City.Links.Reset(); City.Links.SetNum(City.Nodes.Num());
+   if (Root->TryGetArrayField(TEXT("links"), Rows)) for (const auto& V : *Rows) { const auto& L = V->AsArray(); const int32 A = int32(L[0]->AsNumber()), B = int32(L[1]->AsNumber()); City.Links[A].Add(B); City.Links[B].Add(A); }
+   Baked = true;
+  } else UE_LOG(LogTemp, Error, TEXT("Street city: streamed map without %s: the road graph is unchecked"), *BakedPath);
+ }
  FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetCityRoads), false);
  int32 Dropped = 0;
+ if (!World->GetWorldPartition()) {
  for (FVector& Node : City.Nodes) { FHitResult Hit; if (World->LineTraceSingleByChannel(Hit, Node + FVector(0, 0, 400), Node - FVector(0, 0, 600), ECC_WorldStatic, Query)) Node.Z = Hit.ImpactPoint.Z; }
  for (int32 A = 0; A < City.Nodes.Num(); ++A) for (int32 I = City.Links[A].Num() - 1; I >= 0; --I) {
   const int32 B = City.Links[A][I];
@@ -370,6 +385,7 @@ inline void OKStreetCityCheckRoads(UWorld* World) {
   const int32 Door = City.Nodes.Add(At); City.Links.AddDefaulted();
   for (int32 N = 0; N < Lattice; ++N) if (FVector::DistSquared2D(City.Nodes[N], At) < FMath::Square(1500.f) && FMath::Abs(City.Nodes[N].Z - At.Z) < 200.f && OKStreetCityClear(World, At, City.Nodes[N])) { City.Links[Door].Add(N); City.Links[N].Add(Door); } };
  for (const auto& P : OKStreetPlaces()) { Tie(P.Door); for (const auto& A : P.Anchors) if (A.Name.StartsWith(TEXT("gate"))) Tie(A.Position); }
+ }
  TArray<int32> Part; Part.Init(INDEX_NONE, City.Nodes.Num());
  int32 Biggest = INDEX_NONE, BiggestSize = 0;
  for (int32 Start = 0; Start < City.Nodes.Num(); ++Start) {
@@ -381,7 +397,15 @@ inline void OKStreetCityCheckRoads(UWorld* World) {
  }
  for (int32 N = 0; N < City.Nodes.Num(); ++N) if (Part[N] != Biggest) City.Links[N].Reset();
  City.Kept = MoveTemp(Part); City.KeptPart = Biggest;
- UE_LOG(LogTemp, Display, TEXT("Street city: road check dropped %d links, %d of %d points connected (%.0f ms)"), Dropped, BiggestSize, City.Nodes.Num(), (FPlatformTime::Seconds() - Started) * 1000.0);
+ UE_LOG(LogTemp, Display, TEXT("Street city: road check %s, dropped %d links, %d of %d points connected (%.0f ms)"), Baked ? TEXT("read from the bake") : TEXT("on the map"), Dropped, BiggestSize, City.Nodes.Num(), (FPlatformTime::Seconds() - Started) * 1000.0);
+ if (Bake && !World->GetWorldPartition()) {
+  FString Out = TEXT("{\"nodes\":[");
+  for (int32 N = 0; N < City.Nodes.Num(); ++N) Out += FString::Printf(TEXT("%s[%.1f,%.1f,%.1f]"), N ? TEXT(",") : TEXT(""), City.Nodes[N].X, City.Nodes[N].Y, City.Nodes[N].Z);
+  Out += TEXT("],\"links\":["); bool First = true;
+  for (int32 A = 0; A < City.Nodes.Num(); ++A) for (const int32 B : City.Links[A]) if (B > A) { Out += FString::Printf(TEXT("%s[%d,%d]"), First ? TEXT("") : TEXT(","), A, B); First = false; }
+  Out += TEXT("]}\n");
+  UE_LOG(LogTemp, Display, TEXT("Street city: road bake %s: %s"), *BakedPath, FFileHelper::SaveStringToFile(Out, *BakedPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM) ? TEXT("written") : TEXT("FAILED"));
+ }
 }
 
 // He could not walk from A to B: that link is gone, or, from somewhere off the graph, B is not a way onto it from there.

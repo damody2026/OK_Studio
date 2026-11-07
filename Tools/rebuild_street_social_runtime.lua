@@ -79,6 +79,7 @@ local function main()
     -- The university city goes in once its content is in the project (-City at launch plays it).
     local maps = "/Game/Scenes/StreetSocial/StreetSocial"
     if path.exists(path.join(root, "Content/UniversityCity/Maps/UniversityCity.umap")) then maps = maps .. "+/Game/UniversityCity/Maps/UniversityCity" end
+    if path.exists(path.join(root, "Content/UniversityCity/Maps/UniversityCityWP.umap")) then maps = maps .. "+/Game/UniversityCity/Maps/UniversityCityWP" end
     local cook_args = { '"' .. win(root) .. '/OpenKoikatsu.uproject"', "-run=Cook", "-TargetPlatform=Windows",
       "-MAP=" .. maps, "-SkipZenStore", "-CustomConfig=CrowdCookSM6",
       "-DisablePlugins=BpGeneratorUltimate", "-unattended", "-nosound", "-NoSplash", "-corelimit=24",

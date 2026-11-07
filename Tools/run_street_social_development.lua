@@ -30,7 +30,7 @@ local json, path, proc, hash, util = ok.json, ok.path, ok.proc, ok.hash, ok.util
 local fs = require "okfs"
 local instance = require "ok_instance"
 
-local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, mainsave = true, editor = true, nogpurig = true, gpurig = true, city = true }
+local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, mainsave = true, editor = true, nogpurig = true, gpurig = true, city = true, citysource = true }
 local VALUES = { selectionfile = true, malecard = true, retargetfile = true, renderscale = true, executable = true,
   controlport = true, clock = true, window = true, sandbox = true, portbase = true, rulesdll = true, exec = true, trace = true, gpucachedir = true,
   gameargs = true, gpurigverify = true, heroine = true }
@@ -469,7 +469,10 @@ local function main()
   local win_w, win_h = (o.window or "1920x1080"):match("^(%d+)[xX](%d+)$")
   if not win_w then error("-Window takes WxH, e.g. 1280x720", 0) end
   -- -City: the university city in place of the built street (Docs/STREET_CITY_PLACES_INVENTORY_20261103.md).
-  local map = o.city and "/Game/UniversityCity/Maps/UniversityCity?game=/Script/OpenKoikatsu.OKCrowdGameMode" or "/Game/Scenes/StreetSocial/StreetSocial"
+  -- -City plays the streamed map once it is in the project; -CitySource the whole map it is made from (the road bake needs it).
+  if o.citysource then o.city = true end
+  local city_map = (not o.citysource and path.exists(path.join(root, "Content/UniversityCity/Maps/UniversityCityWP.umap"))) and "UniversityCityWP" or "UniversityCity"
+  local map = o.city and ("/Game/UniversityCity/Maps/" .. city_map .. "?game=/Script/OpenKoikatsu.OKCrowdGameMode") or "/Game/Scenes/StreetSocial/StreetSocial"
   local game = { build.executable, map, "-D3D12", "-SM6", "-windowed", "-ResX=" .. win_w, "-ResY=" .. win_h, "-WinX=40", "-WinY=40",
     "-StreetSocialManifest=" .. manifest }
   -- The editor reads the project's uncooked content: the project goes first, and the cooked patch is not mounted.
