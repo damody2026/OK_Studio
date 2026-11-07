@@ -2138,3 +2138,4 @@
 - 2026-11-08 c-conquest 靠近建築只有 60 FPS：街區為了省 GPU 等待關了 r.AllowOcclusionQueries，大學城牆後的房間和家具全部照畫，render thread 16 ms。城市模式改回開著，同一位置 cafe 60 -> 153、conveni 71 -> 153、campus_ee 68 -> 190，其他位置沒變慢。我一度把這個慢歸給別的 Unreal 搶資源，還寫進紀錄和回報：那輪在同一個遊戲裡切過 show flag 和這個開關，切回 1 後就一直快，我誤以為是對方結束造成的。量 A/B 時切過的設定要還原成啟動時的值再量；開關切回去不等於回到原狀。
 - 2026-11-08 c-conquest 商店 2F 以上去不了：有座位 anchor，女角會坐上去，卻沒有電梯和樓梯，導航報「她在别的楼层，找不到路过去」。沒有電梯也沒有 stair anchor 的店，導航改成走到門口後淡出換層，下樓同樣；店內面板加上下樓按鈕。
 - 2026-11-08 c-conquest 打包版 -CitySource 是來源地圖，不是 World Partition，不讀烘好的 city_roads.json，電梯門模型也是 cook 前的。路網和場景的驗證要用編輯器模式 -Editor -City，打包版走得過或走不過都不算數。
+- 2026-11-08 c-conquest 和 c-street-city 同時開了 WP 編輯器（各約 97 GB），可用記憶體掉到 0.7 GB，對方的 CEF 服務掛過一次。claim 後 status 已列出 slot1 被佔，只是程序還沒起來，我只看 unreal processes: 0 就啟動。對方靠 slot 排隊，不是靠程序數：開 WP 編輯器前要確認沒有別人持有 slot，claim 後隔幾秒再看一次，並在 ready 後確認只有一個編輯器。
