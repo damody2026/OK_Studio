@@ -2116,3 +2116,5 @@
 - 2026-11-07 c-conquest 叢集光照的 ensure 沒確認就在 6b4f695a9 的訊息寫「已修掉」，其實改 ECVF 旗標沒用：原因是 `r.UseClusteredDeferredShading` 在 5.7 改名成 `r.UseClusteredDeferredShading_ToBeRemoved`，用舊名會 ensure。修法之後才算數；提交訊息只寫在 log 裡確認過的事。
 - 2026-11-07 c-conquest 走路一直抖：先猜鏡頭碰撞，量了才知道大跳只有 12 次（1982 幀）。真正原因是角色元件在 FTSTicker 更新，而 core ticker 在 GEngine->Tick 之後跑，所有角色都比鏡頭晚一幀畫，落差等於這一幀走的距離，幀時間不穩就來回晃。`OKSetCrowdRuntimeCharacterMotion` 改成當場更新元件。
 - 2026-11-07 c-conquest 畫面一暗一暗地閃：遊戲每秒設地圖的太陽，CityEnvironmentController 每幀也在設，兩邊在搶（只有編輯器模式會，打包 host 之前沒帶這個外掛）。先改成 controller 全權接手，結果 12 點全白人物全黑：它的亮度要配它自己的曝光，遊戲是固定曝光 1.0。改成遊戲管太陽、天光、曝光，controller 用 UseGameClock 只管本地燈、招牌和天空。
+- 2026-11-07 c-conquest 夜晚偏亮：`OKStreetSunAt` 夜裡回的是月亮強度（0.8～1.6），天光用它除以 2.5，整晚停在 64%，所以 12% 和 3% 的下限都沒起作用。c-street-city 量出是 SkyLight 後，我先直接把下限改成 3%，沒看算式。夜裡改成固定 10%，黃昏接白天的 20%。改數字前先算一次實際值。
+- 2026-11-07 c-conquest 鏡子：平面反射就算只畫 20 公尺內 126 個物件，渲染執行緒還是多 4 ms（多一個 scene renderer），立繪式的正交拍攝也多 3.5 ms。改成房間用立方體貼圖只拍一次、箱體投影，人物的正交拍攝走 main renderer；A/B 量到開關鏡子差距在雜訊內。另外玻璃上的殘影是 SSR 把人物抹上去，城市模式已關 SSR。第一次拍立方體會全黑，0.5 秒後重拍。別人的遊戲同時在跑時量到的 21 FPS 不算數，量之前先看 slot。

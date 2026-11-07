@@ -51,6 +51,11 @@
 #include "Engine/StaticMesh.h"
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Components/SceneCaptureComponent2D.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "Engine/TextureRenderTargetCube.h"
+#include "Components/SceneCaptureComponentCube.h"
+#include "OKStoryCapture.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
@@ -3921,9 +3926,12 @@ double AOKStreetSocialScene::SceneTime() const {
  const double Wall=FPlatformTime::Seconds();
  return State?(State->PrivateGirl!=INDEX_NONE?State->HighPrivateAt:Wall)-State->PrivatePausedSeconds:Wall;
 }
-// The city's mirrors (1162 planar reflections in the map): only the two nearest he can see in are drawn, as in the city's
-// own walk-through (CityImmersionWalker). Every one of them on would stop the game.
+// The city's mirrors (1162 planar reflections in the map): the planar captures stay off and only mark where the mirrors are. Even
+// one, cut down to what stands near it, took 4 of the render thread's 8 ms: a scene renderer more, every frame. The nearest mirror he
+// can see in gets a face of its own instead (OKStreetCityMirrorFace).
 static TArray<TWeakObjectPtr<UPlanarReflectionComponent>> GOKStreetCityMirrors;
+static TWeakObjectPtr<UPlanarReflectionComponent> GOKStreetCitySeenMirror;
+static TAutoConsoleVariable<int32> CVarOKStreetCityMirror(TEXT("ok.Street.CityMirror"),1,TEXT("The city's mirrors: 0 bare glass, 1 the room and the people in them."));
 static TWeakObjectPtr<ADirectionalLight> GOKStreetCitySun;
 static TWeakObjectPtr<ACityEnvironmentController> GOKStreetCityEnv;
 static TWeakObjectPtr<USkyLightComponent> GOKStreetCitySkyLight;static float GOKStreetCitySkyDay=0.f;
@@ -3942,7 +3950,7 @@ static void OKStreetCityDress(ULevel* Level){
   if(!Sun||Part->Intensity>Sun->GetLightComponent()->Intensity){if(Sun)Sun->GetLightComponent()->SetVisibility(false);GOKStreetCitySun=Light;Part->SetVisibility(true);}else Part->SetVisibility(false);}
  TInlineComponentArray<UActorComponent*> Parts;
  for(AActor* Actor:Level->Actors)if(Actor){Actor->GetComponents(Parts);for(UActorComponent* Part:Parts){
-  if(auto* Mirror=Cast<UPlanarReflectionComponent>(Part)){Mirror->ScreenPercentage=75;Mirror->PrefilterRoughness=0.f;Mirror->MaxViewDistanceOverride=2500.f;Mirror->ShowFlags.SetDynamicShadows(false);Mirror->SetVisibility(false);GOKStreetCityMirrors.Add(Mirror);}
+  if(auto* Mirror=Cast<UPlanarReflectionComponent>(Part)){Mirror->SetVisibility(false);GOKStreetCityMirrors.Add(Mirror);}
   else if(auto* Sky=Cast<USkyLightComponent>(Part)){if(!GOKStreetCitySkyLight.IsValid()){GOKStreetCitySkyLight=Sky;GOKStreetCitySkyDay=Sky->Intensity;}}
   else if(auto* Light=Cast<ULocalLightComponent>(Part)){Light->MaxDrawDistance=12000.f;Light->MaxDistanceFadeRange=2000.f;Light->MarkRenderStateDirty();if(Light->CastShadows)Light->SetCastShadows(false);}
   else if(auto* Instanced=Cast<UInstancedStaticMeshComponent>(Part)){if(Instanced->GetStaticMesh()&&Instanced->InstanceEndCullDistance<=0){const float Far=FarFor(Instanced->GetStaticMesh()->GetBounds().SphereRadius);if(Far>0.f)Instanced->SetCullDistances(int32(Far*.9f),int32(Far));}}
@@ -3952,6 +3960,8 @@ static void OKStreetCityMirrors(UWorld* World,const FVector& Eye,const FVector& 
  auto& Mirrors=GOKStreetCityMirrors;static TWeakObjectPtr<UWorld> For;static float Wait=0;
  if(For!=World){For=World;Mirrors.Reset();Wait=0;
   if(IConsoleVariable* Clustered=IConsoleManager::Get().FindConsoleVariable(TEXT("r.UseClusteredDeferredShading_ToBeRemoved")))Clustered->Set(1,ECVF_SetByConsole);
+  // Screen-space reflections smeared whoever stood before a mirror across its glass, next to the mirror's own picture.
+  if(IConsoleVariable* Ssr=IConsoleManager::Get().FindConsoleVariable(TEXT("r.SSR.Quality")))Ssr->Set(0,ECVF_SetByConsole);
   for(ULevel* Level:World->GetLevels())if(Level&&Level->bIsVisible)OKStreetCityDress(Level);
   static FDelegateHandle Added;if(!Added.IsValid())Added=FWorldDelegates::LevelAddedToWorld.AddLambda([](ULevel* Level,UWorld* In){if(Level&&In==For.Get())OKStreetCityDress(Level);});
   UE_LOG(LogTemp,Display,TEXT("Street city: %d mirrors at the start"),Mirrors.Num());}
@@ -3959,11 +3969,80 @@ static void OKStreetCityMirrors(UWorld* World,const FVector& Eye,const FVector& 
  TArray<TPair<double,UPlanarReflectionComponent*>> Near;
  for(const auto& Weak:Mirrors)if(auto* R=Weak.Get()){const FVector Offset=Eye-R->GetComponentLocation();if(FMath::Abs(Offset.Z)<300.f&&FVector::DotProduct(Offset,R->GetUpVector())>2.f&&Offset.SizeSquared()<FMath::Square(1000.f))Near.Emplace(Offset.SizeSquared(),R);}
  Near.Sort([](const TPair<double,UPlanarReflectionComponent*>& A,const TPair<double,UPlanarReflectionComponent*>& B){return A.Key<B.Key;});
- // A mirror draws the scene a second time, so only the nearest one in front of the camera with nothing between it and him is drawn.
+ // Only the nearest one in front of the camera with nothing between it and him shows anything.
  UPlanarReflectionComponent* Seen=nullptr;
  for(const auto& Candidate:Near){const FVector Face=Candidate.Value->GetComponentLocation()+Candidate.Value->GetUpVector()*10.f;if(FVector::DotProduct((Face-CameraAt).GetSafeNormal(),CameraForward)<.3f)continue;FHitResult Hit;if(!World->LineTraceSingleByChannel(Hit,Eye,Face,ECC_Visibility)){Seen=Candidate.Value;break;}}
  Mirrors.RemoveAll([](const TWeakObjectPtr<UPlanarReflectionComponent>& Weak){return !Weak.IsValid();});
- for(const auto& Weak:Mirrors)if(auto* R=Weak.Get()){const bool On=R==Seen;if(R->IsVisible()!=On)R->SetVisibility(On);}
+ GOKStreetCitySeenMirror=Seen;
+}
+// The mirror he looks into, as a quad over its glass. The room does not move: one cube capture of what stands near the mirror, taken
+// when he comes to it and again as the hour moves on, costs a frame nothing after that; the eye's ray off the glass is followed to
+// the walls of the room's box (measured with traces) and looked up in it. The people are drawn the way the conversation's portrait
+// is: an orthographic capture of them and nothing else, at the screen's own resolution, as passes of the main renderer (a scene
+// renderer of its own took 3.5 ms). All of them are taken as standing at their average distance d from the glass: a flat picture
+// then lands on the glass where a real mirror shows it, seen from the eye at distance e: towards the point facing the eye, by e/(e+d).
+static void OKStreetCityMirrorFace(AActor* Scene,int32 Slots,const FVector& Eye,float Fov,int32 ViewWidth,double Hours){
+ static TWeakObjectPtr<UStaticMeshComponent> Quads;static TWeakObjectPtr<USceneCaptureComponent2D> Captures;static TWeakObjectPtr<USceneCaptureComponentCube> Rooms;
+ static TWeakObjectPtr<UPlanarReflectionComponent> RoomOf;static double RoomHours=-100,RetakeAt=0;
+ auto* Quad=Quads.Get();auto* Capture=Captures.Get();auto* Room=Rooms.Get();
+ auto Hide=[Quad]{if(Quad&&Quad->IsVisible())Quad->SetVisibility(false);};
+ auto* Mirror=GOKStreetCitySeenMirror.Get();if(!Mirror||!CVarOKStreetCityMirror.GetValueOnGameThread())return Hide();
+ const FVector At=Mirror->GetComponentLocation(),Normal=Mirror->GetUpVector();
+ if(FMath::Abs(Normal.Z)>.5)return Hide(); // the ceilings' mirrors look down: nobody stands before them
+ const FVector Up=(FVector::UpVector-Normal*Normal.Z).GetSafeNormal(),Right=Up^Normal;
+ const double EyeDepth=(Eye-At)|Normal;if(EyeDepth<5)return Hide();
+ UWorld* World=Scene->GetWorld();
+ constexpr double FrameWidth=520,FrameHeight=260,FeetBelowMiddle=120,Reach=600,RoomFar=3000,RoomStandOff=100;
+ if(!Capture){
+  auto* Target=NewObject<UTextureRenderTarget2D>(Scene);Target->RenderTargetFormat=RTF_RGBA16f;Target->bForceLinearGamma=true;Target->TargetGamma=0.f;Target->ClearColor=FLinearColor::Transparent;Target->InitAutoFormat(1024,512);Target->UpdateResourceImmediate(true);
+  Capture=NewObject<USceneCaptureComponent2D>(Scene);Capture->RegisterComponentWithWorld(World);OKStoryCaptureCharactersOnly(Capture);
+  Capture->CaptureSource=SCS_SceneColorHDR;Capture->bRenderInMainRenderer=true;Capture->TextureTarget=Target;Captures=Capture;}
+ if(!Room){
+  auto* Cube=NewObject<UTextureRenderTargetCube>(Scene);Cube->bHDR=true;Cube->Init(2048,PF_FloatRGBA);Cube->UpdateResourceImmediate(true);
+  Room=NewObject<USceneCaptureComponentCube>(Scene);Room->RegisterComponentWithWorld(World);Room->bCaptureEveryFrame=false;Room->bCaptureOnMovement=false;Room->bAlwaysPersistRenderingState=true;
+  Room->CaptureSource=SCS_SceneColorHDR;Room->PrimitiveRenderMode=ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;Room->ShowFlags.SetMotionBlur(false);Room->ShowFlags.SetTemporalAA(false);Room->ShowFlags.SetScreenSpaceReflections(false);Room->TextureTarget=Cube;Rooms=Room;}
+ UTextureRenderTarget2D* Target=Capture->TextureTarget;
+ if(!Quad){
+  auto* Plane=LoadObject<UStaticMesh>(nullptr,TEXT("/Engine/BasicShapes/Plane.Plane"));auto* Look=OKStoryMirrorMaterial(Target,Room->TextureTarget);if(!Plane||!Look)return;
+  Quad=NewObject<UStaticMeshComponent>(Scene);Quad->SetStaticMesh(Plane);Quad->SetCollisionEnabled(ECollisionEnabled::NoCollision);Quad->SetCastShadow(false);Quad->SetMobility(EComponentMobility::Movable);Quad->RegisterComponentWithWorld(World);
+  auto* Made=UMaterialInstanceDynamic::Create(Look,Quad);Made->SetTextureParameterValue(TEXT("Picture"),Target);Made->SetTextureParameterValue(TEXT("Room"),Room->TextureTarget);Quad->SetMaterial(0,Made);Quads=Quad;}
+ auto* Mid=Cast<UMaterialInstanceDynamic>(Quad->GetMaterial(0));if(!Mid)return;
+ auto Set=[Mid](const TCHAR* Name,const FVector& V){Mid->SetVectorParameterValue(Name,FLinearColor(V.X,V.Y,V.Z));};
+ // A capture costs one frame 50 ms. The first one of a mirror came out black (nothing of the room ready yet): it is taken again.
+ const double Now=FPlatformTime::Seconds();
+ if(RoomOf!=Mirror||FMath::Abs(Hours-RoomHours)>1||(RetakeAt>0&&Now>=RetakeAt)){
+  RetakeAt=RoomOf!=Mirror?Now+.5:0;RoomOf=Mirror;RoomHours=Hours;const FVector Stand=At+Normal*RoomStandOff;
+  auto Wall=[&](const FVector& Dir){FHitResult Hit;return World->LineTraceSingleByChannel(Hit,Stand,Stand+Dir*RoomFar,ECC_Visibility)?double(Hit.Distance):RoomFar;};
+  Room->SetWorldLocation(Stand);Room->ShowOnlyComponents.Reset();Room->HiddenComponents.Reset();
+  for(TObjectIterator<UStaticMeshComponent> It;It;++It)if(*It!=Quad&&It->GetWorld()==World&&It->IsRegistered()&&It->Bounds.GetBox().ComputeSquaredDistanceToPoint(At)<FMath::Square(2000.0))Room->ShowOnlyComponents.Add(*It);
+  TArray<UPrimitiveComponent*> Everyone;for(int32 Slot=0;Slot<Slots;++Slot)OKGetCrowdRuntimeCharacterComponents(Scene,Slot,Everyone);for(UPrimitiveComponent* P:Everyone)Room->HiddenComponents.Add(P);
+  Room->CaptureSceneDeferred();
+  Set(TEXT("RoomAt"),Stand);Set(TEXT("RoomRight"),Right);Set(TEXT("RoomUp"),Up);Set(TEXT("RoomNormal"),Normal);
+  Set(TEXT("RoomMin"),FVector(-Wall(-Right),-Wall(-Up),-RoomStandOff-10));Set(TEXT("RoomMax"),FVector(Wall(Right),Wall(Up),Wall(Normal)));
+  UE_LOG(LogTemp,Display,TEXT("Street city: mirror %s at %s, %d parts near it"),*GetNameSafe(Mirror->GetOwner()),*At.ToCompactString(),Room->ShowOnlyComponents.Num());}
+ // The planar reflection's own size: its actor is scaled against a 4000 cm preview plane.
+ const FVector Size=Mirror->GetComponentScale()*4000/100;
+ Quad->SetWorldTransform(FTransform(Mirror->GetComponentQuat(),At+Normal*.1,FVector(Size.X,Size.Y,1)));
+ if(!Quad->IsVisible())Quad->SetVisibility(true);
+ TArray<UPrimitiveComponent*> Shown;double Depth=0,Across=0,Feet=0;int32 People=0;
+ for(int32 Slot=0;Slot<Slots;++Slot){FOKRuntimeCharacterStatus O;if(!OKGetCrowdRuntimeCharacterStatus(Scene,Slot,O)||!O.Visible)continue;
+  const FVector Rel=O.Transform.GetLocation()-At;const double D=Rel|Normal;if(D<5||D>Reach||FMath::Abs(Rel|Right)>Reach||FMath::Abs(Rel.Z)>300)continue;
+  OKGetCrowdRuntimeCharacterComponents(Scene,Slot,Shown);Depth+=D;Across+=Rel|Right;Feet+=Rel|Up;++People;}
+ Mid->SetScalarParameterValue(TEXT("People"),People&&Shown.Num()?1.f:0.f);
+ if(!People||!Shown.Num())return;
+ Depth/=People;Across/=People;Feet/=People;
+ const double Middle=Feet+FeetBelowMiddle,Shrink=EyeDepth/(EyeDepth+Depth);
+ // 100%: as many pixels as the screen gives the picture at this distance. It only grows, and in steps: a new target is not free.
+ const double PerCm=ViewWidth/(2*FMath::Tan(FMath::DegreesToRadians(Fov*.5))*(EyeDepth+Depth));
+ const int32 Need=FMath::Clamp(FMath::DivideAndRoundUp(int32(FrameHeight*PerCm),128)*128,256,2048);
+ if(Target->SizeY<Need){Target->InitAutoFormat(Need*2,Need);Target->UpdateResourceImmediate(true);}
+ Capture->SetWorldLocationAndRotation(At-Normal*30+Right*Across+Up*Middle,FRotationMatrix::MakeFromXZ(Normal,Up).ToQuat());
+ Capture->OrthoWidth=FrameWidth;
+ Capture->ShowOnlyComponents.Reset();for(UPrimitiveComponent* P:Shown)Capture->ShowOnlyComponents.Add(P);
+ Capture->CaptureSceneDeferred();
+ const double FaceAcross=(Eye-At)|Right,FaceUp=(Eye-At)|Up;
+ Set(TEXT("Origin"),At+Normal*.1+Right*(FaceAcross+(Across-FaceAcross)*Shrink)+Up*(FaceUp+(Middle-FaceUp)*Shrink));
+ Set(TEXT("AxisU"),Right/(FrameWidth*Shrink));Set(TEXT("AxisV"),-Up/(FrameHeight*Shrink));
 }
 
 void AOKStreetSocialScene::Tick(float Dt){
@@ -3971,8 +4050,9 @@ void AOKStreetSocialScene::Tick(float Dt){
  if(APlayerController* Eyes=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr;OKStreetCityMode()&&State&&Eyes&&Eyes->PlayerCameraManager)OKStreetCityMirrors(GetWorld(),State->Male+FVector(0,0,150),Eyes->PlayerCameraManager->GetCameraLocation(),Eyes->PlayerCameraManager->GetCameraRotation().Vector(),Dt);
  if(OKStreetCityMode()&&State&&GOKStreetCitySun.IsValid()&&State->Sun!=GOKStreetCitySun){State->Sun=GOKStreetCitySun;State->ClockDrivesSun=true;State->NextSunUpdate=0;}
  if(OKStreetCityMode()&&State)if(auto* Env=GOKStreetCityEnv.Get()){static double NextHour=0;const double Wall=FPlatformTime::Seconds();if(Wall>=NextHour){NextHour=Wall+5;const double Hours=OKStreetClockHours(State->ClockStartHours,Wall-State->ClockStartWall);Env->SetHour(Hours);
-   // The sky light goes with the sun: left at its daytime value, midnight looked like noon.
-   if(auto* Sky=GOKStreetCitySkyLight.Get())Sky->SetIntensity(GOKStreetCitySkyDay*FMath::Clamp(OKStreetSunAt(Hours).Intensity/2.5f,.12f,1.f));}}
+   // The sky light goes with the sun: left at its daytime value, midnight looked like noon. The moon counts for little: it is
+   // bright for the street's sake (1.6 against the sun's 2.5), which held the sky light at 64% all night. Dusk meets the day's .2.
+   if(auto* Sky=GOKStreetCitySkyLight.Get()){const FOKStreetSunState Sun=OKStreetSunAt(Hours);Sky->SetIntensity(GOKStreetCitySkyDay*(Sun.Day?FMath::Clamp(Sun.Intensity/2.5f,.2f,1.f):FMath::Lerp(.2f,.1f,FMath::Clamp((Sun.Intensity-.8f)/.8f,0.f,1.f))));}}}
  // Walls, buildings and floors not drawn from behind (OKStreetBacks.h), in the street and in the room alike.
  if(APlayerController* PC=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr;PC&&PC->PlayerCameraManager)OKHideStreetBacks(GetWorld(),PC->PlayerCameraManager->GetCameraLocation());if(!State||!State->Started||State->Reported)return;auto& S=*State;GOKStreetTalkLimit=S.SelfTest; // the self-tests check the budget arithmetic; normal play has no daily talk limit
  // Walking into or out of a shop, or its opening hours passing: the shop part of the right panel has to follow without waiting for
@@ -4246,6 +4326,7 @@ void AOKStreetSocialScene::Tick(float Dt){
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickGalgame);TickGalgame(Dt);} // conversations as galgame scenes: dialog box, portrait, a shot per line (OKStreetSocialGalgame.inl)
  if(GControlCamera.Active&&S.Camera.IsValid())OKApplyControlCamera(this,S.Camera.Get()); // the control channel's pinned camera wins over the scene's shot (a look at a seated group mid-talk)
  if(S.InspectSlot!=INDEX_NONE)TickInspect(Dt,PC,Focused); // the inspection room's camera wins over everything
+ if(OKStreetCityMode()&&S.Camera.IsValid()){int32 ViewWidth=0,ViewHeight=0;PC->GetViewportSize(ViewWidth,ViewHeight);OKStreetCityMirrorFace(this,S.Manifest.Characters.Num(),S.Camera->GetActorLocation(),S.Camera->GetCameraComponent()->FieldOfView,ViewWidth,OKStreetClockHours(S.ClockStartHours,FPlatformTime::Seconds()-S.ClockStartWall));}
  const bool AppEscape=Focused&&!S.App.IsEmpty()&&OKKeyPressed(PC,EKeys::Escape);if(AppEscape)CloseApp();
  if(Focused&&S.App.IsEmpty()&&OKKeyPressed(PC,EKeys::M)&&S.PrivateGirl==INDEX_NONE)ToggleBigMap();
  // Esc with her answer still on screen closes the talk, not the walk: 安可 agreed to the café, Esc to close the box

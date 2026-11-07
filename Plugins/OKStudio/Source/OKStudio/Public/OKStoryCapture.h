@@ -26,7 +26,20 @@ struct FPostProcessSettings;
 #if WITH_EDITOR
 /** Builds the portrait's UI material in `Outer` (sampler defaults: textures of the capture targets' formats). */
 OKSTUDIO_API UMaterial* OKStoryBuildPortraitMaterial(UObject* Outer, FName Name, EObjectFlags Flags, UTexture* Color, UTexture* Depth);
+/** Builds the mirror's material in `Outer` (sampler defaults: targets of the picture's and the room's formats). */
+OKSTUDIO_API UMaterial* OKStoryBuildMirrorMaterial(UObject* Outer, FName Name, EObjectFlags Flags, UTexture* Picture, UTexture* Room);
 #endif
+
+/** A mirror's face on a mesh over the glass (OKStoryMirrorMaterial): the room from a cube capture, the people on top. */
+#define OK_STORY_MIRROR_MATERIAL TEXT("/Game/OKStudio/Story/M_StoryMirror.M_StoryMirror")
+/** Parameters. The people: Picture (an HDR capture, its alpha the inverse opacity), People (0 or 1), Origin (the world point at the
+ *  picture's middle), AxisU and AxisV (a world offset dotted with them is the picture's u and v). The room: Room (a cube capture),
+ *  RoomAt (where it was taken), RoomRight, RoomUp, RoomNormal (the box's axes), RoomMin, RoomMax (the walls along them, from RoomAt).
+ *  Null where it cannot be had. */
+OKSTUDIO_API UMaterialInterface* OKStoryMirrorMaterial(UTexture* Picture, UTexture* Room);
+/** Makes a capture draw like a portrait: orthographic, its show-only list against nothing, none of the passes that gather
+ *  the rest of the scene. */
+OKSTUDIO_API void OKStoryCaptureCharactersOnly(USceneCaptureComponent2D* Capture);
 
 /**
  * Double-buffered: the view draws the front picture while the next one (colour, then its coverage, a frame apart) is

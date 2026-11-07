@@ -409,6 +409,12 @@ void AOKStreetSocialScene::StartControlServer(){
  });
 
  // The built-in autopilot: to a heroine ("girl": 1..10) or to a place's door ("place": id). The player walks at normal speed.
+ // {"x":..,"y":..,"z":..}: put him there at once (a test at a spot no walk reaches soon, like a mirror on an upper floor).
+ Bind(TEXT("/warp"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
+  auto B=OKControlBody(Req);double X=0,Y=0,Z=0;
+  if(!B->TryGetNumberField(TEXT("x"),X)||!B->TryGetNumberField(TEXT("y"),Y)||!B->TryGetNumberField(TEXT("z"),Z)){OKControlReply(Done,OKControlResult(false,TEXT("x, y and z are required")));return;}
+  StopNavigation(FString());State->Male=FVector(X,Y,Z);OKControlReply(Done,OKControlResult(true));
+ });
  Bind(TEXT("/navigate"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   auto B=OKControlBody(Req);bool Stop=false;B->TryGetBoolField(TEXT("stop"),Stop);double Girl=0;FString Place;
   if(Stop){StopNavigation(FString());OKControlReply(Done,OKControlResult(true));return;}
