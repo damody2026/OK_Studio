@@ -44,10 +44,41 @@ def motel_world_stream_prep():
  for a in SUB_.get_all_level_actors():
   if isinstance(a,(unreal.PointLight,unreal.SpotLight,unreal.RectLight)):
    c=a.light_component;c.set_editor_property('intensity',c.get_editor_property('intensity')*LIGHT_SCALE);lights+=1
+ # a room with no lamp of its own goes black at night once the sky light is down (dance studio SC-0303, c-conquest 11-07):
+ # up to four ceiling lights a room, no shadows, as bright as a shop lamp after LIGHT_SCALE
+ spots=[(a.get_actor_location(),) for a in SUB_.get_all_level_actors() if isinstance(a,(unreal.PointLight,unreal.SpotLight,unreal.RectLight))]
+ rooms=[r for r in json.loads((ROOT/'output/street-social-city-production/places-v1/props.json').read_text('utf8'))['areas'] if r.get('kind')=='room' and 'min' in r]
+ added=0;darkrooms=0
+ for r in rooms:
+  lo,hi=r['min'],r['max']
+  if any(lo[0]<=p[0].x<=hi[0] and lo[1]<=p[0].y<=hi[1] and lo[2]-20<=p[0].z<=hi[2]+60 for p in spots):continue
+  darkrooms+=1;w,d=hi[0]-lo[0],hi[1]-lo[1];nx,ny=(1 if w<900 else 2),(1 if d<900 else 2)
+  for i in range(nx):
+   for j in range(ny):
+    a=SUB_.spawn_actor_from_class(unreal.PointLight,unreal.Vector(lo[0]+w*(i+.5)/nx,lo[1]+d*(j+.5)/ny,lo[2]+260),unreal.Rotator(0,0,0))
+    a.set_actor_label('RoomLight_%s_%d'%(r['id'],i*2+j));a.set_folder_path('UniversityCity/RoomLights');c=a.light_component
+    c.set_editor_property('intensity_units',unreal.LightUnits.LUMENS);c.set_editor_property('intensity',275.);c.set_editor_property('attenuation_radius',800.);c.set_editor_property('cast_shadows',False);c.set_editor_property('light_color',unreal.Color(r=255,g=240,b=220,a=255));added+=1
+ # what the game did to every piece as it came in (OKStreetCityDress) is saved here, so a cell needs no render state rebuilt on arrival:
+ # local lights cast nothing and end at 120 m, and the smaller a mesh the sooner it goes (an instanced one by the size of the mesh it draws)
+ far=lambda r:6000. if r<100 else 15000. if r<300 else 40000. if r<1000 else 0.
+ culled=0;dressed=0
+ for a in SUB_.get_all_level_actors():
+  for c in a.get_components_by_class(unreal.LocalLightComponent):
+   c.set_editor_property('cast_shadows',False);c.set_editor_property('max_draw_distance',12000.);c.set_editor_property('max_distance_fade_range',2000.);dressed+=1
+  for c in a.get_components_by_class(unreal.StaticMeshComponent):
+   m=c.static_mesh
+   if not m:continue
+   if isinstance(c,unreal.InstancedStaticMeshComponent):
+    f=far(m.get_bounds().sphere_radius)
+    if f>0 and c.get_editor_property('instance_end_cull_distance')<=0:c.set_editor_property('instance_start_cull_distance',int(f*.9));c.set_editor_property('instance_end_cull_distance',int(f));culled+=1
+   elif c.get_editor_property('ld_max_draw_distance')<=0:
+    f=far(unreal.SystemLibrary.get_component_bounds(c)[2])
+    if f>0:c.set_editor_property('ld_max_draw_distance',f);culled+=1
+ # the clock, lamps and sky run from this one actor: in a cell it was unloaded and began again at every return, 60-78 ms a scan of the map
  ctl=[a for a in SUB_.get_all_level_actors() if a.get_actor_label()=='CityEnvironmentController']
  if ctl:ctl[0].refresh_bindings();ctl[0].prepare_for_save();ctl[0].set_editor_property('is_spatially_loaded',False)
  assert unreal.EditorLoadingAndSavingUtils.save_map(world,DEST),DEST
  o=ROOT/'output/street-social-city-production/stream-v1';o.mkdir(parents=True,exist_ok=True)
- r=dict(status='passed',map=DEST,split_actors=len(gone),instances=inst,cell_actors=made,kept_small=kept,lights=lights,light_scale=LIGHT_SCALE)
+ r=dict(status='passed',map=DEST,split_actors=len(gone),instances=inst,cell_actors=made,kept_small=kept,lights=lights,light_scale=LIGHT_SCALE,dark_rooms=darkrooms,room_lights=added,lights_dressed=dressed,culled=culled,controller=len(ctl))
  (o/'prep.json').write_text(json.dumps(r,indent=1),'utf8');return r
 ]====]

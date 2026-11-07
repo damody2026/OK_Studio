@@ -574,6 +574,13 @@ R1／R2 每戶的家具都按房間檢查過（用掃描資料切房間，見錯
 
 **沒放的項目（`skipped` 清單）：** 屋頂 T4、LI、D1、D2 各有一座樓梯找不到空地，放在第一個位置。`balcony: 178 of 194`：194 是有陽台或窗戶錨點的住處，其中 16 處放不出陽台，只有窗。`shop_homes` 床第 84 輪 44／47，第 85 輪補到 47／47。`suites_tv` 的 `sofa 48`、`bed 6`、`foot 3` 是看電視的位置落在沙發、床邊或床尾的數量，不是缺件。`homes` 的 `miss`、`tv_blocked`、`dining_tight`、`dining_hall` 和 `sofa_facing_wall` 是重試次數，最後都有放好（電視 134、餐桌 80、洗衣機 80）。
 
+**第 87～88 輪與串流地圖（11-07～11-08）：** 水族館四缸和牆缸補水、沙、石、水草和魚，廚房站位移到檯面外，離線檢查 `Tools/check_street_city_placement.lua` 4219 件 0 問題，錨點 25376。遊戲用的串流圖是 `/Game/UniversityCity/Maps/UniversityCityWP`，由原圖在記憶體裡產生（`Tools/street_city_stream_prep_payload.lua`、`Tools/build_street_city_stream.lua`），原圖不存檔。
+
+- WP 副本裡做的事：寬於 128 m 的實例拆成 2403 個 cell actor；本地燈乘 0.125（遊戲固定曝光 1）；1038 個沒燈的房間補 3506 盞房間燈；6937 盞燈不投影、120 m 消失；18334 個 mesh 烘進裁切距離；`CityEnvironmentController` 常駐。
+- 路網：`city_roads.json` 用 `Tools/street_city_road_bake_payload.lua` 重烘。351 個落在屋頂或雨棚的點貼回地面，切掉 192 條假路線，斷開的 3042 點區塊接回主路網（22529 點）。(71500,108100) 的 54 點小區沒接上，遊戲不會用到。
+- 重建要先把舊的 `__ExternalActors__`、`__ExternalObjects__` 和 WP 地圖檔移走，否則舊 actor 會和新的並存。`Content/` 那份也一樣，複製前先移走舊的。
+- 量測（1080p、編輯器模式，地圖沒 cook）：cafe、`campus_ee`、conveni 各四個方向多數 105～150 FPS，最低 69～91（conveni 90 度、cafe 90 度、`campus_ee` 180 度，render 10～13 ms，原因未定，量到時人可能還在走）。走路 24 分鐘「路被擋住」2 行 log（改前 5 分鐘 107 行）。≥60 ms 的卡頓 47 次，除一次 222 ms 外最高 100 ms，主要是 StaticMesh 同步建置、GC 和 shader map，前者和後者只有編輯器模式才有，GC 要等打包版確認。
+
 ### 8.3 遊戲端之後要做（我負責，換城市整合時）
 
 - 每個新地點的活動（`activities.toml`）、商品與營業時間（`catalog.json`）、`places.toml` 規範、三語文字。
