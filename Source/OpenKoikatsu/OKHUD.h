@@ -11,6 +11,7 @@ class OPENKOIKATSU_API AOKHUD : public AHUD
 
 public:
 	virtual void BeginPlay() override;
+	virtual void DrawHUD() override;
 
 	void SetGalleryVisible(bool bVisible);
 

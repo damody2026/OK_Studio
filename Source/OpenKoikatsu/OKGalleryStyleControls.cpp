@@ -189,6 +189,7 @@ void UOKCharacterController::ApplyCharacterStyle()
 	if (StyledActor != PreviewActor)
 	{
 		StyledActorLocation = PreviewActor->GetActorLocation();
+		StyledScale = 1.f;
 	}
 	StyledActor = PreviewActor;
 	TArray<float> Body = Selected.Body.ShapeValueBody, Face = Selected.Face.ShapeValueFace;
@@ -199,6 +200,12 @@ void UOKCharacterController::ApplyCharacterStyle()
 	const float Height = Selected.Body.ShapeValueBody.IsValidIndex(0) ? Selected.Body.ShapeValueBody[0] : 0.5f;
 	PreviewActor->SetActorLocation(StyledActorLocation + FVector(0.f, 0.f, OKStudioStyleLift(CharacterStyle, Scale, Height)));
 	PreviewActor->MarkShapeDirty(Face, Body);
+	// The view keeps the character's framing as it grows.
+	const float Growth = Scale / StyledScale;
+	StyledScale = Scale;
+	PreviewActor->OrbitFocus = StyledActorLocation + (PreviewActor->OrbitFocus - StyledActorLocation) * Growth;
+	PreviewActor->OrbitDistance *= Growth;
+	PreviewActor->ApplyOrbitCamera();
 }
 
 static FAutoConsoleCommand GalleryStyleCmd(TEXT("ok.GalleryStyle"), TEXT("ok.GalleryStyle <key> <value>: a slider of the card reader's 角色風格 (keys: style, face_style, heads, hips, ...)"),
