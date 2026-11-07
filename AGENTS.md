@@ -30,7 +30,7 @@
 
 流程：建 Interaction host（`Saved/Interaction/FreeTalk01Host`，`Tools/prepare_interaction_runtime_host.lua`）與 Development 遊戲執行檔 → cook StreetSocial 地圖 → UAT 以 `-pak` staging 到 `--base-dir` → `Tools/stage_interaction_runtime.lua` 產生 `Saved/StreetSocial/Build/<名稱>.stage`。換了引擎建置要用新的 `--base-dir`（舊 stage 仍連到舊 base）。`.stage` 目錄裡有 junction，不要遞迴刪除；要換版本就用新的 tag。日誌在 `Saved/StreetSocial/Rebuild-<名稱>/`。
 
-**完整流程只在整合時跑**：平常開發可以沿用既有的 base、只重編執行檔與 stage（`--skip-cook`／`--skip-base`）。整合 C／E 時一律跑完整流程（重新 cook 與 base，新 tag），兩邊的 `CardReaderDevelopment.cmd`、`StreetSocial.cmd` 都要編過並實際啟動確認，再刪掉舊的 stage、base 與 host。
+**完整流程只在整合時跑**：平常開發可以沿用既有的 base、只重編執行檔與 stage（`--skip-cook`／`--skip-base`）。整合 C／E 時一律跑完整流程（重新 cook 與 base，新 tag），兩邊的 `CardReaderDevelopment.cmd`、`StreetSocial.cmd` 都要編過並實際啟動確認，再刪掉舊的 stage、base 與 host。 整合順序：先提交全部已完成的工作（未驗證也算，只有寫到一半的不算），全部合併後才編譯，混合編譯即可，編譯過就整合，測試修正留到整合之後。
 
 **遊戲 MCP**：所有模式啟動就開著控制通道，不需要參數，也沒有關閉開關；socket 與信箱在獨立執行緒（`OKControl`），只收本機程式的請求，見 [Docs/GAME_CONTROL_CHANNELS.md](Docs/GAME_CONTROL_CHANNELS.md)。AI 操作遊戲一律用 `Tools/ok-game-mcp`（`.mcp.json` 的 `ok-game`）：`game_instances` 列出執行中的遊戲，`ui_*` 操作任何模式畫面上的控制，`reader_call` 操作讀卡，`pair_call` 操作 1 對 1，`studio_*` 操作 OK Studio。新增的控制要讓 MCP 讀得到也改得到。
 
