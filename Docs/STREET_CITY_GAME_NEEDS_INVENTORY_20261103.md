@@ -580,6 +580,7 @@ R1／R2 每戶的家具都按房間檢查過（用掃描資料切房間，見錯
 - 路網：`city_roads.json` 用 `Tools/street_city_road_bake_payload.lua` 重烘。351 個落在屋頂或雨棚的點貼回地面，切掉 192 條假路線，斷開的 3042 點區塊接回主路網（22529 點）。(71500,108100) 的 54 點小區沒接上，遊戲不會用到。
 - 重建要先把舊的 `__ExternalActors__`、`__ExternalObjects__` 和 WP 地圖檔移走，否則舊 actor 會和新的並存。`Content/` 那份也一樣，複製前先移走舊的。
 - 量測（1080p、編輯器模式，地圖沒 cook）：cafe、`campus_ee`、conveni 各四個方向多數 105～150 FPS，最低 69～91（conveni 90 度、cafe 90 度、`campus_ee` 180 度，render 10～13 ms，原因未定，量到時人可能還在走）。走路 24 分鐘「路被擋住」2 行 log（改前 5 分鐘 107 行）。≥60 ms 的卡頓 47 次，除一次 222 ms 外最高 100 ms，主要是 StaticMesh 同步建置、GC 和 shader map，前者和後者只有編輯器模式才有，GC 要等打包版確認。
+- 電梯門（11-08）：九棟校舍和兩棟宿舍 2F 以上的電梯門原本建模時就是關的，電梯口前 28 cm 是門板。`Tools/street_city_lift_doors_payload.lua` 從 46 層的外觀模型和碰撞模型（`ComplexCollisionMesh`）刪掉門板，門框留著，開口寬 120 cm、和 1F 一樣。資產原地修改，地圖和 WP 不用重建，錨點和遊戲端不用改；改前的 92 個模型在 `E:\OpenKoikatsuWorkspace\lift-doors-before-1108`。之後重新產生這些樓層模型要再跑一次（`places-v1/lift-doors-apply.txt` 寫 1 才會存檔）。`Tools/street_city_lift_probe_payload.lua` 掃電梯口周圍的空間。
 
 ### 8.3 遊戲端之後要做（我負責，換城市整合時）
 
