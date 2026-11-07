@@ -417,6 +417,14 @@ if sofa then
   check(math.abs(at[1] - 300) < 40 and math.abs(at[2]) < 30 and math.abs(at[3]) < 8, ("坐下 sits on the sofa (%.0f,%.0f,%.0f)"):format(at[1], at[2], at[3]))
 end
 
+-- U268: a new scene's 主光 is Studio's character light: on the map at 4 it washed out the ground.
+do
+  local light = nil
+  for _, o in pairs(objects()) do if o.kind == "light" and (not light or o.id < light.id) then light = o end end
+  local detail = light and (call("inspect", { id = light.id }).object or {}) or {}
+  check(((detail.light or {}).bCharactersOnly) == true, "主光 lights the characters only")
+end
+
 -- U265: 看對方, both looking at the other's head.
 local card = (((call("inspect", { id = id }).object or {}).character or {}).card) or ""
 local known2 = objects()

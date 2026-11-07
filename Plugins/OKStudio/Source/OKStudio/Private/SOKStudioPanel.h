@@ -426,7 +426,7 @@ public:
 				// saved minutes later was named by the time it was made).
 				SaveAsName.Reset();
 				ForgetExport();
-				Game->Add(EOKSceneObjectKind::Light); Game->Document->NotifyChanged();
+				Game->AddMainLight(); Game->Document->NotifyChanged();
 				// The view starts over too (U147: it stayed on the last map's far view, a new character a speck in it).
 				Game->ViewPreset(5);
 				Game->ResetHistory(); Game->bDirty = false;

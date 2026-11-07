@@ -165,6 +165,8 @@ public:
 
 	/** Adds an object under the selected folder (or next to the selected object) and selects it. */
 	int32 Add(EOKSceneObjectKind Kind);
+	/** A new scene's 主光: Studio's character light, on the characters and items only. */
+	int32 AddMainLight();
 	void Select(int32 Id);
 	bool Save(const FString& Path, FString& OutError);
 	bool Load(const FString& Path, FString& OutError);

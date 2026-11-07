@@ -189,7 +189,7 @@ UOKStudioGame* UOKStudioGame::Start(UWorld* World, const FString& InFile, FStrin
 		PC->SetInputMode(FInputModeUIOnly());
 	}
 	if (!InFile.IsEmpty()) { if (!Game->Load(InFile, OutError)) UE_LOG(LogTemp, Warning, TEXT("OK studio: %s"), *OutError); }
-	else Game->Add(EOKSceneObjectKind::Light);
+	else Game->AddMainLight();
 	if (GEngine && GEngine->GameViewport)
 	{
 		Game->Panel = SNew(SOKStudioPanel).Game(Game);
@@ -683,6 +683,14 @@ int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 		if (Panel) Panel->RefreshRows();
 		Document->NotifyChanged();
 	}
+	return Id;
+}
+
+int32 UOKStudioGame::AddMainLight()
+{
+	// Studio's character light (mask 1024, the Chara layer): at 4 on the map too it washed out the ground (U268).
+	const int32 Id = Add(EOKSceneObjectKind::Light);
+	if (FOKSceneObject* O = Document->Find(Id)) O->Light.bCharactersOnly = true;
 	return Id;
 }
 
