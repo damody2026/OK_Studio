@@ -1437,6 +1437,27 @@ void AOKSceneActor::SyncMap()
 static TAutoConsoleVariable<int32> CVarOkStudioMapSun(TEXT("ok.Studio.MapSun"), 1,
 	TEXT("1: light a Studio map with its own sun (SunLightInfo._targetLight at the scene's time of day, casting shadows); 0: maps show only their lightmaps and emission."));
 
+/** The map sun's Light.shadowStrength, where it is not 1: what is left of the sun in its shadows. The library does not record
+ *  it (its records are binary, a new field means converting every map again); read from the game with
+ *  `run_map_tour.lua --lights-only` over every map (U269). */
+static float OKStudioMapSunShadow(int32 Map)
+{
+	switch (Map)
+	{
+	case 5: return .85f;
+	case 11: return .897f;
+	case 16: return .116f;
+	case 40: return .5f;
+	case 50: case 51: case 52: case 54: case 57: return .807f;
+	case 53: return .9f;
+	case 55: return .85f;
+	case 56: return .857f;
+	case 58: return .87f;
+	case 73: return .439f;
+	default: return 1.f;
+	}
+}
+
 void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
 {
 	AKKPreviewActor* Map = MapPreview();
@@ -1516,6 +1537,7 @@ void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
     const float Energy=FMath::Max3(Irradiance.R,Irradiance.G,Irradiance.B);
     MapSun->SetLightColor(Energy>0 ? FLinearColor(Irradiance.R/Energy,Irradiance.G/Energy,Irradiance.B/Energy,1) : FLinearColor::Black);
     MapSun->SetIntensity(Energy*UE_PI);
+    MapSun->SetShadowAmount(OKStudioMapSunShadow(Document->Map));
 	// The items' forward light when it reaches their layer (UpdateItemLighting): Unity (-x, z, y) towards the light.
 	FLinearColor Lo, Hi, Low24;
 	if (Map->Session.MaterialValue(0, "_OKSunCullingLo", Lo) && Map->Session.MaterialValue(0, "_OKSunCullingHi", Hi))
