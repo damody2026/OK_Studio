@@ -1779,6 +1779,10 @@ void ACityEnvironmentController::ApplyScalars(const FCityEnvironmentSample& Samp
 		{
 			const double Factor = ScheduleFor(static_cast<ECityLampGroup>(Item.Group), Sample) * Sample.NightWeight;
 			Intensity = Item.bOverrideLumens ? Item.TargetLumens * static_cast<float>(Factor) : Item.OriginalIntensity * static_cast<float>(Factor);
+			if (bGameClock)
+			{
+				Intensity *= GameClockLampScale;
+			}
 			const bool bKeep = Significant.Contains(Index);
 			const bool bShadow = Shadowed.Contains(Index);
 			if (!bKeep)

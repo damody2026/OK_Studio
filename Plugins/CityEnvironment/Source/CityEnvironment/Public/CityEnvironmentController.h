@@ -178,6 +178,7 @@ protected:
 
 private:
 	bool bGameClock = false;
+	float GameClockLampScale = 0.125f; // the lamps' lumens are physical; the game's exposure is fixed at 1
 	FVector LightingViewOverride = FVector::ZeroVector;
 	bool bLightingViewOverride = false;
 	void UpdateTimeInputMode();
