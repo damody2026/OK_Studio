@@ -1844,6 +1844,29 @@ FString AOKSceneActor::MapTimeNote() const
 	TArray<FString> Notes;
 	if (!MapTimes) Notes.Add(TEXT("地圖沒有時段資料"));
 	else if (!((MapTimes >> Want) & 1) && ShownMapTime >= 0 && ShownMapTime < 4) Notes.Add(FString::Printf(TEXT("地圖沒有「%s」，顯示「%s」"), Names[Want], Names[ShownMapTime]));
+	// A map may give every time the same sun and show the same parts (the park): the buttons then change nothing, as in the
+	// original. Said, or it reads as a broken button (U267).
+	bool bSameTimes = MapTimes != 0 && !bMapSunBaked;
+	AKKPreviewActor* Map = MapPreview();
+	FLinearColor FirstColor, FirstAngle;
+	bool bFirst = true;
+	for (int32 T = 0; T < 4 && bSameTimes; ++T)
+	{
+		if (!((MapTimes >> T) & 1)) continue;
+		FLinearColor Color, Angle;
+		const FTCHARToUTF8 ColorName(*FString::Printf(TEXT("_OKSun%dColor"), T)), AngleName(*FString::Printf(TEXT("_OKSun%dAngle"), T));
+		Map->Session.MaterialValue(0, ColorName.Get(), Color);
+		Map->Session.MaterialValue(0, AngleName.Get(), Angle);
+		if (bFirst) { FirstColor = Color; FirstAngle = Angle; bFirst = false; }
+		else bSameTimes = Color.Equals(FirstColor) && Angle.Equals(FirstAngle);
+	}
+	for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews)
+	{
+		if (!bSameTimes || !P.IsValid()) continue;
+		TInlineComponentArray<UPrimitiveComponent*> Primitives(P.Get());
+		for (const UPrimitiveComponent* C : Primitives) for (const FName& Tag : C->ComponentTags) if (Tag.ToString().StartsWith(TEXT("OKSunVisible"))) bSameTimes = false;
+	}
+	if (bSameTimes) Notes.Add(TEXT("這張地圖各時段的光與物件都相同，換時段畫面不變，和原作一樣；要變暗用畫面設定的色調"));
 	if (bMapSunBaked) Notes.Add(TEXT("光照烘焙在地圖貼圖裡，時段只換顯示的物件與天空"));
 	else if (MapSun)
 	{
