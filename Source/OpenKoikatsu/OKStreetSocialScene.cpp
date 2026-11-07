@@ -3926,6 +3926,7 @@ double AOKStreetSocialScene::SceneTime() const {
 static TArray<TWeakObjectPtr<UPlanarReflectionComponent>> GOKStreetCityMirrors;
 static TWeakObjectPtr<ADirectionalLight> GOKStreetCitySun;
 static TWeakObjectPtr<ACityEnvironmentController> GOKStreetCityEnv;
+static TWeakObjectPtr<USkyLightComponent> GOKStreetCitySkyLight;static float GOKStreetCitySkyDay=0.f;
 // What a piece of the map needs before it is drawn, done as each piece comes in (the world streams around him).
 // The map's 3400 local lights cast shadows: measured 65 of the 80 ms the render thread spent on a frame for the rect lights,
 // 9 of 15 ms on the street for the point and spot lights. Only the sun casts here; the rest are drawn in one clustered pass.
@@ -3942,6 +3943,7 @@ static void OKStreetCityDress(ULevel* Level){
  TInlineComponentArray<UActorComponent*> Parts;
  for(AActor* Actor:Level->Actors)if(Actor){Actor->GetComponents(Parts);for(UActorComponent* Part:Parts){
   if(auto* Mirror=Cast<UPlanarReflectionComponent>(Part)){Mirror->ScreenPercentage=75;Mirror->PrefilterRoughness=0.f;Mirror->MaxViewDistanceOverride=2500.f;Mirror->ShowFlags.SetDynamicShadows(false);Mirror->SetVisibility(false);GOKStreetCityMirrors.Add(Mirror);}
+  else if(auto* Sky=Cast<USkyLightComponent>(Part)){if(!GOKStreetCitySkyLight.IsValid()){GOKStreetCitySkyLight=Sky;GOKStreetCitySkyDay=Sky->Intensity;}}
   else if(auto* Light=Cast<ULocalLightComponent>(Part)){Light->MaxDrawDistance=12000.f;Light->MaxDistanceFadeRange=2000.f;Light->MarkRenderStateDirty();if(Light->CastShadows)Light->SetCastShadows(false);}
   else if(auto* Instanced=Cast<UInstancedStaticMeshComponent>(Part)){if(Instanced->GetStaticMesh()&&Instanced->InstanceEndCullDistance<=0){const float Far=FarFor(Instanced->GetStaticMesh()->GetBounds().SphereRadius);if(Far>0.f)Instanced->SetCullDistances(int32(Far*.9f),int32(Far));}}
   else if(auto* Mesh=Cast<UStaticMeshComponent>(Part)){if(Mesh->LDMaxDrawDistance<=0.f){const float Far=FarFor(Mesh->Bounds.SphereRadius);if(Far>0.f)Mesh->SetCullDistance(Far);}}}}
@@ -3968,7 +3970,9 @@ void AOKStreetSocialScene::Tick(float Dt){
  Super::Tick(Dt);
  if(APlayerController* Eyes=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr;OKStreetCityMode()&&State&&Eyes&&Eyes->PlayerCameraManager)OKStreetCityMirrors(GetWorld(),State->Male+FVector(0,0,150),Eyes->PlayerCameraManager->GetCameraLocation(),Eyes->PlayerCameraManager->GetCameraRotation().Vector(),Dt);
  if(OKStreetCityMode()&&State&&GOKStreetCitySun.IsValid()&&State->Sun!=GOKStreetCitySun){State->Sun=GOKStreetCitySun;State->ClockDrivesSun=true;State->NextSunUpdate=0;}
- if(OKStreetCityMode()&&State)if(auto* Env=GOKStreetCityEnv.Get()){static double NextHour=0;const double Wall=FPlatformTime::Seconds();if(Wall>=NextHour){NextHour=Wall+5;Env->SetHour(OKStreetClockHours(State->ClockStartHours,Wall-State->ClockStartWall));}}
+ if(OKStreetCityMode()&&State)if(auto* Env=GOKStreetCityEnv.Get()){static double NextHour=0;const double Wall=FPlatformTime::Seconds();if(Wall>=NextHour){NextHour=Wall+5;const double Hours=OKStreetClockHours(State->ClockStartHours,Wall-State->ClockStartWall);Env->SetHour(Hours);
+   // The sky light goes with the sun: left at its daytime value, midnight looked like noon.
+   if(auto* Sky=GOKStreetCitySkyLight.Get())Sky->SetIntensity(GOKStreetCitySkyDay*FMath::Clamp(OKStreetSunAt(Hours).Intensity/2.5f,.12f,1.f));}}
  // Walls, buildings and floors not drawn from behind (OKStreetBacks.h), in the street and in the room alike.
  if(APlayerController* PC=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr;PC&&PC->PlayerCameraManager)OKHideStreetBacks(GetWorld(),PC->PlayerCameraManager->GetCameraLocation());if(!State||!State->Started||State->Reported)return;auto& S=*State;GOKStreetTalkLimit=S.SelfTest; // the self-tests check the budget arithmetic; normal play has no daily talk limit
  // Walking into or out of a shop, or its opening hours passing: the shop part of the right panel has to follow without waiting for
