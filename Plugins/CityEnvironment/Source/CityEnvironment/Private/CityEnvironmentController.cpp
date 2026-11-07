@@ -466,6 +466,27 @@ void ACityEnvironmentController::DeactivateAndRestore()
 	if (Exposure) Exposure->bEnabled = false;
 }
 
+void ACityEnvironmentController::UseGameClock()
+{
+	bGameClock = true;
+	for (const FManagedLight& Item : Lights)
+	{
+		if (!Item.bLocal)
+		{
+			if (ULightComponentBase* Light = Item.Component.Get())
+			{
+				WriteIntensity(Light, Item.OriginalIntensity);
+			}
+		}
+	}
+	if (Exposure)
+	{
+		Exposure->bEnabled = false;
+		Exposure->BlendWeight = 0.0f;
+	}
+	SetPaused(true);
+}
+
 void ACityEnvironmentController::ApplyEnvironment()
 {
 	if (!bBindingsReady)
@@ -1617,7 +1638,7 @@ void ACityEnvironmentController::ApplyDirections(float Alpha)
 	for (const FManagedLight& Item : Lights)
 	{
 		ULightComponentBase* Light = Item.Component.Get();
-		if (!Light || !Item.bDirectional)
+		if (!Light || !Item.bDirectional || bGameClock)
 		{
 			continue;
 		}
@@ -1640,7 +1661,10 @@ void ACityEnvironmentController::ApplyScalars(const FCityEnvironmentSample& Samp
 	{
 		return;
 	}
-	EnsureMeterMask();
+	if (!bGameClock)
+	{
+		EnsureMeterMask();
+	}
 	const FVector Camera = ResolveCamera();
 	struct FRank
 	{
@@ -1686,8 +1710,12 @@ void ACityEnvironmentController::ApplyScalars(const FCityEnvironmentSample& Samp
 		{
 			continue;
 		}
-		Light->SetMobility(EComponentMobility::Movable);
 		const ECityLightKind Kind = static_cast<ECityLightKind>(Item.Kind);
+		if (bGameClock && Kind != ECityLightKind::Local)
+		{
+			continue;
+		}
+		Light->SetMobility(EComponentMobility::Movable);
 		float Intensity = Item.OriginalIntensity;
 		if (Kind == ECityLightKind::Sun)
 		{
@@ -1770,7 +1798,7 @@ void ACityEnvironmentController::ApplyScalars(const FCityEnvironmentSample& Samp
 				AsLight->SetMaxDistanceFadeRange(Distance > 0.0f ? Distance * 0.1f : Item.OriginalFadeRange);
 				AsLight->SetMaxDrawDistance(Distance);
 			}
-			Light->SetCastShadows(bShadow);
+			Light->SetCastShadows(bShadow && !bGameClock);
 		}
 		WriteIntensity(Light, Intensity);
 	}
@@ -1789,7 +1817,7 @@ void ACityEnvironmentController::ApplyScalars(const FCityEnvironmentSample& Samp
 			Atmosphere->SetTransmittanceMinLightElevationAngle(0.0f);
 		}
 	}
-	if (Exposure)
+	if (Exposure && !bGameClock)
 	{
 		Exposure->bEnabled = true;
 		Exposure->bUnbound = true;

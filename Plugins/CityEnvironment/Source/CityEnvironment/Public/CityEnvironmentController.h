@@ -92,6 +92,9 @@ public:
 	bool IsClockPaused() const { return Paused; }
 	bool ShouldShowTimeControls() const { return ShowTimeControls; }
 
+	/** The game owns the sun, the sky light and the exposure and feeds SetHour: this keeps the lamps, the signs and the sky dome. */
+	void UseGameClock();
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="City|Environment")
 	FDateTime LocalDateTime;
 
@@ -174,6 +177,7 @@ protected:
 	TObjectPtr<UMaterialParameterCollection> ParameterCollection;
 
 private:
+	bool bGameClock = false;
 	FVector LightingViewOverride = FVector::ZeroVector;
 	bool bLightingViewOverride = false;
 	void UpdateTimeInputMode();

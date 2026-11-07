@@ -2115,3 +2115,4 @@
 - 2026-11-07 c-conquest 只在男宿前面對圍欄、720p、時鐘暫停時量大學城 FPS，看到 183 FPS 差點當成達標；換到街上、店內與 1080p 才看到 50～60 FPS。FPS 要量幾個代表地點與方向，解析度用實際遊玩的。
 - 2026-11-07 c-conquest 叢集光照的 ensure 沒確認就在 6b4f695a9 的訊息寫「已修掉」，其實改 ECVF 旗標沒用：原因是 `r.UseClusteredDeferredShading` 在 5.7 改名成 `r.UseClusteredDeferredShading_ToBeRemoved`，用舊名會 ensure。修法之後才算數；提交訊息只寫在 log 裡確認過的事。
 - 2026-11-07 c-conquest 走路一直抖：先猜鏡頭碰撞，量了才知道大跳只有 12 次（1982 幀）。真正原因是角色元件在 FTSTicker 更新，而 core ticker 在 GEngine->Tick 之後跑，所有角色都比鏡頭晚一幀畫，落差等於這一幀走的距離，幀時間不穩就來回晃。`OKSetCrowdRuntimeCharacterMotion` 改成當場更新元件。
+- 2026-11-07 c-conquest 畫面一暗一暗地閃：遊戲每秒設地圖的太陽，CityEnvironmentController 每幀也在設，兩邊在搶（只有編輯器模式會，打包 host 之前沒帶這個外掛）。先改成 controller 全權接手，結果 12 點全白人物全黑：它的亮度要配它自己的曝光，遊戲是固定曝光 1.0。改成遊戲管太陽、天光、曝光，controller 用 UseGameClock 只管本地燈、招牌和天空。

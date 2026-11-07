@@ -59,7 +59,7 @@ local function main()
   local plugin_root = path.join(destination, "Plugins")
   path.mkdir(plugin_root)
   -- OKPhysXSecondary + KawaiiPhysics: one-to-one interaction physics (its DLLs are copied by its Build.cs); OKAnimation: OK clips.
-  local host_plugins = { "KKCard", "KKSideloader", "KKUnityBundle", "KKRuntimePose", "KKImportedAssets", "KKCrowdGpuPacking",
+  local host_plugins = { "CityLocalization", "KKCard", "KKSideloader", "KKUnityBundle", "KKRuntimePose", "KKImportedAssets", "KKCrowdGpuPacking",
     "OKHGShading", "OKPhysXSecondary", "KawaiiPhysics", "OKAnimation" }
   -- Plus any project plugin the game module depends on by name in its Build.cs (OKStudio once it did).
   local build_cs = path.read_text(path.join(project_root, "Source/OpenKoikatsu/OpenKoikatsu.Build.cs")) or ""

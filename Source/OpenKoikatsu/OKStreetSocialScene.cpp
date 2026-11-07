@@ -30,6 +30,7 @@
 #include "Components/PlanarReflectionComponent.h"
 #include "Engine/PlanarReflection.h"
 #include "Components/LocalLightComponent.h"
+#include "CityEnvironmentController.h"
 #include "UObject/UObjectIterator.h"
 #include "OKStreetSocialCalendar.h"
 #include "OKStreetMind.h"
@@ -804,7 +805,7 @@ void AOKStreetSocialScene::BeginPlay(){
   FString Clock;const bool Override=FParse::Value(FCommandLine::Get(),TEXT("StreetSocialClock="),Clock);if(Override){FString H,M;if(!Clock.Split(TEXT(":"),&H,&M))H=Clock;S.ClockStartHours=FMath::Clamp(FCString::Atod(*H),0.0,23.99)+FMath::Clamp(FCString::Atod(*M),0.0,59.0)/60.0;}
   // Self-tests keep the authored sun unless a clock is asked for, so their captures stay comparable.
   S.ClockDrivesSun=Override||!S.SelfTest;
-  for(TActorIterator<ADirectionalLight> It(GetWorld());It;++It){S.Sun=*It;It->GetLightComponent()->SetMobility(EComponentMobility::Movable);break;}
+  if(!OKStreetCityMode())for(TActorIterator<ADirectionalLight> It(GetWorld());It;++It){S.Sun=*It;It->GetLightComponent()->SetMobility(EComponentMobility::Movable);break;} // the city's: OKStreetCityDress
   for(TActorIterator<AActor> It(GetWorld());It;++It)if(auto* Sky=It->FindComponentByClass<USkyAtmosphereComponent>()){S.Sky=Sky;break;}}
  auto Quality=[](const TCHAR* Name,float Value){if(auto* C=IConsoleManager::Get().FindConsoleVariable(Name))C->Set(Value,ECVF_SetByConsole);};
  Quality(TEXT("r.AntiAliasingMethod"),2);Quality(TEXT("r.ScreenPercentage"),100);Quality(TEXT("r.SecondaryScreenPercentage.GameViewport"),100);Quality(TEXT("r.DynamicRes.OperationMode"),0);Quality(TEXT("r.TemporalAA.Quality"),2);Quality(TEXT("r.TemporalAA.HistoryScreenPercentage"),100);
@@ -3923,6 +3924,8 @@ double AOKStreetSocialScene::SceneTime() const {
 // The city's mirrors (1162 planar reflections in the map): only the two nearest he can see in are drawn, as in the city's
 // own walk-through (CityImmersionWalker). Every one of them on would stop the game.
 static TArray<TWeakObjectPtr<UPlanarReflectionComponent>> GOKStreetCityMirrors;
+static TWeakObjectPtr<ADirectionalLight> GOKStreetCitySun;
+static TWeakObjectPtr<ACityEnvironmentController> GOKStreetCityEnv;
 // What a piece of the map needs before it is drawn, done as each piece comes in (the world streams around him).
 // The map's 3400 local lights cast shadows: measured 65 of the 80 ms the render thread spent on a frame for the rect lights,
 // 9 of 15 ms on the street for the point and spot lights. Only the sun casts here; the rest are drawn in one clustered pass.
@@ -3930,6 +3933,12 @@ static TArray<TWeakObjectPtr<UPlanarReflectionComponent>> GOKStreetCityMirrors;
 // metres, so its own bounds cull nothing: each instance goes by the size of the mesh it draws.
 static void OKStreetCityDress(ULevel* Level){
  auto FarFor=[](float Radius){return Radius<100.f?6000.f:Radius<300.f?15000.f:Radius<1000.f?40000.f:0.f;};
+ // The city's own controller lights the sun for a metered exposure and every frame; the game runs a fixed one its characters are
+ // coloured for, and sets the sun itself: both at once flashed the screen. It keeps the lamps, the signs and the sky dome on the
+ // game's clock; the brightest light is the sun, the other directional lights (moon, street fill, bounce) go out.
+ for(AActor* Actor:Level->Actors)if(auto* Controller=Cast<ACityEnvironmentController>(Actor)){Controller->UseGameClock();GOKStreetCityEnv=Controller;}
+ for(AActor* Actor:Level->Actors)if(auto* Light=Cast<ADirectionalLight>(Actor)){auto* Part=Light->GetLightComponent();Part->SetMobility(EComponentMobility::Movable);ADirectionalLight* Sun=GOKStreetCitySun.Get();
+  if(!Sun||Part->Intensity>Sun->GetLightComponent()->Intensity){if(Sun)Sun->GetLightComponent()->SetVisibility(false);GOKStreetCitySun=Light;Part->SetVisibility(true);}else Part->SetVisibility(false);}
  TInlineComponentArray<UActorComponent*> Parts;
  for(AActor* Actor:Level->Actors)if(Actor){Actor->GetComponents(Parts);for(UActorComponent* Part:Parts){
   if(auto* Mirror=Cast<UPlanarReflectionComponent>(Part)){Mirror->ScreenPercentage=75;Mirror->PrefilterRoughness=0.f;Mirror->MaxViewDistanceOverride=2500.f;Mirror->ShowFlags.SetDynamicShadows(false);Mirror->SetVisibility(false);GOKStreetCityMirrors.Add(Mirror);}
@@ -3958,6 +3967,8 @@ static void OKStreetCityMirrors(UWorld* World,const FVector& Eye,const FVector& 
 void AOKStreetSocialScene::Tick(float Dt){
  Super::Tick(Dt);
  if(APlayerController* Eyes=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr;OKStreetCityMode()&&State&&Eyes&&Eyes->PlayerCameraManager)OKStreetCityMirrors(GetWorld(),State->Male+FVector(0,0,150),Eyes->PlayerCameraManager->GetCameraLocation(),Eyes->PlayerCameraManager->GetCameraRotation().Vector(),Dt);
+ if(OKStreetCityMode()&&State&&GOKStreetCitySun.IsValid()&&State->Sun!=GOKStreetCitySun){State->Sun=GOKStreetCitySun;State->ClockDrivesSun=true;State->NextSunUpdate=0;}
+ if(OKStreetCityMode()&&State)if(auto* Env=GOKStreetCityEnv.Get()){static double NextHour=0;const double Wall=FPlatformTime::Seconds();if(Wall>=NextHour){NextHour=Wall+5;Env->SetHour(OKStreetClockHours(State->ClockStartHours,Wall-State->ClockStartWall));}}
  // Walls, buildings and floors not drawn from behind (OKStreetBacks.h), in the street and in the room alike.
  if(APlayerController* PC=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr;PC&&PC->PlayerCameraManager)OKHideStreetBacks(GetWorld(),PC->PlayerCameraManager->GetCameraLocation());if(!State||!State->Started||State->Reported)return;auto& S=*State;GOKStreetTalkLimit=S.SelfTest; // the self-tests check the budget arithmetic; normal play has no daily talk limit
  // Walking into or out of a shop, or its opening hours passing: the shop part of the right panel has to follow without waiting for
@@ -4211,7 +4222,7 @@ void AOKStreetSocialScene::Tick(float Dt){
   const FRotator View(S.Pitch,S.Yaw,0);const FVector Wanted=Pivot-View.Vector()*S.Distance+(S.Target!=INDEX_NONE?FRotationMatrix(View).GetUnitAxis(EAxis::Y)*(S.Pair.Conversation()?-120.f:110.f):FVector::ZeroVector);FHitResult Hit;FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetCamera),false,this);const bool Blocked=GetWorld()->SweepSingleByChannel(Hit,Pivot,Wanted,FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeSphere(8),Query);FVector Shot=Blocked?Hit.Location:Wanted;
   // The city's street is full of posts, fences and trees, and its ground has kerbs: a lens that jumps to whatever it touches shook
   // him all the way down the road. It closes in fast and backs out slowly, and his height is followed, not copied.
-  if(OKStreetCityMode()&&S.Target==INDEX_NONE){static float Reach=-1.f,Height=0.f;const float Full=float(FVector::Dist(Pivot,Wanted)),Free=float(FVector::Dist(Pivot,Shot));const float RawZ=float(Pivot.Z);
+  if(OKStreetCityMode()&&S.Target==INDEX_NONE){static float Reach=-1.f,Height=0.f;const float Free=float(FVector::Dist(Pivot,Shot));const float RawZ=float(Pivot.Z);
    if(Reach<0.f||FMath::Abs(RawZ-Height)>150.f){Reach=Free;Height=RawZ;}Reach=FMath::FInterpTo(Reach,Free,Dt,Free<Reach?14.f:3.f);Height=FMath::FInterpTo(Height,RawZ,Dt,8.f);
    const FVector Lift(0,0,Height-RawZ);Shot=Pivot+Lift+(Wanted-Pivot).GetSafeNormal()*Reach;Focus+=Lift;}
   S.Camera->SetActorLocation(Shot);S.Camera->SetActorRotation((Focus-S.Camera->GetActorLocation()).Rotation());
