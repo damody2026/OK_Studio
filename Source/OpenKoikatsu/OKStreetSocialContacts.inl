@@ -122,7 +122,9 @@ TArray<FVector> AOKStreetSocialScene::GridRoute(const FVector& From,const FVecto
  // its other way, and the cells tested stay known, so the next try gets further.
  // Upstairs 25 ms: the floors are small and walled, and every caller falls back to a straight line, which from the optician
  // on the department store's 4F went through the shop's wall to the lift ("the way is blocked") or across the atrium.
- const double Budget=!OKStreetCityMode()?TNumericLimits<double>::Max():OKStreetUpstairs(From)?.025:.004;
+ // Inside a building on its ground floor too: from the department store's lift to its door, 4 ms was never enough among
+ // the shops, the straight line ran into a shop wall, and he and Raiden circled the 1F for three hours (R6-183).
+ const double Budget=!OKStreetCityMode()?TNumericLimits<double>::Max():OKStreetUpstairs(From)||!PlaceHere(From).IsEmpty()?.025:.004;
  FOKStreetGridSearch G;G.From=From;G.To=To;GridSearchStep(G,FPlatformTime::Seconds()+Budget);return MoveTemp(G.Route);
 }
 bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline) const{
