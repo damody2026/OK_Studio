@@ -49,6 +49,10 @@ static TAutoConsoleVariable<int32> CVarPaintPacketSweeps(TEXT("ok.Paint.PacketSw
 static TAutoConsoleVariable<int32> CVarPaintSparseUploads(TEXT("ok.Paint.SparseUploads"),1,TEXT("Upload dirty chart runs, bounded to 256 rectangles; 0 retains the original 4x4 block upload oracle."));
 static TAutoConsoleVariable<int32> CVarPaintSparseNormals(TEXT("ok.Paint.SparseNormals"),1,TEXT("Resolve coating normals only for consumed vertices from ordered incident faces; 0 retains full-surface normal oracle."));
 static TAutoConsoleVariable<int32> CVarPaintResidentGeometry(TEXT("ok.Paint.ResidentGeometry"),1,TEXT("Evaluate private collision positions from the current resident GPU source/palette; 0 uses the full native geometry query oracle."));
+// Her liquid's mask transport (1.7 ms a frame on the game thread after he came, the one-on-one scene's longest part then,
+// 2026-11-08) runs on a worker from the end of the tick that owes it to the start of the next. Drips are then taken from
+// the step before's transport: a surface step (1/60 s or more) later.
+static TAutoConsoleVariable<int32> CVarPaintAsyncTransport(TEXT("ok.Paint.AsyncTransport"),1,TEXT("1: the surface mask transport runs on a worker between ticks; 0: in the step, on the game thread."));
 static TAutoConsoleVariable<int32> CVarPaintMaxSteps(TEXT("ok.Paint.MaxSteps"),4,TEXT("Fixed 120 Hz steps one tick may run. Below 30 FPS the paint runs slower instead of making the frame longer still."));
 static TAutoConsoleVariable<int32> CVarPaintGeometryJobs(TEXT("ok.Paint.GeometryJobs"),0,TEXT("Batch current collision vertices/faces across surfaces into blocking jobs; 0 retains the measured faster surface-by-surface path, 2 forces jobs for regression."));
 
@@ -172,7 +176,7 @@ void AOKPaintSprayer::BeginPlay()
  TArray<FVector> GunV={FVector(-25,-3,-3),FVector(-2,-3,-3),FVector(-2,3,-3),FVector(-25,3,-3),FVector(-25,-3,3),FVector(-2,-3,3),FVector(-2,3,3),FVector(-25,3,3)};
  Gun->CreateMeshSection(0,GunV,{0,2,1,0,3,2,4,5,6,4,6,7,0,1,5,0,5,4,1,2,6,1,6,5,2,3,7,2,7,6,3,0,4,3,4,7},{},{},{},{},false);Gun->SetVisibility(false);
 }
-void AOKPaintSprayer::EndPlay(const EEndPlayReason::Type Reason){if(Panel&&GetWorld()&&GetWorld()->GetGameViewport())GetWorld()->GetGameViewport()->RemoveViewportWidgetContent(Panel.ToSharedRef());Panel.Reset();ClearPaint();Super::EndPlay(Reason);}
+void AOKPaintSprayer::EndPlay(const EEndPlayReason::Type Reason){SyncTransport();RunDueTransport();if(Panel&&GetWorld()&&GetWorld()->GetGameViewport())GetWorld()->GetGameViewport()->RemoveViewportWidgetContent(Panel.ToSharedRef());Panel.Reset();ClearPaint();Super::EndPlay(Reason);}
 FVector AOKPaintSprayer::AimDirection(const FVector& Origin,const FVector& Target,double Speed)
 {
  const FVector Delta=Target-Origin;Speed=FMath::Clamp(Speed,10.,10000.);
@@ -364,7 +368,7 @@ void AOKPaintSprayer::DiscoverSurfaces(const FVector& A,const FVector& B,bool So
  }
 }
 bool AOKPaintSprayer::FindPaintHit(const FVector& A,const FVector& B,double Radius,int32& Target,int32& Triangle,FVector& Bary,double& Time)
-{
+{ SyncTransport();
  const bool CachedBounds=CVarPaintCachedSweepBounds.GetValueOnGameThread()!=0;
  bool Found=false;Time=1.;
  for(int32 S=0;S<Surfaces.Num();++S)if(Surfaces[S]->IsDisplayed()&&Surfaces[S]->Sweep(A,B,Radius,CachedBounds,Triangle,Bary,Time)){Target=S;Found=true;if(Time==0)return true;}
@@ -570,7 +574,13 @@ void AOKPaintSprayer::UploadAtlasBlocks(const TMap<int32,TArray<FIntRect>>& Bloc
  // All charts have finished writing their disjoint CPU mirror regions. Copy
  // the final page once; merged rectangles retain untouched neighbors exactly.
  for(const auto& Entry:Blocks){const int32 Page=Entry.Key;struct FRow{FUpdateTextureRegion2D Region;uint32 Offset,Pitch;};TArray<FRow> Uploads;auto Pixels=MakeShared<TArray<FFloat16Color>,ESPMode::ThreadSafe>();const auto Regions=SparseUploads?SharedAtlas.UploadRects(Entry.Value):Entry.Value;
-  for(const auto& R:Regions)if(R.Max.X>R.Min.X&&R.Max.Y>R.Min.Y){const int32 Offset=Pixels->Num();Pixels->AddUninitialized(R.Width()*R.Height());for(int32 Y=0;Y<R.Height();++Y)FMemory::Memcpy(Pixels->GetData()+Offset+Y*R.Width(),AtlasPixels[Page].GetData()+(R.Min.Y+Y)*PageSize+R.Min.X,R.Width()*sizeof(FFloat16Color));Uploads.Add({FUpdateTextureRegion2D(R.Min.X,R.Min.Y,0,0,R.Width(),R.Height()),uint32(Offset),uint32(R.Width()*sizeof(FFloat16Color))});}
+  // Places first, then the rows copied on the pool: one upload was 2.7 ms on the game thread (her liquid, 2026-11-08).
+  struct FCopy{FIntRect Rect;int32 Offset;};TArray<FCopy> Copies;
+  for(const auto& R:Regions)if(R.Max.X>R.Min.X&&R.Max.Y>R.Min.Y){const int32 Offset=Pixels->Num();Pixels->AddUninitialized(R.Width()*R.Height());Copies.Add({R,Offset});Uploads.Add({FUpdateTextureRegion2D(R.Min.X,R.Min.Y,0,0,R.Width(),R.Height()),uint32(Offset),uint32(R.Width()*sizeof(FFloat16Color))});}
+  TArray<TPair<int32,int32>> Rows;for(int32 K=0;K<Copies.Num();++K)for(int32 Y=0;Y<Copies[K].Rect.Height();++Y)Rows.Emplace(K,Y);
+  FFloat16Color* Out=Pixels->GetData();const FFloat16Color* In=AtlasPixels[Page].GetData();
+  ParallelFor(TEXT("PaintAtlasUploadRows"),Rows.Num(),64,[&](int32 I){const auto& Cp=Copies[Rows[I].Key];const int32 Y=Rows[I].Value;const FIntRect& R=Cp.Rect;
+   FMemory::Memcpy(Out+Cp.Offset+Y*R.Width(),In+(R.Min.Y+Y)*PageSize+R.Min.X,R.Width()*sizeof(FFloat16Color));},Rows.Num()<128?EParallelForFlags::ForceSingleThread:EParallelForFlags::None);
   auto* Resource=Targets[Page]->GameThread_GetRenderTargetResource();ENQUEUE_RENDER_COMMAND(OKPaintSharedUpload)([Resource,Pixels,Uploads=MoveTemp(Uploads)](FRHICommandListImmediate& Cmd){if(!Resource)return;const auto Texture=Resource->GetRenderTargetTexture();if(!Texture)return;for(const auto& Row:Uploads)Cmd.UpdateTexture2D(Texture,0,Row.Region,Row.Pitch,reinterpret_cast<const uint8*>(Pixels->GetData()+Row.Offset));});
  }
 }
@@ -638,14 +648,20 @@ void AOKPaintSprayer::Step(double Dt)
 }
 void AOKPaintSprayer::AdvanceSurface(double Dt)
 {
+ // A transport still owed from the step before (two surface steps in one tick) goes first, in order.
+ SyncTransport();RunDueTransport();
  // Evaluate visibility on the game thread. Each worker owns one surface's
  // mask and only reads its film; workers never query components or UObjects.
  TArray<FSurface*> MaskWork;
  for(auto& S:Surfaces)if(S->IsDisplayed()&&(!S->Film.Active.IsEmpty()||!S->Mask.Height.IsEmpty()))MaskWork.Add(S.Get());
  const double MaskStart=FPlatformTime::Seconds();
  const double Speed=Settings.SurfaceSpeed,Viscosity=Settings.Viscosity,Residual=Settings.ResidualThickness;
+ if(CVarPaintAsyncTransport.GetValueOnGameThread()!=0){
+  DueTransport.Reset();for(auto& S:Surfaces)if(MaskWork.Contains(S.Get()))DueTransport.Add(S);DueTransportDt=Dt;
+ }else{
  const bool BatchMasks=FSurface::PreferBatchMasks(MaskWork);
  ParallelFor(TEXT("PaintSurfaceMasks"),MaskWork.Num(),1,[&](int32 I){auto& S=*MaskWork[I];S.Mask.Transport(S.Film,Dt,Speed,Viscosity,Residual,S.GeometryRevision);},BatchMasks?EParallelForFlags::None:EParallelForFlags::ForceSingleThread);
+ }
  MaskTransportMs+=(FPlatformTime::Seconds()-MaskStart)*1000;
  for(int32 S=0;S<Surfaces.Num();++S){auto& Film=Surfaces[S]->Film;if(!Surfaces[S]->IsDisplayed())continue;
   const double FilmStart=FPlatformTime::Seconds();
@@ -665,9 +681,29 @@ void AOKPaintSprayer::AdvanceSurface(double Dt)
   DripUpdateMs+=(FPlatformTime::Seconds()-DripStart)*1000;
  }
 }
+void AOKPaintSprayer::RunDueTransport(){
+ if(DueTransport.IsEmpty())return;TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintDueTransport);
+ const double Speed=Settings.SurfaceSpeed,Viscosity=Settings.Viscosity,Residual=Settings.ResidualThickness;
+ for(auto& S:DueTransport)S->Mask.Transport(S->Film,DueTransportDt,Speed,Viscosity,Residual,S->GeometryRevision);
+ DueTransport.Reset();
+}
+void AOKPaintSprayer::LaunchDueTransport(){
+ SyncTransport();if(DueTransport.IsEmpty())return;
+ // The task holds the surfaces it moves; nothing of this actor.
+ const double Speed=Settings.SurfaceSpeed,Viscosity=Settings.Viscosity,Residual=Settings.ResidualThickness,Step=DueTransportDt;
+ TArray<TPair<TSharedPtr<FSurface>,uint64>> Work;for(auto& S:DueTransport)Work.Emplace(S,S->GeometryRevision);DueTransport.Reset();
+ TransportTask=UE::Tasks::Launch(UE_SOURCE_LOCATION,[Work=MoveTemp(Work),Speed,Viscosity,Residual,Step]{
+  TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintAsyncTransport);
+  for(const auto& W:Work)W.Key->Mask.Transport(W.Key->Film,Step,Speed,Viscosity,Residual,W.Value);});
+ bTransportInFlight=true;
+}
+void AOKPaintSprayer::SyncTransport() const{
+ if(!bTransportInFlight)return;TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintTransportWait);TransportTask.Wait();bTransportInFlight=false;
+}
 void AOKPaintSprayer::Tick(float Dt)
 {
  TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintTick);
+ SyncTransport();
  Super::Tick(Dt);const double Start=FPlatformTime::Seconds();
  // Ownership is this tick, not GFrameCounter: explicit/manual updates can
  // publish more than one pose in the same engine frame. Never reuse across ticks.
@@ -708,16 +744,17 @@ void AOKPaintSprayer::Tick(float Dt)
  for(auto& S:Surfaces)if(S->IsDisplayed()&&(S->Film.Volume()>0||S->HasRenderedPaint||Attached.ContainsByPredicate([&S,this](const auto& D){return Surfaces.IsValidIndex(D.Target)&&Surfaces[D.Target]==S;})))DrawFilm(*S,UpdateGeometry,&PendingStreams,&PendingAtlas,&PendingCharts);
  // Allocations/maps/morphs are captured above. Charts occupy disjoint atlas
  // blocks, profiles remain immutable until this blocking operation joins.
- if(!PendingCharts.IsEmpty())ParallelFor(TEXT("PaintAtlasCharts"),PendingCharts.Num(),16,[&](int32 I){FillAtlasChart(PendingCharts[I]);},PendingCharts.Num()<32?EParallelForFlags::ForceSingleThread:EParallelForFlags::None);
+ if(!PendingCharts.IsEmpty())ParallelFor(TEXT("PaintAtlasCharts"),PendingCharts.Num(),1,[&](int32 I){FillAtlasChart(PendingCharts[I]);},PendingCharts.Num()<2?EParallelForFlags::ForceSingleThread:EParallelForFlags::None);
  if(!PendingAtlas.IsEmpty())UploadAtlasBlocks(PendingAtlas,CVarPaintSparseUploads.GetValueOnGameThread()!=0);
  if(!PendingStreams.IsEmpty())UKKAffineProceduralMeshComponent::UpdateAnimatedStreamsBatch(PendingStreams);
+ LaunchDueTransport(); // drawn: what this tick owes moves on a worker until the next
  CoatingUpdateMs=(FPlatformTime::Seconds()-CoatingStart)*1000;LastUpdateMs=(FPlatformTime::Seconds()-Start)*1000;MaxUpdateMs=FMath::Max(MaxUpdateMs,LastUpdateMs);
  TotalUpdateMs+=LastUpdateMs;TotalGeometryMs+=GeometryUpdateMs;TotalSimulationMs+=SimulationUpdateMs;TotalCoatingMs+=CoatingUpdateMs;++UpdateSamples;
  TotalBallisticMs+=BallisticMs;TotalMaskTransportMs+=MaskTransportMs;TotalFilmTransportMs+=FilmTransportMs;TotalDripUpdateMs+=DripUpdateMs;
  if((LastUpdateMs>16.||FPlatformTime::Seconds()>NextProfileLog)&&FPlatformMisc::GetEnvironmentVariable(TEXT("OK_PAINT_PROFILE"))==TEXT("1")){NextProfileLog=FPlatformTime::Seconds()+1;int32 Wet=0;for(const auto& S:Surfaces)Wet+=S->Film.Active.Num();UE_LOG(LogTemp,Display,TEXT("Paint profile spraying=%d dt=%.3fms geometry=%.3fms simulation=%.3fms coating=%.3fms ballistic=%.3fms mask=%.3fms film=%.3fms drip=%.3fms steps=%d backlog=%.4fs surfaces=%d wet=%d packets=%d attached=%d"),Spraying,Dt*1000,GeometryUpdateMs,SimulationUpdateMs,CoatingUpdateMs,BallisticMs,MaskTransportMs,FilmTransportMs,DripUpdateMs,Steps,Accumulator,Surfaces.Num(),Wet,Packets.Num(),Attached.Num());}
 }
 void AOKPaintSprayer::ClearPaintForActor(AActor* Actor)
-{
+{ SyncTransport();
  if(!Actor)return;
  for(int32 Index=0;Index<Surfaces.Num();++Index){auto& S=*Surfaces[Index];if(!S.Component.IsValid()||S.Component->GetOwner()!=Actor)continue;
   Cleared+=S.Film.Volume();for(int32 F:S.Film.Active.Array())S.Film.AddVolume(F,-S.Film.Faces[F].Volume);
@@ -728,9 +765,15 @@ void AOKPaintSprayer::ClearPaintForActor(AActor* Actor)
   DrawFilm(S);
  }
 }
+void AOKPaintSprayer::ClearPaintOnBodies()
+{ SyncTransport();
+ TSet<AActor*> Owners;for(const auto& S:Surfaces)if(S&&S->Component.IsValid()&&S->Component->GetOwner())Owners.Add(S->Component->GetOwner());
+ for(AActor* Owner:Owners)ClearPaintForActor(Owner);
+ UE_LOG(LogTemp,Display,TEXT("Paint cleared from %d characters"),Owners.Num());
+}
 void AOKPaintSprayer::ReleaseSurfaceAtlas(FSurface& S){for(const auto& Entry:S.Charts)SharedAtlas.Release(Entry.Value);for(const auto& Entry:S.PageMaterials)Materials.Remove(Entry.Value);S.Charts.Reset();S.PageMaterials.Reset();}
 void AOKPaintSprayer::ClearPaint()
-{
+{ SyncTransport();
  UE_LOG(LogTemp,Display,TEXT("Paint clear surfaces=%d volume=%.9f"),Surfaces.Num(),RemainingVolume());
  Spraying=false;if(JetFX)JetFX->DeactivateImmediate();if(Gun)Gun->SetVisibility(false);for(auto FX:OwnedFX)if(IsValid(FX))FX->DestroyComponent();OwnedFX.Reset();FloorStains.Reset();
  for(const auto& S:Surfaces)Cleared+=S->Film.Volume();for(const auto& D:Attached)Cleared+=D.Volume;
@@ -811,9 +854,9 @@ bool AOKPaintSprayer::FilmCenterOfMass(FVector& Center,double& Volume) const {
  for(const auto& S:Surfaces)if(S->IsDisplayed())for(int32 Id:S->Film.Active){const auto& Face=S->Film.Faces[Id];if(Face.Volume>0){Center+=Face.Center()*Face.Volume;Volume+=Face.Volume;}}
  if(Volume<=1.e-12)return false;Center/=Volume;return !Center.ContainsNaN();
 }
-bool AOKPaintSprayer::GetPaintAnchor(int32 I,int32 Face,FVector& Point,UTextureRenderTarget2D*& Texture,int32& FoundFace) const {if(!Surfaces.IsValidIndex(I))return false;const auto& S=*Surfaces[I];if(!S.Film.Faces.IsValidIndex(Face)){Face=INDEX_NONE;for(int32 F:S.Film.Active)if(S.Film.Faces[F].Volume>0){Face=F;break;}}if(!S.Film.Faces.IsValidIndex(Face))return false;FoundFace=Face;Point=S.Film.Faces[Face].Center();const auto* A=S.Charts.Find(Face);Texture=A&&Targets.IsValidIndex(A->Page)?Targets[A->Page].Get():nullptr;return true;}
+bool AOKPaintSprayer::GetPaintAnchor(int32 I,int32 Face,FVector& Point,UTextureRenderTarget2D*& Texture,int32& FoundFace) const {SyncTransport();if(!Surfaces.IsValidIndex(I))return false;const auto& S=*Surfaces[I];if(!S.Film.Faces.IsValidIndex(Face)){Face=INDEX_NONE;for(int32 F:S.Film.Active)if(S.Film.Faces[F].Volume>0){Face=F;break;}}if(!S.Film.Faces.IsValidIndex(Face))return false;FoundFace=Face;Point=S.Film.Faces[Face].Center();const auto* A=S.Charts.Find(Face);Texture=A&&Targets.IsValidIndex(A->Page)?Targets[A->Page].Get():nullptr;return true;}
 FString AOKPaintSprayer::Statistics() const
-{
+{ SyncTransport();
  double Film=0,AttachedVolume=0;int32 Faces=0;uint64 WetCharts=0,WetTexels=0;for(const auto& S:Surfaces){Film+=S->Film.Volume();Faces+=S->Film.Faces.Num();WetCharts+=S->Mask.Height.Num();for(const auto& Entry:S->Mask.Height){const int32 N=S->Mask.Resolution(S->Film.Faces[Entry.Key]);WetTexels+=uint64(N)*N;}}for(const auto& D:Attached)AttachedVolume+=D.Volume;
  uint64 GpuFrames=0,GpuPublished=0,GpuRejectedPages=0;for(const auto& Surface:Surfaces){GpuFrames+=Surface->GpuCoatingFrames;GpuPublished+=Surface->GpuCoatingPublished;for(const auto& Page:Surface->PageStreams)GpuRejectedPages+=Page.Value.GpuRejected?1:0;}
  const FString Workload=FString::Printf(TEXT("atlas_resolution=%d shared_pages=%d wet_charts=%llu wet_chart_texels=%llu fixed_step_backlog_s=%.6f gpu_coating_frames=%llu gpu_coating_published=%llu gpu_coating_rejected_pages=%llu "),SharedAtlas.Resolution,Targets.Num(),WetCharts,WetTexels,Accumulator,GpuFrames,GpuPublished,GpuRejectedPages);

@@ -2886,6 +2886,10 @@ void UOKCharacterController::OnPairStateSelected(FString Item,ESelectInfo::Type 
     }
     const double CommitStart=FPlatformTime::Seconds();
     if(!PairedPlayback)PairedPlayback=GetWorld()->SpawnActor<AKKPairedPlayback>();if(!PairedPlayback){ShowPairStatus(TEXT("無法開始雙人播放。"),true);return;}FString Error;
+    // In the room any pose can always start (user 2026-11-07): the two apart for whatever reason, he comes to her.
+    if(bHScene&&IsValid(PreviewActor)&&IsValid(PartnerActor)&&!PreviewActor->PairFrame().Equals(PartnerActor->PairFrame(),.01f)){const FTransform Frame=PreviewActor->PairFrame();
+        UE_LOG(LogTemp,Warning,TEXT("OK pair: partner brought to %s from %s (origin set %d / %d)"),*Frame.ToString(),*PartnerActor->PairFrame().ToString(),PreviewActor->bPairOriginSet,PartnerActor->bPairOriginSet);
+        if(PartnerActor->bPairOriginSet)PartnerActor->PairOrigin=Frame;else PartnerActor->SetActorTransform(Frame);}
     if(!PairedPlayback->Start(Selected.Sex==1?PreviewActor.Get():PartnerActor.Get(),Selected.Sex==0?PreviewActor.Get():PartnerActor.Get(),FemaleKey,MaleKey,Item,P->GetStringField(TEXT("female_motion")),P->GetStringField(TEXT("male_motion")),Error)){ShowPairStatus(Error.IsEmpty()?TEXT("這個姿勢播放失敗。"):Error,true);PairedPlayback->Destroy();PairedPlayback=nullptr;if(HPanel)HPanel->PoseFailed(Error);return;}
     const double PlaybackDone=FPlatformTime::Seconds();
     ActiveBodyPairKey=FString::Printf(TEXT("%s:%d"),*P->GetStringField(TEXT("category")),P->GetIntegerField(TEXT("id")));

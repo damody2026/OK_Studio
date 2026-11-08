@@ -1366,6 +1366,7 @@ pub fn session_cache_key(lib: &Path, card: &Path, outfit: i32) -> Option<String>
     // both must name the same entry. All worn hashes as nothing, the key entries were first stored under.
     let states = crate::unity::requested_clothes_states();
     h.update(if states == [0u8; 9] { Vec::new() } else { states.to_vec() });
+    if crate::unity::all_clothes_states() { h.update(b"allstates"); }
     match card_models(&bytes) {
         // An OK card names every library model it uses (okLb): only those matter, so the library growing (new models,
         // a longer index) keeps its cached opens. A model changes by being rebuilt (size) or edited (.okedit.json).
@@ -2140,6 +2141,13 @@ where A: serde::Serialize + ?Sized, R: serde::Serialize + serde::de::Deserialize
 /// Run `f` through the library. `id` is the content id of the Unity source;
 /// `args` the query arguments. Replay misses run `f` on the model handle (no
 /// Unity data) and are listed in missing.txt.
+/// Whether a replaying open has this answer. A card pack holds what the garment states its conversion opened asked for;
+/// an open keeping every state also meets renderers none of those showed.
+pub(crate) fn memo_known<A: serde::Serialize + ?Sized>(id: Option<&Id>, method: &str, args: &A) -> bool {
+    let (Some(store), Some(id)) = (active(), id) else { return true };
+    store.mode != Mode::Replay || store.get_raw(id, method, &bincode::serialize(args).unwrap_or_default()).is_some()
+}
+
 pub fn memo<A, R, F>(id: Option<&Id>, method: &str, args: &A, f: F) -> R
 where A: serde::Serialize + ?Sized, R: serde::Serialize + serde::de::DeserializeOwned, F: FnOnce() -> R {
     let (Some(store), Some(id)) = (active(), id) else { return f(); };

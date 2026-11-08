@@ -28,7 +28,7 @@ namespace { UKKSharedAnimation* FindSharedCurveAsset(const FString& Key); }
 
 namespace {
 #if CPUPROFILERTRACE_ENABLED
-uint32 NativeTraceSpecs[47];
+uint32 NativeTraceSpecs[51];
 void NativeCpuTrace(uint32_t Event,int32_t Begin){
     if(Event>=UE_ARRAY_COUNT(NativeTraceSpecs))return;
     if(Begin)FCpuProfilerTrace::OutputBeginEvent(NativeTraceSpecs[Event]);
@@ -50,7 +50,7 @@ void RegisterNativeCpuTrace(){
                 "KK_NativeContactCorrectBefore","KK_NativeContactFreeze","KK_NativeContactSolve","KK_NativeContactCorrectAfter",
                 "KK_NativePalettePrepare","KK_NativePaletteRead","KK_NativePalettePublish",
                 "KK_NativeMotionPlan","KK_NativeMotionLeaves","KK_NativeMotionBlend","KK_NativeLeafSnapshot","KK_NativeLeafChannels","KK_NativeChannelLookup","KK_NativeChannelSample",
-                "KK_NativeAccFrames","KK_NativeAccRadii","KK_NativeAccLeaders"};
+                "KK_NativeAccFrames","KK_NativeAccRadii","KK_NativeAccLeaders","KK_NativeCoverField","KK_NativeCoverPush","KK_NativeCoverLift","KK_NativeCoverPushFrom"};
             static_assert(UE_ARRAY_COUNT(Names)==UE_ARRAY_COUNT(NativeTraceSpecs),"Native CPU trace event storage must match the registered events");
             for(int32 I=0;I<UE_ARRAY_COUNT(Names);++I)NativeTraceSpecs[I]=FCpuProfilerTrace::OutputEventType(Names[I],__FILE__,__LINE__);
             const int32 Result=ok_set_cpu_trace_callback(NativeCpuTrace);
@@ -233,6 +233,25 @@ static void OkLogThunk(int32_t Level, const char* MsgUtf8)
 	}
 }
 
+int32 FOkSession::WardrobePrepare(){return Handle?ok_session_wardrobe_prepare(Handle):-1;}
+int32 FOkSession::WardrobeStrip(){RuntimeMaterials.Reset();return Handle?ok_session_wardrobe_strip(Handle):-1;}
+bool FOkSession::SetPartsHidden(TConstArrayView<uint8> Hidden){return Handle&&ok_session_set_parts_hidden(Handle,Hidden.GetData(),Hidden.Num())==0;}
+int32 FOkSession::WardrobeFirst() const{return Handle?ok_session_wardrobe_first(Handle):-1;}
+const uint8 FOkSession::AllClothesStates[9]={9,9,9,9,9,9,9,9,9};
+bool FOkSession::ClothesPartsShown(const uint8 States[9],TArray<uint8>& Out) const{
+ Out.SetNumZeroed(PartCount());if(!Handle||Out.IsEmpty())return false;
+ return ok_session_clothes_parts_shown(Handle,States,Out.GetData(),Out.Num())==Out.Num();
+}
+bool FOkSession::WardrobeBodyMask(int32 TopState,TArray<uint8>& Out) const{
+ Out.Reset();if(!Handle)return false;const int32 Length=ok_session_wardrobe_body_mask(Handle,TopState,nullptr,0);if(Length<=0)return false;
+ Out.SetNumUninitialized(Length);return ok_session_wardrobe_body_mask(Handle,TopState,Out.GetData(),Length)==Length;
+}
+bool FOkSession::WardrobeSwap(FOkSession& Live,FOkSession& Donor,FString& Error){
+ if(!Live.Handle||!Donor.Handle){Error=TEXT("wardrobe: no session");return false;}
+ char Buffer[512]={};if(ok_session_wardrobe_swap(Live.Handle,Donor.Handle,Buffer,UE_ARRAY_COUNT(Buffer))!=0){Error=UTF8_TO_TCHAR(Buffer);return false;}
+ // Neither session's captured materials describe its parts any more.
+ Live.RuntimeMaterials.Reset();Donor.RuntimeMaterials.Reset();return true;
+}
 bool FOkSession::SetPhysXSecondary(bool bOn) { bPhysXSecondary=bOn; return !Handle||ok_session_set_physx_secondary(Handle,bOn?1:0)==0; }
 void FOkSession::ApplyPhysXSecondary() const { if(Handle){ok_session_set_physx_secondary(Handle,bPhysXSecondary?1:0);ok_session_set_external_animation(Handle,ExternalAnimation);} }
 bool FOkSession::SetExternalAnimation(bool bExternal) { ExternalAnimation=bExternal?1:0; return !Handle||ok_session_set_external_animation(Handle,ExternalAnimation)==0; }
@@ -263,6 +282,23 @@ bool FOkSession::BellyWrapDeltas(const FVector& From,const FVector& To,const FVe
 	if(N>Idx.Num()){Idx.SetNumUninitialized(N);D.SetNumUninitialized(N*6);N=Deltas(Handle,At,RadiusM,Idx.GetData(),D.GetData(),uint32(Idx.Num()));if(N<0)return false;}
 	OutIndices.Append(Idx.GetData(),N);OutDeltas.Reserve(N);for(int32 I=0;I<N;++I)OutDeltas.Add(FVector3f(D[I*6],D[I*6+1],D[I*6+2]));
 	if(OutNormalDeltas){OutNormalDeltas->Reserve(N);for(int32 I=0;I<N;++I)OutNormalDeltas->Add(FVector3f(D[I*6+3],D[I*6+4],D[I*6+5]));}return true; }
+bool FOkSession::BellyWrapStart(bool bWrap,const FVector& From,const FVector& To,const FVector& Up,float RadiusM,bool bCover){
+	if(!Handle)return false;
+	const float At[9]={float(From.X),float(From.Y),float(From.Z),float(To.X),float(To.Y),float(To.Z),float(Up.X),float(Up.Y),float(Up.Z)};
+	return ok_belly_wrap_start(Handle,At,RadiusM,bWrap?1:0,bCover?1:0)==1; }
+bool FOkSession::BellyWrapTake(bool bCover,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,TArray<FVector3f>& OutNormalDeltas,TArray<int32>& OutClothParts,TArray<uint32>& OutClothIndices,TArray<FVector3f>& OutClothDeltas,TArray<int32>& OutCpuParts){
+	OutIndices.Reset();OutDeltas.Reset();OutNormalDeltas.Reset();OutClothParts.Reset();OutClothIndices.Reset();OutClothDeltas.Reset();OutCpuParts.Reset();if(!Handle)return false;
+	static constexpr int32 Most=65536;
+	// Kept between frames: 3.5 MB asked of the system each frame cost more than the rest of the call.
+	static thread_local TArray<uint32> Idx,Part,CIdx;static thread_local TArray<float> D,CD;static thread_local TArray<int32> Cpu;if(Idx.Num()!=Most){Idx.SetNumUninitialized(Most);D.SetNumUninitialized(Most*6);Part.SetNumUninitialized(Most);CIdx.SetNumUninitialized(Most);CD.SetNumUninitialized(Most*3);Cpu.SetNumZeroed(64);}
+	uint32 ClothN=0,CpuN=0;
+	const int32 N=ok_belly_wrap_take(Handle,bCover?1:0,Idx.GetData(),D.GetData(),uint32(Most),Part.GetData(),CIdx.GetData(),CD.GetData(),uint32(Most),&ClothN,Cpu.GetData(),uint32(Cpu.Num()),&CpuN);
+	if(N<0)return false;const int32 Body=FMath::Min(N,Most);
+	OutIndices.Append(Idx.GetData(),Body);OutDeltas.Reserve(Body);OutNormalDeltas.Reserve(Body);
+	for(int32 I=0;I<Body;++I){OutDeltas.Add(FVector3f(D[I*6],D[I*6+1],D[I*6+2]));OutNormalDeltas.Add(FVector3f(D[I*6+3],D[I*6+4],D[I*6+5]));}
+	OutClothIndices.Append(CIdx.GetData(),int32(ClothN));OutClothParts.Reserve(int32(ClothN));OutClothDeltas.Reserve(int32(ClothN));
+	for(int32 I=0;I<int32(ClothN);++I){OutClothParts.Add(int32(Part[I]));OutClothDeltas.Add(FVector3f(CD[I*3],CD[I*3+1],CD[I*3+2]));}
+	OutCpuParts.Append(Cpu.GetData(),int32(CpuN));return true; }
 bool FOkSession::BackExit(const FVector& From,const FVector& To,const FVector& Up,FVector& OutAt,FVector& OutNormal) const {
 	if(!Handle)return false;
 	const float At[9]={float(From.X),float(From.Y),float(From.Z),float(To.X),float(To.Y),float(To.Z),float(Up.X),float(Up.Y),float(Up.Z)};
@@ -1569,6 +1605,7 @@ bool FOkSession::ApplyEditorMods(const FString& Json,int32 Coordinate,bool* Geom
 
 bool FOkSession::ApplyBodyPhysics(float Softness,float Weight){return Handle&&ok_editor_body_physics(Handle,Softness,Weight)==0;}
 bool FOkSession::RefreshBodyPhysics(){return Handle&&ok_session_refresh_body_physics(Handle)==0;}
+int32 FOkSession::RefineBelly(){return Handle?ok_session_refine_belly(Handle):-1;}
 
 extern "C" int32_t ok_appearance_request(const char*,const char*,const char*,char*,int32_t);
 extern "C" int32_t ok_clothes_file(int32_t,const char*,const char*,int32_t,const char*,char*,int32_t);

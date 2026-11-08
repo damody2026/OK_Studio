@@ -90,6 +90,7 @@ public:
     UPROPERTY() TObjectPtr<UOKCharacterController> Gallery;
     virtual TSharedRef<SWidget> RebuildWidget() override;
     virtual void NativeTick(const FGeometry& Geometry,float Delta) override;
+    void TickScene(float Delta);float DeferredDelta=0.f;int32 DeferredTicks=0; // NativeTick: put off to the pair's idle point
     void Click(int32 Kind);
     // What happened, for h_session_end (counts) and her memory (poses, events).
     TSharedRef<FJsonObject> Result() const;
@@ -106,6 +107,7 @@ public:
     bool Hear(const FString& Text,FString& Context);
     void ShowLine(const FString& Text);
     void SpokeLine(){bTalkSpoken=true;}
+    void SetReplyPending(bool bPending){bReplyPending=bPending;}
     UFUNCTION() void OnInputCommitted(const FText& Text,ETextCommit::Type Commit);
     // His penis set live (user, 2026-11-02): length (times along his dan bones) and size (his penis root scale), and
     // where its root goes: Pad in the unit circle, its edge RootReach cm off the way into her toward that side, the
@@ -116,6 +118,7 @@ public:
     // ChangeOutfit). OutfitChanged: it is on her (or failed); the pose starts again on her new self.
     bool WearOutfit(int32 Outfit,const FString& Coordinate,FString& Why);
     void OutfitChanged(bool bOk);
+    void ForgetClothCover();
     UFUNCTION() void OnPenisLength(float Value);
     UFUNCTION() void OnPenisScale(float Value);
     // Her pose set by him (user, 2026-11-02), on top of whatever plays: her ankles bent (degrees, both), each thigh opened
@@ -138,7 +141,7 @@ public:
         SettingsToggle=2300,SettingsReset=2301, // the settings panel on the left
         HeadCameraToggle=2302,EyesCameraToggle=2303, // her head, her eyes on the camera
         PoseBase=1000,
-        Faster=2001,Slower=2002,Toggle=2003,Inside=2004,Outside=2005,Drink=2006,Vomit=2007,Again=2008,Insert=2009,InsertAnal=2010,Pull=2011,Condom=2012,Stop=2014,Continue=2015,ToggleMale=2016,LockHer=2017,LockHis=2018,MaleBottom=2019,PenisXRayToggle=2020,PhysicsNext=2021,GrayRoomToggle=2022,PenisPanelToggle=2023,PenisReset=2024,
+        Faster=2001,Slower=2002,Toggle=2003,Inside=2004,Outside=2005,Drink=2006,Vomit=2007,Again=2008,Insert=2009,InsertAnal=2010,Pull=2011,Condom=2012,Stop=2014,Continue=2015,ToggleMale=2016,LockHer=2017,LockHis=2018,MaleBottom=2019,PenisXRayToggle=2020,PhysicsNext=2021,GrayRoomToggle=2022,PenisPanelToggle=2023,PenisReset=2024,FluidClear=2025,
         SecondChange=3690,SecondClothes=3691,SecondBase=3700, // the second heroine (lesbian, 3P)
         ClothesBase=3000,RoomBase=3200,OutfitBase=3300,CoordinateToggle=3310,CoordinateAccessories=3311,CoordinateBase=3400,
     };
@@ -229,7 +232,7 @@ private:
     UPROPERTY() TArray<TObjectPtr<USoundBase>> SoundsPlaying;
     // One of her lines from the intercourse voice table (HSonyu playVoices - 300), in her experience bank.
     bool PlayHVoice(int32 Row);
-    void ApplySpeed();bool bStrokeDeep=false;double StrokeCryAt=0.;float BellyPullback=0.f;bool bPullbackLogged=false;float SkinFacing=0.f;bool bBellySide=false;int32 BulgeRefused=0;float WrapMs=0.f,SwellMs=0.f;bool bWrapShown=false,bWrapLineShown=false;int32 WrapVerts=0; /* her skin moved over him (ReadBulge) */FVector BellyFront=FVector::ZeroVector;float TipInside=-1.f; // cm his glans is past her entrance along himself (-1 none)
+    void ApplySpeed();float BellyPullback=0.f;bool bPullbackLogged=false;float SkinFacing=0.f;bool bBellySide=false;int32 BulgeRefused=0;float WrapMs=0.f,WrapSolveMs=0.f,SwellMs=0.f;bool bWrapShown=false,bWrapLineShown=false;int32 WrapVerts=0; /* her skin moved over him (ReadBulge) */FVector BellyFront=FVector::ZeroVector;float TipInside=-1.f; // cm his glans is past her entrance along himself (-1 none)
     FString Current() const;
     int32 Level() const;
     // She has come as many times as she will this scene (climax_limit): she wants it to stop, the panel offers no more
@@ -267,7 +270,7 @@ private:
     UPROPERTY() TArray<TObjectPtr<UOKHSceneButton>> CoordButtons;UPROPERTY() TArray<TObjectPtr<class UImage>> CoordImages;UPROPERTY() TArray<TObjectPtr<class UTexture2D>> CoordTextures;TSharedPtr<FOKCoordLoad> CoordLoad;double CoordShown=0.;
     UPROPERTY() TObjectPtr<UTextBlock> CoordAccessories;void ShowCoordinates();void ShowAccessories();void MarkCoordinate();void TickCoordinates();
     bool bHeadCamera=false;TWeakObjectPtr<AKKPreviewActor> HeadCameraGirl;bool HEyesOnCamera() const;
-    TArray<FVector> AheHandAt; // where her double peace puts her hands (HoldFeet gives them)
+    TArray<FVector> AheHandAt;float AheHeadRise=0.f; // where her double peace puts her hands (HoldFeet gives them); her head above her shoulders as it began
     UPROPERTY() TObjectPtr<UWrapBox> Actions;
     UPROPERTY() TObjectPtr<UWrapBox> Tabs;
     UPROPERTY() TObjectPtr<UScrollBox> List;
@@ -276,11 +279,11 @@ private:
     struct FHLine {FString Text,Note;bool System=false;};
     TArray<FHLine> Outbox;
     TArray<FString> Held;
-    bool bTalkSpoken=false;
+    bool bTalkSpoken=false,bReplyPending=false,bChatOpen=true;FString OutfitLoadingText;
     // 0.5x to 4x while moving; past 2x she has no breath to answer.
     float PlaybackSpeed() const {return .5f+3.5f*SpeedValue;}
     bool CannotAnswer() const;
-    void ReleaseHeld();
+    void ReleaseHeld(const TCHAR* NoteKey=TEXT("ui.hscene.held_note"));
     // Her eyes and brows follow the moment (state, her gauge, how used to it she is), as the original's H face lists do.
     void UpdateFace();
     // Her cheeks flush with her excitement (the face's blush overlay, ChangeHohoAkaRate's _overcolor2 alpha = lerp(0, .2, rate)):
@@ -371,7 +374,7 @@ private:
     // Her clothes kept over her skin (CoverClothes): her skin's wrap moves this frame, the garments moved, the time it took.
     void CoverClothes(class AKKPreviewActor* Girl);TArray<uint32> WrapIdxShown;TArray<FVector3f> WrapDShown,WrapNShown;TWeakObjectPtr<class AKKPreviewActor> ClothGirl;TSet<int32> ClothShown;TMap<int32,double> ClothCpuUntil;int32 ClothVerts=0;float ClothMs=0.f;
     // His penis out through her back folded under her skin (ReadBulge, penis.clip): his part with that morph, whether it is moved now.
-    TWeakObjectPtr<class AKKPreviewActor> ClipHim;int32 ClipPart=INDEX_NONE;bool bClipShown=false;int32 ClipVerts=0;float BackExitCm=-1.f;float ClipLastTip=-1.f,ClipLeadCm=0.f;bool bAlignByGlans=false;double AlignNoLineLog=0.;
+    TWeakObjectPtr<class AKKPreviewActor> ClipHim;int32 ClipPart=INDEX_NONE;bool bClipShown=false;int32 ClipVerts=0;float BackExitCm=-1.f;float ClipLastTip=-1.f,ClipLeadCm=0.f;bool bAlignByGlans=false;double AlignNoLineLog=0.;TArray<int32> ClothParts,ClothCpu;TArray<uint32> ClothIdx;TArray<FVector3f> ClothD;bool bClothPiped=false,bClothTaken=false,bWrapTipKnown=false;FVector WrapLastTip=FVector::ZeroVector;
     // The game's coordinate cards (UserData/coordinate and its folders), listed in the clothes tab when opened.
     bool bCoordinateList=false;TArray<FString> CoordinateCards;void FindCoordinateCards();
 public:

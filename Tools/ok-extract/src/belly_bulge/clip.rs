@@ -16,8 +16,25 @@ const CLIP_BEFORE_M: f32 = 0.04;
 const BELLY_COS: f32 = 0.4;
 
 /// Her body's skin, posed now: position and outward normal of each vertex (None where it has no skin).
+/// The whole body skinned for each reading was 0.2 ms, and the scene reads twice a frame (his glans now and a little
+/// ahead, ok.HScene.BackClipLead): skinned on the pool, and kept for the same pose (keyed by the posed bones themselves).
+type PosedBody = std::sync::Arc<Vec<Option<([f32; 3], [f32; 3])>>>;
+static POSED: std::sync::Mutex<Option<(usize, u64, PosedBody)>> = std::sync::Mutex::new(None);
+fn posed_body_cached(part: &SessionPart, worlds: &[Mat4], binds: &[Mat4]) -> PosedBody {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for m in worlds.iter().chain(binds) { for r in m { for v in r { v.to_bits().hash(&mut h); } } }
+    part.rest_positions.len().hash(&mut h);
+    let key = (part as *const SessionPart as usize, h.finish());
+    if let Some((p, k, body)) = POSED.lock().unwrap().as_ref() { if (*p, *k) == key { return body.clone(); } }
+    let body: PosedBody = std::sync::Arc::new(posed_body(part, worlds, binds));
+    *POSED.lock().unwrap() = Some((key.0, key.1, body.clone()));
+    body
+}
+
 fn posed_body(part: &SessionPart, worlds: &[Mat4], binds: &[Mat4]) -> Vec<Option<([f32; 3], [f32; 3])>> {
-    (0..part.rest_positions.len()).map(|j| {
+    use rayon::prelude::*;
+    (0..part.rest_positions.len()).into_par_iter().map(|j| {
         let (m, _, _) = skin_of(part, j, worlds, binds, &[], &[])?;
         let p = point(&m, part.rest_positions[j]);let o = point(&m, [0.; 3]);
         let q = point(&m, *part.rest_normals.get(j)?);let n = [q[0] - o[0], q[1] - o[1], q[2] - o[2]];
@@ -40,20 +57,21 @@ pub fn back_exit(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 3]
     let line = sub(to, from);let len = dot(line, line).sqrt();
     if len <= EXIT_FROM_M || dot(up, up) < 1e-12 { return None; }
     let dir = [line[0] / len, line[1] / len, line[2] / len];
-    let skin = posed_body(part, &worlds, &binds);
-    let mut best: Option<(f32, [f32; 3])> = None;
-    for t in part.indices.chunks_exact(3) {
-        let (Some((a, na)), Some((b, nb)), Some((c, nc))) = (skin[t[0] as usize], skin[t[1] as usize], skin[t[2] as usize]) else { continue; };
+    let skin = posed_body_cached(part, &worlds, &binds);
+    // Each triangle on its own (the pool), the farthest crossing kept; equal ones by the earlier triangle as before.
+    use rayon::prelude::*;
+    let best: Option<(f32, usize, [f32; 3])> = part.indices.par_chunks_exact(3).enumerate().filter_map(|(k, t)| {
+        let (Some((a, na)), Some((b, nb)), Some((c, nc))) = (*skin.get(t[0] as usize)?, *skin.get(t[1] as usize)?, *skin.get(t[2] as usize)?) else { return None; };
         // Möller–Trumbore, the line both ways.
         let (e1, e2) = (sub(b, a), sub(c, a));let h = cross(dir, e2);let det = dot(e1, h);
-        if det.abs() < 1e-12 { continue; }
-        let s = sub(from, a);let u = dot(s, h) / det;if !(0. ..=1.).contains(&u) { continue; }
-        let q = cross(s, e1);let v = dot(dir, q) / det;if v < 0. || u + v > 1. { continue; }
+        if det.abs() < 1e-12 { return None; }
+        let s = sub(from, a);let u = dot(s, h) / det;if !(0. ..=1.).contains(&u) { return None; }
+        let q = cross(s, e1);let v = dot(dir, q) / det;if v < 0. || u + v > 1. { return None; }
         let d = dot(e2, q) / det;
-        if d < EXIT_FROM_M || d > len || best.is_some_and(|(b, _)| b >= d) { continue; }
-        let w = 1. - u - v;let n = [na[0] * w + nb[0] * u + nc[0] * v, na[1] * w + nb[1] * u + nc[1] * v, na[2] * w + nb[2] * u + nc[2] * v];
-        best = Some((d, n));
-    }
+        if d < EXIT_FROM_M || d > len { return None; }
+        let w = 1. - u - v;Some((d, k, [na[0] * w + nb[0] * u + nc[0] * v, na[1] * w + nb[1] * u + nc[1] * v, na[2] * w + nb[2] * u + nc[2] * v]))
+    }).reduce_with(|x, y| if y.0 > x.0 || (y.0 == x.0 && y.1 < x.1) { y } else { x });
+    let best = best.map(|(d, _, n)| (d, n));
     // The last of her skin before his glans: where it is left out of her (her skin facing the way he goes), he is out
     // there; going back in, his glans is in her. Not the first crossing: inside, the folds of her bottom's cleft and her
     // own inner skin faced her belly, and his glans out of the top of her bottom was missed (後背位, root pad (0,3)).

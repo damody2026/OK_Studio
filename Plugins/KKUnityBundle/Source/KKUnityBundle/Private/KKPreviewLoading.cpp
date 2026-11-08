@@ -249,14 +249,46 @@ void AKKPreviewActor::SetClothingPartsHidden(const uint8 States[9]){
  for(UMeshComponent* Component:PartHiddenClothingComponents)if(IsValid(Component))Component->SetVisibility(true,false);
  PartHiddenClothingComponents.Reset();
  bool Any=false;for(int32 Kind=0;Kind<9;++Kind)Any|=States[Kind]==3;
+ TArray<uint8> Shown;if(bAllClothesStates)Session.ClothesPartsShown(States,Shown);
+ // ChaControl.ChangeAlphaMask: _alpha_a, _alpha_b by her top's state, on her bra and inner too.
+ const float AlphaA=States[0]==0?1.f:0.f,AlphaB=States[0]==3?0.f:1.f;
  TInlineComponentArray<UMeshComponent*> Components;GetComponents(Components);
+ // The session solves and skins only what shows (all states kept, about twice her clothes; trace 2026-11-08).
+ TArray<uint8> HiddenParts;HiddenParts.SetNumZeroed(Session.PartCount());
  for(auto* Component:Components){
   const auto* Part=PartFor(this,Component);if(!Part)continue;
   const int32 Kind=ClothingKindOfRole(Part->Role);
-  if(Kind!=INDEX_NONE&&States[Kind]==3&&Component->IsVisible()){PartHiddenClothingComponents.Add(Component);Component->SetVisibility(false,false);}
+  const bool bStateHides=Shown.IsValidIndex(Part->SessionIndex)&&!Shown[Part->SessionIndex];
+  if((bStateHides||Kind!=INDEX_NONE&&States[Kind]==3)&&HiddenParts.IsValidIndex(Part->SessionIndex))HiddenParts[Part->SessionIndex]=1;
+  if((bStateHides||Kind!=INDEX_NONE&&States[Kind]==3)&&Component->IsVisible()){PartHiddenClothingComponents.Add(Component);Component->SetVisibility(false,false);}
+  if(bAllClothesStates&&Kind!=INDEX_NONE)for(int32 Slot=0;Slot<Component->GetNumMaterials();++Slot)if(auto* Dynamic=Cast<UMaterialInstanceDynamic>(Component->GetMaterial(Slot))){
+   float Old=0.f;if(Dynamic->GetScalarParameterValue(FMaterialParameterInfo(TEXT("_alpha_a")),Old)){Dynamic->SetScalarParameterValue(TEXT("_alpha_a"),AlphaA);Dynamic->SetScalarParameterValue(TEXT("_alpha_b"),AlphaB);}}
  }
+ // A part shown again was not skinned while hidden: paused, no frame is solved, and it stood where it was last drawn (her
+ // shoes on the floor). Its chains start over on the next solved frame, which this asks for.
+ if(HiddenParts!=SentHiddenParts){SentHiddenParts=HiddenParts;bBodyReactionPoseDirty=true;}
+ Session.SetPartsHidden(HiddenParts);
+ if(bAllClothesStates)SetBodyMask(WornBodyMask(States[0]));
  if(Any)OpenBodyMasks();else RestoreBodyMasks();
  UE_LOG(LogTemp,Display,TEXT("OK clothing parts hidden=%d masks=%d"),PartHiddenClothingComponents.Num(),ClothingMaskMaterials.Num());
+}
+
+// What her clothes cut from her body changes with them; a piece that is off opens it again afterwards.
+void AKKPreviewActor::SetBodyMask(UTexture* Mask){
+ RestoreBodyMasks();if(!Mask)Mask=WhiteMask();int32 Set=0;
+ TInlineComponentArray<UMeshComponent*> Components;GetComponents(Components);
+ for(auto* Component:Components){
+  const auto* Part=PartFor(this,Component);if(!Part||Part->Role!=TEXT("body"))continue;
+  for(int32 Slot=0;Slot<Component->GetNumMaterials();++Slot){
+   UMaterialInterface* Material=Component->GetMaterial(Slot);FKKPreviewMaterialSlot* Pending=nullptr;
+   for(auto& Entry:PendingPreviewMaterials)if(Entry.Component==Component&&Entry.Slot==Slot){Pending=&Entry;Material=Entry.FinalMaterial;break;}
+   UTexture* Old=nullptr;if(!Material||!Material->GetTextureParameterValue(FMaterialParameterInfo(TEXT("_AlphaMask")),Old)||!Old)continue;
+   auto* Dynamic=Cast<UMaterialInstanceDynamic>(Material);if(!Dynamic)Dynamic=UMaterialInstanceDynamic::Create(Material,this);
+   if(Pending)Pending->FinalMaterial=Dynamic;else Component->SetMaterial(Slot,Dynamic);
+   Dynamic->SetTextureParameterValue(TEXT("_AlphaMask"),Mask);++Set;
+  }
+ }
+ UE_LOG(LogTemp,Display,TEXT("OK body mask set on %d materials"),Set);
 }
 
 void AKKPreviewActor::OpenBodyMasks(){

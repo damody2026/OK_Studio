@@ -28,6 +28,10 @@
 
 static TAutoConsoleVariable<int32> CVarKKStreamParallel(TEXT("ok.Stream.ParallelPacking"),0,TEXT("Pack independent animated vertices in parallel; 0 retains serial packing. Enable only after workload measurement."));
 static TAutoConsoleVariable<int32> CVarKKStreamBatch(TEXT("ok.Stream.BatchPacking"),1,TEXT("0 serial oracle; 1 pack large multi-section animation batches; 2 force batch packing for verification."));
+// Below this many vertices a stream batch is packed on the game thread alone (ParallelFor costs more than it saves for a
+// crowd of small characters). The one-on-one pair lowers it while it shows a frame (AKKPairedPlayback::ShowFrame): its
+// two characters are ~20k vertices each and were 0.7 ms a character on the game thread, before its next solve can start.
+int32 GKKStreamParallelMinVertices=32768;
 // GT-only, process-wide identity. Per-component counters can collide after
 // actor replacement and admit a packet belonging to another character.
 static uint64 GKKGpuStreamProxyEpoch=0;
@@ -952,7 +956,7 @@ void UKKAffineProceduralMeshComponent::UpdateAnimatedStreamsBatch(TArrayView<con
     auto Serial=[&](){for(const auto& R:Requests)if(R.Component&&R.Positions)UpdateStreams(R.Component,R.Section,*R.Positions,R.Normals?*R.Normals:EmptyVectors,EmptyUV,EmptyColors,R.Tangents?*R.Tangents:EmptyTangents);};
     int64 Total=0;TSet<FProcMeshSection*> Seen;
     for(const auto& R:Requests){if(!R.Component||!R.Positions||R.Section<0||R.Section>=R.Component->GetNumSections())continue;auto* Section=R.Component->GetProcMeshSection(R.Section);if(Section&&Seen.Contains(Section)){Serial();return;}if(Section)Seen.Add(Section);Total+=R.Positions->Num();}
-    const int32 Mode=CVarKKStreamBatch.GetValueOnGameThread();if(Mode==0||(Mode!=2&&Total<32768&&(Requests.Num()<4||Total<4096))){Serial();return;}
+    const int32 Mode=CVarKKStreamBatch.GetValueOnGameThread();if(Mode==0||(Mode!=2&&Total<GKKStreamParallelMinVertices&&(Requests.Num()<4||Total<4096))){Serial();return;}
     struct FWork {UKKAffineProceduralMeshComponent* Owned;FProcMeshSection* CPU;FKKStreamSceneProxy* Proxy;FKKStreamUpdateData* Packet;FKKAnimatedStreamRequest Input;int32 Count;bool Normals,Tangents;};
     struct FJob {int32 Work,Begin,End;FBox Bounds=FBox(ForceInit);};
     TArray<FWork,TInlineAllocator<64>> Work;TArray<FJob,TInlineAllocator<128>> Jobs;
@@ -1010,7 +1014,7 @@ bool UKKAffineProceduralMeshComponent::UpdateGeneratedStreamsBatchWithSourceJobs
         auto& Job=Jobs[Index];auto& W=Work[Job.Work];
         for(int32 I=Job.Begin;I<Job.End;++I){auto& V=W.CPU->ProcVertexBuffer[I];Generate(Job.Work,I,V);Job.Bounds+=V.Position;
             if(W.Packet){W.Packet->Positions[I]=FVector3f(V.Position);W.Packet->Tangents[I]=PackKKAnimatedTangents(V);}}
-    },Mode==0||(Mode!=2&&Total<32768)?EParallelForFlags::ForceSingleThread:EParallelForFlags::None);
+    },Mode==0||(Mode!=2&&Total<GKKStreamParallelMinVertices)?EParallelForFlags::ForceSingleThread:EParallelForFlags::None);
     for(auto& W:Work)W.CPU->SectionLocalBox=FBox(ForceInit);
     for(const auto& Job:Jobs)Work[Job.Work].CPU->SectionLocalBox+=Job.Bounds;
     TSet<UKKAffineProceduralMeshComponent*> Updated;
@@ -1053,7 +1057,7 @@ bool UKKAffineProceduralMeshComponent::UpdateGeneratedStreamsBySourceRanges(TArr
             if(End>Begin)JobBounds[Job].Add({Request,End-Begin,Bounds});
         };
         GenerateJob(Job,Emit);
-    },Participants==1||Mode==0||(Mode!=2&&Total<32768)?EParallelForFlags::ForceSingleThread:ParallelFlags);
+    },Participants==1||Mode==0||(Mode!=2&&Total<GKKStreamParallelMinVertices)?EParallelForFlags::ForceSingleThread:ParallelFlags);
     TArray<int32,TInlineAllocator<64>> Written;Written.Init(0,Work.Num());
     for(auto& W:Work)W.CPU->SectionLocalBox=FBox(ForceInit);
     for(const auto& Ranges:JobBounds)for(const auto& Range:Ranges){Work[Range.Work].CPU->SectionLocalBox+=Range.Bounds;Written[Range.Work]+=Range.Count;}

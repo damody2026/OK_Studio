@@ -2371,6 +2371,9 @@ impl ParsedBundle {
     pub(crate) fn body_colliders_for_skeleton(&self,skel:&crate::pose::Skeleton)->crate::dbone::BodyColliderSet {
         self.memo("skel:body_colliders",&(skeleton_topology(skel),self.script_context()),||self.body_colliders_for_skeleton_unity(skel))
     }
+    pub(crate) fn bone_implants_known(&self,skel:&crate::pose::Skeleton)->bool {
+        crate::oklib::memo_known(self.lib.as_ref(),"skel:bone_implants",&(skeleton_topology(skel),self.script_context()))
+    }
     pub(crate) fn bone_implants_for_skeleton(&self,skel:&crate::pose::Skeleton)->Vec<crate::dbone::implant::Marker> {
         self.memo("skel:bone_implants",&(skeleton_topology(skel),self.script_context()),||self.bone_implants_for_skeleton_unity(skel))
     }
@@ -3806,7 +3809,10 @@ impl ParsedBundle {
         // A prefab can contain static and skinned renderers together. The
         // first decoded mesh is not necessarily an SMR, so use the first
         // renderer that actually has a skeleton.
-        let skel = picked.iter().find_map(|m| self.skeleton(m.path_id));
+        // With every garment state kept, still the renderer the worn state would have picked: an OK card has its prefab
+        // answers (bone implants, dynamics) under that skeleton.
+        let worn = |m: &&ExtractedMesh| state_nodes_shown(&m.runtime_textures, &[0; 9]);
+        let skel = picked.iter().filter(worn).find_map(|m| self.skeleton(m.path_id)).or_else(|| picked.iter().find_map(|m| self.skeleton(m.path_id)));
         (picked, skel)
     }
 
@@ -3879,6 +3885,12 @@ impl ParsedBundle {
     /// only one (`ChaControl.cs:1317-1495`, default state 0 = 蝛踹末 = the `_a`
     /// node). We loaded the whole prefab, so both states rendered at once.
     fn clothes_state_filter(&self, meshes: &mut Vec<ExtractedMesh>, chains: &[(i64, Vec<String>)], clothes_category: Option<i32>) {
+        if all_clothes_states() {
+            for mesh in meshes.iter_mut() {
+                if let Some((_, chain)) = chains.iter().find(|(id, _)| *id == mesh.path_id) { mark_state_nodes(mesh, chain, clothes_category); }
+            }
+            return;
+        }
         let states = clothes_states();
         let picked: std::collections::HashSet<i64> = meshes.iter().map(|m| m.path_id).collect();
         note_state_nodes(chains.iter().filter(|(mesh, _)| picked.contains(mesh)).flat_map(|(_, chain)| chain.iter()), clothes_category);

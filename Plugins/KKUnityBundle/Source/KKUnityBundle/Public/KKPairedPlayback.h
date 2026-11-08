@@ -7,6 +7,10 @@ class AKKPreviewActor;
 
 // A single coordinator owns both sessions' elapsed time. The roles cannot
 // also advance from their own Actor Tick while this coordinator is active.
+// Pair poses shown since start (ShowFrame): how often the pair really moves, apart from how often the game draws
+// (ok.Anim.PairNoWait keeps the pose while the next is solved).
+extern KKUNITYBUNDLE_API uint64 GKKPairFramesShown;
+
 UCLASS()
 class KKUNITYBUNDLE_API AKKPairedPlayback : public AActor
 {
@@ -70,6 +74,8 @@ private:
 	// The pending solve is the native GPU pair frame (no OK group for this state), not the OK player's: no face curves.
 	bool bPendingNative=false;
 	double PendingNext=0.;float PendingDelta=0.;
+	// ok.Anim.PairNoWait: ticks that kept the pose while the next frame was solved, and the time they passed on.
+	float SkippedDelta=0.f;int32 SkippedTicks=0;
 	bool PendingReactions[2]={false,false};
 	FString PendingReport;
 	bool ShowFrame(float Delta,const bool Reactions[2],FString& Error);

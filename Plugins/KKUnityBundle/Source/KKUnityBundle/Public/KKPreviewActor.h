@@ -201,6 +201,15 @@ public:
  static bool PrewarmPreviewMaterialParents(UWorld* World);
  bool BeginProgressiveMaterials();
  bool TickProgressiveMaterials();
+ // Her clothes changed on this model (wardrobe.rs): a donor's parts built a few milliseconds at a time beside what she
+ // wears (Continue: 1 ready, 0 later, -1 failed and cancelled), then traded in one step. Nothing else about her changes.
+ bool BeginWardrobeStage(FOkSession& Donor,FString& Error);
+ int32 ContinueWardrobeStage(FString& Error,double Budget);
+ bool CommitWardrobeStage(FString& Error);
+ void CancelWardrobeStage();
+ bool IsWardrobeStaging() const {return WardrobeStage.IsValid();}
+ // Her session keeps every garment state (FOkSession::AllClothesStates): SetClothingPartsHidden shows the one asked for.
+ bool bAllClothesStates=false;
  bool SetClothingHidden(bool Hidden);
  bool bClothingHidden=false;
  // Take off or put back single clothing kinds (ChaFileClothes 0..8, state 3 = off) by visibility alone, without a
@@ -415,6 +424,7 @@ public:
 	bool bHeadLookFollowCamera=false;
     bool bHeadLookPoseDirty=false;
     bool bBodyReactionPoseDirty=false;
+    TArray<uint8> SentHiddenParts; // SetClothingPartsHidden: the hidden parts the session was last given
 	bool bEyeLookTracking = false;
 	bool bEyeLookFollowCamera = false;
 	int32 EyeLookPattern = 1;
@@ -543,6 +553,13 @@ public:
 private:
 	struct FSessionLoadState;
     struct FPartBuildOutput;
+    struct FWardrobeStage;
+    TSharedPtr<FWardrobeStage> WardrobeStage;
+    UPROPERTY() TArray<TObjectPtr<UObject>> WardrobeStaged; // what a stage made, until she wears it
+    UPROPERTY() TArray<TObjectPtr<UTexture2D>> WornTextures; // the textures only her current clothes use
+    void SetBodyMask(UTexture* Mask);
+    UTexture* WornBodyMask(int32 TopState);
+    UPROPERTY() TMap<int32,TObjectPtr<UTexture2D>> WornBodyMasks; // by clothes_alpha_state's three cases, for what she wears
     bool BuildSessionPartRange(FOkSession& Source,FPartBuildOutput& Output,int32 Begin,int32 End,FString& OutError);
 	TSharedPtr<FSessionLoadState> SessionLoadState;
 	bool LoadSessionBatch(FString& OutError, int32 PartLimit, bool bContinue);

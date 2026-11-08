@@ -14,7 +14,8 @@ pub use bones::bone_deltas;
 mod clip;
 pub use clip::{back_exit, clip_deltas};
 mod cover;
-pub use cover::{cover_deltas, set_cover, CoverField};
+pub use cover::{cover_deltas, keep_cover, set_cover, CoverField};
+pub(crate) use cover::clothes_changed;
 
 /// Where the swells are along her crotch-to-upper-spine line (fractions of it): her belly only, from just over her
 /// crotch up (user 2026-11-01: the swells under it, on her upper thighs and by her entrance, moved her thighs).
@@ -189,6 +190,164 @@ pub fn add(session: &mut OkSession) -> bool {
     added
 }
 
+/// How far from her entrance her skin is made finer (`refine`): as far as his glans lifts it, with room for the skirt.
+const REFINE_REACH_M: f32 = 0.30;
+/// Her lips and the skin just round them keep their triangles (her opening is shaped by morphs of its own).
+const REFINE_LIPS_M: f32 = 0.02;
+/// Skin facing further back than this (the z of its normal, she faces +z) stays as it is: he lifts her front.
+const REFINE_FACING: f32 = -0.2;
+
+/// Every triangle with all three corners in `marked` cut in four at its edge middles; a neighbour sharing a cut edge is cut
+/// along it too, so no crack opens at the edge of the marked skin. The new triangle list, and for each new vertex (numbered
+/// from `marked.len()`) the two vertices it lies between. Winding is kept.
+fn split_triangles(indices: &[u32], marked: &[bool]) -> (Vec<u32>, Vec<(u32, u32)>) {
+    let is_marked = |v: u32| marked.get(v as usize).copied().unwrap_or(false);
+    let edge = |a: u32, b: u32| if a < b { (a, b) } else { (b, a) };
+    let mut mids: HashMap<(u32, u32), u32> = HashMap::new();
+    let mut made: Vec<(u32, u32)> = Vec::new();
+    for t in indices.chunks_exact(3) {
+        if !t.iter().all(|v| is_marked(*v)) { continue; }
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            let e = edge(a, b);
+            if !mids.contains_key(&e) { mids.insert(e, (marked.len() + made.len()) as u32);made.push(e); }
+        }
+    }
+    let mut out = Vec::with_capacity(indices.len() + made.len() * 9);
+    for t in indices.chunks_exact(3) {
+        let m = [mids.get(&edge(t[0], t[1])).copied(), mids.get(&edge(t[1], t[2])).copied(), mids.get(&edge(t[2], t[0])).copied()];
+        match m.iter().filter(|x| x.is_some()).count() {
+            0 => out.extend_from_slice(t),
+            3 => {
+                let (ab, bc, ca) = (m[0].unwrap(), m[1].unwrap(), m[2].unwrap());
+                out.extend_from_slice(&[t[0], ab, ca, ab, t[1], bc, ca, bc, t[2], ab, bc, ca]);
+            }
+            1 => {
+                // Turned so the cut edge is a-b.
+                let k = m.iter().position(|x| x.is_some()).unwrap();
+                let (a, b, c, x) = (t[k], t[(k + 1) % 3], t[(k + 2) % 3], m[k].unwrap());
+                out.extend_from_slice(&[a, x, c, x, b, c]);
+            }
+            _ => {
+                // Turned so the whole edge is c-a: a-b and b-c are cut.
+                let k = m.iter().position(|x| x.is_none()).unwrap();
+                let (c, a, b) = (t[k], t[(k + 1) % 3], t[(k + 2) % 3]);
+                let (x, y) = (m[(k + 1) % 3].unwrap(), m[(k + 2) % 3].unwrap());
+                out.extend_from_slice(&[x, b, y, a, x, y, a, y, c]);
+            }
+        }
+    }
+    (out, made)
+}
+
+/// The middle of two skinned vertices: their weights averaged, the four largest kept.
+fn mid_weights(ba: &[u16; 4], wa: &[f32; 4], bb: &[u16; 4], wb: &[f32; 4]) -> ([u16; 4], [f32; 4]) {
+    let mut all: Vec<(u16, f32)> = Vec::with_capacity(8);
+    for (bones, weights) in [(ba, wa), (bb, wb)] {
+        for (b, w) in bones.iter().zip(weights) {
+            if *w <= 0. { continue; }
+            match all.iter_mut().find(|e| e.0 == *b) { Some(e) => e.1 += *w * 0.5, None => all.push((*b, *w * 0.5)) }
+        }
+    }
+    all.sort_by(|x, y| y.1.total_cmp(&x.1));all.truncate(4);
+    let sum: f32 = all.iter().map(|e| e.1).sum();
+    let (mut bones, mut weights) = ([0u16; 4], [0f32; 4]);
+    for (i, (b, w)) in all.iter().enumerate() { bones[i] = *b;weights[i] = if sum > 0. { *w / sum } else { 0. }; }
+    (bones, weights)
+}
+
+/// Her skin where he lifts it cut finer, twice as many edges across it (user, 2026-11-06: the lifted skin looked faceted),
+/// for the one-on-one scene only: every other mode keeps the card's mesh. New vertices lie on the old edges, so she looks
+/// the same at rest; old vertices keep their numbers. Once per session, after `add`, before the mesh is built. Returns
+/// the vertices added.
+pub fn refine(session: &mut OkSession) -> usize {
+    if session.sex != 1 { return 0; }
+    let Some(rest) = crate::skel_export::bind_body(session) else { return 0; };
+    let at = |n: &str| rest.world_tf(n).map(|m| translation(&m));
+    let (Some(kokan), Some(top)) = (at("cf_j_kokan").or_else(|| at("cf_J_Kokan")), at("cf_j_spine02")) else { return 0; };
+    let still: Vec<bool> = rest.names.iter().map(|n| { let n = n.to_ascii_lowercase(); STILL.iter().any(|s| n.contains(s)) }).collect();
+    let thigh: Vec<bool> = rest.names.iter().map(|n| { let n = n.to_ascii_lowercase(); THIGH.iter().any(|s| n.contains(s)) }).collect();
+    let mut total = 0;
+    for part in session.parts.iter_mut() {
+        if part.role != "body" || part.skel_kind != 1 || part.runtime_accessory.is_some() || !part.blend_shapes.iter().any(|(n, _)| is_bulge(n)) { continue; }
+        let (worlds, binds) = crate::skel_export::palettes(&rest, part);
+        if worlds.is_empty() { continue; }
+        let n = part.rest_positions.len();
+        let marked: Vec<bool> = (0..n).map(|j| {
+            let Some((skin, free, on_thigh)) = skin_of(part, j, &worlds, &binds, &still, &thigh) else { return false; };
+            if free - on_thigh <= 0.01 { return false; }
+            let p = point(&skin, part.rest_positions[j]);
+            let d = (0..3).map(|i| (p[i] - kokan[i]) * (p[i] - kokan[i])).sum::<f32>().sqrt();
+            if d < REFINE_LIPS_M || d > REFINE_REACH_M || p[1] > top[1] { return false; }
+            let o = point(&skin, [0.; 3]);
+            part.rest_normals.get(j).is_some_and(|v| { let v = point(&skin, *v);let w = [v[0] - o[0], v[1] - o[1], v[2] - o[2]];
+                let len = (w[0] * w[0] + w[1] * w[1] + w[2] * w[2]).sqrt();len > 1e-6 && w[2] / len >= REFINE_FACING })
+        }).collect();
+        let (indices, made) = split_triangles(&part.indices, &marked);
+        if made.is_empty() { continue; }
+        fn mid2(v: &mut Vec<[f32; 2]>, n: usize, made: &[(u32, u32)]) {
+            if v.len() != n { return; }
+            for (a, b) in made { let (p, q) = (v[*a as usize], v[*b as usize]);v.push([(p[0] + q[0]) * 0.5, (p[1] + q[1]) * 0.5]); }
+        }
+        fn mid3(v: &mut Vec<[f32; 3]>, n: usize, made: &[(u32, u32)], unit: bool) {
+            if v.len() != n { return; }
+            for (a, b) in made {
+                let (p, q) = (v[*a as usize], v[*b as usize]);let mut m = [(p[0] + q[0]) * 0.5, (p[1] + q[1]) * 0.5, (p[2] + q[2]) * 0.5];
+                let len = (m[0] * m[0] + m[1] * m[1] + m[2] * m[2]).sqrt();
+                if unit { if len > 1e-6 { for x in &mut m { *x /= len; } } else { m = p; } }
+                v.push(m);
+            }
+        }
+        mid3(&mut part.rest_positions, n, &made, false);mid3(&mut part.positions, n, &made, false);
+        mid3(&mut part.rest_normals, n, &made, true);mid3(&mut part.normals, n, &made, true);
+        mid2(&mut part.uvs, n, &made);mid2(&mut part.uv2, n, &made);mid2(&mut part.uv3, n, &made);mid2(&mut part.uv4, n, &made);
+        if part.rest_tangents.len() == n {
+            for (a, b) in &made {
+                let (p, q) = (part.rest_tangents[*a as usize], part.rest_tangents[*b as usize]);
+                let mut m = [p[0] + q[0], p[1] + q[1], p[2] + q[2]];
+                let len = (m[0] * m[0] + m[1] * m[1] + m[2] * m[2]).sqrt();
+                if len > 1e-6 { for x in &mut m { *x /= len; } } else { m = [p[0], p[1], p[2]]; }
+                part.rest_tangents.push([m[0], m[1], m[2], p[3]]);
+            }
+        }
+        if part.vertex_colors.len() == n {
+            for (a, b) in &made {
+                let (p, q) = (part.vertex_colors[*a as usize], part.vertex_colors[*b as usize]);
+                part.vertex_colors.push(std::array::from_fn(|i| ((p[i] as u16 + q[i] as u16) / 2) as u8));
+            }
+        }
+        if part.bone_idx.len() == n && part.weights.len() == n {
+            for (a, b) in &made {
+                let (a, b) = (*a as usize, *b as usize);
+                let (bones, weights) = mid_weights(&part.bone_idx[a], &part.weights[a], &part.bone_idx[b], &part.weights[b]);
+                part.bone_idx.push(bones);part.weights.push(weights);
+            }
+        }
+        // Each morph moves the new vertices half way between what it does to the two ends.
+        let middles = |of: &HashMap<u32, [f32; 3]>| -> Vec<(u32, [f32; 3])> {
+            made.iter().enumerate().filter_map(|(i, (a, b))| {
+                let (p, q) = (of.get(a), of.get(b));if p.is_none() && q.is_none() { return None; }
+                let (p, q) = (p.copied().unwrap_or([0.; 3]), q.copied().unwrap_or([0.; 3]));
+                Some(((n + i) as u32, [(p[0] + q[0]) * 0.5, (p[1] + q[1]) * 0.5, (p[2] + q[2]) * 0.5]))
+            }).collect()
+        };
+        for (_, deltas) in part.blend_shapes.iter_mut() {
+            let of: HashMap<u32, [f32; 3]> = deltas.iter().copied().collect();
+            deltas.extend(middles(&of));
+        }
+        for (idx, dxyz) in part.morph_idx.iter_mut().zip(part.morph_dxyz.iter_mut()) {
+            if dxyz.len() != idx.len() * 3 { continue; }
+            let of: HashMap<u32, [f32; 3]> = idx.iter().enumerate().map(|(i, v)| (*v, [dxyz[i * 3], dxyz[i * 3 + 1], dxyz[i * 3 + 2]])).collect();
+            for (v, d) in middles(&of) { idx.push(v);dxyz.extend_from_slice(&d); }
+        }
+        part.indices = indices;total += made.len();
+    }
+    if total > 0 { session.skel_export = None; }
+    // Her index of this skin now, on the opening's thread: left to his first stroke it stopped the game for 1.6 s.
+    if let Some(part) = session.parts.iter().find(|p| p.role == "body" && p.skel_kind == 1 && p.runtime_accessory.is_none() && p.blend_shapes.iter().any(|(n, _)| is_bulge(n))) { let _ = wrap_verts(session, part); }
+    cover::warm(session);
+    total
+}
+
 /// His penis root (cm_J_dan100_00) turned so his penis points along `dir` (his skeleton space, Unity, any length): lying
 /// face down (躺姿後入) the clip points it almost straight down, through her lower belly and about 10 cm into the floor,
 /// where no swell of hers has room to cover it (user, 2026-11-01: turning it is fine there). The scene gives the line into
@@ -353,6 +512,62 @@ fn skin_now(session: &OkSession) -> Option<Vec<SkinNow>> {
     }).collect())
 }
 
+/// Her skin round her entrance in cells of `SKIN_CELL_M`, for `depth`'s nearest vertices without reading all of it.
+struct SkinGrid { lo: [i64; 3], size: [i64; 3], start: Vec<u32>, items: Vec<u32> }
+const SKIN_CELL_M: f32 = 0.02;
+impl SkinGrid {
+    fn cell(p: [f32; 3]) -> [i64; 3] { p.map(|v| (v / SKIN_CELL_M).floor() as i64) }
+    fn new(skin: &[SkinNow]) -> SkinGrid {
+        let (mut lo, mut hi) = ([i64::MAX; 3], [i64::MIN; 3]);
+        for s in skin { let c = Self::cell(s.p); for a in 0..3 { lo[a] = lo[a].min(c[a]);hi[a] = hi[a].max(c[a]); } }
+        if skin.is_empty() { return SkinGrid { lo: [0; 3], size: [0; 3], start: vec![0], items: Vec::new() }; }
+        let size = [hi[0] - lo[0] + 1, hi[1] - lo[1] + 1, hi[2] - lo[2] + 1];
+        let n = (size[0] * size[1] * size[2]) as usize;
+        let index = |c: [i64; 3]| (((c[0] - lo[0]) * size[1] + (c[1] - lo[1])) * size[2] + (c[2] - lo[2])) as usize;
+        let mut count = vec![0u32; n + 1];
+        for s in skin { count[index(Self::cell(s.p)) + 1] += 1; }
+        for k in 1..=n { count[k] += count[k - 1]; }
+        let mut fill = count.clone();let mut items = vec![0u32; skin.len()];
+        for (i, s) in skin.iter().enumerate() { let k = index(Self::cell(s.p));items[fill[k] as usize] = i as u32;fill[k] += 1; }
+        SkinGrid { lo, size, start: count, items }
+    }
+    /// As `depth`, reading the cells out from `at` ring by ring until no nearer vertex can be left.
+    fn depth(&self, skin: &[SkinNow], at: [f32; 3]) -> Option<(f32, f32)> {
+        if self.items.is_empty() { return None; }
+        let mut near: [(f32, usize); NEAREST] = [(f32::MAX, 0); NEAREST];
+        let c = Self::cell(at);
+        // Rings beyond the box hold nothing: as far as the farthest corner of it.
+        let reach = (0..3).map(|a| (c[a] - self.lo[a]).abs().max((c[a] - (self.lo[a] + self.size[a] - 1)).abs())).max().unwrap_or(0);
+        for r in 0..=reach {
+            for x in c[0] - r..=c[0] + r { for y in c[1] - r..=c[1] + r { for z in c[2] - r..=c[2] + r {
+                if (x - c[0]).abs() != r && (y - c[1]).abs() != r && (z - c[2]).abs() != r { continue; }
+                let k = [x - self.lo[0], y - self.lo[1], z - self.lo[2]];
+                if (0..3).any(|a| k[a] < 0 || k[a] >= self.size[a]) { continue; }
+                let cell = ((k[0] * self.size[1] + k[1]) * self.size[2] + k[2]) as usize;
+                for &i in &self.items[self.start[cell] as usize..self.start[cell + 1] as usize] {
+                    let s = &skin[i as usize];let i = i as usize;
+                    let d = (0..3).map(|q| (at[q] - s.p[q]) * (at[q] - s.p[q])).sum::<f32>();
+                    // As the scan in index order: an equal distance goes after the ones already kept.
+                    if d < near[NEAREST - 1].0 || (d == near[NEAREST - 1].0 && i < near[NEAREST - 1].1) {
+                        let mut k = NEAREST - 1;while k > 0 && (near[k - 1].0 > d || (near[k - 1].0 == d && near[k - 1].1 > i)) { near[k] = near[k - 1];k -= 1; }near[k] = (d, i);
+                    }
+                }
+            } } }
+            // Every cell not read yet is at least r cells away.
+            let bound = r as f32 * SKIN_CELL_M;
+            if near[NEAREST - 1].0 < f32::MAX && near[NEAREST - 1].0 <= bound * bound { break; }
+            if bound > NEAR_SKIN_M && near[0].0 > NEAR_SKIN_M * NEAR_SKIN_M { return None; }
+        }
+        if near[0].0 > NEAR_SKIN_M * NEAR_SKIN_M { return None; }
+        let (mut sum, mut weight) = (0f32, 0f32);
+        for &(d, i) in near.iter().filter(|(d, _)| *d < f32::MAX) {
+            let s = &skin[i];let w = 1. / (d.sqrt() + 0.005);
+            sum += w * ((at[0] - s.p[0]) * s.n[0] + (at[1] - s.p[1]) * s.n[1] + (at[2] - s.p[2]) * s.n[2]);weight += w;
+        }
+        Some((sum / weight, skin[near[0].1].rest))
+    }
+}
+
 /// Out of her skin at `at`: the signed distances to her NEAREST skin vertices along their normals, the nearer counting
 /// more; below 0 inside her. And the rest distance of the nearest. None with no skin within NEAR_SKIN_M.
 fn depth(skin: &[SkinNow], at: [f32; 3]) -> Option<(f32, f32)> {
@@ -376,12 +591,15 @@ fn depth(skin: &[SkinNow], at: [f32; 3]) -> Option<(f32, f32)> {
 /// nearest skin. None where no skin is within NEAR_SKIN_M. Her skin is placed once for all of them.
 pub fn skin_check(session: &OkSession, at: &[[f32; 3]]) -> Vec<Option<(f32, [f32; 3], f32)>> {
     let Some(skin) = skin_now(session) else { return vec![None; at.len()]; };
+    // Seven readings a point, each over all of her skin round her entrance: in a grid of it instead (the same nearest
+    // vertices, SkinGrid::depth).
+    let grid = SkinGrid::new(&skin);
     at.iter().map(|&a| {
-        let (d, rest) = depth(&skin, a)?;
+        let (d, rest) = grid.depth(&skin, a)?;
         let mut g = [0f32; 3];
         for c in 0..3 {
             let (mut hi, mut lo) = (a, a);hi[c] += SLOPE_M;lo[c] -= SLOPE_M;
-            g[c] = match (depth(&skin, hi), depth(&skin, lo)) { (Some(h), Some(l)) => h.0 - l.0, _ => 0. };
+            g[c] = match (grid.depth(&skin, hi), grid.depth(&skin, lo)) { (Some(h), Some(l)) => h.0 - l.0, _ => 0. };
         }
         let len = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt();
         Some((d, if len > 1e-6 { [g[0] / len, g[1] / len, g[2] / len] } else { [0.; 3] }, rest))
@@ -389,29 +607,42 @@ pub fn skin_check(session: &OkSession, at: &[[f32; 3]]) -> Vec<Option<(f32, [f32
 }
 
 
+/// The vertices her bulge shapes move, each once, in the order the shapes list them (`past`).
+fn bulge_verts(part: &SessionPart) -> std::sync::Arc<Vec<u32>> {
+    static KEPT: std::sync::Mutex<Vec<(usize, usize, usize, std::sync::Arc<Vec<u32>>)>> = std::sync::Mutex::new(Vec::new());
+    let key = (part as *const SessionPart as usize, part.blend_shapes.len(), part.rest_positions.len());
+    if let Some(e) = KEPT.lock().unwrap().iter().find(|e| (e.0, e.1, e.2) == key) { return e.3.clone(); }
+    let mut seen = std::collections::HashSet::new();let mut verts = Vec::new();
+    for (_, deltas) in part.blend_shapes.iter().filter(|(n, _)| is_bulge(n)) { for (j, _) in deltas { if seen.insert(*j) { verts.push(*j); } } }
+    let verts = std::sync::Arc::new(verts);
+    let mut kept = KEPT.lock().unwrap();kept.insert(0, (key.0, key.1, key.2, verts.clone()));kept.truncate(4);
+    verts
+}
+
 pub fn past(session: &OkSession, tip: [f32; 3]) -> Option<(f32, f32, String, f32)> {
     let skel = session.body_skel.as_ref()?;
     let part = session.parts.iter().find(|p| p.blend_shapes.iter().any(|(n, _)| is_bulge(n)))?;
     let (worlds, binds) = crate::skel_export::palettes(skel, part);
     if worlds.is_empty() { return None; }
-    let mut seen = std::collections::HashSet::new();
+    // Her bulge's vertices once each, in the order the shapes list them (kept per body part: the set of them was built
+    // every frame), skinned on the pool, then taken in that order as before (the first of equals wins).
+    let verts = bulge_verts(part);
+    use rayon::prelude::*;
+    let read: Vec<Option<(f32, f32, usize)>> = verts.par_iter().map(|&j| {
+        let j = j as usize;
+        let (skin, _, _) = skin_of(part, j, &worlds, &binds, &[], &[])?;
+        let p = point(&skin, part.rest_positions[j]);
+        let d = [tip[0] - p[0], tip[1] - p[1], tip[2] - p[2]];
+        let dist = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        let o = point(&skin, [0.; 3]);
+        let n = part.rest_normals.get(j).map(|v| { let v = point(&skin, *v); [v[0] - o[0], v[1] - o[1], v[2] - o[2]] })?;
+        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();if len < 1e-6 { return None; }
+        Some((dist, (d[0] * n[0] + d[1] * n[1] + d[2] * n[2]) / len, j))
+    }).collect();
     let (mut nearest, mut most_out): (Option<(f32, f32, usize)>, Option<(f32, f32, usize)>) = (None, None);
-    for (_, deltas) in part.blend_shapes.iter().filter(|(n, _)| is_bulge(n)) {
-        for (j, _) in deltas {
-            let j = *j as usize;
-            if !seen.insert(j) { continue; }
-            let Some((skin, _, _)) = skin_of(part, j, &worlds, &binds, &[], &[]) else { continue; };
-            let p = point(&skin, part.rest_positions[j]);
-            let d = [tip[0] - p[0], tip[1] - p[1], tip[2] - p[2]];
-            let dist = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
-            if dist > NEAR_M * NEAR_M && nearest.is_some_and(|(b, _, _)| b <= dist) { continue; }
-            let o = point(&skin, [0.; 3]);
-            let Some(n) = part.rest_normals.get(j).map(|v| { let v = point(&skin, *v); [v[0] - o[0], v[1] - o[1], v[2] - o[2]] }) else { continue; };
-            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();if len < 1e-6 { continue; }
-            let out = (d[0] * n[0] + d[1] * n[1] + d[2] * n[2]) / len;
-            if nearest.map_or(true, |(b, _, _)| dist < b) { nearest = Some((dist, out, j)); }
-            if dist <= NEAR_M * NEAR_M && most_out.map_or(true, |(_, b, _)| out > b) { most_out = Some((dist, out, j)); }
-        }
+    for (dist, out, j) in read.into_iter().flatten() {
+        if nearest.map_or(true, |(b, _, _)| dist < b) { nearest = Some((dist, out, j)); }
+        if dist <= NEAR_M * NEAR_M && most_out.map_or(true, |(_, b, _)| out > b) { most_out = Some((dist, out, j)); }
     }
     let (dist, out, j) = most_out.or(nearest)?;
     let mut most: Option<(&std::ffi::CString, f32)> = None;
@@ -427,7 +658,8 @@ pub fn past(session: &OkSession, tip: [f32; 3]) -> Option<(f32, f32, String, f32
 /// Her skin round her entrance that her belly wraps him with (`wrap_deltas`): each vertex of her body part within
 /// WRAP_REACH_M of her entrance at rest, its rest distance from her entrance, and its normal averaged over WRAP_SMOOTH_M
 /// round it (her navel and creases would turn their walls apart). Built once per body.
-struct WrapVert { j: usize, from_entrance: f32, n: [f32; 3], nbr: Vec<u32>, tri: Vec<[u32; 2]>, free: f32, inner: bool }
+/// `place`: the copies of one place of her skin (split at her mesh's UV seams) share it, from where they lie at rest.
+struct WrapVert { j: usize, from_entrance: f32, n: [f32; 3], nbr: Vec<u32>, tri: Vec<[u32; 2]>, free: f32, inner: bool, place: u32, rest: [f32; 3], bones: [u16; 4], weights: [f32; 4] }
 /// Her buttocks (part of a name): with her thighs and the STILL bones, skin on them never rises (user 2026-11-02: the
 /// lift is her belly's, her thighs and bottom stay where they are).
 const BUTTOCK: [&str; 1] = ["siri"];
@@ -457,18 +689,17 @@ const WRAP_FACE_FROM: f32 = 0.0;
 const WRAP_FACE_FULL: f32 = 0.5;
 /// The tent round him falls WRAP_SLOPE metres for each metre along her skin.
 const WRAP_SLOPE: f32 = 1.5;
-const WRAP_TENT_ROUNDS: usize = 200;
 const WRAP_HELD_NEAR_M: f32 = 0.03;
 /// Columns up the way the skin rises, this wide, and how much higher other skin in one is for the lower to be covered.
 const WRAP_LAYER_CELL_M: f32 = 0.015;
 const WRAP_LAYER_GAP_M: f32 = 0.02;
 const WRAP_HELD_FAR_M: f32 = 0.10;
-static WRAP_VERTS: std::sync::Mutex<Option<(usize, usize, std::sync::Arc<Vec<WrapVert>>)>> = std::sync::Mutex::new(None);
+/// The last few bodies (her, the second heroine, an outfit changing); each took 1.6 s to build.
+static WRAP_VERTS: std::sync::Mutex<Vec<(usize, usize, std::sync::Arc<Vec<WrapVert>>)>> = std::sync::Mutex::new(Vec::new());
 
 fn wrap_verts(session: &OkSession, part: &SessionPart) -> Option<std::sync::Arc<Vec<WrapVert>>> {
     let key = (part as *const SessionPart as usize, part.rest_positions.len());
-    let mut cache = WRAP_VERTS.lock().unwrap();
-    if let Some((a, b, v)) = cache.as_ref() { if (*a, *b) == key { return Some(v.clone()); } }
+    if let Some((_, _, v)) = WRAP_VERTS.lock().unwrap().iter().find(|e| (e.0, e.1) == key) { return Some(v.clone()); }
     let rest = crate::skel_export::bind_body(session)?;
     let kokan = rest.world_tf("cf_j_kokan").or_else(|| rest.world_tf("cf_J_Kokan")).map(|m| translation(&m))?;
     let (worlds, binds) = crate::skel_export::palettes(&rest, part);
@@ -524,6 +755,7 @@ fn wrap_verts(session: &OkSession, part: &SessionPart) -> Option<std::sync::Arc<
         false
     };
     let mut out = Vec::with_capacity(near.len());
+    let mut places: HashMap<[i64; 3], u32> = HashMap::new();
     for (j, p, n0, d) in &near {
         let inner = *d <= WRAP_INNER_REACH_M && looks_in(*j, *p, *n0);
         let free = skin_of(part, *j, &worlds, &binds, &still, &held).map_or(0., |(_, f, on)| (f - on).clamp(0., 1.));
@@ -541,7 +773,8 @@ fn wrap_verts(session: &OkSession, part: &SessionPart) -> Option<std::sync::Arc<
         let inv = mat_inv_pub(&m);let o = point(&inv, [0.; 3]);let q = point(&inv, sum);
         let n = [q[0] - o[0], q[1] - o[1], q[2] - o[2]];let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
         if l < 1e-6 { continue; }
-        out.push(WrapVert { j: *j, from_entrance: *d, n: [n[0] / l, n[1] / l, n[2] / l], nbr: Vec::new(), tri: Vec::new(), free, inner });
+        let next = places.len() as u32;let place = *places.entry(p.map(|v| (v * 5000.).round() as i64)).or_insert(next);
+        out.push(WrapVert { j: *j, from_entrance: *d, n: [n[0] / l, n[1] / l, n[2] / l], nbr: Vec::new(), tri: Vec::new(), free, inner, place, rest: part.rest_positions[*j], bones: part.bone_idx[*j], weights: part.weights[*j] });
     }
     // Each one's neighbours along her mesh.
     let at: HashMap<usize, u32> = out.iter().enumerate().map(|(i, v)| (v.j, i as u32)).collect();
@@ -555,7 +788,7 @@ fn wrap_verts(session: &OkSession, part: &SessionPart) -> Option<std::sync::Arc<
         if let [Some(x), Some(y), Some(z)] = ids[..] { out[x as usize].tri.push([y, z]);out[y as usize].tri.push([z, x]);out[z as usize].tri.push([x, y]); }
     }
     let out = std::sync::Arc::new(out);
-    *cache = Some((key.0, key.1, out.clone()));
+    { let mut cache = WRAP_VERTS.lock().unwrap();cache.retain(|e| (e.0, e.1) != key);cache.insert(0, (key.0, key.1, out.clone()));cache.truncate(4); }
     Some(out)
 }
 
@@ -566,16 +799,73 @@ fn wrap_verts(session: &OkSession, part: &SessionPart) -> Option<std::sync::Arc<
 /// over a skirt as wide as that height. Her lips stay. Each move is given in the mesh's own space (as morph deltas),
 /// with the vertex index of her body part.
 pub fn wrap_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 3], radius: f32) -> Vec<(u32, [f32; 6])> {
-    let Some(skel) = session.body_skel.as_ref() else { return Vec::new(); };
-    let Some(part) = session.parts.iter().find(|p| p.role == "body" && p.skel_kind == 1 && p.runtime_accessory.is_none() && p.blend_shapes.iter().any(|(n, _)| is_bulge(n))) else { return Vec::new(); };
-    let Some(verts) = wrap_verts(session, part) else { return Vec::new(); };
+    let Some((verts, worlds, binds)) = wrap_input(session) else { return Vec::new(); };
+    wrap_solve(&verts, &worlds, &binds, from, to, up, radius)
+}
+
+/// What `wrap_solve` needs of her this frame: nothing of the session is read after this, so it can run while the pair
+/// solves on.
+fn wrap_input(session: &OkSession) -> Option<(std::sync::Arc<Vec<WrapVert>>, Vec<Mat4>, Vec<Mat4>)> {
+    let skel = session.body_skel.as_ref()?;
+    let part = session.parts.iter().find(|p| p.role == "body" && p.skel_kind == 1 && p.runtime_accessory.is_none() && p.blend_shapes.iter().any(|(n, _)| is_bulge(n)))?;
+    let verts = wrap_verts(session, part)?;
     let (worlds, binds) = crate::skel_export::palettes(skel, part);
-    if worlds.is_empty() { return Vec::new(); }
+    if worlds.is_empty() { return None; }
+    Some((verts, worlds, binds))
+}
+
+/// One frame's wrap and clothes, off the game thread (the wrap took 5 to 9 ms of it, 2026-11-06). Body and clothes come
+/// from the same frame's skin, so the scene shows them together: a frame apart his bulge came through her clothes.
+struct WrapJob { key: usize, wrap: Option<(std::sync::Arc<Vec<WrapVert>>, Vec<Mat4>, Vec<Mat4>, [[f32; 3]; 3], f32)>, cover: Option<cover::CoverFrame> }
+/// What came of a job: her body's moves, the moves of her garments on her body skeleton, her pushing skin.
+pub struct WrapDone { pub body: Vec<(u32, [f32; 6])>, pub cloth: Vec<(usize, Vec<(u32, [f32; 3])>)>, pub field: Option<std::sync::Arc<CoverField>> }
+/// Each session's job: None while it runs.
+static WRAP_DONE: std::sync::Mutex<Vec<(usize, Option<WrapDone>)>> = std::sync::Mutex::new(Vec::new());
+static WRAP_WORKER: std::sync::OnceLock<std::sync::Mutex<std::sync::mpsc::Sender<WrapJob>>> = std::sync::OnceLock::new();
+
+fn wrap_worker() -> &'static std::sync::Mutex<std::sync::mpsc::Sender<WrapJob>> {
+    WRAP_WORKER.get_or_init(|| {
+        let (send, receive) = std::sync::mpsc::channel::<WrapJob>();
+        let _ = std::thread::Builder::new().name("ok-wrap".into()).spawn(move || {
+            for job in receive {
+                let body = job.wrap.map_or_else(Vec::new, |(verts, worlds, binds, at, radius)| wrap_solve(&verts, &worlds, &binds, at[0], at[1], at[2], radius));
+                let (cloth, field) = job.cover.map_or((Vec::new(), None), |frame| cover::solve(&frame, &body));
+                let mut done = WRAP_DONE.lock().unwrap();
+                if let Some(e) = done.iter_mut().find(|e| e.0 == job.key) { e.1 = Some(WrapDone { body, cloth, field }); }
+            }
+        });
+        std::sync::Mutex::new(send)
+    })
+}
+
+/// Starts this frame's job for `session` (its sessions idle): her skin wrapped round him when `wrap`, her clothes kept
+/// over her skin when `cover`. False while the last one still runs.
+pub fn wrap_start(session: &OkSession, wrap: bool, from: [f32; 3], to: [f32; 3], up: [f32; 3], radius: f32, cover: bool) -> bool {
+    let key = session as *const OkSession as usize;
+    {
+        let mut done = WRAP_DONE.lock().unwrap();
+        match done.iter_mut().find(|e| e.0 == key) { Some(e) => { if e.1.is_none() { return false; } e.1 = None; } None => done.push((key, None)) }
+    }
+    let wrap = if wrap { wrap_input(session).map(|(v, w, b)| (v, w, b, [from, to, up], radius)) } else { None };
+    let cover = if cover { cover::frame(session) } else { None };
+    wrap_worker().lock().unwrap().send(WrapJob { key, wrap, cover }).is_ok()
+}
+
+/// The finished job of `session`, once. Started and taken a frame apart, so what the scene shows is a frame old.
+pub fn wrap_take(session: &OkSession) -> Option<WrapDone> {
+    let key = session as *const OkSession as usize;
+    let mut done = WRAP_DONE.lock().unwrap();
+    let i = done.iter().position(|e| e.0 == key && e.1.is_some())?;
+    done.swap_remove(i).1
+}
+
+/// `wrap_deltas`, reading nothing but what it is given.
+fn wrap_solve(verts: &[WrapVert], worlds: &[Mat4], binds: &[Mat4], from: [f32; 3], to: [f32; 3], up: [f32; 3], radius: f32) -> Vec<(u32, [f32; 6])> {
     let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
     let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     let axis = sub(to, from);let axis_len2 = dot(axis, axis).max(1e-8);
     let along = |k: f32| [from[0] + axis[0] * k, from[1] + axis[1] * k, from[2] + axis[2] * k];
-    let posed = posed_verts(part, &verts, &worlds, &binds);
+    let posed = posed_verts(verts, worlds, binds);
     // Her skin over him, lifted all one way (user, 2026-11-02: project him onto her belly for a height line and pull her
     // belly up): each skin moved along its own normal fanned out into a slab when he stood 60 cm out of her, and went
     // only half way along him when it looked along him.
@@ -597,6 +887,7 @@ pub fn wrap_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
     // Under him: how high his far side stands over each skin facing that way, along it, where he passes within his
     // radius of the line up from it (his height line on her).
     let samples = ((axis_len2.sqrt() / (radius * 0.5)).ceil() as usize).max(1);
+    let line: Vec<[f32; 3]> = (0..=samples).map(|s| along(s as f32 / samples as f32)).collect();
     let mut src = vec![0f32; verts.len()];let mut face = vec![0f32; verts.len()];
     let mut pos: Vec<Option<[f32; 3]>> = vec![None; verts.len()];
     // Skin with more of her skin over it, up the way it would rise (her belly under her drawn-up thighs, the far side of
@@ -605,13 +896,18 @@ pub fn wrap_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
     let e1 = { let h = dot(side, up);let v = [side[0] - up[0] * h, side[1] - up[1] * h, side[2] - up[2] * h];let l = dot(v, v).sqrt();[v[0] / l, v[1] / l, v[2] / l] };
     let e2 = [up[1] * e1[2] - up[2] * e1[1], up[2] * e1[0] - up[0] * e1[2], up[0] * e1[1] - up[1] * e1[0]];
     let column = |p: [f32; 3]| [(dot(p, e1) / WRAP_LAYER_CELL_M).floor() as i64, (dot(p, e2) / WRAP_LAYER_CELL_M).floor() as i64];
-    let mut top: HashMap<[i64; 2], f32> = HashMap::new();
-    for q in &posed { let h = dot(q.p, up);let e = top.entry(column(q.p)).or_insert(f32::MIN);if h > *e { *e = h; } }
+    let cols: Vec<[i64; 2]> = posed.iter().map(|q| column(q.p)).collect();
+    let (lo, hi) = cols.iter().fold(([i64::MAX; 2], [i64::MIN; 2]), |(l, h), c| ([l[0].min(c[0]), l[1].min(c[1])], [h[0].max(c[0]), h[1].max(c[1])]));
+    // One cell of room all round, for the look at the cells beside each.
+    let (w, rows) = ((hi[0] - lo[0] + 3).max(0) as usize, (hi[1] - lo[1] + 3).max(0) as usize);
+    let cell_at = |c: [i64; 2]| (c[1] - lo[1] + 1) as usize * w + (c[0] - lo[0] + 1) as usize;
+    let mut top = vec![f32::MIN; w * rows];
+    for (q, c) in posed.iter().zip(&cols) { let h = dot(q.p, up);let e = &mut top[cell_at(*c)];if h > *e { *e = h; } }
     let covered: Vec<bool> = {
         let mut c = vec![false; verts.len()];
-        for q in &posed {
-            let k = column(q.p);let h = dot(q.p, up);
-            c[q.i] = (-1..=1).any(|a| (-1..=1).any(|b| top.get(&[k[0] + a, k[1] + b]).is_some_and(|t| *t - h > WRAP_LAYER_GAP_M)));
+        for (q, k) in posed.iter().zip(&cols) {
+            let h = dot(q.p, up);let at = cell_at(*k);
+            c[q.i] = [at - w - 1, at - w, at - w + 1, at - 1, at, at + 1, at + w - 1, at + w, at + w + 1].iter().any(|&i| top[i] - h > WRAP_LAYER_GAP_M);
         }
         c
     };
@@ -630,8 +926,8 @@ pub fn wrap_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
         let lips_here = lips(v.from_entrance);
         if lips_here <= 0. || v.inner || f <= 0. { continue; }
         let mut h = 0f32;
-        for s in 0..=samples {
-            let rel = sub(along(s as f32 / samples as f32), q.p);
+        for at in &line {
+            let rel = sub(*at, q.p);
             let hu = dot(rel, up);let lat = [rel[0] - up[0] * hu, rel[1] - up[1] * hu, rel[2] - up[2] * hu];
             let l2 = dot(lat, lat);if l2 >= radius * radius { continue; }
             h = h.max(hu + (radius * radius - l2).sqrt());
@@ -641,19 +937,12 @@ pub fn wrap_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
     // How far along her skin each skin is from the skin he pushes: held skin rises fully within WRAP_HELD_NEAR_M of it,
     // and as held as it is from WRAP_HELD_FAR_M.
     let mut apart: Vec<f32> = src.iter().map(|&h| if h > 0. { 0. } else { f32::MAX }).collect();
-    for _ in 0..WRAP_TENT_ROUNDS {
-        let mut changed = false;
-        for (i, v) in verts.iter().enumerate() {
-            let Some(p) = pos[i] else { continue; };
-            for &k in &v.nbr {
-                let Some(pk) = pos[k as usize] else { continue; };
-                if apart[k as usize] == f32::MAX { continue; }
-                let d = sub(p, pk);let cand = apart[k as usize] + dot(d, d).sqrt();
-                if cand < apart[i] - 1e-5 { apart[i] = cand;changed = true; }
-            }
-        }
-        if !changed { break; }
-    }
+    // The tent round it (down WRAP_SLOPE for each metre along her skin) needs nothing of that: at the same time.
+    let mut lift = src.clone();
+    std::thread::scope(|s| {
+        s.spawn(|| spread_near(&verts, &pos, &mut apart, WRAP_HELD_FAR_M));
+        spread_tent(&verts, &pos, &mut lift, WRAP_SLOPE);
+    });
     for (i, v) in verts.iter().enumerate() {
         let t = ((apart[i] - WRAP_HELD_NEAR_M) / (WRAP_HELD_FAR_M - WRAP_HELD_NEAR_M)).clamp(0., 1.);
         let near = 1. - t * t * (3. - 2. * t);
@@ -662,20 +951,7 @@ pub fn wrap_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
         // black inside (GalV1104g).
         face[i] = if covered[i] { near } else { free.max(near) };
     }
-    // The tent round it: down WRAP_SLOPE for each metre along her skin, then evened.
-    let mut lift = src.clone();
-    for _ in 0..WRAP_TENT_ROUNDS {
-        let mut changed = false;
-        for (i, v) in verts.iter().enumerate() {
-            let Some(p) = pos[i] else { continue; };
-            for &k in &v.nbr {
-                let Some(pk) = pos[k as usize] else { continue; };
-                let d = sub(p, pk);let cand = lift[k as usize] - WRAP_SLOPE * dot(d, d).sqrt();
-                if cand > lift[i] + 1e-5 { lift[i] = cand;changed = true; }
-            }
-        }
-        if !changed { break; }
-    }
+    // The tent evened.
     for _ in 0..WRAP_EVEN_ROUNDS {
         let was = lift.clone();
         for (i, v) in verts.iter().enumerate() {
@@ -689,25 +965,73 @@ pub fn wrap_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
     // The copies of one place of her skin (split at her mesh's UV seams; no edge joins them) rise together, the highest of
     // them: each worked out on its own, they rose apart and her belly split open along the seams, black (椅子對面 with
     // the root pad up, user 2026-11-02; the belly bones had the same, GalBones7).
+    let places = verts.iter().map(|v| v.place as usize + 1).max().unwrap_or(0);
     {
-        let weld = |p: [f32; 3]| p.map(|v| (v * 5000.).round() as i64);
-        let mut most: HashMap<[i64; 3], f32> = HashMap::new();
-        for (i, p) in pos.iter().enumerate() { if let Some(p) = p { let e = most.entry(weld(*p)).or_insert(lift[i]);if lift[i] > *e { *e = lift[i]; } } }
-        for (i, p) in pos.iter().enumerate() { if let Some(p) = p { lift[i] = most[&weld(*p)]; } }
+        let mut most = vec![f32::MIN; places];
+        for (i, p) in pos.iter().enumerate() { if p.is_some() { let e = &mut most[verts[i].place as usize];if lift[i] > *e { *e = lift[i]; } } }
+        for (i, p) in pos.iter().enumerate() { if p.is_some() { lift[i] = most[verts[i].place as usize]; } }
     }
     // Where each skin goes, and its normal there (its triangles' after the move against before, welded over UV seams):
     // left as it was, the outline shell swelled out of the stretched skin along the old normals, black teeth (GalV1104j).
     let moved: Vec<Option<[f32; 3]>> = (0..verts.len()).map(|i| pos[i].map(|p| [p[0] + up[0] * lift[i], p[1] + up[1] * lift[i], p[2] + up[2] * lift[i]])).collect();
-    mesh_moves(&verts, &posed, &pos, &moved)
+    mesh_moves(&verts, &posed, &pos, &moved, places)
+}
+
+/// A skin on the heap of `spread_near` and `spread_tent`: its value, its index. Largest first.
+#[derive(Clone, Copy, PartialEq)]
+struct Reach(f32, u32);
+impl Eq for Reach {}
+impl PartialOrd for Reach { fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> { Some(self.cmp(o)) } }
+impl Ord for Reach { fn cmp(&self, o: &Self) -> std::cmp::Ordering { self.0.total_cmp(&o.0).then(self.1.cmp(&o.1)) } }
+
+fn edge_len(a: [f32; 3], b: [f32; 3]) -> f32 { let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() }
+
+/// How far along her skin each skin is from the nearest with `apart` 0 (the others come in as f32::MAX and stay so past
+/// `reach`: nothing further on uses them). One pass by nearest first; sweeping the whole mesh until nothing changed took
+/// up to 200 rounds, most of the wrap once her belly was refined.
+fn spread_near(verts: &[WrapVert], pos: &[Option<[f32; 3]>], apart: &mut [f32], reach: f32) {
+    let mut heap = std::collections::BinaryHeap::with_capacity(verts.len());
+    for (i, a) in apart.iter().enumerate() { if *a == 0. && pos[i].is_some() { heap.push(Reach(-0., i as u32)); } }
+    while let Some(Reach(d, i)) = heap.pop() {
+        let (d, i) = (-d, i as usize);
+        if d > apart[i] { continue; }
+        let Some(p) = pos[i] else { continue; };
+        for &k in &verts[i].nbr {
+            let k = k as usize;let Some(q) = pos[k] else { continue; };
+            let cand = d + edge_len(p, q);
+            if cand < apart[k] && cand <= reach { apart[k] = cand;heap.push(Reach(-cand, k as u32)); }
+        }
+    }
+}
+
+/// The tent over her skin: each skin as high as the highest of `lift`, down `slope` for each metre along her skin from it.
+fn spread_tent(verts: &[WrapVert], pos: &[Option<[f32; 3]>], lift: &mut [f32], slope: f32) {
+    let mut heap = std::collections::BinaryHeap::with_capacity(verts.len());
+    for (i, h) in lift.iter().enumerate() { if *h > 0. && pos[i].is_some() { heap.push(Reach(*h, i as u32)); } }
+    while let Some(Reach(h, i)) = heap.pop() {
+        let i = i as usize;
+        if h < lift[i] { continue; }
+        let Some(p) = pos[i] else { continue; };
+        for &k in &verts[i].nbr {
+            let k = k as usize;let Some(q) = pos[k] else { continue; };
+            let cand = h - slope * edge_len(p, q);
+            if cand > lift[k] { lift[k] = cand;heap.push(Reach(cand, k as u32)); }
+        }
+    }
 }
 
 /// Each vertex of `verts` posed this frame: position, normal (its averaged one), skin matrix.
 struct Posed { i: usize, p: [f32; 3], n: [f32; 3], m: Mat4 }
-fn posed_verts(part: &SessionPart, verts: &[WrapVert], worlds: &[Mat4], binds: &[Mat4]) -> Vec<Posed> {
+fn posed_verts(verts: &[WrapVert], worlds: &[Mat4], binds: &[Mat4]) -> Vec<Posed> {
     let mut posed = Vec::with_capacity(verts.len());
+    let skins: Vec<Mat4> = worlds.iter().zip(binds).map(|(w, b)| mat_mul_pub(w, b)).collect();
     for (i, v) in verts.iter().enumerate() {
-        let Some((m, _, _)) = skin_of(part, v.j, worlds, binds, &[], &[]) else { continue; };
-        let p = point(&m, part.rest_positions[v.j]);
+        let mut m = [[0.0f32; 4]; 4];
+        for (b, w) in v.bones.iter().zip(&v.weights) {
+            let Some(s) = skins.get(*b as usize) else { continue; };if *w <= 0. { continue; }
+            for r in 0..4 { for c in 0..4 { m[r][c] += s[r][c] * w; } }
+        }
+        let p = point(&m, v.rest);
         let o = point(&m, [0.; 3]);let q = point(&m, v.n);let n = [q[0] - o[0], q[1] - o[1], q[2] - o[2]];
         let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();if l < 1e-6 { continue; }
         posed.push(Posed { i, p, n: [n[0] / l, n[1] / l, n[2] / l], m });
@@ -717,14 +1041,21 @@ fn posed_verts(part: &SessionPart, verts: &[WrapVert], worlds: &[Mat4], binds: &
 
 /// The moves of the skin (`pos` posed, `moved` where it goes this frame) as morph deltas: body vertex index, the move in
 /// the mesh's own space (the posed skin's inverse, as the morph is skinned), then the turn of its normal there.
-fn mesh_moves(verts: &[WrapVert], posed: &[Posed], pos: &[Option<[f32; 3]>], moved: &[Option<[f32; 3]>]) -> Vec<(u32, [f32; 6])> {
+fn mesh_moves(verts: &[WrapVert], posed: &[Posed], pos: &[Option<[f32; 3]>], moved: &[Option<[f32; 3]>], places: usize) -> Vec<(u32, [f32; 6])> {
     let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
     let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-    let weld = |p: [f32; 3]| p.map(|v| (v * 5000.).round() as i64);
-    let mut sums: HashMap<[i64; 3], ([f32; 3], [f32; 3])> = HashMap::new();
+    // Only places on a triangle that moved turn: most of her skin in reach stays where it is.
+    let mut live = vec![false; places];
     for (i, v) in verts.iter().enumerate() {
+        if pos[i] == moved[i] { continue; }
+        live[v.place as usize] = true;
+        for t in &v.tri { live[verts[t[0] as usize].place as usize] = true;live[verts[t[1] as usize].place as usize] = true; }
+    }
+    let mut sums = vec![([0f32; 3], [0f32; 3]); places];
+    for (i, v) in verts.iter().enumerate() {
+        if !live[v.place as usize] { continue; }
         let (Some(p), Some(m)) = (pos[i], moved[i]) else { continue; };
-        let e = sums.entry(weld(p)).or_insert(([0.; 3], [0.; 3]));
+        let e = &mut sums[v.place as usize];
         for t in &v.tri {
             let (Some(b), Some(c), Some(mb), Some(mc)) = (pos[t[0] as usize], pos[t[1] as usize], moved[t[0] as usize], moved[t[1] as usize]) else { continue; };
             let cross = |a: [f32; 3], b: [f32; 3], c: [f32; 3]| { let (u, w) = (sub(b, a), sub(c, a));[u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]] };
@@ -737,7 +1068,8 @@ fn mesh_moves(verts: &[WrapVert], posed: &[Posed], pos: &[Option<[f32; 3]>], mov
     for q in posed {
         let need = moved[q.i].map_or(0., |m| dot(sub(m, q.p), sub(m, q.p)).sqrt());
         // The normal's turn, as a change of her mesh's own normal (the morph's TangentZ delta).
-        let dn = sums.get(&weld(q.p)).and_then(|(a, b)| Some((unit(*a)?, unit(*b)?))).map_or([0.; 3], |(a, b)| sub(b, a));
+        let (a, b) = sums[verts[q.i].place as usize];
+        let dn = unit(a).zip(unit(b)).map_or([0.; 3], |(a, b)| sub(b, a));
         if need < 0.0005 && dot(dn, dn) < 1e-4 { continue; }
         // Up, back into the mesh's space (the posed skin's inverse, as the morph is skinned).
         let inv = mat_inv_pub(&q.m);
@@ -748,4 +1080,118 @@ fn mesh_moves(verts: &[WrapVert], posed: &[Posed], pos: &[Option<[f32; 3]>], mov
         out.push((verts[q.i].j as u32, [a[0] - b[0], a[1] - b[1], a[2] - b[2], turned[0], turned[1], turned[2]]));
     }
     out
+}
+
+#[cfg(test)]
+mod spread_tests {
+    use super::{spread_near, spread_tent, WrapVert};
+    /// A bumpy sheet of skin, each vertex joined to its grid neighbours, one corner hole left unposed.
+    fn sheet(n: usize) -> (Vec<WrapVert>, Vec<Option<[f32; 3]>>) {
+        let id = |x: usize, y: usize| (y * n + x) as u32;
+        let mut verts = Vec::new();let mut pos = Vec::new();
+        for y in 0..n { for x in 0..n {
+            let mut nbr = Vec::new();
+            if x > 0 { nbr.push(id(x - 1, y)); } if x + 1 < n { nbr.push(id(x + 1, y)); }
+            if y > 0 { nbr.push(id(x, y - 1)); } if y + 1 < n { nbr.push(id(x, y + 1)); }
+            if x + 1 < n && y + 1 < n { nbr.push(id(x + 1, y + 1)); } if x > 0 && y > 0 { nbr.push(id(x - 1, y - 1)); }
+            verts.push(WrapVert { j: 0, from_entrance: 0., n: [0.; 3], nbr, tri: Vec::new(), free: 1., inner: false, place: 0, rest: [0.; 3], bones: [0; 4], weights: [0.; 4] });
+            let (fx, fy) = (x as f32, y as f32);
+            pos.push(if x == 3 && y == 4 { None } else { Some([fx * 0.01, fy * 0.012, ((fx * 0.7).sin() + (fy * 0.4).cos()) * 0.004]) });
+        } }
+        (verts, pos)
+    }
+    fn len(a: [f32; 3], b: [f32; 3]) -> f32 { ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt() }
+    #[test]
+    fn nearest_first_finds_what_the_sweeps_found() {
+        let (verts, pos) = sheet(24);
+        let mut start = vec![f32::MAX; verts.len()];start[5 * 24 + 7] = 0.;start[17 * 24 + 15] = 0.;
+        // As the sweeps were, until nothing changed.
+        let mut want = start.clone();
+        loop { let mut changed = false;
+            for (i, v) in verts.iter().enumerate() { let Some(p) = pos[i] else { continue; };
+                for &k in &v.nbr { let Some(q) = pos[k as usize] else { continue; };if want[k as usize] == f32::MAX { continue; }
+                    let c = want[k as usize] + len(p, q);if c < want[i] - 1e-5 { want[i] = c;changed = true; } } }
+            if !changed { break; } }
+        let reach = 0.10;let mut got = start.clone();spread_near(&verts, &pos, &mut got, reach);
+        for i in 0..got.len() {
+            if pos[i].is_none() { continue; }
+            if want[i] <= reach - 1e-3 { assert!((got[i] - want[i]).abs() < 1e-3, "{i}: {} {}", got[i], want[i]); }
+            if want[i] > reach + 1e-3 { assert_eq!(got[i], f32::MAX, "{i}"); }
+        }
+    }
+    #[test]
+    fn the_tent_is_what_the_sweeps_made() {
+        let (verts, pos) = sheet(24);
+        let mut start = vec![0f32; verts.len()];start[5 * 24 + 7] = 0.06;start[6 * 24 + 8] = 0.05;start[17 * 24 + 15] = 0.03;
+        let mut want = start.clone();
+        loop { let mut changed = false;
+            for (i, v) in verts.iter().enumerate() { let Some(p) = pos[i] else { continue; };
+                for &k in &v.nbr { let Some(q) = pos[k as usize] else { continue; };
+                    let c = want[k as usize] - 1.5 * len(p, q);if c > want[i] + 1e-5 { want[i] = c;changed = true; } } }
+            if !changed { break; } }
+        let mut got = start.clone();spread_tent(&verts, &pos, &mut got, 1.5);
+        for i in 0..got.len() { assert!((got[i] - want[i]).abs() < 1e-3, "{i}: {} {}", got[i], want[i]); }
+    }
+}
+
+#[cfg(test)]
+mod refine_tests {
+    use super::{mid_weights, split_triangles};
+    fn area2(p: &[[f32; 2]], t: &[u32]) -> f32 {
+        t.chunks_exact(3).map(|c| { let (a, b, d) = (p[c[0] as usize], p[c[1] as usize], p[c[2] as usize]);(b[0] - a[0]) * (d[1] - a[1]) - (b[1] - a[1]) * (d[0] - a[0]) }).sum()
+    }
+    fn with_mids(mut p: Vec<[f32; 2]>, made: &[(u32, u32)]) -> Vec<[f32; 2]> {
+        for (a, b) in made { let (x, y) = (p[*a as usize], p[*b as usize]);p.push([(x[0] + y[0]) * 0.5, (x[1] + y[1]) * 0.5]); }
+        p
+    }
+    #[test]
+    fn a_marked_triangle_is_cut_in_four_and_its_neighbour_keeps_no_crack() {
+        // Two triangles sharing edge 1-2; only the first has all three corners marked.
+        let p = vec![[0., 0.], [1., 0.], [0., 1.], [1., 1.]];
+        let t = [0, 1, 2, 2, 1, 3];
+        let (out, made) = split_triangles(&t, &[true, true, true, false]);
+        assert_eq!(made.len(), 3);
+        assert_eq!(out.len() / 3, 4 + 2);
+        let q = with_mids(p.clone(), &made);
+        assert!((area2(&q, &out) - area2(&p, &t)).abs() < 1e-6, "area and winding kept");
+        // Every edge used once each way but the outline: no T junction left.
+        let mut open = std::collections::HashMap::new();
+        for c in out.chunks_exact(3) { for (a, b) in [(c[0], c[1]), (c[1], c[2]), (c[2], c[0])] { *open.entry((a, b)).or_insert(0) += 1; } }
+        let outline = open.keys().filter(|(a, b)| !open.contains_key(&(*b, *a))).count();
+        assert_eq!(outline, 6, "the square's four sides, two of them halved");
+    }
+    #[test]
+    fn a_triangle_with_two_cut_edges_stays_whole() {
+        // Marked fan round vertex 0 leaves triangle 1-2-3 with two cut edges (1-2 and 2-3 belong to marked triangles).
+        let p = vec![[0., 0.], [2., 0.], [2., 2.], [0., 2.], [3., 1.], [1., 3.]];
+        let t = [0, 1, 2, 0, 2, 3, 1, 4, 2, 2, 5, 3];
+        let (out, made) = split_triangles(&t, &[true, true, true, true, false, false]);
+        assert!((area2(&with_mids(p.clone(), &made), &out) - area2(&p, &t)).abs() < 1e-6);
+        let (only, none) = split_triangles(&t, &[false; 6]);
+        assert_eq!(only, t);assert!(none.is_empty());
+    }
+    #[test]
+    fn middle_weights_stay_four_and_sum_to_one() {
+        let (b, w) = mid_weights(&[1, 2, 3, 4], &[0.4, 0.3, 0.2, 0.1], &[1, 5, 6, 7], &[0.7, 0.1, 0.1, 0.1]);
+        assert_eq!(b[0], 1);assert!((w.iter().sum::<f32>() - 1.).abs() < 1e-5);
+    }
+}
+
+#[cfg(test)]
+mod skin_grid_tests {
+    use super::*;
+    #[test]
+    fn grid_depth_is_the_scan_depth() {
+        // A rough sheet of skin with repeated points (equal distances) and queries in it, beside it and far off.
+        let mut seed = 12345u64;let mut rnd = || { seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);((seed >> 33) as f32) / (1u64 << 31) as f32 };
+        let mut skin = Vec::new();
+        for _ in 0..3000 { let p = [rnd() * 0.4 - 0.2, rnd() * 0.4 - 0.2, rnd() * 0.05];skin.push(SkinNow { p, n: [0., 0., 1.], rest: rnd() }); }
+        for k in 0..50 { let p = skin[k].p;skin.push(SkinNow { p, n: [0., 1., 0.], rest: 0.5 }); }
+        let grid = SkinGrid::new(&skin);
+        for _ in 0..2000 {
+            let at = [rnd() * 0.8 - 0.4, rnd() * 0.8 - 0.4, rnd() * 0.4 - 0.2];
+            assert_eq!(grid.depth(&skin, at), depth(&skin, at), "at {at:?}");
+        }
+        for k in 0..60 { let at = skin[k].p;assert_eq!(grid.depth(&skin, at), depth(&skin, at)); }
+    }
 }
