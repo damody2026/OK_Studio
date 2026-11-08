@@ -574,7 +574,13 @@ void AOKPaintSprayer::UploadAtlasBlocks(const TMap<int32,TArray<FIntRect>>& Bloc
  // All charts have finished writing their disjoint CPU mirror regions. Copy
  // the final page once; merged rectangles retain untouched neighbors exactly.
  for(const auto& Entry:Blocks){const int32 Page=Entry.Key;struct FRow{FUpdateTextureRegion2D Region;uint32 Offset,Pitch;};TArray<FRow> Uploads;auto Pixels=MakeShared<TArray<FFloat16Color>,ESPMode::ThreadSafe>();const auto Regions=SparseUploads?SharedAtlas.UploadRects(Entry.Value):Entry.Value;
-  for(const auto& R:Regions)if(R.Max.X>R.Min.X&&R.Max.Y>R.Min.Y){const int32 Offset=Pixels->Num();Pixels->AddUninitialized(R.Width()*R.Height());for(int32 Y=0;Y<R.Height();++Y)FMemory::Memcpy(Pixels->GetData()+Offset+Y*R.Width(),AtlasPixels[Page].GetData()+(R.Min.Y+Y)*PageSize+R.Min.X,R.Width()*sizeof(FFloat16Color));Uploads.Add({FUpdateTextureRegion2D(R.Min.X,R.Min.Y,0,0,R.Width(),R.Height()),uint32(Offset),uint32(R.Width()*sizeof(FFloat16Color))});}
+  // Places first, then the rows copied on the pool: one upload was 2.7 ms on the game thread (her liquid, 2026-11-08).
+  struct FCopy{FIntRect Rect;int32 Offset;};TArray<FCopy> Copies;
+  for(const auto& R:Regions)if(R.Max.X>R.Min.X&&R.Max.Y>R.Min.Y){const int32 Offset=Pixels->Num();Pixels->AddUninitialized(R.Width()*R.Height());Copies.Add({R,Offset});Uploads.Add({FUpdateTextureRegion2D(R.Min.X,R.Min.Y,0,0,R.Width(),R.Height()),uint32(Offset),uint32(R.Width()*sizeof(FFloat16Color))});}
+  TArray<TPair<int32,int32>> Rows;for(int32 K=0;K<Copies.Num();++K)for(int32 Y=0;Y<Copies[K].Rect.Height();++Y)Rows.Emplace(K,Y);
+  FFloat16Color* Out=Pixels->GetData();const FFloat16Color* In=AtlasPixels[Page].GetData();
+  ParallelFor(TEXT("PaintAtlasUploadRows"),Rows.Num(),64,[&](int32 I){const auto& Cp=Copies[Rows[I].Key];const int32 Y=Rows[I].Value;const FIntRect& R=Cp.Rect;
+   FMemory::Memcpy(Out+Cp.Offset+Y*R.Width(),In+(R.Min.Y+Y)*PageSize+R.Min.X,R.Width()*sizeof(FFloat16Color));},Rows.Num()<128?EParallelForFlags::ForceSingleThread:EParallelForFlags::None);
   auto* Resource=Targets[Page]->GameThread_GetRenderTargetResource();ENQUEUE_RENDER_COMMAND(OKPaintSharedUpload)([Resource,Pixels,Uploads=MoveTemp(Uploads)](FRHICommandListImmediate& Cmd){if(!Resource)return;const auto Texture=Resource->GetRenderTargetTexture();if(!Texture)return;for(const auto& Row:Uploads)Cmd.UpdateTexture2D(Texture,0,Row.Region,Row.Pitch,reinterpret_cast<const uint8*>(Pixels->GetData()+Row.Offset));});
  }
 }
@@ -738,7 +744,7 @@ void AOKPaintSprayer::Tick(float Dt)
  for(auto& S:Surfaces)if(S->IsDisplayed()&&(S->Film.Volume()>0||S->HasRenderedPaint||Attached.ContainsByPredicate([&S,this](const auto& D){return Surfaces.IsValidIndex(D.Target)&&Surfaces[D.Target]==S;})))DrawFilm(*S,UpdateGeometry,&PendingStreams,&PendingAtlas,&PendingCharts);
  // Allocations/maps/morphs are captured above. Charts occupy disjoint atlas
  // blocks, profiles remain immutable until this blocking operation joins.
- if(!PendingCharts.IsEmpty())ParallelFor(TEXT("PaintAtlasCharts"),PendingCharts.Num(),16,[&](int32 I){FillAtlasChart(PendingCharts[I]);},PendingCharts.Num()<32?EParallelForFlags::ForceSingleThread:EParallelForFlags::None);
+ if(!PendingCharts.IsEmpty())ParallelFor(TEXT("PaintAtlasCharts"),PendingCharts.Num(),1,[&](int32 I){FillAtlasChart(PendingCharts[I]);},PendingCharts.Num()<2?EParallelForFlags::ForceSingleThread:EParallelForFlags::None);
  if(!PendingAtlas.IsEmpty())UploadAtlasBlocks(PendingAtlas,CVarPaintSparseUploads.GetValueOnGameThread()!=0);
  if(!PendingStreams.IsEmpty())UKKAffineProceduralMeshComponent::UpdateAnimatedStreamsBatch(PendingStreams);
  LaunchDueTransport(); // drawn: what this tick owes moves on a worker until the next
