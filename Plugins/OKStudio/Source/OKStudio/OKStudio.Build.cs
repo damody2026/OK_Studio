@@ -18,6 +18,6 @@ public class OKStudio : ModuleRules
 		// Files keep file-scope helpers with short names (OKStudioPost.cpp's Base / Instance): no unity blobs.
 		bUseUnity = false;
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "Json", "JsonUtilities", "Slate", "SlateCore", "InputCore", "HTTPServer" });
-		PrivateDependencyModuleNames.AddRange(new string[] { "KKUnityBundle", "KKCard", "OKAnimation", "OKHGShading", "KKRuntimePose", "RHI", "UMG", "RenderCore", "ImageCore", "Niagara", "XmlParser", "HTTP", "HTTPServer", "Sockets", "Networking", "ImageWrapper", "ApplicationCore" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "KKUnityBundle", "KKCard", "OKAnimation", "OKHGShading", "KKRuntimePose", "RHI", "UMG", "RenderCore", "ImageCore", "Niagara", "XmlParser", "HTTP", "HTTPServer", "Sockets", "Networking", "ImageWrapper", "ApplicationCore", "ProceduralMeshComponent" });
 	}
 }

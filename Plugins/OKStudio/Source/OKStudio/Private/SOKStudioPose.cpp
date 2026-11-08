@@ -817,7 +817,8 @@ void SOKStudioPanel::LookPage(FOKSceneObject& O, bool bNeck)
 	[
 		SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[Button(FText::FromString(TEXT("取鏡頭位置")), TakeView, 0.f, 18.f, false, 10.f)]
-		+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("恢復看鏡頭")), BackToView, 0.f, 18.f, false, 10.f)]
+		+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[Button(FText::FromString(TEXT("恢復看鏡頭")), BackToView, 0.f, 18.f, false, 10.f)]
+		+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("看對方")), Cmd(TEXT("transform.look")), 0.f, 18.f, false, 10.f)]
 	];
 }
 

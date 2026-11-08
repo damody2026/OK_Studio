@@ -46,6 +46,12 @@ public sealed partial class GamePoseProbe {
                 foreach (Material material in renderer.sharedMaterials) {
                     if (material == null) continue;
                     writer.WriteLine("renderer\t" + PathOf(renderer.transform) + "\t" + (filter == null || filter.sharedMesh == null ? "" : filter.sharedMesh.name) + "\t" + material.name + "\t" + material.shader.name + "\t" + renderer.lightmapIndex + "\t" + renderer.lightmapScaleOffset.ToString("R") + "\t" + renderer.bounds.center.ToString("R") + "\t" + renderer.bounds.size.ToString("R") + "\tlayer=" + renderer.gameObject.layer);
+                    // The ambient this renderer really gets: RenderSettings.ambientProbe reads 0 on a Trilight map.
+                    if (renderer.lightmapIndex < 0) {
+                        UnityEngine.Rendering.SphericalHarmonicsL2 sh;
+                        LightProbes.GetInterpolatedProbe(renderer.bounds.center, renderer, out sh);
+                        for (int c = 0; c < 3; ++c) writer.WriteLine("renderer_sh\t" + PathOf(renderer.transform) + "\t" + c + "\t" + sh[c, 0].ToString("R") + "\t" + sh[c, 1].ToString("R") + "\t" + sh[c, 2].ToString("R") + "\t" + sh[c, 3].ToString("R") + "\t" + sh[c, 6].ToString("R"));
+                    }
                     if (!seen.Add(material)) continue;
                     writer.WriteLine("material\t" + material.name + "\t" + material.shader.name + "\t" + material.renderQueue + "\t" + String.Join(",", material.shaderKeywords));
                     for (int p = 0; p < material.shader.GetPropertyCount(); ++p)
@@ -79,7 +85,7 @@ public sealed partial class GamePoseProbe {
             writer.WriteLine("fog\t" + RenderSettings.fog + "\t" + RenderSettings.fogMode + "\t" + RenderSettings.fogColor.ToString("R") + "\t" + RenderSettings.fogDensity.ToString("R"));
             foreach (Light light in UnityEngine.Object.FindObjectsOfType<Light>())
                 if (light.enabled && light.gameObject.activeInHierarchy)
-                    writer.WriteLine("light\t" + PathOf(light.transform) + "\t" + light.type + "\t" + light.color.ToString("R") + "\t" + light.intensity.ToString("R") + "\t" + light.transform.forward.ToString("R") + "\tenabled=" + light.enabled + " mask=" + light.cullingMask + " render=" + light.renderMode + " baked=" + light.bakingOutput.lightmapBakeType + " shadows=" + light.shadows);
+                    writer.WriteLine("light\t" + PathOf(light.transform) + "\t" + light.type + "\t" + light.color.ToString("R") + "\t" + light.intensity.ToString("R") + "\t" + light.transform.forward.ToString("R") + "\tenabled=" + light.enabled + " mask=" + light.cullingMask + " render=" + light.renderMode + " baked=" + light.bakingOutput.lightmapBakeType + " shadows=" + light.shadows + " strength=" + light.shadowStrength.ToString("R"));
             foreach (Renderer renderer in UnityEngine.Object.FindObjectsOfType<Renderer>()) {
                 if (!renderer.enabled || !renderer.gameObject.activeInHierarchy) continue;
                 foreach (Material material in renderer.sharedMaterials) {
@@ -121,6 +127,8 @@ public sealed partial class GamePoseProbe {
             int no = int.Parse(parts[0]), sun = int.Parse(parts[1]);
             yield return map.LoadMapCoroutine(no, false);
             for (int frame = 0; frame < 60; ++frame) yield return null;
+            // OK_PROBE_TOUR_LIGHTS_ONLY: the lights of each map, without its pictures (every map in minutes).
+            if (!String.IsNullOrEmpty(Environment.GetEnvironmentVariable("OK_PROBE_TOUR_LIGHTS_ONLY"))) { WriteTourStop(map, output + ".map" + no + "_lights.tsv"); continue; }
             if (map.isSunLightInfo && !map.IsTimeZone(sun)) continue;
             map.sunType = (SunLightInfo.Info.Type)sun;
             for (int frame = 0; frame < 60; ++frame) yield return null;

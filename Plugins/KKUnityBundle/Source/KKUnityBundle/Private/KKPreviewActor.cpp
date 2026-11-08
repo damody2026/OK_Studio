@@ -11394,7 +11394,9 @@ static FOkCamRig OkComputeCameras(AKKPreviewActor* Actor)
 	const float BodyDist = FMath::Clamp(SizeZ * 2.63f * PortraitWidthFit, 390.f, 980.f);
 	FOkCamRig R;
 	R.BodyCenter = FVector(BodyCenter.X, BodyCenter.Y, LookZ);
-	R.BodyLoc = FVector(BodyCenter.X, BodyCenter.Y + BodyDist, LookZ);
+	// Measured from where the character stands: a tail or long hair behind it moves the box's middle back, which brought the
+	// camera in on the body and cut the feet off.
+	R.BodyLoc = FVector(BodyCenter.X, FMath::Max<double>(BodyCenter.Y, 0.) + BodyDist, LookZ);
 	R.BodyRot = (R.BodyCenter - R.BodyLoc).Rotation();
 	const FVector FaceCenter = FVector(BodyCenter.X, BodyCenter.Y, Bound.Min.Z + SizeZ * 0.88f);
 	FBox FaceBounds(EForceInit::ForceInit);

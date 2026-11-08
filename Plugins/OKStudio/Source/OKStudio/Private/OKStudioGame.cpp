@@ -189,7 +189,7 @@ UOKStudioGame* UOKStudioGame::Start(UWorld* World, const FString& InFile, FStrin
 		PC->SetInputMode(FInputModeUIOnly());
 	}
 	if (!InFile.IsEmpty()) { if (!Game->Load(InFile, OutError)) UE_LOG(LogTemp, Warning, TEXT("OK studio: %s"), *OutError); }
-	else Game->Add(EOKSceneObjectKind::Light);
+	else Game->AddMainLight();
 	if (GEngine && GEngine->GameViewport)
 	{
 		Game->Panel = SNew(SOKStudioPanel).Game(Game);
@@ -317,6 +317,14 @@ void UOKStudioGame::CommitHistory()
 	int64 Bytes = 0;
 	for (const FString& S : UndoStack) Bytes += S.Len() * sizeof(TCHAR);
 	while (UndoStack.Num() > 1 && (UndoStack.Num() > 100 || Bytes > (int64(256) << 20))) { Bytes -= UndoStack[0].Len() * sizeof(TCHAR); UndoStack.RemoveAt(0); UndoSelections.RemoveAt(0); }
+}
+
+void UOKStudioGame::AmendHistory()
+{
+	if (!Document) return;
+	bHistoryDirty = false;
+	HistoryState = Document->ToJson();
+	HistorySelection = Selection;
 }
 
 void UOKStudioGame::RestoreHistory(const FString& State)
@@ -510,6 +518,60 @@ bool UOKStudioGame::FrameMapStart()
 	return true;
 }
 
+bool UOKStudioGame::LandFurniture(int32 Id, bool& bMoved)
+{
+	bMoved = false;
+	FOKSceneObject* O = Document ? Document->Find(Id) : nullptr;
+	if (!O || O->Parent >= 0 || !SceneActor) return true;
+	FBox Box;
+	if (!SceneActor->PreviewOf(Id) || !WorldBounds(Id, Box) || !Box.IsValid || Box.GetVolume() <= 0.) return false;
+	const FVector Size = Box.GetSize();
+	// A book stays where the view is, to be put on something; a sofa came at the view's height, in the air, through her (U265).
+	if (FMath::Max(Size.X, Size.Y) < 40. || Size.Z < 30.) return true;
+	TArray<FBox> Parts, Taken;
+	SceneActor->MapPartBounds(Parts);
+	OKMapFurniture(Parts, Taken);
+	for (const FOKSceneObject& X : Document->Objects)
+	{
+		FBox B;
+		if (X.Id != Id && (X.Kind == EOKSceneObjectKind::Character || X.Kind == EOKSceneObjectKind::Item) && Document->IsShown(X.Id) && WorldBounds(X.Id, B)) Taken.Add(B);
+	}
+	// The floor: the highest wide top under it. No map: the scene's ground.
+	const FVector Middle = Box.GetCenter();
+	double Floor = Parts.IsEmpty() ? 0. : Box.Min.Z;
+	bool bFloor = Parts.IsEmpty();
+	for (const FBox& B : Parts)
+	{
+		const FVector S = B.GetSize();
+		if (S.X < 150. || S.Y < 150. || Middle.X < B.Min.X || Middle.X > B.Max.X || Middle.Y < B.Min.Y || Middle.Y > B.Max.Y || B.Max.Z > Box.Min.Z + 1.) continue;
+		if (!bFloor || B.Max.Z > Floor) { Floor = B.Max.Z; bFloor = true; }
+	}
+	const FVector Half(Size.X / 2., Size.Y / 2., Size.Z / 2.);
+	auto Free = [&](const FVector2D& P)
+	{
+		const FVector At(P.X, P.Y, Floor + Half.Z + 8.);
+		const FBox Room(At - FVector(Half.X, Half.Y, Half.Z), At + Half);
+		if (!Parts.IsEmpty() && !OKStandsOnMap(Parts, FVector(P.X, P.Y, Floor))) return false;
+		return !Taken.ContainsByPredicate([&Room](const FBox& B) { return B.Intersect(Room); });
+	};
+	FVector2D At(Middle.X, Middle.Y);
+	bool bFound = Free(At);
+	for (int32 Ring = 1; Ring <= 15 && !bFound; ++Ring)
+		for (int32 A = 0; A < 16 && !bFound; ++A)
+		{
+			const FVector Step = FRotator(0.f, Yaw + 90.f + A * 22.5f, 0.f).Vector() * (40. * Ring);
+			const FVector2D P(Middle.X + Step.X, Middle.Y + Step.Y);
+			if (Free(P)) { At = P; bFound = true; }
+		}
+	const FVector Move(At.X - Middle.X, At.Y - Middle.Y, Floor - Box.Min.Z);
+	if (Move.IsNearlyZero(0.01)) return true;
+	FTransform World = Document->WorldTransform(Id);
+	World.AddToTranslation(Move);
+	O->Transform = World;
+	bMoved = true;
+	return true;
+}
+
 int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 {
 	const int32 Id = Add(EOKSceneObjectKind::Character);
@@ -621,6 +683,14 @@ int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 		if (Panel) Panel->RefreshRows();
 		Document->NotifyChanged();
 	}
+	return Id;
+}
+
+int32 UOKStudioGame::AddMainLight()
+{
+	// Studio's character light (mask 1024, the Chara layer): at 4 on the map too it washed out the ground (U268).
+	const int32 Id = Add(EOKSceneObjectKind::Light);
+	if (FOKSceneObject* O = Document->Find(Id)) O->Light.bCharactersOnly = true;
 	return Id;
 }
 

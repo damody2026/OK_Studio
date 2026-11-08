@@ -38,6 +38,21 @@ public:
 	AOKStudioViewer(const FObjectInitializer& Initializer);
 };
 
+/** A seat found in the scene (U264): read from its mesh, map parts have no names to go by. */
+struct FOKChair
+{
+	FBox Box = FBox(ForceInit);
+	int32 Item = -1;
+	/** The height of the seat's top; where the hips go on it; the way a person on it looks. */
+	double SeatZ = 0.;
+	FVector2D Hips = FVector2D::ZeroVector;
+	double Yaw = 0.;
+	/** How far along the way it looks the seat ends: knees go past it. */
+	double Edge = 0.;
+	/** A backrest told Yaw; without one, nothing but an item's turn or a desk beside it says. */
+	bool bFacing = false;
+};
+
 /**
  * OK Studio inside the game: the shared scene tree shown in the running world, an orbit viewer camera and a Slate
  * panel (outliner, object properties, scene files). Started by `OKStudio.Play [scene.okscene]`.
@@ -105,15 +120,19 @@ public:
 	void NoteStartView() { StartFocus = Focus; StartDistance = Distance; }
 	/** Pans the free view so object Id stands in the open part of it, when Covered (0..1 of the view) hides it (U263). */
 	bool KeepInOpenView(int32 Id, const FBox2D& Covered);
-	/** The chair-sized boxes of the map and the scene's items (map parts have no names to go by). */
+	/** The boxes of the map and the scene's items a seat could be in. */
 	void FindChairs(TArray<FBox>& Out, TArray<int32>* OutItems = nullptr) const;
-	/** The chair at a point of the view, the nearest of several. */
-	bool ChairAt(const FVector2D& Position, FBox& Out, int32* OutItem = nullptr) const;
-	/** Stands character Id at a chair, facing the desk or table beside it if there is one. */
-	bool SeatAt(int32 Id, const FBox& Chair, int32 Item = -1);
-	/** With its sitting motion on: the hips over the chair, wherever the motion has them. */
-	bool HipsOver(int32 Id, const FBox& Chair);
-	/** The selected items and characters go onto the surface seen behind them, along the line of sight; how many moved. */
+	/** The seat at a point of the view, the nearest of several: on a sofa or bench the place clicked. */
+	bool ChairAt(const FVector2D& Position, FOKChair& Out) const;
+	/** Stands character Id at a seat, looking the way it does. */
+	bool SeatAt(int32 Id, const FOKChair& Chair);
+	/** With its sitting motion on: the hips on the seat, wherever the motion has them. */
+	bool HipsOver(int32 Id, const FOKChair& Chair, bool* OutBehindDesk = nullptr);
+	/** Where a bone of a character is now. */
+	bool BoneAt(int32 Id, const TCHAR* Bone, FVector& Out) const;
+	/** A new item the size of furniture goes down onto the floor and out of what stands there (U265). False while it is not built. */
+	bool LandFurniture(int32 Id, bool& bMoved);
+	/** The selected items and characters go onto the surface seen behind them, along the line of sight; furniture straight down. How many moved. */
 	int32 DropOnSurface();
 	/** The part of the view no panel covers, as fractions of the view (0..1, y down); the panel keeps it current. Framing
 	 *  centres there and sizes the distance to it. */
@@ -146,6 +165,8 @@ public:
 
 	/** Adds an object under the selected folder (or next to the selected object) and selects it. */
 	int32 Add(EOKSceneObjectKind Kind);
+	/** A new scene's 主光: Studio's character light, on the characters and items only. */
+	int32 AddMainLight();
 	void Select(int32 Id);
 	bool Save(const FString& Path, FString& OutError);
 	bool Load(const FString& Path, FString& OutError);
@@ -340,6 +361,8 @@ public:
 	int32 UndoSteps() const { return UndoStack.Num() + (bHistoryDirty ? 1 : 0); }
 	/** Records a pending change now (otherwise done on the next still tick). */
 	void CommitHistory();
+	/** What changed since the last step belongs to that step: one Ctrl+Z takes both back. */
+	void AmendHistory();
 	/** Ends the undo step a pending change is in, so a command or control op is a step of its own (changes within 0.4 s
 	 *  otherwise join one step, which a drag needs). */
 	void EndHistoryStep() { if (bHistoryDirty) CommitHistory(); }

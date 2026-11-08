@@ -1,4 +1,5 @@
 #include "OKSceneActor.h"
+#include "ProceduralMeshComponent.h"
 #include "Async/Async.h"
 #include "Async/ParallelFor.h"
 #include <atomic>
@@ -1436,6 +1437,27 @@ void AOKSceneActor::SyncMap()
 static TAutoConsoleVariable<int32> CVarOkStudioMapSun(TEXT("ok.Studio.MapSun"), 1,
 	TEXT("1: light a Studio map with its own sun (SunLightInfo._targetLight at the scene's time of day, casting shadows); 0: maps show only their lightmaps and emission."));
 
+/** The map sun's Light.shadowStrength, where it is not 1: what is left of the sun in its shadows. The library does not record
+ *  it (its records are binary, a new field means converting every map again); read from the game with
+ *  `run_map_tour.lua --lights-only` over every map (U269). */
+static float OKStudioMapSunShadow(int32 Map)
+{
+	switch (Map)
+	{
+	case 5: return .85f;
+	case 11: return .897f;
+	case 16: return .116f;
+	case 40: return .5f;
+	case 50: case 51: case 52: case 54: case 57: return .807f;
+	case 53: return .9f;
+	case 55: return .85f;
+	case 56: return .857f;
+	case 58: return .87f;
+	case 73: return .439f;
+	default: return 1.f;
+	}
+}
+
 void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
 {
 	AKKPreviewActor* Map = MapPreview();
@@ -1515,6 +1537,7 @@ void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
     const float Energy=FMath::Max3(Irradiance.R,Irradiance.G,Irradiance.B);
     MapSun->SetLightColor(Energy>0 ? FLinearColor(Irradiance.R/Energy,Irradiance.G/Energy,Irradiance.B/Energy,1) : FLinearColor::Black);
     MapSun->SetIntensity(Energy*UE_PI);
+    MapSun->SetShadowAmount(OKStudioMapSunShadow(Document->Map));
 	// The items' forward light when it reaches their layer (UpdateItemLighting): Unity (-x, z, y) towards the light.
 	FLinearColor Lo, Hi, Low24;
 	if (Map->Session.MaterialValue(0, "_OKSunCullingLo", Lo) && Map->Session.MaterialValue(0, "_OKSunCullingHi", Hi))
@@ -1843,6 +1866,29 @@ FString AOKSceneActor::MapTimeNote() const
 	TArray<FString> Notes;
 	if (!MapTimes) Notes.Add(TEXT("地圖沒有時段資料"));
 	else if (!((MapTimes >> Want) & 1) && ShownMapTime >= 0 && ShownMapTime < 4) Notes.Add(FString::Printf(TEXT("地圖沒有「%s」，顯示「%s」"), Names[Want], Names[ShownMapTime]));
+	// A map may give every time the same sun and show the same parts (the park): the buttons then change nothing, as in the
+	// original. Said, or it reads as a broken button (U267).
+	bool bSameTimes = MapTimes != 0 && !bMapSunBaked;
+	AKKPreviewActor* Map = MapPreview();
+	FLinearColor FirstColor, FirstAngle;
+	bool bFirst = true;
+	for (int32 T = 0; T < 4 && bSameTimes; ++T)
+	{
+		if (!((MapTimes >> T) & 1)) continue;
+		FLinearColor Color, Angle;
+		const FTCHARToUTF8 ColorName(*FString::Printf(TEXT("_OKSun%dColor"), T)), AngleName(*FString::Printf(TEXT("_OKSun%dAngle"), T));
+		Map->Session.MaterialValue(0, ColorName.Get(), Color);
+		Map->Session.MaterialValue(0, AngleName.Get(), Angle);
+		if (bFirst) { FirstColor = Color; FirstAngle = Angle; bFirst = false; }
+		else bSameTimes = Color.Equals(FirstColor) && Angle.Equals(FirstAngle);
+	}
+	for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews)
+	{
+		if (!bSameTimes || !P.IsValid()) continue;
+		TInlineComponentArray<UPrimitiveComponent*> Primitives(P.Get());
+		for (const UPrimitiveComponent* C : Primitives) for (const FName& Tag : C->ComponentTags) if (Tag.ToString().StartsWith(TEXT("OKSunVisible"))) bSameTimes = false;
+	}
+	if (bSameTimes) Notes.Add(TEXT("這張地圖各時段的光與物件都相同，換時段畫面不變，和原作一樣；要變暗用畫面設定的色調"));
 	if (bMapSunBaked) Notes.Add(TEXT("光照烘焙在地圖貼圖裡，時段只換顯示的物件與天空"));
 	else if (MapSun)
 	{
@@ -1861,6 +1907,26 @@ void AOKSceneActor::MapPartBounds(TArray<FBox>& Out) const
 		for (const UPrimitiveComponent* C : Primitives)
 			if (C && C->IsRegistered() && C->IsVisible()) Out.Add(C->Bounds.GetBox());
 	}
+}
+
+void AOKSceneActor::ChairMesh(const FBox& Box, int32 Item, TArray<FVector>& Out) const
+{
+	const FBox Around = Box.ExpandBy(1.);
+	const auto Read = [&](const AKKPreviewActor* Preview)
+	{
+		TInlineComponentArray<UProceduralMeshComponent*> Meshes(Preview);
+		for (UProceduralMeshComponent* M : Meshes)
+		{
+			if (!M || !M->IsRegistered() || !M->IsVisible() || !Around.IsInside(M->Bounds.GetBox())) continue;
+			const FMatrix ToWorld = M->GetRenderMatrix();
+			for (int32 I = 0; I < M->GetNumSections(); ++I)
+				if (const FProcMeshSection* Section = M->GetProcMeshSection(I))
+					for (const uint32 Index : Section->ProcIndexBuffer)
+						if (Section->ProcVertexBuffer.IsValidIndex(Index)) Out.Add(ToWorld.TransformPosition(Section->ProcVertexBuffer[Index].Position));
+		}
+	};
+	if (Item >= 0) { if (const AKKPreviewActor* Preview = PreviewOf(Item)) Read(Preview); }
+	else for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews) if (P.IsValid()) Read(P.Get());
 }
 
 AKKPreviewActor* AOKSceneActor::PreviewOf(int32 Id) const

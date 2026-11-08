@@ -362,12 +362,11 @@ click("清除 FK")
 
 -- U262, U263: 放下, 坐下 (on a map's chair), 配到時間軸, 移除配樂. 開啟資料夾 opens Explorer and is left out.
 local function idle() for _ = 1, 240 do if (call("state").busy or "") == "" then return end wait(30) end end
-local function status() return (call("state").status or "") end
+local function status() return ((call("state").ui or {}).status or "") end
 call("scene", { map = 4 }); idle(); wait(60)
 call("cmd", { id = "add.item" }); wait(30)
 call("type", { field = "搜尋道具", text = "見開き", enter = true }); wait(30)
 click("見開き本1"); idle(); wait(30)
-call("cmd", { id = "window.close", arg = "items" }); wait(10)
 local function item() for _, o in ipairs(call("state").objects or {}) do if o.kind == "item" then return o end end end
 local book = item()
 check(book ~= nil, "a book to put down")
@@ -395,6 +394,65 @@ if #chairs > 0 then
   local me = objects()[id]
   local at = me and me.location or { 1e9, 1e9, 0 }
   check(math.sqrt((at[1] - cx) ^ 2 + (at[2] - cy) ^ 2) < 40, ("坐下 puts the character at the chair (%.0f,%.0f by %.0f,%.0f)"):format(at[1], at[2], cx, cy))
+end
+
+-- U264: a sofa, read from its mesh: on the place clicked, the hips on the seat, with no map around.
+call("scene", { map = -1 }); idle(); wait(30)
+local known = objects()
+call("cmd", { id = "add.item", arg = "2/13/79" }); idle(); wait(30)
+local sofa = nil
+for oid, o in pairs(objects()) do if not known[oid] and o.kind == "item" then sofa = o end end
+check(sofa ~= nil, "a sofa to sit on")
+if sofa then
+  wait(120)
+  check(math.abs(objects()[sofa.id].location[3]) < 1, ("a new sofa lands on the floor (%.1f)"):format(objects()[sofa.id].location[3]))
+  call("transform", { id = sofa.id, location = { 300, 0, 0 }, rotation = { 0, 0, 0 } }); wait(30)
+  call("select", { ids = { id } }); wait(10)
+  call("camera", { focus = { 300, 0, 50 }, yaw = 90, pitch = -20, distance = 300 }); wait(30)
+  local shot = call("ui_shot", { name = "button_check_sofa.png" })
+  check(click("坐下").ok, "坐下 clicked for the sofa")
+  call("mouse", { x = (shot.width or 1600) / 2, y = (shot.height or 900) / 2 + 50 }); wait(120)
+  local me = objects()[id]
+  local at = me and me.location or { 1e9, 1e9, 1e9 }
+  check(math.abs(at[1] - 300) < 40 and math.abs(at[2]) < 30 and math.abs(at[3]) < 8, ("坐下 sits on the sofa (%.0f,%.0f,%.0f)"):format(at[1], at[2], at[3]))
+end
+
+-- U268: a new scene's 主光 is Studio's character light: on the map at 4 it washed out the ground.
+do
+  local light = nil
+  for _, o in pairs(objects()) do if o.kind == "light" and (not light or o.id < light.id) then light = o end end
+  local detail = light and (call("inspect", { id = light.id }).object or {}) or {}
+  check(((detail.light or {}).bCharactersOnly) == true, "主光 lights the characters only")
+end
+
+-- U265: 看對方, both looking at the other's head.
+local card = (((call("inspect", { id = id }).object or {}).character or {}).card) or ""
+local known2 = objects()
+call("spawn", { kind = "character", card = card }); idle(); wait(60)
+local other = nil
+for oid, o in pairs(objects()) do if not known2[oid] and o.kind == "character" then other = o end end
+check(other ~= nil, "a second character to look at")
+if other then
+  local function neck(oid) return ((call("inspect", { id = oid }).object or {}).character or {}).neckLook end
+  call("timeline", { time = 0 }); wait(5)
+  local before = neck(id)
+  call("timeline", { key = { ids = { id } } }); wait(5)
+  call("timeline", { time = 2 }); wait(5)
+  call("select", { ids = { id, other.id } }); wait(10)
+  check(call("cmd", { id = "transform.look" }).ok, "看對方 runs")
+  wait(30)
+  check(neck(id) == "Point" and neck(other.id) == "Point", ("看對方 turns both to a look point (%s, %s)"):format(tostring(neck(id)), tostring(neck(other.id))))
+  -- U266: a key holds the look: as it was at 0 s, on the other from 2 s.
+  call("timeline", { key = { ids = { id } } }); wait(5)
+  call("timeline", { time = 0 }); wait(20)
+  local early = neck(id)
+  call("timeline", { time = 2 }); wait(20)
+  local late = neck(id)
+  check(early == before and late == "Point", ("keys hold the look (%s at 0 s, %s at 2 s)"):format(tostring(early), tostring(late)))
+  call("keys", { id = id, action = "clear" }); wait(5)
+  call("timeline", { time = 0 }); wait(5)
+  call("select", { ids = { other.id } }); wait(10); call("cmd", { id = "edit.delete" }); wait(20)
+  call("select", { ids = { id } }); wait(10)
 end
 
 local wav = "UserData/audio/_button_check.wav"
