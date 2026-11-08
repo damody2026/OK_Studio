@@ -55,6 +55,7 @@ public:
  static FVector AimDirection(const FVector& Origin,const FVector& Target,double Speed);
  UFUNCTION(BlueprintCallable,Category="Paint") void ClearPaint();
  UFUNCTION(BlueprintCallable,Category="Paint") void ClearPaintForActor(AActor* Actor);
+ UFUNCTION(BlueprintCallable,Category="Paint") void ClearPaintOnBodies(); // every character it has a coat on; the floor and drops in the air stay
  void SetControlsVisible(bool Visible);
  bool bSkipTongue=false; // her tongue takes no coating
  bool bShowGun=true; // the water gun drawn while it sprays; off for what comes out of her in H (it stood on her head as her drool ran)

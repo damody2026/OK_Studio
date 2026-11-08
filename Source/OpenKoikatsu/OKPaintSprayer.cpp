@@ -765,6 +765,12 @@ void AOKPaintSprayer::ClearPaintForActor(AActor* Actor)
   DrawFilm(S);
  }
 }
+void AOKPaintSprayer::ClearPaintOnBodies()
+{ SyncTransport();
+ TSet<AActor*> Owners;for(const auto& S:Surfaces)if(S&&S->Component.IsValid()&&S->Component->GetOwner())Owners.Add(S->Component->GetOwner());
+ for(AActor* Owner:Owners)ClearPaintForActor(Owner);
+ UE_LOG(LogTemp,Display,TEXT("Paint cleared from %d characters"),Owners.Num());
+}
 void AOKPaintSprayer::ReleaseSurfaceAtlas(FSurface& S){for(const auto& Entry:S.Charts)SharedAtlas.Release(Entry.Value);for(const auto& Entry:S.PageMaterials)Materials.Remove(Entry.Value);S.Charts.Reset();S.PageMaterials.Reset();}
 void AOKPaintSprayer::ClearPaint()
 { SyncTransport();
