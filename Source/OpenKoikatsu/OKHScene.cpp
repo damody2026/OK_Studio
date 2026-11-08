@@ -160,7 +160,7 @@ static TAutoConsoleVariable<float> CVarHMirrorYaw(TEXT("ok.HScene.MirrorYaw"),90
 static TAutoConsoleVariable<int32> CVarHMirrorMainRenderer(TEXT("ok.HScene.MirrorMainRenderer"),0,TEXT("1: the mirror's picture drawn as passes of the main renderer (cheaper; the scene behind them came out black)"));
 static TAutoConsoleVariable<int32> CVarHMirrorEvery(TEXT("ok.HScene.MirrorEvery"),2,TEXT("The mirror's picture taken every this many frames"));
 static TAutoConsoleVariable<float> CVarHMirrorScale(TEXT("ok.HScene.MirrorScale"),2.f,TEXT("The mirror's picture at this many times its size on the screen (its edges smoothed)"));
-static TAutoConsoleVariable<float> CVarHMirrorDistance(TEXT("ok.HScene.MirrorDistance"),150.f,TEXT("How far the mirror stands from them, cm"));
+static TAutoConsoleVariable<float> CVarHMirrorDistance(TEXT("ok.HScene.MirrorDistance"),150.f,TEXT("How far the mirror stands from them, 1 to 150 cm"));
 static TAutoConsoleVariable<float> CVarHTongueLength(TEXT("ok.HScene.TongueLength"),1.f,TEXT("How long her tongue comes out, 1 as the card has it"));
 static TAutoConsoleVariable<int32> CVarHDrool(TEXT("ok.HScene.Drooling"),0,TEXT("1: she drools (kissing, ahegao); 0 not (user 2026-11-09: her mouth no longer drools; renamed from Drool so a saved 1 is not taken)"));
 static TAutoConsoleVariable<int32> CVarHTears(TEXT("ok.HScene.Tears"),0,TEXT("1: tears run down her cheeks sucking him; 0 not (user 2026-11-09: no tears)"));
@@ -221,7 +221,7 @@ static const FHSetting HSettings[]={
     {TEXT("AhegaoSpeed"),TEXT("ui.hscene.set_ahe_speed"),0.f,1.f,.01f,.66f},
     {TEXT("AhegaoGaze"),TEXT("ui.hscene.set_ahe_gaze"),0.f,2.f,.05f,1.25f},
     {TEXT("AhegaoMouthOpen"),TEXT("ui.hscene.set_ahe_mouth"),0.f,1.f,.05f,.85f},
-    {TEXT("AhegaoArms"),TEXT("ui.hscene.set_ahe_arms"),0.f,1.f,1.f,1.f},
+    {TEXT("AhegaoArmsUp"),TEXT("ui.hscene.set_ahe_arms"),0.f,1.f,1.f,0.f},
     {TEXT("Drooling"),TEXT("ui.hscene.set_drool"),0.f,1.f,1.f,0.f},
     {TEXT("Tears"),TEXT("ui.hscene.set_tears"),0.f,1.f,1.f,0.f},
     {TEXT("TongueLength"),TEXT("ui.hscene.tongue_length"),0.f,4.f,.05f,1.f},
@@ -264,7 +264,7 @@ static const FHSetting HSettings[]={
     {nullptr,TEXT("ui.hscene.set_mirror_group")},
     {TEXT("Mirror"),TEXT("ui.hscene.set_mirror"),0.f,1.f,1.f,0.f},
     {TEXT("MirrorYaw"),TEXT("ui.hscene.set_mirror_yaw"),0.f,360.f,5.f,90.f},
-    {TEXT("MirrorDistance"),TEXT("ui.hscene.set_mirror_distance"),50.f,500.f,5.f,150.f},
+    {TEXT("MirrorDistance"),TEXT("ui.hscene.set_mirror_distance"),1.f,150.f,1.f,150.f},
 };
 static IConsoleVariable* HSettingVar(const TCHAR* Name){return IConsoleManager::Get().FindConsoleVariable(*(FString(TEXT("ok.HScene."))+Name));}
 // A test run keeps its own (-OKSettingsDir, Tools/run_street_social_development.lua): the player's game reads the shared one.
@@ -1817,12 +1817,16 @@ static TAutoConsoleVariable<int32> CVarHAhegaoTest(TEXT("ok.HScene.AhegaoTest"),
 static TAutoConsoleVariable<int32> CVarHAhegaoHand(TEXT("ok.HScene.AhegaoHand"),2,TEXT("Ahegao: the hand-shape key of the V sign (-1 no hand shape)"));
 static TAutoConsoleVariable<FString> CVarHAhegaoReach(TEXT("ok.HScene.AhegaoReach"),TEXT("13,9,-1"),TEXT("Ahegao: her hands from her head, cm: out to the side, forward, up"));
 static TAutoConsoleVariable<float> CVarHAhegaoMouthOpen(TEXT("ok.HScene.AhegaoMouthOpen"),.85f,TEXT("Ahegao: how far her mouth stays open (her tongue out)"));
-static TAutoConsoleVariable<int32> CVarHAhegaoArms(TEXT("ok.HScene.AhegaoArms"),1,TEXT("Ahegao: 1 her hands up by her face (Studio IK), 0 only the V"));
+static TAutoConsoleVariable<int32> CVarHAhegaoArms(TEXT("ok.HScene.AhegaoArmsUp"),0,TEXT("Ahegao: 1 her hands up by her face (Studio IK), 0 only the V (user 2026-11-09: her arms not folded in, only her hands; renamed from AhegaoArms so a saved 1 is not taken)"));
 static bool HChestForward(AKKPreviewActor* A,FVector& Out);
 // Her tongue out: SexFaces' ahegao mouth (43: smile with TongueOut, installed with the game), else the original's mouth 24 (its
 // tongue hardly shows here), else 舌出し (_sita), else 舐める (_name).
-static TAutoConsoleVariable<float> CVarHTongueUp(TEXT("ok.HScene.TongueUp"),1.f,TEXT("Her tongue out moved up this many cm (up her face)"));
-static TAutoConsoleVariable<float> CVarHTonguePitch(TEXT("ok.HScene.TonguePitch"),20.f,TEXT("Her tongue out turned up this many degrees round the back of her mouth"));
+// Two settings (user 2026-11-09): him moving in her, her mouth open wide, the tongue as made (raised it stood above her
+// lip); otherwise (after a climax, the test) raised more, it hung below her lip.
+static TAutoConsoleVariable<float> CVarHTongueUp(TEXT("ok.HScene.TongueUp"),1.5f,TEXT("Her tongue out moved up this many cm (up her face), him not moving in her"));
+static TAutoConsoleVariable<float> CVarHTonguePitch(TEXT("ok.HScene.TonguePitch"),30.f,TEXT("Her tongue out turned up this many degrees round the back of her mouth, him not moving in her"));
+static TAutoConsoleVariable<float> CVarHTongueUpIn(TEXT("ok.HScene.TongueUpIn"),0.f,TEXT("Her tongue out moved up this many cm while he moves in her"));
+static TAutoConsoleVariable<float> CVarHTonguePitchIn(TEXT("ok.HScene.TonguePitchIn"),0.f,TEXT("Her tongue out turned up this many degrees while he moves in her"));
 static int32 HTongueMouth(AKKPreviewActor* Girl);
 static constexpr double HTongueFade=1.5; // seconds her tongue takes to go back in after a climax (UpdateFace)
 static bool HBoneTransform(AKKPreviewActor* A,const TCHAR* Name,FTransform& Out);
@@ -1837,7 +1841,8 @@ void UOKHScenePanel::TickTongue(){
     if(!IsValid(Girl)||!Girl->GetRootComponent())return;
     if(Girl->MouthPattern!=TongueOutChecked){TongueOutChecked=Girl->MouthPattern;const FString Label=Girl->GetMouthPatternLabel(Girl->MouthPattern).ToLower();
         TongueOutPattern=Label.Contains(TEXT("_sita"))||Label.Contains(TEXT("_name"))||Girl->MouthPattern==HTongueMouth(Girl)?Girl->MouthPattern:-2;}
-    const float Up=CVarHTongueUp.GetValueOnGameThread(),Pitch=CVarHTonguePitch.GetValueOnGameThread();
+    const bool bMovingIn=Mode==2&&HBase(Current()).Contains(TEXT("Loop"));
+    const float Up=(bMovingIn?CVarHTongueUpIn:CVarHTongueUp).GetValueOnGameThread(),Pitch=(bMovingIn?CVarHTonguePitchIn:CVarHTonguePitch).GetValueOnGameThread();
     USceneComponent* Root=Girl->GetRootComponent();
     const FVector Moved=AlignedHer==Girl?Root->GetComponentTransform().InverseTransformVectorNoScale(HerApplied):FVector::ZeroVector;
     TArray<USceneComponent*> Comps;
@@ -1897,12 +1902,13 @@ void UOKHScenePanel::TickMirror(){
     // it swayed with every thrust (user 2026-11-09).
     const FTransform Frame=Girl->PairFrame();
     const float Yaw=float(Frame.Rotator().Yaw)+CVarHMirrorYaw.GetValueOnGameThread();const FVector Out=FRotator(0.f,Yaw,0.f).Vector();
-    const FVector Center=FVector(Frame.GetLocation().X,Frame.GetLocation().Y,Girl->GetActorLocation().Z+Half)+Out*FMath::Max(10.f,CVarHMirrorDistance.GetValueOnGameThread());
+    const FVector Center=FVector(Frame.GetLocation().X,Frame.GetLocation().Y,Girl->GetActorLocation().Z+Half)+Out*FMath::Clamp(CVarHMirrorDistance.GetValueOnGameThread(),1.f,150.f); // 1 to 150 cm (user 2026-11-09)
     const FVector Normal=-Out; // toward them
     Mirror->SetActorLocationAndRotation(Center,Normal.Rotation());
     // The camera reflected through the mirror's plane, looking straight at it (along the plane's normal toward them).
     const FVector Eye=PC->PlayerCameraManager->GetCameraLocation();const double Off=(Eye-Center)|Normal;
-    if(Off<=1.)return; // behind it: its back shows nothing new
+    // Behind it: its back is not drawn (user 2026-11-09), nor its picture taken.
+    if(Off<=1.){if(MirrorQuad->IsVisible())MirrorQuad->SetVisibility(false);MirrorTakenAt=0;return;}
     const FVector Up=FVector::UpVector,Right=Up^Normal; // the capture's right looking along Normal (UE: right = up x forward)
     // Its picture at twice its size on the screen (MirrorScale; user 2026-11-09: anti-aliased, the picture's pixels averaged
     // two by two as it is drawn smaller), 256 to 2048; both pictures made again only when that size doubles or halves.
@@ -1950,11 +1956,15 @@ void UOKHScenePanel::SetTongue(const TSharedPtr<FJsonObject>& Settings){
     if(!Settings.IsValid())return;double V;
     if(Settings->TryGetNumberField(TEXT("up"),V))CVarHTongueUp->Set(float(V),ECVF_SetByConsole);
     if(Settings->TryGetNumberField(TEXT("pitch"),V))CVarHTonguePitch->Set(float(V),ECVF_SetByConsole);
+    if(Settings->TryGetNumberField(TEXT("up_in"),V))CVarHTongueUpIn->Set(float(V),ECVF_SetByConsole);
+    if(Settings->TryGetNumberField(TEXT("pitch_in"),V))CVarHTonguePitchIn->Set(float(V),ECVF_SetByConsole);
     if(Settings->TryGetNumberField(TEXT("length"),V))CVarHTongueLength->Set(float(V),ECVF_SetByConsole);
-    UE_LOG(LogTemp,Display,TEXT("H scene: her tongue up %.2f cm, pitch %.1f deg, length %.2f"),CVarHTongueUp.GetValueOnGameThread(),CVarHTonguePitch.GetValueOnGameThread(),CVarHTongueLength.GetValueOnGameThread());
+    UE_LOG(LogTemp,Display,TEXT("H scene: her tongue up %.2f cm, pitch %.1f deg (moving in her %.2f cm, %.1f deg), length %.2f"),CVarHTongueUp.GetValueOnGameThread(),CVarHTonguePitch.GetValueOnGameThread(),
+        CVarHTongueUpIn.GetValueOnGameThread(),CVarHTonguePitchIn.GetValueOnGameThread(),CVarHTongueLength.GetValueOnGameThread());
 }
 TSharedPtr<FJsonObject> UOKHScenePanel::TongueJson() const{
     auto J=MakeShared<FJsonObject>();J->SetNumberField(TEXT("up"),CVarHTongueUp.GetValueOnGameThread());J->SetNumberField(TEXT("pitch"),CVarHTonguePitch.GetValueOnGameThread());
+    J->SetNumberField(TEXT("up_in"),CVarHTongueUpIn.GetValueOnGameThread());J->SetNumberField(TEXT("pitch_in"),CVarHTonguePitchIn.GetValueOnGameThread());
     J->SetNumberField(TEXT("length"),CVarHTongueLength.GetValueOnGameThread());J->SetBoolField(TEXT("raised"),bTongueRaised);
     // Why it is not raised: her mouth pattern, the one with her tongue out, the bones it goes by and her tongue's parts.
     if(AKKPreviewActor* Girl=TongueGirl.Get();IsValid(Girl)){J->SetNumberField(TEXT("mouth"),Girl->MouthPattern);J->SetNumberField(TEXT("out_mouth"),TongueOutPattern);FString Missing;
