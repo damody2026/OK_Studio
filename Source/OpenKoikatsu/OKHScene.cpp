@@ -24,13 +24,14 @@
 #include "KKRustExtract.h"
 #include "ok_extract.h"
 #include "KKSpeech.h"
+void OKHNoteCry(const FString& Path); // her cries' loudness (PlayHVoice)
 #include "OKSceneActor.h"
 #include "Kismet/GameplayStatics.h"
 #include "EngineUtils.h"
 #include "Engine/Light.h"
 #include "Components/LightComponentBase.h"
 #include "Engine/SkyLight.h"
-#include "Components/DirectionalLightComponent.h"
+#include "Components/PointLightComponent.h"
 #include "Engine/PostProcessVolume.h"
 #include "GameFramework/Info.h"
 #include "AudioDevice.h"
@@ -798,7 +799,7 @@ void UOKHScenePanel::Finish(const TCHAR* Kind){
         // User 2026-11-02: no spoken lines in H, only her cries (the breathing goes on through her climax).
         if(CVarHSpokenLines.GetValueOnGameThread()&&IsValid(Girl)&&KKSpeech::CollectHVoice(UOKCharacterController::DefaultVoiceRoot(),Gallery->Selected.Personality,K.EndsWith(TEXT("S"))?26:25,AnimId,Gallery->HBreath,Cries,Error)){
             const FKKHBreathCue& Cry=Cries[FMath::RandHelper(Cries.Num())];Girl->StopHBreath();
-            if(Girl->PlaySpeechFile(Cry.Path,FMath::Lerp(.94f,1.06f,Gallery->Selected.VoiceRate),Error)){bTalkSpoken=true;ClimaxUntil=FPlatformTime::Seconds()+4.;UE_LOG(LogTemp,Display,TEXT("H scene: her climax cry %s"),*Cry.Name);}}
+            if(Girl->PlaySpeechFile(Cry.Path,FMath::Lerp(.94f,1.06f,Gallery->Selected.VoiceRate),Error)){bTalkSpoken=true;OKHNoteCry(Cry.Path);ClimaxUntil=FPlatformTime::Seconds()+4.;UE_LOG(LogTemp,Display,TEXT("H scene: her climax cry %s"),*Cry.Name);}}
         if(!Error.IsEmpty())UE_LOG(LogTemp,Display,TEXT("H scene: no climax cry: %s"),*Error);
         ClimaxUntil=FMath::Max(ClimaxUntil,FPlatformTime::Seconds()+3.);
         // Developed there, she comes twice as long; her developed nipples spray six seconds more (H_DEVELOPMENT_EXPERIENCE_PLAN).
@@ -1041,6 +1042,21 @@ void UOKHScenePanel::PlaySe(const FString& Clip){
     SoundsPlaying.Add(Wave);if(SoundsPlaying.Num()>8)SoundsPlaying.RemoveAt(0);
     UGameplayStatics::PlaySound2D(this,Wave);
 }
+// How loud her voice files are (user 2026-11-09: her spoken lines as loud as her cries). The loudness of a file is
+// the RMS of its voiced samples (past 2% of full scale: the silence around the words left out), each file measured
+// once; her cries' mean is what her spoken lines (TTS, OKInteractionMode HSceneSpeak) are brought up to.
+static TAutoConsoleVariable<float> CVarHVoiceLoudness(TEXT("ok.HScene.VoiceLoudness"),.12f,TEXT("Her spoken lines' loudness (RMS of full scale) until a cry of hers has been measured"));
+float OKHVoiceRms(const FKKSpeechPcm& Pcm){
+    double Sum=0;int64 Count=0;for(const int16 S:Pcm.Samples){const double V=S/32768.;if(FMath::Abs(V)>.02){Sum+=V*V;++Count;}}
+    return Count>100?float(FMath::Sqrt(Sum/Count)):0.f;
+}
+static TMap<FString,float> GHCryRms;static double GHCrySum=0;static int32 GHCryCount=0;
+void OKHNoteCry(const FString& Path){
+    if(GHCryRms.Contains(Path))return;TSharedPtr<const FKKSpeechPcm,ESPMode::ThreadSafe> Pcm;FString Error;
+    const float Rms=KKSpeech::DecodeOgg(Path,Pcm,Error)&&Pcm?OKHVoiceRms(*Pcm):0.f;GHCryRms.Add(Path,Rms);
+    if(Rms>0.f){GHCrySum+=Rms;++GHCryCount;}
+}
+float OKHCryRms(){return GHCryCount?float(GHCrySum/GHCryCount):CVarHVoiceLoudness.GetValueOnGameThread();}
 bool UOKHScenePanel::PlayHVoice(int32 Row){
     if(!CVarHSpokenLines.GetValueOnGameThread())return false; // only her cries (user 2026-11-02): the breathing goes on
     AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl)||!Poses.IsValidIndex(ActivePose))return false;
@@ -1048,7 +1064,7 @@ bool UOKHScenePanel::PlayHVoice(int32 Row){
     TArray<FKKHBreathCue> Lines;FString Error;FKKHBreathContext Context=Gallery->HBreath;Context.bAnal=bAnalPlay;Context.bCondom=bCondom; // the panel may have just changed them
     if(KKSpeech::CollectHVoice(UOKCharacterController::DefaultVoiceRoot(),Gallery->Selected.Personality,Row+(Pose.FemaleLead?38:0),AnimId,Context,Lines,Error)){
         const FKKHBreathCue& Line=Lines[FMath::RandHelper(Lines.Num())];Girl->StopHBreath();
-        if(Girl->PlaySpeechFile(Line.Path,FMath::Lerp(.94f,1.06f,Gallery->Selected.VoiceRate),Error)){bTalkSpoken=true;
+        if(Girl->PlaySpeechFile(Line.Path,FMath::Lerp(.94f,1.06f,Gallery->Selected.VoiceRate),Error)){bTalkSpoken=true;OKHNoteCry(Line.Path);
             UE_LOG(LogTemp,Display,TEXT("H scene: her line %d (bank %d) %s"),300+Row,Gallery->HBreath.Experience,*Line.Name);return true;}}
     UE_LOG(LogTemp,Display,TEXT("H scene: no line %d: %s"),300+Row,*Error);return false;
 }
@@ -1962,40 +1978,38 @@ void UOKHScenePanel::TickMirror(){
     if(!MirrorQuad->IsVisible())MirrorQuad->SetVisibility(true);
 }
 // The skin parents lit by the scene (manifest lit_material_root, Launch/materials.json lit_root).
-static TAutoConsoleVariable<float> CVarHSkinLitKey(TEXT("ok.HScene.SkinLitKey"),3.f,TEXT("Lit skin: their key light (lux, channel 1 only)"));
+static TAutoConsoleVariable<float> CVarHSkinLitKey(TEXT("ok.HScene.SkinLitKey"),3.f,TEXT("Lit: their key light, lux where they are (a point light 2.5 m off, reaching only them)"));
 static TAutoConsoleVariable<float> CVarHSkinLitFill(TEXT("ok.HScene.SkinLitFill"),.35f,TEXT("Lit skin: their fill light, a share of the key"));
 static const FString& OKLitMaterialRoot(){
     static const FString Root=[]{FString Manifest,Json,Found;TSharedPtr<FJsonObject> Object;
         if(FParse::Value(FCommandLine::Get(),TEXT("StreetSocialManifest="),Manifest)&&FFileHelper::LoadFileToString(Json,*Manifest)&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Object)&&Object)Object->TryGetStringField(TEXT("lit_material_root"),Found);
-        return Found.IsEmpty()?FString(TEXT("/Game/IndependentResources/RuntimeMaterials/StreetLit01")):Found;}();
+        return Found.IsEmpty()?FString(TEXT("/Game/IndependentResources/RuntimeMaterials/StreetLit03")):Found;}();
     return Root;
 }
 // Each tick while on: a change of clothes brings new skin instances, and her own values move every frame.
 void UOKHScenePanel::TickSkinLit(bool bEnd){
     const bool bOn=!bEnd&&CVarHSkinLit.GetValueOnGameThread()!=0;
     if(!bOn&&!bSkinLitShown)return;
-    for(AKKPreviewActor* A:{Gallery?Gallery->PreviewActor.Get():nullptr,Gallery?Gallery->PartnerActor.Get():nullptr})if(IsValid(A)){
-        A->SetSkinLit(bOn,OKLitMaterialRoot());
-        // Lit by the scene the night street left her near black (2026-11-09): the pair on channel 1 too, where only
-        // their key and fill shine.
-        TInlineComponentArray<UPrimitiveComponent*> Prims(A);
-        // Only the parts drawn with her lit skin: changing every part's channels lost her hair and face (2026-11-09).
-        auto LitPart=[&](UPrimitiveComponent* P){if(auto* M=Cast<UMeshComponent>(P))for(int32 I=0;I<M->GetNumMaterials();++I)if(auto* D=Cast<UMaterialInstanceDynamic>(M->GetMaterial(I)))if(A->LitOriginalOf.Contains(D))return true;return false;};
-        for(UPrimitiveComponent* P:Prims){if(bOn){if(!SkinChannelWas.Contains(P)&&LitPart(P)){SkinChannelWas.Add(P,P->LightingChannels.bChannel1);P->SetLightingChannels(P->LightingChannels.bChannel0,true,P->LightingChannels.bChannel2);}}
-            else if(const bool* Was=SkinChannelWas.Find(P))P->SetLightingChannels(P->LightingChannels.bChannel0,*Was,P->LightingChannels.bChannel2);}}
-    if(!bOn){SkinChannelWas.Reset();for(auto* L:{SkinKey.Get(),SkinFill.Get()})if(L)L->DestroyComponent();SkinKey.Reset();SkinFill.Reset();}
+    for(AKKPreviewActor* A:{Gallery?Gallery->PreviewActor.Get():nullptr,Gallery?Gallery->PartnerActor.Get():nullptr})if(IsValid(A))A->SetSkinLit(bOn,OKLitMaterialRoot());
+    // Lit by the scene the night street left her near black (2026-11-09): a key and a fill light close to them, which
+    // reach only as far as the two of them. Not their own lighting channel: changing a part's channels rebuilds its
+    // render state, and her hair and accessories (affine parts) came back where they rest, not where they are posed.
+    if(!bOn){for(auto* L:{SkinKey.Get(),SkinFill.Get()})if(L)L->DestroyComponent();SkinKey.Reset();SkinFill.Reset();}
     else if(AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl)){
-        auto Make=[&](TWeakObjectPtr<UDirectionalLightComponent>& Out){if(Out.IsValid())return Out.Get();auto* L=NewObject<UDirectionalLightComponent>(Girl);L->SetMobility(EComponentMobility::Movable);
-            L->SetLightingChannels(false,true,false);L->SetCastShadows(false);L->RegisterComponent();Out=L;return L;};
+        auto Make=[&](TWeakObjectPtr<UPointLightComponent>& Out){if(Out.IsValid())return Out.Get();auto* L=NewObject<UPointLightComponent>(Girl);L->SetMobility(EComponentMobility::Movable);
+            L->SetCastShadows(false);L->SetIntensityUnits(ELightUnits::Candelas);L->SetSourceRadius(40.f);L->RegisterComponent();Out=L;return L;};
         static const FLinearColor Tints[]={FLinearColor::White,FLinearColor(1.f,.84f,.62f),FLinearColor(.68f,.8f,1.f),FLinearColor(1.f,.58f,.42f),FLinearColor(.3f,.36f,.62f)};
         const FLinearColor Tint=Tints[FMath::Clamp([]{static IConsoleVariable* const V=IConsoleManager::Get().FindConsoleVariable(TEXT("ok.HScene.LightTint"));return V?V->GetInt():0;}(),0,int32(UE_ARRAY_COUNT(Tints))-1)];
         // From the panel's light direction (TickCameraLight's), else from the camera.
         FVector ToLight=CameraLightShown;
         if(ToLight.IsNearlyZero())if(APlayerCameraManager* Cam=GetOwningPlayer()?GetOwningPlayer()->PlayerCameraManager.Get():nullptr)ToLight=(-Cam->GetCameraRotation().Vector()+FVector(0,0,.4f)).GetSafeNormal();
         if(ToLight.IsNearlyZero())ToLight=FVector(0,0,1);
-        UDirectionalLightComponent* Key=Make(SkinKey);UDirectionalLightComponent* Fill=Make(SkinFill);
-        Key->SetWorldRotation((-ToLight).Rotation());Key->SetIntensity(CVarHSkinLitKey.GetValueOnGameThread());Key->SetLightColor(Tint);
-        Fill->SetWorldRotation((ToLight*FVector(-1,-1,.2f)).GetSafeNormal().Rotation());Fill->SetIntensity(CVarHSkinLitKey.GetValueOnGameThread()*CVarHSkinLitFill.GetValueOnGameThread());Fill->SetLightColor(Tint);}
+        FVector Center=Girl->GetActorLocation();{FVector Hips;if(HBone(Girl,TEXT("j_hips"),Hips))Center=Hips;}
+        constexpr float Away=250.f; // cm from her: the key's lux there is candela / (2.5 m)^2
+        const float Lux=CVarHSkinLitKey.GetValueOnGameThread(),Candela=Lux*Away*Away/10000.f;
+        UPointLightComponent* Key=Make(SkinKey);UPointLightComponent* Fill=Make(SkinFill);
+        Key->SetWorldLocation(Center+ToLight*Away);Key->SetIntensity(Candela);Key->SetLightColor(Tint);Key->SetAttenuationRadius(Away*1.8f);
+        Fill->SetWorldLocation(Center+(ToLight*FVector(-1,-1,.2f)).GetSafeNormal()*Away);Fill->SetIntensity(Candela*CVarHSkinLitFill.GetValueOnGameThread());Fill->SetLightColor(Tint);Fill->SetAttenuationRadius(Away*1.8f);}
     if(bOn!=bSkinLitShown){bSkinLitShown=bOn;ActionsKey.Reset();}
 }
 void UOKHScenePanel::RemoveMirror(){

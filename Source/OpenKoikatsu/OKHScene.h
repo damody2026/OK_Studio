@@ -199,7 +199,7 @@ private:
     // Their skin lit by the scene or the original's toon (ok.HScene.SkinLit, SkinLitToggle; user 2026-11-09).
     void TickSkinLit(bool bEnd);bool bSkinLitShown=false;
     // While lit: a key and a fill light on lighting channel 1 only (the pair, not the street), from the panel's light rows.
-    TWeakObjectPtr<class UDirectionalLightComponent> SkinKey,SkinFill;TMap<TWeakObjectPtr<class UPrimitiveComponent>,bool> SkinChannelWas;
+    TWeakObjectPtr<class UPointLightComponent> SkinKey,SkinFill;
     // Taken after her no (experience "forced"): her first words and her talk context (Context).
     bool Forced() const;bool bForcedSaid=false;double ForcedSayAt=0.;
     // She talks by herself every ok.HScene.ChatEvery seconds she can (user 2026-11-09), his words go on as before.

@@ -10222,20 +10222,27 @@ bool AKKPreviewActor::SetSkinLit(bool bOn,const FString& LitRoot)
     }
     // The wrap's own swap first given back: her skin instance is what the lit one copies.
     if(WrapOriginalOf.Num())SetWrapLine(false,FVector::ZeroVector,FVector::ZeroVector,0.f,FString());
-    static const TSet<FString> Skins={TEXT("M_ForgeSkin"),TEXT("M_KoikanoSkin")};
     TSet<UMaterialInstanceDynamic*> Shown;
-    for(UMeshComponent* Mesh:Meshes)for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
+    // Not the affine parts (hair, clothes, accessories): they are drawn posed by the source mesh pass, whose shaders
+    // exist for unlit parents only; lit, they came out where they rest (2026-11-09). They stay as drawn.
+    for(UMeshComponent* Mesh:Meshes)if(!Mesh->IsA<UKKAffineProceduralMeshComponent>())for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
     {
         auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot));if(!M)continue;
         UMaterialInstanceDynamic* Lit=LitOriginalOf.Contains(M)?M:nullptr;
         if(!Lit)if(const auto* Found=LitInstanceOf.Find(M))Lit=*Found;
         if(!Lit)
         {
+            // Every family with a _Lit parent (skin, hair, clothes, items; user 2026-11-09): the others (eyes, brows,
+            // outlines, effects) stay as drawn. Which parents have none is remembered, not asked of the disk each frame.
             UMaterialInterface* Parent=M->Parent;
-            if(!Parent||!Skins.Contains(Parent->GetName())||Parent->GetPathName().Contains(TEXT("/StreetHG")))continue;
-            const FString Name=Parent->GetName()+TEXT("_Lit");
+            if(!Parent||Parent->GetPathName().Contains(TEXT("/StreetHG"))||Parent->GetName().EndsWith(TEXT("_Wrap")))continue;
+            // The face's parent pressed flat (<name>_Flat, ok.FaceFlatten) is lit as its family: its own shape, lit (user
+            // 2026-11-09: the face lit too).
+            FString Base=Parent->GetName();Base.RemoveFromEnd(TEXT("_Flat"));
+            const FString Name=Base+TEXT("_Lit");
+            if(LitParentMissing.Contains(LitRoot/Name))continue;
             UMaterialInterface* LitParent=FPackageName::DoesPackageExist(LitRoot/Name)?LoadObject<UMaterialInterface>(nullptr,*(LitRoot/Name+TEXT(".")+Name)):nullptr;
-            if(!LitParent){if(!bLitParentMissingLogged){bLitParentMissingLogged=true;UE_LOG(LogTemp,Warning,TEXT("Skin lit: no %s under %s"),*Name,*LitRoot);}continue;}
+            if(!LitParent){LitParentMissing.Add(LitRoot/Name);continue;}
             Lit=UMaterialInstanceDynamic::Create(LitParent,this);
             LitInstanceOf.Add(M,Lit);LitOriginalOf.Add(Lit,M);
         }

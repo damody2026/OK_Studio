@@ -710,14 +710,14 @@ public:
 	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> WrapInstanceOf;
 	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> WrapOriginalOf;
 	bool bWrapParentMissingLogged = false;
-	// Her skin lit by the scene (the 1-on-1 scene's switch): the skin instances swapped for ones of the _Lit parents under
+	// Her lit by the scene (the 1-on-1 scene's switch): every instance whose parent has a _Lit one swapped for one under
 	// LitRoot (Tools/prepare_runtime_shared_material.lua --lit-only), their values copied from hers on every call; false
 	// gives hers back. The _Lit parents carry the wrap offset too (SetWrapLine sets it on them in place).
 	bool SetSkinLit(bool bOn, const FString& LitRoot);
 	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> LitInstanceOf;
 	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> LitOriginalOf;
 	TSet<TWeakObjectPtr<class UMaterialInstanceDynamic>> LitWrapped;
-	bool bLitParentMissingLogged = false;
+	TSet<FString> LitParentMissing;
 	// Insertion depth within the current pose. Authored vagina.open only; bone
 	// spread is used when that morph is absent. Range is owned by paired playback.
 	void DriveVaginaOpening(const AKKPreviewActor& Male, float& RangeMin, float& RangeMax, bool& bRange);

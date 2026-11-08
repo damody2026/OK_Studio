@@ -359,7 +359,7 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
             FString PartRole;OkMeshView V{};if(Index!=INDEX_NONE&&Controller->PreviewActor->Session.PartAt(Index,V)&&V.role)PartRole=UTF8_TO_TCHAR(V.role);
             // Each slot's material: its name, d for a dynamic instance, st when it has the iris tiling (_MainTex_ST), rows when gaze rows.
             FString Mats;for(int32 S=0;S<C->GetNumMaterials();++S)if(UMaterialInterface* M=C->GetMaterial(S)){FLinearColor P;
-                Mats+=FString::Printf(TEXT(" %s%s%s%s"),*M->GetName(),M->IsA<UMaterialInstanceDynamic>()?TEXT(":d"):TEXT(""),M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex_ST")),P)?TEXT(":st"):TEXT(""),M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("KKEyeUV0Row0")),P)?TEXT(":rows"):TEXT(""));}
+                Mats+=FString::Printf(TEXT(" %s%s%s%s"),*(M->GetName()+(Cast<UMaterialInstance>(M)&&Cast<UMaterialInstance>(M)->Parent?TEXT("<")+Cast<UMaterialInstance>(M)->Parent->GetName():FString())),M->IsA<UMaterialInstanceDynamic>()?TEXT(":d"):TEXT(""),M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex_ST")),P)?TEXT(":st"):TEXT(""),M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("KKEyeUV0Row0")),P)?TEXT(":rows"):TEXT(""));}
             L.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("%d %s %s %s vis=%d hig=%d main=%d parent=%s mats=%s"),Index,*PartRole,*C->GetClass()->GetName(),*C->GetName(),C->IsVisible(),C->bHiddenInGame,C->bRenderInMainPass,C->GetAttachParent()?*C->GetAttachParent()->GetName():TEXT("-"),*Mats)));}
         View->SetArrayField(TEXT("parts"),L);}
     // {"his_parts":true}: the same for him, with each part's renderer name (the penis is o_dankon / cm_o_dan00).
@@ -393,11 +393,20 @@ void AOKInteractionMode::HSceneShowLine(const FString& Text){if(Controller&&Cont
 FString AOKInteractionMode::HSceneJudgeFacts() const{return Controller&&Controller->HPanel?Controller->HPanel->JudgeFacts():FString();}
 bool AOKInteractionMode::HSceneApplyTalk(const TSharedPtr<FJsonObject>& Verdict){return Controller&&Controller->HPanel&&Controller->HPanel->ApplyTalk(Verdict);}
 extern TAutoConsoleVariable<int32> CVarHTtsLines; // OKHScene.cpp
+float OKHVoiceRms(const FKKSpeechPcm& Pcm);float OKHCryRms(); // OKHScene.cpp
 bool AOKInteractionMode::HSceneSpeak(const FString& Path){
     if(!CVarHTtsLines.GetValueOnGameThread())return false;
     if(!Controller||!IsValid(Controller->PreviewActor))return false;auto* Her=Controller->PreviewActor.Get();
     if(Controller->HPanel&&Controller->HPanel->LineIsStale())return false; // said to what happened before (UOKHScenePanel::ShowLine)
-    Her->StopHBreath();FString Why;const bool Ok=Her->PlaySpeechFile(Path,1.f,Why);
+    // As loud as her cries (OKHCryRms): the TTS came out much quieter (user 2026-11-09). Its samples scaled up, the
+    // loudest kept below full scale.
+    Her->StopHBreath();FString Why;bool Ok=false;
+    {TSharedPtr<const FKKSpeechPcm,ESPMode::ThreadSafe> Pcm;
+     if(KKSpeech::DecodeOgg(Path,Pcm,Why)&&Pcm){const float Rms=OKHVoiceRms(*Pcm);int32 Peak=1;for(const int16 S:Pcm->Samples)Peak=FMath::Max(Peak,FMath::Abs(int32(S)));
+        const float Gain=Rms>0.f?FMath::Clamp(FMath::Min(OKHCryRms()/Rms,32000.f/Peak*1.5f),1.f,8.f):1.f;
+        if(Gain>1.01f){auto Loud=MakeShared<FKKSpeechPcm,ESPMode::ThreadSafe>(*Pcm);for(int16& S:Loud->Samples){const float V=S*Gain;S=int16(FMath::Clamp(V>29000.f?29000.f+(V-29000.f)*.15f:V<-29000.f?-29000.f+(V+29000.f)*.15f:V,-32767.f,32767.f));}Pcm=Loud;}
+        UE_LOG(LogTemp,Display,TEXT("H scene: her line loudness %.3f -> x%.2f (her cries %.3f)"),Rms,Gain,OKHCryRms());
+        Ok=Her->PlaySpeechPcm(Pcm,1.f,Why);}}
     if(!Ok)UE_LOG(LogTemp,Warning,TEXT("H scene: her line did not play: %s"),*Why);
     if(Ok)UE_LOG(LogTemp,Display,TEXT("H scene: her line spoken on her (%s)"),*FPaths::GetCleanFilename(Path));
     if(Ok&&Controller->HPanel)Controller->HPanel->SpokeLine();

@@ -127,12 +127,24 @@ static bool OKShadowInjection(EKKRuntimeMaterialRecipe Recipe, const TCHAR*& Out
 	}
 }
 
-// -LitOnly: her skin as <name>_Lit, lit by the scene (user 2026-11-09: the 1-on-1 scene's skin switch, lit or the
-// original's own toon). The family program runs with its light along each pixel's normal and no toon self-shadow, so its
+// -LitOnly: every lit family (skin, hair, clothes, items: what the HG style relights; user 2026-11-09: her clothes
+// toon beside lit skin looked wrong) as <name>_Lit, lit by the scene (the 1-on-1 scene's switch, lit or the
+// original's own toon). Eyes, brows, the nose line, glasses and effects stay as drawn. The family program runs with its light along each pixel's normal and no toon self-shadow, so its
 // result is her skin fully lit; that is the base colour of a DefaultLit material, which Unreal's lights then shade. The
 // wrap offset is in it too (no _Wrap swap needed while it is shown). Outlines keep their own parents.
 bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,const FString& Output,bool HGShading,bool WrapOnly,bool LitOnly){
- if(LitOnly){if(HGShading){UE_LOG(LogTemp,Error,TEXT("-LitOnly and -HGShading are separate parents"));return false;}WrapOnly=true;}
+ if(LitOnly){if(HGShading||WrapOnly){UE_LOG(LogTemp,Error,TEXT("-LitOnly is its own set of parents"));return false;}}
+ auto IsSkin=[](EKKRuntimeMaterialRecipe R){return R==EKKRuntimeMaterialRecipe::ForgeSkin||R==EKKRuntimeMaterialRecipe::KoikanoSkin;};
+ // A family lit by the scene: one HG relights, whose program takes the light (_WorldSpaceLightPos0).
+ auto LitFamily=[&](EKKRuntimeMaterialRecipe R){
+#if OK_HG_SHADING_TOOL
+  if(OKHGSurfaceOf(R)==EOKHGSurface::None)return false;
+#else
+  if(!IsSkin(R))return false;
+#endif
+  const auto* Layout=OKRuntimeSharedMaterialLayout(R);if(!Layout)return false;
+  for(const auto& U:Layout->Uniforms)if(U.Name==TEXT("_WorldSpaceLightPos0")&&!U.Rows&&U.Dim>=3)return true;
+  return false;};
 #if !OK_HG_SHADING_TOOL
  if(HGShading){UE_LOG(LogTemp,Error,TEXT("-HGShading needs the OKHGShading plugin in the material host"));return false;}
 #else
@@ -153,7 +165,7 @@ bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,c
  if(Outline&&!OKRuntimeOutlineLayout(Recipe))continue;
  // -WrapOnly: only her skin and its outline, as <name>_Wrap (the 1-on-1 scene's skin pushed off his penis, DPG below).
  if(WrapOnly&&Recipe!=EKKRuntimeMaterialRecipe::ForgeSkin&&Recipe!=EKKRuntimeMaterialRecipe::KoikanoSkin)continue;
- if(LitOnly&&Outline)continue;
+ if(LitOnly&&(Outline||!LitFamily(Recipe)))continue;
  const bool Translucent=!Outline&&OKRuntimeSharedMaterialTranslucent(Recipe);
  const FString Name=OKRuntimeSharedMaterialParentName(Recipe)+(Outline?TEXT("_Outline"):TEXT(""))+(LitOnly?TEXT("_Lit"):WrapOnly?TEXT("_Wrap"):TEXT(""));auto* Mat=NewObject<UMaterial>(CreatePackage(*(Root/Name)),*Name,RF_Public|RF_Standalone);Keep.Emplace(Mat);Assets.Add(Mat);
  Mat->MaterialDomain=MD_Surface;Mat->BlendMode=Outline?BLEND_Masked:OKRuntimeSharedMaterialBlendMode(Recipe);Mat->SetShadingModel(LitOnly?MSM_DefaultLit:MSM_Unlit);Mat->TwoSided=Outline||OKRuntimeSharedMaterialTwoSided(Recipe);Mat->OpacityMaskClipValue=.5f;
@@ -217,7 +229,7 @@ bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,c
   Code+=OKRuntimeSharedMaterialVaryings(Recipe);
   if(LitOnly){bool Found=false;
    for(const auto& U:L.Uniforms)if(U.Name==TEXT("_WorldSpaceLightPos0")&&!U.Rows&&U.Dim>=3){Found=true;
-    Code+=TEXT("{const float3 ok_litn=normalize(float3(-Normal.x,Normal.z,Normal.y))*(FaceSign<0?-1.0:1.0);\n");
+    Code+=TEXT("{float3 ok_litn=normalize(float3(-Normal.x,Normal.z,Normal.y))*(FaceSign<0?-1.0:1.0);const float3 ok_litv=normalize(float3(-(CameraPosition.x-Position.x),CameraPosition.z-Position.z,CameraPosition.y-Position.y));if(dot(ok_litn,ok_litv)<-.25)ok_litn=-ok_litn;\n");
     for(int32 C=0;C<3;++C)Code+=FString::Printf(TEXT("cb%d[%d].%c=ok_litn[%d];\n"),U.CB,(U.Offset/4+C)/4,TEXT("xyzw")[(U.Offset/4+C)%4],C);
     if(U.Dim>3)Code+=FString::Printf(TEXT("cb%d[%d].%c=0;\n"),U.CB,(U.Offset/4+3)/4,TEXT("xyzw")[(U.Offset/4+3)%4]);
     Code+=TEXT("}\n");break;}
@@ -254,7 +266,14 @@ bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,c
  PS->Code=Code+Program;Register(PS);auto* Ed=Mat->GetEditorOnlyData();
  if(LitOnly){Ed->BaseColor.Expression=PS;Ed->BaseColor.Mask=1;Ed->BaseColor.MaskR=Ed->BaseColor.MaskG=Ed->BaseColor.MaskB=1;
   auto* Rough=Scalar(TEXT("__OK_LitRoughness"),.55f);Register(Rough);Ed->Roughness.Expression=Rough;
-  auto* Spec=Scalar(TEXT("__OK_LitSpecular"),.35f);Register(Spec);Ed->Specular.Expression=Spec;}
+  auto* Spec=Scalar(TEXT("__OK_LitSpecular"),.35f);Register(Spec);Ed->Specular.Expression=Spec;
+  // The shading normal, in world space, turned toward the camera where it plainly faces away: her breasts came out
+  // black (2026-11-09), their normals pointing into her (the bust's morphs); a face seen is a face toward the camera.
+  auto* N=NewObject<UMaterialExpressionCustom>(Mat);N->OutputType=CMOT_Float3;N->Description=TEXT("OK lit normal");
+  auto NIn=[&](const TCHAR* Name,UMaterialExpression* X){Register(X);auto& I=N->Inputs.AddDefaulted_GetRef();I.InputName=Name;I.Input.Expression=X;};
+  NIn(TEXT("Normal"),NewObject<UMaterialExpressionVertexNormalWS>(Mat));NIn(TEXT("Position"),NewObject<UMaterialExpressionWorldPosition>(Mat));NIn(TEXT("CameraPosition"),NewObject<UMaterialExpressionCameraPositionWS>(Mat));NIn(TEXT("FaceSign"),NewObject<UMaterialExpressionTwoSidedSign>(Mat));
+  N->Code=TEXT("float3 n=normalize(Normal)*(FaceSign<0?-1.0:1.0);float3 v=normalize(CameraPosition-Position);return dot(n,v)<-.25?-n:n;");
+  Register(N);Mat->bTangentSpaceNormal=false;Ed->Normal.Expression=N;}
  else{Ed->EmissiveColor.Expression=PS;Ed->EmissiveColor.Mask=1;Ed->EmissiveColor.MaskR=Ed->EmissiveColor.MaskG=Ed->EmissiveColor.MaskB=1;}Ed->OpacityMask.Expression=PS;Ed->OpacityMask.Mask=1;Ed->OpacityMask.MaskA=1;if(Translucent){Ed->Opacity.Expression=PS;Ed->Opacity.Mask=1;Ed->Opacity.MaskA=1;OKAddUnityTranslucentDepthTest(Mat);}
 
  if(Outline){
@@ -320,7 +339,7 @@ bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,c
  // -WrapOnly: her skin pushed off the capsule along his penis (DPG-style), __OK_WrapFrom/__OK_WrapTo (UE world cm),
  // __OK_WrapRadius (0: none, the default), __OK_WrapSoft (the falloff past the radius; above the radius it never folds).
  // The skin at distance d from the segment moves out R*(1-d/(R+Soft))^2; an outline adds it to its own hull offset.
- if(WrapOnly){
+ if(WrapOnly||(LitOnly&&IsSkin(Recipe))){
   auto* Wrap=NewObject<UMaterialExpressionCustom>(Mat);Wrap->OutputType=CMOT_Float3;Wrap->Description=TEXT("OK wrap DPG");
   auto In=[&](const TCHAR* N,UMaterialExpression* E){Register(E);auto& I=Wrap->Inputs.AddDefaulted_GetRef();I.InputName=N;I.Input.Expression=E;};
   auto* At=NewObject<UMaterialExpressionWorldPosition>(Mat);At->WorldPositionShaderOffset=WPT_ExcludeAllShaderOffsets;In(TEXT("P"),At);
