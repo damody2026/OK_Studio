@@ -303,6 +303,7 @@ manager_warned_quiet = "；管理员过来提醒你们小声、不要在这里�
 named_reaction_label = "{name}（{reaction}）"
 not_easy_charm_resistance = "她不是随便的人（你的魅力{charm, number, ::integer}，她的抗性{resistance, number, ::integer}）"
 resents_him_alone = "她对他积了太多怨气，不想和他单独待在一起"
+he_forced_alone = "我已经拒绝了，他还是硬把我带去独处"
 she_finds_it_thrilling = "她觉得在这里有点刺激"
 she_goes_along_naturally = "她很自然地配合"
 she_refused_pulls_away = "她拒绝了，拉着你想离开这里"

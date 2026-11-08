@@ -522,7 +522,7 @@ private:
  void PhoneSave();
  int32 RemoteKind(int32 Character) const;
  bool PanelConsent(int32 Girl,const FString& Action,bool bNotify=true);
- bool PrivateConsent(int32 Girl);
+ bool PrivateConsent(int32 Girl);bool PrivateConsentAsked(int32 Girl);
  // The heroine interaction module (OKStreetSocialHeroine.inl, OKStreetHeroine.h): every interaction goes through Interact.
  struct FOKHeroineResult Interact(int32 Girl,const FString& ActId,const struct FOKHeroineArgs& Args);
  void HeroineRefuseGate(int32 Girl,const FString& ActId,const class FJsonObject& Answer);

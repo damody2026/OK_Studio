@@ -98,6 +98,13 @@ pub fn score(kind: usize, r: &Relation, appeal: f32, awkward: f32) -> f32 {
     s - DIFFICULTY[kind] - 30.0
 }
 
+/// She likes him a lot and wants him (her desire or how lewd she is): alone with him or staying over is a yes, whatever
+/// the roll (user 2026-11-09: favor, desire and arousal that high, Raiden said "not ready"). Not while she is angry.
+pub fn eager(r: &Relation) -> bool {
+    let want = (r.sex_desire / crate::relation::SEX_DESIRE_MAX).max(r.lewdness / 100.0);
+    r.liking() >= 70.0 && want >= 0.6 && r.resentment < 50.0
+}
+
 /// P(accept) = sigmoid(score / 10).
 pub fn chance(score: f32) -> f32 {
     1.0 / (1.0 + (-score / 10.0).exp())
@@ -153,7 +160,7 @@ pub fn stance(r: &Relation, appeal: f32, awkward: f32, cooling: &[bool], seed: i
     let mut lines = Vec::with_capacity(KINDS);
     for k in 0..KINDS {
         let cool = cooling.get(k).copied().unwrap_or(false);
-        let p = if cool { 0.0 } else { chance(score(k, r, appeal, awkward)) };
+        let p = if k >= PRIVATE && eager(r) { 1.0 } else if cool { 0.0 } else { chance(score(k, r, appeal, awkward)) };
         let yes = rng.frand() < p;
         accept.push(yes);
         lines.push(if yes {
@@ -295,6 +302,18 @@ mod tests {
         let req = serde_json::json!({"relation": {"id": "a"}, "profile": {}, "action": "drink_shop", "shift_until": 900});
         let v = eval(&places, "invite_refused", &req).unwrap().unwrap();
         assert!(v["why"].as_str().unwrap().contains("15:00"), "{v}");
+    }
+
+    #[test]
+    fn eager_says_yes_to_being_alone() {
+        let hot = Relation { stage: "lover".into(), sex_desire: 170.0, ..Default::default() }.with_liking(90.0);
+        assert!(eager(&hot));
+        for seed in 0..20 {
+            let (accept, _) = stance(&hot, -25.0, 0.5, &[false, false, false, false, true, true], seed);
+            assert!(accept[PRIVATE] && accept[SLEEP], "seed {seed}");
+        }
+        assert!(!eager(&Relation { resentment: 60.0, ..hot.clone() }));
+        assert!(!eager(&Relation { sex_desire: 20.0, ..hot.clone() }));
     }
 
     #[test]

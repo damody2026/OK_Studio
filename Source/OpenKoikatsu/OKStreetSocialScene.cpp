@@ -312,7 +312,7 @@ struct FOKStreetSceneState {
  TWeakObjectPtr<AActor> Rain;TWeakObjectPtr<class UInstancedStaticMeshComponent> RainMesh;TArray<FVector> RainDrops;
  // Plan §12/§13: his look base, this turn's invitation answers, refusals (cooldown and pestering), follow mode,
  // the heroine walking over on her own, and a second sleeper.
- float PlayerLookBase=50.f;TMap<FString,TArray<bool>> InviteStance;TMap<FString,double> InviteRefusedAt;TMap<FString,int32> InviteRefusals;
+ float PlayerLookBase=50.f;TMap<FString,TArray<bool>> InviteStance;TMap<FString,double> InviteRefusedAt;TMap<FString,double> PrivateRefusedAt;TMap<FString,int32> InviteRefusals; // PrivateRefusedAt: her last no to being alone with him (PrivateConsent)
  int32 FollowMode=0,LedReplans=0;double LedBlockedSince=0;FVector LedLastPos=FVector::ZeroVector,LedReplanPos=FVector::ZeroVector;float FollowGirlWalk=0;FVector FollowLead=FVector::ZeroVector;bool FollowLeadInit=false;
  TArray<double> ApproachNext;int32 ApproachGirl=INDEX_NONE;TArray<FVector> ApproachPath;double ApproachLimit=90,ApproachStarted=0,ApproachLast=-1e9,ApproachRouteAt=0;bool ApproachInvite=false;bool ApproachAppointment=false,ApproachJoin=false,ApproachSong=false,ApproachPrivate=false;int32 ApproachRetries=0,ApproachWaitLogged=INDEX_NONE;
   // A date called off on the phone (R3-268): who, how he put it (the judge's cancel_grace; -1: hers), the date the
