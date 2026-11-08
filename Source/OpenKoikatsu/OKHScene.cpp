@@ -2686,11 +2686,11 @@ void UOKHScenePanel::ReadBulge(AKKPreviewActor* Girl,const FVector& Tip,const FV
      const bool bAsync=WrapMode==1&&CVarHWrapAsync.GetValueOnGameThread()!=0;bool bHave=!bAsync;
      if(bAsync){const bool bCover=CVarHClothCover.GetValueOnGameThread()!=0;
          // Last frame's, then this frame's on its way: body and clothes both from it, shown together (CoverClothes).
-         bHave=Girl->Session.BellyWrapTake(bCover,Idx,D,N,ClothParts,ClothIdx,ClothD,ClothCpu);bClothTaken=bHave;bClothPiped=true;
+         {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HWrapTake);bHave=Girl->Session.BellyWrapTake(bCover,Idx,D,N,ClothParts,ClothIdx,ClothD,ClothCpu);}bClothTaken=bHave;bClothPiped=true;
          const bool bIn=!E.IsZero()&&TipInside>=6.f;
          const FVector Ahead=bIn&&bWrapTipKnown?(Tip-WrapLastTip).GetClampedToMaxSize(5.)*CVarHWrapLead.GetValueOnGameThread():FVector::ZeroVector;
          WrapLastTip=Tip;bWrapTipKnown=bIn;
-         Girl->Session.BellyWrapStart(bIn,ToUnity(E),ToUnity(Tip+Ahead),Front.IsZero()?FVector::ZeroVector:(ToUnity(Kokan+Front*10.)-ToUnity(Kokan)).GetSafeNormal(),(Radius+.5f)/100.f,bCover);}
+         TRACE_CPUPROFILER_EVENT_SCOPE(OK_HWrapStart);Girl->Session.BellyWrapStart(bIn,ToUnity(E),ToUnity(Tip+Ahead),Front.IsZero()?FVector::ZeroVector:(ToUnity(Kokan+Front*10.)-ToUnity(Kokan)).GetSafeNormal(),(Radius+.5f)/100.f,bCover);}
      else if(!E.IsZero()&&(WrapMode==1||WrapMode==3)&&TipInside>=6.f)Girl->Session.BellyWrapDeltas(ToUnity(E),ToUnity(Tip),Front.IsZero()?FVector::ZeroVector:(ToUnity(Kokan+Front*10.)-ToUnity(Kokan)).GetSafeNormal(),(Radius+.5f)/100.f,Idx,D,&N,WrapMode==3);
      WrapSolveMs=float((FPlatformTime::Seconds()-WrapT0)*1000.);if(const float Test=CVarHWrapTest.GetValueOnGameThread();Test!=0.f)for(FVector3f& V:D)V=FVector3f(0.f,Test,0.f);
      if(bHave){if(D.Num()||bWrapShown){Girl->SetPartWrapDeltas(BulgePart,Idx,D,N);bWrapShown=D.Num()>0;}WrapVerts=D.Num();WrapIdxShown=Idx;WrapDShown=D;WrapNShown=N;}
