@@ -27,7 +27,7 @@ C `4b4fa1d76`、E `ee7d71bd8`、F `bc9929e65`，都未推送。
 
 ## c-street-city（[C組] 街道城市）
 
-最後提交 `48cc24e5f`，工作樹沒有它未提交的檔案。暫停筆記在 `C:\Users\Damody\AppData\Local\Claude-Data\claude_pzs8sxrjxfjjc\side-session-notes\local_7fdd799f-f2f3-4286-8bf7-2bc968fff630\c-street-city-paused-20261108.md`。
+最後提交 `48cc24e5f`。暫停後它曾排了一個等 E 組測完就自動續跑的背景工作，協調者已要它停掉。暫停筆記在 `C:\Users\Damody\AppData\Local\Claude-Data\claude_pzs8sxrjxfjjc\side-session-notes\local_7fdd799f-f2f3-4286-8bf7-2bc968fff630\c-street-city-paused-20261108.md`。
 
 **這次無人值守做完的（都已提交）**
 - 大學城轉成 World Partition（`/Game/UniversityCity/Maps/UniversityCityWP`）。路網重烘保留山丘，全部路點連成一塊，山丘、花海、神社都實走到。
@@ -38,7 +38,7 @@ C `4b4fa1d76`、E `ee7d71bd8`、F `bc9929e65`，都未推送。
 
 **下一步：商店街開橫巷**（協調者已決定要開）
 - 兩條平行路之間約 290 m 沒有橫巷，到溫泉、房仲、彩券店要繞 450～565 m。
-- 已選定拿掉 S44（y 43140～44340、x 43000～45000，沒有遊戲地點使用），地圖還沒動。
+- 已選定拿掉 S44（y 43140～44340、x 43000～45000，沒有遊戲地點使用）。**更正：** 暫停前已在來源地圖拆掉 S44 並鋪好地面，原圖已存檔，位置見它的暫停筆記；地點、WP 和路網都還沒重建。安裝腳本 `Tools/street_city_alley_payload.lua` 暫停時還沒提交。
 - 模擬路網的效果：
 
 | 路線 | 現在（cm） | 開巷後（cm） |
@@ -48,10 +48,9 @@ C `4b4fa1d76`、E `ee7d71bd8`、F `bc9929e65`，都未推送。
 | 速食店 → 彩券店 | 44,699 | 9,805 |
 
 - **接續步驟：**
-  1. 唯讀探測 S44 範圍內的 actor、實例和地面。scratchpad 的 `s44.lua` 中途被停，沒跑完。
-  2. 寫安裝工作：拆掉 S44、鋪地面、存原圖。
-  3. 依序跑 places、`build_street_city_places`（用 Git bash 執行）、export、WP 重建、路網重烘。
-  4. 實走，量繞路距離改善了多少。
+  1. 確認 S44 已拆乾淨、地面已鋪好；之前的地點探測中途被停，沒跑完。
+  2. 依序跑 places、`build_street_city_places`（用 Git bash 執行）、export、WP 重建、路網重烘。
+  3. 實走，量繞路距離改善了多少。
 
 **之後**
 - 繼續 `C:\portable\OpenKoikatsu\Docs\STREET_CITY_GAME_NEEDS_INVENTORY_20261103.md` 8.2.7 的項目，例如 ee-0205 的綠色斑駁花紋，以及清單上的低影響項目。
