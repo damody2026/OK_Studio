@@ -6,23 +6,12 @@
 
 ## 開啟方式
 
-設定檔：`%LOCALAPPDATA%\OpenKoikatsu\dashscope.json`（不進版控；`OK_DASHSCOPE_CONFIG` 可指定其他檔案）。
+在使用者的金鑰設定檔 `%LOCALAPPDATA%\OpenKoikatsu\api-keys.json` 的 `aliyun.api_key` 填入金鑰（見 [API 金鑰設定檔](API_KEYS.md)）。有金鑰，`ok-tts`／`ok-asr` 下次啟動就走雲端；沒金鑰就沒有雲端，照舊用本機模型。
 
-```json
-{
-  "api_key": "sk-...",
-  "base_url": "https://dashscope.aliyuncs.com",
-  "tts": false,
-  "asr": false,
-  "tts_model": "qwen-audio-3.1-tts-flash",
-  "asr_model": "qwen3-asr-flash"
-}
-```
-
-- `tts`／`asr` 設成 `true` 後，下次啟動的伺服器就改走雲端。這個檔案是整台機器共用的，C／E／F 三組的遊戲都會一起切換。
-- 也可以只切換單一程序：`--backend cloud`，或設環境變數 `OK_TTS_BACKEND=cloud`／`OK_ASR_BACKEND=cloud`。優先順序是 `--backend` > 環境變數 > 設定檔。`--backend design|base`（TTS）、`--backend local`（ASR）會強制使用本機模型。
-- 金鑰優先讀 `DASHSCOPE_API_KEY`，其次是設定檔的 `api_key`；`DASHSCOPE_BASE_URL` 可覆寫端點。金鑰只能用在建立它的區域，目前的金鑰屬於北京區（`dashscope.aliyuncs.com`）。
-- 模型可用 `--cloud-model`、`OK_TTS_CLOUD_MODEL`／`OK_ASR_CLOUD_MODEL` 或設定檔指定。
+- 優先順序：`--backend` > 環境變數 `OK_TTS_BACKEND`／`OK_ASR_BACKEND` > 有沒有金鑰。有金鑰但要用本機模型時，`ok-tts` 用 `--backend base|design`，`ok-asr` 用 `--backend local`。
+- 金鑰優先讀 `DASHSCOPE_API_KEY`，其次是設定檔；`DASHSCOPE_BASE_URL`、`aliyun.base_url` 可覆寫端點。金鑰只能用在建立它的區域，目前的金鑰屬於北京區（`dashscope.aliyuncs.com`）。
+- 模型可用 `--cloud-model`、`OK_TTS_CLOUD_MODEL`／`OK_ASR_CLOUD_MODEL` 或 `aliyun.tts_model`／`aliyun.asr_model` 指定。
+- 這是使用者層級的檔案，同一台機器上的 C／E／F 三組都會一起切換。
 
 ## TTS（`Tools/ok-tts/src/cloud.rs`）
 

@@ -9,7 +9,8 @@
 //! --device NAME (or OK_ASR_DEVICE) picks the first input device whose name contains NAME;
 //! otherwise the Windows default recording device is used.
 //!
-//! --backend cloud (or OK_ASR_BACKEND=cloud, or "asr": true in %LOCALAPPDATA%\OpenKoikatsu\dashscope.json) sends the
+//! --backend cloud (the default when an Alibaba Cloud key is set: DASHSCOPE_API_KEY, or "aliyun"."api_key" in
+//! %LOCALAPPDATA%\OpenKoikatsu\api-keys.json, Docs/API_KEYS.md; OK_ASR_BACKEND=cloud|local overrides) sends the
 //! audio to Alibaba Cloud Model Studio (DashScope, --cloud-model qwen3-asr-flash) instead of loading the local model;
 //! the microphone and voice activity cuts stay local (cloud.rs). --backend local forces the local model.
 //!
@@ -139,7 +140,7 @@ fn main() {
     }
 }
 
-/// --backend, else OK_ASR_BACKEND, else "asr": true in the DashScope settings -> the cloud.
+/// --backend, else OK_ASR_BACKEND, else an Alibaba Cloud key in the key file -> the cloud.
 fn use_cloud(args: &Args) -> Result<bool> {
     let asked = args.opts.get("backend").cloned().or_else(|| std::env::var("OK_ASR_BACKEND").ok().filter(|v| !v.trim().is_empty()));
     match asked.as_deref().map(str::trim) {

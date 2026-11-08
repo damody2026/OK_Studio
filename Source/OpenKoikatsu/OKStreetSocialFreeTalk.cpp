@@ -28,7 +28,27 @@ static bool OKStreetFreeTalkWriteJson(const FString& Path, const TSharedRef<FJso
  return FFileHelper::SaveStringToFile(Out, *Temp, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM) && IFileManager::Get().Move(*Path, *Temp, true, true);
 }
 
+FString OKApiKeysPath() {
+ const FString Env = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_API_KEYS"));
+ if (!Env.IsEmpty()) return Env;
+ const FString Local = FPlatformMisc::GetEnvironmentVariable(TEXT("LOCALAPPDATA"));
+ return Local.IsEmpty() ? FString() : Local / TEXT("OpenKoikatsu/api-keys.json");
+}
+
+// The "deepseek" section of api-keys.json, when it has a key.
+static TSharedPtr<FJsonObject> OKApiKeysDeepSeek() {
+ TSharedPtr<FJsonObject> Root;
+ const TSharedPtr<FJsonObject>* Section = nullptr;
+ FString Key;
+ const FString Path = OKApiKeysPath();
+ if (Path.IsEmpty() || !OKStreetFreeTalkReadJson(Path, Root) || !Root->TryGetObjectField(TEXT("deepseek"), Section) || !Section->IsValid()) return nullptr;
+ if (!(*Section)->TryGetStringField(TEXT("api_key"), Key) || Key.TrimStartAndEnd().IsEmpty()) return nullptr;
+ return *Section;
+}
+
 FString OKStreetFreeTalkSettingsPath() {
+ // The user's key file first (ok-mind reads its "deepseek" section too); the older deepseek.json files after it.
+ if (OKApiKeysDeepSeek().IsValid()) return OKApiKeysPath();
  const FString Env = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_FREE_TALK_SETTINGS"));
  const FString Project = FPaths::ProjectSavedDir() / TEXT("StreetSocial/deepseek.json");
  const FString Local = FPlatformMisc::GetEnvironmentVariable(TEXT("LOCALAPPDATA"));
@@ -49,8 +69,8 @@ static bool OKStreetFreeTalkReadSettings(FOKFreeTalkSettings& Out, FString& Erro
  Out.ApiKey = FPlatformMisc::GetEnvironmentVariable(TEXT("DEEPSEEK_API_KEY"));
  // The runner passes the project path, because a staged build's Saved folder is not the project's.
  const FString Path = OKStreetFreeTalkSettingsPath();
- TSharedPtr<FJsonObject> Root;
- if (OKStreetFreeTalkReadJson(Path, Root)) {
+ TSharedPtr<FJsonObject> Root = OKApiKeysDeepSeek();
+ if (Root.IsValid() || OKStreetFreeTalkReadJson(Path, Root)) {
   if (Out.ApiKey.IsEmpty()) Root->TryGetStringField(TEXT("api_key"), Out.ApiKey);
   Root->TryGetStringField(TEXT("endpoint"), Out.Endpoint);
   Root->TryGetStringField(TEXT("model"), Out.Model);

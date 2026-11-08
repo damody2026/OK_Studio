@@ -9,8 +9,9 @@
 //!       (/health "loading" shows the progress). --base DIR (or OK_TTS_BASE_MODEL) uses a given folder instead.
 //!                 [--backend cloud] [--cloud-model qwen-audio-3.1-tts-flash]
 //!       cloud: the lines come from Alibaba Cloud Model Studio (DashScope) and no GPU model is loaded (cloud.rs). Chosen
-//!       by --backend cloud, OK_TTS_BACKEND=cloud, or "tts": true in %LOCALAPPDATA%\OpenKoikatsu\dashscope.json; the
-//!       key is DASHSCOPE_API_KEY or "api_key" in that file. Voices in cards are not used there.
+//!       whenever an Alibaba Cloud key is set (DASHSCOPE_API_KEY, or "aliyun"."api_key" in the user's key file
+//!       %LOCALAPPDATA%\OpenKoikatsu\api-keys.json, Docs/API_KEYS.md) and no --backend / OK_TTS_BACKEND says otherwise;
+//!       without a key there is no cloud. Voices in cards are not used there.
 //!   ok-tts profile [--base DIR] [--profiles DIR] [--keys 08,m0] [--ages 18] [--ref-text TEXT] [--force]   (see profile.rs)
 //!   ok-tts card-voice --card CARD.png [--set VOICE.okvoice | --remove]   (a character's own voice; see cardvoice.rs)
 //!   ok-tts card-voice --card CARD.png --from-wav REF.wav [--id NAME] [--save VOICE.okvoice] [--base DIR]
@@ -218,7 +219,7 @@ fn cmd_serve(args: &Args) -> Result<()> {
     let voice_table = text::Voices::load(&voices)?;
     let profiles_dir = profiles_dir(args);
     let mut profiles = profile::load_all(&profiles_dir)?;
-    // --backend, else OK_TTS_BACKEND, else "tts": true in the DashScope settings (cloud.rs) -> cloud.
+    // --backend, else OK_TTS_BACKEND, else an Alibaba Cloud key in the key file (cloud.rs) -> cloud.
     let asked = args.opts.get("backend").cloned().or_else(|| std::env::var("OK_TTS_BACKEND").ok().filter(|v| !v.trim().is_empty()));
     let backend = match asked.as_deref().map(str::trim) {
         Some("design") => "design",
