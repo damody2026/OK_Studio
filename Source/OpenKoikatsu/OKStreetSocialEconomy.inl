@@ -751,6 +751,16 @@ void AOKStreetSocialScene::FinishCheckout(const FString& Option,int32 Her,const 
  if(S.Cart.IsEmpty())return;
  const bool WithHer=Her!=INDEX_NONE&&S.Manifest.Characters.IsValidIndex(Her);const FString Id=WithHer?OKStreetStableId(S.Manifest.Characters[Her]):FString();
  const FString PlaceName=OKStreetFindPlace(S.ShopPlace)?FString(OKStreetFindPlace(S.ShopPlace)->Name):S.ShopPlace;
+ // Last orders: something to eat or drink at a place closing within the quarter of an hour a meal there is given
+ // (StartActivity) is not taken. 三月七 took his chicken rice at 18:59 in the cafeteria closing at 19:00; she heard the
+ // meal there had failed, then that the place closed, then that it was paid (so "open again?"), and then it was served (R6-174).
+ {FString Why;const bool Food=S.Cart.ContainsByPredicate([&S](const FOKStreetCartLine& L){const auto* I=S.Catalog.Find(L.ItemId);return I&&I->Consumable&&(I->IsDrink()||I->Effects.Contains(TEXT("satiety")));});
+  if(Food&&!S.ShopPlace.IsEmpty()&&PlaceClosedAt(S.ShopPlace,StreetNow()+FTimespan::FromMinutes(15),Why)){
+   UE_LOG(LogTemp,Display,TEXT("Street checkout: refused, %s closes within 15 minutes (%s); %d lines dropped"),*S.ShopPlace,*Why,S.Cart.Num());
+   S.Cart.Reset();S.OrderDroppedMinute=OKStreetMindNow(S);
+   S.FreeTalkNotice=OKMsg(TEXT("ui.economy.last_order_notice"),{{TEXT("place_name"),*PlaceName}});
+   if(WithHer)S.TellHer.Add(OKMsg(TEXT("ui.economy.last_order_note"),{{TEXT("place_name"),*PlaceName}}));
+   RefreshUI();return;}}
  auto Request=WithHer?OKRulesHeroineRequest(S,TEXT("checkout"),Id):OKRulesRequest(TEXT("checkout"));
  Request->SetStringField(TEXT("option"),Option);Request->SetNumberField(TEXT("service"),S.Catalog.Places.Contains(S.ShopPlace)?S.Catalog.Places[S.ShopPlace].Service:0);
  Request->SetNumberField(TEXT("player_cash"),double(S.Store.PlayerCash));Request->SetStringField(TEXT("place"),S.ShopPlace);Request->SetStringField(TEXT("place_name"),PlaceName);

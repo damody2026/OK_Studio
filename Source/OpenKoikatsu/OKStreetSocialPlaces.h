@@ -147,6 +147,7 @@ struct FOKStreetPlace {
  TArray<FBox> Rooms; // world, from the model
  TArray<int32> RoomLevels; // floor of each room (1 = ground), from the rooms' heights
  TArray<FOKStreetModelAnchor> Anchors; // world positions and yaw
+ bool Outdoor = false; // the city's data: open ground (a park, a beach) rather than a building entered by its door
 };
 
 // The floor (1-based) of the place's room the point stands in, or 0 when outside. 3D: an upper floor's room
@@ -398,7 +399,12 @@ inline void OKStreetCityCheckRoads(UWorld* World) {
  FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetCityRoads), false);
  int32 Dropped = 0;
  if (!World->GetWorldPartition()) {
- for (FVector& Node : City.Nodes) { FHitResult Hit; if (World->LineTraceSingleByChannel(Hit, Node + FVector(0, 0, 400), Node - FVector(0, 0, 600), ECC_WorldStatic, Query)) Node.Z = Hit.ImpactPoint.Z; }
+ // The ground at the point's own height first (the picture puts every point at 1200): traced from 4 m up, the first thing
+ // hit was a wall's or a planter's top beside the road, points stood 1.8 m up on them, and a walk along that road was
+ // stepped into the wall at every point, 20 s each (R6-180). From 4 m up only where nothing is under the point's height
+ // (a hill).
+ for (FVector& Node : City.Nodes) { FHitResult Hit;
+  if (World->LineTraceSingleByChannel(Hit, Node + FVector(0, 0, 60), Node - FVector(0, 0, 600), ECC_WorldStatic, Query) || World->LineTraceSingleByChannel(Hit, Node + FVector(0, 0, 400), Node - FVector(0, 0, 600), ECC_WorldStatic, Query)) Node.Z = Hit.ImpactPoint.Z; }
  for (int32 A = 0; A < City.Nodes.Num(); ++A) for (int32 I = City.Links[A].Num() - 1; I >= 0; --I) {
   const int32 B = City.Links[A][I];
   if (B > A && !OKStreetCityClear(World, City.Nodes[A], City.Nodes[B])) { City.Links[A].RemoveAt(I); City.Links[B].Remove(A); ++Dropped; }
@@ -493,6 +499,7 @@ inline void OKStreetApplyCityPlaces(TArray<FOKStreetPlace>& Out) {
   else { P.Id = Keep(Id); P.Name = Keep(Name); P.About = P.Name; }
   P.Parts.Reset(); P.Model.Reset(); P.Rooms.Reset(); P.RoomLevels.Reset(); P.Anchors.Reset();
   P.Door = OKStreetJsonVector(*O, TEXT("door"));
+  { bool Open = false; P.Outdoor = O->TryGetBoolField(TEXT("outdoor"), Open) && Open; }
   for (const auto& R : O->GetArrayField(TEXT("rooms"))) {
    const TSharedPtr<FJsonObject> Room = R->AsObject();
    P.Rooms.Add(FBox(OKStreetJsonVector(*Room, TEXT("min")), OKStreetJsonVector(*Room, TEXT("max"))));

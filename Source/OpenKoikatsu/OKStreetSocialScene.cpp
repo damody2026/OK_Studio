@@ -370,6 +370,7 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  bool ApproachBlockedNear=false; // she walking over is held up by something within a couple of steps of him: close enough
  int64 ApproachLastMinute=-100000; // game minute the last girl set off to come over to him (TickApproach paces by game time)
  double ApproachBlockedSince=0; // when she walking over to him was last held up (0: walking freely)
+ double ApproachClosestFor=-1;float ApproachClosest=0; // the nearest she has come to him on this walk over (for ApproachStarted)
  int64 OrderDroppedMinute=-100000; // game minute an order was taken back or could not be paid (no implicit menu meal billed then)
  FString FeesDueText; // "pay tuition by 9/27" while the window is open and unpaid (bank.rs bank_daily fees_due)
  int32 FeesDueDay=-1; // the calendar day FeesDueText was worked out for (-1: not yet, e.g. right after loading a save)
@@ -3735,11 +3736,14 @@ float AOKStreetSocialScene::StepCompanion(float Dt){
  // Walking with several of them: the group's formation (TickParty) walks her, not her trail behind him.
  if(S.GroupWalkPartner==S.Companion&&!S.Party.IsEmpty()){S.CompanionTrail.Reset();S.CompanionTrail.Add(S.Male);S.CompanionLastMale=S.Male;return S.GroupWalkPartnerSpeed;}
  auto& Agent=S.Agents[S.Companion-1];
+ // In the city the ground rises and falls: she walks on it at his level, not at the height she last had. Up from the
+ // cafeteria's chair (1398) 胡桃 walked beside him to the park two metres above the pavement (R6-179).
+ auto Ground=[&](FVector& P){if(!OKStreetCityMode())return;float Z=S.Male.Z;P.Z=OKStreetGroundZ(GetWorld(),FVector(P.X,P.Y,S.Male.Z),Z,this)?Z:S.Male.Z;};
  auto StandBeside=[&]()->bool{
   for(int32 K=0;K<12;++K){
    const FVector Try=S.Male+FRotator(0,K*30.f,0).RotateVector(FVector(130,0,0));bool Free=!OKStreetBlockedPoint(Try,28);
    for(const auto& Other:S.Agents)if(Other.Slot!=Agent.Slot&&FVector::Dist2D(Try,Other.Position)<70)Free=false;
-   if(Free){Agent.Position=FVector(Try.X,Try.Y,Agent.Position.Z);S.CompanionBlockedAt=0;S.CompanionTrail.Reset();S.CompanionTrail.Add(S.Male);S.CompanionLastMale=S.Male;return true;}
+   if(Free){Agent.Position=FVector(Try.X,Try.Y,Agent.Position.Z);Ground(Agent.Position);S.CompanionBlockedAt=0;S.CompanionTrail.Reset();S.CompanionTrail.Add(S.Male);S.CompanionLastMale=S.Male;return true;}
   }
   return false;
  };
@@ -3790,7 +3794,7 @@ float AOKStreetSocialScene::StepCompanion(float Dt){
   }
   return 0;
  }
- S.CompanionBlockedAt=0;const FVector Moved=Chosen-Agent.Position;Agent.Position=Chosen;S.Rotations[Agent.Slot]=OKStreetFacingMovement(Moved,S.Rotations[Agent.Slot]);S.CompanionTravel+=Moved.Size();
+ S.CompanionBlockedAt=0;const FVector Moved=Chosen-Agent.Position;Agent.Position=Chosen;Ground(Agent.Position);S.Rotations[Agent.Slot]=OKStreetFacingMovement(Moved,S.Rotations[Agent.Slot]);S.CompanionTravel+=Moved.Size();
  return Dt>0?Step.Size()/(FMath::Min(Dt,.05f)*OKStreetWalkSpeed):0;
 }
 void AOKStreetSocialScene::RunCompanionProbe(double Now){

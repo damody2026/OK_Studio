@@ -12,6 +12,26 @@ bool AOKStreetSocialScene::SeatedWith(int32 Girl) const {if(!State)return false;
 // The city's long way: the road graph between, the fine grid out of the building he is in and into the one he is going to
 // (the graph has no points indoors).
 TArray<FVector> AOKStreetSocialScene::CityRoute(const FVector& From,const FVector& To) const{
+ // Into a building and out of one: by its door. The graph's point nearest a spot indoors was the pavement behind the
+ // wall (三月七 at the cafeteria's table: east of its east wall), the grid from there found no way in in its 4 ms, and the
+ // walk ended against that wall, "the way is blocked" (R6-173). The door is on the graph, so the roads lead to it.
+ auto Indoor=[](const FVector& At)->const FOKStreetPlace*{for(const auto& P:OKStreetPlaces())if(!P.Outdoor&&!P.Rooms.IsEmpty()&&OKStreetInsidePlace(P,At))return &P;return nullptr;};
+ const FOKStreetPlace* Into=Indoor(To);const FOKStreetPlace* OutOf=Indoor(From);
+ // Both in one building on one floor (47 m apart on the EE building's 4F, 優香 at her class): the floor's own way, not the
+ // street's roads down on the ground, which led him into the 4F's wall till "the way is blocked" (R6-177).
+ if(Into&&Into==OutOf&&FMath::Abs(From.Z-To.Z)<150.f){TArray<FVector> Here=GridRoute(From,To);return Here.Num()>=2?Here:TArray<FVector>{From,To};}
+ if(Into&&Into!=OutOf&&FVector::Dist2D(Into->Door,To)>50.f){
+  const FVector Door=Into->Door;TArray<FVector> Route=CityRoute(From,Door);if(Route.IsEmpty())Route={From};
+  // On her floor, in from the door; upstairs the navigation plans the lift from the door (PlanNavLift).
+  if(FMath::Abs(Door.Z-To.Z)<150.f){TArray<FVector> In=GridRoute(Door,To);
+   if(In.Num()>=2){In.RemoveAt(0);Route.Append(In);}
+   else{const FVector Inside=PlaceInsideSpot(*Into);if(!Inside.Equals(Door,1.f))Route.Add(Inside);Route.Add(To);}}
+  return Route;}
+ if(OutOf&&OutOf!=Into&&FVector::Dist2D(OutOf->Door,From)>50.f&&FMath::Abs(OutOf->Door.Z-From.Z)<150.f){
+  const FVector Door=OutOf->Door;TArray<FVector> Route=GridRoute(From,Door);
+  if(Route.Num()<2){Route={From};const FVector Inside=PlaceInsideSpot(*OutOf);if(!Inside.Equals(Door,1.f))Route.Add(Inside);Route.Add(Door);}
+  TArray<FVector> Rest=CityRoute(Door,To);if(!Rest.IsEmpty())Rest.RemoveAt(0);Route.Append(Rest);
+  return Route;}
  TArray<FVector> Route=OKStreetCityRoute(From,To);if(Route.Num()<3)return Route;
  if(!OKStreetCityClear(GetWorld(),From,Route[1],18.f)){TArray<FVector> Out=GridRoute(From,Route[1]);if(Out.Num()>=2){Route.RemoveAt(0,2);Out.Append(Route);Route=MoveTemp(Out);}}
  const int32 Last=Route.Num()-1;
@@ -214,7 +234,12 @@ FVector AOKStreetSocialScene::StreetStep(const FVector& From,const FVector& Dire
   // The city's ground: he goes up and down with it, and where there is none he does not go. A lift's car and doorway are no ground of the
   // map's and its shaft has no floor above the first: from the second floor up nobody could step out of the car.
   if(OKStreetCityMode()){bool Lift=false;for(int32 I=0;I<State->Elevators.Num()&&!Lift;++I)Lift=InElevatorCar(I,From)||InElevatorCar(I,To)||ElevatorLanding(I,From)!=INDEX_NONE;
-   float GroundZ=From.Z;const bool Ground=OKStreetGroundZ(GetWorld(),To,GroundZ,this);if(!Ground&&!Lift)continue;
+   float GroundZ=From.Z;bool Ground=OKStreetGroundZ(GetWorld(),To,GroundZ,this);
+   // Already in the air (no ground in reach under where he stands, put there by a step past at another height): he comes
+   // down to the ground below instead of standing there for good (R6-180). Not off a ledge he stands on: that has ground.
+   if(!Ground&&!Lift){float HereZ=From.Z;if(!OKStreetGroundZ(GetWorld(),From,HereZ,this)){FHitResult Down;FCollisionQueryParams Q(SCENE_QUERY_STAT(StreetFall),false,this);
+    if(GetWorld()->LineTraceSingleByChannel(Down,To+FVector(0,0,70),To-FVector(0,0,600),ECC_WorldStatic,Q)){GroundZ=float(Down.ImpactPoint.Z);Ground=true;}}}
+   if(!Ground&&!Lift)continue;
    To.Z=Lift&&(!Ground||FMath::Abs(GroundZ-From.Z)>60.f)?From.Z:GroundZ;}
   if(Free(To))return To;}
  return From;
@@ -320,6 +345,10 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
     // starts), and the way again from there.
     if(!Out){const FOKStreetPlace* Near=nullptr;for(const auto& P:OKStreetPlaces())if(FMath::Abs(P.Door.Z-Z)<150.f&&(!Near||FVector::Dist2D(P.Door,S.Male)<FVector::Dist2D(Near->Door,S.Male)))Near=&P;
      if(Near&&FVector::Dist2D(Near->Door,S.Male)<2000.f){UE_LOG(LogTemp,Warning,TEXT("Street navigation: shut in at %s, out at the door of %s"),*S.Male.ToCompactString(),Near->Id);S.Male=FVector(Near->Door.X,Near->Door.Y,Z);Out=true;}}
+    // Upstairs no door is on his floor: the lift's landing on it is where walking starts there. Stepped off the car on the
+    // EE building's 4F into a pocket beside the shaft, he stood shut in, saved there, and loaded back into it (R6-178).
+    if(!Out){const FVector* Landing=nullptr;for(const auto& E:S.Elevators)for(int32 F=0;F<E.Landing.Num();++F)if(FMath::Abs(E.StopZ[F]-Z)<100.f&&FVector::Dist2D(E.Landing[F],S.Male)<2000.f&&(!Landing||FVector::Dist2D(E.Landing[F],S.Male)<FVector::Dist2D(*Landing,S.Male)))Landing=&E.Landing[F];
+     if(Landing){UE_LOG(LogTemp,Warning,TEXT("Street navigation: shut in at %s, out at the lift landing %s"),*S.Male.ToCompactString(),*Landing->ToCompactString());S.Male=*Landing;Out=true;}}
     if(Out){auto Path=S.NavPointActive?PlaceRoute(S.Male,Goal):ContactRoute(S.Male,Goal);if(Path.Num()>=2){S.NavPath=MoveTemp(Path);S.NavStep=1;}return 0;}
    }
    // First around what is in the way, to the next point only (the grid keeps the body's clearance; the same route again

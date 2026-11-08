@@ -756,7 +756,9 @@ float AOKStreetSocialScene::StepOuting(float Dt){
    const bool AtLast=S.OutingStep==S.OutingRoute.Num()-1&&FVector::Dist2D(S.Male,S.OutingRoute[S.OutingStep])<200.f;
    if((S.OutingStuckCount>=5||AtLast)&&S.OutingRoute.IsValidIndex(S.OutingStep)){
     const FVector Next=S.OutingRoute[S.OutingStep];UE_LOG(LogTemp,Display,TEXT("Street outing: wedged at (%.0f,%.0f); he steps past to the next point %s"),S.Male.X,S.Male.Y,*Next.ToCompactString());
-    S.Male=FVector(Next.X,Next.Y,S.Male.Z);++S.OutingStep;S.OutingStuckCount=0;return 0;}
+    // At the point's height in the city (its ground): kept at his, a step past onto a lower road left him 2.5 m up in the
+    // air, where no step finds ground under him, and every point after that was a wedge (R6-180).
+    S.Male=FVector(Next.X,Next.Y,OKStreetCityMode()?Next.Z:S.Male.Z);++S.OutingStep;S.OutingStuckCount=0;return 0;}
    if(S.OutingStuckCount>=3&&S.OutingRoute.IsValidIndex(S.OutingStep)){TArray<FVector> Around=GridRoute(S.Male,S.OutingRoute[S.OutingStep]);
     if(Around.Num()>=2){for(int32 K=S.OutingStep+1;K<S.OutingRoute.Num();++K)Around.Add(S.OutingRoute[K]);Again=MoveTemp(Around);UE_LOG(LogTemp,Display,TEXT("Street outing: round it on the grid (%d points)"),Again.Num());}}
    if(Again.Num()>=2){S.OutingRoute=Again;S.OutingStep=1;}
