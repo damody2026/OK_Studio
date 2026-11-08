@@ -6,7 +6,7 @@
 
 ## 開啟方式
 
-在街區左上角的「⚙ 設定」填阿里雲百煉金鑰，再把「配音」或「語音輸入」選成雲端。金鑰存進玩家設定檔 `Saved/StreetSocial/player.json` 的 `aliyun` 段（見 [玩家設定檔與 API 金鑰](API_KEYS.md)）。沒有金鑰就沒有雲端，照舊用本機模型。
+在街區左上角的「設定」填阿里雲百煉金鑰，再把「配音」或「語音輸入」選成雲端。金鑰存進玩家設定檔 `Saved/StreetSocial/player.json` 的 `aliyun` 段（見 [玩家設定檔與 API 金鑰](API_KEYS.md)）。沒有金鑰就沒有雲端，照舊用本機模型。
 
 - **啟動時**：啟動器把 `player.json` 用 `--settings` 傳給伺服器。
   - `voice.voice_mode` 是 `cloud` 且有金鑰：`ok-tts` 只用雲端，不載入本機模型。

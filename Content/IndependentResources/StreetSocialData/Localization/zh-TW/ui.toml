@@ -9,7 +9,7 @@ you = "你"
 him = "他"
 
 [ui.settings]
-menu_button = "⚙ 設定"
+menu_button = "設定"
 title = "設定"
 close = "關閉"
 voice_label = "配音"
@@ -38,7 +38,7 @@ asr_server_missing = "語音辨識伺服器沒有回應；下次啟動遊戲時�
 local_voice_restart = "本機語音合成的模型沒有載入（這次是用雲端啟動的），重新啟動遊戲後才會生效。"
 local_asr_restart = "本機語音辨識的模型沒有載入（這次是用雲端啟動的），重新啟動遊戲後才會生效。"
 voice_server_next_start = "這次啟動時配音是關的，語音合成伺服器沒有開；重新啟動遊戲後才有語音合成。"
-free_talk_needs_key = "AI 自由對話需要 DeepSeek 金鑰（左上角「⚙ 設定」）；現在只用內建選項。"
+free_talk_needs_key = "AI 自由對話需要 DeepSeek 金鑰（左上角「設定」）；現在只用內建選項。"
 file_path = "設定檔：{path}"
 language = "語言：{name}"
 lang_zh-TW = "繁體中文"

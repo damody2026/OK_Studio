@@ -164,5 +164,6 @@ void AOKStreetSocialScene::RebuildSettingsPanel(){
  Box->AddSlot().AutoHeight()[Label(OKT(HasAli?TEXT("ui.settings.aliyun_on"):TEXT("ui.settings.aliyun_off")),11.f,HasAli?FLinearColor(.55f,1.f,.7f):FLinearColor(.8f,.8f,.8f))];
  if(!S.SettingsNotice.IsEmpty())Box->AddSlot().AutoHeight().Padding(0,6,0,0)[Label(S.SettingsNotice,11.f,FLinearColor(1,.83f,.35f))];
  Box->AddSlot().AutoHeight().Padding(0,8,0,0)[Label(OKMsg(TEXT("ui.settings.file_path"),{{TEXT("path"),FPaths::ConvertRelativePathToFull(PlayerSettingsPath())}}),10.f,FLinearColor(.7f,.7f,.7f))];
- S.UiSettingsHolder->SetContent(SNew(SBox).WidthOverride(460)[SNew(SBorder).BorderImage(OKStreetGlassPanel()).Padding(14)[Box]]);
+ static const FSlateRoundedBoxBrush SettingsBrush(FLinearColor(.025f,.045f,.075f,.97f),16.f);
+ S.UiSettingsHolder->SetContent(SNew(SBox).WidthOverride(460)[SNew(SBorder).BorderImage(&SettingsBrush).Padding(14)[Box]]);
 }

@@ -28,7 +28,7 @@
 拿到的人要做的事：
 1. 用自己的遊戲還原原作資料：`Tools\lua\lua.exe Tools\original_data.lua restore --game <遊戲資料夾>`，見 [SHARED_RESOURCES_SETUP](SHARED_RESOURCES_SETUP.md)。
 2. 準備自己的角色卡，放在 `Saved/StreetSocial/heroines.json` 指到的位置。
-3. 要用 AI 對話或雲端語音的話，在遊戲左上角「⚙ 設定」填金鑰。
+3. 要用 AI 對話或雲端語音的話，在遊戲左上角「設定」填金鑰。
 
 ## 打包前的檢查（任一項不過就停止）
 

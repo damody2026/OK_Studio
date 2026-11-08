@@ -9,7 +9,7 @@ you = "You"
 him = "He"
 
 [ui.settings]
-menu_button = "⚙ Settings"
+menu_button = "Settings"
 title = "Settings"
 close = "Close"
 voice_label = "Voices"
@@ -38,7 +38,7 @@ asr_server_missing = "The speech recognition server is not answering; this appli
 local_voice_restart = "The local speech synthesis model is not loaded (this run started on the cloud); restart the game for it."
 local_asr_restart = "The local speech recognition model is not loaded (this run started on the cloud); restart the game for it."
 voice_server_next_start = "Voices were off when the game started, so no speech synthesis server is running; restart the game for it."
-free_talk_needs_key = "AI free talk needs a DeepSeek key (\"⚙ Settings\" at the top left); for now the built-in choices only."
+free_talk_needs_key = "AI free talk needs a DeepSeek key (\"Settings\" at the top left); for now the built-in choices only."
 file_path = "Settings file: {path}"
 language = "Language: {name}"
 lang_zh-TW = "繁體中文"

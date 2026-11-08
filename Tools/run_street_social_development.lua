@@ -216,7 +216,9 @@ local function main()
     say("StreetSocial build: " .. build.executable)
     -- A stage from a package (Tools/package_street_social.lua) comes without its junctions into this folder's Content
     -- (IndependentResources, and KKPreview once the original data is restored): made here when missing.
-    do
+    -- Only a stage's own game (…/X.stage/Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.exe): -Editor runs the
+    -- engine's UnrealEditor.exe, whose Content is the engine's.
+    if build.executable:lower():match("%.stage/windows/openkoikatsu/binaries/win64/[^/]+%.exe$") then
       local content = path.join(path.parent(path.parent(path.parent(build.executable))), "Content")
       for _, name in ipairs({ "IndependentResources", "KKPreview" }) do
         local link, target = path.join(content, name), path.join(root, "Content", name)
