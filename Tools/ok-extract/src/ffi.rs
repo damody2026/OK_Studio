@@ -173,6 +173,35 @@ pub unsafe extern "C" fn ok_belly_wrap_deltas(s:*mut OkSession,at:*const f32,rad
     moves.len() as i32
 }
 #[no_mangle]
+pub unsafe extern "C" fn ok_belly_wrap_start(s:*mut OkSession,at:*const f32,radius:f32,wrap:i32,cover:i32)->i32 {
+    // This frame's wrap and clothes on the wrap worker (belly_bulge::wrap_start), the session idle: at as
+    // ok_belly_wrap_deltas, wrap 0 her skin left alone (her breasts still push her clothes), cover 0 her clothes left
+    // alone. 1 started, 0 the last one still runs, -1 bad input.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if at.is_null() {return -1;}
+    let from=[*at,*at.add(1),*at.add(2)];let to=[*at.add(3),*at.add(4),*at.add(5)];let up=[*at.add(6),*at.add(7),*at.add(8)];
+    crate::belly_bulge::wrap_start(s,wrap!=0,from,to,up,radius,cover!=0) as i32
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_belly_wrap_take(s:*mut OkSession,cover:i32,out_idx:*mut u32,out_d:*mut f32,max:u32,cloth_part:*mut u32,cloth_idx:*mut u32,cloth_d:*mut f32,cloth_max:u32,cloth_n:*mut u32,cpu_parts:*mut i32,cpu_max:u32,cpu_n:*mut u32)->i32 {
+    // The finished job of ok_belly_wrap_start, the session idle. Her body's moves as ok_belly_wrap_deltas (the count
+    // returned; -2 none ready, -1 bad input), her garments' as ok_cover_deltas (cloth_n), the garments with their own rig
+    // to draw from their CPU vertices as ok_set_cover (cpu_n; those are kept over her skin from here on, cover 1).
+    let Some(s)=sess_ref(s) else{return -1;};
+    if out_idx.is_null()||out_d.is_null()||cloth_part.is_null()||cloth_idx.is_null()||cloth_d.is_null()||cloth_n.is_null()||cpu_parts.is_null()||cpu_n.is_null() {return -1;}
+    let Some(done)=crate::belly_bulge::wrap_take(s) else{return -2;};
+    for (i,(j,d)) in done.body.iter().take(max as usize).enumerate(){*out_idx.add(i)=*j;for k in 0..6{*out_d.add(i*6+k)=d[k];}}
+    let n=done.body.len() as i32;
+    let mut k=0usize;
+    for (part,list) in &done.cloth {for (j,d) in list{
+        if k<cloth_max as usize{*cloth_part.add(k)=*part as u32;*cloth_idx.add(k)=*j;for a in 0..3{*cloth_d.add(k*3+a)=d[a];}k+=1;}}}
+    *cloth_n=k as u32;
+    let parts=crate::belly_bulge::keep_cover(s,cover!=0,done.body,done.field.as_deref());
+    for (i,p) in parts.iter().take(cpu_max as usize).enumerate(){*cpu_parts.add(i)=*p as i32;}
+    *cpu_n=parts.len().min(cpu_max as usize) as u32;
+    n
+}
+#[no_mangle]
 pub unsafe extern "C" fn ok_belly_bone_deltas(s:*mut OkSession,at:*const f32,radius:f32,out_idx:*mut u32,out_d:*mut f32,max:u32)->i32 {
     // As ok_belly_wrap_deltas, her skin moved by the belly bones his penis pushes (belly_bulge::bone_deltas, ok.HScene.Wrap 3).
     let Some(s)=sess_ref(s) else{return -1;};
@@ -566,6 +595,50 @@ pub unsafe extern "C" fn ok_session_bone_euler(s:*mut OkSession,name:*const c_ch
     if name.is_null()||out.is_null() {return -1;}
     let Some(e)=s.body_bone_euler(&std::ffi::CStr::from_ptr(name).to_string_lossy()) else{return -1;};
     std::ptr::copy_nonoverlapping(e.as_ptr(),out,3);0
+}
+/// Her clothes changed on the same model (wardrobe.rs): as she opens, her worn parts to the end of her parts.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_wardrobe_prepare(s:*mut OkSession)->i32 {
+    let Some(s)=sess_ref(s) else{return -1;};s.wardrobe_prepare();s.wardrobe_first() as i32
+}
+/// A session opened in another outfit or garment state, cut down to what it puts on her.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_wardrobe_strip(s:*mut OkSession)->i32 {
+    let Some(s)=sess_ref(s) else{return -1;};s.wardrobe_strip();s.parts.len() as i32
+}
+/// Which of her parts these garment states show (1 each; `out` holds `cap`). Returns her part count.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_clothes_parts_shown(s:*mut OkSession,states:*const u8,out:*mut u8,cap:i32)->i32 {
+    let Some(s)=sess_ref(s) else{return -1;};if states.is_null()||out.is_null(){return -1;}
+    let values:[u8;9]=std::slice::from_raw_parts(states,9).try_into().unwrap();
+    for(index,part)in s.parts.iter().enumerate().take(cap.max(0) as usize){*out.add(index)=crate::unity::state_nodes_shown(&part.runtime_textures,&values) as u8;}
+    s.parts.len() as i32
+}
+/// The mask her body takes with her top in this state (`ChaControl.ChangeAlphaMask`); its length, 0 when none, -1 when
+/// `out` is too small for it.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_wardrobe_body_mask(s:*mut OkSession,top_state:i32,out:*mut u8,cap:i32)->i32 {
+    let Some(s)=sess_ref(s) else{return -1;};
+    let Some(mask)=s.wardrobe_mask_for(top_state as u8) else{return 0;};
+    if !out.is_null()&&cap as usize>=mask.len(){std::ptr::copy_nonoverlapping(mask.as_ptr(),out,mask.len());}
+    mask.len() as i32
+}
+/// The parts the display hides (`count` bytes, nonzero hidden; missing ones shown): not solved or skinned while hidden.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_set_parts_hidden(s:*mut OkSession,mask:*const u8,count:i32)->i32 {
+    let Some(s)=sess_ref(s) else{return -1;};
+    let mask=if mask.is_null()||count<=0{&[][..]}else{std::slice::from_raw_parts(mask,count as usize)};
+    s.set_parts_hidden(mask);0
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_wardrobe_first(s:*mut OkSession)->i32 {
+    let Some(s)=sess_ref(s) else{return -1;};s.wardrobe_first() as i32
+}
+/// She wears the donor's parts and the donor holds what she took off. On an error neither changed.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_wardrobe_swap(live:*mut OkSession,donor:*mut OkSession,err:*mut c_char,cap:i32)->i32 {
+    let (Some(live),Some(donor))=(sess_ref(live),sess_ref(donor)) else{write_err(err,cap,"wardrobe: no session");return -1;};
+    match live.wardrobe_swap(donor) {Ok(())=>0,Err(e)=>{write_err(err,cap,&e);-1}}
 }
 #[no_mangle]
 pub unsafe extern "C" fn ok_session_set_physx_secondary(s:*mut OkSession,enabled:i32)->i32 {
@@ -1379,6 +1452,8 @@ pub unsafe extern "C" fn ok_session_open_clothes(game:*const c_char,card:*const 
     if states.is_null()||out.is_null(){write_err(err,cap,"missing clothing state or output");return 1;}
     *out=std::ptr::null_mut();
     let values:[u8;9]=std::slice::from_raw_parts(states,9).try_into().unwrap();
+    // Every state 9: all her garment states kept, shown and hidden afterwards (clothes_states.rs).
+    if values==[9;9] {let _all=crate::profile::scope(&[(crate::unity::ALL_STATES_SWITCH,Some("1"))]);return session_open(game,card,outfit,out,err,cap);}
     if values.iter().any(|v|*v>3){write_err(err,cap,"invalid clothing state");return 1;}
     let _scope=crate::unity::request_clothes_states(values);
     session_open(game,card,outfit,out,err,cap)
@@ -2695,6 +2770,12 @@ pub extern "C" fn ok_set_body_part_physics(part:i32,mode:i32,softness:f32)->i32 
 /// past the pattern's angles and the iris moves on past them in proportion. 0 keeps the source's limits.
 #[no_mangle]
 pub extern "C" fn ok_set_eye_look_unlimited(enabled:i32,most:f32)->i32 {crate::eye_look::set_unlimited(enabled!=0);crate::eye_look::set_most(most);0}
+/// Her skin where he lifts it cut finer (belly_bulge::refine), one-on-one only: once, after opening, before the mesh is
+/// built. The vertices added, -1 without a session.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_refine_belly(s:*mut OkSession)->i32 {
+ let Some(s)=sess_ref(s)else{return -1;};crate::belly_bulge::refine(s) as i32
+}
 /// Builds this character's body dynamics again with the settings now (ok_set_body_part_physics).
 #[no_mangle]
 pub unsafe extern "C" fn ok_session_refresh_body_physics(s:*mut OkSession)->i32 {

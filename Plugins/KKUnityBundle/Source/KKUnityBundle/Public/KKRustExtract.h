@@ -170,7 +170,9 @@ public:
  static TArray<FString> VideoClipNames();
  static bool LoadVideoClip(const FString& Key,TArray<uint8>& Out);
 	void Close();
-	bool IsOpen() const { return Handle != nullptr; }
+	// The raw pointer: `Handle != nullptr` converts through Get(), which waits for a pair frame being solved in the
+	// background, and the one-on-one scene asks this every frame while the next frame solves.
+	bool IsOpen() const { return Handle.Raw != nullptr; }
 	bool IsPortable() const { return bPortable; }
 	/** Identity of this native session for the PhysX secondary-dynamics groups (the native session address). */
 	uint64 PhysicsGroup() const { return reinterpret_cast<uint64>(Handle.Raw); }
@@ -178,6 +180,21 @@ public:
 	 *  one-to-one interaction and paired playback turn it on (AKKPreviewActor::AddPairPhysics); crowd and street
 	 *  NPCs keep the built-in solver. Kept across reopening the card (outfit change, snapshot, clone). */
 	bool SetPhysXSecondary(bool bOn);
+	/** Her clothes changed on the same model (wardrobe.rs). WardrobePrepare: as she opens, her worn parts to the end of
+	 *  her parts. WardrobeStrip: a session opened in another outfit, cut down to what it puts on her. WardrobeFirst: the
+	 *  first worn part. WardrobeSwap: she wears the donor's parts and the donor holds what she took off. */
+	int32 WardrobePrepare();
+	int32 WardrobeStrip();
+	int32 WardrobeFirst() const;
+	/** For Open's clothes argument: every garment state kept, shown and hidden by ClothesPartsShown. */
+	static const uint8 AllClothesStates[9];
+	/** One byte per part: whether these garment states show it. */
+	bool ClothesPartsShown(const uint8 States[9],TArray<uint8>& Out) const;
+	/** The PNG mask her body takes with her top in this state (empty: none). */
+	bool WardrobeBodyMask(int32 TopState,TArray<uint8>& Out) const;
+	// The parts the display hides (one byte a session part): their chains are not solved or skinned while hidden.
+	bool SetPartsHidden(TConstArrayView<uint8> Hidden);
+	static bool WardrobeSwap(FOkSession& Live,FOkSession& Donor,FString& Error);
 	bool IsPhysXSecondary() const { return bPhysXSecondary; }
 	/** Whether an Unreal animation drives this body instead of the session's game animation. Per character: the
 	 *  OK_UE_ANIM environment switch is process-wide, and another actor loading (a clothing warm-up) flipped it under
@@ -210,6 +227,8 @@ public:
  bool ApplyBodyPhysics(float Softness,float Weight);
  // Its body dynamics built again with the bust / hip settings now (ok.Physics.Bust*, ok.Physics.Hip*).
  bool RefreshBodyPhysics();
+ // Her skin where he lifts it cut finer (one-on-one): once, after Open, before her mesh is built. The vertices added.
+ int32 RefineBelly();
  bool ApplyEditorMods(const FString& Json,int32 Coordinate,bool* GeometryChanged=nullptr);
 	// A style's bone modifiers on top of the card's, from the next shape or pose on (ok_set_style_bones).
 	bool SetStyleBones(const FString& Json);
@@ -245,6 +264,12 @@ public:
 	bool BellyBulgePast(const FVector& UnityTip,float& OutPast,float& OutNear,FName& OutTarget,float& OutMoves) const;
 	// How her body's skin moves this frame to wrap his penis in her (ok_belly_wrap_deltas): From her entrance, To his glans
 	// (her skeleton space, Unity metres), RadiusM his and a margin; body vertex indices and moves in the mesh's own space (Unity metres), and the turns of their normals.
+	// This frame's wrap and clothes on the wrap worker, the session idle (ok_belly_wrap_start): as BellyWrapDeltas, bWrap false
+	// her skin left alone, bCover false her clothes left alone.
+	bool BellyWrapStart(bool bWrap,const FVector& From,const FVector& To,const FVector& Up,float RadiusM,bool bCover);
+	// The finished job, the session idle: false when none is ready. Her body's moves as BellyWrapDeltas, her garments' as
+	// ClothCoverDeltas, the garments to draw from their CPU vertices as SetClothCover.
+	bool BellyWrapTake(bool bCover,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,TArray<FVector3f>& OutNormalDeltas,TArray<int32>& OutClothParts,TArray<uint32>& OutClothIndices,TArray<FVector3f>& OutClothDeltas,TArray<int32>& OutCpuParts);
 	bool BellyWrapDeltas(const FVector& From,const FVector& To,const FVector& Up,float RadiusM,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,TArray<FVector3f>* OutNormalDeltas=nullptr,bool bBellyBones=false) const;
 	// bBellyBones: moved by her belly bones his penis pushes instead (ok_belly_bone_deltas).
 	// Where the line From her entrance To his glans comes out of her through her back (ok_back_exit; Up the way her belly

@@ -9,6 +9,7 @@ pub use anim::clip_names_for_source;
 pub use anim::prepare_animation_clip;
 pub use anim::prepare_animation_batch;
 mod abmx;
+mod wardrobe;
 mod accessory_extract;
 pub mod outfit_gaps;
 mod editor_mods;

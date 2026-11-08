@@ -276,6 +276,7 @@ static STATE_NODES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashM
     std::sync::LazyLock::new(Default::default);
 
 fn entry_state_sig(base: &str, category: i32, states: [u8; 9]) -> String {
+    if crate::unity::all_clothes_states() { return "allstates".into(); }
     let nodes = STATE_NODES.lock().unwrap_or_else(|e| e.into_inner()).get(base).cloned();
     match nodes {
         Some(nodes) => format!("nodes={}", nodes.iter().map(|(name, cc)| match crate::unity::clothes_state_node_visible(name, &states, *cc) {
@@ -285,7 +286,10 @@ fn entry_state_sig(base: &str, category: i32, states: [u8; 9]) -> String {
 }
 
 /// The states part of an entry's key before an extraction named the prefab's state nodes.
-fn unlearned_state_sig(category: i32, states: [u8; 9]) -> String { format!("{}|{states:?}", entry_prefab_variant_key(category, true, states)) }
+fn unlearned_state_sig(category: i32, states: [u8; 9]) -> String {
+    if crate::unity::all_clothes_states() { return "allstates".into(); }
+    format!("{}|{states:?}", entry_prefab_variant_key(category, true, states))
+}
 
 /// The entry's memo key now and as it was before its state nodes were learned: an entry prefetch keyed before a helper
 /// learned them is still this extraction's (the same states).
@@ -573,6 +577,8 @@ pub(crate) fn hang_part_dynamic_bones(
     };
     for m in meshes.iter_mut() {
         if let Some(sk) = m.smr_skel.as_mut() {
+            // A garment state's renderer no opened state showed: it keeps its plain rig.
+            if crate::unity::all_clothes_states() && !parsed.bone_implants_known(sk) { continue; }
             m.bone_implants = parsed.bone_implants_for_skeleton(sk);
             let set = source_set(sk);
             if !set.is_empty() {

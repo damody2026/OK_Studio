@@ -58,6 +58,7 @@
 #include "HighResScreenshot.h"
 #include "KKRuntimeSpeech.h"
 #include "KKCardReader.h"
+#include "KKPairedPlayback.h" // GKKPairFramesShown (/fps)
 #include "OKArousalDrops.h"
 // Where a street figure goes while its high model stands in for it (the one-on-one in place): far under the street.
 static const FVector OKStreetOffstage(0.,0.,-100000.);

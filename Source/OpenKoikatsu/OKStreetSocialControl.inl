@@ -175,6 +175,7 @@ void AOKStreetSocialScene::StartControlServer(){
   auto O=OKControlResult(true,FString());O->SetNumberField(TEXT("fps"),GAverageFPS);O->SetNumberField(TEXT("frame_ms"),GAverageFPS>0.f?1000.f/GAverageFPS:0.f);
   O->SetNumberField(TEXT("game_ms"),FPlatformTime::ToMilliseconds(GGameThreadTime));O->SetNumberField(TEXT("render_ms"),FPlatformTime::ToMilliseconds(GRenderThreadTime));
   O->SetNumberField(TEXT("gpu_ms"),FPlatformTime::ToMilliseconds(RHIGetGPUFrameCycles()));
+  O->SetNumberField(TEXT("pair_frames"),double(GKKPairFramesShown));O->SetNumberField(TEXT("seconds"),FPlatformTime::Seconds()); // pair poses shown so far, for their rate
   OKControlReply(Done,O);});
  Bind(TEXT("/play"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   auto& S=*State;auto B=OKControlBody(Req);double Girl=-1,Seconds=4;B->TryGetNumberField(TEXT("girl"),Girl);B->TryGetNumberField(TEXT("seconds"),Seconds);

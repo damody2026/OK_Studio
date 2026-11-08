@@ -103,6 +103,29 @@ pub(crate) fn note_state_nodes<'a>(names: impl Iterator<Item = &'a String>, clot
     });
 }
 
+/// An open that keeps every garment state's meshes, as a prefab holds them: the state only shows and hides them
+/// (ChaControl.UpdateVisible). One-on-one undresses her this way, without loading anything.
+pub(crate) const ALL_STATES_SWITCH: &str = "OK_CLOTHES_ALL_STATES";
+pub(crate) fn all_clothes_states() -> bool { crate::profile::var(ALL_STATES_SWITCH).is_ok_and(|v| v == "1") }
+/// The state nodes over a mesh travel in its `runtime_textures` under this prefix (category:node): that map is
+/// serialized with a part in every format, snapshots in cards included, and nothing walks its keys.
+const STATE_NODE_KEY: &str = "#state:";
+pub(crate) fn mark_state_nodes(mesh: &mut ExtractedMesh, chain: &[String], clothes_category: Option<i32>) {
+    for name in chain {
+        if clothes_state_node_visible(name, &[0; 9], clothes_category).is_some() {
+            mesh.runtime_textures.insert(format!("{STATE_NODE_KEY}{}:{name}", clothes_category.unwrap_or(0)), [0; 5]);
+        }
+    }
+}
+/// Whether every state node over a renderer is active in these states, as activeInHierarchy.
+pub(crate) fn state_nodes_shown(runtime_textures: &std::collections::BTreeMap<String, [i32; 5]>, states: &[u8; 9]) -> bool {
+    runtime_textures.keys().filter_map(|key| key.strip_prefix(STATE_NODE_KEY)).all(|node| {
+        let Some((category, name)) = node.split_once(':') else { return true };
+        let category = category.parse::<i32>().ok().filter(|c| *c != 0);
+        clothes_state_node_visible(name, states, category) != Some(false)
+    })
+}
+
 pub(crate) fn clothes_state_node_visible(name: &str, states: &[u8; 9], clothes_category: Option<i32>) -> Option<bool> {
     let (prefix, suffix) = name.rsplit_once('_')?;
     let variant = match suffix.to_ascii_lowercase().as_str() {

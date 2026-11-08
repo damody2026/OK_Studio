@@ -5110,6 +5110,9 @@ void AKKPreviewActor::Destroyed()
 
 void AKKPreviewActor::DestroyAllParts()
 {
+	CancelWardrobeStage();WornTextures.Reset();
+	for(auto& Mask:WornBodyMasks)if(Mask.Value)Mask.Value->RemoveFromRoot();
+	WornBodyMasks.Reset();
 	StopRenderTextureCaptures();
 	// Wrap morph sets released before their renderers go (their GPU buffers must be released first).
 	for(const FOkMouthSlot& Slot:TArray<FOkMouthSlot>(MouthSlots))SetPartWrapDeltas(Slot.SessionPartIndex,{},{});
@@ -7376,6 +7379,158 @@ bool AKKPreviewActor::ApplyAccessoryGeometryCandidate(FOkAppearanceContext& Cont
   Timing->SetNumberField(TEXT("added_renderers"),End-Offset);Timing->SetNumberField(TEXT("staged_components"),Staged.Num());
  }
  UE_LOG(LogTemp,Display,TEXT("Appearance geometry committed removed=%d added=%d components=%d total_ms=%.3f full_rebuild=0"),Removed.Num(),End-Offset,Staged.Num(),(Done-Begin)*1000.);
+ return true;
+}
+
+struct AKKPreviewActor::FWardrobeStage {
+ FOkSession* Donor=nullptr;int32 Offset=0,At=0;bool bRoleDone=false;TSharedPtr<FOKCookedRoleBuild> RoleBuild;
+ TArray<FKKLoadedPart> Parts;TArray<TObjectPtr<UTexture2D>> Textures;TArray<TObjectPtr<UPoseableMeshComponent>> Followers;
+ TArray<FOkMouthSlot> Mouth;TArray<TObjectPtr<UPrimitiveComponent>> Genital;
+ TArray<TObjectPtr<UMaterialInstanceDynamic>> ShadowMaterials,Cooked,Outlines;
+ TObjectPtr<UTexture2D> Ramp;TSet<FString> SeenHead;TMap<FString,int32> Depth;int32 Extra=0,Next=0;FOKToonShadowParameters Shadow;
+ TArray<TObjectPtr<UActorComponent>> Staged;TArray<TPair<TObjectPtr<USceneComponent>,FName>> Sockets;
+ // Nothing here is reachable by the collector until she wears it.
+ void Keep(TArray<TObjectPtr<UObject>>& Out) const {
+  Out.Reset();for(const auto& T:Textures)Out.Add(T.Get());for(const auto& M:Cooked)Out.Add(M.Get());for(const auto& M:Outlines)Out.Add(M.Get());for(const auto& M:ShadowMaterials)Out.Add(M.Get());for(const auto& C:Staged)Out.Add(C.Get());
+ }
+};
+
+UTexture* AKKPreviewActor::WornBodyMask(int32 TopState)
+{
+ const int32 Key=TopState==0?0:TopState==3?2:1;
+ if(const TObjectPtr<UTexture2D>* Known=WornBodyMasks.Find(Key))return Known->Get();
+ TArray<uint8> Png;UTexture2D* Mask=Session.WardrobeBodyMask(TopState,Png)?LinearTextureFromPngBytes(Png.GetData(),Png.Num()):nullptr;
+ WornBodyMasks.Add(Key,Mask);return Mask;
+}
+
+bool AKKPreviewActor::BeginWardrobeStage(FOkSession& Donor,FString& Error)
+{
+ check(IsInGameThread());
+ if(WardrobeStage){Error=TEXT("Clothes are already changing");return false;}
+ if(!bSessionLoadComplete||!SessionLoadState||!Session.IsOpen()||!Donor.IsOpen()){Error=TEXT("Preview is not ready for a change of clothes");return false;}
+ auto W=MakeShared<FWardrobeStage>();W->Donor=&Donor;W->Offset=Session.WardrobeFirst();W->Ramp=ToonRampTex;W->SeenHead=SessionLoadSeenHead;
+ W->Depth=SessionLoadTranslucentDepth;W->Extra=SessionLoadExtra;W->Shadow=SessionLoadState->Shadow;
+ WardrobeStage=W;return true;
+}
+
+int32 AKKPreviewActor::ContinueWardrobeStage(FString& Error,double Budget)
+{
+ check(IsInGameThread());
+ if(!WardrobeStage){Error=TEXT("No change of clothes is staged");return -1;}
+ FWardrobeStage& W=*WardrobeStage;const double Deadline=FPlatformTime::Seconds()+Budget;
+ if(!W.bRoleDone){
+  int32 RoleStep=1;
+  if(OKSharedParents()&&bUseSharedParents)RoleStep=OKPrepareCookedRole(this,Error,Budget,FOKCookedRoleTarget{*W.Donor,W.Cooked,W.Outlines,W.RoleBuild,W.Textures,true});
+  if(RoleStep<0){
+#if WITH_EDITOR
+   UE_LOG(LogTemp,Warning,TEXT("Wardrobe shared materials unavailable (%s): per-part material graphs"),*Error);W.Cooked.Reset();W.Outlines.Reset();Error.Reset();RoleStep=1;
+#else
+   CancelWardrobeStage();return -1;
+#endif
+  }
+  W.Keep(WardrobeStaged);if(RoleStep==0)return 0;
+  W.bRoleDone=true;
+ }
+ const int32 Count=W.Donor->PartCount();
+ FPartBuildOutput Output{W.Parts,W.Textures,W.Followers,W.Mouth,W.Genital,W.ShadowMaterials,W.Cooked,W.Outlines,W.Ramp,
+  W.SeenHead,W.Depth,W.Extra,W.Next,SessionLoadWhiteRamp,W.Shadow};
+ Output.bStage=true;Output.SessionOffset=W.Offset;Output.Staged=&W.Staged;Output.PendingSockets=&W.Sockets;
+ while(W.At<Count){
+  if(!BuildSessionPartRange(*W.Donor,Output,W.At,W.At+1,Error)){CancelWardrobeStage();return -1;}
+  ++W.At;if(FPlatformTime::Seconds()>=Deadline)break;
+ }
+ W.Keep(WardrobeStaged);
+ return W.At>=Count?1:0;
+}
+
+void AKKPreviewActor::CancelWardrobeStage()
+{
+ if(!WardrobeStage)return;
+ FWardrobeStage& W=*WardrobeStage;
+ for(UActorComponent* Component:W.Staged)if(Component)Component->DestroyComponent();
+ for(UTexture2D* Texture:W.Textures)if(Texture&&!LoadedTextures.Contains(Texture)&&Texture!=ToonRampTex)Texture->RemoveFromRoot();
+ ToonShadowMaterials.RemoveAll([&](UMaterialInstanceDynamic* M){return W.Cooked.Contains(M)||W.ShadowMaterials.Contains(M);});
+ WardrobeStage.Reset();WardrobeStaged.Reset();
+}
+
+bool AKKPreviewActor::CommitWardrobeStage(FString& Error)
+{
+ check(IsInGameThread());
+ if(!WardrobeStage){Error=TEXT("No change of clothes is staged");return false;}
+ const double Begin=FPlatformTime::Seconds();
+ FWardrobeStage& W=*WardrobeStage;const int32 Keep=W.Offset;
+ TMap<FName,FTransform> AdoptedNeutral;
+ for(const FKKLoadedPart& Part:W.Parts)if(!Part.RigidFollowBone.IsNone()&&!RigidNeutralBones.Contains(Part.RigidFollowBone)&&!CpuRigidNeutralBones.Contains(Part.RigidFollowBone)){
+  if(const FTransform* Neutral=RigidNeutralAllBones.Find(Part.RigidFollowBone))AdoptedNeutral.Add(Part.RigidFollowBone,*Neutral);
+  else{Error=TEXT("New clothes need an uncaptured rigid neutral socket");CancelWardrobeStage();return false;}
+ }
+ for(const auto& Socket:W.Sockets)if(!BodySkel||BodySkel->GetBoneIndex(Socket.Value)==INDEX_NONE){Error=TEXT("New clothes need a socket she does not have");CancelWardrobeStage();return false;}
+ // Wrap morph sets go before their renderers (DestroyAllParts).
+ for(const FOkMouthSlot& Slot:TArray<FOkMouthSlot>(MouthSlots))if(Slot.SessionPartIndex>=Keep)SetPartWrapDeltas(Slot.SessionPartIndex,{},{});
+ if(!WrapReleases.IsEmpty()){for(auto& R:WrapReleases)if(!R->bReleased)BeginReleaseResource(&R->Set->MorphBuffers);FlushRenderingCommands();WrapReleases.Reset();}
+ if(!FOkSession::WardrobeSwap(Session,*W.Donor,Error)){CancelWardrobeStage();return false;}
+ // Nothing below can fail: what she took off goes.
+ auto Retire=[&](UPrimitiveComponent* Component){
+  if(!Component)return;GenitalPrimitives.Remove(Component);
+  if(ToonShadowCapture)ToonShadowCapture->RemoveShowOnlyComponent(Component);
+  PendingPreviewMaterials.RemoveAll([&](const FKKPreviewMaterialSlot& Entry){return Entry.Component==Component;});
+  Component->DestroyComponent();
+ };
+ int32 Removed=0;
+ for(int32 Index=SkelFollowers.Num()-1;Index>=0;--Index){
+  UPoseableMeshComponent* Follower=SkelFollowers[Index];const int32 Part=OKSessionPartTag(Follower);
+  if(Part!=INDEX_NONE&&Part>=Keep){Retire(Follower);SkelFollowers.RemoveAt(Index);}
+ }
+ TArray<int32> ArrayMap;ArrayMap.Init(INDEX_NONE,Parts.Num());
+ TArray<FKKLoadedPart> Kept;Kept.Reserve(Parts.Num()+W.Parts.Num());
+ for(int32 Index=0;Index<Parts.Num();++Index){
+  FKKLoadedPart& Part=Parts[Index];
+  if(Part.SessionIndex>=Keep){Retire(Part.Comp);++Removed;continue;}
+  ArrayMap[Index]=Kept.Num();Kept.Add(MoveTemp(Part));
+ }
+ for(int32 Index=MouthSlots.Num()-1;Index>=0;--Index){
+  FOkMouthSlot& Slot=MouthSlots[Index];
+  if(Slot.SessionPartIndex>=Keep){Retire(Slot.Comp);Retire(Slot.OutlineComp);MouthSlots.RemoveAt(Index);continue;}
+  if(Slot.PartArrayIndex!=INDEX_NONE)Slot.PartArrayIndex=ArrayMap.IsValidIndex(Slot.PartArrayIndex)?ArrayMap[Slot.PartArrayIndex]:INDEX_NONE;
+ }
+ for(auto It=PartMorphWeights.CreateIterator();It;++It)if(It.Key()>=Keep)It.RemoveCurrent();
+ if(VaginaMorphPart>=Keep){VaginaMorphPart=INDEX_NONE;bVaginaMorphResolved=false;VaginaMorphName=NAME_None;}
+ for(int32 Index=Keep;Index<CookedRoleMaterials.Num();++Index)ToonShadowMaterials.Remove(CookedRoleMaterials[Index]);
+ if(!CookedRoleMaterials.IsEmpty()||!W.Cooked.IsEmpty()){
+  CookedRoleMaterials.SetNum(Keep);CookedRoleOutlines.SetNum(Keep);
+  W.Cooked.SetNum(Session.PartCount()-Keep);W.Outlines.SetNum(Session.PartCount()-Keep);
+  CookedRoleMaterials.Append(W.Cooked);CookedRoleOutlines.Append(W.Outlines);
+ }
+ const int32 BaseArray=Kept.Num();
+ for(FOkMouthSlot& Slot:W.Mouth)if(Slot.PartArrayIndex!=INDEX_NONE)Slot.PartArrayIndex+=BaseArray;
+ const int32 Added=W.Parts.Num();
+ Kept.Append(MoveTemp(W.Parts));Parts=MoveTemp(Kept);
+ for(UActorComponent* Component:W.Staged)if(Component&&!Component->IsRegistered())Component->RegisterComponent();
+ for(const auto& Socket:W.Sockets)if(Socket.Key)Socket.Key->AttachToComponent(BodySkel,FAttachmentTransformRules::SnapToTargetNotIncludingScale,Socket.Value);
+ for(UPoseableMeshComponent* Follower:W.Followers)if(Follower&&Follower->GetSkinnedAsset()){Follower->AllocateTransformData();OKApplySkelPose(Follower,Session);}
+ for(const FOkMouthSlot& Slot:W.Mouth)for(USkeletalMeshComponent* Mesh:{Slot.Comp,Slot.OutlineComp})if(Mesh&&Mesh->GetSkinnedAsset())Mesh->InitAnim(true);
+ SkelFollowers.Append(W.Followers);MouthSlots.Append(MoveTemp(W.Mouth));GenitalPrimitives.Append(W.Genital);
+ // The masks these clothes cut from her body are made as they are asked for (SetClothingPartsHidden).
+ for(auto& Mask:WornBodyMasks)if(Mask.Value)Mask.Value->RemoveFromRoot();
+ WornBodyMasks.Reset();
+ if(!bAllClothesStates)SetBodyMask(WornBodyMask(0));
+ // Textures only the clothes she took off used are let go; a character would otherwise keep every outfit she tried.
+ TArray<TObjectPtr<UTexture2D>> Worn;
+ for(UTexture2D* Texture:W.Textures)if(Texture&&(WornTextures.Contains(Texture)||!LoadedTextures.Contains(Texture)))Worn.AddUnique(Texture);
+ for(UTexture2D* Texture:WornTextures)if(Texture&&!Worn.Contains(Texture)){LoadedTextures.Remove(Texture);Texture->RemoveFromRoot();}
+ for(UTexture2D* Texture:Worn)LoadedTextures.AddUnique(Texture);
+ WornTextures=MoveTemp(Worn);
+ ToonShadowMaterials.Append(W.ShadowMaterials);if(!ToonRampTex&&W.Ramp)ToonRampTex=W.Ramp;RigidNeutralBones.Append(AdoptedNeutral);
+ SessionLoadNextPart=Session.PartCount();
+ if(ToonShadowCapture)for(UActorComponent* Component:W.Staged)if(auto* Primitive=Cast<UPrimitiveComponent>(Component))
+  if(Primitive->IsVisible()&&Primitive->bRenderInMainPass&&!Primitive->ComponentHasTag(TEXT("KKPreviewOutline")))ToonShadowCapture->ShowOnlyComponent(Primitive);
+ if(bCharacterDisplayShadows){ToonShadowBoundIndex=INDEX_NONE;if(ToonShadowTargets.IsValidIndex(ToonShadowReadIndex))BindToonShadowTarget(ToonShadowReadIndex);UpdateToonShadowProjection();}
+ if(SuspendedDisplayTicks.Num()>0)SuspendDisplayTicks(true);
+ SyncMouthPose();RefreshSkinnedDisplay();ApplyMouth();ApplyGenitalVisibility();
+ if(!MaterialOverrides.IsEmpty())ApplyMaterialOverrides();
+ const int32 Components=W.Staged.Num();
+ WardrobeStage.Reset();WardrobeStaged.Reset();
+ UE_LOG(LogTemp,Display,TEXT("Wardrobe committed removed=%d added=%d components=%d commit_ms=%.3f"),Removed,Added,Components,(FPlatformTime::Seconds()-Begin)*1000.);
  return true;
 }
 
@@ -10014,6 +10169,7 @@ bool AKKPreviewActor::SetWrapLine(bool bOn,const FVector& From,const FVector& To
 // rebuilt each call. The sets just replaced stay alive until the render thread is past them. Empty clears it.
 bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& Indices,const TArray<FVector3f>& UnityDeltas,const TArray<FVector3f>& UnityNormalDeltas)
 {
+    TRACE_CPUPROFILER_EVENT_SCOPE(KK_SetPartWrapDeltas);
     const FOkMouthSlot* Slot=MouthSlots.FindByPredicate([PartIndex](const FOkMouthSlot& S){return S.SessionPartIndex==PartIndex;});
     if(Indices.Num()!=UnityDeltas.Num())return false;
     // A part with no morph slot (her clothes, kept over her skin: belly_bulge::cover_deltas) takes it on its own renderers,

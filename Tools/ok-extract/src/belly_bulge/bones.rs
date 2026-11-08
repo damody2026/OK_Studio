@@ -120,7 +120,7 @@ pub fn bone_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
     if worlds.is_empty() { return Vec::new(); }
     let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
     let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-    let posed = posed_verts(part, &verts, &worlds, &binds);
+    let posed = posed_verts(&verts, &worlds, &binds);
     let mut pos: Vec<Option<[f32; 3]>> = vec![None; verts.len()];let mut normal = vec![[0f32; 3]; verts.len()];
     for q in &posed { pos[q.i] = Some(q.p);normal[q.i] = q.n; }
     let ul = dot(up, up).sqrt();
@@ -234,5 +234,6 @@ pub fn bone_deltas(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 
         if !raised { break; }
     }
     let moved: Vec<Option<[f32; 3]>> = (0..verts.len()).map(|i| pos[i].map(|p| [p[0] + up[0] * lift[i], p[1] + up[1] * lift[i], p[2] + up[2] * lift[i]])).collect();
-    mesh_moves(&verts, &posed, &pos, &moved)
+    let places = verts.iter().map(|v| v.place as usize + 1).max().unwrap_or(0);
+    mesh_moves(&verts, &posed, &pos, &moved, places)
 }

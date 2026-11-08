@@ -1263,6 +1263,16 @@ pub struct OkSession {
     pub(crate) mmdd_face_bone_dirty: bool,
     /// Active shoe metadata `(entry_name, main_data, mod_guid)` for the outfit's `shoesType` slot.
     pub(crate) active_shoe_meta: Option<(String, String, String)>,
+    /// On a wardrobe donor (`wardrobe.rs`): the mask this outfit gives her body.
+    pub(crate) wardrobe_body_mask: Option<Vec<u8>>,
+    /// Her clothes chains were just replaced on a live model: the game starts them where she stands, with no warm-up.
+    pub(crate) wardrobe_quick_settle: bool,
+    /// Parts the display hides (clothes states over every state kept, a piece taken off): their chains are not solved
+    /// or skinned while hidden, and start again from where she stands when shown (set_parts_hidden).
+    pub(crate) hidden_parts: Vec<bool>,
+    /// The cover field built beside her clothes chains this frame (finish_paired_dynamics_filtered), for the accessories
+    /// that follow; None: built there as before.
+    pub(crate) cover_ready: Option<Option<crate::belly_bulge::CoverField>>,
     pub(crate) face_runtime: FaceRuntimeState,
     pub body_shaped: Option<Skeleton>,
     // Runtime-only allocation reuse; restored from the complete current shaped
@@ -2102,7 +2112,9 @@ impl OkSession {
             if let Some(mut state) = crate::dbone::AttachedDynamicSet::new_unsettled(&self.clothes_dynamics, &setup, &crate::pose::ident()) {
                 state.mark_skin_chains();
                 state.configure_shared_clothes_colliders(body, &self.body_colliders, flags);
-                for _ in 0..240 {
+                // A few steps only bring them from their setup pose to where she is.
+                let steps = if std::mem::take(&mut self.wardrobe_quick_settle) { 12 } else { 240 };
+                for _ in 0..steps {
                     state.sync_shared_pose(body); state.configure_shared_clothes_colliders(body, &self.body_colliders, flags);
                     state.step_on_animated_pose(1.0 / 60.0);
                 }
@@ -2199,6 +2211,14 @@ impl OkSession {
     fn update_dynamic_accessories_dispatch_observed(&mut self,dt:f32,palette_only:bool,parallel:bool,observer:Option<crate::ffi::PrivateSkinObserver>) {
         self.update_dynamic_accessories_filtered(dt,palette_only,parallel,observer,&[]);
     }
+    /// The display's hidden parts (one byte a part, nonzero hidden). A part shown again has its chains started over.
+    pub(crate) fn set_parts_hidden(&mut self,mask:&[u8]) {
+        let was=std::mem::take(&mut self.hidden_parts);
+        self.hidden_parts=(0..self.parts.len()).map(|i|mask.get(i).is_some_and(|&m|m!=0)).collect();
+        for (index,part) in self.parts.iter_mut().enumerate() {
+            if was.get(index).copied().unwrap_or(false)&&!self.hidden_parts[index] {if let Some(runtime)=part.runtime_accessory.as_mut(){runtime.reset();}}
+        }
+    }
     fn update_dynamic_accessories_filtered(&mut self,dt:f32,palette_only:bool,parallel:bool,observer:Option<crate::ffi::PrivateSkinObserver>,excluded:&[usize]) {
         let t_prepare=std::time::Instant::now();
         let policy=AccessoryFramePolicy::read();
@@ -2246,6 +2266,7 @@ impl OkSession {
         }
         // Renderers of one prefab (same socket and placement, same simulated bones, same part) share one solve: the
         // first solves, the others take its bone locals (update_render_follow). OK_ACC_SHARED_SOLVE=0: each solves.
+        let hidden=&self.hidden_parts;let hidden=|index:usize|hidden.get(index).copied().unwrap_or(false);
         let mut leader_of:Vec<Option<usize>>=vec![None;self.parts.len()];
         let mut particle_ids:HashMap<usize,Vec<i64>>=HashMap::new();
         if dt>0.0 && acc_shared_solve() {
@@ -2254,7 +2275,7 @@ impl OkSession {
             for (index,part) in self.parts.iter().enumerate() {
                 let Some(runtime)=&part.runtime_accessory else {continue;};
                 let Some(state)=&runtime.state else {continue;};
-                if runtime.copy_weights_body || runtime.coordinated {continue;}
+                if runtime.copy_weights_body || runtime.coordinated || hidden(index) {continue;}
                 let ids=state.particle_ids();if ids.is_empty(){continue;}
                 let placement:[u32;16]=std::array::from_fn(|i|runtime.local_placement[i/4][i%4].to_bits());
                 match leaders.entry((runtime.parent_key.clone(),part.role.clone(),part.source_property.clone(),placement,ids.clone())) {
@@ -2269,9 +2290,9 @@ impl OkSession {
         let t_parts=std::time::Instant::now();
         let skinned=std::sync::atomic::AtomicU64::new(0);
         // Her clothes kept over her skin while the H scene has it on (belly_bulge::CoverField).
-        let cover=crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body);let cover=&cover;
+        let cover=match self.cover_ready.take(){Some(built)=>built,None=>{let _trace=crate::native_profile::Scope::new(47);crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body)}};let cover=&cover;
         let update=|(index,part):(usize,&mut SessionPart)| {
-            if leader_of[index].is_some() {return;}
+            if leader_of[index].is_some()||hidden(index) {return;}
             let Some(runtime) = &mut part.runtime_accessory else { return; };
             let _group = crate::px::enter_group(group, physx);
             // Hair and accessories are worn over the clothes: they collide with the clothed body surface. Garments
@@ -2316,6 +2337,7 @@ impl OkSession {
             }
             let follow=|(index,part):(usize,&mut SessionPart)| {
                 let Some(leader)=leader_of[index] else {return;};
+                if hidden(index) {return;}
                 let Some(runtime)=&mut part.runtime_accessory else {return;};
                 let source=if runtime.coordinated {clothes_body}else{body};
                 let assigned=if runtime.coordinated{assigned_clothes.as_ref()}else{assigned_body.as_ref()};
@@ -2849,7 +2871,15 @@ impl OkSession {
         if let Some(body)=self.body_skel.as_mut() { self.head_look.apply_preserving_fk(body,delta_seconds,&self.user_fk); crate::dbone::apply_head_tilt(body, crate::px::debug_head_tilt()); }
         self.update_body_dynamics(delta_seconds);}
         let body=start.elapsed();
-        {let _trace=crate::native_profile::Scope::new(5);self.update_clothes_dynamics(delta_seconds);}
+        // Her clothes over her skin (belly_bulge::CoverField) is built while her clothes chains run: 0.9 ms of her
+        // accessories' part of the pair frame, on its longest path (trace 2026-11-08).
+        let prep=crate::belly_bulge::CoverField::prepare(self as *const Self as usize,&self.parts,self.body_skel.as_ref());
+        {let _trace=crate::native_profile::Scope::new(5);
+            let built=match prep {
+                Some(prep)=>{let (_,built)=rayon::join(||self.update_clothes_dynamics(delta_seconds),move||crate::belly_bulge::CoverField::build(prep));built}
+                None=>{self.update_clothes_dynamics(delta_seconds);None}
+            };
+            self.cover_ready=Some(built);}
         let clothes=start.elapsed();
         {let _trace=crate::native_profile::Scope::new(6);if let Some(mut ex) = self.skel_export.take() {
             crate::skel_export::refresh_pose(self, &mut ex);
@@ -4157,6 +4187,10 @@ impl SessionBlob {
             mmdd_world_lock: false,
             mmdd_face_bone_dirty: false,
             active_shoe_meta: None,
+            wardrobe_body_mask: None,
+            wardrobe_quick_settle: false,
+            hidden_parts: Vec::new(),
+            cover_ready: None,
             face_runtime: Default::default(),
             body_shaped: self.body_shaped,
             shape_reference_scratch: None,

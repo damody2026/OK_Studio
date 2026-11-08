@@ -114,6 +114,13 @@ int32_t ok_unity_quat_to_euler(const float* q4,float* out3);
 int32_t ok_studio_pose_write(const char* path,const char* json,char* err,int32_t cap);
 /* PhysX secondary dynamics for this character: 1 = host solver (gallery menu, one-to-one, paired playback), 0 = built-in (default). */
 int32_t ok_session_set_physx_secondary(OkSession* s,int32_t enabled);
+int32_t ok_session_wardrobe_prepare(OkSession* s);
+int32_t ok_session_wardrobe_strip(OkSession* s);
+int32_t ok_session_wardrobe_first(OkSession* s);
+int32_t ok_session_clothes_parts_shown(OkSession* s,const uint8_t* states,uint8_t* out,int32_t cap);
+int32_t ok_session_wardrobe_body_mask(OkSession* s,int32_t top_state,uint8_t* out,int32_t cap);
+int32_t ok_session_set_parts_hidden(OkSession* s,const uint8_t* mask,int32_t count);
+int32_t ok_session_wardrobe_swap(OkSession* live,OkSession* donor,char* err,int32_t cap);
 /* Whether an Unreal animation drives this body: 1 yes, 0 the session samples its game animation, -1 follow OK_UE_ANIM
    (process-wide; another actor loading may change it). */
 int32_t ok_session_set_external_animation(OkSession* s,int32_t external);
@@ -129,6 +136,13 @@ int32_t ok_belly_bulge_past(OkSession* s,const float* tip,float* out,char* targe
    (her skeleton space, metres, 9 floats; that way zero: read off her skin), radius his and a margin. Writes up to max (body vertex index, move in the mesh's own space, Unity
    metres, then the turn of its normal there: 6 floats each); returns how many there are, -1 on bad input. */
 int32_t ok_belly_wrap_deltas(OkSession* s,const float* at,float radius,uint32_t* out_idx,float* out_d,uint32_t max);
+/* This frame's wrap and clothes on the wrap worker, the session idle: at as ok_belly_wrap_deltas, wrap 0 her skin left
+   alone, cover 0 her clothes left alone. 1 started, 0 the last one still runs, -1 bad input. */
+int32_t ok_belly_wrap_start(OkSession* s,const float* at,float radius,int32_t wrap,int32_t cover);
+/* The finished job of ok_belly_wrap_start, the session idle: her body's moves as ok_belly_wrap_deltas (the count returned;
+   -2 none ready, -1 bad input), her garments' as ok_cover_deltas (cloth_n), the garments to draw from their CPU vertices
+   as ok_set_cover (cpu_n). */
+int32_t ok_belly_wrap_take(OkSession* s,int32_t cover,uint32_t* out_idx,float* out_d,uint32_t max,uint32_t* cloth_part,uint32_t* cloth_idx,float* cloth_d,uint32_t cloth_max,uint32_t* cloth_n,int32_t* cpu_parts,uint32_t cpu_max,uint32_t* cpu_n);
 /* Her clothes kept over her skin this frame (belly_bulge::cover_deltas): body_idx/body_d her body's skin moves as
    ok_belly_wrap_deltas gave them (n, may be 0). Writes up to max (part index, vertex index, move: 3 floats); returns the count. */
 /* Her garments with their own rig kept over her skin as they are skinned on the CPU (on 1) or not (belly_bulge::set_cover);
@@ -494,6 +508,9 @@ int32_t ok_editor_body_physics(OkSession* session,float softness,float weight);
  * ok_session_refresh_body_physics, load or shape change. 0 on success. */
 int32_t ok_set_body_part_physics(int32_t part,int32_t mode,float softness);
 int32_t ok_session_refresh_body_physics(OkSession* session);
+/* Her skin where he lifts it cut finer, one-on-one only: once, after opening, before the mesh is built. The vertices
+ * added, -1 without a session. */
+int32_t ok_session_refine_belly(OkSession* session);
 /* The eyes past the source's limits for every character (on by default): the look follows past the pattern's
  * angles and the iris moves on in proportion, up to most (in rates, 1 the source's limit); 0 keeps the limits. */
 int32_t ok_set_eye_look_unlimited(int32_t enabled,float most);
