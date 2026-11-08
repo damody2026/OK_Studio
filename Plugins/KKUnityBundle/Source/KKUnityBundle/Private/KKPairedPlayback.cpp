@@ -27,6 +27,9 @@ bool AKKPairedPlayback::Start(AKKPreviewActor* Female,AKKPreviewActor* Male,cons
 	if(!IsValid(Female)||!IsValid(Male)||Female==Male||Female->GetWorld()!=Male->GetWorld()
 		||!Female->PairFrame().Equals(Male->PairFrame(),.01f))
 	{Error=TEXT("配對角色需要共同場景與原點");if(IsValid(Female)&&IsValid(Male))UE_LOG(LogTemp,Warning,TEXT("Pair refused: female %s (origin set %d, actor %s), male %s (origin set %d, actor %s)"),*Female->PairFrame().ToString(),Female->bPairOriginSet,*Female->GetActorTransform().ToString(),*Male->PairFrame().ToString(),Male->bPairOriginSet,*Male->GetActorTransform().ToString());return false;}
+	// Another state of the pose already playing (his strokes stronger or weaker, faster): the chains go on from where they
+	// are, as the original's one Animator does (HSceneProc resets them once, when the scene starts).
+	bSamePoseRestart=bActive&&FemaleActor.Get()==Female&&MaleActor.Get()==Male&&FemaleIK==FemaleMotion&&MaleIK==MaleMotion;
 	Stop();FemaleActor=Female;MaleActor=Male;FemaleClip=FemaleKey;MaleClip=MaleKey;StateName=State;FemaleIK=FemaleMotion;MaleIK=MaleMotion;
 	OldFemaleTick=Female->IsActorTickEnabled();OldMaleTick=Male->IsActorTickEnabled();
 	if(!Restart(Error)) {Stop();return false;}
@@ -54,8 +57,11 @@ bool AKKPairedPlayback::Restart(FString& Error)
 			if(Player->Create(Spec,Anims)&&Player->Roles()==2){OkPlayer=Player;if(WalkCycle)OkPlayer->SetWalk(*WalkCycle);}else UE_LOG(LogTemp,Warning,TEXT("OK pair group unusable: %s %s"),*Path,*FOkAnimBridge::LastError());
 		}
 	}
-	// A new pose can put hair/cloth inside the bodies: settle the chains first (generic, every pose and state).
-	OKPhysXSecondary::Settle();
+	// A new pose can put hair/cloth inside the bodies: settle the chains first. Not for another state of the same pose: the
+	// settle solves with its own backend for a while, whatever solver is chosen, and handing the chains from one solver to
+	// the other and back threw her clothes about at every switch of his strokes (user, 2026-11-09: 強弱切換).
+	if(!bSamePoseRestart)OKPhysXSecondary::Settle();
+	bSamePoseRestart=false;
 	if(!Advance(0.f,Error)){Stop();return false;}return true;
 }
 void AKKPairedPlayback::SetThird(AKKPreviewActor* Actor,const FString& Motion,bool bSwapped)

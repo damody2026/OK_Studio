@@ -21,6 +21,8 @@ public:
 		const FString& State,const FString& FemaleMotion,const FString& MaleMotion,FString& Error);
 	bool Restart(FString& Error);
 	void Stop();
+	// Start into another state of the pose already playing (the same two, the same motions): no settle (Restart).
+	bool bSamePoseRestart=false;
 	void SetPaused(bool Paused) {bPaused=Paused;}
 	bool IsPaused() const {return bPaused;}
 	// A worker is writing both sessions now (ok.Anim.AsyncPair): read neither until it is done.
