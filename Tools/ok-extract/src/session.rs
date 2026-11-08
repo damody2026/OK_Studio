@@ -2421,6 +2421,9 @@ impl OkSession {
                 }
             } else {merged.push(bone.clone());}
         }
+        // A live shape keeps the particles where the old body had them, and a still pose never steps them: a jump of the
+        // style (0 to -1) left the breasts up at the collarbone. The next shape settles fresh dynamics on the new body.
+        if merged!=self.abm {self.body_dynamic_runtime=None;self.clothes_dynamic_runtime=None;}
         self.abm=merged;
         if bones.is_empty() {self.style_card_abm=None;}
     }

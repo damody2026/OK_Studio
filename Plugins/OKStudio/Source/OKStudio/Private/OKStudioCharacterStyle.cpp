@@ -35,6 +35,7 @@ namespace
 		float FOKStudioStyleTuning::* Width = nullptr;	// against the card's
 		bool bArm = false;	// its length follows ArmGrowth
 		bool bLeg = false;	// its length follows LegLength
+		bool bThick = false;	// keeps the card's thickness (front to back)
 	};
 
 	// Indices: KKShapeRows.cpp. Every slider goes the opposite way for the two styles; the inventory and why these values:
@@ -95,7 +96,7 @@ namespace
 
 	using T = FOKStudioStyleTuning;
 	const FStyleWidth Widths[] = {
-		{ TEXT("cf_s_neck"), false, 1 }, { TEXT("cf_s_spine03"), false, 1, &T::Upper }, { TEXT("cf_s_spine02"), false, 1, &T::Upper }, { TEXT("cf_s_spine01"), false, 1, &T::Upper },
+		{ TEXT("cf_s_neck"), false, 1 }, { TEXT("cf_s_spine03"), false, 1, &T::Upper, false, false, true }, { TEXT("cf_s_spine02"), false, 1, &T::Upper }, { TEXT("cf_s_spine01"), false, 1, &T::Upper },
 		{ TEXT("cf_s_waist01"), false, 1, &T::Waist }, { TEXT("cf_s_waist02"), false, 1, &T::Hips }, { TEXT("cf_s_siri"), true, -1, &T::Hips }, { TEXT("cf_d_sk_top"), false, 1, &T::Hem },
 		{ TEXT("cf_s_bust00"), true, -1, &T::Bust },
 		{ TEXT("cf_s_thigh01"), true, 1, &T::Thigh, false, true }, { TEXT("cf_s_thigh02"), true, 1, &T::Thigh, false, true }, { TEXT("cf_s_thigh03"), true, 1, &T::Thigh, false, true },
@@ -166,6 +167,9 @@ FString OKStudioStyleBones(float Style, float Scale)
 			{
 				FVector Size(Thin * FMath::Lerp(1.f, W.Width ? Tuning.*W.Width : 1.f, -Style));
 				if (W.Along >= 0) Size[W.Along] = 1.f;
+				// The chest keeps its depth: thinner, it left the breasts' root (on the spine) standing out in front of it and
+				// the breasts came to a point (2026-11-09, the user).
+				if (W.bThick) Size.Z = 1.f;
 				Add(FString(W.Name) + (W.bBothSides ? Side : TEXT("")), Size, W.bArm ? Arm : W.bLeg ? Leg : 1.f, 0.f);
 				if (!W.bBothSides) break;
 			}
