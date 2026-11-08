@@ -8335,12 +8335,97 @@ void AKKPreviewActor::PreparePrivateGpuDisplayPoses(){
   FString BoxError;States[I]->bPreparedBox=OKEvaluatePrivateGpuBounds(States[I]->Bounds,States[I]->PreparedPose,States[I]->PreparedBox,BoxError);
  }
 }
+// The CPU accessory streams of one frame, between their two halves (ok.Anim.PairSplitDisplay): what the session gave is
+// read on the game thread while no solve runs (PrepareRuntimeAccessories, every pointer moved to a copy of ours), then
+// converted, generated and uploaded (FinishRuntimeAccessories) while the next pair frame is already solved on a worker.
+struct FKKAccessoryStreamSource {FKKLoadedPart* Part;OkMeshView View;bool Changed,CacheMotion,DirectNative;int32 FirstJob,EndJob,FirstWork=0,EndWork=0;};
+struct FKKAccessoryStreamSourceJob {int32 WorkIndex,Begin,End;bool Changed=false;};
+struct FKKAccessoryStreamFrame
+{
+    TArray<FKKAccessoryStreamSource,TInlineAllocator<32>> Sources;
+    TArray<FKKAccessoryStreamSourceJob,TInlineAllocator<128>> SourceJobs;
+    TArray<int32,TInlineAllocator<128>> RegularSourceJobs,FusedSourceJobs;
+    int32 SourceVertices=0;
+    const void* PartsData=nullptr;int32 PartsNum=0; // the parts the sources point into, as they were
+};
+static TAutoConsoleVariable<int32> CVarOkPairSplitDisplay(TEXT("ok.Anim.PairSplitDisplay"),1,
+    TEXT("1: the pair's CPU accessory streams are generated and uploaded after its next frame is launched, from copies of what the session gave (overlapping the solve)."));
+bool GKKDeferRuntimeStreams=false;
 void AKKPreviewActor::RefreshRuntimeAccessories()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(KK_PreviewStreams);
+    FinishRuntimeAccessories(); // one left from before goes first: its copies are older than this frame
+    PrepareRuntimeAccessories();
+    if(!GKKDeferRuntimeStreams||CVarOkPairSplitDisplay.GetValueOnGameThread()==0)FinishRuntimeAccessories();
+}
+void AKKPreviewActor::PrepareRuntimeAccessories()
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(KK_StreamPrepare);
     if(GpuPosesPreparedFrame!=GFrameCounter)PreparePrivateGpuDisplayPoses();
     TArray<FKKGpuStreamSectionRequest> GpuRequests;
     ON_SCOPE_EXIT {QUICK_SCOPE_CYCLE_COUNTER(STAT_KK_SubmitGpuStreams);if(!GpuRequests.IsEmpty())UKKAffineProceduralMeshComponent::SubmitGpuStreamsBatch(MoveTemp(GpuRequests));};
+    const bool bCopy=GKKDeferRuntimeStreams&&CVarOkPairSplitDisplay.GetValueOnGameThread()!=0;
+    PendingStreams=MakePimpl<FKKAccessoryStreamFrame>();FKKAccessoryStreamFrame& Frame=*PendingStreams;Frame.PartsData=Parts.GetData();Frame.PartsNum=Parts.Num();
+    auto& Sources=Frame.Sources;auto& SourceJobs=Frame.SourceJobs;auto& RegularSourceJobs=Frame.RegularSourceJobs;auto& FusedSourceJobs=Frame.FusedSourceJobs;
+    int32& SourceVertices=Frame.SourceVertices;
+    const bool Indexed=CVarOkSourceIndexedStreams.GetValueOnGameThread()!=0&&CVarOkAnimationGeneratedStreams.GetValueOnGameThread()!=0&&CVarOkAnimationSourceConversion.GetValueOnGameThread()!=0;
+    const bool Fused=!Indexed&&CVarOkFusedSourceStreams.GetValueOnGameThread()!=0&&CVarOkAnimationGeneratedStreams.GetValueOnGameThread()!=0;
+    const bool CacheNormalMotion=CVarOkNormalMotionCache.GetValueOnGameThread()!=0;
+	bool GpuPrepared=false;
+	for (FKKLoadedPart& Part : Parts)
+	{
+        const bool HadGpu=Part.PrivateGpuDisplay.IsValid();
+        if(UpdatePrivateGpuDisplay(Part,!GpuPrepared,GpuRequests)){GpuPrepared|=!HadGpu;Part.bNativeDisplayPrepared=false;continue;}
+        if(Part.bNativeDisplayPrepared){Part.bNativeDisplayPrepared=false;continue;}
+		if ((!Part.bRuntimeAccessory && !SkelFollowers.IsEmpty()) || !Part.Comp || Part.bSlotAttached || Part.SessionIndex == INDEX_NONE)
+		{
+			continue;
+		}
+		OkMeshView View;
+		FMemory::Memzero(View);
+		if (!Session.PartAt(Part.SessionIndex, View) || !View.positions ||
+			View.n_verts != Part.BaseVertices.Num())
+		{
+			continue;
+		}
+        // Rigid geometry stays in its authored local coordinates while its render
+        // matrix follows the socket. Compare native streams before converting
+        // those unchanged floats to doubles, irrespective of rigid mesh size.
+        const int32 Morphs=Session.MorphCount(Part.SessionIndex);
+        const bool DirectNative=(Indexed||Fused)&&View.skel_kind==4&&View.normals&&Part.BaseNormals.Num()==View.n_verts
+            &&!Part.bFaceSphereNormals&&!View.eye_draw&&Morphs==0
+            &&(Indexed||!(CacheNormalMotion&&Part.bRuntimeNormalMotionReusable));
+        const bool NativeSnapshot=(DirectNative||View.skel_kind==0||View.n_verts>=16384)&&!Part.bFaceSphereNormals&&!View.eye_draw&&Morphs==0;
+        if(!OKSyncSourceGeometry(Part.RuntimeSourceGeometry,View.n_verts,View.positions,View.normals,View.rest_tangents,NativeSnapshot)){AnimationSkippedVertices+=View.n_verts;continue;}
+        // The session's vectors are replaced by the next solve, which runs while these are converted: read our copy.
+        if(bCopy){
+            TArray<float>& Copy=NativeSnapshot?Part.RuntimeSourceGeometry:Part.RuntimeDeferredGeometry;
+            const int32 NP=View.n_verts*3,NN=View.normals?View.n_verts*3:0,NT=View.rest_tangents?View.n_verts*4:0;
+            if(!NativeSnapshot){Copy.SetNumUninitialized(NP+NN+NT,EAllowShrinking::No);FMemory::Memcpy(Copy.GetData(),View.positions,NP*sizeof(float));
+                if(NN)FMemory::Memcpy(Copy.GetData()+NP,View.normals,NN*sizeof(float));if(NT)FMemory::Memcpy(Copy.GetData()+NP+NN,View.rest_tangents,NT*sizeof(float));}
+            check(Copy.Num()==NP+NN+NT);
+            View.positions=Copy.GetData();if(NN)View.normals=Copy.GetData()+NP;if(NT)View.rest_tangents=Copy.GetData()+NP+NN;
+        }
+        bool GeometryChanged=NativeSnapshot;
+		if(View.rest_tangents&&Part.RuntimeSourceTangents.Num()!=View.n_verts){Part.RuntimeSourceTangents.SetNumUninitialized(View.n_verts);GeometryChanged=true;}
+        const bool CacheMotion=CacheNormalMotion&&Part.bRuntimeNormalMotionReusable&&!Part.bFaceSphereNormals
+            &&Part.RuntimeNormalMotionUses.Num()==View.n_verts
+            &&Part.RuntimeRestNormals.Num()==View.n_verts&&Part.BaseNormals.Num()==View.n_verts;
+        Part.bRuntimeSourceNormalMotionPrepared=CacheMotion;
+        if(CacheMotion&&Part.RuntimeSourceNormalMotion.Num()!=View.n_verts)Part.RuntimeSourceNormalMotion.SetNumUninitialized(View.n_verts);
+        const int32 SourceIndex=Sources.Num(),FirstJob=SourceJobs.Num();
+        const int32 SourceBatch=Indexed&&DirectNative?FMath::Clamp(CVarOkSourceRangeVertices.GetValueOnGameThread(),64,4096):1024;
+        for(int32 Begin=0;Begin<View.n_verts;Begin+=SourceBatch)SourceJobs.Add({SourceIndex,Begin,FMath::Min(Begin+SourceBatch,View.n_verts),false});
+        Sources.Add({&Part,View,GeometryChanged,CacheMotion,DirectNative,FirstJob,SourceJobs.Num()});SourceVertices+=View.n_verts;
+        for(int32 Job=FirstJob;Job<SourceJobs.Num();++Job){if(DirectNative)FusedSourceJobs.Add(Job);else RegularSourceJobs.Add(Job);}
+    }
+}
+void AKKPreviewActor::FinishRuntimeAccessories()
+{
+    if(!PendingStreams.IsValid())return;
+	TRACE_CPUPROFILER_EVENT_SCOPE(KK_StreamFinish);
+    TPimplPtr<FKKAccessoryStreamFrame> Owned=MoveTemp(PendingStreams);FKKAccessoryStreamFrame& Frame=*Owned;
+    if(Frame.PartsData!=Parts.GetData()||Frame.PartsNum!=Parts.Num())return; // reloaded in between: its sources are gone
 	const bool Profile=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_ANIM_PROFILE"))==TEXT("1");
     // UpdateMeshSection retains omitted UV/color attributes and owns a copy
     // of mutable streams. Keep scratch capacity across parts AND frames.
@@ -8350,19 +8435,13 @@ void AKKPreviewActor::RefreshRuntimeAccessories()
     struct FSectionJob {int32 WorkIndex,Begin,End;};
     TArray<FSectionWork,TInlineAllocator<32>> Work;
     TArray<FSectionJob,TInlineAllocator<64>> Jobs;
-    struct FSourceWork {FKKLoadedPart* Part;OkMeshView View;bool Changed,CacheMotion,DirectNative;int32 FirstJob,EndJob,FirstWork=0,EndWork=0;};
-    struct FSourceJob {int32 WorkIndex,Begin,End;bool Changed=false;};
-    TArray<FSourceWork,TInlineAllocator<32>> Sources;
-    TArray<FSourceJob,TInlineAllocator<128>> SourceJobs;
-    TArray<int32,TInlineAllocator<128>> RegularSourceJobs,FusedSourceJobs;
+    auto& Sources=Frame.Sources;auto& SourceJobs=Frame.SourceJobs;auto& RegularSourceJobs=Frame.RegularSourceJobs;auto& FusedSourceJobs=Frame.FusedSourceJobs;
+    const int32 SourceVertices=Frame.SourceVertices;
     const bool Indexed=CVarOkSourceIndexedStreams.GetValueOnGameThread()!=0&&CVarOkAnimationGeneratedStreams.GetValueOnGameThread()!=0&&CVarOkAnimationSourceConversion.GetValueOnGameThread()!=0;
     const bool CheckIndexed=CVarOkSourceIndexedParity.GetValueOnGameThread()!=0;
     TArray<FSectionJob,TInlineAllocator<64>> RegularDrawJobs;
-    const bool Fused=!Indexed&&CVarOkFusedSourceStreams.GetValueOnGameThread()!=0&&CVarOkAnimationGeneratedStreams.GetValueOnGameThread()!=0;
     const bool CheckFused=CVarOkFusedSourceParity.GetValueOnGameThread()!=0;
-    int32 SourceVertices=0;
     int32 TotalDraw=0;
-    const bool CacheNormalMotion=CVarOkNormalMotionCache.GetValueOnGameThread()!=0;
     const bool CheckNormalMotion=CVarOkNormalMotionParity.GetValueOnGameThread()!=0;
     const bool RestCache=CVarOkRestNormalCache.GetValueOnGameThread()!=0;
     const bool ZeroRotation=CVarOkZeroOffsetRotation.GetValueOnGameThread()!=0;
@@ -8395,44 +8474,6 @@ void AKKPreviewActor::RefreshRuntimeAccessories()
     };
 	{
     TRACE_CPUPROFILER_EVENT_SCOPE(KK_StreamPrepareSources);
-	bool GpuPrepared=false;
-	for (FKKLoadedPart& Part : Parts)
-	{
-        const bool HadGpu=Part.PrivateGpuDisplay.IsValid();
-        if(UpdatePrivateGpuDisplay(Part,!GpuPrepared,GpuRequests)){GpuPrepared|=!HadGpu;Part.bNativeDisplayPrepared=false;continue;}
-        if(Part.bNativeDisplayPrepared){Part.bNativeDisplayPrepared=false;continue;}
-		if ((!Part.bRuntimeAccessory && !SkelFollowers.IsEmpty()) || !Part.Comp || Part.bSlotAttached || Part.SessionIndex == INDEX_NONE)
-		{
-			continue;
-		}
-		OkMeshView View;
-		FMemory::Memzero(View);
-		if (!Session.PartAt(Part.SessionIndex, View) || !View.positions ||
-			View.n_verts != Part.BaseVertices.Num())
-		{
-			continue;
-		}
-        // Rigid geometry stays in its authored local coordinates while its render
-        // matrix follows the socket. Compare native streams before converting
-        // those unchanged floats to doubles, irrespective of rigid mesh size.
-        const bool DirectNative=(Indexed||Fused)&&View.skel_kind==4&&View.normals&&Part.BaseNormals.Num()==View.n_verts
-            &&!Part.bFaceSphereNormals&&!View.eye_draw&&Session.MorphCount(Part.SessionIndex)==0
-            &&(Indexed||!(CacheNormalMotion&&Part.bRuntimeNormalMotionReusable));
-        const bool NativeSnapshot=(DirectNative||View.skel_kind==0||View.n_verts>=16384)&&!Part.bFaceSphereNormals&&!View.eye_draw&&Session.MorphCount(Part.SessionIndex)==0;
-        if(!OKSyncSourceGeometry(Part.RuntimeSourceGeometry,View.n_verts,View.positions,View.normals,View.rest_tangents,NativeSnapshot)){AnimationSkippedVertices+=View.n_verts;continue;}
-        bool GeometryChanged=NativeSnapshot;
-		if(View.rest_tangents&&Part.RuntimeSourceTangents.Num()!=View.n_verts){Part.RuntimeSourceTangents.SetNumUninitialized(View.n_verts);GeometryChanged=true;}
-        const bool CacheMotion=CacheNormalMotion&&Part.bRuntimeNormalMotionReusable&&!Part.bFaceSphereNormals
-            &&Part.RuntimeNormalMotionUses.Num()==View.n_verts
-            &&Part.RuntimeRestNormals.Num()==View.n_verts&&Part.BaseNormals.Num()==View.n_verts;
-        Part.bRuntimeSourceNormalMotionPrepared=CacheMotion;
-        if(CacheMotion&&Part.RuntimeSourceNormalMotion.Num()!=View.n_verts)Part.RuntimeSourceNormalMotion.SetNumUninitialized(View.n_verts);
-        const int32 SourceIndex=Sources.Num(),FirstJob=SourceJobs.Num();
-        const int32 SourceBatch=Indexed&&DirectNative?FMath::Clamp(CVarOkSourceRangeVertices.GetValueOnGameThread(),64,4096):1024;
-        for(int32 Begin=0;Begin<View.n_verts;Begin+=SourceBatch)SourceJobs.Add({SourceIndex,Begin,FMath::Min(Begin+SourceBatch,View.n_verts),false});
-        Sources.Add({&Part,View,GeometryChanged,CacheMotion,DirectNative,FirstJob,SourceJobs.Num()});SourceVertices+=View.n_verts;
-        for(int32 Job=FirstJob;Job<SourceJobs.Num();++Job){if(DirectNative)FusedSourceJobs.Add(Job);else RegularSourceJobs.Add(Job);}
-    }
     // Native views and part arrays are captured on the game thread. Workers
     // only convert disjoint source ranges; no UObject/FFI calls run here.
     const int32 SourceMode=CVarOkAnimationSourceConversion.GetValueOnGameThread();

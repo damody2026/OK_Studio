@@ -128,6 +128,24 @@ trace（EGalPerf15 射精後，主執行緒 10.0 ms／幀）：配對 4.3（雙�
 
 剩下的路是結構性的：顯示讀求解結束時發布的快照、與下一次求解重疊（拿掉 0.95 ms 等待，主要幫抽插／加快），以及水槍上色改走 GPU（骨架網格目前走 CPU 蒙皮）。
 
+### 顯示拆兩段，配件串流和下一次求解重疊（EGalPerf18）
+
+`ok.Anim.PairSplitDisplay`（預設 1）：`RefreshRuntimeAccessories` 拆成 `PrepareRuntimeAccessories`（遊戲執行緒讀 session，配件頂點的指標改指向我們自己的副本：大部件本來就有逐位元快照 `RuntimeSourceGeometry`，其他部件另外複製到 `RuntimeDeferredGeometry`）和 `FinishRuntimeAccessories`（轉換、生成、上傳，只讀副本）。配對的 `Advance` 在顯示時只做前半段，後半段在下一次求解啟動後才做（`FinishDeferredStreams`，任何離開 `Advance` 的路徑都會做完），和求解並行。畫面仍是同一幀：串流在這個遊戲幀內、畫面送出前就生成好。
+
+肚子變形（`ReadPairSessions`、`ReadBulge`、衣服覆蓋）照使用者要求不移到求解之後，仍和顯示同一幀讀 session（使用者 2026-11-08：不要因為雙緩衝讓肚子變形慢一幀，怕陰莖穿模）。
+
+安靜機器（c-conquest 暫停，只有一個 Unreal），同一執行檔切換開關，姿勢 Hz（閒置／抽插／加快／射精後），每段確認狀態（WLoop、OLoop、OUT_A）：
+
+| ok.Anim.PairSplitDisplay | 閒置 | 抽插 | 加快 | 射精後 |
+|---|---|---|---|---|
+| 0 | 124 | 116 | 114 | 100 |
+| 1 | 138 | 127 | 128 | 102 |
+| 0 | 127 | 118 | 118 | 99 |
+
+射精後 trace（EGalPerf18，主執行緒 9.9 ms／幀）：配對 3.6（等求解只剩 0.18，延後的串流 0.81 在求解期間跑），水槍 3.5（上色 1.5、等遮罩傳輸 0.6、步進 0.5、atlas 上傳 0.36），Slate 1.75，H 讀取 1.1（包覆 0.57、皮膚檢查 0.38、凸起 0.13），場景 tick 0.45。射精後已不等求解，瓶頸是主執行緒本身。
+
+量測腳本注意：整合後姿勢名稱後面多了「　New」，第一次按「插入」只出「沒戴套插入」的提示，要按到狀態離開 Idle；每段量完要記狀態，不然量到的是沒插入的閒置。
+
 ## 量測規則（來自街區經驗）
 
 - 正式數字一律無 trace、編譯行程 0、只有一個 Unreal；trace 只用來定位。

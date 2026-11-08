@@ -80,7 +80,10 @@ bool AKKPairedPlayback::Advance(float Delta,FString& Error)
 	if(bSolvePending&&!PendingSolve.IsCompleted()&&Delta>0.f&&SkippedTicks<CVarPairNoWait.GetValueOnGameThread()){
 		TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairStillSolving);SkippedDelta+=Delta;++SkippedTicks;return true;}
 	if(SkippedTicks>0){Delta+=SkippedDelta;SkippedDelta=0.f;SkippedTicks=0;}
-	if(bSolvePending){SyncAsync();if(!bSolveOk){Error=TEXT("OK pair frame: ")+OkReport;return false;}}
+	// The frame just solved is shown, all but its CPU accessory streams: those are made from copies after the next solve
+	// is launched below, while it runs (ok.Anim.PairSplitDisplay; any way out of here finishes them).
+	ON_SCOPE_EXIT{FinishDeferredStreams();};
+	if(bSolvePending){SyncAsync(true);if(!bSolveOk){Error=TEXT("OK pair frame: ")+OkReport;return false;}}
 	OnSessionsIdle.Broadcast();
 	if(!bActive||!IsValid(FemaleActor)||!IsValid(MaleActor))return true; // a listener stopped the pair
     const bool Reactions[2]={FemaleActor->Session.IsBodyReactionPlaying(),MaleActor->Session.IsBodyReactionPlaying()};
@@ -132,9 +135,18 @@ bool AKKPairedPlayback::Advance(float Delta,FString& Error)
 }
 uint64 GKKPairFramesShown=0;
 extern int32 GKKStreamParallelMinVertices; // KKStreamMeshProxy.cpp
-bool AKKPairedPlayback::ShowFrame(float Delta,const bool Reactions[2],FString& Error)
+extern bool GKKDeferRuntimeStreams; // KKPreviewActor.cpp
+void AKKPairedPlayback::FinishDeferredStreams()
+{
+ TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairDeferredStreams);
+ TGuardValue<int32> ParallelStreams(GKKStreamParallelMinVertices,4096);
+ FKKGpuStreamBatchScope GpuFrame;
+ for(AKKPreviewActor* PreviewRole : {FemaleActor.Get(),MaleActor.Get(),ThirdActor.Get()})if(IsValid(PreviewRole))PreviewRole->FinishRuntimeAccessories();
+}
+bool AKKPairedPlayback::ShowFrame(float Delta,const bool Reactions[2],FString& Error,bool bDeferStreams)
 {
  ++GKKPairFramesShown;
+ TGuardValue<bool> DeferStreams(GKKDeferRuntimeStreams,bDeferStreams);
  TGuardValue<int32> ParallelStreams(GKKStreamParallelMinVertices,4096); // her and his streams packed on the pool (+13 Hz, 2026-11-08)
 
  FKKGpuStreamBatchScope GpuFrame;
@@ -155,8 +167,9 @@ bool AKKPairedPlayback::ShowFrame(float Delta,const bool Reactions[2],FString& E
  {TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairContactMorph);FemaleActor->DriveVaginaOpening(*MaleActor,VaginaRangeMin,VaginaRangeMax,bVaginaRange);}
 	return true;
 }
-void AKKPairedPlayback::SyncAsync()
+void AKKPairedPlayback::SyncAsync(bool bDeferStreams)
 {
+	FinishDeferredStreams();
 	if(!bSolvePending)return;
 	{TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairOKWait);PendingSolve.Wait();}
 	bSolvePending=false;OkReport=PendingReport;
@@ -164,7 +177,7 @@ void AKKPairedPlayback::SyncAsync()
 	if(OkPlayer&&!bPendingNative){OkPlayer->ApplyFaceCurves(0,float(PendingNext),*FemaleActor);OkPlayer->ApplyFaceCurves(1,float(PendingNext),*MaleActor);}
 	Elapsed=PendingNext;
 	FString Error;
-	ShowFrame(PendingDelta,PendingReactions,Error);
+	ShowFrame(PendingDelta,PendingReactions,Error,bDeferStreams);
 }
 void AKKPairedPlayback::Tick(float DeltaSeconds) {
 	Super::Tick(DeltaSeconds);if(!bActive) return;FString Error;

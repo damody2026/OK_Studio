@@ -48,7 +48,9 @@ public:
 	bool IsUsingOK() const {return OkPlayer.IsValid();}
 	/** Waits for the frame being solved in the background (ok.Anim.AsyncPair) and shows it: call before touching the
 	 *  characters' sessions from outside the playback. */
-	void SyncAsync();
+	void SyncAsync(bool bDeferStreams=false);
+	/** The CPU accessory streams ShowFrame left for after the next solve was launched (ok.Anim.PairSplitDisplay). */
+	void FinishDeferredStreams();
 	/** Walk cycle for OK pair playback (set by the OK animation module). */
 	static const TArray<uint8>* WalkCycle;
 	FString OkReport;
@@ -78,5 +80,5 @@ private:
 	float SkippedDelta=0.f;int32 SkippedTicks=0;
 	bool PendingReactions[2]={false,false};
 	FString PendingReport;
-	bool ShowFrame(float Delta,const bool Reactions[2],FString& Error);
+	bool ShowFrame(float Delta,const bool Reactions[2],FString& Error,bool bDeferStreams=false);
 };

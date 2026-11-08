@@ -11,6 +11,7 @@
 #include "RenderCommandFence.h"
 #include "ProceduralMeshComponent.h"
 #include "Containers/Ticker.h"
+#include "Templates/PimplPtr.h"
 class FOkAnimPlayer;
 
 #include "KKPreviewActor.generated.h"
@@ -163,6 +164,8 @@ struct FKKLoadedPart
 	TArray<FVector4f> RuntimeSourceTangents;
 	// Last uploaded native streams for large non-morph renderers.
 	TArray<float> RuntimeSourceGeometry;
+	// The session's streams copied for a deferred stream frame (ok.Anim.PairSplitDisplay) when the snapshot above is off.
+	TArray<float> RuntimeDeferredGeometry;
     // Authored rest normals are immutable for this loaded part. Built with the
     // exact legacy GetSafeNormal formula whenever RuntimeRestNormals is assigned.
     TArray<FVector> RuntimeUnitRestNormals;
@@ -729,6 +732,11 @@ public:
  bool RefreshEditorGeometry();
 	void RefreshSkinnedDisplay();
 	void RefreshRuntimeAccessories();
+	/** The two halves of RefreshRuntimeAccessories: the session read on the game thread, and the conversion, generation
+	 *  and upload from copies, which the pair runs after launching its next solve (ok.Anim.PairSplitDisplay). */
+	void PrepareRuntimeAccessories();
+	void FinishRuntimeAccessories();
+	TPimplPtr<struct FKKAccessoryStreamFrame> PendingStreams;
     // Refresh CPU query vertices from the already solved native pose without
     // publishing CPU render streams over an installed GPU generation.
     void EnsurePrivateGpuQueryGeometry(UProceduralMeshComponent* Component=nullptr,int32 Section=INDEX_NONE);
