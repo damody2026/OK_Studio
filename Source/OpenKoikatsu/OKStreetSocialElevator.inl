@@ -103,7 +103,7 @@ void AOKStreetSocialScene::SetLiftDoorBlock(int32 Index,int32 Floor,bool Closed)
  const FBox Box(FVector(Mid.X-Half.X,Mid.Y-Half.Y,E.StopZ[Floor]),FVector(Mid.X+Half.X,Mid.Y+Half.Y,E.StopZ[Floor]+OKLiftDoorHeight+40.f));
  auto& Blocks=OKStreetRuntimeBlocks();
  if(Closed)Blocks.Add(Box);else Blocks.RemoveAll([&Box](const FBox& B){return B.Min.Equals(Box.Min,.5)&&B.Max.Equals(Box.Max,.5);});
- State->NavGrid.Reset();
+ State->NavGrid.Reset();State->NavGround.Reset();
 }
 
 void AOKStreetSocialScene::PlaceElevatorParts(int32 Index){

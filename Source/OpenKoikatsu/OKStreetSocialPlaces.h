@@ -512,7 +512,9 @@ inline void OKStreetApplyCityPlaces(TArray<FOKStreetPlace>& Out) {
   }
   Next.Add(MoveTemp(P));
  }
- auto Volume = [](const FOKStreetPlace& P) { double V = 0; for (const FBox& R : P.Rooms) V += R.GetVolume(); return V; };
+ // The smaller place first, so a spot in one inside another is the inner one's: by the ground it covers, not its volume
+ // (the BBQ area's box is 37 m tall over a corner of the playground, and the playground took every spot of it).
+ auto Volume = [](const FOKStreetPlace& P) { double V = 0; for (const FBox& R : P.Rooms) V += (R.Max.X - R.Min.X) * (R.Max.Y - R.Min.Y); return V; };
  Next.StableSort([&](const FOKStreetPlace& A, const FOKStreetPlace& B) {
   const double VA = Volume(A), VB = Volume(B);
   if (!FMath::IsNearlyEqual(VA, VB, 1.0)) return VA < VB;

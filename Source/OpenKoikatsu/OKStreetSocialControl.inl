@@ -350,6 +350,59 @@ void AOKStreetSocialScene::StartControlServer(){
    TSharedPtr<FJsonObject> Story;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(G.Live.State()),Story)&&Story.IsValid())O->SetObjectField(TEXT("story"),Story);
   }else O->SetBoolField(TEXT("active"),false);
   OKControlReply(Done,O);});
+ // Every place, checked for walking (development): its door tied to the road graph's connected part, the way in from the
+ // door to its inside spot, and from there to each activity's anchor on that floor, by a full grid search (no time limit,
+ // unlike a walk's). {"only": "id,id"} for some. Each place: {id, door_links, door_on_roads, in, anchors:[{activity,
+ // anchor, ok, why}], problems:[...]}; the reply also counts the places with problems.
+ Bind(TEXT("/places_check"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
+  const auto Body=OKControlBody(Req);FString OnlyText;Body->TryGetStringField(TEXT("only"),OnlyText);TArray<FString> Only;OnlyText.ParseIntoArray(Only,TEXT(","));
+  const double Began=FPlatformTime::Seconds();const FOKStreetCityData& City=OKStreetCity();
+  auto Walk=[this](const FVector& From,const FVector& To,int32& Points)->bool{
+   if(FMath::Abs(From.Z-To.Z)>=150.f){Points=-1;return true;} // another floor: by the lift, not this check
+   if(FVector::Dist2D(From,To)<30.f){Points=1;return true;}
+   FOKStreetGridSearch G;G.From=From;G.To=To;GridSearchStep(G,TNumericLimits<double>::Max());Points=G.Route.Num();return G.Route.Num()>=2;};
+  TArray<TSharedPtr<FJsonValue>> Rows;int32 Bad=0;
+  for(const auto& P:OKStreetPlaces()){
+   if(Only.Num()&&!Only.Contains(P.Id))continue;
+   auto Row=MakeShared<FJsonObject>();Row->SetStringField(TEXT("id"),P.Id);TArray<TSharedPtr<FJsonValue>> Problems;
+   auto Problem=[&Problems](const FString& Text){Problems.Add(MakeShared<FJsonValueString>(Text));};
+   // The door on the graph: the point tied to it (OKStreetCityCheckRoads), its links, and whether it is in the kept part.
+   int32 DoorNode=INDEX_NONE;for(int32 N=City.Nodes.Num()-1;N>=0;--N)if(FVector::DistSquared2D(City.Nodes[N],P.Door)<1.0){DoorNode=N;break;}
+   const int32 Links=City.Links.IsValidIndex(DoorNode)?City.Links[DoorNode].Num():0;
+   const bool OnRoads=DoorNode!=INDEX_NONE&&Links>0&&(City.Kept.IsEmpty()||City.Kept[DoorNode]==City.KeptPart);
+   Row->SetNumberField(TEXT("door_links"),Links);Row->SetBoolField(TEXT("door_on_roads"),OnRoads);
+   // The way a walk takes from the roads (a point of the kept part) to the door, each leg walkable: clear for his body, or
+   // a grid way between its ends.
+   {const int32 HubNode=City.Kept.IndexOfByKey(City.KeptPart);
+    if(City.Nodes.IsValidIndex(HubNode)&&!OKStreetUpstairs(P.Door)){const TArray<FVector> Route=CityRoute(City.Nodes[HubNode],P.Door);Row->SetNumberField(TEXT("route_points"),Route.Num());
+     if(Route.Num()<2||!Route.Last().Equals(P.Door,50.f))Problem(TEXT("no road route to the door"));
+     for(int32 I=1;I<Route.Num();++I){int32 Points=0;if(OKStreetCityClear(GetWorld(),Route[I-1],Route[I],18.f)||Walk(Route[I-1],Route[I],Points))continue;
+      Problem(FString::Printf(TEXT("road leg %d/%d blocked: %s -> %s (%.0f m)"),I,Route.Num()-1,*Route[I-1].ToCompactString(),*Route[I].ToCompactString(),FVector::Dist2D(Route[I-1],Route[I])/100.f));break;}}}
+   float Ground=P.Door.Z;if(!OKStreetGroundZ(GetWorld(),P.Door,Ground,this))Problem(TEXT("no ground at the door"));
+   else if(FMath::IsNearlyEqual(Ground,P.Door.Z+70.f,1.f))Problem(TEXT("door point inside something solid"));else if(FMath::Abs(Ground-P.Door.Z)>60.f)Problem(FString::Printf(TEXT("door %.0f cm off the ground"),Ground-P.Door.Z));
+   // In from the door.
+   FVector Inside=P.Door;
+   if(!P.Rooms.IsEmpty()){Inside=PlaceInsideSpot(P);int32 Points=0;const bool In=Walk(P.Door,Inside,Points);Row->SetNumberField(TEXT("in_points"),Points);
+    if(!In)Problem(TEXT("no way from the door to the inside spot"));
+    if(PlaceHere(Inside)!=P.Id)Problem(FString::Printf(TEXT("inside spot counts as %s"),*PlaceHere(Inside)));}
+   // To each activity's anchor.
+   TArray<TSharedPtr<FJsonValue>> Anchors;
+   for(const auto& A:OKStreetActivities()){if(!A.Place||FCString::Strcmp(A.Place,P.Id)!=0||!A.Anchor||!*A.Anchor)continue;
+    auto Item=MakeShared<FJsonObject>();Item->SetStringField(TEXT("activity"),A.Id);Item->SetStringField(TEXT("anchor"),A.Anchor);
+    const FOKStreetModelAnchor* Spot=OKStreetPlaceAnchor(P,A.Anchor);FString Why;
+    if(!Spot)Why=TEXT("no such anchor");
+    else{int32 Points=0;const bool Ok=Walk(Inside,Spot->Position,Points)||Walk(P.Door,Spot->Position,Points);
+     if(Points==-1)Why=TEXT("another floor");else if(!Ok)Why=TEXT("no way to it");
+     float G=Spot->Position.Z;if(Why.IsEmpty()&&!OKStreetGroundZ(GetWorld(),Spot->Position,G,this))Why=TEXT("no ground under it");}
+    Item->SetBoolField(TEXT("ok"),Why.IsEmpty()||Why==TEXT("another floor"));Item->SetStringField(TEXT("why"),Why);
+    if(!Why.IsEmpty()&&Why!=TEXT("another floor"))Problem(FString::Printf(TEXT("%s (%s): %s"),A.Id,A.Anchor,*Why));
+    Anchors.Add(MakeShared<FJsonValueObject>(Item));}
+   Row->SetArrayField(TEXT("anchors"),Anchors);Row->SetArrayField(TEXT("problems"),Problems);if(Problems.Num())++Bad;
+   Rows.Add(MakeShared<FJsonValueObject>(Row));
+  }
+  auto O=OKControlResult(true);O->SetNumberField(TEXT("places"),Rows.Num());O->SetNumberField(TEXT("with_problems"),Bad);
+  O->SetNumberField(TEXT("ms"),(FPlatformTime::Seconds()-Began)*1000.0);O->SetArrayField(TEXT("rows"),Rows);OKControlReply(Done,O);
+ });
  // The roster menu (OKStreetSocialRoster.inl), as a person uses it: {} or {"op":"state"} reads it; open | close | scan;
  // import {files}; pick {path, on}; apply; edit {her, tab: settings|memory}; set {field: name|persona|profile|memory,
  // value}; save (the tab being edited); forget (her conversation context).

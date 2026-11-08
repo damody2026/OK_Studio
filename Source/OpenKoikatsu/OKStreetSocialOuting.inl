@@ -393,7 +393,7 @@ void AOKStreetSocialScene::DestroyStreetPlaces(){
  State->PlaceActors.Reset();
  DestroyElevators();
  OKStreetRuntimeBlocks().Reset();
- State->NavGrid.Reset();
+ State->NavGrid.Reset();State->NavGround.Reset();
 }
 
 // Like ContactRoute, over the shared waypoints plus the place corridor and doors.

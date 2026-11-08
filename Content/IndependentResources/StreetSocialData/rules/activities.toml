@@ -1021,3 +1021,896 @@ code = 5
 event = "valentine"
 minutes = 40
 feed = { fun = 15, satiety = 10 }
+
+# 11-09：原本沒有任何共同活動的地點（坐著聊天、吃飯、喝一杯、合照、讀書），錨點取該地點模型裡已有的。
+[[activity]]
+id = "amusement_ferris"
+name = "在遊樂園摩天輪前合照"
+place = "amusement"
+kind = "photo"
+code = 0
+anchor = "ferris_wheel|ferris"
+
+[[activity]]
+id = "amusement_bench"
+name = "坐在遊樂園長椅上休息聊天"
+place = "amusement"
+kind = "pair"
+code = 11
+anchor = "bench|seat"
+feed = { fun = 10 }
+
+[[activity]]
+id = "arcade_photobooth"
+name = "在遊戲中心一起拍大頭貼"
+place = "arcade"
+kind = "photo"
+code = 0
+anchor = "photobooth"
+
+[[activity]]
+id = "arcade_seat"
+name = "在遊戲中心並坐玩賽車遊戲"
+place = "arcade"
+kind = "pair"
+code = 1
+anchor = "racing|rhythm|seat"
+minutes = 30
+feed = { fun = 15 }
+
+[[activity]]
+id = "art_room_sketch"
+name = "在美術社畫室並坐畫畫聊天"
+place = "art_room"
+kind = "pair"
+code = 1
+anchor = "easel|seat|desk"
+feed = { fun = 10 }
+
+[[activity]]
+id = "auditorium_seat"
+name = "坐在大學禮堂的座位上聊天"
+place = "auditorium"
+kind = "pair"
+code = 11
+anchor = "pew|seat"
+
+[[activity]]
+id = "bank_wait"
+name = "在銀行等候區坐著聊天"
+place = "bank"
+kind = "pair"
+code = 1
+anchor = "seat"
+
+[[activity]]
+id = "batting_photo"
+name = "在打擊練習場的打擊區合照"
+place = "batting"
+kind = "photo"
+code = 0
+anchor = "cage|batting_machine"
+
+[[activity]]
+id = "batting_bench"
+name = "坐在打擊練習場長椅上看別人打擊"
+place = "batting"
+kind = "pair"
+code = 11
+anchor = "bench|seat"
+
+[[activity]]
+id = "bbq_meal"
+name = "在烤肉露營區一起烤肉吃"
+place = "bbq"
+kind = "pair"
+code = 5
+anchor = "table|seat"
+feed = { satiety = 30, fun = 10 }
+
+[[activity]]
+id = "beach_parasol"
+name = "在海水浴場的遮陽傘下合照"
+place = "beach"
+kind = "photo"
+code = 0
+anchor = "parasol|sandcastle"
+
+[[activity]]
+id = "beach_splash"
+strenuous = true
+name = "在海邊互相潑水玩"
+place = "beach"
+kind = "pair"
+code = 3
+anchor = "swim"
+weather = "dry"
+feed = { fun = 15, energy = -10 }
+
+[[activity]]
+id = "beach_house_meal"
+name = "在海之家一起吃炒麵"
+place = "beach_house"
+kind = "pair"
+code = 5
+anchor = "table|seat"
+feed = { satiety = 25 }
+
+[[activity]]
+id = "bike_shop_photo"
+name = "在單車行的協力車前合照"
+place = "bike_shop"
+kind = "photo"
+code = 0
+anchor = "bike_rental"
+
+[[activity]]
+id = "boat_dock"
+name = "在天鵝船碼頭合照"
+place = "boat"
+kind = "photo"
+code = 0
+anchor = "swan_boat|dock"
+
+[[activity]]
+id = "boat_ride"
+name = "坐上小船在公園湖上划船聊天"
+place = "boat"
+kind = "pair"
+code = 1
+anchor = "rowing_boat|seat"
+weather = "dry"
+feed = { fun = 15 }
+
+[[activity]]
+id = "bowling_lane"
+name = "在保齡球道前合照"
+place = "bowling"
+kind = "photo"
+code = 0
+anchor = "lane|billiards"
+
+[[activity]]
+id = "bowling_seat"
+name = "在保齡球館休息區坐著聊天"
+place = "bowling"
+kind = "pair"
+code = 1
+anchor = "seat|bench"
+feed = { fun = 10 }
+
+[[activity]]
+id = "breakfast_meal"
+name = "在早餐店一起吃早餐"
+place = "breakfast"
+kind = "pair"
+code = 5
+anchor = "table|seat"
+feed = { satiety = 25 }
+
+[[activity]]
+id = "bridal_mirror"
+name = "在婚紗禮服店的鏡子前合照"
+place = "bridal"
+kind = "photo"
+code = 0
+anchor = "mirror|fitting_show"
+
+[[activity]]
+id = "campus_ad_seat"
+name = "在學校行政中心大廳坐著聊天"
+place = "campus_ad"
+kind = "pair"
+code = 1
+anchor = "seat|hall"
+
+[[activity]]
+id = "campus_e1_study"
+name = "在工程一館大廳一起讀書"
+place = "campus_e1"
+kind = "pair"
+code = 1
+anchor = "hall"
+yields = ["study"]
+
+[[activity]]
+id = "campus_ee_study"
+name = "在電資館大廳一起讀書"
+place = "campus_ee"
+kind = "pair"
+code = 1
+anchor = "seat|hall"
+yields = ["study"]
+
+[[activity]]
+id = "campus_ib_study"
+name = "在國際大樓大廳一起讀書"
+place = "campus_ib"
+kind = "pair"
+code = 1
+anchor = "seat|hall"
+yields = ["study"]
+
+[[activity]]
+id = "campus_ma_study"
+name = "在管理大樓大廳一起讀書"
+place = "campus_ma"
+kind = "pair"
+code = 1
+anchor = "seat|hall"
+yields = ["study"]
+
+[[activity]]
+id = "campus_rb_study"
+name = "在綜合研究大樓大廳一起讀書"
+place = "campus_rb"
+kind = "pair"
+code = 1
+anchor = "seat|hall"
+yields = ["study"]
+
+[[activity]]
+id = "campus_t1_study"
+name = "在第一教學大樓大廳一起讀書"
+place = "campus_t1"
+kind = "pair"
+code = 1
+anchor = "seat|hall"
+yields = ["study"]
+
+[[activity]]
+id = "campus_t2_study"
+name = "在第二教學大樓大廳一起讀書"
+place = "campus_t2"
+kind = "pair"
+code = 1
+anchor = "seat|hall"
+yields = ["study"]
+
+[[activity]]
+id = "campus_t4_study"
+name = "在第四教學大樓大廳一起讀書"
+place = "campus_t4"
+kind = "pair"
+code = 1
+anchor = "seat|hall"
+yields = ["study"]
+
+[[activity]]
+id = "cat_cafe_seat"
+name = "在貓咪咖啡坐著喝咖啡看貓"
+place = "cat_cafe"
+kind = "pair"
+code = 1
+anchor = "seat|table"
+female_clip = "venue_drink_seated.okanim"
+male_clip = "venue_drink_seated.okanim"
+feed = { fun = 15 }
+
+[[activity]]
+id = "church_pew"
+name = "坐在教堂長椅上安靜聊天"
+place = "church"
+kind = "pair"
+code = 11
+anchor = "pew|seat"
+
+[[activity]]
+id = "church_aisle"
+name = "在教堂紅毯走道上合照"
+place = "church"
+kind = "photo"
+code = 0
+anchor = "wedding_aisle|wedding_chapel"
+
+[[activity]]
+id = "cinema_movie"
+name = "在電影院一起看電影"
+place = "cinema"
+kind = "pair"
+code = 1
+anchor = "seat"
+minutes = 120
+feed = { fun = 20 }
+
+[[activity]]
+id = "civic_seat"
+name = "在市民中心大廳坐著聊天"
+place = "civic"
+kind = "pair"
+code = 1
+anchor = "seat|hall"
+
+[[activity]]
+id = "clinic_beauty_wait"
+name = "在醫美診所候診區陪她等"
+place = "clinic_beauty"
+kind = "pair"
+code = 1
+anchor = "wait|seat"
+
+[[activity]]
+id = "clinic_general_wait"
+name = "在家醫科候診區陪她等看診"
+place = "clinic_general"
+kind = "pair"
+code = 1
+anchor = "wait|seat"
+
+[[activity]]
+id = "clinic_gyn_wait"
+name = "在婦科診所候診區陪她等"
+place = "clinic_gyn"
+kind = "pair"
+code = 1
+anchor = "wait|seat"
+
+[[activity]]
+id = "clothing_mirror"
+name = "在服飾店試衣鏡前合照"
+place = "clothing"
+kind = "photo"
+code = 0
+anchor = "mirror"
+
+[[activity]]
+id = "clothing_s10_mirror"
+name = "在服飾店試衣鏡前合照"
+place = "clothing_s10"
+kind = "photo"
+code = 0
+anchor = "mirror"
+
+[[activity]]
+id = "clothing_s30_mirror"
+name = "在服飾店試衣鏡前合照"
+place = "clothing_s30"
+kind = "photo"
+code = 0
+anchor = "mirror"
+
+[[activity]]
+id = "clothing_s46_mirror"
+name = "在服飾店試衣鏡前合照"
+place = "clothing_s46"
+kind = "photo"
+code = 0
+anchor = "mirror"
+
+[[activity]]
+id = "clothing_s94_mirror"
+name = "在服飾店試衣鏡前合照"
+place = "clothing_s94"
+kind = "photo"
+code = 0
+anchor = "mirror"
+
+[[activity]]
+id = "club_room_study"
+name = "在社團教室一起讀書"
+place = "club_room"
+kind = "pair"
+code = 1
+anchor = "seat|desk|table"
+yields = ["study"]
+
+[[activity]]
+id = "craft_table"
+name = "在手作教室並坐做手工"
+place = "craft"
+kind = "pair"
+code = 1
+anchor = "work_table|seat"
+feed = { fun = 15 }
+
+[[activity]]
+id = "crepe_eat"
+name = "在可麗餅店一起吃可麗餅"
+place = "crepe"
+kind = "pair"
+code = 5
+anchor = "seat|bench"
+feed = { satiety = 10, fun = 5 }
+
+[[activity]]
+id = "dentist_wait"
+name = "在牙醫診所候診區陪她等"
+place = "dentist"
+kind = "pair"
+code = 1
+anchor = "wait|seat"
+
+[[activity]]
+id = "district_office_wait"
+name = "在區公所等候區坐著聊天"
+place = "district_office"
+kind = "pair"
+code = 1
+anchor = "seat"
+
+[[activity]]
+id = "fastfood_meal"
+name = "在速食店一起吃漢堡"
+place = "fastfood"
+kind = "pair"
+code = 5
+anchor = "table|seat"
+feed = { satiety = 25 }
+
+[[activity]]
+id = "festival_lanterns"
+name = "在祭典燈籠下合照"
+place = "festival"
+kind = "photo"
+code = 0
+anchor = "lantern_string|shooting_stall"
+
+[[activity]]
+id = "festival_snack"
+name = "在祭典買章魚燒一起吃"
+place = "festival"
+kind = "pair"
+code = 5
+anchor = "seat|takoyaki_stall"
+feed = { satiety = 10, fun = 10 }
+
+[[activity]]
+id = "fishing_sit"
+name = "坐在釣魚台邊一起釣魚聊天"
+place = "fishing"
+kind = "pair"
+code = 11
+anchor = "fishing_spot|bench|seat"
+weather = "dry"
+minutes = 60
+feed = { fun = 10 }
+
+[[activity]]
+id = "flower_field_photo"
+name = "在花海裡合照"
+place = "flower_field"
+kind = "photo"
+code = 0
+anchor = "photo|path"
+
+[[activity]]
+id = "flower_field_bench"
+name = "坐在花海旁的長椅上聊天"
+place = "flower_field"
+kind = "pair"
+code = 11
+anchor = "bench|seat"
+weather = "dry"
+
+[[activity]]
+id = "fortune_reading"
+name = "在占卜屋一起算兩人的緣分"
+place = "fortune"
+kind = "pair"
+code = 1
+anchor = "fortune_table|seat"
+feed = { fun = 10 }
+
+[[activity]]
+id = "gym_stretch"
+strenuous = true
+name = "在健身房的墊子上一起伸展"
+place = "gym"
+kind = "solo"
+code = 0
+anchor = "mat"
+female_clip = "venue_stretch.okanim"
+feed = { energy = -10, fun = 5 }
+
+[[activity]]
+id = "gym_hall_bleacher"
+name = "坐在體育館看台上看比賽"
+place = "gym_hall"
+kind = "pair"
+code = 11
+anchor = "bleacher"
+
+[[activity]]
+id = "gym_storage_mat"
+name = "在體育倉庫的軟墊上坐著聊天"
+place = "gym_storage"
+kind = "pair"
+code = 1
+anchor = "gym_mat"
+
+[[activity]]
+id = "hill_view"
+name = "坐在小山觀景點看風景"
+place = "hill"
+kind = "pair"
+code = 11
+anchor = "bench|seat|view"
+weather = "dry"
+
+[[activity]]
+id = "hill_photo"
+name = "在小山觀景點合照"
+place = "hill"
+kind = "photo"
+code = 0
+anchor = "view"
+
+[[activity]]
+id = "infirmary_rest"
+name = "在保健室陪她休息"
+place = "infirmary"
+kind = "pair"
+code = 1
+anchor = "bed|desk"
+feed = { energy = 10 }
+
+[[activity]]
+id = "izakaya_drink"
+strenuous = true
+name = "在居酒屋一起喝一杯"
+place = "izakaya"
+kind = "pair"
+code = 2
+anchor = "counter_seat|bar|booth"
+feed = { fun = 15 }
+
+[[activity]]
+id = "izakaya_meal"
+name = "在居酒屋包廂一起吃串燒"
+place = "izakaya"
+kind = "pair"
+code = 5
+anchor = "booth|seat"
+feed = { satiety = 25 }
+
+[[activity]]
+id = "jetski_photo"
+name = "在水上摩托車碼頭合照"
+place = "jetski"
+kind = "photo"
+code = 0
+anchor = "jetski|dock"
+
+[[activity]]
+id = "jewelry_mirror"
+name = "在珠寶店試戴飾品對鏡合照"
+place = "jewelry"
+kind = "photo"
+code = 0
+anchor = "mirror|case"
+
+[[activity]]
+id = "karaoke_sing"
+name = "在 KTV 包廂一起唱歌"
+place = "karaoke"
+kind = "pair"
+code = 1
+anchor = "seat"
+minutes = 60
+feed = { fun = 20 }
+
+[[activity]]
+id = "livehouse_show"
+name = "在 Live House 一起聽現場演出"
+place = "livehouse"
+kind = "pair"
+code = 1
+anchor = "watch|seat"
+minutes = 60
+feed = { fun = 20 }
+
+[[activity]]
+id = "lottery_scratch"
+name = "在彩券行一起刮刮樂"
+place = "lottery"
+kind = "pair"
+code = 1
+anchor = "seat"
+feed = { fun = 5 }
+
+[[activity]]
+id = "manga_cafe_read"
+name = "在漫畫網咖包廂並坐看漫畫"
+place = "manga_cafe"
+kind = "pair"
+code = 1
+anchor = "booth|seat"
+minutes = 60
+feed = { fun = 15 }
+
+[[activity]]
+id = "museum_bench"
+name = "在美術館長椅上看展品聊天"
+place = "museum"
+kind = "pair"
+code = 11
+anchor = "bench|seat"
+
+[[activity]]
+id = "museum_photo"
+name = "在美術館展品前合照"
+place = "museum"
+kind = "photo"
+code = 0
+anchor = "exhibit"
+
+[[activity]]
+id = "nail_table"
+name = "在美甲店陪她做指甲"
+place = "nail"
+kind = "pair"
+code = 1
+anchor = "nail_table|seat"
+feed = { fun = 10 }
+
+[[activity]]
+id = "nursery_play"
+name = "在親子館的遊戲區陪小朋友玩"
+place = "nursery"
+kind = "pair"
+code = 1
+anchor = "play|seat"
+feed = { fun = 10 }
+
+[[activity]]
+id = "observation_cafe"
+name = "在展望台咖啡座看景喝咖啡"
+place = "observation"
+kind = "pair"
+code = 1
+anchor = "seat"
+female_clip = "venue_drink_seated.okanim"
+male_clip = "venue_drink_seated.okanim"
+feed = { fun = 15 }
+
+[[activity]]
+id = "observation_photo"
+name = "在展望台望遠鏡旁合照"
+place = "observation"
+kind = "photo"
+code = 0
+anchor = "telescope|view"
+
+[[activity]]
+id = "optician_try"
+name = "在眼鏡行試戴眼鏡對鏡合照"
+place = "optician"
+kind = "photo"
+code = 0
+anchor = "mirror|try"
+
+[[activity]]
+id = "orchard_photo"
+name = "在採果農園的果樹下合照"
+place = "orchard"
+kind = "photo"
+code = 0
+anchor = "pick"
+
+[[activity]]
+id = "orchard_eat"
+name = "坐在農園長椅上吃剛採的水果"
+place = "orchard"
+kind = "pair"
+code = 5
+anchor = "bench|seat"
+feed = { satiety = 10 }
+
+[[activity]]
+id = "phone_shop_selfie"
+name = "在手機行用新手機一起自拍"
+place = "phone_shop"
+kind = "photo"
+code = 0
+anchor = "display"
+
+[[activity]]
+id = "photo_studio_shoot"
+name = "在寫真館佈景前拍合照"
+place = "photo_studio"
+kind = "photo"
+code = 0
+anchor = "backdrop|camera"
+
+[[activity]]
+id = "planetarium_show"
+name = "在天文館一起看星空節目"
+place = "planetarium"
+kind = "pair"
+code = 1
+anchor = "seat"
+minutes = 60
+feed = { fun = 15 }
+
+[[activity]]
+id = "police_wait"
+name = "在派出所的長椅上坐著等"
+place = "police"
+kind = "pair"
+code = 1
+anchor = "seat"
+
+[[activity]]
+id = "pool_side"
+name = "坐在泳池邊聊天"
+place = "pool"
+kind = "pair"
+code = 1
+anchor = "poolside|seat"
+
+[[activity]]
+id = "pool_splash"
+strenuous = true
+name = "在室內游泳池玩水"
+place = "pool"
+kind = "pair"
+code = 3
+anchor = "swim"
+feed = { fun = 15, energy = -10 }
+
+[[activity]]
+id = "post_wait"
+name = "在郵局等候區坐著聊天"
+place = "post"
+kind = "pair"
+code = 1
+anchor = "seat"
+
+[[activity]]
+id = "ramen_meal"
+name = "在拉麵店一起吃拉麵"
+place = "ramen"
+kind = "pair"
+code = 5
+anchor = "counter_seat|table|seat"
+feed = { satiety = 30 }
+
+[[activity]]
+id = "realty_listings"
+name = "在租屋仲介一起看房屋物件"
+place = "realty"
+kind = "pair"
+code = 1
+anchor = "seat"
+
+[[activity]]
+id = "rooftop_bench"
+name = "坐在屋頂長椅上吹風聊天"
+place = "rooftop"
+kind = "pair"
+code = 11
+anchor = "bench|seat"
+weather = "dry"
+
+[[activity]]
+id = "salon_wait"
+name = "在髮廊等她剪頭髮"
+place = "salon"
+kind = "pair"
+code = 1
+anchor = "seat"
+
+[[activity]]
+id = "skating_photo"
+name = "在溜冰場邊合照"
+place = "skating"
+kind = "photo"
+code = 0
+anchor = "rink"
+
+[[activity]]
+id = "skating_bench"
+name = "坐在溜冰場長椅上休息"
+place = "skating"
+kind = "pair"
+code = 11
+anchor = "bench|seat"
+
+[[activity]]
+id = "station_wait"
+name = "在車站候車椅上坐著聊天"
+place = "station"
+kind = "pair"
+code = 1
+anchor = "seat"
+
+[[activity]]
+id = "supermarket_selfie"
+name = "在超市生鮮區一起自拍"
+place = "supermarket"
+kind = "photo"
+code = 0
+anchor = "fresh|aisle"
+
+[[activity]]
+id = "sushi_meal"
+name = "在迴轉壽司一起吃壽司"
+place = "sushi"
+kind = "pair"
+code = 5
+anchor = "conveyor_seat|booth|seat"
+feed = { satiety = 30 }
+
+[[activity]]
+id = "swimwear_mirror"
+name = "在泳裝店試衣鏡前合照"
+place = "swimwear"
+kind = "photo"
+code = 0
+anchor = "mirror"
+
+[[activity]]
+id = "lingerie_mirror"
+name = "在內衣店試衣鏡前合照"
+place = "lingerie"
+kind = "photo"
+code = 0
+anchor = "mirror"
+
+[[activity]]
+id = "waterpark_slide"
+name = "在滑水道前合照"
+place = "waterpark"
+kind = "photo"
+code = 0
+anchor = "slide"
+
+[[activity]]
+id = "waterpark_splash"
+strenuous = true
+name = "在滑水道下的水池玩水"
+place = "waterpark"
+kind = "pair"
+code = 3
+anchor = "swim"
+weather = "dry"
+feed = { fun = 15, energy = -10 }
+
+[[activity]]
+id = "xmas_tree_photo"
+name = "在聖誕樹廣場的大樹前合照"
+place = "xmas_tree"
+kind = "photo"
+code = 0
+anchor = "christmas_tree|tree"
+
+[[activity]]
+id = "xmas_tree_bench"
+name = "坐在聖誕樹旁的長椅上聊天"
+place = "xmas_tree"
+kind = "pair"
+code = 11
+anchor = "bench|seat"
+
+[[activity]]
+id = "yakiniku_meal"
+name = "在燒肉店一起烤肉"
+place = "yakiniku"
+kind = "pair"
+code = 5
+anchor = "grill_table|seat"
+feed = { satiety = 30 }
+
+[[activity]]
+id = "yukata_mirror"
+name = "在浴衣店試衣鏡前合照"
+place = "yukata"
+kind = "photo"
+code = 0
+anchor = "mirror|fitting"
+
+[[activity]]
+id = "zoo_photo"
+name = "在動物園的動物欄前合照"
+place = "zoo"
+kind = "photo"
+code = 0
+anchor = "enclosure"
+
+[[activity]]
+id = "zoo_bench"
+name = "坐在動物園長椅上聊天"
+place = "zoo"
+kind = "pair"
+code = 11
+anchor = "bench|seat"

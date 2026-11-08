@@ -2156,3 +2156,6 @@
 - 2026-11-08 c-conquest 和 E 組都用 `-PortBase 48160`，E 的 game_stop 照埠號關到 C 的遊戲（R6-175）。各 checkout 的 sandbox 要用不同的 PortBase；C 攻略改用 48460。
 - 2026-11-09 c-conquest 用 ok-game-mcp call／curl 在命令列送中文（改女主名字），Git bash 送出的不是 UTF-8，存檔寫進亂碼名字。含中文的請求一律先寫成 UTF-8 檔再 `--data-binary @檔案` 送出。
 - 2026-11-09 c-conquest 名單面板的核取方塊與文字框是純 Slate，ui_widgets 讀不到；另加街區控制路由 `/roster`（game_call）讓 MCP 讀寫。新的 Slate 控制要同時給控制通道入口。
+- 2026-11-09 c-conquest 大學城的地點資料從建築自己的座標轉世界座標時漏了建築的旋轉（`build_street_city_places.lua` 的 BW 只加原點），朝東的 16 家店門點落在背牆上；之前只靠「走得到門口附近」判斷沒發現。新增 `/places_check` 逐段模擬路線，匯出時以建築 yaw 判斷正面並鏡射修正。
+- 2026-11-09 c-conquest 道路點陣圖把校園圍牆的門口畫成「擋住」，匯出的路網從沒有線穿過門口；以前把校內幾塊路網「就近綁到主路網」看起來連通，遊戲載入時那些綁線被圍牆擋掉，整個校園斷開。點陣圖缺的通道（門口）要用建造資料（flat-campus-v1/install.json）補開，不能靠就近綁線。
+- 2026-11-09 c-conquest `/places_check` 第一版把「門口沒綁到路網點」當問題，幾乎每個地點都報錯；遊戲實際是在最後一段用格子找路進門。檢查要照遊戲真正的路線（CityRoute）逐段模擬，不要拿中間資料結構當判準。
