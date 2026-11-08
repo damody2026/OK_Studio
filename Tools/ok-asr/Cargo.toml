@@ -6,6 +6,7 @@ description = "Qwen3-ASR-0.6B speech recognition server for OpenKoikatsu (CUDA v
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 cpal = "0.15"
 cudarc = { version = "0.19", default-features = false, features = ["std", "cuda-12080", "dynamic-loading", "driver", "cublas", "nvrtc"] }
 hound = "3.5"
@@ -15,6 +16,7 @@ safetensors = "0.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tiny_http = "0.12"
+ureq = { version = "2", default-features = false, features = ["tls", "proxy-from-env"] }
 tokenizers = { version = "0.22", default-features = false, features = ["fancy-regex"] }
 zhconv = "0.4"
 

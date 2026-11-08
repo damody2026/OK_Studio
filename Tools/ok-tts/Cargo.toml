@@ -6,6 +6,7 @@ description = "Qwen3-TTS 12Hz VoiceDesign inference server for OpenKoikatsu (CUD
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 cudarc = { version = "0.19", default-features = false, features = ["std", "cuda-12080", "dynamic-loading", "driver", "cublas", "nvrtc"] }
 memmap2 = "0.9"
 safetensors = "0.6"

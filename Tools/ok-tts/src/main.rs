@@ -7,6 +7,10 @@
 //!       --base-size (or OK_TTS_BASE_SIZE): the Base model, 1.7B (default) or 0.6B. A model that is not on this machine
 //!       is downloaded on the first start into <exe>/models (hfget.rs; not versioned) while the server already answers
 //!       (/health "loading" shows the progress). --base DIR (or OK_TTS_BASE_MODEL) uses a given folder instead.
+//!                 [--backend cloud] [--cloud-model qwen-audio-3.1-tts-flash]
+//!       cloud: the lines come from Alibaba Cloud Model Studio (DashScope) and no GPU model is loaded (cloud.rs). Chosen
+//!       by --backend cloud, OK_TTS_BACKEND=cloud, or "tts": true in %LOCALAPPDATA%\OpenKoikatsu\dashscope.json; the
+//!       key is DASHSCOPE_API_KEY or "api_key" in that file. Voices in cards are not used there.
 //!   ok-tts profile [--base DIR] [--profiles DIR] [--keys 08,m0] [--ages 18] [--ref-text TEXT] [--force]   (see profile.rs)
 //!   ok-tts card-voice --card CARD.png [--set VOICE.okvoice | --remove]   (a character's own voice; see cardvoice.rs)
 //!   ok-tts card-voice --card CARD.png --from-wav REF.wav [--id NAME] [--save VOICE.okvoice] [--base DIR]
@@ -35,6 +39,7 @@ mod profile;
 mod audio;
 mod bench;
 mod cardvoice;
+mod cloud;
 mod codec;
 mod consistency;
 mod voicecheck;
@@ -213,13 +218,21 @@ fn cmd_serve(args: &Args) -> Result<()> {
     let voice_table = text::Voices::load(&voices)?;
     let profiles_dir = profiles_dir(args);
     let mut profiles = profile::load_all(&profiles_dir)?;
-    let backend = match args.opts.get("backend").map(String::as_str) {
+    // --backend, else OK_TTS_BACKEND, else "tts": true in the DashScope settings (cloud.rs) -> cloud.
+    let asked = args.opts.get("backend").cloned().or_else(|| std::env::var("OK_TTS_BACKEND").ok().filter(|v| !v.trim().is_empty()));
+    let backend = match asked.as_deref().map(str::trim) {
         Some("design") => "design",
         Some("base") => "base",
-        Some(other) => bail!("--backend must be base or design, not {other}"),
+        Some("cloud") => "cloud",
+        Some(other) => bail!("--backend must be base, design or cloud, not {other}"),
+        None if cloud::wanted() => "cloud",
         None if !profiles.is_empty() => "base",
         None => "design",
     };
+    if backend == "cloud" {
+        let cloud = std::sync::Arc::new(cloud::Cloud::new(args.opts.get("cloud-model").map(String::as_str))?);
+        return server::serve(port, 8, voice_table, None, Some(cloud), || bail!("the cloud backend loads no model"));
+    }
     if backend == "base" {
         // The Base model: --base, else one on this machine, else downloaded below (in the background).
         let size = base_size(args.opts.get("base-size").map(String::as_str))?;
@@ -241,7 +254,7 @@ fn cmd_serve(args: &Args) -> Result<()> {
         let design = model.filter(|m| m.join("model.safetensors").is_file());
         let base_voices = std::sync::Arc::new(voicemgr::BaseVoices::new(profiles_dir.clone(), base.clone(), model_id, design, voices.clone(), positions));
         let bv = base_voices.clone();
-        return server::serve(port, 8, voice_table, Some(base_voices), move || {
+        return server::serve(port, 8, voice_table, Some(base_voices), None, move || {
             if download {
                 hfget::ensure(&size.repo, &base)?;
             }
@@ -269,7 +282,7 @@ fn cmd_serve(args: &Args) -> Result<()> {
     }
     crate::log!("ok-tts: backend design (VoiceDesign)");
     let model = model.context("VoiceDesign model not found; pass --model <snapshot dir> or set OK_TTS_MODEL")?;
-    server::serve(port, 8, voice_table, None, move || {
+    server::serve(port, 8, voice_table, None, None, move || {
         let mut engine = Engine::load(&model, &voices, positions)?;
         engine.stream_later_frames = later.max(1);
         Ok(engine)

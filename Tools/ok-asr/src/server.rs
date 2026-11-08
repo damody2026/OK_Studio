@@ -25,6 +25,9 @@ use serde_json::{json, Value};
 
 use crate::audio::{input_devices, read_wav, rms, to_model_rate, DeviceChoice, Recorder};
 use crate::engine::{Engine, MIN_SAMPLES, MODEL_ID};
+
+/// Set once the engine is there: ("cloud" or "local", model) for /health.
+static BACKEND: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
 use crate::listen::{Listener, Utterance};
 
 /// Hands-free results kept for polling.
@@ -142,6 +145,11 @@ pub fn serve(port: u16, device: Option<String>, load: impl FnOnce() -> Result<En
 
 /// One silent pass so NVRTC kernels and cuBLAS heuristics are warm before the first real request.
 fn warmup(engine: Engine) -> Result<Engine> {
+    let _ = BACKEND.set((if engine.is_cloud() { "cloud" } else { "local" }.to_string(), engine.model().to_string()));
+    if engine.is_cloud() {
+        // Nothing to warm on this machine, and a request would cost a call.
+        return Ok(engine);
+    }
     let t = std::time::Instant::now();
     let tone: Vec<f32> = (0..16_000).map(|i| (i as f32 * 0.05).sin() * 0.01).collect();
     let _ = engine.transcribe(&tone, None)?;
@@ -172,7 +180,9 @@ fn handle(state: &State, mut req: tiny_http::Request) {
         (tiny_http::Method::Get, "/health") => {
             let s = &state.stats;
             respond(req, 200, json!({
-                "ok": ready, "ready": ready, "model": MODEL_ID, "engine": "ok-asr (Rust, CUDA)",
+                "ok": ready, "ready": ready, "model": BACKEND.get().map_or(MODEL_ID, |b| b.1.as_str()),
+                "engine": if BACKEND.get().is_some_and(|b| b.0 == "cloud") { "ok-asr (cloud: DashScope)" } else { "ok-asr (Rust, CUDA)" },
+                "backend": BACKEND.get().map(|b| b.0.as_str()),
                 "recording": state.recorder.recording(),
                 "error": state.load_error.lock().unwrap().clone(),
                 "requests": s.requests.load(Ordering::Relaxed), "failed": s.failed.load(Ordering::Relaxed),

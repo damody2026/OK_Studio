@@ -16,7 +16,7 @@ pub const MODEL_ID: &str = "Qwen/Qwen3-ASR-0.6B";
 /// Shortest clip worth sending to the model (0.3 s).
 pub const MIN_SAMPLES: usize = SAMPLE_RATE as usize * 3 / 10;
 
-pub struct Engine {
+pub struct Local {
     pub gpu: Gpu,
     mel: MelFrontEnd,
     encoder: Encoder,
@@ -41,7 +41,7 @@ pub fn default_model_dir() -> Option<PathBuf> {
         .find(|p| p.join("model.safetensors").is_file())
 }
 
-impl Engine {
+impl Local {
     pub fn load(model_dir: &Path, max_positions: usize) -> Result<Self> {
         let t = Instant::now();
         let gpu = Gpu::new(0)?;
@@ -78,5 +78,42 @@ impl Engine {
         let raw = self.tokenizer.decode(&ids);
         let (lang, text) = parse_output(&raw, language);
         Ok(Transcript { text: to_display(&lang, &text), language: lang, raw, audio_seconds, asr_seconds: t.elapsed().as_secs_f64() })
+    }
+}
+
+/// The recognizer the server and commands use: the local GPU model, or the cloud (cloud.rs).
+pub enum Engine {
+    Local(Local),
+    Cloud(crate::cloud::Cloud),
+}
+
+impl Engine {
+    pub fn load(model_dir: &Path, max_positions: usize) -> Result<Self> {
+        Ok(Engine::Local(Local::load(model_dir, max_positions)?))
+    }
+
+    pub fn cloud(model: Option<&str>) -> Result<Self> {
+        Ok(Engine::Cloud(crate::cloud::Cloud::new(model)?))
+    }
+
+    pub fn is_cloud(&self) -> bool {
+        matches!(self, Engine::Cloud(_))
+    }
+
+    pub fn model(&self) -> &str {
+        match self {
+            Engine::Local(_) => MODEL_ID,
+            Engine::Cloud(c) => &c.model,
+        }
+    }
+
+    pub fn transcribe(&self, samples: &[f32], language: Option<&str>) -> Result<Transcript> {
+        if samples.len() < MIN_SAMPLES {
+            bail!("audio is too short ({:.2}s)", samples.len() as f64 / SAMPLE_RATE as f64);
+        }
+        match self {
+            Engine::Local(l) => l.transcribe(samples, language),
+            Engine::Cloud(c) => c.transcribe(samples, language),
+        }
     }
 }

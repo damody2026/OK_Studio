@@ -25,7 +25,7 @@ StreetSocial 的對話可以選擇兩種人聲：
 
 ## ok-tts（Rust）
 
-`Tools/ok-tts`，不需要 Python 也不需要 CUDA toolkit，只需要 NVIDIA 驅動。
+`Tools/ok-tts`，不需要 Python 也不需要 CUDA toolkit，只需要 NVIDIA 驅動。也可以不用本機模型，改用雲端（阿里雲百煉），見 [TTS／ASR 雲端版](CLOUD_VOICE_DASHSCOPE.md)。
 
 - `cudarc`（動態載入 driver／cuBLAS／NVRTC）。kernel 在 `src/kernels.cu`，啟動時用 NVRTC 編譯；bf16 自己處理，不依賴 CUDA 標頭。
 - talker（28 層）與 code predictor（5 層）bf16，捨入時機照 PyTorch；單句無 padding，M-RoPE 退化成一般 RoPE。

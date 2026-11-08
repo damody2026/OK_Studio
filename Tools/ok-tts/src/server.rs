@@ -64,6 +64,8 @@ struct Flight {
 
 struct State {
     engine: Mutex<Option<Engine>>,
+    /// Cloud backend (cloud.rs): lines come from DashScope and no model is loaded. None: the local GPU model.
+    cloud: Option<Arc<crate::cloud::Cloud>>,
     voices: Voices,
     /// Base backend: profiles, card voices, candidates (voicemgr.rs). None: VoiceDesign.
     base: Option<Arc<BaseVoices>>,
@@ -166,16 +168,24 @@ impl Trace {
     }
 }
 
-pub fn serve(port: u16, workers: usize, voices: Voices, base: Option<Arc<BaseVoices>>, load: impl FnOnce() -> Result<Engine> + Send + 'static) -> Result<()> {
+pub fn serve(port: u16, workers: usize, voices: Voices, base: Option<Arc<BaseVoices>>, cloud: Option<Arc<crate::cloud::Cloud>>,
+             load: impl FnOnce() -> Result<Engine> + Send + 'static) -> Result<()> {
     let server = tiny_http::Server::http(("127.0.0.1", port)).map_err(|e| anyhow::anyhow!("bind 127.0.0.1:{port}: {e}"))?;
     let server = Arc::new(server);
     let state = Arc::new(State {
-        engine: Mutex::new(None), voices, base, ready: AtomicBool::new(false), load_error: Mutex::new(None), stats: Stats::default(),
+        engine: Mutex::new(None), cloud, voices, base, ready: AtomicBool::new(false), load_error: Mutex::new(None), stats: Stats::default(),
         inflight: Mutex::new(HashMap::new()), cancel_floor: Mutex::new(HashMap::new()), active: Mutex::new(HashSet::new()),
         recent: Mutex::new(VecDeque::new()), next_id: AtomicU64::new(1),
     });
-    crate::log!("ok-tts: listening on http://127.0.0.1:{port} (model loads in the background)");
-    {
+    if state.cloud.is_some() {
+        // Nothing to load: ready at once.
+        state.ready.store(true, Ordering::SeqCst);
+        crate::log!("ok-tts: listening on http://127.0.0.1:{port}");
+        crate::log!("ok-tts: READY");
+    } else {
+        crate::log!("ok-tts: listening on http://127.0.0.1:{port} (model loads in the background)");
+    }
+    if state.cloud.is_none() {
         let state = state.clone();
         std::thread::spawn(move || match load().and_then(|e| warmup(e)) {
             Ok(engine) => {
@@ -260,11 +270,13 @@ fn handle(state: &Arc<State>, mut req: tiny_http::Request) {
             let s = &state.stats;
             let ready = state.ready.load(Ordering::SeqCst);
             respond(req, 200, json!({
-                "ok": ready, "ready": ready, "model": state.base.as_ref().map_or(MODEL_ID, |b| b.model_id.as_str()), "engine": "ok-tts (Rust, CUDA)",
+                "ok": ready, "ready": ready,
+                "model": state.cloud.as_ref().map(|c| c.model.as_str()).unwrap_or_else(|| state.base.as_ref().map_or(MODEL_ID, |b| b.model_id.as_str())),
+                "engine": if state.cloud.is_some() { "ok-tts (cloud: DashScope)" } else { "ok-tts (Rust, CUDA)" },
                 // While the model is not there yet: "downloading Qwen/... 37% (...)" (first start; hfget.rs).
                 "loading": if ready { String::new() } else { crate::hfget::status() },
                 "loading_percent": if ready { None } else { crate::hfget::percent() },
-                "backend": if state.base.is_some() { "base" } else { "design" },
+                "backend": if state.cloud.is_some() { "cloud" } else if state.base.is_some() { "base" } else { "design" },
                 "profiles": state.base.as_ref().map(|b| b.tags.lock().unwrap().len()),
                 "voice_design_available": state.base.as_ref().map(|b| b.design_model.is_some()),
                 "protocol": PROTOCOL, "capabilities": CAPABILITIES, "pcm": {"format": "s16le", "rate": SAMPLE_RATE, "channels": 1},
@@ -431,7 +443,11 @@ fn prepare(state: &State, r: SynthRequest) -> Result<Job> {
             }
         }
     };
-    let path = cache_path(&out_dir, &voice, &text, tag.as_deref());
+    let path = match &state.cloud {
+        Some(c) => c.cache_path(&out_dir, &voice, &text),
+        None => cache_path(&out_dir, &voice, &text, tag.as_deref()),
+    };
+    let voice_from = if state.cloud.is_some() { "cloud" } else { voice_from };
     let id = r.request_id.filter(|s| !s.is_empty() && s.len() <= 128)
         .unwrap_or_else(|| format!("s{}", state.next_id.fetch_add(1, Ordering::Relaxed)));
     state.active.lock().unwrap().insert(id.clone());
@@ -545,27 +561,33 @@ fn synthesize_job(state: &Arc<State>, job: &Job, trace: &mut Trace) -> Result<(V
         if !state.ready.load(Ordering::SeqCst) {
             bail!("model is still loading");
         }
-        // While this line waits for the engine and is made, background GPU work (songs) waits for it (voicelease.rs).
-        let _voice = crate::voicelease::VoiceBusy::new();
-        trace.mark("queue_enter");
-        let lock = state.engine.lock().unwrap();
-        trace.mark("queue_leave");
-        if cancelled(state, job) {
-            state.stats.cancelled.fetch_add(1, Ordering::Relaxed);
-            bail!("cancelled");
-        }
-        let engine = lock.as_ref().ok_or_else(|| anyhow::anyhow!("model is not loaded"))?;
-        let mut speech = engine.speak_voice(&job.text, &job.personality, job.age, job.speaker.as_ref().map(|p| p.embedding.as_slice()), GenConfig::default())?;
-        drop(lock);
+        let (mut samples, gen_seconds, voice_key, voice_age) = if let Some(cloud) = &state.cloud {
+            // Cloud: no engine to wait for, and nothing on this GPU for the songs to wait on.
+            let t = Instant::now();
+            (cloud.speak(&job.text, &job.voice)?, t.elapsed().as_secs_f64(), job.voice.key.clone(), job.voice.age)
+        } else {
+            // While this line waits for the engine and is made, background GPU work (songs) waits for it (voicelease.rs).
+            let _voice = crate::voicelease::VoiceBusy::new();
+            trace.mark("queue_enter");
+            let lock = state.engine.lock().unwrap();
+            trace.mark("queue_leave");
+            if cancelled(state, job) {
+                state.stats.cancelled.fetch_add(1, Ordering::Relaxed);
+                bail!("cancelled");
+            }
+            let engine = lock.as_ref().ok_or_else(|| anyhow::anyhow!("model is not loaded"))?;
+            let speech = engine.speak_voice(&job.text, &job.personality, job.age, job.speaker.as_ref().map(|p| p.embedding.as_slice()), GenConfig::default())?;
+            (speech.samples, speech.gen_seconds, speech.voice_key, speech.age)
+        };
         trace.mark("generated");
-        let audio_seconds = store(&mut speech.samples, &job.path)?;
+        let audio_seconds = store(&mut samples, &job.path)?;
         guard.complete();
         trace.mark("cache_ready");
         state.stats.generated.fetch_add(1, Ordering::Relaxed);
-        state.stats.gen_ms.fetch_add((speech.gen_seconds * 1000.0) as u64, Ordering::Relaxed);
-        crate::log!("ok-tts: GEN p={} age={} chars={} gen={:.2}s audio={audio_seconds:.2}s {}", speech.voice_key, speech.age, job.chars, speech.gen_seconds, job.text);
+        state.stats.gen_ms.fetch_add((gen_seconds * 1000.0) as u64, Ordering::Relaxed);
+        crate::log!("ok-tts: GEN p={} age={} chars={} gen={:.2}s audio={audio_seconds:.2}s {}", voice_key, voice_age, job.chars, gen_seconds, job.text);
         let mut v = base(false);
-        v["gen_seconds"] = json!((speech.gen_seconds * 1000.0).round() / 1000.0);
+        v["gen_seconds"] = json!((gen_seconds * 1000.0).round() / 1000.0);
         v["audio_seconds"] = json!((audio_seconds * 1000.0).round() / 1000.0);
         return Ok((v, "miss"));
     }
@@ -676,6 +698,9 @@ fn stream_job(state: &Arc<State>, job: &Job, tx: &std::sync::mpsc::Sender<Vec<u8
             }
             Claim::Owner(g) => g,
         };
+        if let Some(cloud) = &state.cloud {
+            return cloud_stream(state, cloud, job, guard, tx, trace);
+        }
         // While this line waits for the engine and is made, background GPU work (songs) waits for it (voicelease.rs).
         let _voice = crate::voicelease::VoiceBusy::new();
         trace.mark("queue_enter");
@@ -744,6 +769,62 @@ fn stream_job(state: &Arc<State>, job: &Job, tx: &std::sync::mpsc::Sender<Vec<u8
         return ("complete", "miss", extra);
     }
     ("failed", "miss", json!({"error": "another request for this line did not finish it"}))
+}
+
+/// stream_job for the cloud backend: the pieces DashScope sends (SSE) go out as they come, trimmed like the local ones,
+/// and the finished line is cached.
+fn cloud_stream(state: &Arc<State>, cloud: &crate::cloud::Cloud, job: &Job, guard: FlightGuard, tx: &std::sync::mpsc::Sender<Vec<u8>>,
+                trace: &mut Trace) -> (&'static str, &'static str, Value) {
+    let t = Instant::now();
+    let mut trim = StreamTrim::new(SAMPLE_RATE);
+    let mut first_pcm = None;
+    let mut sink = |pcm: &[f32]| -> Result<()> {
+        if cancelled(state, job) {
+            bail!("cancelled");
+        }
+        let out = trim.push(pcm);
+        if !out.is_empty() {
+            first_pcm.get_or_insert_with(|| job_time(trace));
+            tx.send(pcm16(&out)).map_err(|_| anyhow::anyhow!("listener hung up"))?;
+        }
+        Ok(())
+    };
+    let result = cloud.speak_stream(&job.text, &job.voice, &mut sink);
+    drop(sink);
+    if let Some(t) = first_pcm {
+        trace.marks.push(("first_pcm", t));
+    }
+    let mut samples = match result {
+        Ok(s) => s,
+        Err(e) => {
+            let msg = format!("{e:#}");
+            let status = if msg.contains("cancelled") { "cancelled" } else if msg.contains("hung up") { "hangup" } else { "failed" };
+            if status == "failed" {
+                crate::log!("ok-tts: cloud stream stopped: {msg}");
+            }
+            return (status, "miss", json!({"error": msg}));
+        }
+    };
+    let tail = trim.finish();
+    if !tail.is_empty() {
+        let _ = tx.send(pcm16(&tail));
+    }
+    trace.mark("generated");
+    let gen_seconds = t.elapsed().as_secs_f64();
+    let raw_audio = samples.len() as f64 / SAMPLE_RATE as f64;
+    let stored = store(&mut samples, &job.path);
+    if stored.is_ok() {
+        guard.complete();
+        trace.mark("cache_ready");
+    }
+    state.stats.generated.fetch_add(1, Ordering::Relaxed);
+    state.stats.gen_ms.fetch_add((gen_seconds * 1000.0) as u64, Ordering::Relaxed);
+    let mut extra = json!({"gen_seconds": (gen_seconds * 1000.0).round() / 1000.0, "audio_seconds": (raw_audio * 1000.0).round() / 1000.0,
+                           "rtf": (gen_seconds / raw_audio.max(1e-3) * 1000.0).round() / 1000.0});
+    if let Err(e) = stored {
+        extra["cache_error"] = json!(format!("{e:#}"));
+    }
+    ("complete", "miss", extra)
 }
 
 fn job_time(trace: &Trace) -> f64 {

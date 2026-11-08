@@ -9,6 +9,10 @@
 //! --device NAME (or OK_ASR_DEVICE) picks the first input device whose name contains NAME;
 //! otherwise the Windows default recording device is used.
 //!
+//! --backend cloud (or OK_ASR_BACKEND=cloud, or "asr": true in %LOCALAPPDATA%\OpenKoikatsu\dashscope.json) sends the
+//! audio to Alibaba Cloud Model Studio (DashScope, --cloud-model qwen3-asr-flash) instead of loading the local model;
+//! the microphone and voice activity cuts stay local (cloud.rs). --backend local forces the local model.
+//!
 //! CUDA DLLs (cublas64_12, cublasLt64_12, nvrtc64_120_0, nvrtc-builtins) are searched next to the exe,
 //! in <exe>/cuda, in --cuda-dir, then on PATH. Only the NVIDIA driver must be installed.
 
@@ -17,6 +21,7 @@ mod parent;
 mod audio;
 mod decoder;
 mod encoder;
+mod cloud;
 mod engine;
 mod gpu;
 mod listen;
@@ -28,7 +33,7 @@ mod weights;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 use crate::engine::{default_model_dir, Engine};
 
@@ -134,9 +139,32 @@ fn main() {
     }
 }
 
+/// --backend, else OK_ASR_BACKEND, else "asr": true in the DashScope settings -> the cloud.
+fn use_cloud(args: &Args) -> Result<bool> {
+    let asked = args.opts.get("backend").cloned().or_else(|| std::env::var("OK_ASR_BACKEND").ok().filter(|v| !v.trim().is_empty()));
+    match asked.as_deref().map(str::trim) {
+        Some("cloud") => Ok(true),
+        Some("local") => Ok(false),
+        Some(other) => bail!("--backend must be local or cloud, not {other}"),
+        None => Ok(cloud::wanted()),
+    }
+}
+
+/// The engine of a one-shot command (transcribe, record, vad).
+fn engine(args: &Args) -> Result<Engine> {
+    if use_cloud(args)? {
+        return Engine::cloud(args.opts.get("cloud-model").map(String::as_str));
+    }
+    Engine::load(&model_dir(args)?, max_positions(args))
+}
+
 fn cmd_serve(args: &Args) -> Result<()> {
-    let model = model_dir(args)?;
     let port: u16 = args.opts.get("port").map(|p| p.parse()).transpose()?.unwrap_or(47861);
+    if use_cloud(args)? {
+        let model = args.opts.get("cloud-model").cloned();
+        return server::serve(port, device(args), move || Engine::cloud(model.as_deref()));
+    }
+    let model = model_dir(args)?;
     let positions = max_positions(args);
     server::serve(port, device(args), move || Engine::load(&model, positions))
 }
@@ -147,7 +175,7 @@ fn print(t: &engine::Transcript) {
 }
 
 fn cmd_transcribe(args: &Args) -> Result<()> {
-    let engine = Engine::load(&model_dir(args)?, max_positions(args))?;
+    let engine = engine(args)?;
     let (samples, rate) = audio::read_wav(Path::new(args.opts.get("wav").context("--wav is required")?))?;
     let language = args.opts.get("language").map(String::as_str);
     let audio = audio::to_model_rate(&samples, rate);
@@ -159,7 +187,7 @@ fn cmd_transcribe(args: &Args) -> Result<()> {
 }
 
 fn cmd_record(args: &Args) -> Result<()> {
-    let engine = Engine::load(&model_dir(args)?, max_positions(args))?;
+    let engine = engine(args)?;
     let seconds: f32 = args.opts.get("seconds").and_then(|s| s.parse().ok()).unwrap_or(4.0);
     let recorder = audio::Recorder::new(std::sync::Arc::new(std::sync::Mutex::new(device(args))));
     crate::log!("ok-asr: recording {seconds}s from {} ...", recorder.start()?);
@@ -172,7 +200,7 @@ fn cmd_record(args: &Args) -> Result<()> {
 }
 
 fn cmd_vad(args: &Args) -> Result<()> {
-    let engine = Engine::load(&model_dir(args)?, max_positions(args))?;
+    let engine = engine(args)?;
     let (samples, rate) = audio::read_wav(Path::new(args.opts.get("wav").context("--wav is required")?))?;
     for (i, u) in listen::split_utterances(&samples, rate).iter().enumerate() {
         let audio = audio::to_model_rate(u, rate);
