@@ -382,6 +382,7 @@ bool AOKStreetSocialScene::PrivateConsent(int32 Girl){
     S.MindRecent.Add(Id,N->GetStringField(TEXT("text")));}}
   S.Message=OKMsg(TEXT("ui.heroine.private_forced"),{{TEXT("name"),*S.Manifest.Characters[Girl].Name},{TEXT("favor"),FString::Printf(TEXT("%.0f"),Lost)}});S.FreeTalkNotice=S.Message;RefreshUI();
   UE_LOG(LogTemp,Display,TEXT("Street private forced: actor=%d favor -%.0f"),Girl,Lost);
+  S.PrivateForcedGirl=Girl; // the scene knows she was made to (BeginPrivate: experience "forced")
   return true;}
  if(PrivateConsentAsked(Girl)){S.PrivateRefusedAt.Remove(Id);return true;}
  S.PrivateRefusedAt.Add(Id,SceneTime());return false;

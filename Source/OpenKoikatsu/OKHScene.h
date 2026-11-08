@@ -148,7 +148,7 @@ public:
         SettingsToggle=2300,SettingsReset=2301, // the settings panel on the left
         HeadCameraToggle=2302,EyesCameraToggle=2303, // her head, her eyes on the camera
         PoseBase=1000,
-        Faster=2001,Slower=2002,Toggle=2003,Inside=2004,Outside=2005,Drink=2006,Vomit=2007,Again=2008,Insert=2009,InsertAnal=2010,Pull=2011,Condom=2012,Stop=2014,Continue=2015,ToggleMale=2016,LockHer=2017,LockHis=2018,MaleBottom=2019,PenisXRayToggle=2020,PhysicsNext=2021,GrayRoomToggle=2022,PenisPanelToggle=2023,PenisReset=2024,FluidClear=2025,FeetPinToggle=2026,HandsPinToggle=2027,
+        Faster=2001,Slower=2002,Toggle=2003,Inside=2004,Outside=2005,Drink=2006,Vomit=2007,Again=2008,Insert=2009,InsertAnal=2010,Pull=2011,Condom=2012,Stop=2014,Continue=2015,ToggleMale=2016,LockHer=2017,LockHis=2018,MaleBottom=2019,PenisXRayToggle=2020,PhysicsNext=2021,GrayRoomToggle=2022,PenisPanelToggle=2023,PenisReset=2024,FluidClear=2025,FeetPinToggle=2026,HandsPinToggle=2027,SkinLitToggle=2028,
         SecondChange=3690,SecondClothes=3691,SecondBase=3700, // the second heroine (lesbian, 3P)
         ClothesBase=3000,RoomBase=3200,OutfitBase=3300,CoordinateToggle=3310,CoordinateAccessories=3311,CoordinateBase=3400,
     };
@@ -196,6 +196,14 @@ private:
     // shown (MirrorFront), at twice the mirror's size on the screen for its edges (MirrorSize).
     UPROPERTY() TObjectPtr<class UTextureRenderTarget2D> MirrorTargets[2];UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> MirrorShown;
     int32 MirrorFront=0,MirrorSize=0;uint64 MirrorTakenAt=0;void TickMirror();void RemoveMirror();
+    // Their skin lit by the scene or the original's toon (ok.HScene.SkinLit, SkinLitToggle; user 2026-11-09).
+    void TickSkinLit(bool bEnd);bool bSkinLitShown=false;
+    // While lit: a key and a fill light on lighting channel 1 only (the pair, not the street), from the panel's light rows.
+    TWeakObjectPtr<class UDirectionalLightComponent> SkinKey,SkinFill;TMap<TWeakObjectPtr<class UPrimitiveComponent>,bool> SkinChannelWas;
+    // Taken after her no (experience "forced"): her first words and her talk context (Context).
+    bool Forced() const;bool bForcedSaid=false;double ForcedSayAt=0.;
+    // She talks by herself every ok.HScene.ChatEvery seconds she can (user 2026-11-09), his words go on as before.
+    void TickChatter();double QuietSince=0.;
     TMap<TWeakObjectPtr<class USceneComponent>,FTransform> TongueRest;TWeakObjectPtr<class AKKPreviewActor> TongueGirl;int32 TongueOutPattern=-2,TongueOutChecked=-1;bool bTongueRaised=false;
     void TickCameraLight(bool bEnd);bool bCameraLit=false; // their key light from the camera
     TMap<TWeakObjectPtr<class UMaterialInstanceDynamic>,FLinearColor> CameraLightWas;FVector CameraLightShown=FVector::ZeroVector;

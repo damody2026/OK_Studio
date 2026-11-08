@@ -295,9 +295,13 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
         const TSharedPtr<FJsonObject>* TongueSet=nullptr;if(Body->TryGetObjectField(TEXT("tongue"),TongueSet))Panel->SetTongue(*TongueSet);
         // {"mirror":{"on":b,"yaw":deg,"distance":cm}}: the 200 x 200 cm mirror round them (ok.HScene.Mirror / MirrorYaw / MirrorDistance).
         const TSharedPtr<FJsonObject>* MirrorSet=nullptr;if(Body->TryGetObjectField(TEXT("mirror"),MirrorSet))Panel->SetMirror(*MirrorSet);
+        // {"skin_lit":true|false}: their skin lit by the scene or the original's toon (ok.HScene.SkinLit).
+        bool SkinLit=false;if(Body->TryGetBoolField(TEXT("skin_lit"),SkinLit))if(auto* Var=IConsoleManager::Get().FindConsoleVariable(TEXT("ok.HScene.SkinLit")))Var->Set(SkinLit?1:0,ECVF_SetByConsole);
         // {"orbit":[yaw,pitch,distance]}: the camera round her hips, turned from where she faces (pose checks from the side and the front).
         const TArray<TSharedPtr<FJsonValue>>* Orbit=nullptr;if(Body->TryGetArrayField(TEXT("orbit"),Orbit)&&Orbit->Num()==3&&IsValid(Controller->PreviewActor)){auto* Girl=Controller->PreviewActor.Get();
-            FVector Hips=Girl->GetActorLocation();if(Girl->BodySkel){const int32 Bone=Girl->BodySkel->GetBoneIndex(TEXT("j_hips"));if(Bone!=INDEX_NONE)Hips=Girl->BodySkel->GetBoneTransform(Bone).GetLocation();}
+            // "orbit_bone": round another of her bones (cf_J_FaceBase for her face) instead of her hips.
+            FString OrbitBone=TEXT("j_hips");Body->TryGetStringField(TEXT("orbit_bone"),OrbitBone);
+            FVector Hips=Girl->GetActorLocation();if(Girl->BodySkel){int32 Bone=Girl->BodySkel->GetBoneIndex(*OrbitBone);if(Bone==INDEX_NONE)Bone=Girl->BodySkel->GetBoneIndex(*(TEXT("cf_")+OrbitBone));if(Bone==INDEX_NONE)Bone=Girl->BodySkel->GetBoneIndex(TEXT("j_hips"));if(Bone!=INDEX_NONE)Hips=Girl->BodySkel->GetBoneTransform(Bone).GetLocation();}
             Girl->OrbitFocus=Hips;Girl->OrbitYaw=float((*Orbit)[0]->AsNumber())+Girl->GetActorRotation().Yaw;Girl->OrbitPitch=float((*Orbit)[1]->AsNumber());Girl->OrbitDistance=float((*Orbit)[2]->AsNumber());Girl->ApplyOrbitCamera();}
 #if !UE_BUILD_SHIPPING
         // {"spray":true|false}: the player's water gun (A + left button) at what the camera looks at; game.log says what landed.
