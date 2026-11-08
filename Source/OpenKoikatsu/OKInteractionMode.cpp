@@ -288,6 +288,13 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
         if(Body->TryGetStringField(TEXT("coordinate"),Coordinate)&&!Coordinate.IsEmpty()&&!Panel->WearOutfit(Controller->OutfitIndex,Coordinate,OutfitWhy)){Why=OutfitWhy;return nullptr;}
         // {"height":{"her":0..1,"him":0..1}}: their height slider (ChaFile shapeBody[0]) for testing the pair at other sizes.
         double BlushValue;if(Body->TryGetNumberField(TEXT("blush"),BlushValue))Panel->BlushTest=float(BlushValue);
+        // {"limb_ik":{"feet":b,"hands":b,"feet_to_hers":b,"floor_near":cm,"hand_spread":cm,"hand_far":cm,"reread":b}}: their limbs' IK
+        // while he is in her (the answer's limb_ik has them; a hand setting reads his hands again).
+        const TSharedPtr<FJsonObject>* LimbIk=nullptr;if(Body->TryGetObjectField(TEXT("limb_ik"),LimbIk))Panel->SetLimbIk(*LimbIk);
+        // {"tongue":{"up":cm,"pitch":deg,"length":x}}: her tongue out (ok.HScene.TongueUp / TonguePitch / TongueLength).
+        const TSharedPtr<FJsonObject>* TongueSet=nullptr;if(Body->TryGetObjectField(TEXT("tongue"),TongueSet))Panel->SetTongue(*TongueSet);
+        // {"mirror":{"on":b,"yaw":deg,"distance":cm}}: the 200 x 200 cm mirror round them (ok.HScene.Mirror / MirrorYaw / MirrorDistance).
+        const TSharedPtr<FJsonObject>* MirrorSet=nullptr;if(Body->TryGetObjectField(TEXT("mirror"),MirrorSet))Panel->SetMirror(*MirrorSet);
         // {"orbit":[yaw,pitch,distance]}: the camera round her hips, turned from where she faces (pose checks from the side and the front).
         const TArray<TSharedPtr<FJsonValue>>* Orbit=nullptr;if(Body->TryGetArrayField(TEXT("orbit"),Orbit)&&Orbit->Num()==3&&IsValid(Controller->PreviewActor)){auto* Girl=Controller->PreviewActor.Get();
             FVector Hips=Girl->GetActorLocation();if(Girl->BodySkel){const int32 Bone=Girl->BodySkel->GetBoneIndex(TEXT("j_hips"));if(Bone!=INDEX_NONE)Hips=Girl->BodySkel->GetBoneTransform(Bone).GetLocation();}
