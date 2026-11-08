@@ -179,7 +179,9 @@ void AOKStreetSocialScene::StepApproach(){
  // from sleeping (R6-176).
  {const float D=FVector::Dist2D(A.Position,S.Male);
   if(S.ApproachClosestFor!=S.ApproachStarted){S.ApproachClosestFor=S.ApproachStarted;S.ApproachClosest=D;}else S.ApproachClosest=FMath::Min(S.ApproachClosest,D);
-  if(!S.ApproachAppointment&&!S.ApproachPrivate&&D>6000.f&&D>S.ApproachClosest+3000.f){
+  // Twice as far as she has come at the nearest too: him walking on into the cafeteria (48 m to 83 m from 安可) is no
+  // going off, she comes on after him.
+  if(!S.ApproachAppointment&&!S.ApproachPrivate&&D>6000.f&&D>FMath::Max(S.ApproachClosest+3000.f,S.ApproachClosest*2.f)){
    UE_LOG(LogTemp,Display,TEXT("Street approach: actor=%d gave up, he went off (%.0f m away, %.0f m at the nearest)"),I,D/100.f,S.ApproachClosest/100.f);
    if(S.Manifest.Characters.IsValidIndex(I)){S.FreeTalkNotice=OKMsg(TEXT("ui.invite.approach_he_left"),{{TEXT("name"),*S.Manifest.Characters[I].Name}});RefreshUI();}
    Stop();return;}}

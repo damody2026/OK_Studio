@@ -229,22 +229,24 @@ struct Spot {
     line: &'static str,
 }
 
+/// Each line fits any time of day: the song is sung days later, and "breakfast at the cafeteria" was sung after their lunch
+/// there (R6-182).
 const SPOTS: &[Spot] = &[
     Spot { place: "library", name: "圖書館", line: "我們翻著同一本書" },
-    Spot { place: "cafeteria", name: "學生餐廳", line: "一起吃著熱熱的早餐" },
+    Spot { place: "cafeteria", name: "學生餐廳", line: "一起吃著熱騰騰的飯菜" },
     Spot { place: "bookstore", name: "書局", line: "你陪我挑了一本新書" },
     Spot { place: "park", name: "中央公園", line: "沿著小路慢慢地走" },
     Spot { place: "aquarium", name: "水族館", line: "看魚群游過藍色的光" },
     Spot { place: "drinkshop", name: "飲料店", line: "兩杯手搖飲一樣的甜" },
     Spot { place: "cafe", name: "咖啡廳", line: "咖啡香留在窗邊" },
-    Spot { place: "restaurant", name: "餐廳", line: "燈光下一起吃晚餐" },
+    Spot { place: "restaurant", name: "餐廳", line: "燈光下一起吃著飯" },
     Spot { place: "snack", name: "點心店", line: "分著同一份甜點" },
     Spot { place: "department", name: "百貨公司", line: "逛過一層又一層" },
     Spot { place: "shrine", name: "神社", line: "一起許下小小的願" },
     Spot { place: "onsen", name: "溫泉", line: "熱氣裡你的笑臉" },
-    Spot { place: "playground", name: "操場", line: "跑道上吹著晚風" },
-    Spot { place: "campus_sports", name: "運動場", line: "看台上吹著晚風" },
-    Spot { place: "conveni", name: "便利商店", line: "深夜的燈還亮著" },
+    Spot { place: "playground", name: "操場", line: "跑道上吹著微風" },
+    Spot { place: "campus_sports", name: "運動場", line: "看台上吹著微風" },
+    Spot { place: "conveni", name: "便利商店", line: "店裡的燈一直亮著" },
     Spot { place: "fruitshop", name: "水果店", line: "挑著最甜的那一顆" },
     Spot { place: "petshop", name: "寵物店", line: "小狗對著我們笑" },
 ];

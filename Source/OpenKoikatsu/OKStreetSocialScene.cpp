@@ -1474,7 +1474,9 @@ void AOKStreetSocialScene::ExecuteFreeTalkAction(int32 Character,const FString& 
    if(Stance&&Stance->IsValidIndex(Kind)&&!(*Stance)[Kind])UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s agreed aloud although her rolled stance was no; going"),*Action);
    S.InviteRefusals.Remove(Her);}
   // On her shift (making drinks at the shop): a spoken yes does not take her off work; she is told so, and so is he.
-  if(!Handled)if(const int32 Until=ShiftUntil(Character);Until>0){Handled=true;
+  // Not her leaving him to go to it: 惠惠 said "off to the counter now" at 16:58 sitting over cocoa with him in the cafe she
+  // works at, her "leave" was refused as "on shift till 22:00", and she sat on at his table through her shift (R6-181).
+  if(!Handled&&Action!=TEXT("leave"))if(const int32 Until=ShiftUntil(Character);Until>0){Handled=true;
    const FOKStreetPlanBlock* B=BlockNow(Character,int32(OKStreetMindNow(S)%1440));const FOKStreetPlace* P=B?OKStreetFindPlace(B->Place):nullptr;
    const FString Place=P?FString(P->Name):B?B->Place:FString();const FString At=FString::Printf(TEXT("%d:%02d"),Until/60,Until%60);
    // The activity is at the shop she is working in and he is there: he is her customer (his order is the shop's), not
