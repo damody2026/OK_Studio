@@ -288,7 +288,7 @@ struct FOKStreetSceneState {
  // Heroine profiles from the mind (plan §4.1) and their traits (§4.2a), by stable id.
  TMap<FString,TSharedPtr<FJsonObject>> MindProfiles;
  // Plan §7.1 open choices (checkout, gift, invite...), resolved by chat or menu.
- TArray<FOKStreetPendingChoice> Choices;int32 NextChoice=1;
+ TArray<FOKStreetPendingChoice> Choices;int32 NextChoice=1;bool ChoiceByHerReply=false; /* the choice being resolved is her own answer in her reply, not his button */
  // Plan §8: the catalogue, the order being built, and the shop he stands in.
  FOKStreetCatalog Catalog;TArray<FOKStreetCartLine> Cart;FString ShopPlace;bool ShopOpen=false;
  // Plan §9: what just happened in front of others, per heroine id, told to her on the next turn; last needs tick.

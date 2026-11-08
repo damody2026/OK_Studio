@@ -904,15 +904,23 @@ void AOKStreetSocialScene::StartLoan(int32 Amount){
  // A loan to her already on offer (his words and the button for the same money): one, not two (as StartGift).
  if(S.Choices.ContainsByPredicate([Her](const FOKStreetPendingChoice& C){return C.Kind==TEXT("loan")&&C.Heroine==Her;})){UE_LOG(LogTemp,Display,TEXT("Street loan: already offered to actor %d"),Her);return;}
  TWeakObjectPtr<AOKStreetSocialScene> Weak(this);
+ // She is told he holds the money out to her and answers it in her next turn, as with a gift: the button alone moved the
+ // money without a word to her, and 貞德 went on asking why he said nothing (he pressed it twice and lent twice).
+ const FString Held=OKMsg(TEXT("ui.economy.loan_held_out_note"),{{TEXT("amount"),Amount},{TEXT("choice_id"),FString::Printf(TEXT("c%d"),S.NextChoice)}});
  OpenChoice(Her,TEXT("loan"),OKMsg(TEXT("ui.economy.loan_her_button"), {{TEXT("amount"), Amount}}),{TEXT("accept"),TEXT("decline")},Offer->GetStringField(TEXT("lean")),float(Offer->GetNumberField(TEXT("insist"))),15,
-  [Weak,Her,Amount](const FString& Option){if(!Weak.IsValid())return;auto& L=*Weak->State;
+  [Weak,Her,Amount,Held](const FString& Option){if(!Weak.IsValid())return;auto& L=*Weak->State;
+   // Settled by his button before she answered: what happened, in place of the offer she has not heard yet.
+   const bool Unheard=L.TellHer.Remove(Held)>0;const bool HerWord=L.ChoiceByHerReply;
    if(Option!=TEXT("accept")){L.FreeTalkNotice=OKT(TEXT("ui.economy.she_declined"));Weak->RefreshUI();return;}
    if(L.Store.PlayerCash<Amount)return;
    auto Settle=OKRulesHeroineRequest(L,TEXT("loan_settle"),OKStreetStableId(L.Manifest.Characters[Her]));Settle->SetNumberField(TEXT("amount"),Amount);Settle->SetStringField(TEXT("name"),L.Manifest.Characters[Her].Name);
    const TSharedPtr<FJsonObject> Answer=OKRulesEval(L,Settle);if(!Answer)return;
    auto Candidate=L.Store;Weak->ApplyRulesEffects(Candidate,*Answer);
-   if(Weak->CommitStore(MoveTemp(Candidate))){Weak->FlushRulesEffects();L.FreeTalkNotice=OKT(TEXT("ui.economy.she_accepted_loan_promise"));}
+   if(Weak->CommitStore(MoveTemp(Candidate))){Weak->FlushRulesEffects();L.FreeTalkNotice=OKT(TEXT("ui.economy.she_accepted_loan_promise"));
+    if((Unheard||!HerWord)&&Weak->FreeTalkPartner()==Her)L.TellHer.Add(OKMsg(TEXT("ui.scene.game_fact_note"),{{TEXT("fact"),OKMsg(TEXT("ui.economy.loan_taken_fact"),{{TEXT("amount"),Amount}})}}));
+    UE_LOG(LogTemp,Display,TEXT("Street loan: actor %d took %d (%s)"),Her,Amount,HerWord?TEXT("her answer"):TEXT("his button"));}
    Weak->RefreshUI();});
+ S.TellHer.Add(Held);
  S.FreeTalkNotice=OKMsg(TEXT("ui.economy.loan_ask_pending"), {{TEXT("amount"), Amount}});
  RefreshUI();
 }

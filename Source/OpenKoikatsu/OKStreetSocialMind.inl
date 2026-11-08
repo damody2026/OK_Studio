@@ -518,7 +518,7 @@ void AOKStreetSocialScene::ApplyChoiceReply(int32 Character,const FOKFreeTalkRep
    // add on top (R6-43: 惠惠 accepted his treat aloud, the rules pushed back for her and the bill timed out to her paying).
    // Still wanting her way, she says so in this reply (propose).
    if(Reply.ProposeId!=Reply.ResolveId)if(auto* M=S.Choices.FindByPredicate([&](const FOKStreetPendingChoice& X){return X.Id==Reply.ResolveId;});M&&M->Heroine==Character&&M->Options.Contains(Reply.ResolveOption))M->HerLean=Reply.ResolveOption;
-   ResolveChoice(Reply.ResolveId,Reply.ResolveOption,Reply.ResolveInsist);}}
+   S.ChoiceByHerReply=true;ResolveChoice(Reply.ResolveId,Reply.ResolveOption,Reply.ResolveInsist);S.ChoiceByHerReply=false;}}
  // Meetings are booked by the judge, which reads his line and hers (her own promise field cannot tell whether he said yes).
  HandleFinanceReply(Character,Reply.Predict,Reply.Trade,Reply.Bet);
  // Ordering by chat (plan §8.2): only items this place sells; then checkout when asked.
