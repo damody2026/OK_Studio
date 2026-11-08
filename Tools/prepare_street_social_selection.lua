@@ -346,6 +346,7 @@ function M.main(argv)
   -- The HG render style's parents (ok.RenderStyle 1), cooked into the same patch.
   if T(materials.hg_root) then manifest.hg_material_root = materials.hg_root end
   if T(materials.wrap_root) then manifest.wrap_material_root = materials.wrap_root end
+  if T(materials.lit_root) then manifest.lit_material_root = materials.lit_root end
   for _, kv in ipairs({
     { "external_control", true },
     { "generated_voice_root", win(path.join(root, "Saved/StreetSocial/TTSCache")) },

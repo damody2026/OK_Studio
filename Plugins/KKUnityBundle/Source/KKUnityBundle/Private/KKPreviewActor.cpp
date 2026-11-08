@@ -10170,6 +10170,8 @@ bool AKKPreviewActor::SetWrapLine(bool bOn,const FVector& From,const FVector& To
         for(UMeshComponent* Mesh:Meshes)for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
             if(auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot)))if(const auto* Original=WrapOriginalOf.Find(M))Mesh->SetMaterial(Slot,*Original);
         WrapInstanceOf.Reset();WrapOriginalOf.Reset();
+        for(const auto& Lit:LitWrapped)if(UMaterialInstanceDynamic* M=Lit.Get())M->SetScalarParameterValue(TEXT("__OK_WrapRadius"),0.f);
+        LitWrapped.Reset();
         return true;
     }
     static const TSet<FString> Skins={TEXT("M_ForgeSkin"),TEXT("M_ForgeSkin_Outline"),TEXT("M_KoikanoSkin"),TEXT("M_KoikanoSkin_Outline")};
@@ -10177,6 +10179,8 @@ bool AKKPreviewActor::SetWrapLine(bool bOn,const FVector& From,const FVector& To
     for(UMeshComponent* Mesh:Meshes)for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
     {
         auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot));if(!M)continue;
+        // Her lit skin has the offset in it: set in place.
+        if(LitOriginalOf.Contains(M)){LitWrapped.Add(M);continue;}
         UMaterialInstanceDynamic* Wrap=WrapOriginalOf.Contains(M)?M:nullptr;
         if(!Wrap)if(const auto* Found=WrapInstanceOf.Find(M))Wrap=*Found;
         if(!Wrap)
@@ -10193,14 +10197,59 @@ bool AKKPreviewActor::SetWrapLine(bool bOn,const FVector& From,const FVector& To
         Shown.Add(Wrap);
     }
     const float Radius=FMath::Max(RadiusCm,0.f);
+    for(const auto& Lit:LitWrapped)if(UMaterialInstanceDynamic* M=Lit.Get())Shown.Add(M);
     for(UMaterialInstanceDynamic* Wrap:Shown)
     {
-        Wrap->CopyParameterOverrides(WrapOriginalOf[Wrap]);
+        if(const auto* Original=WrapOriginalOf.Find(Wrap))Wrap->CopyParameterOverrides(*Original);
         Wrap->SetVectorParameterValue(TEXT("__OK_WrapFrom"),FLinearColor(From.X,From.Y,From.Z,0.f));
         Wrap->SetVectorParameterValue(TEXT("__OK_WrapTo"),FLinearColor(To.X,To.Y,To.Z,0.f));
         Wrap->SetScalarParameterValue(TEXT("__OK_WrapRadius"),Radius);
         // A falloff of twice the radius: the skin moved never passes the skin farther out (no fold).
         Wrap->SetScalarParameterValue(TEXT("__OK_WrapSoft"),Radius*2.f);
+    }
+    return Shown.Num()>0;
+}
+
+bool AKKPreviewActor::SetSkinLit(bool bOn,const FString& LitRoot)
+{
+    TInlineComponentArray<UMeshComponent*> Meshes(this);
+    if(!bOn)
+    {
+        for(UMeshComponent* Mesh:Meshes)for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
+            if(auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot)))if(const auto* Original=LitOriginalOf.Find(M))Mesh->SetMaterial(Slot,*Original);
+        LitInstanceOf.Reset();LitOriginalOf.Reset();LitWrapped.Reset();
+        return true;
+    }
+    // The wrap's own swap first given back: her skin instance is what the lit one copies.
+    if(WrapOriginalOf.Num())SetWrapLine(false,FVector::ZeroVector,FVector::ZeroVector,0.f,FString());
+    static const TSet<FString> Skins={TEXT("M_ForgeSkin"),TEXT("M_KoikanoSkin")};
+    TSet<UMaterialInstanceDynamic*> Shown;
+    for(UMeshComponent* Mesh:Meshes)for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
+    {
+        auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot));if(!M)continue;
+        UMaterialInstanceDynamic* Lit=LitOriginalOf.Contains(M)?M:nullptr;
+        if(!Lit)if(const auto* Found=LitInstanceOf.Find(M))Lit=*Found;
+        if(!Lit)
+        {
+            UMaterialInterface* Parent=M->Parent;
+            if(!Parent||!Skins.Contains(Parent->GetName())||Parent->GetPathName().Contains(TEXT("/StreetHG")))continue;
+            const FString Name=Parent->GetName()+TEXT("_Lit");
+            UMaterialInterface* LitParent=FPackageName::DoesPackageExist(LitRoot/Name)?LoadObject<UMaterialInterface>(nullptr,*(LitRoot/Name+TEXT(".")+Name)):nullptr;
+            if(!LitParent){if(!bLitParentMissingLogged){bLitParentMissingLogged=true;UE_LOG(LogTemp,Warning,TEXT("Skin lit: no %s under %s"),*Name,*LitRoot);}continue;}
+            Lit=UMaterialInstanceDynamic::Create(LitParent,this);
+            LitInstanceOf.Add(M,Lit);LitOriginalOf.Add(Lit,M);
+        }
+        if(Mesh->GetMaterial(Slot)!=Lit)Mesh->SetMaterial(Slot,Lit);
+        Shown.Add(Lit);
+    }
+    // Her values as they are now (whatever sets hers each frame), the wrap's as it last set them.
+    for(UMaterialInstanceDynamic* Lit:Shown)
+    {
+        float Radius=0.f,Soft=0.f;FLinearColor From,To;
+        const bool bWrap=LitWrapped.Contains(Lit)&&Lit->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("__OK_WrapRadius")),Radius);
+        if(bWrap){Lit->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("__OK_WrapSoft")),Soft);Lit->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("__OK_WrapFrom")),From);Lit->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("__OK_WrapTo")),To);}
+        Lit->CopyParameterOverrides(LitOriginalOf[Lit]);
+        if(bWrap){Lit->SetScalarParameterValue(TEXT("__OK_WrapRadius"),Radius);Lit->SetScalarParameterValue(TEXT("__OK_WrapSoft"),Soft);Lit->SetVectorParameterValue(TEXT("__OK_WrapFrom"),From);Lit->SetVectorParameterValue(TEXT("__OK_WrapTo"),To);}
     }
     return Shown.Num()>0;
 }

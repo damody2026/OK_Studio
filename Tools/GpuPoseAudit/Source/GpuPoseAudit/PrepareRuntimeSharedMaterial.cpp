@@ -127,7 +127,12 @@ static bool OKShadowInjection(EKKRuntimeMaterialRecipe Recipe, const TCHAR*& Out
 	}
 }
 
-bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,const FString& Output,bool HGShading,bool WrapOnly){
+// -LitOnly: her skin as <name>_Lit, lit by the scene (user 2026-11-09: the 1-on-1 scene's skin switch, lit or the
+// original's own toon). The family program runs with its light along each pixel's normal and no toon self-shadow, so its
+// result is her skin fully lit; that is the base colour of a DefaultLit material, which Unreal's lights then shade. The
+// wrap offset is in it too (no _Wrap swap needed while it is shown). Outlines keep their own parents.
+bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,const FString& Output,bool HGShading,bool WrapOnly,bool LitOnly){
+ if(LitOnly){if(HGShading){UE_LOG(LogTemp,Error,TEXT("-LitOnly and -HGShading are separate parents"));return false;}WrapOnly=true;}
 #if !OK_HG_SHADING_TOOL
  if(HGShading){UE_LOG(LogTemp,Error,TEXT("-HGShading needs the OKHGShading plugin in the material host"));return false;}
 #else
@@ -148,9 +153,10 @@ bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,c
  if(Outline&&!OKRuntimeOutlineLayout(Recipe))continue;
  // -WrapOnly: only her skin and its outline, as <name>_Wrap (the 1-on-1 scene's skin pushed off his penis, DPG below).
  if(WrapOnly&&Recipe!=EKKRuntimeMaterialRecipe::ForgeSkin&&Recipe!=EKKRuntimeMaterialRecipe::KoikanoSkin)continue;
+ if(LitOnly&&Outline)continue;
  const bool Translucent=!Outline&&OKRuntimeSharedMaterialTranslucent(Recipe);
- const FString Name=OKRuntimeSharedMaterialParentName(Recipe)+(Outline?TEXT("_Outline"):TEXT(""))+(WrapOnly?TEXT("_Wrap"):TEXT(""));auto* Mat=NewObject<UMaterial>(CreatePackage(*(Root/Name)),*Name,RF_Public|RF_Standalone);Keep.Emplace(Mat);Assets.Add(Mat);
- Mat->MaterialDomain=MD_Surface;Mat->BlendMode=Outline?BLEND_Masked:OKRuntimeSharedMaterialBlendMode(Recipe);Mat->SetShadingModel(MSM_Unlit);Mat->TwoSided=Outline||OKRuntimeSharedMaterialTwoSided(Recipe);Mat->OpacityMaskClipValue=.5f;
+ const FString Name=OKRuntimeSharedMaterialParentName(Recipe)+(Outline?TEXT("_Outline"):TEXT(""))+(LitOnly?TEXT("_Lit"):WrapOnly?TEXT("_Wrap"):TEXT(""));auto* Mat=NewObject<UMaterial>(CreatePackage(*(Root/Name)),*Name,RF_Public|RF_Standalone);Keep.Emplace(Mat);Assets.Add(Mat);
+ Mat->MaterialDomain=MD_Surface;Mat->BlendMode=Outline?BLEND_Masked:OKRuntimeSharedMaterialBlendMode(Recipe);Mat->SetShadingModel(LitOnly?MSM_DefaultLit:MSM_Unlit);Mat->TwoSided=Outline||OKRuntimeSharedMaterialTwoSided(Recipe);Mat->OpacityMaskClipValue=.5f;
  // The native vertex recipes consume independent UV0..UV3. Declare their
  // vertex pass-through explicitly; pixel custom inputs alone are insufficient
  // to initialize all FMaterialVertexParameters texture coordinates.
@@ -209,13 +215,20 @@ bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,c
    AmbientInput.Input.Expression=OKMakeRuntimeVertexAmbient(Mat,FKKRuntimeMaterialScene());
   }
   Code+=OKRuntimeSharedMaterialVaryings(Recipe);
+  if(LitOnly){bool Found=false;
+   for(const auto& U:L.Uniforms)if(U.Name==TEXT("_WorldSpaceLightPos0")&&!U.Rows&&U.Dim>=3){Found=true;
+    Code+=TEXT("{const float3 ok_litn=normalize(float3(-Normal.x,Normal.z,Normal.y))*(FaceSign<0?-1.0:1.0);\n");
+    for(int32 C=0;C<3;++C)Code+=FString::Printf(TEXT("cb%d[%d].%c=ok_litn[%d];\n"),U.CB,(U.Offset/4+C)/4,TEXT("xyzw")[(U.Offset/4+C)%4],C);
+    if(U.Dim>3)Code+=FString::Printf(TEXT("cb%d[%d].%c=0;\n"),U.CB,(U.Offset/4+3)/4,TEXT("xyzw")[(U.Offset/4+3)%4]);
+    Code+=TEXT("}\n");break;}
+   if(!Found){UE_LOG(LogTemp,Error,TEXT("Lit skin: %s has no _WorldSpaceLightPos0"),*Name);return false;}}
  }
  else {Code+=TEXT("clip(-FaceSign);\n");if(Recipe==EKKRuntimeMaterialRecipe::ForgeSkin)Code+=TEXT("v1.zw=float2(SecondaryUV.x,1-SecondaryUV.y);v2=float4(ThirdUV.x,1-ThirdUV.y,FourthUV.x,1-FourthUV.y);v4=VertexColor;\n");if(Recipe==EKKRuntimeMaterialRecipe::KoikanoSkin)Code+=TEXT("v1.zw=float2(SecondaryUV.x,1-SecondaryUV.y);v2=float4(ThirdUV.x,1-ThirdUV.y,FourthUV.x,1-FourthUV.y);v5=VertexColor;\n");}
  if(Outline&&Recipe==EKKRuntimeMaterialRecipe::KoikanoSkin){const TCHAR* Names[]={TEXT("_texcoord_ST"),TEXT("_texcoord2_ST"),TEXT("_texcoord3_ST"),TEXT("_texcoord4_ST")};const TCHAR* Dest[]={TEXT("v1.xy"),TEXT("v1.zw"),TEXT("v2.xy"),TEXT("v2.zw")};for(int32 I=0;I<4;++I)for(const auto& U:L.Uniforms)if(U.Name==Names[I])Code+=FString::Printf(TEXT("%s=%s*cb%d[%d].xy+cb%d[%d].zw;\n"),Dest[I],Dest[I],U.CB,U.Offset/16,U.CB,U.Offset/16);}
  if(Outline&&int32(Recipe)>=17&&int32(Recipe)<=25){for(int32 I=0;I<2;++I){if(I==1&&(Recipe==EKKRuntimeMaterialRecipe::KoikanoClothesItem||Recipe==EKKRuntimeMaterialRecipe::KoikanoClothesItemAlpha||Recipe==EKKRuntimeMaterialRecipe::KoikanoClothesItemTranslucent||Recipe==EKKRuntimeMaterialRecipe::KoikanoClothesItemAlphaTranslucent))continue;for(const auto& U:L.Uniforms)if(U.Name==(I?TEXT("_texcoord2_ST"):TEXT("_texcoord_ST")))Code+=FString::Printf(TEXT("v1.%s=float2(%s.x,1-%s.y)*cb%d[%d].xy+cb%d[%d].zw;\n"),I?TEXT("zw"):TEXT("xy"),I?TEXT("SecondaryUV"):TEXT("UV"),I?TEXT("SecondaryUV"):TEXT("UV"),U.CB,U.Offset/16,U.CB,U.Offset/16);}}
  FString Program=Outline?OKRuntimeOutlineProgram(Recipe):OKRuntimeSharedMaterialProgram(Recipe);for(const auto& T:L.Textures){auto* E=NewObject<UMaterialExpressionTextureObjectParameter>(Mat);E->ParameterName=*T.Name;E->Texture=Default(T);E->SamplerType=SAMPLERTYPE_LinearColor;Add(FString::Printf(TEXT("Texture%d"),T.Index),E);if(T.Sampler>=0)Program.ReplaceInline(*FString::Printf(TEXT("Sampler%d,"),T.Sampler),*FString::Printf(TEXT("Texture%dSampler,"),T.Index));}
  const TCHAR* ShadowAnchor=nullptr;const TCHAR* ShadowInject=nullptr;
- if(!HGShading&&!Outline&&OKShadowInjection(Recipe,ShadowAnchor,ShadowInject)){
+ if(!HGShading&&!LitOnly&&!Outline&&OKShadowInjection(Recipe,ShadowAnchor,ShadowInject)){
   auto* Depth=NewObject<UMaterialExpressionTextureObjectParameter>(Mat);Depth->ParameterName=TEXT("KKShadowDepth");Depth->Texture=Default(FKKRuntimeShaderTexture{TEXT("KKShadowDepth"),TEXT("white"),0,0,2});Depth->SamplerType=SAMPLERTYPE_LinearColor;Add(TEXT("OKShadowDepth"),Depth);
   auto Vec3=[&](const TCHAR* ParamName,const FLinearColor& Def){auto* V=NewObject<UMaterialExpressionVectorParameter>(Mat);V->ParameterName=ParamName;V->DefaultValue=Def;return V;};
   Add(TEXT("OKShadowStrength"),Scalar(TEXT("__OK_ShadowStrength"),0.f));
@@ -238,7 +251,11 @@ bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,c
  if(!Translucent)Program.ReplaceInline(TEXT("return o0;"),TEXT("return float4(o0.rgb,1.0);"));
  else if(Mat->BlendMode==BLEND_AlphaComposite)Program.ReplaceInline(TEXT("return o0;"),TEXT("return o0*RevealOpacity;"));
  else Program.ReplaceInline(TEXT("return o0;"),TEXT("return float4(o0.rgb,o0.a*RevealOpacity);"));
- PS->Code=Code+Program;Register(PS);auto* Ed=Mat->GetEditorOnlyData();Ed->EmissiveColor.Expression=PS;Ed->EmissiveColor.Mask=1;Ed->EmissiveColor.MaskR=Ed->EmissiveColor.MaskG=Ed->EmissiveColor.MaskB=1;Ed->OpacityMask.Expression=PS;Ed->OpacityMask.Mask=1;Ed->OpacityMask.MaskA=1;if(Translucent){Ed->Opacity.Expression=PS;Ed->Opacity.Mask=1;Ed->Opacity.MaskA=1;OKAddUnityTranslucentDepthTest(Mat);}
+ PS->Code=Code+Program;Register(PS);auto* Ed=Mat->GetEditorOnlyData();
+ if(LitOnly){Ed->BaseColor.Expression=PS;Ed->BaseColor.Mask=1;Ed->BaseColor.MaskR=Ed->BaseColor.MaskG=Ed->BaseColor.MaskB=1;
+  auto* Rough=Scalar(TEXT("__OK_LitRoughness"),.55f);Register(Rough);Ed->Roughness.Expression=Rough;
+  auto* Spec=Scalar(TEXT("__OK_LitSpecular"),.35f);Register(Spec);Ed->Specular.Expression=Spec;}
+ else{Ed->EmissiveColor.Expression=PS;Ed->EmissiveColor.Mask=1;Ed->EmissiveColor.MaskR=Ed->EmissiveColor.MaskG=Ed->EmissiveColor.MaskB=1;}Ed->OpacityMask.Expression=PS;Ed->OpacityMask.Mask=1;Ed->OpacityMask.MaskA=1;if(Translucent){Ed->Opacity.Expression=PS;Ed->Opacity.Mask=1;Ed->Opacity.MaskA=1;OKAddUnityTranslucentDepthTest(Mat);}
 
  if(Outline){
   auto* WPO=NewObject<UMaterialExpressionCustom>(Mat);WPO->OutputType=CMOT_Float3;
@@ -335,11 +352,12 @@ bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,c
   }
  });
  FlushRenderingCommands();
- if(!MeshShadersReady){UE_LOG(LogTemp,Error,TEXT("Source material mesh shader pair missing: %s"),*Name);return false;}
+ // Lit parents are drawn by Unreal's own passes, not the source mesh pass (its shaders are for unlit families).
+ if(!MeshShadersReady&&!LitOnly){UE_LOG(LogTemp,Error,TEXT("Source material mesh shader pair missing: %s"),*Name);return false;}
  }
  TArray<TSharedPtr<FJsonValue>> Saved;for(auto* A:Assets){const FString File=FPackageName::LongPackageNameToFilename(A->GetOutermost()->GetName(),FPackageName::GetAssetPackageExtension());IFileManager::Get().MakeDirectory(*FPaths::GetPath(File),true);FSavePackageArgs Args;Args.TopLevelFlags=RF_Public|RF_Standalone;if(!UPackage::SavePackage(A->GetOutermost(),A,*File,Args))return false;Saved.Add(MakeShared<FJsonValueString>(A->GetPathName()));}
  auto Report=MakeShared<FJsonObject>();Report->SetBoolField(TEXT("passed"),true);Report->SetBoolField(TEXT("source_mesh_shader_permutations_verified"),true);Report->SetNumberField(TEXT("schema"),1);Report->SetStringField(TEXT("root"),Root);Report->SetStringField(TEXT("parent"),Root/TEXT("M_ForgeOpaque.M_ForgeOpaque"));Report->SetStringField(TEXT("alpha_masked_parent"),Root/TEXT("M_ForgeAlphaMasked.M_ForgeAlphaMasked"));Report->SetStringField(TEXT("alpha_translucent_parent"),Root/TEXT("M_ForgeAlphaTranslucent.M_ForgeAlphaTranslucent"));Report->SetStringField(TEXT("item_parent"),Root/TEXT("M_ForgeItem.M_ForgeItem"));Report->SetStringField(TEXT("hair_parent"),Root/TEXT("M_ForgeHair.M_ForgeHair"));Report->SetStringField(TEXT("hair_front_parent"),Root/TEXT("M_ForgeHairFront.M_ForgeHairFront"));Report->SetStringField(TEXT("studio_alpha_parent"),Root/TEXT("M_ForgeStudioAlpha.M_ForgeStudioAlpha"));Report->SetArrayField(TEXT("assets"),Saved);Report->SetBoolField(TEXT("per_card_input_used"),false);Report->SetBoolField(TEXT("runtime_compilation_required"),false);
- Report->SetBoolField(TEXT("runtime_reveal_supported"),true);Report->SetBoolField(TEXT("wrap_only"),WrapOnly);Report->SetStringField(TEXT("render_style"),HGShading?TEXT("hg"):TEXT("koikatsu"));Report->SetNumberField(TEXT("runtime_reveal_duration_seconds"),3);
+ Report->SetBoolField(TEXT("runtime_reveal_supported"),true);Report->SetBoolField(TEXT("wrap_only"),WrapOnly);Report->SetBoolField(TEXT("lit_only"),LitOnly);Report->SetStringField(TEXT("render_style"),HGShading?TEXT("hg"):TEXT("koikatsu"));Report->SetNumberField(TEXT("runtime_reveal_duration_seconds"),3);
  FString Text;FJsonSerializer::Serialize(Report,TJsonWriterFactory<>::Create(&Text));return FFileHelper::SaveStringToFile(Text,*Output);
 }
 
