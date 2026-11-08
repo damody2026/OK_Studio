@@ -2,11 +2,11 @@
 //! OpenAI-compatible chat completions) instead of the local GPU model. The microphone, voice activity cuts and the
 //! HTTP contract stay here; only `transcribe` goes to the cloud.
 //!
-//! Key (shared with ok-tts): DASHSCOPE_API_KEY, else "aliyun"."api_key" of the user's key file
-//! %LOCALAPPDATA%\OpenKoikatsu\api-keys.json (OK_API_KEYS names another file). With a key the cloud is the default;
-//! without one there is no cloud. The key never goes into the repository.
+//! Key: DASHSCOPE_API_KEY, else "aliyun"."api_key" of the player's settings file (Saved/StreetSocial/player.json,
+//! passed with --settings; Docs/API_KEYS.md), or what the game sends on POST /cloud. Without a key there is no
+//! cloud. The key never goes into the repository.
 
-use std::path::PathBuf;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
@@ -19,19 +19,9 @@ use crate::text::to_display;
 
 pub const DEFAULT_MODEL: &str = "qwen3-asr-flash";
 
-/// The user's API key file (Docs/API_KEYS.md): OK_API_KEYS, else %LOCALAPPDATA%\OpenKoikatsu\api-keys.json.
-/// {"deepseek": {...}, "aliyun": {"api_key", "base_url", "tts_model", "asr_model"}}; a service without a key is off.
-pub fn config_path() -> PathBuf {
-    if let Some(p) = std::env::var_os("OK_API_KEYS").filter(|p| !p.is_empty()) {
-        return PathBuf::from(p);
-    }
-    let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
-    base.join("OpenKoikatsu").join("api-keys.json")
-}
-
-/// The "aliyun" section of the key file.
-fn config() -> Value {
-    std::fs::read_to_string(config_path()).ok()
+/// The "aliyun" section of the settings file ({"api_key", "base_url", "asr_model"}); {} without one.
+pub fn section(settings: Option<&Path>) -> Value {
+    settings.and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|s| serde_json::from_str::<Value>(s.trim_start_matches('\u{feff}')).ok())
         .and_then(|v| v.get("aliyun").cloned())
         .unwrap_or_else(|| json!({}))
@@ -44,10 +34,9 @@ fn setting(cfg: &Value, env: &str, field: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-/// An Alibaba Cloud key is set (DASHSCOPE_API_KEY or the key file): the cloud is used unless OK_ASR_BACKEND or
-/// --backend asks for the local model.
-pub fn wanted() -> bool {
-    setting(&config(), "DASHSCOPE_API_KEY", "api_key").is_some()
+/// A key is there (DASHSCOPE_API_KEY or the section).
+pub fn has_key(cfg: &Value) -> bool {
+    setting(cfg, "DASHSCOPE_API_KEY", "api_key").is_some()
 }
 
 pub struct Cloud {
@@ -58,14 +47,14 @@ pub struct Cloud {
 }
 
 impl Cloud {
-    pub fn new(model: Option<&str>) -> Result<Self> {
-        let cfg = config();
-        let key = setting(&cfg, "DASHSCOPE_API_KEY", "api_key")
-            .ok_or_else(|| anyhow!("no Alibaba Cloud API key: set DASHSCOPE_API_KEY or \"aliyun\".\"api_key\" in {}", config_path().display()))?;
-        let base_url = setting(&cfg, "DASHSCOPE_BASE_URL", "base_url").unwrap_or_else(|| "https://dashscope.aliyuncs.com".into());
-        let model = model.map(str::to_string).or_else(|| setting(&cfg, "OK_ASR_CLOUD_MODEL", "asr_model")).unwrap_or_else(|| DEFAULT_MODEL.into());
+    /// From an "aliyun" section (the settings file's, or the body of POST /cloud).
+    pub fn new(cfg: &Value, model: Option<&str>) -> Result<Self> {
+        let key = setting(cfg, "DASHSCOPE_API_KEY", "api_key")
+            .ok_or_else(|| anyhow!("no Alibaba Cloud API key (DASHSCOPE_API_KEY, or aliyun.api_key in the player's settings)"))?;
+        let base_url = setting(cfg, "DASHSCOPE_BASE_URL", "base_url").unwrap_or_else(|| "https://dashscope.aliyuncs.com".into());
+        let model = model.map(str::to_string).or_else(|| setting(cfg, "OK_ASR_CLOUD_MODEL", "asr_model")).unwrap_or_else(|| DEFAULT_MODEL.into());
         let agent = ureq::AgentBuilder::new().try_proxy_from_env(true).timeout_connect(Duration::from_secs(15)).timeout_read(Duration::from_secs(60)).build();
-        crate::log!("ok-asr: backend cloud ({model} at {base_url})");
+        crate::log!("ok-asr: cloud recognition ({model} at {base_url})");
         Ok(Self { key, base_url: base_url.trim_end_matches('/').to_string(), model, agent })
     }
 

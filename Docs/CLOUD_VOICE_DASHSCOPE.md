@@ -6,12 +6,17 @@
 
 ## 開啟方式
 
-在使用者的金鑰設定檔 `%LOCALAPPDATA%\OpenKoikatsu\api-keys.json` 的 `aliyun.api_key` 填入金鑰（見 [API 金鑰設定檔](API_KEYS.md)）。有金鑰，`ok-tts`／`ok-asr` 下次啟動就走雲端；沒金鑰就沒有雲端，照舊用本機模型。
+在街區左上角的「⚙ 設定」填阿里雲百煉金鑰，再把「配音」或「語音輸入」選成雲端。金鑰存進玩家設定檔 `Saved/StreetSocial/player.json` 的 `aliyun` 段（見 [玩家設定檔與 API 金鑰](API_KEYS.md)）。沒有金鑰就沒有雲端，照舊用本機模型。
 
-- 優先順序：`--backend` > 環境變數 `OK_TTS_BACKEND`／`OK_ASR_BACKEND` > 有沒有金鑰。有金鑰但要用本機模型時，`ok-tts` 用 `--backend base|design`，`ok-asr` 用 `--backend local`。
+- **啟動時**：啟動器把 `player.json` 用 `--settings` 傳給伺服器。
+  - `voice.voice_mode` 是 `cloud` 且有金鑰：`ok-tts` 只用雲端，不載入本機模型。
+  - `asr.mode` 是 `cloud` 且有金鑰：`ok-asr` 只用雲端。
+- **執行中**：遊戲用 `POST /cloud {"api_key", "base_url", "tts_model"|"asr_model"}` 打開或關閉雲端（`api_key` 空白就是關閉）。
+  - 用雲端啟動的伺服器沒有本機模型，切回本機要重新啟動。這時回覆裡的 `local_ready` 是 false，遊戲會提示。
+- 優先順序：`--backend` > 環境變數 `OK_TTS_BACKEND`／`OK_ASR_BACKEND` > `player.json` 的選擇。
 - 金鑰優先讀 `DASHSCOPE_API_KEY`，其次是設定檔；`DASHSCOPE_BASE_URL`、`aliyun.base_url` 可覆寫端點。金鑰只能用在建立它的區域，目前的金鑰屬於北京區（`dashscope.aliyuncs.com`）。
 - 模型可用 `--cloud-model`、`OK_TTS_CLOUD_MODEL`／`OK_ASR_CLOUD_MODEL` 或 `aliyun.tts_model`／`aliyun.asr_model` 指定。
-- 這是使用者層級的檔案，同一台機器上的 C／E／F 三組都會一起切換。
+- `/health` 多了 `local_ready`（本機模型是否已載入）；`backend` 顯示目前是 `cloud` 還是本機。
 
 ## TTS（`Tools/ok-tts/src/cloud.rs`）
 

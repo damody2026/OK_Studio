@@ -5,6 +5,7 @@
 //!   POST /synthesize_stream (same body) -> 16-bit little-endian mono PCM at 24 kHz, sent in pieces while it is
 //!        generated (first audio after ~4 frames). A line already in the cache is streamed from its file. The finished
 //!        line is written to the cache, so a following /synthesize for it answers with its path without generating.
+//!   POST /cloud {"api_key", "base_url", "tts_model"} -> lines are made in the cloud from now on ("" key: locally again)
 //!   POST /cancel {"channel", "below"} -> requests of that channel with generation < below stop (queued or generating)
 //!   GET  /requests[?id=..] -> what became of a request (complete / cancelled / hangup / failed) and its timings
 //!   /voice/candidates, /voice/fix, /voice/card, /voice/card/remove: choosing and fixing voices (Base backend, voicemgr.rs)
@@ -64,8 +65,9 @@ struct Flight {
 
 struct State {
     engine: Mutex<Option<Engine>>,
-    /// Cloud backend (cloud.rs): lines come from DashScope and no model is loaded. None: the local GPU model.
-    cloud: Option<Arc<crate::cloud::Cloud>>,
+    /// Cloud backend (cloud.rs): while set, lines come from DashScope. From --backend cloud at start (then no model
+    /// is loaded), or switched on and off by the game (POST /cloud) when the player picks it in the settings.
+    cloud: Mutex<Option<Arc<crate::cloud::Cloud>>>,
     voices: Voices,
     /// Base backend: profiles, card voices, candidates (voicemgr.rs). None: VoiceDesign.
     base: Option<Arc<BaseVoices>>,
@@ -119,8 +121,21 @@ struct Job {
     later_frames: Option<usize>,
     /// Base: the card's own voice; None = the design's profile (or VoiceDesign)
     speaker: Option<Arc<Profile>>,
-    /// "card", "profile" or "design"
+    /// "card", "profile", "design" or "cloud"
     voice_from: &'static str,
+    /// The cloud that makes this line (its cache file is the cloud's); None: the local engine.
+    cloud: Option<Arc<crate::cloud::Cloud>>,
+}
+
+impl State {
+    fn cloud(&self) -> Option<Arc<crate::cloud::Cloud>> {
+        self.cloud.lock().unwrap().clone()
+    }
+
+    /// Lines can be made: the local model is loaded, or the cloud is on.
+    fn can_speak(&self) -> bool {
+        self.ready.load(Ordering::SeqCst) || self.cloud.lock().unwrap().is_some()
+    }
 }
 
 /// Times of one request, in seconds since the server received it (one process, one monotonic clock).
@@ -173,19 +188,18 @@ pub fn serve(port: u16, workers: usize, voices: Voices, base: Option<Arc<BaseVoi
     let server = tiny_http::Server::http(("127.0.0.1", port)).map_err(|e| anyhow::anyhow!("bind 127.0.0.1:{port}: {e}"))?;
     let server = Arc::new(server);
     let state = Arc::new(State {
-        engine: Mutex::new(None), cloud, voices, base, ready: AtomicBool::new(false), load_error: Mutex::new(None), stats: Stats::default(),
+        engine: Mutex::new(None), cloud: Mutex::new(cloud.clone()), voices, base, ready: AtomicBool::new(false), load_error: Mutex::new(None), stats: Stats::default(),
         inflight: Mutex::new(HashMap::new()), cancel_floor: Mutex::new(HashMap::new()), active: Mutex::new(HashSet::new()),
         recent: Mutex::new(VecDeque::new()), next_id: AtomicU64::new(1),
     });
-    if state.cloud.is_some() {
-        // Nothing to load: ready at once.
-        state.ready.store(true, Ordering::SeqCst);
-        crate::log!("ok-tts: listening on http://127.0.0.1:{port}");
+    if cloud.is_some() {
+        // Nothing to load: ready at once (the cloud answers).
+        crate::log!("ok-tts: listening on http://127.0.0.1:{port} (cloud only, no local model)");
         crate::log!("ok-tts: READY");
     } else {
         crate::log!("ok-tts: listening on http://127.0.0.1:{port} (model loads in the background)");
     }
-    if state.cloud.is_none() {
+    if cloud.is_none() {
         let state = state.clone();
         std::thread::spawn(move || match load().and_then(|e| warmup(e)) {
             Ok(engine) => {
@@ -197,7 +211,10 @@ pub fn serve(port: u16, workers: usize, voices: Voices, base: Option<Arc<BaseVoi
             Err(e) => {
                 crate::log!("ok-tts: LOAD FAILED: {e:#}");
                 *state.load_error.lock().unwrap() = Some(format!("{e:#}"));
-                std::process::exit(1);
+                // With the cloud on, the server still has something to say lines with.
+                if state.cloud().is_none() {
+                    std::process::exit(1);
+                }
             }
         });
     }
@@ -268,15 +285,17 @@ fn handle(state: &Arc<State>, mut req: tiny_http::Request) {
     match (req.method(), path.as_str()) {
         (tiny_http::Method::Get, "/health") => {
             let s = &state.stats;
-            let ready = state.ready.load(Ordering::SeqCst);
+            let ready = state.can_speak();
+            let cloud = state.cloud();
             respond(req, 200, json!({
                 "ok": ready, "ready": ready,
-                "model": state.cloud.as_ref().map(|c| c.model.as_str()).unwrap_or_else(|| state.base.as_ref().map_or(MODEL_ID, |b| b.model_id.as_str())),
-                "engine": if state.cloud.is_some() { "ok-tts (cloud: DashScope)" } else { "ok-tts (Rust, CUDA)" },
+                "model": cloud.as_ref().map(|c| c.model.as_str()).unwrap_or_else(|| state.base.as_ref().map_or(MODEL_ID, |b| b.model_id.as_str())),
+                "engine": if cloud.is_some() { "ok-tts (cloud: DashScope)" } else { "ok-tts (Rust, CUDA)" },
+                "local_ready": state.ready.load(Ordering::SeqCst),
                 // While the model is not there yet: "downloading Qwen/... 37% (...)" (first start; hfget.rs).
                 "loading": if ready { String::new() } else { crate::hfget::status() },
                 "loading_percent": if ready { None } else { crate::hfget::percent() },
-                "backend": if state.cloud.is_some() { "cloud" } else if state.base.is_some() { "base" } else { "design" },
+                "backend": if cloud.is_some() { "cloud" } else if state.base.is_some() { "base" } else { "design" },
                 "profiles": state.base.as_ref().map(|b| b.tags.lock().unwrap().len()),
                 "voice_design_available": state.base.as_ref().map(|b| b.design_model.is_some()),
                 "protocol": PROTOCOL, "capabilities": CAPABILITIES, "pcm": {"format": "s16le", "rate": SAMPLE_RATE, "channels": 1},
@@ -384,6 +403,26 @@ fn handle(state: &Arc<State>, mut req: tiny_http::Request) {
                 }
             }
         }
+        (tiny_http::Method::Post, "/cloud") => {
+            // The player's choice in the settings: {"api_key", "base_url", "tts_model"} makes lines in the cloud from
+            // now on; an empty key goes back to the local model (when this server has one).
+            match read_body(&mut req).map(|b| serde_json::from_str::<Value>(b.trim_start_matches('\u{feff}').trim()).unwrap_or_else(|_| json!({}))) {
+                Ok(cfg) if cfg.get("api_key").and_then(Value::as_str).unwrap_or("").trim().is_empty() => {
+                    *state.cloud.lock().unwrap() = None;
+                    crate::log!("ok-tts: cloud voices off");
+                    respond(req, 200, json!({"ok": true, "cloud": false, "local_ready": state.ready.load(Ordering::SeqCst)}));
+                }
+                Ok(cfg) => match crate::cloud::Cloud::new(&cfg, None) {
+                    Ok(c) => {
+                        let model = c.model.clone();
+                        *state.cloud.lock().unwrap() = Some(Arc::new(c));
+                        respond(req, 200, json!({"ok": true, "cloud": true, "model": model}));
+                    }
+                    Err(e) => respond(req, 400, json!({"ok": false, "error": format!("{e:#}")})),
+                },
+                Err(e) => respond(req, 400, json!({"ok": false, "error": format!("{e:#}")})),
+            }
+        }
         (tiny_http::Method::Post, "/synthesize") => {
             state.stats.requests.fetch_add(1, Ordering::Relaxed);
             let result = read_body(&mut req).and_then(|b| synthesize(state, serde_json::from_str(&b)?, received));
@@ -443,16 +482,17 @@ fn prepare(state: &State, r: SynthRequest) -> Result<Job> {
             }
         }
     };
-    let path = match &state.cloud {
+    let cloud = state.cloud();
+    let path = match &cloud {
         Some(c) => c.cache_path(&out_dir, &voice, &text),
         None => cache_path(&out_dir, &voice, &text, tag.as_deref()),
     };
-    let voice_from = if state.cloud.is_some() { "cloud" } else { voice_from };
+    let voice_from = if cloud.is_some() { "cloud" } else { voice_from };
     let id = r.request_id.filter(|s| !s.is_empty() && s.len() <= 128)
         .unwrap_or_else(|| format!("s{}", state.next_id.fetch_add(1, Ordering::Relaxed)));
     state.active.lock().unwrap().insert(id.clone());
     Ok(Job { id, text, chars, personality, age, voice, path, channel: r.channel, generation: r.generation, segment: r.segment_index,
-            later_frames: r.stream_later_frames.map(|n| n.clamp(1, 25)), speaker, voice_from })
+            later_frames: r.stream_later_frames.map(|n| n.clamp(1, 25)), speaker, voice_from, cloud })
 }
 
 /// The caller has moved on (a newer conversation generation was announced on /cancel).
@@ -558,10 +598,10 @@ fn synthesize_job(state: &Arc<State>, job: &Job, trace: &mut Trace) -> Result<(V
             }
             Claim::Owner(g) => g,
         };
-        if !state.ready.load(Ordering::SeqCst) {
+        if job.cloud.is_none() && !state.ready.load(Ordering::SeqCst) {
             bail!("model is still loading");
         }
-        let (mut samples, gen_seconds, voice_key, voice_age) = if let Some(cloud) = &state.cloud {
+        let (mut samples, gen_seconds, voice_key, voice_age) = if let Some(cloud) = &job.cloud {
             // Cloud: no engine to wait for, and nothing on this GPU for the songs to wait on.
             let t = Instant::now();
             (cloud.speak(&job.text, &job.voice)?, t.elapsed().as_secs_f64(), job.voice.key.clone(), job.voice.age)
@@ -656,7 +696,7 @@ fn stream_synthesis(state: Arc<State>, r: SynthRequest, received: Instant) -> Re
             return Ok((reader, id, "hit"));
         }
     }
-    if !state.ready.load(Ordering::SeqCst) && !state.inflight.lock().unwrap().contains_key(&job.path) {
+    if job.cloud.is_none() && !state.ready.load(Ordering::SeqCst) && !state.inflight.lock().unwrap().contains_key(&job.path) {
         state.active.lock().unwrap().remove(&job.id);
         bail!("model is still loading");
     }
@@ -698,7 +738,7 @@ fn stream_job(state: &Arc<State>, job: &Job, tx: &std::sync::mpsc::Sender<Vec<u8
             }
             Claim::Owner(g) => g,
         };
-        if let Some(cloud) = &state.cloud {
+        if let Some(cloud) = &job.cloud {
             return cloud_stream(state, cloud, job, guard, tx, trace);
         }
         // While this line waits for the engine and is made, background GPU work (songs) waits for it (voicelease.rs).

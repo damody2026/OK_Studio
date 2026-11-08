@@ -5,9 +5,9 @@
 //! synthesized with that voice (`SpeechSynthesizer`; SSE for /synthesize_stream). The server's HTTP contract, cache
 //! files and OGG output stay the same, so the game does not know which backend made a line.
 //!
-//! Key: DASHSCOPE_API_KEY, else "aliyun"."api_key" of the user's key file %LOCALAPPDATA%\OpenKoikatsu\api-keys.json
-//! (OK_API_KEYS names another file). With a key the cloud is the default; without one there is no cloud. The key
-//! never goes into the repository.
+//! Key: DASHSCOPE_API_KEY, else "aliyun"."api_key" of the player's settings file (Saved/StreetSocial/player.json,
+//! passed with --settings; Docs/API_KEYS.md), or what the game sends on POST /cloud. Without a key there is no
+//! cloud. The key never goes into the repository.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
@@ -29,21 +29,10 @@ const CACHE_VERSION: &str = "ok-tts-cloud-1";
 const PREVIEW_TEXT: &str = "你好，今天天气真好，我们一起去散步吧。";
 const MAX_PROMPT_CHARS: usize = 500;
 
-/// The user's API key file (Docs/API_KEYS.md): OK_API_KEYS, else %LOCALAPPDATA%\OpenKoikatsu\api-keys.json.
-/// {"deepseek": {...}, "aliyun": {"api_key", "base_url", "tts_model", "asr_model"}}; a service without a key is off.
-pub fn config_path() -> PathBuf {
-    if let Some(p) = std::env::var_os("OK_API_KEYS").filter(|p| !p.is_empty()) {
-        return PathBuf::from(p);
-    }
-    let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
-    base.join("OpenKoikatsu").join("api-keys.json")
-}
-
-/// The "aliyun" section of the key file.
-fn config() -> Value {
-    std::fs::read_to_string(config_path()).ok()
+/// The player's settings file (player.json) as JSON; {} when there is none.
+pub fn settings(path: Option<&Path>) -> Value {
+    path.and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|s| serde_json::from_str::<Value>(s.trim_start_matches('\u{feff}')).ok())
-        .and_then(|v| v.get("aliyun").cloned())
         .unwrap_or_else(|| json!({}))
 }
 
@@ -54,10 +43,14 @@ fn setting(cfg: &Value, env: &str, field: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-/// An Alibaba Cloud key is set (DASHSCOPE_API_KEY or the key file): the cloud is used unless OK_TTS_BACKEND or
-/// --backend asks for a local model.
-pub fn wanted() -> bool {
-    setting(&config(), "DASHSCOPE_API_KEY", "api_key").is_some()
+/// An "aliyun" section has a key (or DASHSCOPE_API_KEY is set).
+pub fn has_key(aliyun: &Value) -> bool {
+    setting(aliyun, "DASHSCOPE_API_KEY", "api_key").is_some()
+}
+
+/// Where the cloud voices designed for this account are remembered (not a setting: a cache of voice ids).
+fn voices_dir() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(".")).join("OpenKoikatsu")
 }
 
 pub struct Cloud {
@@ -73,16 +66,16 @@ pub struct Cloud {
 }
 
 impl Cloud {
-    pub fn new(model: Option<&str>) -> Result<Self> {
-        let cfg = config();
-        let key = setting(&cfg, "DASHSCOPE_API_KEY", "api_key")
-            .ok_or_else(|| anyhow!("no Alibaba Cloud API key: set DASHSCOPE_API_KEY or \"aliyun\".\"api_key\" in {}", config_path().display()))?;
-        let base_url = setting(&cfg, "DASHSCOPE_BASE_URL", "base_url").unwrap_or_else(|| "https://dashscope.aliyuncs.com".into());
-        let model = model.map(str::to_string).or_else(|| setting(&cfg, "OK_TTS_CLOUD_MODEL", "tts_model")).unwrap_or_else(|| DEFAULT_MODEL.into());
-        let voices_path = config_path().with_file_name(format!("ok-tts-cloud-voices-{}.json", model));
+    /// From an "aliyun" section ({"api_key", "base_url", "tts_model"}: the settings file's, or POST /cloud's body).
+    pub fn new(cfg: &Value, model: Option<&str>) -> Result<Self> {
+        let key = setting(cfg, "DASHSCOPE_API_KEY", "api_key")
+            .ok_or_else(|| anyhow!("no Alibaba Cloud API key (DASHSCOPE_API_KEY, or aliyun.api_key in the player's settings)"))?;
+        let base_url = setting(cfg, "DASHSCOPE_BASE_URL", "base_url").unwrap_or_else(|| "https://dashscope.aliyuncs.com".into());
+        let model = model.map(str::to_string).or_else(|| setting(cfg, "OK_TTS_CLOUD_MODEL", "tts_model")).unwrap_or_else(|| DEFAULT_MODEL.into());
+        let voices_path = voices_dir().join(format!("ok-tts-cloud-voices-{}.json", model));
         let voices: HashMap<String, String> = std::fs::read_to_string(&voices_path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
         let agent = ureq::AgentBuilder::new().try_proxy_from_env(true).timeout_connect(Duration::from_secs(15)).timeout_read(Duration::from_secs(60)).build();
-        crate::log!("ok-tts: backend cloud ({model} at {base_url}), {} voices designed earlier ({})", voices.len(), voices_path.display());
+        crate::log!("ok-tts: cloud voices ({model} at {base_url}), {} designed earlier ({})", voices.len(), voices_path.display());
         Ok(Self { key, base_url: base_url.trim_end_matches('/').to_string(), model, agent, voices_path, voices: Mutex::new(voices), creating: Mutex::new(()) })
     }
 

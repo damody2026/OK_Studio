@@ -45,6 +45,7 @@
 #include "OKStreetSocialHistory.h"
 #include "OKStreetSocialBluff.h"
 #include "Widgets/Input/SEditableTextBox.h"
+#include "Components/EditableTextBox.h"
 #include "ProceduralMeshComponent.h"
 #include "ProceduralMeshConversion.h"
 #include "MeshDescription.h"
@@ -567,6 +568,9 @@ FString VoicePickDescription,VoicePickNotice,TtsVoiceInstruct;int32 VoicePickTar
  TSharedPtr<SBorder> InteractionPanel,DialoguePanel;
  // The UI shell's holders, one per region (RebuildUI), and the right panel's scroll box (it keeps its position).
  TSharedPtr<SBox> UiRightHolder,UiShopHolder,UiDebugHolder,UiBottomHolder,UiBluffHolder,UiHistoryHolder,UiAppHolder,UiSaveHolder,UiMenuHolder;TSharedPtr<SScrollBox> UiRightScroll;uint32 UiDirtyRegions=0;
+ // The player's settings (OKStreetSocialSettings.inl): voices (builtin | tts | cloud | off), voice input (local |
+ // cloud), the API keys, and the menu at the top left that sets them.
+ FString VoiceMode=TEXT("builtin"),AsrMode=TEXT("local"),DeepSeekKey,AliyunKey,AliyunBaseUrl,AliyunTtsModel,AliyunAsrModel,SettingsNotice;bool SettingsOpen=false;TSharedPtr<SBox> UiSettingsHolder;
  TSharedPtr<SOKStreetMinimap> Minimap;
  TSharedPtr<SWidget> MinimapPanel;
  bool MinimapShowNames=true,MinimapProbeShowNames=true;
@@ -866,6 +870,7 @@ void AOKStreetSocialScene::BeginPlay(){
  {TSharedPtr<FJsonObject> ManifestObject;FString JapanesePath,JapaneseBody;
   if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),ManifestObject)&&ManifestObject.IsValid()&&ManifestObject->TryGetStringField(TEXT("dialogue_catalogue_ja"),JapanesePath)&&FFileHelper::LoadFileToString(JapaneseBody,*JapanesePath))S.OtherLanguage=OKStreetParseCatalogue(JapaneseBody,JapanesePath);
   LoadVoiceSettings(ManifestObject);
+  LoadPlayerSettings();
   LoadPlayerName();
  }
  {TSharedPtr<FJsonObject> M;FString Path;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),M)&&M->TryGetStringField(TEXT("invitation_catalogue"),Path)&&!OKStreetLoadInvitations(Path,S.Catalogue,S.OtherLanguage,S.Invitations,Error)){S.Errors.Add(Error);WriteReport(false);return;}}
@@ -2626,7 +2631,11 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
       return FText::FromString(Inside()?OKMsg(TEXT("ui.scene.elevator_inside"), {{TEXT("place_name"), Place.Name}, {TEXT("where"), *Where}}):OKMsg(TEXT("ui.scene.elevator_at"), {{TEXT("place_name"), Place.Name}, {TEXT("where"), *Where}}));})]
     +SVerticalBox::Slot().AutoHeight()[SNew(SBox).Visibility_Lambda([Inside](){return Inside()?EVisibility::Visible:EVisibility::Collapsed;})[Wrap]]];
   }
-  S.Overlay=SNew(SOverlay)+SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top).Padding(16)[S.MinimapPanel.ToSharedRef()]
+  // Top left: the settings menu button (OKStreetSocialSettings.inl) above the minimap; the open menu covers the minimap.
+  S.Overlay=SNew(SOverlay)+SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top).Padding(16)[SNew(SVerticalBox)
+   +SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Left).Padding(0,0,0,6)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(OKT(TEXT("ui.settings.menu_button"))))
+    .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->ToggleSettingsMenu();return FReply::Handled();})]
+   +SVerticalBox::Slot().AutoHeight()[SNew(SOverlay)+SOverlay::Slot()[S.MinimapPanel.ToSharedRef()]+SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top)[SAssignNew(S.UiSettingsHolder,SBox)]]]
   +SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Bottom).Padding(356,16,0,24)[SNew(SBox).MaxDesiredWidth(1140).MinDesiredWidth(1140)[SNew(SVerticalBox)
    // His cards at the card table, held in front of him right above the dialogue box, which grows upward under them (OKStreetSocialBluff.inl).
    +SVerticalBox::Slot().AutoHeight().Padding(0,0,0,6)[SAssignNew(S.UiBluffHolder,SBox).Visibility(EVisibility::SelfHitTestInvisible)]
@@ -2679,7 +2688,7 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
  if(!S.TouchNotice.IsEmpty())Box->AddSlot().AutoHeight().Padding(8)[SNew(STextBlock).Text(FText::FromString(S.TouchNotice)).AutoWrapText(true).WrapTextAt(360)];
  if(!S.TalkFailureNotice.IsEmpty())Box->AddSlot().AutoHeight().Padding(8)[SNew(STextBlock).Text(FText::FromString(S.TalkFailureNotice)).AutoWrapText(true).WrapTextAt(360)];
  Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).IsFocusable(S.Target!=INDEX_NONE).IsEnabled(!Busy&&!S.OtherLanguage.Nodes.IsEmpty()).Text(FText::FromString(S.Japanese?OKT(TEXT("ui.scene.voice_ja")):OKT(TEXT("ui.scene.voice_zh")))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->ToggleLanguage();return FReply::Handled();})];
- Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).IsFocusable(S.Target!=INDEX_NONE).IsEnabled(!S.TtsCacheDir.IsEmpty()).Text(FText::FromString(S.TtsEnabled?OKT(TEXT("ui.scene.voice_tts")):OKT(TEXT("ui.scene.voice_builtin")))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->ToggleVoiceSource();return FReply::Handled();})];
+ Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).IsFocusable(S.Target!=INDEX_NONE).IsEnabled(!S.TtsCacheDir.IsEmpty()).Text(FText::FromString(OKT(*(TEXT("ui.scene.voice_")+S.VoiceMode)))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->ToggleVoiceSource();return FReply::Handled();})];
  // The TTS model (from the next start): 1.7B sounds closer to each heroine, 0.6B takes about 1 GB less VRAM.
  if(S.TtsEnabled&&!S.TtsSettingsPath.IsEmpty())Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).IsFocusable(S.Target!=INDEX_NONE)
   .Text(FText::FromString(OKMsg(TEXT("ui.scene.tts_model"),{{TEXT("size"),*S.TtsBaseSize}}))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->ToggleTtsBaseSize();return FReply::Handled();})];
@@ -2834,7 +2843,12 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
  }
  Mark(TEXT("freetalk"));
  // Free talk follows its partner: the conversation target, or the girl walking or doing an activity with the player.
- if(FreeTalkPartner()!=INDEX_NONE){
+ // Without a DeepSeek key there is no free talk to open: the conversation keeps to the built-in choices, and a line
+ // says where the key goes (the settings menu, OKStreetSocialSettings.inl). Self-tests keep the button.
+ FOKFreeTalkSettings FreeTalkAi;FString FreeTalkWhy;
+ const bool FreeTalkUsable=S.SelfTest||S.FreeTalkOpen||OKStreetFreeTalkLoadSettings(FreeTalkAi,FreeTalkWhy);
+ if(FreeTalkPartner()!=INDEX_NONE&&!FreeTalkUsable)Box->AddSlot().AutoHeight().Padding(6,4)[SNew(STextBlock).AutoWrapText(true).WrapTextAt(360).ColorAndOpacity(FLinearColor(.75f,.75f,.75f)).Text(FText::FromString(OKT(TEXT("ui.settings.free_talk_needs_key"))))];
+ if(FreeTalkPartner()!=INDEX_NONE&&FreeTalkUsable){
   Box->AddSlot().AutoHeight().Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(S.FreeTalkOpen?OKT(TEXT("ui.scene.collapse_free_talk")):OKT(TEXT("ui.scene.free_talk_label")))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid()){auto& W=*Weak->State;W.FreeTalkOpen=!W.FreeTalkOpen;W.FreeTalkUserClosed=!W.FreeTalkOpen;Weak->FreeTalkLiveSet(W.FreeTalkOpen);Weak->RefreshUI();}return FReply::Handled();})];
   if(S.FreeTalkOpen){
    auto FreeTalk=SNew(SVerticalBox);
@@ -2991,6 +3005,7 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
 
 #include "OKStreetSocialContacts.inl"
 #include "OKStreetSocialSaves.inl"
+#include "OKStreetSocialSettings.inl" // after the voice settings (player.json helpers) and the glass panel
 
 void AOKStreetSocialScene::ResumeConversationPose(int32 Character,FString& Error){
  if(State&&State->PrivateGirl!=INDEX_NONE&&(Character==0||Character==State->PrivateGirl)){OKPlayCrowdRuntimeAction(this,Character,Character==0?TEXT("talk_gesture_03.okanim"):TEXT("talk_gesture_00.okanim"),Error);return;}

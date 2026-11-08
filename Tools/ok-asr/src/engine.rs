@@ -92,19 +92,8 @@ impl Engine {
         Ok(Engine::Local(Local::load(model_dir, max_positions)?))
     }
 
-    pub fn cloud(model: Option<&str>) -> Result<Self> {
-        Ok(Engine::Cloud(crate::cloud::Cloud::new(model)?))
-    }
-
-    pub fn is_cloud(&self) -> bool {
-        matches!(self, Engine::Cloud(_))
-    }
-
-    pub fn model(&self) -> &str {
-        match self {
-            Engine::Local(_) => MODEL_ID,
-            Engine::Cloud(c) => &c.model,
-        }
+    pub fn cloud(cfg: &serde_json::Value, model: Option<&str>) -> Result<Self> {
+        Ok(Engine::Cloud(crate::cloud::Cloud::new(cfg, model)?))
     }
 
     pub fn transcribe(&self, samples: &[f32], language: Option<&str>) -> Result<Transcript> {
