@@ -101,10 +101,16 @@ private:
  struct FAttached {int32 Target=0,Face=0;FVector Bary;double Volume=0,Age=0,Radius=0;TWeakObjectPtr<UProceduralMeshComponent> Visual;TArray<FVector> RenderVertices;};
  TArray<TSharedPtr<FSurface>> Surfaces;
  // ok.Paint.AsyncTransport: the last surface step's mask transport, owed (DueTransport) until the tick has drawn its
- // coat, then run on a worker until anything reads the surfaces again (SyncTransport: the next tick, any public call).
- TArray<TSharedPtr<FSurface>> DueTransport;double DueTransportDt=0;
+ // coat, then run on a worker on its own copy of the surface's mask and film (InTransport), across ticks: the ticks go
+ // on drawing and depositing on the surface meanwhile, and the result is merged back (MergeTransport) once it is done,
+ // at the latest before the next surface step or any public call (SyncTransport).
+ TArray<TSharedPtr<FSurface>> DueTransport,InTransport;double DueTransportDt=0;
  mutable UE::Tasks::FTask TransportTask;mutable bool bTransportInFlight=false;
- void RunDueTransport();void LaunchDueTransport();void SyncTransport() const;
+ void RunDueTransport();void LaunchDueTransport();void SyncTransport() const;void MergeTransport();
+ /** SyncTransport only when the transport is already done: a tick does not wait for it. */
+ void TakeFinishedTransport() const {if(bTransportInFlight&&TransportTask.IsCompleted())SyncTransport();}
+ /** Paint laid on a surface (its mask and film), kept to be laid again on its transport's result while one runs. */
+ void DepositOn(FSurface& Surface,int32 Face,const TArray<float>& Brush,double Volume);
  FOKPaintAtlas SharedAtlas;
  TArray<TArray<FFloat16Color>> AtlasPixels;
  void ReleaseSurfaceAtlas(FSurface& Surface);

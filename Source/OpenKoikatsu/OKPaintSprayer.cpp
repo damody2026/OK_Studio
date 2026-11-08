@@ -66,6 +66,11 @@ struct AOKPaintSprayer::FSurface
  TArray<FVector> Positions,RenderPositions,VertexNormals,TopologyPositions,BuildCenters;
  TArray<uint8> GeometryChangedFlags;
  bool FilmTopologyReady=false,GeometrySnapshotAvailable=false;
+ // ok.Paint.AsyncTransport across ticks: while its transport runs, the worker owns TransportMask (the mask as it was, with
+ // the transport's caches) and TransportFilm (a copy of the film); the ticks keep Mask and Film, and what they deposit
+ // meanwhile is kept in HeldDeposits to be laid again on the transported result (MergeTransport).
+ bool bInTransport=false;FOKPaintMask TransportMask;FOKPaintFilm TransportFilm;
+ struct FHeldDeposit {int32 Face;TArray<float> Brush;double Volume;};TArray<FHeldDeposit> HeldDeposits;
  const FProcMeshSection* PreparedSection=nullptr;FMatrix PreparedRender=FMatrix::Identity;bool PreparedSkinned=false,PreparedValid=false;
  FKKPrivateGpuSurfaceView PreparedPrivate;
  void RefreshCapturedGeometry(bool VertexParallel);
@@ -368,7 +373,7 @@ void AOKPaintSprayer::DiscoverSurfaces(const FVector& A,const FVector& B,bool So
  }
 }
 bool AOKPaintSprayer::FindPaintHit(const FVector& A,const FVector& B,double Radius,int32& Target,int32& Triangle,FVector& Bary,double& Time)
-{ SyncTransport();
+{ TakeFinishedTransport();
  const bool CachedBounds=CVarPaintCachedSweepBounds.GetValueOnGameThread()!=0;
  bool Found=false;Time=1.;
  for(int32 S=0;S<Surfaces.Num();++S)if(Surfaces[S]->IsDisplayed()&&Surfaces[S]->Sweep(A,B,Radius,CachedBounds,Triangle,Bary,Time)){Target=S;Found=true;if(Time==0)return true;}
@@ -631,7 +636,7 @@ void AOKPaintSprayer::Step(double Dt)
     Surface.CoatingSide=FMath::Abs(Out)>.2*All?(Out>0?1.:-1.):(Incoming>=0?1.:-1.);UE_LOG(LogTemp,Display,TEXT("Paint contact winding side=%.0f incoming_dot=%.6f outward=%.2f component=%s"),Surface.CoatingSide,Incoming,All>0?Out/All:0.,*Surface.Component->GetPathName());}
    TMap<int32,TArray<float>> Brushes;double Sum=0;const FVector N=Surface.Film.Faces[F].Normal();
    TArray<int32> Visit={F};TSet<int32> Seen;for(int32 Cursor=0;Cursor<Visit.Num();++Cursor){const int32 J=Visit[Cursor];if(Seen.Contains(J))continue;Seen.Add(J);const auto& Face=Surface.Film.Faces[J];const double Dist=FVector::Dist(FMath::ClosestPointOnTriangleToPoint(Point,Face.P[0],Face.P[1],Face.P[2]),Point);if(J!=F&&Dist>=Settings.BrushRadius)continue;if(FVector::DotProduct(Face.Normal(),N)>.25){auto Brush=Surface.Mask.Brush(Face,Point,Settings.BrushRadius);const double W=Surface.Mask.BrushArea(Face,Brush);if(W>1.e-12){Sum+=W;Brushes.Add(J,MoveTemp(Brush));}}for(int32 Other:Face.Neighbor)if(Other>=0&&!Seen.Contains(Other))Visit.Add(Other);}
-   if(Sum>0){for(const auto& W:Brushes){const double Amount=P.Volume*Surface.Mask.BrushArea(Surface.Film.Faces[W.Key],W.Value)/Sum;Surface.Mask.Deposit(W.Key,Surface.Film.Faces[W.Key],W.Value,Amount);Surface.Film.AddVolume(W.Key,Amount);}}else{auto Brush=Surface.Mask.Brush(Surface.Film.Faces[F],Point,FMath::Max(1.f,Settings.BrushRadius));Surface.Mask.Deposit(F,Surface.Film.Faces[F],Brush,P.Volume);Surface.Film.AddVolume(F,P.Volume);}
+   if(Sum>0){for(const auto& W:Brushes){const double Amount=P.Volume*Surface.Mask.BrushArea(Surface.Film.Faces[W.Key],W.Value)/Sum;DepositOn(Surface,W.Key,W.Value,Amount);}}else{auto Brush=Surface.Mask.Brush(Surface.Film.Faces[F],Point,FMath::Max(1.f,Settings.BrushRadius));DepositOn(Surface,F,Brush,P.Volume);}
    if(!P.Drip)Deposited+=P.Volume;else Dripped-=P.Volume;++HitCount;Splash(Point,N,false,P.Volume);Packets.RemoveAtSwap(I);
   }else if(WorldHit){FloorVolume+=P.Volume;Splash(Hit.ImpactPoint,Hit.ImpactNormal,true,P.Volume);Packets.RemoveAtSwap(I);}
   else if(P.Age>5||Next.Z < -5000){Escaped+=P.Volume;Packets.RemoveAtSwap(I);}else{P.P=Next;P.V.Z-=980*Dt;}
@@ -689,21 +694,54 @@ void AOKPaintSprayer::RunDueTransport(){
 }
 void AOKPaintSprayer::LaunchDueTransport(){
  SyncTransport();if(DueTransport.IsEmpty())return;
- // The task holds the surfaces it moves; nothing of this actor.
+ // The task holds the surfaces it moves and works on their transport copies only; nothing of this actor. Her body's
+ // transport took 10 ms and more, longer than a frame, and the next tick waited for it (traces EGalPerf18-21, after he
+ // came): it now runs across ticks, which draw the coat as it was a surface step before (about 0.05 s).
+ TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintTransportLaunch);
  const double Speed=Settings.SurfaceSpeed,Viscosity=Settings.Viscosity,Residual=Settings.ResidualThickness,Step=DueTransportDt;
- TArray<TPair<TSharedPtr<FSurface>,uint64>> Work;for(auto& S:DueTransport)Work.Emplace(S,S->GeometryRevision);DueTransport.Reset();
+ TArray<TPair<TSharedPtr<FSurface>,uint64>> Work;
+ for(auto& S:DueTransport){FSurface& F=*S;
+  F.TransportMask=MoveTemp(F.Mask);
+  // What the ticks draw and deposit on meanwhile: the texels as they are, the faces still owed to the atlas.
+  F.Mask.Size=F.TransportMask.Size;F.Mask.Height=F.TransportMask.Height;F.Mask.EdgeCoverage=F.TransportMask.EdgeCoverage;
+  F.Mask.DirtyFaces=MoveTemp(F.TransportMask.DirtyFaces);F.TransportMask.DirtyFaces.Reset();
+  F.Mask.ChartBary=F.TransportMask.ChartBary;F.Mask.ChartInterior=F.TransportMask.ChartInterior;F.Mask.ChartResolution=F.TransportMask.ChartResolution;
+  F.TransportFilm=F.Film;F.HeldDeposits.Reset();F.bInTransport=true;
+  Work.Emplace(S,F.GeometryRevision);InTransport.Add(S);}
+ DueTransport.Reset();
  TransportTask=UE::Tasks::Launch(UE_SOURCE_LOCATION,[Work=MoveTemp(Work),Speed,Viscosity,Residual,Step]{
   TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintAsyncTransport);
-  for(const auto& W:Work)W.Key->Mask.Transport(W.Key->Film,Step,Speed,Viscosity,Residual,W.Value);});
+  for(const auto& W:Work)W.Key->TransportMask.Transport(W.Key->TransportFilm,Step,Speed,Viscosity,Residual,W.Value);});
  bTransportInFlight=true;
 }
 void AOKPaintSprayer::SyncTransport() const{
- if(!bTransportInFlight)return;TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintTransportWait);TransportTask.Wait();bTransportInFlight=false;
+ if(!bTransportInFlight)return;
+ {TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintTransportWait);TransportTask.Wait();}
+ bTransportInFlight=false;const_cast<AOKPaintSprayer*>(this)->MergeTransport();
+}
+void AOKPaintSprayer::MergeTransport(){
+ TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintTransportMerge);
+ for(const auto& Ptr:InTransport){FSurface& F=*Ptr;if(!F.bInTransport)continue;F.bInTransport=false;
+  // Gone, or its faces rebuilt meanwhile: the surface keeps what it has (no paint lost, one transport step skipped).
+  if(!Surfaces.Contains(Ptr)||F.TransportFilm.Faces.Num()!=F.Film.Faces.Num()){F.TransportMask=FOKPaintMask();F.TransportFilm=FOKPaintFilm();F.HeldDeposits.Reset();continue;}
+  // The transported mask (with the transport's caches), the faces still owed to the atlas, then what landed meanwhile.
+  F.TransportMask.DirtyFaces.Append(F.Mask.DirtyFaces);
+  F.Mask=MoveTemp(F.TransportMask);F.TransportMask=FOKPaintMask();
+  for(int32 I=0;I<F.Film.Faces.Num();++I)F.Film.Faces[I].Volume=F.TransportFilm.Faces[I].Volume;
+  F.Film.Active=MoveTemp(F.TransportFilm.Active);F.TransportFilm=FOKPaintFilm();
+  for(const auto& D:F.HeldDeposits)if(F.Film.Faces.IsValidIndex(D.Face)){F.Mask.Deposit(D.Face,F.Film.Faces[D.Face],D.Brush,D.Volume);F.Film.AddVolume(D.Face,D.Volume);}
+  F.HeldDeposits.Reset();
+ }
+ InTransport.Reset();
+}
+void AOKPaintSprayer::DepositOn(FSurface& S,int32 Face,const TArray<float>& Brush,double Volume){
+ S.Mask.Deposit(Face,S.Film.Faces[Face],Brush,Volume);S.Film.AddVolume(Face,Volume);
+ if(S.bInTransport)S.HeldDeposits.Add({Face,Brush,Volume});
 }
 void AOKPaintSprayer::Tick(float Dt)
 {
  TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintTick);
- SyncTransport();
+ TakeFinishedTransport();
  Super::Tick(Dt);const double Start=FPlatformTime::Seconds();
  // Ownership is this tick, not GFrameCounter: explicit/manual updates can
  // publish more than one pose in the same engine frame. Never reuse across ticks.
