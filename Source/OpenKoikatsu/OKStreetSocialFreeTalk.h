@@ -106,6 +106,10 @@ FString OKStreetFreeTalkSettingsPath();
 bool OKStreetFreeTalkLoadSettings(FOKFreeTalkSettings& Out, FString& Error);
 // Matches the manifest display name against free_talk_personas.json, else _default.
 bool OKStreetFreeTalkLoadPersona(const FString& Name, FOKFreeTalkPersona& Out, FString& Error);
+// A save's own setting for her (the roster menu, heroine-settings.json): her persona text under this name, and the name
+// whose shipped persona she keeps when only her name changed. Never written into her card.
+void OKStreetFreeTalkSetPersonaOverride(const FString& Name, const FString& BaseName, const FString& Profile);
+void OKStreetFreeTalkClearPersonaOverrides();
 // Stable for a girl: persona, rules and the reply format only.
 // `World` is the street catalogue (places and activities), also stable.
 FString OKStreetFreeTalkSystemPrompt(const FOKFreeTalkPersona& Persona, const FString& World);

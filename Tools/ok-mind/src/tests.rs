@@ -454,3 +454,25 @@ fn instructions_follow_the_job_language() {
     assert_eq!(crate::deepseek::localize("紅豆湯圓", "zh-CN"), "红豆汤圆");
     assert_eq!(crate::deepseek::localize("紅豆 soup", "en"), "紅豆 soup");
 }
+
+#[test]
+fn edited_memories_keep_known_records_add_new_and_drop_the_rest() {
+    let dir = temp_dir();
+    let m = crate::memory::Memories::new(&dir);
+    let rec = |s: &str| crate::memory::MemoryRecord { summary: s.into(), kind: "life".into(), importance: 0.3, t: 10, ..Default::default() };
+    let a = m.add("h", rec("first")).unwrap();
+    m.add("h", rec("second")).unwrap();
+    let edited = vec![
+        crate::memory::MemoryRecord { id: a.clone(), summary: "first, edited".into(), importance: 0.9, ..Default::default() },
+        crate::memory::MemoryRecord { summary: "a new one".into(), importance: 0.5, ..Default::default() },
+    ];
+    assert_eq!(m.replace("h", &edited, 500).unwrap(), 2);
+    let all = m.all("h").unwrap();
+    assert_eq!(all[0].id, a);
+    assert_eq!(all[0].summary, "first, edited");
+    assert_eq!(all[0].kind, "life");
+    assert_eq!(all[0].t, 10);
+    assert_eq!(all[1].id, "m3");
+    assert_eq!(all[1].t, 500);
+    assert_eq!(all[1].author, "player");
+}

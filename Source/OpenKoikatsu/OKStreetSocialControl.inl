@@ -350,6 +350,35 @@ void AOKStreetSocialScene::StartControlServer(){
    TSharedPtr<FJsonObject> Story;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(G.Live.State()),Story)&&Story.IsValid())O->SetObjectField(TEXT("story"),Story);
   }else O->SetBoolField(TEXT("active"),false);
   OKControlReply(Done,O);});
+ // The roster menu (OKStreetSocialRoster.inl), as a person uses it: {} or {"op":"state"} reads it; open | close | scan;
+ // import {files}; pick {path, on}; apply; edit {her, tab: settings|memory}; set {field: name|persona|profile|memory,
+ // value}; save (the tab being edited); forget (her conversation context).
+ Bind(TEXT("/roster"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
+  auto& S=*State;const auto Body=OKControlBody(Req);FString Op,Path,Field,Value,Tab;Body->TryGetStringField(TEXT("op"),Op);
+  Body->TryGetStringField(TEXT("path"),Path);Body->TryGetStringField(TEXT("field"),Field);Body->TryGetStringField(TEXT("value"),Value);Body->TryGetStringField(TEXT("tab"),Tab);
+  bool On=true;Body->TryGetBoolField(TEXT("on"),On);double Her=0;Body->TryGetNumberField(TEXT("her"),Her);
+  FString Error;
+  if(Op==TEXT("open"))OpenRoster();else if(Op==TEXT("close"))CloseRoster();
+  else if(Op==TEXT("scan")||Op==TEXT("import")){TArray<FString> Files;const TArray<TSharedPtr<FJsonValue>>* A=nullptr;if(Body->TryGetArrayField(TEXT("files"),A))for(const auto& V:*A)Files.Add(V->AsString());
+   if(!S.RosterOpen)OpenRoster();if(Op==TEXT("import")||Files.Num())RosterRun(TEXT("import"),Files);else if(!S.RosterBusy)RosterRun(TEXT("scan"),{});}
+  else if(Op==TEXT("pick")){S.RosterPicked.RemoveAll([&](const FString& P){return OKStreetRosterKey(P)==OKStreetRosterKey(Path);});
+   if(On){if(S.RosterPicked.Num()>=OKStreetFemaleCount)Error=TEXT("at most ten heroines");else if(!FPaths::FileExists(Path))Error=TEXT("no such card");else S.RosterPicked.Add(Path);}RosterRebuild();}
+  else if(Op==TEXT("edit"))RosterEditHer(int32(Her),Tab.IsEmpty()?TEXT("settings"):Tab);
+  else if(Op==TEXT("set")){if(Field==TEXT("name"))S.RosterName=Value;else if(Field==TEXT("persona"))S.RosterPersona=Value;else if(Field==TEXT("profile"))S.RosterProfile=Value;else if(Field==TEXT("memory"))S.RosterMemory=Value;else Error=TEXT("field must be name|persona|profile|memory");RosterRebuild();}
+  else if(Op==TEXT("save")){if(S.RosterEdit<1)Error=TEXT("nobody is being edited");else if(S.RosterTab==TEXT("memory"))RosterSaveMemory();else RosterSaveSettings();}
+  else if(Op==TEXT("forget"))RosterForgetContext();
+  else if(!Op.IsEmpty()&&Op!=TEXT("state")&&Op!=TEXT("apply"))Error=TEXT("op must be state|open|close|scan|import|pick|apply|edit|set|save|forget");
+  auto O=OKControlResult(Error.IsEmpty(),Error);O->SetBoolField(TEXT("open"),S.RosterOpen);O->SetBoolField(TEXT("busy"),S.RosterBusy);O->SetStringField(TEXT("notice"),S.RosterNotice);
+  O->SetStringField(TEXT("dir"),OKStreetRosterDir());
+  TArray<TSharedPtr<FJsonValue>> Cards;for(const auto& C:S.RosterCards)Cards.Add(MakeShared<FJsonValueObject>(C));O->SetArrayField(TEXT("cards"),Cards);
+  auto Strings=[](const TArray<FString>& L){TArray<TSharedPtr<FJsonValue>> A;for(const FString& X:L)A.Add(MakeShared<FJsonValueString>(X));return A;};
+  O->SetArrayField(TEXT("picked"),Strings(S.RosterPicked));O->SetArrayField(TEXT("world"),Strings(S.RosterWorld));
+  TArray<FString> Names;for(int32 I=1;I<S.Manifest.Characters.Num();++I)Names.Add(S.Manifest.Characters[I].Name);O->SetArrayField(TEXT("heroines"),Strings(Names)); // her = index + 1
+  O->SetNumberField(TEXT("editing"),S.RosterEdit);O->SetStringField(TEXT("tab"),S.RosterTab);
+  if(S.RosterEdit>0){O->SetStringField(TEXT("name"),S.RosterName);O->SetStringField(TEXT("persona"),S.RosterPersona);O->SetStringField(TEXT("profile"),S.RosterProfile);O->SetStringField(TEXT("memory"),S.RosterMemory);}
+  OKControlReply(Done,O);
+  if(Op==TEXT("apply")&&Error.IsEmpty())RosterApply(); // last: the map starts again
+ });
  Bind(TEXT("/saves"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   auto& S=*State;const auto Body=OKControlBody(Req);FString Op,Slot;Body->TryGetStringField(TEXT("op"),Op);Body->TryGetStringField(TEXT("slot"),Slot);
   if(int32 N=0;Slot.IsEmpty()&&Body->TryGetNumberField(TEXT("slot"),N))Slot=FString::FromInt(N);

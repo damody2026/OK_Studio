@@ -245,6 +245,28 @@ impl Mind {
                 let heroine = text_field(&q, "heroine")?;
                 Ok(json!({"heroine": heroine, "profile": s.profiles.load(heroine)?}).to_string())
             }
+            // The player's edits in the game's roster menu: they live in this save only (never in her card).
+            Some("set_profile") => {
+                let heroine = text_field(&q, "heroine")?;
+                let mut p: crate::profile::Profile = serde_json::from_value(q["profile"].clone()).map_err(|e| format!("profile_invalid: {e}"))?;
+                p.id = heroine.to_string();
+                if p.age_in_setting < 18 {
+                    return Err("profile_rejected: under 18".into());
+                }
+                s.profiles.save(&p)?;
+                Ok(json!({"heroine": heroine, "ok": true, "profile": s.profiles.load(heroine)?}).to_string())
+            }
+            Some("set_memories") => {
+                let heroine = text_field(&q, "heroine")?;
+                let edited: Vec<crate::memory::MemoryRecord> = serde_json::from_value(q["memories"].clone()).map_err(|e| format!("memories_invalid: {e}"))?;
+                let count = s.memories.replace(heroine, &edited, q["now"].as_i64().unwrap_or(0))?;
+                Ok(json!({"heroine": heroine, "ok": true, "count": count}).to_string())
+            }
+            Some("forget_context") => {
+                let heroine = text_field(&q, "heroine")?;
+                s.contexts.forget(heroine)?;
+                Ok(json!({"heroine": heroine, "ok": true}).to_string())
+            }
             // Plan §15: lottery, sports betting, markets and predictions; synchronous, never touches the LLM.
             // "kind" routes the query here; the op's own kind (an order's market/limit, an alert's above/below) comes
             // as "fin_kind" and is put back before the op reads it.

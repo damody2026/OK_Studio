@@ -567,9 +567,13 @@ FString VoicePickDescription,VoicePickNotice,TtsVoiceInstruct;int32 VoicePickTar
  TSharedPtr<SWidget> Overlay;
  TSharedPtr<SBorder> InteractionPanel,DialoguePanel;
  // The UI shell's holders, one per region (RebuildUI), and the right panel's scroll box (it keeps its position).
- TSharedPtr<SBox> UiRightHolder,UiShopHolder,UiDebugHolder,UiBottomHolder,UiBluffHolder,UiHistoryHolder,UiAppHolder,UiSaveHolder,UiMenuHolder;TSharedPtr<SScrollBox> UiRightScroll;uint32 UiDirtyRegions=0;
+ TSharedPtr<SBox> UiRightHolder,UiShopHolder,UiDebugHolder,UiBottomHolder,UiBluffHolder,UiHistoryHolder,UiAppHolder,UiSaveHolder,UiMenuHolder,UiRosterHolder;TSharedPtr<SScrollBox> UiRightScroll;uint32 UiDirtyRegions=0;
  TSharedPtr<SOKStreetMinimap> Minimap;
  TSharedPtr<SWidget> MinimapPanel;
+ // The roster menu (OKStreetSocialRoster.inl): the cards in the heroine folder, the ones picked for this world, and the
+ // heroine being edited (her name, persona and profile, or her memories), as typed.
+ bool RosterOpen=false,RosterBusy=false,RosterPausedClock=false;FString RosterNotice,RosterTab,RosterName,RosterPersona,RosterProfile,RosterMemory;
+ TArray<TSharedPtr<FJsonObject>> RosterCards;TArray<FString> RosterPicked,RosterWorld;int32 RosterEdit=INDEX_NONE;FString RosterPersonaLoaded;TMap<FString,FString> RosterBaseNames; // her card's own name, by id
  bool MinimapShowNames=true,MinimapProbeShowNames=true;
  bool MinimapChecked=false,MinimapOnlyTest=false;
  int32 MinimapProbePhase=0;
@@ -834,6 +838,14 @@ void AOKStreetSocialScene::BeginPlay(){
  FString ManifestPath,Json,Error;
  if(!FParse::Value(FCommandLine::Get(),TEXT("StreetSocialManifest="),ManifestPath)||!FFileHelper::LoadFileToString(Json,*ManifestPath)||!OKStreetReadManifestSocial(ManifestPath,Json,S.Manifest)){
   S.Errors.Add(TEXT("Invalid StreetSocial selection: ")+S.Manifest.Error);WriteReport(false);return;
+ }
+ // The heroines this save lives with (OKStreetSocialRoster.inl): the load or new game asked for last run is taken first,
+ // then the selection gets the save's roster and the save's own names for them.
+ if(!S.SelfTest&&!S.RetargetSelfTest&&S.LiveTestPhase<0){
+  ApplyPendingSave();
+  if(ApplyRosterToManifest(ManifestPath,Json)){S.Manifest=FOKStreetManifestSocial();
+   if(!OKStreetReadManifestSocial(ManifestPath,Json,S.Manifest)){S.Errors.Add(TEXT("Invalid roster selection: ")+S.Manifest.Error);WriteReport(false);return;}}
+  ApplyHeroineSettings();
  }
  TSharedPtr<FJsonObject> SelectionRoot;
  if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),SelectionRoot)&&SelectionRoot){
@@ -2569,6 +2581,8 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
   SAssignNew(S.BigMap,SOKStreetBigMap);S.BigMap->Read=[MapData](){return MapData(MAX_int32);};
   S.BigMap->Pick=[Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](const FVector& Goal,const FString& Name){if(Weak.IsValid())Weak->NavigatePoint(Goal,Name);};
   S.MinimapPanel=SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight()[S.Minimap.ToSharedRef()]+SVerticalBox::Slot().AutoHeight()[SNew(SBorder).BorderBackgroundColor(FLinearColor(.018f,.03f,.055f,.93f))[SNew(SCheckBox).IsChecked_Lambda([Weak=TWeakPtr<FOKStreetSceneState>(State)](){auto Live=Weak.Pin();return Live&&Live->MinimapShowNames?ECheckBoxState::Checked:ECheckBoxState::Unchecked;}).OnCheckStateChanged_Lambda([Weak=TWeakPtr<FOKStreetSceneState>(State)](ECheckBoxState Value){if(auto Live=Weak.Pin())Live->MinimapShowNames=Value==ECheckBoxState::Checked;})[SNew(STextBlock).Text(FText::FromString(OKT(TEXT("ui.scene.show_names"))))]]]
+   +SVerticalBox::Slot().AutoHeight().Padding(0,4,0,0)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).HAlign(HAlign_Center).Text(FText::FromString(OKT(TEXT("ui.roster.open"))))
+    .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid()){if(Weak->State->RosterOpen)Weak->CloseRoster();else Weak->OpenRoster();}return FReply::Handled();})]
    +SVerticalBox::Slot().AutoHeight()[SNew(SBorder).BorderBackgroundColor(FLinearColor(.018f,.03f,.055f,.93f)).Padding(6,2)[SNew(STextBlock).Text_Lambda([Weak=TWeakPtr<FOKStreetSceneState>(State)](){auto Live=Weak.Pin();if(!Live)return FText::GetEmpty();const double H=OKStreetClockHours(Live->ClockStartHours,FPlatformTime::Seconds()-Live->ClockStartWall);return FText::FromString(OKT(TEXT("ui.scene.block_prefix"))+OKStreetCalendarLabel(Live->Store.CalendarDay,H));})]]
    // Plan §13.3.2: appointments with countdowns (click: walk to the soonest one), and blacklisted shops.
    +SVerticalBox::Slot().AutoHeight()[SNew(SButton).ButtonStyle(OKStreetGlassButton()).OnClicked_Lambda([Owner=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Owner.IsValid())Owner->NavigateToNextAppointment();return FReply::Handled();})
@@ -2662,6 +2676,9 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
   // the space above the dialogue box: centred on the whole screen it covered the "heard" and order rows above the box.
   +SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center).Padding(0,16,0,250)[SAssignNew(S.UiMenuHolder,SBox).Visibility(EVisibility::SelfHitTestInvisible)]
   +SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)[SAssignNew(S.UiAppHolder,SBox).Visibility(EVisibility::SelfHitTestInvisible)]
+  +SOverlay::Slot()[SAssignNew(S.UiRosterHolder,SBox).Visibility(EVisibility::SelfHitTestInvisible)]
+  // Cards dragged onto the window from Explorer: while a drag is on, a drop zone over everything (OKStreetSocialRoster.inl).
+  +SOverlay::Slot()[RosterDropZone()]
   +SOverlay::Slot()[SAssignNew(S.UiSaveHolder,SBox).Visibility(EVisibility::SelfHitTestInvisible)];
   GEngine->GameViewport->AddViewportWidgetContent(S.Overlay.ToSharedRef(),10);
  }
@@ -3049,6 +3066,7 @@ static int64 OKStreetMindNow(const FOKStreetSceneState& S);
 #include "OKStreetSocialBank.inl"
 #include "OKStreetSocialInspector.inl"
 #include "OKStreetSocialUiProbe.inl"
+#include "OKStreetSocialRoster.inl"
 #include "OKStreetSocialControl.inl"
 #include "OKStreetSocialClinic.inl"
 #include "OKStreetSocialWardrobe.inl"

@@ -159,9 +159,16 @@ function M.main(argv)
   local root = path.abs(args.root)
   local source = read_json(args.selection)
   local paths = json.is_array(source) and source or source.cards
-  -- One to ten heroines (the street's OKStreetFemaleCount).
+  local male, females, everyone = M.cast(args.male, paths)
+  local materials = read_json(args.materials)
+  return M.finish(args, root, male, females, everyone, materials)
+end
+
+-- The cast from the cards: the male, then one to ten heroines (the street's OKStreetFemaleCount) with their names fixed
+-- and their everyday outfits. Also the in-game roster's (Tools/street_roster.lua).
+function M.cast(male_path, paths)
   if #paths < 1 or #paths > 10 then fail("Street needs one to ten female cards") end
-  local male = M.character(args.male)
+  local male = M.character(male_path)
   local females = util.map(paths, function(p) return M.character(p) end)
   -- Names the cards got wrong (the original work's spelling), by card id.
   local overrides = path.join(ok.root, "Content/IndependentResources/StreetSocialData/name_overrides.json")
@@ -187,7 +194,13 @@ function M.main(argv)
     if seen[c.id] then fail("Duplicate card identity in street selection") end
     seen[c.id] = true
   end
-  local materials = read_json(args.materials)
+  for _, c in ipairs(everyone) do
+    for k, v in pairs(M.locomotion_metadata(c.sex, c.personality, c.id)) do c[k] = v end
+  end
+  return male, females, everyone
+end
+
+function M.finish(args, root, male, females, everyone, materials)
   if not T(materials.passed) or not T(materials.runtime_reveal_supported) then
     fail("Verified common material library required")
   end
@@ -322,10 +335,6 @@ function M.main(argv)
   local locomotion = read_json(path.join(anim_dir, "locomotion.manifest.json"))
   check_hashes(util.map(locomotion.actions, function(r) return path.join(anim_dir, r.file) end),
     util.map(locomotion.actions, function(r) return r.sha256 end), "Common locomotion curve hash mismatch")
-  -- Project-defined styles, stable fallback for every future APNG personality.
-  for _, c in ipairs(everyone) do
-    for k, v in pairs(M.locomotion_metadata(c.sex, c.personality, c.id)) do c[k] = v end
-  end
   local curves = { win(path.join(anim_dir, "idle_02.okanim")), win(path.join(anim_dir, "walk_01.okanim")) }
   for _, r in ipairs(locomotion.actions) do curves[#curves + 1] = win(path.join(anim_dir, r.file)) end
   local action_list = {}

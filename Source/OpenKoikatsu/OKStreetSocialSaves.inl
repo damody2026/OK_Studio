@@ -4,7 +4,8 @@
 // or starting a new game happens on the next start of the map (Saves/pending.json), when nothing has a file open.
 // Settings (player.json: language; voice, ASR and DeepSeek settings) belong to the player, not to a game.
 
-static const TCHAR* OKStreetSaveFiles[]={TEXT("relationships.json"),TEXT("relationships.json.bak"),TEXT("phone.json"),TEXT("free-talk-log.json"),TEXT("free-talk-memory.json"),TEXT("songs.json")};
+static const TCHAR* OKStreetSaveFiles[]={TEXT("relationships.json"),TEXT("relationships.json.bak"),TEXT("phone.json"),TEXT("free-talk-log.json"),TEXT("free-talk-memory.json"),TEXT("songs.json"),
+ TEXT("roster.json"),TEXT("heroine-settings.json")}; // who lives in this world and the save's own settings for them (OKStreetSocialRoster.inl)
 static const TCHAR* OKStreetSaveDirs[]={TEXT("accounts"),TEXT("history"),TEXT("mind"),TEXT("Photos")};
 static constexpr int32 OKStreetSaveSlotCount=8;
 static constexpr double OKStreetAutoSaveSeconds=600;
@@ -34,7 +35,7 @@ static bool OKStreetCopyGame(const FString& From,const FString& To){
 
 static void OKStreetDeleteGame(const FString& Dir){
  auto& F=IFileManager::Get();
- for(const TCHAR* Name:OKStreetSaveFiles)F.Delete(*(Dir/Name),false,true,true);
+ for(const TCHAR* Name:OKStreetSaveFiles)if(FCString::Strcmp(Name,TEXT("roster.json")))F.Delete(*(Dir/Name),false,true,true); // a new game keeps the heroines picked
  for(const TCHAR* Name:OKStreetSaveDirs){TArray<FString> Old;F.FindFilesRecursive(Old,*(Dir/Name),TEXT("*"),true,false);for(const FString& File:Old)if(OKStreetSaveKeeps(File))F.Delete(*File,false,true,true);}
 }
 

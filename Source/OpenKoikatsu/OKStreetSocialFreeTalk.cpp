@@ -79,13 +79,40 @@ bool OKStreetFreeTalkLoadSettings(FOKFreeTalkSettings& Out, FString& Error) {
 }
 
 static bool OKStreetFreeTalkReadPersona(const FString& Name, FOKFreeTalkPersona& Out, FString& Error);
+struct FOKFreeTalkPersonaOverride { FString BaseName, Profile; };
+static FCriticalSection GOKPersonaOverridesLock;
+static TMap<FString, FOKFreeTalkPersonaOverride> GOKPersonaOverrides;
+static TAtomic<int32> GOKPersonaOverridesGeneration{0};
+
+void OKStreetFreeTalkSetPersonaOverride(const FString& Name, const FString& BaseName, const FString& Profile) {
+ FScopeLock Lock(&GOKPersonaOverridesLock);GOKPersonaOverrides.Add(Name, {BaseName, Profile});++GOKPersonaOverridesGeneration;
+}
+
+void OKStreetFreeTalkClearPersonaOverrides() {
+ FScopeLock Lock(&GOKPersonaOverridesLock);GOKPersonaOverrides.Reset();++GOKPersonaOverridesGeneration;
+}
+
+// Her persona: the save's own setting when it has one (her shipped persona under her card's name, the text replaced when
+// the player wrote one), else the shipped one.
+static bool OKStreetFreeTalkReadPersonaOverridden(const FString& Name, FOKFreeTalkPersona& Out, FString& Error) {
+ FOKFreeTalkPersonaOverride Override;bool Has = false;
+ {FScopeLock Lock(&GOKPersonaOverridesLock);if (const auto* O = GOKPersonaOverrides.Find(Name)) {Override = *O;Has = true;}}
+ if (!Has) return OKStreetFreeTalkReadPersona(Name, Out, Error);
+ const bool Base = OKStreetFreeTalkReadPersona(Override.BaseName.IsEmpty() ? Name : Override.BaseName, Out, Error);
+ Out.DisplayName = Name;
+ if (!Override.Profile.IsEmpty()) {Out.Profile = Override.Profile;Error.Reset();return true;}
+ return Base;
+}
+
 bool OKStreetFreeTalkLoadPersona(const FString& Name, FOKFreeTalkPersona& Out, FString& Error) {
- if (!IsInGameThread()) return OKStreetFreeTalkReadPersona(Name, Out, Error);
+ if (!IsInGameThread()) return OKStreetFreeTalkReadPersonaOverridden(Name, Out, Error);
  struct FEntry { FOKFreeTalkPersona Value; FString Error; bool Ok = false; double At = -1e9; };
  static TMap<FString, FEntry> Cache;
  const double Now = FPlatformTime::Seconds();
  FEntry& Entry = Cache.FindOrAdd(OKStreetCppText().Lang + TEXT("\n") + Name);
- if (Now - Entry.At > OKFreeTalkFilesFresh) { Entry.Value = FOKFreeTalkPersona(); Entry.Error.Reset(); Entry.Ok = OKStreetFreeTalkReadPersona(Name, Entry.Value, Entry.Error); Entry.At = Now; }
+ static int32 Generation = -1; // a changed override reads every persona again
+ if (Generation != GOKPersonaOverridesGeneration) {Generation = GOKPersonaOverridesGeneration;for (auto& E : Cache) E.Value.At = -1e9;}
+ if (Now - Entry.At > OKFreeTalkFilesFresh) { Entry.Value = FOKFreeTalkPersona(); Entry.Error.Reset(); Entry.Ok = OKStreetFreeTalkReadPersonaOverridden(Name, Entry.Value, Entry.Error); Entry.At = Now; }
  Out = Entry.Value;
  if (!Entry.Ok) Error = Entry.Error;
  return Entry.Ok;

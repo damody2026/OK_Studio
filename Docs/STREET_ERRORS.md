@@ -2154,3 +2154,5 @@
 - 2026-11-08 e-galgame 隱藏部件不再解算後，暫停中按「全部穿上」，鞋子停在最後一次畫的位置（掉在地上）：暫停時沒有解算幀。可見性一變就要求一幀姿勢更新，暫停也解算一次。
 - 2026-11-08 c-conquest 恢復攻略時 game_launch 沒加 `-CitySource`，進了舊街區地圖；關遊戲前先備份 sandbox，才把大學城的存檔還原回來。大學城的攻略一律加 `-CitySource`（還沒 cook 前），開遊戲後先看 game_state 的位置與地點。
 - 2026-11-08 c-conquest 和 E 組都用 `-PortBase 48160`，E 的 game_stop 照埠號關到 C 的遊戲（R6-175）。各 checkout 的 sandbox 要用不同的 PortBase；C 攻略改用 48460。
+- 2026-11-09 c-conquest 用 ok-game-mcp call／curl 在命令列送中文（改女主名字），Git bash 送出的不是 UTF-8，存檔寫進亂碼名字。含中文的請求一律先寫成 UTF-8 檔再 `--data-binary @檔案` 送出。
+- 2026-11-09 c-conquest 名單面板的核取方塊與文字框是純 Slate，ui_widgets 讀不到；另加街區控制路由 `/roster`（game_call）讓 MCP 讀寫。新的 Slate 控制要同時給控制通道入口。
