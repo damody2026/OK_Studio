@@ -2152,3 +2152,5 @@
 - 2026-11-07 e-galgame 全狀態開卡只用雷電將軍測就回報，刻晴換裝失敗（OK 卡缺骨架答案）：留下全部狀態後，`meshes_for_maindata` 改選到別的網格骨架，只有 OK 卡重播時才會出錯。卡片相關改動要把全部女主的每套衣服都開一次（`wardrobe::tests::every_outfit_opens_with_all_states`）。
 - 2026-11-08 e-galgame 用 TaskStop 停掉量測腳本，它剛開的遊戲沒關，下一輪 ABA 變成兩個遊戲同時跑，B 和第二個 A 都慢了三成，差點當成結果。量測腳本每次開遊戲前先 game_stop，停腳本後要看還有沒有自己的遊戲。
 - 2026-11-08 e-galgame 隱藏部件不再解算後，暫停中按「全部穿上」，鞋子停在最後一次畫的位置（掉在地上）：暫停時沒有解算幀。可見性一變就要求一幀姿勢更新，暫停也解算一次。
+- 2026-11-08 c-conquest 恢復攻略時 game_launch 沒加 `-CitySource`，進了舊街區地圖；關遊戲前先備份 sandbox，才把大學城的存檔還原回來。大學城的攻略一律加 `-CitySource`（還沒 cook 前），開遊戲後先看 game_state 的位置與地點。
+- 2026-11-08 c-conquest 和 E 組都用 `-PortBase 48160`，E 的 game_stop 照埠號關到 C 的遊戲（R6-175）。各 checkout 的 sandbox 要用不同的 PortBase；C 攻略改用 48460。

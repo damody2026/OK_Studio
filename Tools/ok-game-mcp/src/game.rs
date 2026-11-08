@@ -109,9 +109,11 @@ impl Game {
     /// Starts the game with the control channel (Tools/run_street_social_development.lua -Control), windowed, and waits
     /// until the channel answers. extra: more launcher options ("-Trace", "-Exec", "stat unit", "-Sandbox", "x", ...).
     pub fn launch(&self, window: &str, extra: &[String], timeout: Duration) -> Result<Value> {
-        if self.up() {
-            bail!("a game already answers on port {}; game_stop it first", self.port);
+        // Only this server's own game stands in the way: another session's sandbox game runs on its own ports.
+        if crate::control::own_ready(&self.root) && self.up() {
+            bail!("this session's game still answers on port {}; game_stop it first", self.live_port());
         }
+        crate::control::set_own(0);
         let lua = self.root.join("Tools/lua/lua.exe");
         let script = self.root.join("Tools/run_street_social_development.lua");
         let logs = self.root.join("Saved/StreetSocial");
@@ -134,8 +136,12 @@ impl Game {
                     }
                 }
             }
-            if self.up() {
-                return Ok(json!({"ok": true, "port": self.port, "seconds": start.elapsed().as_secs()}));
+            // Up means the game just started answers (its channels written under its pid), not the newest of another session.
+            if let Some(pid) = self.launched_pid().and_then(|p| p.parse::<u32>().ok()) {
+                crate::control::set_own(pid);
+            }
+            if crate::control::own_ready(&self.root) && self.up() {
+                return Ok(json!({"ok": true, "port": self.live_port(), "seconds": start.elapsed().as_secs()}));
             }
             std::thread::sleep(Duration::from_secs(2));
         }
@@ -175,7 +181,17 @@ impl Game {
 
     /// Stops only the game listening on this checkout's control port (another session's sandbox game keeps running).
     pub fn stop(&self) -> Result<Value> {
+        // Never the newest game of the checkout by default: that was another session's (see control::OWN). OK_CONTROL_PORT
+        // names the port outright; otherwise the game started here or one picked with game_select.
+        if std::env::var_os("OK_CONTROL_PORT").is_none() && !crate::control::may_stop(&self.root) {
+            bail!("no game started by this session runs (another session's games are not stopped); game_select the pid to stop another, see game_instances");
+        }
         let Some(pid) = self.port_pid()? else { return Ok(json!({"ok": true, "stopped": null, "note": "no game on that port"})) };
+        // The port is machine-wide: E:'s server, with the same port base, closed C:'s game listening there (2026-11-08 19:03).
+        // Only a game of this checkout (its channels under Saved/OKControl) is stopped.
+        if !crate::control::instances(&self.root).iter().any(|v| v["pid"].as_u64().map(|p| p.to_string()) == Some(pid.clone())) {
+            bail!("the game on port {} (pid {pid}) is not a game of this checkout; not stopped", self.live_port());
+        }
         let status = Command::new("taskkill").args(["/PID", &pid]).output()?;
         Ok(json!({"ok": status.status.success(), "stopped": pid}))
     }
