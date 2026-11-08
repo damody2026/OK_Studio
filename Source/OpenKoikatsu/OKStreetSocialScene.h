@@ -201,6 +201,8 @@ private:
  void SetRenderStyle(const FString& Style);
  bool ApplyRenderStyleSetting(const FString& Style); // the cvars only (startup, from player.json)
  FString RenderStyleLabel(const FString& Style) const;
+ // Lit / unlit characters (player.json "lit"; OKLitSwap.h), live.
+ void SetLit(bool bOn);
  // Regions (OKStreetSocialLocale.inl; the rules decide every amount, ok-rules region.rs): an amount of the scene's own
  // in the save's region (kind: cash | wage | salary | rent | property | goods | price, or a [fixed] key), the save moved
  // to another region (all its money converted by the rules), and finance's yuan wallet amounts crossing to the region.

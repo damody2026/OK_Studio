@@ -352,6 +352,11 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
     bool Faces=false;if(View.IsValid()&&Body.IsValid()&&Body->TryGetBoolField(TEXT("faces"),Faces)&&Faces&&IsValid(Controller->PreviewActor))
         for(int32 Control=1;Control<=2;++Control){TArray<TSharedPtr<FJsonValue>> L;for(int32 P=0;P<Controller->PreviewActor->GetFacePatternCount(Control);++P)L.Add(MakeShared<FJsonValueString>(Controller->PreviewActor->GetFacePatternLabel(Control,P)));View->SetArrayField(Control==1?TEXT("eyes"):TEXT("brows"),L);}
     if(Faces&&View.IsValid()&&IsValid(Controller->PreviewActor)){TArray<TSharedPtr<FJsonValue>> L;for(int32 P=0;P<Controller->PreviewActor->GetMouthPatternCount();++P)L.Add(MakeShared<FJsonValueString>(Controller->PreviewActor->GetMouthPatternLabel(P)));View->SetArrayField(TEXT("mouths"),L);}
+    // {"save_masks":"<folder>"}: her body's mask for each state of her top (on, half, off) as PNG files there.
+    FString MaskDir;if(View.IsValid()&&Body.IsValid()&&Body->TryGetStringField(TEXT("save_masks"),MaskDir)&&!MaskDir.IsEmpty()&&IsValid(Controller->PreviewActor)){
+        TArray<TSharedPtr<FJsonValue>> L;for(int32 TopState:{0,1,3}){TArray<uint8> Png;
+            if(Controller->PreviewActor->Session.WardrobeBodyMask(TopState,Png)&&FFileHelper::SaveArrayToFile(Png,*(MaskDir/FString::Printf(TEXT("body_mask_top%d.png"),TopState))))L.Add(MakeShared<FJsonValueNumber>(TopState));}
+        View->SetArrayField(TEXT("saved_masks"),L);}
     // {"parts":true}: every mesh component on her (role, class, shown), to see what draws.
     bool PartsDump=false;if(View.IsValid()&&Body.IsValid()&&Body->TryGetBoolField(TEXT("parts"),PartsDump)&&PartsDump&&IsValid(Controller->PreviewActor)){
         TArray<TSharedPtr<FJsonValue>> L;TInlineComponentArray<UMeshComponent*> Components;Controller->PreviewActor->GetComponents(Components);
@@ -359,7 +364,10 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
             FString PartRole;OkMeshView V{};if(Index!=INDEX_NONE&&Controller->PreviewActor->Session.PartAt(Index,V)&&V.role)PartRole=UTF8_TO_TCHAR(V.role);
             // Each slot's material: its name, d for a dynamic instance, st when it has the iris tiling (_MainTex_ST), rows when gaze rows.
             FString Mats;for(int32 S=0;S<C->GetNumMaterials();++S)if(UMaterialInterface* M=C->GetMaterial(S)){FLinearColor P;
-                Mats+=FString::Printf(TEXT(" %s%s%s%s"),*(M->GetName()+(Cast<UMaterialInstance>(M)&&Cast<UMaterialInstance>(M)->Parent?TEXT("<")+Cast<UMaterialInstance>(M)->Parent->GetName():FString())),M->IsA<UMaterialInstanceDynamic>()?TEXT(":d"):TEXT(""),M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex_ST")),P)?TEXT(":st"):TEXT(""),M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("KKEyeUV0Row0")),P)?TEXT(":rows"):TEXT(""));}
+                Mats+=FString::Printf(TEXT(" %s%s%s%s"),*(M->GetName()+(Cast<UMaterialInstance>(M)&&Cast<UMaterialInstance>(M)->Parent?TEXT("<")+Cast<UMaterialInstance>(M)->Parent->GetName():FString())),M->IsA<UMaterialInstanceDynamic>()?TEXT(":d"):TEXT(""),M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex_ST")),P)?TEXT(":st"):TEXT(""),M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("KKEyeUV0Row0")),P)?TEXT(":rows"):TEXT(""));
+                // Its main texture and colour (a piece drawn black: user 2026-11-09, her half-off top).
+                UTexture* Tex=nullptr;if(M->GetTextureParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex")),Tex)&&Tex)Mats+=FString::Printf(TEXT("[tex=%s %dx%d]"),*Tex->GetName(),int32(Tex->GetSurfaceWidth()),int32(Tex->GetSurfaceHeight()));
+                if(M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("_Color")),P))Mats+=FString::Printf(TEXT("[col=%.2f,%.2f,%.2f]"),P.R,P.G,P.B);}
             L.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("%d %s %s %s vis=%d hig=%d main=%d parent=%s mats=%s"),Index,*PartRole,*C->GetClass()->GetName(),*C->GetName(),C->IsVisible(),C->bHiddenInGame,C->bRenderInMainPass,C->GetAttachParent()?*C->GetAttachParent()->GetName():TEXT("-"),*Mats)));}
         View->SetArrayField(TEXT("parts"),L);}
     // {"his_parts":true}: the same for him, with each part's renderer name (the penis is o_dankon / cm_o_dan00).

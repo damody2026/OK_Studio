@@ -31,6 +31,7 @@
 #include "OKMouthPatterns.h"
 #include "KKFaceBlendShape.h"
 #include "KKProceduralDeform.h"
+#include "KKLitSync.h"
 #include "KKAffineProceduralMeshComponent.h"
 #include "KKPrivateGpuBounds.h"
 #include "KKGpuStream.h"
@@ -10210,6 +10211,7 @@ bool AKKPreviewActor::SetWrapLine(bool bOn,const FVector& From,const FVector& To
     return Shown.Num()>0;
 }
 
+static TAutoConsoleVariable<int32> CVarOkLitAffine(TEXT("ok.Lit.Affine"),1,TEXT("1: the lit switch also lights the affine parts (hair, clothes, accessories); 0: they stay as drawn."),ECVF_Default);
 bool AKKPreviewActor::SetSkinLit(bool bOn,const FString& LitRoot)
 {
     TInlineComponentArray<UMeshComponent*> Meshes(this);
@@ -10217,15 +10219,16 @@ bool AKKPreviewActor::SetSkinLit(bool bOn,const FString& LitRoot)
     {
         for(UMeshComponent* Mesh:Meshes)for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
             if(auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot)))if(const auto* Original=LitOriginalOf.Find(M))Mesh->SetMaterial(Slot,*Original);
-        LitInstanceOf.Reset();LitOriginalOf.Reset();LitWrapped.Reset();
+        LitInstanceOf.Reset();LitOriginalOf.Reset();LitWrapped.Reset();LitSnapshots.Reset();
         return true;
     }
     // The wrap's own swap first given back: her skin instance is what the lit one copies.
     if(WrapOriginalOf.Num())SetWrapLine(false,FVector::ZeroVector,FVector::ZeroVector,0.f,FString());
     TSet<UMaterialInstanceDynamic*> Shown;
-    // Not the affine parts (hair, clothes, accessories): they are drawn posed by the source mesh pass, whose shaders
-    // exist for unlit parents only; lit, they came out where they rest (2026-11-09). They stay as drawn.
-    for(UMeshComponent* Mesh:Meshes)if(!Mesh->IsA<UKKAffineProceduralMeshComponent>())for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
+    // The affine parts too (hair, clothes, accessories; user 2026-11-09: her hair and accessories lit as well), unless
+    // ok.Lit.Affine is 0.
+    const bool bAffine=CVarOkLitAffine.GetValueOnGameThread()!=0;
+    for(UMeshComponent* Mesh:Meshes)if(bAffine||!Mesh->IsA<UKKAffineProceduralMeshComponent>())for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
     {
         auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot));if(!M)continue;
         UMaterialInstanceDynamic* Lit=LitOriginalOf.Contains(M)?M:nullptr;
@@ -10255,7 +10258,7 @@ bool AKKPreviewActor::SetSkinLit(bool bOn,const FString& LitRoot)
         float Radius=0.f,Soft=0.f;FLinearColor From,To;
         const bool bWrap=LitWrapped.Contains(Lit)&&Lit->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("__OK_WrapRadius")),Radius);
         if(bWrap){Lit->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("__OK_WrapSoft")),Soft);Lit->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("__OK_WrapFrom")),From);Lit->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("__OK_WrapTo")),To);}
-        Lit->CopyParameterOverrides(LitOriginalOf[Lit]);
+        KKSyncLitInstance(Lit,LitOriginalOf[Lit],LitSnapshots.FindOrAdd(Lit));
         if(bWrap){Lit->SetScalarParameterValue(TEXT("__OK_WrapRadius"),Radius);Lit->SetScalarParameterValue(TEXT("__OK_WrapSoft"),Soft);Lit->SetVectorParameterValue(TEXT("__OK_WrapFrom"),From);Lit->SetVectorParameterValue(TEXT("__OK_WrapTo"),To);}
     }
     return Shown.Num()>0;

@@ -67,6 +67,8 @@ ramp_yamadamod_ramp_503 = "邊界清晰 3（ymd）"
 ramp_zmr_shadow_2150 = "動畫陰影（zmr）"
 ramp_zmr_shadow_2151 = "機械陰影（zmr）"
 render_style_restarting = "切換畫面風格：存檔後重新載入…"
+lit_on = "角色光照：吃場景光（lit）"
+lit_off = "角色光照：原作卡通（unlit）"
 
 [ui.bluff]
 start = "玩撲克牌：吹牛"

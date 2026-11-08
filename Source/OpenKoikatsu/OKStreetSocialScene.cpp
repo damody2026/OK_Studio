@@ -63,6 +63,7 @@
 #include "Widgets/Layout/SWrapBox.h"
 #include "Widgets/Notifications/SProgressBar.h"
 #include "OKStreetSocialExpression.h"
+#include "OKLitSwap.h"
 #include "OKCrowdRuntimeScene.h"
 #include "OKCrowdRoom.h"
 #include "HighResScreenshot.h"
@@ -582,6 +583,7 @@ FString VoicePickDescription,VoicePickNotice,TtsVoiceInstruct;int32 VoicePickTar
  bool RuntimeBackdropReady=false;
  FVector Male=OKStreetMaleSpawn();
  FString Lang=TEXT("zh-TW");int32 MoneyDigits=0;TArray<TSharedPtr<FString>> LangOptions,RegionOptions,RenderStyleOptions; // OKStreetSocialLocale.inl
+ bool Lit=false,LitShown=false; // the characters lit by the scene (player.json "lit", SetLit)
  mutable TMap<FString,int64> LocalAmounts; // Local(): region|kind|base -> amount, cleared when the region changes
  FString BluffOnArrival;double BluffDealBy=0; // ...and the time to wait for the others to sit down // the outing that takes them in to play cards: the game is dealt when it arrives (ArriveOuting)
  FVector SpotSavedMale=OKStreetMaleSpawn();double SpotSavedAt=0; // his position in the save, and when it was written (SaveCalendar)
@@ -2698,6 +2700,9 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
    .OnGenerateWidget_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](TSharedPtr<FString> Item){return SNew(STextBlock).Text(FText::FromString(Item.IsValid()&&Weak.IsValid()?Weak->RenderStyleLabel(*Item):FString()));})
    .OnSelectionChanged_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](TSharedPtr<FString> Item,ESelectInfo::Type Info){if(Weak.IsValid()&&Item.IsValid()&&Info!=ESelectInfo::Direct)Weak->SetRenderStyle(*Item);})
    [SNew(STextBlock).Text(FText::FromString(OKMsg(TEXT("ui.settings.render_style"),{{TEXT("name"),RenderStyleLabel(Style)}})))]];}
+ // Lit / unlit (user 2026-11-09): the characters lit by the street's lights instead of their own toon, switched live.
+ Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(OKT(S.Lit?TEXT("ui.settings.lit_on"):TEXT("ui.settings.lit_off"))))
+  .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->SetLit(!Weak->State->Lit);return FReply::Handled();})];
  if(!S.SelfTest)Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(OKT(TEXT("ui.saves.open_button"))))
   .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->OpenSaveMenu(TEXT("game"));return FReply::Handled();})];
   // The setting (Taiwan, mainland China, a US college town): its money and prices; the save's money is converted.
@@ -4053,6 +4058,11 @@ static void OKStreetCityMirrorFace(AActor* Scene,int32 Slots,const FVector& Eye,
 
 void AOKStreetSocialScene::Tick(float Dt){
  Super::Tick(Dt);
+ // Lit: every frame while on (the originals' values copied, new parts swapped as they load), once to give them back.
+ // The catch light (100 cd on the characters' channel, for the lit tears' shine) burnt them white once they took light: off
+ // while they are lit, back when they are not.
+ if(State&&(State->Lit||State->LitShown)){if(State->Lit!=State->LitShown&&State->CatchLight.IsValid())State->CatchLight->SetIntensity(State->Lit?0.f:100.f);
+  OKSetActorLit(this,State->Lit,OKLitMaterialRootPath());State->LitShown=State->Lit;}
  if(APlayerController* Eyes=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr;OKStreetCityMode()&&State&&Eyes&&Eyes->PlayerCameraManager)OKStreetCityMirrors(GetWorld(),State->Male+FVector(0,0,150),Eyes->PlayerCameraManager->GetCameraLocation(),Eyes->PlayerCameraManager->GetCameraRotation().Vector(),Dt);
  if(OKStreetCityMode()&&State&&GOKStreetCitySun.IsValid()&&State->Sun!=GOKStreetCitySun){State->Sun=GOKStreetCitySun;State->ClockDrivesSun=true;State->NextSunUpdate=0;}
  if(OKStreetCityMode()&&State)if(auto* Env=GOKStreetCityEnv.Get()){static double NextHour=0;const double Wall=FPlatformTime::Seconds();if(Wall>=NextHour){NextHour=Wall+5;const double Hours=OKStreetClockHours(State->ClockStartHours,Wall-State->ClockStartWall);Env->SetHour(Hours);
@@ -4073,7 +4083,7 @@ void AOKStreetSocialScene::Tick(float Dt){
  if(S.UiDirty){S.UiDirty=false;const uint32 Regions=S.UiDirtyRegions?S.UiDirtyRegions:uint32(OKStreetUi::All);S.UiDirtyRegions=0;if(CVarOKStreetLogUiRebuilds.GetValueOnGameThread())UE_LOG(LogTemp,Display,TEXT("Street UI rebuild asked by %s:%u (regions %u)"),*FPaths::GetCleanFilename(ANSI_TO_TCHAR(S.UiDirtyFile)),S.UiDirtyLine,Regions);{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_RebuildUI);RebuildUI(Regions);}}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickControl);TickControl();}
  const double Now=SceneTime();auto* PC=GetWorld()->GetFirstPlayerController();if(!PC)return;
  if(!S.CatchLight.IsValid()){auto* L=NewObject<UPointLightComponent>(this);L->SetMobility(EComponentMobility::Movable);L->SetLightingChannels(false,false,true);L->SetCastShadows(false);
-  L->SetIntensityUnits(ELightUnits::Candelas);L->SetIntensity(100.f); /* 100 cd: a clear wet shine, short of glare (300 burns out) */L->SetAttenuationRadius(800.f);L->SetSourceRadius(2.f);L->RegisterComponent();AddInstanceComponent(L);S.CatchLight=L;}
+  L->SetIntensityUnits(ELightUnits::Candelas);L->SetIntensity(S.Lit?0.f:100.f); /* 100 cd: a clear wet shine, short of glare (300 burns out) */L->SetAttenuationRadius(800.f);L->SetSourceRadius(2.f);L->RegisterComponent();AddInstanceComponent(L);S.CatchLight=L;}
  if(PC->PlayerCameraManager)S.CatchLight->SetWorldLocation(PC->PlayerCameraManager->GetCameraLocation()+FVector(0,0,25));
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkReplay);TickFreeTalkReplay(Now);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkSpeech);TickFreeTalkHisVoice(SceneTime());TickFreeTalkSpeech(FPlatformTime::Seconds());TickDeferredNotes();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkLive);TickFreeTalkLive(Now);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkTrace);TickFreeTalkTrace(Now);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickOrderNotice);TickOrderNotice();}
  // The street clock paused: the kitchen and the eating wait too (nothing on the table is eaten while time stands still).

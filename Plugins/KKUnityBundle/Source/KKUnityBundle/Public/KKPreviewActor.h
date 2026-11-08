@@ -14,6 +14,7 @@
 #include "Templates/PimplPtr.h"
 class FOkAnimPlayer;
 
+#include "KKLitSync.h"
 #include "KKPreviewActor.generated.h"
 
 class UProceduralMeshComponent;
@@ -717,6 +718,7 @@ public:
 	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> LitInstanceOf;
 	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> LitOriginalOf;
 	TSet<TWeakObjectPtr<class UMaterialInstanceDynamic>> LitWrapped;
+	TMap<TWeakObjectPtr<class UMaterialInstanceDynamic>,FKKLitSnapshot> LitSnapshots; // KKLitSync.h
 	TSet<FString> LitParentMissing;
 	// Insertion depth within the current pose. Authored vagina.open only; bone
 	// spread is used when that morph is absent. Range is owned by paired playback.

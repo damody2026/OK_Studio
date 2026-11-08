@@ -332,7 +332,8 @@ void AOKStreetSocialScene::StartControlServer(){
  // the map on it). Answers the one in use and every style there is.
  Bind(TEXT("/render"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   const auto Body=OKControlBody(Req);FString Style;if(Body->TryGetStringField(TEXT("style"),Style))SetRenderStyle(Style);
-  auto O=OKControlResult(true);O->SetStringField(TEXT("style"),RenderStyle());O->SetStringField(TEXT("label"),RenderStyleLabel(RenderStyle()));O->SetBoolField(TEXT("restarting"),State->SaveRestarting);
+  bool bLit;if(Body->TryGetBoolField(TEXT("lit"),bLit))SetLit(bLit);
+  auto O=OKControlResult(true);O->SetBoolField(TEXT("lit"),State->Lit);O->SetStringField(TEXT("style"),RenderStyle());O->SetStringField(TEXT("label"),RenderStyleLabel(RenderStyle()));O->SetBoolField(TEXT("restarting"),State->SaveRestarting);
   TArray<TSharedPtr<FJsonValue>> Styles;Styles.Add(MakeShared<FJsonValueString>(TEXT("koikatsu")));for(const auto& R:OKRenderRamps())Styles.Add(MakeShared<FJsonValueString>(TEXT("ramp:")+R.Key));Styles.Add(MakeShared<FJsonValueString>(TEXT("hg")));O->SetArrayField(TEXT("styles"),Styles);
   OKControlReply(Done,O);
  });
