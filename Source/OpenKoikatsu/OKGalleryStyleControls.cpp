@@ -39,6 +39,7 @@ namespace
 		{ TEXT("leg_length"), TEXT("腿長"), 0.7f, 1.3f, &T::LegLength },
 		{ TEXT("bust"), TEXT("胸部大小"), 0.6f, 2.f, &T::Bust },
 		{ TEXT("breast"), TEXT("胸部滑桿目標"), 0.f, 1.5f, &T::Breast },
+		{ TEXT("bust_height"), TEXT("胸部上下位置目標"), 0.f, 2.f, &T::BustHeight },
 		{ TEXT("hem"), TEXT("衣服下擺寬"), 0.6f, 1.5f, &T::Hem },
 		{ TEXT("real_jaw"), TEXT("寫實下巴變化"), 0.f, 1.f, &T::RealJaw },
 		{ TEXT("real_face"), TEXT("寫實五官變化"), 0.f, 1.f, &T::RealFace },

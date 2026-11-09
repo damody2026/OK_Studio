@@ -1319,6 +1319,12 @@ pub(crate) struct FaceRuntimeState {
     pub blush_rate: Option<f32>,
 }
 
+// The body proxies are published under the session's address: the host keeps them until told, and a closed session's
+// body stayed as a phantom partner (a reloaded card's breasts were pushed square or flat by the old one).
+impl Drop for OkSession {
+    fn drop(&mut self) { crate::px::release_group(self as *const Self as u64); }
+}
+
 impl OkSession {
     pub fn set_eye_gaze_rates(&mut self, left: f32, right: f32, vertical: f32) -> bool {
         if !left.is_finite() || !right.is_finite() || !vertical.is_finite() {

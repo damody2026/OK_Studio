@@ -859,6 +859,17 @@ namespace OKPhysXSecondary
 				if (Group) { UE::TUniqueLock GroupGuard(Group->Lock); Group->Chains.Remove(Key); }
 			}
 		}
+		// A character that went away (its session's group id; chain keys are small counters, never a session's address):
+		// its body stayed behind as a phantom partner, and a new session of the same card in the reader had its breasts
+		// pushed square or flat by the old body standing in the same place (2026-11-09).
+		{
+			UE::TUniqueLock GroupGuard(GGroupLock);
+			GGroups.Remove(Key);
+		}
+		{
+			UE::TUniqueLock Guard(GRagdollLock);
+			GRagdolls.Remove(Key);
+		}
 	}
 
 	int32 Ragdoll(uint64 GroupId, void* BonesPtr, uint32 Count, float Dt)

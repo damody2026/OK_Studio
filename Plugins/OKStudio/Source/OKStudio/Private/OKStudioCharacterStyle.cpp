@@ -245,5 +245,7 @@ void OKStudioStyleSliders(float Style, float FaceLook, TArray<float>& Body, TArr
 	Pulled(Style, BodyStyle, Body);
 	// The chibi end takes at most half of the card's breasts away.
 	if (Body.IsValidIndex(4)) Body[4] = Style > 0.f ? FMath::Lerp(Body[4], FMath::Max(Body[4] * 0.5f, FMath::Min(Body[4], ChibiBreast)), Style) : Body[4] - Style * Pull * (OKStudioStyleTuning().Breast - Body[4]);
+	// The realistic end raises the breasts with the style (a card already higher keeps its own).
+	if (Style < 0.f && Body.IsValidIndex(5)) Body[5] = FMath::Lerp(Body[5], FMath::Max(Body[5], OKStudioStyleTuning().BustHeight), -Style);
 	if (Body.IsValidIndex(1)) Body[1] = Style > 0.f ? FMath::Lerp(Body[1], ChibiHead, Style * Pull) : FMath::Lerp(Body[1], FMath::Min(Body[1], RealHead(Body[0])), -Style);
 }
