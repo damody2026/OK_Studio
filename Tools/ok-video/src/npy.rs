@@ -59,6 +59,12 @@ fn parse(bytes: &[u8]) -> Result<Array, String> {
     Ok(Array { shape, data })
 }
 
+/// Reads one .npy file.
+pub fn read_npy(path: &Path) -> Result<Array, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    parse(&bytes).map_err(|e| format!("{}: {e}", path.display()))
+}
+
 /// Reads the named arrays (all supported ones when `want` is empty).
 pub fn read_npz(path: &Path, want: &[&str]) -> Result<HashMap<String, Array>, String> {
     let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;

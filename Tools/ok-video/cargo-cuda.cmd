@@ -2,6 +2,9 @@
 rem Build ok-video with CUDA: MSVC 2022 host compiler (nvcc 12.9 does not accept VS 18) + CUDA 12.9, sm_120 (RTX 50).
 rem Usage: cargo-cuda.cmd build --release   (any cargo arguments)
 setlocal
+rem A newer system-wide CUDA_PATH (e.g. v13.x) does not build candle-kernels 0.11: prefer 12.9 when it is installed,
+rem OK_CUDA_PATH overrides.
+if defined OK_CUDA_PATH (set "CUDA_PATH=%OK_CUDA_PATH%") else if exist "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\bin\nvcc.exe" set "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9"
 if not defined CUDA_PATH set "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9"
 if not defined CUDA_COMPUTE_CAP set CUDA_COMPUTE_CAP=120
 set "PATH=C:\Program Files (x86)\Microsoft Visual Studio\Installer;%PATH%"

@@ -4,6 +4,7 @@ use std::path::Path;
 use std::time::Instant;
 
 mod crop;
+mod flowhmr;
 mod geom;
 mod gvhmr;
 mod npy;
@@ -60,7 +61,7 @@ fn project_root() -> std::path::PathBuf {
     std::env::current_dir().unwrap_or_default()
 }
 
-const IMPORT_USAGE: &str = "ok-video import <影片> [--name 名稱] [-s] [--f_mm N] [--pair --left male|female --game <遊戲目錄>] [--arm-reach 1.0] [--collar-scale 0.5] [--smooth 1.0] [--models <checkpoints>] [--out-dir <dir>] [--card <png>] [--ok-extract <exe>] [--skip-gvhmr] [--no-validate]";
+const IMPORT_USAGE: &str = "ok-video import <影片> [--name 名稱] [--method gvhmr|flowhmr] [--features <SAM 特徵.npy>] [--seed 42] [-s] [--f_mm N] [--pair --left male|female --game <遊戲目錄>] [--arm-reach 1.0] [--collar-scale 0.5] [--smooth 1.0] [--models <checkpoints>] [--out-dir <dir>] [--card <png>] [--ok-extract <exe>] [--skip-gvhmr] [--no-validate]";
 
 fn import(args: &[String]) -> Result<(), String> {
     let root = project_root();
@@ -81,7 +82,7 @@ fn import(args: &[String]) -> Result<(), String> {
     };
     while let Some(a) = it.next() {
         if a.starts_with('-') {
-            if matches!(a.as_str(), "--name" | "--f_mm" | "--left" | "--game" | "--arm-reach" | "--collar-scale" | "--smooth" | "--models" | "--out-dir" | "--card" | "--ok-extract" | "--data") {
+            if matches!(a.as_str(), "--name" | "--f_mm" | "--left" | "--game" | "--arm-reach" | "--collar-scale" | "--smooth" | "--models" | "--out-dir" | "--card" | "--ok-extract" | "--data" | "--method" | "--seed" | "--features") {
                 let v = it.next();
                 if a == "--name" {
                     name = v.cloned();
@@ -141,6 +142,9 @@ fn import(args: &[String]) -> Result<(), String> {
         collar_scale: num("--collar-scale", 0.5)?,
         smooth: num("--smooth", 1.)?,
         skip_gvhmr: skip,
+        method: models::Method::parse(&value("--method").unwrap_or_else(|| "gvhmr".into()))?,
+        seed: value("--seed").map(|v| v.parse::<u64>().map_err(|_| format!("--seed 需要非負整數：{v}"))).transpose()?.unwrap_or(42),
+        features: value("--features").map(Into::into),
     };
     let _ = &mut flag;
     pipeline::run(&o)
@@ -482,6 +486,42 @@ fn weights(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// `flowhmr-golden <flowhmr.safetensors> <inputs.npz> <out.npz> [--steps N]`: runs the FlowHMR sampler
+/// on reference inputs (`feature` (T,3072), `camera_R` (T,9), `noise` (T,491)) and writes `latent`
+/// (T,491) plus the decoded `global_orient` / `body_pose` (axis-angle) and `pelvis`, for comparison
+/// with the PyTorch implementation.
+fn flowhmr_golden(args: &[String]) -> Result<(), String> {
+    let (ck, inp, out) = match args {
+        [a, b, c, ..] => (a, b, c),
+        _ => return Err("用法：ok-video flowhmr-golden <flowhmr.safetensors> <inputs.npz> <out.npz> [--steps N]".into()),
+    };
+    let steps = args.iter().position(|a| a == "--steps").and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(flowhmr::STEPS);
+    let m = npy::read_npz(Path::new(inp), &["feature", "camera_R", "noise"])?;
+    let f32s = |k: &str| m[k].data.iter().map(|v| *v as f32).collect::<Vec<f32>>();
+    let dev = device();
+    let net = flowhmr::Network::load(Path::new(ck), &dev)?;
+    let t = Instant::now();
+    let latent = net.sample(&f32s("feature"), &f32s("camera_R"), &f32s("noise"), steps, &|_| {})?;
+    let l = latent.len() / flowhmr::LATENT;
+    println!("sampled {l} frames, {steps} steps in {:.2}s", t.elapsed().as_secs_f64());
+    let d = flowhmr::decode(&net, &latent)?;
+    let flat3 = |v: &[[f64; 3]]| v.iter().flat_map(|a| a.iter().map(|x| *x as f32)).collect::<Vec<f32>>();
+    let go = flat3(&d.global_orient);
+    let bp: Vec<f32> = d.body_pose.iter().flat_map(|p| p.iter().flat_map(|a| a.iter().map(|x| *x as f32))).collect();
+    let pel = flat3(&d.pelvis);
+    npy::write_npz(
+        Path::new(out),
+        &[
+            ("latent", npy::Out::F32(&latent, vec![l, flowhmr::LATENT])),
+            ("global_orient", npy::Out::F32(&go, vec![l, 3])),
+            ("body_pose", npy::Out::F32(&bp, vec![l, 63])),
+            ("pelvis", npy::Out::F32(&pel, vec![l, 3])),
+        ],
+    )?;
+    println!("wrote {out}");
+    Ok(())
+}
+
 fn device() -> Device {
     match Device::new_cuda(0) {
         Ok(d) => d,
@@ -546,6 +586,10 @@ fn main() {
             1
         }),
         Some("gvhmr-golden") => gvhmr_golden(&args[2..]).map(|_| 0).unwrap_or_else(|e| {
+            eprintln!("[錯誤] {e}");
+            1
+        }),
+        Some("flowhmr-golden") => flowhmr_golden(&args[2..]).map(|_| 0).unwrap_or_else(|e| {
             eprintln!("[錯誤] {e}");
             1
         }),
