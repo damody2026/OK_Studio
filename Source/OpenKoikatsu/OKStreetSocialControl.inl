@@ -403,6 +403,50 @@ void AOKStreetSocialScene::StartControlServer(){
   auto O=OKControlResult(true);O->SetNumberField(TEXT("places"),Rows.Num());O->SetNumberField(TEXT("with_problems"),Bad);
   O->SetNumberField(TEXT("ms"),(FPlatformTime::Seconds()-Began)*1000.0);O->SetArrayField(TEXT("rows"),Rows);OKControlReply(Done,O);
  });
+ // Every activity, tried for real (development, Tools/street_activity_audit.lua): {"op":"start", girl, id} ends what
+ // is going on, puts him at the place's door and her beside him (held), and starts the outing to it as an agreed
+ // invitation does (no asking); {"op":"status"} tells what runs now (walking there, pair, solo, facility, restroom,
+ // sleep, stroll) and where the two stand against the activity's anchor and the ground; {"op":"end"} ends it all.
+ Bind(TEXT("/activity_try"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
+  auto& S=*State;const auto B=OKControlBody(Req);FString Op=TEXT("status"),Id;B->TryGetStringField(TEXT("op"),Op);B->TryGetStringField(TEXT("id"),Id);double GirlNum=0;B->TryGetNumberField(TEXT("girl"),GirlNum);
+  auto EndAll=[this,&S](){if(S.OutingGirl!=INDEX_NONE)CancelOuting(FString());if(S.Pair.Partner!=INDEX_NONE)FinishPhoto();if(S.SoloGirl!=INDEX_NONE)EndSolo();if(S.Facility!=INDEX_NONE)FinishFacility();
+   if(S.RestroomGirl!=INDEX_NONE)EndRestroom(false);if(S.SleepPhase!=0)AbortSleep(FString());if(S.Companion!=INDEX_NONE)FinishCompanion();S.StrollActivity.Reset();EndTalk();};
+  if(Op==TEXT("end")){EndAll();OKControlReply(Done,OKControlResult(true));return;}
+  if(Op==TEXT("start")){
+   const FOKStreetActivity* A=OKStreetFindActivity(Id);const int32 Girl=int32(GirlNum);
+   if(!A||!S.Agents.IsValidIndex(Girl-1)){OKControlReply(Done,OKControlResult(false,TEXT("girl and a known activity id required")));return;}
+   const FOKStreetPlace* P=A->Place&&*A->Place?OKStreetFindPlace(A->Place):nullptr;
+   EndAll();StopNavigation(FString());
+   if(P){S.Male=P->Door;float G=S.Male.Z;if(OKStreetGroundZ(GetWorld(),S.Male,G,this))S.Male.Z=G;}
+   auto& Her=S.Agents[Girl-1];Her.Position=S.Male+FRotator(0,S.Rotations[0].Yaw+90.f,0).RotateVector(FVector(120,0,0));S.Commutes.Remove(Girl);S.LiftWalks.Remove(Girl);Her.Held=true;S.ScheduleHeld.Add(Girl);
+   FString Error;const bool Ok=BeginOuting(Girl,Id,Error);
+   auto O=OKControlResult(Ok,Error);O->SetStringField(TEXT("place"),P?P->Id:TEXT(""));O->SetNumberField(TEXT("kind"),int32(A->Kind));O->SetStringField(TEXT("anchor"),A->Anchor?A->Anchor:TEXT(""));
+   OKControlReply(Done,O);return;}
+  // status
+  auto O=OKControlResult(true);
+  FString Running=TEXT("none");int32 Girl=INDEX_NONE;
+  if(S.OutingGirl!=INDEX_NONE&&S.OutingActivity==TEXT("stroll")){Running=TEXT("stroll");Girl=S.OutingGirl;}
+  else if(S.OutingGirl!=INDEX_NONE){Running=TEXT("walking");Girl=S.OutingGirl;O->SetNumberField(TEXT("route_step"),S.OutingStep);O->SetNumberField(TEXT("route_points"),S.OutingRoute.Num());O->SetStringField(TEXT("activity"),S.OutingActivity);}
+  else if(S.Pair.Partner!=INDEX_NONE){Running=TEXT("pair");Girl=S.Pair.Partner;O->SetNumberField(TEXT("pair_phase"),S.Pair.Phase);O->SetStringField(TEXT("female_clip"),S.Pair.FemaleClip);O->SetStringField(TEXT("male_clip"),S.Pair.MaleClip);}
+  else if(S.SoloGirl!=INDEX_NONE){Running=TEXT("solo");Girl=S.SoloGirl;}
+  else if(S.Facility!=INDEX_NONE){Running=TEXT("facility");Girl=S.FacilityCharacter;}
+  else if(S.RestroomGirl!=INDEX_NONE){Running=TEXT("restroom");Girl=S.RestroomGirl;}
+  else if(S.SleepPhase!=0){Running=TEXT("sleep");Girl=S.SleepGirl;}
+  else if(!S.StrollActivity.IsEmpty()&&S.Companion!=INDEX_NONE){Running=TEXT("stroll");Girl=S.Companion;}
+  O->SetStringField(TEXT("running"),Running);O->SetStringField(TEXT("message"),S.Message);O->SetStringField(TEXT("last_activity"),S.LastActivity);O->SetStringField(TEXT("here"),PlaceHere(S.Male));
+  auto Where=[this](const FVector& At,TSharedRef<FJsonObject> Into,const TCHAR* Name){auto W=MakeShared<FJsonObject>();W->SetNumberField(TEXT("x"),At.X);W->SetNumberField(TEXT("y"),At.Y);W->SetNumberField(TEXT("z"),At.Z);
+   float G=At.Z;const bool HasGround=OKStreetGroundZ(GetWorld(),At,G,this);W->SetBoolField(TEXT("ground"),HasGround);if(HasGround)W->SetNumberField(TEXT("above_ground"),At.Z-G);
+   W->SetBoolField(TEXT("in_obstacle"),OKStreetBlockedPoint(At,0.f));
+   // The map's own meshes (a shelf, a wall): a thin body from chest to head where he stands. From the knees up it was the
+   // table's edge at every meal (a seated pair is at the table on purpose).
+   FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetActivityTry),false,this);
+   W->SetBoolField(TEXT("in_mesh"),GetWorld()->OverlapAnyTestByChannel(FVector(At.X,At.Y,(HasGround?G:At.Z)+140.f),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(12.f,30.f),Query));
+   Into->SetObjectField(Name,W);};
+  Where(S.Male,O,TEXT("male"));if(S.Agents.IsValidIndex(Girl-1)){Where(S.Agents[Girl-1].Position,O,TEXT("female"));O->SetNumberField(TEXT("girl"),Girl);O->SetNumberField(TEXT("apart"),FVector::Dist(S.Male,S.Agents[Girl-1].Position));}
+  const FOKStreetActivity* A=OKStreetFindActivity(Id.IsEmpty()?S.LastActivity:Id);const FOKStreetPlace* P=A&&A->Place?OKStreetFindPlace(A->Place):nullptr;
+  if(const FOKStreetModelAnchor* Spot=P&&A->Anchor?OKStreetPlaceAnchor(*P,A->Anchor):nullptr){Where(Spot->Position,O,TEXT("anchor"));O->SetNumberField(TEXT("male_from_anchor"),FVector::Dist2D(S.Male,Spot->Position));O->SetNumberField(TEXT("male_dz_anchor"),S.Male.Z-Spot->Position.Z);}
+  OKControlReply(Done,O);
+ });
  // The roster menu (OKStreetSocialRoster.inl), as a person uses it: {} or {"op":"state"} reads it; open | close | scan;
  // import {files}; pick {path, on}; apply; edit {her, tab: settings|memory}; set {field: name|persona|profile|memory,
  // value}; save (the tab being edited); forget (her conversation context).

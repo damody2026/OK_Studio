@@ -424,6 +424,13 @@ TArray<const FOKStreetPlace*> AOKStreetSocialScene::NearbyPlaces(float Radius) c
 // Where a walk to a building ends: through its door and a few steps into its ground-floor room (a shop's counter side),
 // or the door when it has no rooms.
 FVector AOKStreetSocialScene::PlaceInsideSpot(const FOKStreetPlace& Place) const{
+ // Open air: its spot nearest the door that counts as this place. 1.8 m from the door towards its box's middle was the
+ // shrine's in the park (the park's box holds the shrine), the BBQ area's in the playground, the fishing spot's over the
+ // pond and the jet-ski's in the water (places_check 11-09).
+ if(Place.Outdoor){const FOKStreetModelAnchor* Near=nullptr;double NearD=FMath::Square(2500.0);
+  for(const auto& A:Place.Anchors){if(A.Name.StartsWith(TEXT("lift"))||A.Name.StartsWith(TEXT("stair"))||A.Name.StartsWith(TEXT("gate"))||FMath::Abs(A.Position.Z-Place.Door.Z)>150.f)continue;
+   const double D=FVector::DistSquared2D(A.Position,Place.Door);if(D<NearD&&PlaceHere(A.Position)==Place.Id){NearD=D;Near=&A;}}
+  if(Near)return Near->Position;}
  const FBox* Ground=nullptr;float Best=1e12f;
  for(int32 R=0;R<Place.Rooms.Num();++R)if(!Place.RoomLevels.IsValidIndex(R)||Place.RoomLevels[R]<=1){const float D=Place.Rooms[R].ComputeSquaredDistanceToPoint(FVector(Place.Door.X,Place.Door.Y,Place.Rooms[R].GetCenter().Z));if(D<Best){Best=D;Ground=&Place.Rooms[R];}}
  if(!Ground)return Place.Door;
@@ -567,6 +574,11 @@ bool AOKStreetSocialScene::BeginOuting(int32 Girl,const FString& ActivityId,FStr
  if(Stroll){BeginStroll(Girl,Error);return Error.IsEmpty();}
  // Activities with an anchor happen inside the place: the route goes on from the door to that spot.
  const FOKStreetModelAnchor* Spot=Place&&Activity?OKStreetPlaceAnchor(*Place,Activity->Anchor):nullptr;
+ // A spot in another building than its place (the old school's music room is on the cafeteria's 3F): the walk goes
+ // through the building it is in, its door and its lift. Up the school's own lift it ended on the 3F 100 m off, two
+ // minutes of walking into walls (activity audit 11-09).
+ if(Spot&&Place&&!OKStreetInsidePlace(*Place,Spot->Position))for(const auto& Q:OKStreetPlaces())if(&Q!=Place&&!Q.Rooms.IsEmpty()&&OKStreetInsidePlace(Q,Spot->Position)){
+  UE_LOG(LogTemp,Display,TEXT("Street outing: %s's spot is in %s, not %s: the walk goes through it"),*ActivityId,Q.Id,Place->Id);Place=&Q;break;}
  // Already there: at the activity's spot, or for a building inside it (at its door is still outside the shop: the route
  // below goes in), for a place without rooms at its door.
  const bool There=!Place||(Spot?FVector::Dist2D(S.Male,Spot->Position)<80&&FMath::Abs(S.Male.Z-Spot->Position.Z)<150.f:Place->Rooms.IsEmpty()?FVector::Dist2D(S.Male,Place->Door)<200:OKStreetInsidePlace(*Place,S.Male));
@@ -600,6 +612,10 @@ bool AOKStreetSocialScene::BeginOuting(int32 Girl,const FString& ActivityId,FStr
   UE_LOG(LogTemp,Display,TEXT("Street outing: %s is on another floor of %s: by the elevator (%d -> %d)"),*ActivityId,Place->Name,From,To);
  }
  else if(Spot&&OKStreetInsidePlace(*Place,S.Male))Route={S.Male,Spot->Position}; // already inside, same floor: walk straight over
+ // Open air: no door to go through, the way leads to the spot itself. By the "door" the walk to the Christmas tree went
+ // round by the campus gate to the far side of the fence and back (its door had been put on the campus side; activity
+ // audit 11-09).
+ else if(Spot&&Place->Outdoor&&!OKStreetUpstairs(Spot->Position)){Route=PlaceRoute(S.Male,Spot->Position);if(Route.Num()<2){Error=OKMsg(TEXT("ui.outing.no_route_to_place"), {{TEXT("place_name"), Place->Name}});return false;}}
  else{
   Route=FVector::Dist2D(S.Male,Place->Door)<200?TArray<FVector>{S.Male,Place->Door}:PlaceRoute(S.Male,Place->Door);
   if(Route.Num()<2){Error=OKMsg(TEXT("ui.outing.no_route_to_place"), {{TEXT("place_name"), Place->Name}});return false;}
@@ -734,11 +750,15 @@ float AOKStreetSocialScene::StepOuting(float Dt){
   if(Now-S.OutingProgressAt>4){
    // Round the obstacle to the next point and on along the rest of the route: planned straight to the last point, a
    // stroll's loop (it ends near where it began) collapsed into two points and the walk was over in seconds.
-   S.OutingProgressAt=Now;TArray<FVector> Again=PlaceRoute(S.Male,S.OutingRoute[S.OutingStep]);
+   S.OutingProgressAt=Now;
+   // Upstairs the way is on this floor: planned again on the street's routes from the EE building's 2F, the next point was
+   // its door on the ground floor and he was stepped down to it through the floor (activity audit 11-09).
+   const bool Upstairs=OKStreetUpstairs(S.Male);
+   TArray<FVector> Again=Upstairs?GridRoute(S.Male,S.OutingRoute[S.OutingStep]):PlaceRoute(S.Male,S.OutingRoute[S.OutingStep]);
    if(Again.Num()>=2)for(int32 K=S.OutingStep+1;K<S.OutingRoute.Num();++K)Again.Add(S.OutingRoute[K]);
-   else Again=PlaceRoute(S.Male,S.OutingRoute.Last()); // the next point itself is out of reach: straight on to the end
+   else if(!Upstairs)Again=PlaceRoute(S.Male,S.OutingRoute.Last()); // the next point itself is out of reach: straight on to the end
    // Inside a building (just down from the elevator) the street routes do not reach him: out by its door first.
-   if(Again.Num()<2)if(const FOKStreetPlace* In=OKStreetFindPlace(PlaceHere(S.Male));In&&!In->Door.IsNearlyZero()){
+   if(Again.Num()<2&&!Upstairs)if(const FOKStreetPlace* In=OKStreetFindPlace(PlaceHere(S.Male));In&&!In->Door.IsNearlyZero()){
     TArray<FVector> Out=PlaceRoute(In->Door,S.OutingRoute.Last());
     // Already tried the straight way to the door and a wall is in it: they step out of the door (a hallway the
     // street map does not know).
@@ -753,8 +773,13 @@ float AOKStreetSocialScene::StepOuting(float Dt){
    if(FVector::Dist2D(S.Male,S.OutingStuckPos)<30.f)++S.OutingStuckCount;else{S.OutingStuckCount=1;S.OutingStuckPos=S.Male;}
    // Held up within reach of the last point (the seat at the table): he takes it now. At the cafeteria he stood 60 cm (at the
    // department store 1.55 m) from his chair for 16 s while the route was planned round the table again and again.
-   const bool AtLast=S.OutingStep==S.OutingRoute.Num()-1&&FVector::Dist2D(S.Male,S.OutingRoute[S.OutingStep])<200.f;
-   if((S.OutingStuckCount>=5||AtLast)&&S.OutingRoute.IsValidIndex(S.OutingStep)){
+   // At the boat pond the dock is over the water's edge: blocked 1.5 m short, the route planned again went the long way
+   // round the pond and back, two minutes (activity audit 11-09); the rowing boat is 8 m off the bank. The activity puts them
+   // on its spot anyway: within 10 m of an activity's last point he takes it.
+   const bool AtLast=S.OutingStep==S.OutingRoute.Num()-1&&FVector::Dist2D(S.Male,S.OutingRoute[S.OutingStep])<(OKStreetFindActivity(S.OutingActivity)?1000.f:200.f);
+   // Upstairs with no way found on the floor twice (the cafeteria's 3F to its music room, the EE building's 2F): the next
+   // point is on this floor, he steps past rather than standing there until she gives up.
+   if((S.OutingStuckCount>=5||AtLast||(Upstairs&&Again.Num()<2&&S.OutingStuckCount>=2))&&S.OutingRoute.IsValidIndex(S.OutingStep)){
     const FVector Next=S.OutingRoute[S.OutingStep];UE_LOG(LogTemp,Display,TEXT("Street outing: wedged at (%.0f,%.0f); he steps past to the next point %s"),S.Male.X,S.Male.Y,*Next.ToCompactString());
     // At the point's height in the city (its ground): kept at his, a step past onto a lower road left him 2.5 m up in the
     // air, where no step finds ground under him, and every point after that was a wedge (R6-180).
@@ -832,6 +857,28 @@ FString AOKStreetSocialScene::CardTableOuting(const FString& Said){
  const FString* Seat=SeatOf.Find(Answer->GetStringField(TEXT("place")));return Seat?*Seat:FString();
 }
 
+// A city spot is often the thing itself (the drink shop's counter, the snack bar's table, the bookshop's shelf, a vending
+// machine): stood exactly there he was inside it, and the camera between their heads with him, the view one white counter
+// (activity audit 11-09). A seat, a bench, a bed or a pool is meant to be sat or lain in: those keep the spot.
+bool AOKStreetSocialScene::ActivitySettles(const TCHAR* Anchor) const{
+ if(!OKStreetCityMode()||!Anchor)return false;const FString Name=Anchor;
+ for(const TCHAR* In:{TEXT("seat"),TEXT("bench"),TEXT("sofa"),TEXT("booth"),TEXT("bed"),TEXT("bleacher"),TEXT("chair"),TEXT("pool"),TEXT("swim"),TEXT("bath"),TEXT("lounge"),TEXT("boat")})if(Name.Contains(In))return false;
+ return true;
+}
+// The nearest open floor round At (a body's room from the hips up, ground at its height), on the near side of what it faces
+// (Yaw) first; At stays when it is open already or nothing is within 4 m (the park's fountain is wider than 2 m).
+void AOKStreetSocialScene::SettleOnFloor(FVector& At,float Yaw,const TCHAR* Why) const{
+ FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetActivitySpot),false,this);
+ // (and clear of the street's own props: the lodge's vending machine has no collision, and she stood in it to her chin)
+ auto Clear=[&](FVector& P){float G=P.Z;if(OKStreetBlockedPoint(P,15.f)||!OKStreetGroundZ(GetWorld(),P,G,this)||G>P.Z+30.f||G<P.Z-60.f)return false;
+  if(GetWorld()->OverlapAnyTestByChannel(FVector(P.X,P.Y,G+110.f),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(20.f,65.f),Query))return false;P.Z=G;return true;};
+ FVector Here=At;if(Clear(Here)){At=Here;return;}
+ const FVector Facing=FRotator(0,Yaw,0).Vector();FVector Best=At;float BestScore=TNumericLimits<float>::Max();
+ for(float R=25.f;R<=400.f;R+=25.f){for(int32 K=0;K<24;++K){const FVector Dir(FMath::Cos(2*PI*K/24.f),FMath::Sin(2*PI*K/24.f),0);FVector C=At+Dir*R;if(!Clear(C))continue;
+   const float Score=R+((Dir|Facing)>.3f?60.f:0.f);if(Score<BestScore){BestScore=Score;Best=C;}}if(BestScore<R+25.f)break;}
+ if(BestScore<TNumericLimits<float>::Max()){UE_LOG(LogTemp,Display,TEXT("Street activity: %s spot inside something, %s -> %s"),Why,*At.ToCompactString(),*Best.ToCompactString());At=Best;}
+}
+
 bool AOKStreetSocialScene::StartOutingActivity(int32 Girl,const FString& ActivityId,FString& Error){
  auto& S=*State;
  // What she ordered on the way here goes to the counter now that they are in the shop (the rest stays for later).
@@ -853,8 +900,10 @@ bool AOKStreetSocialScene::StartOutingActivity(int32 Girl,const FString& Activit
   if(!Spot||!A->FemaleClip){Error=OKT(TEXT("ui.outing.cannot_do_here"));return false;}
   StopAmbientActivity();EndTalk();if(S.Companion==Girl)FinishCompanion();
   const FRotator Facing(0,Spot->Yaw+A->Turn,0);FString Ignore;
-  S.Male=Spot->Position;S.Rotations[0]=Facing;
-  auto& Agent=S.Agents[Girl-1];Agent.Position=S.Male+Facing.RotateVector(FVector(0,110,0));Agent.Held=true;S.Rotations[Girl]=Facing;
+  S.Male=Spot->Position;S.Rotations[0]=Facing;if(ActivitySettles(A->Anchor))SettleOnFloor(S.Male,Facing.Yaw,A->Id);
+  // In the city she stands a little behind his side: what he faces (a vending machine 1.2 m wide, a shelf) is in front, and
+  // level with him she was inside it; a prop without collision is not seen by the settle.
+  auto& Agent=S.Agents[Girl-1];Agent.Position=S.Male+Facing.RotateVector(FVector(OKStreetCityMode()?-60.f:0.f,110,0));if(ActivitySettles(A->Anchor))SettleOnFloor(Agent.Position,Facing.Yaw,A->Id);Agent.Held=true;S.Rotations[Girl]=Facing;
   if(!OKPrewarmCrowdRuntimeAction(this,Girl,A->FemaleClip,Ignore)){Error=OKT(TEXT("ui.outing.action_not_ready_label"))+Ignore;Agent.Held=false;return false;}
   // He does the same thing beside her unless the activity names his own action.
   const TCHAR* MaleClip=A->MaleClip?A->MaleClip:A->FemaleClip;
@@ -897,6 +946,11 @@ bool AOKStreetSocialScene::StartOutingActivity(int32 Girl,const FString& Activit
   if(const FOKStreetModelAnchor* Spot=Place?OKStreetPlaceAnchor(*Place,A->Anchor):nullptr){
    S.Male=Spot->Position;S.NextPairYaw=Spot->Yaw;S.NextPairFemaleClip=A->FemaleClip?A->FemaleClip:TEXT("");S.NextPairMaleClip=A->MaleClip?A->MaleClip:TEXT("");
    S.Agents[Girl-1].Position=S.Male+FRotator(0,Spot->Yaw,0).RotateVector(FVector(0,110,0));
+   // A city spot is often the thing itself (the drink shop's counter, the snack bar's table, the bookshop's shelf): stood
+   // exactly there he was inside it, and the camera between their heads with him, the view one white counter (activity
+   // audit 11-09). Each of the two goes to the nearest open floor round where they were put, on the near side of what
+   // they face first. A seat, a bench, a bed or a pool is meant to be sat or lain in: those keep the spot.
+   if(ActivitySettles(A->Anchor)){SettleOnFloor(S.Male,Spot->Yaw,A->Id);FVector& Her=S.Agents[Girl-1].Position;Her=S.Male+FRotator(0,Spot->Yaw,0).RotateVector(FVector(0,110,0));SettleOnFloor(Her,Spot->Yaw,A->Id);}
   }
  }
  // Which activity this is, also when it starts where they already stand (no walk, no ArriveOuting): without it reading

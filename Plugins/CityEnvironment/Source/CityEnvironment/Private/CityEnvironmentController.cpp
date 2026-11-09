@@ -830,6 +830,17 @@ void ACityEnvironmentController::SetAuthority(bool bInAuthority)
 	}
 }
 
+void ACityEnvironmentController::GetManagedLights(TSet<const ULightComponentBase*>& Out) const
+{
+	for (const FManagedLight& Item : Lights)
+	{
+		if (const ULightComponentBase* Light = Item.Component.Get())
+		{
+			Out.Add(Light);
+		}
+	}
+}
+
 void ACityEnvironmentController::RegisterLevel(ULevel* Level)
 {
 	if (!Level)

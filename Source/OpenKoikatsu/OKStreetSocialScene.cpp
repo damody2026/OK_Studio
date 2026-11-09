@@ -85,6 +85,8 @@ static const FVector OKStreetOffstage(0.,0.,-100000.);
 #include "GameFramework/PlayerController.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Components/PointLightComponent.h"
+#include "Engine/PointLight.h"
+#include "Components/RectLightComponent.h"
 #include "InputCoreTypes.h"
 #include "Misc/CommandLine.h"
 #include "Misc/DateTime.h"
@@ -163,6 +165,7 @@ struct FOKStreetCandidateProbeSnapshot {
 // Reusable two-actor reservation/preparation/capture lifecycle. No card-specific resources.
 struct FOKStreetPairSession {
  int32 Partner=INDEX_NONE,Phase=0;
+ bool YawChecked=false; // the way round chosen for room in the city (pair phase 0)
  FString MaleClip,FemaleClip,CapturePath;
  // At a meal: the clip each of the two (0 him, 1 her) plays now and the one asked for (eating while there is something
  // of theirs to eat, else seated idle: she ate an empty table while only he had ordered).
@@ -3139,6 +3142,17 @@ void AOKStreetSocialScene::TickPhoto(double Now){
  if(!OKGetCrowdRuntimeCharacterStatus(this,0,Male)||!OKGetCrowdRuntimeCharacterStatus(this,P.Partner,Npc)||!Male.Visible||!Npc.Visible||!Male.Error.IsEmpty()||!Npc.Error.IsEmpty()||!OKGetCrowdRuntimeActionStatus(this,0,A)||!OKGetCrowdRuntimeActionStatus(this,P.Partner,B)){UE_LOG(LogTemp,Display,TEXT("Street pair: ended at Scene.cpp:%d (phase %d)"),__LINE__,S.Pair.Phase);FinishPhoto();return;}
  if(P.Phase==0){
   if(Now-P.RequestedAt>60){UE_LOG(LogTemp,Display,TEXT("Street pair: ended at Scene.cpp:%d (phase %d)"),__LINE__,S.Pair.Phase);FinishPhoto();S.Message=OKT(TEXT("ui.scene.dual_activity_prep_timeout"));RefreshUI();return;}
+  // The pair is laid out round him by its own offsets (a meal 1.7 m to his side, a drink 1.5 m, the seats 1.55 m): in a
+  // narrow city shop that side was the shop window, she sat behind the glass and the view was one white pane (the snack
+  // bar's dessert, activity audit 11-09). The first way round with room for her and nothing between them: as laid out,
+  // turned round, or to either side.
+  if(!P.YawChecked){P.YawChecked=true;
+   const FVector Off=P.Read?FVector(85,0,0):P.Splash?FVector(0,160,0):P.PhoneUse?FVector(0,150,0):P.Drink?FVector(0,150,0):P.Watermelon?FVector(120,0,0):P.Meal?FVector(0,170,0):P.Seated?FVector(0,155,0):FVector::ZeroVector;
+   if(OKStreetCityMode()&&!Off.IsZero()){FCollisionQueryParams Q(SCENE_QUERY_STAT(StreetPairRoom),false,this);
+    auto Room=[&](float Yaw){const FVector To=S.Male+FRotator(0,Yaw,0).RotateVector(Off);float G=To.Z;if(!OKStreetGroundZ(GetWorld(),To,G,this)||FMath::Abs(G-S.Male.Z)>60.f)return false;
+     return !GetWorld()->SweepTestByChannel(S.Male+FVector(0,0,120),FVector(To.X,To.Y,G+120.f),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeSphere(15.f),Q)
+      &&!GetWorld()->OverlapAnyTestByChannel(FVector(To.X,To.Y,G+110.f),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(20.f,65.f),Q);};
+    for(const float Turn:{0.f,180.f,90.f,-90.f})if(Room(P.Yaw+Turn)){if(Turn!=0.f)UE_LOG(LogTemp,Display,TEXT("Street pair: no room for her as laid out, turned %.0f degrees"),Turn);P.Yaw+=Turn;break;}}}
   // Turn into the authored paired orientation before starting the clips / props.
   // Otherwise a rate-limited actor would sit sideways through a table or chair.
   const FRotator PairFacing(0,P.Yaw,0);
@@ -3968,6 +3982,25 @@ static TWeakObjectPtr<USkyLightComponent> GOKStreetCitySkyLight;static float GOK
 // 9 of 15 ms on the street for the point and spot lights. Only the sun casts here; the rest are drawn in one clustered pass.
 // Nothing in the map has a cull distance: the smaller a mesh, the sooner it goes. An instanced component spans hundreds of
 // metres, so its own bounds cull nothing: each instance goes by the size of the mesh it draws.
+// The source map's lighting for the game's fixed exposure, live (tuned in the running game with game_exec; 11-09).
+static TArray<TPair<TWeakObjectPtr<ULocalLightComponent>,float>> GOKStreetSourceLamps; // lamps the controller does not set, their own intensity
+static TArray<TWeakObjectPtr<UPointLightComponent>> GOKStreetAddedLamps; // ceiling lights put in rooms with none
+// A lamp's intensity in the game: its own at the scale, and a rect light (the shops' ceiling panels, 60000 lumens each) at most
+// the cap: at 1/8 they still left the department store's floor 55% blown-out white, gone at 120 lumens (11-09, in the game).
+static float OKStreetSourceLampIntensity(const ULocalLightComponent* L,float Own);
+static void OKStreetSourceLampsApply(){for(const auto& L:GOKStreetSourceLamps)if(auto* C=L.Key.Get())C->SetIntensity(OKStreetSourceLampIntensity(C,L.Value));}
+static TAutoConsoleVariable<float> CVarOKStreetCitySourceLampScale(TEXT("ok.Street.CitySourceLampScale"),.125f,
+ TEXT("The source map's own lamps (not the city controller's) against their real lumens: the streamed copy has them at 1/8."),
+ FConsoleVariableDelegate::CreateLambda([](IConsoleVariable*){OKStreetSourceLampsApply();}));
+static TAutoConsoleVariable<float> CVarOKStreetCitySourceRectMax(TEXT("ok.Street.CitySourceRectMax"),150.f,
+ TEXT("The source map's rect lights (ceiling panels, in lumens) at most this, after the scale."),
+ FConsoleVariableDelegate::CreateLambda([](IConsoleVariable*){OKStreetSourceLampsApply();}));
+static float OKStreetSourceLampIntensity(const ULocalLightComponent* L,float Own){
+ float V=Own*CVarOKStreetCitySourceLampScale.GetValueOnGameThread();
+ if(L->IsA<URectLightComponent>()&&L->IntensityUnits==ELightUnits::Lumens)V=FMath::Min(V,CVarOKStreetCitySourceRectMax.GetValueOnGameThread());
+ return V;}
+static TAutoConsoleVariable<int32> CVarOKStreetCityRoomLights(TEXT("ok.Street.CityRoomLights"),1,TEXT("Ceiling lights in the source map's rooms that have no lamp: 1 on, 0 off."),
+ FConsoleVariableDelegate::CreateLambda([](IConsoleVariable* V){for(const auto& L:GOKStreetAddedLamps)if(auto* C=L.Get())C->SetVisibility(V->GetInt()!=0);}));
 static void OKStreetCityDress(ULevel* Level){
  auto FarFor=[](float Radius){return Radius<100.f?6000.f:Radius<300.f?15000.f:Radius<1000.f?40000.f:0.f;};
  // The city's own controller lights the sun for a metered exposure and every frame; the game runs a fixed one its characters are
@@ -3976,13 +4009,35 @@ static void OKStreetCityDress(ULevel* Level){
  for(AActor* Actor:Level->Actors)if(auto* Controller=Cast<ACityEnvironmentController>(Actor)){Controller->UseGameClock();GOKStreetCityEnv=Controller;}
  // Its own lamps and signs come in with the world: it looks through this piece only, not the whole map again (60-78 ms).
  if(auto* Env=GOKStreetCityEnv.Get();Env&&Env->GetLevel()!=Level)Env->RegisterLevel(Level);
+ // The source map (-CitySource) as the streamed copy has it (street_city_stream_prep_payload.lua): its lamps are in real lumens
+ // for a metered exposure, the game's is fixed at 1, and only the copy had them at 1/8. The convenience store, the bookshop and
+ // every lit room were 50-70% blown-out white, day and night (11-09; the local lights off took it to 2%). The controller's own
+ // lamps keep their scale (it sets them, at 1/8 on the game's clock); every other local light here goes to 1/8, once.
+ if(UWorld* World=Level->GetWorld();World&&!World->GetWorldPartition()){
+  TSet<const ULightComponentBase*> Managed;if(auto* Env=GOKStreetCityEnv.Get())Env->GetManagedLights(Managed);
+  static const FName Scaled(TEXT("OKSourceLumens"));int32 Count=0;TArray<FVector> Lamps;
+  TInlineComponentArray<ULocalLightComponent*> Locals;
+  for(AActor* Actor:Level->Actors)if(Actor){Actor->GetComponents(Locals);for(ULocalLightComponent* Light:Locals){Lamps.Add(Light->GetComponentLocation());
+   if(Managed.Contains(Light)||Light->ComponentTags.Contains(Scaled))continue;GOKStreetSourceLamps.Emplace(Light,Light->Intensity);Light->SetIntensity(OKStreetSourceLampIntensity(Light,Light->Intensity));Light->ComponentTags.Add(Scaled);++Count;}}
+  // A room with no lamp of its own goes black at night once the sky light is down: the copy has ceiling lights put in, up to
+  // four a room, as bright as a shop lamp at 1/8. Here each indoor place's floor without a lamp gets the same.
+  int32 Added=0;
+  if(Level==World->PersistentLevel)for(const auto& P:OKStreetPlaces()){if(P.Outdoor)continue;
+   for(const FBox& Room:P.Rooms){if(Lamps.ContainsByPredicate([&](const FVector& L){return L.X>=Room.Min.X&&L.X<=Room.Max.X&&L.Y>=Room.Min.Y&&L.Y<=Room.Max.Y&&L.Z>=Room.Min.Z-20.f&&L.Z<=Room.Max.Z+60.f;}))continue;
+    const FVector Size=Room.GetSize();const int32 NX=Size.X<900.f?1:2,NY=Size.Y<900.f?1:2;
+    for(int32 I=0;I<NX;++I)for(int32 J=0;J<NY;++J){
+     auto* Lamp=World->SpawnActor<APointLight>(FVector(Room.Min.X+Size.X*(I+.5f)/NX,Room.Min.Y+Size.Y*(J+.5f)/NY,Room.Min.Z+30.f+260.f),FRotator::ZeroRotator);if(!Lamp)continue;
+     UPointLightComponent* L=Lamp->PointLightComponent.Get();L->SetMobility(EComponentMobility::Movable);L->SetIntensityUnits(ELightUnits::Lumens);L->SetIntensity(275.f);L->SetAttenuationRadius(800.f);L->SetCastShadows(false);
+     L->SetLightColor(FLinearColor(FColor(255,240,220)));L->ComponentTags.Add(Scaled);L->MaxDrawDistance=12000.f;L->MaxDistanceFadeRange=2000.f;L->SetVisibility(CVarOKStreetCityRoomLights.GetValueOnGameThread()!=0);
+     GOKStreetAddedLamps.Add(L);++Added;Lamps.Add(L->GetComponentLocation());}}}
+  UE_LOG(LogTemp,Display,TEXT("Street city: source map lamps at 1/8: %d scaled, %d kept by the controller, %d room lights added"),Count,Managed.Num(),Added);
+ }
  for(AActor* Actor:Level->Actors)if(auto* Light=Cast<ADirectionalLight>(Actor)){auto* Part=Light->GetLightComponent();Part->SetMobility(EComponentMobility::Movable);ADirectionalLight* Sun=GOKStreetCitySun.Get();
   if(!Sun||Part->Intensity>Sun->GetLightComponent()->Intensity){if(Sun)Sun->GetLightComponent()->SetVisibility(false);GOKStreetCitySun=Light;Part->SetVisibility(true);}else Part->SetVisibility(false);}
  TInlineComponentArray<UActorComponent*> Parts;
  for(AActor* Actor:Level->Actors)if(Actor){Actor->GetComponents(Parts);for(UActorComponent* Part:Parts){
   if(auto* Mirror=Cast<UPlanarReflectionComponent>(Part)){Mirror->SetVisibility(false);GOKStreetCityMirrors.Add(Mirror);}
-  else if(auto* Sky=Cast<USkyLightComponent>(Part)){if(!GOKStreetCitySkyLight.IsValid()){GOKStreetCitySkyLight=Sky;GOKStreetCitySkyDay=Sky->Intensity;}}
-  else if(auto* Light=Cast<ULocalLightComponent>(Part)){if(Light->MaxDrawDistance!=12000.f||Light->MaxDistanceFadeRange!=2000.f){Light->MaxDrawDistance=12000.f;Light->MaxDistanceFadeRange=2000.f;Light->MarkRenderStateDirty();}if(Light->CastShadows)Light->SetCastShadows(false);}
+  else if(auto* Sky=Cast<USkyLightComponent>(Part)){if(!GOKStreetCitySkyLight.IsValid()){GOKStreetCitySkyLight=Sky;GOKStreetCitySkyDay=Sky->Intensity;}}  else if(auto* Light=Cast<ULocalLightComponent>(Part)){if(Light->MaxDrawDistance!=12000.f||Light->MaxDistanceFadeRange!=2000.f){Light->MaxDrawDistance=12000.f;Light->MaxDistanceFadeRange=2000.f;Light->MarkRenderStateDirty();}if(Light->CastShadows)Light->SetCastShadows(false);}
   else if(auto* Instanced=Cast<UInstancedStaticMeshComponent>(Part)){if(Instanced->GetStaticMesh()&&Instanced->InstanceEndCullDistance<=0){const float Far=FarFor(Instanced->GetStaticMesh()->GetBounds().SphereRadius);if(Far>0.f)Instanced->SetCullDistances(int32(Far*.9f),int32(Far));}}
   else if(auto* Mesh=Cast<UStaticMeshComponent>(Part)){if(Mesh->LDMaxDrawDistance<=0.f){const float Far=FarFor(Mesh->Bounds.SphereRadius);if(Far>0.f)Mesh->SetCullDistance(Far);}}}}
 }
@@ -4334,6 +4389,17 @@ void AOKStreetSocialScene::Tick(float Dt){
   if(S.Pair.Watermelon&&S.Pair.Phase==1){Focus=(S.Male+S.Agents[S.Pair.Partner-1].Position)*.5f+FVector(0,35,80);Pivot=Focus;}
   GalgameWalkFocus(Focus,Pivot); // walking and talking: between him and her (OKStreetSocialGalgame.inl)
   const FRotator View(S.Pitch,S.Yaw,0);const FVector Wanted=Pivot-View.Vector()*S.Distance+(S.Target!=INDEX_NONE?FRotationMatrix(View).GetUnitAxis(EAxis::Y)*(S.Pair.Conversation()?-120.f:110.f):FVector::ZeroVector);FHitResult Hit;FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetCamera),false,this);const bool Blocked=GetWorld()->SweepSingleByChannel(Hit,Pivot,Wanted,FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeSphere(8),Query);FVector Shot=Blocked?Hit.Location:Wanted;
+  // At an activity's spot by a wall (the department store's teddy bear, the snack bar's window seat) the lens closed in to
+  // his back and the view was his bag (activity audit 11-09): pulled under 40% of its distance, the way round them with
+  // the most room is taken instead (a quarter, half or three quarters round), kept until it is blocked too.
+  if(OKStreetCityMode()&&S.Pair.Partner!=INDEX_NONE){static float Turn=0.f;static int32 For=INDEX_NONE;if(For!=S.Pair.Partner){For=S.Pair.Partner;Turn=0.f;}
+   auto Try=[&](float T,FVector& Out){const FRotator V(S.Pitch,S.Yaw+T,0);const FVector W=Pivot-V.Vector()*S.Distance+FRotationMatrix(V).GetUnitAxis(EAxis::Y)*(S.Pair.Conversation()?-120.f:110.f);FHitResult H;
+    Out=GetWorld()->SweepSingleByChannel(H,Pivot,W,FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeSphere(8),Query)?H.Location:W;
+    // A prop without collision (the Christmas tree: the photo's view was all branches) counts as no room at all.
+    if(OKStreetBlockedPoint(Out,10.f))return 0.f;return float(FVector::Dist(Pivot,Out));};
+   FVector Best;float Room=Try(Turn,Best);
+   if(Room<S.Distance*.4f)for(const float T:{0.f,90.f,180.f,-90.f}){FVector C;const float R=Try(T,C);if(R>Room+50.f){Room=R;Best=C;Turn=T;}}
+   Shot=Best;}
   // The city's street is full of posts, fences and trees, and its ground has kerbs: a lens that jumps to whatever it touches shook
   // him all the way down the road. It closes in fast and backs out slowly, and his height is followed, not copied.
   if(OKStreetCityMode()&&S.Target==INDEX_NONE){static float Reach=-1.f,Height=0.f;const float Free=float(FVector::Dist(Pivot,Shot));const float RawZ=float(Pivot.Z);

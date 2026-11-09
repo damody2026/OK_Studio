@@ -684,6 +684,8 @@ private:
  bool NavCellFree(const FIntPoint& Cell,float Z) const;
  TArray<const struct FOKStreetPlace*> NearbyPlaces(float Radius) const;
  bool BeginOuting(int32 Girl,const FString& ActivityId,FString& Error);
+ bool ActivitySettles(const TCHAR* Anchor) const;
+ void SettleOnFloor(FVector& At,float Yaw,const TCHAR* Why) const;
  // activities.rs: whether an activity may start now (weather, who, what it uses up, once a day); bConsume takes the items.
  bool ActivityCheck(int32 Girl,const FString& ActivityId,FString& Why,bool bConsume,bool bAtEnd=false);
  TSharedRef<FJsonObject> ActivityContext(int32 Girl,const TCHAR* Rule) const;

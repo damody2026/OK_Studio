@@ -409,9 +409,43 @@ inline void OKStreetCityCheckRoads(UWorld* World) {
   const int32 B = City.Links[A][I];
   if (B > A && !OKStreetCityClear(World, City.Nodes[A], City.Nodes[B])) { City.Links[A].RemoveAt(I); City.Links[B].Remove(A); ++Dropped; }
  }
+ const int32 Lattice = City.Nodes.Num();
+ // A door with no floor under it or inside something (the ramen shop's on its 9F counter seat, the Christmas tree's in the
+ // campus fence, the north restroom's; places_check 11-09): the data's doors come from the models' anchors and the picture
+ // of the roads, which know nothing solid. Such a door moves to the nearest spot round it with a floor at its height and
+ // room for a body, one in sight of a road point first (outdoors), so a walk there ends on its feet beside it.
+ {
+  auto Fine = [&](FVector& At) {
+   FHitResult Hit;
+   if (!World->LineTraceSingleByChannel(Hit, At + FVector(0, 0, 70), At - FVector(0, 0, 120), ECC_WorldStatic, Query) || Hit.bStartPenetrating || Hit.ImpactPoint.Z > At.Z + 50.f) return false;
+   const float Ground = float(Hit.ImpactPoint.Z);
+   if (World->OverlapAnyTestByChannel(FVector(At.X, At.Y, Ground + 105.f), FQuat::Identity, ECC_WorldStatic, FCollisionShape::MakeCapsule(25.f, 60.f), Query)) return false;
+   At.Z = Ground; return true; };
+  auto SeesRoad = [&](const FVector& At) {
+   for (int32 N = 0; N < Lattice; ++N) if (FVector::DistSquared2D(City.Nodes[N], At) < FMath::Square(1500.f) && FMath::Abs(City.Nodes[N].Z - At.Z) < 200.f && OKStreetCityClear(World, At, City.Nodes[N])) return true;
+   return false; };
+  int32 Moved = 0;
+  for (FOKStreetPlace& P : const_cast<TArray<FOKStreetPlace>&>(OKStreetPlaces())) {
+   FVector Here = P.Door; if (Fine(Here)) continue;
+   FVector Best = P.Door; double BestScore = TNumericLimits<double>::Max();
+   for (float R = 40.f; R <= 400.f; R += 30.f) {
+    for (int32 K = 0; K < 24; ++K) {
+     const float T = 2.f * PI * K / 24.f; FVector At = P.Door + FVector(FMath::Cos(T) * R, FMath::Sin(T) * R, 0);
+     if (!Fine(At)) continue;
+     // Open air, the side the place is on: the Christmas tree's door went over the campus fence, 40 cm nearer than the
+     // street side, and every walk to the tree went round by the gate.
+     FVector Middle = P.Door; if (P.Outdoor && !P.Rooms.IsEmpty()) Middle = P.Rooms[0].GetCenter();
+     const double Score = R + (P.Door.Z < 1450.f && !SeesRoad(At) ? 2000.0 : 0.0) + (P.Outdoor ? FVector::Dist2D(At, Middle) * .5 : 0.0);
+     if (Score < BestScore) { BestScore = Score; Best = At; }
+    }
+   }
+   if (BestScore < TNumericLimits<double>::Max()) { UE_LOG(LogTemp, Display, TEXT("Street city: door of %s inside something or over no floor, %s -> %s"), P.Id, *P.Door.ToCompactString(), *Best.ToCompactString()); P.Door = Best; ++Moved; }
+   else UE_LOG(LogTemp, Warning, TEXT("Street city: door of %s inside something or over no floor, and no spot round it"), P.Id);
+  }
+  UE_LOG(LogTemp, Display, TEXT("Street city: %d doors moved onto open floor"), Moved);
+ }
  // Every door is on the graph too, tied to the points it can reach: the picture of the roads knows no doors either.
  // So is every gate: a door on either side of a fence is how the two sides meet.
- const int32 Lattice = City.Nodes.Num();
  auto Tie = [&](const FVector& At) {
   const int32 Door = City.Nodes.Add(At); City.Links.AddDefaulted();
   for (int32 N = 0; N < Lattice; ++N) if (FVector::DistSquared2D(City.Nodes[N], At) < FMath::Square(1500.f) && FMath::Abs(City.Nodes[N].Z - At.Z) < 200.f && OKStreetCityClear(World, At, City.Nodes[N])) { City.Links[Door].Add(N); City.Links[N].Add(Door); } };
@@ -524,7 +558,7 @@ inline void OKStreetApplyCityPlaces(TArray<FOKStreetPlace>& Out) {
 }
 
 inline const TArray<FOKStreetPlace>& OKStreetPlaces() {
- static const TArray<FOKStreetPlace> All = [] {
+ static TArray<FOKStreetPlace> All = [] { // not const: OKStreetCityCheckRoads moves a door the map shows to be inside something
   using M = EOKStreetMaterial;
   TArray<FOKStreetPlace> Out;
   auto Make = [&Out](const TCHAR* Id, const TCHAR* Name, const TCHAR* About) -> FOKStreetPlace& {

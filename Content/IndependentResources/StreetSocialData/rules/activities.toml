@@ -307,7 +307,7 @@ name = "在民宿和室坐著喝茶聊天"
 place = "minshuku"
 kind = "pair"
 code = 1
-anchor = "seat"
+anchor = "chabudai|seat"
 
 [[activity]]
 id = "park_seat"
@@ -819,7 +819,7 @@ name = "在民宿和室鋪棉被睡一晚（睡到隔天早上）"
 place = "minshuku"
 kind = "sleep"
 code = 0
-anchor = "bed1_0"
+anchor = "futon|bed1_0"
 
 [[activity]]
 id = "rest"
@@ -871,7 +871,7 @@ name = "在公園池邊一起餵魚"
 place = "park"
 kind = "solo"
 code = 0
-anchor = "pond|fountain"
+anchor = "fountain|pond"
 turn = 90
 female_clip = "venue_observe.okanim"
 needs = ["park_fishfood"]
@@ -920,7 +920,7 @@ name = "在公園寫生（她畫畫，你陪在旁邊）"
 place = "park"
 kind = "pair"
 code = 1
-anchor = "pond|bench"
+anchor = "bench|pond"
 female_clip = "venue_read_seated.okanim"
 male_clip = "venue_read_seated.okanim"
 weather = "dry"
@@ -1150,7 +1150,7 @@ name = "在天鵝船碼頭合照"
 place = "boat"
 kind = "photo"
 code = 0
-anchor = "swan_boat|dock"
+anchor = "dock|swan_boat"
 
 [[activity]]
 id = "boat_ride"
@@ -1498,7 +1498,7 @@ name = "在健身房的墊子上一起伸展"
 place = "gym"
 kind = "solo"
 code = 0
-anchor = "mat"
+anchor = "mirror|mat"
 female_clip = "venue_stretch.okanim"
 feed = { energy = -10, fun = 5 }
 
