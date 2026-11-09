@@ -5312,6 +5312,14 @@ pub fn pick_named<'a>(meshes: &'a [ExtractedMesh], want: &str) -> Option<&'a Ext
     best
 }
 
+/// The face: the `cf_O_face` renderer (the largest, as pick_named), its first submesh. ChaControl puts the face texture
+/// on that renderer's `material` (materials[0]); a head mod can draw its eyes, lashes, mouth and neck as further
+/// submeshes of the same renderer (jq_lty_lv4_head: eight), which keep their own materials.
+pub fn pick_face(meshes: &[ExtractedMesh]) -> Option<&ExtractedMesh> {
+    let best = pick_named(meshes, "cf_O_face")?;
+    meshes.iter().find(|m| m.path_id == best.path_id && m.submesh_index == 0 && m.name.eq_ignore_ascii_case("cf_O_face")).or(Some(best))
+}
+
 /// Bake a shader's uniform alpha factor into the exported albedo's alpha.
 /// RGB stays unchanged; UE then applies the same per-pixel blend coverage.
 pub fn scale_png_alpha(png: &[u8], factor: f32) -> Option<Vec<u8>> {
