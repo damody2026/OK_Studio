@@ -5,6 +5,7 @@
 #include "Rendering/SkeletalMeshRenderData.h"
 #include "Animation/MorphTarget.h"
 #include "SkeletalRenderPublic.h"
+#include "KKPreviewActor.h"
 
 // Read the current pose without changing rendering mode, forcing LOD, refreshing
 // animation or flushing the render thread. Morph deltas precede linear skinning.
@@ -22,7 +23,10 @@ struct FOKPaintPose {
   Component=C;LocalToWorld=C->GetComponentTransform();auto* Mesh=Cast<USkeletalMesh>(C->GetSkinnedAsset());if(!Mesh||!Mesh->GetResourceForRendering()||Mesh->GetResourceForRendering()->LODRenderData.IsEmpty())return false;
   LOD=&Mesh->GetResourceForRendering()->LODRenderData[0];Weights=C->GetSkinWeightBuffer(0);
   if(!Weights||!Weights->GetDataVertexBuffer()->GetWeightData()||Weights->GetNumVertices()!=LOD->GetNumVertices()||!LOD->StaticVertexBuffers.PositionVertexBuffer.GetVertexData())return false;
-  bool Unsupported=C->HasMeshDeformer(0);for(const auto& Sets:C->GetExternalMorphSetsArray())Unsupported|=!Sets.IsEmpty();
+  // Her clothes' belly wrap (AKKPreviewActor::SetPartWrapDeltas, the one external set we make) is a morph like the others:
+  // read here, not by GetCPUSkinnedVertices, which flushed the render thread every coating frame (2 ms, trace 2026-11-10).
+  const TArray<FMorphTargetDelta>* Wrap=AKKPreviewActor::WrapMorphDeltas(C);
+  bool Unsupported=C->HasMeshDeformer(0);for(const auto& Sets:C->GetExternalMorphSetsArray())Unsupported|=Sets.Num()>(Wrap?1:0);
   if(auto* Skeletal=Cast<USkeletalMeshComponent>(C))if(Skeletal->ClothBlendWeight>0)for(const auto& Section:LOD->RenderSections)Unsupported|=Section.HasClothingData();
   // Preserve the previous precise path for simulation/deformation systems which
   // ordinary bone matrices and built-in morphs cannot describe.
@@ -34,6 +38,7 @@ struct FOKPaintPose {
    if(Morph.IsEmpty())Morph.SetNumZeroed(LOD->GetNumVertices());
    for(auto Delta=Item.Key->GetDeltaIteratorForLOD(0);!Delta.AtEnd();++Delta)if(Morph.IsValidIndex(Delta->SourceIdx))Morph[Delta->SourceIdx]+=Delta->PositionDelta*Weight;
   }
+  if(Wrap&&!Wrap->IsEmpty()){if(Morph.IsEmpty())Morph.SetNumZeroed(LOD->GetNumVertices());for(const FMorphTargetDelta& Delta:*Wrap)if(Morph.IsValidIndex(Delta.SourceIdx))Morph[Delta.SourceIdx]+=Delta.PositionDelta;}
   return !Matrices.IsEmpty();
  }
  FVector Position(int32 Vertex) const {

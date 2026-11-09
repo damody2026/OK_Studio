@@ -175,8 +175,11 @@ bool AKKPairedPlayback::ShowFrame(float Delta,const bool Reactions[2],FString& E
 }
 void AKKPairedPlayback::SyncAsync(bool bDeferStreams)
 {
-	FinishDeferredStreams();
+	// With no solve on its way the deferred streams wait for the scope that launches the next one (Advance): the H scene's
+	// SyncPair in OnSessionsIdle made them here every frame of her ahegao, 0.76 ms before the launch instead of beside it
+	// (trace 2026-11-10). A new display (PrepareRuntimeAccessories) makes any still waiting first.
 	if(!bSolvePending)return;
+	FinishDeferredStreams();
 	{TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairOKWait);PendingSolve.Wait();}
 	bSolvePending=false;OkReport=PendingReport;
 	if(!bSolveOk||!IsValid(FemaleActor)||!IsValid(MaleActor))return;

@@ -8362,6 +8362,8 @@ void AKKPreviewActor::RefreshRuntimeAccessories()
 void AKKPreviewActor::PrepareRuntimeAccessories()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(KK_StreamPrepare);
+    // A frame's streams still waiting (the pair defers them past the next solve's launch) are made first, not dropped.
+    FinishRuntimeAccessories();
     if(GpuPosesPreparedFrame!=GFrameCounter)PreparePrivateGpuDisplayPoses();
     TArray<FKKGpuStreamSectionRequest> GpuRequests;
     ON_SCOPE_EXIT {QUICK_SCOPE_CYCLE_COUNTER(STAT_KK_SubmitGpuStreams);if(!GpuRequests.IsEmpty())UKKAffineProceduralMeshComponent::SubmitGpuStreamsBatch(MoveTemp(GpuRequests));};
@@ -10270,6 +10272,13 @@ bool AKKPreviewActor::SetSkinLit(bool bOn,const FString& LitRoot)
 // Her body part's skin moved this frame by a set of per-vertex moves (belly_bulge::wrap_deltas: her belly wrapping his
 // penis), drawn as an external morph set on the part's renderers (the ML Deformer's way): one morph at weight 1,
 // rebuilt each call. The sets just replaced stay alive until the render thread is past them. Empty clears it.
+static TMap<TWeakObjectPtr<const USkinnedMeshComponent>,TArray<FMorphTargetDelta>> GOkWrapMorphDeltas; // game thread
+const TArray<FMorphTargetDelta>* AKKPreviewActor::WrapMorphDeltas(const USkinnedMeshComponent* Mesh)
+{
+    check(IsInGameThread());
+    for(auto It=GOkWrapMorphDeltas.CreateIterator();It;++It)if(!It.Key().IsValid())It.RemoveCurrent();
+    return GOkWrapMorphDeltas.Find(Mesh);
+}
 bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& Indices,const TArray<FVector3f>& UnityDeltas,const TArray<FVector3f>& UnityNormalDeltas)
 {
     TRACE_CPUPROFILER_EVENT_SCOPE(KK_SetPartWrapDeltas);
@@ -10298,7 +10307,7 @@ bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& In
         // The set it had, released once the render thread is done with it.
         if(Mesh->HasExternalMorphSet(0,WrapSetId)){
             TSharedPtr<FExternalMorphSet> Old=Mesh->GetExternalMorphSets(0).FindRef(WrapSetId);
-            Mesh->RemoveExternalMorphSet(0,WrapSetId);
+            Mesh->RemoveExternalMorphSet(0,WrapSetId);GOkWrapMorphDeltas.Remove(Mesh);
             if(Old.IsValid()){auto Pending=MakeUnique<FOkWrapRelease>();Pending->Set=Old;Pending->Frame=GFrameCounter;WrapReleases.Add(MoveTemp(Pending));}
         }
         if(Indices.IsEmpty()){Mesh->RefreshExternalMorphTargetWeights();continue;}
@@ -10317,7 +10326,7 @@ bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& In
         Set->MorphBuffers.InitMorphResourcesStreaming(GMaxRHIShaderPlatform,Render->LODRenderData[0].RenderSections,MakeArrayView(Models,1),NumVerts,20.f); // error tolerance in micrometres (0.0001 clamped every move to 2.7 cm)
         if(!Set->MorphBuffers.IsMorphCPUDataValid()||Set->MorphBuffers.GetNumMorphs()<1)continue;
         BeginInitResource(&Set->MorphBuffers);
-        Mesh->AddExternalMorphSet(0,WrapSetId,Set);
+        Mesh->AddExternalMorphSet(0,WrapSetId,Set);GOkWrapMorphDeltas.Add(Mesh,MoveTemp(Model.Vertices));
         Mesh->RefreshExternalMorphTargetWeights(false);
         FExternalMorphWeightData& Weights=Mesh->GetExternalMorphWeights(0);
         if(FExternalMorphSetWeights* W=Weights.MorphSets.Find(WrapSetId)){W->Weights.SetNumZeroed(1);W->Weights[0]=1.f;W->UpdateNumActiveMorphTargets();}
