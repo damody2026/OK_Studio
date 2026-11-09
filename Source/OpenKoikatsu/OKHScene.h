@@ -148,6 +148,7 @@ public:
         SettingsToggle=2300,SettingsReset=2301, // the settings panel on the left
         HeadCameraToggle=2302,EyesCameraToggle=2303, // her head, her eyes on the camera
         PanelHideToggle=2304, // the panel on the right away and back (user 2026-11-09)
+        LeaveToggle=2305, // back to the card reader (its one-on-one only; the street has its own leave button)
         PoseBase=1000,
         Faster=2001,Slower=2002,Toggle=2003,Inside=2004,Outside=2005,Drink=2006,Vomit=2007,Again=2008,Insert=2009,InsertAnal=2010,Pull=2011,Condom=2012,Stop=2014,Continue=2015,ToggleMale=2016,LockHer=2017,LockHis=2018,MaleBottom=2019,PenisXRayToggle=2020,PhysicsNext=2021,GrayRoomToggle=2022,PenisPanelToggle=2023,PenisReset=2024,FluidClear=2025,FeetPinToggle=2026,HandsPinToggle=2027,SkinLitToggle=2028,
         SecondChange=3690,SecondClothes=3691,SecondBase=3700, // the second heroine (lesbian, 3P)
@@ -289,6 +290,8 @@ private:
     UPROPERTY() TObjectPtr<UOKHRootPad> RootPadWidget;
     float PenisLength=1.f,PenisScale=1.f,PenisSetLength=1.f,PenisSetScale=1.f;FVector2D RootPad=FVector2D::ZeroVector;FVector2D RootPadNow=FVector2D::ZeroVector;float RootPadScale=1.f;bool bPenisPanel=false;bool bPanelHidden=false;
     UPROPERTY() TObjectPtr<class UTextBlock> PanelHideText;
+    UPROPERTY() TObjectPtr<class UButton> LeaveButton; // the card reader's one-on-one only (LeaveToggle)
+    bool bLeaveChecked=false;
     // Twice the 8 cm it was (user, 2026-11-02: the pad's edge reaches where (0,2) did).
     static constexpr float RootReach=16.f;
     void ShowPenis();

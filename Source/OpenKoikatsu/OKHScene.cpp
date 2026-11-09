@@ -429,6 +429,11 @@ TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
      {UHorizontalBox* Top=WidgetTree->ConstructWidget<UHorizontalBox>();
       if(auto* S=Top->AddChildToHorizontalBox(Button(SettingsToggle,TEXT("ui.hscene.settings"))))S->SetPadding(FMargin(0,0,6,0));
       auto* Hide=Button(PanelHideToggle,bPanelHidden?TEXT("ui.hscene.panel_show"):TEXT("ui.hscene.panel_hide"));PanelHideText=Cast<UTextBlock>(Hide->GetContent());Top->AddChildToHorizontalBox(Hide);
+      // Opened from the card reader (user 2026-11-09: its one-on-one as the street's): the street's leave button is the
+      // street's own, so the panel has one here.
+      // Shown once the tick knows which it was opened from (the panel is built before its Gallery is set).
+      LeaveButton=Button(LeaveToggle,TEXT("ui.hscene.leave_reader"));LeaveButton->SetVisibility(ESlateVisibility::Collapsed);
+      if(auto* S=Top->AddChildToHorizontalBox(LeaveButton))S->SetPadding(FMargin(6,0,0,0));
       if(auto* S=Left->AddChildToVerticalBox(Top))S->SetHorizontalAlignment(HAlign_Left);}
      SettingsBox=WidgetTree->ConstructWidget<USizeBox>();SettingsBox->SetWidthOverride(260.f);SettingsBox->SetVisibility(ESlateVisibility::Collapsed);
      if(auto* S=Left->AddChildToVerticalBox(SettingsBox)){S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));S->SetPadding(FMargin(0,6,0,0));}
@@ -874,6 +879,7 @@ void UOKHScenePanel::Click(int32 Kind){
     if(Kind==SkinLitToggle){HSettingSet(TEXT("SkinLit"),CVarHSkinLit.GetValueOnGameThread()?0.f:1.f);HSettingsSave();ActionsKey.Reset();UE_LOG(LogTemp,Display,TEXT("H scene: skin %s"),CVarHSkinLit.GetValueOnGameThread()?TEXT("lit by the scene"):TEXT("toon"));return;}
     if(Kind==HandsPinToggle){bPinHands=!bPinHands;ActionsKey.Reset();UE_LOG(LogTemp,Display,TEXT("H scene: hands pinned while in her %s"),bPinHands?TEXT("on"):TEXT("off"));return;}
     if(Kind==FeetPinToggle){bPinFeet=!bPinFeet;ActionsKey.Reset();UE_LOG(LogTemp,Display,TEXT("H scene: soles pinned while in her %s"),bPinFeet?TEXT("on"):TEXT("off"));return;}
+    if(Kind==LeaveToggle){if(AOKInteractionMode* M=Interaction())M->Exit();return;}
     if(Kind==PanelHideToggle){bPanelHidden=!bPanelHidden;if(PanelWidth)PanelWidth->SetVisibility(bCoordinateList||bPanelHidden?ESlateVisibility::Collapsed:ESlateVisibility::Visible);
         if(PanelHideText)PanelHideText->SetText(FText::FromString(OKT(bPanelHidden?TEXT("ui.hscene.panel_show"):TEXT("ui.hscene.panel_hide"))));return;}
     if(Kind==PenisPanelToggle){bPenisPanel=!bPenisPanel;if(PenisBox)PenisBox->SetVisibility(bPenisPanel?ESlateVisibility::Visible:ESlateVisibility::Collapsed);ActionsKey.Reset();return;}
@@ -1367,6 +1373,7 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     if(bGrayRoom&&GetWorld()&&GetWorld()->GetTimeSeconds()>=GrayCheckAt){GrayCheckAt=GetWorld()->GetTimeSeconds()+1.;HideWorld();}
     if(HalfInner&&PanelWidth){const float High=2.f*float(PanelWidth->GetCachedGeometry().GetLocalSize().Y);if(High>10.f&&!FMath::IsNearlyEqual(High,HalfInner->GetHeightOverride(),1.f))HalfInner->SetHeightOverride(High);}
     if(!Gallery)return;
+    if(LeaveButton&&!bLeaveChecked)if(const AOKInteractionMode* M=Interaction()){bLeaveChecked=true;LeaveButton->SetVisibility(M->ReturnLabel==TEXT("返回多人街區")?ESlateVisibility::Collapsed:ESlateVisibility::Visible);}
     // The pair's next frame is solved in the background from the end of the pair's tick to the start of the next one, and
     // this tick reads and writes their sessions (her face, his alignment, the liquid...): run here, its first session call
     // waited for that solve, 3.5 ms of a 12.8 ms frame (trace 2026-11-08). So while a solve runs, the scene ticks at the
