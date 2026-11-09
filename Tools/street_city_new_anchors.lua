@@ -110,8 +110,9 @@ return function(ctx)
       local kind = it.anchor:match('^mailbox') and 'mailbox' or it.anchor:match('^crib') and 'crib' or it.anchor:match('^ultrasound') and 'ultrasound'
       if kind then put(kind, it.pos, it.yaw, { kind }, { outdoor = kind == 'mailbox', place = kind ~= 'mailbox' and 'clinic_gyn' or nil }) end
     end
-    -- real balconies (round 3): rows of their room, standing on the slab
-    if it.anchor == 'balcony' then put('balcony', it.pos, it.yaw, { 'balcony', 'view_night', 'stand_pair' }, { area = areas[it.place], place = it.place, outdoor = true, tags = { 'balcony' } }) end
+    -- real balconies (round 3): rows of their room, standing on the slab; a room taken out of the map since (S44 for the
+    -- cross alley, 11-09) is no longer an area, and its balcony stays in the old install receipt only
+    if it.anchor == 'balcony' and areas[it.place] then put('balcony', it.pos, it.yaw, { 'balcony', 'view_night', 'stand_pair' }, { area = areas[it.place], place = it.place, outdoor = true, tags = { 'balcony' } }) end
     -- the school changing booths belong to their building, not to a game place
     local b = it.place:match('^fixtures_changing_(%w+)_')
     if b then put('changing', it.pos, it.yaw, { 'changing' }, { building = b, outdoor = false }) end
