@@ -1432,7 +1432,13 @@ void AOKStreetSocialScene::FinishFreeTalk(int32 Character,const FString& Id,cons
   else if(!A.IsEmpty()&&!(A.StartsWith(TEXT("go:"))||A==TEXT("stroll")||A==TEXT("walk")||OKStreetFindActivity(A)||OKStreetFindPlace(A)))ExecuteFreeTalkAction(Character,Id,A);
   // Hers to propose, his to agree: kept for the judge of his next line. On arriving at the park she said "let's find a
   // bench" (park_seat); he said "sure, that bench", and the judge took them as already sitting there.
-  else if(!A.IsEmpty()&&A!=TEXT("none"))S.HerProposed.Add(Character,A);
+  else if(!A.IsEmpty()&&A!=TEXT("none")){
+   // Somewhere else instead of the long way left ("two in the morning? let's just talk at the convenience store"): the
+   // long walk stops here, her plan waits for his word. It was kept and they walked on to the dorm (R6-201).
+   auto Bare=[](const FString& X){return X.StartsWith(TEXT("go:"))?X.Mid(3):X;};
+   const bool Elsewhere=S.OutingGirl==Character&&Bare(S.OutingActivity)!=Bare(A)&&!S.OutingRoute.IsEmpty()&&FVector::Dist2D(S.Male,S.OutingRoute.Last())>30*275.f;
+   if(Elsewhere){UE_LOG(LogTemp,Display,TEXT("Street outing: actor=%d would rather %s than the long way; stopped"),Character,*A);CancelOuting(FString());}
+   S.HerProposed.Add(Character,A);}
   // Her words too: sat down at the cafe she said "a latte and a lemon tart for me", the note's reply ordered nothing,
   // he said "the latte and the tart are on me", and the judge, seeing only his line and her next one, ordered his
   // americano alone; her latte never came (R6-187).
