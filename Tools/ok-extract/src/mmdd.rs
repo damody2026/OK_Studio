@@ -5421,6 +5421,7 @@ mod tests {
             wardrobe_body_mask: None,
             wardrobe_quick_settle: false,
             hidden_parts: Vec::new(),
+            nipples_flat: false,
             cover_ready: None,
             face_runtime: Default::default(),
             anim_parameters: HashMap::new(),

@@ -628,7 +628,7 @@ pub unsafe extern "C" fn ok_session_wardrobe_body_mask(s:*mut OkSession,top_stat
 pub unsafe extern "C" fn ok_session_set_parts_hidden(s:*mut OkSession,mask:*const u8,count:i32)->i32 {
     let Some(s)=sess_ref(s) else{return -1;};
     let mask=if mask.is_null()||count<=0{&[][..]}else{std::slice::from_raw_parts(mask,count as usize)};
-    s.set_parts_hidden(mask);0
+    s.set_parts_hidden(mask);s.cover_nipples();0
 }
 #[no_mangle]
 pub unsafe extern "C" fn ok_session_wardrobe_first(s:*mut OkSession)->i32 {
@@ -638,7 +638,7 @@ pub unsafe extern "C" fn ok_session_wardrobe_first(s:*mut OkSession)->i32 {
 #[no_mangle]
 pub unsafe extern "C" fn ok_session_wardrobe_swap(live:*mut OkSession,donor:*mut OkSession,err:*mut c_char,cap:i32)->i32 {
     let (Some(live),Some(donor))=(sess_ref(live),sess_ref(donor)) else{write_err(err,cap,"wardrobe: no session");return -1;};
-    match live.wardrobe_swap(donor) {Ok(())=>0,Err(e)=>{write_err(err,cap,&e);-1}}
+    match live.wardrobe_swap(donor) {Ok(())=>{live.cover_nipples();0},Err(e)=>{write_err(err,cap,&e);-1}}
 }
 #[no_mangle]
 pub unsafe extern "C" fn ok_session_set_physx_secondary(s:*mut OkSession,enabled:i32)->i32 {
@@ -1518,6 +1518,8 @@ pub(crate) unsafe extern "C" fn session_open(
         Ok(mut sess) => {
             // Her belly bulge targets (belly_bulge.rs), on every way a body opens: original cards, OK cards, packs.
             crate::belly_bulge::add(&mut sess);
+            // Her nipples flat under the garment she opened in (session.rs cover_nipples).
+            sess.cover_nipples();
             if sess.active_shoe_meta.is_none() {
                 if let Some(cp) = card_for_meta.as_deref() {
                     crate::mmdd::populate_session_shoe_meta(&mut sess, std::path::Path::new(cp), outfit);
