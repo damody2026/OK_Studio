@@ -41,6 +41,11 @@ void AOKStreetSocialScene::SpawnElevators(){
   }
   // The shaft centre is 1.6 m behind every landing spot.
   E.Centre=Lifts[0]->Position-E.Out[0]*160.f;E.Centre.Z=0;E.Axis=E.Out[0];E.Side=FVector(-E.Axis.Y,E.Axis.X,0);
+  // One car a shaft: two places of the data that are one building (lecture and campus_t2, the same rooms and lift
+  // anchors) got a car each in it, and the other's car standing closed at 2F shut him in at its doors (R6-188h). The
+  // second place uses the first one's (ElevatorOfPlace finds it by the shaft).
+  if(const FOKStreetElevator* Same=S.Elevators.FindByPredicate([&E](const FOKStreetElevator& O){return FVector::Dist2D(O.Centre,E.Centre)<10.f;})){
+   UE_LOG(LogTemp,Display,TEXT("Street elevator: %s shares the shaft of %s"),Place.Id,OKStreetPlaces()[Same->Place].Id);continue;}
   for(int32 F=1;F<Lifts.Num();++F){FVector C=Lifts[F]->Position-E.Out[F]*160.f;C.Z=0;if(FVector::Dist2D(C,E.Centre)>10.f)UE_LOG(LogTemp,Warning,TEXT("Street elevator: %s floor %d shaft at %s, not %s"),Place.Id,F+1,*C.ToCompactString(),*E.Centre.ToCompactString());}
   E.CarZ=E.StopZ[0];
   auto Part=[&](FVector Size,FLinearColor Colour,TArray<FOKStreetLiftPart>& Into,FVector Local){

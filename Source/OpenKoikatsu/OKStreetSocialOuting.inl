@@ -233,7 +233,13 @@ void AOKStreetSocialScene::RideElevator(int32 PlaceIndex,int32 Floor){
  PressElevator(Index,Floor-1);
 }
 int32 AOKStreetSocialScene::ElevatorOfPlace(int32 PlaceIndex) const{
- if(!State)return INDEX_NONE;for(int32 I=0;I<State->Elevators.Num();++I)if(State->Elevators[I].Place==PlaceIndex)return I;return INDEX_NONE;
+ if(!State)return INDEX_NONE;for(int32 I=0;I<State->Elevators.Num();++I)if(State->Elevators[I].Place==PlaceIndex)return I;
+ // A place sharing another's shaft (SpawnElevators makes one car a shaft): that car.
+ if(!OKStreetPlaces().IsValidIndex(PlaceIndex))return INDEX_NONE;
+ const auto Lifts=OKStreetPlaceLifts(OKStreetPlaces()[PlaceIndex]);if(Lifts.Num()<2)return INDEX_NONE;
+ const FVector Centre=Lifts[0]->Position-FRotator(0,Lifts[0]->Yaw,0).Vector()*160.f;
+ for(int32 I=0;I<State->Elevators.Num();++I)if(FVector::Dist2D(State->Elevators[I].Centre,Centre)<10.f)return I;
+ return INDEX_NONE;
 }
 
 bool AOKStreetSocialScene::NextDay(){
