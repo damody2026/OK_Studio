@@ -1426,7 +1426,10 @@ void AOKStreetSocialScene::FinishFreeTalk(int32 Character,const FString& Id,cons
  if(OKStreetFreeTalkIsNudge(Text)){
   if(S.ChatOrderAwaitsJudge.Remove(Character)>0&&!S.Cart.IsEmpty())PlaceChatOrder(Character,Reply->Reply); // no judge comes for a nudge
   const FString A=Reply->Action;
-  if(!A.IsEmpty()&&!(A.StartsWith(TEXT("go:"))||A==TEXT("stroll")||A==TEXT("walk")||OKStreetFindActivity(A)||OKStreetFindPlace(A)))ExecuteFreeTalkAction(Character,Id,A);
+  // Told how long the walk is, she finds it too far ("five hours? let's stay near"): the trip is off. She said so and
+  // they walked on toward the boat dock anyway (R6-194).
+  if(A==TEXT("cancel_outing")){if(S.OutingGirl==Character){UE_LOG(LogTemp,Display,TEXT("Street outing: actor=%d finds it too far, called off"),Character);CancelOuting(OKT(TEXT("ui.outing.she_called_off_far")));}}
+  else if(!A.IsEmpty()&&!(A.StartsWith(TEXT("go:"))||A==TEXT("stroll")||A==TEXT("walk")||OKStreetFindActivity(A)||OKStreetFindPlace(A)))ExecuteFreeTalkAction(Character,Id,A);
   // Hers to propose, his to agree: kept for the judge of his next line. On arriving at the park she said "let's find a
   // bench" (park_seat); he said "sure, that bench", and the judge took them as already sitting there.
   else if(!A.IsEmpty()&&A!=TEXT("none"))S.HerProposed.Add(Character,A);
@@ -1452,7 +1455,11 @@ void AOKStreetSocialScene::ExecuteFreeTalkAction(int32 Character,const FString& 
  if(OKStreetReplyActOnly(ActionNow)){UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s is her act, not an activity"),*ActionNow);return;}
  if(S.ActGirl==Character&&S.ActId==ActionNow){UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s is what they are already doing"),*ActionNow);return;}
  // On the way somewhere together, "let's walk" is what they are doing: it does not cancel the trip for a loop nearby.
- if(S.OutingGirl==Character&&(ActionNow==TEXT("walk")||ActionNow==TEXT("stroll"))){UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s while already on the way (%s)"),*ActionNow,*S.OutingActivity);return;}
+ // Unless the way left is long (half an hour or more): "too far, let's just walk around here" is the trip given up for a
+ // stroll; they walked on toward the boat dock five hours off (R6-194).
+ if(S.OutingGirl==Character&&(ActionNow==TEXT("walk")||ActionNow==TEXT("stroll"))&&!S.OutingRoute.IsEmpty()&&FVector::Dist2D(S.Male,S.OutingRoute.Last())>30*275.f){
+  UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s instead of the long way to %s"),*ActionNow,*S.OutingActivity);CancelOuting(FString());}
+ else if(S.OutingGirl==Character&&(ActionNow==TEXT("walk")||ActionNow==TEXT("stroll"))){UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s while already on the way (%s)"),*ActionNow,*S.OutingActivity);return;}
  // Already on the way there, or already in that place: not again (the walk would start over).
  {const FOKStreetPlace* P=OKStreetFindPlace(ActionNow.StartsWith(TEXT("go:"))?ActionNow.Mid(3):ActionNow);
   if(S.OutingGirl!=INDEX_NONE&&(S.OutingActivity==ActionNow||(P&&S.OutingPlace==P->Name))){UE_LOG(LogTemp,Display,TEXT("Street free talk action: already on the way (%s)"),*ActionNow);return;}

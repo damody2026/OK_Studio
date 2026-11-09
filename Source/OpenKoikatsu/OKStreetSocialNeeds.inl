@@ -26,7 +26,10 @@ void AOKStreetSocialScene::TickNeeds(){
    const FString Home=OKStreetProfileString(S.MindProfiles.FindRef(R.Id),nullptr,TEXT("home_place_id"));const bool AtHome=B->Place==Home||B->Place==TEXT("girls_dorm");
    // Not there yet (on her way, or put back beside him in the park after a load while her block says lunch at the
    // department store): it does not feed or rest her. 惠惠 went from satiety 87 to 99 standing in the park.
-   const bool Away=!AtHome&&!B->Place.IsEmpty()&&S.Agents.IsValidIndex(I-1)&&PlaceHere(S.Agents[I-1].Position)!=B->Place;
+   // Inside its rooms counts, though another place is named there first: her meal block at the department store, she sat in
+   // the ramen shop inside it ("ramen there") eating for an hour and went from satiety 29 to 24 (R6-195).
+   const FOKStreetPlace* Planned=B->Place.IsEmpty()?nullptr:OKStreetFindPlace(B->Place);
+   const bool Away=!AtHome&&!B->Place.IsEmpty()&&S.Agents.IsValidIndex(I-1)&&PlaceHere(S.Agents[I-1].Position)!=B->Place&&!(Planned&&OKStreetPlaceFloor(*Planned,S.Agents[I-1].Position)>0);
    if(!Away)O->SetStringField(TEXT("activity"),B->Kind);else UE_LOG(LogTemp,Display,TEXT("Street needs: actor %d is not at %s yet (%s there), no %s gain"),I,*B->Place,*PlaceHere(S.Agents[I-1].Position),*B->Kind);O->SetBoolField(TEXT("at_home"),AtHome);
   }
   Rows.Add(MakeShared<FJsonValueObject>(O));
