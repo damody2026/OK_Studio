@@ -617,20 +617,28 @@ bool AOKStreetSocialScene::BeginOuting(int32 Girl,const FString& ActivityId,FStr
  // audit 11-09).
  else if(Spot&&Place->Outdoor&&!OKStreetUpstairs(Spot->Position)){Route=PlaceRoute(S.Male,Spot->Position);if(Route.Num()<2){Error=OKMsg(TEXT("ui.outing.no_route_to_place"), {{TEXT("place_name"), Place->Name}});return false;}}
  else{
-  Route=FVector::Dist2D(S.Male,Place->Door)<200?TArray<FVector>{S.Male,Place->Door}:PlaceRoute(S.Male,Place->Door);
+  // Upstairs, by an elevator: the place's own, or the building's it is in. "Let's go to the ramen shop" (no activity
+  // spot) walked to the department store's ground floor under its 9F door and "arrived" there; 贞德·Alter's ramen was
+  // "not sold here" (R6-187).
+  const FVector Target=Spot?Spot->Position:PlaceInsideSpot(*Place);
+  const FOKStreetPlace* LiftPlace=nullptr;
+  if(OKStreetUpstairs(Target)){
+   if(!OKStreetPlaceLifts(*Place).IsEmpty())LiftPlace=Place;
+   else for(const auto& Q:OKStreetPlaces())if(&Q!=Place&&!Q.Rooms.IsEmpty()&&!OKStreetPlaceLifts(Q).IsEmpty()&&!OKStreetUpstairs(Q.Door)&&OKStreetInsidePlace(Q,Target)){LiftPlace=&Q;break;}}
+  const FVector Door=LiftPlace?LiftPlace->Door:Place->Door;
+  Route=FVector::Dist2D(S.Male,Door)<200?TArray<FVector>{S.Male,Door}:PlaceRoute(S.Male,Door);
   if(Route.Num()<2){Error=OKMsg(TEXT("ui.outing.no_route_to_place"), {{TEXT("place_name"), Place->Name}});return false;}
-  if(Spot){
-   const auto Lifts=OKStreetPlaceLifts(*Place);
-   if(OKStreetUpstairs(Spot->Position)&&!Lifts.IsEmpty()){
-    // Indoors the grid finds the way round desks and shelves from the door to the elevator.
-    TArray<FVector> In=GridRoute(Route.Last(),Lifts[0]->Position);if(In.Num()>=2){In.RemoveAt(0);Route.Append(In);}
-    else{if(const auto* Hall=OKStreetPlaceAnchor(*Place,TEXT("hall")))Route.Add(Hall->Position);Route.Add(Lifts[0]->Position);}
-    // then ride up in the car (StepLiftRide)
-    int32 Floor=0;for(int32 F=0;F<Lifts.Num();++F)if(FMath::Abs(Lifts[F]->Position.Z-Spot->Position.Z)<FMath::Abs(Lifts[Floor]->Position.Z-Spot->Position.Z))Floor=F;
-    S.LiftRide=FOKStreetLiftRide();S.LiftRide.Elevator=ElevatorOfPlace(OKStreetPlaces().IndexOfByPredicate([Place](const FOKStreetPlace& P){return &P==Place;}));S.LiftRide.Floor=Floor;S.LiftRide.Spot=Spot->Position;
-   }
-   else{TArray<FVector> In=GridRoute(Route.Last(),Spot->Position);if(In.Num()>=2){In.RemoveAt(0);Route.Append(In);}else Route.Add(Spot->Position);}
+  if(LiftPlace){
+   const auto Lifts=OKStreetPlaceLifts(*LiftPlace);
+   // Indoors the grid finds the way round desks and shelves from the door to the elevator.
+   TArray<FVector> In=GridRoute(Route.Last(),Lifts[0]->Position);if(In.Num()>=2){In.RemoveAt(0);Route.Append(In);}
+   else{if(const auto* Hall=OKStreetPlaceAnchor(*LiftPlace,TEXT("hall")))Route.Add(Hall->Position);Route.Add(Lifts[0]->Position);}
+   // then ride up in the car (StepLiftRide)
+   int32 Floor=0;for(int32 F=0;F<Lifts.Num();++F)if(FMath::Abs(Lifts[F]->Position.Z-Target.Z)<FMath::Abs(Lifts[Floor]->Position.Z-Target.Z))Floor=F;
+   S.LiftRide=FOKStreetLiftRide();S.LiftRide.Elevator=ElevatorOfPlace(OKStreetPlaces().IndexOfByPredicate([LiftPlace](const FOKStreetPlace& P){return &P==LiftPlace;}));S.LiftRide.Floor=Floor;S.LiftRide.Spot=Target;
+   if(LiftPlace!=Place)UE_LOG(LogTemp,Display,TEXT("Street outing: %s is upstairs in %s: by its elevator to floor %d"),Place->Id,LiftPlace->Id,Floor);
   }
+  else if(Spot){TArray<FVector> In=GridRoute(Route.Last(),Spot->Position);if(In.Num()>=2){In.RemoveAt(0);Route.Append(In);}else Route.Add(Spot->Position);}
   // Going to a building (no spot of an activity): through the door and a few steps in, so they are in the shop, not outside it.
   else{const FVector In=PlaceInsideSpot(*Place);
    if(In!=Place->Door){TArray<FVector> Steps=GridRoute(Route.Last(),In);if(Steps.Num()>=2){Steps.RemoveAt(0);Route.Append(Steps);}}}
@@ -768,7 +776,7 @@ float AOKStreetSocialScene::StepOuting(float Dt){
     else if(Out.Num()>=2){Again={S.Male};Again.Append(Out);}}
    UE_LOG(LogTemp,Display,TEXT("Street outing: blocked at (%.0f,%.0f), route planned again (%d points)"),S.Male.X,S.Male.Y,Again.Num());
    // The same route again ran into the same thing every 4 s for minutes (a stroll stuck by the restaurant tables;
-   // R3-234). Held up in the same spot a third time: round it on the grid (cells tested with his body's clearance);
+   // R3-234). Held up in the same spot a second time: round it on the grid (cells tested with his body's clearance);
    // a fifth: he squeezes past to the next point, as the navigation does when wedged.
    if(FVector::Dist2D(S.Male,S.OutingStuckPos)<30.f)++S.OutingStuckCount;else{S.OutingStuckCount=1;S.OutingStuckPos=S.Male;}
    // Held up within reach of the last point (the seat at the table): he takes it now. At the cafeteria he stood 60 cm (at the
@@ -784,7 +792,9 @@ float AOKStreetSocialScene::StepOuting(float Dt){
     // At the point's height in the city (its ground): kept at his, a step past onto a lower road left him 2.5 m up in the
     // air, where no step finds ground under him, and every point after that was a wedge (R6-180).
     S.Male=FVector(Next.X,Next.Y,OKStreetCityMode()?Next.Z:S.Male.Z);++S.OutingStep;S.OutingStuckCount=0;return 0;}
-   if(S.OutingStuckCount>=3&&S.OutingRoute.IsValidIndex(S.OutingStep)){TArray<FVector> Around=GridRoute(S.Male,S.OutingRoute[S.OutingStep]);
+   // Back at the same spot after a planned-again route is a loop already: on the way to the ramen shop each new street
+   // route led him off and round to the same block by the department store, three loops, an hour of the clock (R6-187).
+   if(S.OutingStuckCount>=2&&S.OutingRoute.IsValidIndex(S.OutingStep)){TArray<FVector> Around=GridRoute(S.Male,S.OutingRoute[S.OutingStep]);
     if(Around.Num()>=2){for(int32 K=S.OutingStep+1;K<S.OutingRoute.Num();++K)Around.Add(S.OutingRoute[K]);Again=MoveTemp(Around);UE_LOG(LogTemp,Display,TEXT("Street outing: round it on the grid (%d points)"),Again.Num());}}
    if(Again.Num()>=2){S.OutingRoute=Again;S.OutingStep=1;}
   }

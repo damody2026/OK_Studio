@@ -420,8 +420,15 @@ local function main()
 
   -- Heroine mind (Tools/ok-mind, cargo build --release): the game loads a copy, so cargo can rebuild while it runs.
   -- Without the DLL the street keeps its old behaviour.
-  local mind_source = path.join(root, "Tools/ok-mind/target/release/ok_mind.dll")
+  -- Built here like the rules (a no-op when up to date): after the 11-09 integration the copy was the one built before
+  -- it, which still looked for the retired deepseek.json, and every reply failed "no_api_key" (R6-187).
+  local mind_crate = path.join(root, "Tools/ok-mind")
+  local mind_source = path.join(mind_crate, "target/release/ok_mind.dll")
   local mind_dll = path.join(sandbox or path.join(root, "Saved/StreetSocial/Build"), "ok-mind/ok_mind.dll")
+  if proc.which("cargo") then
+    local r = proc.run({ "cargo", "build", "--release", "--quiet", "-j", "8" }, { cwd = mind_crate, capture = true })
+    if not r.ok then say("Heroine mind build failed; using the previous build if there is one") end
+  end
   if path.is_file(mind_source) then
     path.mkdir(path.parent(mind_dll), true)
     local copied, err = pcall(path.copy, mind_source, mind_dll)

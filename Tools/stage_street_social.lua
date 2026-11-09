@@ -50,6 +50,14 @@ function M.stage(executable, destination, base_dir)
   local exe = path.join(target, "Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.exe")
   path.mkdir(path.parent(exe))
   path.copy(executable, exe)
+  -- The DLLs beside it are built first (a no-op when up to date): a stage made after the 11-09 integration carried the
+  -- ok_mind.dll built before it, which looked for the retired deepseek.json, and no reply came ("no_api_key", R6-187).
+  if proc.which("cargo") then
+    for _, crate in ipairs({ "Tools/ok-mind", "Tools/ok-rules", "Tools/ok-story" }) do
+      local r = proc.run({ "cargo", "build", "--release", "--quiet", "-j", "8" }, { cwd = path.join(root, crate), capture = true })
+      if not r.ok then io.stderr:write("WARNING: cargo build --release in " .. crate .. " failed; staging the previous build\n") end
+    end
+  end
   -- Heroine mind (Tools/ok-mind): loaded at runtime from beside the executable; optional.
   local mind = path.join(root, "Tools/ok-mind/target/release/ok_mind.dll")
   if path.exists(mind) then path.copy(mind, path.join(path.parent(exe), "ok_mind.dll")) end
