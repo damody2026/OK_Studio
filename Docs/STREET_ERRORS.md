@@ -2182,3 +2182,4 @@
 - 2026-11-09 R6-188c：測試時遊戲視窗被最小化，拍照就讓遊戲當掉（D3D12 截圖複製越界）。截圖請求要在視窗可畫時才送出。
 - 2026-11-10 R6-188e：用 `game_select` 選過自己的舊遊戲後重啟，`game_launch` 等了 30 分鐘才逾時，期間遊戲沒暫停一直在跑。重啟前要先 `game_select 0`。
 - 2026-11-10：c-conquest 關掉遊戲去重建 stage 時沒有釋放 Unreal slot2（從 22:45 一直占著），f-cover、f-refcards 只能排隊。關遊戲就 release，建好再 claim --wait。
+- 2026-11-10 c-street-city 我 04:11 以 `--need-gb 105` 拿 slot1 開 WP 編輯器時另一個 slot 是空的，47 秒後攻略的遊戲也拿到 slot2（它只要 35 GB，當時夠），編輯器長到 56 GB、遊戲 33 GB，可用 commit 剩 7.7 GB，協調者關掉了我的編輯器。`--need-gb` 只在 claim 那一刻檢查，之後誰都能再拿。修正：`Tools/unreal_slot.lua` 的 claim 需要 60 GB 以上時，要等其他 slot 全空，持有期間別人也拿不到（owner.txt 記 `[need N]`）。
