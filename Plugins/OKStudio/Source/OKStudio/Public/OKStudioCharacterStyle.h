@@ -9,8 +9,8 @@ struct FOKStudioStyleTuning
 	float HeadSize = 1.4f;		// the head against the card's
 	float Hips = 1.4f, Shoulders = 1.4f, Upper = 1.45f, Waist = 1.f, UpperArm = 1.55f, Forearm = 1.6f, Thigh = 1.3f, Calf = 1.3f, Bust = 1.2f, Hem = 1.f;
 	float LegLength = 1.f;		// the legs against what the character's growth gives them
-	float Breast = 0.85f;		// the breast size slider it pulls to
-	float BustHeight = 1.35f;	// the breast height slider it raises them to (2026-11-09, the user)
+	float BreastScale = 1.3f;	// the breast size slider against the card's at the realistic end (2026-11-09, the user)
+	float BustHeight = 1.25f;	// how much the realistic end raises the breast height slider: x1.25 of the card's (2026-11-09, the user)
 	float RealJaw = 0.33f;		// how far the jaw sliders go towards the realistic end's, on a middling jaw
 	float RealFace = 0.6f;		// how far the eye shape, nose and mouth go towards the realistic end's
 	float RealEye = 0.2f;		// and how far the eyes go up: further than this they go under the fringe
