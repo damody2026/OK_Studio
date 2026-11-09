@@ -51,11 +51,14 @@ pub fn keep_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])
     if !on { return Vec::new(); }
     // Only the garments that reach her pushing skin (every eighth vertex as its renderer draws it, against the cells it
     // lists): the others stay on the GPU route.
-    all.push((key, body_moves));
+    all.push((key, body_moves));drop(all);
     let Some(field) = field else { return Vec::new(); };
     let head = session.head_full_posed.as_ref().or(session.head_skel.as_ref());
     let clothes = session.clothes_dynamic_runtime.as_ref().map(|(_, state)| &state.skel);
-    session.parts.iter().enumerate().filter(|(_, p)| p.render_visible && covers(&p.role)).filter_map(|(i, p)| {
+    // Each garment's palette on its own worker: one after another they took 0.56 ms of the game thread each frame
+    // (BellyWrapTake, trace EGalPerf19 after he came). The order of the list stays the parts' order.
+    use rayon::prelude::*;
+    crate::session::native_parallel_work(|| session.parts.par_iter().enumerate().filter(|(_, p)| p.render_visible && covers(&p.role)).filter_map(|(i, p)| {
         let runtime = p.runtime_accessory.as_ref()?;
         let (mesh, palette) = runtime.export_skin_palette(runtime.skin_body(session.body_skel.as_ref(), clothes), head)?;
         let reaches = (0..mesh.rest_positions.len()).step_by(8).any(|j| {
@@ -65,7 +68,7 @@ pub fn keep_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])
             field.at(c).is_some()
         });
         reaches.then_some(i)
-    }).collect()
+    }).collect())
 }
 
 static NEIGHBOURS: std::sync::Mutex<Vec<(usize, usize, std::sync::Arc<Vec<Vec<u32>>>)>> = std::sync::Mutex::new(Vec::new());

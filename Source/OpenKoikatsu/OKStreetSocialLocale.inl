@@ -160,6 +160,14 @@ FString AOKStreetSocialScene::RenderStyleLabel(const FString& Style) const{
  if(Name==Id)if(const FOKRenderRamp* R=OKRenderRamps().FindByPredicate([&](const FOKRenderRamp& X){return X.Key==Key;}))Name=R->Name;
  return OKMsg(TEXT("ui.settings.render_style_ramp"),{{TEXT("name"),Name}});
 }
+void AOKStreetSocialScene::SetLit(bool bOn){
+ auto& S=*State;if(S.Lit==bOn)return;S.Lit=bOn;
+ const FString PlayerFile=FPaths::GetPath(S.Manifest.SavePath)/TEXT("player.json");FString Body;TSharedPtr<FJsonObject> Player;
+ if(!FFileHelper::LoadFileToString(Body,*PlayerFile)||!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Body),Player)||!Player.IsValid())Player=MakeShared<FJsonObject>();
+ Player->SetBoolField(TEXT("lit"),bOn);UE_LOG(LogTemp,Display,TEXT("Street characters %s"),bOn?TEXT("lit"):TEXT("unlit"));
+ if(!S.SelfTest&&!S.Manifest.SavePath.IsEmpty()){FString Out;FJsonSerializer::Serialize(Player.ToSharedRef(),TJsonWriterFactory<>::Create(&Out));FFileHelper::SaveStringToFile(Out,*PlayerFile,FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);}
+ RefreshUI();
+}
 void AOKStreetSocialScene::SetRenderStyle(const FString& Style){
  auto& S=*State;const FString Old=RenderStyle();
  if(Style==Old||S.SaveRestarting)return;

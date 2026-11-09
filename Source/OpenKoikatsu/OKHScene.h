@@ -43,9 +43,13 @@ public:
     int32 Row=INDEX_NONE;
     UPROPERTY() TObjectPtr<UTextBlock> Shown;
     UPROPERTY() TObjectPtr<UOKHScenePanel> Owner;
+    // An on/off row (0..1 in steps of 1) is a button instead (user 2026-11-09): off white with black words, on black with
+    // white words; the slider stays, hidden, holding the value.
+    UPROPERTY() TObjectPtr<class UButton> Toggle;UPROPERTY() TObjectPtr<UTextBlock> ToggleText;
     void Show();
     UFUNCTION() void HandleValue(float NewValue);
     UFUNCTION() void HandleDone();
+    UFUNCTION() void HandleToggle();
 };
 
 // Where his penis root goes (user, 2026-11-02): a point in a circle, dragged; its edge is the farthest that way
@@ -97,6 +101,9 @@ public:
     // The control channel's view (/hscene): pose, state, gauges, the buttons now offered (kind and label), the list.
     TSharedRef<FJsonObject> Describe() const;
     bool SelectPoseNamed(const FString& Name);
+    void SetLimbIk(const TSharedPtr<FJsonObject>& Settings);TSharedPtr<FJsonObject> LimbIkJson() const;
+    void SetTongue(const TSharedPtr<FJsonObject>& Settings);TSharedPtr<FJsonObject> TongueJson() const;
+    void SetMirror(const TSharedPtr<FJsonObject>& Settings);TSharedPtr<FJsonObject> MirrorJson() const;
     void SetSpeed(float Value);
     // Talk while it happens (the street's free talk, OKStreetSocialContacts.inl). What he says goes out at once, or,
     // while she cannot answer (moving faster than 2x), is held and goes out at her climax; her answer shows here and is
@@ -141,7 +148,7 @@ public:
         SettingsToggle=2300,SettingsReset=2301, // the settings panel on the left
         HeadCameraToggle=2302,EyesCameraToggle=2303, // her head, her eyes on the camera
         PoseBase=1000,
-        Faster=2001,Slower=2002,Toggle=2003,Inside=2004,Outside=2005,Drink=2006,Vomit=2007,Again=2008,Insert=2009,InsertAnal=2010,Pull=2011,Condom=2012,Stop=2014,Continue=2015,ToggleMale=2016,LockHer=2017,LockHis=2018,MaleBottom=2019,PenisXRayToggle=2020,PhysicsNext=2021,GrayRoomToggle=2022,PenisPanelToggle=2023,PenisReset=2024,FluidClear=2025,
+        Faster=2001,Slower=2002,Toggle=2003,Inside=2004,Outside=2005,Drink=2006,Vomit=2007,Again=2008,Insert=2009,InsertAnal=2010,Pull=2011,Condom=2012,Stop=2014,Continue=2015,ToggleMale=2016,LockHer=2017,LockHis=2018,MaleBottom=2019,PenisXRayToggle=2020,PhysicsNext=2021,GrayRoomToggle=2022,PenisPanelToggle=2023,PenisReset=2024,FluidClear=2025,FeetPinToggle=2026,HandsPinToggle=2027,SkinLitToggle=2028,
         SecondChange=3690,SecondClothes=3691,SecondBase=3700, // the second heroine (lesbian, 3P)
         ClothesBase=3000,RoomBase=3200,OutfitBase=3300,CoordinateToggle=3310,CoordinateAccessories=3311,CoordinateBase=3400,
     };
@@ -179,6 +186,25 @@ private:
     bool bLickMode=false,bLipsTouch=false,bAfterglow=false; // afterglow: done, lying with him, talking (12)
     void TouchBody(int32 Area);void Flinch(int32 Area);bool BodyTouching() const;
     void TickAhegao();bool bAhegaoPose=false; // her double peace (TickAhegao)
+    // Her tongue out raised (TickTongue; ok.HScene.TongueUp / TonguePitch, {"tongue":{...}} on /hscene): its parts as they
+    // were made (less the alignment's offset), the girl they are hers, and whether her mouth pattern has it out.
+    void TickTongue();
+    // A 200 x 200 cm mirror beside them (user 2026-11-09; TickMirror, ok.HScene.Mirror / MirrorYaw / MirrorDistance,
+    // {"mirror":{...}} on /hscene): a capture from the camera's reflection through the mirror, drawn on its quad.
+    UPROPERTY() TObjectPtr<AActor> Mirror;UPROPERTY() TObjectPtr<class UProceduralMeshComponent> MirrorQuad;UPROPERTY() TObjectPtr<class USceneCaptureComponent2D> MirrorCapture;
+    // Two pictures (user 2026-11-09: the mirror halved the frame rate): taken every other frame into the one not shown, then
+    // shown (MirrorFront), at twice the mirror's size on the screen for its edges (MirrorSize).
+    UPROPERTY() TObjectPtr<class UTextureRenderTarget2D> MirrorTargets[2];UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> MirrorShown;
+    int32 MirrorFront=0,MirrorSize=0;uint64 MirrorTakenAt=0;void TickMirror();void RemoveMirror();
+    // Their skin lit by the scene or the original's toon (ok.HScene.SkinLit, SkinLitToggle; user 2026-11-09).
+    void TickSkinLit(bool bEnd);bool bSkinLitShown=false;
+    // While lit: a key and a fill light on lighting channel 1 only (the pair, not the street), from the panel's light rows.
+    TWeakObjectPtr<class UPointLightComponent> SkinKey,SkinFill;
+    // Taken after her no (experience "forced"): her first words and her talk context (Context).
+    bool Forced() const;bool bForcedSaid=false;double ForcedSayAt=0.;
+    // She talks by herself every ok.HScene.ChatEvery seconds she can (user 2026-11-09), his words go on as before.
+    void TickChatter();double QuietSince=0.;
+    TMap<TWeakObjectPtr<class USceneComponent>,FTransform> TongueRest;TWeakObjectPtr<class AKKPreviewActor> TongueGirl;int32 TongueOutPattern=-2,TongueOutChecked=-1;bool bTongueRaised=false;
     void TickCameraLight(bool bEnd);bool bCameraLit=false; // their key light from the camera
     TMap<TWeakObjectPtr<class UMaterialInstanceDynamic>,FLinearColor> CameraLightWas;FVector CameraLightShown=FVector::ZeroVector;
     // The panel's light rows: their shadow ramp and the colour of the light, each material's own given back when they go.
@@ -193,7 +219,7 @@ private:
     UFUNCTION() void OnLightStyle(FString Option,ESelectInfo::Type How);
     UFUNCTION() void OnLightFrom(FString Option,ESelectInfo::Type How);
     UFUNCTION() void OnLightTint(FString Option,ESelectInfo::Type How);
-    TWeakObjectPtr<AKKPreviewActor> AheGazeFor;float AheGazeSet=0.f;int32 AheMouthSet=INDEX_NONE;bool bAheManualWas=false; // her rolled-up gaze given (TickAhegao)
+    TWeakObjectPtr<AKKPreviewActor> AheGazeFor;float AheGazeSet=0.f;int32 AheMouthSet=INDEX_NONE;bool bAheManualWas=false;double AheTongueUntil=0.; // her tongue out after a climax (CountHerOrgasm, UpdateFace) // her rolled-up gaze given (TickAhegao)
     bool bAheEyeLook=false,bAheEyeFollow=false;int32 AheEyePattern=1;FVector AheEyeTarget=FVector::ZeroVector; // her look, given back after it
     double FlinchUntil=0.,FlinchNext=0.;FString FlinchBone;FVector FlinchTurn=FVector::ZeroVector;
     bool bAibuLoaded=false;
@@ -391,10 +417,24 @@ private:
     // The taller one bends the knees instead of sinking through the floor or floating over it: he is lowered with his feet
     // held where they were (Studio IK foot targets); when he would have to rise, she is lowered the same way.
     FVector HerOffset=FVector::ZeroVector,HerApplied=FVector::ZeroVector;TWeakObjectPtr<class AKKPreviewActor> AlignedHer;
-    int32 FeetWait=0;bool bFeetRead=false,bHisStands=false,bHerStands=false,bHisIk=false,bHerIk=false;FVector HisFeet[2],HerFeet[2],HisHeld[2],HerHeld[2];
+    int32 FeetWait=0,HandsWait=0;bool bFeetRead=false,bHisStands=false,bHerStands=false,bHisIk=false,bHerIk=false;FVector HisFeet[2],HerFeet[2],HisHeld[2],HerHeld[2];
     // Her hands on his penis while she sucks him (GripHim): IK effectors (5, 6) and where, her skeleton space; what was set.
     TArray<int32> HandEff;TArray<FVector> HandAt,HandHeld;void GripHim(class AKKPreviewActor* Girl,class AKKPreviewActor* Him,const FVector& Lips,const FVector& Root,const FVector& Axis);
-    void MoveParts(class AKKPreviewActor* A,const FVector& Want,FVector& Applied);void HoldFeet(class AKKPreviewActor* A,bool bStands,const FVector& Offset,const FVector (&Feet)[2],FVector (&Kept)[2],bool& bIk);
+    // IK targets of HoldFeet while the pair plays: sent when both sessions are idle (ReadPairSessions) instead of waiting
+    // for the solve (SyncPair) each time they move. Each actor's latest set replaces the one before.
+    struct FPendingIk{TWeakObjectPtr<class AKKPreviewActor> Who;TArray<int32> Eff;TArray<FVector> At;uint64 Frame=0;};TArray<FPendingIk> PendingIk;
+    void SendPendingIk(bool bWait);void DropPendingIk(class AKKPreviewActor* A);
+    void MoveParts(class AKKPreviewActor* A,const FVector& Want,FVector& Applied);void HoldFeet(class AKKPreviewActor* A,bool bStands,const FVector& Offset,const FVector (&Feet)[2],FVector (&Kept)[2],bool& bIk,bool bPin=false,const FVector* PinHands=nullptr,FVector* KeptHands=nullptr,int32* KeptSet=nullptr);
+    bool bPinFeet=true; // FeetPinToggle: while he is in her their soles stay where the clip put them (IK)
+    // HandsPinToggle: while he is in her their hands stay where the clip put them (IK), his on her waist going with it.
+    bool bPinHands=true,bHandsRead=false;FVector HisHands[2],HerHands[2],HisHandsKept[2],HerHandsKept[2],HisHandLocal[2];FName HisHandOn[2];int32 HisIkSet=0,HerIkSet=0;FVector HimOffsetWas=FVector::ZeroVector,HerOffsetWas=FVector::ZeroVector;
+    FVector HandOnSum[2][3],HandOnSq[2][3],HandOnLast[2][3];int32 HandOnN[2][3]={}; // his hands on each of her waist bones over the read (ReadHands)
+    bool bHandsReading=false;void ReadHands(class AKKPreviewActor* Girl,class AKKPreviewActor* Him);
+    // Their limbs' IK, set from the control channel too ({"limb_ik":{...}} on /hscene; LimbIkJson in the answer):
+    // a hand of his holds her waist bone it keeps within HandSpreadMax cm of, no farther than HandFarMax cm off it;
+    // bFeetToHers puts his soles as high as hers while both are within FeetFloorNear cm of the floor.
+    float HandSpreadMax=2.5f,HandFarMax=35.f,FeetFloorNear=25.f;bool bFeetToHers=true;
+    void FeetToHers(class AKKPreviewActor* Girl,class AKKPreviewActor* Him,FVector (&Out)[2]) const;
     // The pair solves its next frame in the background (ok.Anim.AsyncPair): wait for it before touching either session.
     void SyncPair();
     void RestoreAlign();

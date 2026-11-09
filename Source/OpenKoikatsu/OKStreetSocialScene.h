@@ -201,6 +201,8 @@ private:
  void SetRenderStyle(const FString& Style);
  bool ApplyRenderStyleSetting(const FString& Style); // the cvars only (startup, from player.json)
  FString RenderStyleLabel(const FString& Style) const;
+ // Lit / unlit characters (player.json "lit"; OKLitSwap.h), live.
+ void SetLit(bool bOn);
  // Regions (OKStreetSocialLocale.inl; the rules decide every amount, ok-rules region.rs): an amount of the scene's own
  // in the save's region (kind: cash | wage | salary | rent | property | goods | price, or a [fixed] key), the save moved
  // to another region (all its money converted by the rules), and finance's yuan wallet amounts crossing to the region.
@@ -529,7 +531,7 @@ private:
  void PhoneSave();
  int32 RemoteKind(int32 Character) const;
  bool PanelConsent(int32 Girl,const FString& Action,bool bNotify=true);
- bool PrivateConsent(int32 Girl);
+ bool PrivateConsent(int32 Girl);bool PrivateConsentAsked(int32 Girl);
  // The heroine interaction module (OKStreetSocialHeroine.inl, OKStreetHeroine.h): every interaction goes through Interact.
  struct FOKHeroineResult Interact(int32 Girl,const FString& ActId,const struct FOKHeroineArgs& Args);
  void HeroineRefuseGate(int32 Girl,const FString& ActId,const class FJsonObject& Answer);

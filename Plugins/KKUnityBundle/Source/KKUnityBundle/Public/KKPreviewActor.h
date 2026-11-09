@@ -11,8 +11,10 @@
 #include "RenderCommandFence.h"
 #include "ProceduralMeshComponent.h"
 #include "Containers/Ticker.h"
+#include "Templates/PimplPtr.h"
 class FOkAnimPlayer;
 
+#include "KKLitSync.h"
 #include "KKPreviewActor.generated.h"
 
 class UProceduralMeshComponent;
@@ -163,6 +165,8 @@ struct FKKLoadedPart
 	TArray<FVector4f> RuntimeSourceTangents;
 	// Last uploaded native streams for large non-morph renderers.
 	TArray<float> RuntimeSourceGeometry;
+	// The session's streams copied for a deferred stream frame (ok.Anim.PairSplitDisplay) when the snapshot above is off.
+	TArray<float> RuntimeDeferredGeometry;
     // Authored rest normals are immutable for this loaded part. Built with the
     // exact legacy GetSafeNormal formula whenever RuntimeRestNormals is assigned.
     TArray<FVector> RuntimeUnitRestNormals;
@@ -707,6 +711,15 @@ public:
 	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> WrapInstanceOf;
 	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> WrapOriginalOf;
 	bool bWrapParentMissingLogged = false;
+	// Her lit by the scene (the 1-on-1 scene's switch): every instance whose parent has a _Lit one swapped for one under
+	// LitRoot (Tools/prepare_runtime_shared_material.lua --lit-only), their values copied from hers on every call; false
+	// gives hers back. The _Lit parents carry the wrap offset too (SetWrapLine sets it on them in place).
+	bool SetSkinLit(bool bOn, const FString& LitRoot);
+	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> LitInstanceOf;
+	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> LitOriginalOf;
+	TSet<TWeakObjectPtr<class UMaterialInstanceDynamic>> LitWrapped;
+	TMap<TWeakObjectPtr<class UMaterialInstanceDynamic>,FKKLitSnapshot> LitSnapshots; // KKLitSync.h
+	TSet<FString> LitParentMissing;
 	// Insertion depth within the current pose. Authored vagina.open only; bone
 	// spread is used when that morph is absent. Range is owned by paired playback.
 	void DriveVaginaOpening(const AKKPreviewActor& Male, float& RangeMin, float& RangeMax, bool& bRange);
@@ -729,6 +742,11 @@ public:
  bool RefreshEditorGeometry();
 	void RefreshSkinnedDisplay();
 	void RefreshRuntimeAccessories();
+	/** The two halves of RefreshRuntimeAccessories: the session read on the game thread, and the conversion, generation
+	 *  and upload from copies, which the pair runs after launching its next solve (ok.Anim.PairSplitDisplay). */
+	void PrepareRuntimeAccessories();
+	void FinishRuntimeAccessories();
+	TPimplPtr<struct FKKAccessoryStreamFrame> PendingStreams;
     // Refresh CPU query vertices from the already solved native pose without
     // publishing CPU render streams over an installed GPU generation.
     void EnsurePrivateGpuQueryGeometry(UProceduralMeshComponent* Component=nullptr,int32 Section=INDEX_NONE);

@@ -27,6 +27,9 @@ bool AKKPairedPlayback::Start(AKKPreviewActor* Female,AKKPreviewActor* Male,cons
 	if(!IsValid(Female)||!IsValid(Male)||Female==Male||Female->GetWorld()!=Male->GetWorld()
 		||!Female->PairFrame().Equals(Male->PairFrame(),.01f))
 	{Error=TEXT("配對角色需要共同場景與原點");if(IsValid(Female)&&IsValid(Male))UE_LOG(LogTemp,Warning,TEXT("Pair refused: female %s (origin set %d, actor %s), male %s (origin set %d, actor %s)"),*Female->PairFrame().ToString(),Female->bPairOriginSet,*Female->GetActorTransform().ToString(),*Male->PairFrame().ToString(),Male->bPairOriginSet,*Male->GetActorTransform().ToString());return false;}
+	// Another state of the pose already playing (his strokes stronger or weaker, faster): the chains go on from where they
+	// are, as the original's one Animator does (HSceneProc resets them once, when the scene starts).
+	bSamePoseRestart=bActive&&FemaleActor.Get()==Female&&MaleActor.Get()==Male&&FemaleIK==FemaleMotion&&MaleIK==MaleMotion;
 	Stop();FemaleActor=Female;MaleActor=Male;FemaleClip=FemaleKey;MaleClip=MaleKey;StateName=State;FemaleIK=FemaleMotion;MaleIK=MaleMotion;
 	OldFemaleTick=Female->IsActorTickEnabled();OldMaleTick=Male->IsActorTickEnabled();
 	if(!Restart(Error)) {Stop();return false;}
@@ -54,8 +57,11 @@ bool AKKPairedPlayback::Restart(FString& Error)
 			if(Player->Create(Spec,Anims)&&Player->Roles()==2){OkPlayer=Player;if(WalkCycle)OkPlayer->SetWalk(*WalkCycle);}else UE_LOG(LogTemp,Warning,TEXT("OK pair group unusable: %s %s"),*Path,*FOkAnimBridge::LastError());
 		}
 	}
-	// A new pose can put hair/cloth inside the bodies: settle the chains first (generic, every pose and state).
-	OKPhysXSecondary::Settle();
+	// A new pose can put hair/cloth inside the bodies: settle the chains first. Not for another state of the same pose: the
+	// settle solves with its own backend for a while, whatever solver is chosen, and handing the chains from one solver to
+	// the other and back threw her clothes about at every switch of his strokes (user, 2026-11-09: 強弱切換).
+	if(!bSamePoseRestart)OKPhysXSecondary::Settle();
+	bSamePoseRestart=false;
 	if(!Advance(0.f,Error)){Stop();return false;}return true;
 }
 void AKKPairedPlayback::SetThird(AKKPreviewActor* Actor,const FString& Motion,bool bSwapped)
@@ -80,7 +86,10 @@ bool AKKPairedPlayback::Advance(float Delta,FString& Error)
 	if(bSolvePending&&!PendingSolve.IsCompleted()&&Delta>0.f&&SkippedTicks<CVarPairNoWait.GetValueOnGameThread()){
 		TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairStillSolving);SkippedDelta+=Delta;++SkippedTicks;return true;}
 	if(SkippedTicks>0){Delta+=SkippedDelta;SkippedDelta=0.f;SkippedTicks=0;}
-	if(bSolvePending){SyncAsync();if(!bSolveOk){Error=TEXT("OK pair frame: ")+OkReport;return false;}}
+	// The frame just solved is shown, all but its CPU accessory streams: those are made from copies after the next solve
+	// is launched below, while it runs (ok.Anim.PairSplitDisplay; any way out of here finishes them).
+	ON_SCOPE_EXIT{FinishDeferredStreams();};
+	if(bSolvePending){SyncAsync(true);if(!bSolveOk){Error=TEXT("OK pair frame: ")+OkReport;return false;}}
 	OnSessionsIdle.Broadcast();
 	if(!bActive||!IsValid(FemaleActor)||!IsValid(MaleActor))return true; // a listener stopped the pair
     const bool Reactions[2]={FemaleActor->Session.IsBodyReactionPlaying(),MaleActor->Session.IsBodyReactionPlaying()};
@@ -132,9 +141,18 @@ bool AKKPairedPlayback::Advance(float Delta,FString& Error)
 }
 uint64 GKKPairFramesShown=0;
 extern int32 GKKStreamParallelMinVertices; // KKStreamMeshProxy.cpp
-bool AKKPairedPlayback::ShowFrame(float Delta,const bool Reactions[2],FString& Error)
+extern bool GKKDeferRuntimeStreams; // KKPreviewActor.cpp
+void AKKPairedPlayback::FinishDeferredStreams()
+{
+ TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairDeferredStreams);
+ TGuardValue<int32> ParallelStreams(GKKStreamParallelMinVertices,4096);
+ FKKGpuStreamBatchScope GpuFrame;
+ for(AKKPreviewActor* PreviewRole : {FemaleActor.Get(),MaleActor.Get(),ThirdActor.Get()})if(IsValid(PreviewRole))PreviewRole->FinishRuntimeAccessories();
+}
+bool AKKPairedPlayback::ShowFrame(float Delta,const bool Reactions[2],FString& Error,bool bDeferStreams)
 {
  ++GKKPairFramesShown;
+ TGuardValue<bool> DeferStreams(GKKDeferRuntimeStreams,bDeferStreams);
  TGuardValue<int32> ParallelStreams(GKKStreamParallelMinVertices,4096); // her and his streams packed on the pool (+13 Hz, 2026-11-08)
 
  FKKGpuStreamBatchScope GpuFrame;
@@ -155,8 +173,9 @@ bool AKKPairedPlayback::ShowFrame(float Delta,const bool Reactions[2],FString& E
  {TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairContactMorph);FemaleActor->DriveVaginaOpening(*MaleActor,VaginaRangeMin,VaginaRangeMax,bVaginaRange);}
 	return true;
 }
-void AKKPairedPlayback::SyncAsync()
+void AKKPairedPlayback::SyncAsync(bool bDeferStreams)
 {
+	FinishDeferredStreams();
 	if(!bSolvePending)return;
 	{TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairOKWait);PendingSolve.Wait();}
 	bSolvePending=false;OkReport=PendingReport;
@@ -164,7 +183,7 @@ void AKKPairedPlayback::SyncAsync()
 	if(OkPlayer&&!bPendingNative){OkPlayer->ApplyFaceCurves(0,float(PendingNext),*FemaleActor);OkPlayer->ApplyFaceCurves(1,float(PendingNext),*MaleActor);}
 	Elapsed=PendingNext;
 	FString Error;
-	ShowFrame(PendingDelta,PendingReactions,Error);
+	ShowFrame(PendingDelta,PendingReactions,Error,bDeferStreams);
 }
 void AKKPairedPlayback::Tick(float DeltaSeconds) {
 	Super::Tick(DeltaSeconds);if(!bActive) return;FString Error;

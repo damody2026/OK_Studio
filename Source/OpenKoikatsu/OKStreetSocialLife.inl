@@ -369,9 +369,26 @@ bool AOKStreetSocialScene::PanelConsent(int32 Girl,const FString& Action,bool bN
  UE_LOG(LogTemp,Display,TEXT("Street consent refused: actor=%d action=%s (%s)"),Girl,*Action,*Why);
  return false;
 }
-// The one-on-one scene: friends at least, then the private-room invitation.
+// The one-on-one scene. Asked again within ten minutes of her no, any heroine goes, at a cost in favor and resentment
+// (user 2026-11-09; heroine.rs heroine_private_forced); otherwise she is asked (PrivateConsentAsked).
 bool AOKStreetSocialScene::PrivateConsent(int32 Girl){
  auto& S=*State;if(Girl<=0||!S.Manifest.Characters.IsValidIndex(Girl))return false;
+ const FString Id=OKStreetStableId(S.Manifest.Characters[Girl]);
+ if(const double* At=S.PrivateRefusedAt.Find(Id);At&&SceneTime()-*At<600.){S.PrivateRefusedAt.Remove(Id);
+  const TSharedPtr<FJsonObject> Out=OKRulesEval(S,OKRulesHeroineRequest(S,TEXT("heroine_private_forced"),Id));
+  float Lost=0.f;
+  if(Out.IsValid()){ApplyRulesRelation(Id,*Out);Lost=float(Out->GetNumberField(TEXT("favor_lost")));
+   for(const auto& V:Out->GetArrayField(TEXT("notes"))){const TSharedPtr<FJsonObject> N=V->AsObject();HeroineNote(Girl,*N->GetStringField(TEXT("act")),N->GetStringField(TEXT("text")),PlaceHere(S.Male),float(N->GetNumberField(TEXT("importance"))));
+    S.MindRecent.Add(Id,N->GetStringField(TEXT("text")));}}
+  S.Message=OKMsg(TEXT("ui.heroine.private_forced"),{{TEXT("name"),*S.Manifest.Characters[Girl].Name},{TEXT("favor"),FString::Printf(TEXT("%.0f"),Lost)}});S.FreeTalkNotice=S.Message;RefreshUI();
+  UE_LOG(LogTemp,Display,TEXT("Street private forced: actor=%d favor -%.0f"),Girl,Lost);
+  S.PrivateForcedGirl=Girl; // the scene knows she was made to (BeginPrivate: experience "forced")
+  return true;}
+ if(PrivateConsentAsked(Girl)){S.PrivateRefusedAt.Remove(Id);return true;}
+ S.PrivateRefusedAt.Add(Id,SceneTime());return false;
+}
+bool AOKStreetSocialScene::PrivateConsentAsked(int32 Girl){
+ auto& S=*State;
  // She has had enough today (earlier scenes, h_experience had_enough): not again today, whatever else would say yes.
  {const FString Id=OKStreetStableId(S.Manifest.Characters[Girl]);auto Ask=OKRulesHeroineRequest(S,TEXT("h_experience"),Id);Ask->SetStringField(TEXT("girl"),Id);Ask->SetNumberField(TEXT("day"),S.Store.CalendarDay);OKRulesPutExt(S,Ask);
   const TSharedPtr<FJsonObject> X=OKRulesEval(S,Ask);

@@ -31,6 +31,7 @@
 #include "OKMouthPatterns.h"
 #include "KKFaceBlendShape.h"
 #include "KKProceduralDeform.h"
+#include "KKLitSync.h"
 #include "KKAffineProceduralMeshComponent.h"
 #include "KKPrivateGpuBounds.h"
 #include "KKGpuStream.h"
@@ -8335,12 +8336,97 @@ void AKKPreviewActor::PreparePrivateGpuDisplayPoses(){
   FString BoxError;States[I]->bPreparedBox=OKEvaluatePrivateGpuBounds(States[I]->Bounds,States[I]->PreparedPose,States[I]->PreparedBox,BoxError);
  }
 }
+// The CPU accessory streams of one frame, between their two halves (ok.Anim.PairSplitDisplay): what the session gave is
+// read on the game thread while no solve runs (PrepareRuntimeAccessories, every pointer moved to a copy of ours), then
+// converted, generated and uploaded (FinishRuntimeAccessories) while the next pair frame is already solved on a worker.
+struct FKKAccessoryStreamSource {FKKLoadedPart* Part;OkMeshView View;bool Changed,CacheMotion,DirectNative;int32 FirstJob,EndJob,FirstWork=0,EndWork=0;};
+struct FKKAccessoryStreamSourceJob {int32 WorkIndex,Begin,End;bool Changed=false;};
+struct FKKAccessoryStreamFrame
+{
+    TArray<FKKAccessoryStreamSource,TInlineAllocator<32>> Sources;
+    TArray<FKKAccessoryStreamSourceJob,TInlineAllocator<128>> SourceJobs;
+    TArray<int32,TInlineAllocator<128>> RegularSourceJobs,FusedSourceJobs;
+    int32 SourceVertices=0;
+    const void* PartsData=nullptr;int32 PartsNum=0; // the parts the sources point into, as they were
+};
+static TAutoConsoleVariable<int32> CVarOkPairSplitDisplay(TEXT("ok.Anim.PairSplitDisplay"),1,
+    TEXT("1: the pair's CPU accessory streams are generated and uploaded after its next frame is launched, from copies of what the session gave (overlapping the solve)."));
+bool GKKDeferRuntimeStreams=false;
 void AKKPreviewActor::RefreshRuntimeAccessories()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(KK_PreviewStreams);
+    FinishRuntimeAccessories(); // one left from before goes first: its copies are older than this frame
+    PrepareRuntimeAccessories();
+    if(!GKKDeferRuntimeStreams||CVarOkPairSplitDisplay.GetValueOnGameThread()==0)FinishRuntimeAccessories();
+}
+void AKKPreviewActor::PrepareRuntimeAccessories()
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(KK_StreamPrepare);
     if(GpuPosesPreparedFrame!=GFrameCounter)PreparePrivateGpuDisplayPoses();
     TArray<FKKGpuStreamSectionRequest> GpuRequests;
     ON_SCOPE_EXIT {QUICK_SCOPE_CYCLE_COUNTER(STAT_KK_SubmitGpuStreams);if(!GpuRequests.IsEmpty())UKKAffineProceduralMeshComponent::SubmitGpuStreamsBatch(MoveTemp(GpuRequests));};
+    const bool bCopy=GKKDeferRuntimeStreams&&CVarOkPairSplitDisplay.GetValueOnGameThread()!=0;
+    PendingStreams=MakePimpl<FKKAccessoryStreamFrame>();FKKAccessoryStreamFrame& Frame=*PendingStreams;Frame.PartsData=Parts.GetData();Frame.PartsNum=Parts.Num();
+    auto& Sources=Frame.Sources;auto& SourceJobs=Frame.SourceJobs;auto& RegularSourceJobs=Frame.RegularSourceJobs;auto& FusedSourceJobs=Frame.FusedSourceJobs;
+    int32& SourceVertices=Frame.SourceVertices;
+    const bool Indexed=CVarOkSourceIndexedStreams.GetValueOnGameThread()!=0&&CVarOkAnimationGeneratedStreams.GetValueOnGameThread()!=0&&CVarOkAnimationSourceConversion.GetValueOnGameThread()!=0;
+    const bool Fused=!Indexed&&CVarOkFusedSourceStreams.GetValueOnGameThread()!=0&&CVarOkAnimationGeneratedStreams.GetValueOnGameThread()!=0;
+    const bool CacheNormalMotion=CVarOkNormalMotionCache.GetValueOnGameThread()!=0;
+	bool GpuPrepared=false;
+	for (FKKLoadedPart& Part : Parts)
+	{
+        const bool HadGpu=Part.PrivateGpuDisplay.IsValid();
+        if(UpdatePrivateGpuDisplay(Part,!GpuPrepared,GpuRequests)){GpuPrepared|=!HadGpu;Part.bNativeDisplayPrepared=false;continue;}
+        if(Part.bNativeDisplayPrepared){Part.bNativeDisplayPrepared=false;continue;}
+		if ((!Part.bRuntimeAccessory && !SkelFollowers.IsEmpty()) || !Part.Comp || Part.bSlotAttached || Part.SessionIndex == INDEX_NONE)
+		{
+			continue;
+		}
+		OkMeshView View;
+		FMemory::Memzero(View);
+		if (!Session.PartAt(Part.SessionIndex, View) || !View.positions ||
+			View.n_verts != Part.BaseVertices.Num())
+		{
+			continue;
+		}
+        // Rigid geometry stays in its authored local coordinates while its render
+        // matrix follows the socket. Compare native streams before converting
+        // those unchanged floats to doubles, irrespective of rigid mesh size.
+        const int32 Morphs=Session.MorphCount(Part.SessionIndex);
+        const bool DirectNative=(Indexed||Fused)&&View.skel_kind==4&&View.normals&&Part.BaseNormals.Num()==View.n_verts
+            &&!Part.bFaceSphereNormals&&!View.eye_draw&&Morphs==0
+            &&(Indexed||!(CacheNormalMotion&&Part.bRuntimeNormalMotionReusable));
+        const bool NativeSnapshot=(DirectNative||View.skel_kind==0||View.n_verts>=16384)&&!Part.bFaceSphereNormals&&!View.eye_draw&&Morphs==0;
+        if(!OKSyncSourceGeometry(Part.RuntimeSourceGeometry,View.n_verts,View.positions,View.normals,View.rest_tangents,NativeSnapshot)){AnimationSkippedVertices+=View.n_verts;continue;}
+        // The session's vectors are replaced by the next solve, which runs while these are converted: read our copy.
+        if(bCopy){
+            TArray<float>& Copy=NativeSnapshot?Part.RuntimeSourceGeometry:Part.RuntimeDeferredGeometry;
+            const int32 NP=View.n_verts*3,NN=View.normals?View.n_verts*3:0,NT=View.rest_tangents?View.n_verts*4:0;
+            if(!NativeSnapshot){Copy.SetNumUninitialized(NP+NN+NT,EAllowShrinking::No);FMemory::Memcpy(Copy.GetData(),View.positions,NP*sizeof(float));
+                if(NN)FMemory::Memcpy(Copy.GetData()+NP,View.normals,NN*sizeof(float));if(NT)FMemory::Memcpy(Copy.GetData()+NP+NN,View.rest_tangents,NT*sizeof(float));}
+            check(Copy.Num()==NP+NN+NT);
+            View.positions=Copy.GetData();if(NN)View.normals=Copy.GetData()+NP;if(NT)View.rest_tangents=Copy.GetData()+NP+NN;
+        }
+        bool GeometryChanged=NativeSnapshot;
+		if(View.rest_tangents&&Part.RuntimeSourceTangents.Num()!=View.n_verts){Part.RuntimeSourceTangents.SetNumUninitialized(View.n_verts);GeometryChanged=true;}
+        const bool CacheMotion=CacheNormalMotion&&Part.bRuntimeNormalMotionReusable&&!Part.bFaceSphereNormals
+            &&Part.RuntimeNormalMotionUses.Num()==View.n_verts
+            &&Part.RuntimeRestNormals.Num()==View.n_verts&&Part.BaseNormals.Num()==View.n_verts;
+        Part.bRuntimeSourceNormalMotionPrepared=CacheMotion;
+        if(CacheMotion&&Part.RuntimeSourceNormalMotion.Num()!=View.n_verts)Part.RuntimeSourceNormalMotion.SetNumUninitialized(View.n_verts);
+        const int32 SourceIndex=Sources.Num(),FirstJob=SourceJobs.Num();
+        const int32 SourceBatch=Indexed&&DirectNative?FMath::Clamp(CVarOkSourceRangeVertices.GetValueOnGameThread(),64,4096):1024;
+        for(int32 Begin=0;Begin<View.n_verts;Begin+=SourceBatch)SourceJobs.Add({SourceIndex,Begin,FMath::Min(Begin+SourceBatch,View.n_verts),false});
+        Sources.Add({&Part,View,GeometryChanged,CacheMotion,DirectNative,FirstJob,SourceJobs.Num()});SourceVertices+=View.n_verts;
+        for(int32 Job=FirstJob;Job<SourceJobs.Num();++Job){if(DirectNative)FusedSourceJobs.Add(Job);else RegularSourceJobs.Add(Job);}
+    }
+}
+void AKKPreviewActor::FinishRuntimeAccessories()
+{
+    if(!PendingStreams.IsValid())return;
+	TRACE_CPUPROFILER_EVENT_SCOPE(KK_StreamFinish);
+    TPimplPtr<FKKAccessoryStreamFrame> Owned=MoveTemp(PendingStreams);FKKAccessoryStreamFrame& Frame=*Owned;
+    if(Frame.PartsData!=Parts.GetData()||Frame.PartsNum!=Parts.Num())return; // reloaded in between: its sources are gone
 	const bool Profile=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_ANIM_PROFILE"))==TEXT("1");
     // UpdateMeshSection retains omitted UV/color attributes and owns a copy
     // of mutable streams. Keep scratch capacity across parts AND frames.
@@ -8350,19 +8436,13 @@ void AKKPreviewActor::RefreshRuntimeAccessories()
     struct FSectionJob {int32 WorkIndex,Begin,End;};
     TArray<FSectionWork,TInlineAllocator<32>> Work;
     TArray<FSectionJob,TInlineAllocator<64>> Jobs;
-    struct FSourceWork {FKKLoadedPart* Part;OkMeshView View;bool Changed,CacheMotion,DirectNative;int32 FirstJob,EndJob,FirstWork=0,EndWork=0;};
-    struct FSourceJob {int32 WorkIndex,Begin,End;bool Changed=false;};
-    TArray<FSourceWork,TInlineAllocator<32>> Sources;
-    TArray<FSourceJob,TInlineAllocator<128>> SourceJobs;
-    TArray<int32,TInlineAllocator<128>> RegularSourceJobs,FusedSourceJobs;
+    auto& Sources=Frame.Sources;auto& SourceJobs=Frame.SourceJobs;auto& RegularSourceJobs=Frame.RegularSourceJobs;auto& FusedSourceJobs=Frame.FusedSourceJobs;
+    const int32 SourceVertices=Frame.SourceVertices;
     const bool Indexed=CVarOkSourceIndexedStreams.GetValueOnGameThread()!=0&&CVarOkAnimationGeneratedStreams.GetValueOnGameThread()!=0&&CVarOkAnimationSourceConversion.GetValueOnGameThread()!=0;
     const bool CheckIndexed=CVarOkSourceIndexedParity.GetValueOnGameThread()!=0;
     TArray<FSectionJob,TInlineAllocator<64>> RegularDrawJobs;
-    const bool Fused=!Indexed&&CVarOkFusedSourceStreams.GetValueOnGameThread()!=0&&CVarOkAnimationGeneratedStreams.GetValueOnGameThread()!=0;
     const bool CheckFused=CVarOkFusedSourceParity.GetValueOnGameThread()!=0;
-    int32 SourceVertices=0;
     int32 TotalDraw=0;
-    const bool CacheNormalMotion=CVarOkNormalMotionCache.GetValueOnGameThread()!=0;
     const bool CheckNormalMotion=CVarOkNormalMotionParity.GetValueOnGameThread()!=0;
     const bool RestCache=CVarOkRestNormalCache.GetValueOnGameThread()!=0;
     const bool ZeroRotation=CVarOkZeroOffsetRotation.GetValueOnGameThread()!=0;
@@ -8395,44 +8475,6 @@ void AKKPreviewActor::RefreshRuntimeAccessories()
     };
 	{
     TRACE_CPUPROFILER_EVENT_SCOPE(KK_StreamPrepareSources);
-	bool GpuPrepared=false;
-	for (FKKLoadedPart& Part : Parts)
-	{
-        const bool HadGpu=Part.PrivateGpuDisplay.IsValid();
-        if(UpdatePrivateGpuDisplay(Part,!GpuPrepared,GpuRequests)){GpuPrepared|=!HadGpu;Part.bNativeDisplayPrepared=false;continue;}
-        if(Part.bNativeDisplayPrepared){Part.bNativeDisplayPrepared=false;continue;}
-		if ((!Part.bRuntimeAccessory && !SkelFollowers.IsEmpty()) || !Part.Comp || Part.bSlotAttached || Part.SessionIndex == INDEX_NONE)
-		{
-			continue;
-		}
-		OkMeshView View;
-		FMemory::Memzero(View);
-		if (!Session.PartAt(Part.SessionIndex, View) || !View.positions ||
-			View.n_verts != Part.BaseVertices.Num())
-		{
-			continue;
-		}
-        // Rigid geometry stays in its authored local coordinates while its render
-        // matrix follows the socket. Compare native streams before converting
-        // those unchanged floats to doubles, irrespective of rigid mesh size.
-        const bool DirectNative=(Indexed||Fused)&&View.skel_kind==4&&View.normals&&Part.BaseNormals.Num()==View.n_verts
-            &&!Part.bFaceSphereNormals&&!View.eye_draw&&Session.MorphCount(Part.SessionIndex)==0
-            &&(Indexed||!(CacheNormalMotion&&Part.bRuntimeNormalMotionReusable));
-        const bool NativeSnapshot=(DirectNative||View.skel_kind==0||View.n_verts>=16384)&&!Part.bFaceSphereNormals&&!View.eye_draw&&Session.MorphCount(Part.SessionIndex)==0;
-        if(!OKSyncSourceGeometry(Part.RuntimeSourceGeometry,View.n_verts,View.positions,View.normals,View.rest_tangents,NativeSnapshot)){AnimationSkippedVertices+=View.n_verts;continue;}
-        bool GeometryChanged=NativeSnapshot;
-		if(View.rest_tangents&&Part.RuntimeSourceTangents.Num()!=View.n_verts){Part.RuntimeSourceTangents.SetNumUninitialized(View.n_verts);GeometryChanged=true;}
-        const bool CacheMotion=CacheNormalMotion&&Part.bRuntimeNormalMotionReusable&&!Part.bFaceSphereNormals
-            &&Part.RuntimeNormalMotionUses.Num()==View.n_verts
-            &&Part.RuntimeRestNormals.Num()==View.n_verts&&Part.BaseNormals.Num()==View.n_verts;
-        Part.bRuntimeSourceNormalMotionPrepared=CacheMotion;
-        if(CacheMotion&&Part.RuntimeSourceNormalMotion.Num()!=View.n_verts)Part.RuntimeSourceNormalMotion.SetNumUninitialized(View.n_verts);
-        const int32 SourceIndex=Sources.Num(),FirstJob=SourceJobs.Num();
-        const int32 SourceBatch=Indexed&&DirectNative?FMath::Clamp(CVarOkSourceRangeVertices.GetValueOnGameThread(),64,4096):1024;
-        for(int32 Begin=0;Begin<View.n_verts;Begin+=SourceBatch)SourceJobs.Add({SourceIndex,Begin,FMath::Min(Begin+SourceBatch,View.n_verts),false});
-        Sources.Add({&Part,View,GeometryChanged,CacheMotion,DirectNative,FirstJob,SourceJobs.Num()});SourceVertices+=View.n_verts;
-        for(int32 Job=FirstJob;Job<SourceJobs.Num();++Job){if(DirectNative)FusedSourceJobs.Add(Job);else RegularSourceJobs.Add(Job);}
-    }
     // Native views and part arrays are captured on the game thread. Workers
     // only convert disjoint source ranges; no UObject/FFI calls run here.
     const int32 SourceMode=CVarOkAnimationSourceConversion.GetValueOnGameThread();
@@ -10129,6 +10171,8 @@ bool AKKPreviewActor::SetWrapLine(bool bOn,const FVector& From,const FVector& To
         for(UMeshComponent* Mesh:Meshes)for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
             if(auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot)))if(const auto* Original=WrapOriginalOf.Find(M))Mesh->SetMaterial(Slot,*Original);
         WrapInstanceOf.Reset();WrapOriginalOf.Reset();
+        for(const auto& Lit:LitWrapped)if(UMaterialInstanceDynamic* M=Lit.Get())M->SetScalarParameterValue(TEXT("__OK_WrapRadius"),0.f);
+        LitWrapped.Reset();
         return true;
     }
     static const TSet<FString> Skins={TEXT("M_ForgeSkin"),TEXT("M_ForgeSkin_Outline"),TEXT("M_KoikanoSkin"),TEXT("M_KoikanoSkin_Outline")};
@@ -10136,6 +10180,8 @@ bool AKKPreviewActor::SetWrapLine(bool bOn,const FVector& From,const FVector& To
     for(UMeshComponent* Mesh:Meshes)for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
     {
         auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot));if(!M)continue;
+        // Her lit skin has the offset in it: set in place.
+        if(LitOriginalOf.Contains(M)){LitWrapped.Add(M);continue;}
         UMaterialInstanceDynamic* Wrap=WrapOriginalOf.Contains(M)?M:nullptr;
         if(!Wrap)if(const auto* Found=WrapInstanceOf.Find(M))Wrap=*Found;
         if(!Wrap)
@@ -10152,14 +10198,68 @@ bool AKKPreviewActor::SetWrapLine(bool bOn,const FVector& From,const FVector& To
         Shown.Add(Wrap);
     }
     const float Radius=FMath::Max(RadiusCm,0.f);
+    for(const auto& Lit:LitWrapped)if(UMaterialInstanceDynamic* M=Lit.Get())Shown.Add(M);
     for(UMaterialInstanceDynamic* Wrap:Shown)
     {
-        Wrap->CopyParameterOverrides(WrapOriginalOf[Wrap]);
+        if(const auto* Original=WrapOriginalOf.Find(Wrap))Wrap->CopyParameterOverrides(*Original);
         Wrap->SetVectorParameterValue(TEXT("__OK_WrapFrom"),FLinearColor(From.X,From.Y,From.Z,0.f));
         Wrap->SetVectorParameterValue(TEXT("__OK_WrapTo"),FLinearColor(To.X,To.Y,To.Z,0.f));
         Wrap->SetScalarParameterValue(TEXT("__OK_WrapRadius"),Radius);
         // A falloff of twice the radius: the skin moved never passes the skin farther out (no fold).
         Wrap->SetScalarParameterValue(TEXT("__OK_WrapSoft"),Radius*2.f);
+    }
+    return Shown.Num()>0;
+}
+
+static TAutoConsoleVariable<int32> CVarOkLitAffine(TEXT("ok.Lit.Affine"),1,TEXT("1: the lit switch also lights the affine parts (hair, clothes, accessories); 0: they stay as drawn."),ECVF_Default);
+bool AKKPreviewActor::SetSkinLit(bool bOn,const FString& LitRoot)
+{
+    TInlineComponentArray<UMeshComponent*> Meshes(this);
+    if(!bOn)
+    {
+        for(UMeshComponent* Mesh:Meshes)for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
+            if(auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot)))if(const auto* Original=LitOriginalOf.Find(M))Mesh->SetMaterial(Slot,*Original);
+        LitInstanceOf.Reset();LitOriginalOf.Reset();LitWrapped.Reset();LitSnapshots.Reset();
+        return true;
+    }
+    // The wrap's own swap first given back: her skin instance is what the lit one copies.
+    if(WrapOriginalOf.Num())SetWrapLine(false,FVector::ZeroVector,FVector::ZeroVector,0.f,FString());
+    TSet<UMaterialInstanceDynamic*> Shown;
+    // The affine parts too (hair, clothes, accessories; user 2026-11-09: her hair and accessories lit as well), unless
+    // ok.Lit.Affine is 0.
+    const bool bAffine=CVarOkLitAffine.GetValueOnGameThread()!=0;
+    for(UMeshComponent* Mesh:Meshes)if(bAffine||!Mesh->IsA<UKKAffineProceduralMeshComponent>())for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
+    {
+        auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot));if(!M)continue;
+        UMaterialInstanceDynamic* Lit=LitOriginalOf.Contains(M)?M:nullptr;
+        if(!Lit)if(const auto* Found=LitInstanceOf.Find(M))Lit=*Found;
+        if(!Lit)
+        {
+            // Every family with a _Lit parent (skin, hair, clothes, items; user 2026-11-09): the others (eyes, brows,
+            // outlines, effects) stay as drawn. Which parents have none is remembered, not asked of the disk each frame.
+            UMaterialInterface* Parent=M->Parent;
+            if(!Parent||Parent->GetPathName().Contains(TEXT("/StreetHG"))||Parent->GetName().EndsWith(TEXT("_Wrap")))continue;
+            // The face's parent pressed flat (<name>_Flat, ok.FaceFlatten) is lit as its family: its own shape, lit (user
+            // 2026-11-09: the face lit too).
+            FString Base=Parent->GetName();Base.RemoveFromEnd(TEXT("_Flat"));
+            const FString Name=Base+TEXT("_Lit");
+            if(LitParentMissing.Contains(LitRoot/Name))continue;
+            UMaterialInterface* LitParent=FPackageName::DoesPackageExist(LitRoot/Name)?LoadObject<UMaterialInterface>(nullptr,*(LitRoot/Name+TEXT(".")+Name)):nullptr;
+            if(!LitParent){LitParentMissing.Add(LitRoot/Name);continue;}
+            Lit=UMaterialInstanceDynamic::Create(LitParent,this);
+            LitInstanceOf.Add(M,Lit);LitOriginalOf.Add(Lit,M);
+        }
+        if(Mesh->GetMaterial(Slot)!=Lit)Mesh->SetMaterial(Slot,Lit);
+        Shown.Add(Lit);
+    }
+    // Her values as they are now (whatever sets hers each frame), the wrap's as it last set them.
+    for(UMaterialInstanceDynamic* Lit:Shown)
+    {
+        float Radius=0.f,Soft=0.f;FLinearColor From,To;
+        const bool bWrap=LitWrapped.Contains(Lit)&&Lit->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("__OK_WrapRadius")),Radius);
+        if(bWrap){Lit->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("__OK_WrapSoft")),Soft);Lit->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("__OK_WrapFrom")),From);Lit->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("__OK_WrapTo")),To);}
+        KKSyncLitInstance(Lit,LitOriginalOf[Lit],LitSnapshots.FindOrAdd(Lit));
+        if(bWrap){Lit->SetScalarParameterValue(TEXT("__OK_WrapRadius"),Radius);Lit->SetScalarParameterValue(TEXT("__OK_WrapSoft"),Soft);Lit->SetVectorParameterValue(TEXT("__OK_WrapFrom"),From);Lit->SetVectorParameterValue(TEXT("__OK_WrapTo"),To);}
     }
     return Shown.Num()>0;
 }

@@ -39,7 +39,8 @@ void AOKStreetSocialScene::StartCalendarAndMind(){
    FString Mode;if(Player->TryGetStringField(TEXT("drama_mode"),Mode)&&(Mode==TEXT("A")||Mode==TEXT("B")||Mode==TEXT("C")))S.DramaMode=Mode[0];
    FString Locale;if(Player->TryGetStringField(TEXT("locale"),Locale)&&(Locale==TEXT("zh-TW")||Locale==TEXT("zh-CN")||Locale==TEXT("en")))S.Lang=Locale;
    // Before any character loads: their materials follow it (SetRenderStyle).
-   FString Style;if(Player->TryGetStringField(TEXT("render_style"),Style))ApplyRenderStyleSetting(Style);}}
+   FString Style;if(Player->TryGetStringField(TEXT("render_style"),Style))ApplyRenderStyleSetting(Style);
+   Player->TryGetBoolField(TEXT("lit"),S.Lit);}}
  LoadUiTexts();
  // Development: OK_STREET_START_DAY=YYYY-MM-DD and OK_STREET_START_CLOCK=HH:MM start the save on that day and time
  // (e.g. a class day on campus). They move the save's calendar, so use them on a test save.

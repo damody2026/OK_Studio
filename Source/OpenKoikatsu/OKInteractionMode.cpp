@@ -288,9 +288,20 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
         if(Body->TryGetStringField(TEXT("coordinate"),Coordinate)&&!Coordinate.IsEmpty()&&!Panel->WearOutfit(Controller->OutfitIndex,Coordinate,OutfitWhy)){Why=OutfitWhy;return nullptr;}
         // {"height":{"her":0..1,"him":0..1}}: their height slider (ChaFile shapeBody[0]) for testing the pair at other sizes.
         double BlushValue;if(Body->TryGetNumberField(TEXT("blush"),BlushValue))Panel->BlushTest=float(BlushValue);
+        // {"limb_ik":{"feet":b,"hands":b,"feet_to_hers":b,"floor_near":cm,"hand_spread":cm,"hand_far":cm,"reread":b}}: their limbs' IK
+        // while he is in her (the answer's limb_ik has them; a hand setting reads his hands again).
+        const TSharedPtr<FJsonObject>* LimbIk=nullptr;if(Body->TryGetObjectField(TEXT("limb_ik"),LimbIk))Panel->SetLimbIk(*LimbIk);
+        // {"tongue":{"up":cm,"pitch":deg,"length":x}}: her tongue out (ok.HScene.TongueUp / TonguePitch / TongueLength).
+        const TSharedPtr<FJsonObject>* TongueSet=nullptr;if(Body->TryGetObjectField(TEXT("tongue"),TongueSet))Panel->SetTongue(*TongueSet);
+        // {"mirror":{"on":b,"yaw":deg,"distance":cm}}: the 200 x 200 cm mirror round them (ok.HScene.Mirror / MirrorYaw / MirrorDistance).
+        const TSharedPtr<FJsonObject>* MirrorSet=nullptr;if(Body->TryGetObjectField(TEXT("mirror"),MirrorSet))Panel->SetMirror(*MirrorSet);
+        // {"skin_lit":true|false}: their skin lit by the scene or the original's toon (ok.HScene.SkinLit).
+        bool SkinLit=false;if(Body->TryGetBoolField(TEXT("skin_lit"),SkinLit))if(auto* Var=IConsoleManager::Get().FindConsoleVariable(TEXT("ok.HScene.SkinLit")))Var->Set(SkinLit?1:0,ECVF_SetByConsole);
         // {"orbit":[yaw,pitch,distance]}: the camera round her hips, turned from where she faces (pose checks from the side and the front).
         const TArray<TSharedPtr<FJsonValue>>* Orbit=nullptr;if(Body->TryGetArrayField(TEXT("orbit"),Orbit)&&Orbit->Num()==3&&IsValid(Controller->PreviewActor)){auto* Girl=Controller->PreviewActor.Get();
-            FVector Hips=Girl->GetActorLocation();if(Girl->BodySkel){const int32 Bone=Girl->BodySkel->GetBoneIndex(TEXT("j_hips"));if(Bone!=INDEX_NONE)Hips=Girl->BodySkel->GetBoneTransform(Bone).GetLocation();}
+            // "orbit_bone": round another of her bones (cf_J_FaceBase for her face) instead of her hips.
+            FString OrbitBone=TEXT("j_hips");Body->TryGetStringField(TEXT("orbit_bone"),OrbitBone);
+            FVector Hips=Girl->GetActorLocation();if(Girl->BodySkel){int32 Bone=Girl->BodySkel->GetBoneIndex(*OrbitBone);if(Bone==INDEX_NONE)Bone=Girl->BodySkel->GetBoneIndex(*(TEXT("cf_")+OrbitBone));if(Bone==INDEX_NONE)Bone=Girl->BodySkel->GetBoneIndex(TEXT("j_hips"));if(Bone!=INDEX_NONE)Hips=Girl->BodySkel->GetBoneTransform(Bone).GetLocation();}
             Girl->OrbitFocus=Hips;Girl->OrbitYaw=float((*Orbit)[0]->AsNumber())+Girl->GetActorRotation().Yaw;Girl->OrbitPitch=float((*Orbit)[1]->AsNumber());Girl->OrbitDistance=float((*Orbit)[2]->AsNumber());Girl->ApplyOrbitCamera();}
 #if !UE_BUILD_SHIPPING
         // {"spray":true|false}: the player's water gun (A + left button) at what the camera looks at; game.log says what landed.
@@ -341,6 +352,11 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
     bool Faces=false;if(View.IsValid()&&Body.IsValid()&&Body->TryGetBoolField(TEXT("faces"),Faces)&&Faces&&IsValid(Controller->PreviewActor))
         for(int32 Control=1;Control<=2;++Control){TArray<TSharedPtr<FJsonValue>> L;for(int32 P=0;P<Controller->PreviewActor->GetFacePatternCount(Control);++P)L.Add(MakeShared<FJsonValueString>(Controller->PreviewActor->GetFacePatternLabel(Control,P)));View->SetArrayField(Control==1?TEXT("eyes"):TEXT("brows"),L);}
     if(Faces&&View.IsValid()&&IsValid(Controller->PreviewActor)){TArray<TSharedPtr<FJsonValue>> L;for(int32 P=0;P<Controller->PreviewActor->GetMouthPatternCount();++P)L.Add(MakeShared<FJsonValueString>(Controller->PreviewActor->GetMouthPatternLabel(P)));View->SetArrayField(TEXT("mouths"),L);}
+    // {"save_masks":"<folder>"}: her body's mask for each state of her top (on, half, off) as PNG files there.
+    FString MaskDir;if(View.IsValid()&&Body.IsValid()&&Body->TryGetStringField(TEXT("save_masks"),MaskDir)&&!MaskDir.IsEmpty()&&IsValid(Controller->PreviewActor)){
+        TArray<TSharedPtr<FJsonValue>> L;for(int32 TopState:{0,1,3}){TArray<uint8> Png;
+            if(Controller->PreviewActor->Session.WardrobeBodyMask(TopState,Png)&&FFileHelper::SaveArrayToFile(Png,*(MaskDir/FString::Printf(TEXT("body_mask_top%d.png"),TopState))))L.Add(MakeShared<FJsonValueNumber>(TopState));}
+        View->SetArrayField(TEXT("saved_masks"),L);}
     // {"parts":true}: every mesh component on her (role, class, shown), to see what draws.
     bool PartsDump=false;if(View.IsValid()&&Body.IsValid()&&Body->TryGetBoolField(TEXT("parts"),PartsDump)&&PartsDump&&IsValid(Controller->PreviewActor)){
         TArray<TSharedPtr<FJsonValue>> L;TInlineComponentArray<UMeshComponent*> Components;Controller->PreviewActor->GetComponents(Components);
@@ -348,7 +364,10 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
             FString PartRole;OkMeshView V{};if(Index!=INDEX_NONE&&Controller->PreviewActor->Session.PartAt(Index,V)&&V.role)PartRole=UTF8_TO_TCHAR(V.role);
             // Each slot's material: its name, d for a dynamic instance, st when it has the iris tiling (_MainTex_ST), rows when gaze rows.
             FString Mats;for(int32 S=0;S<C->GetNumMaterials();++S)if(UMaterialInterface* M=C->GetMaterial(S)){FLinearColor P;
-                Mats+=FString::Printf(TEXT(" %s%s%s%s"),*M->GetName(),M->IsA<UMaterialInstanceDynamic>()?TEXT(":d"):TEXT(""),M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex_ST")),P)?TEXT(":st"):TEXT(""),M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("KKEyeUV0Row0")),P)?TEXT(":rows"):TEXT(""));}
+                Mats+=FString::Printf(TEXT(" %s%s%s%s"),*(M->GetName()+(Cast<UMaterialInstance>(M)&&Cast<UMaterialInstance>(M)->Parent?TEXT("<")+Cast<UMaterialInstance>(M)->Parent->GetName():FString())),M->IsA<UMaterialInstanceDynamic>()?TEXT(":d"):TEXT(""),M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex_ST")),P)?TEXT(":st"):TEXT(""),M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("KKEyeUV0Row0")),P)?TEXT(":rows"):TEXT(""));
+                // Its main texture and colour (a piece drawn black: user 2026-11-09, her half-off top).
+                UTexture* Tex=nullptr;if(M->GetTextureParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex")),Tex)&&Tex)Mats+=FString::Printf(TEXT("[tex=%s %dx%d]"),*Tex->GetName(),int32(Tex->GetSurfaceWidth()),int32(Tex->GetSurfaceHeight()));
+                if(M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("_Color")),P))Mats+=FString::Printf(TEXT("[col=%.2f,%.2f,%.2f]"),P.R,P.G,P.B);}
             L.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("%d %s %s %s vis=%d hig=%d main=%d parent=%s mats=%s"),Index,*PartRole,*C->GetClass()->GetName(),*C->GetName(),C->IsVisible(),C->bHiddenInGame,C->bRenderInMainPass,C->GetAttachParent()?*C->GetAttachParent()->GetName():TEXT("-"),*Mats)));}
         View->SetArrayField(TEXT("parts"),L);}
     // {"his_parts":true}: the same for him, with each part's renderer name (the penis is o_dankon / cm_o_dan00).
@@ -382,11 +401,20 @@ void AOKInteractionMode::HSceneShowLine(const FString& Text){if(Controller&&Cont
 FString AOKInteractionMode::HSceneJudgeFacts() const{return Controller&&Controller->HPanel?Controller->HPanel->JudgeFacts():FString();}
 bool AOKInteractionMode::HSceneApplyTalk(const TSharedPtr<FJsonObject>& Verdict){return Controller&&Controller->HPanel&&Controller->HPanel->ApplyTalk(Verdict);}
 extern TAutoConsoleVariable<int32> CVarHTtsLines; // OKHScene.cpp
+float OKHVoiceRms(const FKKSpeechPcm& Pcm);float OKHCryRms(); // OKHScene.cpp
 bool AOKInteractionMode::HSceneSpeak(const FString& Path){
     if(!CVarHTtsLines.GetValueOnGameThread())return false;
     if(!Controller||!IsValid(Controller->PreviewActor))return false;auto* Her=Controller->PreviewActor.Get();
     if(Controller->HPanel&&Controller->HPanel->LineIsStale())return false; // said to what happened before (UOKHScenePanel::ShowLine)
-    Her->StopHBreath();FString Why;const bool Ok=Her->PlaySpeechFile(Path,1.f,Why);
+    // As loud as her cries (OKHCryRms): the TTS came out much quieter (user 2026-11-09). Its samples scaled up, the
+    // loudest kept below full scale.
+    Her->StopHBreath();FString Why;bool Ok=false;
+    {TSharedPtr<const FKKSpeechPcm,ESPMode::ThreadSafe> Pcm;
+     if(KKSpeech::DecodeOgg(Path,Pcm,Why)&&Pcm){const float Rms=OKHVoiceRms(*Pcm);int32 Peak=1;for(const int16 S:Pcm->Samples)Peak=FMath::Max(Peak,FMath::Abs(int32(S)));
+        const float Gain=Rms>0.f?FMath::Clamp(FMath::Min(OKHCryRms()/Rms,32000.f/Peak*1.5f),1.f,8.f):1.f;
+        if(Gain>1.01f){auto Loud=MakeShared<FKKSpeechPcm,ESPMode::ThreadSafe>(*Pcm);for(int16& S:Loud->Samples){const float V=S*Gain;S=int16(FMath::Clamp(V>29000.f?29000.f+(V-29000.f)*.15f:V<-29000.f?-29000.f+(V+29000.f)*.15f:V,-32767.f,32767.f));}Pcm=Loud;}
+        UE_LOG(LogTemp,Display,TEXT("H scene: her line loudness %.3f -> x%.2f (her cries %.3f)"),Rms,Gain,OKHCryRms());
+        Ok=Her->PlaySpeechPcm(Pcm,1.f,Why);}}
     if(!Ok)UE_LOG(LogTemp,Warning,TEXT("H scene: her line did not play: %s"),*Why);
     if(Ok)UE_LOG(LogTemp,Display,TEXT("H scene: her line spoken on her (%s)"),*FPaths::GetCleanFilename(Path));
     if(Ok&&Controller->HPanel)Controller->HPanel->SpokeLine();
