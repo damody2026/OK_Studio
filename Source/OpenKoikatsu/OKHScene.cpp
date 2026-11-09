@@ -425,7 +425,11 @@ TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
      auto Button=[&](int32 Kind,const TCHAR* Key){auto* B=WidgetTree->ConstructWidget<UOKHSceneButton>();B->Kind=Kind;B->Owner=this;B->OnClicked.AddDynamic(B,&UOKHSceneButton::HandleClick);B->SetContent(Label(OKT(Key),10.f,FLinearColor::Black));return B;};
      UVerticalBox* Left=WidgetTree->ConstructWidget<UVerticalBox>();
      if(auto* S=Root->AddChildToHorizontalBox(Left)){S->SetPadding(FMargin(16,72,0,16));S->SetVerticalAlignment(VAlign_Fill);}
-     if(auto* S=Left->AddChildToVerticalBox(Button(SettingsToggle,TEXT("ui.hscene.settings"))))S->SetHorizontalAlignment(HAlign_Left);
+     // The settings, and the panel on the right put away to see them (user 2026-11-09): this side stays to bring it back.
+     {UHorizontalBox* Top=WidgetTree->ConstructWidget<UHorizontalBox>();
+      if(auto* S=Top->AddChildToHorizontalBox(Button(SettingsToggle,TEXT("ui.hscene.settings"))))S->SetPadding(FMargin(0,0,6,0));
+      auto* Hide=Button(PanelHideToggle,bPanelHidden?TEXT("ui.hscene.panel_show"):TEXT("ui.hscene.panel_hide"));PanelHideText=Cast<UTextBlock>(Hide->GetContent());Top->AddChildToHorizontalBox(Hide);
+      if(auto* S=Left->AddChildToVerticalBox(Top))S->SetHorizontalAlignment(HAlign_Left);}
      SettingsBox=WidgetTree->ConstructWidget<USizeBox>();SettingsBox->SetWidthOverride(260.f);SettingsBox->SetVisibility(ESlateVisibility::Collapsed);
      if(auto* S=Left->AddChildToVerticalBox(SettingsBox)){S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));S->SetPadding(FMargin(0,6,0,0));}
      UBorder* Back=WidgetTree->ConstructWidget<UBorder>();Back->SetBrushColor(FLinearColor(.06f,.02f,.05f,.82f));Back->SetPadding(FMargin(10));SettingsBox->AddChild(Back);
@@ -469,7 +473,7 @@ TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
     UBorder* Back=WidgetTree->ConstructWidget<UBorder>();Back->SetBrushColor(FLinearColor(.06f,.02f,.05f,.82f));Back->SetPadding(FMargin(12));
     // Half size (user, 2026-11-02: the panel text was too big): laid out twice as wide, drawn at half.
     UScaleBox* Half=WidgetTree->ConstructWidget<UScaleBox>();Half->SetStretch(EStretch::UserSpecified);Half->SetUserSpecifiedScale(.5f);Half->SetStretchDirection(EStretchDirection::Both);Width->AddChild(Half);
-    HalfInner=WidgetTree->ConstructWidget<USizeBox>();HalfInner->SetWidthOverride(680.f);Half->AddChild(HalfInner);HalfInner->AddChild(Back);PanelWidth=Width;
+    HalfInner=WidgetTree->ConstructWidget<USizeBox>();HalfInner->SetWidthOverride(680.f);Half->AddChild(HalfInner);HalfInner->AddChild(Back);PanelWidth=Width;if(bPanelHidden)Width->SetVisibility(ESlateVisibility::Collapsed);
     UVerticalBox* Box=WidgetTree->ConstructWidget<UVerticalBox>();Back->AddChild(Box);
     auto Text=[&](float Size,const FLinearColor& Color){auto* T=WidgetTree->ConstructWidget<UTextBlock>();FSlateFontInfo F=T->GetFont();F.Size=Size;T->SetFont(F);T->SetColorAndOpacity(FSlateColor(Color));T->SetAutoWrapText(true);Box->AddChildToVerticalBox(T)->SetPadding(FMargin(0,2));return T;};
     auto Gauge=[&](const TCHAR* Label,const FLinearColor& Color){
@@ -870,6 +874,8 @@ void UOKHScenePanel::Click(int32 Kind){
     if(Kind==SkinLitToggle){HSettingSet(TEXT("SkinLit"),CVarHSkinLit.GetValueOnGameThread()?0.f:1.f);HSettingsSave();ActionsKey.Reset();UE_LOG(LogTemp,Display,TEXT("H scene: skin %s"),CVarHSkinLit.GetValueOnGameThread()?TEXT("lit by the scene"):TEXT("toon"));return;}
     if(Kind==HandsPinToggle){bPinHands=!bPinHands;ActionsKey.Reset();UE_LOG(LogTemp,Display,TEXT("H scene: hands pinned while in her %s"),bPinHands?TEXT("on"):TEXT("off"));return;}
     if(Kind==FeetPinToggle){bPinFeet=!bPinFeet;ActionsKey.Reset();UE_LOG(LogTemp,Display,TEXT("H scene: soles pinned while in her %s"),bPinFeet?TEXT("on"):TEXT("off"));return;}
+    if(Kind==PanelHideToggle){bPanelHidden=!bPanelHidden;if(PanelWidth)PanelWidth->SetVisibility(bCoordinateList||bPanelHidden?ESlateVisibility::Collapsed:ESlateVisibility::Visible);
+        if(PanelHideText)PanelHideText->SetText(FText::FromString(OKT(bPanelHidden?TEXT("ui.hscene.panel_show"):TEXT("ui.hscene.panel_hide"))));return;}
     if(Kind==PenisPanelToggle){bPenisPanel=!bPenisPanel;if(PenisBox)PenisBox->SetVisibility(bPenisPanel?ESlateVisibility::Visible:ESlateVisibility::Collapsed);ActionsKey.Reset();return;}
     if(Kind==PenisReset){SetPenis(1.f,1.f);SetRootPad(FVector2D::ZeroVector);return;}
     if(Kind==PhysicsNext){UComboBoxString* Combo=Gallery?Gallery->PhysicsBackendCombo.Get():nullptr;
@@ -3722,7 +3728,7 @@ struct FOKCoordLoad{TQueue<FOKCoordPicture,EQueueMode::Spsc> Done;std::atomic<in
 void UOKHScenePanel::ShowCoordinates(){
     const ESlateVisibility Shown=bCoordinateList?ESlateVisibility::Visible:ESlateVisibility::Collapsed;
     for(int32 Side=0;Side<2;++Side){if(CoordSides[Side])CoordSides[Side]->SetVisibility(Shown);if(CoordWraps[Side])CoordWraps[Side]->ClearChildren();}
-    if(PanelWidth)PanelWidth->SetVisibility(bCoordinateList?ESlateVisibility::Collapsed:ESlateVisibility::Visible);ShowAccessories(); // room for them (user 2026-11-04)
+    if(PanelWidth)PanelWidth->SetVisibility(bCoordinateList||bPanelHidden?ESlateVisibility::Collapsed:ESlateVisibility::Visible);ShowAccessories(); // room for them (user 2026-11-04)
     CoordButtons.Reset();CoordImages.Reset();CoordTextures.Reset();CoordLoad.Reset();CoordShown=0.;
     if(!bCoordinateList||!WidgetTree||!CoordWraps[0]||!CoordWraps[1])return;
     for(int32 I=0;I<CoordinateCards.Num();++I){
