@@ -28,33 +28,46 @@ namespace { UKKSharedAnimation* FindSharedCurveAsset(const FString& Key); }
 
 namespace {
 #if CPUPROFILERTRACE_ENABLED
-uint32 NativeTraceSpecs[51];
+const ANSICHAR* const NativeTraceNames[]={"KK_NativeValidate","KK_NativeSampleWait","KK_NativeContacts","KK_NativeDynamicsWait",
+    "KK_NativeBodyPhysics","KK_NativeClothesPhysics","KK_NativeExport","KK_NativeAccessoryDispatch",
+    "KK_NativeAccessorySync","KK_NativeAccessorySetup","KK_NativeAccessoryStep","KK_NativeSkinPrepare",
+    "KK_NativeSkinLBS","KK_NativeSkinCorrection","KK_NativeRoleSample",
+    "KK_NativeAnimatorReset","KK_NativeAnimatorCurves","KK_NativeAnimatorModifiers",
+    "KK_NativeDynamicTopology","KK_NativeDynamicColliders","KK_NativeDynamicForces",
+    "KK_NativeDynamicParticles","KK_NativeDynamicApply","KK_NativeDynamicWorlds","KK_NativeFrameWait",
+    "KK_NativeShapeRestore","KK_NativeShapeBody","KK_NativeShapeHead","KK_NativeShapeFullHead","KK_NativeShapeReferences",
+    "KK_NativeContactCorrectBefore","KK_NativeContactFreeze","KK_NativeContactSolve","KK_NativeContactCorrectAfter",
+    "KK_NativePalettePrepare","KK_NativePaletteRead","KK_NativePalettePublish",
+    "KK_NativeMotionPlan","KK_NativeMotionLeaves","KK_NativeMotionBlend","KK_NativeLeafSnapshot","KK_NativeLeafChannels","KK_NativeChannelLookup","KK_NativeChannelSample",
+    "KK_NativeAccFrames","KK_NativeAccRadii","KK_NativeAccLeaders","KK_NativeCoverField","KK_NativeCoverPush","KK_NativeCoverLift","KK_NativeCoverPushFrom"};
+std::atomic<uint32> NativeTraceSpecs[UE_ARRAY_COUNT(NativeTraceNames)];
+// Each event's spec is sent the first time it runs with the CPU channel on, as UE's own scopes do: sent at startup (the
+// channel still off until Trace.File / -Trace) it was dropped, and Insights then had no name for any native event.
+// Each thread remembers which of its open scopes were sent, so an end matches its begin when the channel turns on or
+// off in between.
+thread_local uint64 NativeTraceOpen=0;thread_local int32 NativeTraceDepth=0;
 void NativeCpuTrace(uint32_t Event,int32_t Begin){
-    if(Event>=UE_ARRAY_COUNT(NativeTraceSpecs))return;
-    if(Begin)FCpuProfilerTrace::OutputBeginEvent(NativeTraceSpecs[Event]);
-    else FCpuProfilerTrace::OutputEndEvent();
+    if(Event>=UE_ARRAY_COUNT(NativeTraceNames))return;
+    if(Begin){
+        const bool bOn=UE_TRACE_CHANNELEXPR_IS_ENABLED(CpuChannel)!=0;
+        if(bOn){uint32 Spec=NativeTraceSpecs[Event].load(std::memory_order_acquire);
+            if(!Spec){Spec=FCpuProfilerTrace::OutputEventType(NativeTraceNames[Event],__FILE__,__LINE__);NativeTraceSpecs[Event].store(Spec,std::memory_order_release);}
+            FCpuProfilerTrace::OutputBeginEvent(Spec);}
+        if(NativeTraceDepth<64){if(bOn)NativeTraceOpen|=uint64(1)<<NativeTraceDepth;else NativeTraceOpen&=~(uint64(1)<<NativeTraceDepth);}
+        ++NativeTraceDepth;
+    }else if(NativeTraceDepth>0){
+        --NativeTraceDepth;
+        if(NativeTraceDepth<64&&(NativeTraceOpen>>NativeTraceDepth&1))FCpuProfilerTrace::OutputEndEvent();
+    }
 }
 #endif
 void RegisterNativeCpuTrace(){
     static const bool Registered=[](){
 #if CPUPROFILERTRACE_ENABLED
         if(FParse::Param(FCommandLine::Get(),TEXT("OKNativeTrace"))){
-            const ANSICHAR* Names[]={"KK_NativeValidate","KK_NativeSampleWait","KK_NativeContacts","KK_NativeDynamicsWait",
-                "KK_NativeBodyPhysics","KK_NativeClothesPhysics","KK_NativeExport","KK_NativeAccessoryDispatch",
-                "KK_NativeAccessorySync","KK_NativeAccessorySetup","KK_NativeAccessoryStep","KK_NativeSkinPrepare",
-                "KK_NativeSkinLBS","KK_NativeSkinCorrection","KK_NativeRoleSample",
-                "KK_NativeAnimatorReset","KK_NativeAnimatorCurves","KK_NativeAnimatorModifiers",
-                "KK_NativeDynamicTopology","KK_NativeDynamicColliders","KK_NativeDynamicForces",
-                "KK_NativeDynamicParticles","KK_NativeDynamicApply","KK_NativeDynamicWorlds","KK_NativeFrameWait",
-                "KK_NativeShapeRestore","KK_NativeShapeBody","KK_NativeShapeHead","KK_NativeShapeFullHead","KK_NativeShapeReferences",
-                "KK_NativeContactCorrectBefore","KK_NativeContactFreeze","KK_NativeContactSolve","KK_NativeContactCorrectAfter",
-                "KK_NativePalettePrepare","KK_NativePaletteRead","KK_NativePalettePublish",
-                "KK_NativeMotionPlan","KK_NativeMotionLeaves","KK_NativeMotionBlend","KK_NativeLeafSnapshot","KK_NativeLeafChannels","KK_NativeChannelLookup","KK_NativeChannelSample",
-                "KK_NativeAccFrames","KK_NativeAccRadii","KK_NativeAccLeaders","KK_NativeCoverField","KK_NativeCoverPush","KK_NativeCoverLift","KK_NativeCoverPushFrom"};
-            static_assert(UE_ARRAY_COUNT(Names)==UE_ARRAY_COUNT(NativeTraceSpecs),"Native CPU trace event storage must match the registered events");
-            for(int32 I=0;I<UE_ARRAY_COUNT(Names);++I)NativeTraceSpecs[I]=FCpuProfilerTrace::OutputEventType(Names[I],__FILE__,__LINE__);
             const int32 Result=ok_set_cpu_trace_callback(NativeCpuTrace);
             checkf(Result==0,TEXT("Native CPU trace callback registration failed"));
+            UE_LOG(LogOkExtract,Display,TEXT("Native CPU trace on (%d events, named when the cpu channel is on)"),int32(UE_ARRAY_COUNT(NativeTraceNames)));
         }
 #endif
         return true;
