@@ -2,6 +2,14 @@
  "version": 2,
  "currency": "CNY",
  "places": {
+  "beach_house": {
+   "open": [
+    [
+     9,
+     19
+    ]
+   ]
+  },
   "clinic_gyn": {
    "open": [
     [
@@ -371,6 +379,170 @@
   }
  },
  "items": [
+  {
+   "id": "bh_yakisoba",
+   "place": "beach_house",
+   "name": "炒麵",
+   "category": "meal",
+   "price": {
+    "": 32
+   },
+   "season": null,
+   "tags": [
+    "hot",
+    "filling"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 45,
+    "mood": 5
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "bh_corn",
+   "place": "beach_house",
+   "name": "烤玉米",
+   "category": "light",
+   "price": {
+    "": 15
+   },
+   "season": null,
+   "tags": [
+    "hot"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 20,
+    "mood": 5
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "bh_takoyaki",
+   "place": "beach_house",
+   "name": "章魚燒（6 顆）",
+   "category": "light",
+   "price": {
+    "": 25
+   },
+   "season": null,
+   "tags": [
+    "hot",
+    "shareable"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 20,
+    "mood": 5
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "bh_shaved_ice",
+   "place": "beach_house",
+   "name": "刨冰",
+   "category": "dessert",
+   "price": {
+    "": 18
+   },
+   "season": null,
+   "tags": [
+    "sweet",
+    "cold",
+    "shareable"
+   ],
+   "prop": "cup",
+   "options": [],
+   "effects": {
+    "satiety": 15,
+    "mood": 12
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "bh_ramune",
+   "place": "beach_house",
+   "name": "彈珠汽水",
+   "category": "drink",
+   "price": {
+    "": 8
+   },
+   "season": null,
+   "tags": [
+    "sweet",
+    "cold"
+   ],
+   "prop": "cup",
+   "options": [],
+   "effects": {
+    "satiety": 5,
+    "mood": 6
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "bh_beer",
+   "place": "beach_house",
+   "name": "罐裝啤酒",
+   "category": "alcohol",
+   "price": {
+    "": 12
+   },
+   "season": null,
+   "tags": [
+    "cold"
+   ],
+   "prop": "cup",
+   "options": [],
+   "effects": {
+    "satiety": 3,
+    "mood": 10,
+    "energy": -5
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "bh_parasol",
+   "place": "beach_house",
+   "name": "遮陽傘租借",
+   "category": "service",
+   "price": {
+    "": 30
+   },
+   "season": null,
+   "tags": [],
+   "prop": "none",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false
+  },
+  {
+   "id": "bh_float",
+   "place": "beach_house",
+   "name": "游泳圈租借",
+   "category": "service",
+   "price": {
+    "": 15
+   },
+   "season": null,
+   "tags": [],
+   "prop": "none",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false
+  },
   {
    "id": "rest_porkcutlet",
    "place": "restaurant",

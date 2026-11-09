@@ -16,8 +16,11 @@ static SELECTED: AtomicU32 = AtomicU32::new(0);
 static OWN: AtomicU32 = AtomicU32::new(0);
 static LAST_ID: AtomicU64 = AtomicU64::new(0);
 
+/// Starting a game makes it the one the tools act on: a pid selected before (game_select) is dropped with it. Kept, the
+/// launch waited on the selected game, closed for the restart, and timed out after half an hour (R6-188).
 pub fn set_own(pid: u32) {
     OWN.store(pid, Ordering::Relaxed);
+    SELECTED.store(0, Ordering::Relaxed);
 }
 
 /// This server's own game, when it started one that still runs and has written its channels.

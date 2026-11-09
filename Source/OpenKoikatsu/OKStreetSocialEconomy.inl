@@ -67,6 +67,10 @@ FString AOKStreetSocialScene::ShopPlaceHere() const{
  if(const auto* F=S.Facility!=INDEX_NONE?OKStreetFacilityActivity(S.Facility):nullptr)
   if(S.Catalog.Items.ContainsByPredicate([&](const FOKStreetCatalogItem& I){return I.Place==F->Place;}))return F->Place;
  for(const auto& Place:OKStreetPlaces())if(OKStreetInsidePlace(Place,S.Male)&&S.Catalog.Items.ContainsByPredicate([&](const FOKStreetCatalogItem& I){return I.Place==Place.Id;}))return Place.Id;
+ // At an open-air stall's own tables and seats, set out in front of its counter outside its box: still the stall. At the
+ // beach house's table 三月七 and he ordered two plates of fried noodles that "are not on the menu here" (R6-188d).
+ for(const auto& Place:OKStreetPlaces())if(Place.Outdoor&&S.Catalog.Items.ContainsByPredicate([&](const FOKStreetCatalogItem& I){return I.Place==Place.Id;}))
+  for(const auto& A:Place.Anchors)if((A.Name.StartsWith(TEXT("table"))||A.Name.StartsWith(TEXT("seat")))&&FVector::Dist2D(A.Position,S.Male)<150.f&&FMath::Abs(A.Position.Z-S.Male.Z)<150.f)return Place.Id;
  // Just outside the shop where their table is (she came out to the doorstep to meet him, her cocoa already served
  // inside): still that shop. His latte and panini were "not sold here" and she made up a kitchen out of milk (R6-139).
  if(!S.Table.IsEmpty()&&!S.MealPlace.IsEmpty())if(const FOKStreetPlace* P=OKStreetFindPlace(S.MealPlace))

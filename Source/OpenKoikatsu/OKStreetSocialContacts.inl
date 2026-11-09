@@ -364,7 +364,12 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
     // EE building's 4F into a pocket beside the shaft, he stood shut in, saved there, and loaded back into it (R6-178).
     if(!Out){const FVector* Landing=nullptr;for(const auto& E:S.Elevators)for(int32 F=0;F<E.Landing.Num();++F)if(FMath::Abs(E.StopZ[F]-Z)<100.f&&FVector::Dist2D(E.Landing[F],S.Male)<2000.f&&(!Landing||FVector::Dist2D(E.Landing[F],S.Male)<FVector::Dist2D(*Landing,S.Male)))Landing=&E.Landing[F];
      if(Landing){UE_LOG(LogTemp,Warning,TEXT("Street navigation: shut in at %s, out at the lift landing %s"),*S.Male.ToCompactString(),*Landing->ToCompactString());S.Male=*Landing;Out=true;}}
-    if(Out){auto Path=S.NavPointActive?PlaceRoute(S.Male,Goal):ContactRoute(S.Male,Goal);if(Path.Num()>=2){S.NavPath=MoveTemp(Path);S.NavStep=1;}return 0;}
+    // On the way to a lift: the way again is to its landing (the route's end). The street route from there left the ride
+    // behind: loaded at the ramen shop on the department store's 9F, he walked the 9F wall toward the ground for an hour
+    // (R6-188).
+    if(Out){auto Path=S.NavRide.Elevator!=INDEX_NONE&&!S.NavPath.IsEmpty()?GridRoute(S.Male,S.NavPath.Last()):S.NavPointActive?PlaceRoute(S.Male,Goal):ContactRoute(S.Male,Goal);
+     if(S.NavRide.Elevator!=INDEX_NONE&&Path.Num()<2&&!S.NavPath.IsEmpty())Path={S.Male,S.NavPath.Last()};
+     if(Path.Num()>=2){S.NavPath=MoveTemp(Path);S.NavStep=1;}return 0;}
    }
    // First around what is in the way, to the next point only (the grid keeps the body's clearance; the same route again
    // would run into the same wall); the whole way again only when that finds nothing.

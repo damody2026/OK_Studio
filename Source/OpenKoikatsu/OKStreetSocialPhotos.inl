@@ -79,7 +79,25 @@ static void OKStreetPhotoView(AOKStreetSocialScene* Scene,const FOKStreetSceneSt
  Loc=Her+Gaze*30.f;Rot=FRotator(P.Drawing?-5.f:15.f,Gaze.Rotation().Yaw,0);
 }
 
+// A screenshot while the window is minimized: the back buffer is 8x8 then and the engine's copy of a 3840x1978 viewport
+// out of it asserts in D3D12 (the game died on 三月七's beach photo, R6-188c). Held from after the actors' ticks (every
+// request of the frame is in) until the window is back, then asked for again: the photo, an MCP shot, a probe's.
+static void OKStreetHoldShotsWhileMinimized(UWorld* World,ELevelTick,float){
+ static TArray<TPair<FString,bool>> Held; // file, with the UI
+ if(!World||!World->IsGameWorld()||!GEngine||!GEngine->GameViewport)return;
+ const TSharedPtr<SWindow> Window=GEngine->GameViewport->GetWindow();
+ const FViewport* Viewport=GEngine->GameViewport->Viewport;
+ const bool Hidden=(Window.IsValid()&&Window->IsWindowMinimized())||!Viewport||Viewport->GetSizeXY().X<=8||Viewport->GetSizeXY().Y<=8;
+ if(Hidden&&FScreenshotRequest::IsScreenshotRequested()){
+  const FString File=FScreenshotRequest::GetFilename();
+  if(!Held.ContainsByPredicate([&File](const TPair<FString,bool>& H){return H.Key==File;})){Held.Add({File,FScreenshotRequest::ShouldShowUI()});UE_LOG(LogTemp,Display,TEXT("Street screenshot: window minimized; %s held until it is back"),*File);}
+  FScreenshotRequest::Reset();}
+ else if(!Hidden&&!Held.IsEmpty()&&!FScreenshotRequest::IsScreenshotRequested()){const auto Next=Held[0];Held.RemoveAt(0); // one a frame
+  FScreenshotRequest::RequestScreenshot(Next.Key,Next.Value,false);UE_LOG(LogTemp,Display,TEXT("Street screenshot: window back; %s taken"),*Next.Key);}
+}
+
 void AOKStreetSocialScene::TickPhotos(){
+ {static bool Bound=false;if(!Bound){FWorldDelegates::OnWorldPostActorTick.AddStatic(&OKStreetHoldShotsWhileMinimized);Bound=true;}}
  auto& S=*State;const double Now=SceneTime();
  // Point the camera for the next photo, take it the frame after (the camera moves in this frame's tick).
  for(auto& P:S.HerPhotos)if(!P.Requested&&S.Agents.IsValidIndex(P.Girl-1)&&!FScreenshotRequest::IsScreenshotRequested()){

@@ -1487,7 +1487,11 @@ void AOKStreetSocialScene::ExecuteFreeTalkAction(int32 Character,const FString& 
     else if(!Known&&EatActBlocked(Character,Action))Handled=true;
     else if(!Known&&OKHeroineFind(Action)){Handled=DoActHers(Character,Action);UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s done as an act (%d)"),*Action,Handled?1:0);}
    }
-   if(!Handled&&Known&&Known->Kind==EOKStreetActivityKind::Photo&&S.Pair.Partner==Character&&(S.Pair.Meal||S.Pair.Drink||S.Pair.PhoneUse||S.Pair.Read)){ // just sitting and talking is no reason: they get up for it
+   // Eating or drinking only while something is left on the table: with all of it eaten the meal session runs on (they
+   // sit), and 三月七's "let's take a photo of the sunset" at the beach house was held back as "still holding chopsticks"
+   // after "everything eaten" (R6-188f).
+   const bool StillEating=(S.Pair.Meal||S.Pair.Drink)&&S.Table.ContainsByPredicate([](const FOKStreetDish& D){return !D.Served||D.Percent>0.f;});
+   if(!Handled&&Known&&Known->Kind==EOKStreetActivityKind::Photo&&S.Pair.Partner==Character&&(StillEating||S.Pair.PhoneUse||S.Pair.Read)){ // just sitting and talking is no reason: they get up for it
     Handled=true;S.FreeTalkNotice=OKT(TEXT("ui.scene.other_activity_no_photo"));S.MindRecent.Add(Id,OKT(TEXT("ui.scene.photo_later_eating")));
     S.TellHer.Add(OKT(TEXT("ui.scene.no_photo_eating_note")));
     UE_LOG(LogTemp,Display,TEXT("Street free talk action: photo held back during meal=%d seated=%d drink=%d"),S.Pair.Meal?1:0,S.Pair.Seated?1:0,S.Pair.Drink?1:0);

@@ -1,5 +1,6 @@
 // Street places (OKStreetSocialPlaces.h) and going to an activity together ("一起走過去").
 bool OKStreetFixedBlock(const FOKStreetPlanBlock* B); // OKStreetSocialLife.inl
+namespace{const TCHAR* OKPhoneDoingWord(const FString& Kind);} // OKStreetSocialPhoneInbox.inl
 //
 // An activity tied to a place starts with an outing: the player walks the planned route on autopilot and
 // she follows with the shared-walk follow (StepCompanion). Free talk keeps working on the way
@@ -649,6 +650,18 @@ bool AOKStreetSocialScene::BeginOuting(int32 Girl,const FString& ActivityId,FStr
  S.Companion=Girl;S.Agents[Girl-1].Held=true;S.CompanionTrail.Reset();S.CompanionTrail.Add(S.Male);S.CompanionLastMale=S.Male;S.CompanionBlockedAt=0;S.CompanionTravel=0;S.CompanionWalk=0;
  S.Message=OKMsg(TEXT("ui.outing.walk_to_place_together"), {{TEXT("girl_name"), *S.Manifest.Characters[Girl].Name}, {TEXT("place_name"), Place->Name}});
  UE_LOG(LogTemp,Display,TEXT("Street outing: actor=%d activity=%s route_points=%d"),Girl,*ActivityId,Route.Num());
+ // How long the walk is, and what of her day it runs into: she knows it, the model decides (go on, or say she has to go).
+ // 贞德 said "I have class at 13:30" at 12:47 and set off with him for the park: 69 minutes on foot, there at 13:56, and
+ // she remembered the class only when he asked (R6-188b). The walk as the day plans count it (2.75 m a game minute).
+ {float Length=0;for(int32 K=1;K<Route.Num();++K)Length+=float(FVector::Dist2D(Route[K-1],Route[K]));
+  const int32 Minutes=FMath::CeilToInt(Length/100.f/2.75f);
+  if(Minutes>=10){const int64 NowMin=OKStreetMindNow(S);const int32 Day=int32(NowMin%1440);const int32 Arrive=Day+Minutes;
+   FString Note=OKMsg(TEXT("ui.outing.walk_minutes_tell_her"),{{TEXT("place"),Place->Name},{TEXT("minutes"),Minutes},{TEXT("arrive"),FString::Printf(TEXT("%02d:%02d"),Arrive/60%24,Arrive%60)}});
+   if(const auto* Plan=S.Plans.Find(Girl))for(const auto& B:*Plan)if((B.Kind==TEXT("class")||B.Kind==TEXT("work"))&&B.Start>Day&&B.Start<Arrive+30){
+    const FOKStreetPlace* At=OKStreetFindPlace(B.Place);
+    Note+=OKMsg(TEXT("ui.outing.walk_runs_into_plan"),{{TEXT("at"),FString::Printf(TEXT("%02d:%02d"),B.Start/60%24,B.Start%60)},{TEXT("doing"),OKPhoneDoingWord(B.Kind)},{TEXT("place"),At?FString(At->Name):B.Place}});
+    UE_LOG(LogTemp,Display,TEXT("Street outing: the %d-minute walk runs into actor=%d's %s at %02d:%02d"),Minutes,Girl,*B.Kind,B.Start/60,B.Start%60);break;}
+   S.TellHer.Add(Note);}}
  RefreshUI();
  return true;
 }
