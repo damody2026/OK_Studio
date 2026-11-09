@@ -10,6 +10,38 @@
     ]
    ]
   },
+  "fastfood": {
+   "open": [
+    [
+     9,
+     23
+    ]
+   ]
+  },
+  "festival": {
+   "open": [
+    [
+     10,
+     22
+    ]
+   ]
+  },
+  "izakaya": {
+   "open": [
+    [
+     17,
+     24
+    ]
+   ]
+  },
+  "yakiniku": {
+   "open": [
+    [
+     11,
+     23
+    ]
+   ]
+  },
   "beach_house": {
    "open": [
     [
@@ -680,6 +712,485 @@
     "satiety": 3,
     "mood": 10,
     "energy": -5
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "ff_burger_set",
+   "place": "fastfood",
+   "name": "漢堡套餐",
+   "category": "meal",
+   "price": {
+    "": 35
+   },
+   "season": null,
+   "tags": [
+    "hot",
+    "filling"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 45,
+    "mood": 5
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "ff_fries",
+   "place": "fastfood",
+   "name": "薯條",
+   "category": "light",
+   "price": {
+    "": 12
+   },
+   "season": null,
+   "tags": [
+    "hot",
+    "shareable"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 15,
+    "mood": 4
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "ff_nuggets",
+   "place": "fastfood",
+   "name": "雞塊（6 塊）",
+   "category": "light",
+   "price": {
+    "": 18
+   },
+   "season": null,
+   "tags": [
+    "hot",
+    "shareable"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 18,
+    "mood": 4
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "ff_sundae",
+   "place": "fastfood",
+   "name": "聖代",
+   "category": "dessert",
+   "price": {
+    "": 10
+   },
+   "season": null,
+   "tags": [
+    "sweet",
+    "cold"
+   ],
+   "prop": "cup",
+   "options": [],
+   "effects": {
+    "satiety": 10,
+    "mood": 8
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "ff_cola",
+   "place": "fastfood",
+   "name": "可樂",
+   "category": "drink",
+   "price": {
+    "": 8
+   },
+   "season": null,
+   "tags": [
+    "sweet",
+    "cold"
+   ],
+   "prop": "cup",
+   "options": [],
+   "effects": {
+    "satiety": 5,
+    "mood": 5
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "fe_takoyaki",
+   "place": "festival",
+   "name": "章魚燒（6 顆）",
+   "category": "light",
+   "price": {
+    "": 20
+   },
+   "season": null,
+   "tags": [
+    "hot",
+    "shareable"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 20,
+    "mood": 6
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "fe_yakisoba",
+   "place": "festival",
+   "name": "炒麵",
+   "category": "meal",
+   "price": {
+    "": 25
+   },
+   "season": null,
+   "tags": [
+    "hot",
+    "filling"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 40,
+    "mood": 5
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "fe_candy_apple",
+   "place": "festival",
+   "name": "蘋果糖",
+   "category": "dessert",
+   "price": {
+    "": 10
+   },
+   "season": null,
+   "tags": [
+    "sweet"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 8,
+    "mood": 10
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "fe_cotton_candy",
+   "place": "festival",
+   "name": "棉花糖",
+   "category": "dessert",
+   "price": {
+    "": 8
+   },
+   "season": null,
+   "tags": [
+    "sweet",
+    "shareable"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 5,
+    "mood": 10
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "fe_ramune",
+   "place": "festival",
+   "name": "彈珠汽水",
+   "category": "drink",
+   "price": {
+    "": 8
+   },
+   "season": null,
+   "tags": [
+    "sweet",
+    "cold"
+   ],
+   "prop": "cup",
+   "options": [],
+   "effects": {
+    "satiety": 5,
+    "mood": 6
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "iz_yakitori",
+   "place": "izakaya",
+   "name": "烤雞串拼盤",
+   "category": "light",
+   "price": {
+    "": 38
+   },
+   "season": null,
+   "tags": [
+    "hot",
+    "shareable"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 25,
+    "mood": 6
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "iz_karaage",
+   "place": "izakaya",
+   "name": "日式炸雞",
+   "category": "light",
+   "price": {
+    "": 28
+   },
+   "season": null,
+   "tags": [
+    "hot",
+    "shareable"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 25,
+    "mood": 5
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "iz_edamame",
+   "place": "izakaya",
+   "name": "毛豆",
+   "category": "light",
+   "price": {
+    "": 12
+   },
+   "season": null,
+   "tags": [
+    "shareable"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 8,
+    "mood": 3
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "iz_ochazuke",
+   "place": "izakaya",
+   "name": "茶泡飯",
+   "category": "meal",
+   "price": {
+    "": 25
+   },
+   "season": null,
+   "tags": [
+    "hot",
+    "filling"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 40,
+    "mood": 4
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "iz_beer",
+   "place": "izakaya",
+   "name": "生啤酒",
+   "category": "alcohol",
+   "price": {
+    "": 18
+   },
+   "season": null,
+   "tags": [
+    "cold"
+   ],
+   "prop": "cup",
+   "options": [],
+   "effects": {
+    "satiety": 3,
+    "mood": 10,
+    "energy": -5
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "iz_oolong",
+   "place": "izakaya",
+   "name": "烏龍茶",
+   "category": "drink",
+   "price": {
+    "": 8
+   },
+   "season": null,
+   "tags": [
+    "cold"
+   ],
+   "prop": "cup",
+   "options": [],
+   "effects": {
+    "satiety": 3,
+    "mood": 4
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "yk_set",
+   "place": "yakiniku",
+   "name": "燒肉雙人套餐",
+   "category": "meal",
+   "price": {
+    "": 98
+   },
+   "season": null,
+   "tags": [
+    "hot",
+    "filling",
+    "shareable"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 55,
+    "mood": 10
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "yk_beef",
+   "place": "yakiniku",
+   "name": "牛五花",
+   "category": "meal",
+   "price": {
+    "": 45
+   },
+   "season": null,
+   "tags": [
+    "hot",
+    "shareable"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 35,
+    "mood": 8
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "yk_rice",
+   "place": "yakiniku",
+   "name": "白飯",
+   "category": "light",
+   "price": {
+    "": 5
+   },
+   "season": null,
+   "tags": [
+    "hot"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 20
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "yk_salad",
+   "place": "yakiniku",
+   "name": "蔬菜沙拉",
+   "category": "light",
+   "price": {
+    "": 15
+   },
+   "season": null,
+   "tags": [
+    "shareable"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 8,
+    "mood": 3
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "yk_beer",
+   "place": "yakiniku",
+   "name": "生啤酒",
+   "category": "alcohol",
+   "price": {
+    "": 18
+   },
+   "season": null,
+   "tags": [
+    "cold"
+   ],
+   "prop": "cup",
+   "options": [],
+   "effects": {
+    "satiety": 3,
+    "mood": 10,
+    "energy": -5
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "yk_cola",
+   "place": "yakiniku",
+   "name": "可樂",
+   "category": "drink",
+   "price": {
+    "": 8
+   },
+   "season": null,
+   "tags": [
+    "sweet",
+    "cold"
+   ],
+   "prop": "cup",
+   "options": [],
+   "effects": {
+    "satiety": 5,
+    "mood": 5
    },
    "giftable": false,
    "consumable": true

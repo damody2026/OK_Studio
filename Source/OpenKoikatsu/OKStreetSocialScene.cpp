@@ -1597,6 +1597,9 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
  QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_JudgeContext);
  // The menu where they stand (empty elsewhere or when closed) and what her reply already ordered.
  FString OnTable;for(const auto& D:S.Table)if(D.ForHer&&D.Her==Character&&D.Percent>0)OnTable+=OKMsg(TEXT("ui.scene.dish_entry"), {{TEXT("dish_name"), *D.Name}, {TEXT("served_suffix"), D.Served?TEXT(""):OKT(TEXT("ui.scene.preparing_food"))}});
+ // And what is in the cart for her, not paid yet: she ordered the ramen, he said "my treat", and the judge ordered her a
+ // second bowl; both were billed and served (R6-196).
+ for(const auto& C:S.Cart)if(C.ForHer&&(C.Girl==INDEX_NONE||C.Girl==Character))if(const auto* I=S.Catalog.Find(C.ItemId))OnTable+=OKMsg(TEXT("ui.scene.dish_entry"), {{TEXT("dish_name"), *I->Name}, {TEXT("served_suffix"), OKT(TEXT("ui.scene.in_cart_unpaid"))}});
  FString Menu;{const FString Here=OrderShopHere(Character);const FString Shop=Here.IsEmpty()?OutingShop(Character):Here;FString Closed;if(!Shop.IsEmpty()&&!PlaceClosedNow(Shop,Closed))for(const auto* I:Here.IsEmpty()?OKStreetItemsAt(S.Catalog,Shop,StreetNow().GetMonth()):ItemsHere(Shop))Menu+=OKMsg(TEXT("ui.party.menu_id_name_entry"), {{TEXT("id"), *I->Id}, {TEXT("name"), *I->Name}});}
  // Meetings with her the game already has, so the same plan is not booked twice.
  // His own work shifts too: "see you at the shop at five" said by two who both work at the cafe was booked at the

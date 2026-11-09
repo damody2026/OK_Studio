@@ -1732,6 +1732,7 @@ prep_sit_pose_hint = "Preparing the two-person sitting pose in the background. E
 prep_splash_hint = "Preparing the two-person splashing pose in the background. Esc to cancel."
 prep_watermelon_hint = "Preparing both sides' watermelon-smashing poses in the background. Esc to cancel."
 preparing_food = "(being prepared)"
+in_cart_unpaid = "(ordered, not paid yet; do not order it again)"
 private_topics_label = "More personal topics"
 rare_topic_used = "You've already talked about this rare topic with her. Please pick another."
 reaction_no_source_effect = "This reaction is missing its source voice, so its effect was not saved. The next interaction will continue with the normal count."

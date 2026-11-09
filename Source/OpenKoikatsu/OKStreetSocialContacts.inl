@@ -360,6 +360,9 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
      if(FMath::Max(FMath::Abs(DX),FMath::Abs(DY))!=R)continue;const FIntPoint C=Here+FIntPoint(DX,DY);if((Known&&Known->Contains(C))||!NavCellFree(C,Z))continue;
      const FVector P(C.X*OKStreetNavCell,C.Y*OKStreetNavCell,Z);FHitResult H;
      if(GetWorld()->SweepSingleByChannel(H,S.Male+FVector(0,0,85),P+FVector(0,0,85),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(28,78),Q)&&!H.bStartPenetrating)continue;
+     // Where he lands is clear of furniture: risen from a table his body overlaps it, the sweep above starts inside it
+     // and reports nothing, and he was put under the ramen shop's table, then on it (R6-197).
+     if(GetWorld()->OverlapAnyTestByChannel(P+FVector(0,0,85),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(28,78),Q))continue;
      UE_LOG(LogTemp,Display,TEXT("Street navigation: wedged at %s, out to %s"),*S.Male.ToCompactString(),*P.ToCompactString());S.Male=P;Out=true;}
     // Shut in (between a facade and its inner wall): out at the nearest door on the street (doors are where walking
     // starts), and the way again from there.
