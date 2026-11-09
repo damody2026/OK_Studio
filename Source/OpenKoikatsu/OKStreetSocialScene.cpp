@@ -2591,8 +2591,6 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
   SAssignNew(S.BigMap,SOKStreetBigMap);S.BigMap->Read=[MapData](){return MapData(MAX_int32);};
   S.BigMap->Pick=[Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](const FVector& Goal,const FString& Name){if(Weak.IsValid())Weak->NavigatePoint(Goal,Name);};
   S.MinimapPanel=SNew(SVerticalBox)+SVerticalBox::Slot().AutoHeight()[S.Minimap.ToSharedRef()]+SVerticalBox::Slot().AutoHeight()[SNew(SBorder).BorderBackgroundColor(FLinearColor(.018f,.03f,.055f,.93f))[SNew(SCheckBox).IsChecked_Lambda([Weak=TWeakPtr<FOKStreetSceneState>(State)](){auto Live=Weak.Pin();return Live&&Live->MinimapShowNames?ECheckBoxState::Checked:ECheckBoxState::Unchecked;}).OnCheckStateChanged_Lambda([Weak=TWeakPtr<FOKStreetSceneState>(State)](ECheckBoxState Value){if(auto Live=Weak.Pin())Live->MinimapShowNames=Value==ECheckBoxState::Checked;})[SNew(STextBlock).Text(FText::FromString(OKT(TEXT("ui.scene.show_names"))))]]]
-   +SVerticalBox::Slot().AutoHeight().Padding(0,4,0,0)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).HAlign(HAlign_Center).Text(FText::FromString(OKT(TEXT("ui.roster.open"))))
-    .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid()){if(Weak->State->RosterOpen)Weak->CloseRoster();else Weak->OpenRoster();}return FReply::Handled();})]
    +SVerticalBox::Slot().AutoHeight()[SNew(SBorder).BorderBackgroundColor(FLinearColor(.018f,.03f,.055f,.93f)).Padding(6,2)[SNew(STextBlock).Text_Lambda([Weak=TWeakPtr<FOKStreetSceneState>(State)](){auto Live=Weak.Pin();if(!Live)return FText::GetEmpty();const double H=OKStreetClockHours(Live->ClockStartHours,FPlatformTime::Seconds()-Live->ClockStartWall);return FText::FromString(OKT(TEXT("ui.scene.block_prefix"))+OKStreetCalendarLabel(Live->Store.CalendarDay,H));})]]
    // Plan §13.3.2: appointments with countdowns (click: walk to the soonest one), and blacklisted shops.
    +SVerticalBox::Slot().AutoHeight()[SNew(SButton).ButtonStyle(OKStreetGlassButton()).OnClicked_Lambda([Owner=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Owner.IsValid())Owner->NavigateToNextAppointment();return FReply::Handled();})
@@ -2653,10 +2651,13 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
       return FText::FromString(Inside()?OKMsg(TEXT("ui.scene.elevator_inside"), {{TEXT("place_name"), Place.Name}, {TEXT("where"), *Where}}):OKMsg(TEXT("ui.scene.elevator_at"), {{TEXT("place_name"), Place.Name}, {TEXT("where"), *Where}}));})]
     +SVerticalBox::Slot().AutoHeight()[SNew(SBox).Visibility_Lambda([Inside](){return Inside()?EVisibility::Visible:EVisibility::Collapsed;})[Wrap]]];
   }
-  // Top left: the settings menu button (OKStreetSocialSettings.inl) above the minimap; the open menu covers the minimap.
+  // Top left: the settings menu (OKStreetSocialSettings.inl) and heroine roster (OKStreetSocialRoster.inl) buttons above the minimap; the open settings menu covers the minimap.
   S.Overlay=SNew(SOverlay)+SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top).Padding(16)[SNew(SVerticalBox)
-   +SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Left).Padding(0,0,0,6)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(OKT(TEXT("ui.settings.menu_button"))))
-    .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->ToggleSettingsMenu();return FReply::Handled();})]
+   +SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Left).Padding(0,0,0,6)[SNew(SHorizontalBox)
+    +SHorizontalBox::Slot().AutoWidth()[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(OKT(TEXT("ui.settings.menu_button"))))
+     .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->ToggleSettingsMenu();return FReply::Handled();})]
+    +SHorizontalBox::Slot().AutoWidth().Padding(6,0,0,0)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(OKT(TEXT("ui.roster.open"))))
+     .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid()){if(Weak->State->RosterOpen)Weak->CloseRoster();else Weak->OpenRoster();}return FReply::Handled();})]]
    +SVerticalBox::Slot().AutoHeight()[SNew(SOverlay)+SOverlay::Slot()[S.MinimapPanel.ToSharedRef()]+SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top)[SAssignNew(S.UiSettingsHolder,SBox)]]]
   +SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Bottom).Padding(356,16,0,24)[SNew(SBox).MaxDesiredWidth(1140).MinDesiredWidth(1140)[SNew(SVerticalBox)
    // His cards at the card table, held in front of him right above the dialogue box, which grows upward under them (OKStreetSocialBluff.inl).

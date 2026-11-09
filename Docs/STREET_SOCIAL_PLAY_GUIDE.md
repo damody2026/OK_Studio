@@ -76,7 +76,7 @@
 
 ## 女主名單：誰住在這個世界（2026-11-09）
 
-小地圖下方的「女主名單」打開名單面板（時鐘暫停）。左邊是女主資料夾 `Content/CharacterCards/StreetHeroines/` 裡的卡片，加上目前世界裡的女主；勾選要住在這個世界的人（1～10 位），按「套用」會存進自動存檔並重新載入世界。
+左上角「設定」旁邊的「女主名單」打開名單面板（時鐘暫停）。左邊是女主資料夾 `Content/CharacterCards/StreetHeroines/` 裡的卡片，加上目前世界裡的女主；勾選要住在這個世界的人（1～10 位），按「套用」會存進自動存檔並重新載入世界。
 
 - 加卡：把 KKS 原作卡或 OK 卡從檔案總管拖進遊戲視窗（拖曳時會出現全螢幕的放置區），或直接複製到女主資料夾後按「重新掃描」。KKS 卡會自動轉成 OK 卡（`ok-extract --oklib card`，有 `Config/DefaultGame.ini` 的遊戲就用遊戲的 mods，每張約一分鐘），原檔移到資料夾內的 `KKS/`。檔案工作由 `Tools/street_roster.lua`（scan／import／cast）在背景執行。
 - 名單屬於存檔：存在存檔資料夾的 `roster.json`，跟著存檔槽複製；讀檔或開新遊戲時，遊戲先依存檔的名單改寫這次的 selection（cast 用啟動器同一套 `prepare_street_social_selection.lua` 的 `M.cast`）。開新遊戲保留名單。沒有 `roster.json` 的存檔用啟動器的名單。
