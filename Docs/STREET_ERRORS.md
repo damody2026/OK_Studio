@@ -2182,4 +2182,8 @@
 - 2026-11-09 R6-188c：測試時遊戲視窗被最小化，拍照就讓遊戲當掉（D3D12 截圖複製越界）。截圖請求要在視窗可畫時才送出。
 - 2026-11-10 R6-188e：用 `game_select` 選過自己的舊遊戲後重啟，`game_launch` 等了 30 分鐘才逾時，期間遊戲沒暫停一直在跑。重啟前要先 `game_select 0`。
 - 2026-11-10：c-conquest 關掉遊戲去重建 stage 時沒有釋放 Unreal slot2（從 22:45 一直占著），f-cover、f-refcards 只能排隊。關遊戲就 release，建好再 claim --wait。
+
+- 2026-11-10 02:2x 協調者：c-conquest 在 c-street-city 的 UniversityCityWP HLOD 重建（UnrealEditor-Cmd 84 GB）旁開了遊戲 conq1110c（27 GB），可用 commit 掉到 2 GB。依 2026-11-08 規則（WP 編輯器開著時不能再開遊戲），協調者強制結束遊戲 PID 32948。修正：claim 的記憶體門檻要把「另一個 slot 是 WP 編輯器」算進去，WP 編輯器在跑時第二個 slot 不發。
+- 2026-11-10 03:0x 同一件事第二次：c-conquest 重開 conq1110c，可用 commit 再掉到 1 GB，協調者再次結束遊戲（PID 17744），釋放 c-conquest 的 slot2 並以 coordinator-hold 暫占，HLOD 完成後釋放。
+- 2026-11-10 04:2x 第三次：c-street-city 的 WP 編輯器（56 GB，會再長）和 c-conquest 的遊戲（33 GB）同時開，可用 commit 剩 7.7 GB。依使用者優先序（C 街區攻略 > C 街道城市），協調者結束 WP 編輯器 PID 98456 並釋放 c-street-city 的 slot1。根本修法仍是：WP 編輯器在跑時 slot 工具不發第二個 slot，反之有遊戲在跑時不發 --need-gb 105 的 claim。
 - 2026-11-10 c-street-city 我 04:11 以 `--need-gb 105` 拿 slot1 開 WP 編輯器時另一個 slot 是空的，47 秒後攻略的遊戲也拿到 slot2（它只要 35 GB，當時夠），編輯器長到 56 GB、遊戲 33 GB，可用 commit 剩 7.7 GB，協調者關掉了我的編輯器。`--need-gb` 只在 claim 那一刻檢查，之後誰都能再拿。修正：`Tools/unreal_slot.lua` 的 claim 需要 60 GB 以上時，要等其他 slot 全空，持有期間別人也拿不到（owner.txt 記 `[need N]`）。
