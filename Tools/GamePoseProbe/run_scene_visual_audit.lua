@@ -27,6 +27,8 @@ parser:opt("--hide-file")
 parser:opt("--depth-hide")
 parser:opt("--white")
 parser:opt("--mesh-dump")
+-- group:category:first:last: the first character through these motions (Scene<n>.motion<no>.png, Scene<n>.motion.tsv).
+parser:opt("--motion-sweep")
 local a = parser:parse(arg)
 assert(not a.mesh_snapshot or a.gpu_probe, "Mesh snapshots need --gpu-probe and --mesh")
 assert(not a.input_streams or a.gpu_probe, "Input streams need --gpu-probe and --mesh")
@@ -78,6 +80,7 @@ local success, err = xpcall(function()
         if a.depth_hide then fs.setenv("OK_PROBE_DEPTH_HIDE", a.depth_hide) end
         if a.white then fs.setenv("OK_PROBE_WHITE", a.white) end
         if a.mesh_dump then fs.setenv("OK_PROBE_MESH", a.mesh_dump) end
+        if a.motion_sweep then fs.setenv("OK_PROBE_MOTION_SWEEP", a.motion_sweep) end
         if a.gpu_probe then
             fs.setenv("OK_PROBE_GPU_LIBRARY", path.abs(a.gpu_probe))
             fs.setenv("OK_PROBE_GPU_MESH", a.mesh)

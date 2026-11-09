@@ -416,13 +416,24 @@ fn export_edited(root:&Path,r:&J,raw:&[u8],output:&Path)->Result<J,String>{
 pub fn request(root:&Path,path:&Path)->Result<J,String>{
  let r:J=serde_json::from_slice(&crate::gamefs::read(path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
  // The street's clinics and salon: a copy of her card with someone else's face shape and/or dyed hair (properties::restyle).
- // No game root or cache: the card alone. Request: card, output, donor (a card path, optional), hair_rgb ("#rrggbb", optional).
+ // No game root or cache: the card alone. Request: card, output, donor (a card path, optional), hair_rgb ("#rrggbb", optional),
+ // dress ([{outfit, part, id, color}], the shops' clothes, properties::dress; outfit -1 is `outfit`, the one she goes out in).
+ // Whether the salon can dye this card's hair (hair_dye.rs). Request: card.
+ if text(&r,"action")?=="hair_dyeable"{
+  let card=Path::new(text(&r,"card")?);let session=crate::session::open(&crate::oklib::root_for_card(root,Some(card)),Some(card),0)?;
+  return Ok(json!({"valid":true,"dyeable":crate::hair_dye::dyeable(&session)}));
+ }
  if text(&r,"action")?=="restyle"{
   let card=crate::gamefs::read(text(&r,"card")?).map_err(|e|e.to_string())?;
   let donor=match r["donor"].as_str().filter(|d|!d.is_empty()){Some(d)=>Some(crate::gamefs::read(d).map_err(|e|e.to_string())?),None=>None};
-  let rgb=match r["hair_rgb"].as_str().filter(|h|!h.is_empty()){Some(h)=>{let h=h.trim_start_matches('#');if h.len()!=6||!h.is_ascii(){return Err("髮色格式錯誤".into());}
-   let c=|i:usize|u8::from_str_radix(&h[i..i+2],16).map(|v|v as f32/255.0).map_err(|_|"髮色格式錯誤".to_string());Some([c(0)?,c(2)?,c(4)?])},None=>None};
-  let out=properties::restyle(&card,donor.as_deref(),rgb)?;
+  let hex=|h:&str|->Result<[f32;3],String>{let h=h.trim_start_matches('#');if h.len()!=6||!h.is_ascii(){return Err("顏色格式錯誤".into());}
+   let c=|i:usize|u8::from_str_radix(&h[i..i+2],16).map(|v|v as f32/255.0).map_err(|_|"顏色格式錯誤".to_string());Ok([c(0)?,c(2)?,c(4)?])};
+  let rgb=match r["hair_rgb"].as_str().filter(|h|!h.is_empty()){Some(h)=>Some(hex(h)?),None=>None};
+  let mut out=properties::restyle(&card,donor.as_deref(),rgb)?;
+  if let Some(list)=r["dress"].as_array(){let worn=r["outfit"].as_u64().unwrap_or(0) as usize;let mut pieces=Vec::new();
+   for p in list {let outfit=p["outfit"].as_i64().filter(|o|*o>=0).map_or(worn,|o|o as usize);let color=match p["color"].as_str().filter(|c|!c.is_empty()){Some(c)=>Some(hex(c)?),None=>None};
+    pieces.push((outfit,p["part"].as_u64().ok_or("缺少服裝部位")? as usize,p["id"].as_i64().ok_or("缺少服裝編號")? as i32,color));}
+   out=properties::dress(&out,&pieces)?;}
   let output=Path::new(text(&r,"output")?);if let Some(dir)=output.parent(){std::fs::create_dir_all(dir).map_err(|e|e.to_string())?;}
   std::fs::write(output,&out).map_err(|e|e.to_string())?;
   return Ok(json!({"valid":true,"output":output.to_string_lossy(),"bytes":out.len()}));
@@ -466,9 +477,10 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
 
 #[cfg(test)]mod tests{
  use super::*;
+ fn c001()->std::path::PathBuf{Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Content/CharacterCards/CrowdAPNG/C001.png")}
  #[test]
  fn head_texture_commit_preserves_live_state_and_rejects_geometry(){
-  let path=Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C001.png");if !path.ok_exists(){return;}
+  let path=c001();let path=path.as_path();if !path.ok_exists(){return;}
   let mut source=crate::oklib::open_test_card(path,0).unwrap();
   let mut live=crate::session::OkSession::from_cache_bytes(&source.to_cache_bytes().unwrap()).unwrap();
   let index=source.parts.iter().position(|p|p.name.to_ascii_lowercase().contains("mayuge")).unwrap();
@@ -483,7 +495,7 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
  }
  #[test]
  fn head_texture_rejects_transparency_change_on_opaque_main_alpha(){
-  let path=Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C001.png");
+  let path=c001();let path=path.as_path();
   let mut live=crate::oklib::open_test_card(path,0).unwrap();
   let index=live.parts.iter().position(|p|p.role=="head"&&p.shader_kind==11).unwrap();
   let opaque=crate::unity::solid_png([1.;4],1,1).unwrap();
@@ -505,10 +517,10 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
  #[ignore="game oracle: reads the original KKS installation (set OK_TEST_GAME_ROOT)"]
  fn restoring_legacy_appearance_sources_preserves_current_editor_modifiers(){
   let root=&crate::test_support::game_path("");
-  let path=Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C001.png");if !root.ok_exists()||!path.ok_exists(){return;}
+  let path=c001();let path=path.as_path();if !root.ok_exists()||!path.ok_exists(){return;}
   let raw=crate::gamefs::read(path).unwrap();let before=blocks_from_card(&raw).unwrap();
   let current=crate::editor_mods::decode(before.get("KKEx").map(Vec::as_slice).unwrap_or(&[])).unwrap();
-  let restored=original_metadata(root,Path::new("C:/portable/OpenKoikatsu/Saved/AppearanceEditor/cache"),&raw).unwrap().unwrap();
+  let restored=original_metadata(root,Path::new(crate::test_support::project_path!("Saved/AppearanceEditor/cache")),&raw).unwrap().unwrap();
   let after=crate::editor_mods::decode(&restored).unwrap();
   assert_eq!(serde_json::to_value(&current).unwrap(),serde_json::to_value(&after).unwrap());
   assert!(decode(&restored).unwrap().as_map().unwrap().len()>before.get("KKEx").and_then(|v|decode(v).ok()).and_then(|v|v.as_map().map(Vec::len)).unwrap_or(0));
@@ -516,7 +528,7 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
  #[test]
  #[ignore="installed legacy APNG display regression"]
  fn legacy_texture_edit_keeps_display_geometry(){
-  let project=Path::new("C:/portable/OpenKoikatsu");let game=&crate::test_support::game_path("");
+  let project=Path::new(crate::test_support::project_path!(""));let game=&crate::test_support::game_path("");
   let base=project.join("Content/CharacterCards/CrowdAPNG/C001.png");let original=crate::gamefs::read(&base).unwrap();
   let metadata=original_metadata(game,&project.join("Saved/AppearanceEditor/cache"),&original).unwrap();
   let t=targets().into_iter().find(|t|t.key=="eyebrow").unwrap();
@@ -574,7 +586,7 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
  }
  #[test]
  fn eye_gradient_lookup_does_not_use_the_other_eyes_mod(){
-  let path=Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C001.png");if !path.ok_exists(){return;}
+  let path=c001();let path=path.as_path();if !path.ok_exists(){return;}
   let mut card=crate::card::parse_card_bytes_mode(&crate::gamefs::read(path).unwrap(),0,false).unwrap();
   card.resolves=vec![crate::card::ResolveInfo{mod_id:"other.eye.mod".into(),slot:999,local_slot:1,property:"ChaFileFace.PupilGradient2".into(),category_no:409,name:"right only".into()}];
   let mut vanilla=crate::list::ChaListCatalog::default();vanilla.insert_all(vec![crate::list::ListEntry{category_no:409,id:1,name:"vanilla left".into(),..Default::default()}]);
@@ -583,7 +595,7 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
  }
  #[test]
  fn every_image_selector_patches_and_resets_its_own_field(){
-  let path=Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C001.png");
+  let path=c001();let path=path.as_path();
   if !path.ok_exists(){return;}
   let original=crate::gamefs::read(path).unwrap();let mut failures=Vec::new();let mut checked=0;
   for t in targets(){
@@ -606,7 +618,7 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
  #[test]
  #[ignore="installed catalog sequential ten-selection metadata audit; not renderer acceptance"]
  fn installed_catalog_ten_per_type_sequential_metadata(){
-  let project=Path::new("C:/portable/OpenKoikatsu");let root=&crate::test_support::game_path("");
+  let project=Path::new(crate::test_support::project_path!(""));let root=&crate::test_support::game_path("");
   let base=project.join("Content/CharacterCards/CrowdAPNG/C001.png");
   let cache=project.join("Saved/AppearanceEditor/cache");
   let original=crate::gamefs::read(&base).unwrap();let mut blocks=blocks_from_card(&original).unwrap();
@@ -642,7 +654,7 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
  #[test]
  #[ignore="installed native eye highlight and RT parity"]
  fn eye_highlight_delta_matches_native_source(){
-  let project=Path::new("C:/portable/OpenKoikatsu");let game=&crate::test_support::game_path("");
+  let project=Path::new(crate::test_support::project_path!(""));let game=&crate::test_support::game_path("");
   let base=project.join("Content/CharacterCards/CrowdAPNG/C001.png");let original=crate::gamefs::read(&base).unwrap();
   let metadata=original_metadata(game,&project.join("Saved/AppearanceEditor/cache"),&original).unwrap();
   let t=targets().into_iter().find(|t|t.key=="eye_hi_down").unwrap();
@@ -673,7 +685,7 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
  #[ignore="installed source/APNG parity; set OK_APPEARANCE_NATIVE_BASELINE"]
  fn head_texture_delta_matches_full_source_for_every_outfit(){
   let game=&crate::test_support::game_path("");
-  let project=Path::new("C:/portable/OpenKoikatsu");
+  let project=Path::new(crate::test_support::project_path!(""));
   let base=project.join("Saved/AppearanceEditor/F2CC7DA14D83469B0813EFBEBA4A4AD2.input.png");
   let native=PathBuf::from(std::env::var("OK_APPEARANCE_NATIVE_BASELINE").unwrap());
   let original=crate::gamefs::read(&base).unwrap();let cache=project.join("Saved/AppearanceEditor/cache");
@@ -708,20 +720,20 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
  }
  #[test]#[ignore="local normal-hair position diagnosis; requires OK_TEST_EDITED_CARD"]
  fn diagnose_unedited_wig_bounds(){
-  for name in ["C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C000.png".to_string(),std::env::var("OK_TEST_EDITED_CARD").unwrap()]{
+  for name in [crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png").to_string(),std::env::var("OK_TEST_EDITED_CARD").unwrap()]{
    let mut s=crate::portable::load_outfit(Path::new(&name),0).unwrap();let anchor=crate::bone_world(s.body_skel.as_ref(),s.head_skel.as_ref(),"a_n_headtop");eprintln!("ANCHOR {anchor:?}");for index in 0..s.parts.len(){if s.parts[index].name.contains("爱莉希雅"){let mut hash=[0u8;32];unsafe{crate::ffi::ok_part_skin_source_hash_v2(&mut s,index as i32,hash.as_mut_ptr());}eprintln!("WIG_SOURCE {}",hash.iter().map(|b|format!("{b:02x}")).collect::<String>());}}let info=crate::card::parse_card(Path::new(&name)).unwrap();eprintln!("CARD {name} parent0={} parent1={} abmx={}",info.accessory[0].parent_key,info.accessory[1].parent_key,s.abm.len());
    for p in s.parts.iter().filter(|p|p.name.contains("爱莉希雅")){for(label,positions)in [("rest",&p.rest_positions),("posed",&p.positions)]{let mut lo=[f32::INFINITY;3];let mut hi=[f32::NEG_INFINITY;3];for v in positions{for k in 0..3{lo[k]=lo[k].min(v[k]);hi[k]=hi[k].max(v[k]);}}eprintln!("WIG {} {label} {:?} {:?} parent={:?}",p.name,lo,hi,p.parent_bone);}}
   }
  }
  #[test]#[ignore="game oracle: reads the original KKS installation (set OK_TEST_GAME_ROOT)"]fn empty_extra_slot_reuses_every_outfit_and_keeps_wig_binding(){
-  let base=Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C000.png");if !base.ok_exists(){return;}
+  let base=Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png"));if !base.ok_exists(){return;}
   let original=crate::gamefs::read(base).unwrap();let mut blocks=blocks_from_card(&original).unwrap();
-  let root=&crate::test_support::game_path("");let cache=Path::new("C:/portable/OpenKoikatsu/Saved/AppearanceEditor/cache");
+  let root=&crate::test_support::game_path("");let cache=Path::new(crate::test_support::project_path!("Saved/AppearanceEditor/cache"));
   if let Some(metadata)=original_metadata(root,cache,&original).unwrap(){blocks.insert("KKEx".into(),metadata);}
   let before_raw=write_blocks(&original,blocks.clone()).unwrap();let before=crate::card::parse_card_bytes_mode(&before_raw,0,false).unwrap();
   extra::append(&mut blocks,0).unwrap();let raw=write_blocks(&original,blocks).unwrap();
   let stamp=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-  let output=PathBuf::from(format!("C:/portable/OpenKoikatsu/Saved/Tests/editor-empty-slot-{stamp}.png"));
+  let output=PathBuf::from(format!("{}/../../Saved/Tests/editor-empty-slot-{stamp}.png",env!("CARGO_MANIFEST_DIR")));
   let report=crate::portable::reuse_card_snapshot(&raw,base,&output).unwrap().unwrap();assert_eq!(report["outfits_rebuilt"],0);
   let bytes=crate::gamefs::read(&output).unwrap();let(_,a)=crate::portable::png_snapshot(&original).unwrap();let(_,b)=crate::portable::png_snapshot(&bytes).unwrap();assert_eq!(&original[a.unwrap()],&bytes[b.unwrap()]);
   let after=crate::card::parse_card_bytes_mode(&bytes,0,false).unwrap();assert_eq!(after.accessory.len(),before.accessory.len()+1);assert_eq!(after.accessory[0].parent_key,before.accessory[0].parent_key);for(a,b)in after.accessory[0].add_move.iter().zip(&before.accessory[0].add_move){assert_eq!(a.pos,b.pos);assert_eq!(a.rot,b.rot);assert_eq!(a.scale,b.scale);}assert_eq!(after.shape_body,before.shape_body);assert_eq!(after.coordinate_count,before.coordinate_count);
@@ -753,11 +765,11 @@ pub fn request(root:&Path,path:&Path)->Result<J,String>{
   }
  }
  #[test]fn registry_unique_and_covers_original_surfaces(){let t=targets();let keys=t.iter().map(|t|&t.key).collect::<std::collections::HashSet<_>>();assert_eq!(keys.len(),t.len());for category in [100,101,102,103,104,105,112,121,130,200,212,400,401,406,408,409,412,413,420,421,422,423,424,430,431,433]{assert!(t.iter().any(|t|t.category==category));}}
- #[test]fn every_target_has_real_card_field(){let p=Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C000.png");if !p.ok_exists(){return;}let original=crate::gamefs::read(p).unwrap();let mut errors=Vec::new();for t in targets(){if let Err(e)=patch(&original,&t,None,0){errors.push(format!("{}: {e}",t.key));}}assert!(errors.is_empty(),"{}",errors.join("\n"));}
+ #[test]fn every_target_has_real_card_field(){let p=Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png"));if !p.ok_exists(){return;}let original=crate::gamefs::read(p).unwrap();let mut errors=Vec::new();for t in targets(){if let Err(e)=patch(&original,&t,None,0){errors.push(format!("{}: {e}",t.key));}}assert!(errors.is_empty(),"{}",errors.join("\n"));}
  #[test]fn resolver_preserves_other_mods_and_unknown_data(){for key in ["com.bepis.sideloader.universalautoresolver","EC.Core.Sideloader.UniversalAutoResolver"]{let row=Value::Map(vec![("Property".into(),"untouched.property".into()),("ModID".into(),"other.mod".into())]);let v=Value::Map(vec![("unknown.plugin".into(),Value::Binary(vec![1,2,3])),(key.into(),Value::Array(vec![1.into(),Value::Map(vec![("info".into(),Value::Array(vec![Value::Binary(encode(&row).unwrap())]))])]))]);let result=decode(&resolver(&encode(&v).unwrap(),"ChaFileFace.eyebrowId",None).unwrap()).unwrap();assert_eq!(v,result);}}
  #[test]#[ignore="game oracle: reads the original KKS installation (set OK_TEST_GAME_ROOT)"]fn sprite_atlas_reads_distinct_original_thumbnails(){let p=&crate::test_support::game_path("/abdata/chara/thumb/mt_eyebrow_00.unity3d");if !p.ok_exists(){return;}let bytes=crate::gamefs::read(p).unwrap();let a=crate::unity::sprite_png_from_bytes(bytes.clone(),"thumb_mayuge_000").expect("first sprite");let b=crate::unity::sprite_png_from_bytes(bytes,"thumb_mayuge_001").expect("second sprite");assert_ne!(a,b);let image=crate::teximg::load_from_memory(&a).unwrap();assert!(image.width()>=100&&image.height()>=100);}
  #[test]fn wrapped_custom_body_and_accessory_reset(){let t=targets().into_iter().find(|t|t.key=="body_detail").unwrap();let v=Value::Map(vec![("body".into(),Value::Map(vec![("detailId".into(),9.into())]))]);let b=encode(&v).unwrap();let mut wrapped=(b.len() as u32).to_le_bytes().to_vec();wrapped.extend(b);let result=custom(&wrapped,&t,2).unwrap();let mut decoded=decode(&result[4..]).unwrap();assert_eq!(at(&mut decoded,"body.detailId").unwrap().as_i64(),Some(2));
  let t=targets().into_iter().find(|t|t.key=="accessory0_123").unwrap();let c=Value::Map(Vec::new());let a=Value::Map(vec![("parts".into(),Value::Array(vec![Value::Map(vec![("id".into(),88.into()),("type".into(),123.into()),("unknown".into(),"keep".into())])]))]);let mut raw=Vec::new();for v in [&c,&a]{let b=encode(v).unwrap();raw.extend((b.len() as u32).to_le_bytes());raw.extend(b);}raw.push(0);let b=encode(&c).unwrap();raw.extend((b.len() as u32).to_le_bytes());raw.extend(b);let result=coordinate(&encode(&Value::Array(vec![Value::Binary(raw)])).unwrap(),&t,0,0,true).unwrap();let v=decode(&result).unwrap();let b=v.as_array().unwrap()[0].as_slice().unwrap();let n=u32::from_le_bytes(b[..4].try_into().unwrap()) as usize;let p=4+n;let n=u32::from_le_bytes(b[p..p+4].try_into().unwrap()) as usize;let mut a=decode(&b[p+4..p+4+n]).unwrap();assert_eq!(at(&mut a,"parts.0.type").unwrap().as_i64(),Some(120));assert_eq!(at(&mut a,"parts.0.unknown").unwrap().as_str(),Some("keep"));}
- #[test]fn legacy_portable_restores_exact_original_mod_metadata(){let root=&crate::test_support::game_path("");let p=Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C000.png");if !root.ok_exists()||!p.ok_exists(){return;}let bytes=crate::gamefs::read(p).unwrap();let cache=Path::new("C:/portable/OpenKoikatsu/Saved/AppearanceEditor/cache");fs::create_dir_all(cache).unwrap();let metadata=original_metadata(root,cache,&bytes).unwrap().expect("legacy metadata restored");let t=targets().into_iter().find(|t|t.key=="eyebrow").unwrap();let result=patch_with_metadata(&bytes,&t,None,0,Some(metadata)).unwrap();let card=crate::card::parse_card_bytes_mode(&result,0,false).unwrap();assert!(card.resolves.len()>10,"original mod references missing");assert!(!card.me_tex.keys().any(|k|k.3.contains("mayuge")&&k.4=="maintex"),"old eyebrow texture override survived");assert!(card.me_tex.keys().any(|k|k.3.contains("body")),"unrelated body textures were removed");assert_eq!(card.eyebrow_id,0);let data=blocks_from_card(&result).unwrap();let kkex=decode(&data["KKEx"]).unwrap();assert!(kkex.as_map().unwrap().iter().any(|(k,_)|k.as_str()==Some(PROVENANCE)));}
- #[test]fn patch_preserves_other_blocks_and_values(){let path=Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C000.png");if !path.ok_exists(){return;}let original=crate::gamefs::read(path).unwrap();let before=crate::card::parse_card_bytes_mode(&original,0,false).unwrap();let t=targets().into_iter().find(|t|t.key=="eyebrow").unwrap();let item=Item{key:"test".into(),guid:String::new(),source:String::new(),entry:crate::list::ListEntry{id:3,category_no:406,..Default::default()}};let patched=patch(&original,&t,Some(&item),0).unwrap();let after=crate::card::parse_card_bytes_mode(&patched,0,false).unwrap();assert_eq!(after.eyebrow_id,3);assert_eq!(after.shape_face,before.shape_face);assert_eq!(after.shape_body,before.shape_body);assert_eq!(after.clothes_ids,before.clothes_ids);assert_eq!(after.hair_ids,before.hair_ids);assert_eq!(after.pupil_ids,before.pupil_ids);}
+ #[test]fn legacy_portable_restores_exact_original_mod_metadata(){let root=&crate::test_support::game_path("");let p=Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png"));if !root.ok_exists()||!p.ok_exists(){return;}let bytes=crate::gamefs::read(p).unwrap();let cache=Path::new(crate::test_support::project_path!("Saved/AppearanceEditor/cache"));fs::create_dir_all(cache).unwrap();let metadata=original_metadata(root,cache,&bytes).unwrap().expect("legacy metadata restored");let t=targets().into_iter().find(|t|t.key=="eyebrow").unwrap();let result=patch_with_metadata(&bytes,&t,None,0,Some(metadata)).unwrap();let card=crate::card::parse_card_bytes_mode(&result,0,false).unwrap();assert!(card.resolves.len()>10,"original mod references missing");assert!(!card.me_tex.keys().any(|k|k.3.contains("mayuge")&&k.4=="maintex"),"old eyebrow texture override survived");assert!(card.me_tex.keys().any(|k|k.3.contains("body")),"unrelated body textures were removed");assert_eq!(card.eyebrow_id,0);let data=blocks_from_card(&result).unwrap();let kkex=decode(&data["KKEx"]).unwrap();assert!(kkex.as_map().unwrap().iter().any(|(k,_)|k.as_str()==Some(PROVENANCE)));}
+ #[test]fn patch_preserves_other_blocks_and_values(){let path=Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png"));if !path.ok_exists(){return;}let original=crate::gamefs::read(path).unwrap();let before=crate::card::parse_card_bytes_mode(&original,0,false).unwrap();let t=targets().into_iter().find(|t|t.key=="eyebrow").unwrap();let item=Item{key:"test".into(),guid:String::new(),source:String::new(),entry:crate::list::ListEntry{id:3,category_no:406,..Default::default()}};let patched=patch(&original,&t,Some(&item),0).unwrap();let after=crate::card::parse_card_bytes_mode(&patched,0,false).unwrap();assert_eq!(after.eyebrow_id,3);assert_eq!(after.shape_face,before.shape_face);assert_eq!(after.shape_body,before.shape_body);assert_eq!(after.clothes_ids,before.clothes_ids);assert_eq!(after.hair_ids,before.hair_ids);assert_eq!(after.pupil_ids,before.pupil_ids);}
 }

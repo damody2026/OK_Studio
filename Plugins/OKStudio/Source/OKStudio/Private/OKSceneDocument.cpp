@@ -190,7 +190,11 @@ FString UOKSceneDocument::ToJson() const
 {
 	TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
 	Root->SetStringField(TEXT("format"), TEXT("okscene"));
-	Root->SetNumberField(TEXT("version"), FormatVersion);
+	const bool bMotionKeys = Tracks.ContainsByPredicate([](const FOKSceneTrack& T) { return T.Keys.ContainsByPredicate([](const FOKSceneKey& K) { return K.AnimNo >= 0; }); });
+	const bool bFades = Tracks.ContainsByPredicate([](const FOKSceneTrack& T) { return T.Keys.ContainsByPredicate([](const FOKSceneKey& K) { return K.AnimBlend > 0.f; }); });
+	const bool bClips = Objects.ContainsByPredicate([](const FOKSceneObject& O) { return !O.Character.VoiceClips.IsEmpty(); });
+	const bool bOrbits = Tracks.ContainsByPredicate([](const FOKSceneTrack& T) { return T.bOrbitPath; });
+	Root->SetNumberField(TEXT("version"), bFades || bClips || bOrbits ? 3 : bMotionKeys ? 2 : 1);
 	Root->SetNumberField(TEXT("active_camera"), ActiveCamera);
 	Root->SetNumberField(TEXT("next_id"), NextId);
 	Root->SetNumberField(TEXT("map"), Map);
@@ -231,6 +235,7 @@ FString UOKSceneDocument::ToJson() const
 		Root->SetStringField(TEXT("linked_light_base"), LinkedLightBase.ToString());
 		Root->SetStringField(TEXT("linked_camera_base"), LinkedCameraBase.ToString());
 	}
+	if (SavedView.bSet) if (TSharedPtr<FJsonObject> View = FJsonObjectConverter::UStructToJsonObject(SavedView)) Root->SetObjectField(TEXT("view"), View);
 	if (Bookmarks.ContainsByPredicate([](const FOKSceneBookmark& B) { return B.bSet; }))
 	{
 		TArray<TSharedPtr<FJsonValue>> MarkJson;
@@ -318,6 +323,7 @@ bool UOKSceneDocument::FromJson(const FString& Json, FString& OutError)
 			if (V->AsObject() && FJsonObjectConverter::JsonObjectToUStruct(V->AsObject().ToSharedRef(), &T) && (Ids.Contains(T.ObjectId) || T.ObjectId == SceneTrackId)) Tracks.Add(MoveTemp(T));
 		}
 	Bookmarks.Reset();
+	SavedView = FOKSceneBookmark();
 	Constraints.Reset();
 	const TArray<TSharedPtr<FJsonValue>>* ConJson = nullptr;
 	if (Root->TryGetArrayField(TEXT("constraints"), ConJson))
@@ -355,6 +361,8 @@ bool UOKSceneDocument::FromJson(const FString& Json, FString& OutError)
 	LinkedCameraBase = FVector2D::ZeroVector;
 	if (Root->TryGetStringField(TEXT("linked_light_base"), OrbitStr)) LinkedLightBase.InitFromString(OrbitStr);
 	if (Root->TryGetStringField(TEXT("linked_camera_base"), OrbitStr)) LinkedCameraBase.InitFromString(OrbitStr);
+	const TSharedPtr<FJsonObject>* ViewJson = nullptr;
+	if (Root->TryGetObjectField(TEXT("view"), ViewJson)) FJsonObjectConverter::JsonObjectToUStruct(ViewJson->ToSharedRef(), &SavedView);
 	const TArray<TSharedPtr<FJsonValue>>* MarkJson = nullptr;
 	if (Root->TryGetArrayField(TEXT("bookmarks"), MarkJson))
 		for (const TSharedPtr<FJsonValue>& V : *MarkJson)
@@ -550,6 +558,95 @@ int32 UOKSceneDocument::MoveKey(int32 Id, int32 Index, float NewTime)
 	return T->Keys.IndexOfByPredicate([&K](const FOKSceneKey& X) { return X.Time == K.Time; });
 }
 
+namespace
+{
+	FString KeyedText(const FTransform& T, float Value, bool bCharacter, const TArray<FOKSceneFkBone>& Fk, int32 Eyebrow, int32 Eyes, int32 Mouth, float MouthOpen,
+		int32 HandLeft, int32 HandRight, const TArray<uint8>& Clothes, float Style, float FaceStyle, float AnimTime)
+	{
+		const FVector L = T.GetLocation(), S = T.GetScale3D();
+		const FRotator R = T.Rotator();
+		FString Text = FString::Printf(TEXT("%.2f %.2f %.2f %.2f %.2f %.2f %.3f %.3f %.3f %.3f"), L.X, L.Y, L.Z, R.Pitch, R.Yaw, R.Roll, S.X, S.Y, S.Z, Value);
+		if (!bCharacter) return Text;
+		Text += FString::Printf(TEXT(" %d %d %d %.3f %d %d %.3f %.3f %.3f"), Eyebrow, Eyes, Mouth, MouthOpen, HandLeft, HandRight, Style, FaceStyle, AnimTime);
+		for (uint8 C : Clothes) Text += FString::Printf(TEXT(" c%d"), C);
+		for (const FOKSceneFkBone& B : Fk) Text += FString::Printf(TEXT(" %s %.2f %.2f %.2f"), *B.Bone, B.Euler.X, B.Euler.Y, B.Euler.Z);
+		return Text;
+	}
+}
+
+FString UOKSceneDocument::KeyedState(const FOKSceneObject& O, bool bMotion)
+{
+	const FOKSceneCharacter& C = O.Character;
+	FString Text = KeyedText(O.Transform, KeyValue(O), O.Kind == EOKSceneObjectKind::Character, C.Fk, C.EyebrowPattern, C.EyesPattern, C.MouthPattern, C.MouthOpen,
+		C.HandLeft, C.HandRight, C.ClothesStates, C.Style, C.ShownFaceStyle(), C.Speed == 0.f ? C.Time : -1.f);
+	if (bMotion && C.StudioAnimeNo >= 0) Text += FString::Printf(TEXT(" m%d/%d/%d/%d %.3f"), C.StudioAnimeKind, C.StudioAnimeGroup, C.StudioAnimeCategory, C.StudioAnimeNo, C.Speed);
+	if (O.Kind == EOKSceneObjectKind::Character) Text += FString::Printf(TEXT(" l%d %d %.1f %.1f %.1f"), int32(C.EyesLook), int32(C.NeckLook), C.LookPoint.X, C.LookPoint.Y, C.LookPoint.Z);
+	return Text;
+}
+
+bool UOKSceneDocument::HasMotionKeys(int32 Id) const
+{
+	const FOKSceneTrack* T = Tracks.FindByPredicate([Id](const FOKSceneTrack& X) { return X.ObjectId == Id; });
+	return T && T->Keys.ContainsByPredicate([](const FOKSceneKey& K) { return K.AnimNo >= 0; });
+}
+
+bool UOKSceneDocument::MotionFadeAt(int32 Id, float Time, FOKSceneMotionFade& Out) const
+{
+	Out = FOKSceneMotionFade();
+	const FOKSceneTrack* T = Tracks.FindByPredicate([Id](const FOKSceneTrack& X) { return X.ObjectId == Id; });
+	if (!T) return false;
+	// The first key of the run of one motion that Index is in.
+	auto RunStart = [T](int32 Index)
+	{
+		int32 Start = Index;
+		for (int32 I = Index - 1; I >= 0; --I)
+		{
+			if (T->Keys[I].AnimNo < 0) continue;
+			if (!T->Keys[I].SameMotion(T->Keys[Index])) break;
+			Start = I;
+		}
+		return Start;
+	};
+	int32 First = INDEX_NONE, Last = INDEX_NONE;
+	for (int32 I = 0; I < T->Keys.Num(); ++I)
+	{
+		if (T->Keys[I].AnimNo < 0) continue;
+		if (First == INDEX_NONE) First = I;
+		if (T->Keys[I].Time <= Time) Last = I;
+	}
+	if (Last == INDEX_NONE) return false;
+	const int32 Start = RunStart(Last);
+	const FOKSceneKey& K = T->Keys[Start];
+	if (K.AnimBlend <= 0.f || K.AnimSpeed <= 0.f || K.AnimTime >= 0.f || Time >= K.Time + K.AnimBlend) return false;
+	int32 Before = INDEX_NONE;
+	for (int32 I = Start - 1; I >= 0 && Before == INDEX_NONE; --I) if (T->Keys[I].AnimNo >= 0) Before = I;
+	if (Before == INDEX_NONE) return false;
+	const FOKSceneKey& P = T->Keys[Before];
+	const int32 PStart = RunStart(Before);
+	// Where the old motion's clock stood at the key (ApplyMotionKeys' clock), or the frame it was held on.
+	const float Clock = PStart == First ? T->Keys[PStart].AnimStart : -T->Keys[PStart].Time * P.AnimSpeed;
+	Out.Kind = P.AnimKind; Out.Group = P.AnimGroup; Out.Category = P.AnimCategory; Out.No = P.AnimNo;
+	Out.FromTime = P.AnimTime >= 0.f ? P.AnimTime : Clock + K.Time * P.AnimSpeed;
+	Out.Duration = K.AnimBlend * K.AnimSpeed;
+	return true;
+}
+
+FString UOKSceneDocument::KeyedState(const FOKSceneObject& O, const FOKSceneKey& K)
+{
+	FString Text = KeyedText(K.Transform, K.Value, O.Kind == EOKSceneObjectKind::Character, K.Fk, K.EyebrowPattern, K.EyesPattern, K.MouthPattern, K.MouthOpen,
+		K.HandLeft, K.HandRight, K.ClothesStates, K.Style, K.ShownFaceStyle(), K.AnimTime);
+	if (K.AnimNo >= 0) Text += FString::Printf(TEXT(" m%d/%d/%d/%d %.3f"), K.AnimKind, K.AnimGroup, K.AnimCategory, K.AnimNo, K.AnimSpeed);
+	// A key from before U266 says nothing about the look: whatever it is now is as keyed.
+	if (O.Kind == EOKSceneObjectKind::Character)
+	{
+		const FOKSceneCharacter& C = O.Character;
+		const bool bKeyed = K.LookEyes >= 0;
+		const FVector P = bKeyed ? K.LookPoint : C.LookPoint;
+		Text += FString::Printf(TEXT(" l%d %d %.1f %.1f %.1f"), bKeyed ? K.LookEyes : int32(C.EyesLook), bKeyed ? K.LookNeck : int32(C.NeckLook), P.X, P.Y, P.Z);
+	}
+	return Text;
+}
+
 void UOKSceneDocument::SetKey(int32 Id, float Time)
 {
 	if (Id == SceneTrackId)
@@ -577,10 +674,12 @@ void UOKSceneDocument::SetKey(int32 Id, float Time)
 	// Re-keying keeps the key's curve.
 	const FOKSceneKey* Old = T->Keys.FindByPredicate([Time](const FOKSceneKey& K) { return FMath::Abs(K.Time - Time) < KeyTolerance; });
 	const EOKSceneEase Ease = Old ? Old->Ease : EOKSceneEase::Linear;
+	const float Blend = Old ? Old->AnimBlend : 0.f;
 	T->Keys.RemoveAll([Time](const FOKSceneKey& K) { return FMath::Abs(K.Time - Time) < KeyTolerance; });
 	FOKSceneKey K;
 	K.Time = FMath::Max(Time, 0.f);
 	K.Ease = Ease;
+	K.AnimBlend = Blend;
 	K.Transform = O->Transform;
 	K.Value = KeyValue(*O);
 	if (O->Kind == EOKSceneObjectKind::Character)
@@ -589,9 +688,17 @@ void UOKSceneDocument::SetKey(int32 Id, float Time)
 		K.Fk = C.Fk;
 		K.bCharacterState = true;
 		K.EyebrowPattern = C.EyebrowPattern; K.EyesPattern = C.EyesPattern; K.MouthPattern = C.MouthPattern; K.MouthOpen = C.MouthOpen;
-		K.HandLeft = C.HandLeft; K.HandRight = C.HandRight; K.ClothesStates = C.ClothesStates;
+		K.HandLeft = C.HandLeft; K.HandRight = C.HandRight; K.ClothesStates = C.ClothesStates; K.Style = C.Style; K.FaceStyle = C.FaceStyle;
+		K.LookEyes = int32(C.EyesLook); K.LookNeck = int32(C.NeckLook); K.LookPoint = C.LookPoint;
 		// A stopped animation keys its frame (the timeline then scrubs it); a playing one runs on its own.
 		K.AnimTime = C.Speed == 0.f ? C.Time : -1.f;
+		// The motion too (U230): one person talking, then the other, needs it to change on the timeline. A motion that is
+		// not a Studio one (a video motion, an .okanim) stays as it is.
+		if (C.StudioAnimeNo >= 0)
+		{
+			K.AnimKind = C.StudioAnimeKind; K.AnimGroup = C.StudioAnimeGroup; K.AnimCategory = C.StudioAnimeCategory; K.AnimNo = C.StudioAnimeNo;
+			K.AnimSpeed = C.Speed; K.AnimStart = C.Time;
+		}
 	}
 	if (O->Kind == EOKSceneObjectKind::Light) K.Color = O->Light.Color;
 	T->Keys.Add(K);
@@ -675,13 +782,73 @@ bool UOKSceneDocument::RemoveKey(int32 Id, float Time)
 namespace
 {
 	/** A key's face, hands and clothes onto a character (the mouth opening given separately, it blends). */
-	void ApplyCharacterKey(FOKSceneCharacter& C, const FOKSceneKey& K, float MouthOpen)
+	void ApplyCharacterKey(FOKSceneCharacter& C, const FOKSceneKey& K, float MouthOpen, float Style, float FaceStyle)
 	{
 		if (!K.bCharacterState) return;
+		if (Style >= -1.f) { C.Style = Style; C.FaceStyle = FaceStyle; }
 		C.EyebrowPattern = K.EyebrowPattern; C.EyesPattern = K.EyesPattern; C.MouthPattern = K.MouthPattern; C.MouthOpen = MouthOpen;
 		C.HandLeft = K.HandLeft; C.HandRight = K.HandRight;
+		if (K.LookEyes >= 0) { C.EyesLook = EOKSceneLook(K.LookEyes); C.NeckLook = EOKSceneLook(K.LookNeck); C.LookPoint = K.LookPoint; }
 		// Clothes only change when they differ (a change rebuilds the character).
 		if (K.ClothesStates.Num() == C.ClothesStates.Num() && K.ClothesStates != C.ClothesStates) C.ClothesStates = K.ClothesStates;
+	}
+
+	/** Where the views of two camera keys meet: the middle of the closest points of their rays, both in front of the
+	 *  cameras. False for views that run side by side or apart. */
+	bool OrbitPoint(const FTransform& A, const FTransform& B, FVector& Out)
+	{
+		const FVector DA = A.GetRotation().GetAxisX(), DB = B.GetRotation().GetAxisX(), W = A.GetLocation() - B.GetLocation();
+		const double Dot = DA | DB, Den = 1. - Dot * Dot;
+		if (Den < 1e-3) return false;
+		const double D = DA | W, E = DB | W;
+		const double S = (Dot * E - D) / Den, T = (E - Dot * D) / Den;
+		if (S <= 1. || T <= 1.) return false;
+		Out = (A.GetLocation() + DA * S + B.GetLocation() + DB * T) * 0.5;
+		return true;
+	}
+
+	/** A camera at U between two keys, swung round where they look: the distance and the turn go evenly, and the keys'
+	 *  own aim off that point fades from one to the other, so it lands on each key exactly. */
+	bool OrbitBetween(const FTransform& A, const FTransform& B, float U, FTransform& Out)
+	{
+		FVector Focus;
+		if (!OrbitPoint(A, B, Focus)) return false;
+		const FVector VA = A.GetLocation() - Focus, VB = B.GetLocation() - Focus;
+		const double LA = VA.Size(), LB = VB.Size();
+		if (LA < 1. || LB < 1.) return false;
+		const FVector Dir = FQuat::Slerp(FQuat::Identity, FQuat::FindBetweenVectors(VA, VB), U).RotateVector(VA / LA);
+		if (FMath::Abs(Dir.Z) > 0.999 || FMath::Abs(VA.Z / LA) > 0.999 || FMath::Abs(VB.Z / LB) > 0.999) return false;
+		auto Look = [](const FVector& From) { return FRotationMatrix::MakeFromXZ(-From, FVector::UpVector).ToQuat(); };
+		const FQuat OffA = Look(VA / LA).Inverse() * A.GetRotation(), OffB = Look(VB / LB).Inverse() * B.GetRotation();
+		Out.SetLocation(Focus + Dir * FMath::Lerp(LA, LB, double(U)));
+		Out.SetRotation(Look(Dir) * FQuat::Slerp(OffA, OffB, U));
+		return true;
+	}
+
+	/** The motion a character track gives at Time: the last key at or before it that holds one (before the first, the
+	 *  first). It starts over at the first key of its run; the track's first motion starts where it was keyed. */
+	void ApplyMotionKeys(FOKSceneCharacter& C, const FOKSceneTrack& T, float Time)
+	{
+		int32 First = INDEX_NONE, Last = INDEX_NONE;
+		for (int32 I = 0; I < T.Keys.Num(); ++I)
+		{
+			if (T.Keys[I].AnimNo < 0) continue;
+			if (First == INDEX_NONE) First = I;
+			if (T.Keys[I].Time <= Time || Last == INDEX_NONE) Last = I;
+		}
+		if (Last == INDEX_NONE) return;
+		const FOKSceneKey& K = T.Keys[Last];
+		int32 Start = Last;
+		for (int32 I = Last - 1; I >= 0; --I)
+		{
+			if (T.Keys[I].AnimNo < 0) continue;
+			if (!T.Keys[I].SameMotion(K)) break;
+			Start = I;
+		}
+		C.StudioAnimeKind = K.AnimKind; C.StudioAnimeGroup = K.AnimGroup; C.StudioAnimeCategory = K.AnimCategory; C.StudioAnimeNo = K.AnimNo;
+		C.Speed = K.AnimSpeed;
+		// The clock is Time + the timeline's time * Speed: this puts the motion's start at its key.
+		C.Time = Start == First ? T.Keys[Start].AnimStart : -T.Keys[Start].Time * K.AnimSpeed;
 	}
 
 	/** A character track's FK at Time. */
@@ -897,18 +1064,21 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 			const FOKSceneKey* A = nullptr; const FOKSceneKey* B = nullptr; float U = 0.f;
 			Around(T, A, B, U);
 			if (O->Kind == EOKSceneObjectKind::Light && A->Color.A >= 0.f) O->Light.Color = B && B->Color.A >= 0.f ? FMath::Lerp(A->Color, B->Color, U) : A->Color;
+			if (O->Kind == EOKSceneObjectKind::Character) ApplyMotionKeys(O->Character, T, Time);
 			if (O->Kind == EOKSceneObjectKind::Character && A->AnimTime >= 0.f)
 			{
 				O->Character.Speed = 0.f;
-				O->Character.Time = B && B->AnimTime >= 0.f ? FMath::Lerp(A->AnimTime, B->AnimTime, U) : A->AnimTime;
+				// Times of two motions have nothing to blend.
+				const bool bBlend = B && B->AnimTime >= 0.f && (A->AnimNo < 0 || B->AnimNo < 0 || A->SameMotion(*B));
+				O->Character.Time = bBlend ? FMath::Lerp(A->AnimTime, B->AnimTime, U) : A->AnimTime;
 			}
 		}
 		int32 Next = T.Keys.IndexOfByPredicate([Time](const FOKSceneKey& K) { return K.Time > Time; });
 		FTransform X;
 		float V;
 		const bool bCharacter = O->Kind == EOKSceneObjectKind::Character;
-		if (Next == INDEX_NONE) { const FOKSceneKey& K = T.Keys.Last(); X = K.Transform; V = K.Value; if (bCharacter) { O->Character.Fk = SampleTrackFk(T, Time); ApplyCharacterKey(O->Character, K, K.MouthOpen); } }
-		else if (Next == 0) { const FOKSceneKey& K = T.Keys[0]; X = K.Transform; V = K.Value; if (bCharacter) { O->Character.Fk = SampleTrackFk(T, Time); ApplyCharacterKey(O->Character, K, K.MouthOpen); } }
+		if (Next == INDEX_NONE) { const FOKSceneKey& K = T.Keys.Last(); X = K.Transform; V = K.Value; if (bCharacter) { O->Character.Fk = SampleTrackFk(T, Time); ApplyCharacterKey(O->Character, K, K.MouthOpen, K.Style, K.FaceStyle); } }
+		else if (Next == 0) { const FOKSceneKey& K = T.Keys[0]; X = K.Transform; V = K.Value; if (bCharacter) { O->Character.Fk = SampleTrackFk(T, Time); ApplyCharacterKey(O->Character, K, K.MouthOpen, K.Style, K.FaceStyle); } }
 		else
 		{
 			const FOKSceneKey& A = T.Keys[Next - 1];
@@ -925,13 +1095,17 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 			else X.SetLocation(FMath::Lerp(A.Transform.GetLocation(), B.Transform.GetLocation(), U));
 			X.SetRotation(FQuat::Slerp(A.Transform.GetRotation(), B.Transform.GetRotation(), U));
 			X.SetScale3D(FMath::Lerp(A.Transform.GetScale3D(), B.Transform.GetScale3D(), U));
+			if (T.bOrbitPath && O->Kind == EOKSceneObjectKind::Camera) OrbitBetween(A.Transform, B.Transform, U, X);
 			V = FMath::Lerp(A.Value, B.Value, U);
 			if (bCharacter)
 			{
 				O->Character.Fk = SampleTrackFk(T, Time);
 				// Patterns hold the earlier key's; the mouth opening blends when both keys set it.
 				const float Mouth = A.MouthOpen >= 0.f && B.MouthOpen >= 0.f ? FMath::Lerp(A.MouthOpen, B.MouthOpen, U) : A.MouthOpen;
-				ApplyCharacterKey(O->Character, A, Mouth);
+				const bool bStyles = A.Style >= -1.f && B.Style >= -1.f;
+				ApplyCharacterKey(O->Character, A, Mouth, bStyles ? FMath::Lerp(A.Style, B.Style, U) : A.Style, bStyles ? FMath::Lerp(A.ShownFaceStyle(), B.ShownFaceStyle(), U) : A.FaceStyle);
+				// A look point moves from key to key: two points, the head turns between them.
+				if (A.LookEyes >= 0 && B.LookEyes >= 0 && A.LookNeck == B.LookNeck && A.LookEyes == B.LookEyes) O->Character.LookPoint = FMath::Lerp(A.LookPoint, B.LookPoint, U);
 			}
 		}
 		O->Transform = X;

@@ -1,0 +1,26 @@
+-- Bounded furniture translations derived from actual player-sized obstructions.
+local code=[====[
+import json,struct,hashlib
+from pathlib import Path
+import numpy as np
+R=Path('C:/portable/OpenKoikatsu');O=R/'output/street-social-city-production/immersion-v1';probe=json.loads((O/'door-capsule-probe.json').read_text());export=json.loads((O/'depth-export.json').read_text());snapshot=json.loads((O/'preservation-after.json').read_text());assert probe['map_sha256']==export['map_sha256']==snapshot['map_sha256'];assert len(probe['issues'])==11;S=Path(export['folder']);scene=json.loads((S/'scene.json').read_text());activity=json.loads((R/'output/street-social-city-production/activity-scenes-v1/plan.json').read_text());models={r['id']:r for r in activity['instances']};components={r['actor']+'::'+r['component']:r for r in snapshot['components']};groups=[];meshes=[];folder=O/'door-clearance';folder.mkdir(exist_ok=True)
+for issue in probe['issues']:
+ label=issue['sweep']['actor']
+ if not label.startswith('Activity_'):continue
+ stem=label.removeprefix('Activity_');prefix,index=stem.rsplit('-',1);members=[]
+ for offset,expected in enumerate(['service-counter','laptop','sketchbook','flyer-stand','sign']):
+  identity=prefix+'-'+str(int(index)+offset);q=models[identity];assert q['asset']==expected;actor='Activity_'+identity;key=actor+'::StaticMeshComponent0';c=components[key];members.append(dict(actor=actor,asset_kind=expected,before=c['actor_transform'],delta_cm=[0,40,0]))
+ groups.append(dict(building=issue['building'],door=issue['id'],counter=label,members=members,reason='Increase straight passage beyond the support-room doorway; move counter and all objects/signage resting on or associated with it together. Preserve room use and original furniture.'))
+assert len(groups)==6
+for r in scene['instances']:
+ if r['actor'] not in ['Campus_SP_F01','Campus_SP_F02','Campus_SP_F03','Campus_SP_F04','Campus_SP_F05']:continue
+ floor=int(r['actor'][-2:]);issue=next(q for q in probe['issues'] if q['building']=='SP' and q['floor']==floor);z=issue['supports'][1]['expected_floor_cm'];m=scene['meshes'][r['mesh']];lods=[];stats=[]
+ for l in m['lods']:
+  raw=(S/l['file']).read_bytes();_,nv,nt=struct.unpack_from('<III',raw);xyz=np.frombuffer(raw,dtype='<f4',count=nv*3,offset=12).reshape(-1,3).copy();matrix=np.array(r['matrix']).reshape(4,4);world=(np.c_[xyz,np.ones(nv)]@matrix)[:,:3];tri=np.frombuffer(raw,dtype='<u4',count=nt*3,offset=12+nv*12).reshape(-1,3);slots=np.frombuffer(raw,dtype='<u4',count=nt,offset=12+nv*12+nt*16);low=np.array([75149.98,21329.98,z-.02]);high=np.array([75370.02,21550.02,z+240.02]);inside=np.all((world>=low)&(world<=high),axis=1);wood=[i for i,p in enumerate(r['materials']) if p.endswith('/Campus_wood.Campus_wood') or 'MI_FacingOnly_3386cb006b1ef01622d35980' in p];mask=np.all(inside[tri],axis=1)&np.isin(slots,wood);vi=np.unique(tri[mask]);assert 60<=int(mask.sum())<=100 and len(vi)>40,(r['actor'],int(mask.sum()),len(vi));shared=np.intersect1d(vi,np.unique(tri[~mask]));assert not len(shared),('Fixture vertices shared with unrelated geometry',r['actor'],len(shared));new=xyz.copy();shifted=world[vi].copy();shifted[:,1]-=60;new[vi]=(np.c_[shifted,np.ones(len(vi))]@np.linalg.inv(matrix))[:,:3].astype('<f4');unchanged=np.ones(nv,dtype=bool);unchanged[vi]=False;assert np.array_equal(new[unchanged],xyz[unchanged]);p=folder/(r['actor']+'-lod'+str(l['lod'])+'-vertices.bin');p.write_bytes(np.stack([xyz,new],axis=1).tobytes());lods.append(dict(lod=l['lod'],vertices=str(p),sha256=hashlib.sha256(p.read_bytes()).hexdigest()));stats.append(dict(lod=l['lod'],fixture_triangles=int(mask.sum()),moved_vertices=len(vi),unrelated_vertices_unchanged=int(unchanged.sum()),old_world_bounds_cm=[world[vi].min(0).tolist(),world[vi].max(0).tolist()],world_delta_cm=[0,-60,0],shared_vertices_with_unrelated_geometry=0))
+ meshes.append(dict(key=r['key'],before=m['asset'],after='/Game/UniversityCity/ImmersionV1/InteriorClearance/SM_'+r['actor']+'_ShowerClear_v1',lods=lods,changes=stats,room='SP-F%02d-support-A3'%floor,policy='Move only the complete2.2m accessible shower fixture60cm deeper into its4.4x4m support room. Door/walls/floor and all other furniture vertices bit-identical. Rebuild collision from translated mesh; full native interior and door probes required before saving.'))
+assert len(meshes)==5
+plan=dict(status='prepared_requires_native_preflight',map_sha256=probe['map_sha256'],source_probe_sha256=hashlib.sha256((O/'door-capsule-probe.json').read_bytes()).hexdigest(),source_metadata_sha256=export['metadata_sha256'],groups=groups,meshes=meshes,preserve_building_floors=89,policy='Six complete counter groups shifted40cm with their laptop,paper,flyer and name sign; five complete shower fixtures shifted60cm within existing rooms. No building/room relocation, no furnishing removal, no collision disabling. All3486 door and67302 interior checks must pass before saving.')
+(O/'door-clearance-plan.json').write_text(json.dumps(plan,indent=2),'utf8');print('Prepared',len(groups),'counter groups /',sum(len(g['members']) for g in groups),'actors and',len(meshes),'bounded shower fixture translations.')
+for m in meshes:print(m['key'],m['changes'])
+]====]
+local p=assert(io.popen('python -','w'));assert(p:write(code));assert(p:close())

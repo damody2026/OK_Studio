@@ -13,6 +13,25 @@ struct OkMorphView;
 struct OkBodyPose;
 struct FReferenceSkeleton;
 class UAnimSequence;
+class UTexture;
+
+/** This iris texture with the highlights painted into it taken out (a card's overlay can hold them; the eye material's own
+ *  gate does not reach those). Iris itself when it has none. Made once per texture, on the game thread. */
+KKUNITYBUNDLE_API UTexture* OKIrisWithoutHighlights(UTexture* Iris);
+/** Marks of ours over the middle of an iris, the first under the second: Shape (x; 0 none), across, down, opacity, and each one's
+ *  Colour (hue in degrees, saturation, value). */
+struct FOKIrisMarks
+{
+	FVector4f Shape[2]={FVector4f(0.f,0.f,0.f,0.f),FVector4f(0.f,0.f,0.f,0.f)};
+	FVector3f Colour[2]={FVector3f(0.f,0.f,0.f),FVector3f(0.f,0.f,0.f)};
+	bool Any() const {return Shape[0].X>0.f||Shape[1].X>0.f;}
+	bool operator==(const FOKIrisMarks& O) const {return Shape[0]==O.Shape[0]&&Shape[1]==O.Shape[1]&&Colour[0]==O.Colour[0]&&Colour[1]==O.Colour[1];}
+};
+/** Iris with its hue turned (degrees), its saturation and value times as much, and Marks laid over it; one image per iris, made
+ *  again on a change, the iris itself left as it is. */
+KKUNITYBUNDLE_API UTexture* OKIrisRecolored(UTexture* Iris,float Hue,float Saturation,float Value,const FOKIrisMarks& Marks=FOKIrisMarks());
+/** One clear pixel: an eye layer with nothing on it. */
+KKUNITYBUNDLE_API UTexture* OKClearEyeLayer();
 
 bool KKUNITYBUNDLE_API OKExtractCard(
 	const FString& GameRoot,
@@ -28,6 +47,8 @@ struct KKUNITYBUNDLE_API FOkSessionHandle
 {
 	OkSession* Raw = nullptr;
 	mutable UE::Tasks::TTask<bool> Async;
+	/** A solve of several sessions together (the pair frame): waited for the same way, except inside FOkSharedSolveScope. */
+	mutable UE::Tasks::FTask Shared;
 	FOkSessionHandle() = default;
 	FOkSessionHandle(OkSession* P) : Raw(P) {}
 	FOkSessionHandle(const FOkSessionHandle& Other) : Raw(Other.Get()) {}
@@ -38,9 +59,18 @@ struct KKUNITYBUNDLE_API FOkSessionHandle
 	void Sync() const;
 };
 
+/** Around the work of a shared solve: this thread is the one using the sessions. */
+struct KKUNITYBUNDLE_API FOkSharedSolveScope
+{
+	FOkSharedSolveScope();
+	~FOkSharedSolveScope();
+};
+
 class KKUNITYBUNDLE_API FOkSession
 {
 public:
+	/** Task has this session in a solve with others: from here every use of the session waits for it. */
+	void SetSharedSolve(const UE::Tasks::FTask& Task) { Handle.Shared = Task; }
 	/** Solve the game-animation frame at Time on a worker; the game thread keeps drawing meanwhile. The next use of
 	 *  this session waits for it; FinishAsyncAnimFrame takes its result (false: none pending, or the frame failed). */
 	void LaunchAsyncAnimFrame(float Time, float DeltaSeconds);
@@ -97,6 +127,8 @@ public:
   /** Call between scene loads with no source open/prepare jobs running. Keeps live sessions and disk caches. */
   static void ReleaseSourceCaches();
  static FString CommonInteractionPoses();
+ // What each outfit of her card asks for and nothing provides, as JSON (outfit_gaps.rs). Slow: not on the game thread.
+ static FString CardOutfitGaps(const FString& Root,const FString& Card);
  bool PrepareBodyReaction(const TArray<uint8>& Definition,FString& Error);
  bool BodyReactionHit(int32 Id,TConstArrayView<FVector3f> Forces,float Weight,uint8 ReleaseMask=0);
  void ClearBodyReaction();
@@ -138,7 +170,9 @@ public:
  static TArray<FString> VideoClipNames();
  static bool LoadVideoClip(const FString& Key,TArray<uint8>& Out);
 	void Close();
-	bool IsOpen() const { return Handle != nullptr; }
+	// The raw pointer: `Handle != nullptr` converts through Get(), which waits for a pair frame being solved in the
+	// background, and the one-on-one scene asks this every frame while the next frame solves.
+	bool IsOpen() const { return Handle.Raw != nullptr; }
 	bool IsPortable() const { return bPortable; }
 	/** Identity of this native session for the PhysX secondary-dynamics groups (the native session address). */
 	uint64 PhysicsGroup() const { return reinterpret_cast<uint64>(Handle.Raw); }
@@ -146,6 +180,21 @@ public:
 	 *  one-to-one interaction and paired playback turn it on (AKKPreviewActor::AddPairPhysics); crowd and street
 	 *  NPCs keep the built-in solver. Kept across reopening the card (outfit change, snapshot, clone). */
 	bool SetPhysXSecondary(bool bOn);
+	/** Her clothes changed on the same model (wardrobe.rs). WardrobePrepare: as she opens, her worn parts to the end of
+	 *  her parts. WardrobeStrip: a session opened in another outfit, cut down to what it puts on her. WardrobeFirst: the
+	 *  first worn part. WardrobeSwap: she wears the donor's parts and the donor holds what she took off. */
+	int32 WardrobePrepare();
+	int32 WardrobeStrip();
+	int32 WardrobeFirst() const;
+	/** For Open's clothes argument: every garment state kept, shown and hidden by ClothesPartsShown. */
+	static const uint8 AllClothesStates[9];
+	/** One byte per part: whether these garment states show it. */
+	bool ClothesPartsShown(const uint8 States[9],TArray<uint8>& Out) const;
+	/** The PNG mask her body takes with her top in this state (empty: none). */
+	bool WardrobeBodyMask(int32 TopState,TArray<uint8>& Out) const;
+	// The parts the display hides (one byte a session part): their chains are not solved or skinned while hidden.
+	bool SetPartsHidden(TConstArrayView<uint8> Hidden);
+	static bool WardrobeSwap(FOkSession& Live,FOkSession& Donor,FString& Error);
 	bool IsPhysXSecondary() const { return bPhysXSecondary; }
 	/** Whether an Unreal animation drives this body instead of the session's game animation. Per character: the
 	 *  OK_UE_ANIM environment switch is process-wide, and another actor loading (a clothing warm-up) flipped it under
@@ -178,7 +227,11 @@ public:
  bool ApplyBodyPhysics(float Softness,float Weight);
  // Its body dynamics built again with the bust / hip settings now (ok.Physics.Bust*, ok.Physics.Hip*).
  bool RefreshBodyPhysics();
+ // Her skin where he lifts it cut finer (one-on-one): once, after Open, before her mesh is built. The vertices added.
+ int32 RefineBelly();
  bool ApplyEditorMods(const FString& Json,int32 Coordinate,bool* GeometryChanged=nullptr);
+	// A style's bone modifiers on top of the card's, from the next shape or pose on (ok_set_style_bones).
+	bool SetStyleBones(const FString& Json);
  // ApplyEditorMods followed by ApplyShape(Body,Face), the shape built once (a card's load: its mods, then its sliders).
  bool ApplyEditorModsAndShape(const FString& Json,int32 Coordinate,const TArray<float>& Body,const TArray<float>& Face,bool* GeometryChanged=nullptr);
  bool ApplyShape(const TArray<float>& Body, const TArray<float>& Face);
@@ -211,6 +264,12 @@ public:
 	bool BellyBulgePast(const FVector& UnityTip,float& OutPast,float& OutNear,FName& OutTarget,float& OutMoves) const;
 	// How her body's skin moves this frame to wrap his penis in her (ok_belly_wrap_deltas): From her entrance, To his glans
 	// (her skeleton space, Unity metres), RadiusM his and a margin; body vertex indices and moves in the mesh's own space (Unity metres), and the turns of their normals.
+	// This frame's wrap and clothes on the wrap worker, the session idle (ok_belly_wrap_start): as BellyWrapDeltas, bWrap false
+	// her skin left alone, bCover false her clothes left alone.
+	bool BellyWrapStart(bool bWrap,const FVector& From,const FVector& To,const FVector& Up,float RadiusM,bool bCover);
+	// The finished job, the session idle: false when none is ready. Her body's moves as BellyWrapDeltas, her garments' as
+	// ClothCoverDeltas, the garments to draw from their CPU vertices as SetClothCover.
+	bool BellyWrapTake(bool bCover,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,TArray<FVector3f>& OutNormalDeltas,TArray<int32>& OutClothParts,TArray<uint32>& OutClothIndices,TArray<FVector3f>& OutClothDeltas,TArray<int32>& OutCpuParts);
 	bool BellyWrapDeltas(const FVector& From,const FVector& To,const FVector& Up,float RadiusM,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,TArray<FVector3f>* OutNormalDeltas=nullptr,bool bBellyBones=false) const;
 	// bBellyBones: moved by her belly bones his penis pushes instead (ok_belly_bone_deltas).
 	// Where the line From her entrance To his glans comes out of her through her back (ok_back_exit; Up the way her belly
@@ -259,6 +318,12 @@ public:
 	bool SetEyeGaze(float LeftH, float RightH, float Vertical);
 	bool SetBlush(float Rate);
 	bool SetIrisSmall(float Rate);
+	/** Her pupils drawn Scale times as large; 1 is as on her card. */
+	bool SetPupilScale(float Scale);
+	/** Her pupils drawn off their place, in iris texture units. */
+	bool SetPupilOffset(float X, float Y);
+	/** Her pupils across and down, on top of their scale. */
+	bool SetPupilStretch(float Across, float Down);
 	int32 EyeLookPatternCount() const;
 	bool StepEyeLook(const FVector& UnityTarget, int32 Pattern, float DeltaSeconds, bool Enabled, float* Rates);
 	bool ApplyAnimTime(float Time);
@@ -288,6 +353,7 @@ public:
 	bool SetAnimSceneMode(int32 Mode);
 	int32 AnimationFloatCount() const;
 	bool AnimationFloatAt(int32 Index, FString& Name, float& Value, float& Min, float& Max) const;
+	bool SetPairThird(FOkSession* Third,const FString& Motion,bool bSwapped); // ok_animation_pair_set_third
 	bool SetAnimationFloat(const FString& Name, float Value);
 	TArray<FString> AnimationTriggers() const;
 	bool SetAnimationTrigger(const FString& Name);

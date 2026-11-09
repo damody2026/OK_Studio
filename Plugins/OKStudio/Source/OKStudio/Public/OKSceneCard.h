@@ -43,6 +43,6 @@ struct OKSTUDIO_API FOKSceneCard
 	 * else UserData/Studio/import/<name>_<path hash>_cards. */
 	static FString CardDirectoryFor(const FString& Path);
 
-	/** The scene JSON and embedded cards of an OK scene card (no files written). */
-	static bool ReadPayload(const TArray<uint8>& Bytes, FString& OutSceneJson, TArray<TArray<uint8>>& OutCards, FString& OutError);
+	/** The scene JSON, embedded cards and embedded files (motions, sound; name and bytes) of an OK scene card (no files written). */
+	static bool ReadPayload(const TArray<uint8>& Bytes, FString& OutSceneJson, TArray<TArray<uint8>>& OutCards, FString& OutError, TArray<TPair<FString, TArray<uint8>>>* OutFiles = nullptr);
 };

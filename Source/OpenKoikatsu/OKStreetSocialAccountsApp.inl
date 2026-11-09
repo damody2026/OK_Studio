@@ -25,7 +25,7 @@ FString AOKStreetSocialScene::ExportBook(const FString& Book){
  auto Q=[](const FString& V){return TEXT("\"")+V.Replace(TEXT("\""),TEXT("\"\""))+TEXT("\"");};
  FString Out=OKT(TEXT("ui.accounts_app.csv_header"));
  for(const auto& E:BookOf(Book)){const FDateTime T=OKStreetCalendarDateTime(E.Day,double(E.Minute%1440)/60.0);
-  Out+=FString::Printf(TEXT("%s,%s,%s,%s,%s,%s,%lld,%lld\n"),*T.ToString(TEXT("%Y-%m-%d")),*T.ToString(TEXT("%H:%M")),*Q(OKBookAccountLabel(Book,E.Account)),*Q(OKBookCategoryLabel(E.Category)),*OKBookCategoryKind(E.Category),*Q(E.Note),E.Amount,E.Balance);}
+  Out+=FString::Printf(TEXT("%s,%s,%s,%s,%s,%s,%lld,%lld\n"),*T.ToString(TEXT("%Y-%m-%d")),*T.ToString(TEXT("%H:%M")),*Q(OKBookAccountLabel(Book,E.Account)),*Q(OKBookCategoryLabel(E.Category)),*OKBookCategoryKind(E.Category),*Q(OKBookEntryNote(E)),E.Amount,E.Balance);}
  return FFileHelper::SaveStringToFile(Out,*Path,FFileHelper::EEncodingOptions::ForceUTF8)?Path:FString();
 }
 
@@ -68,7 +68,7 @@ TSharedRef<SWidget> AOKStreetSocialScene::BuildAccountsApp(){
   int32 Shown=0;
   for(int32 K=InMonth.Num()-1;K>=0&&Shown<500;--K){const FOKBookEntry& E=*InMonth[K];if(!S.AccAccount.IsEmpty()&&E.Account!=S.AccAccount)continue;++Shown;
    const FDateTime T=OKStreetCalendarDateTime(E.Day,double(E.Minute%1440)/60.0);
-   Line(Cells({{T.ToString(TEXT("%m/%d %H:%M")),100},{OKBookAccountLabel(Book,E.Account),80},{OKBookCategoryLabel(E.Category),110},{E.Note,0},{OKAccMoney(E.Amount),110},{OKAccMoney(E.Balance),120}},
+   Line(Cells({{T.ToString(TEXT("%m/%d %H:%M")),100},{OKBookAccountLabel(Book,E.Account),80},{OKBookCategoryLabel(E.Category),110},{OKBookEntryNote(E),0},{OKAccMoney(E.Amount),110},{OKAccMoney(E.Balance),120}},
     E.Category==TEXT("unclassified")?FLinearColor(1,.9f,.3f):E.Amount<0?Minus:Plus));}
   if(Shown==0)Line(OKFinText(OKT(TEXT("ui.accounts_app.no_records_this_month")),Dim));
  }

@@ -5,6 +5,7 @@
 #include "Async/ParallelFor.h"
 #include "OKCrowdScene.h"
 #include "KKRuntimePoseNative.h"
+#include "KKRustExtract.h"
 #include "KKRuntimeSpeech.h"
 #include "KKRuntimeGpuDiskCache.h"
 #include "Components/AudioComponent.h"
@@ -385,8 +386,11 @@ struct FEntry {
  // The face look drawn now and the one it eases to: OKSetCrowdRuntimeFaceLook sets the goal, the tick moves the drawn
  // values toward it (TickFaceLook), so a blush rises, tears well up and the eyes glide instead of switching at once.
  // Blush / sweat 0..1 over the card's own, gaze in iris units, highlight 1 shown, Tear[level] visibility (1..3).
- struct FLookValues{float Blush=0.f,Sweat=0.f,Highlight=1.f;FVector2D Gaze=FVector2D::ZeroVector;float Tear[4]={0.f,0.f,0.f,0.f};};
+ struct FLookValues{float Blush=0.f,Sweat=0.f,Highlight=1.f,Pupil=1.f,Dull=0.f;FVector2D Gaze=FVector2D::ZeroVector;float Tear[4]={0.f,0.f,0.f,0.f};};
  FLookValues LookNow,LookGoal;bool LookFading=false;float LookFadeScale=1.f;
+ // Each eye material's own iris once it has been swapped for one without the highlights painted in it.
+ TMap<TWeakObjectPtr<UMaterialInstanceDynamic>,TWeakObjectPtr<UTexture>> IrisOwn;
+ TMap<FString,TWeakObjectPtr<UTexture>> IrisLayerOwn;
  // What each of Materials is to the face look, kept from creation (the part data is dropped once the mesh is up):
  // 1 the face's skin, 2 other skin, 3 an iris, 4 a tear, 5 a brow, 0 anything else.
  TArray<uint8> LookKinds;
@@ -1587,6 +1591,9 @@ bool OKSetCrowdRuntimeCharacterMotion(AActor* Owner,int32 Character,const FTrans
  if(!State||State->Stopped||!State->ExternalControl||!State->Entries.IsValidIndex(Character)){Error=TEXT("External runtime control is unavailable");return false;}
  if(Transform.ContainsNaN()||!Transform.IsValid()||!FMath::IsFinite(Speed)||Speed<0||Speed>10){Error=TEXT("Invalid external character transform/speed");return false;}
  auto& E=*State->Entries[Character];E.ExternalTransform=Transform;E.ExternalSpeed=Speed;E.Transform=Transform;
+ // The scene's own tick runs after this frame is drawn (the core ticker comes after GEngine->Tick), and the camera moves in the
+ // game's tick: left to it, everyone is drawn a frame behind the lens, by as much as that frame took: a walker shakes.
+ if(!(Character==0&&State->LoadingCaptured)){OKRuntimeScene::OKCrowdSetTransform(E.Gpu.Get(),Transform);OKRuntimeScene::OKCrowdSetTransform(E.ShadowGpu.Get(),Transform);OKRuntimeScene::OKCrowdSetTransform(E.DepthGpu.Get(),Transform);OKRuntimeScene::OKCrowdSetTransform(E.FrontGpu.Get(),Transform);OKRuntimeScene::OKCrowdSetTransform(E.OccluderGpu.Get(),Transform);if(auto* C=E.Cpu.Get();C&&C->IsVisible())OKRuntimeScene::OKCrowdSetTransform(C,Transform);}
  if(Character==0){State->PlayerPosition=Transform.GetTranslation();State->PlayerPositionInitialized=true;}Error.Reset();return true;
 }
 float OKGetCrowdRuntimeWalkSpeedNow(AActor* Owner,int32 Character,FVector2f* Pivot){
@@ -1710,10 +1717,20 @@ int32 ApplyFaceLook(FEntry& E,FString* Trace){
   if(Skin&&Base(M,TEXT("_SpecularPower"),false,V)){const float W=FMath::Clamp(L.Sweat,0.f,1.f);M->SetScalarParameterValue(TEXT("_SpecularPower"),FMath::Lerp(V.R,1.f,W));++Changed;
    if(Base(M,TEXT("_SpecularColor"),true,V))SetVec(M,TEXT("_SpecularColor"),FMath::Lerp(V,FLinearColor::White,W));}
   // Gaze: the iris slides in its socket (the source's eye look moves the iris texture offset).
-  if(Iris&&Base(M,TEXT("_MainTex_ST"),true,V)){SetVec(M,TEXT("_MainTex_ST"),FLinearColor(V.R,V.G,V.B-L.Gaze.X*0.12f*V.R,V.A+L.Gaze.Y*0.10f*V.G));++Changed;if(Trace)*Trace+=FString::Printf(TEXT(" iris=(%.3f,%.3f,%.3f,%.3f)"),V.R,V.G,V.B,V.A);}
+  // Pupils larger: less of the texture fills the eye, about its middle (ok-extract eye_gaze::enlarged).
+  if(Iris&&Base(M,TEXT("_MainTex_ST"),true,V)){const float K=FMath::Max(L.Pupil,.1f);SetVec(M,TEXT("_MainTex_ST"),FLinearColor(V.R/K,V.G/K,.5f-(.5f-(V.B-L.Gaze.X*0.12f*V.R))/K,.5f-(.5f-(V.A+L.Gaze.Y*0.10f*V.G))/K));++Changed;if(Trace)*Trace+=FString::Printf(TEXT(" iris=(%.3f,%.3f,%.3f,%.3f)"),V.R,V.G,V.B,V.A);}
   // Tears: her level's drops show (opacity, and the reveal for the unlit fallback), the others are gone.
   if(const int32* Level=E.Tears.Find(M)){const float Show=FMath::Clamp(L.Tear[FMath::Clamp(*Level,1,3)],0.f,1.f);M->SetScalarParameterValue(TEXT("__OK_RuntimeRevealOverride"),Show);M->SetScalarParameterValue(TEXT("TearVisible"),Show);++Changed;continue;}
-  if(Iris&&Base(M,TEXT("_isHighLight"),false,V)){M->SetScalarParameterValue(TEXT("_isHighLight"),V.R*FMath::Clamp(L.Highlight,0.f,1.f));++Changed;}
+  if(Iris&&Base(M,TEXT("_isHighLight"),false,V)){M->SetScalarParameterValue(TEXT("_isHighLight"),V.R*FMath::Clamp(L.Highlight,0.f,1.f)*(1.f-FMath::Clamp(L.Dull,0.f,1.f)));++Changed;}
+  // Their layers' alphas too, and what the card painted into the iris goes with the iris swapped (AKKPreviewActor::SetEyeDull).
+  if(Iris)for(const TCHAR* Layer:{TEXT("_overcolor1"),TEXT("_overcolor2"),TEXT("_overcolor3")})if(Base(M,Layer,true,V)){V.A*=1.f-FMath::Clamp(L.Dull,0.f,1.f);SetVec(M,Layer,V);}
+  if(Iris&&(L.Dull>.5f||E.IrisOwn.Contains(M))){UTexture* Own=nullptr;if(const auto* Kept=E.IrisOwn.Find(M))Own=Kept->Get();else if(M->GetTextureParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex")),Own))E.IrisOwn.Add(M,Own);
+   if(Own)M->SetTextureParameterValue(TEXT("_MainTex"),L.Dull>.5f?OKIrisWithoutHighlights(Own):Own);
+   // Here the card's highlight layers are drawn on their own (KKRuntimeSharedMaterial binds _EyeLayer0/1 to _overtex1/2), so
+   // they go too; the reader has them in the iris.
+   for(const TCHAR* Layer:{TEXT("_overtex1"),TEXT("_overtex2"),TEXT("_overtex3")}){const FString Key=FString::Printf(TEXT("%p|%s"),M,Layer);UTexture* Card=nullptr;
+    if(const auto* Kept=E.IrisLayerOwn.Find(Key))Card=Kept->Get();else if(M->GetTextureParameterValue(FHashedMaterialParameterInfo(Layer),Card))E.IrisLayerOwn.Add(Key,Card);
+    if(Card)M->SetTextureParameterValue(Layer,L.Dull>.5f?OKClearEyeLayer():Card);}}
  }
  return Changed;
 }
@@ -1724,7 +1741,7 @@ void TickFaceLook(FEntry& E,float Dt){
  const float Scale=FMath::Max(E.LookFadeScale,.01f);bool Moving=false;
  auto Ease=[&](float& Now,float Goal,float Tau){const float D=Goal-Now;if(FMath::Abs(D)<.002f){Now=Goal;return;}Now+=D*(1.f-FMath::Exp(-FMath::Min(Dt,.25f)/(Tau*Scale)));Moving=true;};
  auto& N=E.LookNow;const auto& G=E.LookGoal;
- Ease(N.Blush,G.Blush,.35f);Ease(N.Sweat,G.Sweat,.5f);Ease(N.Highlight,G.Highlight,.12f);
+ Ease(N.Blush,G.Blush,.35f);Ease(N.Sweat,G.Sweat,.5f);Ease(N.Highlight,G.Highlight,.12f);Ease(N.Pupil,G.Pupil,.4f);Ease(N.Dull,G.Dull,.12f);
  {const FVector2D To=E.EyeFollowing&&G.Gaze.IsNearlyZero()?E.FollowGaze:G.Gaze;float X=float(N.Gaze.X),Y=float(N.Gaze.Y);Ease(X,float(To.X),.08f);Ease(Y,float(To.Y),.08f);N.Gaze=FVector2D(X,Y);}for(int32 L=1;L<=3;++L)Ease(N.Tear[L],G.Tear[L],.3f);
  ApplyFaceLook(E);E.LookFading=Moving;
 }
@@ -1741,6 +1758,11 @@ bool OKSetCrowdRuntimeFaceLook(AActor* Owner,int32 Character,const FOKRuntimeFac
  {int32 K[5]={0,0,0,0,0};for(const uint8 X:E.LookKinds)++K[FMath::Min<int32>(X,4)];FString Trace;if(E.LookBase.IsEmpty())OKRuntimeScene::ApplyFaceLook(E,&Trace);
   UE_LOG(LogTemp,Display,TEXT("Runtime face look %s: materials face=%d skin=%d iris=%d tears=%d; goal blush=%.2f sweat=%.2f gaze=(%.2f,%.2f) tears=%d highlight=%.0f%s"),*E.Id,K[1],K[2],K[3],E.Tears.Num(),G.Blush,G.Sweat,G.Gaze.X,G.Gaze.Y,Look.Tears,G.Highlight,*Trace);}
  return true;
+}
+bool OKSetCrowdRuntimeEyeDull(AActor* Owner,int32 Character,float PupilScale,bool bHideHighlight){
+ check(IsInGameThread());const auto* Weak=OKRuntimeScene::ActiveScenes.Find(Owner);const auto State=Weak?Weak->Pin():nullptr;
+ if(!State||State->Stopped||!State->Entries.IsValidIndex(Character))return false;
+ auto& E=*State->Entries[Character];E.LookGoal.Pupil=PupilScale;E.LookGoal.Dull=bHideHighlight?1.f:0.f;E.LookFading=true;return true;
 }
 bool OKSetCrowdRuntimeEyeFollow(AActor* Owner,int32 Character,int32 Mode){
  check(IsInGameThread());const auto* Weak=OKRuntimeScene::ActiveScenes.Find(Owner);const auto State=Weak?Weak->Pin():nullptr;
@@ -1760,7 +1782,7 @@ void OKSetCrowdRuntimeOutlinesShown(AActor* Owner,int32 Character,bool Shown){
 bool OKGetCrowdRuntimeFaceLook(AActor* Owner,int32 Character,FOKRuntimeFaceLookNow& Now){
  check(IsInGameThread());const auto* Weak=OKRuntimeScene::ActiveScenes.Find(Owner);const auto State=Weak?Weak->Pin():nullptr;
  if(!State||State->Stopped||!State->Entries.IsValidIndex(Character))return false;const auto& E=*State->Entries[Character];const auto& L=E.LookNow;
- Now.Blush=L.Blush;Now.Sweat=L.Sweat;Now.Highlight=L.Highlight;Now.Gaze=L.Gaze;Now.Fading=E.LookFading;Now.Follow=E.EyeFollowing?E.FollowGaze:FVector2D::ZeroVector;
+ Now.Blush=L.Blush;Now.Sweat=L.Sweat;Now.Highlight=L.Highlight;Now.Pupil=L.Pupil;Now.Dull=L.Dull;Now.Gaze=L.Gaze;Now.Fading=E.LookFading;Now.Follow=E.EyeFollowing?E.FollowGaze:FVector2D::ZeroVector;
  for(int32 Level=1;Level<=3;++Level)if(L.Tear[Level]>Now.TearShown){Now.TearShown=L.Tear[Level];Now.Tears=Level;}
  return true;
 }

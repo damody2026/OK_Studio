@@ -1,0 +1,1356 @@
+{
+  "status": "planning_only_not_applied",
+  "target_map": "/Game/UniversityCity/Maps/UniversityCity",
+  "observed_map_sha256": "af0f0e0553c3e5618ecbf78280401a5fe16d6364eafa2b7a916be04286f5fb36",
+  "source_sha256": {
+    "output/street-social-city-production/world-completion-v1/outdoor/programme.json": "25b78832c8d051f4f5c1c671227cb5a9c07fa0c6dae0785338520a08f83e8482",
+    "output/street-social-city-production/city-destinations-v2/install.json": "ee978ed3305d3cdd04fadf1d7e00418972b9e4356227103bf7c7a6612e75e5a1",
+    "output/street-social-city-production/city-destinations-v2/acceptance.json": "8b3ad5bad1146299e0988a0f4d055b4a387a51b5f76ad8fddd9c37630cdfb58b",
+    "output/street-social-city-production/resort-architecture-v1/acceptance.json": "3d5d87b00008ac028ce8d42391a5617c85c7767e8726a418a83ed05867de97eb",
+    "Tools/street_city_resort_night_payload.lua": "10543721b24916efff194be734ae4ab69185a84edf577cd07500363271297d80",
+    "output/street-social-city-production/city-destinations-v3/install.json": "f11bf65d11ece11df76710fdc3cf4e3ef6a4a04d586d0a0155c39ae2b0eeac53"
+  },
+  "outdoor_spaces": 20,
+  "landmarks": 60,
+  "landmark_zones": 48,
+  "coverage_ids": 80,
+  "coordinate_units": "metres;reuse native terrain support and transforms during implementation",
+  "rows": [
+    {
+      "id": "PK-0101",
+      "name": "校門廣場",
+      "kind": "outdoor-space",
+      "position_m": [
+        700.0,
+        545.0,
+        18.535471038818358
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0102",
+      "name": "中央草坪",
+      "kind": "outdoor-space",
+      "position_m": [
+        572.5,
+        800.0,
+        20.119999999999997
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0103",
+      "name": "北庭院",
+      "kind": "outdoor-space",
+      "position_m": [
+        460.0,
+        820.0,
+        20.119999999999997
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0104",
+      "name": "南庭院",
+      "kind": "outdoor-space",
+      "position_m": [
+        600.0,
+        700.0,
+        20.119999999999997
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0105",
+      "name": "校園湖畔",
+      "kind": "outdoor-space",
+      "position_m": [
+        757.5,
+        852.5,
+        19.72951133728027
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0106",
+      "name": "湖畔木平台",
+      "kind": "outdoor-space",
+      "position_m": [
+        760.0,
+        875.0,
+        20.05319984436035
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0107",
+      "name": "河岸步道",
+      "kind": "outdoor-space",
+      "position_m": [
+        842.5,
+        630.0,
+        12.321471252441405
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0108",
+      "name": "河岸釣魚平台",
+      "kind": "outdoor-space",
+      "position_m": [
+        842.5,
+        280.0,
+        12.072696762084961
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0109",
+      "name": "櫻花步道",
+      "kind": "outdoor-space",
+      "position_m": [
+        815.0,
+        445.0,
+        12.019509353637694
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0110",
+      "name": "野餐草地",
+      "kind": "outdoor-space",
+      "position_m": [
+        835.0,
+        375.0,
+        12.116176719665527
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0111",
+      "name": "小神社",
+      "kind": "outdoor-space",
+      "position_m": [
+        112.5,
+        987.5,
+        129.83
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0112",
+      "name": "戶外舞台",
+      "kind": "outdoor-space",
+      "position_m": [
+        620.0,
+        200.0,
+        12.097745056152343
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0113",
+      "name": "籃球場",
+      "kind": "outdoor-space",
+      "position_m": [
+        327.0,
+        639.5,
+        20.119999999999997
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0114",
+      "name": "網球場",
+      "kind": "outdoor-space",
+      "position_m": [
+        1270,
+        772,
+        12
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0115",
+      "name": "田徑場",
+      "kind": "outdoor-space",
+      "position_m": [
+        300,
+        606,
+        20.06
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0116",
+      "name": "自行車廣場",
+      "kind": "outdoor-space",
+      "position_m": [
+        50.0,
+        200.0,
+        12.12
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0117",
+      "name": "觀景亭",
+      "kind": "outdoor-space",
+      "position_m": [
+        990.0,
+        850.0,
+        20.055000381469725
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0118",
+      "name": "夜市廣場",
+      "kind": "outdoor-space",
+      "position_m": [
+        620.0,
+        355.0,
+        12.095784301757812
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0119",
+      "name": "露營營位A",
+      "kind": "outdoor-space",
+      "position_m": [
+        1040.0,
+        340.0,
+        12.11647045135498
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "PK-0120",
+      "name": "露營營位B",
+      "kind": "outdoor-space",
+      "position_m": [
+        1055.0,
+        295.0,
+        12.118332977294921
+      ],
+      "position_source": "output/street-social-city-production/world-completion-v1/outdoor/programme.json",
+      "position_status": "programme anchor;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D001",
+      "name": "紫藤花拱門",
+      "kind": "landmark",
+      "zone": "campus-reading",
+      "position_m": [
+        747.6698729810778,
+        888.5,
+        19.997827247381213
+      ],
+      "source_actor": "Destination_D001",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D002",
+      "name": "九重葛花廊",
+      "kind": "landmark",
+      "zone": "hotel-garden",
+      "position_m": [
+        758.0,
+        257.0,
+        11.985050169229508
+      ],
+      "source_actor": "Destination_D002",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D003",
+      "name": "孔雀綠雕",
+      "kind": "landmark",
+      "zone": "civic-garden",
+      "position_m": [
+        638.0,
+        285.6794919243112,
+        12.002833280563355
+      ],
+      "source_actor": "Destination_D003",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D004",
+      "name": "翻頁書本雕塑",
+      "kind": "landmark",
+      "zone": "campus-library",
+      "position_m": [
+        629.3301270189222,
+        542.5,
+        17.343119338750842
+      ],
+      "source_actor": "Destination_D004",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D005",
+      "name": "星象儀雕塑",
+      "kind": "landmark",
+      "zone": "campus-science",
+      "position_m": [
+        565.0,
+        727.0,
+        20.008211646080017
+      ],
+      "source_actor": "Destination_D005",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D006",
+      "name": "齒輪藝術裝置",
+      "kind": "landmark",
+      "zone": "campus-engineering",
+      "position_m": [
+        480.0,
+        745.0,
+        20.00999995827675
+      ],
+      "source_actor": "Destination_D006",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D007",
+      "name": "千羽白鶴雕塑",
+      "kind": "landmark",
+      "zone": "campus-courtyard",
+      "position_m": [
+        560.0,
+        732.0,
+        19.969998774528506
+      ],
+      "source_actor": "Destination_D007",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D008",
+      "name": "獻花小熊",
+      "kind": "landmark",
+      "zone": "campus-dorm",
+      "position_m": [
+        495.0,
+        890.0,
+        19.94725536465645
+      ],
+      "source_actor": "Destination_D008",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D009",
+      "name": "躍浪海豚",
+      "kind": "landmark",
+      "zone": "riverside",
+      "position_m": [
+        603.0,
+        205.0,
+        11.986066333055495
+      ],
+      "source_actor": "Destination_D009",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D010",
+      "name": "貝殼拍照椅",
+      "kind": "landmark",
+      "zone": "bay-garden",
+      "position_m": [
+        998.7942286340599,
+        353.5,
+        11.965461180210113
+      ],
+      "source_actor": "Destination_D010",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D011",
+      "name": "海浪曲線長椅",
+      "kind": "landmark",
+      "zone": "riverside",
+      "position_m": [
+        593.6698729810778,
+        207.5,
+        11.945540759563446
+      ],
+      "source_actor": "Destination_D011",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D012",
+      "name": "花心合照框",
+      "kind": "landmark",
+      "zone": "hotel-garden",
+      "position_m": [
+        753.0,
+        262.0,
+        11.98492355108261
+      ],
+      "source_actor": "Destination_D012",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D013",
+      "name": "馬卡龍甜點裝置",
+      "kind": "landmark",
+      "zone": "shopping-north",
+      "position_m": [
+        305.0,
+        465.0,
+        12.009799764156341
+      ],
+      "source_actor": "Destination_D013",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D014",
+      "name": "珍奶打卡裝置",
+      "kind": "landmark",
+      "zone": "shopping-central",
+      "position_m": [
+        345.0,
+        402.0,
+        11.948885968923568
+      ],
+      "source_actor": "Destination_D014",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D015",
+      "name": "復古冰淇淋車",
+      "kind": "landmark",
+      "zone": "shopping-south",
+      "position_m": [
+        305.0,
+        322.0,
+        12.008040109872818
+      ],
+      "source_actor": "Destination_D015",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D016",
+      "name": "花籃復古單車",
+      "kind": "landmark",
+      "zone": "shopping-north",
+      "position_m": [
+        300.6698729810778,
+        462.5,
+        11.969949964284897
+      ],
+      "source_actor": "Destination_D016",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D017",
+      "name": "復古紅色電話亭",
+      "kind": "landmark",
+      "zone": "station-court",
+      "position_m": [
+        168.5,
+        199.20577136594005,
+        11.957412467002868
+      ],
+      "source_actor": "Destination_D017",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D018",
+      "name": "花園售票亭",
+      "kind": "landmark",
+      "zone": "station-court",
+      "position_m": [
+        187.0,
+        207.0,
+        11.976999989748
+      ],
+      "source_actor": "Destination_D018",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D019",
+      "name": "雙面復古街鐘",
+      "kind": "landmark",
+      "zone": "office-plaza",
+      "position_m": [
+        843.5,
+        439.3108891324554,
+        12.013889107704163
+      ],
+      "source_actor": "Destination_D019",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D020",
+      "name": "彩陶花器藝術",
+      "kind": "landmark",
+      "zone": "civic-garden",
+      "position_m": [
+        661.5,
+        326.38268590217984,
+        11.926000133752822
+      ],
+      "source_actor": "Destination_D020",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D021",
+      "name": "蓮花庭園燈雕",
+      "kind": "landmark",
+      "zone": "hotel-garden",
+      "position_m": [
+        748.6698729810778,
+        259.5,
+        11.985158429145812
+      ],
+      "source_actor": "Destination_D021",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D022",
+      "name": "日式疊石水景",
+      "kind": "landmark",
+      "zone": "civic-garden",
+      "position_m": [
+        648.0,
+        330.0,
+        12.00230762720108
+      ],
+      "source_actor": "Destination_D022",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D023",
+      "name": "漂流木迎賓拱",
+      "kind": "landmark",
+      "zone": "bay-camp",
+      "position_m": [
+        985.0,
+        450.0,
+        11.984859684705734
+      ],
+      "source_actor": "Destination_D023",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D024",
+      "name": "海馬雕塑",
+      "kind": "landmark",
+      "zone": "bay-garden",
+      "position_m": [
+        1000.0,
+        349.0,
+        11.984509519338607
+      ],
+      "source_actor": "Destination_D024",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D025",
+      "name": "彩蝶馬賽克裝置",
+      "kind": "landmark",
+      "zone": "residential-garden",
+      "position_m": [
+        163.0,
+        393.0,
+        11.98184760570526
+      ],
+      "source_actor": "Destination_D025",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D026",
+      "name": "摩天輪藝術模型",
+      "kind": "landmark",
+      "zone": "mall-plaza",
+      "position_m": [
+        755.0,
+        460.0,
+        11.996080342531204
+      ],
+      "source_actor": "Destination_D026",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D027",
+      "name": "山景浮雕石",
+      "kind": "landmark",
+      "zone": "campus-administration",
+      "position_m": [
+        698.0,
+        622.0,
+        19.31343974232674
+      ],
+      "source_actor": "Destination_D027",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D028",
+      "name": "晶彩稜鏡雕塑",
+      "kind": "landmark",
+      "zone": "office-plaza",
+      "position_m": [
+        843.0,
+        445.0,
+        12.009200522899627
+      ],
+      "source_actor": "Destination_D028",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D029",
+      "name": "帆影藝術裝置",
+      "kind": "landmark",
+      "zone": "riverside",
+      "position_m": [
+        595.5,
+        200.66987298107782,
+        11.982872364521027
+      ],
+      "source_actor": "Destination_D029",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "D030",
+      "name": "相機造型座椅",
+      "kind": "landmark",
+      "zone": "shopping-south",
+      "position_m": [
+        310.0,
+        322.0,
+        12.008040109872818
+      ],
+      "source_actor": "Destination_D030",
+      "position_source": "output/street-social-city-production/city-destinations-v2/install.json",
+      "position_status": "previously installed source;reconfirm current native actor",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E011",
+      "name": "黑松盆景",
+      "kind": "landmark",
+      "zone": "west-dorm",
+      "position_m": [
+        250.0,
+        890.0,
+        19.492354605197907
+      ],
+      "source_actor": "Destination_E011",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E012",
+      "name": "小熊貓親子雕塑",
+      "kind": "landmark",
+      "zone": "west-dorm",
+      "position_m": [
+        255.0,
+        890.0,
+        19.617844209671023
+      ],
+      "source_actor": "Destination_E012",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E013",
+      "name": "森鹿花角雕塑",
+      "kind": "landmark",
+      "zone": "forest-lookout",
+      "position_m": [
+        78.28,
+        1037.5,
+        137.13
+      ],
+      "source_actor": "Destination_E013",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E014",
+      "name": "蕨葉花拱",
+      "kind": "landmark",
+      "zone": "campus-northeast",
+      "position_m": [
+        760.0,
+        950.0,
+        19.799095121622088
+      ],
+      "source_actor": "Destination_E014",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E015",
+      "name": "白鷺蘆葦雕塑",
+      "kind": "landmark",
+      "zone": "east-wetland",
+      "position_m": [
+        842.5,
+        630.0,
+        12.291689393520356
+      ],
+      "source_actor": "Destination_E015",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E016",
+      "name": "書香貓頭鷹",
+      "kind": "landmark",
+      "zone": "research-garden",
+      "position_m": [
+        450.0,
+        540.0,
+        17.184728870391847
+      ],
+      "source_actor": "Destination_E016",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E017",
+      "name": "翠鳥水岸雕塑",
+      "kind": "landmark",
+      "zone": "campus-fishing",
+      "position_m": [
+        740.1794919243113,
+        862.5,
+        20.07000003218651
+      ],
+      "source_actor": "Destination_E017",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E018",
+      "name": "白玉蘭花樹",
+      "kind": "landmark",
+      "zone": "international-garden",
+      "position_m": [
+        760.0,
+        580.0,
+        19.620249847173692
+      ],
+      "source_actor": "Destination_E018",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E019",
+      "name": "流線跑者雕塑",
+      "kind": "landmark",
+      "zone": "stadium-entry",
+      "position_m": [
+        1210.0,
+        954.36,
+        12.01
+      ],
+      "source_actor": "Destination_E019",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E020",
+      "name": "小提琴長椅",
+      "kind": "landmark",
+      "zone": "practice-garden",
+      "position_m": [
+        997.2057713659401,
+        754.5,
+        19.99154917955399
+      ],
+      "source_actor": "Destination_E020",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E021",
+      "name": "樂章鋼琴雕塑",
+      "kind": "landmark",
+      "zone": "culture-west",
+      "position_m": [
+        547.5,
+        339.3301270189222,
+        11.984472939968109
+      ],
+      "source_actor": "Destination_E021",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E022",
+      "name": "金龍花燈雕塑",
+      "kind": "landmark",
+      "zone": "nightmarket",
+      "position_m": [
+        620.0,
+        355.0,
+        12.10578430056572
+      ],
+      "source_actor": "Destination_E022",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E023",
+      "name": "山茶青瓷茶壺",
+      "kind": "landmark",
+      "zone": "shopping-east",
+      "position_m": [
+        435.0,
+        402.0,
+        11.948885968923568
+      ],
+      "source_actor": "Destination_E023",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E024",
+      "name": "草莓拍照椅",
+      "kind": "landmark",
+      "zone": "shopping-west",
+      "position_m": [
+        420.0,
+        322.0,
+        12.008040109872818
+      ],
+      "source_actor": "Destination_E024",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E025",
+      "name": "黃金獵犬野餐雕塑",
+      "kind": "landmark",
+      "zone": "residential-north",
+      "position_m": [
+        80.0,
+        390.0,
+        12.00999995827675
+      ],
+      "source_actor": "Destination_E025",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E026",
+      "name": "燕子木雕花拱",
+      "kind": "landmark",
+      "zone": "residential-south",
+      "position_m": [
+        189.0,
+        300.0,
+        11.985107926130295
+      ],
+      "source_actor": "Destination_E026",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E027",
+      "name": "鴛鴦水景雕塑",
+      "kind": "landmark",
+      "zone": "campus-watergarden",
+      "position_m": [
+        800.0,
+        850.0,
+        19.955939975976946
+      ],
+      "source_actor": "Destination_E027",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E028",
+      "name": "山茶花雕塑",
+      "kind": "landmark",
+      "zone": "hotel-east",
+      "position_m": [
+        760.0,
+        257.3205080756888,
+        11.98490622997284
+      ],
+      "source_actor": "Destination_E028",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E029",
+      "name": "錦鯉月洞門",
+      "kind": "landmark",
+      "zone": "riverside-south",
+      "position_m": [
+        600.0,
+        180.0,
+        12.018509469032287
+      ],
+      "source_actor": "Destination_E029",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E030",
+      "name": "珍珠海螺雕塑",
+      "kind": "landmark",
+      "zone": "south-bay",
+      "position_m": [
+        1040.0,
+        340.0,
+        12.126470450162888
+      ],
+      "source_actor": "Destination_E030",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E031",
+      "name": "翡翠海龜雕塑",
+      "kind": "landmark",
+      "zone": "marine-garden",
+      "position_m": [
+        1055.0,
+        295.0,
+        12.12833297610283
+      ],
+      "source_actor": "Destination_E031",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E032",
+      "name": "珊瑚海扇雕塑",
+      "kind": "landmark",
+      "zone": "east-coast",
+      "position_m": [
+        1040.0,
+        400.0,
+        12.003530184030533
+      ],
+      "source_actor": "Destination_E032",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E033",
+      "name": "露營浣熊雕塑",
+      "kind": "landmark",
+      "zone": "camping-garden",
+      "position_m": [
+        990.0,
+        470.0,
+        11.985200110673905
+      ],
+      "source_actor": "Destination_E033",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E034",
+      "name": "森林木雕圖騰",
+      "kind": "landmark",
+      "zone": "forest-trail",
+      "position_m": [
+        990.0,
+        850.0,
+        20.06500031113625
+      ],
+      "source_actor": "Destination_E034",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E035",
+      "name": "航海羅盤雕塑",
+      "kind": "landmark",
+      "zone": "lookout-east",
+      "position_m": [
+        983.28,
+        854.5,
+        20.065000381469726
+      ],
+      "source_actor": "Destination_E035",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E036",
+      "name": "招財貓石燈籠",
+      "kind": "landmark",
+      "zone": "shrine-garden",
+      "position_m": [
+        78.28,
+        1028.5,
+        137.13
+      ],
+      "source_actor": "Destination_E036",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E037",
+      "name": "花紋陶球雕塑",
+      "kind": "landmark",
+      "zone": "campus-southcourt",
+      "position_m": [
+        620.0,
+        705.0,
+        20.01003053545952
+      ],
+      "source_actor": "Destination_E037",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E038",
+      "name": "青銅飄帶長椅",
+      "kind": "landmark",
+      "zone": "administration-garden",
+      "position_m": [
+        700.0,
+        715.0,
+        19.267240009307862
+      ],
+      "source_actor": "Destination_E038",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E039",
+      "name": "星形迎賓燈雕",
+      "kind": "landmark",
+      "zone": "station-south",
+      "position_m": [
+        160.0,
+        160.0,
+        12.008040789365769
+      ],
+      "source_actor": "Destination_E039",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    },
+    {
+      "id": "E040",
+      "name": "鳳凰木盆景",
+      "kind": "landmark",
+      "zone": "shopping-gateway",
+      "position_m": [
+        206.5,
+        476.61731409782016,
+        12.07663138270378
+      ],
+      "source_actor": "Destination_E040",
+      "position_source": "output/street-social-city-production/city-destinations-v3/install.json",
+      "position_status": "native installed extension; revalidate fixture support and clearance",
+      "design_reference": "outdoor-lighting-plan.md",
+      "implementation_status": "planned",
+      "visual_acceptance": "not_run"
+    }
+  ],
+  "additional_route_groups": [
+    "bay-walk-beach-rest",
+    "hotel-garden",
+    "campus-connections",
+    "library-entry",
+    "dorm-garden",
+    "shopping-north-central-south",
+    "mall-plaza",
+    "office-civic-gardens",
+    "residential-garden",
+    "station-court-transit",
+    "riverside-bridge-ramps",
+    "market-stage-exit"
+  ],
+  "placement_policy": "No final new fixture coordinates or counts until native clearance and lighting calibration.",
+  "implementation_note": "Includes 30 outdoor E011-E040 extensions found in native inventory; E001-E010 mall installations remain indoors."
+}

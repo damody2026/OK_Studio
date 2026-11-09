@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const CHUNK: &[u8; 4] = b"okLt";
 const VERSION: u32 = 1;
+const PLAIN_BUNDLES: &str = "plain-bundles";
 
 pub type Table = HashMap<(String, Vec<u8>), Vec<u8>>;
 
@@ -37,11 +38,29 @@ pub fn begin(game_root: &Path) {
 pub fn end() -> Result<Vec<u8>, String> {
     RECORDING.store(false, Ordering::Relaxed);
     let table = RECORD.lock().unwrap_or_else(|e| e.into_inner()).take().map(|r| r.1).unwrap_or_default();
+    encode(table)
+}
+
+fn encode(table: Table) -> Result<Vec<u8>, String> {
     let mut rows: Vec<(String, Vec<u8>, Vec<u8>)> = table.into_iter().map(|((k, key), v)| (k, key, v)).collect();
     rows.sort();
     let raw = bincode::serialize(&Saved { version: VERSION, rows }).map_err(|e| e.to_string())?;
     zstd::stream::encode_all(&raw[..], 19).map_err(|e| e.to_string())
 }
+
+/// `card` (an OK card; any other stays as it is) answering, in a strict open, that no mod overrides a bundle it was never
+/// asked about: it now wears the original game's clothes its open never read (appearance/properties.rs `dress`), from
+/// bundles the recording could not know. With the game's mods at hand they are asked as ever: a mod's top she keeps
+/// lives in a bundle of its own (raiden_shogun's baal_clothes went missing when this answered there too).
+pub fn with_plain_bundles(card: &[u8]) -> Result<Vec<u8>, String> {
+    let Some(table) = parse(card) else { return Ok(card.to_vec()) };
+    let mut table = (*table).clone();
+    table.insert((PLAIN_BUNDLES.to_owned(), Vec::new()), Vec::new());
+    with_answers(card, &encode(table)?)
+}
+
+/// Whether the open's card took `with_plain_bundles`.
+pub fn plain_bundles() -> bool { table().is_some_and(|t| t.contains_key(&(PLAIN_BUNDLES.to_owned(), Vec::new()))) }
 
 pub fn recording() -> bool { RECORDING.load(Ordering::Relaxed) }
 
@@ -81,6 +100,18 @@ pub fn lookup<T: serde::de::DeserializeOwned>(kind: &str, key: &[u8]) -> Option<
     let table = table()?;
     let value = table.get(&(kind.to_owned(), key.to_vec()))?;
     let _spot = crate::profile::spot("tree answer");
+    bincode::deserialize(value).ok()
+}
+
+/// The card's answer to a question about a set of names (`key`, one a line), or the answer it recorded for a larger set:
+/// a card that took a mod's piece off after its answers were recorded (the street's clothes, appearance/properties.rs
+/// `dress`) asks about fewer mods. The answer can name more than was asked.
+pub fn lookup_within<T: serde::de::DeserializeOwned>(kind: &str, key: &[u8]) -> Option<T> {
+    if let Some(found) = lookup(kind, key) { return Some(found); }
+    let table = table()?;
+    let lines = |text: &'_ [u8]| text.split(|b| *b == b'\n').map(<[u8]>::to_vec).collect::<std::collections::HashSet<_>>();
+    let wanted = lines(key);
+    let (_, value) = table.iter().find(|((k, asked), _)| k == kind && wanted.is_subset(&lines(asked)))?;
     bincode::deserialize(value).ok()
 }
 

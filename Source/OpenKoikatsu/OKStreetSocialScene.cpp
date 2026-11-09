@@ -1,4 +1,5 @@
 #include "OKStreetSocialScene.h"
+#include "Widgets/SViewport.h"
 #include "OKStreetBacks.h"
 #include "OKStreetSocialText.h"
 #include "OKStreetSpokenText.h"
@@ -20,16 +21,17 @@
 #include "OKStreetSocialDialogueContext.h"
 #include "OKStreetSocialFreeTalk.h"
 #include "OKStreetSocialControl.h"
-#include "HttpServerModule.h"
-#include "IHttpRouter.h"
-#include "HttpPath.h"
-#include "HttpRouteHandle.h"
-#include "HttpRequestHandler.h"
+#include "OKControl.h"
 #include "HttpResultCallback.h"
 #include "HttpServerRequest.h"
 #include "HttpServerResponse.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "OKStreetSocialPlaces.h"
+#include "Components/PlanarReflectionComponent.h"
+#include "Engine/PlanarReflection.h"
+#include "Components/LocalLightComponent.h"
+#include "CityEnvironmentController.h"
+#include "UObject/UObjectIterator.h"
 #include "OKStreetSocialCalendar.h"
 #include "OKStreetMind.h"
 #include "OKStreetRules.h"
@@ -49,6 +51,11 @@
 #include "Engine/StaticMesh.h"
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Components/SceneCaptureComponent2D.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "Engine/TextureRenderTargetCube.h"
+#include "Components/SceneCaptureComponentCube.h"
+#include "OKStoryCapture.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
@@ -61,6 +68,7 @@
 #include "HighResScreenshot.h"
 #include "KKRuntimeSpeech.h"
 #include "KKCardReader.h"
+#include "KKPairedPlayback.h" // GKKPairFramesShown (/fps)
 #include "OKArousalDrops.h"
 // Where a street figure goes while its high model stands in for it (the one-on-one in place): far under the street.
 static const FVector OKStreetOffstage(0.,0.,-100000.);
@@ -220,6 +228,7 @@ struct FOKStreetSceneState {
  // her next drop; the drops and the wet marks they left (OKArousalDrops.h); how wet she is (drops from her crotch and
  // her nipples since she last slept or bathed, a scene with him included) and whether she was asleep or bathing.
  float ArousalBlush[OKStreetCastCount]={},ArousalDesire[OKStreetCastCount]={};double ArousalDripAt[OKStreetCastCount]={},ArousalCheckAt=0;
+ float ArousalPupil[OKStreetCastCount]={};int64 ArousalClimaxDay[OKStreetCastCount]={}; // her eyes (TickArousal), the day she last climaxed
  int64 ArousalWhiteUntil[OKStreetCastCount]={},ArousalRedUntil[OKStreetCastCount]={};uint32 ArousalExtHash=0,ArousalTurn[OKStreetCastCount]={};FOKStreetHerCard HerCard[OKStreetCastCount];double ArousalNippleAt[OKStreetCastCount]={}; // after a scene: until when she runs white / red (hexp)
  FOKArousalDrops ArousalDrops;int32 ArousalWetCrotch[OKStreetCastCount]={},ArousalWetMilk[OKStreetCastCount]={};bool ArousalWashing[OKStreetCastCount]={};int32 ArousalDay=-1;
  // Her pregnancy today (OKStreetSocialPregnancy.inl: rules preg_day each new day) and today's sick spells.
@@ -294,7 +303,7 @@ struct FOKStreetSceneState {
  TMap<int32,FOKNpcLift> NpcLifts;int32 ActGirl=INDEX_NONE,LastActivityGirl=INDEX_NONE;int32 ArrivedWith=INDEX_NONE;FString ArrivedPlace;int64 ArrivedMinute=-1; /* the last walk he and a girl ended together, for appointments_tick (R5-13) */bool ActCutShort=false,ActTimeCut=false;int64 ActStart=0,LifeBlocksMinute=-1;int32 ActFirstAppointment=0; /* the appointments made during it are for later (ActivityAftermath) */ FString ActId,ActSig,LastActivity;int32 HerPaidGirl=INDEX_NONE;int64 HerPaidAmount=0,HerPaidAt=0;bool HerPaidAgreed=false;FString ShopPromptedPlace; /* the place whose menu prompt she was given (TickShopArrival) */int32 PaidBackGirl=INDEX_NONE;int64 PaidBackAmount=0,PaidBackAt=0;FString HerPaidNote;FString HerPaidShop; /* her own bill just paid (RecordPayAgreed) */ /* ActSig: what kind of activity ActId is (TickActivityWatch) */ TSet<FString> LifeDone;double BiasCheckAt=0;TMap<int32,double> PossessiveAt;
  // Round 3 (Docs/STREET_BEHAVIOR_PLAN_20261012b.md).
  TMap<int32,int32> PlanBlockSince;TMap<FString,int32> PaidShiftMinutes;bool ActIsHers=false,ActLover=false;int32 IntroFriend=INDEX_NONE;double IntroAt=0,GatePenaltyAt=-100,LastActivityAt=-100;TMap<FString,int64> ActDoneAt;
- TMap<int32,TArray<int64>> SelfTexts;int32 SentRemoteGirl=INDEX_NONE,SentRemoteMode=0,ReplyRemoteGirl=INDEX_NONE,ReplyRemoteMode=0;int64 LastCheckoutMinute=-1;FString NotServedNote,CheckoutNote;int32 NotServedTurns=0;TMap<FString,int32> JobRejected;
+ TMap<int32,TArray<int64>> SelfTexts;int32 SentRemoteGirl=INDEX_NONE,SentRemoteMode=0,ReplyRemoteGirl=INDEX_NONE,ReplyRemoteMode=0;int64 LastCheckoutMinute=-1;FString LastCheckoutPlace,NotServedNote,CheckoutNote;int32 NotServedTurns=0;TMap<FString,int32> JobRejected;
  // His company (OKStreetSocialCompany*.inl).
  FString CompanyTab=TEXT("overview"),CompanyAmount,HeroJobSig,PayslipNote;TMap<int32,float> NpcLiftArrivedZ;bool FinMenuOpen=false; // the money buttons open under one "理財" (BuildFinanceRows)
  // The books (OKStreetSocialBooks.inl, OKStreetSocialAccountsApp.inl): journals by book, what each account was last seen at, posts already written.
@@ -324,6 +333,7 @@ struct FOKStreetSceneState {
  // (its favours are absolute) is dropped and those minutes asked again.
  bool BondsInFlight=false;uint32 BondsSerial=0;
  TSharedPtr<FOKStreetGridSearch> NavSearch;FVector NavSearchGoal=FVector::ZeroVector;FString NavSearchName; // his map navigation being routed (TickNavSearch)
+ TSharedPtr<FOKStreetGridSearch> NavAround; // the way around what stopped him (StepNavigation)
  TArray<TWeakObjectPtr<AActor>> DestroyQueue; // DestroyLater
  TMap<int32,TArray<FOKStreetPlanBlock>> Plans;int32 PlanDay=-1;double PlanWaitSince=0;bool PlannedWithoutProfiles=false;TMap<int32,int64> ConfessionPending;TMap<int32,int32> PlanBlock;TSet<int32> PlanEaten,ScheduleHeld;TMap<int32,TArray<FVector>> Commutes;
  TMap<FString,int32> PlayerPlaceMinutes;double ScheduleTickAt=0;int64 PlaceCountMinute=-1;
@@ -377,7 +387,8 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  TWeakObjectPtr<class UPointLightComponent> CatchLight;
  int64 SaidToHerAt=0; // game minute of his last line to her: lines from a talk hours ago (same girl) are not this conversation
  double FreeTalkQuietUntil=0; // she asked him to keep quiet (judge): his silence is what she wanted until then
- bool ControlMicIgnored=false; // control channel: what the room microphone hears is not his (a tester talking nearby)
+ bool LookReloadPending=false;int32 LookGirl=INDEX_NONE; // her clothes, face or hair changed: the street reloads as soon as nobody is with him, and she stands beside him when it is back (TickAppointments)
+ double FreeTalkLiveResyncAt=0;bool ControlMicIgnored=false; // control channel: what the room microphone hears is not his (a tester talking nearby)
  bool FreeTalkMicPausedClock=false,FreeTalkMicOpen=false,FreeTalkLiveReady=false,FreeTalkLiveStarting=false,FreeTalkLeavePending=false;double FreeTalkSilenceSince=0,FreeTalkNudgeAt=0,FreeTalkLiveTickAt=0;int32 FreeTalkSilencePenalties=0;float FreeTalkSilenceScale=1;int32 LiveTestPhase=-1,LiveTestNudges=0,LiveTestPenalties=0;float LiveTestFavor=0;bool LiveTestLeft=false,LiveTestInterrupted=false,LiveTestHerReply=false;double LiveTestAt=0;FString LiveTestWav;double FreeTalkLiveRetryAt=0;int32 FreeTalkLivePollFails=0;float FreeTalkMicLevel=0;FString FreeTalkMic;TArray<FString> FreeTalkMics;
  FString OutingActivity,OutingPlace;TArray<FVector> OutingRoute;int32 OutingStep=0;double OutingProgressAt=0;bool OutingWaitDoor=false;bool OutingRun=false;FString StrollActivity;int64 StrollStartMinute=0;bool QuietTalk=false;TArray<TWeakObjectPtr<AActor>> PlaceActors;TArray<TWeakObjectPtr<ADirectionalLight>> PlaceFills;float NextPairYaw=0;FString NextPairFemaleClip,NextPairMaleClip;int32 SoloGirl=INDEX_NONE,SoloPhase=0,SoloMinutes=0;double SoloAt=0;int64 SoloStartMinute=0;FVector SoloSpot=FVector::ZeroVector;float SoloYaw=0;FString SoloFemale,SoloMale,SoloWhat,SoloId;bool SleepPaired=false;int32 SleepPhase=0,SleepGirl=INDEX_NONE;double SleepAt=0;FVector SleepBed=FVector::ZeroVector,SleepGirlBed=FVector::ZeroVector;float SleepYaw=0,SleepGirlYaw=0;FString SleepPlace;int32 RestroomGirl=INDEX_NONE;double RestroomUntil=0;FString RestroomPlace;double RestroomBlockedAt=0;struct FPlaceLayers {int32 Place=INDEX_NONE;TWeakObjectPtr<UPrimitiveComponent> Roof;TMap<int32,TWeakObjectPtr<UPrimitiveComponent>> Levels;};TArray<FPlaceLayers> PlaceRoofs;FString PlaceTourDir;int32 PlaceTourIndex=-1;double PlaceTourAt=0;bool PlaceTourShot=false;TMap<int32,FVector> CommuteShown;
  TArray<FString> FreeTalkSpeechLines,FreeTalkSpeechPaths,FreeTalkReplayParts;TArray<uint8> FreeTalkSpeechReady,FreeTalkSpeechStreamed;TArray<TSharedPtr<FKKRuntimeSpeechStream,ESPMode::ThreadSafe>> FreeTalkSpeechStreams;int32 FreeTalkSpeechGeneration=0,FreeTalkSpeechCharacter=INDEX_NONE,FreeTalkSpeechPlayed=0,FreeTalkSpeechFiles=0;int64 FreeTalkSpeechSerial=0;double FreeTalkSpeechNext=0,FreeTalkSpeechRepliedAt=0;FString FreeTalkSpeechChannel;TArray<double> FreeTalkSpeechSentAt;
@@ -393,11 +404,11 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  // The time after an H scene (OKStreetSocialBookmarks.inl): who with, the result waiting for "leave", its buttons; the
  // bookmark open on the phone page.
  int32 AfterGirl=INDEX_NONE,BookmarkOpen=INDEX_NONE;TSharedPtr<FJsonObject> AfterAnswer;TSharedPtr<SWidget> AfterBar;
- TArray<FString> HighCards;TArray<FString> BaseCards; /* her own card (HighCards may be her clinic/salon copy, OKStreetSocialClinic.inl) */TArray<int32> HighOutfits;TWeakObjectPtr<AOKInteractionMode> PrivateMode;TSharedPtr<SWidget> PrivateLeave;TSharedPtr<SWidget> HResultPanel; /* what the last one-on-one left on her (h_session_end result), until closed */ /* the one-on-one scene's own leave button (R3-228) */FString HighPrivateReport;double HighPrivateAt=0,PrivatePausedSeconds=0;bool PrivateClockFrozen=false; /* the street clock stood still for the private scene (it runs again on leaving, by the real minutes spent) */bool HighPrivateSeenReady=false;TSharedPtr<FJsonObject> HighPrivateResult;TArray<FOKStreetAgentSim> HighPrivateAgents;TArray<FRotator> HighPrivateRotations;FVector HighPrivateMale;
+ TArray<TPair<int32,TSharedPtr<FJsonObject>>> HResultNext; /* the other heroines' results, after the first's */TArray<FString> HighCards;TArray<FString> BaseCards; /* her own card (HighCards may be her clinic/salon copy, OKStreetSocialClinic.inl) */TArray<int32> HighOutfits;TWeakObjectPtr<AOKInteractionMode> PrivateMode;TSharedPtr<SWidget> PrivateLeave;TSharedPtr<SWidget> HResultPanel; /* what the last one-on-one left on her (h_session_end result), until closed */ /* the one-on-one scene's own leave button (R3-228) */FString HighPrivateReport;double HighPrivateAt=0,PrivatePausedSeconds=0;bool PrivateClockFrozen=false; /* the street clock stood still for the private scene (it runs again on leaving, by the real minutes spent) */bool HighPrivateSeenReady=false;TSharedPtr<FJsonObject> HighPrivateResult;TArray<FOKStreetAgentSim> HighPrivateAgents;TArray<FRotator> HighPrivateRotations;FVector HighPrivateMale;
  TMap<int32,double> CommutePausedUntil; // a girl he walked up to stops her walk for a moment (StepNavigation)
  // PrivateInPlace: the one-on-one is where she stands on the street (user, 2026-11-01: no change of scene); the street
- // goes on around them and their street figures are kept out of sight under it (OKStreetOffstage).
- bool PrivateInPlace=false;
+ // goes on around them and every street figure is kept out of sight under it (OKStreetOffstage, in TickPrivate; user, 2026-11-06: nobody else shows in a one-on-one).
+ bool PrivateInPlace=false;TArray<TWeakObjectPtr<AActor>> PrivateHiddenProps; /* what the street figures held, back on leaving */bool PrivateTryOn=false; /* she is trying clothes on: no H scene, no memory of a session */
  int32 NavGirl=INDEX_NONE,PrivateGirl=INDEX_NONE,ContactsProbePhase=0;FOKStreetLiftRide NavRide; // the navigation riding an elevator (PlanNavLift)
  double NavAt=0,ContactsProbeAt=0;
  int32 ContactsProbeGreeting=0;TArray<TSharedPtr<FJsonValue>> ContactsVoiceEvidence;TArray<FVector> NavPath;
@@ -439,6 +450,8 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  double SplashCycleSeconds=10.0/3.0;
  FOKStreetPairSession SplashProbeSession;
  TArray<TWeakObjectPtr<AStaticMeshActor>> PairProps;
+ // The food on their plates at a meal table: drawn from what is served (TickMeal), not picked when they sit down.
+ TFunction<void(int32,float)> MealDishDraw;TArray<TWeakObjectPtr<AStaticMeshActor>> MealDishProps;FString MealDishShown;
  TMap<int32,TArray<TWeakObjectPtr<AStaticMeshActor>>> ReadingProps;
  int32 ReadingActorsVerified=0,ReadingProbePhase=0,ReadingForceWalk=INDEX_NONE;
  FOKStreetAgentSim ReadingSavedAgent;double ReadingProbeAt=0;FString ReadingProbeSave;
@@ -574,7 +587,7 @@ FString VoicePickDescription,VoicePickNotice,TtsVoiceInstruct;int32 VoicePickTar
  FVector SpotSavedMale=OKStreetMaleSpawn();double SpotSavedAt=0; // his position in the save, and when it was written (SaveCalendar)
  float Yaw=90,Pitch=-12,Distance=350,PeakMouth=0;TArray<TWeakObjectPtr<UPrimitiveComponent>> CameraHidden; // CameraHidden: whoever the follow camera is pressed into, left out of the view
  bool MouseUI=false,ViewportFocused=false,MouseToggleRequested=false,MouseModeChecked=false;
- FString SaveMenu,SaveNotice,NewGameRegion;bool SaveConfirmNew=false,SaveMenuPausedClock=false,SaveRestarting=false,StartMenuDecided=false,SaveApplied=false;double NextAutoSave=0; // OKStreetSocialSaves.inl
+ FString SaveMenu,SaveNotice,SaveNoticeId,SaveNoticeSlot,NewGameRegion;bool SaveConfirmNew=false,SaveMenuPausedClock=false,SaveRestarting=false,StartMenuDecided=false,SaveApplied=false;double NextAutoSave=0; // OKStreetSocialSaves.inl
  int32 FacingChecks=0;
  TSet<int32> FacingActorsChecked;
  TSharedPtr<FOKStreetMouseModeInput> MouseInput;
@@ -718,7 +731,12 @@ static int32 OKStreetNormalizeFloorFinishes(UWorld* World){
  return Count;
 }
 
+// The two functions OKStreetSocialRules.h declares for the city.
+FVector OKStreetCitySpawn(){const auto* Dorm=OKStreetFindPlace(TEXT("boys_dorm"));return Dorm?Dorm->Door:FVector::ZeroVector;}
+FVector OKStreetCityWalkPoint(int32 Index){const auto& City=OKStreetCity();if(City.Walk.IsEmpty())return OKStreetCitySpawn();const int32 Node=City.Walk[Index%City.Walk.Num()];return City.Nodes.IsValidIndex(Node)?City.Nodes[Node]:OKStreetCitySpawn();}
+
 static bool OKStreetCreateRuntimeBackdrop(UWorld* World,AActor* Owner,FOKStreetSceneState& State,FString& Error){
+ if(OKStreetCityMode())return true; // the city has its own ground and sky
  UStaticMeshComponent* Ground=nullptr;
  for(TActorIterator<AStaticMeshActor> It(World);It;++It){
   auto* Component=It->GetStaticMeshComponent();
@@ -794,7 +812,7 @@ void AOKStreetSocialScene::BeginPlay(){
   FString Clock;const bool Override=FParse::Value(FCommandLine::Get(),TEXT("StreetSocialClock="),Clock);if(Override){FString H,M;if(!Clock.Split(TEXT(":"),&H,&M))H=Clock;S.ClockStartHours=FMath::Clamp(FCString::Atod(*H),0.0,23.99)+FMath::Clamp(FCString::Atod(*M),0.0,59.0)/60.0;}
   // Self-tests keep the authored sun unless a clock is asked for, so their captures stay comparable.
   S.ClockDrivesSun=Override||!S.SelfTest;
-  for(TActorIterator<ADirectionalLight> It(GetWorld());It;++It){S.Sun=*It;It->GetLightComponent()->SetMobility(EComponentMobility::Movable);break;}
+  if(!OKStreetCityMode())for(TActorIterator<ADirectionalLight> It(GetWorld());It;++It){S.Sun=*It;It->GetLightComponent()->SetMobility(EComponentMobility::Movable);break;} // the city's: OKStreetCityDress
   for(TActorIterator<AActor> It(GetWorld());It;++It)if(auto* Sky=It->FindComponentByClass<USkyAtmosphereComponent>()){S.Sky=Sky;break;}}
  auto Quality=[](const TCHAR* Name,float Value){if(auto* C=IConsoleManager::Get().FindConsoleVariable(Name))C->Set(Value,ECVF_SetByConsole);};
  Quality(TEXT("r.AntiAliasingMethod"),2);Quality(TEXT("r.ScreenPercentage"),100);Quality(TEXT("r.SecondaryScreenPercentage.GameViewport"),100);Quality(TEXT("r.DynamicRes.OperationMode"),0);Quality(TEXT("r.TemporalAA.Quality"),2);Quality(TEXT("r.TemporalAA.HistoryScreenPercentage"),100);
@@ -807,7 +825,9 @@ void AOKStreetSocialScene::BeginPlay(){
  // No hardware occlusion queries: the render thread waited on the GPU for last frame's results (~5 ms a frame in the
  // girls' dorm, GPUBound_WaitingForGPUForOcclusionQueries), worst when another game shares the GPU. Drawing what they
  // would have culled costs the GPU ~1 ms (it idles at 3-4 ms); 127 -> 150 and 151 -> 177 FPS in the dorm, A/B in place.
- Quality(TEXT("r.AllowOcclusionQueries"),0);
+ // Not in the city: everything behind its walls was drawn, and beside a building the render thread took 16 ms (61 FPS at the
+ // cafe, 136 with the queries on).
+ if(!OKStreetCityMode())Quality(TEXT("r.AllowOcclusionQueries"),0);
  int32 ResX=0,ResY=0;
  if(FParse::Value(FCommandLine::Get(),TEXT("ResX="),ResX)&&FParse::Value(FCommandLine::Get(),TEXT("ResY="),ResY)&&ResX>=640&&ResY>=360){if(auto* Settings=GEngine->GetGameUserSettings()){Settings->SetScreenResolution(FIntPoint(ResX,ResY));Settings->SetFullscreenMode(EWindowMode::Windowed);Settings->ApplyResolutionSettings(false);}}
  FString ManifestPath,Json,Error;
@@ -883,6 +903,7 @@ void AOKStreetSocialScene::BeginPlay(){
  if(!OKStartCrowdRuntimeScene(this,CrowdSelection,Error)){S.Errors.Add(Error);WriteReport(false);return;}
  if(!OKStreetCreateRuntimeBackdrop(GetWorld(),this,S,Error)){S.Errors.Add(Error);WriteReport(false);return;}
  SpawnStreetPlaces();
+ if(OKStreetCityMode())OKStreetCityCheckRoads(GetWorld());
  OKSetCrowdRuntimeCharacterMotion(this,0,FTransform(FRotator::ZeroRotator,S.Male),0,Error);
  for(const auto& Agent:S.Agents)OKSetCrowdRuntimeCharacterMotion(this,Agent.Slot,FTransform(FRotator::ZeroRotator,Agent.Position),0,Error);
  auto* Camera=GetWorld()->SpawnActor<ACameraActor>();S.Camera=Camera;
@@ -1286,7 +1307,8 @@ void AOKStreetSocialScene::SendFreeTalk(){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_
  // A note the game wrote for her (a till note, "you are on shift till three"): in the group prompt the model writes
  // every girl's lines, so its "you" is named; Encore took Alice's shift for his. His line goes to the galgame box first
  // (FreeTalkCaptionPlayer, set below only for one girl): in a group talk his question never showed.
- if(S.Party.ContainsByPredicate([Character](int32 G){return G!=Character;})&&RemoteKind(Character)==0){if(His)S.FreeTalkCaptionPlayer=S.Manifest.Characters[0].Name+OKT(TEXT("ui.party.speech_open_quote"))+Text+OKT(TEXT("ui.party.closing_quote_mark"));
+ // In the room with him she is alone with him: those following him stay outside and answer nothing.
+ if(S.Party.ContainsByPredicate([Character](int32 G){return G!=Character;})&&RemoteKind(Character)==0&&!(S.PrivateGirl==Character&&S.PrivateMode.IsValid())){if(His)S.FreeTalkCaptionPlayer=S.Manifest.Characters[0].Name+OKT(TEXT("ui.party.speech_open_quote"))+Text+OKT(TEXT("ui.party.closing_quote_mark"));
   // The wheel rolled back in a group: every girl in it goes back to before that line; then each one's point to return to.
   if(His){TArray<int32> In={Character};for(const int32 Member:S.Party)In.AddUnique(Member);TArray<FString> Ids;for(const int32 Member:In)Ids.Add(OKStreetStableId(S.Manifest.Characters[Member]));
    GalgameRollBack(Ids);if(!OKStreetFreeTalkIsNudge(Text))for(int32 K=0;K<In.Num();++K)GalgameCheckpoint(In[K],Ids[K]);}
@@ -1603,6 +1625,9 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
    if(L->ChatOrderAwaitsJudge.Remove(Character)>0&&!L->Cart.IsEmpty())Weak->PlaceChatOrder(Character,Her);
    Weak->ExecuteFreeTalkAction(Character,Id,HerAction);return;}
   FString DoNow,Why;Verdict->TryGetStringField(TEXT("do_now"),DoNow);Verdict->TryGetStringField(TEXT("why"),Why);
+  // She tries it on now: the same as the menu's button. 贞德 went to "the fitting room" and the floor's photo pose came up.
+  {FString TryOn;if(Verdict->TryGetStringField(TEXT("try_on"),TryOn)&&!TryOn.IsEmpty()){const FString Worn=Weak->ResolveItemId(TryOn,L->ShopPlace);
+    if(const auto* Item=L->Catalog.Find(Worn);Item&&Item->Category==TEXT("clothes")){UE_LOG(LogTemp,Display,TEXT("Street judge: actor=%d tries on %s"),Character,*Worn);DoNow.Reset();Weak->TryClothes(Character,Worn);}}}
   // His words answered her offer to sing ("sure, sing for me"), asked for her waiting song now, or asked her to sing
   // her last song again: the same as the panel's buttons.
   {FString Song;if(Verdict->TryGetStringField(TEXT("song_answer"),Song)){const auto& SG=L->Song;
@@ -1620,6 +1645,12 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
   // became a stroll waiting for his noodles, and set off ten minutes later just as he said he had to run to class (R6-161).
   if(DoNow.StartsWith(TEXT("go:"))&&DoNow.Mid(3)==Weak->PlaceHere(L->Male)&&((L->Pair.Partner==Character&&(L->Pair.Meal||L->Pair.Drink))||(!L->Table.IsEmpty()&&L->MealPlace==DoNow.Mid(3)))){
    UE_LOG(LogTemp,Display,TEXT("Street judge: do_now %s is where they sit at their table; nothing to start"),*DoNow);DoNow.Reset();}
+  // A walk with food still on their table waits until it is eaten: "after we eat we'll go" came as do_now walk, and 惠惠 and
+  // he got up four minutes into their lunch with the plates full (R6-161).
+  if((DoNow==TEXT("walk")||DoNow==TEXT("stroll"))&&L->Pair.Partner==Character&&(L->Pair.Meal||L->Pair.Drink)&&L->Table.ContainsByPredicate([](const FOKStreetDish& D){return D.Percent>0.f;})){
+   UE_LOG(LogTemp,Display,TEXT("Street judge: do_now %s waits until they have eaten"),*DoNow);
+   if(L->ThenAction.IsEmpty()){L->ThenAction=DoNow;L->ThenGirl=Character;L->ThenUntil=OKStreetMindNow(*L)+120;L->ThenReadyAt=0;L->ThenStayMinutes=0;}
+   DoNow.Reset();}
   if(DoNow.StartsWith(TEXT("go:"))&&DoNow.Mid(3)==Weak->PlaceHere(L->Male)){UE_LOG(LogTemp,Display,TEXT("Street judge: do_now %s is where he is; a stroll here"),*DoNow);DoNow=TEXT("stroll");}
   const TSharedPtr<FJsonObject>* Promise=nullptr;FString Day,Time,Place,What;bool PayForPromise=false;
   if(Verdict->TryGetObjectField(TEXT("promise"),Promise)&&Promise&&(*Promise).IsValid()){(*Promise)->TryGetStringField(TEXT("day"),Day);(*Promise)->TryGetStringField(TEXT("time"),Time);(*Promise)->TryGetStringField(TEXT("place"),Place);(*Promise)->TryGetStringField(TEXT("what"),What);}
@@ -1798,7 +1829,10 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
   // activity that fails as "no such activity or place" (R3-114).
   if(!DoNow.IsEmpty()&&!DoNow.StartsWith(TEXT("go:"))&&DoNow!=TEXT("stroll")&&DoNow!=TEXT("leave")&&!OKStreetFindActivity(DoNow)&&!OKStreetFindPlace(DoNow)){
    const FString Here=Weak->OrderShopHere(Character);const FString ItemId=Here.IsEmpty()?FString():Weak->ResolveItemId(DoNow,Here);
-   if(const auto* Item=ItemId.IsEmpty()?nullptr:L->Catalog.Find(ItemId);Item&&Weak->SoldHere(*Item,Here)){
+   // A treatment is his offer and her yes (OfferClinic), never an order: 安可's hair dye was paid three times, once for
+   // her yes and twice more as two orders of the judge, and she waited at the counter for a dish.
+   if(const auto* Item=ItemId.IsEmpty()?nullptr:L->Catalog.Find(ItemId);Item&&Item->Category==TEXT("clinic"))DoNow.Reset();
+   else if(Item&&Weak->SoldHere(*Item,Here)){
     TArray<TSharedPtr<FJsonValue>> Orders;if(const TArray<TSharedPtr<FJsonValue>>* Had=nullptr;Verdict->TryGetArrayField(TEXT("orders"),Had))Orders=*Had;
     auto O=MakeShared<FJsonObject>();O->SetStringField(TEXT("id"),ItemId);O->SetStringField(TEXT("for"),TEXT("him"));Orders.Add(MakeShared<FJsonValueObject>(O));
     Verdict->SetArrayField(TEXT("orders"),Orders);UE_LOG(LogTemp,Display,TEXT("Street judge: do_now %s is on the menu here; ordered instead"),*DoNow);DoNow.Reset();}}
@@ -1823,7 +1857,7 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
    if(!Shop.IsEmpty()&&Verdict->TryGetArrayField(TEXT("orders"),Orders))for(const auto& V:*Orders){
     const TSharedPtr<FJsonObject> O=V.IsValid()?V->AsObject():nullptr;if(!O)continue;FString ItemId,For;O->TryGetStringField(TEXT("id"),ItemId);O->TryGetStringField(TEXT("for"),For);
     ItemId=Weak->ResolveItemId(ItemId,Shop);
-    const auto* Item=L->Catalog.Find(ItemId);if(!Item||(OnTheWay?Item->Place!=Shop:!Weak->SoldHere(*Item,Shop))||HerOrders.Contains(ItemId))continue; // her reply already ordered it
+    const auto* Item=L->Catalog.Find(ItemId);if(!Item||Item->Category==TEXT("clinic")||(OnTheWay?Item->Place!=Shop:!Weak->SoldHere(*Item,Shop))||HerOrders.Contains(ItemId))continue; // her reply already ordered it
     // Whoever it is for still has one of these (a meal, or a drink) in front of them or on its way: not a second one.
     const bool ForHer=For==TEXT("her");
     // Already on the table or on its way first: "too full, the braised pork rice was not ordered" about the bowl in
@@ -1837,6 +1871,8 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
     if(!Item->Consumable&&!Item->UsedOnTheSpot()){const int64* At=L->RecentBought.Find(ItemId+(ForHer?TEXT("|her"):TEXT("|him")));
      if(At&&OKStreetMindNow(*L)-*At<=15){L->TellHer.Add(OKMsg(TEXT("ui.economy.already_bought_order"),{{TEXT("for"),ForHer?TEXT("her"):TEXT("him")},{TEXT("item"),Item->Name}}));UE_LOG(LogTemp,Display,TEXT("Street judge order skipped: %s, bought for %s %lld min ago"),*Item->Name,ForHer?TEXT("her"):TEXT("him"),OKStreetMindNow(*L)-*At);continue;}}
     if(ForHer&&Weak->TooFullFor(Character,*Item)){L->TellHer.Add(OKMsg(TEXT("ui.economy.too_full_to_order"),{{TEXT("item"),Item->Name}}));UE_LOG(LogTemp,Display,TEXT("Street judge order skipped: %s, she is full"),*Item->Name);continue;}
+    // Clothes he buys for her are hers to wear, not a line on a bill: ¥399 was paid for 贞德's dress and it was never in her wardrobe.
+    if(ForHer&&Item->Category==TEXT("clothes")){L->ShopPlace=Shop;Weak->FinishClothes(Character,ItemId,TEXT("accept"));continue;}
     FOKStreetCartLine Line;Line.ItemId=ItemId;Line.ForHer=ForHer;Line.Size=Item->DefaultSize();
     // As he asked for it ("a pearl milk tea, half sugar less ice"): the judge's sweetness and ice, as the shop makes them.
     if(!Item->Options.IsEmpty()){FString Sweet,Ice,Refused;O->TryGetStringField(TEXT("sweetness"),Sweet);O->TryGetStringField(TEXT("ice"),Ice);Weak->SetDrinkOptions(Line,Sweet,Ice,&Refused);
@@ -1978,6 +2014,14 @@ void AOKStreetSocialScene::RequestFreeTalkSegment(int32 Generation,int32 Index){
    const bool Ok=Connected&&Response.IsValid()&&Response->GetResponseCode()==200&&Stream->Num()>0;
    Stream->Finish();
    if(!State||Generation!=State->FreeTalkSpeechGeneration)return;auto& L=*State;
+   // The server did not answer at all (timed out, usually a GPU full of other work): a file request would wait as long
+   // again, line after line, and her reply crawled out 86 s late with the clock running. This reply goes on as text.
+   if(!Ok&&Stream->Num()==0&&L.FreeTalkSpeechReady[Index]==0&&(!Connected||!Response.IsValid()||Response->GetResponseCode()==0)){
+    UE_LOG(LogTemp,Display,TEXT("Free talk: TTS gave no answer to line %d, the rest of this reply is text only"),Index);
+    OKStreetTtsCancel(L.TtsEndpoint,L.FreeTalkSpeechChannel,uint32(Generation)+1);
+    for(int32 I=Index;I<L.FreeTalkSpeechReady.Num();++I)if(L.FreeTalkSpeechReady[I]==0){L.FreeTalkSpeechStreamed[I]=2;L.FreeTalkSpeechReady[I]=2;L.FreeTalkSpeechStreams[I].Reset();}
+    L.FreeTalkNotice=FString(OKT(TEXT("ui.scene.tts_failed_text_only")))+OKT(TEXT("ui.scene.tts_connect_failed"));
+    ProbeTtsServer(39);return;} // one health check: the panel kept saying the server was ready after it had gone
    if(!Ok){L.FreeTalkSpeechStreamed[Index]=2;if(L.FreeTalkSpeechReady[Index]==0)L.FreeTalkSpeechStreams[Index].Reset();UE_LOG(LogTemp,Display,TEXT("Free talk: TTS stream failed (%d), using the file"),Response.IsValid()?Response->GetResponseCode():0);}
    // The streamed line's file for the log (the server answers once it is written, without generating it again),
    // and the next line's stream right away instead of after that file.
@@ -2437,7 +2481,7 @@ void AOKStreetSocialScene::ApplyMouseMode(bool Focused){
  const bool Foreground=S.SelfTest||S.RetargetSelfTest||(GEngine->GameViewport->Viewport&&GEngine->GameViewport->Viewport->IsForegroundWindow());
  // Played through the control channel (-Control: an AI or test driver sends the input), the mouse is never taken: the
  // person at the machine keeps using it while the game runs in front.
- const bool Show=S.MouseUI||!Focused||!Foreground||OKVirtualInput().Active;
+ const bool Show=S.MouseUI||!Focused||!Foreground||OKVirtualInput().Driven;
  PC->bShowMouseCursor=Show;PC->bEnableClickEvents=Show;PC->bEnableMouseOverEvents=Show;
  auto* Viewport=GEngine->GameViewport.Get();
  if(Show){FInputModeGameAndUI Input;Input.SetHideCursorDuringCapture(false);Input.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);PC->SetInputMode(Input);Viewport->SetMouseCaptureMode(EMouseCaptureMode::NoCapture);Viewport->SetMouseLockMode(EMouseLockMode::DoNotLock);}
@@ -2671,7 +2715,8 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
    .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item){return SNew(STextBlock).Text(FText::FromString(Item.IsValid()?*Item:FString()));})
    .OnSelectionChanged_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](TSharedPtr<FString> Item,ESelectInfo::Type Info){if(!Weak.IsValid()||!Item.IsValid()||Info==ESelectInfo::Direct)return;const int32 I=Weak->State->MaleToneOptions.IndexOfByKey(Item);if(I!=INDEX_NONE)Weak->SetMaleTone(I);})
    [SNew(STextBlock).Text_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){return FText::FromString(OKT(TEXT("ui.scene.his_tone_label"))+(Weak.IsValid()?Weak->MaleToneLabel():FString()));})]];
-  if(S.Target!=INDEX_NONE&&!S.TtsVoiceInfo.IsEmpty())Box->AddSlot().AutoHeight().Padding(8,2)[SNew(STextBlock).Text(FText::FromString(S.TtsVoiceInfo)).AutoWrapText(true).WrapTextAt(360).Font(FCoreStyle::GetDefaultFontStyle("Regular",11))];
+  // The raw voice instruction: only with the stats panel (F10).
+  if(S.ShowDebug&&S.Target!=INDEX_NONE&&!S.TtsVoiceInfo.IsEmpty())Box->AddSlot().AutoHeight().Padding(8,2)[SNew(STextBlock).Text(FText::FromString(S.TtsVoiceInfo)).AutoWrapText(true).WrapTextAt(360).Font(FCoreStyle::GetDefaultFontStyle("Regular",11))];
   Mark(TEXT("voicepick"));AddVoicePickUI(Box);
   Mark(TEXT("song"));BuildSongRow(Box);
   Mark(TEXT("look2"));
@@ -3003,6 +3048,7 @@ static int64 OKStreetMindNow(const FOKStreetSceneState& S);
 #include "OKStreetSocialUiProbe.inl"
 #include "OKStreetSocialControl.inl"
 #include "OKStreetSocialClinic.inl"
+#include "OKStreetSocialWardrobe.inl"
 void AOKStreetSocialScene::BeginPhoto(int32 Character){BeginPair(Character,false);}
 void AOKStreetSocialScene::BeginPair(int32 Character,int32 Kind){
  const bool PhoneUse=Kind==8,Watermelon=Kind==6||Kind==7,FemaleStrikes=Kind==7,Meal=Kind==5,Bath=Kind==9,Read=Kind==10,NoProps=Kind==11,Seated=Kind==1||Bath||NoProps,Drink=Kind==2,Splash=Kind==3||Kind==4,FemaleThrows=Kind==4;
@@ -3058,6 +3104,7 @@ void AOKStreetSocialScene::FinishPhoto(bool bKeepTalking){
  if(P.Conversation()&&S.ActGirl==P.Partner)S.ActTimeCut=true;
  const auto Before=P;P=FOKStreetPairSession();if(Before.Conversation())EndTalk();
  for(auto& Prop:S.PairProps)DestroyLater(Prop.Get());S.PairProps.Reset();S.MealHandProps.Reset();
+ for(auto& Prop:S.MealDishProps)DestroyLater(Prop.Get());S.MealDishProps.Reset();S.MealDishDraw=nullptr;S.MealDishShown.Reset();
  const auto& Restore=Before;FString Error;ResumeBehavior(0,Error);ResumeBehavior(Restore.Partner,Error);
  S.PairRestoredFrame=GFrameCounter;S.PairRestoredActor=Restore.Partner;
  {auto& Agent=S.Agents[Restore.Partner-1];Agent.Held=false;Agent.Mode=EOKStreetMove::Walking;Agent.Stuck=0;}S.Yaw=Restore.SavedYaw;S.Pitch=Restore.SavedPitch;S.Distance=Restore.SavedDistance;S.MouseUI=Restore.SavedMouseUI;ApplyMouseMode(S.ViewportFocused);
@@ -3100,13 +3147,14 @@ void AOKStreetSocialScene::TickPhoto(double Now){
    // Tinted shapes (the engine's BasicShapeMaterial takes any colour), so every meal and book looks different.
    UMaterialInterface* Tint=LoadObject<UMaterialInterface>(nullptr,TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
    auto Srgb=[](uint8 R,uint8 G,uint8 B){return FLinearColor(FColor(R,G,B));};
-   auto Shape=[&](const TCHAR* Mesh,FVector Position,FVector Size,FLinearColor Colour,float Yaw=0.f,float Roll=0.f){
+   // By value: the dishes are drawn later, when they come (MealDishDraw).
+   auto Shape=[this,Tint,PairFacing,Origin=S.Male](const TCHAR* Mesh,FVector Position,FVector Size,FLinearColor Colour,float Yaw=0.f,float Roll=0.f){
     const FString Path=FString::Printf(TEXT("/Game/Scenes/StreetSocial/Meshes/%s.%s"),Mesh,Mesh);auto* M=LoadObject<UStaticMesh>(nullptr,*Path);if(!M)return;
-    auto* A=GetWorld()->SpawnActor<AStaticMeshActor>(S.Male+PairFacing.RotateVector(Position),PairFacing+FRotator(0,Yaw,Roll));if(!A)return;A->SetOwner(this);A->SetActorScale3D(Size/100.f);
+    auto* A=GetWorld()->SpawnActor<AStaticMeshActor>(Origin+PairFacing.RotateVector(Position),PairFacing+FRotator(0,Yaw,Roll));if(!A)return;A->SetOwner(this);A->SetActorScale3D(Size/100.f);
     auto* C=A->GetStaticMeshComponent();C->SetMobility(EComponentMobility::Movable);C->SetStaticMesh(M);C->SetCollisionEnabled(ECollisionEnabled::NoCollision);C->SetCastShadow(false);C->SetLightingChannels(true,true,false); // the indoor fill lights too
-    if(Tint){auto* D=UMaterialInstanceDynamic::Create(Tint,A);D->SetVectorParameterValue(TEXT("Color"),Colour);C->SetMaterial(0,D);}S.PairProps.Add(A);};
+    if(Tint){auto* D=UMaterialInstanceDynamic::Create(Tint,A);D->SetVectorParameterValue(TEXT("Color"),Colour);C->SetMaterial(0,D);}State->PairProps.Add(A);};
    // One dish on a plate whose top is at Z (table frame: X across the table, Y from him to her).
-   auto Dish=[&](int32 Kind,float Y,float Z){
+   auto Dish=[Shape,Srgb](int32 Kind,float Y,float Z){
     switch(Kind){
     case 0: // curry rice
      Shape(TEXT("StreetSphere"),FVector(-3,Y-3,Z),FVector(15,10,5),Srgb(250,248,240));Shape(TEXT("StreetSphere"),FVector(3,Y+3,Z),FVector(13,11,3.5f),Srgb(150,90,30));
@@ -3158,11 +3206,10 @@ void AOKStreetSocialScene::TickPhoto(double Now){
     }
    }
    if(P.Meal){
-    const int32 MealKind=FMath::RandHelper(9);
+    S.MealDishDraw=[Dish](int32 Kind,float PlateY){Dish(Kind,PlateY,74.f);};S.MealDishShown.Reset();
     for(int32 Participant=0;Participant<2;++Participant){
      const float PlateY=Participant==0?60.f:110.f;
      Part(FVector(0,PlateY,73),FVector(30,25,2),3);
-     Dish(Participant==0||FMath::RandBool()?MealKind:FMath::RandHelper(9),PlateY,74.f); // often the same as his, sometimes her own
      for(int32 Piece=0;Piece<2;++Piece){const int32 Before=S.PairProps.Num();Part(FVector::ZeroVector,Piece==0?FVector(.8f,13,.8f):FVector(3,4,.6f));if(S.PairProps.Num()!=Before+1){UE_LOG(LogTemp,Display,TEXT("Street pair: ended at Scene.cpp:%d (phase %d)"),__LINE__,S.Pair.Phase);FinishPhoto();return;}auto* Prop=S.PairProps.Last().Get();Prop->SetActorHiddenInGame(true);if(auto* Material=LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/Scenes/StreetSocial/Materials/StreetMaterial11.StreetMaterial11")))Prop->GetStaticMeshComponent()->SetMaterial(0,Material);S.MealHandProps.Add({Prop,FVector(0,Piece==0?5.f:12.f,0)});}
     }
    }
@@ -3788,7 +3835,7 @@ void AOKStreetSocialScene::BeginFacility(int32 Kind,int32 Character){
  EndTalk();S.Facility=Kind;S.FacilityCharacter=Character;S.FacilitySavedAgent=S.Agents[Character-1];S.FacilitySavedRotation=S.Rotations[Character];S.FacilitySavedMaleRotation=S.Rotations[0];S.FacilitySavedMale=S.Male;S.FacilitySavedYaw=S.Yaw;S.FacilitySavedPitch=S.Pitch;S.FacilitySavedDistance=S.Distance;S.FacilityRequestedAt=SceneTime();S.FacilityStartedAt=0;S.FacilityEntered=false;S.FacilitySavedMouse=S.MouseUI;S.NavGirl=INDEX_NONE;S.NavPath.Reset();
  // In a place: right where they stand, facing his way, with the props only (no room shell, no collision). Elsewhere
  // (and in the self-test probes) the independent authored room off the map.
- const bool InPlace=!S.SelfTest&&!PlaceHere(S.Male).IsEmpty();
+ const bool InPlace=!S.SelfTest&&(OKStreetCityMode()||!PlaceHere(S.Male).IsEmpty()); // the off-map room would stand under the city
  S.FacilityInPlace=InPlace;S.FacilityRotation=InPlace?FRotator(0,S.Rotations[0].Yaw,0):FRotator::ZeroRotator;
  S.FacilityOrigin=InPlace?FVector(S.Male.X,S.Male.Y,OKStreetFloorZ(S.Male)):FVector(7000.f,Kind*1600.f,0);
  const FVector Origin=S.FacilityOrigin;const FRotator Turn=S.FacilityRotation;
@@ -3883,8 +3930,135 @@ double AOKStreetSocialScene::SceneTime() const {
  const double Wall=FPlatformTime::Seconds();
  return State?(State->PrivateGirl!=INDEX_NONE?State->HighPrivateAt:Wall)-State->PrivatePausedSeconds:Wall;
 }
+// The city's mirrors (1162 planar reflections in the map): the planar captures stay off and only mark where the mirrors are. Even
+// one, cut down to what stands near it, took 4 of the render thread's 8 ms: a scene renderer more, every frame. The nearest mirror he
+// can see in gets a face of its own instead (OKStreetCityMirrorFace).
+static TArray<TWeakObjectPtr<UPlanarReflectionComponent>> GOKStreetCityMirrors;
+static TWeakObjectPtr<UPlanarReflectionComponent> GOKStreetCitySeenMirror;
+static TAutoConsoleVariable<int32> CVarOKStreetCityMirror(TEXT("ok.Street.CityMirror"),1,TEXT("The city's mirrors: 0 bare glass, 1 the room and the people in them."));
+static TWeakObjectPtr<ADirectionalLight> GOKStreetCitySun;
+static TWeakObjectPtr<ACityEnvironmentController> GOKStreetCityEnv;
+static TWeakObjectPtr<USkyLightComponent> GOKStreetCitySkyLight;static float GOKStreetCitySkyDay=0.f;
+// What a piece of the map needs before it is drawn, done as each piece comes in (the world streams around him).
+// The map's 3400 local lights cast shadows: measured 65 of the 80 ms the render thread spent on a frame for the rect lights,
+// 9 of 15 ms on the street for the point and spot lights. Only the sun casts here; the rest are drawn in one clustered pass.
+// Nothing in the map has a cull distance: the smaller a mesh, the sooner it goes. An instanced component spans hundreds of
+// metres, so its own bounds cull nothing: each instance goes by the size of the mesh it draws.
+static void OKStreetCityDress(ULevel* Level){
+ auto FarFor=[](float Radius){return Radius<100.f?6000.f:Radius<300.f?15000.f:Radius<1000.f?40000.f:0.f;};
+ // The city's own controller lights the sun for a metered exposure and every frame; the game runs a fixed one its characters are
+ // coloured for, and sets the sun itself: both at once flashed the screen. It keeps the lamps, the signs and the sky dome on the
+ // game's clock; the brightest light is the sun, the other directional lights (moon, street fill, bounce) go out.
+ for(AActor* Actor:Level->Actors)if(auto* Controller=Cast<ACityEnvironmentController>(Actor)){Controller->UseGameClock();GOKStreetCityEnv=Controller;}
+ // Its own lamps and signs come in with the world: it looks through this piece only, not the whole map again (60-78 ms).
+ if(auto* Env=GOKStreetCityEnv.Get();Env&&Env->GetLevel()!=Level)Env->RegisterLevel(Level);
+ for(AActor* Actor:Level->Actors)if(auto* Light=Cast<ADirectionalLight>(Actor)){auto* Part=Light->GetLightComponent();Part->SetMobility(EComponentMobility::Movable);ADirectionalLight* Sun=GOKStreetCitySun.Get();
+  if(!Sun||Part->Intensity>Sun->GetLightComponent()->Intensity){if(Sun)Sun->GetLightComponent()->SetVisibility(false);GOKStreetCitySun=Light;Part->SetVisibility(true);}else Part->SetVisibility(false);}
+ TInlineComponentArray<UActorComponent*> Parts;
+ for(AActor* Actor:Level->Actors)if(Actor){Actor->GetComponents(Parts);for(UActorComponent* Part:Parts){
+  if(auto* Mirror=Cast<UPlanarReflectionComponent>(Part)){Mirror->SetVisibility(false);GOKStreetCityMirrors.Add(Mirror);}
+  else if(auto* Sky=Cast<USkyLightComponent>(Part)){if(!GOKStreetCitySkyLight.IsValid()){GOKStreetCitySkyLight=Sky;GOKStreetCitySkyDay=Sky->Intensity;}}
+  else if(auto* Light=Cast<ULocalLightComponent>(Part)){if(Light->MaxDrawDistance!=12000.f||Light->MaxDistanceFadeRange!=2000.f){Light->MaxDrawDistance=12000.f;Light->MaxDistanceFadeRange=2000.f;Light->MarkRenderStateDirty();}if(Light->CastShadows)Light->SetCastShadows(false);}
+  else if(auto* Instanced=Cast<UInstancedStaticMeshComponent>(Part)){if(Instanced->GetStaticMesh()&&Instanced->InstanceEndCullDistance<=0){const float Far=FarFor(Instanced->GetStaticMesh()->GetBounds().SphereRadius);if(Far>0.f)Instanced->SetCullDistances(int32(Far*.9f),int32(Far));}}
+  else if(auto* Mesh=Cast<UStaticMeshComponent>(Part)){if(Mesh->LDMaxDrawDistance<=0.f){const float Far=FarFor(Mesh->Bounds.SphereRadius);if(Far>0.f)Mesh->SetCullDistance(Far);}}}}
+}
+static void OKStreetCityMirrors(UWorld* World,const FVector& Eye,const FVector& CameraAt,const FVector& CameraForward,float Dt){
+ auto& Mirrors=GOKStreetCityMirrors;static TWeakObjectPtr<UWorld> For;static float Wait=0;
+ if(For!=World){For=World;Mirrors.Reset();Wait=0;
+  if(IConsoleVariable* Clustered=IConsoleManager::Get().FindConsoleVariable(TEXT("r.UseClusteredDeferredShading_ToBeRemoved")))Clustered->Set(1,ECVF_SetByConsole);
+  // Screen-space reflections smeared whoever stood before a mirror across its glass, next to the mirror's own picture.
+  if(IConsoleVariable* Ssr=IConsoleManager::Get().FindConsoleVariable(TEXT("r.SSR.Quality")))Ssr->Set(0,ECVF_SetByConsole);
+  for(ULevel* Level:World->GetLevels())if(Level&&Level->bIsVisible)OKStreetCityDress(Level);
+  static FDelegateHandle Added;if(!Added.IsValid())Added=FWorldDelegates::LevelAddedToWorld.AddLambda([](ULevel* Level,UWorld* In){if(Level&&In==For.Get())OKStreetCityDress(Level);});
+  UE_LOG(LogTemp,Display,TEXT("Street city: %d mirrors at the start"),Mirrors.Num());}
+ Wait-=Dt;if(Wait>0)return;Wait=.2f;
+ TArray<TPair<double,UPlanarReflectionComponent*>> Near;
+ for(const auto& Weak:Mirrors)if(auto* R=Weak.Get()){const FVector Offset=Eye-R->GetComponentLocation();if(FMath::Abs(Offset.Z)<300.f&&FVector::DotProduct(Offset,R->GetUpVector())>2.f&&Offset.SizeSquared()<FMath::Square(1000.f))Near.Emplace(Offset.SizeSquared(),R);}
+ Near.Sort([](const TPair<double,UPlanarReflectionComponent*>& A,const TPair<double,UPlanarReflectionComponent*>& B){return A.Key<B.Key;});
+ // Only the nearest one in front of the camera with nothing between it and him shows anything.
+ UPlanarReflectionComponent* Seen=nullptr;
+ for(const auto& Candidate:Near){const FVector Face=Candidate.Value->GetComponentLocation()+Candidate.Value->GetUpVector()*10.f;if(FVector::DotProduct((Face-CameraAt).GetSafeNormal(),CameraForward)<.3f)continue;FHitResult Hit;if(!World->LineTraceSingleByChannel(Hit,Eye,Face,ECC_Visibility)){Seen=Candidate.Value;break;}}
+ Mirrors.RemoveAll([](const TWeakObjectPtr<UPlanarReflectionComponent>& Weak){return !Weak.IsValid();});
+ GOKStreetCitySeenMirror=Seen;
+}
+// The mirror he looks into, as a quad over its glass. The room does not move: one cube capture of what stands near the mirror, taken
+// when he comes to it and again as the hour moves on, costs a frame nothing after that; the eye's ray off the glass is followed to
+// the walls of the room's box (measured with traces) and looked up in it. The people are drawn the way the conversation's portrait
+// is: an orthographic capture of them and nothing else, at the screen's own resolution, as passes of the main renderer (a scene
+// renderer of its own took 3.5 ms). All of them are taken as standing at their average distance d from the glass: a flat picture
+// then lands on the glass where a real mirror shows it, seen from the eye at distance e: towards the point facing the eye, by e/(e+d).
+static void OKStreetCityMirrorFace(AActor* Scene,int32 Slots,const FVector& Eye,float Fov,int32 ViewWidth,double Hours){
+ static TWeakObjectPtr<UStaticMeshComponent> Quads;static TWeakObjectPtr<USceneCaptureComponent2D> Captures;static TWeakObjectPtr<USceneCaptureComponentCube> Rooms;
+ static TWeakObjectPtr<UPlanarReflectionComponent> RoomOf;static double RoomHours=-100,RetakeAt=0;
+ auto* Quad=Quads.Get();auto* Capture=Captures.Get();auto* Room=Rooms.Get();
+ auto Hide=[Quad]{if(Quad&&Quad->IsVisible())Quad->SetVisibility(false);};
+ auto* Mirror=GOKStreetCitySeenMirror.Get();if(!Mirror||!CVarOKStreetCityMirror.GetValueOnGameThread())return Hide();
+ const FVector At=Mirror->GetComponentLocation(),Normal=Mirror->GetUpVector();
+ if(FMath::Abs(Normal.Z)>.5)return Hide(); // the ceilings' mirrors look down: nobody stands before them
+ const FVector Up=(FVector::UpVector-Normal*Normal.Z).GetSafeNormal(),Right=Up^Normal;
+ const double EyeDepth=(Eye-At)|Normal;if(EyeDepth<5)return Hide();
+ UWorld* World=Scene->GetWorld();
+ constexpr double FrameWidth=520,FrameHeight=260,FeetBelowMiddle=120,Reach=600,RoomFar=3000,RoomStandOff=100;
+ if(!Capture){
+  auto* Target=NewObject<UTextureRenderTarget2D>(Scene);Target->RenderTargetFormat=RTF_RGBA16f;Target->bForceLinearGamma=true;Target->TargetGamma=0.f;Target->ClearColor=FLinearColor::Transparent;Target->InitAutoFormat(1024,512);Target->UpdateResourceImmediate(true);
+  Capture=NewObject<USceneCaptureComponent2D>(Scene);Capture->RegisterComponentWithWorld(World);OKStoryCaptureCharactersOnly(Capture);
+  Capture->CaptureSource=SCS_SceneColorHDR;Capture->bRenderInMainRenderer=true;Capture->TextureTarget=Target;Captures=Capture;}
+ if(!Room){
+  auto* Cube=NewObject<UTextureRenderTargetCube>(Scene);Cube->bHDR=true;Cube->Init(2048,PF_FloatRGBA);Cube->UpdateResourceImmediate(true);
+  Room=NewObject<USceneCaptureComponentCube>(Scene);Room->RegisterComponentWithWorld(World);Room->bCaptureEveryFrame=false;Room->bCaptureOnMovement=false;Room->bAlwaysPersistRenderingState=true;
+  Room->CaptureSource=SCS_SceneColorHDR;Room->PrimitiveRenderMode=ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;Room->ShowFlags.SetMotionBlur(false);Room->ShowFlags.SetTemporalAA(false);Room->ShowFlags.SetScreenSpaceReflections(false);Room->TextureTarget=Cube;Rooms=Room;}
+ UTextureRenderTarget2D* Target=Capture->TextureTarget;
+ if(!Quad){
+  auto* Plane=LoadObject<UStaticMesh>(nullptr,TEXT("/Engine/BasicShapes/Plane.Plane"));auto* Look=OKStoryMirrorMaterial(Target,Room->TextureTarget);if(!Plane||!Look)return;
+  Quad=NewObject<UStaticMeshComponent>(Scene);Quad->SetStaticMesh(Plane);Quad->SetCollisionEnabled(ECollisionEnabled::NoCollision);Quad->SetCastShadow(false);Quad->SetMobility(EComponentMobility::Movable);Quad->RegisterComponentWithWorld(World);
+  auto* Made=UMaterialInstanceDynamic::Create(Look,Quad);Made->SetTextureParameterValue(TEXT("Picture"),Target);Made->SetTextureParameterValue(TEXT("Room"),Room->TextureTarget);Quad->SetMaterial(0,Made);Quads=Quad;}
+ auto* Mid=Cast<UMaterialInstanceDynamic>(Quad->GetMaterial(0));if(!Mid)return;
+ auto Set=[Mid](const TCHAR* Name,const FVector& V){Mid->SetVectorParameterValue(Name,FLinearColor(V.X,V.Y,V.Z));};
+ // A capture costs one frame 50 ms. The first one of a mirror came out black (nothing of the room ready yet): it is taken again.
+ const double Now=FPlatformTime::Seconds();
+ if(RoomOf!=Mirror||FMath::Abs(Hours-RoomHours)>1||(RetakeAt>0&&Now>=RetakeAt)){
+  RetakeAt=RoomOf!=Mirror?Now+.5:0;RoomOf=Mirror;RoomHours=Hours;const FVector Stand=At+Normal*RoomStandOff;
+  auto Wall=[&](const FVector& Dir){FHitResult Hit;return World->LineTraceSingleByChannel(Hit,Stand,Stand+Dir*RoomFar,ECC_Visibility)?double(Hit.Distance):RoomFar;};
+  Room->SetWorldLocation(Stand);Room->ShowOnlyComponents.Reset();Room->HiddenComponents.Reset();
+  for(TObjectIterator<UStaticMeshComponent> It;It;++It)if(*It!=Quad&&It->GetWorld()==World&&It->IsRegistered()&&It->Bounds.GetBox().ComputeSquaredDistanceToPoint(At)<FMath::Square(2000.0))Room->ShowOnlyComponents.Add(*It);
+  TArray<UPrimitiveComponent*> Everyone;for(int32 Slot=0;Slot<Slots;++Slot)OKGetCrowdRuntimeCharacterComponents(Scene,Slot,Everyone);for(UPrimitiveComponent* P:Everyone)Room->HiddenComponents.Add(P);
+  Room->CaptureSceneDeferred();
+  Set(TEXT("RoomAt"),Stand);Set(TEXT("RoomRight"),Right);Set(TEXT("RoomUp"),Up);Set(TEXT("RoomNormal"),Normal);
+  Set(TEXT("RoomMin"),FVector(-Wall(-Right),-Wall(-Up),-RoomStandOff-10));Set(TEXT("RoomMax"),FVector(Wall(Right),Wall(Up),Wall(Normal)));
+  UE_LOG(LogTemp,Display,TEXT("Street city: mirror %s at %s, %d parts near it"),*GetNameSafe(Mirror->GetOwner()),*At.ToCompactString(),Room->ShowOnlyComponents.Num());}
+ // The planar reflection's own size: its actor is scaled against a 4000 cm preview plane.
+ const FVector Size=Mirror->GetComponentScale()*4000/100;
+ Quad->SetWorldTransform(FTransform(Mirror->GetComponentQuat(),At+Normal*.1,FVector(Size.X,Size.Y,1)));
+ if(!Quad->IsVisible())Quad->SetVisibility(true);
+ TArray<UPrimitiveComponent*> Shown;double Depth=0,Across=0,Feet=0;int32 People=0;
+ for(int32 Slot=0;Slot<Slots;++Slot){FOKRuntimeCharacterStatus O;if(!OKGetCrowdRuntimeCharacterStatus(Scene,Slot,O)||!O.Visible)continue;
+  const FVector Rel=O.Transform.GetLocation()-At;const double D=Rel|Normal;if(D<5||D>Reach||FMath::Abs(Rel|Right)>Reach||FMath::Abs(Rel.Z)>300)continue;
+  OKGetCrowdRuntimeCharacterComponents(Scene,Slot,Shown);Depth+=D;Across+=Rel|Right;Feet+=Rel|Up;++People;}
+ Mid->SetScalarParameterValue(TEXT("People"),People&&Shown.Num()?1.f:0.f);
+ if(!People||!Shown.Num())return;
+ Depth/=People;Across/=People;Feet/=People;
+ const double Middle=Feet+FeetBelowMiddle,Shrink=EyeDepth/(EyeDepth+Depth);
+ // 100%: as many pixels as the screen gives the picture at this distance. It only grows, and in steps: a new target is not free.
+ const double PerCm=ViewWidth/(2*FMath::Tan(FMath::DegreesToRadians(Fov*.5))*(EyeDepth+Depth));
+ const int32 Need=FMath::Clamp(FMath::DivideAndRoundUp(int32(FrameHeight*PerCm),128)*128,256,2048);
+ if(Target->SizeY<Need){Target->InitAutoFormat(Need*2,Need);Target->UpdateResourceImmediate(true);}
+ Capture->SetWorldLocationAndRotation(At-Normal*30+Right*Across+Up*Middle,FRotationMatrix::MakeFromXZ(Normal,Up).ToQuat());
+ Capture->OrthoWidth=FrameWidth;
+ Capture->ShowOnlyComponents.Reset();for(UPrimitiveComponent* P:Shown)Capture->ShowOnlyComponents.Add(P);
+ Capture->CaptureSceneDeferred();
+ const double FaceAcross=(Eye-At)|Right,FaceUp=(Eye-At)|Up;
+ Set(TEXT("Origin"),At+Normal*.1+Right*(FaceAcross+(Across-FaceAcross)*Shrink)+Up*(FaceUp+(Middle-FaceUp)*Shrink));
+ Set(TEXT("AxisU"),Right/(FrameWidth*Shrink));Set(TEXT("AxisV"),-Up/(FrameHeight*Shrink));
+}
+
 void AOKStreetSocialScene::Tick(float Dt){
  Super::Tick(Dt);
+ if(APlayerController* Eyes=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr;OKStreetCityMode()&&State&&Eyes&&Eyes->PlayerCameraManager)OKStreetCityMirrors(GetWorld(),State->Male+FVector(0,0,150),Eyes->PlayerCameraManager->GetCameraLocation(),Eyes->PlayerCameraManager->GetCameraRotation().Vector(),Dt);
+ if(OKStreetCityMode()&&State&&GOKStreetCitySun.IsValid()&&State->Sun!=GOKStreetCitySun){State->Sun=GOKStreetCitySun;State->ClockDrivesSun=true;State->NextSunUpdate=0;}
+ if(OKStreetCityMode()&&State)if(auto* Env=GOKStreetCityEnv.Get()){static double NextHour=0;const double Wall=FPlatformTime::Seconds();if(Wall>=NextHour){NextHour=Wall+5;const double Hours=OKStreetClockHours(State->ClockStartHours,Wall-State->ClockStartWall);Env->SetHour(Hours);
+   // The sky light goes with the sun: left at its daytime value, midnight looked like noon. The moon counts for little: it is
+   // bright for the street's sake (1.6 against the sun's 2.5), which held the sky light at 64% all night. Dusk meets the day's .2.
+   if(auto* Sky=GOKStreetCitySkyLight.Get()){const FOKStreetSunState Sun=OKStreetSunAt(Hours);Sky->SetIntensity(GOKStreetCitySkyDay*(Sun.Day?FMath::Clamp(Sun.Intensity/2.5f,.2f,1.f):FMath::Lerp(.2f,.1f,FMath::Clamp((Sun.Intensity-.8f)/.8f,0.f,1.f))));}}}
  // Walls, buildings and floors not drawn from behind (OKStreetBacks.h), in the street and in the room alike.
  if(APlayerController* PC=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr;PC&&PC->PlayerCameraManager)OKHideStreetBacks(GetWorld(),PC->PlayerCameraManager->GetCameraLocation());if(!State||!State->Started||State->Reported)return;auto& S=*State;GOKStreetTalkLimit=S.SelfTest; // the self-tests check the budget arithmetic; normal play has no daily talk limit
  // Walking into or out of a shop, or its opening hours passing: the shop part of the right panel has to follow without waiting for
@@ -3987,7 +4161,7 @@ void AOKStreetSocialScene::Tick(float Dt){
  S.CompanionWalk=S.FollowMode!=0&&S.OutingGirl!=INDEX_NONE&&S.Companion==S.OutingGirl&&SceneTime()-S.ManualMoveAt>3.0?S.FollowGirlWalk:StepCompanion(Dt);
  // Standing still he always takes his own stand (conversation_male, the game's mc_m_stand): the base idle is the
  // heroines' book-reading loop, and alone he stood holding an invisible book.
- FString Error;OKSetCrowdRuntimeLocomotionState(this,0,true,Speed>2.f,Error);OKSetCrowdRuntimeCharacterMotion(this,0,FTransform(S.Rotations[0],S.PrivateInPlace?OKStreetOffstage:S.Male),S.ReadingForceWalk==0?1.f:Speed,Error);
+ FString Error;OKSetCrowdRuntimeLocomotionState(this,0,true,Speed>2.f,Error);OKSetCrowdRuntimeCharacterMotion(this,0,FTransform(S.Rotations[0],S.Male),S.ReadingForceWalk==0?1.f:Speed,Error);
  // A girl he is with is not on her schedule walk any more (it would keep pulling her to its route, on the ground).
  for(int32 G=1;G<=S.Agents.Num();++G)if(S.Commutes.Contains(G)&&(BusyWithPlayer(G)||S.LiftWalks.Contains(G)||S.LiftPins.Contains(G)))S.Commutes.Remove(G);
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickElevators);TickElevators(Dt);}
@@ -4026,6 +4200,7 @@ void AOKStreetSocialScene::Tick(float Dt){
     UE_LOG(LogTemp,Display,TEXT("Street walk: actor %d is inside %s, a wall before her next stop %s: out on the grid"),Agent.Slot,P.Id,*Stop.ToCompactString());
     break;}
   const FVector Before=Agent.Position;if(Agent.Slot!=S.PairRestoredActor||GFrameCounter!=S.PairRestoredFrame)OKStreetStepAgent(Agent,FMath::Min(Dt,.05f),Snapshot,TravelSpeed);
+  if(OKStreetCityMode()){float GroundZ=Agent.Position.Z;if(OKStreetGroundZ(GetWorld(),Agent.Position,GroundZ,this))Agent.Position.Z=GroundZ;}
   // Her street walk heads straight for its next stop; a building in between (the block across from the dorm door) held
   // her walking at its wall, and the stuck rule only turned her to the next stop behind it too. Held up 1.5 s, she
   // walks round to that stop on the grid (its cells tested against the buildings), then the street walk goes on (R3-211).
@@ -4057,7 +4232,7 @@ void AOKStreetSocialScene::Tick(float Dt){
    if(Rate>15.f&&Rate<600.f)ShownWalk=Rate/OKStreetWalkSpeed;
   }
   S.LastShown.Add(Agent.Slot,Shown);
- OKSetCrowdRuntimeCharacterMotion(this,Agent.Slot,FTransform(S.RenderedRotations[Agent.Slot],S.PrivateInPlace&&Agent.Slot==S.PrivateGirl?OKStreetOffstage:Shown),S.ReadingForceWalk==Agent.Slot?1.f:ShownWalk,Error);
+ OKSetCrowdRuntimeCharacterMotion(this,Agent.Slot,FTransform(S.RenderedRotations[Agent.Slot],Shown),S.ReadingForceWalk==Agent.Slot?1.f:ShownWalk,Error);
   if(S.SelfTest&&Agent.Position!=Before&&!S.FacingActorsChecked.Contains(Agent.Slot)){FOKRuntimeCharacterStatus Submitted;const float BeforeError=FMath::Abs(FMath::FindDeltaAngleDegrees(PreviousFacing.Yaw,S.Rotations[Agent.Slot].Yaw));const float AfterError=FMath::Abs(FMath::FindDeltaAngleDegrees(S.RenderedRotations[Agent.Slot].Yaw,S.Rotations[Agent.Slot].Yaw));if(OKGetCrowdRuntimeCharacterStatus(this,Agent.Slot,Submitted)&&Submitted.Transform.Rotator().Equals(S.RenderedRotations[Agent.Slot],.01f)&&Turn<=OKStreetFemaleTurnDegreesPerSecond*FMath::Max(0.f,Dt)+.001f&&AfterError<=BeforeError+.001f){S.FacingActorsChecked.Add(Agent.Slot);++S.FacingChecks;}else S.Errors.Add(TEXT("NPC submitted facing exceeded turn limit or turned away from movement"));}
 
  }
@@ -4134,7 +4309,13 @@ void AOKStreetSocialScene::Tick(float Dt){
   if((S.Pair.Conversation()||S.Pair.Splash)&&S.Pair.Phase==1){FVector A,B;if((OKGetCrowdRuntimeBonePosition(this,0,TEXT("cm_j_head"),A)||OKGetCrowdRuntimeBonePosition(this,0,TEXT("cf_j_head"),A))&&OKGetCrowdRuntimeBonePosition(this,S.Pair.Partner,TEXT("cf_j_head"),B)&&!A.ContainsNaN()&&!B.ContainsNaN()){Focus=(A+B)*.5f-FVector(0,0,25);Pivot=Focus;}}
   if(S.Pair.Watermelon&&S.Pair.Phase==1){Focus=(S.Male+S.Agents[S.Pair.Partner-1].Position)*.5f+FVector(0,35,80);Pivot=Focus;}
   GalgameWalkFocus(Focus,Pivot); // walking and talking: between him and her (OKStreetSocialGalgame.inl)
-  const FRotator View(S.Pitch,S.Yaw,0);const FVector Wanted=Pivot-View.Vector()*S.Distance+(S.Target!=INDEX_NONE?FRotationMatrix(View).GetUnitAxis(EAxis::Y)*(S.Pair.Conversation()?-120.f:110.f):FVector::ZeroVector);FHitResult Hit;FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetCamera),false,this);const bool Blocked=GetWorld()->SweepSingleByChannel(Hit,Pivot,Wanted,FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeSphere(8),Query);S.Camera->SetActorLocation(Blocked?Hit.Location:Wanted);S.Camera->SetActorRotation((Focus-S.Camera->GetActorLocation()).Rotation());
+  const FRotator View(S.Pitch,S.Yaw,0);const FVector Wanted=Pivot-View.Vector()*S.Distance+(S.Target!=INDEX_NONE?FRotationMatrix(View).GetUnitAxis(EAxis::Y)*(S.Pair.Conversation()?-120.f:110.f):FVector::ZeroVector);FHitResult Hit;FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetCamera),false,this);const bool Blocked=GetWorld()->SweepSingleByChannel(Hit,Pivot,Wanted,FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeSphere(8),Query);FVector Shot=Blocked?Hit.Location:Wanted;
+  // The city's street is full of posts, fences and trees, and its ground has kerbs: a lens that jumps to whatever it touches shook
+  // him all the way down the road. It closes in fast and backs out slowly, and his height is followed, not copied.
+  if(OKStreetCityMode()&&S.Target==INDEX_NONE){static float Reach=-1.f,Height=0.f;const float Free=float(FVector::Dist(Pivot,Shot));const float RawZ=float(Pivot.Z);
+   if(Reach<0.f||FMath::Abs(RawZ-Height)>150.f){Reach=Free;Height=RawZ;}Reach=FMath::FInterpTo(Reach,Free,Dt,Free<Reach?14.f:3.f);Height=FMath::FInterpTo(Height,RawZ,Dt,8.f);
+   const FVector Lift(0,0,Height-RawZ);Shot=Pivot+Lift+(Wanted-Pivot).GetSafeNormal()*Reach;Focus+=Lift;}
+  S.Camera->SetActorLocation(Shot);S.Camera->SetActorRotation((Focus-S.Camera->GetActorLocation()).Rotation());
    // Right in front of the lens (in the lift she stood between the camera and him, under a metre from it: her back and
    // hair filled the view): she is left out of the view until the camera has room again; her portrait still shows her.
    // Not him (he is who is walked). Only for the street's own follow camera: the scene's shots hide what is in their way
@@ -4151,6 +4332,7 @@ void AOKStreetSocialScene::Tick(float Dt){
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickGalgame);TickGalgame(Dt);} // conversations as galgame scenes: dialog box, portrait, a shot per line (OKStreetSocialGalgame.inl)
  if(GControlCamera.Active&&S.Camera.IsValid())OKApplyControlCamera(this,S.Camera.Get()); // the control channel's pinned camera wins over the scene's shot (a look at a seated group mid-talk)
  if(S.InspectSlot!=INDEX_NONE)TickInspect(Dt,PC,Focused); // the inspection room's camera wins over everything
+ if(OKStreetCityMode()&&S.Camera.IsValid()){int32 ViewWidth=0,ViewHeight=0;PC->GetViewportSize(ViewWidth,ViewHeight);OKStreetCityMirrorFace(this,S.Manifest.Characters.Num(),S.Camera->GetActorLocation(),S.Camera->GetCameraComponent()->FieldOfView,ViewWidth,OKStreetClockHours(S.ClockStartHours,FPlatformTime::Seconds()-S.ClockStartWall));}
  const bool AppEscape=Focused&&!S.App.IsEmpty()&&OKKeyPressed(PC,EKeys::Escape);if(AppEscape)CloseApp();
  if(Focused&&S.App.IsEmpty()&&OKKeyPressed(PC,EKeys::M)&&S.PrivateGirl==INDEX_NONE)ToggleBigMap();
  // Esc with her answer still on screen closes the talk, not the walk: 安可 agreed to the café, Esc to close the box

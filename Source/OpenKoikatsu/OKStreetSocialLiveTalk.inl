@@ -186,7 +186,10 @@ void AOKStreetSocialScene::TickFreeTalkLive(double Now){
   L->FreeTalkLiveSpeaking=Speaking;
   // The server's mute must follow ours (it outlives the game; a lost request would leave it stuck).
   bool ServerMuted=false,ServerDucked=false;Root->TryGetBoolField(TEXT("muted"),ServerMuted);Root->TryGetBoolField(TEXT("ducked"),ServerDucked);
-  if(L->FreeTalkLive&&L->FreeTalkLiveReady&&(ServerMuted!=L->FreeTalkLiveHisMute||(!ServerMuted&&ServerDucked!=L->FreeTalkLiveMuted))){
+  // Every two seconds at most: with a second game on the same ok-asr port the two overwrite each other for as long as both
+  // talk, and this went into the log four times a second (139 lines in six minutes).
+  if(L->FreeTalkLive&&L->FreeTalkLiveReady&&FPlatformTime::Seconds()>=L->FreeTalkLiveResyncAt&&(ServerMuted!=L->FreeTalkLiveHisMute||(!ServerMuted&&ServerDucked!=L->FreeTalkLiveMuted))){
+   L->FreeTalkLiveResyncAt=FPlatformTime::Seconds()+2.0;
    UE_LOG(LogTemp,Display,TEXT("Free talk live: server mute %d duck %d differs from game %d, resyncing"),ServerMuted?1:0,ServerDucked?1:0,L->FreeTalkLiveMuted?1:0);
    OKStreetFreeTalkAsrPost(TEXT("listen/mute"),L->FreeTalkLiveHisMute?TEXT("{\"mute\":true,\"duck\":false}"):L->FreeTalkLiveMuted?TEXT("{\"mute\":false,\"duck\":true}"):TEXT("{\"mute\":false,\"duck\":false}"),nullptr);
   }

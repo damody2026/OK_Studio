@@ -1,5 +1,8 @@
 #include "OKSceneActor.h"
+#include "ProceduralMeshComponent.h"
+#include "Async/Async.h"
 #include "Async/ParallelFor.h"
+#include <atomic>
 #include "Tasks/Task.h"
 #include "HAL/IConsoleManager.h"
 #include "OKStudioImport.h"
@@ -37,6 +40,7 @@
 #include "OKAnimationAssets.h"
 #include "KKOkAnimation.h"
 #include "OKStudioCatalog.h"
+#include "OKStudioCharacterStyle.h"
 #include "OKStudioSky.h"
 #include "OKHGShading.h"
 #include "KKRuntimeDisplayProfile.h"
@@ -151,6 +155,34 @@ namespace
 		FJsonSerializer::Serialize(Node(0, 0).ToSharedRef(), TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Spec));
 		TSharedPtr<FOkAnimPlayer> Player = MakeShared<FOkAnimPlayer>();
 		if (!Player->Create(Spec, Blobs)) { OutError = FOkAnimBridge::LastError(); return nullptr; }
+		UOKAnimationAsset::ApplyFamilyAliases(*Player);
+		return Player;
+	}
+
+	/** The motion To entered from the fade's old one, by the player's cross-fade (U236). Null when the old one cannot be
+	 *  read or is more than one clip (the change is then a cut). */
+	TSharedPtr<FOkAnimPlayer> StudioFadePlayer(const FOKSceneMotionFade& Fade, const UOKAnimSequence& To)
+	{
+		const FOKStudioAnim* Entry = FOKStudioCatalog::Get().FindAnim(Fade.Kind, Fade.Group, Fade.Category, Fade.No);
+		FString Error;
+		const UOKAnimSequence* From = Entry && !Entry->File.IsEmpty() ? UOKAnimationLibrary::LoadOkAnimFile(AOKSceneActor::LibraryDirectory() / Entry->File, nullptr, NAME_None, Error) : nullptr;
+		TArray<TArray<uint8>> Blobs, ToBlobs;
+		FString FromSpec, ToSpec;
+		if (!From || !From->BuildSpec(FromSpec, Blobs, Error) || !To.BuildSpec(ToSpec, ToBlobs, Error) || Blobs.Num() != 1 || ToBlobs.Num() != 1) return nullptr;
+		TSharedPtr<FJsonObject> FromNode, ToNode;
+		if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(FromSpec), FromNode) || !FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(ToSpec), ToNode)) return nullptr;
+		ToNode->SetNumberField(TEXT("anim"), 1);
+		Blobs.Add(MoveTemp(ToBlobs[0]));
+		TSharedRef<FJsonObject> J = MakeShared<FJsonObject>();
+		J->SetStringField(TEXT("type"), TEXT("crossfade"));
+		J->SetObjectField(TEXT("from"), FromNode);
+		J->SetObjectField(TEXT("to"), ToNode);
+		J->SetNumberField(TEXT("from_time"), Fade.FromTime);
+		J->SetNumberField(TEXT("duration"), Fade.Duration);
+		FString Spec;
+		FJsonSerializer::Serialize(J, TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Spec));
+		TSharedPtr<FOkAnimPlayer> Player = MakeShared<FOkAnimPlayer>();
+		if (!Player->Create(Spec, Blobs)) { UE_LOG(LogTemp, Warning, TEXT("OK studio: motion fade not built: %s"), *FOkAnimBridge::LastError()); return nullptr; }
 		UOKAnimationAsset::ApplyFamilyAliases(*Player);
 		return Player;
 	}
@@ -343,7 +375,7 @@ namespace
 	}
 
 	AKKPreviewActor* SpawnPreview(UWorld* World, FOkSession&& Session, FString& OutError, const TArray<FLinearColor>& ItemColors = {}, const TArray<FOKMaterialOverride>& Overrides = {},
-		const FOKSceneItem* Item = nullptr, bool bMap = false, const TMap<FName, FLinearColor>& ShaderGlobals = {}, int32 Ramp = -1)
+		const FOKSceneItem* Item = nullptr, bool bMap = false, const TMap<FName, FLinearColor>& ShaderGlobals = {}, int32 Ramp = -1, bool bProgressive = false)
 	{
 		FActorSpawnParameters Params;
 		Params.ObjectFlags = RF_Transient;
@@ -395,13 +427,168 @@ namespace
 		}
 		// Before the session loads: the materials are made with these parameters (AKKPreviewActor::MaterialOverrides).
 		Actor->MaterialOverrides = Overrides;
-		if (!Actor->LoadSession(OutError)) { Actor->Destroy(); return nullptr; }
+		if (!(bProgressive ? Actor->BeginSessionLoad(OutError) : Actor->LoadSession(OutError))) { Actor->Destroy(); return nullptr; }
 		// The preview actor's own studio camera is not part of the scene.
 		TArray<UCameraComponent*> Cameras;
 		Actor->GetComponents(Cameras);
 		for (UCameraComponent* Cam : Cameras) Cam->DestroyComponent();
 		return Actor;
 	}
+}
+
+struct AOKSceneActor::FPreparedCharacter
+{
+	/** What it was opened for: a character changed meanwhile starts over. */
+	FString Key;
+	FOkSession Session;
+	FString Error;
+	bool bOpened = false;
+	std::atomic<bool> bDone{ false };
+	TFuture<void> Opening;
+	TWeakObjectPtr<AKKPreviewActor> Actor;
+};
+
+namespace
+{
+	FString PrepareKey(const FOKSceneCharacter& C)
+	{
+		return FString::Printf(TEXT("%s|%d|%s|%s"), *C.Card, C.Outfit, *BytesToHex(C.ClothesStates.GetData(), C.ClothesStates.Num()), *StatusJson(C));
+	}
+}
+
+struct AOKSceneActor::FPreparedMap
+{
+	struct FRoot
+	{
+		FString Root, Error;
+		FOkSession Session;
+		bool bOpened = false;
+		TWeakObjectPtr<AKKPreviewActor> Actor;
+	};
+	int32 No = -1;
+	TArray<FRoot> Roots;
+	/** The roots opened so far, in order: the frame builds one while the thread opens the next. */
+	std::atomic<int32> Opened{ 0 };
+	std::atomic<bool> bStop{ false };
+	std::atomic<bool> bDone{ false };
+	TFuture<void> Opening;
+	int32 Next = 0;
+};
+
+int32 AOKSceneActor::PreparingMap() const { return PreparedMap ? PreparedMap->No : -1; }
+
+void AOKSceneActor::PrepareMap(int32 No)
+{
+	if (PreparingMap() == No) return;
+	StopMapPrepare();
+	const FOKStudioCatalogMap* Entry = FOKStudioCatalog::Get().FindMap(No);
+	if (!Entry) return;
+	TSharedPtr<FPreparedMap> M = MakeShared<FPreparedMap>();
+	M->No = No;
+	for (const FString& Root : Entry->Roots) M->Roots.AddDefaulted_GetRef().Root = Root;
+	M->Opening = AsyncThread([M, Library = LibraryDirectory(), Model = Entry->Model]
+	{
+		for (int32 I = 0; I < M->Roots.Num() && !M->bStop; ++I)
+		{
+			FPreparedMap::FRoot& R = M->Roots[I];
+			R.bOpened = R.Session.OpenOkModel(Library, Model, R.Root, false, R.Error);
+			M->Opened = I + 1;
+		}
+		M->bDone = true;
+	}, 16 * 1024 * 1024);
+	PreparedMap = M;
+}
+
+void AOKSceneActor::StopMapPrepare()
+{
+	if (!PreparedMap) return;
+	PreparedMap->bStop = true;
+	for (FPreparedMap::FRoot& R : PreparedMap->Roots) if (R.Actor.IsValid()) R.Actor->Destroy();
+	if (!PreparedMap->bDone) DroppedMaps.Add(PreparedMap);
+	PreparedMap.Reset();
+}
+
+bool AOKSceneActor::ContinueMapPrepare()
+{
+	DroppedMaps.RemoveAll([](const TSharedPtr<FPreparedMap>& M) { return M->bDone.load(); });
+	if (!PreparedMap) return false;
+	FPreparedMap& M = *PreparedMap;
+	const double Start = FPlatformTime::Seconds();
+	while (M.Next < M.Opened.load())
+	{
+		FPreparedMap::FRoot& R = M.Roots[M.Next];
+		FString Error;
+		if (R.bOpened && !R.Actor.IsValid())
+		{
+			AKKPreviewActor* Spawned = SpawnPreview(GetWorld(), MoveTemp(R.Session), Error, {}, {}, nullptr, true, {}, -1, true);
+			R.bOpened = Spawned != nullptr;
+			if (Spawned) { Spawned->SetActorHiddenInGame(true); R.Actor = Spawned; }
+		}
+		// A root that did not open or start: SyncMap tries it by itself and says why.
+		AKKPreviewActor* Actor = R.Actor.Get();
+		while (Actor && !Actor->IsSessionLoadComplete())
+		{
+			if (FPlatformTime::Seconds() - Start >= .03) return false;
+			if (!Actor->ContinueSessionLoad(Error)) { Actor->Destroy(); R.Actor = nullptr; Actor = nullptr; R.bOpened = false; }
+		}
+		++M.Next;
+		if (FPlatformTime::Seconds() - Start >= .03) break;
+	}
+	return M.bDone && M.Next == M.Roots.Num();
+}
+
+void AOKSceneActor::StartCharacterOpen(const FOKSceneObject& Object)
+{
+	const FOKSceneCharacter& C = Object.Character;
+	TSharedPtr<FPreparedCharacter> P = MakeShared<FPreparedCharacter>();
+	P->Key = PrepareKey(C);
+	TArray<uint8> States = C.ClothesStates;
+	States.SetNumZeroed(9);
+	P->Opening = AsyncThread([P, Card = CardPath(C.Card), Outfit = C.Outfit, States = MoveTemp(States), Status = StatusJson(C)]
+	{
+		P->bOpened = P->Session.Open(FString(), Card, Outfit, P->Error, States.GetData(), Status);
+		// The material bytes as well, as the one-to-one scene does: on the game thread this was the 1 to 6 s frame left.
+		FString MaterialError;
+		if (P->bOpened && !P->Session.PrepareRuntimeMaterials(MaterialError, true)) UE_LOG(LogTemp, Warning, TEXT("OK studio: materials not prepared: %s"), *MaterialError);
+		P->bDone = true;
+	}, 16 * 1024 * 1024);
+	Prepared.Add(Object.Id, P);
+}
+
+void AOKSceneActor::DropPrepared(int32 Id)
+{
+	TSharedPtr<FPreparedCharacter> P;
+	if (!Prepared.RemoveAndCopyValue(Id, P)) return;
+	if (P->Opening.IsValid()) P->Opening.Wait();
+	if (AKKPreviewActor* Actor = P->Actor.Get()) Actor->Destroy();
+}
+
+bool AOKSceneActor::PrepareCharacter(const FOKSceneObject& Object)
+{
+	TSharedPtr<FPreparedCharacter> P = Prepared.FindRef(Object.Id);
+	if (P && P->Key != PrepareKey(Object.Character)) { DropPrepared(Object.Id); P.Reset(); }
+	if (!P)
+	{
+		// One at a time on the worker; the one waiting for it comes next.
+		for (const auto& Pair : Prepared) if (!Pair.Value->bDone) return false;
+		StartCharacterOpen(Object);
+		return false;
+	}
+	if (!P->bDone) return false;
+	FString Error;
+	AKKPreviewActor* Actor = P->Actor.Get();
+	if (P->bOpened && !Actor)
+	{
+		Actor = SpawnPreview(GetWorld(), MoveTemp(P->Session), Error, {}, {}, nullptr, false,
+			Document ? Document->Post.ShaderGlobals() : TMap<FName, FLinearColor>(), Document ? Document->Post.RampG : -1, true);
+		if (Actor) { Actor->SetActorHiddenInGame(true); P->Actor = Actor; }
+	}
+	// It did not open or start: Build tries by itself and says why.
+	if (!Actor) { DropPrepared(Object.Id); return true; }
+	const double Start = FPlatformTime::Seconds();
+	while (!Actor->IsSessionLoadComplete() && FPlatformTime::Seconds() - Start < .03)
+		if (!Actor->ContinueSessionLoad(Error)) { DropPrepared(Object.Id); return true; }
+	return Actor->IsSessionLoadComplete();
 }
 
 bool AOKSceneActor::ItemModel(const FOKSceneItem& Item, FString& OutModel, FString& OutPrefab, FString& OutError)
@@ -436,14 +623,28 @@ bool AOKSceneActor::Build(const FOKSceneObject& Object, FShown& Out, FString& Ou
 	case EOKSceneObjectKind::Character:
 	{
 		if (Object.Character.Card.IsEmpty()) { OutError = TEXT("no card"); return false; }
-		TArray<uint8> States = Object.Character.ClothesStates;
-		States.SetNumZeroed(9);
-		FOkSession Session;
-		// An OK card opens from the OK base library and its pack; an original KKS card from the library plus its zipmods.
-		if (!Session.Open(FString(), CardPath(Object.Character.Card), Object.Character.Outfit, OutError, States.GetData(), StatusJson(Object.Character))) return false;
-		AKKPreviewActor* Actor = SpawnPreview(World, MoveTemp(Session), OutError, {}, {}, nullptr, false,
-			Document ? Document->Post.ShaderGlobals() : TMap<FName, FLinearColor>(), Document ? Document->Post.RampG : -1);
-		if (!Actor) return false;
+		AKKPreviewActor* Actor = nullptr;
+		const TSharedPtr<FPreparedCharacter> Ready = Prepared.FindRef(Object.Id);
+		if (Ready && Ready->Actor.IsValid() && Ready->Actor->IsSessionLoadComplete() && Ready->Key == PrepareKey(Object.Character))
+		{
+			Actor = Ready->Actor.Get();
+			Actor->SetActorHiddenInGame(false);
+			Prepared.Remove(Object.Id);
+		}
+		else
+		{
+			DropPrepared(Object.Id);
+			TArray<uint8> States = Object.Character.ClothesStates;
+			States.SetNumZeroed(9);
+			FOkSession Session;
+			// An OK card opens from the OK base library and its pack; an original KKS card from the library plus its zipmods.
+			const double OpenStart = FPlatformTime::Seconds();
+			if (!Session.Open(FString(), CardPath(Object.Character.Card), Object.Character.Outfit, OutError, States.GetData(), StatusJson(Object.Character))) return false;
+			UE_LOG(LogTemp, Display, TEXT("OK studio: %s session opened in %.2f s"), *Object.Name, FPlatformTime::Seconds() - OpenStart);
+			Actor = SpawnPreview(World, MoveTemp(Session), OutError, {}, {}, nullptr, false,
+				Document ? Document->Post.ShaderGlobals() : TMap<FName, FLinearColor>(), Document ? Document->Post.RampG : -1);
+			if (!Actor) return false;
+		}
 		Out.Preview = Actor;
 		// Private-rig parts (hair, skirts, accessories) skinned on the GPU as in the one-to-one interaction scene: their
 		// streams cost the game thread a third of the CPU path (OK_STUDIO_GPU_PLAYBACK=0 keeps the CPU path).
@@ -843,6 +1044,20 @@ void AOKSceneActor::ApplyCharacterState(const FOKSceneObject& Object, FShown& It
 	{
 		Actor->SetBlush(C.Blush);
 	}
+	// The style is the card's sliders moved: the shown character takes them on its next pose, as the maker's sliders.
+	if (!FMath::IsNearlyEqual(C.Style, Item.AppliedStyle, 1.e-3f) || !FMath::IsNearlyEqual(C.ShownFaceStyle(), Item.AppliedFaceStyle, 1.e-3f) || Item.AppliedStyleTuning != OKStudioStyleTuning().Revision)
+	{
+		TArray<float> Body = Actor->ShapeBody, Face = Actor->ShapeFace;
+		OKStudioStyleSliders(C.Style, C.ShownFaceStyle(), Body, Face);
+		const float Scale = OKStudioStyleScale(C.Style, Actor->ShapeBody, Body);
+		Actor->Session.SetStyleBones(OKStudioStyleBones(C.Style, Scale));
+		Item.RenderCorrection.SetScale3D(FVector(Scale));
+		Item.RenderCorrection.SetTranslation(FVector(0.f, 0.f, OKStudioStyleLift(C.Style, Scale, Actor->ShapeBody.IsValidIndex(0) ? Actor->ShapeBody[0] : 0.5f)));
+		Actor->MarkShapeDirty(Face, Body);
+		Item.AppliedStyle = C.Style;
+		Item.AppliedFaceStyle = C.ShownFaceStyle();
+		Item.AppliedStyleTuning = OKStudioStyleTuning().Revision;
+	}
 	if (bHasAnimFace) { if (Actor->bAutomaticBlink) Actor->SetAutomaticBlink(false); } else if (C.Blink >= 0 && Actor->bAutomaticBlink != (C.Blink == 1)) Actor->SetAutomaticBlink(C.Blink == 1);
 	// Studio controls of a blended H motion (option 1 height, option 2 breast, pattern): the scene's value, else the
 	// controller's own.
@@ -988,7 +1203,9 @@ void AOKSceneActor::Sync()
 	// Objects are built a batch per frame: a scene of thousands built in one frame never lets the renderer upload and
 	// free what it queued (memory ran past 28 GB). The rest waits for the next Tick (bBuildsPending).
 	int32 Built = 0;
+	bool bPrepareBusy = false;
 	bBuildsPending = false;
+	BuildsLeft = 0;
 	TSet<int32> Present;
 	for (const FOKSceneObject& Object : Document->Objects)
 	{
@@ -997,29 +1214,49 @@ void AOKSceneActor::Sync()
 		// Content changes rebuild the object; transform and visibility only move it.
 		// An eyes pattern is set on the live face, unless its eye set changes parts (gag eyes): then it is built in.
 		auto PartsEyes = [](int32 Ptn) { return Ptn >= 0 && FOKStudioCatalog::Get().EyeSet(Ptn).bChangesParts ? Ptn : -1; };
+		if (Item) SwapKeyedMotion(Object, *Item);
 		const bool bSame = Item && Item->Kind == Object.Kind && Item->Character.SameContent(Object.Character) && Item->Item.SameContent(Object.Item) && Item->Light == Object.Light
 			&& (Object.Kind != EOKSceneObjectKind::Effect || Item->Effect == Object.Effect.Effect)
 			&& (Object.Kind != EOKSceneObjectKind::Character || PartsEyes(Item->Character.EyesPattern) == PartsEyes(Object.Character.EyesPattern));
+		// A scene opening: the character is got ready over the frames, Build only finishes it. The next one opens meanwhile.
+		if (!bSame && bProgressiveBuild && Object.Kind == EOKSceneObjectKind::Character)
+		{
+			if (bPrepareBusy)
+			{
+				bool bOpening = Prepared.Contains(Object.Id) || Prepared.Num() >= 2;
+				for (const auto& Pair : Prepared) bOpening = bOpening || !Pair.Value->bDone;
+				if (!bOpening) StartCharacterOpen(Object);
+			}
+			else if (!PrepareCharacter(Object))
+			{
+				bPrepareBusy = true;
+				Built = FMath::Max(Built, BuildsPerFrame);
+			}
+		}
 		if (!bSame && Built >= BuildsPerFrame)
 		{
 			// Over this frame's budget: an object already shown keeps its old look until its turn, a new one waits.
 			bBuildsPending = true;
+			++BuildsLeft;
 			if (!Item) continue;
 		}
 		else if (!bSame)
 		{
-			++Built;
+			// A character takes seconds: one a frame, so the status line can say how far the scene is (U251).
+			Built += Object.Kind == EOKSceneObjectKind::Character ? BuildsPerFrame : 1;
 			if (Item) Release(*Item);
 			FShown Fresh;
 			FString Error;
 			Errors.Remove(Object.Id);
 			UE_LOG(LogTemp, Display, TEXT("OK studio: building %s (%d)"), *Object.Name, Object.Id);
 			LastBuildFrame = GFrameCounter;
+			const double BuildStart = FPlatformTime::Seconds();
 			if (!Build(Object, Fresh, Error))
 			{
 				Errors.Add(Object.Id, Error);
 				UE_LOG(LogTemp, Warning, TEXT("OK studio: %s (%d) not shown: %s"), *Object.Name, Object.Id, *Error);
 			}
+			UE_LOG(LogTemp, Display, TEXT("OK studio: %s (%d) built in %.2f s"), *Object.Name, Object.Id, FPlatformTime::Seconds() - BuildStart);
 			Item = &Shown.Add(Object.Id, Fresh);
 			if (Object.Kind == EOKSceneObjectKind::Character) { ApplyCharacterState(Object, *Item); SetAnimationTime(Object.Id, 0.f); }
 		}
@@ -1109,6 +1346,11 @@ void AOKSceneActor::Sync()
 	{
 		if (!Present.Contains(It.Key())) { Release(It.Value()); Errors.Remove(It.Key()); It.RemoveCurrent(); }
 	}
+	TArray<int32> PreparedIds;
+	Prepared.GetKeys(PreparedIds);
+	for (int32 Id : PreparedIds) if (!bBuildsPending || !Present.Contains(Id)) DropPrepared(Id);
+	bBuildsPending |= bMapPending;
+	if (!bBuildsPending) bProgressiveBuild = false;
 	WireRenderTextures();
 	// A destroyed preview's meshes, textures and materials are freed by garbage collection, which the engine runs only
 	// now and then: after another scene is loaded (or many objects go) collect now, or scenes opened one after another
@@ -1131,9 +1373,21 @@ void AOKSceneActor::SyncMap()
 		ApplyMapTime(MapPlace);
 		return;
 	}
+	// A scene opens over many frames, its map with it: the biggest held one frame 28 s (U259).
+	bMapPending = false;
+	if (bProgressiveBuild && Document->Map >= 0)
+	{
+		if (PreparingMap() != Document->Map) PrepareMap(Document->Map);
+		if (PreparingMap() == Document->Map && !ContinueMapPrepare()) { bMapPending = true; return; }
+	}
+	// Built ahead for this map, or for one nobody wants any more.
+	TSharedPtr<FPreparedMap> Ready;
+	if (PreparedMap && PreparedMap->No == Document->Map && PreparedMap->bDone && PreparedMap->Next == PreparedMap->Roots.Num()) Ready = MoveTemp(PreparedMap);
+	else StopMapPrepare();
 	ShownMapTime = -2;
 	for (const TPair<TWeakObjectPtr<ULightComponent>, uint32>& L : MapLights) if (L.Key.IsValid()) L.Key->DestroyComponent();
 	MapLights.Reset();
+	MapWaterLights.Reset();
 	for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews) if (P.IsValid()) { P->Destroy(); ReleasedSinceCollect += 32; }
 	ShownMapPreviews.Reset();
 	ShownMap = Document->Map;
@@ -1144,11 +1398,21 @@ void AOKSceneActor::SyncMap()
 	UE_LOG(LogTemp, Display, TEXT("OK studio: building map %s (%d) at %s"), *Entry->Name, ShownMap, *Document->MapTransform.ToString());
 	// A scene map shows each scene root that has meshes (controllers without renderers are skipped).
 	TArray<FString> Failed;
+	double OpenSeconds = 0, SpawnSeconds = 0;
+	const double MapStart = FPlatformTime::Seconds();
 	for (const FString& Root : Entry->Roots)
 	{
 		FOkSession Session;
 		FString Error;
-		AKKPreviewActor* Actor = Session.OpenOkModel(LibraryDirectory(), Entry->Model, Root, false, Error) ? SpawnPreview(GetWorld(), MoveTemp(Session), Error, {}, {}, nullptr, true) : nullptr;
+		const double RootStart = FPlatformTime::Seconds();
+		const FPreparedMap::FRoot* Built = Ready ? Ready->Roots.FindByPredicate([&](const FPreparedMap::FRoot& R) { return R.Root == Root && R.Actor.IsValid(); }) : nullptr;
+		AKKPreviewActor* Actor = Built ? Built->Actor.Get() : nullptr;
+		if (Actor) Actor->SetActorHiddenInGame(false);
+		const bool bOpened = Actor || Session.OpenOkModel(LibraryDirectory(), Entry->Model, Root, false, Error);
+		const double Opened = FPlatformTime::Seconds();
+		OpenSeconds += Opened - RootStart;
+		if (!Actor && bOpened) Actor = SpawnPreview(GetWorld(), MoveTemp(Session), Error, {}, {}, nullptr, true);
+		SpawnSeconds += FPlatformTime::Seconds() - Opened;
 		if (!Actor) { Failed.Add(Root + TEXT(": ") + Error); continue; }
 		Actor->SetActorTransform(MapPlace);
         Actor->Tags.Add(FName(*(TEXT("OKStudioMapRoot=")+Root)));
@@ -1165,12 +1429,34 @@ void AOKSceneActor::SyncMap()
 	}
 	if (ShownMapPreviews.IsEmpty()) MapError = FString::Join(Failed, TEXT("; "));
 	ApplyMapTime(MapPlace);
+	UE_LOG(LogTemp, Display, TEXT("OK studio: map %d built in %.2f s (%d roots, open %.2f, spawn %.2f)"), ShownMap, FPlatformTime::Seconds() - MapStart, Entry->Roots.Num(), OpenSeconds, SpawnSeconds);
 }
 
 // Preserve the source renderer shadow policy, including invisible room occluders,
 // before applying the authored sun. Fully baked lights do not add a dynamic term.
 static TAutoConsoleVariable<int32> CVarOkStudioMapSun(TEXT("ok.Studio.MapSun"), 1,
 	TEXT("1: light a Studio map with its own sun (SunLightInfo._targetLight at the scene's time of day, casting shadows); 0: maps show only their lightmaps and emission."));
+
+/** The map sun's Light.shadowStrength, where it is not 1: what is left of the sun in its shadows. The library does not record
+ *  it (its records are binary, a new field means converting every map again); read from the game with
+ *  `run_map_tour.lua --lights-only` over every map (U269). */
+static float OKStudioMapSunShadow(int32 Map)
+{
+	switch (Map)
+	{
+	case 5: return .85f;
+	case 11: return .897f;
+	case 16: return .116f;
+	case 40: return .5f;
+	case 50: case 51: case 52: case 54: case 57: return .807f;
+	case 53: return .9f;
+	case 55: return .85f;
+	case 56: return .857f;
+	case 58: return .87f;
+	case 73: return .439f;
+	default: return 1.f;
+	}
+}
 
 void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
 {
@@ -1251,6 +1537,7 @@ void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
     const float Energy=FMath::Max3(Irradiance.R,Irradiance.G,Irradiance.B);
     MapSun->SetLightColor(Energy>0 ? FLinearColor(Irradiance.R/Energy,Irradiance.G/Energy,Irradiance.B/Energy,1) : FLinearColor::Black);
     MapSun->SetIntensity(Energy*UE_PI);
+    MapSun->SetShadowAmount(OKStudioMapSunShadow(Document->Map));
 	// The items' forward light when it reaches their layer (UpdateItemLighting): Unity (-x, z, y) towards the light.
 	FLinearColor Lo, Hi, Low24;
 	if (Map->Session.MaterialValue(0, "_OKSunCullingLo", Lo) && Map->Session.MaterialValue(0, "_OKSunCullingHi", Hi))
@@ -1262,7 +1549,14 @@ void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
 	MapSunItemColor = FLinearColor(Irradiance.R, Irradiance.G, Irradiance.B, 1.f);
 	// The map's water (StylizedWater, the lighthouse's Lux Water sea) is lit by the map's sun as Unity's ForwardBase
 	// gives it: _LightColor0 the sun's colour times intensity, from the sun's direction (U166: the sea kept the same
-	// colour at every time).
+	// colour at every time). Lux Water also takes the time's ambient (U169).
+	FLinearColor Ambient;
+	const bool bAmbient = OKStudioMapTimeAmbient(Document->Map, Time, Ambient);
+	int32 SkyPattern = -1;
+	const FLinearColor SkyLight = OKStudioMapSky(Document->Map, Time, SkyPattern) ? OKStudioSkyLight(SkyPattern) : FLinearColor::Black;
+	FLinearColor WaterLight = FLinearColor::Black;
+	for (const TPair<FLinearColor, uint32>& L : MapWaterLights)
+		if (L.Value == 0 || (Time >= 0 && ((L.Value >> Time) & 1) != 0)) WaterLight += L.Key;
 	for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews)
 	{
 		if (!P.IsValid()) continue;
@@ -1276,6 +1570,9 @@ void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
 				{
 					Water->SetVectorParameterValue(TEXT("_LightColor0"), MapSunItemColor);
 					Water->SetVectorParameterValue(TEXT("_OKLightDir"), FLinearColor(MapSunItemDirection.R, MapSunItemDirection.G, MapSunItemDirection.B, 1.f));
+					if (bAmbient) Water->SetVectorParameterValue(TEXT("_OKAmbient"), Ambient);
+					Water->SetVectorParameterValue(TEXT("_OKWaterLight"), WaterLight);
+					Water->SetVectorParameterValue(TEXT("_OKSkyLight"), SkyLight);
 				}
 			}
 	}
@@ -1307,6 +1604,16 @@ void AOKSceneActor::AddMapLights(AKKPreviewActor* Map, const FString& Model, con
 		};
 		const TArray<float> P = Floats(TEXT("pos"), 3), R = Floats(TEXT("rot"), 4), C = Floats(TEXT("color"), 4);
 		const int32 Kind = L->GetIntegerField(TEXT("kind"));
+		bool bCookie = false;
+		L->TryGetBoolField(TEXT("cookie"), bCookie);
+		const FLinearColor Irradiance = OKStudioLinearLightColor(FLinearColor(C[0], C[1], C[2], 1), float(L->GetNumberField(TEXT("intensity"))));
+		// Lit from its height (Unity forward y, Unity's light shines along +Z), against the lighthouse's by day (0.6): the
+		// night's low light gave its sea too much blue, map 50's high one too little foam.
+		const float Height = FMath::Max(2.f * (R[3] * R[0] - R[1] * R[2]), 0.f) / .6f;
+		if (L->GetStringField(TEXT("name")).Contains(TEXT("_water"))) MapWaterLights.Emplace(Irradiance * Height, uint32(L->GetNumberField(TEXT("times"))));
+		// A directional light's cookie lights one tile of the map; there is no cookie here, and without it the whole map
+		// got the light (map 50's night ground, far over native's).
+		if (Kind == 1 && bCookie) continue;
 		const float Range = float(L->GetNumberField(TEXT("range"))) * 100.f;
 		ULightComponent* Light = nullptr;
 		if (Kind == 1) { UDirectionalLightComponent* Sun = NewObject<UDirectionalLightComponent>(Map); Sun->ForwardShadingPriority = DirectionalPriority++; Light = Sun; }
@@ -1331,7 +1638,6 @@ void AOKSceneActor::AddMapLights(AKKPreviewActor* Map, const FString& Model, con
 		const FQuat Node = FQuat(-R[0], R[2], R[1], R[3]).GetNormalized();
 		Light->SetRelativeLocation(FVector(-P[0], P[2], P[1]) * 100.0);
 		Light->SetRelativeRotation(Node * FRotationMatrix::MakeFromXZ(FVector(0, 1, 0), FVector(0, 0, 1)).ToQuat());
-		const FLinearColor Irradiance = OKStudioLinearLightColor(FLinearColor(C[0], C[1], C[2], 1), float(L->GetNumberField(TEXT("intensity"))));
 		const float Energy = FMath::Max3(Irradiance.R, Irradiance.G, Irradiance.B);
 		Light->SetLightColor(Energy > 0 ? FLinearColor(Irradiance.R / Energy, Irradiance.G / Energy, Irradiance.B / Energy, 1) : FLinearColor::Black);
 		Light->SetIntensity(Energy * UE_PI);
@@ -1471,7 +1777,56 @@ void AOKSceneActor::SetActiveVmdSource(int32 Id, const FString& VmdFile, const F
 	else ActiveVmdSources.Add(Id, FActiveVmdSource{ VmdFile, OkAnimRelPath });
 }
 
-bool AOKSceneActor::SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int32 Category, int32 No, FString& OutError)
+void AOKSceneActor::SwapKeyedMotion(const FOKSceneObject& Object, FShown& Item)
+{
+	if (Object.Kind != EOKSceneObjectKind::Character || Item.Kind != EOKSceneObjectKind::Character || Object.Character.StudioAnimeNo < 0) return;
+	const FOKSceneCharacter& C = Object.Character;
+	FOKSceneCharacter Was = Item.Character;
+	FOKSceneMotionFade Fade;
+	Document->MotionFadeAt(Object.Id, Document->ItemAnimationSeconds, Fade);
+	if (Was.StudioAnimeKind == C.StudioAnimeKind && Was.StudioAnimeGroup == C.StudioAnimeGroup && Was.StudioAnimeCategory == C.StudioAnimeCategory && Was.StudioAnimeNo == C.StudioAnimeNo && Item.Fade == Fade) return;
+	// Only the motion differs: the timeline changing it, on the live character. Rebuilding stopped the picture for a moment.
+	Was.StudioAnimeKind = C.StudioAnimeKind; Was.StudioAnimeGroup = C.StudioAnimeGroup; Was.StudioAnimeCategory = C.StudioAnimeCategory; Was.StudioAnimeNo = C.StudioAnimeNo;
+	if (!Was.SameContent(C)) return;
+	// An H motion with variants is blended at build.
+	const FOKStudioAnim* Entry = FOKStudioCatalog::Get().FindAnim(C.StudioAnimeKind, C.StudioAnimeGroup, C.StudioAnimeCategory, C.StudioAnimeNo);
+	if (!Entry || !Entry->Variants.IsEmpty()) return;
+	const float Time = C.Time, Speed = C.Speed;
+	FString Error;
+	if (!SetCharacterAnimation(Object.Id, C.StudioAnimeKind, C.StudioAnimeGroup, C.StudioAnimeCategory, C.StudioAnimeNo, Error, &Fade))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OK studio: keyed motion of %s rebuilt: %s"), *Object.Name, *Error);
+		return;
+	}
+	Item.Fade = Fade;
+	// It starts its motion at 0; the key said when.
+	if (FOKSceneObject* Doc = Document->Find(Object.Id)) { Doc->Character.Time = Time; Doc->Character.Speed = Speed; }
+	Item.Character.Time = Time;
+	SetAnimationTime(Object.Id, Document->ItemAnimationSeconds);
+}
+
+bool AOKSceneActor::SetCharacterAnimFile(int32 Id, const FString& File, FString& OutError)
+{
+	FShown* Item = Shown.Find(Id);
+	FOKSceneObject* Object = Document ? Document->Find(Id) : nullptr;
+	AKKPreviewActor* Actor = Item ? Item->Preview.Get() : nullptr;
+	if (!Object || !Actor || Item->Kind != EOKSceneObjectKind::Character) { OutError = TEXT("no shown character"); return false; }
+	UOKAnimSequence* Seq = UOKAnimationLibrary::LoadOkAnimFile(FPaths::IsRelative(File) ? FPaths::ProjectDir() / File : File, nullptr, NAME_None, OutError);
+	const TSharedPtr<FOkAnimPlayer> Player = Seq ? Seq->CreatePlayer(OutError) : nullptr;
+	if (!Player || !Actor->SetOkAnimation(Player, true)) { if (OutError.IsEmpty()) OutError = TEXT("animation not playable"); return false; }
+	Actor->PoseMode = 3;
+	Item->StudioAnim.Reset(Seq);
+	Item->Time = 0.f;
+	Item->Fade = FOKSceneMotionFade();
+	// Both copies agree, so the next Sync keeps the character as it is.
+	for (FOKSceneCharacter* C : { &Object->Character, &Item->Character })
+	{
+		C->StudioAnimeNo = -1; C->Animation.Reset(); C->AnimFile = File; C->Time = 0.f;
+	}
+	return true;
+}
+
+bool AOKSceneActor::SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int32 Category, int32 No, FString& OutError, const FOKSceneMotionFade* Fade)
 {
 	ActiveVmdSources.Remove(Id);
 	FShown* Item = Shown.Find(Id);
@@ -1481,7 +1836,8 @@ bool AOKSceneActor::SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int
 	const FOKStudioAnim* Entry = FOKStudioCatalog::Get().FindAnim(Kind, Group, Category, No);
 	if (!Entry || Entry->File.IsEmpty()) { OutError = FString::Printf(TEXT("studio animation %d/%d/%d/%d %s"), Kind, Group, Category, No, Entry ? TEXT("not converted") : TEXT("not in the library")); return false; }
 	UOKAnimSequence* Seq = UOKAnimationLibrary::LoadOkAnimFile(LibraryDirectory() / Entry->File, nullptr, NAME_None, OutError);
-	const TSharedPtr<FOkAnimPlayer> Player = Seq ? Seq->CreatePlayer(OutError) : nullptr;
+	TSharedPtr<FOkAnimPlayer> Player = Seq && Fade && Fade->Duration > 0.f ? StudioFadePlayer(*Fade, *Seq) : nullptr;
+	if (!Player && Seq) Player = Seq->CreatePlayer(OutError);
 	if (!Player || !Actor->SetOkAnimation(Player, true)) { if (OutError.IsEmpty()) OutError = TEXT("animation not playable"); return false; }
 	Actor->PoseMode = 3;
 	Item->StudioAnim.Reset(Seq);
@@ -1510,6 +1866,29 @@ FString AOKSceneActor::MapTimeNote() const
 	TArray<FString> Notes;
 	if (!MapTimes) Notes.Add(TEXT("地圖沒有時段資料"));
 	else if (!((MapTimes >> Want) & 1) && ShownMapTime >= 0 && ShownMapTime < 4) Notes.Add(FString::Printf(TEXT("地圖沒有「%s」，顯示「%s」"), Names[Want], Names[ShownMapTime]));
+	// A map may give every time the same sun and show the same parts (the park): the buttons then change nothing, as in the
+	// original. Said, or it reads as a broken button (U267).
+	bool bSameTimes = MapTimes != 0 && !bMapSunBaked;
+	AKKPreviewActor* Map = MapPreview();
+	FLinearColor FirstColor, FirstAngle;
+	bool bFirst = true;
+	for (int32 T = 0; T < 4 && bSameTimes; ++T)
+	{
+		if (!((MapTimes >> T) & 1)) continue;
+		FLinearColor Color, Angle;
+		const FTCHARToUTF8 ColorName(*FString::Printf(TEXT("_OKSun%dColor"), T)), AngleName(*FString::Printf(TEXT("_OKSun%dAngle"), T));
+		Map->Session.MaterialValue(0, ColorName.Get(), Color);
+		Map->Session.MaterialValue(0, AngleName.Get(), Angle);
+		if (bFirst) { FirstColor = Color; FirstAngle = Angle; bFirst = false; }
+		else bSameTimes = Color.Equals(FirstColor) && Angle.Equals(FirstAngle);
+	}
+	for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews)
+	{
+		if (!bSameTimes || !P.IsValid()) continue;
+		TInlineComponentArray<UPrimitiveComponent*> Primitives(P.Get());
+		for (const UPrimitiveComponent* C : Primitives) for (const FName& Tag : C->ComponentTags) if (Tag.ToString().StartsWith(TEXT("OKSunVisible"))) bSameTimes = false;
+	}
+	if (bSameTimes) Notes.Add(TEXT("這張地圖各時段的光與物件都相同，換時段畫面不變，和原作一樣；要變暗用畫面設定的色調"));
 	if (bMapSunBaked) Notes.Add(TEXT("光照烘焙在地圖貼圖裡，時段只換顯示的物件與天空"));
 	else if (MapSun)
 	{
@@ -1528,6 +1907,26 @@ void AOKSceneActor::MapPartBounds(TArray<FBox>& Out) const
 		for (const UPrimitiveComponent* C : Primitives)
 			if (C && C->IsRegistered() && C->IsVisible()) Out.Add(C->Bounds.GetBox());
 	}
+}
+
+void AOKSceneActor::ChairMesh(const FBox& Box, int32 Item, TArray<FVector>& Out) const
+{
+	const FBox Around = Box.ExpandBy(1.);
+	const auto Read = [&](const AKKPreviewActor* Preview)
+	{
+		TInlineComponentArray<UProceduralMeshComponent*> Meshes(Preview);
+		for (UProceduralMeshComponent* M : Meshes)
+		{
+			if (!M || !M->IsRegistered() || !M->IsVisible() || !Around.IsInside(M->Bounds.GetBox())) continue;
+			const FMatrix ToWorld = M->GetRenderMatrix();
+			for (int32 I = 0; I < M->GetNumSections(); ++I)
+				if (const FProcMeshSection* Section = M->GetProcMeshSection(I))
+					for (const uint32 Index : Section->ProcIndexBuffer)
+						if (Section->ProcVertexBuffer.IsValidIndex(Index)) Out.Add(ToWorld.TransformPosition(Section->ProcVertexBuffer[Index].Position));
+		}
+	};
+	if (Item >= 0) { if (const AKKPreviewActor* Preview = PreviewOf(Item)) Read(Preview); }
+	else for (const TWeakObjectPtr<AKKPreviewActor>& P : ShownMapPreviews) if (P.IsValid()) Read(P.Get());
 }
 
 AKKPreviewActor* AOKSceneActor::PreviewOf(int32 Id) const
@@ -1760,7 +2159,7 @@ void AOKSceneActor::UpdateItemLighting()
 	// The sky's ambient (Studio's ambient mode is Skybox: the sky controller updates the ambient probe) on the
 	// scene renderers' unity_SHA*. Without a map or sky, native Studio's
 	// empty environment is zero, rather than the Maker display environment.
-	if (SkyShown != AmbientSky || Document->Map != AmbientMap) { AmbientSky = SkyShown; AmbientMap = Document->Map; AmbientLit.Reset(); }
+	if (SkyShown != AmbientSky || Document->Map != AmbientMap || ShownMapTime != AmbientTime) { AmbientSky = SkyShown; AmbientMap = Document->Map; AmbientTime = ShownMapTime; AmbientLit.Reset(); }
 	FLinearColor SH[3];
 	TArray<FLinearColor> Higher = { FLinearColor(0,0,0,0), FLinearColor(0,0,0,0), FLinearColor(0,0,0,0), FLinearColor(0,0,0,1) };
 	// A loaded map's scene is the active one: its RenderSettings give the ambient. Only with ambient mode Skybox does the
@@ -1771,7 +2170,9 @@ void AOKSceneActor::UpdateItemLighting()
 	TArray<FLinearColor> MapHigher = Higher;
 	const bool bMapAmbient = Document->Map >= 0 && OKStudioMapAmbient(Document->Map, MapSH[0], MapSH[1], MapSH[2], &MapHigher, &MapMode);
 	const bool bSkyLit = AmbientSky >= 0 && !(bMapAmbient && (MapMode == 1 || MapMode == 3));
-	if (!bSkyLit && bMapAmbient) { for (int32 I = 0; I < 3; ++I) SH[I] = MapSH[I]; Higher = MapHigher; }
+	// A Trilight map's colours change with the time of day (SunLightInfo sets them; U176: one colour at every time).
+	if (bMapAmbient && MapMode == 1 && OKStudioMapTimeTrilight(Document->Map, ShownMapTime, SH[0], SH[1], SH[2])) {}
+	else if (!bSkyLit && bMapAmbient) { for (int32 I = 0; I < 3; ++I) SH[I] = MapSH[I]; Higher = MapHigher; }
 	else if (!(bSkyLit && OKStudioSkyAmbient(AmbientSky, SH[0], SH[1], SH[2]))
 		&& !OKStudioMapAmbient(Document->Map, SH[0], SH[1], SH[2], &Higher))
 	{
@@ -2525,6 +2926,17 @@ void AOKSceneActor::PlaceSky(const FTransform& View)
 	if (SkyDome.IsValid() && SkyShown >= 0) SkyDome->SetWorldLocation(View.GetLocation());
 }
 
+void AOKSceneActor::EndPlay(const EEndPlayReason::Type Reason)
+{
+	// Leaving while a scene opens: the card being opened on its thread must not outlive the world it was opened for.
+	for (const auto& Pair : Prepared) if (Pair.Value->Opening.IsValid()) Pair.Value->Opening.Wait();
+	Prepared.Reset();
+	StopMapPrepare();
+	for (const TSharedPtr<FPreparedMap>& M : DroppedMaps) if (M->Opening.IsValid()) M->Opening.Wait();
+	DroppedMaps.Reset();
+	Super::EndPlay(Reason);
+}
+
 void AOKSceneActor::BeginPlay()
 {
 	Super::BeginPlay();
@@ -2567,6 +2979,12 @@ void AOKSceneActor::ShowSequenceTime()
 
 void AOKSceneActor::ReleaseScene()
 {
+	TArray<int32> PreparedIds;
+	Prepared.GetKeys(PreparedIds);
+	for (int32 Id : PreparedIds) DropPrepared(Id);
+	StopMapPrepare();
+	bMapPending = false;
+	bProgressiveBuild = false;
 	bSkyDomesDirty = true;
 	for (auto& Pair : Shown) Release(Pair.Value);
 	Shown.Reset();

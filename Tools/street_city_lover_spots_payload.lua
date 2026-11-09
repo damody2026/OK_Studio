@@ -49,16 +49,165 @@ def _ls_fits(world,c,yaw,w,d,h,z,tol=8):
 def _ls_wall_behind(world,c,yaw,d,z):
  a=math.radians(yaw);back=unreal.Vector(-math.cos(a),-math.sin(a),0);p=unreal.Vector(c.x,c.y,z+100)
  return _ls_hit(world,p,p+back*(d/2+40)) is not None
-def _ls_search(world,hint,z,w,d,h,yaws,rmin=0,rmax=1200,avoid=[],wall=False,region=None,step=25,tol=8,follow=False):
+def _ls_note(text):
+ # progress file, written and closed at once: the editor log can lag behind a long Python call
+ with open(str(ROOT/'output/street-social-city-production/world-edge-v1/lover-progress.txt'),'a',encoding='utf8') as f:f.write(time.strftime('%H:%M:%S ')+text+'\n')
+_LS_FIT={}
+def _ls_fit_cells(actor,ax,ay):
+ # 20 cm cells under the fit pieces of one floor; rugs and bath mats lie flat and may be stood on
+ if actor in _LS_FIT:return _LS_FIT[actor]
+ import struct
+ raw=(ROOT/'output/street-social-city-production/office-fit-v1'/(actor+'.glb')).read_bytes();n=struct.unpack('<I',raw[12:16])[0];j=json.loads(raw[20:20+n]);b0=20+n+8;S=set()
+ def acc(i,c,fmt,sz):
+  a=j['accessors'][i];v=j['bufferViews'][a['bufferView']];o=b0+v.get('byteOffset',0)+a.get('byteOffset',0)
+  return struct.unpack('<%d%s'%(a['count']*c,fmt),raw[o:o+a['count']*c*sz])
+ for p in j['meshes'][0]['primitives']:
+  if j['materials'][p['material']]['name'].startswith(('rug','bathmat')):continue
+  v=acc(p['attributes']['POSITION'],3,'f',4);short=j['accessors'][p['indices']]['componentType']==5123;ix=acc(p['indices'],1,'H' if short else 'I',2 if short else 4)
+  for t in range(0,len(ix),3):
+   q=[(ax+v[i*3]*100,ay+v[i*3+2]*100,v[i*3+1]*100) for i in ix[t:t+3]]
+   if max(e[2] for e in q)<8 or min(e[2] for e in q)>200:continue
+   m=max(1,int(max(math.hypot(q[e][0]-q[f][0],q[e][1]-q[f][1]) for e,f in ((0,1),(1,2),(0,2)))/12))
+   for e in range(m+1):
+    for f in range(m+1-e):
+     u,s=e/m,f/m;S.add((int((q[0][0]*(1-u-s)+q[1][0]*u+q[2][0]*s)//20),int((q[0][1]*(1-u-s)+q[1][1]*u+q[2][1]*s)//20)))
+ _LS_FIT[actor]=S;return S
+_LS_WALK={}
+def _ls_walk_cells(actor,ax,ay):
+ # the way a person walks from each home's entry to its rooms: 20 cm cells that stay clear, so nothing stands in a corridor or a doorway
+ if actor in _LS_WALK:return _LS_WALK[actor]
+ import re
+ from collections import deque
+ B_=ROOT/'output/street-social-city-production'
+ sc=json.loads((B_/'home-fit-v1/fixture-scan-resi.json').read_text(encoding='utf8'));fl=int(actor[-2:]);bl=actor[5:7]
+ fl_={f['actor']:f for f in sc['floors']};s=fl_.get(actor) or fl_['City_%s_F02'%bl] if fl>1 else fl_['City_R1_F01'];dx=ax-s['anchor'][0];ox,oy=s['origin'][0],s['origin'][1]
+ ar_={q['id']:q for q in json.loads((B_/'places-v1/props.json').read_text(encoding='utf8'))['areas']}
+ an=json.loads((ROOT/'Content/IndependentResources/StreetSocialData/city_anchors.json').read_text(encoding='utf8'))['anchors'];an=an if isinstance(an,list) else list(an.values())
+ F=_ls_fit_cells(actor,ax,ay);W=set()
+ def ij(c):return int((c[0]*20+10-dx-ox)//20),int((c[1]*20+10-oy)//20)
+ def solid(c):
+  i,k=ij(c)
+  return not(0<=k<s['ny'] and 0<=i<s['nx']) or s['h'][k][i]>8 or s['h'][k][i]<0 or c in F
+ def step(c,n):
+  i,k=ij(c);i2,k2=ij(n)
+  if n[0]>c[0]:return s['ex'][k][i]=='0'
+  if n[0]<c[0]:return s['ex'][k2][i2]=='0'
+  if n[1]>c[1]:return s['ey'][k][i]=='0'
+  return s['ey'][k2][i2]=='0'
+ rooms={}
+ for r in an:
+  p=r.get('place','')
+  if re.match(r'^r[12]-\d{4}$',p) and p[:2].upper()==bl and p in ar_ and 'min' in ar_[p] and round((ar_[p]['min'][2]-1200)/360)+1==fl:rooms.setdefault(p,[]).append(r)
+ SKIP={'dining','crib','tv_sofa','fridge','plant','bookcase','laundry','window','mailbox','bath'}
+ for rid,rows in rooms.items():
+  a=ar_[rid];x0,x1,y0,y1=[int(v//20) for v in (a['min'][0],a['max'][0],a['min'][1],a['max'][1])]
+  def free(c,wide):
+   if not(x0<=c[0]<=x1 and y0<=c[1]<=y1) or solid(c):return False
+   return not wide or not any(solid((c[0]+e,c[1]+f)) for e,f in ((1,0),(-1,0),(0,1),(0,-1)))
+  def near(p,wide):
+   c0=(int(p[0]//20),int(p[1]//20));best=None
+   for e in range(-7,8):
+    for f in range(-7,8):
+     c=(c0[0]+e,c0[1]+f)
+     if free(c,wide) and (best is None or e*e+f*f<best[0]):best=(e*e+f*f,c)
+   return best and best[1]
+  ent=next((r for r in rows if 'entry' in r['kinds']),None)
+  if not ent:continue
+  for wide in (True,False):
+   st=near(ent['pos'],wide)
+   if not st:continue
+   prev={st:None};q=deque([st])
+   while q:
+    c=q.popleft()
+    for e in ((1,0),(-1,0),(0,1),(0,-1)):
+     n=(c[0]+e[0],c[1]+e[1])
+     if n not in prev and free(n,wide) and step(c,n):prev[n]=c;q.append(n)
+   for r in rows:
+    if r['name'].split('.')[-1].rstrip('0123456789_') in SKIP or r.get('id','').split('.')[-1] in SKIP:continue
+    if abs(r['pos'][2]-a['min'][2])>60 or not(a['min'][0]<=r['pos'][0]<=a['max'][0] and a['min'][1]<=r['pos'][1]<=a['max'][1]):continue
+    t=near(r['pos'],wide)
+    if t not in prev:continue
+    path=[]
+    while t:path.append(t);t=prev[t]
+    for c in path[3:]:
+     for e in (-1,0,1):
+      for f in (-1,0,1):W.add((c[0]+e,c[1]+f))
+ _LS_WALK[actor]=W;return W
+_LS_ROOM={}
+def _ls_room_map(actor,ax):
+ # the rooms of a floor: a 180 cm box sliding over the bare floor cannot pass a door, so what it reaches is one room; the rest of the floor joins the nearest room without crossing a wall
+ if actor in _LS_ROOM:return _LS_ROOM[actor]
+ from collections import deque
+ B_=ROOT/'output/street-social-city-production'
+ sc=json.loads((B_/'home-fit-v1/fixture-scan-resi.json').read_text(encoding='utf8'));fl=int(actor[-2:]);bl=actor[5:7]
+ fl_={f['actor']:f for f in sc['floors']};s=fl_.get(actor) or fl_['City_%s_F02'%bl] if fl>1 else fl_['City_R1_F01'];dx=ax-s['anchor'][0];ox,oy,nx,ny=s['origin'][0],s['origin'][1],s['nx'],s['ny'];h,ex,ey=s['h'],s['ex'],s['ey'];HW=4
+ def pre(f):
+  P=[[0]*(nx+1) for _ in range(ny+1)]
+  for k in range(ny):
+   r=0;a=P[k];b=P[k+1]
+   for i in range(nx):
+    r+=f(i,k);b[i+1]=a[i+1]+r
+  return P
+ def box(P,i0,i1,k0,k1):return P[k1+1][i1+1]-P[k0][i1+1]-P[k1+1][i0]+P[k0][i0]
+ PS=pre(lambda i,k:1 if h[k][i]>150 or h[k][i]<0 else 0);PX=pre(lambda i,k:0 if ex[k][i]=='0' else 1);PY=pre(lambda i,k:0 if ey[k][i]=='0' else 1)
+ cen={(i,k) for k in range(HW,ny-HW) for i in range(HW,nx-HW) if not box(PS,i-HW,i+HW,k-HW,k+HW) and not box(PX,i-HW,i+HW-1,k-HW,k+HW) and not box(PY,i-HW,i+HW,k-HW,k+HW-1)}
+ L={};n=0
+ for c in sorted(cen):
+  if c in L:continue
+  n+=1;L[c]=n;q=[c]
+  while q:
+   u=q.pop()
+   for v in ((u[0]+1,u[1]),(u[0]-1,u[1]),(u[0],u[1]+1),(u[0],u[1]-1)):
+    if v in cen and v not in L:L[v]=n;q.append(v)
+ q=deque(sorted(L))
+ while q:
+  i,k=q.popleft()
+  for i2,k2,open_ in ((i+1,k,i+1<nx and ex[k][i]=='0'),(i-1,k,i>0 and ex[k][i-1]=='0'),(i,k+1,k+1<ny and ey[k][i]=='0'),(i,k-1,k>0 and ey[k-1][i]=='0')):
+   if open_ and (i2,k2) not in L and 0<=h[k2][i2]<=150:L[(i2,k2)]=L[(i,k)];q.append((i2,k2))
+ _LS_ROOM[actor]=(L,dx,ox,oy);return _LS_ROOM[actor]
+def _ls_room_of(x,y,z):
+ # which room of R1/R2 a point is in; a point on a fixture takes the room of the nearest floor
+ b=next((k for k,x0,x1 in (('R1',42200,48800),('R2',30200,36800)) if x0<=x<=x1),None)
+ if not b:return None
+ L,dx,ox,oy=_ls_room_map('City_%s_F%02d'%(b,int((z-1200+20)//360)+1),45500 if b=='R1' else 33500)
+ i,k=int(((x//20)*20+10-dx-ox)//20),int(((y//20)*20+10-oy)//20)
+ for r in range(0,13):
+  best=None
+  for e in range(-r,r+1):
+   for f in range(-r,r+1):
+    if max(abs(e),abs(f))==r and (i+e,k+f) in L and (best is None or e*e+f*f<best[0]):best=(e*e+f*f,L[(i+e,k+f)])
+  if best:return best[1]
+ return None
+_LS_HOME={}
+def _ls_home_rooms(rid,z):
+ # kitchen, hall and wet rooms of one R home, from the fixed anchors
+ if not _LS_HOME:
+  an=json.loads((ROOT/'Content/IndependentResources/StreetSocialData/city_anchors.json').read_text(encoding='utf8'))['anchors'];an=an if isinstance(an,list) else list(an.values())
+  for r in an:_LS_HOME.setdefault(r.get('place'),[]).append(r)
+ rows=[r for r in _LS_HOME.get(rid,[]) if abs(r['pos'][2]-z)<60];at=lambda ks:[_ls_room_of(r['pos'][0],r['pos'][1],z) for r in rows if set(r['kinds'])&ks]
+ return dict(kitchen=next(iter(at({'cook'})),None),hall=next(iter(at({'entry'})),None),wet=set(at({'bath','shower','toilet','vanity'})))
+def _ls_fit_free(c,yaw,w,d,z):
+ b=next((k for k,x0,x1 in (('R1',42200,48800),('R2',30200,36800)) if x0<=c.x<=x1),None)
+ if not b or not 8700<=c.y<=16300 or not 1190<=z<=3000:return True
+ fa_=('City_%s_F%02d'%(b,int((z-1200+20)//360)+1),45500 if b=='R1' else 33500,12500);S=_ls_fit_cells(*fa_)|_ls_walk_cells(*fa_)
+ a=math.radians(yaw);fx,fy=math.cos(a),math.sin(a);nu,nv=int(w/20)+1,int(d/20)+1
+ for i in range(nu+1):
+  for k in range(nv+1):
+   u,v=-w/2+w*i/nu,-d/2+d*k/nv
+   if (int((c.x-fy*u+fx*v)//20),int((c.y+fx*u+fy*v)//20)) in S:return False
+ return True
+def _ls_search(world,hint,z,w,d,h,yaws,rmin=0,rmax=1200,avoid=[],wall=False,region=None,step=25,tol=8,follow=False,pad=160,test=None):
  # follow: outdoors the ground slopes, so each candidate is tested at its own floor height instead of the hint's
  # spiral of 25 cm rings; first spot (optionally with a wall behind) wins, else the nearest free spot
- best=None
+ best=None;end=time.time()+60
  for r in range(int(rmin),int(rmax)+1,step):
+  if time.time()>end:_ls_note('search gave up at r=%d of %d, %dx%d near %d,%d'%(r,rmax,w,d,hint.x,hint.y));return best
   n=max(1,int(2*math.pi*max(r,1)/step))
   for k in range(n):
    t=2*math.pi*k/n;c=unreal.Vector(hint.x+r*math.cos(t),hint.y+r*math.sin(t),z)
    if region and not(region[0][0]<=c.x<=region[1][0] and region[0][1]<=c.y<=region[1][1]):continue
-   if any((c-unreal.Vector(p.x,p.y,z)).length()<160+max(w,d)/2 for p in avoid):continue
+   if any((c-unreal.Vector(p.x,p.y,z)).length()<pad+max(w,d)/2 for p in avoid):continue
+   if test and not test(c):continue
    cz=z
    if follow:
     g=_ls_hit(world,unreal.Vector(c.x,c.y,z+600),unreal.Vector(c.x,c.y,z-600))
@@ -66,7 +215,7 @@ def _ls_search(world,hint,z,w,d,h,yaws,rmin=0,rmax=1200,avoid=[],wall=False,regi
     cz=g[4].z
     c=unreal.Vector(c.x,c.y,cz)
    for yaw in yaws:
-    if not _ls_fits(world,c,yaw,w,d,h,cz,tol):continue
+    if not _ls_fit_free(c,yaw,w,d,cz) or not _ls_fits(world,c,yaw,w,d,h,cz,tol):continue
     if wall and not _ls_wall_behind(world,c,yaw,d,cz):
      best=best or (c,yaw);continue
     return c,yaw
@@ -88,6 +237,19 @@ def _ls_cyl(label,p,r,hgt,mat,collide=True):
  return _ls_spawn(label,EAL.load_asset('/Engine/BasicShapes/Cylinder'),unreal.Vector(p.x,p.y,p.z+hgt/2),0,[r/50,r/50,hgt/100],mat,collide)
 def _ls_off(p,yaw,fwd,side=0,up=0):
  a=math.radians(yaw);return unreal.Vector(p.x+math.cos(a)*fwd-math.sin(a)*side,p.y+math.sin(a)*fwd+math.cos(a)*side,p.z+up)
+def _ls_texmat(name,file,emit=0.,instanced=False):
+ # the image imported straight into a plain material: the glTF route can drop the texture and leave the engine default in the slot
+ path=LS_DIR+'/Materials/M_LS_'+name
+ if EAL.does_asset_exist(path):return EAL.load_asset(path)
+ job=unreal.AssetImportTask();job.filename=str(file);job.destination_path=LS_DIR+'/Textures';job.destination_name='T_LS_'+name;job.automated=True;job.replace_existing=True;job.save=True;ATS.import_asset_tasks([job])
+ tex=EAL.load_asset(LS_DIR+'/Textures/T_LS_'+name);assert tex,name
+ m=ATS.create_asset('M_LS_'+name,LS_DIR+'/Materials',unreal.Material,unreal.MaterialFactoryNew())
+ n=MEL.create_material_expression(m,unreal.MaterialExpressionTextureSample);n.set_editor_property('texture',tex);MEL.connect_material_property(n,'RGB',unreal.MaterialProperty.MP_BASE_COLOR)
+ c=MEL.create_material_expression(m,unreal.MaterialExpressionConstant);c.set_editor_property('r',.9);MEL.connect_material_property(c,'',unreal.MaterialProperty.MP_ROUGHNESS)
+ if emit:
+  e=MEL.create_material_expression(m,unreal.MaterialExpressionConstant);e.set_editor_property('r',emit);x=MEL.create_material_expression(m,unreal.MaterialExpressionMultiply);MEL.connect_material_expressions(n,'RGB',x,'A');MEL.connect_material_expressions(e,'',x,'B');MEL.connect_material_property(x,'',unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+ if instanced:m.set_editor_property('used_with_instanced_static_meshes',True)
+ MEL.recompile_material(m);assert EAL.save_loaded_asset(m,False);return m
 def _ls_vending(i,c,yaw,M):
  # body 100 wide x 80 deep x 190 high, front (+yaw) panel lit, coin slot strip; yaw = facing direction
  lab='LoverSpot_Vending_%02d'%i
@@ -97,12 +259,14 @@ def _ls_vending(i,c,yaw,M):
  _ls_box(lab+'_Slot',_ls_off(c,yaw,40.5,0,15),yaw,(3,60,22),M['dark'],False)
  return lab
 def motel_world_lover_spots_install():
+ import faulthandler;_ls_note('install started');FH=open(str(LS_OUT/'lover-stack.txt'),'a',encoding='utf8');faulthandler.dump_traceback_later(120,repeat=True,file=FH)
  world=unreal.EditorLevelLibrary.get_editor_world();acts={a.get_actor_label():a for a in SUB.get_all_level_actors()}
  b=LS_OUT/('UniversityCity-before-lover-spots-'+LOAD_SHA[:16]+'.umap')
  if not b.exists():shutil.copy2(MAPFILE,b)
- for a in list(acts.values()):
+ # from the actor list, not the dict by label: pieces sharing a label collapse in the dict, and the ones left behind piled up install after install
+ for a in list(SUB.get_all_level_actors()):
   if a.get_actor_label().startswith('LoverSpot_'):SUB.destroy_actor(a)
- M=dict(vend_body=_ls_mat('M_LS_VendBody',(.82,.12,.1),.35),vend_panel=_ls_mat('M_LS_VendPanel',(.85,.92,1.),.2,0.,3.),vend_button=_ls_mat('M_LS_VendButton',(.9,.75,.2),.3,0.,1.),dark=_ls_mat('M_LS_Dark',(.03,.03,.035),.4),
+ M=dict(vend_body=_ls_mat('M_LS_VendBody',(.82,.12,.1),.35),vend_panel=_ls_texmat('VendFront',ROOT/'output/street-social-city-production/hill-v1/vending_panel.jpg',.5),vend_button=_ls_mat('M_LS_VendButton',(.9,.75,.2),.3,0.,1.),dark=_ls_mat('M_LS_Dark',(.03,.03,.035),.4),
   wood=_ls_mat('M_LS_Wood',(.36,.22,.12),.55),counter=_ls_mat('M_LS_Counter',(.86,.84,.8),.4),steel=_ls_mat('M_LS_Steel',(.6,.6,.62),.3,1.),cushion=_ls_mat('M_LS_Cushion',(.75,.18,.2),.8),
   sofa=_ls_mat('M_LS_Sofa',(.32,.38,.55),.85),screen=_ls_mat('M_LS_Screen',(.2,.35,.6),.1,0.,1.5),vermilion=_ls_mat('M_LS_Vermilion',(.78,.12,.05),.45),roofblack=_ls_mat('M_LS_RoofBlack',(.05,.05,.05),.5),
   stone=_ls_mat('M_LS_Stone',(.55,.54,.5),.85),lamp=_ls_mat('M_LS_LanternLight',(1.,.8,.5),.5,0.,2.))
@@ -128,7 +292,7 @@ def motel_world_lover_spots_install():
   if not got:got=_ls_search(world,d,z,100,80,190,[0,90,180,270],rmin=200,rmax=2500,avoid=[d],wall=True,step=50,tol=15,follow=True)
   if not got:skipped.append(dict(place=pid,reason='no free spot within 25 m'));continue
   c,yaw=got;lab=_ls_vending(i,c,yaw,M);front=_ls_off(c,yaw,110)
-  items.append(dict(place=pid,anchor='vending',pos=num(front),yaw=yaw-90,actor=lab))
+  items.append(dict(place=pid,anchor='vending',pos=num(front),yaw=yaw+90,actor=lab))
   views.append(dict(id='LS-vend-'+pid,eye=num(_ls_off(c,yaw,420,120,160)),target=num(_ls_off(c,yaw,0,0,100)),fov=70,hour=15))
  # 2. convenience store eat-in counter (S06): 240 x 50 counter at 105 cm, three stools 45 cm in front
  g=gp.get('conveni')
@@ -183,6 +347,7 @@ def motel_world_lover_spots_install():
   items.append(dict(place=pid,anchor='game',pos=num(_ls_off(c,yaw,10,-45)),yaw=yaw-90,actor=tag+'_TV'))
   views.append(dict(id='LS-'+pid+'-lounge',eye=num(_ls_off(c,yaw,-60,-260,170)),target=num(_ls_off(c,yaw,150,0,60)),fov=80,hour=20))
  # 4. shrine: 5 x 9 m flat lawn near the park, torii at the path start, hokora at the end
+ shrine_at=[]
  g=gp.get('park');hint=V(g['door']) if g else None
  if hint:
   z=_ls_floor(world,hint.x,hint.y,hint.z) or hint.z
@@ -199,11 +364,11 @@ def motel_world_lover_spots_install():
    _ls_box('LoverSpot_Shrine_HokoraBase',ho,yaw,(120,140,40),M['stone'])
    _ls_box('LoverSpot_Shrine_Hokora',_ls_off(ho,yaw,0,0,40),yaw,(90,110,110),M['wood'])
    _ls_box('LoverSpot_Shrine_HokoraRoof',_ls_off(ho,yaw,0,0,150),yaw,(150,170,14),M['roofblack'])
-   _ls_box('LoverSpot_Shrine_OfferingBox',_ls_off(ho,yaw,-110,0,0),yaw,(40,70,55),M['wood'])
+   shrine_at.append((c,yaw,st,ho))
    for s in (-150,150):
     lp=_ls_off(ho,yaw,-150,s);_ls_cyl('LoverSpot_Shrine_LanternPost%+d'%s,lp,14,110,M['stone']);_ls_box('LoverSpot_Shrine_LanternLight%+d'%s,_ls_off(lp,yaw,0,0,110),yaw,(34,34,30),M['lamp'],False);_ls_box('LoverSpot_Shrine_LanternCap%+d'%s,_ls_off(lp,yaw,0,0,140),yaw,(50,50,10),M['stone'])
    items.append(dict(place='shrine',anchor='torii',pos=num(_ls_off(st,yaw,-150)),yaw=yaw-90,actor='LoverSpot_Shrine_ToriiKasagi'))
-   items.append(dict(place='shrine',anchor='pray',pos=num(_ls_off(ho,yaw,-170)),yaw=yaw-90,actor='LoverSpot_Shrine_OfferingBox'))
+   items.append(dict(place='shrine',anchor='pray',pos=num(_ls_off(ho,yaw,-170)),yaw=yaw-90,actor='LoverSpot_Shrine_OfferingBox_Tripo'))
    views.append(dict(id='LS-shrine',eye=num(_ls_off(st,yaw,-700,150,170)),target=num(_ls_off(c,yaw,0,0,150)),fov=75,hour=15))
   else:skipped.append(dict(place='shrine',reason='no 5 x 9 m lawn (20 cm slope) 15-60 m nor 4 x 8 m 60-150 m from the park'))
  # 5. aquarium in S28 (毛孩選物, a pet-shop clone): a 3.6 m tank wall with koi against a wall, a bench 2.2 m in front
@@ -506,6 +671,23 @@ def motel_world_lover_spots_install():
   _ls_box(t+'_Curtain',_ls_off(b,yaw,58,0,15),yaw,(3,118,195),R2mat('Curtain',(.55,.2,.3)),False)
   _ls_box(t+'_Glass',_ls_off(b,yaw,-55,0,40),yaw,(1.5,60,150),silver or M['steel'],False)
   A2(pl,'fitting',b,yaw+180-90,t+'_Curtain')
+ def r_changing(base):
+  def fn(t,c,yaw,pl):
+   b=_ls_off(c,yaw,-40);wall=R2mat('Booth',(.88,.86,.82))
+   _ls_box(t+'_Back',_ls_off(b,yaw,-60),yaw,(8,125,220),wall)
+   for s in (-62,62):_ls_box(t+'_Side%+d'%s,_ls_off(b,yaw,0,s),yaw,(120,6,220),wall)
+   _ls_box(t+'_Curtain',_ls_off(b,yaw,58,0,15),yaw,(3,118,195),R2mat('CurtainChange',(.3,.4,.55)),False)
+   A2(pl,base,b,yaw+180-90,t+'_Curtain')
+  return fn
+ def r_curtain(t,c,yaw,pl):
+  _ls_box(t+'_Rail',_ls_off(c,yaw,0,0,205),yaw,(4,220,4),M['steel'],False);_ls_box(t+'_Cloth',_ls_off(c,yaw,0,0,20),yaw,(3,215,185),R2mat('CurtainWhite',(.92,.93,.9)),False)
+  A2(pl,'curtain',_ls_off(c,yaw,40),yaw-90,t+'_Cloth')
+ def r_telescope(t,c,yaw,pl):
+  _ls_cyl(t+'_Post',c,5,120,M['steel']);_ls_box(t+'_Tube',_ls_off(c,yaw,0,0,120),yaw,(60,12,12),M['dark'],False)
+  p,y=face(c,yaw,50);A2(pl,'telescope',p,y,t+'_Post')
+ def r_bleacher(t,c,yaw,pl):
+  for k in range(3):_ls_box(t+('_Seat' if k==0 else '_Step%d'%k),_ls_off(c,yaw,50-50*k),yaw,(50,480,45*(k+1)),M['wood'])
+  A2(pl,'bleacher',_ls_off(c,yaw,50),yaw-90,t+'_Seat')
  def r_mirror(t,c,yaw,pl):
   w0=(wd(c,yaw) or 60)-1;mirror(t+'_M',_ls_off(c,yaw,-w0,0,20),yaw,90,180);p,y=face(c,yaw,40);A2(pl,'mirror',p,y,t+'_M_Glass')
  def r_counter(t,c,yaw,pl,base='counter'):
@@ -653,6 +835,28 @@ def motel_world_lover_spots_install():
  def r_seatbench(t,c,yaw,pl):
   _ls_box(t+'_Seat',c,yaw,(45,180,45),M['sofa']);_ls_box(t+'_Back',_ls_off(c,yaw,-20,0,45),yaw,(6,180,40),M['sofa'])
   A2(pl,'seat',_ls_off(c,yaw,5,-45),yaw-90,t+'_Seat');A2(pl,'seat',_ls_off(c,yaw,5,45),yaw-90,t+'_Seat')
+ def r_shoerack(t,c,yaw,pl):
+  b=_ls_off(c,yaw,-40);_ls_box(t+'_Shelf',b,yaw,(40,200,200),M['wood'])
+  for k in range(4):_ls_box(t+'_Shoes%d'%k,_ls_off(b,yaw,8,0,25+45*k),yaw,(30,185,14),R2mat('Shoes%d'%k,[(.75,.72,.7),(.2,.2,.25),(.7,.25,.25),(.35,.25,.18)][k]),False)
+  p,y=face(c,yaw,40);A2(pl,'shoe_rack',p,y,t+'_Shelf')
+ def r_tryshoes(t,c,yaw,pl):
+  _ls_box(t+'_Seat',c,yaw,(45,120,42),M['sofa']);_ls_box(t+'_FloorMirror',_ls_off(c,yaw,70,0,0),yaw,(4,40,35),silver or M['steel'],False)
+  A2(pl,'try_shoes',_ls_off(c,yaw,35),yaw-90,t+'_Seat')
+ def r_vaultbox(t,c,yaw,pl):
+  for k,(w_,d_) in enumerate([(120,70),(114,66),(108,62),(102,58)]):_ls_box(t+'_Tier%d'%k,_ls_off(c,yaw,0,0,25*k),yaw,(d_,w_,25),R2mat('VaultWood',(.62,.45,.28)))
+  _ls_box(t+'_Top',_ls_off(c,yaw,0,0,100),yaw,(58,102,8),R2mat('VaultTop',(.85,.82,.72)))
+  p,y=face(c,yaw,60);A2(pl,'vault_box',p,y,t+'_Top')
+ def r_gymmat(t,c,yaw,pl):
+  for k in range(3):_ls_box(t+'_Mat%d'%k,_ls_off(c,yaw,0,0,10*k),yaw,(120,200,10),R2mat('GymMat',(.2,.35,.65)))
+  A2(pl,'gym_mat',_ls_off(c,yaw,0,0,0),yaw-90,t+'_Mat0')
+ def r_crib(t,c,yaw,pl):
+  _ls_box(t+'_Base',_ls_off(c,yaw,0,0,40),yaw,(60,120,8),M['wood'])
+  for s in (-28,28):_ls_box(t+'_Rail%+d'%s,_ls_off(c,yaw,s,0,48),yaw,(3,120,40),M['wood'],False)
+  for s in (-58,58):_ls_box(t+'_End%+d'%s,_ls_off(c,yaw,0,s,0),yaw,(60,4,90),M['wood'])
+  p,y=face(c,yaw,60);A2(pl,'crib',p,y,t+'_Base')
+ def r_ultra(t,c,yaw,pl):
+  _ls_box(t+'_Cart',c,yaw,(60,50,110),M['counter']);_ls_box(t+'_Screen',_ls_off(c,yaw,0,0,115),yaw,(4,45,35),M['screen'],False)
+  p,y=face(c,yaw,60);A2(pl,'ultrasound_cart',p,y,t+'_Cart')
  def r_exhibit(t,c,yaw,pl):
   _ls_box(t+'_Plinth',c,yaw,(60,60,100),R2mat('Plinth',(.92,.92,.9)));_ls_box(t+'_Piece',_ls_off(c,yaw,0,0,100),yaw+25,(30,30,45),R2mat('Bronze',(.55,.4,.25),.35))
   p,y=face(c,yaw,90);A2(pl,'exhibit',p,y,t+'_Plinth')
@@ -704,17 +908,25 @@ def motel_world_lover_spots_install():
   'racing':'racing_game','billiards':'billiards_table','dental':'dental_chair','bed':'hospital_bed_curtain','doctor':'consult_desk_screen',
   'nail':'nail_table','aisle':'supermarket_shelf','fresh':'produce_case','cart':'shopping_cart','atm':'atm','concession':'popcorn_counter',
   'recliner':'planetarium_recliner','exhibit':'museum_vitrine','easel':'easel_canvas','tank':'aquarium_tank_wall','jelly':'jellyfish_column',
-  'bike':'spin_bike','mat':'yoga_mat_roll','shower':'gym_shower_stall','backdrop':'studio_backdrop','kitchen':'kitchen_unit'}
+  'bike':'spin_bike','mat':'yoga_mat_roll','shower':'gym_shower_stall','backdrop':'studio_backdrop','kitchen':'kitchen_unit',
+  'shoerack':'shoe_display_rack','tryshoes':'shoe_try_bench','vaultbox':'vaulting_box','gymmat':'gym_mat_stack','crib':'baby_crib','ultra':'ultrasound_cart'}
  PLACE_TRIPO={('rack','swimwear'):'swimsuit_rack',('rack','yukata'):'yukata_rack',('rack','lingerie'):'lingerie_mannequin',('display','phone_shop'):'phone_display',
   ('counter_seats','ramen'):'ramen_counter',('counter_seats','izakaya'):'izakaya_lantern_bar',('counter','crepe'):'crepe_stand',
   ('counter','fastfood'):'fastfood_counter',('shelf','manga_cafe'):'manga_shelf'}
+ # world-tripo-v1 pieces share the same path table
+ wp={q['id']:q for q in json.loads((ROOT/'output/street-social-city-production/world-tripo-v1/prepared.json').read_text('utf-8-sig'))['assets']}
+ for r in json.loads((ROOT/'output/street-social-city-production/world-tripo-v1/remeshed.json').read_text('utf-8-sig'))['assets']:
+  p=wp[r['id']];ltr.setdefault(p['key'],r['path'] if r.get('triangles',1e9)<p.get('triangles',0) else p['path'])
+ for k_ in ('notice_board','beach_shower'):ltr[k_]=str(ROOT/'output/street-social-city-production/hill-v1'/(k_+'.glb'))
+ FAo=ROOT/'output/street-social-city-production/furniture-add-tripo-v1'
+ for q in json.loads((FAo/'prepared.json').read_text('utf-8-sig'))['assets']:ltr[q['key']]=q['path']
  def tripo_mesh(key):
   if key in ltm:return ltm[key]
   ltm[key]=None;path=ltr.get(key)
   if path:
    src=(ROOT/'Tools/street_city_activity_native_payload.lua').read_text('utf8').split('def import_one(',1)[1].split('def simple_water(',1)[0]
    ns=dict(globals());ns.update(PREFIX='/Game/UniversityCity/LifeTripoV1',KEEP=[],save=lambda a:EAL.save_loaded_asset(a,False))
-   exec('def import_one('+src,ns);ltm[key]=ns['import_one'](type(ROOT)(path),'lt-'+key,0,True)
+   exec('def import_one('+src,ns);ltm[key]=ns['import_one'](type(ROOT)(path),('lt2-' if key in ('dining_set','fruit_display','snack_kiosk') else 'lt3-' if key in ('washer','mailbox_bank','notice_board','beach_shower','zoo_pen','ticket_booth','craft_table','fruit_crate','saisen_box','temizuya','omikuji_stand','ema_rack','charm_booth','spa_bed','towel_cabinet','tandem_bike') else 'lt-')+key,0,True)
   return ltm[key]
  def tripo_swap(t,c,yaw,w,dd,h,key,spawned):
   mesh=tripo_mesh(key)
@@ -739,6 +951,9 @@ def motel_world_lover_spots_install():
   'concession':(r_named_counter('concession'),170,150,120,True),'shop':(r_named_counter('shop'),170,150,120,True),'doctor':(r_doctor,180,200,80,False),
   'seatbench':(r_seatbench,190,110,90,False),'exhibit':(r_exhibit,90,200,150,False),'easel':(r_easel,80,160,165,False),'weights':(r_weights,190,180,115,True),
   'locker':(r_locker,190,130,195,True),'shower':(r_shower,115,170,225,True),'tank':(r_tank,430,260,240,True),'jelly':(r_jelly,100,200,260,False),'vend':(r_vend,110,190,195,True),
+  'shoerack':(r_shoerack,210,140,210,True),'tryshoes':(r_tryshoes,130,170,60,False),'vaultbox':(r_vaultbox,130,170,110,True),'gymmat':(r_gymmat,210,130,35,True),'crib':(r_crib,130,120,95,True),'ultra':(r_ultra,70,100,150,True),
+  'changing_w':(r_changing('changing_women'),135,210,225,True),'changing_m':(r_changing('changing_men'),135,210,225,True),'changing':(r_changing('changing'),135,210,225,True),
+  'curtain':(r_curtain,230,90,225,False),'telescope':(r_telescope,80,120,150,False),'bleacher':(r_bleacher,490,190,140,True),
   'net':(r_net,920,320,250,False),'pingpong':(r_pingpong,190,500,80,False),'treadmill':(r_treadmill,90,220,140,False),'bike':(r_bike,60,170,100,False),'mat':(r_mat,80,200,20,False)}
  def roomreg(rid):
   a=ar.get(rid)
@@ -755,7 +970,9 @@ def motel_world_lover_spots_install():
  if pp:
   for s in json.loads(open(pp[-1],encoding='utf8').read()).get('sweeps',[]):
    if s.get('kind')=='open_door_player_capsule':opendoors+=[V(s['start']),V(s['end'])]
- def dress(place,where,plan,newplace=None):
+ placed={}
+ def dress(place,where,plan,newplace=None,reach=1600):
+  _ls_note('dress %s %s'%(place,[k for k,n in plan]))
   if not where:skipped.append(dict(place=place,reason='room not found'));return
   reg,d,z=where;c0=unreal.Vector((reg[0][0]+reg[1][0])/2,(reg[0][1]+reg[1][1])/2,z);res=[(d,150)]
   res+=[(p,150) for p in opendoors if reg[0][0]-200<=p.x<=reg[1][0]+200 and reg[0][1]-200<=p.y<=reg[1][1]+200 and abs(p.z-z)<300]
@@ -764,31 +981,42 @@ def motel_world_lover_spots_install():
    fn,w,dd,h,wall=REC[key]
    for k in range(n):
     best=None
-    for r in range(0,1601,25):
-     m=max(1,int(2*math.pi*max(r,1)/25))
+    st=25 if reach<=1600 else 75;dl=time.time()+45
+    for r in range(0,reach+1,st):
+     if time.time()>dl:break
+     m=max(1,int(2*math.pi*max(r,1)/st))
      for q in range(m):
       a=2*math.pi*q/m;c=unreal.Vector(c0.x+r*math.cos(a),c0.y+r*math.sin(a),z)
       if not(reg[0][0]<=c.x<=reg[1][0] and reg[0][1]<=c.y<=reg[1][1]):continue
       if any((c-unreal.Vector(p.x,p.y,z)).length()<rr+max(w,dd)*.45 for p,rr in res):continue
       for yaw in (0,90,180,270):
+       hx,hy=(dd/2,w/2) if yaw%180==0 else (w/2,dd/2)
+       if any(abs(c.x-q[0])<hx+q[2] and abs(c.y-q[1])<hy+q[3] for q in placed.get(place,[])):continue
        if not _ls_fits(world,c,yaw,w,dd,h,z,10):continue
        if wall and not _ls_wall_behind(world,c,yaw,dd,z):continue
        best=(c,yaw);break
       if best:break
      if best:break
     if not best:skipped.append(dict(place=place,reason='no spot for %s #%d'%(key,k+1)));break
-    c,yaw=best;res.append((c,max(w,dd)*.45));t='LoverSpot_R2_%s_%s%d'%(place,key,cnt.get((place,'_'+key),0)+1);cnt[(place,'_'+key)]=cnt.get((place,'_'+key),0)+1
+    c,yaw=best;res.append((c,max(w,dd)*.45));placed.setdefault(place,[]).append((c.x,c.y)+((dd/2,w/2) if yaw%180==0 else (w/2,dd/2)));t='LoverSpot_R2_%s_%s%d'%(place,key,cnt.get((place,'_'+key),0)+1);cnt[(place,'_'+key)]=cnt.get((place,'_'+key),0)+1
     key2=PLACE_TRIPO.get((key,place),TRIPO.get(key));_LS_REC[0]=[] if key2 else None
     try:fn(t,c,yaw,place)
     finally:spawned=_LS_REC[0];_LS_REC[0]=None
     if key2:tripo_swap(t,c,yaw,w,dd,h,key2,spawned)
-  views.append(dict(id='R2-%s-%d'%(place,len(views)),eye=num(unreal.Vector(d.x,d.y,z+180)),target=num(unreal.Vector(c0.x,c0.y,z+90)),fov=90,hour=15))
+  views.append(dict(id='R2-%s-%d'%(place,len(views)),eye=num(unreal.Vector(d.x*.55+c0.x*.45,d.y*.55+c0.y*.45,z+180)),target=num(unreal.Vector(c0.x,c0.y,z+90)),fov=100,hour=15))  # from inside: at the door the camera can stand behind the stairs
  S=lambda b,name:(('%s_F01'%b),b,name)
- for rid in ('m1-0201','m1-0202','m1-0203','m1-0204','m1-0205','m1-0301','m1-0302','m1-0303','m1-0304'):dress('clothing',roomreg(rid),[('rack',2),('fitting',1),('mirror',1),('counter',1)])
- for b in ('S10','S30','S46','S94'):dress('clothing_'+b.lower(),shopreg(b),[('fitting',1),('mirror',1)],S(b,b+' 服飾店'))
- dress('lingerie',roomreg('m1-0206'),[('rack',2),('fitting',2),('mirror',1),('counter',1)])
- dress('swimwear',shopreg('S58'),[('rack',3),('fitting',2),('mirror',1),('counter',1)],S('S58','泳裝店（S58 改建）'))
- dress('yukata',shopreg('S76'),[('rack',3),('fitting',2),('mirror',1),('counter',1)],S('S76','浴衣租借（S76 改建）'))
+ for rid in ('m1-0201','m1-0202','m1-0203','m1-0204','m1-0205','m1-0301','m1-0302','m1-0303','m1-0304'):dress('clothing',roomreg(rid),[('rack',2),('fitting',1),('mirror',1),('counter',1),('seatbench',1)])
+ for b in ('S10','S30','S46','S94'):dress('clothing_'+b.lower(),shopreg(b),[('fitting',1),('mirror',1),('rack',2),('counter',1),('seatbench',1)],S(b,b+' 服飾店'))
+ dress('lingerie',roomreg('m1-0206'),[('rack',2),('fitting',2),('mirror',1),('counter',1),('seatbench',1)])
+ dress('swimwear',shopreg('S58'),[('rack',3),('fitting',2),('mirror',1),('counter',1),('seatbench',1)],S('S58','泳裝店（S58 改建）'))
+ dress('yukata',shopreg('S76'),[('rack',3),('fitting',2),('mirror',1),('counter',1),('seatbench',1)],S('S76','浴衣租借（S76 改建）'))
+ # the department store's own floors (c-conquest 10.4): zones join `department` as women_*, men_*, shoes_*, accessory_*
+ dress('dept_women',roomreg('m1-0207'),[('rack',3),('fitting',2),('mirror',1),('counter',1),('seatbench',1)])
+ dress('dept_men',roomreg('m1-0305'),[('rack',3),('fitting',2),('mirror',1),('counter',1),('seatbench',1)])
+ dress('dept_accessory',roomreg('m1-0208'),[('rack',2),('fitting',1),('mirror',1),('counter',1),('seatbench',1)])
+ for rid in ('m1-0401','m1-0402','m1-0403'):dress('dept_shoes',roomreg(rid),[('shoerack',3),('tryshoes',2),('mirror',1),('counter',1)])
+ dress('gym_storage',roomreg('sp-0406'),[('vaultbox',2),('gymmat',2)],S('SP','體育倉庫'))
+ dress('fixtures',roomreg('cv-0101'),[('crib',1),('ultra',1)])
  dress('optician',roomreg('m1-0407'),[('counter',1),('mirror',1),('try',2)])
  dress('jewelry',roomreg('m1-0105'),[('case',3),('counter',1),('mirror',1)])
  dress('phone_shop',roomreg('m1-0701'),[('display',3),('counter',1)])
@@ -827,6 +1055,42 @@ def motel_world_lover_spots_install():
   dress('aquarium',roomreg('cv-0301'),[('tank',1),('bench',1),('vend',1)])
   items.append(dict(place='aquarium',anchor='door',pos=a1['door'],yaw=0,actor='CV-0301',building='CV',name='海洋水族館（CV 3F 大水槽展廳、水母展廳）',rooms=[dict(min=a1['min'],max=[a1['max'][0],a1['max'][1],a1['min'][2]+420]),dict(min=a2['min'],max=[a2['max'][0],a2['max'][1],a2['min'][2]+420])]))
   dress('aquarium',roomreg('cv-0302'),[('jelly',2),('bench',1)])
+  def aqua_fill():
+   import random
+   # the four CV glass tanks (baked in City_CV_F03, 3.9 x 2.4 m inside, floor 35 cm up) only had a water skin at 2.25 m and
+   # three fish each, so they read as empty: fill each with a water volume, sand, rocks, weed and a school of fish
+   ltr.setdefault('reef_fish',str(ROOT/'output/street-social-city-production/world-completion-v1/components/fish/remesh/remeshed-candidate.glb'))
+   def tank_water():
+    path=LS_DIR+'/Materials/M_LS_TankWater'
+    if EAL.does_asset_exist(path):return EAL.load_asset(path)
+    m=ATS.create_asset('M_LS_TankWater',LS_DIR+'/Materials',unreal.Material,unreal.MaterialFactoryNew());m.set_editor_property('blend_mode',unreal.BlendMode.BLEND_TRANSLUCENT);m.set_editor_property('two_sided',True)
+    n=MEL.create_material_expression(m,unreal.MaterialExpressionConstant3Vector);n.set_editor_property('constant',unreal.LinearColor(.03,.3,.5,1));MEL.connect_material_property(n,'',unreal.MaterialProperty.MP_BASE_COLOR)
+    e=MEL.create_material_expression(m,unreal.MaterialExpressionConstant3Vector);e.set_editor_property('constant',unreal.LinearColor(.01,.09,.15,1));MEL.connect_material_property(e,'',unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+    o=MEL.create_material_expression(m,unreal.MaterialExpressionConstant);o.set_editor_property('r',.38);MEL.connect_material_property(o,'',unreal.MaterialProperty.MP_OPACITY)
+    MEL.recompile_material(m);assert EAL.save_loaded_asset(m,False);return m
+   def fit(label,key,x,y,z,yaw,hgt,span):
+    # bottom of the model on z, scaled to hgt but never wider than span
+    mesh=tripo_mesh(key)
+    if not mesh:skipped.append(dict(place='aquarium',reason='no model '+key));return
+    bb=mesh.get_bounding_box();lo,hi=bb.min,bb.max;s=min(hgt/max(hi.z-lo.z,1),span/max(hi.x-lo.x,hi.y-lo.y,1));a=math.radians(yaw);cx,cy=(lo.x+hi.x)/2,(lo.y+hi.y)/2
+    _ls_spawn(label,mesh,unreal.Vector(x-(cx*math.cos(a)-cy*math.sin(a))*s,y-(cx*math.sin(a)+cy*math.cos(a))*s,z-lo.z*s),yaw,[s,s,s],None,False)
+   rnd=random.Random(20261107);wat=tank_water();sand=_ls_mat('M_LS_TankSand',(.72,.66,.5),.9);FLOOR,TOP=2055,2245
+   for n_,(tx,ty) in enumerate([(32265,58293.3),(32615,58293.3),(32265,60400),(32615,60400)]):
+    t='LoverSpot_Aqua_CV%d'%n_;c_=unreal.Vector(tx,ty,FLOOR)
+    _ls_box(t+'_Sand',c_,0,(236,386,6),sand,False)
+    fit(t+'_Rock0','coastal_rocks',tx+rnd.uniform(-30,30),ty-115,FLOOR+4,rnd.uniform(0,360),75,150)
+    fit(t+'_Rock1','boulder_a',tx+rnd.uniform(-40,40),ty+120,FLOOR+4,rnd.uniform(0,360),55,110)
+    fit(t+'_Rock2','boulder_b',tx+rnd.uniform(-60,60),ty+15,FLOOR+4,rnd.uniform(0,360),30,70)
+    for k in range(4):fit(t+'_Weed%d'%k,'reeds_a' if k%2 else 'reeds_b',tx+rnd.uniform(-90,90),ty+(-170,-45,70,165)[k],FLOOR+4,rnd.uniform(0,360),rnd.uniform(70,120),60)
+    for k in range(12):fit(t+'_Fish%d'%k,'reef_fish',tx+rnd.uniform(-95,95),ty+rnd.uniform(-165,165),rnd.uniform(FLOOR+45,TOP-35),rnd.choice((90,-90))+rnd.uniform(-30,30),rnd.uniform(12,20),60)
+    _ls_box(t+'_Water',unreal.Vector(tx,ty,FLOOR+6),0,(234,384,TOP-FLOOR-7),wat,False)
+    views.append(dict(id='R86-tank-%d'%n_,eye=[tx+(-260 if n_%2==0 else 260),ty-330,2190],target=[tx,ty,2130],fov=80,hour=15))
+   # the Tripo wall tank has open windows and nothing behind them: same water behind the windows
+   wt=next((a for a in SUB.get_all_level_actors() if a.get_actor_label()=='LoverSpot_R2_aquarium_tank1_Tripo'),None)
+   if wt:
+    o_,e_=wt.get_actor_bounds(False);_ls_box('LoverSpot_Aqua_Wall_Water',unreal.Vector(o_.x,o_.y,o_.z-e_.z+48),0,(e_.x*2-22,e_.y*2-22,e_.z*2-96),wat,False)
+    views.append(dict(id='R86-tank-wall',eye=[o_.x-330,o_.y-60,2180],target=[o_.x,o_.y,2120],fov=80,hour=15))
+  aqua_fill()
  else:skipped.append(dict(place='aquarium',reason='cv-0301 / cv-0302 not in props areas'))
  # water checks for round 2: the SP pools and the S19 onsen bath (views only)
  for rid in ('sp-0101','s19-0101'):
@@ -839,7 +1103,42 @@ def motel_world_lover_spots_install():
  #     footprint and an anchor in front; places that the game does not have yet get a door item with a box round them.
  gpa=lambda pid,name:next((V(a['pos']) for a in (gp.get(pid) or {}).get('anchors',[]) if a['name']==name),None)
  out_used=[]
- def outdoor(place,hint,plan,rmin=200,rmax=2500,newname=None,margin=60,step=50):
+ def place_mesh(t,key,c,yaw):
+  # a Tripo piece standing on c with no collision: nothing changes for the walkers
+  mesh=tripo_mesh(key)
+  if not mesh:raise RuntimeError('no model for %s (%s)'%(key,t))
+  bb=mesh.get_bounding_box();lo,hi=bb.min,bb.max;a=math.radians(yaw);cx,cy=(lo.x+hi.x)/2,(lo.y+hi.y)/2
+  _ls_spawn(t+'_Tripo',mesh,unreal.Vector(c.x-(cx*math.cos(a)-cy*math.sin(a)),c.y-(cx*math.sin(a)+cy*math.cos(a)),c.z-lo.z),yaw,[1,1,1],None,False)
+ ENTRY={a['building']:a['door'] for a in json.loads((ROOT/'output/street-social-city-production/places-v1/props.json').read_text('utf8'))['areas'] if a.get('kind')=='building'}
+ LAWN='MI_Detail_b6a245f3a69b53317770';ROADS=('','Tripo-ground-campus')
+ def ground_mat(x,y,z):
+  h=_ls_hit(world,unreal.Vector(x,y,z+300),unreal.Vector(x,y,z-300))
+  if not h or len(h)<16 or not h[10]:return None
+  try:
+   q=h[10].get_material_from_collision_face_index(h[15]);q=q[0] if isinstance(q,tuple) else q;return q.get_name() if q else ''
+  except Exception:return None
+ RS=[]
+ for r_ in json.loads((ROOT/'output/street-social-city-production/world-ground-v1/ground-plan.json').read_text('utf8'))['roads']:
+  if r_['kind']!='asphalt':continue
+  q_=[((1100-p[1])*100,p[0]*100) for p in r_['points_map_m']];RS+=[(a_,b_,r_['width_m']*50) for a_,b_ in zip(q_,q_[1:])]
+ road_pad=[150]
+ def on_road(x,y,pad=None):
+  pad=road_pad[0] if pad is None else pad
+  for a_,b_,hw in RS:
+   dx,dy=b_[0]-a_[0],b_[1]-a_[1];l2=dx*dx+dy*dy or 1;t_=max(0,min(1,((x-a_[0])*dx+(y-a_[1])*dy)/l2))
+   if math.hypot(x-a_[0]-t_*dx,y-a_[1]-t_*dy)<hw+pad:return True
+  return False
+ def ground_ok(c,yaw,ex,ey,lawn):
+  # never on a road; lawn pieces (the amusement park) only on grass, tested at the piece's centre and corners
+  for u,v in [(0,0),(ex/2,ey/2),(-ex/2,ey/2),(ex/2,-ey/2),(-ex/2,-ey/2)]:
+   p=_ls_off(c,yaw,u,v);m=ground_mat(p.x,p.y,c.z)
+   if on_road(p.x,p.y) or m is None or m in ROADS or (lawn and m!=LAWN):return False
+  return True
+ # names of the game's lists (c-conquest 8.2) next to the models' own: anchor names stay, these point at the same spot
+ DOCN=dict(batting_machine='cage',popcorn_cart='stall',float_rental_rack='rental',skate_rental='rental',christmas_tree='tree',bbq_grill='grill',camping_tent='tent',fishing_spot='fishing',ferris_wheel='ferris',coaster_station='coaster',
+  haunted_house='haunted',beach_volleyball_net='volleyball',beach_house_stall='counter',bench_slat_a='bench',stepping_stones='path',flower_bed_round='photo')
+ def outdoor(place,hint,plan,rmin=200,rmax=2500,newname=None,margin=60,step=50,lawn=False,block=True,pitch=None):
+  _ls_note('outdoor %s %s'%(place,[k for k,n in plan]))
   if not hint:skipped.append(dict(place=place,reason='no hint anchor'));return
   placed=[];av=[]
   for key,n in plan:
@@ -850,17 +1149,21 @@ def motel_world_lover_spots_install():
     # the followed ground can be a roof or a deck (the amusement teacups first landed 4 m up): keep only ground within
     # 1.5 m of the hint, ruling the rest out and searching again
     bad=[]
-    for _ in range(40):
-     got=_ls_search(world,hint,hint.z,ey+margin,ex+margin,min(ez,400),[0,90,180,270],rmin=rmin,rmax=rmax,avoid=av+bad,follow=True,tol=20,step=step)
-     if not got or abs(got[0].z-hint.z)<=150:break
+    t0_=time.time()
+    for _ in range(120):
+     if time.time()-t0_>90:got=None;break
+     got=_ls_search(world,hint,hint.z,ey+margin,ex+margin,min(ez,400),[0,90,180,270],rmin=rmin,rmax=rmax,avoid=av+bad,follow=True,tol=20,step=step,region=pitch)
+     # pitch: the sports ground's own box; it shares a material with the roads, but no road runs inside it
+     if not got or (abs(got[0].z-hint.z)<=150 and (pitch or ground_ok(got[0],got[1],ex,ey,lawn))):break
      bad.append(got[0]);got=None
     if not got:skipped.append(dict(place=place,reason='no free %dx%d cm spot for %s #%d'%(ex,ey,key,k+1)));break
     c,yaw=got;a=math.radians(yaw);cx,cy=(lo.x+hi.x)/2,(lo.y+hi.y)/2
     t='LoverSpot_R3_%s_%s%d'%(place,key,k+1)
-    _ls_box(t+'_Block',c,yaw,(ex,ey,min(ez,300)),M['counter']).static_mesh_component.set_visibility(False)
+    if block:_ls_box(t+'_Block',c,yaw,(ex,ey,min(ez,300)),M['counter']).static_mesh_component.set_visibility(False)
     p=unreal.Vector(c.x-(cx*math.cos(a)-cy*math.sin(a)),c.y-(cx*math.sin(a)+cy*math.cos(a)),c.z-lo.z)
     _ls_spawn(t+'_Tripo',mesh,p,yaw,[1,1,1],None,False)
     av.append(c);placed.append((c,max(ex,ey)/2));q,y=face(c,yaw,ex/2+70);A2(place,key,q,y,t+'_Tripo')
+    if key in DOCN:A2(place,DOCN[key],q,y,t+'_Tripo')
     out_used.append(dict(actor=t,key=key,place=place))
   if newname and placed:
    xs=[c.x-r for c,r in placed]+[c.x+r for c,r in placed];ys=[c.y-r for c,r in placed]+[c.y+r for c,r in placed];z=min(c.z for c,r in placed)
@@ -870,24 +1173,1082 @@ def motel_world_lover_spots_install():
   if placed:
    mx,my=sum(c.x for c,r in placed)/len(placed),sum(c.y for c,r in placed)/len(placed);span=max(1500,max(max(abs(c.x-mx),abs(c.y-my))+r for c,r in placed))
    views.append(dict(id='R3-%s-%d'%(place,len(views)),eye=num(unreal.Vector(mx-span,my-span,hint.z+span*1.3)),target=num(unreal.Vector(mx,my,hint.z+100)),fov=80,hour=15))
- for i,nm_ in enumerate(['lifeguard','lifeguard2','lifeguard3','lifeguard4','lifeguard5','lifeguard6']):
+ # the first four towers stand on the sand; lifeguard5 and 6 are on the lawns inland, beach pieces do not belong there
+ for i,nm_ in enumerate(['lifeguard','lifeguard2','lifeguard3','lifeguard4']):
   h_=gpa('beach',nm_)
   if not h_:continue
-  outdoor('beach',h_,[('changing_hut',1),('sandcastle',1),('watermelon_split',1)]+([('beach_volleyball_net',1),('float_rental_rack',1),('banana_boat',2)] if i==0 else []),rmin=400,rmax=3000)
+  outdoor('beach',h_,[('changing_hut',1),('sandcastle',1),('watermelon_split',1)]+([('beach_volleyball_net',1),('float_rental_rack',1),('banana_boat',2)] if i==0 else []),rmin=500,rmax=3500,margin=250,step=100)
   if i==0:outdoor('beach_house',h_,[('beach_house_stall',1)],rmin=800,rmax=4000,newname='海之家')
   if i==1:outdoor('jetski',h_,[('jetski',2)],rmin=600,rmax=4000,newname='水上摩托車出租')
+ road_pad[0]=450  # the stalls stand well clear of the road edge
  outdoor('festival',gpa('park','plaza'),[('goldfish_stall',1),('shooting_stall',1),('takoyaki_stall',1),('cotton_candy_stall',1),('yoyo_pool',1),('lantern_string',4)],rmin=300,rmax=3000,newname='夏日祭典（公園廣場）')
  outdoor('xmas_tree',gpa('campus_gate','gate'),[('christmas_tree',1)],rmin=800,rmax=3000,newname='聖誕樹廣場（校門）')
- outdoor('batting',gpa('campus_sports','field'),[('batting_machine',2)],rmin=1500,rmax=5000,newname='打擊練習場')
- outdoor('skating',gpa('park','pond'),[('skate_rental',1)],rmin=300,rmax=2500,newname='溜冰場（公園池畔）')
- outdoor('fishing',gpa('park','pond'),[('fishing_spot',3)],rmin=200,rmax=2000,newname='釣魚池（公園池畔）')
+ # the `field` anchor is the base of the track mesh, which runs 3 m under the ground: the pitch is at street height
+ tf=gpa('campus_sports','field');tf=tf and unreal.Vector(tf.x,tf.y,1205);TB=tf and ((tf.x-5500,tf.y-9700),(tf.x+5500,tf.y+9700))
+ # a real lane: net, turf, home plate and the pitching machine are one mesh, open at the batter's end (Tools/build_street_city_batting_cage.lua)
+ ltr['batting_cage']=str(ROOT/'output/street-social-city-production/hill-v1/batting_cage.glb')
+ outdoor('batting',V([70000,53000,1205]),[('batting_cage',2)],rmin=0,rmax=3500,newname='打擊練習場',block=False,margin=150,step=100)
+ for it in [i for i in items if i['place']=='batting' and i['anchor'].startswith('batting_cage')]:
+  it['anchor']=nm('batting','batting_machine');A2('batting','cage',V(it['pos']),it['yaw'],it['actor'])
+  views.append(dict(id='R8-batting-%d'%len(views),eye=num(V(it['pos'])+V([0,0,170])),target=num(next(a for a in SUB.get_all_level_actors() if a.get_actor_label()==it['actor']).get_actor_location()+V([0,0,120])),fov=85,hour=15))
+ # the pond anchor is the lake bed: the deck over the lake is at street height, nothing stands in the water
+ pd=gpa('park','pond');pd=pd and unreal.Vector(pd.x,pd.y,1205)
+ outdoor('skating',gpa('park','plaza'),[('skate_rental',1)],rmin=2500,rmax=6000,step=100,newname='溜冰場（公園廣場）')
+ outdoor('fishing',pd,[('fishing_spot',3)],rmin=600,rmax=2000,newname='釣魚台（湖上平台）')
  outdoor('bbq',gpa('playground','field'),[('bbq_grill',3),('camping_tent',3)],rmin=1500,rmax=5000,newname='烤肉露營區')
- outdoor('amusement',gpa('playground','field'),[('ferris_wheel',1),('carousel',1),('teacup_ride',1),('haunted_house',1),('coaster_station',1),('coaster_track',3),('ticket_gate',1),('popcorn_cart',2)],rmin=3000,rmax=15000,newname='遊樂園',margin=300,step=250)
+ outdoor('amusement',gpa('playground','field'),[('ferris_wheel',1),('carousel',1),('teacup_ride',1),('haunted_house',1),('coaster_station',1),('coaster_track',3),('ticket_gate',1),('popcorn_cart',2)],rmin=1500,rmax=20000,lawn=True,newname='遊樂園',margin=300,step=250)
+ # a post box outside each home and the post office; no collision, so nothing changes for the walkers
+ for pid in ('girls_dorm','boys_dorm','hotel'):
+  q=gp.get(pid)
+  if not q or not q.get('door'):continue
+  h=V(q['door']);got=_ls_search(world,h,h.z,60,60,140,[0,90,180,270],rmin=250,rmax=1000,follow=True,tol=12)
+  if not got:skipped.append(dict(place=pid,reason='no spot for mailbox'));continue
+  c,yaw=got;t='LoverSpot_Mailbox_'+pid;place_mesh(t,'post_box',c,yaw)
+  items.append(dict(place='fixtures',anchor='mailbox_'+pid,pos=num(_ls_off(c,yaw,60)),yaw=yaw-90,actor=t+'_Tripo'))
+ # a shoe locker just inside each school entrance, against a wall where one is free
+ for b_,e_ in sorted(ENTRY.items()):
+  if not re.match('T1|T2|T4|E1|EE|MA|RB|IB|AD|LI|SC|IN',b_):continue
+  got=_ls_search(world,V(e_),e_[2],210,60,190,[0,90,180,270],rmin=250,rmax=1200,wall=True,tol=10)
+  if not got:skipped.append(dict(place=b_,reason='no spot for shoe lockers'));continue
+  c,yaw=got;t='LoverSpot_ShoeLockers_'+b_;place_mesh(t,'shoe_lockers',c,yaw)
+ # sports grounds, fitness corners, beach and plaza pieces from world-tripo-v1; no collision so the walks stay as they are
+ F=dict(block=False)
+ # the sports ground has its own goals: stands behind the goal lines, benches on the sidelines, lights in the track's corners
+ if tf:
+  for k,(key,x,y,yw) in enumerate((('bleacher_b',60812,22300,0),('bleacher_b',60812,37700,180),('scoreboard',60812,38600,180),('dugout',64600,29000,180),('dugout',64600,31000,180),('umpire_chair',64600,27000,180),('umpire_chair',57000,33000,0),
+    ('floodlight',55500,20500,45),('floodlight',66100,20500,135),('floodlight',55500,39500,-45),('floodlight',66100,39500,-135))):
+   place_mesh('LoverSpot_R3_facility_%s%d'%(key,k),key,V([x,y,1205]),yw)
+  views.append(dict(id='R5-sports',eye=num(V([52000,30000,4200])),target=num(V([60800,30000,1205])),fov=80,hour=15))
+ outdoor('facility',gpa('playground','field'),[('fitness_station_a',2),('fitness_station_b',2)],rmin=800,rmax=6000,lawn=True,**F)
+ outdoor('facility',gpa('park','plaza'),[('food_cart_a',1),('food_cart_b',1)],rmin=500,rmax=3000,**F)
+ for nm_ in ('lifeguard2','lifeguard3','lifeguard4'):
+  h_=gpa('beach',nm_)
+  if h_:outdoor('facility',h_,[('beach_umbrella_a',2),('beach_umbrella_b',2),('beach_hut',1),('beach_walkway',3)],rmin=800,rmax=6000,margin=500,step=100,**F)
+ # the lawn foliage: the decimated Tripo shrubs were loose shards, the closed baked ones (Tools/build_street_city_foliage.lua) take their place
+ FD=ROOT/'output/street-social-city-production/world-tripo-v1/foliage';fsrc=(ROOT/'Tools/street_city_activity_native_payload.lua').read_text('utf8').split('def import_one(',1)[1].split('def simple_water(',1)[0]
+ fns=dict(globals());fns.update(PREFIX=LS_DIR+'/Foliage',KEEP=[],save=lambda a:EAL.save_loaded_asset(a,False));exec('def import_one('+fsrc,fns)
+ fapi=unreal.get_editor_subsystem(unreal.StaticMeshEditorSubsystem);fac=[a for a in SUB.get_all_level_actors() if a.get_actor_label().startswith('WorldTripo_')];fswap=0
+ for g_ in sorted(FD.glob('*.glb')):
+  key=g_.stem;m_=fns['import_one'](g_,'wf-'+key,0,False);m_.set_material(0,_ls_texmat('Fol_'+key,FD/(key+'.jpg'),0.,True))
+  if fapi.get_lod_count(m_)<3:
+   o_=unreal.EditorScriptingMeshReductionOptions();o_.set_editor_property('auto_compute_lod_screen_size',False);st_=[]
+   for pc,sc in [(1.,1.),(.4,.2),(.15,.06)]:
+    r_=unreal.EditorScriptingMeshReductionSettings();r_.set_editor_property('percent_triangles',pc);r_.set_editor_property('screen_size',sc);st_.append(r_)
+   o_.set_editor_property('reduction_settings',st_);fapi.set_lods(m_,o_)
+  assert EAL.save_loaded_asset(m_,False)
+  for a_ in fac:
+   if re.fullmatch('WorldTripo_'+key+r'_-?\d+_-?\d+',a_.get_actor_label()):
+    c_=a_.get_component_by_class(unreal.HierarchicalInstancedStaticMeshComponent);c_.set_static_mesh(m_);fswap+=c_.get_instance_count()
+ assert fswap>500,fswap;_ls_note('foliage swapped: %d instances'%fswap)
+ # 18. the last pieces of c-conquest 8.2 / 10.4: seats, tables and rooms beside the places above
+ _ls_note('R5: start, %d items'%len(items))
+ rav=[]
+ def ia(place,name):return next((V(i['pos']) for i in items if i['place']==place and i['anchor']==name),None)
+ def outdoor_rec(place,hint,plan,rmin=200,rmax=2500,lawn=False):
+  # recipe furniture outdoors: same ground tests as outdoor(), the piece stands on the followed ground
+  if not hint:skipped.append(dict(place=place,reason='no hint anchor'));return
+  for key,n in plan:
+   fn,w,dd,h,wall=REC[key]
+   for k in range(n):
+    bad=[]
+    t0_=time.time()
+    for _ in range(60):
+     if time.time()-t0_>90:got=None;break
+     got=_ls_search(world,hint,hint.z,w+60,dd+60,min(h,250),[0,90,180,270],rmin=rmin,rmax=rmax,avoid=rav+bad,follow=True,tol=20,step=50)
+     if not got or (abs(got[0].z-hint.z)<=150 and ground_ok(got[0],got[1],dd,w,lawn)):break
+     bad.append(got[0]);got=None
+    if not got:skipped.append(dict(place=place,reason='no outdoor spot for %s #%d'%(key,k+1)));break
+    c,yaw=got;rav.append(c);fn('LoverSpot_R5_%s_%s%d'%(place,key,k+1),c,yaw,place)
+ outdoor('amusement',ia('amusement','carousel'),[('bench_slat_a',4)],rmin=300,rmax=3000,lawn=True,**F)
+ outdoor('batting',ia('batting','batting_machine'),[('bench_slat_a',2)],rmin=300,rmax=2000,**F)
+ outdoor('fishing',pd,[('bench_slat_a',1)],rmin=600,rmax=2000,**F)
+ outdoor('skating',ia('skating','skate_rental'),[('bench_slat_a',2)],rmin=200,rmax=2500,**F)
+ outdoor('xmas_tree',ia('xmas_tree','christmas_tree'),[('bench_slat_a',2)],rmin=300,rmax=2000,**F)
+ outdoor_rec('bbq',ia('bbq','bbq_grill'),[('table',3)],rmin=300,rmax=2500)
+ outdoor_rec('beach_house',ia('beach_house','beach_house_stall'),[('table',3),('shower',1)],rmin=300,rmax=1500)
+ outdoor_rec('beach',gpa('beach','lifeguard'),[('locker',2)],rmin=400,rmax=3000)
+ # the skating rink: a thin ice sheet with low boards near the rental, walkers cross it freely
+ h_=ia('skating','skate_rental');got=h_ and _ls_search(world,h_,h_.z,1660,1060,60,[0,90],rmin=800,rmax=5000,follow=True,tol=25,step=100)
+ if got:
+  c,yaw=got;ice=R2mat('Ice',(.82,.9,.96),.08);_ls_box('LoverSpot_R5_rink',c,yaw,(1000,1600,4),ice,False)
+  for s in (-1,1):_ls_box('LoverSpot_R5_rink_BoardA%+d'%s,_ls_off(c,yaw,s*500),yaw,(8,1600,70),M['wood'],False);_ls_box('LoverSpot_R5_rink_BoardB%+d'%s,_ls_off(c,yaw,0,s*800),yaw,(1000,8,70),M['wood'],False)
+  A2('skating','rink',c,yaw,'LoverSpot_R5_rink')
+ else:skipped.append(dict(place='skating',reason='no spot for the rink'))
+ # sports halls: courts are the rooms themselves, stands and changing booths along the walls
+ for rid in ('sp-0104','sp-0106','sp-0108'):
+  a=ar.get(rid)
+  if a:A2('gym_hall','court',V([(a['min'][0]+a['max'][0])/2,(a['min'][1]+a['max'][1])/2,a['min'][2]]),0,rid.upper())
+ dress('gym_hall',roomreg('sp-0104'),[('bleacher',2),('changing_w',1),('changing_m',1)],reach=4000)
+ dress('gym_hall',roomreg('sp-0106'),[('bleacher',1)],reach=4000)
+ dress('infirmary',ir,[('curtain',2)])
+ dress('photo_studio',shopreg('S34'),[('seatbench',1),('changing',1)])
+ a=ar.get('cv-0401')
+ if a:A2('planetarium','dome',V([(a['min'][0]+a['max'][0])/2,(a['min'][1]+a['max'][1])/2,a['min'][2]]),0,'CV-0401')
+ # school changing rooms: two curtained booths in a ground floor room of each teaching building (doc 10.4); the lobbies
+ # stay clear, a booth there stood on a walking route. The last rooms first: they are the ones furthest from the entrance
+ for b_ in sorted(ENTRY):
+  if not re.match('T1|T2|T4|E1|EE|MA|RB|IB|AD|LI|SC|IN',b_):continue
+  rooms=sorted((r for r in ar if re.match(b_.lower()+'-01',r)),reverse=True);n0=len(skipped);done_=False
+  for rid in rooms:
+   before=len(items);dress('fixtures_changing_%s_x'%b_,roomreg(rid),[('changing',2)])
+   if len(items)-before>=1:done_=True;break
+  del skipped[n0:]
+  if not done_:skipped.append(dict(place=b_,reason='no ground floor room takes a changing booth'))
+ _ls_note('R5: rooms done, %d items'%len(items))
+ # the hill (Tools/build_street_city_hill.lua) and the flower field beside it, on the open west lawns
+ def lawn_spot(hints,w,d,h):
+  # the 20 m ground probe: centres whose whole footprint reads lawn, nearest the hints first, at most 40 real box tests
+  pts=json.loads((ROOT/'output/street-social-city-production/world-tripo-v1/probe.json').read_text('utf8'))['points']
+  lawn={(p[0],p[1]) for p in pts if p[3].endswith(LAWN) and abs(p[2]-1205)<=20};rr=int(w/2//2000+1)*2000
+  ok_=[c for c in lawn if all((c[0]+i,c[1]+j) in lawn for i in range(-rr,rr+1,2000) for j in range(-rr,rr+1,2000))]
+  ok_.sort(key=lambda c:min(math.hypot(c[0]-x,c[1]-y) for x,y in hints))
+  for c in ok_[:160]:
+   g=_ls_hit(world,V([c[0],c[1],1800]),V([c[0],c[1],600]))
+   if g and _ls_fits(world,g[4],0,w*.68,d*.68,h,g[4].z,30):return g[4]
+  return None
+ def lawn_mat(c):
+  h=_ls_hit(world,V([c.x,c.y,c.z+300]),V([c.x,c.y,c.z-300]));q=h[10].get_material_from_collision_face_index(h[15]);return q[0] if isinstance(q,tuple) else q
+ # the chapel stands on the nearest open lawn to the park; its spot comes from the ground probe like the hill's
+ c=lawn_spot([(30000,46000),(30000,30000),(46000,46000)],1800,1300,300)
+ if c:
+  # a hall you can walk into (Tools/build_street_city_chapel.lua): door on the west end, aisle to the altar along +X, walls block, pews and altar are real seats
+  HV_=ROOT/'output/street-social-city-production/hill-v1';ltr['chapel']=str(HV_/'chapel.glb');D0=_ls_off(c,0,-800);ct='LoverSpot_R3_church_hall'
+  _ls_spawn(ct+'_Tripo',tripo_mesh('chapel'),D0,0,[1,1,1],None,False)
+  for k,(a_,b_,c_,d_) in enumerate(json.loads((HV_/'chapel-walls.json').read_text('utf8'))):
+   _ls_box('%s_Wall%d'%(ct,k),V([D0.x+(a_+b_)*50,D0.y+(c_+d_)*50,c.z]),0,((b_-a_)*100,(d_-c_)*100,500),M['counter']).static_mesh_component.set_visibility(False)
+  _ls_box(ct+'_Floor',V([D0.x+800,D0.y,c.z]),0,(1600,1100,5),M['counter']).static_mesh_component.set_visibility(False)
+  _ls_box(ct+'_Altar',V([D0.x+1450,D0.y,c.z]),0,(100,220,120),M['counter']).static_mesh_component.set_visibility(False)
+  glass=_ls_texmat('ChapelGlass',HV_/'chapel_glass.jpg',.8)
+  for k in range(5):
+   for s in (-1,1):_ls_box('%s_Glass%d%+d'%(ct,k,s),V([D0.x+(1.6+k*2.9+.7)*100,D0.y+s*538,c.z+160]),0,(140,4,240),glass,False)
+  for x_ in (500,1100):
+   l_=SUB.spawn_actor_from_class(unreal.PointLight,V([D0.x+x_,D0.y,c.z+420]),unreal.Rotator());l_.set_actor_label('%s_Light%d'%(ct,x_));l_.tags=[unreal.Name('LoverSpot')];l_.set_folder_path('UniversityCity/LoverSpotsV1');q_=l_.light_component;q_.set_mobility(unreal.ComponentMobility.STATIC);q_.set_intensity(6000);q_.set_temperature(3400);q_.set_attenuation_radius(1500)
+  for k in range(6):
+   for s in (-1,1):
+    for j_,o in enumerate((-55,55)):
+     x_=D0.x+(3.+k*1.55)*100;y_=D0.y+s*280+o
+     items.append(dict(place='church',anchor=nm('church','seat' if j_ else 'pew'),pos=num(V([x_+62,y_,c.z+5])),yaw=-90,actor=ct+'_Tripo',seat=num(V([x_+22,y_,c.z+47]))))
+  A2('church','wedding_chapel',V([D0.x+1300,D0.y,c.z+5]),90,ct+'_Tripo')
+  items.append(dict(place='church',anchor='door',pos=num(_ls_off(D0,0,-120)),yaw=0,actor=ct,building=None,name='教堂',rooms=[dict(min=[D0.x-100,D0.y-600,c.z-100],max=[D0.x+1650,D0.y+600,c.z+900])]))
+  views.append(dict(id='R5-church',eye=num(V([c.x-1800,c.y-1800,c.z+1400])),target=num(c),fov=70,hour=15))
+  views.append(dict(id='R8-church-in',eye=num(V([D0.x+80,D0.y,c.z+170])),target=num(V([D0.x+1500,D0.y,c.z+170])),fov=85,hour=15))
+  views.append(dict(id='R8-church-back',eye=num(V([D0.x+1300,D0.y+300,c.z+190])),target=num(V([D0.x+200,D0.y-100,c.z+110])),fov=85,hour=15))
+ else:skipped.append(dict(place='church',reason='no lawn for the chapel'))
+ ltr['hill']=str(ROOT/'output/street-social-city-production/hill-v1/hill.glb');hm=tripo_mesh('hill')
+ c=hm and lawn_spot([(72000,112000),(70000,112000),(72000,114000)],7400,7400,200)
+ if c:
+  bs=hm.get_editor_property('body_setup');bs.set_editor_property('collision_trace_flag',unreal.CollisionTraceFlag.CTF_USE_COMPLEX_AS_SIMPLE);EAL.save_loaded_asset(hm,False)
+  _ls_spawn('LoverSpot_R5_hill',hm,V([c.x,c.y,c.z-5]),0,[1,1,1],lawn_mat(c),True)
+  top=hm.get_bounding_box().max.z+c.z-5;t_=V([c.x,c.y,top])
+  items.append(dict(place='hill',anchor='door',pos=num(_ls_off(c,0,-3300)),yaw=0,actor='LoverSpot_R5_hill',building=None,name='小山觀景點',rooms=[dict(min=[c.x-3700,c.y-3700,c.z-100],max=[c.x+3700,c.y+3700,top+400])]))
+  place_mesh('LoverSpot_R5_hill_Bench',"bench_slat_a",_ls_off(t_,0,-200),0);A2('hill','bench',_ls_off(t_,0,-150),-90,'LoverSpot_R5_hill_Bench_Tripo')
+  A2('hill','view',_ls_off(t_,0,200),-90,'LoverSpot_R5_hill');A2('hill','view',_ls_off(t_,0,0,300),0,'LoverSpot_R5_hill')
+  views.append(dict(id='R5-hill',eye=num(unreal.Vector(c.x-6000,c.y-6000,top+2500)),target=num(t_),fov=70,hour=15))
+  fp=V([c.x+200,c.y+6400,c.z])
+  items.append(dict(place='flower_field',anchor='door',pos=num(_ls_off(fp,0,-2500)),yaw=0,actor='LoverSpot_R5_flower',building=None,name='花海（西側草坪）',rooms=[dict(min=[fp.x-2300,fp.y-1700,c.z-100],max=[fp.x+2300,fp.y+1700,c.z+400])]))
+  # the lane through the middle: stepping stones, the photo spot at its centre, benches at the end facing the flowers
+  for k,o in enumerate((-1500,-750,750,1500)):
+   t_=_ls_off(fp,0,o);place_mesh('LoverSpot_R5_flower_path%d'%k,'stepping_stones',t_,0);A2('flower_field','path',t_,0,'LoverSpot_R5_flower_path%d_Tripo'%k)
+  place_mesh('LoverSpot_R5_flower_bed','flower_bed_round',fp,0);A2('flower_field','photo',_ls_off(fp,0,-260),0,'LoverSpot_R5_flower_bed_Tripo')
+  for k,o in enumerate((-300,300)):
+   t_=_ls_off(fp,0,-2200,o);place_mesh('LoverSpot_R5_flower_bench_slat_a%d'%k,'bench_slat_a',t_,0);A2('flower_field','bench',_ls_off(t_,0,60),-90,'LoverSpot_R5_flower_bench_slat_a%d_Tripo'%k)
+  views.append(dict(id='R5-flower',eye=num(_ls_off(fp,0,-3200,0,700)),target=num(fp),fov=75,hour=15))
+  # the field itself: 3 m flower patches (Tools/build_street_city_flower_patch.lua) over a 42 x 30 m block, a lane left through the middle
+  ltr['flower_patch']=str(ROOT/'output/street-social-city-production/hill-v1/flower_patch.glb');fx0,fy0=c.x+200,c.y+6400;fn=0
+  for i in range(-7,8):
+   for k in range(-5,6):
+    if abs(k)==0:continue
+    x,y=fx0+i*280+(k%2)*90,fy0+k*280;g=_ls_hit(world,V([x,y,c.z+300]),V([x,y,c.z-300]))
+    if g and abs(g[4].z-c.z)<=60 and not on_road(x,y) and ground_mat(x,y,c.z)==LAWN:fn+=1;place_mesh('LoverSpot_R5_flower%d'%fn,'flower_patch',g[4],(i*53+k*97)%360)
+  _ls_note('flower patches %d'%fn)
+ else:skipped.append(dict(place='hill',reason='no lawn for the hill'))
+ _ls_note('R5: hill and flowers done, %d items'%len(items))
+ # the 50 m pool (one water sheet over the three SP halls, deck at 1200): water points, deck edge, ladders, wet rooms
+ PW=(77621,22511,82619,33169);pz=1200
+ dress('pool',roomreg('sp-0101'),[('changing_w',1),('changing_m',1),('shower',2),('locker',1),('seatbench',2)],reach=3800)
+ for x in (78600,80120,81640):
+  for y in (24200,27840,31480):A2('pool','swim',V([x,y,1185]),0,'Campus_SP_Water')
+ for x,yw in ((PW[2]+50,90),(PW[0]-50,-90)):
+  for y in range(23500,33000,2400):
+   q=_ls_floor(world,x,y,pz)
+   if q is not None and abs(q-pz)<=10:A2('pool','poolside',V([x,y,pz]),yw,'Campus_SP_Water')
+ for k,(x,s) in enumerate(((PW[0],1),(PW[2],-1))):
+  y=28000+1200*s;t='LoverSpot_R5_PoolLadder%d'%k
+  for o in (-22,22):_ls_cyl(t+'_Rail%+d'%o,V([x+8*s,y+o,1090]),2.5,200,M['steel'],False)
+  for z_ in (1110,1140,1170):_ls_box(t+'_Rung%d'%z_,V([x+8*s,y,z_]),0,(4,44,3),M['steel'],False)
+  A2('pool','ladder',V([x-40*s,y,pz]),90 if s<0 else -90,t+'_Rail-22')
+ # the sky cafe's west windows: places to stand looking out, telescopes and benches between them
+ dress('observation',roomreg('m1-1006'),[('telescope',2),('seatbench',2)])
+ for y in (62700,63400,64100,64800):A2('observation','view',V([42420,y,4980]),90,'M1-1006')
+ # flat roofs: a steel fire stair up one wall reaches each from the ground (no stairwell comes through the slabs), rails on
+ # all edges with a gap at the stair head, benches. u runs along the wall, v away from it; spots come off the walk routes
+ steel=M['steel'];rm=tripo_mesh('waterfront_rail');roof_rooms=[]
+ def roof_stair(b,box,side,us,rz):
+  bx0,by0,bx1,by1=box;cx,cy=(bx0+bx1)/2,(by0+by1)/2;tag='LoverSpot_R5_%sStair'%b
+  def wall(dx,dy):
+   h=_ls_hit(world,V([cx+dx*((bx1-bx0)/2+400),cy+dy*((by1-by0)/2+400),rz-150]),V([cx,cy,rz-150]));return h[4]
+  X1,X0,Y1,Y0=wall(1,0).x,wall(-1,0).x,wall(0,1).y,wall(0,-1).y
+  def P(u,v,z=0):return V([X1+v,u,z]) if side=='n' else V([X0-v,u,z]) if side=='s' else V([u,Y1+v,z]) if side=='e' else V([u,Y0-v,z])
+  yw=0 if side in 'ns' else 90;p0=P(us[0],80);gz=_ls_floor(world,p0.x,p0.y,1205) or 1200
+  u0=next((u for u in us if _ls_fits(world,P(u+180,150,gz),yw,640,300,300,gz,12)),None)
+  if u0 is None:skipped.append(dict(place='rooftop',reason='no clear ground on the %s %s wall, stair placed at the first spot'%(b,side)));u0=us[0]
+  va,vb,steps,fl=80,220,12,10;rise=(rz-gz)/(steps*fl);u1=u0+steps*30;z=gz;n=0
+  nr=[0]
+  def rail_piece(a,b):
+   # the rooftop's rail from a to b (b the high end), tilted along a flight, level around a landing; no collision
+   if not rm:return
+   bb=rm.get_bounding_box();lo,hi=bb.min,bb.max;xl=hi.x-lo.x>hi.y-lo.y;L=max(hi.x-lo.x,hi.y-lo.y);d=math.hypot(b.x-a.x,b.y-a.y);th=math.degrees(math.atan2(b.z-a.z,d));yr=math.degrees(math.atan2(b.y-a.y,b.x-a.x))
+   full=math.hypot(d,b.z-a.z);m=max(1,round(full/L));s=full/m/L;sc=[s,1,1] if xl else [1,s,1]
+   for sg in (1,-1):
+    rot=unreal.Rotator(roll=0 if xl else sg*th,pitch=sg*th if xl else 0,yaw=yr if xl else yr-90);q=rot.quaternion();ax=q.rotate_vector(V([1,0,0]) if xl else V([0,1,0]))
+    if ax.x*(b.x-a.x)+ax.y*(b.y-a.y)<0:rot=unreal.Rotator(roll=rot.roll,pitch=rot.pitch,yaw=rot.yaw+180);q=rot.quaternion();ax=q.rotate_vector(V([1,0,0]) if xl else V([0,1,0]))
+    if ax.z>=-.001:break
+   off=q.rotate_vector(V([(lo.x+hi.x)/2*sc[0],(lo.y+hi.y)/2*sc[1],lo.z]))
+   for k in range(m):
+    t_=(k+.5)/m;nr[0]+=1;w=_ls_spawn(tag+'_Rail%03d'%nr[0],rm,V([a.x+(b.x-a.x)*t_-off.x,a.y+(b.y-a.y)*t_-off.y,a.z+(b.z-a.z)*t_-off.z]),0,sc,None,False);w.set_actor_rotation(rot,False)
+  for f in range(fl):
+   up=f%2==0;v=va if up else vb;z0=z
+   for s_ in range(steps):
+    z+=rise;u=u0+15+30*s_ if up else u1-15-30*s_;n+=1;_ls_box(tag+'_%03d'%n,P(u,v,z-8),yw,(130,30,8),steel)
+   for e_ in (-66,66):rail_piece(P(u0 if up else u1,v+e_,z0),P(u1 if up else u0,v+e_,z))
+   _ls_box(tag+'_Landing%d'%f,P(u1+70 if up else u0-70,140,z-8),yw,(300,140,8),steel)
+   ue,ui=(u1+138,u1) if up else (u0-138,u0)
+   rail_piece(P(ue,-8,z),P(ue,288,z));rail_piece(P(ui,288,z),P(ue,288,z))
+  for k,uc in enumerate((u0-140,u1+140)):_ls_cyl(tag+'_Col%d'%k,P(uc,210,gz),6,rz-gz,steel)
+  rx0,rx1,ry0,ry1=X0+40,X1-40,Y0+40,Y1-40;blk='LoverSpot_R5_%sRailBlock'%b
+  if rm:
+   bb=rm.get_bounding_box();ex,ey=bb.max.x-bb.min.x,bb.max.y-bb.min.y;L=max(ex,ey);ry=90 if ey>ex else 0
+   def rail_run(ax,ay,bx,by):
+    d=math.hypot(bx-ax,by-ay);yr=math.degrees(math.atan2(by-ay,bx-ax));m=int(d/L)
+    for i in range(m):
+     t_=(i+.5)*L/d;place_mesh('LoverSpot_R5_%sRail_%d_%d_%d'%(b,ax,ay,i),'waterfront_rail',V([ax+(bx-ax)*t_,ay+(by-ay)*t_,rz]),yr+ry)
+    w=_ls_box(blk+'_%d_%d'%(ax,ay),V([(ax+bx)/2,(ay+by)/2,rz]),yr,(d,8,110),M['counter']);w.static_mesh_component.set_visibility(False)
+   ga,gb=u0-160,u0+20;runs=dict(n=(rx1,ry0,rx1,ry1),s=(rx0,ry0,rx0,ry1),e=(rx0,ry1,rx1,ry1),w=(rx0,ry0,rx1,ry0))
+   for k,(ax,ay,bx,by) in runs.items():
+    if k!=side:rail_run(ax,ay,bx,by)
+    elif side in 'ns':rail_run(ax,ay,bx,ga);rail_run(ax,gb,bx,by)
+    else:rail_run(ax,ay,ga,by);rail_run(gb,ay,bx,by)
+  roof_rooms.append(dict(min=[X0,Y0+130,rz-20],max=[X1,Y1-130,rz+400]));head=P(u0-70,-100,rz)
+  A2('rooftop','stair_bottom',P(u0-60,80,gz),0,tag+'_001')
+  for q,yw2 in ((V([rx1-60,cy,rz]),-90),(V([rx0+60,cy,rz]),90),(V([cx,ry0+60,rz]),180),(V([cx,ry1-60,rz]),0)):A2('rooftop','fence',q,yw2,blk)
+  for k,o in enumerate((-.3,0,.3)):
+   q=V([cx-(bx1-bx0)*.25,cy+(by1-by0)*o,rz]);place_mesh('LoverSpot_R5_%s_bench_slat_a%d'%(b,k),'bench_slat_a',q,0);A2('rooftop','bench',V([q.x+60,q.y,rz]),-90,'LoverSpot_R5_%s_bench_slat_a%d_Tripo'%(b,k))
+  return head,gz
+ t1_head,_g=roof_stair('T1',(61500,49468,66500,56531),'n',list(range(50400,55600,200)),3200)
+ for b,box,side,u,rz in (('T2',(74500,67468,79500,74531),'s',69268,3200),('T4',(61500,41468,66500,48531),'w',65100,3200),('LI',(55500,58268,60500,66731),'n',63668,3200),('D1',(90700,31968,95700,42031),'w',94300,3420),('D2',(90700,55968,95700,66031),'e',91300,3420)):
+  roof_stair(b,box,side,[u,u+200,u-200,u+400,u-400],rz)
+ items.append(dict(place='rooftop',anchor='door',pos=num(t1_head),yaw=0,actor='LoverSpot_R5_T1Stair',building='T1',name='屋頂',rooms=roof_rooms))
+ views.append(dict(id='R5-rooftop',eye=num(V([68500,50500,4100])),target=num(V([64500,53000,3200])),fov=80,hour=15))
+ views.append(dict(id='R6-roof-D2',eye=num(V([91300,68000,4300])),target=num(V([93000,62000,3420])),fov=80,hour=15))
+ _ls_note('R5: pool, observation, rooftop done, %d items'%len(items))
+ # boats on the park lake: open water cells of the lake box (traces land on the lake bed, the deck reads street height),
+ # the pier reaches from the deck edge nearest the open water
+ def water_cells(x0,y0_,x1,y1_,step=200):
+  cell={}
+  for x in range(x0,x1,step):
+   for y in range(y0_,y1_,step):
+    h=_ls_hit(world,V([x,y,1900]),V([x,y,800]));cell[(x,y)]=h[4].z if h else None
+  return cell,[k for k,v in cell.items() if v is not None and v<=1110 and all((cell.get((k[0]+i*step,k[1]+j*step)) or 9999)<=1110 for i in (-2,-1,0,1,2) for j in (-1,0,1))]
+ cell,free=water_cells(83250,74500,88500,78250);land=[k for k,v in cell.items() if v is None or v>1110]
+ used=[]
+ def on_water(key,n,place,base):
+  got=0
+  for k in sorted(free,key=lambda q:-min([math.hypot(q[0]-d_[0],q[1]-d_[1]) for d_ in land] or [0])):
+   if got>=n:break
+   if any(math.hypot(k[0]-u[0],k[1]-u[1])<450 for u in used):continue
+   used.append(k);got+=1;t='LoverSpot_R5_%s%d'%(key,got);place_mesh(t,key,V([k[0],k[1],1092]),(k[0]+k[1])%360);A2(place,base,V([k[0],k[1],1100]),0,t+'_Tripo')
+  if got<n:skipped.append(dict(place=place,reason='open water for %d of %d %s'%(got,n,key)))
+ on_water('swan_boat',4,'boat','swan_boat');on_water('rowing_boat',2,'boat','rowing_boat')
+ if free:
+  deck=[k for k,v in cell.items() if v is not None and v>=1180];w0=min(free,key=lambda q:min([math.hypot(q[0]-d_[0],q[1]-d_[1]) for d_ in deck] or [9e9]));d0=min(deck,key=lambda q:math.hypot(q[0]-w0[0],q[1]-w0[1])) if deck else None
+  if d0:
+   yw=math.degrees(math.atan2(w0[1]-d0[1],w0[0]-d0[0]));place_mesh('LoverSpot_R5_boat_pier','lake_pier',V([(w0[0]+d0[0])/2,(w0[1]+d0[1])/2,1080]),yw)
+   items.append(dict(place='boat',anchor='door',pos=[d0[0],d0[1],cell[d0]],yaw=0,actor='LoverSpot_R5_boat_pier',building=None,name='天鵝船碼頭（公園湖）',rooms=[dict(min=[83250,74500,1000],max=[88500,78250,1800])]))
+   A2('boat','dock',V([d0[0],d0[1],cell[d0]]),yw-90,'LoverSpot_R5_boat_pier_Tripo')
+   views.append(dict(id='R5-boat',eye=num(V([d0[0]-1500,d0[1]-1500,2200])),target=num(V([w0[0],w0[1],1100])),fov=80,hour=15))
+ else:skipped.append(dict(place='boat',reason='no open water in the lake box'))
+ # the sea: from each lifeguard tower straight toward the water, the shore is where the ground drops to the sea sheet
+ def shore(h_):
+  x=h_.x
+  while x>0:
+   h=_ls_hit(world,V([x,h_.y,1900]),V([x,h_.y,800]))
+   if h and h[4].z<=1105:return x
+   x-=100
+  return None
+ for i,nm_ in enumerate(['lifeguard','lifeguard2','lifeguard3','lifeguard4','lifeguard5','lifeguard6']):
+  h_=gpa('beach',nm_);sx=h_ and shore(h_)
+  if not sx:skipped.append(dict(place='beach',reason='no shore from '+nm_));continue
+  for d_,o in ((700,-300),(1200,300)):A2('beach','swim',V([sx-d_,h_.y+o,1100]),90,'G_Water')
+  if i==1:
+   place_mesh('LoverSpot_R5_jetski_pier','lake_pier',V([sx-300,h_.y+600,1085]),0)
+   A2('jetski','dock',V([sx+80,h_.y+600,1200]),90,'LoverSpot_R5_jetski_pier_Tripo')
+   views.append(dict(id='R5-jetski-dock',eye=num(V([sx+1500,h_.y-800,1900])),target=num(V([sx-300,h_.y+600,1100])),fov=70,hour=15))
+ # the landscape scatter of world-tripo-v1 read lawn collision under some roads: take those instances out
+ cut=0;LK=re.compile('WorldTripo_(boxwood|azalea|hydrangea|shrub|ornamental|boulder|meadow|flower|planter_wood|stepping)')
+ for a_ in SUB.get_all_level_actors():
+  if not LK.match(a_.get_actor_label()):continue
+  c_=a_.get_component_by_class(unreal.HierarchicalInstancedStaticMeshComponent)
+  if not c_:continue
+  for i in range(c_.get_instance_count()-1,-1,-1):
+   t_=c_.get_instance_transform(i,True).translation
+   # the Tripo meadow patches read as crumpled sheets from the ground: none stay
+   if 'meadow' in a_.get_actor_label() or on_road(t_.x,t_.y,60):c_.remove_instance(i);cut+=1
+ _ls_note('road scatter removed %d'%cut)
  # new-game spawn outside the boys' dorm: only a check view, nothing placed
  sp=next((a for a in (gp.get('boys_dorm') or {}).get('anchors',[]) if a['name']=='spawn'),None)
  if sp:views.append(dict(id='LS-spawn',eye=num(_ls_off(V(sp['pos']),sp['yaw']+90,-500,0,250)),target=num(_ls_off(V(sp['pos']),sp['yaw']+90,300,0,120)),fov=80,hour=9))
+ # round 3 (c-conquest 8.2.3): real tubs and cribs in the homes, more of the few-of-a-kind places
+ _ls_note('R6: start, %d items'%len(items))
+ pl6=json.loads((ROOT/'output/street-social-city-production/places-v1/places.json').read_text('utf8'))['places']
+ hv={}
+ def fit_home(p,key,base,start,rings):
+  # a Tripo piece against the room's free floor, searched outward from `start`; the anchor stands on the piece
+  mesh=tripo_mesh(key)
+  if not mesh:return False
+  rid_=re.sub(r'_\d+$','',p['id']);held=hv.setdefault(rid_,[])
+  bb=mesh.get_bounding_box();ex,ey,ez=bb.max.x-bb.min.x,bb.max.y-bb.min.y,bb.max.z-bb.min.z;rm=p['room'];lo,hi,z=rm['min'],rm['max'],rm['min'][2];door=p.get('door') or [(rm['min'][0]+rm['max'][0])/2,(rm['min'][1]+rm['max'][1])/2];dl=time.time()+20
+  in_room=None
+  if re.match(r'^r[12]-\d{4}$',rid_) and key in ('fridge','baby_crib','bookcase_full','potted_monstera'):
+   # no fridge, book or crib in a wet room; the fridge stays by the kitchen, the crib out of it
+   hr_=_ls_home_rooms(rid_,z);no_=set(hr_['wet'])|({hr_['kitchen']} if key=='baby_crib' else set());yes_={hr_['kitchen'],hr_['hall']}-hr_['wet'] if key=='fridge' else None
+   in_room=lambda c_:(lambda r_:r_ is not None and r_ not in no_ and (yes_ is None or r_ in yes_))(_ls_room_of(c_.x,c_.y,z))
+  if key in ('bookcase_full','fridge','wardrobe','baby_crib','potted_monstera'):
+   g=_ls_search(world,V([start[0],start[1],z]),z,ex,ey,min(ez,110),[0,90,180,270],rmin=rings[0],rmax=max(rings),wall=True,region=((lo[0]+30,lo[1]+30),(hi[0]-30,hi[1]-30)),avoid=held+[V([door[0],door[1],z])],test=in_room)
+   if g:
+    c,fy=g;t='LoverSpot_R6_%s_%s'%(key,p['id']);place_mesh(t,key,c,fy-90);A2(p['id'],base,_ls_off(c,fy,ey/2+45),fy+90,t+'_Tripo');held.append(c);return True
+  for r in rings:
+   for q in range(12 if r else 1):
+    if time.time()>dl:return False
+    a=q*math.pi/6;c=V([start[0]+r*math.cos(a),start[1]+r*math.sin(a),z])
+    if math.hypot(c.x-door[0],c.y-door[1])<130+max(ex,ey)/2:continue
+    if any(math.hypot(c.x-o.x,c.y-o.y)<110+max(ex,ey)/2 for o in held):continue
+    if in_room and not in_room(c):continue
+    for yaw in (0,90):
+     hx,hy=(ex/2,ey/2) if yaw==0 else (ey/2,ex/2)
+     if c.x-hx<lo[0]+8 or c.x+hx>hi[0]-8 or c.y-hy<lo[1]+8 or c.y+hy>hi[1]-8:continue
+     if (key=='bathtub' or _ls_fit_free(c,yaw,ey,ex,z)) and _ls_fits(world,c,yaw,ey,ex,min(ez,110),z,8):
+      t='LoverSpot_R6_%s_%s'%(key,p['id']);place_mesh(t,key,c,yaw);A2(p['id'],base,c,yaw,t+'_Tripo');held.append(c);return True
+  return False
+ tubs=cribs=0
+ for p in pl6:
+  b=str(p.get('building') or '');an=p.get('anchors') or []
+  if p.get('kind') not in ('room_apartment','room_dorm') or 'min' not in (p.get('room') or {}) or not re.match('^(R1|R2|D[1-4]|S[0-9]+)$',b):continue
+  sh=next((a for a in an if a['name'].startswith('shower')),None)
+  if sh and not any(a.get('asset')=='bathtub' for a in an):
+   if fit_home(p,'bathtub','bath',sh['pos'],range(110,620,35)):tubs+=1
+   else:skipped.append(dict(place=p['id'],reason='no floor for a tub'))
+ _ls_note('R6: %d tubs'%tubs)
+ dress('fixtures',roomreg('cv-0101'),[('crib',2),('ultra',2)])
+ dress('infirmary',ir,[('bed',2)])
+ dress('fixtures',roomreg('cv-0103'),[('ultra',1)])
+ dress('gym_storage',roomreg('sp-0406'),[('vaultbox',4)])
+ tr_=next(p for p in pl6 if p['id']=='tr');q_=tr_['room']
+ dress('station',(([q_['min'][0]+30,q_['min'][1]+30],[q_['max'][0]-30,q_['max'][1]-30]),V(tr_['door']),q_['min'][2]),[('ticket',3)],('TR_F01','TR','交通站'),reach=2600)
+ cc=ia('church','wedding_chapel')
+ if cc:
+  for k,(fw,sd) in enumerate(((-150,0),(-300,-120),(-300,120),(-450,0))):A2('church','wedding_aisle',_ls_off(cc,0,fw,sd),0,'LoverSpot_R3_church_hall')
+ # real balconies: a slab on the nearest outside wall of each home (Tools/build_street_city_balcony.lua); the facades are one
+ # solid mesh, so the door on the wall is the model's and characters are placed onto the slab
+ ltr['balcony']=str(ROOT/'output/street-social-city-production/hill-v1/balcony.glb');used=[]
+ # the stair runs of the walk plan: a wall beside one is the stairwell's inner wall, not the facade
+ stairs_=set()
+ for r_ in json.loads(sorted((ROOT/'output/street-social-city-production/motel-v1').glob('physics-*-plan.json'))[-1].read_text('utf8'))['rays']:
+  if r_.get('kind')=='stair_headroom':stairs_.add((round(r_['start'][0]/200),round(r_['start'][1]/200)))
+ # outer footprints: R and H have stair towers and light wells inside them, their walls are not the facade
+ FOOT=dict(r1=(42272,8555,48728,16445),r2=(30272,8555,36728,16445),h1=(26772,63955,32435,77045),d1=(90700,31968,95700,42031),d2=(90700,55968,95700,66031),d3=(90700,43968,95700,54031),d4=(90700,19968,95700,30031))
+ def balcony(rid,lo,hi):
+  z=lo[2];cx,cy=(lo[0]+hi[0])/2,(lo[1]+hi[1])/2;hx,hy=(hi[0]-lo[0])/2,(hi[1]-lo[1])/2
+  if z<1400:return False
+  for far in (300,600,1200,2100,3200):
+   for dx,dy,half in ((1,0,hx),(-1,0,hx),(0,1,hy),(0,-1,hy)):
+    sx,sy=cx+dx*(half+far),cy+dy*(half+far)
+    g=_ls_hit(world,V([sx,sy,z+150]),V([sx,sy,z-3000]))
+    if not g or g[4].z>z-150:continue
+    h=_ls_hit(world,V([sx,sy,z+120]),V([cx,cy,z+120]))
+    if not h:continue
+    p=h[4];ok=True
+    for o in (-150,150):
+     q=_ls_hit(world,V([sx-dy*o,sy+dx*o,z+120]),V([cx-dy*o,cy+dx*o,z+120]))
+     if not q or abs((q[4].x-p.x)*dx+(q[4].y-p.y)*dy)>40:ok=False
+    # the slab's own spot: open down to the ground and no storey slab over it (a stairwell or a recess is not the facade)
+    bx_,by_=p.x+dx*66,p.y+dy*66;g=_ls_hit(world,V([bx_,by_,z+150]),V([bx_,by_,z-3000]))
+    if not g or g[4].z>z-150 or _ls_hit(world,V([bx_,by_,z+150]),V([bx_,by_,z+420])):ok=False
+    if any((round(bx_/200)+i,round(by_/200)+j) in stairs_ for i in (-2,-1,0,1,2) for j in (-2,-1,0,1,2)):ok=False
+    fb=FOOT.get(rid[:2])
+    if fb and fb[0]+100<bx_<fb[2]-100 and fb[1]+100<by_<fb[3]-100:ok=False
+    if not ok or any(abs(u[2]-z)<50 and math.hypot(u[0]-p.x,u[1]-p.y)<320 for u in used):continue
+    if re.match('^d[1-4]-',rid):
+     lx_,ly_=-dy,dx;pl_=lambda o,k:_ls_hit(world,V([sx+lx_*o,sy+ly_*o,z+k]),V([cx+lx_*o,cy+ly_*o,z+k]))
+     dep=lambda h_:h_[4].x*dx+h_[4].y*dy
+     outs=[dep(h_) for h_ in (pl_(0,60),pl_(0,90),pl_(0,120),pl_(0,200)) if h_]
+     out_=max(outs) if outs else dep(h)
+     for o in (0,60,-60,120,-120,180,-180,240,-240):
+      hs=[pl_(o+e,k) for e in (-60,0,60) for k in (120,200)]
+      if all(h_ and abs(dep(h_)-out_)<3 for h_ in hs):break
+     else:o=0
+     p=V([p.x+dx*(out_-dep(h))+lx_*o,p.y+dy*(out_-dep(h))+ly_*o,p.z])
+    c=V([p.x+dx*66,p.y+dy*66,z-14]);yaw=math.degrees(math.atan2(dy,dx));t='LoverSpot_R6_balcony_'+rid
+    place_mesh(t,'balcony',c,yaw);w=_ls_box(t+'_Floor',c,yaw,(130,300,14),M['counter']);w.static_mesh_component.set_visibility(False)
+    A2(rid,'balcony',V([c.x,c.y,z]),yaw-90,t+'_Tripo');used.append((p.x,p.y,z))
+    if re.match('^d[1-4]-',rid):views.append(dict(id='R9-balcony-'+rid,eye=num(V([c.x+dx*420-dy*260,c.y+dy*420+dx*260,z+220])),target=num(V([c.x,c.y,z+60])),fov=75,hour=15))
+    return True
+  return False
+ ca=json.loads((ROOT/'Content/IndependentResources/StreetSocialData/city_anchors.json').read_text('utf8'))['anchors']
+ # by the room's window, not by last run's kinds: a home that lost its balcony comes back as view_night, and picking on `balcony` lost it for good
+ homes=sorted({r.get('room') or r['place'] for r in ca if 'balcony' in r['kinds'] or 'view_window' in r['kinds'] or 'window' in (r.get('tags') or [])}|{k for k in ar if re.match('^d[1-4]-0[2-6]01$',k)})
+ nb=0
+ for rid in homes:
+  a=ar.get(rid)
+  if a and 'min' in a and balcony(rid,a['min'],a['max']):nb+=1
+ _ls_note('R6: %d balconies of %d homes'%(nb,len(homes)));skipped.append(dict(place='balcony',reason='%d of %d homes'%(nb,len(homes))))
+ # round 4 (c-conquest 8.2.7 A): a television where people sit, a table and a washer in the apartments, a mailbox bank at each block, the post office box
+ HV_=ROOT/'output/street-social-city-production/hill-v1';ltr['washer']=str(HV_/'washer.glb');ltr['mailbox_bank']=str(HV_/'mailbox_bank.glb')
+ WTo=ROOT/'output/street-social-city-production/world-tripo-v1';wp_={q['id']:q for q in json.loads((WTo/'prepared.json').read_text('utf-8-sig'))['assets']}
+ for r_ in json.loads((WTo/'remeshed.json').read_text('utf-8-sig'))['assets']:
+  p_=wp_[r_['id']]
+  if p_['key'] in ('dining_set','bed_double','sofa_three','fridge'):ltr[p_['key']]=r_['path'] if r_.get('triangles',1e9)<p_.get('triangles',0) else p_['path']
+ by_room={}
+ for r_ in ca:by_room.setdefault(r_['place'],[]).append(r_)
+ tvs=[q for q in pr['props'] if q['k']=='tv'];nh=dict(tv=0,tv_have=0,dining=0,washer=0,miss=0)
+ def inroom(a,p):return a['min'][0]<=p[0]<=a['max'][0] and a['min'][1]<=p[1]<=a['max'][1] and a['min'][2]-5<=p[2]<=a['max'][2]
+ def snap(dx,dy):return (0 if dx>0 else 180) if abs(dx)>=abs(dy) else (90 if dy>0 else -90)
+ def spot(rid,a,hint,w,d,h,rmin,rmax,wall=False,pad=160,test=None):
+  got=_ls_search(world,hint,a['min'][2],w,d,h,[0,90,180,270],rmin=rmin,rmax=rmax,wall=wall,region=((a['min'][0]+40,a['min'][1]+40),(a['max'][0]-40,a['max'][1]-40)),avoid=hv.setdefault(rid,[]),pad=pad,test=test)
+  if got:hv[rid].append(got[0])
+  else:nh['miss']+=1
+  return got
+ def seen(rid,a,s_,hint,w,d,h,rmin,rmax,wall=False,near=170,edges=(0,55,-55)):
+  # the first free spot with no wall between it and the seat s_; candidates that failed stay avoided only during the search
+  n0=len(hv.setdefault(rid,[]));z_=a['min'][2]
+  for k in range(8):
+   g=spot(rid,a,hint,w,d,h,rmin,rmax,wall,test=lambda c_:math.hypot(c_.x-s_.x,c_.y-s_.y)>=near)
+   if not g:break
+   L_=max(math.hypot(g[0].x-s_.x,g[0].y-s_.y),1);nx,ny=-(g[0].y-s_.y)/L_,(g[0].x-s_.x)/L_
+   if not any(_ls_hit(world,V([s_.x,s_.y,z_+100]),V([g[0].x+nx*o_,g[0].y+ny*o_,z_+100])) for o_ in edges):
+    del hv[rid][n0:-1];return g
+   nh['tv_blocked']=nh.get('tv_blocked',0)+1
+  del hv[rid][n0:];return None
+ homev={}
+ def shop_home(rid):
+  m_=re.match(r'^s(\d\d)-0301$',rid)
+  return bool(m_) and (26<=int(m_.group(1))<=48 or 73<=int(m_.group(1))<=96) and ar.get(rid,{}).get('type')=='apartment' and 'min' in ar[rid] and not any(r_['name'].startswith(('stove','bed0','sofa0')) for r_ in by_room.get(rid,[]))
+ t0_=time.time()
+ for rid in sorted(by_room):
+  if not re.match(r'^(r[12]|s\d\d|h1)-',rid) or rid not in ar or 'min' not in ar[rid] or shop_home(rid):continue
+  if time.time()-t0_>1500:skipped.append(dict(place='homes',reason='out of time at '+rid));break
+  a=ar[rid];rows_=by_room[rid];mid=((a['min'][0]+a['max'][0])/2,(a['min'][1]+a['max'][1])/2)
+  sit=next((r_ for r_ in rows_ if 'h_sofa' in r_['kinds'] or r_['name'].startswith('sofa')),None) or next((r_ for r_ in rows_ if 'lie' in r_['kinds']),None)
+  if sit and not any('tv_sofa' in r_['kinds'] and not r_['name'].startswith('tv_sofa') for r_ in rows_):
+   s_=V(sit['pos']);fy=sit.get('yaw',0)+90 if rid[0]=='r' and 'lie' not in sit['kinds'] else snap(mid[0]-s_.x,mid[1]-s_.y);f_=math.radians(fy)
+   if any(inroom(a,q['p']) for q in tvs):A2(rid,'tv_sofa',s_,sit.get('yaw',0),'room');nh['tv_have']+=1
+   else:
+    keep_=[V([q['p'][0],q['p'][1],a['min'][2]]) for q in pr['props'] if q['k'] in ('desk','study_desk','chair','table') and inroom(a,q['p'])]
+    if a.get('door'):keep_.append(V([a['door'][0],a['door'][1],a['min'][2]]))
+    hv.setdefault(rid,[]).extend([] if rid[0]=='r' else keep_)
+    h_=V([s_.x+math.cos(f_)*260,s_.y+math.sin(f_)*260,a['min'][2]]);got=(rid[0]!='r' and seen(rid,a,s_,h_,140,60,110,0,200,True)) or seen(rid,a,s_,h_,140,60,110,0,340) or seen(rid,a,s_,h_,140,60,110,0,340,near=140,edges=(0,))
+    if got:
+     c=got[0];t='LoverSpot_R8_tv_'+rid;place_mesh(t,'tv_cabinet',c,snap(s_.x-c.x,s_.y-c.y)-90);A2(rid,'tv_sofa',s_,sit.get('yaw',0),t+'_Tripo');nh['tv']+=1;homev[rid]=dict(homev.get(rid,{}),tv=(s_,c))
+  if rid[0]=='s' and not any('dining' in r_['kinds'] and not r_['name'].startswith('dining') for r_ in rows_):
+   tb_=next((r_ for r_ in rows_ if r_['name'].startswith('table')),None)
+   if tb_:A2(rid,'dining',V(tb_['pos']),tb_.get('yaw',0),'room')
+  if rid[0]=='r':
+   kit=next((r_ for r_ in rows_ if 'cook' in r_['kinds']),None);wet=next((r_ for r_ in rows_ if 'bath' in r_['kinds'] or 'shower' in r_['kinds']),None)
+   if kit and not any('dining' in r_['kinds'] and not r_['name'].startswith('dining') for r_ in rows_):
+    kz_=a['min'][2];kx_,ky_=kit['pos'][0],kit['pos'][1]
+    hr_=_ls_home_rooms(rid,kz_)
+    same_=lambda c_:_ls_room_of(c_.x,c_.y,kz_)==hr_['kitchen'] and hr_['kitchen'] not in hr_['wet']
+    hall_=lambda c_:_ls_room_of(c_.x,c_.y,kz_)==hr_['hall'] and hr_['hall'] not in hr_['wet']
+    got=spot(rid,a,V([kx_,ky_,kz_]),220,220,100,170,560,pad=40,test=same_)
+    if not got:nh['dining_tight']=nh.get('dining_tight',0)+1;got=spot(rid,a,V([kx_,ky_,kz_]),190,190,100,155,560,pad=20,test=same_)
+    if not got:nh['dining_hall']=nh.get('dining_hall',0)+1;got=spot(rid,a,V([kx_,ky_,kz_]),190,190,100,155,1500,pad=20,test=hall_)
+    if got:
+     c=got[0];t='LoverSpot_R8_dining_'+rid;place_mesh(t,'dining_set',c,0);A2(rid,'dining',V([c.x,c.y-100,c.z]),0,t+'_Tripo');nh['dining']+=1;homev[rid]=dict(homev.get(rid,{}),dine=c)
+   if wet:
+    got=spot(rid,a,V(wet['pos']),70,70,90,60,400,True)
+    if got:
+     c=got[0];fy=snap(mid[0]-c.x,mid[1]-c.y);t='LoverSpot_R8_washer_'+rid;place_mesh(t,'washer',c,fy+90);A2(rid,'laundry',_ls_off(c,fy,80),fy+90,t+'_Tripo');nh['washer']+=1
+ for p in pl6:
+  if str(p.get('building') or '') in ('R1','R2') and p.get('kind') in ('room_apartment','room_dorm') and 'min' in (p.get('room') or {}):
+   rc=[(p['room']['min'][0]+p['room']['max'][0])/2,(p['room']['min'][1]+p['room']['max'][1])/2]
+   if fit_home(p,'baby_crib','crib',rc,range(0,620,45)):cribs+=1
+   else:skipped.append(dict(place=p['id'],reason='no floor for a crib'))
+ _ls_note('R8: %d cribs'%cribs)
+ for b_,key,pid,nam in (('R1','mailbox_bank','r1-0101','mailbox'),('R2','mailbox_bank','r2-0101','mailbox'),('CV','post_box','post','mailbox')):
+  e_=ENTRY.get(b_);got=e_ and _ls_search(world,V(e_),1200,170 if key!='post_box' else 70,50,150,[0,90,180,270],rmin=200,rmax=1200,wall=True,follow=True,tol=12)
+  if not got:skipped.append(dict(place=pid,reason='no spot for '+key));continue
+  c,yaw=got;t='LoverSpot_R8_%s_%s'%(key,b_);place_mesh(t,key,c,yaw+90 if key!='post_box' else yaw);A2(pid,nam,_ls_off(c,yaw,70),yaw+90,t+'_Tripo')
+  views.append(dict(id='R8-mail-'+b_,eye=num(_ls_off(c,yaw,170,30,165)),target=num(_ls_off(c,yaw,0,0,90)),fov=90,hour=15))
+ # the S19 baths stand on the floor with 25 cm of water: a low seat, hips below the bath floor, keeps the water at the shoulders (the bath floor itself is part of the shop mesh)
+ for k,y_ in enumerate((50180,50580,50980,51520,51920)):
+  for o in (-60,60):items.append(dict(place='onsen',anchor=nm('onsen','soak'),pos=num(V([45590,y_+o,1265])),yaw=-90,actor='S19_F01',seat=[45590,y_+o,1240]))
+ _ls_note('R8 homes: %s'%nh);skipped.append(dict(place='homes',reason=str(nh)))
+ # round 4 B (c-conquest 8.2.7): what the activities use and the scenes did not have. Tools/build_street_city_fixtures.lua makes the pieces
+ for k_ in ('saisen_box','temizuya','omikuji_stand','ema_rack','charm_booth','spa_bed','towel_cabinet','tandem_bike'):ltr[k_]=str(HV_/(k_+'.glb'))
+ def hide(a_):a_.static_mesh_component.set_visibility(False);return a_
+ # shrine: a real offering box, then the purification font, fortune stand, ema rack and charm booth along the path, each turned to it
+ if shrine_at:
+  c0,y0,st,ho=shrine_at[0];z0=ho.z;av=[c0,ho];t='LoverSpot_Shrine_OfferingBox'
+  place_mesh(t,'saisen_box',_ls_off(ho,y0,-110),y0+270);hide(_ls_box(t+'_Block',_ls_off(ho,y0,-110),y0,(60,100,60),M['wood']))
+  for key,base,fw,sd,w_,d_,h_,stand in (('temizuya','temizu',-170,330,300,210,290,110),('omikuji_stand','omikuji',-170,-330,260,70,180,75),('ema_rack','ema',170,340,290,70,230,75),('charm_booth','charm',170,-380,390,240,300,170)):
+   got=_ls_search(world,_ls_off(c0,y0,fw,sd),z0,w_,d_,h_,[0,90,180,270],rmin=0,rmax=900,avoid=av,follow=True,tol=20)
+   if not got:skipped.append(dict(place='shrine',reason='no spot for '+key));continue
+   c=got[0];av.append(c);fy=snap(c0.x-c.x,c0.y-c.y);t='LoverSpot_Shrine_'+base
+   place_mesh(t,key,c,fy+90);hide(_ls_box(t+'_Block',c,fy,(d_-20,w_-20,min(h_,200)),M['wood']));A2('shrine',base,_ls_off(c,fy,stand),fy+90,t+'_Tripo')
+   views.append(dict(id='R8-shrine-'+base,eye=num(_ls_off(c,fy,480,170,190)),target=num(_ls_off(c,fy,0,0,110)),fov=70,hour=15))
+  views.append(dict(id='R8-shrine-all',eye=num(_ls_off(c0,y0,-900,250,420)),target=num(_ls_off(c0,y0,100,0,80)),fov=75,hour=15))
+ # the restaurant's private room: walls, a door, a table inside
+ sr=shopreg('S04');got=None
+ if sr:
+  reg,d_,z=sr;mid=V([(reg[0][0]+reg[1][0])/2,(reg[0][1]+reg[1][1])/2,z])
+  for w_,dp in ((440,340),(380,300),(340,280)):
+   got=_ls_search(world,mid,z,w_,dp,285,[0,90,180,270],rmax=1300,avoid=[d_]+[p for p in opendoors if reg[0][0]-200<=p.x<=reg[1][0]+200 and reg[0][1]-200<=p.y<=reg[1][1]+200 and abs(p.z-z)<300],region=reg)
+   if got:break
+ if got:
+  c,yaw=got;t='LoverSpot_R8_private_room';wm=R2mat('PrivWall',(.86,.8,.68));fr=M['wood']
+  _ls_box(t+'_WallBack',_ls_off(c,yaw,-dp/2+5),yaw,(10,w_,285),wm)
+  for s in (-w_/2+5,w_/2-5):_ls_box(t+'_WallSide%+d'%(s>0),_ls_off(c,yaw,0,s),yaw,(dp,10,285),wm)
+  _ls_box(t+'_WallFront',_ls_off(c,yaw,dp/2-5,-55),yaw,(10,w_-110,285),wm);_ls_box(t+'_Lintel',_ls_off(c,yaw,dp/2-5,w_/2-55,215),yaw,(10,110,70),wm)
+  for s in (w_/2-110,w_/2-8):_ls_box(t+'_Jamb%+d'%(s>w_/2-50),_ls_off(c,yaw,dp/2-5,s,0),yaw,(14,6,215),fr,False)
+  _ls_box(t+'_Door',_ls_off(c,yaw,dp/2-55,w_/2-108,3),yaw,(92,5,208),fr,False)
+  place_mesh(t,'dining_set',_ls_off(c,yaw,-15,-25),0)
+  A2('restaurant','private_room',_ls_off(c,yaw,-105,-25),yaw-90,t+'_Tripo');A2('restaurant','private_room',_ls_off(c,yaw,75,-25),yaw+90,t+'_Tripo')
+  A2('restaurant','private_door',_ls_off(c,yaw,dp/2+70,w_/2-55),yaw+90,t+'_Door')
+  views.append(dict(id='R8-private-in',eye=num(_ls_off(c,yaw,100,-120,260)),target=num(_ls_off(c,yaw,-50,20,40)),fov=100,hour=19))
+  views.append(dict(id='R8-private-out',eye=[48250,25600,1440],target=[48150,25352,1260],fov=85,hour=19))
+ else:skipped.append(dict(place='restaurant',reason='no room for a private room in S04'))
+ # treatment beds: the hotel's second floor plan is stale (the motel suites stand there), so both places share the concierge room on its ground floor
+ a=ar.get('h1-0102')
+ if not a:raise RuntimeError('h1-0102 not in areas')
+ z=a['min'][2];reg=([a['min'][0]+60,a['min'][1]+60],[a['max'][0]-60,a['max'][1]-60]);P_=V([a['door'][0]+90,a['door'][1],z]);mid=V([(a['min'][0]+a['max'][0])/2,(a['min'][1]+a['max'][1])/2,z])
+ av=[V([q['p'][0],q['p'][1],z]) for q in pr['props'] if a['min'][0]<=q['p'][0]<=a['max'][0] and a['min'][1]<=q['p'][1]<=a['max'][1] and abs(q['p'][2]-z)<60]+[V([a['door'][0],a['door'][1],z])];last=None
+ for x_ in SUB.get_all_level_actors():
+  if x_.get_actor_label().startswith('LoverSpot') and not x_.get_actor_label().startswith('LoverSpot_R8_spa') and not x_.get_actor_label().startswith('LoverSpot_R8_towels'):
+   l_=x_.get_actor_location()
+   if a['min'][0]<=l_.x<=a['max'][0] and a['min'][1]<=l_.y<=a['max'][1] and abs(l_.z-z)<200:av.append(V([l_.x,l_.y,z]))
+ spa_=[]
+ def inroom_(w,d,h,wall=False):
+  tried=[]
+  for k in range(10):
+   g=_ls_search(world,mid,z,w,d,h,[0,90,180,270],rmin=0,rmax=700,avoid=av+tried,region=reg,wall=wall,pad=70)
+   if not g:return None
+   if not _ls_hit(world,V([P_.x,P_.y,z+100]),V([g[0].x,g[0].y,z+100])):return g
+   tried.append(g[0])
+  return None
+ for pl_,nb_ in (('hotel',2),('lodge',2)):
+  for k in range(nb_):
+   got=inroom_(240,190,120)
+   if not got:skipped.append(dict(place=pl_,reason='concierge room holds %d of %d spa beds'%(k,nb_)));break
+   c,yaw=got;av.append(c);spa_.append(c);last=c;t='LoverSpot_R8_spa_%s_%d'%(pl_,k)
+   place_mesh(t,'spa_bed',c,yaw+90);hide(_ls_box(t+'_Block',c,yaw,(80,200,70),M['wood']))
+   items.append(dict(place=pl_,anchor=nm(pl_,'spa_bed'),pos=num(_ls_off(c,yaw,95)),yaw=yaw,actor=t+'_Tripo',seat=num(V([c.x,c.y,c.z+72]))))
+ got=inroom_(130,60,190,True)
+ if got:
+  c,fy=got;t='LoverSpot_R8_towels_hotel';place_mesh(t,'towel_cabinet',c,fy+90);hide(_ls_box(t+'_Block',c,fy,(45,120,185),M['wood']));A2('hotel','towel_cabinet',_ls_off(c,fy,75),fy+90,t+'_Tripo');A2('lodge','towel_cabinet',_ls_off(c,fy,75),fy+90,t+'_Tripo');last=last or c;spa_.append(c)
+ else:skipped.append(dict(place='hotel',reason='no wall for the towel cabinet'))
+ if spa_:
+  x0=min(p_.x for p_ in spa_)-210;x1=max(p_.x for p_ in spa_)+210;y0=min(p_.y for p_ in spa_)-210;y1=max(p_.y for p_ in spa_)+210;cx,cy=(x0+x1)/2,(y0+y1)/2
+  dx,dy=a['door'][0]-cx,a['door'][1]-cy;gate=('x0' if dx<0 else 'x1') if abs(dx)>=abs(dy) else ('y0' if dy<0 else 'y1')
+  def screen(n_,ax,fix,lo,hi):
+   L_=hi-lo
+   if L_<40:return
+   c_=V([(lo+hi)/2,fix,z]) if ax=='x' else V([fix,(lo+hi)/2,z])
+   _ls_box('LoverSpot_R8_spa_screen_'+n_,c_,0,(L_,8,220) if ax=='x' else (8,L_,220),M['wood'])
+  for n_,ax,fix,lo,hi in (('y0','x',y0,x0,x1),('y1','x',y1,x0,x1),('x0','y',x0,y0,y1),('x1','y',x1,y0,y1)):
+   if (ax=='x' and not a['min'][1]+60<fix<a['max'][1]-60) or (ax=='y' and not a['min'][0]+60<fix<a['max'][0]-60):continue
+   if n_==gate:m_=(lo+hi)/2;screen(n_+'a',ax,fix,lo,m_-75);screen(n_+'b',ax,fix,m_+75,hi)
+   else:screen(n_,ax,fix,lo,hi)
+ if spa_:views.append(dict(id='R8-spa-room',eye=[max(x0,a['min'][0])+50,max(y0,a['min'][1])+50,z+205],target=[cx,cy,z+40],fov=105,hour=15));views.append(dict(id='R8-spa-room2',eye=[min(x1,a['max'][0])-50,min(y1,a['max'][1])-50,z+205],target=[cx,cy,z+40],fov=105,hour=15))
+ # tandem bikes: two at each bicycle shop, one parked at each stop round the park loop
+ av=[a_.get_actor_location() for a_ in SUB.get_all_level_actors() if re.match(r'^ResortLantern_.*(_Plinth|_BollardFoot)$',a_.get_actor_label())];rooms_=[]
+ for b_ in ('S35','S81'):
+  sb=shopbox(b_);e_=ENTRY.get(b_)
+  if not sb or not e_:skipped.append(dict(place='bike_shop',reason=b_+' not found'));continue
+  rooms_.append(dict(min=num(sb[0]-sb[1]),max=num(sb[0]+sb[1])));out_=(V(e_)-sb[0]);out_=V([out_.x,out_.y,0]);out_=out_*(1/max(out_.length(),1))
+  for k in range(2):
+   got=_ls_search(world,V(e_)+out_*220,1200,300,70,125,[0,90,180,270],rmin=0,rmax=700,avoid=av+[V(e_)],follow=True,tol=12)
+   if not got:skipped.append(dict(place='bike_shop',reason='no spot by '+b_));continue
+   c,yaw=got;av.append(c);t='LoverSpot_R8_tandem_%s_%d'%(b_,k);place_mesh(t,'tandem_bike',c,yaw+90);A2('bike_shop','bike_rental',_ls_off(c,yaw,90),yaw+90,t+'_Tripo')
+   views.append(dict(id='R8-bike-%s-%d'%(b_,k),eye=num(_ls_off(c,yaw,-400,-200,220)),target=num(_ls_off(c,yaw,0,0,60)),fov=75,hour=15))
+ if rooms_:items.append(dict(place='bike_shop',anchor='door',pos=num(V(ENTRY['S35'])),yaw=0,actor='S35_F01',building='S35',name='單車行（S35 城市單車、S81 前輪單車店）',rooms=rooms_))
+ for n_ in ('plaza','fountain','pond','bench'):
+  h_=gpa('park',n_)
+  if not h_:continue
+  got=_ls_search(world,h_,h_.z,300,70,125,[0,90,180,270],rmin=250,rmax=1500,avoid=av,follow=True,tol=15)
+  if got:
+   c,yaw=got;av.append(c);t='LoverSpot_R8_tandem_park_'+n_;place_mesh(t,'tandem_bike',c,yaw+90);A2('park','tandem',_ls_off(c,yaw,90),yaw+90,t+'_Tripo')
+ # tickets and counters
+ dress('aquarium',roomreg('cv-0301'),[('ticket',1),('shop',1)]);dress('planetarium',roomreg('cv-0401'),[('counter',1)]);dress('karaoke',shopreg('S48'),[('counter',1)])
+ h_=gpa('amusement','ferris_wheel') or gpa('amusement','carousel')
+ if h_:
+  mesh=tripo_mesh('snack_kiosk');bb=mesh.get_bounding_box();ex,ey=bb.max.x-bb.min.x,bb.max.y-bb.min.y;w_=max(ex,ey)
+  got=_ls_search(world,h_,h_.z,w_+60,w_+60,320,[0,90,180,270],rmin=500,rmax=3000,step=50,follow=True,tol=25)
+  if got:
+   c,yaw=got;t='LoverSpot_R8_amusement_shop';place_mesh(t,'snack_kiosk',c,yaw-90);hide(_ls_box(t+'_Block',c,yaw+90,(ex,ey,220),M['wood']));A2('amusement','shop',_ls_off(c,yaw,ey/2+80),yaw+90,t+'_Tripo')
+   views.append(dict(id='R8-amusement-shop',eye=num(_ls_off(c,yaw,650,200,200)),target=num(_ls_off(c,yaw,0,0,120)),fov=70,hour=15))
+  else:skipped.append(dict(place='amusement',reason='no spot for the shop kiosk'))
+ # round 4 C (c-conquest 8.2.7): twelve new places. Eight shops change trade, chosen for the furniture their meshes already hold;
+ # the auditorium is a new hall like the chapel; the zoo, the orchard and the water park stand on open ground
+ CAo=ROOT/'output/street-social-city-production/city-add-tripo-v1';cp_={q['id']:q for q in json.loads((CAo/'prepared.json').read_text('utf-8-sig'))['assets']}
+ for r_ in json.loads((CAo/'remeshed.json').read_text('utf-8-sig'))['assets']:
+  p_=cp_[r_['id']];ltr[p_['key']]=r_['path'] if r_.get('triangles',1e9)<p_.get('triangles',0) else p_['path']
+ for q_ in cp_.values():ltr.setdefault(q_['key'],q_['path'])
+ for k_ in ('zoo_pen','ticket_booth','craft_table','fruit_crate','auditorium'):ltr[k_]=str(HV_/(k_+'.glb'))
+ def r_mesh(key,base,stand,bw=0,bd=0,bh=0):
+  def fn(t,c,yaw,pl):
+   place_mesh(t,key,c,yaw+90)
+   if bh:hide(_ls_box(t+'_Block',c,yaw,(bd,bw,bh),M['wood']))
+   p,y=face(c,yaw,stand);A2(pl,base,p,y,t+'_Tripo')
+  return fn
+ pmat=_ls_texmat('PhotoBoard',HV_/'photo_board.jpg',.2)
+ def r_board(t,c,yaw,pl):
+  _ls_box(t+'_Panel',_ls_off(c,yaw,-46,0,70),yaw,(4,240,160),pmat,False);p,y=face(c,yaw,60);A2(pl,'photo',p,y,t+'_Panel')
+ def r_work(t,c,yaw,pl):
+  place_mesh(t,'craft_table',c,yaw+90);hide(_ls_box(t+'_Block',c,yaw,(95,190,75),M['wood']));p,y=face(c,yaw,80);A2(pl,'work_table',p,y,t+'_Tripo')
+  for s in (-50,50):_ls_box(t+'_Stool%+d'%s,_ls_off(c,yaw,85,s),yaw,(32,32,45),M['wood'],False);A2(pl,'seat',_ls_off(c,yaw,85,s),yaw+90,t+'_Tripo')
+ def r_fortune(t,c,yaw,pl):
+  place_mesh(t,'fortune_table',c,yaw);hide(_ls_box(t+'_Block',c,yaw,(100,100,80),M['wood']));p,y=face(c,yaw,95);A2(pl,'fortune_table',p,y,t+'_Tripo')
+  stool=R2mat('FortuneStool',(.3,.12,.42))
+  for f_ in (-95,95):_ls_box(t+'_Stool%+d'%f_,_ls_off(c,yaw,f_),yaw,(36,36,45),stool,False);A2(pl,'seat',_ls_off(c,yaw,f_),yaw+(90 if f_>0 else -90),t+'_Tripo')
+ REC.update(wdress=(r_mesh('wedding_dress','rack',95,80,80,165),130,130,180,False),photoboard=(r_board,260,100,240,True),noticeb=(r_mesh('notice_board','notice',90),210,100,210,True),listing=(r_mesh('notice_board','display',90),210,100,210,True),
+  play=(r_mesh('soft_play','play',190),370,320,150,False),worktable=(r_work,220,290,100,False),kilnr=(r_mesh('kiln','kiln',95,85,75,145),120,130,170,True),fortune=(r_fortune,240,240,130,False))
+ dress('district_office',shopreg('S13'),[('counter',2),('seatbench',2),('photoboard',1)],S('S13','區公所（S13 改建）'))
+ dress('bridal',shopreg('S75'),[('fitting',2),('mirror',1),('counter',1),('wdress',4),('seatbench',1)],S('S75','婚紗禮服店（S75 改建）'))
+ dress('police',shopreg('S66'),[('counter',1),('seatbench',1),('noticeb',1)],S('S66','派出所（S66 改建）'))
+ dress('realty',shopreg('S22'),[('counter',1),('seatbench',1),('listing',2)],S('S22','租屋仲介（S22 改建）'))
+ dress('nursery',shopreg('S91'),[('play',2),('crib',2),('seatbench',2)],S('S91','親子館（S91 改建）'))
+ dress('craft',shopreg('S55'),[('worktable',3),('kilnr',1)],S('S55','手作教室（S55 改建）'))
+ dress('fortune',shopreg('S50'),[('fortune',1),('seatbench',1)],S('S50','占卜屋（S50 改建）'))
+ dress('breakfast',shopreg('S87'),[('counter',1),('table',3)],S('S87','早餐店（S87 改建）'))
+ for it_ in list(items):
+  if it_.get('place')=='bridal' and str(it_.get('anchor','')).startswith('mirror'):items.append(dict(it_,anchor='fitting_show'));break
+ def light(t,p,i_=9000,r_=2400):
+  l_=SUB.spawn_actor_from_class(unreal.PointLight,p,unreal.Rotator());l_.set_actor_label(t);l_.tags=[unreal.Name('LoverSpot')];l_.set_folder_path('UniversityCity/LoverSpotsV1');q_=l_.light_component;q_.set_mobility(unreal.ComponentMobility.MOVABLE);q_.set_intensity(i_);q_.set_temperature(3800);q_.set_attenuation_radius(r_);q_.set_cast_shadows(False)
+ # the auditorium: door in the west end, the rows look east at the stage
+ c=lawn_spot([(62000,82000),(50000,76000),(46000,46000)],2800,2000,300)
+ if c:
+  D0=_ls_off(c,0,-1300);ct='LoverSpot_R9_auditorium';_ls_spawn(ct+'_Tripo',tripo_mesh('auditorium'),D0,0,[1,1,1],None,False)
+  for k,(a_,b_,c_,d_) in enumerate(json.loads((HV_/'auditorium-walls.json').read_text('utf8'))):hide(_ls_box('%s_Wall%d'%(ct,k),V([D0.x+(a_+b_)*50,D0.y+(c_+d_)*50,c.z]),0,((b_-a_)*100,(d_-c_)*100,700),M['counter']))
+  hide(_ls_box(ct+'_Floor',V([D0.x+1300,D0.y,c.z]),0,(2600,1800,5),M['counter']));hide(_ls_box(ct+'_Stage',V([D0.x+2275,D0.y,c.z]),0,(650,1740,105),M['counter']))
+  for k,(a_,h_) in enumerate(((1850,30),(1890,55),(1930,80))):hide(_ls_box('%s_Step%d'%(ct,k),V([D0.x+a_+20,D0.y,c.z]),0,(40,200,h_),M['counter']))
+  for x_ in (600,1300,2000):light('%s_Light%d'%(ct,x_),V([D0.x+x_,D0.y,c.z+620]))
+  for k in range(0,10,2):
+   for s in (-1,1):
+    for j_,o in enumerate((-200,0,200)):
+     x_=D0.x+400+k*120;y_=D0.y+s*460+o
+     items.append(dict(place='auditorium',anchor=nm('auditorium','seat' if j_ else 'pew'),pos=num(V([x_+72,y_,c.z+5])),yaw=-90,actor=ct+'_Tripo',seat=num(V([x_+24,y_,c.z+47]))))
+  A2('auditorium','stage',V([D0.x+2200,D0.y,c.z+105]),-90,ct+'_Tripo')
+  items.append(dict(place='auditorium',anchor='door',pos=num(_ls_off(D0,0,-120)),yaw=0,actor=ct,building=None,name='大學禮堂',rooms=[dict(min=[D0.x-100,D0.y-900,c.z-100],max=[D0.x+2650,D0.y+900,c.z+900])]))
+  views.append(dict(id='R9-auditorium-in',eye=num(V([D0.x+120,D0.y,c.z+190])),target=num(V([D0.x+2200,D0.y,c.z+200])),fov=85,hour=15))
+  views.append(dict(id='R9-auditorium-out',eye=num(V([D0.x-1400,D0.y-1400,c.z+900])),target=num(c),fov=70,hour=15))
+ else:skipped.append(dict(place='auditorium',reason='no 28 x 20 m lawn'))
+ # the zoo: four pens round a cross of paths, ticket booth at the west end, a kiosk at the east end
+ c=lawn_spot([(71700,112000),(60000,100000),(30000,46000)],3600,2400,300)
+ if c:
+  zt='LoverSpot_R9_zoo'
+  for k,(key,n_,ox,oy) in enumerate((('alpaca',3,-650,-650),('goat',4,650,-650),('penguin',6,-650,650),('rabbit',6,650,650))):
+   p=V([c.x+ox,c.y+oy,c.z]);p=V([p.x,p.y,_ls_floor(world,p.x,p.y,c.z) or c.z]);t='%s_pen%d'%(zt,k);place_mesh(t,'zoo_pen',p,0)
+   for s in (-1,1):hide(_ls_box('%s_F%+d'%(t,s),_ls_off(p,0,0,s*300),0,(800,10,120),M['wood']));hide(_ls_box('%s_G%+d'%(t,s),_ls_off(p,0,s*400),0,(10,600,120),M['wood']))
+   for i_ in range(n_):place_mesh('%s_%s%d'%(t,key,i_),key,V([p.x-250+(i_*197)%500,p.y-170+(i_*131)%300,p.z]),(i_*83+k*40)%360)
+   sy=-1 if oy>0 else 1;q0=V([p.x,p.y+sy*375,p.z]);dy=-90 if sy>0 else 90
+   A2('zoo','enclosure',V([q0.x-150,q0.y,q0.z]),dy-90,t+'_Tripo');A2('zoo','feed_animal',V([q0.x+150,q0.y,q0.z]),dy-90,t+'_Tripo')
+   views.append(dict(id='R9-zoo-pen%d'%k,eye=num(V([q0.x,q0.y+sy*140,q0.z+165])),target=num(V([p.x,p.y,p.z+50])),fov=80,hour=15))
+  for k,ox in enumerate((-300,300)):
+   p=V([c.x+ox,c.y+130,c.z]);p=V([p.x,p.y,_ls_floor(world,p.x,p.y,c.z) or c.z]);t='%s_bench%d'%(zt,k);place_mesh(t,'bench_slat_a',p,0);A2('zoo','bench',V([p.x,p.y-50,p.z]),0,t+'_Tripo')
+  p=V([c.x-1500,c.y,c.z]);p=V([p.x,p.y,_ls_floor(world,p.x,p.y,c.z) or c.z]);t=zt+'_ticket';place_mesh(t,'ticket_booth',p,90);hide(_ls_box(t+'_Block',p,0,(180,220,220),M['wood']));A2('zoo','ticket',_ls_off(p,0,170),90,t+'_Tripo')
+  mesh=tripo_mesh('snack_kiosk');bb=mesh.get_bounding_box();ex,ey=bb.max.x-bb.min.x,bb.max.y-bb.min.y
+  p=V([c.x+1550,c.y,c.z]);p=V([p.x,p.y,_ls_floor(world,p.x,p.y,c.z) or c.z]);t=zt+'_shop';place_mesh(t,'snack_kiosk',p,90);hide(_ls_box(t+'_Block',p,270,(ex,ey,220),M['wood']));A2('zoo','shop',_ls_off(p,180,ey/2+80),270,t+'_Tripo')
+  items.append(dict(place='zoo',anchor='door',pos=num(V([c.x-1750,c.y,p.z])),yaw=0,actor=zt+'_ticket',building=None,name='小型動物園',rooms=[dict(min=[c.x-1800,c.y-1100,c.z-200],max=[c.x+1800,c.y+1100,c.z+600])]))
+  views.append(dict(id='R9-zoo-all',eye=num(V([c.x-1900,c.y-1500,c.z+1000])),target=num(V([c.x,c.y,c.z])),fov=75,hour=15))
+ else:skipped.append(dict(place='zoo',reason='no 36 x 24 m lawn'))
+ # the orchard: twelve apple trees, a table of crates at the gate
+ c=lawn_spot([(71700,118000),(60000,104000),(30000,30000)],2800,1900,520)
+ if c:
+  ot='LoverSpot_R9_orchard';np_=0
+  for i_ in range(4):
+   for j_ in range(3):
+    p=V([c.x-900+i_*600,c.y-500+j_*500,c.z]);p=V([p.x,p.y,_ls_floor(world,p.x,p.y,c.z) or c.z]);t='%s_tree%d%d'%(ot,i_,j_);place_mesh(t,'apple_tree',p,(i_*70+j_*130)%360);hide(_ls_box(t+'_Block',p,0,(40,40,200),M['wood']))
+    if (i_+j_)%2==0:A2('orchard','pick',V([p.x,p.y-195,p.z]),0,t+'_Tripo');np_+=1
+  for k,ox in enumerate((-300,300)):
+   p=V([c.x+ox,c.y+800,c.z]);p=V([p.x,p.y,_ls_floor(world,p.x,p.y,c.z) or c.z]);t='%s_bench%d'%(ot,k);place_mesh(t,'bench_slat_a',p,180);A2('orchard','bench',V([p.x,p.y+50,p.z]),180,t+'_Tripo')
+  p=V([c.x-1250,c.y,c.z]);p=V([p.x,p.y,_ls_floor(world,p.x,p.y,c.z) or c.z]);t=ot+'_stand';place_mesh(t,'fruit_display',p,90);hide(_ls_box(t+'_Block',p,0,(120,200,100),M['wood']));A2('orchard','counter',_ls_off(p,180,120),270,t+'_Tripo')
+  for k,oy in enumerate((-190,190)):place_mesh('%s_crate%d'%(ot,k),'fruit_crate',V([p.x,p.y+oy,p.z]),90)
+  items.append(dict(place='orchard',anchor='door',pos=num(V([c.x-1450,c.y,p.z])),yaw=0,actor=t,building=None,name='採果農園',rooms=[dict(min=[c.x-1500,c.y-1000,c.z-200],max=[c.x+1400,c.y+1000,c.z+700])]))
+  views.append(dict(id='R9-orchard',eye=num(V([c.x-1600,c.y-1100,c.z+500])),target=num(V([c.x,c.y,c.z+150])),fov=75,hour=15))
+  views.append(dict(id='R9-orchard-in',eye=num(V([c.x-600,c.y-250,c.z+170])),target=num(V([c.x+300,c.y-250,c.z+200])),fov=85,hour=15))
+ else:skipped.append(dict(place='orchard',reason='no 28 x 19 m lawn'))
+ # the water park on the sand: the slide runs down into a shallow splash pool
+ h_=gpa('beach','beach_volleyball_net') or V(gp['beach']['door']);got=_ls_search(world,h_,h_.z,1900,1200,700,[0,90,180,270],rmin=800,rmax=7000,step=100,follow=True,tol=60)
+ if got and not on_road(got[0].x,got[0].y):
+  c,yaw=got;wt='LoverSpot_R9_waterpark';sl=_ls_off(c,yaw,0,-430);pl_=_ls_off(c,yaw,0,430);wm=_ls_mat('M_LS_AquaWater',(.1,.45,.6),.05,0.,.8)
+  place_mesh(wt+'_slide','water_slide',sl,yaw);hide(_ls_box(wt+'_Block',sl,yaw,(500,600,300),M['wood']))
+  _ls_cyl(wt+'_Rim',pl_,350,48,M['stone'],False);_ls_cyl(wt+'_Water',pl_,328,50,wm,False)
+  A2('waterpark','slide',_ls_off(sl,yaw,0,320),yaw+90,wt+'_slide_Tripo')
+  for k,(u,v) in enumerate(((-150,-120),(150,-120),(-150,120),(150,120))):A2('waterpark','swim',_ls_off(pl_,yaw,u,v),yaw+k*90,wt+'_Water')
+  for k,u in enumerate((-430,430)):
+   p=_ls_off(pl_,yaw,u,-120);t='%s_bench%d'%(wt,k);place_mesh(t,'bench_slat_a',p,yaw);A2('waterpark','bench',p,yaw,t+'_Tripo')
+  p=_ls_off(pl_,yaw,-470,230);t=wt+'_shower';place_mesh(t,'beach_shower',p,yaw);A2('waterpark','shower',_ls_off(p,yaw,70),yaw+90,t+'_Tripo')
+  items.append(dict(place='waterpark',anchor='door',pos=num(_ls_off(c,yaw,-700)),yaw=0,actor=wt+'_slide',building=None,name='滑水道',rooms=[dict(min=[c.x-1100,c.y-1100,c.z-200],max=[c.x+1100,c.y+1100,c.z+900])]))
+  views.append(dict(id='R9-waterpark',eye=num(_ls_off(c,yaw,-1300,700,520)),target=num(_ls_off(c,yaw,0,0,200)),fov=75,hour=15))
+ else:skipped.append(dict(place='waterpark',reason='no 19 x 12 m sand by the beach'))
+ # what stands in the aquarium halls (the glass tanks are empty): logged for the next pass
+ for rid in ('cv-0301','cv-0302'):
+  a=ar.get(rid)
+  for q_ in SUB.get_all_level_actors():
+   l_=q_.get_actor_label()
+   if l_.startswith('LoverSpot'):continue
+   o_,e_=q_.get_actor_bounds(False)
+   if isinstance(q_,unreal.StaticMeshActor) and a['min'][0]<=o_.x<=a['max'][0] and a['min'][1]<=o_.y<=a['max'][1] and a['min'][2]-5<=o_.z<=a['max'][2] and max(e_.x,e_.y)<900:
+    m_=q_.static_mesh_component.static_mesh;_ls_note('hall %s %s %s c=%d,%d,%d e=%d,%d,%d'%(rid,l_,m_.get_name() if m_ else '',o_.x,o_.y,o_.z,e_.x,e_.y,e_.z))
+ # the shops that changed trade still carry the old name on their sign slots (Tools/build_street_city_signs.lua)
+ SD=ROOT/'output/street-social-city-production/shop-refits-v1/converted-signs';ns=0;nb=0;acts2={a.get_actor_label():a for a in SUB.get_all_level_actors()}
+ for f_ in sorted(SD.glob('S*-B.jpg')):
+  b_=f_.stem.split('-')[0];q_=acts2.get('RomanceName_'+b_)
+  if not q_:raise RuntimeError('no name board on '+b_)
+  q_.modify();q_.static_mesh_component.modify();q_.static_mesh_component.set_material(0,_ls_texmat('SignB'+b_,f_,.9));ns+=1
+  r_=acts2.get('ShopV1_%s_Refit'%b_);v_=SD/(b_+'-V.jpg')
+  if r_ and v_.exists():
+   cp=r_.static_mesh_component;sn_=[str(n_) for n_ in cp.get_material_slot_names()]
+   for i_,n_ in enumerate(sn_):
+    if n_.lower().startswith(('shopsign_%s_v'%b_).lower()):r_.modify();cp.modify();cp.set_material(i_,_ls_texmat('SignV'+b_,v_,.9));nb+=1
+ _ls_note('R8 signs swapped: %d boards, %d blades'%(ns,nb));skipped.append(dict(place='signs',reason='%d boards, %d blades'%(ns,nb)))
+ for b_ in ('S79','S41','S96','S13','S75','S66','S22','S91','S55','S50','S87'):
+  a_=ar.get(b_.lower()+'-f01')
+  sb=shopbox(b_);e_=ENTRY.get(b_)
+  if sb and e_:
+   bo_=acts2['RomanceName_'+b_].get_actor_bounds(False)[0];o_=bo_-sb[0];o_=V([o_.x,0,0]) if abs(o_.x)>abs(o_.y) else V([0,o_.y,0]);o_=o_*(1/max(o_.length(),1));views.append(dict(id='R8-sign-'+b_,eye=num(bo_+o_*1000+V([0,0,-170])),target=num(bo_+V([0,0,-60])),fov=70,hour=15));views.append(dict(id='R9-in-'+b_,eye=num(V(e_)*.6+sb[0]*.4+V([0,0,0])+V([0,0,170-(V(e_)*.6+sb[0]*.4).z+1200])),target=num(V([sb[0].x,sb[0].y,1290])),fov=100,hour=15))
+ # world gaps of section 8.1: dune grass along the back of the beach, rocks at the waterline, reeds and lily pads on the
+ # lake and canal, the interior Tripo pieces in homes, schools and offices, and lit lamp heads at night
+ ng=nr=0
+ for i,y in enumerate(range(3000,81000,850)):
+  edge=sh_=None
+  for x in range(10500,17000,100):
+   h=_ls_hit(world,V([x,y,1500]),V([x,y,900]))
+   if not h:continue
+   if h[4].z>=1100 and sh_ is None:sh_=x
+   if h[9] and h[9].get_actor_label()=='WorldEdge_CoastStrip' and h[4].z>1190:edge=(x,h[4].z)
+  if edge:
+   c=V([edge[0]-80-(i*37)%160,y+(i*61)%300,edge[1]])
+   if _ls_fits(world,c,0,160,160,60,c.z,16):t='LoverSpot_R6_dune%d'%i;place_mesh(t,'dune_grass',c,(i*71)%360);ng+=1
+  if sh_ and i%7==3:
+   t='LoverSpot_R6_rocks%d'%i;place_mesh(t,'coastal_rocks',V([sh_+40,y,1094]),(i*53)%360);nr+=1
+ _ls_note('R6: dune %d rocks %d'%(ng,nr));nd=nl=0
+ def reed(k,x,y):
+  place_mesh('LoverSpot_R6_reed%d'%k,'reeds_a' if k%2 else 'reeds_b',V([x,y,1096]),(k*67)%360)
+ for i,x in enumerate(range(16000,108000,1400)):
+  wet=[]
+  for y in range(82000,98000,100):
+   h=_ls_hit(world,V([x,y,1500]),V([x,y,800]))
+   if h and h[4].z<1095:wet.append(y)
+  if len(wet)<10:continue
+  reed(2*i,x,wet[0]+90);reed(2*i+1,x+500,wet[-1]-90);nd+=2
+  if i%3==0:place_mesh('LoverSpot_R6_lily%d'%i,'lily_pads',V([x+250,wet[0]+380,1100.5]),(i*29)%360);nl+=1
+ edge_=[k for k in free if any((k[0]+i*200,k[1]+j*200) in land or (k[0]+i*200,k[1]+j*200) not in cell for i in (-3,3) for j in (-2,2))]
+ for i,k in enumerate(edge_[:16]):reed(500+i,k[0],k[1]);nd+=1
+ for i,k in enumerate([k for k in free[::9] if k not in edge_][:8]):place_mesh('LoverSpot_R6_lilylake%d'%i,'lily_pads',V([k[0],k[1],1100.5]),(i*47)%360);nl+=1
+ _ls_note('R6: reeds %d lily %d'%(nd,nl));nf=0
+ for p in pl6:
+  rm_=p.get('room') or {}
+  if 'min' not in rm_:continue
+  b=str(p.get('building') or '');cx_=[(rm_['min'][0]+rm_['max'][0])/2,(rm_['min'][1]+rm_['max'][1])/2];an={a['name']:a for a in p.get('anchors') or []}
+  plan=[]
+  if b in ('R1','R2'):plan=[('fridge','fridge',(an.get('kitchen') or {}).get('pos') or cx_),('bookcase_full','bookcase',cx_),('potted_monstera','plant',cx_)]
+  elif p.get('kind')=='room_dorm':plan=[('wardrobe','wardrobe',cx_),('dorm_desk','desk',cx_)]
+  for key,base,st in plan:
+   # the search starts at the cook's spot for the fridge: keep off it, or the fridge stands in front of the counter
+   if fit_home(p,key,base,st,range(130 if key=='fridge' else 0,620,50)):nf+=1
+ for rid,key,n in (('t1-0201','lectern',1),('t1-0202','lectern',1),('t2-0201','lectern',1),('t4-0201','lectern',1),('t1-0201','student_desk',4),('t2-0201','student_desk',4),('ad-0201','workstation',4),('ad-0201','office_chair',4),('ad-0202','workstation',4),('ad-0202','monitor_set',2),('ad-0101','sofa_three',2),('ad-0101','potted_monstera',3)):
+  a=ar.get(rid)
+  if not a or 'min' not in a:skipped.append(dict(place=rid,reason='no room for '+key));continue
+  q=dict(id=rid,room=dict(min=a['min'],max=a['max']),door=a.get('door'))
+  for k in range(n):
+   q['id']='%s_%d'%(rid,k)
+   if fit_home(q,key,key,[(a['min'][0]+a['max'][0])/2+k*90,(a['min'][1]+a['max'][1])/2],range(0,1000,60)):nf+=1
+ _ls_note('R6: interior pieces %d'%nf);k=0
+ # round 4 follow-up (item 2): S26-S48 and S73-S96 homes only have the bathroom the shop mesh gives them; furnish them like the S01-S25 homes
+ ns=dict(sofa=0,tv=0,bed=0,dining=0,kitchen=0,fridge=0,rooms=0)
+ def seat_at(place,base,c,fy,actor,hip=45):
+  items.append(dict(place=place,anchor=nm(place,base),pos=num(V([c.x,c.y,c.z])),yaw=fy-90,actor=actor,seat=[c.x,c.y,c.z+hip]))
+ sight={}
+ def off_sight(rid,c,w,d):
+  # the piece's half size clear of the seat-to-television line
+  if rid not in sight:return True
+  p,q=sight[rid];dx,dy=q.x-p.x,q.y-p.y;t=max(0,min(1,((c.x-p.x)*dx+(c.y-p.y)*dy)/max(dx*dx+dy*dy,1)))
+  return math.hypot(c.x-p.x-t*dx,c.y-p.y-t*dy)>max(w,d)/2+25
+ def clear(rid,a,hint,w,d,h,rmin,rmax,wall=False,pad=160):
+  n0=len(hv.setdefault(rid,[]))
+  for k in range(8):
+   g=spot(rid,a,hint,w,d,h,rmin,rmax,wall,pad)
+   if not g:break
+   if off_sight(rid,g[0],w,d):del hv[rid][n0:-1];return g
+  del hv[rid][n0:];return None
+ for rid in sorted(ar):
+  if not shop_home(rid):continue
+  a=ar[rid]
+  ns['rooms']+=1;z_=a['min'][2];mid=V([(a['min'][0]+a['max'][0])/2,(a['min'][1]+a['max'][1])/2,z_])
+  if a.get('door'):hv.setdefault(rid,[]).append(V([a['door'][0],a['door'][1],z_]))
+  n0=len(hv.setdefault(rid,[]));got=None;sofa_=None
+  for k in range(8):
+   g=spot(rid,a,mid,215,100,90,0,460,True)
+   if not g:break
+   if not _ls_hit(world,V([g[0].x,g[0].y,z_+100]),_ls_off(V([g[0].x,g[0].y,z_+100]),g[1],260)):got=g;del hv[rid][n0:-1];break
+   ns['sofa_facing_wall']=ns.get('sofa_facing_wall',0)+1
+  if not got:del hv[rid][n0:]
+  if got:
+   c,fy=got;sofa_=(c,fy);t='LoverSpot_R8_sofa_'+rid;place_mesh(t,'sofa_three',c,fy-90);s_=_ls_off(c,fy,15)
+   seat_at(rid,'sofa',s_,fy,t+'_Tripo');seat_at(rid,'tv_sofa',s_,fy,t+'_Tripo');ns['sofa']+=1
+   g2=seen(rid,a,s_,_ls_off(c,fy,300),140,60,110,0,320,True)
+   if g2:
+    c2=g2[0];t='LoverSpot_R8_tv_'+rid;place_mesh(t,'tv_cabinet',c2,snap(c.x-c2.x,c.y-c2.y)-90);ns['tv']+=1
+    homev[rid]=dict(homev.get(rid,{}),tv=(s_,c2));sight[rid]=(s_,c2)
+  got=clear(rid,a,mid,225,175,100,0,520,True) or clear(rid,a,mid,225,175,100,0,700,True,pad=100) or clear(rid,a,mid,225,175,100,0,700,True,pad=60)
+  if got:
+   c,fy=got;t='LoverSpot_R8_bed_'+rid;place_mesh(t,'bed_double',c,fy);items.append(dict(place=rid,anchor=nm(rid,'bed'),pos=num(V([c.x,c.y,z_])),yaw=fy-90,actor=t+'_Tripo',seat=[c.x,c.y,z_+55]));ns['bed']+=1
+  got=clear(rid,a,mid,120,60,100,0,520,True)
+  if got:
+   c,fy=got;t='LoverSpot_R8_kitchen_'+rid;place_mesh(t,'kitchen_unit',c,fy-90);A2(rid,'kitchen',_ls_off(c,fy,70),fy+90,t+'_Tripo');ns['kitchen']+=1
+   g2=spot(rid,a,c,70,75,120,0,300,True)
+   if g2:t='LoverSpot_R8_fridge_'+rid;place_mesh(t,'fridge',g2[0],g2[1]-90);ns['fridge']+=1
+  got=clear(rid,a,mid,195,195,100,0,460) or clear(rid,a,mid,195,195,100,0,700,pad=135) or clear(rid,a,mid,195,195,100,0,700,pad=120) or clear(rid,a,mid,195,195,100,0,520,pad=100)
+  if got:
+   c=got[0]
+   if sofa_:
+    # a table that sinks into the sofa slides straight out of it, along the axis with the shorter way out
+    sc,sy_=sofa_;hx,hy=(50,108) if sy_%180==0 else (108,50);dx,dy=c.x-sc.x,c.y-sc.y;ox,oy=112+hx-abs(dx),112+hy-abs(dy)
+    if ox>0 and oy>0:
+     for mx,my in sorted([(math.copysign(ox+6,dx),0),(0,math.copysign(oy+6,dy))],key=lambda m:abs(m[0])+abs(m[1])):
+      c2=V([c.x+mx,c.y+my,z_])
+      if a['min'][0]+40<=c2.x<=a['max'][0]-40 and a['min'][1]+40<=c2.y<=a['max'][1]-40 and _ls_fits(world,c2,0,195,195,100,z_,8):c=c2;ns['dining_slid']=ns.get('dining_slid',0)+1;break
+   t='LoverSpot_R8_dining_'+rid;place_mesh(t,'dining_set',c,0);A2(rid,'dining',V([c.x,c.y-100,z_]),0,t+'_Tripo');ns['dining']+=1;homev[rid]=dict(homev.get(rid,{}),dine=c)
+ _ls_note('R8 shop homes: %s'%ns);skipped.append(dict(place='shop_homes',reason=str(ns)))
+ for rid in ('r1-0301','r2-0201','s05-0301','s30-0301','s73-0301'):
+  h_=homev.get(rid) or {};z_=ar[rid]['min'][2]
+  if h_.get('tv'):views.append(dict(id='R9-tv-'+rid,eye=num(V([h_['tv'][0].x,h_['tv'][0].y,z_+150])),target=num(V([h_['tv'][1].x,h_['tv'][1].y,z_+70])),fov=95,hour=15))
+  if h_.get('dine'):views.append(dict(id='R9-dine-'+rid,eye=num(V([h_['dine'].x+70,h_['dine'].y+70,z_+285])),target=num(V([h_['dine'].x,h_['dine'].y,z_+40])),fov=100,hour=15))
+ for rid,h_ in sorted(homev.items()):
+  if rid in ('r1-0301','r2-0201','s05-0301','s30-0301','s73-0301') or not (shop_home(rid) or rid[0]=='r'):continue
+  z_=ar[rid]['min'][2]
+  if h_.get('tv'):views.append(dict(id='R9-all-tv-'+rid,eye=num(V([h_['tv'][0].x,h_['tv'][0].y,z_+150])),target=num(V([h_['tv'][1].x,h_['tv'][1].y,z_+70])),fov=95,hour=15))
+  if h_.get('dine'):views.append(dict(id='R9-all-dine-'+rid,eye=num(V([h_['dine'].x+70,h_['dine'].y+70,z_+285])),target=num(V([h_['dine'].x,h_['dine'].y,z_+40])),fov=100,hour=15))
+ # item 1: every suite has its television on the living wall (room-specs); the sofa facing it is the seat, the foot of the bed when the sofa is not there
+ MS={}
+ for f_ in sorted((ROOT/'output/street-social-city-production/motel-v1/room-specs').glob('*.json')):
+  if '.before' not in f_.name:MS.update({r_['id']:r_ for r_ in json.loads(f_.read_text('utf8'))['rooms']})
+ def tv_of(o):
+  if isinstance(o,dict):
+   if ('tv' in o.values() or o.get('tv')) and o.get('at'):return o['at']
+   o=list(o.values())
+  if isinstance(o,list):
+   for v_ in o:
+    r_=tv_of(v_) if isinstance(v_,(dict,list)) else None
+    if r_:return r_
+  return None
+ nt=dict(sofa=0,bed=0,foot=0);hot=False
+ for p in pl6:
+  if p.get('kind')!='motel_suite':continue
+  bed=next((q for q in p.get('anchors') or [] if q['name'].startswith('bed')),None);st_=next((q for q in p.get('anchors') or [] if q['name']=='stand'),None)
+  if not bed or not st_:continue
+  sp=MS.get(p['id'].split('_')[-1]) or {};bl=(sp.get('bed') or {}).get('at');z_=st_['pos'][2];cx_,cy_=p['room']['center'][:2];bx_,by_=bed['pos'][:2];T=None
+  if bl and abs(abs(bx_-cx_)-abs(bl[1])*100)<150 and abs(abs(by_-cy_)-abs(bl[0])*100)<150:
+   sx_=1 if (bx_-cx_)*bl[1]>0 else -1;sy_=1 if (by_-cy_)*bl[0]>0 else -1
+   W=lambda lx,ly:(cx_+sx_*ly*100,cy_+sy_*lx*100)
+   lv=sp.get('living') or {};lc=(lv.get('table') or {}).get('at',(2.4,-.5))
+   se=next((q['at'] for q in lv.get('seats') or [] if q.get('kind','modern') in ('baroque','chesterfield','modern','curved') and q.get('at')),None) or (lc[0],lc[1]+1.45)
+   T=W(*(tv_of(sp) or (2.3,-3.05)));P=W(*se);h=_ls_hit(world,V([P[0],P[1],z_+130]),V([P[0],P[1],z_-5]))
+   if h and 20<h[4].z-z_<95:hip=h[4].z-z_+6;nt['sofa']+=1
+   else:P=W(bl[0],bl[1]-1.1);hip=55;nt['bed']+=1
+   yaw=math.degrees(math.atan2(T[1]-P[1],T[0]-P[0]))-90
+  else:
+   f_=math.radians(bed['yaw']-90);P=(bx_+math.cos(f_)*110,by_+math.sin(f_)*110);hip=55;yaw=bed['yaw']+180;nt['foot']+=1
+  for pid in [p['id']]+(['hotel'] if p.get('building')=='H1' and not hot else []):
+   items.append(dict(place=pid,anchor=nm(pid,'tv_sofa'),pos=[P[0],P[1],z_],yaw=yaw,actor='room',seat=[P[0],P[1],z_+hip]))
+  if p.get('building')=='H1':hot=True
+  if p['id']=='motel_301_imore-e4e6c095f732':
+   if T:views.append(dict(id='R9-suite-tv',eye=[P[0],P[1],z_+120],target=[T[0],T[1],z_+120],fov=85,hour=20))
+   views.append(dict(id='R9-suite-ceiling',eye=[cx_,cy_,z_+150],target=[cx_+200,cy_+60,z_+380],fov=100,hour=20))
+   views.append(dict(id='R9-suite-bed',eye=[P[0],P[1],z_+160],target=[bx_,by_,z_+60],fov=85,hour=20))
+ _ls_note('R8 suites tv: %s'%nt);skipped.append(dict(place='suites_tv',reason=str(nt)))
+ # item 6: R1, R2 and the dorms are solid behind the glass, the wall showed through; an opaque dark pane reads as a window from the street
+ pane=_ls_mat('M_LS_WinPane',(.05,.08,.12),.12,.3);ng=0;gl=[]
+ for a_ in SUB.get_all_level_actors():
+  if not re.match(r'^(City|Campus)_(R1|R2|D[1-4])_F0[2-9]',a_.get_actor_label()):continue
+  for smc in a_.get_components_by_class(unreal.StaticMeshComponent):
+   for i_ in range(smc.get_num_materials()):
+    m_=smc.get_material(i_)
+    if m_ and 'glass' in m_.get_name().lower():smc.set_material(i_,pane);ng+=1;gl.append(a_.get_actor_label())
+ _ls_note('R8 window panes: %d on %s'%(ng,sorted(set(gl))[:12]));skipped.append(dict(place='window_panes',reason=str(ng)))
+ views.append(dict(id='R9-soak',eye=num(V([45350,50200,1400])),target=num(V([45590,50180,1250])),fov=80,hour=15))
+ views.append(dict(id='R9-soak-side',eye=num(V([45590,49960,1340])),target=num(V([45590,50300,1240])),fov=90,hour=15))
+ for rid in ('r1-0301','r2-0201'):
+  w_=next((i_ for i_ in items if i_['place']==rid and i_['anchor']=='balcony'),None)
+  if w_:f_=math.radians(w_.get('yaw',0)+90);views.append(dict(id='R9-window-'+rid,eye=num(V([w_['pos'][0]+math.cos(f_)*1130,w_['pos'][1]+math.sin(f_)*1130,w_['pos'][2]+380])),target=num(V([w_['pos'][0],w_['pos'][1],w_['pos'][2]+80])),fov=60,hour=15))
+ # shop counters: the anchor stood on the counter top before the build moved it to the floor (anchor-ground.json keeps that height)
+ gf=ROOT/'output/street-social-city-production/places-v1/anchor-ground.json';top={};tills=set()
+ if gf.is_file():
+  for s_,to in json.loads(gf.read_text('utf8')).items():
+   q=[float(v) for v in s_.split(',')];top[(round(to[0]),round(to[1]))]=q[2]
+ for p in pl6:
+  for a in p.get('anchors') or []:
+   if not a.get('pos'):continue
+   z_=top.get((round(a['pos'][0]),round(a['pos'][1])),a['pos'][2])
+   if a['name'].startswith('counter') and str(p.get('building') or '').startswith('S') and z_-(p.get('room') or {}).get('min',[0,0,1200])[2]>70:
+    # two places can share one counter: one register
+    key_=(round(a['pos'][0]),round(a['pos'][1]))
+    if key_ in tills:continue
+    tills.add(key_);k+=1;place_mesh('LoverSpot_R6_register%d'%k,'cash_register',V([a['pos'][0],a['pos'][1],z_]),a.get('yaw',0))
+ # lit heads on the Tripo street lamps: opal spheres follow the day-night LampGlowWeight
+ opal=EAL.load_asset('/Game/UniversityCity/EnvironmentV1/Materials/M_EnvironmentOpal_01');sph=EAL.load_asset('/Engine/BasicShapes/Sphere');nlamp=0
+ for a_ in SUB.get_all_level_actors():
+  lb=a_.get_actor_label()
+  if not lb.startswith('WorldTripo_lamp_'):continue
+  c_=a_.get_component_by_class(unreal.HierarchicalInstancedStaticMeshComponent)
+  if not c_:continue
+  bb=c_.static_mesh.get_bounding_box();ex,ey=bb.max.x-bb.min.x,bb.max.y-bb.min.y;dbl='double' in lb
+  for i in range(c_.get_instance_count()):
+   tr=c_.get_instance_transform(i,True);p_=tr.translation;s_=tr.scale3d;ya=tr.rotation.rotator().yaw;top=p_.z+bb.max.z*s_.z
+   offs=[(bb.min.x*s_.x*.88,0),(bb.max.x*s_.x*.88,0)] if dbl and ex>=ey else [(0,bb.min.y*s_.y*.88),(0,bb.max.y*s_.y*.88)] if dbl else [(0,0)]
+   for j,(ox,oy) in enumerate(offs):
+    q=_ls_off(V([p_.x,p_.y,top-(14 if dbl else 34)]),ya,ox,oy);nlamp+=1;_ls_spawn('LoverSpot_R6_LampGlow%d'%nlamp,sph,q,0,[.26,.26,.2] if dbl else [.34,.34,.34],opal,False)
+ # one warm spot per lamp for the pool of light on the road, on the same night schedule as the path lamps
+ nlight=0
+ for a_ in SUB.get_all_level_actors():
+  lb=a_.get_actor_label()
+  if not lb.startswith('WorldTripo_lamp_'):continue
+  c_=a_.get_component_by_class(unreal.HierarchicalInstancedStaticMeshComponent)
+  if not c_:continue
+  bb=c_.static_mesh.get_bounding_box()
+  for i in range(c_.get_instance_count()):
+   tr=c_.get_instance_transform(i,True);p_=tr.translation;top=p_.z+bb.max.z*tr.scale3d.z;nlight+=1
+   l_=SUB.spawn_actor_from_class(unreal.SpotLight,V([p_.x,p_.y,top-30]),unreal.Rotator(pitch=-90));l_.set_actor_label('LoverSpot_R6_LampLight%d'%nlight);l_.tags=[unreal.Name('LoverSpot'),unreal.Name('EnvGroup=Path'),unreal.Name('EnvLumens=1500')];l_.set_folder_path('UniversityCity/LoverSpotsV1');c=l_.light_component;c.set_mobility(unreal.ComponentMobility.MOVABLE);c.set_editor_property('intensity_units',unreal.LightUnits.LUMENS);c.set_intensity(1500);c.set_temperature(3200);c.set_editor_property('use_temperature',True);c.set_editor_property('attenuation_radius',1500);c.set_editor_property('inner_cone_angle',50);c.set_editor_property('outer_cone_angle',75);c.set_editor_property('source_radius',12);c.set_cast_shadows(False)
+ # newsstands, cafe sets and lanterns the street dressing left standing on the road: to the nearest pavement
+ nm_=0
+ for a_ in SUB.get_all_level_actors():
+  lb=a_.get_actor_label()
+  if not (lb.startswith('Landmark_newsstand') or lb.startswith('Landmark_cafe_set') or lb.startswith('ResortLantern_CV_')):continue
+  o_=a_.get_actor_bounds(False)[0];l0=a_.get_actor_location()
+  if not on_road(o_.x,o_.y,60):continue
+  best=None
+  for r in range(200,1401,100):
+   for q in range(16):
+    x,y=o_.x+r*math.cos(q*math.pi/8),o_.y+r*math.sin(q*math.pi/8)
+    if not on_road(x,y,260):
+     g=_ls_floor(world,x,y,1205)
+     if g is not None and abs(g-1205)<=20:best=(x-o_.x,y-o_.y,g);break
+   if best:break
+  if best:a_.set_actor_location(V([l0.x+best[0],l0.y+best[1],l0.z]),False,False);nm_+=1
+ skipped.append(dict(place='road_clear',reason='moved %d pieces off the road, %d lamp lights'%(nm_,nlight)))
+ _ls_note('R6: lamp heads %d'%nlamp);skipped.append(dict(place='world_gap',reason='dune %d rocks %d reeds %d lily %d interior %d registers %d lamp heads %d'%(ng,nr,nd,nl,nf,k,nlamp)))
+ # R7 minshuku (c-conquest 11-05): S18's floors above the carport are a corridor and three motel suites, so the inn stands on
+ # its own on the lawn between AD and T2: Tools/build_street_city_minshuku.lua, wall boxes from minshuku-walls.json.
+ # L(x,y) = metres in the building's frame, front (veranda) at -y
+ HV=ROOT/'output/street-social-city-production/hill-v1';ltr['minshuku_annex']=str(HV/'minshuku_annex.glb');im=tripo_mesh('minshuku_annex');wj=json.loads((HV/'minshuku-walls.json').read_text('utf8'))
+ ltr['minshuku_scroll']=str(HV/'minshuku_scroll.glb');IX,IY=72000,74000;cut=0
+ for a_ in SUB.get_all_level_actors():
+  if not a_.get_actor_label().startswith('WorldTripo_'):continue
+  c_=a_.get_component_by_class(unreal.HierarchicalInstancedStaticMeshComponent)
+  if not c_:continue
+  for i in range(c_.get_instance_count()-1,-1,-1):
+   t_=c_.get_instance_transform(i,True).translation
+   if abs(t_.x-IX)<1900 and abs(t_.y-IY)<860:c_.remove_instance(i);cut+=1
+ # a street tree stood inside the first room, trunk proxy included: both go behind the building (motel_physics_plan moves them the same way)
+ moved=0
+ for a_ in SUB.get_all_level_actors():
+  for c_ in a_.get_components_by_class(unreal.HierarchicalInstancedStaticMeshComponent):
+   m_=c_.get_editor_property('static_mesh')
+   if not m_ or m_.get_name() not in ('SM_terminalia','tree_trunk_collision_LOD0'):continue
+   for i in range(c_.get_instance_count()):
+    t_=c_.get_instance_transform(i,True)
+    if abs(t_.translation.x-70776.66)<2 and abs(t_.translation.y-74056.24)<2:
+     t_.translation=t_.translation+unreal.Vector(600,-1200,0);assert c_.update_instance_transform(i,t_,True,True,True);moved+=1
+ assert moved in (0,2),moved;skipped.append(dict(place='minshuku',reason='tree and proxy moved: %d'%moved))
+ qs=[_ls_floor(world,IX+i*400,IY+j*300,1205) for i in range(-4,5) for j in range(-2,3)];qs=[q for q in qs if q is not None];gz=max(qs);fz=gz+3
+ _ls_note('R7: inn ground %.0f..%.0f, scatter cut %d'%(min(qs),gz,cut));skipped.append(dict(place='minshuku',reason='ground %.0f..%.0f, scatter cut %d'%(min(qs),gz,cut)))
+ bb=im.get_bounding_box();SY=1 if bb.min.y+bb.max.y<0 else -1
+ def L(x,y,z=None):return V([IX+x*100,IY+SY*y*100,fz if z is None else z])
+ ia=_ls_spawn('LoverSpot_R7_minshuku',im,V([IX,IY,gz]),0,[1,1,1],None,False)
+ # the glTF factors come out cold and shiny under the sky light: the building's slots get matt project materials, the
+ # roof and the wet-room floor warmer than they should read, the sky light turns them blue
+ IM=dict(wall=((.8,.6,.34),.95),timber=((.22,.12,.06),.8),roof=((.17,.1,.06),1.),tatami2=((.56,.46,.15),.95),tatami=((.62,.5,.16),.95),edge=((.1,.09,.04),.9),deck=((.38,.21,.09),.8),tile=((.72,.58,.36),.8),shoji=((.95,.84,.62),.9),fusuma=((.85,.68,.4),.9),ceil=((.5,.3,.14),.8),noren=((.08,.1,.24),.9),rib=((.1,.06,.04),.95),steel=((.05,.05,.05),.5))
+ nslot=0
+ for i,s_ in enumerate(im.get_editor_property('static_materials')):
+  n_=(str(s_.material_slot_name)+' '+(s_.material_interface.get_name() if s_.material_interface else '')).lower()
+  k_=next((k for k in IM if k in n_),None)
+  if k_:ia.static_mesh_component.set_material(i,_ls_mat('M_LS_Inn2_'+k_,IM[k_][0],IM[k_][1]));nslot+=1
+ skipped.append(dict(place='minshuku',reason='%d material slots replaced'%nslot))
+ w=_ls_box('LoverSpot_R7_minshuku_Floor',V([IX,IY,gz-40]),0,(3440,1240,43),M['counter']);w.static_mesh_component.set_visibility(False)
+ for k,(x0,x1,y0,y1) in enumerate(wj['walls']):
+  w=_ls_box('LoverSpot_R7_minshuku_Wall%02d'%k,L((x0+x1)/2,(y0+y1)/2),0,((x1-x0)*100,(y1-y0)*100,270),M['counter']);w.static_mesh_component.set_visibility(False)
+ wood=_ls_mat('M_LS_InnWood',(.3,.2,.12),.6)
+ def scroll_mat():
+  # the glTF import of the scroll panel leaves its texture out and the slot shows the engine default, so the painting is imported here
+  path=LS_DIR+'/Materials/M_LS_InnScroll'
+  if EAL.does_asset_exist(path):return EAL.load_asset(path)
+  job=unreal.AssetImportTask();job.filename=str(HV/'scroll.jpg');job.destination_path=LS_DIR+'/Textures';job.destination_name='T_LS_InnScroll';job.automated=True;job.replace_existing=True;job.save=True;ATS.import_asset_tasks([job])
+  tex=EAL.load_asset(LS_DIR+'/Textures/T_LS_InnScroll');assert tex,'scroll texture'
+  m=ATS.create_asset('M_LS_InnScroll',LS_DIR+'/Materials',unreal.Material,unreal.MaterialFactoryNew())
+  n=MEL.create_material_expression(m,unreal.MaterialExpressionTextureSample);n.set_editor_property('texture',tex);MEL.connect_material_property(n,'RGB',unreal.MaterialProperty.MP_BASE_COLOR)
+  c=MEL.create_material_expression(m,unreal.MaterialExpressionConstant);c.set_editor_property('r',.9);MEL.connect_material_property(c,'',unreal.MaterialProperty.MP_ROUGHNESS)
+  MEL.recompile_material(m);assert EAL.save_loaded_asset(m,False);return m
+ def lay(t,key,x,y,along=None,yaw=0):
+  # a Tripo piece on the floor, its long side along x or y of the building
+  t='LoverSpot_R7_'+t;mesh=tripo_mesh(key)
+  if not mesh:skipped.append(dict(place='minshuku',reason='no model '+key));return t
+  bb=mesh.get_bounding_box();ex,ey=bb.max.x-bb.min.x,bb.max.y-bb.min.y
+  if along:yaw=(0 if ex>=ey else 90) if along=='x' else (90 if ex>=ey else 0)
+  place_mesh(t,key,L(x,y),yaw);return t+'_Tripo'
+ def lamp(t,x,y):
+  l_=SUB.spawn_actor_from_class(unreal.PointLight,L(x,y,fz+235),unreal.Rotator());l_.set_actor_label('LoverSpot_R7_Light_'+t);l_.tags=[unreal.Name('LoverSpot')];l_.set_folder_path('UniversityCity/LoverSpotsV1');c=l_.light_component;c.set_mobility(unreal.ComponentMobility.MOVABLE);c.set_editor_property('intensity_units',unreal.LightUnits.LUMENS);c.set_intensity(4000);c.set_temperature(3000);c.set_editor_property('use_temperature',True);c.set_editor_property('attenuation_radius',800);c.set_editor_property('source_radius',12);c.set_cast_shadows(False)
+ BACK=90*SY;FRONT=-90*SY;rr=[]
+ def rb(x0,x1,y0,y1):
+  a,b=L(x0,y0),L(x1,y1);rr.append(dict(min=[min(a.x,b.x),min(a.y,b.y),fz-30],max=[max(a.x,b.x),max(a.y,b.y),fz+300]))
+ for i,r_ in enumerate(wj['rooms']):
+  cx=r_['cx'];g='guest%d'%(i+1);rb(cx-4,cx+4,-4.5,6)
+  for k,y in enumerate((-1.1,.1)):
+   t=lay('%s_futon%d'%(g,k),'futon_set',cx-2.8,y,'x');A2('minshuku','futon',L(cx-2.8,y),0,t)
+  t=lay(g+'_chabudai','chabudai',cx+1.4,-1.4);A2('minshuku','chabudai',L(cx+1.4,-1.4),0,t)
+  for k,(dx,dy,yw_) in enumerate(((-1,0,0),(1,0,180),(0,-1,BACK),(0,1,FRONT))):
+   t=lay('%s_zabuton%d'%(g,k),'zabuton',cx+1.4+dx,-1.4+dy);A2('minshuku','zabuton',L(cx+1.4+dx,-1.4+dy),yw_,t)
+  # television cabinet against the side wall, watched from the far cushion; the oshiire is part of the building
+  t=lay(g+'_tv','tv_cabinet',cx+3.45,-1.4,None,90);A2('minshuku','inn_tv',L(cx+.4,-1.4),0,t)
+  A2('minshuku','inn_closet',L(cx+2.6,1.6),0,'LoverSpot_R7_minshuku')
+  t=lay(g+'_tub','bathtub',cx-2.6,4.4,'x');A2('minshuku','bath',L(cx-2.6,4.4),0,t)
+  # shower column and washbasin on the back wall; the toilet off the line of its doorway, so the room does not look straight at it
+  t=lay(g+'_shower','shower_column',cx+.4,5.65,None,FRONT-90);A2('minshuku','inn_shower',L(cx+.4,5),BACK,t)
+  t=lay(g+'_sink','washbasin',cx-.9,5.55,None,FRONT-90);A2('minshuku','inn_sink',L(cx-.9,4.8),BACK,t)
+  t=lay(g+'_toilet','toilet_room',cx+1.75,5.3,None,FRONT-90);A2('minshuku','inn_toilet',L(cx+1.75,4.7),BACK,t)
+  t=lay(g+'_scroll','minshuku_scroll',cx+.05,2.405);
+  if t:
+   a_=next((x for x in SUB.get_all_level_actors() if x.get_actor_label()==t),None)
+   if a_:a_.set_actor_location(L(cx+.05,2.405,fz+60),False,False);a_.static_mesh_component.set_material(0,scroll_mat())
+  A2('minshuku','engawa',L(cx+2.2,-5.2),FRONT,'LoverSpot_R7_minshuku')
+  lamp(g,cx,-1);lamp(g+'_bath',cx-1.5,4.2);lamp(g+'_wc',cx+2.5,4.2)
+ rb(-17,-15,-4.5,6);rb(-17,17,-6,-4.5)
+ t=lay('hall_shoes','shoe_lockers',-16,5.3,'x');A2('minshuku','inn_shoes',L(-16,4.2),BACK,t)
+ _ls_box('LoverSpot_R7_hall_Bin',L(-16.6,-3.8),0,(30,30,45),wood,False);A2('minshuku','inn_trash',L(-16.2,-3.4),0,'LoverSpot_R7_hall_Bin')
+ A2('minshuku','inn_lamp',L(-16,-5.4),BACK,'LoverSpot_R7_minshuku');lamp('hall',-16,0)
+ dp=L(-16,-6.9);dz=_ls_floor(world,dp.x,dp.y,1205)
+ items.append(dict(place='minshuku',anchor='door',pos=num(V([dp.x,dp.y,dz if dz is not None else gz])),yaw=BACK,actor='LoverSpot_R7_minshuku',building=None,name='日式民宿',rooms=rr))
+ views.append(dict(id='R7-minshuku-out',eye=num(L(-23,-15,fz+420)),target=num(L(-4,0,fz+100)),fov=70,hour=15))
+ views.append(dict(id='R7-minshuku-room',eye=num(L(-.4,-3.9,fz+165)),target=num(L(-3,1.5,fz+60)),fov=85,hour=15))
+ views.append(dict(id='R7-minshuku-room2',eye=num(L(-6.4,-3.8,fz+165)),target=num(L(.6,1.2,fz+60)),fov=85,hour=15))
+ views.append(dict(id='R7-minshuku-room-night',eye=num(L(-.4,-3.9,fz+165)),target=num(L(-3,1.5,fz+60)),fov=85,hour=22))
+ views.append(dict(id='R7-minshuku-front',eye=num(L(0,-16,fz+420)),target=num(L(0,-2,fz+120)),fov=80,hour=15))
+ views.append(dict(id='R7-minshuku-bath',eye=num(L(-2.4,2.9,fz+170)),target=num(L(-5.6,4.8,fz+30)),fov=90,hour=15))
+ views.append(dict(id='R7-minshuku-room1',eye=num(L(-11,-3.9,fz+165)),target=num(L(-13,1.5,fz+60)),fov=95,hour=15))
+ views.append(dict(id='R7-minshuku-bath2',eye=num(L(-6.5,2.9,fz+165)),target=num(L(-3.2,5.7,fz+95)),fov=85,hour=15))
+ views.append(dict(id='R7-minshuku-wc',eye=num(L(.4,2.85,fz+170)),target=num(L(-1.25,5.3,fz+30)),fov=90,hour=15))
+ views.append(dict(id='R7-minshuku-wc-door',eye=num(L(-.9,-.4,fz+150)),target=num(L(-1.2,2.5,fz+95)),fov=80,hour=15))
+ views.append(dict(id='R7-minshuku-scroll',eye=num(L(-2.9,.1,fz+130)),target=num(L(-2.95,2.45,fz+115)),fov=60,hour=15))
+ views.append(dict(id='R7-minshuku-low',eye=num(L(31,-13,fz+140)),target=num(L(6,-5,fz+170)),fov=60,hour=15))
+ views.append(dict(id='R7-minshuku-high',eye=num(L(24,-20,fz+500)),target=num(L(0,-2,fz+120)),fov=66,hour=15))
+ views.append(dict(id='R7-stair-T2',eye=num(V([72200,69450,2000])),target=num(V([74400,69450,1900])),fov=75,hour=15))
+ _ls_note('R7: minshuku done, %d rooms'%len(rr))
  acts={a.get_actor_label():a for a in SUB.get_all_level_actors()}
+ # 160 rect lights with shadows cost about 65 ms of render thread in the packaged game (c-conquest 11-07)
+ rects=[a for a in acts.values() if isinstance(a,unreal.RectLight)]
+ for a in rects:a.light_component.set_editor_property('cast_shadows',False)
+ _ls_note('rect lights without shadows: %d'%len(rects))
  acts.get('CityEnvironmentController') and acts['CityEnvironmentController'].prepare_for_save()
+ faulthandler.cancel_dump_traceback_later();_ls_note('saving map')
  assert unreal.EditorLevelLibrary.save_current_level();new=sha(MAPFILE)
  installed=read('motel-install');installed.update(parent_map_sha256=LOAD_SHA,map_sha256=new);write('motel-install',installed)
  (LS_OUT/'lover-spots-views.json').write_text(json.dumps(views,indent=1),'utf8')

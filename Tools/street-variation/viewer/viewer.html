@@ -1,0 +1,17 @@
+<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>街景可調變體・實際模型</title>
+<style>body{margin:0;background:#edf2ed;color:#20372e;font:15px/1.5 system-ui}header{padding:18px 24px;background:#183f32;color:white}h1{margin:0;font-size:25px}.layout{display:grid;grid-template-columns:280px 1fr;min-height:680px}aside{padding:20px;display:flex;flex-direction:column;gap:14px;background:#fff}label{display:grid;gap:5px;font-weight:600}select,input,button{font:inherit;padding:8px;border:1px solid #b1c6b8;border-radius:7px}button{cursor:pointer;background:#e2eee5}button:hover{background:#bde2c9}input[type=color]{width:100%;height:44px}input[type=range]{padding:0;width:100%}#view{height:610px;position:relative}canvas{display:block;width:100%;height:100%;touch-action:none}#status{padding:10px 20px;background:#dbe7dd}#labels{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;padding:12px}#labels button.active{outline:3px solid #337456}#swatches{display:flex;gap:6px;flex-wrap:wrap}.swatch{min-width:36px;height:30px}.small{font-size:12px;color:#536c5b;margin:0}#error{color:#8d2424;white-space:pre-wrap}#snapshot{display:none;width:100%}#download{display:none}.download{padding:12px}a{color:#256044}@media(max-width:800px){.layout{grid-template-columns:1fr}aside{display:grid;grid-template-columns:1fr 1fr}#view{height:520px}}</style>
+<script type="importmap">{"imports":{"three":"./vendor/build/three.module.js"}}</script>
+<header><h1>街景可調變體</h1><div>同一網格・車色獨立調整・樹列自然差異・保留原有 LOD</div></header>
+<div class="layout"><aside>
+<label>物件<select id="asset"><option value="scooter">機車</option><option value="bicycle">自行車</option><option value="camphor">樟樹</option><option value="cherry">櫻花樹</option></select></label>
+<label>模型精細度<select id="lod"><option value="0">LOD 0・近景</option><option value="1">LOD 1・中景</option><option value="2">LOD 2・遠景</option></select></label>
+<label><span>選取物件顏色</span><input id="color" type="color" value="#417f80"></label><label>自訂色碼<input id="hex" aria-label="自訂色碼" value="#417f80" maxlength="7" pattern="#[0-9a-fA-F]{6}"></label><div id="swatches"></div>
+<label>角度微調 <output id="yawValue">0°</output><input aria-label="角度微調" id="yaw" type="range" min="-12" max="12" step="0.1" value="0"></label>
+<label>水平尺寸 <output id="xyValue">100%</output><input aria-label="水平尺寸" id="xy" type="range" min="94" max="100" step="0.1" value="100"></label>
+<label>高度尺寸 <output id="heightValue">100%</output><input aria-label="高度尺寸" id="height" type="range" min="96" max="104" step="0.1" value="100"></label>
+<label><span><input id="variation" type="checkbox" checked> 啟用不同顏色與自然變化</span></label>
+<button id="reset">恢復預設</button><button id="snapshotButton">準備目前預覽 PNG</button><button id="settings">下載目前調整設定</button>
+<p class="small">拖曳旋轉、滾輪縮放。車色只改車漆／車架遮罩；樹只改葉片色彩。所有網格沿用已 remesh 來源。</p>
+<p class="small">這是可攜模型預覽。依目前 AGENTS.md，尚未修改 StreetSocialCity 原生地圖。</p><div id="error" role="alert"></div>
+</aside><main><div id="view" aria-label="實際三維模型比較"></div><div id="status" role="status">載入模型中…</div><div id="labels"></div><div class="download"><a id="download">下載目前模型預覽 PNG</a><img id="snapshot" alt="目前實際模型預覽"></div></main></div>
+<script type="module" src="./viewer.js"></script></html>

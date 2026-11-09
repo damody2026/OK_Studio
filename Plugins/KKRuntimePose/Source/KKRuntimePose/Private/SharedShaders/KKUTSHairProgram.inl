@@ -443,8 +443,8 @@ r4.zw=(r7.xx+r4.zw);
 r1.w=m)OKSHADER")
 TEXT(R"OKSHADER(ad(cb0[33].z,asfloat(0xc0000000u),asfloat(0x3f800000u));
 r4.zw=(r4.zw/r1.ww);
-r4.x=sin(r4.x);
 r5.x=cos(r4.x);
+r4.x=sin(r4.x);
 r4.zw=(r4.zw+float2(asfloat(0xbf000000u),asfloat(0xbf000000u)));
 r7.x=-r4.x;
 r7.y=r5.x;

@@ -1,5 +1,6 @@
 ﻿#include "SOKStudioTimeline.h"
 #include "OKSceneActor.h"
+#include "OKStudioCatalog.h"
 #include "OKStudioStyle.h"
 #include "Fonts/FontMeasure.h"
 #include "Framework/Application/SlateApplication.h"
@@ -17,26 +18,30 @@ TArray<SOKStudioTimeline::FRowInfo> SOKStudioTimeline::RowInfos() const
 	TArray<FRowInfo> Rows;
 	if (!Game.IsValid()) return Rows;
 	const UOKSceneDocument* Doc = Game->Document;
-	static const TCHAR* Subs[] = { TEXT("變換"), TEXT("FK"), TEXT("狀態"), TEXT("數值") };
-	for (const FOKSceneTrack& T : Doc->Tracks)
+	static const TCHAR* Subs[] = { TEXT("變換"), TEXT("FK"), TEXT("狀態"), TEXT("數值"), TEXT("動作"), TEXT("語音") };
+	auto AddRows = [&](int32 Track)
 	{
-		const FOKSceneObject* O = Doc->Find(T.ObjectId);
+		const FOKSceneObject* O = Doc->Find(Track);
 		FRowInfo R;
-		R.Track = T.ObjectId;
-		R.Label = T.ObjectId == UOKSceneDocument::SceneTrackId ? FString(TEXT("場景（畫面）")) : (O ? O->Name : FString::Printf(TEXT("#%d"), T.ObjectId));
+		R.Track = Track;
+		R.Label = Track == UOKSceneDocument::SceneTrackId ? FString(TEXT("場景（畫面）")) : (O ? O->Name : FString::Printf(TEXT("#%d"), Track));
 		Rows.Add(R);
-		if (!Open.Contains(T.ObjectId) || T.ObjectId == UOKSceneDocument::SceneTrackId) continue;
-		for (int32 S = 0; S < 4; ++S)
+		if (!Open.Contains(Track) || Track == UOKSceneDocument::SceneTrackId) return;
+		for (int32 S = 0; S < 6; ++S)
 		{
-			if ((S == 1 || S == 2) && (!O || O->Kind != EOKSceneObjectKind::Character)) continue;
+			if ((S == 1 || S == 2 || S == 4 || S == 5) && (!O || O->Kind != EOKSceneObjectKind::Character)) continue;
 			if (S == 3 && (!O || (O->Kind != EOKSceneObjectKind::Light && O->Kind != EOKSceneObjectKind::Camera && O->Kind != EOKSceneObjectKind::Effect))) continue;
 			FRowInfo Sub;
-			Sub.Track = T.ObjectId;
+			Sub.Track = Track;
 			Sub.Sub = S;
 			Sub.Label = FString(TEXT("    ")) + Subs[S];
 			Rows.Add(Sub);
 		}
-	}
+	};
+	for (const FOKSceneTrack& T : Doc->Tracks) AddRows(T.ObjectId);
+	// A character with voices but no keys has no track.
+	for (const FOKSceneObject& O : Doc->Objects)
+		if (!O.Character.VoiceClips.IsEmpty() && !Doc->TrackOf(O.Id)) AddRows(O.Id);
 	return Rows;
 }
 
@@ -47,6 +52,7 @@ bool SOKStudioTimeline::SubHasKey(int32 Sub, const FOKSceneKey& K, const FOKScen
 	case 1: return K.Fk.Num() > 0;
 	case 2: return K.bCharacterState || K.AnimTime >= 0.f;
 	case 3: return O && (O->Kind == EOKSceneObjectKind::Light || O->Kind == EOKSceneObjectKind::Camera || O->Kind == EOKSceneObjectKind::Effect);
+	case 4: return K.AnimNo >= 0;
 	default: return true;
 	}
 }
@@ -112,25 +118,50 @@ int32 SOKStudioTimeline::OnPaint(const FPaintArgs&, const FGeometry& G, const FS
 		FSlateDrawElement::MakeLines(Out, Layer + 1, G.ToPaintGeometry(), { FVector2f(0.f, Y + RowHeight), FVector2f(Size.X, Y + RowHeight) }, ESlateDrawEffect::None, FLinearColor(1.f, 1.f, 1.f, 0.06f));
 		const FOKSceneTrack* T = Doc->TrackOf(R.Track);
 		const FOKSceneObject* O = Doc->Find(R.Track);
+		// Voice clips (U233): bars of their length, thin on the character's own row.
+		if (O && (R.Sub < 0 || R.Sub == 5))
+			for (int32 V = 0; V < O->Character.VoiceClips.Num(); ++V)
+			{
+				const FOKSceneVoiceClip& Voice = O->Character.VoiceClips[V];
+				const bool bPicked = R.Track == VoiceTrack && V == VoiceIndex;
+				const float Start = Voice.Start + (bPicked && Drag == EDrag::Voice ? XToTime(G, DragNow.X) - DragTimeFrom : 0.f);
+				const float X0 = FMath::Max(TimeToX(G, Start), LabelWidth), X1 = FMath::Min(TimeToX(G, Start + Game->VoiceClipSeconds(Voice)), float(Size.X));
+				if (X1 <= X0) continue;
+				const FLinearColor C = bPicked ? FLinearColor(1.f, .85f, .3f, .9f) : FLinearColor(.3f, .55f, 1.f, .75f);
+				if (R.Sub < 0) { Box(X0, Y + RowHeight - 3.f, X1 - X0, 2.f, C, Layer + 2); continue; }
+				Box(X0, Y + 2.f, X1 - X0, RowHeight - 4.f, C, Layer + 2);
+				if (X1 - X0 >= 14.f) Text(X0 + 2.f, Y + 1.f, Game->VoiceClipName(Voice).Left(FMath::Max(int32((X1 - X0) / 7.f), 1)), FLinearColor::White, 9.f, Layer + 3);
+			}
 		if (!T) continue;
 		for (const FOKSceneKey& K : T->Keys)
 		{
 			if (R.Sub >= 0 && !SubHasKey(R.Sub, K, O)) continue;
 			const float X = TimeToX(G, K.Time);
 			if (X < LabelWidth || X > Size.X) continue;
+			// A motion that fades in (U236): the fade's length after its key.
+			if (K.AnimBlend > 0.f && R.Sub == 4) Box(X, Y + 3.f, FMath::Min(TimeToX(G, K.Time + K.AnimBlend), float(Size.X)) - X, RowHeight - 6.f, FLinearColor(.45f, .9f, .5f, .35f), Layer + 2);
 			const bool bSel = Selected.Contains(FKeyRef{ R.Track, K.Time });
 			const FLinearColor C = bSel ? FLinearColor::Yellow : (K.Ease == EOKSceneEase::Step ? FLinearColor(1.f, .55f, .2f) : FLinearColor(.75f, .85f, 1.f));
 			const float H = R.Sub < 0 ? 5.f : 3.5f, CY = Y + RowHeight * 0.5f;
 			FSlateDrawElement::MakeLines(Out, Layer + 3, G.ToPaintGeometry(), { FVector2f(X, CY - H), FVector2f(X + H, CY), FVector2f(X, CY + H), FVector2f(X - H, CY), FVector2f(X, CY - H) }, ESlateDrawEffect::None, C, true, 2.f);
+			// Only as many characters as fit before the next key (about 6 px each at this size).
+			const FOKSceneKey* NextKey = T->Keys.FindByPredicate([&K](const FOKSceneKey& N) { return N.Time > K.Time; });
+			const float Room = (NextKey ? FMath::Min(TimeToX(G, NextKey->Time) - H, Size.X) : Size.X) - (X + H + 2.f);
 			// Scene keys name the view they cut to.
 			if (R.Track == UOKSceneDocument::SceneTrackId && K.Camera >= -1)
 			{
-				// Only as many characters as fit before the next key (about 6 px each at this size).
-				const FOKSceneKey* NextKey = T->Keys.FindByPredicate([&K](const FOKSceneKey& N) { return N.Time > K.Time; });
-				const float Room = (NextKey ? FMath::Min(TimeToX(G, NextKey->Time) - H, Size.X) : Size.X) - (X + H + 2.f);
 				const FOKSceneObject* Cam = Doc->Find(K.Camera);
 				const FString Name = K.Camera < 0 ? FString(TEXT("自由")) : (Cam ? Cam->Name : FString(TEXT("（已刪）")));
 				if (Room >= 12.f) Text(X + H + 2.f, Y + 1.f, Name.Left(FMath::Max(int32(Room / 6.f), 1)), TextHint(), 9.f, Layer + 3);
+			}
+			// A character's keys name the motion where it changes (U230), in its own colour.
+			if (K.AnimNo >= 0 && (R.Sub < 0 || R.Sub == 4) && Room >= 12.f)
+			{
+				const FOKSceneKey* Before = nullptr;
+				for (const FOKSceneKey& P : T->Keys) if (P.Time < K.Time && P.AnimNo >= 0) Before = &P;
+				const FOKStudioAnim* Anim = FOKStudioCatalog::Get().FindAnim(K.AnimKind, K.AnimGroup, K.AnimCategory, K.AnimNo);
+				if (Anim && (!Before || !Before->SameMotion(K)))
+					Text(X + H + 2.f, Y + 1.f, FOKStudioCatalog::ZhName(Anim->Name).Left(FMath::Max(int32(Room / 6.f), 1)), FLinearColor(.55f, .95f, .6f), 9.f, Layer + 3);
 			}
 		}
 	}
@@ -143,7 +174,7 @@ int32 SOKStudioTimeline::OnPaint(const FPaintArgs&, const FGeometry& G, const FS
 		const FVector2D A(FMath::Min(DragFrom.X, DragNow.X), FMath::Min(DragFrom.Y, DragNow.Y)), B(FMath::Max(DragFrom.X, DragNow.X), FMath::Max(DragFrom.Y, DragNow.Y));
 		Box(A.X, A.Y, B.X - A.X, B.Y - A.Y, FLinearColor(1.f, 1.f, 1.f, 0.12f), Layer + 5);
 	}
-	if (Rows.IsEmpty()) Text(LabelWidth + 8.f, RulerHeight + 6.f, TEXT("沒有關鍵幀：選物件後按「打 key」（K）"), TextHint(), 10.f, Layer + 2);
+	if (Rows.IsEmpty()) Text(LabelWidth + 8.f, RulerHeight + 6.f, TEXT("做一段動作：選物件打 key（K）→ 點上方尺規換時間 → 移動 → 再打 key → 播放"), TextHint(), 10.f, Layer + 2);
 	return Layer + 6;
 }
 
@@ -165,6 +196,23 @@ bool SOKStudioTimeline::HitKey(const FGeometry& G, const FVector2D& Local, FKeyR
 		if (D < Best) { Best = D; Out = { Rows[Row].Track, K.Time }; bHit = true; }
 	}
 	return bHit;
+}
+
+bool SOKStudioTimeline::HitVoice(const FGeometry& G, const FVector2D& Local, int32& OutTrack, int32& OutIndex) const
+{
+	if (!Game.IsValid() || Local.Y < RulerHeight || Local.X < LabelWidth) return false;
+	const TArray<FRowInfo> Rows = RowInfos();
+	const int32 Row = RowScroll + int32((Local.Y - RulerHeight) / RowHeight);
+	if (!Rows.IsValidIndex(Row) || (Rows[Row].Sub >= 0 && Rows[Row].Sub != 5)) return false;
+	const FOKSceneObject* O = Game->Document->Find(Rows[Row].Track);
+	if (!O) return false;
+	// The last laid on top.
+	for (int32 V = O->Character.VoiceClips.Num() - 1; V >= 0; --V)
+	{
+		const FOKSceneVoiceClip& Voice = O->Character.VoiceClips[V];
+		if (Local.X >= TimeToX(G, Voice.Start) - 2.f && Local.X <= TimeToX(G, Voice.Start + Game->VoiceClipSeconds(Voice)) + 2.f) { OutTrack = O->Id; OutIndex = V; return true; }
+	}
+	return false;
 }
 
 void SOKStudioTimeline::Scrub(float Time)
@@ -212,13 +260,21 @@ FReply SOKStudioTimeline::OnMouseButtonDown(const FGeometry& G, const FPointerEv
 	}
 	else if (bKey)
 	{
+		VoiceTrack = -1;
 		if (E.IsShiftDown() || E.IsControlDown()) { if (Selected.Contains(Key)) Selected.Remove(Key); else Selected.Add(Key); }
 		else if (!Selected.Contains(Key)) Selected = { Key };
 		Drag = EDrag::Keys;
 		DragTimeFrom = XToTime(G, Local.X);
 	}
+	else if (HitVoice(G, Local, VoiceTrack, VoiceIndex))
+	{
+		Selected.Reset();
+		Drag = EDrag::Voice;
+		DragTimeFrom = XToTime(G, Local.X);
+	}
 	else
 	{
+		VoiceTrack = -1;
 		if (!E.IsShiftDown() && !E.IsControlDown()) Selected.Reset();
 		Drag = EDrag::Box;
 	}
@@ -258,6 +314,18 @@ FReply SOKStudioTimeline::OnMouseButtonUp(const FGeometry& G, const FPointerEven
 					Moved.Add({ K.Track, To });
 				}
 				Selected = Moved;
+			}
+		}
+		else if (Drag == EDrag::Voice)
+		{
+			FOKSceneObject* O = Game->Document->Find(VoiceTrack);
+			const float Shift = XToTime(G, DragNow.X) - DragTimeFrom;
+			if (O && O->Character.VoiceClips.IsValidIndex(VoiceIndex) && FMath::Abs(Shift) > 1e-4f)
+			{
+				FOKSceneVoiceClip& Voice = O->Character.VoiceClips[VoiceIndex];
+				Voice.Start = FMath::Max(0.f, Snap(Voice.Start + Shift));
+				Game->Document->Duration = FMath::Max(Game->Document->Duration, Voice.Start + Game->VoiceClipSeconds(Voice));
+				Game->Document->NotifyChanged();
 			}
 		}
 		else if (Drag == EDrag::Box)
@@ -308,6 +376,14 @@ FReply SOKStudioTimeline::OnKeyDown(const FGeometry&, const FKeyEvent& E)
 void SOKStudioTimeline::DeleteSelected()
 {
 	if (!Game.IsValid()) return;
+	if (FOKSceneObject* O = VoiceTrack >= 0 ? Game->Document->Find(VoiceTrack) : nullptr; O && O->Character.VoiceClips.IsValidIndex(VoiceIndex))
+	{
+		O->Character.VoiceClips.RemoveAt(VoiceIndex);
+		VoiceTrack = -1;
+		Game->Document->NotifyChanged();
+		if (OnStatus) OnStatus(TEXT("刪除語音片段"));
+		return;
+	}
 	for (const FKeyRef& K : Selected) Game->Document->RemoveKey(K.Track, K.Time);
 	if (OnStatus) OnStatus(FString::Printf(TEXT("刪除 %d 個 key"), Selected.Num()));
 	Selected.Reset();
@@ -356,7 +432,16 @@ void SOKStudioTimeline::SetEase(EOKSceneEase Ease)
 void SOKStudioTimeline::KeySelection()
 {
 	if (!Game.IsValid()) return;
+	// U191: with nothing selected it reported "0 objects keyed", which read like a failure with no reason.
+	if (Game->Selection.IsEmpty()) { if (OnStatus) OnStatus(TEXT("先選物件再打 key")); return; }
 	const float Time = Snap(Game->TimelineTime);
-	for (int32 Id : Game->Selection) Game->Document->SetKey(Id, Time);
-	if (OnStatus) OnStatus(FString::Printf(TEXT("在 %.2f 秒為 %d 個物件打 key"), Time, Game->Selection.Num()));
+	bool bCameraAside = false;
+	for (int32 Id : Game->Selection)
+	{
+		Game->Document->SetKey(Id, Time);
+		const FOKSceneObject* O = Game->Document->Find(Id);
+		bCameraAside |= O && O->Kind == EOKSceneObjectKind::Camera && Game->Document->ActiveCamera != Id;
+	}
+	// The view moved, the camera did not (U238).
+	if (OnStatus) OnStatus(FString::Printf(TEXT("在 %.2f 秒為 %d 個物件打 key%s"), Time, Game->Selection.Num(), bCameraAside ? TEXT("（相機用的是它自己的位置；要用目前視角按「視角打 key」）") : TEXT("")));
 }

@@ -1,0 +1,16 @@
+-- Native E-engine inspection and bounded fixes for the unattended immersion pass.
+local f=assert(io.open('Tools/street_city_romance_pbr.lua','rb'));local source=f:read('*a');f:close()
+local helper=assert(source:match('local code=%[====%[(.-)%]====%]')):match('^(.-)\ndef work%(%)')
+local ground=dofile('Tools/street_city_ground_pbr_payload.lua'):match('^(.-)\ndef work%(%)')
+local payload=dofile('Tools/street_city_immersion_payload.lua')
+local function replace(p,v)local n;source,n=source:gsub(p,function()return v end);assert(n==1,p)end
+replace("local out=root%.%.'/output/street%-social%-city%-production/romance%-pbr%-v1'","local out=root..'/output/street-social-city-production/immersion-v1'")
+replace('local code=%[====%[.-%]====%]','local code=[====['..helper..'\n'..ground..'\n'..payload..']====]')
+replace("root%.%.'/StreetSocialCity/StreetSocialCity%.uproject'","'E:/StreetSocialCityProduction/environment-packages/20261023-122745/HostProject/StreetSocialCity.uproject'")
+replace("local engine=json.decode%(read%('Tools/engine.local.json'%)%)%.engine","local engine='E:/PhysX/UE5.8'")
+replace("local engine='E:/PhysX/UE5.8'",[[assert(os.execute(([=[python -c "import ast,json;ast.parse(json.load(open('%s',encoding='utf8'))['code'])"]=]):format(payloadpath)),'Embedded native payload syntax failed')
+local engine='E:/PhysX/UE5.8']])
+source=source:gsub('StreetSocialCityRomanceUser','StreetSocialCityImmersionUser'):gsub("'%-d3d12'","'-nullrhi'")
+source=source:gsub('restore=true','restore=true,inspect=true,serve=true')
+source=source:gsub("'%-unattended'","'-EnablePlugins=PythonScriptPlugin,EditorScriptingUtilities,CityDepthAudit','-unattended','-DDC=(Local)','-ini:Engine:[ConsoleVariables]:Editor.AsyncAssetCompilationMaxMemoryUsage=6'")
+assert(load(source,'immersion-launcher'))()

@@ -1025,9 +1025,9 @@ mod tests {
                 }
             }
         }
-        std::fs::create_dir_all(r"C:\portable\OpenKoikatsu\Saved\spike").ok();
+        std::fs::create_dir_all(crate::test_support::project_path!("Saved/spike")).ok();
         std::fs::write(
-            r"C:\portable\OpenKoikatsu\Saved\spike\chalist_dump.txt",
+            crate::test_support::project_path!("Saved/spike/chalist_dump.txt"),
             reports.join("\n"),
         )
         .ok();
@@ -1069,7 +1069,7 @@ mod tests {
                 ));
             }
         }
-        std::fs::write(r"C:\portable\OpenKoikatsu\Saved\spike\chalist_cats.txt", lines.join("\n")).ok();
+        std::fs::write(crate::test_support::project_path!("Saved/spike/chalist_cats.txt"), lines.join("\n")).ok();
         eprintln!("{}", lines.join("\n"));
         assert!(!cat.by_id.is_empty());
     }
@@ -1220,7 +1220,7 @@ mod tests {
                 }
             }
         }
-        std::fs::write(r"C:\portable\OpenKoikatsu\Saved\spike\card_blocks.txt", lines.join("\n")).ok();
+        std::fs::write(crate::test_support::project_path!("Saved/spike/card_blocks.txt"), lines.join("\n")).ok();
         eprintln!("{}", lines.join("\n"));
     }
 }

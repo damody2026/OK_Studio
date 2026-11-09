@@ -1,4 +1,5 @@
 #include "OKGalleryWidget.h"
+#include "OKHScene.h"
 #include "OKComboBox.h"
 #include "HAL/IConsoleManager.h"
 #include "OKInteractionScene.h"
@@ -60,6 +61,8 @@
 #include "GameFramework/PlayerController.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Widgets/SViewport.h"
 #include "Engine/World.h"
 #include "UObject/UObjectIterator.h"
 #include "TimerManager.h"
@@ -201,7 +204,12 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 	MotionScroll->AddChild(MotionCol);
 	MotionFrame->AddChildToVerticalBox(MotionScroll)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 	MotionBorder->AddChild(MotionFrame);
-	MotionPanel->AddChild(MotionBorder);
+	MotionContentScale=WidgetTree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass(),TEXT("MotionContentScale"));
+	MotionContentScale->SetStretch(EStretch::UserSpecified);
+	auto* MotionScaleSlot=CastChecked<UScaleBoxSlot>(MotionContentScale->AddChild(MotionBorder));
+	MotionScaleSlot->SetHorizontalAlignment(HAlign_Fill);
+	MotionScaleSlot->SetVerticalAlignment(VAlign_Fill);
+	MotionPanel->AddChild(MotionContentScale);
 	UHorizontalBox* PoseNav = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("PoseNav"));
 	auto StylePoseButton = [](UButton* Btn)
 	{
@@ -581,11 +589,11 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
  BuildEditorDisplayControls(EditorColumn);
  EditorContentScale=WidgetTree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass(),TEXT("EditorContentScale"));
  EditorContentScale->SetStretch(EStretch::UserSpecified);
- auto* EditorScaleSlot=CastChecked<UScaleBoxSlot>(EditorContentScale->AddChild(ShapeBorder));
+ EditorColumn->AddChildToVerticalBox(ShapeBorder)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+ auto* EditorScaleSlot=CastChecked<UScaleBoxSlot>(EditorContentScale->AddChild(EditorColumn));
  EditorScaleSlot->SetHorizontalAlignment(HAlign_Fill);
  EditorScaleSlot->SetVerticalAlignment(VAlign_Fill);
- EditorColumn->AddChildToVerticalBox(EditorContentScale)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
- ShapeSize->AddChild(EditorColumn);
+ ShapeSize->AddChild(EditorContentScale);
  ApplyEditorDisplaySettings();
 
 	CardListView = WidgetTree->ConstructWidget<UOKCardListView>(UOKCardListView::StaticClass(), TEXT("CardListView"));
@@ -781,6 +789,12 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 	GazeSliders[0]->OnValueChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnGazeLeft);
 	GazeSliders[1]->OnValueChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnGazeRight);
 	GazeSliders[2]->OnValueChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnGazeVertical);
+	{
+		UButton* EyeModeButton=WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(),TEXT("EyeMode"));
+		EyeModeLabel=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());EyeModeLabel->SetText(FText::FromString(TEXT("眼睛：面向前方")));
+		EyeModeButton->AddChild(EyeModeLabel);StyleMotionButton(EyeModeButton);MotionCol->AddChild(EyeModeButton);
+		EyeModeButton->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnEyeModeNext);
+	}
 	EyeLookCameraCheck=WidgetTree->ConstructWidget<UCheckBox>();
 	{
 		auto* Label=WidgetTree->ConstructWidget<UTextBlock>();Label->SetText(FText::FromString(TEXT("眼睛跟隨鏡頭")));
@@ -1575,9 +1589,11 @@ static void OKNoteFrameGraph(UOKCharacterController* Self, float DeltaSeconds)
 void UOKCharacterController::NativeTick(const FGeometry& Geometry,float DeltaSeconds)
 {
 	Super::NativeTick(Geometry,DeltaSeconds);
+	if((CharacterStyle!=0.f||CharacterFaceStyle!=0.f)&&StyledActor!=PreviewActor)ApplyCharacterStyle();
  // The shown character solves its next frame while this one draws; the interaction scene and paired playback pose it themselves.
  if(IsValid(PreviewActor))PreviewActor->bAsyncNativePose=!InteractionWidget&&!InteractionScene&&!PairedPlayback;
     OKNoteFrameGraph(this, DeltaSeconds);
+ TickEyeMode();
  TickCharacterMCP();
  TickCardListMetadata();
  // Coalesce input within a frame, never wait for the user to stop dragging.
@@ -1963,6 +1979,8 @@ void UOKCharacterController::FinishPreparedPreview(AKKPreviewActor* Actor,bool b
 	}
 	if (bOk)
 	{
+        // A yandere's eyes: pupils 1.1 times as large, no highlight (user 2026-11-04).
+        if(Selected.Personality==KKPersonalityYandere)Actor->SetEyeDull(1.1f,true);
         // LoadSession already displays the card's saved shape. Reapplying the
         // identical values rebuilds every GPU follower for no visible change.
         if(Selected.Face.ShapeValueFace!=Actor->Session.ShapeFace() || Selected.Body.ShapeValueBody!=Actor->Session.ShapeBody()){
@@ -2125,6 +2143,9 @@ void UOKCharacterController::FinishPreparedPreview(AKKPreviewActor* Actor,bool b
 	if(IsValid(PreviewActor)&&(!bOk||!GeometryOnly))PreviewActor->SetupStudioView();
 	if(bOk)Actor->SetActorHiddenInGame(false);
 	SetLoadBusy(false);
+	// Paint is armed inside SetModelLayout, which the load path calls while
+	// bLoadInFlight is still true, so the sprayer stays off and left-drag orbits.
+	SetModelLayout(bModelLayout);
 	RestorePairAfterReload();
     if(bOk)WarmClothingPreviews();
 	ProfileStep(TEXT("studio"));
@@ -2337,13 +2358,45 @@ void UOKCharacterController::OnEyeLookCamera(bool Enabled)
 {
     if(bSuppressFaceControls || !PreviewActor) return;
     if(Enabled) {
-        if(!PreviewActor->FollowEyeLookCamera(PreviewActor->Session.EyeLookPatternCount()>1?1:0)) EyeLookCameraCheck->SetIsChecked(false);
+        if(!PreviewActor->FollowEyeLookCamera(PreviewActor->Session.EyeLookPatternCount()>1?1:0)) {EyeLookCameraCheck->SetIsChecked(false);Enabled=false;}
     } else PreviewActor->StopEyeLookTracking();
+    EyeMode=Enabled?2:0;if(EyeModeLabel)EyeModeLabel->SetText(FText::FromString(Enabled?TEXT("眼睛：看 Camera"):TEXT("眼睛：面向前方")));
+}
+void UOKCharacterController::OnEyeModeNext() {SetEyeMode((EyeMode+1)%3);}
+void UOKCharacterController::SetEyeMode(int32 Mode)
+{
+    const TCHAR* Labels[]={TEXT("眼睛：面向前方"),TEXT("眼睛：看鼠標"),TEXT("眼睛：看 Camera")};
+    EyeMode=Mode;EyeModeActor=PreviewActor;if(EyeModeLabel)EyeModeLabel->SetText(FText::FromString(Labels[Mode]));
+    if(EyeLookCameraCheck)EyeLookCameraCheck->SetIsChecked(Mode==2);
+    if(!PreviewActor)return;
+    if(Mode==2)PreviewActor->FollowEyeLookCamera(PreviewActor->Session.EyeLookPatternCount()>1?1:0);
+    if(Mode==0){
+        PreviewActor->StopEyeLookTracking();PreviewActor->SetEyeGaze(0,0,0);
+        for(USlider* Slider:GazeSliders)Slider->SetValue(0.f);
+    }
+}
+void UOKCharacterController::TickEyeMode()
+{
+    if(!IsValid(PreviewActor))return;
+    // A new card or outfit is a new actor: the choice goes on with it.
+    if(PreviewActor!=EyeModeActor.Get()){if(EyeMode)SetEyeMode(EyeMode);else EyeModeActor=PreviewActor;}
+    if(EyeMode!=1)return;
+    APlayerController* PC=GetOwningPlayer();UGameViewportClient* Client=GEngine?GEngine->GameViewport:nullptr;if(!PC||!Client)return;
+    // The cursor from Slate: over the panels the viewport itself does not hear it move.
+    FVector2D Pixel=EyeMousePixel;
+    if(Pixel.X<0){const TSharedPtr<SViewport> Widget=Client->GetGameViewportWidget();FVector2D Size;Client->GetViewportSize(Size);if(!Widget||!FSlateApplication::IsInitialized())return;
+        const FGeometry& Geo=Widget->GetCachedGeometry();if(Geo.GetLocalSize().X<=0||Geo.GetLocalSize().Y<=0)return;
+        Pixel=Geo.AbsoluteToLocal(FSlateApplication::Get().GetCursorPos())*Size/Geo.GetLocalSize();}
+    FVector Origin,Direction;if(!UGameplayStatics::DeprojectScreenToWorld(PC,Pixel,Origin,Direction))return;
+    // Halfway to her along the cursor's ray: on her own plane a cursor over her eyes would sit inside them.
+    const float Distance=FVector::Dist(Origin,PreviewActor->OrbitFocus);
+    PreviewActor->SetEyeLookTarget(Origin+Direction*Distance*.5f,PreviewActor->Session.EyeLookPatternCount()>1?1:0,true);
 }
 void UOKCharacterController::UpdateGaze()
 {
     if(PreviewActor) PreviewActor->StopEyeLookTracking();
     if(EyeLookCameraCheck) EyeLookCameraCheck->SetIsChecked(false);
+    EyeMode=0;if(EyeModeLabel)EyeModeLabel->SetText(FText::FromString(TEXT("眼睛：面向前方")));
     if(PreviewActor && GazeSliders.Num()==3)
         PreviewActor->SetEyeGaze(GazeSliders[0]->GetValue(),GazeSliders[1]->GetValue(),GazeSliders[2]->GetValue());
 }
@@ -2480,7 +2533,7 @@ void UOKCharacterController::RefreshPairs(){
     const bool Prepared=PendingLoadPairGeneration==LoadGeneration;
     const FString Json=Prepared?MoveTemp(PendingLoadPairJson):PreviewActor->Session.NativeAnimationPairs();
     PendingLoadPairGeneration=INDEX_NONE;
-    if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Rows)){for(const auto& Row:Rows){auto P=Row->AsObject();double Participants=0;if(!P||!P->TryGetNumberField(TEXT("participants"),Participants)||Participants!=2)continue;NativePairs.Add(P);}}
+    if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Rows)){for(const auto& Row:Rows){auto P=Row->AsObject();double Participants=0;if(!P||!P->TryGetNumberField(TEXT("participants"),Participants)||(Participants!=2&&!(bInteractionOnly&&Participants==3)))continue;NativePairs.Add(P);}}
     TMap<FString,int32> Counts;TArray<FString> Labels;Labels.Reserve(NativePairs.Num());
     for(const TSharedPtr<FJsonObject>& P:NativePairs){
         const FString Category=P->GetStringField(TEXT("category"));
@@ -2760,7 +2813,9 @@ void UOKCharacterController::OnPairSelected(FString Item,ESelectInfo::Type Type)
     bSuppressPairControls=true;PairStateCombo->ClearOptions();PairStateCombo->AddOption(TEXT("選擇階段"));TArray<FString> States;FemalePairStates.GetKeys(States);States.Sort();for(const auto& State:States)if(MalePairStates.Contains(State))PairStateCombo->AddOption(State);PairStateCombo->SetSelectedIndex(0);bSuppressPairControls=false;
     if(PairStateCombo->GetOptionCount()<2){ShowPairStatus(TEXT("這個姿勢沒有雙方都有的動作階段。"),true);return;}
     FString State=PairStateCombo->FindOptionIndex(TEXT("WLoop"))>0?TEXT("WLoop"):PairStateCombo->FindOptionIndex(TEXT("Idle"))>0?TEXT("Idle"):PairStateCombo->GetOptionAtIndex(1);
-    if(ReadyPairs.IsValidIndex(Index)&&ReadyPairs[Index].IsValid()&&ReadyPairs[Index]->Progress&&ReadyPairs[Index]->Progress->StateOf(State)!=1){
+    // In the H scene the wanted state is waited for (OnPairStateSelected moves it to the front): started on the first one ready
+    // (A_Drop by name) the panel had no way on from it and the pose could not be played.
+    if(!bHScene&&ReadyPairs.IsValidIndex(Index)&&ReadyPairs[Index].IsValid()&&ReadyPairs[Index]->Progress&&ReadyPairs[Index]->Progress->StateOf(State)!=1){
         // States are still being prepared: start with one that is ready (the first one always is).
         for(int32 Option=1;Option<PairStateCombo->GetOptionCount();++Option)if(ReadyPairs[Index]->Progress->StateOf(PairStateCombo->GetOptionAtIndex(Option))==1){State=PairStateCombo->GetOptionAtIndex(Option);break;}
     }
@@ -2831,7 +2886,11 @@ void UOKCharacterController::OnPairStateSelected(FString Item,ESelectInfo::Type 
     }
     const double CommitStart=FPlatformTime::Seconds();
     if(!PairedPlayback)PairedPlayback=GetWorld()->SpawnActor<AKKPairedPlayback>();if(!PairedPlayback){ShowPairStatus(TEXT("無法開始雙人播放。"),true);return;}FString Error;
-    if(!PairedPlayback->Start(Selected.Sex==1?PreviewActor.Get():PartnerActor.Get(),Selected.Sex==0?PreviewActor.Get():PartnerActor.Get(),FemaleKey,MaleKey,Item,P->GetStringField(TEXT("female_motion")),P->GetStringField(TEXT("male_motion")),Error)){ShowPairStatus(Error.IsEmpty()?TEXT("這個姿勢播放失敗。"):Error,true);PairedPlayback->Destroy();PairedPlayback=nullptr;return;}
+    // In the room any pose can always start (user 2026-11-07): the two apart for whatever reason, he comes to her.
+    if(bHScene&&IsValid(PreviewActor)&&IsValid(PartnerActor)&&!PreviewActor->PairFrame().Equals(PartnerActor->PairFrame(),.01f)){const FTransform Frame=PreviewActor->PairFrame();
+        UE_LOG(LogTemp,Warning,TEXT("OK pair: partner brought to %s from %s (origin set %d / %d)"),*Frame.ToString(),*PartnerActor->PairFrame().ToString(),PreviewActor->bPairOriginSet,PartnerActor->bPairOriginSet);
+        if(PartnerActor->bPairOriginSet)PartnerActor->PairOrigin=Frame;else PartnerActor->SetActorTransform(Frame);}
+    if(!PairedPlayback->Start(Selected.Sex==1?PreviewActor.Get():PartnerActor.Get(),Selected.Sex==0?PreviewActor.Get():PartnerActor.Get(),FemaleKey,MaleKey,Item,P->GetStringField(TEXT("female_motion")),P->GetStringField(TEXT("male_motion")),Error)){ShowPairStatus(Error.IsEmpty()?TEXT("這個姿勢播放失敗。"):Error,true);PairedPlayback->Destroy();PairedPlayback=nullptr;if(HPanel)HPanel->PoseFailed(Error);return;}
     const double PlaybackDone=FPlatformTime::Seconds();
     ActiveBodyPairKey=FString::Printf(TEXT("%s:%d"),*P->GetStringField(TEXT("category")),P->GetIntegerField(TEXT("id")));
     OnPairSpeed(PairSpeedSlider?PairSpeedSlider->GetValue():.25f);
@@ -3479,7 +3538,8 @@ void UOKCharacterController::ApplyShapeValue(bool bBody, int32 Index, float Valu
 		}
 		Selected.Face.ShapeValueFace[Index] = Value;
 	}
-	if (PreviewActor && bModelLayout)
+	if (CharacterStyle != 0.f || CharacterFaceStyle != 0.f) ApplyCharacterStyle();
+	else if (PreviewActor && bModelLayout)
 	{
 		PreviewActor->MarkShapeDirty(Selected.Face.ShapeValueFace, Selected.Body.ShapeValueBody);
 	}

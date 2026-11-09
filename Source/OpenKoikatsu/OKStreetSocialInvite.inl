@@ -157,7 +157,8 @@ void AOKStreetSocialScene::YandereComes(int32 Girl){
 
 void AOKStreetSocialScene::StepApproach(){
  auto& S=*State;const int32 I=S.ApproachGirl;auto& A=S.Agents[I-1];
- auto Stop=[&](){A.Held=false;S.ApproachGirl=INDEX_NONE;S.ApproachPath.Reset();S.ApproachBlockedNear=false;S.ApproachJoin=false;S.ApproachSong=false;S.ApproachPrivate=false;};
+ auto Stop=[&](){if(S.ApproachAppointment&&S.Manifest.Characters.IsValidIndex(I)){const FString Her=OKStreetStableId(S.Manifest.Characters[I]);for(auto& Ap:S.Store.Appointments)if(Ap.Heroine==Her)Ap.ComingAt=-1;}
+  A.Held=false;S.ApproachGirl=INDEX_NONE;S.ApproachPath.Reset();S.ApproachBlockedNear=false;S.ApproachJoin=false;S.ApproachSong=false;S.ApproachPrivate=false;};
  // On her way to a meeting she was held up step after step (a park exit: 40 cm every 8 s) and ran out of time: the meeting
  // used to vanish. Once more on a fresh route; out of his sight (25 m) she is already further along it.
  // Him talking with someone meanwhile is no reason to stop: 惠惠, coming to their breakfast, stuck behind a wall while
@@ -166,7 +167,7 @@ void AOKStreetSocialScene::StepApproach(){
   TArray<FVector> Path=ContactRoute(A.Position,S.Male);int32 From=0;
   if(FVector::Dist2D(A.Position,S.Male)>2500.f)for(int32 K=0;K<Path.Num();++K)if(FVector::Dist2D(Path[K],S.Male)<=1500.f){From=FMath::Max(0,K-1);break;}
   if(Path.Num()>=2){
-   ++S.ApproachRetries;if(From>0){A.Position=FVector(Path[From].X,Path[From].Y,A.Position.Z);Path.RemoveAt(0,From);}
+   ++S.ApproachRetries;if(From>0){A.Position=Path[From];Path.RemoveAt(0,From);}
    float Length=0;for(int32 K=1;K<Path.Num();++K)Length+=FVector::Dist2D(Path[K-1],Path[K]);
    S.ApproachLimit=FMath::Max(90.0,30.0+2.0*Length/OKStreetWalkSpeed);S.ApproachStarted=FPlatformTime::Seconds();S.ApproachPath=MoveTemp(Path);S.ApproachBlockedNear=false;S.ApproachBlockedSince=0;
    UE_LOG(LogTemp,Display,TEXT("Street approach: actor=%d held up on the way to the meeting; she goes on from %s on a fresh route (route points=%d%s)"),I,*A.Position.ToCompactString(),S.ApproachPath.Num(),From>0?TEXT(", out of his sight further along"):TEXT(""));
@@ -258,10 +259,11 @@ void AOKStreetSocialScene::StepApproach(){
   if(S.ApproachBlockedSince==0)S.ApproachBlockedSince=SceneTime();
   else if(SceneTime()-S.ApproachBlockedSince>8.0&&FVector::Dist2D(A.Position,S.Male)>600.f&&S.ApproachPath.Num()>=2){
    UE_LOG(LogTemp,Display,TEXT("Street approach: actor=%d held up at %s for 8 s; on to the next route point %s"),I,*A.Position.ToCompactString(),*S.ApproachPath[1].ToCompactString());
-   A.Position=FVector(S.ApproachPath[1].X,S.ApproachPath[1].Y,A.Position.Z);S.ApproachPath.RemoveAt(0);S.ApproachBlockedSince=0;return;}
+   // At the point's own height: from a third floor she kept 1960 and walked the street's route in the air, held up at every point.
+   A.Position=S.ApproachPath[1];S.ApproachPath.RemoveAt(0);S.ApproachBlockedSince=0;return;}
   // Held up inside a building he is not in (a hallway the route does not know): out of its door.
   {const FString In=PlaceHere(A.Position);if(!In.IsEmpty()&&In!=PlaceHere(S.Male))if(const auto* P=OKStreetFindPlace(In);P&&!P->Door.IsNearlyZero()&&FVector::Dist2D(A.Position,P->Door)>80.f){
-   UE_LOG(LogTemp,Display,TEXT("Street approach: actor=%d held up inside %s; she comes out of its door"),I,P->Name);A.Position=FVector(P->Door.X,P->Door.Y,A.Position.Z);S.ApproachRouteAt=-1000;return;}}
+   UE_LOG(LogTemp,Display,TEXT("Street approach: actor=%d held up inside %s; she comes out of its door"),I,P->Name);A.Position=P->Door;S.ApproachRouteAt=-1000;return;}}
   if(FPlatformTime::Seconds()>S.ApproachBlockLogAt){S.ApproachBlockLogAt=FPlatformTime::Seconds()+5.0;UE_LOG(LogTemp,Display,TEXT("Street approach: actor=%d blocked at %s going to %s (route points=%d)"),I,*A.Position.ToCompactString(),*S.ApproachPath[1].ToCompactString(),S.ApproachPath.Num());}
   return;
  }

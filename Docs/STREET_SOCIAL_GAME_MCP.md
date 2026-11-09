@@ -1,3 +1,5 @@
+> 控制通道現在所有模式常開，不帶 `-Control` 也連得上；`-Control` 只再加上 AI 驅動的行為（滑鼠不鎖、跳過開始選單）。見 [控制通道](GAME_CONTROL_CHANNELS.md)。
+
 # 街區遊戲 MCP（ok-game-mcp）
 
 讓 AI 像玩家一樣操作 StreetSocial：走路、按鍵、按畫面上的按鈕、跟女主說話、等時間過去、截圖，另外能下引擎主控台指令與錄 Unreal Insights trace（效能分析）。
@@ -19,6 +21,8 @@ Tools/ok-game-mcp（Rust）
 
 - 註冊在專案根目錄 `.mcp.json`（`ok-game`，`cargo run --release` 啟動，第一次會自動編譯）。新開的 Claude Code session 會載入它。
 - 控制埠：`OK_CONTROL_PORT`，否則 `local-instance.json` 的 `port_base + 10`，預設 47870。沙盒遊戲（`-Sandbox`）用自己的埠，設 `OK_CONTROL_PORT` 指過去。
+- 存檔：`-Control` 一律不碰主存檔。沒給 `-Sandbox` 時走沙盒 `Control`（這個 checkout 自己的連接埠，不用另設 `OK_CONTROL_PORT`）；要測主存檔本身才加 `-MainSave`。
+- 水槍：H 場景裡 `/hscene {"spray": true}` 從鏡頭朝鏡頭看的地方噴，`false` 停，`game.log` 的 `H control spray` 記命中數與附著量。
 - 沒有 MCP 的環境（例如已經開著、沒重新載入設定的 session）可以用同一套工具的命令列：
   `Tools/ok-game-mcp/target/release/ok-game-mcp.exe call <工具> '<JSON 參數>'`，`--check` 看找到的專案、埠號與遊戲是否在線。
 - 以前的 `Tools/street_play.lua`（curl 呼叫同一組端點）已移除，功能都在這裡。
@@ -36,6 +40,8 @@ Tools/ok-game-mcp（Rust）
 | `game_buttons` / `game_click` | 列出畫面按鈕／照文字按下（會自動開關游標、捲動後重按）。 |
 | `game_goto` | 先結束對話，再自動導航到女主（編號 1–10）或地點 id，時鐘走到抵達或有人搭話為止。 |
 | `game_wait` | 讓時鐘走：幾秒、到某個遊戲時間（`until: "15:00"`）、或到同行結束（`outing: true`）。 |
+| `game_ovulate` | 讀女角的懷孕狀態（`girl` 1～10）。`on: true` 強制排卵：不管週期，下一次裡面射精（沒戴套）必定受孕，受孕後自動解除；`on: false` 回到她的週期。走控制通道 `/pregnancy {girl, ovulate?}`。 |
+| `game_warp` | 立刻把他放到某座標（公分，測試用）。不檢查該點，放在牆另一側就在牆另一側。 |
 | `game_clock` / `game_look` / `game_phone` | 時鐘暫停／繼續、轉鏡頭、在開著的手機對話裡打字送出。 |
 | `game_screenshot` | 截圖（含 UI），直接回傳圖片；`scale` 2–4 是不含 UI 的高解析截圖。 |
 | `game_inspect` | 把女主（`girl` 1–10）帶進高空的檢視房間（只有灰地板），鏡頭繞著她：`yaw` 0 是正面、90／180 是側面／背面，`pitch` 俯仰、`distance` 遠近（60–900 cm），回傳截圖；`off: true` 讓她回到原本的行程。她在房間裡時行程暫停。啟動時直接進：`game_launch {options: ["-Inspect", "N"]}`，或 `StreetSocial.cmd -Inspect N`（←→ 轉圈、↑↓ 俯仰、滾輪遠近、PageUp／PageDown 換人、Home 重置、End 離開）。 |

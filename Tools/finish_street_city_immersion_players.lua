@@ -1,0 +1,8 @@
+package.path='Tools/lua/?.lua;'..package.path
+local j=require('ok.json');local h=require('ok.hash');local out='C:/portable/OpenKoikatsu/output/street-social-city-production/immersion-v1/'
+local function read(p)local f=assert(io.open(p,'rb'));local d=j.decode(f:read('*a'));f:close();return d end
+local r=read(out..'outdoor-players/captures-running.json');local base=read(out..'detail/captures.json');assert(base.exit_code==0 and base.map_sha256==r.map_sha256 and #base.images==22);assert(h.sha256_file('StreetSocialCity/Content/UniversityCity/Maps/UniversityCity.umap')==r.map_sha256)
+local f=assert(io.open(base.native_log,'rb'));local text=f:read('*a');f:close();local date;local saved={}
+for line in text:gmatch('[^\r\n]+')do local v=line:match('LocalDateTime = (%d%d%d%d%.%d%d%.%d%d%-%d%d%.%d%d%.%d%d)');if v then date=v end;local p=line:match('High resolution screenshot saved as (.+%.png)');if p then saved[p:gsub('\\','/')]=date end end
+for _,v in ipairs(r.views)do assert(saved[v.path]==v.date,'Missing exact-clock outdoor image '..v.id);local f=assert(io.open(v.path,'rb'));assert(f:seek('end')>5000);f:close();v.sha256=h.sha256_file(v.path)end
+assert(#r.views==40);local d={status='captured_requires_visual_review',source_runtime='Same uncooked native UnrealEditor -game process as detail22; staged validation remains mandatory',engine='E:/PhysX/UE5.8',map_sha256=r.map_sha256,exit_code=base.exit_code,native_log=base.native_log,images=r.views,scope='All20 outdoor sites day/night at supported capsule-clear player height; no elevated diagnostic cameras in this set.'};f=assert(io.open(out..'outdoor-players/captures.json','wb'));f:write(j.encode(d));f:close();print('Verified 40 native source Game images at all20 player-height outdoor sites.')

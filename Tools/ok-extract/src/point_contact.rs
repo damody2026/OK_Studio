@@ -79,11 +79,11 @@ impl Recipe {
  // StreetSocial places the melon at 0.8 m scaled by the striker's standing shoulder height / 1.253 m (clamped 0.8..1).
  #[test] #[ignore="reads Saved/OKCardTest OK cards and the base library"]
  fn ok_card_watermelon_reach(){
-  std::env::set_var("OK_BASE_LIBRARY","C:/portable/OpenKoikatsu/Content/IndependentResources/base_v1");
-  let runtime=std::path::Path::new("C:/portable/OpenKoikatsu/Content/IndependentResources/RuntimeAnimations");
+  std::env::set_var("OK_BASE_LIBRARY",crate::test_support::project_path!("Content/IndependentResources/base_v1"));
+  let runtime=std::path::Path::new(crate::test_support::project_path!("Content/IndependentResources/RuntimeAnimations"));
   let clip=std::fs::read(runtime.join("watermelon_strike.okanim")).unwrap();let json=std::fs::read(runtime.join("watermelon.contact.json")).unwrap();
   for n in 1..=10{
-   let p=std::path::PathBuf::from(format!("C:/portable/OpenKoikatsu/Saved/OKCardTest/OK{n:02}.png"));
+   let p=std::path::PathBuf::from(format!("{}/../../Saved/OKCardTest/OK{n:02}.png",env!("CARGO_MANIFEST_DIR")));
    let mut s=crate::session::open(&crate::oklib::root_for_card(std::path::Path::new(""),Some(&p)),Some(&p),0).unwrap();
    let (root,key)=crate::anim::install_shared_clip(&clip).unwrap();s.game_root=root;s.anim_clip=key;s.anim_parameters.clear();s.anim_scene_mode=0;s.anim_time=0.;s.reset_anim_clock();s.pv_mask=15;
    s.sample_paired_frame(0.);let shoulder=super::point(s.body_skel.as_ref().unwrap(),"cf_j_shoulder_R",[0.;3])[1];

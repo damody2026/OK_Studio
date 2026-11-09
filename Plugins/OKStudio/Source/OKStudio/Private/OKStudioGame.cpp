@@ -112,6 +112,11 @@ FString UOKStudioGame::SceneDirectory()
 	return FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("UserData/Studio/scene"));
 }
 
+FString UOKStudioGame::ScenePictureFile(const FString& Scene)
+{
+	return FPaths::GetPath(Scene) / FPaths::GetBaseFilename(Scene) + TEXT(".thumb.png");
+}
+
 TArray<FString> UOKStudioGame::SceneFiles()
 {
 	TArray<FString> Names;
@@ -184,7 +189,7 @@ UOKStudioGame* UOKStudioGame::Start(UWorld* World, const FString& InFile, FStrin
 		PC->SetInputMode(FInputModeUIOnly());
 	}
 	if (!InFile.IsEmpty()) { if (!Game->Load(InFile, OutError)) UE_LOG(LogTemp, Warning, TEXT("OK studio: %s"), *OutError); }
-	else Game->Add(EOKSceneObjectKind::Light);
+	else Game->AddMainLight();
 	if (GEngine && GEngine->GameViewport)
 	{
 		Game->Panel = SNew(SOKStudioPanel).Game(Game);
@@ -314,6 +319,14 @@ void UOKStudioGame::CommitHistory()
 	while (UndoStack.Num() > 1 && (UndoStack.Num() > 100 || Bytes > (int64(256) << 20))) { Bytes -= UndoStack[0].Len() * sizeof(TCHAR); UndoStack.RemoveAt(0); UndoSelections.RemoveAt(0); }
 }
 
+void UOKStudioGame::AmendHistory()
+{
+	if (!Document) return;
+	bHistoryDirty = false;
+	HistoryState = Document->ToJson();
+	HistorySelection = Selection;
+}
+
 void UOKStudioGame::RestoreHistory(const FString& State)
 {
 	const TArray<int32> Keep = HistorySelection;
@@ -344,8 +357,10 @@ void UOKStudioGame::Undo()
 {
 	if (bHistoryDirty) CommitHistory();
 	if (UndoStack.IsEmpty()) return;
-	// The objects the undone edit was made on stay selected (when they are still there).
+	// The objects the undone edit was made on stay selected (when they are still there), the primary one too
+	// (U209: it became the last of the list, and the pages changed to another character).
 	const TArray<int32> EditSelection = HistorySelection;
+	const int32 Primary = SelectedId;
 	RedoStack.Add(MoveTemp(HistoryState));
 	RedoSelections.Add(HistorySelection);
 	HistoryState = UndoStack.Pop();
@@ -353,7 +368,7 @@ void UOKStudioGame::Undo()
 	RestoreHistory(HistoryState);
 	TArray<int32> Keep;
 	for (int32 Id : EditSelection) if (Document->Find(Id)) Keep.Add(Id);
-	if (Keep.Num()) SelectMany(Keep, Keep.Last());
+	if (Keep.Num()) SelectMany(Keep, Primary);
 	// Back at the saved document: nothing to save (U130: an add undone still asked to save).
 	bDirty = HistoryState != SavedState;
 }
@@ -362,11 +377,13 @@ void UOKStudioGame::Redo()
 {
 	if (bHistoryDirty) CommitHistory();
 	if (RedoStack.IsEmpty()) return;
+	const int32 Primary = SelectedId;
 	UndoStack.Add(MoveTemp(HistoryState));
 	UndoSelections.Add(HistorySelection);
 	HistoryState = RedoStack.Pop();
 	HistorySelection = RedoSelections.Num() ? RedoSelections.Pop() : TArray<int32>();
 	RestoreHistory(HistoryState);
+	if (Selection.Contains(Primary)) { const TArray<int32> Kept = Selection; SelectMany(Kept, Primary); }
 	bDirty = HistoryState != SavedState;
 }
 
@@ -501,6 +518,60 @@ bool UOKStudioGame::FrameMapStart()
 	return true;
 }
 
+bool UOKStudioGame::LandFurniture(int32 Id, bool& bMoved)
+{
+	bMoved = false;
+	FOKSceneObject* O = Document ? Document->Find(Id) : nullptr;
+	if (!O || O->Parent >= 0 || !SceneActor) return true;
+	FBox Box;
+	if (!SceneActor->PreviewOf(Id) || !WorldBounds(Id, Box) || !Box.IsValid || Box.GetVolume() <= 0.) return false;
+	const FVector Size = Box.GetSize();
+	// A book stays where the view is, to be put on something; a sofa came at the view's height, in the air, through her (U265).
+	if (FMath::Max(Size.X, Size.Y) < 40. || Size.Z < 30.) return true;
+	TArray<FBox> Parts, Taken;
+	SceneActor->MapPartBounds(Parts);
+	OKMapFurniture(Parts, Taken);
+	for (const FOKSceneObject& X : Document->Objects)
+	{
+		FBox B;
+		if (X.Id != Id && (X.Kind == EOKSceneObjectKind::Character || X.Kind == EOKSceneObjectKind::Item) && Document->IsShown(X.Id) && WorldBounds(X.Id, B)) Taken.Add(B);
+	}
+	// The floor: the highest wide top under it. No map: the scene's ground.
+	const FVector Middle = Box.GetCenter();
+	double Floor = Parts.IsEmpty() ? 0. : Box.Min.Z;
+	bool bFloor = Parts.IsEmpty();
+	for (const FBox& B : Parts)
+	{
+		const FVector S = B.GetSize();
+		if (S.X < 150. || S.Y < 150. || Middle.X < B.Min.X || Middle.X > B.Max.X || Middle.Y < B.Min.Y || Middle.Y > B.Max.Y || B.Max.Z > Box.Min.Z + 1.) continue;
+		if (!bFloor || B.Max.Z > Floor) { Floor = B.Max.Z; bFloor = true; }
+	}
+	const FVector Half(Size.X / 2., Size.Y / 2., Size.Z / 2.);
+	auto Free = [&](const FVector2D& P)
+	{
+		const FVector At(P.X, P.Y, Floor + Half.Z + 8.);
+		const FBox Room(At - FVector(Half.X, Half.Y, Half.Z), At + Half);
+		if (!Parts.IsEmpty() && !OKStandsOnMap(Parts, FVector(P.X, P.Y, Floor))) return false;
+		return !Taken.ContainsByPredicate([&Room](const FBox& B) { return B.Intersect(Room); });
+	};
+	FVector2D At(Middle.X, Middle.Y);
+	bool bFound = Free(At);
+	for (int32 Ring = 1; Ring <= 15 && !bFound; ++Ring)
+		for (int32 A = 0; A < 16 && !bFound; ++A)
+		{
+			const FVector Step = FRotator(0.f, Yaw + 90.f + A * 22.5f, 0.f).Vector() * (40. * Ring);
+			const FVector2D P(Middle.X + Step.X, Middle.Y + Step.Y);
+			if (Free(P)) { At = P; bFound = true; }
+		}
+	const FVector Move(At.X - Middle.X, At.Y - Middle.Y, Floor - Box.Min.Z);
+	if (Move.IsNearlyZero(0.01)) return true;
+	FTransform World = Document->WorldTransform(Id);
+	World.AddToTranslation(Move);
+	O->Transform = World;
+	bMoved = true;
+	return true;
+}
+
 int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 {
 	const int32 Id = Add(EOKSceneObjectKind::Character);
@@ -538,7 +609,11 @@ int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 			HalfWidth = FMath::Max(HalfWidth, float(FMath::Max(B.GetExtent().X, B.GetExtent().Y)));
 		}
 		HalfWidth = FMath::Min(HalfWidth, 120.f);
-		auto Free = [this, Id, &Furniture, &People, &Scene, HalfWidth, &MapParts, &bNeedGround](const FVector& P)
+		// Room kept from the furniture: a person's shoulders and hips, so that the 56 cm slit between a desk and the next
+		// chair is no spot while the aisle is (U171: he stood in the slit, touching both). Where nothing has that much room,
+		// the body alone.
+		float Clearance = 35.f;
+		auto Free = [this, Id, &Furniture, &People, &Scene, HalfWidth, &MapParts, &bNeedGround, &Clearance](const FVector& P)
 		{
 			if (bNeedGround && !OKStandsOnMap(MapParts, Scene.TransformPosition(P))) return false;
 			if (Document->Objects.ContainsByPredicate([this, Id, &P](const FOKSceneObject& X)
@@ -546,7 +621,7 @@ int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 			const FVector W = Scene.TransformPosition(P);
 			const FBox Reach(W - FVector(HalfWidth, HalfWidth, 0.f), W + FVector(HalfWidth, HalfWidth, 0.f));
 			if (People.ContainsByPredicate([&Reach](const FBox& B) { return B.Min.X < Reach.Max.X && B.Max.X > Reach.Min.X && B.Min.Y < Reach.Max.Y && B.Max.Y > Reach.Min.Y; })) return false;
-			const FBox Body(W + FVector(-22.f, -22.f, 15.f), W + FVector(22.f, 22.f, 150.f));
+			const FBox Body(W + FVector(-Clearance, -Clearance, 15.f), W + FVector(Clearance, Clearance, 150.f));
 			return !Furniture.ContainsByPredicate([&Body](const FBox& B) { return B.Intersect(Body); });
 		};
 		const FVector Start(Focus.X, Focus.Y, 0.f);
@@ -580,20 +655,17 @@ int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 		FVector At = Start;
 		bool bFound = false;
 		double Best = TNumericLimits<double>::Max();
-		for (const FVector& P : Spots)
+		auto Search = [&]()
 		{
-			const double C = Cost(P);
-			if (C < Best && Free(P)) { Best = C; At = P; bFound = true; }
-		}
-		if (!bFound && bNeedGround)
-		{
-			bNeedGround = false;
 			for (const FVector& P : Spots)
 			{
 				const double C = Cost(P);
 				if (C < Best && Free(P)) { Best = C; At = P; bFound = true; }
 			}
-		}
+		};
+		Search();
+		if (!bFound) { Clearance = 22.f; Search(); }
+		if (!bFound && bNeedGround) { bNeedGround = false; Search(); }
 		if (!bFound) At = Start;
 		bLastAddBlocked = !bFound;
 		O->Transform.SetLocation(O->Parent >= 0 ? Document->WorldTransform(O->Parent).InverseTransformPosition(At) : At);
@@ -605,11 +677,20 @@ int32 UOKStudioGame::AddCharacter(const FString& Card, int32 Outfit)
 			if (GEngine && GEngine->GameViewport) GEngine->GameViewport->GetViewportSize(Size);
 			const bool bShown = PC->ProjectWorldLocationToScreen(Scene.TransformPosition(At + FVector(0.f, 0.f, 90.f)), Screen) && Size.X > 1.0 && Size.Y > 1.0
 				&& ClearView.IsInside(FVector2D(Screen.X / Size.X, Screen.Y / Size.Y));
-			if (!bShown) { Focus.X = At.X; Focus.Y = At.Y; Document->ActiveCamera = -1; }
+			// A locked camera stays (U242): the dance's camera is what is being watched.
+			if (!bShown && !bLockActiveCamera) { Focus.X = At.X; Focus.Y = At.Y; Document->ActiveCamera = -1; }
 		}
 		if (Panel) Panel->RefreshRows();
 		Document->NotifyChanged();
 	}
+	return Id;
+}
+
+int32 UOKStudioGame::AddMainLight()
+{
+	// Studio's character light (mask 1024, the Chara layer): at 4 on the map too it washed out the ground (U268).
+	const int32 Id = Add(EOKSceneObjectKind::Light);
+	if (FOKSceneObject* O = Document->Find(Id)) O->Light.bCharactersOnly = true;
 	return Id;
 }
 
@@ -628,7 +709,17 @@ int32 UOKStudioGame::Add(EOKSceneObjectKind Kind)
 	// A new item or effect comes where the view looks (its orbit focus), not at the world origin, which a map's
 	// furniture often hides (the 自室 table): what was added is in sight to move on from.
 	if (Kind == EOKSceneObjectKind::Item || Kind == EOKSceneObjectKind::Effect)
-		O->Transform.SetLocation(Parent >= 0 ? Document->WorldTransform(Parent).InverseTransformPosition(Focus) : Focus);
+	{
+		// U186: the focus is usually on a character, and the item came inside her, out of sight: a step towards the view.
+		FVector Spot = Focus;
+		for (const FOKSceneObject& X : Document->Objects)
+			if (X.Kind == EOKSceneObjectKind::Character && FVector::Dist2D(Document->WorldTransform(X.Id).GetLocation(), Spot) < 40.f)
+			{
+				Spot -= FRotator(0.f, Yaw, 0.f).Vector() * 50.f;
+				break;
+			}
+		O->Transform.SetLocation(Parent >= 0 ? Document->WorldTransform(Parent).InverseTransformPosition(Spot) : Spot);
+	}
 	if (Kind == EOKSceneObjectKind::Camera) O->Transform = FTransform(FRotator(Pitch, Yaw, 0.f), Focus - FRotator(Pitch, Yaw, 0.f).Vector() * Distance);
 	Select(Id);
 	return Id;
@@ -669,6 +760,11 @@ TArray<int32> UOKStudioGame::SelectionRoots() const
 bool UOKStudioGame::Save(const FString& Path, FString& OutError)
 {
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
+	Document->SavedView.bSet = true;
+	Document->SavedView.Focus = Focus;
+	Document->SavedView.Yaw = Yaw;
+	Document->SavedView.Pitch = Pitch;
+	Document->SavedView.Distance = Distance;
 	if (FPaths::GetExtension(Path).Equals(TEXT("png"), ESearchCase::IgnoreCase))
 	{
 		// OK scene card: the current view and the three views, with the scene and its character cards inside. Written beside
@@ -683,7 +779,22 @@ bool UOKStudioGame::Save(const FString& Path, FString& OutError)
 		if (!FOKSceneCard::Write(Document, Views, Temp, OutError)) { IFileManager::Get().Delete(*Temp, false, true, true); return false; }
 		if (!UOKSceneDocument::ReplaceFile(Temp, Path, OutError)) return false;
 	}
-	else if (!Document->SaveToFile(Path, OutError)) return false;
+	else
+	{
+		if (!Document->SaveToFile(Path, OutError)) return false;
+		// The list shows this picture (U226). The scene is saved whether or not it could be taken.
+		if (Viewer && SceneActor)
+		{
+			UpdateViewer();
+			SyncNow();
+			const UCameraComponent* Camera = Viewer->GetCameraComponent();
+			TArray<TArray<uint8>> Views;
+			FString PictureError;
+			if (FOKSceneCard::CaptureViews(SceneActor, Camera->GetComponentTransform(), Camera->FieldOfView, &Camera->PostProcessSettings, Views, PictureError) && Views.Num() > 0)
+				FFileHelper::SaveArrayToFile(Views[0], *ScenePictureFile(Path));
+			else UE_LOG(LogTemp, Warning, TEXT("OK studio: no picture for %s: %s"), *Path, *PictureError);
+		}
+	}
 	File = Path;
 	FOKStudioSettings::Get().UseScene(Path);
 	// The history takes the edits made since its last step first: undoing an edit made after saving comes back to
@@ -723,18 +834,38 @@ int32 UOKStudioGame::FindMmdCameraId(bool bOnlyMmdScene) const
 bool UOKStudioGame::Load(const FString& Path, FString& OutError)
 {
 	FString Note;
+	const double OpenStart = FPlatformTime::Seconds();
 	if (!FOKSceneCard::Open(Path, Document, OutError, &Note)) return false;
-	UE_LOG(LogTemp, Display, TEXT("OK studio: opened %s: %s"), *Path, *Note);
+	const double Opened = FPlatformTime::Seconds();
+	UE_LOG(LogTemp, Display, TEXT("OK studio: opened %s in %.2f s: %s"), *Path, Opened - OpenStart, *Note);
 	FOKStudioSettings::Get().UseScene(Path);
 	// A KStudio scene is imported, not edited in place: saving writes an OK scene card beside it.
 	File = FOKSceneCard::Kind(Path) == FOKSceneCard::EKind::KStudio ? FString() : Path;
 	ReleaseSceneResources();
+	UE_LOG(LogTemp, Display, TEXT("OK studio: last scene released in %.2f s"), FPlatformTime::Seconds() - Opened);
+	if (SceneActor) SceneActor->bProgressiveBuild = !bSyncBuildsAll;
 	TimelineTime = FMath::Clamp(Document->Playhead, 0.f, FMath::Max(Document->Duration, 0.f)); // where it was saved
 	LoopStart = 0.f;
 	LoopEnd = 0.f;
 	MmdCameraOffset = FVector::ZeroVector;
 	MmdCameraYawOffset = 0.f;
 	MmdCameraFovOffset = 0.f;
+	// The view it was saved in (U247: the last scene's view stayed, and a character away from the middle was not in the
+	// picture). An older file has none: its first character, as when one is added to an empty scene.
+	if (Document->SavedView.bSet)
+	{
+		Focus = Document->SavedView.Focus;
+		Yaw = Document->SavedView.Yaw;
+		Pitch = Document->SavedView.Pitch;
+		Distance = Document->SavedView.Distance;
+	}
+	else if (!File.IsEmpty())
+	{
+		const int32 Camera = Document->ActiveCamera;
+		ViewPreset(5);
+		Document->ActiveCamera = Camera;
+		if (const FOKSceneObject* First = Document->Objects.FindByPredicate([](const FOKSceneObject& O) { return O.Kind == EOKSceneObjectKind::Character; })) FrameFirstCharacter(First->Id);
+	}
 	const int32 MmdCamId = FindMmdCameraId(true);
 	if (MmdCamId >= 0)
 	{
@@ -758,6 +889,8 @@ bool UOKStudioGame::Load(const FString& Path, FString& OutError)
 
 void UOKStudioGame::ReleaseSceneResources()
 {
+	++SceneSerial;
+	bTimelineUsed = false;
 	Select(-1);
 	StopSceneAudio();
 	StopStudioSounds();
@@ -1329,9 +1462,14 @@ bool UOKStudioGame::EncodeMp4(const FString& FramesDir, float Fps, const FString
 	if (Audio.Num() == 1) AudioOut = TEXT(" -map 0:v -map 1:a -c:a aac -b:a 192k");
 	else if (Audio.Num() > 1)
 	{
-		FString Inputs;
-		for (int32 I = 0; I < Audio.Num(); ++I) Inputs += FString::Printf(TEXT("[%d:a]"), I + 1);
-		AudioOut = FString::Printf(TEXT(" -filter_complex \"%samix=inputs=%d:duration=longest[a]\" -map 0:v -map \"[a]\" -c:a aac -b:a 192k"), *Inputs, Audio.Num());
+		// All stereo first: beside a mono input amix went mono, summing the stereo one's channels (3 dB louder, U237).
+		FString Format, Inputs;
+		for (int32 I = 0; I < Audio.Num(); ++I)
+		{
+			Format += FString::Printf(TEXT("[%d:a]aformat=channel_layouts=stereo[s%d];"), I + 1, I);
+			Inputs += FString::Printf(TEXT("[s%d]"), I);
+		}
+		AudioOut = FString::Printf(TEXT(" -filter_complex \"%s%samix=inputs=%d:duration=longest:normalize=0[a]\" -map 0:v -map \"[a]\" -c:a aac -b:a 192k"), *Format, *Inputs, Audio.Num());
 	}
 	if (!Audio.IsEmpty() && Seconds > 0.f) AudioOut += FString::Printf(TEXT(" -t %.3f"), Seconds);
 	FString Tried;
@@ -1356,6 +1494,8 @@ void UOKStudioGame::CancelExport()
 	ExportFrame = -1;
 	SetTimelineTime(ExportReturnTime);
 	LastMovieError = TEXT("cancelled");
+	// U216: an mp4's frames are only its working files (a PNG sequence stays, what was made of it may be wanted).
+	if (bExportMp4) IFileManager::Get().DeleteDirectory(*ExportDir, false, true);
 }
 
 FString UOKStudioGame::ExportFrames(float Fps, int32 Width, int32 Height, bool bMp4, float From, float To, const FString& Folder)
@@ -1375,6 +1515,7 @@ FString UOKStudioGame::ExportFrames(float Fps, int32 Width, int32 Height, bool b
 	IFileManager::Get().MakeDirectory(*ExportDir, true);
 	ExportFrame = 0;
 	bExportShotPending = false;
+	LoadVoiceClips();
 	bTimelinePlaying = false;
 	ExportReturnTime = TimelineTime;
 	return ExportDir;
@@ -1400,7 +1541,8 @@ void UOKStudioGame::TickExport()
 			{
 				const FOKSceneSound& S = Document->Sound;
 				if (const FString Bgm = BgmFile(); S.bBgmPlay && FPaths::FileExists(Bgm)) Audio.Add({ Bgm, S.bBgmRepeat });
-				if (const FString Outside = OutsideSoundFile(); S.bOutsidePlay && FPaths::FileExists(Outside)) Audio.Add({ Outside, S.bOutsideRepeat });
+				if (const FString Outside = OutsideSoundFile(); S.bOutsidePlay && FPaths::FileExists(Outside) && !FPaths::IsSamePath(Outside, SceneSoundFile())) Audio.Add({ Outside, S.bOutsideRepeat });
+				if (const FString Mix = ExportDir / TEXT("voices.wav"); WriteExportMix(Mix)) Audio.Add({ Mix, false });
 			}
 			if (bExportAudio && Audio.IsEmpty()) LastMovieNote = TEXT("沒有播放中的音樂或外部音源，影片無聲");
 			bool bMovie = EncodeMp4(ExportDir, ExportFps, Movie, Encoder, LastMovieError, Audio, ExportTotal / ExportFps);
@@ -1424,15 +1566,17 @@ void UOKStudioGame::TickExport()
 	const float FrameTime = ExportFrom + ExportFrame / ExportFps;
 	SetTimelineTime(FrameTime);
 	SyncNow();
+	ApplyVoiceMouth(FrameTime);
 	for (const FOKSceneObject& O : Document->Objects) if (O.Kind == EOKSceneObjectKind::Character) SceneActor->SetAnimationTime(O.Id, FrameTime);
 	// What the scene's tick does after this one: items on posed hands and the characters' light for this frame's
 	// keys (U131: each frame showed the light of the one before; the first, of where the playhead had been).
 	SceneActor->PlaceAttached();
 	SceneActor->UpdateItemLighting();
 	FString Error;
-	if (!CaptureToPng(ExportDir / FString::Printf(TEXT("frame_%05d.png"), ExportFrame), ExportWidth, ExportHeight, Error))
+	if (!CaptureToPng(ExportDir / FString::Printf(TEXT("frame_%05d.png"), ExportFrame), ExportWidth, ExportHeight, Error, bExportTransparent && !bExportMp4))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("OK studio: frame %d not exported: %s"), ExportFrame, *Error);
+		LastMovieError = Error;
 		ExportFrame = -1;
 		SetTimelineTime(ExportReturnTime);
 		return;
@@ -1444,7 +1588,9 @@ void UOKStudioGame::SyncNow()
 {
 	bSyncPending = false;
 	// A few batches at once (small scenes are complete on return); a large scene goes on building over the next frames.
-	for (int32 Round = 0; SceneActor && Round < 8 && (Round == 0 || SceneActor->HasPendingBuilds()); ++Round) SceneActor->Sync();
+	// Not past a quarter second: eight characters in a row froze the picture for half a minute (U251).
+	const double Start = FPlatformTime::Seconds();
+	for (int32 Round = 0; SceneActor && (bSyncBuildsAll || Round < 8) && (Round == 0 || (SceneActor->HasPendingBuilds() && (bSyncBuildsAll || FPlatformTime::Seconds() - Start < .25))); ++Round) SceneActor->Sync();
 	if (Panel) Panel->RefreshRows();
 }
 
@@ -1633,6 +1779,7 @@ void UOKStudioGame::StopStudioSounds()
 	for (TPair<int32, FCharacterVoice>& V : CharacterVoices)
 		if (V.Value.bStarted && V.Value.Speaker.IsValid()) V.Value.Speaker->StopSpeech();
 	CharacterVoices.Reset();
+	StopVoiceClipAudio();
 }
 
 int32 UOKStudioGame::VoicePlayingIndex(int32 Id) const
@@ -1758,6 +1905,11 @@ bool UOKStudioGame::EnsureSceneAudioPcmLoaded()
 	return SceneAudioPcm && SceneAudioPcm->Channels > 0 && SceneAudioPcm->SampleRate > 0;
 }
 
+float UOKStudioGame::SceneSoundSeconds()
+{
+	return EnsureSceneAudioPcmLoaded() ? float(SceneAudioPcm->Samples.Num() / SceneAudioPcm->Channels) / SceneAudioPcm->SampleRate : 0.f;
+}
+
 void UOKStudioGame::PollSceneAudioHardwareClock()
 {
 	if (!AudioMasterClock.bAudioActive) return;
@@ -1835,12 +1987,21 @@ void UOKStudioGame::UpdateSceneAudio()
 	}
 }
 
+void UOKStudioGame::UpdateTimelineDriven()
+{
+	if (!SceneActor || !Document) return;
+	// Paused on a frame of a dance it stays on that frame; Studio's own motions keep running as they do there.
+	SceneActor->bTimelineDriven = bTimelinePlaying || !Document->SoundFile.IsEmpty()
+		|| (bTimelineUsed && Document->Objects.ContainsByPredicate([](const FOKSceneObject& O) { return O.Kind == EOKSceneObjectKind::Character && !O.Character.AnimFile.IsEmpty(); }));
+}
+
 void UOKStudioGame::SetTimelineTime(float Time)
 {
 	TimelineTime = FMath::Clamp(Time, 0.f, FMath::Max(Document->Duration, 0.01f));
 	Document->ItemAnimationSeconds = TimelineTime;
 	Document->Playhead = TimelineTime; // saved with the scene
-	if (SceneActor) SceneActor->bTimelineDriven = bTimelinePlaying || !Document->SoundFile.IsEmpty();
+	bTimelineUsed = true;
+	UpdateTimelineDriven();
 	// Posing the scene for a time is not an edit (no undo step, no unsaved mark).
 	TGuardValue<bool> Evaluating(bEvaluatingTimeline, true);
 	Document->EvaluateTimeline(TimelineTime);
@@ -1854,6 +2015,7 @@ void UOKStudioGame::SetTimelineTime(float Time)
 	if (!bSteppingTimelineFromClock)
 	{
 		StopSceneAudio();
+		StopVoiceClipAudio();
 	}
 }
 
@@ -1902,6 +2064,52 @@ bool UOKStudioGame::CaptureToPng(const FString& Path, int32 Width, int32 Height,
 	if (!FOKSceneCard::Capture(SceneActor, Camera->GetComponentTransform(), Camera->FieldOfView, &Camera->PostProcessSettings, Width, Height, bTransparent, Pixels, OutError)) return false;
 	TArray64<uint8> Png;
 	FImageUtils::PNGCompressImageArray(Width, Height, TArrayView64<const FColor>(Pixels.GetData(), Pixels.Num()), Png);
+	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
+	if (Png.IsEmpty() || !FFileHelper::SaveArrayToFile(Png, *Path)) { OutError = TEXT("cannot write ") + Path; return false; }
+	return true;
+}
+
+bool UOKStudioGame::CaptureMapPicture(const FString& Path, FString& OutError)
+{
+	if (!Viewer || !SceneActor) { OutError = TEXT("studio not running"); return false; }
+	constexpr int32 Width = 320, Height = 180;
+	UpdateViewer();
+	UCameraComponent* Camera = Viewer->GetCameraComponent();
+	// How much of the picture shows anything: the start view of a closed room stands outside its walls (U256: 和室, 体育館).
+	const auto Seen = [](const TArray<FColor>& Pixels)
+	{
+		int32 Lit = 0;
+		for (const FColor& C : Pixels) Lit += C.R + C.G + C.B > 72;
+		return Pixels.IsEmpty() ? 0.f : float(Lit) / Pixels.Num();
+	};
+	TArray<FColor> Best;
+	float BestSeen = -1.f;
+	if (FOKSceneCard::Capture(SceneActor, Camera->GetComponentTransform(), Camera->FieldOfView, &Camera->PostProcessSettings, Width, Height, false, Best, OutError)) BestSeen = Seen(Best);
+	if (BestSeen < 0.35f)
+	{
+		TArray<FBox> Parts;
+		SceneActor->MapPartBounds(Parts);
+		// The sky box around a room is no part of it: with it the middle lay 14 m under the floor (U257: 体育館ライブ, 個室).
+		Parts.Sort([](const FBox& A, const FBox& B) { return A.GetVolume() > B.GetVolume(); });
+		FBox All(ForceInit);
+		for (int32 I = 1; I < Parts.Num(); ++I) All += Parts[I];
+		if (!Parts.IsEmpty() && !(All.IsValid && Parts[0].IsInside(All))) All += Parts[0];
+		if (All.IsValid)
+		{
+			const FVector Eye(All.GetCenter().X, All.GetCenter().Y, All.Min.Z + FMath::Min(150.f, All.GetSize().Z * 0.5f));
+			for (const float Turn : { 0.f, 90.f, 180.f, 270.f })
+			{
+				TArray<FColor> Pixels;
+				FString Error;
+				if (!FOKSceneCard::Capture(SceneActor, FTransform(FRotator(-5.f, Turn, 0.f), Eye), 70.f, &Camera->PostProcessSettings, Width, Height, false, Pixels, Error)) continue;
+				const float Amount = Seen(Pixels);
+				if (Amount > BestSeen) { BestSeen = Amount; Best = MoveTemp(Pixels); }
+			}
+		}
+	}
+	if (BestSeen < 0.f) return false;
+	TArray64<uint8> Png;
+	FImageUtils::PNGCompressImageArray(Width, Height, TArrayView64<const FColor>(Best.GetData(), Best.Num()), Png);
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
 	if (Png.IsEmpty() || !FFileHelper::SaveArrayToFile(Png, *Path)) { OutError = TEXT("cannot write ") + Path; return false; }
 	return true;
@@ -1961,7 +2169,7 @@ void UOKStudioGame::Tick(float DeltaTime)
 		Document->ActiveCamera = -1;
 	}
 	TickExport();
-	if (SceneActor && Document) SceneActor->bTimelineDriven = bTimelinePlaying || !Document->SoundFile.IsEmpty();
+	UpdateTimelineDriven();
 	if (bTimelinePlaying && Document && !IsExporting())
 	{
 		bool bJustStartedAudio = false;
@@ -2017,6 +2225,7 @@ void UOKStudioGame::Tick(float DeltaTime)
 		UpdateStudioSound(StudioBgm, BgmFile(), Document->Sound.bBgmPlay, Document->Sound.bBgmRepeat);
 		UpdateStudioSound(StudioOutside, OutsideSound, Document->Sound.bOutsidePlay && !bDuplicateOutside, Document->Sound.bOutsideRepeat);
 		UpdateCharacterVoices();
+		UpdateVoiceClips();
 	}
 	// Auto backup every few minutes, not while something is moving or loading.
 	const int32 Minutes = FOKStudioSettings::Get().BackupMinutes;

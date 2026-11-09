@@ -20,8 +20,8 @@ fn assert_snapshot_equal(a:&SplitSnapshot,b:&SplitSnapshot){
 fn single_slot_card_patch_preserves_other_renderers_and_outfits(){
     let game=&crate::test_support::game_path("");
     let original=game.join("UserData/chara/female/19重绘爱莉希雅女仆v1.1.png");
-    let library=Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C000.png");
-    let resources=Path::new("C:/portable/OpenKoikatsu/Content/IndependentResources/v1");
+    let library=Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png"));
+    let resources=Path::new(crate::test_support::project_path!("Content/IndependentResources/v1"));
     for key in ["OK_GPU_SKIN","OK_SKELMESH","OK_NOPOSE","OK_UE_ANIM","OK_HEAD_GPUSKIN"]{std::env::set_var(key,"1");}
     std::env::set_var("OK_BUILTIN_RESOURCES",resources);
     let raw=crate::gamefs::read(&original).unwrap();let info=crate::card::parse_card_outfit(&original,0).unwrap();
@@ -70,7 +70,7 @@ fn single_slot_card_patch_preserves_other_renderers_and_outfits(){
     let bytes=crate::gamefs::read(library).unwrap();let(_,range)=portable::png_snapshot(&bytes).unwrap();
     let payload=portable_outfits::replace_outfit(&bytes[range.unwrap()],SplitSnapshot{schema:1,residue,references,unique},0,resources).unwrap();
     let stamp=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-    let dir=Path::new("C:/portable/OpenKoikatsu/Saved/Tests").join(format!("EditorSingleSlotNativeR27-{stamp}"));fs::create_dir_all(&dir).unwrap();
+    let dir=Path::new(crate::test_support::project_path!("Saved/Tests")).join(format!("EditorSingleSlotNativeR27-{stamp}"));fs::create_dir_all(&dir).unwrap();
     let base=dir.join("base.png");let(iend,_)=portable::png_snapshot(&raw).unwrap();
     let mut chunk=b"okPv".to_vec();chunk.extend(&payload);
     let mut base_bytes=raw[..iend].to_vec();base_bytes.extend((payload.len() as u32).to_be_bytes());
@@ -98,7 +98,7 @@ fn single_slot_card_patch_preserves_other_renderers_and_outfits(){
     // Exercise the editing context's owned candidate/checkpoint transaction,
     // not just the lower-level extractor. Preparation must have no publication
     // or card I/O, and stale candidates must fail after the next revision.
-    let cache=Path::new("C:/portable/OpenKoikatsu/Saved/AppearanceEditor/cache");
+    let cache=Path::new(crate::test_support::project_path!("Saved/AppearanceEditor/cache"));
     let key=catalog(game,cache).unwrap().iter().find(|i|i.entry.category_no==124&&i.entry.id==14&&i.source.is_empty()).unwrap().key.clone();
     let mut geometry_context=live_head::Context::new(game,&base,resources,cache,0).unwrap();
     let mut geometry_live=portable::load(&base).unwrap();geometry_live.ensure_skel_export();
@@ -316,7 +316,7 @@ fn diagnose_checkpoint_resource_difference(){
             _=>{let s=|v:&J|{let t=v.to_string();if t.len()>200{format!("{}...(len {})",&t[..200],t.len())}else{t}};out.push(format!("{path}: {} != {}",s(a),s(b)))}
         }
     }
-    let resources=Path::new("C:/portable/OpenKoikatsu/Content/IndependentResources/v1");
+    let resources=Path::new(crate::test_support::project_path!("Content/IndependentResources/v1"));
     let open=|key:&str|{let bytes=crate::gamefs::read(std::env::var(key).unwrap()).unwrap();let(_,r)=portable::png_snapshot(&bytes).unwrap();let payload=bytes[r.unwrap()].to_vec();payload};
     let(pa,pb)=(open("OK_DIFF_A"),open("OK_DIFF_B"));
     let(ra,rb)=(SnapshotReader::new(&pa,resources).unwrap(),SnapshotReader::new(&pb,resources).unwrap());
@@ -340,8 +340,8 @@ fn diagnose_checkpoint_resource_difference(){
 #[ignore="installed C001 APNG and original assets; legacy provenance parity"]
 fn legacy_accessory_provenance_parity(){
     let game=&crate::test_support::game_path("");
-    let card=Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C001.png");
-    let resources=Path::new("C:/portable/OpenKoikatsu/Content/IndependentResources/v1");
+    let card=Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C001.png"));
+    let resources=Path::new(crate::test_support::project_path!("Content/IndependentResources/v1"));
     for key in ["OK_GPU_SKIN","OK_SKELMESH","OK_NOPOSE","OK_UE_ANIM","OK_HEAD_GPUSKIN"]{std::env::set_var(key,"1");}
     std::env::set_var("OK_BUILTIN_RESOURCES",resources);
     let outfit:usize=std::env::var("OK_PARITY_OUTFIT").ok().and_then(|v|v.parse().ok()).unwrap_or(0);
@@ -388,8 +388,8 @@ fn legacy_accessory_provenance_parity(){
 fn editor_environment_geometry_fixture(){
     let game=&crate::test_support::game_path("");
     let original=game.join("UserData/chara/female/19重绘爱莉希雅女仆v1.1.png");
-    let library=Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C000.png");
-    let resources=Path::new("C:/portable/OpenKoikatsu/Content/IndependentResources/v1");
+    let library=Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png"));
+    let resources=Path::new(crate::test_support::project_path!("Content/IndependentResources/v1"));
     let output=std::path::PathBuf::from(std::env::var("OK_GEOMETRY_FIXTURE_OUT").unwrap());
     assert!(!output.ok_exists(),"fixture output must be fresh");
     std::env::set_var("OK_BUILTIN_RESOURCES",resources);

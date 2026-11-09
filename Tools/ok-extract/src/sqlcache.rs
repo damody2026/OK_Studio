@@ -899,6 +899,7 @@ fn env_sig_with(get: impl Fn(&str) -> String) -> String {
         "OK_DB_MOVE",
         "OK_DBSTST",
         "OK_RUNTIME_ACCESSORY",
+        "OK_CLOTHES_ALL_STATES",
         "OK_OLDPHEAD",
         "OK_NOCOPYTRF",
         "OK_FACE_FIXES",

@@ -12,14 +12,14 @@ local game_managed = game .. "/CharaStudio_Data/Managed"
 local args = { "C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe", "/nologo", "/target:library",
   "/out:" .. win(path.join(here, "OpenKoikatsu.GamePoseProbe.dll")) }
 for _, name in ipairs({ "UnityEngine.dll", "UnityEngine.CoreModule.dll", "UnityEngine.AnimationModule.dll",
-  "UnityEngine.JSONSerializeModule.dll", "UnityEngine.ImageConversionModule.dll", "UnityEngine.AssetBundleModule.dll",
+  "UnityEngine.JSONSerializeModule.dll", "UnityEngine.TerrainModule.dll", "UnityEngine.ImageConversionModule.dll", "UnityEngine.AssetBundleModule.dll",
   "Assembly-CSharp.dll", "Assembly-CSharp-firstpass.dll" }) do
   args[#args + 1] = "/reference:" .. win(path.join(game_managed, name))
 end
 args[#args + 1] = "/reference:" .. win(game .. "/BepInEx/core/BepInEx.dll")
 args[#args + 1] = "/reference:" .. win(game .. "/BepInEx/core/0Harmony.dll")
 for _, source in ipairs({ "Probe.cs", "AccessoryPhysicsControl.cs", "HPairControl.cs", "GenericIkScaleControl.cs",
-    "GenericDynamicScaleControl.cs", "GenericColliderControl.cs", "StudioVisualAudit.cs" }) do
+    "GenericDynamicScaleControl.cs", "GenericColliderControl.cs", "StudioVisualAudit.cs", "StudioMapTour.cs" }) do
   args[#args + 1] = win(path.join(here, source))
 end
 local res = ok.proc.run(args)

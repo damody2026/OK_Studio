@@ -1,0 +1,13 @@
+-- Reuse the real Game/UI/day-clock audit, isolated from accepted earlier reports.
+local f=assert(io.open('Tools/run_street_city_environment_game.lua','rb'));local s=f:read('*a');f:close()
+s=s:gsub("local mode=arg%[1%] or 'editor'","local mode=arg[1] or 'package'")
+s=s:gsub("local mode=arg%[1%] or 'package'", "local immersion=root..'/output/street-social-city-production/immersion-v1'\nlocal mode=arg[1] or 'package'")
+s=s:gsub("before==read%(out%.%.'/current%-map.json'%).map_sha256", "before==read(immersion..'/audit.json').map_sha256")
+s=s:gsub("assert%(executable:match%('%^E:/StreetSocialCityProduction/'%) and executable:match%('%%.exe%$'%),'Unexpected staged target'%)", "assert(executable==read(out..'/package.json').target..'/Stage/Windows/StreetSocialCity/Binaries/Win64/StreetSocialCity.exe','Unexpected staged target');assert(read(out..'/package.json').map_sha256==before,'Package/source mismatch')")
+s=s:gsub("out%.%.'/runtime%-", "immersion..'/runtime-")
+s=s:gsub('StreetSocialCityEnvironmentGameUser','StreetSocialCityImmersionAuditUser')
+s=s:gsub("out%.%.'/street%-surface%-install.json'", "immersion..'/street-surface-current-ledger.json'")
+s=s:gsub("out%.%.'/tactile%-surface%-install.json'", "immersion..'/tactile-surface-current-ledger.json'")
+assert(s:find("executable==read(out..'/package.json').target",1,true),'Staged executable guard adapter failed')
+assert(s:find("before==read(immersion..'/audit.json').map_sha256",1,true),'Current source audit guard adapter failed')
+assert(load(s,'immersion-native-runtime-audit'))()

@@ -192,6 +192,43 @@ struct OKSTUDIO_API FOKSceneVoice
 	bool operator==(const FOKSceneVoice& O) const = default;
 };
 
+/** A voice laid on the timeline: said from Start on, with the mouth following it, in playback and in exports alike
+ *  (U233). A library voice (No >= 0) or a sound file (File; a relative one is looked for beside the scene). */
+USTRUCT(BlueprintType)
+struct OKSTUDIO_API FOKSceneVoiceClip
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice")
+	float Start = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice")
+	int32 Group = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice")
+	int32 Category = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice")
+	int32 No = -1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice")
+	FString File;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice", meta = (ClampMin = "0", ClampMax = "2"))
+	float Volume = 1.f;
+
+	bool operator==(const FOKSceneVoiceClip& O) const = default;
+};
+
+/** A character's motion fading in (U236): the motion it comes from, that motion's time at the key, and how long the fade
+ *  lasts on the new motion's own clock. Duration 0: no fade. */
+struct FOKSceneMotionFade
+{
+	int32 Kind = 0, Group = 0, Category = 0, No = -1;
+	float FromTime = 0.f, Duration = 0.f;
+	bool operator==(const FOKSceneMotionFade& O) const = default;
+};
+
 USTRUCT(BlueprintType)
 struct OKSTUDIO_API FOKSceneCharacter
 {
@@ -342,6 +379,10 @@ struct OKSTUDIO_API FOKSceneCharacter
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice")
 	TArray<FOKSceneVoice> Voices;
 
+	/** Voices on the timeline; the list above plays apart from it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice")
+	TArray<FOKSceneVoiceClip> VoiceClips;
+
 	/** 0 plays the list once, 1 repeats the whole list, 2 repeats the voice it starts from (Studio's None / All / Select). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice", meta = (ClampMin = "0", ClampMax = "2"))
 	int32 VoiceRepeat = 1;
@@ -386,6 +427,16 @@ struct OKSTUDIO_API FOKSceneCharacter
 	/** Accessory slots shown (20, then one value for every extra MoreAccessories slot; empty: the card's). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State")
 	TArray<uint8> AccessoriesShown;
+
+	/** Style of the character's body: -1 realistic, 0 the card's, 1 chibi. Changes the shown character without a rebuild. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State")
+	float Style = 0.f;
+
+	/** Style of the face, on its own (below -1: the body's, as scenes from before it was separate have). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State")
+	float FaceStyle = -2.f;
+
+	float ShownFaceStyle() const { return FaceStyle < -1.f ? Style : FaceStyle; }
 
 	/** Invisible Body (KK_InvisibleBody): -1 the card's, 0 shown, 1 only clothes and accessories drawn. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State")
@@ -813,11 +864,11 @@ struct OKSTUDIO_API FOKScenePost
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Post")
 	float Exposure = 0.f;
 
-	/** Studio screen filter (Filter list number, -1: none): an Amplify Color LUT as colour grading, at this strength
+	/** Studio screen filter (Filter list number, -1: none; a new Studio scene has 0, aceNo): an Amplify Color LUT as colour grading, at this strength
 	 * (KStudio scenes: 1 - aceBlend). Like Studio, the rest of the strength is filter 0 (Lut_Amount), Studio's
 	 * blend target: strength 0 is Lut_Amount alone, not an ungraded picture. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Post")
-	int32 ColorFilter = -1;
+	int32 ColorFilter = 0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Post", meta = (ClampMin = "0", ClampMax = "1"))
 	float ColorFilterIntensity = 1.f;
@@ -930,6 +981,26 @@ struct OKSTUDIO_API FOKSceneKey
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
 	TArray<uint8> ClothesStates;
 
+	/** Where a character's eyes and neck look from this key on (U266; < 0: not keyed, as in older scenes), and the look point. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	int32 LookEyes = -1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	int32 LookNeck = -1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	FVector LookPoint = FVector::ZeroVector;
+
+	/** A character's style at this key (below -1: not keyed); it blends between keys. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	float Style = -2.f;
+
+	/** The face's style at this key (below -1: the key's Style). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	float FaceStyle = -2.f;
+
+	float ShownFaceStyle() const { return FaceStyle < -1.f ? Style : FaceStyle; }
+
 	/** A light's colour at this key (alpha < 0: not keyed). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
 	FLinearColor Color = FLinearColor(1.f, 1.f, 1.f, -1.f);
@@ -938,6 +1009,33 @@ struct OKSTUDIO_API FOKSceneKey
 	 *  animation is scrubbed, which also holds a pose still. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
 	float AnimTime = -1.f;
+
+	/** A character's Studio motion from this key on (AnimNo < 0: not keyed, as in scenes of format version 1): it changes
+	 *  at the key and starts over there. Keys in a row with one motion run on. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	int32 AnimKind = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	int32 AnimGroup = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	int32 AnimCategory = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	int32 AnimNo = -2;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	float AnimSpeed = 1.f;
+
+	/** The character's Time when keyed: where the first motion of the track starts from. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	float AnimStart = 0.f;
+
+	/** Seconds the motion before fades into this key's (0: it cuts). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	float AnimBlend = 0.f;
+
+	bool SameMotion(const FOKSceneKey& O) const { return AnimKind == O.AnimKind && AnimGroup == O.AnimGroup && AnimCategory == O.AnimCategory && AnimNo == O.AnimNo; }
 
 	/** The scene track (ObjectId SceneTrackId): exposure (EV) and depth of field focus distance (cm) at this key. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
@@ -1204,6 +1302,11 @@ struct OKSTUDIO_API FOKSceneTrack
 	/** The position follows a smooth curve through the keys (Catmull-Rom; a camera path) instead of straight segments. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
 	bool bSmoothPath = false;
+
+	/** A camera between keys swings round the point the two keys look at, which stays in the picture (U241); keys that
+	 *  look the same way, with no such point, go straight. Takes the place of bSmoothPath. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	bool bOrbitPath = false;
 };
 
 /**
@@ -1216,7 +1319,8 @@ class OKSTUDIO_API UOKSceneDocument : public UObject
 	GENERATED_BODY()
 
 public:
-	static constexpr int32 FormatVersion = 1;
+	/** 2: keys hold a motion (U230). A scene with no such key is still written as 1, and reads as it did. */
+	static constexpr int32 FormatVersion = 3;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
 	TArray<FOKSceneObject> Objects;
@@ -1304,6 +1408,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
 	TArray<FOKSceneBookmark> Bookmarks;
 
+	/** The free view when the scene was saved; opening it comes back there (U247). Not set in older files. */
+	UPROPERTY()
+	FOKSceneBookmark SavedView;
+
 	/** Keys the object's current transform and value at Time (replacing a key within 1/60 s). Id SceneTrackId keys the
 	 *  scene's exposure and focus distance. */
 	void SetKey(int32 Id, float Time);
@@ -1320,6 +1428,12 @@ public:
 	bool ClearTrack(int32 Id);
 	/** The key of the object at the time (within the key tolerance), or null. */
 	FOKSceneKey* KeyAt(int32 Id, float Time);
+	bool HasMotionKeys(int32 Id) const;
+	/** The fade a character's motion is in at Time (U236), read from its keys alone so every way to reach Time agrees. */
+	bool MotionFadeAt(int32 Id, float Time, FOKSceneMotionFade& Out) const;
+	/** What a key holds of the object (or holds in Key), as text to compare: a change here is lost without a key (U218). */
+	static FString KeyedState(const FOKSceneObject& O, bool bMotion);
+	static FString KeyedState(const FOKSceneObject& O, const FOKSceneKey& Key);
 	/** The eased blend (0..1) between two keys at fraction U of the way. */
 	static float EaseAlpha(EOKSceneEase Ease, float U);
 	/** Poses every keyed object at Time (between keys: linear position and scale, slerped rotation). */

@@ -14,6 +14,7 @@
 --       loaded; a save made with the full roster is not for it)
 --     [-Inspect [N]]  (straight into the inspection room with heroine N: her alone in an empty room, the camera round her
 --       by the arrow keys, wheel nearer/farther, PageUp/PageDown another heroine, End back to the street)
+-- -Control without -Sandbox runs as -Sandbox Control on this checkout's own ports; -MainSave keeps it on the main save.
 -- -Sandbox runs a second game beside one already playing from this checkout without touching it: its own ports
 -- (-PortBase, default 48060: TTS N, ASR N+1, control N+10), its own save, voice settings and free-talk logs in
 -- Saved/StreetSocial/Sandbox/NAME/ (copied from the main save the first time), voice servers started for it only (the
@@ -29,7 +30,7 @@ local json, path, proc, hash, util = ok.json, ok.path, ok.proc, ok.hash, ok.util
 local fs = require "okfs"
 local instance = require "ok_instance"
 
-local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, editor = true, nogpurig = true, gpurig = true }
+local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, mainsave = true, editor = true, nogpurig = true, gpurig = true, city = true, citysource = true }
 local VALUES = { selectionfile = true, malecard = true, retargetfile = true, renderscale = true, executable = true,
   controlport = true, clock = true, window = true, sandbox = true, portbase = true, rulesdll = true, exec = true, trace = true, gpucachedir = true,
   gameargs = true, gpurigverify = true, heroine = true }
@@ -181,6 +182,12 @@ end
 
 local function main()
   local o = parse(arg)
+  -- A controlled run is a test: it never touches the player's save, even for a moment (loading rewrites it). It takes
+  -- the sandbox Control on this checkout's own ports, so ok-game-mcp finds it. -MainSave is for when the save is the test.
+  if o.control and not o.sandbox and not o.mainsave then
+    o.sandbox = "Control"
+    o.portbase = o.portbase or tostring(instance.ports(ok.root).base)
+  end
   local root = ok.root
   local build, launch
   if o.strict then
@@ -461,11 +468,17 @@ local function main()
 
   local win_w, win_h = (o.window or "1920x1080"):match("^(%d+)[xX](%d+)$")
   if not win_w then error("-Window takes WxH, e.g. 1280x720", 0) end
-  local game = { build.executable, "/Game/Scenes/StreetSocial/StreetSocial", "-D3D12", "-SM6", "-windowed", "-ResX=" .. win_w, "-ResY=" .. win_h, "-WinX=40", "-WinY=40",
+  -- -City: the university city in place of the built street (Docs/STREET_CITY_PLACES_INVENTORY_20261103.md).
+  -- -City plays the streamed map once it is in the project; -CitySource the whole map it is made from (the road bake needs it).
+  if o.citysource then o.city = true end
+  local city_map = (not o.citysource and path.exists(path.join(root, "Content/UniversityCity/Maps/UniversityCityWP.umap"))) and "UniversityCityWP" or "UniversityCity"
+  local map = o.city and ("/Game/UniversityCity/Maps/" .. city_map .. "?game=/Script/OpenKoikatsu.OKCrowdGameMode") or "/Game/Scenes/StreetSocial/StreetSocial"
+  local game = { build.executable, map, "-D3D12", "-SM6", "-windowed", "-ResX=" .. win_w, "-ResY=" .. win_h, "-WinX=40", "-WinY=40",
     "-StreetSocialManifest=" .. manifest }
   -- The editor reads the project's uncooked content: the project goes first, and the cooked patch is not mounted.
   if o.editor then table.insert(game, 2, path.join(root, "OpenKoikatsu.uproject")); game[#game + 1] = "-game"
   elseif path.exists(build.patch) then game[#game + 1] = "-pakdir=" .. build.patch end
+  if o.city then game[#game + 1] = "-StreetCity" end
   game[#game + 1] = "-abslog=" .. path.join(output, "game.log")
   game[#game + 1] = "-RuntimeGpuCacheMiB=4096"
   -- The GPU rig's shaders are verified at startup only when asked for (OKGpuRig.cpp): with gpu_rig on, the patch has them.
@@ -489,13 +502,24 @@ local function main()
     game[#game + 1] = "-tracefile=" .. path.join(output, "trace.utrace"); game[#game + 1] = "-statnamedevents"
   end
   if o.selftest then for _, a in ipairs({ "-StreetSocialSelfTest", "-unattended", "-RenderOffscreen" }) do game[#game + 1] = a end end
-  -- Development control channel (http://127.0.0.1:<port>: state, say, click, key, navigate, screenshot); never on by default.
-  if o.control then game[#game + 1] = "-StreetSocialControl"; game[#game + 1] = "-StreetSocialControlPort=" .. control_port end
+  -- The control channel (http://127.0.0.1:<port>: state, say, click, key, navigate, screenshot) is always open: the game takes
+  -- port_base + 10 or the next free one (Saved/OKControl/<pid>.json). -Control: the driver's behaviour on that exact port.
+  if o.control then game[#game + 1] = "-StreetSocialControl" end
+  if o.control or sandbox then game[#game + 1] = "-StreetSocialControlPort=" .. control_port end
+  -- A sandbox or a controlled run never writes the player's H settings: it starts from a copy and keeps its own.
+  local settings_dir = sandbox or (o.control and path.join(root, "Saved/StreetSocial/ControlSettings"))
+  if settings_dir then
+    path.mkdir(settings_dir, true)
+    local shared, own = path.join(os.getenv("LOCALAPPDATA") or "", "OpenKoikatsu/HSettings.ini"), path.join(settings_dir, "HSettings.ini")
+    if not path.exists(own) and path.is_file(shared) then path.copy(shared, own) end
+    game[#game + 1] = "-OKSettingsDir=" .. settings_dir
+  end
   if o.inspect then game[#game + 1] = "-StreetSocialInspect=" .. o.inspect end
   if o.clock then game[#game + 1] = "-StreetSocialClock=" .. o.clock end
   say("StreetSocial: one male + up to ten heroines. WASD move, Shift run, mouse camera, Ctrl/middle UI cursor, wheel zoom, E talk, 1/2/3 topics, Esc cancel, L Chinese/Japanese voices, V built-in/TTS voice, N skip to 07:00 next morning; friendship/confession results save automatically after dialogue; F9 CPU/GPU; conversation buttons: shared walk/explore, photo (P save), seated talk, drinks, splash either direction; Esc ends activity. Reading uses a hand-held book.")
   if o.control then say(("Control channel: http://127.0.0.1:%d (Tools/ok-game-mcp finds it through local-instance.json)"):format(control_port)) end
   local pid = proc.spawn(game, { cwd = root, hide = o.selftest and true or nil })
+  print("game pid " .. pid);io.stdout:flush() -- ok-game-mcp watches it: this launcher leaves while the game runs
   path.write_text(path.join(output, "game.pid"), tostring(pid))
   local server_pids = {}
   for _, s in ipairs(servers) do

@@ -1,0 +1,15 @@
+// Inputs and output are LINEAR RGB. Mask texture must be non-sRGB.
+// Feed TargetLinear from PerInstanceCustomData floats 0, 1, 2.
+float3 StreetVehiclePaint(float3 BaseLinear, float PaintMask,
+                         float3 TargetLinear, float ReferenceLinearValue)
+{
+    float Shade = clamp(max(max(BaseLinear.r, BaseLinear.g), BaseLinear.b)
+                       / max(ReferenceLinearValue, 0.025), 0.15, 1.8);
+    return lerp(BaseLinear, TargetLinear * Shade, saturate(PaintMask));
+}
+
+// Apply only to the leaf slot. Bark, opacity mask and normal maps are unchanged.
+float3 StreetLeafTint(float3 BaseLeafLinear, float3 InstanceTintLinear)
+{
+    return BaseLeafLinear * InstanceTintLinear;
+}

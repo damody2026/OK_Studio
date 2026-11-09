@@ -104,15 +104,16 @@ private:
  bool SeatedWith(int32 Girl) const;
  bool ContactLover(int32 Character) const;
  TArray<FVector> ContactRoute(const FVector& From,const FVector& To) const;
+ TArray<FVector> CityRoute(const FVector& From,const FVector& To) const;
  void SelectContact(int32 Character);
  void NavigateGirl(int32 Character);
  void NavigatePoint(const FVector& Goal,const FString& Name);
  void StopNavigation(const FString& Notice);
  float StepNavigation(float Dt);
  void ToggleBigMap();
- void BeginPrivate(int32 Character);
+ void BeginPrivate(int32 Character,const FString& TryCard=FString(),int32 TryOutfit=-1); // TryCard: a piece being tried on, the high model only, no H scene (OKStreetSocialWardrobe.inl)
  void FinishPrivate();
- void ShowHResult(int32 Girl,const class FJsonObject& Answer); // OKStreetSocialContacts.inl
+ void ShowHResult(int32 Girl,const class FJsonObject& Answer);void CloseHResult(); // OKStreetSocialContacts.inl
  // Bookmarks and the time after an H scene (OKStreetSocialBookmarks.inl).
  void Bookmark(int32 Girl);FString BookmarkFacts(int32 Character,const FString& Said) const;TSharedRef<SWidget> BuildBookmarks(int32 Girl);TSharedRef<SWidget> BookmarkButton(int32 Girl);
  void BeginAfter(int32 Girl,const TSharedPtr<class FJsonObject>& Answer);void EndAfter(bool bShowResult);void TickAfter();
@@ -228,9 +229,19 @@ private:
  TSharedPtr<class FJsonObject> ClinicRequest(int32 Her,const FString& ItemId,const FString& From,const FString& Color);
  void OfferClinic(int32 Her,const FString& ItemId,const FString& From,const FString& Color);
  void FinishClinic(int32 Her,const FString& ItemId,const FString& Option,const FString& From,const FString& Color);
- FString RestyledCard(int32 Her,FString& Error);
+ FString RestyledCard(int32 Her,FString& Error,const struct FOKStreetCatalogItem* Trying=nullptr);
+ bool HairDyeable(int32 Her);
  FString ApplyAppearanceToSelection(const FString& ManifestPath,const FString& Json);
  void AddClinicRows(const TSharedRef<class SVerticalBox>& List,const struct FOKStreetCatalogItem& Item,int32 Her);
+ // Her clothes (OKStreetSocialWardrobe.inl).
+ TSharedPtr<class FJsonObject> WardrobeOf(int32 Her,const struct FOKStreetCatalogItem* Trying=nullptr);
+ void OfferClothes(int32 Her,const FString& ItemId);
+ void FinishClothes(int32 Her,const FString& ItemId,const FString& Option);
+ void TryClothes(int32 Her,const FString& ItemId);
+ void ChangeClothes(int32 Her,const FString& ItemId,bool On);
+ FString DressedCard(int32 Her);
+ void AddClothesRows(const TSharedRef<class SVerticalBox>& List,const struct FOKStreetCatalogItem& Item,int32 Her);
+ void AddWardrobeRows(const TSharedRef<class SVerticalBox>& List,int32 Her);
  void StartLoan(int32 Amount);
  void InitWalletFromProfile(const FString& Id,const TSharedPtr<class FJsonObject>& Profile);
  void BuildShopPanel(const TSharedRef<class SVerticalBox>& Box);
@@ -461,6 +472,8 @@ private:
  FVector NavApproachSpot(const FVector& Her) const; // OKStreetSocialContacts.inl
  FVector PlaceInsideSpot(const struct FOKStreetPlace& Place) const; // OKStreetSocialOuting.inl
  bool NavNeedsLift(const FVector& Goal) const;
+ bool NavByShopStairs(const FVector& Goal); // OKStreetSocialCampus.inl: upstairs in a shop with no lift
+ void MoveFloor(const FVector& To);
  // Lover moments (OKStreetSocialLover.inl): DoAct's kiss / embrace / hand / head pat, shown.
  void PlayLoverAct(int32 Girl,const FString& Act,int32 Reaction);
  // OKStreetSocialLover.inl: a gesture of motions.toml with her words; her next two-shot pose (empty: the next one).

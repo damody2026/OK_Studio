@@ -55,6 +55,21 @@ impl EyeDraw {
 mod tests {
     use super::*;
     #[test]
+    fn stretched_goes_each_way_on_its_own() {
+        let st=super::stretched([1.,1.,0.,0.],0.5,2.);
+        assert_eq!(st,[2.,0.5,-0.5,0.25]);
+        assert_eq!(super::stretched([1.,1.,0.,0.],0.,0.),[1.,1.,0.,0.]);
+    }
+
+    #[test]
+    fn enlarged_keeps_the_middle_of_the_iris_where_it_is() {
+        let st=[1.2,0.8,-0.1,0.13];let big=enlarged(st,1.3);
+        let middle=[(0.5-st[2])/st[0],(0.5-st[3])/st[1]];
+        assert!((big[0]-st[0]/1.3).abs()<1e-6&&(big[1]-st[1]/1.3).abs()<1e-6);
+        for c in 0..2 {assert!((middle[c]*big[c]+big[2+c]-0.5).abs()<1e-6);}
+        assert_eq!(enlarged(st,1.),st);assert_eq!(enlarged(st,0.),st);
+    }
+    #[test]
     fn expression_varying_ignores_pupil_and_eyelook_transforms() {
         let mut draw=EyeDraw {kind:2,textures:[None,None],colors:[[1.;4];2],offsets:[[0.;2];2],rotations:[0.25,0.5,0.5],color:[1.;4],enabled:1.,raw_uvs:[vec![],vec![]],texcoord_st:[[1.,1.,0.,0.];2],main_texcoord_st:[2.,3.,0.125,-0.25],sample_uvs:vec![]};
         let raw=[0.2,0.7];let mut up=vec![];let mut down=vec![];
@@ -68,6 +83,7 @@ mod tests {
         assert_eq!(draw.expression_uv([f32::NAN,0.]),None);draw.kind=0;assert_eq!(draw.expression_uv(raw),None);
     }
     #[test]
+    #[ignore = "needs Saved/Tests/EyeGaze284: tables a game probe writes, kept nowhere"]
     fn native_eye_material_transforms() {
         let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Saved/Tests/EyeGaze284");
         let mut count=0;
@@ -157,6 +173,15 @@ mod tests {
         eprintln!("EYE_DRAW_NATIVE cards=5 eyes=10 transforms={transforms} raw_uv_vertices={uv_count}");
     }
 }
+/// A tiling with her pupil drawn `scale` times as large, about the middle of the iris texture: wherever the look puts
+/// the pupil it stays, only less of the texture fills the eye.
+pub(crate) fn enlarged(st:[f32;4],scale:f32)->[f32;4] {stretched(st,scale,scale)}
+/// `enlarged` with its own scale across and down (0: that way as it is): a narrow, tall pupil is a cat's.
+pub(crate) fn stretched(st:[f32;4],across:f32,down:f32)->[f32;4] {
+    let axis=|tiling:f32,offset:f32,scale:f32| if scale<=0.||scale==1. {(tiling,offset)}else{(tiling/scale,0.5-(0.5-offset)/scale)};
+    let (x,u)=axis(st[0],st[2],across);let (y,v)=axis(st[1],st[3],down);
+    [x,y,u,v]
+}
 impl IrisRuntime {
     pub fn st(&self,h:f32,v:f32)->[f32;4] {
         let s=&self.settings;
@@ -183,12 +208,38 @@ impl IrisRuntime {
         if past>0. {st[3]+=(self.settings[3]-self.settings[4]).signum()*v.signum()*past;}
         st
     }
+    /// `st` looking `x` of the width of her eye across and `y` of its height up from straight on (the unlimited look:
+    /// the raw UVs cross the whole eye, so this is the same part of every eye; the texture is drawn `st[0]`, `st[1]` over
+    /// them, which the offset is in).
+    pub fn st_look(&self,x:f32,y:f32)->[f32;4] {
+        let s=&self.settings;
+        let span=|i:usize| {let (mut low,mut high)=(f32::MAX,f32::MIN);for uv in &self.raw_uvs {low=low.min(uv[i]);high=high.max(uv[i]);}(high-low).max(0.)};
+        let mut st=self.st(0.,0.);
+        st[2]+=x*(s[2]-s[1]).signum()*st[0]*span(0);
+        st[3]+=y*(s[3]-s[4]).signum()*st[1]*span(1);
+        st
+    }
     pub fn apply(&self,uvs:&mut [[f32;2]],h:f32,v:f32) {
         self.apply_st(uvs,self.st(h,v));
     }
     pub fn apply_st(&self,uvs:&mut [[f32;2]],st:[f32;4]) {
         for (uv,raw) in uvs.iter_mut().zip(&self.raw_uvs) {
             *uv=[raw[0]*st[0]+st[2],raw[1]*st[1]+st[3]];
+        }
+    }
+}
+#[cfg(test)]
+mod look_tests {
+    use super::IrisRuntime;
+    // A look is the same part of the eye whatever the size of the iris: the drawn raw UVs move by x of their width.
+    #[test]
+    fn st_look_is_a_part_of_the_eye() {
+        for size in [0.,0.8] {
+            let mut settings=[0.;14];settings[1]=-100.;settings[2]=100.;settings[3]=-100.;settings[4]=100.;settings[5]=-100.;settings[6]=100.;settings[7]=-80.;settings[8]=80.;settings[9]=0.001;settings[12]=size;settings[13]=size;
+            let iris=IrisRuntime {settings,raw_uvs:vec![[0.2,0.3],[0.8,0.7]]};
+            let (still,look)=(iris.st_look(0.,0.),iris.st_look(0.25,-0.5));
+            assert!(((look[2]-still[2])/still[0]-0.25*0.6).abs()<1e-5,"across {look:?}");
+            assert!(((look[3]-still[3])/still[1]-0.5*0.4).abs()<1e-5,"up {look:?}");
         }
     }
 }

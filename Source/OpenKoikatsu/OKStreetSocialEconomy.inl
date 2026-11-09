@@ -509,8 +509,34 @@ void AOKStreetSocialScene::TickPlaceClosing(){
 
 // Eating at the table: once a dish is served she (and he, his own) eats it down over OKStreetEatSeconds, one dish at a time,
 // and what she eats fills her needs in proportion. When she is full she stops and says so; stop_eating stops her earlier.
+// Which of the table's drawn dishes (MealDishDraw's kinds, Scene.cpp) a catalog item looks like.
+static int32 OKStreetDishKind(const FString& Id){
+ auto Any=[&](std::initializer_list<const TCHAR*> Words){for(const TCHAR* W:Words)if(Id.Contains(W))return true;return false;};
+ if(Any({TEXT("pasta"),TEXT("carbonara")}))return 4;
+ if(Any({TEXT("omurice")}))return 6;
+ if(Any({TEXT("steak"),TEXT("hamburg"),TEXT("cutlet"),TEXT("teriyaki"),TEXT("porkchop"),TEXT("drumstick"),TEXT("teppanyaki"),TEXT("bbq"),TEXT("_set"),TEXT("platter")}))return 5;
+ if(Any({TEXT("noodle"),TEXT("ramen"),TEXT("soup"),TEXT("oden")}))return 1;
+ if(Any({TEXT("curry"),TEXT("bento"),TEXT("luroufan"),TEXT("bibimbap"),TEXT("buffet")}))return 0;
+ if(Any({TEXT("caesar"),TEXT("fr_")}))return 7;
+ if(Any({TEXT("fries"),TEXT("nuggets"),TEXT("hotdog"),TEXT("panini")}))return 2;
+ if(Any({TEXT("dumplings"),TEXT("onigiri")}))return 3;
+ return 8;
+}
+
 void AOKStreetSocialScene::TickMeal(float Dt){
- auto& S=*State;if(S.Table.IsEmpty())return;const double Wall=FPlatformTime::Seconds();
+ auto& S=*State;
+ // What is on their plates is what was served: 惠惠's hamburger steak came as a slice of cake and a cup, and he had a plate
+ // of food without ordering, as the dishes were picked at random on sitting down.
+ if(S.MealDishDraw){const FOKStreetDish* Top[2]={nullptr,nullptr};
+  for(const auto& D:S.Table)if(D.Served&&D.Percent>0.f)if(const auto* I=S.Catalog.Find(D.ItemId);I&&!I->IsDrink()){const FOKStreetDish*& T=Top[D.ForHer?1:0];
+   const auto* Was=T?S.Catalog.Find(T->ItemId):nullptr;if(!T||(I->Category==TEXT("meal")&&Was&&Was->Category!=TEXT("meal")))T=&D;}
+  const FString Shown=(Top[0]?Top[0]->ItemId:FString())+TEXT("|")+(Top[1]?Top[1]->ItemId:FString());
+  if(Shown!=S.MealDishShown){S.MealDishShown=Shown;for(auto& Prop:S.MealDishProps)DestroyLater(Prop.Get());S.MealDishProps.Reset();
+   const int32 Before=S.PairProps.Num();
+   if(Top[0])S.MealDishDraw(OKStreetDishKind(Top[0]->ItemId),60.f);
+   if(Top[1])S.MealDishDraw(OKStreetDishKind(Top[1]->ItemId),110.f);
+   for(int32 K=Before;K<S.PairProps.Num();++K)S.MealDishProps.Add(S.PairProps[K]);S.PairProps.SetNum(Before);}}
+ if(S.Table.IsEmpty())return;const double Wall=FPlatformTime::Seconds();
  // The meal is with the girl the dishes were ordered with (each dish keeps her): talking to another one at the table
  // (the drink one girl bought him, then he turns to her friend) does not make it the new one's meal.
  const int32 Talking=FreeTalkPartner();
@@ -542,7 +568,9 @@ void AOKStreetSocialScene::TickMeal(float Dt){
   FreeTalkLeave(OKMsg(TEXT("ui.party.you_said_goodbye"),{{TEXT("name"),*S.Manifest.Characters[Talking].Name}}));return;}
  // One who has gone from the table (not talking with him, not in the group, a few steps off) has left hers: 安可 said
  // goodbye with her soup half drunk, and it sat on the table for 胡桃, who came for lunch half an hour later.
- auto Gone=[&S,Talking](const FOKStreetDish& D){return D.Her!=Talking&&S.Agents.IsValidIndex(D.Her-1)&&!S.Party.Contains(D.Her)&&FVector::Dist2D(S.Agents[D.Her-1].Position,S.Male)>300.f;};
+ // Walking off or out of the place, that is: him stepping a few metres from where she still sits is not her going. 安可's
+ // macchiato and tart were cleared as he stood up and walked towards the door, she in her seat with them.
+ auto Gone=[this,&S,Talking](const FOKStreetDish& D){return D.Her!=Talking&&S.Agents.IsValidIndex(D.Her-1)&&!S.Party.Contains(D.Her)&&FVector::Dist2D(S.Agents[D.Her-1].Position,S.Male)>300.f&&(S.Commutes.Contains(D.Her)||PlaceHere(S.Agents[D.Her-1].Position)!=S.MealPlace);};
  if(There&&S.Table.ContainsByPredicate([&](const FOKStreetDish& D){return D.ForHer&&Gone(D);})){
   auto Candidate=S.Store;TArray<FString> Packed;SettleHers(Candidate,Packed,Gone);CommitStore(MoveTemp(Candidate));
   const int32 Before=S.Table.Num();S.Table.RemoveAll([&](const FOKStreetDish& D){return D.ForHer&&Gone(D);});
@@ -743,7 +771,7 @@ void AOKStreetSocialScene::FinishCheckout(const FString& Option,int32 Her,const 
  // Something to eat or drink paid for here: what a meal's or a drink's end is not billed again for (Life.inl
  // bought_at_counter). Not the fish food: ¥2 of it in the park made the drinks at the park's machine free (R4-17).
  const auto Edible=[&S](const FOKStreetCartLine& L){const auto* I=S.Catalog.Find(L.ItemId);return I&&I->Consumable&&(I->IsDrink()||I->Effects.Contains(TEXT("satiety")));};
- if(S.Cart.ContainsByPredicate(Edible))S.LastCheckoutMinute=OKStreetMindNow(S);
+ if(S.Cart.ContainsByPredicate(Edible)){S.LastCheckoutMinute=OKStreetMindNow(S);S.LastCheckoutPlace=S.ShopPlace;}
  ApplyRulesEffects(Candidate,*Answer);
  // What is not eaten (a plush, a keyring, a notebook) is his to carry: into the backpack. Bought for her and giftable:
  // he gives it to her next, the gift as the gift rules take it (StartGift), not a dish served.
@@ -955,6 +983,7 @@ TSharedRef<SWidget> AOKStreetSocialScene::BuildMenuCard(const FString& Title,int
  TArray<const FOKStreetCatalogItem*> Items=ItemsHere(S.ShopPlace);
  Items.StableSort([&Rank](const FOKStreetCatalogItem& A,const FOKStreetCatalogItem& B){return Rank(A.Category)<Rank(B.Category);});
  auto List=SNew(SVerticalBox);FString Section;
+ if(Items.ContainsByPredicate([](const FOKStreetCatalogItem* I){return I->Category==TEXT("clothes");}))AddWardrobeRows(List,Her);
  for(const auto* Item:Items){
   if(Item->Category!=Section||List->NumSlots()==0){Section=Item->Category;
    const FString Key=TEXT("ui.economy.menu_section_")+Section;const FString Name=OKT(*Key);
@@ -968,6 +997,8 @@ TSharedRef<SWidget> AOKStreetSocialScene::BuildMenuCard(const FString& Title,int
   Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(0,0,10,0)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold",15)).ColorAndOpacity(Ink).Text(FText::FromString(Money(Item->PriceOf(Item->DefaultSize()))))];
   // A treatment at the clinics and the salon is done for her when she says yes, not put in the cart.
   if(Item->Category==TEXT("clinic")){List->AddSlot().AutoHeight().Padding(0,3)[Row];AddClinicRows(List,*Item,Her);continue;}
+  // Clothes are tried on and bought for her (OKStreetSocialWardrobe.inl).
+  if(Item->Category==TEXT("clothes")){List->AddSlot().AutoHeight().Padding(0,3)[Row];AddClothesRows(List,*Item,Her);continue;}
   if(Item->Consumable||Item->UsedOnTheSpot())
    Row->AddSlot().AutoWidth().Padding(2,0)[Button(OKT(TEXT("ui.economy.i_want_button")),[Weak,Id](){Weak->AddToCart(Id,false);})];
   if(Her!=INDEX_NONE&&Item->Consumable)Row->AddSlot().AutoWidth().Padding(2,0)[Button(OKT(TEXT("ui.economy.order_for_her_button")),[Weak,Id](){Weak->AddToCart(Id,true);})];

@@ -105,6 +105,38 @@
     ]
    ]
   },
+  "clothing": {
+   "open": [
+    [
+     11,
+     21
+    ]
+   ]
+  },
+  "lingerie": {
+   "open": [
+    [
+     11,
+     21
+    ]
+   ]
+  },
+  "swimwear": {
+   "open": [
+    [
+     10,
+     20
+    ]
+   ]
+  },
+  "yukata": {
+   "open": [
+    [
+     10,
+     19
+    ]
+   ]
+  },
   "department": {
    "open": [
     [
@@ -4593,6 +4625,1447 @@
    },
    "giftable": false,
    "consumable": false
+  },
+  {
+   "id": "dept_dress_plain",
+   "place": "department",
+   "name": "素色連身裙",
+   "category": "clothes",
+   "price": {
+    "": 399
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[0,56],[1,0]], "outfit": -1, "color": "#e8e2d6"}
+  },
+  {
+   "id": "dept_dress_floral",
+   "place": "department",
+   "name": "碎花連身裙",
+   "category": "clothes",
+   "price": {
+    "": 459
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[0,55],[1,0]], "outfit": -1, "color": "#ffffff"}
+  },
+  {
+   "id": "dept_dress_tight",
+   "place": "department",
+   "name": "修身連身裙",
+   "category": "clothes",
+   "price": {
+    "": 529
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[0,328],[1,0]], "outfit": -1, "color": "#23252e"}
+  },
+  {
+   "id": "dept_dress_retro",
+   "place": "department",
+   "name": "復古洋裝",
+   "category": "clothes",
+   "price": {
+    "": 559
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[0,329],[1,0]], "outfit": -1, "color": "#7a2f3a"}
+  },
+  {
+   "id": "dept_top_tshirt",
+   "place": "department",
+   "name": "素色 T 恤",
+   "category": "clothes",
+   "price": {
+    "": 79
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[0,38]], "outfit": -1, "color": "#f2f2f2"}
+  },
+  {
+   "id": "dept_top_frill",
+   "place": "department",
+   "name": "荷葉邊襯衫",
+   "category": "clothes",
+   "price": {
+    "": 229
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[0,319]], "outfit": -1, "color": "#f4e9ea"}
+  },
+  {
+   "id": "dept_top_knit",
+   "place": "department",
+   "name": "針織毛衣",
+   "category": "clothes",
+   "price": {
+    "": 299
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[0,208]], "outfit": -1, "color": "#c9b79c"}
+  },
+  {
+   "id": "dept_top_hoodie",
+   "place": "department",
+   "name": "連帽上衣",
+   "category": "clothes",
+   "price": {
+    "": 259
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[0,324]], "outfit": -1, "color": "#8a93a6"}
+  },
+  {
+   "id": "dept_top_denim",
+   "place": "department",
+   "name": "牛仔外套",
+   "category": "clothes",
+   "price": {
+    "": 359
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[0,314]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "dept_bot_flare",
+   "place": "department",
+   "name": "喇叭裙",
+   "category": "clothes",
+   "price": {
+    "": 199
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[1,8]], "outfit": -1, "color": "#47556e"}
+  },
+  {
+   "id": "dept_bot_mini",
+   "place": "department",
+   "name": "百褶短裙",
+   "category": "clothes",
+   "price": {
+    "": 179
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[1,31]], "outfit": -1, "color": "#3b3f58"}
+  },
+  {
+   "id": "dept_bot_tight",
+   "place": "department",
+   "name": "窄裙",
+   "category": "clothes",
+   "price": {
+    "": 189
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[1,20]], "outfit": -1, "color": "#2a2a2e"}
+  },
+  {
+   "id": "dept_bot_long",
+   "place": "department",
+   "name": "長裙",
+   "category": "clothes",
+   "price": {
+    "": 259
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[1,202]], "outfit": -1, "color": "#a58f7a"}
+  },
+  {
+   "id": "dept_bot_hotpants",
+   "place": "department",
+   "name": "熱褲",
+   "category": "clothes",
+   "price": {
+    "": 149
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[1,22]], "outfit": -1, "color": "#4d6a8f"}
+  },
+  {
+   "id": "dept_bot_pants",
+   "place": "department",
+   "name": "長褲",
+   "category": "clothes",
+   "price": {
+    "": 219
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[1,3]], "outfit": -1, "color": "#2f3440"}
+  },
+  {
+   "id": "dept_leg_knee",
+   "place": "department",
+   "name": "過膝襪",
+   "category": "clothes",
+   "price": {
+    "": 39
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[6,3]], "outfit": -1, "color": "#1d1d22"}
+  },
+  {
+   "id": "dept_leg_high",
+   "place": "department",
+   "name": "高筒襪",
+   "category": "clothes",
+   "price": {
+    "": 29
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[6,15]], "outfit": -1, "color": "#f0f0f0"}
+  },
+  {
+   "id": "dept_leg_panst",
+   "place": "department",
+   "name": "絲襪",
+   "category": "clothes",
+   "price": {
+    "": 49
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[5,5]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "dept_under_lace",
+   "place": "department",
+   "name": "蕾絲內衣組",
+   "category": "clothes",
+   "price": {
+    "": 199
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[2,3],[3,2]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "dept_under_ribbon",
+   "place": "department",
+   "name": "緞帶蕾絲內衣組",
+   "category": "clothes",
+   "price": {
+    "": 259
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[2,12],[3,12]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "dept_under_cute",
+   "place": "department",
+   "name": "可愛內衣組",
+   "category": "clothes",
+   "price": {
+    "": 179
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[2,203],[3,201]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "dept_under_flower",
+   "place": "department",
+   "name": "花朵蕾絲內衣組",
+   "category": "clothes",
+   "price": {
+    "": 229
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[2,205],[3,203]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "dept_sleep_pyjama",
+   "place": "department",
+   "name": "睡衣",
+   "category": "clothes",
+   "price": {
+    "": 199
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[0,45],[1,32]], "outfit": 6, "color": ""}
+  },
+  {
+   "id": "dept_sleep_negligee",
+   "place": "department",
+   "name": "性感睡衣",
+   "category": "clothes",
+   "price": {
+    "": 259
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[0,20],[1,0]], "outfit": 6, "color": ""}
+  },
+  {
+   "id": "dept_swim_bikini",
+   "place": "department",
+   "name": "比基尼",
+   "category": "clothes",
+   "price": {
+    "": 299
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[0,0],[1,0],[2,8],[3,7]], "outfit": 3, "color": ""}
+  },
+  {
+   "id": "dept_swim_frill",
+   "place": "department",
+   "name": "荷葉邊比基尼",
+   "category": "clothes",
+   "price": {
+    "": 339
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[0,0],[1,0],[2,24],[3,16]], "outfit": 3, "color": ""}
+  },
+  {
+   "id": "dept_swim_tie",
+   "place": "department",
+   "name": "綁帶比基尼",
+   "category": "clothes",
+   "price": {
+    "": 329
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[0,0],[1,0],[2,304],[3,304]], "outfit": 3, "color": ""}
+  },
+  {
+   "id": "dept_swim_race",
+   "place": "department",
+   "name": "競泳泳裝",
+   "category": "clothes",
+   "price": {
+    "": 289
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[0,0],[1,0],[2,10],[3,0]], "outfit": 3, "color": ""}
+  },
+  {
+   "id": "dept_swim_pareo",
+   "place": "department",
+   "name": "比基尼配紗裙",
+   "category": "clothes",
+   "price": {
+    "": 359
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 2,
+   "clothes": {"parts": [[0,57],[1,0],[2,8],[3,7]], "outfit": 3, "color": ""}
+  },
+  {
+   "id": "dept_shoe_loafer",
+   "place": "department",
+   "name": "樂福鞋",
+   "category": "clothes",
+   "price": {
+    "": 269
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 4,
+   "clothes": {"parts": [[7,1],[8,1]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "dept_shoe_sneaker",
+   "place": "department",
+   "name": "運動鞋",
+   "category": "clothes",
+   "price": {
+    "": 259
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 4,
+   "clothes": {"parts": [[7,3],[8,3]], "outfit": -1, "color": "#e9e9e9"}
+  },
+  {
+   "id": "dept_shoe_hightop",
+   "place": "department",
+   "name": "高筒帆布鞋",
+   "category": "clothes",
+   "price": {
+    "": 329
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 4,
+   "clothes": {"parts": [[7,22],[8,22]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "dept_shoe_pumps",
+   "place": "department",
+   "name": "高跟鞋",
+   "category": "clothes",
+   "price": {
+    "": 399
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 4,
+   "clothes": {"parts": [[7,11],[8,11]], "outfit": -1, "color": "#2a2022"}
+  },
+  {
+   "id": "dept_shoe_sandal",
+   "place": "department",
+   "name": "涼鞋",
+   "category": "clothes",
+   "price": {
+    "": 219
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 4,
+   "clothes": {"parts": [[7,9],[8,9]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "dept_shoe_boots",
+   "place": "department",
+   "name": "綁帶靴",
+   "category": "clothes",
+   "price": {
+    "": 599
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "floor": 4,
+   "clothes": {"parts": [[7,33],[8,33]], "outfit": -1, "color": "#4a3426"}
+  },
+  {
+   "id": "cloth_dress_plain",
+   "place": "clothing",
+   "name": "素色連身裙",
+   "category": "clothes",
+   "price": {
+    "": 399
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,56],[1,0]], "outfit": -1, "color": "#e8e2d6"}
+  },
+  {
+   "id": "cloth_dress_floral",
+   "place": "clothing",
+   "name": "碎花連身裙",
+   "category": "clothes",
+   "price": {
+    "": 459
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,55],[1,0]], "outfit": -1, "color": "#ffffff"}
+  },
+  {
+   "id": "cloth_dress_tight",
+   "place": "clothing",
+   "name": "修身連身裙",
+   "category": "clothes",
+   "price": {
+    "": 529
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,328],[1,0]], "outfit": -1, "color": "#23252e"}
+  },
+  {
+   "id": "cloth_dress_retro",
+   "place": "clothing",
+   "name": "復古洋裝",
+   "category": "clothes",
+   "price": {
+    "": 559
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,329],[1,0]], "outfit": -1, "color": "#7a2f3a"}
+  },
+  {
+   "id": "cloth_dress_aline",
+   "place": "clothing",
+   "name": "A 字洋裝",
+   "category": "clothes",
+   "price": {
+    "": 499
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,330],[1,0]], "outfit": -1, "color": "#6d8fb5"}
+  },
+  {
+   "id": "cloth_top_tshirt",
+   "place": "clothing",
+   "name": "素色 T 恤",
+   "category": "clothes",
+   "price": {
+    "": 79
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,38]], "outfit": -1, "color": "#f2f2f2"}
+  },
+  {
+   "id": "cloth_top_frill",
+   "place": "clothing",
+   "name": "荷葉邊襯衫",
+   "category": "clothes",
+   "price": {
+    "": 229
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,319]], "outfit": -1, "color": "#f4e9ea"}
+  },
+  {
+   "id": "cloth_top_knit",
+   "place": "clothing",
+   "name": "針織毛衣",
+   "category": "clothes",
+   "price": {
+    "": 299
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,208]], "outfit": -1, "color": "#c9b79c"}
+  },
+  {
+   "id": "cloth_top_hoodie",
+   "place": "clothing",
+   "name": "連帽上衣",
+   "category": "clothes",
+   "price": {
+    "": 259
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,324]], "outfit": -1, "color": "#8a93a6"}
+  },
+  {
+   "id": "cloth_top_denim",
+   "place": "clothing",
+   "name": "牛仔外套",
+   "category": "clothes",
+   "price": {
+    "": 359
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,314]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "cloth_bot_flare",
+   "place": "clothing",
+   "name": "喇叭裙",
+   "category": "clothes",
+   "price": {
+    "": 199
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[1,8]], "outfit": -1, "color": "#47556e"}
+  },
+  {
+   "id": "cloth_bot_mini",
+   "place": "clothing",
+   "name": "百褶短裙",
+   "category": "clothes",
+   "price": {
+    "": 179
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[1,31]], "outfit": -1, "color": "#3b3f58"}
+  },
+  {
+   "id": "cloth_bot_tight",
+   "place": "clothing",
+   "name": "窄裙",
+   "category": "clothes",
+   "price": {
+    "": 189
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[1,20]], "outfit": -1, "color": "#2a2a2e"}
+  },
+  {
+   "id": "cloth_bot_long",
+   "place": "clothing",
+   "name": "長裙",
+   "category": "clothes",
+   "price": {
+    "": 259
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[1,202]], "outfit": -1, "color": "#a58f7a"}
+  },
+  {
+   "id": "cloth_bot_hotpants",
+   "place": "clothing",
+   "name": "熱褲",
+   "category": "clothes",
+   "price": {
+    "": 149
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[1,22]], "outfit": -1, "color": "#4d6a8f"}
+  },
+  {
+   "id": "cloth_bot_pants",
+   "place": "clothing",
+   "name": "長褲",
+   "category": "clothes",
+   "price": {
+    "": 219
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[1,3]], "outfit": -1, "color": "#2f3440"}
+  },
+  {
+   "id": "cloth_leg_knee",
+   "place": "clothing",
+   "name": "過膝襪",
+   "category": "clothes",
+   "price": {
+    "": 39
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[6,3]], "outfit": -1, "color": "#1d1d22"}
+  },
+  {
+   "id": "cloth_leg_high",
+   "place": "clothing",
+   "name": "高筒襪",
+   "category": "clothes",
+   "price": {
+    "": 29
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[6,15]], "outfit": -1, "color": "#f0f0f0"}
+  },
+  {
+   "id": "cloth_leg_panst",
+   "place": "clothing",
+   "name": "絲襪",
+   "category": "clothes",
+   "price": {
+    "": 49
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[5,5]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "cloth_shoe_loafer",
+   "place": "clothing",
+   "name": "樂福鞋",
+   "category": "clothes",
+   "price": {
+    "": 269
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[7,1],[8,1]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "cloth_shoe_sneaker",
+   "place": "clothing",
+   "name": "運動鞋",
+   "category": "clothes",
+   "price": {
+    "": 259
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[7,3],[8,3]], "outfit": -1, "color": "#e9e9e9"}
+  },
+  {
+   "id": "cloth_shoe_hightop",
+   "place": "clothing",
+   "name": "高筒帆布鞋",
+   "category": "clothes",
+   "price": {
+    "": 329
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[7,22],[8,22]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "cloth_shoe_pumps",
+   "place": "clothing",
+   "name": "高跟鞋",
+   "category": "clothes",
+   "price": {
+    "": 399
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[7,11],[8,11]], "outfit": -1, "color": "#2a2022"}
+  },
+  {
+   "id": "cloth_shoe_sandal",
+   "place": "clothing",
+   "name": "涼鞋",
+   "category": "clothes",
+   "price": {
+    "": 219
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[7,9],[8,9]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "cloth_shoe_boots",
+   "place": "clothing",
+   "name": "綁帶靴",
+   "category": "clothes",
+   "price": {
+    "": 599
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[7,33],[8,33]], "outfit": -1, "color": "#4a3426"}
+  },
+  {
+   "id": "linger_under_lace",
+   "place": "lingerie",
+   "name": "蕾絲內衣組",
+   "category": "clothes",
+   "price": {
+    "": 199
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[2,3],[3,2]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "linger_under_ribbon",
+   "place": "lingerie",
+   "name": "緞帶蕾絲內衣組",
+   "category": "clothes",
+   "price": {
+    "": 259
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[2,12],[3,12]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "linger_under_cute",
+   "place": "lingerie",
+   "name": "可愛內衣組",
+   "category": "clothes",
+   "price": {
+    "": 179
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[2,203],[3,201]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "linger_under_flower",
+   "place": "lingerie",
+   "name": "花朵蕾絲內衣組",
+   "category": "clothes",
+   "price": {
+    "": 229
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[2,205],[3,203]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "linger_sleep_pyjama",
+   "place": "lingerie",
+   "name": "睡衣",
+   "category": "clothes",
+   "price": {
+    "": 199
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,45],[1,32]], "outfit": 6, "color": ""}
+  },
+  {
+   "id": "linger_sleep_negligee",
+   "place": "lingerie",
+   "name": "性感睡衣",
+   "category": "clothes",
+   "price": {
+    "": 259
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,20],[1,0]], "outfit": 6, "color": ""}
+  },
+  {
+   "id": "swimwear_swim_bikini",
+   "place": "swimwear",
+   "name": "比基尼",
+   "category": "clothes",
+   "price": {
+    "": 299
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,0],[1,0],[2,8],[3,7]], "outfit": 3, "color": ""}
+  },
+  {
+   "id": "swimwear_swim_frill",
+   "place": "swimwear",
+   "name": "荷葉邊比基尼",
+   "category": "clothes",
+   "price": {
+    "": 339
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,0],[1,0],[2,24],[3,16]], "outfit": 3, "color": ""}
+  },
+  {
+   "id": "swimwear_swim_tie",
+   "place": "swimwear",
+   "name": "綁帶比基尼",
+   "category": "clothes",
+   "price": {
+    "": 329
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,0],[1,0],[2,304],[3,304]], "outfit": 3, "color": ""}
+  },
+  {
+   "id": "swimwear_swim_race",
+   "place": "swimwear",
+   "name": "競泳泳裝",
+   "category": "clothes",
+   "price": {
+    "": 289
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,0],[1,0],[2,10],[3,0]], "outfit": 3, "color": ""}
+  },
+  {
+   "id": "swimwear_swim_pareo",
+   "place": "swimwear",
+   "name": "比基尼配紗裙",
+   "category": "clothes",
+   "price": {
+    "": 359
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,57],[1,0],[2,8],[3,7]], "outfit": 3, "color": ""}
+  },
+  {
+   "id": "yukata_yukata_plain",
+   "place": "yukata",
+   "name": "素色和服",
+   "category": "clothes",
+   "price": {
+    "": 699
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,9],[1,0]], "outfit": -1, "color": "#2c3a5e"}
+  },
+  {
+   "id": "yukata_yukata_pattern",
+   "place": "yukata",
+   "name": "花紋和服",
+   "category": "clothes",
+   "price": {
+    "": 899
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[0,27],[1,0]], "outfit": -1, "color": ""}
+  },
+  {
+   "id": "yukata_yukata_sandal",
+   "place": "yukata",
+   "name": "草履",
+   "category": "clothes",
+   "price": {
+    "": 159
+   },
+   "season": null,
+   "tags": [
+    "clothes"
+   ],
+   "prop": "bag",
+   "options": [],
+   "effects": {},
+   "giftable": false,
+   "consumable": false,
+   "clothes": {"parts": [[7,17],[8,17]], "outfit": -1, "color": ""}
   }
  ],
  "jobs": [

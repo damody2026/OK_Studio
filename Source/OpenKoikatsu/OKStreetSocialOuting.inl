@@ -41,6 +41,8 @@ static UPrimitiveComponent* OKStreetFreezePlaceMesh(AActor* Actor,UProceduralMes
 
 void AOKStreetSocialScene::SpawnStreetPlaces(){
  auto& S=*State;
+ // The city's buildings and ground are in its map; only the elevators are the game's.
+ if(OKStreetCityMode()){OKStreetRuntimeBlocks().Reset();SpawnElevators();return;}
  UStaticMesh* Meshes[]={LoadObject<UStaticMesh>(nullptr,TEXT("/Game/Scenes/StreetSocial/Meshes/StreetCube.StreetCube")),LoadObject<UStaticMesh>(nullptr,TEXT("/Game/Scenes/StreetSocial/Meshes/StreetSphere.StreetSphere")),LoadObject<UStaticMesh>(nullptr,TEXT("/Game/Scenes/StreetSocial/Meshes/StreetCylinder.StreetCylinder"))};
  if(!Meshes[0]){UE_LOG(LogTemp,Warning,TEXT("Street places: shared street meshes are missing"));return;}
  auto Spawn=[&](const FOKStreetPlacePart& Part){
@@ -396,10 +398,11 @@ void AOKStreetSocialScene::DestroyStreetPlaces(){
 
 // Like ContactRoute, over the shared waypoints plus the place corridor and doors.
 TArray<FVector> AOKStreetSocialScene::PlaceRoute(const FVector& From,const FVector& To) const{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_PlaceRoute);
- if(FMath::Abs(From.Z-To.Z)<150.f){auto Grid=GridRoute(From,To);if(Grid.Num()>=2)return Grid;}
+ if(FMath::Abs(From.Z-To.Z)<150.f&&!OKStreetCityFar(From,To)){auto Grid=GridRoute(From,To);if(Grid.Num()>=2)return Grid;}
  return PlaceRouteWaypoints(From,To);
 }
 TArray<FVector> AOKStreetSocialScene::PlaceRouteWaypoints(const FVector& From,const FVector& To) const{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_PlaceRouteWaypoints);
+ if(OKStreetCityMode())return CityRoute(From,To);
  TArray<FOKStreetPointData> Shared;OKStreetWaypoints(Shared);TArray<FVector> Points;for(const auto& P:Shared)Points.Add(P.Position);
  Points.Append(OKStreetPlaceRoutePoints());
  return OKStreetContactRoute(From,To,Points,[&](const FVector& A,const FVector& B){
@@ -570,7 +573,7 @@ bool AOKStreetSocialScene::BeginOuting(int32 Girl,const FString& ActivityId,FStr
  if(There)return StartOutingActivity(Girl,ActivityId,Error);
  // Upstairs in a building with an elevator and going elsewhere: to the car on this floor and down to the street
  // first (StepLiftRide), then the way there from the ground floor. A route straight from upstairs runs into walls.
- if(S.Male.Z>100.f&&!(Spot&&OKStreetInsidePlace(*Place,S.Male)))for(int32 PlaceIx=0;PlaceIx<OKStreetPlaces().Num();++PlaceIx){
+ if(OKStreetUpstairs(S.Male)&&!(Spot&&OKStreetInsidePlace(*Place,S.Male)))for(int32 PlaceIx=0;PlaceIx<OKStreetPlaces().Num();++PlaceIx){
   const auto& Here=OKStreetPlaces()[PlaceIx];if(!OKStreetInsidePlace(Here,S.Male))continue;
   const auto Lifts=OKStreetPlaceLifts(Here);const int32 Elevator=ElevatorOfPlace(PlaceIx);if(Lifts.IsEmpty()||Elevator==INDEX_NONE)continue;
   int32 Floor=0;for(int32 F=0;F<Lifts.Num();++F)if(FMath::Abs(Lifts[F]->Position.Z-S.Male.Z)<FMath::Abs(Lifts[Floor]->Position.Z-S.Male.Z))Floor=F;
@@ -602,7 +605,7 @@ bool AOKStreetSocialScene::BeginOuting(int32 Girl,const FString& ActivityId,FStr
   if(Route.Num()<2){Error=OKMsg(TEXT("ui.outing.no_route_to_place"), {{TEXT("place_name"), Place->Name}});return false;}
   if(Spot){
    const auto Lifts=OKStreetPlaceLifts(*Place);
-   if(Spot->Position.Z>100.f&&!Lifts.IsEmpty()){
+   if(OKStreetUpstairs(Spot->Position)&&!Lifts.IsEmpty()){
     // Indoors the grid finds the way round desks and shelves from the door to the elevator.
     TArray<FVector> In=GridRoute(Route.Last(),Lifts[0]->Position);if(In.Num()>=2){In.RemoveAt(0);Route.Append(In);}
     else{if(const auto* Hall=OKStreetPlaceAnchor(*Place,TEXT("hall")))Route.Add(Hall->Position);Route.Add(Lifts[0]->Position);}

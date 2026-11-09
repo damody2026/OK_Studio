@@ -133,7 +133,7 @@ TSharedRef<SWidget> AOKStreetSocialScene::BuildVentureApp(){
   }
   if(S.Store.Company.Founded>=0){
    const FOKStreetEmployee* Emp=S.Store.Company.Staff.FindByPredicate([&](const FOKStreetEmployee& E){return E.Heroine==Id;});
-   if(Emp)Row->AddSlot().Padding(2)[OKFinButton(Weak,OKMsg(TEXT("ui.venture.dismiss_employee_button"), {{TEXT("role"), *Emp->Role}, {TEXT("pay"), Emp->Pay}}),[Weak,Id](){Weak->FireStaff(Id);})];
+   if(Emp)Row->AddSlot().Padding(2)[OKFinButton(Weak,OKMsg(TEXT("ui.venture.dismiss_employee_button"), {{TEXT("role"), *OKStaffRole(Emp->Role)}, {TEXT("pay"), Emp->Pay}}),[Weak,Id](){Weak->FireStaff(Id);})];
    else for(const auto& RoleOption:{TPair<const TCHAR*,const TCHAR*>(TEXT("ceo"),OKT(TEXT("ui.venture.hire_as_ceo"))),TPair<const TCHAR*,const TCHAR*>(TEXT("secretary"),OKT(TEXT("ui.venture.hire_as_secretary"))),TPair<const TCHAR*,const TCHAR*>(TEXT("manager"),OKT(TEXT("ui.venture.hire_as_manager")))}){
     const FString RoleId=RoleOption.Key;Row->AddSlot().Padding(2)[OKFinButton(Weak,OKMsg(TEXT("ui.venture.monthly_salary_note"), {{TEXT("salary"), RoleOption.Value}}),[Weak,I,RoleId](){Weak->OfferJob(I,RoleId,FMath::Max<int64>(Weak->Local(TEXT("salary"),2000),Weak->MoneyIn(Weak->State->VentureAmount)),true,false);})];}
   }
@@ -143,7 +143,7 @@ TSharedRef<SWidget> AOKStreetSocialScene::BuildVentureApp(){
  const auto& Co=S.Store.Company;
  if(Co.Founded<0)Line(SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth()[OKFinButton(Weak,OKT(TEXT("ui.venture.found_company_cafe")),[Weak](){Weak->FoundCompany(FString(),TEXT("cafe"));})]
   +SHorizontalBox::Slot().AutoWidth()[OKFinButton(Weak,OKT(TEXT("ui.venture.found_company_mall")),[Weak](){Weak->FoundCompany(FString(),TEXT("department"));})]);
- else Line(OKFinText(OKMsg(TEXT("ui.venture.company_summary_line"), {{TEXT("company_name"), *Co.Name}, {TEXT("founded_date"), *OKStreetCalendarLabel(Co.Founded,12.0)}, {TEXT("office_name"), OKStreetFindPlace(Co.Office)?OKStreetFindPlace(Co.Office)->Name:*Co.Office}, {TEXT("staff_count"), Co.Staff.Num()}, {TEXT("last_profit"), Co.LastProfit}})));
+ else Line(OKFinText(OKMsg(TEXT("ui.venture.company_summary_line"), {{TEXT("company_name"), *Co.Name}, {TEXT("founded_date"), *OKStreetCalendarDateTime(Co.Founded,8.0).ToString(TEXT("%Y/%m/%d"))}, {TEXT("office_name"), OKStreetFindPlace(Co.Office)?OKStreetFindPlace(Co.Office)->Name:*Co.Office}, {TEXT("staff_count"), Co.Staff.Num()+Co.Estate.Workers.Num()}, {TEXT("last_profit"), Co.LastProfit}})));
  Line(OKFinText(OKT(TEXT("ui.venture.settle_amount_explainer")),FLinearColor(.75f,.75f,.75f),10));
  BuildHerInvestRows(Box);
  return SNew(SScrollBox)+SScrollBox::Slot()[Box];

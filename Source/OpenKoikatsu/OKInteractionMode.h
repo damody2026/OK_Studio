@@ -10,6 +10,10 @@ class AKKPreviewActor;
 class APlayerController;
 class FJsonObject;
 
+// A set of clothes she could wear, every garment state of it: her outfit, or a coordinate card worn as it.
+struct FOKWardrobeWant {FString Card,Coordinate;bool bAccessories=false;int32 Outfit=0;FString Key() const;};
+struct FOKWardrobeItem;
+
 // One in-world lifetime for both entry points. No browser, process or IPC ownership.
 UCLASS()
 class OPENKOIKATSU_API AOKInteractionMode : public AActor {
@@ -25,6 +29,9 @@ public:
     virtual void Tick(float Delta) override;
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;
     void Exit(bool Cancelled=false);
+    // The street's fitting (OKStreetSocialWardrobe.inl): she alone, standing, to be looked at: no partner, no pose, no panel.
+    bool bFitting=false;
+    FBox FittingRoom=FBox(ForceInit); // the room she tries clothes on in: the city's walls have no collision, the camera stays inside this
     // The street's one-on-one: the H scene panel for her (name, relation stage, ok-rules h_experience answer).
     void BeginHScene(const FString& Name,const FString& Stage,const TSharedPtr<FJsonObject>& Experience,const FString& Player);
     // The control channel's /hscene: {kind} presses a panel button, {pose} picks a pose by name, {speed} sets it; answers the panel's view.
@@ -37,6 +44,7 @@ public:
     void HSceneShowLine(const FString& Text);
     FString HSceneJudgeFacts() const;
     bool HSceneApplyTalk(const TSharedPtr<FJsonObject>& Verdict);
+    void HSceneReplyPending(bool bPending);
     bool HSceneSpeak(const FString& Path);
     bool HSceneSpeaking() const;
     bool HSceneHasReaction() const;
@@ -48,12 +56,12 @@ public:
     // bWithAccessories: the coordinate card's accessories too (else only its clothes: her accessories, hair made of them
     // among them, stay, as the maker loads one with accessories unticked).
     bool ChangeOutfit(int32 Outfit,const FString& Coordinate=FString(),bool bWithAccessories=false);
-    bool IsChangingOutfit() const {return OutfitChanging||SwappingFemale!=nullptr;}
+    // The card she was opened from and its root, for what reads it again.
+    void OpenedSource(FString& Root,FString& Card) const{Root=OpenedRoot();Card=OpenedFemaleCard();}
+    bool IsChangingOutfit() const {return OutfitChanging;}
     // A garment's next state as the original cycles it (on, half off where it has one, off), from the card she is opened
-    // from; ChangeClothesStates opens her again in states a garment's half off needs (visibility alone cannot show it).
+    // from. All its states are in her model: AKKPreviewActor::SetClothingPartsHidden shows the one asked for.
     bool ClothesTransition(int32 Kind,uint8 Out[9],FString& Why) const;
-    bool ChangeClothesStates(const uint8 States[9]);
-    bool bSwapClothesOnly=false; // the change in progress (or last) only opened her clothes in other states
     FString OutfitError;     // the last change's failure (empty when it worked)
     FString WornCoordinate;  // the coordinate card she wears now (empty: her card's own outfit)
     bool IsReady() const {return Ready;}
@@ -73,9 +81,11 @@ private:
 #endif
     void Fail(const FString& Why);
     UPROPERTY() TObjectPtr<AKKPreviewActor> LoadingFemale;
-    UPROPERTY() TObjectPtr<AKKPreviewActor> SwappingFemale; // her in the new outfit, built hidden (ChangeOutfit)
-    bool OutfitChanging=false;int32 SwapOutfit=0;FString SwapCoordinate,SwapOpened,OpenedCard;uint8 SwapStates[9]{};
-    bool StartSwap(int32 Outfit,const FString& Coordinate,bool bWithAccessories,const uint8* States);
+    bool OutfitChanging=false,bWardrobeBusy=false,bWardrobePlanned=false,bClonedFemale=false;int32 SwapOutfit=0;FString SwapCoordinate,SwapKey,OpenedCard;
+    FOKWardrobeWant SwapWas; // what she had on when the change began
+    TMap<FString,TSharedPtr<FOKWardrobeItem,ESPMode::ThreadSafe>> Wardrobe;TArray<FOKWardrobeWant> WardrobeQueue;
+    FOKWardrobeWant WornWant() const;void PlanWardrobe();void PumpWardrobe();
+    bool StartSwap(int32 Outfit,const FString& Coordinate,bool bWithAccessories);
     FString OpenedFemaleCard() const;FString OpenedRoot() const; // the card she is opened from now (a coordinate worn: that copy)
     void TickOutfitSwap();
     UPROPERTY() TObjectPtr<AActor> PreviousView;

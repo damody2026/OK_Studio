@@ -431,6 +431,7 @@ void AOKStreetSocialScene::FinishPartyTalk(const FString& Text,const TArray<int3
     if(!Item)for(const auto* I:ItemsHere(Shop))if(I->Name==ItemId||ItemId.Contains(I->Name)){Item=I;break;} // by name
     // Every order not placed is said at the table, as one on one (OKStreetSocialMind.inl): not sold here, one like it
     // still being eaten, too full. Dropped without a word, she went on as if it were coming.
+    if(Item&&Item->Category==TEXT("clinic"))continue; // his offer and her yes, not an order (OfferClinic)
     if(!Item||!SoldHere(*Item,Shop)||!Item->Consumable){if(!Item||!SoldHere(*Item,Shop)){const int32 For=Find(Who);
       S.PartyEvents.Add(OKMsg(TEXT("ui.party.not_sold_order"),{{TEXT("girl_name"),For==INDEX_NONE?OKT(TEXT("ui.party.he_pronoun")):*S.Manifest.Characters[For].Name},{TEXT("item"),Item?Item->Name:ItemId}}));}continue;}
     ItemId=Item->Id;

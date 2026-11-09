@@ -118,6 +118,15 @@ void AOKStreetSocialScene::StopLifePose(int32 Only){
 void AOKStreetSocialScene::StopStrayPoses(){
  if(!State)return;auto& S=*State;const double Wall=FPlatformTime::Seconds();
  if(Wall<S.StrayPoseAt)return;S.StrayPoseAt=Wall+0.5;
+ // SpotFor keeps her off the table he eats at only if he is at it when she is placed. 刻晴 had her meal at 18:50, 优香 and he
+ // sat down there at 19:04: her chair and table stood inside theirs (the "57-70 cm" neighbour). She moves to another table.
+ if(S.Pair.Partner!=INDEX_NONE&&(S.Pair.Meal||S.Pair.Drink)){const int32 Minute=int32(OKStreetMindNow(S)%1440);
+  for(const int32 I:S.ScheduleHeld.Array()){
+   if(I==S.Pair.Partner||S.Party.Contains(I)||!S.Agents.IsValidIndex(I-1)||S.Commutes.Contains(I)||BusyWithPlayer(I))continue;
+   const FVector At=S.Agents[I-1].Position;if(FVector::Dist2D(At,S.Male)>=250.f||FMath::Abs(At.Z-S.Male.Z)>100.f)continue;
+   const FOKStreetPlanBlock* B=LifeBlock(I,Minute);if(!B||B->Place!=PlaceHere(S.Male))continue; /* only a diner of this place: 雷电将军 walking past on her way to the bookshop was sent there at once */float Yaw=0;const FVector Spot=SpotFor(I,B->Place,B->Kind,Yaw);if(FVector::Dist2D(Spot,S.Male)<250.f)continue;
+   if(InLifePose(I))StopLifePose(I);S.Agents[I-1].Position=Spot;S.Rotations[I]=FRotator(0,Yaw,0);S.LifeCooldown.Add(I,SceneTime()+5.0);
+   UE_LOG(LogTemp,Display,TEXT("Street life: actor %d moves to another table, he sits at hers (%s)"),I,*Spot.ToCompactString());}}
  for(int32 I=1;I<=S.Agents.Num();++I){
   FOKRuntimeActionStreamStatus A;
   const bool Legit=InLifePose(I)||S.PartySeats.ContainsByPredicate([I](const FOKLifePose& P){return P.Actor==I;})||S.Pair.Partner==I||(S.Facility!=INDEX_NONE&&S.FacilityCharacter==I)||S.PrivateGirl==I||S.SleepGirl==I||S.SleepGirl2==I||S.SoloGirl==I
@@ -407,12 +416,14 @@ void AOKStreetSocialScene::ActivityAftermath(const FString& ActivityId,int32 Gir
  // A meal or a drink not paid at the counter comes from the menu. Paid at the counter means during it, or ordered just
  // before sitting down (she ordered on the way in: "my treat, a donut"); that bill is this meal's, not another one.
  // The order could not be paid, or he took it back: they ate nothing, not "a meal from the menu" billed at the end.
- Request->SetBoolField(TEXT("menu"),!S.ActCutShort&&A&&(A->Code==5||A->Code==2)&&A->Kind==EOKStreetActivityKind::Pair&&P&&S.LastCheckoutMinute<StartMinute-30&&S.OrderDroppedMinute<StartMinute-30
+ // Paid here, not anywhere: 雷电's rice ball at the convenience store made the park machine's drinks free ten minutes later.
+ const bool CheckedOutHere=S.LastCheckoutMinute>=StartMinute-30&&S.LastCheckoutPlace==PlaceId;
+ Request->SetBoolField(TEXT("menu"),!S.ActCutShort&&A&&(A->Code==5||A->Code==2)&&A->Kind==EOKStreetActivityKind::Pair&&P&&!CheckedOutHere&&S.OrderDroppedMinute<StartMinute-30
   // Dishes ordered there for this visit (within three hours: a private-room hour skipped in between made the half-hour
   // window miss them and the soup and tea were billed again as a set dinner).
   &&!(S.OrderedAtPlace.Contains(PlaceId)&&S.OrderedAtPlace[PlaceId]>=StartMinute-180));
  // What it is about (the machine's drink) bought from the menu and settled during it or just before: no fee on top (R3-240).
- Request->SetBoolField(TEXT("bought_at_counter"),S.LastCheckoutMinute>=StartMinute-30||(S.OrderedAtPlace.Contains(PlaceId)&&S.OrderedAtPlace[PlaceId]>=StartMinute-30));
+ Request->SetBoolField(TEXT("bought_at_counter"),CheckedOutHere||(S.OrderedAtPlace.Contains(PlaceId)&&S.OrderedAtPlace[PlaceId]>=StartMinute-30));
  // At the machine, what they ordered here just before is the drink they had there: not still being made afterwards (it
  // is only served inside, and they drank at the door). 刻晴's tea, paid by chat, stayed "being made" after their machine
  // drink, to be "left behind" later (R5-2, R4-24).

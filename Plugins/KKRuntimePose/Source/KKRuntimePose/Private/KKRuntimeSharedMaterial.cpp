@@ -324,11 +324,17 @@ bool OKPrepareRuntimeSharedMaterialBinding(const FKKRuntimeMaterialPart& P,const
   for(int32 I=0;I<UE_ARRAY_COUNT(Keys);++I)if(const auto* V=P.Values.Find(Keys[I])){if(V->ContainsNaN())return Fail(TEXT("Resolved skin property nonfinite"));Values.Add(Targets[I],FLinearColor(V->X,V->Y,V->Z,V->W));}
  }
  FKKRuntimeMaterialBinding B;B.Scalars.Add(TEXT("__OK_RuntimeMaterialSchema"),1);B.Scalars.Add(TEXT("__OK_RuntimeMaterialFamily"),float(Recipe)+(Outline?128:0));if(Outline)B.Scalars.Add(TEXT("__OK_OutlineApprox"),OKRuntimeOutlineApprox());
+ // Cards lower-case MaterialEditor's property names, and writing one takes the real property's place (`_color` for
+ // `_Color` on her tongue), as OK cards have it saved. Only `_Color`: the other lower-case keys are old shaders' leftovers
+ // the game never reads (`_shadowcolor` drew hair's shadow near black).
+ const bool bKoikanoTongue=P.Name.Equals(TEXT("o_tang"),ESearchCase::IgnoreCase)&&(Recipe==EKKRuntimeMaterialRecipe::KoikanoClothesItem||Recipe==EKKRuntimeMaterialRecipe::KoikanoClothesItemAlpha||Recipe==EKKRuntimeMaterialRecipe::KoikanoClothesItemTranslucent||Recipe==EKKRuntimeMaterialRecipe::KoikanoClothesItemAlphaTranslucent);
+ const bool bKKUTSOrKKUSS=Recipe==EKKRuntimeMaterialRecipe::KKUTS||Recipe==EKKRuntimeMaterialRecipe::KKUTSItem||Recipe==EKKRuntimeMaterialRecipe::KKUTSAlpha||Recipe==EKKRuntimeMaterialRecipe::KKUTSHair||Recipe==EKKRuntimeMaterialRecipe::KKUTSEye||Recipe==EKKRuntimeMaterialRecipe::KKUTSEyeWhite||Recipe==EKKRuntimeMaterialRecipe::KKUSS||Recipe==EKKRuntimeMaterialRecipe::KKUSSItem||Recipe==EKKRuntimeMaterialRecipe::KKUSSAlpha||Recipe==EKKRuntimeMaterialRecipe::KKUSSHair;
+ auto FindValue=[&](const FString& Key)->const FLinearColor*{if(const auto* Exact=Values.Find(Key))return Exact;return (Key==TEXT("_Color")||(bKKUTSOrKKUSS&&Key!=TEXT("_ShadowColor")))?Values.Find(Key.ToLower()):nullptr;};
  for(const auto& U:Layout->Uniforms){
   if(U.Rows&&U.Name==TEXT("unity_ProbeVolumeWorldToObject")){if(U.Rows!=4)return Fail(TEXT("Probe volume matrix shape unsupported"));for(int32 Row=0;Row<4;++Row){const FString Name=U.Name+FString::Printf(TEXT("_Row%d"),Row);FLinearColor V(0,0,0,0);(&V.R)[Row]=1;if(const auto* Override=Scene.Uniforms.Find(*Name))V=*Override;for(int32 C=0;C<4;++C)if(!FMath::IsFinite((&V.R)[C]))return Fail(TEXT("Probe volume matrix nonfinite"));B.Vectors.Add(*Name,V);B.Scalars.Add(*(Name+TEXT("__A")),V.A);}continue;}
   if(Automatic(U))continue;FLinearColor V=U.Default;
-  auto FindValue=[&](const FString& Key)->const FLinearColor*{if(const auto* Exact=Values.Find(Key))return Exact;return Key==TEXT("_ShadowColor")?nullptr:Values.Find(Key.ToLower());};
   if(const auto* Authored=FindValue(U.Name))V=Convert(*Authored,U.Gamma);
+  else if(bKoikanoTongue&&U.Name==TEXT("_Color"))V=Convert(FLinearColor(.94f,.7551464f,.7179444f,1.f),U.Gamma); // the game's own tongue pink (user 2026-11-05), not the shader's white
   else if(U.Name.EndsWith(TEXT("_ST"))){const TCHAR* Axes[]={TEXT("x"),TEXT("y"),TEXT("z"),TEXT("w")};for(int32 C=0;C<4;++C)if(const auto* X=FindValue(U.Name+TEXT("_")+Axes[C]))(&V.R)[C]=X->R;}
   if(U.Name==TEXT("_LightColor0"))V=Scene.Light;
   if(U.Name==TEXT("_WorldSpaceLightPos0"))V=FLinearColor(Scene.LightDirectionUnity.X,Scene.LightDirectionUnity.Y,Scene.LightDirectionUnity.Z,0);

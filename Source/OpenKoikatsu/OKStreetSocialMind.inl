@@ -11,7 +11,11 @@ void AOKStreetSocialScene::StartCalendarAndMind(){
   else{S.Rules.Reset();OKStreetRulesFatal(Error);return;}}
  LoadCatalog();
  // A saved game continues where he was (the start place below, a development switch, still wins).
- if(S.Store.HasPlayerSpot&&!S.SelfTest){S.Male=S.Store.PlayerSpot;if(S.Rotations.IsValidIndex(0))S.Rotations[0]=FRotator(0,S.Store.PlayerYaw,0);S.Yaw=S.Store.ViewYaw;S.SpotSavedMale=S.Male;
+ // A save from the other map: the spot means nothing here, he starts at the dorm, and who was with him goes on from her day.
+ // (The inspection room, z 20000, is not the other map: that save starts at the spawn below.)
+ if(S.Store.HasPlayerSpot&&S.Store.PlayerSpot.Z<10000.f&&OKStreetCityMode()!=(S.Store.PlayerSpot.Z>500.f)){UE_LOG(LogTemp,Display,TEXT("Street start: the saved spot %s is on the other map"),*S.Store.PlayerSpot.ToCompactString());S.Store.HasPlayerSpot=false;S.Store.WithHim.Reset();}
+ // A save written in the inspection room (z 20000, no street there) starts him at the spawn instead.
+ if(S.Store.HasPlayerSpot&&!S.SelfTest){S.Male=S.Store.PlayerSpot.Z>=10000.f?OKStreetMaleSpawn():S.Store.PlayerSpot;if(S.Rotations.IsValidIndex(0))S.Rotations[0]=FRotator(0,S.Store.PlayerYaw,0);S.Yaw=S.Store.ViewYaw;S.SpotSavedMale=S.Male;
   UE_LOG(LogTemp,Display,TEXT("Street start: where he was saved, %s yaw %.0f"),*S.Male.ToCompactString(),S.Store.PlayerYaw);
   for(const auto& W:S.Store.WithHim)S.ResumeWithHim.Add(W.Id,W); // put back by TickSchedules once her plan is there
   // Their table as it was (a dish still being made is on it now): eaten on when he talks with her there (TickMeal).
@@ -28,7 +32,7 @@ void AOKStreetSocialScene::StartCalendarAndMind(){
  // Development: OK_STREET_START_PLACE=<place id> starts the player inside that place (first anchor, else room, else door).
  {FString Start=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_STREET_START_PLACE")),Anchor;Start.Split(TEXT("@"),&Start,&Anchor);if(Start.IsEmpty())Start=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_STREET_START_PLACE"));
   if(!Start.IsEmpty()&&!S.SelfTest)if(const auto* P=OKStreetFindPlace(Start)){const FOKStreetModelAnchor* A=Anchor.IsEmpty()?(P->Anchors.Num()?&P->Anchors[0]:nullptr):P->Anchors.FindByPredicate([&](const FOKStreetModelAnchor& X){return X.Name==Anchor;});
-   S.Male=A?A->Position:P->Rooms.Num()?P->Rooms[0].GetCenter():P->Door;if(!A)S.Male.Z=0;UE_LOG(LogTemp,Display,TEXT("Street start place: %s %s"),*Start,A?*A->Name:TEXT("(room)"));}}
+   S.Male=A?A->Position:P->Rooms.Num()?P->Rooms[0].GetCenter():P->Door;if(!A)S.Male.Z=OKStreetCityMode()?P->Door.Z:0;UE_LOG(LogTemp,Display,TEXT("Street start place: %s %s"),*Start,A?*A->Name:TEXT("(room)"));}}
  {FString Body;TSharedPtr<FJsonObject> Player;double Base=50;const FString PlayerFile=FPaths::GetPath(S.Manifest.SavePath)/TEXT("player.json");
   if(FFileHelper::LoadFileToString(Body,*PlayerFile)&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Body),Player)&&Player.IsValid()){
    if(Player->TryGetNumberField(TEXT("appearance_base"),Base))S.PlayerLookBase=FMath::Clamp(float(Base),0.f,100.f);
@@ -101,8 +105,9 @@ void AOKStreetSocialScene::SaveCalendar(){
  // A scene that stopped while starting (a rejected input) has no one placed yet: nothing of it is saved.
  if(S.Rotations.IsEmpty())return;
  auto Candidate=S.Store;
- // Where he stands: outside the room of a facility he is in (it puts him in a set), not while riding an elevator.
- if(ElevatorWithMale()==INDEX_NONE&&S.LiftRide.Elevator==INDEX_NONE){Candidate.HasPlayerSpot=true;Candidate.PlayerSpot=S.FacilityEntered?S.FacilitySavedMale:S.Male;Candidate.PlayerYaw=S.FacilityEntered?S.FacilitySavedMaleRotation.Yaw:S.Rotations[0].Yaw;Candidate.ViewYaw=S.FacilityEntered?S.FacilitySavedYaw:S.Yaw;S.SpotSavedMale=Candidate.PlayerSpot;S.SpotSavedAt=FPlatformTime::Seconds();}
+ // Where he stands: outside the room of a facility he is in (it puts him in a set), back on the street while the inspection
+ // room holds him, not while riding an elevator.
+ if(ElevatorWithMale()==INDEX_NONE&&S.LiftRide.Elevator==INDEX_NONE){Candidate.HasPlayerSpot=true;Candidate.PlayerSpot=S.FacilityEntered?S.FacilitySavedMale:S.InspectSlot!=INDEX_NONE?S.InspectMaleBack:S.Male;Candidate.PlayerYaw=S.FacilityEntered?S.FacilitySavedMaleRotation.Yaw:S.Rotations[0].Yaw;Candidate.ViewYaw=S.FacilityEntered?S.FacilitySavedYaw:S.Yaw;S.SpotSavedMale=Candidate.PlayerSpot;S.SpotSavedAt=FPlatformTime::Seconds();}
  Candidate.CalendarMinute=FMath::Clamp(FMath::FloorToInt32(OKStreetClockHours(S.ClockStartHours,FPlatformTime::Seconds()-S.ClockStartWall)*60.0),0,24*60-1);
  // Who is with him (R3-238): walking or out with him follows him again after a load; sitting, talking or in a set with
  // him waits beside him. Not put back yet from the last load: kept as it was saved.
@@ -347,6 +352,11 @@ void AOKStreetSocialScene::FillMindStatus(int32 Character,FOKFreeTalkStatus& Sta
   // singing date with none ready, then stood silent and asked why he said nothing (R6-55).
   const EOKSongPhase Song=S.Song.Girl==Character?S.Song.Phase:EOKSongPhase::Idle;
   Status.Scene+=OKMsg(TEXT("ui.mind.song_status"),{{TEXT("state"),Song==EOKSongPhase::Ready||Song==EOKSongPhase::Offered?TEXT("ready"):Song>=EOKSongPhase::Intro&&Song<=EOKSongPhase::Outro?TEXT("singing"):Song==EOKSongPhase::Preparing?TEXT("preparing"):TEXT("none")}});}
+ // What she has on (ok-rules wardrobe.rs; her own clothes are in her persona): asked to change back into her cheongsam,
+ // 安可 said she had not worn one today, she had only what the shop had just sold her to go by.
+ {TArray<FString> Worn;const TArray<TSharedPtr<FJsonValue>>* Pieces=nullptr;
+  if(const TSharedPtr<FJsonObject> Has=WardrobeOf(Character);Has&&Has->TryGetArrayField(TEXT("owned"),Pieces))for(const auto& V:*Pieces)if(V->AsObject()->GetBoolField(TEXT("worn")))Worn.Add(V->AsObject()->GetStringField(TEXT("name")));
+  Status.Scene+=Worn.IsEmpty()?FString(OKT(TEXT("ui.mind.wearing_own"))):OKMsg(TEXT("ui.mind.wearing_bought"),{{TEXT("items"),*FString::Join(Worn,OKT(TEXT("ui.bank.list_separator")))}});}
  if(!Apart&&S.ShiftAppointment)if(const auto* Job=S.Catalog.FindJob(S.ShiftJob)){const FDateTime T=StreetNow();
   // Clock times and hours: told "505 minutes to the end of his shift", 优香 said "five hundred-odd minutes" — at
   // 22:35, before the 23:00 shift had even begun (R6-151).
@@ -483,9 +493,12 @@ void AOKStreetSocialScene::ApplyChoiceReply(int32 Character,const FOKFreeTalkRep
  // goodbye ended the talk, or her words promised to pay, is judged by DeepSeek after the reply (JudgeFreeTalk).
  // A goodbye while he is still walking her somewhere waits for the door (the walk's end resumes the talk); walking off
  // ("leave") does not.
- const bool OnTheWay=S.OutingGirl==Character&&Reply.ActKind!=TEXT("leave");
+ // A stroll goes nowhere, so there is no door to wait for: 惠惠 said good night and they walked on for the rest of the loop.
+ const bool Strolling=S.OutingGirl==Character&&(S.OutingActivity==TEXT("stroll")||S.OutingActivity==TEXT("walk"));
+ const bool OnTheWay=S.OutingGirl==Character&&!Strolling&&Reply.ActKind!=TEXT("leave");
  if(OnTheWay&&(Reply.ActKind==TEXT("end_talk")||Reply.Action==TEXT("end_talk")||Reply.Action==TEXT("farewell")||Reply.Action==TEXT("goodbye"))){UE_LOG(LogTemp,Display,TEXT("Street farewell: actor=%d not on the way; the outing reaches %s first"),Character,*S.OutingPlace);}
  else if(Reply.ActKind==TEXT("end_talk")||Reply.ActKind==TEXT("leave")||Reply.Action==TEXT("end_talk")||Reply.Action==TEXT("farewell")||Reply.Action==TEXT("goodbye")){
+  if(Strolling)CancelOuting(FString());
   S.FarewellPending=true;S.FarewellFromTalk=true;S.FarewellAt=FPlatformTime::Seconds();UE_LOG(LogTemp,Display,TEXT("Street farewell: actor=%d the conversation ends after her last line (act=%s)"),Character,*Reply.ActKind);
  }
  if(Reply.ActKind==TEXT("promise_treat")&&OKStreetMindNow(S)-S.HerTreatKept.FindRef(Character,-100000)>=60){/* not again within the hour she paid one (R3-227) */S.HerTreatPromise.Add(Character,OKStreetMindNow(S)+6*60);UE_LOG(LogTemp,Display,TEXT("Street treat promise: actor=%d will pay for what he orders (act)"),Character);}
@@ -521,6 +534,7 @@ void AOKStreetSocialScene::ApplyChoiceReply(int32 Character,const FOKFreeTalkRep
  for(auto O:Reply.Orders){
   O.Id=ResolveItemId(O.Id,Dest);
   const auto* Item=S.Catalog.Find(O.Id);
+  if(Item&&Item->Category==TEXT("clinic"))continue; // his offer and her yes, not an order (OfferClinic)
   const bool ForHer=O.ForHer; // whose it is: the AI's "for"
   // Ordered on the way to that shop ("let's go to the store: a tea egg and water"): carried until they get there.
   const FOKStreetActivity* Going=OKStreetFindActivity(Reply.Action);
@@ -539,6 +553,8 @@ void AOKStreetSocialScene::ApplyChoiceReply(int32 Character,const FOKFreeTalkRep
   // were dropped without a word, and she ate a strawberry cake while his soup never came, R4-28).
   if(!Item||!SoldHere(*Item,Place)){UE_LOG(LogTemp,Display,TEXT("Street order rejected: %s at %s"),*O.Id,*Place);
    S.TellHer.Add(OKMsg(TEXT("ui.economy.not_sold_here_order"),{{TEXT("item"),Item?Item->Name:O.Id}}));continue;}
+  // Clothes for her go to her wardrobe, not onto a bill (as the judge's orders).
+  if(ForHer&&Item->Category==TEXT("clothes")){S.ShopPlace=Place;FinishClothes(Character,O.Id,TEXT("accept"));continue;}
   // Whoever it is for still has one of these on the table or on its way ("then a tea" again, the tea she ordered a
   // moment ago still coming): not a second one (as for the judge's orders).
   bool HadBefore=false;{const TArray<FOKStreetCartLine> Mine(S.Cart.GetData()+CartBefore,S.Cart.Num()-CartBefore);S.Cart.SetNum(CartBefore);HadBefore=HasDishLike(ForHer?Character:0,*Item);S.Cart.Append(Mine);}
@@ -583,6 +599,9 @@ void AOKStreetSocialScene::ApplyChoiceReply(int32 Character,const FOKFreeTalkRep
  else if(Reply.ActKind==TEXT("entrust")){FString A,D;if(!Reply.ActArg.Split(TEXT("|"),&A,&D))A=Reply.ActArg;StartEntrust(Character,TEXT("entrust"),FCString::Atoi64(*A),D.IsEmpty()?30:FCString::Atoi(*D));}
  else if(Reply.ActKind==TEXT("follow_mode"))SetFollowMode(Reply.ActArg==TEXT("her_lead")?1:Reply.ActArg==TEXT("side_by_side")?2:0);
  else if(Reply.ActKind==TEXT("end_talk")||Reply.ActKind==TEXT("leave")||Reply.ActKind==TEXT("promise_treat")){} // handled above (the goodbye, the promise)
+ // A walk is the judge's (do_now, then): she said "let's walk when we've eaten" with act stroll while then=walk was already
+ // set, and the player read "惠惠 wants to do stroll, which cannot be done yet".
+ else if(Reply.ActKind==TEXT("stroll")||Reply.ActKind==TEXT("walk")){UE_LOG(LogTemp,Display,TEXT("Street act: %s is left to the judge's do_now and then"),*Reply.ActKind);}
  // "Let's go to the restaurant" with act eat: the eating is there, not here (she ate at the shrine and the keeper came
  // over, R3-126).
  // The meal they are already at ("cafeteria_meal" while eating at the cafeteria, she feeds him) is not somewhere else.

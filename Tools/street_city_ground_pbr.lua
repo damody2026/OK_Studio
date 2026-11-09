@@ -1,0 +1,18 @@
+-- Full-city ground inventory and material-only replacements using the isolated E host.
+local f=assert(io.open('Tools/street_city_romance_pbr.lua','rb'));local source=f:read('*a');f:close()
+local helper=assert(source:match('local code=%[====%[(.-)%]====%]')):match('^(.-)\ndef work%(%)')
+helper=helper:gsub('2048','1024')
+local payload=dofile('Tools/street_city_ground_pbr_payload.lua')
+local floors=dofile('Tools/street_city_mixed_floor_payload.lua')
+payload=payload:gsub('\ndef work%(%)','\n'..floors:gsub('%%','%%%%')..'\ndef work()')
+local function replace(p,v)local n;source,n=source:gsub(p,function()return v end);assert(n==1,p)end
+replace("local out=root%.%.'/output/street%-social%-city%-production/romance%-pbr%-v1'","local out=root..'/output/street-social-city-production/ground-pbr-v1'")
+replace('local code=%[====%[.-%]====%]','local code=[====['..helper..'\n'..payload..']====]')
+replace("root%.%.'/StreetSocialCity/StreetSocialCity%.uproject'","'E:/StreetSocialCityProduction/environment-packages/20261023-122745/HostProject/StreetSocialCity.uproject'")
+replace("local engine=json.decode%(read%('Tools/engine.local.json'%)%)%.engine","local engine='E:/PhysX/UE5.8'")
+source=source:gsub('StreetSocialCityRomanceUser','StreetSocialCityGroundPBRUser')
+source=source:gsub('restore=true','restore=true,finish=true,verify=true,complete=true,normal_fix=true')
+source=source:gsub("'%-d3d12'","'-nullrhi'")
+source=source:gsub("'%-unattended'","'-EnablePlugins=PythonScriptPlugin,EditorScriptingUtilities,CityDepthAudit','-unattended','-DDC=(Local)','-ini:Engine:[ConsoleVariables]:Editor.AsyncAssetCompilationMaxMemoryUsage=6'")
+source=source:gsub('Romance PBR ','Ground PBR ')
+assert(load(source,'ground-pbr-launcher'))()

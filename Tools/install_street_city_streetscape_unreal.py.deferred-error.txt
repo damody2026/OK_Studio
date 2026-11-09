@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "C:/portable/OpenKoikatsu/Tools/run_street_city_unreal_deferred.py", line 11, in tick
+    try:runpy.run_path(str(SCRIPT),run_name='__main__')
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen runpy>", line 291, in run_path
+  File "<frozen runpy>", line 98, in _run_module_code
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\portable\OpenKoikatsu\Tools\install_street_city_streetscape_unreal.py", line 5, in <module>
+    from street_city_streetscape import ROOT,BASE,OUT,read,write,sha
+  File "C:\portable\OpenKoikatsu\Tools\street_city_streetscape.py", line 4, in <module>
+    import numpy as np
+ModuleNotFoundError: No module named 'numpy'

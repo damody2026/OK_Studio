@@ -46,10 +46,11 @@ public sealed partial class GamePoseProbe : BaseUnityPlugin
             if (studio != null) {
                 started = true;
                 string auditScene = Environment.GetEnvironmentVariable("OK_PROBE_STUDIO_SCENE");
-                StartCoroutine(String.IsNullOrEmpty(auditScene) ? Run() : AuditStudioScene(studio, auditScene));
+                string mapTour = Environment.GetEnvironmentVariable("OK_PROBE_MAP_TOUR");
+                StartCoroutine(!String.IsNullOrEmpty(mapTour) ? MapTour(studio, mapTour) : String.IsNullOrEmpty(auditScene) ? Run() : AuditStudioScene(studio, auditScene));
             }
         }
-        if (!finished && elapsed > 180f) {
+        if (!finished && elapsed > 180f && String.IsNullOrEmpty(Environment.GetEnvironmentVariable("OK_PROBE_MAP_TOUR"))) {
             finished = true; Save(new Dump { error = "timeout before probe completion" }); Application.Quit();
         }
     }

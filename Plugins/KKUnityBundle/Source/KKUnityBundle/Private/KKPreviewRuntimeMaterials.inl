@@ -11,13 +11,15 @@
 struct FOKCookedRoleBuild {FString Root;bool HG=false;FKKRuntimeMaterialScene Scene;TArray<UTexture2D*> Textures;int32 NextTexture=0,NextPart=0,Uncovered=0;};
 // 1: the actor's shared-parent instances are ready; 0: continue in a later batch (Budget seconds were spent; 0 = no
 // limit); -1: failed (Error).
-static int32 OKPrepareCookedRole(AKKPreviewActor* Actor,FString& Error,double Budget=0.){
-    if(!Actor->CookedRoleBuild&&!Actor->CookedRoleMaterials.IsEmpty())return 1;
+// Whose parts the instances are for: hers as she loads, or a donor's staged for a change of clothes (wardrobe.rs).
+struct FOKCookedRoleTarget {FOkSession& Source;TArray<TObjectPtr<UMaterialInstanceDynamic>>& Materials;TArray<TObjectPtr<UMaterialInstanceDynamic>>& Outlines;TSharedPtr<FOKCookedRoleBuild>& Build;TArray<TObjectPtr<UTexture2D>>& Textures;bool bWardrobe;};
+static int32 OKPrepareCookedRole(AKKPreviewActor* Actor,FString& Error,double Budget,const FOKCookedRoleTarget& To){
+    if(!To.Build&&!To.Materials.IsEmpty())return 1;
     const double Deadline=Budget>0.?FPlatformTime::Seconds()+Budget:DBL_MAX;
-    auto Fail=[&](){Actor->CookedRoleBuild.Reset();Actor->CookedRoleMaterials.Reset();Actor->CookedRoleOutlines.Reset();return -1;};
-    if(!Actor->CookedRoleBuild){
+    auto Fail=[&](){To.Build.Reset();To.Materials.Reset();To.Outlines.Reset();return -1;};
+    if(!To.Build){
     auto Setup=[&]()->bool{
-    {TRACE_CPUPROFILER_EVENT_SCOPE(KK_CookedRolePrepare);if(!Actor->Session.PrepareRuntimeMaterials(Error))return false;}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(KK_CookedRolePrepare);if(!To.Source.PrepareRuntimeMaterials(Error))return false;}
     FString Manifest;
     if(!FParse::Value(FCommandLine::Get(),TEXT("StreetSocialManifest="),Manifest))FParse::Value(FCommandLine::Get(),TEXT("CrowdRuntimeScene="),Manifest);
     FString Root;
@@ -62,27 +64,27 @@ static int32 OKPrepareCookedRole(AKKPreviewActor* Actor,FString& Error,double Bu
         if(HGRoot.IsEmpty()){UE_LOG(LogTemp,Warning,TEXT("HG render style: no hg_material_root, keeping %s"),*Root);HG=false;}else Root=HGRoot;
     }
     FKKRuntimeMaterialScene Scene;Scene.EnableShadows=(Actor->bCharacterDisplayShadows||Actor->bStudioItemShading)&&!HG;OKApplyCharacterMakerLighting(Scene);Scene.Globals=Actor->StudioShaderGlobals;
-    auto Build=MakeShared<FOKCookedRoleBuild>();Build->Root=Root;Build->HG=HG;Build->Scene=Scene;Actor->CookedRoleBuild=Build;
+    auto Build=MakeShared<FOKCookedRoleBuild>();Build->Root=Root;Build->HG=HG;Build->Scene=Scene;To.Build=Build;
     return true;
     };
-    if(!Setup()){Actor->CookedRoleBuild.Reset();return -1;}
+    if(!Setup()){To.Build.Reset();return -1;}
     }
-    FOKCookedRoleBuild& Role=*Actor->CookedRoleBuild;
-    const auto& Data=*Actor->Session.RuntimeMaterials;
+    FOKCookedRoleBuild& Role=*To.Build;
+    const auto& Data=*To.Source.RuntimeMaterials;
     {TRACE_CPUPROFILER_EVENT_SCOPE(KK_CookedRoleTextures);
     while(Role.NextTexture<Data.Textures.Num()){
         FOkCardProfileScope Profile(GOkCardLoadProfile.bActive?&GOkCardLoadProfile.RoleTextureSeconds:nullptr);
-        auto* Texture=OKCreateRuntimePreparedTexture(Data.Textures[Role.NextTexture++],Error);if(!Texture)return Fail();Role.Textures.Add(Texture);Actor->LoadedTextures.Add(Texture);
+        auto* Texture=OKCreateRuntimePreparedTexture(Data.Textures[Role.NextTexture++],Error);if(!Texture)return Fail();Role.Textures.Add(Texture);To.Textures.Add(Texture);
         if(FPlatformTime::Seconds()>=Deadline)return 0;
     }}
-    if(Role.NextPart==0&&Actor->CookedRoleMaterials.IsEmpty()){
-        Actor->FlatFaceMaterials.Reset();Actor->FlatFaceState=FKKFaceFlattenState();
-        Actor->CookedRoleMaterials.SetNum(Actor->Session.PartCount());Actor->CookedRoleOutlines.SetNum(Actor->Session.PartCount());
+    if(Role.NextPart==0&&To.Materials.IsEmpty()){
+        if(!To.bWardrobe){Actor->FlatFaceMaterials.Reset();Actor->FlatFaceState=FKKFaceFlattenState();}
+        To.Materials.SetNum(To.Source.PartCount());To.Outlines.SetNum(To.Source.PartCount());
     }
     TRACE_CPUPROFILER_EVENT_SCOPE(KK_CookedRoleParts);
     auto BuildPart=[&](const FKKRuntimeMaterialPart& SourcePart)->int32{
         auto& Textures=Role.Textures;auto& Scene=Role.Scene;const FString& Root=Role.Root;const bool HG=Role.HG;int32& Uncovered=Role.Uncovered;
-        OkMeshView View{};if(!Actor->Session.PartAt(SourcePart.NativePart,View)||!View.render_visible||View.n_verts<=0)return 1;
+        OkMeshView View{};if(!To.Source.PartAt(SourcePart.NativePart,View)||!View.render_visible||View.n_verts<=0)return 1;
         // OK Studio item state (AKKPreviewActor::ItemColorOverrides, ItemShadowColorOverride: sRGB, the values the game
         // writes to _Color.._Color4 and _ShadowColor) reaches the shared parent as the part's own material values.
         FKKRuntimeMaterialPart Part=SourcePart;
@@ -118,13 +120,13 @@ static int32 OKPrepareCookedRole(AKKPreviewActor* Actor,FString& Error,double Bu
 #if WITH_EDITOR
         if(!Material){UE_LOG(LogTemp,Warning,TEXT("Shared material for part %d (%s): %s; its own graph instead"),Part.NativePart,*Name,*Error);Error.Reset();++Uncovered;return 1;}
 #endif
-        if(!Material){Actor->CookedRoleMaterials.Reset();Actor->CookedRoleOutlines.Reset();return -1;}
+        if(!Material){To.Materials.Reset();To.Outlines.Reset();return -1;}
         if(Actor->ToonRampTex){UTexture* Existing=nullptr;if(Material->GetTextureParameterValue(FMaterialParameterInfo(TEXT("_RampG")),Existing))Material->SetTextureParameterValue(TEXT("_RampG"),Actor->ToonRampTex);}
         // HG faces light from the character's front instead of their bumpy normals.
         if(HG&&Part.Role==TEXT("head")){float Face=0;if(Material->GetScalarParameterValue(FMaterialParameterInfo(TEXT("__OK_HG_Face")),Face))Material->SetScalarParameterValue(TEXT("__OK_HG_Face"),1);}
         // OK_SHARED_PARAM_DUMP=1 (debugging): an item instance's colour, shadow and light parameters.
         if(Part.ItemDraw&&FPlatformMisc::GetEnvironmentVariable(TEXT("OK_SHARED_PARAM_DUMP"))==TEXT("1")){FString Line;for(const TCHAR* N:{TEXT("_Color"),TEXT("_ShadowColor"),TEXT("_LightColor0"),TEXT("_WorldSpaceLightPos0"),TEXT("_ambientshadowG"),TEXT("_LineColorG")}){FLinearColor V;if(Material->GetVectorParameterValue(FMaterialParameterInfo(N),V))Line+=FString::Printf(TEXT(" %s=(%.3f,%.3f,%.3f,%.3f)"),N,V.R,V.G,V.B,V.A);}UE_LOG(LogTemp,Display,TEXT("OK shared item params part=%s parent=%s%s"),*Part.Name,*Name,*Line);}
-        Actor->CookedRoleMaterials[Part.NativePart]=Material;
+        To.Materials[Part.NativePart]=Material;
         if(Part.Outline&&OKRuntimeOutlineLayout(Recipe)){
             const FString OutlineName=Name+TEXT("_Outline");
             auto* OutlineParent=LoadParent(true);
@@ -134,10 +136,10 @@ static int32 OKPrepareCookedRole(AKKPreviewActor* Actor,FString& Error,double Bu
 #if WITH_EDITOR
             if(!Outline){UE_LOG(LogTemp,Warning,TEXT("Shared outline for part %d (%s): %s"),Part.NativePart,*OutlineName,*Error);Error.Reset();}
 #else
-            if(!Outline){Actor->CookedRoleMaterials.Reset();Actor->CookedRoleOutlines.Reset();return -1;}
+            if(!Outline){To.Materials.Reset();To.Outlines.Reset();return -1;}
 #endif
             if(Outline&&Actor->ToonRampTex){UTexture* Existing=nullptr;if(Outline->GetTextureParameterValue(FMaterialParameterInfo(TEXT("_RampG")),Existing))Outline->SetTextureParameterValue(TEXT("_RampG"),Actor->ToonRampTex);}
-            Actor->CookedRoleOutlines[Part.NativePart]=Outline;
+            To.Outlines[Part.NativePart]=Outline;
         }
         return 1;
     };
@@ -146,7 +148,7 @@ static int32 OKPrepareCookedRole(AKKPreviewActor* Actor,FString& Error,double Bu
         if(Role.NextPart<Data.Parts.Num()&&FPlatformTime::Seconds()>=Deadline)return 0;
     }
     if(Actor->bCharacterDisplayShadows){
-        for(UMaterialInstanceDynamic* Material:Actor->CookedRoleMaterials){
+        for(UMaterialInstanceDynamic* Material:To.Materials){
             UTexture* ShadowTex=nullptr;
             if(Material&&Material->GetTextureParameterValue(FMaterialParameterInfo(TEXT("KKShadowDepth")),ShadowTex))Actor->ToonShadowMaterials.AddUnique(Material);
         }
@@ -154,10 +156,13 @@ static int32 OKPrepareCookedRole(AKKPreviewActor* Actor,FString& Error,double Bu
         if(Actor->ToonShadowTargets.IsValidIndex(Actor->ToonShadowReadIndex))Actor->BindToonShadowTarget(Actor->ToonShadowReadIndex);
         Actor->UpdateToonShadowProjection();
     }
-    UE_LOG(LogTemp,Display,TEXT("High model cooked shared materials root=%s style=%s parts=%d own_graph=%d"),*Role.Root,Role.HG?TEXT("hg"):TEXT("koikatsu"),Actor->CookedRoleMaterials.Num(),Role.Uncovered);
+    UE_LOG(LogTemp,Display,TEXT("High model cooked shared materials root=%s style=%s parts=%d own_graph=%d"),*Role.Root,Role.HG?TEXT("hg"):TEXT("koikatsu"),To.Materials.Num(),Role.Uncovered);
     // A Studio item's instances are made and its textures uploaded: the decoded texture data is not needed again, and
     // a scene holds thousands of items (it stayed per actor: 28 -> 39 GB on a 1,900-item scene).
-    if(Actor->bStudioItemShading)Actor->Session.RuntimeMaterials.Reset();
-    Actor->CookedRoleBuild.Reset();
+    if(Actor->bStudioItemShading)To.Source.RuntimeMaterials.Reset();
+    To.Build.Reset();
     return 1;
+}
+static int32 OKPrepareCookedRole(AKKPreviewActor* Actor,FString& Error,double Budget=0.){
+    return OKPrepareCookedRole(Actor,Error,Budget,FOKCookedRoleTarget{Actor->Session,Actor->CookedRoleMaterials,Actor->CookedRoleOutlines,Actor->CookedRoleBuild,Actor->LoadedTextures,false});
 }

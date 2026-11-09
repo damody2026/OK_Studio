@@ -1,0 +1,15 @@
+-- Restore the user's preferred paving/floors and enlarge the remaining ground detail.
+local f=assert(io.open('Tools/street_city_romance_pbr.lua','rb'));local source=f:read('*a');f:close()
+local helper=assert(source:match('local code=%[====%[(.-)%]====%]')):match('^(.-)\ndef work%(%)'):gsub('2048','1024')
+local ground=dofile('Tools/street_city_ground_pbr_payload.lua'):match('^(.-)\ndef work%(%)')
+local revision=dofile('Tools/street_city_ground_revision_payload.lua')
+local function replace(p,v)local n;source,n=source:gsub(p,function()return v end);assert(n==1,p)end
+replace("local out=root%.%.'/output/street%-social%-city%-production/romance%-pbr%-v1'","local out=root..'/output/street-social-city-production/ground-pbr-v2'")
+replace('local code=%[====%[.-%]====%]','local code=[====['..helper..'\n'..ground..'\n'..revision..']====]')
+replace("root%.%.'/StreetSocialCity/StreetSocialCity%.uproject'","'E:/StreetSocialCityProduction/environment-packages/20261023-122745/HostProject/StreetSocialCity.uproject'")
+replace("local engine=json.decode%(read%('Tools/engine.local.json'%)%)%.engine","local engine='E:/PhysX/UE5.8'")
+source=source:gsub('restore=true','restore=true,revise=true,revision_audit=true')
+source=source:gsub('StreetSocialCityRomanceUser','StreetSocialCityGroundRevisionUser')
+source=source:gsub("'%-d3d12'","'-nullrhi'")
+source=source:gsub("'%-unattended'","'-EnablePlugins=PythonScriptPlugin,EditorScriptingUtilities,CityDepthAudit','-unattended','-DDC=(Local)','-ini:Engine:[ConsoleVariables]:Editor.AsyncAssetCompilationMaxMemoryUsage=6'")
+assert(load(source,'ground-revision-launcher'))()

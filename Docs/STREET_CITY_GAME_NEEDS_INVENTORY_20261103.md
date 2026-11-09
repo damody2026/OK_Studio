@@ -418,11 +418,182 @@ c-street-city 的逐項回答在 `Docs/STREET_CITY_PLACES_INVENTORY_20261103.md`
     - 其他：`festival`、`xmas_tree`、`batting`。
   - 第 4 輪：`amusement`。
 
+### 8.2.3 第 2 輪比對（11-05，`city_anchors.json` 23745 列）
+
+c-street-city 回報第 8、10 節做完一輪（9d20bdf1e、c59d2378a、8f5abb346）。我直接數 `city_anchors.json`：
+
+- 23745 列都有 `pos`，1380 個地點；`places.json` 98 個 game_place。
+- `anchor_kinds.toml` 的 82 個種類都不是 0。
+- 坐的錨點：`seat_pos` 12636 個，加上 `seat_face` 109 個放在 `slots` 裡，共 12745。`seat_ground` 165 個坐地上，沒有椅面，不用 `seat_pos`。約 3400 個是推算值，不是逐一實測（c-street-city 回報，我沒有另外查）。
+- 第 10.4 節：`browse` 51、`fitting` 25、`fitting_wait` 84、`fitting_show` 24、`checkout` 22、`try_shoes` 7、`shoe_rack` 10、`closet` 1928、`shoe_change` 483、`changing` 79。`department` 有 `browse` 17、`fitting` 5、`checkout` 6、`try_shoes` 7、`shoe_rack` 10。鞋店用百貨鞋區。
+
+還缺、已交回 c-street-city：
+
+| 項目 | 現況 |
+|---|---|
+| 真浴缸 | 女宿與公寓沒有，`bath` 放在淋浴同一點 |
+| 真陽台 | `balcony` 197 個都是窗邊錨點 |
+| 屋頂 | 只有 T1 走得上去，其他 5 棟有 `rooftop_lunch` 但沒有路 |
+| 數量太少的種類 | `h_bench` 1、`crib` 1、`ultrasound` 1、`infirmary_bed` 2、`h_box` 2、`h_net` 2、`station` 2、`wedding` 2 |
+| `campus_sports.field` | z 924.8，比地面低約 3 公尺，要改 1205 |
+| S19 池子 | 台階與水深只看過畫面，沒有量 |
+| 世界缺口 | 沙灘草、礁石、蘆葦、睡蓮、室內 Tripo 家具、路燈夜間發光 |
+
+`swim` 的 `pos` 是水面高度，游泳動作是遊戲端的事，排在第 8.3 節之後。
+
+### 8.2.4 第 3 輪比對（11-05，`city_anchors.json` 24730 列）
+
+c-conquest 第 8.2.3 節之後列的九項。地圖已打包，四段實走都通過，重拍 `shop-survey-v1/captures-20261105-105103`（新地點）、`-110021`（全城）、`-110843`（夜間）、`-110957`（陽台）。
+
+| 項目 | 狀態 | 結果 |
+|---|---|---|
+| 真浴缸 | 完成 | 女宿、男宿與公寓放了 335 個 Tripo 浴缸，`bath` 錨點在浴缸上，不再和淋浴同一點 |
+| 真陽台 | 完成，有一個限制 | 178 個實體陽台：R1／R2 64、D1–D4 20、H1 1，其餘在商店街住宅。錨點 `balcony` 站在陽台板上。其餘房間的窗邊改成 `view_night`（看夜景的窗邊）。外牆是一整塊網格，開不了門洞，玻璃門是模型的一部分，角色要用定點放上去，走不過去 |
+| 屋頂 | 完成 | T1、T2、T4、LI、D1、D2 都有外掛鋼樓梯、四邊欄杆、長椅。`rooftop` 有 6 個 rooms，`rooftop_lunch` 6 列 |
+| 少數種類 | 完成 | `h_bench` 89、`crib` 83、`ultrasound` 5、`infirmary_bed` 14、`h_box` 6、`h_net` 5、`station` 310、`wedding` 6。新增地點 `station`（交通站，3 台售票機） |
+| `field` 地面高度 | 完成 | `campus_sports.field` z 1198。全部錨點往下掃一遍，約 1700 個浮空或埋地的貼回地板（鏡子高度的 `vanity`、汽車旅館房間中心高度、樓梯井上方的平台等），每次最多往下一層。剩下的多數是刻意的（游泳、船、煙火、池內）；`minshuku` 約 40 個的樓層在 S18 改建後不存在，還留著原高度，要改地點定義 |
+| S19 池子 | 量測完成 | 5 座架高的湯池，不是挖下去的。外側台階高 10–30 cm，池緣 90 cm，池底 65 cm，池內深度 25 cm。`pool*` 錨點在池邊地面 z 1200 |
+| 世界缺口 | 完成 | 沙灘草 83、礁石 13、蘆葦 140、睡蓮 23、室內 Tripo 家具 693、櫃台收銀機 53、路燈發光燈頭 694、路面暖光 501 盞（跟 `EnvGroup=Path` 同一個夜間排程） |
+| 祭典白攤與海面長線 | 完成 | 祭典離車道 4.5 m。長線是水面破口：1 m 寬、數百公尺長的細長面被 Unreal 當退化三角形丟掉，沙色海床露出來。`build_street_city_water_plane.lua` 改成最長 16 m 的面，海面重拍沒有長線 |
+| 推算座位 | 部分 | 實測 8106 個，這輪再從座面量到 111 個。還有約 1600 個換不了：1158 個座位物件沒有碰撞（長椅、椅子、沙發、躺椅，高度用該種類的標準值），446 個沒找到座面（主要是商店的 `table`、`seat*`），清單在 `places-v1/seat-measured.json` 的 `unmeasured` |
+
+盤點另外修掉：報攤、咖啡座等 24 件站在車道上的物件移到人行道。
+
+### 8.2.5 第 3 輪收尾（11-05，`city_anchors.json` 24748 列）
+
+c-conquest 核對第 8.2.4 節後要收的五項。地圖沒有再動，只改錨點資料，`cargo test anchor` 6 項通過。
+
+| 項目 | 結果 |
+|---|---|
+| `minshuku` | S18 改建後實際樓層是 1206、1646、2086，西半部變成前庭。47 個錨點搬到同層最近的可走格，地點的 rooms 高度也改成實際樓層，66 個錨點都有 `floor`。二、三樓可走的位置是走廊（約 90 格），`toilet`、`seat` 這類錨點沒有對應的房間，只是站得住 |
+| 屋頂樓梯 | 六棟都拍過近照（`shop-survey-v1/captures-20261105-113055`）：下接地面，上到欄杆缺口。逐階檢查 6 × 120 階，人形碰撞盒全部沒有擋到，第一階離地 16–19 cm |
+| `h_net` | 24 個：網球網 4 座與排球網 4 座各站兩側，足球門 2 座，海灘排球網兩端，體育館 5 個。網和球門併在 `Outdoor_stadium`、`Outdoor_campus_track` 網格裡，用高度圖找出位置 |
+| 貼地錨點抽查 | 1492 個座標全部檢查，地板與人形空間：597 個直接通過，約 816 個被牆或物件擋到，移到 1.5 m 內的空位。66 個是該在家具上的（浴缸、床、座位）保留。13 個找不到空位留在原處：主要是 S 棟櫃台、走道，另有 `public.blossom13`、`beach_lounger_69` 等 |
+| 座位清單 | `places-v1/seat-measured.json`：`unmeasured` 446 筆，`nominal` 1158 筆（標準高度，不再量） |
+
+### 8.2.6 第 3 輪結案三項（11-05，`city_anchors.json` 24587 列）
+
+c-conquest 核對第 8.2.5 節後要收的三項。地圖重裝、打包 `20261105-174535`，四段實走都通過，`cargo test anchor` 6 項通過。
+
+| 項目 | 結果 |
+|---|---|
+| `minshuku` 真房間 | S18 二、三樓只有走廊和三間汽車旅館套房，一樓是車棚，蓋不出客房，所以在 AD 和 T2 之間的草坪（72000, 74000）新蓋一棟平房：`Tools/build_street_city_minshuku.lua`，34 × 12 m，玄關、四間客房、緣側。每間 8 × 7 m 榻榻米，有兩組棉被、矮桌、四個坐墊、電視、壁櫥，後方是獨立的浴室和廁所。56 個錨點都在房間裡，`rooms` 六筆（四間客房、玄關、緣側）。S18 走廊上的錨點、`s18-f01`～`f03`、`s18-0201`、`s18-0301` 都移除，三間汽車旅館套房和大廳保留 |
+| 被擋的錨點 | 13 個加上同一批的 2 個，都找不到空位，全部刪除。公園半徑誤收的洗衣機和烘衣機：疊在上層的 2 個刪除，其餘歸回 `s36-f01`、`s37-f01` 洗衣店，附近沒有洗衣店的刪除。重測 1492 個座標，除了本來就站在家具上的 66 個，沒有被擋的 |
+| 樓梯扶手 | 六棟都換成和屋頂四邊同款的 `waterfront_rail`：每段樓梯兩側順著斜度裝，每個平台外側圍起來，原本的立柱移除。扶手沒有碰撞，120 階全部人形檢查沒有被擋 |
+
+- `minshuku.seat`、`minshuku.bed1_0` 名稱保留，`inn_tea`、`sleep_inn`、`inn_helper` 不用改。
+- 11-05 補拍後依 c-conquest 的意見再修一輪，打包 `20261105-222511`，四段實走全過：客房之間本來就是到天花板的牆，上次是相機架在牆裡；每間加了木柱、長押、竿緣天井、內側障子、床之間與掛軸，壁櫥改成有拉門的 `oshiire`，電視換成 Tripo 的電視櫃，浴廁加了腰壁與暖簾，屋頂有瓦條。畫面在 `shop-survey-v1/captures-20261105-231526`。
+- 客房 `R7-minshuku-room`、`room2`、`room-night`，浴廁 `bath`、`wc`，外觀 `out`、`front` 都看過；浴室地板日間仍偏冷，是天光造成的，留著。
+- 11-06 c-conquest 最後一輪補齊，打包 `20261106-033433`，`city_anchors.json` 24590 列，地板與人形空間重測 1492 個（其他 0），`cargo test anchor` 6 項通過：淋浴換 Tripo 真淋浴柱（`inn_shower` 名稱不變），四間浴室加洗手台（`inn_sink`），浴室和廁所都加了開著的拉門，床之間改窄、兩端有柱撐住長押，掛軸是 Grok 水墨畫。第一間客室裡原有一棵街樹穿出屋頂，連同樹幹碰撞移到建築後方，`motel_physics_plan` 同步。
+- 四段實走全過，但第 0 段第一次失敗、重試才過：`imore-491f7709b202-pool-entry-and-exit` 第 28 段，泳池階梯，離民宿約 400 m，與這輪改動無關。chain70 也在另一座泳池出現過一次（`imore-cda5d5e2dcb9`，第 24 段）。這不是卡住：是 CharacterWalk 懸空檢查在階緣的誤判（中心射線差 121.85 cm，門檻 120），`Docs/STREET_ERRORS.md` 11-01 已記錄，修法要動 StreetSocialCity 的 C++，所以用重跑處理。
+- 照片在 `shop-survey-v1/captures-20261106-043454`：`R7-minshuku-room1`、`room`、`bath2`、`wc-door`、`scroll`、`low`、`high`。
+
+### 8.2.7 第 4 輪盤點（11-06 盤點時 24590 列，11-07 做完後 25376 列）
+
+c-conquest 重新對照 `activities.toml`、`acts.toml`、`events.toml`、`places.json` 與錨點種類。`activities.toml` 每個活動的地點和錨點都查得到，85 個種類都不是 0。下面三類是還缺的，新地點的遊戲端規則仍排在第 8.3 節之後。
+
+**A. 資料對不起來**
+
+| 項目 | 現況 | 要做 |
+|---|---|---|
+| `balcony` | 只有 20 個，全在 D1–D4（各 5）。第 8.2.4 節寫 178 個實體陽台，R1／R2 64 個，商店街住宅也有 | 每個實體陽台都要有錨點，查清楚少掉的原因 |
+| R1／R2 公寓 | `cook` 各 40，`dining` 0；`h_sofa` 各 40，`tv_sofa` 0；`laundry`、`mailbox` 都是 0 | 補餐桌、電視、洗衣機（每層或頂樓曬衣處）、一樓信箱與對應錨點 |
+| 其他住處的 `tv_sofa` | 飯店 0，汽車旅館 0，商店街住宅 0 | 房間有電視的補上；沒有電視的補電視 |
+| `church` | 只有外觀模型和 5 個 `wedding*` 錨點，沒有 `seat` | 確認走得進去；做出內部、長椅、祭壇，補 `seat`、`seat_pair` |
+| 溫泉池 | 池內深度 25 cm（第 8.2.4 節），坐下去水只到腰 | 加深到約 55 cm，或把坐的位置做低，一起泡湯要泡得到肩下 |
+| `mailbox` | 郵局沒有 | 郵局門口加郵筒 |
+| `places.json` | `s18-f01`～`f03`、`s18-0201`、`s18-0301` 還是「日式民宿」 | 改成現在的用途，免得和新民宿混淆 |
+
+**B. 活動要用、場景沒有**
+
+| 活動 | 缺什麼 |
+|---|---|
+| `restaurant_room`（餐廳包廂） | `restaurant` 沒有包廂，要做一間有門的包廂，錨點 `private_room` |
+| `hotel_spa`、`spa`（精油護理室） | 飯店與 `lodge` 沒有護理室，要有護理床、毛巾櫃，錨點 `spa_bed` |
+| 新年、參拜（`new_year`、`shrine_pray`） | 神社只有 `torii`、`pray`、`seat`。要有賽錢箱、手水舍、籤筒 `omikuji`、繪馬架 `ema`、授與所 `charm` |
+| `ride_pair`（第 10.1 節的協力車） | 沒有協力車。單車行 S35／S81 放協力車與 `bike_rental`，沿河堤或公園環道放 `ride_pair` |
+| 買票、紀念品 | 水族館沒有 `ticket`、`shop`；天文館、KTV 沒有 `counter`；遊樂園沒有 `shop` |
+
+**C. 還沒有的地點**
+
+室內優先改建重複的店面（書店、便利店、寵物店、花店、唱片行都有 3 間以上），每種至少留兩間。
+
+| game id | 場所 | 錨點／道具 | 用途 |
+|---|---|---|---|
+| `district_office` | 區公所、戶政窗口 | `counter*`、`seat*`、`photo`（登記紀念板） | 結婚登記、遷戶口 |
+| `bridal` | 婚紗禮服店 | `rack*`、`fitting*`、`fitting_show`、`mirror`、`counter` | 試婚紗，接教堂與寫真館 |
+| `police` | 派出所 | `counter`、`seat*` | 失物招領、問路 |
+| `realty` | 租屋仲介 | `counter`、`seat*`、`display*` | 一起找房子、同居 |
+| `nursery` | 親子館、托兒所 | `play*`、`seat*`、`crib*` | 孩子出生後（`pregnancy.rs`）的去處 |
+| `craft` | 手作教室 | `work_table*`、`seat*`、`kiln` | 陶藝、蠟燭、料理課 |
+| `fortune` | 占卜店 | `fortune_table`、`seat*` | 情侶占卜 |
+| `breakfast` | 早餐店 | `counter`、`table*`、`seat*` | 上課前一起吃早餐 |
+| `auditorium` | 大學禮堂 | `stage`、`seat*`、`seat_pair` | 開學、畢業、表演 |
+| `zoo` | 小型動物園 | `enclosure*`、`feed_animal*`、`bench*`、`ticket`、`shop` | 戶外約會，放在公園或西側空地 |
+| `orchard` | 採果農園 | `pick*`、`bench*`、`counter` | 戶外約會 |
+| `waterpark` | 滑水道（海邊或泳池旁） | `slide`、`swim*`、`seat*`、`shower` | 夏天約會 |
+
+**A 段結果（chain74，11-06）：** `balcony` 178；住處的 `tv_sofa` 132 處、`dining` 132 處、`laundry` 88 處，種類列數分別是 154、189、98；`mailbox` 6 處（兩座公寓、郵局、飯店、兩棟宿舍）；教堂 29 個錨點，`seat` 24、`seat_pair` 12；溫泉 `soak` 10 個，種類是 `bath`＋`seat`；S18 改名星澄別館。四段行走通過，w2 others 0。
+
+這輪有兩件事留到 chain75：站在洗衣機、信箱、販賣機前的錨點朝向是反的（第 3 列錯誤紀錄），R1、R2 住處與信箱的驗收視角拍到牆上，物件本身沒有照到。
+
+**B、C 段與六項補件結果（第 84 輪，11-07）：** `city_anchors.json` 25373 列；`cargo test anchor` 6 項通過；地板與人形空間重測 1504 個通過，607 個留原位，66 個在家具上（本來就要坐的），其他 0。四段實走都過。第 2 段第一次在 `imore-8ed9ae8ccd08-pool-entry-and-exit` 第 28 段回報 `native_soak_walk_obstructed`，同一份打包重試就過：這是泳池入水台階下行第一階的懸空誤判（`STREET_ERRORS.md` 2026-10-31 條），和這輪的家具無關，修法要改 StreetSocialCity 的 C++，不在場景工作範圍內。照片在 `shop-survey-v1/captures-20261107-074614`（陽台另在 `captures-20261107-081741`）。
+
+算法：「實體」是 `places-v1/actors.json` 裡用該模型的 actor 數。「錨點」用 `count_street_city_pieces.lua` 算，來源是最新的 `lover-spots-install-*.json`（這次安裝寫入的項目），依 `anchor` 名稱去掉結尾數字和底線分組，所以不含 `city_anchors.json` 裡安裝以外的列，也不等於 `name` 欄或 `kinds` 欄的計數。全表的列數看下一段。
+
+| 項目 | 做法 | 實體 | 錨點 |
+|---|---|---:|---:|
+| 餐桌 `dining_set` | Tripo | 128 | `dining` 177（127 在地圖，50 是現成場景物件） |
+| 電視櫃 `tv_cabinet` | Tripo（既有模型） | 185 | `tv_sofa` 239（181 在地圖，58 是現成場景物件） |
+| 洗衣機 `washer` | Tripo | 80 | `laundry` 80 |
+| 嬰兒床 `baby_crib` | Tripo | 85 | `crib` 85 |
+| 護理床 `spa_bed` | Tripo | 4 | `spa_bed` 4 |
+| 協力車 `tandem_bike` | Tripo | 8 | `bike_rental` 4，`ride_pair` 19 |
+| 毛巾櫃 `towel_cabinet` | Tripo | 1 | 2（`hotel`、`lodge` 共用同一間護理室和同一座櫃子） |
+| 信箱 `mailbox_bank`、郵筒 `post_box` | Tripo | 2＋4 | `mailbox` 6 |
+| `fruit_display` | Tripo | 1 | 採果農園 |
+| `snack_kiosk` | Tripo | 2 | 遊樂園、動物園的 `shop` |
+| `notice_board`、`beach_shower` | Blender（原計畫的 facility） | 3、1 | 依所在地點 |
+
+依種類算的列數比上表多，因為別的名稱也帶同一種類：`tv_sofa` 259（含 `tv` 19、`inn_tv` 4、`lounge` 3、`game` 2），`dining` 282，`laundry` 98（含 `dryer` 8、`washer` 6），`mailbox` 6。安裝時缺模型一律失敗，`count_street_city_pieces.lua` 的 missing 全部 0。
+
+R1／R2 每戶的家具都按房間檢查過（用掃描資料切房間，見錯誤紀錄）：餐桌廚房 18、玄關大廳 62；冰箱廚房 70、玄關 10；嬰兒床玄關 80；書櫃 80 都不在濕區；電視 80 都在沙發那間，同房間沒有衛浴。
+
+**做不到或和原要求不同的地方：**
+
+- R1／R2 多數戶的餐桌在玄關大廳，因為廚房那間已被原有家具占滿，放不下 190 公分的桌椅。r1-0101 這型在大廳的凹角，桌椅幾乎填滿，能走但偏擠。
+- R1／R2 的電視是獨立擺放，對著沙發，不靠牆；s05 也一樣。
+- R1／R2 的陽台離房間約 19.5 公尺，房間內沒有窗。窗外看不到房間，外牆玻璃不透明。
+- 水族館的四座玻璃缸原本只有缸頂一片水面和每缸 3 條魚。第 86 輪補上水體、沙、岩石、水草和每缸 12 條魚，假山水槽的窗後也補了水。照片：`output/street-social-city-production/shop-survey-v1/captures-20261107-135121`。
+- 溫泉 `soak` 的坐姿只驗了數字：錨點 1265、座面 1240、池底 1200，約 25 公分水深。
+- 招牌只有中文，單一語言。
+- 飯店的護理室在禮賓服務室角落，用屏風隔開。`lodge` 沒有自己的護理室，錨點指到同一間，護理床 4 張也是兩邊共用。
+- s39-0301、s84-0301、s86-0301 原本沒有床：放完沙發和電視後找不到 225×175 的空地。第 85 輪放寬間距後已補上，`shop_homes` 床 47／47，`bed` 錨點 51，`city_anchors.json` 25376 列，四段實走第一次就全過。照片補拍在 `output/street-social-city-production/shop-survey-v1/captures-20261107-122313`。
+- `R8-private-out` 照片大半是牆和門邊，包廂本身看 `R8-private-in`。
+- R 住家的廚房站位原本在流理台中間，第 86 輪改到檯面正面外 70 公分。
+
+**沒放的項目（`skipped` 清單）：** 屋頂 T4、LI、D1、D2 各有一座樓梯找不到空地，放在第一個位置。`balcony: 178 of 194`：194 是有陽台或窗戶錨點的住處，其中 16 處放不出陽台，只有窗。`shop_homes` 床第 84 輪 44／47，第 85 輪補到 47／47。`suites_tv` 的 `sofa 48`、`bed 6`、`foot 3` 是看電視的位置落在沙發、床邊或床尾的數量，不是缺件。`homes` 的 `miss`、`tv_blocked`、`dining_tight`、`dining_hall` 和 `sofa_facing_wall` 是重試次數，最後都有放好（電視 134、餐桌 80、洗衣機 80）。
+
+**第 87～88 輪與串流地圖（11-07～11-08）：** 水族館四缸和牆缸補水、沙、石、水草和魚，廚房站位移到檯面外，離線檢查 `Tools/check_street_city_placement.lua` 4219 件 0 問題，錨點 25376。遊戲用的串流圖是 `/Game/UniversityCity/Maps/UniversityCityWP`，由原圖在記憶體裡產生（`Tools/street_city_stream_prep_payload.lua`、`Tools/build_street_city_stream.lua`），原圖不存檔。
+
+- WP 副本裡做的事：寬於 128 m 的實例拆成 2403 個 cell actor；本地燈乘 0.125（遊戲固定曝光 1）；1038 個沒燈的房間補 3506 盞房間燈；6937 盞燈不投影、120 m 消失；18334 個 mesh 烘進裁切距離；`CityEnvironmentController` 常駐。
+- 路網：`city_roads.json` 用 `Tools/street_city_road_bake_payload.lua` 重烘。351 個落在屋頂或雨棚的點貼回地面，切掉 192 條假路線，斷開的 3042 點區塊接回主路網（22529 點）。(71500,108100) 的 54 點小區沒接上，遊戲不會用到。
+- 重建要先把舊的 `__ExternalActors__`、`__ExternalObjects__` 和 WP 地圖檔移走，否則舊 actor 會和新的並存。`Content/` 那份也一樣，複製前先移走舊的。
+- 量測（1080p、編輯器模式，地圖沒 cook）：cafe、`campus_ee`、conveni 各四個方向多數 105～150 FPS，最低 69～91（conveni 90 度、cafe 90 度、`campus_ee` 180 度，render 10～13 ms，原因未定，量到時人可能還在走）。走路 24 分鐘「路被擋住」2 行 log（改前 5 分鐘 107 行）。≥60 ms 的卡頓 47 次，除一次 222 ms 外最高 100 ms，主要是 StaticMesh 同步建置、GC 和 shader map，前者和後者只有編輯器模式才有，GC 要等打包版確認。
+- 電梯門（11-08）：九棟校舍和兩棟宿舍 2F 以上的電梯門原本建模時就是關的，電梯口前 28 cm 是門板。`Tools/street_city_lift_doors_payload.lua` 從 46 層的外觀模型和碰撞模型（`ComplexCollisionMesh`）刪掉門板，門框留著，開口寬 120 cm、和 1F 一樣。資產原地修改，地圖和 WP 不用重建，錨點和遊戲端不用改；改前的 92 個模型在 `E:\OpenKoikatsuWorkspace\lift-doors-before-1108`。之後重新產生這些樓層模型要再跑一次（`places-v1/lift-doors-apply.txt` 寫 1 才會存檔）。`Tools/street_city_lift_probe_payload.lua` 掃電梯口周圍的空間。
+- 樓上地點（11-08 下午）：SC（`cafeteria`）、SP（`campus_sports`）、LI（`library`）補電梯錨點，CV 新增涵蓋整棟的地點 `civic`（市民中心）放電梯；這四棟 2F 以上的電梯門也已挖開（再 28 個模型，備份同上）。泳池套房門口改到套房地板高度（1871 → 1706）。匯出時 14.5 m 以上沒樓層號的房間，依所在建築的電梯停靠高度編號。實走：CV 的銀行、電影院、美術館、天文館、郵局、水族館，SC 美術教室、社團教室，SP 健身房、體育倉庫，泳池套房、牙醫、保健室都到得了。還不通的有屋頂（要走樓梯，遊戲端）和眼鏡行（搭到 4F 後同層判斷，遊戲端）。
+- 路網加密（11-08）：`city_roads.json` 重烘時，空的 6 m 格只要有地面就加點（4442 點），9 m 內相鄰點雙向實走後連線（11929 條）。主路網 24790 點，百貨走到 MA 從 156,774 cm 降到 57,150 cm，實走 143 秒抵達；地點兩兩繞路超過 2 倍的從 2127 對降到 647 對。重烘的輸入是遊戲自己的烘焙結果 `places-v1/city_roads-before-bake.json`。
+- 剩下的繞路（647 對）多是街區本身：商店街 x 42700 與 x 45700 兩條平行路之間是整排背靠背的店，從 y≈20500 到約 49000、近 290 m 沒有橫向巷子，所以 `clothing_s46`、`karaoke`、`fastfood` 到 `onsen`、`realty`、`lottery` 都要繞到南端（直線 35～56 m，走 450～565 m）。遊樂園、禮堂則是圍牆，要從大門繞。要改得在那排店中間開巷子，屬於街區配置，還沒做。
+- M1 中庭挑空邊緣大多沒有護欄碰撞（4F：598 條邊只有 142 條有），導航直線穿過會掉到下一層的手扶梯；c-conquest 決定由遊戲端處理：grid 每格要求腳下有地面（11-08），地圖不動。
+- 夜晚房間抽樣（11-08）：`sc-0303`、`d2-0409`、`r1-0507`、`t1-0102`、`o03-0103`、`ee-0205` 晚上 21 點都有暖色燈。`ee-0205` 的牆、地、天花板是綠色斑駁花紋，看起來突兀，列入低影響清單。
+
 ### 8.3 遊戲端之後要做（我負責，換城市整合時）
 
 - 每個新地點的活動（`activities.toml`）、商品與營業時間（`catalog.json`）、`places.toml` 規範、三語文字。
 - `motions.toml` 的 `beach`、`pool` 要能接上新的地點 id。
 - 戶外旗標接到雨天、雨傘、撲克牌桌和視線判斷。
+- 坐的錨點有 `seat_pos` 時用真椅子：不生成 `SpawnLifeProps` 的方塊椅，坐姿高度依 `seat_pos`（第 10.2 節）。
+- 買衣試衣與換裝（第 10.4 節）：11-04 已做。`catalog.json` 有 `clothes` 商品（百貨、服飾、內衣、泳裝、浴衣店），帶她到店裡可以試穿、買給她、換穿（`OKStreetSocialWardrobe.inl`、ok-rules `wardrobe.rs`）。還沒做：試穿走到 `fitting`／`fitting_show` 錨點（現在是原地進一對一高模）、住處 `closet` 換衣、男裝。街上群眾換裝和換臉一樣要下次啟動才生效。
 - `hotel` 的 privacy 是 1，`TickIntimacy` 在飯店永遠不會觸發（子代理發現）。要改成 2，或給飯店一個私人房間的子地點。
 - 寫死在舊地圖座標的東西要換掉：
   - 女主走路的路線點、休息點、看風景點（`OKStreetSocialRules.h:1809-1831`）。
@@ -435,3 +606,186 @@ c-street-city 的逐項回答在 `Docs/STREET_CITY_PLACES_INVENTORY_20261103.md`
 1. c-street-city 依第 2 節（C1–C11）補場景與 `places.json`，重跑 `build_street_city_places.lua`。
 2. c-conquest 重跑比對腳本確認沒有缺漏。
 3. 第 3 節等使用者整合大學城時，由 c-conquest 補規則與活動。
+
+## 10. 生活與戀人互動的錨點（使用者 11-04：盤點完設定到 Rust，可以快速查詢）
+
+第 8 節盤點「地點和家具」，這一節盤點「人在那裡做什麼、站在哪裡」。對照的是 11-04 的 `places.json`：`game_places` 91 個、錨點 849 個。
+
+現況三個問題：
+
+- **錨點沒有分類**：只有名稱和位置（`name`、`pos`、`yaw`、`source`）。要找「附近能兩人並坐的地方」，只能靠名稱前綴猜。
+- **只有室內場所有錨點**：戶外的散步、看風景、告白、接吻地點幾乎沒有。`public_seats` 目前 0 筆。
+- **隱私等級太粗**：`privacy` 是整個地點一個值，同一個地點裡的角落和大廳分不出來。
+
+### 10.1 錨點種類（`kind`）
+
+一個錨點可以有多個種類，例如公園長椅同時是 `seat_pair` 和 `lap_pillow`。「現況」只算 `places.json` 裡查得到的。
+
+**姿勢：所有活動共用**
+
+| kind | 做什麼 | 人數 | 要放在 | 現況 |
+|---|---|---:|---|---|
+| `seat` | 單人坐下 | 1 | 所有椅子、凳子、吧台椅、候診椅（見 11-04 給 c-street-city 的座位要求） | 部分（`seat` 54、`chair` 3） |
+| `seat_pair` | 兩人並坐 | 2 | 長椅、沙發、堤防、階梯、看台、電影院情侶座 | 部分（`bench` 9、`sofa` 1） |
+| `seat_face` | 隔桌面對面坐 | 2 | 餐廳、咖啡店、學生餐廳、圖書館、自習室的桌子 | 部分（`table` 14，沒有分兩個座位） |
+| `seat_ground` | 坐在地上、草地、沙灘 | 2 | 草地、野餐墊、沙灘、屋頂 | 沒有 |
+| `lie` | 單人躺下 | 1 | 床、沙灘躺椅、天文館躺椅、保健室床 | 部分（`bed` 22、`lounger` 2） |
+| `lie_pair` | 兩人並躺 | 2 | 雙人床、草地、沙灘墊、屋頂、帳篷 | 部分（只有床） |
+| `lean` | 靠牆、靠欄杆站 | 1–2 | 平整的牆面、欄杆、販賣機旁 | 沒有 |
+| `stand_pair` | 兩人並肩站 | 2 | 展示櫃、水槽、櫥窗、欄杆前 | 部分（`tank`、`exhibit`） |
+| `queue` | 排隊 | 多人 | 櫃台、售票機、遊樂設施入口 | 沒有 |
+
+**戀人：`acts.toml` 的行為與約會**
+
+| kind | 做什麼 | 要放在 | 現況 |
+|---|---|---|---|
+| `meet` | 約會碰面 | 校門、車站前、噴水池、鐘塔、大型招牌下 | 部分（`gate`、`fountain`） |
+| `goodbye` | 送她回家、門口道別 | 女宿、男宿、民宿、公寓門口 | 沒有 |
+| `stroll` | 牽手散步（`hold_hands`），一條路線的依序路線點 | 校園林蔭道、河堤、海岸步道、商店街、公園環道 | 沒有 |
+| `confess` | 告白、分手談話 | 屋頂欄杆、大樹下、校舍後、海邊、神社 | 沒有 |
+| `kiss` | 接吻、擁抱（`kiss`、`hug`），要旁人看不太到 | 路燈下、樓梯間、校舍後、書架間、橋上、摩天輪車廂 | 沒有 |
+| `wall_pin` | 壁咚 | 走廊死角、巷子、書架間 | 沒有 |
+| `lap_pillow` | 膝枕、一起午睡（`lap_pillow`、`nap_together`） | 草地、長椅、沙發、沙灘墊 | 沒有（可由 `seat_pair` 加種類） |
+| `feed` | 互相餵食、分食（`feed`、`share_food`） | 餐桌、便當長椅、野餐墊 | 沒有（可由 `seat_face`、`seat_pair` 加種類） |
+| `picnic` | 野餐 | 公園、河堤、海邊草地 | 沒有 |
+| `view_sunset` | 看夕陽 | 海堤、屋頂、展望台 | 沒有 |
+| `view_night` | 看夜景 | 展望台、摩天輪、飯店窗邊、屋頂 | 部分（`view` 1） |
+| `stargaze` | 看星星 | 草地、屋頂、海邊 | 沒有 |
+| `fireworks` | 看煙火、跨年倒數 | 河堤、海灘、屋頂、祭典廣場 | 沒有 |
+| `blossom` | 賞櫻、賞楓（依季節開放） | 櫻花樹、楓樹下 | 沒有 |
+| `shelter` | 躲雨、共撐一把傘等雨停 | 屋簷、公車亭、涼亭、騎樓 | 沒有 |
+| `selfie` | 兩人自拍、合照 | 地標前、花海、拍貼機 | 部分（`photobooth`、`fountain`） |
+| `ride_pair` | 雙人共乘 | 摩天輪車廂、旋轉木馬、雲霄飛車座位、天鵝船、香蕉船、協力車 | 部分（只有設施本體，沒有座位點） |
+| `gift` | 送禮、交換戒指、求婚 | 珠寶店、展望台、海邊、餐廳窗邊 | 部分（`case`） |
+| `wedding` | 婚紗照、教堂誓言 | 拍照棚、教堂 | 部分（`backdrop`），教堂未查到 |
+
+**同居與日常：住處都要有**（女宿房間、男宿、民宿、飯店、公寓，以及 `lots` 蓋好的自宅）
+
+| kind | 做什麼 | 現況 |
+|---|---|---|
+| `entry` | 玄關：回家、換鞋、迎接 | 沒有 |
+| `cook` | 一起做飯：`stove`、水槽、冰箱前 | 部分（`stove` 2、`kitchen` 2，只有女宿與少數地方） |
+| `dining` | 家裡的餐桌，對坐吃飯 | 沒有 |
+| `tv_sofa` | 沙發看電視、打電動 | 部分（`lounge`、`game`） |
+| `desk_study` | 書桌讀書、用電腦 | 部分（`desk` 18） |
+| `vanity` | 梳妝、吹頭髮 | 部分（`mirror`） |
+| `bath` | 浴缸、一起泡澡 | 沒有（飯店 `pool`、溫泉另算） |
+| `shower` | 淋浴 | 部分（`girls_dorm_rooms` 的 `showers`、海灘與健身房） |
+| `toilet` | 馬桶 | 只有公廁地點，沒有座位點 |
+| `laundry` | 洗衣機前、曬衣處 | 沒有（地點名稱有「洗衣」6 處，沒有錨點） |
+| `balcony` | 陽台吹風、抽菸、講電話（`phone_call`） | 沒有 |
+| `closet` | 換衣服、挑衣服 | 沒有 |
+
+**校園戀愛**
+
+| kind | 做什麼 | 要放在 | 現況 |
+|---|---|---|---|
+| `shoe_locker` | 鞋櫃塞情書 | 校舍入口 | 沒有 |
+| `empty_class` | 放學後的空教室 | 校舍各層（`class*` 可加種類） | 部分 |
+| `rooftop_lunch` | 屋頂吃便當 | 校舍屋頂 | 沒有，第 8.2 節的 `rooftop` 未查到 |
+| `stair_landing` | 樓梯間說悄悄話 | 校舍樓梯轉角（`stair*` 是走路用，要另外放） | 沒有 |
+| `storage_room` | 體育倉庫：跳箱、軟墊 | 體育館 | 沒有 |
+| `infirmary_bed` | 保健室布簾床 | `infirmary` | 部分（`bed_exam`） |
+| `music_piano` | 音樂教室鋼琴 | 校舍 | 部分（`music`） |
+
+**生活服務**
+
+| kind | 要放在 | 現況 |
+|---|---|---|
+| `bus_stop`、`station` | 公車站、車站月台、剪票口 | `ticket_gate` 1，地點名稱查不到車站、公車 |
+| `bike_rack` | 校舍、宿舍、車站 | 沒有 |
+| `mailbox` | 宿舍、郵局前 | 沒有 |
+| `trash`、`water_fountain`、`notice_board` | 校舍、公園 | 沒有 |
+| `staff_room` | 打工換衣、休息 | 沒有 |
+| `ultrasound`、`crib` | 懷孕回診（`pregnancy.rs`）、新生兒 | 沒有 |
+
+**H 姿勢（`h_poses.json` 的類別，放在隱私足夠或刻意冒險的地方）**
+
+| kind | 類別 | 姿勢例 | 要放在 |
+|---|---|---|---|
+| `h_floor` | 0、1、9、1008、1014、1100、1102、1012 | 地板、站姿 | 所有私人房間，以及倉庫、保健室、海灘角落 |
+| `h_chair` | 2–5、1003、1011、1101、1200 | 椅子 | 私人房間、空教室、社團教室 |
+| `h_bench` | 12 | 長椅 | 公園深處、更衣室 |
+| `h_sofa` | 1201 | 沙發 | 私人房間、KTV 包廂、漫畫網咖包廂 |
+| `h_desk` | 6、7、1010、1305 | 書桌、桌角 | 教室、辦公室、私人房間 |
+| `h_box` | 1009 | 跳箱 | 體育倉庫 |
+| `h_pingpong` | 1301 | 桌球桌 | `gym_hall`、宿舍交誼廳 |
+| `h_wall` | 8、1302、1304 | 靠牆 | 私人房間、巷子、樓梯間 |
+| `h_bookshelf` | 1002 | 書架 | 圖書館深處、書店 |
+| `h_fence` | 1006 | 圍欄 | 屋頂、操場 |
+| `h_net` | 1015、1300 | 球網 | `gym_hall`、操場 |
+| `h_pool` | 1004 | 泳池邊 | `pool`、飯店泳池 |
+| `h_boat` | 1303 | 香蕉船 | 海灘 |
+| `h_toilet` | 2000、2003 | 廁所 | 公廁、宿舍、飯店 |
+| `h_shower` | 2001、2004 | 淋浴 | 宿舍、飯店、健身房、海灘 |
+| `h_group` | 3000、3001 | 三人 | 私人房間 |
+
+### 10.2 每個錨點的欄位
+
+| 欄位 | 說明 |
+|---|---|
+| `id` | 全地圖唯一，`<place>.<name>` |
+| `name`、`place`、`building`、`room`、`floor` | 既有名稱不改，活動和打工仍用 `name` 查 |
+| `pos`、`yaw` | 既有規則不變：`pos` 是地面上角色的腳底點，遊戲讓人走到這裡（`Agents[].Position`），坐姿動畫和椅子道具都從地面算起（`SpawnLifeProps` 座面約 41 cm）。**不能改成座面高度** |
+| `seat_pos` | 坐的錨點才有：實測的臀部落點（座面中央）。遊戲用它和 `pos` 的高度差調整坐姿，並在有真椅子時不生成方塊椅 |
+| `kinds` | 第 10.1 節的種類，可多個 |
+| `slots` | 多人時每人的 `pos`、`yaw`。`seat_pair` 兩筆，`seat_face` 隔桌兩筆 |
+| `privacy` | 這個點自己的隱私：0 公開、1 半隱蔽（角落、視線被擋）、2 私人（鎖門）。不寫就用地點的值 |
+| `outdoor` | 不寫就用地點的值 |
+| `tags` | `sunset`、`night_view`、`shade`、`sheltered`（下雨不會淋濕）、`water`、`spring`、`autumn`、`festival` |
+
+### 10.3 Rust 查詢
+
+**資料**：`build_street_city_places.lua` 除了 `places.json`，另外產生 `Content/IndependentResources/StreetSocialData/city_anchors.json`。`output/` 不隨遊戲發佈，所以要放在 Content。
+
+**程式**：新增 `Tools/ok-rules/src/anchors.rs`，掛進 `lib.rs` 的 `eval`。規則表載入時（含 `reload`）讀一次，建好索引：`id`、`place`、`kind`，以及以 10 公尺為一格的空間格。查詢時不讀檔、不掃全表。
+
+| 查詢 | 參數 | 回傳 |
+|---|---|---|
+| `anchor_find` | `kinds`（任一符合）；選填 `place`、`near`、`radius`、`floor`、`privacy_min`、`privacy_max`、`outdoor`、`tags`、`capacity`、`exclude`（已被占用的 `id`）、`limit` | 依距離排序的錨點，含 `slots` |
+| `anchors_of_place` | `place`、選填 `kinds` | 這個地點的錨點 |
+| `anchor_get` | `id` | 單一錨點 |
+| `anchor_for_act` | `act`（`acts.toml` 的 id 或 H 類別編號），其他同 `anchor_find` | 這個行為能用的錨點；對應表放 `rules/anchor_kinds.toml` |
+| `anchor_kinds` | 無 | 所有種類和每種的數量 |
+
+占用狀態由遊戲傳 `exclude`，ok-rules 仍然不保存狀態。
+
+**測試**（放在 `anchors.rs`）：
+
+- `activities.toml` 每個 `anchor`、`catalog.json` 每個打工 `stations` 都查得到。
+- 第 10.1 節每個種類至少一筆；`h_poses.json` 每個類別至少對應一個 `kind`。
+- `id` 不重複；`slots` 數量和人數相符；`floor` 和高度相符。
+- 全表 `anchor_find` 一次要在 0.1 ms 內。
+
+改到 `Tools/ok-rules` 要照 `AGENTS.md` 的共用程式碼規則：`cargo test -j 8 --release`、`cargo check -j 8 --release --no-default-features`，並確認遊戲和編輯器連結成功。C++ 接上查詢由 c-conquest 做。
+
+### 10.4 換衣服、換鞋、買衣試衣（使用者 11-04）
+
+現況（`places.json`）：
+
+| 地點 | 有的錨點 | 缺 |
+|---|---|---|
+| `clothing`（M1 2F 女裝、3F 男裝） | `counter` 9、`fitting` 9、`mirror` 9、`rack` 18 | 試衣間外等人的座位、鞋區 |
+| `clothing_s10`、`s30`、`s46`、`s94` | `fitting`、`mirror` 各 1 | `rack`、`counter`、等人座位 |
+| `lingerie`、`swimwear`、`yukata` | `counter`、`fitting`、`mirror`、`rack` | 等人座位 |
+| `department` | `mirror` 2、`shoes` 1 | 百貨各樓的 `rack`、`fitting`、`counter`、鞋區全套 |
+| 鞋店 | 沒有這個地點，只有百貨的 `shoes` 1 個點 | 整間店，或百貨鞋區做完整 |
+
+新增的錨點種類：
+
+| kind | 做什麼 | 要放在 | 現況 |
+|---|---|---|---|
+| `browse` | 在衣架或貨架前挑衣服，兩人並肩 | 所有 `rack`、鞋架前 | `rack` 26 可加種類，百貨沒有 |
+| `fitting` | 進試衣間換衣服。`slots` 第 1 個在簾內，第 2 個在簾外 | 所有服裝店、內衣、泳裝、浴衣、百貨 | 有 `fitting` 20，百貨沒有 |
+| `fitting_wait` | 他坐著等她換好，看得到試衣間簾子 | 每組試衣間外 | 沒有 |
+| `fitting_show` | 換好出來給他看：全身鏡前，留得下轉一圈的空間 | 試衣間出口的鏡子前 | `mirror` 可加種類 |
+| `try_shoes` | 坐下試穿鞋子：試鞋凳和腳邊的地鏡 | 鞋店、百貨鞋區 | `shoes` 1 |
+| `shoe_rack` | 挑鞋子 | 鞋店、百貨鞋區 | 沒有 |
+| `checkout` | 結帳、包裝 | 所有賣衣服和鞋子的店 | `counter`、`checkout` 可加種類，百貨和 `clothing_s*` 沒有 |
+| `changing` | 換裝，不是試穿：換運動服、泳裝、制服、打工制服 | 校舍和體育館更衣室、`pool`、`beach`、`gym`、溫泉脫衣間、打工的員工室 | 部分（`changing_hut`、`changing_women`、`changing_men`） |
+| `closet` | 在家選衣服、換衣服（第 10.1 節） | 所有住處 | 沒有 |
+| `shoe_change` | 脫鞋、換鞋：玄關、校舍鞋櫃換室內鞋、溫泉、民宿、榻榻米包廂 | 住處 `entry`、校舍 `shoe_locker`、`onsen`、`minshuku`、`izakaya` | 沒有 |
+
+`fitting_wait`、`try_shoes` 都是坐的錨點，要照第 10.2 節放 `pos` 和 `seat_pos`。
+
+`department` 要補的樓層：女裝、男裝、鞋區、配件，每區都要 `browse`、`fitting`（鞋區是 `try_shoes`）、`fitting_wait`、`checkout`。既有活動用的 `mirror2`、`mirror3`、`shoes` 名稱不改。

@@ -101,6 +101,7 @@ class OPENKOIKATSU_API AOKCrowdGameMode : public AGameModeBase {
  GENERATED_BODY()
 public:
  AOKCrowdGameMode();
+ virtual void StartPlay() override; // the city's map has no street scene of its own (-StreetCity)
 };
 
 UCLASS()

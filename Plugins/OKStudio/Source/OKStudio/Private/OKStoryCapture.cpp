@@ -5,11 +5,15 @@
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
 #include "Materials/Material.h"
+#include "Materials/MaterialExpressionCameraPositionWS.h"
 #include "Materials/MaterialExpressionComponentMask.h"
 #include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialExpressionScalarParameter.h"
 #include "Materials/MaterialExpressionTextureSampleParameter2D.h"
+#include "Materials/MaterialExpressionTextureSampleParameterCube.h"
 #include "Materials/MaterialExpressionUtils.h"
+#include "Materials/MaterialExpressionVectorParameter.h"
+#include "Materials/MaterialExpressionWorldPosition.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "RenderingThread.h"
 #include "RHIGPUReadback.h"
@@ -101,7 +105,129 @@ UMaterial* OKStoryBuildPortraitMaterial(UObject* Outer, FName Name, EObjectFlags
 	Mat->PostEditChange();
 	return Mat;
 }
+
+UMaterial* OKStoryBuildMirrorMaterial(UObject* Outer, FName Name, EObjectFlags Flags, UTexture* Picture, UTexture* Room)
+{
+	UMaterial* Mat = NewObject<UMaterial>(Outer, Name, Flags);
+	Mat->MaterialDomain = MD_Surface;
+	Mat->BlendMode = BLEND_Opaque;
+	Mat->SetShadingModel(MSM_Unlit);
+	auto Add = [&](UMaterialExpression* E) { E->Material = Mat; Mat->GetExpressionCollection().AddExpression(E); };
+	auto Vector = [&](const TCHAR* Name)
+	{
+		UMaterialExpressionVectorParameter* V = NewObject<UMaterialExpressionVectorParameter>(Mat);
+		V->ParameterName = Name;
+		Add(V);
+		return V;
+	};
+	auto Input = [](UMaterialExpressionCustom* Custom, const TCHAR* Name, UMaterialExpression* E, int32 Output = 0)
+	{
+		FCustomInput In;
+		In.InputName = Name;
+		In.Input.Expression = E;
+		In.Input.OutputIndex = Output;
+		Custom->Inputs.Add(In);
+	};
+	UMaterialExpressionWorldPosition* World = NewObject<UMaterialExpressionWorldPosition>(Mat);
+	Add(World);
+	UMaterialExpressionCameraPositionWS* Camera = NewObject<UMaterialExpressionCameraPositionWS>(Mat);
+	Add(Camera);
+	// The people: this point of the glass in the flat picture.
+	UMaterialExpressionCustom* Uv = NewObject<UMaterialExpressionCustom>(Mat);
+	Uv->OutputType = CMOT_Float2;
+	Uv->Code = TEXT("float3 R = W - O;\nreturn float2(dot(R, U), dot(R, V)) + 0.5;");
+	Uv->Inputs.Reset();
+	Input(Uv, TEXT("W"), World);
+	Input(Uv, TEXT("O"), Vector(TEXT("Origin")));
+	Input(Uv, TEXT("U"), Vector(TEXT("AxisU")));
+	Input(Uv, TEXT("V"), Vector(TEXT("AxisV")));
+	Add(Uv);
+	UMaterialExpressionTextureSampleParameter2D* Sample = NewObject<UMaterialExpressionTextureSampleParameter2D>(Mat);
+	Sample->ParameterName = TEXT("Picture");
+	Sample->SamplerType = MaterialExpressionUtils::GetSamplerTypeForTexture(Picture);
+	Sample->Texture = Picture;
+	Sample->Coordinates.Expression = Uv;
+	Add(Sample);
+	// The room: the eye's ray off the glass, followed to the wall of the room's box, then looked up from where the capture stood.
+	UMaterialExpressionCustom* Ray = NewObject<UMaterialExpressionCustom>(Mat);
+	Ray->OutputType = CMOT_Float3;
+	Ray->Code = TEXT("float3 P = W - At;\nfloat3 D = normalize(W - E);\nD -= 2 * dot(D, Az) * Az;\n")
+		TEXT("float3 p = float3(dot(P, Ax), dot(P, Ay), dot(P, Az));\nfloat3 d = float3(dot(D, Ax), dot(D, Ay), dot(D, Az));\n")
+		TEXT("d += (abs(d) < 1e-5) * 1e-5;\nfloat3 t = max((Lo - p) / d, (Hi - p) / d);\nfloat3 q = p + d * min(t.x, min(t.y, t.z));\n")
+		TEXT("return Ax * q.x + Ay * q.y + Az * q.z;");
+	Ray->Inputs.Reset();
+	Input(Ray, TEXT("W"), World);
+	Input(Ray, TEXT("E"), Camera);
+	Input(Ray, TEXT("At"), Vector(TEXT("RoomAt")));
+	Input(Ray, TEXT("Ax"), Vector(TEXT("RoomRight")));
+	Input(Ray, TEXT("Ay"), Vector(TEXT("RoomUp")));
+	Input(Ray, TEXT("Az"), Vector(TEXT("RoomNormal")));
+	Input(Ray, TEXT("Lo"), Vector(TEXT("RoomMin")));
+	Input(Ray, TEXT("Hi"), Vector(TEXT("RoomMax")));
+	Add(Ray);
+	UMaterialExpressionTextureSampleParameterCube* RoomSample = NewObject<UMaterialExpressionTextureSampleParameterCube>(Mat);
+	RoomSample->ParameterName = TEXT("Room");
+	RoomSample->SamplerType = MaterialExpressionUtils::GetSamplerTypeForTexture(Room);
+	RoomSample->Texture = Room;
+	RoomSample->Coordinates.Expression = Ray;
+	Add(RoomSample);
+	UMaterialExpressionScalarParameter* People = NewObject<UMaterialExpressionScalarParameter>(Mat);
+	People->ParameterName = TEXT("People");
+	Add(People);
+	UMaterialExpressionCustom* Custom = NewObject<UMaterialExpressionCustom>(Mat);
+	Custom->OutputType = CMOT_Float3;
+	// The picture's colour is black where nothing is, so an edge's bilinear blend is already premultiplied; its alpha is the
+	// inverse opacity of what it drew. Past its edge there is nothing.
+	Custom->Code = TEXT("float In = (all(T > 0) && all(T < 1)) ? N : 0;\nreturn C.rgb * In + B.rgb * (1 - saturate(1 - C.a) * In);");
+	Custom->Inputs.Reset();
+	Input(Custom, TEXT("C"), Sample, 5); // a texture sample's output 5 is its RGBA
+	Input(Custom, TEXT("B"), RoomSample, 5);
+	Input(Custom, TEXT("T"), Uv);
+	Input(Custom, TEXT("N"), People);
+	Add(Custom);
+	if (UMaterialEditorOnlyData* Ed = Mat->GetEditorOnlyData()) Ed->EmissiveColor.Expression = Custom;
+	Mat->UpdateCachedExpressionData();
+	Mat->PreEditChange(nullptr);
+	Mat->PostEditChange();
+	return Mat;
+}
 #endif
+
+UMaterialInterface* OKStoryMirrorMaterial(UTexture* Picture, UTexture* Room)
+{
+	static TStrongObjectPtr<UMaterialInterface> Cached;
+	if (Cached) return Cached.Get();
+	UMaterialInterface* Mat = LoadObject<UMaterialInterface>(nullptr, OK_STORY_MIRROR_MATERIAL, nullptr, LOAD_NoWarn | LOAD_Quiet);
+#if WITH_EDITOR
+	if (!Mat) Mat = OKStoryBuildMirrorMaterial(GetTransientPackage(), NAME_None, RF_Transient, Picture, Room);
+#endif
+	if (!Mat)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Mirror material %s missing: mirrors stay empty (run the OKStorySavePortrait commandlet)"), OK_STORY_MIRROR_MATERIAL);
+		return nullptr;
+	}
+	Cached.Reset(Mat);
+	return Mat;
+}
+
+void OKStoryCaptureCharactersOnly(USceneCaptureComponent2D* C)
+{
+	C->bCaptureEveryFrame = false;
+	C->bCaptureOnMovement = false;
+	C->bAlwaysPersistRenderingState = true;
+	C->ProjectionType = ECameraProjectionMode::Orthographic;
+	C->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
+	// One character against nothing: the passes that gather the rest of the scene (global illumination,
+	// reflections, ambient occlusion, volumetrics) cost a full view each and add nothing to a toon portrait.
+	FEngineShowFlags& Show = C->ShowFlags;
+	Show.SetAtmosphere(false); Show.SetFog(false); Show.SetVolumetricFog(false); Show.SetCloud(false);
+	Show.SetTemporalAA(false); Show.SetMotionBlur(false);
+	Show.SetGlobalIllumination(false); Show.SetLumenGlobalIllumination(false); Show.SetLumenReflections(false);
+	Show.SetScreenSpaceReflections(false); Show.SetReflectionEnvironment(false);
+	Show.SetAmbientOcclusion(false); Show.SetDistanceFieldAO(false); Show.SetContactShadows(false);
+	Show.SetCapsuleShadows(false); Show.SetLightShafts(false); Show.SetParticles(false); Show.SetDecals(false);
+	C->bUseRayTracingIfEnabled = false;
+}
 
 // The saved material (OKStorySavePortrait commandlet); in the editor without it, one built in memory.
 static UMaterialInterface* OKStoryPortraitMaterial(UTexture* Color, UTexture* Depth)
@@ -156,25 +282,12 @@ void FOKStoryPortraitCapture::Update(UObject* Outer, UWorld* World, const TShare
 		{
 			C.Reset(NewObject<USceneCaptureComponent2D>(Outer));
 			C->RegisterComponentWithWorld(World);
-			C->bCaptureEveryFrame = false;
-			C->bCaptureOnMovement = false;
-			C->bAlwaysPersistRenderingState = true;
-			C->ProjectionType = ECameraProjectionMode::Orthographic;
+			OKStoryCaptureCharactersOnly(C.Get());
 			C->CaptureSource = Source;
-			C->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
-			// One character against nothing: the passes that gather the rest of the scene (global illumination,
-			// reflections, ambient occlusion, volumetrics) cost a full view each and add nothing to a toon portrait.
-			FEngineShowFlags& Show = C->ShowFlags;
-			Show.SetAtmosphere(false); Show.SetFog(false); Show.SetVolumetricFog(false); Show.SetCloud(false);
-			Show.SetTemporalAA(false); Show.SetMotionBlur(false);
-			Show.SetGlobalIllumination(false); Show.SetLumenGlobalIllumination(false); Show.SetLumenReflections(false);
-			Show.SetScreenSpaceReflections(false); Show.SetReflectionEnvironment(false);
-			Show.SetAmbientOcclusion(false); Show.SetDistanceFieldAO(false); Show.SetContactShadows(false);
-			Show.SetCapsuleShadows(false); Show.SetLightShafts(false); Show.SetParticles(false); Show.SetDecals(false);
-			C->bUseRayTracingIfEnabled = false;
 			if (Source == SCS_SceneColorHDR)
 			{
 				// The coverage capture only reads the scene alpha (what was drawn): no light, shadow or post at all.
+				FEngineShowFlags& Show = C->ShowFlags;
 				Show.SetLighting(false); Show.SetDynamicShadows(false); Show.SetSkyLighting(false);
 				Show.SetPostProcessing(false); Show.SetBloom(false);
 				// Unlit anyway: drawn as passes of the main renderer, not a second scene renderer every other frame.

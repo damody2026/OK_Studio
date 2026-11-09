@@ -17,6 +17,8 @@ struct FOKStreetCatalogItem {
  TMap<FString, float> Effects;
  bool Giftable = false, Consumable = true;
  int32 Floor = 0;            // a building's floor it is sold on (1-based); 0 = anywhere in the place
+ // Clothes (category "clothes", OKStreetSocialWardrobe.inl): card part, list id, part, list id, ...; which of her outfits (-1 the one she goes out in); main colour.
+ TArray<int32> ClothesParts; int32 ClothesOutfit = -1; FString ClothesColor;
  // A drink (served in a cup): sipped even when full, while food stops at OKStreetFullSatiety.
  bool IsDrink() const { return Prop == TEXT("cup"); }
  // Used where it is bought (a fortune slip, fish food, an onsen ticket): nothing kept, so buying it again is another go.
@@ -117,6 +119,10 @@ inline FOKStreetCatalog OKStreetLoadCatalog(const FString& Path) {
   O->TryGetStringField(TEXT("category"), I.Category); O->TryGetStringField(TEXT("prop"), I.Prop);
   O->TryGetBoolField(TEXT("giftable"), I.Giftable); O->TryGetBoolField(TEXT("consumable"), I.Consumable);
   { double Floor = 0; if (O->TryGetNumberField(TEXT("floor"), Floor)) I.Floor = int32(Floor); }
+  { const TSharedPtr<FJsonObject>* Wear = nullptr; if (O->TryGetObjectField(TEXT("clothes"), Wear)) {
+    const TArray<TSharedPtr<FJsonValue>>* Parts = nullptr; if ((*Wear)->TryGetArrayField(TEXT("parts"), Parts)) for (const auto& P : *Parts) for (const auto& V : P->AsArray()) I.ClothesParts.Add(int32(V->AsNumber()));
+    double Outfit = -1; if ((*Wear)->TryGetNumberField(TEXT("outfit"), Outfit)) I.ClothesOutfit = int32(Outfit);
+    (*Wear)->TryGetStringField(TEXT("color"), I.ClothesColor); } }
   const TSharedPtr<FJsonObject>* Price = nullptr; if (O->TryGetObjectField(TEXT("price"), Price)) for (const auto& P : (*Price)->Values) I.Price.Add(FString(*P.Key), int32(P.Value->AsNumber()));
   const TSharedPtr<FJsonObject>* Effects = nullptr; if (O->TryGetObjectField(TEXT("effects"), Effects)) for (const auto& E : (*Effects)->Values) I.Effects.Add(FString(*E.Key), float(E.Value->AsNumber()));
   const TArray<TSharedPtr<FJsonValue>>* List = nullptr;

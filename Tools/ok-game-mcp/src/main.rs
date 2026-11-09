@@ -1,7 +1,9 @@
-//! ok-game-mcp: plays StreetSocial like a player through the game's development control channel (MCP over stdio).
-//! The game must run with -StreetSocialControl (game_launch does that). Everything goes through the paths a player
+//! ok-game-mcp: drives the game through its control channels (MCP over stdio), open in every mode without any switch.
+//! game_* play StreetSocial like a player, studio_* OK Studio, ui_* whatever is on screen in any mode, reader_call the card
+//! reader, pair_call the 1-on-1 scene; game_instances lists what runs. Everything goes through the paths a player
 //! uses: walking, keys, the UI's buttons, saying things to her, waiting with the clock running. Profiling: game_exec runs
 //! engine console commands, game_trace_start/stop record an Unreal Insights trace. Docs/STREET_SOCIAL_GAME_MCP.md.
+mod control;
 mod game;
 mod studio;
 
@@ -16,6 +18,7 @@ use std::time::{Duration, Instant};
 fn tools() -> Value {
     let mut all = street_tools();
     all.as_array_mut().expect("tool list").extend(studio::tools());
+    all.as_array_mut().expect("tool list").extend(control::tools());
     all
 }
 
@@ -42,6 +45,10 @@ fn street_tools() -> Value {
         t("game_wait", "Let the clock run: for seconds, until a game time (HH:MM), or until the walk/outing with her ends; then pause. Returns the state summary.",
           json!({"seconds": {"type": "number"}, "until": {"type": "string"}, "outing": {"type": "boolean"}, "timeout_s": {"type": "number"}}), &[]),
         t("game_clock", "Pause or run the game clock.", json!({"paused": {"type": "boolean"}}), &["paused"]),
+        t("game_ovulate", "Her pregnancy state (girl: slot 1..10). on true: she ovulates, any finish inside takes whatever the day, until she conceives; on false: back on her cycle; omitted: only reads.",
+          json!({"girl": {"type": "integer"}, "on": {"type": "boolean"}}), &["girl"]),
+        t("game_warp", "Put him at a spot at once (cm; for a test at a place no walk reaches soon). Nothing checks the spot: a point behind a wall leaves him behind it.",
+          json!({"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}}), &["x", "y", "z"]),
         t("game_look", "Point the camera (yaw degrees, pitch -50..15).", json!({"yaw": {"type": "number"}, "pitch": {"type": "number"}}), &["yaw"]),
         t("game_phone", "Type into the open phone thread and send.", json!({"text": {"type": "string"}}), &["text"]),
         t("game_screenshot", "A screenshot of the game window (with UI). scale 2..4: a high-resolution shot without UI.", json!({"scale": {"type": "number"}}), &[]),
@@ -142,6 +149,9 @@ fn end_talk(game: &Game) -> Result<()> {
 fn run(game: &Game, name: &str, a: &Value) -> Result<Value> {
     if name.starts_with("studio_") {
         return studio::run(&studio::Studio::locate(&game.root), name, a);
+    }
+    if matches!(name, "game_instances" | "game_select" | "reader_call" | "pair_call") || name.starts_with("ui_") {
+        return control::run(&game.root, name, a);
     }
     Ok(match name {
         "game_launch" => {
@@ -287,6 +297,11 @@ fn run(game: &Game, name: &str, a: &Value) -> Result<Value> {
             text(summary(&game.call("/state", None)?, 5))
         }
         "game_clock" => json_text(game.call("/clock", Some(&json!({"paused": a["paused"] != false})))?),
+        "game_ovulate" => {
+            let mut body = json!({"girl": a["girl"]});
+            if let Some(on) = a["on"].as_bool() { body["ovulate"] = json!(on); }
+            json_text(game.call("/pregnancy", Some(&body))?)
+        }
         "game_look" => {
             let mut body = json!({"yaw": arg_f(a, "yaw", 0.0)});
             if let Some(p) = a["pitch"].as_f64() {
@@ -318,6 +333,7 @@ fn run(game: &Game, name: &str, a: &Value) -> Result<Value> {
             let r = game.log(a["lines"].as_u64().unwrap_or(60) as usize, a["contains"].as_str())?;
             text(format!("{}\n{}", s(&r["file"]), s(&r["lines"])))
         }
+        "game_warp" => json_text(game.call("/warp", Some(&json!({"x": a["x"], "y": a["y"], "z": a["z"]})))?),
         "game_exec" => json_text(game.call("/exec", Some(&json!({"command": a["command"]})))?),
         "game_trace_start" => {
             let dir = game.root.join("Saved/Profiling");
@@ -392,7 +408,7 @@ impl ServerHandler for App {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("ok-game", "0.1.0"))
-            .with_instructions("StreetSocial through its control channel. game_launch if game_state says the channel is not up. Keys act only while the clock runs (game_key does it). Talk: walk to her (game_goto girl), game_key E, then game_talk. Profiling: game_exec, game_trace_start/stop. OK Studio (SceneEditor): the studio_* tools on its own port (OK_STUDIO_PORT, default 47890); studio_launch when studio_state says it is not running; studio_state lists the objects and their ids.")
+            .with_instructions("Every mode of the game keeps its control channels open: game_instances lists the running games; ui_* act on any mode, reader_call on the card reader, pair_call on the 1-on-1 scene, studio_* on OK Studio, game_* on the street. StreetSocial through its control channel. game_launch if game_state says the channel is not up. Keys act only while the clock runs (game_key does it). Talk: walk to her (game_goto girl), game_key E, then game_talk. Profiling: game_exec, game_trace_start/stop. OK Studio (SceneEditor): the studio_* tools on its own port (OK_STUDIO_PORT, default 47890); studio_launch when studio_state says it is not running; studio_state lists the objects and their ids.")
     }
 }
 

@@ -11,7 +11,7 @@ namespace OKStreetClinic {
 inline const TCHAR* KindOf(const FString& ItemId){
  return ItemId==TEXT("gyn_hymen_repair")?TEXT("hymen_restore"):ItemId==TEXT("beauty_face_swap")?TEXT("face_swap"):ItemId==TEXT("beauty_face_restore")?TEXT("face_restore"):ItemId==TEXT("salon_dye")?TEXT("hair_dye"):nullptr;
 }
-inline FString Dir(){return FPaths::ProjectSavedDir()/TEXT("StreetSocial/Appearance");}
+inline FString Dir(){return FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir())/TEXT("StreetSocial/Appearance");} // full: the crowd resolves relative paths against the project
 }
 
 TSharedPtr<FJsonObject> AOKStreetSocialScene::ClinicRequest(int32 Her,const FString& ItemId,const FString& From,const FString& Color){
@@ -31,6 +31,9 @@ void AOKStreetSocialScene::OfferClinic(int32 Her,const FString& ItemId,const FSt
  // Asked first with nothing changed: what cannot be done (she is still a virgin, that is her face already) is said now.
  const TSharedPtr<FJsonObject> Try=ClinicRequest(Her,ItemId,From,Color);if(!Try)return;
  if(!Try->GetBoolField(TEXT("ok"))){S.FreeTalkNotice=Try->GetStringField(TEXT("fact"));RefreshUI();return;}
+ // Hair that cannot take a dye (hair_dye.rs): nothing is paid, and she is the one who says so.
+ if(ItemId==TEXT("salon_dye")&&!HairDyeable(Her)){UE_LOG(LogTemp,Display,TEXT("Street clinic: actor %d's hair cannot be dyed"),Her);
+  S.FreeTalkNotice=OKT(TEXT("ui.clinic.hair_cannot_dye_notice"));S.DeferredNotes.Add(OKMsg(TEXT("ui.scene.game_fact_note"),{{TEXT("fact"),OKT(TEXT("ui.clinic.hair_cannot_dye_fact"))}}));RefreshUI();return;}
  FString What=Item->Name;
  if(!From.IsEmpty())for(const auto& C:S.Manifest.Characters)if(OKStreetStableId(C)==From)What=OKMsg(TEXT("ui.clinic.face_of"),{{TEXT("name"),C.Name}});
  if(!Color.IsEmpty())if(const TSharedPtr<FJsonObject> Chart=OKRulesEval(S,OKRulesRequest(TEXT("hair_colors")))){const TArray<TSharedPtr<FJsonValue>>* Colors=nullptr;
@@ -62,29 +65,32 @@ void AOKStreetSocialScene::FinishClinic(int32 Her,const FString& ItemId,const FS
  // Her face and hair: a new copy of her card for the one-on-one now; the street shows it from the next start.
  if(ItemId!=TEXT("gyn_hymen_repair")){FString Error;const FString Card=RestyledCard(Her,Error);
   if(Card.IsEmpty()){UE_LOG(LogTemp,Warning,TEXT("Street clinic: actor %d card not restyled: %s"),Her,*Error);}
-  else{if(S.HighCards.IsValidIndex(Her))S.HighCards[Her]=Card;Notice+=OKT(TEXT("ui.clinic.street_next_start"));}}
+  else{if(S.HighCards.IsValidIndex(Her))S.HighCards[Her]=Card;S.LookReloadPending=true;S.LookGirl=Her;Notice+=OKT(TEXT("ui.clinic.street_next_start"));}}
  S.FreeTalkNotice=Notice;
  RefreshUI();
 }
 
-// Her card as she looks now (ext.appearance): her own card, or a copy with someone's face shape and/or her dyed hair,
-// made once for each look and kept in Saved/StreetSocial/Appearance. Empty (with Error) when it could not be made.
-FString AOKStreetSocialScene::RestyledCard(int32 Her,FString& Error){
+// Her card as she looks now (ext.appearance, ext.wardrobe): her own card, or a copy with someone's face shape, her dyed
+// hair and/or the clothes she has on (with Trying, that piece too), made once for each look and kept in
+// Saved/StreetSocial/Appearance. Empty (with Error) when it could not be made.
+FString AOKStreetSocialScene::RestyledCard(int32 Her,FString& Error,const FOKStreetCatalogItem* Trying){
  auto& S=*State;if(!S.BaseCards.IsValidIndex(Her)||!S.Manifest.Characters.IsValidIndex(Her)){Error=TEXT("no card");return FString();}
  const FString Own=S.BaseCards[Her],Girl=OKStreetStableId(S.Manifest.Characters[Her]);
  auto Request=OKRulesRequest(TEXT("appearance_of"));OKRulesPutExt(S,Request);Request->SetStringField(TEXT("girl"),Girl);
  const TSharedPtr<FJsonObject> Look=OKRulesEval(S,Request);if(!Look){Error=TEXT("appearance_of failed");return FString();}
  const FString FaceFrom=Look->GetStringField(TEXT("face_from")),Hair=Look->GetStringField(TEXT("hair_rgb"));
- if(FaceFrom.IsEmpty()&&Hair.IsEmpty())return Own;
+ TArray<TSharedPtr<FJsonValue>> Dress;if(const TSharedPtr<FJsonObject> Has=WardrobeOf(Her,Trying)){const TArray<TSharedPtr<FJsonValue>>* List=nullptr;if(Has->TryGetArrayField(TEXT("dress"),List))Dress=*List;}
+ if(FaceFrom.IsEmpty()&&Hair.IsEmpty()&&Dress.IsEmpty())return Own;
+ const int32 Outfit=S.HighOutfits.IsValidIndex(Her)?S.HighOutfits[Her]:0;FString DressKey;{auto W=TJsonWriterFactory<>::Create(&DressKey);FJsonSerializer::Serialize(Dress,W);}
  FString Donor;
  if(!FaceFrom.IsEmpty())for(int32 I=0;I<S.Manifest.Characters.Num();++I)if(OKStreetStableId(S.Manifest.Characters[I])==FaceFrom&&S.BaseCards.IsValidIndex(I))Donor=S.BaseCards[I];
  if(!FaceFrom.IsEmpty()&&Donor.IsEmpty()){Error=TEXT("whose face she has is not in this street: ")+FaceFrom;return FString();}
  // One file for each look of hers: the same look again reuses it (and the crowd's disk cache keyed by the card).
- const FString Key=FMD5::HashAnsiString(*FString::Printf(TEXT("%s|%s|%s"),*Own,*Donor,*Hair)).Left(12);
+ const FString Key=FMD5::HashAnsiString(*FString::Printf(TEXT("%s|%s|%s|%d|%s"),*Own,*Donor,*Hair,Outfit,*DressKey)).Left(12);
  const FString Out=OKStreetClinic::Dir()/FString::Printf(TEXT("%s-%s.png"),*Girl.Right(16),*Key);
  if(IFileManager::Get().FileExists(*Out))return Out;
  auto Json=MakeShared<FJsonObject>();Json->SetStringField(TEXT("action"),TEXT("restyle"));Json->SetStringField(TEXT("card"),Own);Json->SetStringField(TEXT("output"),Out);
- Json->SetStringField(TEXT("donor"),Donor);Json->SetStringField(TEXT("hair_rgb"),Hair);
+ Json->SetStringField(TEXT("donor"),Donor);Json->SetStringField(TEXT("hair_rgb"),Hair);Json->SetArrayField(TEXT("dress"),Dress);Json->SetNumberField(TEXT("outfit"),Outfit);
  FString Body;{auto W=TJsonWriterFactory<>::Create(&Body);FJsonSerializer::Serialize(Json,W);}
  const FString RequestPath=OKStreetClinic::Dir()/TEXT("restyle.request.json"),Report=OKStreetClinic::Dir()/TEXT("restyle.report.json");
  IFileManager::Get().MakeDirectory(*OKStreetClinic::Dir(),true);
@@ -92,6 +98,18 @@ FString AOKStreetSocialScene::RestyledCard(int32 Her,FString& Error){
  if(!FOkSession::AppearanceRequest(FString(),RequestPath,Report,Error)||!IFileManager::Get().FileExists(*Out))return FString();
  UE_LOG(LogTemp,Display,TEXT("Street clinic: %s restyled to %s (face of %s, hair %s)"),*Girl,*Out,*FaceFrom,*Hair);
  return Out;
+}
+
+// Whether the salon can dye her hair (ok-extract appearance.rs "hair_dyeable"). Not known (no answer): it can, as it always did.
+bool AOKStreetSocialScene::HairDyeable(int32 Her){
+ auto& S=*State;if(!S.BaseCards.IsValidIndex(Her))return true;
+ auto Json=MakeShared<FJsonObject>();Json->SetStringField(TEXT("action"),TEXT("hair_dyeable"));Json->SetStringField(TEXT("card"),S.BaseCards[Her]);
+ FString Body,Error,Text;{auto W=TJsonWriterFactory<>::Create(&Body);FJsonSerializer::Serialize(Json,W);}
+ const FString RequestPath=OKStreetClinic::Dir()/TEXT("dyeable.request.json"),Report=OKStreetClinic::Dir()/TEXT("dyeable.report.json");
+ IFileManager::Get().MakeDirectory(*OKStreetClinic::Dir(),true);
+ if(!FFileHelper::SaveStringToFile(Body,*RequestPath,FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM)||!FOkSession::AppearanceRequest(FString(),RequestPath,Report,Error)||!FFileHelper::LoadFileToString(Text,*Report)){UE_LOG(LogTemp,Warning,TEXT("Street clinic: no answer on dyeing actor %d: %s"),Her,*Error);return true;}
+ TSharedPtr<FJsonObject> Answer;bool Dyeable=true;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text),Answer)&&Answer)Answer->TryGetBoolField(TEXT("dyeable"),Dyeable);
+ return Dyeable;
 }
 
 // At the start, before the crowd loads: each girl with a changed face or hair is loaded from her restyled card (the

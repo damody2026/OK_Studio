@@ -4,6 +4,21 @@
 
 | 日期 | 錯誤 | 原因 | 規則 |
 |---|---|---|---|
+| 2026-11-08 | 從 PowerShell 跑 `build_street_city_places.lua`，地點從 112 掉到 58，門口變 (0,0,0) | 腳本用 `io.popen('ls ...')` 找戀人景點安裝檔，cmd 沒有 `ls`，讀不到就整批略過 | 這支和輪次流程一律從 Git bash 跑；跑完先比對地點數，少了就停 |
+| 2026-11-08 | PowerShell `Set-Content -Encoding utf8` 改腳本，加了 BOM，bash 第一行變成指令，腳本卡在等鎖 | Windows PowerShell 5.1 的 utf8 帶 BOM | 改 bash 腳本用 `[IO.File]::WriteAllText` 搭 `UTF8Encoding($false)`，或直接用 Write 工具 |
+| 2026-11-08 | 切掉屋頂假連線後，百貨走到 MA 要繞直線 5 倍 | 路網只在道路圖的「路／草地」格之間連線，校園廣場、中庭被標成建築，那裡沒有路點；之前靠屋頂連線抄近路 | 重烘加「加密」：空的 6 m 格有地面就加點，9 m 內相鄰點雙向實走後連線；2 倍以上繞路的地點對從 2127 降到 647 |
+| 2026-11-08 | 健身房、體育倉庫被當成地面，遊戲走平地路線繞到逾時 | 這些房間沒有樓層號，匯出時預設 1 | 匯出時 14.5 m 以上沒樓層號的房間，依所在建築的電梯停靠高度編號 |
+| 2026-11-08 | 重烘路網時把山丘上 40 個真路點壓到山體下面，切出 54 點小區，又回報成「地圖原本沒接上」 | 用「高於 1300 就是屋頂」判斷，沒看點下面是什麼物件 | 改高度前先查點下面的 actor；只有 `LoverSpot_R5_hill` 是地面，摩天輪方塊、樹冠、舞台才貼回地面 |
+| 2026-11-08 | 背景驗證 04:24 就停了，04:32 還回報「在等它跑完」 | 腳本把輸出接到 `head`，管線關閉後腳本中途結束，又沒回頭看 log | 背景腳本輸出寫檔不接 `head`；說「在等」前先確認程序還活著 |
+| 2026-11-08 | 電梯口從中線打射線，82 處都沒打到東西，差點判定門不存在 | 射線剛好穿過雙開門中間 2 cm 的門縫 | 查擋路用多方向環狀掃描加身體大小的 sweep，單一射線不算證據 |
+| 2026-11-08 | 只挖外觀模型會以為門開了，人還是過不去 | 樓層模型的碰撞來自 `ComplexCollisionMesh` 指向的舊模型，外觀和碰撞是兩份 | 改樓層幾何時兩份都改，存檔後用新開的 worker 重掃驗證 |
+| 2026-11-08 | 告訴 c-conquest「campus_ib 走得過」時，那趟其實逾時沒走到 | 拿「沒有 blocked log」當成走到了 | 回報前核對抵達訊息和座標；寫錯立刻更正 |
+| 2026-11-07 | 說商店白到過曝是 `ExtendDefaultLuminanceRange` 不同造成，遊戲內切換後畫面完全沒變 | 看到設定差異就下結論，沒先在遊戲裡切換驗證；真正原因是街區鏡頭固定曝光 1.0，城市燈是給自動曝光的真實流明 | 畫面問題先在執行中切換該設定看有沒有變，再說原因；城市燈只在 WP 副本乘 0.125，來源圖不動 |
+| 2026-11-07 | 測試時的 `game_key A`、`game_goto conveni` 打到 c-conquest 的遊戲 | 沒設 `OK_CONTROL_PORT`，ok-game-mcp 挑了別人的實例 | 每個 ok-game-mcp 指令都先設自己的控制埠；腳本開頭 export，不靠預設 |
+| 2026-11-07 | 72～108 個梳妝台錨點跑到別的樓層 | `areaof` 找不到地板時的備援只比平面範圍，沒比高度 | 依座標找房間一律連高度一起比 |
+| 2026-11-07 | 離線擺放檢查第一版回報 0 個問題，其實一件都沒讀到 | `actors.json` 的資料在 `.actors` 底下，讀成空清單；R6 又被排除，藏住冰箱和重複收銀台 | 檢查工具要斷言讀到的件數（>1000），0 件算失敗；排除清單要逐項說明原因 |
+| 2026-11-07 | 把 conveni 的量測數字當成 conveni，實際人停在 `campus_ib` | `game_goto` 回「路被擋住」沒檢查就繼續量 | 量測前先核對 `game_state` 的 place 和座標，到不了就不記 |
+| 2026-11-07 | 拿編輯器模式開場頭幾分鐘的卡頓當地圖問題 | 207 次卡頓有 178 次在開場前四分鐘，多是 shader map、貼圖鎖定、StaticMesh 同步建置，這些是編輯器才有的成本 | 編輯器模式量走路要等開場穩定，同一路線走第二趟才算；按堆疊分類後再判斷是不是地圖造成的 |
 | 2026-10-23 | 週六約的「下週三晚上七點」被排在週二 | 判斷器要模型自己從今天數天數，數錯一天 | day 可直接填星期（「週三」「下週三」），由 promise.rs 換算 |
 | 2026-10-23 | 她問「要不要去互動區玩」的同一句就下單，他沒答應卻被扣 ¥21 | 女主 prompt 沒禁止提議當句就 order | 她這句才提議、他還沒答應的東西不先下單 |
 | 2026-10-23 | 我的重開腳本關掉所有從 Saved/StreetSocial/Build/ 執行的遊戲，把另一個 session 的沙盒一起關了；清舊 stage 時也可能刪掉別人正在用的 | 用路徑判斷「我的遊戲」 | 只關佔用自己控制埠（47870）的那個；清舊 stage 時跳過還有遊戲在跑的 |
@@ -1956,4 +1971,184 @@
 - 2026-11-03 e-galgame 關了不確定是自己的遊戲：EGal7 實測前發現 48080 被 22:56 開的 EGal6（PID 90524，EMain 沙盒）佔著，以為是自己壓縮前留下的，沒有查是誰開的就 game_stop。那是 E 主線 session（local_aa5c7d4c，也叫 e-galgame）的遊戲：兩個 session 共用了 slot 名稱 e-galgame 與沙盒 EMain，才會互相關掉。之後這個 session 用 slot `e-fork-2`、`-Sandbox EFork2 -PortBase 48110`（控制埠 48120），只關這一輪自己 game_launch 回傳的 PID；連接埠被佔就換埠，不關別人的。
 - 2026-11-04 協調者整合：e-fork 的 a6d2681da 只在含別人未提交改動的工作樹上建置過，提交進去的 OKCrowdRuntimeScene.cpp 把 OKSetCrowdRuntimeEyeFollow 插在 OKSetCrowdRuntimeOutlinesShown 中間、OKHScene.cpp 把 TickEyesCamera 插在 TickHands 中間（正確位置留在 E 工作樹沒提交），Int1104C／E 與 F 都編不過（C2601）。協調者在 441f3447d 搬回，但自己多留一個 `}`，第二次又全部失敗，e7bc32d05 才修好。規則：提交 C++ 前在只含已提交內容的乾淨樹（臨時 worktree 或 stash 後）建置；協調者的整合修正先單獨建置遊戲目標再提交。
 - 2026-11-04 協調者整合：F 合併 feat/mmd-vnge-support 的 53aafe10f 把 4 個 base_v1 okmodel（501c…db66、561c…d544、992c…684b、992c…6e55）一起刪掉，提交訊息沒寫。原因多半是本機執行工具時 shared-ignore 改寫了 shared_mods／.gitignore（F 工作樹仍留著這兩個改動），合併時 `git add` 把本機不存在的模型當成刪除。街區 jeanne、keqing、hayase_yuuka、alice、encore 與 Male01 報 absent-model，11 人只裝起 5 人；167fee388 從 429650157 還原。規則：提交前看 `git diff --cached --stat`，base_v1 有刪除就停下確認；不要提交工具改寫的 shared_mods.txt／models/.gitignore。
+- 2026-11-04 協調者整合：c-street-city 回報「背景鏈已停、slot 已釋放」，實際 chain21（run_street_city_motel_physics.lua）還在跑，沒拿 slot 開著 StreetSocialCity 實走；協調者以 taskkill /T 停掉該 bash 樹。規則：回報停止前用 Get-CimInstance 確認沒有自己的 chain bash／lua／Unreal 程序。- 2026-11-04 c-street-city 遊樂園放在馬路上：戶外搜尋只判斷「有地面、高度差 1.5 m 內、沒有擋」，馬路也算平地，chain21 把摩天輪、雲霄飛車擺在車道上，祭典攤位壓到路緣；實走與 106 張重拍都能跑完，要看畫面才發現。修正：`ground_ok` 用命中面的材質排除路面（空材質與 `Tripo-ground-campus`），遊樂園和教堂限定在草地材質上。
+- 2026-11-04 c-street-city 座位實測抓到下一層樓板：`col` 往下多取到樓下天花板的上表面，把最低的表面當地板，床緣高度算成 20 cm、部分椅子座面等於地板。修正：地板取最接近物件底部的表面，腳底點沿用同一個地板值。
+- 2026-11-04 c-street-city 差點把引擎內建 glTF 材質當成可用於實例化網格：`M_Default` 沒有 instanced 使用旗標，換成 HISM 打包後會掉回預設材質。修正：world-tripo 自建 `M_WorldTripoPBR`，貼圖轉到它的實例上。
+- 2026-11-04 c-conquest 坐的錨點規格寫錯：第 10.2 節把 `pos` 寫成臀部落點，但 `Agents[].Position` 是地面腳底點，坐姿動畫和 `SpawnLifeProps` 的椅子都從地面算。修正：`pos` 維持地面腳底點，臀部落點放新欄位 `seat_pos`（37bb9a023），在 c-street-city 寫入前改正，資料沒有寫錯。
+- 2026-11-04 c-conquest 換裝只測一張卡：第一版 `dress` 只在 alice 上開卡，上面 39 件有 15 件開不了卡，原因是拿掉 mod 部件後 `okLt` 的 guids／strip-all 問題清單變短，以及卡片沒問過的原作 bundle 沒有 override 答案。修正：`tree_answers::lookup_within`、`with_plain_bundles`。改成全部商品穿到全部女主角卡上驗證後，又抓到 3 張卡穿連身上衣時下身不顯示，`dress` 改為此時把上衣換成素色 T 恤。
+- 2026-11-04 c-street-city 運動場設施全部沒放，第一次還修錯：球門、看台、記分板等 7 項回報找不到位置，我以為是材質被當路面排除，加了略過材質的判斷後重裝，結果一樣，也沒先驗證就寫成原因。真正原因是 `campus_sports.field` 取 `Outdoor_campus_track` 模型底部，z 924.8，比實際地面（約 1205）低 3 m，高度檢查永遠不過。修正：搜尋改從街面高度開始，範圍限制在運動場的方框內，方框內不檢查材質。`field` 錨點本身的高度還是錯的，留待回報 c-conquest。
+- 2026-11-04 c-street-city 從 PowerShell 跑 `build_street_city_places.lua` 少了 8000 多筆錨點：腳本用 `ls` 找 `lover-spots-install-*.json`，PowerShell 的 `io.popen` 走 cmd 找不到 `ls`，只印一行錯誤就繼續，`browse`、`checkout` 等 15 種變成 0。修正：這支建置一律從 Git bash 跑。
+- 2026-11-04 c-street-city 擋住 e-fork-2 近兩小時：`unreal_slot.lua` 的 PRIORITY 沒有 e-fork-2，它的等級比我低，我的鏈每次 release 後重新 claim 都贏它，yield 也不會因它觸發。修正：鏈改成 release 後等 e-fork-2 拿到 slot 才重新排隊。
+- 2026-11-04 c-conquest 換裝後遊戲開不起來：`OKStreetSocialClinic.inl` 的 `Dir()` 用相對的 `ProjectSavedDir()`，存進 selection 的卡路徑下次啟動找不到（`Selected APNG missing`），換臉、染髮也一樣。改成完整路徑。只在同一次遊戲裡測換裝看不出來，要重開一次才測得到。
+- 2026-11-04 c-conquest 雷電的上衣在街上不見：`with_plain_bundles` 回答「沒有 override」在有遊戲 mods 的非嚴格開卡也生效，她的 mod 上衣 bundle 查不到，上身裸露。改成只在 strict 開卡時回答。測開卡通過不代表街上對：測試是 strict，遊戲不是。
+- 2026-11-04 c-conquest 試穿掉進雙人 H 姿勢：試穿直接沿用一對一模式，載男方、預設姿勢和面板都跟著來。加 `bFitting` 只留她一人站著。
+- 2026-11-04 c-conquest 試穿 T-pose 打包了兩次才查到：先以為卡在 `AreInteractionStreamsReady`，拿掉後 log 仍是 `the standing clip did not play`。OK 卡的 session 是 portable，`studio/anime/00.unity3d|f_tachi_00_00` 這種鍵只有遊戲來源認得，要用基礎庫 `okpaired.json` 裡的 `states:studio@...` 鍵。動畫鍵要先在 okpaired.json 查過再寫死。
+- 2026-11-04 c-street-city 第五輪安裝跑了一小時沒輸出：小山用 74 m 方塊在 200 m 半徑螺旋搜尋、花海用 50 cm 間距重試上百次，追加的搜尋沒有估算次數，也沒有進度輸出；協調者發現後才停。修正：大型物件從 20 m 地面探測格挑候選，最多實測 40 次；花海放寬間距；各段輸出 `LoverSpots R5` 進度。
+- 2026-11-04 c-street-city 釣魚椅與溜冰租借放進湖裡：`park.pond` 的高度是湖底（z 1018），搜尋以它為基準就落在湖床上，安裝與驗收都過，看 R3-fishing 重拍才發現。修正：改用街面高度，釣魚台在湖上平台、溜冰場移到公園廣場。
+- 2026-11-04 c-street-city 任務名稱 `world_round5_probe` 含數字被 `street_city_motel_job.lua` 的名稱檢查擋下，排隊等 slot 後才失敗，白佔一次 slot。修正：任務名只用小寫字母與底線，排隊前先在本機跑過名稱檢查。
+- 2026-11-05 c-street-city 第五輪第二次安裝又超過 30 分鐘：`dress` 的房間搜尋 `reach=4000` 用 25 cm 細格加靠牆條件，在 78 m 大廳幾十萬次方塊掃描；`unreal.log` 進度也沒進 log。修正：`_ls_search` 單次 60 秒、`dress` 每件 45 秒上限，大範圍改 75 cm 間距；進度改寫獨立檔 `world-edge-v1/lover-progress.txt`，每行關檔。
+- 2026-11-05 c-street-city 第五輪安裝連續四次沒進度：我把卡住的 job 強制停掉時，`jobs/` 留下沒有 result 的 request，新開的 worker 先撿最舊的那筆，一直在重跑 22:41 的舊 payload，新改的程式根本沒執行；我還猜了兩次搜尋太慢。協調者看 log 指出程式沒走到第 104 行才查到。修正：清掉無 result 的 request，chain 開 serve 前自動清。強制停 job 後一定要清 request；診斷先確認跑的是不是新程式。
+- 2026-11-05 c-street-city cook 空佔 slot：cook 啟動時的 `Build.bat -Mode=ValidatePlatforms` 要等引擎的 UBT 鎖，E 引擎上別組正在建置，cook 5 分鐘只用 4 秒 CPU 還佔著 slot，協調者發現。修正：關掉 cook，chain 改成等所有 UBT 結束才 claim。
+- 2026-11-05 c-street-city 校舍更衣間放在入口大廳：只看「靠牆有空位」，E1 的更衣間擋到既有走動路線，實走第一條射線就失敗。修正：改放各棟一樓房間，大廳保持淨空。
+- 2026-11-05 c-street-city 地面判斷不出馬路：`ground_ok` 只看碰撞面材質，部分馬路的碰撞面也是草地或鋪面材質，教堂、祭典攤位和 world-tripo 景觀件都壓在車道上。修正：改用 `world-ground-v1/ground-plan.json` 的道路中心線判斷（邊界再留 150 cm），已放下的景觀件逐一移除。
+- 2026-11-05 c-street-city 釣魚椅放進錦鯉池：改到街面高度後搜尋半徑仍從池邊開始，池子的碰撞面也算平地。修正：搜尋從池中心 6 m 外開始。
+- 2026-11-05 c-street-city Tripo 地被看起來像揉皺的鋁箔：`meadow_patch` 上限 1500 面，3 公尺大的東西只剩大三角面，散了約 400 個，從俯視圖看不出來，要看地面視角才發現。修正：全部移除，花海改用 Blender 組出的花叢。大面積又矮的東西不要用 Tripo。
+- 2026-11-05 c-street-city 驗收讓位後重跑又去 cook：打包 04:22 已完成且地圖沒變，`--yield` 退出後 chain 重跑整段驗收，又卡在 E 引擎 UBT 鎖。修正：先比對 `package.json` 的 `map_sha256`，相同就直接跑鏡面遷移、實走、重拍。
+- 2026-11-05 c-street-city 打擊機和小山壓到走動路線：挑位置時沒比對 physics plan 的路線，實走才一件一件爆。修正：用 plan 的 sweeps 與 actors.json 外框離線比對全部新物件，再挑離路線夠遠的草坪。
+- 2026-11-05 c-street-city 錨點浮空或埋地約 1800 個沒被發現：`vanity` 用鏡子高度、汽車旅館套房用房間中心高度（比地板高 165 cm）、樓梯平台落在樓梯井上方。先前只抽看新錨點和數量，沒有逐個往下打射線。修正：量測把沒有地板的錨點全列出，`anchor-ground.json` 記下各自的地板，樓梯平台另找 4.8 m 內的平台面。
+- 2026-11-05 c-street-city 海面淺色長線追錯方向：之前找細長物件沒找到，這次沿線量測發現海床平順，放大照片才看出是水面本身的破口。`build_street_city_water_plane.lua` 併成 1 m 寬、數百公尺長的細長面，Unreal 建網格時當退化三角形丟掉，沙色海床從缺口露出來。修正：面最長 16 m。
+- 2026-11-05 c-street-city 量測任務連失敗兩次：假設每個房間都有 `room.center`、`room.min`，汽車旅館套房只有 center 與 size。每次都要等編輯器開完才報錯。修正：先用 places.json 檢查欄位再送任務。
+- 2026-11-05 c-street-city 陽台放進樓梯井：把「起點往下打得到地面」當成室外，R、D、H 棟牆內的樓梯井和採光井也符合，離線比對和陽台照片才發現，連改三次安裝。修正：要在建築外框之外、離 walk plan 的樓梯約 5 m 以上、上方沒有樓板。
+- 2026-11-05 c-street-city 驗收讓位後 `--from-cook` 失敗：讓位發生在稽核之前，chain 卻一律帶 `--from-cook`。修正：看 acceptance log 有 `== cook` 才接續。
+- 2026-11-05 c-street-city 貼地修正把上層錨點貼到一樓：沒限制往下幾層，`s18-0301.entry` 掉到 z 1206，`cargo test anchor` 的樓層檢查才抓到。修正：最多往下一層，超過就找同高度 4.8 m 內的地板。
+- 2026-11-05 c-street-city 貼地後沒檢查人站不站得下：只確認腳下有地板，1492 個座標裡約 800 個貼著牆或被物件擋住，是 c-conquest 要求抽查才發現。修正：用人形碰撞盒檢查，擋到的移到 1.5 m 內的空位。
+- 2026-11-05 c-street-city 打包等待永遠不結束：組 chain51 時用 Python 文字模式讀寫腳本，`tr -d` 引號裡的 CR 被轉成 LF，PowerShell 輸出的 `0\r` 比不上 `"0"`，鏈空等兩小時，是協調者查出來的；我當時只查了條件範圍，沒查比對本身。第一次修正只確認 bytes 替換有寫入、沒實跑函式，空等到協調者再查出來；重點是改完要實跑 `ubt | od -c` 確認只有 `0`。修正：所有 chain 的 `tr -d` 改成 `'[:space:]'`，不放控制字元，實跑確認後從 acceptance 接續。
+- 2026-11-05 c-street-city 民宿刪掉舊錨點時連活動要用的名稱一起刪：`inn_tea`、`sleep_inn`、`inn_helper` 要 `minshuku.seat`、`minshuku.bed1_0`，`cargo test anchor` 才抓到。修正：第一張棉被和第一個坐墊沿用這兩個名稱。
+- 2026-11-05 c-street-city 移舊打包到 F 槽用 Git Bash `mv`：MSYS 把 `StreetSocialCity` 和 `StreetSocialCity.exe` 當成同名，三個都只複製一部分就失敗，鏈也在空間不足時先啟動。修正：改用 robocopy，確認剩餘空間後才重啟鏈。
 - 2026-11-04 協調者整合：c-street-city 回報「背景鏈已停、slot 已釋放」，實際 chain21（run_street_city_motel_physics.lua）還在跑，沒拿 slot 開著 StreetSocialCity 實走；協調者以 taskkill /T 停掉該 bash 樹。規則：回報停止前用 Get-CimInstance 確認沒有自己的 chain bash／lua／Unreal 程序。
+- 2026-11-04（e-fork-2）：口交「眼睛上翻」實際是往下看：`TickFace` 傳 `SetEyeGaze(0,0,+強度)`，這組眼睛 -1 才是往上（`ok.HScene.AhegaoGaze` 的 -1.25 就是負的）。11-02 只看到眼皮半閉就記成上翻。近拍（距離 12）才看出虹膜貼著下眼皮；修正：改傳負值。教訓：方向類的效果要拍到能分辨方向的距離再判定，不能用「有變化」代替。
+- 2026-11-04（e-fork-2）：`TickDrips` 的流水、乳汁、噴水都是一幀最多一滴，機器忙到 15 FPS 時開發度 100 和 0 噴一樣多（兩者都是每幀一滴），平時乳汁也只有 ×2.65。11-02 在高 FPS 量到 ×2、×3 就算通過。修正：`Due` 把上一幀到期的份補出來（一幀最多 4 滴）。教訓：以時間間隔控制的數量要在低 FPS 也量一次。
+- 2026-11-04 e-galgame 實測前改存檔：回報「放進 EMain 存檔的保險套啟動後被清空」，以為是遊戲的問題。實際是 `game_stop` 用不帶 `/F` 的 taskkill，指令回傳時遊戲還在關閉，結束時存檔（`relationships.json`、`Saves/auto`）把我剛改的內容蓋掉。之後改存檔一律等遊戲行程結束再改，不要接在 game_stop 後面。
+- 2026-11-04 e-galgame `SetHandShape` 沒同步：H 面板換手型時，配對播放的背景執行緒還在用同一個 Session，遊戲偶爾直接消失（game.log 沒有 Fatal、Windows 也沒紀錄），一開始還以為是別的 session 關掉的。修正：呼叫前 `SyncPair()`。教訓：在 H 面板改 Session 的東西都要先 SyncPair。
+- 2026-11-04 e-galgame 腳本錨點失敗沒看到：`grip.py` 的錨點多了 4 個空白，斷言失敗什麼都沒改，又因同一條指令多打 `cat > /dev/null` 卡住，輸出被吃掉，拍了兩輪才發現手型根本沒套上。之後 python 腳本接 `&& echo applied`，看到再往下做。
+- 2026-11-04 e-galgame：H 裡換衣服閃退（19:36、20:56 兩次，同一原因）：新部件還沒有 MeshObject，`AOKPaintSprayer::Tick` → `FOKPaintPose::Prepare` 同一幀呼叫 `GetCPUSkinnedVertices` 觸發 assert。第一版只擋在 `Unsupported` 分支，改成 `Prepare` 開頭檢查 `IsRegistered()` 與 `GetMeshObject()`，這幀跳過、下一幀重試；`KKPreviewActor` 量外框與 `OKCardPreviewCapture` 也加同樣檢查。壓力測試：H 場景連續換衣、半脫、換體位 36 次沒有閃退（`Saved/StreetSocial/Play-20261104T211309`）；測試沒有同時按住噴射，舊版也未重跑對照。
+- 2026-11-04 e-galgame：更正上一列的壓力測試：那 36 次換衣時大部分沒有油漆表面（`Tick` 在 `Surfaces` 為空時直接返回），不算壓到崩潰路徑。重跑時用啊嘿顏的流口水讓噴射持續：`EGalEight4` 50 次操作（實際換裝 46 次、表面失效重建 2231 次）沒有閃退（`Saved/StreetSocial/Play-20261104T221556`）；舊版 `EGalSet2` 40 次操作（換裝 21 次、1060 次）也沒有閃退（`Play-20261104T221027`），所以沒有重現，修法是依當機報告的呼叫堆疊判斷，尚未以對照證明。
+- 2026-11-04 e-galgame：把使用者回報的問題當成新版的問題：20:56 的閃退與「舌頭沒跟深度」都發生在舊的 `EGalSet2`（19:29 開到 20:56，當機報告在該 stage 的 `Saved/Crashes`）。回報時先看當機報告與 game.log 是哪個 stage。
+- 2026-11-04 e-galgame：啊嘿顏雙手上下跳：`HoldFeet`（站姿壓低時的雙腳）與 `TickAhegao`（雙手）都呼叫 `SetStudioIk`，而它會整組取代，兩邊每幀互相蓋掉。改成雙手放進 `HoldFeet` 的同一組目標；`TickAhegao` 原本沒先 `SyncPair` 就設，也一併改掉。
+- 2026-11-04 e-galgame：啊嘿顏時頭上閃黑色長方體：H 的體液借用 `AOKPaintSprayer`，`SetSpray` 會顯示水槍模型，流口水向下噴，槍身立在頭上，斷續噴就閃。`bShowGun` 關掉。
+- 2026-11-04 e-galgame：新增文字鍵前沒查重：`cloth_all_half` 已存在，重複的鍵讓 TOML 解析失敗，ok-rules 189 項測試一起失敗。
+- 2026-11-04 e-galgame：測試時用 `game_click` 會把自己的遊戲視窗拉到最前面（`Win->BringToFront`），使用者正在玩時點擊可能落到測試視窗。使用者在玩時不要用 `game_click`，改用 `/hscene` 的 kind 或截圖。
+- 2026-11-04 e-galgame：舌頭變白先往材質想，其實是流口水的白色塗料蓋在舌頭上：不流口水時是紅的。現在 H 的體液不畫在舌頭上（`bSkipTongue`，`ok.HScene.FluidTongue` 預設 0），流 40 秒後舌頭還是紅的（`Play-20261104T223655`）。
+- 2026-11-05 e-galgame：頭看鏡頭、眼睛追鏡頭兩個按鈕加在愛撫分支 `return` 之後，進場景的愛撫畫面看不到，只有插入才出現。之前用 kind 直接呼叫沒發現。改到 `BuildActions` 分支之前。
+- 2026-11-05 e-galgame：`EGalRound15` 一啟動就崩潰。exe 是從乾淨工作樹複製的，那是用完整 `.uproject` 建的（400 MB，多 `AudioWidgets`、`Paper2D`），base 沒 cook 這些資源。要在工作樹編 stage 用的 exe，先換成 host 的 `.uproject`（315 MB）。打完 stage 先開一次才能給 tag。
+- 2026-11-05 e-galgame：host 的 `Tools` 是連到 E 的 junction，我對 host 路徑寫 `git show HEAD:ffi.rs`，蓋掉 e-fork-2 還沒提交的 `ffi.rs`，別組連結失敗。已從對方紀錄補回。host 裡只有 `Source`、`Plugins` 是自己的檔案，`Tools` 不能當暫存改。
+- 2026-11-05 e-galgame：`a35ba8b74` 的大小寫修法沒看影響範圍就對所有屬性生效，把舊著色器的小寫值也讀進來（頭髮影子近黑）。回報只說「沒看到變化」。動共用材質前先列出會改到哪些值。
+- 2026-11-05 e-galgame：建置失敗還照樣打 stage 和量測，舊執行檔跑出的數字差點當成新版結果。腳本要先看 `Result: Succeeded`。
+- 2026-11-05 e-galgame：舌頭顏色錯了很久，Material Editor 的屬性名小寫後蓋掉 `_Color`。`Material::color` 不分大小寫，所以 log 印的顏色是對的，著色器那邊分大小寫才取不到。查顏色要看實際綁到著色器的值，不能只看 log。
+- 2026-11-05 e-galgame：`EGalRound11` 回報把「射在外面」算成走過，其實 log 寫著 `action 2005 not offered now`，腳本只送了按鈕沒看有沒有效。走查腳本按之前要先確認按鈕可按，不能按就記下來。
+- 2026-11-05 e-galgame：舌頭拉長用整個 morph 權重放大，1～2 倍看不出來，舌根其實也在往外移，3 倍就離開嘴巴。沒有骨頭的東西要拉長，得固定一端。
+- 2026-11-05 e-galgame：水槍控制用 `GetComponentsBoundingBox().GetCenter()` 當她的中央，實際在腳邊（Z=-1.2），距離 90 打到地板，還記成「原因沒查」。記下瞄準點與命中後一次就看出來。
+- 2026-11-05 e-galgame：把遊戲消失記成「沒解釋、重跑沒再現」就要往下走。用 `Process.ExitCode` 等退出碼，換體位循環兩輪就重現，崩潰報告在 stage 的 `Saved/Crashes/`，`llvm-symbolizer` 配主機的 pdb 就能解出來。根因是配對背景解算與水槍查詢同時碰 Session。
+- 2026-11-05 e-galgame：`-Control` 不帶 `-Sandbox` 時短暫啟動就改到主存檔（載入會重寫 `relationships.json`），靠手動備份還原。現在 `-Control` 一律走沙盒 `Control`（這個 checkout 自己的連接埠），`-MainSave` 才用主存檔。
+- 2026-11-05 e-galgame：開發度一場 +45：`CHEST..=NIPPLE` 的迴圈把陰部與屁眼也算進去，愛撫 50 秒 +25，再加兩次高潮 +20。規格是這兩處只靠在裡面高潮成長，`NeverHad` 的註解也這樣寫。現在摸這兩處只算習慣度（`crotch_h`／`anal_h`，`used_to`）。已經存進存檔的舊值沒有改。
+- 2026-11-05 e-galgame：上一輪把口水看不到判斷成「直直往下掉碰不到臉」和「筆刷 0.4 太小」，兩個都只對一半：0.4 那次是第一滴從裡面打到臉，膜塗到皮膚內側。只跑一次就下結論，沒比對 `Paint contact` 的 `side`。
+- 2026-11-05 e-galgame：`game_launch` 不指定 `-Executable` 會跑最新的 stage，別的 session 打包的也算，一輪測試因此跑在 `EForkGaps3` 上。要測指定版本一律帶 `-Executable`，並用行程路徑確認。
+- 2026-11-05 e-galgame：建置結果看錯：用 Git Bash 的 `cmd //c` 呼叫 `Build.bat` 只開了 cmd 就結束，回傳 0，差點當成連結成功。發現是因為 log 裡沒有 `Result: Succeeded`。改用 PowerShell，並一律看 log 的 `Result:`。
+- 2026-11-05 e-galgame：`/activity` 第一版傳 `at_end=true`，規則在活動結束時不擋任何條件，所以懷孕的她全部回可以，差點記成規則壞了。改成直接問 `activity_check`。
+- 2026-11-05 e-galgame：測試把值留在共用的 `%LOCALAPPDATA%\OpenKoikatsu\HSettings.ini`：`AhegaoClimaxes=1` 是我測試設的，按面板按鈕時一起存下來，使用者的遊戲也讀同一檔，一次高潮就啊嘿顏；這次測試的 `EyesCamera=0` 也一樣。兩個都已改回 4 與 1。測試用 console 改設定後，測完要改回，再按會存檔的按鈕。
+- 2026-11-04 e-fork 眼睛上下顛倒，只測左右沒發現：`ok.VerifyEyeCamera` 第一版只繞左右轉，100 張全過，但走 `_MainTex_ST` 的 GPU 眼睛垂直方向是反的（鏡頭在下，虹膜往上翻；Rows 的 V 和貼圖 tiling 的 V 差一個翻轉）。`ok.EyeGazeSTFlipV` 預設改 1。e-fork-2 那天把口交上翻改成負值，以及 `ok.HScene.AhegaoGaze` 的 -1.25，都是在補這個反向，一併改回 +1 向上。教訓：跟隨類功能的驗收要含上下，方向要用量到的位移判定。
+- 2026-11-04 e-fork 跟鏡頭的轉動量每張卡差很多：同樣轉 35°，畫面上 15°～55°，C097 虹膜跑出眼睛，C018 向下被下眼皮切掉。兩個原因：(1) rate 換算成固定的貼圖位移，卡片虹膜尺寸（settings 12、13）越大移得越多，和眼睛寬度無關；(2) 解除限制後垂直 rate 超過 ±1 時走了 `st_rolled` 的翻白眼路徑，位移突然加大。修正：跟隨目標時改用 `IrisRuntime::st_look`，直接以眼睛寬高的比例移動，rate 只留給其他用途。
+- 2026-11-04 e-fork 稽核誤判三次：(1) 用影像比對虹膜位移，虹膜環紋重複加上陰影不動，C000 量到 -5（實際約 -15），改成換白底黑點貼圖量；(2) 髮絲蓋到黑點會拉偏重心，量點時隱藏頭髮與配件；(3) 側看時用正面的眼寬當半徑，近眼 47°、遠眼 31°，看起來像兩眼不一致，實際是遠眼被壓扁，改用每個視角自己量到的眼寬。教訓：量測模型先對截圖核對，數字不對時先懷疑量法。
+- 2026-11-04 e-fork 同時開了 4 個 Unreal：`Tools/run_card_reader_development.lua` 啟動後馬上回傳（只印 PID），批次腳本以為跑完了，連開 4 個又放掉名額，約 15 秒後才發現並關掉。之後批次一律等 PID 結束才放名額。
+- 2026-11-04 e-fork 普查連續當掉 5 次（TAsync 的 EXCEPTION_ACCESS_VIOLATION，結果是空的）：別的 session 在共用工作樹只重建了一部分，`ok_extract.h` 和 Rust 函式表不一致。每次開測前先完整建置一次編輯器。
+- 2026-11-04 e-fork 眼睛稽核把 11 張好卡判失敗：角度差把上下也算進去，黑點貼近眼角時被眼皮或高光切掉，中心往下偏，遠側眼睛算出 12°～21°。看截圖視線是對的，水平誤差都在 10° 內。修正：只拍最左、最右，只算水平。另外先前拍五個視角、每張卡七套，一輪要好幾個小時，使用者指出不用拍那麼多。
+- 2026-11-04 e-fork 光影選單的修改腳本改到一半失敗：`OKHScene.h` 已寫入、`OKHScene.cpp` 的錨點比對失敗，遊戲連結錯誤約一分鐘，共用工作樹的其他 session 也會受影響。修正：補上 cpp 後重建成功。之後要先比對全部錨點，再一次寫入所有檔案。
+- 2026-11-04 e-fork-2：跟著走的女主台詞漏進 H 字幕：隊伍閒聊的台詞走同一條字幕，H 場景沒有擋。H 場景裡只顯示場景內的她的台詞（隊伍 [9,8] 實測只有愛麗絲）。
+- 2026-11-04 e-fork-2：吐舌沒跟深度：嘴巴底值 .75～.85 把開口墊住，深度再淺也一樣張嘴。改用 `SetMouthOpenHeld` 依深度直接給開口。
+- 2026-11-04 e-fork-2：把隱藏高光失敗誤判成 `M_KoikanoEye_Flat` 的 `_isHighLight` 閘門沒作用。實際上閘門有效，失敗的卡高光畫在卡片 KSOX 虹膜疊圖裡（`hl_up`／`hl_down` 可能是空的）。先把資料（虹膜貼圖）倒出來看再下結論；改成從貼圖塗掉（`paint_out_iris_highlights`）。
+- 2026-11-05 e-fork-2：街區隱藏高光只換虹膜 `_MainTex`，高光還在：街區的卡片高光是分開綁在 `_overtex1/2/3` 的圖層，和讀卡模式、H 場景不同。`dull` 時連這些圖層一起換成透明貼圖（`OKClearEyeLayer`）。
+- 2026-11-05 e-fork-2：把 game.log 沒有那幾行當成程式沒跑到；log 有緩衝，`game_stop` 會丟掉尾巴。讀 log 前先 `game_exec flushlog`。
+- 2026-11-05 e-fork-2：打包背景工作回傳 exit 0 就當成打包成功，其實 `EFork2h` 編譯失敗（`RandPointInCircle` 回傳 `FVector2D`，指定給 `FVector2f` 要明確轉換），worktree 的 fix15 也因 HEAD 不同而中途停止。背景工作要看 log 裡的 `Result:`，不是看退出碼。
+- 2026-11-05 e-fork 把讀卡器正常啟動當成卡死：UE 啟動時 UBT AutoSDK 要跑 5～6 分鐘，log 這段完全不動，我先猜是在等別的建置，又用 150 秒的看門狗把它關掉一次。對照昨晚的正常 log 才看到同一段也停了 5 分 40 秒。修正：看門狗改 15 分鐘，判斷前先比對正常 log。
+- 2026-11-05 e-fork 11-04 讀卡器 `CopyBox` 閃退（`D3D12Texture.cpp:1551`，log `Saved/Logs/CardReader/20261104-193637-272007cb.log`）沒查明：斷言在 RHI 執行緒的 `GetStagingTexture`，時間是 C012 跑完、C013 載入後 3.5 秒，落在 `ok.VerifyEyeCamera` 第一次截圖前後，懷疑是 `FScreenshotRequest` 讀畫面的矩形超過 back buffer。沒有證據：log 沒有視窗改變大小的紀錄，C013 單獨開 7 套全過，C012 接 C013 的順序沒有重跑。再遇到先看遊戲執行緒當時在截哪一張。
+- 2026-11-05 e-fork `jeanne_alter.png` 第 1 套黑髮、沒穿衣服不是重封或程式問題：這張卡 10-29 之後沒動過，也不在 11-04 重封名單；原作卡 `D:/KoikatuSunshine/UserData/chara/female/Jeanne Alter V1.2.png` 轉出同樣 20 個部件、同樣 34 條 `KKEx entry missing`。第 1 套指向 `Jeanne_Alter_Cetol` 的 slot 7421135、7421162、5141、756537、7451711、7426537、7621167、7421537，已裝的 `[Cetol]Jeanne_Alter Mod.zipmod` v1.1.0 只有 722132、7421532、7621162、7421132。部分 ID 在 `[Cetol]JeanneV1.2.zipmod` 裡，但 GUID 是 `Jeanne_Cetol`，不能混用。其他 6 套沒有缺件。要補只能拿到含這些物品的 mod。
+- 2026-11-05 e-fork `megumin` 第 3 套手套 877 沒有 log：`select_card_clothes` 在這格沒有 mod 解析紀錄、內建和 mod 清單都找不到時用 `?` 回 None，服裝槽位不經過 `lookup_entry`，所以安靜少一件。改由 `outfit_gaps.rs` 開卡時逐格對照並寫 `item missing`。
+- 2026-11-05 e-fork 把舊 stage 的結果當成新程式的結果：`OKHScene.cpp` 呼叫 private 的 `OpenedFemaleCard`，stage 編譯失敗，啟動器跑最新的舊 stage，我兩次看到「第一次按就換了、沒有缺件 log」就下結論說遊戲裡掃描失敗。實際上新程式根本沒建出來。實機測試前先看 `Rebuild-<tag>/build.log` 的 `Result:`，並用 `-Executable` 指定自己的 stage。
+- 2026-11-05 e-fork `eprintln!` 到不了遊戲 log（只有 `ffi_log` 會），只寫 stderr 的 Rust 紀錄在 `game.log` 永遠看不到；`outfit_gaps::log` 兩邊都寫。
+- 2026-11-05 c-street-city 民宿改了顏色畫面卻沒變：`_ls_mat` 看到已有版本標記的材質就直接回傳，同名材質的新顏色不會寫入，白白重打包一輪。修正：顏色改動時換材質名稱（`M_LS_Inn2_*`）。
+- 2026-11-05 c-street-city 民宿馬桶朝向錯兩次：換 Tripo 模型後沿用舊模型的朝向。Tripo 模型的正面方向不固定，換模型要重看畫面。
+- 2026-11-06 c-street-city 民宿掛軸顯示引擎預設貼圖：glTF 匯入把面板的貼圖丟了，匯入後沒檢查貼圖資產，看照片才發現。修正：`AssetImportTask` 直接匯入 `T_LS_InnScroll`，自建材質 `M_LS_InnScroll`。
+- 2026-11-06 c-street-city 民宿第一間客室裡有一棵街樹，樹冠穿出屋頂：蓋房子時只清了 WorldTripo 散布物件，沒清 `BP_StreetCluster` 的街樹，之前也只拍第二間，連續幾輪沒發現。修正：樹和樹幹碰撞一起移到建築後方，`motel_physics_plan` 同步，並新增 `R7-minshuku-room1` 視角。四間客室都要拍。
+
+- 2026-11-06 c-street-city 海灘越裝越多（116 間小屋、成堆沙堡與西瓜，多了 2934 個物件，含欄杆、步道、陽傘）：重裝時用 `{label: actor}` 字典找舊物件，同名的只留一個，每次重裝只刪掉一個又多放一批。修正：刪除時直接走 `get_all_level_actors()` 的清單。同名物件不能用字典收。
+- 2026-11-06 c-street-city 陽台從 178 個實體掉到 20 個錨點：重裝時用上一輪的 `balcony` 種類挑住處，而 `build_street_city_places.lua` 會把不是陽台的窗改成 `view_night`，掉出去的住處下次就不再被挑到。修正：改看房間有沒有窗（`window` tag），不靠上一輪的結果。
+- 2026-11-06 c-street-city 草地上一堆銀色碎片：把 26 萬面的 Tripo 植栽直接減到約 1500 面，葉子碎成浮空三角片，又吃到 `M_WorldTripoPBR` 預設的金屬感。修正：`Tools/build_street_city_foliage.lua` 先包體素外殼再減面、烘貼圖，來源的金屬度先關掉。
+- 2026-11-06 c-street-city 救生員 5、6 號站在草地上，海灘用品跟著放到草皮：`outdoor` 迴圈沒排除它們。修正：沙灘物件只用救生員 1–4 號。
+- 2026-11-06 c-street-city 把泳池階梯失敗寫成「原因未查明」，也這樣告訴 c-conquest：本檔 11-01 就查過，是 CharacterWalk 懸空檢查在階緣的誤判（中心射線差 121.85 cm，門檻 120），不是卡住，修法要動 StreetSocialCity 的 C++。寫文件前要先搜這份紀錄。第 8.2.6 節已更正。
+- 2026-11-06 c-street-city 站在販賣機、洗衣機、信箱前的錨點都背對機器：角色朝向是 yaw+90，「站在正面看物件」要用 `face()` 的 yaw+90，我照沙發的寫法填 yaw-90。沙發是朝前坐，機器是回頭看，不能抄。修正：三處都改，販賣機的舊錯也一起修。
+- 2026-11-06 c-street-city 改建的店招牌還是舊店名（保齡球館掛「聚友桌遊店」）：之前的改建只放家具，沒看外觀。修正：`Tools/build_street_city_signs.lua` 產生招牌圖，重裝時換掉 `ShopSign_<id>_H/V` 材質槽。改店要連招牌一起看。
+- 2026-11-06 c-street-city 回報 R1、R2 的 `dining` 各 40，其實 80 間都沒有桌子：`dining_set` 只在 plan，沒生成過，`place_mesh` 找不到模型只寫一行 `skipped` 就回傳，錨點照加，`R8 homes` 的計數也照算。修正：`Tools/build_street_city_fixtures.lua` 補 `dining_set`、`notice_board`、`beach_shower`、`fruit_display`、`snack_kiosk`。回報數量前要看 `skipped` 裡的 `no Tripo model`。
+- 2026-11-06 c-street-city 重裝後電視只剩 8 台、餐桌 0 張：`R8 homes` 用上一輪的 `tv_sofa`、`dining` 判斷要不要放，但重裝會先刪掉上一輪的物件。和陽台是同一類錯（上一輪的結果決定這一輪），我修陽台時沒有檢查同樣的寫法。修正：判斷時排除自己放的 `tv_sofa*`、`dining*` 錨點。
+- 2026-11-06 c-street-city 缺的 `dining_set`、`fruit_display`、`snack_kiosk` 我自己改用 Blender 做，違反使用者「缺的家具用 Tripo，其他用 Blender」的決定，還只是事後告知。修正：這三個改由 Tripo 生成（`furniture-add-tripo-v1`），Blender 版只當過渡；原計畫分類為設施的 `notice_board`、`beach_shower` 留 Blender。使用者定的做法不能為了趕進度自己換。
+- 2026-11-06 c-street-city 安裝缺模型時不會失敗：`place_mesh` 只記 `skipped` 就繼續，錨點照加。修正：`place_mesh` 缺模型直接中止，地圖不存檔；`Tools/check_street_city_models.lua` 在開編輯器前先查模型檔；`Tools/count_street_city_pieces.lua` 比對錨點和地圖裡的 actor，回報時附上。
+- 2026-11-06 c-street-city 自製擺件的正面全部朝反：Blender 的 -Y 匯入 Unreal 後是 +Y（Y 軸鏡像），`front on -Y` 的假設從沒拍照核對，信箱、御守所、售票亭、洗衣機都背對使用者。修正：`Tools/build_street_city_fixtures.lua` 和 `Tools/build_street_city_chapel.lua`（洗衣機、信箱）輸出前翻 Y，資產改名 `lt3-`；Tripo 小吃亭照電視櫃改用 +Y。
+- 2026-11-06 c-street-city 店面樓上住處的沙發和電視被隔間牆分開，有的沙發正對一步外的牆：`spot` 只看房間外框，不知道隔間。修正：新增 `seen`，電視要和座位之間沒有牆，沙發前方 260 cm 要是空的，否則換下一個位置。
+- 2026-11-06 c-street-city 驗收照約三分之一拍到牆面（單車行、浴池、R1 窗、護理室）：視角用公式算，沒確認鏡頭在空間內。修正：先用現成打包版試拍，確認看得到物件才寫進視角清單。
+- 2026-11-06 c-street-city 嬰兒床、書櫃、盆栽在 80 多間房疊在房間中央（322 組）：Tripo 物件沒有碰撞，`_ls_fits` 看不到彼此。修正：`hv` 記每間房已擺的物件；嬰兒床、盆栽、書櫃、冰箱、衣櫃改靠牆。
+- 2026-11-06 c-street-city 護理床擺進汽車旅館套房：`h1-0203`／`h1-0204` 是過期的飯店二樓區域，那層已是套房，房間外框也比大理石房大。修正：改放飯店一樓 `h1-0102`，木屏風隔出空間，留一個入口。
+- 2026-11-06 c-street-city 單車穿過街燈：單車搜尋位置時不看燈柱。修正：`av` 先放 ResortLantern 的底座位置。
+- 2026-11-06 c-street-city 店改行後招牌仍是舊店名（區公所掛「街角遊戲店」），報告卻只寫 `signs: 0 slots` 沒追：店名其實在 `RomanceName_<id>` 文字面，`ShopSign_<id>_V` 只是側招。修正：換 `RomanceName_<id>` 的材質，另產 2048x180 的 `<id>-B.jpg`；驗收視角改由招牌位置算，不再用店門方向（S41 等六間拍到背面）。
+- 2026-11-06 c-street-city 店面樓上住處一間兩台電視：第一個迴圈讀到上一輪的沙發定位點又擺一台。修正：`shop_home` 的房間只由店面住處迴圈佈置。
+- 2026-11-06 c-street-city 電視前擋著流理台、R1／R2 餐椅和書桌椅重疊：後擺的家具不知道視線，書桌在建築模型裡沒有碰撞，props 的書桌位置又和實際相反。修正：床、流理台、餐桌避開座位到電視的連線；餐桌避開以房間中心鏡像的書桌點。
+- 2026-11-06 c-street-city 第 78 輪以為餐椅避開書桌就好，R1／R2 照片仍壓到書桌椅：避開半徑剛好等於桌子到書桌的距離，沒算椅子。修正：`_ls_search` 加 `test`，餐桌中心離書桌至少 235。
+- 2026-11-06 c-street-city 電視只檢查中線，s73 一片門擋住半個螢幕；嬰兒床先佔走沙發正前方，電視被擠到離沙發 1.6 公尺。修正：電視左右兩端也要看得到、離座位至少 170；放嬰兒床時保留沙發前方；驗收照改成全部店面住處，不再只抽五間。
+- 2026-11-06 c-street-city 毛巾櫃擺在屏風外，護理室照片也只拍到屏風外側。修正：屏風範圍包含毛巾櫃，驗收視角改在屏風內。
+- 2026-11-06 c-street-city 第 79 輪把電視條件加嚴，R1／R2 的 80 間全部沒了電視（`tv_sofa` 239 降到 159）；餐桌避開書桌時跑到牆另一側的廁所旁；保留沙發前方反而把嬰兒床推進內門。原因是只看單間照片，沒先弄清楚 R 住處分成兩個房間，沙發其實面向長桌。修正：嚴格條件失敗才退回只看中線；餐桌定在廚房同一側，並檢查和廚房之間沒有牆；撤掉嬰兒床保留。驗收照改成全部 R 住處。
+- 2026-11-06 c-conquest 把「按 N 沒反應、沒有提示」寫進盤點文件，也這樣回報。程式其實有提示：有人走過來時說明，有約定時先問、6 秒內再按才跳。我按完 N 緊接著下走路指令，訊息被蓋掉，沒先讀程式就下結論。規則：回報「沒有提示」前先查該按鍵的程式，再單獨按一次看訊息。
+- 2026-11-06 c-conquest 查到道別後她 2 秒內走回來：`SongCallOver` 沒看 `PartedAt`，也等走到才判斷這裡適不適合唱，不適合就開新對話，玩家離不開。修正：出發前先看剛道別的 3 分鐘和 `SongAtEase`。
+- 2026-11-07 c-street-city R1／R2 的餐桌一直壓到書桌椅、床、流理台，前幾輪都在猜半徑。真正原因：這些家具在每層的 `office-fit-v1/City_R?_F0n.glb`，沒有碰撞，也不在 `props.json`，各間還不一樣，所以 `_ls_search` 完全看不到。修正：`_ls_search` 讀 fit 模型，算出 20 公分格的佔用範圍，所有 R 住處的擺放都避開；餐桌含椅子範圍 220，放不下才縮到 190，並離浴廁至少 190。以後物件看起來「憑空出現」，先查 `actors.json` 裡有沒有整層的模型，不要從單張照片推半徑。
+- 2026-11-07 c-conquest 查到赴約途中存檔、讀檔後她不來，約定也消失：約定在她出發時就算完成，走過來的路沒進存檔。修正：約定加 `coming_at`，讀檔後她重新出發。規則：狀態在動作完成前就改掉時，要想存檔夾在中間會怎樣。
+- 2026-11-07 c-conquest 查到他走開幾步，她桌上的餐就被清掉：「她離開了」比的是她和他的距離，不是她有沒有走。修正：要她走動或離開這家店才清。
+- 2026-11-07 c-conquest 查到便利店結帳後，到公園等別處買東西不用錢：`bought_at_counter` 只看 30 分鐘內結過帳，沒看地點。修正：記下結帳地點 `LastCheckoutPlace`。
+- 2026-11-07 c-conquest 查到早退後班次重新開始，每 6 分鐘早退一次直到被開除：班次結束後狀態仍是 `done`，又在班表時間內。修正：結束的班次改成 `worked`；班次開始前離店不算早退。
+- 2026-11-07 c-street-city R1／R2 的餐桌避開了書桌椅，卻整組站在 180 公分寬的走廊上，電視櫃站在房間內門的門洞裡。我之前用 20 公分格做連通檢查，桌子邊還留 10 公分縫，就算成「走得過」，所以判斷錯。修正：擺放前先算每戶從玄關到各房間的步行路線，路線兩側 60 公分範圍不放家具；電視改朝沙發正前方找位置；嬰兒床排在電視和餐桌之後。以後檢查走道要用人的寬度，不要用格子大小。
+- 2026-11-07 c-conquest 查到桌上的菜是坐下時亂數畫的，和點的東西無關（漢堡排定食顯示成蛋糕）。修正：依上桌的菜畫，`TickMeal` 比對後重畫。
+- 2026-11-07 c-conquest 查到對話買的衣服走一般結帳，付了 ¥399 卻沒進她的衣櫃；對話說試穿開的是合照。修正：衣服直接進衣櫃；判斷器加 `try_on`，和菜單試穿同一條路。
+- 2026-11-07 c-conquest 修 R6-152 時把提示加進 `payer_format_instruction`，那是多人對話用的，一對一判斷器是 `ai_judge_prompt`，也已經有 `she_treats`。規則：改提示前先查這段提示是誰在用，再看有沒有現成欄位。
+- 2026-11-07 c-conquest 查到「吃完一起走」被判成現在散步，午餐吃 4 分鐘就起身（R6-161）。修正：提示說明沒講地點也填 `then`；桌上還有菜時散步等吃完。
+- 2026-11-07 c-street-city 第 82 輪加了走道後 R 住處餐桌只剩 32 間、電視少 4 台。查到 `keep_` 用 `props.json` 的 y 沒鏡像，書桌位置落在公寓另一半，把廚房那間的空地都擋掉，餐桌範圍一直放不下 220 也是這個原因。修正：R 住處不再用 `keep_`（fit 模型和走道已涵蓋），浴室距離改成有牆隔開就不算，電視不再先貼側牆。props 在 R 住處的 y 是鏡像，用之前要先換算。
+- 2026-11-07 c-conquest 查到試穿背景是街上：`OkComputeCameras` 把高模搬到世界原點。修正：試穿留在她站的地方，鏡頭往房間中央放。
+- 2026-11-07 c-conquest 試穿搬回原地後，安可身上有紅旗袍，我連續猜成 KoiClothesOverlay、內褲欄、配件欄 0，把她的瀏海都拿掉了，其實是她的街上模型和高模疊在同一處。規則：畫面上多一隻手或多一件衣服時，先看同位置有沒有第二個模型，再查卡片。
+- 2026-11-07 c-conquest 查到散步中道別要等到目的地才結束，惠惠說晚安後又走 3 分鐘。修正：散步沒有目的地，道別就取消散步。
+- 2026-11-07 c-conquest 查到 `act=stroll` 走到未知動作，畫面顯示「想做 stroll，但做不到」。修正：散步交給判斷器的 `do_now`／`then`。
+- 2026-11-07 c-street-city 第 83 輪數量全對，但 r1-0107、r1-0108 這型的餐桌和冰箱放進了浴室，桌邊就是洗手台、馬桶和浴缸，r1-0104 的書櫃進了馬桶間，8 張嬰兒床在廚房。原因是擺放只看距離和視線，沒有「房間」：浴室夠大，離浴缸 190 公分就算過關；視線又會穿過門。修正：用掃描資料切房間（180 公分方塊滑不過門，滑得到的範圍是一間），餐桌只放廚房那間，放不下才放玄關大廳；冰箱只放廚房或玄關；書櫃、植物、嬰兒床不放濕區，嬰兒床也不放廚房。數量對不代表位置對，每種家具都要看它落在哪個房間。
+- 2026-11-07 c-conquest 看餐廳鄰桌時只看到刻晴坐在隔壁桌，就判定沒穿模，還寫成 57～70 公分是路過的人。其實是客人先入座、他後坐進同一張桌子，桌椅疊在一起。修正：他入座後把桌邊的客人換到別桌。規則：沒重現到問題的當下情境，不能下「沒問題」的結論。
+- 2026-11-07 c-conquest 換桌第一版沒看行程地點，雷電將軍路過就被傳送到書店。修正：只搬行程排在這個地點的人。
+- 2026-11-07 c-conquest 查到她已經說「沒賣」，判斷器又填 `unsold`，她就再講一次「說了沒賣」。修正：提示改成她已經說過的不算。
+- 2026-11-07 c-conquest 看到幾位女角穿碎花裙都有長外套，先猜是配件或手套。其實長外套是裙子自己的第二色區，顏色沿用舊上衣。修正：列出開卡後的部件確認，再重設色區。規則：判斷「多出來的東西」先列實際部件，不看畫面猜。
+- 2026-11-07 c-conquest 染髮只測欄位有寫進卡，沒實際看畫面，一半女角的頭髮其實是畫好的貼圖，染了不會變。規則：外觀功能要在遊戲裡看到結果才算通過。
+- 2026-11-07 c-conquest 診所項目在菜單上，判斷器把它當成點餐，染髮收了三次錢。修正：診所項目不能點餐。規則：有自己流程的商品要從點餐路徑排除。
+- 2026-11-07 c-street-city 第 84 輪核對 `skipped` 時才發現 s39-0301、s84-0301、s86-0301 沒有床：`shop_homes` 床 44／47，之前當成重試次數帶過，寫報告差點寫成「本來就有床」。原因是床要離沙發、電視和門 160 公分，小房間找不到位置。修正：放不下時把間距放寬到 100、60 公分。`skipped` 裡的每個數字都要查出是哪幾處、為什麼，不能用猜的解釋。
+- 2026-11-07 c-street-city 第 84 輪實走第 2 段失敗時，我拿 `soak_samples` 最後一筆的 route 19 查路線，回報成 `wego-linsen-918b0413ed68` 入口，還寫進 commit 3cece9dfb 的訊息和文件。那只是取樣紀錄，實際停住的是報告的 `stalled_route` 2、`stalled_segment` 28，也就是 `imore-8ed9ae8ccd08-pool-entry-and-exit`，泳池台階的已知懸空誤判。查實走失敗一律看 `stalled_route`、`stalled_segment` 和 `unsupported_character_cm`。
+- 2026-11-07 c-conquest 看到幾位女角穿碎花裙都有長外套，先猜是配件或手套。其實長外套是裙子自己的第二色區，顏色沿用舊上衣。修正：列出開卡後的部件確認，再重設色區。規則：判斷「多出來的東西」先列實際部件，不看畫面猜。
+- 2026-11-07 c-conquest 染髮只測欄位有寫進卡，沒實際看畫面，一半女角的頭髮其實是畫好的貼圖，染了不會變。規則：外觀功能要在遊戲裡看到結果才算通過。
+- 2026-11-07 c-conquest 診所項目在菜單上，判斷器把它當成點餐，染髮收了三次錢。修正：診所項目不能點餐。規則：有自己流程的商品要從點餐路徑排除。
+- 2026-11-07 c-conquest 愛麗絲胸口穿模先後猜是鞋子欄的身體網格、再猜是內衣，兩次實驗都推翻。實際是她的卡在第 0 套有自己畫的 BodyMask，蓋掉了裙子的身體遮罩。修正：換上衣時連同 BodyMask、BraMask、InnerMask 一起拿掉。規則：穿模先比對實際用到的遮罩，再動部件。
+- 2026-11-07 c-conquest 雷电将军的頭髮掛在 main_item 材質、叫 Minus_screw，只看材質名稱認不出是頭髮，染了只有花變色。修正：同網格同欄位、貼圖相同的部件一起算頭髮。規則：認部件要看實際貼圖，不只看名稱。
+- 2026-11-05 e-galgame：`ok-extract` lib 測試偶發失敗，先把失敗的測試標成 ignore，下一輪換別的測試失敗才發現治標。實際原因是 `pack_parallel` 在沒有開卡的執行緒上走 rayon 全域執行緒池，全樹掃描被算成當時唯一在開的卡的缺口。修在 `pack_parallel`，ignore 已還原。另外 `eprintln!` 在 rayon 工作執行緒會落到別的測試的輸出裡，追蹤要加 `--nocapture`。教訓：偶發失敗先抓呼叫路徑再動手。
+- 2026-11-06 e-galgame：插入譯文時把 `\r` 留在行中間（比對到行尾前的 `[^\n]*` 含 `\r`，又補了 `\r\n`），`ui_text.toml` 解析失敗，規則載入不了，遊戲啟動 5 秒就退出。改 CRLF 檔案時比對要排除 `\r`；改完 toml 先跑規則測試再開遊戲。
+- 2026-11-06 e-galgame 自慰、女女的興奮值：`TickSolo` 加 2/s，一般分支閒置又扣 3/s，`MLoop` 卡住往下掉；`SLoop` 又被 `HIsLoop` 當成插入循環，一起加算並走 `Finish`，70 以後幾秒就高潮。之前只用自慰跑過循環就寫「走完兩輪」，沒看興奮值數字。修正：獨處模式在分支鏈最前面跳過，興奮值只由 `TickSolo` 管。
+- 2026-11-06 e-galgame 3P 比耶：她的雙手在姿勢裡，比耶的 IK 還是把手拉到臉旁，`足交＆手交`、`抬腿舔睪丸` 的頭被拉離頭髮。先懷疑頭看鏡頭，實測不是（那局沒有比耶，就沒事）。修正：3P、女女、自慰、偷窺不比耶。
+- 2026-11-06 e-galgame 3P 換位：`入れ替え` 姿勢他在第二位身上，插入、中出、處女、懷孕卻全記在主角，上一版也只給第二位高潮次數和姿勢。原作 `id % 2` 決定對象，移植時沒讀。使用者指出開發度和記憶要每位都處理。修正：`FHLedger` 換帳本，`group_role` 算沒被插入那位的開發度。
+- 2026-11-06 e-galgame 3P 插入就停：上一版寫「18 個姿勢都看過」，其實只切換到 Idle，後半段沒插入，所以沒發現 `khs3_m_*` 指向第三人時整個播放會停。看過姿勢要連插入和循環都走到才算。還有 `SetAnimationFloat` 擋 portable，傳給第二位的身高沒生效，我沒看回傳值就寫進文件。修正：三人解算、拿掉擋板。
+- 2026-11-06 e-galgame 選姿勢時預設狀態還沒準備好，改播第一個準備好的狀態，按字母是 `A_Drop`，面板從那裡走不下去，`騎乘位舔陰入れ替え` 等幾個姿勢開場就卡住。修正：H 場景等想要的狀態。
+- 2026-11-06 e-galgame 認錯愛麗絲：只憑同名單有早瀨優香，就說 `alice.png` 是《蔚藍檔案》的天童愛麗絲，其實 `free_talk_personas.json` 寫的是《勝利女神：妮姬》。還有 3P 測試（`EGalThree2`～`4`）拿三月七當第二位，她的原作年齡不明、設定是少女，不該用在性愛場景。Profiles 的 `age_in_setting` 全部是 20，不能當成年依據。修正：先看 persona 與卡片再判斷角色；性愛場景只用原作明確成年的角色。
+- 2026-11-06 e-galgame 動過風格滑桿後，姿勢全部開不了：滑桿改角色縮放，`AKKPairedPlayback::Start` 要求兩人 transform 相同，每次都回「配對角色需要共同場景與原點」，面板沒有提示，停在等待狀態，插入選項和物理按鈕都不出現。修正：風格只算顯示，配對比 `PairFrame()`；開不了時 `PoseFailed` 說明並清掉等待。物理、背景改成每種互動都有，各互動的選單分開。
+- 2026-11-06 e-galgame 自動變形偶爾沒作用，陰莖穿出小腹：`AlignHim` 用 `J_dan100`、`J_dan109` 算方向，`SLoop` 最深的瞬間兩根骨頭只差 1.7～1.9 cm，低於 2 cm 門檻，那幾幀整段對齊和包覆被跳過，按暫停就停在穿模的畫面。修正：骨頭太短時改用根部到龜頭的線。排查時我一度把暫停、男主風格當成原因，要先比對條件再下結論。
+- 2026-11-07 c-conquest 用控制通道的 `/saves` `open` 打開存檔選單後沒關就跳了幾天，選單一直蓋在畫面上，看起來像遊戲卡住。修正：開了選單要按「返回游戲」關掉再操作時間。
+- 2026-11-07 c-conquest 以為 D3D12 residency 上限崩潰只發生在未 cook 的編輯器模式，打包版沒事：City1107Fps1（點光與聚光仍有陰影）開場第 3 幀就崩潰，重開一次又過了，是偶發。關掉本地燈陰影的版本連開 4 次沒遇到，但沒有證明已經解決；要留意 `D3D12.ResidencyManagement` 或引擎的 MAX_NUM_CONCURRENT_CMD_LISTS。
+- 2026-11-07 c-conquest 只在男宿前面對圍欄、720p、時鐘暫停時量大學城 FPS，看到 183 FPS 差點當成達標；換到街上、店內與 1080p 才看到 50～60 FPS。FPS 要量幾個代表地點與方向，解析度用實際遊玩的。
+- 2026-11-07 c-conquest 叢集光照的 ensure 沒確認就在 6b4f695a9 的訊息寫「已修掉」，其實改 ECVF 旗標沒用：原因是 `r.UseClusteredDeferredShading` 在 5.7 改名成 `r.UseClusteredDeferredShading_ToBeRemoved`，用舊名會 ensure。修法之後才算數；提交訊息只寫在 log 裡確認過的事。
+- 2026-11-07 c-conquest 走路一直抖：先猜鏡頭碰撞，量了才知道大跳只有 12 次（1982 幀）。真正原因是角色元件在 FTSTicker 更新，而 core ticker 在 GEngine->Tick 之後跑，所有角色都比鏡頭晚一幀畫，落差等於這一幀走的距離，幀時間不穩就來回晃。`OKSetCrowdRuntimeCharacterMotion` 改成當場更新元件。
+- 2026-11-07 c-conquest 畫面一暗一暗地閃：遊戲每秒設地圖的太陽，CityEnvironmentController 每幀也在設，兩邊在搶（只有編輯器模式會，打包 host 之前沒帶這個外掛）。先改成 controller 全權接手，結果 12 點全白人物全黑：它的亮度要配它自己的曝光，遊戲是固定曝光 1.0。改成遊戲管太陽、天光、曝光，controller 用 UseGameClock 只管本地燈、招牌和天空。
+- 2026-11-07 c-conquest 夜晚偏亮：`OKStreetSunAt` 夜裡回的是月亮強度（0.8～1.6），天光用它除以 2.5，整晚停在 64%，所以 12% 和 3% 的下限都沒起作用。c-street-city 量出是 SkyLight 後，我先直接把下限改成 3%，沒看算式。夜裡改成固定 10%，黃昏接白天的 20%。改數字前先算一次實際值。
+- 2026-11-07 c-conquest 鏡子：平面反射就算只畫 20 公尺內 126 個物件，渲染執行緒還是多 4 ms（多一個 scene renderer），立繪式的正交拍攝也多 3.5 ms。改成房間用立方體貼圖只拍一次、箱體投影，人物的正交拍攝走 main renderer；A/B 量到開關鏡子差距在雜訊內。另外玻璃上的殘影是 SSR 把人物抹上去，城市模式已關 SSR。第一次拍立方體會全黑，0.5 秒後重拍。別人的遊戲同時在跑時量到的 21 FPS 不算數，量之前先看 slot。
+- 2026-11-08 c-conquest 大學城二樓以上走不出電梯：城市模式每一步都找地面，電梯井二樓以上沒地板，連門檻也沒有，開門後一步都走不動，等 60 秒才報「路被擋住」。電梯車廂與門口改用原高度。同一路徑上還有三個問題：格點找不到路時規劃對空陣列取 Last() 當掉；走向電梯時被擋，重規劃把路線換成全程街道路線，人往反方向走；站在門側邊直線進門撞門框。
+- 2026-11-08 c-conquest 導航到遠處女角沒反應：NavigateGirl 和每 0.75 秒重算都用 ContactReady，它要求角色正在畫，城市裡遠處的人不畫，所以按了沒事。重算每次也從路線起點重走，人在街上來回晃；遠距離改 5 秒一次。我自己的測試還把人傳到牆另一側，把那次失敗當成 bug 追了一輪，傳送前要先確認位置可走。
+- 2026-11-08 c-conquest 遊戲無聲結束兩次（00:24 載入中、01:15 剛啟動），game.log 沒錯誤、沒 crash 檔，Windows 只有 00:20 一筆 LiveKernelEvent 117。後續對照：這兩次之前都沒有我的 game_stop，log 也沒有 ExceptionHandler（23:49 那次有，是已修的 `.Last()` 崩潰；23:01、23:09 的截斷接在我的 game_stop 之後）。專案腳本裡沒有會結束別人遊戲的路徑，但別的 session 直接結束程序無法排除；那兩個時間點的記憶體峰值沒有紀錄。01:55 起用監看器抓住 pid 記退出碼，軟關閉是 0，log 收在 Log file closed。原因仍未查明，沒有重現方法；再發生時看退出碼：1 是被 TerminateProcess，0xC0000409 是 fastfail／abort，0xC0000005 是記憶體存取錯誤。
+- 2026-11-08 c-conquest 女角從樓上走向他時飄在空中：走過來的路線是街道路線（Z 1198），她跳到下一點時只換 X、Y，高度留在三樓 1960，每個點都沒地面踩、卡 8 秒。走出門和重排路線的兩個跳點也一樣。三處都改用路線點或門的高度。
+- 2026-11-08 c-conquest 校園各棟和兩棟宿舍 2F 以上走不出電梯：場景的電梯門模型在 landing 外 20 公分，是實體，遊戲的門在 centre+75，landing 夾在兩扇門中間；只在樓層間移動的測試看不出來（昨天的電梯驗證都沒走出門廳）。hotel、department 正常。要改場景資料，已交 c-street-city。
+- 2026-11-08 c-conquest 探電梯口時女角中途搭話，對話中 W 不生效，hotel、lecture、school 被我測成 0 並傳給 c-street-city，事後更正。批次探測要先做對照，並確認每筆都不在對話中。另外別的 session 也在跑遊戲時，MCP 的 game_* 會打到它的端口，要用 OK_CONTROL_PORT 走自己的。
+- 2026-11-08 c-conquest 靠近建築只有 60 FPS：街區為了省 GPU 等待關了 r.AllowOcclusionQueries，大學城牆後的房間和家具全部照畫，render thread 16 ms。城市模式改回開著，同一位置 cafe 60 -> 153、conveni 71 -> 153、campus_ee 68 -> 190，其他位置沒變慢。我一度把這個慢歸給別的 Unreal 搶資源，還寫進紀錄和回報：那輪在同一個遊戲裡切過 show flag 和這個開關，切回 1 後就一直快，我誤以為是對方結束造成的。量 A/B 時切過的設定要還原成啟動時的值再量；開關切回去不等於回到原狀。
+- 2026-11-08 c-conquest 商店 2F 以上去不了：有座位 anchor，女角會坐上去，卻沒有電梯和樓梯，導航報「她在别的楼层，找不到路过去」。沒有電梯也沒有 stair anchor 的店，導航改成走到門口後淡出換層，下樓同樣；店內面板加上下樓按鈕。
+- 2026-11-08 c-conquest 打包版 -CitySource 是來源地圖，不是 World Partition，不讀烘好的 city_roads.json，電梯門模型也是 cook 前的。路網和場景的驗證要用編輯器模式 -Editor -City，打包版走得過或走不過都不算數。
+- 2026-11-08 c-conquest 和 c-street-city 同時開了 WP 編輯器（各約 97 GB），可用記憶體掉到 0.7 GB，對方的 CEF 服務掛過一次。claim 後 status 已列出 slot1 被佔，只是程序還沒起來，我只看 unreal processes: 0 就啟動。對方靠 slot 排隊，不是靠程序數：開 WP 編輯器前要確認沒有別人持有 slot，claim 後隔幾秒再看一次，並在 ready 後確認只有一個編輯器。
+- 2026-11-08 c-conquest 屋頂去不了：屋頂只有外牆的 stair_bottom，電梯只到 5F，導航兩秒就回「她在別的樓層」。改成像店內樓梯：走到那片屋頂的樓梯腳再淡出上去，下來同樣；六片屋頂算同一個地點，所以改用同一片屋頂來判斷。同一層的判斷原本只拿第一個包住他的地點比，改成任一地點同時包住兩人才算。眼鏡行到不了另有原因：M1 4F 店門外的走道有洞，他掉到 2303，交給 c-street-city。
+- 2026-11-08 c-conquest 眼鏡行（M1 4F）到不了：下電梯後 grid 路線在城市模式只有 4 ms，算不完就退成直線，直線穿過沒有護欄的手扶梯挑空，他掉到 3F 手扶梯上（2460 -> 2303）。地面檢查往下 120 cm 打到下一層，挑空也算有地。改成下電梯後分段搜尋到完成，樓上的格子要求 60 cm 內有地面。我先把它當成「第一個地點」判斷錯誤，改了一版才發現不是。
+- 2026-11-07 e-galgame 一對一還是看得到其他角色：`0fc3c8989` 把隱藏條件改在 `Tick` 的角色移動那兩行，但 `Tick` 在 `if(TickPrivate(Now))return;` 就返回了，一對一期間那兩行根本不會執行，舊的 `Agent.Slot==S.PrivateGirl` 也一樣。我當時沒看畫面確認就回報完成。修正：移到 `TickPrivate` 每幀把街上角色移到地底，其他角色手上的道具進場時隱藏、離開時還原。
+- 2026-11-07 e-galgame 「這個姿勢現在不能用」誤判使用者：先說使用者換了衣服、又懷疑風格滑桿，使用者都沒動。真正的觸發是換姿勢自動重開模型（`PoseClothes` → `ChangeClothesStates`）。查清前不該把原因推給操作。一對一換模型這件事本身是錯的，已改成同一模型換部件，半脫改回原作的節點開關。
+- 2026-11-07 e-galgame 驗 x1.5 破洞時開著「半透明顯示插入部分」，看不出有沒有穿透，結果先報太早。驗衣物穿模一律關掉半透明。
+- 2026-11-07 e-galgame 測試腳本用 `grep slot` 判斷 `unreal_slot.lua claim`，排隊訊息也有 slot 字樣，沒拿到名額就開了遊戲。等名額要用 `claim --wait` 看結束碼。
+- 2026-11-07 e-galgame 全狀態開卡只用雷電將軍測就回報，刻晴換裝失敗（OK 卡缺骨架答案）：留下全部狀態後，`meshes_for_maindata` 改選到別的網格骨架，只有 OK 卡重播時才會出錯。卡片相關改動要把全部女主的每套衣服都開一次（`wardrobe::tests::every_outfit_opens_with_all_states`）。
+- 2026-11-08 e-galgame 用 TaskStop 停掉量測腳本，它剛開的遊戲沒關，下一輪 ABA 變成兩個遊戲同時跑，B 和第二個 A 都慢了三成，差點當成結果。量測腳本每次開遊戲前先 game_stop，停腳本後要看還有沒有自己的遊戲。
+- 2026-11-08 e-galgame 隱藏部件不再解算後，暫停中按「全部穿上」，鞋子停在最後一次畫的位置（掉在地上）：暫停時沒有解算幀。可見性一變就要求一幀姿勢更新，暫停也解算一次。

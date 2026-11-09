@@ -202,18 +202,6 @@ pub(crate) fn rig_mesh(
         };
         if crate::profile::var("OK_GPU_SKIN").ok().as_deref() == Some("1") {
             let owned = mesh.smr_skel.clone().or_else(|| part_skel.cloned());
-            if mesh.name.contains("cf_hair_31") {
-                let _ = std::fs::write(
-                    r"C:\portable\OpenKoikatsu\Saved\hair_gpu.txt",
-                    format!(
-                        "env=1 head={} smr={} part={} bones={}\n",
-                        head_skel.is_some(),
-                        mesh.smr_skel.is_some(),
-                        part_skel.is_some(),
-                        owned.as_ref().map(|s| s.names.len()).unwrap_or(0)
-                    ),
-                );
-            }
             if let (Some(hsk), Some(ps)) = (head_skel, owned.as_ref()) {
                 let mapped = ps
                     .names

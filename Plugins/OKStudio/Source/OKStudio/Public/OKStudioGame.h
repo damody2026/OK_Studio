@@ -38,6 +38,21 @@ public:
 	AOKStudioViewer(const FObjectInitializer& Initializer);
 };
 
+/** A seat found in the scene (U264): read from its mesh, map parts have no names to go by. */
+struct FOKChair
+{
+	FBox Box = FBox(ForceInit);
+	int32 Item = -1;
+	/** The height of the seat's top; where the hips go on it; the way a person on it looks. */
+	double SeatZ = 0.;
+	FVector2D Hips = FVector2D::ZeroVector;
+	double Yaw = 0.;
+	/** How far along the way it looks the seat ends: knees go past it. */
+	double Edge = 0.;
+	/** A backrest told Yaw; without one, nothing but an item's turn or a desk beside it says. */
+	bool bFacing = false;
+};
+
 /**
  * OK Studio inside the game: the shared scene tree shown in the running world, an orbit viewer camera and a Slate
  * panel (outliner, object properties, scene files). Started by `OKStudio.Play [scene.okscene]`.
@@ -69,6 +84,8 @@ public:
 	float Pitch = -8.f;
 	float OrbitFov = 40.f;
 	float Distance = 380.f;
+	FVector StartFocus = FVector::ZeroVector;
+	float StartDistance = -1.f;
 
 	FString File;
 	/** The primary selection: the guide's pivot and the object the detail windows show (also in Selection). */
@@ -91,6 +108,32 @@ public:
 	/** Points the free view at the selection, far enough to see all of it; bFace: at one character's face, close up (the
 	 *  look, neck and expression pages edit what the face shows). */
 	void FocusSelection(bool bFace = false);
+	/** The view is as FocusSelection left it (nobody moved it since): it can follow the open area. */
+	bool ViewStillFramed() const;
+	void Reframe() { FocusSelection(bFramedFace); }
+	FVector FramedFocus = FVector::ZeroVector;
+	float FramedDistance = -1.f, FramedYaw = 0.f, FramedPitch = 0.f;
+	bool bFramedFace = false;
+	/** The whole figure of a character just added, while the view is still the initial one (U212). */
+	void FrameFirstCharacter(int32 Id);
+	/** The view a map just opened with: the first character may still reframe it (U262: head and feet were cut). */
+	void NoteStartView() { StartFocus = Focus; StartDistance = Distance; }
+	/** Pans the free view so object Id stands in the open part of it, when Covered (0..1 of the view) hides it (U263). */
+	bool KeepInOpenView(int32 Id, const FBox2D& Covered);
+	/** The boxes of the map and the scene's items a seat could be in. */
+	void FindChairs(TArray<FBox>& Out, TArray<int32>* OutItems = nullptr) const;
+	/** The seat at a point of the view, the nearest of several: on a sofa or bench the place clicked. */
+	bool ChairAt(const FVector2D& Position, FOKChair& Out) const;
+	/** Stands character Id at a seat, looking the way it does. */
+	bool SeatAt(int32 Id, const FOKChair& Chair);
+	/** With its sitting motion on: the hips on the seat, wherever the motion has them. */
+	bool HipsOver(int32 Id, const FOKChair& Chair, bool* OutBehindDesk = nullptr);
+	/** Where a bone of a character is now. */
+	bool BoneAt(int32 Id, const TCHAR* Bone, FVector& Out) const;
+	/** A new item the size of furniture goes down onto the floor and out of what stands there (U265). False while it is not built. */
+	bool LandFurniture(int32 Id, bool& bMoved);
+	/** The selected items and characters go onto the surface seen behind them, along the line of sight; furniture straight down. How many moved. */
+	int32 DropOnSurface();
 	/** The part of the view no panel covers, as fractions of the view (0..1, y down); the panel keeps it current. Framing
 	 *  centres there and sizes the distance to it. */
 	FBox2D ClearView = FBox2D(FVector2D(0.f, 0.f), FVector2D(1.f, 1.f));
@@ -122,16 +165,28 @@ public:
 
 	/** Adds an object under the selected folder (or next to the selected object) and selects it. */
 	int32 Add(EOKSceneObjectKind Kind);
+	/** A new scene's 主光: Studio's character light, on the characters and items only. */
+	int32 AddMainLight();
 	void Select(int32 Id);
 	bool Save(const FString& Path, FString& OutError);
 	bool Load(const FString& Path, FString& OutError);
 	/** Drop the current scene and its source/image caches before another independent load. */
 	void ReleaseSceneResources();
+	/** Whether the scene's clock follows the timeline (else motions run on their own, as Studio's do). */
+	void UpdateTimelineDriven();
+	/** The timeline was used in this scene: from then on a file motion (a VMD) stays where it put it. */
+	bool bTimelineUsed = false;
+	/** The self test reads what it just added: SyncNow builds everything before it returns. */
+	bool bSyncBuildsAll = false;
+	/** Goes up each time the scene is replaced: work started on the old scene must not land on the new one (U251). */
+	int32 SceneSerial = 0;
 	/** Cards the character picker offers (Content/CharacterCards). */
 	static TArray<FString> AvailableCards();
 	/** Scene files of the in-game list: UserData/Studio/scene/*.okscene, newest first. */
 	static FString SceneDirectory();
 	static TArray<FString> SceneFiles();
+	/** The picture saved beside an .okscene (a PNG without scene data, so the lists leave it out). */
+	static FString ScenePictureFile(const FString& Scene);
 
 	/** Guide object (gizmo) of the selection: 0 move, 1 rotate, 2 scale. */
 	int32 GuideMode = 0;
@@ -238,11 +293,25 @@ public:
 	bool IsOutsideSoundPlaying() const;
 	/** The voice list entry character `Id` is speaking (-1: none, still loading or ended). */
 	int32 VoicePlayingIndex(int32 Id) const;
+	/** How long the scene's sound runs (0: none, or it cannot be read). */
+	float SceneSoundSeconds();
+	/** Voices on the timeline (U233): the clip's sound file (empty: not there), its label and length (1 s until decoded). */
+	FString VoiceClipFile(const FOKSceneVoiceClip& Clip) const;
+	FString VoiceClipName(const FOKSceneVoiceClip& Clip) const;
+	float VoiceClipSeconds(const FOKSceneVoiceClip& Clip) const;
+	/** How open the voice clips hold character `Id`'s mouth at Time: playback, scrubbing and exports all read this. */
+	float VoiceMouth(int32 Id, float Time) const;
+	/** Voice clips audible now. */
+	int32 VoiceClipsSounding() const;
+	/** Lays a clip on the character and lengthens the timeline to hold it. */
+	void AddVoiceClip(int32 Id, const FOKSceneVoiceClip& Clip);
 
 	/** Screenshot through the current view into UserData/Studio/screenshot (returns the file; empty on failure). */
 	FString Screenshot(int32 Width, int32 Height, bool bTransparent = false);
 	/** Renders the current view (camera, FOV, scene post-processing) at a resolution and writes a PNG, synchronously. */
 	/** bTransparent: only the scene's characters and items, the rest (map, sky) transparent. */
+	/** A map's picture for the map window: the view as it stands, or from inside the map if that sees next to nothing. */
+	bool CaptureMapPicture(const FString& Path, FString& OutError);
 	bool CaptureToPng(const FString& Path, int32 Width, int32 Height, FString& OutError, bool bTransparent = false);
 
 	/** Exports the timeline as numbered PNG frames (UserData/Studio/movie/<time>/frame_00000.png), one per Tick. */
@@ -262,6 +331,8 @@ public:
 		const TArray<TPair<FString, bool>>& Audio = {}, float Seconds = 0.f);
 	/** A movie export takes the scene's BGM and outside sound that play (U129: the mp4 had no sound). */
 	bool bExportAudio = true;
+	/** A PNG sequence with only the characters and items, the rest transparent (U247; a movie has no alpha). */
+	bool bExportTransparent = false;
 	/** The ffmpeg the movie export uses (not under version control; downloaded into Tools/ffmpeg). */
 	static FString FfmpegPath();
 	/** Movie export: the last mp4 written, or why it was not; LastMovieNote says when it came out without sound though
@@ -290,6 +361,8 @@ public:
 	int32 UndoSteps() const { return UndoStack.Num() + (bHistoryDirty ? 1 : 0); }
 	/** Records a pending change now (otherwise done on the next still tick). */
 	void CommitHistory();
+	/** What changed since the last step belongs to that step: one Ctrl+Z takes both back. */
+	void AmendHistory();
 	/** Ends the undo step a pending change is in, so a command or control op is a step of its own (changes within 0.4 s
 	 *  otherwise join one step, which a drag needs). */
 	void EndHistoryStep() { if (bHistoryDirty) CommitHistory(); }
@@ -414,6 +487,21 @@ private:
 	};
 	TMap<int32, FCharacterVoice> CharacterVoices;
 	void UpdateCharacterVoices();
+	/** Voice clips: sounds by file and the file of each clip (kept across calls from const getters). */
+	mutable TMap<FString, TSharedPtr<struct FOKStudioVoiceSound, ESPMode::ThreadSafe>> VoiceSounds;
+	mutable TMap<FString, FString> VoiceClipPaths;
+	/** The clips sounding now, by character, start and file. */
+	TMap<FString, TWeakObjectPtr<class UAudioComponent>> VoiceClipAudio;
+	TSet<int32> VoiceMouthIds;
+	FString VoiceClipScene;
+	float VoiceClipTime = 0.f;
+	const struct FOKStudioVoiceSound* VoiceClipSound(const FOKSceneVoiceClip& Clip, bool bWait) const;
+	void UpdateVoiceClips();
+	void StopVoiceClipAudio();
+	void ApplyVoiceMouth(float Time);
+	void LoadVoiceClips() const;
+	/** The voice clips and the scene's sound over the export's range as a WAV (false: none sound there). */
+	bool WriteExportMix(const FString& Wav);
 	void UpdateViewer();
 	void SyncNow();
 	/** Whether a shown preview still draws stand-in materials or runtime shaders are compiling (pictures would miss it). */

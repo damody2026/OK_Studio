@@ -147,6 +147,8 @@ static TAutoConsoleVariable<int32> CVarAudit(
 	TEXT("OKPhysXSecondary.Audit"), 0, TEXT("1: measure clipping and jitter every step (OKPhysXSecondary::GetStats); costs CPU, for tests only."), ECVF_Default);
 static TAutoConsoleVariable<int32> CVarCrossCollision(
 	TEXT("OKPhysXSecondary.CrossCollision"), 1, TEXT("1: chains also collide with the body capsules of the other characters (two-person scenes)."), ECVF_Default);
+static TAutoConsoleVariable<int32> CVarBustArmContact(
+	TEXT("ok.HScene.BustArmContact"), 0, TEXT("1: breasts also collide with the partner's arms. Off, a partner leaning on his arms does not pin them (a setting of the H panel)."), ECVF_Default);
 static TAutoConsoleVariable<int32> CVarBodyMask(
 	TEXT("OKPhysXSecondary.BodyMask"), -1, TEXT("Bit i enables body capsule i (arms L 0-4, R 5-9, torso 10, neck 11, pelvis 12, head 13) for chain collision."), ECVF_Default);
 static TAutoConsoleVariable<int32> CVarRagdollPassthrough(
@@ -1376,6 +1378,7 @@ namespace OKPhysXSecondary
 				{
 					FOKPxCapsule C = Body[BodyIndex];
 					if (!(Mask & (1 << FMath::Min(BodyIndex, 30)))) continue;
+					if (BodyGroupId != S.Group && BodyIndex < 10 && (S.Particles[0].Flags & 64u) && !CVarBustArmContact.GetValueOnAnyThread()) continue;
 					if (BodyIndex == RootBody) continue;
 					if (!Overlaps(C.A, C.B, C.Radius)) continue; // out of reach: no clearance to compute
 					// Clothes and hair rest on the skin and the body proxies are rough. Each frame the capsule is shrunk

@@ -2,6 +2,7 @@
 //! The rules keep no game state: every call carries the facts it needs, so the DLL can be swapped while the game runs.
 pub mod academics;
 pub mod activities;
+pub mod anchors;
 pub mod motions;
 pub mod bank;
 pub mod bias;
@@ -25,6 +26,7 @@ pub mod events;
 pub mod games;
 pub mod heroine;
 pub mod clinic;
+pub mod wardrobe;
 pub mod hexp;
 mod hexp_edges;
 pub mod pregnancy;
@@ -163,12 +165,14 @@ impl Rules {
             }
             _ => {
                 let routed = needs::eval(&tuning.needs, &kind, &request)
+                    .or_else(|| anchors::eval(&tuning.anchors, &kind, &request))
                     .or_else(|| places::eval(tuning.places_in(locale::lang(&request)), &kind, &request))
                     .or_else(|| heroine::eval(tuning.acts_in(locale::lang(&request)), tuning.places_in(locale::lang(&request)), &kind, &request))
                     .or_else(|| invite::eval(tuning.places_in(locale::lang(&request)), &kind, &request))
                     .or_else(|| mind::eval(&kind, &request))
                     .or_else(|| hexp::eval(&kind, &request))
                     .or_else(|| clinic::eval(&kind, &request))
+                    .or_else(|| wardrobe::eval(&kind, &request))
                     .or_else(|| pregnancy::eval(&kind, &request))
                     .or_else(|| day::eval(&kind, &request))
                     .or_else(|| bank::eval(&kind, &request))

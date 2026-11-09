@@ -885,9 +885,9 @@ impl SessionPart {
                     // MDK reads emission regardless of Standard's _EMISSION
                     // keyword, and its normal slot is _BumpMap.
                     textures.retain(|name, _| matches!(name.as_str(), "_BumpMap" | "_ParallaxMap" | "_MetallicGlossMap" | "_EmissionMap" | "_OKLightmap" | "_OKLightmapDirection" | "_OKReflection"));
-                } else if mesh.mat.as_ref().is_some_and(|m| m.shader == "StylizedWater/Desktop") {
+                } else if mesh.mat.as_ref().is_some_and(|m| m.shader == "StylizedWater/Desktop" || m.shader.starts_with("Lux Water/")) {
                     // Drawn by the renderer's own water graph (AKKPreviewActor): its normals, mask and reflection cube atlas.
-                    textures.retain(|name, _| matches!(name.as_str(), "_Normals" | "_Shadermap" | "_Reflection" | "_OKLightmap" | "_OKLightmapDirection"));
+                    textures.retain(|name, _| matches!(name.as_str(), "_Normals" | "_BumpMap" | "_Shadermap" | "_Reflection" | "_OKLightmap" | "_OKLightmapDirection"));
                 } else if is_hair_shader {
                     textures.retain(|name, _| name == "_AnotherRamp");
                 } else if role == "head" && matches!(hair_shader_name.as_str(), "koikano/main_skin" | "shader forge/main_skin" | "xukmi/skinplus") {
@@ -909,7 +909,7 @@ impl SessionPart {
                     let is_kkuts=crate::is_kkuts_shader(&hair_shader_name);
                     // The character shaders' liquid (ChaControl siruLv, the H scene's semen) samples its region mask
                     // `_liquidmask`, pattern `_Texture2` and (Forge) normal `_Texture3`: kept so the skin and clothes show it.
-                    textures.retain(|name,_|(standard_normal && name=="_BumpMap") || (emits && name=="_EmissionMap") || (metal_map && name=="_MetallicGlossMap") || name=="_OKLightmap" || name=="_OKLightmapDirection" || name=="_OKReflection" || name=="_OKSkyCube" || name=="_expression"
+                    textures.retain(|name,_|name=="_DetailAlbedoMap" || (standard_normal && name=="_BumpMap") || (emits && name=="_EmissionMap") || (metal_map && name=="_MetallicGlossMap") || name=="_OKLightmap" || name=="_OKLightmapDirection" || name=="_OKReflection" || name=="_OKSkyCube" || name=="_expression"
                         || matches!(name.as_str(),"_liquidmask"|"_Texture2"|"_Texture3")
                         || (is_kkuss && (matches!(name.as_str(),"_NormalMapDetail"|"_AnotherRamp"|"_overtex1"|"_overtex2"|"_overtex3") || crate::KKUTS_EXTRA_TEXTURE_SLOTS.contains(&name.as_str())))
                         || (is_kkuts && (matches!(name.as_str(),"_NormalMapDetail"|"_AnotherRamp"|"_overtex1"|"_overtex2"|"_overtex3") || crate::KKUTS_EXTRA_TEXTURE_SLOTS.contains(&name.as_str())))
@@ -1160,6 +1160,8 @@ impl SessionPart {
 }
 
 pub struct OkSession {
+    /// On the female of a pair: the second heroine solved in the same frame (3P).
+    pub(crate) pair_third:Option<crate::h_playback::PairThird>,
     pub(crate) accessory_context:Option<std::sync::Arc<crate::accessory_extract::Context>>,
     pub editor_pregnancy:crate::pregnancy::Runtime,
     pub(crate) pv_config:Option<crate::pv::Config>,
@@ -1241,6 +1243,8 @@ pub struct OkSession {
     pub shape_body: Vec<f32>,
     pub shape_face: Vec<f32>,
     pub abm: Vec<crate::abmx::AbmBone>,
+    /// The card's bone modifiers while a style's are on top of them (`set_style_bones`).
+    pub(crate) style_card_abm: Option<Vec<crate::abmx::AbmBone>>,
     pub parts: Vec<SessionPart>,
     /// Number of outfit coordinate slots in the card (>= 1).
     pub coordinate_count: usize,
@@ -1263,6 +1267,16 @@ pub struct OkSession {
     pub(crate) mmdd_face_bone_dirty: bool,
     /// Active shoe metadata `(entry_name, main_data, mod_guid)` for the outfit's `shoesType` slot.
     pub(crate) active_shoe_meta: Option<(String, String, String)>,
+    /// On a wardrobe donor (`wardrobe.rs`): the mask this outfit gives her body.
+    pub(crate) wardrobe_body_mask: Option<Vec<u8>>,
+    /// Her clothes chains were just replaced on a live model: the game starts them where she stands, with no warm-up.
+    pub(crate) wardrobe_quick_settle: bool,
+    /// Parts the display hides (clothes states over every state kept, a piece taken off): their chains are not solved
+    /// or skinned while hidden, and start again from where she stands when shown (set_parts_hidden).
+    pub(crate) hidden_parts: Vec<bool>,
+    /// The cover field built beside her clothes chains this frame (finish_paired_dynamics_filtered), for the accessories
+    /// that follow; None: built there as before.
+    pub(crate) cover_ready: Option<Option<crate::belly_bulge::CoverField>>,
     pub(crate) face_runtime: FaceRuntimeState,
     pub body_shaped: Option<Skeleton>,
     // Runtime-only allocation reuse; restored from the complete current shaped
@@ -1297,6 +1311,15 @@ pub(crate) struct FaceRuntimeState {
     pub iris_base_settings: Vec<(usize, [f32; 2])>,
     pub iris_small_rate: f32,
     pub last_eye_gaze: [f32; 3],
+    /// The rates `step_eye_look` gave and where its unlimited look puts the irises for them: they are given back to
+    /// `set_eye_gaze_rates` to be drawn, and past ±1 they would roll her eyes.
+    pub eye_look_shown: Option<([f32; 3], [f32; 3])>,
+    /// How many times as large her pupils are drawn (0 and 1: as on her card; `set_pupil_scale`).
+    pub pupil_scale: f32,
+    /// Where her pupils are drawn off their place, in iris texture units (`set_pupil_offset`).
+    pub pupil_offset: [f32; 2],
+    /// Her pupils across and down, on top of `pupil_scale` (`set_pupil_stretch`; 0 as 1).
+    pub pupil_stretch: [f32; 2],
     pub blush_rate: Option<f32>,
 }
 
@@ -1305,16 +1328,24 @@ impl OkSession {
         if !left.is_finite() || !right.is_finite() || !vertical.is_finite() {
             return false;
         }
+        let look = self.face_runtime.eye_look_shown.filter(|(rates, _)| *rates == [left, right, vertical]).map(|(_, look)| look);
         // Vertical past ±1 rolls her eyes on past the limit (IrisRuntime::st_rolled); the look's rates stay in -1..1.
         let most = crate::eye_look::most();
         let lh = left.clamp(-most, most);
         let rh = right.clamp(-most, most);
         let v = vertical.clamp(-2.0, 2.0);
         self.face_runtime.last_eye_gaze = [lh, rh, v];
+        let pupil = self.face_runtime.pupil_scale;
+        let [pupil_x, pupil_y] = self.face_runtime.pupil_offset;
+        let [across, down] = self.face_runtime.pupil_stretch;
         for part in &mut self.parts {
             if let Some(runtime) = part.iris_runtime.as_ref() {
-                let h = if runtime.settings[0] == 1.0 { rh } else { lh };
-                let st = runtime.st_rolled(h, v);
+                let right_eye = runtime.settings[0] == 1.0;
+                let h = if right_eye { rh } else { lh };
+                let st = look.map_or_else(|| runtime.st_rolled(h, v), |l| runtime.st_look(l[right_eye as usize], l[2]));
+                let mut st = crate::eye_gaze::stretched(crate::eye_gaze::enlarged(st, pupil), across, down);
+                st[2] += pupil_x;
+                st[3] += pupil_y;
                 runtime.apply_st(&mut part.uvs, st);
                 if let Some(draw) = part.eye_draw.as_mut() {
                     draw.apply(st, &runtime.raw_uvs, &mut part.uv2, &mut part.uv3);
@@ -1322,6 +1353,35 @@ impl OkSession {
             }
         }
         true
+    }
+
+    /// Her pupils drawn `scale` times as large as they look now. Not `set_iris_small`: that scales the card's pupil
+    /// width, which is capped at 1 and is not the size seen.
+    pub fn set_pupil_offset(&mut self, x: f32, y: f32) -> bool {
+        if !x.is_finite() || !y.is_finite() {
+            return false;
+        }
+        self.face_runtime.pupil_offset = [x.clamp(-0.25, 0.25), y.clamp(-0.25, 0.25)];
+        let [lh, rh, v] = self.face_runtime.last_eye_gaze;
+        self.set_eye_gaze_rates(lh, rh, v)
+    }
+
+    pub fn set_pupil_stretch(&mut self, across: f32, down: f32) -> bool {
+        if !across.is_finite() || !down.is_finite() || across <= 0.0 || down <= 0.0 {
+            return false;
+        }
+        self.face_runtime.pupil_stretch = [across.clamp(0.1, 3.0), down.clamp(0.1, 3.0)];
+        let [lh, rh, v] = self.face_runtime.last_eye_gaze;
+        self.set_eye_gaze_rates(lh, rh, v)
+    }
+
+    pub fn set_pupil_scale(&mut self, scale: f32) -> bool {
+        if !scale.is_finite() || scale <= 0.0 {
+            return false;
+        }
+        self.face_runtime.pupil_scale = scale.clamp(0.5, 2.0);
+        let [lh, rh, v] = self.face_runtime.last_eye_gaze;
+        self.set_eye_gaze_rates(lh, rh, v)
     }
 
     /// KKS MMDD `get_iris_size_kk` / `set_iris_size_kk` (`瞳小` / `瞳大`):
@@ -1979,6 +2039,7 @@ impl OkSession {
             }
             crate::pose::assigned_weights_remap(head);
         }
+        self.face_runtime.eye_look_shown=runtime.look().map(|look|(runtime.rates,look));
         Some(runtime.rates)
     }
     /// Clothes thickness per body capsule for the clothed collision layer; recomputed only when the worn meshes change.
@@ -2055,7 +2116,9 @@ impl OkSession {
             if let Some(mut state) = crate::dbone::AttachedDynamicSet::new_unsettled(&self.clothes_dynamics, &setup, &crate::pose::ident()) {
                 state.mark_skin_chains();
                 state.configure_shared_clothes_colliders(body, &self.body_colliders, flags);
-                for _ in 0..240 {
+                // A few steps only bring them from their setup pose to where she is.
+                let steps = if std::mem::take(&mut self.wardrobe_quick_settle) { 12 } else { 240 };
+                for _ in 0..steps {
                     state.sync_shared_pose(body); state.configure_shared_clothes_colliders(body, &self.body_colliders, flags);
                     state.step_on_animated_pose(1.0 / 60.0);
                 }
@@ -2152,6 +2215,14 @@ impl OkSession {
     fn update_dynamic_accessories_dispatch_observed(&mut self,dt:f32,palette_only:bool,parallel:bool,observer:Option<crate::ffi::PrivateSkinObserver>) {
         self.update_dynamic_accessories_filtered(dt,palette_only,parallel,observer,&[]);
     }
+    /// The display's hidden parts (one byte a part, nonzero hidden). A part shown again has its chains started over.
+    pub(crate) fn set_parts_hidden(&mut self,mask:&[u8]) {
+        let was=std::mem::take(&mut self.hidden_parts);
+        self.hidden_parts=(0..self.parts.len()).map(|i|mask.get(i).is_some_and(|&m|m!=0)).collect();
+        for (index,part) in self.parts.iter_mut().enumerate() {
+            if was.get(index).copied().unwrap_or(false)&&!self.hidden_parts[index] {if let Some(runtime)=part.runtime_accessory.as_mut(){runtime.reset();}}
+        }
+    }
     fn update_dynamic_accessories_filtered(&mut self,dt:f32,palette_only:bool,parallel:bool,observer:Option<crate::ffi::PrivateSkinObserver>,excluded:&[usize]) {
         let t_prepare=std::time::Instant::now();
         let policy=AccessoryFramePolicy::read();
@@ -2199,6 +2270,7 @@ impl OkSession {
         }
         // Renderers of one prefab (same socket and placement, same simulated bones, same part) share one solve: the
         // first solves, the others take its bone locals (update_render_follow). OK_ACC_SHARED_SOLVE=0: each solves.
+        let hidden=&self.hidden_parts;let hidden=|index:usize|hidden.get(index).copied().unwrap_or(false);
         let mut leader_of:Vec<Option<usize>>=vec![None;self.parts.len()];
         let mut particle_ids:HashMap<usize,Vec<i64>>=HashMap::new();
         if dt>0.0 && acc_shared_solve() {
@@ -2207,7 +2279,7 @@ impl OkSession {
             for (index,part) in self.parts.iter().enumerate() {
                 let Some(runtime)=&part.runtime_accessory else {continue;};
                 let Some(state)=&runtime.state else {continue;};
-                if runtime.copy_weights_body || runtime.coordinated {continue;}
+                if runtime.copy_weights_body || runtime.coordinated || hidden(index) {continue;}
                 let ids=state.particle_ids();if ids.is_empty(){continue;}
                 let placement:[u32;16]=std::array::from_fn(|i|runtime.local_placement[i/4][i%4].to_bits());
                 match leaders.entry((runtime.parent_key.clone(),part.role.clone(),part.source_property.clone(),placement,ids.clone())) {
@@ -2222,9 +2294,9 @@ impl OkSession {
         let t_parts=std::time::Instant::now();
         let skinned=std::sync::atomic::AtomicU64::new(0);
         // Her clothes kept over her skin while the H scene has it on (belly_bulge::CoverField).
-        let cover=crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body);let cover=&cover;
+        let cover=match self.cover_ready.take(){Some(built)=>built,None=>{let _trace=crate::native_profile::Scope::new(47);crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body)}};let cover=&cover;
         let update=|(index,part):(usize,&mut SessionPart)| {
-            if leader_of[index].is_some() {return;}
+            if leader_of[index].is_some()||hidden(index) {return;}
             let Some(runtime) = &mut part.runtime_accessory else { return; };
             let _group = crate::px::enter_group(group, physx);
             // Hair and accessories are worn over the clothes: they collide with the clothed body surface. Garments
@@ -2269,6 +2341,7 @@ impl OkSession {
             }
             let follow=|(index,part):(usize,&mut SessionPart)| {
                 let Some(leader)=leader_of[index] else {return;};
+                if hidden(index) {return;}
                 let Some(runtime)=&mut part.runtime_accessory else {return;};
                 let source=if runtime.coordinated {clothes_body}else{body};
                 let assigned=if runtime.coordinated{assigned_clothes.as_ref()}else{assigned_body.as_ref()};
@@ -2338,6 +2411,23 @@ impl OkSession {
         } else {self.parts.iter_mut().enumerate().for_each(render);}
     }
 
+    /// A style's bone modifiers on top of the card's (scales and lengths multiply, offsets add): they take effect with the
+    /// next shape or pose. Empty gives the card's back.
+    pub(crate) fn set_style_bones(&mut self,bones:&[crate::abmx::AbmBone]) {
+        let card=self.style_card_abm.get_or_insert_with(||self.abm.clone()).clone();
+        let mut merged=card;
+        for bone in bones {
+            let style=bone.for_coord(0);
+            if let Some(found)=merged.iter_mut().find(|b|b.name==bone.name) {
+                for data in &mut found.coord {
+                    for axis in 0..3 {data.scale[axis]*=style.scale[axis];data.pos[axis]+=style.pos[axis];data.rot[axis]+=style.rot[axis];}
+                    data.length*=style.length;
+                }
+            } else {merged.push(bone.clone());}
+        }
+        self.abm=merged;
+        if bones.is_empty() {self.style_card_abm=None;}
+    }
     pub fn apply_shape(&mut self, body: &[f32], face: &[f32]) {self.apply_shape_impl(body,face,false,false,true);}
 
     /// Maker live parameter edits do not call ResetDynamicBoneAll.
@@ -2785,7 +2875,15 @@ impl OkSession {
         if let Some(body)=self.body_skel.as_mut() { self.head_look.apply_preserving_fk(body,delta_seconds,&self.user_fk); crate::dbone::apply_head_tilt(body, crate::px::debug_head_tilt()); }
         self.update_body_dynamics(delta_seconds);}
         let body=start.elapsed();
-        {let _trace=crate::native_profile::Scope::new(5);self.update_clothes_dynamics(delta_seconds);}
+        // Her clothes over her skin (belly_bulge::CoverField) is built while her clothes chains run: 0.9 ms of her
+        // accessories' part of the pair frame, on its longest path (trace 2026-11-08).
+        let prep=crate::belly_bulge::CoverField::prepare(self as *const Self as usize,&self.parts,self.body_skel.as_ref());
+        {let _trace=crate::native_profile::Scope::new(5);
+            let built=match prep {
+                Some(prep)=>{let (_,built)=rayon::join(||self.update_clothes_dynamics(delta_seconds),move||crate::belly_bulge::CoverField::build(prep));built}
+                None=>{self.update_clothes_dynamics(delta_seconds);None}
+            };
+            self.cover_ready=Some(built);}
         let clothes=start.elapsed();
         {let _trace=crate::native_profile::Scope::new(6);if let Some(mut ex) = self.skel_export.take() {
             crate::skel_export::refresh_pose(self, &mut ex);
@@ -4031,6 +4129,7 @@ impl SessionBlob {
             pv_config:self.pv_config,pv_mask:15,pv_fk:false,
             eye_look_config:self.eye_look_config,
             eye_look_runtime:None,
+            pair_third:None,
             head_look:crate::head_look::HeadLook::default(),
             physx_secondary:false,
             external_animation:None,
@@ -4079,6 +4178,7 @@ impl SessionBlob {
             shape_body: self.shape_body,
             shape_face: self.shape_face,
             abm: self.abm,
+            style_card_abm: None,
             parts: { let mut parts: Vec<SessionPart> = self.parts.into_iter().map(PartBlob::into_part).collect(); crate::assign_draw_layers(&mut parts); parts },
             coordinate_count: self.coordinate_count,
             skel_export: None,
@@ -4091,6 +4191,10 @@ impl SessionBlob {
             mmdd_world_lock: false,
             mmdd_face_bone_dirty: false,
             active_shoe_meta: None,
+            wardrobe_body_mask: None,
+            wardrobe_quick_settle: false,
+            hidden_parts: Vec::new(),
+            cover_ready: None,
             face_runtime: Default::default(),
             body_shaped: self.body_shaped,
             shape_reference_scratch: None,
@@ -4365,6 +4469,8 @@ fn open_unconfigured(game: &Path, card: Option<&Path>, outfit: i32) -> Result<Ok
         }
         let mut sess = made?;
         sess.game_root = std::path::PathBuf::new();
+        // Dyed hair, before the open cache stores the session.
+        if let Some(bytes) = card.and_then(|c| crate::card::card_file_bytes(c).ok()) { crate::hair_dye::apply(&mut sess, &bytes); }
         log_shader_inputs(&sess);
         // The key covers the library, the card (and its pack) and the zipmods the fallback can serve.
         // An open that read installed zipmods is only valid while they are unchanged (checked on load).
@@ -4421,7 +4527,7 @@ mod tests {
     #[ignore="prepared local APNG; verifies backwards-compatible slot provenance, run alone"]
     fn part_origins_survive_cache_and_split_resources_without_name_identity() {
         use super::*;
-        let path=std::path::Path::new("C:/portable/OpenKoikatsu/Content/CharacterCards/CrowdAPNG/C000.png");
+        let path=std::path::Path::new(crate::test_support::project_path!("Content/CharacterCards/CrowdAPNG/C000.png"));
         let mut source=crate::portable::load(path).unwrap();
         assert!(source.parts.len()>2);
         // Identical renderer names must remain independently addressable.
@@ -7212,7 +7318,7 @@ fn part_resource_split_preserves_full_renderer_contract(){
     let game=&crate::test_support::game_path("");
     let card=game.join("UserData/chara/female/19重绘爱莉希雅女仆v1.1.png");
     for key in ["OK_GPU_SKIN","OK_SKELMESH","OK_NOPOSE","OK_UE_ANIM","OK_HEAD_GPUSKIN"]{std::env::set_var(key,"1");}
-    std::env::set_var("OK_BUILTIN_RESOURCES","C:/portable/OpenKoikatsu/Content/IndependentResources/v1");
+    std::env::set_var("OK_BUILTIN_RESOURCES",crate::test_support::project_path!("Content/IndependentResources/v1"));
     let mut source=open(game,Some(&card),0).unwrap();let info=crate::card::parse_card_outfit(&card,0).unwrap();
     assert!(source.accessory_context.is_some()&&source.body_rest.is_some()&&!source.parts.is_empty());
     let mut full=Vec::new();let start=std::time::Instant::now();

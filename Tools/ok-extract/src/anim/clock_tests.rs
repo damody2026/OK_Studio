@@ -22,9 +22,9 @@ fn native_animator_parameterized_clock() {
     let tos=load_avatar_tos(game);let mut count=0;let mut attrs_count=0;let mut errors=[0f32;3];let mut positives=0;
     for card in ["[Card] March_7th_keiyuu","Alice_keiyuu","Hayase_yuuka_keiyuu_V1_02 For KKS","KK_091207","KK_384283"] {
         let stem:String=card.chars().map(|c|if c.is_ascii_alphanumeric()||c=='_' {c} else {'_'}).collect();
-        let mut frames:Vec<Frame>=serde_json::from_slice(&crate::gamefs::read(format!("C:/portable/OpenKoikatsu/Saved/Tests/Animator292/{stem}Animator292.json.animator-clock.json")).unwrap()).unwrap();
+        let mut frames:Vec<Frame>=serde_json::from_slice(&crate::gamefs::read(format!("{}/../../Saved/Tests/Animator292/{stem}Animator292.json.animator-clock.json",env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap();
         assert_eq!(frames.len(),24);
-        let layer_frames:Vec<Frame>=serde_json::from_slice(&crate::gamefs::read(format!("C:/portable/OpenKoikatsu/Saved/Tests/Animator292/{stem}Animator292Layer.json.animator-clock.json")).unwrap()).unwrap();
+        let layer_frames:Vec<Frame>=serde_json::from_slice(&crate::gamefs::read(format!("{}/../../Saved/Tests/Animator292/{stem}Animator292Layer.json.animator-clock.json",env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap();
         assert_eq!(layer_frames.len(),12);frames.extend(layer_frames);
         let mut session=crate::session::open(game,Some(&game.join(format!("UserData/chara/female/{card}.png"))),0).unwrap();
         session.apply_anim_frame(0.,0.);let baseline=session.body_shaped.as_ref().unwrap();let mut card_positive=0;

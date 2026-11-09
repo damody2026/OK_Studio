@@ -11,6 +11,12 @@ const TArray<uint8>* AKKPairedPlayback::WalkCycle = nullptr;
 
 static TAutoConsoleVariable<int32> CVarPairAsync(TEXT("ok.Anim.AsyncPair"), 1,
 	TEXT("1: OK pair playback solves the next frame on a worker thread while the game thread goes on (one frame of latency)."));
+// The pair at its own pace (user, 2026-11-08: "like the render thread doing the logic frame, or the portrait in the corner"):
+// a tick that finds the next pose still being solved does not wait for it. The pair keeps the pose it shows, the rest of
+// the game (camera, UI, the street) goes on, and the time passed goes to the next solve, so the motion keeps its speed.
+// At most this many ticks in a row; then the tick waits as before.
+static TAutoConsoleVariable<int32> CVarPairNoWait(TEXT("ok.Anim.PairNoWait"), 0,
+	TEXT("Ticks in a row the pair may keep its pose while its next frame is still solved (0: every tick waits for it)."));
 static TAutoConsoleVariable<int32> CVarPairUseOK(TEXT("ok.Anim.UseOK"), 1,
 	TEXT("1: paired states with a converted OK group (Saved/OKAnim/Pairs, OKAnim.SavePair / ok.Demo.PairBatch) play through the OK player; 0: always the native KK pair."));
 
@@ -19,8 +25,8 @@ bool AKKPairedPlayback::Start(AKKPreviewActor* Female,AKKPreviewActor* Male,cons
 	const FString& State,const FString& FemaleMotion,const FString& MaleMotion,FString& Error)
 {
 	if(!IsValid(Female)||!IsValid(Male)||Female==Male||Female->GetWorld()!=Male->GetWorld()
-		||!Female->GetActorTransform().Equals(Male->GetActorTransform(),.01f))
-	{Error=TEXT("配對角色需要共同場景與原點");return false;}
+		||!Female->PairFrame().Equals(Male->PairFrame(),.01f))
+	{Error=TEXT("配對角色需要共同場景與原點");if(IsValid(Female)&&IsValid(Male))UE_LOG(LogTemp,Warning,TEXT("Pair refused: female %s (origin set %d, actor %s), male %s (origin set %d, actor %s)"),*Female->PairFrame().ToString(),Female->bPairOriginSet,*Female->GetActorTransform().ToString(),*Male->PairFrame().ToString(),Male->bPairOriginSet,*Male->GetActorTransform().ToString());return false;}
 	Stop();FemaleActor=Female;MaleActor=Male;FemaleClip=FemaleKey;MaleClip=MaleKey;StateName=State;FemaleIK=FemaleMotion;MaleIK=MaleMotion;
 	OldFemaleTick=Female->IsActorTickEnabled();OldMaleTick=Male->IsActorTickEnabled();
 	if(!Restart(Error)) {Stop();return false;}
@@ -38,7 +44,7 @@ bool AKKPairedPlayback::Restart(FString& Error)
 	if(!FemaleActor->SetGameAnimation(FemaleClip,false)||!MaleActor->SetGameAnimation(MaleClip,false)) {Error=TEXT("配對控制器狀態不存在");return false;}
 	FemaleActor->SetCoordinatedPlayback(true);MaleActor->SetCoordinatedPlayback(true);
 	FemaleActor->SetActorTickEnabled(false);MaleActor->SetActorTickEnabled(false);
-	Elapsed=0.;bPaused=false;bActive=true;bVaginaRange=false;SetActorTickEnabled(true);
+	Elapsed=0.;SkippedDelta=0.f;SkippedTicks=0;bPaused=false;bActive=true;bVaginaRange=false;SetActorTickEnabled(true);
 	// The converted OK group of this state, when there is one: same characters, placement, IK and physics through the OK player.
 	OkPlayer.Reset();OkReport.Reset();
 	if(CVarPairUseOK.GetValueOnGameThread()!=0){
@@ -52,6 +58,16 @@ bool AKKPairedPlayback::Restart(FString& Error)
 	OKPhysXSecondary::Settle();
 	if(!Advance(0.f,Error)){Stop();return false;}return true;
 }
+void AKKPairedPlayback::SetThird(AKKPreviewActor* Actor,const FString& Motion,bool bSwapped)
+{
+	if(ThirdActor==Actor&&(!Actor||(ThirdMotion==Motion&&bThirdSwapped==bSwapped)))return;
+	SyncAsync();
+	if(!IsValid(FemaleActor)||(Actor&&(OkPlayer.IsValid()||!bActive)))Actor=nullptr; // the OK player has two roles
+	if(IsValid(ThirdActor)&&ThirdActor!=Actor)ThirdActor->SetCoordinatedPlayback(false);
+	ThirdActor=Actor;ThirdMotion=Motion;bThirdSwapped=bSwapped;
+	if(IsValid(FemaleActor))FemaleActor->Session.SetPairThird(Actor?&Actor->Session:nullptr,Motion,bSwapped);
+	if(Actor){Actor->SetCoordinatedPlayback(true);Actor->SetActorTickEnabled(false);}
+}
 bool AKKPairedPlayback::SetSpeed(float Value) {if(!FMath::IsFinite(Value)||Value<0.f||Value>4.f) return false;Speed=Value;return true;}
 bool AKKPairedPlayback::Advance(float Delta,FString& Error)
 {
@@ -61,8 +77,12 @@ bool AKKPairedPlayback::Advance(float Delta,FString& Error)
 	if(!bActive||!IsValid(FemaleActor)||!IsValid(MaleActor)||!FMath::IsFinite(Delta)||Delta<0.f) {Error=TEXT("無效配對播放狀態");return false;}
 	// A frame solved in the background (ok.Anim.AsyncPair) is shown first: nothing below may read the sessions while
 	// the worker writes them.
+	if(bSolvePending&&!PendingSolve.IsCompleted()&&Delta>0.f&&SkippedTicks<CVarPairNoWait.GetValueOnGameThread()){
+		TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairStillSolving);SkippedDelta+=Delta;++SkippedTicks;return true;}
+	if(SkippedTicks>0){Delta+=SkippedDelta;SkippedDelta=0.f;SkippedTicks=0;}
 	if(bSolvePending){SyncAsync();if(!bSolveOk){Error=TEXT("OK pair frame: ")+OkReport;return false;}}
 	OnSessionsIdle.Broadcast();
+	if(!bActive||!IsValid(FemaleActor)||!IsValid(MaleActor))return true; // a listener stopped the pair
     const bool Reactions[2]={FemaleActor->Session.IsBodyReactionPlaying(),MaleActor->Session.IsBodyReactionPlaying()};
     const bool BodyUpdate=Reactions[0]||Reactions[1]||FemaleActor->bBodyReactionPoseDirty||MaleActor->bBodyReactionPoseDirty;
 	if(bPaused&&!BodyUpdate&&!FemaleActor->bShapeDirty&&!MaleActor->bShapeDirty&&!FemaleActor->bHeadLookFollowCamera&&!FemaleActor->bHeadLookPoseDirty&&!MaleActor->bHeadLookFollowCamera&&!MaleActor->bHeadLookPoseDirty){for(auto* PreviewRole:{FemaleActor.Get(),MaleActor.Get()}){PreviewRole->BeginFaceDisplayUpdate();PreviewRole->AdvanceEyeLook(Delta);PreviewRole->AdvanceFaceAnimation(Delta);PreviewRole->AdvanceSpeech();PreviewRole->EndFaceDisplayUpdate();}return true;}
@@ -81,7 +101,8 @@ bool AKKPairedPlayback::Advance(float Delta,FString& Error)
   PendingNext=Next;PendingDelta=PhysicsDelta;PendingReactions[0]=Reactions[0];PendingReactions[1]=Reactions[1];
   TSharedPtr<FOkAnimPlayer> Player=OkPlayer;FOkSession* F=&FemaleActor->Session;FOkSession* M=&MaleActor->Session;const float T=float(Next),D=PendingDelta;
   bSolvePending=true;bPendingNative=false;
-  PendingSolve=UE::Tasks::Launch(UE_SOURCE_LOCATION,[this,Player,F,M,T,D]{bSolveOk=Player->ApplySessions({F,M},T,D,&PendingReport);});
+  PendingSolve=UE::Tasks::Launch(UE_SOURCE_LOCATION,[this,Player,F,M,T,D]{FOkSharedSolveScope Solving;bSolveOk=Player->ApplySessions({F,M},T,D,&PendingReport);});
+  F->SetSharedSolve(PendingSolve);M->SetSharedSolve(PendingSolve);
   return true;}
  if(OkPlayer){TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairOK);
   FemaleActor->PublishPhysicsFrame();MaleActor->PublishPhysicsFrame();
@@ -94,28 +115,36 @@ bool AKKPairedPlayback::Advance(float Delta,FString& Error)
   TArray<int32> FemaleParts,MaleParts;TArray<uint64> FemaleRevisions,MaleRevisions;
   if(CVarPairAsync.GetValueOnGameThread()!=0&&Delta>0.f&&AKKPreviewActor::PairedFrameGpuParts(*FemaleActor,*MaleActor,FemaleParts,FemaleRevisions,MaleParts,MaleRevisions)){
    TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairNativeAsync);
-   FemaleActor->PublishPhysicsFrame();MaleActor->PublishPhysicsFrame();
+   FemaleActor->PublishPhysicsFrame();MaleActor->PublishPhysicsFrame();if(IsValid(ThirdActor))ThirdActor->PublishPhysicsFrame();
    PendingNext=Next;PendingDelta=PhysicsDelta;PendingReactions[0]=Reactions[0];PendingReactions[1]=Reactions[1];
    FOkSession* F=&FemaleActor->Session;FOkSession* M=&MaleActor->Session;const float T=float(Next),D=PendingDelta;
    bSolvePending=true;bPendingNative=true;
    PendingSolve=UE::Tasks::Launch(UE_SOURCE_LOCATION,[this,F,M,T,D,State=StateName,FemaleMotion=FemaleIK,MaleMotion=MaleIK,
     FemaleParts=MoveTemp(FemaleParts),FemaleRevisions=MoveTemp(FemaleRevisions),MaleParts=MoveTemp(MaleParts),MaleRevisions=MoveTemp(MaleRevisions)]{
-    FString Report;bSolveOk=FOkSession::ApplyPairedFrameGpu(*F,*M,T,D,State,FemaleMotion,MaleMotion,FemaleParts,FemaleRevisions,MaleParts,MaleRevisions,Report);PendingReport=Report;});
+    FOkSharedSolveScope Solving;FString Report;bSolveOk=FOkSession::ApplyPairedFrameGpu(*F,*M,T,D,State,FemaleMotion,MaleMotion,FemaleParts,FemaleRevisions,MaleParts,MaleRevisions,Report);PendingReport=Report;});
+   // The paint on her asks these sessions for geometry from its own tick (that read a skeleton the worker was changing).
+   F->SetSharedSolve(PendingSolve);M->SetSharedSolve(PendingSolve);if(IsValid(ThirdActor))ThirdActor->Session.SetSharedSolve(PendingSolve);
    return true;}
+  if(IsValid(ThirdActor))ThirdActor->PublishPhysicsFrame();
   TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairNative);if(!AKKPreviewActor::ApplyPairedFrameWithDisplay(*FemaleActor,*MaleActor,float(Next),PhysicsDelta,StateName,FemaleIK,MaleIK,Error)) return false;}
 	Elapsed=Next;
 	return ShowFrame(Delta,Reactions,Error);
 }
+uint64 GKKPairFramesShown=0;
+extern int32 GKKStreamParallelMinVertices; // KKStreamMeshProxy.cpp
 bool AKKPairedPlayback::ShowFrame(float Delta,const bool Reactions[2],FString& Error)
 {
+ ++GKKPairFramesShown;
+ TGuardValue<int32> ParallelStreams(GKKStreamParallelMinVertices,4096); // her and his streams packed on the pool (+13 Hz, 2026-11-08)
 
  FKKGpuStreamBatchScope GpuFrame;
-	for(AKKPreviewActor* PreviewRole : {FemaleActor.Get(),MaleActor.Get()}) {
+	for(AKKPreviewActor* PreviewRole : {FemaleActor.Get(),MaleActor.Get(),ThirdActor.Get()}) {
+  if(!IsValid(PreviewRole))continue;
   TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairRoleDisplay);
 		PreviewRole->BeginFaceDisplayUpdate();
 		PreviewRole->bHeadLookPoseDirty=false;
         const int32 BodyRoleIndex=PreviewRole==FemaleActor?0:1;
-        PreviewRole->bBodyReactionPoseDirty=Reactions[BodyRoleIndex]&&!PreviewRole->Session.IsBodyReactionPlaying();
+        if(PreviewRole!=ThirdActor)PreviewRole->bBodyReactionPoseDirty=Reactions[BodyRoleIndex]&&!PreviewRole->Session.IsBodyReactionPlaying();
 		PreviewRole->AnimPhase=float(Elapsed);PreviewRole->AnimDuration=PreviewRole->Session.AnimDuration();PreviewRole->RefreshSkinnedDisplay();
   {TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairFace);
 		PreviewRole->AdvanceEyeLook(Delta);PreviewRole->AdvanceFaceAnimation(Delta);
@@ -143,6 +172,7 @@ void AKKPairedPlayback::Tick(float DeltaSeconds) {
 }
 void AKKPairedPlayback::Stop() {
 	SyncAsync();
+	SetThird(nullptr,FString(),false);
 	if(bPairPhysics){if(IsValid(FemaleActor))FemaleActor->RemovePairPhysics();if(IsValid(MaleActor))MaleActor->RemovePairPhysics();bPairPhysics=false;}
 	if(bActive) {if(IsValid(FemaleActor)){FemaleActor->SetCoordinatedPlayback(false);FemaleActor->CloseVaginaOpening();FemaleActor->SetActorTickEnabled(OldFemaleTick);}if(IsValid(MaleActor)){MaleActor->SetCoordinatedPlayback(false);MaleActor->SetActorTickEnabled(OldMaleTick);}}
 	bVaginaRange=false;

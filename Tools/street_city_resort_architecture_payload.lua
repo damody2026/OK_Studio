@@ -31,7 +31,7 @@ def sign_face_file(b):
  # Follow the public entrance facade; keep lettering upright in every direction.
  angle=math.radians(q.get('yaw_deg',0));ux,uy=math.cos(angle),math.sin(angle);nx,ny=math.sin(angle),-math.cos(angle)
  def vertex(x,z):
-  px=cx+ux*x+nx*.21;py=cy+uy*x+ny*.21
+  px=cx+ux*x+nx*.19;py=cy+uy*x+ny*.19
   return (px,cz+z,-py)
  p=[vertex(-w/2,-h/2),vertex(w/2,-h/2),vertex(w/2,h/2),vertex(-w/2,h/2)]
  idx=[0,1,2,0,2,3];positions=[v for i in idx for v in p[i]];uvs=[v for i in idx for v in [(0,1),(1,1),(1,0),(0,0)][i]]
@@ -51,16 +51,17 @@ def signs_map():
  return result
 
 def name_material(bid,existing,vertical=False):
- if bid in existing and not vertical:return EAL.load_asset(existing[bid])
- # A few older source models used wall graphics instead of a building name slot.
- name=('M_Vertical_' if vertical else 'M_Name_')+bid;dest=ARCH+'/Signs/'+name
+ digest=hashlib.sha256(b''.join((OUT/'lettering-v2'/locale/(bid+'.png')).read_bytes() for locale in ['zh-Hant','zh-Hans','en'])).hexdigest()[:16]
+ name='M_Text_'+bid+'_'+digest;dest=ARCH+'/Signs/'+name
  if EAL.does_asset_exist(dest):return EAL.load_asset(dest)
  m=ATS.create_asset(name,ARCH+'/Signs',unreal.Material,unreal.MaterialFactoryNew());m.set_editor_property('two_sided',True)
  col=EAL.load_asset('/Game/UniversityCity/Localization/MPC_CityLanguage');assert col,'Language collection absent'
  nodes=[]
  for locale in ['zh-Hant','zh-Hans','en']:
-  path=OUT/'vertical-signs'/locale/(bid+'.png') if vertical else ROOT/'output/street-social-city-production/localization-v1/textures'/locale/('building.'+bid+'.png');assert path.exists(),str(path)
-  task=unreal.AssetImportTask();task.filename=str(path);task.destination_path=ARCH+'/Signs';task.destination_name='T_'+('Vertical_' if vertical else '')+bid+'_'+locale.replace('-','_');task.automated=True;task.save=True;ATS.import_asset_tasks([task]);t=EAL.load_asset(task.imported_object_paths[0]);assert t
+  path=OUT/'lettering-v2'/locale/(bid+'.png');assert path.exists(),str(path)
+  task=unreal.AssetImportTask();task.filename=str(path);task.destination_path=ARCH+'/Signs';task.destination_name='T_Text_'+bid+'_'+digest+'_'+locale.replace('-','_');task.automated=True;task.save=True;ATS.import_asset_tasks([task]);t=EAL.load_asset(task.imported_object_paths[0]);assert t
+  t.set_editor_property('mip_gen_settings',unreal.TextureMipGenSettings.TMGS_NO_MIPMAPS);t.set_editor_property('never_stream',True);t.set_editor_property('lod_bias',0);t.set_editor_property('max_texture_size',2048);t.set_editor_property('compression_settings',unreal.TextureCompressionSettings.TC_EDITOR_ICON);save_asset(t)
+  assert t.blueprint_get_size_x()>=128 and t.blueprint_get_size_y()>=128,(bid,locale,'texture still pending')
   n=MEL.create_material_expression(m,unreal.MaterialExpressionTextureSampleParameter2D,-700,len(nodes)*240);n.set_editor_property('parameter_name','CityText_'+locale.replace('-','_'));n.set_editor_property('texture',t);nodes.append(n)
  control=MEL.create_material_expression(m,unreal.MaterialExpressionCollectionParameter,-1000,0);control.set_editor_property('collection',col);control.set_editor_property('parameter_name','LanguageIndex')
  def choose(threshold,low,high,x):
@@ -69,7 +70,7 @@ def name_material(bid,existing,vertical=False):
   return n
  first=choose(.5,nodes[0],nodes[1],-350);last=choose(1.5,first,nodes[2],-100)
  assert MEL.connect_material_property(last,'',unreal.MaterialProperty.MP_BASE_COLOR)
- errs=MEL.recompile_material(m);assert not errs,errs;EAL.set_metadata_tag(m,'CityTextID','building.'+bid);save_asset(m);return m
+ errs=MEL.recompile_material(m);assert not errs,errs;EAL.set_metadata_tag(m,'CityTextID','building.'+bid);EAL.set_metadata_tag(m,'SignArtwork','large text only');save_asset(m);return m
 
 def architecture_material(bid,role,accent=None):
  name='MI_'+bid+'_'+role;dest=ARCH+'/Materials/'+name
@@ -151,9 +152,9 @@ def validate_geometry():
  assert not issues,str(issues[:12]);assert total<=200000,('Triangle budget',total)
  write('geometry-review',dict(status='passed',buildings=122,original_floors=sum(len(b['floors']) for b in inputs.values()),triangles=total,issues=issues,rows=rows,scope='Independent binary GLB vertex and format checks: finite positions, baked coordinates, occupied box, minimum headroom, courtyard exclusion, roof relief and total triangle budget. Original native model comparison is separately required.'))
 
-def import_arch():
- validate_geometry();manifest=jread(OUT/'geometry-manifest.json');existing=signs_map();rows=[]
- for b in manifest['buildings']:
+def import_arch_batch(buildings,existing):
+ rows=[]
+ for b in buildings:
   bid=b['id'];path=OUT/b['glb'];mesh=import_arch_mesh(path,'Exterior_'+bid)
   mats=[]
   for i,s in enumerate(mesh.get_editor_property('static_materials')):
@@ -162,11 +163,30 @@ def import_arch():
    mat=architecture_material(bid,role,b.get('recipe',{}).get('accent'))
    assert mat,(bid,role);mesh.set_material(i,mat);mats.append(dict(slot=i,role=role,material=mat.get_path_name()))
   save_asset(mesh)
-  face=import_arch_mesh(sign_face_file(b),'Name_'+bid);mat=name_material(bid,existing,b['sign_board']['placement']=='ground_to_upper_vertical');face.set_material(0,mat);save_asset(face)
+  mat=name_material(bid,existing,b['sign_board']['placement']=='ground_to_upper_vertical');face=import_arch_mesh(sign_face_file(b),'NameText_'+bid+'_'+mat.get_name().split('_')[-1]);face.set_material(0,mat);save_asset(face)
   rows.append(dict(id=bid,mesh=mesh.get_path_name(),sign_mesh=face.get_path_name(),materials=mats,sign_material=mat.get_path_name(),glb_sha256=sha(path)))
-  if len(rows)%12==0:unreal.log('RESORT ARCH IMPORT '+str(len(rows))+'/122')
- assert len(rows)==122
- write('shader',dict(status='passed',buildings=rows,manifest_sha256=sha(OUT/'geometry-manifest.json')))
+ return rows
+
+def import_arch():
+ unreal.SystemLibrary.execute_console_command(unreal.EditorLevelLibrary.get_editor_world(),'Editor.AsyncTextureCompilation 0')
+ validate_geometry();manifest=jread(OUT/'geometry-manifest.json');existing=signs_map();state=dict(i=0,rows=[],busy=False,wait=5)
+ def tick_import_arch(dt):
+  if state['busy']:return
+  if state['wait']>0:state['wait']-=1;return
+  state['busy']=True
+  try:
+   if state['i']==len(manifest['buildings']):
+    unreal.unregister_slate_post_tick_callback(arch_import_handle)
+    write('shader',dict(status='passed',buildings=state['rows'],manifest_sha256=sha(OUT/'geometry-manifest.json'),relief_sha256=sha(OUT/'relief-signs-review.json'),material_architecture='one shared relief master and122 material instances'))
+    write_night_signs_review(state['rows'])
+    unreal.SystemLibrary.collect_garbage();schedule_arch_quit();return
+   state['rows']+=import_arch_batch([manifest['buildings'][state['i']]],existing);state['i']+=1;state['wait']=3
+   if state['i']%12==0:unreal.log('RESORT ARCH IMPORT '+str(state['i'])+'/122');unreal.SystemLibrary.collect_garbage()
+  except BaseException:
+   unreal.unregister_slate_post_tick_callback(arch_import_handle);write('shader-error',dict(status='failed',error=traceback.format_exc()));unreal.log_error(traceback.format_exc());schedule_arch_quit()
+  finally:state['busy']=False
+ global arch_import_handle
+ arch_import_handle=unreal.register_slate_post_tick_callback(tick_import_arch)
 
 def prepare_arch_materials():
  existing=signs_map();rows=[]
@@ -216,7 +236,7 @@ def repair_arch_transforms():
   row['geometry_mesh']=fresh['mesh'];row['sign_mesh']=fresh['sign_mesh'];row['sign_material']=fresh['sign_material']
  write('transform-diagnostic',dict(status='recorded',rows=diagnostic))
  old_scene_check();assert sha(MAPFILE)==LOAD_SHA;assert unreal.EditorLevelLibrary.save_current_level()
- receipt['map_sha256']=sha(MAPFILE);receipt['signage_revision']='120 ground-floor horizontal fascias and2 upright vertical name boards starting in the ground storey; former rooftop boards removed';receipt['revision_backup']=str(backup);write('install',receipt)
+ receipt['map_sha256']=sha(MAPFILE);receipt['signage_revision']='122 self-emissive relief signs:lit backgrounds,lit letters and backlit halos;120 ground-floor horizontal and2 upright vertical';receipt['relief_sha256']=sha(OUT/'relief-signs-review.json');receipt['night_sha256']=sha(OUT/'night-signs-review.json');receipt['revision_backup']=str(backup);write('install',receipt)
 
 def install_arch():
  if (OUT/'install.json').is_file() and any(TAG in [str(t) for t in a.tags] for a in SUB.get_all_level_actors()):
@@ -241,6 +261,7 @@ def install_arch():
 
 def audit_arch():
  before=jread(OUT/'baseline.json');added=jread(OUT/'install.json')['buildings'];actors={a.get_actor_label():a for a in SUB.get_all_level_actors()}
+ relief_designs={d['id']:d for d in jread(OUT/'relief-signs-review.json')['designs']}
  checks=old_scene_check();issues=[]
  for row in added:
   for label,path in [(row['geometry_actor'],row['geometry_mesh']),(row['sign_actor'],row['sign_mesh'])]:
@@ -251,6 +272,24 @@ def audit_arch():
    if str(c.get_collision_profile_name())!='NoCollision':issues.append(label+' blocks original routes')
    if not all(c.get_material(i) for i in range(c.get_num_materials())):issues.append(label+' missing material')
    if label==row['sign_actor'] and c.get_material(0).get_path_name()!=row['sign_material']:issues.append(label+' incorrect name material')
+   if label==row['sign_actor'] and EAL.get_metadata_tag(c.get_material(0),'SignArtwork')!='large text only':issues.append(label+' has no large-text artwork')
+   if label==row['sign_actor'] and EAL.get_metadata_tag(c.get_material(0),'SignRelief')!='POM-2.8cm':issues.append(label+' lacks height-driven relief')
+   if label==row['sign_actor']:
+    mat=c.get_material(0);checks+=1
+    if mat.get_editor_property('parent').get_name()!='M_ReliefShared_Night_01':issues.append(label+' does not share the night relief master')
+    profile=sign_night_profile(relief_designs[row['id']]['style'])
+    for param,expected in [('SignLightMode',profile['mode']),('SignNightStrength',1.0),('SignGlowStrength',profile['strength'])]:
+     checks+=1
+     if abs(MEL.get_material_instance_scalar_parameter_value(mat,param)-expected)>.00001:issues.append(label+' incorrect self-emission setting '+param)
+    for locale in ['zh_Hant','zh_Hans','en']:
+     for prefix in ['CityText_','SignDetail_']:
+      checks+=1;t=MEL.get_material_instance_texture_parameter_value(mat,prefix+locale)
+      if not t or not t.get_editor_property('never_stream') or t.blueprint_get_size_x()<128 or t.blueprint_get_size_y()<128:issues.append(label+' invalid full-resolution relief texture '+prefix+locale)
+      elif t.get_editor_property('compression_settings')!=unreal.TextureCompressionSettings.TC_EDITOR_ICON or t.get_editor_property('srgb')!=(prefix=='CityText_'):issues.append(label+' incorrect packed texture encoding '+prefix+locale)
+    d=relief_designs[row['id']]
+    for param,extent in [('SignDepthU',d['physical_size_m'][0]),('SignDepthV',d['physical_size_m'][1])]:
+     checks+=1
+     if abs(MEL.get_material_instance_scalar_parameter_value(mat,param)-2.8/(extent*100))>0.000001:issues.append(label+' incorrect physical depth ratio '+param)
   checks+=4
  assert len([a for a in actors.values() if TAG in [str(t) for t in a.tags]])==244
  assert len([a for a in actors.values() if is_building_floor(a.get_actor_label())])==427
@@ -283,28 +322,86 @@ def render_arch():
   distance=max(650.,board['width_m']*100*.8)
   target=[so.x,so.y,so.z];eye=[so.x+dx*distance-dy*distance*.08,so.y+dy*distance+dx*distance*.08,rows[0]['xform']['location'][2]+220.]
   views.append(dict(name=bid,eye=eye,target=target,fov=70))
+  if bid in ['S01','S03','S09']:
+   # Oblique close-ups make the height-field parallax and beveled edges reviewable.
+   eye=[so.x+dx*240-dy*220,so.y+dy*240+dx*220,so.z-30]
+   views.append(dict(name=bid+'-relief',eye=eye,target=target,fov=55))
+ day_views=list(views)
+ if 'resort_night_views' in globals():views.extend(resort_night_views(views))
+ for q in day_views:
+  if q['name'] in ['S01','S01-relief','S03','S09','H1','R1','TR']:
+   views.append(dict(q,name=q['name']+'-night',night=True))
+   if q['name'] in ['S01','S03','S09']:views.append(dict(q,name=q['name']+'-night-off',night=True,emission_off=True))
  world=unreal.EditorLevelLibrary.get_editor_world();folder=OUT/'renders';folder.mkdir(exist_ok=True);state=dict(i=0,phase='setup',wait=60,images=[],busy=False);refs=[]
+ lights=[(a,a.light_component,a.get_actor_rotation(),a.light_component.get_editor_property('intensity')) for a in SUB.get_all_level_actors() if isinstance(a,(unreal.DirectionalLight,unreal.SkyLight))]
+ def restore_material():
+  if state.get('material_override'):
+   comp,mat,mid=state['material_override'];comp.set_material(0,mat);state['material_override']=None
+ def environment(q):
+  restore_material()
+  if 'resort_night_environment' in globals():
+   resort_night_environment(q)
+  else:
+   original_environment(q)
+  if q.get('emission_off'):
+   label='RomanceName_'+q['name'].split('-')[0];target=next(a for a in SUB.get_all_level_actors() if a.get_actor_label()==label);comp=target.static_mesh_component;mat=comp.get_material(0)
+   mid=unreal.MaterialLibrary.create_dynamic_material_instance(world,mat);assert mid;mid.set_scalar_parameter_value('SignNightStrength',0.0);comp.set_material(0,mid);state['material_override']=(comp,mat,mid)
+ def original_environment(q):
+  for actor,comp,rotation,intensity in lights:
+   if q.get('night'):
+    comp.set_intensity(.10 if isinstance(actor,unreal.SkyLight) else .012)
+    if isinstance(actor,unreal.DirectionalLight):actor.set_actor_rotation(unreal.Rotator(pitch=12,yaw=rotation.yaw,roll=0),False)
+   else:comp.set_intensity(intensity);actor.set_actor_rotation(rotation,False)
  def tick_render_arch(dt):
+  nonlocal world
   if state['busy']:return
   if state['wait']>0:state['wait']-=1;return
   state['busy']=True
   try:
    if state['phase']=='setup':
-    q=views[state['i']];eye=unreal.Vector(*q['eye']);rot=unreal.MathLibrary.find_look_at_rotation(eye,unreal.Vector(*q['target']))
+    q=views[state['i']];environment(q);eye=unreal.Vector(*q['eye']);rot=unreal.MathLibrary.find_look_at_rotation(eye,unreal.Vector(*q['target']))
     a=SUB.spawn_actor_from_class(unreal.SceneCapture2D,eye,rot);c=a.capture_component2d;c.set_editor_property('capture_every_frame',False);c.set_editor_property('capture_on_movement',False)
     rt=unreal.RenderingLibrary.create_render_target2d(world,1600,1000,unreal.TextureRenderTargetFormat.RTF_RGBA8);refs.append(rt);c.set_editor_property('texture_target',rt);c.set_editor_property('capture_source',unreal.SceneCaptureSource.SCS_FINAL_COLOR_LDR);c.set_editor_property('fov_angle',q['fov']);c.set_editor_property('max_view_distance_override',160000.)
+    if q.get('night'):
+     if 'resort_night_environment' in globals():c.set_editor_property('max_view_distance_override',400000.)
+     pp=c.get_editor_property('post_process_settings')
+     for key,v in dict(override_auto_exposure_min_brightness=True,override_auto_exposure_max_brightness=True,auto_exposure_min_brightness=1.0,auto_exposure_max_brightness=1.0,override_auto_exposure_bias=True,auto_exposure_bias=0.0,override_bloom_intensity=True,bloom_intensity=.25).items():pp.set_editor_property(key,v)
+     c.set_editor_property('post_process_settings',pp);c.set_editor_property('post_process_blend_weight',1.0)
     state['current']=(q,a,c,rt);state['phase']='capture';state['wait']=80
    elif state['phase']=='capture':unreal.AutomationLibrary.finish_loading_before_screenshot();state['current'][2].capture_scene();state['phase']='export';state['wait']=10
+   elif state['phase']=='cleanup':
+    unreal.SystemLibrary.collect_garbage();state['phase']='quit';state['wait']=60
+   elif state['phase']=='quit':
+    environment({});audit_arch()
+    assert sha(MAPFILE)==LOAD_SHA,'Capture must never save the temporary night lighting'
+    unreal.unregister_slate_post_tick_callback(arch_render_handle);write('render',dict(status='passed',images=state['images'],map_sha256=sha(MAPFILE)))
+    lights.clear()
+    world=None
+    # Unload the large capture world while the renderer is still alive. A separate
+    # callback owns shutdown, so capture/world Python wrappers have gone away.
+    assert unreal.EditorLevelLibrary.load_level('/Engine/Maps/Entry')
+    unreal.SystemLibrary.collect_garbage();schedule_arch_quit()
    else:
     q,a,c,rt=state['current'];dest=folder/(q['name']+'.png');unreal.RenderingLibrary.export_render_target(world,rt,str(folder),dest.name);assert dest.exists() and dest.stat().st_size>5000
     state['images'].append(dict(name=q['name'],path=str(dest),sha256=sha(dest),camera=q));c.set_editor_property('texture_target',None);SUB.destroy_actor(a);unreal.RenderingLibrary.release_render_target2d(rt);refs.remove(rt);state['current']=None;state['i']+=1;state['phase']='setup';state['wait']=10
     if state['i']==len(views):
-     unreal.unregister_slate_post_tick_callback(arch_render_handle);write('render',dict(status='passed',images=state['images'],map_sha256=sha(MAPFILE)));unreal.SystemLibrary.quit_editor()
+     state['phase']='cleanup';state['wait']=60
   except BaseException:
    unreal.unregister_slate_post_tick_callback(arch_render_handle);write('render-error',dict(status='failed',error=traceback.format_exc()));unreal.log_error(traceback.format_exc());unreal.SystemLibrary.quit_editor()
   finally:state['busy']=False
  global arch_render_handle,ARCH_RENDER_REFS
  ARCH_RENDER_REFS=(state,refs);arch_render_handle=unreal.register_slate_post_tick_callback(tick_render_arch)
+
+def schedule_arch_quit():
+ global arch_quit_handle,ARCH_RENDER_REFS,arch_quit_frames
+ ARCH_RENDER_REFS=None;arch_quit_frames=0
+ arch_quit_handle=unreal.register_slate_post_tick_callback(tick_arch_quit)
+
+def tick_arch_quit(dt):
+ global arch_quit_frames
+ arch_quit_frames+=1
+ if arch_quit_frames<120:return
+ unreal.unregister_slate_post_tick_callback(arch_quit_handle);unreal.SystemLibrary.quit_editor()
 
 def snapshot():
  inventory()
@@ -319,7 +416,7 @@ def run_arch():
  try:
   if MODE=='inventory':snapshot()
   elif MODE=='plan':prepare_arch_materials()
-  elif MODE=='shader':import_arch()
+  elif MODE=='shader':import_arch();return
   elif MODE=='install':install_arch()
   elif MODE=='audit':audit_arch()
   elif MODE=='restore':restore_arch()

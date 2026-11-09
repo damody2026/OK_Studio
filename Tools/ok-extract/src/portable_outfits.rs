@@ -137,7 +137,7 @@ pub(crate) fn replace_outfits(payload:&[u8],replacements:Vec<(usize,SplitSnapsho
 #[cfg(test)]
 #[test]
 fn batch_outfit_replacement_matches_serial_and_rejects_duplicate_indices(){
-    let root=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/NonexistentOutfitResourceRoot");
+    let root=Path::new(crate::test_support::project_path!("Saved/Tests/NonexistentOutfitResourceRoot"));
     let snapshot=|value:u8|{let bytes=vec![value;100];let id=portable_resources::id("test",&bytes);SplitSnapshot{schema:1,residue:vec![value],references:vec![portable_resources::ResourceRef{part:Some(0),field:"png".into(),kind:"test".into(),id:id.clone()}],unique:BTreeMap::from([(id,bytes)])}};
     let(original,_)=pack(vec![snapshot(1),snapshot(2),snapshot(3)],root).unwrap();
     let serial=replace_outfit(&replace_outfit(&original,snapshot(4),0,root).unwrap(),snapshot(5),2,root).unwrap();
@@ -149,7 +149,7 @@ fn batch_outfit_replacement_matches_serial_and_rejects_duplicate_indices(){
 #[cfg(test)]
 #[test]
 fn replace_outfit_preserves_other_snapshots_and_prunes_only_unused_unique_assets(){
-    let root=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/NonexistentOutfitResourceRoot");
+    let root=Path::new(crate::test_support::project_path!("Saved/Tests/NonexistentOutfitResourceRoot"));
     let snapshot=|value:u8|{let bytes=vec![value;100];let id=portable_resources::id("test",&bytes);SplitSnapshot{schema:1,residue:vec![value],references:vec![portable_resources::ResourceRef{part:Some(0),field:"png".into(),kind:"test".into(),id:id.clone()}],unique:BTreeMap::from([(id,bytes)])}};
     let(original,_)=pack(vec![snapshot(1),snapshot(2)],root).unwrap();let(before,_)=directory(&original).unwrap();
     let previous=bincode::serialize(&before.outfits[0].snapshot).unwrap();

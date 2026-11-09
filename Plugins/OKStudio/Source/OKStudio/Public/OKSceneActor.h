@@ -52,6 +52,17 @@ public:
 
 	/** Whether some document objects are not built yet (a large scene being built over several frames). */
 	bool HasPendingBuilds() const { return bBuildsPending; }
+	/** Builds map No over the next frames, hidden, with the shown map still up; SyncMap then shows it at once (U258). */
+	void PrepareMap(int32 No);
+	/** A slice of that; true when the map is ready for Document->Map. */
+	bool ContinueMapPrepare();
+	void StopMapPrepare();
+	/** The map being prepared, or -1. */
+	int32 PreparingMap() const;
+	/** A scene being opened: its characters open on a worker and load a part a frame instead of stopping the picture. */
+	bool bProgressiveBuild = false;
+	/** Objects still waiting for their turn to build. */
+	int32 PendingBuilds() const { return BuildsLeft; }
 
 	/** Advances character animations (seconds). */
 	UFUNCTION(BlueprintCallable, Category = "OK Studio")
@@ -68,7 +79,9 @@ public:
 	void Rebuild(int32 Id);
 	/** Plays another Studio animation (OK animation library) on a shown character in place, without building it again;
 	 *  the document object follows. */
-	bool SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int32 Category, int32 No, FString& OutError);
+	/** Plays an .okanim file on the live character (no rebuild); false when it is not shown or the file does not play. */
+	bool SetCharacterAnimFile(int32 Id, const FString& File, FString& OutError);
+	bool SetCharacterAnimation(int32 Id, int32 Kind, int32 Group, int32 Category, int32 No, FString& OutError, const FOKSceneMotionFade* Fade = nullptr);
 	/** Records an active live .vmd source for a character so rebuilding (outfit / shoe on-off) re-solves ShoesDetect. */
 	void SetActiveVmdSource(int32 Id, const FString& VmdFile, const FString& OkAnimRelPath);
 
@@ -94,6 +107,8 @@ public:
 	int32 MapPartCount() const;
 	/** World bounds of every shown part of the map (its desks, shelves, walls), to keep new characters out of them. */
 	void MapPartBounds(TArray<FBox>& Out) const;
+	/** The triangles (three points each, world) of the meshes inside Box: of the map, or of item Item when it is one. */
+	void ChairMesh(const FBox& Box, int32 Item, TArray<FVector>& Out) const;
 	/** What the scene's time of day does on this map, for the status line: a time the map lacks, a lightmapped map, the
 	 *  sun's height and colour (U128: picking 夕 showed no change and said nothing). Empty without a map. */
 	FString MapTimeNote() const;
@@ -101,6 +116,7 @@ public:
 
 	virtual void Destroyed() override;
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual bool ShouldTickIfViewportsOnly() const override { return true; }
@@ -123,6 +139,7 @@ public:
 	 *  character display's own) and the characters that have it. */
 	int32 AmbientSky = -1;
 	int32 AmbientMap = -1;
+	int32 AmbientTime = -2;
 	TSet<TWeakObjectPtr<AKKPreviewActor>> AmbientLit;
 	TMap<FName, FLinearColor> AppliedShaderGlobals;
 	TSet<TWeakObjectPtr<AKKPreviewActor>> ShaderGlobalsLit;
@@ -182,6 +199,7 @@ private:
 	FVector RankEye = FVector(NAN);
 	bool bSkyDomesDirty = true;
 	bool bBuildsPending = false;
+	int32 BuildsLeft = 0;
 	/** Previews destroyed since the last forced garbage collection. */
 	int32 ReleasedSinceCollect = 0;
 	float ShownSequenceTime = -1.f;
@@ -192,6 +210,8 @@ private:
 	{
 		EOKSceneObjectKind Kind = EOKSceneObjectKind::Folder;
 		FOKSceneCharacter Character;
+		/** The fade its player is built with (U236). */
+		FOKSceneMotionFade Fade;
 		FOKSceneItem Item;
 		FOKSceneLight Light;
 		/** The shown effect's id (another id rebuilds it; speed, intensity and colour apply in place). */
@@ -222,6 +242,9 @@ private:
 		TArray<FString> BlendControls;
 		TArray<float> BlendDefaults, AppliedBlend;
 		int32 AppliedHands[2] = { -1, -1 };
+		float AppliedStyle = 0.f;
+		float AppliedFaceStyle = 0.f;
+		int32 AppliedStyleTuning = 0;
 		bool bEyesTracking = false;
 		bool bFixedEyesApplied = false;
 		TArray<float> AppliedFixedEyes;
@@ -260,12 +283,27 @@ private:
 	uint32 MapSunMask = 0;
 	/** The map's own realtime lamps (ok_okmodel_map_lights) with the times of day they show at (0: always). */
 	TArray<TPair<TWeakObjectPtr<class ULightComponent>, uint32>> MapLights;
+	// The map's "..._water" lights (their linear colour and SunLightInfo times): they light Lux Water only.
+	TArray<TPair<FLinearColor, uint32>> MapWaterLights;
 	void AddMapLights(class AKKPreviewActor* Map, const FString& Model, const FString& Root);
 	int32 ShownMapComponents = 0;
 	FTransform ShownMapSunPlace;
 	void ApplyMapTime(const FTransform& MapPlace);
 
 	bool Build(const FOKSceneObject& Object, FShown& Out, FString& OutError);
+	/** A character on its way in while a scene opens (U255). */
+	struct FPreparedMap;
+	TSharedPtr<FPreparedMap> PreparedMap;
+	/** The opening scene's map is not ready yet: Sync goes on next frame. */
+	bool bMapPending = false;
+	/** Given up while their thread still opens: only the thread holds them up, not the frame. */
+	TArray<TSharedPtr<FPreparedMap>> DroppedMaps;
+	struct FPreparedCharacter;
+	TMap<int32, TSharedPtr<FPreparedCharacter>> Prepared;
+	void StartCharacterOpen(const FOKSceneObject& Object);
+	/** Takes the character a step further; true when Build can have it (or should try by itself). */
+	bool PrepareCharacter(const FOKSceneObject& Object);
+	void DropPrepared(int32 Id);
 	/** A Studio camera item (a camera drawing into a RenderTexture, e.g. HarvexARC's CH1-Camera): its capture as `Out.Component`. */
 	void AddRenderCamera(const FString& Model, const FString& Prefab, FShown& Out);
 	/** Gives each screen item showing a camera item's RenderTexture that camera's target (the first camera item of a
@@ -284,6 +322,8 @@ private:
 	TArray<TObjectPtr<class USceneCaptureComponent2D>> MirrorCaptures;
 	TArray<TWeakObjectPtr<class UMaterialInstanceDynamic>> MirrorCaptureMaterials;
 	void Release(FShown& Item);
+	/** A motion changed by the timeline, on the live character (U230); anything else the next step rebuilds. */
+	void SwapKeyedMotion(const FOKSceneObject& Object, FShown& Item);
 	void ApplyCharacterState(const FOKSceneObject& Object, FShown& Item);
 	void SolveConstraints();
 };

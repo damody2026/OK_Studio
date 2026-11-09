@@ -281,7 +281,7 @@ pub unsafe extern "C" fn ok_appearance_geometry_commit(context:*mut AppearanceCo
  #[test]#[ignore="installed APNG, source catalog and resource acceptance"]
  fn owned_candidate_and_checkpoint_lifecycle(){unsafe{
   use std::ffi::CString;
-  let root=&crate::test_support::game_path("");let project=Path::new("C:/portable/OpenKoikatsu");
+  let root=&crate::test_support::game_path("");let project=Path::new(crate::test_support::project_path!(""));
   let card=project.join("Content/CharacterCards/CrowdAPNG/C001.png");let resources=project.join("Content/IndependentResources/v1");let cache=project.join("Saved/AppearanceEditor/cache");
   let strings=[root.to_path_buf(),card.clone(),resources,cache.clone()].map(|p|CString::new(p.to_string_lossy().as_bytes()).unwrap());
   let mut err=[0i8;1024];let mut context=ptr::null_mut();

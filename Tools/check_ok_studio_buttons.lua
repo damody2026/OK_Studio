@@ -1,8 +1,9 @@
 -- Clicks OK Studio's character-page buttons through the control channel's "click" op (the button's own handler runs)
--- and reads the result back ("bones" op), one check per line. Needs a studio started with -Control.
--- Tools/lua/lua.exe Tools/check_ok_studio_buttons.lua [--port 47890] [--card Content/CharacterCards/CrowdAPNG/C000.png]
+-- and reads the result back ("bones" op), one check per line. Needs a running studio.
+-- Tools/lua/lua.exe Tools/check_ok_studio_buttons.lua [--port N] [--card Content/CharacterCards/CrowdAPNG/C000.png]
+package.path = (arg[0]:match("^(.*)[/\\]") or ".") .. "/?.lua;" .. package.path
 local json = require "ok.json"
-local port, card = "47890", "Content/CharacterCards/CrowdAPNG/C000.png"
+local port, card = tostring(require("ok_instance").ports().studio_control), "Content/CharacterCards/CrowdAPNG/C000.png"
 for i = 1, #arg, 2 do
   if arg[i] == "--port" then port = arg[i + 1] elseif arg[i] == "--card" then card = arg[i + 1] else error("unknown option " .. arg[i]) end
 end
@@ -156,7 +157,7 @@ check(dist(fk_world("cf_j_head"), head0) < 0.5, "neck part off: the head follows
 click("頸", 0); wait(20)
 check(dist(fk_world("cf_j_head"), head1) < 0.5, "neck part on: the kept FK value shows again")
 local function neck_set() for _, b in ipairs(bones().fk or {}) do if b.bone == "cf_j_neck" then return b.set end end end
-check(click("頸", 1).ok and not neck_set(), "復位 頸 drops the neck's FK")
+check(click("頸", 2).ok and not neck_set(), "復位 頸 drops the neck's FK")
 
 -- U20: IK parts, 全部, weights, FK←IK (IK tab).
 call("cmd", { id = "bones.page", arg = "1" }); wait(20)
@@ -208,7 +209,7 @@ check(math.abs(mid - 20) < 2, ("at 1 s the neck is half way (%.1f°)"):format(mi
 call("timeline", { time = 2 }); wait(5)
 check(click("骨骼刪 key").ok and (keys()[2] or {}).fk_bones == 0, "骨骼刪 key drops the neck from the 2 s key")
 call("cmd", { id = "toggle.timeline" }); wait(30)
-check(click("清空軌道").ok and #keys() == 0, "清空軌道 removes the track")
+check(click("清空").ok and #keys() == 0, "清空 removes the track")
 call("cmd", { id = "toggle.timeline" }); wait(10)
 click("清除 FK")
 
@@ -358,6 +359,111 @@ local r = fk_euler("cf_j_arm00_R") or {}
 local function near(a, b) return a and math.abs(((a - b + 180) % 360) - 180) < 0.5 end
 check(near(r[1], 10) and near(r[2], -20) and near(r[3], -30), ("左→右 puts the left arm's rotation on the right arm, mirrored (%s)"):format(table.concat(r, ",")))
 click("清除 FK")
+
+-- U262, U263: 放下, 坐下 (on a map's chair), 配到時間軸, 移除配樂. 開啟資料夾 opens Explorer and is left out.
+local function idle() for _ = 1, 240 do if (call("state").busy or "") == "" then return end wait(30) end end
+local function status() return ((call("state").ui or {}).status or "") end
+call("scene", { map = 4 }); idle(); wait(60)
+call("cmd", { id = "add.item" }); wait(30)
+call("type", { field = "搜尋道具", text = "見開き", enter = true }); wait(30)
+click("見開き本1"); idle(); wait(30)
+local function item() for _, o in ipairs(call("state").objects or {}) do if o.kind == "item" then return o end end end
+local book = item()
+check(book ~= nil, "a book to put down")
+call("camera", { focus = { 0, 0, 70 }, yaw = -110, pitch = -30, distance = 300 }); wait(20)
+local z0 = book and book.location[3] or 0
+check(click("放下").ok, "放下 clicked")
+wait(30)
+local down = item()
+check(down and down.location[3] < z0 - 1, ("放下 brings the book down (%s to %s)"):format(tostring(z0), tostring(down and down.location[3])))
+
+local chairs = {}
+for _, b in ipairs(call("bounds", { map = true, ids = {} }).map or {}) do
+  local w, l, h = b.max[1] - b.min[1], b.max[2] - b.min[2], b.max[3] - b.min[3]
+  if math.min(w, l) >= 30 and math.max(w, l) <= 65 and h >= 55 and h <= 115 then chairs[#chairs + 1] = b end
+end
+check(#chairs > 0, ("the classroom has chairs (%d)"):format(#chairs))
+if #chairs > 0 then
+  local c = chairs[1]
+  local cx, cy = (c.min[1] + c.max[1]) / 2, (c.min[2] + c.max[2]) / 2
+  call("select", { ids = { id } }); wait(10)
+  call("camera", { focus = { cx, cy, 40 }, yaw = 0, pitch = -50, distance = 250 }); wait(30)
+  local shot = call("ui_shot", { name = "button_check_chair.png" })
+  check(click("坐下").ok and status():find("椅子", 1, true) ~= nil, "坐下 asks for a chair")
+  call("mouse", { x = (shot.width or 1600) / 2, y = (shot.height or 900) / 2 }); wait(120)
+  local me = objects()[id]
+  local at = me and me.location or { 1e9, 1e9, 0 }
+  check(math.sqrt((at[1] - cx) ^ 2 + (at[2] - cy) ^ 2) < 40, ("坐下 puts the character at the chair (%.0f,%.0f by %.0f,%.0f)"):format(at[1], at[2], cx, cy))
+end
+
+-- U264: a sofa, read from its mesh: on the place clicked, the hips on the seat, with no map around.
+call("scene", { map = -1 }); idle(); wait(30)
+local known = objects()
+call("cmd", { id = "add.item", arg = "2/13/79" }); idle(); wait(30)
+local sofa = nil
+for oid, o in pairs(objects()) do if not known[oid] and o.kind == "item" then sofa = o end end
+check(sofa ~= nil, "a sofa to sit on")
+if sofa then
+  wait(120)
+  check(math.abs(objects()[sofa.id].location[3]) < 1, ("a new sofa lands on the floor (%.1f)"):format(objects()[sofa.id].location[3]))
+  call("transform", { id = sofa.id, location = { 300, 0, 0 }, rotation = { 0, 0, 0 } }); wait(30)
+  call("select", { ids = { id } }); wait(10)
+  call("camera", { focus = { 300, 0, 50 }, yaw = 90, pitch = -20, distance = 300 }); wait(30)
+  local shot = call("ui_shot", { name = "button_check_sofa.png" })
+  check(click("坐下").ok, "坐下 clicked for the sofa")
+  call("mouse", { x = (shot.width or 1600) / 2, y = (shot.height or 900) / 2 + 50 }); wait(120)
+  local me = objects()[id]
+  local at = me and me.location or { 1e9, 1e9, 1e9 }
+  check(math.abs(at[1] - 300) < 40 and math.abs(at[2]) < 30 and math.abs(at[3]) < 8, ("坐下 sits on the sofa (%.0f,%.0f,%.0f)"):format(at[1], at[2], at[3]))
+end
+
+-- U268: a new scene's 主光 is Studio's character light: on the map at 4 it washed out the ground.
+do
+  local light = nil
+  for _, o in pairs(objects()) do if o.kind == "light" and (not light or o.id < light.id) then light = o end end
+  local detail = light and (call("inspect", { id = light.id }).object or {}) or {}
+  check(((detail.light or {}).bCharactersOnly) == true, "主光 lights the characters only")
+end
+
+-- U265: 看對方, both looking at the other's head.
+local card = (((call("inspect", { id = id }).object or {}).character or {}).card) or ""
+local known2 = objects()
+call("spawn", { kind = "character", card = card }); idle(); wait(60)
+local other = nil
+for oid, o in pairs(objects()) do if not known2[oid] and o.kind == "character" then other = o end end
+check(other ~= nil, "a second character to look at")
+if other then
+  local function neck(oid) return ((call("inspect", { id = oid }).object or {}).character or {}).neckLook end
+  call("timeline", { time = 0 }); wait(5)
+  local before = neck(id)
+  call("timeline", { key = { ids = { id } } }); wait(5)
+  call("timeline", { time = 2 }); wait(5)
+  call("select", { ids = { id, other.id } }); wait(10)
+  check(call("cmd", { id = "transform.look" }).ok, "看對方 runs")
+  wait(30)
+  check(neck(id) == "Point" and neck(other.id) == "Point", ("看對方 turns both to a look point (%s, %s)"):format(tostring(neck(id)), tostring(neck(other.id))))
+  -- U266: a key holds the look: as it was at 0 s, on the other from 2 s.
+  call("timeline", { key = { ids = { id } } }); wait(5)
+  call("timeline", { time = 0 }); wait(20)
+  local early = neck(id)
+  call("timeline", { time = 2 }); wait(20)
+  local late = neck(id)
+  check(early == before and late == "Point", ("keys hold the look (%s at 0 s, %s at 2 s)"):format(tostring(early), tostring(late)))
+  call("keys", { id = id, action = "clear" }); wait(5)
+  call("timeline", { time = 0 }); wait(5)
+  call("select", { ids = { other.id } }); wait(10); call("cmd", { id = "edit.delete" }); wait(20)
+  call("select", { ids = { id } }); wait(10)
+end
+
+local wav = "UserData/audio/_button_check.wav"
+local f = assert(io.open(wav, "wb"))
+f:write("RIFF", string.pack("<I4", 36 + 8000), "WAVEfmt ", string.pack("<I4I2I2I4I4I2I2", 16, 1, 1, 8000, 8000, 1, 8), "data", string.pack("<I4", 8000), string.rep("\128", 8000))
+f:close()
+call("cmd", { id = "window.open", arg = "outside" }); wait(30)
+click("_button_check.wav")
+check(click("配到時間軸").ok and status():find("已載入音樂", 1, true) ~= nil, "配到時間軸 puts the file on the timeline")
+check(click("移除配樂").ok and status():find("已移除音樂", 1, true) ~= nil, "移除配樂 takes it off")
+os.remove(wav)
 
 print(("BUTTONS %d/%d"):format(passed, passed + failed))
 os.exit(failed == 0 and 0 or 1)

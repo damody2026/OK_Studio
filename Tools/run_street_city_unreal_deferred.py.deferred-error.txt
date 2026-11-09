@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "C:/portable/OpenKoikatsu/Tools/run_street_city_unreal_deferred.py", line 14, in tick
+    exec(compile(payload['code'],payload['source'],'exec'),{'__name__':'__main__','__file__':payload['source'],'PAYLOAD':payload})
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:/portable/OpenKoikatsu/Tools/street_city_romance_pbr.lua::UnrealPayload", line 951
+    assert unreal.EditorLevelLibrary.load_level('/Engine/Maps/Entry' if MODE=='shader' else MAP))
+                                                                                                ^
+SyntaxError: unmatched ')'

@@ -35,7 +35,7 @@ fn native_animator_cartesian() {
 fn verify_native_card(root:&Path,card:&str,two_d:bool)->(usize,[f32;3]) {
     let stem:String=card.chars().map(|c|if c.is_ascii_alphanumeric()||c=='_' {c} else {'_'}).collect();
     let (stage,suffix,frames,kind)=if two_d {(290,"animator-2d",144,"Animator2D")} else {(289,"animator-blend",60,"Animator1D")};
-    let native:Vec<Frame>=serde_json::from_slice(&crate::gamefs::read(format!("C:/portable/OpenKoikatsu/Saved/Tests/Animator{stage}/{stem}Animator{stage}.json.{suffix}.json")).unwrap()).unwrap();
+    let native:Vec<Frame>=serde_json::from_slice(&crate::gamefs::read(format!("{}/../../Saved/Tests/Animator{stage}/{stem}Animator{stage}.json.{suffix}.json",env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap();
     assert_eq!(native.len(),frames);
     let mut session=crate::session::open(root,Some(&root.join(format!("UserData/chara/female/{card}.png"))),0).unwrap();
     session.apply_anim_frame(0.,0.);

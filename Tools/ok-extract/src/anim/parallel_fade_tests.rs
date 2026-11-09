@@ -9,7 +9,7 @@ use std::{ffi::CString,collections::BTreeMap};
 #[derive(Deserialize)]#[serde(rename_all="camelCase")]struct Event{layer:usize,start:f32,blend:f32,offset:f32,source_length:f32,to_normalized:f32,transition_normalized:f32,transitioning:bool}
 #[derive(Deserialize)]#[serde(rename_all="camelCase")]struct Frame{bundle:String,controller:String,base_state:String,elapsed:f32,base_length:f32,parameters:Vec<Float>,layers:Vec<Layer>,events:Vec<Event>,bones:Vec<Bone>}
 const CARDS:[&str;5]=["[Card] March_7th_keiyuu","Alice_keiyuu","Hayase_yuuka_keiyuu_V1_02 For KKS","KK_091207","KK_384283"];
-fn frames(card:&str)->Vec<Frame>{let s:String=card.chars().map(|c|if c.is_ascii_alphanumeric()||c=='_'{c}else{'_'}).collect();serde_json::from_slice(&crate::gamefs::read(format!("C:/portable/OpenKoikatsu/Saved/Tests/AnimatorParallelFade303/{s}AnimatorParallelFade303.json.parallel-fade.json")).unwrap()).unwrap()}
+fn frames(card:&str)->Vec<Frame>{let s:String=card.chars().map(|c|if c.is_ascii_alphanumeric()||c=='_'{c}else{'_'}).collect();serde_json::from_slice(&crate::gamefs::read(format!("{}/../../Saved/Tests/AnimatorParallelFade303/{s}AnimatorParallelFade303.json.parallel-fade.json",env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap()}
 fn key(f:&Frame)->String {
     let hex=|v:&serde_json::Value|serde_json::to_vec(v).unwrap().iter().map(|b|format!("{b:02X}")).collect::<String>();
     let source=format!("controller@{}",hex(&serde_json::json!([f.bundle,f.controller,"",""])));

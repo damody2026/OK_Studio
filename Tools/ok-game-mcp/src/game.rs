@@ -1,6 +1,5 @@
-//! The game side: the StreetSocial development control channel (HTTP on 127.0.0.1, only open when the game was started
-//! with -StreetSocialControl; Source/OpenKoikatsu/OKStreetSocialControl.inl), the checkout it belongs to, and starting or
-//! stopping that game.
+//! The game side: the StreetSocial control channel (HTTP on 127.0.0.1, always open; Source/OpenKoikatsu/OKStreetSocialControl.inl),
+//! the checkout it belongs to, and starting or stopping that game.
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::io::{Read, Write};
@@ -44,10 +43,16 @@ impl Game {
         Ok(Game { root, port })
     }
 
+    /// The running street game's port (OK_CONTROL_PORT fixes it; a game takes the next free one when another has it).
+    fn live_port(&self) -> u16 {
+        if std::env::var_os("OK_CONTROL_PORT").is_some() { self.port } else { crate::control::port(&self.root, "street", self.port) }
+    }
+
     /// GET (body None) or POST JSON to the control channel; the reply is JSON.
     pub fn call(&self, path: &str, body: Option<&Value>) -> Result<Value> {
-        http(self.port, path, body, Duration::from_secs(60), || {
-            format!("the game's control channel is not up on 127.0.0.1:{} (start it with game_launch)", self.port)
+        let port = self.live_port();
+        http(port, path, body, Duration::from_secs(60), || {
+            format!("the game's control channel is not up on 127.0.0.1:{port} (start it with game_launch)")
         })
     }
 
@@ -58,6 +63,12 @@ impl Game {
 
 /// GET (body None) or POST JSON to a local HTTP control server; the reply is JSON. down: the error when nothing listens.
 pub fn http(port: u16, path: &str, body: Option<&Value>, timeout: Duration, down: impl FnOnce() -> String) -> Result<Value> {
+    let text = http_text(port, path, body, timeout, down)?;
+    serde_json::from_str(&text).with_context(|| format!("{path}: reply is not JSON"))
+}
+
+/// The same, the reply as text.
+pub fn http_text(port: u16, path: &str, body: Option<&Value>, timeout: Duration, down: impl FnOnce() -> String) -> Result<String> {
     {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).with_context(down)?;
         stream.set_read_timeout(Some(timeout))?;
@@ -81,12 +92,17 @@ pub fn http(port: u16, path: &str, body: Option<&Value>, timeout: Duration, down
         if headers.contains("transfer-encoding: chunked") {
             data = unchunk(&data)?;
         }
-        let text = String::from_utf8_lossy(&data);
+        let text = String::from_utf8_lossy(&data).into_owned();
         if !(200..300).contains(&status) {
             bail!("{path}: HTTP {status}: {}", text.chars().take(400).collect::<String>());
         }
-        serde_json::from_str(&text).with_context(|| format!("{path}: reply is not JSON"))
+        Ok(text)
     }
+}
+
+fn pid_alive(pid: &str) -> Result<bool> {
+    let out = Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"]).output()?;
+    Ok(String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\"")))
 }
 
 impl Game {
@@ -100,7 +116,7 @@ impl Game {
         let script = self.root.join("Tools/run_street_social_development.lua");
         let logs = self.root.join("Saved/StreetSocial");
         std::fs::create_dir_all(&logs)?;
-        let log = std::fs::File::create(logs.join("ok-game-mcp-launch.log"))?;
+        let log = std::fs::File::create(self.launch_log())?;
         let mut cmd = Command::new(lua);
         cmd.arg(script).args(["-Control", "-Window", window]).args(extra).current_dir(&self.root);
         cmd.stdout(Stdio::from(log.try_clone()?)).stderr(Stdio::from(log)).stdin(Stdio::null());
@@ -109,7 +125,13 @@ impl Game {
         while start.elapsed() < timeout {
             if let Some(status) = child.try_wait()? {
                 if !status.success() && !self.up() {
-                    bail!("the launcher stopped ({status}); see Saved/StreetSocial/ok-game-mcp-launch.log:\n{}", self.launch_log_tail());
+                    bail!("the launcher stopped ({status}); see {}:\n{}", self.launch_log().display(), self.launch_log_tail());
+                }
+                // The launcher leaves once the game is started: a game that dies before it answers would wait out the timeout.
+                if let Some(pid) = self.launched_pid() {
+                    if !self.up() && !pid_alive(&pid)? {
+                        bail!("the game (pid {pid}) exited before the control channel came up; see the newest Saved/StreetSocial/Play-*/game.log");
+                    }
                 }
             }
             if self.up() {
@@ -120,8 +142,19 @@ impl Game {
         bail!("the control channel did not come up in {}s; launcher log:\n{}", timeout.as_secs(), self.launch_log_tail())
     }
 
+    /// One per control port: games of other sessions in this checkout start at the same time.
+    fn launch_log(&self) -> std::path::PathBuf {
+        self.root.join(format!("Saved/StreetSocial/ok-game-mcp-launch-{}.log", self.port))
+    }
+
+    /// The game the launcher last started (its "game pid N" line).
+    fn launched_pid(&self) -> Option<String> {
+        let text = std::fs::read_to_string(self.launch_log()).ok()?;
+        text.lines().rev().find_map(|l| l.trim().strip_prefix("game pid ").map(String::from))
+    }
+
     fn launch_log_tail(&self) -> String {
-        let text = std::fs::read_to_string(self.root.join("Saved/StreetSocial/ok-game-mcp-launch.log")).unwrap_or_default();
+        let text = std::fs::read_to_string(self.launch_log()).unwrap_or_default();
         let lines: Vec<&str> = text.lines().collect();
         lines[lines.len().saturating_sub(20)..].join("\n")
     }
@@ -130,8 +163,9 @@ impl Game {
     fn port_pid(&self) -> Result<Option<String>> {
         let out = Command::new("netstat").args(["-ano", "-p", "TCP"]).output()?;
         let text = String::from_utf8_lossy(&out.stdout);
-        let local = format!("127.0.0.1:{}", self.port);
-        let any = format!("0.0.0.0:{}", self.port);
+        let port = self.live_port();
+        let local = format!("127.0.0.1:{port}");
+        let any = format!("0.0.0.0:{port}");
         Ok(text
             .lines()
             .map(|l| l.split_whitespace().collect::<Vec<_>>())

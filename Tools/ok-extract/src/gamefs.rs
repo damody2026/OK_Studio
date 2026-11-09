@@ -77,7 +77,10 @@ impl Entry {
     fn data(&self) -> Option<Vec<u8>> {
         match self {
             Entry::Data(bytes) => Some(bytes.clone()),
-            Entry::Mapped(offset, len) => INDEX_MAP.read().unwrap().as_ref().and_then(|m| m.get(*offset..*offset + *len)).map(<[u8]>::to_vec),
+            Entry::Mapped(offset, len) => {
+                #[cfg(test)] if let Some(map) = TEST_INDEX_MAP.with(|m| m.borrow().clone()) { return map.get(*offset..*offset + *len).map(<[u8]>::to_vec); }
+                INDEX_MAP.read().unwrap().as_ref().and_then(|m| m.get(*offset..*offset + *len)).map(<[u8]>::to_vec)
+            }
             Entry::Shared(bytes) => Some(bytes.0.to_vec()),
             _ => None,
         }
@@ -90,6 +93,9 @@ impl Entry {
 
 /// The decompressed index of the replayed library, mapped (`Entry::Mapped` points into it).
 static INDEX_MAP: RwLock<Option<Arc<memmap2::Mmap>>> = RwLock::new(None);
+// A test's own index, on its thread: the process's is the library every other test reads through (one swapped and
+// cleared it, and the running tests' cards lost their library entries as gaps of their strict opens, 2026-11-05).
+#[cfg(test)] thread_local! { static TEST_INDEX_MAP: std::cell::RefCell<Option<Arc<memmap2::Mmap>>> = const { std::cell::RefCell::new(None) }; }
 
 /// Borrowed twins of the index types: the index deserialized in place from its mapped bytes.
 #[derive(serde::Deserialize)]
@@ -1641,14 +1647,14 @@ mod mapped_index_tests {
         std::fs::write(index_path(&library), lz4_flex::block::compress_prepend_size(&raw)).unwrap();
 
         let (mapped, map) = mapped_index(&library).expect("mapped index");
-        *INDEX_MAP.write().unwrap() = Some(map);
+        TEST_INDEX_MAP.with(|m| *m.borrow_mut() = Some(map));
         assert!(matches!(mapped.files["abdata/list/b.txt"], Entry::Mapped(..)));
         for (key, entry) in &index.files { assert_eq!(entry_bytes(&mapped.files[key]), entry_bytes(entry), "{key}"); }
         assert_eq!(entry_bytes(&mapped.zips["mods/m.zipmod"].entries[&0]).as_deref(), Some(&b"csv"[..]));
         assert_eq!(bincode::serialize(&mapped).unwrap(), raw, "written back as the original Data entries");
         // The cache is reused, and a replaced index file gets a new one.
         assert!(mapped_index(&library).is_some());
-        *INDEX_MAP.write().unwrap() = None;
+        TEST_INDEX_MAP.with(|m| *m.borrow_mut() = None);
         let _ = std::fs::remove_dir_all(&library);
     }
 

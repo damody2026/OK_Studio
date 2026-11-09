@@ -3256,7 +3256,7 @@ mod tests {
                 }
             }
         }
-        std::fs::write(r"C:\portable\OpenKoikatsu\Saved\spike\acc_body.txt", lines.join("\n")).ok();
+        std::fs::write(crate::test_support::project_path!("Saved/spike/acc_body.txt"), lines.join("\n")).ok();
         eprintln!("{}", lines.join("\n"));
         assert!(!lines.is_empty());
     }

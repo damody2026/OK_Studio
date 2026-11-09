@@ -93,9 +93,27 @@ local L = {
   { 'teacup_ride', 'spinning teacup ride with pastel cups', { 9.0, 9.0, 3.0 }, 6000, 'amusement', 'amusement', 1, 2, 4 },
   { 'ticket_gate', 'amusement park entrance ticket gate arch with turnstiles', { 8.0, 2.0, 5.0 }, 4000, 'amusement', 'amusement', 1, 1, 4 },
   { 'popcorn_cart', 'striped amusement park popcorn cart with umbrella', { 1.6, 1.0, 2.4 }, 2500, 'amusement', 'amusement', 2, 2, 4 },
+  -- round 5 (doc section 10): what the anchors need and the map lacks
+  { 'wedding_chapel', 'small white wedding chapel building with a pitched roof, a little bell tower with a cross, arched double wooden door and stained glass windows', { 9, 14, 11 }, 12000, 'outdoor', 'church', 1, 1, 5 },
+  { 'shoe_display_rack', 'tall shoe store display shelf with rows of sneakers, heels and leather shoes, light wood', { 2.0, 0.45, 2.0 }, 3500, 'shop', 'department', 9, 1, 5 },
+  { 'shoe_try_bench', 'shoe store try-on bench, padded leather seat with a small slanted floor mirror beside it', { 1.3, 0.8, 0.6 }, 2000, 'shop', 'department', 6, 1, 5 },
+  { 'post_box', 'red japanese street post box on a short post with a slot', { 0.5, 0.5, 1.4 }, 1200, 'street', 'dorms post', 4, 1, 5 },
+  { 'vaulting_box', 'school gym wooden vaulting box, stacked wooden tiers with a white padded top', { 1.2, 0.7, 1.1 }, 2000, 'sport', 'gym_storage', 2, 1, 5 },
+  { 'gym_mat_stack', 'stack of three blue gym exercise floor mats, thick foam', { 2.0, 1.2, 0.3 }, 1000, 'sport', 'gym_storage', 2, 1, 5 },
+  { 'baby_crib', 'white wooden baby crib with slatted sides and a soft mattress', { 1.2, 0.65, 0.95 }, 2500, 'clinic', 'clinic_gyn', 1, 1, 5 },
+  { 'ultrasound_cart', 'medical ultrasound machine cart with a monitor, keyboard and probe holder on wheels', { 0.6, 0.7, 1.5 }, 2500, 'clinic', 'clinic_gyn', 2, 1, 5 },
+  { 'shoe_lockers', 'japanese school entrance shoe locker cabinet, grey steel, grid of small open compartments with indoor shoes', { 2.0, 0.4, 1.8 }, 2500, 'school', 'campus', 12, 1, 5 },
+  { 'swan_boat', 'white swan shaped two seat pedal boat with a long curved neck, for a park lake', { 2.6, 1.5, 1.8 }, 3000, 'water', 'boat', 4, 1, 3 },
+  { 'futon_set', 'japanese futon bedding laid flat on the floor, thick white mattress with a folded floral quilt and a small pillow', { 2.0, 1.0, 0.25 }, 3000, 'inn', 'minshuku', 8, 1, 6 },
+  { 'chabudai', 'low round japanese wooden tea table with short legs and a small teapot and two cups on it', { 0.9, 0.9, 0.4 }, 2500, 'inn', 'minshuku', 4, 1, 6 },
+  { 'zabuton', 'square japanese floor cushion, indigo cloth with corner tassels, flat', { 0.6, 0.6, 0.1 }, 1000, 'inn', 'minshuku', 16, 1, 6 },
+  { 'toilet_room', 'white ceramic western toilet with a tank and a closed seat lid', { 0.45, 0.75, 0.8 }, 2000, 'inn', 'minshuku', 4, 1, 6 },
+  { 'tv_cabinet', 'flat screen television standing on a low japanese style dark wooden tv cabinet with two sliding doors', { 1.3, 0.45, 1.05 }, 2500, 'inn', 'minshuku', 4, 1, 6 },
+  { 'washbasin', 'white bathroom washbasin on a wooden vanity cabinet with a tall mirror on a back panel', { 0.8, 0.5, 1.9 }, 2500, 'inn', 'minshuku', 4, 1, 6 },
+  { 'shower_column', 'wall mounted chrome shower column with a rain head, a hand shower and a mixer', { 0.45, 0.35, 2.15 }, 2000, 'inn', 'minshuku', 4, 1, 6 },
 }
 -- world-tripo-v1 keys reused as they are (planned there; generated or still to generate there)
-local reuse = { treadmill = 'gym', dumbbell_rack = 'gym', locker_bank = 'gym beach', volleyball_net = 'gym_hall', swan_boat = 'boat',
+local reuse = { treadmill = 'gym', dumbbell_rack = 'gym', locker_bank = 'gym beach', volleyball_net = 'gym_hall',
   lifeguard_tower = 'beach', beach_umbrella_a = 'beach parasol', beach_shower = 'beach', beach_hut = 'beach', lake_pier = 'boat fishing',
   rowing_boat = 'boat', reception_desk = 'counters', cash_register = 'counters', vending_drinks_a = 'vending', food_cart_a = 'stall',
   picnic_table = 'bbq', kitchen_counter = 'home', dining_set = 'home', conference_set = 'office_units', bleacher_a = 'gym_hall', lectern = 'club_room' }

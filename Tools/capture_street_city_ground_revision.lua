@@ -1,0 +1,6 @@
+local f=assert(io.open('Tools/capture_street_city_ground_pbr.lua','rb'));local source=f:read('*a');f:close()
+source=source:gsub('ground%-pbr%-v1','ground-pbr-v2')
+source=source:gsub("local floorproof=read%(out%.%.'/verify.json'%);local completion=read%(out%.%.'/complete.json'%);assert%(floorproof.status=='passed' and floorproof.map_sha256==completion.before_map_sha256 and completion.map_sha256==installed.map_sha256%)",[[local floorproof=read(root..'/output/street-social-city-production/ground-pbr-v1/verify.json');assert(floorproof.status=='passed' and audit.geometry_changes==0)]])
+source=source:gsub("read%(out%.%.'/inventory.json'%)","read(root..'/output/street-social-city-production/ground-pbr-v1/inventory.json')")
+source=source:gsub("io.open%(out%.%.'/road%-camera.json','rb'%)","io.open(root..'/output/street-social-city-production/ground-pbr-v1/road-camera.json','rb')")
+assert(load(source,'ground-revision-capture'))()

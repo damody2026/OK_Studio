@@ -52,6 +52,34 @@ bool FOkAnimBridge::FromVmd(const FOkSession* Session, const FString& VmdFile, c
 	}, Out);
 }
 
+OkVmdJob* FOkAnimBridge::VmdJobNew(const FOkSession* Session, float ObjScaleY)
+{
+	return ok_okanim_vmd_job_new(Session ? Session->Handle : nullptr, ObjScaleY);
+}
+
+bool FOkAnimBridge::VmdJobRun(OkVmdJob* Job, const FString& VmdFile, const FString& ParamsJson, TArray<uint8>& Out)
+{
+	const FTCHARToUTF8 V(*VmdFile);
+	const FTCHARToUTF8 P(*ParamsJson);
+	return OkAnimReadBytes([&](uint8* Buf, int32 Cap) {
+		return ok_okanim_vmd_job_run(Job, V.Get(), ParamsJson.IsEmpty() ? nullptr : P.Get(), Buf, Cap);
+	}, Out);
+}
+
+void FOkAnimBridge::VmdJobFree(OkVmdJob* Job)
+{
+	ok_okanim_vmd_job_free(Job);
+}
+
+bool FOkAnimBridge::CameraFromVmd(const FString& VmdFile, FString& OutJson)
+{
+	const FTCHARToUTF8 V(*VmdFile);
+	TArray<uint8> Bytes;
+	if (!OkAnimReadBytes([&](uint8* Buf, int32 Cap) { return ok_mmdd_camera_from_vmd(V.Get(), Buf, Cap); }, Bytes)) return false;
+	OutJson = OkAnimUtf8(Bytes);
+	return true;
+}
+
 bool FOkAnimBridge::FromLocals(const FString& HeaderJson, const TArray<float>& Rotations, const TArray<float>& Hips, TArray<uint8>& Out)
 {
 	const FTCHARToUTF8 H(*HeaderJson);

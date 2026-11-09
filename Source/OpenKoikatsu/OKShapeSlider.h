@@ -19,7 +19,7 @@ public:
 	int32 Index = INDEX_NONE;
 	bool bBody = false;
 	FString AnimationParameter;
- FString ModBone, ModRight, ModCategory, PregnancyParameter, BodyParameter;
+ FString ModBone, ModRight, ModCategory, PregnancyParameter, BodyParameter, StyleParameter;
  int32 ModAxis=-1;
  bool ModCoordinateSpecific=false;
  UPROPERTY() TObjectPtr<UComboBoxString> ModSide;

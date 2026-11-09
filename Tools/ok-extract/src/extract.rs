@@ -2320,6 +2320,7 @@ pub(crate) fn extract_session_from_info(
     }
     assign_draw_layers(&mut session_parts);
     Ok(crate::session::OkSession {
+        pair_third:None,
         accessory_context,
         editor_pregnancy:Default::default(),
         pv_config,pv_mask:15,pv_fk:false,
@@ -2373,6 +2374,7 @@ pub(crate) fn extract_session_from_info(
         shape_body,
         shape_face,
         abm,
+        style_card_abm: None,
         parts: session_parts,
         coordinate_count: parsed_card
             .as_ref()
@@ -2386,6 +2388,10 @@ pub(crate) fn extract_session_from_info(
         mmdd_world_lock: false,
         mmdd_face_bone_dirty: false,
         active_shoe_meta,
+        wardrobe_body_mask: None,
+        wardrobe_quick_settle: false,
+        hidden_parts: Vec::new(),
+        cover_ready: None,
         face_runtime: Default::default(),
         anim_parameters: std::collections::HashMap::new(),
         anim_clock:Default::default(),anim_crossfade:None,anim_layer_crossfades:Default::default(),
@@ -2849,6 +2855,9 @@ fn lists_stage(game_root: &Path, parsed_card: &Option<CardInfo>, outfit: i32, ou
     let selected_top_subparts = parsed_card.as_ref().map(|card|
         select_card_top_subparts(card, outfit, selected_top_type,
             &vanilla, &mod_catalog, &guid_index));
+    if let Some(card) = parsed_card.as_ref() {
+        crate::outfit_gaps::log("opening", outfit, &crate::outfit_gaps::of_outfit(card, outfit, &vanilla, mod_catalog, &guid_index));
+    }
     let mut state_types = std::array::from_fn(|kind| selected_clothes.as_ref()
         .and_then(|slots| slots[kind].as_ref())
         .and_then(|(entry, _, _)| entry.info("StateType").trim().parse::<u8>().ok()));

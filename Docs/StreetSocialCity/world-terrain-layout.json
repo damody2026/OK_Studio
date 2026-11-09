@@ -2459,7 +2459,7 @@
       "name": "河岸企業大樓",
       "center_map_m": [
         824.0,
-        760.0
+        765.0
       ],
       "footprint_m": [
         52,
@@ -2469,7 +2469,7 @@
       "courtyard_reserved_m": null,
       "world_center_m": {
         "east": 824.0,
-        "north": 340.0,
+        "north": 335.0,
         "up": 12
       },
       "floor_count": 6,

@@ -24,6 +24,26 @@ local function strip(s)
 end
 
 -- Hash files in one batch; stop at the first unreadable file or mismatch, in order.
+-- An outfit that would leave her bare or bald for want of a mod (outfit_gaps.rs) is not put on her by itself: the next
+-- one that is whole. No ok-extract here: she keeps it.
+local function avoid_severe_outfit(character)
+  local exe = path.join(ok.root, "Tools/ok-extract/target/release/ok-extract.exe")
+  if not character.path or not path.exists(exe) then return end
+  local pipe = io.popen(('""%s" X:/NoGame --oklib outfit-gaps "%s" "%s" 2>nul"'):format(win(exe), win(path.join(ok.root, "Content/IndependentResources/base_v1")), win(character.path)))
+  if not pipe then return end
+  local severe = {}
+  for outfit in pipe:read("a"):gmatch("OKGAPS severe\t[^\t]*\t(%d+)") do severe[tonumber(outfit)] = true end
+  pipe:close()
+  if not severe[character.outfit] then return end
+  for outfit = 0, 6 do
+    if not severe[outfit] then
+      print(("%s: outfit %d lacks items, wearing %d"):format(character.id, character.outfit, outfit))
+      character.outfit = outfit
+      return
+    end
+  end
+end
+
 local function check_hashes(files, expected, message)
   local digests = ok.hash.files(files, "sha256")
   for i, f in ipairs(files) do
@@ -158,6 +178,7 @@ function M.main(argv)
     local profile_path = path.join(ok.root, "Content/IndependentResources/StreetSocialData/Profiles", female.id .. ".json")
     female.outfit = 0
     if path.exists(profile_path) then female.outfit = tonumber(get(read_json(profile_path), "everyday_outfit", 0)) or 0 end
+    avoid_severe_outfit(female)
   end
   male.outfit = 0
   local everyone = { male, table.unpack(females) }

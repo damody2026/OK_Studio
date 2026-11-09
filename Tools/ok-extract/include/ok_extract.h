@@ -33,6 +33,7 @@ int32_t ok_body_reaction_hit_with_release(OkSession*,int32_t id,const float* for
 int32_t ok_body_reaction_clear(OkSession*);
 int32_t ok_body_reaction_is_playing(OkSession*);
 int32_t ok_common_interaction_poses(const char* root,char* out,int32_t capacity);
+int32_t ok_card_outfit_gaps(const char* game,const char* card,char* out,int32_t capacity);
 int32_t ok_clothing_transition(const char* root,const char* card,int32_t outfit,const uint8_t* previous,int32_t kind,uint8_t* out,char* error,int32_t error_cap);
 /* OK clothes (.okclothes). op 0 import coordinate card a; 1 export outfit of card a; 2 wear okclothes b as outfit of card a. Writes out; summary or error in msg. */
 int32_t ok_clothes_file(int32_t op,const char* a,const char* b,int32_t outfit,const char* out,char* msg,int32_t msg_cap);
@@ -113,6 +114,13 @@ int32_t ok_unity_quat_to_euler(const float* q4,float* out3);
 int32_t ok_studio_pose_write(const char* path,const char* json,char* err,int32_t cap);
 /* PhysX secondary dynamics for this character: 1 = host solver (gallery menu, one-to-one, paired playback), 0 = built-in (default). */
 int32_t ok_session_set_physx_secondary(OkSession* s,int32_t enabled);
+int32_t ok_session_wardrobe_prepare(OkSession* s);
+int32_t ok_session_wardrobe_strip(OkSession* s);
+int32_t ok_session_wardrobe_first(OkSession* s);
+int32_t ok_session_clothes_parts_shown(OkSession* s,const uint8_t* states,uint8_t* out,int32_t cap);
+int32_t ok_session_wardrobe_body_mask(OkSession* s,int32_t top_state,uint8_t* out,int32_t cap);
+int32_t ok_session_set_parts_hidden(OkSession* s,const uint8_t* mask,int32_t count);
+int32_t ok_session_wardrobe_swap(OkSession* live,OkSession* donor,char* err,int32_t cap);
 /* Whether an Unreal animation drives this body: 1 yes, 0 the session samples its game animation, -1 follow OK_UE_ANIM
    (process-wide; another actor loading may change it). */
 int32_t ok_session_set_external_animation(OkSession* s,int32_t external);
@@ -128,6 +136,13 @@ int32_t ok_belly_bulge_past(OkSession* s,const float* tip,float* out,char* targe
    (her skeleton space, metres, 9 floats; that way zero: read off her skin), radius his and a margin. Writes up to max (body vertex index, move in the mesh's own space, Unity
    metres, then the turn of its normal there: 6 floats each); returns how many there are, -1 on bad input. */
 int32_t ok_belly_wrap_deltas(OkSession* s,const float* at,float radius,uint32_t* out_idx,float* out_d,uint32_t max);
+/* This frame's wrap and clothes on the wrap worker, the session idle: at as ok_belly_wrap_deltas, wrap 0 her skin left
+   alone, cover 0 her clothes left alone. 1 started, 0 the last one still runs, -1 bad input. */
+int32_t ok_belly_wrap_start(OkSession* s,const float* at,float radius,int32_t wrap,int32_t cover);
+/* The finished job of ok_belly_wrap_start, the session idle: her body's moves as ok_belly_wrap_deltas (the count returned;
+   -2 none ready, -1 bad input), her garments' as ok_cover_deltas (cloth_n), the garments to draw from their CPU vertices
+   as ok_set_cover (cpu_n). */
+int32_t ok_belly_wrap_take(OkSession* s,int32_t cover,uint32_t* out_idx,float* out_d,uint32_t max,uint32_t* cloth_part,uint32_t* cloth_idx,float* cloth_d,uint32_t cloth_max,uint32_t* cloth_n,int32_t* cpu_parts,uint32_t cpu_max,uint32_t* cpu_n);
 /* Her clothes kept over her skin this frame (belly_bulge::cover_deltas): body_idx/body_d her body's skin moves as
    ok_belly_wrap_deltas gave them (n, may be 0). Writes up to max (part index, vertex index, move: 3 floats); returns the count. */
 /* Her garments with their own rig kept over her skin as they are skinned on the CPU (on 1) or not (belly_bulge::set_cover);
@@ -428,6 +443,7 @@ int32_t ok_select_common_animation(OkSession* s,const char* root,const char* key
 /* Optional profiling only. Register once; callback must outlive the module.
    event identifies a fixed native scope; begin is 1, end is 0. */
 int32_t ok_set_cpu_trace_callback(void (*callback)(uint32_t event,int32_t begin));
+int32_t ok_animation_pair_set_third(OkSession* female,OkSession* third,const char* motion,int32_t swapped);
 int32_t ok_animation_pair_frame(OkSession* female, OkSession* male, float time, float dt,
     const char* state, const char* female_motion, const char* male_motion, char* err, int32_t cap);
 // 2 = ownership rejected before any solver advancement; 1 = frame failure.
@@ -492,12 +508,17 @@ int32_t ok_editor_body_physics(OkSession* session,float softness,float weight);
  * ok_session_refresh_body_physics, load or shape change. 0 on success. */
 int32_t ok_set_body_part_physics(int32_t part,int32_t mode,float softness);
 int32_t ok_session_refresh_body_physics(OkSession* session);
+/* Her skin where he lifts it cut finer, one-on-one only: once, after opening, before the mesh is built. The vertices
+ * added, -1 without a session. */
+int32_t ok_session_refine_belly(OkSession* session);
 /* The eyes past the source's limits for every character (on by default): the look follows past the pattern's
  * angles and the iris moves on in proportion, up to most (in rates, 1 the source's limit); 0 keeps the limits. */
 int32_t ok_set_eye_look_unlimited(int32_t enabled,float most);
 int32_t ok_editor_decode_mods(const uint8_t* data,int32_t len,uint8_t* out,int32_t cap);
 int32_t ok_editor_encode_mods(const uint8_t* data,int32_t len,const char* json,uint8_t* out,int32_t cap);
 int32_t ok_editor_apply_mods(OkSession* session,const char* json,int32_t coordinate);
+/* A style's bone modifiers on top of the card's (JSON list of bones; empty gives the card's back), from the next shape or pose on. */
+int32_t ok_set_style_bones(OkSession* session,const char* json);
 /* ok_editor_apply_mods, then the card's sliders (null/0 = the session's), building the shape once when possible. */
 int32_t ok_editor_apply_mods_shape(OkSession* session,const char* json,int32_t coordinate,const float* body,int32_t n_body,const float* face,int32_t n_face);
 
@@ -520,6 +541,15 @@ typedef struct OkAnimPlayer OkAnimPlayer;
 int32_t ok_okanim_last_error(char* out, int32_t cap);
 int32_t ok_okanim_from_clip(OkSession* s, const char* key, float fps, uint8_t* out, int32_t cap);
 int32_t ok_okanim_from_vmd(const OkSession* s, const char* vmd_path, const char* params_json, uint8_t* out, int32_t cap);
+/* The same solve for a worker thread: new copies the character's rig out of the session on the session's thread (s may
+   be null), run solves on the first call and keeps the bytes (null out/cap0 queries the size; errors through
+   ok_okanim_last_error on that thread), free releases it. */
+typedef struct OkVmdJob OkVmdJob;
+OkVmdJob* ok_okanim_vmd_job_new(const OkSession* s, float obj_scale_y);
+int32_t ok_okanim_vmd_job_run(OkVmdJob* j, const char* vmd_path, const char* params_json, uint8_t* out, int32_t cap);
+void ok_okanim_vmd_job_free(OkVmdJob* j);
+/* A camera VMD's keys as a JSON array (time, world_pos, rot, fov...). Null out/cap0 queries the size. */
+int32_t ok_mmdd_camera_from_vmd(const char* vmd_path, uint8_t* out, int32_t cap);
 int32_t ok_okanim_session_rest(OkSession* s, uint8_t* out, int32_t cap);
 int32_t ok_okanim_quality(const uint8_t* bytes, int32_t len, const char* header, uint8_t* out, int32_t cap);
 int32_t ok_okanim_set_posture(int32_t on);
@@ -596,6 +626,12 @@ int32_t ok_okmodel_texture_png(const char* library, const char* id_hex, const ch
 int32_t ok_session_has_game_root(OkSession* s);
 int32_t ok_session_set_blush(OkSession* s, float rate);
 int32_t ok_session_set_iris_small(OkSession* s, float rate);
+int32_t ok_session_set_pupil_scale(OkSession* s, float scale);
+int32_t ok_session_set_pupil_offset(OkSession* s, float x, float y);
+int32_t ok_session_set_pupil_stretch(OkSession* s, float across, float down);
+int32_t ok_iris_recolor(uint8_t* pixels, int32_t width, int32_t height, float hue, float saturation, float value);
+int32_t ok_iris_mark(uint8_t* pixels, int32_t width, int32_t height, int32_t shape, float across, float down, float opacity, float hue, float saturation, float value);
+int32_t ok_iris_without_highlights(uint8_t* pixels, int32_t width, int32_t height);
 
 #ifdef __cplusplus
 }

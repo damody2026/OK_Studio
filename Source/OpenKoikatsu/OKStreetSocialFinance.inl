@@ -24,7 +24,7 @@ FString AOKStreetSocialScene::FinQueryText(const FString& Op,TSharedPtr<FJsonObj
  const FDateTime Now=StreetNow();
  // "kind" routes the query to finance (ok-mind mind.rs); the op's own kind (market / limit, above / below) travels as fin_kind.
  {FString Own;if(Args->TryGetStringField(TEXT("kind"),Own))Args->SetStringField(TEXT("fin_kind"),Own);}
- Args->SetStringField(TEXT("kind"),TEXT("fin"));Args->SetStringField(TEXT("op"),Op);Args->SetStringField(TEXT("lang"),S.Lang); // names in the game's script (貴州茅臺 in a Simplified game)
+ Args->SetStringField(TEXT("kind"),TEXT("fin"));Args->SetStringField(TEXT("op"),Op);Args->SetStringField(TEXT("lang"),S.Lang);Args->SetStringField(TEXT("region"),S.Store.Region); // names in the game's script (貴州茅臺 in a Simplified game)
  if(!Args->HasField(TEXT("date")))Args->SetStringField(TEXT("date"),Now.ToString(TEXT("%Y-%m-%d")));
  if(!Args->HasField(TEXT("minute")))Args->SetNumberField(TEXT("minute"),Now.GetHour()*60+Now.GetMinute());
  FString Text;FJsonSerializer::Serialize(Args.ToSharedRef(),TJsonWriterFactory<TCHAR,TCondensedJsonPrintPolicy<TCHAR>>::Create(&Text));

@@ -11,6 +11,7 @@ void UKKAffineProceduralMeshComponent::ExpandAnimatedRenderBounds(const FBox& Bo
 
 void UKKAffineProceduralMeshComponent::PublishAnimatedStreamBounds()
 {
+    GpuSectionBounds.Reset();
     if (bUseConservativeAnimatedBounds && UsesAnimatedStreams() && GetCollisionEnabled()==ECollisionEnabled::NoCollision)
     {
         const FBox Before=AnimatedBoundsEnvelope;
@@ -34,6 +35,19 @@ void UKKAffineProceduralMeshComponent::SetRenderResidual(const FMatrix& Matrix)
 FMatrix UKKAffineProceduralMeshComponent::GetRenderMatrix() const
 {
     return RenderResidual * Super::GetRenderMatrix();
+}
+
+FBox UKKAffineProceduralMeshComponent::CurrentWorldBounds() const
+{
+    if(GpuSectionBounds.IsEmpty())return Bounds.GetBox();
+    FBox Box(ForceInit);
+    auto* MutableThis = const_cast<UKKAffineProceduralMeshComponent*>(this);
+    for (int32 Section = 0; Section < GetNumSections(); ++Section)
+    {
+        const FBox* Gpu=GpuSectionBounds.Find(Section);
+        Box += Gpu ? *Gpu : MutableThis->GetProcMeshSection(Section)->SectionLocalBox;
+    }
+    return Box.IsValid ? Box.TransformBy(RenderResidual * GetComponentTransform().ToMatrixWithScale()) : Bounds.GetBox();
 }
 
 FBoxSphereBounds UKKAffineProceduralMeshComponent::CalcBounds(const FTransform& LocalToWorld) const

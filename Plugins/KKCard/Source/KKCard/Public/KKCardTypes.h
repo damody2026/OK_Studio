@@ -3,6 +3,9 @@
 #include "CoreMinimal.h"
 #include "KKCardTypes.generated.h"
 
+// The card's personality 病嬌 (ok-rules traits.rs).
+constexpr int32 KKPersonalityYandere = 24;
+
 UENUM(BlueprintType)
 enum class EKKCardKind : uint8
 {

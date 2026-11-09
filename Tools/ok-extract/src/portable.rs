@@ -916,7 +916,7 @@ mod tests {
     #[ignore="installed APNG/shared resources; owns process environment"]
     fn runtime_apng_parameters_survive_all_outfit_loads(){
         use sha2::{Digest,Sha256};
-        let project=Path::new("C:/portable/OpenKoikatsu");
+        let project=Path::new(crate::test_support::project_path!(""));
         let path=std::env::var_os("OK_TEST_PREVIEW_PACK").map(std::path::PathBuf::from)
             .unwrap_or_else(||project.join("Content/CharacterCards/CrowdAPNG/C001.png"));
         std::env::set_var("OK_BUILTIN_RESOURCES",project.join("Content/IndependentResources/v1"));
@@ -1050,11 +1050,11 @@ mod reader_regressions {
     #[test]
     #[ignore="installed clothing texture diagnostic"]
     fn reader_waist_material_oracle() {
-        std::env::set_var("OK_BUILTIN_RESOURCES","C:/portable/OpenKoikatsu/Content/IndependentResources/v1");
+        std::env::set_var("OK_BUILTIN_RESOURCES",crate::test_support::project_path!("Content/IndependentResources/v1"));
         std::env::set_var("OK_CLOTHES_STATES","0,0,0,0,0,0,0,0,0");
-        let mut session=load_outfit(Path::new("C:/portable/OpenKoikatsu/output/CrowdAPNG/C001.png"),0).unwrap();
+        let mut session=load_outfit(Path::new(crate::test_support::project_path!("output/CrowdAPNG/C001.png")),0).unwrap();
         let body=session.shape_body.clone();let face=session.shape_face.clone();session.apply_shape(&body,&face);session.skin_all();session.refresh_portable_render();
-        let out=Path::new("C:/portable/OpenKoikatsu/Saved/Tests/Reader292WaistMaterials");fs::create_dir_all(out).unwrap();
+        let out=Path::new(crate::test_support::project_path!("Saved/Tests/Reader292WaistMaterials"));fs::create_dir_all(out).unwrap();
         let mut rows=Vec::new();
         for (i,p) in session.parts.iter().enumerate().filter(|(_,p)|p.role.contains("cloth")) {
             for (name,png) in [("main",p.png.as_ref()),("alpha",p.alpha_mask.as_ref()),("detail",p.detail_mask.as_ref()),("overlay",p.overtex_png.as_ref())] {
@@ -1068,7 +1068,7 @@ mod reader_regressions {
     #[test]
     #[ignore="source renderer visibility oracle; owns process environment"]
     fn reader_source_visibility_oracle() {
-        let project=Path::new("C:/portable/OpenKoikatsu");let game=&crate::test_support::game_path("");
+        let project=Path::new(crate::test_support::project_path!(""));let game=&crate::test_support::game_path("");
         std::env::set_var("OK_NOCACHE","1");std::env::set_var("OK_BUILTIN_RESOURCES",project.join("Content/IndependentResources/v1"));
         for key in ["OK_GPU_SKIN","OK_SKELMESH","OK_NOPOSE","OK_UE_ANIM","OK_HEAD_GPUSKIN"]{std::env::set_var(key,"1");}
         std::env::set_var("OK_CLOTHES_STATES","0,0,0,0,0,0,0,0,0");let mut rows=Vec::new();
@@ -1088,12 +1088,12 @@ mod reader_regressions {
     #[ignore="portable material/geometry diagnostic; owns process environment"]
     fn reader_face_material_oracle() {
         use sha2::{Digest,Sha256};
-        std::env::set_var("OK_BUILTIN_RESOURCES","C:/portable/OpenKoikatsu/Content/IndependentResources/v1");
+        std::env::set_var("OK_BUILTIN_RESOURCES",crate::test_support::project_path!("Content/IndependentResources/v1"));
         for key in ["OK_GPU_SKIN","OK_SKELMESH","OK_NOPOSE","OK_UE_ANIM","OK_HEAD_GPUSKIN"]{std::env::set_var(key,"1");}
         std::env::set_var("OK_CLOTHES_STATES","0,0,0,0,0,0,0,0,0");
         let mut rows=Vec::new();
         for outfit in [0,4,6] {
-            let mut session=load_outfit(Path::new("C:/portable/OpenKoikatsu/output/CrowdAPNG/C002.png"),outfit).unwrap();
+            let mut session=load_outfit(Path::new(crate::test_support::project_path!("output/CrowdAPNG/C002.png")),outfit).unwrap();
             session.ensure_skel_export();
             let body=session.shape_body.clone();let face=session.shape_face.clone();session.apply_shape(&body,&face);
             let bones=session.ensure_skel_export().bones.iter().map(|b|serde_json::json!({"name":b.name,"parent":b.parent,"rest_pos":b.rest_pos,"rest_rot":b.rest_rot,"rest_scl":b.rest_scl,"pose_pos":b.pose_pos,"pose_rot":b.pose_rot,"pose_scl":b.pose_scl})).collect::<Vec<_>>();
@@ -1106,13 +1106,13 @@ mod reader_regressions {
             }).collect::<Vec<_>>();
             rows.push(serde_json::json!({"outfit":outfit,"parts":parts,"bones":bones}));
         }
-        fs::write("C:/portable/OpenKoikatsu/Saved/Tests/Reader292FaceMaterials.json",serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
+        fs::write(crate::test_support::project_path!("Saved/Tests/Reader292FaceMaterials.json"),serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
     }
     #[test]
     #[ignore="all real library outfits; owns process environment"]
     fn reader_all_outfits_integrity() {
         use sha2::{Digest,Sha256};
-        let project=Path::new("C:/portable/OpenKoikatsu");
+        let project=Path::new(crate::test_support::project_path!(""));
         std::env::set_var("OK_BUILTIN_RESOURCES",project.join("Content/IndependentResources/v1"));
         for key in ["OK_GPU_SKIN","OK_SKELMESH","OK_NOPOSE","OK_UE_ANIM","OK_HEAD_GPUSKIN"]{std::env::set_var(key,"1");}
         std::env::set_var("OK_CLOTHES_STATES","0,0,0,0,0,0,0,0,0");
@@ -1148,7 +1148,7 @@ mod reader_regressions {
     #[test]
     #[ignore="prepared real card resources"]
     fn compact_clothing_checks_base_and_corruption() {
-      let project=std::path::PathBuf::from("C:/portable/OpenKoikatsu");std::env::set_var("OK_BUILTIN_RESOURCES",project.join("Content/IndependentResources/v1"));
+      let project=std::path::PathBuf::from(crate::test_support::project_path!(""));std::env::set_var("OK_BUILTIN_RESOURCES",project.join("Content/IndependentResources/v1"));
       let path=project.join("output/CrowdAPNG/C000.png");let png=crate::gamefs::read(&path).unwrap();
       let cache=path.parent().unwrap().join(".okstates").join(clothing_resource_digest(&png).unwrap()).join("outfit0_111100000.okpreview");
       let payload=crate::gamefs::read(cache).unwrap();assert!(payload.starts_with(CLOTHING_MAGIC));assert!(decode_clothing(&payload,&png,&path).is_ok());
@@ -1161,7 +1161,7 @@ mod reader_regressions {
     #[ignore="real multi-outfit library; owns process environment"]
     fn clothing_states_survive_preview_edits_and_outfit_changes() {
         use sha2::{Digest,Sha256};
-        let project=std::path::PathBuf::from("C:/portable/OpenKoikatsu");
+        let project=std::path::PathBuf::from(crate::test_support::project_path!(""));
         let library=project.join("output/CrowdAPNG");
         let offline=project.join("Saved/Tests/Reader291Offline");fs::create_dir_all(&offline).unwrap();
         for key in ["OK_GPU_SKIN","OK_SKELMESH","OK_NOPOSE","OK_UE_ANIM","OK_HEAD_GPUSKIN"]{std::env::set_var(key,"1");}
@@ -1209,7 +1209,7 @@ mod reader_regressions {
     #[test]
     #[ignore = "real prepared 100-card library; owns process environment"]
     fn prepared_library_hair_and_clothing_states() {
-        let project=std::path::PathBuf::from("C:/portable/OpenKoikatsu");
+        let project=std::path::PathBuf::from(crate::test_support::project_path!(""));
         let library=project.join("output/CrowdAPNG");
         for key in ["OK_GPU_SKIN","OK_SKELMESH","OK_NOPOSE","OK_UE_ANIM","OK_HEAD_GPUSKIN"] {std::env::set_var(key,"1");}
         std::env::set_var("OK_BUILTIN_RESOURCES",project.join("Content/IndependentResources/v1"));

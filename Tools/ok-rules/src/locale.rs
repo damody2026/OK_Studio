@@ -430,11 +430,7 @@ fn text_of(r: &Value) -> String {
                 Value::Number(n) => crate::icu::Arg::Num(n.as_f64().unwrap_or(0.0)),
                 // Names (name, girl_name, place_name, …) in the game's script: a card named in Simplified ("贞德·Alter",
                 // "早濑优香") showed as written on a Traditional game's buttons and notes.
-                Value::String(s) if k.contains("name") => crate::icu::Arg::Str(match l {
-                    "zh-CN" => zhconv::zhconv(s, zhconv::Variant::ZhCN),
-                    "zh-TW" => zhconv::zhconv(s, zhconv::Variant::ZhTW),
-                    _ => s.clone(),
-                }),
+                Value::String(s) if k.contains("name") => crate::icu::Arg::Str(crate::tr::script_name(s, l)),
                 Value::String(s) => crate::icu::Arg::Str(s.clone()),
                 other => crate::icu::Arg::Str(other.to_string()),
             };

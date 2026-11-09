@@ -54,7 +54,7 @@ void RunBloomTest(bool bExit)
     State->Cube->GetStaticMeshComponent()->SetMaterial(0, Surface);
     FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([State, bExit](float)
     {
-        FOKScenePost Post; Post.bBloom = true; Post.BloomThreshold = 0.3f; Post.BloomIntensity = 0.25f;
+        FOKScenePost Post; Post.ColorFilter = -1; Post.bBloom = true; Post.BloomThreshold = 0.3f; Post.BloomIntensity = 0.25f;
         FPostProcessSettings A;
         Post.ApplyTo(A);
         const FString Status = OKStudioSourceBloomState();

@@ -84,9 +84,13 @@ public:
     void SetRenderResidual(const FMatrix& Matrix);
     virtual FMatrix GetRenderMatrix() const override;
     virtual FBoxSphereBounds CalcBounds(const FTransform& LocalToWorld) const override;
+    // Where the sections are now. Bounds only grow while the GPU draws a section, so that a late publication is not culled.
+    FBox CurrentWorldBounds() const;
 private:
     void PublishAnimatedStreamBounds();
     FBox AnimatedBoundsEnvelope = FBox(ForceInit);
+    // The bounds of each section's latest GPU publication; empty while the CPU writes the sections.
+    TMap<int32,FBox> GpuSectionBounds;
     FMatrix RenderResidual = FMatrix::Identity;
     uint64 GpuStreamProxyEpoch=0;
 };

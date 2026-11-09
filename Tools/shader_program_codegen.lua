@@ -374,8 +374,12 @@ function M.translate(lines, output_registers, return_statement)
         local parts = util.split(args[2], ".")
         if #parts ~= 2 then fail("ValueError: unpack sincos destination: " .. line) end
         local d2, m2 = parts[1], parts[2]
-        out[#out + 1] = dest .. "." .. mask .. "=sin(" .. operand(args[3], mask) .. ");"
-        out[#out + 1] = d2 .. "." .. m2 .. "=cos(" .. operand(args[3], m2) .. ");"
+        -- Both read the source as it was: the destination that overwrites it goes last (sincos r0.x, r1.x, r0.x).
+        local sin_line = dest .. "." .. mask .. "=sin(" .. operand(args[3], mask) .. ");"
+        local cos_line = d2 .. "." .. m2 .. "=cos(" .. operand(args[3], m2) .. ");"
+        if args[1] == args[3] then sin_line, cos_line = cos_line, sin_line end
+        out[#out + 1] = sin_line
+        out[#out + 1] = cos_line
         goto continue
       end
       if name == "sample" or name == "sample_l" or name == "sample_d" then

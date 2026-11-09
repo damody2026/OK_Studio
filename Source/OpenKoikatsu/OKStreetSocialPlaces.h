@@ -1,9 +1,15 @@
 #pragma once
 #include "OKStreetSocialRules.h"
 #include "OKStreetSocialProperty.h"
+#include "Algo/Reverse.h"
+#include "Dom/JsonObject.h"
+#include "Engine/World.h"
 #include "HAL/PlatformMisc.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+#include "UObject/WeakObjectPtrTemplates.h"
 
 // Street places the player and a girl can go to together, and the built-in activities free talk can start.
 //
@@ -187,6 +193,31 @@ inline bool OKStreetInsidePlace(const FOKStreetPlace& Place, const FVector& Poin
  return false;
 }
 
+// A roof reached by its own stairs from the street (the campus rooftop: no lift goes above 5F, only the stairs at each
+// building's wall, anchors "stair_bottom..." on the ground). The place At is on, if it is one, and the room (roof) it is on.
+inline const TArray<FOKStreetPlace>& OKStreetPlaces();
+inline const FOKStreetPlace* OKStreetStairRoof(const FVector& At, const FBox** Roof = nullptr) {
+ for (const auto& P : OKStreetPlaces()) {
+  if (P.Anchors.ContainsByPredicate([](const FOKStreetModelAnchor& A) { return A.Name.StartsWith(TEXT("lift")); })) continue;
+  if (!P.Anchors.ContainsByPredicate([](const FOKStreetModelAnchor& A) { return A.Name.StartsWith(TEXT("stair_bottom")); })) continue;
+  for (const FBox& Room : P.Rooms) if (At.X >= Room.Min.X && At.X <= Room.Max.X && At.Y >= Room.Min.Y && At.Y <= Room.Max.Y && At.Z >= Room.Min.Z - 60.f && At.Z < Room.Max.Z - 60.f) {
+   if (Roof) *Roof = &Room;
+   return &P;
+  }
+ }
+ return nullptr;
+}
+// The foot of the stairs up to that roof: the stair_bottom closest to the roof (each roof has its own at its wall).
+inline FVector OKStreetRoofStairFoot(const FOKStreetPlace& Place, const FBox& Roof) {
+ FVector Best = Place.Door; double BestSq = TNumericLimits<double>::Max();
+ for (const auto& A : Place.Anchors) {
+  if (!A.Name.StartsWith(TEXT("stair_bottom"))) continue;
+  const double Dx = FMath::Max3(Roof.Min.X - A.Position.X, 0.0, A.Position.X - Roof.Max.X), Dy = FMath::Max3(Roof.Min.Y - A.Position.Y, 0.0, A.Position.Y - Roof.Max.Y);
+  if (Dx * Dx + Dy * Dy < BestSq) { BestSq = Dx * Dx + Dy * Dy; Best = A.Position; }
+ }
+ return Best;
+}
+
 enum class EOKStreetActivityKind : uint8 { Pair, Photo, Facility, Walk, Restroom, Sleep, Solo };
 
 struct FOKStreetActivity {
@@ -300,6 +331,189 @@ inline void OKStreetAppendPropertyLots(TArray<FOKStreetPlace>& Out) {
  }
 }
 
+inline const TArray<FOKStreetPlace>& OKStreetPlaces();
+
+// The city's data (Tools/export_street_city_game_places.lua): its places, and the road graph his long walks follow.
+struct FOKStreetCityData {
+ TSharedPtr<FJsonObject> Root;
+ TArray<FVector> Nodes; // road points
+ TArray<TArray<int32>> Links; // each node's neighbours
+ TArray<int32> Walk; // the street walks' stops
+ TWeakObjectPtr<UWorld> World; // set by OKStreetCityCheckRoads: the routes ask it what stands between
+ TArray<int32> Kept; int32 KeptPart = INDEX_NONE; // which connected part each point is in, and the one kept
+ TSet<int32> NoStart; // points he tried to walk onto the graph at and could not
+};
+inline FVector OKStreetJsonVector(const FJsonObject& O, const TCHAR* Field) {
+ const TArray<TSharedPtr<FJsonValue>>* V = nullptr;
+ if (!O.TryGetArrayField(Field, V) || V->Num() < 3) return FVector::ZeroVector;
+ return FVector((*V)[0]->AsNumber(), (*V)[1]->AsNumber(), (*V)[2]->AsNumber());
+}
+inline FOKStreetCityData& OKStreetCity() {
+ static FOKStreetCityData City = [] {
+  FOKStreetCityData Out;
+  const FString Path = FPaths::GetPath(OKStreetPlaceModelDir()) / TEXT("city_places.json");
+  FString Body;
+  if (!FFileHelper::LoadFileToString(Body, *Path) || !FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Body), Out.Root) || !Out.Root) { UE_LOG(LogTemp, Error, TEXT("Street city: cannot read %s"), *Path); Out.Root.Reset(); return Out; }
+  const TSharedPtr<FJsonObject>* Road = nullptr;
+  if (Out.Root->TryGetObjectField(TEXT("road"), Road)) {
+   const TArray<TSharedPtr<FJsonValue>>* Rows = nullptr;
+   if ((*Road)->TryGetArrayField(TEXT("nodes"), Rows)) for (const auto& V : *Rows) { const auto& P = V->AsArray(); Out.Nodes.Add(FVector(P[0]->AsNumber(), P[1]->AsNumber(), P[2]->AsNumber())); }
+   Out.Links.SetNum(Out.Nodes.Num());
+   if ((*Road)->TryGetArrayField(TEXT("links"), Rows)) for (const auto& V : *Rows) { const auto& L = V->AsArray(); const int32 A = int32(L[0]->AsNumber()), B = int32(L[1]->AsNumber()); if (Out.Links.IsValidIndex(A) && Out.Links.IsValidIndex(B)) { Out.Links[A].Add(B); Out.Links[B].Add(A); } }
+   if ((*Road)->TryGetArrayField(TEXT("walk"), Rows)) for (const auto& V : *Rows) Out.Walk.Add(int32(V->AsNumber()));
+  }
+  UE_LOG(LogTemp, Display, TEXT("Street city: %d road points, %d walk stops from %s"), Out.Nodes.Num(), Out.Walk.Num(), *Path);
+  return Out;
+ }();
+ return City;
+}
+
+// Is a body's way clear between two points of the street (he walks 105 cm over the ground, so a kerb is no wall)?
+// Radius: a thinner body from where he stands, since he may stand closer to a fence than the 30 cm of the graph's links.
+inline bool OKStreetCityClear(const UWorld* World, const FVector& A, const FVector& B, float Radius = 30.f) {
+ FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetCityClear), false);
+ FHitResult Hit;
+ return !World->SweepSingleByChannel(Hit, A + FVector(0, 0, 105), B + FVector(0, 0, 105), FQuat::Identity, ECC_WorldStatic, FCollisionShape::MakeCapsule(Radius, 60), Query);
+}
+// The road graph comes from a picture of the roads, which knows no fences: once the map is up, each point takes the height
+// of its ground and each link the map blocks is dropped; only the biggest connected part stays.
+inline void OKStreetCityCheckRoads(UWorld* World) {
+ FOKStreetCityData& City = OKStreetCity();
+ City.World = World;
+ const double Started = FPlatformTime::Seconds();
+ // A streamed map has only his surroundings loaded, so nothing can be checked here: it reads what the whole map said
+ // (a run on the source map with -CityBakeRoads writes city_roads.json).
+ const FString BakedPath = FPaths::GetPath(OKStreetPlaceModelDir()) / TEXT("city_roads.json");
+ const bool Bake = FParse::Param(FCommandLine::Get(), TEXT("CityBakeRoads"));
+ bool Baked = false;
+ if (World->GetWorldPartition()) {
+  FString Body; TSharedPtr<FJsonObject> Root; const TArray<TSharedPtr<FJsonValue>>* Rows = nullptr;
+  if (FFileHelper::LoadFileToString(Body, *BakedPath) && FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Body), Root) && Root && Root->TryGetArrayField(TEXT("nodes"), Rows)) {
+   City.Nodes.Reset(); for (const auto& V : *Rows) { const auto& P = V->AsArray(); City.Nodes.Add(FVector(P[0]->AsNumber(), P[1]->AsNumber(), P[2]->AsNumber())); }
+   City.Links.Reset(); City.Links.SetNum(City.Nodes.Num());
+   if (Root->TryGetArrayField(TEXT("links"), Rows)) for (const auto& V : *Rows) { const auto& L = V->AsArray(); const int32 A = int32(L[0]->AsNumber()), B = int32(L[1]->AsNumber()); City.Links[A].Add(B); City.Links[B].Add(A); }
+   Baked = true;
+  } else UE_LOG(LogTemp, Error, TEXT("Street city: streamed map without %s: the road graph is unchecked"), *BakedPath);
+ }
+ FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetCityRoads), false);
+ int32 Dropped = 0;
+ if (!World->GetWorldPartition()) {
+ for (FVector& Node : City.Nodes) { FHitResult Hit; if (World->LineTraceSingleByChannel(Hit, Node + FVector(0, 0, 400), Node - FVector(0, 0, 600), ECC_WorldStatic, Query)) Node.Z = Hit.ImpactPoint.Z; }
+ for (int32 A = 0; A < City.Nodes.Num(); ++A) for (int32 I = City.Links[A].Num() - 1; I >= 0; --I) {
+  const int32 B = City.Links[A][I];
+  if (B > A && !OKStreetCityClear(World, City.Nodes[A], City.Nodes[B])) { City.Links[A].RemoveAt(I); City.Links[B].Remove(A); ++Dropped; }
+ }
+ // Every door is on the graph too, tied to the points it can reach: the picture of the roads knows no doors either.
+ // So is every gate: a door on either side of a fence is how the two sides meet.
+ const int32 Lattice = City.Nodes.Num();
+ auto Tie = [&](const FVector& At) {
+  const int32 Door = City.Nodes.Add(At); City.Links.AddDefaulted();
+  for (int32 N = 0; N < Lattice; ++N) if (FVector::DistSquared2D(City.Nodes[N], At) < FMath::Square(1500.f) && FMath::Abs(City.Nodes[N].Z - At.Z) < 200.f && OKStreetCityClear(World, At, City.Nodes[N])) { City.Links[Door].Add(N); City.Links[N].Add(Door); } };
+ for (const auto& P : OKStreetPlaces()) { Tie(P.Door); for (const auto& A : P.Anchors) if (A.Name.StartsWith(TEXT("gate"))) Tie(A.Position); }
+ }
+ TArray<int32> Part; Part.Init(INDEX_NONE, City.Nodes.Num());
+ int32 Biggest = INDEX_NONE, BiggestSize = 0;
+ for (int32 Start = 0; Start < City.Nodes.Num(); ++Start) {
+  if (Part[Start] != INDEX_NONE) continue;
+  TArray<int32> Open = {Start}; Part[Start] = Start; int32 Size = 0;
+  while (!Open.IsEmpty()) { const int32 N = Open.Pop(EAllowShrinking::No); ++Size; for (const int32 Next : City.Links[N]) if (Part[Next] == INDEX_NONE) { Part[Next] = Start; Open.Add(Next); } }
+  if (Size > 50) UE_LOG(LogTemp, Display, TEXT("Street city: road part from %s: %d points"), *City.Nodes[Start].ToCompactString(), Size);
+  if (Size > BiggestSize) { BiggestSize = Size; Biggest = Start; }
+ }
+ for (int32 N = 0; N < City.Nodes.Num(); ++N) if (Part[N] != Biggest) City.Links[N].Reset();
+ City.Kept = MoveTemp(Part); City.KeptPart = Biggest;
+ UE_LOG(LogTemp, Display, TEXT("Street city: road check %s, dropped %d links, %d of %d points connected (%.0f ms)"), Baked ? TEXT("read from the bake") : TEXT("on the map"), Dropped, BiggestSize, City.Nodes.Num(), (FPlatformTime::Seconds() - Started) * 1000.0);
+ if (Bake && !World->GetWorldPartition()) {
+  FString Out = TEXT("{\"nodes\":[");
+  for (int32 N = 0; N < City.Nodes.Num(); ++N) Out += FString::Printf(TEXT("%s[%.1f,%.1f,%.1f]"), N ? TEXT(",") : TEXT(""), City.Nodes[N].X, City.Nodes[N].Y, City.Nodes[N].Z);
+  Out += TEXT("],\"links\":["); bool First = true;
+  for (int32 A = 0; A < City.Nodes.Num(); ++A) for (const int32 B : City.Links[A]) if (B > A) { Out += FString::Printf(TEXT("%s[%d,%d]"), First ? TEXT("") : TEXT(","), A, B); First = false; }
+  Out += TEXT("]}\n");
+  UE_LOG(LogTemp, Display, TEXT("Street city: road bake %s: %s"), *BakedPath, FFileHelper::SaveStringToFile(Out, *BakedPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM) ? TEXT("written") : TEXT("FAILED"));
+ }
+}
+
+// He could not walk from A to B: that link is gone, or, from somewhere off the graph, B is not a way onto it from there.
+inline void OKStreetCityBlocked(const FVector& A, const FVector& B) {
+ FOKStreetCityData& City = OKStreetCity();
+ auto Node = [&City](const FVector& At) { for (int32 I = 0; I < City.Nodes.Num(); ++I) if (FVector::DistSquared2D(City.Nodes[I], At) < 1.0) return I; return int32(INDEX_NONE); };
+ const int32 From = Node(A), To = Node(B);
+ if (To == INDEX_NONE) return;
+ if (From != INDEX_NONE && City.Links[From].Remove(To) > 0) { City.Links[To].Remove(From); UE_LOG(LogTemp, Display, TEXT("Street city: link %d-%d blocked"), From, To); return; }
+ City.NoStart.Add(To);
+}
+
+// The way along the roads: to a road point he can reach from where he is, along the graph, to the one nearest the goal.
+inline TArray<FVector> OKStreetCityRoute(const FVector& From, const FVector& To) {
+ const FOKStreetCityData& City = OKStreetCity();
+ auto Nearest = [&City](const FVector& At) {
+  TArray<TPair<double, int32>> Near;
+  for (int32 I = 0; I < City.Nodes.Num(); ++I) if ((City.Kept.IsEmpty() || City.Kept[I] == City.KeptPart) && !City.NoStart.Contains(I)) Near.Emplace(FVector::DistSquared2D(City.Nodes[I], At), I);
+  Near.Sort([](const TPair<double, int32>& A, const TPair<double, int32>& B) { return A.Key < B.Key; });
+  const UWorld* World = City.World.Get();
+  for (int32 I = 0; World && I < FMath::Min(Near.Num(), 24); ++I) if (OKStreetCityClear(World, At, City.Nodes[Near[I].Value], 18.f)) return Near[I].Value;
+  return Near.IsEmpty() ? INDEX_NONE : Near[0].Value; };
+ const int32 Start = Nearest(From), Goal = Nearest(To);
+ if (Start == INDEX_NONE || Goal == INDEX_NONE) return {From, To};
+ TArray<double> Cost; Cost.Init(TNumericLimits<double>::Max(), City.Nodes.Num());
+ TArray<int32> Came; Came.Init(INDEX_NONE, City.Nodes.Num());
+ typedef TPair<double, int32> FOpen; TArray<FOpen> Open;
+ auto Less = [](const FOpen& A, const FOpen& B) { return A.Key < B.Key; };
+ Cost[Start] = 0; Open.HeapPush(FOpen(0, Start), Less);
+ while (!Open.IsEmpty()) {
+  FOpen Top; Open.HeapPop(Top, Less);
+  if (Top.Value == Goal) break;
+  for (const int32 Next : City.Links[Top.Value]) {
+   const double New = Cost[Top.Value] + FVector::Dist2D(City.Nodes[Top.Value], City.Nodes[Next]);
+   if (New < Cost[Next]) { Cost[Next] = New; Came[Next] = Top.Value; Open.HeapPush(FOpen(New + FVector::Dist2D(City.Nodes[Next], City.Nodes[Goal]), Next), Less); }
+  }
+ }
+ if (Start != Goal && Came[Goal] == INDEX_NONE) return {From, To};
+ TArray<FVector> Route = {To};
+ for (int32 At = Goal; At != INDEX_NONE; At = Came[At]) Route.Add(City.Nodes[At]);
+ Route.Add(From);
+ Algo::Reverse(Route);
+ return Route;
+}
+
+// In the city each place comes from the data: an old id keeps its words for the model, a new one starts from its name.
+// The smallest place first, so a room in a building is found before the building (PlaceHere takes the first).
+inline void OKStreetApplyCityPlaces(TArray<FOKStreetPlace>& Out) {
+ static TArray<TUniquePtr<FString>> Strings;
+ auto Keep = [](const FString& Text) -> const TCHAR* { Strings.Add(MakeUnique<FString>(Text)); return **Strings.Last(); };
+ const TSharedPtr<FJsonObject>& Root = OKStreetCity().Root;
+ const TArray<TSharedPtr<FJsonValue>>* Rows = nullptr;
+ if (!Root || !Root->TryGetArrayField(TEXT("places"), Rows)) return;
+ TArray<FOKStreetPlace> Next;
+ for (const auto& V : *Rows) {
+  const TSharedPtr<FJsonObject> O = V->AsObject();
+  const FString Id = O->GetStringField(TEXT("id")), Name = O->GetStringField(TEXT("name"));
+  FOKStreetPlace P;
+  if (const FOKStreetPlace* Old = Out.FindByPredicate([&](const FOKStreetPlace& X) { return Id == X.Id; })) P = *Old;
+  else { P.Id = Keep(Id); P.Name = Keep(Name); P.About = P.Name; }
+  P.Parts.Reset(); P.Model.Reset(); P.Rooms.Reset(); P.RoomLevels.Reset(); P.Anchors.Reset();
+  P.Door = OKStreetJsonVector(*O, TEXT("door"));
+  for (const auto& R : O->GetArrayField(TEXT("rooms"))) {
+   const TSharedPtr<FJsonObject> Room = R->AsObject();
+   P.Rooms.Add(FBox(OKStreetJsonVector(*Room, TEXT("min")), OKStreetJsonVector(*Room, TEXT("max"))));
+   P.RoomLevels.Add(int32(Room->GetNumberField(TEXT("floor"))));
+  }
+  for (const auto& A : O->GetArrayField(TEXT("anchors"))) {
+   const TSharedPtr<FJsonObject> Row = A->AsObject();
+   FOKStreetModelAnchor Anchor; Anchor.Name = Row->GetStringField(TEXT("name")); Anchor.Position = OKStreetJsonVector(*Row, TEXT("pos")); Anchor.Yaw = float(Row->GetNumberField(TEXT("yaw")));
+   P.Anchors.Add(Anchor);
+  }
+  Next.Add(MoveTemp(P));
+ }
+ auto Volume = [](const FOKStreetPlace& P) { double V = 0; for (const FBox& R : P.Rooms) V += R.GetVolume(); return V; };
+ Next.StableSort([&](const FOKStreetPlace& A, const FOKStreetPlace& B) {
+  const double VA = Volume(A), VB = Volume(B);
+  if (!FMath::IsNearlyEqual(VA, VB, 1.0)) return VA < VB;
+  return FString(A.Id).StartsWith(TEXT("campus_")) && !FString(B.Id).StartsWith(TEXT("campus_")); }); // T1 is school and campus_t1: the college's id wins
+ Out = MoveTemp(Next);
+ UE_LOG(LogTemp, Display, TEXT("Street city: %d places"), Out.Num());
+}
+
 inline const TArray<FOKStreetPlace>& OKStreetPlaces() {
  static const TArray<FOKStreetPlace> All = [] {
   using M = EOKStreetMaterial;
@@ -380,6 +594,7 @@ inline const TArray<FOKStreetPlace>& OKStreetPlaces() {
    {{TEXT("counter"), 230, 0, 180}, {TEXT("consult"), 0, -200, 90}, {TEXT("seat"), 150, 250, -90}, {TEXT("bed_op"), -250, 0, 0}, {TEXT("rest"), -250, 250, 0}, {TEXT("mirror"), -100, -300, 90}, {TEXT("wait"), 250, -200, 180}});
   OKStreetWalkInBuilding(Make(TEXT("salon"), TEXT("美髮店"), TEXT("美髮店，有理髮椅、洗頭台和髮色樣本牆，可以染頭髮")), FVector2D(3550, 4100), FVector(800, 800, 340), FVector2D(0, -1), M::Stripe, M::Stone, M::Lamp,
    {{TEXT("counter"), 250, -250, 180}, {TEXT("chair"), 0, -200, 90}, {TEXT("chair2"), 0, 200, -90}, {TEXT("wash"), -250, 0, 0}, {TEXT("seat"), 250, 250, 180}, {TEXT("swatch"), -100, -300, 90}});
+  if (OKStreetCityMode()) { OKStreetApplyCityPlaces(Out); return Out; } // TODO his company's lots: the city's `lots` are not read yet
   // Models replace the box buildings: same spot, the model's front (+X) turned to the street.
   struct FPlacement { const TCHAR* Id; FVector Origin; float Yaw; };
   const FPlacement Placements[] = {
@@ -473,6 +688,7 @@ inline TArray<FVector> OKStreetPlaceRoutePoints() {
 // Ground for the north (school side) and south (shops) extensions, top at z=0 like the cooked ground.
 inline TArray<FOKStreetPlacePart> OKStreetPlaceGround() {
  TArray<FOKStreetPlacePart> Out;
+ if (OKStreetCityMode()) return Out; // the city's ground is in its map
  for (const float X : {4800.f, -4800.f}) {
   FOKStreetPlacePart G;G.Material = EOKStreetMaterial::Checker;G.Center = FVector(X, 0, -20);G.Size = FVector(3200, 5600, 40);Out.Add(G);
  }
@@ -509,8 +725,29 @@ inline const FOKStreetModelAnchor* OKStreetNearestBed(const FVector& At, float R
 // The floor height under a point: the bottom of the place room it stands in, else the street (0).
 inline float OKStreetFloorZ(const FVector& At) {
  for (const auto& P : OKStreetPlaces()) for (const FBox& Room : P.Rooms)
-  if (At.X >= Room.Min.X && At.X <= Room.Max.X && At.Y >= Room.Min.Y && At.Y <= Room.Max.Y && At.Z >= Room.Min.Z - 60.f && At.Z < Room.Max.Z - 60.f) return Room.Min.Z;
- return 0.f;
+  if (At.X >= Room.Min.X && At.X <= Room.Max.X && At.Y >= Room.Min.Y && At.Y <= Room.Max.Y && At.Z >= Room.Min.Z - 60.f && At.Z < Room.Max.Z - 60.f) return OKStreetCityMode() ? Room.Min.Z + 30.f : Room.Min.Z; // the city's room boxes start 30 cm under the floor
+ return OKStreetCityMode() ? float(At.Z) : 0.f; // the city's street is not flat: he stays where the ground has him
+}
+
+// The ground under a point, within a step up and a slope down. False: no ground there.
+inline bool OKStreetGroundZ(const UWorld* World, const FVector& At, float& Z, const AActor* Ignore = nullptr) {
+ FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetGround), false, Ignore);
+ FHitResult Hit;
+ if (!World->LineTraceSingleByChannel(Hit, At + FVector(0, 0, 70), At - FVector(0, 0, 120), ECC_WorldStatic, Query)) return false;
+ Z = float(Hit.ImpactPoint.Z);
+ return true;
+}
+// His body in the sweeps: on the built street 7 cm over flat ground; in the city high enough to walk up a kerb or a stair.
+inline float OKStreetBodyLift() { return OKStreetCityMode() ? 105.f : 85.f; }
+inline float OKStreetBodyHalf() { return OKStreetCityMode() ? 60.f : 78.f; }
+// Too far for the street grid (it searches at most 60000 cells): the city's road graph.
+inline bool OKStreetCityFar(const FVector& From, const FVector& To) { return OKStreetCityMode() && FVector::Dist2D(From, To) > 4000.f; }
+
+// Up a floor: a floor above the street. On the built street that is any height; the city's street itself is 12 m up.
+inline bool OKStreetUpstairs(const FVector& At) {
+ if (!OKStreetCityMode()) return At.Z > 100.f;
+ for (const auto& P : OKStreetPlaces()) if (OKStreetPlaceFloor(P, At) > 1) return true;
+ return false;
 }
 
 inline FString OKStreetPlaceCatalogue() {

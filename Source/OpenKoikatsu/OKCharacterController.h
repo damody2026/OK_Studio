@@ -197,9 +197,10 @@ public:
  UFUNCTION() void OnEditorPanelWidthChanged(float Value);
  UFUNCTION() void OnEditorFontSizeChanged(float Value);
  UPROPERTY() TObjectPtr<class UScaleBox> EditorContentScale;
+ UPROPERTY() TObjectPtr<class UScaleBox> MotionContentScale;
  UPROPERTY() TObjectPtr<class USpinBox> EditorWidthInput;
  UPROPERTY() TObjectPtr<class USpinBox> EditorFontInput;
- float EditorPanelWidth=360.f,EditorFontSize=16.f;
+ float EditorPanelWidth=360.f,EditorFontSize=8.f;
  bool bEditorDisplayDirty=false;
  double EditorDisplayChangedAt=0.;
 	void BuildAnimationLookup();
@@ -213,6 +214,17 @@ public:
 	void SelectIndex(int32 Index);
  void BuildBoneControls();
  void BuildPregnancyControls();
+ void BuildStyleControls();
+ void OnStyleChanged(const FString& Parameter,float Value);
+ float StyleDefault(const FString& Parameter) const;
+ void OnStyleReset(UOKShapeSlider* Slider);
+ void ApplyCharacterStyle();
+ float CharacterStyle=0.f,CharacterFaceStyle=0.f;
+ FVector StyledActorLocation=FVector::ZeroVector;
+ float StyledScale=1.f;
+ UPROPERTY() TObjectPtr<AKKPreviewActor> StyledActor;
+ UPROPERTY() TObjectPtr<UVerticalBox> StyleBox;
+ UPROPERTY() TArray<TObjectPtr<UOKShapeSlider>> StyleSliders;
  void OnBodyPhysicsChanged(const FString& Parameter,float Value);
  void OnPregnancyChanged(const FString& Parameter,float Value);
  UFUNCTION() void OnPregnancyEnabled(bool Value);
@@ -386,6 +398,17 @@ public:
 	void UpdateGaze();
 	UFUNCTION()
 	void OnEyeLookCamera(bool Enabled);
+	// Where her eyes go in the reader (user 2026-11-04): 0 ahead, 1 the mouse, 2 the camera; the button cycles them and the
+	// choice stays from card to card. EyeMousePixel >= 0 stands in for the cursor (the eye audit).
+	UFUNCTION()
+	void OnEyeModeNext();
+	void SetEyeMode(int32 Mode);
+	void TickEyeMode();
+	int32 EyeMode=0;
+	FVector2D EyeMousePixel=FVector2D(-1,-1);
+	TWeakObjectPtr<AKKPreviewActor> EyeModeActor;
+	UPROPERTY()
+	TObjectPtr<class UTextBlock> EyeModeLabel;
 	// The face pressed flat along the view (ok.FaceFlatten, ok.FaceFlattenLock): its strength, and the direction held
 	// still so the camera can turn round and see that it is flat.
 	UFUNCTION()

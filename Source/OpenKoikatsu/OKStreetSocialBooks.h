@@ -88,6 +88,9 @@ inline FString OKBookAccountLabel(const FString& Book, const FString& Account) {
  const FString* L = (Book == TEXT("private") ? Private : Company).Find(Account); return L ? FString(OKT(**L)) : Account;
 }
 
+// The opening row is the game's own words, in the language of the moment; the rest are what was written then.
+inline FString OKBookEntryNote(const FOKBookEntry& E) { return E.Category == TEXT("opening") ? FString(OKT(TEXT("ui.books.opening_balance_label"))) : E.Note; }
+
 inline FString OKBookEntryLine(const FOKBookEntry& E) {
  auto O = MakeShared<FJsonObject>(); auto I64 = [](int64 V) { return FString::Printf(TEXT("%lld"), V); };
  O->SetStringField(TEXT("s"), I64(E.Serial)); O->SetStringField(TEXT("m"), I64(E.Minute)); O->SetNumberField(TEXT("d"), E.Day);

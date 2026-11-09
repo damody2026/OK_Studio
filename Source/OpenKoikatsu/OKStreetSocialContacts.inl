@@ -9,7 +9,17 @@ bool AOKStreetSocialScene::ContactLover(int32 Character) const {return State&&St
 bool AOKStreetSocialScene::ContactIdle() const {if(!State)return false;const auto& S=*State;return S.PrivateGirl==INDEX_NONE&&S.Pair.Partner==INDEX_NONE&&S.Facility==INDEX_NONE&&S.Companion==INDEX_NONE&&!OKStreetConversationBusy(S.Node!=INDEX_NONE,S.CollectedActive,S.RelationshipPending,S.TouchActive);}
 // Only sitting and talking with this girl in the way of a contact: nothing else going on (a photo being taken, a meal).
 bool AOKStreetSocialScene::SeatedWith(int32 Girl) const {if(!State)return false;const auto& S=*State;return S.Pair.Partner==Girl&&S.Pair.Conversation()&&!S.Pair.CapturePending&&S.PrivateGirl==INDEX_NONE&&S.Facility==INDEX_NONE&&S.Companion==INDEX_NONE&&!OKStreetConversationBusy(S.Node!=INDEX_NONE,S.CollectedActive,S.RelationshipPending,S.TouchActive);}
+// The city's long way: the road graph between, the fine grid out of the building he is in and into the one he is going to
+// (the graph has no points indoors).
+TArray<FVector> AOKStreetSocialScene::CityRoute(const FVector& From,const FVector& To) const{
+ TArray<FVector> Route=OKStreetCityRoute(From,To);if(Route.Num()<3)return Route;
+ if(!OKStreetCityClear(GetWorld(),From,Route[1],18.f)){TArray<FVector> Out=GridRoute(From,Route[1]);if(Out.Num()>=2){Route.RemoveAt(0,2);Out.Append(Route);Route=MoveTemp(Out);}}
+ const int32 Last=Route.Num()-1;
+ if(Last>=1&&!OKStreetCityClear(GetWorld(),Route[Last-1],To,18.f)){TArray<FVector> In=GridRoute(Route[Last-1],To);if(In.Num()>=2){Route.RemoveAt(Last-1,2);Route.Append(In);}}
+ return Route;
+}
 TArray<FVector> AOKStreetSocialScene::ContactRoute(const FVector& From,const FVector& To) const {
+ if(OKStreetCityMode()&&(OKStreetCityFar(From,To)||FMath::Abs(From.Z-To.Z)>=150.f))return CityRoute(From,To);
  if(FMath::Abs(From.Z-To.Z)<150.f){auto Grid=GridRoute(From,To);if(Grid.Num()>=2)return Grid;}
  TArray<FOKStreetPointData> Shared;OKStreetWaypoints(Shared);TArray<FVector> Points;for(const auto& P:Shared)Points.Add(P.Position);
  return OKStreetContactRoute(From,To,Points,[&](const FVector& A,const FVector& B){
@@ -18,17 +28,21 @@ TArray<FVector> AOKStreetSocialScene::ContactRoute(const FVector& From,const FVe
  });
 }
 void AOKStreetSocialScene::SelectContact(int32 Character){if(!State||!State->Agents.IsValidIndex(Character-1))return;State->ContactSelection=Character;RefreshUI(OKStreetUi::Right|OKStreetUi::Debug);}
-void AOKStreetSocialScene::NavigateGirl(int32 Character){if(!ContactReady(Character)||State->PrivateGirl!=INDEX_NONE)return;auto& S=*State;
+void AOKStreetSocialScene::NavigateGirl(int32 Character){
+ // Not ContactReady: it asks for her being drawn, and across the city she is not, so the button did nothing. Her place is enough.
+ if(!State||!State->Agents.IsValidIndex(Character-1)||State->OnaniGirl==Character||State->PrivateGirl!=INDEX_NONE)return;auto& S=*State;
  // Talking or in an activity he cannot walk off: say so (as the map does) instead of accepting a route he never walks.
  if(S.Target!=INDEX_NONE||S.Pair.Partner!=INDEX_NONE||S.OutingGirl!=INDEX_NONE||S.Facility!=INDEX_NONE){S.Message=OKT(TEXT("ui.contacts.end_activity_before_nav"));S.ContactsNotice=S.Message;return;}
  // She is on another floor: the navigation takes the elevator (PlanNavLift, in StepNavigation).
- S.NavRide=FOKStreetLiftRide();S.NavGirl=Character;S.NavPointActive=false;S.NavAt=0;S.NavStep=1;S.NavReplans=0;S.NavProgressAt=SceneTime();S.NavPath=ContactRoute(S.Male,S.Agents[Character-1].Position);S.ContactsNotice=OKT(TEXT("ui.contacts.auto_travel_to_her_hint"));}
-void AOKStreetSocialScene::NavigatePoint(const FVector& Goal,const FString& Name){
+ S.NavAround.Reset();S.NavRide=FOKStreetLiftRide();S.NavGirl=Character;S.NavPointActive=false;S.NavAt=0;S.NavStep=1;S.NavReplans=0;S.NavProgressAt=SceneTime();S.NavPath=ContactRoute(S.Male,S.Agents[Character-1].Position);S.ContactsNotice=OKT(TEXT("ui.contacts.auto_travel_to_her_hint"));}
+void AOKStreetSocialScene::NavigatePoint(const FVector& Spot,const FString& Name){
  if(!State)return;auto& S=*State;
+ FVector Goal=Spot;if(OKStreetCityMode()&&Goal.Z==0.f)Goal.Z=S.Male.Z; // a spot on the big map has no height
  if(S.Target!=INDEX_NONE||S.PrivateGirl!=INDEX_NONE||S.Pair.Partner!=INDEX_NONE||S.OutingGirl!=INDEX_NONE||S.Facility!=INDEX_NONE){S.Message=OKT(TEXT("ui.contacts.end_activity_before_map_nav"));return;}
  // On his floor the street grid is searched a slice a frame (TickNavSearch, 3 ms each): a long route held the frame
  // 6-8 ms. Another floor: the place graph (doors and corridors), at once.
  S.NavSearch.Reset();
+ if(OKStreetCityMode()&&OKStreetCityFar(S.Male,Goal)){NavigatePointAlong(Goal,Name,CityRoute(S.Male,Goal));return;}
  if(FMath::Abs(S.Male.Z-Goal.Z)<150.f){S.NavSearch=MakeShared<FOKStreetGridSearch>();S.NavSearch->From=S.Male;S.NavSearch->To=Goal;S.NavSearchGoal=Goal;S.NavSearchName=Name;return;}
  NavigatePointAlong(Goal,Name,PlaceRouteWaypoints(S.Male,Goal));
 }
@@ -51,12 +65,12 @@ void AOKStreetSocialScene::NavigatePointAlong(const FVector& Goal,const FString&
  const bool Floors=NavNeedsLift(Goal);
  if(Path.IsEmpty()&&!Floors){S.Message=OKT(TEXT("ui.contacts.unreachable_try_elsewhere"));return;}
  if(Path.IsEmpty())Path={S.Male};
- S.NavRide=FOKStreetLiftRide();S.NavGirl=INDEX_NONE;S.NavPointActive=true;S.NavPoint=Floors?Target:FVector(Target.X,Target.Y,S.Male.Z);S.NavPointName=Name;S.NavPath=MoveTemp(Path);S.NavStep=1;S.NavReplans=0;S.NavAt=SceneTime();S.NavProgressAt=S.NavAt;
+ S.NavAround.Reset();S.NavRide=FOKStreetLiftRide();S.NavGirl=INDEX_NONE;S.NavPointActive=true;S.NavPoint=Floors?Target:FVector(Target.X,Target.Y,S.Male.Z);S.NavPointName=Name;S.NavPath=MoveTemp(Path);S.NavStep=1;S.NavReplans=0;S.NavAt=SceneTime();S.NavProgressAt=S.NavAt;
  S.Message=OKT(TEXT("ui.contacts.auto_travel_button"))+(Name.IsEmpty()?FString(OKT(TEXT("ui.contacts.map_selected_spot"))):Name)+OKT(TEXT("ui.contacts.wasd_cancel_nav_suffix"));
  if(S.BigMapOpen)ToggleBigMap(); // navigation, its notice and the message are bound to state: no rebuild
 }
 void AOKStreetSocialScene::StopNavigation(const FString& Notice){
- if(!State)return;auto& S=*State;S.NavSearch.Reset();S.NavGirl=INDEX_NONE;S.NavPointActive=false;S.NavPath.Reset();S.NavRide=FOKStreetLiftRide();S.ContactsNotice.Reset();
+ if(!State)return;auto& S=*State;S.NavSearch.Reset();S.NavAround.Reset();S.NavGirl=INDEX_NONE;S.NavPointActive=false;S.NavPath.Reset();S.NavRide=FOKStreetLiftRide();S.ContactsNotice.Reset();
  if(!Notice.IsEmpty())S.Message=Notice;
 }
 void AOKStreetSocialScene::ToggleBigMap(){
@@ -74,11 +88,22 @@ bool AOKStreetSocialScene::NavCellFree(const FIntPoint& Cell,float Z) const{
  QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_NavCellTest);
  const FVector P(Cell.X*OKStreetNavCell,Cell.Y*OKStreetNavCell,Z);
  bool Free=OKStreetObstacleGap(P,30.f)>30.f;
- if(Free){FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetNavCell),false,this);Free=!GetWorld()->OverlapAnyTestByChannel(P+FVector(0,0,85),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(40,78),Query);} // wider than his 28: a cell beside an awning or a sign is not a way
+ // The city's ground is not flat: a cell needs ground near this height, and the body is tested above a step's height.
+ float GroundZ=Z;if(Free&&OKStreetCityMode())Free=OKStreetGroundZ(GetWorld(),P,GroundZ,this);
+ // Upstairs the floor is flat, and ground 1.2 m down is the floor below: the department store's 4F atrium has no rail on
+ // most of its edge, the trace hit the 3F escalator 1-2 m under it, and the route to the optician led him into the void
+ // (2460 -> 2303, "she is on another floor"). The street keeps its slopes.
+ if(Free&&OKStreetCityMode()&&GroundZ<Z-60.f&&OKStreetUpstairs(P))Free=false;
+ if(Free){FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetNavCell),false,this);Free=!GetWorld()->OverlapAnyTestByChannel(FVector(P.X,P.Y,GroundZ)+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(40,OKStreetBodyHalf()),Query);} // wider than his 28: a cell beside an awning or a sign is not a way
  Grid.Add(Cell,Free);return Free;
 }
 TArray<FVector> AOKStreetSocialScene::GridRoute(const FVector& From,const FVector& To) const{
- FOKStreetGridSearch G;G.From=From;G.To=To;GridSearchStep(G,TNumericLimits<double>::Max());return MoveTemp(G.Route);
+ // In the city a walled-in search ran through 60000 cells in one frame (300 ms). 4 ms, then no route: the caller falls back to
+ // its other way, and the cells tested stay known, so the next try gets further.
+ // Upstairs 25 ms: the floors are small and walled, and every caller falls back to a straight line, which from the optician
+ // on the department store's 4F went through the shop's wall to the lift ("the way is blocked") or across the atrium.
+ const double Budget=!OKStreetCityMode()?TNumericLimits<double>::Max():OKStreetUpstairs(From)?.025:.004;
+ FOKStreetGridSearch G;G.From=From;G.To=To;GridSearchStep(G,FPlatformTime::Seconds()+Budget);return MoveTemp(G.Route);
 }
 bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline) const{
  if(G.Phase==2)return true;
@@ -148,7 +173,7 @@ bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline
   for(int32 I=1;I<N;++I)if(!Passable(ToCell(FMath::Lerp(A,B,float(I)/N))))return false;
   FHitResult Hit;
   // Starting against a wall counts as clear only when the line leads away from it (as StreetStep backs out of one).
-  if(GetWorld()->SweepSingleByChannel(Hit,FVector(A.X,A.Y,Z)+FVector(0,0,85),FVector(B.X,B.Y,Z)+FVector(0,0,85),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(30,78),SweepQuery)&&(!Hit.bStartPenetrating||FVector::DotProduct((B-A).GetSafeNormal2D(),Hit.Normal)<=0.f))return false;
+  if(GetWorld()->SweepSingleByChannel(Hit,FVector(A.X,A.Y,Z)+FVector(0,0,OKStreetBodyLift()),FVector(B.X,B.Y,Z)+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(30,OKStreetBodyHalf()),SweepQuery)&&(!Hit.bStartPenetrating||FVector::DotProduct((B-A).GetSafeNormal2D(),Hit.Normal)<=0.f))return false;
   return true;};
  QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_GridPull);
  // A slice at a time too: out of time between two tries, it goes on from the same corner and cell next slice.
@@ -180,12 +205,18 @@ FVector AOKStreetSocialScene::StreetStep(const FVector& From,const FVector& Dire
    if(A.Slot==State->Companion||A.Slot==State->OutingGirl||A.Slot==State->Pair.Partner)continue;const float Near=float(FVector::Dist2D(To,A.Position));
    if(Near<OKStreetHeroineBody&&Near<float(FVector::Dist2D(From,A.Position)))return false;}
   FHitResult Hit;
-  if(GetWorld()->SweepSingleByChannel(Hit,From+FVector(0,0,85),To+FVector(0,0,85),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(28,78),Query))
+  if(GetWorld()->SweepSingleByChannel(Hit,From+FVector(0,0,OKStreetBodyLift()),To+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(28,OKStreetBodyHalf()),Query))
    if(!Hit.bStartPenetrating||FVector::DotProduct((To-From).GetSafeNormal2D(),Hit.Normal)<=0.f)return false;
   return true;};
  // Straight on, else slide along the obstacle: either axis, then 45 degrees either way (corners, posts, trees).
  const FVector Tries[]={D,FVector(FMath::Sign(D.X),0,0),FVector(0,FMath::Sign(D.Y),0),D.RotateAngleAxis(45,FVector::UpVector),D.RotateAngleAxis(-45,FVector::UpVector)};
- for(const FVector& T:Tries){if(T.IsNearlyZero()||FVector::DotProduct(T,D)<.3f)continue;const FVector To=From+T*Distance;if(Free(To))return To;}
+ for(const FVector& T:Tries){if(T.IsNearlyZero()||FVector::DotProduct(T,D)<.3f)continue;FVector To=From+T*Distance;
+  // The city's ground: he goes up and down with it, and where there is none he does not go. A lift's car and doorway are no ground of the
+  // map's and its shaft has no floor above the first: from the second floor up nobody could step out of the car.
+  if(OKStreetCityMode()){bool Lift=false;for(int32 I=0;I<State->Elevators.Num()&&!Lift;++I)Lift=InElevatorCar(I,From)||InElevatorCar(I,To)||ElevatorLanding(I,From)!=INDEX_NONE;
+   float GroundZ=From.Z;const bool Ground=OKStreetGroundZ(GetWorld(),To,GroundZ,this);if(!Ground&&!Lift)continue;
+   To.Z=Lift&&(!Ground||FMath::Abs(GroundZ-From.Z)>60.f)?From.Z:GroundZ;}
+  if(Free(To))return To;}
  return From;
 }
 // Where to walk to speak to her: where she is, or, when she sits among furniture (a sofa, a bench by a table), the
@@ -210,9 +241,18 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
  const FVector Her=S.NavPointActive?S.NavPoint:S.Agents[S.NavGirl-1].Position;
  const FVector Goal=S.NavPointActive?S.NavPoint:NavApproachSpot(Her);
  // He is walking himself: the autopilot waits, then goes on from where he is.
- if(SceneTime()-S.ManualMoveAt<3.0)return 0;
+ if(SceneTime()-S.ManualMoveAt<3.0){S.NavAround.Reset();return 0;}
+ // The way around what stopped him, searched a slice a frame while he stands there.
+ if(S.NavAround){
+  if(!GridSearchStep(*S.NavAround,FPlatformTime::Seconds()+.003))return 0;
+  TArray<FVector> Around=MoveTemp(S.NavAround->Route);const FVector To=S.NavAround->To;S.NavAround.Reset();S.NavProgressAt=SceneTime();
+  if(Around.Num()>=2){if(S.NavPath.IsValidIndex(S.NavStep)&&To==S.NavPath[S.NavStep])S.NavPath.RemoveAt(0,S.NavStep+1);else S.NavPath.Reset();
+   Around.Append(S.NavPath);S.NavPath=MoveTemp(Around);S.NavStep=1;}
+  else if(S.NavRide.Elevator==INDEX_NONE){auto Path=S.NavPointActive?PlaceRoute(S.Male,Goal):ContactRoute(S.Male,Goal);if(Path.Num()>=2){S.NavPath=MoveTemp(Path);S.NavStep=1;}}
+  return 0;}
  // On another floor: to an elevator first, then the ride (the route there is the plan's).
- if(S.NavRide.Elevator==INDEX_NONE&&NavNeedsLift(Goal)&&!PlanNavLift(Goal)){StopNavigation(OKT(TEXT("ui.contacts.other_floor_no_path")));return 0;}
+ // The shop's stairs first: from a shop's 2F to the department store's lift he walked into the shop's wall.
+ if(S.NavRide.Elevator==INDEX_NONE&&NavNeedsLift(Goal)&&!NavByShopStairs(Goal)&&!PlanNavLift(Goal)){StopNavigation(OKT(TEXT("ui.contacts.other_floor_no_path")));return 0;}
  if(S.NavRide.Elevator!=INDEX_NONE&&S.NavStep>=S.NavPath.Num()){
   float Rate=0;const int32 Done=AdvanceLiftRide(S.NavRide,Dt,Rate);
   if(Done==2){StopNavigation(OKT(TEXT("ui.contacts.path_blocked_stop")));return 0;}
@@ -220,8 +260,12 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
    // Off the car: on this floor the grid; down on the street the place graph. Still another floor away: plan again.
    const FVector Now=S.NavPointActive?S.NavPoint:S.Agents[S.NavGirl-1].Position;
    const bool More=NavNeedsLift(Now);
-   TArray<FVector> Rest=More?TArray<FVector>{S.Male}:Down?(S.NavPointActive?PlaceRoute(S.Male,Now):ContactRoute(S.Male,Now)):GridRoute(S.Male,Now);
-   if(Rest.Num()<2&&!More)Rest={S.Male,Now};
+   // Up on her floor: the grid searched a slice a frame till it is done (NavAround). GridRoute gives the city 4 ms, and
+   // with no route in that time the straight line led across the department store's 4F atrium into the void.
+   const bool Search=!More&&!Down&&OKStreetCityMode();
+   TArray<FVector> Rest=More||Search?TArray<FVector>{S.Male}:Down?(S.NavPointActive?PlaceRoute(S.Male,Now):ContactRoute(S.Male,Now)):GridRoute(S.Male,Now);
+   if(Search){S.NavAround=MakeShared<FOKStreetGridSearch>();S.NavAround->From=S.Male;S.NavAround->To=Now;}
+   else if(Rest.Num()<2&&!More)Rest={S.Male,Now};
    if(S.NavPointActive&&!More)S.NavPoint.Z=S.Male.Z; // still another floor away: the goal keeps its height
    S.NavPath=MoveTemp(Rest);S.NavStep=1;S.NavReplans=0;S.NavProgressAt=SceneTime();}
   return Rate;
@@ -251,10 +295,13 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
  const double Now=SceneTime();
  const FVector Moved=StreetStep(S.Male,Delta/Distance,Step);
  if(Moved==S.Male){
+  // On his way to a lift and stopped at its landing: he is there, standing there calls the car.
+  if(S.NavRide.Elevator!=INDEX_NONE&&ElevatorLanding(S.NavRide.Elevator,S.Male)!=INDEX_NONE){S.NavStep=S.NavPath.Num();return 0;}
   // Blocked: find a new way from where he stands before giving up.
   if(Now-S.NavProgressAt>1.0){
-   if(S.NavReplans>=6){StopNavigation(OKT(TEXT("ui.contacts.path_blocked_stop")));return 0;} // each try learns a blocked cell, so a few more find the way round
+   if(S.NavReplans>=(OKStreetCityMode()?30:6)){StopNavigation(OKT(TEXT("ui.contacts.path_blocked_stop")));return 0;} // each try learns a blocked cell, so a few more find the way round
    ++S.NavReplans;S.NavProgressAt=Now;
+   if(OKStreetCityMode())OKStreetCityBlocked(S.NavPath.IsValidIndex(S.NavStep-1)?S.NavPath[S.NavStep-1]:S.Male,Next); // the road graph learns it too
    // Stopped by something solid the grid did not see: the cell ahead is known blocked from now on.
    {const FVector Ahead=S.Male+Delta/Distance*OKStreetNavCell;const FIntPoint Cell(FMath::RoundToInt(Ahead.X/OKStreetNavCell),FMath::RoundToInt(Ahead.Y/OKStreetNavCell));
     const FIntPoint Here(FMath::RoundToInt(S.Male.X/OKStreetNavCell),FMath::RoundToInt(S.Male.Y/OKStreetNavCell));
@@ -277,15 +324,13 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
    }
    // First around what is in the way, to the next point only (the grid keeps the body's clearance; the same route again
    // would run into the same wall); the whole way again only when that finds nothing.
-   TArray<FVector> Around=S.NavReplans==1?GridRoute(S.Male,Next):TArray<FVector>();
-   if(Around.Num()>=2){if(S.NavPath.IsValidIndex(S.NavStep)&&Next==S.NavPath[S.NavStep])S.NavPath.RemoveAt(0,S.NavStep+1);else S.NavPath.Reset();
-    Around.Append(S.NavPath);S.NavPath=MoveTemp(Around);S.NavStep=1;}
-   else{auto Path=S.NavPointActive?PlaceRoute(S.Male,Goal):ContactRoute(S.Male,Goal);
+   if(S.NavReplans==1){S.NavAround=MakeShared<FOKStreetGridSearch>();S.NavAround->From=S.Male;S.NavAround->To=Next;}
+   else if(S.NavRide.Elevator==INDEX_NONE){auto Path=S.NavPointActive?PlaceRoute(S.Male,Goal):ContactRoute(S.Male,Goal);
     if(Path.Num()>=2){S.NavPath=MoveTemp(Path);S.NavStep=1;}}
    {
     // What is in the way: the clearance gap on his side, and the first thing a body-sized sweep toward the next point hits.
     FString Hit=TEXT("none");FCollisionQueryParams Q(SCENE_QUERY_STAT(StreetNavWhy),false,this);FHitResult H;const FVector Dir=Delta/Distance;
-    if(GetWorld()->SweepSingleByChannel(H,S.Male+FVector(0,0,85),S.Male+Dir*Step+FVector(0,0,85),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(28,78),Q))Hit=FString::Printf(TEXT("%s pen=%d"),*GetNameSafe(H.GetActor()),H.bStartPenetrating?1:0);
+    if(GetWorld()->SweepSingleByChannel(H,S.Male+FVector(0,0,OKStreetBodyLift()),S.Male+Dir*Step+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(28,OKStreetBodyHalf()),Q))Hit=FString::Printf(TEXT("%s/%s at %s pen=%d"),*GetNameSafe(H.GetActor()),*GetNameSafe(H.GetComponent()),*H.ImpactPoint.ToCompactString(),H.bStartPenetrating?1:0);
     UE_LOG(LogTemp,Display,TEXT("Street navigation: blocked why: next=%s gap_here=%.0f gap_ahead=%.0f sweep=%s"),*Next.ToCompactString(),OKStreetObstacleGap(S.Male),OKStreetObstacleGap(S.Male+Dir*Step),*Hit);
    }
    UE_LOG(LogTemp,Display,TEXT("Street navigation: blocked at %s, replanned %d (points=%d)"),*S.Male.ToCompactString(),S.NavReplans,S.NavPath.Num());
@@ -296,7 +341,7 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
  if(FVector::Dist2D(S.Male,S.NavPath.IsValidIndex(S.NavStep)?S.NavPath[S.NavStep]:Goal)<60)S.NavReplans=0;
  return OKStreetMaleRunSpeed/OKStreetWalkSpeed;
 }
-void AOKStreetSocialScene::BeginPrivate(int32 Character){
+void AOKStreetSocialScene::BeginPrivate(int32 Character,const FString& TryCard,int32 TryOutfit){
  if(!ContactReady(Character)||!ContactIdle()||!State->HighCards.IsValidIndex(Character)||State->HighCards.IsEmpty())return;
  auto& S=*State;StopAmbientActivity();EndTalk();GalgameHideForPrivate();
  OKStreetPrivateEnvSave(); // its high models change the extraction environment the crowd reads (OKStreetSocialPrivateEnv.cpp)
@@ -304,16 +349,28 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character){
  // scene): her high model takes her place, his is set by the pair; the street goes on around them.
  const FOKStreetAgentSim* Her=S.Agents.FindByPredicate([Character](const FOKStreetAgentSim& A){return A.Slot==Character;});
  const FTransform There(FRotator(0.,S.RenderedRotations.IsValidIndex(Character)?S.RenderedRotations[Character].Yaw:0.,0.),Her?Her->Position:S.Male);
- auto* Mode=AOKInteractionMode::EnterCards(GetWorld()->GetFirstPlayerController(),S.HighCards[Character],S.HighCards[0],S.HighOutfits.IsValidIndex(Character)?S.HighOutfits[Character]:0,&There);
+ const bool TryOn=!TryCard.IsEmpty();const int32 Worn=S.HighOutfits.IsValidIndex(Character)?S.HighOutfits[Character]:0;
+ auto* Mode=AOKInteractionMode::EnterCards(GetWorld()->GetFirstPlayerController(),TryOn?TryCard:S.HighCards[Character],S.HighCards[0],TryOn&&TryOutfit>=0?TryOutfit:Worn,&There);
  if(!Mode){OKStreetPrivateEnvRestore();S.ContactsNotice=OKT(TEXT("ui.contacts.interaction_load_failed"));RefreshUI();return;}
  // Her experience (hexp.rs) gates the poses, raw insertion and anal in the H panel.
- {const FString Id=OKStreetStableId(S.Manifest.Characters[Character]);auto Ask=OKRulesHeroineRequest(S,TEXT("h_experience"),Id);Ask->SetStringField(TEXT("girl"),Id);Ask->SetNumberField(TEXT("day"),S.Store.CalendarDay);OKRulesPutExt(S,Ask);
+ S.PrivateTryOn=TryOn;Mode->bFitting=TryOn;
+ // Her street model stands right where the high one now does: 安可 tried the dress on inside her own cheongsam.
+ if(TryOn){FString Hidden;OKSetCrowdRuntimeCharacterMotion(this,Character,FTransform(There.GetRotation(),There.GetLocation()-FVector(0.,0.,100000.)),0.f,Hidden);}
+ if(TryOn){const FVector At=There.GetLocation();for(const auto& P:OKStreetPlaces())for(const FBox& Room:P.Rooms)if(At.X>=Room.Min.X&&At.X<=Room.Max.X&&At.Y>=Room.Min.Y&&At.Y<=Room.Max.Y&&At.Z>=Room.Min.Z-60.f&&At.Z<Room.Max.Z-60.f)Mode->FittingRoom=Room;}
+ if(!TryOn){const FString Id=OKStreetStableId(S.Manifest.Characters[Character]);auto Ask=OKRulesHeroineRequest(S,TEXT("h_experience"),Id);Ask->SetStringField(TEXT("girl"),Id);Ask->SetNumberField(TEXT("day"),S.Store.CalendarDay);OKRulesPutExt(S,Ask);
   // With her desire and bust: past 100 she runs and her nipples leak in the room too (OKHScene drips).
-  TSharedPtr<FJsonObject> Experience=OKRulesEval(S,Ask);if(Experience.IsValid()){Experience->SetNumberField(TEXT("sex_desire"),OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget).SexDesire);Experience->SetNumberField(TEXT("bust"),OKStreetHerCard(S,Character).Bust);
+  TSharedPtr<FJsonObject> Experience=OKRulesEval(S,Ask);if(Experience.IsValid()){Experience->SetNumberField(TEXT("sex_desire"),OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget).SexDesire);Experience->SetNumberField(TEXT("favor"),OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget).Favor);Experience->SetNumberField(TEXT("bust"),OKStreetHerCard(S,Character).Bust);
+   // Her eyes in the room: who she is and how worn out (OKHScene TickEyeDull).
+   {const auto R=OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget);Experience->SetNumberField(TEXT("energy"),R.Energy);Experience->SetNumberField(TEXT("satiety"),R.Satiety);Experience->SetNumberField(TEXT("personality"),S.Manifest.Characters[Character].PersonalityId);}
    // His condoms (the H panel puts one on only when he or she has one; hers are hexp's her_condoms).
    Experience->SetNumberField(TEXT("his_condoms"),S.Store.Inventory.FilterByPredicate([](const FString& I){return I==TEXT("cv_condom");}).Num());
    // Taken from touching herself on the street: she wants it, raw and all (OKStreetSocialOnani.inl).
    if(S.OnaniPrivate==Character){Experience->SetBoolField(TEXT("street_onani"),true);Experience->SetBoolField(TEXT("raw_ok"),true);Experience->SetBoolField(TEXT("kiss_ok"),true);Experience->SetBoolField(TEXT("resentful"),false);}}
+  // The other heroines, for the lesbian and 3P poses (OKHScene LoadSecond).
+  if(Experience.IsValid()){TArray<TSharedPtr<FJsonValue>> Others;for(int32 I=1;I<S.Manifest.Characters.Num();++I){const FString Card=OKStreetCardFor(S,I);if(I==Character||Card.IsEmpty())continue;
+    auto O=MakeShared<FJsonObject>();O->SetStringField(TEXT("name"),S.Manifest.Characters[I].Name);O->SetStringField(TEXT("card"),Card);O->SetNumberField(TEXT("girl"),I);{const FString OtherId=OKStreetStableId(S.Manifest.Characters[I]);O->SetStringField(TEXT("id"),OtherId);const FString Stage=OKStreetViewRelation(S.Store,OtherId,S.Manifest.TalkBudget).Stage;O->SetBoolField(TEXT("willing"),Stage!=TEXT("stranger"));auto AskHer=OKRulesHeroineRequest(S,TEXT("h_experience"),OtherId);AskHer->SetStringField(TEXT("girl"),OtherId);AskHer->SetNumberField(TEXT("day"),S.Store.CalendarDay);OKRulesPutExt(S,AskHer);double Level=Stage==TEXT("lover")?2:Stage==TEXT("friend")?1:0;
+    if(const TSharedPtr<FJsonObject> Had=OKRulesEval(S,AskHer)){O->SetObjectField(TEXT("experience"),Had);Had->TryGetNumberField(TEXT("level"),Level);}O->SetNumberField(TEXT("level"),Level);}Others.Add(MakeShared<FJsonValueObject>(O));}
+   Experience->SetArrayField(TEXT("others"),Others);}
   Mode->BeginHScene(S.Manifest.Characters[Character].Name,OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget).Stage,Experience,S.Manifest.Characters[0].Name);}
  S.PrivateShownLine=S.FreeTalkCaptionHer; // what was on screen before is not shown in the scene
  // The street clock runs about 24 times real time: an hour in the room would be a whole night gone (she said the sun was
@@ -329,19 +386,29 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character){
  TWeakObjectPtr<AOKStreetSocialScene> Weak(this);
  Mode->Returned=[Weak](TSharedRef<FJsonObject> Result){if(Weak.IsValid()&&Weak->State){Weak->State->HighPrivateResult=Result;Weak->State->HighPrivateSeenReady=Result->HasField(TEXT("partner_ready"))&&Result->GetBoolField(TEXT("partner_ready"));Weak->FinishPrivate();if(Weak->State->SelfTest&&!Weak->State->Reported)Weak->RunContactsProbe(Weak->SceneTime());}};
  S.PrivateInPlace=true;S.MouseToggleRequested=false;S.ContactsNotice=OKT(TEXT("ui.contacts.loading_one_on_one"));RefreshUI();
+ // What the street figures hold would stay hanging in the air: their ticks stop with the street's (TickPrivate).
+ {auto Hide=[&S](AActor* A){if(A&&!A->IsHidden()){A->SetActorHiddenInGame(true);S.PrivateHiddenProps.Add(A);}};
+  for(auto& Held:S.ReadingProps)for(auto& P:Held.Value)Hide(P.Get());for(auto& P:S.MealHandProps)Hide(P.Key.Get());for(auto& P:S.FacilityHandProps)Hide(P.Key.Get());
+  for(auto& P:S.PairProps)Hide(P.Get());for(auto& P:S.AmbientProps)Hide(P.Get());Hide(S.Umbrella.Get());}
  if(S.Overlay)S.Overlay->SetVisibility(EVisibility::Collapsed);
  // A leave button of the street's own, top right over the scene: back to the street at any time (its panel's return is
  // at the top of a long scrolled list, and the control channel cannot reach it).
  if(GEngine&&GEngine->GameViewport){
   S.PrivateLeave=SNew(SBox).HAlign(HAlign_Right).VAlign(VAlign_Top).Padding(FMargin(0,16,24,0))
-   [SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().Padding(0,0,8,0)[BookmarkButton(Character)] // this moment kept (OKStreetSocialBookmarks.inl)
+   [SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().Padding(0,0,8,0)[TryOn?SNullWidget::NullWidget:BookmarkButton(Character)] // this moment kept (OKStreetSocialBookmarks.inl)
     +SHorizontalBox::Slot().AutoWidth()[SNew(SButton).ButtonStyle(OKStreetGlassButton()).ContentPadding(FMargin(18,8))
-    .Text(FText::FromString(OKT(TEXT("ui.contacts.leave_one_on_one"))))
+    .Text(FText::FromString(OKT(TryOn?TEXT("ui.clothes.try_done"):TEXT("ui.contacts.leave_one_on_one"))))
     .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->FinishPrivate();return FReply::Handled();})]];
   GEngine->GameViewport->AddViewportWidgetContent(S.PrivateLeave.ToSharedRef(),20);}
 }
 // The original's result after an H scene (HSceneResult): her level then and now, each place's development before and
 // after (what grew in green), and this time's firsts; on the street until he closes it or another one-on-one ends.
+// The result screen closed: the other heroines in the scene next, one after the other.
+void AOKStreetSocialScene::CloseHResult(){
+ if(!State||!State->HResultPanel.IsValid()||!GEngine||!GEngine->GameViewport)return;auto& S=*State;
+ GEngine->GameViewport->RemoveViewportWidgetContent(S.HResultPanel.ToSharedRef());S.HResultPanel.Reset();
+ if(S.HResultNext.Num()){const auto One=S.HResultNext[0];S.HResultNext.RemoveAt(0);ShowHResult(One.Key,*One.Value);}
+}
 void AOKStreetSocialScene::ShowHResult(int32 Girl,const FJsonObject& Answer){
  auto& S=*State;const TSharedPtr<FJsonObject>* Result=nullptr;
  if(S.HResultPanel.IsValid()){if(GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(S.HResultPanel.ToSharedRef());S.HResultPanel.Reset();}
@@ -383,7 +450,7 @@ void AOKStreetSocialScene::ShowHResult(int32 Girl,const FJsonObject& Answer){
   if(Where.Num())Line(OKMsg(TEXT("ui.hresult.stats_where"),{{TEXT("where"),FString::Join(Where,OKT(TEXT("ui.memory.list_separator")))}}),FLinearColor(.95f,.85f,.6f),14);}
  Rows->AddSlot().AutoHeight().HAlign(HAlign_Right).Padding(FMargin(0,10,0,0))
   [SNew(SButton).ButtonStyle(OKStreetGlassButton()).ContentPadding(FMargin(18,6)).Text(FText::FromString(OKT(TEXT("ui.hresult.close"))))
-   .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid()&&Weak->State&&Weak->State->HResultPanel.IsValid()&&GEngine&&GEngine->GameViewport){GEngine->GameViewport->RemoveViewportWidgetContent(Weak->State->HResultPanel.ToSharedRef());Weak->State->HResultPanel.Reset();}return FReply::Handled();})];
+   .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->CloseHResult();return FReply::Handled();})];
  TSharedRef<SBorder> Panel=SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(FLinearColor(.05f,.04f,.08f,.88f)).Padding(FMargin(28,20));
  Panel->SetContent(Rows);
  S.HResultPanel=SNew(SBox).HAlign(HAlign_Center).VAlign(VAlign_Center)[Panel];
@@ -400,11 +467,12 @@ void AOKStreetSocialScene::FinishPrivate(){
  if(S.PrivateClockFrozen&&S.ClockPaused){const double Wall=FPlatformTime::Seconds();S.ClockStartHours=FMath::Fmod(S.ClockStartHours+FMath::Max(0.,Wall-S.HighPrivateAt)/3600.,24.);S.ClockStartWall=Wall;S.ClockPaused=false;RefreshUI();}S.PrivateClockFrozen=false; // (someone ran the clock meanwhile: it already moved)
  S.PrivatePausedSeconds+=FMath::Max(0.,FPlatformTime::Seconds()-S.HighPrivateAt);S.LastWall=0;
  OKSuspendCrowdRuntimeScene(this,false);S.PrivateInPlace=false;S.MouseUI=S.PrivateMouse;S.MouseToggleRequested=false;
+ for(const auto& P:S.PrivateHiddenProps)if(AActor* A=P.Get())A->SetActorHiddenInGame(false);S.PrivateHiddenProps.Reset();
  if(auto* PC=GetWorld()->GetFirstPlayerController())PC->SetViewTarget(S.Camera.Get());
  if(S.Overlay)S.Overlay->SetVisibility(EVisibility::Visible);
  if(S.PrivateLeave.IsValid()){if(GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(S.PrivateLeave.ToSharedRef());S.PrivateLeave.Reset();}
  // Her memory of the session: when it started (the memory's own time), how long, and every thing they did, in order.
- if(S.HighPrivateResult.IsValid()&&S.Manifest.Characters.IsValidIndex(Girl)){
+ if(S.HighPrivateResult.IsValid()&&!S.PrivateTryOn&&S.Manifest.Characters.IsValidIndex(Girl)){
   const TArray<TSharedPtr<FJsonValue>>* Acts=nullptr;TArray<FString> Done;
   if(S.HighPrivateResult->TryGetArrayField(TEXT("actions"),Acts))for(const auto& V:*Acts){const auto O=V->AsObject();if(!O)continue;
    const int32 Sec=int32(O->GetNumberField(TEXT("seconds")));FString Label=O->GetStringField(TEXT("label"));
@@ -415,6 +483,16 @@ void AOKStreetSocialScene::FinishPrivate(){
   MindObserve(Girl,TEXT("private"),Text,PlaceHere(S.Male),Done.IsEmpty()?0.5f:0.75f);
   // What it leaves on her: the experience, firsts and the relation (hexp.rs h_session_end), whichever way the scene opened.
   const TSharedPtr<FJsonObject>* H=nullptr;
+  // The others in it (lesbian, 3P) remember it and keep their climaxes and poses; these counts have no touch or insertion
+  // of hers, so her firsts stay as they were.
+  if(S.HighPrivateResult->TryGetObjectField(TEXT("h"),H)){const TArray<TSharedPtr<FJsonValue>>* Joined=nullptr;
+   if((*H)->TryGetArrayField(TEXT("second"),Joined))for(const auto& Row:*Joined){const auto R=Row->AsObject();if(!R)continue;
+    const int32 Other=int32(R->GetNumberField(TEXT("girl")));const FString OtherId=R->GetStringField(TEXT("id"));const TSharedPtr<FJsonObject>* Hers=nullptr;if(Other<=0||OtherId.IsEmpty()||!R->TryGetObjectField(TEXT("counts"),Hers))continue;
+    // As the first heroine below: what is on her, then the same h_session_end on her own counts.
+    if(Other<OKStreetCastCount){const TArray<TSharedPtr<FJsonValue>>* On=nullptr;if((*Hers)->TryGetArrayField(TEXT("siru"),On))for(int32 A=0;A<On->Num()&&A<5;++A)if((*On)[A]->AsNumber()>0)S.SemenOn[Other]|=1<<A;double Drips=0,Milk=0;(*Hers)->TryGetNumberField(TEXT("her_drips"),Drips);(*Hers)->TryGetNumberField(TEXT("her_milk"),Milk);S.ArousalWetCrotch[Other]+=int32(Drips);S.ArousalWetMilk[Other]+=int32(Milk);}
+    auto Request=OKRulesHeroineRequest(S,TEXT("h_session_end"),OtherId);Request->SetStringField(TEXT("girl"),OtherId);Request->SetNumberField(TEXT("day"),S.Store.CalendarDay);Request->SetStringField(TEXT("place"),PlaceHere(S.Male));Request->SetNumberField(TEXT("minute"),double(OKStreetMindNow(S)));Request->SetObjectField(TEXT("counts"),*Hers);{const TArray<TSharedPtr<FJsonValue>>* Names=nullptr;if(R->TryGetArrayField(TEXT("poses"),Names))Request->SetArrayField(TEXT("poses"),*Names);}OKRulesPutExt(S,Request);
+    if(const TSharedPtr<FJsonObject> Answer=OKRulesEval(S,Request)){auto Candidate=S.Store;OKRulesTakeExt(Candidate,*Answer);ApplyRulesEffects(Candidate,*Answer);if(CommitStore(MoveTemp(Candidate)))FlushRulesEffects();OKStreetApplyHerExtras(S,OtherId);S.HResultNext.Add(TPair<int32,TSharedPtr<FJsonObject>>(Other,Answer));
+     UE_LOG(LogTemp,Display,TEXT("Street private: %s was in it too, %d climaxes, level %s"),*R->GetStringField(TEXT("name")),int32((*Hers)->GetNumberField(TEXT("her_orgasms"))),*Answer->GetStringField(TEXT("level_name")));}}}
   if(S.HighPrivateResult->TryGetObjectField(TEXT("h"),H)&&(*H)->HasField(TEXT("counts"))){
    // She comes out of the room as wet as she ran in it (until she sleeps or bathes).
    if(Girl>0&&Girl<OKStreetCastCount){const auto C=(*H)->GetObjectField(TEXT("counts"));double Drips=0,Milk=0;C->TryGetNumberField(TEXT("her_drips"),Drips);C->TryGetNumberField(TEXT("her_milk"),Milk);
@@ -430,6 +508,7 @@ void AOKStreetSocialScene::FinishPrivate(){
     else ShowHResult(Girl,*Answer);}
   }
  }
+ S.PrivateTryOn=false;
  // Back on the street with her beside him: they go on talking (the scene started from their talk, which it ended).
  // Without this she went straight back to her schedule and walked off from the lunch he had just paid for. Opened from
  // the contacts with her elsewhere, there is nobody beside him to go on with.
@@ -439,6 +518,10 @@ void AOKStreetSocialScene::FinishPrivate(){
 }
 bool AOKStreetSocialScene::TickPrivate(double Now){
  auto& S=*State;if(S.PrivateGirl==INDEX_NONE)return false;
+ // Tick stops at this function for the whole one-on-one, so the street's own motion never runs: every street figure goes
+ // out of sight from here, and Tick puts them back after it (he and she are the high models meanwhile).
+ {FString Hidden;OKSetCrowdRuntimeCharacterMotion(this,0,FTransform(S.Rotations[0],S.Male+OKStreetOffstage),0.f,Hidden);
+  for(const auto& Agent:S.Agents)OKSetCrowdRuntimeCharacterMotion(this,Agent.Slot,FTransform(S.RenderedRotations[Agent.Slot],Agent.Position+OKStreetOffstage),0.f,Hidden);}
  // Esc leaves it like the leave button (the scene's own Esc check sees only real keys, not the control channel's).
  if(S.PrivateMode.IsValid()&&OKKeyPressed(GetWorld()->GetFirstPlayerController(),EKeys::Escape)){FinishPrivate();return true;}
  if(S.PrivateMode.IsValid()){
@@ -453,6 +536,7 @@ bool AOKStreetSocialScene::TickPrivate(double Now){
    S.FreeTalkSpeechPlayed=S.FreeTalkSpeechLines.Num();}
   if(!S.FreeTalkBusy&&S.FreeTalkDraft.IsEmpty()&&!HerReplyUnspoken()&&S.PrivateMode->HSceneTakeLine(Line,Context,System)){S.PrivateTalkContext=Context;S.FreeTalkDraft=Line;S.SystemNote=System;S.PrivateReplyIsReaction=System;SendFreeTalk();}
   if(S.FreeTalkCaptionHer!=S.PrivateShownLine){S.PrivateShownLine=S.FreeTalkCaptionHer;S.PrivateMode->HSceneShowLine(S.FreeTalkCaptionHer);}
+  S.PrivateMode->HSceneReplyPending(HerReplyUnspoken());
   return true;
  }
  FinishPrivate();if(S.SelfTest){S.Errors.Add(TEXT("Shared interaction mode disappeared without returning"));WriteReport(false);}return true;
@@ -462,7 +546,9 @@ void AOKStreetSocialScene::TickContacts(float Dt,double Now){
  if(S.PrivateGirl!=INDEX_NONE&&!ContactReady(S.PrivateGirl)){FinishPrivate();return;}
  TickAfter();
  // Her route is redrawn as she moves; not while the navigation is on its way to (or in) an elevator, or with her upstairs.
- if(S.NavGirl!=INDEX_NONE&&Now-S.NavAt>.75&&S.NavRide.Elevator==INDEX_NONE&&S.Agents.IsValidIndex(S.NavGirl-1)&&!NavNeedsLift(S.Agents[S.NavGirl-1].Position)){if(!ContactReady(S.NavGirl)){S.NavGirl=INDEX_NONE;S.NavPath.Reset();S.ContactsNotice=OKT(TEXT("ui.contacts.nav_target_unavailable"));RefreshUI();}else{S.NavAt=Now;S.NavPath=ContactRoute(S.Male,NavApproachSpot(S.Agents[S.NavGirl-1].Position));S.NavStep=1;}}
+ // Across the city the route is drawn again every 5 s, not 0.75: each new one started him off from its first point, and he paced
+ // back and forth on the street. She may not be drawn from there (ContactReady): only gone from the street ends it.
+ if(S.NavGirl!=INDEX_NONE&&S.Agents.IsValidIndex(S.NavGirl-1)&&Now-S.NavAt>(OKStreetCityMode()&&OKStreetCityFar(S.Male,S.Agents[S.NavGirl-1].Position)?5.:.75)&&S.NavRide.Elevator==INDEX_NONE&&!NavNeedsLift(S.Agents[S.NavGirl-1].Position)){if(S.OnaniGirl==S.NavGirl){S.NavGirl=INDEX_NONE;S.NavPath.Reset();S.ContactsNotice=OKT(TEXT("ui.contacts.nav_target_unavailable"));RefreshUI();}else{S.NavAt=Now;S.NavPath=ContactRoute(S.Male,NavApproachSpot(S.Agents[S.NavGirl-1].Position));S.NavStep=1;}}
 }
 void AOKStreetSocialScene::RunContactsProbe(double Now){
  auto& S=*State;if(S.ContactsChecked){if(S.ContactsOnlyTest)WriteReport(S.Errors.IsEmpty());return;}

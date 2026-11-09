@@ -134,7 +134,7 @@ void RunStudioTransparencyTest(bool Exit)
             auto* C=NewObject<USceneCaptureComponent2D>(Probe->Back.Get()); C->RegisterComponentWithWorld(Probe->Back->GetWorld());
             C->SetWorldTransform(FTransform::Identity); C->FOVAngle=60.f;
             C->CaptureSource=SCS_FinalColorHDR; C->TextureTarget=Target; C->bCaptureEveryFrame=C->bCaptureOnMovement=false; C->bAlwaysPersistRenderingState=true;
-            FOKScenePost Post; Post.bBloom=false; Post.ApplyTo(C->PostProcessSettings); C->PostProcessBlendWeight=1.f;
+            FOKScenePost Post; Post.ColorFilter=-1; Post.bBloom=false; Post.ApplyTo(C->PostProcessSettings); C->PostProcessBlendWeight=1.f;
             C->CaptureScene(); TArray<FLinearColor> Pixels; FReadSurfaceDataFlags Flags(RCM_MinMax); Flags.SetLinearToGamma(false);
             Passed &= Target->GameThread_GetRenderTargetResource()->ReadLinearColorPixels(Pixels,Flags) && Pixels.Num()==4096; C->DestroyComponent();
             if (Pixels.Num()!=4096) return FLinearColor::Black;

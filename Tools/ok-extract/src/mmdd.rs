@@ -5350,6 +5350,7 @@ mod tests {
         let body_rest = Some(tpl.female_body_rest.clone());
         let head_rest = tpl.head_rest.clone();
         let mut sess = crate::session::OkSession {
+            pair_third: None,
             accessory_context: None,
             editor_pregnancy: Default::default(),
             pv_config: None,
@@ -5405,6 +5406,7 @@ mod tests {
             shape_body: shape_body.clone(),
             shape_face: shape_face.clone(),
             abm,
+            style_card_abm: None,
             parts: Vec::new(),
             coordinate_count: 1,
             skel_export: None,
@@ -5415,6 +5417,10 @@ mod tests {
             mmdd_world_lock: false,
             mmdd_face_bone_dirty: false,
             active_shoe_meta: None,
+            wardrobe_body_mask: None,
+            wardrobe_quick_settle: false,
+            hidden_parts: Vec::new(),
+            cover_ready: None,
             face_runtime: Default::default(),
             anim_parameters: HashMap::new(),
             anim_clock: Default::default(),

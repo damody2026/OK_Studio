@@ -1237,7 +1237,7 @@ mod tests {
     #[test]
     #[ignore = "installed APNG/shared resources; owns process environment"]
     fn installed_card_lowpoly() {
-        let project = Path::new("C:/portable/OpenKoikatsu");
+        let project = Path::new(crate::test_support::project_path!(""));
         let card = std::env::var_os("OK_LOWPOLY_CARD").map(std::path::PathBuf::from)
             .unwrap_or_else(|| project.join("Content/CharacterCards/CrowdAPNG/C000.png"));
         let out = std::path::PathBuf::from(std::env::var("OK_LOWPOLY_OUT").expect("OK_LOWPOLY_OUT directory"));
@@ -1316,7 +1316,7 @@ mod hole_audit {
     #[test]
     #[ignore = "installed APNG/shared resources; owns process environment"]
     fn installed_card_source_mesh() {
-        let project = Path::new("C:/portable/OpenKoikatsu");
+        let project = Path::new(crate::test_support::project_path!(""));
         let card = std::env::var_os("OK_LOWPOLY_CARD").map(std::path::PathBuf::from)
             .unwrap_or_else(|| project.join("Content/CharacterCards/CrowdAPNG/C000.png"));
         std::env::set_var("OK_BUILTIN_RESOURCES", project.join("Content/IndependentResources/v1"));
@@ -1346,7 +1346,7 @@ mod hole_audit {
     #[test]
     #[ignore = "installed APNG/shared resources; owns process environment"]
     fn installed_card_hair_orientation() {
-        let project = Path::new("C:/portable/OpenKoikatsu");
+        let project = Path::new(crate::test_support::project_path!(""));
         let card = std::env::var_os("OK_LOWPOLY_CARD").map(std::path::PathBuf::from)
             .unwrap_or_else(|| project.join("Content/CharacterCards/CrowdAPNG/C024.png"));
         std::env::set_var("OK_BUILTIN_RESOURCES", project.join("Content/IndependentResources/v1"));
@@ -1396,7 +1396,7 @@ mod hole_audit {
     #[test]
     #[ignore = "installed APNG/shared resources; owns process environment"]
     fn installed_card_remesher_holes() {
-        let project = Path::new("C:/portable/OpenKoikatsu");
+        let project = Path::new(crate::test_support::project_path!(""));
         let card = std::env::var_os("OK_LOWPOLY_CARD").map(std::path::PathBuf::from)
             .unwrap_or_else(|| project.join("Content/CharacterCards/CrowdAPNG/C000.png"));
         std::env::set_var("OK_BUILTIN_RESOURCES", project.join("Content/IndependentResources/v1"));
@@ -1452,7 +1452,7 @@ mod hole_audit {
     #[test]
     #[ignore = "installed APNG/shared resources; owns process environment"]
     fn installed_card_holes() {
-        let project = Path::new("C:/portable/OpenKoikatsu");
+        let project = Path::new(crate::test_support::project_path!(""));
         let card = std::env::var_os("OK_LOWPOLY_CARD").map(std::path::PathBuf::from)
             .unwrap_or_else(|| project.join("Content/CharacterCards/CrowdAPNG/C000.png"));
         std::env::set_var("OK_BUILTIN_RESOURCES", project.join("Content/IndependentResources/v1"));

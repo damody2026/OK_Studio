@@ -444,3 +444,10 @@ cat = "activity"
 history = "activity"
 text = "%s"
 memory = -1
+
+[[act]]
+id = "new_clothes"
+cat = "activity"
+history = "activity"
+text = "%s"
+memory = -1

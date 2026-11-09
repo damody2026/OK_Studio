@@ -185,3 +185,8 @@ deepseek.json
 /Docs/images/street-social-*
 /Docs/images/video-motion-*
 /Docs/StreetSocialCity/production/floor-models/S01/chrome-export-check.png
+
+# UniversityCity copied from StreetSocialCity by Tools/migrate_street_city_content.lua: generated models stay local
+/Content/UniversityCity/
+/Content/__ExternalActors__/
+/Content/__ExternalObjects__/

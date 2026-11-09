@@ -39,7 +39,7 @@ fn studio_yure_policy_and_shape_initialization() {
         let mut s=open(game,Some(&game.join(format!("UserData/chara/female/{card}.png"))),0).unwrap();
         s.apply_anim_frame(0.,0.);s.ensure_skel_export();let unmasked=s.body_shaped.clone().unwrap();
         let stem:String=card.chars().map(|c|if c.is_ascii_alphanumeric()||c=='_'{c}else{'_'}).collect();
-        let frames:Vec<serde_json::Value>=serde_json::from_slice(&crate::gamefs::read(format!("C:/portable/OpenKoikatsu/Saved/Tests/Studio294/{stem}Studio294.json.yure.json")).unwrap()).unwrap();
+        let frames:Vec<serde_json::Value>=serde_json::from_slice(&crate::gamefs::read(format!("{}/../../Saved/Tests/Studio294/{stem}Studio294.json.yure.json",env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap();
         assert_eq!(frames.len(),9);let mut max=0f32;
         for f in frames {
             let data=[f["source"].as_str().unwrap(),f["owner"].as_str().unwrap(),f["overlaySource"].as_str().unwrap(),f["overlayOwner"].as_str().unwrap()];

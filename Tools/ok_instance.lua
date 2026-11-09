@@ -3,7 +3,8 @@
 -- its root (not in git; outside Saved/ so wiping Saved/ keeps it):
 --   {"port_base": 47960, "voice": false}
 -- port_base: TTS = base, ASR = base+1, StreetSocial control = base+10, interaction pair control = base+11,
--- song jobs (ok-song) = base+20.
+-- any mode's UI channel = base+12, song jobs (ok-song) = base+20, OK Studio control = base+30. A game takes the next free
+-- one 100 up when another has it; Saved/OKControl/<pid>.json says which (Docs/GAME_CONTROL_CHANNELS.md).
 --   Without the file the base is 47860 (47860 / 47861 / 47870 / 47871, the long-standing ports).
 -- voice false: this checkout neither starts nor stops ok-tts / ok-asr (built-in voices, no voice input).
 --
@@ -17,7 +18,7 @@ local M = {}
 -- The ports for a given base (a sandboxed run picks its own; see run_street_social_development.lua -Sandbox).
 function M.ports_at(base, voice)
   if base < 1024 or base > 65400 then error("port base out of range: " .. base) end
-  return { base = base, tts = base, asr = base + 1, street_control = base + 10, pair_control = base + 11, song = base + 20, voice = voice }
+  return { base = base, tts = base, asr = base + 1, street_control = base + 10, pair_control = base + 11, ui_control = base + 12, song = base + 20, studio_control = base + 30, voice = voice }
 end
 
 function M.ports(root)
@@ -30,7 +31,7 @@ function M.ports(root)
     if cfg.voice ~= nil then voice = cfg.voice and true or false end
     if base < 1024 or base > 65400 then error("local-instance.json port_base out of range: " .. base) end
   end
-  return { base = base, tts = base, asr = base + 1, street_control = base + 10, pair_control = base + 11, song = base + 20, voice = voice }
+  return M.ports_at(base, voice)
 end
 
 -- Server pids of sandboxed games that are still running (Saved/StreetSocial/Sandbox/<name>/running.json, written by

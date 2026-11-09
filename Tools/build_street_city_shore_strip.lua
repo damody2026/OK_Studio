@@ -13,10 +13,10 @@
 --   under the original ground + 15 cm (the bed cells kept the grass of the land they were pressed from).
 -- Output world-edge-v1/coast-strip/coast-strip.glb (+ seawall.glb) + build.json in the coast strip contract (probes,
 -- bounds), so the native job world_coast_strip_install places them as WorldEdge_CoastStrip / WorldEdge_Seawall.
--- Usage: lua Tools/build_street_city_shore_strip.lua [--dir <world-edge-v1 dir>] [--sigma 2.5] [--level 0.2] [--inland 6] [--slope 6] [--shelf 14] [--bed 1030] [--channel 80] [--off 2]
+-- Usage: lua Tools/build_street_city_shore_strip.lua [--dir <world-edge-v1 dir>] [--sigma 2.5] [--level 0.2] [--inland 6] [--slope 6] [--shelf 14] [--bed 1030] [--channel 80] [--off 2] [--top 1212]
 package.path='Tools/lua/?.lua;'..package.path
 local j=require('ok.json');local out='C:/portable/OpenKoikatsu/output/street-social-city-production/world-edge-v1'
-local o={sigma=2.5,level=0.2,inland=6,slope=6,shelf=14,bed=1030,channel=80,off=2}
+local o={sigma=2.5,level=0.2,inland=6,slope=6,shelf=14,bed=1030,channel=80,off=2,top=1212}
 for i=1,#arg-1 do local k=arg[i]:match('^%-%-(%w+)$');if k and o[k] then o[k]=tonumber(arg[i+1]) elseif k=='dir' then out=arg[i+1] end end
 local code=[====[
 import bpy,bmesh,json,hashlib,math
@@ -94,7 +94,10 @@ lines=[resample(relax(resample(chaikin(l,3)))) for l in lines]
 def Fat(x,y):
  k=min(max(int(round((x-xs[0])/st)),0),nx-1);i=min(max(int(round((y-ys[0])/st)),0),ny-1);return F[i,k]
 IN,SL,SH,BED=T['inland'],T['slope'],T['shelf'],T['bed']/100
-prof=[(-IN,12.01),(0.0,12.01),(SL*.35,11.62),(SL*.7,11.12),(SL,10.60),(SL+SH,BED)]
+# the flat top stands `--top` cm over the 1198 land (ramped up over the inner 2 m): at 3 cm the grass of the ground
+# sheet's 2.5 m stair cells showed through from the air as square steps along the inner edge (A04, G024 11-02)
+TOP=T['top']/100
+prof=[(-IN,12.01),(-IN+2,TOP),(0.0,TOP),(SL*.35,11.62),(SL*.7,11.12),(SL,10.60),(SL+SH,BED)]
 def normals(l):
  out=[]
  for i,p in enumerate(l):
@@ -117,6 +120,28 @@ def far_bank(p,n):return next((s for s in range(2,int(CH)+1) if Fat(p[0]+n[0]*s,
 # the lines keep the land part of the cross profile down to the waterline slope (d <= --slope); everything under the
 # water is the seabed heightfield below, so no shelf ends in a stair where a line stops
 lprof=[q for q in prof if q[0]<=SL]
+# world-edge-v1/ground-sections.json (native world_ground_sections_probe): 1 m map of which material section of the
+# city ground sheets draws each top cell; 's' = the beach-sand section
+SEC=json.loads((O/'ground-sections.json').read_text('utf8')) if (O/'ground-sections.json').exists() else None
+def sand_at(x,y):
+ if SEC is None:return False
+ k=int((x*100-SEC['x0_cm'])//100);i=int((y*100-SEC['y0_cm'])//100)
+ return 0<=i<len(SEC['rows']) and 0<=k<len(SEC['rows'][0]) and SEC['rows'][i][k]=='s'
+def inland_reach(p,n,cap=40.0):
+ # farthest sand cell inland along -n (gaps of up to 2 m bridged), + 1.5 m, never less than --inland
+ far=0.0;d=0.0;gap=0.0
+ while d<cap:
+  d+=.5
+  if sand_at(p[0]-n[0]*d,p[1]-n[1]*d):far=d;gap=0.0
+  else:
+   gap+=.5
+   if gap>2.0:break
+ return max(IN,far+1.5)
+def smooth_reach(r):
+ # +-15 m running maximum, then a +-10 m mean: every point of the mean's window has the centre inside its maximum
+ # window, so the result never falls inside the raw reach, and the edge has no steps
+ m=[max(r[max(0,i-15):i+16]) for i in range(len(r))]
+ return [sum(m[max(0,i-10):i+11])/len(m[max(0,i-10):i+11]) for i in range(len(m))]
 bm=bmesh.new();wm=bmesh.new();cols_all=0;quay=[]
 for l,N in kept:
  runs=[[]]
@@ -133,7 +158,10 @@ for l,N in kept:
     for k in range(3):wm.faces.new((a[k],a[k+1],b[k+1],b[k]))
    quay+=[p for p,_,_ in run]
   else:
-   cols=[[bm.verts.new((p[0]+n[0]*d,p[1]+n[1]*d,z)) for d,z in lprof] for p,n,_ in run]
+   # the inner edge reaches past the ground sheet's own beach-sand section on this normal, so its 2.5 m stair edge
+   # (inland of the 6 m strip at A01-A04 / G024) is covered; per-point reach smoothed so the edge stays a curve
+   reach=smooth_reach([inland_reach(p,n) for p,n,_ in run])
+   cols=[[bm.verts.new((p[0]+n[0]*(d if k>1 else d-(r-IN)),p[1]+n[1]*(d if k>1 else d-(r-IN)),z)) for k,(d,z) in enumerate(lprof)] for (p,n,_),r in zip(run,reach)]
    for a,b in zip(cols,cols[1:]):
     for k in range(len(lprof)-1):bm.faces.new((a[k],a[k+1],b[k+1],b[k]))
    cols_all+=len(cols)
@@ -247,7 +275,10 @@ if WB.exists():
  for i in range(by2):
   for k in range(bx2):
    if bq[i,k]:im2.faces.new((corner2(i,k),corner2(i+1,k),corner2(i+1,k+1),corner2(i,k+1)));inland+=1
- tmp2=bpy.data.meshes.new('inland');im2.to_mesh(tmp2);im2.free();bm.from_mesh(tmp2)
+ # the inland river / lake bed draws its own slot (S_RiverBed, river gravel at install): beach sand seen through the
+ # clear water of a river read as a white untextured slope in front of the quay (G113, 11-02)
+ tmp2=bpy.data.meshes.new('inland');im2.to_mesh(tmp2);im2.free();n0=len(bm.faces);bm.from_mesh(tmp2);bm.faces.ensure_lookup_table()
+ for f in bm.faces[n0:]:f.material_index=1
  # inland banks are ~1 m vertical ground faces between the water (1100) and the land (1198), stone on one tile and grass
  # on the next (G099) and stepped along the 1 m raster (A04, A17; bank_probe 2026-11-01: 102 of 37,951 band cells are
  # slopes). One stone quay along every inland water edge: the smoothed contour of the city water raster (the edge the
@@ -278,6 +309,8 @@ def finish(b,name,matname,rgb):
  for p in me.polygons:p.use_smooth=name=='CoastStrip'
  ob=bpy.data.objects.new(name,me);bpy.context.collection.objects.link(ob)
  m=bpy.data.materials.new(matname);m.use_nodes=True;m.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value=(*rgb,1);me.materials.append(m)
+ if name=='CoastStrip' and any(p.material_index==1 for p in me.polygons):
+  r=bpy.data.materials.new('S_RiverBed');r.use_nodes=True;r.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value=(.45,.42,.36,1);me.materials.append(r)
  uv=me.uv_layers.new(name='UVMap')
  for lp in me.loops:v=me.vertices[lp.vertex_index].co;uv.data[lp.index].uv=((v.x+v.z)/4,(v.y+v.z)/4)
  me.calc_loop_triangles();return ob

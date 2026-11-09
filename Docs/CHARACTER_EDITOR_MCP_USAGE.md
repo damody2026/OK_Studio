@@ -24,9 +24,9 @@ Tools/lua/lua.exe Tools/character_mcp/build.lua --test
 
 | 選項 | 用途 |
 |---|---|
-| `-CharacterMCP` | 啟用編輯器 MCP 控制，必要 |
-| `-CharacterMCPDir=` | 信箱目錄，必須與 MCP server 的 `--mailbox` 相同 |
-| `-CharacterMCPCard=` | 自動載入指定 PNG 角色卡；省略時自行進入編輯模式並載入 3D 角色 |
+| `-CharacterMCP` | 不需要了：信箱在所有模式常開（[控制通道](GAME_CONTROL_CHANNELS.md)），舊參數仍接受 |
+| `-CharacterMCPDir=` | 信箱目錄，必須與 MCP server 的 `--mailbox` 相同；省略時第一個實例用 `Saved/CharacterMCP`，之後 `Saved/CharacterMCP/instances/<pid>`（`Saved/OKControl/<pid>.json` 的 `mailbox`） |
+| `-CharacterMCPCard=` | 自動載入指定 PNG 角色卡；省略時不載入，停在卡片牆，可用 `cards`、`select`、`load` 操作 |
 
 每個遊戲執行個體使用不同信箱。等待角色完成載入後開始操作。
 
@@ -288,7 +288,7 @@ Tools/lua/lua.exe Tools/character_mcp/build.lua --test
 | 狀況 | 處理方式 |
 |---|---|
 | 找不到工具／server 無法啟動 | 檢查 Rust 執行檔的絕對路徑，重新連接 MCP 客戶端 |
-| `Editor timed out`／未開編輯模式 | 確認遊戲加了 `-CharacterMCP`、信箱相同、角色 3D 已載入；再查 state/progress |
+| `Editor timed out`／未開編輯模式 | 確認讀卡有開、信箱相同（`Saved/OKControl/<pid>.json`）、角色 3D 已載入；再查 state/progress |
 | `Character changed`／`Stale revision` | 重新查 state，重新確認角色／參數後使用新版本，不盲目重送舊寫入 |
 | 暫存屬性尚未套用 | 先 apply，或 reset 撤銷；不要直接保存或開始擬合 |
 | 找不到 Rust 執行檔 | 執行 build.lua 並確認 command 指向 bin/ok-character-mcp.exe |

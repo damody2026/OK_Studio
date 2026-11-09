@@ -4,10 +4,13 @@
 #include "OKCharacterMCPRegistry.h"
 #include "OKCharacterMCPGeometry.h"
 #include "OKVideoMotionPanel.h"
+#include "OKControl.h"
 #include "OKStudioGame.h"
 #include "KKPreviewActor.h"
 #include "KKCardWorkspace.h"
 #include "Blueprint/SlateBlueprintLibrary.h"
+#include "Containers/Queue.h"
+#include "Containers/Ticker.h"
 #include "Camera/CameraComponent.h"
 #include "Components/PoseableMeshComponent.h"
 #include "Components/EditableTextBox.h"
@@ -33,12 +36,42 @@ static int32 MCPAppearanceCategory(const FMCPObject& Item)
  const TSharedPtr<FJsonObject>* Entry=nullptr;
  return Item->TryGetObjectField(TEXT("entry"),Entry)?(*Entry)->GetIntegerField(TEXT("category_no")):-1;
 }
+// The mailbox's file work, on the control thread (OKControl::Every): the game thread only takes a request that came and
+// hands over what it has built. One per process, shared by the reader's controller and the 1-on-1 scene's.
+struct FOKCharacterMCPBox
+{
+ FString Root;
+ TQueue<TPair<FString,FString>,EQueueMode::Mpsc> Incoming; // id, text (empty: not a valid request)
+ TQueue<TPair<FString,FString>,EQueueMode::Mpsc> Outgoing; // file, text
+ FCriticalSection Guard;
+ FMCPObject Status;
+ static void Write(const FString& Path,const FString& Text){if(FFileHelper::SaveStringToFile(Text,*(Path+TEXT(".tmp")),FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))IFileManager::Get().Move(*Path,*(Path+TEXT(".tmp")),true);}
+ void Work()
+ {
+  for(TPair<FString,FString> Out;Outgoing.Dequeue(Out);)Write(Out.Key,Out.Value);
+  FMCPObject Now;{FScopeLock Lock(&Guard);Now=MoveTemp(Status);Status.Reset();}
+  if(Now){FString Text;FJsonSerializer::Serialize(Now.ToSharedRef(),TJsonWriterFactory<>::Create(&Text));Write(Root/TEXT("status.json"),Text);}
+  TArray<FString> Files;IFileManager::Get().FindFiles(Files,*(Root/TEXT("requests")/TEXT("*.json")),true,false);Files.Sort();
+  for(const FString& File:Files){const FString Id=FPaths::GetBaseFilename(File);FGuid Guid;if(Id.Len()!=32||!FGuid::ParseExact(Id,EGuidFormats::Digits,Guid))continue;const FString Path=Root/TEXT("requests")/File,Claim=Path+TEXT(".claimed");if(!IFileManager::Get().Move(*Claim,*Path,false))continue;FString Text;if(IFileManager::Get().FileSize(*Claim)>1048576||!FFileHelper::LoadFileToString(Text,*Claim))Text.Empty();IFileManager::Get().Delete(*Claim);Incoming.Enqueue({Id,Text});}
+ }
+};
+static TSharedRef<FOKCharacterMCPBox> OKCharacterMCPBox()
+{
+ static TSharedPtr<FOKCharacterMCPBox> Box;
+ if(!Box){Box=MakeShared<FOKCharacterMCPBox>();FString Root;
+  if(!FParse::Value(FCommandLine::Get(),TEXT("CharacterMCPDir="),Root)){Root=OKControl::Checkout()/TEXT("Saved/CharacterMCP");if(OKControl::TakenByOther(TEXT("mailbox"),Root))Root/=FString::Printf(TEXT("instances/%u"),FPlatformProcess::GetCurrentProcessId());}
+  Box->Root=FPaths::ConvertRelativePathToFull(Root);for(const TCHAR* D:{TEXT("requests"),TEXT("responses"),TEXT("images"),TEXT("cards")})IFileManager::Get().MakeDirectory(*(Box->Root/D),true);
+  OKControl::Publish(TEXT("mailbox"),Box->Root);OKControl::Every(.02,[Worker=Box]{Worker->Work();});UE_LOG(LogTemp,Display,TEXT("Character MCP mailbox: %s"),*Box->Root);}
+ return Box.ToSharedRef();
+}
 struct FOKCharacterMCPSnapshot { FKKCharacterFile Card; FString Path,Source,Properties,Pending;int32 Outfit=0;bool Independent=false; };
 struct FOKCharacterMCPState
 {
  FString Root,Session,Identity,RequestId,Action,Source,BeforePath;
  FMCPObject Request;
- double Deadline=0,ReadyAt=0,HeartbeatAt=0;
+ double Deadline=0,ReadyAt=0,HeartbeatAt=0,LastRequestAt=-1000;
+ TSharedPtr<FOKCharacterMCPBox> Box;
+ FTSTicker::FDelegateHandle StudioTicker;
  FString LoggedOperation;
  uint64 ReadyFrame=0;
  uint32 Fingerprint=0;
@@ -53,6 +86,11 @@ struct FOKCharacterMCPState
  TWeakObjectPtr<AKKPreviewActor> CaptureActor;
  bool WasTicking=false,AutoLoadAttempted=false;
  float SavedYaw=0,SavedPitch=0;
+ struct FShapeRamp { int32 Index=INDEX_NONE; float From=0, To=0, Restore=0, Seconds=0; };
+ TArray<FShapeRamp> ShapeRamps;
+ double ShapeRampOrigin=0;
+ int32 ShapeRampIndex=-1, ShapeRampHoldIndex=-1;
+ float ShapeRampHoldValue=0;
 };
 namespace OKCharacterMCP
 {
@@ -61,6 +99,7 @@ static bool Busy(UOKCharacterController* G){return G->bLoadInFlight||G->Preparin
 static FString Source(UOKCharacterController* G){if(auto* C=G->CardSources.Find(G->SelectedIndex))return C->Key;return G->Entries.IsValidIndex(G->SelectedIndex)?G->Entries[G->SelectedIndex].Path:FString();}
 static void Refresh(UOKCharacterController* G,FOKCharacterMCPState& S)
 {
+ if(!IsValid(G->PreviewActor)){if(S.Session.IsEmpty())S.Session=FGuid::NewGuid().ToString(EGuidFormats::Digits);return;}
  const FString I=FString::Printf(TEXT("%d|%d|%d|%s"),G->SelectedIndex,G->OutfitIndex,G->LoadGeneration,G->Entries.IsValidIndex(G->SelectedIndex)?*G->Entries[G->SelectedIndex].Path:TEXT(""));
  if(I!=S.Identity){S.Identity=I;S.Session=FGuid::NewGuid().ToString(EGuidFormats::Digits);++S.Revision;}
  auto O=MakeShared<FJsonObject>();O->SetStringField(TEXT("mods"),G->EditorModsJson());O->SetStringField(TEXT("nickname"),G->Selected.Nickname);O->SetArrayField(TEXT("controls"),OKCharacterMCPRegistry::Controls(G));for(auto E:G->PendingProperties)O->SetField(E.Key,E.Value);
@@ -73,7 +112,7 @@ static void Finish(FOKCharacterMCPState& S,FMCPObject Result,const FString& Erro
 {
  if(S.ShotHandle.IsValid()){UGameViewportClient::OnScreenshotCaptured().Remove(S.ShotHandle);S.ShotHandle.Reset();}S.ShotPixels.Reset();
  RestoreCamera(S);auto R=MakeShared<FJsonObject>();R->SetBoolField(TEXT("ok"),Error.IsEmpty());R->SetStringField(TEXT("session"),S.Session);R->SetNumberField(TEXT("revision"),S.Revision);if(Result)R->SetObjectField(TEXT("result"),Result.ToSharedRef());if(!Error.IsEmpty())R->SetStringField(TEXT("error"),Error);
- const FString P=S.Root/TEXT("responses")/(S.RequestId+TEXT(".json"));if(FFileHelper::SaveStringToFile(Encode(R),*(P+TEXT(".tmp")),FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))IFileManager::Get().Move(*P,*(P+TEXT(".tmp")),true);
+ S.Box->Outgoing.Enqueue({S.Root/TEXT("responses")/(S.RequestId+TEXT(".json")),Encode(R)});
  S.Request.Reset();S.Phase=0;S.RequestId.Empty();S.Images.Reset();
 }
 // bFingerprint is for a claimed request. The 0.5 s heartbeat must not take it:
@@ -81,9 +120,9 @@ static void Finish(FOKCharacterMCPState& S,FMCPObject Result,const FString& Erro
 // combo option lists, which stalls the game thread and steps stat unitgraph.
 static FMCPObject State(UOKCharacterController* G,FOKCharacterMCPState& S,bool bFingerprint=true)
 {
- if(bFingerprint)Refresh(G,S);auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("session"),S.Session);R->SetNumberField(TEXT("revision"),S.Revision);R->SetStringField(TEXT("card"),G->Entries[G->SelectedIndex].Path);R->SetNumberField(TEXT("outfit"),G->OutfitIndex);R->SetBoolField(TEXT("busy"),Busy(G));R->SetNumberField(TEXT("pending_properties"),G->PendingProperties.Num());R->SetStringField(TEXT("status"),Busy(G)?TEXT("busy"):G->PendingProperties.IsEmpty()?TEXT("applied"):TEXT("staged"));
+ if(bFingerprint)Refresh(G,S);auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("session"),S.Session);R->SetNumberField(TEXT("revision"),S.Revision);R->SetStringField(TEXT("screen"),G->bOkStudioOpen?TEXT("studio"):G->InteractionWidget||G->bInteractionOnly||G->GetVisibility()==ESlateVisibility::Collapsed?TEXT("interaction"):G->bModelLayout?TEXT("edit"):TEXT("cards"));R->SetNumberField(TEXT("cards_total"),G->Entries.Num());R->SetNumberField(TEXT("selected_index"),G->SelectedIndex);R->SetStringField(TEXT("card"),G->Entries.IsValidIndex(G->SelectedIndex)?G->Entries[G->SelectedIndex].Path:FString());R->SetNumberField(TEXT("outfit"),G->OutfitIndex);R->SetBoolField(TEXT("busy"),Busy(G));R->SetNumberField(TEXT("pending_properties"),G->PendingProperties.Num());R->SetStringField(TEXT("status"),Busy(G)?TEXT("busy"):G->PendingProperties.IsEmpty()?TEXT("applied"):TEXT("staged"));
  if(G->AnimationStatus)R->SetStringField(TEXT("animation_status"),G->AnimationStatus->GetText().ToString());if(G->PairStatus)R->SetStringField(TEXT("pair_status"),G->PairStatus->GetText().ToString());
- if(UOKStudioGame* Studio=G->bOkStudioOpen?UOKStudioGame::Get():nullptr){TSharedPtr<FJsonObject> Ui;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Studio->UiStateJson()),Ui)&&Ui)R->SetObjectField(TEXT("studio"),Ui);}
+ if(UOKStudioGame* Studio=G->bOkStudioOpen&&(bFingerprint||FPlatformTime::Seconds()-S.LastRequestAt<60)?UOKStudioGame::Get():nullptr){TSharedPtr<FJsonObject> Ui;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Studio->UiStateJson()),Ui)&&Ui)R->SetObjectField(TEXT("studio"),Ui);}
  if(G->VideoMotionPanel){R->SetStringField(TEXT("video_status"),G->VideoMotionPanel->StatusText());R->SetBoolField(TEXT("video_importing"),G->VideoMotionPanel->IsImporting());}R->SetStringField(TEXT("selected_clip"),G->SelectedGameClip);
  R->SetBoolField(TEXT("partner_loaded"),IsValid(G->PartnerActor)&&G->PartnerActor->Session.IsOpen());R->SetBoolField(TEXT("partner_loading"),G->bPartnerLoadInFlight);
  if(IsValid(G->PartnerActor)){R->SetNumberField(TEXT("partner_pose_mode"),G->PartnerActor->PoseMode);R->SetBoolField(TEXT("partner_ticking"),G->PartnerActor->IsActorTickEnabled());R->SetNumberField(TEXT("partner_anim_phase"),G->PartnerActor->AnimPhase);}
@@ -91,7 +130,7 @@ static FMCPObject State(UOKCharacterController* G,FOKCharacterMCPState& S,bool b
  if(G->PropertyStatus)R->SetStringField(TEXT("property_status"),G->PropertyStatus->GetText().ToString());if(G->AppearanceStatus)R->SetStringField(TEXT("appearance_status"),G->AppearanceStatus->GetText().ToString());
  FMCPRows States;for(int32 I=0;I<9;++I)States.Add(MakeShared<FJsonValueNumber>(G->ClothesStates[I]));R->SetArrayField(TEXT("clothing_states"),States);
  if(auto* V=G->GetWorld()->GetGameViewport())if(V->Viewport){auto Size=V->Viewport->GetSizeXY();R->SetNumberField(TEXT("viewport_width"),Size.X);R->SetNumberField(TEXT("viewport_height"),Size.Y);}
- auto* A=G->PreviewActor.Get();R->SetNumberField(TEXT("pose_mode"),A->PoseMode);R->SetBoolField(TEXT("preview_ticking"),A->IsActorTickEnabled());auto Waiting=MakeShared<FJsonObject>();Waiting->SetBoolField(TEXT("mods_dirty"),G->bEditorModsDirty);Waiting->SetBoolField(TEXT("shape_dirty"),A->bShapeDirty);Waiting->SetBoolField(TEXT("materials_ready"),A->bPlaybackMaterialsReady);Waiting->SetBoolField(TEXT("shaders_compiling"),GShaderCompilingManager&&GShaderCompilingManager->IsCompiling());R->SetObjectField(TEXT("settling"),Waiting);auto C=MakeShared<FJsonObject>();C->SetNumberField(TEXT("yaw"),A->OrbitYaw);C->SetNumberField(TEXT("pitch"),A->OrbitPitch);C->SetNumberField(TEXT("distance"),A->OrbitDistance);C->SetArrayField(TEXT("focus"),{MakeShared<FJsonValueNumber>(A->OrbitFocus.X),MakeShared<FJsonValueNumber>(A->OrbitFocus.Y),MakeShared<FJsonValueNumber>(A->OrbitFocus.Z)});if(A->StudioLens){C->SetStringField(TEXT("projection"),A->StudioLens->ProjectionMode==ECameraProjectionMode::Orthographic?TEXT("orthographic"):TEXT("perspective"));C->SetNumberField(TEXT("ortho_width"),A->StudioLens->OrthoWidth);}R->SetObjectField(TEXT("camera"),C);R->SetBoolField(TEXT("sweep_active"),A->bProductSweep);R->SetBoolField(TEXT("sweep_latched"),A->bProductLightLatched);R->SetStringField(TEXT("sweep_ramp"),A->ProductRampLabel);R->SetNumberField(TEXT("sweep_slots"),A->ProductRampSlots);return R;
+ auto* A=G->PreviewActor.Get();if(!A)return R;R->SetNumberField(TEXT("pose_mode"),A->PoseMode);R->SetBoolField(TEXT("preview_ticking"),A->IsActorTickEnabled());auto Waiting=MakeShared<FJsonObject>();Waiting->SetBoolField(TEXT("mods_dirty"),G->bEditorModsDirty);Waiting->SetBoolField(TEXT("shape_dirty"),A->bShapeDirty);Waiting->SetBoolField(TEXT("materials_ready"),A->bPlaybackMaterialsReady);Waiting->SetBoolField(TEXT("shaders_compiling"),GShaderCompilingManager&&GShaderCompilingManager->IsCompiling());R->SetObjectField(TEXT("settling"),Waiting);auto C=MakeShared<FJsonObject>();C->SetNumberField(TEXT("yaw"),A->OrbitYaw);C->SetNumberField(TEXT("pitch"),A->OrbitPitch);C->SetNumberField(TEXT("distance"),A->OrbitDistance);C->SetArrayField(TEXT("focus"),{MakeShared<FJsonValueNumber>(A->OrbitFocus.X),MakeShared<FJsonValueNumber>(A->OrbitFocus.Y),MakeShared<FJsonValueNumber>(A->OrbitFocus.Z)});if(A->StudioLens){C->SetStringField(TEXT("projection"),A->StudioLens->ProjectionMode==ECameraProjectionMode::Orthographic?TEXT("orthographic"):TEXT("perspective"));C->SetNumberField(TEXT("ortho_width"),A->StudioLens->OrthoWidth);}R->SetObjectField(TEXT("camera"),C);R->SetBoolField(TEXT("sweep_active"),A->bProductSweep);R->SetBoolField(TEXT("sweep_latched"),A->bProductLightLatched);R->SetStringField(TEXT("sweep_ramp"),A->ProductRampLabel);R->SetNumberField(TEXT("sweep_slots"),A->ProductRampSlots);return R;
 }
 static void Page(UOKCharacterController* G,FOKCharacterMCPState& S,const FMCPRows& All,const TCHAR* Field=TEXT("parameters"))
 {
@@ -144,26 +183,58 @@ static void Camera(UOKCharacterController* G,FOKCharacterMCPState& S)
 }
 }
 
+static void DriveShapeRamp(UOKCharacterController* G,FOKCharacterMCPState& S)
+{
+ const double Elapsed=FPlatformTime::Seconds()-S.ShapeRampOrigin;
+ auto Apply=[&](int32 Index,float Value){
+  if(S.ShapeRampHoldIndex==Index&&FMath::IsNearlyEqual(S.ShapeRampHoldValue,Value,0.00005f))return;
+  G->OnShapeChanged(true,Index,Value);S.ShapeRampHoldIndex=Index;S.ShapeRampHoldValue=Value;};
+ if(S.ShapeRamps.Num()==0){S.Phase=4;S.ReadyAt=0;return;}
+ if(Elapsed<0){Apply(S.ShapeRamps[0].Index,S.ShapeRamps[0].From);return;}
+ double Cursor=0;
+ for(int32 I=0;I<S.ShapeRamps.Num();++I){
+  const auto& R=S.ShapeRamps[I];
+  if(Elapsed<Cursor+R.Seconds){
+   if(S.ShapeRampIndex!=I){if(S.ShapeRampIndex>=0)Apply(S.ShapeRamps[S.ShapeRampIndex].Index,S.ShapeRamps[S.ShapeRampIndex].Restore);S.ShapeRampIndex=I;G->SyncShapeSliders();}
+   Apply(R.Index,FMath::Lerp(R.From,R.To,FMath::Clamp(float((Elapsed-Cursor)/R.Seconds),0.f,1.f)));return;}
+  Cursor+=R.Seconds;}
+ if(S.ShapeRampIndex>=0)Apply(S.ShapeRamps.Last().Index,S.ShapeRamps.Last().Restore);
+ G->SyncShapeSliders();S.ShapeRamps.Reset();S.ShapeRampIndex=-1;S.Phase=4;S.ReadyAt=0;
+}
+
 void UOKCharacterController::TickCharacterMCP()
 {
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_GalleryMCP);
  using namespace OKCharacterMCP;
- if(!FParse::Param(FCommandLine::Get(),TEXT("CharacterMCP"))||bInteractionOnly||!IsInViewport())return;
- if(!CharacterMCP){CharacterMCP=MakeShared<FOKCharacterMCPState>();auto& S=*CharacterMCP;if(!FParse::Value(FCommandLine::Get(),TEXT("CharacterMCPDir="),S.Root))S.Root=FPaths::ProjectSavedDir()/TEXT("CharacterMCP");S.Root=FPaths::ConvertRelativePathToFull(S.Root);for(const TCHAR* D:{TEXT("requests"),TEXT("responses"),TEXT("images"),TEXT("cards")})IFileManager::Get().MakeDirectory(*(S.Root/D),true);UE_LOG(LogTemp,Display,TEXT("Character MCP enabled: %s"),*S.Root);}
+ if(!IsInViewport())return;
+ if(!CharacterMCP){CharacterMCP=MakeShared<FOKCharacterMCPState>();CharacterMCP->Box=OKCharacterMCPBox();CharacterMCP->Root=CharacterMCP->Box->Root;
+  // OK Studio and the 1-on-1 scene hide this widget, which stops its NativeTick; the mailbox keeps answering.
+  CharacterMCP->StudioTicker=FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this,[this](float){if(bOkStudioOpen||GetVisibility()==ESlateVisibility::Collapsed)TickCharacterMCP();return true;}));}
  auto& S=*CharacterMCP;
- if(FPlatformTime::Seconds()-S.HeartbeatAt>.5){const double HeartbeatBegan=FPlatformTime::Seconds();S.HeartbeatAt=HeartbeatBegan;auto Status=Entries.IsValidIndex(SelectedIndex)&&IsValid(PreviewActor)?State(this,S,false):MakeShared<FJsonObject>();if(!IsValid(PreviewActor))Status->SetBoolField(TEXT("busy"),true);Status->SetNumberField(TEXT("heartbeat"),double(FDateTime::UtcNow().ToUnixTimestamp()));Status->SetStringField(TEXT("operation"),S.Request?S.Action:FString());Status->SetNumberField(TEXT("phase"),S.Phase);const FString Path=S.Root/TEXT("status.json");if(FFileHelper::SaveStringToFile(Encode(Status),*(Path+TEXT(".tmp")),FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))IFileManager::Get().Move(*Path,*(Path+TEXT(".tmp")),true);const double HeartbeatMs=(FPlatformTime::Seconds()-HeartbeatBegan)*1000.;if(HeartbeatMs>8.)UE_LOG(LogTemp,Display,TEXT("OK mcp heartbeat %.1f ms"),HeartbeatMs);}
+ if(FPlatformTime::Seconds()-S.HeartbeatAt>.5){const double HeartbeatBegan=FPlatformTime::Seconds();S.HeartbeatAt=HeartbeatBegan;auto Status=State(this,S,false);if(!IsValid(PreviewActor))Status->SetBoolField(TEXT("busy"),true);Status->SetNumberField(TEXT("heartbeat"),double(FDateTime::UtcNow().ToUnixTimestamp()));Status->SetStringField(TEXT("operation"),S.Request?S.Action:FString());Status->SetNumberField(TEXT("phase"),S.Phase);{FScopeLock Lock(&S.Box->Guard);S.Box->Status=Status;}const double HeartbeatMs=(FPlatformTime::Seconds()-HeartbeatBegan)*1000.;if(HeartbeatMs>8.)UE_LOG(LogTemp,Display,TEXT("OK mcp heartbeat %.1f ms"),HeartbeatMs);}
  if(S.Request){const FString Operation=S.RequestId+FString::FromInt(S.Phase);if(Operation!=S.LoggedOperation){S.LoggedOperation=Operation;UE_LOG(LogTemp,Display,TEXT("Character MCP operation=%s phase=%d busy=%d actor=%d"),*S.Action,S.Phase,Busy(this),IsValid(PreviewActor));}}
  if(!S.AutoLoadAttempted){S.AutoLoadAttempted=true;FString Card;if(FParse::Value(FCommandLine::Get(),TEXT("CharacterMCPCard="),Card)&&IFileManager::Get().FileExists(*Card)){
   bIndependentCards=!UKKCardWorkspace::PortableSourcePath(Card).IsEmpty();int32 Index=Entries.IndexOfByPredicate([&](const auto& E){return E.Path==Card;});if(Index==INDEX_NONE){FKKCardListEntry E;E.Path=Card;E.FileName=FPaths::GetCleanFilename(Card);Index=Entries.Add(E);}SelectIndex(Index);OnLoad3D();return;
  }}
- if(!S.Request){TArray<FString> Files;IFileManager::Get().FindFiles(Files,*(S.Root/TEXT("requests")/TEXT("*.json")),true,false);Files.Sort();for(const FString& File:Files){const FString Id=FPaths::GetBaseFilename(File);FGuid Guid;if(Id.Len()!=32||!FGuid::ParseExact(Id,EGuidFormats::Digits,Guid))continue;const FString Path=S.Root/TEXT("requests")/File,Claim=Path+TEXT(".claimed");if(!IFileManager::Get().Move(*Claim,*Path,false))continue;FString Text;FMCPObject R;const bool Valid=IFileManager::Get().FileSize(*Claim)<=1048576&&FFileHelper::LoadFileToString(Text,*Claim)&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text),R);IFileManager::Get().Delete(*Claim);S.RequestId=Id;if(!Valid){Finish(S,nullptr,TEXT("Invalid request JSON"));return;}
-   S.Request=R;if(!R->TryGetStringField(TEXT("action"),S.Action))S.Action.Empty();if(!R->TryGetNumberField(TEXT("deadline"),S.Deadline))S.Deadline=0;S.Selection=SelectedIndex;S.Outfit=OutfitIndex;S.Source=Source(this);S.BeforePath=Entries.IsValidIndex(SelectedIndex)?Entries[SelectedIndex].Path:FString();Refresh(this,S);break;}}
+ if(!S.Request){TPair<FString,FString> In;if(S.Box->Incoming.Dequeue(In)){FMCPObject R;S.RequestId=In.Key;S.LastRequestAt=FPlatformTime::Seconds();if(In.Value.IsEmpty()||!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(In.Value),R)||!R){Finish(S,nullptr,TEXT("Invalid request JSON"));return;}
+  S.Request=R;if(!R->TryGetStringField(TEXT("action"),S.Action))S.Action.Empty();if(!R->TryGetNumberField(TEXT("deadline"),S.Deadline))S.Deadline=0;S.Selection=SelectedIndex;S.Outfit=OutfitIndex;S.Source=Source(this);S.BeforePath=Entries.IsValidIndex(SelectedIndex)?Entries[SelectedIndex].Path:FString();Refresh(this,S);}}
  if(!S.Request)return;if(!FMath::IsFinite(S.Deadline)||FDateTime::UtcNow().ToUnixTimestamp()>S.Deadline){Finish(S,nullptr,TEXT("Request expired; re-query state before retrying"));return;}
+ if(S.Phase==6){DriveShapeRamp(this,S);return;}
  if(S.Phase>0&&Busy(this)){S.ReadyAt=0;return;}
- if(!Entries.IsValidIndex(SelectedIndex)||!bModelLayout||!IsValid(PreviewActor)||InteractionWidget||InteractionScene||bEnterInteractionAfterLoad){Finish(S,nullptr,TEXT("Open character edit mode and load a 3D character first"));return;}
+ auto LoadCard=[&](const FString& Path){bIndependentCards=!UKKCardWorkspace::PortableSourcePath(Path).IsEmpty();int32 Index=Entries.IndexOfByPredicate([&](const auto& E){return FPaths::IsSamePath(E.Path,Path);});if(Index==INDEX_NONE){FKKCardListEntry E;E.Path=Path;E.FileName=FPaths::GetCleanFilename(Path);Index=Entries.Add(E);}SelectIndex(Index);if(SelectedIndex!=Index){Finish(S,nullptr,TEXT("Card could not be read"));return;}OnLoad3D();S.Selection=SelectedIndex;S.Outfit=OutfitIndex;S.Source=Source(this);S.Phase=4;S.ReadyAt=0;};
+ const bool Interaction=bInteractionOnly||InteractionWidget||InteractionScene||bEnterInteractionAfterLoad;
+ // The card wall and the state need no character.
+ if(S.Phase==0&&S.Action==TEXT("state")){Finish(S,State(this,S));return;}
+ if(S.Phase==0&&S.Action==TEXT("cards")){FMCPRows Rows;for(int32 I=0;I<Entries.Num();++I){auto O=MakeShared<FJsonObject>();O->SetStringField(TEXT("key"),Entries[I].Path);O->SetStringField(TEXT("label"),Entries[I].FileName);O->SetNumberField(TEXT("index"),I);Rows.Add(MakeShared<FJsonValueObject>(O));}Page(this,S,Rows,TEXT("cards"));return;}
+ if(S.Phase==0&&S.Action==TEXT("select")){double Index=-1;if(Interaction||Busy(this)||!S.Request->TryGetNumberField(TEXT("index"),Index)||!Entries.IsValidIndex(int32(Index))){Finish(S,nullptr,TEXT("Busy, in the 1-on-1 scene, or no such card index"));return;}SelectIndex(int32(Index));Finish(S,State(this,S));return;}
+ if(S.Phase==0&&S.Action==TEXT("load")&&!Interaction&&!IsValid(PreviewActor)){FString Path;if(Busy(this)||!S.Request->TryGetStringField(TEXT("path"),Path)||FPaths::IsRelative(Path)||!FPaths::GetExtension(Path).Equals(TEXT("png"),ESearchCase::IgnoreCase)||!IFileManager::Get().FileExists(*Path)){Finish(S,nullptr,TEXT("Provide an existing absolute PNG card path"));return;}LoadCard(Path);return;}
+ if(!bOkStudioOpen&&GetVisibility()==ESlateVisibility::Collapsed){Finish(S,nullptr,TEXT("In the 1-on-1 scene: use ui_widgets, ui_press, ui_set"));return;}
+ static const TSet<FString> InInteraction={TEXT("controls"),TEXT("control_set"),TEXT("action"),TEXT("screenshot")};
+ if(Interaction&&!InInteraction.Contains(S.Action)){Finish(S,nullptr,TEXT("Not in the 1-on-1 scene: use controls, control_set, action, screenshot here, and ui_widgets for its panel"));return;}
+ if(!IsValid(PreviewActor)||(!Interaction&&(!Entries.IsValidIndex(SelectedIndex)||!bModelLayout))){Finish(S,nullptr,TEXT("Open character edit mode and load a 3D character first"));return;}
  if(S.Phase==0){FString Expected;S.Request->TryGetStringField(TEXT("session"),Expected);if(S.Action!=TEXT("state")&&Expected!=S.Session){Finish(S,nullptr,TEXT("Character changed; obtain a new session"));return;}static const TSet<FString> Mutations={TEXT("set"),TEXT("reset"),TEXT("control_set"),TEXT("apply"),TEXT("appearance"),TEXT("add_accessory"),TEXT("restore"),TEXT("camera"),TEXT("save"),TEXT("action"),TEXT("load"),TEXT("product_sweep")};if(Mutations.Contains(S.Action)){double Revision;if(!S.Request->TryGetNumberField(TEXT("revision"),Revision)||Revision!=S.Revision){Finish(S,nullptr,TEXT("Stale revision; re-query state"));return;}}}
  else if(SelectedIndex!=S.Selection||OutfitIndex!=S.Outfit||Source(this)!=S.Source){Finish(S,nullptr,TEXT("Character changed during operation"));return;}
- if(S.Action==TEXT("state")){Finish(S,State(this,S));return;}if(S.Phase==0&&Busy(this)){Finish(S,nullptr,TEXT("Editor busy; wait and re-query state"));return;}if(S.Phase>0&&Busy(this)){S.ReadyAt=0;return;}
+ if(S.Phase==0&&Busy(this)){Finish(S,nullptr,TEXT("Editor busy; wait and re-query state"));return;}if(S.Phase>0&&Busy(this)){S.ReadyAt=0;return;}
  if(S.Phase==4){if(!Settled(this,S))return;Finish(S,State(this,S));return;}
  if(S.Phase==5){Capture(this,S);return;}
  if(S.Phase==3){if(!Settled(this,S))return;FString Target,Item;S.Request->TryGetStringField(TEXT("target"),Target);S.Request->TryGetStringField(TEXT("item"),Item);if((S.Action==TEXT("apply")&&!PendingProperties.IsEmpty())||(S.Action==TEXT("appearance")&&AppearanceSelectedKeys.FindRef(Target)!=Item)||(S.Action==TEXT("add_accessory")&&Entries[SelectedIndex].Path==S.BeforePath)){Finish(S,nullptr,TEXT("Operation failed; inspect editor status"));return;}Finish(S,State(this,S));return;}
@@ -185,7 +256,7 @@ void UOKCharacterController::TickCharacterMCP()
  if(S.Action==TEXT("controls")){Page(this,S,OKCharacterMCPRegistry::Controls(this),TEXT("controls"));return;}
  if(S.Action==TEXT("load")){
   FString Path;if(!PendingProperties.IsEmpty()||!S.Request->TryGetStringField(TEXT("path"),Path)||FPaths::IsRelative(Path)||!FPaths::GetExtension(Path).Equals(TEXT("png"),ESearchCase::IgnoreCase)||!IFileManager::Get().FileExists(*Path)){Finish(S,nullptr,TEXT("Apply/reset pending edits and provide an existing absolute PNG card path"));return;}
-  bIndependentCards=!UKKCardWorkspace::PortableSourcePath(Path).IsEmpty();int32 Index=Entries.IndexOfByPredicate([&](const auto& E){return FPaths::IsSamePath(E.Path,Path);});if(Index==INDEX_NONE){FKKCardListEntry E;E.Path=Path;E.FileName=FPaths::GetCleanFilename(Path);Index=Entries.Add(E);}SelectIndex(Index);if(SelectedIndex!=Index){Finish(S,nullptr,TEXT("Card could not be read"));return;}OnLoad3D();S.Selection=SelectedIndex;S.Outfit=OutfitIndex;S.Source=Source(this);S.Phase=4;S.ReadyAt=0;return;
+  LoadCard(Path);return;
  }
  if(S.Action==TEXT("control_set")){FString Key,Error;if(!S.Request->TryGetStringField(TEXT("key"),Key)||!OKCharacterMCPRegistry::SetControl(this,Key,S.Request->TryGetField(TEXT("value")),Error)){Finish(S,nullptr,Error.IsEmpty()?TEXT("Missing control key"):Error);return;}S.Selection=SelectedIndex;S.Outfit=OutfitIndex;S.Source=Source(this);S.Phase=4;S.ReadyAt=0;return;}
  if(S.Action==TEXT("action")){FString Command;S.Request->TryGetStringField(TEXT("command"),Command);
@@ -209,6 +280,17 @@ void UOKCharacterController::TickCharacterMCP()
  if(S.Action==TEXT("restore")){FString Id;S.Request->TryGetStringField(TEXT("snapshot"),Id);auto* Snap=S.Snapshots.Find(Id);if(!Snap||Snap->Source!=Source(this)||Snap->Outfit!=OutfitIndex){Finish(S,nullptr,TEXT("Snapshot belongs to another source character or outfit"));return;}Selected=Snap->Card;bIndependentCards=Snap->Independent;SetWorkingCardPath(Snap->Path);EditorProperties.Reset();FMCPObject O;FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Snap->Properties),O);if(O)for(auto P:O->GetArrayField(TEXT("properties")))EditorProperties.Add(P->AsObject());O.Reset();FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Snap->Pending),O);PendingProperties.Reset();if(O)for(auto E:O->Values)PendingProperties.Add(FString(*E.Key),E.Value);PropertySource=Snap->Path;PropertyOutfit=OutfitIndex;PreviewResourceSignature.Empty();OnLoad3D();S.Phase=3;S.ReadyAt=0;return;}
  if(S.Action==TEXT("camera")){Camera(this,S);return;}
  if(S.Action==TEXT("product_sweep")){FString Key;S.Request->TryGetStringField(TEXT("ramp"),Key);double Seconds=5;S.Request->TryGetNumberField(TEXT("seconds"),Seconds);if(!FMath::IsFinite(Seconds)||Seconds<1||Seconds>20){Finish(S,nullptr,TEXT("seconds must be 1..20"));return;}UTexture2D* Ramp=nullptr;if(!Key.IsEmpty()){FString RampError;Ramp=OKLoadRenderRamp(Key,RampError);if(!Ramp){Finish(S,nullptr,RampError);return;}}SuspendClothingWarmForCapture();FString Error;if(!PreviewActor->BeginProductCloseup(Key,Ramp,float(Seconds),Error)){Finish(S,nullptr,Error);return;}++S.Revision;Finish(S,State(this,S));return;}
+ if(S.Action==TEXT("shape_ramp")){
+  const FMCPRows* Rows=nullptr;double Lead=0.35;S.Request->TryGetNumberField(TEXT("lead"),Lead);
+  if(!S.Request->TryGetArrayField(TEXT("ramps"),Rows)||!Rows||Rows->IsEmpty()||Rows->Num()>16||!FMath::IsFinite(Lead)||Lead<0||Lead>2){Finish(S,nullptr,TEXT("ramps requires 1..16 entries"));return;}
+  S.ShapeRamps.Reset();double Total=0;
+  for(auto V:*Rows){const FMCPObject* O=nullptr;if(!V->TryGetObject(O)||!O||!O->IsValid()){Finish(S,nullptr,TEXT("Invalid ramp"));return;}double Index,From,To,Seconds,Restore;if(!(*O)->TryGetNumberField(TEXT("index"),Index)||!(*O)->TryGetNumberField(TEXT("from"),From)||!(*O)->TryGetNumberField(TEXT("to"),To)||!(*O)->TryGetNumberField(TEXT("seconds"),Seconds)||Index!=FMath::FloorToDouble(Index)||Index<0||Index>43||!FMath::IsFinite(From)||!FMath::IsFinite(To)||From<-1||From>2||To<-1||To>2||!FMath::IsFinite(Seconds)||Seconds<0.05||Seconds>20){Finish(S,nullptr,TEXT("Ramp index, from, to or seconds is outside the body slider"));return;}if(!(*O)->TryGetNumberField(TEXT("restore"),Restore)||!FMath::IsFinite(Restore)||Restore<-1||Restore>2)Restore=From;FOKCharacterMCPState::FShapeRamp R;R.Index=int32(Index);R.From=float(From);R.To=float(To);R.Restore=float(Restore);R.Seconds=float(Seconds);Total+=Seconds;S.ShapeRamps.Add(R);}
+  if(Total>60){S.ShapeRamps.Reset();Finish(S,nullptr,TEXT("Ramp longer than 60s"));return;}
+  S.ShapeRampIndex=-1;S.ShapeRampHoldIndex=-1;S.ShapeRampOrigin=FPlatformTime::Seconds()+Lead;S.Phase=6;S.ReadyAt=0;
+  auto Mark=MakeShared<FJsonObject>();Mark->SetNumberField(TEXT("lead"),Lead);Mark->SetNumberField(TEXT("seconds"),Total);Mark->SetNumberField(TEXT("unix_ms"),double(FDateTime::UtcNow().ToUnixTimestamp())*1000.+FDateTime::UtcNow().GetMillisecond());
+  const FString MarkPath=S.Root/TEXT("ramp.json");if(FFileHelper::SaveStringToFile(Encode(Mark),*(MarkPath+TEXT(".tmp")),FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))IFileManager::Get().Move(*MarkPath,*(MarkPath+TEXT(".tmp")),true);
+  UE_LOG(LogTemp,Display,TEXT("Character MCP shape ramp count=%d seconds=%.2f lead=%.2f"),S.ShapeRamps.Num(),Total,Lead);
+  DriveShapeRamp(this,S);return;}
  if(S.Action==TEXT("screenshot")||S.Action==TEXT("views")){S.Phase=2;S.ReadyAt=0;S.View=0;return;}
  if(S.Action==TEXT("measure")||S.Action==TEXT("geometry")){if(!Settled(this,S))return;FString Error;auto Geometry=OKCharacterMCPGeometry(PreviewActor,Error);if(!Geometry){Finish(S,nullptr,Error);return;}auto R=State(this,S);Geometry->SetStringField(TEXT("session"),S.Session);Geometry->SetNumberField(TEXT("revision"),S.Revision);for(auto E:Geometry->Values)if(E.Key!=TEXT("meshes"))R->SetField(FString(*E.Key),E.Value);if(S.Action==TEXT("geometry")){const FString Directory=S.Root/TEXT("geometry");IFileManager::Get().MakeDirectory(*Directory,true);const FString Path=Directory/(S.RequestId+TEXT(".json"));if(!FFileHelper::SaveStringToFile(Encode(Geometry.ToSharedRef()),*(Path+TEXT(".tmp")),FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM)||!IFileManager::Get().Move(*Path,*(Path+TEXT(".tmp")),true)){Finish(S,nullptr,TEXT("Cannot save geometry"));return;}R->SetStringField(TEXT("geometry"),Path);}Finish(S,R);return;}
  if(S.Action==TEXT("save")){if(!PendingProperties.IsEmpty()){Finish(S,nullptr,TEXT("Apply staged properties before saving"));return;}FString Name;S.Request->TryGetStringField(TEXT("name"),Name);if(Name.IsEmpty()||Name.Len()>80){Finish(S,nullptr,TEXT("Invalid card name"));return;}for(TCHAR C:Name)if(!FChar::IsAlnum(C)&&C!=TEXT('_')&&C!=TEXT('-')&&C!=TEXT(' ')){Finish(S,nullptr,TEXT("Use letters, numbers, spaces, dash or underscore for card name"));return;}
@@ -218,5 +300,5 @@ void UOKCharacterController::TickCharacterMCP()
 
 void UOKCharacterController::CancelCharacterMCP()
 {
- if(!CharacterMCP)return;auto& S=*CharacterMCP;if(S.Request)OKCharacterMCP::Finish(S,nullptr,TEXT("Character editor closed"));else OKCharacterMCP::RestoreCamera(S);CharacterMCP.Reset();
+ if(!CharacterMCP)return;auto& S=*CharacterMCP;FTSTicker::RemoveTicker(S.StudioTicker);if(S.Request)OKCharacterMCP::Finish(S,nullptr,TEXT("Character editor closed"));else OKCharacterMCP::RestoreCamera(S);CharacterMCP.Reset();
 }

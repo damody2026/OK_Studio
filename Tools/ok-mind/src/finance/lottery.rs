@@ -186,6 +186,15 @@ pub fn draw_json(d: &Draw, game: Lotto) -> Value {
            "date": dates::format(d.day), "numbers": d.numbers, "special": d.special, "pool": d.pool, "jackpot_hit": d.npc_jackpot})
 }
 
+/// An issue number with the Western year in front: 99011 -> 2010011. Left alone if it is not a year and a three-digit count.
+pub fn issue_western(issue: &str) -> String {
+    let Some(split) = issue.len().checked_sub(3) else { return issue.to_string() };
+    match issue.get(..split).and_then(|y| y.parse::<i32>().ok()) {
+        Some(year) => format!("{}{}", year + 1911, &issue[split..]),
+        None => issue.to_string(),
+    }
+}
+
 // ------------------------------------------------------------------------------------------------ scratch cards
 
 pub struct Theme {
@@ -254,6 +263,12 @@ pub fn scratch(seed: u64, serial: i64, price: i64) -> (Vec<i64>, i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn issue_takes_the_western_year_outside_taiwan() {
+        assert_eq!(issue_western("99011"), "2010011");
+        assert_eq!(issue_western("100001"), "2011001");
+        assert_eq!(issue_western("011"), "011");
+    }
     #[test]
     fn draws_are_fixed_by_seed_and_scratch_returns_about_sixty_percent() {
         let a = draw(42, Lotto::Star649, 5);

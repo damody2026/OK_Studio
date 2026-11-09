@@ -41,6 +41,9 @@ public:
 	/** Tracks opened into their sub rows. */
 	TSet<int32> Open;
 
+	/** The voice clip picked (its character, index in VoiceClips; track -1: none). */
+	int32 VoiceTrack = -1, VoiceIndex = -1;
+
 	void DeleteSelected();
 	void CopySelected();
 	void PasteAtPlayhead();
@@ -55,12 +58,12 @@ private:
 	TWeakObjectPtr<UOKStudioGame> Game;
 	TFunction<void(const FVector2D&)> OnEaseMenu;
 	TFunction<void(const FString&)> OnStatus;
-	/** The rows as painted: the track, its sub row (-1 the track itself; 0 transform, 1 FK, 2 state, 3 value). */
+	/** The rows as painted: the track, its sub row (-1 the track itself; 0 transform, 1 FK, 2 state, 3 value, 4 motion, 5 voice). */
 	struct FRowInfo { int32 Track = 0; int32 Sub = -1; FString Label; };
 	TArray<FRowInfo> RowInfos() const;
 	/** Clipboard: keys relative to the earliest, per track. */
 	TArray<TPair<int32, FOKSceneKey>> Clip;
-	enum class EDrag : uint8 { None, Scrub, Keys, Box } Drag = EDrag::None;
+	enum class EDrag : uint8 { None, Scrub, Keys, Box, Voice } Drag = EDrag::None;
 	FVector2D DragFrom = FVector2D::ZeroVector, DragNow = FVector2D::ZeroVector;
 	float DragTimeFrom = 0.f;
 	float Zoom = 1.f, Scroll = 0.f;
@@ -70,5 +73,7 @@ private:
 	float XToTime(const FGeometry& G, float X) const;
 	/** The key under a local position. */
 	bool HitKey(const FGeometry& G, const FVector2D& Local, FKeyRef& Out) const;
+	/** The voice clip under a local position. */
+	bool HitVoice(const FGeometry& G, const FVector2D& Local, int32& OutTrack, int32& OutIndex) const;
 	bool SubHasKey(int32 Sub, const FOKSceneKey& K, const FOKSceneObject* O) const;
 };

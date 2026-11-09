@@ -1,0 +1,17 @@
+Traceback (most recent call last):
+  File "C:/portable/OpenKoikatsu/Tools/run_street_city_unreal_deferred.py", line 11, in tick
+    try:runpy.run_path(str(SCRIPT),run_name='__main__')
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen runpy>", line 291, in run_path
+  File "<frozen runpy>", line 98, in _run_module_code
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\portable\OpenKoikatsu\Tools\repair_street_city_native_foliage.py", line 6, in <module>
+    installed=read(OUT/'native-install.json');mats={aid:foliage_material(aid) for aid in ['camphor','cherry']};meshes={row['id']:unreal.load_asset(row['asset']) for row in installed['assets'] if row['id'] in mats}
+                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\portable\OpenKoikatsu\Tools\repair_street_city_native_foliage.py", line 6, in <dictcomp>
+    installed=read(OUT/'native-install.json');mats={aid:foliage_material(aid) for aid in ['camphor','cherry']};meshes={row['id']:unreal.load_asset(row['asset']) for row in installed['assets'] if row['id'] in mats}
+                                                        ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\portable\OpenKoikatsu\Tools\street_city_native_foliage.py", line 18, in foliage_material
+    mel.recompile_material(material);eal.set_metadata_tag(material,'StreetLeafAlphaSHA256',sha(source));eal.set_metadata_tag(material,'StreetLeafMaskChannel','A');assert eal.save_loaded_asset(material)
+                                                                                                                                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

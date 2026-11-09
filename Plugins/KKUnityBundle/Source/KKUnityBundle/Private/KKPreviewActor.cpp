@@ -721,6 +721,9 @@ struct FOKToonShadowParameters
 	FLinearColor EmissionColor = FLinearColor::Black;
 	// Unity Standard-family _Color (linear), multiplied into the albedo; white for other shaders.
 	FLinearColor StandardAlbedoTint = FLinearColor::White;
+	// Unity Standard's detail albedo (keyword _DETAIL_MULX2) and its _DetailAlbedoMap_ST.
+	UTexture2D* StandardDetailTex = nullptr;
+	FLinearColor StandardDetailST = FLinearColor(1.f, 1.f, 0.f, 0.f);
 	// Baked lightmap (RGBM, linear sampling) of a map part, on TEXCOORD1; Lightmaps keeps each index's texture for the
 	// later parts of the same load (only the first part using a lightmap carries it).
 	UTexture2D* LightmapTex = nullptr;
@@ -1412,8 +1415,8 @@ static UMaterialInterface* MakePartMaterial(UTexture2D* Tex, const FString& Blen
 			}
 			auto* Color = NewObject<UMaterialExpressionConstant3Vector>(Mat);
 			Color->Constant = Shadow->EyeColor; Mat->GetExpressionCollection().AddExpression(Color); Add(TEXT("Color"), Color);
-			auto* Enabled = NewObject<UMaterialExpressionConstant>(Mat);
-			Enabled->R = Shadow->EyeHighlight; Mat->GetExpressionCollection().AddExpression(Enabled); Add(TEXT("Enabled"), Enabled);
+			auto* Enabled = NewObject<UMaterialExpressionScalarParameter>(Mat);
+			Enabled->ParameterName = TEXT("_isHighLight"); Enabled->DefaultValue = Shadow->EyeHighlight; Mat->GetExpressionCollection().AddExpression(Enabled); Add(TEXT("Enabled"), Enabled);
 			for (int32 Layer = 0; Layer < 2; ++Layer) {
 				auto* Col = NewObject<UMaterialExpressionConstant4Vector>(Mat);
 				Col->Constant = Shadow->EyeColors[Layer]; Mat->GetExpressionCollection().AddExpression(Col);
@@ -2462,6 +2465,27 @@ return diffuse * (light * (1.0 - shadow) + shadow) * faceScale * lightLift;
 			Tinted->B.Expression = Tint;
 			Mat->GetExpressionCollection().AddExpression(Tinted);
 			ColorOut = Tinted;
+		}
+		// _DETAIL_MULX2: albedo x detail x unity_ColorSpaceDouble (4.59479 in linear colour space).
+		if (Shadow && Shadow->StandardDetailTex)
+		{
+			UMaterialExpressionTextureSample* Detail = NewObject<UMaterialExpressionTextureSample>(Mat);
+			Detail->Material = Mat;
+			Detail->Texture = Shadow->StandardDetailTex;
+			Detail->SamplerType = Shadow->StandardDetailTex->SRGB ? SAMPLERTYPE_Color : SAMPLERTYPE_LinearColor;
+			Detail->Coordinates.Expression = MakeUnityMaskUVParameter(Mat, TEXT("_DetailAlbedoMap_ST"), Shadow->StandardDetailST);
+			Mat->GetExpressionCollection().AddExpression(Detail);
+			UMaterialExpressionMultiply* Doubled = NewObject<UMaterialExpressionMultiply>(Mat);
+			Doubled->Material = Mat;
+			Doubled->A.Expression = Detail;
+			Doubled->ConstB = 4.59479f;
+			Mat->GetExpressionCollection().AddExpression(Doubled);
+			UMaterialExpressionMultiply* Detailed = NewObject<UMaterialExpressionMultiply>(Mat);
+			Detailed->Material = Mat;
+			Detailed->A.Expression = ColorOut;
+			Detailed->B.Expression = Doubled;
+			Mat->GetExpressionCollection().AddExpression(Detailed);
+			ColorOut = Detailed;
 		}
 		// Maker CustomScene's measured interpolated light probe is blue above,
 		// neutral below, and identical in the four horizontal directions. Add
@@ -3869,6 +3893,15 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 	// camera-parented light. The program's L is the way the light travels (the camera's forward), so it takes the
 	// opposite (U166: lit from the view, the sea did not change with the time of day).
 	Vector(TEXT("_OKLightDir"), FLinearColor(0.f, 0.f, 0.f, 0.f));
+	// Lux Water (_OKLux 1, U169): its water colour under the time's ambient, the sun and what scatters through it. It
+	// reflects no sky: its planar reflection texture is null in Studio (native lighthouse: the sea takes no colour from it).
+	Scalar(TEXT("_OKLux"), 0.f);
+	Vector(TEXT("_OKScatter"), FLinearColor::Black);
+	// The map's lights only for the water ("Directional Light_water": 3.5 by day) and the deep foam they light.
+	Vector(TEXT("_OKWaterLight"), FLinearColor::Black);
+	Vector(TEXT("_OKDeepFoam"), FLinearColor(0.f, 0.f, 0.f, 0.f));
+	// The sky controller's sun or moon Light: the lighthouse's evening sea is brown from it (measured, not Lux Water's terms).
+	Vector(TEXT("_OKSkyLight"), FLinearColor::Black);
 	Scalar(TEXT("_RimSize"), 0.75f); Scalar(TEXT("_Tiling"), 0.9f); Scalar(TEXT("_RefractionAmount"), 0.055f);
 	Scalar(TEXT("_Transparency"), 0.35f); Scalar(TEXT("_Wavesspeed"), 0.5f); Scalar(TEXT("_Glossiness"), 0.5f);
 	Scalar(TEXT("_Depth"), 15.f); Scalar(TEXT("_Depthdarkness"), 0.15f); Scalar(TEXT("_Rimtiling"), 1.f);
@@ -3972,6 +4005,14 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 		"lit += (diffuse * LightColor0.rgb + 2.0 * OKAmbient.rgb) * water;\n"
 		"float overlay = alpha > 0.5 ? 1.0 - (1.0 - 2.0 * (alpha - 0.5)) * (1.0 - deep) : 2.0 * alpha * deep;\n"
 		"GrabOffset = r4.xz;\n"
+		"if (OKLux > 0.5) {\n"
+		// Lux's _FarBumpSampleParams: its normals are gone by 300 m (without it the far sea was noise).
+		"float nearW = saturate(1.0 - distance(cam, wp) / 300.0);\n"
+		"float ripple = 1.0 + 0.5 * (n.x + n.z) * nearW;\n"
+		"float foam = lerp(0.25, saturate(length(n.xz) * 4.0), nearW);\n"
+		"foam *= foam * OKDeepFoam.a * OKDeepFoam.a * OKDeepFoam.a;\n"
+		"return float4(WaterColor.rgb * (OKAmbient.rgb + 0.2 * diffuse * LightColor0.rgb) * ripple + (0.25 * OKScatter.rgb + foam * OKDeepFoam.rgb) * OKWaterLight.rgb + OKSkyLight.rgb + pow(nh, 256.0) * LightColor0.rgb, saturate(deep * 4.0 + 0.5));\n"
+		"}\n"
 		"return float4(lit, saturate(overlay) + high);");
 	Add(Program);
 	auto* Lit = Add(NewObject<UMaterialExpressionComponentMask>(Mat));
@@ -5069,6 +5110,9 @@ void AKKPreviewActor::Destroyed()
 
 void AKKPreviewActor::DestroyAllParts()
 {
+	CancelWardrobeStage();WornTextures.Reset();
+	for(auto& Mask:WornBodyMasks)if(Mask.Value)Mask.Value->RemoveFromRoot();
+	WornBodyMasks.Reset();
 	StopRenderTextureCaptures();
 	// Wrap morph sets released before their renderers go (their GPU buffers must be released first).
 	for(const FOkMouthSlot& Slot:TArray<FOkMouthSlot>(MouthSlots))SetPartWrapDeltas(Slot.SessionPartIndex,{},{});
@@ -6024,6 +6068,9 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 		if (ShadowParams.LightmapTex || bReflected || (bSourceMapShading))
 		{
 			const FString Shader = Source.MaterialShaderName(i);
+			// Nature/SpeedTree is a linear-space Lambert: Standard's path with no specular (the gamma path overexposed the trees).
+			const bool bSpeedTree = Shader.StartsWith(TEXT("Nature/SpeedTree"), ESearchCase::IgnoreCase);
+			if (bSpeedTree) { ShadowParams.bStandardLinear = true; ShadowParams.StandardSmoothness = 0.f; }
 			if (Shader.StartsWith(TEXT("Standard"), ESearchCase::IgnoreCase))
 			{
 				ShadowParams.bStandardLinear = true;
@@ -6094,13 +6141,27 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 			}
 		}
 		ShadowParams.StandardAlbedoTint = FLinearColor::White;
-		if (!ShadowParams.bItemDraw && Source.MaterialShaderName(i).StartsWith(TEXT("Standard"), ESearchCase::IgnoreCase))
+		if (!ShadowParams.bItemDraw && (Source.MaterialShaderName(i).StartsWith(TEXT("Standard"), ESearchCase::IgnoreCase)
+			|| Source.MaterialShaderName(i).StartsWith(TEXT("Nature/SpeedTree"), ESearchCase::IgnoreCase)))
 		{
 			FLinearColor Tint;
 			if (Source.MaterialValue(i, "_Color", Tint))
 			{
 				auto Linear = [](float V) { return V <= .04045f ? V / 12.92f : FMath::Pow((V + .055f) / 1.055f, 2.4f); };
 				ShadowParams.StandardAlbedoTint = FLinearColor(Linear(Tint.R), Linear(Tint.G), Linear(Tint.B), 1.f);
+			}
+		}
+		ShadowParams.StandardDetailTex = nullptr;
+		if (!ShadowParams.bItemDraw && Source.MaterialKeyword(i, "_DETAIL_MULX2"))
+		{
+			const uint8* Bytes = nullptr;
+			int32 Length = 0;
+			if (Source.ShaderTexture(i, "_DetailAlbedoMap", Bytes, Length))
+			{
+				ShadowParams.StandardDetailTex = TextureFromPngBytes(Bytes, Length);
+				if (ShadowParams.StandardDetailTex) { ShadowParams.StandardDetailTex->AddToRoot(); Output.Textures.Add(ShadowParams.StandardDetailTex); }
+				ShadowParams.StandardDetailST = FLinearColor(1.f, 1.f, 0.f, 0.f);
+				Source.MaterialValue(i, "_DetailAlbedoMap_ST", ShadowParams.StandardDetailST);
 			}
 		}
 		// Unity Standard-family emission (keyword _EMISSION): _EmissionColor (gamma, may exceed 1) times _EmissionMap.
@@ -6814,10 +6875,16 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 						{
 							if (Source.MaterialValue(i, From, V)) Dynamic->SetVectorParameterValue(To, FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), Alpha));
 						};
-						Color("_TranslucencyColor", TEXT("_WaterColor"), 1.f);
+						Color("_Color", TEXT("_WaterColor"), 1.f);
+						Dynamic->SetScalarParameterValue(TEXT("_OKLux"), 1.f);
+						// _TranslucencyIntensity 5.78 at the lighthouse's evening, 0.04 by day: what makes that sea brown.
+						FLinearColor Intensity(0.f, 0.f, 0.f, 0.f);
+						if (Source.MaterialValue(i, "_TranslucencyColor", V) && Source.MaterialValue(i, "_TranslucencyIntensity", Intensity))
+							Dynamic->SetVectorParameterValue(TEXT("_OKScatter"), FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), 1.f) * Intensity.R);
+						if (Source.MaterialValue(i, "_DeepFoamColor", V)) Dynamic->SetVectorParameterValue(TEXT("_OKDeepFoam"), FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), V.A));
 						Color("_UnderWaterReflCol", TEXT("_FresnelColor"), .35f);
 						Color("_FoamColor", TEXT("_RimColor"), .25f);
-						if (Source.MaterialValue(i, "_BumpTiling", V)) Dynamic->SetScalarParameterValue(TEXT("_Tiling"), 1.f - FMath::Clamp(V.G, .02f, .9f));
+						if (Source.MaterialValue(i, "_BumpTiling", V)) Dynamic->SetScalarParameterValue(TEXT("_Tiling"), 1.f - FMath::Clamp(V.R, .01f, .9f));
 						if (Source.MaterialValue(i, "_DepthAtten", V) && V.G > 0.f) Dynamic->SetScalarParameterValue(TEXT("_Depth"), V.G);
 						Dynamic->SetScalarParameterValue(TEXT("_Transparency"), .55f);
 						Dynamic->SetScalarParameterValue(TEXT("_Glossiness"), .8f);
@@ -6865,7 +6932,11 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 					// The water writes Unity's depth texture itself (queue 2500 with a shadow caster): it reads its own
 					// depth there (native probe: hiding it moves the depth behind it), so it is in the stand-in too.
 					DepthTexturePresentParts.Add(Comp);
-					UE_LOG(LogTemp, Display, TEXT("OK stylized water part=%s lux=%d"), *Name, bLuxWater ? 1 : 0);
+					FLinearColor Sun(0.f, 0.f, 0.f, 0.f), Tint(-1.f, -1.f, -1.f, -1.f);
+					Source.MaterialValue(i, "_OKSunVisible", Sun);
+					Source.MaterialValue(i, "_Color", Tint);
+					const uint8* Bump = nullptr; int32 BumpLength = 0;
+					UE_LOG(LogTemp, Display, TEXT("OK stylized water part=%s lux=%d shown=%d color=(%.2f,%.2f,%.2f) bump=%d"), *Name, bLuxWater ? 1 : 0, int32(Sun.R), Tint.R, Tint.G, Tint.B, Source.ShaderTexture(i, "_BumpMap", Bump, BumpLength) ? BumpLength : 0);
 				}
 		// A mirror (FX/MirrorReflection): the scene gives "_ReflectionTex" a capture mirrored in the part's plane.
 		if (Comp && !bBody && !bFaceDraw && Source.MaterialShaderName(i).StartsWith(TEXT("FX/MirrorReflection")))
@@ -7308,6 +7379,158 @@ bool AKKPreviewActor::ApplyAccessoryGeometryCandidate(FOkAppearanceContext& Cont
   Timing->SetNumberField(TEXT("added_renderers"),End-Offset);Timing->SetNumberField(TEXT("staged_components"),Staged.Num());
  }
  UE_LOG(LogTemp,Display,TEXT("Appearance geometry committed removed=%d added=%d components=%d total_ms=%.3f full_rebuild=0"),Removed.Num(),End-Offset,Staged.Num(),(Done-Begin)*1000.);
+ return true;
+}
+
+struct AKKPreviewActor::FWardrobeStage {
+ FOkSession* Donor=nullptr;int32 Offset=0,At=0;bool bRoleDone=false;TSharedPtr<FOKCookedRoleBuild> RoleBuild;
+ TArray<FKKLoadedPart> Parts;TArray<TObjectPtr<UTexture2D>> Textures;TArray<TObjectPtr<UPoseableMeshComponent>> Followers;
+ TArray<FOkMouthSlot> Mouth;TArray<TObjectPtr<UPrimitiveComponent>> Genital;
+ TArray<TObjectPtr<UMaterialInstanceDynamic>> ShadowMaterials,Cooked,Outlines;
+ TObjectPtr<UTexture2D> Ramp;TSet<FString> SeenHead;TMap<FString,int32> Depth;int32 Extra=0,Next=0;FOKToonShadowParameters Shadow;
+ TArray<TObjectPtr<UActorComponent>> Staged;TArray<TPair<TObjectPtr<USceneComponent>,FName>> Sockets;
+ // Nothing here is reachable by the collector until she wears it.
+ void Keep(TArray<TObjectPtr<UObject>>& Out) const {
+  Out.Reset();for(const auto& T:Textures)Out.Add(T.Get());for(const auto& M:Cooked)Out.Add(M.Get());for(const auto& M:Outlines)Out.Add(M.Get());for(const auto& M:ShadowMaterials)Out.Add(M.Get());for(const auto& C:Staged)Out.Add(C.Get());
+ }
+};
+
+UTexture* AKKPreviewActor::WornBodyMask(int32 TopState)
+{
+ const int32 Key=TopState==0?0:TopState==3?2:1;
+ if(const TObjectPtr<UTexture2D>* Known=WornBodyMasks.Find(Key))return Known->Get();
+ TArray<uint8> Png;UTexture2D* Mask=Session.WardrobeBodyMask(TopState,Png)?LinearTextureFromPngBytes(Png.GetData(),Png.Num()):nullptr;
+ WornBodyMasks.Add(Key,Mask);return Mask;
+}
+
+bool AKKPreviewActor::BeginWardrobeStage(FOkSession& Donor,FString& Error)
+{
+ check(IsInGameThread());
+ if(WardrobeStage){Error=TEXT("Clothes are already changing");return false;}
+ if(!bSessionLoadComplete||!SessionLoadState||!Session.IsOpen()||!Donor.IsOpen()){Error=TEXT("Preview is not ready for a change of clothes");return false;}
+ auto W=MakeShared<FWardrobeStage>();W->Donor=&Donor;W->Offset=Session.WardrobeFirst();W->Ramp=ToonRampTex;W->SeenHead=SessionLoadSeenHead;
+ W->Depth=SessionLoadTranslucentDepth;W->Extra=SessionLoadExtra;W->Shadow=SessionLoadState->Shadow;
+ WardrobeStage=W;return true;
+}
+
+int32 AKKPreviewActor::ContinueWardrobeStage(FString& Error,double Budget)
+{
+ check(IsInGameThread());
+ if(!WardrobeStage){Error=TEXT("No change of clothes is staged");return -1;}
+ FWardrobeStage& W=*WardrobeStage;const double Deadline=FPlatformTime::Seconds()+Budget;
+ if(!W.bRoleDone){
+  int32 RoleStep=1;
+  if(OKSharedParents()&&bUseSharedParents)RoleStep=OKPrepareCookedRole(this,Error,Budget,FOKCookedRoleTarget{*W.Donor,W.Cooked,W.Outlines,W.RoleBuild,W.Textures,true});
+  if(RoleStep<0){
+#if WITH_EDITOR
+   UE_LOG(LogTemp,Warning,TEXT("Wardrobe shared materials unavailable (%s): per-part material graphs"),*Error);W.Cooked.Reset();W.Outlines.Reset();Error.Reset();RoleStep=1;
+#else
+   CancelWardrobeStage();return -1;
+#endif
+  }
+  W.Keep(WardrobeStaged);if(RoleStep==0)return 0;
+  W.bRoleDone=true;
+ }
+ const int32 Count=W.Donor->PartCount();
+ FPartBuildOutput Output{W.Parts,W.Textures,W.Followers,W.Mouth,W.Genital,W.ShadowMaterials,W.Cooked,W.Outlines,W.Ramp,
+  W.SeenHead,W.Depth,W.Extra,W.Next,SessionLoadWhiteRamp,W.Shadow};
+ Output.bStage=true;Output.SessionOffset=W.Offset;Output.Staged=&W.Staged;Output.PendingSockets=&W.Sockets;
+ while(W.At<Count){
+  if(!BuildSessionPartRange(*W.Donor,Output,W.At,W.At+1,Error)){CancelWardrobeStage();return -1;}
+  ++W.At;if(FPlatformTime::Seconds()>=Deadline)break;
+ }
+ W.Keep(WardrobeStaged);
+ return W.At>=Count?1:0;
+}
+
+void AKKPreviewActor::CancelWardrobeStage()
+{
+ if(!WardrobeStage)return;
+ FWardrobeStage& W=*WardrobeStage;
+ for(UActorComponent* Component:W.Staged)if(Component)Component->DestroyComponent();
+ for(UTexture2D* Texture:W.Textures)if(Texture&&!LoadedTextures.Contains(Texture)&&Texture!=ToonRampTex)Texture->RemoveFromRoot();
+ ToonShadowMaterials.RemoveAll([&](UMaterialInstanceDynamic* M){return W.Cooked.Contains(M)||W.ShadowMaterials.Contains(M);});
+ WardrobeStage.Reset();WardrobeStaged.Reset();
+}
+
+bool AKKPreviewActor::CommitWardrobeStage(FString& Error)
+{
+ check(IsInGameThread());
+ if(!WardrobeStage){Error=TEXT("No change of clothes is staged");return false;}
+ const double Begin=FPlatformTime::Seconds();
+ FWardrobeStage& W=*WardrobeStage;const int32 Keep=W.Offset;
+ TMap<FName,FTransform> AdoptedNeutral;
+ for(const FKKLoadedPart& Part:W.Parts)if(!Part.RigidFollowBone.IsNone()&&!RigidNeutralBones.Contains(Part.RigidFollowBone)&&!CpuRigidNeutralBones.Contains(Part.RigidFollowBone)){
+  if(const FTransform* Neutral=RigidNeutralAllBones.Find(Part.RigidFollowBone))AdoptedNeutral.Add(Part.RigidFollowBone,*Neutral);
+  else{Error=TEXT("New clothes need an uncaptured rigid neutral socket");CancelWardrobeStage();return false;}
+ }
+ for(const auto& Socket:W.Sockets)if(!BodySkel||BodySkel->GetBoneIndex(Socket.Value)==INDEX_NONE){Error=TEXT("New clothes need a socket she does not have");CancelWardrobeStage();return false;}
+ // Wrap morph sets go before their renderers (DestroyAllParts).
+ for(const FOkMouthSlot& Slot:TArray<FOkMouthSlot>(MouthSlots))if(Slot.SessionPartIndex>=Keep)SetPartWrapDeltas(Slot.SessionPartIndex,{},{});
+ if(!WrapReleases.IsEmpty()){for(auto& R:WrapReleases)if(!R->bReleased)BeginReleaseResource(&R->Set->MorphBuffers);FlushRenderingCommands();WrapReleases.Reset();}
+ if(!FOkSession::WardrobeSwap(Session,*W.Donor,Error)){CancelWardrobeStage();return false;}
+ // Nothing below can fail: what she took off goes.
+ auto Retire=[&](UPrimitiveComponent* Component){
+  if(!Component)return;GenitalPrimitives.Remove(Component);
+  if(ToonShadowCapture)ToonShadowCapture->RemoveShowOnlyComponent(Component);
+  PendingPreviewMaterials.RemoveAll([&](const FKKPreviewMaterialSlot& Entry){return Entry.Component==Component;});
+  Component->DestroyComponent();
+ };
+ int32 Removed=0;
+ for(int32 Index=SkelFollowers.Num()-1;Index>=0;--Index){
+  UPoseableMeshComponent* Follower=SkelFollowers[Index];const int32 Part=OKSessionPartTag(Follower);
+  if(Part!=INDEX_NONE&&Part>=Keep){Retire(Follower);SkelFollowers.RemoveAt(Index);}
+ }
+ TArray<int32> ArrayMap;ArrayMap.Init(INDEX_NONE,Parts.Num());
+ TArray<FKKLoadedPart> Kept;Kept.Reserve(Parts.Num()+W.Parts.Num());
+ for(int32 Index=0;Index<Parts.Num();++Index){
+  FKKLoadedPart& Part=Parts[Index];
+  if(Part.SessionIndex>=Keep){Retire(Part.Comp);++Removed;continue;}
+  ArrayMap[Index]=Kept.Num();Kept.Add(MoveTemp(Part));
+ }
+ for(int32 Index=MouthSlots.Num()-1;Index>=0;--Index){
+  FOkMouthSlot& Slot=MouthSlots[Index];
+  if(Slot.SessionPartIndex>=Keep){Retire(Slot.Comp);Retire(Slot.OutlineComp);MouthSlots.RemoveAt(Index);continue;}
+  if(Slot.PartArrayIndex!=INDEX_NONE)Slot.PartArrayIndex=ArrayMap.IsValidIndex(Slot.PartArrayIndex)?ArrayMap[Slot.PartArrayIndex]:INDEX_NONE;
+ }
+ for(auto It=PartMorphWeights.CreateIterator();It;++It)if(It.Key()>=Keep)It.RemoveCurrent();
+ if(VaginaMorphPart>=Keep){VaginaMorphPart=INDEX_NONE;bVaginaMorphResolved=false;VaginaMorphName=NAME_None;}
+ for(int32 Index=Keep;Index<CookedRoleMaterials.Num();++Index)ToonShadowMaterials.Remove(CookedRoleMaterials[Index]);
+ if(!CookedRoleMaterials.IsEmpty()||!W.Cooked.IsEmpty()){
+  CookedRoleMaterials.SetNum(Keep);CookedRoleOutlines.SetNum(Keep);
+  W.Cooked.SetNum(Session.PartCount()-Keep);W.Outlines.SetNum(Session.PartCount()-Keep);
+  CookedRoleMaterials.Append(W.Cooked);CookedRoleOutlines.Append(W.Outlines);
+ }
+ const int32 BaseArray=Kept.Num();
+ for(FOkMouthSlot& Slot:W.Mouth)if(Slot.PartArrayIndex!=INDEX_NONE)Slot.PartArrayIndex+=BaseArray;
+ const int32 Added=W.Parts.Num();
+ Kept.Append(MoveTemp(W.Parts));Parts=MoveTemp(Kept);
+ for(UActorComponent* Component:W.Staged)if(Component&&!Component->IsRegistered())Component->RegisterComponent();
+ for(const auto& Socket:W.Sockets)if(Socket.Key)Socket.Key->AttachToComponent(BodySkel,FAttachmentTransformRules::SnapToTargetNotIncludingScale,Socket.Value);
+ for(UPoseableMeshComponent* Follower:W.Followers)if(Follower&&Follower->GetSkinnedAsset()){Follower->AllocateTransformData();OKApplySkelPose(Follower,Session);}
+ for(const FOkMouthSlot& Slot:W.Mouth)for(USkeletalMeshComponent* Mesh:{Slot.Comp,Slot.OutlineComp})if(Mesh&&Mesh->GetSkinnedAsset())Mesh->InitAnim(true);
+ SkelFollowers.Append(W.Followers);MouthSlots.Append(MoveTemp(W.Mouth));GenitalPrimitives.Append(W.Genital);
+ // The masks these clothes cut from her body are made as they are asked for (SetClothingPartsHidden).
+ for(auto& Mask:WornBodyMasks)if(Mask.Value)Mask.Value->RemoveFromRoot();
+ WornBodyMasks.Reset();
+ if(!bAllClothesStates)SetBodyMask(WornBodyMask(0));
+ // Textures only the clothes she took off used are let go; a character would otherwise keep every outfit she tried.
+ TArray<TObjectPtr<UTexture2D>> Worn;
+ for(UTexture2D* Texture:W.Textures)if(Texture&&(WornTextures.Contains(Texture)||!LoadedTextures.Contains(Texture)))Worn.AddUnique(Texture);
+ for(UTexture2D* Texture:WornTextures)if(Texture&&!Worn.Contains(Texture)){LoadedTextures.Remove(Texture);Texture->RemoveFromRoot();}
+ for(UTexture2D* Texture:Worn)LoadedTextures.AddUnique(Texture);
+ WornTextures=MoveTemp(Worn);
+ ToonShadowMaterials.Append(W.ShadowMaterials);if(!ToonRampTex&&W.Ramp)ToonRampTex=W.Ramp;RigidNeutralBones.Append(AdoptedNeutral);
+ SessionLoadNextPart=Session.PartCount();
+ if(ToonShadowCapture)for(UActorComponent* Component:W.Staged)if(auto* Primitive=Cast<UPrimitiveComponent>(Component))
+  if(Primitive->IsVisible()&&Primitive->bRenderInMainPass&&!Primitive->ComponentHasTag(TEXT("KKPreviewOutline")))ToonShadowCapture->ShowOnlyComponent(Primitive);
+ if(bCharacterDisplayShadows){ToonShadowBoundIndex=INDEX_NONE;if(ToonShadowTargets.IsValidIndex(ToonShadowReadIndex))BindToonShadowTarget(ToonShadowReadIndex);UpdateToonShadowProjection();}
+ if(SuspendedDisplayTicks.Num()>0)SuspendDisplayTicks(true);
+ SyncMouthPose();RefreshSkinnedDisplay();ApplyMouth();ApplyGenitalVisibility();
+ if(!MaterialOverrides.IsEmpty())ApplyMaterialOverrides();
+ const int32 Components=W.Staged.Num();
+ WardrobeStage.Reset();WardrobeStaged.Reset();
+ UE_LOG(LogTemp,Display,TEXT("Wardrobe committed removed=%d added=%d components=%d commit_ms=%.3f"),Removed,Added,Components,(FPlatformTime::Seconds()-Begin)*1000.);
  return true;
 }
 
@@ -8446,8 +8669,13 @@ void AKKPreviewActor::UpdateRigidFollowers()
 	{
 		const FTransform Current = BodySkel->GetSocketTransform(Entry.Key, RTS_Component);
 		// Procedural vertices are in component space: neutral bone inverse,
-		// followed by the current bone transform, preserves their pivot.
-		Deltas.Add(Entry.Key, Entry.Value.Inverse() * Current * BodyOffset);
+		// followed by the current bone transform, preserves their pivot. Turning about the bone with one scale: a scale
+		// that differs by axis would act along the component's axes and throw vertices far from its origin away.
+		const FVector Ratio = Current.GetScale3D() * FTransform::GetSafeScaleReciprocal(Entry.Value.GetScale3D());
+		const double Scale = (Ratio.X + Ratio.Y + Ratio.Z) / 3.;
+		const FQuat Turn = Current.GetRotation() * Entry.Value.GetRotation().Inverse();
+		const FTransform Delta(Turn, Current.GetTranslation() - Turn.RotateVector(Entry.Value.GetTranslation() * Scale), FVector(Scale));
+		Deltas.Add(Entry.Key, Delta * BodyOffset);
 	}
 	for (FKKLoadedPart& Part : Parts)
 	{
@@ -8765,6 +8993,19 @@ void AKKPreviewActor::SetMouthOpenFloor(float Open01)
 	Open01 = FMath::Clamp(Open01, 0.f, 1.f);
 	if (FMath::IsNearlyEqual(Open01, MouthOpenFloor, .01f)) return;
 	MouthOpenFloor = Open01;
+	ApplyMouth();
+}
+
+void AKKPreviewActor::SetTongueLength(float Length)
+{
+	if (FMath::IsNearlyEqual(Length, TongueLength, .001f)) return;
+	TongueLength = Length;
+	ApplyMouth();
+}
+void AKKPreviewActor::SetMouthOpenHeld(float Open01)
+{
+	if (FMath::IsNearlyEqual(Open01, MouthOpenHeld, .01f)) return;
+	MouthOpenHeld = Open01;
 	ApplyMouth();
 }
 
@@ -9129,6 +9370,7 @@ void AKKPreviewActor::ForceBlink()
 
 float AKKPreviewActor::EffectiveFaceRate(int32 Control) const
 {
+    if(Control==0&&MouthOpenHeld>=0.f) return MouthOpenHeld;
     if(Control==0) return FMath::Max(MouthOpenFloor,bSpeechActive&&bSpeechDrivesMouth?FMath::Lerp(SpeechOpenMin,1.f,SpeechOpen):MouthOpen01);
     const int32 Index=Control-1;
     if(bManualFaceControl[Index]) return FaceOpen01[Index];
@@ -9149,9 +9391,11 @@ float AKKPreviewActor::EffectiveFaceRate(int32 Control) const
         Control==1?BlinkEyeRate:BlinkBrowRate);
 }
 
-// The iris tiling's axes against the mesh's coordinates, as measured in H (2026-11-03): both the same way (U mirrored
-// made her eyes look apart, each out to its own side, when the look turned them in; user 2026-11-03).
-static TAutoConsoleVariable<int32> CVarOKEyeGazeSTFlipV(TEXT("ok.EyeGazeSTFlipV"),0,TEXT("1: an eye's gaze written to its iris tiling (_MainTex_ST) with V mirrored; 0: as the mesh's."));
+// The iris tiling's axes against the mesh's coordinates: U the same way (mirrored made her eyes look apart, each out to
+// its own side, when the look turned them in; user 2026-11-03). V mirrored: the rows are in UE's V, the tiling takes
+// Unity's offset and turns it round itself (MakeUnityMaskUVParameter), so as the mesh's the iris went the wrong way up
+// and left the eye on a look of -0.48 (U227, against CharaStudio: same rates, offset y +0.12 there).
+static TAutoConsoleVariable<int32> CVarOKEyeGazeSTFlipV(TEXT("ok.EyeGazeSTFlipV"),1,TEXT("1: an eye's gaze written to its iris tiling (_MainTex_ST) with V mirrored; 0: as the mesh's."));
 static TAutoConsoleVariable<int32> CVarOKEyeGazeSTFlipU(TEXT("ok.EyeGazeSTFlipU"),0,TEXT("1: an eye's gaze written to its iris tiling (_MainTex_ST) with U mirrored; 0: as the mesh's."));
 // M_ForgeEye_Flat (the shared display eye, street and H) has the gaze rows but does not move the iris by them; its
 // tiling does (2026-11-03: rows of -0.38 on V showed nothing, the tiling rolled her eyes up).
@@ -9161,6 +9405,7 @@ bool AKKPreviewActor::SetEyeGaze(float LeftHorizontal,float RightHorizontal,floa
 {
     if(!FMath::IsFinite(LeftHorizontal)||!FMath::IsFinite(RightHorizontal)||!FMath::IsFinite(Vertical)) return false;
     if(!Session.SetEyeGaze(LeftHorizontal,RightHorizontal,Vertical)) return false;
+    EyeGazeAsked[0]=LeftHorizontal;EyeGazeAsked[1]=RightHorizontal;EyeGazeAsked[2]=Vertical;
     EyeGaze[0]=FMath::Clamp(LeftHorizontal,-1.f,1.f);
     EyeGaze[1]=FMath::Clamp(RightHorizontal,-1.f,1.f);
     EyeGaze[2]=FMath::Clamp(Vertical,-1.f,1.f);
@@ -9217,8 +9462,8 @@ bool AKKPreviewActor::SetEyeGaze(float LeftHorizontal,float RightHorizontal,floa
 					const FLinearColor ST(Su*Base->R,Sv*Base->G,Ou*Base->R+Base->B,Ov*Base->G+Base->A);
 					M->SetVectorParameterValue(TEXT("_MainTex_ST"),ST);M->SetScalarParameterValue(TEXT("_MainTex_ST__A"),ST.A);++Set;}
 			if(CVarOKEyeGazeLog.GetValueOnGameThread()){FLinearColor Shown;const bool Has=Part.GpuEyeMaterial&&Part.GpuEyeMaterial->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("KKEyeUV0Row1")),Shown);
-				UE_LOG(LogTemp,Display,TEXT("Eye gaze part=%d gaze=(%.3f,%.3f,%.3f) iris rows u=(%.4f,%.4f,%.4f) v=(%.4f,%.4f,%.4f) uv0=(%.4f,%.4f) base0=(%.4f,%.4f) built=%s shown_v=(%.4f,%.4f,%.4f) drawn rows=%d tiling=%d"),
-					Part.SessionIndex,EyeGaze[0],EyeGaze[1],EyeGaze[2],Rows[0].R,Rows[0].G,Rows[0].B,Rows[1].R,Rows[1].G,Rows[1].B,Part.UVs.IsEmpty()?0.:Part.UVs[0].X,Part.UVs.IsEmpty()?0.:Part.UVs[0].Y,
+				UE_LOG(LogTemp,Display,TEXT("Eye gaze %s part=%d gaze=(%.3f,%.3f,%.3f) iris rows u=(%.4f,%.4f,%.4f) v=(%.4f,%.4f,%.4f) uv0=(%.4f,%.4f) base0=(%.4f,%.4f) built=%s shown_v=(%.4f,%.4f,%.4f) drawn rows=%d tiling=%d"),
+					*GetName(),Part.SessionIndex,EyeGaze[0],EyeGaze[1],EyeGaze[2],Rows[0].R,Rows[0].G,Rows[0].B,Rows[1].R,Rows[1].G,Rows[1].B,Part.UVs.IsEmpty()?0.:Part.UVs[0].X,Part.UVs.IsEmpty()?0.:Part.UVs[0].Y,
 					Part.GpuEyeUV[0][0].X,Part.GpuEyeUV[0][0].Y,Part.GpuEyeMaterial?*Part.GpuEyeMaterial->GetName():TEXT("-"),Has?Shown.R:0.f,Has?Shown.G:0.f,Has?Shown.B:0.f,RowsSet,Set);}
 			if(!bEyeTilingSaid&&(Set||RowsSet)){bEyeTilingSaid=true;UE_LOG(LogTemp,Display,TEXT("Eye gaze part=%d drawn: %d with rows, %d through the iris tiling"),Part.SessionIndex,RowsSet,Set);}
 		}
@@ -9241,6 +9486,49 @@ bool AKKPreviewActor::SetEyeGaze(float LeftHorizontal,float RightHorizontal,floa
     return true;
 }
 
+// The pupils go through the session's tiling, so SetEyeGaze draws them on each kind of eye. The highlights go on every eye
+// material her components draw with (the display swaps in its own instance), the card's values kept to come back to: the gate
+// and the layers' alphas; what a card painted into its iris goes with the iris swapped (2026-11-04, 38 of 70 reader cards
+// had them only there).
+bool AKKPreviewActor::SetPupilOffset(float X,float Y)
+{
+    return Session.SetPupilOffset(X,Y)&&SetEyeGaze(EyeGazeAsked[0],EyeGazeAsked[1],EyeGazeAsked[2]);
+}
+bool AKKPreviewActor::SetPupilStretch(float Across,float Down)
+{
+    return Session.SetPupilStretch(Across,Down)&&SetEyeGaze(EyeGazeAsked[0],EyeGazeAsked[1],EyeGazeAsked[2]);
+}
+bool AKKPreviewActor::SetIrisHsv(float Hue,float Saturation,float Value)
+{
+    EyeIrisHsv=FVector3f(Hue,Saturation,Value);
+    return SetEyeDull(EyePupilScale>0.f?EyePupilScale:1.f,bEyeHighlightHidden);
+}
+bool AKKPreviewActor::SetPupilMarks(const FOKIrisMarks& Marks)
+{
+    EyePupilMarks=Marks;
+    return SetEyeDull(EyePupilScale>0.f?EyePupilScale:1.f,bEyeHighlightHidden);
+}
+bool AKKPreviewActor::SetEyeDull(float PupilScale,bool bHideHighlight)
+{
+    if(!Session.SetPupilScale(PupilScale)) return false;
+    EyePupilScale=PupilScale;bEyeHighlightHidden=bHideHighlight;
+    const bool bDrawn=SetEyeGaze(EyeGazeAsked[0],EyeGazeAsked[1],EyeGazeAsked[2]);
+    static const TCHAR* const HighlightLayers[]={TEXT("_overcolor1"),TEXT("_overcolor2"),TEXT("_overcolor3")};
+    auto Gate=[&](UMaterialInstanceDynamic* M){if(!M)return;const FVector4f* Card=EyeHighlightBase.Find(M);
+        if(!Card){float Gated=0.f;if(!M->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("_isHighLight")),Gated))return;FVector4f Kept(Gated,0.f,0.f,0.f);
+            for(int32 I=0;I<3;++I){FLinearColor V;float A=0.f;if(M->GetVectorParameterValue(FHashedMaterialParameterInfo(HighlightLayers[I]),V))Kept[I+1]=M->GetScalarParameterValue(FHashedMaterialParameterInfo(*(FString(HighlightLayers[I])+TEXT("__A"))),A)?A:V.A;}
+            Card=&EyeHighlightBase.Add(M,Kept);
+            UTexture* Iris=nullptr;if(M->GetTextureParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex")),Iris))EyeIrisBase.Add(M,Iris);}
+        M->SetScalarParameterValue(TEXT("_isHighLight"),bHideHighlight?0.f:Card->X);
+        if(const auto* Iris=EyeIrisBase.Find(M))if(UTexture* Own=Iris->Get())M->SetTextureParameterValue(TEXT("_MainTex"),OKIrisRecolored(bHideHighlight?OKIrisWithoutHighlights(Own):Own,EyeIrisHsv.X,EyeIrisHsv.Y,EyeIrisHsv.Z,EyePupilMarks));
+        for(int32 I=0;I<3;++I){FLinearColor V;if(!M->GetVectorParameterValue(FHashedMaterialParameterInfo(HighlightLayers[I]),V))continue;V.A=bHideHighlight?0.f:(*Card)[I+1];M->SetVectorParameterValue(HighlightLayers[I],V);M->SetScalarParameterValue(*(FString(HighlightLayers[I])+TEXT("__A")),V.A);}};
+    TInlineComponentArray<UMeshComponent*> Meshes(this);
+    for(const auto& Part:Parts){if(Session.EyeMaterialSetting(Part.SessionIndex,-1)==0.f)continue;Gate(Part.GpuEyeMaterial);
+        const FName PartTags[]={*FString::Printf(TEXT("KKSessionPart_%d"),Part.SessionIndex),*FString::Printf(TEXT("KKMorphPart_%d"),Part.SessionIndex)};
+        for(UMeshComponent* Drawn:Meshes)if(Drawn&&(Drawn==Part.Comp||Drawn->ComponentHasTag(PartTags[0])||Drawn->ComponentHasTag(PartTags[1])))
+            for(int32 Slot=0;Slot<Drawn->GetNumMaterials();++Slot)Gate(Cast<UMaterialInstanceDynamic>(Drawn->GetMaterial(Slot)));}
+    return bDrawn;
+}
 bool AKKPreviewActor::SetEyeLookTarget(FVector Target,int32 Pattern,bool Enabled)
 {
     if(Target.ContainsNaN() || Pattern<0 || Pattern>=Session.EyeLookPatternCount()) return false;
@@ -9683,8 +9971,11 @@ void AKKPreviewActor::ApplyMouth()
 
         for (const FName& Aux : {Slot.MouthCornerUp, Slot.MouthCornerDown})
             if (!Aux.IsNone()) Desired.Add(Aux, 0.f);
-        const bool bCompoundMouth = !bSpeechActive && (!Slot.Patterns.IsEmpty())
-            && ((MouthWeight < 0.999f && MouthPattern > 0) || MouthCornerUp > 1.e-4f || MouthCornerDown > 1.e-4f);
+        // Held: the pattern itself goes with it, over her breathing. A keep-open pattern (SexFaces' tongue out) has no closed
+        // shape, so the open rate alone does not move it.
+        const bool bHeldMouth = MouthOpenHeld >= 0.f && MouthPattern > 0;
+        const bool bCompoundMouth = (!Slot.Patterns.IsEmpty()) && (bHeldMouth || (!bSpeechActive
+            && ((MouthWeight < 0.999f && MouthPattern > 0) || MouthCornerUp > 1.e-4f || MouthCornerDown > 1.e-4f)));
         if (bCompoundMouth)
         {
             for (const auto& Pair : Slot.Patterns)
@@ -9694,7 +9985,7 @@ void AKKPreviewActor::ApplyMouth()
             }
             const int32 MPtn = FMath::Clamp(MouthPattern, 0, Slot.Patterns.Num() - 1);
             const float MOpen = FMath::Clamp(EffectiveFaceRate(0), 0.f, 1.f);
-            const float MW = FMath::Clamp(MouthWeight, 0.f, 1.f);
+            const float MW = FMath::Clamp(bHeldMouth ? MouthOpenHeld : MouthWeight, 0.f, 1.f);
             const float CUp = FMath::Clamp(MouthCornerUp, 0.f, 1.f);
             const float CDown = FMath::Clamp(MouthCornerDown, 0.f, 1.f);
             const float CSum = FMath::Min(1.f, CUp + CDown);
@@ -9721,6 +10012,17 @@ void AKKPreviewActor::ApplyMouth()
         else
         {
             OKFbsWriteTransition(Desired, Slot.Patterns, FaceTransitions[0], EffectiveFaceRate(0));
+        }
+        // Her tongue has no bones: shorter is less of its morphs, longer their tips on top (OKTongueTipMorph; a mesh without them scales).
+        if (Slot.InsideBit & 4)
+        {
+            TArray<TPair<FName, float>> Tips;
+            for (auto& Weight : Desired)
+            {
+                if (Slot.Comp) Tips.Emplace(OKTongueTipMorph(Weight.Key), (Weight.Value - Slot.BaselineWeights.FindRef(Weight.Key)) * FMath::Max(TongueLength - 1.f, 0.f));
+                if (TongueLength < 1.f || !Slot.Comp) Weight.Value *= TongueLength;
+            }
+            for (const auto& Tip : Tips) Desired.Add(Tip.Key, Tip.Value);
         }
         if(const auto* Overrides=PartMorphWeights.Find(Slot.SessionPartIndex))
             for(const auto& Weight:*Overrides) Desired.Add(Weight.Key,Weight.Value);
@@ -9867,6 +10169,7 @@ bool AKKPreviewActor::SetWrapLine(bool bOn,const FVector& From,const FVector& To
 // rebuilt each call. The sets just replaced stay alive until the render thread is past them. Empty clears it.
 bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& Indices,const TArray<FVector3f>& UnityDeltas,const TArray<FVector3f>& UnityNormalDeltas)
 {
+    TRACE_CPUPROFILER_EVENT_SCOPE(KK_SetPartWrapDeltas);
     const FOkMouthSlot* Slot=MouthSlots.FindByPredicate([PartIndex](const FOkMouthSlot& S){return S.SessionPartIndex==PartIndex;});
     if(Indices.Num()!=UnityDeltas.Num())return false;
     // A part with no morph slot (her clothes, kept over her skin: belly_bulge::cover_deltas) takes it on its own renderers,
@@ -11091,7 +11394,9 @@ static FOkCamRig OkComputeCameras(AKKPreviewActor* Actor)
 	const float BodyDist = FMath::Clamp(SizeZ * 2.63f * PortraitWidthFit, 390.f, 980.f);
 	FOkCamRig R;
 	R.BodyCenter = FVector(BodyCenter.X, BodyCenter.Y, LookZ);
-	R.BodyLoc = FVector(BodyCenter.X, BodyCenter.Y + BodyDist, LookZ);
+	// Measured from where the character stands: a tail or long hair behind it moves the box's middle back, which brought the
+	// camera in on the body and cut the feet off.
+	R.BodyLoc = FVector(BodyCenter.X, FMath::Max<double>(BodyCenter.Y, 0.) + BodyDist, LookZ);
 	R.BodyRot = (R.BodyCenter - R.BodyLoc).Rotation();
 	const FVector FaceCenter = FVector(BodyCenter.X, BodyCenter.Y, Bound.Min.Z + SizeZ * 0.88f);
 	FBox FaceBounds(EForceInit::ForceInit);
@@ -11234,7 +11539,7 @@ static void OkFitCaptureRig(AKKPreviewActor* Actor, FOkCamRig& Rig,AKKPreviewAct
 	DisplayActor->GetComponents(Skinned);
 	for (USkinnedMeshComponent* Component : Skinned)
 	{
-		if (!Component->IsVisible() || !Component->GetSkinnedAsset()) { continue; }
+		if (!Component->IsVisible() || !Component->GetSkinnedAsset() || !Component->GetMeshObject()) { continue; }
 		// Runtime skin bounds include current bone palettes and active morphs.
 		// Their conservative envelopes avoid a render flush/GPU vertex readback.
 		if(Realtime){AddBox(Component->CalcBounds(Component->GetComponentTransform()).GetBox());continue;}

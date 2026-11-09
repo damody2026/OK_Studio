@@ -27,6 +27,19 @@ const TArray<FOKStudioSkyPattern>& OKStudioSkyPatterns();
  */
 bool OKStudioMapSky(int32 Map, int32 SunType, int32& OutPattern);
 
+/** Map `Map`'s ambient sky colour at time `SunType` (SunLightInfo.Info.ambientSkyColor), linear. False when the library's
+ * studio/sky.json is older than this field or the map has no such time. */
+bool OKStudioMapTimeAmbient(int32 Map, int32 SunType, FLinearColor& OutSky);
+
+/** Map `Map`'s Trilight ambient at time `SunType` (SunLightInfo sets sky, equator and ground per time) as unity_SHA*.
+ * False when the library's studio/sky.json is older than these fields or the map has no such time. */
+bool OKStudioMapTimeTrilight(int32 Map, int32 SunType, FLinearColor& OutSHAr, FLinearColor& OutSHAg, FLinearColor& OutSHAb);
+
+/** Sky pattern `No`'s controller Lights (its sun and moon when the pattern draws them), linear colour times intensity.
+ * Black when the library's studio/sky.json is older than these fields. */
+FLinearColor OKStudioSkyLight(int32 No);
+
+
 /**
  * The material drawing sky pattern `No` on a dome around the view: Studio's skybox shader (Funly Sky Studio
  * "3D Standard", translated by Tools/generate_studio_sky.lua) with the pattern's values and textures. The program

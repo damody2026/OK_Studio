@@ -60,6 +60,22 @@ pub unsafe extern "C" fn ok_okanim_from_clip(s: *mut OkSession, key: *const c_ch
     })
 }
 
+/// A camera VMD's keys as a JSON array of `MmddCameraKeyEval` (Studio's default scales; the same keys a scene's MMDD camera gets).
+#[no_mangle]
+pub unsafe extern "C" fn ok_mmdd_camera_from_vmd(vmd_path: *const c_char, out: *mut u8, cap: i32) -> i32 {
+    let Some(path) = str_arg(vmd_path).filter(|p| !p.trim().is_empty()) else {
+        set_error("invalid vmd_path");
+        return -1;
+    };
+    cached(hash_args(&[b"vmd camera", path.as_bytes()]), out, cap, || {
+        let bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
+        let vmd = crate::vmd::VmdFile::parse(&bytes).map_err(|e| format!("{e:?}"))?;
+        let keys = crate::mmdd::evaluate_camera_vmd(&vmd, 0.0, 1.0, 0.079, 0.079, [0.0; 3], [0.0; 3]);
+        if keys.is_empty() { return Err("no camera keys in this VMD".to_string()); }
+        serde_json::to_vec(&keys).map_err(|e| e.to_string())
+    })
+}
+
 /// Solves a VMD file into OK animation bytes on `s`'s shaped character skeleton (`s` may be null for standard KK rest).
 /// `params_json` is optional JSON (`char_scale`, `obj_scale_y`, `playback_speed`, `delay`, `looping`, `high_heels_rot`, etc.).
 #[no_mangle]
@@ -111,21 +127,85 @@ pub unsafe extern "C" fn ok_okanim_from_vmd(
         &shape_sig,
     ]);
     cached(k, out, cap, || {
-        let vmd_bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
-        let vmd = crate::vmd::VmdFile::parse(&vmd_bytes)?;
-        let ini = crate::mmdd::CharaIniConfig::parse(crate::mmdd::DEFAULT_CHARA_INI)?;
-        let (params, obj_scale_y) = crate::mmdd::MotionSolveParams::from_json_with_obj_scale(&pj)?;
-        let stem = std::path::Path::new(&path)
-            .file_stem()
-            .and_then(|st| st.to_str())
-            .unwrap_or("vmd");
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let rig = sess_opt.and_then(|sess| crate::mmdd::MmddCharacterRig::from_session(sess, obj_scale_y));
-            crate::mmdd::solve_vmd_to_okanim_for_rig(&vmd, &ini, &params, stem, rig.as_ref())
-        }))
-        .unwrap_or_else(|_| Err("VMD conversion panicked".into()))?;
-        r.to_bytes()
+        solve_vmd_file(&path, &pj, |obj_scale_y| {
+            sess_opt.and_then(|sess| crate::mmdd::MmddCharacterRig::from_session(sess, obj_scale_y))
+        })
     })
+}
+
+fn solve_vmd_file(
+    path: &str,
+    params_json: &str,
+    rig: impl FnOnce(f32) -> Option<crate::mmdd::MmddCharacterRig>,
+) -> Result<Vec<u8>, String> {
+    let vmd_bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    let vmd = crate::vmd::VmdFile::parse(&vmd_bytes)?;
+    let ini = crate::mmdd::CharaIniConfig::parse(crate::mmdd::DEFAULT_CHARA_INI)?;
+    let (params, obj_scale_y) = crate::mmdd::MotionSolveParams::from_json_with_obj_scale(params_json)?;
+    let stem = std::path::Path::new(path)
+        .file_stem()
+        .and_then(|st| st.to_str())
+        .unwrap_or("vmd");
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let rig = rig(obj_scale_y);
+        crate::mmdd::solve_vmd_to_okanim_for_rig(&vmd, &ini, &params, stem, rig.as_ref())
+    }))
+    .unwrap_or_else(|_| Err("VMD conversion panicked".into()))?;
+    r.to_bytes()
+}
+
+/// A VMD solve for a worker thread: the character's rig is copied out of the session by `new` (on the thread that owns
+/// the session), so `run` touches no session and the character may change or go away meanwhile.
+pub struct VmdJob {
+    rig: Option<crate::mmdd::MmddCharacterRig>,
+    bytes: Option<Vec<u8>>,
+}
+const _: fn() = || {
+    fn send<T: Send>() {}
+    send::<VmdJob>();
+};
+
+/// `s` may be null (standard KK rest). Free with `ok_okanim_vmd_job_free`.
+#[no_mangle]
+pub unsafe extern "C" fn ok_okanim_vmd_job_new(s: *const OkSession, obj_scale_y: f32) -> *mut VmdJob {
+    let rig = s.as_ref().and_then(|sess| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::mmdd::MmddCharacterRig::from_session(sess, obj_scale_y)
+        }))
+        .unwrap_or(None)
+    });
+    Box::into_raw(Box::new(VmdJob { rig, bytes: None }))
+}
+
+/// Solves on the first call and keeps the result on the job (null `out` / 0 `cap`: the size). Errors are read with
+/// `ok_okanim_last_error` on the same thread.
+#[no_mangle]
+pub unsafe extern "C" fn ok_okanim_vmd_job_run(
+    j: *mut VmdJob,
+    vmd_path: *const c_char,
+    params_json: *const c_char,
+    out: *mut u8,
+    cap: i32,
+) -> i32 {
+    let Some(j) = j.as_mut() else { set_error("invalid arguments"); return -1 };
+    if j.bytes.is_none() {
+        let Some(path) = str_arg(vmd_path).filter(|p| !p.trim().is_empty()) else {
+            set_error("invalid vmd_path");
+            return -1;
+        };
+        let pj = str_arg(params_json).unwrap_or_default();
+        let rig = j.rig.take();
+        match solve_vmd_file(&path, &pj, |_| rig) {
+            Ok(b) => j.bytes = Some(b),
+            Err(e) => { set_error(&e); return -1; }
+        }
+    }
+    crate::ffi::copy_resource(j.bytes.as_deref().unwrap_or_default(), out, cap)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ok_okanim_vmd_job_free(j: *mut VmdJob) {
+    if !j.is_null() { drop(Box::from_raw(j)); }
 }
 
 /// Rest skeleton of a character's Animator layer as a target/source header JSON (UTF-8, not terminated).

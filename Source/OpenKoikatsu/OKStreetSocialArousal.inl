@@ -61,9 +61,9 @@ void AOKStreetSocialScene::TickArousal(float Dt){
   const uint32 ExtHash=GetTypeHash(S.Store.Ext);
   if(ExtHash!=S.ArousalExtHash){S.ArousalExtHash=ExtHash;TSharedPtr<FJsonObject> E;const TSharedPtr<FJsonObject>* H=nullptr;
    const bool Read=!S.Store.Ext.IsEmpty()&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(S.Store.Ext),E)&&E.IsValid()&&E->TryGetObjectField(TEXT("hexp"),H);
-   for(int32 Girl=1;Girl<Cast;++Girl){const TSharedPtr<FJsonObject>* Her=nullptr;double White=-1,Red=-1;
-    if(Read&&(*H)->TryGetObjectField(OKStreetStableId(S.Manifest.Characters[Girl]),Her)){(*Her)->TryGetNumberField(TEXT("white_until"),White);(*Her)->TryGetNumberField(TEXT("red_until"),Red);}
-    S.ArousalWhiteUntil[Girl]=int64(White);S.ArousalRedUntil[Girl]=int64(Red);}}
+   for(int32 Girl=1;Girl<Cast;++Girl){const TSharedPtr<FJsonObject>* Her=nullptr;double White=-1,Red=-1,Day=-1,Climaxes=0;
+    if(Read&&(*H)->TryGetObjectField(OKStreetStableId(S.Manifest.Characters[Girl]),Her)){(*Her)->TryGetNumberField(TEXT("white_until"),White);(*Her)->TryGetNumberField(TEXT("red_until"),Red);(*Her)->TryGetNumberField(TEXT("today_day"),Day);(*Her)->TryGetNumberField(TEXT("today_orgasms"),Climaxes);}
+    S.ArousalWhiteUntil[Girl]=int64(White);S.ArousalRedUntil[Girl]=int64(Red);S.ArousalClimaxDay[Girl]=Climaxes>=1.?int64(Day):-1;}}
   const bool NewDay=S.ArousalDay!=S.Store.CalendarDay;S.ArousalDay=S.Store.CalendarDay;
   for(int32 Girl=1;Girl<Cast;++Girl){
    const FOKStreetPlanBlock* B=LifeBlock(Girl,int32(Minute%1440));
@@ -72,7 +72,12 @@ void AOKStreetSocialScene::TickArousal(float Dt){
     if(S.ArousalWetCrotch[Girl]||S.ArousalWetMilk[Girl])UE_LOG(LogTemp,Display,TEXT("Street arousal: actor=%d %s, dry again"),Girl,NewDay?TEXT("a new day"):Washing&&B?*B->Kind:TEXT("asleep or bathing"));
     S.ArousalWetCrotch[Girl]=S.ArousalWetMilk[Girl]=0;S.SemenOn[Girl]=0;}
    S.ArousalWashing[Girl]=Washing;
-   const float Desire=OKStreetViewRelation(S.Store,OKStreetStableId(S.Manifest.Characters[Girl]),S.Manifest.TalkBudget).SexDesire;
+   const auto Relation=OKStreetViewRelation(S.Store,OKStreetStableId(S.Manifest.Characters[Girl]),S.Manifest.TalkBudget);const float Desire=Relation.SexDesire;
+   // Her eyes as in the room (OKHScene TickEyeDull), sent again while they are not her card's: a new body of hers starts
+   // with the card's.
+   {const bool Spent=S.ArousalClimaxDay[Girl]==S.Store.CalendarDay&&(Relation.Energy<50.f||Relation.Satiety<50.f);
+    const float Pupil=Spent?1.3f:S.Manifest.Characters[Girl].PersonalityId==KKPersonalityYandere?1.1f:1.f;
+    if((Pupil>1.f||S.ArousalPupil[Girl]>1.f)&&OKSetCrowdRuntimeEyeDull(this,Girl,Pupil,Pupil>1.f))S.ArousalPupil[Girl]=Pupil;}
    S.ArousalDesire[Girl]=Desire;const float Bl=OKArousal::Blush(Desire);
    if(FMath::Abs(Bl-S.ArousalBlush[Girl])<.05f)continue;
    FOKRuntimeFaceLookNow Was;FOKRuntimeFaceLook Look;Look.Blush=Bl;if(OKGetCrowdRuntimeFaceLook(this,Girl,Was))Look.Gaze=Was.Gaze; // her gaze stays

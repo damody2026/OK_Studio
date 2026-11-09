@@ -1,21 +1,23 @@
--- Machine-wide Unreal slots shared by every agent and checkout (C:, E:, F:): at most three Unreal processes at once.
+-- Machine-wide Unreal slots shared by every agent and checkout (C:, E:, F:): at most two Unreal processes at once.
 -- slotN\owner.txt names who holds a slot (first word = agent), queue\<agent>.txt says who is waiting.
 --
---   Tools\lua\lua.exe Tools\unreal_slot.lua claim <agent> "<what for>" [--wait]   take a free slot, else stay queued (exit 2)
+--   Tools\lua\lua.exe Tools\unreal_slot.lua claim <agent> "<what for>" [--wait] [--need-gb N]   take a free slot, else stay queued (exit 2)
 --   Tools\lua\lua.exe Tools\unreal_slot.lua release <agent>                       give back the agent's slots and queue entry
 --   Tools\lua\lua.exe Tools\unreal_slot.lua yield <agent>                         exit 3 when someone of higher priority waits
 --   Tools\lua\lua.exe Tools\unreal_slot.lua status
 --
--- claim only succeeds when no agent of higher priority is queued, a slot is free and fewer than three Unreal processes
--- run. It re-reads owner.txt after writing (another agent may have written the same slot) and leaves the queue in the
+-- claim only succeeds when no agent of higher priority is queued, a slot is free, fewer than two Unreal processes
+-- run and enough commit is free (default 35 GB, --need-gb N). It re-reads owner.txt after writing (another agent may have written the same slot) and leaves the queue in the
 -- same step, so a stale queue file never makes a lower-priority agent wait for someone who already runs.
 local ok = require "ok"
 local path, proc = ok.path, ok.proc
 
 local ROOT = os.getenv("OK_UNREAL_SLOTS") or "C:/portable/OpenKoikatsu/Saved/UnrealSlots"
-local SLOTS = 3
+local SLOTS = 2
+-- claim also waits until this much commit is free; pass --need-gb 105 before opening the editor on UniversityCityWP.
+local DEFAULT_NEED_GB = 35
 -- Lower runs first; agents not listed rank after these.
-local PRIORITY = { ["e-galgame"] = 1, ["e-fork"] = 1, F = 2, ["c-conquest"] = 3, ["e-okcard"] = 3, ["c-street-city"] = 4 }
+local PRIORITY = { ["c-street-city"] = -1, ["c-conquest"] = 0, FStyle = 1, ["e-galgame"] = 2, ["e-fork"] = 2, ["e-fork-2"] = 2, F = 3, ["e-okcard"] = 4 }
 
 local function rank(agent) return PRIORITY[agent] or 9 end
 local function owner_file(i) return path.join(ROOT, "slot" .. i, "owner.txt") end
@@ -39,6 +41,14 @@ local function unreal_count()
     if not line:lower():match("\\windows\\[^\\]+%.exe$") then n = n + 1 end
   end
   return n
+end
+
+-- Free commit (RAM + page file) in GB. An editor with the university city WP map commits about 97 GB and the game
+-- about 27 GB, so two of them can exhaust the machine even under the process cap (2026-11-08 05:17).
+local function free_commit_gb()
+  local out = proc.output({ "powershell", "-NoProfile", "-Command",
+    "[int]((Get-CimInstance Win32_OperatingSystem).FreeVirtualMemory/1MB)" }) or ""
+  return tonumber(out:match("%d+")) or 0
 end
 
 local function queued()
@@ -65,11 +75,13 @@ local function enqueue(agent, note)
 end
 
 -- One attempt: the slot index taken (or already held), or nil and why not.
-local function try_claim(agent, note)
+local function try_claim(agent, note, need_gb)
   for i = 1, SLOTS do if owner(i) == agent then return i end end
   local blocker = waiting_above(agent)
   if blocker then return nil, blocker .. " has higher priority and is waiting" end
   if unreal_count() >= SLOTS then return nil, SLOTS .. " Unreal processes already run" end
+  local free = free_commit_gb()
+  if free < need_gb then return nil, "only " .. free .. " GB commit free, need " .. need_gb end
   for i = 1, SLOTS do
     if not owner(i) then
       path.mkdir(path.parent(owner_file(i)), true)
@@ -80,10 +92,10 @@ local function try_claim(agent, note)
   return nil, "no free slot"
 end
 
-local function claim(agent, note, wait)
+local function claim(agent, note, wait, need_gb)
   enqueue(agent, note)
   while true do
-    local i, why = try_claim(agent, note)
+    local i, why = try_claim(agent, note, need_gb)
     if i then
       path.remove(queue_file(agent))
       io.write("slot", i, "\n")
@@ -111,16 +123,23 @@ local function status()
   end
   io.write("queue: ", table.concat(queued(), ", "), "\n")
   io.write("unreal processes: ", unreal_count(), "\n")
+  io.write("free commit: ", free_commit_gb(), " GB\n")
   return 0
 end
 
 local function main()
   local cmd, agent = arg[1], arg[2]
-  local rest, wait = {}, false
-  for i = 3, #arg do if arg[i] == "--wait" then wait = true else rest[#rest + 1] = arg[i] end end
+  local rest, wait, need_gb = {}, false, DEFAULT_NEED_GB
+  local i = 3
+  while i <= #arg do
+    if arg[i] == "--wait" then wait = true
+    elseif arg[i] == "--need-gb" then i = i + 1; need_gb = tonumber(arg[i]) or error("--need-gb <GB>", 0)
+    else rest[#rest + 1] = arg[i] end
+    i = i + 1
+  end
   local note = table.concat(rest, " ")
   if agent and not agent:match("^[%w%-_]+$") then error("agent name: letters, digits, - or _", 0) end
-  if cmd == "claim" and agent then os.exit(claim(agent, note, wait))
+  if cmd == "claim" and agent then os.exit(claim(agent, note, wait, need_gb))
   elseif cmd == "release" and agent then os.exit(release(agent))
   elseif cmd == "yield" and agent then
     local other = waiting_above(agent)

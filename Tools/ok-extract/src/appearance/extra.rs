@@ -16,6 +16,13 @@ pub(super) fn targets_for(blocks:&BTreeMap<String,Vec<u8>>,outfit:usize)->Result
  if count>4096{return Err("額外飾品欄位超過安全上限".into())}
  for i in 20..20+count{for template in targets().into_iter().filter(|t|t.section=="accessory"&&t.path=="parts.0.id"){let mut t=template;t.key=format!("accessory{i}_{}",t.category);t.label=t.label.replacen("配件欄 1：",&format!("額外配件欄 {}：",i+1),1);t.block="KKEx".into();t.section="accessory_extra".into();t.path=format!("parts.{i}.id");t.property=format!("accessory{i}.ChaFileAccessory.PartsInfo.id");out.push(t);}}Ok(out)
 }
+/// What the outfit's extra slots hold: (slot, type, parentKey), the empty ones left out.
+pub(super) fn worn(blocks:&BTreeMap<String,Vec<u8>>,outfit:usize)->Result<Vec<(usize,String,String)>,String>{
+ let Some(b)=blocks.get("KKEx")else{return Ok(Vec::new())};let mut v=decode(b)?;let Some(s)=xml(&mut v).and_then(|v|v.as_str())else{return Ok(Vec::new())};
+ let doc=roxmltree::Document::parse(s).map_err(|e|e.to_string())?;
+ Ok(doc.descendants().filter(|n|n.has_tag_name("accessorySet")&&n.attribute("type").and_then(|v|v.parse::<usize>().ok())==Some(outfit)).flat_map(|n|n.children().filter(|n|n.has_tag_name("accessory"))).enumerate()
+  .filter(|(_,n)|n.attribute("type").is_some_and(|t|t!="120")).map(|(i,n)|(i+20,n.attribute("type").unwrap_or_default().to_string(),n.attribute("parentKey").unwrap_or_default().to_string())).collect())
+}
 pub(super) fn patch(bytes:&[u8],t:&Target,item:Option<&Item>,outfit:usize)->Result<Vec<u8>,String>{
  let mut v=decode(bytes)?;let value=xml(&mut v).ok_or("缺少額外飾品資料")?;let s=value.as_str().ok_or("額外飾品 XML 格式錯誤")?;let doc=roxmltree::Document::parse(s).map_err(|e|e.to_string())?;
  let index=t.path.split('.').nth(1).and_then(|s|s.parse::<usize>().ok()).and_then(|i|i.checked_sub(20)).ok_or("額外飾品欄位錯誤")?;

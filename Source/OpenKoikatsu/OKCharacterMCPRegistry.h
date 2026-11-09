@@ -6,6 +6,7 @@ class UWidget;
 namespace OKCharacterMCPRegistry
 {
  using FRows=TArray<TSharedPtr<FJsonValue>>;
+ FString Label(UWidget* W);
  FRows Parameters(UOKCharacterController* G);
  FRows Controls(UOKCharacterController* G,TMap<FString,UWidget*>* Widgets=nullptr);
  bool SetParameters(UOKCharacterController* G,const FRows& Edits,FString& Error);

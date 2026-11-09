@@ -39,10 +39,12 @@ pub struct Preg {
     /// She has been told (by her body) of this pregnancy and it is in her memory; births so far that are.
     pub told: bool,
     pub births_noted: i32,
+    /// Made to ovulate (the control channel's game_ovulate): any finish inside takes, whatever the day, until she conceives.
+    pub ovulate: bool,
 }
 
 impl Default for Preg {
-    fn default() -> Self { Preg { since: -1, births: 0, recover_until: -1, term: 0, born_at: -1, told: false, births_noted: 0 } }
+    fn default() -> Self { Preg { since: -1, births: 0, recover_until: -1, term: 0, born_at: -1, told: false, births_noted: 0, ovulate: false } }
 }
 
 impl Preg {
@@ -79,6 +81,9 @@ pub fn chance(girl: &str, day: i64) -> f32 {
         _ => 0.0,
     }
 }
+
+/// Her chance today with what has been done to her: made to ovulate it is certain.
+fn chance_now(p: &Preg, girl: &str, day: i64) -> f32 { if p.ovulate { 1.0 } else { chance(girl, day) } }
 
 fn belly(progress: f32) -> f32 {
     let p = progress.clamp(0.0, 1.0);
@@ -121,7 +126,8 @@ pub fn view(p: &Preg, girl: &str, day: i64) -> Value {
         // Lying on her front or pressed on her belly: not from week 20 (OKHScene locks those poses).
         "belly_locked": pregnant && week >= 20,
         "cycle_day": cycle_day(girl, day),
-        "chance": if pregnant || recovering { 0.0 } else { chance(girl, day) },
+        "chance": if pregnant || recovering { 0.0 } else { chance_now(p, girl, day) },
+        "ovulate": p.ovulate,
     })
 }
 
@@ -132,8 +138,9 @@ pub fn after_scene(p: &mut Preg, girl: &str, day: i64, inside: i64, seed: i32) -
         return false;
     }
     let mut rng = crate::rng::RandomStream::new(seed);
-    let c = chance(girl, day);
-    if (0..inside.min(10)).any(|_| rng.chance(c)) {
+    let c = chance_now(p, girl, day);
+    if p.ovulate || (0..inside.min(10)).any(|_| rng.chance(c)) {
+        p.ovulate = false;
         p.since = day;
         p.term = TERM_MIN + rng.rand_range(0, (TERM_MAX - TERM_MIN) as i32) as i64;
         p.told = false;
@@ -196,8 +203,22 @@ fn set(r: &Value) -> Result<Value, String> {
     Ok(json!({"ext": ext, "pregnancy": view(&p, girl, day)}))
 }
 
+/// Request: girl, ext, day, on (omitted: only asks). Answer: ext, pregnancy (a test and debug set: game_ovulate).
+fn ovulate(r: &Value) -> Result<Value, String> {
+    let girl = r.get("girl").and_then(Value::as_str).ok_or("missing_field: girl")?;
+    let day = r.get("day").and_then(Value::as_i64).ok_or("missing_field: day")?;
+    let mut ext = r.get("ext").cloned().filter(Value::is_object).unwrap_or_else(|| json!({}));
+    let mut p = on_day(&ext, girl, day);
+    if let Some(on) = r.get("on").and_then(Value::as_bool) {
+        p.ovulate = on;
+        store(&mut ext, girl, &p);
+    }
+    Ok(json!({"ext": ext, "pregnancy": view(&p, girl, day)}))
+}
+
 pub fn eval(kind: &str, r: &Value) -> Option<Result<Value, String>> {
     match kind {
+        "preg_ovulate" => Some(ovulate(r)),
         "preg_set" => Some(set(r)),
         "preg_day" => Some(day(r)),
         _ => None,
@@ -207,6 +228,26 @@ pub fn eval(kind: &str, r: &Value) -> Option<Result<Value, String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn made_to_ovulate_any_finish_inside_takes_once() {
+        // A day she never can on her own.
+        let barren = (0..CYCLE_DAYS).find(|&d| chance("a", d) == 0.0).unwrap();
+        let on = ovulate(&json!({"girl": "a", "day": barren, "on": true})).unwrap();
+        assert_eq!(on["pregnancy"]["ovulate"], true);
+        assert_eq!(on["pregnancy"]["chance"], 1.0);
+        let mut p = on_day(&on["ext"], "a", barren);
+        assert!(!after_scene(&mut p, "a", barren, 0, 1), "no finish inside, nothing takes");
+        assert!(p.ovulate);
+        assert!(after_scene(&mut p, "a", barren, 1, 1));
+        assert_eq!(p.since, barren);
+        assert!(!p.ovulate, "spent on the pregnancy");
+        // Off again: her own cycle, and only reading changes nothing.
+        let off = ovulate(&json!({"girl": "a", "day": barren, "ext": on["ext"], "on": false})).unwrap();
+        assert_eq!(off["pregnancy"]["chance"], 0.0);
+        let read = ovulate(&json!({"girl": "a", "day": barren, "ext": on["ext"]})).unwrap();
+        assert_eq!(read["ext"], on["ext"]);
+    }
 
     #[test]
     fn belly_grows_by_stages_and_body_by_births() {

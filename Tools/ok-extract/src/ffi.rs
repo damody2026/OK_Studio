@@ -173,6 +173,35 @@ pub unsafe extern "C" fn ok_belly_wrap_deltas(s:*mut OkSession,at:*const f32,rad
     moves.len() as i32
 }
 #[no_mangle]
+pub unsafe extern "C" fn ok_belly_wrap_start(s:*mut OkSession,at:*const f32,radius:f32,wrap:i32,cover:i32)->i32 {
+    // This frame's wrap and clothes on the wrap worker (belly_bulge::wrap_start), the session idle: at as
+    // ok_belly_wrap_deltas, wrap 0 her skin left alone (her breasts still push her clothes), cover 0 her clothes left
+    // alone. 1 started, 0 the last one still runs, -1 bad input.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if at.is_null() {return -1;}
+    let from=[*at,*at.add(1),*at.add(2)];let to=[*at.add(3),*at.add(4),*at.add(5)];let up=[*at.add(6),*at.add(7),*at.add(8)];
+    crate::belly_bulge::wrap_start(s,wrap!=0,from,to,up,radius,cover!=0) as i32
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_belly_wrap_take(s:*mut OkSession,cover:i32,out_idx:*mut u32,out_d:*mut f32,max:u32,cloth_part:*mut u32,cloth_idx:*mut u32,cloth_d:*mut f32,cloth_max:u32,cloth_n:*mut u32,cpu_parts:*mut i32,cpu_max:u32,cpu_n:*mut u32)->i32 {
+    // The finished job of ok_belly_wrap_start, the session idle. Her body's moves as ok_belly_wrap_deltas (the count
+    // returned; -2 none ready, -1 bad input), her garments' as ok_cover_deltas (cloth_n), the garments with their own rig
+    // to draw from their CPU vertices as ok_set_cover (cpu_n; those are kept over her skin from here on, cover 1).
+    let Some(s)=sess_ref(s) else{return -1;};
+    if out_idx.is_null()||out_d.is_null()||cloth_part.is_null()||cloth_idx.is_null()||cloth_d.is_null()||cloth_n.is_null()||cpu_parts.is_null()||cpu_n.is_null() {return -1;}
+    let Some(done)=crate::belly_bulge::wrap_take(s) else{return -2;};
+    for (i,(j,d)) in done.body.iter().take(max as usize).enumerate(){*out_idx.add(i)=*j;for k in 0..6{*out_d.add(i*6+k)=d[k];}}
+    let n=done.body.len() as i32;
+    let mut k=0usize;
+    for (part,list) in &done.cloth {for (j,d) in list{
+        if k<cloth_max as usize{*cloth_part.add(k)=*part as u32;*cloth_idx.add(k)=*j;for a in 0..3{*cloth_d.add(k*3+a)=d[a];}k+=1;}}}
+    *cloth_n=k as u32;
+    let parts=crate::belly_bulge::keep_cover(s,cover!=0,done.body,done.field.as_deref());
+    for (i,p) in parts.iter().take(cpu_max as usize).enumerate(){*cpu_parts.add(i)=*p as i32;}
+    *cpu_n=parts.len().min(cpu_max as usize) as u32;
+    n
+}
+#[no_mangle]
 pub unsafe extern "C" fn ok_belly_bone_deltas(s:*mut OkSession,at:*const f32,radius:f32,out_idx:*mut u32,out_d:*mut f32,max:u32)->i32 {
     // As ok_belly_wrap_deltas, her skin moved by the belly bones his penis pushes (belly_bulge::bone_deltas, ok.HScene.Wrap 3).
     let Some(s)=sess_ref(s) else{return -1;};
@@ -566,6 +595,50 @@ pub unsafe extern "C" fn ok_session_bone_euler(s:*mut OkSession,name:*const c_ch
     if name.is_null()||out.is_null() {return -1;}
     let Some(e)=s.body_bone_euler(&std::ffi::CStr::from_ptr(name).to_string_lossy()) else{return -1;};
     std::ptr::copy_nonoverlapping(e.as_ptr(),out,3);0
+}
+/// Her clothes changed on the same model (wardrobe.rs): as she opens, her worn parts to the end of her parts.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_wardrobe_prepare(s:*mut OkSession)->i32 {
+    let Some(s)=sess_ref(s) else{return -1;};s.wardrobe_prepare();s.wardrobe_first() as i32
+}
+/// A session opened in another outfit or garment state, cut down to what it puts on her.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_wardrobe_strip(s:*mut OkSession)->i32 {
+    let Some(s)=sess_ref(s) else{return -1;};s.wardrobe_strip();s.parts.len() as i32
+}
+/// Which of her parts these garment states show (1 each; `out` holds `cap`). Returns her part count.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_clothes_parts_shown(s:*mut OkSession,states:*const u8,out:*mut u8,cap:i32)->i32 {
+    let Some(s)=sess_ref(s) else{return -1;};if states.is_null()||out.is_null(){return -1;}
+    let values:[u8;9]=std::slice::from_raw_parts(states,9).try_into().unwrap();
+    for(index,part)in s.parts.iter().enumerate().take(cap.max(0) as usize){*out.add(index)=crate::unity::state_nodes_shown(&part.runtime_textures,&values) as u8;}
+    s.parts.len() as i32
+}
+/// The mask her body takes with her top in this state (`ChaControl.ChangeAlphaMask`); its length, 0 when none, -1 when
+/// `out` is too small for it.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_wardrobe_body_mask(s:*mut OkSession,top_state:i32,out:*mut u8,cap:i32)->i32 {
+    let Some(s)=sess_ref(s) else{return -1;};
+    let Some(mask)=s.wardrobe_mask_for(top_state as u8) else{return 0;};
+    if !out.is_null()&&cap as usize>=mask.len(){std::ptr::copy_nonoverlapping(mask.as_ptr(),out,mask.len());}
+    mask.len() as i32
+}
+/// The parts the display hides (`count` bytes, nonzero hidden; missing ones shown): not solved or skinned while hidden.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_set_parts_hidden(s:*mut OkSession,mask:*const u8,count:i32)->i32 {
+    let Some(s)=sess_ref(s) else{return -1;};
+    let mask=if mask.is_null()||count<=0{&[][..]}else{std::slice::from_raw_parts(mask,count as usize)};
+    s.set_parts_hidden(mask);0
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_wardrobe_first(s:*mut OkSession)->i32 {
+    let Some(s)=sess_ref(s) else{return -1;};s.wardrobe_first() as i32
+}
+/// She wears the donor's parts and the donor holds what she took off. On an error neither changed.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_wardrobe_swap(live:*mut OkSession,donor:*mut OkSession,err:*mut c_char,cap:i32)->i32 {
+    let (Some(live),Some(donor))=(sess_ref(live),sess_ref(donor)) else{write_err(err,cap,"wardrobe: no session");return -1;};
+    match live.wardrobe_swap(donor) {Ok(())=>0,Err(e)=>{write_err(err,cap,&e);-1}}
 }
 #[no_mangle]
 pub unsafe extern "C" fn ok_session_set_physx_secondary(s:*mut OkSession,enabled:i32)->i32 {
@@ -1240,6 +1313,16 @@ pub unsafe extern "C" fn ok_common_interaction_poses(root:*const c_char,out:*mut
     let Ok(Ok(json))=std::panic::catch_unwind(||serde_json::to_string(&crate::h_playback::interaction_poses(std::path::Path::new(&root))))else{return -1;};
     if out.is_null()||cap<=0{return json.len() as i32+1;}if cap as usize<=json.len(){return -1;}write_err(out,cap,&json);0
 }
+// Every outfit's gaps as JSON (outfit_gaps.rs). Reads her card again: for a background thread. A failure goes to the
+// game's log (stderr does not reach it).
+#[no_mangle]
+pub unsafe extern "C" fn ok_card_outfit_gaps(game:*const c_char,card:*const c_char,out:*mut c_char,cap:i32)->i32 {
+    let (Some(game),Some(card))=(cstr_opt(game),cstr_opt(card)) else{return -1;};
+    let scanned=crate::run_no_panic(||crate::outfit_gaps::scan(std::path::Path::new(&game),std::path::Path::new(&card)));
+    let outfits=match scanned {Ok(outfits)=>outfits,Err(e)=>{ffi_log(0,&format!("ok-extract: ERROR outfit gaps {card}: {e}"));return -1;}};
+    let Ok(json)=serde_json::to_string(&outfits) else{return -1;};
+    if out.is_null()||cap<=0||cap as usize<=json.len(){return -1;}write_err(out,cap,&json);0
+}
 #[no_mangle]
 pub unsafe extern "C" fn ok_common_animation_pair_clip(root:*const c_char,key:*const c_char,layer:i32,out:*mut c_char,cap:i32)->i32 {
     let (Some(root),Some(key))=(cstr_opt(root),cstr_opt(key)) else{return -1;};
@@ -1288,20 +1371,27 @@ unsafe fn animation_pair_frame_impl(female:*mut OkSession,male:*mut OkSession,ti
     let (Some(state),Some(fm),Some(mm))=(cstr_opt(state),cstr_opt(female_motion),cstr_opt(male_motion)) else {write_err(err,cap,"invalid UTF-8 pair identity");return 1;};
     let female=&mut *female;let male=&mut *male;
     if female.sex!=1||male.sex!=0||female.game_root!=male.game_root {write_err(err,cap,"pair needs opposite roles from the same game");return 1;}
+    // The second heroine of a 3P pose: set with ok_animation_pair_set_third, a third distinct session.
+    let third_link=female.pair_third.clone();
+    let mut third:Option<&mut OkSession>=third_link.as_ref().filter(|t|!t.session.is_null()&&!std::ptr::eq(t.session,&*female)&&!std::ptr::eq(t.session,&*male)).map(|t|&mut *t.session);
     let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let profile=std::env::var("OK_ANIM_PROFILE").ok().as_deref()==Some("1");let start=std::time::Instant::now();
         let setups={let _trace=crate::native_profile::Scope::new(0);crate::h_playback::validated_pair_setups(female,male,&state,&fm,&mm)?};
+        let third_setup=match (&third,&third_link){(Some(_),Some(link))=>crate::h_playback::third_setup(&female.game_root,&link.motion,&state)?,_=>None};
+        let swapped=third_link.as_ref().is_some_and(|l|l.swapped);
         let validated=start.elapsed();
         // Keep the established stage barriers/dispatch: an outer worker
         // transaction did not improve complete-frame measurements.
         let work=||{
         {let _trace=crate::native_profile::Scope::new(1);
         crate::h_playback::set_native_pair_parameters(female,male);
+        if let Some(t)=third.as_deref_mut(){crate::h_playback::set_third_pair_parameters(female,male,t,swapped);}
         crate::session::native_parallel_work(||rayon::join(
             ||{let _trace=crate::native_profile::Scope::new(14);female.sample_paired_frame(time)},
-            ||{let _trace=crate::native_profile::Scope::new(14);male.sample_paired_frame(time)}));}
+            ||rayon::join(||{let _trace=crate::native_profile::Scope::new(14);male.sample_paired_frame(time)},
+                ||if let Some(t)=third.as_deref_mut(){t.sample_paired_frame(time)})));}
         let sampled=start.elapsed();
-        let contacts={let _trace=crate::native_profile::Scope::new(2);crate::h_playback::apply_contacts_prepared_with_policy(female,male,&state,setups,false,true,dt)?};
+        let contacts={let _trace=crate::native_profile::Scope::new(2);{let [f,m]=setups;crate::h_playback::apply_contacts_roles(female,male,third.as_deref_mut(),&state,[f,m,third_setup],swapped,false,true,dt)?}};
         // Studio IK once more after the contacts: MotionIK solves the whole body again and took back the knees that held
         // feet bend (one-on-one fitting of different heights keeps the taller one's feet on the floor).
         // His FK (his penis root turned toward her belly, belly_bulge::aim_penis) and hers (her body trembling as she comes,
@@ -1319,7 +1409,8 @@ unsafe fn animation_pair_frame_impl(female:*mut OkSession,male:*mut OkSession,ti
         // Contact solving is a barrier: both sampled actors must be visible
         // to the coupled solver before either actor advances private physics.
         {let _trace=crate::native_profile::Scope::new(3);crate::session::native_parallel_work(||rayon::join(
-            ||female.finish_paired_dynamics_filtered(dt,observer,excluded.0),||male.finish_paired_dynamics_filtered(dt,observer.map(|o|PrivateSkinObserver{role:1,..o}),excluded.1)));}
+            ||female.finish_paired_dynamics_filtered(dt,observer,excluded.0),||rayon::join(||male.finish_paired_dynamics_filtered(dt,observer.map(|o|PrivateSkinObserver{role:1,..o}),excluded.1),
+                ||if let Some(t)=third.as_deref_mut(){t.finish_paired_dynamics_filtered(dt,None,&[])})));}
         if profile{eprintln!("OK animation pair validate_ms={:.3} sample_ms={:.3} contacts_ms={:.3} dynamics_ms={:.3}",validated.as_secs_f64()*1000.,(sampled-validated).as_secs_f64()*1000.,(contacted-sampled).as_secs_f64()*1000.,(start.elapsed()-contacted).as_secs_f64()*1000.);}
         Ok::<usize,String>(contacts)
         };
@@ -1327,6 +1418,15 @@ unsafe fn animation_pair_frame_impl(female:*mut OkSession,male:*mut OkSession,ti
         work()
     }));
     match result {Ok(Ok(_))=>0,Ok(Err(message))=>{write_err(err,cap,&message);1},Err(_)=>{write_err(err,cap,"paired playback failed");1}}
+}
+
+/// The second heroine of a 3P pose: solved in the frames of the pair `female` is in, with her MotionIK `motion`; `swapped`
+/// is an odd pose (the one he is with is her). A null `third` clears it, which the caller must do before closing that session.
+#[no_mangle]
+pub unsafe extern "C" fn ok_animation_pair_set_third(female:*mut OkSession,third:*mut OkSession,motion:*const c_char,swapped:i32)->i32 {
+    if female.is_null()||female==third {return 1;}
+    let female=&mut *female;
+    female.pair_third=if third.is_null(){None}else{let Some(motion)=cstr_opt(motion) else{return 1;};Some(crate::h_playback::PairThird{session:third,motion,swapped:swapped!=0})};0
 }
 
 #[no_mangle]
@@ -1352,6 +1452,8 @@ pub unsafe extern "C" fn ok_session_open_clothes(game:*const c_char,card:*const 
     if states.is_null()||out.is_null(){write_err(err,cap,"missing clothing state or output");return 1;}
     *out=std::ptr::null_mut();
     let values:[u8;9]=std::slice::from_raw_parts(states,9).try_into().unwrap();
+    // Every state 9: all her garment states kept, shown and hidden afterwards (clothes_states.rs).
+    if values==[9;9] {let _all=crate::profile::scope(&[(crate::unity::ALL_STATES_SWITCH,Some("1"))]);return session_open(game,card,outfit,out,err,cap);}
     if values.iter().any(|v|*v>3){write_err(err,cap,"invalid clothing state");return 1;}
     let _scope=crate::unity::request_clothes_states(values);
     session_open(game,card,outfit,out,err,cap)
@@ -2626,6 +2728,7 @@ pub unsafe extern "C" fn ok_editor_apply_mods(s:*mut OkSession,json:*const c_cha
     let Ok(mut mods)=serde_json::from_slice::<crate::editor_mods::EditorMods>(CStr::from_ptr(json).to_bytes()) else{return -1;};
     if !crate::editor_mods::valid(&mods){return -1;}
     for b in &mut mods.abm {let active=b.for_coord(coordinate as usize);b.coord=vec![active];}
+    s.style_card_abm=None;
     if s.abm!=mods.abm{s.abm=mods.abm;let body=s.shape_body.clone();let face=s.shape_face.clone();s.apply_shape(&body,&face);}let changed=crate::pregnancy::apply(s,&mods.pregnancy);if changed{2}else{0}
 }
 
@@ -2646,6 +2749,15 @@ pub unsafe extern "C" fn ok_editor_apply_mods_shape(s:*mut OkSession,json:*const
     crate::editor_mods::apply_with_shape(sess,&mods,&body,&face)
 }
 
+/// A style's bone modifiers on top of the card's (JSON list of abmx::AbmBone; empty gives the card's back). They take effect
+/// with the next shape or pose.
+#[no_mangle]
+pub unsafe extern "C" fn ok_set_style_bones(s:*mut OkSession,json:*const c_char)->i32 {
+    let Some(s)=sess_ref(s) else{return -1;};if json.is_null(){return -1;}
+    let Ok(bones)=serde_json::from_slice::<Vec<crate::abmx::AbmBone>>(CStr::from_ptr(json).to_bytes()) else{return -1;};
+    s.set_style_bones(&bones);0
+}
+
 /// How the bust (part 0) or the hips (part 1) move, for every character (dbone::ver02::PartPhysics): mode 0 the
 /// original verlet, 1 pudding, 2 (hips) the prefab's values; softness < 0 the card's or the default. Takes effect when a
 /// character's body dynamics are built again (`ok_session_refresh_body_physics`, a load or a shape change).
@@ -2658,6 +2770,12 @@ pub extern "C" fn ok_set_body_part_physics(part:i32,mode:i32,softness:f32)->i32 
 /// past the pattern's angles and the iris moves on past them in proportion. 0 keeps the source's limits.
 #[no_mangle]
 pub extern "C" fn ok_set_eye_look_unlimited(enabled:i32,most:f32)->i32 {crate::eye_look::set_unlimited(enabled!=0);crate::eye_look::set_most(most);0}
+/// Her skin where he lifts it cut finer (belly_bulge::refine), one-on-one only: once, after opening, before the mesh is
+/// built. The vertices added, -1 without a session.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_refine_belly(s:*mut OkSession)->i32 {
+ let Some(s)=sess_ref(s)else{return -1;};crate::belly_bulge::refine(s) as i32
+}
 /// Builds this character's body dynamics again with the settings now (ok_set_body_part_physics).
 #[no_mangle]
 pub unsafe extern "C" fn ok_session_refresh_body_physics(s:*mut OkSession)->i32 {
@@ -2994,6 +3112,54 @@ pub unsafe extern "C" fn ok_okmodel_texture_png(lib: *const c_char, id: *const c
 pub unsafe extern "C" fn ok_session_set_blush(s: *mut OkSession, rate: f32) -> i32 {
     let Some(session) = sess_ref(s) else { return 1; };
     if session.set_blush(rate) { 0 } else { 1 }
+}
+
+/// `paint_out_iris_highlights` on an image of `width` x `height` four-byte pixels: 1 when it changed anything.
+#[no_mangle]
+pub unsafe extern "C" fn ok_iris_without_highlights(pixels: *mut u8, width: i32, height: i32) -> i32 {
+    if pixels.is_null() || width <= 0 || height <= 0 { return 0; }
+    let (w, h) = (width as usize, height as usize);
+    i32::from(crate::texture_bake::paint_out_iris_highlights(std::slice::from_raw_parts_mut(pixels, w * h * 4), w, h))
+}
+
+/// `recolor_iris` on an image of `width` x `height` BGRA pixels.
+#[no_mangle]
+pub unsafe extern "C" fn ok_iris_recolor(pixels: *mut u8, width: i32, height: i32, hue: f32, saturation: f32, value: f32) -> i32 {
+    if pixels.is_null() || width <= 0 || height <= 0 {
+        return 1;
+    }
+    let (w, h) = (width as usize, height as usize);
+    crate::texture_bake::recolor_iris(std::slice::from_raw_parts_mut(pixels, w * h * 4), hue, saturation, value);
+    0
+}
+
+/// `mark_iris` on an image of `width` x `height` BGRA pixels.
+#[no_mangle]
+pub unsafe extern "C" fn ok_iris_mark(pixels: *mut u8, width: i32, height: i32, shape: i32, across: f32, down: f32, opacity: f32, hue: f32, saturation: f32, value: f32) -> i32 {
+    if pixels.is_null() || width <= 0 || height <= 0 {
+        return 1;
+    }
+    let (w, h) = (width as usize, height as usize);
+    crate::texture_bake::mark_iris(std::slice::from_raw_parts_mut(pixels, w * h * 4), w, h, shape, across, down, opacity, [hue, saturation, value]);
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_set_pupil_stretch(s: *mut OkSession, across: f32, down: f32) -> i32 {
+    let Some(session) = sess_ref(s) else { return 1; };
+    if session.set_pupil_stretch(across, down) { 0 } else { 1 }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_set_pupil_offset(s: *mut OkSession, x: f32, y: f32) -> i32 {
+    let Some(session) = sess_ref(s) else { return 1; };
+    if session.set_pupil_offset(x, y) { 0 } else { 1 }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_set_pupil_scale(s: *mut OkSession, scale: f32) -> i32 {
+    let Some(session) = sess_ref(s) else { return 1; };
+    if session.set_pupil_scale(scale) { 0 } else { 1 }
 }
 
 #[no_mangle]

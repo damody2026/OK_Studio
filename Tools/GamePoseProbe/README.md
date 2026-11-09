@@ -528,3 +528,11 @@ Lookup. Captures are diagnostics, never production asset inputs.
 - `Saved/Tests/Skin324InventoryShader.py` maps the extracted `xukmi/SkinPlus` Outline/Forward/ShadowCaster programs, keywords, constant buffers and samplers into `Saved/Logs/Skin324NativeShaderInventory.json`. All 14 profile/index/digest mappings are checked. This is source research only; the production SkinPlus shader remains unported.
 - `verify_dump_texture_transforms.lua INVENTORY COMPARISON OUTPUT --identities SOURCE_IDENTITIES` validates changed supported ST against current user material dumps. Match the explicit Unity `mesh` asset, not `gameObject`. Reused accessory assets require source `field`/`slot`; additional renderer draws require the original mesh identity recorded by the source emitter. `trace_texture_transform_source_identities` is an opt-in installed Rust test: source-only ordered extraction must match every cached role/mesh/full material before its original card property/slot is used. Its manifest hook and original-mesh metadata are `cfg(test)` only, with no production ABI/cache change. Do not select native rows using the desired ST values or guessed suffix removal.
 - Preserve historical reports: Stage323 cached Megumin comparison selected an indoor control because its SQL exclusion expected a trailing delimiter after the last key field. Stage324 requires exact default-mode key endings and complete keys identical except pipeline. This supersedes the earlier formal-outdoor cache parity claim; native footwear/capture evidence retain their own scopes.
+
+## Map tour (sky and sea of a map at each time of day)
+
+`Tools/lua/lua.exe Tools/GamePoseProbe/run_map_tour.lua --tag <tag> --stops 56:0,56:3,... [--height 30]`: for each
+`map:sun` stop, CharaStudio loads the map and writes nine fixed views from (0, height, 0) (vertical FOV 60), the same
+views without image effects (`_nopost`), and a `.tsv` with the runtime sky material, lights and water material
+properties. The pictures contain original game content: they stay in `Saved/Tests/<tag>` and are never committed.
+OK Studio's FOV is horizontal: vertical 60 at 16:9 is 91.5 there.

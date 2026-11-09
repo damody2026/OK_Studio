@@ -292,8 +292,21 @@ void AOKStreetSocialScene::SetAsideAbsentMeetings(){
 void AOKStreetSocialScene::TickAppointments(){
  auto& S=*State;const int64 Now=OKStreetMindNow(S);
  if(Now==S.AppointmentTickMinute)return;S.AppointmentTickMinute=Now;
+ // Back from that load she is where he left her: 三月七 said goodbye in her new dress and was across town when the street came back.
+ if(!S.LookReloadPending&&S.AllReady&&S.LookGirl!=INDEX_NONE&&S.Agents.IsValidIndex(S.LookGirl-1)){const int32 G=S.LookGirl;S.LookGirl=INDEX_NONE;const float Angle=FMath::DegreesToRadians(S.Rotations[0].Yaw);
+  S.Agents[G-1].Position=S.Male+FVector(FMath::Cos(Angle),FMath::Sin(Angle),0)*170.f;S.Commutes.Remove(G);S.LiftWalks.Remove(G);S.Agents[G-1].Held=true;S.ScheduleHeld.Add(G);UE_LOG(LogTemp,Display,TEXT("Street clothes: actor %d is back beside him in her new look"),G);}
+ // The street's models are made from the cards when it loads: a new look shows once it loads again, as soon as he is on his
+ // own (a save and a load of it, about half a minute), not at the next start of the game.
+ if(S.LookReloadPending&&FreeTalkPartner()==INDEX_NONE&&S.Target==INDEX_NONE&&S.Companion==INDEX_NONE&&S.OutingGirl==INDEX_NONE&&S.Pair.Partner==INDEX_NONE&&S.PrivateGirl==INDEX_NONE&&S.ApproachGirl==INDEX_NONE&&S.Party.IsEmpty()){
+  S.LookReloadPending=false;UE_LOG(LogTemp,Display,TEXT("Street clothes: the street reloads for a new look"));SaveToSlot(TEXT("auto"));RestartWithSave(TEXT("load"),TEXT("auto"));return;}
  TickSeries();
- if(!S.bAbsentCastChecked){S.bAbsentCastChecked=true;SetAsideAbsentMeetings();} // the rules are open by now (not at load)
+ if(!S.bAbsentCastChecked){S.bAbsentCastChecked=true;SetAsideAbsentMeetings(); // the rules are open by now (not at load)
+  // Saved while she was walking over: the meeting was already kept, her walk was not in the save, and 雷电将军 never came
+  // to the 15:00 dumplings after a load; the meeting was gone from the list too. She sets out again.
+  for(auto& Ap:S.Store.Appointments)if(Ap.ComingAt>=0){const int32 G=CharacterOf(Ap.Heroine);
+   if(G!=INDEX_NONE&&Now<=Ap.Start+Ap.Grace+60){S.ArriveLater.Add(G,FMath::Max(Now+1,Ap.ComingAt));if(!Ap.Payer.IsEmpty())RecordPayAgreed(G,Ap.Payer,TEXT("go:")+Ap.Place);
+    UE_LOG(LogTemp,Display,TEXT("Street appointment %d: actor=%d was on her way when this was saved; she sets out again"),Ap.Id,G);}
+   else Ap.ComingAt=-1;}}
  // She walks over to him at the meeting place and opens the talk.
  // Join: he is talking with another girl; she comes over and joins them (StepApproach), not a talk of her own.
  auto ArriveNow=[this,&S](int32 Girl,bool Join=false){
@@ -327,7 +340,7 @@ void AOKStreetSocialScene::TickAppointments(){
     S.ApproachLimit=FMath::Max(90.0,30.0+2.0*Length/OKStreetWalkSpeed);
     S.ApproachGirl=Girl;S.ApproachBlockedNear=false;S.ApproachBlockedSince=0;S.ApproachPath=MoveTemp(Path);S.ApproachStarted=FPlatformTime::Seconds();S.ApproachInvite=false;S.ApproachAppointment=true;S.ApproachJoin=Join;S.ApproachRetries=0;S.Agents[Girl-1].Held=true;
     UE_LOG(LogTemp,Display,TEXT("Street appointment: actor=%d comes to him (route points=%d, she is at %s, he at %s)"),Girl,S.ApproachPath.Num(),*S.Agents[Girl-1].Position.ToCompactString(),*S.Male.ToCompactString());
-   }else if(WithHim){UE_LOG(LogTemp,Display,TEXT("Street appointment: actor=%d is already with him, no walk over"),Girl);}
+   }else if(WithHim){UE_LOG(LogTemp,Display,TEXT("Street appointment: actor=%d is already with him, no walk over"),Girl);if(S.Manifest.Characters.IsValidIndex(Girl)){const FString Her=OKStreetStableId(S.Manifest.Characters[Girl]);for(auto& Ap:S.Store.Appointments)if(Ap.Heroine==Her)Ap.ComingAt=-1;}}
    // She is the one walking over already (to sing for him, and on the way he texted her to meet): that walk is the
    // meeting. She waited for herself ("another girl is walking over (approach=9)").
    else if(S.ApproachGirl==Girl){S.ApproachAppointment=true;UE_LOG(LogTemp,Display,TEXT("Street appointment: actor=%d is walking over to him already"),Girl);}
@@ -401,11 +414,12 @@ void AOKStreetSocialScene::TickAppointments(){
   const int32 Girl=CharacterOf(V->AsObject()->GetStringField(TEXT("heroine")));if(Girl==INDEX_NONE)continue;
   // Still at work (or in class) until the meeting: she comes at its time, not half an hour early off her shift ("I am still
   // working, 25 more minutes" when she had already walked over).
-  {const int32 Id=int32(V->AsObject()->GetNumberField(TEXT("id")));const FOKStreetAppointment* A=S.Store.Appointments.FindByPredicate([&](const FOKStreetAppointment& X){return X.Id==Id;});
+  {const int32 Id=int32(V->AsObject()->GetNumberField(TEXT("id")));FOKStreetAppointment* A=S.Store.Appointments.FindByPredicate([&](const FOKStreetAppointment& X){return X.Id==Id;});
+   if(A)A->ComingAt=Now;
    const FOKStreetPlanBlock* B=BlockNow(Girl,int32(Now%1440));
    // Her shift over before the meeting's time: she comes as it ends. The meeting is settled, so her day no longer holds
    // her there; 惠惠's work ended at 22:00 and she walked home before the 22:15 pickup he was waiting for (R6-127).
-   if(A&&Now<A->Start&&B&&(B->Kind==TEXT("work")||B->Kind==TEXT("class"))){const int64 At=FMath::Min(A->Start,Now-Now%1440+B->End);S.ArriveLater.Add(Girl,At);UE_LOG(LogTemp,Display,TEXT("Street appointment: actor=%d is at %s until %02d:%02d; she comes then"),Girl,*B->Kind,int32(At%1440)/60,int32(At%60));continue;}}
+   if(A&&Now<A->Start&&B&&(B->Kind==TEXT("work")||B->Kind==TEXT("class"))){const int64 At=FMath::Min(A->Start,Now-Now%1440+B->End);A->ComingAt=At;S.ArriveLater.Add(Girl,At);UE_LOG(LogTemp,Display,TEXT("Street appointment: actor=%d is at %s until %02d:%02d; she comes then"),Girl,*B->Kind,int32(At%1440)/60,int32(At%60));continue;}}
   bool Join=false;V->AsObject()->TryGetBoolField(TEXT("join"),Join);
   // Who they said would pay when they made it: the bill there follows it (RecordPayAgreed), as said that day (R3-216).
   {const int32 Id=int32(V->AsObject()->GetNumberField(TEXT("id")));if(const FOKStreetAppointment* A=S.Store.Appointments.FindByPredicate([&](const FOKStreetAppointment& X){return X.Id==Id;});A&&!A->Payer.IsEmpty())
