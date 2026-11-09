@@ -97,7 +97,8 @@ local function claim(agent, note, wait, need_gb)
   while true do
     local i, why = try_claim(agent, note, need_gb)
     if i then
-      path.remove(queue_file(agent))
+      -- the queue entry may already be gone (another session cleaned the queue); the slot is ours either way
+      pcall(path.remove, queue_file(agent))
       io.write("slot", i, "\n")
       return 0
     end
