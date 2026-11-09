@@ -143,7 +143,10 @@ void AOKStreetSocialScene::AddPromiseFromChat(int32 Character,const FString& Day
  // Closed then (breakfast at 8:00 at a shop opening at 10:00): not booked; she hears why, so the two pick another time.
  if(Action==TEXT("closed")){const FString Why=Out->GetStringField(TEXT("why"));
   S.TellHer.Add(OKMsg(TEXT("ui.appointments.closed_then_note"), {{TEXT("place_name"), P->Name}, {TEXT("why"), *Why}}));S.FreeTalkNotice=Why;
+  // The judge reads "seven, the other restaurant" next as the old plan confirmed and books nothing (R6-193): it is told.
+  S.HerUnbooked.Add(Character,TPair<int64,FString>(OKStreetMindNow(S),P->Name));
   UE_LOG(LogTemp,Display,TEXT("Street appointment: %s at minute %lld not booked, closed then (%s)"),*Place,Start,*Why);RefreshUI();return;}
+ S.HerUnbooked.Remove(Character);
  const FString Label=OKMsg(TEXT("ui.appointments.meet_with_summary"), {{TEXT("character_name"), *S.Manifest.Characters[Character].Name}, {TEXT("what"), What.IsEmpty()?OKT(TEXT("ui.appointments.meeting_label")):*What}, {TEXT("person_name"), P->Name}});
  // The meeting this one takes the place of goes quietly (promise.rs replaces_id).
  {const int32 Old=int32(Out->GetNumberField(TEXT("replaces_id")));if(Old>0)MovePromiseWith(Old);}

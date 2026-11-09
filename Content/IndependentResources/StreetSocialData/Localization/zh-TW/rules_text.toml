@@ -6,6 +6,7 @@
 class_attended = "這堂課有出席。"
 class_soon = "{time} 有「{name}」，你還沒到上課的大樓（缺課超過一半會被當）。"
 class_missed = "「{name}」這堂課缺席了（出席 {attended}/{held}）。"
+class_too_short = "「{name}」你只在教學樓待了 {minutes} 分鐘，不到半堂課，算缺席（出席 {attended}/{held}）。"
 enrollment_label = "入學"
 exam_failed_score = "{subject}考試 {score, number, ::integer} 分（門檻 {threshold}），沒有通過。多讀點書再來吧。"
 exam_passed_status = "{subject}考試 {score, number, ::integer} 分（門檻 {threshold}），通過！現在是{student_level}的學生。"
