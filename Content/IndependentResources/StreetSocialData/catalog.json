@@ -2,6 +2,14 @@
  "version": 2,
  "currency": "CNY",
  "places": {
+  "bbq": {
+   "open": [
+    [
+     10,
+     22
+    ]
+   ]
+  },
   "beach_house": {
    "open": [
     [
@@ -542,6 +550,139 @@
    "effects": {},
    "giftable": false,
    "consumable": false
+  },
+  {
+   "id": "bbq_set",
+   "place": "bbq",
+   "name": "烤肉雙人套餐",
+   "category": "meal",
+   "price": {
+    "": 88
+   },
+   "season": null,
+   "tags": [
+    "hot",
+    "filling",
+    "shareable"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 50,
+    "mood": 10
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "bbq_skewer",
+   "place": "bbq",
+   "name": "烤串（5 串）",
+   "category": "light",
+   "price": {
+    "": 25
+   },
+   "season": null,
+   "tags": [
+    "hot",
+    "shareable"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 20,
+    "mood": 5
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "bbq_sausage",
+   "place": "bbq",
+   "name": "烤香腸",
+   "category": "light",
+   "price": {
+    "": 12
+   },
+   "season": null,
+   "tags": [
+    "hot"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 12,
+    "mood": 4
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "bbq_marshmallow",
+   "place": "bbq",
+   "name": "烤棉花糖",
+   "category": "dessert",
+   "price": {
+    "": 10
+   },
+   "season": null,
+   "tags": [
+    "sweet",
+    "hot",
+    "shareable"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 8,
+    "mood": 10
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "bbq_cola",
+   "place": "bbq",
+   "name": "罐裝可樂",
+   "category": "drink",
+   "price": {
+    "": 6
+   },
+   "season": null,
+   "tags": [
+    "sweet",
+    "cold"
+   ],
+   "prop": "cup",
+   "options": [],
+   "effects": {
+    "satiety": 5,
+    "mood": 6
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "bbq_beer",
+   "place": "bbq",
+   "name": "罐裝啤酒",
+   "category": "alcohol",
+   "price": {
+    "": 12
+   },
+   "season": null,
+   "tags": [
+    "cold"
+   ],
+   "prop": "cup",
+   "options": [],
+   "effects": {
+    "satiety": 3,
+    "mood": 10,
+    "energy": -5
+   },
+   "giftable": false,
+   "consumable": true
   },
   {
    "id": "rest_porkcutlet",
