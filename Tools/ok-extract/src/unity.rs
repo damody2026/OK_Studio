@@ -3885,13 +3885,16 @@ impl ParsedBundle {
     /// only one (`ChaControl.cs:1317-1495`, default state 0 = 蝛踹末 = the `_a`
     /// node). We loaded the whole prefab, so both states rendered at once.
     fn clothes_state_filter(&self, meshes: &mut Vec<ExtractedMesh>, chains: &[(i64, Vec<String>)], clothes_category: Option<i32>) {
-        if all_clothes_states() {
+        // Only a garment's prefab follows the clothes states (ChaControl sets its state nodes). An accessory or hair
+        // that reuses a garment prefab (Lhianna_dress_acc: p_o_top_HMteacher on a_n_back) keeps the worn state in
+        // every clothes state: what the conversion records for it (its garment-state variants skip accessories).
+        if all_clothes_states() && clothes_category.is_some() {
             for mesh in meshes.iter_mut() {
                 if let Some((_, chain)) = chains.iter().find(|(id, _)| *id == mesh.path_id) { mark_state_nodes(mesh, chain, clothes_category); }
             }
             return;
         }
-        let states = clothes_states();
+        let states = if clothes_category.is_some() { clothes_states() } else { [0; 9] };
         let picked: std::collections::HashSet<i64> = meshes.iter().map(|m| m.path_id).collect();
         note_state_nodes(chains.iter().filter(|(mesh, _)| picked.contains(mesh)).flat_map(|(_, chain)| chain.iter()), clothes_category);
         // A renderer can sit below two state nodes (for example o_bra_b inside
