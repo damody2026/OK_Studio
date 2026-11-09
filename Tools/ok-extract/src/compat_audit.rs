@@ -155,6 +155,18 @@ pub fn classify_shader_supported(shader: &str) -> &'static str {
                 | "standard"
                 | "kkuss"
                 | "kkussitem"
+                | "kkussalpha"
+                | "kkusshair"
+                | "kkuts"
+                | "kkuts_tess"
+                | "kkutsitem"
+                | "kkutsitem_tess"
+                | "kkutsalpha"
+                | "kkutsalpha_tess"
+                | "kkutshair"
+                | "kkutshair_tess"
+                | "kkutseye"
+                | "kkutseyew"
                 | "ibl_shader"
                 | "ibl_shader_alpha"
                 | "goo"
@@ -196,9 +208,15 @@ fn classify_card_plugin(id: &str) -> &'static str {
     {
         "supported"
     } else if low.contains("additionalcardinfo")
+        || low.contains("additional_card_info")
+        || low.contains("authordata")
+        || low == "migrationhelper"
+        || low == "pluginlisttool"
+        || low == "aaaaaaaaaaaa_data"
+        || low.contains("gamedialoghelper")
         || low.contains("autosave")
         || low.contains("charamaker")
-        || low.contains("ClothingUnlocker")
+        || low.contains("clothingunlocker")
         || low.contains("maker")
         || low.contains("sliders")
         || low.contains("title")
@@ -320,6 +338,27 @@ fn classify_timeline_interpolable(owner: &str, id: &str) -> &'static str {
             | "lastBlendShape"
             | "groupBlendShape"
             | "groupBlendShapeLink",
+        )
+        | (
+            "ShalltyUtils",
+            "guideObjectXPos"
+            | "guideObjectYPos"
+            | "guideObjectZPos"
+            | "guideObjectXRot"
+            | "guideObjectYRot"
+            | "guideObjectZRot"
+            | "guideObjectXScale"
+            | "guideObjectYScale"
+            | "guideObjectZScale"
+            | "boneXPos"
+            | "boneYPos"
+            | "boneZPos"
+            | "boneXRot"
+            | "boneYRot"
+            | "boneZRot"
+            | "boneXScale"
+            | "boneYScale"
+            | "boneZScale",
         )
         | ("NodesConstraints", "constraintEnabled") => "supported",
         _ => "unsupported",

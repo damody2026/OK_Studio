@@ -17,7 +17,7 @@ void AddShadowReason(TArray<FString>& Reasons,const TCHAR* Reason){
 }
 
 FOKRuntimeShadowCoverageResult OKRuntimeShadowCoverage(const FOKRuntimeShadowMaterialFacts& Facts){
- const bool Known=int32(Facts.Recipe)>=1&&int32(Facts.Recipe)<=61;
+ const bool Known=int32(Facts.Recipe)>=1&&int32(Facts.Recipe)<=70;
  if(!Known)return {EOKRuntimeShadowCoverage::OriginalMaterial,TEXT("unclassified material")};
  const EBlendMode Expected=OKRuntimeSharedMaterialBlendMode(Facts.Recipe);
  const EBlendMode Blend=Facts.BlendObserved?Facts.Blend:Expected;

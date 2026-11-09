@@ -823,7 +823,7 @@ impl SessionPart {
         };
         let is_forge_opaque = mesh.mat.as_ref().is_some_and(|m| {
             let s = m.shader.to_ascii_lowercase();
-            s.contains("main_opaque") || matches!(s.as_str(), "kkussitem" | "kkuss")
+            s.contains("main_opaque") || matches!(s.as_str(), "kkussitem" | "kkuss" | "kkusshair")
                 || (m.shader.is_empty() && role.starts_with("clothes")
                     && m.slot("_Texture3").is_some())
         });
@@ -905,12 +905,14 @@ impl SessionPart {
                     let stage=mesh.mat.as_ref().is_some_and(|m|m.floats.contains_key("_OKStageEffect"));
                     let metal_map=mesh.mat.as_ref().is_some_and(|m|m.keywords.iter().any(|k|k=="_METALLICGLOSSMAP"));
                     let standard_normal=mesh.mat.as_ref().is_some_and(|m|m.shader.starts_with("Standard")&&m.keywords.iter().any(|k|k=="_NORMALMAP"));
-                    let is_kkuss=matches!(hair_shader_name.as_str(),"kkussitem"|"kkuss");
+                    let is_kkuss=crate::is_kkuss_shader(&hair_shader_name);
+                    let is_kkuts=crate::is_kkuts_shader(&hair_shader_name);
                     // The character shaders' liquid (ChaControl siruLv, the H scene's semen) samples its region mask
                     // `_liquidmask`, pattern `_Texture2` and (Forge) normal `_Texture3`: kept so the skin and clothes show it.
                     textures.retain(|name,_|(standard_normal && name=="_BumpMap") || (emits && name=="_EmissionMap") || (metal_map && name=="_MetallicGlossMap") || name=="_OKLightmap" || name=="_OKLightmapDirection" || name=="_OKReflection" || name=="_OKSkyCube" || name=="_expression"
                         || matches!(name.as_str(),"_liquidmask"|"_Texture2"|"_Texture3")
-                        || (is_kkuss && matches!(name.as_str(),"_NormalMapDetail"|"_overtex1"|"_overtex2"|"_overtex3"))
+                        || (is_kkuss && (matches!(name.as_str(),"_NormalMapDetail"|"_AnotherRamp"|"_overtex1"|"_overtex2"|"_overtex3") || crate::KKUTS_EXTRA_TEXTURE_SLOTS.contains(&name.as_str())))
+                        || (is_kkuts && (matches!(name.as_str(),"_NormalMapDetail"|"_AnotherRamp"|"_overtex1"|"_overtex2"|"_overtex3") || crate::KKUTS_EXTRA_TEXTURE_SLOTS.contains(&name.as_str())))
                         || (stage && matches!(name.as_str(),"_color"|"_mask"|"_Emission"|"_MaskFast"|"_MaskSlow"|"_MaskFull")));
                 }
                 textures
@@ -984,6 +986,8 @@ impl SessionPart {
                 .unwrap_or(if is_hair_shader { 0.5 } else { 1.0 }),
             source_outline_enabled: mesh.mat.as_ref().is_none_or(|m|
                 if m.shader.eq_ignore_ascii_case("xukmi/MainItemPlus") {m.float("_OutlineOn").unwrap_or(1.)!=0.}
+                else if crate::is_kkuts_shader(&m.shader) {crate::is_kkuts_outline_shader(&m.shader) && m.float("_OutlineAdjust").unwrap_or(3.)>0.}
+                else if crate::is_kkuss_shader(&m.shader) {crate::is_kkuss_outline_shader(&m.shader)}
                 else {m.keywords.iter().any(|k|k.eq_ignore_ascii_case("_OUTLINE_ON"))}),
             shadow_extend_another: mesh.mat.as_ref().and_then(|m| m.float("_ShadowExtendAnother")).unwrap_or(0.0),
             main_tex_st: {

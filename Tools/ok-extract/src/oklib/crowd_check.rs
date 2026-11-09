@@ -21,6 +21,8 @@ const ANY_KIND: &[&str] = &[
     "Shader Forge/main_item_studio", "Goo", "Shader Forge/main_item_ditherd", "Shader Forge/main_item_emission", "KKUSS",
     "Shader Forge/toon_eyew_lod0", "DA/Chara/Oil Painting", "BetterMatcap", "Koikano/hair_main_sun",
     "Koikano/hair_main_sun_front", "Koikano/main_clothes_item_glasses",
+    "KKUTS", "KKUTS_Tess", "KKUTSitem", "KKUTSitem_Tess", "KKUTSalpha", "KKUTSalpha_Tess",
+    "KKUTShair", "KKUTShair_Tess", "KKUTSeye", "KKUTSeyew", "KKUSSalpha", "KKUSShair",
 ];
 /// Kind-0 translucent unlit parts: (shader, eye draw kind).
 const EYES: &[(&str, i32)] = &[
@@ -31,7 +33,7 @@ const EYES: &[(&str, i32)] = &[
 const HIDDEN: &[&str] = &["o_dankon", "o_dan_f", "cm_o_dan00", "cm_o_dan_f"];
 
 fn supported(shader: Option<&str>, kind: u8, blend: &str, unlit: bool, eye: i32) -> bool {
-    if shader.is_some_and(|s| ANY_KIND.contains(&s)) { return true; }
+    if shader.is_some_and(|s| ANY_KIND.contains(&s) || crate::is_kkuss_shader(s) || crate::is_kkuts_shader(s)) { return true; }
     let is = |want: &str| shader.is_some_and(|s| s.eq_ignore_ascii_case(want));
     let translucent = blend.eq_ignore_ascii_case("translucent");
     match kind {

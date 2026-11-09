@@ -1939,6 +1939,8 @@ r0.w=rsqrt(r0.w);
 o2.xyz=(r0.www*r0.xyz);
 )OKSHADER")
 ;
+#include "KKUTSOutlinePrograms.inl"
+#include "KKUSSOutlinePrograms.inl"
 static const FKKRuntimeShaderLayout* OutlineLayout(EKKRuntimeMaterialRecipe Recipe){switch(Recipe){
 case EKKRuntimeMaterialRecipe::ForgeItem:{static const auto L=BuildAdditionalLayout(MakeArrayView(GForgeItemOutlineCBSize),MakeArrayView(GForgeItemOutlineUniforms),MakeArrayView(GForgeItemOutlineTextures),MakeArrayView(GForgeItemOutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
 case EKKRuntimeMaterialRecipe::ForgeHairFront:{static const auto L=BuildAdditionalLayout(MakeArrayView(GForgeHairFrontOutlineCBSize),MakeArrayView(GForgeHairFrontOutlineUniforms),MakeArrayView(GForgeHairFrontOutlineTextures),MakeArrayView(GForgeHairFrontOutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
@@ -1950,6 +1952,11 @@ case EKKRuntimeMaterialRecipe::KoikanoSkin:{static const auto L=BuildAdditionalL
 case EKKRuntimeMaterialRecipe::KoikanoClothesItem:case EKKRuntimeMaterialRecipe::KoikanoClothesItemAlpha:case EKKRuntimeMaterialRecipe::KoikanoClothesItemTranslucent:case EKKRuntimeMaterialRecipe::KoikanoClothesItemAlphaTranslucent:{static const auto L=BuildAdditionalLayout(MakeArrayView(GKoikanoClothesItemOutlineCBSize),MakeArrayView(GKoikanoClothesItemOutlineUniforms),MakeArrayView(GKoikanoClothesItemOutlineTextures),MakeArrayView(GKoikanoClothesItemOutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
 case EKKRuntimeMaterialRecipe::KoikanoHairSun0:case EKKRuntimeMaterialRecipe::KoikanoHairSun1:case EKKRuntimeMaterialRecipe::KoikanoHairSun2:case EKKRuntimeMaterialRecipe::KoikanoHairSun3:case EKKRuntimeMaterialRecipe::KoikanoHairSun4:case EKKRuntimeMaterialRecipe::KoikanoHairSun5:case EKKRuntimeMaterialRecipe::KoikanoHairSun6:case EKKRuntimeMaterialRecipe::KoikanoHairSun7:{static const auto L=BuildAdditionalLayout(MakeArrayView(GKoikanoHairSun0OutlineCBSize),MakeArrayView(GKoikanoHairSun0OutlineUniforms),MakeArrayView(GKoikanoHairSun0OutlineTextures),MakeArrayView(GKoikanoHairSun0OutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
 case EKKRuntimeMaterialRecipe::KoikanoClothesOpaque:case EKKRuntimeMaterialRecipe::KoikanoClothesColor:{static const auto L=BuildAdditionalLayout(MakeArrayView(GKoikanoClothesOpaqueOutlineCBSize),MakeArrayView(GKoikanoClothesOpaqueOutlineUniforms),MakeArrayView(GKoikanoClothesOpaqueOutlineTextures),MakeArrayView(GKoikanoClothesOpaqueOutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
+case EKKRuntimeMaterialRecipe::KKUTS:{static const auto L=BuildAdditionalLayout(MakeArrayView(GKKUTSOutlineCBSize),MakeArrayView(GKKUTSOutlineUniforms),MakeArrayView(GKKUTSOutlineTextures),MakeArrayView(GKKUTSOutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
+case EKKRuntimeMaterialRecipe::KKUTSItem:{static const auto L=BuildAdditionalLayout(MakeArrayView(GKKUTSItemOutlineCBSize),MakeArrayView(GKKUTSItemOutlineUniforms),MakeArrayView(GKKUTSItemOutlineTextures),MakeArrayView(GKKUTSItemOutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
+case EKKRuntimeMaterialRecipe::KKUTSHair:{static const auto L=BuildAdditionalLayout(MakeArrayView(GKKUTSHairOutlineCBSize),MakeArrayView(GKKUTSHairOutlineUniforms),MakeArrayView(GKKUTSHairOutlineTextures),MakeArrayView(GKKUTSHairOutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
+case EKKRuntimeMaterialRecipe::KKUSS:{static const auto L=BuildAdditionalLayout(MakeArrayView(GKKUSSOutlineCBSize),MakeArrayView(GKKUSSOutlineUniforms),MakeArrayView(GKKUSSOutlineTextures),MakeArrayView(GKKUSSOutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
+case EKKRuntimeMaterialRecipe::KKUSSHair:{static const auto L=BuildAdditionalLayout(MakeArrayView(GKKUSSHairOutlineCBSize),MakeArrayView(GKKUSSHairOutlineUniforms),MakeArrayView(GKKUSSHairOutlineTextures),MakeArrayView(GKKUSSHairOutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
 default:return nullptr;}}
 static FString OutlineProgram(EKKRuntimeMaterialRecipe Recipe){switch(Recipe){
 case EKKRuntimeMaterialRecipe::ForgeItem:return GForgeItemOutlineProgram;
@@ -1962,6 +1969,11 @@ case EKKRuntimeMaterialRecipe::KoikanoSkin:return GKoikanoSkinOutlineProgram;
 case EKKRuntimeMaterialRecipe::KoikanoClothesItem:case EKKRuntimeMaterialRecipe::KoikanoClothesItemAlpha:case EKKRuntimeMaterialRecipe::KoikanoClothesItemTranslucent:case EKKRuntimeMaterialRecipe::KoikanoClothesItemAlphaTranslucent:return GKoikanoClothesItemOutlineProgram;
 case EKKRuntimeMaterialRecipe::KoikanoHairSun0:case EKKRuntimeMaterialRecipe::KoikanoHairSun1:case EKKRuntimeMaterialRecipe::KoikanoHairSun2:case EKKRuntimeMaterialRecipe::KoikanoHairSun3:case EKKRuntimeMaterialRecipe::KoikanoHairSun4:case EKKRuntimeMaterialRecipe::KoikanoHairSun5:case EKKRuntimeMaterialRecipe::KoikanoHairSun6:case EKKRuntimeMaterialRecipe::KoikanoHairSun7:return GKoikanoHairSun0OutlineProgram;
 case EKKRuntimeMaterialRecipe::KoikanoClothesOpaque:case EKKRuntimeMaterialRecipe::KoikanoClothesColor:return GKoikanoClothesOpaqueOutlineProgram;
+case EKKRuntimeMaterialRecipe::KKUTS:return GKKUTSOutlineProgram;
+case EKKRuntimeMaterialRecipe::KKUTSItem:return GKKUTSItemOutlineProgram;
+case EKKRuntimeMaterialRecipe::KKUTSHair:return GKKUTSHairOutlineProgram;
+case EKKRuntimeMaterialRecipe::KKUSS:return GKKUSSOutlineProgram;
+case EKKRuntimeMaterialRecipe::KKUSSHair:return GKKUSSHairOutlineProgram;
 default:return {};}}
 static const FKKRuntimeShaderLayout* OutlineVertexLayout(EKKRuntimeMaterialRecipe Recipe){switch(Recipe){
 case EKKRuntimeMaterialRecipe::ForgeItem:{static const auto L=BuildAdditionalLayout(MakeArrayView(GForgeItemOutlineVertexCBSize),MakeArrayView(GForgeItemOutlineVertexUniforms),MakeArrayView(GForgeItemOutlineVertexTextures),MakeArrayView(GForgeItemOutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
@@ -1974,6 +1986,11 @@ case EKKRuntimeMaterialRecipe::KoikanoSkin:{static const auto L=BuildAdditionalL
 case EKKRuntimeMaterialRecipe::KoikanoClothesItem:case EKKRuntimeMaterialRecipe::KoikanoClothesItemAlpha:case EKKRuntimeMaterialRecipe::KoikanoClothesItemTranslucent:case EKKRuntimeMaterialRecipe::KoikanoClothesItemAlphaTranslucent:{static const auto L=BuildAdditionalLayout(MakeArrayView(GKoikanoClothesItemOutlineVertexCBSize),MakeArrayView(GKoikanoClothesItemOutlineVertexUniforms),MakeArrayView(GKoikanoClothesItemOutlineVertexTextures),MakeArrayView(GKoikanoClothesItemOutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
 case EKKRuntimeMaterialRecipe::KoikanoHairSun0:case EKKRuntimeMaterialRecipe::KoikanoHairSun1:case EKKRuntimeMaterialRecipe::KoikanoHairSun2:case EKKRuntimeMaterialRecipe::KoikanoHairSun3:case EKKRuntimeMaterialRecipe::KoikanoHairSun4:case EKKRuntimeMaterialRecipe::KoikanoHairSun5:case EKKRuntimeMaterialRecipe::KoikanoHairSun6:case EKKRuntimeMaterialRecipe::KoikanoHairSun7:{static const auto L=BuildAdditionalLayout(MakeArrayView(GKoikanoHairSun0OutlineVertexCBSize),MakeArrayView(GKoikanoHairSun0OutlineVertexUniforms),MakeArrayView(GKoikanoHairSun0OutlineVertexTextures),MakeArrayView(GKoikanoHairSun0OutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
 case EKKRuntimeMaterialRecipe::KoikanoClothesOpaque:case EKKRuntimeMaterialRecipe::KoikanoClothesColor:{static const auto L=BuildAdditionalLayout(MakeArrayView(GKoikanoClothesOpaqueOutlineVertexCBSize),MakeArrayView(GKoikanoClothesOpaqueOutlineVertexUniforms),MakeArrayView(GKoikanoClothesOpaqueOutlineVertexTextures),MakeArrayView(GKoikanoClothesOpaqueOutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
+case EKKRuntimeMaterialRecipe::KKUTS:{static const auto L=BuildAdditionalLayout(MakeArrayView(GKKUTSOutlineVertexCBSize),MakeArrayView(GKKUTSOutlineVertexUniforms),MakeArrayView(GKKUTSOutlineVertexTextures),MakeArrayView(GKKUTSOutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
+case EKKRuntimeMaterialRecipe::KKUTSItem:{static const auto L=BuildAdditionalLayout(MakeArrayView(GKKUTSItemOutlineVertexCBSize),MakeArrayView(GKKUTSItemOutlineVertexUniforms),MakeArrayView(GKKUTSItemOutlineVertexTextures),MakeArrayView(GKKUTSItemOutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
+case EKKRuntimeMaterialRecipe::KKUTSHair:{static const auto L=BuildAdditionalLayout(MakeArrayView(GKKUTSHairOutlineVertexCBSize),MakeArrayView(GKKUTSHairOutlineVertexUniforms),MakeArrayView(GKKUTSHairOutlineVertexTextures),MakeArrayView(GKKUTSHairOutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
+case EKKRuntimeMaterialRecipe::KKUSS:{static const auto L=BuildAdditionalLayout(MakeArrayView(GKKUSSOutlineVertexCBSize),MakeArrayView(GKKUSSOutlineVertexUniforms),MakeArrayView(GKKUSSOutlineVertexTextures),MakeArrayView(GKKUSSOutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
+case EKKRuntimeMaterialRecipe::KKUSSHair:{static const auto L=BuildAdditionalLayout(MakeArrayView(GKKUSSHairOutlineVertexCBSize),MakeArrayView(GKKUSSHairOutlineVertexUniforms),MakeArrayView(GKKUSSHairOutlineVertexTextures),MakeArrayView(GKKUSSHairOutlineProperties),EKKRuntimeMaterialRecipe::None);return &L;}
 default:return nullptr;}}
 static FString OutlineVertexProgram(EKKRuntimeMaterialRecipe Recipe){switch(Recipe){
 case EKKRuntimeMaterialRecipe::ForgeItem:return GForgeItemOutlineVertexProgram;
@@ -1986,4 +2003,9 @@ case EKKRuntimeMaterialRecipe::KoikanoSkin:return GKoikanoSkinOutlineVertexProgr
 case EKKRuntimeMaterialRecipe::KoikanoClothesItem:case EKKRuntimeMaterialRecipe::KoikanoClothesItemAlpha:case EKKRuntimeMaterialRecipe::KoikanoClothesItemTranslucent:case EKKRuntimeMaterialRecipe::KoikanoClothesItemAlphaTranslucent:return GKoikanoClothesItemOutlineVertexProgram;
 case EKKRuntimeMaterialRecipe::KoikanoHairSun0:case EKKRuntimeMaterialRecipe::KoikanoHairSun1:case EKKRuntimeMaterialRecipe::KoikanoHairSun2:case EKKRuntimeMaterialRecipe::KoikanoHairSun3:case EKKRuntimeMaterialRecipe::KoikanoHairSun4:case EKKRuntimeMaterialRecipe::KoikanoHairSun5:case EKKRuntimeMaterialRecipe::KoikanoHairSun6:case EKKRuntimeMaterialRecipe::KoikanoHairSun7:return GKoikanoHairSun0OutlineVertexProgram;
 case EKKRuntimeMaterialRecipe::KoikanoClothesOpaque:case EKKRuntimeMaterialRecipe::KoikanoClothesColor:return GKoikanoClothesOpaqueOutlineVertexProgram;
+case EKKRuntimeMaterialRecipe::KKUTS:return GKKUTSOutlineVertexProgram;
+case EKKRuntimeMaterialRecipe::KKUTSItem:return GKKUTSItemOutlineVertexProgram;
+case EKKRuntimeMaterialRecipe::KKUTSHair:return GKKUTSHairOutlineVertexProgram;
+case EKKRuntimeMaterialRecipe::KKUSS:return GKKUSSOutlineVertexProgram;
+case EKKRuntimeMaterialRecipe::KKUSSHair:return GKKUSSHairOutlineVertexProgram;
 default:return {};}}

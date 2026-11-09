@@ -46,7 +46,8 @@ impl ItemMaterialEdits {
             "shader forge/main_item", "shader forge/main_opaque", "shader forge/main_alpha",
             "shader forge/main_standardmdk_studio", "standard", "shader forge/main_item_emission",
             "shader forge/main_item_ditherd", "shader forge/toon_glasses_lod0",
-            "kkussitem", "kkuss", "ibl_shader", "ibl_shader_alpha", "goo", "bettermatcap", "da/chara/oil painting",
+            "kkussitem", "kkuss", "kkussalpha", "kkusshair", "kkuts", "kkuts_tess", "kkutsitem", "kkutsitem_tess", "kkutsalpha", "kkutsalpha_tess",
+            "kkutshair", "kkutshair_tess", "kkutseye", "kkutseyew", "ibl_shader", "ibl_shader_alpha", "goo", "bettermatcap", "da/chara/oil painting",
             "koikano/main_clothes_item_glasses", "koikano/main_clothes_opaque", "koikano/main_clothes_item",
             "koikano/main_clothes_alpha", "koikano/low_clothes_alpha",
             // Drawn by AKKPreviewActor's own graphs (OKXRayMaterial, OKGlitchMaterial).

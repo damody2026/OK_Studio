@@ -1061,6 +1061,7 @@ fn own_scope() -> Option<Arc<PackScope>> { PACK_SCOPE.with(|c| c.borrow().clone(
 // made its scans of the whole tree that card's reads (an OK card's strict open counted them as its gaps).
 thread_local! { static OUTSIDE_OPENS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 pub fn mark_outside_opens() { OUTSIDE_OPENS.with(|o| o.set(true)); }
+pub fn is_outside_opens() -> bool { OUTSIDE_OPENS.with(|o| o.get()) }
 /// Scopes of the opens running now (the fallback for a thread outside every open's pool).
 static ACTIVE_SCOPES: Mutex<Vec<std::sync::Weak<PackScope>>> = Mutex::new(Vec::new());
 /// The pack of the open this thread works for: its own, else the only one open (a worker outside every open's pool
@@ -1103,6 +1104,7 @@ static MOUNTED_PACK: Mutex<String> = Mutex::new(String::new());
 /// library serves must not mix two cards' own zipmods.
 pub fn mounted_pack_identity() -> String {
     if let Some(scope) = pack_scope() { return scope.identity.clone(); }
+    if is_outside_opens() { return String::new(); }
     MOUNTED_PACK.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 static MOUNTED_PACK_MODS: Mutex<String> = Mutex::new(String::new());
@@ -1111,6 +1113,7 @@ static MOUNTED_PACK_MODS: Mutex<String> = Mutex::new(String::new());
 /// zipmods of its own reuses them instead of rescanning ~7000 zipmods.
 pub fn mounted_pack_mods_identity() -> String {
     if let Some(scope) = pack_scope() { return scope.mods_identity.clone(); }
+    if is_outside_opens() { return String::new(); }
     MOUNTED_PACK_MODS.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 /// Models in the last mounted OK card pack (diagnostics).
@@ -1258,7 +1261,8 @@ pub fn session_cache_location() -> Option<PathBuf> {
 /// 29: the geometry stays put again; parts carry their draw layer and the engine orders them (OpaqueSortPriority).
 /// 30-32: the skin and clothes keep their liquid textures (_liquidmask, _Texture2, _Texture3) for the H scene's semen.
 /// 33: native ForgeSkin/KKUSS draw settings, glasses _GlassRamp/V-flip, and character card plugins.
-const SESSION_CACHE_REVISION: u32 = 33;
+/// 34-38: KKUTS and KKUSS character/item/alpha/hair/eye shaders, outlines, extra texture slots, ME copies, ShadowsOnly, and backed zipmod priority.
+const SESSION_CACHE_REVISION: u32 = 38;
 /// What the library contributes to an open, by content (not file times): the same library in another clone, after a
 /// git checkout or a copy gives the same identity, so its cached opens stay valid there. Memoized per process.
 fn library_identity(lib: &Path) -> String {
@@ -1679,7 +1683,23 @@ fn with_zipmods_and<R>(lib: &Path, game: &Path, card: &Path, extra: &[PathBuf], 
         roots.push(crate::gamefs::Fallback { root: game.to_owned(), loose_mods: false, files: Vec::new(), installation: true, settings });
     }
     crate::gamefs::set_fallback(roots);
+    struct FallbackGuard;
+    impl Drop for FallbackGuard {
+        fn drop(&mut self) {
+            *MOUNTED_PACK.lock().unwrap_or_else(|e| e.into_inner()) = String::new();
+            *MOUNTED_PACK_MODS.lock().unwrap_or_else(|e| e.into_inner()) = String::new();
+            crate::gamefs::set_fallback(Vec::new());
+        }
+    }
+    let _guard = FallbackGuard;
+    let fb = crate::gamefs::fallback_identity();
+    if !fb.is_empty() {
+        let fb_id = format!("fallback:{}", hex(&hash16(fb.as_bytes())));
+        *MOUNTED_PACK.lock().unwrap_or_else(|e| e.into_inner()) = fb_id.clone();
+        *MOUNTED_PACK_MODS.lock().unwrap_or_else(|e| e.into_inner()) = fb_id;
+    }
     let result = f();
+    drop(_guard);
     crate::gamefs::set_fallback(Vec::new());
     result
 }

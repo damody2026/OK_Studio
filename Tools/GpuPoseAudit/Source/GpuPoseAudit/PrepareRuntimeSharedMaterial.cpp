@@ -111,8 +111,26 @@ static bool OKShadowInjection(EKKRuntimeMaterialRecipe Recipe, const TCHAR*& Out
 		return true;
 	case EKKRuntimeMaterialRecipe::KKUSSItem:
 	case EKKRuntimeMaterialRecipe::KKUSS:
+	case EKKRuntimeMaterialRecipe::KKUSSHair:
 		OutAnchor = TEXT("r2.w=saturate(dot(r6.xyzw,cb2[45].xyzw));");
 		OutInject = TEXT("r2.w*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::KKUTS:
+	case EKKRuntimeMaterialRecipe::KKUTSItem:
+		OutAnchor = TEXT("r2.w=saturate(dot(r7.xyzw,cb2[45].xyzw));");
+		OutInject = TEXT("r2.w*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::KKUTSAlpha:
+		OutAnchor = TEXT("r3.w=saturate(dot(r7.xyzw,cb2[45].xyzw));");
+		OutInject = TEXT("r3.w*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::KKUSSAlpha:
+		OutAnchor = TEXT("r3.w=saturate(dot(r6.xyzw,cb2[45].xyzw));");
+		OutInject = TEXT("r3.w*=ok_atten;");
+		return true;
+	case EKKRuntimeMaterialRecipe::KKUTSHair:
+		OutAnchor = TEXT("r5.w=saturate(dot(r7.xyzw,cb2[45].xyzw));");
+		OutInject = TEXT("r5.w*=ok_atten;");
 		return true;
 	case EKKRuntimeMaterialRecipe::XukmiItem:
 		OutAnchor = TEXT("r2.y=mad(r3.w,r2.y,r11.x);");
@@ -247,7 +265,7 @@ bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,c
   for(const TCHAR* N:{TEXT("__OK_OutlineWidth"),TEXT("__OK_OutlineSkinWidth"),TEXT("_DetailMask_ST"),TEXT("_AlphaMask_ST"),TEXT("_MainTex_ST"),TEXT("_LineMask_ST")}){const int32 U=L.Uniforms.IndexOfByPredicate([&](const auto& V){return V.Name==N;});if(U<0)return false;int32 P=0;for(int32 I=0;I<U;++I)if(!L.Uniforms[I].Rows)++P;if(!Copy(FString::Printf(TEXT("P%d"),P),N))return false;}
   for(const TCHAR* N:{TEXT("_DetailMask"),TEXT("_AlphaMask"),TEXT("_MainTex"),TEXT("_LineMask")}){const auto* T=L.Textures.FindByPredicate([&](const auto& V){return V.Name==N;});if(T&&!Copy(FString::Printf(TEXT("Texture%d"),T->Index),N))return false;}
   const bool Kano=Recipe==EKKRuntimeMaterialRecipe::KoikanoSkin||(int32(Recipe)>=17&&int32(Recipe)<=25);
-  const bool Hair=Recipe==EKKRuntimeMaterialRecipe::ForgeHair||Recipe==EKKRuntimeMaterialRecipe::ForgeHairFront||(int32(Recipe)>=27&&int32(Recipe)<=34);
+  const bool Hair=Recipe==EKKRuntimeMaterialRecipe::ForgeHair||Recipe==EKKRuntimeMaterialRecipe::ForgeHairFront||Recipe==EKKRuntimeMaterialRecipe::KKUTSHair||Recipe==EKKRuntimeMaterialRecipe::KKUSSHair||(int32(Recipe)>=27&&int32(Recipe)<=34);
   if(Hair){auto* Pixels=Scalar(TEXT("__OK_OutlineHairPixelsPerWidth"),4.f);Register(Pixels);auto& Input=WPO->Inputs.AddDefaulted_GetRef();Input.InputName=TEXT("HairPixelsPerWidth");Input.Input.Expression=Pixels;}
   // Source UV transforms run in Unity coordinates; exported PNG rows run in
   // UE coordinates. Apply the row conversion after each independent ST,

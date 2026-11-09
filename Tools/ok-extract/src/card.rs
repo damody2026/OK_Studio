@@ -580,7 +580,40 @@ fn parse_material_editor(
     plugin: &Value,
     out: &mut std::collections::HashSet<(i32, i32, i32, String)>,
 ) {
-    parse_material_editor_visibility(plugin,out,"0")
+    let mut disabled = std::collections::HashSet::new();
+    let mut shadows_only = std::collections::HashSet::new();
+    if let Some(data) = if let Some(arr) = plugin.as_array() { arr.get(1) } else { map_get(plugin, "1").or(Some(plugin)) } {
+        let inner = map_get(data, "data").unwrap_or(data);
+        if let Some(bin) = map_get(inner, "RendererPropertyList").and_then(|v| v.as_slice()) {
+            if let Ok(list) = rmpv::decode::read_value(&mut Cursor::new(bin)) {
+                if let Some(arr) = list.as_array() {
+                    for item in arr {
+                        let prop = map_get(item, "Property").and_then(|x| x.as_i64()).unwrap_or(-1);
+                        if prop != 0 && prop != 1 { continue; }
+                        let val = map_get(item, "Value").and_then(|x| x.as_str()).unwrap_or("");
+                        let ot = map_get(item, "ObjectType").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+                        let coord = map_get(item, "CoordinateIndex").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+                        let slot = map_get(item, "Slot").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+                        let name = map_get(item, "RendererName").and_then(|x| x.as_str()).unwrap_or("").trim().to_ascii_lowercase();
+                        if name.is_empty() { continue; }
+                        let key = (ot, coord, slot, name);
+                        if prop == 0 {
+                            if val == "0" { disabled.insert(key); } else { disabled.remove(&key); }
+                        } else if val == "3" {
+                            shadows_only.insert(key);
+                        } else {
+                            shadows_only.remove(&key);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out.extend(disabled);
+    out.extend(shadows_only);
+    if !out.is_empty() && card_diagnostics_enabled() {
+        eprintln!("ok-extract: material editor renderer off {}", out.len());
+    }
 }
 fn parse_material_editor_visibility(plugin:&Value,out:&mut std::collections::HashSet<(i32,i32,i32,String)>,requested:&str) {
     let data = if let Some(arr) = plugin.as_array() {
@@ -3305,6 +3338,29 @@ mod clothes_mask_tests {
         assert_eq!(values.len(),2);
         assert_eq!(values.get(&(2,3,11,"mat".into(),"maintex_st_z".into())),Some(&-0.25));
         assert_eq!(values.get(&(2,3,11,"mat".into(),"maintex_st_w".into())),Some(&1.5));
+    }
+
+    #[test]
+    fn material_editor_shadows_only_hides_renderer_from_camera() {
+        let row = |prop: i64, val: &str, name: &str| Value::Map(vec![
+            (Value::from("ObjectType"), Value::from(3)),
+            (Value::from("CoordinateIndex"), Value::from(0)),
+            (Value::from("Slot"), Value::from(0)),
+            (Value::from("RendererName"), Value::from(name)),
+            (Value::from("Property"), Value::from(prop)),
+            (Value::from("Value"), Value::from(val)),
+        ]);
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &Value::Array(vec![
+            row(1, "3", "Shadow"),
+            row(0, "0", "HiddenMesh"),
+            row(1, "1", "HiddenMesh"),
+        ])).unwrap();
+        let plugin = Value::Map(vec![(Value::from("RendererPropertyList"), Value::Binary(bytes))]);
+        let mut off = std::collections::HashSet::new();
+        parse_material_editor(&plugin, &mut off);
+        assert!(off.contains(&(3, 0, 0, "shadow".into())));
+        assert!(off.contains(&(3, 0, 0, "hiddenmesh".into())));
     }
 
     #[test]

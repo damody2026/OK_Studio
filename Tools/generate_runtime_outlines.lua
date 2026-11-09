@@ -174,6 +174,9 @@ local function main()
     for _, r in ipairs(recipes) do s[#s + 1] = "case EKKRuntimeMaterialRecipe::" .. r .. ":" end
     return table.concat(s)
   end
+  generated = cg.concat(generated, { { "KKUTSOutline", { "KKUTS" } }, { "KKUTSItemOutline", { "KKUTSItem" } }, { "KKUTSHairOutline", { "KKUTSHair" } }, { "KKUSSOutline", { "KKUSS" } }, { "KKUSSHairOutline", { "KKUSSHair" } } })
+  lines[#lines + 1] = '#include "KKUTSOutlinePrograms.inl"'
+  lines[#lines + 1] = '#include "KKUSSOutlinePrograms.inl"'
   lines[#lines + 1] = "static const FKKRuntimeShaderLayout* OutlineLayout(EKKRuntimeMaterialRecipe Recipe){switch(Recipe){"
   for _, g in ipairs(generated) do
     local label = g[1]

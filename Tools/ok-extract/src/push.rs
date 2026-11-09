@@ -260,11 +260,13 @@ impl<'a, 's> PushCtx<'a, 's> {
                     );
                 }
             }
+            let allow_me_color = false;
             let is_glasses = mesh.mat.as_ref().is_some_and(|m| matches!(
                 m.shader.to_ascii_lowercase().as_str(),
                 "koikano/main_clothes_item_glasses" | "shader forge/toon_glasses_lod0"
             ));
-            if source_program || native_hair_color || is_glasses {
+            let is_kkuts = mesh.mat.as_ref().is_some_and(|m| crate::is_kkuts_shader(&m.shader));
+            if source_program || is_kkuts || allow_me_color || native_hair_color || is_glasses {
                 // Both shader families sample the original full-resolution mask;
                 // glasses shaders likewise consume raw _Color.._Color4 directly.
                 if hair_like {
@@ -324,14 +326,16 @@ impl<'a, 's> PushCtx<'a, 's> {
                 mesh.texture_png = Some(png.to_vec());
                 mark_material_editor_main_texture(&mut mesh);
             }
+            let is_kkuss = mesh.mat.as_ref().is_some_and(|m| crate::is_kkuss_shader(&m.shader));
+            let allow_me_color = is_kkuss;
             if let Some(png) = me_texture(me_tex, outfit, role, property.as_deref(), &mesh, "detailmask") {
                 mesh.detail_mask_png = Some(png.to_vec());
-                if source_program {mark_material_editor_texture(&mut mesh,"_DetailMask");}
+                if source_program || is_kkuts || is_kkuss {mark_material_editor_texture(&mut mesh,"_DetailMask");}
                 else {mesh.runtime_textures.remove("_DetailMask");}
             }
             if let Some(png) = me_texture(me_tex, outfit, role, property.as_deref(), &mesh, "linemask") {
                 mesh.line_mask_png = Some(png.to_vec());
-                if source_program {mark_material_editor_texture(&mut mesh,"_LineMask");}
+                if source_program || is_kkuts || is_kkuss {mark_material_editor_texture(&mut mesh,"_LineMask");}
             }
             // A resolved material's null NormalMap is authoritative. A decoded
             // normal retained from an earlier renderer/material must not survive
@@ -343,7 +347,7 @@ impl<'a, 's> PushCtx<'a, 's> {
             }
             if let Some(png) = me_texture(me_tex, outfit, role, property.as_deref(), &mesh, "alphamask") {
                 mesh.alpha_mask_png = Some(png.to_vec());
-                if source_program {mark_material_editor_texture(&mut mesh,"_AlphaMask");}
+                if source_program || is_kkuts || is_kkuss {mark_material_editor_texture(&mut mesh,"_AlphaMask");}
             }
             // MaterialEditor replaces _NormalMap with a blitted RenderTexture after
             // it applies texture overrides. Its normal_convert fragment writes
@@ -394,7 +398,8 @@ impl<'a, 's> PushCtx<'a, 's> {
                     }
                 }
             }
-            if source_program || native_hair_color || is_glasses {
+            let is_kkuts = mesh.mat.as_ref().is_some_and(|m| crate::is_kkuts_shader(&m.shader));
+            if source_program || is_kkuts || allow_me_color || native_hair_color || is_glasses {
                 if let Some(overrides)=me_color {
                     if let (Some(ot),Some(s),Some(mat))=(me_object_type(role),me_slot(role,property.as_deref()),mesh.mat.as_mut()) {
                         let material=crate::card::me_mat_key(&mat.name);
@@ -416,7 +421,7 @@ impl<'a, 's> PushCtx<'a, 's> {
                 if let Some(png) = me_color_mask {
                     mesh.color_mask_png = Some(png.to_vec());
                     // SetTexture changes the source to a runtime texture.
-                    if source_program {mark_material_editor_texture(&mut mesh,"_ColorMask");}
+                    if source_program || is_kkuts || is_kkuss {mark_material_editor_texture(&mut mesh,"_ColorMask");}
                     else {mesh.runtime_textures.remove("_ColorMask");}
                 }
                 if let Some(png)=mesh.color_mask_png.take() {
@@ -455,16 +460,16 @@ impl<'a, 's> PushCtx<'a, 's> {
                     mesh.shader_extra_textures.insert("_NormalMap".into(), png.clone());
                 }
             }
-            if source_program {
-                for name in ["_NormalMapDetail","_AnotherRamp","_EmissionMask","_ReflectionMapCap","_ReflectMapDetail","_Texture2","_Texture3","_liquidmask"] {
+            if source_program || is_kkuts || is_kkuss {
+                for name in ["_NormalMapDetail","_AnotherRamp","_EmissionMask","_ReflectionMapCap","_ReflectMapDetail","_Texture2","_Texture3","_liquidmask"].into_iter().chain(if is_kkuts || is_kkuss { crate::KKUTS_EXTRA_TEXTURE_SLOTS } else { &[] }.iter().copied()).chain(if is_kkuts || is_kkuss { ["_overtex1","_overtex2","_overtex3","_expression"].as_slice() } else { &[] }.iter().copied()) {
                     let property_name=name.trim_start_matches('_').to_ascii_lowercase();
                     let override_png=me_texture(me_tex,outfit,role,property.as_deref(),&mesh,&property_name).map(|png|png.to_vec());
                     let is_override=override_png.is_some();
                     let data=override_png.or_else(||mesh.shader_extra_textures.remove(name));
                     if let Some(data)=data {
                         if is_override {mark_material_editor_texture(&mut mesh,name);}
-                        let data=if name=="_NormalMapDetail" && convert_normals {
-                            let srgb=is_override || mesh.runtime_textures.get("_OKSourceNormalMapDetail").is_some_and(|s|s[3]==1);
+                        let data=if matches!(name,"_NormalMapDetail"|"_NormalMapForMatCap"|"_NormalMapa") && convert_normals {
+                            let srgb=is_override || mesh.runtime_textures.get(&format!("_OKSource{}",name.trim_start_matches('_'))).is_some_and(|s|s[3]==1);
                             mark_native_runtime_normal_texture(&mut mesh,name);
                             let converted=convert_runtime_normal_map_rows(data,srgb,!is_override);
                             linear_texture_to_srgb_png(&converted).unwrap_or(converted)
@@ -472,7 +477,7 @@ impl<'a, 's> PushCtx<'a, 's> {
                         mesh.shader_extra_textures.insert(name.into(),data);
                     }
                 }
-                if mesh.texture_png.is_none() {mesh.texture_png=crate::unity::solid_png([1.;4],8,8);}
+                if source_program && mesh.texture_png.is_none() {mesh.texture_png=crate::unity::solid_png([1.;4],8,8);}
             } else if mesh.mat.as_ref().is_some_and(|mat| matches!(mat.shader.as_str(), "Shader Forge/main_StandardMDK_studio" | "Standard" | "Standard (Specular setup)" | "Legacy Shaders/Particles/Additive")) {
                 // Like MainTex above, every MDK slot follows the native mesh's
                 // (u, 1-v) rendering UV convention. Keep their rows aligned.
@@ -525,7 +530,7 @@ impl<'a, 's> PushCtx<'a, 's> {
             let material_mask = if role.starts_with("clothes") && !is_glasses {
                 mesh.alpha_mask_png.as_deref().map(|mask| (mask, 1.0, 0.0))
             } else { None };
-            if source_program {
+            if source_program || is_kkuts || is_kkuss {
                 // ChaControl assigns the equipped outer layer's mask to the
                 // inner/bra renderer. Native shaders must receive that binding;
                 // skipping CPU alpha baking must not drop the dynamic mask.
@@ -663,9 +668,9 @@ pub(crate) fn push_meshes<'a>(
         apply_me_shader(game_root, me_shader, outfit, role, property.as_deref(), &mut mesh);
         if let Some(overrides)=me_float { apply_me_floats(overrides,outfit,role,property.as_deref(),&mut mesh); }
         apply_material_editor_remove_rim(remove_rim, me_float, outfit, role, property.as_deref(), &mut mesh);
-        let source_program=mesh.mat.as_ref().is_some_and(|m|matches!(m.shader.to_ascii_lowercase().as_str(),"xukmi/mainitemplus"|"shader forge/main_item"|"shader forge/main_alpha"|"shader forge/main_opaque"));
+        let source_program=mesh.mat.as_ref().is_some_and(|m|crate::is_kkuts_surface_shader(&m.shader)||crate::is_kkuts_hair_shader(&m.shader)||crate::is_kkuss_item_shader(&m.shader)||crate::is_kkuss_hair_shader(&m.shader)||matches!(m.shader.to_ascii_lowercase().as_str(),"xukmi/mainitemplus"|"shader forge/main_item"|"shader forge/main_alpha"|"shader forge/main_opaque"));
         let native_hair_color=mesh.mat.as_ref().is_some_and(|m|
-            is_native_hair_shader(&m.shader)) || mesh.hair_shader_hint;
+            is_native_hair_shader(&m.shader)||crate::is_kkuts_hair_shader(&m.shader)||crate::is_kkuss_hair_shader(&m.shader)) || mesh.hair_shader_hint;
         // Head/face renderers are emitted from the head prefab. An accessory
         // or a second SMR with the same name (head mod + vanilla, or a
         // disabled colour variant that slipped through) must not be drawn again.

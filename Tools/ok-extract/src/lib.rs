@@ -195,6 +195,32 @@ fn toon_clothes_unlit(mat: &crate::unity::MeshMaterial) -> bool {
         && !s.contains("skin")
 }
 
+/// True when `game_root` (or the active installation fallback behind an OK base library) is a Koikatsu (`Koikatu.exe`)
+/// installation rather than Koikatsu Sunshine (`KoikatsuSunshine.exe`).
+pub(crate) fn is_kk_installation(game_root: &Path) -> bool {
+    let is_kk_dir = |dir: &Path| {
+        !dir.as_os_str().is_empty()
+            && dir.join("Koikatu.exe").is_file()
+            && !dir.join("KoikatsuSunshine.exe").is_file()
+    };
+    if is_kk_dir(game_root) {
+        return true;
+    }
+    if crate::gamefs::serves_from_library(game_root) {
+        if let Some(inst) = crate::gamefs::fallback_installation() {
+            if is_kk_dir(&inst) {
+                return true;
+            }
+        }
+        if let Some(env_root) = std::env::var_os("OK_GAME_ROOT").map(PathBuf::from) {
+            if is_kk_dir(&env_root) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// The Shader Forge shader a material's shader stands for, lowercase. xukmi's KKShadersPlus replace them under CamelCase
 /// names with a "Plus" suffix ("xukmi/MainItemStudioAlphaPlus" for "Shader Forge/main_item_studio_alpha"); their blend
 /// state and `_alpha` follow the shader they replace. Any other shader is returned lowercased.
@@ -222,6 +248,62 @@ pub(crate) fn is_native_hair_shader(shader: &str) -> bool {
 /// meshes keep CM3D2's V and the shaders reverse it. Checked on Petardo's Kitchen against the scene's own picture
 /// (back wall red tiles, cupboard fronts, the trees behind the window); Standard and Unlit items of the same scenes
 /// (the helipad's lettering) draw with V as stored.
+pub(crate) const KKUTS_EXTRA_TEXTURE_SLOTS: &[&str] = &[
+    "_1st_ShadeMap", "_2nd_ShadeMap", "_ShadingGradeMap",
+    "_HighColor_Tex", "_Set_HighColorMask", "_Set_RimLightMask",
+    "_NormalMapForMatCap", "_MatCap_Sampler", "_Set_MatcapMask",
+    "_AngelRing_Sampler", "_Emissive_Tex", "_OutlineTex",
+    "_Outline_Sampler", "_BakedNormal", "_RampGx", "_NormalMapa",
+];
+
+pub(crate) fn is_kkuts_shader(shader: &str) -> bool {
+    matches!(
+        shader.to_ascii_lowercase().as_str(),
+        "kkuts" | "kkuts_tess" | "kkutsitem" | "kkutsitem_tess"
+            | "kkutsalpha" | "kkutsalpha_tess" | "kkutshair" | "kkutshair_tess"
+            | "kkutseye" | "kkutseyew"
+    )
+}
+
+pub(crate) fn is_kkuts_surface_shader(shader: &str) -> bool {
+    matches!(
+        shader.to_ascii_lowercase().as_str(),
+        "kkuts" | "kkuts_tess" | "kkutsitem" | "kkutsitem_tess"
+            | "kkutsalpha" | "kkutsalpha_tess"
+    )
+}
+
+pub(crate) fn is_kkuts_hair_shader(shader: &str) -> bool {
+    matches!(shader.to_ascii_lowercase().as_str(), "kkutshair" | "kkutshair_tess")
+}
+
+pub(crate) fn is_kkuts_outline_shader(shader: &str) -> bool {
+    matches!(
+        shader.to_ascii_lowercase().as_str(),
+        "kkuts" | "kkuts_tess" | "kkutsitem" | "kkutsitem_tess"
+            | "kkutshair" | "kkutshair_tess"
+    )
+}
+
+pub(crate) fn is_kkuss_shader(shader: &str) -> bool {
+    matches!(
+        shader.to_ascii_lowercase().as_str(),
+        "kkuss" | "kkussitem" | "kkussalpha" | "kkusshair"
+    )
+}
+
+pub(crate) fn is_kkuss_item_shader(shader: &str) -> bool {
+    matches!(shader.to_ascii_lowercase().as_str(), "kkussitem" | "kkussalpha")
+}
+
+pub(crate) fn is_kkuss_hair_shader(shader: &str) -> bool {
+    shader.eq_ignore_ascii_case("kkusshair")
+}
+
+pub(crate) fn is_kkuss_outline_shader(shader: &str) -> bool {
+    matches!(shader.to_ascii_lowercase().as_str(), "kkuss" | "kkusshair")
+}
+
 pub(crate) fn shader_samples_flipped_v(shader: &str) -> bool {
     shader.to_ascii_lowercase().starts_with("cm3d2/")
 }
@@ -288,11 +370,17 @@ pub(crate) fn blend_for_mesh(role: &str, mesh: &crate::unity::ExtractedMesh) -> 
         // Shared runtime item/character shaders (StudioDisplay29: M_KKUSSItem, M_KKUSS, M_IBLOpaque, M_ForgeMDK,
         // M_ForgeDither, M_ForgeEmission, M_OilPainting) draw masked with depth writes even when Material Editor
         // switched from main_item_studio_alpha without resetting its serialized render_queue (e.g. 4907).
-        if matches!(shader.as_str(), "kkussitem" | "kkuss" | "ibl_shader" | "shader forge/main_standardmdk_studio"
+        if matches!(shader.as_str(), "kkussitem" | "kkuss" | "kkusshair" | "ibl_shader" | "shader forge/main_standardmdk_studio"
             | "shader forge/main_item_ditherd" | "shader forge/main_item_emission" | "da/chara/oil painting") {
             return ("masked".into(), false);
         }
-        if matches!(shader.as_str(), "goo" | "bettermatcap") {
+        if matches!(shader.as_str(), "kkuts" | "kkuts_tess" | "kkutsitem" | "kkutsitem_tess" | "kkutshair" | "kkutshair_tess") {
+            return ("masked".into(), false);
+        }
+        if matches!(shader.as_str(), "kkutseye" | "kkutseyew") {
+            return ("translucent".into(), true);
+        }
+        if matches!(shader.as_str(), "goo" | "bettermatcap" | "kkussalpha" | "kkutsalpha" | "kkutsalpha_tess") {
             return ("translucent".into(), false);
         }
         // Unity renderQueue changes draw order, not a shader pass's Blend or

@@ -1,4 +1,4 @@
-﻿#include "KKRuntimeShadowSubmit.h"
+#include "KKRuntimeShadowSubmit.h"
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
 
@@ -23,7 +23,7 @@ int32 SkeletonBone(const FKKRuntimeRenderMeshData& Mesh,int32 Section,int32 Vert
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FKKRuntimeShadowCoverageTest,"OpenKoikatsu.Runtime.ShadowSubmit.Coverage",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
 bool FKKRuntimeShadowCoverageTest::RunTest(const FString&){
- for(int32 Id=1;Id<=61;++Id){
+ for(int32 Id=1;Id<=70;++Id){
   const auto Recipe=EKKRuntimeMaterialRecipe(Id);
   const auto Got=OKRuntimeShadowCoverage(Fact(Recipe));
   const bool Translucent=OKRuntimeSharedMaterialTranslucent(Recipe);

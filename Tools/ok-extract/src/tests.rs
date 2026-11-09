@@ -3012,6 +3012,112 @@ fn blend_alphatest_keyword_is_masked() {
 }
 
 #[test]
+fn kkuss_shaders_cover_blend_outline_and_extra_textures() {
+    for s in ["KKUSS", "kKUSS", "KKUSShair"] {
+        assert!(crate::is_kkuss_shader(s));
+        assert!(crate::is_kkuss_outline_shader(s));
+        let mesh = crate::unity::ExtractedMesh {
+            name: "part".into(),
+            mat: Some(crate::unity::MeshMaterial { shader: s.into(), render_queue: 2450, ..Default::default() }),
+            ..Default::default()
+        };
+        assert_eq!(blend_for_mesh("clothes_top", &mesh), ("masked".into(), false), "{s}");
+    }
+    assert!(crate::is_kkuss_shader("KKUSSitem"));
+    assert!(crate::is_kkuss_item_shader("KKUSSitem"));
+    assert!(!crate::is_kkuss_outline_shader("KKUSSitem"));
+    assert!(crate::is_kkuss_shader("KKUSSalpha"));
+    assert!(crate::is_kkuss_item_shader("KKUSSalpha"));
+    assert!(!crate::is_kkuss_outline_shader("KKUSSalpha"));
+    assert!(crate::is_kkuss_hair_shader("KKUSShair"));
+    assert!(!crate::is_kkuss_hair_shader("KKUSS"));
+
+    let alpha_mesh = crate::unity::ExtractedMesh {
+        name: "veil".into(),
+        mat: Some(crate::unity::MeshMaterial { shader: "KKUSSalpha".into(), render_queue: 3000, ..Default::default() }),
+        ..Default::default()
+    };
+    assert_eq!(blend_for_mesh("clothes_top", &alpha_mesh), ("translucent".into(), false));
+    let alpha_part = crate::session::SessionPart::from_mesh("clothes_top", &alpha_mesh, "translucent", false);
+    assert!(!alpha_part.source_outline_enabled);
+
+    let mut extra_textures = std::collections::BTreeMap::new();
+    extra_textures.insert("_OutlineTex".into(), vec![1, 2]);
+    extra_textures.insert("_BakedNormal".into(), vec![3, 4]);
+    extra_textures.insert("_overtex1".into(), vec![5, 6]);
+    extra_textures.insert("_UnusedOtherSlot".into(), vec![9]);
+    let kkuss_mesh = crate::unity::ExtractedMesh {
+        name: "coat".into(),
+        mat: Some(crate::unity::MeshMaterial { shader: "KKUSS".into(), render_queue: 2450, ..Default::default() }),
+        shader_extra_textures: extra_textures,
+        ..Default::default()
+    };
+    let kkuss_part = crate::session::SessionPart::from_mesh("clothes_top", &kkuss_mesh, "masked", false);
+    assert!(kkuss_part.source_outline_enabled);
+    assert!(kkuss_part.shader_textures.contains_key("_OutlineTex"));
+    assert!(kkuss_part.shader_textures.contains_key("_BakedNormal"));
+    assert!(kkuss_part.shader_textures.contains_key("_overtex1"));
+    assert!(!kkuss_part.shader_textures.contains_key("_UnusedOtherSlot"));
+}
+
+#[test]
+fn kkuts_shaders_cover_blend_outline_and_extra_textures() {
+    for s in ["KKUTS", "KKUTS_Tess", "KKUTSitem", "KKUTSitem_Tess", "KKUTShair", "KKUTShair_Tess"] {
+        assert!(crate::is_kkuts_shader(s));
+        assert!(crate::is_kkuts_outline_shader(s));
+        let mesh = crate::unity::ExtractedMesh {
+            name: "part".into(),
+            mat: Some(crate::unity::MeshMaterial { shader: s.into(), render_queue: 2450, ..Default::default() }),
+            ..Default::default()
+        };
+        assert_eq!(blend_for_mesh("clothes_top", &mesh), ("masked".into(), false), "{s}");
+    }
+    for (s, unlit) in [("KKUTSalpha", false), ("KKUTSalpha_Tess", false), ("KKUTSeye", true), ("KKUTSeyew", true)] {
+        assert!(crate::is_kkuts_shader(s));
+        assert!(!crate::is_kkuts_outline_shader(s));
+        let mesh = crate::unity::ExtractedMesh {
+            name: "part".into(),
+            mat: Some(crate::unity::MeshMaterial { shader: s.into(), render_queue: 3000, ..Default::default() }),
+            ..Default::default()
+        };
+        assert_eq!(blend_for_mesh("head", &mesh), ("translucent".into(), unlit), "{s}");
+    }
+    assert!(crate::is_kkuts_hair_shader("KKUTShair"));
+    assert!(crate::is_kkuts_hair_shader("KKUTShair_Tess"));
+    assert!(!crate::is_kkuts_hair_shader("KKUTS"));
+
+    let mut mat = crate::unity::MeshMaterial {
+        shader: "KKUTS".into(),
+        render_queue: 2450,
+        ..Default::default()
+    };
+    mat.floats.insert("_OutlineAdjust".into(), 0.5);
+    let mut extra_textures = std::collections::BTreeMap::new();
+    extra_textures.insert("_1st_ShadeMap".into(), vec![1, 2, 3]);
+    extra_textures.insert("_MatCap_Sampler".into(), vec![4, 5, 6]);
+    extra_textures.insert("_UnusedOtherSlot".into(), vec![9]);
+    let mesh = crate::unity::ExtractedMesh {
+        name: "ribbon".into(),
+        mat: Some(mat),
+        shader_extra_textures: extra_textures,
+        ..Default::default()
+    };
+    let part = crate::session::SessionPart::from_mesh("accessory", &mesh, "masked", true);
+    assert!(part.source_outline_enabled);
+    assert!(part.shader_textures.contains_key("_1st_ShadeMap"));
+    assert!(part.shader_textures.contains_key("_MatCap_Sampler"));
+    assert!(!part.shader_textures.contains_key("_UnusedOtherSlot"));
+    let mut zero_outline_mesh = mesh.clone();
+    zero_outline_mesh.mat.as_mut().unwrap().floats.insert("_OutlineAdjust".into(), 0.0);
+    let zero_part = crate::session::SessionPart::from_mesh("accessory", &zero_outline_mesh, "masked", true);
+    assert!(!zero_part.source_outline_enabled);
+    let mut alpha_mesh = mesh.clone();
+    alpha_mesh.mat.as_mut().unwrap().shader = "KKUTSalpha".into();
+    let alpha_part = crate::session::SessionPart::from_mesh("accessory", &alpha_mesh, "translucent", true);
+    assert!(!alpha_part.source_outline_enabled);
+}
+
+#[test]
 fn xukmi_plus_shaders_map_to_their_shader_forge_family() {
     assert_eq!(shader_family("xukmi/MainItemStudioAlphaPlus"), "shader forge/main_item_studio_alpha");
     assert_eq!(shader_family("xukmi/MainItemPlus"), "shader forge/main_item");

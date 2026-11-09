@@ -748,9 +748,18 @@ pub(crate) fn extract_session_from_info(
         mesh.normal_map_png = converted.or_else(|| normal_now.map(convert_runtime_normal_map));
         profile_tick("body normal convert", t_mark); t_mark = Instant::now();
         if let Some(card)=parsed_card.as_ref() {apply_native_skin_draw_settings(game_root,mesh,card,outfit,true);}
+        if let Some(s) = mesh.mat.as_ref().map(|m| m.shader.to_ascii_lowercase()) {
+            if matches!(s.as_str(), "kkutsalpha" | "kkutsalpha_tess" | "kkussalpha") { body_blend = "translucent"; }
+            else if matches!(s.as_str(), "kkuts" | "kkuts_tess" | "kkuss") { body_blend = "masked"; }
+        }
         let (p, tex) = emit_part(out_dir, &mut session_parts, "body", "body", mesh, body_blend, false)?;
         profile_tick("body draw+emit", t_mark); t_mark = Instant::now();
         if let Some(part) = session_parts.last_mut() {
+            if let Some(ref det) = body_normal_detail_png {
+                if part.source_material.as_ref().is_some_and(|m| crate::is_kkuss_shader(&m.shader) || crate::is_kkuts_shader(&m.shader)) {
+                    part.shader_textures.insert("_NormalMapDetail".into(), det.clone());
+                }
+            }
             part.normal_detail = body_normal_detail_png;
         }
         if let (Some(card), Some(part)) = (parsed_card.as_ref(), session_parts.last_mut()) {
@@ -1479,6 +1488,7 @@ pub(crate) fn extract_session_from_info(
                         set_selected_hair_gloss(&mut meshes, selected_hair_gloss.as_ref().map(|g|g.0.as_slice()));
                         if (101..=104).contains(&resolve.category_no) {set_hair_part_materials(&mut meshes,&card.hair_parts[(resolve.category_no-101) as usize]);}
                     }
+                    apply_me_material_copies(&mut meshes, &card.me_copies, outfit, role, Some(&resolve.property));
                     let pk = parent_for_part(card, &resolve.property, "", role);
                     let acc_local = acc_local_for(card, &resolve.property);
                     push_meshes(
@@ -1547,6 +1557,7 @@ pub(crate) fn extract_session_from_info(
             if (101..=104).contains(&resolve.category_no) && role.contains("hair") {
                 set_hair_part_materials(&mut meshes,&card.hair_parts[(resolve.category_no - 101) as usize]);
             }
+            apply_me_material_copies(&mut meshes, &card.me_copies, outfit, role, Some(&resolve.property));
             let assignment=if role.contains("acc") {accessory_assignment(game_root,zip_path.map(|p|p.as_path()),&entry)} else {None};
             push_meshes(
                 &mut parts,
@@ -1640,6 +1651,7 @@ pub(crate) fn extract_session_from_info(
                 game_root, zip_path.as_deref(), &entry, !card.hair_parts[i].no_shake);
             set_selected_hair_gloss(&mut meshes, selected_hair_gloss.as_ref().map(|g|g.0.as_slice()));
             set_hair_part_materials(&mut meshes,&card.hair_parts[i]);
+            apply_me_material_copies(&mut meshes, &card.me_copies, outfit, role, Some(&property));
             let name = if display.is_empty() {
                 entry.name.clone()
             } else {
@@ -1907,6 +1919,8 @@ pub(crate) fn extract_session_from_info(
                 }
             }
             profile_tick("clothes dynamics", t_part);
+            let clothes_prop = format!("outfit{outfit}.clothes{kind}");
+            apply_me_material_copies(&mut meshes, &card.me_copies, outfit, role, Some(&clothes_prop));
             let t_part = Instant::now();
             push_meshes(
                 &mut parts,
@@ -2056,6 +2070,9 @@ pub(crate) fn extract_session_from_info(
                 }
                 apply_clothes_emblems(game_root, &vanilla, &mod_catalog, card, 0, &mut meshes, &head_texs, &body_texs);
                 apply_clothes_overlay(card,outfit,["ct_top_parts_A","ct_top_parts_B","ct_top_parts_C"][kind],&mut meshes,cmp.as_ref(),&baked);
+                let subclothes_role = role_for_category(cat, "");
+                let subclothes_prop = format!("outfit{outfit}.clothesTopParts{kind}");
+                apply_me_material_copies(&mut meshes, &card.me_copies, outfit, subclothes_role, Some(&subclothes_prop));
                 let role = role_for_category(cat, "");
                 // Top subparts use the same copyDynamicBone path as the top.
                 if let (Some(part), Some(body), Some((bytes,source_zip))) = (
@@ -2188,7 +2205,12 @@ pub(crate) fn extract_session_from_info(
             )
         })
         .unwrap_or_else(|| (Vec::new(), Vec::new(), 0, 0, 0.0, Vec::new()));
-    let sexfaces_installed = game_root.join("BepInEx/plugins/KKS_SexFaces.dll").ok_is_file();
+    let sexfaces_installed = [
+        "BepInEx/plugins/KKS_SexFaces.dll",
+        "BepInEx/plugins/KK_SexFaces.dll",
+    ]
+    .iter()
+    .any(|p| game_root.join(p).ok_is_file());
     if let Some((_, sampling)) = selected_hair_gloss.as_ref() {
         // ChaControl.LoadHairGlossMask selects one Texture2D for the card;
         // HairAccessoryCustomizer can attach the same asset to mod hair.

@@ -1501,7 +1501,6 @@ fn mmdd_resource_candidates() -> Vec<PathBuf> {
         candidates.push(PathBuf::from(game));
     }
     candidates.push(PathBuf::from(r"E:\Koikatu"));
-    candidates.push(PathBuf::from(r"E:\01_Games\KKS\KoikatuSunshine"));
     candidates
 }
 

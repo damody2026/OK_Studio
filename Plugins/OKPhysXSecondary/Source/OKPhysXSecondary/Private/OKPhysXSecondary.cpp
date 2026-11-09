@@ -1,6 +1,28 @@
-﻿#include "OKPhysXSecondary.h"
+#include "OKPhysXSecondary.h"
 #include "OKPhysXSecondaryAbi.h"
 #include "OKSecondaryBackends.h"
+
+#if defined(OK_PHYSX_SECONDARY_STUB) && OK_PHYSX_SECONDARY_STUB
+namespace OKPhysXSecondary
+{
+	void SetGroupFrame(uint64, const FMatrix44f&) {}
+	float HeadTilt() { return 0.f; }
+	int32 AuditEnabled() { return 0; }
+	void ResetStats() {}
+	FStats GetStats() { return FStats{}; }
+	void Register(void (*)(int32 (*)(const void*), void (*)(uint64), void (*)(uint64, const void*, uint32), int32 (*)(uint64, void*, uint32, float), float (*)(), int32 (*)(uint64, void*, uint32), int32 (*)())) {}
+	void RegisterTuning(void (*)(void (*)(float*, float*))) {}
+	FSoftness Softness(uint32) { return FSoftness{}; }
+	bool IsEnabled() { return false; }
+	void Settle(float) {}
+	int32 Solve(const void*) { return 0; }
+	int32 SolveBatch(uint64, void*, uint32) { return 0; }
+	void Release(uint64) {}
+	int32 Ragdoll(uint64, void*, uint32, float) { return 0; }
+	void PublishBody(uint64, const void*, uint32) {}
+}
+IMPLEMENT_MODULE(FDefaultModuleImpl, OKPhysXSecondary)
+#else
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
 #include "HAL/IConsoleManager.h"
@@ -2341,3 +2363,4 @@ public:
 };
 
 IMPLEMENT_MODULE(FOKPhysXSecondaryModule, OKPhysXSecondary)
+#endif

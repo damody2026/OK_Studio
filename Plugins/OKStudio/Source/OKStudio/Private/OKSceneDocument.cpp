@@ -948,6 +948,8 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 		bool bDirectCamPos = false, bDirectCamRot = false, bCamFov = false;
 		FVector DirectCamPos = FVector::ZeroVector, DirectCamRotEuler = FVector::ZeroVector;
 		float CamVertFov = 23.f;
+		TMap<TPair<int32, FString>, FVector> GuideEulerAccum;
+		TMap<TPair<int32, FString>, FVector> BoneEulerAccum;
 
 		for (const FOKSceneTimelineTrack& Tr : TimelineTracks)
 		{
@@ -969,6 +971,14 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 			auto Sample1 = [&]() -> float
 			{
 				return K1 && K1->Values.Num() >= 1 ? FMath::Lerp(K0->Values[0], K1->Values[0], Factor) : K0->Values[0];
+			};
+			auto SampleAngleDeg = [&]() -> float
+			{
+				if (!K1 || K1->Values.Num() < 1) return K0->Values[0];
+				const float Delta = FMath::FindDeltaAngleDegrees(K0->Values[0], K1->Values[0]);
+				float Out = FMath::Fmod(K0->Values[0] + Delta * Factor, 360.f);
+				if (Out < 0.f) Out += 360.f;
+				return Out;
 			};
 			auto Sample3 = [&]() -> FVector
 			{
@@ -1152,6 +1162,146 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 							const float W = K1 && K1->Values.IsValidIndex(M) ? FMath::Lerp(K0->Values[M], K1->Values[M], Factor) : K0->Values[M];
 							const FString Nm = K0->Names.IsValidIndex(M) ? K0->Names[M] : FString();
 							UpsertMorphOverride(*Morphs, Tr.TargetPath, M, Nm, W);
+						}
+					}
+				}
+			}
+			else if (Tr.Owner == TEXT("ShalltyUtils"))
+			{
+				auto AxisOf = [](const FString& Id, const TCHAR* Prefix) -> int32
+				{
+					if (Id == FString::Printf(TEXT("%sXPos"), Prefix) || Id == FString::Printf(TEXT("%sXRot"), Prefix) || Id == FString::Printf(TEXT("%sXScale"), Prefix)) return 0;
+					if (Id == FString::Printf(TEXT("%sYPos"), Prefix) || Id == FString::Printf(TEXT("%sYRot"), Prefix) || Id == FString::Printf(TEXT("%sYScale"), Prefix)) return 1;
+					if (Id == FString::Printf(TEXT("%sZPos"), Prefix) || Id == FString::Printf(TEXT("%sZRot"), Prefix) || Id == FString::Printf(TEXT("%sZScale"), Prefix)) return 2;
+					return -1;
+				};
+				const int32 GuideAxis = AxisOf(Tr.InterpolableId, TEXT("guideObject"));
+				const int32 BoneAxis = AxisOf(Tr.InterpolableId, TEXT("bone"));
+				if (GuideAxis >= 0 && Tr.InterpolableId.EndsWith(TEXT("Pos")))
+				{
+					const float Val = Sample1();
+					if (Tr.TargetPath.IsEmpty())
+					{
+						FVector LocUe = O->Transform.GetLocation();
+						if (GuideAxis == 0) LocUe.X = -Val * 100.0;
+						else if (GuideAxis == 1) LocUe.Z = Val * 100.0;
+						else LocUe.Y = Val * 100.0;
+						O->Transform.SetLocation(LocUe);
+					}
+					else if (Tr.TargetIkEffector >= 0 && O->Kind == EOKSceneObjectKind::Character)
+					{
+						FOKSceneIkTarget* Ik = O->Character.Ik.FindByPredicate([&](const FOKSceneIkTarget& X) { return X.Effector == Tr.TargetIkEffector; });
+						if (!Ik) { Ik = &O->Character.Ik.AddDefaulted_GetRef(); Ik->Effector = Tr.TargetIkEffector; Ik->bUseRotation = (Tr.TargetIkEffector >= 5 && Tr.TargetIkEffector <= 8); }
+						if (GuideAxis == 0) Ik->Position.X = -Val * 100.0;
+						else if (GuideAxis == 1) Ik->Position.Z = Val * 100.0;
+						else Ik->Position.Y = Val * 100.0;
+					}
+					else if (!Tr.TargetBone.IsEmpty())
+					{
+						TArray<FOKSceneBoneTrs>* Bones = O->Kind == EOKSceneObjectKind::Character ? &O->Character.BoneOverrides : (O->Kind == EOKSceneObjectKind::Item ? &O->Item.BoneOverrides : nullptr);
+						if (Bones)
+						{
+							FOKSceneBoneTrs* Entry = Bones->FindByPredicate([&](const FOKSceneBoneTrs& B) { return B.Bone == Tr.TargetBone; });
+							FVector P = (Entry && Entry->bHasPos) ? Entry->Pos : FVector::ZeroVector;
+							P[GuideAxis] = Val;
+							UpsertBoneOverride(*Bones, Tr.TargetBone, &P, nullptr, nullptr);
+						}
+					}
+				}
+				else if (GuideAxis >= 0 && Tr.InterpolableId.EndsWith(TEXT("Rot")))
+				{
+					const float Deg = SampleAngleDeg();
+					const TPair<int32, FString> Key(Tr.ObjectId, Tr.TargetPath);
+					if (Tr.TargetPath.IsEmpty())
+					{
+						FVector* Cached = GuideEulerAccum.Find(Key);
+						if (!Cached)
+						{
+							FQuat Q = O->Transform.GetRotation();
+							if (O->Kind == EOKSceneObjectKind::Camera || O->Kind == EOKSceneObjectKind::Light)
+								Q = Q * FQuat(FVector::UpVector, -UE_HALF_PI);
+							Q.Normalize();
+							const float Uq[4] = { float(-Q.X), float(Q.Z), float(Q.Y), float(Q.W) };
+							float InitEuler[3] = { 0.f, 0.f, 0.f };
+							ok_unity_quat_to_euler(Uq, InitEuler);
+							Cached = &GuideEulerAccum.Add(Key, FVector(InitEuler[0], InitEuler[1], InitEuler[2]));
+						}
+						(*Cached)[GuideAxis] = Deg;
+						FQuat QOut = DocUnityToUe(FVector::ZeroVector, *Cached, FVector::OneVector).GetRotation();
+						if (O->Kind == EOKSceneObjectKind::Camera || O->Kind == EOKSceneObjectKind::Light)
+							QOut = QOut * FQuat(FVector::UpVector, UE_HALF_PI);
+						O->Transform.SetRotation(QOut);
+					}
+					else if (Tr.TargetIkEffector >= 0 && O->Kind == EOKSceneObjectKind::Character)
+					{
+						FOKSceneIkTarget* Ik = O->Character.Ik.FindByPredicate([&](const FOKSceneIkTarget& X) { return X.Effector == Tr.TargetIkEffector; });
+						if (!Ik) { Ik = &O->Character.Ik.AddDefaulted_GetRef(); Ik->Effector = Tr.TargetIkEffector; }
+						Ik->Euler[GuideAxis] = Deg;
+						Ik->bUseRotation = (Tr.TargetIkEffector >= 5 && Tr.TargetIkEffector <= 8);
+					}
+					else if (!Tr.TargetBone.IsEmpty())
+					{
+						TArray<FOKSceneFkBone>* FkArr = O->Kind == EOKSceneObjectKind::Character ? &O->Character.Fk : (O->Kind == EOKSceneObjectKind::Item ? &O->Item.Fk : nullptr);
+						if (FkArr)
+						{
+							FOKSceneFkBone* Fk = FkArr->FindByPredicate([&](const FOKSceneFkBone& X) { return X.Bone == Tr.TargetBone; });
+							if (!Fk) { Fk = &FkArr->AddDefaulted_GetRef(); Fk->Bone = Tr.TargetBone; }
+							Fk->Euler[GuideAxis] = Deg;
+						}
+					}
+				}
+				else if (GuideAxis >= 0 && Tr.InterpolableId.EndsWith(TEXT("Scale")))
+				{
+					const float Val = Sample1();
+					if (Tr.TargetPath.IsEmpty())
+					{
+						FVector ScaleUe = O->Transform.GetScale3D();
+						if (GuideAxis == 0) ScaleUe.X = Val;
+						else if (GuideAxis == 1) ScaleUe.Z = Val;
+						else ScaleUe.Y = Val;
+						O->Transform.SetScale3D(ScaleUe);
+					}
+					else if (!Tr.TargetBone.IsEmpty())
+					{
+						TArray<FOKSceneBoneTrs>* Bones = O->Kind == EOKSceneObjectKind::Character ? &O->Character.BoneOverrides : (O->Kind == EOKSceneObjectKind::Item ? &O->Item.BoneOverrides : nullptr);
+						if (Bones)
+						{
+							FOKSceneBoneTrs* Entry = Bones->FindByPredicate([&](const FOKSceneBoneTrs& B) { return B.Bone == Tr.TargetBone; });
+							FVector S = (Entry && Entry->bHasScale) ? Entry->Scale : FVector::OneVector;
+							S[GuideAxis] = Val;
+							UpsertBoneOverride(*Bones, Tr.TargetBone, nullptr, nullptr, &S);
+						}
+					}
+				}
+				else if (BoneAxis >= 0 && !Tr.TargetBone.IsEmpty())
+				{
+					TArray<FOKSceneBoneTrs>* Bones = O->Kind == EOKSceneObjectKind::Character ? &O->Character.BoneOverrides : (O->Kind == EOKSceneObjectKind::Item ? &O->Item.BoneOverrides : nullptr);
+					if (Bones)
+					{
+						FOKSceneBoneTrs* Entry = Bones->FindByPredicate([&](const FOKSceneBoneTrs& B) { return B.Bone == Tr.TargetBone; });
+						if (Tr.InterpolableId.EndsWith(TEXT("Pos")))
+						{
+							FVector P = (Entry && Entry->bHasPos) ? Entry->Pos : FVector::ZeroVector;
+							P[BoneAxis] = Sample1();
+							UpsertBoneOverride(*Bones, Tr.TargetBone, &P, nullptr, nullptr);
+						}
+						else if (Tr.InterpolableId.EndsWith(TEXT("Rot")))
+						{
+							const TPair<int32, FString> Key(Tr.ObjectId, Tr.TargetBone);
+							FVector* Cached = BoneEulerAccum.Find(Key);
+							if (!Cached)
+							{
+								const FVector InitE = (Entry && Entry->bHasRot) ? Entry->Euler : FVector::ZeroVector;
+								Cached = &BoneEulerAccum.Add(Key, InitE);
+							}
+							(*Cached)[BoneAxis] = SampleAngleDeg();
+							UpsertBoneOverride(*Bones, Tr.TargetBone, nullptr, Cached, nullptr);
+						}
+						else if (Tr.InterpolableId.EndsWith(TEXT("Scale")))
+						{
+							FVector S = (Entry && Entry->bHasScale) ? Entry->Scale : FVector::OneVector;
+							S[BoneAxis] = Sample1();
+							UpsertBoneOverride(*Bones, Tr.TargetBone, nullptr, nullptr, &S);
 						}
 					}
 				}

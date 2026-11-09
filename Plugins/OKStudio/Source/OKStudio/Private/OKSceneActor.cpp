@@ -367,7 +367,7 @@ namespace
 		if (!bMap) Actor->CharacterDisplayShadowsOverride = Item == nullptr;
 		// Items draw from the Studio root: the street's parents plus M_ForgeStudioOpaque, the depth-writing variant of the
 		// game's item program (opaque items overlapping each other sort by depth, not by distance).
-		if (!bMap) Actor->SharedMaterialRootOverride = TEXT("/Game/IndependentResources/RuntimeMaterials/StudioDisplay30");
+		if (!bMap) Actor->SharedMaterialRootOverride = TEXT("/Game/IndependentResources/RuntimeMaterials/StudioDisplay31");
 		// The scene's shading globals (Studio's _ambientshadowG, _LineColorG, _linewidthG): Studio sets them for everything
 		// it draws, characters as well as items.
 		if (!bMap) Actor->StudioShaderGlobals = ShaderGlobals;
@@ -2004,9 +2004,38 @@ void AOKSceneActor::SolveConstraints()
 			}
 			else if (ParentObj->Kind == EOKSceneObjectKind::Character)
 			{
-				FTransform BoneRel;
-				if (!Document->BoneFrame || !Document->BoneFrame(Con.ParentId, Con.ParentBone, BoneRel)) continue;
-				SceneUeToUnity(Compose(BoneRel, ParentObjWorld), false, ParentPos, ParentRot, ParentScale);
+				auto ParentIkEff = [](const FString& B) -> int32
+				{
+					if (B == TEXT("cf_t_hips") || B == TEXT("cm_t_hips")) return 0;
+					if (B == TEXT("cf_t_shoulder_L") || B == TEXT("cm_t_shoulder_L")) return 1;
+					if (B == TEXT("cf_t_shoulder_R") || B == TEXT("cm_t_shoulder_R")) return 2;
+					if (B == TEXT("cf_t_waist_L") || B == TEXT("cm_t_waist_L")) return 3;
+					if (B == TEXT("cf_t_waist_R") || B == TEXT("cm_t_waist_R")) return 4;
+					if (B == TEXT("cf_t_hand_L") || B == TEXT("cm_t_hand_L")) return 5;
+					if (B == TEXT("cf_t_hand_R") || B == TEXT("cm_t_hand_R")) return 6;
+					if (B == TEXT("cf_t_leg_L") || B == TEXT("cm_t_leg_L")) return 7;
+					if (B == TEXT("cf_t_leg_R") || B == TEXT("cm_t_leg_R")) return 8;
+					if (B == TEXT("cf_t_elbo_L") || B == TEXT("cm_t_elbo_L")) return 9;
+					if (B == TEXT("cf_t_elbo_R") || B == TEXT("cm_t_elbo_R")) return 10;
+					if (B == TEXT("cf_t_knee_L") || B == TEXT("cm_t_knee_L")) return 11;
+					if (B == TEXT("cf_t_knee_R") || B == TEXT("cm_t_knee_R")) return 12;
+					return -1;
+				};
+				const int32 Eff = ParentIkEff(Con.ParentBone);
+				const FShown* ParentShown = Shown.Find(Con.ParentId);
+				const TArray<FOKSceneIkTarget>* ActiveParentIk = ParentShown && ParentShown->AppliedIk.Num() ? &ParentShown->AppliedIk : &ParentObj->Character.Ik;
+				const FOKSceneIkTarget* ExistingIk = (Eff >= 0 && ActiveParentIk) ? ActiveParentIk->FindByPredicate([Eff](const FOKSceneIkTarget& T) { return T.Effector == Eff; }) : nullptr;
+				if (ExistingIk)
+				{
+					const FTransform RelUe(FOKStudioImport::UnityToUe(FVector::ZeroVector, ExistingIk->Euler, FVector::OneVector).GetRotation(), ExistingIk->Position, FVector::OneVector);
+					SceneUeToUnity(Compose(RelUe, ParentObjWorld), false, ParentPos, ParentRot, ParentScale);
+				}
+				else
+				{
+					FTransform BoneRel;
+					if (!Document->BoneFrame || !Document->BoneFrame(Con.ParentId, Con.ParentBone, BoneRel)) continue;
+					SceneUeToUnity(Compose(BoneRel, ParentObjWorld), false, ParentPos, ParentRot, ParentScale);
+				}
 			}
 			else if (ParentObj->Kind == EOKSceneObjectKind::Item)
 			{

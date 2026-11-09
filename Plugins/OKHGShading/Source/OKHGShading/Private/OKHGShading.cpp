@@ -22,10 +22,10 @@ EOKHGSurface OKHGSurfaceOf(EKKRuntimeMaterialRecipe R){
  using E=EKKRuntimeMaterialRecipe;const int32 I=int32(R);
  switch(R){
  case E::KoikanoSkin:case E::ForgeSkin:return EOKHGSurface::Skin;
- case E::ForgeHair:case E::ForgeHairFront:return EOKHGSurface::Hair;
+ case E::ForgeHair:case E::ForgeHairFront:case E::KKUTSHair:case E::KKUSSHair:return EOKHGSurface::Hair;
  // Eyes, brows and the nose line are drawn, not lit; glasses, depth-only
  // and effect shaders keep their own look.
- case E::ForgeEyeWhite:case E::ForgeEye:case E::KoikanoEyeWhite:case E::KoikanoEye:case E::ForgeEyeWhiteLod:
+ case E::ForgeEyeWhite:case E::ForgeEye:case E::KoikanoEyeWhite:case E::KoikanoEye:case E::ForgeEyeWhiteLod:case E::KKUTSEye:case E::KKUTSEyeWhite:
  case E::ForgeNose:case E::KoikanoNose:case E::KoikanoBrow:case E::ForgeGlasses:case E::IBLDepth:
  case E::ForgeDither:case E::ForgeEmission:case E::OilPainting:case E::Goo:case E::BetterMatcap:case E::None:
   return EOKHGSurface::None;

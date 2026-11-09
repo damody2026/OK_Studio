@@ -1,6 +1,6 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "{7A2A60EB-4330-A41B-0900-5BBEFDA5A0A5}",
+	"EngineAssociation": "5.8",
 	"Category": "",
 	"Description": "Open-source Koikatsu Sunshine character maker and viewer",
 	"Modules": [

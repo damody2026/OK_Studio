@@ -28,19 +28,28 @@ pub(crate) fn clear_zip_bundle_cache() {
 }
 
 fn guid_cache_path(mods_dir: &Path) -> PathBuf {
-    mods_dir.join(".ok_guid_index.txt")
+    mods_dir.join(".ok_guid_index_v2.txt")
 }
 
 /// Native MigrateData gives StripAll precedence over individual/MigrateAll
 /// rules, even when the old GUID is still installed. Preserve the saved numeric
 /// fields and let normal compatibility resolution select the internal list.
 fn strip_all_manifest(xml:&str)->Vec<String> {
+    strip_all_manifest_for_game(xml,false)
+}
+
+fn strip_all_manifest_for_game(xml:&str,kk:bool)->Vec<String> {
     let Ok(doc)=roxmltree::Document::parse(xml) else{return vec![]};
     let root=doc.root_element();
     if root.tag_name().name()!="manifest"||root.attribute("schema-ver")!=Some("1"){return vec![];}
     let games:Vec<_>=root.children().filter(|n|n.has_tag_name("game"))
         .filter_map(|n|n.text()).map(str::trim).filter(|s|!s.is_empty()).collect();
-    if !games.is_empty()&&!games.iter().any(|s|["koikatsu sunshine","koikatu sunshine","コイカツ sunshine"].iter().any(|g|s.eq_ignore_ascii_case(g))){return vec![];}
+    let allowed:&[&str]=if kk {
+        &["koikatsu","koikatu","コイカツ","koikatsu party","koikatu party"]
+    } else {
+        &["koikatsu sunshine","koikatu sunshine","コイカツ sunshine"]
+    };
+    if !games.is_empty()&&!games.iter().any(|s|allowed.iter().any(|g|s.eq_ignore_ascii_case(g))){return vec![];}
     root.children().filter(|n|n.has_tag_name("migrationInfo")).flat_map(|n|n.children())
         .filter(|n|n.has_tag_name("info")&&n.attribute("migrationType")==Some("StripAll"))
         .filter_map(|n|n.attribute("guidOld")).map(str::trim).filter(|s|!s.is_empty()).map(str::to_owned).collect()
@@ -102,7 +111,8 @@ pub(crate) fn strip_all_guids(mods:&Path)->Arc<HashSet<String>> {
     if mods.canonicalize().is_ok() { return migration_cache::get(mods,read_strip_all_guids); }
     use std::sync::Mutex;
     static MEMO: Mutex<Vec<(String, Arc<HashSet<String>>)>> = Mutex::new(Vec::new());
-    let key = format!("{}\n{:016x}\n{}", mods.display(), crate::list::zip_list_sig(mods), crate::oklib::mounted_pack_mods_identity());
+    let kk = mods.parent().is_some_and(crate::is_kk_installation);
+    let key = format!("{}\n{:016x}\n{}\nkk={kk}", mods.display(), crate::list::zip_list_sig(mods), crate::oklib::mounted_pack_mods_identity());
     if let Some((_, hit)) = MEMO.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(k, _)| *k == key) { return hit.clone(); }
     if std::env::var_os("OK_PROFILE").is_some() { eprintln!("ok-extract: MEMO miss strip_all key={}", key.replace('\n', " | ")); }
     let value = Arc::new(read_strip_all_guids(mods).0);
@@ -114,22 +124,24 @@ pub(crate) fn strip_all_guids(mods:&Path)->Arc<HashSet<String>> {
 }
 
 fn read_strip_all_guids(mods:&Path)->(HashSet<String>,bool) {let _spot=crate::profile::spot("read_strip_all_guids");
+    let kk=mods.parent().is_some_and(crate::is_kk_installation);
+    let memo_kind=if kk{"strip_all_kk"}else{"strip_all"};
     let mut stripped=HashSet::new();let mut complete=true;
     let paths=match collect_zipmods_checked(mods){Ok((paths,trackable))=>{complete&=trackable;paths},Err(_)=>{complete=false;Vec::new()}};
     for path in paths {
-        let (guids,ok)=crate::gamefs::zip_memo("strip_all",&path,||zipmod_strip_all(&path));
+        let (guids,ok)=crate::gamefs::zip_memo(memo_kind,&path,||zipmod_strip_all(&path,kk));
         stripped.extend(guids);complete&=ok;
     }
     (stripped,complete)
 }
 
 /// One zipmod's StripAll GUIDs, and whether it could be read.
-fn zipmod_strip_all(path:&Path)->(Vec<String>,bool) {
+fn zipmod_strip_all(path:&Path,kk:bool)->(Vec<String>,bool) {
     let Some(mut zip) = crate::gamefs::open_zip(path) else{return (Vec::new(),false)};
     // Sideloader reads the root manifest, not arbitrary embedded manifests.
     let mut entry=match zip.by_name("manifest.xml") {Ok(entry)=>entry,Err(zip::result::ZipError::FileNotFound)=>return (Vec::new(),true),Err(_)=>return (Vec::new(),false)};
     match read_manifest(&mut entry) {
-        Ok(xml)=>(strip_all_manifest(&xml),true),
+        Ok(xml)=>(strip_all_manifest_for_game(&xml,kk),true),
         Err(error) if error.kind()==std::io::ErrorKind::InvalidData=>(Vec::new(),true),
         Err(_)=>(Vec::new(),false),
     }
@@ -197,6 +209,8 @@ mod migration_tests {
         let xml=r#"<manifest schema-ver="1"><game> </game><game>Koikatsu Sunshine</game><migrationInfo><info migrationType='StripAll' guidOld='old'/><info migrationType="MigrateAll" guidOld="old"/><info migrationType="StripAll" guidOld="other"/></migrationInfo><!-- <info migrationType="StripAll" guidOld="comment"/> --></manifest>"#;
         assert_eq!(super::strip_all_manifest(xml),vec!["old","other"]);
         assert!(super::strip_all_manifest(&xml.replace("Koikatsu Sunshine","Koikatsu")).is_empty());
+        assert_eq!(super::strip_all_manifest_for_game(&xml.replace("Koikatsu Sunshine","Koikatsu"),true),vec!["old","other"]);
+        assert!(super::strip_all_manifest_for_game(xml,true).is_empty());
         assert!(super::strip_all_manifest(&xml.replace("schema-ver=\"1\"","schema-ver=\"2\"")).is_empty());
         assert!(super::strip_all_manifest("broken XML").is_empty());
     }
@@ -220,34 +234,71 @@ mod migration_tests {
         let again=super::strip_all_guids(&root);assert_eq!(*before,*again);assert!(!std::sync::Arc::ptr_eq(&before,&again));
         package("new");let after=super::strip_all_guids(&root);assert!(after.contains("new")&&!after.contains("old"));assert!(before.contains("old"));
     }
+    #[test]
+    fn duplicate_guid_prefers_highest_manifest_version() {
+        use std::{collections::HashSet, io::Write};
+        assert!(super::parse_manifest_version("1.24") > super::parse_manifest_version("1.11"));
+        assert!(super::parse_manifest_version("1.11") > super::parse_manifest_version("1.4"));
+        assert_eq!(super::parse_manifest_version("1.2"), super::parse_manifest_version("v1.2.0"));
+        let base = std::env::temp_dir().join(format!("ok-dup-guid-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let mods = base.join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        let write_zip = |name: &str, guid: &str, version: &str| -> std::path::PathBuf {
+            let p = mods.join(name);
+            let mut zip = zip::ZipWriter::new(std::fs::File::create(&p).unwrap());
+            zip.start_file("manifest.xml", zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored)).unwrap();
+            write!(zip, "<manifest schema-ver='1'><guid>{guid}</guid><version>{version}</version></manifest>").unwrap();
+            zip.finish().unwrap();
+            p
+        };
+        let _v111 = write_zip("[Phantom]Hairs_v1.11.zipmod", "Phantom.Hairs", "1.11");
+        let v124 = write_zip("[Phantom]Hairs_v1.24.zipmod", "Phantom.Hairs", "1.24");
+        let _v117 = write_zip("[Phantom]Hairs_v1.99_typo.zipmod", "Phantom.Hairs", "1.17");
+        let wanted = HashSet::from(["Phantom.Hairs".to_string()]);
+        // SQL-backed path (when library is inactive on this thread)
+        crate::sqlcache::TEST_IGNORE_LIBRARY.with(|c| c.set(true));
+        let sql_hit = super::find_guids(&mods, Some(&wanted));
+        crate::sqlcache::TEST_IGNORE_LIBRARY.with(|c| c.set(false));
+        assert_eq!(sql_hit.get("Phantom.Hairs"), Some(&v124));
+        // Tree GUID index path (library / OK_NOCACHE mode)
+        let tree = super::tree_guid_index(&mods).expect("tree index");
+        assert_eq!(tree.get("phantom.hairs"), Some(&v124));
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
 
-fn load_guid_cache(mods_dir: &Path) -> (HashMap<String, PathBuf>, bool) {
+fn load_guid_cache(mods_dir: &Path) -> (HashMap<String, (PathBuf, String)>, bool) {
     let mut out = HashMap::new();
     let Ok(text) = crate::gamefs::read_to_string(guid_cache_path(mods_dir)) else {
         return (out, false);
     };
     let mut full = false;
     for line in text.lines() {
-        let Some((g, p)) = line.split_once('\t') else { continue };
+        let Some((g, rest)) = line.split_once('\t') else { continue };
         if g == "__FULL__" {
             full = true;
             continue;
         }
-        out.insert(g.to_string(), PathBuf::from(p));
+        let (p, ver) = match rest.split_once('\t') {
+            Some((p, v)) => (p, v.to_string()),
+            None => (rest, String::new()),
+        };
+        out.insert(g.to_string(), (PathBuf::from(p), ver));
     }
     (out, full)
 }
 
-fn save_guid_cache(mods_dir: &Path, map: &HashMap<String, PathBuf>, full: bool) {
+fn save_guid_cache(mods_dir: &Path, map: &HashMap<String, (PathBuf, String)>, full: bool) {
     let mut s = String::new();
     if full {
         s.push_str("__FULL__\t1\n");
     }
-    for (g, p) in map {
+    for (g, (p, ver)) in map {
         s.push_str(g);
         s.push('\t');
         s.push_str(&p.to_string_lossy());
+        s.push('\t');
+        s.push_str(ver);
         s.push('\n');
     }
     let _ = fs::write(guid_cache_path(mods_dir), s);
@@ -352,26 +403,41 @@ fn tree_guid_index(mods_dir: &Path) -> Option<Arc<HashMap<String, PathBuf>>> {le
         memo.push((key, index.clone()));
         return Some(index);
     }
-    // An archive the active library records cannot change: its GUIDs are kept by path, so a card pack's new view
+    // An archive the active library records cannot change: its GUIDs and versions are kept by path, so a card pack's new view
     // only reads the archives it adds (looking each of ~7000 up through `zip_memo` again cost ~0.3 s per view).
-    static RECORDED: Mutex<Option<HashMap<PathBuf, Vec<String>>>> = Mutex::new(None);
+    static RECORDED: Mutex<Option<HashMap<PathBuf, Vec<(String, String)>>>> = Mutex::new(None);
     let recorded = crate::gamefs::library_records_zips(&walk);
-    let known: Vec<Option<Vec<String>>> = {
+    let known: Vec<Option<Vec<(String, String)>>> = {
         let mut map = RECORDED.lock().unwrap_or_else(|e| e.into_inner());
         // The previous process's answers for this library (oklib::library_scan_load).
-        if map.is_none() { *map = crate::oklib::library_scan_load::<HashMap<PathBuf, Vec<String>>>("zip-guids-v1"); }
+        if map.is_none() { *map = crate::oklib::library_scan_load::<HashMap<PathBuf, Vec<(String, String)>>>("zip-guids-v2"); }
         walk.iter().zip(&recorded).map(|(p, r)| if *r { map.as_ref().and_then(|m| m.get(p).cloned()) } else { None }).collect()
     };
     let fresh_recorded = recorded.iter().zip(&known).any(|(r, k)| *r && k.is_none());
-    let guids: Vec<Vec<String>> = { use rayon::prelude::*; crate::oklib::pack_parallel(|| walk.par_iter().zip(known.into_par_iter()).map(|(p, k)| k.unwrap_or_else(|| guids_from_zipmod(p))).collect()) };
+    let guids: Vec<Vec<(String, String)>> = { use rayon::prelude::*; crate::oklib::pack_parallel(|| walk.par_iter().zip(known.into_par_iter()).map(|(p, k)| k.unwrap_or_else(|| guids_and_versions_from_zipmod(p))).collect()) };
     {
         let mut map = RECORDED.lock().unwrap_or_else(|e| e.into_inner());
         let map = map.get_or_insert_with(HashMap::new);
         for ((p, r), g) in walk.iter().zip(&recorded).zip(&guids) { if *r { map.entry(p.clone()).or_insert_with(|| g.clone()); } }
-        if fresh_recorded { crate::oklib::library_scan_save("zip-guids-v1", &*map); }
+        if fresh_recorded { crate::oklib::library_scan_save("zip-guids-v2", &*map); }
     }
+    let unbacked = crate::gamefs::library_zips_unbacked(&walk);
     let mut index = HashMap::new();
-    for (path, guids) in walk.iter().zip(guids) { for g in guids { index.entry(g.to_ascii_lowercase()).or_insert_with(|| path.clone()); } }
+    let mut best_ver: HashMap<String, (bool, ParsedModVersion)> = HashMap::new();
+    for ((path, gv), is_unbacked) in walk.iter().zip(guids).zip(unbacked) {
+        for (g, ver) in gv {
+            let key_lc = g.to_ascii_lowercase();
+            let rank = guid_candidate_rank(is_unbacked, &ver);
+            let replace = match best_ver.get(&key_lc) {
+                None => true,
+                Some(cur) => rank > *cur,
+            };
+            if replace {
+                best_ver.insert(key_lc.clone(), rank);
+                index.insert(key_lc, path.clone());
+            }
+        }
+    }
     if installed { save_tree_guid_index(mods_dir, &key, &index); }
     let index = Arc::new(index);
     let mut memo = MEMO.lock().unwrap_or_else(|e| e.into_inner());
@@ -381,10 +447,14 @@ fn tree_guid_index(mods_dir: &Path) -> Option<Arc<HashMap<String, PathBuf>>> {le
     Some(index)
 }
 
+fn guid_candidate_rank(is_unbacked: bool, ver: &str) -> (bool, ParsedModVersion) {
+    (!is_unbacked, parse_manifest_version(ver))
+}
+
 /// The installed tree's GUID index kept between processes, valid for one tree key (its zips' paths, sizes and
 /// modification times).
 fn tree_guid_index_path(mods_dir: &Path) -> PathBuf { mods_dir.join(".ok_tree_guid_index.bin") }
-const TREE_GUID_INDEX_VERSION: u32 = 1;
+const TREE_GUID_INDEX_VERSION: u32 = 3;
 fn load_tree_guid_index(mods_dir: &Path, key: &str) -> Option<HashMap<String, PathBuf>> {
     let bytes = fs::read(tree_guid_index_path(mods_dir)).ok()?;
     let (version, stored, entries): (u32, String, Vec<(String, PathBuf)>) = bincode::deserialize(&bytes).ok()?;
@@ -433,65 +503,80 @@ fn find_guids_uncached(mods_dir: &Path, wanted: Option<&std::collections::HashSe
     }
     let (mut cache, cache_full) = load_guid_cache(mods_dir);
     let mut out = HashMap::new();
-    // Never open unused zipmods. Resolve wanted GUIDs from cache + filename only.
-    if let Some(w) = wanted {
-        for g in w {
-            if let Some(p) = cache.get(g).cloned().or_else(|| {
+    let lookup_cached = |cache: &HashMap<String, (PathBuf, String)>, g: &str| -> Option<PathBuf> {
+        cache
+            .get(g)
+            .map(|(p, _)| p.clone())
+            .or_else(|| {
                 cache
                     .iter()
                     .find(|(k, _)| k.eq_ignore_ascii_case(g))
-                    .map(|(_, p)| p.clone())
-            }) {
-                if p.ok_is_file() {
-                    out.insert(g.clone(), p);
+                    .map(|(_, (p, _))| p.clone())
+            })
+            .filter(|p| p.ok_is_file())
+    };
+    let merge_zip_guids = |cache: &mut HashMap<String, (PathBuf, String)>, path: &Path| {
+        for (g, ver) in guids_and_versions_from_zipmod(path) {
+            let new_ver = parse_manifest_version(&ver);
+            let existing_key = if cache.contains_key(&g) {
+                Some(g.clone())
+            } else {
+                cache.keys().find(|k| k.eq_ignore_ascii_case(&g)).cloned()
+            };
+            match existing_key {
+                Some(k) => {
+                    let (cur_path, cur_ver) = &cache[&k];
+                    if !cur_path.ok_is_file() || new_ver > parse_manifest_version(cur_ver) {
+                        if k != g {
+                            cache.remove(&k);
+                        }
+                        cache.insert(g, (path.to_path_buf(), ver));
+                    }
+                }
+                None => {
+                    cache.insert(g, (path.to_path_buf(), ver));
                 }
             }
         }
-        if w.iter().all(|g| out.contains_key(g)) {
+    };
+    // Never open unused zipmods when the cache already resolves all wanted GUIDs.
+    if let Some(w) = wanted {
+        for g in w {
+            if let Some(p) = lookup_cached(&cache, g) {
+                out.insert(g.clone(), p);
+            }
+        }
+        if w.iter().all(|g| out.contains_key(g)) || cache_full {
             return out;
         }
         let Ok(walk) = collect_zipmods(mods_dir) else {
             return out;
         };
         // Resolve the remaining GUIDs by reading each zipmod's manifest.xml and
-        // matching the GUID exactly. (Fuzzy filename matching is unsafe: e.g.
-        // "com.DeathWeasel.Panties" -> tail "panties" would match
-        // "[Augh] Hungry Panties" and load the wrong mod.)
+        // matching the GUID + highest <version> as Sideloader does.
         for path in &walk {
-            let guids = guids_from_zipmod(path);
-            for g in &guids {
-                let stale = cache.get(g).map(|p| !p.ok_is_file()).unwrap_or(false);
-                if stale {
-                    cache.insert(g.clone(), path.clone());
-                } else {
-                    cache.entry(g.clone()).or_insert_with(|| path.clone());
-                }
-            }
-            for g in w {
-                if out.contains_key(g) {
-                    continue;
-                }
-                if guids.iter().any(|x| x.eq_ignore_ascii_case(g)) {
-                    out.insert(g.clone(), path.clone());
-                }
+            merge_zip_guids(&mut cache, path);
+        }
+        out.clear();
+        for g in w {
+            if let Some(p) = lookup_cached(&cache, g) {
+                out.insert(g.clone(), p);
             }
         }
-        save_guid_cache(mods_dir, &cache, cache_full);
+        save_guid_cache(mods_dir, &cache, true);
         return out;
     }
     if cache_full {
-        return cache;
+        return cache.into_iter().map(|(g, (p, _))| (g, p)).collect();
     }
     let Ok(walk) = collect_zipmods(mods_dir) else {
         return out;
     };
     for path in walk {
-        let Some(guid) = guid_from_zipmod(&path) else { continue };
-        cache.entry(guid.clone()).or_insert(path.clone());
-        out.entry(guid).or_insert(path);
+        merge_zip_guids(&mut cache, &path);
     }
     save_guid_cache(mods_dir, &cache, true);
-    out
+    cache.into_iter().map(|(g, (p, _))| (g, p)).collect()
 }
 
 pub fn all_zipmods(root: &Path) -> Vec<PathBuf> {
@@ -672,6 +757,53 @@ fn guid_from_zipmod_uncached(path: &Path) -> Option<String> {
         return extract_tag(&xml, "guid");
     }
     None
+}
+
+pub(crate) type ParsedModVersion = Vec<(u64, String)>;
+
+/// Parses a Sideloader manifest `<version>` tag into comparable segments so `"1.24" > "1.11"` and `"1.2" == "1.2.0"`.
+pub(crate) fn parse_manifest_version(ver: &str) -> ParsedModVersion {
+    let trimmed = ver.trim().trim_start_matches(['v', 'V']);
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let mut parts: ParsedModVersion = trimmed
+        .split('.')
+        .map(|seg| {
+            let s = seg.trim();
+            let digit_bytes = s.bytes().take_while(|b| b.is_ascii_digit()).count();
+            let num = s[..digit_bytes].parse::<u64>().unwrap_or(0);
+            let suffix = s[digit_bytes..].trim().to_ascii_lowercase();
+            (num, suffix)
+        })
+        .collect();
+    while matches!(parts.last(), Some((0, suf)) if suf.is_empty()) {
+        parts.pop();
+    }
+    parts
+}
+
+/// Every `(<guid>, <version>)` pair declared by any manifest.xml inside the zipmod.
+pub(crate) fn guids_and_versions_from_zipmod(path: &Path) -> Vec<(String, String)> {
+    let _spot = crate::profile::spot("guids_and_versions_from_zipmod");
+    zipmod_manifests(path)
+        .iter()
+        .filter_map(|xml| {
+            let guid = extract_tag(xml, "guid")?;
+            let ver = extract_tag(xml, "version").unwrap_or_default();
+            Some((guid, ver))
+        })
+        .collect()
+}
+
+/// Highest `<version>` declared for `guid` (case-insensitive) inside `path`.
+pub(crate) fn zipmod_version_for_guid(path: &Path, guid: &str) -> ParsedModVersion {
+    guids_and_versions_from_zipmod(path)
+        .into_iter()
+        .filter(|(g, _)| g.eq_ignore_ascii_case(guid))
+        .map(|(_, v)| parse_manifest_version(&v))
+        .max()
+        .unwrap_or_default()
 }
 
 /// Every `<guid>` declared by any manifest.xml inside the zipmod.
@@ -1749,4 +1881,17 @@ fn zipmod_files(path: &Path, keep: impl Fn(&str) -> bool) -> Vec<(String, Vec<u8
         }
     }
     out
+}
+
+#[cfg(test)]
+mod guid_rank_tests {
+    use super::*;
+
+    #[test]
+    fn backed_zipmod_beats_unbacked_ghost_even_at_same_or_lower_version() {
+        assert!(guid_candidate_rank(false, "1.0") > guid_candidate_rank(true, "1.0"));
+        assert!(guid_candidate_rank(false, "1.0") > guid_candidate_rank(true, "2.0"));
+        assert!(guid_candidate_rank(false, "1.1") > guid_candidate_rank(false, "1.0"));
+        assert!(guid_candidate_rank(true, "1.1") > guid_candidate_rank(true, "1.0"));
+    }
 }

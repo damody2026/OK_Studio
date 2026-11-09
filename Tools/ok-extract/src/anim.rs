@@ -2161,7 +2161,8 @@ use super::*;
     #[test]
     fn installed_sexfaces_extends_source_mouth_without_missing_morphs() {
         let game = &crate::test_support::bundles_root();
-        if !game.join("BepInEx/plugins/KKS_SexFaces.dll").ok_is_file() { return; }
+        if !game.join("BepInEx/plugins/KKS_SexFaces.dll").ok_is_file()
+            && !game.join("BepInEx/plugins/KK_SexFaces.dll").ok_is_file() { return; }
         let Ok(bytes) = crate::gamefs::read(game.join("abdata/chara/bo_head_00.unity3d")) else { return; };
         let parsed = crate::unity::parse_bundle_cached(bytes);
         let patterns = parsed.face_mouth_patterns("p_cf_head_00");

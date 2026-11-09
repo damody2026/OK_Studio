@@ -49,10 +49,12 @@ pub fn sorted_dic_keys(scene: &Scene) -> Vec<i32> {
     set.into_iter().collect()
 }
 
-/// Maps a KK Studio IK target bone/guide-object name (`cf_t_*` / `cm_t_*`) to `OKStudio`'s FinalIK effector index:
+/// Maps a KK Studio IK target bone/guide-object name (`cf_t_*` / `cm_t_*`, with or without CharaStudio's `(work)` suffix)
+/// to `OKStudio`'s FinalIK effector index:
 /// `0` body, `1..2` L/R shoulder, `3..4` L/R thigh, `5..6` L/R hand, `7..8` L/R foot, `9..10` L/R elbow bend, `11..12` L/R knee bend.
 pub fn studio_ik_effector_from_path(path: &str) -> Option<i32> {
     let leaf = path.rsplit('/').next().unwrap_or(path).trim();
+    let leaf = leaf.strip_suffix("(work)").unwrap_or(leaf).trim();
     match leaf {
         "cf_t_hips" | "cm_t_hips" => Some(0),
         "cf_t_shoulder_L" | "cm_t_shoulder_L" => Some(1),
@@ -73,7 +75,8 @@ pub fn studio_ik_effector_from_path(path: &str) -> Option<i32> {
 
 pub fn leaf_bone_name(path: &str) -> String {
     let trimmed = path.trim().trim_matches('/');
-    trimmed.rsplit('/').next().unwrap_or(trimmed).to_string()
+    let leaf = trimmed.rsplit('/').next().unwrap_or(trimmed);
+    leaf.strip_suffix("(work)").unwrap_or(leaf).trim().to_string()
 }
 
 fn plugin_data_map<'a>(blocks: &'a Value, id: &str) -> Option<&'a Value> {
@@ -976,7 +979,28 @@ fn parse_timeline_keyframe_value(
             | "lightRange"
             | "lightSpotAngle",
         )
-        | ("KKPE", "lastBlendShape") => {
+        | ("KKPE", "lastBlendShape")
+        | (
+            "ShalltyUtils",
+            "guideObjectXPos"
+            | "guideObjectYPos"
+            | "guideObjectZPos"
+            | "guideObjectXRot"
+            | "guideObjectYRot"
+            | "guideObjectZRot"
+            | "guideObjectXScale"
+            | "guideObjectYScale"
+            | "guideObjectZScale"
+            | "boneXPos"
+            | "boneYPos"
+            | "boneZPos"
+            | "boneXRot"
+            | "boneYRot"
+            | "boneZRot"
+            | "boneXScale"
+            | "boneYScale"
+            | "boneZScale",
+        ) => {
             let v = attr_f32(kf_node, "value")?;
             Some((vec![v], Vec::new()))
         }
@@ -1100,7 +1124,19 @@ pub fn parse_timeline_xml(xml: &str, sorted_keys: &[i32]) -> Option<TimelineScen
                     let mut param_int = -1;
 
                     match (owner, id) {
-                        ("Timeline", "guideObjectPos" | "guideObjectRot" | "guideObjectScale") => {
+                        ("Timeline", "guideObjectPos" | "guideObjectRot" | "guideObjectScale")
+                        | (
+                            "ShalltyUtils",
+                            "guideObjectXPos"
+                            | "guideObjectYPos"
+                            | "guideObjectZPos"
+                            | "guideObjectXRot"
+                            | "guideObjectYRot"
+                            | "guideObjectZRot"
+                            | "guideObjectXScale"
+                            | "guideObjectYScale"
+                            | "guideObjectZScale",
+                        ) => {
                             target_path = child.attribute("guideObjectPath").unwrap_or("").trim().to_string();
                             if !target_path.is_empty() {
                                 if let Some(eff) = studio_ik_effector_from_path(&target_path) {
@@ -1114,7 +1150,19 @@ pub fn parse_timeline_xml(xml: &str, sorted_keys: &[i32]) -> Option<TimelineScen
                             let Some(p) = attr_i32(child, "parameter") else { continue };
                             param_int = p;
                         }
-                        ("KKPE", "bonePos" | "boneRot" | "boneScale") => {
+                        ("KKPE", "bonePos" | "boneRot" | "boneScale")
+                        | (
+                            "ShalltyUtils",
+                            "boneXPos"
+                            | "boneYPos"
+                            | "boneZPos"
+                            | "boneXRot"
+                            | "boneYRot"
+                            | "boneZRot"
+                            | "boneXScale"
+                            | "boneYScale"
+                            | "boneZScale",
+                        ) => {
                             target_path = child.attribute("parameter").unwrap_or("").trim().to_string();
                             target_bone = leaf_bone_name(&target_path);
                             if target_bone.is_empty() {
@@ -1281,12 +1329,14 @@ mod tests {
     #[test]
     fn ik_effector_mapping_matches_okstudio_finalik_indices() {
         assert_eq!(studio_ik_effector_from_path("BodyTop/work/cf_t_hips"), Some(0));
+        assert_eq!(studio_ik_effector_from_path("cf_t_hips(work)"), Some(0));
         assert_eq!(studio_ik_effector_from_path("cf_t_shoulder_L"), Some(1));
         assert_eq!(studio_ik_effector_from_path("cf_t_elbo_L"), Some(9));
         assert_eq!(studio_ik_effector_from_path("cf_t_hand_L"), Some(5));
         assert_eq!(studio_ik_effector_from_path("cf_t_shoulder_R"), Some(2));
         assert_eq!(studio_ik_effector_from_path("cf_t_elbo_R"), Some(10));
         assert_eq!(studio_ik_effector_from_path("cf_t_hand_R"), Some(6));
+        assert_eq!(studio_ik_effector_from_path("cf_t_hand_R(work)"), Some(6));
         assert_eq!(studio_ik_effector_from_path("cf_t_waist_L"), Some(3));
         assert_eq!(studio_ik_effector_from_path("cf_t_knee_L"), Some(11));
         assert_eq!(studio_ik_effector_from_path("cf_t_leg_L"), Some(7));
@@ -1294,6 +1344,7 @@ mod tests {
         assert_eq!(studio_ik_effector_from_path("cf_t_knee_R"), Some(12));
         assert_eq!(studio_ik_effector_from_path("cf_t_leg_R"), Some(8));
         assert_eq!(studio_ik_effector_from_path("BodyTop/p_cf_body_bone/cf_j_arm01_L"), None);
+        assert_eq!(leaf_bone_name("cf_t_hand_R(work)"), "cf_t_hand_R");
     }
 
     #[test]
