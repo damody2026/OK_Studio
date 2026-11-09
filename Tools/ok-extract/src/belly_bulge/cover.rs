@@ -12,6 +12,8 @@ use crate::pose::Skeleton;
 const REACH_M: f32 = 0.025;
 /// Her breasts' push fades over this (they lift the cloth a little; the width lifted skin needs tented a shirt).
 const BUST_REACH_M: f32 = 0.015;
+/// The farthest cloth her unmoved skin pushes: `BUST_REACH_M` across it, `UNDER_M` behind it or the margin before it.
+const NEAR_M: f32 = 0.022;
 /// Over skin lifted this near (across the way it went) the cloth rises all the way: wider than a triangle of cloth, or the
 /// ridge of the hill comes up between its corners.
 const FULL_M: f32 = 0.012;
@@ -23,6 +25,9 @@ const FAR_M: f32 = 0.06;
 const UNDER_M: f32 = 0.015;
 /// Her skin is thinned to one place in each cube this wide (the nearest a garment vertex looks is `REACH_M`).
 const THIN_M: f32 = 0.006;
+/// Her breasts away from her nipples, still, are thinned to this (a smooth surface: the chord sags 0.2 mm over it): each cloth
+/// vertex there looks through a quarter as much skin (6 mm cost 10 ms of the frame for one shirt, every frame).
+const BUST_THIN_M: f32 = 0.012;
 /// How far moved skin must have swelled out along its normal to push the cloth.
 const OUT_M: f32 = 0.003;
 /// Bones whose skin pushes every frame (part of a name): her breasts and nipples.
@@ -133,7 +138,7 @@ impl CoverField {
         let skins: Vec<Mat4> = worlds.iter().zip(binds).map(|(w, b)| mat_mul_pub(w, b)).collect();
         let unit = |v: [f32; 3]| { let l = dot(v, v).sqrt();(l > 1e-6).then(|| [v[0] / l, v[1] / l, v[2] / l]) };
         let moved: HashMap<u32, [f32; 6]> = body_moves.iter().copied().collect();
-        let mut skin = Vec::new();let mut taken: std::collections::HashSet<[i64; 3]> = std::collections::HashSet::new();
+        let mut skin = Vec::new();let mut taken: std::collections::HashSet<([i64; 3], bool)> = std::collections::HashSet::new();
         let mut lifted: Vec<([f32; 3], [f32; 3])> = Vec::new();
         for j in 0..still.rest.len() {
             let delta = moved.get(&(j as u32));
@@ -156,7 +161,8 @@ impl CoverField {
             let Some(n0) = unit(sub(point(&m, *rn), o)) else { continue; };
             if dot(sub(p, p0), n0) >= OUT_M { lifted.push((p0, p)); }
             if !on_bust && dot(sub(p, p0), n) < OUT_M { continue; }
-            if !taken.insert(p.map(|v| (v / THIN_M).floor() as i64)) { continue; }
+            let fine = delta.is_some() || still.on_nip[j];let thin = if fine { THIN_M } else { BUST_THIN_M };
+            if !taken.insert((p.map(|v| (v / thin).floor() as i64), fine)) { continue; }
             skin.push((p0, p, n));
         }
         if skin.is_empty() { return None; }
@@ -175,6 +181,19 @@ impl CoverField {
         let mut cells: Vec<usize> = Vec::new();
         for (i, s) in skin.iter().enumerate() {
             cells.clear();
+            // Skin that did not move pushes only cloth within `BUST_REACH_M` across it and `UNDER_M` / the margin along it
+            // (push_at): only the cells that near it, at most eight. Listed in all 27 round it, each cloth vertex at her
+            // breasts went through some 150 of them: 2.4 ms a frame for one shirt, every character, every frame.
+            if s.0 == s.1 {
+                let c = cell(s.1);
+                for a in -1..=1 { for b in -1..=1 { for e in -1..=1 {
+                    let k = [c[0] + a, c[1] + b, c[2] + e];
+                    let gap: f32 = (0..3).map(|x| { let (l, h) = (k[x] as f32 * REACH_M, (k[x] + 1) as f32 * REACH_M);let d = (l - s.1[x]).max(s.1[x] - h).max(0.);d * d }).sum();
+                    if gap <= NEAR_M * NEAR_M { cells.push((((k[0] - lo[0]) as usize * size[1]) + (k[1] - lo[1]) as usize) * size[2] + (k[2] - lo[2]) as usize); }
+                } } }
+                for &c in &cells { grid[c].push(i as u32); }
+                continue;
+            }
             for c in path(*s) {
                 for a in -1..=1 { for b in -1..=1 { for e in -1..=1 {
                     cells.push((((c[0] + a - lo[0]) as usize * size[1]) + (c[1] + b - lo[1]) as usize) * size[2] + (c[2] + e - lo[2]) as usize);
@@ -212,8 +231,8 @@ impl CoverField {
     /// A garment with its own rig, just skinned on the CPU (`positions`, her skeleton space): moved out over her skin.
     pub(crate) fn cover(&self, _index: usize, part: &SessionPart, positions: &mut [[f32; 3]]) {
         if !covers(&part.role) || part.runtime_accessory.is_none() || positions.len() != part.rest_positions.len() { return; }
-        let _trace = crate::native_profile::Scope::new(48);
-        let nbr = neighbours(&part.indices, &part.rest_positions);
+        let _trace = crate::native_profile::Scope::new(48);let _time = Timed(std::time::Instant::now(), 27);
+        let nbr = { let _t = Timed(std::time::Instant::now(), 28);neighbours(&part.indices, &part.rest_positions) };
         let Some(push) = self.pushes(margin(&part.role), positions, &nbr, &part.indices) else { return; };
         for (p, v) in positions.iter_mut().zip(push) { for a in 0..3 { p[a] += v[a]; } }
     }
@@ -242,15 +261,21 @@ impl CoverField {
         let _trace = crate::native_profile::Scope::new(50);
         // Each vertex on its own, on the pool: one garment was 1 ms on the frame's longest path (trace 2026-11-08).
         use rayon::prelude::*;
-        let mut push: Vec<[f32; 3]> = positions.par_iter().map(|&c| self.push_at(keep, c)).collect();
+        let t_at = Timed(std::time::Instant::now(), 29);let mut push: Vec<[f32; 3]> = positions.par_iter().map(|&c| self.push_at(keep, c)).collect();drop(t_at);let t_rings = Timed(std::time::Instant::now(), 30);
         if !push.iter().any(|v| dot(*v, *v) > 0.) { return None; }
         // Only the cloth round what moved: six rings out from it (the push reaches only `REACH_M` across the skin itself).
         // Where each ring vertex is in the ring: a dense index (a hash map of them each ring was most of this).
         let mut near: Vec<u32> = (0..push.len() as u32).filter(|&j| dot(push[j as usize], push[j as usize]) > 0.).collect();
         let mut slot: Vec<u32> = vec![u32::MAX; push.len()];
+        // Which vertices are in the ring already: grown by marking (sorting each ring with its neighbours, ten times its
+        // size, was most of a garment's cover: 2026-11-10, every character, every frame).
+        let mut taken = vec![false; push.len()];
+        for &j in &near { taken[j as usize] = true; }
         for _ in 0..6 {
-            let mut ring: Vec<u32> = near.iter().flat_map(|&j| nbr.get(j as usize).into_iter().flatten().copied()).chain(near.iter().copied()).collect();
-            ring.sort_unstable();ring.dedup();near = ring;
+            for i in 0..near.len() {
+                let j = near[i] as usize;
+                for &k in nbr.get(j).into_iter().flatten() { if let Some(t) = taken.get_mut(k as usize).filter(|t| !**t) { *t = true;near.push(k); } }
+            }
             let was: Vec<[f32; 3]> = near.iter().map(|&j| push[j as usize]).collect();
             for (i, &j) in near.iter().enumerate() { if let Some(s) = slot.get_mut(j as usize) { *s = i as u32; } }
             for (i, &j) in near.iter().enumerate() {
@@ -262,13 +287,16 @@ impl CoverField {
             }
             for &j in &near { if let Some(s) = slot.get_mut(j as usize) { *s = u32::MAX; } }
         }
+        drop(t_rings);let _flip = Timed(std::time::Instant::now(), 31);
         // A triangle of cloth the pushes turn over (her crotch, where the skin round him moves apart) showed its black inside:
         // its corners are pushed half as far, until none turns over. Halving never pushes a vertex that was not: the
         // triangles that can turn are found once.
         let cross = |u: [f32; 3], v: [f32; 3]| [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
         let moved = |push: &[[f32; 3]], k: usize| { let (p, v) = (positions[k], push[k]);[p[0] + v[0], p[1] + v[1], p[2] + v[2]] };
         let pushed: Vec<[usize; 3]> = indices.chunks_exact(3).map(|t| [t[0] as usize, t[1] as usize, t[2] as usize])
-            .filter(|t| t.iter().all(|&k| k < push.len()) && !t.iter().all(|&k| dot(push[k], push[k]) == 0.)).collect();
+            .filter(|t| t.iter().all(|&k| k < push.len()) && !t.iter().all(|&k| dot(push[k], push[k]) == 0.))
+            // A triangle with no area (a seam's sliver) never counts as upright: it halved its corners all six times.
+            .filter(|&[a, b, c]| { let w = cross(sub(positions[b], positions[a]), sub(positions[c], positions[a]));dot(w, w) > 1e-16 }).collect();
         for _ in 0..6 {
             let mut halve: Vec<usize> = Vec::new();
             for &[a, b, c] in &pushed {
@@ -441,10 +469,12 @@ impl Lift {
 
 /// What of her body and her garments on her body skeleton stays while she is posed, once for each set of parts.
 pub(super) struct CoverStill {
-    body: usize, rest: Vec<[f32; 3]>, normals: Vec<[f32; 3]>, bones: Vec<[u16; 4]>, weights: Vec<[f32; 4]>, on_bust: Vec<bool>,
+    body: usize, rest: Vec<[f32; 3]>, normals: Vec<[f32; 3]>, bones: Vec<[u16; 4]>, weights: Vec<[f32; 4]>, on_bust: Vec<bool>, on_nip: Vec<bool>,
     cloth: Vec<ClothMesh>,
 }
-struct ClothMesh { part: usize, keep: f32, rest: Vec<[f32; 3]>, bones: Vec<[u16; 4]>, weights: Vec<[f32; 4]>, indices: Vec<u32>, nbr: std::sync::Arc<Vec<Vec<u32>>> }
+/// `near`: its vertices led by a bone that leads her breast skin too (the only ones her breasts can reach while no skin is
+/// lifted; a skirt has none): only those are posed then.
+struct ClothMesh { part: usize, keep: f32, rest: Vec<[f32; 3]>, bones: Vec<[u16; 4]>, weights: Vec<[f32; 4]>, indices: Vec<u32>, nbr: std::sync::Arc<Vec<Vec<u32>>>, near: Vec<u32> }
 static COVER_STILL: std::sync::Mutex<Vec<(usize, usize, usize, std::sync::Arc<CoverStill>)>> = std::sync::Mutex::new(Vec::new());
 
 /// Her clothes changed on the same model (wardrobe.rs): what was read from the old ones goes.
@@ -459,11 +489,21 @@ fn cover_still(parts: &[SessionPart], skel: &Skeleton) -> Option<std::sync::Arc<
     let (body, part) = parts.iter().enumerate().filter(|(_, p)| p.role == "body" && p.skel_kind == 1 && p.runtime_accessory.is_none())
         .max_by_key(|(_, p)| (p.blend_shapes.iter().any(|(n, _)| is_bulge(n)), p.rest_positions.len()))?;
     let pushing: Vec<bool> = skel.names.iter().map(|n| { let n = n.to_ascii_lowercase();PUSHING.iter().any(|s| n.contains(s)) }).collect();
-    let on_bust = (0..part.rest_positions.len()).map(|j| part.bone_idx.get(j).zip(part.weights.get(j)).is_some_and(|(b, w)| b.iter().zip(w).any(|(b, w)| *w > 0.3 && pushing.get(*b as usize) == Some(&true)))).collect();
+    let on_bust: Vec<bool> = (0..part.rest_positions.len()).map(|j| part.bone_idx.get(j).zip(part.weights.get(j)).is_some_and(|(b, w)| b.iter().zip(w).any(|(b, w)| *w > 0.3 && pushing.get(*b as usize) == Some(&true)))).collect();
+    // Her nipples and areolae (led by a `bnip` bone): thinned finely.
+    let nip: Vec<bool> = skel.names.iter().map(|n| n.to_ascii_lowercase().contains("bnip")).collect();
+    let on_nip: Vec<bool> = (0..part.rest_positions.len()).map(|j| part.bone_idx.get(j).zip(part.weights.get(j)).is_some_and(|(b, w)| b.iter().zip(w).any(|(b, w)| *w > 0.05 && nip.get(*b as usize) == Some(&true)))).collect();
+    // The bones leading her breast skin at all (her body and her clothes on it share the skeleton's bone indices).
+    let mut region = vec![false; skel.names.len()];
+    for j in (0..on_bust.len()).filter(|&j| on_bust[j]) {
+        if let (Some(b), Some(w)) = (part.bone_idx.get(j), part.weights.get(j)) { for (b, w) in b.iter().zip(w) { if *w > 0. { if let Some(r) = region.get_mut(*b as usize) { *r = true; } } } }
+    }
+    let near = |p: &SessionPart| (0..p.rest_positions.len() as u32)
+        .filter(|&j| p.bone_idx[j as usize].iter().zip(&p.weights[j as usize]).any(|(b, w)| *w > 0. && region.get(*b as usize) == Some(&true))).collect::<Vec<u32>>();
     let cloth = parts.iter().enumerate().filter(|(_, p)| covers(&p.role) && p.runtime_accessory.is_none() && p.skel_kind == 1
         && p.weights.len() == p.rest_positions.len() && p.bone_idx.len() == p.rest_positions.len())
-        .map(|(i, p)| ClothMesh { part: i, keep: margin(&p.role), rest: p.rest_positions.clone(), bones: p.bone_idx.clone(), weights: p.weights.clone(), indices: p.indices.clone(), nbr: neighbours(&p.indices, &p.rest_positions) }).collect();
-    let still = std::sync::Arc::new(CoverStill { body, rest: part.rest_positions.clone(), normals: part.rest_normals.clone(), bones: part.bone_idx.clone(), weights: part.weights.clone(), on_bust, cloth });
+        .map(|(i, p)| ClothMesh { part: i, keep: margin(&p.role), rest: p.rest_positions.clone(), bones: p.bone_idx.clone(), weights: p.weights.clone(), indices: p.indices.clone(), nbr: neighbours(&p.indices, &p.rest_positions), near: near(p) }).collect();
+    let still = std::sync::Arc::new(CoverStill { body, rest: part.rest_positions.clone(), normals: part.rest_normals.clone(), bones: part.bone_idx.clone(), weights: part.weights.clone(), on_bust, on_nip, cloth });
     let mut all = COVER_STILL.lock().unwrap();all.insert(0, (key.0, key.1, key.2, still.clone()));all.truncate(4);
     Some(still)
 }
@@ -496,7 +536,12 @@ pub(super) fn solve(frame: &CoverFrame, body_moves: &[(u32, [f32; 6])]) -> (Vec<
     for (i, palette) in &frame.cloth {
         let mesh = &frame.still.cloth[*i];
         let (rest, weights, bones) = (&mesh.rest, &mesh.weights, &mesh.bones);
+        // No skin lifted (every character's own cover, each pose): only what her breasts can reach is posed.
+        if body_moves.is_empty() && frame.still.cloth[*i].near.is_empty() { continue; }
+        let mut wanted = vec![!body_moves.is_empty(); rest.len()];
+        if body_moves.is_empty() { for &j in &mesh.near { wanted[j as usize] = true; } }
         let mats: Vec<Option<Mat4>> = (0..rest.len()).map(|j| {
+            if !wanted[j] { return None; }
             let mut m = [[0f32; 4]; 4];let mut total = 0.;
             for (b, w) in bones[j].iter().zip(&weights[j]) {
                 let Some(p) = palette.get(*b as usize).filter(|_| *w > 0.) else { continue; };
@@ -590,3 +635,7 @@ mod lift_tests {
         assert_eq!(moves[10 * h], [0.; 3]);
     }
 }
+
+/// A garment's cover time, added to OKAnim.Profile's `cover.garments` when it ends.
+struct Timed(std::time::Instant, usize);
+impl Drop for Timed { fn drop(&mut self) { crate::okanim::prof::add(self.1, self.0); } }

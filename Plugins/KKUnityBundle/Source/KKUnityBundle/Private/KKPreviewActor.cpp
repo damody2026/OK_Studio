@@ -10329,7 +10329,10 @@ bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& In
 // they follow the breast sliders, but the skin can still pass the cloth (a card's nipple sliders, a garment with no
 // OverBodyMask, the realistic style's larger breasts): after each pose her breast and nipple skin pushes the garments on
 // her body skeleton out over it (belly_bulge::cover_deltas, no belly moves), drawn as a morph of each garment.
-static TAutoConsoleVariable<int32> CVarOkClothCover(TEXT("ok.ClothCover"),1,TEXT("1: her clothes are pushed out over her breasts and nipples after each pose (belly_bulge::cover_deltas); 0 off"));
+static TAutoConsoleVariable<int32> CVarOkClothCover(TEXT("ok.ClothCover"),1,TEXT("Her clothes pushed out over her breasts and nipples after each pose: 1 all of them; 2 only her garments with their own rig (CPU skinned); 3 only those on her body skeleton (morph); 0 off"));
+// ok.ClothCoverStats: the game-thread time the morph route took per pose since the last call.
+static double GClothCoverMs=0.;static int32 GClothCoverCalls=0;
+static FAutoConsoleCommand GOKClothCoverStats(TEXT("ok.ClothCoverStats"),TEXT("Log the morph cover's game-thread ms per pose since the last call"),FConsoleCommandDelegate::CreateLambda([]{UE_LOG(LogTemp,Display,TEXT("Cloth cover: %.3f ms per pose over %d poses"),GClothCoverCalls?GClothCoverMs/GClothCoverCalls:0.,GClothCoverCalls);GClothCoverMs=0.;GClothCoverCalls=0;}));
 void AKKPreviewActor::ClearClothCover()
 {
     for(const auto& Shown:TMap<int32,uint32>(ClothCoverShown))SetPartWrapDeltas(Shown.Key,{},{});
@@ -10340,7 +10343,9 @@ void AKKPreviewActor::ClearClothCover()
 // kept on before each pose, so the pose about to be solved has it (set_cover; another outfit clears it, wardrobe.rs).
 void AKKPreviewActor::KeepClothCoverCpu()
 {
-    if(bExternalClothCover||CVarOkClothCover.GetValueOnGameThread()==0||!Session.IsOpen())return;
+    const int32 Mode=CVarOkClothCover.GetValueOnGameThread();
+    if(bExternalClothCover||Mode==0||!Session.IsOpen())return;
+    if(Mode==3){if(bClothCoverCpu){TArray<int32> None;Session.SetClothCover(false,{},{},{},None);bClothCoverCpu=false;}return;}
     TRACE_CPUPROFILER_EVENT_SCOPE(KK_KeepClothCoverCpu);
     TArray<int32> Cpu;
     if(Session.SetClothCover(true,{},{},{},Cpu))bClothCoverCpu=true;
@@ -10350,7 +10355,10 @@ void AKKPreviewActor::UpdateClothCover()
 {
     TRACE_CPUPROFILER_EVENT_SCOPE(KK_UpdateClothCover);
     if(bExternalClothCover){ClothCoverShown.Reset();return;}
-    if(CVarOkClothCover.GetValueOnGameThread()==0||!Session.IsOpen()){ClearClothCover();return;}
+    const int32 Mode=CVarOkClothCover.GetValueOnGameThread();
+    if(Mode==0||!Session.IsOpen()){ClearClothCover();return;}
+    if(Mode==2){for(const auto& Shown:TMap<int32,uint32>(ClothCoverShown))SetPartWrapDeltas(Shown.Key,{},{});ClothCoverShown.Reset();return;}
+    const double T0=FPlatformTime::Seconds();ON_SCOPE_EXIT{GClothCoverMs+=(FPlatformTime::Seconds()-T0)*1000.;++GClothCoverCalls;};
     TArray<int32> CoverParts;TArray<uint32> Idx;TArray<FVector3f> D;
     if(!Session.ClothCoverDeltas({},{},{},CoverParts,Idx,D))return;
     TMap<int32,TPair<TArray<uint32>,TArray<FVector3f>>> ByPart;
