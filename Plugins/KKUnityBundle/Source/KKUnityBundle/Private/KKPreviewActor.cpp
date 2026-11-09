@@ -10239,6 +10239,9 @@ bool AKKPreviewActor::SetSkinLit(bool bOn,const FString& LitRoot)
             // outlines, effects) stay as drawn. Which parents have none is remembered, not asked of the disk each frame.
             UMaterialInterface* Parent=M->Parent;
             if(!Parent||Parent->GetPathName().Contains(TEXT("/StreetHG"))||Parent->GetName().EndsWith(TEXT("_Wrap")))continue;
+            // See-through pieces keep their own material: lit, a 35% body-tights torso still came out solid white over
+            // her bare chest (2026-11-09; the lit translucent colour is far over 1, so any opacity covers her).
+            if(const EBlendMode Blend=Parent->GetBlendMode();Blend!=BLEND_Opaque&&Blend!=BLEND_Masked)continue;
             // The face's parent pressed flat (<name>_Flat, ok.FaceFlatten) is lit as its family: its own shape, lit (user
             // 2026-11-09: the face lit too).
             FString Base=Parent->GetName();Base.RemoveFromEnd(TEXT("_Flat"));

@@ -51,6 +51,9 @@ int32 OKSetActorLit(AActor* Owner,bool bOn,const FString& LitRoot){
 			if(!Lit)if(const auto* Found=Set.LitOf.Find(M))Lit=Found->Get();
 			if(!Lit){
 				UMaterialInterface* Parent=M->Parent;if(!Parent||Parent->GetPathName().Contains(TEXT("/StreetHG"))||Parent->GetName().EndsWith(TEXT("_Wrap")))continue;
+				// See-through pieces keep their own material: lit, a 35% body-tights torso still came out solid white
+				// over her bare chest (2026-11-09; the lit translucent colour is far over 1, so any opacity covers her).
+				if(const EBlendMode Blend=Parent->GetBlendMode();Blend!=BLEND_Opaque&&Blend!=BLEND_Masked)continue;
 				FString Base=Parent->GetName();Base.RemoveFromEnd(TEXT("_Flat"));
 				const FString Path=LitRoot/(Base+TEXT("_Lit"));if(GMissing.Contains(Path))continue;
 				UMaterialInterface* LitParent=nullptr;
