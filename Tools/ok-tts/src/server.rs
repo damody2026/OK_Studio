@@ -41,7 +41,10 @@ const MAX_TEXT_CHARS: usize = 400;
 const CACHE_VERSION: &str = "ok-tts-3"; // 3: one seed per voice
 const BASE_CACHE_VERSION: &str = "ok-tts-base-1";
 const PROTOCOL: u32 = 2;
-const CAPABILITIES: &[&str] = &["stream", "stream_cache_hit", "shared_synthesis", "cancel", "request_status", "voice_while_loading", "card_voice", "voice_candidates"];
+const CAPABILITIES: &[&str] = &["stream", "stream_cache_hit", "shared_synthesis", "cancel", "request_status", "voice_while_loading", "card_voice", "voice_candidates", "voice_prepare"];
+/// POST /voice/prepare: at most this many voices per call, designed by this many threads at once.
+const PREPARE_MAX: usize = 24;
+const PREPARE_WORKERS: usize = 3;
 /// How long a request waits for another one making the same line before it tries itself.
 const JOIN_WAIT: Duration = Duration::from_secs(60);
 const RECENT: usize = 256;
@@ -402,6 +405,42 @@ fn handle(state: &Arc<State>, mut req: tiny_http::Request) {
                     respond(req, error_code(&e), json!({"ok": false, "error": format!("{e:#}")}));
                 }
             }
+        }
+        (tiny_http::Method::Post, "/voice/prepare") => {
+            // {"voices": [{"personality", "age"}...]}: the voices the game will speak with (its heroines and his tone).
+            // In the cloud each new one is designed now, in the background (about 12 s each), so her first line
+            // does not wait for it and miss the game's timeout. Nothing to do for the local backends.
+            let parsed = read_body(&mut req).and_then(|b| Ok(serde_json::from_str::<Value>(b.trim_start_matches('\u{feff}').trim())?));
+            let body = match parsed {
+                Ok(v) => v,
+                Err(e) => return respond(req, 400, json!({"ok": false, "error": format!("{e:#}")})),
+            };
+            let Some(cloud) = state.cloud() else {
+                return respond(req, 200, json!({"ok": true, "cloud": false, "designing": 0}));
+            };
+            let mut todo = Vec::new();
+            let mut seen = HashSet::new();
+            for v in body["voices"].as_array().into_iter().flatten().take(PREPARE_MAX) {
+                let choice = state.voices.choose(&personality_string(&v["personality"]), v["age"].as_u64().unwrap_or(18) as u32);
+                if !cloud.has_voice(&choice) && seen.insert(choice.instruct.clone()) {
+                    todo.push(choice);
+                }
+            }
+            let designing = todo.len();
+            if designing > 0 {
+                crate::log!("ok-tts: designing {designing} cloud voice(s) ahead");
+                let todo = Arc::new(Mutex::new(todo));
+                for _ in 0..designing.min(PREPARE_WORKERS) {
+                    let (cloud, todo) = (cloud.clone(), todo.clone());
+                    std::thread::spawn(move || loop {
+                        let Some(v) = todo.lock().unwrap().pop() else { break };
+                        if let Err(e) = cloud.voice_id(&v) {
+                            crate::log!("ok-tts: cloud voice {} ahead failed: {e:#}", v.key);
+                        }
+                    });
+                }
+            }
+            respond(req, 200, json!({"ok": true, "cloud": true, "designing": designing}));
         }
         (tiny_http::Method::Post, "/cloud") => {
             // The player's choice in the settings: {"api_key", "base_url", "tts_model"} makes lines in the cloud from

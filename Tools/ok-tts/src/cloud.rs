@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -61,8 +61,9 @@ pub struct Cloud {
     voices_path: PathBuf,
     /// voice key (see `voice_key`) -> cloud voice id
     voices: Mutex<HashMap<String, String>>,
-    /// One voice is designed at a time, so two requests for a new voice do not make it twice.
-    creating: Mutex<()>,
+    /// One lock per voice being designed, so two requests for a new voice do not make it twice, while different
+    /// voices are designed side by side (a line does not wait behind /voice/prepare designing someone else).
+    creating: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 impl Cloud {
@@ -76,7 +77,7 @@ impl Cloud {
         let voices: HashMap<String, String> = std::fs::read_to_string(&voices_path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
         let agent = ureq::AgentBuilder::new().try_proxy_from_env(true).timeout_connect(Duration::from_secs(15)).timeout_read(Duration::from_secs(60)).build();
         crate::log!("ok-tts: cloud voices ({model} at {base_url}), {} designed earlier ({})", voices.len(), voices_path.display());
-        Ok(Self { key, base_url: base_url.trim_end_matches('/').to_string(), model, agent, voices_path, voices: Mutex::new(voices), creating: Mutex::new(()) })
+        Ok(Self { key, base_url: base_url.trim_end_matches('/').to_string(), model, agent, voices_path, voices: Mutex::new(voices), creating: Mutex::new(HashMap::new()) })
     }
 
     /// Where a line in this voice is cached: keyed on the cloud model and the voice's description, apart from the
@@ -110,9 +111,17 @@ impl Cloud {
         if let Some(id) = self.voices.lock().unwrap().get(&key) {
             return Ok(id.clone());
         }
-        let _one = self.creating.lock().unwrap();
+        let this_voice = self.creating.lock().unwrap().entry(key.clone()).or_default().clone();
+        let _one = this_voice.lock().unwrap();
         if let Some(id) = self.voices.lock().unwrap().get(&key) {
             return Ok(id.clone());
+        }
+        // Designed by another ok-tts meanwhile (the file is shared by every game on this machine).
+        if let Some(id) = std::fs::read_to_string(&self.voices_path).ok()
+            .and_then(|s| serde_json::from_str::<HashMap<String, String>>(&s).ok())
+            .and_then(|m| m.get(&key).cloned()) {
+            self.voices.lock().unwrap().insert(key, id.clone());
+            return Ok(id);
         }
         let t = std::time::Instant::now();
         let prompt: String = voice.instruct.chars().take(MAX_PROMPT_CHARS).collect();
@@ -128,6 +137,13 @@ impl Cloud {
             .to_string();
         crate::log!("ok-tts: cloud voice {key} -> {id} ({:.1}s)", t.elapsed().as_secs_f64());
         let mut all = self.voices.lock().unwrap();
+        // Another ok-tts (another game on this machine) may have designed voices since this one read the file: keep
+        // theirs, so neither overwrites the other's and has them made again.
+        if let Some(on_disk) = std::fs::read_to_string(&self.voices_path).ok().and_then(|s| serde_json::from_str::<HashMap<String, String>>(&s).ok()) {
+            for (k, v) in on_disk {
+                all.entry(k).or_insert(v);
+            }
+        }
         all.insert(key, id.clone());
         let body = serde_json::to_vec_pretty(&*all)?;
         if let Some(dir) = self.voices_path.parent() {
@@ -135,6 +151,11 @@ impl Cloud {
         }
         crate::audio::write_atomic(&self.voices_path, &body).with_context(|| format!("write {}", self.voices_path.display()))?;
         Ok(id)
+    }
+
+    /// Whether this voice already has its cloud voice (a line in it does not wait for a design).
+    pub fn has_voice(&self, voice: &VoiceChoice) -> bool {
+        self.voices.lock().unwrap().contains_key(&voice_key(voice))
     }
 
     fn synth_body(&self, text: &str, voice: &VoiceChoice) -> Result<Value> {
