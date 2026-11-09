@@ -228,10 +228,10 @@ static const FHSetting HSettings[]={
     {TEXT("Drooling"),TEXT("ui.hscene.set_drool"),0.f,1.f,1.f,0.f},
     {TEXT("Tears"),TEXT("ui.hscene.set_tears"),0.f,1.f,1.f,0.f},
     {TEXT("TongueLength"),TEXT("ui.hscene.tongue_length"),0.f,4.f,.05f,1.f},
-    {TEXT("TongueUp"),TEXT("ui.hscene.set_tongue_up"),-3.f,5.f,.1f,1.5f},
-    {TEXT("TonguePitch"),TEXT("ui.hscene.set_tongue_pitch"),-45.f,60.f,1.f,30.f},
+    {TEXT("TongueUp"),TEXT("ui.hscene.set_tongue_up"),-3.f,5.f,.1f,0.f},
+    {TEXT("TonguePitch"),TEXT("ui.hscene.set_tongue_pitch"),-45.f,60.f,1.f,13.f},
     {TEXT("TongueUpIn"),TEXT("ui.hscene.set_tongue_up_in"),-3.f,5.f,.1f,0.f},
-    {TEXT("TonguePitchIn"),TEXT("ui.hscene.set_tongue_pitch_in"),-45.f,60.f,1.f,0.f},
+    {TEXT("TonguePitchIn"),TEXT("ui.hscene.set_tongue_pitch_in"),-45.f,60.f,1.f,11.f},
     {nullptr,TEXT("ui.hscene.set_service")},
     {TEXT("CondomMouthFavor"),TEXT("ui.hscene.set_condom_favor"),0.f,500.f,10.f,100.f},
     {TEXT("CondomMouthSeconds"),TEXT("ui.hscene.set_condom_seconds"),2.f,20.f,1.f,6.f},
@@ -1871,10 +1871,10 @@ static bool HChestForward(AKKPreviewActor* A,FVector& Out);
 // tongue hardly shows here), else 舌出し (_sita), else 舐める (_name).
 // Two settings (user 2026-11-09): him moving in her, her mouth open wide, the tongue as made (raised it stood above her
 // lip); otherwise (after a climax, the test) raised more, it hung below her lip.
-static TAutoConsoleVariable<float> CVarHTongueUp(TEXT("ok.HScene.TongueUp"),1.5f,TEXT("Her tongue out moved up this many cm (up her face), him not moving in her"));
-static TAutoConsoleVariable<float> CVarHTonguePitch(TEXT("ok.HScene.TonguePitch"),30.f,TEXT("Her tongue out turned up this many degrees round the back of her mouth, him not moving in her"));
+static TAutoConsoleVariable<float> CVarHTongueUp(TEXT("ok.HScene.TongueUp"),0.f,TEXT("Her tongue out moved up this many cm (up her face), him not moving in her"));
+static TAutoConsoleVariable<float> CVarHTonguePitch(TEXT("ok.HScene.TonguePitch"),13.f,TEXT("Her tongue out turned up this many degrees round the back of her mouth, him not moving in her"));
 static TAutoConsoleVariable<float> CVarHTongueUpIn(TEXT("ok.HScene.TongueUpIn"),0.f,TEXT("Her tongue out moved up this many cm while he moves in her"));
-static TAutoConsoleVariable<float> CVarHTonguePitchIn(TEXT("ok.HScene.TonguePitchIn"),0.f,TEXT("Her tongue out turned up this many degrees while he moves in her"));
+static TAutoConsoleVariable<float> CVarHTonguePitchIn(TEXT("ok.HScene.TonguePitchIn"),11.f,TEXT("Her tongue out turned up this many degrees while he moves in her"));
 static int32 HTongueMouth(AKKPreviewActor* Girl);
 static constexpr double HTongueFade=1.5; // seconds her tongue takes to go back in after a climax (UpdateFace)
 static bool HBoneTransform(AKKPreviewActor* A,const TCHAR* Name,FTransform& Out);
@@ -1890,6 +1890,8 @@ void UOKHScenePanel::TickTongue(){
     if(Girl->MouthPattern!=TongueOutChecked){TongueOutChecked=Girl->MouthPattern;const FString Label=Girl->GetMouthPatternLabel(Girl->MouthPattern).ToLower();
         TongueOutPattern=Label.Contains(TEXT("_sita"))||Label.Contains(TEXT("_name"))||Girl->MouthPattern==HTongueMouth(Girl)?Girl->MouthPattern:-2;}
     const bool bMovingIn=Mode==2&&HBase(Current()).Contains(TEXT("Loop"));
+    // In every mouth, not only the one with her tongue out (user 2026-11-09: lengthened it stayed out in her moans and would
+    // not go up).
     const float Up=(bMovingIn?CVarHTongueUpIn:CVarHTongueUp).GetValueOnGameThread(),Pitch=(bMovingIn?CVarHTonguePitchIn:CVarHTonguePitch).GetValueOnGameThread();
     USceneComponent* Root=Girl->GetRootComponent();
     const FVector Moved=AlignedHer==Girl?Root->GetComponentTransform().InverseTransformVectorNoScale(HerApplied):FVector::ZeroVector;
@@ -1900,7 +1902,7 @@ void UOKHScenePanel::TickTongue(){
         if(const FTransform* Kept=TongueRest.Find(Comp))T=*Kept;else{T=Comp->GetRelativeTransform();if(bOnRoot)T.AddToTranslation(-Moved);TongueRest.Add(Comp,T);}
         if(bOnRoot)T.AddToTranslation(Moved);return T;};
     FTransform Cavity;FVector CornerL,CornerR,Head;
-    const bool bRaise=TongueOutPattern==Girl->MouthPattern&&(Up!=0.f||Pitch!=0.f)&&HBoneTransform(Girl,TEXT("J_MouthCavity"),Cavity)
+    const bool bRaise=(Up!=0.f||Pitch!=0.f)&&HBoneTransform(Girl,TEXT("J_MouthCavity"),Cavity)
         &&HBone(Girl,TEXT("J_Mouth_L"),CornerL)&&HBone(Girl,TEXT("J_Mouth_R"),CornerR)&&HBone(Girl,TEXT("J_Nose_tip"),Head);
     if(!bRaise){if(bTongueRaised){for(USceneComponent* Comp:Comps)Comp->SetRelativeTransform(Rest(Comp));bTongueRaised=false;}return;}
     const FVector Pivot=Cavity.GetLocation(),Forward=((CornerL+CornerR)*.5-Pivot).GetSafeNormal(); // to between her mouth's corners (no J_MouthBase_s on these heads)
