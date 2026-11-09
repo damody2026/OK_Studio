@@ -810,7 +810,16 @@ float AOKStreetSocialScene::StepOuting(float Dt){
     const FVector Next=S.OutingRoute[S.OutingStep];UE_LOG(LogTemp,Display,TEXT("Street outing: wedged at (%.0f,%.0f); he steps past to the next point %s"),S.Male.X,S.Male.Y,*Next.ToCompactString());
     // At the point's height in the city (its ground): kept at his, a step past onto a lower road left him 2.5 m up in the
     // air, where no step finds ground under him, and every point after that was a wedge (R6-180).
-    S.Male=FVector(Next.X,Next.Y,OKStreetCityMode()?Next.Z:S.Male.Z);++S.OutingStep;S.OutingStuckCount=0;return 0;}
+    FVector To(Next.X,Next.Y,OKStreetCityMode()?Next.Z:S.Male.Z);
+    // Not into the furniture: the meal's last point is the table itself, he was put in the fast food table and stood
+    // up inside it, shut in between it and the wall (R6-199). The nearest clear spot, his side first.
+    {FCollisionQueryParams Q(SCENE_QUERY_STAT(StreetStepPast),false,this);
+     auto Clear=[&](const FVector& P){return !GetWorld()->OverlapAnyTestByChannel(P+FVector(0,0,85),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(28,78),Q);};
+     if(!Clear(To)){bool Found=false;FVector Best=To;double BestD=1e18;
+      for(int32 R=1;R<=4&&!Found;++R)for(int32 DX=-R;DX<=R;++DX)for(int32 DY=-R;DY<=R;++DY){if(FMath::Max(FMath::Abs(DX),FMath::Abs(DY))!=R)continue;
+       const FVector P=To+FVector(DX*OKStreetNavCell,DY*OKStreetNavCell,0);if(!Clear(P))continue;const double D=FVector::Dist2D(P,S.Male);if(D<BestD){BestD=D;Best=P;Found=true;}}
+      if(Found){UE_LOG(LogTemp,Display,TEXT("Street outing: %s is in the furniture, he stands at %s"),*To.ToCompactString(),*Best.ToCompactString());To=Best;}}}
+    S.Male=To;++S.OutingStep;S.OutingStuckCount=0;return 0;}
    // Back at the same spot after a planned-again route is a loop already: on the way to the ramen shop each new street
    // route led him off and round to the same block by the department store, three loops, an hour of the clock (R6-187).
    if(S.OutingStuckCount>=2&&S.OutingRoute.IsValidIndex(S.OutingStep)){TArray<FVector> Around=GridRoute(S.Male,S.OutingRoute[S.OutingStep]);
