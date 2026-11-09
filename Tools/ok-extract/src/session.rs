@@ -1270,8 +1270,6 @@ pub struct OkSession {
     /// Parts the display hides (clothes states over every state kept, a piece taken off): their chains are not solved
     /// or skinned while hidden, and start again from where she stands when shown (set_parts_hidden).
     pub(crate) hidden_parts: Vec<bool>,
-    /// Her bones are shaped with flat nipples: a garment covers them (`cover_nipples`).
-    pub(crate) nipples_flat: bool,
     /// The cover field built beside her clothes chains this frame (finish_paired_dynamics_filtered), for the accessories
     /// that follow; None: built there as before.
     pub(crate) cover_ready: Option<Option<crate::belly_bulge::CoverField>>,
@@ -2016,9 +2014,8 @@ impl OkSession {
             return;
         }
         let Some(mut shaped)=self.body_rest.clone() else {return;};
-        let (shaping,nip_rate)=self.shaping_body(&self.shape_body);
-        crate::shape::apply_body_shape_keys_masked(&mut shaped,&self.body_keys,&shaping,&self.correct,
-            self.sex,self.type_bone,nip_rate,policy.shapes);
+        crate::shape::apply_body_shape_keys_masked(&mut shaped,&self.body_keys,&self.shape_body,&self.correct,
+            self.sex,self.type_bone,self.nip_stand_rate,policy.shapes);
         crate::pose::assigned_weights_remap(&mut shaped);
         self.body_shaped=Some(shaped.clone());
         if let Some(runtime)=&mut self.body_dynamic_runtime {
@@ -2438,30 +2435,6 @@ impl OkSession {
     }
     pub fn apply_shape(&mut self, body: &[f32], face: &[f32]) {self.apply_shape_impl(body,face,false,false,true);}
 
-    /// Whether a garment she wears covers her nipples now: her top or bra drawn and not hidden.
-    pub(crate) fn nipples_covered(&self)->bool {
-        self.sex==1&&self.parts.iter().enumerate().any(|(i,p)|p.render_visible&&!self.hidden_parts.get(i).copied().unwrap_or(false)
-            &&matches!(p.role.as_str(),"clothes_top"|"clothes_bra"))
-    }
-    /// The body sliders and nipple stand rate her bones are shaped from: under a garment her nipples are flat. Her clothes
-    /// do not follow the nipple bones, and a nipple standing out came through a close top (Jeanne Alter, March 7th; user,
-    /// 2026-11-09): Pushup's FlattenNipples, kept on for every garment and not only the ones the card turned Pushup on for.
-    /// The card's sliders stay as they are (`shape_body`).
-    pub(crate) fn shaping_body<'a>(&self,body:&'a [f32])->(std::borrow::Cow<'a,[f32]>,f32) {
-        if !self.nipples_flat {return (std::borrow::Cow::Borrowed(body),self.nip_stand_rate);}
-        let mut flat=body.to_vec();
-        for i in [11,13] {if let Some(v)=flat.get_mut(i){*v=0.;}}
-        (std::borrow::Cow::Owned(flat),0.)
-    }
-    /// Shapes her again when what she wears starts or stops covering her nipples (an open, a garment hidden or swapped).
-    pub(crate) fn cover_nipples(&mut self) {
-        let covered=self.nipples_covered();
-        if covered==self.nipples_flat {return;}
-        self.nipples_flat=covered;
-        let standing=[11,13].iter().any(|&i|self.shape_body.get(i).is_some_and(|v|*v!=0.))||self.nip_stand_rate!=0.;
-        if standing&&!self.shape_body.is_empty() {let body=self.shape_body.clone();let face=self.shape_face.clone();self.apply_shape_live(&body,&face);}
-    }
-
     /// Maker live parameter edits do not call ResetDynamicBoneAll.
     pub fn apply_shape_live(&mut self,body:&[f32],face:&[f32]) {self.apply_shape_impl(body,face,true,false,true);}
 
@@ -2481,17 +2454,16 @@ impl OkSession {
         let body_trace=crate::native_profile::Scope::new(26);
         let mut head_scale = [1.0f32; 3];
         let external_animation=self.external_animation();
-        let (shaping,nip_rate)=self.shaping_body(&self.shape_body);let shaping=shaping.into_owned();
         if let Some(sk) = self.body_skel.as_mut() {
             if !self.shape_body.is_empty() && !self.body_keys.is_empty() {
                 head_scale = crate::shape::apply_body_shape_keys_masked(
                     sk,
                     &self.body_keys,
-                    &shaping,
+                    &self.shape_body,
                     &self.correct,
                     self.sex,
                     self.type_bone,
-                    nip_rate,
+                    self.nip_stand_rate,
                     self.yure_policy.map_or([[true;9];2],|p|p.shapes),
                 );
             }
@@ -4227,7 +4199,6 @@ impl SessionBlob {
             wardrobe_body_mask: None,
             wardrobe_quick_settle: false,
             hidden_parts: Vec::new(),
-            nipples_flat: false,
             cover_ready: None,
             face_runtime: Default::default(),
             body_shaped: self.body_shaped,
