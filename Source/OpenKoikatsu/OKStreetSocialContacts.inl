@@ -255,6 +255,11 @@ FVector AOKStreetSocialScene::StreetStep(const FVector& From,const FVector& Dire
    if(!Ground&&!Lift){float HereZ=From.Z;if(!OKStreetGroundZ(GetWorld(),From,HereZ,this)){FHitResult Down;FCollisionQueryParams Q(SCENE_QUERY_STAT(StreetFall),false,this);
     if(GetWorld()->LineTraceSingleByChannel(Down,To+FVector(0,0,70),To-FVector(0,0,600),ECC_WorldStatic,Q)){GroundZ=float(Down.ImpactPoint.Z);Ground=true;}}}
    if(!Ground&&!Lift)continue;
+   // Up a stair or a kerb, never onto the furniture: the sweep's body starts 45 cm up, so a bench passed under it and
+   // the ground trace (70 cm up) put him on its seat, from there on the cafeteria table, where no grid way starts
+   // (R6-190). A step is at most 21 cm long; a stair's riser is under 25. Only from ground he stands on: put somewhere
+   // below the ground (a door's height, a step past) he still comes up onto it.
+   if(Ground&&!Lift&&GroundZ-From.Z>35.f){float HereZ=From.Z;if(OKStreetGroundZ(GetWorld(),From,HereZ,this)&&FMath::Abs(HereZ-From.Z)<10.f)continue;}
    To.Z=Lift&&(!Ground||FMath::Abs(GroundZ-From.Z)>60.f)?From.Z:GroundZ;}
   if(Free(To))return To;}
  return From;

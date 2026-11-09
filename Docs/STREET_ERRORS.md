@@ -2187,3 +2187,4 @@
 - 2026-11-10 03:0x 同一件事第二次：c-conquest 重開 conq1110c，可用 commit 再掉到 1 GB，協調者再次結束遊戲（PID 17744），釋放 c-conquest 的 slot2 並以 coordinator-hold 暫占，HLOD 完成後釋放。
 - 2026-11-10 04:2x 第三次：c-street-city 的 WP 編輯器（56 GB，會再長）和 c-conquest 的遊戲（33 GB）同時開，可用 commit 剩 7.7 GB。依使用者優先序（C 街區攻略 > C 街道城市），協調者結束 WP 編輯器 PID 98456 並釋放 c-street-city 的 slot1。根本修法仍是：WP 編輯器在跑時 slot 工具不發第二個 slot，反之有遊戲在跑時不發 --need-gb 105 的 claim。
 - 2026-11-10 c-street-city 我 04:11 以 `--need-gb 105` 拿 slot1 開 WP 編輯器時另一個 slot 是空的，47 秒後攻略的遊戲也拿到 slot2（它只要 35 GB，當時夠），編輯器長到 56 GB、遊戲 33 GB，可用 commit 剩 7.7 GB，協調者關掉了我的編輯器。`--need-gb` 只在 claim 那一刻檢查，之後誰都能再拿。修正：`Tools/unreal_slot.lua` 的 claim 需要 60 GB 以上時，要等其他 slot 全空，持有期間別人也拿不到（owner.txt 記 `[need N]`）。
+- 2026-11-10 c-conquest：在凌晨按「早上」想睡到天亮，結果回到前一天早上，又重玩了一段；先存了 slot 8 才發現日期不對。之後跳時間後先看存檔的日期再存（已修 R6-189）。

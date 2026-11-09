@@ -2621,6 +2621,9 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
    if(Delta>0&&OKStreetDayStartsPassed(Was,To)>0){if(Owner.IsValid())Owner->NextDay();}
    else if(Delta<0&&OKStreetDayStartsPassed(To,Was)>0&&L->Store.CalendarDay>0){if(L->DayRewound<0)L->DayRewound=L->Store.CalendarDay;--L->Store.CalendarDay;}};
   auto ClockButton=[](const TCHAR* Label,TFunction<void()> Do)->TSharedRef<SWidget>{return SNew(SButton).ButtonStyle(OKStreetGlassButton()).HAlign(HAlign_Center).Text(FText::FromString(Label)).OnClicked_Lambda([Do](){Do();return FReply::Handled();});};
+  // Morning / noon / dusk / night move on to the next such hour, the way +1h does (a new game day across 04:00). Only
+  // setting the hour kept the game day, so "morning" at 01:22 went back to the previous date's 08:00 (R6-189).
+  auto AheadTo=[StepClock,ClockNow](double Hours){const double Delta=FMath::Fmod(Hours-ClockNow()+48.0,24.0);if(Delta>1.0/60)StepClock(Delta);};
   TSharedRef<SWidget> ClockRow=SNew(SVerticalBox)
    +SVerticalBox::Slot().AutoHeight().Padding(2)[SNew(SHorizontalBox)
     +SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center).Padding(4,0)[SNew(STextBlock).ColorAndOpacity(FLinearColor::White).Text_Lambda([ClockState,ClockNow](){auto L=ClockState.Pin();if(!L)return FText::GetEmpty();const int32 M=FMath::FloorToInt32(ClockNow()*60);return FText::FromString(OKMsg(TEXT("ui.scene.clock_display"), {{TEXT("hour"), M/60}, {TEXT("minute"), M%60}, {TEXT("paused_suffix"), L->ClockPaused?OKT(TEXT("ui.scene.paused_label")):TEXT("")}}));})]
@@ -2630,10 +2633,10 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
      .Text_Lambda([ClockState](){auto L=ClockState.Pin();return FText::FromString(L&&L->ClockPaused?OKT(TEXT("ui.scene.continue_button")):OKT(TEXT("ui.scene.pause_button")));})
      .OnClicked_Lambda([ClockState,SetClock,ClockNow](){if(auto L=ClockState.Pin()){const double Hours=ClockNow();L->ClockPaused=!L->ClockPaused;SetClock(Hours);}return FReply::Handled();})]]
    +SVerticalBox::Slot().AutoHeight().Padding(2)[SNew(SHorizontalBox)
-    +SHorizontalBox::Slot().FillWidth(1).Padding(2,0)[ClockButton(OKT(TEXT("ui.scene.morning_label")),[SetClock](){SetClock(8.0);})]
-    +SHorizontalBox::Slot().FillWidth(1).Padding(2,0)[ClockButton(OKT(TEXT("ui.free_talk.noon_period")),[SetClock](){SetClock(12.5);})]
-    +SHorizontalBox::Slot().FillWidth(1).Padding(2,0)[ClockButton(OKT(TEXT("ui.free_talk.evening_dusk_period")),[SetClock](){SetClock(17.5);})]
-    +SHorizontalBox::Slot().FillWidth(1).Padding(2,0)[ClockButton(OKT(TEXT("ui.free_talk.night_period")),[SetClock](){SetClock(21.0);})]];
+    +SHorizontalBox::Slot().FillWidth(1).Padding(2,0)[ClockButton(OKT(TEXT("ui.scene.morning_label")),[AheadTo](){AheadTo(8.0);})]
+    +SHorizontalBox::Slot().FillWidth(1).Padding(2,0)[ClockButton(OKT(TEXT("ui.free_talk.noon_period")),[AheadTo](){AheadTo(12.5);})]
+    +SHorizontalBox::Slot().FillWidth(1).Padding(2,0)[ClockButton(OKT(TEXT("ui.free_talk.evening_dusk_period")),[AheadTo](){AheadTo(17.5);})]
+    +SHorizontalBox::Slot().FillWidth(1).Padding(2,0)[ClockButton(OKT(TEXT("ui.free_talk.night_period")),[AheadTo](){AheadTo(21.0);})]];
   // Bed: a "sleep here" button while the player stands by one.
   TSharedRef<SWidget> SleepRow=SNew(SBox).Visibility_Lambda([ClockState](){auto L=ClockState.Pin();return L&&L->SleepPhase==0&&OKStreetNearestBed(L->Male,260,nullptr)?EVisibility::Visible:EVisibility::Collapsed;})
    [SNew(SButton).ButtonStyle(OKStreetGlassButton()).HAlign(HAlign_Center).Text(FText::FromString(OKT(TEXT("ui.scene.sleep_in_bed"))))
