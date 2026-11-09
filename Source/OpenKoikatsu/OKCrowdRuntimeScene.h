@@ -57,6 +57,9 @@ bool OKSpeakCrowdRuntimeStream(AActor* Owner,int32 Character,TSharedPtr<struct F
 bool OKSpeakCrowdRuntimeActionLine(AActor* Owner,int32 Character,const FString& VoiceId,const FString& ActionId,FString& Error);
 // Stop active audio and discard pending decode; mouth restores on the next tick.
 bool OKStopCrowdRuntimeSpeech(AActor* Owner,int32 Character,FString& Error);
+// No voices (the player's setting): every line still plays, silently, so its timing and what waits for its end stay
+// the same. Applies from the next line.
+void OKSetCrowdRuntimeSpeechMuted(bool Muted);
 // The heroine he is on the phone with (INDEX_NONE: nobody): her lines play unattenuated, not from where she stands.
 void OKSetCrowdRuntimeSpeechRemote(AActor* Owner,int32 Character);
 // 0 restores authored eyes; 1 native closed eyelids; -1 resumes automatic blink.

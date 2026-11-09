@@ -31,6 +31,18 @@ public:
  void FinClickDone(const FString& MessageBefore);
 private:
  TSharedPtr<FOKStreetSceneState> State;
+ // Settings menu (OKStreetSocialSettings.inl): the API key boxes (UMG, so ok-game-mcp ui_set can fill them).
+ UPROPERTY(Transient) TObjectPtr<class UEditableTextBox> SettingsDeepSeekBox;
+ UPROPERTY(Transient) TObjectPtr<class UEditableTextBox> SettingsAliyunBox;
+ FString PlayerSettingsPath() const; // player.json beside the save: the player's settings, keys included
+ void LoadPlayerSettings();
+ void SetVoiceMode(const FString& Mode); // builtin | tts | cloud | off
+ void SetAsrMode(const FString& Mode); // local | cloud
+ void SaveApiKeys();
+ void PushCloudSetting(bool Voice); // tell ok-tts (Voice) or ok-asr whether to use the cloud now
+ void ToggleSettingsMenu();
+ void RebuildSettingsPanel();
+ FString VoiceModeLabel(const FString& Mode) const;
  // Conversations as galgame scenes (OKStreetSocialGalgame.inl).
  TSharedPtr<struct FOKStreetGalgame> Galgame;
  void TickGalgame(float Dt);

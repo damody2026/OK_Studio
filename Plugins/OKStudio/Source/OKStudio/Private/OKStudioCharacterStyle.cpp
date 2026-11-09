@@ -35,6 +35,7 @@ namespace
 		float FOKStudioStyleTuning::* Width = nullptr;	// against the card's
 		bool bArm = false;	// its length follows ArmGrowth
 		bool bLeg = false;	// its length follows LegLength
+		bool bThick = false;	// keeps the card's thickness (front to back)
 	};
 
 	// Indices: KKShapeRows.cpp. Every slider goes the opposite way for the two styles; the inventory and why these values:
@@ -95,7 +96,7 @@ namespace
 
 	using T = FOKStudioStyleTuning;
 	const FStyleWidth Widths[] = {
-		{ TEXT("cf_s_neck"), false, 1 }, { TEXT("cf_s_spine03"), false, 1, &T::Upper }, { TEXT("cf_s_spine02"), false, 1, &T::Upper }, { TEXT("cf_s_spine01"), false, 1, &T::Upper },
+		{ TEXT("cf_s_neck"), false, 1 }, { TEXT("cf_s_spine03"), false, 1, &T::Upper, false, false, true }, { TEXT("cf_s_spine02"), false, 1, &T::Upper }, { TEXT("cf_s_spine01"), false, 1, &T::Upper },
 		{ TEXT("cf_s_waist01"), false, 1, &T::Waist }, { TEXT("cf_s_waist02"), false, 1, &T::Hips }, { TEXT("cf_s_siri"), true, -1, &T::Hips }, { TEXT("cf_d_sk_top"), false, 1, &T::Hem },
 		{ TEXT("cf_s_bust00"), true, -1, &T::Bust },
 		{ TEXT("cf_s_thigh01"), true, 1, &T::Thigh, false, true }, { TEXT("cf_s_thigh02"), true, 1, &T::Thigh, false, true }, { TEXT("cf_s_thigh03"), true, 1, &T::Thigh, false, true },
@@ -166,6 +167,9 @@ FString OKStudioStyleBones(float Style, float Scale)
 			{
 				FVector Size(Thin * FMath::Lerp(1.f, W.Width ? Tuning.*W.Width : 1.f, -Style));
 				if (W.Along >= 0) Size[W.Along] = 1.f;
+				// The chest keeps its depth: thinner, it left the breasts' root (on the spine) standing out in front of it and
+				// the breasts came to a point (2026-11-09, the user).
+				if (W.bThick) Size.Z = 1.f;
 				Add(FString(W.Name) + (W.bBothSides ? Side : TEXT("")), Size, W.bArm ? Arm : W.bLeg ? Leg : 1.f, 0.f);
 				if (!W.bBothSides) break;
 			}
@@ -239,7 +243,9 @@ void OKStudioStyleSliders(float Style, float FaceLook, TArray<float>& Body, TArr
 	}
 	if (Style == 0.f) return;
 	Pulled(Style, BodyStyle, Body);
-	// The chibi end takes at most half of the card's breasts away.
-	if (Body.IsValidIndex(4)) Body[4] = Style > 0.f ? FMath::Lerp(Body[4], FMath::Max(Body[4] * 0.5f, FMath::Min(Body[4], ChibiBreast)), Style) : Body[4] - Style * Pull * (OKStudioStyleTuning().Breast - Body[4]);
+	// The chibi end takes at most half of the card's breasts away, the realistic end makes them bigger (x1.3 at -1).
+	if (Body.IsValidIndex(4)) Body[4] = Style > 0.f ? FMath::Lerp(Body[4], FMath::Max(Body[4] * 0.5f, FMath::Min(Body[4], ChibiBreast)), Style) : FMath::Lerp(Body[4], Body[4] * OKStudioStyleTuning().BreastScale, -Style);
+	// The realistic end raises the breasts with the style, by a share of the card's height (x1.25 at -1).
+	if (Style < 0.f && Body.IsValidIndex(5)) Body[5] = FMath::Lerp(Body[5], Body[5] * OKStudioStyleTuning().BustHeight, -Style);
 	if (Body.IsValidIndex(1)) Body[1] = Style > 0.f ? FMath::Lerp(Body[1], ChibiHead, Style * Pull) : FMath::Lerp(Body[1], FMath::Min(Body[1], RealHead(Body[0])), -Style);
 }

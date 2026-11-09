@@ -1,5 +1,6 @@
 //! Local HTTP API for StreetSocial voice input. Binds 127.0.0.1 only; the model loads in the background.
 //!   GET  /health
+//!   POST /cloud {"api_key", "base_url", "asr_model"}   recognize in the cloud from now on ("" key: the local model again)
 //!   GET  /devices                       {"devices": [...], "current": "..."} (system default first)
 //!   POST /device {"device": "name"}     use this microphone from now on ("" = system default)
 //!   POST /record/start                  start the default microphone
@@ -24,6 +25,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::audio::{input_devices, read_wav, rms, to_model_rate, DeviceChoice, Recorder};
+use crate::cloud::Cloud;
 use crate::engine::{Engine, MIN_SAMPLES, MODEL_ID};
 use crate::listen::{Listener, Utterance};
 
@@ -39,6 +41,10 @@ struct Stats {
 
 struct State {
     engine: Mutex<Option<Engine>>,
+    /// The cloud recognizer (cloud.rs), used instead of the engine while set: from --backend cloud at start, or
+    /// switched on and off by the game (POST /cloud) when the player picks it in the settings.
+    cloud: Mutex<Option<Arc<Cloud>>>,
+    /// The local engine is loaded (ready() also counts the cloud).
     ready: AtomicBool,
     load_error: Mutex<Option<String>>,
     recorder: Recorder,
@@ -68,13 +74,26 @@ struct Options {
     device: Option<String>,
 }
 
-pub fn serve(port: u16, device: Option<String>, load: impl FnOnce() -> Result<Engine> + Send + 'static) -> Result<()> {
+impl State {
+    fn cloud(&self) -> Option<Arc<Cloud>> {
+        self.cloud.lock().unwrap().clone()
+    }
+
+    fn ready(&self) -> bool {
+        self.ready.load(Ordering::SeqCst) || self.cloud.lock().unwrap().is_some()
+    }
+}
+
+/// The local model loads in the background when `load` is given; `cloud` recognizes from the start (--backend cloud,
+/// no local model). A failed load ends the process unless the cloud is there to answer.
+pub fn serve(port: u16, device: Option<String>, cloud: Option<Cloud>, load: Option<Box<dyn FnOnce() -> Result<Engine> + Send>>) -> Result<()> {
     let server = Arc::new(tiny_http::Server::http(("127.0.0.1", port)).map_err(|e| anyhow::anyhow!("bind 127.0.0.1:{port}: {e}"))?);
     crate::log!("ok-asr: microphone {}", device.as_deref().map(|d| format!("matching \"{d}\"")).unwrap_or_else(|| "= system default".into()));
     let (utterances, heard_rx) = channel::<Utterance>();
     let device: DeviceChoice = Arc::new(Mutex::new(device));
     let state = Arc::new(State {
         engine: Mutex::new(None),
+        cloud: Mutex::new(cloud.map(Arc::new)),
         ready: AtomicBool::new(false),
         load_error: Mutex::new(None),
         recorder: Recorder::new(device.clone()),
@@ -91,7 +110,7 @@ pub fn serve(port: u16, device: Option<String>, load: impl FnOnce() -> Result<En
         let state = state.clone();
         std::thread::spawn(move || {
             while let Ok(u) = heard_rx.recv() {
-                if !state.ready.load(Ordering::SeqCst) {
+                if !state.ready() {
                     continue;
                 }
                 match recognize(&state, &u.samples, u.rate, None) {
@@ -108,8 +127,8 @@ pub fn serve(port: u16, device: Option<String>, load: impl FnOnce() -> Result<En
             }
         });
     }
-    crate::log!("ok-asr: listening on http://127.0.0.1:{port} (model loads in the background)");
-    {
+    if let Some(load) = load {
+        crate::log!("ok-asr: listening on http://127.0.0.1:{port} (model loads in the background)");
         let state = state.clone();
         std::thread::spawn(move || match load().and_then(warmup) {
             Ok(engine) => {
@@ -120,9 +139,14 @@ pub fn serve(port: u16, device: Option<String>, load: impl FnOnce() -> Result<En
             Err(e) => {
                 crate::log!("ok-asr: LOAD FAILED: {e:#}");
                 *state.load_error.lock().unwrap() = Some(format!("{e:#}"));
-                std::process::exit(1);
+                if state.cloud().is_none() {
+                    std::process::exit(1);
+                }
             }
         });
+    } else {
+        crate::log!("ok-asr: listening on http://127.0.0.1:{port} (cloud only, no local model)");
+        crate::log!("ok-asr: READY");
     }
     let mut handles = Vec::new();
     for _ in 0..4 {
@@ -167,12 +191,16 @@ fn read_options(req: &mut tiny_http::Request) -> Result<Options> {
 
 fn handle(state: &State, mut req: tiny_http::Request) {
     let url = req.url().trim_end_matches('/').to_string();
-    let ready = state.ready.load(Ordering::SeqCst);
+    let ready = state.ready();
     match (req.method(), url.as_str()) {
         (tiny_http::Method::Get, "/health") => {
             let s = &state.stats;
             respond(req, 200, json!({
-                "ok": ready, "ready": ready, "model": MODEL_ID, "engine": "ok-asr (Rust, CUDA)",
+                "ok": ready, "ready": ready,
+                "model": state.cloud().map_or_else(|| MODEL_ID.to_string(), |c| c.model.clone()),
+                "engine": if state.cloud().is_some() { "ok-asr (cloud: DashScope)" } else { "ok-asr (Rust, CUDA)" },
+                "backend": if state.cloud().is_some() { "cloud" } else { "local" },
+                "local_ready": state.ready.load(Ordering::SeqCst),
                 "recording": state.recorder.recording(),
                 "error": state.load_error.lock().unwrap().clone(),
                 "requests": s.requests.load(Ordering::Relaxed), "failed": s.failed.load(Ordering::Relaxed),
@@ -223,6 +251,28 @@ fn handle(state: &State, mut req: tiny_http::Request) {
             let results: Vec<Value> = state.heard.lock().unwrap().iter().filter(|v| v["id"].as_u64().unwrap_or(0) > after).cloned().collect();
             respond(req, 200, json!({"ok": true, "ready": ready, "listening": st.active, "muted": st.muted, "ducked": st.ducked, "speaking": st.speaking,
                                      "level": st.level, "device": st.device, "results": results}));
+        }
+        (tiny_http::Method::Post, "/cloud") => {
+            // The player's choice in the settings: {"api_key", "base_url", "asr_model"} recognizes in the cloud from
+            // now on; an empty key goes back to the local model.
+            let mut body = String::new();
+            let _ = std::io::Read::read_to_string(req.as_reader(), &mut body);
+            let cfg: Value = serde_json::from_str(body.trim_start_matches('\u{feff}').trim()).unwrap_or_else(|_| json!({}));
+            let key = cfg.get("api_key").and_then(Value::as_str).unwrap_or("").trim().to_string();
+            if key.is_empty() {
+                *state.cloud.lock().unwrap() = None;
+                crate::log!("ok-asr: cloud recognition off");
+                respond(req, 200, json!({"ok": true, "cloud": false, "local_ready": state.ready.load(Ordering::SeqCst)}));
+            } else {
+                match Cloud::new(&cfg, None) {
+                    Ok(c) => {
+                        let model = c.model.clone();
+                        *state.cloud.lock().unwrap() = Some(Arc::new(c));
+                        respond(req, 200, json!({"ok": true, "cloud": true, "model": model}));
+                    }
+                    Err(e) => respond(req, 400, json!({"ok": false, "error": format!("{e:#}")})),
+                }
+            }
         }
         (tiny_http::Method::Get, "/devices") => {
             let st = state.listener.status();
@@ -329,10 +379,15 @@ fn recognize(state: &State, samples: &[f32], rate: u32, language: Option<&str>) 
     if audio.len() < MIN_SAMPLES || rms(&audio) < 0.003 {
         return Ok(json!({"ok": true, "text": "", "language": "", "audio_seconds": seconds, "asr_seconds": 0.0, "speech": false}));
     }
-    let guard = state.engine.lock().unwrap();
-    let engine = guard.as_ref().ok_or_else(|| anyhow::anyhow!("model is not loaded"))?;
-    let t = engine.transcribe(&audio, language)?;
-    drop(guard);
+    let t = match state.cloud() {
+        // The cloud answers on its own (no engine lock): a slow network never holds up a local request.
+        Some(cloud) => cloud.transcribe(&audio, language)?,
+        None => {
+            let guard = state.engine.lock().unwrap();
+            let engine = guard.as_ref().ok_or_else(|| anyhow::anyhow!("model is not loaded"))?;
+            engine.transcribe(&audio, language)?
+        }
+    };
     state.stats.asr_ms.fetch_add((t.asr_seconds * 1000.0) as u64, Ordering::Relaxed);
     crate::log!("ok-asr: ASR audio={:.2}s asr={:.2}s lang={} {}", t.audio_seconds, t.asr_seconds, t.language, t.text);
     Ok(json!({"ok": true, "text": t.text, "language": t.language, "raw": t.raw, "speech": !t.text.is_empty(),

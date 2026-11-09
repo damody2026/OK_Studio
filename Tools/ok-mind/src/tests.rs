@@ -228,6 +228,26 @@ fn settings_file_fills_model_and_key() {
     }
 }
 
+#[test]
+fn api_keys_file_deepseek_section() {
+    let dir = temp_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("api-keys.json");
+    std::fs::write(&path, "{\"deepseek\":{\"api_key\":\"dk\",\"model\":\"m1\"},\"aliyun\":{\"api_key\":\"ak\"}}").unwrap();
+    let cfg = config::Config::parse(&json!({"save_dir": dir, "deepseek_settings": path}).to_string()).unwrap();
+    if std::env::var("DEEPSEEK_API_KEY").map(|k| k.trim().is_empty()).unwrap_or(true) {
+        let llm = cfg.llm().unwrap();
+        assert_eq!(llm.api_key, "dk");
+        assert_eq!(llm.model, "m1");
+        assert_eq!(llm.endpoint, config::DEFAULT_ENDPOINT);
+    }
+    // No deepseek key: the service is off.
+    std::fs::write(&path, "{\"deepseek\":{\"api_key\":\"\"},\"aliyun\":{\"api_key\":\"ak\"}}").unwrap();
+    if std::env::var("DEEPSEEK_API_KEY").map(|k| k.trim().is_empty()).unwrap_or(true) {
+        assert!(cfg.llm().unwrap_err().starts_with("no_api_key"));
+    }
+}
+
 fn talk_job(heroine: &str, system: &str, user: &str) -> Value {
     json!({"kind": "talk", "tag": "freetalk", "heroine": heroine, "system": system, "user": user})
 }

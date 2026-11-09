@@ -1567,7 +1567,7 @@ use super::*;
     #[test]
     #[ignore="read-only portable rig topology cache oracle"]
     fn rig_binding_cache_matches_uncached_and_invalidates_topology() {
-        let path=std::env::var("OK_TEST_LEGACY_PORTABLE").unwrap();let session=crate::portable::load(Path::new(&path)).unwrap();let mut rig=session.body_skel.unwrap();
+        let path=std::env::var("OK_TEST_LEGACY_PORTABLE").unwrap();let session=crate::portable::load(Path::new(&path)).unwrap();let mut rig=session.body_skel.clone().unwrap();
         for frame in 0..30 {
             for tf in rig.tfs.values_mut(){tf.pos[0]+=frame as f32*0.001;}
             let cached=cached_rig_bindings(&rig);let oracle=rig_binding_data_uncached(&rig);
@@ -1589,7 +1589,7 @@ use super::*;
     #[ignore="real native curves and portable topology binding plan oracle"]
     fn prepared_binding_plan_matches_legacy_frames_and_invalidates() {
         let path=std::env::var("OK_TEST_LEGACY_PORTABLE").unwrap();
-        let session=crate::portable::load(Path::new(&path)).unwrap();let baseline=session.body_skel.unwrap();
+        let session=crate::portable::load(Path::new(&path)).unwrap();let baseline=session.body_skel.clone().unwrap();
         let root=std::env::var("OK_TEST_GAME_ROOT").unwrap();let game=Path::new(&root);
         let key="studio/anime/00.unity3d|f_aruki_00_00_01";
         for frame in 0..240 {
@@ -1617,7 +1617,7 @@ use super::*;
     #[test]
     #[ignore="native controller single-leaf composition and exact baseline reset oracle"]
     fn prepared_motion_pose_matches_clone_composition_and_reset() {
-        let path=std::env::var("OK_TEST_LEGACY_PORTABLE").unwrap();let session=crate::portable::load(Path::new(&path)).unwrap();let baseline=session.body_skel.unwrap();
+        let path=std::env::var("OK_TEST_LEGACY_PORTABLE").unwrap();let session=crate::portable::load(Path::new(&path)).unwrap();let baseline=session.body_skel.clone().unwrap();
         let root=std::env::var("OK_TEST_GAME_ROOT").unwrap();let game=Path::new(&root);let parameters=HashMap::new();
         let key="states:studio/anime/00.unity3d|walk_run / Base Layer.f_aruki_00_00_01";assert!(prepare_animation_clip(game,key));
         let source="studio/anime/00.unity3d";let resolved=source_path(game,source).unwrap();
@@ -1661,7 +1661,7 @@ use super::*;
     #[test]
     #[ignore="real concurrent preparation/sampling diagnostic via portable fixture and game root"]
     fn background_motion_preparation_keeps_sampling_responsive() {
-        let path=std::env::var("OK_TEST_LEGACY_PORTABLE").unwrap();let session=crate::portable::load(Path::new(&path)).unwrap();let baseline=session.body_skel.unwrap();
+        let path=std::env::var("OK_TEST_LEGACY_PORTABLE").unwrap();let session=crate::portable::load(Path::new(&path)).unwrap();let baseline=session.body_skel.clone().unwrap();
         let root=std::env::var("OK_TEST_GAME_ROOT").unwrap();let game=Path::new(&root);
         let walk="states:studio/anime/00.unity3d|walk_run / Base Layer.f_aruki_00_00_01";assert!(prepare_animation_clip(game,walk));
         let source="states:studio/anime/00.unity3d";let keys:Vec<_>=clip_names_for_source(game,source).into_iter().take(32).map(|name|format!("{source}|{name}")).collect();assert_eq!(keys.len(),32);

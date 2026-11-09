@@ -29,6 +29,7 @@ local ok = require "ok"
 local json, path, proc, hash, util = ok.json, ok.path, ok.proc, ok.hash, ok.util
 local fs = require "okfs"
 local instance = require "ok_instance"
+local player_settings = require "street_player_settings"
 
 local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, mainsave = true, editor = true, nogpurig = true, gpurig = true, city = true, citysource = true }
 local VALUES = { selectionfile = true, malecard = true, retargetfile = true, renderscale = true, executable = true,
@@ -213,6 +214,20 @@ local function main()
     end
     build.executable = path.abs(o.executable)
     say("StreetSocial build: " .. build.executable)
+    -- A stage from a package (Tools/package_street_social.lua) comes without its junctions into this folder's Content
+    -- (IndependentResources, and KKPreview once the original data is restored): made here when missing.
+    -- Only a stage's own game (…/X.stage/Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.exe): -Editor runs the
+    -- engine's UnrealEditor.exe, whose Content is the engine's.
+    if build.executable:lower():match("%.stage/windows/openkoikatsu/binaries/win64/[^/]+%.exe$") then
+      local content = path.join(path.parent(path.parent(path.parent(build.executable))), "Content")
+      for _, name in ipairs({ "IndependentResources", "KKPreview" }) do
+        local link, target = path.join(content, name), path.join(root, "Content", name)
+        if path.is_dir(content) and not path.exists(link) and path.is_dir(target) then
+          local made = proc.run({ "cmd", "/c", "mklink", "/J", (link:gsub("/", "\\")), (target:gsub("/", "\\")) }, { quiet = true })
+          say((made.ok and "Linked " or "Could not link ") .. link .. " -> " .. target)
+        end
+      end
+    end
     -- The runtime material shader library and audio settings ship as a patch beside the stage; rebuild it when gone.
     if not path.exists(build.patch) then
       say("No StreetSocial runtime patch under Saved/: rebuilding it from Content...")
@@ -319,32 +334,39 @@ local function main()
   -- Replaced heroine cards (StreetSocialData/identity_aliases.json): the live game and every save slot move to the new
   -- ids before the game opens them (a no-op when no save names an old id).
   if not o.selftest and not o.sandbox and not tool("street_identity_migrate.lua", {}).ok then error("Identity alias migration failed", 0) end
-  -- Saved/ is disposable: the player's own settings (microphone, voice, name) are kept at %LOCALAPPDATA%\OpenKoikatsu
-  -- too, like deepseek.json, and put back from there when Saved/ was cleared. The newer copy wins.
+  -- The player's settings, keys included, are one file: Saved/StreetSocial/player.json (Tools/street_player_settings.lua,
+  -- Docs/API_KEYS.md); the older voice / microphone / DeepSeek files are read into it once. Saved/ is disposable, so
+  -- it is kept at %LOCALAPPDATA%\OpenKoikatsu\player.json too and put back from there when Saved/ was cleared.
   local user_dir = os.getenv("LOCALAPPDATA") and path.join(os.getenv("LOCALAPPDATA"), "OpenKoikatsu")
-  if user_dir then
-    path.mkdir(user_dir, true); path.mkdir(path.join(root, "Saved/StreetSocial"), true)
-    for _, name in ipairs({ "asr-settings.json", "voice-settings.json" }) do
-      local here, kept = path.join(root, "Saved/StreetSocial", name), path.join(user_dir, name)
-      if path.is_file(here) and (not path.is_file(kept) or (path.mtime(here) or 0) > (path.mtime(kept) or 0)) then pcall(path.copy, here, kept)
-      elseif not path.is_file(here) and path.is_file(kept) then pcall(path.copy, kept, here); say("Restored " .. name .. " from " .. user_dir) end
-    end
+  local main_settings = path.join(root, "Saved/StreetSocial/player.json")
+  path.mkdir(path.join(root, "Saved/StreetSocial"), true)
+  if user_dir and not path.is_file(main_settings) and path.is_file(path.join(user_dir, "player.json")) then
+    pcall(path.copy, path.join(user_dir, "player.json"), main_settings); say("Restored player.json from " .. user_dir)
   end
+  do
+    local _, notes = player_settings.migrate(path.join(root, "Saved/StreetSocial"))
+    if #notes > 0 then say("Player settings: moved " .. table.concat(notes, ", ") .. " into " .. main_settings) end
+  end
+  if user_dir then path.mkdir(user_dir, true); pcall(path.copy, main_settings, path.join(user_dir, "player.json")) end
   -- Sandbox: the save (and what lives beside it: voice settings, free-talk logs) moves to the sandbox folder.
   local sandbox
   if o.sandbox then
     if not o.sandbox:match("^[%w_%-]+$") then error("-Sandbox takes a name of letters, digits, - and _", 0) end
     sandbox = path.join(root, "Saved/StreetSocial/Sandbox", o.sandbox)
     path.mkdir(sandbox, true)
-    for _, name in ipairs({ "relationships.json", "voice-settings.json", "player.json", "phone.json", "free-talk-log.json", "free-talk-memory.json" }) do
+    for _, name in ipairs({ "relationships.json", "player.json", "phone.json", "free-talk-log.json", "free-talk-memory.json" }) do
       local main_file, own = path.join(root, "Saved/StreetSocial", name), path.join(sandbox, name)
       if not path.exists(own) and path.is_file(main_file) then path.copy(main_file, own) end
     end
     local m = json.decode(path.read_text(manifest))
     m.save_path = (path.join(sandbox, "relationships.json"):gsub("/", "\\"))
     path.write_text(manifest, json.encode(m, { ensure_ascii = false, indent = 2 }))
+    player_settings.migrate(sandbox)
     say("Sandbox " .. o.sandbox .. ": save and settings in " .. sandbox)
   end
+  -- The settings this run uses (the sandbox's own when there is one).
+  local settings_file = sandbox and path.join(sandbox, "player.json") or main_settings
+  local settings = player_settings.read(settings_file)
 
   -- This checkout's ports and voice servers (local-instance.json, Tools/ok_instance.lua).
   local ports = instance.ports(root)
@@ -364,32 +386,30 @@ local function main()
     asr_endpoint = fs.getenv("OK_ASR_ENDPOINT") or asr_endpoint
     song_endpoint = fs.getenv("OK_SONG_ENDPOINT") or song_endpoint
   end
-  local asr_settings = path.join(root, "Saved/StreetSocial/asr-settings.json")
   if voice then
     if not sandbox then instance.stop_own_voice_servers(root) end
-    local vs = path.join(sandbox or path.join(root, "Saved/StreetSocial"), "voice-settings.json")
-    local okv, v = pcall(read_json, vs)
-    if path.is_file(vs) and okv and v.tts_server_command then say("tts_server_command is ignored: the server is tied to the game process (Build/ok-tts/ok-tts.exe)") end
-    -- Free-talk replies are always spoken through ok-tts, so it starts in built-in voice mode too. Its Base model is
-    -- the one chosen in the voice panel (tts_base_size: 1.7B by default, 0.6B saves about 1 GB of VRAM); a model not
-    -- on this machine is downloaded by ok-tts on its first start (Build/ok-tts/models, not versioned).
+    local v = settings.voice
+    -- Free-talk replies are always spoken through ok-tts, so it starts in built-in voice mode too; "off" (no voices)
+    -- starts none. voice_mode "cloud" with an Alibaba Cloud key: ok-tts makes the lines in the cloud and loads no model
+    -- (it reads the key from player.json). Otherwise its Base model is the one chosen in the voice panel
+    -- (tts_base_size: 1.7B by default, 0.6B saves about 1 GB of VRAM); a model not on this machine is downloaded by
+    -- ok-tts on its first start (Build/ok-tts/models, not versioned).
     local tts = path.join(root, "Build/ok-tts/ok-tts.exe")
-    local tts_args = { "serve", "--port", tostring(ports.tts) }
-    local size = path.is_file(vs) and okv and type(v) == "table" and v.tts_base_size
+    local tts_args = { "serve", "--port", tostring(ports.tts), "--settings", settings_file }
+    local size = v.tts_base_size
     if size == "1.7B" or size == "0.6B" then tts_args[#tts_args + 1] = "--base-size"; tts_args[#tts_args + 1] = size end
-    if path.is_file(tts) then servers[#servers + 1] = { name = "TTS", file = tts, args = tts_args }
+    if v.voice_mode == "off" then say("Voices are off (settings): no TTS server")
+    elseif path.is_file(tts) then servers[#servers + 1] = { name = "TTS", file = tts, args = tts_args }
     else say("TTS server not found; built-in voice will be used: " .. tts) end
-    -- Free-talk voice input: asr-settings.json may name the microphone ({"device": "part of the input device name"});
-    -- otherwise the Windows default recording device is used. ok-asr writes its own log (Build/ok-asr/logs/ok-asr.log).
-    -- A saved "endpoint" names someone else's server and is used only without one of our own: the server started here
+    -- Free-talk voice input: player.json asr.device may name the microphone (part of the input device name);
+    -- otherwise the Windows default recording device is used; asr.mode "cloud" with a key recognizes in the cloud.
+    -- ok-asr writes its own log (Build/ok-asr/logs/ok-asr.log).
+    -- A saved asr.endpoint names someone else's server and is used only without one of our own: the server started here
     -- listens on this instance's port, and E launched with C's saved 47861 shared C's ok-asr (and its mute) with C's game.
-    local oka, a = pcall(read_json, asr_settings)
     local asr = path.join(root, "Build/ok-asr/ok-asr.exe")
-    if not path.is_file(asr) and path.is_file(asr_settings) and oka and type(a.endpoint) == "string" and a.endpoint ~= "" then asr_endpoint = a.endpoint end
+    if not path.is_file(asr) and type(settings.asr.endpoint) == "string" and settings.asr.endpoint ~= "" then asr_endpoint = settings.asr.endpoint end
     if path.is_file(asr) then
-      local args = { "serve", "--port", tostring(ports.asr) }
-      if path.is_file(asr_settings) then args[#args + 1] = "--settings"; args[#args + 1] = asr_settings end
-      servers[#servers + 1] = { name = "ASR", file = asr, args = args }
+      servers[#servers + 1] = { name = "ASR", file = asr, args = { "serve", "--port", tostring(ports.asr), "--settings", settings_file } }
     else say("ASR server not found; voice input unavailable: " .. asr) end
     -- Heroine songs (Tools/ok-song; its ok-song.json beside the exe says where the model stages run). Optional: without
     -- it the game simply never offers a song.
@@ -445,15 +465,16 @@ local function main()
     OK_RULES_TUNING = path.join(root, "Content/IndependentResources/StreetSocialData/rules"),
     OK_STORY_DLL = path.is_file(story_dll) and story_dll or "",
     OK_STORY_DATA = path.join(root, "Content/IndependentResources/Story"),
-    -- Free talk: staged builds cannot see the project Saved/Content folders, so pass absolute paths.
-    OK_FREE_TALK_SETTINGS = path.join(root, "Saved/StreetSocial/deepseek.json"),
+    -- Free talk: staged builds cannot see the project Saved/Content folders, so pass absolute paths. The DeepSeek key
+    -- is the "deepseek" section of the player's settings.
+    OK_FREE_TALK_SETTINGS = settings_file,
     OK_FREE_TALK_PERSONAS = path.join(root, "Content/IndependentResources/StreetSocialData/free_talk_personas.json"),
     OK_ASR_ENDPOINT = asr_endpoint,
-    -- The launcher started ok-tts on this checkout's port; it wins over an endpoint saved in voice-settings.json.
+    -- The launcher started ok-tts on this checkout's port; it wins over an endpoint saved in player.json.
     OK_TTS_ENDPOINT = tts_endpoint,
     OK_SONG_ENDPOINT = song_endpoint,
-    -- The game saves the microphone chosen in its settings here; the next launch passes it to ok-asr.
-    OK_ASR_SETTINGS = asr_settings,
+    -- The game saves the microphone chosen in its settings here (asr.device); the next launch passes it to ok-asr.
+    OK_ASR_SETTINGS = settings_file,
     OK_ASR_SERVER = path.join(root, "Build/ok-asr/ok-asr.exe"),
     OK_MIND_DLL = path.is_file(mind_dll) and mind_dll or "",
     -- The build the mind's hot reload watches (ok-game-mcp game_call /mind reload).
