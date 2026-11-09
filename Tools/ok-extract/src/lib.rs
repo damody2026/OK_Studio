@@ -597,6 +597,27 @@ pub fn extract_card_outfit(
     Ok(out_dir.join("manifest.json"))
 }
 
+/// The most a body-tights piece over her torso covers (alpha 89 = 35%).
+pub(crate) const SHEER_BODY_TIGHTS_ALPHA: u8 = 89;
+
+/// A pantyhose item's piece over her torso (a full-body tights' `o_body_*` mesh beside its `o_panst_*` legs) drawn
+/// see-through: at most `SHEER_BODY_TIGHTS_ALPHA` covers her skin. With her top half off, Raiden's club outfit showed
+/// that piece's 91% white torso as white skin (user 2026-11-09: make it see-through). Capping, not scaling, keeps it
+/// the same however often the parts are revisited.
+pub(crate) fn sheer_body_tights(parts: &mut [crate::session::SessionPart]) {
+    for part in parts.iter_mut() {
+        if !part.role.starts_with("clothes_panst") || !part.name.to_ascii_lowercase().contains("o_body") { continue; }
+        let Some(png) = part.png.as_ref() else { continue };
+        let capped = png_transform_cache::transform("sheer_body_tights_v1", png, &[SHEER_BODY_TIGHTS_ALPHA], || {
+            let mut image = crate::teximg::load_from_memory(png).ok()?.into_rgba8();
+            if image.pixels().all(|p| p[3] <= SHEER_BODY_TIGHTS_ALPHA) { return None; }
+            for p in image.pixels_mut() { p[3] = p[3].min(SHEER_BODY_TIGHTS_ALPHA); }
+            crate::texture_bake::encode_png(&image)
+        });
+        if let Some(capped) = capped { part.png = Some(capped); }
+    }
+}
+
 /// Opaque and alpha-tested parts that draw the very same surface (a Material Editor copy on the renderer, a second
 /// accessory slot with the same item, a hair renderer's extra material). Unity draws them in order with ZTest LEqual,
 /// so the later material wins every equal-depth pixel: a decal layer (straps, cuffs) clipped by its alpha sits on the
@@ -604,6 +625,7 @@ pub fn extract_card_outfit(
 /// that order (`r.OK.OpaqueSortPriority`, engine patch OpaqueSortPriority), so equal depths resolve the same way.
 /// Translucent parts keep layer 0: they are ordered by their own sort priority.
 pub(crate) fn assign_draw_layers(parts: &mut [crate::session::SessionPart]) {
+    sheer_body_tights(parts);
     let mut layers: std::collections::HashMap<(u32, u32, usize, usize), u16> = std::collections::HashMap::new();
     for part in parts.iter_mut() {
         part.draw_layer = 0;
@@ -644,6 +666,30 @@ fn coincident_layers_take_draw_order() {
     assert!(parts.iter().zip(&before).all(|(p, b)| &p.rest_positions == b), "geometry stays as the source has it");
     assign_draw_layers(&mut parts);
     assert_eq!(parts.iter().map(|p| p.draw_layer).collect::<Vec<_>>(), [0, 1, 0, 2, 0], "recomputing is stable");
+}
+
+#[cfg(test)]
+#[test]
+fn body_tights_torso_is_sheer() {
+    let white = crate::unity::solid_png([1., 1., 1., 233. / 255.], 4, 4).unwrap();
+    let mesh = |name: &str| ExtractedMesh {
+        name: name.into(),
+        positions: vec![[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]],
+        normals: vec![[0., 0., 1.]; 3],
+        uvs: vec![[0., 0.], [1., 0.], [0., 1.]],
+        indices: vec![0, 1, 2],
+        texture_png: Some(white.clone()),
+        mat: Some(crate::unity::MeshMaterial { shader: "Shader Forge/main_alpha".into(), ..Default::default() }),
+        ..Default::default()
+    };
+    let mut parts = preview_session_parts(Path::new(""), "clothes_panst", vec![mesh("o_panst_00_a"), mesh("o_body_allbodytights_top_a")], None).unwrap();
+    let alpha = |p: &crate::session::SessionPart| crate::teximg::load_from_memory(p.png.as_ref().unwrap()).unwrap().into_rgba8().get_pixel(0, 0)[3];
+    assign_draw_layers(&mut parts);
+    assert_eq!(alpha(&parts[0]), 233, "the legs keep their alpha");
+    assert_eq!(alpha(&parts[1]), SHEER_BODY_TIGHTS_ALPHA, "the torso piece is see-through");
+    let once = parts[1].png.clone();
+    assign_draw_layers(&mut parts);
+    assert_eq!(parts[1].png, once, "revisiting leaves it as it is");
 }
 
 pub(crate) fn extract_session(
