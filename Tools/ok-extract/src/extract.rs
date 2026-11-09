@@ -2179,7 +2179,7 @@ pub(crate) fn extract_session_from_info(
         .as_ref()
         .map(|c| {
             (
-                c.shape_body.clone(),
+                c.unpushed_body.clone().unwrap_or_else(|| c.shape_body.clone()),
                 c.shape_face.clone(),
                 c.sex,
                 c.type_bone,
@@ -2188,6 +2188,7 @@ pub(crate) fn extract_session_from_info(
             )
         })
         .unwrap_or_else(|| (Vec::new(), Vec::new(), 0, 0, 0.0, Vec::new()));
+    let pushup = parsed_card.as_ref().and_then(|c| c.pushup);
     let sexfaces_installed = game_root.join("BepInEx/plugins/KKS_SexFaces.dll").ok_is_file();
     if let Some((_, sampling)) = selected_hair_gloss.as_ref() {
         // ChaControl.LoadHairGlossMask selects one Texture2D for the card;
@@ -2349,6 +2350,7 @@ pub(crate) fn extract_session_from_info(
         sex,
         type_bone,
         nip_stand_rate: nip,
+        pushup,
         shape_body,
         shape_face,
         abm,

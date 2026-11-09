@@ -5404,6 +5404,7 @@ mod tests {
             sex: 1,
             type_bone: 0,
             nip_stand_rate: 0.5,
+            pushup: None,
             shape_body: shape_body.clone(),
             shape_face: shape_face.clone(),
             abm,
