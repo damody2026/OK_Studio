@@ -2882,7 +2882,7 @@ void UOKHScenePanel::ForgetClothCover(){
 }
 void UOKHScenePanel::RestoreAlign(){
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;auto* Him=Gallery?Gallery->PartnerActor.Get():nullptr;
-    WrapIdxShown.Reset();WrapDShown.Reset();WrapNShown.Reset();if(AKKPreviewActor* Was=ClothGirl.Get()){for(int32 Part:ClothShown)Was->SetPartWrapDeltas(Part,{},{});TArray<int32> None;Was->Session.SetClothCover(false,{},{},{},None);Was->CpuSkinnedParts.Reset();}ClothGirl=nullptr;ClothCpuUntil.Reset();ClothShown.Reset();ClothVerts=0;
+    WrapIdxShown.Reset();WrapDShown.Reset();WrapNShown.Reset();if(AKKPreviewActor* Was=ClothGirl.Get()){Was->bExternalClothCover=false;for(int32 Part:ClothShown)Was->SetPartWrapDeltas(Part,{},{});TArray<int32> None;Was->Session.SetClothCover(false,{},{},{},None);Was->CpuSkinnedParts.Reset();}ClothGirl=nullptr;ClothCpuUntil.Reset();ClothShown.Reset();ClothVerts=0;
     if(IsValid(Girl)&&(BustSwellSet!=1.f||OralSuckSet!=0.f))Girl->MarkShapeDirty(HerFace(),HerBody()); // her own bust and face again
     if(IsValid(Girl)&&OralGazeSet!=0.f&&!bAhegaoShown)Girl->SetEyeGaze(0.f,0.f,0.f);
     BustSwell=BustSwellSet=1.f;OralSuck=OralSuckSet=OralGazeSet=OralPull=OralPullSet=0.f;bSucking=false;if(IsValid(Girl)){Girl->HiddenMouthInside=0;Girl->SetMouthOpenFloor(0.f);}
@@ -3117,8 +3117,10 @@ void UOKHScenePanel::HideInMouth(AKKPreviewActor* Girl,AKKPreviewActor* Him){ TR
 // through her clothes): each frame her breasts and the skin lifted over him push her garments out over them
 // (belly_bulge::cover_deltas), drawn as a morph of each garment. ok.HScene.ClothCover 0 leaves her clothes as they are.
 void UOKHScenePanel::CoverClothes(AKKPreviewActor* Girl){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HCoverClothes);
-    if(ClothGirl.Get()!=Girl){if(AKKPreviewActor* Was=ClothGirl.Get()){for(int32 Part:ClothShown)Was->SetPartWrapDeltas(Part,{},{});TArray<int32> None;Was->Session.SetClothCover(false,{},{},{},None);Was->CpuSkinnedParts.Reset();}ClothShown.Reset();ClothCpuUntil.Reset();ClothGirl=Girl;}
+    if(ClothGirl.Get()!=Girl){if(AKKPreviewActor* Was=ClothGirl.Get()){Was->bExternalClothCover=false;for(int32 Part:ClothShown)Was->SetPartWrapDeltas(Part,{},{});TArray<int32> None;Was->Session.SetClothCover(false,{},{},{},None);Was->CpuSkinnedParts.Reset();}ClothShown.Reset();ClothCpuUntil.Reset();ClothGirl=Girl;}
     if(!IsValid(Girl))return;
+    // Her own cover (AKKPreviewActor::UpdateClothCover, without her belly) gives way to this one.
+    if(!Girl->bExternalClothCover){Girl->ClearClothCover();Girl->bExternalClothCover=true;}
     // From the wrap worker (ReadBulge), this frame's body moves came with these: nothing ready, her clothes stay as they are.
     const bool bPiped=bClothPiped;bClothPiped=false;if(bPiped&&!bClothTaken)return;bClothTaken=false;
     // Her garments with their own rig, as they are skinned on the CPU in her next frame (drawn from those vertices then:

@@ -40,6 +40,12 @@ static COVER: std::sync::Mutex<Vec<(usize, Vec<(u32, [f32; 6])>)>> = std::sync::
 /// Keeps (or stops keeping) the garments with their own rig of `session` over her skin as they are skinned; `body_moves`
 /// her body's skin moves now (`wrap_deltas`). The garments it moves (session part indices: to be drawn from their CPU vertices).
 pub fn set_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])>) -> Vec<usize> {
+    // Kept on as it already is, with no skin moved (every character's own cover, before each pose: AKKPreviewActor::
+    // KeepClothCoverCpu): nothing to work out again, and no garments newly reached.
+    if on && body_moves.is_empty() {
+        let key = session as *const OkSession as usize;
+        if COVER.lock().unwrap().iter().any(|(k, m)| *k == key && m.is_empty()) { return Vec::new(); }
+    }
     let field = if on { session.body_skel.as_ref().and_then(|skel| CoverField::new(&session.parts, skel, &body_moves)) } else { None };
     keep_cover(session, on, body_moves, field.as_ref())
 }
