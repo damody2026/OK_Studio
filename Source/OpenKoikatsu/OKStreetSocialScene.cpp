@@ -1436,7 +1436,9 @@ void AOKStreetSocialScene::FinishFreeTalk(int32 Character,const FString& Id,cons
    // Somewhere else instead of the long way left ("two in the morning? let's just talk at the convenience store"): the
    // long walk stops here, her plan waits for his word. It was kept and they walked on to the dorm (R6-201).
    auto Bare=[](const FString& X){return X.StartsWith(TEXT("go:"))?X.Mid(3):X;};
-   const bool Elsewhere=S.OutingGirl==Character&&Bare(S.OutingActivity)!=Bare(A)&&!S.OutingRoute.IsEmpty()&&FVector::Dist2D(S.Male,S.OutingRoute.Last())>30*275.f;
+   // "walk" is walking on with him, which they are doing: "let's keep going, the dorm is just ahead" stopped the walk to
+   // the dorm and she was put to bed there at midnight (R6-204).
+   const bool Elsewhere=S.OutingGirl==Character&&A!=TEXT("walk")&&Bare(S.OutingActivity)!=Bare(A)&&!S.OutingRoute.IsEmpty()&&FVector::Dist2D(S.Male,S.OutingRoute.Last())>30*275.f;
    if(Elsewhere){UE_LOG(LogTemp,Display,TEXT("Street outing: actor=%d would rather %s than the long way; stopped"),Character,*A);CancelOuting(FString());}
    S.HerProposed.Add(Character,A);}
   // Her words too: sat down at the cafe she said "a latte and a lemon tart for me", the note's reply ordered nothing,
