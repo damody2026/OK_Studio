@@ -42,7 +42,7 @@ TArray<FVector> AOKStreetSocialScene::CityRoute(const FVector& From,const FVecto
  TArray<FVector> Route=OKStreetCityRoute(From,To);if(Route.Num()<3)return Route;
  if(!OKStreetCityClear(GetWorld(),From,Route[1],18.f)){TArray<FVector> Out=GridRoute(From,Route[1]);if(Out.Num()>=2){Route.RemoveAt(0,2);Out.Append(Route);Route=MoveTemp(Out);}}
  const int32 Last=Route.Num()-1;
- if(Last>=1&&!OKStreetCityClear(GetWorld(),Route[Last-1],To,18.f)){TArray<FVector> In=GridRoute(Route[Last-1],To);if(In.Num()>=2){Route.RemoveAt(Last-1,2);Route.Append(In);}}
+ if(Last>=1&&!OKStreetCityClear(GetWorld(),Route[Last-1],To,18.f)){TArray<FVector> In=GridRoute(Route[Last-1],To,NearCm);if(In.Num()>=2){Route.RemoveAt(Last-1,2);Route.Append(In);}}
  return Route;
 }
 TArray<FVector> AOKStreetSocialScene::ContactRoute(const FVector& From,const FVector& To) const {
@@ -319,7 +319,7 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
    // with no route in that time the straight line led across the department store's 4F atrium into the void.
    const bool Search=!More&&!Down&&OKStreetCityMode();
    TArray<FVector> Rest=More||Search?TArray<FVector>{S.Male}:Down?(S.NavPointActive?PlaceRoute(S.Male,Now):ContactRoute(S.Male,Now)):GridRoute(S.Male,Now);
-   if(Search){S.NavAround=MakeShared<FOKStreetGridSearch>();S.NavAround->From=S.Male;S.NavAround->To=Now;}
+   if(Search){S.NavAround=MakeShared<FOKStreetGridSearch>();S.NavAround->From=S.Male;S.NavAround->To=Now;S.NavAround->NearCm=S.NavPointActive?0.f:200.f;}
    else if(Rest.Num()<2&&!More)Rest={S.Male,Now};
    if(S.NavPointActive&&!More)S.NavPoint.Z=S.Male.Z; // still another floor away: the goal keeps its height
    S.NavPath=MoveTemp(Rest);S.NavStep=1;S.NavReplans=0;S.NavProgressAt=SceneTime();}
@@ -393,7 +393,7 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
    }
    // First around what is in the way, to the next point only (the grid keeps the body's clearance; the same route again
    // would run into the same wall); the whole way again only when that finds nothing.
-   if(S.NavReplans==1){S.NavAround=MakeShared<FOKStreetGridSearch>();S.NavAround->From=S.Male;S.NavAround->To=Next;}
+   if(S.NavReplans==1){S.NavAround=MakeShared<FOKStreetGridSearch>();S.NavAround->From=S.Male;S.NavAround->To=Next;S.NavAround->NearCm=S.NavPointActive?0.f:200.f;}
    else if(S.NavRide.Elevator==INDEX_NONE){auto Path=S.NavPointActive?PlaceRoute(S.Male,Goal):ContactRoute(S.Male,Goal);
     if(Path.Num()>=2){S.NavPath=MoveTemp(Path);S.NavStep=1;}}
    {
@@ -622,7 +622,10 @@ void AOKStreetSocialScene::TickContacts(float Dt,double Now){
  // Her route is redrawn as she moves; not while the navigation is on its way to (or in) an elevator, or with her upstairs.
  // Across the city the route is drawn again every 5 s, not 0.75: each new one started him off from its first point, and he paced
  // back and forth on the street. She may not be drawn from there (ContactReady): only gone from the street ends it.
- if(S.NavGirl!=INDEX_NONE&&S.Agents.IsValidIndex(S.NavGirl-1)&&Now-S.NavAt>(OKStreetCityMode()&&OKStreetCityFar(S.Male,S.Agents[S.NavGirl-1].Position)?5.:.75)&&S.NavRide.Elevator==INDEX_NONE&&!NavNeedsLift(S.Agents[S.NavGirl-1].Position)){if(S.OnaniGirl==S.NavGirl){S.NavGirl=INDEX_NONE;S.NavPath.Reset();S.ContactsNotice=OKT(TEXT("ui.contacts.nav_target_unavailable"));RefreshUI();}else{S.NavAt=Now;S.NavPath=ContactRoute(S.Male,NavApproachSpot(S.Agents[S.NavGirl-1].Position));S.NavStep=1;}}
+ if(S.NavGirl!=INDEX_NONE&&S.Agents.IsValidIndex(S.NavGirl-1)&&Now-S.NavAt>(OKStreetCityMode()&&OKStreetCityFar(S.Male,S.Agents[S.NavGirl-1].Position)?5.:.75)&&S.NavRide.Elevator==INDEX_NONE&&!NavNeedsLift(S.Agents[S.NavGirl-1].Position)){if(S.OnaniGirl==S.NavGirl){S.NavGirl=INDEX_NONE;S.NavPath.Reset();S.ContactsNotice=OKT(TEXT("ui.contacts.nav_target_unavailable"));RefreshUI();}else{S.NavAt=Now;
+   // A fresh route only when it is one: the 4 ms search unfinished gave none or the bare straight line, and the way into
+   // the cafeteria the search round the wall had found was dropped for the line into the wall (R6-208).
+   TArray<FVector> Fresh=ContactRoute(S.Male,NavApproachSpot(S.Agents[S.NavGirl-1].Position));if(Fresh.Num()>2||S.NavPath.Num()<=2){S.NavPath=MoveTemp(Fresh);S.NavStep=1;}}}
 }
 void AOKStreetSocialScene::RunContactsProbe(double Now){
  auto& S=*State;if(S.ContactsChecked){if(S.ContactsOnlyTest)WriteReport(S.Errors.IsEmpty());return;}
