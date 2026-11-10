@@ -27,6 +27,10 @@ dorm = 9000
 card_limit = 20000
 loan_year_cap = 60000
 allowance = 8000
+# Getting about town (ok-rules transit.rs): a bus ride a person, a taxi's flag fall (first 3 km) and each km after.
+bus_fare = 15
+taxi_flag = 70
+taxi_per_km = 20
 
 # Labor and health insurance, labor pension, and the 2010 consolidated income tax (yearly brackets with the quick
 # deduction); business tax 5%, profit-seeking enterprise income tax 17% (2010).

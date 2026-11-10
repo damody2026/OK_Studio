@@ -708,6 +708,10 @@ private:
  FString ThingsFacts(int32 Character) const; // OKStreetSocialMind.inl: her things and what is lent between them (items.rs)
  void ReturnBorrowed(int32 Her,const FString& ItemId); // OKStreetSocialMind.inl: he gives back what he borrowed from her
  void CancelOuting(const FString& Message);
+ // OKStreetSocialTransit.inl (R6-203): the bus and the taxi for a long walk (ok-rules transit.rs); the quote, its words
+ // for her, and the ride itself (fare, minutes gone by, and the two of them set down where it stops).
+ FString QuoteTransit(int32 Girl,float WalkCm,const FVector& Drop);
+ bool TakeTransit(const FString& Mode,bool HerIdea);
  float StepOuting(float Dt);
  void ArriveOuting();
  bool StartOutingActivity(int32 Girl,const FString& ActivityId,FString& Error);

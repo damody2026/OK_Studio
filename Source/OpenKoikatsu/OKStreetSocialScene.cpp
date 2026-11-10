@@ -399,7 +399,7 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  bool LookReloadPending=false;int32 LookGirl=INDEX_NONE; // her clothes, face or hair changed: the street reloads as soon as nobody is with him, and she stands beside him when it is back (TickAppointments)
  double FreeTalkLiveResyncAt=0;bool ControlMicIgnored=false; // control channel: what the room microphone hears is not his (a tester talking nearby)
  bool FreeTalkMicPausedClock=false,FreeTalkMicOpen=false,FreeTalkLiveReady=false,FreeTalkLiveStarting=false,FreeTalkLeavePending=false;double FreeTalkSilenceSince=0,FreeTalkNudgeAt=0,FreeTalkLiveTickAt=0;int32 FreeTalkSilencePenalties=0;float FreeTalkSilenceScale=1;int32 LiveTestPhase=-1,LiveTestNudges=0,LiveTestPenalties=0;float LiveTestFavor=0;bool LiveTestLeft=false,LiveTestInterrupted=false,LiveTestHerReply=false;double LiveTestAt=0;FString LiveTestWav;double FreeTalkLiveRetryAt=0;int32 FreeTalkLivePollFails=0;float FreeTalkMicLevel=0;FString FreeTalkMic;TArray<FString> FreeTalkMics;
- FString OutingActivity,OutingPlace;TArray<FVector> OutingRoute;int32 OutingStep=0;double OutingProgressAt=0;bool OutingWaitDoor=false;bool OutingRun=false;FString StrollActivity;int64 StrollStartMinute=0;bool QuietTalk=false;TArray<TWeakObjectPtr<AActor>> PlaceActors;TArray<TWeakObjectPtr<ADirectionalLight>> PlaceFills;float NextPairYaw=0;FString NextPairFemaleClip,NextPairMaleClip;int32 SoloGirl=INDEX_NONE,SoloPhase=0,SoloMinutes=0;double SoloAt=0;int64 SoloStartMinute=0;FVector SoloSpot=FVector::ZeroVector;float SoloYaw=0;FString SoloFemale,SoloMale,SoloWhat,SoloId;bool SleepPaired=false;int32 SleepPhase=0,SleepGirl=INDEX_NONE;double SleepAt=0;FVector SleepBed=FVector::ZeroVector,SleepGirlBed=FVector::ZeroVector;float SleepYaw=0,SleepGirlYaw=0;FString SleepPlace;int32 RestroomGirl=INDEX_NONE;double RestroomUntil=0;FString RestroomPlace;double RestroomBlockedAt=0;struct FPlaceLayers {int32 Place=INDEX_NONE;TWeakObjectPtr<UPrimitiveComponent> Roof;TMap<int32,TWeakObjectPtr<UPrimitiveComponent>> Levels;};TArray<FPlaceLayers> PlaceRoofs;FString PlaceTourDir;int32 PlaceTourIndex=-1;double PlaceTourAt=0;bool PlaceTourShot=false;TMap<int32,FVector> CommuteShown;
+ FString OutingActivity,OutingPlace;TArray<FVector> OutingRoute;int32 OutingStep=0;TSharedPtr<FJsonObject> TransitQuote;int32 TransitFor=INDEX_NONE;FVector TransitDrop=FVector::ZeroVector; /* the bus or taxi offered for this walk (OKStreetSocialTransit.inl) */double OutingProgressAt=0;bool OutingWaitDoor=false;bool OutingRun=false;FString StrollActivity;int64 StrollStartMinute=0;bool QuietTalk=false;TArray<TWeakObjectPtr<AActor>> PlaceActors;TArray<TWeakObjectPtr<ADirectionalLight>> PlaceFills;float NextPairYaw=0;FString NextPairFemaleClip,NextPairMaleClip;int32 SoloGirl=INDEX_NONE,SoloPhase=0,SoloMinutes=0;double SoloAt=0;int64 SoloStartMinute=0;FVector SoloSpot=FVector::ZeroVector;float SoloYaw=0;FString SoloFemale,SoloMale,SoloWhat,SoloId;bool SleepPaired=false;int32 SleepPhase=0,SleepGirl=INDEX_NONE;double SleepAt=0;FVector SleepBed=FVector::ZeroVector,SleepGirlBed=FVector::ZeroVector;float SleepYaw=0,SleepGirlYaw=0;FString SleepPlace;int32 RestroomGirl=INDEX_NONE;double RestroomUntil=0;FString RestroomPlace;double RestroomBlockedAt=0;struct FPlaceLayers {int32 Place=INDEX_NONE;TWeakObjectPtr<UPrimitiveComponent> Roof;TMap<int32,TWeakObjectPtr<UPrimitiveComponent>> Levels;};TArray<FPlaceLayers> PlaceRoofs;FString PlaceTourDir;int32 PlaceTourIndex=-1;double PlaceTourAt=0;bool PlaceTourShot=false;TMap<int32,FVector> CommuteShown;
  TArray<FString> FreeTalkSpeechLines,FreeTalkSpeechPaths,FreeTalkReplayParts;TArray<uint8> FreeTalkSpeechReady,FreeTalkSpeechStreamed;TArray<TSharedPtr<FKKRuntimeSpeechStream,ESPMode::ThreadSafe>> FreeTalkSpeechStreams;int32 FreeTalkSpeechGeneration=0,FreeTalkSpeechCharacter=INDEX_NONE,FreeTalkSpeechPlayed=0,FreeTalkSpeechFiles=0;int64 FreeTalkSpeechSerial=0;double FreeTalkSpeechNext=0,FreeTalkSpeechRepliedAt=0;FString FreeTalkSpeechChannel;TArray<double> FreeTalkSpeechSentAt;
  FString FreeTalkCaptionPlayer,FreeTalkCaptionHer;TArray<int64> FreeTalkReplay;int32 FreeTalkReplayTotal=0,FreeTalkReplaySpeaker=INDEX_NONE;double FreeTalkReplayNext=0;
  // The replayed line now playing, for the galgame scene (its box and portrait): bumped per line.
@@ -1433,6 +1433,8 @@ void AOKStreetSocialScene::FinishFreeTalk(int32 Character,const FString& Id,cons
   if(A==TEXT("cancel_outing")){if(S.OutingGirl==Character){UE_LOG(LogTemp,Display,TEXT("Street outing: actor=%d finds it too far, called off"),Character);CancelOuting(OKT(TEXT("ui.outing.she_called_off_far")));
     FString Said=Reply->Reply;for(const TCHAR* Mark:{TEXT("…"),TEXT("."),TEXT("。"),TEXT(" "),TEXT("　"),TEXT("\n")})Said.ReplaceInline(Mark,TEXT(""));
     if(Said.IsEmpty()&&S.Target==Character){UE_LOG(LogTemp,Display,TEXT("Street outing: actor=%d called it off without a word, asked to say it"),Character);S.TellHer.Add(OKT(TEXT("ui.outing.say_why_called_off")));}}}
+  // Her idea to ride the rest (told the bus and taxi with the walk's minutes): they ride, he pays (R6-203).
+  else if((A==TEXT("take_bus")||A==TEXT("take_taxi"))&&S.OutingGirl==Character)TakeTransit(A.Mid(5),true);
   else if(!A.IsEmpty()&&!(A.StartsWith(TEXT("go:"))||A==TEXT("stroll")||A==TEXT("walk")||OKStreetFindActivity(A)||OKStreetFindPlace(A)))ExecuteFreeTalkAction(Character,Id,A);
   // Hers to propose, his to agree: kept for the judge of his next line. On arriving at the park she said "let's find a
   // bench" (park_seat); he said "sure, that bench", and the judge took them as already sitting there.
@@ -1463,6 +1465,8 @@ void AOKStreetSocialScene::ExecuteFreeTalkAction(int32 Character,const FString& 
  // The model sometimes writes its act prefix in the activity field ("act:stroll", "act:eat"): the same thing without it.
  const FString ActionNow=RawAction.StartsWith(TEXT("act:"))?RawAction.Mid(4):RawAction;
  if(ActionNow.IsEmpty())return;
+ // The bus or the taxi on the long way they are walking (R6-203, OKStreetSocialTransit.inl).
+ if(ActionNow==TEXT("take_bus")||ActionNow==TEXT("take_taxi")){if(S.OutingGirl==Character)TakeTransit(ActionNow.Mid(5),false);return;}
  // Her acts (the treat she promised, a goodbye) are not activities: ApplyChoiceReply handles them.
  if(OKStreetReplyActOnly(ActionNow)){UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s is her act, not an activity"),*ActionNow);return;}
  if(S.ActGirl==Character&&S.ActId==ActionNow){UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s is what they are already doing"),*ActionNow);return;}
@@ -1651,6 +1655,8 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
  // The meeting they planned was not booked (closed then): what they agree on now is a new plan, not that one (R6-193).
  if(const auto* Unbooked=S.HerUnbooked.Find(Character)){if(OKStreetMindNow(S)-Unbooked->Key<=60)User+=OKMsg(TEXT("ui.scene.judge_unbooked"),{{TEXT("place_name"),Unbooked->Value}});else S.HerUnbooked.Remove(Character);}
  if(FString NoteLine;S.HerNoteLine.RemoveAndCopyValue(Character,NoteLine))User+=OKMsg(TEXT("ui.scene.judge_her_note_line"),{{TEXT("line"),NoteLine}});
+ // On a long walk with a ride offered: his "let's take a taxi" is the ride (R6-203).
+ if(S.OutingGirl==Character&&S.TransitFor==Character&&S.TransitQuote.IsValid())User+=OKT(TEXT("ui.transit.judge_ride"));
  TArray<TSharedPtr<FJsonValue>> Messages;
  auto AddMessage=[&Messages](const TCHAR* Who,const FString& Content){TSharedRef<FJsonObject> O=MakeShared<FJsonObject>();O->SetStringField(TEXT("role"),Who);O->SetStringField(TEXT("content"),Content);Messages.Add(MakeShared<FJsonValueObject>(O));};
  // The lines before these two ("breakfast at the cafeteria?" ... "it's past seven, let's walk over"): what "there" and
@@ -2847,6 +2853,12 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
  }
  if(S.Companion!=INDEX_NONE){
   Box->AddSlot().AutoHeight().Padding(4)[SNew(STextBlock).AutoWrapText(true).WrapTextAt(360).Text(FText::FromString(S.OutingGirl!=INDEX_NONE?OKMsg(TEXT("ui.scene.walking_together_hint_2"), {{TEXT("companion"), *S.Manifest.Characters[S.Companion].Name}, {TEXT("place"), *S.OutingPlace}}):S.Manifest.Characters[S.Companion].Name+OKT(TEXT("ui.scene.walking_together_hint"))))];
+  // The bus and the taxi for the rest of a long walk (R6-203, OKStreetSocialTransit.inl).
+  if(S.OutingGirl!=INDEX_NONE&&S.TransitFor==S.OutingGirl&&S.TransitQuote.IsValid())for(const TCHAR* Mode:{TEXT("bus"),TEXT("taxi")}){
+   const TSharedPtr<FJsonObject>* Offer=nullptr;if(!S.TransitQuote->TryGetObjectField(Mode,Offer)||!Offer||!Offer->IsValid())continue;
+   const FString Label=OKMsg(*(FString(TEXT("ui.transit."))+Mode+TEXT("_button")),{{TEXT("minutes"),int64((*Offer)->GetNumberField(TEXT("minutes")))},{TEXT("fare"),int64((*Offer)->GetNumberField(TEXT("fare")))}});
+   Box->AddSlot().AutoHeight().Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(Label)).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this),M=FString(Mode)](){if(Weak.IsValid())Weak->TakeTransit(M,false);return FReply::Handled();})];
+  }
   Box->AddSlot().AutoHeight().Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(S.OutingGirl!=INDEX_NONE?OKT(TEXT("ui.scene.cancel_going")):OKT(TEXT("ui.scene.end_walking_together")))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid()){if(Weak->State->OutingGirl!=INDEX_NONE)Weak->CancelOuting(OKT(TEXT("ui.scene.go_cancelled")));else Weak->FarewellCompanion();}return FReply::Handled();})];
  }
  Mark(TEXT("party"));BluffUI(Box); // 吹牛 with the group (OKStreetSocialBluff.inl)
@@ -3096,6 +3108,7 @@ static FTransform OKStreetPhonePartTransform(const FTransform& Hand,int32 Part){
 static int64 OKStreetMindNow(const FOKStreetSceneState& S);
 #include "OKStreetSocialBooks.inl"
 #include "OKStreetSocialOuting.inl"
+#include "OKStreetSocialTransit.inl"
 #include "OKStreetSocialElevator.inl"
 #include "OKStreetSocialHeroine.inl"
 #include "OKStreetSocialLover.inl"

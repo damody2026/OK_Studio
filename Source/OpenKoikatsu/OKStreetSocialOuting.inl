@@ -652,6 +652,7 @@ bool AOKStreetSocialScene::BeginOuting(int32 Girl,const FString& ActivityId,FStr
  }
  StopAmbientActivity();EndTalk();
  S.OutingGirl=Girl;S.OutingActivity=ActivityId;S.OutingPlace=Place->Name;S.OutingRoute=Route;S.OutingStep=1;S.OutingProgressAt=S.OutingBegunAt=SceneTime();
+ S.TransitQuote.Reset();S.TransitFor=INDEX_NONE;
  // Same follow as the shared walk: she trails the player's breadcrumbs.
  S.Companion=Girl;S.Agents[Girl-1].Held=true;S.CompanionTrail.Reset();S.CompanionTrail.Add(S.Male);S.CompanionLastMale=S.Male;S.CompanionBlockedAt=0;S.CompanionTravel=0;S.CompanionWalk=0;
  S.Message=OKMsg(TEXT("ui.outing.walk_to_place_together"), {{TEXT("girl_name"), *S.Manifest.Characters[Girl].Name}, {TEXT("place_name"), Place->Name}});
@@ -667,6 +668,8 @@ bool AOKStreetSocialScene::BeginOuting(int32 Girl,const FString& ActivityId,FStr
     const FOKStreetPlace* At=OKStreetFindPlace(B.Place);
     Note+=OKMsg(TEXT("ui.outing.walk_runs_into_plan"),{{TEXT("at"),FString::Printf(TEXT("%02d:%02d"),B.Start/60%24,B.Start%60)},{TEXT("doing"),OKPhoneDoingWord(B.Kind)},{TEXT("place"),At?FString(At->Name):B.Place}});
     UE_LOG(LogTemp,Display,TEXT("Street outing: the %d-minute walk runs into actor=%d's %s at %02d:%02d"),Minutes,Girl,*B.Kind,B.Start/60,B.Start%60);break;}
+   // The bus and the taxi for it (R6-203): she hears them with the minutes, he sees them as buttons.
+   Note+=QuoteTransit(Girl,Length,Place->Door);
    S.TellHer.Add(Note);}}
  RefreshUI();
  return true;
@@ -723,7 +726,7 @@ void AOKStreetSocialScene::CancelOuting(const FString& Message){
  const int32 Girl=S.OutingGirl;
  MindRemember(Girl,TEXT("outing"),OKMsg(TEXT("ui.memory.outing_cancelled"),{{TEXT("place"),([&](const FString& Id){const FOKStreetPlace* P=OKStreetFindPlace(Id);return P?FString(P->Name):Id.IsEmpty()?FString(OKT(TEXT("ui.etiquette.street_location"))):Id;})(S.OutingPlace)},{TEXT("activity"),OKStreetActivityName(S.OutingActivity)},{TEXT("why"),Message}}),S.OutingPlace,0.25f);
  UE_LOG(LogTemp,Display,TEXT("Street outing: cancelled at %s (%s)"),*S.Male.ToCompactString(),*Message);
- S.OutingGirl=INDEX_NONE;S.OutingRoute.Reset();S.OutingActivity.Reset();S.OutingPlace.Reset();S.LiftRide=FOKStreetLiftRide();S.OutingWaitDoor=false;S.OutingRun=false;S.StrollActivity.Reset();S.PhotoWalkAlbum.Reset();
+ S.OutingGirl=INDEX_NONE;S.TransitQuote.Reset();S.TransitFor=INDEX_NONE;S.OutingRoute.Reset();S.OutingActivity.Reset();S.OutingPlace.Reset();S.LiftRide=FOKStreetLiftRide();S.OutingWaitDoor=false;S.OutingRun=false;S.StrollActivity.Reset();S.PhotoWalkAlbum.Reset();
  if(S.Companion==Girl)FinishCompanion();
  if(!Message.IsEmpty()){S.Message=Message;ResumeTalkQuiet(Girl);}
  RefreshUI();
@@ -835,7 +838,7 @@ float AOKStreetSocialScene::StepOuting(float Dt){
 void AOKStreetSocialScene::ArriveOuting(){
  auto& S=*State;
  const int32 Girl=S.OutingGirl;const FString Activity=S.OutingActivity;const FString Place=S.OutingPlace;
- S.OutingGirl=INDEX_NONE;S.OutingRoute.Reset();S.OutingActivity.Reset();S.OutingPlace.Reset();S.LiftRide=FOKStreetLiftRide();S.OutingWaitDoor=false;
+ S.OutingGirl=INDEX_NONE;S.TransitQuote.Reset();S.TransitFor=INDEX_NONE;S.OutingRoute.Reset();S.OutingActivity.Reset();S.OutingPlace.Reset();S.LiftRide=FOKStreetLiftRide();S.OutingWaitDoor=false;
  S.LastActivity=Activity;S.LastActivityGirl=Girl;S.LastActivityAt=SceneTime(); // for its aftermath when it ends (Life.inl)
  // Where the two of them just got to, for a meeting there later today that this walk already was (R5-13).
  if(Girl!=INDEX_NONE){const FOKStreetActivity* A=OKStreetFindActivity(Activity);S.ArrivedWith=Girl;S.ArrivedMinute=OKStreetMindNow(S);
