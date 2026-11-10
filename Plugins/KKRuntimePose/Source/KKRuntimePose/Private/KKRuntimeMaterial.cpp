@@ -65,6 +65,8 @@ bool OKBuildRuntimeTextureMips(TArray<uint8> BGRA,int32 Width,int32 Height,const
 }
 
 namespace {
+// The decoded image before it is shrunk: 16384x16384 BGRA (1 GiB) at most, held only while its mips are built.
+constexpr uint64 OKRuntimeTextureDecodeLimit=16384ull*16384*4;
 FString RuntimeTextureIdentity(const FKKRuntimePreparedTexture& T);
 bool PrepareSharedRuntimeTexture(const FString& Key,const FString& Hash,const uint8* Bytes,int32 Length,const FKKRuntimeTextureSettings& Settings,FKKRuntimePreparedTexture& Out,FString& Error){
  if(const auto Cached=FindPreparedTexture(Key,Bytes,Length)){++PreparedCacheHits;Out=Cached->Prepared;return true;}
@@ -97,14 +99,16 @@ bool PrepareSharedRuntimeTexture(const FString& Key,const FString& Hash,const ui
  auto* Images=IsEngineExitRequested()?nullptr:FModuleManager::GetModulePtr<IImageWrapperModule>(TEXT("ImageWrapper"));
  if(!Images){Error=TEXT("Runtime texture preparation stopped: the game is quitting");return false;}
  auto W=Images->CreateImageWrapper(EImageFormat::PNG);if(!W||!W->SetCompressed(Bytes,Length)){Error=TEXT("Runtime PNG decode header failed");return false;}
- Width=W->GetWidth();Height=W->GetHeight();if(Width<=0||Height<=0||uint64(Width)*Height*4>128ull*1024*1024){Error=TEXT("Runtime PNG decoded size exceeds budget");return false;}
+ // Decoding takes up to OKRuntimeTextureDecodeLimit; OKBuildRuntimeTextureMips then shrinks anything over
+ // OKRuntimeTextureMaxDimension, so a mod's 8192x8192 sheet costs a moment, not the whole character.
+ Width=W->GetWidth();Height=W->GetHeight();if(Width<=0||Height<=0||uint64(Width)*Height*4>OKRuntimeTextureDecodeLimit){Error=TEXT("Runtime PNG decoded size exceeds budget");return false;}
  // A grayscale PNG is one value per pixel: every colour channel gets it, explicitly rather than through the
  // wrapper's BGRA conversion.
  if(W->GetFormat()==ERGBFormat::Gray){TArray<uint8> Gray;if(!W->GetRaw(ERGBFormat::Gray,8,Gray)||uint64(Gray.Num())!=uint64(Width)*Height){Error=TEXT("Runtime PNG gray pixels invalid");return false;}
   M.BGRA.SetNumUninitialized(Gray.Num()*4);for(int32 I=0;I<Gray.Num();++I){uint8* P=&M.BGRA[I*4];P[0]=P[1]=P[2]=Gray[I];P[3]=255;}}
  else if(!W->GetRaw(ERGBFormat::BGRA,8,M.BGRA)||uint64(M.BGRA.Num())!=uint64(Width)*Height*4){Error=TEXT("Runtime PNG pixels invalid");return false;}
  }
- if(uint64(Width)*Height*4>128ull*1024*1024){Error=TEXT("Runtime PNG decoded size exceeds budget");return false;}
+ if(uint64(Width)*Height*4>OKRuntimeTextureDecodeLimit){Error=TEXT("Runtime PNG decoded size exceeds budget");return false;}
  M.Width=Width;M.Height=Height;
  auto& T=Flight->Prepared;T.SourceHash=Hash;T.Settings=Settings;T.SourceWidth=Width;T.SourceHeight=Height;
  if(!OKBuildRuntimeTextureMips(MoveTemp(M.BGRA),Width,Height,Settings,T.Mips,Error))return false;
