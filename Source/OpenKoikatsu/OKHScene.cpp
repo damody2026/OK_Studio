@@ -129,6 +129,7 @@ bool UOKHScenePanel::NeverHad(int32 Area) const{
 // The private room is a bare floor: a pose fits it when the original lets it play on the floor, a bed or standing
 // (H point categories 0, 1, 9; 1008, which only マングリ正常位 has, is played on the floor too). Chair, desk, wall,
 // pool, fence, net and the rest need their prop and floated there (he sat on air in 椅子対面, she lay in mid-air in 机寝位).
+static TAutoConsoleVariable<int32> CVarHTickBeside(TEXT("ok.HScene.TickBeside"),1,TEXT("1: the H scene ticks beside the pair's background solve, the parts that set her session at its idle point; 0: all at the idle point"));
 static TAutoConsoleVariable<int32> CVarHAllPoses(TEXT("ok.HScene.AllPoses"),0,TEXT("1: list every authored pose in the private room, props or not (testing prop placement)"));
 // The room's prop for a pose: 0 none (it plays on the floor, a bed or standing: categories 0, 1, 9, 1008), 1 a seat (chair
 // 2-5, bench 12, prank chair 1003, straddled chair 1200, sofa 1201), 2 a table (desk 6-7, box 1009, table tennis 1301,
@@ -1379,9 +1380,17 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     // waited for that solve, 3.5 ms of a 12.8 ms frame (trace 2026-11-08). So while a solve runs, the scene ticks at the
     // pair's next idle point instead (ReadPairSessions, before the next solve starts), with the time that passed. If that
     // point did not come (the pair stopped), it ticks here as before.
-    if(auto* Pending=Gallery->PairedPlayback.Get();IsValid(Pending)&&Pending->IsSolving()&&DeferredTicks<6){DeferredDelta+=Delta;++DeferredTicks;return;}
-    const float Owed=DeferredDelta;DeferredDelta=0.f;DeferredTicks=0;TickScene(Delta+Owed);
+    // ok.HScene.TickBeside 1: the scene ticks here beside the solve (pipelined, 2026-11-10);
+    // what sets her session (her ahegao, her hands: TickAtIdle) runs at the next idle point instead of waiting. Its inputs
+    // reach the solve a frame later; both bodies, her belly and the liquid still show the same frame (quiet machine, Raiden
+    // back cowgirl: loop 115 -> 133-137 FPS, after he came 115 -> 123-125).
+    if(auto* Pending=Gallery->PairedPlayback.Get();CVarHTickBeside.GetValueOnGameThread()==0&&IsValid(Pending)&&Pending->IsSolving()&&DeferredTicks<6){DeferredDelta+=Delta;++DeferredTicks;return;}
+    const float Owed=DeferredDelta;DeferredDelta=0.f;DeferredTicks=0;
+    // Beside the solve, the parts that set her session (her ahegao, her hands) wait for the idle point (TickAtIdle).
+    {auto* Pending=Gallery->PairedPlayback.Get();bTickingBeside=CVarHTickBeside.GetValueOnGameThread()!=0&&IsValid(Pending)&&Pending->IsSolving();}
+    TickScene(Delta+Owed);bTickingBeside=false;
 }
+void UOKHScenePanel::TickAtIdle(){if(!bIdleTickOwed)return;bIdleTickOwed=false;TickAhegao();TickHands();}
 void UOKHScenePanel::TickScene(float Delta){
     TRACE_CPUPROFILER_EVENT_SCOPE(OK_HSceneTick);
     if(Poses.IsEmpty()&&!Gallery->NativePairs.IsEmpty()){LoadPoses();BuildList();}
@@ -1390,7 +1399,7 @@ void UOKHScenePanel::TickScene(float Delta){
     if(!bForcedSaid&&Forced()&&ForcedSayAt==0.)ForcedSayAt=FPlatformTime::Seconds()+3.;
     if(!bForcedSaid&&Forced()&&FPlatformTime::Seconds()>=ForcedSayAt){bForcedSaid=true;const FString Event=OKT(TEXT("ui.hscene.forced_event"));Note(Event,false);React(Event,OKT(TEXT("ui.hscene.forced_react_note")));}
     TickChatter();
-    TickSolo(Delta);TickSecond(Delta);TickDrips(Delta);TickFluids(Delta);TickEyeDull(Delta);TickStyle(Delta);TickDeepFace(Delta);TickAhegao();TickTongue();TickMirror();TickSkinLit(false);TickCameraLight(false);Tremble(FPlatformTime::Seconds());TickHands();TickEyesCamera();TickCoordinates();TickSounds();SwellBust(Delta);ApplyPregnancy(FPlatformTime::Seconds());
+    TickSolo(Delta);TickSecond(Delta);TickDrips(Delta);TickFluids(Delta);TickEyeDull(Delta);TickStyle(Delta);TickDeepFace(Delta);if(bTickingBeside)bIdleTickOwed=true;else TickAhegao();TickTongue();TickMirror();TickSkinLit(false);TickCameraLight(false);Tremble(FPlatformTime::Seconds());if(!bTickingBeside)TickHands();TickEyesCamera();TickCoordinates();TickSounds();SwellBust(Delta);ApplyPregnancy(FPlatformTime::Seconds());
     // Her breathing as the original picks it (HVoiceCtrl): her gauge past 50 and his fast motion (voice.speedMotion,
     // with its own up and down marks) change the cries, her experience the bank. A change starts the matching set
     // (user, 2026-11-01: in her it kept the first, quiet set the caress also uses).
@@ -3211,6 +3220,7 @@ void UOKHScenePanel::ReadHands(AKKPreviewActor* Girl,AKKPreviewActor* Him){
 void UOKHScenePanel::ReadPairSessions(){
     // The scene's tick put off while the last frame was solved (NativeTick).
     if(DeferredTicks>0&&Gallery){const float Owed=DeferredDelta;DeferredDelta=0.f;DeferredTicks=0;TickScene(Owed);}
+    TickAtIdle();
     TRACE_CPUPROFILER_EVENT_SCOPE(OK_HReadPairSessions);
     // Both sessions are idle and show this frame (AKKPairedPlayback::OnSessionsIdle). Reading them at any other time while
     // the pair plays meant either a crash (the solve was writing them) or values several frames old: a tick almost never
