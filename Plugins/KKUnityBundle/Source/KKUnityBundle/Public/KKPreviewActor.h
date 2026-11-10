@@ -339,6 +339,16 @@ public:
     // Session parts drawn from their CPU-skinned vertices even then (her clothes pushed out over her skin as they are
     // skinned, belly_bulge::CoverField; the private GPU route skins its own copy of the rest mesh).
     TSet<int32> CpuSkinnedParts;
+    // An owner keeps her clothes over her skin itself (the H scene: belly_bulge::cover_deltas with her belly moves); this
+    // actor's own cover (UpdateClothCover, ok.ClothCover) then leaves her clothes alone.
+    bool bExternalClothCover=false;
+    // Her clothes pushed out over her breasts and nipples after each pose (ok.ClothCover; user, 2026-11-09: however large
+    // her breasts, her nipples never come through her clothes): the parts it moved, with a hash of each one's moves.
+    TMap<int32,uint32> ClothCoverShown;
+    void UpdateClothCover();
+    void ClearClothCover();
+    void KeepClothCoverCpu();
+    bool bClothCoverCpu=false;
     // The card reader's shown character: its game-animation frame is solved on a worker during the previous frame
     // (drawn one frame later), so the game thread does not wait ~4-6 ms for it (ok.Animation.AsyncNativePose).
     bool bAsyncNativePose=false;bool bTickPose=false;bool bLaunchAsyncPose=false;float AsyncPoseDelta=0.f;

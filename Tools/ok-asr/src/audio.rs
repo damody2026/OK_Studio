@@ -16,7 +16,11 @@ pub type DeviceChoice = Arc<Mutex<Option<String>>>;
 pub const MAX_SECONDS: f32 = 30.0;
 
 pub fn read_wav(path: &Path) -> Result<(Vec<f32>, u32)> {
-    let mut r = hound::WavReader::open(path).with_context(|| format!("open {}", path.display()))?;
+    let mut r = match hound::WavReader::open(path) {
+        Ok(r) => r,
+        // hound refuses a data chunk whose length is not whole frames (the WAVs DashScope sends); read those here.
+        Err(e) => return read_wav_loose(path).with_context(|| format!("open {}: {e}", path.display())),
+    };
     let spec = r.spec();
     let ch = spec.channels.max(1) as usize;
     let interleaved: Vec<f32> = match spec.sample_format {
@@ -27,6 +31,38 @@ pub fn read_wav(path: &Path) -> Result<(Vec<f32>, u32)> {
         }
     };
     Ok((downmix(&interleaved, ch), spec.sample_rate))
+}
+
+/// A PCM16 / float32 WAV read by hand: the chunks are walked, a data chunk that is too long or not whole frames is
+/// cut to the frames there are.
+fn read_wav_loose(path: &Path) -> Result<(Vec<f32>, u32)> {
+    let b = std::fs::read(path)?;
+    if b.len() < 12 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
+        bail!("not a WAV file");
+    }
+    let u16_at = |i: usize| u16::from_le_bytes([b[i], b[i + 1]]);
+    let u32_at = |i: usize| u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+    let (mut fmt, mut i) = (None, 12usize);
+    while i + 8 <= b.len() {
+        let (id, len) = (&b[i..i + 4], u32_at(i + 4) as usize);
+        let body = i + 8;
+        if id == b"fmt " && body + 16 <= b.len() {
+            fmt = Some((u16_at(body), u16_at(body + 2).max(1) as usize, u32_at(body + 4), u16_at(body + 14)));
+        } else if id == b"data" {
+            let (tag, ch, rate, bits) = fmt.ok_or_else(|| anyhow!("WAV data before fmt"))?;
+            let end = body.saturating_add(len).min(b.len());
+            let data = &b[body..end];
+            let interleaved: Vec<f32> = match (tag, bits) {
+                (1, 16) | (0xFFFE, 16) => data.chunks_exact(2).map(|s| i16::from_le_bytes([s[0], s[1]]) as f32 / 32768.0).collect(),
+                (3, 32) | (0xFFFE, 32) => data.chunks_exact(4).map(|s| f32::from_le_bytes([s[0], s[1], s[2], s[3]])).collect(),
+                _ => bail!("WAV format {tag} with {bits} bits is not read"),
+            };
+            let whole = interleaved.len() / ch * ch;
+            return Ok((downmix(&interleaved[..whole], ch), rate));
+        }
+        i = body.saturating_add(len + (len & 1));
+    }
+    bail!("WAV without a data chunk")
 }
 
 /// A WAV or an OGG Vorbis file (a song from ok-song), mono.
@@ -255,5 +291,31 @@ fn push(buf: &Mutex<Vec<f32>>, cap: usize, data: impl Iterator<Item = f32>) {
             break;
         }
         b.push(v);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn reads_a_wav_whose_data_is_not_whole_frames() {
+        // PCM16 mono 16 kHz, 3 samples, data chunk says 7 bytes (as DashScope's WAVs do) and runs past the end.
+        let mut b = b"RIFF\0\0\0\0WAVEfmt ".to_vec();
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&[1, 0, 1, 0]);
+        b.extend_from_slice(&16000u32.to_le_bytes());
+        b.extend_from_slice(&32000u32.to_le_bytes());
+        b.extend_from_slice(&[2, 0, 16, 0]);
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+        for s in [0i16, 16384, -16384] {
+            b.extend_from_slice(&s.to_le_bytes());
+        }
+        b.push(7);
+        let path = std::env::temp_dir().join(format!("ok-asr-loose-{}.wav", std::process::id()));
+        std::fs::write(&path, &b).unwrap();
+        let (pcm, rate) = super::read_wav(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(rate, 16000);
+        assert_eq!(pcm, vec![0.0, 0.5, -0.5]);
     }
 }

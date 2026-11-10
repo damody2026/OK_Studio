@@ -10336,6 +10336,59 @@ bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& In
     return bAny||Indices.IsEmpty();
 }
 
+// Her clothes kept over her breasts and nipples in every mode, not only the H scene (user, 2026-11-09: however large her
+// breasts are made, her nipples never come through her clothes). The original binds her clothes to her body's bones, so
+// they follow the breast sliders, but the skin can still pass the cloth (a card's nipple sliders, a garment with no
+// OverBodyMask, the realistic style's larger breasts): after each pose her breast and nipple skin pushes the garments on
+// her body skeleton out over it (belly_bulge::cover_deltas, no belly moves), drawn as a morph of each garment.
+static TAutoConsoleVariable<int32> CVarOkClothCover(TEXT("ok.ClothCover"),1,TEXT("Her clothes pushed out over her breasts and nipples after each pose: 1 all of them; 2 only her garments with their own rig (CPU skinned); 3 only those on her body skeleton (morph); 0 off"));
+// ok.ClothCoverStats: the game-thread time the morph route took per pose since the last call.
+static double GClothCoverMs=0.;static int32 GClothCoverCalls=0;
+static FAutoConsoleCommand GOKClothCoverStats(TEXT("ok.ClothCoverStats"),TEXT("Log the morph cover's game-thread ms per pose since the last call"),FConsoleCommandDelegate::CreateLambda([]{UE_LOG(LogTemp,Display,TEXT("Cloth cover: %.3f ms per pose over %d poses"),GClothCoverCalls?GClothCoverMs/GClothCoverCalls:0.,GClothCoverCalls);GClothCoverMs=0.;GClothCoverCalls=0;}));
+void AKKPreviewActor::ClearClothCover()
+{
+    for(const auto& Shown:TMap<int32,uint32>(ClothCoverShown))SetPartWrapDeltas(Shown.Key,{},{});
+    ClothCoverShown.Reset();
+    if(bClothCoverCpu&&Session.IsOpen()){TArray<int32> None;Session.SetClothCover(false,{},{},{},None);}bClothCoverCpu=false;
+}
+// Her garments with their own rig are moved out over her skin as they are skinned on the CPU (belly_bulge::CoverField::cover):
+// kept on before each pose, so the pose about to be solved has it (set_cover; another outfit clears it, wardrobe.rs).
+void AKKPreviewActor::KeepClothCoverCpu()
+{
+    const int32 Mode=CVarOkClothCover.GetValueOnGameThread();
+    if(bExternalClothCover||Mode==0||!Session.IsOpen())return;
+    if(Mode==3){if(bClothCoverCpu){TArray<int32> None;Session.SetClothCover(false,{},{},{},None);bClothCoverCpu=false;}return;}
+    TRACE_CPUPROFILER_EVENT_SCOPE(KK_KeepClothCoverCpu);
+    TArray<int32> Cpu;
+    if(Session.SetClothCover(true,{},{},{},Cpu))bClothCoverCpu=true;
+    CpuSkinnedParts.Append(Cpu);
+}
+void AKKPreviewActor::UpdateClothCover()
+{
+    TRACE_CPUPROFILER_EVENT_SCOPE(KK_UpdateClothCover);
+    if(bExternalClothCover){ClothCoverShown.Reset();return;}
+    const int32 Mode=CVarOkClothCover.GetValueOnGameThread();
+    if(Mode==0||!Session.IsOpen()){ClearClothCover();return;}
+    if(Mode==2){for(const auto& Shown:TMap<int32,uint32>(ClothCoverShown))SetPartWrapDeltas(Shown.Key,{},{});ClothCoverShown.Reset();return;}
+    const double T0=FPlatformTime::Seconds();ON_SCOPE_EXIT{GClothCoverMs+=(FPlatformTime::Seconds()-T0)*1000.;++GClothCoverCalls;};
+    TArray<int32> CoverParts;TArray<uint32> Idx;TArray<FVector3f> D;
+    if(!Session.ClothCoverDeltas({},{},{},CoverParts,Idx,D))return;
+    TMap<int32,TPair<TArray<uint32>,TArray<FVector3f>>> ByPart;
+    // Moves under a tenth of a millimetre dropped: a set of only those has no morph batches and the engine asserts.
+    for(int32 I=0;I<CoverParts.Num();++I)if(D[I].SizeSquared()>=1e-8f){auto& P=ByPart.FindOrAdd(CoverParts[I]);P.Key.Add(Idx[I]);P.Value.Add(D[I]);}
+    for(auto It=ClothCoverShown.CreateIterator();It;++It)if(!ByPart.Contains(It.Key())){SetPartWrapDeltas(It.Key(),{},{});It.RemoveCurrent();}
+    for(const auto& P:ByPart){
+        // An unchanged set (a still pose, the camera only moving) is not rebuilt.
+        const uint32 Hash=HashCombine(GetTypeHash(P.Value.Key.Num()),FCrc::MemCrc32(P.Value.Value.GetData(),P.Value.Value.Num()*sizeof(FVector3f),FCrc::MemCrc32(P.Value.Key.GetData(),P.Value.Key.Num()*sizeof(uint32))));
+        // Its renderers rebuilt since (another outfit, a reload) have none: set again.
+        if(const uint32* Was=ClothCoverShown.Find(P.Key);Was&&*Was==Hash){
+            const FName Tag(*FString::Printf(TEXT("KKSessionPart_%d"),P.Key));bool bHas=false;
+            TInlineComponentArray<USkinnedMeshComponent*> All(this);for(USkinnedMeshComponent* C:All)if(C&&C->ComponentHasTag(Tag)&&C->IsValidExternalMorphSetLODIndex(0)&&C->HasExternalMorphSet(0,0x4F4B5752)){bHas=true;break;}
+            if(bHas)continue;}
+        if(SetPartWrapDeltas(P.Key,P.Value.Key,P.Value.Value))ClothCoverShown.Add(P.Key,Hash);else ClothCoverShown.Remove(P.Key);
+    }
+}
+
 static FAutoConsoleCommandWithWorldAndArgs GOKPartMorph(
     TEXT("ok.SetPartMorph"),TEXT("Set source renderer morph: part-index morph-name weight-percent [actor-name]"),
     FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args,UWorld* World) {
@@ -10383,6 +10436,9 @@ void AKKPreviewActor::ApplyPoseFrame(float DeltaSeconds,bool bAdvanceAnimation)
 	{
 		return;
 	}
+    // Her clothes over her breasts and nipples (ok.ClothCover): her own-rig garments as this pose skins them, the rest after.
+    if(!bStudioItemShading)KeepClothCoverCpu();
+    ON_SCOPE_EXIT{if(!bStudioItemShading)UpdateClothCover();};
 	if (bShapeDirty)
 	{
 #if PLATFORM_WINDOWS

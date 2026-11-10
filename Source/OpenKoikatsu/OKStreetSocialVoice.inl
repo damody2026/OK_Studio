@@ -149,7 +149,9 @@ void AOKStreetSocialScene::ProbeTtsServer(int32 Attempt){
   // While it downloads its model (first start) or prepares the voices for it, it says so: wait as long as it does.
   FString Loading;double Percent=-1;
   if(Connected&&Response.IsValid()&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()),J)&&J.IsValid()){
-   J->TryGetBoolField(TEXT("ready"),Ready);J->TryGetStringField(TEXT("loading"),Loading);if(!J->TryGetNumberField(TEXT("loading_percent"),Percent))Percent=-1;}
+   J->TryGetBoolField(TEXT("ready"),Ready);J->TryGetStringField(TEXT("loading"),Loading);if(!J->TryGetNumberField(TEXT("loading_percent"),Percent))Percent=-1;
+   // Started on the cloud (player.json at launch): have every voice of this world designed now.
+   FString Backend;if(Ready&&J->TryGetStringField(TEXT("backend"),Backend)&&Backend==TEXT("cloud"))PrepareCloudVoices();}
   const bool Waiting=!Ready&&(Attempt<40||!Loading.IsEmpty());const FString Before=State->TtsNotice;
   State->TtsNotice=Ready?OKT(TEXT("ui.voice.voice_tts_server_ready"))
    :Percent>=0?OKMsg(TEXT("ui.voice.voice_tts_downloading"),{{TEXT("percent"),int32(Percent)}})
@@ -159,6 +161,25 @@ void AOKStreetSocialScene::ProbeTtsServer(int32 Attempt){
   if(Waiting)GetWorldTimerManager().SetTimer(TtsProbeTimer,FTimerDelegate::CreateWeakLambda(this,[this,Attempt](){if(State&&State->TtsEnabled)ProbeTtsServer(Attempt+1);}),2.f,false);
   // Only a changed notice rebuilds the panel (the probe repeats every 2 s while the server loads).
   if(State->TtsNotice!=Before)RefreshUI();
+ });
+ Request->ProcessRequest();
+}
+
+// The cloud designs a voice the first time it is used (~12 s, ok-tts /voice/prepare), longer than a line may wait
+// (TtsTimeout): ask for every heroine's voice and his tone up front, in the background, once per world.
+void AOKStreetSocialScene::PrepareCloudVoices(){
+ if(!State)return;auto& S=*State;if(S.CloudVoicesPrepared||S.Manifest.Characters.IsEmpty())return;S.CloudVoicesPrepared=true;
+ TArray<TSharedPtr<FJsonValue>> Voices;
+ for(const auto& Her:S.Manifest.Characters){auto V=MakeShared<FJsonObject>();V->SetStringField(TEXT("personality"),FString::FromInt(Her.PersonalityId));V->SetNumberField(TEXT("age"),S.TtsAge);Voices.Add(MakeShared<FJsonValueObject>(V));}
+ if(S.MaleTone!=TEXT("off")){auto V=MakeShared<FJsonObject>();V->SetStringField(TEXT("personality"),S.MaleTone);V->SetNumberField(TEXT("age"),0);Voices.Add(MakeShared<FJsonValueObject>(V));}
+ auto Body=MakeShared<FJsonObject>();Body->SetArrayField(TEXT("voices"),Voices);FString Payload;FJsonSerializer::Serialize(Body,TJsonWriterFactory<>::Create(&Payload));
+ auto Request=FHttpModule::Get().CreateRequest();
+ Request->SetURL(S.TtsEndpoint/TEXT("voice/prepare"));Request->SetVerb(TEXT("POST"));Request->SetHeader(TEXT("Content-Type"),TEXT("application/json; charset=utf-8"));Request->SetContentAsString(Payload);Request->SetTimeout(5);
+ Request->OnProcessRequestComplete().BindWeakLambda(this,[this](FHttpRequestPtr,FHttpResponsePtr Response,bool Connected){
+  // An older server without /voice/prepare (404) or no answer: designed on first use instead, as before.
+  const FString Reply=Connected&&Response.IsValid()?Response->GetContentAsString():FString(TEXT("no answer"));
+  UE_LOG(LogTemp,Display,TEXT("Street voices: cloud voices prepared ahead: %s"),*Reply);
+  if(State&&(!Connected||!Response.IsValid()||Response->GetResponseCode()!=200))State->CloudVoicesPrepared=false;
  });
  Request->ProcessRequest();
 }
