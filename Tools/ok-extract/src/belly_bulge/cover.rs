@@ -62,7 +62,7 @@ pub fn keep_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])
     let mut all = COVER.lock().unwrap();all.retain(|(k, _)| *k != key);
     if !on { return Vec::new(); }
     // Only the garments that reach her pushing skin (every eighth vertex as its renderer draws it, against the cells it
-    // lists): the others stay on the GPU route.
+    // lists); while none does they all stay on the GPU route.
     all.push((key, body_moves));drop(all);
     let Some(field) = field else { return Vec::new(); };
     let head = session.head_full_posed.as_ref().or(session.head_skel.as_ref());
@@ -70,8 +70,9 @@ pub fn keep_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])
     // Each garment's palette on its own worker: one after another they took 0.56 ms of the game thread each frame
     // (BellyWrapTake, trace EGalPerf19 after he came). The order of the list stays the parts' order.
     use rayon::prelude::*;
-    crate::session::native_parallel_work(|| session.parts.par_iter().enumerate().filter(|(_, p)| p.render_visible && covers(&p.role)).filter_map(|(i, p)| {
-        let runtime = p.runtime_accessory.as_ref()?;
+    let own: Vec<usize> = session.parts.iter().enumerate().filter(|(_, p)| p.render_visible && covers(&p.role) && p.runtime_accessory.is_some()).map(|(i, _)| i).collect();
+    let reached: Vec<usize> = crate::session::native_parallel_work(|| own.par_iter().filter_map(|&i| {
+        let runtime = session.parts[i].runtime_accessory.as_ref()?;
         let (mesh, palette) = runtime.export_skin_palette(runtime.skin_body(session.body_skel.as_ref(), clothes), head)?;
         let reaches = (0..mesh.rest_positions.len()).step_by(8).any(|j| {
             let (Some(b), Some(w)) = (mesh.bone_idx.get(j), mesh.weights.get(j)) else { return false; };
@@ -80,7 +81,10 @@ pub fn keep_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])
             field.at(c).is_some()
         });
         reaches.then_some(i)
-    }).collect())
+    }).collect());
+    // One reaching: all of them on the CPU. Garments laid on one another (fishnet over tights, the same tights in two
+    // slots) drawn one from the CPU and one from the GPU fought for depth all down her legs (user, 2026-11-11).
+    if reached.is_empty() { reached } else { own }
 }
 
 /// Per garment (its neighbour table): the frame count, the vertices `push_at` moved last frame, its vertex count.
