@@ -228,10 +228,10 @@ static const FHSetting HSettings[]={
     {TEXT("Drooling"),TEXT("ui.hscene.set_drool"),0.f,1.f,1.f,0.f},
     {TEXT("Tears"),TEXT("ui.hscene.set_tears"),0.f,1.f,1.f,0.f},
     {TEXT("TongueLength"),TEXT("ui.hscene.tongue_length"),0.f,4.f,.05f,1.f},
-    {TEXT("TongueUp"),TEXT("ui.hscene.set_tongue_up"),-3.f,5.f,.1f,1.5f},
-    {TEXT("TonguePitch"),TEXT("ui.hscene.set_tongue_pitch"),-45.f,60.f,1.f,30.f},
+    {TEXT("TongueUp"),TEXT("ui.hscene.set_tongue_up"),-3.f,5.f,.1f,0.f},
+    {TEXT("TonguePitch"),TEXT("ui.hscene.set_tongue_pitch"),-45.f,60.f,1.f,13.f},
     {TEXT("TongueUpIn"),TEXT("ui.hscene.set_tongue_up_in"),-3.f,5.f,.1f,0.f},
-    {TEXT("TonguePitchIn"),TEXT("ui.hscene.set_tongue_pitch_in"),-45.f,60.f,1.f,0.f},
+    {TEXT("TonguePitchIn"),TEXT("ui.hscene.set_tongue_pitch_in"),-45.f,60.f,1.f,11.f},
     {nullptr,TEXT("ui.hscene.set_service")},
     {TEXT("CondomMouthFavor"),TEXT("ui.hscene.set_condom_favor"),0.f,500.f,10.f,100.f},
     {TEXT("CondomMouthSeconds"),TEXT("ui.hscene.set_condom_seconds"),2.f,20.f,1.f,6.f},
@@ -425,7 +425,16 @@ TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
      auto Button=[&](int32 Kind,const TCHAR* Key){auto* B=WidgetTree->ConstructWidget<UOKHSceneButton>();B->Kind=Kind;B->Owner=this;B->OnClicked.AddDynamic(B,&UOKHSceneButton::HandleClick);B->SetContent(Label(OKT(Key),10.f,FLinearColor::Black));return B;};
      UVerticalBox* Left=WidgetTree->ConstructWidget<UVerticalBox>();
      if(auto* S=Root->AddChildToHorizontalBox(Left)){S->SetPadding(FMargin(16,72,0,16));S->SetVerticalAlignment(VAlign_Fill);}
-     if(auto* S=Left->AddChildToVerticalBox(Button(SettingsToggle,TEXT("ui.hscene.settings"))))S->SetHorizontalAlignment(HAlign_Left);
+     // The settings, and the panel on the right put away to see them (user 2026-11-09): this side stays to bring it back.
+     {UHorizontalBox* Top=WidgetTree->ConstructWidget<UHorizontalBox>();
+      if(auto* S=Top->AddChildToHorizontalBox(Button(SettingsToggle,TEXT("ui.hscene.settings"))))S->SetPadding(FMargin(0,0,6,0));
+      auto* Hide=Button(PanelHideToggle,bPanelHidden?TEXT("ui.hscene.panel_show"):TEXT("ui.hscene.panel_hide"));PanelHideText=Cast<UTextBlock>(Hide->GetContent());Top->AddChildToHorizontalBox(Hide);
+      // Opened from the card reader (user 2026-11-09: its one-on-one as the street's): the street's leave button is the
+      // street's own, so the panel has one here.
+      // Shown once the tick knows which it was opened from (the panel is built before its Gallery is set).
+      LeaveButton=Button(LeaveToggle,TEXT("ui.hscene.leave_reader"));LeaveButton->SetVisibility(ESlateVisibility::Collapsed);
+      if(auto* S=Top->AddChildToHorizontalBox(LeaveButton))S->SetPadding(FMargin(6,0,0,0));
+      if(auto* S=Left->AddChildToVerticalBox(Top))S->SetHorizontalAlignment(HAlign_Left);}
      SettingsBox=WidgetTree->ConstructWidget<USizeBox>();SettingsBox->SetWidthOverride(260.f);SettingsBox->SetVisibility(ESlateVisibility::Collapsed);
      if(auto* S=Left->AddChildToVerticalBox(SettingsBox)){S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));S->SetPadding(FMargin(0,6,0,0));}
      UBorder* Back=WidgetTree->ConstructWidget<UBorder>();Back->SetBrushColor(FLinearColor(.06f,.02f,.05f,.82f));Back->SetPadding(FMargin(10));SettingsBox->AddChild(Back);
@@ -469,7 +478,7 @@ TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
     UBorder* Back=WidgetTree->ConstructWidget<UBorder>();Back->SetBrushColor(FLinearColor(.06f,.02f,.05f,.82f));Back->SetPadding(FMargin(12));
     // Half size (user, 2026-11-02: the panel text was too big): laid out twice as wide, drawn at half.
     UScaleBox* Half=WidgetTree->ConstructWidget<UScaleBox>();Half->SetStretch(EStretch::UserSpecified);Half->SetUserSpecifiedScale(.5f);Half->SetStretchDirection(EStretchDirection::Both);Width->AddChild(Half);
-    HalfInner=WidgetTree->ConstructWidget<USizeBox>();HalfInner->SetWidthOverride(680.f);Half->AddChild(HalfInner);HalfInner->AddChild(Back);PanelWidth=Width;
+    HalfInner=WidgetTree->ConstructWidget<USizeBox>();HalfInner->SetWidthOverride(680.f);Half->AddChild(HalfInner);HalfInner->AddChild(Back);PanelWidth=Width;if(bPanelHidden)Width->SetVisibility(ESlateVisibility::Collapsed);
     UVerticalBox* Box=WidgetTree->ConstructWidget<UVerticalBox>();Back->AddChild(Box);
     auto Text=[&](float Size,const FLinearColor& Color){auto* T=WidgetTree->ConstructWidget<UTextBlock>();FSlateFontInfo F=T->GetFont();F.Size=Size;T->SetFont(F);T->SetColorAndOpacity(FSlateColor(Color));T->SetAutoWrapText(true);Box->AddChildToVerticalBox(T)->SetPadding(FMargin(0,2));return T;};
     auto Gauge=[&](const TCHAR* Label,const FLinearColor& Color){
@@ -870,6 +879,9 @@ void UOKHScenePanel::Click(int32 Kind){
     if(Kind==SkinLitToggle){HSettingSet(TEXT("SkinLit"),CVarHSkinLit.GetValueOnGameThread()?0.f:1.f);HSettingsSave();ActionsKey.Reset();UE_LOG(LogTemp,Display,TEXT("H scene: skin %s"),CVarHSkinLit.GetValueOnGameThread()?TEXT("lit by the scene"):TEXT("toon"));return;}
     if(Kind==HandsPinToggle){bPinHands=!bPinHands;ActionsKey.Reset();UE_LOG(LogTemp,Display,TEXT("H scene: hands pinned while in her %s"),bPinHands?TEXT("on"):TEXT("off"));return;}
     if(Kind==FeetPinToggle){bPinFeet=!bPinFeet;ActionsKey.Reset();UE_LOG(LogTemp,Display,TEXT("H scene: soles pinned while in her %s"),bPinFeet?TEXT("on"):TEXT("off"));return;}
+    if(Kind==LeaveToggle){if(AOKInteractionMode* M=Interaction())M->Exit();return;}
+    if(Kind==PanelHideToggle){bPanelHidden=!bPanelHidden;if(PanelWidth)PanelWidth->SetVisibility(bCoordinateList||bPanelHidden?ESlateVisibility::Collapsed:ESlateVisibility::Visible);
+        if(PanelHideText)PanelHideText->SetText(FText::FromString(OKT(bPanelHidden?TEXT("ui.hscene.panel_show"):TEXT("ui.hscene.panel_hide"))));return;}
     if(Kind==PenisPanelToggle){bPenisPanel=!bPenisPanel;if(PenisBox)PenisBox->SetVisibility(bPenisPanel?ESlateVisibility::Visible:ESlateVisibility::Collapsed);ActionsKey.Reset();return;}
     if(Kind==PenisReset){SetPenis(1.f,1.f);SetRootPad(FVector2D::ZeroVector);return;}
     if(Kind==PhysicsNext){UComboBoxString* Combo=Gallery?Gallery->PhysicsBackendCombo.Get():nullptr;
@@ -1361,6 +1373,7 @@ void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     if(bGrayRoom&&GetWorld()&&GetWorld()->GetTimeSeconds()>=GrayCheckAt){GrayCheckAt=GetWorld()->GetTimeSeconds()+1.;HideWorld();}
     if(HalfInner&&PanelWidth){const float High=2.f*float(PanelWidth->GetCachedGeometry().GetLocalSize().Y);if(High>10.f&&!FMath::IsNearlyEqual(High,HalfInner->GetHeightOverride(),1.f))HalfInner->SetHeightOverride(High);}
     if(!Gallery)return;
+    if(LeaveButton&&!bLeaveChecked)if(const AOKInteractionMode* M=Interaction()){bLeaveChecked=true;LeaveButton->SetVisibility(M->ReturnLabel==TEXT("返回多人街區")?ESlateVisibility::Collapsed:ESlateVisibility::Visible);}
     // The pair's next frame is solved in the background from the end of the pair's tick to the start of the next one, and
     // this tick reads and writes their sessions (her face, his alignment, the liquid...): run here, its first session call
     // waited for that solve, 3.5 ms of a 12.8 ms frame (trace 2026-11-08). So while a solve runs, the scene ticks at the
@@ -1865,10 +1878,10 @@ static bool HChestForward(AKKPreviewActor* A,FVector& Out);
 // tongue hardly shows here), else 舌出し (_sita), else 舐める (_name).
 // Two settings (user 2026-11-09): him moving in her, her mouth open wide, the tongue as made (raised it stood above her
 // lip); otherwise (after a climax, the test) raised more, it hung below her lip.
-static TAutoConsoleVariable<float> CVarHTongueUp(TEXT("ok.HScene.TongueUp"),1.5f,TEXT("Her tongue out moved up this many cm (up her face), him not moving in her"));
-static TAutoConsoleVariable<float> CVarHTonguePitch(TEXT("ok.HScene.TonguePitch"),30.f,TEXT("Her tongue out turned up this many degrees round the back of her mouth, him not moving in her"));
+static TAutoConsoleVariable<float> CVarHTongueUp(TEXT("ok.HScene.TongueUp"),0.f,TEXT("Her tongue out moved up this many cm (up her face), him not moving in her"));
+static TAutoConsoleVariable<float> CVarHTonguePitch(TEXT("ok.HScene.TonguePitch"),13.f,TEXT("Her tongue out turned up this many degrees round the back of her mouth, him not moving in her"));
 static TAutoConsoleVariable<float> CVarHTongueUpIn(TEXT("ok.HScene.TongueUpIn"),0.f,TEXT("Her tongue out moved up this many cm while he moves in her"));
-static TAutoConsoleVariable<float> CVarHTonguePitchIn(TEXT("ok.HScene.TonguePitchIn"),0.f,TEXT("Her tongue out turned up this many degrees while he moves in her"));
+static TAutoConsoleVariable<float> CVarHTonguePitchIn(TEXT("ok.HScene.TonguePitchIn"),11.f,TEXT("Her tongue out turned up this many degrees while he moves in her"));
 static int32 HTongueMouth(AKKPreviewActor* Girl);
 static constexpr double HTongueFade=1.5; // seconds her tongue takes to go back in after a climax (UpdateFace)
 static bool HBoneTransform(AKKPreviewActor* A,const TCHAR* Name,FTransform& Out);
@@ -1884,6 +1897,8 @@ void UOKHScenePanel::TickTongue(){
     if(Girl->MouthPattern!=TongueOutChecked){TongueOutChecked=Girl->MouthPattern;const FString Label=Girl->GetMouthPatternLabel(Girl->MouthPattern).ToLower();
         TongueOutPattern=Label.Contains(TEXT("_sita"))||Label.Contains(TEXT("_name"))||Girl->MouthPattern==HTongueMouth(Girl)?Girl->MouthPattern:-2;}
     const bool bMovingIn=Mode==2&&HBase(Current()).Contains(TEXT("Loop"));
+    // In every mouth, not only the one with her tongue out (user 2026-11-09: lengthened it stayed out in her moans and would
+    // not go up).
     const float Up=(bMovingIn?CVarHTongueUpIn:CVarHTongueUp).GetValueOnGameThread(),Pitch=(bMovingIn?CVarHTonguePitchIn:CVarHTonguePitch).GetValueOnGameThread();
     USceneComponent* Root=Girl->GetRootComponent();
     const FVector Moved=AlignedHer==Girl?Root->GetComponentTransform().InverseTransformVectorNoScale(HerApplied):FVector::ZeroVector;
@@ -1894,7 +1909,7 @@ void UOKHScenePanel::TickTongue(){
         if(const FTransform* Kept=TongueRest.Find(Comp))T=*Kept;else{T=Comp->GetRelativeTransform();if(bOnRoot)T.AddToTranslation(-Moved);TongueRest.Add(Comp,T);}
         if(bOnRoot)T.AddToTranslation(Moved);return T;};
     FTransform Cavity;FVector CornerL,CornerR,Head;
-    const bool bRaise=TongueOutPattern==Girl->MouthPattern&&(Up!=0.f||Pitch!=0.f)&&HBoneTransform(Girl,TEXT("J_MouthCavity"),Cavity)
+    const bool bRaise=(Up!=0.f||Pitch!=0.f)&&HBoneTransform(Girl,TEXT("J_MouthCavity"),Cavity)
         &&HBone(Girl,TEXT("J_Mouth_L"),CornerL)&&HBone(Girl,TEXT("J_Mouth_R"),CornerR)&&HBone(Girl,TEXT("J_Nose_tip"),Head);
     if(!bRaise){if(bTongueRaised){for(USceneComponent* Comp:Comps)Comp->SetRelativeTransform(Rest(Comp));bTongueRaised=false;}return;}
     const FVector Pivot=Cavity.GetLocation(),Forward=((CornerL+CornerR)*.5-Pivot).GetSafeNormal(); // to between her mouth's corners (no J_MouthBase_s on these heads)
@@ -3724,7 +3739,7 @@ struct FOKCoordLoad{TQueue<FOKCoordPicture,EQueueMode::Spsc> Done;std::atomic<in
 void UOKHScenePanel::ShowCoordinates(){
     const ESlateVisibility Shown=bCoordinateList?ESlateVisibility::Visible:ESlateVisibility::Collapsed;
     for(int32 Side=0;Side<2;++Side){if(CoordSides[Side])CoordSides[Side]->SetVisibility(Shown);if(CoordWraps[Side])CoordWraps[Side]->ClearChildren();}
-    if(PanelWidth)PanelWidth->SetVisibility(bCoordinateList?ESlateVisibility::Collapsed:ESlateVisibility::Visible);ShowAccessories(); // room for them (user 2026-11-04)
+    if(PanelWidth)PanelWidth->SetVisibility(bCoordinateList||bPanelHidden?ESlateVisibility::Collapsed:ESlateVisibility::Visible);ShowAccessories(); // room for them (user 2026-11-04)
     CoordButtons.Reset();CoordImages.Reset();CoordTextures.Reset();CoordLoad.Reset();CoordShown=0.;
     if(!bCoordinateList||!WidgetTree||!CoordWraps[0]||!CoordWraps[1])return;
     for(int32 I=0;I<CoordinateCards.Num();++I){

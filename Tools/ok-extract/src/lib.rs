@@ -605,16 +605,17 @@ pub(crate) const SHEER_BODY_TIGHTS_ALPHA: u8 = 89;
 /// that piece's 91% white torso as white skin (user 2026-11-09: make it see-through). Capping, not scaling, keeps it
 /// the same however often the parts are revisited.
 pub(crate) fn sheer_body_tights(parts: &mut [crate::session::SessionPart]) {
+    let cap = |png: &Vec<u8>| png_transform_cache::transform("sheer_body_tights_v1", png, &[SHEER_BODY_TIGHTS_ALPHA], || {
+        let mut image = crate::teximg::load_from_memory(png).ok()?.into_rgba8();
+        if image.pixels().all(|p| p[3] <= SHEER_BODY_TIGHTS_ALPHA) { return None; }
+        for p in image.pixels_mut() { p[3] = p[3].min(SHEER_BODY_TIGHTS_ALPHA); }
+        crate::texture_bake::encode_png(&image)
+    });
     for part in parts.iter_mut() {
         if !part.role.starts_with("clothes_panst") || !part.name.to_ascii_lowercase().contains("o_body") { continue; }
-        let Some(png) = part.png.as_ref() else { continue };
-        let capped = png_transform_cache::transform("sheer_body_tights_v1", png, &[SHEER_BODY_TIGHTS_ALPHA], || {
-            let mut image = crate::teximg::load_from_memory(png).ok()?.into_rgba8();
-            if image.pixels().all(|p| p[3] <= SHEER_BODY_TIGHTS_ALPHA) { return None; }
-            for p in image.pixels_mut() { p[3] = p[3].min(SHEER_BODY_TIGHTS_ALPHA); }
-            crate::texture_bake::encode_png(&image)
-        });
-        if let Some(capped) = capped { part.png = Some(capped); }
+        // The game draws the material's own _MainTex (shader_textures) when it has one, the part texture otherwise.
+        if let Some(capped) = part.png.as_ref().and_then(cap) { part.png = Some(capped); }
+        if let Some(capped) = part.shader_textures.get("_MainTex").and_then(cap) { part.shader_textures.insert("_MainTex".into(), capped); }
     }
 }
 
@@ -684,9 +685,13 @@ fn body_tights_torso_is_sheer() {
     };
     let mut parts = preview_session_parts(Path::new(""), "clothes_panst", vec![mesh("o_panst_00_a"), mesh("o_body_allbodytights_top_a")], None).unwrap();
     let alpha = |p: &crate::session::SessionPart| crate::teximg::load_from_memory(p.png.as_ref().unwrap()).unwrap().into_rgba8().get_pixel(0, 0)[3];
+    for part in parts.iter_mut() { part.shader_textures.insert("_MainTex".into(), white.clone()); }
+    let main_alpha = |p: &crate::session::SessionPart| crate::teximg::load_from_memory(&p.shader_textures["_MainTex"]).unwrap().into_rgba8().get_pixel(0, 0)[3];
     assign_draw_layers(&mut parts);
     assert_eq!(alpha(&parts[0]), 233, "the legs keep their alpha");
     assert_eq!(alpha(&parts[1]), SHEER_BODY_TIGHTS_ALPHA, "the torso piece is see-through");
+    assert_eq!(main_alpha(&parts[0]), 233, "the legs' material keeps its alpha");
+    assert_eq!(main_alpha(&parts[1]), SHEER_BODY_TIGHTS_ALPHA, "the material's _MainTex is see-through too");
     let once = parts[1].png.clone();
     assign_draw_layers(&mut parts);
     assert_eq!(parts[1].png, once, "revisiting leaves it as it is");

@@ -2317,25 +2317,36 @@ impl OkSession {
             let assigned=if runtime.coordinated{assigned_clothes.as_ref()}else{assigned_body.as_ref()};
             let t_part=std::time::Instant::now();
             let rendered=runtime.update_render_impl(source,head,colliders,flags,dt,!palette_only&&excluded.binary_search(&index).is_err(),frame.as_ref(),policy,assigned);
-            // OK_ACC_PART_PROFILE=<frames>: every that many frames of a part, its solve time (diagnostic).
-            if let Some(every)=acc_part_profile_every() {
-                static TIMES:std::sync::Mutex<Option<HashMap<(u64,usize),(u32,u64)>>>=std::sync::Mutex::new(None);
-                let mut times=TIMES.lock().unwrap();let slot=times.get_or_insert_with(HashMap::new).entry((group,index)).or_insert((0,0));
-                slot.0+=1;slot.1+=t_part.elapsed().as_micros() as u64;
-                if slot.0%every==0 {eprintln!("OK acc part session={group:x} index={index} role={} name={} avg_us={}",part.role,part.name,slot.1/every as u64);slot.1=0;}
-            }
+            let render_us=t_part.elapsed().as_micros() as u64;let start_us=t_part.duration_since(t_parts).as_micros() as u64;let mut cover_us=0u64;
             if let Some((mut positions, normals,tangents)) = rendered {
                 skinned.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
-                if let Some(cover)=cover {cover.cover(index,part,&mut positions);}
+                if let Some(cover)=cover {let t_cover=std::time::Instant::now();cover.cover(index,part,&mut positions);cover_us=t_cover.elapsed().as_micros() as u64;}
                 part.positions = positions;
                 part.normals = normals;
                 part.rest_tangents=tangents;
                 if let Some(observer)=observer{observer.emit(index,part);}
             }
+            // OK_ACC_PART_PROFILE=<frames>: every that many frames of a part, when it started after the parts began, its solve
+            // (physics and skinning) and its cover push, averaged; to stderr, and to OK_ACC_PART_PROFILE_FILE when set.
+            if let Some(every)=acc_part_profile_every() {
+                static TIMES:std::sync::Mutex<Option<HashMap<(u64,usize),(u32,u64,u64,u64)>>>=std::sync::Mutex::new(None);
+                let mut times=TIMES.lock().unwrap();let slot=times.get_or_insert_with(HashMap::new).entry((group,index)).or_insert((0,0,0,0));
+                slot.0+=1;slot.1+=render_us;slot.2+=cover_us;slot.3+=start_us;
+                if slot.0%every==0 {
+                    let line=format!("OK acc part session={group:x} index={index} role={} name={} start_us={} avg_us={} cover_us={}",part.role,part.name,slot.3/every as u64,slot.1/every as u64,slot.2/every as u64);
+                    eprintln!("{line}");
+                    if let Ok(path)=std::env::var("OK_ACC_PART_PROFILE_FILE"){use std::io::Write;if let Ok(mut file)=std::fs::OpenOptions::new().create(true).append(true).open(path){let _=writeln!(file,"{line}");}}
+                    slot.1=0;slot.2=0;slot.3=0;
+                }
+            }
         };
         if parallel&&self.parts.iter().filter(|p|p.runtime_accessory.is_some()).count()>=8 {
             use rayon::prelude::*;
-            native_parallel_work(||self.parts.par_iter_mut().enumerate().for_each(update));
+            // The biggest first (longest job first): her body tights, at index 35 of 36, started 0.6 ms after the others and
+            // its cover push ended the whole solve (OK_ACC_PART_PROFILE, 2026-11-10). Each part is still solved on its own.
+            let mut order:Vec<(usize,&mut SessionPart)>=self.parts.iter_mut().enumerate().filter(|(_,p)|p.runtime_accessory.is_some()).collect();
+            order.sort_by_key(|(index,part)|(std::cmp::Reverse(part.rest_positions.len()),*index));
+            native_parallel_work(||order.into_par_iter().with_max_len(1).for_each(update));
         } else {self.parts.iter_mut().enumerate().for_each(update);}
         if leader_of.iter().any(Option::is_some) {
             // The leaders' solved locals, then the followers; one that cannot follow solves on its own.
