@@ -2254,6 +2254,12 @@ pub(crate) struct BodyColliderSet { colliders: Vec<(String, BodyCollider)> }
 impl BodyColliderSet {
     #[cfg(test)]
     pub(crate) fn count(&self)->usize {self.colliders.len()}
+    /// Which colliders she has (names and bones), not where they are: for caches of what depends on them.
+    pub(crate) fn layout_hash(&self, h:&mut impl std::hash::Hasher) {
+        use std::hash::Hash;
+        self.colliders.len().hash(h);
+        for (name,c) in &self.colliders {name.hash(h);c.transform.hash(h);}
+    }
     pub(crate) fn extend_serialized(&mut self, file: &SerializedFile, source: &Skeleton, scripts:&crate::unity::references::Scripts) {
         let colliders = parse_colliders_resolved(file, Some(source),scripts);
         let children: HashMap<_, _> = file.objects.iter().filter(|o| o.type_id == 4).filter_map(|o| {
@@ -2692,6 +2698,7 @@ impl AttachedDynamicSet {
     /// Number of attachment ancestors this state was built on (0: placed without a chain).
     pub(crate) fn attachment_len(&self)->usize{self.attachment_ids.len()}
     /// The bones this set's chains move (sorted): renderers of one prefab carry the same set.
+    pub(crate) fn chain_count(&self)->usize {self.chains.len()}
     pub(crate) fn particle_ids(&self)->Vec<i64>{
         let mut ids:Vec<i64>=self.chains.iter().flat_map(|chain|chain.particles.iter().filter_map(|p|p.id)).collect();
         ids.sort_unstable();ids.dedup();ids

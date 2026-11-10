@@ -1168,6 +1168,18 @@ impl SessionPart {
     }
 }
 
+/// Results of the accessory pass that depend on her parts only (which are worn, hidden, settled, their rigs and
+/// placement), not on the pose: `OkSession::acc_fingerprint` of the parts they were worked out for, and the result.
+/// The same parts give the same result, so it is kept across frames. OK_ACC_CACHE=0: worked out every frame.
+#[derive(Default)]
+pub(crate) struct AccCache {
+    early: Option<(u64, Option<Vec<bool>>)>,
+    radii: Option<u64>,
+    leaders: Option<(u64, Vec<Option<usize>>, HashMap<usize, Vec<i64>>)>,
+}
+
+fn acc_cache_on() -> bool { std::env::var("OK_ACC_CACHE").ok().as_deref() != Some("0") }
+
 pub struct OkSession {
     /// On the female of a pair: the second heroine solved in the same frame (3P).
     pub(crate) pair_third:Option<crate::h_playback::PairThird>,
@@ -1289,6 +1301,8 @@ pub struct OkSession {
     /// The cover field built beside her clothes chains this frame (finish_paired_dynamics_filtered), for the accessories
     /// that follow; None: built there as before.
     pub(crate) cover_ready: Option<Option<crate::belly_bulge::CoverField>>,
+    /// What the accessory pass works out from her parts alone, kept while they stay the same (AccCache).
+    pub(crate) acc_cache: AccCache,
     pub(crate) face_runtime: FaceRuntimeState,
     pub body_shaped: Option<Skeleton>,
     // Runtime-only allocation reuse; restored from the complete current shaped
@@ -2249,9 +2263,43 @@ impl OkSession {
     /// Her accessories that read none of the bones her clothes chains move (those particles and all under them): what
     /// they do this frame does not wait on her clothes, so they are solved while those run (finish_paired_dynamics_filtered).
     /// None: none of them, or her colliders or her body proxy hang on such a bone (they would differ). OK_ACC_EARLY=0: none.
-    fn early_accessories(&self,dt:f32,flags:crate::dbone::game_colliders::Flags)->Option<Vec<bool>> {
+    /// Her parts as the accessory pass reads them apart from the pose: which are worn and hidden, settled, their rigs,
+    /// sockets and placement, her colliders' layout, her clothes chains (AccCache).
+    fn acc_fingerprint(&self,flags:crate::dbone::game_colliders::Flags)->u64 {
+        use std::hash::{Hash,Hasher};
+        let mut h=std::collections::hash_map::DefaultHasher::new();
+        self.parts.len().hash(&mut h);self.hidden_parts.hash(&mut h);flags.hash(&mut h);
+        for p in &self.parts {
+            p.role.hash(&mut h);p.source_property.hash(&mut h);p.rest_positions.len().hash(&mut h);
+            let Some(r)=&p.runtime_accessory else {0u8.hash(&mut h);continue;};
+            1u8.hash(&mut h);r.coordinated.hash(&mut h);r.copy_weights_body.hash(&mut h);r.parent_key.hash(&mut h);
+            for row in &r.local_placement {for v in row {v.to_bits().hash(&mut h);}}
+            r.body_bridges.hash(&mut h);
+            r.source.deferred_dbones.as_ref().map(|d|d.is_empty()).hash(&mut h);
+            r.source.smr_skel.as_ref().map(|s|s.names.len()).hash(&mut h);
+            r.state.as_ref().map(|s|(s.chain_count(),s.skel.names.len())).hash(&mut h);
+        }
+        self.body_colliders.layout_hash(&mut h);
+        self.body_skel.as_ref().map(|b|b.tfs.len()).hash(&mut h);
+        self.clothes_dynamic_runtime.as_ref().map(|(_,s)|s.particle_ids()).hash(&mut h);
+        h.finish()
+    }
+
+    fn early_accessories(&mut self,dt:f32,flags:crate::dbone::game_colliders::Flags)->Option<Vec<bool>> {
         if !(dt>0.)||std::env::var("OK_ACC_EARLY").ok().as_deref()==Some("0")||std::env::var("OK_NODB").is_ok()
             ||std::env::var("OK_NO_CLOTH_DYNAMICS").ok().as_deref()==Some("1")||self.clothes_dynamics.is_empty() {return None;}
+        let t=std::time::Instant::now();
+        let key=acc_cache_on().then(||self.acc_fingerprint(flags));
+        if let (Some(key),Some((was,early)))=(key,self.acc_cache.early.as_ref()) {
+            if *was==key {let early=early.clone();crate::okanim::prof::add(35,t);return early;}
+        }
+        let early=self.early_accessories_now(flags);
+        if let Some(key)=key {self.acc_cache.early=Some((key,early.clone()));}
+        crate::okanim::prof::add(35,t);
+        early
+    }
+
+    fn early_accessories_now(&self,flags:crate::dbone::game_colliders::Flags)->Option<Vec<bool>> {
         let (_,state)=self.clothes_dynamic_runtime.as_ref()?;
         let body=self.body_skel.as_ref()?;
         let mut children:HashMap<i64,Vec<i64>>=HashMap::new();
@@ -2339,7 +2387,13 @@ impl OkSession {
         // mesh thickness of its own renderer only; with different radii against the partner's body the copies of a
         // strand parted and crossed each other (bangs "fighting"). Every copy uses the largest thickness of the bone.
         // Done in the early pass for all of them, before any is solved.
-        if !matches!(pass,AccPass::Late(_)) {
+        // AccCache: her parts as they were the last time these were worked out (None: OK_ACC_CACHE=0).
+        let t_key=std::time::Instant::now();
+        let key=acc_cache_on().then(||self.acc_fingerprint(flags));
+        crate::okanim::prof::add(36,t_key);
+        // Once the largest is on every copy, doing it again changes nothing until her parts change.
+        if !matches!(pass,AccPass::Late(_))&&(key.is_none()||self.acc_cache.radii!=key) {
+            self.acc_cache.radii=key;
             let _trace=crate::native_profile::Scope::new(45);
             let mut radii: HashMap<(String, String), f32> = HashMap::new();
             for runtime in self.parts.iter().filter_map(|p| p.runtime_accessory.as_ref()) {
@@ -2363,7 +2417,11 @@ impl OkSession {
         let hidden=&self.hidden_parts;let hidden=|index:usize|hidden.get(index).copied().unwrap_or(false);
         let mut leader_of:Vec<Option<usize>>=vec![None;self.parts.len()];
         let mut particle_ids:HashMap<usize,Vec<i64>>=HashMap::new();
-        if dt>0.0 && acc_shared_solve() {
+        let shared_solve=dt>0.0&&acc_shared_solve();
+        // Taken out of AccCache and put back when the pass ends (keep_leaders).
+        let cached=shared_solve&&key.is_some()&&self.acc_cache.leaders.as_ref().is_some_and(|(was,_,_)|Some(*was)==key);
+        if cached {let (_,l,ids)=self.acc_cache.leaders.take().expect("cached leaders");leader_of=l;particle_ids=ids;}
+        else if shared_solve {
             let _trace=crate::native_profile::Scope::new(46);
             let mut leaders:HashMap<(String,String,Option<String>,[u32;16],Vec<i64>),usize>=HashMap::new();
             for (index,part) in self.parts.iter().enumerate() {
@@ -2378,7 +2436,9 @@ impl OkSession {
                 }
             }
         }
-        let leader_of=&leader_of;
+        let (leaders_owned,particle_ids)=(leader_of,particle_ids);
+        let leader_of=&leaders_owned;
+        let keep=match key {Some(key) if shared_solve=>Some(key),_=>None};
         let physics=&self.physics;
         crate::okanim::prof::add(18,t_prepare);
         let t_parts=std::time::Instant::now();
@@ -2433,7 +2493,7 @@ impl OkSession {
             native_parallel_work(||order.into_par_iter().with_max_len(1).for_each(update));
         } else {self.parts.iter_mut().enumerate().for_each(update);}
         // The early pass leaves the followers and the cover field to the pass after her clothes.
-        if pass.early() {self.cover_ready=Some(cover_field);crate::okanim::prof::add(19,t_parts);return;}
+        if pass.early() {self.cover_ready=Some(cover_field);if let Some(k)=keep {self.acc_cache.leaders=Some((k,leaders_owned,particle_ids));}crate::okanim::prof::add(19,t_parts);return;}
         if leader_of.iter().any(Option::is_some) {
             // The leaders' solved locals, then the followers; one that cannot follow solves on its own.
             let mut solved:HashMap<usize,Vec<([f32;3],[f32;4])>>=HashMap::new();
@@ -2474,6 +2534,7 @@ impl OkSession {
                 native_parallel_work(||self.parts.par_iter_mut().enumerate().for_each(follow));
             } else {self.parts.iter_mut().enumerate().for_each(follow);}
         }
+        if let Some(k)=keep {self.acc_cache.leaders=Some((k,leaders_owned,particle_ids));}
         crate::okanim::prof::add(19,t_parts);
         crate::okanim::prof::add_us(20,skinned.load(std::sync::atomic::Ordering::Relaxed));
         crate::okanim::prof::add_us(21,palette_only as u64);
@@ -4347,6 +4408,7 @@ impl SessionBlob {
             wardrobe_quick_settle: false,
             hidden_parts: Vec::new(),
             cover_ready: None,
+            acc_cache: Default::default(),
             face_runtime: Default::default(),
             body_shaped: self.body_shaped,
             shape_reference_scratch: None,

@@ -11,6 +11,7 @@
 #include "Async/UniqueLock.h"
 #include "Algo/StableSort.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
+#include "Async/ParallelFor.h"
 
 // PhysX headers use member functions named check()/verify(), which UE defines as macros.
 #pragma push_macro("check")
@@ -150,6 +151,14 @@ static TAutoConsoleVariable<int32> CVarMaxSubsteps(
 	TEXT("OKPhysXSecondary.MaxSubsteps"), 4, TEXT("Upper bound of PhysX substeps per chain per frame."), ECVF_Default);
 static TAutoConsoleVariable<float> CVarSubstep(
 	TEXT("OKPhysXSecondary.Substep"), 1.f / 120.f, TEXT("Target PhysX substep length in seconds."), ECVF_Default);
+static TAutoConsoleVariable<int32> CVarPartnerLastFrame(
+	TEXT("OKPhysXSecondary.PartnerLastFrame"), 1,
+	TEXT("1: hair and cloth meet the partner's body as it was when the frame began (the two characters are solved side by side ")
+	TEXT("with nothing between them). 0: whatever the partner had published by then (this frame's or last frame's)."), ECVF_Default);
+static TAutoConsoleVariable<int32> CVarBatchSplit(
+	TEXT("OKPhysXSecondary.BatchSplit"), 4,
+	TEXT("A DynamicBone set's chains are split into up to this many PhysX scenes solved in parallel (1 = one scene per set). ")
+	TEXT("Chains in different scenes no longer touch each other's collider copies."), ECVF_Default);
 
 using namespace physx;
 
@@ -252,7 +261,8 @@ namespace
 	{
 		UE::FMutex Lock;
 		PxScene* Scene = nullptr;
-		~FBatch() { if (Scene) Scene->release(); }
+		TArray<TSharedPtr<FBatch>> Parts; // the set split into several scenes (OKPhysXSecondary.BatchSplit), solved in parallel
+		~FBatch() { Parts.Reset(); if (Scene) Scene->release(); }
 	};
 
 	struct FChain
@@ -568,6 +578,9 @@ namespace
 		TMap<uint64, FSnapshot> Chains;
 		FMatrix44f Frame = FMatrix44f::Identity; // skeleton space (metres) -> world (metres)
 		bool bHasFrame = false;
+		TArray<FOKPxCapsule> PrevBody;    // Body and Clothed as they were when this frame began (SetGroupFrame)
+		TArray<FOKPxCapsule> PrevClothed;
+		bool bHasPrev = false;
 	};
 	TMap<uint64, TSharedPtr<FGroup>> GGroups;
 	UE::FMutex GGroupLock;
@@ -1091,6 +1104,11 @@ namespace OKPhysXSecondary
 		}
 		Group->Frame = SkeletonToWorld;
 		Group->bHasFrame = true;
+		// Called once a frame before the characters are solved: what was published so far is last frame's body, the one
+		// the partners meet this frame (PartnerLastFrame).
+		Group->PrevBody = Group->Body;
+		Group->PrevClothed = Group->Clothed;
+		Group->bHasPrev = Group->Body.Num() > 0;
 	}
 
 	float HeadTilt() { return CVarDebugHeadTilt.GetValueOnAnyThread(); }
@@ -1444,8 +1462,13 @@ namespace OKPhysXSecondary
 					bool bOtherFrame = false;
 					{
 						UE::TUniqueLock OtherGuard(Other.Value->Lock);
-						// The partner is met at the surface of their clothes.
-						OtherBody = Other.Value->Clothed.Num() == Other.Value->Body.Num() ? Other.Value->Clothed : Other.Value->Body;
+						// The partner is met at the surface of their clothes. Their body as of last frame: solved beside ours,
+						// whatever they had published by then was this frame's or last frame's, by chance.
+						const FGroup& O = *Other.Value;
+						const bool bPrev = O.bHasPrev && CVarPartnerLastFrame.GetValueOnAnyThread() != 0;
+						const TArray<FOKPxCapsule>& Skin = bPrev ? O.PrevBody : O.Body;
+						const TArray<FOKPxCapsule>& Dressed = bPrev ? O.PrevClothed : O.Clothed;
+						OtherBody = Dressed.Num() == Skin.Num() ? Dressed : Skin;
 						OtherFrame = Other.Value->Frame;
 						bOtherFrame = Other.Value->bHasFrame;
 					}
@@ -2324,11 +2347,78 @@ namespace OKPhysXSecondary
 			Batch = Slot;
 		}
 		UE::TUniqueLock Guard(Batch->Lock);
-		TArray<FSolveJob> Jobs;
-		Jobs.SetNum(Count);
-		for (uint32 i = 0; i < Count; ++i) Jobs[i].S = static_cast<FOKPxChainStep*>(Steps) + i;
-		// No fallback: a chain whose input cannot be prepared is left untouched (it holds still), the others are solved.
-		const int32 Solved = SolveJobs(Jobs, Batch, BatchKey);
+		FOKPxChainStep* const All = First;
+		const int32 Split = FMath::Clamp(CVarBatchSplit.GetValueOnAnyThread(), 1, 16);
+		// Only PhysX chains: the other solvers keep one world per set under BatchKey.
+		bool bAllPhysX = true;
+		{
+			const int32 Forced = CVarBackend.GetValueOnAnyThread();
+			if (Settling()) bAllPhysX = CVarSettleBackend.GetValueOnAnyThread() == 0;
+			else if (Forced >= 0) bAllPhysX = Forced == 0;
+			else for (uint32 i = 0; i < Count && bAllPhysX; ++i) { const FOKPxChainStep& S = All[i]; bAllPhysX = !S.ParticleCount || ((S.Particles[0].Flags >> 8) & 15u) <= 1u; }
+		}
+		const int32 PartCount = bAllPhysX ? FMath::Min(Split, int32(Count)) : 1;
+		int32 Solved = 0;
+		if (PartCount <= 1)
+		{
+			TArray<FSolveJob> Jobs;
+			Jobs.SetNum(Count);
+			for (uint32 i = 0; i < Count; ++i) Jobs[i].S = All + i;
+			// No fallback: a chain whose input cannot be prepared is left untouched (it holds still), the others are solved.
+			Solved = SolveJobs(Jobs, Batch, BatchKey);
+		}
+		else
+		{
+			// Longest chains first onto the least loaded scene (cost ~ particles x colliders). The same set of chains gives
+			// the same split every frame, so a chain keeps its scene (moving it rebuilds the chain at its animated pose).
+			TArray<int32, TInlineAllocator<64>> Order;
+			for (uint32 i = 0; i < Count; ++i) Order.Add(int32(i));
+			auto Cost = [All](int32 i) { return uint64(All[i].ParticleCount) * (1u + All[i].ColliderCount); };
+			Algo::StableSort(Order, [&](int32 A, int32 B) { const uint64 CA = Cost(A), CB = Cost(B); return CA != CB ? CA > CB : All[A].Key < All[B].Key; });
+			TArray<TArray<FSolveJob>, TInlineAllocator<16>> Parts;
+			Parts.SetNum(PartCount);
+			TArray<uint64, TInlineAllocator<16>> Load;
+			Load.SetNumZeroed(PartCount);
+			for (int32 i : Order)
+			{
+				int32 Best = 0;
+				for (int32 p = 1; p < PartCount; ++p) if (Load[p] < Load[Best]) Best = p;
+				Load[Best] += Cost(i);
+				Parts[Best].AddDefaulted_GetRef().S = All + i;
+			}
+			while (Batch->Parts.Num() < PartCount)
+			{
+				TSharedPtr<FBatch> Part = MakeShared<FBatch>();
+				Part->Scene = CreateChainScene();
+				Batch->Parts.Add(Part);
+			}
+			// A chain moving to another scene (the split was changed, the set's chains changed) leaves its old one here, on
+			// one thread: rebuilt in parallel, two parts removed actors from one scene at once (crash switching 1 -> 4).
+			for (int32 p = 0; p < PartCount; ++p)
+			{
+				for (const FSolveJob& J : Parts[p])
+				{
+					TSharedPtr<FChain> Old;
+					{
+						UE::TUniqueLock MapGuard(GMapLock);
+						Old = GChains.FindRef(J.S->Key);
+					}
+					if (!Old || !Old->Batch || Old->Batch == Batch->Parts[p]) continue;
+					UE::TUniqueLock ChainGuard(Old->Lock);
+					if (Old->Batch == Batch) Old->ReleaseActors(); // its lock is ours already
+					else { UE::TUniqueLock OldGuard(Old->Batch->Lock); Old->ReleaseActors(); }
+				}
+			}
+			std::atomic<int32> Done{0};
+			ParallelFor(TEXT("OKPx_BatchSplit"), PartCount, 1, [&](int32 p)
+			{
+				TRACE_CPUPROFILER_EVENT_SCOPE(OKPx_BatchPart);
+				// A chain released meanwhile (FChain's destructor) takes this lock before it touches the part's scene.
+				UE::TUniqueLock PartGuard(Batch->Parts[p]->Lock);
+				if (Parts[p].Num()) Done += SolveJobs(Parts[p], Batch->Parts[p], BatchKey);
+			}, EParallelForFlags::Unbalanced);
+			Solved = Done.load();
+		}
 		if (Solved != int32(Count))
 		{
 			static std::atomic<int32> Holds{0};
