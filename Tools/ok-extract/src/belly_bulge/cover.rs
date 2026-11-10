@@ -57,6 +57,7 @@ pub fn set_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])>
 
 /// `set_cover` with her pushing skin already worked out (the wrap worker's).
 pub fn keep_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])>, field: Option<&CoverField>) -> Vec<usize> {
+    let _trace = crate::native_profile::Scope::new(54);
     let key = session as *const OkSession as usize;
     let mut all = COVER.lock().unwrap();all.retain(|(k, _)| *k != key);
     if !on { return Vec::new(); }

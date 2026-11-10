@@ -8384,6 +8384,10 @@ void AKKPreviewActor::PrepareRuntimeAccessories()
 		{
 			continue;
 		}
+        // Not drawn (his hair and clothes while he is see-through in the H scene, a hidden actor): no streams made for
+        // it, 0.3 ms of the game thread each frame for him (2026-11-10). Its source copy is left as it was, so the first
+        // frame it is drawn again finds its geometry changed and makes them.
+        if(!Part.Comp->IsVisible()||IsHidden())continue;
 		OkMeshView View;
 		FMemory::Memzero(View);
 		if (!Session.PartAt(Part.SessionIndex, View) || !View.positions ||

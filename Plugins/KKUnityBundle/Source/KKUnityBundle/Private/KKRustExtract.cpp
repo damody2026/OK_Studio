@@ -39,7 +39,8 @@ const ANSICHAR* const NativeTraceNames[]={"KK_NativeValidate","KK_NativeSampleWa
     "KK_NativeContactCorrectBefore","KK_NativeContactFreeze","KK_NativeContactSolve","KK_NativeContactCorrectAfter",
     "KK_NativePalettePrepare","KK_NativePaletteRead","KK_NativePalettePublish",
     "KK_NativeMotionPlan","KK_NativeMotionLeaves","KK_NativeMotionBlend","KK_NativeLeafSnapshot","KK_NativeLeafChannels","KK_NativeChannelLookup","KK_NativeChannelSample",
-    "KK_NativeAccFrames","KK_NativeAccRadii","KK_NativeAccLeaders","KK_NativeCoverField","KK_NativeCoverPush","KK_NativeCoverLift","KK_NativeCoverPushFrom"};
+    "KK_NativeAccFrames","KK_NativeAccRadii","KK_NativeAccLeaders","KK_NativeCoverField","KK_NativeCoverPush","KK_NativeCoverLift","KK_NativeCoverPushFrom",
+    "KK_NativeSkinNow","KK_NativeSkinGrid","KK_NativeSkinQueries","KK_NativeKeepCover","KK_NativeBulgePast","KK_NativeBackExit"};
 std::atomic<uint32> NativeTraceSpecs[UE_ARRAY_COUNT(NativeTraceNames)];
 // Each event's spec is sent the first time it runs with the CPU channel on, as UE's own scopes do: sent at startup (the
 // channel still off until Trace.File / -Trace) it was dropped, and Insights then had no name for any native event.

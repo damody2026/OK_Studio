@@ -97,6 +97,8 @@ public:
     void TickScene(float Delta);float DeferredDelta=0.f;int32 DeferredTicks=0; // NativeTick: put off to the pair's idle point
     bool bTickingBeside=false,bIdleTickOwed=false; // ok.HScene.TickBeside: TickScene runs beside the solve; its session parts at the idle point (TickAtIdle)
     void TickAtIdle();
+    double DevLineAt=0.; // DevLine is formatted at most 4 times a second
+    bool bFastPaths=false;void FastPaths(bool bOn); // ok.HScene.FastPaths: Slate global invalidation and indexed accessory streams while the scene is up
     void Click(int32 Kind);
     // What happened, for h_session_end (counts) and her memory (poses, events).
     TSharedRef<FJsonObject> Result() const;
