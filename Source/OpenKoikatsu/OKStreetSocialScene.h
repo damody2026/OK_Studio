@@ -116,7 +116,7 @@ private:
  bool SeatedWith(int32 Girl) const;
  bool ContactLover(int32 Character) const;
  TArray<FVector> ContactRoute(const FVector& From,const FVector& To) const;
- TArray<FVector> CityRoute(const FVector& From,const FVector& To) const;
+ TArray<FVector> CityRoute(const FVector& From,const FVector& To,float NearCm=0) const; // NearCm: GridRoute's
  void SelectContact(int32 Character);
  void NavigateGirl(int32 Character);
  void NavigatePoint(const FVector& Goal,const FString& Name);
@@ -680,7 +680,7 @@ private:
  // One walking step for him: straight, else sliding along the obstacle; never trapped inside one. Returns From if stuck.
  FVector StreetStep(const FVector& From,const FVector& Direction,float Distance) const;
  // Grid A* over the walkable street at From's floor (lazy 40 cm cells, same clearance as walking). Empty if none.
- TArray<FVector> GridRoute(const FVector& From,const FVector& To) const;
+ TArray<FVector> GridRoute(const FVector& From,const FVector& To,float NearCm=0) const; // NearCm: FOKStreetGridSearch's
  // GridRoute's search a slice at a time (Deadline: FPlatformTime seconds): true once done, the route in its Route.
  bool GridSearchStep(struct FOKStreetGridSearch& G,double Deadline) const;
  // PlaceRoute's waypoint graph (another floor, or no grid way).

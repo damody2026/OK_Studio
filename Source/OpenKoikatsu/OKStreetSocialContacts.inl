@@ -11,7 +11,7 @@ bool AOKStreetSocialScene::ContactIdle() const {if(!State)return false;const aut
 bool AOKStreetSocialScene::SeatedWith(int32 Girl) const {if(!State)return false;const auto& S=*State;return S.Pair.Partner==Girl&&S.Pair.Conversation()&&!S.Pair.CapturePending&&S.PrivateGirl==INDEX_NONE&&S.Facility==INDEX_NONE&&S.Companion==INDEX_NONE&&!OKStreetConversationBusy(S.Node!=INDEX_NONE,S.CollectedActive,S.RelationshipPending,S.TouchActive);}
 // The city's long way: the road graph between, the fine grid out of the building he is in and into the one he is going to
 // (the graph has no points indoors).
-TArray<FVector> AOKStreetSocialScene::CityRoute(const FVector& From,const FVector& To) const{
+TArray<FVector> AOKStreetSocialScene::CityRoute(const FVector& From,const FVector& To,float NearCm) const{
  // Into a building and out of one: by its door. The graph's point nearest a spot indoors was the pavement behind the
  // wall (三月七 at the cafeteria's table: east of its east wall), the grid from there found no way in in its 4 ms, and the
  // walk ended against that wall, "the way is blocked" (R6-173). The door is on the graph, so the roads lead to it.
@@ -26,11 +26,11 @@ TArray<FVector> AOKStreetSocialScene::CityRoute(const FVector& From,const FVecto
  const FOKStreetPlace* Into=Outer(Indoor(To));const FOKStreetPlace* OutOf=Outer(Indoor(From));
  // Both in one building on one floor (47 m apart on the EE building's 4F, 優香 at her class): the floor's own way, not the
  // street's roads down on the ground, which led him into the 4F's wall till "the way is blocked" (R6-177).
- if(Into&&Into==OutOf&&FMath::Abs(From.Z-To.Z)<150.f){TArray<FVector> Here=GridRoute(From,To);return Here.Num()>=2?Here:TArray<FVector>{From,To};}
+ if(Into&&Into==OutOf&&FMath::Abs(From.Z-To.Z)<150.f){TArray<FVector> Here=GridRoute(From,To,NearCm);return Here.Num()>=2?Here:TArray<FVector>{From,To};}
  if(Into&&Into!=OutOf&&FVector::Dist2D(Into->Door,To)>50.f){
   const FVector Door=Into->Door;TArray<FVector> Route=CityRoute(From,Door);if(Route.IsEmpty())Route={From};
   // On her floor, in from the door; upstairs the navigation plans the lift from the door (PlanNavLift).
-  if(FMath::Abs(Door.Z-To.Z)<150.f){TArray<FVector> In=GridRoute(Door,To);
+  if(FMath::Abs(Door.Z-To.Z)<150.f){TArray<FVector> In=GridRoute(Door,To,NearCm);
    if(In.Num()>=2){In.RemoveAt(0);Route.Append(In);}
    else{const FVector Inside=PlaceInsideSpot(*Into);if(!Inside.Equals(Door,1.f))Route.Add(Inside);Route.Add(To);}}
   return Route;}
@@ -46,8 +46,9 @@ TArray<FVector> AOKStreetSocialScene::CityRoute(const FVector& From,const FVecto
  return Route;
 }
 TArray<FVector> AOKStreetSocialScene::ContactRoute(const FVector& From,const FVector& To) const {
- if(OKStreetCityMode()&&(OKStreetCityFar(From,To)||FMath::Abs(From.Z-To.Z)>=150.f))return CityRoute(From,To);
- if(FMath::Abs(From.Z-To.Z)<150.f){auto Grid=GridRoute(From,To);if(Grid.Num()>=2)return Grid;}
+ // To her: a seat closed in by tables ends within talking range of it (R6-208).
+ if(OKStreetCityMode()&&(OKStreetCityFar(From,To)||FMath::Abs(From.Z-To.Z)>=150.f))return CityRoute(From,To,200.f);
+ if(FMath::Abs(From.Z-To.Z)<150.f){auto Grid=GridRoute(From,To,200.f);if(Grid.Num()>=2)return Grid;}
  TArray<FOKStreetPointData> Shared;OKStreetWaypoints(Shared);TArray<FVector> Points;for(const auto& P:Shared)Points.Add(P.Position);
  return OKStreetContactRoute(From,To,Points,[&](const FVector& A,const FVector& B){
   const int32 Steps=FMath::Max(1,FMath::CeilToInt(FVector::Dist2D(A,B)/25));for(int32 I=0;I<=Steps;++I)if(OKStreetBlockedPoint(FMath::Lerp(A,B,float(I)/Steps),30))return false;
@@ -128,7 +129,7 @@ bool AOKStreetSocialScene::NavCellFree(const FIntPoint& Cell,float Z) const{
  if(Free){FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetNavCell),false,this);Free=!GetWorld()->OverlapAnyTestByChannel(FVector(P.X,P.Y,GroundZ)+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(40,OKStreetBodyHalf()),Query);} // wider than his 28: a cell beside an awning or a sign is not a way
  Grid.Add(Cell,Free);return Free;
 }
-TArray<FVector> AOKStreetSocialScene::GridRoute(const FVector& From,const FVector& To) const{
+TArray<FVector> AOKStreetSocialScene::GridRoute(const FVector& From,const FVector& To,float NearCm) const{
  // In the city a walled-in search ran through 60000 cells in one frame (300 ms). 4 ms, then no route: the caller falls back to
  // its other way, and the cells tested stay known, so the next try gets further.
  // Upstairs 25 ms: the floors are small and walled, and every caller falls back to a straight line, which from the optician
@@ -136,7 +137,7 @@ TArray<FVector> AOKStreetSocialScene::GridRoute(const FVector& From,const FVecto
  // Inside a building on its ground floor too: from the department store's lift to its door, 4 ms was never enough among
  // the shops, the straight line ran into a shop wall, and he and Raiden circled the 1F for three hours (R6-183).
  const double Budget=!OKStreetCityMode()?TNumericLimits<double>::Max():OKStreetUpstairs(From)||!PlaceHere(From).IsEmpty()?.025:.004;
- FOKStreetGridSearch G;G.From=From;G.To=To;GridSearchStep(G,FPlatformTime::Seconds()+Budget);return MoveTemp(G.Route);
+ FOKStreetGridSearch G;G.From=From;G.To=To;G.NearCm=NearCm;GridSearchStep(G,FPlatformTime::Seconds()+Budget);return MoveTemp(G.Route);
 }
 bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline) const{
  if(G.Phase==2)return true;
@@ -196,8 +197,14 @@ bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline
    if(New<Cost[NI]){Cost[NI]=New;Came[NI]=Index(C);Open.HeapPush({New+Heuristic(N),N},Less);}
   }
  }
+ // Not reached, all the way searched: the reached cell nearest the goal, when it is near (NearCm, his walk to her: 2 m).
+ // Her seat among the cafeteria tables was closed in, and he walked straight into the wall 18 m away instead (R6-208).
+ FIntPoint End=Goal;
+ if(!Reached&&Open.IsEmpty()&&G.NearCm>0){float Best=FMath::Square(G.NearCm/OKStreetNavCell)+.01f;bool Near=false;
+  for(int32 I=0;I<Cost.Num();++I)if(Cost[I]<TNumericLimits<float>::Max()){const FIntPoint C(Lo.X+I%W,Lo.Y+I/W);const float D=float((C-Goal).SizeSquared());if(D<Best&&C!=Start){Best=D;End=C;Near=true;}}
+  if(Near){Reached=true;G.Goal=End;UE_LOG(LogTemp,Display,TEXT("Street grid route: %s closed in, to the nearest reached cell %.0f cm from it"),*To.ToCompactString(),FMath::Sqrt(Best)*OKStreetNavCell);}}
  if(!Reached){G.Phase=2;UE_LOG(LogTemp,Display,TEXT("Street grid route: none from %s to %s (%d cells)"),*From.ToCompactString(),*To.ToCompactString(),G.Expanded);Release();return true;}
- TArray<FIntPoint>& Cells=G.Path;Cells={Goal};while(Cells.Last()!=Start){const int32 P=Came[Index(Cells.Last())];Cells.Add(FIntPoint(Lo.X+P%W,Lo.Y+P/W));}
+ TArray<FIntPoint>& Cells=G.Path;Cells={End};while(Cells.Last()!=Start){const int32 P=Came[Index(Cells.Last())];Cells.Add(FIntPoint(Lo.X+P%W,Lo.Y+P/W));}
  Algo::Reverse(Cells);
  // The pull still asks what is known of the cells (Cell), not the costs or links.
  G.Cost.Empty();G.Came.Empty();G.Open.Empty();G.Route={From};G.PullI=0;G.PullJ=-1;G.Phase=3;
@@ -219,7 +226,7 @@ bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline
  while(G.PullI<Cells.Num()-1){const int32 I=G.PullI;if(G.PullJ<0)G.PullJ=Cells.Num()-1;
   while(G.PullJ>I+1&&!Clear(I==0?From:Centre(Cells[I]),Centre(Cells[G.PullJ]))){--G.PullJ;if(FPlatformTime::Seconds()>Deadline)return false;}
   Route.Add(Centre(Cells[G.PullJ]));G.PullI=G.PullJ;G.PullJ=-1;}
- if(Goal==ToCell(To)&&Clear(Route.Last(),To))Route.Last()=To;
+ if(G.Goal==ToCell(To)&&Clear(Route.Last(),To))Route.Last()=To;
  G.Phase=2;Release();return true;
 }
 // How near his feet may come to a heroine's (her body and his, side by side).
@@ -321,7 +328,9 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
  if(S.ManualReplan){S.ManualReplan=false;auto Path=S.NavPointActive?PlaceRoute(S.Male,Goal):ContactRoute(S.Male,Goal);if(Path.Num()>=2){S.NavPath=MoveTemp(Path);S.NavStep=1;S.NavReplans=0;S.NavProgressAt=SceneTime();}S.Message=OKT(TEXT("ui.contacts.resume_auto_travel"));RefreshUI();}
  // Close to her counts only on her side of the walls: in the same place (both in the bookstore, both outside), not
  // 1.2 m away through the shop's wall, where E cannot reach her.
- if((FVector::Dist2D(S.Male,Goal)<=(S.NavPointActive?80.f:40.f)||(!S.NavPointActive&&FVector::Dist2D(S.Male,Her)<=180.f&&PlaceHere(S.Male)==PlaceHere(Her)))&&FMath::Abs(S.Male.Z-Goal.Z)<150.f){
+ // At the end of a route that stops short of her (her seat closed in, R6-208): within talking range is there too.
+ const bool RouteDone=S.NavPath.Num()>=2&&S.NavStep>=S.NavPath.Num()-1&&FVector::Dist2D(S.Male,S.NavPath.Last())<=40.f;
+ if((FVector::Dist2D(S.Male,Goal)<=(S.NavPointActive?80.f:40.f)||(!S.NavPointActive&&FVector::Dist2D(S.Male,Her)<=(RouteDone?OKStreetTalkRangeCm-20.f:180.f)&&PlaceHere(S.Male)==PlaceHere(Her)))&&FMath::Abs(S.Male.Z-Goal.Z)<150.f){
   // Walked up to her: if she was on her way somewhere she notices him, stops and turns to him for a moment, so he can
   // speak to her instead of chasing her down the street.
   if(!S.NavPointActive&&S.Agents.IsValidIndex(S.NavGirl-1)){const int32 G=S.NavGirl;S.CommutePausedUntil.Add(G,SceneTime()+10.0);
