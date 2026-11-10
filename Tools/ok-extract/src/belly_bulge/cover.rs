@@ -83,6 +83,12 @@ pub fn keep_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])
     }).collect())
 }
 
+/// Per garment (its neighbour table): the frame count, the vertices `push_at` moved last frame, its vertex count.
+static WARM: std::sync::LazyLock<std::sync::Mutex<HashMap<usize, (u32, Vec<u32>, usize)>>> = std::sync::LazyLock::new(Default::default);
+/// OK_COVER_WARM=<n>: each frame `push_at` looks at last frame's pushed cloth, two rings round it and one in n of the rest
+/// (default 4); 0 or 1: every vertex every frame.
+fn warm_stride() -> usize { std::env::var("OK_COVER_WARM").ok().and_then(|v| v.parse().ok()).unwrap_or(4) }
+
 static NEIGHBOURS: std::sync::Mutex<Vec<(usize, usize, std::sync::Arc<Vec<Vec<u32>>>)>> = std::sync::Mutex::new(Vec::new());
 /// Each vertex's neighbours along a garment's mesh (copies of one place split at UV seams count as one another's).
 fn neighbours(indices: &[u32], rest: &[[f32; 3]]) -> std::sync::Arc<Vec<Vec<u32>>> {
@@ -234,7 +240,9 @@ impl CoverField {
         if !covers(&part.role) || part.runtime_accessory.is_none() || positions.len() != part.rest_positions.len() { return; }
         let _trace = crate::native_profile::Scope::new(48);let _time = Timed(std::time::Instant::now(), 27);
         let nbr = { let _t = Timed(std::time::Instant::now(), 28);neighbours(&part.indices, &part.rest_positions) };
-        let Some(push) = self.pushes(margin(&part.role), positions, &nbr, &part.indices) else { return; };
+        // Keyed by the garment's own neighbour table (one per mesh of each session).
+        let warm = std::sync::Arc::as_ptr(&nbr) as usize;
+        let Some(push) = self.pushes(margin(&part.role), positions, &nbr, &part.indices, Some(warm)) else { return; };
         for (p, v) in positions.iter_mut().zip(push) { for a in 0..3 { p[a] += v[a]; } }
     }
 
@@ -248,21 +256,51 @@ impl CoverField {
 
     /// How far each of `positions` (a garment posed, her skeleton space) moves: up over the skin lifted under it, then out
     /// over her breasts.
-    fn pushes(&self, keep: f32, positions: &[[f32; 3]], nbr: &[Vec<u32>], indices: &[u32]) -> Option<Vec<[f32; 3]>> {
+    fn pushes(&self, keep: f32, positions: &[[f32; 3]], nbr: &[Vec<u32>], indices: &[u32], warm: Option<usize>) -> Option<Vec<[f32; 3]>> {
         let lifted = { let _trace = crate::native_profile::Scope::new(49); self.lift.as_ref().and_then(|l| l.moves(keep, positions, nbr, indices)) };
-        let Some(mut total) = lifted else { return self.pushes_from(keep, positions, nbr, indices); };
+        let Some(mut total) = lifted else { return self.pushes_from(keep, positions, nbr, indices, warm); };
         let moved: Vec<[f32; 3]> = positions.iter().zip(&total).map(|(p, v)| [p[0] + v[0], p[1] + v[1], p[2] + v[2]]).collect();
-        if let Some(push) = self.pushes_from(keep, &moved, nbr, indices) { for (t, v) in total.iter_mut().zip(push) { for a in 0..3 { t[a] += v[a]; } } }
+        if let Some(push) = self.pushes_from(keep, &moved, nbr, indices, warm) { for (t, v) in total.iter_mut().zip(push) { for a in 0..3 { t[a] += v[a]; } } }
         Some(total)
     }
 
     /// How far each of `positions` moves to stay `keep` past her breasts, evened over the cloth round it (so a nipple lifts
     /// a little tent of cloth and not one vertex).
-    fn pushes_from(&self, keep: f32, positions: &[[f32; 3]], nbr: &[Vec<u32>], indices: &[u32]) -> Option<Vec<[f32; 3]>> {
+    fn pushes_from(&self, keep: f32, positions: &[[f32; 3]], nbr: &[Vec<u32>], indices: &[u32], warm: Option<usize>) -> Option<Vec<[f32; 3]>> {
         let _trace = crate::native_profile::Scope::new(50);
         // Each vertex on its own, on the pool: one garment was 1 ms on the frame's longest path (trace 2026-11-08).
         use rayon::prelude::*;
-        let at_trace = crate::native_profile::Scope::new(60);let t_at = Timed(std::time::Instant::now(), 29);let mut push: Vec<[f32; 3]> = positions.par_iter().map(|&c| self.push_at(keep, c)).collect();drop(t_at);drop(at_trace);let rings_trace = crate::native_profile::Scope::new(61);let t_rings = Timed(std::time::Instant::now(), 30);
+        let at_trace = crate::native_profile::Scope::new(60);let t_at = Timed(std::time::Instant::now(), 29);
+        // From last frame's (WARM): the vertices it pushed, two rings round them and every `stride`-th of the rest in
+        // turn. Cloth the skin newly reaches elsewhere is pushed up to `stride` frames late (user accepted, 2026-11-10).
+        let stride = warm_stride();
+        let n = positions.len();
+        let last = warm.filter(|_| stride > 1).and_then(|k| WARM.lock().unwrap().get(&k).filter(|e| e.2 == n).map(|e| (e.0, e.1.clone())));
+        let frame = last.as_ref().map_or(0, |l| l.0.wrapping_add(1));
+        let mut push: Vec<[f32; 3]> = match last {
+            None => positions.par_iter().map(|&c| self.push_at(keep, c)).collect(),
+            Some((_, hot)) => {
+                let mut want = vec![false; n];let mut list: Vec<u32> = Vec::with_capacity(hot.len() * 4 + n / stride + 1);
+                for &j in &hot { if !want[j as usize] { want[j as usize] = true;list.push(j); } }
+                let mut from = 0;
+                for _ in 0..2 {
+                    let to = list.len();
+                    for i in from..to { for &k in nbr.get(list[i] as usize).into_iter().flatten() { if let Some(w) = want.get_mut(k as usize).filter(|w| !**w) { *w = true;list.push(k); } } }
+                    from = to;
+                }
+                for j in (frame as usize % stride..n).step_by(stride) { if !want[j] { want[j] = true;list.push(j as u32); } }
+                let found: Vec<[f32; 3]> = list.par_iter().map(|&j| self.push_at(keep, positions[j as usize])).collect();
+                let mut push = vec![[0f32; 3]; n];
+                for (&j, v) in list.iter().zip(found) { push[j as usize] = v; }
+                push
+            }
+        };
+        if let Some(k) = warm {
+            let hot: Vec<u32> = (0..n as u32).filter(|&j| dot(push[j as usize], push[j as usize]) > 0.).collect();
+            let mut all = WARM.lock().unwrap();if all.len() > 256 { all.clear(); }
+            all.insert(k, (frame, hot, n));
+        }
+        drop(t_at);drop(at_trace);let rings_trace = crate::native_profile::Scope::new(61);let t_rings = Timed(std::time::Instant::now(), 30);
         if !push.iter().any(|v| dot(*v, *v) > 0.) { return None; }
         // Only the cloth round what moved: six rings out from it (the push reaches only `REACH_M` across the skin itself).
         // Where each ring vertex is in the ring: a dense index (a hash map of them each ring was most of this).
@@ -493,6 +531,7 @@ static COVER_STILL: std::sync::Mutex<Vec<(usize, usize, usize, std::sync::Arc<Co
 /// Her clothes changed on the same model (wardrobe.rs): what was read from the old ones goes.
 pub(crate) fn clothes_changed() {
     COVER_STILL.lock().unwrap().clear();
+    WARM.lock().unwrap().clear();
     COVER.lock().unwrap().clear();
 }
 
@@ -563,7 +602,7 @@ pub(super) fn solve(frame: &CoverFrame, body_moves: &[(u32, [f32; 6])]) -> (Vec<
             (total > 0.5).then_some(m)
         }).collect();
         let posed: Vec<[f32; 3]> = mats.iter().zip(rest).map(|(m, r)| m.map_or([f32::MAX; 3], |m| point(&m, *r))).collect();
-        let Some(push) = field.pushes(mesh.keep, &posed, &mesh.nbr, &mesh.indices) else { continue; };
+        let Some(push) = field.pushes(mesh.keep, &posed, &mesh.nbr, &mesh.indices, None) else { continue; };
         let mut moves = Vec::new();
         for (j, v) in push.into_iter().enumerate() {
             let Some(m) = mats[j] else { continue; };
