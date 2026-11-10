@@ -39,6 +39,7 @@ private:
  void SetVoiceMode(const FString& Mode); // builtin | tts | cloud | off
  void SetAsrMode(const FString& Mode); // local | cloud
  void SaveApiKeys();
+ void PrepareCloudVoices(); // ok-tts /voice/prepare: design this world's cloud voices ahead (OKStreetSocialVoice.inl)
  void PushCloudSetting(bool Voice); // tell ok-tts (Voice) or ok-asr whether to use the cloud now
  void ToggleSettingsMenu();
  void RebuildSettingsPanel();

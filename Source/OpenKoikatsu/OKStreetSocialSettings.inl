@@ -51,6 +51,7 @@ void AOKStreetSocialScene::PushCloudSetting(bool Voice){
   if(!Connected||!Response.IsValid())S.SettingsNotice=Wanted?OKT(Voice?TEXT("ui.settings.tts_server_missing"):TEXT("ui.settings.asr_server_missing")):FString();
   else if(!Ok)S.SettingsNotice=OKT(TEXT("ui.settings.cloud_failed"))+Error;
   else if(!On&&!LocalReady&&Wanted)S.SettingsNotice=OKT(Voice?TEXT("ui.settings.local_voice_restart"):TEXT("ui.settings.local_asr_restart"));
+  if(Voice&&On&&Connected&&Ok){S.CloudVoicesPrepared=false;PrepareCloudVoices();} // a new key or model: its own voices
   UE_LOG(LogTemp,Display,TEXT("Street settings: %s cloud %s -> %s"),Voice?TEXT("voice"):TEXT("asr"),On?TEXT("on"):TEXT("off"),Connected&&Ok?TEXT("ok"):*S.SettingsNotice);
   RebuildSettingsPanel();
  });

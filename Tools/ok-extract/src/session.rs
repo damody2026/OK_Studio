@@ -1236,6 +1236,9 @@ pub struct OkSession {
     pub sex: i32,
     pub type_bone: i32,
     pub nip_stand_rate: f32,
+    /// The Pushup setting of the garments she wears (`CardInfo::pushup`): `shape_body` holds the sliders without it, as the
+    /// editor shows and sends them, and her bones are shaped with it (`shaping_body`).
+    pub(crate) pushup: Option<crate::card::PushupCloth>,
     pub shape_body: Vec<f32>,
     pub shape_face: Vec<f32>,
     pub abm: Vec<crate::abmx::AbmBone>,
@@ -2014,7 +2017,8 @@ impl OkSession {
             return;
         }
         let Some(mut shaped)=self.body_rest.clone() else {return;};
-        crate::shape::apply_body_shape_keys_masked(&mut shaped,&self.body_keys,&self.shape_body,&self.correct,
+        let shaping=self.shaping_body(&self.shape_body);
+        crate::shape::apply_body_shape_keys_masked(&mut shaped,&self.body_keys,&shaping,&self.correct,
             self.sex,self.type_bone,self.nip_stand_rate,policy.shapes);
         crate::pose::assigned_weights_remap(&mut shaped);
         self.body_shaped=Some(shaped.clone());
@@ -2296,7 +2300,7 @@ impl OkSession {
         let t_parts=std::time::Instant::now();
         let skinned=std::sync::atomic::AtomicU64::new(0);
         // Her clothes kept over her skin while the H scene has it on (belly_bulge::CoverField).
-        let cover=match self.cover_ready.take(){Some(built)=>built,None=>{let _trace=crate::native_profile::Scope::new(47);crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body)}};let cover=&cover;
+        let cover=match self.cover_ready.take(){Some(built)=>built,None=>{let _trace=crate::native_profile::Scope::new(47);let t=std::time::Instant::now();let f=crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body);if f.is_some(){crate::okanim::prof::add(26,t);}f}};let cover=&cover;
         let update=|(index,part):(usize,&mut SessionPart)| {
             if leader_of[index].is_some()||hidden(index) {return;}
             let Some(runtime) = &mut part.runtime_accessory else { return; };
@@ -2435,6 +2439,14 @@ impl OkSession {
     }
     pub fn apply_shape(&mut self, body: &[f32], face: &[f32]) {self.apply_shape_impl(body,face,false,false,true);}
 
+    /// The body sliders her bones are shaped from: `body` (the card's, as the editor sends them) with the Pushup of the
+    /// garments she wears. The editor's sliders came in without it and replaced the shape the open had pushed, so a
+    /// nipple the card's Pushup flattens came through a close top (Jeanne Alter, March 7th; user, 2026-11-09).
+    pub(crate) fn shaping_body<'a>(&self,body:&'a [f32])->std::borrow::Cow<'a,[f32]> {
+        let Some(pushup)=self.pushup else {return std::borrow::Cow::Borrowed(body);};
+        let mut pushed=body.to_vec();pushup.push_body(&mut pushed);std::borrow::Cow::Owned(pushed)
+    }
+
     /// Maker live parameter edits do not call ResetDynamicBoneAll.
     pub fn apply_shape_live(&mut self,body:&[f32],face:&[f32]) {self.apply_shape_impl(body,face,true,false,true);}
 
@@ -2454,12 +2466,13 @@ impl OkSession {
         let body_trace=crate::native_profile::Scope::new(26);
         let mut head_scale = [1.0f32; 3];
         let external_animation=self.external_animation();
+        let shaping=self.shaping_body(&self.shape_body).into_owned();
         if let Some(sk) = self.body_skel.as_mut() {
             if !self.shape_body.is_empty() && !self.body_keys.is_empty() {
                 head_scale = crate::shape::apply_body_shape_keys_masked(
                     sk,
                     &self.body_keys,
-                    &self.shape_body,
+                    &shaping,
                     &self.correct,
                     self.sex,
                     self.type_bone,
@@ -4051,13 +4064,15 @@ impl SessionBlob {
     }
 
     fn from_session_selected(s: &OkSession, include_globals:bool) -> Self {
+        // A blob keeps the sliders she is shaped with (its Pushup in them): it reopens without the card's Pushup record.
+        let pushed=s.shaping_body(&s.shape_body).into_owned();
         macro_rules! global {($field:ident) => {if include_globals {s.$field.clone()} else {Default::default()}};}
         let mut body_shaped=global!(body_shaped);
         // Yure is transient Studio state, like anim_clip/particle history.
         // A cache reload must start from the original card shape again.
         if include_globals && s.yure_policy.is_some_and(|p|p.shapes!=[[true;9];2]) {
             if let Some(mut neutral)=s.body_rest.clone() {
-                crate::shape::apply_body_shape_keys(&mut neutral,&s.body_keys,&s.shape_body,&s.correct,s.sex,s.type_bone,s.nip_stand_rate);
+                crate::shape::apply_body_shape_keys(&mut neutral,&s.body_keys,&pushed,&s.correct,s.sex,s.type_bone,s.nip_stand_rate);
                 crate::pose::assigned_weights_remap(&mut neutral);body_shaped=Some(neutral);
             }
         }
@@ -4069,7 +4084,7 @@ impl SessionBlob {
             let mut head_scale=[1.0f32;3];
             if let Some(mut body)=s.body_rest.clone() {
                 if !s.shape_body.is_empty()&&!s.body_keys.is_empty() {
-                    head_scale=crate::shape::apply_body_shape_keys(&mut body,&s.body_keys,&s.shape_body,&s.correct,s.sex,s.type_bone,s.nip_stand_rate);
+                    head_scale=crate::shape::apply_body_shape_keys(&mut body,&s.body_keys,&pushed,&s.correct,s.sex,s.type_bone,s.nip_stand_rate);
                 }
                 crate::pose::assigned_weights_remap(&mut body);
                 if body_shaped.is_none(){body_shaped=Some(body);}
@@ -4107,7 +4122,7 @@ impl SessionBlob {
             sex: s.sex,
             type_bone: s.type_bone,
             nip_stand_rate: s.nip_stand_rate,
-            shape_body: s.shape_body.clone(),
+            shape_body: pushed.clone(),
             shape_face: s.shape_face.clone(),
             abm: global!(abm),
             parts: s.parts.iter().map(PartBlob::from_part).collect(),
@@ -4180,6 +4195,7 @@ impl SessionBlob {
             sex: self.sex,
             type_bone: self.type_bone,
             nip_stand_rate: self.nip_stand_rate,
+            pushup: None,
             shape_body: self.shape_body,
             shape_face: self.shape_face,
             abm: self.abm,
