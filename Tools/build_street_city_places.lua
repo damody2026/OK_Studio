@@ -331,7 +331,13 @@ do -- school = T1 (two classrooms) + the SC music club room
   local an = { ids[1] and A('seat', rooms1[ids[1]].pos, rooms1[ids[1]].yaw, ids[1]) or nil, c2 and A('class2', c2.pos, c2.yaw, c2.owner) or nil, mc and A('music', md or mc, 0, 'SC-0301 音樂社練習室') or nil }
   def('school', { building = 'T1', name = bname.T1, door = entry.T1, rooms = { bbox('T1') }, anchors = an, privacy = 0 })
 end
-do local s = pick('seat', { b = 'T2', floor = 1 }); def('lecture', { building = 'T2', name = bname.T2, door = entry.T2, rooms = { bbox('T2') }, anchors = { first(s, 'seat') }, privacy = 0 }) end
+-- lecture = the T2 ground-floor classroom with the most seats, a room inside campus_t2 (the whole T2). It was the whole
+-- building, the same rooms and lift anchors as campus_t2, and the game built a second car in the same shaft (R6-188h, 11-10)
+do local s = pick('seat', { b = 'T2', floor = 1 }); local n, best = {}, nil
+  for _, a in ipairs(s) do n[a.owner] = (n[a.owner] or 0) + 1; if not best or n[a.owner] > n[best] or (n[a.owner] == n[best] and a.owner < best) then best = a.owner end end
+  local c, door, box = roomcentre(best or '')
+  local mine = {}; for _, a in ipairs(s) do if a.owner == best then mine[#mine + 1] = a end end
+  def('lecture', { building = 'T2', name = bname.T2 .. ' ' .. (planrooms[best] and planrooms[best].name or best or ''), door = door or c or entry.T2, rooms = { box or bbox('T2') }, anchors = { first(mine, 'seat') }, privacy = 0, note = 'a room of campus_t2: the building, its lifts and stairs are campus_t2' }) end
 do -- campus_sports = SP with the outdoor track as the field
   local tr = alabel['Outdoor_campus_track']
   def('campus_sports', { building = 'SP', name = bname.SP, door = entry.SP, rooms = { bbox('SP'), tr and { min = P(tr.c[1] - tr.e[1], tr.c[2] - tr.e[2], tr.c[3] - tr.e[3]), max = P(tr.c[1] + tr.e[1], tr.c[2] + tr.e[2], tr.c[3] + tr.e[3] + 300) } or nil },
@@ -463,7 +469,7 @@ do
   -- SC, SP, LI and CV have the same lift shafts: without anchors the game could not take him to the club rooms, the gym, the
   -- aquarium or the cinema upstairs ("on another floor, no way there", 11-08). CV had no place for the whole building: 'civic'.
   def('civic', { building = 'CV', name = bname.CV or '市民中心', door = entry.CV, rooms = { bbox('CV') }, anchors = {}, privacy = 0 })
-  local multi = { girls_dorm = true, boys_dorm = true, department = true, hotel = true, school = true, lecture = true, cafeteria = true, campus_sports = true, library = true, civic = true }
+  local multi = { girls_dorm = true, boys_dorm = true, department = true, hotel = true, school = true, cafeteria = true, campus_sports = true, library = true, civic = true }
   for _, g in ipairs(G) do
     if multi[g.id] or (g.id:match('^campus_') and g.building) then
       if multi[g.id] then cores(g.building, g.anchors) end
@@ -955,7 +961,13 @@ if exists(root .. 'places-v1/seats-fit.json') then
     for _, r in ipairs(g.rooms or {}) do local lo, hi = box(r)
       if lo then B[#B + 1] = { g = g, lo = lo, hi = hi, v = (hi[1] - lo[1]) * (hi[2] - lo[2]) } end end
   end
-  table.sort(B, function(a, b) return a.v < b.v end)
+  -- school and campus_t1 are the same T1 box: table.sort is not stable, so a tie went either way from run to run (11-10);
+  -- now the game place (school) gets them, then by id
+  table.sort(B, function(a, b)
+    if a.v ~= b.v then return a.v < b.v end
+    local ca, cb = a.g.id:match('^campus_') ~= nil, b.g.id:match('^campus_') ~= nil
+    if ca ~= cb then return cb end
+    return a.g.id < b.g.id end)
   local function owner(p)
     for _, b in ipairs(B) do if p[1] >= b.lo[1] and p[1] <= b.hi[1] and p[2] >= b.lo[2] and p[2] <= b.hi[2] and p[3] >= b.lo[3] - 30 and p[3] <= b.hi[3] + 30 then return b.g end end
     for _, g in ipairs(GAME_PLACES) do if g.outdoor and not (g.rooms and #g.rooms > 0) and g.door then
