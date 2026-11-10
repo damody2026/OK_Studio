@@ -8,7 +8,7 @@ use crate::gvhmr::{self, Output};
 use crate::flowhmr;
 use crate::models::{Method, Paths};
 use crate::npy::{write_npz, Out};
-use crate::{crop, pairalign, smplx, track, video, vit, vo, yolo};
+use crate::{crop, pairalign, sam3d, smplx, track, video, vit, vo, yolo};
 use candle_core::Device;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -289,29 +289,55 @@ fn convert(o: &Options, motion_single: &Path, params: serde_json::Value) -> Resu
     Ok(())
 }
 
-const NO_SAM3D: &str = "FlowHMR 需要 SAM 3D Body 的影像特徵，原生版本還沒有移植完成。目前請用 --features <特徵.npy>（形狀 (幀數, 3072)）指定已算好的特徵，見 Docs/VIDEO_MOTION.md 的 FlowHMR 一節";
+/// Frames per SAM 3D Body batch (the hands run as a batch of twice this).
+const SAM3D_BATCH: usize = 8;
 
-/// SAM 3D Body pose tokens (body, left hand, right hand; T × 3072) for FlowHMR.
-/// The native SAM 3D Body port is not in yet: `--features <tokens.npy>` supplies them
-/// (float32, shape (frames, 3072), as FlowHMR's runtime_sam_features.py writes them).
-fn sam3d_tokens(o: &Options, n: usize) -> Result<Vec<f32>, String> {
-    let path = o.features.as_ref().ok_or(NO_SAM3D)?;
-    let a = crate::npy::read_npy(path)?;
-    if a.shape.len() != 2 || a.shape[1] != flowhmr::FEATURE {
-        return Err(format!("{} 的形狀是 {:?}，應為 (幀數, {})", path.display(), a.shape, flowhmr::FEATURE));
+/// SAM 3D Body pose tokens (body, left hand, right hand; T × 3072) for FlowHMR, computed natively
+/// (sam3d.rs) from the tracked person boxes (xyxy); `--features <tokens.npy>` (float32, frames × 3072,
+/// as FlowHMR's runtime_sam_features.py writes them) replaces them.
+fn sam3d_tokens(o: &Options, dev: &Device, info: &video::Info, boxes: &[[f32; 4]]) -> Result<Vec<f32>, String> {
+    let n = boxes.len();
+    if let Some(path) = &o.features {
+        let a = crate::npy::read_npy(path)?;
+        if a.shape.len() != 2 || a.shape[1] != flowhmr::FEATURE {
+            return Err(format!("{} 的形狀是 {:?}，應為 (幀數, {})", path.display(), a.shape, flowhmr::FEATURE));
+        }
+        if a.shape[0] != n {
+            return Err(format!("{} 有 {} 幀特徵，影片有 {n} 幀", path.display(), a.shape[0]));
+        }
+        return Ok(a.data.iter().map(|v| *v as f32).collect());
     }
-    if a.shape[0] != n {
-        return Err(format!("{} 有 {} 幀特徵，影片有 {n} 幀", path.display(), a.shape[0]));
+    let model = sam3d::Model::load(&o.models.cached("sam3d_body.safetensors"), &o.models.cached("mhr.safetensors"), dev, false)?;
+    let (f, cx, cy) = intrinsics(info, o.f_mm);
+    let f = f as f32 as f64;
+    let k = [f, 0., cx, 0., f, cy, 0., 0., 1.];
+    let mut reader = video::Reader::open(&o.video, info, 1.)?;
+    let mut frames: Vec<Vec<u8>> = Vec::with_capacity(SAM3D_BATCH);
+    let mut out = Vec::with_capacity(n * flowhmr::FEATURE);
+    let started = Instant::now();
+    let mut t = 0;
+    while t < n {
+        frames.clear();
+        while frames.len() < SAM3D_BATCH && t + frames.len() < n {
+            let mut buf = Vec::new();
+            if !reader.next(&mut buf)? {
+                return Err(format!("影片只讀到 {} 幀（偵測時有 {n} 幀）", t + frames.len()));
+            }
+            frames.push(buf);
+        }
+        let refs: Vec<&[u8]> = frames.iter().map(|v| v.as_slice()).collect();
+        out.extend(model.tokens(&refs, reader.width, reader.height, &boxes[t..t + frames.len()], &k, None)?);
+        t += frames.len();
+        if t % (SAM3D_BATCH * 8) == 0 || t == n {
+            say(&format!("[資訊] SAM 3D Body {t}/{n} 幀（{:.1} 幀/秒）", t as f64 / started.elapsed().as_secs_f64()));
+        }
     }
-    Ok(a.data.iter().map(|v| *v as f32).collect())
+    Ok(out)
 }
 
 pub fn run(o: &Options) -> Result<(), String> {
     if o.pair && o.method == Method::Flowhmr {
         return Err("雙人影片目前只支援 GVHMR：FlowHMR 沒有相機位置，無法把兩人放進同一個世界座標".into());
-    }
-    if o.method == Method::Flowhmr && o.features.is_none() && !o.skip_gvhmr {
-        return Err(format!("影像特徵（SAM 3D Body）：{NO_SAM3D}"));
     }
     if o.name.is_empty() || o.name.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) || o.name.contains("..") {
         return Err(format!("動作名稱不可空白，也不可包含 \\ / : * ? \" < > | 或 ..：{}", o.name));
@@ -357,6 +383,7 @@ pub fn run(o: &Options) -> Result<(), String> {
             return Err(format!("影片只有 {n} 幀，無法估計動作"));
         }
         // (role name, boxes): single = one main track; pair = male / female.
+        let mut main_xyxy: Vec<[f32; 4]> = Vec::new();
         let roles: Vec<(&str, Vec<[f64; 3]>)> = if o.pair {
             let p = step("分配兩人（左右）", || track::pair(&dets, info.width as usize))?;
             let (male, female, cm, cf) = if o.left_male { (p.left, p.right, p.cover_left, p.cover_right) } else { (p.right, p.left, p.cover_right, p.cover_left) };
@@ -369,12 +396,16 @@ pub fn run(o: &Options) -> Result<(), String> {
             vec![("male", male.iter().map(track::bbx_xys).collect()), ("female", female.iter().map(track::bbx_xys).collect())]
         } else {
             let main = step("追蹤主要人物", || track::single(&dets, info.width as usize, info.height as usize))?;
-            vec![("single", main.iter().map(track::bbx_xys).collect())]
+            let r = vec![("single", main.iter().map(track::bbx_xys).collect())];
+            main_xyxy = main;
+            r
         };
         let boxes: Vec<Vec<[f64; 3]>> = roles.iter().map(|r| r.1.clone()).collect();
         if o.method == Method::Flowhmr {
             let cam_r = if o.static_cam { vec![crate::geom::I3; n] } else { step("估計鏡頭轉動", || camera_rotation(o, &info, n))? };
-            let feature = step("影像特徵（SAM 3D Body）", || sam3d_tokens(o, n))?;
+            let flat: Vec<f32> = main_xyxy.iter().flatten().copied().collect();
+            write_npz(&work.join("boxes.npz"), &[("boxes", Out::F32(&flat, vec![n, 4]))])?;
+            let feature = step("影像特徵（SAM 3D Body）", || sam3d_tokens(o, &dev, &info, &main_xyxy))?;
             let started = Instant::now();
             let output = step("推論 3D 動作（FlowHMR）", || {
                 let net = flowhmr::Network::load(&o.models.cached("flowhmr.safetensors"), &dev)?;

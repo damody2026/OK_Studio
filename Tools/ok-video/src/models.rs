@@ -11,11 +11,15 @@ pub const SOURCES: [(&str, &str, &str); 4] = [
     ("hmr2/epoch=10-step=25000.ckpt", "hmr2.safetensors", "state_dict"),
     ("gvhmr/gvhmr_siga24_release.ckpt", "gvhmr.safetensors", "state_dict"),
 ];
-/// FlowHMR (`--method flowhmr`): the person detector is shared, the denoiser replaces ViTPose/HMR2/GVHMR.
-/// https://huggingface.co/fafsaf1/flowhmr-0.46B (flowhmr_latest; the weights are non-commercial).
-pub const FLOWHMR_SOURCES: [(&str, &str, &str); 2] = [
+/// FlowHMR (`--method flowhmr`): the person detector is shared, SAM 3D Body supplies the image
+/// features and the denoiser replaces ViTPose/HMR2/GVHMR.
+/// https://huggingface.co/fafsaf1/flowhmr-0.46B (flowhmr_latest; the weights are non-commercial),
+/// https://huggingface.co/facebook/sam-3d-body-dinov3 (gated; SAM License).
+pub const FLOWHMR_SOURCES: [(&str, &str, &str); 4] = [
     ("yolo/yolov8x.pt", "yolov8x.safetensors", "model"),
     ("flowhmr/flowhmr_latest.ckpt", "flowhmr.safetensors", "model_state_dict"),
+    ("sam3d_body/model.ckpt", "sam3d_body.safetensors", ""),
+    ("sam3d_body/assets/mhr_model.pt", "mhr.safetensors", ""),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -119,7 +123,7 @@ impl Paths {
         if !missing.is_empty() {
             let what = match method {
                 Method::Gvhmr => "GVHMR 的 checkpoints（gvhmr、hmr2、vitpose、yolo）",
-                Method::Flowhmr => "FlowHMR 的 flowhmr/flowhmr_latest.ckpt（https://huggingface.co/fafsaf1/flowhmr-0.46B）、yolo/yolov8x.pt",
+                Method::Flowhmr => "FlowHMR 的 flowhmr/flowhmr_latest.ckpt（https://huggingface.co/fafsaf1/flowhmr-0.46B）、SAM 3D Body 的 sam3d_body/model.ckpt 與 sam3d_body/assets/mhr_model.pt（https://huggingface.co/facebook/sam-3d-body-dinov3，需申請）、yolo/yolov8x.pt",
             };
             return Err(format!(
                 "找不到模型檔：{}。請把 {what} 與 SMPL-X（body_models/smplx/SMPLX_NEUTRAL.npz）放在 {}，見 Docs/VIDEO_MOTION.md",
