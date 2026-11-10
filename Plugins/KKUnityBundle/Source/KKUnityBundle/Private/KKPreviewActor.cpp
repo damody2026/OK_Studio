@@ -10340,7 +10340,7 @@ bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& In
 
 // Her thighs and buttocks jiggle behind her legs (user, 2026-11-10: ref/zzz_thigh_jiggle.md): six rotation springs a
 // side worked out from her body (thigh_jiggle), drawn as their own morph set of her body so the belly wrap keeps its own.
-static TAutoConsoleVariable<float> CVarOkThighJiggle(TEXT("ok.ThighJiggle"),1.f,TEXT("Her thighs' and buttocks' jiggle in the paired playback: scales the springs' swing limits (1 the reference's, 0 off)"));
+static TAutoConsoleVariable<float> CVarOkThighJiggle(TEXT("ok.ThighJiggle"),2.f,TEXT("Her thighs' and buttocks' jiggle in the paired playback: scales the swing (1 the reference's, 2 the default, 0 off)"));
 static constexpr int32 GOkThighJiggleSet=0x4F4B544A; // 'OKTJ'
 // ok.ThighJiggleStats: the largest move (mm) and the most vertices moved in one frame since the last call.
 static float GThighJiggleMost=0.f;static int32 GThighJiggleVerts=0,GThighJiggleFrames=0;

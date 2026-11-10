@@ -156,7 +156,7 @@ impl ThighJiggle {
             let inv = mat_inv_pub(&s);
             let rest = unit(sub(island.tail, island.head));
             let mut now = unit(vector(&inv, sub(spring.q, head)));
-            let max = (spec.max_deg * gain).to_radians();
+            let max = spec.max_deg.to_radians();
             let angle = dot(rest, now).clamp(-1., 1.).acos();
             if angle > max {
                 let side = unit(sub(now, scale(rest, dot(now, rest))));
@@ -165,6 +165,10 @@ impl ThighJiggle {
                 spring.q = add(head, scale(unit(vector(&s, now)), TAIL_M));
             }
             if angle < 1e-5 { continue; }
+            // `gain` scales the swing shown (the spring keeps the reference's limits).
+            let shown = angle.min(max) * gain;
+            let side = unit(sub(now, scale(rest, dot(now, rest))));
+            let now = add(scale(rest, shown.cos()), scale(side, shown.sin()));
             let r = turn(rest, now);
             for (j, wgt) in &island.verts {
                 let v = part.rest_positions[*j as usize];
@@ -179,7 +183,7 @@ impl ThighJiggle {
 }
 
 /// Her thighs' and buttocks' jiggle `dt` on (0: as it was): the session part of her body and its vertices' moves, or
-/// None (no female body, `gain` 0). `gain` scales the swing limits (1: the reference's).
+/// None (no female body, `gain` 0). `gain` scales the swing (1: the reference's).
 pub fn thigh_jiggle(session: &OkSession, dt: f32, gain: f32) -> Option<(usize, Vec<(u32, [f32; 3])>)> {
     let key = session as *const OkSession as usize;
     let mut all = ALL.lock().unwrap();
