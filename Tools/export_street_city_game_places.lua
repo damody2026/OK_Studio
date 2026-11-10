@@ -124,6 +124,33 @@ for _, p in ipairs(places) do
   end
 end
 if moved_doors > 0 then print(('%d doors moved out of props'):format(moved_doors)) end
+-- A spot taken from a room's middle (its source is the room id, 'M1-0901 ...') can land in the furniture: the department
+-- store's 'food' was in the ramen shop's counter seats, and a walk there from the 9F lift found no way (R6-197, 11-10). Such an
+-- anchor moves to the nearest spot clear of the props round it, on its own floor.
+do
+  local moved = 0
+  for _, p in ipairs(places) do
+    for _, an in ipairs(p.anchors or {}) do
+      local q = an.pos
+      local hit = (an.source or ''):match('^%w+%-%d%d%d%d') and q and solid_at(q[1], q[2], q[3], 35)
+      if hit then
+        local best, far
+        for r = 50, 400, 25 do
+          for s = 0, 31 do
+            local t = s / 32 * 2 * math.pi; local x, y = q[1] + math.cos(t) * r, q[2] + math.sin(t) * r
+            if not solid_at(x, y, q[3], 35) then local d = (x - q[1]) ^ 2 + (y - q[2]) ^ 2; if not far or d < far then best, far = { x, y, q[3] }, d end end
+          end
+          if best then break end
+        end
+        if best then
+          print(('anchor: %s %s moved out of %s, %.0f,%.0f -> %.0f,%.0f'):format(p.id, an.name, hit.label, q[1], q[2], best[1], best[2]))
+          an.pos = best; moved = moved + 1
+        else problem(p.id .. ' ' .. an.name .. ': inside ' .. hit.label .. ' and no clear spot within 4 m') end
+      end
+    end
+  end
+  if moved > 0 then print(('%d room anchors moved out of props'):format(moved)) end
+end
 -- A shop upstairs in the mall took the street entrance below it for its door, the same spot on every floor; on the 2F, 8F and
 -- 10F that spot is over the atrium, with no floor under it (the game's places_check, 11-09), and a walk to the lingerie
 -- shop, the arcade or the observation cafe ended in the air. Its door is its own spot on its floor nearest that entrance:
@@ -168,7 +195,8 @@ do
     local mirrored = 0
     for _, p in ipairs(places) do
       local d = p.door
-      if d and #d == 3 and d[3] < 1450 then
+      -- door_measured: chosen and walked through (build_street_city_places.lua ENTRY), not a mirrored entry-A
+      if d and #d == 3 and d[3] < 1450 and not p.door_measured then
         for _, a in ipairs(floors) do
           if math.abs(d[1] - a.c[1]) <= a.e[1] + 20 and math.abs(d[2] - a.c[2]) <= a.e[2] + 20 then
             local t = math.rad(a.yaw or 0)

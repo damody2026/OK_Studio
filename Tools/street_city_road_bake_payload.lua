@@ -149,7 +149,12 @@ def motel_world_road_bake():
   dp=p.get('door')
   if not dp:continue
   di=min((i for i in range(len(nodes)) if i not in gone and adj[i] and abs(nodes[i][0]-dp[0])<60 and abs(nodes[i][1]-dp[1])<60 and abs(nodes[i][2]-dp[2])<150),key=lambda i:math.dist(nodes[i],dp),default=None)
-  if di is None:continue
+  # a door moved since the game's own bake (the onsen's north door, 11-10) has no point yet: one on the ground there
+  if di is None:
+   g=ground(dp[0],dp[1],dp[2])
+   if g is None or abs(g-dp[2])>STEP or body(V(dp[0],dp[1],g+60),V(dp[0],dp[1],g+61)):continue
+   nodes.append([float(dp[0]),float(dp[1]),g]);di=len(nodes)-1;new=True
+  else:new=False
   for _ in range(DOOR_N):
    s=(round(nodes[di][0]/100),round(nodes[di][1]/100));seen={s:nodes[di][2]};par={};far={s:0};q=collections.deque([s]);end=time.time()+DOOR_S
    while q and time.time()<end:
@@ -166,7 +171,9 @@ def motel_world_road_bake():
      if j==di or abs(nodes[j][2]-seen[c])>STEP:continue
      save=graph.get(j,1e18)-w
      if save>max(2000,w) and (not best or save>best[0]):best=(save,c,j)
-   if not best:break
+   if not best:
+    if new and not adj[di]:nodes.pop()  # nowhere to tie it to: no lone point the game could snap to
+    break
    w=[];e=best[1]
    while e in par:w.append(e);e=par[e]
    w=w[::-1];last=di

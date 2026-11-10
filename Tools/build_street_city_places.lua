@@ -190,12 +190,15 @@ for n = 1, 96 do
 end
 local motel_floors = { H1 = { [2] = true, [3] = true, [4] = true, [5] = true } } -- replaced by the motel suites
 local entry = {}  -- building -> street entrance (world)
+-- the entrance used where entry-A opens on to a wall: the onsen S19's west door is 1 m from the side of S48, and a walk from it
+-- went nowhere; its north door is the way out (walk probe, places-v1/walk-probe.json, 11-10)
+local ENTRY = { S19 = 'S19-entry-front-N' }
 local inst = {}   -- every anchor-kind instance: {b, floor, owner, kind, pos, yaw}
 for _, rep in ipairs(reports) do
   local b = rep[1]
   if origin[b] then
     local R = load(rep[2])
-    for _, d in ipairs(R.doors or {}) do if d.id == b .. '-entry-A' then entry[b] = BW(b, d.position_m[1], d.position_m[2], 0) end end
+    for _, d in ipairs(R.doors or {}) do if d.id == (ENTRY[b] or (b .. '-entry-A')) then entry[b] = BW(b, d.position_m[1], d.position_m[2], 0) end end
     for _, i in ipairs(R.instances or {}) do
       if not entry[b] and i.asset == 'entryframe' and i.position_m then entry[b] = BW(b, i.position_m[1], i.position_m[2], 0) end
       local kind = ANCHOR[i.asset]
@@ -521,6 +524,8 @@ do
     end
   end
 end
+-- a door from ENTRY was walked through (walk probe): the exporter leaves it where it is
+for _, g in ipairs(G) do if g.building and ENTRY[g.building] and g.door == entry[g.building] then g.door_measured = true end end
 -- new-game spawn (c-conquest Q16): 3 m out from the boys' dorm entrance, away from the building, facing the door
 for _, g in ipairs(G) do
   local whole = g.id == 'boys_dorm' and g.door and bbox(g.building)
