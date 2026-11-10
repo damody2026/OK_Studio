@@ -10326,7 +10326,9 @@ bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& In
         TSharedPtr<FExternalMorphSet> Set=MakeShared<FExternalMorphSet>();Set->Name=FName(bKeep?TEXT("OKBellyWrap"):TEXT("OKWrapSet"));
         const FMorphTargetLODModel* Models[1]={&Model};
         Set->MorphBuffers.InitMorphResourcesStreaming(GMaxRHIShaderPlatform,Render->LODRenderData[0].RenderSections,MakeArrayView(Models,1),NumVerts,20.f); // error tolerance in micrometres (0.0001 clamped every move to 2.7 cm)
-        if(!Set->MorphBuffers.IsMorphCPUDataValid()||Set->MorphBuffers.GetNumMorphs()<1)continue;
+        // Every move under the error tolerance (her thighs' jiggle settling) compresses to no batches, which the render
+        // thread's InitRHI asserts on (NumTotalBatches > 0): nothing to draw then.
+        if(!Set->MorphBuffers.IsMorphCPUDataValid()||Set->MorphBuffers.GetNumMorphs()<1||Set->MorphBuffers.GetNumBatches()==0){Mesh->RefreshExternalMorphTargetWeights();continue;}
         BeginInitResource(&Set->MorphBuffers);
         Mesh->AddExternalMorphSet(0,WrapSetId,Set);if(bKeep)GOkWrapMorphDeltas.Add(Mesh,MoveTemp(Model.Vertices));
         Mesh->RefreshExternalMorphTargetWeights(false);
