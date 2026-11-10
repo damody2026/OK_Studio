@@ -1396,15 +1396,18 @@ unsafe fn animation_pair_frame_impl(female:*mut OkSession,male:*mut OkSession,ti
         // feet bend (one-on-one fitting of different heights keeps the taller one's feet on the floor).
         // His FK (his penis root turned toward her belly, belly_bulge::aim_penis) and hers (her body trembling as she comes,
         // OKHScene) over what the contacts set.
-        for s in [&mut *female,&mut *male] {
-            let Some(sk)=s.body_skel.as_mut() else{continue;};
-            let fk=!s.user_fk.is_empty()&&crate::session::apply_user_fk_locals(sk,&s.user_fk,&mut s.user_fk_ids);
-            if crate::belly_bulge::apply_penis_size(sk,&mut s.penis_size)||fk {sk.rebuild_worlds();}
-        }
-        for s in [&mut *female,&mut *male] {
-            if s.studio_ik.is_empty() {continue;}
-            if let Some(sk)=s.body_skel.as_mut() {crate::session::apply_studio_ik(sk,&mut s.studio_ik_solver,&s.studio_ik,&s.studio_ik_rotations,&s.studio_ik_weights);}
-        }
+        // Each on its own skeleton: both at once (0.3 ms of the frame's longest path one after the other, trace 2026-11-10).
+        let finish=|s:&mut OkSession|{
+            if let Some(sk)=s.body_skel.as_mut() {
+                let fk=!s.user_fk.is_empty()&&crate::session::apply_user_fk_locals(sk,&s.user_fk,&mut s.user_fk_ids);
+                if crate::belly_bulge::apply_penis_size(sk,&mut s.penis_size)||fk {sk.rebuild_worlds();}
+            }
+            if !s.studio_ik.is_empty() {
+                if let Some(sk)=s.body_skel.as_mut() {crate::session::apply_studio_ik(sk,&mut s.studio_ik_solver,&s.studio_ik,&s.studio_ik_rotations,&s.studio_ik_weights);}
+            }
+        };
+        if std::env::var("OK_PAIR_FINISH_SERIAL").ok().as_deref()==Some("1") {finish(&mut *female);finish(&mut *male);}
+        else {crate::session::native_parallel_work(||rayon::join(||finish(&mut *female),||finish(&mut *male)));}
         let contacted=start.elapsed();
         // Contact solving is a barrier: both sampled actors must be visible
         // to the coupled solver before either actor advances private physics.
@@ -1412,6 +1415,11 @@ unsafe fn animation_pair_frame_impl(female:*mut OkSession,male:*mut OkSession,ti
             ||female.finish_paired_dynamics_filtered(dt,observer,excluded.0),||rayon::join(||male.finish_paired_dynamics_filtered(dt,observer.map(|o|PrivateSkinObserver{role:1,..o}),excluded.1),
                 ||if let Some(t)=third.as_deref_mut(){t.finish_paired_dynamics_filtered(dt,None,&[])})));}
         if profile{eprintln!("OK animation pair validate_ms={:.3} sample_ms={:.3} contacts_ms={:.3} dynamics_ms={:.3}",validated.as_secs_f64()*1000.,(sampled-validated).as_secs_f64()*1000.,(contacted-sampled).as_secs_f64()*1000.,(start.elapsed()-contacted).as_secs_f64()*1000.);}
+        // OKAnim.Profile: the whole solve on its own thread, its sampling and contacts, its dynamics.
+        let total=start.elapsed();
+        crate::okanim::prof::add_us(32,total.as_micros() as u64);
+        crate::okanim::prof::add_us(33,(contacted-validated).as_micros() as u64);
+        crate::okanim::prof::add_us(34,(total-contacted).as_micros() as u64);
         Ok::<usize,String>(contacts)
         };
         let _trace=crate::native_profile::Scope::new(24);

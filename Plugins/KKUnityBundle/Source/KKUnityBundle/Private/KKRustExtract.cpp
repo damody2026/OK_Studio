@@ -40,7 +40,8 @@ const ANSICHAR* const NativeTraceNames[]={"KK_NativeValidate","KK_NativeSampleWa
     "KK_NativePalettePrepare","KK_NativePaletteRead","KK_NativePalettePublish",
     "KK_NativeMotionPlan","KK_NativeMotionLeaves","KK_NativeMotionBlend","KK_NativeLeafSnapshot","KK_NativeLeafChannels","KK_NativeChannelLookup","KK_NativeChannelSample",
     "KK_NativeAccFrames","KK_NativeAccRadii","KK_NativeAccLeaders","KK_NativeCoverField","KK_NativeCoverPush","KK_NativeCoverLift","KK_NativeCoverPushFrom",
-    "KK_NativeSkinNow","KK_NativeSkinGrid","KK_NativeSkinQueries","KK_NativeKeepCover","KK_NativeBulgePast","KK_NativeBackExit"};
+    "KK_NativeSkinNow","KK_NativeSkinGrid","KK_NativeSkinQueries","KK_NativeKeepCover","KK_NativeBulgePast","KK_NativeBackExit",
+    "KK_NativeLiftRise","KK_NativeLiftClear","KK_NativeLiftRings","KK_NativePushAt","KK_NativePushRings","KK_NativePushFlip","KK_NativeClothesStep","KK_NativePxBatch"};
 std::atomic<uint32> NativeTraceSpecs[UE_ARRAY_COUNT(NativeTraceNames)];
 // Each event's spec is sent the first time it runs with the CPU channel on, as UE's own scopes do: sent at startup (the
 // channel still off until Trace.File / -Trace) it was dropped, and Insights then had no name for any native event.
@@ -1649,6 +1650,16 @@ bool FOkSession::AbsentCardMods(const FString& Card,TArray<FString>& Absent,FStr
  if(Result!=0){Error=Text;return false;}
  Text.ParseIntoArrayLines(Absent);return true;
 }
+// The native library reads its OK_* switches from the process environment as it runs: this flips one in a running game
+// (in-process A/B of a switch, without restarting between the two halves).
+static FAutoConsoleCommand GOKEnvCommand(TEXT("OK.Env"),
+ TEXT("OK.Env <NAME> [value]: sets (no value: clears) an environment variable of this process; prints it when only the name is given with '?'."),
+ FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args){
+  if(Args.Num()<1){UE_LOG(LogTemp,Error,TEXT("OK.Env: name required"));return;}
+  if(Args.Num()>1&&Args[1]==TEXT("?")){UE_LOG(LogTemp,Display,TEXT("OK.Env %s=%s"),*Args[0],*FPlatformMisc::GetEnvironmentVariable(*Args[0]));return;}
+  FPlatformMisc::SetEnvironmentVar(*Args[0],Args.Num()>1?*Args[1]:nullptr);
+  UE_LOG(LogTemp,Display,TEXT("OK.Env %s=%s"),*Args[0],Args.Num()>1?*Args[1]:TEXT("(cleared)"));
+ }));
 static FAutoConsoleCommand GOKMakeOkCardCommand(TEXT("OK.MakeOkCard"),
  TEXT("OK.MakeOkCard <card.png> [out.png]: converts an original KKS card (with its zipmods from the KKS installation) or an edited OK card into an OK card for the OK base library; default output <card>.ok.png."),
  FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args){

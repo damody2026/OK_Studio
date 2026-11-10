@@ -262,7 +262,7 @@ impl CoverField {
         let _trace = crate::native_profile::Scope::new(50);
         // Each vertex on its own, on the pool: one garment was 1 ms on the frame's longest path (trace 2026-11-08).
         use rayon::prelude::*;
-        let t_at = Timed(std::time::Instant::now(), 29);let mut push: Vec<[f32; 3]> = positions.par_iter().map(|&c| self.push_at(keep, c)).collect();drop(t_at);let t_rings = Timed(std::time::Instant::now(), 30);
+        let at_trace = crate::native_profile::Scope::new(60);let t_at = Timed(std::time::Instant::now(), 29);let mut push: Vec<[f32; 3]> = positions.par_iter().map(|&c| self.push_at(keep, c)).collect();drop(t_at);drop(at_trace);let rings_trace = crate::native_profile::Scope::new(61);let t_rings = Timed(std::time::Instant::now(), 30);
         if !push.iter().any(|v| dot(*v, *v) > 0.) { return None; }
         // Only the cloth round what moved: six rings out from it (the push reaches only `REACH_M` across the skin itself).
         // Where each ring vertex is in the ring: a dense index (a hash map of them each ring was most of this).
@@ -288,7 +288,7 @@ impl CoverField {
             }
             for &j in &near { if let Some(s) = slot.get_mut(j as usize) { *s = u32::MAX; } }
         }
-        drop(t_rings);let _flip = Timed(std::time::Instant::now(), 31);
+        drop(t_rings);drop(rings_trace);let _flip_trace = crate::native_profile::Scope::new(62);let _flip = Timed(std::time::Instant::now(), 31);
         // A triangle of cloth the pushes turn over (her crotch, where the skin round him moves apart) showed its black inside:
         // its corners are pushed half as far, until none turns over. Halving never pushes a vertex that was not: the
         // triangles that can turn are found once.
@@ -440,24 +440,36 @@ impl Lift {
         if self.far(q, up) { return 0.; }
         for &i in &self.grid[(k[0] - self.lo[0]) as usize * h + (k[1] - self.lo[1]) as usize] {
             let (s, top) = self.skin[i as usize];
-            let (x, y) = (q[0] - s[0], q[1] - s[1]);let across = (x * x + y * y).sqrt();
-            if across >= LIFT_REACH_M { continue; }
+            // Its most is `room` (the falloff is at most 1): none that cannot pass the best so far, and none out of reach,
+            // is weighed (the same best; most of the list is either).
+            let room = top + keep - up;if room <= best { continue; }
+            let (x, y) = (q[0] - s[0], q[1] - s[1]);let d2 = x * x + y * y;
+            if d2 >= LIFT_REACH_M * LIFT_REACH_M { continue; }let across = d2.sqrt();
             let t = ((LIFT_REACH_M - across) / (LIFT_REACH_M - FULL_M)).min(1.);
-            best = best.max((top + keep - up) * t * t * (3. - 2. * t));
+            best = best.max(room * t * t * (3. - 2. * t));
         }
         best
     }
 
     /// How each of `positions` moves, evened over the cloth round it (a tent, not a spike). None when none does.
     fn moves(&self, keep: f32, positions: &[[f32; 3]], nbr: &[Vec<u32>], indices: &[u32]) -> Option<Vec<[f32; 3]>> {
-        let mut rise: Vec<f32> = positions.iter().map(|&c| self.rise(keep, c)).collect();
-        self.clear(keep, positions, &mut rise, indices);
+        // Each vertex on its own, on the pool; the rings grown by marking, as pushes_from's (sorting each ring with its
+        // neighbours was most of the lift: 1 ms of a garment on the pair solve's longest path, trace 2026-11-10).
+        use rayon::prelude::*;
+        let mut rise: Vec<f32> = { let _trace = crate::native_profile::Scope::new(57); positions.par_iter().map(|&c| self.rise(keep, c)).collect() };
+        { let _trace = crate::native_profile::Scope::new(58); self.clear(keep, positions, &mut rise, indices); }
+        let _rings_trace = crate::native_profile::Scope::new(59);
         let mut near: Vec<u32> = (0..rise.len() as u32).filter(|&j| rise[j as usize] > 0.).collect();
         if near.is_empty() { return None; }
+        let mut taken = vec![false; rise.len()];
+        for &j in &near { taken[j as usize] = true; }
+        let mut was = rise.clone();
         for _ in 0..6 {
-            let mut ring: Vec<u32> = near.iter().flat_map(|&j| nbr.get(j as usize).into_iter().flatten().copied()).chain(near.iter().copied()).collect();
-            ring.sort_unstable();ring.dedup();near = ring;
-            let was = rise.clone();
+            for i in 0..near.len() {
+                let j = near[i] as usize;
+                for &k in nbr.get(j).into_iter().flatten() { if let Some(t) = taken.get_mut(k as usize).filter(|t| !**t) { *t = true;near.push(k); } }
+            }
+            was.copy_from_slice(&rise);
             for &j in &near {
                 let Some(list) = nbr.get(j as usize).filter(|l| !l.is_empty()) else { continue; };
                 let avg = list.iter().map(|&k| was[k as usize]).sum::<f32>() * 0.8 / list.len() as f32;

@@ -10,6 +10,7 @@
 #include "Async/Mutex.h"
 #include "Async/UniqueLock.h"
 #include "Algo/StableSort.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 
 // PhysX headers use member functions named check()/verify(), which UE defines as macros.
 #pragma push_macro("check")
@@ -2253,10 +2254,13 @@ namespace OKPhysXSecondary
 		float Dt = 0.f;
 		uint64 Mark = FPlatformTime::Cycles64();
 		auto Lap = [&Mark](int32 Phase) { const uint64 Now = FPlatformTime::Cycles64(); GPhaseCycles[Phase] += int64(Now - Mark); Mark = Now; };
-		for (FSolveJob& J : Jobs)
 		{
-			J.bReady = PrepareJob(J, Batch, true);
-			if (J.bReady) { Substeps = FMath::Max(Substeps, J.Substeps); Dt = FMath::Max(Dt, J.Dt); }
+			TRACE_CPUPROFILER_EVENT_SCOPE(OKPx_Prepare);
+			for (FSolveJob& J : Jobs)
+			{
+				J.bReady = PrepareJob(J, Batch, true);
+				if (J.bReady) { Substeps = FMath::Max(Substeps, J.Substeps); Dt = FMath::Max(Dt, J.Dt); }
+			}
 		}
 		if (Dt > 0.f)
 		{
@@ -2268,15 +2272,16 @@ namespace OKPhysXSecondary
 			{
 				const float Alpha = float(Step + 1) / float(Substeps);
 				Lap(0);
-				for (FSolveJob& J : Jobs) if (J.bReady) BeforeSubstep(J, Alpha);
-				for (PxScene* Scene : Scenes) { Scene->simulate(Sub); Scene->fetchResults(true); }
+				{ TRACE_CPUPROFILER_EVENT_SCOPE(OKPx_Before); for (FSolveJob& J : Jobs) if (J.bReady) BeforeSubstep(J, Alpha); }
+				{ TRACE_CPUPROFILER_EVENT_SCOPE(OKPx_Simulate); for (PxScene* Scene : Scenes) { Scene->simulate(Sub); Scene->fetchResults(true); } }
 				Lap(1);
-				for (FSolveJob& J : Jobs) if (J.bReady) AfterSubstep(J, Alpha);
+				{ TRACE_CPUPROFILER_EVENT_SCOPE(OKPx_After); for (FSolveJob& J : Jobs) if (J.bReady) AfterSubstep(J, Alpha); }
 				Lap(2);
 			}
 		}
 		Lap(0);
 		int32 Solved = 0;
+		TRACE_CPUPROFILER_EVENT_SCOPE(OKPx_Finish);
 		for (FSolveJob& J : Jobs) if (J.bReady) { FinishJob(J, true); ++Solved; }
 		Lap(3);
 		return Solved;

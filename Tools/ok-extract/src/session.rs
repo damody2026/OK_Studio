@@ -76,6 +76,19 @@ impl AccessoryFramePolicy {
 /// Immutable, scoped to one solved body pose. Missing names are cached too;
 /// private renderer fallback decisions still belong to effective_worlds.
 struct AssignedWorldFrame { worlds:HashMap<String,Option<crate::pose::Mat4>> }
+
+/// Which of her accessories a pass solves (OkSession::update_dynamic_accessories_pass).
+#[derive(Clone,Copy)]
+enum AccPass<'a> { All, Early(&'a [bool]), Late(&'a [bool]) }
+impl AccPass<'_> {
+    fn wants(&self,index:usize)->bool {
+        match self { AccPass::All=>true, AccPass::Early(s)=>s.get(index).copied().unwrap_or(false), AccPass::Late(s)=>!s.get(index).copied().unwrap_or(false) }
+    }
+    fn early(&self)->bool {matches!(self,AccPass::Early(_))}
+}
+/// The body bones her body proxy for PhysX is made of (dbone::body_proxy_capsules).
+const PROXY_BONES:[&str;16]=["cf_j_arm00_l","cf_j_forearm01_l","cf_j_hand_l","cf_j_thigh00_l","cf_j_leg01_l","cf_j_leg03_l",
+    "cf_j_arm00_r","cf_j_forearm01_r","cf_j_hand_r","cf_j_thigh00_r","cf_j_leg01_r","cf_j_leg03_r","cf_j_spine01","cf_j_spine03","cf_j_neck","cf_j_head"];
 impl AssignedWorldFrame {
     fn prepare(body:Option<&Skeleton>,parts:&[SessionPart],coordinated:bool)->Option<Self> {
         // Exact oracle passes, but normal-RHI ABA did not improve frame time.
@@ -2230,32 +2243,103 @@ impl OkSession {
         }
     }
     fn update_dynamic_accessories_filtered(&mut self,dt:f32,palette_only:bool,parallel:bool,observer:Option<crate::ffi::PrivateSkinObserver>,excluded:&[usize]) {
+        self.update_dynamic_accessories_pass(dt,palette_only,parallel,observer,excluded,AccPass::All,None);
+    }
+
+    /// Her accessories that read none of the bones her clothes chains move (those particles and all under them): what
+    /// they do this frame does not wait on her clothes, so they are solved while those run (finish_paired_dynamics_filtered).
+    /// None: none of them, or her colliders or her body proxy hang on such a bone (they would differ). OK_ACC_EARLY=0: none.
+    fn early_accessories(&self,dt:f32,flags:crate::dbone::game_colliders::Flags)->Option<Vec<bool>> {
+        if !(dt>0.)||std::env::var("OK_ACC_EARLY").ok().as_deref()==Some("0")||std::env::var("OK_NODB").is_ok()
+            ||std::env::var("OK_NO_CLOTH_DYNAMICS").ok().as_deref()==Some("1")||self.clothes_dynamics.is_empty() {return None;}
+        let (_,state)=self.clothes_dynamic_runtime.as_ref()?;
+        let body=self.body_skel.as_ref()?;
+        let mut children:HashMap<i64,Vec<i64>>=HashMap::new();
+        for (id,tf) in &body.tfs {if let Some(p)=tf.parent.filter(|p|p!=id) {children.entry(p).or_default().push(*id);}}
+        let mut moved:std::collections::HashSet<i64>=std::collections::HashSet::new();
+        let mut stack=state.particle_ids();
+        while let Some(id)=stack.pop() {if moved.insert(id) {if let Some(c)=children.get(&id) {stack.extend(c.iter().copied());}}}
+        if moved.is_empty() {return None;}
+        let names:std::collections::HashSet<String>=moved.iter().filter_map(|id|body.tfs.get(id)).map(|tf|tf.name.to_ascii_lowercase()).collect();
+        let hit=|n:&str|names.contains(&n.to_ascii_lowercase());
+        if PROXY_BONES.iter().any(|n|hit(n)) {return None;}
+        if crate::dbone::CharacterColliderFrame::new(body,&self.body_colliders,flags).bone_ids().iter().any(|id|moved.contains(id)) {return None;}
+        let hidden=|index:usize|self.hidden_parts.get(index).copied().unwrap_or(false);
+        // Why each is not early (None: it is).
+        let why:Vec<Option<String>>=self.parts.iter().enumerate().map(|(index,part)|{
+            let Some(r)=&part.runtime_accessory else {return Some("no runtime".into());};
+            if r.coordinated {return Some("coordinated".into());}
+            if hidden(index)||r.state.is_none()||r.source.deferred_dbones.is_none() {return Some("hidden or unsettled".into());}
+            if hit(&r.parent_key)||hit("cf_s_head") {return Some(format!("parent {}",r.parent_key));}
+            if let Some((_,n))=r.body_bridges.iter().find(|(_,n)|hit(n)) {return Some(format!("bridge {n}"));}
+            // Only the slots its vertices are weighted to (a garment's rig lists her skirt bones it never uses).
+            if r.copy_weights_body {
+                let Some(smr)=r.source.smr_skel.as_ref() else {return Some("no rig".into());};
+                let mut used=vec![false;smr.names.len()];
+                for (b,w) in r.source.bone_idx.iter().zip(&r.source.weights) {for (b,w) in b.iter().zip(w) {if *w>0. {let Some(u)=used.get_mut(*b as usize) else {return Some("slot out of rig".into());};*u=true;}}}
+                let slot_hit=|names:&[String]|if names.len()!=used.len() {Some("rig size".to_string())} else {names.iter().zip(&used).find(|(n,u)|**u&&hit(n)).map(|(n,_)|format!("slot {n}"))};
+                if let Some(w)=r.state.as_ref().and_then(|s|slot_hit(&s.skel.names)).or_else(||slot_hit(&smr.names)) {return Some(w);}
+            }
+            None
+        }).collect();
+        let early:Vec<bool>=why.iter().map(Option::is_none).collect();
+        if let Ok(path)=std::env::var("OK_ACC_EARLY_LOG") {
+            static LOGGED:std::sync::Mutex<Vec<usize>>=std::sync::Mutex::new(Vec::new());
+            let key=self as *const Self as usize;
+            if !LOGGED.lock().unwrap().contains(&key) {LOGGED.lock().unwrap().push(key);
+                use std::io::Write;
+                if let Ok(mut f)=std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                    for (index,part) in self.parts.iter().enumerate().filter(|(_,p)|p.runtime_accessory.is_some()) {
+                        let _=writeln!(f,"session={key:x} index={index} early={} role={} name={} why={}",early[index],part.role,part.name,why[index].as_deref().unwrap_or("-"));
+                    }
+                }
+            }
+        }
+        early.iter().any(|e|*e).then_some(early)
+    }
+
+    /// Her clothes chains one step on `pose` (her body as it is before they move it), without writing it back.
+    fn step_clothes_alone(state:&mut crate::dbone::AttachedDynamicSet,pose:&Skeleton,colliders:&crate::dbone::BodyColliderSet,
+        flags:crate::dbone::game_colliders::Flags,dt:f32,group:u64,physx:bool,solver:crate::px::Solver) {
+        use crate::okanim::prof;
+        let _group=crate::px::enter_group(group,physx);
+        let _solver=crate::px::enter_solver(solver);
+        let t=std::time::Instant::now();state.sync_shared_pose(pose);prof::add(22,t);
+        let t=std::time::Instant::now();state.configure_shared_clothes_colliders(pose,colliders,flags);prof::add(23,t);
+        let t=std::time::Instant::now();state.step_on_animated_pose(dt);prof::add(24,t);
+    }
+
+    /// One pass over her accessories: all of them, the ones `early_accessories` chose (while her clothes chains run), or
+    /// the rest after them.
+    fn update_dynamic_accessories_pass(&mut self,dt:f32,palette_only:bool,parallel:bool,observer:Option<crate::ffi::PrivateSkinObserver>,excluded:&[usize],pass:AccPass,lent:Option<(&Skeleton,&crate::dbone::BodyColliderSet)>) {
         let t_prepare=std::time::Instant::now();
         let policy=AccessoryFramePolicy::read();
         let studio = crate::anim::clip_expression_bone_mode(&self.game_root, &self.anim_clip, self.anim_scene_mode);
         let flags = self.collider_settings.resolve(studio, self.collider_overrides);
         let group = self as *const Self as u64;
         let physx = self.physx_secondary;
-        let body = self.body_skel.as_ref();
-        if let Some(sk) = body { let _group = crate::px::enter_group(group, physx); crate::dbone::publish_body_proxy(group, sk, &self.cloth_thickness()); }
+        let body = lent.map(|l|l.0).or(self.body_skel.as_ref());let collider_set=lent.map_or(&self.body_colliders,|l|l.1);
+        // The early pass: published before her clothes chains ran (the same capsules: none of them moves).
+        if let Some(sk) = body.filter(|_|!pass.early()) { let _group = crate::px::enter_group(group, physx); crate::dbone::publish_body_proxy(group, sk, &self.cloth_thickness()); }
         let clothes_body=self.clothes_dynamic_runtime.as_ref().map(|(_,state)|&state.skel).or(body);
         let head = self.head_full_posed.as_ref().or(self.head_skel.as_ref());
         // Private rigs own independent particle histories. Prepare immutable
         // character colliders once, then solve each renderer on the pool.
         let needs_frame=|coordinated|self.parts.iter().any(|p|p.runtime_accessory.as_ref().is_some_and(|r|r.coordinated==coordinated&&r.source.deferred_dbones.as_ref().is_some_and(|d|!d.is_empty())));
         let frames_trace=crate::native_profile::Scope::new(44);
-        let body_frame=body.filter(|_|needs_frame(false)).map(|sk|crate::dbone::CharacterColliderFrame::new(sk,&self.body_colliders,flags));
-        let clothes_frame=clothes_body.filter(|_|needs_frame(true)).map(|sk|crate::dbone::CharacterColliderFrame::new(sk,&self.body_colliders,flags));
-        let colliders=&self.body_colliders;
+        let body_frame=body.filter(|_|needs_frame(false)).map(|sk|crate::dbone::CharacterColliderFrame::new(sk,collider_set,flags));
+        let clothes_frame=clothes_body.filter(|_|!pass.early()&&needs_frame(true)).map(|sk|crate::dbone::CharacterColliderFrame::new(sk,collider_set,flags));
+        let colliders=collider_set;
         // Body pose is immutable throughout the joined renderer pass. Palette-only
         // dynamics do not consume skin matrices and must not pay this preparation.
         let assigned_body=if palette_only{None}else{AssignedWorldFrame::prepare(body,&self.parts,false)};
-        let assigned_clothes=if palette_only{None}else{AssignedWorldFrame::prepare(clothes_body,&self.parts,true)};
+        let assigned_clothes=if palette_only||pass.early(){None}else{AssignedWorldFrame::prepare(clothes_body,&self.parts,true)};
         drop(frames_trace);
         // One accessory drawn by several renderers simulates the same bones once per renderer. Each measured the
         // mesh thickness of its own renderer only; with different radii against the partner's body the copies of a
         // strand parted and crossed each other (bangs "fighting"). Every copy uses the largest thickness of the bone.
-        {
+        // Done in the early pass for all of them, before any is solved.
+        if !matches!(pass,AccPass::Late(_)) {
             let _trace=crate::native_profile::Scope::new(45);
             let mut radii: HashMap<(String, String), f32> = HashMap::new();
             for runtime in self.parts.iter().filter_map(|p| p.runtime_accessory.as_ref()) {
@@ -2300,9 +2384,9 @@ impl OkSession {
         let t_parts=std::time::Instant::now();
         let skinned=std::sync::atomic::AtomicU64::new(0);
         // Her clothes kept over her skin while the H scene has it on (belly_bulge::CoverField).
-        let cover=match self.cover_ready.take(){Some(built)=>built,None=>{let _trace=crate::native_profile::Scope::new(47);let t=std::time::Instant::now();let f=crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body);if f.is_some(){crate::okanim::prof::add(26,t);}f}};let cover=&cover;
+        let cover_field=match self.cover_ready.take(){Some(built)=>built,None=>{let _trace=crate::native_profile::Scope::new(47);let t=std::time::Instant::now();let f=crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body);if f.is_some(){crate::okanim::prof::add(26,t);}f}};let cover=&cover_field;
         let update=|(index,part):(usize,&mut SessionPart)| {
-            if leader_of[index].is_some()||hidden(index) {return;}
+            if leader_of[index].is_some()||hidden(index)||!pass.wants(index) {return;}
             let Some(runtime) = &mut part.runtime_accessory else { return; };
             let _group = crate::px::enter_group(group, physx);
             // Hair and accessories are worn over the clothes: they collide with the clothed body surface. Garments
@@ -2348,6 +2432,8 @@ impl OkSession {
             order.sort_by_key(|(index,part)|(std::cmp::Reverse(part.rest_positions.len()),*index));
             native_parallel_work(||order.into_par_iter().with_max_len(1).for_each(update));
         } else {self.parts.iter_mut().enumerate().for_each(update);}
+        // The early pass leaves the followers and the cover field to the pass after her clothes.
+        if pass.early() {self.cover_ready=Some(cover_field);crate::okanim::prof::add(19,t_parts);return;}
         if leader_of.iter().any(Option::is_some) {
             // The leaders' solved locals, then the followers; one that cannot follow solves on its own.
             let mut solved:HashMap<usize,Vec<([f32;3],[f32;4])>>=HashMap::new();
@@ -2907,19 +2993,53 @@ impl OkSession {
         // Her clothes over her skin (belly_bulge::CoverField) is built while her clothes chains run: 0.9 ms of her
         // accessories' part of the pair frame, on its longest path (trace 2026-11-08).
         let prep=crate::belly_bulge::CoverField::prepare(self as *const Self as usize,&self.parts,self.body_skel.as_ref());
+        let palette_only=crate::anim::is_shared_root(&self.game_root);
+        let studio=crate::anim::clip_expression_bone_mode(&self.game_root,&self.anim_clip,self.anim_scene_mode);
+        let flags=self.collider_settings.resolve(studio,self.collider_overrides);
+        // Her accessories that do not read what her clothes chains move are solved while those run (1.4 ms of the pair
+        // frame's longest path, her clothes chains alone with the pool idle, trace 2026-11-10): the chains step on a copy
+        // of her pose and are written back after; the rest of her accessories after that, as before.
+        let early=self.early_accessories(delta_seconds,flags);
         {let _trace=crate::native_profile::Scope::new(5);
+            // (early_accessories is Some only with her clothes runtime and her body.)
+            if let (Some(sel),true)=(early.as_deref(),self.clothes_dynamic_runtime.is_some()&&self.body_skel.is_some()) {
+                let (_,mut state)=self.clothes_dynamic_runtime.take().expect("clothes runtime");
+                // Her pose and colliders are only read while both run: lent to both, not copied.
+                let pose=self.body_skel.take().expect("body");let colliders=std::mem::take(&mut self.body_colliders);
+                let group=self as *const Self as u64;let physx=self.physx_secondary;
+                let solver=self.physics.solver(Some(crate::okphysics::CLOTHES),crate::px::PhysicsComponent::Clothes);
+                {let _group=crate::px::enter_group(group,physx);let _solver=crate::px::enter_solver(solver);crate::dbone::publish_body_proxy(group,&pose,&self.cloth_thickness());}
+                // The cover field is built beside them unless a garment among them is kept over her skin (it needs it).
+                let garment=sel.iter().zip(&self.parts).any(|(e,p)|*e&&p.role.starts_with("clothes")&&p.role!="clothes_shoes");
+                let (pose_ref,colliders_ref)=(&pose,&colliders);
+                let (_,built)=rayon::join(||{let _trace=crate::native_profile::Scope::new(63);Self::step_clothes_alone(&mut state,pose_ref,colliders_ref,flags,delta_seconds,group,physx,solver)},||{
+                    let (now,later)=if garment {(prep.and_then(crate::belly_bulge::CoverField::build),None)} else {(None,prep)};
+                    self.cover_ready=Some(now);
+                    let early_pass=||{let _trace=crate::native_profile::Scope::new(7);
+                        self.update_dynamic_accessories_pass(delta_seconds,palette_only,true,observer,excluded,AccPass::Early(sel),Some((pose_ref,colliders_ref)));};
+                    rayon::join(early_pass,move||later.and_then(crate::belly_bulge::CoverField::build)).1
+                });
+                if !garment {self.cover_ready=Some(built);}
+                self.body_colliders=colliders;self.body_skel=Some(pose);
+                let t=std::time::Instant::now();
+                if let Some(body)=self.body_skel.as_mut() {state.copy_simulated_pose_filtered(body,delta_seconds==0.0);}
+                crate::okanim::prof::add(25,t);
+                self.clothes_dynamic_runtime=Some((flags,state));
+            } else {
             let built=match prep {
                 Some(prep)=>{let (_,built)=rayon::join(||self.update_clothes_dynamics(delta_seconds),move||crate::belly_bulge::CoverField::build(prep));built}
                 None=>{self.update_clothes_dynamics(delta_seconds);None}
             };
-            self.cover_ready=Some(built);}
+            self.cover_ready=Some(built);}}
         let clothes=start.elapsed();
         {let _trace=crate::native_profile::Scope::new(6);if let Some(mut ex) = self.skel_export.take() {
             crate::skel_export::refresh_pose(self, &mut ex);
             self.skel_export = Some(ex);
         }}
         let exported=start.elapsed();
-        {let _trace=crate::native_profile::Scope::new(7);self.update_dynamic_accessories_filtered(delta_seconds,crate::anim::is_shared_root(&self.game_root),true,observer,excluded);}
+        {let _trace=crate::native_profile::Scope::new(7);
+            let pass=match early.as_deref() {Some(sel)=>AccPass::Late(sel),None=>AccPass::All};
+            self.update_dynamic_accessories_pass(delta_seconds,palette_only,true,observer,excluded,pass,None);}
         crate::okanim::prof::add_us(7, body.as_micros() as u64);
         crate::okanim::prof::add_us(8, (clothes - body).as_micros() as u64);
         crate::okanim::prof::add_us(9, (exported - clothes).as_micros() as u64);

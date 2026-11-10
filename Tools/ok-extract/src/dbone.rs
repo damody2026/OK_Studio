@@ -2309,6 +2309,10 @@ impl CharacterColliderFrame {
         let ordinary=std::array::from_fn(|i|game_colliders::ordinary_colliders(body,flags,i==1).into_iter().map(|c|collider_pose_cached(c,body,&mut worlds)).collect());
         Self {native,ordinary,flags}
     }
+    /// The bones the colliders hang on.
+    pub(crate) fn bone_ids(&self)->Vec<i64> {
+        self.native.iter().chain(self.ordinary.iter().flatten()).map(|(c,_,_)|c.transform).collect()
+    }
 }
 
 #[cfg(test)]
@@ -3205,7 +3209,7 @@ impl AttachedDynamicSet {
             let solved = {
                 // Chains PhysX cannot express (a single particle, dt 0) keep the built-in solver; the rest is one batch.
                 let mut inputs: Vec<&mut crate::px::ChainInput> = plans.iter_mut().filter_map(|plan| plan.input.as_mut()).collect();
-                !inputs.is_empty() && crate::px::solve_batch(&self.px_batch, &mut inputs)
+                let _trace=crate::native_profile::Scope::new(64);!inputs.is_empty() && crate::px::solve_batch(&self.px_batch, &mut inputs)
             };
             for (chain, plan) in self.chains.iter_mut().zip(plans) {
                 let db = &chain.db;
