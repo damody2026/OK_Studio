@@ -86,8 +86,8 @@ pub fn keep_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])
 /// Per garment (its neighbour table): the frame count, the vertices `push_at` moved last frame, its vertex count.
 static WARM: std::sync::LazyLock<std::sync::Mutex<HashMap<usize, (u32, Vec<u32>, usize)>>> = std::sync::LazyLock::new(Default::default);
 /// OK_COVER_WARM=<n>: each frame `push_at` looks at last frame's pushed cloth, two rings round it and one in n of the rest
-/// (default 4); 0 or 1: every vertex every frame.
-fn warm_stride() -> usize { std::env::var("OK_COVER_WARM").ok().and_then(|v| v.parse().ok()).unwrap_or(4) }
+/// (0 or 1, the default: every vertex every frame; the approximation pushed cloth late, the user turned it back, 2026-11-10).
+fn warm_stride() -> usize { std::env::var("OK_COVER_WARM").ok().and_then(|v| v.parse().ok()).unwrap_or(0) }
 
 static NEIGHBOURS: std::sync::Mutex<Vec<(usize, usize, std::sync::Arc<Vec<Vec<u32>>>)>> = std::sync::Mutex::new(Vec::new());
 /// Each vertex's neighbours along a garment's mesh (copies of one place split at UV seams count as one another's).
