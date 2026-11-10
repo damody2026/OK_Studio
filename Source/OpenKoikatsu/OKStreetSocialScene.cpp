@@ -2642,7 +2642,10 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
   auto ClockButton=[](const TCHAR* Label,TFunction<void()> Do)->TSharedRef<SWidget>{return SNew(SButton).ButtonStyle(OKStreetGlassButton()).HAlign(HAlign_Center).Text(FText::FromString(Label)).OnClicked_Lambda([Do](){Do();return FReply::Handled();});};
   // Morning / noon / dusk / night move on to the next such hour, the way +1h does (a new game day across 04:00). Only
   // setting the hour kept the game day, so "morning" at 01:22 went back to the previous date's 08:00 (R6-189).
-  auto AheadTo=[StepClock,ClockNow](double Hours){const double Delta=FMath::Fmod(Hours-ClockNow()+48.0,24.0);if(Delta>1.0/60)StepClock(Delta);};
+  // The day start is counted here: OKStreetDayStartsPassed ignores a step of more than 12 hours (a tick's guard), so
+  // "morning" at 12:03 went back to that day's 08:00 (R6-189b).
+  auto AheadTo=[SetClock,ClockNow,Owner=TWeakObjectPtr<AOKStreetSocialScene>(this)](double Hours){const double Was=ClockNow(),Delta=FMath::Fmod(Hours-Was+48.0,24.0);if(Delta<=1.0/60)return;
+   double First=FMath::Fmod(double(OKStreetDayStartHour)-Was+48.0,24.0);if(First<=0)First=24.0;SetClock(Was+Delta);if(Delta>=First&&Owner.IsValid())Owner->NextDay();};
   TSharedRef<SWidget> ClockRow=SNew(SVerticalBox)
    +SVerticalBox::Slot().AutoHeight().Padding(2)[SNew(SHorizontalBox)
     +SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center).Padding(4,0)[SNew(STextBlock).ColorAndOpacity(FLinearColor::White).Text_Lambda([ClockState,ClockNow](){auto L=ClockState.Pin();if(!L)return FText::GetEmpty();const int32 M=FMath::FloorToInt32(ClockNow()*60);return FText::FromString(OKMsg(TEXT("ui.scene.clock_display"), {{TEXT("hour"), M/60}, {TEXT("minute"), M%60}, {TEXT("paused_suffix"), L->ClockPaused?OKT(TEXT("ui.scene.paused_label")):TEXT("")}}));})]

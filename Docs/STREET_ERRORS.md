@@ -2189,3 +2189,4 @@
 - 2026-11-10 c-street-city 我 04:11 以 `--need-gb 105` 拿 slot1 開 WP 編輯器時另一個 slot 是空的，47 秒後攻略的遊戲也拿到 slot2（它只要 35 GB，當時夠），編輯器長到 56 GB、遊戲 33 GB，可用 commit 剩 7.7 GB，協調者關掉了我的編輯器。`--need-gb` 只在 claim 那一刻檢查，之後誰都能再拿。修正：`Tools/unreal_slot.lua` 的 claim 需要 60 GB 以上時，要等其他 slot 全空，持有期間別人也拿不到（owner.txt 記 `[need N]`）。
 - 2026-11-10 c-conquest：在凌晨按「早上」想睡到天亮，結果回到前一天早上，又重玩了一段；先存了 slot 8 才發現日期不對。之後跳時間後先看存檔的日期再存（已修 R6-189）。
 - 2026-11-10 c-street-city S44 橫巷重建後實走，遊戲仍在巷內 x≈43780 被一面牆（`StaticMeshActor_129`）擋住，回頭繞舊路。來源地圖探測那裡什麼都沒有；那是 11-07 轉換的 S44 actor，遊戲讀主專案 `Content/` 的 WP 副本，而 `Tools/migrate_street_city_content.lua` 只複製新檔、從不刪舊檔，我的流程也漏了這一步。修正：migrate 刪掉來源已沒有的 WP actor 檔，WP 重建後一定要跑 migrate 再實走。通則：遊戲行為跟來源地圖對不上時，先查遊戲實際讀的那份內容是不是最新。
+- 2026-11-10 c-conquest：R6-189 只驗了「晚上往後到隔天早上」（往前 9 小時），沒驗「中午往後到隔天早上」（往前 20 小時），漏掉 `OKStreetDayStartsPassed` 超過 12 小時回 0 的保護，又玩錯一天（R6-189b）。改時間相關的程式要驗不同跨度。
