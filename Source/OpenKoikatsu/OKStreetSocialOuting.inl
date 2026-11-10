@@ -1013,9 +1013,9 @@ bool AOKStreetSocialScene::StartOutingActivity(int32 Girl,const FString& Activit
 // Back to talking with her without the scripted greeting line (after an activity or an outing).
 void AOKStreetSocialScene::ResumeTalkQuiet(int32 Girl){
  auto& S=*State;
- if(!S.FreeTalkOpen||S.Target==Girl||!S.Manifest.Characters.IsValidIndex(Girl))return;
+ if(!S.FreeTalkOpen||S.Target==Girl||!S.Manifest.Characters.IsValidIndex(Girl)){UE_LOG(LogTemp,Display,TEXT("Street talk: no talk to resume with actor %d (open=%d target=%d)"),Girl,S.FreeTalkOpen?1:0,S.Target);return;}
  S.QuietTalk=true;
- if(!BeginTalk(Girl))S.QuietTalk=false;
+ if(!BeginTalk(Girl)){S.QuietTalk=false;UE_LOG(LogTemp,Display,TEXT("Street talk: could not resume the talk with actor %d (companion=%d facility=%d pair=%d)"),Girl,S.Companion,S.Facility,S.Pair.Partner);}
  S.FreeTalkOpen=true;
 }
 

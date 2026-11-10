@@ -301,7 +301,12 @@ float AOKStreetSocialScene::StepLiftRide(float Dt){
 // Is the goal on another floor than him: another height, or upstairs in a building he is not upstairs in (the same
 // height in two buildings is two floors, joined only through the street).
 bool AOKStreetSocialScene::NavNeedsLift(const FVector& Goal) const{
- const auto& S=*State;if(FMath::Abs(Goal.Z-S.Male.Z)>=150.f)return true;
+ const auto& S=*State;
+ // Both out in the open (in no building's rooms, on no roof): the ground's own rise is no floor. From the hill to her in
+ // the flower field, 87 m over grass, was "she is on another floor, no way there" (R6-205).
+ if(OKStreetCityMode()){auto Open=[](const FVector& P){if(OKStreetStairRoof(P))return false;for(const auto& Pl:OKStreetPlaces())if(!Pl.Outdoor&&OKStreetPlaceFloor(Pl,P)!=0)return false;return true;};
+  if(Open(S.Male)&&Open(Goal))return false;}
+ if(FMath::Abs(Goal.Z-S.Male.Z)>=150.f)return true;
  if(!OKStreetUpstairs(S.Male))return false;
  // On a roof: each roof is its own, joined to the others only by its stairs down to the street.
  const FBox* Mine=nullptr;const FBox* Hers=nullptr;

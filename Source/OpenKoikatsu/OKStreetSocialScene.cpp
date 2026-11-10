@@ -1428,7 +1428,10 @@ void AOKStreetSocialScene::FinishFreeTalk(int32 Character,const FString& Id,cons
   const FString A=Reply->Action;
   // Told how long the walk is, she finds it too far ("five hours? let's stay near"): the trip is off. She said so and
   // they walked on toward the boat dock anyway (R6-194).
-  if(A==TEXT("cancel_outing")){if(S.OutingGirl==Character){UE_LOG(LogTemp,Display,TEXT("Street outing: actor=%d finds it too far, called off"),Character);CancelOuting(OKT(TEXT("ui.outing.she_called_off_far")));}}
+  // Her line left empty ("……"): asked again to say it, so the trip is not off without a word (R6-202).
+  if(A==TEXT("cancel_outing")){if(S.OutingGirl==Character){UE_LOG(LogTemp,Display,TEXT("Street outing: actor=%d finds it too far, called off"),Character);CancelOuting(OKT(TEXT("ui.outing.she_called_off_far")));
+    FString Said=Reply->Reply;for(const TCHAR* Mark:{TEXT("…"),TEXT("."),TEXT("。"),TEXT(" "),TEXT("　"),TEXT("\n")})Said.ReplaceInline(Mark,TEXT(""));
+    if(Said.IsEmpty()&&S.Target==Character){UE_LOG(LogTemp,Display,TEXT("Street outing: actor=%d called it off without a word, asked to say it"),Character);S.TellHer.Add(OKT(TEXT("ui.outing.say_why_called_off")));}}}
   else if(!A.IsEmpty()&&!(A.StartsWith(TEXT("go:"))||A==TEXT("stroll")||A==TEXT("walk")||OKStreetFindActivity(A)||OKStreetFindPlace(A)))ExecuteFreeTalkAction(Character,Id,A);
   // Hers to propose, his to agree: kept for the judge of his next line. On arriving at the park she said "let's find a
   // bench" (park_seat); he said "sure, that bench", and the judge took them as already sitting there.
