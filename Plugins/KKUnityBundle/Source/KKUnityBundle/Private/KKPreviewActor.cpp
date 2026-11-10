@@ -8063,7 +8063,12 @@ bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrep
   bool Pending=false;
   for(int32 S=0;S<State.Receipts.Num();++S)if(State.Receipts[S]){
    const int32 Status=State.Receipts[S]->Status.Load();
-   if(Status==FKKGpuStreamReceipt::Rejected)return Restore(State.Receipts[S]->Error,true);
+   // A proxy not ready (its render state rebuilt that frame) or a stale epoch passes: try the GPU again next frame. Kept
+   // on the CPU for good, one of two body-hugging garments drew a hair off the other and they fought for depth (bunny
+   // suit over tights after an insertion, 2026-11-10).
+   if(Status==FKKGpuStreamReceipt::Rejected){const FString& E=State.Receipts[S]->Error;
+    const bool bTransient=E.Contains(TEXT("requires ready"))||E.Contains(TEXT("requires a ready"))||E.Contains(TEXT("Stale GPU batch proxy epoch"));
+    return Restore(E,!bTransient);}
    if(Status==FKKGpuStreamReceipt::Pending)Pending=true;
    else{State.Generations[S]=State.Receipts[S]->Generation;State.Receipts[S].Reset();}
   }
