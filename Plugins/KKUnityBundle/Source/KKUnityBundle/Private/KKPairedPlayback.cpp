@@ -164,6 +164,8 @@ bool AKKPairedPlayback::ShowFrame(float Delta,const bool Reactions[2],FString& E
         const int32 BodyRoleIndex=PreviewRole==FemaleActor?0:1;
         if(PreviewRole!=ThirdActor)PreviewRole->bBodyReactionPoseDirty=Reactions[BodyRoleIndex]&&!PreviewRole->Session.IsBodyReactionPlaying();
 		PreviewRole->AnimPhase=float(Elapsed);PreviewRole->AnimDuration=PreviewRole->Session.AnimDuration();PreviewRole->RefreshSkinnedDisplay();
+  // Her thighs and buttocks jiggle behind this frame's pose (ref/zzz_thigh_jiggle.md; ok.ThighJiggle).
+  if(PreviewRole==FemaleActor){TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairThighJiggle);PreviewRole->UpdateThighJiggle(Delta);}
   {TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairFace);
 		PreviewRole->AdvanceEyeLook(Delta);PreviewRole->AdvanceFaceAnimation(Delta);
 		if(PreviewRole->IsSpeaking()) PreviewRole->AdvanceSpeech();
@@ -196,7 +198,7 @@ void AKKPairedPlayback::Stop() {
 	SyncAsync();
 	SetThird(nullptr,FString(),false);
 	if(bPairPhysics){if(IsValid(FemaleActor))FemaleActor->RemovePairPhysics();if(IsValid(MaleActor))MaleActor->RemovePairPhysics();bPairPhysics=false;}
-	if(bActive) {if(IsValid(FemaleActor)){FemaleActor->SetCoordinatedPlayback(false);FemaleActor->CloseVaginaOpening();FemaleActor->SetActorTickEnabled(OldFemaleTick);}if(IsValid(MaleActor)){MaleActor->SetCoordinatedPlayback(false);MaleActor->SetActorTickEnabled(OldMaleTick);}}
+	if(bActive) {if(IsValid(FemaleActor)){FemaleActor->SetCoordinatedPlayback(false);FemaleActor->CloseVaginaOpening();FemaleActor->ClearThighJiggle();FemaleActor->SetActorTickEnabled(OldFemaleTick);}if(IsValid(MaleActor)){MaleActor->SetCoordinatedPlayback(false);MaleActor->SetActorTickEnabled(OldMaleTick);}}
 	bVaginaRange=false;
 	bActive=false;SetActorTickEnabled(false);
 }

@@ -463,6 +463,7 @@ mod face_shapes;
 pub(crate) use face_shapes::*;
 
 mod rig;
+pub mod thigh_jiggle;
 pub(crate) use rig::*;
 
 pub fn open_session(game_root: &Path, card_path: Option<&Path>, outfit: i32) -> Result<usize, String> {

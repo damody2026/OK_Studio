@@ -337,6 +337,16 @@ bool FOkSession::ClothCoverDeltas(const TArray<uint32>& BodyIndices,const TArray
 		N=ok_cover_deltas(Handle,BodyIndices.GetData(),In.GetData(),uint32(BodyIndices.Num()),Part.GetData(),Idx.GetData(),D.GetData(),uint32(Idx.Num()));if(N<0)return false;}
 	for(int32 I=0;I<N;++I){OutParts.Add(int32(Part[I]));OutIndices.Add(Idx[I]);OutDeltas.Add(FVector3f(D[I*3],D[I*3+1],D[I*3+2]));}
 	return true; }
+bool FOkSession::ThighJiggle(float DeltaSeconds,float Gain,int32& OutPart,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas) const {
+	OutPart=INDEX_NONE;OutIndices.Reset();OutDeltas.Reset();if(!Handle)return false;
+	TArray<uint32> Idx;TArray<float> D;Idx.SetNumUninitialized(4096);D.SetNumUninitialized(4096*3);int32 Part=-1;
+	int32 N=ok_thigh_jiggle(Handle,DeltaSeconds,Gain,&Part,Idx.GetData(),D.GetData(),uint32(Idx.Num()));
+	// More than fit: the same moves again (0 steps nothing) into room for them all.
+	if(N>Idx.Num()){Idx.SetNumUninitialized(N);D.SetNumUninitialized(N*3);N=ok_thigh_jiggle(Handle,0.f,Gain,&Part,Idx.GetData(),D.GetData(),uint32(Idx.Num()));}
+	if(N<0)return false;
+	OutPart=Part;OutIndices.Append(Idx.GetData(),N);OutDeltas.Reserve(N);
+	for(int32 I=0;I<N;++I)OutDeltas.Add(FVector3f(D[I*3],D[I*3+1],D[I*3+2]));
+	return true; }
 bool FOkSession::PenisClipDeltas(const FVector& At,const FVector& Normal,const FVector& Axis,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,float InsetM) const {
 	OutIndices.Reset();OutDeltas.Reset();if(!Handle)return false;
 	const float In[10]={float(At.X),float(At.Y),float(At.Z),float(Normal.X),float(Normal.Y),float(Normal.Z),float(Axis.X),float(Axis.Y),float(Axis.Z),InsetM};
