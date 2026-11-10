@@ -2342,7 +2342,11 @@ impl OkSession {
         };
         if parallel&&self.parts.iter().filter(|p|p.runtime_accessory.is_some()).count()>=8 {
             use rayon::prelude::*;
-            native_parallel_work(||self.parts.par_iter_mut().enumerate().for_each(update));
+            // The biggest first (longest job first): her body tights, at index 35 of 36, started 0.6 ms after the others and
+            // its cover push ended the whole solve (OK_ACC_PART_PROFILE, 2026-11-10). Each part is still solved on its own.
+            let mut order:Vec<(usize,&mut SessionPart)>=self.parts.iter_mut().enumerate().filter(|(_,p)|p.runtime_accessory.is_some()).collect();
+            order.sort_by_key(|(index,part)|(std::cmp::Reverse(part.rest_positions.len()),*index));
+            native_parallel_work(||order.into_par_iter().with_max_len(1).for_each(update));
         } else {self.parts.iter_mut().enumerate().for_each(update);}
         if leader_of.iter().any(Option::is_some) {
             // The leaders' solved locals, then the followers; one that cannot follow solves on its own.
