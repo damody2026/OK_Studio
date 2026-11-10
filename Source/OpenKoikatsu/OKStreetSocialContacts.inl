@@ -98,6 +98,9 @@ void AOKStreetSocialScene::NavigatePointAlong(const FVector& Goal,const FString&
 }
 void AOKStreetSocialScene::StopNavigation(const FString& Notice){
  if(!State)return;auto& S=*State;S.NavSearch.Reset();S.NavAround.Reset();S.NavGirl=INDEX_NONE;S.NavPointActive=false;S.NavPath.Reset();S.NavRide=FOKStreetLiftRide();S.ContactsNotice.Reset();
+ // The cells learned blocked were for this walk's way round: kept, the girls' dorm door he was wedged in stayed shut to
+ // every later walk there ("the way is blocked" 9 m from her, R6-207).
+ S.NavLearned.Reset();
  if(!Notice.IsEmpty())S.Message=Notice;
 }
 void AOKStreetSocialScene::ToggleBigMap(){
