@@ -8,6 +8,7 @@
 --   dense   every empty 6 m lattice cell with street-height ground and room to stand gets a point (squares, courtyards)
 --   fill    every unlinked pair within 9 m is walked both ways and linked when clear (courtyards the road picture missed)
 --   parts   a part cut off from the biggest one is joined by a 1 m flood over the same test, its path added as new points every 6 m
+--   doors   from every place door a 1 m flood of 25 m; a point it reaches much sooner than over the links gets its path
 -- Point numbers stay, new ones go at the end. Output: city_roads.json, and places-v1/road-bake.json for the numbers.
 return [====[
 def motel_world_road_bake():
@@ -124,9 +125,60 @@ def motel_world_road_bake():
     nodes.append([c[0]*100.,c[1]*100.,seen[c]]);kept.append((last,len(nodes)-1));last=len(nodes)-1
   kept.append((last,main[found]));joined+=1
   for i in p:main[(round(nodes[i][0]/100),round(nodes[i][1]/100))]=i
+ # doors: a door between lattice lines had links only into its own building, so the walk from the department store's west door
+ # to the fast-food shop went out by the south side, 406 m for 187 straight (R6-200, 11-10). From every place door a 1 m flood
+ # (same test) of DOOR_R; a lattice point it reaches on foot much sooner than over the links gets the flood's path as points
+ # every 6 m, the best one first, at most DOOR_N a door
+ DOOR_R=2500.;DOOR_N=2;DOOR_S=20;doors=0;shortcuts=[]
+ adj=collections.defaultdict(list)
+ for a,b in kept:
+  d=math.dist(nodes[a],nodes[b]);adj[a].append((b,d));adj[b].append((a,d))
+ def reach(s,limit):
+  import heapq
+  dist={s:0.};h=[(0.,s)]
+  while h:
+   d,u=heapq.heappop(h)
+   if d>dist[u] or d>limit:continue
+   for v,w in adj[u]:
+    if d+w<dist.get(v,1e18):dist[v]=d+w;heapq.heappush(h,(d+w,v))
+  return dist
+ near=collections.defaultdict(list)
+ for i,n in enumerate(nodes):
+  if i not in gone and adj[i]:near[(round(n[0]/100),round(n[1]/100))].append(i)
+ for p in json.loads((ROOT/'Content/IndependentResources/StreetSocialData/city_places.json').read_text('utf8'))['places']:
+  dp=p.get('door')
+  if not dp:continue
+  di=min((i for i in range(len(nodes)) if i not in gone and adj[i] and abs(nodes[i][0]-dp[0])<60 and abs(nodes[i][1]-dp[1])<60 and abs(nodes[i][2]-dp[2])<150),key=lambda i:math.dist(nodes[i],dp),default=None)
+  if di is None:continue
+  for _ in range(DOOR_N):
+   s=(round(nodes[di][0]/100),round(nodes[di][1]/100));seen={s:nodes[di][2]};par={};far={s:0};q=collections.deque([s]);end=time.time()+DOOR_S
+   while q and time.time()<end:
+    c=q.popleft();z=seen[c]
+    for d in ((1,0),(-1,0),(0,1),(0,-1)):
+     n=(c[0]+d[0],c[1]+d[1])
+     if n in seen or math.hypot(n[0]-s[0],n[1]-s[1])*100>DOOR_R:continue
+     g=step(c[0]*100.,c[1]*100.,z,n[0]*100.,n[1]*100.)
+     if g is None:continue
+     seen[n]=g;par[n]=c;far[n]=far[c]+100;q.append(n)
+   graph=reach(di,4*DOOR_R);best=None
+   for c,w in far.items():
+    for j in near.get(c,()):
+     if j==di or abs(nodes[j][2]-seen[c])>STEP:continue
+     save=graph.get(j,1e18)-w
+     if save>max(2000,w) and (not best or save>best[0]):best=(save,c,j)
+   if not best:break
+   w=[];e=best[1]
+   while e in par:w.append(e);e=par[e]
+   w=w[::-1];last=di
+   for k,c in enumerate(w[:-1]):
+    if (k+1)%6==0:
+     nodes.append([c[0]*100.,c[1]*100.,seen[c]]);ni=len(nodes)-1;kept.append((last,ni))
+     d=math.dist(nodes[last],nodes[ni]);adj[last].append((ni,d));adj[ni].append((last,d));last=ni
+   kept.append((last,best[2]));d=math.dist(nodes[last],nodes[best[2]]);adj[last].append((best[2],d));adj[best[2]].append((last,d));doors+=1
+   shortcuts.append([p['id'],round(best[0])])
  ps=parts()
  row=lambda n:'[%.1f,%.1f,%.1f]'%tuple(n)
  path.write_text('{"nodes":['+','.join(row(n) for n in nodes)+'],"links":['+','.join('[%d,%d]'%l for l in kept)+']}\n','utf8')
- r=dict(status='passed',points=len(nodes),moved=len(moved),hill=len(hills),gone=len(gone),links=len(kept),tested=tested,cut=cut,dense=dense,fill_tried=tried,filled=added,fill_finished=time.time()<=stop,parts_before=before,joined=joined,failed=failed[:40],failed_count=len(failed),parts_after=[len(p) for p in ps[:8]],highest=max(n[2] for n in nodes))
+ r=dict(status='passed',points=len(nodes),moved=len(moved),hill=len(hills),gone=len(gone),links=len(kept),tested=tested,cut=cut,dense=dense,fill_tried=tried,filled=added,fill_finished=time.time()<=stop,parts_before=before,joined=joined,failed=failed[:40],failed_count=len(failed),parts_after=[len(p) for p in ps[:8]],doors=doors,door_shortcuts=shortcuts,highest=max(n[2] for n in nodes))
  (ROOT/'output/street-social-city-production/places-v1/road-bake.json').write_text(json.dumps(r,indent=1),'utf8');return r
 ]====]
