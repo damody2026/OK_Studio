@@ -30,8 +30,12 @@ TArray<FVector> AOKStreetSocialScene::CityRoute(const FVector& From,const FVecto
  if(Into&&Into!=OutOf&&FVector::Dist2D(Into->Door,To)>50.f){
   const FVector Door=Into->Door;TArray<FVector> Route=CityRoute(From,Door);if(Route.IsEmpty())Route={From};
   // On her floor, in from the door; upstairs the navigation plans the lift from the door (PlanNavLift).
-  if(FMath::Abs(Door.Z-To.Z)<150.f){TArray<FVector> In=GridRoute(Door,To,NearCm);
-   if(In.Num()>=2){In.RemoveAt(0);Route.Append(In);}
+  // The search from the spot just inside, not the door: the café's doorway is narrower than a free cell, the search from
+  // it never got in, and its nearest cell to her was the pavement behind the café's wall (R6-211).
+  if(FMath::Abs(Door.Z-To.Z)<150.f){const FVector Within=PlaceInsideSpot(*Into);
+   TArray<FVector> In=Within.Equals(Door,1.f)?TArray<FVector>():GridRoute(Within,To,NearCm);
+   if(In.Num()>=2)Route.Append(In);
+   else if((In=GridRoute(Door,To,NearCm)).Num()>=2){In.RemoveAt(0);Route.Append(In);}
    else{const FVector Inside=PlaceInsideSpot(*Into);if(!Inside.Equals(Door,1.f))Route.Add(Inside);Route.Add(To);}}
   return Route;}
  if(OutOf&&OutOf!=Into&&FVector::Dist2D(OutOf->Door,From)>50.f&&FMath::Abs(OutOf->Door.Z-From.Z)<150.f){
@@ -200,10 +204,15 @@ bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline
  // Not reached, all the way searched: the reached cell nearest the goal, when it is near (NearCm, his walk to her: 2 m).
  // Her seat among the cafeteria tables was closed in, and he walked straight into the wall 18 m away instead (R6-208).
  FIntPoint End=Goal;
- // On her side of the wall: from the café's door the nearest reached cell was the pavement 1.65 m from her behind the
- // café's north wall, and he walked into that wall 30 times (R6-211).
- if(!Reached&&Open.IsEmpty()&&G.NearCm>0){float Best=FMath::Square(G.NearCm/OKStreetNavCell)+.01f;bool Near=false;const FString Where=PlaceHere(To);
-  for(int32 I=0;I<Cost.Num();++I)if(Cost[I]<TNumericLimits<float>::Max()){const FIntPoint C(Lo.X+I%W,Lo.Y+I/W);const float D=float((C-Goal).SizeSquared());if(D<Best&&C!=Start&&PlaceHere(Centre(C))==Where){Best=D;End=C;Near=true;}}
+ // On her side of the wall, in sight of her (as E asks): from the café's door the nearest reached cell was the pavement
+ // 1.65 m from her behind the café's north wall, and he walked into that wall 30 times (R6-211). Not the place's name:
+ // the café's rooms reach past its walls, and that pavement was "the café" too.
+ FCollisionQueryParams SightQuery(SCENE_QUERY_STAT(StreetGridNear),false,this);
+ auto Sees=[&](const FVector& P){FHitResult Hit;for(const float Height:{120.f,165.f})
+  if(!GetWorld()->LineTraceSingleByChannel(Hit,FVector(P.X,P.Y,To.Z)+FVector(0,0,Height),To+FVector(0,0,Height),ECC_Visibility,SightQuery)||FVector::Dist(Hit.ImpactPoint,To+FVector(0,0,Height))<80.f)return true;
+  return false;};
+ if(!Reached&&Open.IsEmpty()&&G.NearCm>0){float Best=FMath::Square(G.NearCm/OKStreetNavCell)+.01f;bool Near=false;
+  for(int32 I=0;I<Cost.Num();++I)if(Cost[I]<TNumericLimits<float>::Max()){const FIntPoint C(Lo.X+I%W,Lo.Y+I/W);const float D=float((C-Goal).SizeSquared());if(D<Best&&C!=Start&&Sees(Centre(C))){Best=D;End=C;Near=true;}}
   if(Near){Reached=true;G.Goal=End;UE_LOG(LogTemp,Display,TEXT("Street grid route: %s closed in, to the nearest reached cell %.0f cm from it"),*To.ToCompactString(),FMath::Sqrt(Best)*OKStreetNavCell);}}
  if(!Reached){G.Phase=2;UE_LOG(LogTemp,Display,TEXT("Street grid route: none from %s to %s (%d cells)"),*From.ToCompactString(),*To.ToCompactString(),G.Expanded);Release();return true;}
  TArray<FIntPoint>& Cells=G.Path;Cells={End};while(Cells.Last()!=Start){const int32 P=Came[Index(Cells.Last())];Cells.Add(FIntPoint(Lo.X+P%W,Lo.Y+P/W));}
