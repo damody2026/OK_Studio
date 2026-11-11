@@ -2468,7 +2468,7 @@ impl OkSession {
             if let Some((mut positions, normals,tangents)) = rendered {
                 skinned.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
                 if let Some(cover)=cover {let t_cover=std::time::Instant::now();cover.cover(index,part,&mut positions);cover_us=t_cover.elapsed().as_micros() as u64;}
-                crate::thigh_jiggle::follow_own(jiggle_key,index,part,&mut positions);
+                crate::thigh_jiggle::follow_own(jiggle_key,index,part,&mut positions,&normals);
                 part.positions = positions;
                 part.normals = normals;
                 part.rest_tangents=tangents;
@@ -2529,7 +2529,7 @@ impl OkSession {
                 if let Some((mut positions,normals,tangents))=rendered {
                     skinned.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
                     if let Some(cover)=cover {cover.cover(index,part,&mut positions);}
-                    crate::thigh_jiggle::follow_own(jiggle_key,index,part,&mut positions);
+                    crate::thigh_jiggle::follow_own(jiggle_key,index,part,&mut positions,&normals);
                     part.positions=positions;part.normals=normals;part.rest_tangents=tangents;
                     if let Some(observer)=observer{observer.emit(index,part);}
                 }
@@ -2572,7 +2572,7 @@ impl OkSession {
             let assigned=if runtime.coordinated{assigned_clothes.as_ref()}else{assigned_body.as_ref()};
             if let Some((mut positions,normals,tangents))=runtime.render_solved(if runtime.coordinated{clothes}else{body},head,policy,assigned) {
                 if let Some(cover)=&cover {cover.cover(index,part,&mut positions);}
-                crate::thigh_jiggle::follow_own(jiggle_key,index,part,&mut positions);
+                crate::thigh_jiggle::follow_own(jiggle_key,index,part,&mut positions,&normals);
                 part.positions=positions;part.normals=normals;part.rest_tangents=tangents;
                 if let Some(observer)=observer{observer.emit(index,part);}
             }
