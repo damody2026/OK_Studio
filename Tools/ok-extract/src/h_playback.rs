@@ -513,7 +513,8 @@ pub(crate) fn apply_contacts_roles(female:&mut crate::session::OkSession,male:&m
         let _trace=crate::native_profile::Scope::new(32);
         let mut count=0;
         let Some(setup)=setup else {session.apply_body_interaction(dt);return Ok(0);};
-        let (config,source_data)=setup.as_ref();let mut data=source_data.clone();
+        // Only the state being solved (link_ik reads nothing else): copying the pose's every state each frame was waste.
+        let (config,source_data)=setup.as_ref();let mut data=crate::finalik::MotionIkData{states:source_data.state(state).into_iter().cloned().collect()};
         let active=data.states.iter_mut().find(|s|s.name==state).unwrap();let post_corrections=active.clone();let mut proxies=Vec::new();
         for (i,part) in active.parts.iter_mut().enumerate() {
             // SetPartners puts this role first, then the others (frozen_parts read them by partner_order).

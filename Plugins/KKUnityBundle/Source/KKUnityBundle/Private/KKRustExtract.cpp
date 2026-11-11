@@ -39,7 +39,9 @@ const ANSICHAR* const NativeTraceNames[]={"KK_NativeValidate","KK_NativeSampleWa
     "KK_NativeContactCorrectBefore","KK_NativeContactFreeze","KK_NativeContactSolve","KK_NativeContactCorrectAfter",
     "KK_NativePalettePrepare","KK_NativePaletteRead","KK_NativePalettePublish",
     "KK_NativeMotionPlan","KK_NativeMotionLeaves","KK_NativeMotionBlend","KK_NativeLeafSnapshot","KK_NativeLeafChannels","KK_NativeChannelLookup","KK_NativeChannelSample",
-    "KK_NativeAccFrames","KK_NativeAccRadii","KK_NativeAccLeaders","KK_NativeCoverField","KK_NativeCoverPush","KK_NativeCoverLift","KK_NativeCoverPushFrom"};
+    "KK_NativeAccFrames","KK_NativeAccRadii","KK_NativeAccLeaders","KK_NativeCoverField","KK_NativeCoverPush","KK_NativeCoverLift","KK_NativeCoverPushFrom",
+    "KK_NativeSkinNow","KK_NativeSkinGrid","KK_NativeSkinQueries","KK_NativeKeepCover","KK_NativeBulgePast","KK_NativeBackExit",
+    "KK_NativeLiftRise","KK_NativeLiftClear","KK_NativeLiftRings","KK_NativePushAt","KK_NativePushRings","KK_NativePushFlip","KK_NativeClothesStep","KK_NativePxBatch"};
 std::atomic<uint32> NativeTraceSpecs[UE_ARRAY_COUNT(NativeTraceNames)];
 // Each event's spec is sent the first time it runs with the CPU channel on, as UE's own scopes do: sent at startup (the
 // channel still off until Trace.File / -Trace) it was dropped, and Insights then had no name for any native event.
@@ -336,6 +338,25 @@ bool FOkSession::ClothCoverDeltas(const TArray<uint32>& BodyIndices,const TArray
 	if(N>Idx.Num()){Part.SetNumUninitialized(N);Idx.SetNumUninitialized(N);D.SetNumUninitialized(N*3);
 		N=ok_cover_deltas(Handle,BodyIndices.GetData(),In.GetData(),uint32(BodyIndices.Num()),Part.GetData(),Idx.GetData(),D.GetData(),uint32(Idx.Num()));if(N<0)return false;}
 	for(int32 I=0;I<N;++I){OutParts.Add(int32(Part[I]));OutIndices.Add(Idx[I]);OutDeltas.Add(FVector3f(D[I*3],D[I*3+1],D[I*3+2]));}
+	return true; }
+bool FOkSession::ThighJiggle(float DeltaSeconds,float Gain,int32& OutPart,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas) const {
+	OutPart=INDEX_NONE;OutIndices.Reset();OutDeltas.Reset();if(!Handle)return false;
+	TArray<uint32> Idx;TArray<float> D;Idx.SetNumUninitialized(4096);D.SetNumUninitialized(4096*3);int32 Part=-1;
+	int32 N=ok_thigh_jiggle(Handle,DeltaSeconds,Gain,&Part,Idx.GetData(),D.GetData(),uint32(Idx.Num()));
+	// More than fit: the same moves again (0 steps nothing) into room for them all.
+	if(N>Idx.Num()){Idx.SetNumUninitialized(N);D.SetNumUninitialized(N*3);N=ok_thigh_jiggle(Handle,0.f,Gain,&Part,Idx.GetData(),D.GetData(),uint32(Idx.Num()));}
+	if(N<0)return false;
+	OutPart=Part;OutIndices.Append(Idx.GetData(),N);OutDeltas.Reserve(N);
+	for(int32 I=0;I<N;++I)OutDeltas.Add(FVector3f(D[I*3],D[I*3+1],D[I*3+2]));
+	return true; }
+bool FOkSession::ThighJiggleCloth(TArray<int32>& OutCpuParts,TArray<int32>& OutParts,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas) const {
+	OutCpuParts.Reset();OutParts.Reset();OutIndices.Reset();OutDeltas.Reset();if(!Handle)return false;
+	TArray<uint32> Part,Idx;TArray<float> D;Part.SetNumUninitialized(8192);Idx.SetNumUninitialized(8192);D.SetNumUninitialized(8192*3);
+	int32 N=ok_thigh_jiggle_cloth(Handle,Part.GetData(),Idx.GetData(),D.GetData(),uint32(Idx.Num()));
+	if(N>Idx.Num()){Part.SetNumUninitialized(N);Idx.SetNumUninitialized(N);D.SetNumUninitialized(N*3);N=ok_thigh_jiggle_cloth(Handle,Part.GetData(),Idx.GetData(),D.GetData(),uint32(Idx.Num()));}
+	if(N<0)return false;N=FMath::Min(N,Idx.Num());
+	for(int32 I=0;I<N;++I){if(Idx[I]==0xFFFFFFFFu){OutCpuParts.Add(int32(Part[I]));continue;}
+		OutParts.Add(int32(Part[I]));OutIndices.Add(Idx[I]);OutDeltas.Add(FVector3f(D[I*3],D[I*3+1],D[I*3+2]));}
 	return true; }
 bool FOkSession::PenisClipDeltas(const FVector& At,const FVector& Normal,const FVector& Axis,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,float InsetM) const {
 	OutIndices.Reset();OutDeltas.Reset();if(!Handle)return false;
@@ -1648,6 +1669,16 @@ bool FOkSession::AbsentCardMods(const FString& Card,TArray<FString>& Absent,FStr
  if(Result!=0){Error=Text;return false;}
  Text.ParseIntoArrayLines(Absent);return true;
 }
+// The native library reads its OK_* switches from the process environment as it runs: this flips one in a running game
+// (in-process A/B of a switch, without restarting between the two halves).
+static FAutoConsoleCommand GOKEnvCommand(TEXT("OK.Env"),
+ TEXT("OK.Env <NAME> [value]: sets (no value: clears) an environment variable of this process; prints it when only the name is given with '?'."),
+ FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args){
+  if(Args.Num()<1){UE_LOG(LogTemp,Error,TEXT("OK.Env: name required"));return;}
+  if(Args.Num()>1&&Args[1]==TEXT("?")){UE_LOG(LogTemp,Display,TEXT("OK.Env %s=%s"),*Args[0],*FPlatformMisc::GetEnvironmentVariable(*Args[0]));return;}
+  FPlatformMisc::SetEnvironmentVar(*Args[0],Args.Num()>1?*Args[1]:nullptr);
+  UE_LOG(LogTemp,Display,TEXT("OK.Env %s=%s"),*Args[0],Args.Num()>1?*Args[1]:TEXT("(cleared)"));
+ }));
 static FAutoConsoleCommand GOKMakeOkCardCommand(TEXT("OK.MakeOkCard"),
  TEXT("OK.MakeOkCard <card.png> [out.png]: converts an original KKS card (with its zipmods from the KKS installation) or an edited OK card into an OK card for the OK base library; default output <card>.ok.png."),
  FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args){

@@ -5423,6 +5423,7 @@ mod tests {
             wardrobe_quick_settle: false,
             hidden_parts: Vec::new(),
             cover_ready: None,
+            acc_cache: Default::default(),
             face_runtime: Default::default(),
             anim_parameters: HashMap::new(),
             anim_clock: Default::default(),

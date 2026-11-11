@@ -95,6 +95,10 @@ public:
     virtual TSharedRef<SWidget> RebuildWidget() override;
     virtual void NativeTick(const FGeometry& Geometry,float Delta) override;
     void TickScene(float Delta);float DeferredDelta=0.f;int32 DeferredTicks=0; // NativeTick: put off to the pair's idle point
+    bool bTickingBeside=false,bIdleTickOwed=false; // ok.HScene.TickBeside: TickScene runs beside the solve; its session parts at the idle point (TickAtIdle)
+    void TickAtIdle();
+    double DevLineAt=0.; // DevLine is formatted at most 4 times a second
+    bool bFastPaths=false;void FastPaths(bool bOn); // ok.HScene.FastPaths: Slate global invalidation and indexed accessory streams while the scene is up
     void Click(int32 Kind);
     // What happened, for h_session_end (counts) and her memory (poses, events).
     TSharedRef<FJsonObject> Result() const;
@@ -200,6 +204,7 @@ private:
     int32 MirrorFront=0,MirrorSize=0;uint64 MirrorTakenAt=0;void TickMirror();void RemoveMirror();
     // Their skin lit by the scene or the original's toon (ok.HScene.SkinLit, SkinLitToggle; user 2026-11-09).
     void TickSkinLit(bool bEnd);bool bSkinLitShown=false;
+    void TickClothBias(bool bEnd);bool bClothBiasShown=false;
     // While lit: a key and a fill light on lighting channel 1 only (the pair, not the street), from the panel's light rows.
     TWeakObjectPtr<class UPointLightComponent> SkinKey,SkinFill;
     // Taken after her no (experience "forced"): her first words and her talk context (Context).
@@ -380,7 +385,7 @@ private:
     // The street hidden behind a plain grey room around them (user, 2026-11-01): the world's actors hidden (lights,
     // cameras and the two of them kept), six grey slabs round her.
     void SetGrayRoom(bool bOn);void HideWorld();double GrayCheckAt=0.;bool bGrayRoom=false;UPROPERTY() TArray<TObjectPtr<AActor>> GrayRoom;TArray<TWeakObjectPtr<AActor>> GrayHidden;
-    int32 MaleView=1;bool bMaleBottomOff=true;bool bPenisXRay=true;TWeakObjectPtr<class AKKPreviewActor> MaleLookFor;
+    int32 MaleView=1;bool bMaleBottomOff=true;bool bPenisXRay=false; /* off by default: user 2026-11-11 */TWeakObjectPtr<class AKKPreviewActor> MaleLookFor;
     UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> MaleGhost;
     UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> PenisXRay; // over her while he is see-through (M_PreviewXRay)
     UPROPERTY() TArray<TObjectPtr<class UMeshComponent>> MaleGhostComps;

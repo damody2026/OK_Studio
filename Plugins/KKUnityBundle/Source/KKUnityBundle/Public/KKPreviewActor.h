@@ -172,6 +172,9 @@ struct FKKLoadedPart
     TArray<FVector> RuntimeUnitRestNormals;
     bool bNativeDisplayPrepared=false;
     TSharedPtr<FKKPrivateGpuDisplay> PrivateGpuDisplay;
+    // The display last given up for a passing reason (its proxy not ready): its captured source, draw and bounds reused by
+    // the next capture of the same source revision.
+    TSharedPtr<FKKPrivateGpuDisplay> PrivateGpuSpare;
     uint64 PrivateGpuRejectedEpoch=0;
     uint64 PrivateGpuRejectedRevision=0;
 };
@@ -339,6 +342,10 @@ public:
     // Session parts drawn from their CPU-skinned vertices even then (her clothes pushed out over her skin as they are
     // skinned, belly_bulge::CoverField; the private GPU route skins its own copy of the rest mesh).
     TSet<int32> CpuSkinnedParts;
+    // Her garments with their own rig over her thighs' jiggle, drawn from their CPU vertices while it is on (moved with her
+    // skin as they are skinned, thigh_jiggle::follow_own); and her garments on her body skeleton showing its morph.
+    TSet<int32> JiggleCpuParts;
+    TSet<int32> JiggleClothShown;
     // An owner keeps her clothes over her skin itself (the H scene: belly_bulge::cover_deltas with her belly moves); this
     // actor's own cover (UpdateClothCover, ok.ClothCover) then leaves her clothes alone.
     bool bExternalClothCover=false;
@@ -709,7 +716,14 @@ public:
 	bool SetPartMorphWeight(int32 SessionPartIndex, FName Name, float Percent);
 	// A part's skin moved this frame by per-vertex moves (vertex index, Unity metres in the mesh's own space; belly_bulge::
 	// wrap_deltas), drawn as an external morph set on its renderers and rebuilt on each call. Empty clears it.
-	bool SetPartWrapDeltas(int32 SessionPartIndex, const TArray<uint32>& Indices, const TArray<FVector3f>& UnityDeltas, const TArray<FVector3f>& UnityNormalDeltas = TArray<FVector3f>());
+	bool SetPartWrapDeltas(int32 SessionPartIndex, const TArray<uint32>& Indices, const TArray<FVector3f>& UnityDeltas, const TArray<FVector3f>& UnityNormalDeltas = TArray<FVector3f>(), int32 SetId = 0x4F4B5752);
+	// Her thighs' and buttocks' jiggle (thigh_jiggle, ref/zzz_thigh_jiggle.md) DeltaSeconds on, drawn as its own morph set
+	// of her body (ok.ThighJiggle scales it, 0 off). The paired playback (the one-on-one scene, the H scene) calls it each
+	// frame it shows; ClearThighJiggle takes it away and forgets her springs.
+	void UpdateThighJiggle(float DeltaSeconds);
+	void ClearThighJiggle();
+	void UpdateThighJiggleCloth();
+	int32 ThighJigglePart=INDEX_NONE;
 	// The wrap morph a renderer draws now (SetPartWrapDeltas, weight 1, mesh-local), for code that skins it on the CPU
 	// (the water gun's coating) instead of reading the vertices back (GetCPUSkinnedVertices waits for the render thread).
 	static const TArray<struct FMorphTargetDelta>* WrapMorphDeltas(const class USkinnedMeshComponent* Mesh);
@@ -733,6 +747,17 @@ public:
 	TSet<TWeakObjectPtr<class UMaterialInstanceDynamic>> LitWrapped;
 	TMap<TWeakObjectPtr<class UMaterialInstanceDynamic>,FKKLitSnapshot> LitSnapshots; // KKLitSync.h
 	TSet<FString> LitParentMissing;
+	// Her clothes drawn BiasCm toward the camera along each view ray (the 1-on-1 scene: skin a few millimetres through a
+	// tight garment stays under it on screen): every garment instance swapped for one of its <name>_Bias parent under
+	// BiasRoot (Tools/prepare_runtime_shared_material.lua --bias-only), its values copied from hers on every call; each
+	// layer StepCm further out than the one under it (panst/socks, bra/shorts, gloves, bottoms, tops, the rest), so two
+	// garments laid on the same surface no longer fight for depth. 0 gives hers back. False when none was found.
+	// InflateCm: each garment also pushed out along its surface by up to that at her silhouette (its edge seen side-on).
+	bool SetClothViewBias(float BiasCm, float StepCm, const FString& BiasRoot, float InflateCm=0.f);
+	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> BiasInstanceOf;
+	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> BiasOriginalOf;
+	TSet<FString> BiasParentMissing;
+	TMap<TWeakObjectPtr<class UMaterialInstanceDynamic>,FKKLitSnapshot> BiasSnapshots; // KKLitSync.h
 	// Insertion depth within the current pose. Authored vagina.open only; bone
 	// spread is used when that morph is absent. Range is owned by paired playback.
 	void DriveVaginaOpening(const AKKPreviewActor& Male, float& RangeMin, float& RangeMax, bool& bRange);

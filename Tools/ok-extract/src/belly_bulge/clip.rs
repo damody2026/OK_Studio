@@ -47,6 +47,7 @@ fn posed_body(part: &SessionPart, worlds: &[Mat4], binds: &[Mat4]) -> Vec<Option
 /// past `EXIT_FROM_M`, if that skin is not her belly (faces `up`, the way her belly faces, less than `BELLY_COS`): the place and her skin's outward normal
 /// there. None when he stays in her or comes out on her belly side.
 pub fn back_exit(session: &OkSession, from: [f32; 3], to: [f32; 3], up: [f32; 3]) -> Option<([f32; 3], [f32; 3])> {
+    let _trace = crate::native_profile::Scope::new(56);
     let skel = session.body_skel.as_ref()?;
     let part = session.parts.iter().find(|p| p.role == "body" && p.skel_kind == 1 && p.runtime_accessory.is_none() && p.blend_shapes.iter().any(|(n, _)| is_bulge(n)))?;
     let (worlds, binds) = crate::skel_export::palettes(skel, part);

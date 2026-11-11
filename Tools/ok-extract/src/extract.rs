@@ -2384,6 +2384,7 @@ pub(crate) fn extract_session_from_info(
         wardrobe_quick_settle: false,
         hidden_parts: Vec::new(),
         cover_ready: None,
+        acc_cache: Default::default(),
         face_runtime: Default::default(),
         anim_parameters: std::collections::HashMap::new(),
         anim_clock:Default::default(),anim_crossfade:None,anim_layer_crossfades:Default::default(),
