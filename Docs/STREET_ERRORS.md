@@ -2198,3 +2198,4 @@
 - 2026-11-11 R6-208 的「最近的已達格」退路沒看格子在牆的哪一邊，從咖啡廳門口找她時挑到牆外人行道，他撞牆 30 次（R6-211）。退路要求格子和目標同一個地點。
 - 2026-11-11 c-street-city：ee-0205 等 EE 教室的牆、地板、天花板是藍綠色斑駁花紋。10-22 的 romance PBR（`Tools/street_city_romance_pbr.lua`）按槽位名稱分類，室內漆、可洗漆、600mm 瓷磚地板的名稱命中 `paint|washable|porcelain` 被當成 `wall`，換成整棟的外牆材質：多數棟是淡色灰泥看不出來，EE（lagoon_mineral_plaster_v2）、LI、T4（lagoon_ceramic_v1）是藍綠斑駁，SP 另由 sports finish 改過。`Tools/street_city_interior_walls_payload.lua` 把 EE、LI、T4 的 45 個室內槽位改回 romance 前的材質。分類材質時要對照前一輪的室內／外牆標記（world-wall-grok 的 `role`），不能只看名稱。另外 R6-213 咖啡廳「關著的玻璃門」是內開 90 度的雙開門門扇，門口到座位的斜線會撞到，地圖不用改。
 - 2026-11-11 17:4x 協調者：可用 commit 掉到 1 GB。c-street-city 只拿一個 slot（slot2），卻同時開了兩個 StreetSocialCity 編輯器（run_street_city_unreal_deferred.py，各約 39 GB）；協調者結束較新的 PID 22756，可用 commit 回到 41 GB。規則：一個 slot 只能開一個 Unreal 程序，要開第二個先再 claim。
+- 2026-11-11 同一天兩次在 Contacts.inl 新增的區域變數（Inside、D）和外層同名，C4456 在 host 專案是錯誤，第一次還讓 f-q-fork 建不起 C 的 stage。在既有長函式裡加變數前先搜同名。

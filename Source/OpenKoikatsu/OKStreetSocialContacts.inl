@@ -269,7 +269,12 @@ FVector AOKStreetSocialScene::StreetStep(const FVector& From,const FVector& Dire
  for(const FVector& T:Tries){if(T.IsNearlyZero()||FVector::DotProduct(T,D)<.3f)continue;FVector To=From+T*Distance;
   // The city's ground: he goes up and down with it, and where there is none he does not go. A lift's car and doorway are no ground of the
   // map's and its shaft has no floor above the first: from the second floor up nobody could step out of the car.
-  if(OKStreetCityMode()){bool Lift=false;for(int32 I=0;I<State->Elevators.Num()&&!Lift;++I)Lift=InElevatorCar(I,From)||InElevatorCar(I,To)||ElevatorLanding(I,From)!=INDEX_NONE;
+  // From the landing only through the doorway, straight in front of the doors: anywhere within 1.4 m of it was "the lift",
+  // and off the library's 5F landing he walked north-west into the open shaft beside the car, where no way out starts (R6-217).
+  if(OKStreetCityMode()){bool Lift=false;for(int32 I=0;I<State->Elevators.Num()&&!Lift;++I){
+    Lift=InElevatorCar(I,From)||InElevatorCar(I,To);const int32 F=ElevatorLanding(I,From);
+    if(!Lift&&F!=INDEX_NONE){const auto& E=State->Elevators[I];const FVector FromShaft=To-FVector(E.Centre.X,E.Centre.Y,To.Z);const FVector Across(-E.Out[F].Y,E.Out[F].X,0);
+     Lift=FMath::Abs(FVector::DotProduct(FromShaft,Across))<60.f&&FVector::DotProduct(FromShaft,E.Out[F])>0.f;}}
    float GroundZ=From.Z;bool Ground=OKStreetGroundZ(GetWorld(),To,GroundZ,this);
    // Already in the air (no ground in reach under where he stands, put there by a step past at another height): he comes
    // down to the ground below instead of standing there for good (R6-180). Not off a ledge he stands on: that has ground.
