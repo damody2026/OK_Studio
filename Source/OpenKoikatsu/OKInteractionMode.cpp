@@ -35,6 +35,7 @@
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Input/SButton.h"
+#include "OKReaderTalk.h"
 
 extern TAutoConsoleVariable<int32> CVarHRefineBelly; // OKHScene.cpp
 namespace {
@@ -152,7 +153,9 @@ AOKInteractionMode* AOKInteractionMode::EnterReader(UOKCharacterController* Sour
          ReaderRules=MakeUnique<FOKStreetRules>();FString RulesError;
          if(ReaderRules->Open(RulesError))OKStreetSetActiveRules(ReaderRules.Get());
          else{UE_LOG(LogTemp,Warning,TEXT("Card reader one-on-one: rules not open, the H panel shows its text ids: %s"),*RulesError);ReaderRules.Reset();}}
-     Mode->BeginHScene(Her,TEXT("lover"),ReaderExperience(Source),Him);}
+     // Her talk first: the names the panel shows are the street's (her name table, his name from the settings), as she says them.
+     Mode->ReaderTalk=MakeShared<FOKReaderTalk>(Source->PreviewCardPath,Her,Him,Source->Selected.Personality);
+     Mode->BeginHScene(Mode->ReaderTalk->HerName(),TEXT("lover"),ReaderExperience(Source),Mode->ReaderTalk->HisName());}
     const auto SourceVisibility=Source->GetVisibility();Source->SetVisibility(ESlateVisibility::Collapsed);
     Mode->Returned=[Weak=TWeakObjectPtr<UOKCharacterController>(Source),SourceVisibility](TSharedRef<FJsonObject>){if(Weak.IsValid()){Weak->SetVisibility(SourceVisibility);Weak->ApplyClickInputMode();}};
     return Mode;
@@ -492,6 +495,7 @@ void AOKInteractionMode::SetHPaused(bool bPaused){
 }
 void AOKInteractionMode::Tick(float Delta){
     Super::Tick(Delta);if(Finished||!Controller)return;
+    if(ReaderTalk&&Ready)ReaderTalk->Tick(*this);
     if(auto* PC=Controller->GetOwningPlayer())if(PC->WasInputKeyJustPressed(EKeys::Escape)){Exit(!Ready);return;}
     // Space pauses or resumes the two of them (user, 2026-11-02: to take pictures), not while typing to her.
     if(auto* PC=Controller->GetOwningPlayer())if(Controller->HPanel&&Controller->PairedPlayback&&PC->WasInputKeyJustPressed(EKeys::SpaceBar)){
@@ -570,6 +574,7 @@ void AOKInteractionMode::UpdatePairPhysics(){
 }
 void AOKInteractionMode::Exit(bool WasCancelled){
     if(Exiting||Finished)return;Exiting=true;if(Cancelled)*Cancelled=true;
+    if(ReaderTalk){ReaderTalk->End();ReaderTalk.Reset();}
     if(PreviousShadowDistance>=0.f){if(IConsoleVariable* V=IConsoleManager::Get().FindConsoleVariable(TEXT("r.Shadow.DistanceScale")))V->Set(PreviousShadowDistance,ECVF_SetByConsole);PreviousShadowDistance=-1.f;}
     for(const TWeakObjectPtr<AKKPreviewActor>& Actor:PairPhysicsActors)if(Actor.IsValid())Actor->RemovePairPhysics();PairPhysicsActors.Reset();
     if(PreparingOverlay&&GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(PreparingOverlay.ToSharedRef());PreparingOverlay.Reset();
