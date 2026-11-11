@@ -8084,7 +8084,11 @@ bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrep
    // on the CPU for good, one of two body-hugging garments drew a hair off the other and they fought for depth (bunny
    // suit over tights after an insertion, 2026-11-10).
    if(Status==FKKGpuStreamReceipt::Rejected){const FString& E=State.Receipts[S]->Error;
-    const bool bTransient=E.Contains(TEXT("requires ready"))||E.Contains(TEXT("requires a ready"))||E.Contains(TEXT("Stale GPU batch proxy epoch"));
+    // Passing only for a while: on the C street (conq1111i) one of his garments was rejected "requires ready collision-free
+    // animated proxy" every other frame for good, never installed, and the 1-on-1 waited on it until its 180 s timeout
+    // ("正在準備高模…", 2026-11-12). Sixty in a row and it stays on the CPU.
+    const bool bTransient=(E.Contains(TEXT("requires ready"))||E.Contains(TEXT("requires a ready"))||E.Contains(TEXT("Stale GPU batch proxy epoch")))&&++Part.PrivateGpuTransientRejects<60;
+    if(!bTransient)Part.PrivateGpuTransientRejects=0;
     return Restore(E,!bTransient);}
    if(Status==FKKGpuStreamReceipt::Pending)Pending=true;
    else{State.Generations[S]=State.Receipts[S]->Generation;State.Receipts[S].Reset();}
@@ -8093,7 +8097,7 @@ bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrep
   TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrivateGpuReceipts);
   if(Pending){if(Session.PrivateSkinSourceRevision(Part.SessionIndex)!=State.Source.Revision)return Restore(TEXT("Native source changed"),false);return true;} // Reserve queued publication.
   if(!State.HasGeneration)State.HasGeneration=true;
-  else if(State.InstallQueued&&!State.Installed){State.Installed=true;UE_LOG(LogTemp,Display,TEXT("OK private GPU installed actor=%s part=%d source_vertices=%d sections=%d bounds_groups=%d"),*GetName(),Part.SessionIndex,State.Source.Vertices.Num(),State.Draw.Num(),State.Bounds.Groups.Num());}
+  else if(State.InstallQueued&&!State.Installed){State.Installed=true;Part.PrivateGpuTransientRejects=0;UE_LOG(LogTemp,Display,TEXT("OK private GPU installed actor=%s part=%d source_vertices=%d sections=%d bounds_groups=%d"),*GetName(),Part.SessionIndex,State.Source.Vertices.Num(),State.Draw.Num(),State.Bounds.Groups.Num());}
   if(State.PreparedPoseFrame==GFrameCounter){Pose=MoveTemp(State.PreparedPose);State.PreparedPoseFrame=MAX_uint64;bPreparedBox=State.bPreparedBox;PreparedBox=State.PreparedBox;}
   else{TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrivateGpuReadPose);if(!OKReadPrivateGpuPose(Session,Part.SessionIndex,State.Source,Pose,Error))return Restore(Error,false);}
  }
