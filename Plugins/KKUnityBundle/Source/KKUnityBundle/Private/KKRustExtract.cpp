@@ -349,6 +349,15 @@ bool FOkSession::ThighJiggle(float DeltaSeconds,float Gain,int32& OutPart,TArray
 	OutPart=Part;OutIndices.Append(Idx.GetData(),N);OutDeltas.Reserve(N);
 	for(int32 I=0;I<N;++I)OutDeltas.Add(FVector3f(D[I*3],D[I*3+1],D[I*3+2]));
 	return true; }
+bool FOkSession::ThighJiggleCloth(TArray<int32>& OutCpuParts,TArray<int32>& OutParts,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas) const {
+	OutCpuParts.Reset();OutParts.Reset();OutIndices.Reset();OutDeltas.Reset();if(!Handle)return false;
+	TArray<uint32> Part,Idx;TArray<float> D;Part.SetNumUninitialized(8192);Idx.SetNumUninitialized(8192);D.SetNumUninitialized(8192*3);
+	int32 N=ok_thigh_jiggle_cloth(Handle,Part.GetData(),Idx.GetData(),D.GetData(),uint32(Idx.Num()));
+	if(N>Idx.Num()){Part.SetNumUninitialized(N);Idx.SetNumUninitialized(N);D.SetNumUninitialized(N*3);N=ok_thigh_jiggle_cloth(Handle,Part.GetData(),Idx.GetData(),D.GetData(),uint32(Idx.Num()));}
+	if(N<0)return false;N=FMath::Min(N,Idx.Num());
+	for(int32 I=0;I<N;++I){if(Idx[I]==0xFFFFFFFFu){OutCpuParts.Add(int32(Part[I]));continue;}
+		OutParts.Add(int32(Part[I]));OutIndices.Add(Idx[I]);OutDeltas.Add(FVector3f(D[I*3],D[I*3+1],D[I*3+2]));}
+	return true; }
 bool FOkSession::PenisClipDeltas(const FVector& At,const FVector& Normal,const FVector& Axis,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,float InsetM) const {
 	OutIndices.Reset();OutDeltas.Reset();if(!Handle)return false;
 	const float In[10]={float(At.X),float(At.Y),float(At.Z),float(Normal.X),float(Normal.Y),float(Normal.Z),float(Axis.X),float(Axis.Y),float(Axis.Z),InsetM};

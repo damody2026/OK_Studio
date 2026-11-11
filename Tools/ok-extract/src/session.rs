@@ -2444,6 +2444,9 @@ impl OkSession {
         let t_parts=std::time::Instant::now();
         let skinned=std::sync::atomic::AtomicU64::new(0);
         // Her clothes kept over her skin while the H scene has it on (belly_bulge::CoverField).
+        // Her thighs' jiggle stepped with this pose before her clothes are skinned over it (thigh_jiggle::solve_step).
+        if self.cover_ready.is_none(){if let Some(b)=body{crate::thigh_jiggle::solve_step(&*self,b,dt);}}
+        let jiggle_key=self as *const Self as usize;
         let cover_field=match self.cover_ready.take(){Some(built)=>built,None=>{let _trace=crate::native_profile::Scope::new(47);let t=std::time::Instant::now();let f=crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body);if f.is_some(){crate::okanim::prof::add(26,t);}f}};let cover=&cover_field;
         let update=|(index,part):(usize,&mut SessionPart)| {
             if leader_of[index].is_some()||hidden(index)||!pass.wants(index) {return;}
@@ -2465,6 +2468,7 @@ impl OkSession {
             if let Some((mut positions, normals,tangents)) = rendered {
                 skinned.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
                 if let Some(cover)=cover {let t_cover=std::time::Instant::now();cover.cover(index,part,&mut positions);cover_us=t_cover.elapsed().as_micros() as u64;}
+                crate::thigh_jiggle::follow_own(jiggle_key,index,part,&mut positions);
                 part.positions = positions;
                 part.normals = normals;
                 part.rest_tangents=tangents;
@@ -2525,6 +2529,7 @@ impl OkSession {
                 if let Some((mut positions,normals,tangents))=rendered {
                     skinned.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
                     if let Some(cover)=cover {cover.cover(index,part,&mut positions);}
+                    crate::thigh_jiggle::follow_own(jiggle_key,index,part,&mut positions);
                     part.positions=positions;part.normals=normals;part.rest_tangents=tangents;
                     if let Some(observer)=observer{observer.emit(index,part);}
                 }
@@ -2560,12 +2565,14 @@ impl OkSession {
         let assigned_body=AssignedWorldFrame::prepare(body,&self.parts,false);
         let assigned_clothes=AssignedWorldFrame::prepare(clothes,&self.parts,true);
         let cover=crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body);
+        let jiggle_key=self as *const Self as usize;
         let render=|(index,part):(usize,&mut SessionPart)| {
             if excluded.binary_search(&index).is_ok(){return;}
             let Some(runtime)=part.runtime_accessory.as_ref() else{return;};
             let assigned=if runtime.coordinated{assigned_clothes.as_ref()}else{assigned_body.as_ref()};
             if let Some((mut positions,normals,tangents))=runtime.render_solved(if runtime.coordinated{clothes}else{body},head,policy,assigned) {
                 if let Some(cover)=&cover {cover.cover(index,part,&mut positions);}
+                crate::thigh_jiggle::follow_own(jiggle_key,index,part,&mut positions);
                 part.positions=positions;part.normals=normals;part.rest_tangents=tangents;
                 if let Some(observer)=observer{observer.emit(index,part);}
             }

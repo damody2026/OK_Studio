@@ -284,6 +284,9 @@ public:
 	// Her thighs' and buttocks' jiggle DeltaSeconds on (ok_thigh_jiggle; Gain scales the swing limits, 0 off): her body's
 	// session part index and its vertices' moves (the mesh's own space, Unity metres). False: none (no female body).
 	bool ThighJiggle(float DeltaSeconds,float Gain,int32& OutPart,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas) const;
+	// Her clothes' share of the jiggle now (ok_thigh_jiggle_cloth): the garments with their own rig to draw from their CPU
+	// vertices, and per vertex of her garments on her body skeleton (part, vertex, move in the mesh's own space).
+	bool ThighJiggleCloth(TArray<int32>& OutCpuParts,TArray<int32>& OutParts,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas) const;
 	// His penis past her skin folded under it (ok_penis_clip_deltas, his skeleton space): At where he comes out, Normal
 	// her skin's outward normal there, Axis the way he points, InsetM how much further under her skin; his penis vertex
 	// indices and moves in the mesh's own space.

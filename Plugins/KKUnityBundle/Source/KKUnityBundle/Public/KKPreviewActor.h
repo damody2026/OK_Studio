@@ -339,6 +339,10 @@ public:
     // Session parts drawn from their CPU-skinned vertices even then (her clothes pushed out over her skin as they are
     // skinned, belly_bulge::CoverField; the private GPU route skins its own copy of the rest mesh).
     TSet<int32> CpuSkinnedParts;
+    // Her garments with their own rig over her thighs' jiggle, drawn from their CPU vertices while it is on (moved with her
+    // skin as they are skinned, thigh_jiggle::follow_own); and her garments on her body skeleton showing its morph.
+    TSet<int32> JiggleCpuParts;
+    TSet<int32> JiggleClothShown;
     // An owner keeps her clothes over her skin itself (the H scene: belly_bulge::cover_deltas with her belly moves); this
     // actor's own cover (UpdateClothCover, ok.ClothCover) then leaves her clothes alone.
     bool bExternalClothCover=false;
@@ -715,6 +719,7 @@ public:
 	// frame it shows; ClearThighJiggle takes it away and forgets her springs.
 	void UpdateThighJiggle(float DeltaSeconds);
 	void ClearThighJiggle();
+	void UpdateThighJiggleCloth();
 	int32 ThighJigglePart=INDEX_NONE;
 	// The wrap morph a renderer draws now (SetPartWrapDeltas, weight 1, mesh-local), for code that skins it on the CPU
 	// (the water gun's coating) instead of reading the vertices back (GetCPUSkinnedVertices waits for the render thread).

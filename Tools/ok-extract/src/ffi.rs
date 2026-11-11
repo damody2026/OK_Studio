@@ -252,6 +252,19 @@ pub unsafe extern "C" fn ok_thigh_jiggle(s:*mut OkSession,dt:f32,gain:f32,out_pa
     moves.len() as i32
 }
 #[no_mangle]
+pub unsafe extern "C" fn ok_thigh_jiggle_cloth(s:*mut OkSession,out_part:*mut u32,out_idx:*mut u32,out_d:*mut f32,max:u32)->i32 {
+    // Her clothes' share of the jiggle (thigh_jiggle::cloth_moves): (part, vertex, move in the mesh's own space) for her
+    // garments on her body skeleton; vertex u32::MAX marks a garment with its own rig to draw from its CPU vertices.
+    // Writes up to max; returns how many there are, -1 bad input.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if out_part.is_null()||out_idx.is_null()||out_d.is_null() {return -1;}
+    let (cpu,moves)=crate::thigh_jiggle::cloth_moves(s);
+    let all=cpu.iter().map(|&p|(p,u32::MAX,[0f32;3])).chain(moves.iter().flat_map(|(p,m)|m.iter().map(move|(j,d)|(*p,*j,*d))));
+    let mut k=0usize;
+    for (p,j,d) in all {if k<max as usize{*out_part.add(k)=p as u32;*out_idx.add(k)=j;for a in 0..3{*out_d.add(k*3+a)=d[a];}}k+=1;}
+    k as i32
+}
+#[no_mangle]
 pub unsafe extern "C" fn ok_back_exit(s:*mut OkSession,at:*const f32,out:*mut f32)->i32 {
     // Where the line from her entrance to his glans comes out of her through her back (belly_bulge::back_exit): at = her
     // entrance, his glans, the way her belly faces (her skeleton space, metres, 9 floats); out = the place and her skin's

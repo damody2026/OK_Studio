@@ -35,8 +35,19 @@ struct Island { spec: usize, bone: usize, head: [f32; 3], tail: [f32; 3], verts:
 #[derive(Clone, Copy, Default)]
 struct Spring { q: [f32; 3], v: [f32; 3], target: [f32; 3], live: bool }
 
-/// Her helpers and their springs, and the moves last worked out (vertex, move in the mesh's own space).
-pub struct ThighJiggle { body: usize, verts: usize, islands: Vec<Island>, springs: Vec<Spring>, pub moves: Vec<(u32, [f32; 3])> }
+/// Her helpers and their springs, and the moves last worked out (vertex, move in the mesh's own space). `near` her skin
+/// round the islands, `posed` its moves as she is posed (her skeleton space), `stepped` when the pose's solve stepped the
+/// springs this frame (`solve_step`), `gain` the last asked.
+pub struct ThighJiggle { body: usize, verts: usize, islands: Vec<Island>, springs: Vec<Spring>, pub moves: Vec<(u32, [f32; 3])>,
+    near: std::sync::Arc<Near>, posed: Vec<[f32; 3]>, skins: Vec<Mat4>, stepped: bool, gain: f32 }
+
+/// Her body's vertices within `FOLLOW_M` of an island (the islands and the still skin round them), as bound: what her
+/// clothes over the back of her legs look for under them.
+struct Near { body: Vec<u32>, rest: Vec<[f32; 3]>, bones: Vec<[u16; 4]>, weights: Vec<[f32; 4]>, slot: std::collections::HashMap<u32, u32> }
+/// Cloth this far from her skin follows it some (all of it within `HUG_M`): the jiggle moved her skin and left the tights
+/// and the bodysuit over it where they were, so the back of her thighs came through them (user, 2026-11-11).
+const FOLLOW_M: f32 = 0.04;
+const HUG_M: f32 = 0.015;
 
 static ALL: std::sync::Mutex<Vec<(usize, ThighJiggle)>> = std::sync::Mutex::new(Vec::new());
 
@@ -123,7 +134,22 @@ impl ThighJiggle {
         for i in &islands { for (j, w) in &i.verts { taken[*j as usize] += w; } }
         for i in &mut islands { for (j, w) in &mut i.verts { let t = taken[*j as usize];if t > PEAK { *w *= PEAK / t; } } }
         let springs = vec![Spring::default(); islands.len()];
-        Some(ThighJiggle { body, verts: part.rest_positions.len(), islands, springs, moves: Vec::new() })
+        // Her skin within FOLLOW_M of an island, on a grid of that size.
+        let cell = |p: [f32; 3]| p.map(|v| (v / FOLLOW_M).floor() as i32);
+        let mut grid: std::collections::HashMap<[i32; 3], Vec<u32>> = std::collections::HashMap::new();
+        for i in &islands { for (j, _) in &i.verts { grid.entry(cell(part.rest_positions[*j as usize])).or_default().push(*j); } }
+        let mut near = Near { body: Vec::new(), rest: Vec::new(), bones: Vec::new(), weights: Vec::new(), slot: Default::default() };
+        for (j, v) in part.rest_positions.iter().enumerate() {
+            let c = cell(*v);
+            let close = (-1..=1).any(|x| (-1..=1).any(|y| (-1..=1).any(|z| grid.get(&[c[0] + x, c[1] + y, c[2] + z]).is_some_and(|l|
+                l.iter().any(|&k| len(sub(part.rest_positions[k as usize], *v)) < FOLLOW_M)))));
+            if !close { continue; }
+            near.slot.insert(j as u32, near.body.len() as u32);near.body.push(j as u32);near.rest.push(*v);
+            near.bones.push(part.bone_idx.get(j).copied().unwrap_or_default());near.weights.push(part.weights.get(j).copied().unwrap_or_default());
+        }
+        let n = near.body.len();
+        Some(ThighJiggle { body, verts: part.rest_positions.len(), islands, springs, moves: Vec::new(), near: std::sync::Arc::new(near),
+            posed: vec![[0.; 3]; n], skins: Vec::new(), stepped: false, gain: 0. })
     }
 
     /// The springs `dt` on (her skeleton as posed now; 0 keeps them), and the moves of her body's vertices.
@@ -179,7 +205,168 @@ impl ThighJiggle {
         }
         self.moves = by_vertex.into_iter().filter(|(_, d)| dot(*d, *d) > 1e-10).collect();
         self.moves.sort_unstable_by_key(|(j, _)| *j);
+        // The same moves as she is posed (the morph is skinned with her vertex), for her clothes.
+        self.skins = (0..part.bind_poses.len().min(worlds.len())).map(|b| mat_mul_pub(&worlds[b], &part.bind_poses[b])).collect();
+        for p in &mut self.posed { *p = [0.; 3]; }
+        for (j, d) in &self.moves {
+            let (Some(&k), Some(b), Some(w)) = (self.near.slot.get(j), part.bone_idx.get(*j as usize), part.weights.get(*j as usize)) else { continue; };
+            let mut v = [0f32; 3];
+            for (b, w) in b.iter().zip(w) { if let Some(m) = self.skins.get(*b as usize).filter(|_| *w > 0.) { let q = vector(m, *d);for a in 0..3 { v[a] += q[a] * w; } } }
+            self.posed[k as usize] = v;
+        }
     }
+
+    /// Her clothes' share of this frame's moves (`FOLLOW`).
+    fn publish(&self, key: usize) {
+        let any = self.posed.iter().any(|v| dot(*v, *v) > 0.);
+        let f = std::sync::Arc::new(Follow { near: self.near.clone(), skins: self.skins.clone(), moves: self.posed.clone(), any, posed: Default::default() });
+        let mut all = FOLLOW.lock().unwrap();all.retain(|(k, _)| *k != key);all.push((key, f));
+        ANY_FOLLOW.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// One frame of her skin round the islands for her clothes: where its moves are (her skeleton space).
+struct Follow { near: std::sync::Arc<Near>, skins: Vec<Mat4>, moves: Vec<[f32; 3]>, any: bool, posed: std::sync::OnceLock<Vec<[f32; 3]>> }
+static FOLLOW: std::sync::Mutex<Vec<(usize, std::sync::Arc<Follow>)>> = std::sync::Mutex::new(Vec::new());
+static ANY_FOLLOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Each garment's vertices: her four nearest skin vertices round the islands (`Near` slots), weighed (nearer more, less the
+/// further the cloth stands off her skin). Keyed by session, part and vertex count; worked out the first frame it is posed.
+type ClothMap = std::sync::Arc<Vec<[(u32, f32); 4]>>;
+static MAPS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(usize, usize, usize), ClothMap>>> = std::sync::LazyLock::new(Default::default);
+
+fn forget(key: usize) {
+    MAPS.lock().unwrap().retain(|k, _| k.0 != key);
+    let mut all = FOLLOW.lock().unwrap();all.retain(|(k, _)| *k != key);
+    ANY_FOLLOW.store(!all.is_empty(), std::sync::atomic::Ordering::Relaxed);
+}
+
+impl Follow {
+    fn skin_at(&self, k: usize) -> [f32; 3] {
+        let (r, b, w) = (self.near.rest[k], self.near.bones[k], self.near.weights[k]);
+        let mut c = [0f32; 3];
+        for (b, w) in b.iter().zip(w) { if let Some(m) = self.skins.get(*b as usize).filter(|_| w > 0.) { let q = point(m, r);for a in 0..3 { c[a] += q[a] * w; } } }
+        c
+    }
+    fn map(&self, positions: &[[f32; 3]]) -> Vec<[(u32, f32); 4]> {
+        let posed = self.posed.get_or_init(|| (0..self.near.rest.len()).map(|k| self.skin_at(k)).collect());
+        let cell = |p: [f32; 3]| p.map(|v| (v / FOLLOW_M).floor() as i32);
+        let mut grid: std::collections::HashMap<[i32; 3], Vec<u32>> = std::collections::HashMap::new();
+        for (k, p) in posed.iter().enumerate() { grid.entry(cell(*p)).or_default().push(k as u32); }
+        positions.iter().map(|p| {
+            let mut best = [(0u32, f32::MAX); 4];
+            if p[0] == f32::MAX { return [(0, 0.); 4]; }
+            let c = cell(*p);
+            for x in -1..=1 { for y in -1..=1 { for z in -1..=1 {
+                let Some(l) = grid.get(&[c[0] + x, c[1] + y, c[2] + z]) else { continue; };
+                for &k in l {
+                    let d = len(sub(posed[k as usize], *p));
+                    if d < FOLLOW_M && d < best[3].1 { best[3] = (k, d);best.sort_by(|a, b| a.1.total_cmp(&b.1)); }
+                }
+            } } }
+            if best[0].1 >= FOLLOW_M { return [(0, 0.); 4]; }
+            let hug = (1. - (best[0].1 - HUG_M).max(0.) / (FOLLOW_M - HUG_M)).clamp(0., 1.);
+            let inv: Vec<f32> = best.iter().map(|(_, d)| if *d < FOLLOW_M { 1. / (d + 0.002) } else { 0. }).collect();
+            let total: f32 = inv.iter().sum();
+            std::array::from_fn(|i| (best[i].0, inv[i] / total * hug))
+        }).collect()
+    }
+    fn moves<'a>(&'a self, map: &'a [[(u32, f32); 4]]) -> impl Iterator<Item = (usize, [f32; 3])> + 'a {
+        map.iter().enumerate().filter(|(_, n)| n[0].1 > 0.).map(|(j, n)| {
+            let mut v = [0f32; 3];
+            for &(k, w) in n { if w > 0. { let d = self.moves[k as usize];for a in 0..3 { v[a] += d[a] * w; } } }
+            (j, v)
+        })
+    }
+}
+
+fn map_for(f: &Follow, key: (usize, usize, usize), positions: impl FnOnce() -> Vec<[f32; 3]>) -> ClothMap {
+    if let Some(m) = MAPS.lock().unwrap().get(&key) { return m.clone(); }
+    let m = std::sync::Arc::new(f.map(&positions()));
+    // Nothing posed (no palette yet): asked again next frame.
+    if !m.is_empty() { MAPS.lock().unwrap().insert(key, m.clone()); }
+    m
+}
+fn follow_of(key: usize) -> Option<std::sync::Arc<Follow>> {
+    if !ANY_FOLLOW.load(std::sync::atomic::Ordering::Relaxed) { return None; }
+    FOLLOW.lock().unwrap().iter().find(|(k, _)| *k == key).map(|(_, f)| f.clone())
+}
+fn covers(role: &str) -> bool { role.starts_with("clothes") && role != "clothes_shoes" }
+
+/// A garment with its own rig just skinned on the CPU (`positions`, her skeleton space): moved with the jiggle of her
+/// skin under it.
+pub(crate) fn follow_own(session: usize, index: usize, part: &SessionPart, positions: &mut [[f32; 3]]) {
+    if !covers(&part.role) || part.runtime_accessory.is_none() { return; }
+    let Some(f) = follow_of(session) else { return; };
+    if !f.any { return; }
+    let map = map_for(&f, (session, index, positions.len()), || positions.to_vec());
+    if map.len() != positions.len() { return; }
+    for (j, v) in f.moves(&map) { for a in 0..3 { positions[j][a] += v[a]; } }
+}
+
+/// The pose's solve: her springs stepped with her skeleton as just posed, before her clothes are skinned over it, so they
+/// move with the same frame of her skin (C++ asks for the moves after; `thigh_jiggle` then steps nothing).
+pub(crate) fn solve_step(session: &OkSession, skel: &crate::pose::Skeleton, dt: f32) {
+    let key = session as *const OkSession as usize;
+    let mut all = ALL.lock().unwrap();
+    let Some((_, jiggle)) = all.iter_mut().find(|(k, _)| *k == key) else { return; };
+    let Some(part) = session.parts.get(jiggle.body).filter(|p| p.role == "body" && p.rest_positions.len() == jiggle.verts) else { return; };
+    let gain = jiggle.gain;
+    jiggle.step(part, &skel.worlds, dt.clamp(0., 0.1), gain);
+    jiggle.stepped = true;
+    jiggle.publish(key);
+}
+
+/// Her clothes' share of the jiggle now: the garments with their own rig over it (to be drawn from their CPU vertices,
+/// where `follow_own` moves them; all of them when one is, so the layers stay on one route) and, for her garments on her
+/// body skeleton, their vertices' moves in the mesh's own space (a morph each).
+pub fn cloth_moves(session: &OkSession) -> (Vec<usize>, Vec<(usize, Vec<(u32, [f32; 3])>)>) {
+    let key = session as *const OkSession as usize;
+    let Some(f) = follow_of(key) else { return Default::default(); };
+    let Some(skel) = session.body_skel.as_ref() else { return Default::default(); };
+    let head = session.head_full_posed.as_ref().or(session.head_skel.as_ref());
+    let clothes = session.clothes_dynamic_runtime.as_ref().map(|(_, state)| &state.skel);
+    let own: Vec<usize> = session.parts.iter().enumerate().filter(|(_, p)| p.render_visible && covers(&p.role) && p.runtime_accessory.is_some()).map(|(i, _)| i).collect();
+    let reached = own.iter().any(|&i| {
+        // Posed as its renderer draws it, the first frame only (the map is kept).
+        let map = map_for(&f, (key, i, session.parts[i].rest_positions.len()), || {
+            let runtime = session.parts[i].runtime_accessory.as_ref().unwrap();
+            let Some((mesh, palette)) = runtime.export_skin_palette(runtime.skin_body(Some(skel), clothes), head) else { return Vec::new(); };
+            (0..mesh.rest_positions.len()).map(|j| {
+                let (Some(b), Some(w)) = (mesh.bone_idx.get(j), mesh.weights.get(j)) else { return [f32::MAX; 3]; };
+                let mut c = [0f32; 3];
+                for (b, w) in b.iter().zip(w) { if let Some(m) = palette.get(*b as usize).filter(|_| *w > 0.) { let q = point(m, mesh.rest_positions[j]);for a in 0..3 { c[a] += q[a] * w; } } }
+                c
+            }).collect()
+        });
+        map.iter().any(|n| n[0].1 > 0.)
+    });
+    let cpu = if reached { own } else { Vec::new() };
+    let mut out = Vec::new();
+    if f.any {
+        for (i, p) in session.parts.iter().enumerate() {
+            if !p.render_visible || !covers(&p.role) || p.runtime_accessory.is_some() || p.skel_kind != 1
+                || p.weights.len() != p.rest_positions.len() || p.bone_idx.len() != p.rest_positions.len() { continue; }
+            let (w, b) = crate::skel_export::palettes(skel, p);
+            let palette: Vec<Mat4> = w.iter().zip(&b).map(|(w, b)| mat_mul_pub(w, b)).collect();
+            if palette.is_empty() { continue; }
+            let mat = |j: usize| -> Option<Mat4> {
+                let mut m = [[0f32; 4]; 4];let mut total = 0.;
+                for (b, w) in p.bone_idx[j].iter().zip(&p.weights[j]) {
+                    let Some(q) = palette.get(*b as usize).filter(|_| *w > 0.) else { continue; };
+                    for r in 0..4 { for c in 0..4 { m[r][c] += q[r][c] * w; } }total += w;
+                }
+                (total > 0.5).then_some(m)
+            };
+            let map = map_for(&f, (key, i, p.rest_positions.len()), || (0..p.rest_positions.len()).map(|j| mat(j).map_or([f32::MAX; 3], |m| point(&m, p.rest_positions[j]))).collect());
+            if map.len() != p.rest_positions.len() { continue; }
+            let moves: Vec<(u32, [f32; 3])> = f.moves(&map).filter(|(_, v)| dot(*v, *v) >= 0.0001 * 0.0001).filter_map(|(j, v)| {
+                let m = mat(j)?;
+                Some((j as u32, vector(&mat_inv_pub(&m), v)))
+            }).collect();
+            if !moves.is_empty() { out.push((i, moves)); }
+        }
+    }
+    (cpu, out)
 }
 
 /// Her thighs' and buttocks' jiggle `dt` on (0: as it was): the session part of her body and its vertices' moves, or
@@ -187,17 +374,20 @@ impl ThighJiggle {
 pub fn thigh_jiggle(session: &OkSession, dt: f32, gain: f32) -> Option<(usize, Vec<(u32, [f32; 3])>)> {
     let key = session as *const OkSession as usize;
     let mut all = ALL.lock().unwrap();
-    if gain <= 0. { all.retain(|(k, _)| *k != key);return None; }
+    if gain <= 0. { all.retain(|(k, _)| *k != key);drop(all);forget(key);return None; }
     let skel = session.body_skel.as_ref()?;
     let fresh = |j: &ThighJiggle| session.parts.get(j.body).is_some_and(|p| p.role == "body" && p.rest_positions.len() == j.verts);
     if !all.iter().any(|(k, j)| *k == key && fresh(j)) {
         all.retain(|(k, _)| *k != key);
+        MAPS.lock().unwrap().retain(|k, _| k.0 != key);
         let made = ThighJiggle::new(session)?;
         if all.len() >= 16 { all.remove(0); }
         all.push((key, made));
     }
     let (_, jiggle) = all.iter_mut().find(|(k, _)| *k == key)?;
-    jiggle.step(&session.parts[jiggle.body], &skel.worlds, dt.clamp(0., 0.1), gain);
+    jiggle.gain = gain;
+    // The pose's solve stepped it this frame already (solve_step): its moves as they are.
+    if jiggle.stepped { jiggle.stepped = false; } else { jiggle.step(&session.parts[jiggle.body], &skel.worlds, dt.clamp(0., 0.1), gain);jiggle.publish(key); }
     Some((jiggle.body, jiggle.moves.clone()))
 }
 

@@ -8030,7 +8030,7 @@ bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrep
   if(Reject){Part.PrivateGpuRejectedEpoch=Epoch;Part.PrivateGpuRejectedRevision=Session.PrivateSkinSourceRevision(Part.SessionIndex);UE_LOG(LogTemp,Warning,TEXT("OK private GPU retained CPU actor=%s part=%d reason=%s"),*GetName(),Part.SessionIndex,*Reason);}
   return false;
  };
- if(!CVarOkPrivateGpuStreams.GetValueOnGameThread()||!bUsePrivateGpuPlayback||!Component||!Part.bRuntimeAccessory||Part.bSlotAttached||Part.bFaceSphereNormals||Part.SessionIndex==INDEX_NONE||Session.MorphCount(Part.SessionIndex)!=0||CpuSkinnedParts.Contains(Part.SessionIndex))
+ if(!CVarOkPrivateGpuStreams.GetValueOnGameThread()||!bUsePrivateGpuPlayback||!Component||!Part.bRuntimeAccessory||Part.bSlotAttached||Part.bFaceSphereNormals||Part.SessionIndex==INDEX_NONE||Session.MorphCount(Part.SessionIndex)!=0||CpuSkinnedParts.Contains(Part.SessionIndex)||JiggleCpuParts.Contains(Part.SessionIndex))
   return Restore(FString(),false);
  if(Part.PrivateGpuDisplay&&Part.PrivateGpuDisplay->Epoch!=Epoch)Restore(FString(),false);
  if(!Epoch||Component->IsRenderStateDirty()||!Component->UsesAnimatedStreams()||Component->GetCollisionEnabled()!=ECollisionEnabled::NoCollision)return Restore(FString(),false);
@@ -10361,7 +10361,22 @@ void AKKPreviewActor::ClearThighJiggle()
 {
     if(ThighJigglePart!=INDEX_NONE)SetPartWrapDeltas(ThighJigglePart,{},{},{},GOkThighJiggleSet);
     ThighJigglePart=INDEX_NONE;
+    for(int32 Part:TSet<int32>(JiggleClothShown))SetPartWrapDeltas(Part,{},{},{},GOkThighJiggleSet);
+    JiggleClothShown.Reset();JiggleCpuParts.Reset();
     if(Session.IsOpen()){int32 Part;TArray<uint32> Idx;TArray<FVector3f> D;Session.ThighJiggle(0.f,0.f,Part,Idx,D);}
+}
+// Her clothes over the jiggle move with it (user, 2026-11-11: the back of her thighs came through her shorts and tights):
+// her garments on her body skeleton by their own morph set, those with their own rig on the CPU as they are skinned.
+void AKKPreviewActor::UpdateThighJiggleCloth()
+{
+    TRACE_CPUPROFILER_EVENT_SCOPE(KK_ThighJiggleCloth);
+    TArray<int32> Cpu,ClothParts;TArray<uint32> Idx;TArray<FVector3f> D;
+    if(!Session.ThighJiggleCloth(Cpu,ClothParts,Idx,D))return;
+    JiggleCpuParts=TSet<int32>(Cpu);
+    TMap<int32,TPair<TArray<uint32>,TArray<FVector3f>>> ByPart;
+    for(int32 I=0;I<ClothParts.Num();++I){auto& P=ByPart.FindOrAdd(ClothParts[I]);P.Key.Add(Idx[I]);P.Value.Add(D[I]);}
+    for(auto It=JiggleClothShown.CreateIterator();It;++It)if(!ByPart.Contains(*It)){SetPartWrapDeltas(*It,{},{},{},GOkThighJiggleSet);It.RemoveCurrent();}
+    for(const auto& P:ByPart)if(SetPartWrapDeltas(P.Key,P.Value.Key,P.Value.Value,{},GOkThighJiggleSet))JiggleClothShown.Add(P.Key);else JiggleClothShown.Remove(P.Key);
 }
 void AKKPreviewActor::UpdateThighJiggle(float DeltaSeconds)
 {
@@ -10370,6 +10385,7 @@ void AKKPreviewActor::UpdateThighJiggle(float DeltaSeconds)
     if(Gain<=0.f||!Session.IsOpen()){if(ThighJigglePart!=INDEX_NONE)ClearThighJiggle();return;}
     int32 Part=INDEX_NONE;TArray<uint32> Idx;TArray<FVector3f> D;
     if(!Session.ThighJiggle(FMath::Max(0.f,DeltaSeconds),Gain,Part,Idx,D)||Part==INDEX_NONE){if(ThighJigglePart!=INDEX_NONE)ClearThighJiggle();return;}
+    UpdateThighJiggleCloth();
     // Still (no move over a tenth of a millimetre) and nothing shown: nothing to rebuild.
     if(Idx.IsEmpty()&&ThighJigglePart==INDEX_NONE)return;
     if(ThighJigglePart!=INDEX_NONE&&ThighJigglePart!=Part)SetPartWrapDeltas(ThighJigglePart,{},{},{},GOkThighJiggleSet);

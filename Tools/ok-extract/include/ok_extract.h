@@ -153,6 +153,10 @@ int32_t ok_cover_deltas(OkSession* s,const uint32_t* body_idx,const float* body_
    body's session part index in out_part, up to max (vertex index, move in the mesh's own space, 3 floats); returns the
    count, -2 none (no female body), -1 bad input. */
 int32_t ok_thigh_jiggle(OkSession* s,float dt,float gain,int32_t* out_part,uint32_t* out_idx,float* out_d,uint32_t max);
+/* Her clothes' share of the jiggle now (after ok_thigh_jiggle): up to max (session part index, vertex index, move in the
+   mesh's own space, 3 floats) for her garments on her body skeleton; a vertex index of 0xFFFFFFFF marks a garment with
+   its own rig to draw from its CPU vertices (moved there as it is skinned). Returns the count, -1 bad input. */
+int32_t ok_thigh_jiggle_cloth(OkSession* s,uint32_t* out_part,uint32_t* out_idx,float* out_d,uint32_t max);
 /* As ok_belly_wrap_deltas, her skin moved by her belly bones, pushed by his penis as BetterPenetration's colliders push
    its belly DynamicBone (belly_bulge::bone_deltas). Same input and output. */
 int32_t ok_belly_bone_deltas(OkSession* s,const float* at,float radius,uint32_t* out_idx,float* out_d,uint32_t max);
