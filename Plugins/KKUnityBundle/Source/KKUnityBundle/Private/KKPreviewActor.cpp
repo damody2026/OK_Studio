@@ -8040,7 +8040,10 @@ bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrep
  bGated=!CVarOkPrivateGpuStreams.GetValueOnGameThread()||!bUsePrivateGpuPlayback||!Component||!Part.bRuntimeAccessory||Part.bSlotAttached||Part.bFaceSphereNormals||Part.SessionIndex==INDEX_NONE||Session.MorphCount(Part.SessionIndex)!=0||CpuSkinnedParts.Contains(Part.SessionIndex)||JiggleCpuParts.Contains(Part.SessionIndex);}
  if(bGated)return Restore(FString(),false);
  if(Part.PrivateGpuDisplay&&Part.PrivateGpuDisplay->Epoch!=Epoch)Restore(FString(),false);
- if(!Epoch||Component->IsRenderStateDirty()||!Component->UsesAnimatedStreams()||Component->GetCollisionEnabled()!=ECollisionEnabled::NoCollision)return Restore(FString(),false);
+ // No scene proxy (a hidden part: her hair ornament and top halves not shown in this pose): nothing to install, so no
+ // display that waits on an install the batch always rejects; the one-on-one never became ready (Jeanne Alter,
+ // 2026-11-12). Shown again, the new proxy gets a new epoch and installs then.
+ if(!Epoch||!Component->SceneProxy||Component->IsRenderStateDirty()||!Component->UsesAnimatedStreams()||Component->GetCollisionEnabled()!=ECollisionEnabled::NoCollision)return Restore(FString(),false);
  if(Part.PrivateGpuRejectedEpoch==Epoch&&Part.PrivateGpuRejectedRevision==Session.PrivateSkinSourceRevision(Part.SessionIndex))return false;
  FString Error;FKKPrivateGpuPose Pose;bool bPreparedBox=false;FBox PreparedBox(ForceInit);
  if(!Part.PrivateGpuDisplay){

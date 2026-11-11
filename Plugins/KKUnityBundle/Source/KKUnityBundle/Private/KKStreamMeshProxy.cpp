@@ -827,7 +827,9 @@ void UKKAffineProceduralMeshComponent::SubmitGpuStreamsBatch(TArray<FKKGpuStream
         auto* C=Entry.Component;auto& R=Entry.Request;if(!Entry.Receipt)Entry.Receipt=MakeShared<FKKGpuStreamReceipt,ESPMode::ThreadSafe>();
         const uint64 Epoch=C?C->GpuStreamProxyEpoch:0;
         auto Reject=[&](const TCHAR* Error){Entry.Receipt->Complete(false,R.ExpectedGeneration,Epoch,Error);};
-        if(!C||!C->UsesAnimatedStreams()||!C->SceneProxy||C->IsRenderStateDirty()||C->GetCollisionEnabled()!=ECollisionEnabled::NoCollision){Reject(TEXT("GPU batch requires ready collision-free animated proxy"));continue;}
+        // Which of them failed, in the reason (the receiver keys on "requires ready" for a passing one).
+        if(!C||!C->UsesAnimatedStreams()||!C->SceneProxy||C->IsRenderStateDirty()||C->GetCollisionEnabled()!=ECollisionEnabled::NoCollision){
+            Reject(!C?TEXT("GPU batch requires ready collision-free animated proxy (no component)"):!C->UsesAnimatedStreams()?TEXT("GPU batch requires ready collision-free animated proxy (not animated streams)"):!C->SceneProxy?TEXT("GPU batch requires ready collision-free animated proxy (no proxy)"):C->IsRenderStateDirty()?TEXT("GPU batch requires ready collision-free animated proxy (render state dirty)"):TEXT("GPU batch requires ready collision-free animated proxy (collision)"));continue;}
         if(!R.ProxyEpoch||R.ProxyEpoch!=Epoch){Reject(TEXT("Stale GPU batch proxy epoch"));continue;}
         if(Entry.Section<0||Entry.Section>=C->GetNumSections()){Reject(TEXT("GPU batch section invalid"));continue;}
         auto* Section=C->GetProcMeshSection(Entry.Section);
