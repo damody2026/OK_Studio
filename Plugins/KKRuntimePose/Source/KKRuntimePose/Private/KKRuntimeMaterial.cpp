@@ -17,6 +17,9 @@
 #include <atomic>
 
 namespace {
+// The decoded image before it is shrunk to OKRuntimeTextureMaxDimension: 16384x16384 BGRA (1 GiB, still within
+// TArray's int32 count) at most, held only while its mips are built.
+constexpr uint64 OKRuntimeTextureDecodeLimit=16384ull*16384*4;
 // Immutable prepared pixels only; each card retains its own material bindings.
 struct FPreparedTextureCacheEntry {TArray<uint8> Encoded;FKKRuntimePreparedTexture Prepared;uint64 Bytes=0;};
 FCriticalSection PreparedTextureCacheLock;
@@ -56,7 +59,7 @@ FKKRuntimeTextureMip Resize(const FKKRuntimeTextureMip& A,const FKKRuntimeTextur
 }
 
 bool OKBuildRuntimeTextureMips(TArray<uint8> BGRA,int32 Width,int32 Height,const FKKRuntimeTextureSettings& Settings,TArray<FKKRuntimeTextureMip>& Out,FString& Error){
- if(Width<=0||Height<=0||int64(Width)*Height*4!=BGRA.Num()||BGRA.Num()>128*1024*1024){Error=TEXT("Invalid runtime texture source pixels");return false;}
+ if(Width<=0||Height<=0||int64(Width)*Height*4!=BGRA.Num()||uint64(BGRA.Num())>OKRuntimeTextureDecodeLimit){Error=TEXT("Invalid runtime texture source pixels");return false;}
  FKKRuntimeTextureMip M;M.Width=Width;M.Height=Height;M.BGRA=MoveTemp(BGRA);
  int32 TargetWidth=Width,TargetHeight=Height;while(TargetWidth>OKRuntimeTextureMaxDimension||TargetHeight>OKRuntimeTextureMaxDimension){TargetWidth=FMath::Max(1,TargetWidth/2);TargetHeight=FMath::Max(1,TargetHeight/2);}
  if(TargetWidth!=Width||TargetHeight!=Height)M=Resize(M,Settings,TargetWidth,TargetHeight);
@@ -65,8 +68,6 @@ bool OKBuildRuntimeTextureMips(TArray<uint8> BGRA,int32 Width,int32 Height,const
 }
 
 namespace {
-// The decoded image before it is shrunk: 16384x16384 BGRA (1 GiB) at most, held only while its mips are built.
-constexpr uint64 OKRuntimeTextureDecodeLimit=16384ull*16384*4;
 FString RuntimeTextureIdentity(const FKKRuntimePreparedTexture& T);
 bool PrepareSharedRuntimeTexture(const FString& Key,const FString& Hash,const uint8* Bytes,int32 Length,const FKKRuntimeTextureSettings& Settings,FKKRuntimePreparedTexture& Out,FString& Error){
  if(const auto Cached=FindPreparedTexture(Key,Bytes,Length)){++PreparedCacheHits;Out=Cached->Prepared;return true;}
