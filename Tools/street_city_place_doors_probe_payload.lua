@@ -10,6 +10,10 @@
 -- picks (rooms) and to each anchor on the door's floor; and the open spots round the door that would tie to the roads.
 -- Lift landings: what stands within 1.5 m of the landing at 105 cm in the four directions. Floors: every 25 cm cell of the
 -- box with the game's Fine test, as clear cells. Points ([{ name, pos }]): Fine and the road ties of a candidate door.
+-- Probes ([{ name, pos }]): what blocks a body standing there (25x60 capsule at 105) and lines at 60/105/180 cm in eight
+-- directions out to 2 m, with the actor's label, mesh, location and bounds.
+-- Spots ([{ place, name, candidates = [pos...] }]): walk from the place's door (moved as the game moves it) to each candidate
+-- in turn; the first one reached is the answer.
 -- Output: places-v1/place-doors.json
 return [====[
 def motel_world_place_doors():
@@ -33,6 +37,11 @@ def motel_world_place_doors():
   a=h[9];c=h[10];p=h[5];row=dict(at=[round(p.x),round(p.y),round(p.z)],actor=a.get_actor_label() if a else None,component=c.get_name() if c else None)
   try:row['mesh']=c.static_mesh.get_path_name()
   except Exception:pass
+  if a:
+   try:
+    o,e=a.get_actor_bounds(False);l=a.get_actor_location();row['actor_loc']=[round(l.x),round(l.y),round(l.z)]
+    row['bounds']=[[round(o.x-e.x),round(o.y-e.y),round(o.z-e.z)],[round(o.x+e.x),round(o.y+e.y),round(o.z+e.z)]];row['path']=a.get_path_name()
+   except Exception:pass
   return row
  # the game's Fine(): a floor at the point's height and room for a body
  def fine(x,y,z):
@@ -150,6 +159,35 @@ def motel_world_place_doors():
   x,y,z=s['pos'];g=fine(x,y,z);row=dict(name=s['name'],pos=s['pos'],fine=g is not None)
   if g is not None:k,blocked=ties([x,y,g],True);row['ties']=k;row['blocked']=blocked
   out['points'].append(row)
+ out['spots']=[]
+ for s in seeds.get('spots',[]):
+  p=byid.get(s['place']);row=dict(place=s['place'],name=s['name'],tried=[])
+  if not p:row['why']='no such place';out['spots'].append(row);continue
+  d=list(p['door']);g=fine(*d)
+  if g is None:
+   best=None
+   for R in range(40,401,30):
+    for K in range(24):
+     t=2*math.pi*K/24;x,y=d[0]+math.cos(t)*R,d[1]+math.sin(t)*R;gg=fine(x,y,d[2])
+     if gg is not None and (not best or R<best[0]):best=(R,[x,y,gg])
+   d=best[1] if best else d
+  else:d=[d[0],d[1],g]
+  row['door']=[round(v) for v in d]
+  for c in s['candidates']:
+   gg=fine(*c);w=walk(d,[c[0],c[1],gg if gg is not None else c[2]]) if gg is not None else dict(reached=False,why='no room for a body')
+   row['tried'].append(dict(pos=c,fine=gg is not None,walk=w))
+   if w.get('reached'):row['use']=c;break
+  out['spots'].append(row)
+  (base/'place-doors.json').write_text(json.dumps(out,indent=1),'utf8')
+ out['probes']=[]
+ for s in seeds.get('probes',[]):
+  x,y,z=s['pos'];row=dict(name=s['name'],pos=s['pos'],body=what(caps(V(x,y,z+105),V(x,y,z+105.5),25,60)),rays={})
+  for K in range(8):
+   t=2*math.pi*K/8;dx,dy=math.cos(t),math.sin(t);hs=[]
+   for hgt in(60,105,180):
+    h=hit(V(x,y,z+hgt),V(x+dx*200,y+dy*200,z+hgt));hs.append(dict(h=hgt,dist=round(math.hypot(h[4].x-x,h[4].y-y)) if h else None,hit=what(h)))
+   row['rays'][str(K*45)]=hs
+  out['probes'].append(row)
  for f in seeds.get('floors',[]):
   x0,y0,x1,y1=f['box'];C=f.get('cell',25);z=f['z'];ok=[]
   x=x0

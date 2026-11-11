@@ -997,6 +997,14 @@ do
   -- It is reached the way the beach is, from the beach's street door 7 m off (the road bake walked that way down).
   local byid = {}; for _, g in ipairs(GAME_PLACES) do byid[g.id] = g end
   if byid.waterpark and byid.beach and byid.beach.door then byid.waterpark.door = byid.beach.door end
+  -- counter / checkout anchors sat on the counter item, which can be behind the counter: the cafe's was in the staff aisle and
+  -- he walked into the corner behind a partition and could not get out (c-conquest conq1112c, 11-12). places-v1/counter-spots.json
+  -- (walks from each door on the source map, the spots probe) puts them where a customer can stand
+  if exists(root .. 'places-v1/counter-spots.json') then
+    for pid, s in pairs(load('places-v1/counter-spots.json').spots) do local g = byid[pid]
+      if g then for _, a in ipairs(g.anchors) do if a.name == s.name then a.pos = P(s.pos[1], s.pos[2], s.pos[3]); a.source = (a.source or '') .. ' (customer side)' end end end
+    end
+  end
   table.sort(GAME_PLACES, function(a, b) return a.id < b.id end)
 end
 -- kitchens and baths in the homes (c-conquest 8.2 住家): every lockable room gets kitchen / stove / bath anchors from
