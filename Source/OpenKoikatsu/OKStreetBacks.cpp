@@ -5,11 +5,12 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Components/StaticMeshComponent.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 
 static TAutoConsoleVariable<int32> CVarStreetHideBacks(TEXT("ok.Street.HideBacks"),1,TEXT("1: a street shape the camera is inside, or a floor it is under, is not drawn; 0: all drawn"));
 
 namespace{
- struct FBacks{TWeakObjectPtr<UWorld> World;double FoundAt=-1.;TArray<TWeakObjectPtr<UStaticMeshComponent>> Shapes;TSet<TWeakObjectPtr<UStaticMeshComponent>> Hidden;};
+ struct FBacks{TWeakObjectPtr<UWorld> World;double FoundAt=-1.;TArray<TWeakObjectPtr<UStaticMeshComponent>> Shapes;TSet<TWeakObjectPtr<UStaticMeshComponent>> Hidden;FVector Eye=FVector::ZeroVector;bool bLooked=false,bOn=true;};
  FBacks GBacks;
  // The street's own shapes and the engine's basic ones (the room's walls and floor are those too); not the people.
  bool IsStreetShape(const UStaticMeshComponent* C){
@@ -24,8 +25,13 @@ void OKHideStreetBacks(UWorld* World,const FVector& Eye){
  if(!World)return;
  // Shapes come and go (shops, the room's walls): looked up again every two seconds.
  const double Now=World->GetTimeSeconds();
- if(B.FoundAt<0.||Now-B.FoundAt>2.){B.FoundAt=Now;B.Shapes.Reset();
+ TRACE_CPUPROFILER_EVENT_SCOPE(Street_HideBacks);
+ if(B.FoundAt<0.||Now-B.FoundAt>2.){B.FoundAt=Now;B.Shapes.Reset();B.bLooked=false;
   for(TActorIterator<AStaticMeshActor> It(World);It;++It)if(UStaticMeshComponent* C=It->GetStaticMeshComponent();IsStreetShape(C))B.Shapes.Add(C);}
+ // The same eye over the same shapes hides the same ones: a still camera (the one-on-one's, mostly) costs nothing. Every
+ // frame it took 0.4 ms of the game thread in the university city (2026-11-12).
+ else if(B.bLooked&&B.bOn==bOn&&FVector::DistSquared(B.Eye,Eye)<1.)return;
+ B.bLooked=true;B.bOn=bOn;B.Eye=Eye;
  TSet<TWeakObjectPtr<UStaticMeshComponent>> Hide;
  if(bOn)for(const auto& Weak:B.Shapes){UStaticMeshComponent* C=Weak.Get();if(!C||!C->GetStaticMesh())continue;
   // In the shape's own space: inside its box (2 cm in from its faces), or lower than a floor's top (a slab far wider

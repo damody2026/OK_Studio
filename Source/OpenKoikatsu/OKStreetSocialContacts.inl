@@ -479,7 +479,7 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character,const FString& TryCard,i
  // The last scene's result still open (or still waiting for the time after it to end) does not stay over this one.
  EndAfter(false);
  if(S.HResultPanel.IsValid()){if(GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(S.HResultPanel.ToSharedRef());S.HResultPanel.Reset();}
- S.PrivateGirl=Character;S.HighPrivateAt=FPlatformTime::Seconds();S.HighPrivateSeenReady=false;S.HighPrivateResult.Reset();S.PrivateMouse=S.MouseUI;S.PrivateMode=Mode;
+ S.PrivateGirl=Character;S.PrivateOffstageAt=-1.;S.HighPrivateAt=FPlatformTime::Seconds();S.HighPrivateSeenReady=false;S.HighPrivateResult.Reset();S.PrivateMouse=S.MouseUI;S.PrivateMode=Mode;
  const FString Directory=FPaths::GetPath(S.Manifest.SocialReport)/TEXT("HighInteraction")/FGuid::NewGuid().ToString(EGuidFormats::Digits);IFileManager::Get().MakeDirectory(*Directory,true);
  S.HighPrivateReport=Directory/TEXT("result.json");Mode->ReportPath=S.HighPrivateReport;
  Mode->AutoReturnSeconds=S.SelfTest?2:0;
@@ -620,7 +620,10 @@ bool AOKStreetSocialScene::TickPrivate(double Now){
  auto& S=*State;if(S.PrivateGirl==INDEX_NONE)return false;
  // Tick stops at this function for the whole one-on-one, so the street's own motion never runs: every street figure goes
  // out of sight from here, and Tick puts them back after it (he and she are the high models meanwhile).
- {FString Hidden;OKSetCrowdRuntimeCharacterMotion(this,0,FTransform(S.Rotations[0],S.Male+OKStreetOffstage),0.f,Hidden);
+ // Nothing else moves them meanwhile: once a second is enough (every frame it took 0.5 ms of the game thread in the
+ // university city, one-on-one in place, 2026-11-12).
+ if(Now-S.PrivateOffstageAt>1.||Now<S.PrivateOffstageAt){TRACE_CPUPROFILER_EVENT_SCOPE(Street_PrivateOffstage);S.PrivateOffstageAt=Now;
+  FString Hidden;OKSetCrowdRuntimeCharacterMotion(this,0,FTransform(S.Rotations[0],S.Male+OKStreetOffstage),0.f,Hidden);
   for(const auto& Agent:S.Agents)OKSetCrowdRuntimeCharacterMotion(this,Agent.Slot,FTransform(S.RenderedRotations[Agent.Slot],Agent.Position+OKStreetOffstage),0.f,Hidden);}
  // Esc leaves it like the leave button (the scene's own Esc check sees only real keys, not the control channel's).
  if(S.PrivateMode.IsValid()&&OKKeyPressed(GetWorld()->GetFirstPlayerController(),EKeys::Escape)){FinishPrivate();return true;}

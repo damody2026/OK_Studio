@@ -417,6 +417,7 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  TMap<int32,double> CommutePausedUntil; // a girl he walked up to stops her walk for a moment (StepNavigation)
  // PrivateInPlace: the one-on-one is where she stands on the street (user, 2026-11-01: no change of scene); the street
  // goes on around them and every street figure is kept out of sight under it (OKStreetOffstage, in TickPrivate; user, 2026-11-06: nobody else shows in a one-on-one).
+ double PrivateOffstageAt=-1.; /* when the street figures were last sent off stage in the one-on-one (TickPrivate) */
  bool PrivateInPlace=false;TArray<TWeakObjectPtr<AActor>> PrivateHiddenProps; /* what the street figures held, back on leaving */bool PrivateTryOn=false; /* she is trying clothes on: no H scene, no memory of a session */
  int32 NavGirl=INDEX_NONE,PrivateGirl=INDEX_NONE,ContactsProbePhase=0;FOKStreetLiftRide NavRide; // the navigation riding an elevator (PlanNavLift)
  double NavAt=0,ContactsProbeAt=0;

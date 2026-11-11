@@ -94,6 +94,7 @@ private:
     double Started=0,ReadyAt=0;
     bool OwnController=false,Activated=false,Ready=false,Finished=false,Exiting=false,bInPlace=false;FTransform InPlaceAt;
     bool PreviousPaint=false,PreviousMouse=false,PreviousTouch=false;
+    float PreviousShadowDistance=-1.f; // r.Shadow.DistanceScale before an in-place one-on-one lowered it; -1: untouched
     FOKBodyInteraction PreviousBodyInteraction;
     FOKBodyGesture PreviousBodyGesture;
     struct FSourceAudioState {TWeakObjectPtr<class UAudioComponent> Audio;bool Paused=false;};

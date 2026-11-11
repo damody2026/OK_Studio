@@ -47,7 +47,11 @@ AOKInteractionMode* AOKInteractionMode::Enter(UOKCharacterController* Input,cons
     if(!Input||!Input->GetWorld()||!Input->GetOwningPlayer()||Input->Selected.Sex!=1)return nullptr;
     for(TActorIterator<AOKInteractionMode> It(Input->GetWorld());It;++It)if(!It->Finished)return It->Controller==Input?*It:nullptr;
     auto* Mode=Input->GetWorld()->SpawnActor<AOKInteractionMode>();if(!Mode)return nullptr;
-    Mode->Controller=Input;Mode->Started=FPlatformTime::Seconds();if(InPlace){Mode->bInPlace=true;Mode->InPlaceAt=*InPlace;Input->bInteractionInPlace=true;}Mode->PreviousView=Input->GetOwningPlayer()->GetViewTarget();Mode->PreviousMouse=Input->GetOwningPlayer()->bShowMouseCursor;
+    Mode->Controller=Input;Mode->Started=FPlatformTime::Seconds();if(InPlace){Mode->bInPlace=true;Mode->InPlaceAt=*InPlace;Input->bInteractionInPlace=true;
+        // In the world itself the sun's shadows reach no further than 40% of their distance while they are at it: gathering
+        // the university city's casters took 0.9 ms of the render thread in the department store, the two of them and what
+        // stands around them shadowed the same (2026-11-12). Given back on leaving (Exit).
+        if(IConsoleVariable* V=IConsoleManager::Get().FindConsoleVariable(TEXT("r.Shadow.DistanceScale"));V&&V->GetFloat()>.4f){Mode->PreviousShadowDistance=V->GetFloat();V->Set(.4f,ECVF_SetByConsole);}}Mode->PreviousView=Input->GetOwningPlayer()->GetViewTarget();Mode->PreviousMouse=Input->GetOwningPlayer()->bShowMouseCursor;
     if(auto* PC=Cast<AOpenKoikatsuPlayerController>(Input->GetOwningPlayer())){
         Mode->PreviousPaint=PC->IsPaintPreviewActive();Mode->PreviousTouch=PC->bBodyTouchEnabled;
         // Detach the source context before stage activation can cancel it.
@@ -566,6 +570,7 @@ void AOKInteractionMode::UpdatePairPhysics(){
 }
 void AOKInteractionMode::Exit(bool WasCancelled){
     if(Exiting||Finished)return;Exiting=true;if(Cancelled)*Cancelled=true;
+    if(PreviousShadowDistance>=0.f){if(IConsoleVariable* V=IConsoleManager::Get().FindConsoleVariable(TEXT("r.Shadow.DistanceScale")))V->Set(PreviousShadowDistance,ECVF_SetByConsole);PreviousShadowDistance=-1.f;}
     for(const TWeakObjectPtr<AKKPreviewActor>& Actor:PairPhysicsActors)if(Actor.IsValid())Actor->RemovePairPhysics();PairPhysicsActors.Reset();
     if(PreparingOverlay&&GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(PreparingOverlay.ToSharedRef());PreparingOverlay.Reset();
     if(!Evidence)Evidence=MakeShared<FJsonObject>();Evidence->SetStringField(TEXT("state"),!WasCancelled&&Activated?TEXT("returned"):TEXT("cancelled"));Evidence->SetStringField(TEXT("error"),Error);Evidence->SetBoolField(TEXT("same_process"),true);Evidence->SetNumberField(TEXT("process_id"),FPlatformProcess::GetCurrentProcessId());
