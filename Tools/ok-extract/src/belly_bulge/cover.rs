@@ -8,6 +8,10 @@
 use super::*;
 use crate::pose::Skeleton;
 
+/// Cloth this near her skin moves with it as it swells (`CoverField::follows`), all of it within `HUG_M`.
+const FOLLOW_M: f32 = 0.03;
+/// Each garment's cloth vertices and the skin they follow (by its neighbour table), found the first time it is pushed.
+static FOLLOW_MAP: std::sync::LazyLock<std::sync::Mutex<HashMap<usize, std::sync::Arc<Vec<([(u32, f32); 4], f32)>>>>> = std::sync::LazyLock::new(Default::default);
 /// How far across the skin one place pushes the cloth (its push fades to nothing there), and the cells it is looked up in.
 const REACH_M: f32 = 0.025;
 /// Her breasts' push fades over this (they lift the cloth a little; the width lifted skin needs tented a shirt).
@@ -125,7 +129,12 @@ fn dot(a: [f32; 3], b: [f32; 3]) -> f32 { a[0] * b[0] + a[1] * b[1] + a[2] * b[2
 /// CoverField::prepare's reading of her skeleton.
 pub(crate) struct CoverPrep { still: std::sync::Arc<CoverStill>, worlds: Vec<Mat4>, binds: Vec<Mat4>, moves: Vec<(u32, [f32; 6])> }
 
-pub struct CoverField { skin: Vec<([f32; 3], [f32; 3], [f32; 3])>, grid: Vec<Vec<u32>>, lo: [i64; 3], hi: [i64; 3], lift: Option<Lift> }
+/// `lifted`: for each of `skin`, whether `Lift` raises the cloth over it (moved along its one way, on her front); the rest
+/// of the moved skin pushes the cloth out along its own normal (`push_at`).
+/// `follow`: her skin that swelled out this frame (body vertex, how far it went, her skeleton space): the cloth hugging it
+/// moves as far (`follows`). `still`, `skins`: to pose all her skin once, for a garment seen the first time.
+pub struct CoverField { skin: Vec<([f32; 3], [f32; 3], [f32; 3])>, lifted: Vec<bool>, grid: Vec<Vec<u32>>, lo: [i64; 3], hi: [i64; 3], lift: Option<Lift>,
+    follow: HashMap<u32, [f32; 3]>, still: std::sync::Arc<CoverStill>, skins: Vec<Mat4>, posed: std::sync::OnceLock<Vec<[f32; 3]>> }
 
 /// Her skin that was lifted, seen along the way it went (`way`): where across it (in `side`) and how high along it now, one
 /// for each `THIN_M` square, the highest; in squares `LIFT_REACH_M` wide, each listing what is in it and round it. `belly`:
@@ -133,7 +142,7 @@ pub struct CoverField { skin: Vec<([f32; 3], [f32; 3], [f32; 3])>, grid: Vec<Vec
 /// it was where it came from says nothing of what lies under the cloth it now reaches. Cloth rises along that one way only, so seen from there no triangle of it turns over however tall the hill:
 /// pushed along the skin's normals a hill of 12 cm turned them over, and what stops that left the hill through the kimono
 /// (user, 2026-11-07).
-struct Lift { way: [f32; 3], side: [[f32; 3]; 2], skin: Vec<([f32; 2], f32)>, belly: [f32; 3], grid: Vec<Vec<u32>>, lo: [i64; 2], hi: [i64; 2] }
+struct Lift { way: [f32; 3], side: [[f32; 3]; 2], skin: Vec<([f32; 2], f32, f32)>, belly: [f32; 3], grid: Vec<Vec<u32>>, lo: [i64; 2], hi: [i64; 2] }
 
 impl CoverField {
     /// Her pushing skin posed on `skel` (her body skeleton now), lifted by `body_moves`.
@@ -145,12 +154,13 @@ impl CoverField {
     }
 
     /// As `new`, reading nothing of the session.
-    fn from_still(still: &CoverStill, worlds: &[Mat4], binds: &[Mat4], body_moves: &[(u32, [f32; 6])]) -> Option<CoverField> {
+    fn from_still(still: &std::sync::Arc<CoverStill>, worlds: &[Mat4], binds: &[Mat4], body_moves: &[(u32, [f32; 6])]) -> Option<CoverField> {
         let skins: Vec<Mat4> = worlds.iter().zip(binds).map(|(w, b)| mat_mul_pub(w, b)).collect();
         let unit = |v: [f32; 3]| { let l = dot(v, v).sqrt();(l > 1e-6).then(|| [v[0] / l, v[1] / l, v[2] / l]) };
         let moved: HashMap<u32, [f32; 6]> = body_moves.iter().copied().collect();
         let mut skin = Vec::new();let mut taken: std::collections::HashSet<([i64; 3], bool)> = std::collections::HashSet::new();
         let mut lifted: Vec<([f32; 3], [f32; 3])> = Vec::new();
+        let mut follow: HashMap<u32, [f32; 3]> = HashMap::new();
         for j in 0..still.rest.len() {
             let delta = moved.get(&(j as u32));
             let on_bust = still.on_bust[j];
@@ -171,13 +181,17 @@ impl CoverField {
             // Against her normal as it was: on the flank of the hill the normal now lies across the move.
             let Some(n0) = unit(sub(point(&m, *rn), o)) else { continue; };
             if dot(sub(p, p0), n0) >= OUT_M { lifted.push((p0, p)); }
+            if delta.is_some() && dot(sub(p, p0), n0) > 0. { follow.insert(j as u32, sub(p, p0)); }
+            // Moved skin is followed (`follows`) and lifted over (`Lift`), not pushed off along its normal.
+            if p != p0 { continue; }
             if !on_bust && dot(sub(p, p0), n) < OUT_M { continue; }
             let fine = delta.is_some() || still.on_nip[j];let thin = if fine { THIN_M } else { BUST_THIN_M };
             if !taken.insert((p.map(|v| (v / thin).floor() as i64), fine)) { continue; }
             skin.push((p0, p, n));
         }
-        if skin.is_empty() { return None; }
+        if skin.is_empty() && follow.is_empty() { return None; }
         let lift = Lift::new(&lifted);
+        let lifted = vec![false; skin.len()];
         // In every cell from where the skin was to where it is: the cloth over it lies back where it was. The cells, a box
         // of them round all the skin (a dense grid: a hash map of them cost milliseconds a frame).
         let path = |s: ([f32; 3], [f32; 3], [f32; 3])| {
@@ -186,6 +200,7 @@ impl CoverField {
         };
         let (mut lo, mut hi) = ([i64::MAX; 3], [i64::MIN; 3]);
         for s in &skin { for c in path(*s) { for a in 0..3 { lo[a] = lo[a].min(c[a] - 1);hi[a] = hi[a].max(c[a] + 1); } } }
+        if skin.is_empty() { (lo, hi) = ([0; 3], [0; 3]); }
         let size: Vec<usize> = (0..3).map(|a| (hi[a] - lo[a] + 1) as usize).collect();
         if size.iter().product::<usize>() > 1 << 20 { return None; }
         let mut grid: Vec<Vec<u32>> = vec![Vec::new(); size.iter().product()];
@@ -213,7 +228,7 @@ impl CoverField {
             cells.sort_unstable();cells.dedup();
             for &c in &cells { grid[c].push(i as u32); }
         }
-        Some(CoverField { skin, grid, lo, hi, lift })
+        Some(CoverField { skin, lifted, grid, lo, hi, lift, follow, still: still.clone(), skins, posed: std::sync::OnceLock::new() })
     }
 
     /// What `build` needs, read off her skeleton before her clothes chains move (they write their own bones into it):
@@ -250,6 +265,69 @@ impl CoverField {
         for (p, v) in positions.iter_mut().zip(push) { for a in 0..3 { p[a] += v[a]; } }
     }
 
+    /// How far each of `positions` (a garment posed) moves with the skin under it that swelled out, and whether it hugs
+    /// her skin at all. Every layer of cloth over one place moves as far, so they stay in their order: each pushed to one
+    /// height over the skin, her fishnets and tights lay on one surface and fought for depth (user, 2026-11-11).
+    fn follows(&self, positions: &[[f32; 3]], key: usize) -> Option<(Vec<[f32; 3]>, Vec<bool>)> {
+        if self.follow.is_empty() { return None; }
+        let found = FOLLOW_MAP.lock().unwrap().get(&key).filter(|m| m.len() == positions.len()).cloned();
+        let map = match found { Some(m) => m, None => {
+            let m = std::sync::Arc::new(self.map_to_skin(positions));
+            let mut all = FOLLOW_MAP.lock().unwrap();if all.len() > 256 { all.clear(); }
+            all.insert(key, m.clone());m
+        } };
+        let mut hugs = vec![false; positions.len()];let mut any = false;
+        let moves: Vec<[f32; 3]> = map.iter().enumerate().map(|(j, (near, gap))| {
+            if near[0].1 <= 0. { return [0.; 3]; }
+            hugs[j] = true;
+            let hug = (1. - (gap - HUG_M).max(0.) / (FOLLOW_M - HUG_M)).clamp(0., 1.);
+            let mut v = [0f32; 3];
+            for &(i, w) in near { if w <= 0. { break; } if let Some(d) = self.follow.get(&i) { for a in 0..3 { v[a] += d[a] * w * hug; } } }
+            if dot(v, v) > 0. { any = true; }
+            v
+        }).collect();
+        any.then_some((moves, hugs))
+    }
+
+    /// For each cloth vertex at `positions`: her four nearest skin vertices within `FOLLOW_M` (weighed, nearer more) and how
+    /// far the nearest is. Her skin posed this frame.
+    fn map_to_skin(&self, positions: &[[f32; 3]]) -> Vec<([(u32, f32); 4], f32)> {
+        use rayon::prelude::*;
+        let still = &self.still;let skins = &self.skins;
+        let posed = self.posed.get_or_init(|| {
+            (0..still.rest.len()).into_par_iter().map(|j| {
+                let (Some(b), Some(w)) = (still.bones.get(j), still.weights.get(j)) else { return [f32::MAX; 3]; };
+                let mut c = [0f32; 3];let r = still.rest[j];
+                for (b, w) in b.iter().zip(w) { if *w <= 0. { continue; } if let Some(s) = skins.get(*b as usize) { let q = point(s, r);for a in 0..3 { c[a] += q[a] * w; } } }
+                c
+            }).collect()
+        });
+        let key = |p: [f32; 3]| p.map(|v| (v / FOLLOW_M).floor() as i64);
+        let mut grid: HashMap<[i64; 3], Vec<u32>> = HashMap::new();
+        for (j, p) in posed.iter().enumerate() { if p[0].abs() < 1e6 { grid.entry(key(*p)).or_default().push(j as u32); } }
+        positions.par_iter().map(|&c| {
+            let mut best: [(u32, f32); 4] = [(0, f32::MAX); 4];
+            if c[0].abs() < 1e6 {
+                let k = key(c);
+                for a in -1..=1 { for b in -1..=1 { for e in -1..=1 {
+                    let Some(list) = grid.get(&[k[0] + a, k[1] + b, k[2] + e]) else { continue; };
+                    for &i in list {
+                        let d = sub(c, posed[i as usize]);let d = dot(d, d);
+                        if d >= FOLLOW_M * FOLLOW_M || d >= best[3].1 { continue; }
+                        let mut s = 3;while s > 0 && best[s - 1].1 > d { best[s] = best[s - 1];s -= 1; }
+                        best[s] = (i, d);
+                    }
+                } } }
+            }
+            if best[0].1 == f32::MAX { return ([(0, 0.); 4], f32::MAX); }
+            let gap = best[0].1.sqrt();
+            let mut out = [(0u32, 0f32); 4];let mut total = 0.;
+            for (o, &(i, d)) in out.iter_mut().zip(&best) { if d == f32::MAX { break; } let w = 1. / (d.sqrt() + 0.002);*o = (i, w);total += w; }
+            for o in &mut out { o.1 /= total; }
+            (out, gap)
+        }).collect()
+    }
+
     /// The skin listed for the cell `c` is in (None outside the box).
     fn at(&self, c: [f32; 3]) -> Option<&Vec<u32>> {
         let k = cell(c);
@@ -261,7 +339,11 @@ impl CoverField {
     /// How far each of `positions` (a garment posed, her skeleton space) moves: up over the skin lifted under it, then out
     /// over her breasts.
     fn pushes(&self, keep: f32, positions: &[[f32; 3]], nbr: &[Vec<u32>], indices: &[u32], warm: Option<usize>) -> Option<Vec<[f32; 3]>> {
-        let lifted = { let _trace = crate::native_profile::Scope::new(49); self.lift.as_ref().and_then(|l| l.moves(keep, positions, nbr, indices)) };
+        // The cloth hugging her skin moves with it; what hangs loose is lifted over it.
+        let (follow, hugs) = self.follows(positions, nbr.as_ptr() as usize).unzip();
+        let at: std::borrow::Cow<[[f32; 3]]> = match &follow { Some(f) => positions.iter().zip(f).map(|(p, v)| [p[0] + v[0], p[1] + v[1], p[2] + v[2]]).collect::<Vec<_>>().into(), None => positions.into() };
+        let lifted = { let _trace = crate::native_profile::Scope::new(49); self.lift.as_ref().and_then(|l| l.moves(keep, &at, nbr, indices, hugs.as_deref())) };
+        let lifted = match (follow, lifted) { (Some(mut f), Some(l)) => { for (t, v) in f.iter_mut().zip(l) { for a in 0..3 { t[a] += v[a]; } } Some(f) }, (f, l) => f.or(l) };
         let Some(mut total) = lifted else { return self.pushes_from(keep, positions, nbr, indices, warm); };
         let moved: Vec<[f32; 3]> = positions.iter().zip(&total).map(|(p, v)| [p[0] + v[0], p[1] + v[1], p[2] + v[2]]).collect();
         if let Some(push) = self.pushes_from(keep, &moved, nbr, indices, warm) { for (t, v) in total.iter_mut().zip(push) { for a in 0..3 { t[a] += v[a]; } } }
@@ -364,13 +446,13 @@ impl CoverField {
             for &i in list {
                 let (p0, p, n) = self.skin[i as usize];
                 // Skin lifted is `Lift`'s.
-                if p != p0 { continue; }
+                if self.lifted[i as usize] { continue; }
                 // Cloth behind the skin: her far side, or under it.
                 if dot(sub(c, p0), n) < -UNDER_M { continue; }
                 let g = sub(c, p);let h = dot(g, n);let across = dot(g, g) - h * h;
                 if across >= BUST_REACH_M * BUST_REACH_M { continue; }
                 let t = 1. - across.sqrt() / BUST_REACH_M;let w = t * t * (3. - 2. * t);
-                let need = (keep - h) * w;
+                let need = push_by(keep, dot(sub(c, p0), n), dot(sub(p, p0), n)) * w;
                 if need <= 0. { continue; }
                 best = best.max(need);for a in 0..3 { way[a] += n[a] * need; }
             }
@@ -394,6 +476,19 @@ fn plane(points: impl Iterator<Item = [f32; 3]>) -> [f32; 3] {
     [a as f32, b as f32, (mid[2] - a * mid[0] - b * mid[1]) as f32]
 }
 
+/// How far over the moved skin cloth `g` over it as it was ends up: as far as it was (it moves with the skin), and cloth
+/// nearer than `keep` (or under it) out to a little under `keep`, in the same order. Every garment pushed to `keep` lay
+/// on one surface: her fishnets and tights fought for depth wherever the skin swelled (user, 2026-11-11).
+fn over(keep: f32, g: f32) -> f32 { if g >= keep { g } else { keep * ((g - keep) / keep).exp() } }
+/// Cloth this near the skin as it was hugs it (moves all the way with it); looser cloth moves less, the order kept.
+const HUG_M: f32 = 0.01;
+/// How far out cloth `g` over the skin as it was moves when that skin swells out `lift`: with the skin as it hugs it, less
+/// the looser it hangs (none once the skin no longer reaches it), never past cloth that lay over it.
+fn push_by(keep: f32, g: f32, lift: f32) -> f32 {
+    let lift = lift.max(0.);let hug = (1. - (g - HUG_M).max(0.) / (lift + HUG_M)).max(0.);
+    lift * hug + over(keep, g) - g
+}
+
 fn cell(p: [f32; 3]) -> [i64; 3] { p.map(|v| (v / REACH_M).floor() as i64) }
 
 impl Lift {
@@ -407,16 +502,18 @@ impl Lift {
         let other = if way[0].abs() < 0.7 { [1., 0., 0.] } else { [0., 1., 0.] };
         let a = cross(way, other);let l = dot(a, a).sqrt();let a = a.map(|v| v / l);
         let side = [a, cross(way, a)];
-        let belly = plane(lifted.iter().map(|(p0, _)| [dot(*p0, side[0]), dot(*p0, side[1]), dot(*p0, way)]));
-        let mut thin: HashMap<[i64; 2], ([f32; 2], f32)> = HashMap::new();
+        // Only the skin that went its way (the swelling of her buttocks behind would set the plane between them).
+        let belly = plane(lifted.iter().filter(|(p0, p)| dot(sub(*p, *p0), way) > 0.).map(|(p0, _)| [dot(*p0, side[0]), dot(*p0, side[1]), dot(*p0, way)]));
+        let mut thin: HashMap<[i64; 2], ([f32; 2], f32, f32)> = HashMap::new();
         for (p0, p) in lifted {
             let h = dot(*p, way);
             if h <= dot(*p0, way) { continue; }
             let q = [dot(*p, side[0]), dot(*p, side[1])];
-            let e = thin.entry(q.map(|v| (v / THIN_M).floor() as i64)).or_insert((q, h));
-            if h > e.1 { *e = (q, h); }
+            let base = dot(*p0, way);
+            let e = thin.entry(q.map(|v| (v / THIN_M).floor() as i64)).or_insert((q, h, base));
+            if h > e.1 { *e = (q, h, base); }
         }
-        let skin: Vec<([f32; 2], f32)> = thin.into_values().collect();
+        let skin: Vec<([f32; 2], f32, f32)> = thin.into_values().collect();
         if skin.is_empty() { return None; }
         let (mut lo, mut hi) = ([i64::MAX; 2], [i64::MIN; 2]);
         for s in &skin { let c = s.0.map(|v| (v / LIFT_REACH_M).floor() as i64);for a in 0..2 { lo[a] = lo[a].min(c[a] - 1);hi[a] = hi[a].max(c[a] + 1); } }
@@ -456,14 +553,15 @@ impl Lift {
             let cell = |v: f32, a: usize| ((v / LIFT_REACH_M).floor() as i64).clamp(self.lo[a], self.hi[a]);
             for i in cell(x0, 0)..=cell(x1, 0) { for j in cell(y0, 1)..=cell(y1, 1) {
                 for &n in &self.grid[(i - self.lo[0]) as usize * h + (j - self.lo[1]) as usize] {
-                    let (s, top) = self.skin[n as usize];
+                    let (s, top, base) = self.skin[n as usize];
                     if s[0] < x0 || s[0] > x1 || s[1] < y0 || s[1] > y1 { continue; }
                     let u = ((s[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (s[1] - a[1])) / d;
                     let v = ((b[0] - a[0]) * (s[1] - a[1]) - (s[0] - a[0]) * (b[1] - a[1])) / d;
                     if u < 0. || v < 0. || u + v > 1. { continue; }
                     let w = [1. - u - v, u, v];
                     let z = (a[2] + rise[k[0]]) * w[0] + (b[2] + rise[k[1]]) * w[1] + (c[2] + rise[k[2]]) * w[2];
-                    let short = top + keep - z;
+                    let z0 = a[2] * w[0] + b[2] * w[1] + c[2] * w[2];
+                    let short = z0 + push_by(keep, z0 - base, top - base) - z;
                     if short > 0. { for m in k { rise[m] += short; } }
                 }
             } }
@@ -481,10 +579,10 @@ impl Lift {
         let up = dot(c, self.way);let mut best = 0f32;
         if self.far(q, up) { return 0.; }
         for &i in &self.grid[(k[0] - self.lo[0]) as usize * h + (k[1] - self.lo[1]) as usize] {
-            let (s, top) = self.skin[i as usize];
+            let (s, top, base) = self.skin[i as usize];
             // Its most is `room` (the falloff is at most 1): none that cannot pass the best so far, and none out of reach,
             // is weighed (the same best; most of the list is either).
-            let room = top + keep - up;if room <= best { continue; }
+            let room = push_by(keep, up - base, top - base);if room <= best { continue; }
             let (x, y) = (q[0] - s[0], q[1] - s[1]);let d2 = x * x + y * y;
             if d2 >= LIFT_REACH_M * LIFT_REACH_M { continue; }let across = d2.sqrt();
             let t = ((LIFT_REACH_M - across) / (LIFT_REACH_M - FULL_M)).min(1.);
@@ -494,12 +592,15 @@ impl Lift {
     }
 
     /// How each of `positions` moves, evened over the cloth round it (a tent, not a spike). None when none does.
-    fn moves(&self, keep: f32, positions: &[[f32; 3]], nbr: &[Vec<u32>], indices: &[u32]) -> Option<Vec<[f32; 3]>> {
+    /// `fixed`: cloth that moves with her skin already (`follows`): left where it is.
+    fn moves(&self, keep: f32, positions: &[[f32; 3]], nbr: &[Vec<u32>], indices: &[u32], fixed: Option<&[bool]>) -> Option<Vec<[f32; 3]>> {
+        let held = |j: usize| fixed.is_some_and(|f| f.get(j) == Some(&true));
         // Each vertex on its own, on the pool; the rings grown by marking, as pushes_from's (sorting each ring with its
         // neighbours was most of the lift: 1 ms of a garment on the pair solve's longest path, trace 2026-11-10).
         use rayon::prelude::*;
-        let mut rise: Vec<f32> = { let _trace = crate::native_profile::Scope::new(57); positions.par_iter().map(|&c| self.rise(keep, c)).collect() };
+        let mut rise: Vec<f32> = { let _trace = crate::native_profile::Scope::new(57); positions.par_iter().enumerate().map(|(j, &c)| if held(j) { 0. } else { self.rise(keep, c) }).collect() };
         { let _trace = crate::native_profile::Scope::new(58); self.clear(keep, positions, &mut rise, indices); }
+        for j in 0..rise.len() { if held(j) { rise[j] = 0.; } }
         let _rings_trace = crate::native_profile::Scope::new(59);
         let mut near: Vec<u32> = (0..rise.len() as u32).filter(|&j| rise[j as usize] > 0.).collect();
         if near.is_empty() { return None; }
@@ -515,7 +616,7 @@ impl Lift {
             for &j in &near {
                 let Some(list) = nbr.get(j as usize).filter(|l| !l.is_empty()) else { continue; };
                 let avg = list.iter().map(|&k| was[k as usize]).sum::<f32>() * 0.8 / list.len() as f32;
-                if avg > rise[j as usize] { rise[j as usize] = avg; }
+                if avg > rise[j as usize] && !held(j as usize) { rise[j as usize] = avg; }
             }
         }
         Some(rise.into_iter().map(|r| self.way.map(|v| v * r)).collect())
@@ -536,6 +637,7 @@ static COVER_STILL: std::sync::Mutex<Vec<(usize, usize, usize, std::sync::Arc<Co
 pub(crate) fn clothes_changed() {
     COVER_STILL.lock().unwrap().clear();
     WARM.lock().unwrap().clear();
+    FOLLOW_MAP.lock().unwrap().clear();
     COVER.lock().unwrap().clear();
 }
 
@@ -639,7 +741,7 @@ mod lift_tests {
         let lift = Lift::new(&lifted).unwrap();
         let cloth = [[-0.3, -0.3, 0.02], [0.3, -0.3, 0.02], [0., 0.3, 0.02]];
         let nbr = vec![vec![1, 2], vec![0, 2], vec![0, 1]];
-        let moves = lift.moves(0.005, &cloth, &nbr, &[0, 1, 2]).unwrap();
+        let moves = lift.moves(0.005, &cloth, &nbr, &[0, 1, 2], None).unwrap();
         // At the ridge, a third of the way from each corner in height.
         assert!(moves.iter().map(|v| cloth[0][2] + v[2]).sum::<f32>() / 3. >= 0.09, "{moves:?}");
     }
@@ -681,14 +783,15 @@ mod lift_tests {
             if i + 1 < w { nbr[k].push((k + h) as u32);nbr[k + h].push(k as u32); }
             if j + 1 < h { nbr[k].push((k + 1) as u32);nbr[k + 1].push(k as u32); }
         }
-        let moves = lift.moves(0.005, &cloth, &nbr, &[]).unwrap();
+        let moves = lift.moves(0.005, &cloth, &nbr, &[], None).unwrap();
         // Along the ridge it clears the top.
         for i in 0..w - 1 { let k = i * h + 10;assert!(cloth[k][2] + moves[k][2] >= 0.1, "{i}: {}", cloth[k][2] + moves[k][2]); }
         // Only up: seen from there the cloth stays where it was, so no triangle of it turns over.
         for v in &moves { assert!(v[0].abs() < 0.005 && v[1].abs() < 0.005 && v[2] >= 0.); }
         // Her far side, and cloth far across the ridge, stay.
         assert_eq!(moves[w * h], [0.; 3]);
-        assert_eq!(moves[10 * h], [0.; 3]);
+        // (loose cloth near the low edge of the ridge moves a hair with it: well under a tenth of a millimetre here)
+        assert!(dot(moves[10 * h], moves[10 * h]) < 1e-5 * 1e-5, "{:?}", moves[10 * h]);
     }
 }
 
