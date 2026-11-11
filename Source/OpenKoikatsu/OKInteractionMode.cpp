@@ -518,6 +518,13 @@ void AOKInteractionMode::Tick(float Delta){
             const FVector Foot=Her->GetActorLocation();Her->SetActorLocationAndRotation(Feet+FVector(0.,0.,Foot.Z),FRotator(0.,-Yaw,0.));
             Her->OrbitFocus=FVector(Feet.X,Feet.Y,Feet.Z+Her->OrbitFocus.Z);Her->OrbitYaw=Yaw;Her->OrbitPitch=0.f;Her->OrbitDistance=Distance;Her->ApplyOrbitCamera();
             UE_LOG(LogTemp,Display,TEXT("Fitting: in place at %s, camera yaw %.0f at %.0f cm"),*Feet.ToCompactString(),Yaw,Distance);}
+        // The one-on-one in place as well: right where she stood, facing as she did (he follows her, RefreshPairs). At the
+        // origin it was in the sea off the university city (Jeanne Alter in the bookstore, 2026-11-12); the street's origin
+        // being its square had hidden it.
+        else if(bInPlace){auto* Her=Controller->PreviewActor.Get();const FVector Feet=InPlaceAt.GetLocation();const FVector Foot=Her->GetActorLocation();
+            Her->SetActorLocationAndRotation(Feet+FVector(0.,0.,Foot.Z),FRotator(0.,InPlaceAt.Rotator().Yaw,0.));
+            Her->OrbitFocus=FVector(Feet.X,Feet.Y,Feet.Z+Her->OrbitFocus.Z);Her->OrbitYaw=InPlaceAt.Rotator().Yaw;Her->ApplyOrbitCamera();
+            UE_LOG(LogTemp,Display,TEXT("One-on-one: in place at %s yaw %.0f"),*Feet.ToCompactString(),InPlaceAt.Rotator().Yaw);}
     }
     if(!OwnController)Controller->TickPreviewPreparation();
     if(!Activated){
