@@ -1,9 +1,11 @@
--- Native job: give the classroom interiors of EE, LI and T4 their own interior finish back (2026-11-11).
+-- Native job: give the interiors of every building their own interior finish back (EE, LI, T4 2026-11-11; all others 11-12).
 --   lua Tools/street_city_motel_job.lua world_interior_walls Tools/street_city_interior_walls_payload.lua
 -- The romance PBR round (10-22, Tools/street_city_romance_pbr.lua) classified slots by name, so the interior paint and the
 -- porcelain floor of the campus floors (world-wall-grok role `interior`) were taken as `wall` and got the building's facade
 -- family. For most buildings that is a pale plaster or limestone, but EE (lagoon_mineral_plaster_v2), LI and T4
 -- (lagoon_ceramic_v1) are blue-green mottled: walls, floor and ceiling of every room looked like a pond (ee-0205 report).
+-- 11-12: the same in every other building, where the facade family was pale or, in the corner bookshop (S07), green like
+-- grass (e-120fps): every interior paint, washable wall tile and porcelain floor slot the romance round touched.
 -- Those interior slots and the porcelain floor go back to the material they had before the romance round (the receipt's `original`, the
 -- world-wall-grok interior material or the porcelain floor). SP keeps its facade family: the sports finish reworked MI_SP_wall.
 -- Facades, stairs and trims are not touched. The source map is backed up next to the output, then saved.
@@ -15,13 +17,13 @@ def motel_world_interior_walls():
  MAP=ROOT/'StreetSocialCity/Content/UniversityCity/Maps/UniversityCity.umap'
  sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
  prod=ROOT/'output/street-social-city-production';out=prod/'places-v1/interior-walls.json'
- BUILDINGS={'EE','LI','T4'}
+ SKIP={'SP'}
  wall=json.loads((prod/'world-wall-grok-v1/native-install.json').read_text('utf8'))
  wl=next(v for v in wall.values() if isinstance(v,list) and v and isinstance(v[0],dict) and 'actor' in v[0])
  role={(s['actor'],s['slot']):s['role'] for s in wl}
  rom=json.loads((prod/'romance-pbr-v1/install.json').read_text('utf8'))['slots']
  # the porcelain floor never went through world-wall-grok, so it has no role there; take it by its original name
- todo=[s for s in rom if s['building'] in BUILDINGS and s['role']=='wall' and (role.get((s['actor'],s['slot']))=='interior' or 'porcelain' in s['original'])]
+ todo=[s for s in rom if s['building'] not in SKIP and s['role']=='wall' and (role.get((s['actor'],s['slot']))=='interior' or 'porcelain' in s['original'] or 'washable' in s['original'])]
  r=dict(planned=len(todo),slots=[])
  b=out.parent/('UniversityCity-before-interior-walls-'+sha(MAP)[:16]+'.umap')
  if not b.exists():shutil.copy2(MAP,b)
