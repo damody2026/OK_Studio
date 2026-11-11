@@ -363,9 +363,12 @@ bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,c
   auto In=[&](const TCHAR* N,UMaterialExpression* E){Register(E);auto& I=Bias->Inputs.AddDefaulted_GetRef();I.InputName=N;I.Input.Expression=E;};
   auto* At=NewObject<UMaterialExpressionWorldPosition>(Mat);At->WorldPositionShaderOffset=WPT_ExcludeAllShaderOffsets;In(TEXT("P"),At);
   In(TEXT("Eye"),NewObject<UMaterialExpressionCameraPositionWS>(Mat));In(TEXT("B"),Scalar(TEXT("__OK_ViewBias"),0.f));
+  In(TEXT("N"),NewObject<UMaterialExpressionVertexNormalWS>(Mat));In(TEXT("S"),Scalar(TEXT("__OK_ViewInflate"),0.f));
   // Straight toward the camera along the view direction: one constant offset for every vertex, so a garment keeps its
   // shape on screen (off each pixel ray by B*tan(angle), a fraction of a pixel at the 1-on-1 camera).
-  Bias->Code=TEXT("if(B<=0)return float3(0,0,0);return -ResolvedView.ViewForward*B;");
+  // Plus __OK_ViewInflate cm out along her surface where it turns away from the camera (the square of 1-|N.V|): at the
+  // silhouette the skin a few millimetres through the garment sticks out sideways, which no move toward the camera covers.
+  Bias->Code=TEXT("float3 o=B>0?-ResolvedView.ViewForward*B:float3(0,0,0);if(S>0){float3 n=normalize(N);float g=1-abs(dot(n,normalize(Eye-P)));o+=n*(S*g*g);}return o;");
   Register(Bias);
   auto* None=NewObject<UMaterialExpressionConstant3Vector>(Mat);None->Constant=FLinearColor(0,0,0,0);Register(None);
   auto* Pass=NewObject<UMaterialExpressionShadowReplace>(Mat);Pass->Default.Expression=Bias;Pass->Shadow.Expression=None;Register(Pass);

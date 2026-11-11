@@ -2025,17 +2025,18 @@ static const FString& OKLitMaterialRoot(){
 // Her clothes drawn toward the camera (user 2026-11-11: fix the last millimetres of skin through her clothes on
 // screen): the _Bias parents (manifest bias_material_root, Launch/materials.json bias_root).
 static TAutoConsoleVariable<float> CVarHClothViewBias(TEXT("ok.HScene.ClothViewBias"),.6f,TEXT("cm her clothes are drawn toward the camera along the view direction (0 off)"));
+static TAutoConsoleVariable<float> CVarHClothViewInflate(TEXT("ok.HScene.ClothViewInflate"),.3f,TEXT("cm her clothes are pushed out along their surface at her silhouette, where skin through them sticks out sideways (0 off)"));
 static TAutoConsoleVariable<float> CVarHClothViewStep(TEXT("ok.HScene.ClothViewStep"),.03f,TEXT("cm each outer layer of her clothes is drawn nearer than the one under it"));
 static const FString& OKBiasMaterialRoot(){
     static const FString Root=[]{FString Manifest,Json,Found;TSharedPtr<FJsonObject> Object;
         if(FParse::Value(FCommandLine::Get(),TEXT("StreetSocialManifest="),Manifest)&&FFileHelper::LoadFileToString(Json,*Manifest)&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Object)&&Object)Object->TryGetStringField(TEXT("bias_material_root"),Found);
-        return Found.IsEmpty()?FString(TEXT("/Game/IndependentResources/RuntimeMaterials/StreetBias02")):Found;}();
+        return Found.IsEmpty()?FString(TEXT("/Game/IndependentResources/RuntimeMaterials/StreetBias03")):Found;}();
     return Root;
 }
 void UOKHScenePanel::TickClothBias(bool bEnd){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickClothBias);
     const float Bias=bEnd?0.f:FMath::Max(CVarHClothViewBias.GetValueOnGameThread(),0.f);
     if(Bias<=0.f&&!bClothBiasShown)return;
-    if(AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl))Girl->SetClothViewBias(Bias,FMath::Max(CVarHClothViewStep.GetValueOnGameThread(),0.f),OKBiasMaterialRoot());
+    if(AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl))Girl->SetClothViewBias(Bias,FMath::Max(CVarHClothViewStep.GetValueOnGameThread(),0.f),OKBiasMaterialRoot(),FMath::Max(CVarHClothViewInflate.GetValueOnGameThread(),0.f));
     bClothBiasShown=Bias>0.f;
 }
 // Each tick while on: a change of clothes brings new skin instances, and her own values move every frame.

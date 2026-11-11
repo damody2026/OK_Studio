@@ -10222,7 +10222,7 @@ bool AKKPreviewActor::SetWrapLine(bool bOn,const FVector& From,const FVector& To
     return Shown.Num()>0;
 }
 
-bool AKKPreviewActor::SetClothViewBias(float BiasCm,float StepCm,const FString& BiasRoot)
+bool AKKPreviewActor::SetClothViewBias(float BiasCm,float StepCm,const FString& BiasRoot,float InflateCm)
 {
     TRACE_CPUPROFILER_EVENT_SCOPE(KK_SetClothViewBias);
     TInlineComponentArray<UMeshComponent*> Meshes(this);
@@ -10279,6 +10279,7 @@ bool AKKPreviewActor::SetClothViewBias(float BiasCm,float StepCm,const FString& 
             if(Mesh->GetMaterial(Slot)!=Shown)Mesh->SetMaterial(Slot,Shown);
             if(const auto* Original=BiasOriginalOf.Find(Shown))Shown->CopyParameterOverrides(*Original);
             Shown->SetScalarParameterValue(TEXT("__OK_ViewBias"),Bias);
+            Shown->SetScalarParameterValue(TEXT("__OK_ViewInflate"),InflateCm+StepCm*float(*Found));
             bAny=true;
         }
     }

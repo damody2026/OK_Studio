@@ -749,7 +749,8 @@ public:
 	// BiasRoot (Tools/prepare_runtime_shared_material.lua --bias-only), its values copied from hers on every call; each
 	// layer StepCm further out than the one under it (panst/socks, bra/shorts, gloves, bottoms, tops, the rest), so two
 	// garments laid on the same surface no longer fight for depth. 0 gives hers back. False when none was found.
-	bool SetClothViewBias(float BiasCm, float StepCm, const FString& BiasRoot);
+	// InflateCm: each garment also pushed out along its surface by up to that at her silhouette (its edge seen side-on).
+	bool SetClothViewBias(float BiasCm, float StepCm, const FString& BiasRoot, float InflateCm=0.f);
 	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> BiasInstanceOf;
 	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> BiasOriginalOf;
 	TSet<FString> BiasParentMissing;
