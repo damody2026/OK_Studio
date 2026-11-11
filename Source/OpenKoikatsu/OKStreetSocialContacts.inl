@@ -200,8 +200,10 @@ bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline
  // Not reached, all the way searched: the reached cell nearest the goal, when it is near (NearCm, his walk to her: 2 m).
  // Her seat among the cafeteria tables was closed in, and he walked straight into the wall 18 m away instead (R6-208).
  FIntPoint End=Goal;
- if(!Reached&&Open.IsEmpty()&&G.NearCm>0){float Best=FMath::Square(G.NearCm/OKStreetNavCell)+.01f;bool Near=false;
-  for(int32 I=0;I<Cost.Num();++I)if(Cost[I]<TNumericLimits<float>::Max()){const FIntPoint C(Lo.X+I%W,Lo.Y+I/W);const float D=float((C-Goal).SizeSquared());if(D<Best&&C!=Start){Best=D;End=C;Near=true;}}
+ // On her side of the wall: from the café's door the nearest reached cell was the pavement 1.65 m from her behind the
+ // café's north wall, and he walked into that wall 30 times (R6-211).
+ if(!Reached&&Open.IsEmpty()&&G.NearCm>0){float Best=FMath::Square(G.NearCm/OKStreetNavCell)+.01f;bool Near=false;const FString Where=PlaceHere(To);
+  for(int32 I=0;I<Cost.Num();++I)if(Cost[I]<TNumericLimits<float>::Max()){const FIntPoint C(Lo.X+I%W,Lo.Y+I/W);const float D=float((C-Goal).SizeSquared());if(D<Best&&C!=Start&&PlaceHere(Centre(C))==Where){Best=D;End=C;Near=true;}}
   if(Near){Reached=true;G.Goal=End;UE_LOG(LogTemp,Display,TEXT("Street grid route: %s closed in, to the nearest reached cell %.0f cm from it"),*To.ToCompactString(),FMath::Sqrt(Best)*OKStreetNavCell);}}
  if(!Reached){G.Phase=2;UE_LOG(LogTemp,Display,TEXT("Street grid route: none from %s to %s (%d cells)"),*From.ToCompactString(),*To.ToCompactString(),G.Expanded);Release();return true;}
  TArray<FIntPoint>& Cells=G.Path;Cells={End};while(Cells.Last()!=Start){const int32 P=Came[Index(Cells.Last())];Cells.Add(FIntPoint(Lo.X+P%W,Lo.Y+P/W));}
@@ -330,7 +332,12 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
  // 1.2 m away through the shop's wall, where E cannot reach her.
  // At the end of a route that stops short of her (her seat closed in, R6-208): within talking range is there too.
  const bool RouteDone=S.NavPath.Num()>=2&&S.NavStep>=S.NavPath.Num()-1&&FVector::Dist2D(S.Male,S.NavPath.Last())<=40.f;
- if((FVector::Dist2D(S.Male,Goal)<=(S.NavPointActive?80.f:40.f)||(!S.NavPointActive&&FVector::Dist2D(S.Male,Her)<=(RouteDone?OKStreetTalkRangeCm-20.f:180.f)&&PlaceHere(S.Male)==PlaceHere(Her)))&&FMath::Abs(S.Male.Z-Goal.Z)<150.f){
+ // And in sight of her, as E asks (chest or head height): in the café's doorway Alice 1.8 m away was behind the glass of
+ // its front, the walk ended there and E found nobody (R6-212).
+ auto InSight=[&](){FHitResult Hit;FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetNavSight),false,this);
+  for(const float Height:{120.f,165.f})if(!GetWorld()->LineTraceSingleByChannel(Hit,S.Male+FVector(0,0,Height),Her+FVector(0,0,Height),ECC_Visibility,Query)||FVector::Dist(Hit.ImpactPoint,Her+FVector(0,0,Height))<80.f)return true;
+  return false;};
+ if((FVector::Dist2D(S.Male,Goal)<=(S.NavPointActive?80.f:40.f)||(!S.NavPointActive&&FVector::Dist2D(S.Male,Her)<=(RouteDone?OKStreetTalkRangeCm-20.f:180.f)&&PlaceHere(S.Male)==PlaceHere(Her)&&InSight()))&&FMath::Abs(S.Male.Z-Goal.Z)<150.f){
   // Walked up to her: if she was on her way somewhere she notices him, stops and turns to him for a moment, so he can
   // speak to her instead of chasing her down the street.
   if(!S.NavPointActive&&S.Agents.IsValidIndex(S.NavGirl-1)){const int32 G=S.NavGirl;S.CommutePausedUntil.Add(G,SceneTime()+10.0);
@@ -625,7 +632,10 @@ void AOKStreetSocialScene::TickContacts(float Dt,double Now){
  if(S.NavGirl!=INDEX_NONE&&S.Agents.IsValidIndex(S.NavGirl-1)&&Now-S.NavAt>(OKStreetCityMode()&&OKStreetCityFar(S.Male,S.Agents[S.NavGirl-1].Position)?5.:.75)&&S.NavRide.Elevator==INDEX_NONE&&!NavNeedsLift(S.Agents[S.NavGirl-1].Position)){if(S.OnaniGirl==S.NavGirl){S.NavGirl=INDEX_NONE;S.NavPath.Reset();S.ContactsNotice=OKT(TEXT("ui.contacts.nav_target_unavailable"));RefreshUI();}else{S.NavAt=Now;
    // A fresh route only when it is one: the 4 ms search unfinished gave none or the bare straight line, and the way into
    // the cafeteria the search round the wall had found was dropped for the line into the wall (R6-208).
-   TArray<FVector> Fresh=ContactRoute(S.Male,NavApproachSpot(S.Agents[S.NavGirl-1].Position));if(Fresh.Num()>2||S.NavPath.Num()<=2){S.NavPath=MoveTemp(Fresh);S.NavStep=1;}}}
+   // But she walks on: the kept route ended where she had been, and he stopped 4 m behind her (R6-209). A route ending
+   // beyond talking range of where she is now is stale, and the fresh one replaces it.
+   const FVector Spot=NavApproachSpot(S.Agents[S.NavGirl-1].Position);
+   TArray<FVector> Fresh=ContactRoute(S.Male,Spot);if(Fresh.Num()>2||S.NavPath.Num()<=2||(Fresh.Num()>=2&&FVector::Dist2D(S.NavPath.Last(),Spot)>OKStreetTalkRangeCm)){S.NavPath=MoveTemp(Fresh);S.NavStep=1;}}}
 }
 void AOKStreetSocialScene::RunContactsProbe(double Now){
  auto& S=*State;if(S.ContactsChecked){if(S.ContactsOnlyTest)WriteReport(S.Errors.IsEmpty());return;}
