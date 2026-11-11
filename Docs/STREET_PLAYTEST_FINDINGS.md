@@ -863,3 +863,4 @@
 | R6-228 | 重驗：從遊樂園門走到旋轉木馬，在 (97708,50452) 欄杆邊卡住，繞道 30 點仍到不了 | 旋轉木馬、鬼屋、咖啡杯在一圈鐵欄杆圍的園區裡，和遊樂園門隔著馬路與烤肉區；格子尋路看不到地圖欄杆，沒有 gate 錨點把兩側接進道路網 | 交 c-street-city：欄杆入口加 gate 錨點或把門點移進欄杆內，並釐清 amusement／bbq 範圍 | 地圖 |
 | R6-226／228 重驗 | c-street-city 19ab3abcf（遊樂園欄杆 gate1–3、bbq 範圍、playground 改園外 b_107、waterpark 門改海灘街口、四間廁所、school 改 T1 教室）後 conq1111j 重跑這 9 處 28 項：旋轉木馬、鬼屋、咖啡杯、爆米花、烤肉、滑水道、四間廁所等全部走到並開始 | — | — | 已驗（宿舍電梯門待 cook） |
 | R6-229 | 重驗：學校音樂教室合照，從 school 門出發被告知「走到學生餐廳約 78 分鐘」，她嫌遠取消 | music 錨點實際在學生餐廳 3F，卻列在 school 的錨點裡，活動也掛在 school | 請 c-street-city 把 music 錨點移到 cafeteria，之後活動改 place = cafeteria | 待地圖 |
+| R6-229 修正 | c-street-city 06adccc7b 把 music 錨點也列在 cafeteria；school_music 改 place = cafeteria、名稱「在學生餐廳三樓音樂教室鋼琴旁合照」（三語） | — | — | conq1111j 已驗：從餐廳門坐電梯到 3F 開始合照（29 s） |

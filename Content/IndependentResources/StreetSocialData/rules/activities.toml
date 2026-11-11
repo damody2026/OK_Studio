@@ -189,8 +189,8 @@ male_clip = "venue_study_seated.okanim"
 
 [[activity]]
 id = "school_music"
-name = "在學校三樓音樂教室鋼琴旁合照"
-place = "school"
+name = "在學生餐廳三樓音樂教室鋼琴旁合照"
+place = "cafeteria"
 kind = "photo"
 code = 0
 anchor = "music"
