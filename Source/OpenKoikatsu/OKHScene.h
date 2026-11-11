@@ -204,6 +204,7 @@ private:
     int32 MirrorFront=0,MirrorSize=0;uint64 MirrorTakenAt=0;void TickMirror();void RemoveMirror();
     // Their skin lit by the scene or the original's toon (ok.HScene.SkinLit, SkinLitToggle; user 2026-11-09).
     void TickSkinLit(bool bEnd);bool bSkinLitShown=false;
+    void TickClothBias(bool bEnd);bool bClothBiasShown=false;
     // While lit: a key and a fill light on lighting channel 1 only (the pair, not the street), from the panel's light rows.
     TWeakObjectPtr<class UPointLightComponent> SkinKey,SkinFill;
     // Taken after her no (experience "forced"): her first words and her talk context (Context).

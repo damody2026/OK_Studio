@@ -10222,6 +10222,64 @@ bool AKKPreviewActor::SetWrapLine(bool bOn,const FVector& From,const FVector& To
     return Shown.Num()>0;
 }
 
+bool AKKPreviewActor::SetClothViewBias(float BiasCm,float StepCm,const FString& BiasRoot)
+{
+    TRACE_CPUPROFILER_EVENT_SCOPE(KK_SetClothViewBias);
+    TInlineComponentArray<UMeshComponent*> Meshes(this);
+    if(BiasCm<=0.f)
+    {
+        for(UMeshComponent* Mesh:Meshes)for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
+            if(auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot)))if(const auto* Original=BiasOriginalOf.Find(M))Mesh->SetMaterial(Slot,*Original);
+        BiasInstanceOf.Reset();BiasOriginalOf.Reset();
+        return true;
+    }
+    // Inner layers first: a garment laid over another sits one step further toward the camera.
+    auto Rank=[](const FString& PartRole)->int32{
+        if(!PartRole.StartsWith(TEXT("clothes"))||PartRole==TEXT("clothes_shoes"))return -1;
+        if(PartRole==TEXT("clothes_panst")||PartRole==TEXT("clothes_socks"))return 0;
+        if(PartRole==TEXT("clothes_bra")||PartRole==TEXT("clothes_shorts"))return 1;
+        if(PartRole==TEXT("clothes_gloves"))return 2;
+        if(PartRole==TEXT("clothes_bot"))return 3;
+        if(PartRole==TEXT("clothes_top"))return 4;
+        return 5;};
+    static const FString Prefix=TEXT("KKSessionPart_");
+    TMap<int32,int32> RankOf;bool bAny=false;
+    for(UMeshComponent* Mesh:Meshes)
+    {
+        int32 Index=INDEX_NONE;
+        for(FName Tag:Mesh->ComponentTags){const FString Text=Tag.ToString();if(Text.StartsWith(Prefix)){Index=FCString::Atoi(*Text.Mid(Prefix.Len()));break;}}
+        if(Index==INDEX_NONE)continue;
+        const int32* Found=RankOf.Find(Index);
+        if(!Found){OkMeshView View{};int32 R=-1;if(Session.PartAt(Index,View)&&View.role)R=Rank(UTF8_TO_TCHAR(View.role));Found=&RankOf.Add(Index,R);}
+        if(*Found<0)continue;
+        const float Bias=BiasCm+StepCm*float(*Found);
+        for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
+        {
+            auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot));if(!M)continue;
+            // Lit or wrapped by the other switches: those keep theirs.
+            if(LitOriginalOf.Contains(M)||WrapOriginalOf.Contains(M))continue;
+            UMaterialInstanceDynamic* Shown=BiasOriginalOf.Contains(M)?M:nullptr;
+            if(!Shown)if(const auto* Have=BiasInstanceOf.Find(M))Shown=*Have;
+            if(!Shown)
+            {
+                UMaterialInterface* Parent=M->Parent;
+                if(!Parent||Parent->GetPathName().Contains(TEXT("/StreetHG")))continue;
+                const FString Name=Parent->GetName()+TEXT("_Bias");
+                if(BiasParentMissing.Contains(BiasRoot/Name))continue;
+                UMaterialInterface* BiasParent=FPackageName::DoesPackageExist(BiasRoot/Name)?LoadObject<UMaterialInterface>(nullptr,*(BiasRoot/Name+TEXT(".")+Name)):nullptr;
+                if(!BiasParent){BiasParentMissing.Add(BiasRoot/Name);UE_LOG(LogTemp,Warning,TEXT("Cloth view bias: no %s under %s"),*Name,*BiasRoot);continue;}
+                Shown=UMaterialInstanceDynamic::Create(BiasParent,this);
+                BiasInstanceOf.Add(M,Shown);BiasOriginalOf.Add(Shown,M);
+            }
+            if(Mesh->GetMaterial(Slot)!=Shown)Mesh->SetMaterial(Slot,Shown);
+            if(const auto* Original=BiasOriginalOf.Find(Shown))Shown->CopyParameterOverrides(*Original);
+            Shown->SetScalarParameterValue(TEXT("__OK_ViewBias"),Bias);
+            bAny=true;
+        }
+    }
+    return bAny;
+}
+
 static TAutoConsoleVariable<int32> CVarOkLitAffine(TEXT("ok.Lit.Affine"),1,TEXT("1: the lit switch also lights the affine parts (hair, clothes, accessories); 0: they stay as drawn."),ECVF_Default);
 bool AKKPreviewActor::SetSkinLit(bool bOn,const FString& LitRoot)
 {

@@ -18,6 +18,7 @@
 #include "Materials/MaterialExpressionTransform.h"
 #include "Materials/MaterialExpressionTime.h"
 #include "Materials/MaterialExpressionAdd.h"
+#include "Materials/MaterialExpressionShadowReplace.h"
 #include "Engine/Texture2D.h"
 #include "Engine/TextureCube.h"
 #include "Engine/VolumeTexture.h"
@@ -132,8 +133,9 @@ static bool OKShadowInjection(EKKRuntimeMaterialRecipe Recipe, const TCHAR*& Out
 // original's own toon). Eyes, brows, the nose line, glasses and effects stay as drawn. The family program runs with its light along each pixel's normal and no toon self-shadow, so its
 // result is her skin fully lit; that is the base colour of a DefaultLit material, which Unreal's lights then shade. The
 // wrap offset is in it too (no _Wrap swap needed while it is shown). Outlines keep their own parents.
-bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,const FString& Output,bool HGShading,bool WrapOnly,bool LitOnly){
+bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,const FString& Output,bool HGShading,bool WrapOnly,bool LitOnly,bool BiasOnly){
  if(LitOnly){if(HGShading||WrapOnly){UE_LOG(LogTemp,Error,TEXT("-LitOnly is its own set of parents"));return false;}}
+ if(BiasOnly&&(HGShading||WrapOnly||LitOnly)){UE_LOG(LogTemp,Error,TEXT("-BiasOnly is its own set of parents"));return false;}
  auto IsSkin=[](EKKRuntimeMaterialRecipe R){return R==EKKRuntimeMaterialRecipe::ForgeSkin||R==EKKRuntimeMaterialRecipe::KoikanoSkin;};
  // A family lit by the scene: one HG relights, whose program takes the light (_WorldSpaceLightPos0).
  auto LitFamily=[&](EKKRuntimeMaterialRecipe R){
@@ -166,8 +168,10 @@ bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,c
  // -WrapOnly: only her skin and its outline, as <name>_Wrap (the 1-on-1 scene's skin pushed off his penis, DPG below).
  if(WrapOnly&&Recipe!=EKKRuntimeMaterialRecipe::ForgeSkin&&Recipe!=EKKRuntimeMaterialRecipe::KoikanoSkin)continue;
  if(LitOnly&&(Outline||!LitFamily(Recipe)))continue;
+ // -BiasOnly: every family but her skin, as <name>_Bias (the 1-on-1 scene's clothes drawn toward the camera, below).
+ if(BiasOnly&&IsSkin(Recipe))continue;
  const bool Translucent=!Outline&&OKRuntimeSharedMaterialTranslucent(Recipe);
- const FString Name=OKRuntimeSharedMaterialParentName(Recipe)+(Outline?TEXT("_Outline"):TEXT(""))+(LitOnly?TEXT("_Lit"):WrapOnly?TEXT("_Wrap"):TEXT(""));auto* Mat=NewObject<UMaterial>(CreatePackage(*(Root/Name)),*Name,RF_Public|RF_Standalone);Keep.Emplace(Mat);Assets.Add(Mat);
+ const FString Name=OKRuntimeSharedMaterialParentName(Recipe)+(Outline?TEXT("_Outline"):TEXT(""))+(LitOnly?TEXT("_Lit"):WrapOnly?TEXT("_Wrap"):BiasOnly?TEXT("_Bias"):TEXT(""));auto* Mat=NewObject<UMaterial>(CreatePackage(*(Root/Name)),*Name,RF_Public|RF_Standalone);Keep.Emplace(Mat);Assets.Add(Mat);
  Mat->MaterialDomain=MD_Surface;Mat->BlendMode=Outline?BLEND_Masked:OKRuntimeSharedMaterialBlendMode(Recipe);Mat->SetShadingModel(LitOnly?MSM_DefaultLit:MSM_Unlit);Mat->TwoSided=Outline||OKRuntimeSharedMaterialTwoSided(Recipe);Mat->OpacityMaskClipValue=.5f;
  // The native vertex recipes consume independent UV0..UV3. Declare their
  // vertex pass-through explicitly; pixel custom inputs alone are insufficient
@@ -350,6 +354,22 @@ bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,c
   if(auto* Native=Ed->WorldPositionOffset.Expression){auto* Sum=NewObject<UMaterialExpressionAdd>(Mat);Sum->A.Expression=Native;Sum->B.Expression=Wrap;Register(Sum);Ed->WorldPositionOffset.Expression=Sum;}
   else Ed->WorldPositionOffset.Expression=Wrap;
  }
+ // -BiasOnly: the garment drawn __OK_ViewBias cm nearer the camera along its view ray (0, the default: as before). The
+ // ray keeps the vertex on the same pixel; only its depth changes, so skin a few millimetres through a tight garment, and
+ // the garment laid on another at the same height, are drawn under it (user 2026-11-11: fix it on screen). Not in the
+ // shadow passes: the shadow stays where the garment is.
+ if(BiasOnly){
+  auto* Bias=NewObject<UMaterialExpressionCustom>(Mat);Bias->OutputType=CMOT_Float3;Bias->Description=TEXT("OK view bias");
+  auto In=[&](const TCHAR* N,UMaterialExpression* E){Register(E);auto& I=Bias->Inputs.AddDefaulted_GetRef();I.InputName=N;I.Input.Expression=E;};
+  auto* At=NewObject<UMaterialExpressionWorldPosition>(Mat);At->WorldPositionShaderOffset=WPT_ExcludeAllShaderOffsets;In(TEXT("P"),At);
+  In(TEXT("Eye"),NewObject<UMaterialExpressionCameraPositionWS>(Mat));In(TEXT("B"),Scalar(TEXT("__OK_ViewBias"),0.f));
+  Bias->Code=TEXT("float3 v=Eye-P;float l=length(v);if(B<=0||l<1)return float3(0,0,0);return v*(min(B,l*.5)/l);");
+  Register(Bias);
+  auto* None=NewObject<UMaterialExpressionConstant3Vector>(Mat);None->Constant=FLinearColor(0,0,0,0);Register(None);
+  auto* Pass=NewObject<UMaterialExpressionShadowReplace>(Mat);Pass->Default.Expression=Bias;Pass->Shadow.Expression=None;Register(Pass);
+  if(auto* Native=Ed->WorldPositionOffset.Expression){auto* Sum=NewObject<UMaterialExpressionAdd>(Mat);Sum->A.Expression=Native;Sum->B.Expression=Pass;Register(Sum);Ed->WorldPositionOffset.Expression=Sum;}
+  else Ed->WorldPositionOffset.Expression=Pass;
+ }
  Mat->UpdateCachedExpressionData();Mat->PostEditChange();
  Mat->CacheShaders(EMaterialShaderPrecompileMode::Synchronous);
  // Finish async DDC shader-map retrieval as well as submitted compiler jobs.
@@ -376,7 +396,7 @@ bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,c
  }
  TArray<TSharedPtr<FJsonValue>> Saved;for(auto* A:Assets){const FString File=FPackageName::LongPackageNameToFilename(A->GetOutermost()->GetName(),FPackageName::GetAssetPackageExtension());IFileManager::Get().MakeDirectory(*FPaths::GetPath(File),true);FSavePackageArgs Args;Args.TopLevelFlags=RF_Public|RF_Standalone;if(!UPackage::SavePackage(A->GetOutermost(),A,*File,Args))return false;Saved.Add(MakeShared<FJsonValueString>(A->GetPathName()));}
  auto Report=MakeShared<FJsonObject>();Report->SetBoolField(TEXT("passed"),true);Report->SetBoolField(TEXT("source_mesh_shader_permutations_verified"),true);Report->SetNumberField(TEXT("schema"),1);Report->SetStringField(TEXT("root"),Root);Report->SetStringField(TEXT("parent"),Root/TEXT("M_ForgeOpaque.M_ForgeOpaque"));Report->SetStringField(TEXT("alpha_masked_parent"),Root/TEXT("M_ForgeAlphaMasked.M_ForgeAlphaMasked"));Report->SetStringField(TEXT("alpha_translucent_parent"),Root/TEXT("M_ForgeAlphaTranslucent.M_ForgeAlphaTranslucent"));Report->SetStringField(TEXT("item_parent"),Root/TEXT("M_ForgeItem.M_ForgeItem"));Report->SetStringField(TEXT("hair_parent"),Root/TEXT("M_ForgeHair.M_ForgeHair"));Report->SetStringField(TEXT("hair_front_parent"),Root/TEXT("M_ForgeHairFront.M_ForgeHairFront"));Report->SetStringField(TEXT("studio_alpha_parent"),Root/TEXT("M_ForgeStudioAlpha.M_ForgeStudioAlpha"));Report->SetArrayField(TEXT("assets"),Saved);Report->SetBoolField(TEXT("per_card_input_used"),false);Report->SetBoolField(TEXT("runtime_compilation_required"),false);
- Report->SetBoolField(TEXT("runtime_reveal_supported"),true);Report->SetBoolField(TEXT("wrap_only"),WrapOnly);Report->SetBoolField(TEXT("lit_only"),LitOnly);Report->SetStringField(TEXT("render_style"),HGShading?TEXT("hg"):TEXT("koikatsu"));Report->SetNumberField(TEXT("runtime_reveal_duration_seconds"),3);
+ Report->SetBoolField(TEXT("runtime_reveal_supported"),true);Report->SetBoolField(TEXT("wrap_only"),WrapOnly);Report->SetBoolField(TEXT("lit_only"),LitOnly);Report->SetBoolField(TEXT("bias_only"),BiasOnly);Report->SetStringField(TEXT("render_style"),HGShading?TEXT("hg"):TEXT("koikatsu"));Report->SetNumberField(TEXT("runtime_reveal_duration_seconds"),3);
  FString Text;FJsonSerializer::Serialize(Report,TJsonWriterFactory<>::Create(&Text));return FFileHelper::SaveStringToFile(Text,*Output);
 }
 

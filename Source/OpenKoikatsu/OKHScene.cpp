@@ -1411,7 +1411,7 @@ void UOKHScenePanel::TickScene(float Delta){
     if(!bForcedSaid&&Forced()&&ForcedSayAt==0.)ForcedSayAt=FPlatformTime::Seconds()+3.;
     if(!bForcedSaid&&Forced()&&FPlatformTime::Seconds()>=ForcedSayAt){bForcedSaid=true;const FString Event=OKT(TEXT("ui.hscene.forced_event"));Note(Event,false);React(Event,OKT(TEXT("ui.hscene.forced_react_note")));}
     TickChatter();
-    TickSolo(Delta);TickSecond(Delta);TickDrips(Delta);TickFluids(Delta);TickEyeDull(Delta);TickStyle(Delta);TickDeepFace(Delta);if(bTickingBeside)bIdleTickOwed=true;else TickAhegao();TickTongue();TickMirror();TickSkinLit(false);TickCameraLight(false);Tremble(FPlatformTime::Seconds());if(!bTickingBeside)TickHands();TickEyesCamera();TickCoordinates();TickSounds();SwellBust(Delta);ApplyPregnancy(FPlatformTime::Seconds());
+    TickSolo(Delta);TickSecond(Delta);TickDrips(Delta);TickFluids(Delta);TickEyeDull(Delta);TickStyle(Delta);TickDeepFace(Delta);if(bTickingBeside)bIdleTickOwed=true;else TickAhegao();TickTongue();TickMirror();TickSkinLit(false);TickClothBias(false);TickCameraLight(false);Tremble(FPlatformTime::Seconds());if(!bTickingBeside)TickHands();TickEyesCamera();TickCoordinates();TickSounds();SwellBust(Delta);ApplyPregnancy(FPlatformTime::Seconds());
     // Her breathing as the original picks it (HVoiceCtrl): her gauge past 50 and his fast motion (voice.speedMotion,
     // with its own up and down marks) change the cries, her experience the bank. A change starts the matching set
     // (user, 2026-11-01: in her it kept the first, quiet set the caress also uses).
@@ -2021,6 +2021,22 @@ static const FString& OKLitMaterialRoot(){
         if(FParse::Value(FCommandLine::Get(),TEXT("StreetSocialManifest="),Manifest)&&FFileHelper::LoadFileToString(Json,*Manifest)&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Object)&&Object)Object->TryGetStringField(TEXT("lit_material_root"),Found);
         return Found.IsEmpty()?FString(TEXT("/Game/IndependentResources/RuntimeMaterials/StreetLit03")):Found;}();
     return Root;
+}
+// Her clothes drawn toward the camera (user 2026-11-11: fix the last millimetres of skin through her clothes on
+// screen): the _Bias parents (manifest bias_material_root, Launch/materials.json bias_root).
+static TAutoConsoleVariable<float> CVarHClothViewBias(TEXT("ok.HScene.ClothViewBias"),0.f,TEXT("cm her clothes are drawn toward the camera along the view ray (0 off, the default: her own-rig garments drawn from their CPU vertices vanished in patches with it on, EGalPerf121)"));
+static TAutoConsoleVariable<float> CVarHClothViewStep(TEXT("ok.HScene.ClothViewStep"),.03f,TEXT("cm each outer layer of her clothes is drawn nearer than the one under it"));
+static const FString& OKBiasMaterialRoot(){
+    static const FString Root=[]{FString Manifest,Json,Found;TSharedPtr<FJsonObject> Object;
+        if(FParse::Value(FCommandLine::Get(),TEXT("StreetSocialManifest="),Manifest)&&FFileHelper::LoadFileToString(Json,*Manifest)&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Object)&&Object)Object->TryGetStringField(TEXT("bias_material_root"),Found);
+        return Found.IsEmpty()?FString(TEXT("/Game/IndependentResources/RuntimeMaterials/StreetBias01")):Found;}();
+    return Root;
+}
+void UOKHScenePanel::TickClothBias(bool bEnd){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickClothBias);
+    const float Bias=bEnd?0.f:FMath::Max(CVarHClothViewBias.GetValueOnGameThread(),0.f);
+    if(Bias<=0.f&&!bClothBiasShown)return;
+    if(AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl))Girl->SetClothViewBias(Bias,FMath::Max(CVarHClothViewStep.GetValueOnGameThread(),0.f),OKBiasMaterialRoot());
+    bClothBiasShown=Bias>0.f;
 }
 // Each tick while on: a change of clothes brings new skin instances, and her own values move every frame.
 void UOKHScenePanel::TickSkinLit(bool bEnd){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickSkinLit);
@@ -3479,7 +3495,7 @@ void UOKHScenePanel::ClearProps(){for(AStaticMeshActor* A:Props)if(IsValid(A))A-
 void UOKHScenePanel::NativeDestruct(){FastPaths(false);DropSecond();RestoreEyeLook();RestoreStyle();if(IsValid(Fluid)){Fluid->StopSpray();Fluid->Destroy();Fluid=nullptr;}if(Siru[0]+Siru[1]+Siru[2]+Siru[3]+Siru[4]>0){FMemory::Memzero(Siru);ApplySiru();}if(bCovered)Cover(false,FPlatformTime::Seconds());ClearProps();RestoreBlush();
     if(auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl))EndDeepFace(Girl);
     if(bAhegaoShown){bAhegaoShown=false;TickAhegao();if(auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl)){Girl->SetEyeGaze(0.f,0.f,0.f);Girl->SetMouthPattern(0);}} // her eyes, mouth and hands back from ahegao
-    TickCameraLight(true);TickSkinLit(true);
+    TickCameraLight(true);TickSkinLit(true);TickClothBias(true);
     SetGrayRoom(false);RemoveMirror();Drips.Reset();Tears.Reset();RestoreAlign();Super::NativeDestruct();}
 // Off for now (user, 2026-11-02: the box, table and chair hid the bugs being looked at): ok.HScene.Props 1 sets them again.
 static TAutoConsoleVariable<int32> CVarHProps(TEXT("ok.HScene.Props"),0,TEXT("1: a box, table or chair under her for the poses that lean on one; 0: none"));

@@ -744,6 +744,15 @@ public:
 	TSet<TWeakObjectPtr<class UMaterialInstanceDynamic>> LitWrapped;
 	TMap<TWeakObjectPtr<class UMaterialInstanceDynamic>,FKKLitSnapshot> LitSnapshots; // KKLitSync.h
 	TSet<FString> LitParentMissing;
+	// Her clothes drawn BiasCm toward the camera along each view ray (the 1-on-1 scene: skin a few millimetres through a
+	// tight garment stays under it on screen): every garment instance swapped for one of its <name>_Bias parent under
+	// BiasRoot (Tools/prepare_runtime_shared_material.lua --bias-only), its values copied from hers on every call; each
+	// layer StepCm further out than the one under it (panst/socks, bra/shorts, gloves, bottoms, tops, the rest), so two
+	// garments laid on the same surface no longer fight for depth. 0 gives hers back. False when none was found.
+	bool SetClothViewBias(float BiasCm, float StepCm, const FString& BiasRoot);
+	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> BiasInstanceOf;
+	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> BiasOriginalOf;
+	TSet<FString> BiasParentMissing;
 	// Insertion depth within the current pose. Authored vagina.open only; bone
 	// spread is used when that morph is absent. Range is owned by paired playback.
 	void DriveVaginaOpening(const AKKPreviewActor& Male, float& RangeMin, float& RangeMax, bool& bRange);
