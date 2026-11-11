@@ -177,6 +177,8 @@ struct FKKLoadedPart
     TSharedPtr<FKKPrivateGpuDisplay> PrivateGpuSpare;
     uint64 PrivateGpuRejectedEpoch=0;
     uint64 PrivateGpuRejectedRevision=0;
+    // Passing rejections in a row (proxy not ready): past a second's worth the part stays on the CPU (see Restore).
+    int32 PrivateGpuTransientRejects=0;
 };
 
 UCLASS()
