@@ -2200,3 +2200,4 @@
 - 2026-11-11 17:4x 協調者：可用 commit 掉到 1 GB。c-street-city 只拿一個 slot（slot2），卻同時開了兩個 StreetSocialCity 編輯器（run_street_city_unreal_deferred.py，各約 39 GB）；協調者結束較新的 PID 22756，可用 commit 回到 41 GB。規則：一個 slot 只能開一個 Unreal 程序，要開第二個先再 claim。
 - 2026-11-11 c-street-city：用 TaskStop 停掉在排隊的背景腳本 wp1.sh（等 slot 的 `while … sleep` 迴圈），只結束了外層，腳本本身繼續跑，之後 claim、移走舊 WP、啟動 worker，和下一個腳本 li5.sh 的 worker 同時開，兩邊 run_id 對不上，工作全部被擋（沒有改到地圖）。停背景腳本後要用程序清單確認它真的不在了；腳本開頭應寫 PID 檔或在迴圈裡檢查停止旗標。
 - 2026-11-11 同一天兩次在 Contacts.inl 新增的區域變數（Inside、D）和外層同名，C4456 在 host 專案是錯誤，第一次還讓 f-q-fork 建不起 C 的 stage。在既有長函式裡加變數前先搜同名。
+- 2026-11-11 c-conquest：活動巡檢工具用 Lua 字元類 `[–-]` 比對「營業 17–24 點」，全形破折號是 UTF-8 多位元組，字元類只比一個位元組，從未比對到，晚上才開的店一直沒重試。比對中文時用固定字串（「營業%s*(%d+)」），不要把多位元組字元放進 `[]`。

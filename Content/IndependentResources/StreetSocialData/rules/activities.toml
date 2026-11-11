@@ -1947,3 +1947,219 @@ place = "zoo"
 kind = "pair"
 code = 11
 anchor = "bench|seat"
+
+[[activity]]
+id = "amusement_haunted"
+name = "一起走鬼屋"
+place = "amusement"
+kind = "solo"
+code = 0
+anchor = "haunted_house|haunted"
+female_clip = "venue_observe.okanim"
+minutes = 20
+feed = { fun = 18 }
+
+[[activity]]
+id = "amusement_teacup"
+name = "一起坐咖啡杯"
+place = "amusement"
+kind = "pair"
+code = 1
+anchor = "teacup_ride"
+minutes = 10
+feed = { fun = 15 }
+
+[[activity]]
+id = "amusement_popcorn"
+name = "在爆米花車旁一起吃爆米花"
+place = "amusement"
+kind = "pair"
+code = 5
+anchor = "popcorn_cart|stall"
+minutes = 15
+feed = { satiety = 5, fun = 6 }
+
+[[activity]]
+id = "amusement_gate_photo"
+name = "在遊樂園入口合照"
+place = "amusement"
+kind = "photo"
+code = 0
+anchor = "ticket_gate"
+
+[[activity]]
+id = "aquarium_jelly"
+name = "在水母區一起看水母"
+place = "aquarium"
+kind = "solo"
+code = 0
+anchor = "jelly"
+female_clip = "venue_observe.okanim"
+minutes = 15
+feed = { fun = 10 }
+
+[[activity]]
+id = "arcade_claw"
+name = "一起玩夾娃娃機"
+place = "arcade"
+kind = "solo"
+code = 0
+anchor = "claw"
+female_clip = "venue_observe.okanim"
+minutes = 15
+feed = { fun = 12 }
+
+[[activity]]
+id = "beach_lounger"
+name = "在海灘躺椅上並坐曬太陽"
+place = "beach"
+kind = "pair"
+code = 1
+anchor = "lounger"
+weather = "dry"
+minutes = 30
+feed = { fun = 8 }
+
+[[activity]]
+id = "beach_watermelon"
+strenuous = true
+name = "在海邊一起打西瓜"
+place = "beach"
+kind = "pair"
+code = 6
+anchor = "watermelon_split"
+weather = "dry"
+feed = { fun = 15, energy = -10 }
+
+[[activity]]
+id = "beach_volleyball"
+name = "在沙灘排球網前合照"
+place = "beach"
+kind = "photo"
+code = 0
+anchor = "beach_volleyball_net|volleyball"
+
+[[activity]]
+id = "beach_banana_boat"
+name = "在香蕉船前合照"
+place = "beach"
+kind = "photo"
+code = 0
+anchor = "banana_boat"
+
+[[activity]]
+id = "festival_goldfish"
+name = "在祭典一起撈金魚"
+place = "festival"
+kind = "solo"
+code = 0
+anchor = "goldfish_stall"
+female_clip = "venue_observe.okanim"
+minutes = 15
+feed = { fun = 12 }
+
+[[activity]]
+id = "festival_cotton_candy"
+name = "在祭典買棉花糖一起吃"
+place = "festival"
+kind = "pair"
+code = 5
+anchor = "cotton_candy_stall"
+feed = { satiety = 5, fun = 8 }
+
+[[activity]]
+id = "festival_yoyo"
+name = "在祭典一起釣水球"
+place = "festival"
+kind = "solo"
+code = 0
+anchor = "yoyo_pool"
+female_clip = "venue_observe.okanim"
+minutes = 10
+feed = { fun = 10 }
+
+[[activity]]
+id = "shrine_omikuji"
+name = "在神社一起抽籤"
+place = "shrine"
+kind = "solo"
+code = 0
+anchor = "omikuji"
+female_clip = "venue_shopping.okanim"
+minutes = 10
+feed = { fun = 8 }
+
+[[activity]]
+id = "shrine_ema"
+name = "在神社一起寫繪馬"
+place = "shrine"
+kind = "solo"
+code = 0
+anchor = "ema"
+female_clip = "venue_shopping.okanim"
+minutes = 15
+feed = { fun = 8 }
+
+[[activity]]
+id = "shrine_charm"
+name = "在神社一起挑御守"
+place = "shrine"
+kind = "solo"
+code = 0
+anchor = "charm"
+female_clip = "venue_shopping.okanim"
+minutes = 10
+feed = { fun = 6 }
+
+[[activity]]
+id = "shrine_temizu"
+name = "在手水舍一起淨手"
+place = "shrine"
+kind = "solo"
+code = 0
+anchor = "temizu"
+female_clip = "venue_observe.okanim"
+minutes = 5
+
+[[activity]]
+id = "zoo_feed"
+name = "在動物園一起餵動物"
+place = "zoo"
+kind = "solo"
+code = 0
+anchor = "feed_animal"
+female_clip = "venue_observe.okanim"
+minutes = 15
+feed = { fun = 15 }
+
+[[activity]]
+id = "rooftop_fence"
+name = "靠在頂樓欄杆邊一起看風景"
+place = "rooftop"
+kind = "solo"
+code = 0
+anchor = "fence"
+female_clip = "venue_sky.okanim"
+minutes = 15
+feed = { fun = 6 }
+
+[[activity]]
+id = "inn_engawa"
+name = "坐在民宿緣側一起乘涼"
+place = "minshuku"
+kind = "pair"
+code = 1
+anchor = "engawa"
+minutes = 30
+
+[[activity]]
+id = "gym_treadmill"
+strenuous = true
+name = "在健身房一起用跑步機"
+place = "gym"
+kind = "solo"
+code = 0
+anchor = "treadmill"
+female_clip = "venue_stretch.okanim"
+minutes = 30
+feed = { fun = 5, energy = -15 }

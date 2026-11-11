@@ -368,7 +368,9 @@ void AOKStreetSocialScene::TickSolo(){
  const FRotator Facing(0,S.SoloYaw,0);
  // Still getting ready: where he ends up after being set down (pushed out of a vending machine by 151 cm) is the spot.
  if(S.SoloPhase==1)S.SoloSpot=S.Male;
- S.Agents[Girl-1].Position=S.SoloSpot+Facing.RotateVector(FVector(0,110,0));S.Rotations[Girl]=Facing;
+ // Where she was put beside him at the start (behind his side, settled off the omikuji stand): kept, not put back level
+ // with him 110 cm aside, which stood her inside the shrine's stands and the haunted house (activity audit 11-11).
+ S.Agents[Girl-1].Position=S.SoloSpot+(S.SoloHerOffset.IsNearlyZero()?Facing.RotateVector(FVector(0,110,0)):S.SoloHerOffset);S.Rotations[Girl]=Facing;
  // He walks away: done (with his own clip playing, any step away ends it).
  // Walking off, not the nudge he gets when he is set down on the spot (a 60 cm push-out ended the stretch 0.12 s in).
  if(FVector::Dist2D(S.Male,S.SoloSpot)>(S.SoloMale.IsEmpty()?320.f:150.f)){UE_LOG(LogTemp,Display,TEXT("Street solo: %s ends, he is %.0f from the spot (%s, spot %s, phase %d, %.2f s in)"),*S.SoloWhat,FVector::Dist2D(S.Male,S.SoloSpot),*S.Male.ToCompactString(),*S.SoloSpot.ToCompactString(),S.SoloPhase,SceneTime()-S.SoloAt);EndSolo();return;}
@@ -618,7 +620,10 @@ bool AOKStreetSocialScene::BeginOuting(int32 Girl,const FString& ActivityId,FStr
   S.LiftRide=FOKStreetLiftRide();S.LiftRide.Elevator=InElevator;S.LiftRide.Floor=To;S.LiftRide.Spot=Spot->Position;
   UE_LOG(LogTemp,Display,TEXT("Street outing: %s is on another floor of %s: by the elevator (%d -> %d)"),*ActivityId,Place->Name,From,To);
  }
- else if(Spot&&OKStreetInsidePlace(*Place,S.Male))Route={S.Male,Spot->Position}; // already inside, same floor: walk straight over
+ // Already inside, same floor: over on the grid, to the spot or the nearest cell beside it in sight of it (a carousel's
+ // spot is in the ride); straight over only when the grid finds nothing. Straight from the amusement park's gate to the
+ // carousel he ran into the rides 14 m short and went round for two minutes (activity audit 11-11).
+ else if(Spot&&OKStreetInsidePlace(*Place,S.Male)){Route=GridRoute(S.Male,Spot->Position,150.f);if(Route.Num()<2)Route={S.Male,Spot->Position};}
  // Open air: no door to go through, the way leads to the spot itself. By the "door" the walk to the Christmas tree went
  // round by the campus gate to the far side of the fence and back (its door had been put on the campus side; activity
  // audit 11-09).
@@ -662,7 +667,10 @@ bool AOKStreetSocialScene::BeginOuting(int32 Girl,const FString& ActivityId,FStr
  // she remembered the class only when he asked (R6-188b). The walk as the day plans count it (2.75 m a game minute).
  {float Length=0;for(int32 K=1;K<Route.Num();++K)Length+=float(FVector::Dist2D(Route[K-1],Route[K]));
   const int32 Minutes=FMath::CeilToInt(Length/100.f/2.75f);
-  if(Minutes>=10){const int64 NowMin=OKStreetMindNow(S);const int32 Day=int32(NowMin%1440);const int32 Arrive=Day+Minutes;
+  // Already at the place (in it, or at its door): the walk is a few steps inside, not a trip. Told "12 minutes to the
+  // boys' dorm" at its door for the lounge 28 m in, she found it too far and called it off (activity audit 11-11).
+  const bool AtPlace=OKStreetInsidePlace(*Place,S.Male)||FVector::Dist2D(S.Male,Place->Door)<500.f;
+  if(Minutes>=10&&!AtPlace){const int64 NowMin=OKStreetMindNow(S);const int32 Day=int32(NowMin%1440);const int32 Arrive=Day+Minutes;
    FString Note=OKMsg(TEXT("ui.outing.walk_minutes_tell_her"),{{TEXT("place"),Place->Name},{TEXT("minutes"),Minutes},{TEXT("arrive"),FString::Printf(TEXT("%02d:%02d"),Arrive/60%24,Arrive%60)}});
    if(const auto* Plan=S.Plans.Find(Girl))for(const auto& B:*Plan)if((B.Kind==TEXT("class")||B.Kind==TEXT("work"))&&B.Start>Day&&B.Start<Arrive+30){
     const FOKStreetPlace* At=OKStreetFindPlace(B.Place);
@@ -950,7 +958,7 @@ bool AOKStreetSocialScene::StartOutingActivity(int32 Girl,const FString& Activit
   const TCHAR* MaleClip=A->MaleClip?A->MaleClip:A->FemaleClip;
   const bool MaleOk=OKPrewarmCrowdRuntimeAction(this,0,MaleClip,Ignore);if(!MaleOk)UE_LOG(LogTemp,Warning,TEXT("Street solo: male clip %s: %s"),MaleClip,*Ignore);
   if(A->Effect&&*A->Effect)StartEffect(A->Effect,Girl); // her spell, far off over the field
-  S.SoloGirl=Girl;S.SoloPhase=1;S.SoloSpot=S.Male;S.SoloYaw=Facing.Yaw;S.SoloFemale=A->FemaleClip;S.SoloMale=MaleOk?MaleClip:TEXT("");S.SoloWhat=A->Name;S.SoloId=A->Id;S.SoloAt=SceneTime();
+  S.SoloGirl=Girl;S.SoloPhase=1;S.SoloSpot=S.Male;S.SoloHerOffset=Agent.Position-S.Male;S.SoloYaw=Facing.Yaw;S.SoloFemale=A->FemaleClip;S.SoloMale=MaleOk?MaleClip:TEXT("");S.SoloWhat=A->Name;S.SoloId=A->Id;S.SoloAt=SceneTime();
   // It takes its time (game minutes, the rules' table) and then ends by itself: praying is over, the fish watched.
   S.SoloStartMinute=OKStreetMindNow(S);{auto Request=OKRulesRequest(TEXT("activity_minutes"));Request->SetStringField(TEXT("id"),A->Id);Request->SetStringField(TEXT("kind"),TEXT("solo"));Request->SetNumberField(TEXT("code"),A->Code);
    const TSharedPtr<FJsonObject> Answer=OKRulesEval(S,Request);S.SoloMinutes=Answer.IsValid()?int32(Answer->GetNumberField(TEXT("minutes"))):20;}

@@ -94,7 +94,8 @@ for _, a in ipairs(acts) do
     call("game_clock", { paused = false })
     call("game_call", { path = "/clock", body = { hours = 14, paused = false } })
     local s = try({ op = "start", girl = tonumber(args.girl), id = a.id })
-    local opens = not s.ok and tostring(s.error):match("(%d+)%s*[–-]%s*%d+")
+    -- ("營業 17–24 點": the dash is three bytes, so a [–-] class never matched it and a closed place was never retried)
+    local opens = not s.ok and (tostring(s.error):match("營業%s*(%d+)") or tostring(s.error):match("(%d+)%s*%-%s*%d+"))
     if not s.ok and tostring(s.error):match("快打烊") then opens = "10" end
     if opens then
       call("game_call", { path = "/clock", body = { hours = (tonumber(opens) + 1) % 24, paused = false } })
