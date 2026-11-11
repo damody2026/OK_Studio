@@ -75,6 +75,19 @@ FString AOKStreetSocialScene::ShopPlaceHere() const{
  // inside): still that shop. His latte and panini were "not sold here" and she made up a kitchen out of milk (R6-139).
  if(!S.Table.IsEmpty()&&!S.MealPlace.IsEmpty())if(const FOKStreetPlace* P=OKStreetFindPlace(S.MealPlace))
   for(const FBox& Room:P->Rooms)if(Room.ComputeSquaredDistanceToPoint(FVector(S.Male.X,S.Male.Y,Room.GetCenter().Z))<=FMath::Square(300.f))return S.MealPlace;
+ // At the counter of the shop the girl he is talking with works in, on her shift: that shop.
+ return HerCounterHere(FreeTalkPartner());
+}
+
+// The shop Girl is working in now (her plan's block, on shift) when he stands in it or at its counter just outside it
+// (within 3 m of its rooms); empty otherwise. 爱丽丝 at the drink shop's counter took his "a pearl milk tea, half sugar"
+// with no menu, wrote a hot dog, and said she would see him after three, as if he had asked her out (R6-238).
+FString AOKStreetSocialScene::HerCounterHere(int32 Girl) const{
+ const auto& S=*State;if(Girl==INDEX_NONE||ShiftUntil(Girl)<=0)return FString();
+ const FOKStreetPlanBlock* B=BlockNow(Girl,int32(OKStreetMindNow(S)%1440));const FOKStreetPlace* P=B?OKStreetFindPlace(B->Place):nullptr;
+ if(!P||!S.Catalog.Items.ContainsByPredicate([P](const FOKStreetCatalogItem& I){return I.Place==P->Id;}))return FString();
+ if(OKStreetInsidePlace(*P,S.Male))return P->Id;
+ for(const FBox& Room:P->Rooms)if(Room.ComputeSquaredDistanceToPoint(FVector(S.Male.X,S.Male.Y,Room.GetCenter().Z))<=FMath::Square(300.f))return P->Id;
  return FString();
 }
 

@@ -171,6 +171,7 @@ private:
  void LoadCatalog();
  FDateTime StreetNow() const;
  FString ShopPlaceHere() const;
+ FString HerCounterHere(int32 Girl) const; // the shop she works in when he is at its counter (OKStreetSocialEconomy.inl)
  void RecordPayAgreed(int32 Girl,const FString& How,const FString& Going=FString()); // OKStreetSocialEconomy.inl; Going: what they set off to do now (the judge's do_now)
  FString PayAgreed(int32 Girl) const; // OKStreetSocialEconomy.inl
  FString OutingShop(int32 Girl) const; // OKStreetSocialEconomy.inl

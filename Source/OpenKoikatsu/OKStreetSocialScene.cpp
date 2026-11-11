@@ -1538,7 +1538,7 @@ void AOKStreetSocialScene::ExecuteFreeTalkAction(int32 Character,const FString& 
    // asking her out. Told "on shift, after 22:00" for the latte he ordered from 三月七 at her counter, she said "showing
    // you round has to wait till I'm off" to a man who had only asked for a coffee (R6-25).
    const FOKStreetActivity* Act=OKStreetFindActivity(Action);const FOKStreetPlace* ActAt=OKStreetFindPlace(Act&&Act->Place?FString(Act->Place):Action.StartsWith(TEXT("go:"))?Action.Mid(3):Action);
-   if(B&&ActAt&&ActAt->Id==B->Place&&PlaceHere(S.Male)==B->Place){UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s is him served at %s where actor=%d works, not an outing"),*Action,*B->Place,Character);}
+   if(B&&ActAt&&ActAt->Id==B->Place&&(PlaceHere(S.Male)==B->Place||HerCounterHere(Character)==B->Place)){UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s is him served at %s where actor=%d works, not an outing"),*Action,*B->Place,Character);}
    else{
    // Named, not "you": in a group the model writes every girl's lines, and "you are on shift till three" became his.
    S.TellHer.Add(OKMsg(TEXT("ui.invite.on_shift_tell_her"),{{TEXT("name"),SpokenName(Character)},{TEXT("place"),Place},{TEXT("until"),At}}));
@@ -4574,6 +4574,10 @@ void AOKStreetSocialScene::Tick(float Dt){
    if(S.SilentLineUntil<=0)S.SilentLineUntil=Now+FMath::Clamp(1.5+0.12*S.Message.Len(),2.0,8.0);
    else if(Now>=S.SilentLineUntil){S.SilentLineUntil=0;S.SilentLine=true;FinishLine();}
   }
+  // Still saying her free-talk line (a stream begun just before he pressed "confess"): the scripted line waits for her
+  // to finish. Started over it, it cut that line off, the speech state read back was not "completed", and the
+  // confession she had accepted (chance 100) ended as "he left without a word", twice (R6-239).
+  else if(!S.ClipStarted&&OKCrowdRuntimeSpeechActive(this,S.Target)){}
   else if(!S.ClipStarted){const bool WithGesture=S.Voice==0&&(!S.Pair.Conversation()||S.TouchActive);bool Played=WithGesture?OKSpeakCrowdRuntimeActionLine(this,S.Target,S.VoiceIds[S.Voice],S.ActiveGesture,Error):OKSpeakCrowdRuntimeLine(this,S.Target,S.VoiceIds[S.Voice],Error);
    // Her gesture could not be queued (her shy gesture from the line before still waiting to play): she says it without
    // it. The confession scene 惠惠 was to answer ended the whole talk, and her shift took her off unanswered (R4-19).
