@@ -1,11 +1,12 @@
-//! Getting about town (R6-203): the city is a kilometre across and two people walk it at 2.75 m a game minute, so the
-//! dorm to the convenience store was four hours on foot. The bus (cheap, between its fixed stops) and the taxi (dearer,
+//! Getting about town (R6-203): the city is a kilometre across and two people walk it at 4 m a game minute, so the
+//! dorm to the convenience store was close to three hours on foot. The bus (cheap, between its fixed stops) and the taxi (dearer,
 //! to the door) take them there; the clock and the walking pace stay as they are. Amounts are written in yuan and come
 //! out in the request's region (`region::fixed`: a region has its own fares); the two of them ride together.
 use serde_json::{json, Value};
 
-/// The day plans' walk, two together (OKStreetSocialOuting.inl counts the same).
-pub const WALK_M_PER_MIN: f64 = 2.75;
+/// Two together walk at his pace (OKStreetOutingWalkMPerMin in OKStreetSocialRules.h: 160 cm/s on the 24x clock). At her
+/// own 2.75 (the day plans') the bookstore to the drink shop was quoted over thirty minutes and took 14 (R6-235).
+pub const WALK_M_PER_MIN: f64 = 4.0;
 /// A town bus between stops, stops and lights counted.
 const BUS_M_PER_MIN: f64 = 250.0;
 /// Half the time between two buses, on average.
@@ -130,15 +131,15 @@ mod tests {
     #[test]
     fn a_short_walk_needs_no_ride() {
         let q = quote(&json!({"walk_m": 25.0, "from": [930.0, 560.0], "to": [940.0, 540.0], "stops": stops()})).unwrap();
-        assert_eq!(q["walk"]["minutes"], 10);
+        assert_eq!(q["walk"]["minutes"], 7);
         assert!(q["bus"].is_null() && q["taxi"].is_null());
         assert_eq!(q["suggest"], "walk");
     }
 
     #[test]
     fn across_the_park_no_taxi_however_long_on_the_clock() {
-        // R6-215: 50 m across Central Park is 19 minutes on the game's clock, but nobody calls a cab for it.
-        let q = quote(&json!({"walk_m": 50.0, "from": [379.0, 377.0], "to": [421.0, 415.0], "stops": stops()})).unwrap();
+        // R6-215: 70 m across Central Park is 18 minutes on the game's clock, but nobody calls a cab for it.
+        let q = quote(&json!({"walk_m": 70.0, "from": [379.0, 377.0], "to": [421.0, 415.0], "stops": stops()})).unwrap();
         assert!(q["walk"]["minutes"].as_i64().unwrap() >= RIDE_FROM_MIN);
         assert!(q["bus"].is_null() && q["taxi"].is_null(), "{q}");
         assert_eq!(q["suggest"], "walk");
@@ -146,9 +147,9 @@ mod tests {
 
     #[test]
     fn across_town_the_bus_and_the_taxi_save_hours() {
-        // The boys' dorm to the convenience store beside the bookstore: about 650 m of road, four hours on foot.
+        // The boys' dorm to the convenience store beside the bookstore: about 650 m of road, close to three hours on foot.
         let q = quote(&json!({"walk_m": 660.0, "from": [931.0, 560.0], "to": [470.0, 274.0], "stops": stops(), "people": 2})).unwrap();
-        assert!(q["walk"]["minutes"].as_i64().unwrap() > 200);
+        assert!(q["walk"]["minutes"].as_i64().unwrap() > 150);
         let taxi = &q["taxi"];
         assert!(taxi["minutes"].as_i64().unwrap() < 10, "{q}");
         assert_eq!(taxi["fare"], TAXI_FLAG);

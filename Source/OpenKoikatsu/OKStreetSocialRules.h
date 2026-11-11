@@ -570,6 +570,9 @@ inline void OKStreetSplitMessageHint(const FString& Message, FString& Body, FStr
 
 // The street sun follows a clock seeded from the real local time, running 24x faster (4 h per 10 min).
 constexpr double OKStreetClockSpeed = 24.0;
+// An outing's walk, the two of them at his pace (OKStreetMaleWalkSpeed): 4 m a game minute. Her own walk in the day plans
+// is 2.75; told "over thirty minutes" from the bookstore to the drink shop at that, they were there in 14 (R6-235).
+inline constexpr float OKStreetOutingWalkMPerMin = float(OKStreetMaleWalkSpeed * 60.0 / OKStreetClockSpeed / 100.0);
 
 inline double OKStreetClockHours(double StartHours, double ElapsedSeconds) {
  const double Hours = FMath::Fmod(StartHours + ElapsedSeconds * OKStreetClockSpeed / 3600.0, 24.0);

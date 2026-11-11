@@ -54,7 +54,18 @@ FString AOKStreetSocialScene::TodayText(int32 Character) const{
  // Where she lives (her profile): at the door of her own dorm Jeanne said she did not live there and had come to see a
  // friend; only "resting at home at the girls' dorm" in her plan said so.
  if(Character>0&&S.Manifest.Characters.IsValidIndex(Character)){const FString Home=OKStreetProfileString(S.MindProfiles.FindRef(OKStreetStableId(S.Manifest.Characters[Character])),nullptr,TEXT("home_place_id"));
-  if(const FOKStreetPlace* P=Home.IsEmpty()?nullptr:OKStreetFindPlace(Home))Parts.Add(OKMsg(TEXT("ui.director.your_home_line"),{{TEXT("place"),FString(P->Name)}}));}
+  if(const FOKStreetPlace* P=Home.IsEmpty()?nullptr:OKStreetFindPlace(Home)){Parts.Add(OKMsg(TEXT("ui.director.your_home_line"),{{TEXT("place"),FString(P->Name)}}));
+   // And how far it is to campus on her own feet (the day plans' 2.75 m a game minute, the way 1.3 times the straight
+   // line): Jeanne told him the girls' dorm was five minutes from school, and stood by it when he said the map showed it
+   // much further (R6-236). Told only the walk, she said 270 minutes as if she walked it to class: the bus too.
+   if(const FOKStreetPlace* Gate=OKStreetFindPlace(TEXT("campus_gate"));Gate&&Gate!=P){
+    const float WalkCm=FVector::Dist2D(P->Door,Gate->Door)*1.3f;
+    const int32 Minutes=FMath::Max(5,FMath::RoundToInt(WalkCm/100.f/2.75f/5.f)*5);
+    FString Line=OKMsg(TEXT("ui.director.home_walk_line"),{{TEXT("home"),FString(P->Name)},{TEXT("place"),FString(Gate->Name)},{TEXT("minutes"),Minutes}});
+    const TSharedPtr<FJsonObject>* Bus=nullptr;
+    if(const TSharedPtr<FJsonObject> Quote=OKStreetCityMode()?OKStreetTransitQuote(S,P->Door,Gate->Door,WalkCm,1,-1):nullptr;Quote&&Quote->TryGetObjectField(TEXT("bus"),Bus)&&Bus&&Bus->IsValid())
+     Line+=OKMsg(TEXT("ui.director.home_bus_line"),{{TEXT("minutes"),int64((*Bus)->GetNumberField(TEXT("minutes")))}});
+    Parts.Add(Line);}}}
  // Where he lives: Yuuka, at the girls' dorm, took "I just moved in, do you live here too?" as him living on her floor.
  if(const FOKStreetPlace* P=OKStreetFindPlace(TEXT("boys_dorm")))Parts.Add(OKMsg(TEXT("ui.director.his_home_line"),{{TEXT("place"),FString(P->Name)}}));
  // What her own day still holds (the plan she follows): what she says she has to do comes from here.

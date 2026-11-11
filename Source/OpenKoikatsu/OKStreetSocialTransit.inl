@@ -1,25 +1,30 @@
-// Getting about town by bus or taxi (R6-203). The city is a kilometre across and two people walk it at 2.75 m a game
-// minute: the dorm to the convenience store was four hours on foot. The rules (ok-rules transit.rs) quote the bus
+// Getting about town by bus or taxi (R6-203). The city is a kilometre across and two people walk it at 4 m a game
+// minute (OKStreetOutingWalkMPerMin): the dorm to the convenience store is close to three hours on foot. The rules (ok-rules transit.rs) quote the bus
 // (between its fixed stops, at the doors of the places it names) and the taxi (to the door) for a long walk; she hears
 // them with the walk's minutes and may say "let's take the bus" (take_bus / take_taxi), he has them as buttons. A ride
 // is his fare paid, the minutes gone by, and the two of them set down where it stops; the walk goes on from there.
 
 // The quote for a walk of WalkCm from where he is to Drop (the place's door); her words about it ("" when no ride is
 // worth it). Kept for the buttons and the ride until the walk ends.
-FString AOKStreetSocialScene::QuoteTransit(int32 Girl,float WalkCm,const FVector& Drop){
- auto& S=*State;S.TransitQuote.Reset();S.TransitFor=INDEX_NONE;
- if(!OKStreetCityMode())return FString();
+// The rules' quote (transit.rs) for a walk of WalkCm from From to To; Cash < 0: no wallet to check.
+static TSharedPtr<FJsonObject> OKStreetTransitQuote(const FOKStreetSceneState& S,const FVector& From,const FVector& To,float WalkCm,int32 People,int64 Cash){
  static TArray<FString> StopIds;
  if(StopIds.IsEmpty())if(const TSharedPtr<FJsonObject> Out=OKRulesEval(S,OKRulesRequest(TEXT("transit_stops")))){
   const TArray<TSharedPtr<FJsonValue>>* A=nullptr;if(Out->TryGetArrayField(TEXT("stops"),A))for(const auto& V:*A)StopIds.Add(V->AsString());}
  auto Point=[](const FVector& P){TArray<TSharedPtr<FJsonValue>> A;A.Add(MakeShared<FJsonValueNumber>(P.X/100.0));A.Add(MakeShared<FJsonValueNumber>(P.Y/100.0));return A;};
  TSharedRef<FJsonObject> Ask=OKRulesRequest(TEXT("transit_quote"));
- Ask->SetNumberField(TEXT("walk_m"),WalkCm/100.0);Ask->SetArrayField(TEXT("from"),Point(S.Male));Ask->SetArrayField(TEXT("to"),Point(Drop));
+ Ask->SetNumberField(TEXT("walk_m"),WalkCm/100.0);Ask->SetArrayField(TEXT("from"),Point(From));Ask->SetArrayField(TEXT("to"),Point(To));
  TArray<TSharedPtr<FJsonValue>> Stops;
  for(const FString& Id:StopIds)if(const FOKStreetPlace* P=OKStreetFindPlace(Id)){TSharedRef<FJsonObject> O=MakeShared<FJsonObject>();
   O->SetStringField(TEXT("id"),Id);O->SetNumberField(TEXT("x"),P->Door.X/100.0);O->SetNumberField(TEXT("y"),P->Door.Y/100.0);Stops.Add(MakeShared<FJsonValueObject>(O));}
- Ask->SetArrayField(TEXT("stops"),Stops);Ask->SetNumberField(TEXT("people"),2);Ask->SetNumberField(TEXT("cash"),double(S.Store.PlayerCash));
- const TSharedPtr<FJsonObject> Out=OKRulesEval(S,Ask);if(!Out)return FString();
+ Ask->SetArrayField(TEXT("stops"),Stops);Ask->SetNumberField(TEXT("people"),People);if(Cash>=0)Ask->SetNumberField(TEXT("cash"),double(Cash));
+ return OKRulesEval(S,Ask);
+}
+
+FString AOKStreetSocialScene::QuoteTransit(int32 Girl,float WalkCm,const FVector& Drop){
+ auto& S=*State;S.TransitQuote.Reset();S.TransitFor=INDEX_NONE;
+ if(!OKStreetCityMode())return FString();
+ const TSharedPtr<FJsonObject> Out=OKStreetTransitQuote(S,S.Male,Drop,WalkCm,2,S.Store.PlayerCash);if(!Out)return FString();
  auto StopName=[](const FString& Id){const FOKStreetPlace* P=OKStreetFindPlace(Id);return P?FString(P->Name):Id;};
  FString Options;
  for(const TCHAR* Mode:{TEXT("bus"),TEXT("taxi")}){

@@ -527,10 +527,10 @@ bool AOKStreetSocialScene::BeginOuting(int32 Girl,const FString& ActivityId,FStr
  if(S.ShiftAppointment&&!Leave){Error=OKT(TEXT("ui.jobs.on_shift_no_outing"));UE_LOG(LogTemp,Display,TEXT("Street outing: %s not started, he is on shift"),*ActivityId);return false;}
  // Closed when they get there and still a quarter of an hour after (it opens at 11:00, they set off at 10:39 with twenty
  // minutes to walk: open by then), or open then but closing within a quarter of an hour (Raiden and he set off for
- // dinner at 21:39, walked in at 21:59 and the restaurant closed on their dishes). The walk as the day plans count it
- // (2.75 m a game minute, the way 1.3 times the straight line).
+ // dinner at 21:39, walked in at 21:59 and the restaurant closed on their dishes). The walk at the outing's pace
+ // (OKStreetOutingWalkMPerMin, the way 1.3 times the straight line).
  if(Place&&!Leave){FString Why;int32 Days=0;if(Blacklisted(Place->Id,&Days)){Error=OKMsg(TEXT("ui.outing.blacklisted_days_left"), {{TEXT("days"), Days}});return false;}
-  const float WalkMinutes=OKStreetInsidePlace(*Place,S.Male)?0.f:FVector::Dist2D(S.Male,Place->Door)/100.f*1.3f/2.75f;
+  const float WalkMinutes=OKStreetInsidePlace(*Place,S.Male)?0.f:FVector::Dist2D(S.Male,Place->Door)/100.f*1.3f/OKStreetOutingWalkMPerMin;
   const FDateTime Arrive=StreetNow()+FTimespan::FromMinutes(WalkMinutes);
   const bool ClosedThen=PlaceClosedAt(Place->Id,Arrive,Why);FString After;const bool ClosedAfter=PlaceClosedAt(Place->Id,Arrive+FTimespan::FromMinutes(15),After);
   // Only walking to it (go:, nothing to do there yet) to wait at its door: an hour before it opens is as good a place to
@@ -926,13 +926,13 @@ bool AOKStreetSocialScene::PlanOutingRoute(const FOKStreetPlace* Place,const FVe
 
 // How long the walk is, and what of her day it runs into: she knows it, the model decides (go on, or say she has to go).
 // 贞德 said "I have class at 13:30" at 12:47 and set off with him for the park: 69 minutes on foot, there at 13:56, and
-// she remembered the class only when he asked (R6-188b). The walk as the day plans count it (2.75 m a game minute).
+// she remembered the class only when he asked (R6-188b). The walk at the outing's pace (OKStreetOutingWalkMPerMin, R6-235).
 // Also after a ride down from upstairs (StepLiftRide): from the ramen shop on the department store's 9F to the cafe was two
 // hours on foot in the rain, and she was never told, nor offered the bus or a taxi (R6-230).
 void AOKStreetSocialScene::TellOutingWalk(int32 Girl,const FOKStreetPlace& Place,const TArray<FVector>& Route){
  auto& S=*State;
  float Length=0;for(int32 K=1;K<Route.Num();++K)Length+=float(FVector::Dist2D(Route[K-1],Route[K]));
- const int32 Minutes=FMath::CeilToInt(Length/100.f/2.75f);
+ const int32 Minutes=FMath::CeilToInt(Length/100.f/OKStreetOutingWalkMPerMin);
  // Already at the place (in it, or at its door): the walk is a few steps inside, not a trip. Told "12 minutes to the
  // boys' dorm" at its door for the lounge 28 m in, she found it too far and called it off (activity audit 11-11).
  const bool AtPlace=OKStreetInsidePlace(Place,S.Male)||FVector::Dist2D(S.Male,Place.Door)<500.f;
