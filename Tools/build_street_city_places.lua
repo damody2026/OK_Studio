@@ -351,8 +351,17 @@ do -- campus_sports = SP with the outdoor track as the field
   def('campus_sports', { building = 'SP', name = bname.SP, door = entry.SP, rooms = { bbox('SP'), tr and { min = P(tr.c[1] - tr.e[1], tr.c[2] - tr.e[2], tr.c[3] - tr.e[3]), max = P(tr.c[1] + tr.e[1], tr.c[2] + tr.e[2], tr.c[3] + tr.e[3] + 300) } or nil },
     anchors = { first(pick('seat', { b = 'SP' }), 'seat'), tr and A('field', abase(tr), 0, 'Outdoor_campus_track') or nil }, privacy = 0 })
 end
-do local pg = alabel['Landmark_playground_a_98'] or alabel['Landmark_playground_b_99']
-  for l, a in pairs(alabel) do if not pg and l:match('^Landmark_playground') then pg = a end end
+-- playground = the first playground landmark (by label) whose field lies clear of every installed place's area. a_98 stands in
+-- the amusement park: the field, its door and the park's teacups and popcorn cart were in each other's boxes, and the
+-- grandstand seats were in both (c-conquest place survey, 11-11). The field's vending machine stays the installed one.
+do local pg
+  local function clearof(b)
+    for _, it in pairs(newitems) do if it.anchor == 'door' then for _, r in ipairs(it.rooms or {}) do
+      if r.min and b.min[1] < r.max[1] and b.max[1] > r.min[1] and b.min[2] < r.max[2] and b.max[2] > r.min[2] then return false end end end end
+    return true end
+  local labels = {}; for l in pairs(alabel) do if l:match('^Landmark_playground') then labels[#labels + 1] = l end end; table.sort(labels)
+  for _, l in ipairs(labels) do if clearof(aroundbox(abase(alabel[l]), 1500)) then pg = alabel[l]; break end end
+  pg = pg or alabel[labels[1] or '']
   if pg then def('playground', { name = '遊樂場', door = abase(pg), rooms = { aroundbox(abase(pg), 1500) }, anchors = { A('field', abase(pg), r1(pg.yaw), pg.label) }, privacy = 0 }) end
 end
 do local gates = {}; for l, a in pairs(alabel) do if l:match('campus%-gate$') then gates[#gates + 1] = a end end
@@ -427,7 +436,23 @@ end
 -- restrooms: public WC basins (wait) / toilets (women) in four buildings spread over the map
 for id, b in pairs({ restroom_campus = 'SC', restroom_north = 'D3', restroom_park = 'CV', restroom_resort = 'H1' }) do
   local w = pick('washbasin', { b = b, floor = 1 }); local tl = pick('toilet', { b = b, floor = 1 })
-  if w[1] then def(id, { building = b, name = (bname[b] or b) .. ' 1F 廁所', door = w[1].pos, rooms = { aroundbox(w[1].pos, 800) }, anchors = { A('wait', w[1].pos, w[1].yaw, w[1].asset), tl[#tl] and A('women', tl[#tl].pos, tl[#tl].yaw, tl[#tl].asset) or nil }, privacy = 1 }) end
+  -- The common WC module (D3, CV, SC): the basins stand against a wall at x, the cubicles in a row along the outer wall
+  -- (y = their toilets), the open floor in front of the cubicles (2.5 to 4.7 m from the outer wall, 7 m long; the cubicles themselves are walled), its doorway 3.5 m along the far wall. The door was the
+  -- first basin itself, inside the wall: the game moved it 37 cm out, onto the street side of the outer wall, and there
+  -- was no way in (places_check, 11-11; floor scan places-v1/place-doors-1111a.json). Now the building's entrance is the
+  -- door, the room is that box, 'wait' stands in front of the basins and 'women' in front of the last cubicle of the row.
+  local m
+  if w[1] then local bx, by = w[1].pos[1], w[1].pos[2]; local row = {}
+    for _, t in ipairs(tl) do if math.abs(t.pos[2] - by) < 600 and t.pos[1] > bx and t.pos[1] < bx + 800 then row[#row + 1] = t end end
+    table.sort(row, function(u, v) return u.pos[1] < v.pos[1] end)
+    if #row > 0 and entry[b] then local ty, z = row[1].pos[2], row[1].pos[3]; local sg = by > ty and 1 or -1
+      local y0, y1 = ty + 250 * sg, ty + 470 * sg
+      m = { door = entry[b], room = { min = P(bx + 50, math.min(y0, y1), z), max = P(bx + 750, math.max(y0, y1), z + 300) },
+        wait = A('wait', P(bx + 100, by, z), w[1].yaw, w[1].asset), women = A('women', P(row[#row].pos[1], ty + 270 * sg, z), row[#row].yaw, row[#row].asset) }
+    end
+  end
+  if m then def(id, { building = b, name = (bname[b] or b) .. ' 1F 廁所', door = m.door, rooms = { m.room }, anchors = { m.wait, m.women }, privacy = 1 })
+  elseif w[1] then def(id, { building = b, name = (bname[b] or b) .. ' 1F 廁所', door = w[1].pos, rooms = { aroundbox(w[1].pos, 800) }, anchors = { A('wait', w[1].pos, w[1].yaw, w[1].asset), tl[#tl] and A('women', tl[#tl].pos, tl[#tl].yaw, tl[#tl].asset) or nil }, privacy = 1 }) end
 end
 -- campus_* = the college buildings (effective-city-plan legacy_place), with the anchors the game's campus code reads
 -- (OKStreetSocialCampus.inl, Tools/street_models/campus.py): 'stairK' on every floor (stair core A), 'liftK:label'
@@ -526,6 +551,35 @@ do
     if g and it.anchor ~= 'door' then
       local have = false; for _, a in pairs(g.anchors) do if a and a.name == it.anchor then have = true end end
       if not have then g.anchors[#g.anchors + 1] = A(it.anchor, it.pos, it.yaw, it.actor) end
+    end
+  end
+end
+-- The amusement park and the BBQ area (lover spots round 3) had one box each drawn round everything: the park's took in the
+-- graduate dorm's balcony seats (x 95260) and the BBQ area's held the teacups and a popcorn cart, so those spots were the
+-- BBQ area's. The rides stand in two groups: west of the road inside the lot's railing (carousel, haunted house, teacups)
+-- and east of it (coaster station, ferris wheel, ticket gate). Each place now gets a box per group, fitted round its own
+-- anchors (1.5 m out, nothing more than 25 m from the group's first anchor), and the park's railing gets 'gate' anchors
+-- where a walk from its door crosses it (places-v1/walk-probe.json 11-12: the lamp-post gate at y 47.9 m and two gaps
+-- beside the BBQ tables), so the game ties both sides of the railing to the roads (c-conquest R6-228).
+do
+  local function fit(g, keep)
+    local groups = {}
+    for _, a in ipairs(g.anchors) do if keep(a) then
+      local put
+      for _, gr in ipairs(groups) do if math.abs(a.pos[1] - gr.x) < 2500 and math.abs(a.pos[2] - gr.y) < 4000 then put = gr; break end end
+      if not put then put = { x = a.pos[1], y = a.pos[2], lo = { a.pos[1], a.pos[2] }, hi = { a.pos[1], a.pos[2] }, z = a.pos[3] }; groups[#groups + 1] = put end
+      put.lo = { math.min(put.lo[1], a.pos[1]), math.min(put.lo[2], a.pos[2]) }; put.hi = { math.max(put.hi[1], a.pos[1]), math.max(put.hi[2], a.pos[2]) }
+    end end
+    local rooms = {}
+    for _, gr in ipairs(groups) do rooms[#rooms + 1] = { min = P(gr.lo[1] - 150, gr.lo[2] - 150, gr.z - 100), max = P(gr.hi[1] + 150, gr.hi[2] + 150, gr.z + 600) } end
+    if #rooms > 0 then g.rooms = rooms end
+  end
+  for _, g in ipairs(G) do
+    if g.id == 'amusement' then
+      fit(g, function(a) return not a.name:match('^seat') and not a.name:match('^coaster_track') end)
+      for i, at in ipairs({ { 97596, 48098 }, { 97621, 50248 }, { 97596, 51698 } }) do g.anchors[#g.anchors + 1] = A('gate' .. i, P(at[1], at[2], 1198), 90, 'railing crossing, walk probe 11-12') end
+    elseif g.id == 'bbq' then
+      fit(g, function(a) return not a.name:match('^seat') and math.abs(a.pos[2] - 50500) < 1500 end)
     end
   end
 end
@@ -935,6 +989,11 @@ do
   end
   -- every game place: outdoor when it has no building (park, playground, shrine, campus gate, beach); the sports field too
   for _, g in ipairs(GAME_PLACES) do if g.outdoor == nil then g.outdoor = type(g.building) ~= 'string' or g.id == 'rooftop' end; if g.furnished == false and #g.anchors > 0 then g.furnished = true end end
+  -- the water park lies on the sand under the coast strip (WorldEdge_CoastStrip): from its door no road point within 15 m
+  -- could be reached straight, so the game tied it to nothing (door_links=0, "no road route to the door", c-conquest 11-11).
+  -- It is reached the way the beach is, from the beach's street door 7 m off (the road bake walked that way down).
+  local byid = {}; for _, g in ipairs(GAME_PLACES) do byid[g.id] = g end
+  if byid.waterpark and byid.beach and byid.beach.door then byid.waterpark.door = byid.beach.door end
   table.sort(GAME_PLACES, function(a, b) return a.id < b.id end)
 end
 -- kitchens and baths in the homes (c-conquest 8.2 住家): every lockable room gets kitchen / stove / bath anchors from

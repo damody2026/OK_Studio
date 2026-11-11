@@ -62,20 +62,22 @@ def motel_world_place_doors():
   for d,i in near(p):
    if not clear(p,lattice[i]):return True
   return False
+ def sph(a,b):
+  r=unreal.SystemLibrary.sphere_trace_single(world,a,b,35,Q,True,[],NONE,True);h=r.to_tuple() if r else [False]
+  return bool(h and h[0])
  def step(x0,y0,z0,x1,y1):
   h=hit(V(x1,y1,z0+170),V(x1,y1,z0-170))
   if not h:return None
   g=h[4].z
   if abs(g-z0)>40:return None
-  if unreal.SystemLibrary.sphere_trace_single(world,V(x0,y0,z0+60),V(x1,y1,g+60),35,Q,True,[],NONE,True).to_tuple()[0]:return None
-  if unreal.SystemLibrary.sphere_trace_single(world,V(x0,y0,z0+140),V(x1,y1,g+140),35,Q,True,[],NONE,True).to_tuple()[0]:return None
+  if sph(V(x0,y0,z0+60),V(x1,y1,g+60)) or sph(V(x0,y0,z0+140),V(x1,y1,g+140)):return None
   return g
- def walk(a,b,pad=1500.,C=50.):
+ def walk(a,b,pad=800.,C=50.):
   fx,fy,fz=a;tx,ty,tz=b
   if abs(fz-tz)>=150:return dict(reached=None,why='another floor')
   x0,x1=min(fx,tx)-pad,max(fx,tx)+pad;y0,y1=min(fy,ty)-pad,max(fy,ty)+pad
   goal=(round((tx-fx)/C),round((ty-fy)/C));z={(0,0):fz};q=collections.deque([(0,0)]);n=0
-  while q and goal not in z and n<30000:
+  while q and goal not in z and n<8000:
    u=q.popleft();n+=1;ux,uy=fx+u[0]*C,fy+u[1]*C
    for d in((1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1)):
     v=(u[0]+d[0],u[1]+d[1])
