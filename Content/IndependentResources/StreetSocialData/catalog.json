@@ -2,6 +2,14 @@
  "version": 2,
  "currency": "CNY",
  "places": {
+  "amusement": {
+   "open": [
+    [
+     9,
+     21
+    ]
+   ]
+  },
   "bbq": {
    "open": [
     [
@@ -822,6 +830,112 @@
    "effects": {
     "satiety": 5,
     "mood": 5
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "am_hotdog",
+   "place": "amusement",
+   "name": "熱狗",
+   "category": "light",
+   "price": {
+    "": 18
+   },
+   "season": null,
+   "tags": [
+    "hot"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 25,
+    "mood": 5
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "am_burger_set",
+   "place": "amusement",
+   "name": "漢堡套餐",
+   "category": "meal",
+   "price": {
+    "": 45
+   },
+   "season": null,
+   "tags": [
+    "hot",
+    "filling"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 45,
+    "mood": 5
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "am_popcorn",
+   "place": "amusement",
+   "name": "爆米花",
+   "category": "light",
+   "price": {
+    "": 15
+   },
+   "season": null,
+   "tags": [
+    "shareable"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 12,
+    "mood": 6
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "am_churro",
+   "place": "amusement",
+   "name": "吉拿棒",
+   "category": "dessert",
+   "price": {
+    "": 12
+   },
+   "season": null,
+   "tags": [
+    "sweet"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 12,
+    "mood": 6
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "am_soda",
+   "place": "amusement",
+   "name": "汽水",
+   "category": "drink",
+   "price": {
+    "": 10
+   },
+   "season": null,
+   "tags": [
+    "cold"
+   ],
+   "prop": "cup",
+   "options": [],
+   "effects": {
+    "satiety": 4,
+    "mood": 4
    },
    "giftable": false,
    "consumable": true

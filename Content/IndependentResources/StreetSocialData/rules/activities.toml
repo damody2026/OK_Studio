@@ -1040,6 +1040,39 @@ code = 11
 anchor = "bench|seat"
 feed = { fun = 10 }
 
+# 11-11（R6-218）：遊樂園的設施本身。「去坐雲霄飛車」沒有活動可對，判斷成在附近散步，走了 49 分鐘哪裡也沒去。
+# 錨點是地圖已有的 ride_pair（雲霄飛車月台、旋轉木馬、摩天輪），兩人並坐的姿勢。
+[[activity]]
+id = "amusement_coaster"
+name = "一起坐雲霄飛車"
+place = "amusement"
+kind = "pair"
+code = 1
+anchor = "coaster_station"
+minutes = 15
+weather = "dry"
+feed = { fun = 22 }
+
+[[activity]]
+id = "amusement_carousel"
+name = "一起坐旋轉木馬"
+place = "amusement"
+kind = "pair"
+code = 1
+anchor = "carousel"
+minutes = 15
+feed = { fun = 15 }
+
+[[activity]]
+id = "amusement_ferris_ride"
+name = "一起坐摩天輪"
+place = "amusement"
+kind = "pair"
+code = 1
+anchor = "ferris_wheel"
+minutes = 20
+feed = { fun = 18, social = 6 }
+
 [[activity]]
 id = "arcade_photobooth"
 name = "在遊戲中心一起拍大頭貼"
