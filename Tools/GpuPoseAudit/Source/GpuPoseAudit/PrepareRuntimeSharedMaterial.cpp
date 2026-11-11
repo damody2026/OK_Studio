@@ -363,7 +363,9 @@ bool PrepareRuntimeSharedMaterial(const FString& AssetRoot,const FString& Root,c
   auto In=[&](const TCHAR* N,UMaterialExpression* E){Register(E);auto& I=Bias->Inputs.AddDefaulted_GetRef();I.InputName=N;I.Input.Expression=E;};
   auto* At=NewObject<UMaterialExpressionWorldPosition>(Mat);At->WorldPositionShaderOffset=WPT_ExcludeAllShaderOffsets;In(TEXT("P"),At);
   In(TEXT("Eye"),NewObject<UMaterialExpressionCameraPositionWS>(Mat));In(TEXT("B"),Scalar(TEXT("__OK_ViewBias"),0.f));
-  Bias->Code=TEXT("float3 v=Eye-P;float l=length(v);if(B<=0||l<1)return float3(0,0,0);return v*(min(B,l*.5)/l);");
+  // Straight toward the camera along the view direction: one constant offset for every vertex, so a garment keeps its
+  // shape on screen (off each pixel ray by B*tan(angle), a fraction of a pixel at the 1-on-1 camera).
+  Bias->Code=TEXT("if(B<=0)return float3(0,0,0);return -ResolvedView.ViewForward*B;");
   Register(Bias);
   auto* None=NewObject<UMaterialExpressionConstant3Vector>(Mat);None->Constant=FLinearColor(0,0,0,0);Register(None);
   auto* Pass=NewObject<UMaterialExpressionShadowReplace>(Mat);Pass->Default.Expression=Bias;Pass->Shadow.Expression=None;Register(Pass);

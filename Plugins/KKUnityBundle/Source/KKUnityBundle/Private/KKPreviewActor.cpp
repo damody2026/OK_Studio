@@ -10242,13 +10242,17 @@ bool AKKPreviewActor::SetClothViewBias(float BiasCm,float StepCm,const FString& 
         if(PartRole==TEXT("clothes_bot"))return 3;
         if(PartRole==TEXT("clothes_top"))return 4;
         return 5;};
-    static const FString Prefix=TEXT("KKSessionPart_");
+    // The part each mesh draws: tagged followers (KKSessionPart_, or KKMorphPart_ for the ones with morphs), and the
+    // procedural meshes of the parts drawn on the CPU or the private GPU stream (own-rig garments, untagged).
+    static const FString Prefixes[]={TEXT("KKSessionPart_"),TEXT("KKMorphPart_")};
+    TMap<UMeshComponent*,int32> PartOf;
+    for(UMeshComponent* Mesh:Meshes)for(FName Tag:Mesh->ComponentTags){const FString Text=Tag.ToString();
+        for(const FString& Prefix:Prefixes)if(Text.StartsWith(Prefix)){PartOf.Add(Mesh,FCString::Atoi(*Text.Mid(Prefix.Len())));break;}}
+    for(const FKKLoadedPart& Part:Parts)if(Part.Comp&&Part.SessionIndex!=INDEX_NONE)PartOf.FindOrAdd(Part.Comp.Get(),Part.SessionIndex);
     TMap<int32,int32> RankOf;bool bAny=false;
-    for(UMeshComponent* Mesh:Meshes)
+    for(const TPair<UMeshComponent*,int32>& Pair:PartOf)
     {
-        int32 Index=INDEX_NONE;
-        for(FName Tag:Mesh->ComponentTags){const FString Text=Tag.ToString();if(Text.StartsWith(Prefix)){Index=FCString::Atoi(*Text.Mid(Prefix.Len()));break;}}
-        if(Index==INDEX_NONE)continue;
+        UMeshComponent* Mesh=Pair.Key;const int32 Index=Pair.Value;
         const int32* Found=RankOf.Find(Index);
         if(!Found){OkMeshView View{};int32 R=-1;if(Session.PartAt(Index,View)&&View.role)R=Rank(UTF8_TO_TCHAR(View.role));Found=&RankOf.Add(Index,R);}
         if(*Found<0)continue;
@@ -10270,6 +10274,7 @@ bool AKKPreviewActor::SetClothViewBias(float BiasCm,float StepCm,const FString& 
                 if(!BiasParent){BiasParentMissing.Add(BiasRoot/Name);UE_LOG(LogTemp,Warning,TEXT("Cloth view bias: no %s under %s"),*Name,*BiasRoot);continue;}
                 Shown=UMaterialInstanceDynamic::Create(BiasParent,this);
                 BiasInstanceOf.Add(M,Shown);BiasOriginalOf.Add(Shown,M);
+                UE_LOG(LogTemp,Display,TEXT("Cloth view bias: part %d %s slot %d -> %s"),Index,*Mesh->GetName(),Slot,*Name);
             }
             if(Mesh->GetMaterial(Slot)!=Shown)Mesh->SetMaterial(Slot,Shown);
             if(const auto* Original=BiasOriginalOf.Find(Shown))Shown->CopyParameterOverrides(*Original);

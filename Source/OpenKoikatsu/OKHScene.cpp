@@ -2024,12 +2024,12 @@ static const FString& OKLitMaterialRoot(){
 }
 // Her clothes drawn toward the camera (user 2026-11-11: fix the last millimetres of skin through her clothes on
 // screen): the _Bias parents (manifest bias_material_root, Launch/materials.json bias_root).
-static TAutoConsoleVariable<float> CVarHClothViewBias(TEXT("ok.HScene.ClothViewBias"),0.f,TEXT("cm her clothes are drawn toward the camera along the view ray (0 off, the default: her own-rig garments drawn from their CPU vertices vanished in patches with it on, EGalPerf121)"));
+static TAutoConsoleVariable<float> CVarHClothViewBias(TEXT("ok.HScene.ClothViewBias"),.6f,TEXT("cm her clothes are drawn toward the camera along the view direction (0 off)"));
 static TAutoConsoleVariable<float> CVarHClothViewStep(TEXT("ok.HScene.ClothViewStep"),.03f,TEXT("cm each outer layer of her clothes is drawn nearer than the one under it"));
 static const FString& OKBiasMaterialRoot(){
     static const FString Root=[]{FString Manifest,Json,Found;TSharedPtr<FJsonObject> Object;
         if(FParse::Value(FCommandLine::Get(),TEXT("StreetSocialManifest="),Manifest)&&FFileHelper::LoadFileToString(Json,*Manifest)&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Object)&&Object)Object->TryGetStringField(TEXT("bias_material_root"),Found);
-        return Found.IsEmpty()?FString(TEXT("/Game/IndependentResources/RuntimeMaterials/StreetBias01")):Found;}();
+        return Found.IsEmpty()?FString(TEXT("/Game/IndependentResources/RuntimeMaterials/StreetBias02")):Found;}();
     return Root;
 }
 void UOKHScenePanel::TickClothBias(bool bEnd){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickClothBias);
