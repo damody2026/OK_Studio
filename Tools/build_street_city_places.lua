@@ -338,6 +338,9 @@ do
   local an = { ids[1] and A('seat', rooms1[ids[1]].pos, rooms1[ids[1]].yaw, ids[1]) or nil, c2 and A('class2', c2.pos, c2.yaw, c2.owner) or nil, mc and A('music', md or mc, 0, 'SC-0301 音樂社練習室') or nil }
   local _, _, cbox = roomcentre(ids[1] or '')
   def('school', { building = 'T1', name = bname.T1 .. (cbox and planrooms[ids[1]] and (' ' .. planrooms[ids[1]].name) or ''), door = entry.T1, rooms = { cbox or bbox('T1') }, anchors = an, privacy = 0, note = 'a room of campus_t1: the building, its lifts and stairs are campus_t1' })
+  -- the music room is on the cafeteria's 3F: listed there too, so school_music can be the cafeteria's (from the school's door
+  -- it was a 78-minute walk round to it, and she called it off; c-conquest 11-12)
+  if mc then for _, g in ipairs(G) do if g.id == 'cafeteria' then g.anchors[#g.anchors + 1] = A('music', md or mc, 0, 'SC-0301 music club room') end end end
 end
 -- lecture = the T2 ground-floor classroom with the most seats, a room inside campus_t2 (the whole T2). It was the whole
 -- building, the same rooms and lift anchors as campus_t2, and the game built a second car in the same shaft (R6-188h, 11-10)
