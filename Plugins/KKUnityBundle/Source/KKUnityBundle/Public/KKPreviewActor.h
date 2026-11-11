@@ -172,6 +172,9 @@ struct FKKLoadedPart
     TArray<FVector> RuntimeUnitRestNormals;
     bool bNativeDisplayPrepared=false;
     TSharedPtr<FKKPrivateGpuDisplay> PrivateGpuDisplay;
+    // The display last given up for a passing reason (its proxy not ready): its captured source, draw and bounds reused by
+    // the next capture of the same source revision.
+    TSharedPtr<FKKPrivateGpuDisplay> PrivateGpuSpare;
     uint64 PrivateGpuRejectedEpoch=0;
     uint64 PrivateGpuRejectedRevision=0;
 };
@@ -754,6 +757,7 @@ public:
 	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> BiasInstanceOf;
 	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> BiasOriginalOf;
 	TSet<FString> BiasParentMissing;
+	TMap<TWeakObjectPtr<class UMaterialInstanceDynamic>,FKKLitSnapshot> BiasSnapshots; // KKLitSync.h
 	// Insertion depth within the current pose. Authored vagina.open only; bone
 	// spread is used when that morph is absent. Range is owned by paired playback.
 	void DriveVaginaOpening(const AKKPreviewActor& Male, float& RangeMin, float& RangeMax, bool& bRange);

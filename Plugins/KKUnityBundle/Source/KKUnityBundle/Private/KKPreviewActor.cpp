@@ -8019,6 +8019,8 @@ void AKKPreviewActor::SkinPrivateDisplay()
  if(Excluded.IsEmpty()||!Session.SkinDisplayExceptPrivate(Excluded,Revisions))Session.Skin();
 }
 
+// ok.PrivateGpuLog 1: log each private GPU display a part loses or captures again (what makes it re-capture each frame).
+static TAutoConsoleVariable<int32> CVarOkPrivateGpuLog(TEXT("ok.PrivateGpuLog"),0,TEXT("1: log each private GPU display reset and capture with its reason"));
 bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrepare,TArray<FKKGpuStreamSectionRequest>& Requests)
 {
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrivateGpuDisplay);QUICK_SCOPE_CYCLE_COUNTER(STAT_KK_PrivateGpuDisplay);
@@ -8026,12 +8028,17 @@ bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrep
  const uint64 Epoch=Component?Component->GetGpuStreamProxyEpoch():0;
  // Reason by value: a rejected receipt's error lives in the display this resets (a reference crashed the log line).
  auto Restore=[&](FString Reason,bool Reject){
+  if(Part.PrivateGpuDisplay&&CVarOkPrivateGpuLog.GetValueOnGameThread())UE_LOG(LogTemp,Display,TEXT("OK private GPU reset part=%d frame=%llu reason=%s cpu=%d jiggle=%d"),Part.SessionIndex,GFrameCounter,Reason.IsEmpty()?TEXT("(gate)"):*Reason,CpuSkinnedParts.Contains(Part.SessionIndex),JiggleCpuParts.Contains(Part.SessionIndex));
+  // Kept for a passing reason: a proxy not ready rejected the install every other frame, and each capture again took
+  // 0.7 ms of the game thread (three of her garments, 1-on-1 scene, EGalPerf130).
+  Part.PrivateGpuSpare=Reject?nullptr:Part.PrivateGpuDisplay;
   if(Part.PrivateGpuDisplay){EnsurePrivateGpuQueryGeometry(Part.Comp);Part.PrivateGpuDisplay.Reset();Part.RuntimeSourceGeometry.Reset();Part.bNativeDisplayPrepared=false;}
   if(Reject){Part.PrivateGpuRejectedEpoch=Epoch;Part.PrivateGpuRejectedRevision=Session.PrivateSkinSourceRevision(Part.SessionIndex);UE_LOG(LogTemp,Warning,TEXT("OK private GPU retained CPU actor=%s part=%d reason=%s"),*GetName(),Part.SessionIndex,*Reason);}
   return false;
  };
- if(!CVarOkPrivateGpuStreams.GetValueOnGameThread()||!bUsePrivateGpuPlayback||!Component||!Part.bRuntimeAccessory||Part.bSlotAttached||Part.bFaceSphereNormals||Part.SessionIndex==INDEX_NONE||Session.MorphCount(Part.SessionIndex)!=0||CpuSkinnedParts.Contains(Part.SessionIndex)||JiggleCpuParts.Contains(Part.SessionIndex))
-  return Restore(FString(),false);
+ bool bGated;{TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrivateGpuGate);
+ bGated=!CVarOkPrivateGpuStreams.GetValueOnGameThread()||!bUsePrivateGpuPlayback||!Component||!Part.bRuntimeAccessory||Part.bSlotAttached||Part.bFaceSphereNormals||Part.SessionIndex==INDEX_NONE||Session.MorphCount(Part.SessionIndex)!=0||CpuSkinnedParts.Contains(Part.SessionIndex)||JiggleCpuParts.Contains(Part.SessionIndex);}
+ if(bGated)return Restore(FString(),false);
  if(Part.PrivateGpuDisplay&&Part.PrivateGpuDisplay->Epoch!=Epoch)Restore(FString(),false);
  if(!Epoch||Component->IsRenderStateDirty()||!Component->UsesAnimatedStreams()||Component->GetCollisionEnabled()!=ECollisionEnabled::NoCollision)return Restore(FString(),false);
  if(Part.PrivateGpuRejectedEpoch==Epoch&&Part.PrivateGpuRejectedRevision==Session.PrivateSkinSourceRevision(Part.SessionIndex))return false;
@@ -8044,9 +8051,18 @@ bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrep
   // export a source yet. This is readiness, not a permanent unsupported route.
   if(!Session.PrivateSkinSourceRevision(Part.SessionIndex))return false;
   auto Next=MakeShared<FKKPrivateGpuDisplay>();Next->Epoch=Epoch;
-  if(!OKCapturePrivateGpuSource(Session,Part.SessionIndex,Next->Source,Pose,Error))return Restore(Error,true);
+
   const int32 Count=Part.RuntimeSectionOffsets.Num();
   if(!Count||Count!=Component->GetNumSections())return Restore(TEXT("Section layout unsupported"),true);
+  bool bReused=false;
+  if(TSharedPtr<FKKPrivateGpuDisplay> Spare=MoveTemp(Part.PrivateGpuSpare);Spare&&Spare->Source.Revision==Session.PrivateSkinSourceRevision(Part.SessionIndex)&&Spare->Draw.Num()==Count){
+   bool bSame=true;for(int32 S=0;S<Count&&bSame;++S){const auto* CPU=Component->GetProcMeshSection(S);bSame=CPU&&CPU->ProcVertexBuffer.Num()==Spare->Draw[S].Num();}
+   if(bSame&&OKReadPrivateGpuPose(Session,Part.SessionIndex,Spare->Source,Pose,Error)){
+    Next->Source=MoveTemp(Spare->Source);Next->Draw=MoveTemp(Spare->Draw);Next->Bounds=MoveTemp(Spare->Bounds);bReused=true;}
+  }
+  if(!bReused){
+  if(CVarOkPrivateGpuLog.GetValueOnGameThread())UE_LOG(LogTemp,Display,TEXT("OK private GPU capture part=%d frame=%llu"),Part.SessionIndex,GFrameCounter);
+  if(!OKCapturePrivateGpuSource(Session,Part.SessionIndex,Next->Source,Pose,Error))return Restore(Error,true);
   Next->Draw.SetNum(Count);TArray<FOKGpuDeformDraw> AllDraw;
   for(int32 S=0;S<Count;++S){
    if(!Part.RuntimeSectionNormals.IsValidIndex(S))return Restore(TEXT("Missing section normals"),true);
@@ -8056,6 +8072,7 @@ bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrep
    AllDraw.Append(Next->Draw[S]);
   }
   if(!OKBuildPrivateGpuBounds(Next->Source,AllDraw,Next->Bounds,Error))return Restore(Error,true);
+  }
   Next->Generations.Init(0,Count);Next->Receipts.SetNum(Count);
   Part.PrivateGpuDisplay=MoveTemp(Next);
  }else{
@@ -8073,15 +8090,17 @@ bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrep
    else{State.Generations[S]=State.Receipts[S]->Generation;State.Receipts[S].Reset();}
   }
   State.MarkQueryDirty();
+  TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrivateGpuReceipts);
   if(Pending){if(Session.PrivateSkinSourceRevision(Part.SessionIndex)!=State.Source.Revision)return Restore(TEXT("Native source changed"),false);return true;} // Reserve queued publication.
   if(!State.HasGeneration)State.HasGeneration=true;
   else if(State.InstallQueued&&!State.Installed){State.Installed=true;UE_LOG(LogTemp,Display,TEXT("OK private GPU installed actor=%s part=%d source_vertices=%d sections=%d bounds_groups=%d"),*GetName(),Part.SessionIndex,State.Source.Vertices.Num(),State.Draw.Num(),State.Bounds.Groups.Num());}
   if(State.PreparedPoseFrame==GFrameCounter){Pose=MoveTemp(State.PreparedPose);State.PreparedPoseFrame=MAX_uint64;bPreparedBox=State.bPreparedBox;PreparedBox=State.PreparedBox;}
-  else if(!OKReadPrivateGpuPose(Session,Part.SessionIndex,State.Source,Pose,Error))return Restore(Error,false);
+  else{TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrivateGpuReadPose);if(!OKReadPrivateGpuPose(Session,Part.SessionIndex,State.Source,Pose,Error))return Restore(Error,false);}
  }
  auto& State=*Part.PrivateGpuDisplay;FBox Box(ForceInit);
  if(bPreparedBox)Box=PreparedBox;
- else if(!OKEvaluatePrivateGpuBounds(State.Bounds,Pose,Box,Error))return Restore(Error,true);
+ else{TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrivateGpuBounds);if(!OKEvaluatePrivateGpuBounds(State.Bounds,Pose,Box,Error))return Restore(Error,true);}
+ TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrivateGpuRequests);
  for(int32 S=0;S<State.Draw.Num();++S){
   const auto* CPU=Component->GetProcMeshSection(S);
   if(!CPU||CPU->ProcVertexBuffer.Num()!=State.Draw[S].Num())return Restore(TEXT("GPU topology changed"),true);
@@ -10230,7 +10249,7 @@ bool AKKPreviewActor::SetClothViewBias(float BiasCm,float StepCm,const FString& 
     {
         for(UMeshComponent* Mesh:Meshes)for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
             if(auto* M=Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot)))if(const auto* Original=BiasOriginalOf.Find(M))Mesh->SetMaterial(Slot,*Original);
-        BiasInstanceOf.Reset();BiasOriginalOf.Reset();
+        BiasInstanceOf.Reset();BiasOriginalOf.Reset();BiasSnapshots.Reset();
         return true;
     }
     // Inner layers first: a garment laid over another sits one step further toward the camera.
@@ -10249,13 +10268,15 @@ bool AKKPreviewActor::SetClothViewBias(float BiasCm,float StepCm,const FString& 
     for(UMeshComponent* Mesh:Meshes)for(FName Tag:Mesh->ComponentTags){const FString Text=Tag.ToString();
         for(const FString& Prefix:Prefixes)if(Text.StartsWith(Prefix)){PartOf.Add(Mesh,FCString::Atoi(*Text.Mid(Prefix.Len())));break;}}
     for(const FKKLoadedPart& Part:Parts)if(Part.Comp&&Part.SessionIndex!=INDEX_NONE)PartOf.FindOrAdd(Part.Comp.Get(),Part.SessionIndex);
+    // Each part's rank from the role it was loaded with, not from the session: the H tick runs beside the pair solve, and
+    // asking the session waited for it every frame (2.8 ms, EGalPerf127).
     TMap<int32,int32> RankOf;bool bAny=false;
+    for(const FKKLoadedPart& Part:Parts)if(Part.SessionIndex!=INDEX_NONE)RankOf.FindOrAdd(Part.SessionIndex,Rank(Part.Role));
     for(const TPair<UMeshComponent*,int32>& Pair:PartOf)
     {
         UMeshComponent* Mesh=Pair.Key;const int32 Index=Pair.Value;
         const int32* Found=RankOf.Find(Index);
-        if(!Found){OkMeshView View{};int32 R=-1;if(Session.PartAt(Index,View)&&View.role)R=Rank(UTF8_TO_TCHAR(View.role));Found=&RankOf.Add(Index,R);}
-        if(*Found<0)continue;
+        if(!Found||*Found<0)continue;
         const float Bias=BiasCm+StepCm*float(*Found);
         for(int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
         {
@@ -10277,9 +10298,13 @@ bool AKKPreviewActor::SetClothViewBias(float BiasCm,float StepCm,const FString& 
                 UE_LOG(LogTemp,Display,TEXT("Cloth view bias: part %d %s slot %d -> %s"),Index,*Mesh->GetName(),Slot,*Name);
             }
             if(Mesh->GetMaterial(Slot)!=Shown)Mesh->SetMaterial(Slot,Shown);
-            if(const auto* Original=BiasOriginalOf.Find(Shown))Shown->CopyParameterOverrides(*Original);
-            Shown->SetScalarParameterValue(TEXT("__OK_ViewBias"),Bias);
-            Shown->SetScalarParameterValue(TEXT("__OK_ViewInflate"),InflateCm+StepCm*float(*Found));
+            // Only the values that moved (KKLitSync.h): the whole copy every frame re-sent each garment to the render thread,
+            // 1.5 ms of the 1-on-1 game thread with the H tick beside the pair solve (EGalPerf126, 2026-11-11).
+            if(const auto* Original=BiasOriginalOf.Find(Shown))KKSyncLitInstance(Shown,*Original,BiasSnapshots.FindOrAdd(Shown));
+            auto SetIfMoved=[Shown](const TCHAR* Name,float Value){float Was=0.f;
+                if(!Shown->GetScalarParameterValue(FHashedMaterialParameterInfo(Name),Was)||Was!=Value)Shown->SetScalarParameterValue(Name,Value);};
+            SetIfMoved(TEXT("__OK_ViewBias"),Bias);
+            SetIfMoved(TEXT("__OK_ViewInflate"),InflateCm+StepCm*float(*Found));
             bAny=true;
         }
     }
