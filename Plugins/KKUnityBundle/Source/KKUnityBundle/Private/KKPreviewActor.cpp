@@ -10288,7 +10288,7 @@ const TArray<FMorphTargetDelta>* AKKPreviewActor::WrapMorphDeltas(const USkinned
     for(auto It=GOkWrapMorphDeltas.CreateIterator();It;++It)if(!It.Key().IsValid())It.RemoveCurrent();
     return GOkWrapMorphDeltas.Find(Mesh);
 }
-bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& Indices,const TArray<FVector3f>& UnityDeltas,const TArray<FVector3f>& UnityNormalDeltas)
+bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& Indices,const TArray<FVector3f>& UnityDeltas,const TArray<FVector3f>& UnityNormalDeltas,int32 SetId)
 {
     TRACE_CPUPROFILER_EVENT_SCOPE(KK_SetPartWrapDeltas);
     const FOkMouthSlot* Slot=MouthSlots.FindByPredicate([PartIndex](const FOkMouthSlot& S){return S.SessionPartIndex==PartIndex;});
@@ -10306,7 +10306,9 @@ bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& In
     for(int32 P=WrapReleases.Num()-1;P>=0;--P){FOkWrapRelease& R=*WrapReleases[P];
         if(!R.bReleased){if(GFrameCounter>R.Frame+4){BeginReleaseResource(&R.Set->MorphBuffers);R.Fence.BeginFence();R.bReleased=true;}}
         else if(R.Fence.IsFenceComplete())WrapReleases.RemoveAtSwap(P);}
-    static constexpr int32 WrapSetId=0x4F4B5752; // 'OKWR'
+    // Each set its own (the belly wrap 'OKWR', her thighs' jiggle 'OKTJ'): one does not replace another. Only the belly wrap's
+    // moves are kept for WrapMorphDeltas.
+    const int32 WrapSetId=SetId;const bool bKeep=SetId==0x4F4B5752;
     bool bAny=false;
     for(USkinnedMeshComponent* Mesh:Meshes){
         if(!Mesh||!Mesh->GetSkinnedAsset()||!Mesh->IsValidExternalMorphSetLODIndex(0))continue;
@@ -10316,7 +10318,7 @@ bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& In
         // The set it had, released once the render thread is done with it.
         if(Mesh->HasExternalMorphSet(0,WrapSetId)){
             TSharedPtr<FExternalMorphSet> Old=Mesh->GetExternalMorphSets(0).FindRef(WrapSetId);
-            Mesh->RemoveExternalMorphSet(0,WrapSetId);GOkWrapMorphDeltas.Remove(Mesh);
+            Mesh->RemoveExternalMorphSet(0,WrapSetId);if(bKeep)GOkWrapMorphDeltas.Remove(Mesh);
             if(Old.IsValid()){auto Pending=MakeUnique<FOkWrapRelease>();Pending->Set=Old;Pending->Frame=GFrameCounter;WrapReleases.Add(MoveTemp(Pending));}
         }
         if(Indices.IsEmpty()){Mesh->RefreshExternalMorphTargetWeights();continue;}
@@ -10330,12 +10332,14 @@ bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& In
         if(Model.Vertices.IsEmpty()){Mesh->RefreshExternalMorphTargetWeights();continue;}
         Model.NumVertices=Model.Vertices.Num();Model.NumBaseMeshVerts=NumVerts;
         for(int32 Section=0;Section<Render->LODRenderData[0].RenderSections.Num();++Section)Model.SectionIndices.Add(Section);
-        TSharedPtr<FExternalMorphSet> Set=MakeShared<FExternalMorphSet>();Set->Name=FName(TEXT("OKBellyWrap"));
+        TSharedPtr<FExternalMorphSet> Set=MakeShared<FExternalMorphSet>();Set->Name=FName(bKeep?TEXT("OKBellyWrap"):TEXT("OKWrapSet"));
         const FMorphTargetLODModel* Models[1]={&Model};
         Set->MorphBuffers.InitMorphResourcesStreaming(GMaxRHIShaderPlatform,Render->LODRenderData[0].RenderSections,MakeArrayView(Models,1),NumVerts,20.f); // error tolerance in micrometres (0.0001 clamped every move to 2.7 cm)
-        if(!Set->MorphBuffers.IsMorphCPUDataValid()||Set->MorphBuffers.GetNumMorphs()<1)continue;
+        // Every move under the error tolerance (her thighs' jiggle settling) compresses to no batches, which the render
+        // thread's InitRHI asserts on (NumTotalBatches > 0): nothing to draw then.
+        if(!Set->MorphBuffers.IsMorphCPUDataValid()||Set->MorphBuffers.GetNumMorphs()<1||Set->MorphBuffers.GetNumBatches()==0){Mesh->RefreshExternalMorphTargetWeights();continue;}
         BeginInitResource(&Set->MorphBuffers);
-        Mesh->AddExternalMorphSet(0,WrapSetId,Set);GOkWrapMorphDeltas.Add(Mesh,MoveTemp(Model.Vertices));
+        Mesh->AddExternalMorphSet(0,WrapSetId,Set);if(bKeep)GOkWrapMorphDeltas.Add(Mesh,MoveTemp(Model.Vertices));
         Mesh->RefreshExternalMorphTargetWeights(false);
         FExternalMorphWeightData& Weights=Mesh->GetExternalMorphWeights(0);
         if(FExternalMorphSetWeights* W=Weights.MorphSets.Find(WrapSetId)){W->Weights.SetNumZeroed(1);W->Weights[0]=1.f;W->UpdateNumActiveMorphTargets();}
@@ -10343,6 +10347,36 @@ bool AKKPreviewActor::SetPartWrapDeltas(int32 PartIndex,const TArray<uint32>& In
         Mesh->MarkRenderDynamicDataDirty();bAny=true;
     }
     return bAny||Indices.IsEmpty();
+}
+
+// Her thighs and buttocks jiggle behind her legs (user, 2026-11-10: ref/zzz_thigh_jiggle.md): six rotation springs a
+// side worked out from her body (thigh_jiggle), drawn as their own morph set of her body so the belly wrap keeps its own.
+static TAutoConsoleVariable<float> CVarOkThighJiggle(TEXT("ok.ThighJiggle"),2.f,TEXT("Her thighs' and buttocks' jiggle in the paired playback: scales the swing (1 the reference's, 2 the default, 0 off)"));
+static constexpr int32 GOkThighJiggleSet=0x4F4B544A; // 'OKTJ'
+// ok.ThighJiggleStats: the largest move (mm) and the most vertices moved in one frame since the last call.
+static float GThighJiggleMost=0.f;static int32 GThighJiggleVerts=0,GThighJiggleFrames=0;
+static FAutoConsoleCommand GOKThighJiggleStats(TEXT("ok.ThighJiggleStats"),TEXT("Log her thighs' jiggle since the last call: largest move (mm), most vertices in a frame, frames"),
+    FConsoleCommandDelegate::CreateLambda([]{UE_LOG(LogTemp,Display,TEXT("Thigh jiggle: most %.2f mm, %d vertices, %d frames"),GThighJiggleMost*1000.f,GThighJiggleVerts,GThighJiggleFrames);GThighJiggleMost=0.f;GThighJiggleVerts=0;GThighJiggleFrames=0;}));
+void AKKPreviewActor::ClearThighJiggle()
+{
+    if(ThighJigglePart!=INDEX_NONE)SetPartWrapDeltas(ThighJigglePart,{},{},{},GOkThighJiggleSet);
+    ThighJigglePart=INDEX_NONE;
+    if(Session.IsOpen()){int32 Part;TArray<uint32> Idx;TArray<FVector3f> D;Session.ThighJiggle(0.f,0.f,Part,Idx,D);}
+}
+void AKKPreviewActor::UpdateThighJiggle(float DeltaSeconds)
+{
+    TRACE_CPUPROFILER_EVENT_SCOPE(KK_ThighJiggle);
+    const float Gain=CVarOkThighJiggle.GetValueOnGameThread();
+    if(Gain<=0.f||!Session.IsOpen()){if(ThighJigglePart!=INDEX_NONE)ClearThighJiggle();return;}
+    int32 Part=INDEX_NONE;TArray<uint32> Idx;TArray<FVector3f> D;
+    if(!Session.ThighJiggle(FMath::Max(0.f,DeltaSeconds),Gain,Part,Idx,D)||Part==INDEX_NONE){if(ThighJigglePart!=INDEX_NONE)ClearThighJiggle();return;}
+    // Still (no move over a tenth of a millimetre) and nothing shown: nothing to rebuild.
+    if(Idx.IsEmpty()&&ThighJigglePart==INDEX_NONE)return;
+    if(ThighJigglePart!=INDEX_NONE&&ThighJigglePart!=Part)SetPartWrapDeltas(ThighJigglePart,{},{},{},GOkThighJiggleSet);
+    SetPartWrapDeltas(Part,Idx,D,{},GOkThighJiggleSet);
+    ThighJigglePart=Idx.IsEmpty()?INDEX_NONE:Part;
+    for(const FVector3f& V:D)GThighJiggleMost=FMath::Max(GThighJiggleMost,V.Size());
+    GThighJiggleVerts=FMath::Max(GThighJiggleVerts,Idx.Num());++GThighJiggleFrames;
 }
 
 // Her clothes kept over her breasts and nipples in every mode, not only the H scene (user, 2026-11-09: however large her

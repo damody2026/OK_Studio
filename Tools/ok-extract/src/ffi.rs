@@ -239,6 +239,19 @@ pub unsafe extern "C" fn ok_cover_deltas(s:*mut OkSession,body_idx:*const u32,bo
     k as i32
 }
 #[no_mangle]
+pub unsafe extern "C" fn ok_thigh_jiggle(s:*mut OkSession,dt:f32,gain:f32,out_part:*mut i32,out_idx:*mut u32,out_d:*mut f32,max:u32)->i32 {
+    // Her thighs' and buttocks' jiggle dt seconds on (thigh_jiggle; 0 steps nothing and gives the moves again, for a
+    // larger buffer). gain scales the swing limits (0 turns it off and forgets her springs). out_part: her body's session
+    // part index. Writes up to max (vertex index, move in the mesh's own space, Unity metres: 3 floats each); returns how
+    // many there are, -2 none (no female body), -1 bad input.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if out_part.is_null()||out_idx.is_null()||out_d.is_null()||!dt.is_finite()||!gain.is_finite() {return -1;}
+    let Some((part,moves))=crate::thigh_jiggle::thigh_jiggle(s,dt,gain) else{return -2;};
+    *out_part=part as i32;
+    for (k,(j,d)) in moves.iter().enumerate().take(max as usize){*out_idx.add(k)=*j;for a in 0..3{*out_d.add(k*3+a)=d[a];}}
+    moves.len() as i32
+}
+#[no_mangle]
 pub unsafe extern "C" fn ok_back_exit(s:*mut OkSession,at:*const f32,out:*mut f32)->i32 {
     // Where the line from her entrance to his glans comes out of her through her back (belly_bulge::back_exit): at = her
     // entrance, his glans, the way her belly faces (her skeleton space, metres, 9 floats); out = the place and her skin's
