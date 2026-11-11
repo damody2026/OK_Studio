@@ -42,6 +42,8 @@ def motel_world_place_doors():
     o,e=a.get_actor_bounds(False);l=a.get_actor_location();row['actor_loc']=[round(l.x),round(l.y),round(l.z)]
     row['bounds']=[[round(o.x-e.x),round(o.y-e.y),round(o.z-e.z)],[round(o.x+e.x),round(o.y+e.y),round(o.z+e.z)]];row['path']=a.get_path_name()
    except Exception:pass
+   try:row['hidden']=bool(a.get_editor_property('hidden'));row['visible']=bool(c.get_editor_property('visible')) if c else None
+   except Exception:pass
   return row
  # the game's Fine(): a floor at the point's height and room for a body
  def fine(x,y,z):
