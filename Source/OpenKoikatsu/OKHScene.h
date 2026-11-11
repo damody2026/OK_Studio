@@ -385,7 +385,7 @@ private:
     // The street hidden behind a plain grey room around them (user, 2026-11-01): the world's actors hidden (lights,
     // cameras and the two of them kept), six grey slabs round her.
     void SetGrayRoom(bool bOn);void HideWorld();double GrayCheckAt=0.;bool bGrayRoom=false;UPROPERTY() TArray<TObjectPtr<AActor>> GrayRoom;TArray<TWeakObjectPtr<AActor>> GrayHidden;
-    int32 MaleView=1;bool bMaleBottomOff=true;bool bPenisXRay=true;TWeakObjectPtr<class AKKPreviewActor> MaleLookFor;
+    int32 MaleView=1;bool bMaleBottomOff=true;bool bPenisXRay=false; /* off by default: user 2026-11-11 */TWeakObjectPtr<class AKKPreviewActor> MaleLookFor;
     UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> MaleGhost;
     UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> PenisXRay; // over her while he is see-through (M_PreviewXRay)
     UPROPERTY() TArray<TObjectPtr<class UMeshComponent>> MaleGhostComps;
