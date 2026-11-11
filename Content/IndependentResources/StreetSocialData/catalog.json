@@ -10,6 +10,30 @@
     ]
    ]
   },
+  "breakfast": {
+   "open": [
+    [
+     6,
+     11
+    ]
+   ]
+  },
+  "sushi": {
+   "open": [
+    [
+     11,
+     22
+    ]
+   ]
+  },
+  "crepe": {
+   "open": [
+    [
+     10,
+     21
+    ]
+   ]
+  },
   "bbq": {
    "open": [
     [
@@ -936,6 +960,257 @@
    "effects": {
     "satiety": 4,
     "mood": 4
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "bf_sandwich",
+   "place": "breakfast",
+   "name": "火腿蛋三明治",
+   "category": "light",
+   "price": {
+    "": 18
+   },
+   "season": null,
+   "tags": [
+    "hot"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 25,
+    "mood": 3
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "bf_danbing",
+   "place": "breakfast",
+   "name": "起司蛋餅",
+   "category": "light",
+   "price": {
+    "": 15
+   },
+   "season": null,
+   "tags": [
+    "hot"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 22,
+    "mood": 3
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "bf_set",
+   "place": "breakfast",
+   "name": "早餐套餐（漢堡、薯餅、飲料）",
+   "category": "meal",
+   "price": {
+    "": 35
+   },
+   "season": null,
+   "tags": [
+    "hot",
+    "filling"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 40,
+    "mood": 5
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "bf_soymilk",
+   "place": "breakfast",
+   "name": "溫豆漿",
+   "category": "drink",
+   "price": {
+    "": 8
+   },
+   "season": null,
+   "tags": [
+    "hot"
+   ],
+   "prop": "cup",
+   "options": [],
+   "effects": {
+    "satiety": 8,
+    "mood": 3
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "bf_milktea",
+   "place": "breakfast",
+   "name": "冰奶茶",
+   "category": "drink",
+   "price": {
+    "": 12
+   },
+   "season": null,
+   "tags": [
+    "cold"
+   ],
+   "prop": "cup",
+   "options": [],
+   "effects": {
+    "satiety": 6,
+    "mood": 4
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "su_set",
+   "place": "sushi",
+   "name": "握壽司套餐（十貫）",
+   "category": "meal",
+   "price": {
+    "": 88
+   },
+   "season": null,
+   "tags": [
+    "filling"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 45,
+    "mood": 8
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "su_salmon",
+   "place": "sushi",
+   "name": "鮭魚握壽司（兩貫）",
+   "category": "light",
+   "price": {
+    "": 30
+   },
+   "season": null,
+   "tags": [
+    "shareable"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 12,
+    "mood": 5
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "su_miso",
+   "place": "sushi",
+   "name": "味噌湯",
+   "category": "light",
+   "price": {
+    "": 10
+   },
+   "season": null,
+   "tags": [
+    "hot"
+   ],
+   "prop": "cup",
+   "options": [],
+   "effects": {
+    "satiety": 8,
+    "mood": 3
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "su_tea",
+   "place": "sushi",
+   "name": "熱綠茶",
+   "category": "drink",
+   "price": {
+    "": 5
+   },
+   "season": null,
+   "tags": [
+    "hot"
+   ],
+   "prop": "cup",
+   "options": [],
+   "effects": {
+    "satiety": 2,
+    "mood": 3
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "cr_strawberry",
+   "place": "crepe",
+   "name": "草莓鮮奶油可麗餅",
+   "category": "dessert",
+   "price": {
+    "": 25
+   },
+   "season": null,
+   "tags": [
+    "cold"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 15,
+    "mood": 8
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "cr_choco_banana",
+   "place": "crepe",
+   "name": "巧克力香蕉可麗餅",
+   "category": "dessert",
+   "price": {
+    "": 28
+   },
+   "season": null,
+   "tags": [],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 18,
+    "mood": 8
+   },
+   "giftable": false,
+   "consumable": true
+  },
+  {
+   "id": "cr_ham_cheese",
+   "place": "crepe",
+   "name": "火腿起司可麗餅",
+   "category": "light",
+   "price": {
+    "": 30
+   },
+   "season": null,
+   "tags": [
+    "hot"
+   ],
+   "prop": "plate",
+   "options": [],
+   "effects": {
+    "satiety": 24,
+    "mood": 5
    },
    "giftable": false,
    "consumable": true

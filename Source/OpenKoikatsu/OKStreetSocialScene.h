@@ -711,6 +711,7 @@ private:
  // OKStreetSocialTransit.inl (R6-203): the bus and the taxi for a long walk (ok-rules transit.rs); the quote, its words
  // for her, and the ride itself (fare, minutes gone by, and the two of them set down where it stops).
  FString QuoteTransit(int32 Girl,float WalkCm,const FVector& Drop);
+ void TellOutingWalk(int32 Girl,const FOKStreetPlace& Place,const TArray<FVector>& Route); // OKStreetSocialOuting.inl: how long the walk is, the bus and taxi for it
  bool TakeTransit(const FString& Mode,bool HerIdea);
  float StepOuting(float Dt);
  void ArriveOuting();

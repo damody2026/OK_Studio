@@ -602,6 +602,7 @@ bool AOKStreetSocialScene::BeginOuting(int32 Girl,const FString& ActivityId,FStr
   S.LiftRide=FOKStreetLiftRide();S.LiftRide.Elevator=Elevator;S.LiftRide.Floor=0;S.LiftRide.Descend=true;S.LiftRide.Spot=Spot?Spot->Position:PlaceInsideSpot(*Place);
   StopAmbientActivity();EndTalk();
   S.OutingGirl=Girl;S.OutingActivity=ActivityId;S.OutingPlace=Place->Name;S.OutingRoute=MoveTemp(Down);S.OutingStep=1;S.OutingProgressAt=S.OutingBegunAt=SceneTime();
+  S.TransitQuote.Reset();S.TransitFor=INDEX_NONE; // the walk and its bus or taxi are told once down on the street (StepLiftRide)
   S.Companion=Girl;S.Agents[Girl-1].Held=true;S.CompanionTrail.Reset();S.CompanionTrail.Add(S.Male);S.CompanionLastMale=S.Male;S.CompanionBlockedAt=0;S.CompanionTravel=0;S.CompanionWalk=0;
   S.Message=OKMsg(TEXT("ui.outing.walk_to_place_by_elevator"), {{TEXT("girl_name"), *S.Manifest.Characters[Girl].Name}, {TEXT("place_name"), Place->Name}});
   UE_LOG(LogTemp,Display,TEXT("Street outing: actor=%d activity=%s starts upstairs in %s: down by the elevator first"),Girl,*ActivityId,Here.Name);
@@ -662,23 +663,7 @@ bool AOKStreetSocialScene::BeginOuting(int32 Girl,const FString& ActivityId,FStr
  S.Companion=Girl;S.Agents[Girl-1].Held=true;S.CompanionTrail.Reset();S.CompanionTrail.Add(S.Male);S.CompanionLastMale=S.Male;S.CompanionBlockedAt=0;S.CompanionTravel=0;S.CompanionWalk=0;
  S.Message=OKMsg(TEXT("ui.outing.walk_to_place_together"), {{TEXT("girl_name"), *S.Manifest.Characters[Girl].Name}, {TEXT("place_name"), Place->Name}});
  UE_LOG(LogTemp,Display,TEXT("Street outing: actor=%d activity=%s route_points=%d"),Girl,*ActivityId,Route.Num());
- // How long the walk is, and what of her day it runs into: she knows it, the model decides (go on, or say she has to go).
- // 贞德 said "I have class at 13:30" at 12:47 and set off with him for the park: 69 minutes on foot, there at 13:56, and
- // she remembered the class only when he asked (R6-188b). The walk as the day plans count it (2.75 m a game minute).
- {float Length=0;for(int32 K=1;K<Route.Num();++K)Length+=float(FVector::Dist2D(Route[K-1],Route[K]));
-  const int32 Minutes=FMath::CeilToInt(Length/100.f/2.75f);
-  // Already at the place (in it, or at its door): the walk is a few steps inside, not a trip. Told "12 minutes to the
-  // boys' dorm" at its door for the lounge 28 m in, she found it too far and called it off (activity audit 11-11).
-  const bool AtPlace=OKStreetInsidePlace(*Place,S.Male)||FVector::Dist2D(S.Male,Place->Door)<500.f;
-  if(Minutes>=10&&!AtPlace){const int64 NowMin=OKStreetMindNow(S);const int32 Day=int32(NowMin%1440);const int32 Arrive=Day+Minutes;
-   FString Note=OKMsg(TEXT("ui.outing.walk_minutes_tell_her"),{{TEXT("place"),Place->Name},{TEXT("minutes"),Minutes},{TEXT("arrive"),FString::Printf(TEXT("%02d:%02d"),Arrive/60%24,Arrive%60)}});
-   if(const auto* Plan=S.Plans.Find(Girl))for(const auto& B:*Plan)if((B.Kind==TEXT("class")||B.Kind==TEXT("work"))&&B.Start>Day&&B.Start<Arrive+30){
-    const FOKStreetPlace* At=OKStreetFindPlace(B.Place);
-    Note+=OKMsg(TEXT("ui.outing.walk_runs_into_plan"),{{TEXT("at"),FString::Printf(TEXT("%02d:%02d"),B.Start/60%24,B.Start%60)},{TEXT("doing"),OKPhoneDoingWord(B.Kind)},{TEXT("place"),At?FString(At->Name):B.Place}});
-    UE_LOG(LogTemp,Display,TEXT("Street outing: the %d-minute walk runs into actor=%d's %s at %02d:%02d"),Minutes,Girl,*B.Kind,B.Start/60,B.Start%60);break;}
-   // The bus and the taxi for it (R6-203): she hears them with the minutes, he sees them as buttons.
-   Note+=QuoteTransit(Girl,Length,Place->Door);
-   S.TellHer.Add(Note);}}
+ TellOutingWalk(Girl,*Place,Route);
  RefreshUI();
  return true;
 }
@@ -926,6 +911,30 @@ void AOKStreetSocialScene::SettleOnFloor(FVector& At,float Yaw,const TCHAR* Why)
  for(float R=25.f;R<=400.f;R+=25.f){for(int32 K=0;K<24;++K){const FVector Dir(FMath::Cos(2*PI*K/24.f),FMath::Sin(2*PI*K/24.f),0);FVector C=At+Dir*R;if(!Clear(C))continue;
    const float Score=R+((Dir|Facing)>.3f?60.f:0.f);if(Score<BestScore){BestScore=Score;Best=C;}}if(BestScore<R+25.f)break;}
  if(BestScore<TNumericLimits<float>::Max()){UE_LOG(LogTemp,Display,TEXT("Street activity: %s spot inside something, %s -> %s"),Why,*At.ToCompactString(),*Best.ToCompactString());At=Best;}
+}
+
+// How long the walk is, and what of her day it runs into: she knows it, the model decides (go on, or say she has to go).
+// 贞德 said "I have class at 13:30" at 12:47 and set off with him for the park: 69 minutes on foot, there at 13:56, and
+// she remembered the class only when he asked (R6-188b). The walk as the day plans count it (2.75 m a game minute).
+// Also after a ride down from upstairs (StepLiftRide): from the ramen shop on the department store's 9F to the cafe was two
+// hours on foot in the rain, and she was never told, nor offered the bus or a taxi (R6-230).
+void AOKStreetSocialScene::TellOutingWalk(int32 Girl,const FOKStreetPlace& Place,const TArray<FVector>& Route){
+ auto& S=*State;
+ float Length=0;for(int32 K=1;K<Route.Num();++K)Length+=float(FVector::Dist2D(Route[K-1],Route[K]));
+ const int32 Minutes=FMath::CeilToInt(Length/100.f/2.75f);
+ // Already at the place (in it, or at its door): the walk is a few steps inside, not a trip. Told "12 minutes to the
+ // boys' dorm" at its door for the lounge 28 m in, she found it too far and called it off (activity audit 11-11).
+ const bool AtPlace=OKStreetInsidePlace(Place,S.Male)||FVector::Dist2D(S.Male,Place.Door)<500.f;
+ if(Minutes<10||AtPlace)return;
+ const int64 NowMin=OKStreetMindNow(S);const int32 Day=int32(NowMin%1440);const int32 Arrive=Day+Minutes;
+ FString Note=OKMsg(TEXT("ui.outing.walk_minutes_tell_her"),{{TEXT("place"),Place.Name},{TEXT("minutes"),Minutes},{TEXT("arrive"),FString::Printf(TEXT("%02d:%02d"),Arrive/60%24,Arrive%60)}});
+ if(const auto* Plan=S.Plans.Find(Girl))for(const auto& B:*Plan)if((B.Kind==TEXT("class")||B.Kind==TEXT("work"))&&B.Start>Day&&B.Start<Arrive+30){
+  const FOKStreetPlace* At=OKStreetFindPlace(B.Place);
+  Note+=OKMsg(TEXT("ui.outing.walk_runs_into_plan"),{{TEXT("at"),FString::Printf(TEXT("%02d:%02d"),B.Start/60%24,B.Start%60)},{TEXT("doing"),OKPhoneDoingWord(B.Kind)},{TEXT("place"),At?FString(At->Name):B.Place}});
+  UE_LOG(LogTemp,Display,TEXT("Street outing: the %d-minute walk runs into actor=%d's %s at %02d:%02d"),Minutes,Girl,*B.Kind,B.Start/60,B.Start%60);break;}
+ // The bus and the taxi for it (R6-203): she hears them with the minutes, he sees them as buttons.
+ Note+=QuoteTransit(Girl,Length,Place.Door);
+ S.TellHer.Add(Note);
 }
 
 bool AOKStreetSocialScene::StartOutingActivity(int32 Girl,const FString& ActivityId,FString& Error){

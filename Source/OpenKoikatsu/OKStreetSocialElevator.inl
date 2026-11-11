@@ -289,7 +289,10 @@ float AOKStreetSocialScene::StepLiftRide(float Dt){
   TArray<FVector> Rest=R.Descend?PlaceRoute(S.Male,R.Spot):GridRoute(S.Male,R.Spot);if(Rest.Num()<2)Rest={S.Male,R.Spot};
   S.OutingRoute=MoveTemp(Rest);S.OutingStep=1;S.OutingProgressAt=SceneTime();
   UE_LOG(LogTemp,Display,TEXT("Street elevator: outing continues, %d more points"),S.OutingRoute.Num());
-  R=FOKStreetLiftRide();
+  // Down on the street now: the walk from here is the real one, she hears how long it is and of the bus and taxi (R6-230).
+  const bool Descended=R.Descend;R=FOKStreetLiftRide();
+  if(Descended&&S.OutingGirl!=INDEX_NONE&&S.OutingActivity!=TEXT("stroll"))
+   if(const FOKStreetPlace* To=OKStreetPlaces().FindByPredicate([&S](const FOKStreetPlace& P){return S.OutingPlace==P.Name;}))TellOutingWalk(S.OutingGirl,*To,S.OutingRoute);
  }
  return Rate;
 }

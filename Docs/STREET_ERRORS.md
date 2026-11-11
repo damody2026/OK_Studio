@@ -2204,3 +2204,4 @@
 - 2026-11-12 c-conquest：整合後沒在 C 的 stage 進一次一對一就把遊戲交給使用者，結果卡在「正在準備高模」（E 的私有 GPU 暫時拒絕無上限重試，R6-227）。整合後的 stage 交出去前，一對一、讀卡、街區各實際進一次。
 - 2026-11-12 c-street-city：11-11 只修了 EE、LI、T4，判斷其他棟換成的是淡色灰泥、看不出來，沒有全部改回。結果書局（S07）的外牆材質偏綠，室內地板和牆看起來像草地（e-120fps 在 BaseCity1107 看到）。同一個分類錯誤其實遍及全城 121 棟，現在 `Tools/street_city_interior_walls_payload.lua` 改成除了 SP 以外全部改回（1143 個槽位，另有 45 個已在 11-11 修過、9 個找不到 actor）。找到一個分類錯誤時，要把它影響到的範圍全部修掉，不能只修看得出來的。
 - 2026-11-12 c-street-city：廁所、waterpark、playground 的門點是從擺設位置直接取來的（洗手台本身、海岸邊條下的沙灘、遊樂園裡的遊樂設施地標），沒有用遊戲的規則檢查：門要站得住人、15 m 內要能直線接到路點、從門要走得到 inside spot。現在用 `Tools/street_city_place_doors_probe_payload.lua` 在來源地圖照遊戲的規則量過才匯出。新增或改動門點後先跑這個探測。
+- 2026-11-12 c-conquest：同一個 PowerShell 指令裡先 `unreal_slot.lua claim`（沒加 --wait）再 Start-Process 開遊戲，claim 回「queued: e-120fps holds the whole machine」仍照開，和佔整台機器的 E 組搶資源約一分鐘才關掉。claim 要用 --wait，或確認回的是 slot 名稱後才啟動。
