@@ -292,14 +292,17 @@ float AOKStreetSocialScene::StepLiftRide(float Dt){
   UE_LOG(LogTemp,Warning,TEXT("Street elevator: down ride stuck, set down at %s by the lift"),*E.Labels[R.Floor]);Done=1;}
  else if(Done==2){S.Male=R.Spot;S.OutingRoute={S.Male,R.Spot};S.OutingStep=1;R=FOKStreetLiftRide();return 0;}
  if(Done==1){
-  // Up to a spot in this building: the grid inside; down on the way out: the street route from here.
-  TArray<FVector> Rest=R.Descend?PlaceRoute(S.Male,R.Spot):GridRoute(S.Male,R.Spot);if(Rest.Num()<2)Rest={S.Male,R.Spot};
+  const bool Descended=R.Descend;const FVector Spot=R.Spot;R=FOKStreetLiftRide();
+  const FOKStreetPlace* To=Descended&&S.OutingGirl!=INDEX_NONE?OKStreetPlaces().FindByPredicate([&S](const FOKStreetPlace& P){return S.OutingPlace==P.Name;}):nullptr;
+  // Down on the way out: the way there as from the street, the door of the building the spot is upstairs in and up by
+  // its lift (that plan sets the next S.LiftRide). The street route straight at the aquarium on the civic centre's 3F
+  // ended under it, and the taxi left them on the 3F past the lift (R6-234). Up to a spot in this building: the grid.
+  TArray<FVector> Rest;FString Error;
+  if(!(To&&PlanOutingRoute(To,&Spot,Rest,Error))){Rest=Descended?PlaceRoute(S.Male,Spot):GridRoute(S.Male,Spot);if(Rest.Num()<2)Rest={S.Male,Spot};}
   S.OutingRoute=MoveTemp(Rest);S.OutingStep=1;S.OutingProgressAt=SceneTime();
-  UE_LOG(LogTemp,Display,TEXT("Street elevator: outing continues, %d more points"),S.OutingRoute.Num());
+  UE_LOG(LogTemp,Display,TEXT("Street elevator: outing continues, %d more points%s"),S.OutingRoute.Num(),S.LiftRide.Elevator!=INDEX_NONE?TEXT(", then up by a lift"):TEXT(""));
   // Down on the street now: the walk from here is the real one, she hears how long it is and of the bus and taxi (R6-230).
-  const bool Descended=R.Descend;R=FOKStreetLiftRide();
-  if(Descended&&S.OutingGirl!=INDEX_NONE&&S.OutingActivity!=TEXT("stroll"))
-   if(const FOKStreetPlace* To=OKStreetPlaces().FindByPredicate([&S](const FOKStreetPlace& P){return S.OutingPlace==P.Name;}))TellOutingWalk(S.OutingGirl,*To,S.OutingRoute);
+  if(To&&S.OutingActivity!=TEXT("stroll"))TellOutingWalk(S.OutingGirl,*To,S.OutingRoute);
  }
  return Rate;
 }

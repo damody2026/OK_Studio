@@ -712,6 +712,7 @@ private:
  // for her, and the ride itself (fare, minutes gone by, and the two of them set down where it stops).
  FString QuoteTransit(int32 Girl,float WalkCm,const FVector& Drop);
  void TellOutingWalk(int32 Girl,const FOKStreetPlace& Place,const TArray<FVector>& Route); // OKStreetSocialOuting.inl: how long the walk is, the bus and taxi for it
+ bool PlanOutingRoute(const FOKStreetPlace* Place,const FVector* Spot,TArray<FVector>& Route,FString& Error); // OKStreetSocialOuting.inl: the way to it from here (and S.LiftRide up)
  bool TakeTransit(const FString& Mode,bool HerIdea);
  float StepOuting(float Dt);
  void ArriveOuting();

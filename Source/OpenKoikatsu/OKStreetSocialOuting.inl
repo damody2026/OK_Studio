@@ -608,54 +608,8 @@ bool AOKStreetSocialScene::BeginOuting(int32 Girl,const FString& ActivityId,FStr
   UE_LOG(LogTemp,Display,TEXT("Street outing: actor=%d activity=%s starts upstairs in %s: down by the elevator first"),Girl,*ActivityId,Here.Name);
   RefreshUI();return true;
  }
- TArray<FVector> Route;
- // Already inside: walk over on this floor; the spot on another floor (the food court on 9F from the ground floor) is
- // up (or down) by the elevator: to its landing here, the ride (StepLiftRide), then on to the spot. Walking straight at
- // it "arrived" under it and the activity put them on 9F without the ride.
- const TArray<const FOKStreetModelAnchor*> InLifts=Spot&&OKStreetInsidePlace(*Place,S.Male)?OKStreetPlaceLifts(*Place):TArray<const FOKStreetModelAnchor*>();
- const int32 InElevator=InLifts.IsEmpty()?INDEX_NONE:ElevatorOfPlace(OKStreetPlaces().IndexOfByPredicate([Place](const FOKStreetPlace& P){return &P==Place;}));
- if(Spot&&InElevator!=INDEX_NONE&&FMath::Abs(S.Male.Z-Spot->Position.Z)>=150.f){
-  auto FloorAt=[&](float Z){int32 Best=0;for(int32 F=0;F<InLifts.Num();++F)if(FMath::Abs(InLifts[F]->Position.Z-Z)<FMath::Abs(InLifts[Best]->Position.Z-Z))Best=F;return Best;};
-  const int32 From=FloorAt(S.Male.Z),To=FloorAt(Spot->Position.Z);
-  Route=GridRoute(S.Male,InLifts[From]->Position);if(Route.Num()<2)Route={S.Male,InLifts[From]->Position};
-  S.LiftRide=FOKStreetLiftRide();S.LiftRide.Elevator=InElevator;S.LiftRide.Floor=To;S.LiftRide.Spot=Spot->Position;
-  UE_LOG(LogTemp,Display,TEXT("Street outing: %s is on another floor of %s: by the elevator (%d -> %d)"),*ActivityId,Place->Name,From,To);
- }
- // Already inside, same floor: over on the grid, to the spot or the nearest cell beside it in sight of it (a carousel's
- // spot is in the ride); straight over only when the grid finds nothing. Straight from the amusement park's gate to the
- // carousel he ran into the rides 14 m short and went round for two minutes (activity audit 11-11).
- else if(Spot&&OKStreetInsidePlace(*Place,S.Male)){Route=GridRoute(S.Male,Spot->Position,150.f);if(Route.Num()<2)Route={S.Male,Spot->Position};}
- // Open air: no door to go through, the way leads to the spot itself. By the "door" the walk to the Christmas tree went
- // round by the campus gate to the far side of the fence and back (its door had been put on the campus side; activity
- // audit 11-09).
- else if(Spot&&Place->Outdoor&&!OKStreetUpstairs(Spot->Position)){Route=PlaceRoute(S.Male,Spot->Position);if(Route.Num()<2){Error=OKMsg(TEXT("ui.outing.no_route_to_place"), {{TEXT("place_name"), Place->Name}});return false;}}
- else{
-  // Upstairs, by an elevator: the place's own, or the building's it is in. "Let's go to the ramen shop" (no activity
-  // spot) walked to the department store's ground floor under its 9F door and "arrived" there; 贞德·Alter's ramen was
-  // "not sold here" (R6-187).
-  const FVector Target=Spot?Spot->Position:PlaceInsideSpot(*Place);
-  const FOKStreetPlace* LiftPlace=nullptr;
-  if(OKStreetUpstairs(Target)){
-   if(!OKStreetPlaceLifts(*Place).IsEmpty())LiftPlace=Place;
-   else for(const auto& Q:OKStreetPlaces())if(&Q!=Place&&!Q.Rooms.IsEmpty()&&!OKStreetPlaceLifts(Q).IsEmpty()&&!OKStreetUpstairs(Q.Door)&&OKStreetInsidePlace(Q,Target)){LiftPlace=&Q;break;}}
-  const FVector Door=LiftPlace?LiftPlace->Door:Place->Door;
-  Route=FVector::Dist2D(S.Male,Door)<200?TArray<FVector>{S.Male,Door}:PlaceRoute(S.Male,Door);
-  if(Route.Num()<2){Error=OKMsg(TEXT("ui.outing.no_route_to_place"), {{TEXT("place_name"), Place->Name}});return false;}
-  if(LiftPlace){
-   const auto Lifts=OKStreetPlaceLifts(*LiftPlace);
-   // Indoors the grid finds the way round desks and shelves from the door to the elevator.
-   TArray<FVector> In=GridRoute(Route.Last(),Lifts[0]->Position);if(In.Num()>=2){In.RemoveAt(0);Route.Append(In);}
-   else{if(const auto* Hall=OKStreetPlaceAnchor(*LiftPlace,TEXT("hall")))Route.Add(Hall->Position);Route.Add(Lifts[0]->Position);}
-   // then ride up in the car (StepLiftRide)
-   int32 Floor=0;for(int32 F=0;F<Lifts.Num();++F)if(FMath::Abs(Lifts[F]->Position.Z-Target.Z)<FMath::Abs(Lifts[Floor]->Position.Z-Target.Z))Floor=F;
-   S.LiftRide=FOKStreetLiftRide();S.LiftRide.Elevator=ElevatorOfPlace(OKStreetPlaces().IndexOfByPredicate([LiftPlace](const FOKStreetPlace& P){return &P==LiftPlace;}));S.LiftRide.Floor=Floor;S.LiftRide.Spot=Target;
-   if(LiftPlace!=Place)UE_LOG(LogTemp,Display,TEXT("Street outing: %s is upstairs in %s: by its elevator to floor %d"),Place->Id,LiftPlace->Id,Floor);
-  }
-  else if(Spot){TArray<FVector> In=GridRoute(Route.Last(),Spot->Position);if(In.Num()>=2){In.RemoveAt(0);Route.Append(In);}else Route.Add(Spot->Position);}
-  // Going to a building (no spot of an activity): through the door and a few steps in, so they are in the shop, not outside it.
-  else{const FVector In=PlaceInsideSpot(*Place);
-   if(In!=Place->Door){TArray<FVector> Steps=GridRoute(Route.Last(),In);if(Steps.Num()>=2){Steps.RemoveAt(0);Route.Append(Steps);}}}
- }
+ const FVector SpotAt=Spot?Spot->Position:FVector::ZeroVector;TArray<FVector> Route;
+ if(!PlanOutingRoute(Place,Spot?&SpotAt:nullptr,Route,Error))return false;
  StopAmbientActivity();EndTalk();
  S.OutingGirl=Girl;S.OutingActivity=ActivityId;S.OutingPlace=Place->Name;S.OutingRoute=Route;S.OutingStep=1;S.OutingProgressAt=S.OutingBegunAt=SceneTime();
  S.TransitQuote.Reset();S.TransitFor=INDEX_NONE;
@@ -913,6 +867,63 @@ void AOKStreetSocialScene::SettleOnFloor(FVector& At,float Yaw,const TCHAR* Why)
  if(BestScore<TNumericLimits<float>::Max()){UE_LOG(LogTemp,Display,TEXT("Street activity: %s spot inside something, %s -> %s"),Why,*At.ToCompactString(),*Best.ToCompactString());At=Best;}
 }
 
+// The way to an outing's place from where he is (not upstairs in another building: BeginOuting takes him down first):
+// inside it over the grid or by its elevator, out in the open to the spot, else to the door (of the building it is
+// upstairs in, and up by its elevator: S.LiftRide). Also after the ride down from upstairs: the street route straight at
+// a spot upstairs in another building ended under it, and the taxi set them down on the civic centre's 3F at the
+// aquarium, past its lift (R6-234).
+bool AOKStreetSocialScene::PlanOutingRoute(const FOKStreetPlace* Place,const FVector* Spot,TArray<FVector>& Route,FString& Error){
+ auto& S=*State;Route.Reset();
+ // Already inside: walk over on this floor; the spot on another floor (the food court on 9F from the ground floor) is
+ // up (or down) by the elevator: to its landing here, the ride (StepLiftRide), then on to the spot. Walking straight at
+ // it "arrived" under it and the activity put them on 9F without the ride.
+ const TArray<const FOKStreetModelAnchor*> InLifts=Spot&&OKStreetInsidePlace(*Place,S.Male)?OKStreetPlaceLifts(*Place):TArray<const FOKStreetModelAnchor*>();
+ const int32 InElevator=InLifts.IsEmpty()?INDEX_NONE:ElevatorOfPlace(OKStreetPlaces().IndexOfByPredicate([Place](const FOKStreetPlace& P){return &P==Place;}));
+ if(Spot&&InElevator!=INDEX_NONE&&FMath::Abs(S.Male.Z-(*Spot).Z)>=150.f){
+  auto FloorAt=[&](float Z){int32 Best=0;for(int32 F=0;F<InLifts.Num();++F)if(FMath::Abs(InLifts[F]->Position.Z-Z)<FMath::Abs(InLifts[Best]->Position.Z-Z))Best=F;return Best;};
+  const int32 From=FloorAt(S.Male.Z),To=FloorAt((*Spot).Z);
+  Route=GridRoute(S.Male,InLifts[From]->Position);if(Route.Num()<2)Route={S.Male,InLifts[From]->Position};
+  S.LiftRide=FOKStreetLiftRide();S.LiftRide.Elevator=InElevator;S.LiftRide.Floor=To;S.LiftRide.Spot=(*Spot);
+  UE_LOG(LogTemp,Display,TEXT("Street outing: the spot is on another floor of %s: by the elevator (%d -> %d)"),Place->Name,From,To);
+ }
+ // Already inside, same floor: over on the grid, to the spot or the nearest cell beside it in sight of it (a carousel's
+ // spot is in the ride); straight over only when the grid finds nothing. Straight from the amusement park's gate to the
+ // carousel he ran into the rides 14 m short and went round for two minutes (activity audit 11-11).
+ else if(Spot&&OKStreetInsidePlace(*Place,S.Male)){Route=GridRoute(S.Male,(*Spot),150.f);if(Route.Num()<2)Route={S.Male,(*Spot)};}
+ // Open air: no door to go through, the way leads to the spot itself. By the "door" the walk to the Christmas tree went
+ // round by the campus gate to the far side of the fence and back (its door had been put on the campus side; activity
+ // audit 11-09).
+ else if(Spot&&Place->Outdoor&&!OKStreetUpstairs((*Spot))){Route=PlaceRoute(S.Male,(*Spot));if(Route.Num()<2){Error=OKMsg(TEXT("ui.outing.no_route_to_place"), {{TEXT("place_name"), Place->Name}});return false;}}
+ else{
+  // Upstairs, by an elevator: the place's own, or the building's it is in. "Let's go to the ramen shop" (no activity
+  // spot) walked to the department store's ground floor under its 9F door and "arrived" there; 贞德·Alter's ramen was
+  // "not sold here" (R6-187).
+  const FVector Target=Spot?(*Spot):PlaceInsideSpot(*Place);
+  const FOKStreetPlace* LiftPlace=nullptr;
+  if(OKStreetUpstairs(Target)){
+   if(!OKStreetPlaceLifts(*Place).IsEmpty())LiftPlace=Place;
+   else for(const auto& Q:OKStreetPlaces())if(&Q!=Place&&!Q.Rooms.IsEmpty()&&!OKStreetPlaceLifts(Q).IsEmpty()&&!OKStreetUpstairs(Q.Door)&&OKStreetInsidePlace(Q,Target)){LiftPlace=&Q;break;}}
+  const FVector Door=LiftPlace?LiftPlace->Door:Place->Door;
+  Route=FVector::Dist2D(S.Male,Door)<200?TArray<FVector>{S.Male,Door}:PlaceRoute(S.Male,Door);
+  if(Route.Num()<2){Error=OKMsg(TEXT("ui.outing.no_route_to_place"), {{TEXT("place_name"), Place->Name}});return false;}
+  if(LiftPlace){
+   const auto Lifts=OKStreetPlaceLifts(*LiftPlace);
+   // Indoors the grid finds the way round desks and shelves from the door to the elevator.
+   TArray<FVector> In=GridRoute(Route.Last(),Lifts[0]->Position);if(In.Num()>=2){In.RemoveAt(0);Route.Append(In);}
+   else{if(const auto* Hall=OKStreetPlaceAnchor(*LiftPlace,TEXT("hall")))Route.Add(Hall->Position);Route.Add(Lifts[0]->Position);}
+   // then ride up in the car (StepLiftRide)
+   int32 Floor=0;for(int32 F=0;F<Lifts.Num();++F)if(FMath::Abs(Lifts[F]->Position.Z-Target.Z)<FMath::Abs(Lifts[Floor]->Position.Z-Target.Z))Floor=F;
+   S.LiftRide=FOKStreetLiftRide();S.LiftRide.Elevator=ElevatorOfPlace(OKStreetPlaces().IndexOfByPredicate([LiftPlace](const FOKStreetPlace& P){return &P==LiftPlace;}));S.LiftRide.Floor=Floor;S.LiftRide.Spot=Target;
+   if(LiftPlace!=Place)UE_LOG(LogTemp,Display,TEXT("Street outing: %s is upstairs in %s: by its elevator to floor %d"),Place->Id,LiftPlace->Id,Floor);
+  }
+  else if(Spot){TArray<FVector> In=GridRoute(Route.Last(),(*Spot));if(In.Num()>=2){In.RemoveAt(0);Route.Append(In);}else Route.Add((*Spot));}
+  // Going to a building (no spot of an activity): through the door and a few steps in, so they are in the shop, not outside it.
+  else{const FVector In=PlaceInsideSpot(*Place);
+   if(In!=Place->Door){TArray<FVector> Steps=GridRoute(Route.Last(),In);if(Steps.Num()>=2){Steps.RemoveAt(0);Route.Append(Steps);}}}
+ }
+ return true;
+}
+
 // How long the walk is, and what of her day it runs into: she knows it, the model decides (go on, or say she has to go).
 // 贞德 said "I have class at 13:30" at 12:47 and set off with him for the park: 69 minutes on foot, there at 13:56, and
 // she remembered the class only when he asked (R6-188b). The walk as the day plans count it (2.75 m a game minute).
@@ -933,7 +944,11 @@ void AOKStreetSocialScene::TellOutingWalk(int32 Girl,const FOKStreetPlace& Place
   Note+=OKMsg(TEXT("ui.outing.walk_runs_into_plan"),{{TEXT("at"),FString::Printf(TEXT("%02d:%02d"),B.Start/60%24,B.Start%60)},{TEXT("doing"),OKPhoneDoingWord(B.Kind)},{TEXT("place"),At?FString(At->Name):B.Place}});
   UE_LOG(LogTemp,Display,TEXT("Street outing: the %d-minute walk runs into actor=%d's %s at %02d:%02d"),Minutes,Girl,*B.Kind,B.Start/60,B.Start%60);break;}
  // The bus and the taxi for it (R6-203): she hears them with the minutes, he sees them as buttons.
- Note+=QuoteTransit(Girl,Length,Place.Door);
+ // Set down at the street door: for a place upstairs (the aquarium on the civic centre's 3F) the door of the building it
+ // is in, whose lift takes them up. Its own door upstairs had the taxi leave them on the 3F (R6-234).
+ FVector Drop=Place.Door;
+ if(OKStreetUpstairs(Drop))for(const auto& Q:OKStreetPlaces())if(&Q!=&Place&&!Q.Rooms.IsEmpty()&&!OKStreetUpstairs(Q.Door)&&OKStreetInsidePlace(Q,Place.Door)){Drop=Q.Door;break;}
+ Note+=QuoteTransit(Girl,Length,Drop);
  S.TellHer.Add(Note);
 }
 
