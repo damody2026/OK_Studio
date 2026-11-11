@@ -859,3 +859,5 @@
 | R6-226 | 巡檢：男生宿舍睡覺坐電梯到 3F，出不了電梯口 2 分鐘 | 3F 電梯口前 40 cm 有地圖的靜態電梯門模型（遊戲的門在井側 +73 cm）；1F 沒有 | 交 c-street-city（另報操場框在遊樂園內、水上樂園門沒接道路、音樂教室錨點落在餐廳、廁所門內走不進） | 地圖 |
 | 巡檢工具 | 居酒屋（營業 17–24 點）沒在開店後重試 | street_activity_audit.lua 用 [–-] 比對營業時間，「–」是 3 位元組字元，從未比對到 | 改抓「營業」後的數字 | 待重跑 |
 | R6-227 | 使用者：C 組（conq1111i，整合 830d5a46c 後）和貞德·Alter 進一對一，停在「正在準備高模…」，180 s 後「一對一互動準備逾時」退回街區；重現兩次 | ok.PrivateGpuLog 1：他的衣服（part 19–24）與她的 part 29 每隔一幀被拒「GPU batch requires ready collision-free animated proxy」；整合帶進的 E 改動把這類拒絕當暫時、每幀重試永不放棄，私有 GPU 永不 Installed，AreInteractionStreamsReady 一直 false | KKPreviewActor：同一部件連續 60 次暫時拒絕就改用 CPU（裝好時歸零） | conq1111j 同流程進得去（Shared interaction ready）；為何 C 的這些 proxy 一直不就緒交 E 組；C stage 的 BaseCity1107 沒有 StreetBias03 母材質，衣服往鏡頭提前要下次 cook |
+| R6-222～225 重驗 | conq1111j 重跑 25 項（21 個新景點活動與上次失敗的音樂教室、宿舍交誼廳、運動場、跑步機、海灘躺椅）：24 項到達並開始，鬼屋／水母／抽籤／繪馬不再站進模型 | — | — | 已驗（旋轉木馬見 R6-228） |
+| R6-228 | 重驗：從遊樂園門走到旋轉木馬，在 (97708,50452) 欄杆邊卡住，繞道 30 點仍到不了 | 旋轉木馬、鬼屋、咖啡杯在一圈鐵欄杆圍的園區裡，和遊樂園門隔著馬路與烤肉區；格子尋路看不到地圖欄杆，沒有 gate 錨點把兩側接進道路網 | 交 c-street-city：欄杆入口加 gate 錨點或把門點移進欄杆內，並釐清 amusement／bbq 範圍 | 地圖 |
