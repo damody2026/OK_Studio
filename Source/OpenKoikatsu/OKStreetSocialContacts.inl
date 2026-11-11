@@ -274,7 +274,11 @@ FVector AOKStreetSocialScene::StreetStep(const FVector& From,const FVector& Dire
    // Already in the air (no ground in reach under where he stands, put there by a step past at another height): he comes
    // down to the ground below instead of standing there for good (R6-180). Not off a ledge he stands on: that has ground.
    if(!Ground&&!Lift){float HereZ=From.Z;if(!OKStreetGroundZ(GetWorld(),From,HereZ,this)){FHitResult Down;FCollisionQueryParams Q(SCENE_QUERY_STAT(StreetFall),false,this);
-    if(GetWorld()->LineTraceSingleByChannel(Down,To+FVector(0,0,70),To-FVector(0,0,600),ECC_WorldStatic,Q)){GroundZ=float(Down.ImpactPoint.Z);Ground=true;}}}
+    if(GetWorld()->LineTraceSingleByChannel(Down,To+FVector(0,0,70),To-FVector(0,0,600),ECC_WorldStatic,Q)){GroundZ=float(Down.ImpactPoint.Z);Ground=true;}}
+    // Up on the furniture indoors (stood up from the café's table onto its top, 80 cm over the floor): down off it to
+    // the room's floor, which a step's reach (50 cm) never found; he walked about the tables and never out (R6-213b).
+    else{const float Floor=OKStreetFloorZ(From);if(Floor<From.Z-35.f&&!PlaceHere(From).IsEmpty()){FHitResult Down;FCollisionQueryParams Q(SCENE_QUERY_STAT(StreetOffFurniture),false,this);
+     if(GetWorld()->LineTraceSingleByChannel(Down,To+FVector(0,0,70),FVector(To.X,To.Y,Floor-20.f),ECC_WorldStatic,Q)&&Down.ImpactPoint.Z<From.Z-35.f){GroundZ=float(Down.ImpactPoint.Z);Ground=true;}}}}
    if(!Ground&&!Lift)continue;
    // Up a stair or a kerb, never onto the furniture: the sweep's body starts 45 cm up, so a bench passed under it and
    // the ground trace (70 cm up) put him on its seat, from there on the cafeteria table, where no grid way starts
@@ -346,7 +350,8 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
  auto InSight=[&](){FHitResult Hit;FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetNavSight),false,this);
   for(const float Height:{120.f,165.f})if(!GetWorld()->LineTraceSingleByChannel(Hit,S.Male+FVector(0,0,Height),Her+FVector(0,0,Height),ECC_Visibility,Query)||FVector::Dist(Hit.ImpactPoint,Her+FVector(0,0,Height))<80.f)return true;
   return false;};
- if((FVector::Dist2D(S.Male,Goal)<=(S.NavPointActive?80.f:40.f)||(!S.NavPointActive&&FVector::Dist2D(S.Male,Her)<=(RouteDone?OKStreetTalkRangeCm-20.f:180.f)&&PlaceHere(S.Male)==PlaceHere(Her)&&InSight()))&&FMath::Abs(S.Male.Z-Goal.Z)<150.f){
+ // At the spot beside her too: in the girls' dorm the spot was on his side of a wall, Raiden 1.1 m behind it.
+ if((FVector::Dist2D(S.Male,Goal)<=(S.NavPointActive?80.f:40.f)||(!S.NavPointActive&&FVector::Dist2D(S.Male,Her)<=(RouteDone?OKStreetTalkRangeCm-20.f:180.f)&&PlaceHere(S.Male)==PlaceHere(Her)))&&FMath::Abs(S.Male.Z-Goal.Z)<150.f&&(S.NavPointActive||InSight())){
   // Walked up to her: if she was on her way somewhere she notices him, stops and turns to him for a moment, so he can
   // speak to her instead of chasing her down the street.
   if(!S.NavPointActive&&S.Agents.IsValidIndex(S.NavGirl-1)){const int32 G=S.NavGirl;S.CommutePausedUntil.Add(G,SceneTime()+10.0);

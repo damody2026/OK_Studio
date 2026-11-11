@@ -23,6 +23,9 @@ const TAXI_FLAG_KM: f64 = 3.0;
 const TAXI_PER_KM: i64 = 2;
 /// Under this many minutes on foot no ride is worth it.
 const RIDE_FROM_MIN: i64 = 15;
+/// Nor under this many metres, however long the walk takes on the game's clock: across the park, 50 m (18 minutes on
+/// foot) came with a taxi, and nobody calls a cab for a walk across the square (R6-215).
+const RIDE_FROM_M: f64 = 250.0;
 
 /// The bus stops: by the door of these places, one town line through campus, the shopping streets, the station and
 /// the south (the map has shelters only by the station). Unreal places them at the places' doors.
@@ -68,7 +71,7 @@ fn quote(r: &Value) -> Result<Value, String> {
     let (Some(from), Some(to)) = (point(r, "from"), point(r, "to")) else {
         return Ok(json!({"walk": {"minutes": walk_min}, "bus": null, "taxi": null, "suggest": "walk"}));
     };
-    let far = walk_min >= RIDE_FROM_MIN;
+    let far = walk_min >= RIDE_FROM_MIN && walk_m >= RIDE_FROM_M;
     let taxi = far.then(|| {
         // By road, never longer than the walking route itself.
         let ride_m = (dist(from, to) * ROAD_FACTOR).min(walk_m.max(dist(from, to)));
@@ -129,6 +132,15 @@ mod tests {
         let q = quote(&json!({"walk_m": 25.0, "from": [930.0, 560.0], "to": [940.0, 540.0], "stops": stops()})).unwrap();
         assert_eq!(q["walk"]["minutes"], 10);
         assert!(q["bus"].is_null() && q["taxi"].is_null());
+        assert_eq!(q["suggest"], "walk");
+    }
+
+    #[test]
+    fn across_the_park_no_taxi_however_long_on_the_clock() {
+        // R6-215: 50 m across Central Park is 19 minutes on the game's clock, but nobody calls a cab for it.
+        let q = quote(&json!({"walk_m": 50.0, "from": [379.0, 377.0], "to": [421.0, 415.0], "stops": stops()})).unwrap();
+        assert!(q["walk"]["minutes"].as_i64().unwrap() >= RIDE_FROM_MIN);
+        assert!(q["bus"].is_null() && q["taxi"].is_null(), "{q}");
         assert_eq!(q["suggest"], "walk");
     }
 
