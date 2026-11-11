@@ -281,9 +281,16 @@ int32 AOKStreetSocialScene::AdvanceLiftRide(FOKStreetLiftRide& R,float Dt,float&
 // An outing going upstairs (or down from upstairs): the ride, then the outing walks on to its spot.
 float AOKStreetSocialScene::StepLiftRide(float Dt){
  auto& S=*State;auto& R=S.LiftRide;float Rate=0;
- const int32 Done=AdvanceLiftRide(R,Dt,Rate);
- // Something went wrong for too long: fall back to being there.
- if(Done==2){S.Male=R.Spot;S.OutingRoute={S.Male,R.Spot};S.OutingStep=1;R=FOKStreetLiftRide();return 0;}
+ int32 Done=AdvanceLiftRide(R,Dt,Rate);
+ // Something went wrong for too long: up to a spot in this building, fall back to being there; down on the way out, to
+ // the ground floor by the lift and the walk from there. Stuck on the cafeteria's 3F (its doors still shut in the map),
+ // he was set down at the aquarium 400 m off at once (R6-233).
+ if(Done==2&&R.Descend&&S.Elevators.IsValidIndex(R.Elevator)&&S.Elevators[R.Elevator].Landing.IsValidIndex(R.Floor)){
+  const auto& E=S.Elevators[R.Elevator];S.Male=E.Landing[R.Floor]+E.Out[R.Floor]*60.f;
+  if(S.OutingGirl!=INDEX_NONE&&S.Agents.IsValidIndex(S.OutingGirl-1)){S.LiftWalks.Remove(S.OutingGirl);S.LiftPins.Remove(S.OutingGirl);S.Agents[S.OutingGirl-1].Position=S.Male+E.Side*80.f;}
+  S.CompanionTrail.Reset();S.CompanionTrail.Add(S.Male);S.CompanionLastMale=S.Male;
+  UE_LOG(LogTemp,Warning,TEXT("Street elevator: down ride stuck, set down at %s by the lift"),*E.Labels[R.Floor]);Done=1;}
+ else if(Done==2){S.Male=R.Spot;S.OutingRoute={S.Male,R.Spot};S.OutingStep=1;R=FOKStreetLiftRide();return 0;}
  if(Done==1){
   // Up to a spot in this building: the grid inside; down on the way out: the street route from here.
   TArray<FVector> Rest=R.Descend?PlaceRoute(S.Male,R.Spot):GridRoute(S.Male,R.Spot);if(Rest.Num()<2)Rest={S.Male,R.Spot};
