@@ -820,8 +820,11 @@ void AOKStreetSocialScene::ArriveOuting(){
  // At a meal upstairs in a building they were already in (the food court on 9F): no menu prompt came, as they had
  // walked in on 1F, and the ramen 惠惠 asked for on the way was never ordered; she said "the ramen is here" over his
  // bowl alone (R6-62). Arriving at it is walking into the place to eat: the prompt comes once (TickShopArrival).
+ // Only for a meal or a drink (the activities billed from the menu, ActivityAftermath): the ferris wheel at the amusement
+ // park, which sells churros, got the menu prompt, and 刻晴 ordered a churro on the wheel instead of riding it (R6-240).
  if(Girl!=INDEX_NONE){const FOKStreetActivity* A=OKStreetFindActivity(Activity);const FString At=A&&A->Place?FString(A->Place):Place;
-  if(!At.IsEmpty()&&S.ShopPromptedPlace!=At&&ItemsHere(At).ContainsByPredicate([](const FOKStreetCatalogItem* I){return I&&I->Consumable;})){
+  const bool Eating=A&&A->Kind==EOKStreetActivityKind::Pair&&(A->Code==5||A->Code==2);
+  if(Eating&&!At.IsEmpty()&&S.ShopPromptedPlace!=At&&ItemsHere(At).ContainsByPredicate([](const FOKStreetCatalogItem* I){return I&&I->Consumable;})){
    S.ShopArrivalPlace.Reset();S.ShopSeenPlace=At;S.ShopEnteredWith=true;UE_LOG(LogTemp,Display,TEXT("Street outing: arrived to eat at %s; the menu prompt is due"),*At);}}
  if(!StartOutingActivity(Girl,Activity,Error)){S.Message=OKMsg(TEXT("ui.outing.arrived_but_error"), {{TEXT("place"), *Place}, {TEXT("error"), *Error}});ResumeTalkQuiet(Girl);RefreshUI();}
 }

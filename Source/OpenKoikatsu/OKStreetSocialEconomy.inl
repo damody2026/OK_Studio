@@ -466,7 +466,10 @@ void AOKStreetSocialScene::TickShopArrival(){
   if(Dest.IsEmpty())if(const FOKStreetActivity* A=OKStreetFindActivity(S.OutingActivity);A&&A->Place&&*A->Place)Dest=A->Place;
   if(!Dest.IsEmpty()&&Dest!=Place){S.ShopArrivalPlace=Place;UE_LOG(LogTemp,Display,TEXT("Street shop arrival: passing %s on the way to %s; no arrival prompt"),*Place,*Dest);return;}}
  const bool SellsFood=ItemsHere(Place).ContainsByPredicate([](const FOKStreetCatalogItem* I){return I&&I->Consumable;});
- if(!SellsFood&&S.OutingGirl!=INDEX_NONE&&!S.OutingActivity.StartsWith(TEXT("go:")))if(const auto* Act=OKStreetFindActivity(S.OutingActivity);Act&&Act->Place==Place){
+ // Nor on the way to something there that is not a meal or a drink, where it sells food too: walking back into the
+ // amusement park for the roller coaster (the way had gone out round a block) had 刻晴 told to order (R6-240).
+ if(S.OutingGirl!=INDEX_NONE&&!S.OutingActivity.StartsWith(TEXT("go:")))if(const auto* Act=OKStreetFindActivity(S.OutingActivity);Act&&Act->Place==Place&&
+  (!SellsFood||!(Act->Kind==EOKStreetActivityKind::Pair&&(Act->Code==5||Act->Code==2)))){
   S.ShopArrivalPlace=Place;UE_LOG(LogTemp,Display,TEXT("Street shop arrival: on the way to %s inside %s; no arrival prompt"),*S.OutingActivity,*Place);return;}
  FString Why;if(PlaceClosedNow(Place,Why)||ItemsHere(Place).IsEmpty()){S.ShopArrivalPlace=Place;return;}
  // Her home (walking her back to the dorm at night): she is home, not out shopping ("I'm full, I don't need to buy anything").
