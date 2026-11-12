@@ -548,12 +548,15 @@ pub(crate) fn zip_list_sig(mods_dir: &Path) -> u64 {let _spot=crate::profile::sp
 
 fn zip_list_sig_view(mods_dir: &Path) -> u64 {
     if let Some(tree) = crate::mods::watched_tree_zips(mods_dir) { return tree.1; }
-    // A replaying library's recorded tree only changes with the mounted card pack: walking and stating its ~7000
-    // archives for every memo key (several per open) cost ~0.1 s each time.
+    // A replaying library's recorded tree only changes with the mounted card pack and the zipmod fallback (the card's
+    // directory and the archives it names): walking and stating its ~7000 archives for every memo key (several per
+    // open) cost ~0.1 s each time. Keyed on the pack only, the first card's tree stayed for every later one: a card
+    // whose zipmod lies beside it, opened after another card, found none of its GUIDs (花火's skirt, gloves and
+    // head pieces, 2026-11-12).
     if crate::oklib::active().is_some_and(|s| s.mode == crate::oklib::Mode::Replay) && mods_dir.canonicalize().is_err() {
         use std::sync::Mutex;
         static MEMO: Mutex<Vec<(std::path::PathBuf, String, u64)>> = Mutex::new(Vec::new());
-        let pack = crate::oklib::mounted_pack_identity();
+        let pack = format!("{}\n{}", crate::oklib::mounted_pack_identity(), crate::gamefs::fallback_identity());
         if let Some((_, _, sig)) = MEMO.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(d, p, _)| d == mods_dir && *p == pack) { return *sig; }
         let mut zips = crate::mods::all_zipmods(mods_dir);
         zips.sort();

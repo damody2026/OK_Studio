@@ -405,6 +405,12 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 	ModelApngSave->SetToolTipText(FText::FromString(TEXT("另存 APNG 新卡：原卡圖 3 秒，加上 T-pose 三視圖各 1 秒。")));
 	ModelApngSave->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnSaveApng);
 	ShapeCol->AddChild(ModelApngSave);
+	UButton* KksSave=WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(),TEXT("EditorSaveKks"));
+	UTextBlock* KksSaveLabel=WidgetTree->ConstructWidget<UTextBlock>();
+	KksSaveLabel->SetText(FText::FromString(TEXT("存成 KKS 卡")));KksSave->SetContent(KksSaveLabel);StylePoseButton(KksSave);
+	KksSave->SetToolTipText(FText::FromString(TEXT("把目前的角色存成原作 KKS 卡（存到另存資料夾）：身材、臉部與骨骼調整，角色風格也寫進滑桿與 ABMX 骨骼；風格的骨骼與整體大小要 KKS 裝 ABMX 才看得到。")));
+	KksSave->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnSaveKks);
+	ShapeCol->AddChild(KksSave);
 	OutfitCombo = WidgetTree->ConstructWidget<UOKComboBoxString>(UOKComboBoxString::StaticClass(), TEXT("OutfitCombo"));
 	OutfitCombo->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this), &UOKCharacterController::OnOutfitSelected);
 	USizeBox* OutfitBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("OutfitBox"));
