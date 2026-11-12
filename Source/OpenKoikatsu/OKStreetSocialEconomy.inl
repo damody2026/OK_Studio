@@ -483,6 +483,11 @@ void AOKStreetSocialScene::TickShopArrival(){
  if(S.MealPlace==Place&&(!S.Table.IsEmpty()||!S.Serves.IsEmpty())){S.ShopArrivalPlace=Place;S.ShopArrivalAt=SceneTime();
   UE_LOG(LogTemp,Display,TEXT("Street shop arrival: actor=%d already ordered at %s; no menu prompt"),Her,*Place);return;}
  S.ShopArrivalPlace=Place;S.ShopArrivalAt=SceneTime();
+ // Told already a little while ago: the park fountain, the festival and the shrine overlap, and a stroll round the
+ // fountain went shrine, festival, shrine; each step forgot the last, the shrine's "here is what it sells" came twice in a
+ // minute and 三月七 said "why are we back at the shrine again" (R6-248).
+ if(const double* Told=S.ShopPromptedAt.Find(Place);Told&&SceneTime()-*Told<300.0){UE_LOG(LogTemp,Display,TEXT("Street shop arrival: %s was told %.0f s ago; no menu prompt"),*Place,SceneTime()-*Told);return;}
+ S.ShopPromptedAt.Add(Place,SceneTime());
  const auto* Where=OKStreetFindPlace(Place);
  // A bookshop or a pet shop: what is on sale, not "order what you feel like eating" (she said "nothing to eat here, don't order").
  const bool Food=ItemsHere(Place).ContainsByPredicate([](const FOKStreetCatalogItem* I){return I&&I->Consumable;});
