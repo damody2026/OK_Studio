@@ -440,6 +440,9 @@ public:
 				// saved minutes later was named by the time it was made).
 				SaveAsName.Reset();
 				ForgetExport();
+				// The part picked on the last scene's character is not picked on this one (U270: clicking the same part
+				// again then unpicked it and 掛到所選部位 stayed grey).
+				GroupPoint.Reset();
 				Game->AddMainLight(); Game->Document->NotifyChanged();
 				// The view starts over too (U147: it stayed on the last map's far view, a new character a speck in it).
 				Game->ViewPreset(5);
@@ -2340,7 +2343,7 @@ public:
 		SetStatus(bOk ? TEXT("已讀取 ") + FPaths::GetBaseFilename(Path) : E);
 		if (bOk)
 		{
-			ReportPending = 90; SaveAsName = FPaths::GetBaseFilename(Path); ForgetExport();
+			ReportPending = 90; SaveAsName = FPaths::GetBaseFilename(Path); ForgetExport(); GroupPoint.Reset();
 			ActiveInterpTrack = 0; ActiveInterpKeyTime = 0.f;
 			if (VngeUi) { VngeUi->ResetTransientCaches(); VngeUi->RefreshAllOpenVngeWindows(); }
 			if (CurveView) CurveView->RefreshContent();

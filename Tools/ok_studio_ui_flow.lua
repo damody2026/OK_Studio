@@ -63,7 +63,13 @@ for line in io.lines(steps) do
     local field, text = rest:match("^(.-)=(.*)$")
     local enter = text:sub(-1) == "!"
     if enter then text = text:sub(1, -2) end
-    reply = call("type", { field = field, text = text, enter = enter })
+    -- A window opened by the step before may not take the keyboard until it is laid out (U270): try again a little later.
+    for try = 1, 10 do
+      reply = call("type", { field = field, text = text, enter = enter })
+      if not reply:find("not ready for the keyboard", 1, true) then break end
+      print(("  %s: field not ready for the keyboard, try %d"):format(field, try))
+      sleep(1)
+    end
   else
     local text, index = rest:match("^(.-)#(%d+)$")
     text = text or rest
