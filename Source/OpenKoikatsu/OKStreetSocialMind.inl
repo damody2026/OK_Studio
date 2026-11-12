@@ -508,10 +508,18 @@ void AOKStreetSocialScene::ApplyChoiceReply(int32 Character,const FOKFreeTalkRep
  // ("leave") does not.
  // A stroll goes nowhere, so there is no door to wait for: 惠惠 said good night and they walked on for the rest of the loop.
  const bool Strolling=S.OutingGirl==Character&&(S.OutingActivity==TEXT("stroll")||S.OutingActivity==TEXT("walk"));
- const bool OnTheWay=S.OutingGirl==Character&&!Strolling&&Reply.ActKind!=TEXT("leave");
+ // A walk that is not where she goes next: her class or shift within the hour is elsewhere. 胡桃 said "I have class at
+ // 12:30, let's stop here, I'm off" and he agreed, and the two walked on toward the bookstore (R6-252). Her goodbye
+ // calls that walk off; walking her to her class or home still waits for the door.
+ bool AwayFromHerNext=false;
+ if(S.OutingGirl==Character&&!Strolling)if(const FOKStreetPlace* Dest=OKStreetPlaces().FindByPredicate([&S](const FOKStreetPlace& P){return S.OutingPlace==P.Name;}))if(const TArray<FOKStreetPlanBlock>* Plan=S.Plans.Find(Character)){
+  const int32 Now=int32(OKStreetMindNow(S)%1440);const FOKStreetPlanBlock* Next=nullptr;
+  for(const auto& B:*Plan)if((B.Kind==TEXT("class")||B.Kind==TEXT("work"))&&B.End>Now&&(!Next||B.Start<Next->Start))Next=&B;
+  AwayFromHerNext=Next&&Next->Start<=Now+60&&Next->Place!=Dest->Id;}
+ const bool OnTheWay=S.OutingGirl==Character&&!Strolling&&!AwayFromHerNext&&Reply.ActKind!=TEXT("leave");
  if(OnTheWay&&(Reply.ActKind==TEXT("end_talk")||Reply.Action==TEXT("end_talk")||Reply.Action==TEXT("farewell")||Reply.Action==TEXT("goodbye"))){UE_LOG(LogTemp,Display,TEXT("Street farewell: actor=%d not on the way; the outing reaches %s first"),Character,*S.OutingPlace);}
  else if(Reply.ActKind==TEXT("end_talk")||Reply.ActKind==TEXT("leave")||Reply.Action==TEXT("end_talk")||Reply.Action==TEXT("farewell")||Reply.Action==TEXT("goodbye")){
-  if(Strolling)CancelOuting(FString());
+  if(Strolling||AwayFromHerNext){if(AwayFromHerNext)UE_LOG(LogTemp,Display,TEXT("Street farewell: actor=%d has class/work elsewhere soon; the walk to %s is called off"),Character,*S.OutingPlace);CancelOuting(FString());}
   S.FarewellPending=true;S.FarewellFromTalk=true;S.FarewellAt=FPlatformTime::Seconds();UE_LOG(LogTemp,Display,TEXT("Street farewell: actor=%d the conversation ends after her last line (act=%s)"),Character,*Reply.ActKind);
  }
  if(Reply.ActKind==TEXT("promise_treat")&&OKStreetMindNow(S)-S.HerTreatKept.FindRef(Character,-100000)>=60){/* not again within the hour she paid one (R3-227) */S.HerTreatPromise.Add(Character,OKStreetMindNow(S)+6*60);UE_LOG(LogTemp,Display,TEXT("Street treat promise: actor=%d will pay for what he orders (act)"),Character);}

@@ -104,7 +104,13 @@ void AOKStreetSocialScene::AddPromiseFromChat(int32 Character,const FString& Day
  {FString Met;if(!P&&Out->TryGetStringField(TEXT("place"),Met)&&!Met.IsEmpty())if(const FOKStreetPlace* MetP=OKStreetFindPlace(Met)){Place=Met;P=MetP;}}
  // An ignored promise has no start or minute.
  double StartAt=0,MinuteAt=0;Out->TryGetNumberField(TEXT("start"),StartAt);Out->TryGetNumberField(TEXT("minute"),MinuteAt);
- const int64 Start=int64(StartAt);const int32 Minute=int32(MinuteAt);
+ int64 Start=int64(StartAt);int32 Minute=int32(MinuteAt);
+ // "Now" (his "I'm coming over now", she reads it as this minute): he still has to walk there. Booked for the minute it
+ // was said, his 21-minute walk to the crepe shop counted as 21 minutes late and cost favor (R6-251). A meeting
+ // about now starts when he can be there; a time he named himself stays as he said it.
+ if(P&&Action!=TEXT("ignore")&&!OKStreetInsidePlace(*P,S.Male)){const int64 Now=OKStreetMindNow(S);
+  const int64 Reach=Now+FMath::CeilToInt(FVector::Dist2D(S.Male,P->Door)/100.f*1.3f/OKStreetOutingWalkMPerMin);
+  if(Start>=Now-30&&Start<=Now+5&&Start<Reach){UE_LOG(LogTemp,Display,TEXT("Street promise: meeting at %s now, starts when he can be there (minute %lld -> %lld)"),*Place,Start,Reach);Start=Reach;Minute=int32(Reach%1440);}}
  if(Action==TEXT("ignore")){UE_LOG(LogTemp,Display,TEXT("Street promise ignored (%s): day \"%s\" time \"%s\" at %s"),*Reason,*Day,*Time,*Place);
   // The judge's "+365" (days from today) said as a date: it showed as it was, "+365 at the park: no time yet" (R6-24).
   const FString DaySaid=Day.StartsWith(TEXT("+"))&&Day.Mid(1).IsNumeric()?[&]{const FDateTime T=OKStreetCalendarDateTime(S.Store.CalendarDay+FCString::Atoi(*Day.Mid(1)),12.0);return OKMsg(TEXT("ui.calendar.date_full"),{{TEXT("year"),T.GetYear()},{TEXT("month"),T.GetMonth()},{TEXT("day"),T.GetDay()},{TEXT("weekday"),OKMsg(TEXT("ui.calendar.weekday_name"),{{TEXT("d"),int32(T.GetDayOfWeek())}})}});}():Day;
