@@ -25,7 +25,7 @@ pub(crate) fn replay(
 ) -> Option<MeshMaterial> {
     let identity = crate::card::me_mat_key(&source.name);
     let edit = card.me_shader.get(&(4, 0, 0, identity.clone()));
-    let target = edit.map(|(name, _)| name.as_str()).unwrap_or(&source.shader);
+    let target = edit.map(|(name, _)| name.as_str()).filter(|name| !name.is_empty()).unwrap_or(&source.shader); // "": queue only
     if !target.eq_ignore_ascii_case("xukmi/SkinPlus") { return None; }
     let schema: serde_json::Value = serde_json::from_str(include_str!(
         "../../../Plugins/KKUnityBundle/Source/KKUnityBundle/Private/Shaders/SkinPlusBindings.json"

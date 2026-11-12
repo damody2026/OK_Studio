@@ -308,7 +308,7 @@ fn me_shader_registration_now(game_root: &Path, shader: &str) -> (bool, Option<b
     if crate::is_kkuts_shader(shader) {
         return (true, Some(crate::is_kkuts_hair_shader(shader)));
     }
-    if shader.to_ascii_lowercase().starts_with("xukmi/") && shader_family(shader).contains("main_item_studio") {
+    if shader.to_ascii_lowercase().starts_with("xukmi/") && (shader_family(shader).contains("main_item_studio") || xukmi_forge_stand_in(shader).is_some()) {
         return (true, None);
     }
     // An OK card's answer (tree_answers.rs): no manifest of the tree is read.
@@ -423,6 +423,18 @@ pub(crate) fn me_shader_registered(game_root: &Path, shader: &str) -> bool {
     me_shader_registration(game_root, shader).0
 }
 
+/// The Shader Forge clothes shader a xukmi Vanilla+ one replaces, drawn by its program: their blend state and alpha follow
+/// it (`shader_family`). Without it a Material Editor switch to xukmi/MainAlphaPlus was dropped and the garment stayed
+/// opaque (2026-11-12, extra.png's skin-tight suit: its top drew its whole texture, its lower half none).
+pub(crate) fn xukmi_forge_stand_in(shader: &str) -> Option<&'static str> {
+    if !shader.to_ascii_lowercase().starts_with("xukmi/") { return None; }
+    match shader_family(shader).as_str() {
+        "shader forge/main_alpha" => Some("Shader Forge/main_alpha"),
+        "shader forge/main_opaque" => Some("Shader Forge/main_opaque"),
+        _ => None,
+    }
+}
+
 pub(crate) fn apply_me_shader(
     game_root: &Path,
     overrides: Option<&crate::card::MeShaderMap>,
@@ -438,9 +450,9 @@ pub(crate) fn apply_me_shader(
     if let Some((shader, queue)) = overrides.and_then(|map| map.get(&key)) {
         // MaterialAPI.SetShader returns false when the requested shader is not
         // in LoadedShaders. Its subsequent SetRenderQueue still runs.
-        let (registered, has_rim) = me_shader_registration(game_root, shader);
+        let (registered, has_rim) = if shader.is_empty() { (false, None) } else { me_shader_registration(game_root, shader) };
         if registered {
-            material.shader = shader.clone();
+            material.shader = xukmi_forge_stand_in(shader).map_or_else(|| shader.clone(), str::to_owned);
             // The previous Shader declaration no longer applies after
             // MaterialAPI.SetShader, including when its answer was false.
             material.shader_has_rim = has_rim;

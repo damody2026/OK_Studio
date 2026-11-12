@@ -77,6 +77,7 @@ class OPENKOIKATSU_API UOKHRootPad : public UUserWidget {
 public:
     UPROPERTY() TObjectPtr<UOKHScenePanel> Owner;
     FVector2D Value=FVector2D::ZeroVector;
+    void Show(const FVector2D& V); // Value set and the dot repainted (NativePaint draws it; nothing else repaints the panel)
     virtual TSharedRef<SWidget> RebuildWidget() override;
     virtual int32 NativePaint(const FPaintArgs& Args,const FGeometry& Geometry,const FSlateRect& Culling,FSlateWindowElementList& Out,int32 Layer,const FWidgetStyle& Style,bool bParentEnabled) const override;
     virtual FReply NativeOnMouseButtonDown(const FGeometry& Geometry,const FPointerEvent& Event) override;
@@ -225,7 +226,14 @@ private:
     UPROPERTY() TObjectPtr<USceneCaptureComponent2D> PuddleFloorCapture;UPROPERTY() TObjectPtr<UTextureRenderTarget2D> PuddleFloorTarget;
     FVector PuddleFloorAt=FVector::ZeroVector;double PuddleFloorTakenAt=-1.;float PuddleFloorWidth=0.f;
     int32 PuddlesMade=0;float PuddlesSize=0.f;int32 PreviousSsrQuality=-1,PreviousReflectionMethod=-1;
-    void TickPuddles();void RemovePuddles();
+    void TickPuddles();void RemovePuddles();void UseSsr(bool bOn);
+    // Her fluids' stains on the floor drawn as the puddles' water (AOKPaintSprayer::OnFloorStain): DressStain gives one its
+    // outline and colour, DressStainFloor the floor's photo while puddles lie there.
+    UPROPERTY() TArray<TObjectPtr<class UTexture2D>> StainMasks;TArray<TWeakObjectPtr<UMaterialInstanceDynamic>> StainShown;
+public:
+    void DressStain(UMaterialInstanceDynamic* M);
+private:
+    void DressStainFloor(UMaterialInstanceDynamic* M) const;void DressStainsOf(class AOKPaintSprayer* Sprayer);
 public:
     void SetPuddles(const TSharedPtr<FJsonObject>& Settings);TSharedPtr<FJsonObject> PuddlesJson() const;
 private:

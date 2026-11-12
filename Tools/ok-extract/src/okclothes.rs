@@ -121,7 +121,23 @@ pub fn probe_plugin(path: &Path, plugin: &str) -> Result<(), String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let kkex = match read_coordinate_file(&bytes) { Ok(f) => f.kkex, Err(_) => card_kkex(&bytes)? };
     if let Some(Value::Map(m)) = kkex {
-        for (k, v) in m { if k.as_str() == Some(plugin) { println!("{}", outline(&v, 12)); if let Some(x) = find_string(&v) { println!("{x}"); } } }
+        for (k, v) in m {
+            if k.as_str() != Some(plugin) { continue; }
+            println!("{}", outline(&v, 12));
+            if let Some(x) = find_string(&v) { println!("{x}"); }
+            // Every entry of each list (Material Editor's *List, DynamicBoneEditor's), one a line.
+            let data = match &v { Value::Array(a) if a.len() == 2 => a[1].clone(), other => other.clone() };
+            for (name, list) in data.as_map().into_iter().flatten() {
+                if let Value::Array(items) = unbin(list) { for item in items { println!("{name}\t{}", outline(&item, 3)); } }
+                // OK_DUMP_TEX=<folder>: Material Editor's textures written there as <TexID>.png.
+                if name.as_str() == Some("TextureDictionary") {
+                    let Some(dir) = std::env::var_os("OK_DUMP_TEX") else { continue };
+                    for (id, png) in unbin(list).as_map().into_iter().flatten() {
+                        if let (Some(id), Some(png)) = (int_key(id), png.as_slice()) { let _ = std::fs::write(Path::new(&dir).join(format!("{id}.png")), png); }
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -233,12 +249,14 @@ fn material_editor(from: &Value, to: &mut Value, outfit: usize, wear: bool, clot
     for list in lists {
         let incoming = map_get(&src, &list).map(unbin).and_then(|v| v.as_array().cloned()).unwrap_or_default();
         let mut out: Vec<Value> = if wear { map_get(&dst, &list).map(unbin).and_then(|v| v.as_array().cloned()).unwrap_or_default() } else { Vec::new() };
-        let ours = |e: &Value, index: i64| map_get(e, "CoordinateIndex").and_then(int_key) == Some(index)
-            && map_get(e, "ObjectType").and_then(int_key).is_some_and(|t| t == 1 || (t == 2 && !clothes_only));
+        let kind = |e: &Value| map_get(e, "ObjectType").and_then(int_key).is_some_and(|t| t == 1 || (t == 2 && !clothes_only));
+        let ours = |e: &Value, index: i64| map_get(e, "CoordinateIndex").and_then(int_key) == Some(index) && kind(e);
         if wear { out.retain(|e| !ours(e, outfit)); }
         for mut e in incoming {
-            let from_index = if wear { 0 } else { outfit };
-            if !ours(&e, from_index) { continue; }
+            // A coordinate card's entries keep the outfit index they were saved from (bunny.png 5, extra.png 2), and the
+            // game's coordinate load takes them all whatever it is: taking index 0 only lost every shader, texture,
+            // colour and transparency change of such a card (2026-11-12, the bunny suit opaque and dark, extra white).
+            if !(if wear { kind(&e) } else { ours(&e, outfit as i64) }) { continue; }
             map_set(&mut e, "CoordinateIndex", Value::from(if wear { outfit } else { 0 }));
             if let Some(id) = map_get(&e, "TexID").and_then(int_key) {
                 let new = *tex_map.entry(id).or_insert_with(|| {
@@ -343,7 +361,9 @@ fn indexed_lists(from: &Value, to: &mut Value, outfit: usize, wear: bool, key: &
         let mut out: Vec<Value> = if wear { map_get(&dst, &list).map(unbin).and_then(|v| v.as_array().cloned()).unwrap_or_default() } else { Vec::new() };
         if wear { out.retain(|e| index(e) != Some(outfit as i64)); }
         for mut e in incoming {
-            if index(&e) != Some(if wear { coordinate_value } else { outfit as i64 }) { continue; }
+            // Worn: every entry of the coordinate whatever index it was saved with (DynamicBoneEditor keeps the outfit's,
+            // as Material Editor does); ASS writes -1.
+            if if wear { index(&e).is_none() } else { index(&e) != Some(outfit as i64) } { continue; }
             map_set(&mut e, field, Value::from(if wear { outfit as i64 } else { coordinate_value }));
             out.push(e);
         }

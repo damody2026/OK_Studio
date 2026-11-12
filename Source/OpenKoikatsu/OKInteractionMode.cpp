@@ -232,7 +232,8 @@ static void OKOpenWardrobeItem(FOKWardrobeItem& Item,const FString& GameRoot,con
             // Her card with the coordinate card written into this outfit, made once per card, coordinate and outfit.
             const FString Dir=FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir()/TEXT("StreetSocial/HOutfits"));IFileManager::Get().MakeDirectory(*Dir,true);
             const FString Clothes=Dir/(FPaths::GetBaseFilename(Want.Coordinate)+TEXT(".okclothes"));
-            const FString Worn=Dir/FString::Printf(TEXT("%s__%s_%d%s.png"),*FPaths::GetBaseFilename(Want.Card),*FPaths::GetBaseFilename(Want.Coordinate),Want.Outfit,Want.bAccessories?TEXT("_acc"):TEXT(""));
+            // _w2: made again since a coordinate's plugin data saved under another outfit index is worn (okclothes.rs).
+            const FString Worn=Dir/FString::Printf(TEXT("%s__%s_%d%s_w2.png"),*FPaths::GetBaseFilename(Want.Card),*FPaths::GetBaseFilename(Want.Coordinate),Want.Outfit,Want.bAccessories?TEXT("_acc"):TEXT(""));
             const FDateTime Made=IFileManager::Get().GetTimeStamp(*Worn);
             if(Made==FDateTime::MinValue()||Made<IFileManager::Get().GetTimeStamp(*Want.Card)||Made<IFileManager::Get().GetTimeStamp(*Want.Coordinate)){
                 // Worn on her card as the game's card (its OK chunks, ok*, dropped) and opened from the game: an OK card
