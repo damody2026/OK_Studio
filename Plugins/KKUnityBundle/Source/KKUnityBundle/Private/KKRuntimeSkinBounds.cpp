@@ -14,6 +14,58 @@
 #include "BoneContainer.h"
 #include "HAL/IConsoleManager.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
+#include "PSOPrecache.h"
+#include "PSOPrecacheMaterial.h"
+#include "Materials/Material.h"
+#include "Misc/App.h"
+
+void KKCollectRuntimeSkinnedPSOs(USkinnedMeshComponent& Component,const FPSOPrecacheParams& Base,FMaterialInterfacePSOPrecacheParamsList& Out)
+{
+ USkinnedAsset* Asset=Component.GetSkinnedAsset();
+ FSkeletalMeshRenderData* RenderData=Asset?Asset->GetResourceForRendering():nullptr;
+ if(!RenderData)return;
+ if(RenderData->IsLODDataReady()){Component.USkinnedMeshComponent::CollectPSOPrecacheData(Base,Out);return;}
+ // What USkinnedMeshComponent::CollectPSOPrecacheData does past its ready check; runtime meshes are built in
+ // memory on the game thread and never stream, so there is no load to race. No Nanite skinning here.
+ // Shadow passes always: the scenes turn CastShadow on after the materials are set (SetCastShadow does not
+ // precache again), and the shadow depth PSOs then compiled in the frame that drew her (2026-11-12).
+ const ERHIFeatureLevel::Type FeatureLevel=Component.GetWorld()?Component.GetWorld()->GetFeatureLevel():GMaxRHIFeatureLevel;
+ const int32 MinLOD=Component.ComputeMinLOD();
+ FPSOPrecacheVertexFactoryDataPerMaterialIndexList PerMaterial;
+ Asset->GetVertexFactoryTypesPerMaterialIndex(PerMaterial,&Component,MinLOD,Component.bRenderStatic||Component.ShouldCPUSkin(),FeatureLevel);
+ FPSOPrecacheParams Params=Base;
+ Params.bCastShadow=RenderData->AnyRenderSectionCastsShadows(MinLOD);
+ Params.bSkinnedMesh=true;
+ Params.bRequireRTDynamicGeometryUpdate=Params.bAnyMaterialHasWorldPositionOffset;
+ for(FPSOPrecacheVertexFactoryDataPerMaterialIndex& Entry:PerMaterial){
+  UMaterialInterface* Material=Component.GetMaterial(Entry.MaterialIndex);
+  if(!Material)Material=UMaterial::GetDefaultMaterial(MD_Surface);
+  FMaterialInterfacePSOPrecacheParams& P=Out[Out.AddDefaulted()];
+  P.MaterialInterface=Material;P.VertexFactoryDataList=Entry.VertexFactoryDataList;P.PSOPrecacheParams=Params;
+ }
+ if(UMaterialInterface* Overlay=Component.GetOverlayMaterial();Overlay&&PerMaterial.Num()>0){
+  FMaterialInterfacePSOPrecacheParams& P=Out[Out.AddDefaulted()];
+  P.MaterialInterface=Overlay;P.PSOPrecacheParams=Params;P.PSOPrecacheParams.bCastShadow=false;
+  for(const FPSOPrecacheVertexFactoryDataPerMaterialIndex& Entry:PerMaterial)for(const FPSOPrecacheVertexFactoryData& VF:Entry.VertexFactoryDataList)P.VertexFactoryDataList.AddUnique(VF);
+ }
+}
+
+void KKPrecacheRuntimePSOs(UPrimitiveComponent* Component)
+{
+#if UE_WITH_PSO_PRECACHING
+ if(!Component||!FApp::CanEverRender()||!IsComponentPSOPrecachingEnabled())return;
+ auto* Skinned=Cast<USkinnedMeshComponent>(Component);
+ const bool Ours=Component->IsA<UKKRuntimePoseableMeshComponent>()||Component->IsA<UKKRuntimeSkeletalMeshComponent>();
+ const FSkeletalMeshRenderData* RenderData=Skinned&&Skinned->GetSkinnedAsset()?Skinned->GetSkinnedAsset()->GetResourceForRendering():nullptr;
+ if(!Skinned||Ours||!RenderData||RenderData->IsLODDataReady()){Component->PrecachePSOs();return;}
+ TRACE_CPUPROFILER_EVENT_SCOPE(KKPrecacheRuntimePSOs);
+ FPSOPrecacheParams Params;Component->SetupPrecachePSOParams(Params);
+ FMaterialInterfacePSOPrecacheParamsList List;KKCollectRuntimeSkinnedPSOs(*Skinned,Params,List);
+ TArray<FMaterialPSOPrecacheRequestID> Ids;FGraphEventArray Events;
+ PrecacheMaterialPSOs(List,Ids,Events);
+ Component->SetMaterialPSOPrecacheData(Ids,Events);
+#endif
+}
 
 namespace {
 TArrayView<const FTransform> GAffineInput;

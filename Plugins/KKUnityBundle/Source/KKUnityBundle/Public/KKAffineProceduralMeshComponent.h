@@ -56,6 +56,9 @@ public:
     static bool UpdateGeneratedStreamsExternally(TArrayView<const FKKGeneratedStreamRequest> Requests,
         TFunctionRef<void(FKKGeneratedSectionEmitter)> Schedule);
     virtual FPrimitiveSceneProxy* CreateSceneProxy() override;
+    // The stock procedural component collects nothing, so each material compiled its shaders in the frame that first
+    // drew it; both proxies draw with FLocalVertexFactory.
+    virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& Base, FMaterialInterfacePSOPrecacheParamsList& Out) override;
     static void UpdateStreams(UProceduralMeshComponent* Component, int32 Section,
         const TArray<FVector>& Positions, const TArray<FVector>& Normals,
         const TArray<FVector2D>& UV0, const TArray<FVector2D>& UV1,

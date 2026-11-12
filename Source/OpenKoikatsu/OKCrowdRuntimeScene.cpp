@@ -19,6 +19,7 @@
 #include "KKRuntimeSharedMaterial.h"
 #include "Materials/Material.h"
 #include "KKRuntimeDisplayProfile.h"
+#include "KKRuntimeSkinBounds.h"
 #include "Materials/MaterialRelevance.h"
 #include "RHIShaderPlatform.h"
 #include "OKGpuAnimationManifest.h"
@@ -672,6 +673,9 @@ struct FScene : TSharedFromThis<FScene> {
  void BeginReveal(FEntry& E){
   if(E.RevealStarted)return;E.RevealStarted=true;E.RevealWorldStart=Owner->GetWorld()->GetTimeSeconds();E.RevealStartMs=(FPlatformTime::Seconds()-Started)*1000;
   TSet<UMaterialInstanceDynamic*> Seen;auto Apply=[&](UMaterialInstanceDynamic* M){if(M&&!Seen.Contains(M)){Seen.Add(M);M->SetScalarParameterValue(TEXT("__OK_RuntimeRevealStart"),E.RevealWorldStart);M->SetScalarParameterValue(TEXT("__OK_RuntimeRevealDuration"),3);}};for(const auto& M:E.Materials)Apply(M.Get());for(const auto& M:E.OutlineMaterials)Apply(M.Get());for(const auto& M:E.ShadowProxyMaterials)Apply(M.Get());
+  // Runtime meshes are skipped by the engine's PSO precache (KKPrecacheRuntimePSOs): compile her shaders off the
+  // frame now, not in the frame that first draws her.
+  for(USkinnedMeshComponent* C:{static_cast<USkinnedMeshComponent*>(E.Cpu.Get()),static_cast<USkinnedMeshComponent*>(E.Gpu.Get()),static_cast<USkinnedMeshComponent*>(E.DepthGpu.Get()),static_cast<USkinnedMeshComponent*>(E.ShadowGpu.Get()),static_cast<USkinnedMeshComponent*>(E.FrontGpu.Get()),static_cast<USkinnedMeshComponent*>(E.OccluderGpu.Get())})KKPrecacheRuntimePSOs(C);
  }
  void CaptureLoading(){
   if(LoadingCaptured||VisualPrefix.IsEmpty()||Installed||Entries[0]->Stage!=5)return;

@@ -48,6 +48,11 @@ pub fn install(texts: &Texts) {
     if let Ok(mut t) = TABLES.write() {
         *t = Some(all);
     }
+    // The script conversion builds its tables on first use (3-5 ms each way): built here, with the tables, not in the
+    // frame of the first message with a name in it (2026-11-12).
+    for v in [zhconv::Variant::ZhCN, zhconv::Variant::ZhTW] {
+        let _ = zhconv::zhconv("貞德", v);
+    }
 }
 
 fn with_table<R>(f: impl FnOnce(&Table) -> R) -> R {

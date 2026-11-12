@@ -25,6 +25,7 @@
 #include "OKResidentGpuDeform.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
+#include "PSOPrecache.h"
 
 static TAutoConsoleVariable<int32> CVarKKStreamParallel(TEXT("ok.Stream.ParallelPacking"),0,TEXT("Pack independent animated vertices in parallel; 0 retains serial packing. Enable only after workload measurement."));
 static TAutoConsoleVariable<int32> CVarKKStreamBatch(TEXT("ok.Stream.BatchPacking"),1,TEXT("0 serial oracle; 1 pack large multi-section animation batches; 2 force batch packing for verification."));
@@ -707,6 +708,32 @@ FPrimitiveSceneProxy* UKKAffineProceduralMeshComponent::CreateSceneProxy()
 {
     check(IsInGameThread());GpuStreamProxyEpoch=++GKKGpuStreamProxyEpoch;
     return UsesAnimatedStreams() ? new FKKStreamSceneProxy(this) : Super::CreateSceneProxy();
+}
+
+void UKKAffineProceduralMeshComponent::CollectPSOPrecacheData(const FPSOPrecacheParams& Base, FMaterialInterfacePSOPrecacheParamsList& Out)
+{
+    TArray<UMaterialInterface*,TInlineAllocator<8>> Seen;
+    // Materials may be set before the sections are created.
+    const int32 Count = FMath::Max(GetNumSections(), GetNumOverrideMaterials());
+    for (int32 Index = 0; Index < Count; ++Index)
+    {
+        UMaterialInterface* Material = GetMaterial(Index);
+        if (!Material) Material = UMaterial::GetDefaultMaterial(MD_Surface);
+        if (Seen.Contains(Material)) continue;
+        Seen.Add(Material);
+        FMaterialInterfacePSOPrecacheParams& P = Out[Out.AddDefaulted()];
+        P.MaterialInterface = Material;
+        P.VertexFactoryDataList.Add(FPSOPrecacheVertexFactoryData(&FLocalVertexFactory::StaticType));
+        P.PSOPrecacheParams = Base;
+    }
+    if (UMaterialInterface* Overlay = GetOverlayMaterial(); Overlay && Seen.Num() > 0)
+    {
+        FMaterialInterfacePSOPrecacheParams& P = Out[Out.AddDefaulted()];
+        P.MaterialInterface = Overlay;
+        P.VertexFactoryDataList.Add(FPSOPrecacheVertexFactoryData(&FLocalVertexFactory::StaticType));
+        P.PSOPrecacheParams = Base;
+        P.PSOPrecacheParams.bCastShadow = false;
+    }
 }
 
 static void FlushCurrentGpuStreamBatch();
