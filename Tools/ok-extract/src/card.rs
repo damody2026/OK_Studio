@@ -972,11 +972,13 @@ fn parse_material_editor_shaders(plugin: &Value, out: &mut MeShaderMap) {
     for item in items {
         let material = map_get(item, "MaterialName").and_then(Value::as_str).unwrap_or("");
         let shader = map_get(item, "ShaderName").and_then(Value::as_str).unwrap_or("");
-        if material.is_empty() || shader.is_empty() { continue; }
+        let queue = map_get(item, "RenderQueue").and_then(Value::as_i64).map(|x| x as i32);
+        // An entry may change only the render queue (ShaderName nil): extra.png's tights at 3200, drawn after the
+        // skin-tight suit under them; skipped, they drew first and their depth hid the suit's lower half (2026-11-12).
+        if material.is_empty() || (shader.is_empty() && queue.is_none()) { continue; }
         let ot = map_get(item, "ObjectType").and_then(Value::as_i64).unwrap_or(0) as i32;
         let coord = map_get(item, "CoordinateIndex").and_then(Value::as_i64).unwrap_or(0) as i32;
         let slot = map_get(item, "Slot").and_then(Value::as_i64).unwrap_or(0) as i32;
-        let queue = map_get(item, "RenderQueue").and_then(Value::as_i64).map(|x| x as i32);
         out.insert((ot, coord, slot, me_mat_key(material)), (shader.to_string(), queue));
     }
 }

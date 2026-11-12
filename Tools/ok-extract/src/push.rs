@@ -345,6 +345,7 @@ impl<'a, 's> PushCtx<'a, 's> {
                 mesh.normal_map_png = Some(png.to_vec());
                 if source_program || is_glasses {mark_material_editor_texture(&mut mesh,"_NormalMap");}
             }
+            let me_alpha_mask = me_texture(me_tex, outfit, role, property.as_deref(), &mesh, "alphamask").is_some();
             if let Some(png) = me_texture(me_tex, outfit, role, property.as_deref(), &mesh, "alphamask") {
                 mesh.alpha_mask_png = Some(png.to_vec());
                 if source_program || is_kkuts || is_kkuss {mark_material_editor_texture(&mut mesh,"_AlphaMask");}
@@ -530,6 +531,10 @@ impl<'a, 's> PushCtx<'a, 's> {
             let material_mask = if role.starts_with("clothes") && !is_glasses {
                 mesh.alpha_mask_png.as_deref().map(|mask| (mask, 1.0, 0.0))
             } else { None };
+            // MaterialEditor sets its textures after ChaControl gave the bra/inner the outer layer's mask, so a Material
+            // Editor AlphaMask is the one drawn (extra.png: white over the skin-tight top's OverBraMask, which cut its
+            // suit's lower half away, 2026-11-12).
+            let alpha_mask = if me_alpha_mask { None } else { alpha_mask };
             if source_program || is_kkuts || is_kkuss {
                 // ChaControl assigns the equipped outer layer's mask to the
                 // inner/bra renderer. Native shaders must receive that binding;

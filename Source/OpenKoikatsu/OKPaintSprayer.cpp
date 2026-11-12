@@ -593,9 +593,9 @@ void AOKPaintSprayer::Splash(FVector P,FVector N,bool Floor,double Volume)
 {
  if(SplashSystem&&OwnedFX.Num()<FMath::Clamp(Settings.MaxImpactEffects,1,64)&&GetWorld()->GetTimeSeconds()>=NextSplashAt){NextSplashAt=GetWorld()->GetTimeSeconds()+.05;auto* FX=UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(),SplashSystem,P,N.Rotation(),FVector(1),true,true);if(FX){FX->SetVariableLinearColor(TEXT("User.PaintColor"),Settings.Color);OwnedFX.Add(FX);}}
  if(!Floor)return;
- auto* M=DropBase.Get();if(!M)return;
+ auto* M=FloorStainMaterial?FloorStainMaterial.Get():DropBase.Get();if(!M)return;
  // A small geometry stain follows any rigid floor/wall, never used on skin.
- auto* Stain=NewObject<UProceduralMeshComponent>(this);Stain->RegisterComponent();Stain->ComponentTags.Add(TEXT("OKPaintOverlay"));Stain->SetCollisionEnabled(ECollisionEnabled::NoCollision);Stain->SetCastShadow(false);auto* MID=UMaterialInstanceDynamic::Create(M,this);MID->SetVectorParameterValue(TEXT("PaintColor"),Settings.Color);Materials.Add(MID);Stain->SetMaterial(0,MID);Overlays.Add(Stain);
+ auto* Stain=NewObject<UProceduralMeshComponent>(this);Stain->RegisterComponent();Stain->ComponentTags.Add(TEXT("OKPaintOverlay"));Stain->SetCollisionEnabled(ECollisionEnabled::NoCollision);Stain->SetCastShadow(false);auto* MID=UMaterialInstanceDynamic::Create(M,this);MID->SetVectorParameterValue(TEXT("PaintColor"),Settings.Color);if(FloorStainMaterial&&OnFloorStain)OnFloorStain(MID);Materials.Add(MID);Stain->SetMaterial(0,MID);Overlays.Add(Stain);
  const double Radius=FMath::Clamp(FMath::Sqrt(Volume/(PI*.015)),.15,2.);FVector U,V;N.FindBestAxisVectors(U,V);TArray<FVector> Vertices={P+N*.1-U*Radius-V*Radius,P+N*.1+U*Radius-V*Radius,P+N*.1+U*Radius+V*Radius,P+N*.1-U*Radius+V*Radius};TArray<FVector> Normals;Normals.Init(N,4);TArray<FVector2D> UV={FVector2D(0,0),FVector2D(1,0),FVector2D(1,1),FVector2D(0,1)};TArray<FColor> Colors;Colors.Init(FColor::White,4);TArray<FProcMeshTangent> Tangents;
  Stain->CreateMeshSection(0,Vertices,{0,1,2,0,2,3},Normals,UV,Colors,Tangents,false);
  FloorStains.Add(Stain);if(FloorStains.Num()>FMath::Clamp(Settings.MaxFloorStains,8,512)){auto Old=FloorStains[0];FloorStains.RemoveAt(0);Overlays.Remove(Old);Materials.Remove(Cast<UMaterialInstanceDynamic>(Old->GetMaterial(0)));Old->DestroyComponent();}

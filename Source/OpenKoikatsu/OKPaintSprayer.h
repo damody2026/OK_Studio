@@ -59,6 +59,10 @@ public:
  void SetControlsVisible(bool Visible);
  bool bSkipTongue=false; // her tongue takes no coating
  bool bShowGun=true; // the water gun drawn while it sprays; off for what comes out of her in H (it stood on her head as her drool ran)
+ // The floor stains' material instead of M_PaintDrop when set, each stain's instance handed to OnFloorStain for its
+ // parameters (the 1-on-1: its puddle water, so screen space reflections show in every stain on the floor; user 2026-11-12).
+ UPROPERTY() TObjectPtr<UMaterialInterface> FloorStainMaterial;
+ TFunction<void(UMaterialInstanceDynamic*)> OnFloorStain;
  UFUNCTION(BlueprintCallable,Category="Paint") FString Statistics() const;
  bool FindPaintHit(const FVector& A,const FVector& B,double Radius,int32& Target,int32& Triangle,FVector& Bary,double& Time);
  double Deposited=0,Dripped=0,FloorVolume=0,Cleared=0,Escaped=0;

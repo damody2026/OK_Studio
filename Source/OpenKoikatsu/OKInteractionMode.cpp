@@ -232,7 +232,8 @@ static void OKOpenWardrobeItem(FOKWardrobeItem& Item,const FString& GameRoot,con
             // Her card with the coordinate card written into this outfit, made once per card, coordinate and outfit.
             const FString Dir=FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir()/TEXT("StreetSocial/HOutfits"));IFileManager::Get().MakeDirectory(*Dir,true);
             const FString Clothes=Dir/(FPaths::GetBaseFilename(Want.Coordinate)+TEXT(".okclothes"));
-            const FString Worn=Dir/FString::Printf(TEXT("%s__%s_%d%s.png"),*FPaths::GetBaseFilename(Want.Card),*FPaths::GetBaseFilename(Want.Coordinate),Want.Outfit,Want.bAccessories?TEXT("_acc"):TEXT(""));
+            // _w2: made again since a coordinate's plugin data saved under another outfit index is worn (okclothes.rs).
+            const FString Worn=Dir/FString::Printf(TEXT("%s__%s_%d%s_w2.png"),*FPaths::GetBaseFilename(Want.Card),*FPaths::GetBaseFilename(Want.Coordinate),Want.Outfit,Want.bAccessories?TEXT("_acc"):TEXT(""));
             const FDateTime Made=IFileManager::Get().GetTimeStamp(*Worn);
             if(Made==FDateTime::MinValue()||Made<IFileManager::Get().GetTimeStamp(*Want.Card)||Made<IFileManager::Get().GetTimeStamp(*Want.Coordinate)){
                 // Worn on her card as the game's card (its OK chunks, ok*, dropped) and opened from the game: an OK card
@@ -387,7 +388,9 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
 #if !UE_BUILD_SHIPPING
         // {"spray":true|false}: the player's water gun (A + left button) at what the camera looks at; game.log says what landed.
         bool Spray=false;if(Body->TryGetBoolField(TEXT("spray"),Spray))if(auto* PC=Cast<AOpenKoikatsuPlayerController>(Controller->GetOwningPlayer())){
-            if(Spray&&Controller->PreviewActor)PC->ScriptedPaintAim=Controller->PreviewActor->OrbitFocus;else PC->ScriptedPaintAim.Reset();
+            // "spray_at":[x,y,z] aims that far (cm, world) from the orbit focus, e.g. at the floor beside her.
+            FVector Off=FVector::ZeroVector;const TArray<TSharedPtr<FJsonValue>>* At=nullptr;if(Body->TryGetArrayField(TEXT("spray_at"),At)&&At->Num()==3)Off=FVector((*At)[0]->AsNumber(),(*At)[1]->AsNumber(),(*At)[2]->AsNumber());
+            if(Spray&&Controller->PreviewActor)PC->ScriptedPaintAim=Controller->PreviewActor->OrbitFocus+Off;else PC->ScriptedPaintAim.Reset();
             PC->bScriptedPaintFire=Spray;
             UE_LOG(LogTemp,Display,TEXT("H control spray %d: preview=%d hits=%d deposited=%.3f"),Spray,PC->IsPaintPreviewActive(),PC->PaintSprayer?PC->PaintSprayer->HitCount:-1,PC->PaintSprayer?PC->PaintSprayer->Deposited:-1.);}
 #endif

@@ -238,10 +238,15 @@ void AOKStreetSocialScene::StartControlServer(){
   GControlRestoreMouseAt=FPlatformTime::Seconds()+5.0;
   if(TSharedPtr<SWindow> Win=Client->GetWindow())Win->BringToFront(true);
   FVector2D Size;Client->GetViewportSize(Size);const FGeometry Geo=Widget->GetCachedGeometry();const FVector2D P=Geo.LocalToAbsolute(FVector2D(X,Y)*Geo.GetLocalSize()/Size);
-  FSlateApplication& App=FSlateApplication::Get();App.SetCursorPos(P);TSet<FKey> Pressed;Pressed.Add(EKeys::LeftMouseButton);
-  App.ProcessMouseMoveEvent(FPointerEvent(App.CursorPointerIndex,P,P,TSet<FKey>(),FKey(),0,FModifierKeysState()));
-  App.ProcessMouseButtonDownEvent(nullptr,FPointerEvent(App.CursorPointerIndex,P,P,Pressed,EKeys::LeftMouseButton,0,FModifierKeysState()));
-  App.ProcessMouseButtonUpEvent(FPointerEvent(App.CursorPointerIndex,P,P,TSet<FKey>(),EKeys::LeftMouseButton,0,FModifierKeysState()));
+  FSlateApplication& App=FSlateApplication::Get();TSet<FKey> Pressed;Pressed.Add(EKeys::LeftMouseButton);
+  // "phase": down | move | up drags over several frames as a held button does (a click when absent).
+  FString Phase;B->TryGetStringField(TEXT("phase"),Phase);static FVector2D Last=FVector2D::ZeroVector;
+  const FVector2D From=Phase==TEXT("move")||Phase==TEXT("up")?Last:P;Last=P;App.SetCursorPos(P);
+  const TSet<FKey>& Held=Phase==TEXT("move")?Pressed:TSet<FKey>();
+  App.ProcessMouseMoveEvent(FPointerEvent(App.CursorPointerIndex,P,From,Held,FKey(),0,FModifierKeysState()));
+  if(Phase.IsEmpty()||Phase==TEXT("down"))App.ProcessMouseButtonDownEvent(nullptr,FPointerEvent(App.CursorPointerIndex,P,P,Pressed,EKeys::LeftMouseButton,0,FModifierKeysState()));
+  if(Phase.IsEmpty()||Phase==TEXT("up"))App.ProcessMouseButtonUpEvent(FPointerEvent(App.CursorPointerIndex,P,P,TSet<FKey>(),EKeys::LeftMouseButton,0,FModifierKeysState()));
+  if(!Phase.IsEmpty()&&Phase!=TEXT("up"))GControlRestoreMouseAt=FPlatformTime::Seconds()+30.0;
   OKControlReply(Done,OKControlResult(true));
  });
 

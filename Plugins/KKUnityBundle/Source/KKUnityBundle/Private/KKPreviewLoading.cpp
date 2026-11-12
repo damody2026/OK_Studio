@@ -270,7 +270,10 @@ void AKKPreviewActor::SetClothingPartsHidden(const uint8 States[9]){ TRACE_CPUPR
  {TRACE_CPUPROFILER_EVENT_SCOPE(KK_SetPartsHidden);Session.SetPartsHidden(HiddenParts);}
  if(bAllClothesStates)SetBodyMask(WornBodyMask(States[0]));
  if(Any)OpenBodyMasks();else RestoreBodyMasks();
- UE_LOG(LogTemp,Display,TEXT("OK clothing parts hidden=%d masks=%d"),PartHiddenClothingComponents.Num(),ClothingMaskMaterials.Num());
+ // Which ones, by role and name: a part a garment state hides by its name alone is otherwise found only by eye.
+ FString Names;for(UMeshComponent* Component:PartHiddenClothingComponents)if(const auto* Part=PartFor(this,Component)){OkMeshView V{};Names+=FString::Printf(TEXT(" %s/%s"),*Part->Role,Session.PartAt(Part->SessionIndex,V)&&V.name?UTF8_TO_TCHAR(V.name):TEXT("?"));}
+ UE_LOG(LogTemp,Display,TEXT("OK clothing parts hidden=%d masks=%d states=%d%d%d%d%d%d%d%d%d:%s"),PartHiddenClothingComponents.Num(),ClothingMaskMaterials.Num(),
+  States[0],States[1],States[2],States[3],States[4],States[5],States[6],States[7],States[8],*Names);
 }
 
 // What her clothes cut from her body changes with them; a piece that is off opens it again afterwards.

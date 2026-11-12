@@ -89,6 +89,7 @@ void OKHNoteCry(const FString& Path); // her cries' loudness (PlayHVoice)
 #include "Misc/Paths.h"
 #include "Serialization/JsonSerializer.h"
 #include "OKPaintSprayer.h"
+#include "OpenKoikatsuPlayerController.h"
 #include "Components/InvalidationBox.h"
 #include "ok_extract.h"
 #include "Misc/ScopeLock.h"
@@ -1284,8 +1285,11 @@ int32 UOKHRootPad::NativePaint(const FPaintArgs& Args,const FGeometry& Geometry,
 void UOKHRootPad::Drag(const FGeometry& Geometry,const FPointerEvent& Event){
     const FVector2D Size=Geometry.GetLocalSize();const float R=FMath::Min(Size.X,Size.Y)*.5f-12.f;if(R<=1.f)return;
     const FVector2D P=(Geometry.AbsoluteToLocal(Event.GetScreenSpacePosition())-Size*.5f)/R;FVector2D V(P.X,-P.Y);
-    if(V.Size()>1.f)V/=V.Size();Value=V;if(Owner)Owner->SetRootPad(V);
+    if(V.Size()>1.f)V/=V.Size();if(V.Equals(Value,1e-4f))return;Show(V);if(Owner)Owner->SetRootPad(V);
 }
+// Drawn in NativePaint from Value: nothing else repaints the cached panel, so the dot stood still while dragged
+// (user, 2026-11-12: dragging the pad stuck).
+void UOKHRootPad::Show(const FVector2D& V){if(V.Equals(Value,1e-4f))return;Value=V;Invalidate(EInvalidateWidgetReason::Paint);}
 FReply UOKHRootPad::NativeOnMouseButtonDown(const FGeometry& Geometry,const FPointerEvent& Event){
     if(Event.GetEffectingButton()!=EKeys::LeftMouseButton)return FReply::Unhandled();
     bDragging=true;Drag(Geometry,Event);return FReply::Handled().CaptureMouse(TakeWidget());
@@ -1308,7 +1312,8 @@ void UOKHScenePanel::SetPenis(float Length,float Scale,float Most){
 }
 // Most: past the pad's edge, for testing (the control channel's penis.root; user, 2026-11-02: her belly pushed 40 cm out).
 void UOKHScenePanel::SetRootPad(const FVector2D& Pad,float Most){
-    RootPad=Pad.Size()>Most?Pad*(Most/Pad.Size()):Pad;RootPadScale=1.f;if(RootPadWidget)RootPadWidget->Value=RootPad;ShowPenis();
+    RootPad=Pad.Size()>Most?Pad*(Most/Pad.Size()):Pad;RootPadScale=1.f;
+    if(RootPadWidget)RootPadWidget->Show(RootPad);ShowPenis();
 }
 void UOKHScenePanel::ShowPenis(){
     if(PenisLabel)PenisLabel->SetText(FText::FromString(FString::Printf(TEXT("%s x%.2f  %s x%.2f  %s %.1f cm"),OKT(TEXT("ui.hscene.penis_length")),PenisLength,OKT(TEXT("ui.hscene.penis_scale")),PenisScale,OKT(TEXT("ui.hscene.penis_root")),RootPad.Size()*RootReach*RootPadScale)));
@@ -2172,6 +2177,16 @@ static const FString& OKPuddleMaterialPath(){
         return Found/TEXT("M_OKPuddleMirror.M_OKPuddleMirror");}();
     return Path;
 }
+// The puddle water, looked for once: a missing parent stays missing for the run, and asking again every frame was a
+// synchronous package load (FlushAsyncLoading) each frame of the 1-on-1, ~0.1 ms (2026-11-12, the StreetDisplay27 root
+// without it).
+static UMaterialInterface* OKPuddleParent(){
+    static bool bMissing=false;static TWeakObjectPtr<UMaterialInterface> Found;
+    if(Found.IsValid())return Found.Get();if(bMissing)return nullptr;
+    UMaterialInterface* Parent=LoadObject<UMaterialInterface>(nullptr,*OKPuddleMaterialPath(),nullptr,LOAD_NoWarn);
+    if(!Parent){bMissing=true;UE_LOG(LogTemp,Warning,TEXT("H scene: no puddle material %s (Tools/prepare_face_materials.lua, then the patch)"),*OKPuddleMaterialPath());}
+    Found=Parent;return Parent;
+}
 // One puddle's outline, 128 x 128, white where the water is: blobs round its middle, their edges eased (the material clips at
 // a half, the mask's slope keeps that edge smooth when drawn larger).
 static UTexture2D* OKPuddleMask(int32 Seed){
@@ -2217,11 +2232,7 @@ void UOKHScenePanel::TickPuddles(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickPuddl
     const int32 Count=FMath::Clamp(CVarHPuddleCount.GetValueOnGameThread(),1,8);const float Size=FMath::Clamp(CVarHPuddleSize.GetValueOnGameThread(),20.f,300.f);
     if(!IsValid(Puddles)||PuddlesMade!=Count||PuddlesSize!=Size){
         if(IsValid(Puddles))Puddles->Destroy();Puddles=nullptr;PuddleShown.Reset();PuddleShineShown=-1.f;PuddleFloorCapture=nullptr;PuddleFloorTarget=nullptr;PuddleFloorTakenAt=-1.;
-        // Looked for once: a missing parent stays missing for the run, and asking again every frame was a synchronous
-        // package load (FlushAsyncLoading) each frame of the 1-on-1, ~0.1 ms (2026-11-12, the StreetDisplay27 root without it).
-        static bool bNoParent=false;if(bNoParent)return;
-        UMaterialInterface* Parent=LoadObject<UMaterialInterface>(nullptr,*OKPuddleMaterialPath(),nullptr,LOAD_NoWarn);
-        if(!Parent){bNoParent=true;static bool bSaid=false;if(!bSaid){bSaid=true;UE_LOG(LogTemp,Warning,TEXT("H scene: no puddle material %s (Tools/prepare_face_materials.lua, then the patch)"),*OKPuddleMaterialPath());}return;}
+        UMaterialInterface* Parent=OKPuddleParent();if(!Parent)return;
         FActorSpawnParameters Params;Params.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
         Puddles=GetWorld()->SpawnActor<AActor>(AActor::StaticClass(),FTransform::Identity,Params);if(!IsValid(Puddles))return;
         USceneComponent* Root=NewObject<USceneComponent>(Puddles,TEXT("PuddlesRoot"));Puddles->SetRootComponent(Root);Root->RegisterComponent();
@@ -2239,8 +2250,7 @@ void UOKHScenePanel::TickPuddles(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickPuddl
             PuddleShown.Add(Shown);Quad->SetMaterial(0,Shown);Quad->SetCastShadow(false);Quad->SetCollisionEnabled(ECollisionEnabled::NoCollision);}
         PuddlesMade=Count;PuddlesSize=Size;PuddleFloorWidth=Size*4.4f+40.f; // reaches the farthest puddle's far edge (1.6 + .53 sizes out)
         // Screen space reflections, for as long as they lie there.
-        if(IConsoleVariable* Method=IConsoleManager::Get().FindConsoleVariable(TEXT("r.ReflectionMethod"));Method&&PreviousReflectionMethod<0){PreviousReflectionMethod=Method->GetInt();if(PreviousReflectionMethod!=2)Method->Set(2,ECVF_SetByConsole);}
-        if(IConsoleVariable* Ssr=IConsoleManager::Get().FindConsoleVariable(TEXT("r.SSR.Quality"));Ssr&&PreviousSsrQuality<0){PreviousSsrQuality=Ssr->GetInt();if(PreviousSsrQuality<2)Ssr->Set(3,ECVF_SetByConsole);}
+        UseSsr(true);
         UE_LOG(LogTemp,Display,TEXT("H scene: %d puddles down, %.0f cm (reflections: method %d, ssr %d)"),Count,Size,PreviousReflectionMethod,PreviousSsrQuality);}
     // How much they reflect: 0 wet floor with water's own faint glint, 1 a mirror (metallic, reflectance .95) over the floor's
     // glow; the floor's photo darker the more it reflects, so the floor does not wash the reflection out.
@@ -2256,13 +2266,50 @@ void UOKHScenePanel::TickPuddles(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickPuddl
     if(PuddleFloorTakenAt<0.||Now-PuddleFloorTakenAt>2.||FVector::DistSquared(Puddles->GetActorLocation(),PuddleFloorAt)>4.){
         AActor* const MirrorActors[2]={Mirrors[0].Actor.Get(),Mirrors[1].Actor.Get()};
         OKTakePuddleFloor(GetWorld(),Puddles,Girl,Gallery->PartnerActor.Get(),MirrorActors,PuddleFloorCapture,PuddleFloorTarget,PuddleFloorWidth,PuddleShown);
-        PuddleFloorTakenAt=Now;PuddleFloorAt=Puddles->GetActorLocation();}
+        PuddleFloorTakenAt=Now;PuddleFloorAt=Puddles->GetActorLocation();
+        // Her fluids on the floor glow with the same photo (DressStain).
+        StainShown.RemoveAll([](const TWeakObjectPtr<UMaterialInstanceDynamic>& M){return !M.IsValid();});
+        for(const auto& M:StainShown)DressStainFloor(M.Get());}
+}
+// Her fluids' stains on the floor (AOKPaintSprayer::Splash), the puddles' water (user 2026-11-12: every water stain on the
+// floor with screen space reflections): a blob outline of its own, her fluid's whitish colour lit as it lies, nearly smooth
+// so the reflections show in it, and while puddles lie there the floor's photo under it as theirs.
+void UOKHScenePanel::DressStain(UMaterialInstanceDynamic* M){
+    if(!M)return;
+    while(StainMasks.Num()<4)StainMasks.Add(OKPuddleMask(100+StainMasks.Num()));
+    if(UTexture2D* Mask=StainMasks[FMath::RandRange(0,StainMasks.Num()-1)])M->SetTextureParameterValue(TEXT("PuddleMask"),Mask);
+    // Half metal: a milky body that still mirrors what stands by it (a plain dielectric showed only the light's glint, 11-13).
+    M->SetVectorParameterValue(TEXT("PuddleColor"),FLinearColor(.92f,.92f,.88f));M->SetScalarParameterValue(TEXT("PuddleMetallic"),.6f);
+    M->SetScalarParameterValue(TEXT("PuddleSpecular"),1.f);M->SetScalarParameterValue(TEXT("PuddleRoughness"),.03f);M->SetScalarParameterValue(TEXT("PuddleDarken"),.6f);
+    DressStainFloor(M);StainShown.Add(M);UseSsr(true);
+}
+// A sprayer's floor stains drawn as the puddles' water from now on: her fluids', and the player's water gun's while the
+// scene is on (put back to its paint drops when the scene ends, NativeDestruct).
+void UOKHScenePanel::DressStainsOf(AOKPaintSprayer* Sprayer){
+    UMaterialInterface* Water=IsValid(Sprayer)&&!Sprayer->FloorStainMaterial?OKPuddleParent():nullptr;if(!Water)return;
+    Sprayer->FloorStainMaterial=Water;Sprayer->OnFloorStain=[Weak=TWeakObjectPtr<UOKHScenePanel>(this)](UMaterialInstanceDynamic* M){if(UOKHScenePanel* P=Weak.Get())P->DressStain(M);};
+}
+void UOKHScenePanel::DressStainFloor(UMaterialInstanceDynamic* M) const{
+    if(!M||!PuddleFloorTarget||!PuddleFloorCapture||PuddleFloorWidth<=0.f)return;const FVector At=PuddleFloorCapture->GetComponentLocation();
+    M->SetTextureParameterValue(TEXT("PuddleFloor"),PuddleFloorTarget);M->SetVectorParameterValue(TEXT("PuddleFloorRect"),FLinearColor(float(At.X),float(At.Y),1.f/PuddleFloorWidth,0.f));
 }
 void UOKHScenePanel::RemovePuddles(){
     if(IsValid(Puddles)){Puddles->Destroy();UE_LOG(LogTemp,Display,TEXT("H scene: puddles up"));}
     Puddles=nullptr;PuddleShown.Reset();PuddleShineShown=-1.f;PuddleFloorCapture=nullptr;PuddleFloorTarget=nullptr;PuddleFloorTakenAt=-1.;PuddlesMade=0;PuddlesSize=0.f;
-    if(PreviousReflectionMethod>=0){if(IConsoleVariable* Method=IConsoleManager::Get().FindConsoleVariable(TEXT("r.ReflectionMethod")))Method->Set(PreviousReflectionMethod,ECVF_SetByConsole);PreviousReflectionMethod=-1;}
-    if(PreviousSsrQuality>=0){if(IConsoleVariable* Ssr=IConsoleManager::Get().FindConsoleVariable(TEXT("r.SSR.Quality")))Ssr->Set(PreviousSsrQuality,ECVF_SetByConsole);PreviousSsrQuality=-1;}
+    // Her stains on the floor keep the reflections on until the last is gone.
+    StainShown.RemoveAll([](const TWeakObjectPtr<UMaterialInstanceDynamic>& M){return !M.IsValid();});
+    if(StainShown.IsEmpty())UseSsr(false);
+}
+// Screen space reflections, for as long as puddles or her stains lie on the floor: r.ReflectionMethod 2 (SSR, the
+// project's default) and r.SSR.Quality at least 2 (the university city turns it off); put back as they were after.
+void UOKHScenePanel::UseSsr(bool bOn){
+    IConsoleVariable* Method=IConsoleManager::Get().FindConsoleVariable(TEXT("r.ReflectionMethod"));IConsoleVariable* Ssr=IConsoleManager::Get().FindConsoleVariable(TEXT("r.SSR.Quality"));
+    if(bOn){
+        if(Method&&PreviousReflectionMethod<0){PreviousReflectionMethod=Method->GetInt();if(PreviousReflectionMethod!=2)Method->Set(2,ECVF_SetByConsole);}
+        if(Ssr&&PreviousSsrQuality<0){PreviousSsrQuality=Ssr->GetInt();if(PreviousSsrQuality<2)Ssr->Set(3,ECVF_SetByConsole);}
+        return;}
+    if(PreviousReflectionMethod>=0){if(Method)Method->Set(PreviousReflectionMethod,ECVF_SetByConsole);PreviousReflectionMethod=-1;}
+    if(PreviousSsrQuality>=0){if(Ssr)Ssr->Set(PreviousSsrQuality,ECVF_SetByConsole);PreviousSsrQuality=-1;}
 }
 void UOKHScenePanel::SetPuddles(const TSharedPtr<FJsonObject>& Settings){
     if(!Settings.IsValid())return;bool B;double V;
@@ -2687,10 +2734,12 @@ void UOKHScenePanel::Spurt(int32 Pulses){SpurtLeft=FMath::Max(SpurtLeft,Pulses);
     UE_LOG(LogTemp,Display,TEXT("H scene: he spurts %d times (water gun)"),Pulses);}
 void UOKHScenePanel::TickFluids(float Delta){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickFluids);
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;auto* Him=Gallery?Gallery->PartnerActor.Get():nullptr;if(!IsValid(Girl)||!GetWorld())return;
+    if(auto* PC=Cast<AOpenKoikatsuPlayerController>(GetOwningPlayer()))DressStainsOf(PC->PaintSprayer); // the player's water gun too
     TArray<float> F;{TArray<FString> P;CVarHFluid.GetValueOnGameThread().ParseIntoArray(P,TEXT(","));for(const FString& S:P)F.Add(FCString::Atof(*S));}
     while(F.Num()<8)F.Add(1.f);
     const double Now=FPlatformTime::Seconds();const FString Base=HBase(Current());
     if(!IsValid(Fluid)){Fluid=GetWorld()->SpawnActor<AOKPaintSprayer>();if(!IsValid(Fluid))return;Fluid->SetControlsVisible(false);Fluid->bShowGun=false;Fluid->bSkipTongue=!CVarHFluidTongue.GetValueOnGameThread();Fluid->SetActorTickEnabled(true);
+        DressStainsOf(Fluid);
         UE_LOG(LogTemp,Display,TEXT("H scene: water gun ready for her fluids"));}
     // Out of her: his semen she held runs out of where he came, starting as he is out of her.
     const bool In=Mode==2&&(Base.StartsWith(TEXT("Insert"))||HIsLoop(Base)||Base==TEXT("OLoop")||Base.Contains(TEXT("_IN"))||Base.EndsWith(TEXT("_Start"))||Base.EndsWith(TEXT("_Loop"))||Base==TEXT("IN_A"));
@@ -3507,8 +3556,9 @@ void UOKHScenePanel::ReadPairSessions(){
         // His root moved on the pad (SetRootPad): RootReach cm toward that side at its edge, her entrance still the pivot,
         // so his penis points from there through her entrance. Up the pad is her back, right her right (the converted
         // skeleton is mirrored: her _L thigh is on her right).
-        // The pad eased, its radius a second: a jump of the root swung him through her before the dodge caught up.
-        RootPadNow=FMath::Vector2DInterpConstantTo(RootPadNow,RootPad,FApp::GetDeltaTime(),1.f);
+        // The pad eased so a jump of the root does not swing him through her before the dodge catches up, but eight
+        // radii a second: at one he trailed the dragged pad by up to a second (user, 2026-11-12: change it at once).
+        RootPadNow=FMath::Vector2DInterpConstantTo(RootPadNow,RootPad,FApp::GetDeltaTime(),8.f);
         if(!RootPadNow.IsNearlyZero()||!RootDodge.IsNearlyZero()){FVector Back=-Front;Back-=Want*FVector::DotProduct(Back,Want);
             FVector Right=bThighs?ThighL-ThighR:FVector::CrossProduct(Want,Back);Right-=Want*FVector::DotProduct(Right,Want);
             const float Reach=bGlans?float(GlansFromRoot.Size()):15.f;
@@ -3697,7 +3747,9 @@ void UOKHScenePanel::NativeDestruct(){FastPaths(false);DropSecond();RestoreEyeLo
     if(auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl))EndDeepFace(Girl);
     if(bAhegaoShown){bAhegaoShown=false;TickAhegao();if(auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl)){Girl->SetEyeGaze(0.f,0.f,0.f);Girl->SetMouthPattern(0);}} // her eyes, mouth and hands back from ahegao
     TickCameraLight(true);TickSkinLit(true);TickClothBias(true);
-    SetGrayRoom(false);RemoveMirror();RemovePuddles();Drips.Reset();Tears.Reset();RestoreAlign();Super::NativeDestruct();}
+    SetGrayRoom(false);RemoveMirror();StainShown.Reset();
+    if(auto* PC=Cast<AOpenKoikatsuPlayerController>(GetOwningPlayer());PC&&IsValid(PC->PaintSprayer)&&PC->PaintSprayer->FloorStainMaterial){PC->PaintSprayer->FloorStainMaterial=nullptr;PC->PaintSprayer->OnFloorStain=nullptr;}
+    RemovePuddles();Drips.Reset();Tears.Reset();RestoreAlign();Super::NativeDestruct();}
 // Off for now (user, 2026-11-02: the box, table and chair hid the bugs being looked at): ok.HScene.Props 1 sets them again.
 static TAutoConsoleVariable<int32> CVarHProps(TEXT("ok.HScene.Props"),0,TEXT("1: a box, table or chair under her for the poses that lean on one; 0: none"));
 void UOKHScenePanel::PlaceProps(int32 Kind){
