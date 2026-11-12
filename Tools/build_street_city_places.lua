@@ -533,7 +533,11 @@ for _, g in ipairs(G) do
   for _, name in ipairs(wants[g.id] or {}) do
     local it = newitems[g.id .. ':' .. name]
     if it and OVERRIDE[g.id .. ':' .. name] then for k = #an, 1, -1 do if an[k].name == name then table.remove(an, k) end end; have[name] = nil end
-    if not have[name] and it then an[#an + 1] = A(name, it.pos, it.yaw, it.actor); have[name] = true; if g.id == 'shrine' and name == 'torii' then g.door = it.pos; g.rooms = { aroundbox(it.pos, 1500) } end end
+    if not have[name] and it then an[#an + 1] = A(name, it.pos, it.yaw, it.actor); have[name] = true; if g.id == 'shrine' and name == 'torii' then g.door = it.pos
+      -- the torii to the prayer hall, the charm, ema, omikuji and temizu stands (x +0..+12 m, y -6..+6 m). It was 15 m round
+      -- the torii: the whole festival square, the fountain and its benches and the park's door were the shrine's, and walking
+      -- by the fountain went park, shrine, festival, shrine (c-conquest 11-12)
+      g.rooms = { { min = P(it.pos[1] - 100, it.pos[2] - 600, it.pos[3] - 100), max = P(it.pos[1] + 1250, it.pos[2] + 600, it.pos[3] + 500) } } end end
   end
   g.anchors = an
   local miss = {}; for _, name in ipairs(wants[g.id] or {}) do if not have[name] then miss[#miss + 1] = name end end
