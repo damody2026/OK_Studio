@@ -1127,6 +1127,8 @@ with_name_suffix = "(with {with_name})"
 you_refused_open_paren = ", you refused ("
 
 [ui.live_talk]
+headphones = "Wearing headphones (the microphone stays open while she speaks)"
+mic_off_status = "Microphone not listening yet"
 asr_cannot_list_mics = "Speech recognition server isn't responding; couldn't list microphones."
 asr_no_response_open = "Speech recognition server isn't responding (ok-asr, "
 asr_retrying_open_paren = "Live talk: speech recognition isn't ready yet, retrying automatically…("

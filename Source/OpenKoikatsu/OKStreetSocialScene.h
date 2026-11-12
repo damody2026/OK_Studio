@@ -474,6 +474,7 @@ private:
  void FreeTalkMicToggle();
  void FreeTalkMicRefresh();
  void FreeTalkMicSelect(const FString& Name);
+ void FreeTalkSetHeadphones(bool bOn);TSharedRef<class SWidget> MicPanel();void RefreshPrivateMic(); // OKStreetSocialLiveTalk.inl
  void SpawnStreetPlaces();
  void TickPlaceTour(double Now);
  void RideElevator(int32 PlaceIndex,int32 Floor);

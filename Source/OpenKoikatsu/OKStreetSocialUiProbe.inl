@@ -91,6 +91,7 @@ bool AOKStreetSocialScene::ProbePress(const FString& Label,FString& Why,int32 Nt
  if(!S.Overlay.IsValid()){Why=TEXT("no overlay");return false;}
  TArray<TPair<FString,TSharedPtr<SWidget>>> Buttons;OKProbeCollect(S.Overlay.ToSharedRef(),nullptr,Buttons);
  if(S.PrivateLeave.IsValid())OKProbeCollect(S.PrivateLeave.ToSharedRef(),nullptr,Buttons); // the one-on-one scene's leave button
+ if(S.PrivateMic.IsValid())OKProbeCollect(S.PrivateMic.ToSharedRef(),nullptr,Buttons); // and its microphone block
  // Nth: which of several buttons with the same label (the menu has one "我要" per dish), counted from the top of the list.
  const TPair<FString,TSharedPtr<SWidget>>* Hit=nullptr;
  {int32 Seen=0;for(const auto& B:Buttons)if(B.Key==Label&&B.Value->IsEnabled()&&(!B.Value->GetCachedGeometry().GetLocalSize().IsNearlyZero()||OKProbeScrolledOut(B.Value))&&Seen++==Nth){Hit=&B;break;}}

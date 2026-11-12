@@ -1127,6 +1127,8 @@ with_name_suffix = "（和 {with_name}）"
 you_refused_open_paren = "，你拒絕了（"
 
 [ui.live_talk]
+headphones = "戴耳機（她說話時麥克風照樣收音）"
+mic_off_status = "麥克風尚未收音"
 asr_cannot_list_mics = "語音辨識伺服器沒有回應，無法列出麥克風。"
 asr_no_response_open = "語音辨識伺服器沒有回應（ok-asr，"
 asr_retrying_open_paren = "即時對話：語音辨識還沒準備好，自動重試中…（"

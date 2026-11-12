@@ -1127,6 +1127,8 @@ with_name_suffix = "（和 {with_name}）"
 you_refused_open_paren = "，你拒绝了（"
 
 [ui.live_talk]
+headphones = "戴耳机（她说话时麦克风照样收音）"
+mic_off_status = "麦克风尚未收音"
 asr_cannot_list_mics = "语音识别服务器没有响应，无法列出麦克风。"
 asr_no_response_open = "语音识别服务器没有响应（ok-asr，"
 asr_retrying_open_paren = "即时对话：语音识别还没准备好，自动重试中…（"

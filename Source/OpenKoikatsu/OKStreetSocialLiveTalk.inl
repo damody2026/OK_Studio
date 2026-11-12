@@ -33,6 +33,20 @@ void AOKStreetSocialScene::FreeTalkClose(){
  RefreshUI();
 }
 
+// What ok-asr is told while she (or his own voice, or her song) is heard: off while he speaks, only loud barge-in
+// while she does. Wearing headphones (the setting, saved as asr.headphones) none of it reaches the microphone: it
+// stays fully open (user, 2026-11-12: in the one-on-one her breath kept it turned down and nothing he said came through).
+static const TCHAR* OKStreetAsrMutePayload(const FOKStreetSceneState& S){
+ if(S.Headphones)return TEXT("{\"mute\":false,\"duck\":false}");
+ return S.FreeTalkLiveHisMute?TEXT("{\"mute\":true,\"duck\":false}"):S.FreeTalkLiveMuted?TEXT("{\"mute\":false,\"duck\":true}"):TEXT("{\"mute\":false,\"duck\":false}");
+}
+// The player's settings file the launcher hands ok-asr (player.json), read or updated in its "asr" object.
+static TSharedPtr<FJsonObject> OKStreetAsrSettingsLoad(TSharedPtr<FJsonObject>& Root){
+ const FString Path=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_ASR_SETTINGS"));FString Text;
+ if(Path.IsEmpty()||!FFileHelper::LoadFileToString(Text,*Path)||!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text),Root)||!Root.IsValid())Root=MakeShared<FJsonObject>();
+ const TSharedPtr<FJsonObject>* Have=nullptr;return Root->TryGetObjectField(TEXT("asr"),Have)&&Have->IsValid()?*Have:MakeShared<FJsonObject>();
+}
+
 static void OKStreetFreeTalkAsrPost(const FString& Path,const FString& Body,TFunction<void(bool,const FString&)> Done){
  auto Request=FHttpModule::Get().CreateRequest();
  Request->SetURL(OKStreetFreeTalkAsrEndpoint()/Path);Request->SetVerb(TEXT("POST"));
@@ -96,6 +110,7 @@ void AOKStreetSocialScene::TickFreeTalkLive(double Now){
  }
  // A topic he chose while her answer was on its way (Topic): asked once she has said it.
  if(!S.PendingTopic.IsEmpty()&&!S.FreeTalkBusy&&!FreeTalkHerVoiceBusy()){const FString Category=MoveTemp(S.PendingTopic);S.PendingTopic.Reset();Topic(Category);}
+ if(!S.HeadphonesLoaded){S.HeadphonesLoaded=true;TSharedPtr<FJsonObject> Root;OKStreetAsrSettingsLoad(Root)->TryGetBoolField(TEXT("headphones"),S.Headphones);}
  if(!S.FreeTalkLive&&!S.FreeTalkMicOpen)return;
  if(S.FreeTalkLive){
  // Her actual audio, not the dialogue box: a scripted line whose completion is lost must not keep the mic muted.
@@ -121,7 +136,7 @@ void AOKStreetSocialScene::TickFreeTalkLive(double Now){
  if(Talking!=S.FreeTalkLiveMuted||HisVoice!=S.FreeTalkLiveHisMute){
   S.FreeTalkLiveMuted=Talking;S.FreeTalkLiveHisMute=HisVoice;
   UE_LOG(LogTemp,Display,TEXT("Free talk live: mic %s (audio=%d pending=%d/%d replay=%d)"),HisVoice?(Singing?TEXT("off while she sings"):TEXT("off while he speaks")):Talking?TEXT("ducked"):TEXT("open"),OKCrowdRuntimeSpeechActive(this,Partner)?1:0,S.FreeTalkSpeechPlayed,S.FreeTalkSpeechLines.Num(),S.FreeTalkReplay.IsEmpty()&&S.FreeTalkReplayParts.IsEmpty()?0:1);
-  OKStreetFreeTalkAsrPost(TEXT("listen/mute"),HisVoice?TEXT("{\"mute\":true,\"duck\":false}"):Talking?TEXT("{\"mute\":false,\"duck\":true}"):TEXT("{\"mute\":false,\"duck\":false}"),nullptr);
+  OKStreetFreeTalkAsrPost(TEXT("listen/mute"),OKStreetAsrMutePayload(S),nullptr);
  }
  // Silence: 5-10 s after she finishes she speaks up herself; every 30 s he stays silent costs 1 favor, and
  // after the third she says goodbye and leaves. Anything he says resets it.
@@ -161,8 +176,11 @@ void AOKStreetSocialScene::TickFreeTalkLive(double Now){
  }
  // Not open (failed start, server restarted, device lost): keep trying.
  if(S.FreeTalkLive&&!S.FreeTalkLiveReady&&!S.FreeTalkLiveStarting&&FPlatformTime::Seconds()>=S.FreeTalkLiveRetryAt)FreeTalkLiveConnect();
- if(S.FreeTalkLivePolling||Now<S.FreeTalkLiveNextPoll||(S.FreeTalkLive&&!S.FreeTalkLiveReady&&!S.FreeTalkMicOpen))return;
- S.FreeTalkLivePolling=true;S.FreeTalkLiveNextPoll=Now+.25;
+ // On the wall clock: the scene clock stands still in the one-on-one room and while he pauses, and polled on it
+ // nothing he said there was ever fetched (ok-asr heard every line, 2026-11-12).
+ const double PollWall=FPlatformTime::Seconds();
+ if(S.FreeTalkLivePolling||PollWall<S.FreeTalkLiveNextPoll||(S.FreeTalkLive&&!S.FreeTalkLiveReady&&!S.FreeTalkMicOpen))return;
+ S.FreeTalkLivePolling=true;S.FreeTalkLiveNextPoll=PollWall+.25;
  auto Request=FHttpModule::Get().CreateRequest();
  Request->SetURL(OKStreetFreeTalkAsrEndpoint()/FString::Printf(TEXT("listen/poll?after=%lld"),S.FreeTalkLiveAfter));Request->SetVerb(TEXT("GET"));Request->SetTimeout(3.f);
  TWeakPtr<FOKStreetSceneState> WeakState=State;
@@ -188,10 +206,11 @@ void AOKStreetSocialScene::TickFreeTalkLive(double Now){
   bool ServerMuted=false,ServerDucked=false;Root->TryGetBoolField(TEXT("muted"),ServerMuted);Root->TryGetBoolField(TEXT("ducked"),ServerDucked);
   // Every two seconds at most: with a second game on the same ok-asr port the two overwrite each other for as long as both
   // talk, and this went into the log four times a second (139 lines in six minutes).
-  if(L->FreeTalkLive&&L->FreeTalkLiveReady&&FPlatformTime::Seconds()>=L->FreeTalkLiveResyncAt&&(ServerMuted!=L->FreeTalkLiveHisMute||(!ServerMuted&&ServerDucked!=L->FreeTalkLiveMuted))){
+  const bool WantMuted=L->FreeTalkLiveHisMute&&!L->Headphones,WantDucked=L->FreeTalkLiveMuted&&!L->Headphones;
+  if(L->FreeTalkLive&&L->FreeTalkLiveReady&&FPlatformTime::Seconds()>=L->FreeTalkLiveResyncAt&&(ServerMuted!=WantMuted||(!ServerMuted&&ServerDucked!=WantDucked))){
    L->FreeTalkLiveResyncAt=FPlatformTime::Seconds()+2.0;
    UE_LOG(LogTemp,Display,TEXT("Free talk live: server mute %d duck %d differs from game %d, resyncing"),ServerMuted?1:0,ServerDucked?1:0,L->FreeTalkLiveMuted?1:0);
-   OKStreetFreeTalkAsrPost(TEXT("listen/mute"),L->FreeTalkLiveHisMute?TEXT("{\"mute\":true,\"duck\":false}"):L->FreeTalkLiveMuted?TEXT("{\"mute\":false,\"duck\":true}"):TEXT("{\"mute\":false,\"duck\":false}"),nullptr);
+   OKStreetFreeTalkAsrPost(TEXT("listen/mute"),OKStreetAsrMutePayload(*L),nullptr);
   }
   double Level=0;Root->TryGetNumberField(TEXT("level"),Level);L->FreeTalkMicLevel=(float)Level;
   // The microphone closed under us (server restarted, device switched): reopen it instead of giving up.
@@ -513,7 +532,7 @@ void AOKStreetSocialScene::FreeTalkMicToggle(){
   S.FreeTalkLiveBaseline=true;S.FreeTalkLiveNextPoll=0;
   if(!S.FreeTalkLive){OKStreetFreeTalkAsrPost(TEXT("listen/start"),TEXT("{}"),nullptr);OKStreetFreeTalkAsrPost(TEXT("listen/mute"),TEXT("{\"mute\":false}"),nullptr);}
  }else if(!S.FreeTalkLive)OKStreetFreeTalkAsrPost(TEXT("listen/stop"),TEXT("{}"),nullptr);
- RefreshUI();
+ RefreshUI();RefreshPrivateMic();
 }
 
 void AOKStreetSocialScene::FreeTalkMicRefresh(){
@@ -529,7 +548,7 @@ void AOKStreetSocialScene::FreeTalkMicRefresh(){
    L->FreeTalkMics.Reset();for(const auto& V:*Devices){FString Name;if(V.IsValid()&&V->TryGetString(Name))L->FreeTalkMics.Add(Name);}
    Root->TryGetStringField(TEXT("current"),L->FreeTalkMic);
   }
-  if(Weak.IsValid()&&Weak->State==L)Weak->RefreshUI();
+  if(Weak.IsValid()&&Weak->State==L){Weak->RefreshUI();Weak->RefreshPrivateMic();}
  });
  Request->ProcessRequest();
 }
@@ -555,7 +574,46 @@ void AOKStreetSocialScene::FreeTalkMicSelect(const FString& Name){
    FString Out;FJsonSerializer::Serialize(Root.ToSharedRef(),TJsonWriterFactory<>::Create(&Out));
    if(!FFileHelper::SaveStringToFile(Out,*Path,FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))L->FreeTalkNotice+=OKT(TEXT("ui.live_talk.cannot_save_settings"));
   }
-  if(Weak.IsValid()&&Weak->State==L)Weak->RefreshUI();
+  if(Weak.IsValid()&&Weak->State==L){Weak->RefreshUI();Weak->RefreshPrivateMic();}
  });
  RefreshUI();
+}
+
+// Headphones on or off: the microphone stops (or starts) being turned down while voices play; kept in player.json.
+void AOKStreetSocialScene::FreeTalkSetHeadphones(bool bOn){
+ auto& S=*State;S.Headphones=bOn;S.HeadphonesLoaded=true;
+ if(S.FreeTalkLive)OKStreetFreeTalkAsrPost(TEXT("listen/mute"),OKStreetAsrMutePayload(S),nullptr);
+ const FString Path=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_ASR_SETTINGS"));
+ if(!Path.IsEmpty()){TSharedPtr<FJsonObject> Root;const TSharedPtr<FJsonObject> Asr=OKStreetAsrSettingsLoad(Root);Asr->SetBoolField(TEXT("headphones"),bOn);Root->SetObjectField(TEXT("asr"),Asr);
+  FString Out;FJsonSerializer::Serialize(Root.ToSharedRef(),TJsonWriterFactory<>::Create(&Out));FFileHelper::SaveStringToFile(Out,*Path,FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);}
+ UE_LOG(LogTemp,Display,TEXT("Free talk live: headphones %s"),bOn?TEXT("on (microphone never turned down)"):TEXT("off"));
+ RefreshUI();RefreshPrivateMic();
+}
+
+// The microphone block: what it hears, the headphones setting, and the input to record from. The street's panel shows
+// it under free talk; in the one-on-one (whose panel replaces the street's) it stands on its own at the top left.
+TSharedRef<SWidget> AOKStreetSocialScene::MicPanel(){
+ auto& S=*State;const TWeakObjectPtr<AOKStreetSocialScene> Weak(this);
+ auto Box=SNew(SVerticalBox);
+ Box->AddSlot().AutoHeight().Padding(2)[SNew(STextBlock).AutoWrapText(true).WrapTextAt(330).ColorAndOpacity(FLinearColor(.55f,1.f,.7f))
+  .Text_Lambda([Weak](){if(!Weak.IsValid())return FText::GetEmpty();const FString Status=Weak->FreeTalkLiveStatus();return FText::FromString(Status.IsEmpty()?FString(OKT(TEXT("ui.live_talk.mic_off_status"))):Status);})];
+ Box->AddSlot().AutoHeight().Padding(2,4,2,2)[SNew(SProgressBar).Percent_Lambda([Weak](){if(!Weak.IsValid())return TOptional<float>(0.f);const float Level=Weak->State->FreeTalkMicLevel;return TOptional<float>(FMath::Clamp((20.f*FMath::LogX(10.f,FMath::Max(Level,1e-5f))+60.f)/60.f,0.f,1.f));})
+  .FillColorAndOpacity_Lambda([Weak](){return Weak.IsValid()&&Weak->State->FreeTalkLiveSpeaking?FSlateColor(FLinearColor(.3f,1.f,.45f)):FSlateColor(FLinearColor(.4f,.7f,1.f));})];
+ Box->AddSlot().AutoHeight().Padding(2,0,2,2)[SNew(STextBlock).ColorAndOpacity(FLinearColor::White).Text_Lambda([Weak](){if(!Weak.IsValid())return FText::GetEmpty();const auto& L=*Weak->State;
+  const float Db=20.f*FMath::LogX(10.f,FMath::Max(L.FreeTalkMicLevel,1e-5f));
+  return FText::FromString(OKMsg(TEXT("ui.scene.mic_volume_level"),{{TEXT("db"),Db},{TEXT("speaking_suffix"),L.FreeTalkLiveSpeaking?OKT(TEXT("ui.scene.speech_detected")):TEXT("")}}));})];
+ Box->AddSlot().AutoHeight().Padding(2)[SNew(SCheckBox).IsChecked_Lambda([Weak](){return Weak.IsValid()&&Weak->State->Headphones?ECheckBoxState::Checked:ECheckBoxState::Unchecked;})
+  .OnCheckStateChanged_Lambda([Weak](ECheckBoxState V){if(Weak.IsValid())Weak->FreeTalkSetHeadphones(V==ECheckBoxState::Checked);})
+  [SNew(STextBlock).ColorAndOpacity(FLinearColor::White).Text(FText::FromString(OKT(TEXT("ui.live_talk.headphones"))))]];
+ Box->AddSlot().AutoHeight().Padding(2)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(S.FreeTalkMicOpen?OKT(TEXT("ui.scene.collapse_mic_settings")):OKT(TEXT("ui.scene.mic_settings"))))
+  .OnClicked_Lambda([Weak](){if(Weak.IsValid())Weak->FreeTalkMicToggle();return FReply::Handled();})];
+ if(S.FreeTalkMicOpen){
+  for(const FString& Mic:S.FreeTalkMics)Box->AddSlot().AutoHeight().Padding(8,1,2,1)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString((Mic==S.FreeTalkMic?FString(TEXT("▶ ")):FString(OKT(TEXT("ui.scene.ideographic_space"))))+Mic))
+   .OnClicked_Lambda([Weak,Mic](){if(Weak.IsValid())Weak->FreeTalkMicSelect(Mic);return FReply::Handled();})];
+  if(S.FreeTalkMics.IsEmpty())Box->AddSlot().AutoHeight().Padding(8,2)[SNew(STextBlock).ColorAndOpacity(FLinearColor::White).Text(FText::FromString(OKT(TEXT("ui.scene.reading_mic_list"))))];
+ }
+ return Box;
+}
+void AOKStreetSocialScene::RefreshPrivateMic(){
+ if(State&&State->PrivateMicHolder.IsValid())State->PrivateMicHolder->SetContent(MicPanel());
 }

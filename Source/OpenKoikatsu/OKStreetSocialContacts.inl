@@ -499,7 +499,10 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character,const FString& TryCard,i
     +SHorizontalBox::Slot().AutoWidth()[SNew(SButton).ButtonStyle(OKStreetGlassButton()).ContentPadding(FMargin(18,8))
     .Text(FText::FromString(OKT(TryOn?TEXT("ui.clothes.try_done"):TEXT("ui.contacts.leave_one_on_one"))))
     .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->FinishPrivate();return FReply::Handled();})]];
-  GEngine->GameViewport->AddViewportWidgetContent(S.PrivateLeave.ToSharedRef(),20);}
+  GEngine->GameViewport->AddViewportWidgetContent(S.PrivateLeave.ToSharedRef(),20);
+  // The microphone too (user, 2026-11-12): the street's panel with it is put away here. Top left, over the scene.
+  if(!TryOn){S.PrivateMic=SNew(SBox).HAlign(HAlign_Left).VAlign(VAlign_Top).Padding(FMargin(16,16,0,0))[SNew(SBox).WidthOverride(340)[SNew(SBorder).BorderImage(OKStreetGlassPanel()).Padding(10)[SAssignNew(S.PrivateMicHolder,SBox)]]];
+   RefreshPrivateMic();GEngine->GameViewport->AddViewportWidgetContent(S.PrivateMic.ToSharedRef(),20);}}
 }
 // The original's result after an H scene (HSceneResult): her level then and now, each place's development before and
 // after (what grew in green), and this time's firsts; on the street until he closes it or another one-on-one ends.
@@ -571,6 +574,7 @@ void AOKStreetSocialScene::FinishPrivate(){
  if(auto* PC=GetWorld()->GetFirstPlayerController())PC->SetViewTarget(S.Camera.Get());
  if(S.Overlay)S.Overlay->SetVisibility(EVisibility::Visible);
  if(S.PrivateLeave.IsValid()){if(GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(S.PrivateLeave.ToSharedRef());S.PrivateLeave.Reset();}
+ if(S.PrivateMic.IsValid()){if(GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(S.PrivateMic.ToSharedRef());S.PrivateMic.Reset();S.PrivateMicHolder.Reset();}
  // Her memory of the session: when it started (the memory's own time), how long, and every thing they did, in order.
  if(S.HighPrivateResult.IsValid()&&!S.PrivateTryOn&&S.Manifest.Characters.IsValidIndex(Girl)){
   const TArray<TSharedPtr<FJsonValue>>* Acts=nullptr;TArray<FString> Done;

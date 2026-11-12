@@ -294,6 +294,10 @@ struct FOKStreetSceneState {
  bool UserPaused=false;double UserPausedAt=0;
  // The line going out was heard by the recogniser (he said it aloud himself): his TTS voice does not say it again.
  bool FreeTalkFromAsr=false;
+ // Wearing headphones (asr.headphones in player.json): the microphone is never turned down while voices play.
+ bool Headphones=false,HeadphonesLoaded=false;
+ // The microphone block standing on its own over the one-on-one scene (MicPanel), and its holder.
+ TSharedPtr<SWidget> PrivateMic;TSharedPtr<SBox> PrivateMicHolder;
  double TalkOutOfViewSince=0; // since when the girl he talks with has been out of the picture (0: in it)
  TWeakObjectPtr<ADirectionalLight> Sun;
  // The sky dome the sun lights; SkyGainOverride (R >= 0, from the control channel's /clock "sky_gain") replaces
@@ -3031,6 +3035,7 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
    FreeTalk->AddSlot().AutoHeight().Padding(8,0,2,2)[SNew(STextBlock).AutoWrapText(true).WrapTextAt(350).Text_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(!Weak.IsValid())return FText::GetEmpty();const auto& L=*Weak->State;
     const float Db=20.f*FMath::LogX(10.f,FMath::Max(L.FreeTalkMicLevel,1e-5f));
     return FText::FromString(OKMsg(TEXT("ui.scene.mic_volume_level"), {{TEXT("db"), Db}, {TEXT("speaking_suffix"), L.FreeTalkLiveSpeaking?OKT(TEXT("ui.scene.speech_detected")):TEXT("")}}));})];
+FreeTalk->AddSlot().AutoHeight().Padding(8,2,2,2)[SNew(SCheckBox).IsChecked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){return Weak.IsValid()&&Weak->State->Headphones?ECheckBoxState::Checked:ECheckBoxState::Unchecked;}).OnCheckStateChanged_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](ECheckBoxState V){if(Weak.IsValid())Weak->FreeTalkSetHeadphones(V==ECheckBoxState::Checked);})[SNew(STextBlock).Text(FText::FromString(OKT(TEXT("ui.live_talk.headphones"))))]]; // OKStreetSocialLiveTalk.inl
     // Microphone settings: pick the input ok-asr records from and watch its level (speech detection shows in green).
     FreeTalk->AddSlot().AutoHeight().Padding(2)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(S.FreeTalkMicOpen?OKT(TEXT("ui.scene.collapse_mic_settings")):OKT(TEXT("ui.scene.mic_settings")))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->FreeTalkMicToggle();return FReply::Handled();})];
     if(S.FreeTalkMicOpen){
