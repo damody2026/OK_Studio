@@ -73,7 +73,7 @@ local function main()
       { stdout_file = path.join(logs, "prepare.log"), merge = true })
     if not prep.ok then error("host preparation failed: " .. win(path.join(logs, "prepare.log")), 0) end
     local build = proc.run({ win(path.join(engine, "Engine/Build/BatchFiles/Build.bat")), "OpenKoikatsu", "Win64", "Development",
-      "-Project=" .. win(path.join(host_dir, "OpenKoikatsu.uproject")), "-WaitMutex" },
+      "-Project=" .. win(path.join(host_dir, "OpenKoikatsu.uproject")), "-WaitMutex", "-MaxParallelActions=8" },
       { stdout_file = path.join(logs, "build.log"), merge = true })
     if not build.ok then error("game build failed: " .. win(path.join(logs, "build.log")), 0) end
   end
