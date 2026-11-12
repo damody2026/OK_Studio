@@ -49,6 +49,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Koikatsu|Catalog")
 	static UKKAnimationCatalog* LoadDefaultCatalog();
+	// LoadDefaultCatalog's asset read in ahead, asynchronously, and kept loaded (once): read where it was first asked
+	// for, it was 110 ms of the frame a one-on-one opened (2026-11-12).
+	static void PreloadDefaultCatalog();
 	UFUNCTION(BlueprintPure, Category="Koikatsu|Catalog")
 	int32 GetRowCount(FName Table) const;
 	UFUNCTION(BlueprintPure, Category="Koikatsu|Catalog")

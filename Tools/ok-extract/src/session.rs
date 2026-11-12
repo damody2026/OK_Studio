@@ -2811,6 +2811,16 @@ impl OkSession {
 
     /// Animator sampling and DynamicBone's Time.deltaTime are separate clocks.
     /// Keep particle history across loops, repeated samples and timeline seeks.
+    /// The shaped baselines `reset_animator_pose` makes when they are missing (portable packs saved without them), made
+    /// now: off the game thread while the session is opened, rather than in the frame a one-on-one comes up (168 ms there,
+    /// 2026-11-12).
+    pub(crate) fn prepare_shaped_baselines(&mut self) {
+        if self.shaped_baselines_missing() {
+            let body=self.shape_body.clone();let face=self.shape_face.clone();
+            self.apply_shape(&body,&face);
+        }
+    }
+
     fn shaped_baselines_missing(&self)->bool {
         (self.body_rest.is_some()&&self.body_shaped.is_none()) ||
         (self.head_rest.is_some()&&self.head_shaped.is_none())
@@ -2890,8 +2900,18 @@ impl OkSession {
     }
 
     pub(crate) fn refresh_static_interaction(&mut self,dt:f32) {
+        // As finish_animator_pose, timed: the one-on-one's entry spent 160 ms here (2026-11-12).
+        let t0=std::time::Instant::now();
         self.reset_animator_pose();
-        self.finish_animator_pose(dt,false);
+        let t1=std::time::Instant::now();
+        self.finish_animator_transforms(false);
+        let t2=std::time::Instant::now();
+        self.apply_body_interaction(dt);
+        let t3=std::time::Instant::now();
+        self.finish_paired_dynamics(dt);
+        let ms=|a:std::time::Instant,b:std::time::Instant|(b-a).as_secs_f64()*1000.;
+        let total=ms(t0,std::time::Instant::now());
+        if total>20.{crate::ffi::ffi_log(0,&format!("static interaction frame {total:.0} ms: reset {:.0}, transforms {:.0}, body interaction {:.0}, dynamics {:.0}",ms(t0,t1),ms(t1,t2),ms(t2,t3),ms(t3,std::time::Instant::now())));}
     }
 
     fn reset_animator_pose(&mut self) {

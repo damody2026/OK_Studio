@@ -388,57 +388,58 @@ void UOKInteractionWidget::OnStopSpeech(){++SpeechGeneration;if(Gallery)Gallery-
 
 void UOKCharacterController::ActivateInteraction() {
     if(bAppearanceBusy||bPropertyBusy)return;
-    if(MaterializeAppearance([](UOKCharacterController* G){G->ActivateInteraction();}))return;
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_Materialize);if(MaterializeAppearance([](UOKCharacterController* G){G->ActivateInteraction();}))return;}
     if(InteractionWidget||bLoadInFlight)return;
     if(Selected.Sex!=1||!Entries.IsValidIndex(SelectedIndex)){ShowAnimationStatus(TEXT("請先選擇女角"),true);return;}
     if(!IsValid(PreviewActor)||!FPaths::IsSamePath(PreviewCardPath,Entries[SelectedIndex].Path)||PreviewOutfitIndex!=OutfitIndex||!bModelLayout) {
         bEnterInteractionAfterLoad=true;OnLoad3D();return;
     }
     if(!PreviewActor->Session.IsOpen()){ShowAnimationStatus(TEXT("角色沒有可互動的原生骨架"),true);return;}
-    ApplyPendingEditorMods();
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_EditorMods);ApplyPendingEditorMods();}
     if(bEditorModsDirty){ShowAnimationStatus(TEXT("角色參數套用失敗，請檢查模組資料。"),true);return;}
-    PreviewActor->Session.ApplyBodyPhysics(Selected.Body.BustSoftness,Selected.Body.BustWeight);
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_BodyPhysics);PreviewActor->Session.ApplyBodyPhysics(Selected.Body.BustSoftness,Selected.Body.BustWeight);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_Shapes);
     if(PreviewActor->bShapeDirty||PreviewActor->Session.ShapeBody()!=Selected.Body.ShapeValueBody||PreviewActor->Session.ShapeFace()!=Selected.Face.ShapeValueFace)
-        PreviewActor->ApplyShapes(Selected.Face.ShapeValueFace,Selected.Body.ShapeValueBody);
-    CancelPairPreparation();
-    if(PreviewActor->Session.IsPortable()&&!bPairCataloguePreparing)ResumePairCatalogue();
+        PreviewActor->ApplyShapes(Selected.Face.ShapeValueFace,Selected.Body.ShapeValueBody);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_PairCatalogue);CancelPairPreparation();
+    if(PreviewActor->Session.IsPortable()&&!bPairCataloguePreparing)ResumePairCatalogue();}
     PreviewActor->StopHBreath();
     // Prepare the default native controller/materials before enabling interaction.
-    if(PreviewActor->PoseMode==0&&!PreviewActor->Session.IsPortable())PreviewActor->SetPoseMode(1);
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_PoseMode);if(PreviewActor->PoseMode==0&&!PreviewActor->Session.IsPortable())PreviewActor->SetPoseMode(1);}
     if(PreviewActor->PoseMode==0&&PreviewActor->Session.IsPortable()){
-        const double PrepareStart=FPlatformTime::Seconds();
+        TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_StaticFrame);const double PrepareStart=FPlatformTime::Seconds();
         if(!PreviewActor->Session.StaticInteractionFrame(0.f)){ShowAnimationStatus(TEXT("角色互動物理準備失敗"),true);return;}
         PreviewActor->RefreshSkinnedDisplay();
         UE_LOG(LogTemp,Display,TEXT("OK interaction runtime physics preparation_ms=%.3f"),(FPlatformTime::Seconds()-PrepareStart)*1000.);
     }
     // Shader/render readiness is a scene-entry cost, never the first live click.
     // Portable characters may enter without selecting an initial animation.
-    PreviewActor->PreparePlaybackMaterials(!PreviewActor->Session.IsPortable());
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_PlaybackMaterials);PreviewActor->PreparePlaybackMaterials(!PreviewActor->Session.IsPortable());}
     // Finish per-character solver preparation in the entry transaction. No
     // file parsing or factory initialization is deferred to the first click.
     FString BodyError;
     if(auto* PC=Cast<AOpenKoikatsuPlayerController>(GetOwningPlayer())){
         PC->SetBodyTouchEnabled(false);
-        if(!PC->BodyInteraction.Prepare(PreviewActor,BodyError))UE_LOG(LogTemp,Warning,TEXT("OK body interaction unavailable: %s"),*BodyError);
+        TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_BodyInteraction);if(!PC->BodyInteraction.Prepare(PreviewActor,BodyError))UE_LOG(LogTemp,Warning,TEXT("OK body interaction unavailable: %s"),*BodyError);
     }
-    InteractionScene=GetWorld()->SpawnActor<AOKInteractionScene>();
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_SpawnScene);InteractionScene=GetWorld()->SpawnActor<AOKInteractionScene>();}
     if(!InteractionScene)return;
     InteractionScene->SetActorLocation(PreviewActor->GetActorLocation()+FVector(0.,0.,-1.));
     // In the world itself (the street's one-on-one in place): its own ground and light, not the showcase's.
     if(bInteractionInPlace){InteractionScene->Floor->SetVisibility(false);InteractionScene->Backdrop->SetVisibility(false);
         TArray<AActor*> Attached;InteractionScene->GetAttachedActors(Attached);for(AActor* A:Attached)if(Cast<ADirectionalLight>(A))A->Destroy();}
-    InteractionWidget=CreateWidget<UOKInteractionWidget>(GetOwningPlayer());
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_CreateWidget);InteractionWidget=CreateWidget<UOKInteractionWidget>(GetOwningPlayer());}
     if(!InteractionWidget){InteractionScene->Destroy();InteractionScene=nullptr;return;}
     InteractionWidget->BodyPrepareAttempt=PreviewActor;InteractionWidget->BodyPreparationError=BodyError;
     bInteractionPreviousPoseSharing=PreviewActor->bShareIdenticalPose;
-    PreviewActor->bShareIdenticalPose=true;PreviewActor->bUsePrivateGpuPlayback=true;PreviewActor->RefreshSkinnedDisplay();
-    if(PartnerActor){PartnerActor->bUsePrivateGpuPlayback=true;PartnerActor->RefreshSkinnedDisplay();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_SkinnedDisplay);PreviewActor->bShareIdenticalPose=true;PreviewActor->bUsePrivateGpuPlayback=true;PreviewActor->RefreshSkinnedDisplay();
+    if(PartnerActor){PartnerActor->bUsePrivateGpuPlayback=true;PartnerActor->RefreshSkinnedDisplay();}}
     PreviewActor->bReuseSpeechAudio=true;
-    RefreshInteractionMotionSources();
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_MotionSources);RefreshInteractionMotionSources();}
     InteractionWidget->Gallery=this;InteractionWidget->Scene=InteractionScene;
-    SetModelLayout(true);InteractionWidget->AddToViewport(110);if(bHScene&&(HPanel=CreateWidget<UOKHScenePanel>(GetOwningPlayer()))!=nullptr){HPanel->Gallery=this;HPanel->AddToViewport(111);}if(SpeechCombo)SpeechCombo->OnSelectionChanged.AddDynamic(InteractionWidget,&UOKInteractionWidget::OnSpeechSelection);InteractionWidget->PreloadSpeech();SetVisibility(ESlateVisibility::Collapsed);
+    TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_Widgets);SetModelLayout(true);InteractionWidget->AddToViewport(110);if(bHScene&&(HPanel=CreateWidget<UOKHScenePanel>(GetOwningPlayer()))!=nullptr){HPanel->Gallery=this;HPanel->AddToViewport(111);}if(SpeechCombo)SpeechCombo->OnSelectionChanged.AddDynamic(InteractionWidget,&UOKInteractionWidget::OnSpeechSelection);InteractionWidget->PreloadSpeech();SetVisibility(ESlateVisibility::Collapsed);
     if(auto* PC=Cast<AOpenKoikatsuPlayerController>(GetOwningPlayer()))PC->SetPaintPreviewActive(true);
-    OnLoadSpeech();
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_Speech);OnLoadSpeech();}
     UE_LOG(LogTemp,Display,TEXT("OK interaction entered actor=%s card=%s"),*PreviewActor->GetName(),*PreviewCardPath);
 }
 void UOKCharacterController::OnExitInteraction() {

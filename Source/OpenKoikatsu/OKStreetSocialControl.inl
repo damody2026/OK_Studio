@@ -540,6 +540,16 @@ void AOKStreetSocialScene::StartControlServer(){
  // {"x":..,"y":..,"z":..}: put him there at once (a test at a spot no walk reaches soon, like a mirror on an upper floor).
  Bind(TEXT("/warp"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   auto B=OKControlBody(Req);double X=0,Y=0,Z=0;
+  // {girl}: a metre in front of her, facing her; {place}: its door. Tests go there at once instead of walking (user 2026-11-12).
+  double Girl=0;FString Place;
+  if(B->TryGetNumberField(TEXT("girl"),Girl)){auto& S=*State;const int32 G=int32(Girl);const FOKStreetAgentSim* Her=S.Agents.FindByPredicate([G](const FOKStreetAgentSim& A){return A.Slot==G;});
+   if(!Her){OKControlReply(Done,OKControlResult(false,TEXT("no such girl")));return;}
+   const float Yaw=S.RenderedRotations.IsValidIndex(G)?S.RenderedRotations[G].Yaw:0.f;const FVector Ahead=FRotator(0.f,Yaw,0.f).Vector();
+   StopNavigation(FString());S.Male=Her->Position+Ahead*100.;if(S.Rotations.IsValidIndex(0))S.Rotations[0].Yaw=Yaw+180.f;
+   auto O=OKControlResult(true);O->SetNumberField(TEXT("x"),S.Male.X);O->SetNumberField(TEXT("y"),S.Male.Y);O->SetNumberField(TEXT("z"),S.Male.Z);OKControlReply(Done,O);return;}
+  if(B->TryGetStringField(TEXT("place"),Place)&&!Place.IsEmpty()){const FOKStreetPlace* P=OKStreetFindPlace(Place);
+   if(!P){OKControlReply(Done,OKControlResult(false,TEXT("no such place")));return;}
+   StopNavigation(FString());State->Male=P->Door;OKControlReply(Done,OKControlResult(true));return;}
   if(!B->TryGetNumberField(TEXT("x"),X)||!B->TryGetNumberField(TEXT("y"),Y)||!B->TryGetNumberField(TEXT("z"),Z)){OKControlReply(Done,OKControlResult(false,TEXT("x, y and z are required")));return;}
   StopNavigation(FString());State->Male=FVector(X,Y,Z);OKControlReply(Done,OKControlResult(true));
  });

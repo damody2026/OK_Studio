@@ -5,6 +5,7 @@
 #include "PlatformHttp.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
+#include "Misc/ScopeLock.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
@@ -14,6 +15,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
+#include "Async/Async.h"
 
 static bool OKStreetFreeTalkReadJson(const FString& Path, TSharedPtr<FJsonObject>& Root) {
  FString Body;
@@ -60,14 +62,23 @@ static bool OKStreetFreeTalkReadSettings(FOKFreeTalkSettings& Out, FString& Erro
 
 // The settings and the personas are read again at most every 2 s on the game thread (an edited key or persona file
 // applies within that): reading and parsing them took 1-3 ms a call, and a reply asks several times (prompt, judge,
-// every girl near for a group talk).
+// every girl near for a group talk). Once read, a stale copy is still handed out while a worker reads the files again
+// (the frame he sent a line in spent 0.5 ms reading them, 2026-11-12); only the first read waits.
 static constexpr double OKFreeTalkFilesFresh = 2.0;
 bool OKStreetFreeTalkLoadSettings(FOKFreeTalkSettings& Out, FString& Error) {
  if (!IsInGameThread()) return OKStreetFreeTalkReadSettings(Out, Error);
  struct FEntry { FOKFreeTalkSettings Value; FString Error; bool Ok = false; double At = -1e9; };
  static FEntry Cache;
+ static bool Reading = false;
  const double Now = FPlatformTime::Seconds();
- if (Now - Cache.At > OKFreeTalkFilesFresh) { Cache.Value = FOKFreeTalkSettings(); Cache.Error.Reset(); Cache.Ok = OKStreetFreeTalkReadSettings(Cache.Value, Cache.Error); Cache.At = Now; }
+ if (Cache.At < 0) { Cache.Value = FOKFreeTalkSettings(); Cache.Error.Reset(); Cache.Ok = OKStreetFreeTalkReadSettings(Cache.Value, Cache.Error); Cache.At = Now; }
+ else if (Now - Cache.At > OKFreeTalkFilesFresh && !Reading) {
+  Reading = true;
+  Async(EAsyncExecution::ThreadPool, []() {
+   TSharedRef<FEntry> Read = MakeShared<FEntry>();Read->Ok = OKStreetFreeTalkReadSettings(Read->Value, Read->Error);
+   AsyncTask(ENamedThreads::GameThread, [Read]() { Cache.Value = Read->Value;Cache.Error = Read->Error;Cache.Ok = Read->Ok;Cache.At = FPlatformTime::Seconds();Reading = false; });
+  });
+ }
  Out = Cache.Value;
  if (!Cache.Ok) Error = Cache.Error;
  return Cache.Ok;
@@ -104,10 +115,23 @@ bool OKStreetFreeTalkLoadPersona(const FString& Name, FOKFreeTalkPersona& Out, F
  struct FEntry { FOKFreeTalkPersona Value; FString Error; bool Ok = false; double At = -1e9; };
  static TMap<FString, FEntry> Cache;
  const double Now = FPlatformTime::Seconds();
- FEntry& Entry = Cache.FindOrAdd(OKStreetCppText().Lang + TEXT("\n") + Name);
- static int32 Generation = -1; // a changed override reads every persona again
- if (Generation != GOKPersonaOverridesGeneration) {Generation = GOKPersonaOverridesGeneration;for (auto& E : Cache) E.Value.At = -1e9;}
- if (Now - Entry.At > OKFreeTalkFilesFresh) { Entry.Value = FOKFreeTalkPersona(); Entry.Error.Reset(); Entry.Ok = OKStreetFreeTalkReadPersonaOverridden(Name, Entry.Value, Entry.Error); Entry.At = Now; }
+ static TSet<FString> Reading;
+ const FString Key = OKStreetCppText().Lang + TEXT("\n") + Name;
+ FEntry& Entry = Cache.FindOrAdd(Key);
+ static int32 Generation = -1; // a changed override reads every persona again, now (the player just wrote it)
+ if (Generation != GOKPersonaOverridesGeneration) {Generation = GOKPersonaOverridesGeneration;for (auto& E : Cache) E.Value.At = -1e9;Reading.Reset();}
+ if (Entry.At < 0) { Entry.Value = FOKFreeTalkPersona(); Entry.Error.Reset(); Entry.Ok = OKStreetFreeTalkReadPersonaOverridden(Name, Entry.Value, Entry.Error); Entry.At = Now; }
+ else if (Now - Entry.At > OKFreeTalkFilesFresh && !Reading.Contains(Key)) {
+  Reading.Add(Key);
+  Async(EAsyncExecution::ThreadPool, [Key, Name, Started = GOKPersonaOverridesGeneration.Load()]() {
+   TSharedRef<FEntry> Read = MakeShared<FEntry>();Read->Ok = OKStreetFreeTalkReadPersonaOverridden(Name, Read->Value, Read->Error);
+   AsyncTask(ENamedThreads::GameThread, [Key, Read, Started]() {
+    if (Started != Generation) return; // an override changed meanwhile: already read again
+    Reading.Remove(Key);
+    if (FEntry* E = Cache.Find(Key)) { E->Value = Read->Value;E->Error = Read->Error;E->Ok = Read->Ok;E->At = FPlatformTime::Seconds(); }
+   });
+  });
+ }
  Out = Entry.Value;
  if (!Entry.Ok) Error = Entry.Error;
  return Entry.Ok;
@@ -170,6 +194,19 @@ static bool OKStreetFreeTalkReadPersona(const FString& Name, FOKFreeTalkPersona&
 }
 
 FString OKStreetFreeTalkSystemPrompt(const FOKFreeTalkPersona& Persona, const FString& World) {
+ // The same words every turn of a girl (her persona, the rules, the place catalogue, the language's tables): formatted
+ // once and kept, not on every line she says (2026-11-12). The tables' own text is in the key, so a language change
+ // makes it again.
+ static FCriticalSection Lock; static TMap<FString, FString> Made;
+ const FString Key = Persona.DisplayName + TEXT("\x1f") + Persona.Profile + TEXT("\x1f") + FString::Join(Persona.Rules, TEXT("\x1e")) + TEXT("\x1f") + World
+  + TEXT("\x1f") + OKT(TEXT("ui.free_talk.persona_system_prompt")) + OKT(TEXT("ui.free_talk.rules_prompt"));
+ { FScopeLock Guard(&Lock); if (const FString* Hit = Made.Find(Key)) return *Hit; }
+ FString Out = OKStreetFreeTalkSystemPromptBuild(Persona, World);
+ FScopeLock Guard(&Lock); if (Made.Num() > 64) Made.Reset(); Made.Add(Key, Out);
+ return Out;
+}
+
+FString OKStreetFreeTalkSystemPromptBuild(const FOKFreeTalkPersona& Persona, const FString& World) {
  FString Out = OKMsg(TEXT("ui.free_talk.persona_system_prompt"), {{TEXT("persona_name"), *Persona.DisplayName}, {TEXT("persona_profile"), *Persona.Profile}});
  for (int32 I = 0; I < Persona.Rules.Num(); ++I) Out += FString::Printf(TEXT("%d. %s\n"), I + 1, *Persona.Rules[I]);
  // What she may fill in her JSON and how (favor, lines, orders, acts, promises, activities): the text tables

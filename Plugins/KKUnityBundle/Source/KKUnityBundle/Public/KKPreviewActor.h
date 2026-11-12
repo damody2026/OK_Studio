@@ -407,6 +407,8 @@ public:
 	float EyeGazeAsked[3] = {0.f,0.f,0.f};
 	/** Her pupils PupilScale times as large and her eye highlights off (a yandere's, or worn out); 1 and false: her card's. */
 	bool SetEyeDull(float PupilScale, bool bHideHighlight);
+	// SetEyeDull's irises without highlights made ahead off the game thread; cheap to ask again.
+	void PrepareEyeDull();
 	/** Her pupils drawn off their place, in iris texture units (a tremble); 0 is where they belong. */
 	bool SetPupilOffset(float X, float Y);
 	/** Her pupils across and down, on top of SetEyeDull's scale; 1 is as they are. */
@@ -582,6 +584,10 @@ private:
     UPROPERTY() TArray<TObjectPtr<UTexture2D>> WornTextures; // the textures only her current clothes use
     void SetBodyMask(UTexture* Mask);
     UTexture* WornBodyMask(int32 TopState);
+public:
+    // WornBodyMask's masks made and decoded ahead off the game thread (call with the session idle, once it is open).
+    void PrepareWornBodyMasks();
+private:
     UPROPERTY() TMap<int32,TObjectPtr<UTexture2D>> WornBodyMasks; // by clothes_alpha_state's three cases, for what she wears
     bool BuildSessionPartRange(FOkSession& Source,FPartBuildOutput& Output,int32 Begin,int32 End,FString& OutError);
 	TSharedPtr<FSessionLoadState> SessionLoadState;

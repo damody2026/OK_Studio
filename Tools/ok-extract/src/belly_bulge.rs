@@ -59,8 +59,11 @@ fn is_bulge(n: &std::ffi::CString) -> bool { n.to_bytes().starts_with(b"belly.bu
 pub fn name(side: char, k: usize, across: usize) -> String { format!("belly.bulge.{side}{k}{across}") }
 
 /// The skin matrix of vertex `j` (palette blended by its weights) and how much of it is on bones that swell.
-fn skin_of(part: &SessionPart, j: usize, worlds: &[Mat4], binds: &[Mat4], still: &[bool], thigh: &[bool]) -> Option<(Mat4, f32, f32)> {
-    let (indices, weights) = (part.bone_idx.get(j)?, part.weights.get(j)?);
+/// The bone indices and weights of a skinned mesh.
+pub(crate) trait SkinMesh { fn bone_idx(&self) -> &[[u16; 4]]; fn weights(&self) -> &[[f32; 4]]; }
+impl SkinMesh for SessionPart { fn bone_idx(&self) -> &[[u16; 4]] { &self.bone_idx } fn weights(&self) -> &[[f32; 4]] { &self.weights } }
+fn skin_of<P: SkinMesh + ?Sized>(part: &P, j: usize, worlds: &[Mat4], binds: &[Mat4], still: &[bool], thigh: &[bool]) -> Option<(Mat4, f32, f32)> {
+    let (indices, weights) = (part.bone_idx().get(j)?, part.weights().get(j)?);
     let mut free = 1.0f32;let mut on_thigh = 0.0f32;
     let mut skin = [[0.0f32; 4]; 4];
     for (b, w) in indices.iter().zip(weights) {
@@ -704,30 +707,70 @@ fn wrap_verts(session: &OkSession, part: &SessionPart) -> Option<std::sync::Arc<
     let key = (part as *const SessionPart as usize, part.rest_positions.len());
     if let Some((_, _, v)) = WRAP_VERTS.lock().unwrap().iter().find(|e| (e.0, e.1) == key) { return Some(v.clone()); }
     let rest = crate::skel_export::bind_body(session)?;
+    let out = std::sync::Arc::new(build_wrap_verts(&rest, &WrapMesh::of(part))?);
+    remember_wrap_verts(key, out.clone());
+    Some(out)
+}
+fn remember_wrap_verts(key: (usize, usize), out: std::sync::Arc<Vec<WrapVert>>) {
+    let mut cache = WRAP_VERTS.lock().unwrap();cache.retain(|e| (e.0, e.1) != key);cache.insert(0, (key.0, key.1, out));cache.truncate(4);
+}
+
+/// What `build_wrap_verts` reads of her body part.
+pub(crate) struct WrapMesh<'a> { rest_positions: &'a [[f32; 3]], rest_normals: &'a [[f32; 3]], indices: &'a [u32], bone_idx: &'a [[u16; 4]], weights: &'a [[f32; 4]], bind_poses: &'a [Mat4] }
+impl<'a> WrapMesh<'a> {
+    fn of(part: &'a SessionPart) -> Self { WrapMesh { rest_positions: &part.rest_positions, rest_normals: &part.rest_normals, indices: &part.indices, bone_idx: &part.bone_idx, weights: &part.weights, bind_poses: &part.bind_poses } }
+}
+impl SkinMesh for WrapMesh<'_> { fn bone_idx(&self) -> &[[u16; 4]] { self.bone_idx } fn weights(&self) -> &[[f32; 4]] { self.weights } }
+
+/// Her wrap's vertex table built ahead, off the game thread (its first build was 190 ms of the frame he first went into
+/// her, 2026-11-12): a copy of what it reads, taken while the session is idle; the table lands in the cache under her
+/// part, as `wrap_verts` would put it. Nothing when it is there already or she has no wrap.
+static WRAP_PREPARING: std::sync::Mutex<Vec<(usize, usize)>> = std::sync::Mutex::new(Vec::new());
+pub fn wrap_prepare(session: &OkSession) {
+    let Some(part) = session.parts.iter().find(|p| p.role == "body" && p.skel_kind == 1 && p.runtime_accessory.is_none() && p.blend_shapes.iter().any(|(n, _)| is_bulge(n))) else { return; };
+    let key = (part as *const SessionPart as usize, part.rest_positions.len());
+    if WRAP_VERTS.lock().unwrap().iter().any(|e| (e.0, e.1) == key) { return; }
+    // Once per part while it builds (the scene asks every frame until it is there).
+    { let mut on = WRAP_PREPARING.lock().unwrap();if on.contains(&key) { return; }on.push(key); }
+    let Some(rest) = crate::skel_export::bind_body(session) else { WRAP_PREPARING.lock().unwrap().retain(|e| *e != key);return; };
+    let (pos, nrm, idx, bones, weights, binds) = (part.rest_positions.clone(), part.rest_normals.clone(), part.indices.clone(), part.bone_idx.clone(), part.weights.clone(), part.bind_poses.clone());
+    let _ = std::thread::Builder::new().name("ok-wrap-prepare".into()).spawn(move || {
+        let t0 = std::time::Instant::now();
+        let mesh = WrapMesh { rest_positions: &pos, rest_normals: &nrm, indices: &idx, bone_idx: &bones, weights: &weights, bind_poses: &binds };
+        if let Some(out) = build_wrap_verts(&rest, &mesh) {
+            // A build of its own on the game thread first (he went in before this was done) is kept.
+            if !WRAP_VERTS.lock().unwrap().iter().any(|e| (e.0, e.1) == key) { remember_wrap_verts(key, std::sync::Arc::new(out)); }
+            crate::ffi::ffi_log(0, &format!("belly wrap prepared in {:.0} ms", t0.elapsed().as_secs_f64() * 1000.));
+        }
+        WRAP_PREPARING.lock().unwrap().retain(|e| *e != key);
+    });
+}
+
+fn build_wrap_verts(rest: &crate::pose::Skeleton, mesh: &WrapMesh) -> Option<Vec<WrapVert>> {
     let kokan = rest.world_tf("cf_j_kokan").or_else(|| rest.world_tf("cf_J_Kokan")).map(|m| translation(&m))?;
-    let (worlds, binds) = crate::skel_export::palettes(&rest, part);
+    let (worlds, binds) = crate::skel_export::palettes_from(&rest, mesh.bind_poses);
     if worlds.is_empty() { return None; }
     let named = |list: &[&str]| -> Vec<bool> { rest.names.iter().map(|n| { let n = n.to_ascii_lowercase(); list.iter().any(|s| n.contains(s)) }).collect() };
     let (still, mut held) = (named(&STILL), named(&THIGH));
     for (h, b) in held.iter_mut().zip(named(&BUTTOCK)) { *h |= b; }
     // Bind pose position and normal of each vertex near her entrance.
     let mut near: Vec<(usize, [f32; 3], [f32; 3], f32)> = Vec::new();
-    let mut at_rest: Vec<Option<[f32; 3]>> = vec![None; part.rest_positions.len()];
-    for j in 0..part.rest_positions.len() {
-        let Some((m, _, _)) = skin_of(part, j, &worlds, &binds, &[], &[]) else { continue; };
-        let p = point(&m, part.rest_positions[j]);
+    let mut at_rest: Vec<Option<[f32; 3]>> = vec![None; mesh.rest_positions.len()];
+    for j in 0..mesh.rest_positions.len() {
+        let Some((m, _, _)) = skin_of(mesh, j, &worlds, &binds, &[], &[]) else { continue; };
+        let p = point(&m, mesh.rest_positions[j]);
         let d = ((0..3).map(|i| (p[i] - kokan[i]) * (p[i] - kokan[i])).sum::<f32>()).sqrt();
         if d <= WRAP_INNER_REACH_M + WRAP_INNER_M { at_rest[j] = Some(p); }
         if d > WRAP_REACH_M { continue; }
         let o = point(&m, [0.; 3]);
-        let n = part.rest_normals.get(j).map(|v| { let v = point(&m, *v); [v[0] - o[0], v[1] - o[1], v[2] - o[2]] }).unwrap_or([0., 0., 1.]);
+        let n = mesh.rest_normals.get(j).map(|v| { let v = point(&m, *v); [v[0] - o[0], v[1] - o[1], v[2] - o[2]] }).unwrap_or([0., 0., 1.]);
         near.push((j, p, n, d));
     }
     let cell = |p: [f32; 3]| p.map(|v| (v / WRAP_SMOOTH_M).floor() as i64);
     let mut grid: HashMap<[i64; 3], Vec<usize>> = HashMap::new();
     for (i, (_, p, _, _)) in near.iter().enumerate() { grid.entry(cell(*p)).or_default().push(i); }
     // Her skin round her entrance at rest, in cells WRAP_INNER_M wide, to look into.
-    let tris: Vec<[usize; 3]> = part.indices.chunks_exact(3).map(|t| [t[0] as usize, t[1] as usize, t[2] as usize])
+    let tris: Vec<[usize; 3]> = mesh.indices.chunks_exact(3).map(|t| [t[0] as usize, t[1] as usize, t[2] as usize])
         .filter(|t| t.iter().all(|&v| at_rest.get(v).is_some_and(|p| p.is_some()))).collect();
     let tcell = |p: [f32; 3]| p.map(|v| (v / WRAP_INNER_M).floor() as i64);
     let mut tgrid: HashMap<[i64; 3], Vec<usize>> = HashMap::new();
@@ -761,7 +804,7 @@ fn wrap_verts(session: &OkSession, part: &SessionPart) -> Option<std::sync::Arc<
     let mut places: HashMap<[i64; 3], u32> = HashMap::new();
     for (j, p, n0, d) in &near {
         let inner = *d <= WRAP_INNER_REACH_M && looks_in(*j, *p, *n0);
-        let free = skin_of(part, *j, &worlds, &binds, &still, &held).map_or(0., |(_, f, on)| (f - on).clamp(0., 1.));
+        let free = skin_of(mesh, *j, &worlds, &binds, &still, &held).map_or(0., |(_, f, on)| (f - on).clamp(0., 1.));
         let c = cell(*p);let mut sum = [0f32; 3];
         for dx in -1..=1 { for dy in -1..=1 { for dz in -1..=1 {
             for &i in grid.get(&[c[0] + dx, c[1] + dy, c[2] + dz]).into_iter().flatten() {
@@ -772,16 +815,16 @@ fn wrap_verts(session: &OkSession, part: &SessionPart) -> Option<std::sync::Arc<
             }
         }}}
         // Back into the mesh's own space (the bind skin's inverse), where the posed skin turns it each frame.
-        let Some((m, _, _)) = skin_of(part, *j, &worlds, &binds, &[], &[]) else { continue; };
+        let Some((m, _, _)) = skin_of(mesh, *j, &worlds, &binds, &[], &[]) else { continue; };
         let inv = mat_inv_pub(&m);let o = point(&inv, [0.; 3]);let q = point(&inv, sum);
         let n = [q[0] - o[0], q[1] - o[1], q[2] - o[2]];let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
         if l < 1e-6 { continue; }
         let next = places.len() as u32;let place = *places.entry(p.map(|v| (v * 5000.).round() as i64)).or_insert(next);
-        out.push(WrapVert { j: *j, from_entrance: *d, n: [n[0] / l, n[1] / l, n[2] / l], nbr: Vec::new(), tri: Vec::new(), free, inner, place, rest: part.rest_positions[*j], bones: part.bone_idx[*j], weights: part.weights[*j] });
+        out.push(WrapVert { j: *j, from_entrance: *d, n: [n[0] / l, n[1] / l, n[2] / l], nbr: Vec::new(), tri: Vec::new(), free, inner, place, rest: mesh.rest_positions[*j], bones: mesh.bone_idx[*j], weights: mesh.weights[*j] });
     }
     // Each one's neighbours along her mesh.
     let at: HashMap<usize, u32> = out.iter().enumerate().map(|(i, v)| (v.j, i as u32)).collect();
-    for t in part.indices.chunks_exact(3) {
+    for t in mesh.indices.chunks_exact(3) {
         let ids: Vec<Option<u32>> = t.iter().map(|&v| at.get(&(v as usize)).copied()).collect();
         for a in 0..3 { for b in 0..3 {
             if a == b { continue; }
@@ -790,8 +833,6 @@ fn wrap_verts(session: &OkSession, part: &SessionPart) -> Option<std::sync::Arc<
         // Its triangles, the other two corners in winding order (for its normal after the move).
         if let [Some(x), Some(y), Some(z)] = ids[..] { out[x as usize].tri.push([y, z]);out[y as usize].tri.push([z, x]);out[z as usize].tri.push([x, y]); }
     }
-    let out = std::sync::Arc::new(out);
-    { let mut cache = WRAP_VERTS.lock().unwrap();cache.retain(|e| (e.0, e.1) != key);cache.insert(0, (key.0, key.1, out.clone()));cache.truncate(4); }
     Some(out)
 }
 
@@ -849,8 +890,12 @@ pub fn wrap_start(session: &OkSession, wrap: bool, from: [f32; 3], to: [f32; 3],
         let mut done = WRAP_DONE.lock().unwrap();
         match done.iter_mut().find(|e| e.0 == key) { Some(e) => { if e.1.is_none() { return false; } e.1 = None; } None => done.push((key, None)) }
     }
+    let t0 = std::time::Instant::now();
     let wrap = if wrap { wrap_input(session).map(|(v, w, b)| (v, w, b, [from, to, up], radius)) } else { None };
+    let t1 = std::time::Instant::now();
     let cover = if cover { cover::frame(session) } else { None };
+    let (a, b) = ((t1 - t0).as_secs_f64() * 1000., t1.elapsed().as_secs_f64() * 1000.);
+    if a + b > 20. { crate::ffi::ffi_log(0, &format!("belly wrap start: wrap input {a:.0} ms, cover frame {b:.0} ms")); }
     wrap_worker().lock().unwrap().send(WrapJob { key, wrap, cover }).is_ok()
 }
 

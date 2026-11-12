@@ -2,6 +2,7 @@
 -- named by Content/IndependentResources/StreetSocialData/Launch/materials.json (root, hg_root), so
 -- Tools/rebuild_street_social_patch.lua cooks them with the other runtime parents:
 --   M_OKTearLit (PrepareTearMaterial.cpp)      the lit tears (cf_O_namida_S/M/L)
+--   M_OKPuddleMirror (PreparePuddleMaterial.cpp) the 1-on-1's puddles: wet floor glow + screen space reflections
 --   <Parent>_Fg (PrepareForegroundMaterial.cpp) eyes / eyebrows drawn through the front hair (the card's foreground
 --                                               setting, as Koikatsu's stencil does)
 --   <Parent>_Flat (PrepareFlatFaceMaterial.cpp) the head parts with the face pressed flat along the view
@@ -24,9 +25,11 @@ local roots, todo = {}, {}
 for _, r in ipairs({ materials.root, materials.hg_root }) do
   if r then
     table.insert(roots, r)
-    local material = r .. "/M_OKTearLit"
-    local asset = path.join(root, "Content", material:sub(7) .. ".uasset")
-    if path.exists(asset) then say("exists " .. asset) else table.insert(todo, { material = material, asset = asset }) end
+    for _, each in ipairs({ { name = "M_OKTearLit", flag = "-PrepareTearMaterial", what = "Tear" }, { name = "M_OKPuddleMirror", flag = "-PreparePuddleMaterial", what = "Puddle" } }) do
+      local material = r .. "/" .. each.name
+      local asset = path.join(root, "Content", material:sub(7) .. ".uasset")
+      if path.exists(asset) then say("exists " .. asset) else table.insert(todo, { material = material, asset = asset, flag = each.flag, what = each.what }) end
+    end
   end
 end
 
@@ -84,7 +87,7 @@ local function commandlet(args, out, what)
 end
 for k, each in ipairs(todo) do
   say("generate " .. each.material)
-  commandlet({ "-PrepareTearMaterial", "-MaterialPath=" .. each.material }, log .. "-tear" .. k, "Tear material generation")
+  commandlet({ each.flag, "-MaterialPath=" .. each.material }, log .. "-" .. each.what:lower() .. k, each.what .. " material generation")
   say("ok " .. each.asset)
 end
 -- The foreground variants of every translucent shared parent; the commandlet keeps the ones already there.

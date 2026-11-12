@@ -272,7 +272,14 @@ void OKRulesReadTables(FOKStreetSceneState& S);
 // The save's ext (the rules' own state: her things, loans, photos) into a request, with today; and back from an answer,
 // with what goes into or out of his bag (his_add, his_remove).
 void OKRulesPutExt(const FOKStreetSceneState& S,const TSharedRef<FJsonObject>& Request){
- TSharedPtr<FJsonObject> E;if(S.Store.Ext.IsEmpty()||!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(S.Store.Ext),E)||!E.IsValid())E=MakeShared<FJsonObject>();
+ // On the game thread the ext parsed last time, while the save's text is the same (it changes only when a rule answers
+ // with a new one): parsed anew for every rule asked, it was most of what a small rule cost (2026-11-12). The object is
+ // only read (serialized into the request); an answer's ext replaces the text, not this object.
+ static FString ParsedExt;static TSharedPtr<FJsonObject> Parsed;
+ TSharedPtr<FJsonObject> E;
+ if(IsInGameThread()&&Parsed.IsValid()&&ParsedExt.Len()==S.Store.Ext.Len()&&ParsedExt==S.Store.Ext)E=Parsed;
+ else{if(S.Store.Ext.IsEmpty()||!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(S.Store.Ext),E)||!E.IsValid())E=MakeShared<FJsonObject>();
+  if(IsInGameThread()){ParsedExt=S.Store.Ext;Parsed=E;}}
  Request->SetObjectField(TEXT("ext"),E);Request->SetNumberField(TEXT("day"),S.Store.CalendarDay);
 }
 void OKRulesTakeExt(FOKStreetStore& Store,const FJsonObject& Answer){

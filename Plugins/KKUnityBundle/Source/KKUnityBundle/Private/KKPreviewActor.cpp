@@ -19,6 +19,7 @@
 #include "KKRustExtract.h"
 #include "KKTextureRuntime.h"
 #include "Async/ParallelFor.h"
+#include "Async/Async.h"
 #include "Misc/SecureHash.h"
 #include "KKMainItemPlus.h"
 #include "KKForgeItem.h"
@@ -7396,11 +7397,23 @@ struct AKKPreviewActor::FWardrobeStage {
  }
 };
 
+void AKKPreviewActor::PrepareWornBodyMasks()
+{
+ // Her body's mask for each state of her top made and decoded ahead off the game thread (pixels only; the texture is
+ // still made on first use): decoding the first one was 140 ms of the frame her one-on-one opened (2026-11-12).
+ TArray<uint8> Own;if(!Session.WardrobeBodyMask(0,Own))return;
+ Async(EAsyncExecution::Thread,[Own=MoveTemp(Own)](){
+  for(const int32 Top:{0,1,3}){TArray<uint8> Png;if(Top==0)Png=Own;else if(!FOkSession::BodyMaskForTopState(Own,Top,Png))continue;OKPrecacheRuntimePng(Png,false);}
+ });
+}
+
 UTexture* AKKPreviewActor::WornBodyMask(int32 TopState)
 {
+ TRACE_CPUPROFILER_EVENT_SCOPE(KK_WornBodyMask);
  const int32 Key=TopState==0?0:TopState==3?2:1;
  if(const TObjectPtr<UTexture2D>* Known=WornBodyMasks.Find(Key))return Known->Get();
- TArray<uint8> Png;UTexture2D* Mask=Session.WardrobeBodyMask(TopState,Png)?LinearTextureFromPngBytes(Png.GetData(),Png.Num()):nullptr;
+ TArray<uint8> Png;bool bHave;{TRACE_CPUPROFILER_EVENT_SCOPE(KK_WornBodyMaskPng);bHave=Session.WardrobeBodyMask(TopState,Png);}
+ UTexture2D* Mask=nullptr;if(bHave){TRACE_CPUPROFILER_EVENT_SCOPE(KK_WornBodyMaskTexture);Mask=LinearTextureFromPngBytes(Png.GetData(),Png.Num());}
  WornBodyMasks.Add(Key,Mask);return Mask;
 }
 
@@ -8040,7 +8053,10 @@ bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrep
  bGated=!CVarOkPrivateGpuStreams.GetValueOnGameThread()||!bUsePrivateGpuPlayback||!Component||!Part.bRuntimeAccessory||Part.bSlotAttached||Part.bFaceSphereNormals||Part.SessionIndex==INDEX_NONE||Session.MorphCount(Part.SessionIndex)!=0||CpuSkinnedParts.Contains(Part.SessionIndex)||JiggleCpuParts.Contains(Part.SessionIndex);}
  if(bGated)return Restore(FString(),false);
  if(Part.PrivateGpuDisplay&&Part.PrivateGpuDisplay->Epoch!=Epoch)Restore(FString(),false);
- if(!Epoch||Component->IsRenderStateDirty()||!Component->UsesAnimatedStreams()||Component->GetCollisionEnabled()!=ECollisionEnabled::NoCollision)return Restore(FString(),false);
+ // No scene proxy (a hidden part: her hair ornament and top halves not shown in this pose): nothing to install, so no
+ // display that waits on an install the batch always rejects; the one-on-one never became ready (Jeanne Alter,
+ // 2026-11-12). Shown again, the new proxy gets a new epoch and installs then.
+ if(!Epoch||!Component->SceneProxy||Component->IsRenderStateDirty()||!Component->UsesAnimatedStreams()||Component->GetCollisionEnabled()!=ECollisionEnabled::NoCollision)return Restore(FString(),false);
  if(Part.PrivateGpuRejectedEpoch==Epoch&&Part.PrivateGpuRejectedRevision==Session.PrivateSkinSourceRevision(Part.SessionIndex))return false;
  FString Error;FKKPrivateGpuPose Pose;bool bPreparedBox=false;FBox PreparedBox(ForceInit);
  if(!Part.PrivateGpuDisplay){
@@ -9584,11 +9600,24 @@ bool AKKPreviewActor::SetPupilMarks(const FOKIrisMarks& Marks)
     EyePupilMarks=Marks;
     return SetEyeDull(EyePupilScale>0.f?EyePupilScale:1.f,bEyeHighlightHidden);
 }
+void AKKPreviewActor::PrepareEyeDull()
+{
+    // SetEyeDull's irises without their highlights made ahead, off the game thread (OKPrepareIrisWithoutHighlights).
+    TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrepareEyeDull);
+    auto Ask=[](UMaterialInterface* Material){UTexture* Iris=nullptr;if(Material&&Material->GetTextureParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex")),Iris)&&Iris)OKPrepareIrisWithoutHighlights(Iris);};
+    TInlineComponentArray<UMeshComponent*> Meshes(this);
+    for(const auto& Part:Parts){if(Session.EyeMaterialSetting(Part.SessionIndex,-1)==0.f)continue;Ask(Part.GpuEyeMaterial);
+        const FName PartTags[]={*FString::Printf(TEXT("KKSessionPart_%d"),Part.SessionIndex),*FString::Printf(TEXT("KKMorphPart_%d"),Part.SessionIndex)};
+        for(UMeshComponent* Drawn:Meshes)if(Drawn&&(Drawn==Part.Comp||Drawn->ComponentHasTag(PartTags[0])||Drawn->ComponentHasTag(PartTags[1])))
+            for(int32 Slot=0;Slot<Drawn->GetNumMaterials();++Slot)if(auto* Dynamic=Cast<UMaterialInstanceDynamic>(Drawn->GetMaterial(Slot)))if(!EyeIrisBase.Contains(Dynamic))Ask(Dynamic);}
+}
+
 bool AKKPreviewActor::SetEyeDull(float PupilScale,bool bHideHighlight)
 {
-    if(!Session.SetPupilScale(PupilScale)) return false;
+    TRACE_CPUPROFILER_EVENT_SCOPE(KK_SetEyeDull);
+    {TRACE_CPUPROFILER_EVENT_SCOPE(KK_SetPupilScale);if(!Session.SetPupilScale(PupilScale)) return false;}
     EyePupilScale=PupilScale;bEyeHighlightHidden=bHideHighlight;
-    const bool bDrawn=SetEyeGaze(EyeGazeAsked[0],EyeGazeAsked[1],EyeGazeAsked[2]);
+    bool bDrawn;{TRACE_CPUPROFILER_EVENT_SCOPE(KK_EyeDullGaze);bDrawn=SetEyeGaze(EyeGazeAsked[0],EyeGazeAsked[1],EyeGazeAsked[2]);}
     static const TCHAR* const HighlightLayers[]={TEXT("_overcolor1"),TEXT("_overcolor2"),TEXT("_overcolor3")};
     auto Gate=[&](UMaterialInstanceDynamic* M){if(!M)return;const FVector4f* Card=EyeHighlightBase.Find(M);
         if(!Card){float Gated=0.f;if(!M->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("_isHighLight")),Gated))return;FVector4f Kept(Gated,0.f,0.f,0.f);

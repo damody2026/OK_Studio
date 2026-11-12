@@ -10,6 +10,9 @@
 #include "KKRustExtract.h"
 #include "OKHScene.generated.h"
 
+// The H scene's material twins asked for ahead (its _Bias clothes): installed once, by the host scene at start.
+void OKHSceneInstallPrecacheAhead();
+
 // The street one-on-one as the original H scene (HSceneProc / HSprite, D:\KoikatuSunshine\H_scene.md): a menu of the
 // authored poses by mode (service by hand, mouth, breasts; intercourse), each pose's state flow (Idle → Insert →
 // InsertIdle → WLoop/SLoop → OLoop → finish → after), both gauges, speed, condom, the finish choices, her clothes; what
@@ -25,6 +28,20 @@ class UProgressBar;
 class USlider;
 class UScrollBox;
 struct FOKCoordLoad;
+
+// One mirror of the H scene (UOKHScenePanel::TickMirror): its actor, the quad its picture is drawn on, the capture, and two
+// pictures (user 2026-11-09: the mirror halved the frame rate) taken every other frame into the one not shown, then shown
+// (Front), at twice the mirror's size on the screen for its edges (Size).
+USTRUCT()
+struct FOKHMirror {
+    GENERATED_BODY()
+    UPROPERTY() TObjectPtr<AActor> Actor;
+    UPROPERTY() TObjectPtr<class UProceduralMeshComponent> Quad;
+    UPROPERTY() TObjectPtr<class USceneCaptureComponent2D> Capture;
+    UPROPERTY() TObjectPtr<class UTextureRenderTarget2D> Targets[2];
+    UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> Shown;
+    int32 Front=0,Size=0;uint64 TakenAt=0;
+};
 
 UCLASS()
 class OPENKOIKATSU_API UOKHSceneButton : public UButton {
@@ -107,7 +124,7 @@ public:
     bool SelectPoseNamed(const FString& Name);
     void SetLimbIk(const TSharedPtr<FJsonObject>& Settings);TSharedPtr<FJsonObject> LimbIkJson() const;
     void SetTongue(const TSharedPtr<FJsonObject>& Settings);TSharedPtr<FJsonObject> TongueJson() const;
-    void SetMirror(const TSharedPtr<FJsonObject>& Settings);TSharedPtr<FJsonObject> MirrorJson() const;
+    void SetMirror(const TSharedPtr<FJsonObject>& Settings,int32 Index=0);TSharedPtr<FJsonObject> MirrorJson(int32 Index=0) const;
     void SetSpeed(float Value);
     // Talk while it happens (the street's free talk, OKStreetSocialContacts.inl). What he says goes out at once, or,
     // while she cannot answer (moving faster than 2x), is held and goes out at her climax; her answer shows here and is
@@ -195,13 +212,23 @@ private:
     // Her tongue out raised (TickTongue; ok.HScene.TongueUp / TonguePitch, {"tongue":{...}} on /hscene): its parts as they
     // were made (less the alignment's offset), the girl they are hers, and whether her mouth pattern has it out.
     void TickTongue();
-    // A 200 x 200 cm mirror beside them (user 2026-11-09; TickMirror, ok.HScene.Mirror / MirrorYaw / MirrorDistance,
-    // {"mirror":{...}} on /hscene): a capture from the camera's reflection through the mirror, drawn on its quad.
-    UPROPERTY() TObjectPtr<AActor> Mirror;UPROPERTY() TObjectPtr<class UProceduralMeshComponent> MirrorQuad;UPROPERTY() TObjectPtr<class USceneCaptureComponent2D> MirrorCapture;
-    // Two pictures (user 2026-11-09: the mirror halved the frame rate): taken every other frame into the one not shown, then
-    // shown (MirrorFront), at twice the mirror's size on the screen for its edges (MirrorSize).
-    UPROPERTY() TObjectPtr<class UTextureRenderTarget2D> MirrorTargets[2];UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> MirrorShown;
-    int32 MirrorFront=0,MirrorSize=0;uint64 MirrorTakenAt=0;void TickMirror();void RemoveMirror();
+    // Two 200 x 200 cm mirrors beside them (user 2026-11-09, the second 2026-11-12; TickMirror, ok.HScene.Mirror / MirrorYaw /
+    // MirrorDistance and Mirror2 / Mirror2Yaw / Mirror2Distance, {"mirror":{...}} and {"mirror2":{...}} on /hscene): each a
+    // capture from the camera's reflection through it, drawn on its quad (FOKHMirror).
+    UPROPERTY() FOKHMirror Mirrors[2];int32 MirrorTurn=0;
+    void TickMirror();void TickOneMirror(int32 Index,bool& bTaken);void RemoveMirror();void RemoveMirror(int32 Index);
+    // Puddles on the floor round them (user 2026-11-12; TickPuddles, ok.HScene.Puddles / PuddleCount / PuddleSize,
+    // {"puddles":{...}} on /hscene): nearly smooth water (M_OKPuddleMirror) in which screen space reflections show them,
+    // glowing with a photo of the floor under it (PuddleFloorCapture) so it is wet floor, not black, where nothing is reflected.
+    UPROPERTY() TObjectPtr<AActor> Puddles;UPROPERTY() TArray<TObjectPtr<class UTexture2D>> PuddleMasks;
+    UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> PuddleShown;float PuddleShineShown=-1.f;
+    UPROPERTY() TObjectPtr<USceneCaptureComponent2D> PuddleFloorCapture;UPROPERTY() TObjectPtr<UTextureRenderTarget2D> PuddleFloorTarget;
+    FVector PuddleFloorAt=FVector::ZeroVector;double PuddleFloorTakenAt=-1.;float PuddleFloorWidth=0.f;
+    int32 PuddlesMade=0;float PuddlesSize=0.f;int32 PreviousSsrQuality=-1,PreviousReflectionMethod=-1;
+    void TickPuddles();void RemovePuddles();
+public:
+    void SetPuddles(const TSharedPtr<FJsonObject>& Settings);TSharedPtr<FJsonObject> PuddlesJson() const;
+private:
     // Their skin lit by the scene or the original's toon (ok.HScene.SkinLit, SkinLitToggle; user 2026-11-09).
     void TickSkinLit(bool bEnd);bool bSkinLitShown=false;
     void TickClothBias(bool bEnd);bool bClothBiasShown=false;

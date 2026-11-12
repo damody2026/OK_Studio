@@ -61,11 +61,19 @@ struct FKKRuntimeSkinBounds
  bool Calculate(const USkinnedMeshComponent& Component,const FTransform& LocalToWorld,FBoxSphereBounds& Result);
 };
 
+// Skinned assets built at runtime never mark their LOD data ready (only serialization does), so the engine's PSO
+// collection skips them and their shaders compiled in the frame that first drew them (2026-11-12). These collect
+// what the engine would; the KK runtime components use them on every engine precache call (register, asset,
+// material), and KKPrecacheRuntimePSOs asks it for any other component once its materials are set.
+KKUNITYBUNDLE_API void KKCollectRuntimeSkinnedPSOs(USkinnedMeshComponent& Component,const FPSOPrecacheParams& Base,FMaterialInterfacePSOPrecacheParamsList& Out);
+KKUNITYBUNDLE_API void KKPrecacheRuntimePSOs(UPrimitiveComponent* Component);
+
 UCLASS()
 class KKUNITYBUNDLE_API UKKRuntimePoseableMeshComponent : public UPoseableMeshComponent
 {
  GENERATED_BODY()
 public:
+ virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& Base,FMaterialInterfacePSOPrecacheParamsList& Out) override {KKCollectRuntimeSkinnedPSOs(*this,Base,Out);}
  virtual FBoxSphereBounds CalcBounds(const FTransform& LocalToWorld) const override;
  virtual void FinalizeBoneTransform() override;
  virtual void UpdateFollowerComponent() override;
@@ -100,6 +108,7 @@ class KKUNITYBUNDLE_API UKKRuntimeSkeletalMeshComponent : public USkeletalMeshCo
 {
  GENERATED_BODY()
 public:
+ virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& Base,FMaterialInterfacePSOPrecacheParamsList& Out) override {KKCollectRuntimeSkinnedPSOs(*this,Base,Out);}
  virtual FBoxSphereBounds CalcBounds(const FTransform& LocalToWorld) const override;
  virtual void FinalizeBoneTransform() override;
  virtual void UpdateFollowerComponent() override;

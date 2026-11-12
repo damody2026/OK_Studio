@@ -56,6 +56,15 @@ public:
     static bool UpdateGeneratedStreamsExternally(TArrayView<const FKKGeneratedStreamRequest> Requests,
         TFunctionRef<void(FKKGeneratedSectionEmitter)> Schedule);
     virtual FPrimitiveSceneProxy* CreateSceneProxy() override;
+    // The stock procedural component collects nothing, so each material compiled its shaders in the frame that first
+    // drew it; both proxies draw with FLocalVertexFactory.
+    virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& Base, FMaterialInterfacePSOPrecacheParamsList& Out) override;
+    // Ask for a material's PSOs as one of these components (movable, casting shadows) will draw it, before any does: the
+    // high model's parents as they load, so its first frame in the one-on-one does not wait for them (once per material).
+    static void PrecacheAhead(UMaterialInterface* Material);
+    // Called (game thread) with each material PrecacheAhead takes for the first time: a host asks for the parents it will
+    // swap in for that one later (the H scene's _Bias clothes) the same way.
+    static TFunction<void(UMaterialInterface*)>& PrecacheAheadVariants();
     static void UpdateStreams(UProceduralMeshComponent* Component, int32 Section,
         const TArray<FVector>& Positions, const TArray<FVector>& Normals,
         const TArray<FVector2D>& UV0, const TArray<FVector2D>& UV1,

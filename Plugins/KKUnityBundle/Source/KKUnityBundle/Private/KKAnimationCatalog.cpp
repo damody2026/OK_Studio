@@ -1,10 +1,22 @@
 #include "KKAnimationCatalog.h"
 #include "Serialization/JsonSerializer.h"
+#include "UObject/StrongObjectPtr.h"
+#include "UObject/UObjectGlobals.h"
+#include "UObject/Package.h"
 
 UKKAnimationCatalog* UKKAnimationCatalog::LoadDefaultCatalog()
 {
 	return LoadObject<UKKAnimationCatalog>(nullptr,
 		TEXT("/Game/Koikatsu/Data/DA_AnimationAndMouth.DA_AnimationAndMouth"), nullptr, LOAD_NoWarn);
+}
+
+void UKKAnimationCatalog::PreloadDefaultCatalog()
+{
+	static bool bAsked=false;if(bAsked)return;bAsked=true;
+	static TStrongObjectPtr<UKKAnimationCatalog> Kept;
+	if(UKKAnimationCatalog* Loaded=FindObject<UKKAnimationCatalog>(nullptr,TEXT("/Game/Koikatsu/Data/DA_AnimationAndMouth.DA_AnimationAndMouth"))){Kept.Reset(Loaded);return;}
+	LoadPackageAsync(TEXT("/Game/Koikatsu/Data/DA_AnimationAndMouth"),FLoadPackageAsyncDelegate::CreateLambda([](const FName&,UPackage* Package,EAsyncLoadingResult::Type){
+		if(UKKAnimationCatalog* Loaded=Package?FindObject<UKKAnimationCatalog>(Package,TEXT("DA_AnimationAndMouth")):nullptr)Kept.Reset(Loaded);}));
 }
 
 const FKKExportCatalogTable* UKKAnimationCatalog::FindTable(FName Name) const

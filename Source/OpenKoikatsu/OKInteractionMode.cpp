@@ -28,6 +28,7 @@
 #include "Components/ComboBoxString.h"
 #include "ProceduralMeshComponent.h"
 #include "Misc/FileHelper.h"
+#include "KKAnimationCatalog.h"
 #include "Serialization/JsonSerializer.h"
 #include "UnrealClient.h"
 #include "Engine/GameViewportClient.h"
@@ -35,6 +36,7 @@
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Input/SButton.h"
+#include "OKReaderTalk.h"
 
 extern TAutoConsoleVariable<int32> CVarHRefineBelly; // OKHScene.cpp
 namespace {
@@ -47,7 +49,11 @@ AOKInteractionMode* AOKInteractionMode::Enter(UOKCharacterController* Input,cons
     if(!Input||!Input->GetWorld()||!Input->GetOwningPlayer()||Input->Selected.Sex!=1)return nullptr;
     for(TActorIterator<AOKInteractionMode> It(Input->GetWorld());It;++It)if(!It->Finished)return It->Controller==Input?*It:nullptr;
     auto* Mode=Input->GetWorld()->SpawnActor<AOKInteractionMode>();if(!Mode)return nullptr;
-    Mode->Controller=Input;Mode->Started=FPlatformTime::Seconds();if(InPlace){Mode->bInPlace=true;Mode->InPlaceAt=*InPlace;Input->bInteractionInPlace=true;}Mode->PreviousView=Input->GetOwningPlayer()->GetViewTarget();Mode->PreviousMouse=Input->GetOwningPlayer()->bShowMouseCursor;
+    Mode->Controller=Input;Mode->Started=FPlatformTime::Seconds();if(InPlace){Mode->bInPlace=true;Mode->InPlaceAt=*InPlace;Input->bInteractionInPlace=true;
+        // In the world itself the sun's shadows reach no further than 40% of their distance while they are at it: gathering
+        // the university city's casters took 0.9 ms of the render thread in the department store, the two of them and what
+        // stands around them shadowed the same (2026-11-12). Given back on leaving (Exit).
+        if(IConsoleVariable* V=IConsoleManager::Get().FindConsoleVariable(TEXT("r.Shadow.DistanceScale"));V&&V->GetFloat()>.4f){Mode->PreviousShadowDistance=V->GetFloat();V->Set(.4f,ECVF_SetByConsole);}}Mode->PreviousView=Input->GetOwningPlayer()->GetViewTarget();Mode->PreviousMouse=Input->GetOwningPlayer()->bShowMouseCursor;
     if(auto* PC=Cast<AOpenKoikatsuPlayerController>(Input->GetOwningPlayer())){
         Mode->PreviousPaint=PC->IsPaintPreviewActive();Mode->PreviousTouch=PC->bBodyTouchEnabled;
         // Detach the source context before stage activation can cancel it.
@@ -148,7 +154,9 @@ AOKInteractionMode* AOKInteractionMode::EnterReader(UOKCharacterController* Sour
          ReaderRules=MakeUnique<FOKStreetRules>();FString RulesError;
          if(ReaderRules->Open(RulesError))OKStreetSetActiveRules(ReaderRules.Get());
          else{UE_LOG(LogTemp,Warning,TEXT("Card reader one-on-one: rules not open, the H panel shows its text ids: %s"),*RulesError);ReaderRules.Reset();}}
-     Mode->BeginHScene(Her,TEXT("lover"),ReaderExperience(Source),Him);}
+     // Her talk first: the names the panel shows are the street's (her name table, his name from the settings), as she says them.
+     Mode->ReaderTalk=MakeShared<FOKReaderTalk>(Source->PreviewCardPath,Her,Him,Source->Selected.Personality);
+     Mode->BeginHScene(Mode->ReaderTalk->HerName(),TEXT("lover"),ReaderExperience(Source),Mode->ReaderTalk->HisName());}
     const auto SourceVisibility=Source->GetVisibility();Source->SetVisibility(ESlateVisibility::Collapsed);
     Mode->Returned=[Weak=TWeakObjectPtr<UOKCharacterController>(Source),SourceVisibility](TSharedRef<FJsonObject>){if(Weak.IsValid()){Weak->SetVisibility(SourceVisibility);Weak->ApplyClickInputMode();}};
     return Mode;
@@ -177,11 +185,17 @@ void AOKInteractionMode::LoadFemale(const FString& Path,int32 Outfit){
         const double T2=FPlatformTime::Seconds();double T3=T2,T35=T2,T4=T2;
         // Her materials first, every texture in parallel (the precache below then finds them prepared): one at a time,
         // March 7th's took 10 s here (Encore 1 s), the player looking at the loading screen.
-        if(Job->Ok&&!*Token){Job->Session.WardrobePrepare();Job->Session.ApplyBodyPhysics(Job->Card.Body.BustSoftness,Job->Card.Body.BustWeight);if(CVarHRefineBelly.GetValueOnAnyThread())Job->Session.RefineBelly();T3=FPlatformTime::Seconds();
+        if(Job->Ok&&!*Token){Job->Session.WardrobePrepare();Job->Session.ApplyBodyPhysics(Job->Card.Body.BustSoftness,Job->Card.Body.BustWeight);if(CVarHRefineBelly.GetValueOnAnyThread())Job->Session.RefineBelly();
+         // The shaped baselines her entry's static frame would make first (168 ms in that frame, 2026-11-12).
+         Job->Session.PrepareShapedBaselines();T3=FPlatformTime::Seconds();
          FString MaterialError;if(!Job->Session.PrepareRuntimeMaterials(MaterialError,true))UE_LOG(LogTemp,Warning,TEXT("Interaction female materials: %s"),*MaterialError);T35=FPlatformTime::Seconds();
          AKKPreviewActor::PrecacheSessionTextures(Job->Session,true);T4=FPlatformTime::Seconds();
          // The touch reactions' shared data, parsed here rather than in the frame her scene comes up.
-         FString BodyError;if(!FOKBodyInteraction::WarmShared(BodyError))UE_LOG(LogTemp,Warning,TEXT("Interaction body data: %s"),*BodyError);
+         FString BodyError;if(!FOKBodyInteraction::WarmShared(BodyError)){UE_LOG(LogTemp,Warning,TEXT("Interaction body data: %s"),*BodyError);}
+         // And her reaction solver, which her entry made in its frame (89 ms, 2026-11-12).
+         else if(!FOKBodyInteraction::PrepareAhead(Job->Session,BodyError)){UE_LOG(LogTemp,Warning,TEXT("Interaction body reaction: %s"),*BodyError);}
+         // Her ahegao's eye set (OKHScene.cpp), read in her scene's first frame before (72 ms).
+         {extern void OKHScenePrepareFace();OKHScenePrepareFace();}
          // Her pair list too, as the card reader's own load does (RefreshPairs read it from the session on the game thread).
          Job->Pairs=Job->Session.NativeAnimationPairs();}
         UE_LOG(LogTemp,Display,TEXT("Interaction female load %s: card %.0f ms, session %.0f ms, body physics %.0f ms, materials %.0f ms, textures %.0f ms"),*FPaths::GetCleanFilename(Path),(T1-T0)*1000.,(T2-T1)*1000.,(T3-T2)*1000.,(T35-T3)*1000.,(T4-T35)*1000.);
@@ -190,7 +204,7 @@ void AOKInteractionMode::LoadFemale(const FString& Path,int32 Outfit){
             if(!Job->Ok){Mode->Fail(Job->Error.IsEmpty()?TEXT("女角高模載入失敗"):Job->Error);return;}
             C->Selected=MoveTemp(Job->Card);C->Entries.Reset();auto& E=C->Entries.AddDefaulted_GetRef();E.Path=Path;E.FileName=FPaths::GetCleanFilename(Path);C->SelectedIndex=0;C->OutfitIndex=Outfit;C->PreviewOutfitIndex=Outfit;C->PreviewCardPath=Path;C->bModelLayout=true;
             if(!Job->Pairs.IsEmpty()){C->PendingLoadPairJson=MoveTemp(Job->Pairs);C->PendingLoadPairGeneration=C->LoadGeneration;}
-            Mode->LoadingFemale=Mode->GetWorld()->SpawnActor<AKKPreviewActor>();if(!Mode->LoadingFemale){Mode->Fail(TEXT("無法建立高模角色"));return;}Mode->LoadingFemale->bPreserveSourceWorld=true;if(Mode->bInPlace)Mode->LoadingFemale->SetActorTransform(FTransform(Mode->InPlaceAt.GetRotation(),Mode->InPlaceAt.GetLocation()));else Mode->LoadingFemale->SetActorLocation(FVector::ZeroVector);Mode->LoadingFemale->SetActorHiddenInGame(true);Mode->LoadingFemale->Session=MoveTemp(Job->Session);
+            Mode->LoadingFemale=Mode->GetWorld()->SpawnActor<AKKPreviewActor>();if(!Mode->LoadingFemale){Mode->Fail(TEXT("無法建立高模角色"));return;}Mode->LoadingFemale->bPreserveSourceWorld=true;if(Mode->bInPlace)Mode->LoadingFemale->SetActorTransform(FTransform(Mode->InPlaceAt.GetRotation(),Mode->InPlaceAt.GetLocation()));else Mode->LoadingFemale->SetActorLocation(FVector::ZeroVector);Mode->LoadingFemale->SetActorHiddenInGame(true);Mode->LoadingFemale->Session=MoveTemp(Job->Session);Mode->LoadingFemale->PrepareWornBodyMasks();if(Mode->Controller)Mode->Controller->PrepareEditorModsJson();UKKAnimationCatalog::PreloadDefaultCatalog();
             FString Error;if(!Mode->LoadingFemale->BeginSessionLoad(Error)){Mode->Fail(Error);return;}
         });
     });
@@ -292,6 +306,12 @@ void AOKInteractionMode::PumpWardrobe(){
 }
 void AOKInteractionMode::TickOutfitSwap(){
     if(!bWardrobePlanned){bWardrobePlanned=true;PlanWardrobe();
+        // Her clothing rules for each outfit worked out off the game thread (ok-extract keeps them): a pose's undoing of her
+        // clothes asks for them, and the first ask cost 0.8 s a piece in the frame (3.9 s for the side position, 2026-11-12).
+        {const FString Root=OpenedRoot(),Card=OpenedFemaleCard();const int32 Count=FMath::Clamp(Controller->Selected.Outfits.Num(),1,8),Worn=Controller->OutfitIndex;
+         Async(EAsyncExecution::Thread,[Root,Card,Count,Worn](){const double T0=FPlatformTime::Seconds();
+             for(int32 I=-1;I<Count;++I){const int32 Outfit=I<0?Worn:I;if(I>=0&&Outfit==Worn)continue;uint8 Zero[9]={},Out[9];FString Why;FOkSession::ClothingTransition(Root,Card,Outfit,Zero,0,Out,Why);}
+             UE_LOG(LogTemp,Display,TEXT("H scene clothing rules prepared for %d outfits in %.0f ms"),Count,(FPlatformTime::Seconds()-T0)*1000.);});}
         // Brought over from the card reader, she has only the state she was opened in: her clothes again, with them all.
         if(bClonedFemale)StartSwap(Controller->OutfitIndex,FString(),false);}
     if(OutfitChanging){
@@ -351,7 +371,11 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
         // {"tongue":{"up":cm,"pitch":deg,"length":x}}: her tongue out (ok.HScene.TongueUp / TonguePitch / TongueLength).
         const TSharedPtr<FJsonObject>* TongueSet=nullptr;if(Body->TryGetObjectField(TEXT("tongue"),TongueSet))Panel->SetTongue(*TongueSet);
         // {"mirror":{"on":b,"yaw":deg,"distance":cm}}: the 200 x 200 cm mirror round them (ok.HScene.Mirror / MirrorYaw / MirrorDistance).
-        const TSharedPtr<FJsonObject>* MirrorSet=nullptr;if(Body->TryGetObjectField(TEXT("mirror"),MirrorSet))Panel->SetMirror(*MirrorSet);
+        const TSharedPtr<FJsonObject>* MirrorSet=nullptr;if(Body->TryGetObjectField(TEXT("mirror"),MirrorSet))Panel->SetMirror(*MirrorSet,0);
+        // {"mirror2":{...}}: the second mirror, the same way (ok.HScene.Mirror2 / Mirror2Yaw / Mirror2Distance).
+        if(Body->TryGetObjectField(TEXT("mirror2"),MirrorSet))Panel->SetMirror(*MirrorSet,1);
+        // {"puddles":{"on":b,"count":n,"size":cm,"shine":0..1}}: the puddles on the floor (ok.HScene.Puddles / PuddleCount / PuddleSize / PuddleShine).
+        if(Body->TryGetObjectField(TEXT("puddles"),MirrorSet))Panel->SetPuddles(*MirrorSet);
         // {"skin_lit":true|false}: their skin lit by the scene or the original's toon (ok.HScene.SkinLit).
         bool SkinLit=false;if(Body->TryGetBoolField(TEXT("skin_lit"),SkinLit))if(auto* Var=IConsoleManager::Get().FindConsoleVariable(TEXT("ok.HScene.SkinLit")))Var->Set(SkinLit?1:0,ECVF_SetByConsole);
         // {"orbit":[yaw,pitch,distance]}: the camera round her hips, turned from where she faces (pose checks from the side and the front).
@@ -488,22 +512,28 @@ void AOKInteractionMode::SetHPaused(bool bPaused){
 }
 void AOKInteractionMode::Tick(float Delta){
     Super::Tick(Delta);if(Finished||!Controller)return;
+    if(ReaderTalk&&Ready)ReaderTalk->Tick(*this);
     if(auto* PC=Controller->GetOwningPlayer())if(PC->WasInputKeyJustPressed(EKeys::Escape)){Exit(!Ready);return;}
     // Space pauses or resumes the two of them (user, 2026-11-02: to take pictures), not while typing to her.
     if(auto* PC=Controller->GetOwningPlayer())if(Controller->HPanel&&Controller->PairedPlayback&&PC->WasInputKeyJustPressed(EKeys::SpaceBar)){
         const TSharedPtr<SWidget> Focus=FSlateApplication::IsInitialized()?FSlateApplication::Get().GetKeyboardFocusedWidget():nullptr;
         if(!Focus||!Focus->GetType().ToString().Contains(TEXT("EditableText")))SetHPaused(!Controller->PairedPlayback->IsPaused());}
     if(FPlatformTime::Seconds()-Started>180&&!Ready&&(!Activated||ReturnLabel==TEXT("返回多人街區"))){Fail(TEXT("一對一互動準備逾時"));return;}
-    if(LoadingFemale){FString Why;
+    if(LoadingFemale){TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_HerLoaded);FString Why;
         if(!LoadingFemale->ContinueSessionLoad(Why)){Fail(Why);return;}
+        // Her irises without highlights read back and painted while she loads (her H panel may ask for them at once).
+        LoadingFemale->PrepareEyeDull();
         if(!LoadingFemale->IsSessionLoadComplete())return;
         bool FullOff=true;for(uint8 State:Controller->ClothesStates)FullOff&=State==3;
-        LoadingFemale->bAllClothesStates=!bClonedFemale;LoadingFemale->SetClothingPartsHidden(Controller->ClothesStates);
-        if(FullOff)LoadingFemale->SetClothingHidden(true);
-        if(!LoadingFemale->BeginProgressiveMaterials())return;
+        {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_HerClothes);LoadingFemale->bAllClothesStates=!bClonedFemale;LoadingFemale->SetClothingPartsHidden(Controller->ClothesStates);
+        if(FullOff)LoadingFemale->SetClothingHidden(true);}
+        {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_HerMaterials);if(!LoadingFemale->BeginProgressiveMaterials())return;}
         Controller->PreviewActor=LoadingFemale;LoadingFemale=nullptr;Controller->PreviewActor->SetActorTickEnabled(false);Controller->bLoadInFlight=false;
-        Controller->PreviewActor->ApplyShapes(Controller->Selected.Face.ShapeValueFace,Controller->Selected.Body.ShapeValueBody);
-        Controller->PreviewActor->SetupStudioView(true);Controller->PreviewActor->SetActorHiddenInGame(false);Controller->RefreshPairs();
+        // Only when they differ from what she was opened with (as ActivateInteraction): the same again was 220 ms of the frame.
+        {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_HerShapes);auto* Her=Controller->PreviewActor.Get();
+         if(Her->bShapeDirty||Her->Session.ShapeBody()!=Controller->Selected.Body.ShapeValueBody||Her->Session.ShapeFace()!=Controller->Selected.Face.ShapeValueFace)Her->ApplyShapes(Controller->Selected.Face.ShapeValueFace,Controller->Selected.Body.ShapeValueBody);}
+        {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_HerView);Controller->PreviewActor->SetupStudioView(true);Controller->PreviewActor->SetActorHiddenInGame(false);}
+        {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_RefreshPairs);Controller->RefreshPairs();}
         // SetupStudioView stands her at the world's origin, which on the street is a square outdoors: she tried the shop's
         // dress on in the open. A fitting stays where she was, in the shop, and the camera takes the side with the most room.
         if(bFitting&&bInPlace){auto* Her=Controller->PreviewActor.Get();const FVector Feet=InPlaceAt.GetLocation();const FVector Chest=Feet+FVector(0.,0.,100.);
@@ -518,17 +548,24 @@ void AOKInteractionMode::Tick(float Delta){
             const FVector Foot=Her->GetActorLocation();Her->SetActorLocationAndRotation(Feet+FVector(0.,0.,Foot.Z),FRotator(0.,-Yaw,0.));
             Her->OrbitFocus=FVector(Feet.X,Feet.Y,Feet.Z+Her->OrbitFocus.Z);Her->OrbitYaw=Yaw;Her->OrbitPitch=0.f;Her->OrbitDistance=Distance;Her->ApplyOrbitCamera();
             UE_LOG(LogTemp,Display,TEXT("Fitting: in place at %s, camera yaw %.0f at %.0f cm"),*Feet.ToCompactString(),Yaw,Distance);}
+        // The one-on-one in place as well: right where she stood, facing as she did (he follows her, RefreshPairs). At the
+        // origin it was in the sea off the university city (Jeanne Alter in the bookstore, 2026-11-12); the street's origin
+        // being its square had hidden it.
+        else if(bInPlace){auto* Her=Controller->PreviewActor.Get();const FVector Feet=InPlaceAt.GetLocation();const FVector Foot=Her->GetActorLocation();
+            Her->SetActorLocationAndRotation(Feet+FVector(0.,0.,Foot.Z),FRotator(0.,InPlaceAt.Rotator().Yaw,0.));
+            Her->OrbitFocus=FVector(Feet.X,Feet.Y,Feet.Z+Her->OrbitFocus.Z);Her->OrbitYaw=InPlaceAt.Rotator().Yaw;Her->ApplyOrbitCamera();
+            UE_LOG(LogTemp,Display,TEXT("One-on-one: in place at %s yaw %.0f"),*Feet.ToCompactString(),InPlaceAt.Rotator().Yaw);}
     }
-    if(!OwnController)Controller->TickPreviewPreparation();
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_PreviewPreparation);if(!OwnController)Controller->TickPreviewPreparation();}
     if(!Activated){
         if(Controller->bLoadInFlight)return;
-        Controller->InteractionReturnLabel=ReturnLabel;Controller->ActivateInteraction();
+        {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_Activate);Controller->InteractionReturnLabel=ReturnLabel;Controller->ActivateInteraction();}
         if(!Controller->InteractionWidget)return;
         Activated=true;OriginalPosition=Controller->PreviewActor->GetActorLocation();
         if(bFitting){Controller->InteractionWidget->SetVisibility(ESlateVisibility::Collapsed);if(auto* PC=Cast<AOpenKoikatsuPlayerController>(Controller->GetOwningPlayer()))PC->SetPaintPreviewActive(false);}
-        else if(!MalePath.IsEmpty())Controller->LoadPartnerFromPath(MalePath);
+        else if(!MalePath.IsEmpty()){TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_LoadPartner);Controller->LoadPartnerFromPath(MalePath);}
     }
-    UpdatePairPhysics();
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_PairPhysics);UpdatePairPhysics();}
     if(bFitting&&!Ready&&IsValid(Controller->PreviewActor)&&Controller->PreviewActor->PreparePlaybackMaterials(false)){
         auto* Her=Controller->PreviewActor.Get();
         if(!Her->SetGameSceneMode(3,false)||!Her->SetGameAnimation(TEXT("states:studio@5B2273747564696F2F616E696D652F30302E756E6974793364222C227461636869222C22222C22225D|tachi / [Studio layer 0] Base Layer.f_tachi_00_00")))UE_LOG(LogTemp,Warning,TEXT("Fitting: the standing clip did not play"));
@@ -547,9 +584,9 @@ void AOKInteractionMode::Tick(float Delta){
         Evidence->SetNumberField(TEXT("playback_start_seconds"),Controller->PairedPlayback->GetElapsed());
         if(!ReportPath.IsEmpty())FScreenshotRequest::RequestScreenshot(FPaths::GetPath(ReportPath)/TEXT("high-interaction.png"),true,false);
     }
-    if(Ready)TickOutfitSwap();
+    if(Ready){TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_OutfitSwap);TickOutfitSwap();}
 #if !UE_BUILD_SHIPPING
-    if(Ready&&!TickFeatureAudit())return;
+    if(Ready){TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_FeatureAudit);if(!TickFeatureAudit())return;}
 #endif
     if(Ready&&AutoReturnSeconds>0&&FPlatformTime::Seconds()-ReadyAt>=AutoReturnSeconds)Exit();
 }
@@ -559,6 +596,8 @@ void AOKInteractionMode::UpdatePairPhysics(){
 }
 void AOKInteractionMode::Exit(bool WasCancelled){
     if(Exiting||Finished)return;Exiting=true;if(Cancelled)*Cancelled=true;
+    if(ReaderTalk){ReaderTalk->End();ReaderTalk.Reset();}
+    if(PreviousShadowDistance>=0.f){if(IConsoleVariable* V=IConsoleManager::Get().FindConsoleVariable(TEXT("r.Shadow.DistanceScale")))V->Set(PreviousShadowDistance,ECVF_SetByConsole);PreviousShadowDistance=-1.f;}
     for(const TWeakObjectPtr<AKKPreviewActor>& Actor:PairPhysicsActors)if(Actor.IsValid())Actor->RemovePairPhysics();PairPhysicsActors.Reset();
     if(PreparingOverlay&&GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(PreparingOverlay.ToSharedRef());PreparingOverlay.Reset();
     if(!Evidence)Evidence=MakeShared<FJsonObject>();Evidence->SetStringField(TEXT("state"),!WasCancelled&&Activated?TEXT("returned"):TEXT("cancelled"));Evidence->SetStringField(TEXT("error"),Error);Evidence->SetBoolField(TEXT("same_process"),true);Evidence->SetNumberField(TEXT("process_id"),FPlatformProcess::GetCurrentProcessId());

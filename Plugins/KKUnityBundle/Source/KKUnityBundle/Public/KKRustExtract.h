@@ -18,6 +18,9 @@ class UTexture;
 /** This iris texture with the highlights painted into it taken out (a card's overlay can hold them; the eye material's own
  *  gate does not reach those). Iris itself when it has none. Made once per texture, on the game thread. */
 KKUNITYBUNDLE_API UTexture* OKIrisWithoutHighlights(UTexture* Iris);
+/** OKIrisWithoutHighlights made ahead without waiting on the game thread (read back on the render thread, painted on a
+ *  worker); nothing when it is made or on its way. */
+KKUNITYBUNDLE_API void OKPrepareIrisWithoutHighlights(UTexture* Iris);
 /** Marks of ours over the middle of an iris, the first under the second: Shape (x; 0 none), across, down, opacity, and each one's
  *  Colour (hue in degrees, saturation, value). */
 struct FOKIrisMarks
@@ -129,7 +132,8 @@ public:
  static FString CommonInteractionPoses();
  // What each outfit of her card asks for and nothing provides, as JSON (outfit_gaps.rs). Slow: not on the game thread.
  static FString CardOutfitGaps(const FString& Root,const FString& Card);
- bool PrepareBodyReaction(const TArray<uint8>& Definition,FString& Error);
+ // bAhead: by the thread that opened the session; the next call (not ahead) takes what it made as it is, once.
+ bool PrepareBodyReaction(const TArray<uint8>& Definition,FString& Error,bool bAhead=false);
  bool BodyReactionHit(int32 Id,TConstArrayView<FVector3f> Forces,float Weight,uint8 ReleaseMask=0);
  void ClearBodyReaction();
  bool IsBodyReactionPlaying() const;
@@ -192,6 +196,8 @@ public:
 	bool ClothesPartsShown(const uint8 States[9],TArray<uint8>& Out) const;
 	/** The PNG mask her body takes with her top in this state (empty: none). */
 	bool WardrobeBodyMask(int32 TopState,TArray<uint8>& Out) const;
+	// WardrobeBodyMask from her body's own mask (WardrobeBodyMask(0, ...)), no session: any thread.
+	static bool BodyMaskForTopState(const TArray<uint8>& Mask,int32 TopState,TArray<uint8>& Out);
 	// The parts the display hides (one byte a session part): their chains are not solved or skinned while hidden.
 	bool SetPartsHidden(TConstArrayView<uint8> Hidden);
 	static bool WardrobeSwap(FOkSession& Live,FOkSession& Donor,FString& Error);
@@ -267,6 +273,10 @@ public:
 	// This frame's wrap and clothes on the wrap worker, the session idle (ok_belly_wrap_start): as BellyWrapDeltas, bWrap false
 	// her skin left alone, bCover false her clothes left alone.
 	bool BellyWrapStart(bool bWrap,const FVector& From,const FVector& To,const FVector& Up,float RadiusM,bool bCover);
+	// Her wrap's vertex table built ahead off the game thread, the session idle (ok_belly_wrap_prepare): cheap to ask again.
+	void BellyWrapPrepare();
+	// The shaped baselines StaticInteractionFrame would make first, made now (ok_session_prepare_shaped_baselines).
+	void PrepareShapedBaselines();
 	// The finished job, the session idle: false when none is ready. Her body's moves as BellyWrapDeltas, her garments' as
 	// ClothCoverDeltas, the garments to draw from their CPU vertices as SetClothCover.
 	bool BellyWrapTake(bool bCover,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,TArray<FVector3f>& OutNormalDeltas,TArray<int32>& OutClothParts,TArray<uint32>& OutClothIndices,TArray<FVector3f>& OutClothDeltas,TArray<int32>& OutCpuParts);

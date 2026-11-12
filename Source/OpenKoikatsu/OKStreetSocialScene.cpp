@@ -6,6 +6,9 @@
 #include "OKStreetSocialSpeakerText.h"
 #include "OKStreetSocialSongState.h"
 #include "OKInteractionMode.h"
+#include "KKRustExtract.h"
+#include "KKSpeech.h"
+#include "Async/Async.h"
 #include "OKStreetSocialRules.h"
 #include "OKStreetHeroine.h"
 #include "Algo/Reverse.h"
@@ -289,6 +292,9 @@ struct FOKStreetSceneState {
  // ok_mind.dll, when it loaded; null keeps the old behaviour.
  TUniquePtr<FOKStreetRules> Rules;int32 RulesDefaultsGeneration=-1;TArray<TSharedPtr<FJsonObject>> PendingRulesEffects;float BondStartFavor=10.f;int64 BondTickMinutes=15,NeedsTickMinutes=15;
  TUniquePtr<FOKStreetMind> Mind;TMap<uint64,FOKStreetMindTalk> MindTalks;
+ // His line's job, handed to the mind the frame after it was prepared (SendFreeTalk); and the heroines the mind is
+ // known to hold a context for (no legacy history goes with their jobs).
+ struct FPendingMindTalk{int32 Character=INDEX_NONE;FString Id,System,User,Text;};TOptional<FPendingMindTalk> PendingMindTalk;TSet<FString> MindContextKnown;
  // The heroine the last mind talk was with; when talk moves on, her meeting is summarised into memories.
  int32 MindTalkPartner=INDEX_NONE;
  // Heroine profiles from the mind (plan §4.1) and their traits (§4.2a), by stable id.
@@ -417,6 +423,7 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  TMap<int32,double> CommutePausedUntil; // a girl he walked up to stops her walk for a moment (StepNavigation)
  // PrivateInPlace: the one-on-one is where she stands on the street (user, 2026-11-01: no change of scene); the street
  // goes on around them and every street figure is kept out of sight under it (OKStreetOffstage, in TickPrivate; user, 2026-11-06: nobody else shows in a one-on-one).
+ double PrivateOffstageAt=-1.; /* when the street figures were last sent off stage in the one-on-one (TickPrivate) */
  bool PrivateInPlace=false;TArray<TWeakObjectPtr<AActor>> PrivateHiddenProps; /* what the street figures held, back on leaving */bool PrivateTryOn=false; /* she is trying clothes on: no H scene, no memory of a session */
  int32 NavGirl=INDEX_NONE,PrivateGirl=INDEX_NONE,ContactsProbePhase=0;FOKStreetLiftRide NavRide; // the navigation riding an elevator (PlanNavLift)
  double NavAt=0,ContactsProbeAt=0;
@@ -808,6 +815,16 @@ void AOKStreetSocialScene::BeginPlay(){
   }
   return;
  }
+ // The one-on-one's coordinate cards open as original cards from the OK base library (OKOpenWardrobeItem), and the
+ // first of a game run read every archive the library records (6.6 s, 96 s with the files not cached yet; 2026-11-12).
+ // The library's memos built now, in the background while the street loads, as the card reader does: 3 s after it.
+ {
+  static bool bPrewarmed=false;
+  if(!bPrewarmed&&FPaths::FileExists(FPaths::ProjectContentDir()/TEXT("IndependentResources/base_v1/oklib.json"))){
+   bPrewarmed=true;Async(EAsyncExecution::Thread,[](){FOkSession::Prewarm(FString());});
+  }
+ }
+ // r.SkipDrawOnPSOPrecaching and the H scene's precache-ahead hook: set for every mode at engine start (OpenKoikatsu.cpp).
  State=MakeShared<FOKStreetSceneState>();auto& S=*State;
  S.TouchReactionOnlyTest=FParse::Param(FCommandLine::Get(),TEXT("StreetSocialTouchReactionSelfTest"));
  S.ContextOnlyTest=FParse::Param(FCommandLine::Get(),TEXT("StreetSocialDialogueContextSelfTest"));
@@ -1267,18 +1284,19 @@ bool AOKStreetSocialScene::PrepareFreeTalk(int32 Character,const FString& Text,F
  // His name as the game has it (the group prompt says it too), once she knows it: past a stranger, or he told her. A
  // stranger meeting him called him by name and said 爱丽丝 had told her (R4-1).
  if(S.Manifest.Characters.IsValidIndex(0)&&!S.Manifest.Characters[0].Name.IsEmpty()){const FString& HisName=S.Manifest.Characters[0].Name;
-  bool Knows=HerRelation.Stage!=TEXT("stranger");
+  QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkHisName);bool Knows=HerRelation.Stage!=TEXT("stranger");
   if(!Knows)for(const FOKStreetHistoryEntry& E:HistoryOf(Id))if(E.Who==TEXT("him")&&E.Text.Contains(HisName)){Knows=true;break;}
   // Not known yet: said so, or she takes a name from around her (刻晴 greeted him "早，安可" the first time, R5-1).
   Status.Relation+=Knows?OKMsg(TEXT("ui.free_talk.his_name_note"), {{TEXT("name"), *HisName}}):FString(OKT(TEXT("ui.free_talk.his_name_unknown_note")));}
  // Apart (a phone message or call): what they are doing face to face does not apply (OKStreetSocialPhoneInbox.inl).
- {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkDoing);Status.Doing=RemoteWith(Character)?RemoteDoing(Character):FreeTalkDoing()+FreeTalkExtras();}Status.Nearby=RemoteWith(Character)?FString(OKT(TEXT("ui.free_talk.remote_nearby_unknown"))):FreeTalkNearby();
- // Alone with him in the private room (the H scene): not where the street left her, nobody around to see or hear.
- if(S.PrivateGirl==Character&&S.PrivateMode.IsValid()){Status.Doing=OKT(TEXT("ui.free_talk.private_doing"));Status.Nearby=OKT(TEXT("ui.free_talk.private_nearby"));} // the places around him are not around her on the phone
+ // Alone with him in the private room (the H scene): not where the street left her, nobody around to see or hear (the
+ // street's, made and thrown away there, are not made, 2026-11-12).
+ if(S.PrivateGirl==Character&&S.PrivateMode.IsValid()){Status.Doing=OKT(TEXT("ui.free_talk.private_doing"));Status.Nearby=OKT(TEXT("ui.free_talk.private_nearby"));}
+ else{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkDoing);Status.Doing=RemoteWith(Character)?RemoteDoing(Character):FreeTalkDoing()+FreeTalkExtras();Status.Nearby=RemoteWith(Character)?FString(OKT(TEXT("ui.free_talk.remote_nearby_unknown"))):FreeTalkNearby();} // the places around him are not around her on the phone
  {const double Hours=OKStreetClockHours(S.ClockStartHours,FPlatformTime::Seconds()-S.ClockStartWall);Status.Now=OKStreetFreeTalkDateTime(OKStreetCalendarDateTime(S.Store.CalendarDay,Hours));Status.StreetTime=OKStreetFreeTalkClock(Hours);}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkRecall);Status.Memories=MindRecallText(Id,Text);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkHistory);Status.Memories+=HistoryPromptText(Character);}
  // The moments he bookmarked with her (bookmarks.rs): the last five, and the lines of one he asks about.
- {const FString Marks=BookmarkFacts(Character,Text);if(!Marks.IsEmpty())Status.Memories+=(Status.Memories.IsEmpty()?FString():FString(OKT(TEXT("ui.economy.semicolon_mark"))))+Marks;}
+ {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkBookmarks);const FString Marks=BookmarkFacts(Character,Text);if(!Marks.IsEmpty())Status.Memories+=(Status.Memories.IsEmpty()?FString():FString(OKT(TEXT("ui.economy.semicolon_mark"))))+Marks;}
  // Just after a scene, still together (OKStreetSocialBookmarks.inl): the places around are the street's again.
  if(S.AfterGirl==Character&&S.PrivateGirl==INDEX_NONE)Status.Doing=OKT(TEXT("ui.bookmarks.after_doing"));
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkMindStatus);FillMindStatus(Character,Status);}
@@ -1286,7 +1304,7 @@ bool AOKStreetSocialScene::PrepareFreeTalk(int32 Character,const FString& Text,F
  // at satiety 23 she is hungry there too).
  // Nor the street place's scene line (the lounge, the crowd, who of hers is standing a few metres away): the room is theirs.
  if(S.PrivateGirl==Character&&S.PrivateMode.IsValid()){Status.Menu.Reset();Status.Choices.Reset();Status.Invite.Reset();Status.Scene=OKT(TEXT("ui.free_talk.private_scene"));}
- System=OKStreetFreeTalkSystemPrompt(Persona,OKStreetPlaceCatalogue());UserMessage=OKStreetFreeTalkUserMessage(Status,Text);
+ {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkSystemPrompt);System=OKStreetFreeTalkSystemPrompt(Persona,OKStreetPlaceCatalogue());}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkUserMessage);UserMessage=OKStreetFreeTalkUserMessage(Status,Text);}
  return true;
 }
 
@@ -1365,7 +1383,10 @@ void AOKStreetSocialScene::SendFreeTalk(){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_
  S.FreeTalkBusy=true;S.FreeTalkSentAt=SceneTime();++S.FreeTalkSent;S.FreeTalkDraft.Reset();S.FreeTalkNotice=OKT(TEXT("ui.scene.she_is_thinking"));
  // The heroine mind keeps her whole context and the full state of every turn (plan §7.0); without it,
  // the request goes straight to DeepSeek with the trimmed local memory.
- if(!SubmitFreeTalkToMind(Character,Id,System,UserMessage,Text))FinishFreeTalk(Character,Id,Text,nullptr,OKT(TEXT("ui.scene.ai_service_off_reply")));
+ // Handed over in the next frame (Tick): building and submitting the job was another 0.7 ms in the frame his line
+ // went out, after the 2.9 of preparing it (2026-11-12). FreeTalkBusy keeps another line from going out meanwhile.
+ if(!S.Mind)FinishFreeTalk(Character,Id,Text,nullptr,OKT(TEXT("ui.scene.ai_service_off_reply")));
+ else S.PendingMindTalk=FOKStreetSceneState::FPendingMindTalk{Character,Id,System,UserMessage,Text};
  RefreshUI();
 }
 
@@ -1393,6 +1414,7 @@ void AOKStreetSocialScene::FinishFreeTalk(int32 Character,const FString& Id,cons
  FOKFreeTalkReply PrivateReply;const bool InPrivate=S.PrivateGirl==Character&&S.PrivateMode.IsValid();
  if(InPrivate){PrivateReply=*Reply;PrivateReply.Action.Reset();PrivateReply.ActKind.Reset();PrivateReply.ActArg.Reset();PrivateReply.Orders.Reset();PrivateReply.Payer.Reset();
   PrivateReply.ProposeId.Reset();PrivateReply.ResolveId.Reset();Reply=&PrivateReply;}
+ QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkRest);
  S.FreeTalkAnswered=S.FreeTalkSent; // the open choices were in that request (TickChoices)
  // Her memory keeps the exchange (her turn in the same JSON form she answers in); the values travel
  // only with the newest message. With the mind open this copy is only the fallback's memory.
@@ -1412,14 +1434,16 @@ void AOKStreetSocialScene::FinishFreeTalk(int32 Character,const FString& Id,cons
  {FOKFreeTalkReply Applied=*Reply;if(OKStreetFreeTalkIsNudge(Text)&&!Applied.Payer.IsEmpty()&&Applied.Payer!=TEXT("her")&&!S.Choices.ContainsByPredicate([](const FOKStreetPendingChoice& C){return C.Kind==TEXT("checkout");})){
    UE_LOG(LogTemp,Display,TEXT("Street pay: actor=%d payer \"%s\" on a game note, not settled by them"),Character,*Applied.Payer);Applied.Payer.Reset();}
   QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkChoice);ApplyChoiceReply(Character,Applied);}
- {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkExpression);ApplyMindExpression(Character,Reply->Emotion,Reply);}
+ // Not in the private room: her street actor is hidden there and the room's model has its own face (UOKHScenePanel); the
+ // street face cost 5.7 ms of the frame her answer came in (2026-11-12).
+ if(!InPrivate){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkExpression);ApplyMindExpression(Character,Reply->Emotion,Reply);}
  // And her body: the gesture she makes with it (motions.toml), face to face only.
  // Every line, as long as she speaks it: with no gesture from the model, one for her mood (motions.toml mood). A still
  // pose under every line left her standing in her idle (the raised finger) through the whole talk.
  if(RemoteKind(Character)==0){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkGesture);int32 Chars=0;for(const FString& L:Reply->Lines)Chars+=L.Len();PlayGesture(Character,Reply->Gesture,Reply->Emotion,0.6f+0.22f*Chars);}
  // Free-talk replies have no recorded clip, so they always go to the TTS server (independent of the
  // V voice-mode toggle, which only chooses for scripted lines); the text stays on screen either way.
- SongCountLines(Character,Reply->Lines.Num()); // her lines count toward her next song (every 500, OKStreetSocialSong.inl)
+ {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkSong);SongCountLines(Character,Reply->Lines.Num());} // her lines count toward her next song (every 500, OKStreetSocialSong.inl)
  if(!S.TtsCacheDir.IsEmpty()&&RemoteKind(Character)!=1){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkSpeak);SpeakFreeTalk(Character,Reply->Lines,Serial);} // a text message is read, not heard
  // What happens next (going somewhere now, an act, or a promise for later) is judged by DeepSeek from his words and hers,
  // not by keyword rules (JudgeFreeTalk). Without words of his (a nudge, a notice) she does her own acts but never starts
@@ -1453,7 +1477,7 @@ void AOKStreetSocialScene::FinishFreeTalk(int32 Character,const FString& Id,cons
   if(!Reply->Reply.IsEmpty())S.HerNoteLine.Add(Character,Reply->Reply);
  }
  // In the private room his words still do things there: stop, pull out, another pose, faster, end (JudgeHTalk).
- else if(InPrivate)JudgeHTalk(Character,S.PlayerAskedText.IsEmpty()?Text:S.PlayerAskedText,Reply->Reply);
+ else if(InPrivate){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkHJudge);JudgeHTalk(Character,S.PlayerAskedText.IsEmpty()?Text:S.PlayerAskedText,Reply->Reply);}
  else if(!InPrivate){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkJudge);TArray<FString> Ordered;for(const auto& O:Reply->Orders)Ordered.Add(O.Id);JudgeFreeTalk(Character,Id,S.PlayerAskedText.IsEmpty()?Text:S.PlayerAskedText,Reply->Reply,Reply->Action,Ordered);}
  S.PlayerAskedText.Reset();
  S.ReplyRemoteGirl=INDEX_NONE;{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkUi);RefreshUI();}
@@ -1994,15 +2018,15 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
 void AOKStreetSocialScene::ApplyFreeTalkFavor(int32 Character,int32 Delta,const FString& Reason){
  auto& S=*State;
  const FString Id=OKStreetStableId(S.Manifest.Characters[Character]);
- const auto Before=OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget);
- const float Limit=OKStreetFreeTalkStatusOf(S,Before).FavorLimit;
+ FOKStreetRelation Before;float Limit=0;{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FavorBefore);Before=OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget);
+ Limit=OKStreetFreeTalkStatusOf(S,Before).FavorLimit;}
  // The rules scale a gain by how many lovers he already has (mind.rs favor_gain): one more is harder to win.
  if(Delta!=0){int32 Lovers=0;for(const auto& R:S.Store.Relations)if(R.Id!=Id&&R.Stage==TEXT("lover"))++Lovers;
   auto Request=OKRulesRequest(TEXT("favor_gain"));Request->SetStringField(TEXT("stage"),Before.Stage);Request->SetNumberField(TEXT("favor"),Before.Favor);
   Request->SetNumberField(TEXT("limit"),Limit);Request->SetNumberField(TEXT("delta"),Delta);Request->SetNumberField(TEXT("lovers"),Lovers);
-  const TSharedPtr<FJsonObject> Gain=OKRulesEval(S,Request);
-  SetCharacterStat(Character,0,Gain.IsValid()?float(Gain->GetNumberField(TEXT("favor"))):FMath::Clamp(Before.Favor+Delta,0.f,Limit));}
- const float After=OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget).Favor;
+  TSharedPtr<FJsonObject> Gain;{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FavorRule);Gain=OKRulesEval(S,Request);}
+  QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FavorSet);SetCharacterStat(Character,0,Gain.IsValid()?float(Gain->GetNumberField(TEXT("favor"))):FMath::Clamp(Before.Favor+Delta,0.f,Limit));}
+ QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FavorAfter);const float After=OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget).Favor;
  S.FreeTalkNotice=OKMsg(TEXT("ui.scene.favor_change"), {{TEXT("before"), FMath::RoundToInt(Before.Favor)}, {TEXT("after"), FMath::RoundToInt(After)}, {TEXT("delta"), FMath::RoundToInt(After)-FMath::RoundToInt(Before.Favor)}})+(Reason.IsEmpty()?FString():OKT(TEXT("ui.accounts_app.ideographic_space"))+Reason);
 }
 
@@ -2107,6 +2131,9 @@ void AOKStreetSocialScene::RequestFreeTalkSegment(int32 Generation,int32 Index){
    if(!(J->TryGetBoolField(TEXT("ok"),Ok)&&Ok&&J->TryGetStringField(TEXT("path"),Path))){Ok=false;J->TryGetStringField(TEXT("error"),Error);}
   }
   L.FreeTalkSpeechPaths[Index]=Ok?Path:FString();
+  // Decoded now, off the game thread, into the speech cache (KKSpeech::DecodeOgg): in the one-on-one the line waits for
+  // the one before it and was decoded in the frame it began (5 to 10 ms each, 2026-11-12).
+  if(Ok)Async(EAsyncExecution::ThreadPool,[Path](){TSharedPtr<const FKKSpeechPcm,ESPMode::ThreadSafe> Pcm;FString Why;KKSpeech::DecodeOgg(Path,Pcm,Why);});
   const bool Streaming=L.FreeTalkSpeechStreams[Index].IsValid();
   if(!Streaming&&L.FreeTalkSpeechReady[Index]==0)L.FreeTalkSpeechReady[Index]=Ok?1:2;
   if(!Ok&&!Streaming)L.FreeTalkNotice=OKT(TEXT("ui.scene.tts_failed_text_only"))+Error;
@@ -2198,6 +2225,7 @@ void AOKStreetSocialScene::FreeTalkEnsureLog(){
  const FString LogFile=FreeTalkFilePath(TEXT("free-talk-log.json")),MemoryFile=FreeTalkFilePath(TEXT("free-talk-memory.json"));
  OKStreetFlushSaves();if(!LogFile.IsEmpty())OKStreetFreeTalkLoadLog(LogFile,S.FreeTalkLog);
  if(!MemoryFile.IsEmpty())OKStreetFreeTalkLoadMemory(MemoryFile,S.FreeTalkMemory);
+ S.MindContextKnown.Reset(); // another save: its mind is asked again
  for(const auto& Line:S.FreeTalkLog)S.FreeTalkSerial=FMath::Max(S.FreeTalkSerial,Line.Serial);
 }
 
@@ -2564,7 +2592,7 @@ void AOKStreetSocialScene::ApplyMouseMode(bool Focused){
 void AOKStreetSocialScene::SetCharacterStat(int32 Character,int32 Field,float Value){
  if(!State||Character<=0||!State->Manifest.Characters.IsValidIndex(Character)||!OKHeroineStats().IsValidIndex(Field)||!FMath::IsFinite(Value))return;auto& S=*State;
  // Start with the latest relation and change only this field, preserving voice effects and other updates.
- auto Candidate=S.Store;const FString Id=OKStreetStableId(S.Manifest.Characters[Character]);
+ QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_SetCharacterStat);auto Candidate=S.Store;const FString Id=OKStreetStableId(S.Manifest.Characters[Character]);
  auto& R=Candidate.Relations[OKStreetRelationIndex(Candidate,Id,S.Manifest.TalkBudget,true)];
  const FOKHeroineStat& Stat=OKHeroineStats()[Field];float Max=Stat.Max;
  if(Field==0){const int32 Limit=OKRulesFavorLimit(S,R,R.Stage);if(Limit!=INDEX_NONE)Max=FMath::Min(Max,float(Limit));} // favor stays under her stage's cap
@@ -2612,6 +2640,7 @@ static void OKStreetDigestMessage(FOKStreetSceneState& S){
  if(!Hint.IsEmpty()&&Hint!=S.HintText){S.HintText=Hint;S.HintUnread=!S.HintOpen;}
 }
 
+static TAutoConsoleVariable<int32> CVarOKStreetUiRegionsPerFrame(TEXT("ok.Street.UiRegionsPerFrame"),1,TEXT("1: a refresh rebuilds one region of the street panel a frame (the right panel first); 0: every region it names in one frame (a whole refresh was ~4 ms of one frame, 2026-11-12)."));
 static TAutoConsoleVariable<int32> CVarOKStreetLogUiRebuilds(TEXT("ok.Street.LogUiRebuilds"),0,TEXT("1: log each rebuild of the right panel with the RefreshUI call that asked for it (file:line). A rebuild costs ~10 ms."));
 void AOKStreetSocialScene::RefreshUI(uint32 Regions,std::source_location Where){if(State){State->UiDirty=true;State->UiDirtyRegions|=Regions;State->UiDirtyFile=Where.file_name();State->UiDirtyLine=Where.line();}}
 
@@ -3087,7 +3116,7 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
   S.UiSaveHolder->SetContent(S.SaveMenu.IsEmpty()?SNullWidget::NullWidget:BuildSaveMenu());
  }
  Mark(TEXT("end"));
- if(CVarOKStreetLogUiRebuilds.GetValueOnGameThread()&&FPlatformTime::ToMilliseconds64(Marks.Last().Value-Marks[0].Value)>5){FString Parts;for(int32 I=1;I<Marks.Num();++I)Parts+=FString::Printf(TEXT(" %s %.1f"),Marks[I-1].Key,FPlatformTime::ToMilliseconds64(Marks[I].Value-Marks[I-1].Value));UE_LOG(LogTemp,Display,TEXT("Street UI rebuild %.1f ms:%s"),FPlatformTime::ToMilliseconds64(Marks.Last().Value-Marks[0].Value),*Parts);}
+ if(CVarOKStreetLogUiRebuilds.GetValueOnGameThread()&&FPlatformTime::ToMilliseconds64(Marks.Last().Value-Marks[0].Value)>2){FString Parts;for(int32 I=1;I<Marks.Num();++I)Parts+=FString::Printf(TEXT(" %s %.1f"),Marks[I-1].Key,FPlatformTime::ToMilliseconds64(Marks[I].Value-Marks[I-1].Value));UE_LOG(LogTemp,Display,TEXT("Street UI rebuild %.1f ms:%s"),FPlatformTime::ToMilliseconds64(Marks.Last().Value-Marks[0].Value),*Parts);}
 }
 
 #include "OKStreetSocialContacts.inl"
@@ -4234,11 +4263,20 @@ void AOKStreetSocialScene::Tick(float Dt){
  }
  if(S.FreeTalkLogDirty&&FPlatformTime::Seconds()-S.FreeTalkLogSavedAt>1.0){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkSaveLog);S.FreeTalkLogDirty=false;S.FreeTalkLogSavedAt=FPlatformTime::Seconds();FreeTalkSaveLog();}
  OKStreetDigestMessage(S);
- if(S.UiDirty){S.UiDirty=false;const uint32 Regions=S.UiDirtyRegions?S.UiDirtyRegions:uint32(OKStreetUi::All);S.UiDirtyRegions=0;if(CVarOKStreetLogUiRebuilds.GetValueOnGameThread())UE_LOG(LogTemp,Display,TEXT("Street UI rebuild asked by %s:%u (regions %u)"),*FPaths::GetCleanFilename(ANSI_TO_TCHAR(S.UiDirtyFile)),S.UiDirtyLine,Regions);{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_RebuildUI);RebuildUI(Regions);}}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickControl);TickControl();}
+ // The panel put away (the one-on-one's private room collapses it): what was asked for waits, rebuilt once it shows
+ // again; each line of the talk there rebuilt all of it twice, 4 ms each, never seen (2026-11-12). Shown, one region a
+ // frame (ok.Street.UiRegionsPerFrame), the right panel first.
+ if(S.UiDirty&&!(S.Overlay.IsValid()&&S.Overlay->GetVisibility()==EVisibility::Collapsed)){
+  const uint32 Regions=S.UiDirtyRegions?S.UiDirtyRegions:uint32(OKStreetUi::All);
+  const uint32 Now=S.Overlay.IsValid()&&!(Regions&OKStreetUi::Shell)&&CVarOKStreetUiRegionsPerFrame.GetValueOnGameThread()!=0?(Regions&(~Regions+1)):Regions;
+  S.UiDirtyRegions=Regions&~Now;S.UiDirty=S.UiDirtyRegions!=0;
+  if(CVarOKStreetLogUiRebuilds.GetValueOnGameThread())UE_LOG(LogTemp,Display,TEXT("Street UI rebuild asked by %s:%u (regions %u, now %u)"),*FPaths::GetCleanFilename(ANSI_TO_TCHAR(S.UiDirtyFile)),S.UiDirtyLine,Regions,Now);{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_RebuildUI);RebuildUI(Now);}}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickControl);TickControl();}
  const double Now=SceneTime();auto* PC=GetWorld()->GetFirstPlayerController();if(!PC)return;
  if(!S.CatchLight.IsValid()){auto* L=NewObject<UPointLightComponent>(this);L->SetMobility(EComponentMobility::Movable);L->SetLightingChannels(false,false,true);L->SetCastShadows(false);
   L->SetIntensityUnits(ELightUnits::Candelas);L->SetIntensity(S.Lit?0.f:100.f); /* 100 cd: a clear wet shine, short of glare (300 burns out) */L->SetAttenuationRadius(800.f);L->SetSourceRadius(2.f);L->RegisterComponent();AddInstanceComponent(L);S.CatchLight=L;}
  if(PC->PlayerCameraManager)S.CatchLight->SetWorldLocation(PC->PlayerCameraManager->GetCameraLocation()+FVector(0,0,25));
+ if(S.PendingMindTalk.IsSet()){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_PendingMindTalk);const auto P=S.PendingMindTalk.GetValue();S.PendingMindTalk.Reset();
+  if(!SubmitFreeTalkToMind(P.Character,P.Id,P.System,P.User,P.Text)){FinishFreeTalk(P.Character,P.Id,P.Text,nullptr,OKT(TEXT("ui.scene.ai_service_off_reply")));RefreshUI();}}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkReplay);TickFreeTalkReplay(Now);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkSpeech);TickFreeTalkHisVoice(SceneTime());TickFreeTalkSpeech(FPlatformTime::Seconds());TickDeferredNotes();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkLive);TickFreeTalkLive(Now);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkTrace);TickFreeTalkTrace(Now);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickOrderNotice);TickOrderNotice();}
  // The street clock paused: the kitchen and the eating wait too (nothing on the table is eaten while time stands still).
  if(S.ClockPaused)for(auto& P:S.Serves)P.At+=Dt;
@@ -5070,7 +5108,7 @@ void AOKStreetSocialScene::WriteReport(bool Passed){
  if(S.SelfTest||S.RetargetSelfTest||!Passed)FPlatformMisc::RequestExitWithStatus(false,Passed?0:1);
 }
 
-void AOKStreetSocialScene::EndPlay(const EEndPlayReason::Type Reason){EndGalgame();OKControlStop();if(State){WaitFinQuery();if(State->FreeTalkLogDirty)FreeTalkSaveLog();SaveCalendar();OKStreetFlushSaves();if(!State->SaveRestarting&&State->Started)SaveToSlot(TEXT("auto"));if(State->Mind)OKStreetSetActiveMind(nullptr);if(State->Rules)OKStreetSetActiveRules(nullptr);}StopAmbientActivity();DestroyStreetPlaces();if(State&&State->FreeTalkLive)OKStreetFreeTalkAsrPost(TEXT("listen/stop"),TEXT("{}"),nullptr);if(State){FinishPrivate();}if(State){State->Pair.CapturePending=false;FinishPhoto();}EndTalk();if(State){for(auto& Row:State->ReadingProps)for(auto& Prop:Row.Value)if(Prop.IsValid())Prop->Destroy();State->ReadingProps.Reset();if(State->MouseInput.IsValid()&&FSlateApplication::IsInitialized())FSlateApplication::Get().UnregisterInputPreProcessor(State->MouseInput);for(auto& Prop:State->FacilityProps)if(Prop.IsValid())Prop->Destroy();for(auto& Pickup:State->TopicPickups)if(Pickup.IsValid())Pickup->Destroy();if(State->BackgroundGround.IsValid())State->BackgroundGround->Destroy();if(State->BackgroundFog.IsValid())State->BackgroundFog->Destroy();}if(State&&State->Overlay.IsValid()&&GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(State->Overlay.ToSharedRef());State.Reset();Super::EndPlay(Reason);}
+void AOKStreetSocialScene::EndPlay(const EEndPlayReason::Type Reason){EndGalgame();OKControlStop();if(State){WaitFinQuery();if(State->FreeTalkLogDirty)FreeTalkSaveLog();SaveCalendar();if(State->Song.SaveDirty)SongSave();OKStreetFlushSaves();if(!State->SaveRestarting&&State->Started)SaveToSlot(TEXT("auto"));if(State->Mind)OKStreetSetActiveMind(nullptr);if(State->Rules)OKStreetSetActiveRules(nullptr);}StopAmbientActivity();DestroyStreetPlaces();if(State&&State->FreeTalkLive)OKStreetFreeTalkAsrPost(TEXT("listen/stop"),TEXT("{}"),nullptr);if(State){FinishPrivate();}if(State){State->Pair.CapturePending=false;FinishPhoto();}EndTalk();if(State){for(auto& Row:State->ReadingProps)for(auto& Prop:Row.Value)if(Prop.IsValid())Prop->Destroy();State->ReadingProps.Reset();if(State->MouseInput.IsValid()&&FSlateApplication::IsInitialized())FSlateApplication::Get().UnregisterInputPreProcessor(State->MouseInput);for(auto& Prop:State->FacilityProps)if(Prop.IsValid())Prop->Destroy();for(auto& Pickup:State->TopicPickups)if(Pickup.IsValid())Pickup->Destroy();if(State->BackgroundGround.IsValid())State->BackgroundGround->Destroy();if(State->BackgroundFog.IsValid())State->BackgroundFog->Destroy();}if(State&&State->Overlay.IsValid()&&GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(State->Overlay.ToSharedRef());State.Reset();Super::EndPlay(Reason);}
 
 #if WITH_EDITOR
 #include "Materials/Material.h"

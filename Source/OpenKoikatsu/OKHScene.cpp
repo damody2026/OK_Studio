@@ -20,6 +20,7 @@
 #include "OKStreetSocialText.h"
 #include "OKMotionLabelZh.h"
 #include "KKPreviewActor.h"
+#include "KKAffineProceduralMeshComponent.h"
 #include "KKPairedPlayback.h"
 #include "KKRustExtract.h"
 #include "ok_extract.h"
@@ -38,6 +39,8 @@ void OKHNoteCry(const FString& Path); // her cries' loudness (PlayHVoice)
 #include "Engine/StaticMeshActor.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Engine/TextureRenderTarget2D.h"
+#include "Engine/Texture2D.h"
+#include "TextureResource.h"
 #include "ProceduralMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/Material.h"
@@ -88,6 +91,7 @@ void OKHNoteCry(const FString& Path); // her cries' loudness (PlayHVoice)
 #include "OKPaintSprayer.h"
 #include "Components/InvalidationBox.h"
 #include "ok_extract.h"
+#include "Misc/ScopeLock.h"
 
 void UOKHSceneButton::HandleClick(){if(Owner)Owner->Click(Kind);}
 
@@ -168,6 +172,14 @@ static TAutoConsoleVariable<int32> CVarHMirrorMainRenderer(TEXT("ok.HScene.Mirro
 static TAutoConsoleVariable<int32> CVarHMirrorEvery(TEXT("ok.HScene.MirrorEvery"),2,TEXT("The mirror's picture taken every this many frames"));
 static TAutoConsoleVariable<float> CVarHMirrorScale(TEXT("ok.HScene.MirrorScale"),2.f,TEXT("The mirror's picture at this many times its size on the screen (its edges smoothed)"));
 static TAutoConsoleVariable<float> CVarHMirrorDistance(TEXT("ok.HScene.MirrorDistance"),150.f,TEXT("How far the mirror stands from them, 1 to 150 cm"));
+// The second mirror (user 2026-11-12: the same again, its own distance and angle), on their other side at first.
+static TAutoConsoleVariable<float> CVarHMirror2(TEXT("ok.HScene.Mirror2"),0.f,TEXT("1: a second 200 x 200 cm mirror beside them"));
+static TAutoConsoleVariable<float> CVarHMirror2Yaw(TEXT("ok.HScene.Mirror2Yaw"),270.f,TEXT("Where the second mirror stands round them, degrees from where she faces (it faces them)"));
+static TAutoConsoleVariable<float> CVarHMirror2Distance(TEXT("ok.HScene.Mirror2Distance"),150.f,TEXT("How far the second mirror stands from them, 1 to 150 cm"));
+static TAutoConsoleVariable<float> CVarHPuddles(TEXT("ok.HScene.Puddles"),0.f,TEXT("1: puddles on the floor round them, reflecting them (screen space reflections)"));
+static TAutoConsoleVariable<int32> CVarHPuddleCount(TEXT("ok.HScene.PuddleCount"),4,TEXT("How many puddles, 1 to 8 (the first under them)"));
+static TAutoConsoleVariable<float> CVarHPuddleSize(TEXT("ok.HScene.PuddleSize"),90.f,TEXT("The puddles' size, 20 to 300 cm across"));
+static TAutoConsoleVariable<float> CVarHPuddleShine(TEXT("ok.HScene.PuddleShine"),1.f,TEXT("How much the puddles reflect, 0 (dark water, only a glint) to 1 (a dark mirror)"));
 static TAutoConsoleVariable<float> CVarHTongueLength(TEXT("ok.HScene.TongueLength"),1.f,TEXT("How long her tongue comes out, 1 as the card has it"));
 static TAutoConsoleVariable<int32> CVarHSkinLit(TEXT("ok.HScene.SkinLit"),0,TEXT("1: their skin lit by the scene (the _Lit parents, Launch/materials.json lit_root); 0 the original's toon"));
 static TAutoConsoleVariable<int32> CVarHDrool(TEXT("ok.HScene.Drooling"),0,TEXT("1: she drools (kissing, ahegao); 0 not (user 2026-11-09: her mouth no longer drools; renamed from Drool so a saved 1 is not taken)"));
@@ -278,6 +290,14 @@ static const FHSetting HSettings[]={
     {TEXT("Mirror"),TEXT("ui.hscene.set_mirror"),0.f,1.f,1.f,0.f},
     {TEXT("MirrorYaw"),TEXT("ui.hscene.set_mirror_yaw"),0.f,360.f,5.f,90.f},
     {TEXT("MirrorDistance"),TEXT("ui.hscene.set_mirror_distance"),1.f,150.f,1.f,150.f},
+    {TEXT("Mirror2"),TEXT("ui.hscene.set_mirror2"),0.f,1.f,1.f,0.f},
+    {TEXT("Mirror2Yaw"),TEXT("ui.hscene.set_mirror2_yaw"),0.f,360.f,5.f,270.f},
+    {TEXT("Mirror2Distance"),TEXT("ui.hscene.set_mirror2_distance"),1.f,150.f,1.f,150.f},
+    {nullptr,TEXT("ui.hscene.set_puddle_group")},
+    {TEXT("Puddles"),TEXT("ui.hscene.set_puddles"),0.f,1.f,1.f,0.f},
+    {TEXT("PuddleCount"),TEXT("ui.hscene.set_puddle_count"),1.f,8.f,1.f,4.f},
+    {TEXT("PuddleSize"),TEXT("ui.hscene.set_puddle_size"),20.f,300.f,5.f,90.f},
+    {TEXT("PuddleShine"),TEXT("ui.hscene.set_puddle_shine"),0.f,1.f,.05f,1.f},
 };
 static IConsoleVariable* HSettingVar(const TCHAR* Name){return IConsoleManager::Get().FindConsoleVariable(*(FString(TEXT("ok.HScene."))+Name));}
 // A test run keeps its own (-OKSettingsDir, Tools/run_street_social_development.lua): the player's game reads the shared one.
@@ -774,7 +794,7 @@ void UOKHScenePanel::AskNoCondoms(){
     if(Gallery)Gallery->NoteAction(TEXT("said"),OKT(TEXT("ui.hscene.ask_no_condoms")));
     Outbox.Add({OKT(TEXT("ui.hscene.ask_no_condoms")),OKT(TEXT("ui.hscene.no_condoms_note"))});
 }
-void UOKHScenePanel::Finish(const TCHAR* Kind){
+void UOKHScenePanel::Finish(const TCHAR* Kind){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HFinish);
     const FString K=Kind;++LineEpoch;
     JustCameAt=FPlatformTime::Seconds();JustCame=K.StartsWith(TEXT("org"))?1:K.StartsWith(TEXT("same"))?2:0;
     if(Mode==1){
@@ -1138,6 +1158,9 @@ void UOKHScenePanel::ApplyPregnancy(double Now){ TRACE_CPUPROFILER_EVENT_SCOPE(O
     TSharedPtr<FJsonObject> Mods;if(!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Gallery->EditorModsJson()),Mods)||!Mods.IsValid())return;
     const TSharedPtr<FJsonObject>* Own=nullptr;TSharedPtr<FJsonObject> P=Mods->TryGetObjectField(TEXT("pregnancy"),Own)?*Own:MakeShared<FJsonObject>();
     double Card=0;P->TryGetNumberField(TEXT("inflationSize"),Card);bool bShaped=P->HasField(TEXT("inflationMultiplier"));
+    // Nothing to show on a model just built (no belly, none on her card): it is as loaded, and sending her mods again cost
+    // 430 ms in the scene's first frames (trace 2026-11-12).
+    if(Belly<=0.f&&PregBellyShown<=0.f&&Card<=0.){PregActor=Girl;PregOutfit=Gallery->OutfitIndex;return;}
     if(!bShaped)for(const auto& KV:OKPregStandard)P->SetNumberField(KV[0],FCString::Atof(KV[1]));
     P->SetBoolField(TEXT("GameplayEnabled"),true);P->SetNumberField(TEXT("inflationSize"),FMath::Max(Card,40.*Belly));Mods->SetObjectField(TEXT("pregnancy"),P);
     FString Json;FJsonSerializer::Serialize(Mods.ToSharedRef(),TJsonWriterFactory<>::Create(&Json));bool Geometry=false;
@@ -1410,8 +1433,29 @@ void UOKHScenePanel::TickScene(float Delta){
     // After the scene has settled (3 s): a line asked while her first pose was put on was dropped as from before it.
     if(!bForcedSaid&&Forced()&&ForcedSayAt==0.)ForcedSayAt=FPlatformTime::Seconds()+3.;
     if(!bForcedSaid&&Forced()&&FPlatformTime::Seconds()>=ForcedSayAt){bForcedSaid=true;const FString Event=OKT(TEXT("ui.hscene.forced_event"));Note(Event,false);React(Event,OKT(TEXT("ui.hscene.forced_react_note")));}
-    TickChatter();
-    TickSolo(Delta);TickSecond(Delta);TickDrips(Delta);TickFluids(Delta);TickEyeDull(Delta);TickStyle(Delta);TickDeepFace(Delta);if(bTickingBeside)bIdleTickOwed=true;else TickAhegao();TickTongue();TickMirror();TickSkinLit(false);TickClothBias(false);TickCameraLight(false);Tremble(FPlatformTime::Seconds());if(!bTickingBeside)TickHands();TickEyesCamera();TickCoordinates();TickSounds();SwellBust(Delta);ApplyPregnancy(FPlatformTime::Seconds());
+    // Each part of the tick timed on its own (a 10 ms tick every 5 to 10 s had no part named, 2026-11-12).
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickChatter);TickChatter();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSolo);TickSolo(Delta);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSecond);TickSecond(Delta);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickDrips);TickDrips(Delta);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickFluids);TickFluids(Delta);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickEyeDull);TickEyeDull(Delta);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickStyle);TickStyle(Delta);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickDeepFace);TickDeepFace(Delta);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickAhegao);if(bTickingBeside)bIdleTickOwed=true;else TickAhegao();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickTongue);TickTongue();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickMirror);TickMirror();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickPuddles);TickPuddles();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSkinLit);TickSkinLit(false);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickClothBias);TickClothBias(false);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickCameraLight);TickCameraLight(false);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickTremble);Tremble(FPlatformTime::Seconds());}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickHands);if(!bTickingBeside)TickHands();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickEyesCamera);TickEyesCamera();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickCoordinates);TickCoordinates();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSounds);TickSounds();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSwellBust);SwellBust(Delta);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickPregnancy);ApplyPregnancy(FPlatformTime::Seconds());}
     // Her breathing as the original picks it (HVoiceCtrl): her gauge past 50 and his fast motion (voice.speedMotion,
     // with its own up and down marks) change the cries, her experience the bank. A change starts the matching set
     // (user, 2026-11-01: in her it kept the first, quiet set the caress also uses).
@@ -1426,7 +1470,7 @@ void UOKHScenePanel::TickScene(float Delta){
     // states 7 and 8 to 3 for everyone there.
     if(AKKPreviewActor* Girl=Gallery->PreviewActor.Get();IsValid(Girl)&&ShoesOffFor!=Girl){ShoesOffFor=Girl;uint8* S=Gallery->ClothesStates;
         if(S[7]!=3||S[8]!=3){S[7]=S[8]=3;Girl->SetClothingPartsHidden(S);Gallery->RefreshClothesStateLabels();}}
-    UpdateFace();UpdateBlush(Delta);FrameCamera();
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickFace);UpdateFace();UpdateBlush(Delta);}{TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickFrameCamera);FrameCamera();}
     // The original writes the liquid every frame; her materials are remade when her clothes or pose parts change.
     if(Siru[0]+Siru[1]+Siru[2]+Siru[3]+Siru[4]>0&&(SiruRefresh-=Delta)<=0.f){SiruRefresh=.5f;ApplySiru();}
     {const int32 Kind=Mode==0?(AibuPoses.IsValidIndex(ActiveAibu)?AibuPoses[ActiveAibu].Prop:0):(Poses.IsValidIndex(ActivePose)?Poses[ActivePose].Prop:0);
@@ -1450,8 +1494,9 @@ void UOKHScenePanel::TickScene(float Delta){
     // Only once the pair plays: while his parts and materials are still being prepared, hiding his clothes or swapping his
     // materials keeps that preparation from ever finishing (the room timed out).
     const bool PairPlaying=Gallery->PairedPlayback&&Gallery->PairedPlayback->GetElapsed()>0.f;
-    if(Mode!=0&&PairPlaying&&Gallery->PartnerActor&&(MaleLookFor!=Gallery->PartnerActor.Get()||bXRayInHer!=XRayInHer()))ApplyMaleLook(); // he was (re)made for the pair, or he went into her / out of her
-    AlignHim(Delta); // measures while the pair plays; a new pose or mode puts them back
+    if(Mode!=0&&PairPlaying&&Gallery->PartnerActor&&(MaleLookFor!=Gallery->PartnerActor.Get()||bXRayInHer!=XRayInHer())){TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickMaleLook);ApplyMaleLook();} // he was (re)made for the pair, or he went into her / out of her
+    TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickLate); // the rest of the tick
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickAlign);AlignHim(Delta);} // measures while the pair plays; a new pose or mode puts them back
     const double Now=FPlatformTime::Seconds();
     auto* Playback=Gallery->PairedPlayback.Get();
     // The scene opens on the pair list's first pose (a hand service): the original opens on the first caress that fits the
@@ -1481,9 +1526,10 @@ void UOKHScenePanel::TickScene(float Delta){
     }
     if(CondomMouthFrom!=INDEX_NONE&&PendingPose==INDEX_NONE&&CondomMouthAt>0.&&Now>=CondomMouthAt){
         const int32 Back=CondomMouthFrom;CondomMouthFrom=INDEX_NONE;CondomMouthAt=0.;PutCondomOn();bCondomMouthBack=true;SelectPose(Back);}
+    TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickFlow);
     const FString Cur=Current(),Base=Mode==0?Cur:HBase(Cur);
     if(Mode==2&&Base.Contains(TEXT("Loop"))){float& Deepest=Cur.StartsWith(TEXT("A_"))?AnalDeepest:CrotchDeepest;Deepest=FMath::Max(Deepest,AlignDeep);}
-    if(Cur!=LastState){
+    if(Cur!=LastState){TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickStateChanged);
         const FString Before=HBase(LastState);
         LastState=Cur;StateSeen=Now;
         // Inserted once the insertion has played (SetInsertKokan / SetInsertAnal): her first time is then.
@@ -1516,7 +1562,7 @@ void UOKHScenePanel::TickScene(float Delta){
     }
     if(!Wanted.IsEmpty()&&Cur==Wanted)Wanted.Reset();
     if(Mode==0&&!Wanted.IsEmpty()){PlaySolo(Wanted);Wanted.Reset();}
-    if(!Wanted.IsEmpty()&&Playback&&!Gallery->bPairPreparing&&Now-LastRequest>.75&&Gallery->PairStateCombo){
+    if(!Wanted.IsEmpty()&&Playback&&!Gallery->bPairPreparing&&Now-LastRequest>.75&&Gallery->PairStateCombo){TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickWantState);
         LastRequest=Now;
         if(Gallery->PairStateCombo->GetSelectedOption()!=Wanted)Gallery->PairStateCombo->SetSelectedOption(Wanted);
         else Gallery->OnPairStateSelected(Wanted,ESelectInfo::Direct);
@@ -1557,19 +1603,20 @@ void UOKHScenePanel::TickScene(float Delta){
     Her=FMath::Clamp(Her,0.f,100.f);His=FMath::Clamp(His,0.f,100.f);
     // In her mouth she decides herself if he waits (HHoushi Oral_Idle: drink or spit after a while).
     if(Queue.IsEmpty()&&Base==TEXT("Oral_Idle")&&OralIdleSince>0.&&Now-OralIdleSince>8.){OralIdleSince=0.;static const float DrinkChance[]={.2f,.35f,.6f,.85f};Click(FMath::FRand()<DrinkChance[FMath::Clamp(Level(),0,3)]?Drink:Vomit);} // her own choice: the more used to it, the likelier she swallows
-    ApplySpeed();
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSpeed);ApplySpeed();}
     // Her spoken answer is over: her breathing goes on (the line stopped it).
     // What is being put on stays on screen until it is on: without it the wait looks like a hang (user 2026-11-07).
     if(!OutfitLoadingText.IsEmpty()){AOKInteractionMode* Changing=Interaction();if(!Changing||!Changing->IsChangingOutfit())OutfitLoadingText.Reset();else if(Hint)Hint->SetText(FText::FromString(OutfitLoadingText));}
     // Chat opens and closes by itself; what he said while it was closed she answers as soon as it opens.
-    {const bool bChat=!CannotAnswer();if(bChat!=bChatOpen){bChatOpen=bChat;if(Input)Input->SetHintText(FText::FromString(OKT(bChat?TEXT("ui.hscene.say_hint"):TEXT("ui.hscene.say_hint_busy"))));if(bChat)ReleaseHeld(TEXT("ui.hscene.held_note_calm"));}}
+    {const bool bChat=!CannotAnswer();if(bChat!=bChatOpen){TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickChatOpen);bChatOpen=bChat;if(Input)Input->SetHintText(FText::FromString(OKT(bChat?TEXT("ui.hscene.say_hint"):TEXT("ui.hscene.say_hint_busy"))));if(bChat)ReleaseHeld(TEXT("ui.hscene.held_note_calm"));}}
     // Her breathing waits for the whole answer, not each of its lines (bReplyPending: more of it is still to be said).
-    if(bTalkSpoken&&!bReplyPending&&Gallery->PreviewActor&&!Gallery->PreviewActor->IsSpeaking()){bTalkSpoken=false;if(Mode==0)CaressBreath();else if(Gallery->PairedPlayback)Gallery->StartPairBreath();}
+    if(bTalkSpoken&&!bReplyPending&&Gallery->PreviewActor&&!Gallery->PreviewActor->IsSpeaking()){TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickBreathBack);bTalkSpoken=false;if(Mode==0)CaressBreath();else if(Gallery->PairedPlayback)Gallery->StartPairBreath();}
+    TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickTexts);
     if(HerGauge)HerGauge->SetPercent(Her/100.f);if(HisGauge)HisGauge->SetPercent(His/100.f);
     // Her developments as the scene uses them, each climax there (his finish in her mouth) shown as it adds 10
     // (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md P3); kissing and her caressed places with what this scene's touch adds when it
     // ends (hexp h_session_end: a second of kissing a point, of touch half a point; user 2026-11-03: kiss and butt shown).
-    if(DevLine&&Now>=DevLineAt){DevLineAt=Now+.25;auto Pct=[this](const TCHAR* A){return int32(FMath::RoundToFloat(Dev(A)*100.f));};
+    if(DevLine&&Now>=DevLineAt){TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickDevLine);DevLineAt=Now+.25;auto Pct=[this](const TCHAR* A){return int32(FMath::RoundToFloat(Dev(A)*100.f));};
         auto Gain=[](int32 N){return N>0?OKMsg(TEXT("ui.hscene.dev_gain"),{{TEXT("n"),N}}):FString();};
         auto Touch=[&](int32 Area,float PerSecond){const float Was=AreaExperience(Area);return Gain(int32(FMath::Min(100.f,Was+AreaSeconds[Area]*PerSecond))-int32(Was));};
         OKHSetText(DevLine,(OKMsg(TEXT("ui.hscene.dev_line"),{{TEXT("kiss"),Pct(TEXT("kiss"))},{TEXT("kiss_gain"),Touch(0,1.f)},
@@ -1587,7 +1634,7 @@ void UOKHScenePanel::TickScene(float Delta){
         const FString PoseName=Mode==0&&AibuPoses.IsValidIndex(ActiveAibu)?AibuPoses[ActiveAibu].Name:Poses.IsValidIndex(PendingPose)?Poses[PendingPose].Name+OKT(TEXT("ui.hscene.loading")):Poses.IsValidIndex(ActivePose)?Poses[ActivePose].Name:FString(OKT(TEXT("ui.hscene.pick_pose")));
         OKHSetText(Status,(Cur.IsEmpty()?PoseName:FString::Printf(TEXT("%s · %s · ×%.1f%s"),*PoseName,*StateWords(Mode==0?Cur:HBase(Cur)),PlaybackSpeed(),Mode==2?(bCondom?OKT(TEXT("ui.hscene.condom_mark")):TEXT("")):TEXT(""))));
     }
-    BuildActions();
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickActions);BuildActions();}
 }
 
 static TAutoConsoleVariable<float> CVarHChatEvery(TEXT("ok.HScene.ChatEvery"),5.f,TEXT("She says something by herself after this many quiet seconds, whenever she can talk (0: only answers and reactions)"));
@@ -1873,8 +1920,10 @@ static TAutoConsoleVariable<float> CVarHAhegaoGaze(TEXT("ok.HScene.AhegaoGaze"),
 static TAutoConsoleVariable<float> CVarHAhegaoSpeed(TEXT("ok.HScene.AhegaoSpeed"),.66f,TEXT("Ahegao after her climaxes: only faster than this (the original's Minimum Speed 66; 0 always)"));
 // The original's eyes pattern is a cha_eyeset row (ChaControl.ChangeEyesPtn): its FaceBlendShape eye pattern is the row's
 // eyes_ptn (as OK Studio reads it, OKStudioCatalog::EyeSet), from the base library's lists; -1 when they have none.
+static FCriticalSection GEyeSetLock;
 static int32 HEyeSetBlend(int32 Ptn){
-    static TMap<int32,int32> Cache;if(const int32* Hit=Cache.Find(Ptn))return *Hit;
+    // Any thread (OKHScenePrepareFace reads the ahegao's ahead on the worker that opens her).
+    static TMap<int32,int32> Cache;{FScopeLock Lock(&GEyeSetLock);if(const int32* Hit=Cache.Find(Ptn))return *Hit;}
     const FString Configured=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_BASE_LIBRARY"));
     const FTCHARToUTF8 Lib(*(Configured.IsEmpty()?FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir()/TEXT("IndependentResources/base_v1")):Configured));
     int32 Blend=-1;const int32 Size=ok_eye_set_json(Lib.Get(),Ptn,nullptr,0);
@@ -1882,9 +1931,12 @@ static int32 HEyeSetBlend(int32 Ptn){
         const FString Json=UTF8_TO_TCHAR(reinterpret_cast<const char*>(Bytes.GetData()));TSharedPtr<FJsonObject> Root;
         if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Root)&&Root){double V=-1;Root->TryGetNumberField(TEXT("eyes_ptn"),V);Blend=int32(V);}
         UE_LOG(LogTemp,Display,TEXT("H scene: eye set %d: %s"),Ptn,*Json);}
-    Cache.Add(Ptn,Blend);return Blend;
+    FScopeLock Lock(&GEyeSetLock);Cache.Add(Ptn,Blend);return Blend;
 }
 static TAutoConsoleVariable<FString> CVarHAhegaoFace(TEXT("ok.HScene.AhegaoFace"),TEXT("25,2,43"),TEXT("Ahegao: eye set, brow and mouth patterns (the original's Eye ID 25, Eyebrow ID 2; mouth 43 SexFaces' ahegao, the original's 24 when it lacks)"));
+// The ahegao's eye set read ahead off the game thread (its first read, from the base library's lists, was 72 ms of the
+// frame her scene came up, 2026-11-12); any thread.
+void OKHScenePrepareFace(){TArray<FString> AF;CVarHAhegaoFace.GetValueOnAnyThread().ParseIntoArray(AF,TEXT(","));HEyeSetBlend(AF.IsValidIndex(0)?FCString::Atoi(*AF[0]):25);}
 static TAutoConsoleVariable<int32> CVarHAhegaoClimaxes(TEXT("ok.HScene.AhegaoClimaxes"),4,TEXT("Her climaxes in one scene after which she shows the ahegao (0 only when worn out for the day)"));
 static TAutoConsoleVariable<int32> CVarHAhegaoTest(TEXT("ok.HScene.AhegaoTest"),0,TEXT("1: the ahegao now (testing)"));
 // The double peace of her ahegao: both hands up by her face (Studio FBBIK hand effectors 5 left, 6 right, at her head
@@ -1944,49 +1996,59 @@ void UOKHScenePanel::TickTongue(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickTongue
         Comp->SetRelativeTransform(Raised.GetRelativeTransform(ParentWorld));}
     bTongueRaised=true;
 }
-// The mirror stands on the floor round her hips (MirrorYaw from where she faces, MirrorDistance off), facing them. What it
+// The mirrors stand on the floor round them (Mirror?Yaw from where she faces, Mirror?Distance off), facing them. What each
 // shows is drawn from the camera reflected through it, its view cut to the mirror's square (an off-centre frustum whose
 // near plane is the mirror itself, so nothing behind it shows), on the mirror's quad unlit. The capture follows the camera
-// each tick; the mirror itself is hidden from it.
+// each tick; the mirror itself is hidden from its own capture, the other one is not (a mirror in a mirror, a picture behind).
+static TAutoConsoleVariable<float>* const HMirrorOn[2]={&CVarHMirror,&CVarHMirror2};
+static TAutoConsoleVariable<float>* const HMirrorYaw[2]={&CVarHMirrorYaw,&CVarHMirror2Yaw};
+static TAutoConsoleVariable<float>* const HMirrorDistance[2]={&CVarHMirrorDistance,&CVarHMirror2Distance};
 void UOKHScenePanel::TickMirror(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickMirror);
+    // At most one picture a frame between the two (each a scene renderer of its own): they take turns.
+    bool bTaken=false;const int32 First=MirrorTurn;
+    for(int32 Step=0;Step<2;++Step){const int32 Index=(First+Step)%2;const bool bBefore=bTaken;TickOneMirror(Index,bTaken);if(bTaken&&!bBefore)MirrorTurn=1-Index;}
+}
+void UOKHScenePanel::TickOneMirror(int32 Index,bool& bTaken){
+    FOKHMirror& M=Mirrors[Index];
     AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;
-    if(CVarHMirror.GetValueOnGameThread()<.5f||!IsValid(Girl)||!GetWorld()){RemoveMirror();return;}
+    if(HMirrorOn[Index]->GetValueOnGameThread()<.5f||!IsValid(Girl)||!GetWorld()){RemoveMirror(Index);return;}
     APlayerController* PC=GetOwningPlayer();if(!PC||!PC->PlayerCameraManager)return;
     constexpr float Half=100.f;
-    if(!IsValid(Mirror)){
+    if(!IsValid(M.Actor)){
         UMaterialInterface* Parent=LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/IndependentResources/PreviewMaterials/M_PreviewOpaque.M_PreviewOpaque"),nullptr,LOAD_NoWarn);if(!Parent)return;
         FActorSpawnParameters Params;Params.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-        Mirror=GetWorld()->SpawnActor<AActor>(AActor::StaticClass(),FTransform::Identity,Params);if(!IsValid(Mirror))return;
-        USceneComponent* Root=NewObject<USceneComponent>(Mirror,TEXT("MirrorRoot"));Mirror->SetRootComponent(Root);Root->RegisterComponent();
+        M.Actor=GetWorld()->SpawnActor<AActor>(AActor::StaticClass(),FTransform::Identity,Params);if(!IsValid(M.Actor))return;
+        USceneComponent* Root=NewObject<USceneComponent>(M.Actor,TEXT("MirrorRoot"));M.Actor->SetRootComponent(Root);Root->RegisterComponent();
         // The quad in the mirror's own space: X out of it toward them, Y the capture's right (looking out of the mirror at them):
         // u along +Y from the image's left, v down Z from its top.
-        MirrorQuad=NewObject<UProceduralMeshComponent>(Mirror,TEXT("MirrorQuad"));MirrorQuad->SetupAttachment(Root);MirrorQuad->RegisterComponent();
-        MirrorQuad->CreateMeshSection(0,{FVector(0,-Half,-Half),FVector(0,Half,-Half),FVector(0,Half,Half),FVector(0,-Half,Half)},{0,1,2,0,2,3},{FVector(1,0,0),FVector(1,0,0),FVector(1,0,0),FVector(1,0,0)},
+        M.Quad=NewObject<UKKAffineProceduralMeshComponent>(M.Actor,TEXT("MirrorQuad")); // its PSOs precached (stock procedural meshes collect none)
+        M.Quad->SetupAttachment(Root);M.Quad->RegisterComponent();
+        M.Quad->CreateMeshSection(0,{FVector(0,-Half,-Half),FVector(0,Half,-Half),FVector(0,Half,Half),FVector(0,-Half,Half)},{0,1,2,0,2,3},{FVector(1,0,0),FVector(1,0,0),FVector(1,0,0),FVector(1,0,0)},
             {FVector2D(0,1),FVector2D(1,1),FVector2D(1,0),FVector2D(0,0)},{},{},false);
-        MirrorShown=UMaterialInstanceDynamic::Create(Parent,Mirror);MirrorShown->SetVectorParameterValue(TEXT("PreviewTint"),FLinearColor::White);
-        MirrorQuad->SetMaterial(0,MirrorShown);MirrorQuad->SetCastShadow(false);MirrorQuad->SetCollisionEnabled(ECollisionEnabled::NoCollision);MirrorQuad->SetVisibility(false);
-        MirrorCapture=NewObject<USceneCaptureComponent2D>(Mirror,TEXT("MirrorCapture"));MirrorCapture->SetupAttachment(Root);MirrorCapture->RegisterComponent();
+        M.Shown=UMaterialInstanceDynamic::Create(Parent,M.Actor);M.Shown->SetVectorParameterValue(TEXT("PreviewTint"),FLinearColor::White);
+        M.Quad->SetMaterial(0,M.Shown);M.Quad->SetCastShadow(false);M.Quad->SetCollisionEnabled(ECollisionEnabled::NoCollision);M.Quad->SetVisibility(false);
+        M.Capture=NewObject<USceneCaptureComponent2D>(M.Actor,TEXT("MirrorCapture"));M.Capture->SetupAttachment(Root);M.Capture->RegisterComponent();
         // Scene colour before the view's post: the view's own tone mapping then (a finished picture tone mapped again came
         // out washed white). Taken on demand (TickMirror).
-        MirrorCapture->CaptureSource=SCS_SceneColorHDR;MirrorCapture->bCaptureEveryFrame=false;MirrorCapture->bCaptureOnMovement=false;
+        M.Capture->CaptureSource=SCS_SceneColorHDR;M.Capture->bCaptureEveryFrame=false;M.Capture->bCaptureOnMovement=false;
         // Its own scene renderer: as passes of the main renderer the street behind them came out black (user 2026-11-09:
         // the scene must show in it); ok.HScene.MirrorMainRenderer 1 tries that again.
-        MirrorCapture->bAlwaysPersistRenderingState=true;MirrorCapture->bRenderInMainRenderer=CVarHMirrorMainRenderer.GetValueOnGameThread()!=0;
-        MirrorCapture->bUseCustomProjectionMatrix=true;MirrorCapture->HiddenActors.Add(Mirror);
-        MirrorCapture->ShowFlags.SetMotionBlur(false);MirrorCapture->ShowFlags.SetTemporalAA(false);
-        MirrorSize=0;MirrorTakenAt=0;
-        UE_LOG(LogTemp,Display,TEXT("H scene: mirror up"));}
+        M.Capture->bAlwaysPersistRenderingState=true;M.Capture->bRenderInMainRenderer=CVarHMirrorMainRenderer.GetValueOnGameThread()!=0;
+        M.Capture->bUseCustomProjectionMatrix=true;M.Capture->HiddenActors.Add(M.Actor);
+        M.Capture->ShowFlags.SetMotionBlur(false);M.Capture->ShowFlags.SetTemporalAA(false);
+        M.Size=0;M.TakenAt=0;
+        UE_LOG(LogTemp,Display,TEXT("H scene: mirror %d up"),Index+1);}
     // Where it stands: round the pair's origin (where the pose puts them), on her floor, facing them. Not round her hips:
     // it swayed with every thrust (user 2026-11-09).
     const FTransform Frame=Girl->PairFrame();
-    const float Yaw=float(Frame.Rotator().Yaw)+CVarHMirrorYaw.GetValueOnGameThread();const FVector Out=FRotator(0.f,Yaw,0.f).Vector();
-    const FVector Center=FVector(Frame.GetLocation().X,Frame.GetLocation().Y,Girl->GetActorLocation().Z+Half)+Out*FMath::Clamp(CVarHMirrorDistance.GetValueOnGameThread(),1.f,150.f); // 1 to 150 cm (user 2026-11-09)
+    const float Yaw=float(Frame.Rotator().Yaw)+HMirrorYaw[Index]->GetValueOnGameThread();const FVector Out=FRotator(0.f,Yaw,0.f).Vector();
+    const FVector Center=FVector(Frame.GetLocation().X,Frame.GetLocation().Y,Girl->GetActorLocation().Z+Half)+Out*FMath::Clamp(HMirrorDistance[Index]->GetValueOnGameThread(),1.f,150.f); // 1 to 150 cm (user 2026-11-09)
     const FVector Normal=-Out; // toward them
-    Mirror->SetActorLocationAndRotation(Center,Normal.Rotation());
+    M.Actor->SetActorLocationAndRotation(Center,Normal.Rotation());
     // The camera reflected through the mirror's plane, looking straight at it (along the plane's normal toward them).
     const FVector Eye=PC->PlayerCameraManager->GetCameraLocation();const double Off=(Eye-Center)|Normal;
     // Behind it: its back is not drawn (user 2026-11-09), nor its picture taken.
-    if(Off<=1.){if(MirrorQuad->IsVisible())MirrorQuad->SetVisibility(false);MirrorTakenAt=0;return;}
+    if(Off<=1.){if(M.Quad->IsVisible())M.Quad->SetVisibility(false);M.TakenAt=0;return;}
     const FVector Up=FVector::UpVector,Right=Up^Normal; // the capture's right looking along Normal (UE: right = up x forward)
     // Its picture at twice its size on the screen (MirrorScale; user 2026-11-09: anti-aliased, the picture's pixels averaged
     // two by two as it is drawn smaller), 256 to 2048; both pictures made again only when that size doubles or halves.
@@ -1994,24 +2056,24 @@ void UOKHScenePanel::TickMirror(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickMirror
         for(const FVector& Corner:{Center+(Right+Up)*Half,Center+(Right-Up)*Half,Center+(Up-Right)*Half,Center-(Right+Up)*Half})if(PC->ProjectWorldLocationToScreen(Corner,S[Count]))++Count;
         if(Count==4)Seen=float(FMath::Max(FMath::Max(FVector2D::Distance(S[0],S[1]),FVector2D::Distance(S[2],S[3])),FMath::Max(FVector2D::Distance(S[0],S[2]),FVector2D::Distance(S[1],S[3]))));}
     const int32 Want=int32(FMath::Clamp(FMath::RoundUpToPowerOfTwo(uint32(FMath::Max(1.f,Seen*CVarHMirrorScale.GetValueOnGameThread()))),256u,2048u));
-    if(!MirrorTargets[0]||!MirrorTargets[1]||Want>MirrorSize||Want*2<MirrorSize){
-        for(TObjectPtr<UTextureRenderTarget2D>& Target:MirrorTargets){Target=NewObject<UTextureRenderTarget2D>(this);Target->RenderTargetFormat=RTF_RGBA16f;Target->ClearColor=FLinearColor::Black;Target->InitAutoFormat(Want,Want);Target->UpdateResourceImmediate(true);}
-        MirrorSize=Want;MirrorTakenAt=0;}
+    if(!M.Targets[0]||!M.Targets[1]||Want>M.Size||Want*2<M.Size){
+        for(TObjectPtr<UTextureRenderTarget2D>& Target:M.Targets){Target=NewObject<UTextureRenderTarget2D>(this);Target->RenderTargetFormat=RTF_RGBA16f;Target->ClearColor=FLinearColor::Black;Target->InitAutoFormat(Want,Want);Target->UpdateResourceImmediate(true);}
+        M.Size=Want;M.TakenAt=0;}
     // Every other frame (MirrorEvery), into the picture not shown, shown from then on (the capture is drawn before the view):
-    // at most a frame or two behind them (user 2026-11-09).
+    // at most a frame or two behind them (user 2026-11-09). One picture a frame between both mirrors (TickMirror).
     const uint64 Every=uint64(FMath::Max(1,CVarHMirrorEvery.GetValueOnGameThread()));
-    if(MirrorTakenAt!=0&&GFrameCounter-MirrorTakenAt<Every)return;
-    MirrorTakenAt=GFrameCounter;const int32 Back=1-MirrorFront;
-    MirrorCapture->TextureTarget=MirrorTargets[Back];
+    if(bTaken||(M.TakenAt!=0&&GFrameCounter-M.TakenAt<Every))return;
+    bTaken=true;M.TakenAt=GFrameCounter;const int32 Back=1-M.Front;
+    M.Capture->TextureTarget=M.Targets[Back];
     const FVector Reflected=Eye-Normal*(2.*Off);
-    MirrorCapture->SetWorldLocationAndRotation(Reflected,FRotationMatrix::MakeFromXZ(Normal,Up).Rotator());
+    M.Capture->SetWorldLocationAndRotation(Reflected,FRotationMatrix::MakeFromXZ(Normal,Up).Rotator());
     // The mirror's edges seen from there, on the near plane (the mirror, Off away).
     const FVector Rel=Center-Reflected;const double Cx=Rel|Right,Cy=Rel|Up,Near=Off;
     const double L=Cx-Half,R=Cx+Half,B=Cy-Half,T=Cy+Half;
-    MirrorCapture->CustomProjectionMatrix=FMatrix(FPlane(2.*Near/(R-L),0.,0.,0.),FPlane(0.,2.*Near/(T-B),0.,0.),FPlane((L+R)/(L-R),(T+B)/(B-T),0.,1.),FPlane(0.,0.,Near,0.));
-    MirrorCapture->CaptureScene();
-    MirrorFront=Back;MirrorShown->SetTextureParameterValue(TEXT("PreviewTexture"),MirrorTargets[MirrorFront]);
-    if(!MirrorQuad->IsVisible())MirrorQuad->SetVisibility(true);
+    M.Capture->CustomProjectionMatrix=FMatrix(FPlane(2.*Near/(R-L),0.,0.,0.),FPlane(0.,2.*Near/(T-B),0.,0.),FPlane((L+R)/(L-R),(T+B)/(B-T),0.,1.),FPlane(0.,0.,Near,0.));
+    M.Capture->CaptureScene();
+    M.Front=Back;M.Shown->SetTextureParameterValue(TEXT("PreviewTexture"),M.Targets[M.Front]);
+    if(!M.Quad->IsVisible())M.Quad->SetVisibility(true);
 }
 // The skin parents lit by the scene (manifest lit_material_root, Launch/materials.json lit_root).
 static TAutoConsoleVariable<float> CVarHSkinLitKey(TEXT("ok.HScene.SkinLitKey"),3.f,TEXT("Lit: their key light, lux where they are (a point light 2.5 m off, reaching only them)"));
@@ -2032,6 +2094,15 @@ static const FString& OKBiasMaterialRoot(){
         if(FParse::Value(FCommandLine::Get(),TEXT("StreetSocialManifest="),Manifest)&&FFileHelper::LoadFileToString(Json,*Manifest)&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Object)&&Object)Object->TryGetStringField(TEXT("bias_material_root"),Found);
         return Found.IsEmpty()?FString(TEXT("/Game/IndependentResources/RuntimeMaterials/StreetBias03")):Found;}();
     return Root;
+}
+// Each high-model parent's _Bias twin asked for as the high model loads (UKKAffineProceduralMeshComponent::PrecacheAhead):
+// swapped in at the first H frame, a cold driver cache had its PSOs still compiling there (2026-11-12).
+void OKHSceneInstallPrecacheAhead(){
+    UKKAffineProceduralMeshComponent::PrecacheAheadVariants()=[](UMaterialInterface* Parent){
+        if(!Parent||CVarHClothViewBias.GetValueOnGameThread()<=0.f||Parent->GetName().EndsWith(TEXT("_Bias"))||Parent->GetPathName().Contains(TEXT("/StreetHG")))return;
+        const FString Name=Parent->GetName()+TEXT("_Bias"),Path=OKBiasMaterialRoot()/Name;
+        if(!FPackageName::DoesPackageExist(Path))return;
+        if(UMaterialInterface* Bias=LoadObject<UMaterialInterface>(nullptr,*(Path+TEXT(".")+Name)))UKKAffineProceduralMeshComponent::PrecacheAhead(Bias);};
 }
 void UOKHScenePanel::TickClothBias(bool bEnd){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickClothBias);
     const float Bias=bEnd?0.f:FMath::Max(CVarHClothViewBias.GetValueOnGameThread(),0.f);
@@ -2065,21 +2136,145 @@ void UOKHScenePanel::TickSkinLit(bool bEnd){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_
         Fill->SetWorldLocation(Center+(ToLight*FVector(-1,-1,.2f)).GetSafeNormal()*Away);Fill->SetIntensity(Candela*CVarHSkinLitFill.GetValueOnGameThread());Fill->SetLightColor(Tint);Fill->SetAttenuationRadius(Away*1.8f);}
     if(bOn!=bSkinLitShown){bSkinLitShown=bOn;ActionsKey.Reset();}
 }
-void UOKHScenePanel::RemoveMirror(){
-    if(IsValid(Mirror)){Mirror->Destroy();UE_LOG(LogTemp,Display,TEXT("H scene: mirror down"));}
-    Mirror=nullptr;MirrorQuad=nullptr;MirrorCapture=nullptr;MirrorTargets[0]=MirrorTargets[1]=nullptr;MirrorShown=nullptr;MirrorSize=0;MirrorTakenAt=0;
+void UOKHScenePanel::RemoveMirror(){RemoveMirror(0);RemoveMirror(1);}
+void UOKHScenePanel::RemoveMirror(int32 Index){
+    FOKHMirror& M=Mirrors[Index];
+    if(IsValid(M.Actor)){M.Actor->Destroy();UE_LOG(LogTemp,Display,TEXT("H scene: mirror %d down"),Index+1);}
+    M=FOKHMirror();
 }
-void UOKHScenePanel::SetMirror(const TSharedPtr<FJsonObject>& Settings){
-    if(!Settings.IsValid())return;bool B;double V;
-    if(Settings->TryGetBoolField(TEXT("on"),B))CVarHMirror->Set(B?1.f:0.f,ECVF_SetByConsole);
-    if(Settings->TryGetNumberField(TEXT("yaw"),V))CVarHMirrorYaw->Set(float(FMath::Fmod(FMath::Fmod(V,360.)+360.,360.)),ECVF_SetByConsole);
-    if(Settings->TryGetNumberField(TEXT("distance"),V))CVarHMirrorDistance->Set(float(V),ECVF_SetByConsole);
+void UOKHScenePanel::SetMirror(const TSharedPtr<FJsonObject>& Settings,int32 Index){
+    if(!Settings.IsValid()||Index<0||Index>1)return;bool B;double V;
+    if(Settings->TryGetBoolField(TEXT("on"),B))(*HMirrorOn[Index])->Set(B?1.f:0.f,ECVF_SetByConsole);
+    if(Settings->TryGetNumberField(TEXT("yaw"),V))(*HMirrorYaw[Index])->Set(float(FMath::Fmod(FMath::Fmod(V,360.)+360.,360.)),ECVF_SetByConsole);
+    if(Settings->TryGetNumberField(TEXT("distance"),V))(*HMirrorDistance[Index])->Set(float(V),ECVF_SetByConsole);
     HSettingsSave();for(UOKHSettingSlider* Slider:SettingSliders)if(Slider)Slider->Show();
 }
-TSharedPtr<FJsonObject> UOKHScenePanel::MirrorJson() const{
-    auto J=MakeShared<FJsonObject>();J->SetBoolField(TEXT("on"),CVarHMirror.GetValueOnGameThread()>.5f);J->SetNumberField(TEXT("yaw"),CVarHMirrorYaw.GetValueOnGameThread());
-    J->SetNumberField(TEXT("distance"),CVarHMirrorDistance.GetValueOnGameThread());J->SetBoolField(TEXT("up"),IsValid(Mirror));
-    if(IsValid(Mirror)){const FVector At=Mirror->GetActorLocation();J->SetArrayField(TEXT("at"),{MakeShared<FJsonValueNumber>(At.X),MakeShared<FJsonValueNumber>(At.Y),MakeShared<FJsonValueNumber>(At.Z)});}
+TSharedPtr<FJsonObject> UOKHScenePanel::MirrorJson(int32 Index) const{
+    auto J=MakeShared<FJsonObject>();if(Index<0||Index>1)return J;const FOKHMirror& M=Mirrors[Index];
+    J->SetBoolField(TEXT("on"),HMirrorOn[Index]->GetValueOnGameThread()>.5f);J->SetNumberField(TEXT("yaw"),HMirrorYaw[Index]->GetValueOnGameThread());
+    J->SetNumberField(TEXT("distance"),HMirrorDistance[Index]->GetValueOnGameThread());J->SetBoolField(TEXT("up"),IsValid(M.Actor));
+    if(IsValid(M.Actor)){const FVector At=M.Actor->GetActorLocation();J->SetArrayField(TEXT("at"),{MakeShared<FJsonValueNumber>(At.X),MakeShared<FJsonValueNumber>(At.Y),MakeShared<FJsonValueNumber>(At.Z)});}
+    J->SetBoolField(TEXT("shown"),IsValid(M.Quad)&&M.Quad->IsVisible());
+    return J;
+}
+// The puddles (user 2026-11-12: water on the ground, reflecting with screen space reflections): flat quads a few millimetres
+// over her floor round the pair's origin (the first under them), each with an outline of its own (a few round blobs run
+// together, its mask), M_OKPuddleMirror (Tools/prepare_face_materials.lua) in the scene's material root. Where nothing on
+// screen is reflected they show the floor under them, darker (user 2026-11-12, "why so black"): a photo of the floor from
+// above (OKTakePuddleFloor) that the material glows with. Translucent water was tried (its own screen space reflections
+// are grainy and faint) and decals (the street floor takes none). They stay with the
+// pair's origin as the mirrors do. Screen space reflections are what shows them in the water: while puddles are down
+// r.ReflectionMethod is 2 (SSR, the project's default) and r.SSR.Quality at least 2 (the university city turns it off).
+static const FString& OKPuddleMaterialPath(){
+    static const FString Path=[]{FString Manifest,Json,Found;TSharedPtr<FJsonObject> Object;
+        if(FParse::Value(FCommandLine::Get(),TEXT("StreetSocialManifest="),Manifest)&&FFileHelper::LoadFileToString(Json,*Manifest)&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Object)&&Object)Object->TryGetStringField(TEXT("material_root"),Found);
+        if(Found.IsEmpty())Found=TEXT("/Game/IndependentResources/RuntimeMaterials/StreetDisplay26");
+        return Found/TEXT("M_OKPuddleMirror.M_OKPuddleMirror");}();
+    return Path;
+}
+// One puddle's outline, 128 x 128, white where the water is: blobs round its middle, their edges eased (the material clips at
+// a half, the mask's slope keeps that edge smooth when drawn larger).
+static UTexture2D* OKPuddleMask(int32 Seed){
+    constexpr int32 N=128;UTexture2D* Tex=UTexture2D::CreateTransient(N,N,PF_B8G8R8A8);if(!Tex||!Tex->GetPlatformData()||Tex->GetPlatformData()->Mips.IsEmpty())return nullptr;
+    FRandomStream R(Seed*7919+13);struct FBlob{FVector2f At;float Radius;};TArray<FBlob> Blobs;
+    const int32 Count=R.RandRange(4,7);
+    for(int32 I=0;I<Count;++I){const float A=float(R.FRandRange(0.f,2.f*PI)),D=I==0?0.f:float(R.FRandRange(.08f,.22f));Blobs.Add({FVector2f(.5f+D*FMath::Cos(A),.5f+D*FMath::Sin(A)),float(I==0?R.FRandRange(.18f,.24f):R.FRandRange(.08f,.17f))});}
+    FColor* Pixels=static_cast<FColor*>(Tex->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE));
+    for(int32 Y=0;Y<N;++Y)for(int32 X=0;X<N;++X){const FVector2f P((X+.5f)/N,(Y+.5f)/N);float Field=0.f;
+        // Each blob's reach (1 at its middle, 0 at its rim) added: blobs near each other run together.
+        for(const FBlob& B:Blobs){const float T=1.f-FVector2f::Distance(P,B.At)/B.Radius;if(T>0.f)Field+=T*T;}
+        const float Edge=FMath::Max(0.f,1.f-2.f*FMath::Max(FMath::Abs(P.X-.5f),FMath::Abs(P.Y-.5f))); // nothing at the quad's border
+        const uint8 V=uint8(FMath::Clamp(FMath::SmoothStep(.05f,.35f,Field)*FMath::SmoothStep(0.f,.1f,Edge),0.f,1.f)*255.f);
+        Pixels[Y*N+X]=FColor(V,V,V,255);}
+    Tex->GetPlatformData()->Mips[0].BulkData.Unlock();
+    Tex->SRGB=false;Tex->Filter=TF_Bilinear;Tex->AddressX=Tex->AddressY=TA_Clamp;Tex->NeverStream=true;Tex->UpdateResource();
+    return Tex;
+}
+// The floor under the puddles, photographed straight down (orthographic, 256 x 256, linear scene colour) with nothing but
+// the floor in it: the part a trace straight down from her hips meets, or, when that finds nothing, the scene without the
+// two of them, the puddles and the mirrors. Screen up is +X and screen right +Y (pitch -90, yaw 0), as the material reads it.
+static void OKTakePuddleFloor(UWorld* World,AActor* Puddles,AKKPreviewActor* Girl,AActor* Him,TArrayView<AActor* const> Mirrors,
+    TObjectPtr<USceneCaptureComponent2D>& Capture,TObjectPtr<UTextureRenderTarget2D>& Target,float Width,TArrayView<const TObjectPtr<UMaterialInstanceDynamic>> Shown){
+    if(!Target){Target=NewObject<UTextureRenderTarget2D>(Puddles);Target->RenderTargetFormat=RTF_RGBA16f;Target->ClearColor=FLinearColor::Black;Target->InitAutoFormat(256,256);Target->UpdateResourceImmediate(true);}
+    if(!Capture){Capture=NewObject<USceneCaptureComponent2D>(Puddles,TEXT("PuddleFloor"));Capture->SetupAttachment(Puddles->GetRootComponent());Capture->SetUsingAbsoluteRotation(true);
+        Capture->ProjectionType=ECameraProjectionMode::Orthographic;Capture->bCaptureEveryFrame=false;Capture->bCaptureOnMovement=false;
+        Capture->CaptureSource=SCS_SceneColorHDR;Capture->ShowFlags.SetScreenSpaceReflections(false);Capture->ShowFlags.SetMotionBlur(false);Capture->ShowFlags.SetTemporalAA(false);
+        Capture->TextureTarget=Target;Capture->RegisterComponent();}
+    Capture->SetRelativeLocation(FVector(0.,0.,300.));Capture->SetWorldRotation(FRotator(-90.f,0.f,0.f));Capture->OrthoWidth=Width;
+    Capture->ShowOnlyActors.Reset();Capture->ShowOnlyComponents.Reset();Capture->HiddenActors.Reset();
+    FHitResult Hit;FCollisionQueryParams Query(TEXT("OKPuddleFloor"),false);Query.AddIgnoredActor(Girl);Query.AddIgnoredActor(Puddles);if(Him)Query.AddIgnoredActor(Him);for(AActor* M:Mirrors)if(M)Query.AddIgnoredActor(M);
+    const FVector From=Girl->GetActorLocation()+FVector(0.,0.,60.);
+    if(World->LineTraceSingleByChannel(Hit,From,From-FVector(0.,0.,200.),ECC_Visibility,Query)&&Hit.GetComponent()){Capture->PrimitiveRenderMode=ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;Capture->ShowOnlyComponents.Add(Hit.GetComponent());}
+    else{Capture->PrimitiveRenderMode=ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;Capture->HiddenActors.Add(Girl);Capture->HiddenActors.Add(Puddles);if(Him)Capture->HiddenActors.Add(Him);for(AActor* M:Mirrors)if(M)Capture->HiddenActors.Add(M);}
+    Capture->CaptureScene();
+    const FVector At=Capture->GetComponentLocation();
+    for(UMaterialInstanceDynamic* M:Shown)if(M){M->SetTextureParameterValue(TEXT("PuddleFloor"),Target);M->SetVectorParameterValue(TEXT("PuddleFloorRect"),FLinearColor(float(At.X),float(At.Y),1.f/Width,0.f));}
+    static bool bSaid=false;if(!bSaid){bSaid=true;UE_LOG(LogTemp,Display,TEXT("H scene: puddle floor photo %.0f cm, %s"),Width,Capture->ShowOnlyComponents.Num()?*GetNameSafe(Hit.GetActor()):TEXT("scene without them"));}
+}
+void UOKHScenePanel::TickPuddles(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickPuddles);
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;
+    if(CVarHPuddles.GetValueOnGameThread()<.5f||!IsValid(Girl)||!GetWorld()){RemovePuddles();return;}
+    const int32 Count=FMath::Clamp(CVarHPuddleCount.GetValueOnGameThread(),1,8);const float Size=FMath::Clamp(CVarHPuddleSize.GetValueOnGameThread(),20.f,300.f);
+    if(!IsValid(Puddles)||PuddlesMade!=Count||PuddlesSize!=Size){
+        if(IsValid(Puddles))Puddles->Destroy();Puddles=nullptr;PuddleShown.Reset();PuddleShineShown=-1.f;PuddleFloorCapture=nullptr;PuddleFloorTarget=nullptr;PuddleFloorTakenAt=-1.;
+        UMaterialInterface* Parent=LoadObject<UMaterialInterface>(nullptr,*OKPuddleMaterialPath(),nullptr,LOAD_NoWarn);
+        if(!Parent){static bool bSaid=false;if(!bSaid){bSaid=true;UE_LOG(LogTemp,Warning,TEXT("H scene: no puddle material %s (Tools/prepare_face_materials.lua, then the patch)"),*OKPuddleMaterialPath());}return;}
+        FActorSpawnParameters Params;Params.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        Puddles=GetWorld()->SpawnActor<AActor>(AActor::StaticClass(),FTransform::Identity,Params);if(!IsValid(Puddles))return;
+        USceneComponent* Root=NewObject<USceneComponent>(Puddles,TEXT("PuddlesRoot"));Puddles->SetRootComponent(Root);Root->RegisterComponent();
+        while(PuddleMasks.Num()<Count)PuddleMasks.Add(OKPuddleMask(PuddleMasks.Num()));
+        for(int32 I=0;I<Count;++I){
+            // Where it lies round the pair's origin and how large: the same every time (seeded by its number).
+            FRandomStream R(I*104729+7);const float Scale=I==0?1.f:float(R.FRandRange(.55f,1.05f)),Half=Size*Scale*.5f;
+            const float Angle=I*137.5f+float(R.FRandRange(-25.f,25.f)),Away=I==0?0.f:float(R.FRandRange(Size*.7f,Size*1.6f));
+            const FVector At(FMath::Cos(FMath::DegreesToRadians(Angle))*Away,FMath::Sin(FMath::DegreesToRadians(Angle))*Away,0.);
+            auto* Quad=NewObject<UKKAffineProceduralMeshComponent>(Puddles,*FString::Printf(TEXT("Puddle%d"),I));Quad->SetupAttachment(Root);Quad->RegisterComponent();
+            const FQuat Turn(FVector::UpVector,FMath::DegreesToRadians(R.FRandRange(0.f,360.f)));
+            TArray<FVector> V;for(const FVector& C:{FVector(-Half,-Half,0),FVector(Half,-Half,0),FVector(Half,Half,0),FVector(-Half,Half,0)})V.Add(At+Turn.RotateVector(C));
+            Quad->CreateMeshSection(0,V,{0,2,1,0,3,2},{FVector::UpVector,FVector::UpVector,FVector::UpVector,FVector::UpVector},{FVector2D(0,0),FVector2D(1,0),FVector2D(1,1),FVector2D(0,1)},{},{},false);
+            auto* Shown=UMaterialInstanceDynamic::Create(Parent,Puddles);if(PuddleMasks.IsValidIndex(I)&&PuddleMasks[I])Shown->SetTextureParameterValue(TEXT("PuddleMask"),PuddleMasks[I]);
+            PuddleShown.Add(Shown);Quad->SetMaterial(0,Shown);Quad->SetCastShadow(false);Quad->SetCollisionEnabled(ECollisionEnabled::NoCollision);}
+        PuddlesMade=Count;PuddlesSize=Size;PuddleFloorWidth=Size*4.4f+40.f; // reaches the farthest puddle's far edge (1.6 + .53 sizes out)
+        // Screen space reflections, for as long as they lie there.
+        if(IConsoleVariable* Method=IConsoleManager::Get().FindConsoleVariable(TEXT("r.ReflectionMethod"));Method&&PreviousReflectionMethod<0){PreviousReflectionMethod=Method->GetInt();if(PreviousReflectionMethod!=2)Method->Set(2,ECVF_SetByConsole);}
+        if(IConsoleVariable* Ssr=IConsoleManager::Get().FindConsoleVariable(TEXT("r.SSR.Quality"));Ssr&&PreviousSsrQuality<0){PreviousSsrQuality=Ssr->GetInt();if(PreviousSsrQuality<2)Ssr->Set(3,ECVF_SetByConsole);}
+        UE_LOG(LogTemp,Display,TEXT("H scene: %d puddles down, %.0f cm (reflections: method %d, ssr %d)"),Count,Size,PreviousReflectionMethod,PreviousSsrQuality);}
+    // How much they reflect: 0 wet floor with water's own faint glint, 1 a mirror (metallic, reflectance .95) over the floor's
+    // glow; the floor's photo darker the more it reflects, so the floor does not wash the reflection out.
+    if(const float Shine=FMath::Clamp(CVarHPuddleShine.GetValueOnGameThread(),0.f,1.f);Shine!=PuddleShineShown){PuddleShineShown=Shine;
+        const FLinearColor Color=FLinearColor(.95f,.95f,.97f)*Shine;
+        for(UMaterialInstanceDynamic* Shown:PuddleShown)if(Shown){Shown->SetVectorParameterValue(TEXT("PuddleColor"),Color);Shown->SetScalarParameterValue(TEXT("PuddleMetallic"),Shine);
+            Shown->SetScalarParameterValue(TEXT("PuddleDarken"),FMath::Lerp(.75f,.5f,Shine));Shown->SetScalarParameterValue(TEXT("PuddleSpecular"),FMath::Lerp(.5f,1.f,Shine));}}
+    // On her floor round the pair's origin, a few millimetres up (no fighting with the floor's depth).
+    const FTransform Frame=Girl->PairFrame();
+    Puddles->SetActorLocationAndRotation(FVector(Frame.GetLocation().X,Frame.GetLocation().Y,Girl->GetActorLocation().Z+.4f),FRotator(0.f,Frame.Rotator().Yaw,0.f));
+    // The floor's photo again when they have moved or every two seconds (the light may change); one small capture.
+    const double Now=FPlatformTime::Seconds();
+    if(PuddleFloorTakenAt<0.||Now-PuddleFloorTakenAt>2.||FVector::DistSquared(Puddles->GetActorLocation(),PuddleFloorAt)>4.){
+        AActor* const MirrorActors[2]={Mirrors[0].Actor.Get(),Mirrors[1].Actor.Get()};
+        OKTakePuddleFloor(GetWorld(),Puddles,Girl,Gallery->PartnerActor.Get(),MirrorActors,PuddleFloorCapture,PuddleFloorTarget,PuddleFloorWidth,PuddleShown);
+        PuddleFloorTakenAt=Now;PuddleFloorAt=Puddles->GetActorLocation();}
+}
+void UOKHScenePanel::RemovePuddles(){
+    if(IsValid(Puddles)){Puddles->Destroy();UE_LOG(LogTemp,Display,TEXT("H scene: puddles up"));}
+    Puddles=nullptr;PuddleShown.Reset();PuddleShineShown=-1.f;PuddleFloorCapture=nullptr;PuddleFloorTarget=nullptr;PuddleFloorTakenAt=-1.;PuddlesMade=0;PuddlesSize=0.f;
+    if(PreviousReflectionMethod>=0){if(IConsoleVariable* Method=IConsoleManager::Get().FindConsoleVariable(TEXT("r.ReflectionMethod")))Method->Set(PreviousReflectionMethod,ECVF_SetByConsole);PreviousReflectionMethod=-1;}
+    if(PreviousSsrQuality>=0){if(IConsoleVariable* Ssr=IConsoleManager::Get().FindConsoleVariable(TEXT("r.SSR.Quality")))Ssr->Set(PreviousSsrQuality,ECVF_SetByConsole);PreviousSsrQuality=-1;}
+}
+void UOKHScenePanel::SetPuddles(const TSharedPtr<FJsonObject>& Settings){
+    if(!Settings.IsValid())return;bool B;double V;
+    if(Settings->TryGetBoolField(TEXT("on"),B))CVarHPuddles->Set(B?1.f:0.f,ECVF_SetByConsole);
+    if(Settings->TryGetNumberField(TEXT("count"),V))CVarHPuddleCount->Set(int32(V),ECVF_SetByConsole);
+    if(Settings->TryGetNumberField(TEXT("size"),V))CVarHPuddleSize->Set(float(V),ECVF_SetByConsole);
+    if(Settings->TryGetNumberField(TEXT("shine"),V))CVarHPuddleShine->Set(float(V),ECVF_SetByConsole);
+    HSettingsSave();for(UOKHSettingSlider* Slider:SettingSliders)if(Slider)Slider->Show();
+}
+TSharedPtr<FJsonObject> UOKHScenePanel::PuddlesJson() const{
+    auto J=MakeShared<FJsonObject>();J->SetBoolField(TEXT("on"),CVarHPuddles.GetValueOnGameThread()>.5f);J->SetNumberField(TEXT("count"),CVarHPuddleCount.GetValueOnGameThread());
+    J->SetNumberField(TEXT("size"),CVarHPuddleSize.GetValueOnGameThread());J->SetNumberField(TEXT("shine"),CVarHPuddleShine.GetValueOnGameThread());J->SetBoolField(TEXT("down"),IsValid(Puddles));J->SetStringField(TEXT("material"),OKPuddleMaterialPath());
+    if(IConsoleVariable* Method=IConsoleManager::Get().FindConsoleVariable(TEXT("r.ReflectionMethod")))J->SetNumberField(TEXT("reflection_method"),Method->GetInt());
+    if(IConsoleVariable* Ssr=IConsoleManager::Get().FindConsoleVariable(TEXT("r.SSR.Quality")))J->SetNumberField(TEXT("ssr_quality"),Ssr->GetInt());
+    if(IsValid(Puddles)){const FVector At=Puddles->GetActorLocation();J->SetArrayField(TEXT("at"),{MakeShared<FJsonValueNumber>(At.X),MakeShared<FJsonValueNumber>(At.Y),MakeShared<FJsonValueNumber>(At.Z)});}
     return J;
 }
 void UOKHScenePanel::SetTongue(const TSharedPtr<FJsonObject>& Settings){
@@ -2131,7 +2326,7 @@ void UOKHScenePanel::TickEyeDull(float Delta){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_
         if(PupilShakeClock>=1.f){PupilShakeClock=FMath::Fractional(PupilShakeClock);PupilShakeFrom=PupilShakeTo;PupilShakeTo=FVector2f(FMath::RandPointInCircle(Range));}
         PupilShakeNow=FMath::Lerp(PupilShakeFrom,PupilShakeTo,PupilShakeClock);Girl->SetPupilOffset(PupilShakeNow.X,PupilShakeNow.Y);}
     else if(!PupilShakeNow.IsZero()){PupilShakeNow=PupilShakeFrom=PupilShakeTo=FVector2f::ZeroVector;Girl->SetPupilOffset(0.f,0.f);}
-    TickEyeLook(Girl,Delta);
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickEyeLook);TickEyeLook(Girl,Delta);}
     const bool bHide=Want>1.f||CVarHPupilHighlight.GetValueOnGameThread()==0;const float Sized=Want*CVarHPupilSize.GetValueOnGameThread();
     const float Now=EyeDullScale>0.f?FMath::FInterpConstantTo(EyeDullScale,Sized,Delta,.3f):Sized;
     if(Now==EyeDullScale&&bHide==bEyeDullHidden)return;
@@ -2337,14 +2532,14 @@ void UOKHScenePanel::UpdateFace(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HUpdateFace)
     // it (user 2026-11-09: her tongue out all the time with him out of her). The test shows it always.
     const bool bInHer=Mode==2&&Base.Contains(TEXT("Loop")); // moving in her; the afterglow (IN_A) only by the climax window
     const bool bTongueOut=bInHer||FPlatformTime::Seconds()<AheTongueUntil+HTongueFade||CVarHAhegaoTest.GetValueOnGameThread();
-    const int32 Tongue=bAhegao&&bTongueOut?HTongueMouth(Girl):INDEX_NONE;
-    if(bAhegao!=bAhegaoShown||(bAhegao&&Tongue!=AheMouthSet)){bAhegaoShown=bAhegao;
+    int32 Tongue;{TRACE_CPUPROFILER_EVENT_SCOPE(OK_HFaceTongue);Tongue=bAhegao&&bTongueOut?HTongueMouth(Girl):INDEX_NONE;}
+    if(bAhegao!=bAhegaoShown||(bAhegao&&Tongue!=AheMouthSet)){TRACE_CPUPROFILER_EVENT_SCOPE(OK_HFaceAhegaoMouth);bAhegaoShown=bAhegao;
         if(bAhegao&&Tongue==INDEX_NONE&&AheMouthSet!=INDEX_NONE){Girl->bManualSpeechPattern=bAheManualWas;Girl->SetMouthPattern(0);} // her tongue back in
         AheMouthSet=Tongue;
         if(bAhegao){if(Tongue!=INDEX_NONE)Girl->SetMouthPattern(Tongue);
             UE_LOG(LogTemp,Display,TEXT("H scene: ahegao (mouth %d %s)"),Tongue,Tongue!=INDEX_NONE?*Girl->GetMouthPatternLabel(Tongue):TEXT("none"));}
         else{Girl->SetEyeGaze(0.f,0.f,0.f);Girl->SetMouthPattern(0);}}
-    if(bAhegao){const int32 Set=AF.IsValidIndex(0)?FCString::Atoi(*AF[0]):25;const int32 Blend=HEyeSetBlend(Set);
+    if(bAhegao){TRACE_CPUPROFILER_EVENT_SCOPE(OK_HFaceEyeSet);const int32 Set=AF.IsValidIndex(0)?FCString::Atoi(*AF[0]):25;const int32 Blend=HEyeSetBlend(Set);
         const int32 E=Blend>=0&&Blend<Girl->GetFacePatternCount(1)?Blend:INDEX_NONE,B=AheId(1,2,Girl->GetFacePatternCount(2));Eye=E!=INDEX_NONE?E:8;Brow=B!=INDEX_NONE?B:11;Open=E!=INDEX_NONE?1.f:.6f;}
     else if(Cur.Contains(TEXT("Dislikes"))){Eye=13;Brow=1;Open=.9f;}
     else if(bDeepFace){Eye=8;Brow=11;Open=.85f;} // wide enough to see them roll (TickDeepFace)
@@ -2359,7 +2554,7 @@ void UOKHScenePanel::UpdateFace(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HUpdateFace)
     else if(Base==TEXT("Insert")||Base==TEXT("InsertIdle")){Eye=L<=1?12:8;Brow=L<=1?11:2;Open=.7f;}
     else if(L>=2){Eye=4;Brow=0;Open=.9f;}
     const FString Key=FString::Printf(TEXT("%d/%d/%.2f"),Eye,Brow,Open);if(Key==FaceKey)return;FaceKey=Key;
-    Girl->SetFaceControl(1,Eye,Open,true);Girl->SetFaceControl(2,Brow,1.f,true);
+    TRACE_CPUPROFILER_EVENT_SCOPE(OK_HFaceControls);Girl->SetFaceControl(1,Eye,Open,true);Girl->SetFaceControl(2,Brow,1.f,true);
 }
 void UOKHScenePanel::UpdateBlush(float Delta){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HUpdateBlush);
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl))return;
@@ -3050,6 +3245,8 @@ void UOKHScenePanel::ReadBulge(AKKPreviewActor* Girl,const FVector& Tip,const FV
          // Last frame's, then this frame's on its way: body and clothes both from it, shown together (CoverClothes).
          {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HWrapTake);bHave=Girl->Session.BellyWrapTake(bCover,Idx,D,N,ClothParts,ClothIdx,ClothD,ClothCpu);}bClothTaken=bHave;bClothPiped=true;
          const bool bIn=!E.IsZero()&&TipInside>=6.f;
+         // Her wrap's vertex table built ahead off the game thread: built the frame he first went in, it took 190 ms.
+         if(!bIn&&!bWrapTipKnown)Girl->Session.BellyWrapPrepare();
          const FVector Ahead=bIn&&bWrapTipKnown?(Tip-WrapLastTip).GetClampedToMaxSize(5.)*CVarHWrapLead.GetValueOnGameThread():FVector::ZeroVector;
          WrapLastTip=Tip;bWrapTipKnown=bIn;
          TRACE_CPUPROFILER_EVENT_SCOPE(OK_HWrapStart);Girl->Session.BellyWrapStart(bIn,ToUnity(E),ToUnity(Tip+Ahead),Front.IsZero()?FVector::ZeroVector:(ToUnity(Kokan+Front*10.)-ToUnity(Kokan)).GetSafeNormal(),(Radius+.5f)/100.f,bCover);}
@@ -3497,7 +3694,7 @@ void UOKHScenePanel::NativeDestruct(){FastPaths(false);DropSecond();RestoreEyeLo
     if(auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl))EndDeepFace(Girl);
     if(bAhegaoShown){bAhegaoShown=false;TickAhegao();if(auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl)){Girl->SetEyeGaze(0.f,0.f,0.f);Girl->SetMouthPattern(0);}} // her eyes, mouth and hands back from ahegao
     TickCameraLight(true);TickSkinLit(true);TickClothBias(true);
-    SetGrayRoom(false);RemoveMirror();Drips.Reset();Tears.Reset();RestoreAlign();Super::NativeDestruct();}
+    SetGrayRoom(false);RemoveMirror();RemovePuddles();Drips.Reset();Tears.Reset();RestoreAlign();Super::NativeDestruct();}
 // Off for now (user, 2026-11-02: the box, table and chair hid the bugs being looked at): ok.HScene.Props 1 sets them again.
 static TAutoConsoleVariable<int32> CVarHProps(TEXT("ok.HScene.Props"),0,TEXT("1: a box, table or chair under her for the poses that lean on one; 0: none"));
 void UOKHScenePanel::PlaceProps(int32 Kind){
@@ -3653,7 +3850,7 @@ void UOKHScenePanel::OnInputCommitted(const FText& Text,ETextCommit::Type Commit
 TSharedRef<FJsonObject> UOKHScenePanel::Describe() const{
     auto O=MakeShared<FJsonObject>();
     O->SetStringField(TEXT("pose"),Mode==0&&AibuPoses.IsValidIndex(ActiveAibu)?AibuPoses[ActiveAibu].Name:Poses.IsValidIndex(ActivePose)?Poses[ActivePose].Name:FString());O->SetStringField(TEXT("pending"),Poses.IsValidIndex(PendingPose)?Poses[PendingPose].Name:FString());
-    O->SetObjectField(TEXT("limb_ik"),LimbIkJson());O->SetObjectField(TEXT("tongue"),TongueJson());O->SetObjectField(TEXT("mirror"),MirrorJson());O->SetBoolField(TEXT("skin_lit"),CVarHSkinLit.GetValueOnGameThread()!=0);O->SetBoolField(TEXT("skin_lit_shown"),bSkinLitShown);
+    O->SetObjectField(TEXT("limb_ik"),LimbIkJson());O->SetObjectField(TEXT("tongue"),TongueJson());O->SetObjectField(TEXT("mirror"),MirrorJson(0));O->SetObjectField(TEXT("mirror2"),MirrorJson(1));O->SetObjectField(TEXT("puddles"),PuddlesJson());O->SetBoolField(TEXT("skin_lit"),CVarHSkinLit.GetValueOnGameThread()!=0);O->SetBoolField(TEXT("skin_lit_shown"),bSkinLitShown);
     if(AlignOff>=0.f){auto A=MakeShared<FJsonObject>();A->SetNumberField(TEXT("tip"),AlignTip);A->SetNumberField(TEXT("open"),OpenEased);{float Most=0.f;for(const auto& B:Bulge)Most=FMath::Max(Most,B.Value);A->SetNumberField(TEXT("bulge"),Most);A->SetStringField(TEXT("bulge_at"),BulgeTarget.IsNone()?FString():BulgeTarget.ToString());A->SetNumberField(TEXT("bulge_past"),BulgePast);A->SetNumberField(TEXT("bulge_moves"),BulgeMoves);}A->SetNumberField(TEXT("off"),AlignOff);A->SetNumberField(TEXT("at"),AlignAt);A->SetNumberField(TEXT("len"),AlignLen);A->SetNumberField(TEXT("moved"),HimOffset.Size());A->SetNumberField(TEXT("at_min"),AtShownMin);A->SetNumberField(TEXT("foot"),AlignFoot);A->SetNumberField(TEXT("mz"),HimOffset.Z);A->SetNumberField(TEXT("her_z"),HerOffset.Z);A->SetBoolField(TEXT("his_knees"),bHisIk);A->SetBoolField(TEXT("her_knees"),bHerIk);{TArray<TSharedPtr<FJsonValue>> F;for(float V:FeetShown)F.Add(MakeShared<FJsonValueNumber>(V));A->SetArrayField(TEXT("feet"),F);}A->SetNumberField(TEXT("pushed"),AlignPushed);A->SetNumberField(TEXT("deep"),AlignDeep);A->SetNumberField(TEXT("at_max"),AtShownMax);
         // Their soles and hands where they are drawn now (world cm), and what pins them (FeetPinToggle, HandsPinToggle).
         {A->SetBoolField(TEXT("pin_feet"),bPinFeet);A->SetBoolField(TEXT("pin_hands"),bPinHands);

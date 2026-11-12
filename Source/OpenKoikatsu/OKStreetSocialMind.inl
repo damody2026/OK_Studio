@@ -200,16 +200,23 @@ void AOKStreetSocialScene::TickCalendarAndMind(){
 
 // FreeTalk through the mind: her persistent context lives in Rust (Saved/StreetSocial/mind/context), this turn's
 // message carries the full state. False when the mind is not open (nothing is posted around it).
+static FString OKStreetMindJson(const TSharedRef<FJsonObject>& Object);
 bool AOKStreetSocialScene::SubmitFreeTalkToMind(int32 Character,const FString& Id,const FString& System,const FString& UserMessage,const FString& Text){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_SubmitFreeTalkToMind);
  auto& S=*State;if(!S.Mind)return false;
  TSharedRef<FJsonObject> Job=MakeShared<FJsonObject>();
  Job->SetStringField(TEXT("kind"),TEXT("talk"));Job->SetStringField(TEXT("tag"),TEXT("freetalk"));Job->SetStringField(TEXT("priority"),TEXT("dialogue"));
  Job->SetStringField(TEXT("heroine"),Id);Job->SetStringField(TEXT("system"),System);Job->SetStringField(TEXT("user"),UserMessage);
  Job->SetNumberField(TEXT("max_tokens"),400);Job->SetNumberField(TEXT("temperature"),1.0); /* 1.2 drifted into word salad over long talks (DeepSeek: 1.0 for conversation) */ Job->SetBoolField(TEXT("json"),true);
- // Only used the first time she talks through the mind: her conversation so far comes along.
- TArray<TSharedPtr<FJsonValue>> Legacy;
- for(const auto& Turn:S.FreeTalkMemory.FindOrAdd(Id)){auto M=MakeShared<FJsonObject>();M->SetStringField(TEXT("role"),Turn.Role);M->SetStringField(TEXT("content"),Turn.Content);Legacy.Add(MakeShared<FJsonValueObject>(M));}
- Job->SetArrayField(TEXT("legacy_history"),Legacy);
+ // Only used the first time she talks through the mind: her conversation so far comes along. Once the mind holds a
+ // context of hers it ignores it, so it is not built or sent then (with every line it was most of this job, up to
+ // 10,000 characters, 2026-11-12). Asked of the mind once per heroine and save.
+ bool Known=S.MindContextKnown.Contains(Id);
+ if(!Known){TSharedRef<FJsonObject> Q=MakeShared<FJsonObject>();Q->SetStringField(TEXT("kind"),TEXT("context"));Q->SetStringField(TEXT("heroine"),Id);
+  FString Out,QueryError;TSharedPtr<FJsonObject> Root;bool Exists=false;
+  if(S.Mind->Query(OKStreetMindJson(Q),Out,QueryError)&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Out),Root)&&Root.IsValid()&&Root->TryGetBoolField(TEXT("exists"),Exists)&&Exists){Known=true;S.MindContextKnown.Add(Id);}}
+ if(!Known){TArray<TSharedPtr<FJsonValue>> Legacy;
+  for(const auto& Turn:S.FreeTalkMemory.FindOrAdd(Id)){auto M=MakeShared<FJsonObject>();M->SetStringField(TEXT("role"),Turn.Role);M->SetStringField(TEXT("content"),Turn.Content);Legacy.Add(MakeShared<FJsonValueObject>(M));}
+  Job->SetArrayField(TEXT("legacy_history"),Legacy);}
  FString Json,Error;FJsonSerializer::Serialize(Job,TJsonWriterFactory<TCHAR,TCondensedJsonPrintPolicy<TCHAR>>::Create(&Json));
  const uint64 JobId=S.Mind->Submit(Json,Error);
  if(!JobId){UE_LOG(LogTemp,Warning,TEXT("StreetSocial mind refused the talk: %s"),*Error);return false;}
@@ -344,6 +351,10 @@ void AOKStreetSocialScene::FillMindStatus(int32 Character,FOKFreeTalkStatus& Sta
  // Apart (a message or a call) the place, menu and people around him are not around her: she knows where he is only if
  // he says so or somebody saw him (what she heard).
  const bool Apart=RemoteWith(Character);
+ // Alone with him in the private room (the H scene) PrepareFreeTalk gives the menu and the scene its own words after
+ // this: the street's, made here, were thrown away (11 to 16 ms of a frame each time she answered in it, 2026-11-12).
+ const bool InRoom=S.PrivateGirl==Character&&S.PrivateMode.IsValid();
+ if(!InRoom){
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_StatusMenu);Status.Menu=Apart?FString():MenuText(R.Satiety,100.f/SatietyMax(Character),Character);}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_StatusScene);Status.Scene=Apart?FString():SceneLine(Character);}
  // Whose number each has: without his she cannot send him the photo they just took (she said her phone "can't do that").
@@ -364,6 +375,7 @@ void AOKStreetSocialScene::FillMindStatus(int32 Character,FOKFreeTalkStatus& Sta
   const int64 Now=OKStreetMindNow(S);auto Clock=[](int64 M){return FString::Printf(TEXT("%02d:%02d"),int32(M%1440/60),int32(M%60));};
   Status.Scene+=OKMsg(TEXT("ui.mind.he_working_here_status"), {{TEXT("job_title"), *Job->Title}, {TEXT("busyness_percent"), OKRulesCrowdAt(S,Job->Place,T.GetHour()+T.GetMinute()/60.0)*100.f},
    {TEXT("started"), Now>=S.ShiftStart?TEXT("yes"):TEXT("no")}, {TEXT("start_time"), Clock(S.ShiftStart)}, {TEXT("end_time"), Clock(S.ShiftEnd)}, {TEXT("hours_to_shift_end"), FMath::Max<int64>(0,FMath::RoundToInt64((S.ShiftEnd-Now)/60.0))}});NoteShiftChat();}
+ } // !InRoom
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_StatusInvite);Status.Invite=RollInviteStance(Character);}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_StatusHeard);Status.Heard=HeardText(Character);}
  // The meetings the game really has with him: she must not remember others (a time she said once is not a promise).

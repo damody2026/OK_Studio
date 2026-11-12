@@ -238,6 +238,8 @@ public:
  void SyncBoneSliders();
  void OnBoneChanged(UOKShapeSlider* Slider,float Value);
  FString EditorModsJson() const;
+ // Her card's mods decoded ahead on a worker, for EditorModsJson.
+ void PrepareEditorModsJson() const;
  bool CommitEditorMods(const TSharedPtr<FJsonObject>& Mods);
  UFUNCTION() void OnBoneCategoryChanged(FString Value,ESelectInfo::Type Type);
  UPROPERTY() TObjectPtr<UComboBoxString> BoneCategoryCombo;

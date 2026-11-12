@@ -793,7 +793,15 @@ inline bool OKStreetUpstairs(const FVector& At) {
  return false;
 }
 
+inline FString OKStreetPlaceCatalogueBuild();
+// Made once per place set (city or street): every free-talk turn asked for it again, places times activities (2026-11-12).
 inline FString OKStreetPlaceCatalogue() {
+ static FString Cached; static int32 CachedKey = -1;
+ const int32 Key = (OKStreetCityMode() ? 1 : 0) + 2 * OKStreetPlaces().Num();
+ if (Key != CachedKey) { Cached = OKStreetPlaceCatalogueBuild(); CachedKey = Key; }
+ return Cached;
+}
+inline FString OKStreetPlaceCatalogueBuild() {
  FString Out = TEXT("【街區地點】\n");
  for (const auto& P : OKStreetPlaces()) {
   Out += FString::Printf(TEXT("- %s（id: %s）：%s"), P.Name, P.Id, P.About);

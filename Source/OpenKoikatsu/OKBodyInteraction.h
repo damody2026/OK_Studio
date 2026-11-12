@@ -17,6 +17,8 @@ public:
  bool Prepare(AKKPreviewActor* Actor,FString& Error);
  // The shared reaction data read once per process (any thread): the 1-on-1 load calls it on its worker.
  static bool WarmShared(FString& Error);
+ // Her session's reaction solver made ahead by the thread that opened it (Prepare then takes it as it is, once).
+ static bool PrepareAhead(class FOkSession& Session,FString& Error);
  void SetContext(const FString& Pair,const FString& State);
  int32 Query(const FVector& Origin,const FVector& Direction,double& Distance) const;
  bool Press(int32 Collider);

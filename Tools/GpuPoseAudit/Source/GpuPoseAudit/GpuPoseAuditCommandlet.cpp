@@ -15,6 +15,7 @@ bool InspectImportedGeometry(const FString& Input,const FString& AssetRoot,const
 #if OK_RUNTIME_SHARED_MATERIAL_TOOL
 bool PrepareRuntimeSharedMaterial(const FString&,const FString&,const FString&,bool HGShading,bool WrapOnly,bool LitOnly,bool BiasOnly);
 bool PrepareTearMaterial(const FString& AssetRoot,const FString& MaterialPath,const FString& Output);
+bool PreparePuddleMaterial(const FString& AssetRoot,const FString& MaterialPath,const FString& Output);
 bool PrepareForegroundMaterials(const FString& AssetRoot,const FString& Root,const FString& Output);
 bool PrepareFlatFaceMaterials(const FString& AssetRoot,const FString& Root,const FString& Output);
 #endif
@@ -22,6 +23,7 @@ bool PrepareInstancedMaterials(const FString& Input,const FString& AssetRoot,con
 UGpuPoseAuditCommandlet::UGpuPoseAuditCommandlet(){IsClient=false;IsServer=false;IsEditor=true;LogToConsole=true;}
 int32 UGpuPoseAuditCommandlet::Main(const FString& Params){FString Output;if(!FParse::Value(*Params,TEXT("Output="),Output)||IFileManager::Get().FileExists(*Output))return 1;FString RuntimeCache;if(FParse::Value(*Params,TEXT("RuntimeBankCache="),RuntimeCache))return RunRuntimeBankAudit(RuntimeCache,Output)?0:1;FString ShardIndex;if(FParse::Value(*Params,TEXT("ShardIndex="),ShardIndex))return RunShardLoadAudit(ShardIndex,Output)?0:1;if(GShaderCompilingManager)GShaderCompilingManager->FinishAllCompilation();if(FParse::Param(*Params,TEXT("ManifestSynthetic")))return OKRunGpuManifestSelectionOracle(Output)?0:1;FString Input,AssetRoot;
 #if OK_RUNTIME_SHARED_MATERIAL_TOOL
+if(FParse::Param(*Params,TEXT("PreparePuddleMaterial"))){FString Path;if(!FParse::Value(*Params,TEXT("AssetRoot="),AssetRoot)||!FParse::Value(*Params,TEXT("MaterialPath="),Path))return 1;return PreparePuddleMaterial(AssetRoot,Path,Output)?0:1;}
 if(FParse::Param(*Params,TEXT("PrepareTearMaterial"))){FString Path;if(!FParse::Value(*Params,TEXT("AssetRoot="),AssetRoot)||!FParse::Value(*Params,TEXT("MaterialPath="),Path))return 1;return PrepareTearMaterial(AssetRoot,Path,Output)?0:1;}
 if(FParse::Param(*Params,TEXT("PrepareFlatFaceMaterials"))){FString Root;if(!FParse::Value(*Params,TEXT("AssetRoot="),AssetRoot)||!FParse::Value(*Params,TEXT("MaterialRoot="),Root))return 1;return PrepareFlatFaceMaterials(AssetRoot,Root,Output)?0:1;}
 if(FParse::Param(*Params,TEXT("PrepareForegroundMaterials"))){FString Root;if(!FParse::Value(*Params,TEXT("AssetRoot="),AssetRoot)||!FParse::Value(*Params,TEXT("MaterialRoot="),Root))return 1;return PrepareForegroundMaterials(AssetRoot,Root,Output)?0:1;}

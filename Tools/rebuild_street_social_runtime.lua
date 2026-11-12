@@ -35,8 +35,12 @@ local function lint_sources(root)
     for _, n in ipairs(files) do
       if n:match("%.cpp$") or n:match("%.inl$") or n:match("%.h$") then
         local file = path.join(dir, n)
+        local previous = ""
         for i, line in ipairs(path.read_lines(file)) do
           for call in line:gmatch("UE_LOG%s*%b()%s*;%s*else") do bad[#bad + 1] = ("%s:%d: %s"):format(file, i, call) end
+          -- The same across a line break (`...UE_LOG(...);` then `else` at the next line's start; 2026-11-12).
+          if line:match("^%s*else") and previous:match("UE_LOG%s*%b()%s*;%s*$") then bad[#bad + 1] = ("%s:%d: %s"):format(file, i, line) end
+          previous = line
         end
       end
     end

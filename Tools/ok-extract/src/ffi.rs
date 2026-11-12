@@ -173,6 +173,17 @@ pub unsafe extern "C" fn ok_belly_wrap_deltas(s:*mut OkSession,at:*const f32,rad
     moves.len() as i32
 }
 #[no_mangle]
+pub unsafe extern "C" fn ok_session_prepare_shaped_baselines(s:*mut OkSession) {
+    // The baselines a static interaction frame would make first (OkSession::prepare_shaped_baselines); any thread that
+    // owns the session.
+    if let Some(s)=sess_ref(s){s.prepare_shaped_baselines();}
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_belly_wrap_prepare(s:*mut OkSession) {
+    // Her wrap's vertex table built ahead on a thread of its own (belly_bulge::wrap_prepare), the session idle.
+    if let Some(s)=sess_ref(s){crate::belly_bulge::wrap_prepare(s);}
+}
+#[no_mangle]
 pub unsafe extern "C" fn ok_belly_wrap_start(s:*mut OkSession,at:*const f32,radius:f32,wrap:i32,cover:i32)->i32 {
     // This frame's wrap and clothes on the wrap worker (belly_bulge::wrap_start), the session idle: at as
     // ok_belly_wrap_deltas, wrap 0 her skin left alone (her breasts still push her clothes), cover 0 her clothes left
@@ -640,6 +651,16 @@ pub unsafe extern "C" fn ok_session_clothes_parts_shown(s:*mut OkSession,states:
     for(index,part)in s.parts.iter().enumerate().take(cap.max(0) as usize){*out.add(index)=crate::unity::state_nodes_shown(&part.runtime_textures,&values) as u8;}
     s.parts.len() as i32
 }
+/// `ok_session_wardrobe_body_mask` from her body's own mask (its top-state-0 mask), no session: thread-safe, so the
+/// three states can be made ahead off the game thread (the result is kept by content, png_transform_cache).
+#[no_mangle]
+pub unsafe extern "C" fn ok_body_mask_for_top_state(mask:*const u8,len:i32,top_state:i32,out:*mut u8,cap:i32)->i32 {
+    if mask.is_null()||len<=0{return -1;}
+    let mask=std::slice::from_raw_parts(mask,len as usize);
+    let Some(png)=crate::clothes_texture::body_mask_for_alpha_state(mask,crate::clothes_texture::clothes_alpha_state(top_state.clamp(0,3) as u8)) else{return 0;};
+    if !out.is_null()&&cap as usize>=png.len(){std::ptr::copy_nonoverlapping(png.as_ptr(),out,png.len());}
+    png.len() as i32
+}
 /// The mask her body takes with her top in this state (`ChaControl.ChangeAlphaMask`); its length, 0 when none, -1 when
 /// `out` is too small for it.
 #[no_mangle]
@@ -689,6 +710,21 @@ pub unsafe extern "C" fn ok_static_interaction_frame(s:*mut OkSession,dt:f32)->i
 // is explicit and transactional; the frame path performs no file IO.
 #[no_mangle]
 pub unsafe extern "C" fn ok_body_reaction_prepare(s:*mut OkSession,root:*const c_char,json:*const u8,len:i32,err:*mut c_char,cap:i32)->i32 {
+    ok_body_reaction_prepare_mode(s,root,json,len,err,cap,0)
+}
+/// Sessions whose body reaction was prepared ahead (ok_body_reaction_prepare_ahead) and not yet asked for since.
+static BODY_REACTION_AHEAD: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
+/// ok_body_reaction_prepare made ahead by the thread that opened the session (89 ms in the frame a one-on-one came up,
+/// 2026-11-12); the next ok_body_reaction_prepare of that session takes it as it is, once.
+#[no_mangle]
+pub unsafe extern "C" fn ok_body_reaction_prepare_ahead(s:*mut OkSession,root:*const c_char,json:*const u8,len:i32,err:*mut c_char,cap:i32)->i32 {
+    ok_body_reaction_prepare_mode(s,root,json,len,err,cap,1)
+}
+unsafe fn ok_body_reaction_prepare_mode(s:*mut OkSession,root:*const c_char,json:*const u8,len:i32,err:*mut c_char,cap:i32,ahead:i32)->i32 {
+    let key=s as usize;
+    {let mut list=BODY_REACTION_AHEAD.lock().unwrap_or_else(|e|e.into_inner());
+     if let Some(i)=list.iter().position(|k|*k==key){list.swap_remove(i);
+        if ahead==0&&sess_ref(s).is_some_and(|s|s.body_interaction.is_some()){return 0;}}}
     let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||{
         let s=sess_ref(s).ok_or("missing session")?;
         let root=cstr_opt(root).ok_or("missing shared resource root")?;
@@ -699,7 +735,7 @@ pub unsafe extern "C" fn ok_body_reaction_prepare(s:*mut OkSession,root:*const c
         s.body_interaction=Some(crate::hit_reaction::Interaction{reaction:crate::hit_reaction::Runtime::new(definition),weight:1.,release_mask:0,solver});
         Ok(())
     })).unwrap_or_else(|_|Err("body reaction preparation failed".into()));
-    match result{Ok(())=>0,Err(e)=>{write_err(err,cap,&e);-1}}
+    match result{Ok(())=>{if ahead!=0{BODY_REACTION_AHEAD.lock().unwrap_or_else(|e|e.into_inner()).push(key);}0},Err(e)=>{write_err(err,cap,&e);-1}}
 }
 #[no_mangle]
 pub unsafe extern "C" fn ok_body_reaction_hit(s:*mut OkSession,id:i32,forces:*const f32,count:i32,weight:f32)->i32 {

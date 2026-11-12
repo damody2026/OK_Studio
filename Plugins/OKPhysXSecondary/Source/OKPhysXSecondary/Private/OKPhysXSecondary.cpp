@@ -1032,31 +1032,7 @@ namespace OKPhysXSecondary
 			Group->Body.Append(All, Split);
 			TArray<FOKPxCapsule> Clothed;
 			if (Split < int32(Count) && int32(Count) - Split - 1 == Split) Clothed.Append(All + Split + 1, Split);
-			// Report a changed clothes layer once (how much each capsule grew, cm).
-			FString Grown;
-			for (int32 i = 0; i < Clothed.Num(); ++i) Grown += FString::Printf(TEXT("%d:%.1f "), i, (Clothed[i].Radius - Group->Body[i].Radius) * 100.f);
-			// Per group: one shared "last" with two characters in the scene (the one-on-one) changed every call, and the
-			// line was written twice a frame (55k lines a minute).
-			static TMap<uint64, FString> LastGrown;
-			static UE::FMutex LogLock;
-			{
-				UE::TUniqueLock LogGuard(LogLock);
-				if (Split < int32(Count)) Grown += FString::Printf(TEXT("| skinMedian=%.3f skinVerts=%.0f clothVerts=%.0f"), All[Split].A[0], All[Split].A[1], All[Split].A[2]);
-				FString& Last = LastGrown.FindOrAdd(uint64(GroupId));
-				if (Grown != Last) { UE_LOG(LogOKPhysX, Display, TEXT("clothes layer group=%llu grown(cm)=%s"), GroupId, Grown.IsEmpty() ? TEXT("none") : *Grown); Last = Grown; }
-			}
 			Group->Clothed = MoveTemp(Clothed);
-		}
-		{
-			static std::atomic<int32> Publishes{0};
-			if (Count > 12 && (Publishes++ % 900) == 0)
-			{
-				const FOKPxCapsule* Body = static_cast<const FOKPxCapsule*>(Capsules);
-				const FOKPxCapsule& Pelvis = Body[12];
-				const FOKPxCapsule& Head = Body[13];
-				UE_LOG(LogOKPhysX, Display, TEXT("group %llu pelvis=(%.2f %.2f %.2f) head=(%.2f %.2f %.2f) capsules=%u"), GroupId,
-					(Pelvis.A[0] + Pelvis.B[0]) * 0.5f, (Pelvis.A[1] + Pelvis.B[1]) * 0.5f, (Pelvis.A[2] + Pelvis.B[2]) * 0.5f, Head.A[0], Head.A[1], Head.A[2], Count);
-			}
 		}
 		// Do two characters' bodies share one space? Their closest approach tells (touching poses give ~0).
 		TArray<TSharedPtr<FGroup>> OtherGroups;
@@ -1271,7 +1247,8 @@ namespace OKPhysXSecondary
 		Chain->bHasLastFrame = bGroupFrame;
 		static std::atomic<int64> Calls{0};
 		const int64 N = ++Calls;
-		if (N == 1 || N % 20000 == 0) UE_LOG(LogOKPhysX, Display, TEXT("PhysX solved %lld chain steps (chains=%d, particles=%u, colliders=%u)"), N, GChains.Num(), S.ParticleCount, S.ColliderCount);
+		// The first only (every 20000th was a line every 8 s of the one-on-one, 2026-11-12).
+		if (N == 1) UE_LOG(LogOKPhysX, Display, TEXT("PhysX solved %lld chain steps (chains=%d, particles=%u, colliders=%u)"), N, GChains.Num(), S.ParticleCount, S.ColliderCount);
 
 		RefStep = S.ReferenceStep;
 		Dt = FMath::Min(S.Dt, 0.1f);

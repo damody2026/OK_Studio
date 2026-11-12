@@ -25,6 +25,10 @@
 #include "OKResidentGpuDeform.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
+#include "PSOPrecache.h"
+#include "PSOPrecacheMaterial.h"
+#include "Misc/App.h"
+#include "UObject/StrongObjectPtr.h"
 
 static TAutoConsoleVariable<int32> CVarKKStreamParallel(TEXT("ok.Stream.ParallelPacking"),0,TEXT("Pack independent animated vertices in parallel; 0 retains serial packing. Enable only after workload measurement."));
 static TAutoConsoleVariable<int32> CVarKKStreamBatch(TEXT("ok.Stream.BatchPacking"),1,TEXT("0 serial oracle; 1 pack large multi-section animation batches; 2 force batch packing for verification."));
@@ -709,6 +713,65 @@ FPrimitiveSceneProxy* UKKAffineProceduralMeshComponent::CreateSceneProxy()
     return UsesAnimatedStreams() ? new FKKStreamSceneProxy(this) : Super::CreateSceneProxy();
 }
 
+void UKKAffineProceduralMeshComponent::CollectPSOPrecacheData(const FPSOPrecacheParams& Base, FMaterialInterfacePSOPrecacheParamsList& Out)
+{
+    TArray<UMaterialInterface*,TInlineAllocator<8>> Seen;
+    // Materials may be set before the sections are created.
+    const int32 Count = FMath::Max(GetNumSections(), GetNumOverrideMaterials());
+    for (int32 Index = 0; Index < Count; ++Index)
+    {
+        UMaterialInterface* Material = GetMaterial(Index);
+        if (!Material) Material = UMaterial::GetDefaultMaterial(MD_Surface);
+        if (Seen.Contains(Material)) continue;
+        Seen.Add(Material);
+        FMaterialInterfacePSOPrecacheParams& P = Out[Out.AddDefaulted()];
+        P.MaterialInterface = Material;
+        P.VertexFactoryDataList.Add(FPSOPrecacheVertexFactoryData(&FLocalVertexFactory::StaticType));
+        P.PSOPrecacheParams = Base;
+    }
+    if (UMaterialInterface* Overlay = GetOverlayMaterial(); Overlay && Seen.Num() > 0)
+    {
+        FMaterialInterfacePSOPrecacheParams& P = Out[Out.AddDefaulted()];
+        P.MaterialInterface = Overlay;
+        P.VertexFactoryDataList.Add(FPSOPrecacheVertexFactoryData(&FLocalVertexFactory::StaticType));
+        P.PSOPrecacheParams = Base;
+        P.PSOPrecacheParams.bCastShadow = false;
+    }
+}
+
+void UKKAffineProceduralMeshComponent::PrecacheAhead(UMaterialInterface* Material)
+{
+#if UE_WITH_PSO_PRECACHING
+    check(IsInGameThread());
+    if (!Material || !FApp::CanEverRender() || !IsComponentPSOPrecachingEnabled()) return;
+    static TSet<TWeakObjectPtr<UMaterialInterface>> Done;
+    if (Done.Contains(Material)) return;
+    Done.Add(Material);
+    // The parameters come from a component as the preview actor makes them (defaults: movable, casting shadows).
+    static TStrongObjectPtr<UKKAffineProceduralMeshComponent> Template;
+    if (!Template.IsValid()) Template.Reset(NewObject<UKKAffineProceduralMeshComponent>(GetTransientPackage()));
+    TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrecacheAhead);
+    FPSOPrecacheParams Base;
+    Template->SetupPrecachePSOParams(Base);
+    Base.bAnyMaterialHasWorldPositionOffset = Material->IsUsingWorldPositionOffset_Concurrent(GMaxRHIShaderPlatform);
+    FMaterialInterfacePSOPrecacheParamsList List;
+    FMaterialInterfacePSOPrecacheParams& P = List[List.AddDefaulted()];
+    P.MaterialInterface = Material;
+    P.VertexFactoryDataList.Add(FPSOPrecacheVertexFactoryData(&FLocalVertexFactory::StaticType));
+    P.PSOPrecacheParams = Base;
+    TArray<FMaterialPSOPrecacheRequestID> Ids;
+    FGraphEventArray Events;
+    ::PrecacheMaterialPSOs(List, Ids, Events);
+    if (PrecacheAheadVariants()) PrecacheAheadVariants()(Material);
+#endif
+}
+
+TFunction<void(UMaterialInterface*)>& UKKAffineProceduralMeshComponent::PrecacheAheadVariants()
+{
+    static TFunction<void(UMaterialInterface*)> Hook;
+    return Hook;
+}
+
 static void FlushCurrentGpuStreamBatch();
 static bool ExpandGpuStreamBounds(FBox& Bounds,const FBox& Addition)
 {
@@ -827,7 +890,9 @@ void UKKAffineProceduralMeshComponent::SubmitGpuStreamsBatch(TArray<FKKGpuStream
         auto* C=Entry.Component;auto& R=Entry.Request;if(!Entry.Receipt)Entry.Receipt=MakeShared<FKKGpuStreamReceipt,ESPMode::ThreadSafe>();
         const uint64 Epoch=C?C->GpuStreamProxyEpoch:0;
         auto Reject=[&](const TCHAR* Error){Entry.Receipt->Complete(false,R.ExpectedGeneration,Epoch,Error);};
-        if(!C||!C->UsesAnimatedStreams()||!C->SceneProxy||C->IsRenderStateDirty()||C->GetCollisionEnabled()!=ECollisionEnabled::NoCollision){Reject(TEXT("GPU batch requires ready collision-free animated proxy"));continue;}
+        // Which of them failed, in the reason (the receiver keys on "requires ready" for a passing one).
+        if(!C||!C->UsesAnimatedStreams()||!C->SceneProxy||C->IsRenderStateDirty()||C->GetCollisionEnabled()!=ECollisionEnabled::NoCollision){
+            Reject(!C?TEXT("GPU batch requires ready collision-free animated proxy (no component)"):!C->UsesAnimatedStreams()?TEXT("GPU batch requires ready collision-free animated proxy (not animated streams)"):!C->SceneProxy?TEXT("GPU batch requires ready collision-free animated proxy (no proxy)"):C->IsRenderStateDirty()?TEXT("GPU batch requires ready collision-free animated proxy (render state dirty)"):TEXT("GPU batch requires ready collision-free animated proxy (collision)"));continue;}
         if(!R.ProxyEpoch||R.ProxyEpoch!=Epoch){Reject(TEXT("Stale GPU batch proxy epoch"));continue;}
         if(Entry.Section<0||Entry.Section>=C->GetNumSections()){Reject(TEXT("GPU batch section invalid"));continue;}
         auto* Section=C->GetProcMeshSection(Entry.Section);

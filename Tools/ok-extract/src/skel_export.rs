@@ -268,8 +268,13 @@ pub fn deform_from_ref(
 }
 
 pub(crate) fn palettes(skel: &Skeleton, part: &SessionPart) -> (Vec<Mat4>, Vec<Mat4>) {
-    let n = if !part.bind_poses.is_empty() {
-        part.bind_poses.len().min(skel.worlds.len())
+    palettes_from(skel, &part.bind_poses)
+}
+
+/// `palettes` from a part's bind poses alone.
+pub(crate) fn palettes_from(skel: &Skeleton, bind_poses: &[Mat4]) -> (Vec<Mat4>, Vec<Mat4>) {
+    let n = if !bind_poses.is_empty() {
+        bind_poses.len().min(skel.worlds.len())
     } else {
         skel.worlds.len().min(skel.rest.len())
     };
@@ -277,8 +282,8 @@ pub(crate) fn palettes(skel: &Skeleton, part: &SessionPart) -> (Vec<Mat4>, Vec<M
         return (Vec::new(), Vec::new());
     }
     let worlds = skel.worlds[..n].to_vec();
-    let binds = if part.bind_poses.len() >= n {
-        part.bind_poses[..n].to_vec()
+    let binds = if bind_poses.len() >= n {
+        bind_poses[..n].to_vec()
     } else {
         pose::binds_from_rest(&skel.rest[..n])
     };
