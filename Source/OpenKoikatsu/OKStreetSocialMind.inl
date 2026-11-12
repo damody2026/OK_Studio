@@ -540,7 +540,11 @@ void AOKStreetSocialScene::ApplyChoiceReply(int32 Character,const FOKFreeTalkRep
   // Ordered on the way to that shop ("let's go to the store: a tea egg and water"): carried until they get there.
   const FOKStreetActivity* Going=OKStreetFindActivity(Reply.Action);
   // Or the shop the outing is already walking to (a later reply on the way has no action of its own).
-  const bool ShopAhead=Item&&Item->Place!=Place&&(Reply.Action==TEXT("go:")+Item->Place||(Going&&Going->Place&&Item->Place==Going->Place)||(Place.IsEmpty()&&Item->Place==OutingShop(Character)));
+  // Or the shop whose door they stand at: 贞德, treating him at the cafe, took his latte and her matcha latte 4 m from
+  // the cafe's door, both were "not sold here", and she said the cafe had no latte (R6-249).
+  const FOKStreetPlace* ItemShop=Item?OKStreetFindPlace(Item->Place):nullptr;
+  const bool AtDoor=Place.IsEmpty()&&ItemShop&&FVector::Dist2D(S.Male,ItemShop->Door)<600.f;
+  const bool ShopAhead=Item&&Item->Place!=Place&&(Reply.Action==TEXT("go:")+Item->Place||(Going&&Going->Place&&Item->Place==Going->Place)||(Place.IsEmpty()&&Item->Place==OutingShop(Character))||AtDoor);
   if(ShopAhead){FOKStreetCartLine Carry;Carry.ItemId=O.Id;Carry.ForHer=ForHer;Carry.HerOwn=ForHer;Carry.Size=Item->Price.Contains(O.Size)?O.Size:Item->DefaultSize();
    if(!Item->Options.IsEmpty())SetDrinkOptions(Carry,O.Sweetness,O.Ice);
    S.CarriedOrders.FindOrAdd(Character).Add(Carry);S.CarriedOrderSaid.Add(Character,Reply.Reply);UE_LOG(LogTemp,Display,TEXT("Street order carried: %s until they reach %s"),*O.Id,*Item->Place);continue;}
