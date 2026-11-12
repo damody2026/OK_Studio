@@ -498,6 +498,8 @@ local function main()
   if not win_w then error("-Window takes WxH, e.g. 1280x720", 0) end
   -- -City: the university city in place of the built street (Docs/STREET_CITY_PLACES_INVENTORY_20261103.md).
   -- -City plays the streamed map once it is in the project; -CitySource the whole map it is made from (the road bake needs it).
+  -- Since 2026-11-13 the university city is the only map: the old built street (/Game/Scenes/StreetSocial) is not played.
+  o.city = true
   if o.citysource then o.city = true end
   local city_map = (not o.citysource and path.exists(path.join(root, "Content/UniversityCity/Maps/UniversityCityWP.umap"))) and "UniversityCityWP" or "UniversityCity"
   local map = o.city and ("/Game/UniversityCity/Maps/" .. city_map .. "?game=/Script/OpenKoikatsu.OKCrowdGameMode") or "/Game/Scenes/StreetSocial/StreetSocial"
