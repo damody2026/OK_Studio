@@ -371,7 +371,11 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
         // {"tongue":{"up":cm,"pitch":deg,"length":x}}: her tongue out (ok.HScene.TongueUp / TonguePitch / TongueLength).
         const TSharedPtr<FJsonObject>* TongueSet=nullptr;if(Body->TryGetObjectField(TEXT("tongue"),TongueSet))Panel->SetTongue(*TongueSet);
         // {"mirror":{"on":b,"yaw":deg,"distance":cm}}: the 200 x 200 cm mirror round them (ok.HScene.Mirror / MirrorYaw / MirrorDistance).
-        const TSharedPtr<FJsonObject>* MirrorSet=nullptr;if(Body->TryGetObjectField(TEXT("mirror"),MirrorSet))Panel->SetMirror(*MirrorSet);
+        const TSharedPtr<FJsonObject>* MirrorSet=nullptr;if(Body->TryGetObjectField(TEXT("mirror"),MirrorSet))Panel->SetMirror(*MirrorSet,0);
+        // {"mirror2":{...}}: the second mirror, the same way (ok.HScene.Mirror2 / Mirror2Yaw / Mirror2Distance).
+        if(Body->TryGetObjectField(TEXT("mirror2"),MirrorSet))Panel->SetMirror(*MirrorSet,1);
+        // {"puddles":{"on":b,"count":n,"size":cm,"shine":0..1}}: the puddles on the floor (ok.HScene.Puddles / PuddleCount / PuddleSize / PuddleShine).
+        if(Body->TryGetObjectField(TEXT("puddles"),MirrorSet))Panel->SetPuddles(*MirrorSet);
         // {"skin_lit":true|false}: their skin lit by the scene or the original's toon (ok.HScene.SkinLit).
         bool SkinLit=false;if(Body->TryGetBoolField(TEXT("skin_lit"),SkinLit))if(auto* Var=IConsoleManager::Get().FindConsoleVariable(TEXT("ok.HScene.SkinLit")))Var->Set(SkinLit?1:0,ECVF_SetByConsole);
         // {"orbit":[yaw,pitch,distance]}: the camera round her hips, turned from where she faces (pose checks from the side and the front).
