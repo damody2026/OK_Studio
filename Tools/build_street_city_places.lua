@@ -1007,8 +1007,11 @@ do
   end
   -- the park's fountain photo: facing north (yaw -75.7, the landmark's own) they were put on the fountain's north side, in
   -- the festival square, and the camera stood among the stalls (cotton candy, shooting, a tandem bike in front of them;
-  -- c-conquest conq1112g, 11-12). Facing south they stand on the open south side, outside the festival's box
-  if byid.park then for _, a in ipairs(byid.park.anchors) do if a.name == 'fountain' then a.yaw = 90 end end end
+  -- c-conquest conq1112g, 11-12). The yaw alone did not move them: the anchor is the fountain's middle, the game looks for
+  -- the nearest open floor round it whatever way it faces, and the ring of benches fills the south side, so it was the
+  -- north side again (conq1112i). The spot is now on the open floor south of the benches, 1.2 m in from the park's door,
+  -- facing south (yaw + 90 = 180): him there, her 110 cm on, the fountain behind them; outside the festival's box
+  if byid.park then for _, a in ipairs(byid.park.anchors) do if a.name == 'fountain' then a.yaw = 90; a.pos = P(37850, 37761, 1198.1) end end end
   table.sort(GAME_PLACES, function(a, b) return a.id < b.id end)
 end
 -- kitchens and baths in the homes (c-conquest 8.2 住家): every lockable room gets kitchen / stove / bath anchors from
