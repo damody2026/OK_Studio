@@ -344,6 +344,10 @@ void AOKStreetSocialScene::FillMindStatus(int32 Character,FOKFreeTalkStatus& Sta
  // Apart (a message or a call) the place, menu and people around him are not around her: she knows where he is only if
  // he says so or somebody saw him (what she heard).
  const bool Apart=RemoteWith(Character);
+ // Alone with him in the private room (the H scene) PrepareFreeTalk gives the menu and the scene its own words after
+ // this: the street's, made here, were thrown away (11 to 16 ms of a frame each time she answered in it, 2026-11-12).
+ const bool InRoom=S.PrivateGirl==Character&&S.PrivateMode.IsValid();
+ if(!InRoom){
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_StatusMenu);Status.Menu=Apart?FString():MenuText(R.Satiety,100.f/SatietyMax(Character),Character);}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_StatusScene);Status.Scene=Apart?FString():SceneLine(Character);}
  // Whose number each has: without his she cannot send him the photo they just took (she said her phone "can't do that").
@@ -364,6 +368,7 @@ void AOKStreetSocialScene::FillMindStatus(int32 Character,FOKFreeTalkStatus& Sta
   const int64 Now=OKStreetMindNow(S);auto Clock=[](int64 M){return FString::Printf(TEXT("%02d:%02d"),int32(M%1440/60),int32(M%60));};
   Status.Scene+=OKMsg(TEXT("ui.mind.he_working_here_status"), {{TEXT("job_title"), *Job->Title}, {TEXT("busyness_percent"), OKRulesCrowdAt(S,Job->Place,T.GetHour()+T.GetMinute()/60.0)*100.f},
    {TEXT("started"), Now>=S.ShiftStart?TEXT("yes"):TEXT("no")}, {TEXT("start_time"), Clock(S.ShiftStart)}, {TEXT("end_time"), Clock(S.ShiftEnd)}, {TEXT("hours_to_shift_end"), FMath::Max<int64>(0,FMath::RoundToInt64((S.ShiftEnd-Now)/60.0))}});NoteShiftChat();}
+ } // !InRoom
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_StatusInvite);Status.Invite=RollInviteStance(Character);}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_StatusHeard);Status.Heard=HeardText(Character);}
  // The meetings the game really has with him: she must not remember others (a time she said once is not a promise).

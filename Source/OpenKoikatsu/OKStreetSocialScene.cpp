@@ -6,6 +6,8 @@
 #include "OKStreetSocialSpeakerText.h"
 #include "OKStreetSocialSongState.h"
 #include "OKInteractionMode.h"
+#include "KKRustExtract.h"
+#include "Async/Async.h"
 #include "OKStreetSocialRules.h"
 #include "OKStreetHeroine.h"
 #include "Algo/Reverse.h"
@@ -808,6 +810,15 @@ void AOKStreetSocialScene::BeginPlay(){
    FPlatformMisc::RequestExitWithStatus(false,1);
   }
   return;
+ }
+ // The one-on-one's coordinate cards open as original cards from the OK base library (OKOpenWardrobeItem), and the
+ // first of a game run read every archive the library records (6.6 s, 96 s with the files not cached yet; 2026-11-12).
+ // The library's memos built now, in the background while the street loads, as the card reader does: 3 s after it.
+ {
+  static bool bPrewarmed=false;
+  if(!bPrewarmed&&FPaths::FileExists(FPaths::ProjectContentDir()/TEXT("IndependentResources/base_v1/oklib.json"))){
+   bPrewarmed=true;Async(EAsyncExecution::Thread,[](){FOkSession::Prewarm(FString());});
+  }
  }
  State=MakeShared<FOKStreetSceneState>();auto& S=*State;
  S.TouchReactionOnlyTest=FParse::Param(FCommandLine::Get(),TEXT("StreetSocialTouchReactionSelfTest"));

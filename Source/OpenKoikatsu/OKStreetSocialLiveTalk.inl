@@ -222,8 +222,8 @@ void AOKStreetSocialScene::TickFreeTalkLive(double Now){
 }
 
 // Behaviour trace of the free-talk partner, for finding out why she does something odd (a pose left over, drifting,
-// walking off). One "Street talk trace" line whenever any of her state changes, and a heartbeat every second while
-// she moves (every 5 s while she stands): position, speed, what she is bound to, the action clip, her voice.
+// walking off). One "Street talk trace" line whenever any of her state changes: position, what she is bound to, the
+// action clip, her voice (the heartbeat every 1 to 5 s in between was dropped, 2026-11-12: noise in every log).
 void AOKStreetSocialScene::TickFreeTalkTrace(double Now){
  auto& S=*State;
  // The screen a moment after each decision of hers (queued by ApplyChoiceReply), saved beside the game log.
@@ -270,8 +270,7 @@ void AOKStreetSocialScene::TickFreeTalkTrace(double Now){
  const FString Sig=FString::Printf(TEXT("%s|%s|%d|%d|%d"),*FString::Join(Flags,TEXT(",")),HasAct?*Act.ClipId:TEXT("-"),HasAct&&Act.Playing?1:0,int32(A.Mode),Speaking?1:0);
  const double Moved=S.TraceGirl==G?FVector::Dist(S.TracePos,A.Position):0.0;
  const bool Changed=S.TraceGirl!=G||Sig!=S.TraceSig;
- const double Interval=Moved>3.0?1.0:5.0;
- if(!Changed&&Wall-S.TraceAt<Interval)return;
+ if(!Changed)return;
  UE_LOG(LogTemp,Display,TEXT("Street talk trace: actor=%d %s flags=[%s] clip=%s playing=%d mode=%d dwell=%.1f pos=(%.0f,%.0f,%.0f) moved=%.0f yaw=%.0f dist_to_player=%.0f speaking=%d live=%d busy=%d t=%.1f"),
   G,Changed?TEXT("CHANGE"):TEXT("tick"),*FString::Join(Flags,TEXT(",")),HasAct?*Act.ClipId:TEXT("-"),HasAct&&Act.Playing?1:0,int32(A.Mode),A.Dwell,A.Position.X,A.Position.Y,A.Position.Z,Moved,
   S.Rotations.IsValidIndex(G)?S.Rotations[G].Yaw:0.f,FVector::Dist2D(A.Position,S.Male),Speaking?1:0,S.FreeTalkLive?1:0,S.FreeTalkBusy?1:0,Now);
