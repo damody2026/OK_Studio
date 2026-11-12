@@ -413,8 +413,10 @@ void AOKStreetSocialScene::TickRetryAction(){
  const double Now=SceneTime();
  if(Now>S.RetryUntil||S.RetryGirl==INDEX_NONE||FreeTalkPartner()!=S.RetryGirl){S.RetryAction.Reset();return;}
  if(OKStreetConversationBusy(S.Node!=INDEX_NONE,S.CollectedActive,S.RelationshipPending,S.TouchActive))return;
- // Waiting for what they ordered (BeginOuting's wait_for_order): not before it is on the table.
- const int32 Girl=S.RetryGirl;if(S.Table.ContainsByPredicate([Girl](const FOKStreetDish& D){return !D.Served&&(!D.ForHer||D.Her==INDEX_NONE||D.Her==Girl);}))return;
+ // Waiting for what they ordered (BeginOuting's wait_for_order): not before it is on the table, and not before it is
+ // finished either: the photo 雷电将军 agreed to while their lattes were being made started the moment the lattes came,
+ // and they got up from the cafe seats with full cups (R6-245).
+ const int32 Girl=S.RetryGirl;if(S.Table.ContainsByPredicate([Girl](const FOKStreetDish& D){return (!D.Served||D.Percent>0.5f)&&(!D.ForHer||D.Her==INDEX_NONE||D.Her==Girl);}))return;
  FString Error;const FString Action=S.RetryAction;S.RetryAction.Reset();
  const bool Started=BeginOuting(S.RetryGirl,Action,Error);
  UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s retried after her line: %s%s"),*Action,Started?TEXT("started"):TEXT("refused: "),*Error);

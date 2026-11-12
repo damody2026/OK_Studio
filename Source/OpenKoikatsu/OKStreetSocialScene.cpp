@@ -1562,7 +1562,7 @@ void AOKStreetSocialScene::ExecuteFreeTalkAction(int32 Character,const FString& 
    if(Error==OKT(TEXT("ui.scene.wait_her_finish_line"))){S.RetryAction=Action;S.RetryGirl=Character;S.RetryUntil=SceneTime()+25.0;UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s waits for her line to end"),*Action);}
    // Only because what they ordered is still being made (his latte, when she said "let's go and eat"): they go once it
    // is served, not never (TickRetryAction).
-   else if(Error==OKT(TEXT("ui.outing.wait_for_order"))){S.RetryAction=Action;S.RetryGirl=Character;S.RetryUntil=SceneTime()+180.0;S.FreeTalkNotice=Error;UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s waits for the order to be served"),*Action);}
+   else if(Error==OKT(TEXT("ui.outing.wait_for_order"))){S.RetryAction=Action;S.RetryGirl=Character;S.RetryUntil=SceneTime()+600.0;S.FreeTalkNotice=Error;UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s waits for the order to be served"),*Action);}
    else{
     S.FreeTalkNotice=OKT(TEXT("ui.live_talk.she_agreed_but"))+Error;
     // Which place it was ("there is closed" at the cafeteria door was taken for the cafeteria, not the restaurant).
