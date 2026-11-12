@@ -17,7 +17,7 @@ local function exe()
   for _, f in ipairs(path.glob(crate .. "/src", "*.rs")) do newest = math.max(newest, path.mtime(f) or 0) end
   if not built or newest > built then
     io.stderr:write(built and "ok-luakit sources changed; rebuilding...\n" or "ok-luakit.exe missing; building...\n")
-    local res = require("ok.proc").run({ "cargo", "build", "--release", "--quiet", "--manifest-path", crate .. "/Cargo.toml" }, { stdout_file = "NUL" })
+    local res = require("ok.proc").run({ "cargo", "build", "--release", "--quiet", "-j", "8", "--manifest-path", crate .. "/Cargo.toml" }, { stdout_file = "NUL" })
     if not res.ok or not path.is_file(p) then
       error("ok-luakit build failed; run: cargo build --release --manifest-path Tools/ok-luakit/Cargo.toml", 3)
     end

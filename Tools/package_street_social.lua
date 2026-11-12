@@ -189,7 +189,9 @@ local function main()
   for _, rel in ipairs(tracked(root, { "Tools" })) do if rel:match("^Tools/[^/]+%.lua$") then add(path.join(root, rel), rel) end end
   -- Built tools the launcher and the restore use (the player has no cargo).
   for _, rel in ipairs({ "Tools/ok-rules/target/release/ok_rules.dll", "Tools/ok-mind/target/release/ok_mind.dll",
-      "Tools/ok-story/target/release/ok_story.dll", "Tools/ok-extract/target/release/ok-extract.exe" }) do
+      "Tools/ok-story/target/release/ok_story.dll", "Tools/ok-extract/target/release/ok-extract.exe",
+      -- Tools/lua/ok/kit.lua: the launcher's card checks (prepare_street_social_selection.lua) decode with it.
+      "Tools/ok-luakit/target/release/ok-luakit.exe" }) do
     if path.is_file(path.join(root, rel)) then add(path.join(root, rel), rel) else say("Not built, left out: " .. rel) end
   end
   if not a.no_voice_servers then
@@ -307,7 +309,10 @@ local function main()
   say("Packed into " .. win(out))
   if a.zip then
     local zip = path.abs(a.zip)
-    proc.run({ "tar", "-a", "-c", "-f", win(zip), "-C", win(out), "." }, { check = true })
+    -- 7-Zip when it is installed: Windows' tar crashed (0xC0000005) zipping a 16 GB package with a Chinese file name.
+    local seven = "C:/Program Files/7-Zip/7z.exe"
+    if path.is_file(seven) then proc.run({ win(seven), "a", "-tzip", "-mx=1", "-mmt=8", win(zip), win(out) .. "\\*" }, { check = true })
+    else proc.run({ "tar", "-a", "-c", "-f", win(zip), "-C", win(out), "." }, { check = true }) end
     say("Zip: " .. win(zip))
   end
 end
