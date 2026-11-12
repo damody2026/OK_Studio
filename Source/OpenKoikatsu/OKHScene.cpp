@@ -88,6 +88,7 @@ void OKHNoteCry(const FString& Path); // her cries' loudness (PlayHVoice)
 #include "OKPaintSprayer.h"
 #include "Components/InvalidationBox.h"
 #include "ok_extract.h"
+#include "Misc/ScopeLock.h"
 
 void UOKHSceneButton::HandleClick(){if(Owner)Owner->Click(Kind);}
 
@@ -1876,8 +1877,10 @@ static TAutoConsoleVariable<float> CVarHAhegaoGaze(TEXT("ok.HScene.AhegaoGaze"),
 static TAutoConsoleVariable<float> CVarHAhegaoSpeed(TEXT("ok.HScene.AhegaoSpeed"),.66f,TEXT("Ahegao after her climaxes: only faster than this (the original's Minimum Speed 66; 0 always)"));
 // The original's eyes pattern is a cha_eyeset row (ChaControl.ChangeEyesPtn): its FaceBlendShape eye pattern is the row's
 // eyes_ptn (as OK Studio reads it, OKStudioCatalog::EyeSet), from the base library's lists; -1 when they have none.
+static FCriticalSection GEyeSetLock;
 static int32 HEyeSetBlend(int32 Ptn){
-    static TMap<int32,int32> Cache;if(const int32* Hit=Cache.Find(Ptn))return *Hit;
+    // Any thread (OKHScenePrepareFace reads the ahegao's ahead on the worker that opens her).
+    static TMap<int32,int32> Cache;{FScopeLock Lock(&GEyeSetLock);if(const int32* Hit=Cache.Find(Ptn))return *Hit;}
     const FString Configured=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_BASE_LIBRARY"));
     const FTCHARToUTF8 Lib(*(Configured.IsEmpty()?FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir()/TEXT("IndependentResources/base_v1")):Configured));
     int32 Blend=-1;const int32 Size=ok_eye_set_json(Lib.Get(),Ptn,nullptr,0);
@@ -1885,9 +1888,12 @@ static int32 HEyeSetBlend(int32 Ptn){
         const FString Json=UTF8_TO_TCHAR(reinterpret_cast<const char*>(Bytes.GetData()));TSharedPtr<FJsonObject> Root;
         if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Root)&&Root){double V=-1;Root->TryGetNumberField(TEXT("eyes_ptn"),V);Blend=int32(V);}
         UE_LOG(LogTemp,Display,TEXT("H scene: eye set %d: %s"),Ptn,*Json);}
-    Cache.Add(Ptn,Blend);return Blend;
+    FScopeLock Lock(&GEyeSetLock);Cache.Add(Ptn,Blend);return Blend;
 }
 static TAutoConsoleVariable<FString> CVarHAhegaoFace(TEXT("ok.HScene.AhegaoFace"),TEXT("25,2,43"),TEXT("Ahegao: eye set, brow and mouth patterns (the original's Eye ID 25, Eyebrow ID 2; mouth 43 SexFaces' ahegao, the original's 24 when it lacks)"));
+// The ahegao's eye set read ahead off the game thread (its first read, from the base library's lists, was 72 ms of the
+// frame her scene came up, 2026-11-12); any thread.
+void OKHScenePrepareFace(){TArray<FString> AF;CVarHAhegaoFace.GetValueOnAnyThread().ParseIntoArray(AF,TEXT(","));HEyeSetBlend(AF.IsValidIndex(0)?FCString::Atoi(*AF[0]):25);}
 static TAutoConsoleVariable<int32> CVarHAhegaoClimaxes(TEXT("ok.HScene.AhegaoClimaxes"),4,TEXT("Her climaxes in one scene after which she shows the ahegao (0 only when worn out for the day)"));
 static TAutoConsoleVariable<int32> CVarHAhegaoTest(TEXT("ok.HScene.AhegaoTest"),0,TEXT("1: the ahegao now (testing)"));
 // The double peace of her ahegao: both hands up by her face (Studio FBBIK hand effectors 5 left, 6 right, at her head
@@ -2340,14 +2346,14 @@ void UOKHScenePanel::UpdateFace(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HUpdateFace)
     // it (user 2026-11-09: her tongue out all the time with him out of her). The test shows it always.
     const bool bInHer=Mode==2&&Base.Contains(TEXT("Loop")); // moving in her; the afterglow (IN_A) only by the climax window
     const bool bTongueOut=bInHer||FPlatformTime::Seconds()<AheTongueUntil+HTongueFade||CVarHAhegaoTest.GetValueOnGameThread();
-    const int32 Tongue=bAhegao&&bTongueOut?HTongueMouth(Girl):INDEX_NONE;
-    if(bAhegao!=bAhegaoShown||(bAhegao&&Tongue!=AheMouthSet)){bAhegaoShown=bAhegao;
+    int32 Tongue;{TRACE_CPUPROFILER_EVENT_SCOPE(OK_HFaceTongue);Tongue=bAhegao&&bTongueOut?HTongueMouth(Girl):INDEX_NONE;}
+    if(bAhegao!=bAhegaoShown||(bAhegao&&Tongue!=AheMouthSet)){TRACE_CPUPROFILER_EVENT_SCOPE(OK_HFaceAhegaoMouth);bAhegaoShown=bAhegao;
         if(bAhegao&&Tongue==INDEX_NONE&&AheMouthSet!=INDEX_NONE){Girl->bManualSpeechPattern=bAheManualWas;Girl->SetMouthPattern(0);} // her tongue back in
         AheMouthSet=Tongue;
         if(bAhegao){if(Tongue!=INDEX_NONE)Girl->SetMouthPattern(Tongue);
             UE_LOG(LogTemp,Display,TEXT("H scene: ahegao (mouth %d %s)"),Tongue,Tongue!=INDEX_NONE?*Girl->GetMouthPatternLabel(Tongue):TEXT("none"));}
         else{Girl->SetEyeGaze(0.f,0.f,0.f);Girl->SetMouthPattern(0);}}
-    if(bAhegao){const int32 Set=AF.IsValidIndex(0)?FCString::Atoi(*AF[0]):25;const int32 Blend=HEyeSetBlend(Set);
+    if(bAhegao){TRACE_CPUPROFILER_EVENT_SCOPE(OK_HFaceEyeSet);const int32 Set=AF.IsValidIndex(0)?FCString::Atoi(*AF[0]):25;const int32 Blend=HEyeSetBlend(Set);
         const int32 E=Blend>=0&&Blend<Girl->GetFacePatternCount(1)?Blend:INDEX_NONE,B=AheId(1,2,Girl->GetFacePatternCount(2));Eye=E!=INDEX_NONE?E:8;Brow=B!=INDEX_NONE?B:11;Open=E!=INDEX_NONE?1.f:.6f;}
     else if(Cur.Contains(TEXT("Dislikes"))){Eye=13;Brow=1;Open=.9f;}
     else if(bDeepFace){Eye=8;Brow=11;Open=.85f;} // wide enough to see them roll (TickDeepFace)
@@ -2362,7 +2368,7 @@ void UOKHScenePanel::UpdateFace(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HUpdateFace)
     else if(Base==TEXT("Insert")||Base==TEXT("InsertIdle")){Eye=L<=1?12:8;Brow=L<=1?11:2;Open=.7f;}
     else if(L>=2){Eye=4;Brow=0;Open=.9f;}
     const FString Key=FString::Printf(TEXT("%d/%d/%.2f"),Eye,Brow,Open);if(Key==FaceKey)return;FaceKey=Key;
-    Girl->SetFaceControl(1,Eye,Open,true);Girl->SetFaceControl(2,Brow,1.f,true);
+    TRACE_CPUPROFILER_EVENT_SCOPE(OK_HFaceControls);Girl->SetFaceControl(1,Eye,Open,true);Girl->SetFaceControl(2,Brow,1.f,true);
 }
 void UOKHScenePanel::UpdateBlush(float Delta){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HUpdateBlush);
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl))return;

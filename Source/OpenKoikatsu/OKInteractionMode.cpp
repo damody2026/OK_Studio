@@ -185,11 +185,17 @@ void AOKInteractionMode::LoadFemale(const FString& Path,int32 Outfit){
         const double T2=FPlatformTime::Seconds();double T3=T2,T35=T2,T4=T2;
         // Her materials first, every texture in parallel (the precache below then finds them prepared): one at a time,
         // March 7th's took 10 s here (Encore 1 s), the player looking at the loading screen.
-        if(Job->Ok&&!*Token){Job->Session.WardrobePrepare();Job->Session.ApplyBodyPhysics(Job->Card.Body.BustSoftness,Job->Card.Body.BustWeight);if(CVarHRefineBelly.GetValueOnAnyThread())Job->Session.RefineBelly();T3=FPlatformTime::Seconds();
+        if(Job->Ok&&!*Token){Job->Session.WardrobePrepare();Job->Session.ApplyBodyPhysics(Job->Card.Body.BustSoftness,Job->Card.Body.BustWeight);if(CVarHRefineBelly.GetValueOnAnyThread())Job->Session.RefineBelly();
+         // The shaped baselines her entry's static frame would make first (168 ms in that frame, 2026-11-12).
+         Job->Session.PrepareShapedBaselines();T3=FPlatformTime::Seconds();
          FString MaterialError;if(!Job->Session.PrepareRuntimeMaterials(MaterialError,true))UE_LOG(LogTemp,Warning,TEXT("Interaction female materials: %s"),*MaterialError);T35=FPlatformTime::Seconds();
          AKKPreviewActor::PrecacheSessionTextures(Job->Session,true);T4=FPlatformTime::Seconds();
          // The touch reactions' shared data, parsed here rather than in the frame her scene comes up.
-         FString BodyError;if(!FOKBodyInteraction::WarmShared(BodyError))UE_LOG(LogTemp,Warning,TEXT("Interaction body data: %s"),*BodyError);
+         FString BodyError;if(!FOKBodyInteraction::WarmShared(BodyError)){UE_LOG(LogTemp,Warning,TEXT("Interaction body data: %s"),*BodyError);}
+         // And her reaction solver, which her entry made in its frame (89 ms, 2026-11-12).
+         else if(!FOKBodyInteraction::PrepareAhead(Job->Session,BodyError)){UE_LOG(LogTemp,Warning,TEXT("Interaction body reaction: %s"),*BodyError);}
+         // Her ahegao's eye set (OKHScene.cpp), read in her scene's first frame before (72 ms).
+         {extern void OKHScenePrepareFace();OKHScenePrepareFace();}
          // Her pair list too, as the card reader's own load does (RefreshPairs read it from the session on the game thread).
          Job->Pairs=Job->Session.NativeAnimationPairs();}
         UE_LOG(LogTemp,Display,TEXT("Interaction female load %s: card %.0f ms, session %.0f ms, body physics %.0f ms, materials %.0f ms, textures %.0f ms"),*FPaths::GetCleanFilename(Path),(T1-T0)*1000.,(T2-T1)*1000.,(T3-T2)*1000.,(T35-T3)*1000.,(T4-T35)*1000.);

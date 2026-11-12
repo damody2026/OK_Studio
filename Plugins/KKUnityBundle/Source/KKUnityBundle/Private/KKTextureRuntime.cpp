@@ -12,6 +12,7 @@
 #include "ok_raw_texture.h"
 #include "KKRustExtract.h"
 #include "RenderingThread.h"
+#include "HAL/IConsoleManager.h"
 #include "RHICommandList.h"
 #include "TextureResource.h"
 #include "Async/Async.h"
@@ -132,6 +133,9 @@ UTexture* OKIrisRecolored(UTexture* Iris,float Hue,float Saturation,float Value,
 // Each iris's own without its highlights, once (OKIrisWithoutHighlights, or OKPrepareIrisWithoutHighlights ahead).
 static TMap<TObjectKey<UTexture>,TStrongObjectPtr<UTexture>> GIrisWithoutHighlights;
 static TSet<TObjectKey<UTexture>> GIrisPreparing;
+// Every iris made again on its next ask (to measure the irises' first making, ahead or not).
+static FAutoConsoleCommand GIrisCacheClear(TEXT("ok.IrisCacheClear"),TEXT("Forget the irises made without highlights"),
+    FConsoleCommandDelegate::CreateLambda([](){UE_LOG(LogTemp,Display,TEXT("Iris cache cleared: %d"),GIrisWithoutHighlights.Num());GIrisWithoutHighlights.Reset();}));
 void OKPrepareIrisWithoutHighlights(UTexture* Iris)
 {
     // OKIrisWithoutHighlights' work without its waits (it flushed rendering twice, read the iris back and built its mips

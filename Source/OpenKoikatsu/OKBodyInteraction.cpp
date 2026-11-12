@@ -48,6 +48,11 @@ bool FOKBodyInteraction::WarmShared(FString& Error){
  }
  SharedDefinition=MoveTemp(Definition);SharedCatalog=Next;return true;
 }
+bool FOKBodyInteraction::PrepareAhead(FOkSession& Session,FString& Error){
+ // 89 ms of the frame a one-on-one came up (2026-11-12), now on the worker that opens her.
+ if(!WarmShared(Error))return false;
+ return Session.PrepareBodyReaction(SharedDefinition,Error,true);
+}
 bool FOKBodyInteraction::Prepare(AKKPreviewActor* Actor,FString& Error){
  const double Started=FPlatformTime::Seconds();
  Cancel();Owner.Reset();Catalog.Reset();Colliders.Reset();ActiveReactions.Reset();PairKey.Reset();StateName.Reset();++Revision;

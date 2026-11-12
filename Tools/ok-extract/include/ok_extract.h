@@ -28,6 +28,8 @@ OkSession* ok_session_clone_interaction(const OkSession* source);
 /* Shared authored definition; no APNG layout changes. Prepare is transactional.
    Hit forces are count xyz triplets in native Unity world coordinates. */
 int32_t ok_body_reaction_prepare(OkSession*,const char* root,const uint8_t* json,int32_t len,char* error,int32_t error_cap);
+/* The same by the thread that opened the session; the next ok_body_reaction_prepare of it takes the result as it is, once. */
+int32_t ok_body_reaction_prepare_ahead(OkSession*,const char* root,const uint8_t* json,int32_t len,char* error,int32_t error_cap);
 int32_t ok_body_reaction_hit(OkSession*,int32_t id,const float* forces,int32_t count,float weight);
 int32_t ok_body_reaction_hit_with_release(OkSession*,int32_t id,const float* forces,int32_t count,float weight,uint8_t release_mask);
 int32_t ok_body_reaction_clear(OkSession*);
@@ -143,6 +145,8 @@ int32_t ok_belly_wrap_deltas(OkSession* s,const float* at,float radius,uint32_t*
 int32_t ok_belly_wrap_start(OkSession* s,const float* at,float radius,int32_t wrap,int32_t cover);
 /* Her wrap's vertex table built ahead on a thread of its own, the session idle (once; nothing when it is there). */
 void ok_belly_wrap_prepare(OkSession* s);
+/* The shaped baselines a static interaction frame would make first, made now (by the thread that owns the session). */
+void ok_session_prepare_shaped_baselines(OkSession* s);
 /* The finished job of ok_belly_wrap_start, the session idle: her body's moves as ok_belly_wrap_deltas (the count returned;
    -2 none ready, -1 bad input), her garments' as ok_cover_deltas (cloth_n), the garments to draw from their CPU vertices
    as ok_set_cover (cpu_n). */

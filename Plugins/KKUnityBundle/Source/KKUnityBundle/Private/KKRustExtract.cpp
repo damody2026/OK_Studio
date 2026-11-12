@@ -306,6 +306,7 @@ bool FOkSession::BellyWrapStart(bool bWrap,const FVector& From,const FVector& To
 	const float At[9]={float(From.X),float(From.Y),float(From.Z),float(To.X),float(To.Y),float(To.Z),float(Up.X),float(Up.Y),float(Up.Z)};
 	return ok_belly_wrap_start(Handle,At,RadiusM,bWrap?1:0,bCover?1:0)==1; }
 void FOkSession::BellyWrapPrepare(){if(Handle)ok_belly_wrap_prepare(Handle);}
+void FOkSession::PrepareShapedBaselines(){if(Handle)ok_session_prepare_shaped_baselines(Handle);}
 bool FOkSession::BellyWrapTake(bool bCover,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,TArray<FVector3f>& OutNormalDeltas,TArray<int32>& OutClothParts,TArray<uint32>& OutClothIndices,TArray<FVector3f>& OutClothDeltas,TArray<int32>& OutCpuParts){
 	OutIndices.Reset();OutDeltas.Reset();OutNormalDeltas.Reset();OutClothParts.Reset();OutClothIndices.Reset();OutClothDeltas.Reset();OutCpuParts.Reset();if(!Handle)return false;
 	static constexpr int32 Most=65536;
@@ -472,10 +473,10 @@ bool FOkSession::BoneEuler(const FString& Bone,FVector& Out) const
 	Out=FVector(E[0],E[1],E[2]);return true;
 }
 bool FOkSession::StaticInteractionFrame(float Delta) { return Handle&&ok_static_interaction_frame(Handle,Delta)==0; }
-bool FOkSession::PrepareBodyReaction(const TArray<uint8>& Definition,FString& Error){
+bool FOkSession::PrepareBodyReaction(const TArray<uint8>& Definition,FString& Error,bool bAhead){
  if(!Handle){Error=TEXT("角色尚未載入");return false;}
  FTCHARToUTF8 Root(*CommonPairRoot());char Message[2048]={};
- if(ok_body_reaction_prepare(Handle,Root.Get(),Definition.GetData(),Definition.Num(),Message,UE_ARRAY_COUNT(Message))!=0){Error=UTF8_TO_TCHAR(Message);return false;}return true;
+ if((bAhead?ok_body_reaction_prepare_ahead:ok_body_reaction_prepare)(Handle,Root.Get(),Definition.GetData(),Definition.Num(),Message,UE_ARRAY_COUNT(Message))!=0){Error=UTF8_TO_TCHAR(Message);return false;}return true;
 }
 bool FOkSession::BodyReactionHit(int32 Id,TConstArrayView<FVector3f> Forces,float Weight,uint8 ReleaseMask){
  static_assert(sizeof(FVector3f)==sizeof(float)*3);

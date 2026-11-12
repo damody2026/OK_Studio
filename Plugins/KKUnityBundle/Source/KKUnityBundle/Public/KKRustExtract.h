@@ -132,7 +132,8 @@ public:
  static FString CommonInteractionPoses();
  // What each outfit of her card asks for and nothing provides, as JSON (outfit_gaps.rs). Slow: not on the game thread.
  static FString CardOutfitGaps(const FString& Root,const FString& Card);
- bool PrepareBodyReaction(const TArray<uint8>& Definition,FString& Error);
+ // bAhead: by the thread that opened the session; the next call (not ahead) takes what it made as it is, once.
+ bool PrepareBodyReaction(const TArray<uint8>& Definition,FString& Error,bool bAhead=false);
  bool BodyReactionHit(int32 Id,TConstArrayView<FVector3f> Forces,float Weight,uint8 ReleaseMask=0);
  void ClearBodyReaction();
  bool IsBodyReactionPlaying() const;
@@ -274,6 +275,8 @@ public:
 	bool BellyWrapStart(bool bWrap,const FVector& From,const FVector& To,const FVector& Up,float RadiusM,bool bCover);
 	// Her wrap's vertex table built ahead off the game thread, the session idle (ok_belly_wrap_prepare): cheap to ask again.
 	void BellyWrapPrepare();
+	// The shaped baselines StaticInteractionFrame would make first, made now (ok_session_prepare_shaped_baselines).
+	void PrepareShapedBaselines();
 	// The finished job, the session idle: false when none is ready. Her body's moves as BellyWrapDeltas, her garments' as
 	// ClothCoverDeltas, the garments to draw from their CPU vertices as SetClothCover.
 	bool BellyWrapTake(bool bCover,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,TArray<FVector3f>& OutNormalDeltas,TArray<int32>& OutClothParts,TArray<uint32>& OutClothIndices,TArray<FVector3f>& OutClothDeltas,TArray<int32>& OutCpuParts);
