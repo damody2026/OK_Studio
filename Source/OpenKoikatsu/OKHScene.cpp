@@ -2278,8 +2278,9 @@ void UOKHScenePanel::DressStain(UMaterialInstanceDynamic* M){
     if(!M)return;
     while(StainMasks.Num()<4)StainMasks.Add(OKPuddleMask(100+StainMasks.Num()));
     if(UTexture2D* Mask=StainMasks[FMath::RandRange(0,StainMasks.Num()-1)])M->SetTextureParameterValue(TEXT("PuddleMask"),Mask);
-    M->SetVectorParameterValue(TEXT("PuddleColor"),FLinearColor(.85f,.85f,.82f)*.6f);M->SetScalarParameterValue(TEXT("PuddleMetallic"),0.f);
-    M->SetScalarParameterValue(TEXT("PuddleSpecular"),1.f);M->SetScalarParameterValue(TEXT("PuddleRoughness"),.03f);M->SetScalarParameterValue(TEXT("PuddleDarken"),.75f);
+    // Half metal: a milky body that still mirrors what stands by it (a plain dielectric showed only the light's glint, 11-13).
+    M->SetVectorParameterValue(TEXT("PuddleColor"),FLinearColor(.92f,.92f,.88f));M->SetScalarParameterValue(TEXT("PuddleMetallic"),.6f);
+    M->SetScalarParameterValue(TEXT("PuddleSpecular"),1.f);M->SetScalarParameterValue(TEXT("PuddleRoughness"),.03f);M->SetScalarParameterValue(TEXT("PuddleDarken"),.6f);
     DressStainFloor(M);StainShown.Add(M);UseSsr(true);
 }
 // A sprayer's floor stains drawn as the puddles' water from now on: her fluids', and the player's water gun's while the

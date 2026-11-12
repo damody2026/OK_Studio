@@ -388,7 +388,9 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
 #if !UE_BUILD_SHIPPING
         // {"spray":true|false}: the player's water gun (A + left button) at what the camera looks at; game.log says what landed.
         bool Spray=false;if(Body->TryGetBoolField(TEXT("spray"),Spray))if(auto* PC=Cast<AOpenKoikatsuPlayerController>(Controller->GetOwningPlayer())){
-            if(Spray&&Controller->PreviewActor)PC->ScriptedPaintAim=Controller->PreviewActor->OrbitFocus;else PC->ScriptedPaintAim.Reset();
+            // "spray_at":[x,y,z] aims that far (cm, world) from the orbit focus, e.g. at the floor beside her.
+            FVector Off=FVector::ZeroVector;const TArray<TSharedPtr<FJsonValue>>* At=nullptr;if(Body->TryGetArrayField(TEXT("spray_at"),At)&&At->Num()==3)Off=FVector((*At)[0]->AsNumber(),(*At)[1]->AsNumber(),(*At)[2]->AsNumber());
+            if(Spray&&Controller->PreviewActor)PC->ScriptedPaintAim=Controller->PreviewActor->OrbitFocus+Off;else PC->ScriptedPaintAim.Reset();
             PC->bScriptedPaintFire=Spray;
             UE_LOG(LogTemp,Display,TEXT("H control spray %d: preview=%d hits=%d deposited=%.3f"),Spray,PC->IsPaintPreviewActive(),PC->PaintSprayer?PC->PaintSprayer->HitCount:-1,PC->PaintSprayer?PC->PaintSprayer->Deposited:-1.);}
 #endif
