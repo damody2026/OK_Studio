@@ -3237,3 +3237,124 @@ pub unsafe extern "C" fn ok_session_set_iris_small(s: *mut OkSession, rate: f32)
     let Some(session) = sess_ref(s) else { return 1; };
     if session.set_iris_small(rate) { 0 } else { 1 }
 }
+
+unsafe fn write_sized_cstr(text: &str, out: *mut c_char, cap: i32) -> i32 {
+    let bytes = text.as_bytes();
+    let needed = (bytes.len() + 1) as i32;
+    if out.is_null() || cap <= 0 {
+        return needed;
+    }
+    if cap < needed {
+        return -1;
+    }
+    std::ptr::copy_nonoverlapping(bytes.as_ptr(), out as *mut u8, bytes.len());
+    *out.add(bytes.len()) = 0;
+    bytes.len() as i32
+}
+
+/// Reads a `Timeline.dll` single-file or scene XML (`path_or_xml`; `is_path != 0` reads from disk) into JSON (`TimelineSceneData`); size-then-copy (`out` null / `cap <= 0`: needed bytes incl. NUL; `-1` on error).
+#[no_mangle]
+pub unsafe extern "C" fn ok_studio_timeline_read_xml(
+    path_or_xml: *const c_char,
+    is_path: i32,
+    target_dic_key: i32,
+    out: *mut c_char,
+    cap: i32,
+) -> i32 {
+    let result = (|| {
+        let src = cstr_opt(path_or_xml).ok_or("timeline XML path/text missing")?;
+        let xml = if is_path != 0 {
+            std::fs::read_to_string(&src).map_err(|e| format!("{src}: {e}"))?
+        } else {
+            src
+        };
+        let parsed = if target_dic_key >= 0 {
+            crate::studio_scene_plugins::parse_timeline_single_xml(&xml, target_dic_key)
+        } else {
+            crate::studio_scene_plugins::parse_timeline_xml(&xml, &[])
+        }
+        .ok_or_else(|| "no supported Timeline tracks in XML".to_string())?;
+        serde_json::to_string(&parsed).map_err(|e| e.to_string())
+    })();
+    match result {
+        Ok(json) => write_sized_cstr(&json, out, cap),
+        Err(e) => { write_err(out, cap, &e); -1 }
+    }
+}
+
+/// Writes `TimelineSceneData` JSON to a `Timeline.dll` XML file at `path` (`single_file != 0` writes `<root GUID="" ...>`); 0 ok, 1 error.
+#[no_mangle]
+pub unsafe extern "C" fn ok_studio_timeline_write_xml(
+    path: *const c_char,
+    json: *const c_char,
+    single_file: i32,
+    err: *mut c_char,
+    cap: i32,
+) -> i32 {
+    let result = (|| {
+        let path = cstr_opt(path).ok_or("timeline XML output path missing")?;
+        let raw_json = cstr_opt(json).ok_or("timeline JSON missing")?;
+        let data: crate::studio_scene_plugins::TimelineSceneData =
+            serde_json::from_str(&raw_json).map_err(|e| e.to_string())?;
+        let xml = crate::studio_scene_plugins::write_timeline_xml(&data, single_file != 0);
+        if let Some(dir) = std::path::Path::new(&path).parent() {
+            if !dir.as_os_str().is_empty() {
+                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            }
+        }
+        std::fs::write(&path, xml.as_bytes()).map_err(|e| format!("{path}: {e}"))
+    })();
+    match result {
+        Ok(()) => 0,
+        Err(e) => { write_err(err, cap, &e); 1 }
+    }
+}
+
+/// Reads a VNGE `PoseSaveState` `.png` or `.txt` preset into JSON (`VngePosePreset`); size-then-copy (`out` null / `cap <= 0`: needed bytes incl. NUL; `-1` on error).
+#[no_mangle]
+pub unsafe extern "C" fn ok_studio_vnge_pose_read(path: *const c_char, out: *mut c_char, cap: i32) -> i32 {
+    let result = (|| {
+        let path = cstr_opt(path).ok_or("VNGE pose path missing")?;
+        let bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
+        let preset = crate::vnge_ext::read_vnge_pose_preset(&bytes)?;
+        serde_json::to_string(&preset).map_err(|e| e.to_string())
+    })();
+    match result {
+        Ok(json) => write_sized_cstr(&json, out, cap),
+        Err(e) => { write_err(out, cap, &e); -1 }
+    }
+}
+
+/// Writes a VNGE `PoseSaveState` `.png` preset at `path`; 0 ok, 1 error.
+#[no_mangle]
+pub unsafe extern "C" fn ok_studio_vnge_pose_write(
+    path: *const c_char,
+    category: *const c_char,
+    json: *const c_char,
+    png_bytes: *const u8,
+    png_len: i32,
+    err: *mut c_char,
+    cap: i32,
+) -> i32 {
+    let result = (|| {
+        let path = cstr_opt(path).ok_or("VNGE pose output path missing")?;
+        let cat = cstr_opt(category).unwrap_or_else(|| "sss/fposes/".into());
+        let payload = cstr_opt(json).ok_or("VNGE pose JSON missing")?;
+        let thumb = if !png_bytes.is_null() && png_len > 0 {
+            Some(std::slice::from_raw_parts(png_bytes, png_len as usize))
+        } else {
+            None
+        };
+        let encoded = crate::vnge_ext::write_vnge_pose_preset(&cat, &payload, thumb);
+        if let Some(dir) = std::path::Path::new(&path).parent() {
+            if !dir.as_os_str().is_empty() {
+                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            }
+        }
+        std::fs::write(&path, encoded).map_err(|e| format!("{path}: {e}"))
+    })();
+    match result {
+        Ok(()) => 0,
+        Err(e) => { write_err(err, cap, &e); 1 }
+    }
+}

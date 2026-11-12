@@ -90,7 +90,9 @@ fn accessory_clothes_plugins_now(game_root:&Path)->Vec<PathBuf> {
         for entry in entries.flatten() {
             let Ok(kind)=entry.file_type() else {continue};let path=entry.path();
             if kind.ok_is_dir() {pending.push(path);}
-            else if path.file_name().and_then(|n|n.to_str()).is_some_and(|n|n.eq_ignore_ascii_case("KKS_AccessoryClothes.dll")) {found.push(path);}
+            else if path.file_name().and_then(|n|n.to_str()).is_some_and(|n| {
+                n.eq_ignore_ascii_case("KKS_AccessoryClothes.dll") || n.eq_ignore_ascii_case("KK_AccessoryClothes.dll")
+            }) {found.push(path);}
         }
     }
     found.sort();found
@@ -300,6 +302,12 @@ fn me_shader_registration_now(game_root: &Path, shader: &str) -> (bool, Option<b
     // xukmi's studio item shaders are drawn as the Shader Forge family they replace (translucent, `_alpha`, see
     // `shader_family`): no Vanilla+ program or zipmod is needed. An OK card opens with only the zipmods its items use,
     // so the shader mod was never found and a 0.6 hair-shadow overlay stayed on the opaque item shader (black forehead).
+    if crate::is_kkuss_shader(shader) {
+        return (true, Some(shader.eq_ignore_ascii_case("kkuss")));
+    }
+    if crate::is_kkuts_shader(shader) {
+        return (true, Some(crate::is_kkuts_hair_shader(shader)));
+    }
     if shader.to_ascii_lowercase().starts_with("xukmi/") && shader_family(shader).contains("main_item_studio") {
         return (true, None);
     }
@@ -338,7 +346,7 @@ pub(crate) fn me_shader_registration_in_tree(game_root: &Path, shader: &str,
         // programs before replacing the established preview shader path.
         let usable=if shader.eq_ignore_ascii_case("xukmi/MainItemPlus") {
             crate::unity::shader_bundle_has_dxbc(&bundle,shader)
-        } else {crate::unity::shader_bundle_has_legacy_dxbc(&bundle,shader)};
+        } else if shader.to_ascii_lowercase().starts_with("xukmi/") { false } else {crate::unity::shader_bundle_has_legacy_dxbc(&bundle,shader)};
         if usable {
             let found = (true, crate::unity::shader_bundle_declares_property(&bundle, shader, "_rimV"));
             results.lock().unwrap().insert(key, found);
@@ -349,36 +357,45 @@ pub(crate) fn me_shader_registration_in_tree(game_root: &Path, shader: &str,
     (false, None)
 }
 
-/// The MaterialEditor / KKS_MaterialEditor manifest sections of the mods tree, in zip order. Built once per tree view
-/// (root, fallback, zip list): every shader a card asks for used to read all ~7000 manifests again (~1 s cold).
+/// The MaterialEditor / KKS_MaterialEditor (and KK_MaterialEditor when backed by a KK installation) manifest sections
+/// of the mods tree, in zip order. Built once per tree view (root, fallback, zip list): every shader a card asks for
+/// used to read all ~7000 manifests again (~1 s cold).
 pub(crate) fn me_manifest_sections(game_root: &Path) -> std::sync::Arc<Vec<(PathBuf, String)>> {
     use std::sync::{Arc, Mutex};
     static MEMO: Mutex<Vec<(String, Arc<Vec<(PathBuf, String)>>)>> = Mutex::new(Vec::new());
+    let kk = crate::is_kk_installation(game_root);
     let mods = game_root.join("mods");
-    let key = format!("{}|{}|{:016x}|{}", crate::gamefs::normalize(game_root), crate::gamefs::fallback_identity(),
+    let key = format!("{}|{}|{:016x}|{}|kk={kk}", crate::gamefs::normalize(game_root), crate::gamefs::fallback_identity(),
         crate::list::zip_list_sig(&mods), crate::oklib::mounted_pack_mods_identity());
     if let Some((_, hit)) = MEMO.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(k, _)| *k == key) { return hit.clone(); }
     let zips = crate::mods::all_zipmods(&mods);
     // One archive's section. An archive the active library records cannot change, so its answer is kept by path
     // (no per-archive validation): a card pack's view then only reads the few archives it adds.
-    fn section(zip: &Path) -> Option<String> {let _spot=crate::profile::spot("me_section");
+    fn section(zip: &Path, kk: bool) -> Option<String> {let _spot=crate::profile::spot("me_section");
         let bytes = crate::mods::zipmod_file_suffix(zip, "manifest.xml")?;
         let xml = std::str::from_utf8(&bytes).ok()?;
-        ["MaterialEditor", "KKS_MaterialEditor"].iter().find_map(|name| {
+        let tags: &[&str] = if kk {
+            &["MaterialEditor", "KK_MaterialEditor", "KKS_MaterialEditor"]
+        } else {
+            &["MaterialEditor", "KKS_MaterialEditor"]
+        };
+        tags.iter().find_map(|name| {
             let (_, tail) = xml.split_once(&format!("<{name}>"))?;
             Some(tail.split_once(&format!("</{name}>"))?.0.to_string())
         })
     }
-    static RECORDED: Mutex<Option<std::collections::HashMap<PathBuf, Option<String>>>> = Mutex::new(None);
+    static RECORDED_KKS: Mutex<Option<std::collections::HashMap<PathBuf, Option<String>>>> = Mutex::new(None);
+    static RECORDED_KK: Mutex<Option<std::collections::HashMap<PathBuf, Option<String>>>> = Mutex::new(None);
+    let (recorded_slot, scan_name) = if kk { (&RECORDED_KK, "me-sections-kk-v1") } else { (&RECORDED_KKS, "me-sections-v1") };
     let recorded = crate::gamefs::library_records_zips(&zips);
     if profile_enabled() {
         eprintln!("ok-extract: me sections view zips={} recorded={} known={} first={:?}", zips.len(), recorded.iter().filter(|r| **r).count(),
-            RECORDED.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or(0, |m| m.len()), zips.first());
+            recorded_slot.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or(0, |m| m.len()), zips.first());
     }
     let known: Vec<Option<Option<String>>> = {
-        let mut map = RECORDED.lock().unwrap_or_else(|e| e.into_inner());
+        let mut map = recorded_slot.lock().unwrap_or_else(|e| e.into_inner());
         // The previous process's answers for this library (oklib::library_scan_load).
-        if map.is_none() { *map = crate::oklib::library_scan_load::<std::collections::HashMap<PathBuf, Option<String>>>("me-sections-v1"); }
+        if map.is_none() { *map = crate::oklib::library_scan_load::<std::collections::HashMap<PathBuf, Option<String>>>(scan_name); }
         zips.iter().zip(&recorded).map(|(z, r)| if *r { map.as_ref().and_then(|m| m.get(z).cloned()) } else { None }).collect()
     };
     let fresh_recorded = recorded.iter().zip(&known).any(|(r, k)| *r && k.is_none());
@@ -386,12 +403,12 @@ pub(crate) fn me_manifest_sections(game_root: &Path) -> std::sync::Arc<Vec<(Path
         use rayon::prelude::*;
         let fresh: Vec<Option<String>> = crate::oklib::pack_parallel(|| zips.par_iter().zip(known.par_iter()).map(|(zip, known)| match known {
             Some(answer) => answer.clone(),
-            None => section(zip),
+            None => section(zip, kk),
         }).collect());
-        let mut map = RECORDED.lock().unwrap_or_else(|e| e.into_inner());
+        let mut map = recorded_slot.lock().unwrap_or_else(|e| e.into_inner());
         let map = map.get_or_insert_with(Default::default);
         for ((zip, r), answer) in zips.iter().zip(&recorded).zip(&fresh) { if *r { map.entry(zip.clone()).or_insert_with(|| answer.clone()); } }
-        if fresh_recorded { crate::oklib::library_scan_save("me-sections-v1", &*map); }
+        if fresh_recorded { crate::oklib::library_scan_save(scan_name, &*map); }
         zips.iter().zip(fresh).map(|(z, a)| a.map(|a| (z.clone(), a))).collect()
     };
     let out = Arc::new(rows.into_iter().flatten().collect::<Vec<_>>());
@@ -503,7 +520,7 @@ pub(crate) fn apply_native_skin_draw_settings(
         .is_some_and(|(target, queue)| {
             let supported = matches!(
                 target.to_ascii_lowercase().as_str(),
-                "koikano/main_skin" | "shader forge/main_skin" | "kkuss"
+                "koikano/main_skin" | "shader forge/main_skin" | "kkuss" | "kkussalpha" | "kkuts" | "kkuts_tess" | "kkutsalpha" | "kkutsalpha_tess"
             );
             if supported {
                 let prev = mesh.mat.as_ref().map(|m| m.shader.clone()).unwrap_or_default();
@@ -550,6 +567,24 @@ pub(crate) fn apply_native_skin_draw_settings(
         }
     }
     apply_me_floats(&card.me_float, outfit, role, None, mesh);
+    if mesh.mat.as_ref().is_some_and(|m| crate::is_kkuts_shader(&m.shader) || crate::is_kkuss_shader(&m.shader)) {
+        let convert_normals = material_editor_converts_normals(game_root);
+        for &slot in crate::KKUTS_EXTRA_TEXTURE_SLOTS.iter().chain(["_overtex1", "_overtex2", "_overtex3", "_expression"].iter()) {
+            let prop = slot.trim_start_matches('_').to_ascii_lowercase();
+            let override_png = me_texture(Some(&card.me_tex), outfit, role, None, mesh, &prop).map(|p| p.to_vec());
+            let is_override = override_png.is_some();
+            if let Some(data) = override_png.or_else(|| mesh.shader_extra_textures.remove(slot)) {
+                if is_override { mark_material_editor_texture(mesh, slot); }
+                let data = if matches!(slot, "_NormalMapForMatCap" | "_NormalMapa") && convert_normals {
+                    let srgb = is_override || mesh.runtime_textures.get(&format!("_OKSource{}", slot.trim_start_matches('_'))).is_some_and(|s| s[3] == 1);
+                    mark_native_runtime_normal_texture(mesh, slot);
+                    let converted = convert_runtime_normal_map_rows(data, srgb, !is_override);
+                    linear_texture_to_srgb_png(&converted).unwrap_or(converted)
+                } else if is_override { data } else { flip_png_v(&data).unwrap_or(data) };
+                mesh.shader_extra_textures.insert(slot.into(), data);
+            }
+        }
+    }
     if let Some(mat) = mesh.mat.as_mut() {
         let name = crate::card::me_mat_key(&mat.name);
         for ((t, coord, s, material, prop), value) in &card.me_color {
@@ -810,7 +845,7 @@ pub(crate) fn color_accessory_meshes(
         // Material Editor shader swap onto a hair accessory keeps the hair material's own colours; the colours the
         // game writes (ChangeAccessoryColor, HairAccessoryCustomizer) must reach the material, not a baked albedo.
         let studio_item = shader.contains("main_item_studio") && !shader.contains("_add");
-        if studio_item || matches!(shader.as_str(),"xukmi/mainitemplus"|"shader forge/main_item"|"shader forge/main_alpha"|"shader forge/main_opaque") {
+        if studio_item || crate::is_kkuts_surface_shader(&shader) || crate::is_kkuss_item_shader(&shader) || matches!(shader.as_str(),"xukmi/mainitemplus"|"shader forge/main_item"|"shader forge/main_alpha"|"shader forge/main_opaque") {
             // Keep shader inputs separate. Its fragment performs linear
             // ColorMask mixing; baking gamma colours here double-applies them.
             for (key,color) in color_key.iter().zip(cols.iter()) {set_material_color(&mut m,key,*color);}
@@ -821,10 +856,13 @@ pub(crate) fn color_accessory_meshes(
                 let null_main=m.mat.as_ref().is_some_and(|mat| mat.slot("_MainTex").is_none_or(str::is_empty));
                 if m.texture_png.is_none() || (null_main && !main_from_me) {m.texture_png=crate::unity::solid_png([1.0;4],8,8);}
                 scale_studio_item_alpha(&mut m,&shader);
+            } else if crate::is_kkuts_surface_shader(&shader) || crate::is_kkuss_item_shader(&shader) {
+                let null_main=m.mat.as_ref().is_some_and(|mat| mat.slot("_MainTex").is_none_or(str::is_empty));
+                if m.texture_png.is_none() || (null_main && !main_from_me) {m.texture_png=crate::unity::solid_png([1.0;4],8,8);}
             }
             return Some(m);
         }
-        if is_native_hair_shader(&shader) || m.hair_shader_hint {
+        if is_native_hair_shader(&shader) || crate::is_kkuts_hair_shader(&shader) || crate::is_kkuss_hair_shader(&shader) || m.hair_shader_hint {
             // Shader Forge/main_hair samples the full-resolution ColorMask in
             // its pixel program. Baking it into a null MainTex's 8x8 white
             // fallback destroys the mask's strand detail and its mip chain.

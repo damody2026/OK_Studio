@@ -5076,7 +5076,7 @@ impl ParsedBundle {
                 }
             }
             // Capture the whole material for downstream tint/blend/slot use.
-            for property in ["_NormalMapDetail","_AnotherRamp","_GlassRamp","_EmissionMask","_EmissionMap","_ReflectionMapCap","_ReflectMapDetail","_Texture2","_Texture3","_liquidmask","_overtex1","_overtex2","_overtex3"] {
+            for property in ["_NormalMapDetail","_AnotherRamp","_GlassRamp","_EmissionMask","_EmissionMap","_ReflectionMapCap","_ReflectMapDetail","_Texture2","_Texture3","_liquidmask","_overtex1","_overtex2","_overtex3"].into_iter().chain(crate::KKUTS_EXTRA_TEXTURE_SLOTS.iter().copied()) {
                 if let Some(name)=mat.slot(property) {
                     if let Some(png)=self.decode_tex(name) {
                         m.shader_extra_textures.insert(property.into(),png);
@@ -5085,13 +5085,19 @@ impl ParsedBundle {
                                 m.runtime_textures.insert(property.into(),[s.filter,s.wrap_u,s.wrap_v,i32::from(s.srgb),s.mip_count]);
                             }
                         }
-                        if property=="_NormalMapDetail" {
+                        if matches!(property,"_NormalMapDetail"|"_NormalMapForMatCap"|"_NormalMapa") {
+                            if let Some(s)=self.texture_sampling_named(name) {
+                                m.runtime_textures.insert(format!("_OKSource{}",property.trim_start_matches('_')),
+                                    [s.filter,s.wrap_u,s.wrap_v,i32::from(s.srgb),s.mip_count]);
+                            }
+                        }
+                        if false && property=="_NormalMapDetail" {
                             if let Some(s)=self.texture_sampling_named(name) {
                                 m.runtime_textures.insert("_OKSourceNormalMapDetail".into(),
                                     [s.filter,s.wrap_u,s.wrap_v,i32::from(s.srgb),s.mip_count]);
                             }
                         }
-                        if matches!(property,"_AnotherRamp"|"_GlassRamp"|"_Texture2"|"_Texture3"|"_liquidmask") {
+                        if matches!(property,"_AnotherRamp"|"_GlassRamp"|"_Texture2"|"_Texture3"|"_liquidmask") || crate::KKUTS_EXTRA_TEXTURE_SLOTS.contains(&property) {
                             if let Some(sampling) = self.texture_sampling_named(name) {
                                 m.runtime_textures.insert(property.into(), [
                                     sampling.filter, sampling.wrap_u, sampling.wrap_v,

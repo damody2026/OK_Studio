@@ -216,17 +216,20 @@ pub struct Fallback {
     pub settings: bool,
 }
 static FALLBACK: RwLock<Vec<Fallback>> = RwLock::new(Vec::new());
+fn fallback_roots() -> Option<std::sync::RwLockReadGuard<'static, Vec<Fallback>>> {
+    if crate::oklib::is_outside_opens() { None } else { Some(FALLBACK.read().unwrap()) }
+}
 
 /// Game settings files (logical keys) read from the installation when one is given (see `read`).
 const INSTALLATION_SETTINGS: &[&str] = &["userdata/config/system.xml", "bepinex/config/com.deathweasel.bepinex.uncensorselector.cfg"];
 
 /// The game installation exposed by the current fallback, if any.
 pub fn fallback_installation() -> Option<PathBuf> {
-    FALLBACK.read().unwrap().iter().find(|f| f.installation && f.settings && !f.root.as_os_str().is_empty()).map(|f| f.root.clone())
+    fallback_roots()?.iter().find(|f| f.installation && f.settings && !f.root.as_os_str().is_empty()).map(|f| f.root.clone())
 }
 /// The card directory exposed by the current fallback, if any.
 pub fn fallback_card_dir() -> Option<PathBuf> {
-    FALLBACK.read().unwrap().iter().find(|f| f.loose_mods && !f.root.as_os_str().is_empty()).map(|f| f.root.clone())
+    fallback_roots()?.iter().find(|f| f.loose_mods && !f.root.as_os_str().is_empty()).map(|f| f.root.clone())
 }
 /// The bytes the replayed OK card's pack holds for `path` (not the library's).
 pub fn overlay_bytes(path: &Path) -> Option<Vec<u8>> {
@@ -298,7 +301,7 @@ pub fn set_fallback(roots: Vec<Fallback>) {
 }
 /// Zipmods exposed by the current fallback (archives named by the card, plus a card directory marker).
 pub fn fallback_summary() -> (usize, usize) {
-    let roots = FALLBACK.read().unwrap();
+    let Some(roots) = fallback_roots() else { return Default::default() };
     (roots.iter().map(|f| f.files.len()).sum(), roots.iter().filter(|f| f.loose_mods).count())
 }
 /// Changes whenever the fallback or the overlay does (a key part of memos of the tree it serves).
@@ -308,6 +311,7 @@ pub fn fallback_generation() -> u64 { FALLBACK_GENERATION.load(std::sync::atomic
 /// memos key on it (MaterialEditor shader registrations, library memos), ~1000 times a card conversion at ~1 ms each
 /// (a stat of every archive and a listing of the card directory).
 pub fn fallback_identity() -> String {
+    if crate::oklib::is_outside_opens() { return String::new(); }
     static LAST: Mutex<Option<(u64, String)>> = Mutex::new(None);
     let generation = FALLBACK_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
     if let Some((g, identity)) = LAST.lock().unwrap_or_else(|e| e.into_inner()).as_ref() { if *g == generation { return identity.clone(); } }
@@ -316,7 +320,7 @@ pub fn fallback_identity() -> String {
     identity
 }
 fn fallback_identity_now() -> String {
-    let roots = FALLBACK.read().unwrap();
+    let Some(roots) = fallback_roots() else { return Default::default() };
     let mut out = String::new();
     let mut roots_seen = Vec::new();
     let mut add = |p: &Path| {
@@ -363,22 +367,38 @@ pub fn fallback_used() -> bool {
 
 fn is_mods_key(key: &str) -> bool { key == "mods" || key.starts_with("mods/") }
 
-fn strip_author_tag(name: &str) -> &str {
+fn split_author_tags(name: &str) -> (Vec<&str>, &str) {
+    let mut tags = Vec::new();
     let mut s = name.trim();
     while let Some(rest) = s.strip_prefix('[') {
-        let Some((_, after)) = rest.split_once(']') else { break };
+        let Some((tag, after)) = rest.split_once(']') else { break };
         let trimmed = after.trim_start();
         if trimmed.split('.').next().is_some_and(|stem| stem.len() >= 3) {
+            let tag = tag.trim();
+            if !tag.is_empty() {
+                tags.push(tag);
+            }
             s = trimmed;
         } else {
             break;
         }
     }
-    s
+    (tags, s)
 }
 
 pub fn same_archive_name(a: &str, b: &str) -> bool {
-    a.eq_ignore_ascii_case(b) || strip_author_tag(a).eq_ignore_ascii_case(strip_author_tag(b))
+    if a.eq_ignore_ascii_case(b) {
+        return true;
+    }
+    let (ta, sa) = split_author_tags(a);
+    let (tb, sb) = split_author_tags(b);
+    if !sa.eq_ignore_ascii_case(sb) {
+        return false;
+    }
+    let subset = |xs: &[&str], ys: &[&str]| {
+        xs.iter().all(|x| ys.iter().any(|y| x.eq_ignore_ascii_case(y)))
+    };
+    subset(&ta, &tb) || subset(&tb, &ta)
 }
 
 fn zip_unity3d_entries(path: &Path) -> Vec<(String, u64)> {
@@ -418,6 +438,77 @@ fn recorded_zip_matches_file(key: &str, candidate: &Path) -> bool {
     recorded_bundles.iter().any(|(n, sz)| cand_bundles.iter().any(|(cn, csz)| cn == n && (csz == sz || *sz == 0)))
 }
 
+fn real_zip_matches_recorded(names: &[(String, u64, u32, bool)], real_path: &Path) -> bool {
+    type Key = (PathBuf, u64, u128);
+    static CACHE: std::sync::OnceLock<Mutex<std::collections::HashMap<Key, Vec<(String, u64, bool)>>>> = std::sync::OnceLock::new();
+    let Ok(meta) = std::fs::metadata(real_path) else { return false };
+    let modified = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
+    let cache_key = (real_path.to_owned(), meta.len(), modified);
+    let cache = CACHE.get_or_init(Default::default);
+    let cached = cache.lock().unwrap_or_else(|e| e.into_inner()).get(&cache_key).cloned();
+    let actual = if let Some(hit) = cached {
+        hit
+    } else {
+        let Ok(file) = std::fs::File::open(real_path) else { return false };
+        let Ok(mut zip) = zip::ZipArchive::new(std::io::BufReader::new(file)) else { return false };
+        let mut list = Vec::with_capacity(zip.len());
+        for i in 0..zip.len() {
+            match zip.by_index_raw(i) {
+                Ok(f) => list.push((f.name().replace('\\', "/").to_ascii_lowercase(), f.size(), f.is_dir())),
+                Err(_) => return false,
+            }
+        }
+        let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.len() >= 16_384 { guard.clear(); }
+        guard.insert(cache_key, list.clone());
+        list
+    };
+    names.len() == actual.len()
+        && names.iter().zip(&actual).all(|((n, sz, _, dir), (an, asz, adir))| {
+            *sz == *asz && *dir == *adir && n.replace('\\', "/").eq_ignore_ascii_case(an)
+        })
+}
+
+fn exact_fallback_file(key: &str) -> Option<PathBuf> {
+    if !is_mods_key(key) { return None; }
+    let roots = fallback_roots()?;
+    let recording = recording_overlay().is_some();
+    let top_name = key.strip_prefix("mods/").filter(|rest| !rest.contains('/'));
+    for f in roots.iter() {
+        if f.installation && recording { continue; }
+        if !f.root.as_os_str().is_empty() {
+            let direct = f.root.join(key);
+            if direct.is_file() { return Some(direct); }
+            if let (true, Some(name)) = (f.loose_mods, top_name) {
+                let p = f.root.join(name);
+                if p.is_file() { return Some(p); }
+            }
+        }
+        if let Some(name) = top_name {
+            if let Some(p) = f.files.iter().find(|p| p.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(name)) && p.is_file()) {
+                return Some(p.clone());
+            }
+        }
+    }
+    None
+}
+
+fn held_zip_names(st: &State) -> Arc<std::collections::HashSet<String>> {
+    static HELD: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Arc<std::collections::HashSet<String>>>>> = std::sync::OnceLock::new();
+    let map = HELD.get_or_init(Default::default);
+    if let Some(hit) = map.lock().unwrap_or_else(|e| e.into_inner()).get(&st.root).cloned() {
+        return hit;
+    }
+    let keys: Vec<String> = st.index.lock().unwrap().zips.keys().cloned().collect();
+    let set: std::collections::HashSet<String> = keys.into_iter()
+        .filter(|k| !zip_lacks_models(st, k))
+        .filter_map(|k| k.rsplit('/').next().map(|n| n.to_ascii_lowercase()))
+        .collect();
+    let arc = Arc::new(set);
+    map.lock().unwrap_or_else(|e| e.into_inner()).insert(st.root.clone(), arc.clone());
+    arc
+}
+
 /// Resolves a logical `mods/.../<file>.zipmod` key against a game root whose `mods/` tree may organize
 /// archives in different subfolders (e.g. `ForCharactersLoading/...`) or with an `[Author]` prefix.
 pub fn resolve_mod_archive(root: &Path, key: &str) -> Option<PathBuf> {
@@ -428,7 +519,7 @@ pub fn resolve_mod_archive(root: &Path, key: &str) -> Option<PathBuf> {
     let want = key.rsplit('/').next()?;
     let want_lower = want.to_ascii_lowercase();
     if !want_lower.ends_with(".zipmod") && !want_lower.ends_with(".zip") { return None; }
-    static INDEX: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, Vec<(String, String, PathBuf)>>>> = std::sync::OnceLock::new();
+    static INDEX: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, Vec<(String, PathBuf)>>>> = std::sync::OnceLock::new();
     let map = INDEX.get_or_init(Default::default);
     let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
     let entries = guard.entry(root.to_owned()).or_insert_with(|| {
@@ -443,25 +534,23 @@ pub fn resolve_mod_archive(root: &Path, key: &str) -> Option<PathBuf> {
                 } else if let Some(n) = p.file_name().map(|s| s.to_string_lossy().into_owned()) {
                     let lower = n.to_ascii_lowercase();
                     if lower.ends_with(".zipmod") || lower.ends_with(".zip") {
-                        let stripped = strip_author_tag(&lower).to_ascii_lowercase();
-                        list.push((lower, stripped, p));
+                        list.push((lower, p));
                     }
                 }
             }
         }
         list
     });
-    if let Some((_, _, p)) = entries.iter().find(|(l, _, _)| *l == want_lower) {
+    if let Some((_, p)) = entries.iter().find(|(l, _)| *l == want_lower) {
         return Some(p.clone());
     }
-    let want_stripped = strip_author_tag(&want_lower).to_ascii_lowercase();
-    entries.iter().find(|(_, s, _)| *s == want_stripped).map(|(_, _, p)| p.clone())
+    entries.iter().find(|(l, _)| same_archive_name(l, &want_lower)).map(|(_, p)| p.clone())
 }
 
 /// Real paths that may serve `key`, each with whether it is the installation's (see `Fallback::installation`).
 /// While a card is recorded the installation serves nothing: what the card needs from it is found through gaps.
 fn fallback_candidates(key: &str) -> Vec<(PathBuf, bool)> {
-    let roots = FALLBACK.read().unwrap();
+    let Some(roots) = fallback_roots() else { return Default::default() };
     let mut out = Vec::new();
     if !is_mods_key(key) { return out; }
     let recording = recording_overlay().is_some();
@@ -478,7 +567,14 @@ fn fallback_candidates(key: &str) -> Vec<(PathBuf, bool)> {
         }
         if let Some(name) = file_name {
             let mut matched = false;
-            for p in f.files.iter().filter(|p| p.file_name().is_some_and(|n| same_archive_name(&n.to_string_lossy(), name))) {
+            for p in f.files.iter().filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(name))) {
+                out.push((p.clone(), false));
+                matched = true;
+            }
+            for p in f.files.iter().filter(|p| p.file_name().is_some_and(|n| {
+                let s = n.to_string_lossy();
+                !s.eq_ignore_ascii_case(name) && same_archive_name(&s, name)
+            })) {
                 out.push((p.clone(), false));
                 matched = true;
             }
@@ -510,18 +606,17 @@ fn fallback_source(key: &str, want_dir: Option<bool>) -> Option<(PathBuf, std::f
 /// Real listings of `key` in the fallback directories (the card directory adds its zipmods to `mods`).
 fn fallback_listing(key: &str) -> Option<Vec<(String, bool)>> {
     if !is_mods_key(key) { return None; }
-    let roots = FALLBACK.read().unwrap().clone();
+    let Some(roots) = fallback_roots().map(|r| r.clone()) else { return None };
     let mut out: Vec<(String, bool)> = Vec::new();
     let mut found = false;
     let mut add = |name: String, dir: bool| { if !out.iter().any(|(n, _)| n.eq_ignore_ascii_case(&name)) { out.push((name, dir)); } };
     // Archives the library already records elsewhere under mods/ are not listed twice. Only the mods root lists
     // fallback archives: building this set for every listed directory cost ~1.3 s per walk of the mods tree.
-    let recorded: std::collections::HashSet<String> = if key != "mods" { Default::default() } else {
-        state().map(|st| st.index.lock().unwrap().zips.keys()
-            .filter_map(|k| k.rsplit('/').next().map(str::to_owned)).collect()).unwrap_or_default() };
+    let recorded: Option<Arc<std::collections::HashSet<String>>> = if key != "mods" { None } else { state().map(|st| held_zip_names(&st)) };
     let mut add_zip = |name: String, add: &mut dyn FnMut(String, bool)| {
         let lower = name.to_ascii_lowercase();
-        if (lower.ends_with(".zipmod") || lower.ends_with(".zip")) && !recorded.contains(&lower) { add(name, false); }
+        let already_held = recorded.as_ref().is_some_and(|set| set.contains(&lower));
+        if (lower.ends_with(".zipmod") || lower.ends_with(".zip")) && !already_held { add(name, false); }
     };
     let recording = recording_overlay().is_some();
     for f in &roots {
@@ -1040,6 +1135,7 @@ pub fn open_zip<P: AsRef<Path>>(path: P) -> Option<Zip> {let _spot=crate::profil
             // Library entries, completed by the overlay's (an OK card's pack, or what was read for one).
             let library = st.index.lock().unwrap().zips.get(&key).cloned();
             let overlaid = replay_overlay().and_then(|o| o.index.lock().unwrap().zips.get(&key).cloned());
+            let has_overlay = overlaid.is_some();
             // An OK card's open: a third-party archive from its own pack, with the library's shared entries (list
             // bundles, a shared bundle in it) (okstrict.rs). Sealing reads the library's and copies what is read.
             // (converting: an archive the library does not record is the zipmods', below)
@@ -1072,7 +1168,17 @@ pub fn open_zip<P: AsRef<Path>>(path: P) -> Option<Zip> {let _spot=crate::profil
             };
             let real = || fallback_source(&key, Some(false)).map(|(p, _, installation)| (p, installation));
             match found {
-                Some(index) => { let real = real(); Some(Zip::Library(st, key, index, real)) }
+                Some(index) => {
+                    let real = real();
+                    if !has_overlay && zip_lacks_models(&st, &key) {
+                        if let Some((ref real_path, _)) = real {
+                            if !real_zip_matches_recorded(&index.names, real_path) {
+                                return open_real(real_path, recording_overlay().map(|o| (Sink::Overlay(o), key)));
+                            }
+                        }
+                    }
+                    Some(Zip::Library(st, key, index, real))
+                }
                 None => match real() {
                     Some((real, _)) => open_real(&real, recording_overlay().map(|o| (Sink::Overlay(o), key))),
                     None => { missing("zip", &key); None }
@@ -1301,8 +1407,14 @@ fn zip_lacks_models(st: &State, key: &str) -> bool {
     let memo_key = format!("{}\n{key}", st.root);
     if let Some(v) = memo.lock().unwrap().get(&memo_key) { return *v; }
     let dir = PathBuf::from(&st.root);
-    let lacks = st.index.lock().unwrap().zips.get(key).is_some_and(|z| z.entries.values()
-        .any(|e| matches!(e, Entry::Model(id, _) if !crate::oklib::model_file(&dir, id).is_file())));
+    let lacks = st.index.lock().unwrap().zips.get(key).is_some_and(|z| {
+        if z.entries.values().any(|e| matches!(e, Entry::Model(id, _) if !crate::oklib::model_file(&dir, id).is_file())) {
+            return true;
+        }
+        let has_unity3d = z.names.iter().any(|(n, _, _, is_dir)| !*is_dir && n.to_ascii_lowercase().ends_with(".unity3d"));
+        let has_held_model = z.entries.values().any(|e| matches!(e, Entry::Model(id, _) if crate::oklib::model_file(&dir, id).is_file()));
+        has_unity3d && !has_held_model
+    });
     memo.lock().unwrap().insert(memo_key, lacks);
     lacks
 }
@@ -1333,8 +1445,50 @@ pub fn library_zip_memo<T: Clone + Send + Sync + 'static>(what: &str, zip: &Path
 /// change while the library is active; the others (a mounted card pack's own zipmods) are what a view adds.
 pub fn library_records_zips(paths: &[PathBuf]) -> Vec<bool> {
     let Some(st) = state().filter(|st| st.mode == Mode::Replay) else { return vec![false; paths.len()] };
-    let index = st.index.lock().unwrap();
-    paths.iter().map(|p| logical(&st, p).is_some_and(|k| index.zips.contains_key(&k))).collect()
+    let keys: Vec<Option<String>> = {
+        let index = st.index.lock().unwrap();
+        paths.iter().map(|p| logical(&st, p).filter(|k| index.zips.contains_key(k))).collect()
+    };
+    let overlay = replay_overlay();
+    keys.into_iter().map(|k| {
+        let Some(k) = k else { return false };
+        if zip_lacks_models(&st, &k) && !overlay.as_ref().is_some_and(|o| o.index.lock().unwrap().zips.contains_key(&k)) {
+            if let Some(exact) = exact_fallback_file(&k) {
+                let names = st.index.lock().unwrap().zips.get(&k).map(|z| z.names.clone()).unwrap_or_default();
+                if !real_zip_matches_recorded(&names, &exact) {
+                    return false;
+                }
+            }
+        }
+        true
+    }).collect()
+}
+
+/// Whether `path` is a recorded non-shared zipmod in the replaying library whose models are absent from this checkout
+/// and which has no exact file in the active fallback or card-pack overlay.
+pub fn library_zip_unbacked(path: &Path) -> bool {
+    let Some(st) = state().filter(|st| st.mode == Mode::Replay) else { return false };
+    let Some(k) = logical(&st, path) else { return false };
+    let in_lib = st.index.lock().unwrap().zips.contains_key(&k);
+    if !in_lib { return false; }
+    if !zip_lacks_models(&st, &k) { return false; }
+    if replay_overlay().is_some_and(|o| o.index.lock().unwrap().zips.contains_key(&k)) { return false; }
+    exact_fallback_file(&k).is_none()
+}
+
+pub fn library_zips_unbacked(paths: &[PathBuf]) -> Vec<bool> {
+    let Some(st) = state().filter(|st| st.mode == Mode::Replay) else { return vec![false; paths.len()] };
+    let keys: Vec<Option<String>> = {
+        let index = st.index.lock().unwrap();
+        paths.iter().map(|p| logical(&st, p).filter(|k| index.zips.contains_key(k))).collect()
+    };
+    let overlay = replay_overlay();
+    keys.into_iter().map(|k| {
+        let Some(k) = k else { return false };
+        zip_lacks_models(&st, &k)
+            && !overlay.as_ref().is_some_and(|o| o.index.lock().unwrap().zips.contains_key(&k))
+            && exact_fallback_file(&k).is_none()
+    }).collect()
 }
 
 /// Value derived from one zipmod, built once per archive generation: an archive the active library records by its
@@ -1502,5 +1656,42 @@ mod mapped_index_tests {
         assert!(mapped_index(&library).is_some());
         TEST_INDEX_MAP.with(|m| *m.borrow_mut() = None);
         let _ = std::fs::remove_dir_all(&library);
+    }
+
+    #[test]
+    fn same_archive_name_respects_distinct_author_tags() {
+        assert!(same_archive_name("[Makise] Focalors.zipmod", "[makise] focalors.zipmod"));
+        assert!(same_archive_name("Focalors.zipmod", "[Makise] Focalors.zipmod"));
+        assert!(same_archive_name("[xukmi] Vanilla Plus.zipmod", "[xukmi][KK] Vanilla Plus.zipmod"));
+        assert!(!same_archive_name("[Makise] Focalors.zipmod", "[Hitori] Focalors.zipmod"));
+        assert!(!same_archive_name("[AuthorA][KK] Hair.zipmod", "[AuthorB][KK] Hair.zipmod"));
+    }
+
+    #[test]
+    fn real_zip_matches_recorded_detects_repacked_bundle_names() {
+        use std::io::Write;
+        let zip_path = std::env::temp_dir().join(format!("ok-repacked-zip-{}.zipmod", std::process::id()));
+        let _ = std::fs::remove_file(&zip_path);
+        {
+            let f = std::fs::File::create(&zip_path).unwrap();
+            let mut w = zip::ZipWriter::new(f);
+            let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            w.start_file("manifest.xml", opts).unwrap();
+            w.write_all(b"<manifest><guid>[Makise]Focalors</guid><version>1.0</version></manifest>").unwrap();
+            w.start_file("abdata/chara/[Makise]Focalors.unity3d", opts).unwrap();
+            w.write_all(b"UnityFS-repacked-bundle").unwrap();
+            w.finish().unwrap();
+        }
+        let matching = vec![
+            ("manifest.xml".to_string(), 72, 0, false),
+            ("abdata/chara/[Makise]Focalors.unity3d".to_string(), 23, 0, false),
+        ];
+        let stale_kks = vec![
+            ("manifest.xml".to_string(), 72, 0, false),
+            ("abdata/chara/focalors.unity3d".to_string(), 23, 0, false),
+        ];
+        assert!(real_zip_matches_recorded(&matching, &zip_path));
+        assert!(!real_zip_matches_recorded(&stale_kks, &zip_path));
+        let _ = std::fs::remove_file(&zip_path);
     }
 }

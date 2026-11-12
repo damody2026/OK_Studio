@@ -774,8 +774,8 @@ struct FScene : TSharedFromThis<FScene> {
    // below the eye white's (C049/C051: iris 2451, eye white 2901, so a hair shadow at 2500 darkens it); a translucent
    // section here writes no depth and that eye white covered the iris (white eyes). The eyeball's white
    // (cf_Ohitomi_L/R; the eyelines share its shader and keep their queues) then draws just before the iris instead.
-   int32 Iris=MAX_int32;for(int32 I=0;I<Queues.Num();++I){const auto R=OKRuntimeSharedMaterialRecipe(E.Material.Parts[I]);if(R==EKKRuntimeMaterialRecipe::KoikanoEye||R==EKKRuntimeMaterialRecipe::ForgeEye)Iris=FMath::Min(Iris,Queues[I]);}
-   if(Iris!=MAX_int32)for(int32 I=0;I<Queues.Num();++I){const auto& P=E.Material.Parts[I];const auto R=OKRuntimeSharedMaterialRecipe(P);if((R==EKKRuntimeMaterialRecipe::KoikanoEyeWhite||R==EKKRuntimeMaterialRecipe::ForgeEyeWhite)&&(P.Name.Equals(TEXT("cf_Ohitomi_L"),ESearchCase::IgnoreCase)||P.Name.Equals(TEXT("cf_Ohitomi_R"),ESearchCase::IgnoreCase)))Queues[I]=FMath::Min(Queues[I],Iris-1);}
+   int32 Iris=MAX_int32;for(int32 I=0;I<Queues.Num();++I){const auto R=OKRuntimeSharedMaterialRecipe(E.Material.Parts[I]);if(R==EKKRuntimeMaterialRecipe::KoikanoEye||R==EKKRuntimeMaterialRecipe::ForgeEye||R==EKKRuntimeMaterialRecipe::KKUTSEye)Iris=FMath::Min(Iris,Queues[I]);}
+   if(Iris!=MAX_int32)for(int32 I=0;I<Queues.Num();++I){const auto& P=E.Material.Parts[I];const auto R=OKRuntimeSharedMaterialRecipe(P);if((R==EKKRuntimeMaterialRecipe::KoikanoEyeWhite||R==EKKRuntimeMaterialRecipe::ForgeEyeWhite||R==EKKRuntimeMaterialRecipe::ForgeEyeWhiteLod||R==EKKRuntimeMaterialRecipe::KKUTSEyeWhite)&&(P.Name.Equals(TEXT("cf_Ohitomi_L"),ESearchCase::IgnoreCase)||P.Name.Equals(TEXT("cf_Ohitomi_R"),ESearchCase::IgnoreCase)))Queues[I]=FMath::Min(Queues[I],Iris-1);}
    D.Sections.StableSort([&](const auto& A,const auto& B){return Queues[A.Material]<Queues[B.Material];});
   }
   TArray<UTexture2D*> Textures;for(auto& T:E.Textures)Textures.Add(T.Get());
@@ -799,7 +799,7 @@ struct FScene : TSharedFromThis<FScene> {
     // OK_RUNTIME_HIDE_PART=<name>: that part draws nothing (diagnosis: what shows where it was).
     {const FString Hide=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_RUNTIME_HIDE_PART"));if(!Hide.IsEmpty()&&P.Name==Hide&&TearParent.IsValid())if(auto* None=UMaterialInstanceDynamic::Create(TearParent.Get(),GetTransientPackage())){None->SetScalarParameterValue(TEXT("__OK_RuntimeRevealOverride"),0);M=None;Identity.Append(reinterpret_cast<const uint8*>(&Part),sizeof(Part));Identity.Add(0xEE);}}
     Identities.Add(MoveTemp(Identity));E.Materials.Emplace(M);
-    {const bool Skin=Recipe==EKKRuntimeMaterialRecipe::KoikanoSkin||Recipe==EKKRuntimeMaterialRecipe::ForgeSkin;const bool Iris=Recipe==EKKRuntimeMaterialRecipe::ForgeEye||Recipe==EKKRuntimeMaterialRecipe::KoikanoEye;
+    {const bool Skin=Recipe==EKKRuntimeMaterialRecipe::KoikanoSkin||Recipe==EKKRuntimeMaterialRecipe::ForgeSkin;const bool Iris=Recipe==EKKRuntimeMaterialRecipe::ForgeEye||Recipe==EKKRuntimeMaterialRecipe::KoikanoEye||Recipe==EKKRuntimeMaterialRecipe::KKUTSEye;
      E.LookKinds.Add(TearLevel?4:Skin&&P.Role==TEXT("head")?1:Skin?2:Iris?3:Recipe==EKKRuntimeMaterialRecipe::KoikanoBrow?5:0);
      if(TearLevel&&M){E.Tears.Add(M,TearLevel);M->SetScalarParameterValue(TEXT("__OK_RuntimeRevealOverride"),0);}}
     ++E.MaterialCursor;}while(E.MaterialCursor<E.Material.Parts.Num()&&FPlatformTime::Seconds()<Deadline);

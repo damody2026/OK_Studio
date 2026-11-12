@@ -129,6 +129,15 @@ static bool DescribePart(OkSession* Session,const OkMeshView& V,int32 NativePart
  const int32 Size=ok_part_material_metadata(Session,NativePart,nullptr,0);if(Size<=0||Size>1024*1024)return Fail(TEXT("Runtime material metadata size invalid"));
  TArray<uint8> Json;Json.SetNumZeroed(Size+1);if(ok_part_material_metadata(Session,NativePart,Json.GetData(),Size)!=Size)return Fail(TEXT("Runtime material metadata copy failed"));P.SourceMetadataJson=UTF8_TO_TCHAR(reinterpret_cast<const char*>(Json.GetData()));
  if(!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(P.SourceMetadataJson),Metadata)||Metadata->GetIntegerField(TEXT("schema"))!=1)return Fail(TEXT("Runtime material metadata schema invalid"));
+ {const TSharedPtr<FJsonObject>* MatObj=nullptr;FString MatShader;if(Metadata->TryGetObjectField(TEXT("material"),MatObj)&&(*MatObj)->TryGetStringField(TEXT("shader"),MatShader)){
+  if(MatShader.StartsWith(TEXT("KKUTS"),ESearchCase::IgnoreCase)){
+   if(MatShader.Equals(TEXT("KKUTSalpha"),ESearchCase::IgnoreCase)||MatShader.Equals(TEXT("KKUTSalpha_Tess"),ESearchCase::IgnoreCase)||MatShader.Equals(TEXT("KKUTSeye"),ESearchCase::IgnoreCase)||MatShader.Equals(TEXT("KKUTSeyew"),ESearchCase::IgnoreCase))P.Outline=false;
+   else{const TSharedPtr<FJsonObject>* MatFloats=nullptr;double Adj=3;if((*MatObj)->TryGetObjectField(TEXT("floats"),MatFloats)&&((*MatFloats)->TryGetNumberField(TEXT("_OutlineAdjust"),Adj)||(*MatFloats)->TryGetNumberField(TEXT("_outlineadjust"),Adj))&&Adj<=0)P.Outline=false;if(V.line_width<=0)P.Outline=false;}
+  }else if(MatShader.StartsWith(TEXT("KKUSS"),ESearchCase::IgnoreCase)){
+   if(MatShader.Equals(TEXT("KKUSSitem"),ESearchCase::IgnoreCase)||MatShader.Equals(TEXT("KKUSSalpha"),ESearchCase::IgnoreCase))P.Outline=false;
+   else if(V.line_width<=0)P.Outline=false;
+  }
+ }}
  auto Scalar=[&](const TCHAR* N,float F){P.Values.Add(N,FVector4f(F,0,0,0));};auto Vec=[&](const TCHAR* N,const float* F){P.Values.Add(N,FVector4f(F[0],F[1],F[2],F[3]));};
  if(V.eye_draw)Scalar(TEXT("_OKEyeUVPrepared"),V.eye_sample_uvs&&V.uv2&&V.uv3?1.f:0.f);if(V.eye_draw==1||V.eye_draw==2)Scalar(TEXT("_OKEyeExpressionUVPrepared"),ok_part_eye_expression_uvs(Session,NativePart,nullptr,0)==V.n_verts?1.f:0.f);
  Scalar(TEXT("_ShadowDepth"),V.shadow_depth);Scalar(TEXT("_LineWidth"),V.line_width);Scalar(TEXT("_LineDepth"),V.line_depth);Scalar(TEXT("_VerticalShift"),V.kano_ver_shift);

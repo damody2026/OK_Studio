@@ -12,10 +12,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use rmpv::Value;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::card::map_get;
-use crate::studio_scene::{scene_plugins, Object, Scene};
+use crate::studio_scene::{scene_plugins, MaterialEdit, Object, Scene};
 
 /// Collects every `ObjectCtrlInfo` key in `scene.objects` sorted ascending, matching
 /// `new SortedDictionary<int, ObjectCtrlInfo>(Studio.Instance.dicObjectCtrl).ToList()`
@@ -49,10 +49,12 @@ pub fn sorted_dic_keys(scene: &Scene) -> Vec<i32> {
     set.into_iter().collect()
 }
 
-/// Maps a KK Studio IK target bone/guide-object name (`cf_t_*` / `cm_t_*`) to `OKStudio`'s FinalIK effector index:
+/// Maps a KK Studio IK target bone/guide-object name (`cf_t_*` / `cm_t_*`, with or without CharaStudio's `(work)` suffix)
+/// to `OKStudio`'s FinalIK effector index:
 /// `0` body, `1..2` L/R shoulder, `3..4` L/R thigh, `5..6` L/R hand, `7..8` L/R foot, `9..10` L/R elbow bend, `11..12` L/R knee bend.
 pub fn studio_ik_effector_from_path(path: &str) -> Option<i32> {
     let leaf = path.rsplit('/').next().unwrap_or(path).trim();
+    let leaf = leaf.strip_suffix("(work)").unwrap_or(leaf).trim();
     match leaf {
         "cf_t_hips" | "cm_t_hips" => Some(0),
         "cf_t_shoulder_L" | "cm_t_shoulder_L" => Some(1),
@@ -73,7 +75,8 @@ pub fn studio_ik_effector_from_path(path: &str) -> Option<i32> {
 
 pub fn leaf_bone_name(path: &str) -> String {
     let trimmed = path.trim().trim_matches('/');
-    trimmed.rsplit('/').next().unwrap_or(trimmed).to_string()
+    let leaf = trimmed.rsplit('/').next().unwrap_or(trimmed);
+    leaf.strip_suffix("(work)").unwrap_or(leaf).trim().to_string()
 }
 
 fn plugin_data_map<'a>(blocks: &'a Value, id: &str) -> Option<&'a Value> {
@@ -854,10 +857,20 @@ pub fn extract_nodes_constraints(
 }
 
 // ============================================================================
-// 8. Timeline (`timeline` -> `sceneInfo` XML)
+// 8. Timeline (`timeline` -> `sceneInfo` XML & `Single Files/*.xml`) + `rendererEditor`
 // ============================================================================
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+fn tl_default_true() -> bool { true }
+fn tl_default_one() -> f32 { 1.0 }
+fn tl_default_duration() -> f32 { 10.0 }
+fn tl_default_divisions() -> i32 { 10 }
+fn tl_default_neg_one() -> i32 { -1 }
+fn tl_default_white() -> [f32; 3] { [1.0, 1.0, 1.0] }
+fn tl_is_white(c: &[f32; 3]) -> bool {
+    (c[0] - 1.0).abs() < 1e-4 && (c[1] - 1.0).abs() < 1e-4 && (c[2] - 1.0).abs() < 1e-4
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TimelineCurvePoint {
     pub t: f32,
     pub v: f32,
@@ -865,37 +878,99 @@ pub struct TimelineCurvePoint {
     pub out_t: f32,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TimelineKeyframe {
     pub time: f32,
-    /// Value components (`[v]` for scalar/bool/int, `[x,y,z]` for Vector3, `[x,y,z,w]` for Quaternion/Color/Vector4, or `N` morph weights).
+    /// Value components (`[v]` for scalar/bool/int, `[x,y]` for Vec2, `[x,y,z]` for Vec3/Anim, `[x,y,z,w]` for Quat/Color/Vec4, or `N` morph weights).
     pub values: Vec<f32>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub names: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub curve: Vec<TimelineCurvePoint>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TimelineInterpolableTrack {
     pub owner: String,
     pub id: String,
     /// `-1` for global tracks (`cameraPos`, `cameraRot`, `cameraFOV`, `cameraOPos`, `cameraORot`, `cameraOZoom`, `timeScale`).
+    #[serde(default = "tl_default_neg_one")]
     pub dic_key: i32,
-    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default = "tl_default_true")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub alias: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub group_path: String,
+    #[serde(default = "tl_default_white", skip_serializing_if = "tl_is_white")]
+    pub color: [f32; 3],
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub target_path: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub target_bone: String,
-    /// `>= 0` when `guideObject*` targets a character Studio IK effector (`cf_t_*`).
+    /// `>= 0` when `guideObject*` or `KKPE::fbbik*` targets a character Studio IK effector (`0..12`).
+    #[serde(default = "tl_default_neg_one")]
     pub target_ik_effector: i32,
+    #[serde(default = "tl_default_neg_one")]
     pub param_int: i32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub param_str: String,
     pub keyframes: Vec<TimelineKeyframe>,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TimelineSceneData {
+    #[serde(default = "tl_default_duration")]
     pub duration: f32,
+    #[serde(default = "tl_default_one")]
+    pub speed: f32,
+    #[serde(default = "tl_default_divisions")]
+    pub divisions: i32,
+    #[serde(default = "tl_default_one")]
+    pub block_length: f32,
+    #[serde(default = "tl_default_true")]
+    pub is_looping: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sorted_keys: Vec<i32>,
     pub tracks: Vec<TimelineInterpolableTrack>,
+}
+
+impl Default for TimelineSceneData {
+    fn default() -> Self {
+        Self {
+            duration: 10.0,
+            speed: 1.0,
+            divisions: 10,
+            block_length: 1.0,
+            is_looping: true,
+            sorted_keys: Vec::new(),
+            tracks: Vec::new(),
+        }
+    }
+}
+
+pub fn fbbik_effector_from_kkpe_id(id: &str) -> Option<i32> {
+    let suffix = id
+        .strip_prefix("fbbikEffectorPositionWeight")
+        .or_else(|| id.strip_prefix("fbbikEffectorRotationWeight"))
+        .or_else(|| id.strip_prefix("fbbikConstraintBendWeight"))?
+        .trim();
+    match suffix {
+        "Body" => Some(0),
+        "L. Shoulder" => Some(1),
+        "R. Shoulder" => Some(2),
+        "L. Thigh" => Some(3),
+        "R. Thigh" => Some(4),
+        "L. Hand" => Some(5),
+        "R. Hand" => Some(6),
+        "L. Foot" => Some(7),
+        "R. Foot" => Some(8),
+        "L. Elbow" => Some(9),
+        "R. Elbow" => Some(10),
+        "L. Knee" => Some(11),
+        "R. Knee" => Some(12),
+        _ => None,
+    }
 }
 
 fn read_curve_points(kf_node: roxmltree::Node<'_, '_>) -> Vec<TimelineCurvePoint> {
@@ -934,21 +1009,59 @@ fn parse_timeline_keyframe_value(
     id: &str,
     kf_node: roxmltree::Node<'_, '_>,
 ) -> Option<(Vec<f32>, Vec<String>)> {
-    match (owner, id) {
+    let norm_owner = if owner == "HSPE" { "KKPE" } else { owner };
+    match (norm_owner, id) {
         ("Timeline", "cameraOPos" | "cameraPos" | "guideObjectPos" | "guideObjectScale")
-        | ("KKPE", "bonePos" | "boneScale") => {
-            let x = attr_f32(kf_node, "valueX")?;
-            let y = attr_f32(kf_node, "valueY")?;
-            let z = attr_f32(kf_node, "valueZ")?;
+        | (
+            "KKPE",
+            "bonePos"
+            | "boneScale"
+            | "leftBoobGravity"
+            | "rightBoobGravity"
+            | "leftButtGravity"
+            | "rightButtGravity"
+            | "leftBoobForce"
+            | "rightBoobForce"
+            | "leftButtForce"
+            | "rightButtForce"
+            | "dynamicBoneForce"
+            | "dynamicBoneGravity"
+            | "colliderBaseCenter",
+        )
+        | ("NodesConstraints", "constraintPos") => {
+            let x = attr_f32(kf_node, "valueX").or_else(|| attr_f32(kf_node, "X"))?;
+            let y = attr_f32(kf_node, "valueY").or_else(|| attr_f32(kf_node, "Y"))?;
+            let z = attr_f32(kf_node, "valueZ").or_else(|| attr_f32(kf_node, "Z"))?;
             Some((vec![x, y, z], Vec::new()))
         }
-        ("Timeline", "cameraORot" | "cameraRot" | "guideObjectRot") | ("KKPE", "boneRot") => {
+        ("Timeline", "cameraORot" | "cameraRot" | "guideObjectRot")
+        | ("KKPE", "boneRot")
+        | ("NodesConstraints", "constraintRos") => {
             let x = attr_f32(kf_node, "valueX")?;
             let y = attr_f32(kf_node, "valueY")?;
             let z = attr_f32(kf_node, "valueZ")?;
             let w = attr_f32(kf_node, "valueW")?;
             let q = crate::finalik::qnorm([x, y, z, w]);
             Some((vec![q[0], q[1], q[2], q[3]], Vec::new()))
+        }
+        ("Timeline", "charAnimation") => {
+            let g = attr_i32(kf_node, "valueGroup")?;
+            let c = attr_i32(kf_node, "valueCategory")?;
+            let n = attr_i32(kf_node, "valueNo")?;
+            Some((vec![g as f32, c as f32, n as f32], Vec::new()))
+        }
+        ("Timeline", "cameraData") => {
+            let px = attr_f32(kf_node, "posX").or_else(|| attr_f32(kf_node, "valuePosX"))?;
+            let py = attr_f32(kf_node, "posY").or_else(|| attr_f32(kf_node, "valuePosY"))?;
+            let pz = attr_f32(kf_node, "posZ").or_else(|| attr_f32(kf_node, "valuePosZ"))?;
+            let rx = attr_f32(kf_node, "rotX").or_else(|| attr_f32(kf_node, "valueRotX")).unwrap_or(0.0);
+            let ry = attr_f32(kf_node, "rotY").or_else(|| attr_f32(kf_node, "valueRotY")).unwrap_or(0.0);
+            let rz = attr_f32(kf_node, "rotZ").or_else(|| attr_f32(kf_node, "valueRotZ")).unwrap_or(0.0);
+            let dx = attr_f32(kf_node, "disX").or_else(|| attr_f32(kf_node, "valueDisX")).unwrap_or(0.0);
+            let dy = attr_f32(kf_node, "disY").or_else(|| attr_f32(kf_node, "valueDisY")).unwrap_or(0.0);
+            let dz = attr_f32(kf_node, "disZ").or_else(|| attr_f32(kf_node, "valueDisZ")).unwrap_or(-2.0);
+            let fov = attr_f32(kf_node, "fov").or_else(|| attr_f32(kf_node, "valueFOV")).unwrap_or(23.0);
+            Some((vec![px, py, pz, rx, ry, rz, dx, dy, dz, fov], Vec::new()))
         }
         (
             "Timeline",
@@ -976,7 +1089,50 @@ fn parse_timeline_keyframe_value(
             | "lightRange"
             | "lightSpotAngle",
         )
-        | ("KKPE", "lastBlendShape") => {
+        | (
+            "KKPE",
+            "lastBlendShape"
+            | "ikPositionWeight"
+            | "dynamicBoneWeight"
+            | "dynamicBoneDamping"
+            | "dynamicBoneElasticity"
+            | "dynamicBoneStiffness"
+            | "dynamicBoneInertia"
+            | "dynamicBoneRadius"
+            | "colliderRadius"
+            | "colliderHeight",
+        )
+        | ("MaterialEditor", "floatProperty")
+        | ("PregnancyPlus", "0" | "inflation")
+        | (
+            "ShalltyUtils",
+            "guideObjectXPos"
+            | "guideObjectYPos"
+            | "guideObjectZPos"
+            | "guideObjectXRot"
+            | "guideObjectYRot"
+            | "guideObjectZRot"
+            | "guideObjectXScale"
+            | "guideObjectYScale"
+            | "guideObjectZScale"
+            | "boneXPos"
+            | "boneYPos"
+            | "boneZPos"
+            | "boneXRot"
+            | "boneYRot"
+            | "boneZRot"
+            | "boneXScale"
+            | "boneYScale"
+            | "boneZScale",
+        ) => {
+            let v = attr_f32(kf_node, "value")?;
+            Some((vec![v], Vec::new()))
+        }
+        ("KKPE", x)
+            if x.starts_with("fbbikEffectorPositionWeight")
+                || x.starts_with("fbbikEffectorRotationWeight")
+                || x.starts_with("fbbikConstraintBendWeight") =>
+        {
             let v = attr_f32(kf_node, "value")?;
             Some((vec![v], Vec::new()))
         }
@@ -985,7 +1141,13 @@ fn parse_timeline_keyframe_value(
             "objectEnabled" | "lightOnOff" | "lightShadows" | "itemPatternClamp1" | "itemPatternClamp2"
             | "itemPatternClamp3" | "itemPanelPatternClamp",
         )
-        | ("NodesConstraints", "constraintEnabled") => {
+        | (
+            "KKPE",
+            "leftBoobEnabled" | "rightBoobEnabled" | "leftButtEnabled" | "rightButtEnabled" | "dynamicBoneEnabled",
+        )
+        | ("RendererEditor", "targetEnabled")
+        | ("NodesConstraints", "constraintEnabled")
+        | ("Eye Shaking", "shakingEnabled") => {
             let b = attr_bool(kf_node, "value").or_else(|| attr_f32(kf_node, "value").map(|v| v != 0.0))?;
             Some((vec![if b { 1.0 } else { 0.0 }], Vec::new()))
         }
@@ -1000,8 +1162,9 @@ fn parse_timeline_keyframe_value(
             | "characterMouth"
             | "characterLeftHand"
             | "characterRightHand",
-        ) => {
-            let n = attr_i32(kf_node, "value")?;
+        )
+        | ("KKPE", "dynamicBoneFreezeAxis" | "colliderBaseDirection" | "colliderBaseBound") => {
+            let n = attr_i32(kf_node, "value").or_else(|| attr_f32(kf_node, "value").map(|f| f.round() as i32))?;
             Some((vec![n as f32], Vec::new()))
         }
         (
@@ -1018,12 +1181,20 @@ fn parse_timeline_keyframe_value(
             | "itemEmissionColor"
             | "itemLineColor"
             | "itemPanelColor",
-        ) => {
-            let r = attr_f32(kf_node, "valueR")?;
-            let g = attr_f32(kf_node, "valueG")?;
-            let b = attr_f32(kf_node, "valueB")?;
-            let a = attr_f32(kf_node, "valueA").unwrap_or(1.0);
+        )
+        | ("MaterialEditor", "colorProperty") => {
+            let r = attr_f32(kf_node, "valueR").or_else(|| attr_f32(kf_node, "R"))?;
+            let g = attr_f32(kf_node, "valueG").or_else(|| attr_f32(kf_node, "G"))?;
+            let b = attr_f32(kf_node, "valueB").or_else(|| attr_f32(kf_node, "B"))?;
+            let a = attr_f32(kf_node, "valueA")
+                .or_else(|| attr_f32(kf_node, "A"))
+                .unwrap_or(1.0);
             Some((vec![r, g, b, a], Vec::new()))
+        }
+        ("MaterialEditor", "textureOffsetProperty" | "textureScaleProperty") => {
+            let x = attr_f32(kf_node, "X").or_else(|| attr_f32(kf_node, "valueX"))?;
+            let y = attr_f32(kf_node, "Y").or_else(|| attr_f32(kf_node, "valueY"))?;
+            Some((vec![x, y], Vec::new()))
         }
         (
             "Timeline",
@@ -1034,6 +1205,31 @@ fn parse_timeline_keyframe_value(
             let z = attr_f32(kf_node, "valueZ")?;
             let w = attr_f32(kf_node, "valueW")?;
             Some((vec![x, y, z, w], Vec::new()))
+        }
+        ("RendererEditor", x) if x.starts_with("Float_") => {
+            let v = attr_f32(kf_node, "value")?;
+            Some((vec![v], Vec::new()))
+        }
+        ("RendererEditor", x) if x.starts_with("Color_") => {
+            let r = attr_f32(kf_node, "valueR").or_else(|| attr_f32(kf_node, "R"))?;
+            let g = attr_f32(kf_node, "valueG").or_else(|| attr_f32(kf_node, "G"))?;
+            let b = attr_f32(kf_node, "valueB").or_else(|| attr_f32(kf_node, "B"))?;
+            let a = attr_f32(kf_node, "valueA")
+                .or_else(|| attr_f32(kf_node, "A"))
+                .unwrap_or(1.0);
+            Some((vec![r, g, b, a], Vec::new()))
+        }
+        ("RendererEditor", x) if x.starts_with("Vector4_") => {
+            let vx = attr_f32(kf_node, "valueX").or_else(|| attr_f32(kf_node, "X"))?;
+            let vy = attr_f32(kf_node, "valueY").or_else(|| attr_f32(kf_node, "Y"))?;
+            let vz = attr_f32(kf_node, "valueZ").or_else(|| attr_f32(kf_node, "Z"))?;
+            let vw = attr_f32(kf_node, "valueW").or_else(|| attr_f32(kf_node, "W"))?;
+            Some((vec![vx, vy, vz, vw], Vec::new()))
+        }
+        ("RendererEditor", x) if x.starts_with("Texture_") && (x.ends_with("Offset") || x.ends_with("Scale")) => {
+            let vx = attr_f32(kf_node, "valueX").or_else(|| attr_f32(kf_node, "X"))?;
+            let vy = attr_f32(kf_node, "valueY").or_else(|| attr_f32(kf_node, "Y"))?;
+            Some((vec![vx, vy], Vec::new()))
         }
         ("KKPE", "groupBlendShape" | "groupBlendShapeLink") => {
             let count = attr_i32(kf_node, "valueCount")?;
@@ -1061,7 +1257,7 @@ fn parse_timeline_keyframe_value(
     }
 }
 
-pub fn parse_timeline_xml(xml: &str, sorted_keys: &[i32]) -> Option<TimelineSceneData> {
+fn parse_timeline_xml_impl(xml: &str, sorted_keys: &[i32], single_target_key: Option<i32>) -> Option<TimelineSceneData> {
     let cleaned = parse_xml_lenient(xml)?;
     let doc = roxmltree::Document::parse(&cleaned).ok()?;
     let root = doc.root_element();
@@ -1074,33 +1270,77 @@ pub fn parse_timeline_xml(xml: &str, sorted_keys: &[i32]) -> Option<TimelineScen
     fn walk_tree(
         node: roxmltree::Node<'_, '_>,
         sorted_keys: &[i32],
+        single_target_key: Option<i32>,
+        group_prefix: &str,
+        parent_enabled: bool,
         tracks: &mut Vec<TimelineInterpolableTrack>,
         max_kf_time: &mut f32,
     ) {
         for child in node.children().filter(|c| c.is_element()) {
             match child.tag_name().name() {
-                "interpolableGroup" => walk_tree(child, sorted_keys, tracks, max_kf_time),
+                "interpolableGroup" => {
+                    let gname = child.attribute("name").unwrap_or("").trim();
+                    let next_group = if gname.is_empty() {
+                        group_prefix.to_string()
+                    } else if group_prefix.is_empty() {
+                        gname.to_string()
+                    } else {
+                        format!("{group_prefix}/{gname}")
+                    };
+                    let grp_en = parent_enabled && attr_bool(child, "enabled").unwrap_or(true);
+                    walk_tree(child, sorted_keys, single_target_key, &next_group, grp_en, tracks, max_kf_time);
+                }
                 "interpolable" => {
-                    if !attr_bool(child, "enabled").unwrap_or(true) {
-                        continue;
-                    }
-                    let Some(owner) = child.attribute("owner") else { continue };
+                    let enabled = parent_enabled && attr_bool(child, "enabled").unwrap_or(true);
+                    let Some(raw_owner) = child.attribute("owner") else { continue };
+                    let owner = if raw_owner == "HSPE" { "KKPE" } else { raw_owner };
                     let Some(id) = child.attribute("id") else { continue };
-                    let dic_key = if let Some(obj_idx) = attr_i32(child, "objectIndex") {
-                        if obj_idx < 0 || (obj_idx as usize) >= sorted_keys.len() {
+                    let dic_key = if let Some(target_key) = single_target_key {
+                        if attr_i32(child, "objectIndex").is_some() {
+                            target_key
+                        } else {
+                            -1
+                        }
+                    } else if let Some(obj_idx) = attr_i32(child, "objectIndex") {
+                        if obj_idx < 0 {
                             continue;
                         }
-                        sorted_keys[obj_idx as usize]
+                        if sorted_keys.is_empty() {
+                            obj_idx
+                        } else if (obj_idx as usize) < sorted_keys.len() {
+                            sorted_keys[obj_idx as usize]
+                        } else {
+                            continue;
+                        }
                     } else {
                         -1
                     };
+                    let alias = child.attribute("alias").unwrap_or("").trim().to_string();
+                    let color = [
+                        attr_f32(child, "bgColorR").unwrap_or(1.0).clamp(0.0, 1.0),
+                        attr_f32(child, "bgColorG").unwrap_or(1.0).clamp(0.0, 1.0),
+                        attr_f32(child, "bgColorB").unwrap_or(1.0).clamp(0.0, 1.0),
+                    ];
                     let mut target_path = String::new();
                     let mut target_bone = String::new();
                     let mut target_ik_effector = -1;
                     let mut param_int = -1;
+                    let mut param_str = String::new();
 
                     match (owner, id) {
-                        ("Timeline", "guideObjectPos" | "guideObjectRot" | "guideObjectScale") => {
+                        ("Timeline", "guideObjectPos" | "guideObjectRot" | "guideObjectScale")
+                        | (
+                            "ShalltyUtils",
+                            "guideObjectXPos"
+                            | "guideObjectYPos"
+                            | "guideObjectZPos"
+                            | "guideObjectXRot"
+                            | "guideObjectYRot"
+                            | "guideObjectZRot"
+                            | "guideObjectXScale"
+                            | "guideObjectYScale"
+                            | "guideObjectZScale",
+                        ) => {
                             target_path = child.attribute("guideObjectPath").unwrap_or("").trim().to_string();
                             if !target_path.is_empty() {
                                 if let Some(eff) = studio_ik_effector_from_path(&target_path) {
@@ -1114,11 +1354,54 @@ pub fn parse_timeline_xml(xml: &str, sorted_keys: &[i32]) -> Option<TimelineScen
                             let Some(p) = attr_i32(child, "parameter") else { continue };
                             param_int = p;
                         }
-                        ("KKPE", "bonePos" | "boneRot" | "boneScale") => {
+                        (
+                            "KKPE",
+                            "bonePos"
+                            | "boneRot"
+                            | "boneScale"
+                            | "dynamicBoneEnabled"
+                            | "dynamicBoneForce"
+                            | "dynamicBoneGravity"
+                            | "dynamicBoneWeight"
+                            | "dynamicBoneDamping"
+                            | "dynamicBoneElasticity"
+                            | "dynamicBoneStiffness"
+                            | "dynamicBoneInertia"
+                            | "dynamicBoneRadius"
+                            | "dynamicBoneFreezeAxis"
+                            | "colliderRadius"
+                            | "colliderHeight"
+                            | "colliderBaseCenter"
+                            | "colliderBaseDirection"
+                            | "colliderBaseBound",
+                        )
+                        | (
+                            "ShalltyUtils",
+                            "boneXPos"
+                            | "boneYPos"
+                            | "boneZPos"
+                            | "boneXRot"
+                            | "boneYRot"
+                            | "boneZRot"
+                            | "boneXScale"
+                            | "boneYScale"
+                            | "boneZScale",
+                        ) => {
                             target_path = child.attribute("parameter").unwrap_or("").trim().to_string();
                             target_bone = leaf_bone_name(&target_path);
                             if target_bone.is_empty() {
                                 continue;
+                            }
+                        }
+                        ("KKPE", x)
+                            if x == "ikPositionWeight"
+                                || x.starts_with("fbbikEffectorPositionWeight")
+                                || x.starts_with("fbbikEffectorRotationWeight")
+                                || x.starts_with("fbbikConstraintBendWeight") =>
+                        {
+                            target_path = child.attribute("parameter").unwrap_or("").trim().to_string();
+                            if let Some(eff) = fbbik_effector_from_kkpe_id(x) {
+                                target_ik_effector = eff;
                             }
                         }
                         ("KKPE", "lastBlendShape") => {
@@ -1135,7 +1418,33 @@ pub fn parse_timeline_xml(xml: &str, sorted_keys: &[i32]) -> Option<TimelineScen
                                 continue;
                             }
                         }
-                        ("NodesConstraints", "constraintEnabled") => {
+                        ("RendererEditor", x) => {
+                            target_path = child.attribute("parameterTargetPath").unwrap_or("").trim().to_string();
+                            target_bone = leaf_bone_name(&target_path);
+                            param_int = attr_i32(child, "parameterIndex").unwrap_or(0);
+                            if let Some(prop) = x.strip_prefix("Float_").or_else(|| x.strip_prefix("Color_")).or_else(|| x.strip_prefix("Vector4_")) {
+                                param_str = format!("_{prop}");
+                            } else if let Some(rest) = x.strip_prefix("Texture_") {
+                                if let Some(prop) = rest.strip_suffix("Offset").or_else(|| rest.strip_suffix("Scale")) {
+                                    param_str = format!("_{prop}");
+                                }
+                            }
+                        }
+                        ("MaterialEditor", _) => {
+                            target_path = child.attribute("gameObjectPath").unwrap_or("").trim().to_string();
+                            let mat = child
+                                .attribute("materialName")
+                                .unwrap_or("")
+                                .trim()
+                                .trim_end_matches(" (Instance)");
+                            let prop = child.attribute("propertyName").unwrap_or("").trim();
+                            let rend = child.attribute("rendererName").unwrap_or("").trim();
+                            if prop.is_empty() {
+                                continue;
+                            }
+                            param_str = format!("{mat}|{prop}|{rend}");
+                        }
+                        ("NodesConstraints", "constraintEnabled" | "constraintPos" | "constraintRos") => {
                             let Some(load_id) = attr_i32(child, "parameter") else { continue };
                             param_int = load_id;
                         }
@@ -1147,10 +1456,11 @@ pub fn parse_timeline_xml(xml: &str, sorted_keys: &[i32]) -> Option<TimelineScen
                         .children()
                         .filter(|k| k.is_element() && k.tag_name().name() == "keyframe")
                     {
-                        let Some(time) = attr_f32(kf_node, "time") else { continue };
-                        if time < 0.0 {
+                        let Some(raw_time) = attr_f32(kf_node, "time") else { continue };
+                        if raw_time < -1e-3 {
                             continue;
                         }
+                        let time = raw_time.max(0.0);
                         let Some((values, names)) = parse_timeline_keyframe_value(owner, id, kf_node) else {
                             continue;
                         };
@@ -1168,7 +1478,6 @@ pub fn parse_timeline_xml(xml: &str, sorted_keys: &[i32]) -> Option<TimelineScen
                         continue;
                     }
                     keyframes.sort_by(|a, b| a.time.total_cmp(&b.time));
-                    // Keep only the first groupBlendShape keyframe's `names` array to avoid repeating identical blendshape names per keyframe.
                     for kf in keyframes.iter_mut().skip(1) {
                         kf.names.clear();
                     }
@@ -1176,10 +1485,15 @@ pub fn parse_timeline_xml(xml: &str, sorted_keys: &[i32]) -> Option<TimelineScen
                         owner: owner.to_string(),
                         id: id.to_string(),
                         dic_key,
+                        enabled,
+                        alias,
+                        group_path: group_prefix.to_string(),
+                        color,
                         target_path,
                         target_bone,
                         target_ik_effector,
                         param_int,
+                        param_str,
                         keyframes,
                     });
                 }
@@ -1188,14 +1502,302 @@ pub fn parse_timeline_xml(xml: &str, sorted_keys: &[i32]) -> Option<TimelineScen
         }
     }
 
-    walk_tree(root, sorted_keys, &mut tracks, &mut max_kf_time);
+    walk_tree(root, sorted_keys, single_target_key, "", true, &mut tracks, &mut max_kf_time);
     if tracks.is_empty() {
         return None;
     }
     let duration = attr_f32(root, "duration")
         .filter(|d| *d > 0.0)
         .unwrap_or_else(|| if max_kf_time > 1e-4 { max_kf_time } else { 10.0 });
-    Some(TimelineSceneData { duration, tracks })
+    let speed = attr_f32(root, "timeScale")
+        .or_else(|| attr_f32(root, "playbackSpeed"))
+        .or_else(|| attr_f32(root, "speed"))
+        .filter(|s| *s > 0.0)
+        .unwrap_or(1.0);
+    let divisions = attr_i32(root, "divisions").filter(|d| *d > 0).unwrap_or(10);
+    let block_length = attr_f32(root, "blockLength").filter(|b| *b > 0.0).unwrap_or(1.0);
+    let is_looping = attr_bool(root, "isLooping")
+        .or_else(|| attr_bool(root, "isLoop"))
+        .unwrap_or(true);
+    Some(TimelineSceneData {
+        duration,
+        speed,
+        divisions,
+        block_length,
+        is_looping,
+        sorted_keys: sorted_keys.to_vec(),
+        tracks,
+    })
+}
+
+pub fn parse_timeline_xml(xml: &str, sorted_keys: &[i32]) -> Option<TimelineSceneData> {
+    parse_timeline_xml_impl(xml, sorted_keys, None)
+}
+
+/// Parses a `Timeline/Single Files/*.xml` template and binds object tracks onto `target_dic_key`.
+pub fn parse_timeline_single_xml(xml: &str, target_dic_key: i32) -> Option<TimelineSceneData> {
+    parse_timeline_xml_impl(xml, &[], Some(target_dic_key))
+}
+
+fn xml_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Serializes `TimelineSceneData` into a `Timeline.dll`-compatible XML document (either full scene XML or `Single Files/*.xml`).
+pub fn write_timeline_xml(data: &TimelineSceneData, single_file: bool) -> String {
+    let mut unique_keys: BTreeSet<i32> = BTreeSet::new();
+    for tr in &data.tracks {
+        if tr.dic_key >= 0 {
+            unique_keys.insert(tr.dic_key);
+        }
+    }
+    let key_vec: Vec<i32> = if !data.sorted_keys.is_empty() {
+        let mut s = data.sorted_keys.clone();
+        s.sort_unstable();
+        s.dedup();
+        s
+    } else {
+        unique_keys.into_iter().collect()
+    };
+    let mut out = String::with_capacity(4096);
+    if single_file {
+        out.push_str("<root GUID=\"\" animationGroup=\"0\" animationCategory=\"0\" animationNo=\"0\">");
+    } else {
+        out.push_str(&format!(
+            "<root duration=\"{}\" blockLength=\"{}\" divisions=\"{}\" timeScale=\"{}\" isLooping=\"{}\">",
+            data.duration.max(0.1),
+            data.block_length.max(0.01),
+            data.divisions.max(1),
+            data.speed.max(0.01),
+            if data.is_looping { "true" } else { "false" }
+        ));
+    }
+
+    let mut open_groups: Vec<String> = Vec::new();
+    for tr in &data.tracks {
+        let wanted: Vec<&str> = if tr.group_path.trim().is_empty() {
+            Vec::new()
+        } else {
+            tr.group_path.split('/').filter(|s| !s.trim().is_empty()).collect()
+        };
+        let mut common = 0usize;
+        while common < open_groups.len() && common < wanted.len() && open_groups[common] == wanted[common] {
+            common += 1;
+        }
+        while open_groups.len() > common {
+            open_groups.pop();
+            out.push_str("</interpolableGroup>");
+        }
+        for g in &wanted[common..] {
+            out.push_str(&format!("<interpolableGroup name=\"{}\">", xml_escape(g)));
+            open_groups.push((*g).to_string());
+        }
+
+        out.push_str(&format!(
+            "<interpolable enabled=\"{}\" owner=\"{}\" id=\"{}\"",
+            if tr.enabled { "true" } else { "false" },
+            xml_escape(&tr.owner),
+            xml_escape(&tr.id)
+        ));
+        if tr.dic_key >= 0 {
+            let obj_idx = if single_file {
+                0
+            } else {
+                key_vec.binary_search(&tr.dic_key).unwrap_or(0)
+            };
+            out.push_str(&format!(" objectIndex=\"{obj_idx}\""));
+        }
+        match (tr.owner.as_str(), tr.id.as_str()) {
+            ("Timeline", "guideObjectPos" | "guideObjectRot" | "guideObjectScale") => {
+                out.push_str(&format!(" guideObjectPath=\"{}\"", xml_escape(&tr.target_path)));
+            }
+            ("ShalltyUtils", s) if s.starts_with("guideObject") => {
+                out.push_str(&format!(" guideObjectPath=\"{}\"", xml_escape(&tr.target_path)));
+            }
+            ("Timeline", "charClothes" | "juice") | ("NodesConstraints", _) => {
+                if tr.param_int >= 0 {
+                    out.push_str(&format!(" parameter=\"{}\"", tr.param_int));
+                }
+            }
+            ("KKPE", "lastBlendShape") => {
+                out.push_str(&format!(
+                    " parameter1=\"{}\" parameter2=\"{}\"",
+                    xml_escape(&tr.target_path),
+                    tr.param_int.max(0)
+                ));
+            }
+            ("KKPE", _) | ("ShalltyUtils", _) => {
+                if !tr.target_path.is_empty() {
+                    out.push_str(&format!(" parameter=\"{}\"", xml_escape(&tr.target_path)));
+                }
+            }
+            ("RendererEditor", _) => {
+                out.push_str(&format!(
+                    " parameterTargetPath=\"{}\" parameterTargetType=\"0\" parameterIndex=\"{}\"",
+                    xml_escape(&tr.target_path),
+                    tr.param_int.max(0)
+                ));
+            }
+            ("MaterialEditor", _) => {
+                let mut parts = tr.param_str.splitn(3, '|');
+                let mat = parts.next().unwrap_or("");
+                let prop = parts.next().unwrap_or("");
+                let rend = parts.next().unwrap_or("");
+                out.push_str(&format!(
+                    " gameObjectPath=\"{}\" materialName=\"{}\" propertyName=\"{}\" rendererName=\"{}\"",
+                    xml_escape(&tr.target_path),
+                    xml_escape(mat),
+                    xml_escape(prop),
+                    xml_escape(rend)
+                ));
+            }
+            _ => {}
+        }
+        out.push_str(&format!(
+            " bgColorR=\"{}\" bgColorG=\"{}\" bgColorB=\"{}\" alias=\"{}\">",
+            tr.color[0],
+            tr.color[1],
+            tr.color[2],
+            xml_escape(&tr.alias)
+        ));
+
+        let morph_names = tr.keyframes.first().map(|k| &k.names);
+        for kf in &tr.keyframes {
+            out.push_str(&format!("<keyframe time=\"{}\"", kf.time));
+            let v = &kf.values;
+            let get = |idx: usize, def: f32| v.get(idx).copied().unwrap_or(def);
+            match (tr.owner.as_str(), tr.id.as_str()) {
+                ("Timeline", "charAnimation") => {
+                    out.push_str(&format!(
+                        " valueGroup=\"{}\" valueCategory=\"{}\" valueNo=\"{}\"",
+                        get(0, 0.0).round() as i32,
+                        get(1, 0.0).round() as i32,
+                        get(2, 0.0).round() as i32
+                    ));
+                }
+                ("Timeline", "cameraData") => {
+                    out.push_str(&format!(
+                        " posX=\"{}\" posY=\"{}\" posZ=\"{}\" rotX=\"{}\" rotY=\"{}\" rotZ=\"{}\" disX=\"{}\" disY=\"{}\" disZ=\"{}\" fov=\"{}\"",
+                        get(0, 0.0), get(1, 0.0), get(2, 0.0),
+                        get(3, 0.0), get(4, 0.0), get(5, 0.0),
+                        get(6, 0.0), get(7, 0.0), get(8, -2.0), get(9, 23.0)
+                    ));
+                }
+                ("KKPE", "groupBlendShape" | "groupBlendShapeLink") => {
+                    out.push_str(&format!(" valueCount=\"{}\"", v.len()));
+                    for (i, val) in v.iter().enumerate() {
+                        out.push_str(&format!(" value{i}=\"{val}\""));
+                        if let Some(nm) = morph_names.and_then(|ns| ns.get(i)).filter(|s| !s.is_empty()) {
+                            out.push_str(&format!(" name{i}=\"{}\"", xml_escape(nm)));
+                        }
+                    }
+                }
+                ("MaterialEditor", "colorProperty") => {
+                    out.push_str(&format!(
+                        " R=\"{}\" G=\"{}\" B=\"{}\" A=\"{}\"",
+                        get(0, 1.0), get(1, 1.0), get(2, 1.0), get(3, 1.0)
+                    ));
+                }
+                ("MaterialEditor", "textureOffsetProperty" | "textureScaleProperty") => {
+                    out.push_str(&format!(" X=\"{}\" Y=\"{}\"", get(0, 0.0), get(1, 0.0)));
+                }
+                (
+                    "Timeline",
+                    "objectEnabled" | "lightOnOff" | "lightShadows" | "itemPatternClamp1" | "itemPatternClamp2"
+                    | "itemPatternClamp3" | "itemPanelPatternClamp",
+                )
+                | (
+                    "KKPE",
+                    "leftBoobEnabled" | "rightBoobEnabled" | "leftButtEnabled" | "rightButtEnabled" | "dynamicBoneEnabled",
+                )
+                | ("RendererEditor", "targetEnabled")
+                | ("NodesConstraints", "constraintEnabled")
+                | ("Eye Shaking", "shakingEnabled") => {
+                    out.push_str(&format!(" value=\"{}\"", if get(0, 0.0) >= 0.5 { "true" } else { "false" }));
+                }
+                (
+                    "Timeline",
+                    "tears"
+                    | "charClothes"
+                    | "juice"
+                    | "characterNeck"
+                    | "characterEyes"
+                    | "characterEyebrows"
+                    | "characterMouth"
+                    | "characterLeftHand"
+                    | "characterRightHand",
+                )
+                | ("KKPE", "dynamicBoneFreezeAxis" | "colliderBaseDirection" | "colliderBaseBound") => {
+                    out.push_str(&format!(" value=\"{}\"", get(0, 0.0).round() as i32));
+                }
+                (
+                    "Timeline",
+                    "lightColor"
+                    | "itemColor1"
+                    | "itemColor2"
+                    | "itemColor3"
+                    | "itemColor4"
+                    | "itemPatternColor1"
+                    | "itemPatternColor2"
+                    | "itemPatternColor3"
+                    | "itemShadowColor"
+                    | "itemEmissionColor"
+                    | "itemLineColor"
+                    | "itemPanelColor",
+                ) => {
+                    out.push_str(&format!(
+                        " valueR=\"{}\" valueG=\"{}\" valueB=\"{}\" valueA=\"{}\"",
+                        get(0, 1.0), get(1, 1.0), get(2, 1.0), get(3, 1.0)
+                    ));
+                }
+                ("RendererEditor", x) if x.starts_with("Color_") => {
+                    out.push_str(&format!(
+                        " valueR=\"{}\" valueG=\"{}\" valueB=\"{}\" valueA=\"{}\"",
+                        get(0, 1.0), get(1, 1.0), get(2, 1.0), get(3, 1.0)
+                    ));
+                }
+                _ => match v.len() {
+                    0 => out.push_str(" value=\"0\""),
+                    1 => out.push_str(&format!(" value=\"{}\"", v[0])),
+                    2 => out.push_str(&format!(" valueX=\"{}\" valueY=\"{}\"", v[0], v[1])),
+                    3 => out.push_str(&format!(" valueX=\"{}\" valueY=\"{}\" valueZ=\"{}\"", v[0], v[1], v[2])),
+                    _ => out.push_str(&format!(
+                        " valueX=\"{}\" valueY=\"{}\" valueZ=\"{}\" valueW=\"{}\"",
+                        v[0], v[1], v[2], v[3]
+                    )),
+                },
+            }
+            out.push('>');
+            if kf.curve.is_empty() {
+                out.push_str("<curveKeyframe time=\"0\" value=\"0\" inTangent=\"1\" outTangent=\"1\" /><curveKeyframe time=\"1\" value=\"1\" inTangent=\"1\" outTangent=\"1\" />");
+            } else {
+                for cp in &kf.curve {
+                    out.push_str(&format!(
+                        "<curveKeyframe time=\"{}\" value=\"{}\" inTangent=\"{}\" outTangent=\"{}\" />",
+                        cp.t, cp.v, cp.in_t, cp.out_t
+                    ));
+                }
+            }
+            out.push_str("</keyframe>");
+        }
+        out.push_str("</interpolable>");
+    }
+    while open_groups.pop().is_some() {
+        out.push_str("</interpolableGroup>");
+    }
+    out.push_str("</root>");
+    out
 }
 
 pub fn extract_timeline(scene_blocks: Option<&Value>, sorted_keys: &[i32]) -> Option<TimelineSceneData> {
@@ -1203,6 +1805,154 @@ pub fn extract_timeline(scene_blocks: Option<&Value>, sorted_keys: &[i32]) -> Op
     let data = plugin_data_map(blocks, "timeline")?;
     let xml = map_get(data, "sceneInfo")?.as_str()?;
     parse_timeline_xml(xml, sorted_keys)
+}
+
+/// Parses Joan6694's `RendererEditor` scene XML (`KKEx["rendererEditor"]["xml"]`) into `MaterialEdit` entries.
+pub fn parse_renderer_editor_xml(xml: &str, sorted_keys: &[i32]) -> Vec<MaterialEdit> {
+    let Some(cleaned) = parse_xml_lenient(xml) else { return Vec::new() };
+    let Ok(doc) = roxmltree::Document::parse(&cleaned) else { return Vec::new() };
+    let mut out = Vec::new();
+    for rnode in doc
+        .root_element()
+        .children()
+        .filter(|n| n.is_element() && n.tag_name().name() == "renderer")
+    {
+        let Some(obj_idx) = attr_i32(rnode, "objectIndex") else { continue };
+        if obj_idx < 0 || (obj_idx as usize) >= sorted_keys.len() {
+            continue;
+        }
+        let id = sorted_keys[obj_idx as usize];
+        let rpath = rnode.attribute("rendererPath").unwrap_or("").trim();
+        let rend_name = leaf_bone_name(rpath);
+        if !rend_name.is_empty() {
+            if let Some(false) = attr_bool(rnode, "rendererEnabled") {
+                out.push(MaterialEdit {
+                    id,
+                    material: rend_name.clone(),
+                    property: "Enabled".into(),
+                    kind: "renderer".into(),
+                    value: [0.0, 0.0, 0.0, 0.0],
+                    text: String::new(),
+                });
+            }
+            if let Some(sc) = attr_i32(rnode, "shadowCastingMode") {
+                if sc == 0 {
+                    out.push(MaterialEdit {
+                        id,
+                        material: rend_name.clone(),
+                        property: "ShadowCastingMode".into(),
+                        kind: "renderer".into(),
+                        value: [0.0, 0.0, 0.0, 0.0],
+                        text: String::new(),
+                    });
+                }
+            }
+            if let Some(false) = attr_bool(rnode, "receiveShadows") {
+                out.push(MaterialEdit {
+                    id,
+                    material: rend_name.clone(),
+                    property: "ReceiveShadows".into(),
+                    kind: "renderer".into(),
+                    value: [0.0, 0.0, 0.0, 0.0],
+                    text: String::new(),
+                });
+            }
+        }
+        for mnode in rnode.children().filter(|n| n.is_element() && n.tag_name().name() == "material") {
+            let mut st_map: BTreeMap<String, ([f32; 2], [f32; 2])> = BTreeMap::new();
+            for group in mnode.children().filter(|n| n.is_element()) {
+                match group.tag_name().name() {
+                    "floats" => {
+                        for f in group.children().filter(|n| n.is_element() && n.tag_name().name() == "float") {
+                            let Some(key) = f.attribute("key").filter(|s| !s.is_empty()) else { continue };
+                            let Some(v) = attr_f32(f, "value") else { continue };
+                            out.push(MaterialEdit {
+                                id,
+                                material: String::new(),
+                                property: key.to_string(),
+                                kind: "float".into(),
+                                value: [v, 0.0, 0.0, 0.0],
+                                text: String::new(),
+                            });
+                        }
+                    }
+                    "colors" => {
+                        for c in group.children().filter(|n| n.is_element() && n.tag_name().name() == "color") {
+                            let Some(key) = c.attribute("key").filter(|s| !s.is_empty()) else { continue };
+                            let (Some(r), Some(g), Some(b)) = (attr_f32(c, "r"), attr_f32(c, "g"), attr_f32(c, "b")) else { continue };
+                            let a = attr_f32(c, "a").unwrap_or(1.0);
+                            out.push(MaterialEdit {
+                                id,
+                                material: String::new(),
+                                property: key.to_string(),
+                                kind: "color".into(),
+                                value: [r, g, b, a],
+                                text: String::new(),
+                            });
+                        }
+                    }
+                    "vectors" => {
+                        for vn in group.children().filter(|n| n.is_element() && n.tag_name().name() == "vector") {
+                            let Some(key) = vn.attribute("key").filter(|s| !s.is_empty()) else { continue };
+                            let x = attr_f32(vn, "x").unwrap_or(0.0);
+                            let y = attr_f32(vn, "y").unwrap_or(0.0);
+                            let z = attr_f32(vn, "z").unwrap_or(0.0);
+                            let w = attr_f32(vn, "w").unwrap_or(0.0);
+                            out.push(MaterialEdit {
+                                id,
+                                material: String::new(),
+                                property: key.to_string(),
+                                kind: "vector".into(),
+                                value: [x, y, z, w],
+                                text: String::new(),
+                            });
+                        }
+                    }
+                    "textureScales" => {
+                        for ts in group.children().filter(|n| n.is_element() && n.tag_name().name() == "textureScale") {
+                            let Some(key) = ts.attribute("key").filter(|s| !s.is_empty()) else { continue };
+                            let entry = st_map.entry(key.to_string()).or_insert(([1.0, 1.0], [0.0, 0.0]));
+                            if let Some(x) = attr_f32(ts, "x") { entry.0[0] = x; }
+                            if let Some(y) = attr_f32(ts, "y") { entry.0[1] = y; }
+                        }
+                    }
+                    "textureOffsets" => {
+                        for to in group.children().filter(|n| n.is_element() && n.tag_name().name() == "textureOffset") {
+                            let Some(key) = to.attribute("key").filter(|s| !s.is_empty()) else { continue };
+                            let entry = st_map.entry(key.to_string()).or_insert(([1.0, 1.0], [0.0, 0.0]));
+                            if let Some(x) = attr_f32(to, "x") { entry.1[0] = x; }
+                            if let Some(y) = attr_f32(to, "y") { entry.1[1] = y; }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            for (key, (sc, off)) in st_map {
+                out.push(MaterialEdit {
+                    id,
+                    material: String::new(),
+                    property: key,
+                    kind: "texture_st".into(),
+                    value: [sc[0], sc[1], off[0], off[1]],
+                    text: String::new(),
+                });
+            }
+        }
+    }
+    out
+}
+
+pub fn extract_renderer_editor(scene_blocks: Option<&Value>, sorted_keys: &[i32]) -> Vec<MaterialEdit> {
+    let Some(blocks) = scene_blocks else { return Vec::new() };
+    let Some(data) = plugin_data_map(blocks, "rendererEditor") else { return Vec::new() };
+    let Some(xml) = map_get(data, "xml").and_then(|v| {
+        v.as_str()
+            .map(str::to_owned)
+            .or_else(|| v.as_slice().map(|b| String::from_utf8_lossy(b).into_owned()))
+    }) else {
+        return Vec::new();
+    };
+    parse_renderer_editor_xml(&xml, sorted_keys)
 }
 
 // ============================================================================
@@ -1267,6 +2017,20 @@ pub fn export_scene_plugins(
         }
     }
 
+    let re_edits = extract_renderer_editor(blocks.as_ref(), &sorted_keys);
+    if !re_edits.is_empty() {
+        if !json["material_edits"].is_array() {
+            json["material_edits"] = serde_json::json!([]);
+        }
+        if let Some(arr) = json["material_edits"].as_array_mut() {
+            for e in re_edits {
+                if let Ok(v) = serde_json::to_value(e) {
+                    arr.push(v);
+                }
+            }
+        }
+    }
+
     if let Some(timeline) = extract_timeline(blocks.as_ref(), &sorted_keys) {
         if let Ok(v) = serde_json::to_value(timeline) {
             json["timeline"] = v;
@@ -1281,12 +2045,14 @@ mod tests {
     #[test]
     fn ik_effector_mapping_matches_okstudio_finalik_indices() {
         assert_eq!(studio_ik_effector_from_path("BodyTop/work/cf_t_hips"), Some(0));
+        assert_eq!(studio_ik_effector_from_path("cf_t_hips(work)"), Some(0));
         assert_eq!(studio_ik_effector_from_path("cf_t_shoulder_L"), Some(1));
         assert_eq!(studio_ik_effector_from_path("cf_t_elbo_L"), Some(9));
         assert_eq!(studio_ik_effector_from_path("cf_t_hand_L"), Some(5));
         assert_eq!(studio_ik_effector_from_path("cf_t_shoulder_R"), Some(2));
         assert_eq!(studio_ik_effector_from_path("cf_t_elbo_R"), Some(10));
         assert_eq!(studio_ik_effector_from_path("cf_t_hand_R"), Some(6));
+        assert_eq!(studio_ik_effector_from_path("cf_t_hand_R(work)"), Some(6));
         assert_eq!(studio_ik_effector_from_path("cf_t_waist_L"), Some(3));
         assert_eq!(studio_ik_effector_from_path("cf_t_knee_L"), Some(11));
         assert_eq!(studio_ik_effector_from_path("cf_t_leg_L"), Some(7));
@@ -1294,6 +2060,7 @@ mod tests {
         assert_eq!(studio_ik_effector_from_path("cf_t_knee_R"), Some(12));
         assert_eq!(studio_ik_effector_from_path("cf_t_leg_R"), Some(8));
         assert_eq!(studio_ik_effector_from_path("BodyTop/p_cf_body_bone/cf_j_arm01_L"), None);
+        assert_eq!(leaf_bone_name("cf_t_hand_R(work)"), "cf_t_hand_R");
     }
 
     #[test]
@@ -1396,5 +2163,47 @@ mod tests {
         assert_eq!(tl.tracks[2].owner, "NodesConstraints");
         assert_eq!(tl.tracks[2].param_int, 4);
         assert_eq!(tl.tracks[2].keyframes[1].values, vec![0.0]);
+    }
+
+    #[test]
+    fn timeline_extended_interpolables_and_xml_roundtrip() {
+        let sorted = vec![15, 28];
+        let xml = r#"<root duration="12.0" blockLength="2" divisions="20" timeScale="1.5" isLooping="false">
+            <interpolableGroup name="Chara/Sub">
+                <interpolable enabled="false" owner="Timeline" objectIndex="0" id="charAnimation" bgColorR="0.8" bgColorG="0.4" bgColorB="0.2" alias="SwitchDance">
+                    <keyframe time="0.5" valueGroup="4" valueCategory="146" valueNo="13"/>
+                </interpolable>
+                <interpolable enabled="true" owner="KKPE" objectIndex="0" id="fbbikEffectorPositionWeightL. Hand" parameter="BodyTop/p_cf_body_bone">
+                    <keyframe time="0" value="0.25"/>
+                    <keyframe time="3" value="1.0"/>
+                </interpolable>
+                <interpolable enabled="true" owner="RendererEditor" objectIndex="1" id="Float_Alpha" parameterTargetPath="Prop/Mesh" parameterTargetType="0" parameterIndex="0">
+                    <keyframe time="0" value="0.3"/>
+                </interpolable>
+                <interpolable enabled="true" owner="MaterialEditor" objectIndex="1" id="colorProperty" gameObjectPath="CommonSpace/Prop" materialName="Hair1" propertyName="Color" rendererName="">
+                    <keyframe time="0" R="0.9" G="0.3" B="0.2" A="1.0"/>
+                </interpolable>
+            </interpolableGroup>
+        </root>"#;
+        let tl = parse_timeline_xml(xml, &sorted).expect("extended timeline parsed");
+        assert!((tl.duration - 12.0).abs() < 1e-5);
+        assert!((tl.speed - 1.5).abs() < 1e-5);
+        assert_eq!(tl.divisions, 20);
+        assert!(!tl.is_looping);
+        assert_eq!(tl.tracks.len(), 4);
+        assert!(!tl.tracks[0].enabled);
+        assert_eq!(tl.tracks[0].alias, "SwitchDance");
+        assert_eq!(tl.tracks[0].group_path, "Chara/Sub");
+        assert_eq!(tl.tracks[0].keyframes[0].values, vec![4.0, 146.0, 13.0]);
+        assert_eq!(tl.tracks[1].target_ik_effector, 5);
+        assert_eq!(tl.tracks[2].param_str, "_Alpha");
+        assert_eq!(tl.tracks[3].param_str, "Hair1|Color|");
+
+        let serialized_single = write_timeline_xml(&tl, true);
+        let rebound = parse_timeline_single_xml(&serialized_single, 99).expect("single xml roundtrip");
+        assert_eq!(rebound.tracks.len(), 4);
+        assert_eq!(rebound.tracks[0].dic_key, 99);
+        assert_eq!(rebound.tracks[0].keyframes[0].values, vec![4.0, 146.0, 13.0]);
+        assert_eq!(rebound.tracks[3].param_str, "Hair1|Color|");
     }
 }

@@ -4,7 +4,9 @@
 
 ## 工作規則
 
-- **回覆語言**：一律用繁體中文；程式碼、識別名稱、路徑、指令保持原文。
+- **回复语言（最高优先级）**：**必须一律使用简体中文**（严禁使用繁体中文）；代码、标识符、路径、指令保持原文。
+- **汇报风格（按工作节点输出一次）**：每到一个关键工作节点输出一次大纲式进展（像 Codex 一样只说大体在干什么以及重要改动，不要每一步琐碎操作都汇报）。
+- **启动指令格式（`Win + R`）**：凡涉及打开本工作区程序、编辑器或测试窗口时，一律直接给出可直接复制粘贴进 `Win + R` 运行框的单行完整绝对路径命令（不依赖当前工作目录）。
 - **照使用者的決定做**：使用者做出的決定或指出的錯誤，直接照辦，不質疑、不反問、不二度確認；使用者說錯就是錯。
 - **版控只放程式碼與自製內容**：
   - **原作資料不進版控**（2026-11-04 起，[Docs/ORIGINAL_DATA_OUT_OF_GIT_PLAN_20261104.md](Docs/ORIGINAL_DATA_OUT_OF_GIT_PLAN_20261104.md)）：基礎庫 `base_v1/`（含共用 mod 轉出的模型）、`RuntimeAnimations/`、`KKPreview/` 等原作／mod 衍生資料一律不提交，清單在 `Tools/original_data_manifest.json`。新 checkout 用 `Tools\lua\lua.exe Tools\original_data.lua restore --game <原作>` 從遊戲轉換，或 `restore --archive <開發資源 zip> [--h-voices <H 語音 zip>]` 還原（[Docs/SHARED_RESOURCES_SETUP.md](Docs/SHARED_RESOURCES_SETUP.md)）。歷史已改寫（2026-11-04），舊 checkout 要 reset 到新的 origin，不能 merge 舊歷史。

@@ -86,5 +86,75 @@ bool FOKForgeSkinCustomizationBinding::RunTest(const FString&)
     return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOKKKUTSMaterialCoverage,
+    "OpenKoikatsu.RuntimeMaterial.KKUTSCoverage",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FOKKKUTSMaterialCoverage::RunTest(const FString&)
+{
+    struct FCase { const TCHAR* Shader; EKKRuntimeMaterialRecipe Recipe; EBlendMode Blend; bool TwoSided; bool HasOutline; };
+    const FCase Cases[] = {
+        { TEXT("KKUTS"), EKKRuntimeMaterialRecipe::KKUTS, BLEND_Masked, true, true },
+        { TEXT("KKUTS_Tess"), EKKRuntimeMaterialRecipe::KKUTS, BLEND_Masked, true, true },
+        { TEXT("KKUTSitem"), EKKRuntimeMaterialRecipe::KKUTSItem, BLEND_Masked, true, true },
+        { TEXT("KKUTSitem_Tess"), EKKRuntimeMaterialRecipe::KKUTSItem, BLEND_Masked, true, true },
+        { TEXT("KKUTSalpha"), EKKRuntimeMaterialRecipe::KKUTSAlpha, BLEND_Translucent, true, false },
+        { TEXT("KKUTSalpha_Tess"), EKKRuntimeMaterialRecipe::KKUTSAlpha, BLEND_Translucent, true, false },
+        { TEXT("KKUTShair"), EKKRuntimeMaterialRecipe::KKUTSHair, BLEND_Masked, true, true },
+        { TEXT("KKUTShair_Tess"), EKKRuntimeMaterialRecipe::KKUTSHair, BLEND_Masked, true, true },
+        { TEXT("KKUTSeye"), EKKRuntimeMaterialRecipe::KKUTSEye, BLEND_Translucent, false, false },
+        { TEXT("KKUTSeyew"), EKKRuntimeMaterialRecipe::KKUTSEyeWhite, BLEND_Translucent, false, false },
+        { TEXT("KKUSS"), EKKRuntimeMaterialRecipe::KKUSS, BLEND_Masked, true, true },
+        { TEXT("kKUSS"), EKKRuntimeMaterialRecipe::KKUSS, BLEND_Masked, true, true },
+        { TEXT("KKUSSitem"), EKKRuntimeMaterialRecipe::KKUSSItem, BLEND_Masked, true, false },
+        { TEXT("KKUSSalpha"), EKKRuntimeMaterialRecipe::KKUSSAlpha, BLEND_AlphaComposite, false, false },
+        { TEXT("KKUSShair"), EKKRuntimeMaterialRecipe::KKUSSHair, BLEND_Masked, true, true },
+    };
+    for (const FCase& C : Cases)
+    {
+        FKKRuntimeMaterialPart Part;
+        Part.SourceMetadataJson = FString::Printf(TEXT("{\"schema\":1,\"material\":{\"shader\":\"%s\",\"floats\":{\"_highcolor_power\":0.42,\"_outlineadjust\":1.5,\"_1st_shademap_st_x\":2.0},\"colors\":{}}}"), C.Shader);
+        const auto Recipe = OKRuntimeSharedMaterialRecipe(Part);
+        TestEqual(C.Shader, int32(Recipe), int32(C.Recipe));
+        TestEqual(C.Shader, int32(OKRuntimeSharedMaterialBlendMode(Recipe)), int32(C.Blend));
+        TestEqual(C.Shader, OKRuntimeSharedMaterialTwoSided(Recipe), C.TwoSided);
+        TestEqual(C.Shader, OKRuntimeOutlineLayout(Recipe) != nullptr, C.HasOutline);
+        {
+            FKKRuntimeMaterialScene Scene;
+            FKKRuntimeMaterialBinding Binding;
+            FString Error;
+            TestTrue(*FString::Printf(TEXT("%s forward binding: %s"), C.Shader, *Error), OKPrepareRuntimeSharedMaterialBinding(Part, Scene, Binding, Error, false));
+            if (C.Recipe == EKKRuntimeMaterialRecipe::KKUTS)
+            {
+                TestTrue(TEXT("lowercase ME float binds to _HighColor_Power"), FMath::IsNearlyEqual(Binding.Scalars.FindRef(TEXT("_HighColor_Power")), 0.42f, 1e-4f));
+                TestTrue(TEXT("lowercase ME ST axis binds to _1st_ShadeMap_ST"), FMath::IsNearlyEqual(Binding.Vectors.FindRef(TEXT("_1st_ShadeMap_ST")).R, 2.f, 1e-4f));
+            }
+            if (C.HasOutline)
+            {
+                FKKRuntimeMaterialBinding OutlineBinding;
+                TestTrue(*FString::Printf(TEXT("%s outline binding: %s"), C.Shader, *Error), OKPrepareRuntimeSharedMaterialBinding(Part, Scene, OutlineBinding, Error, true));
+                if (C.Recipe == EKKRuntimeMaterialRecipe::KKUTS || C.Recipe == EKKRuntimeMaterialRecipe::KKUTSItem || C.Recipe == EKKRuntimeMaterialRecipe::KKUTSHair)
+                {
+                    TestTrue(TEXT("lowercase ME _outlineadjust binds to _OutlineAdjust"), FMath::IsNearlyEqual(OutlineBinding.Scalars.FindRef(TEXT("_OutlineAdjust")), 1.5f, 1e-4f));
+                }
+                else
+                {
+                    TestTrue(TEXT("KKUSS outline binds _linewidthG"), OutlineBinding.Scalars.Contains(TEXT("_linewidthG")));
+                }
+            }
+            for (const TCHAR* Root : { TEXT("/Game/IndependentResources/RuntimeMaterials/StreetDisplay27"), TEXT("/Game/IndependentResources/RuntimeMaterials/StreetHG06"), TEXT("/Game/IndependentResources/RuntimeMaterials/StudioDisplay31") })
+            {
+                auto* Parent = OKLoadRuntimeSharedMaterialParent(Root, Recipe, false);
+                TestNotNull(*FString::Printf(TEXT("%s/%s forward parent"), Root, C.Shader), Parent);
+                if (C.HasOutline)
+                {
+                    auto* OutlineParent = OKLoadRuntimeSharedMaterialParent(Root, Recipe, true);
+                    TestNotNull(*FString::Printf(TEXT("%s/%s outline parent"), Root, C.Shader), OutlineParent);
+                }
+            }
+        }
+    }
+    return !HasAnyErrors();
+}
+
 #endif
 

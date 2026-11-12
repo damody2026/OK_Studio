@@ -71,6 +71,21 @@ int32 UOKSceneDocument::Duplicate(int32 Id)
 	// The copies keep their timeline keys, as a copy and paste does.
 	for (int32 T = 0, Count = Tracks.Num(); T < Count; ++T)
 		if (const int32* To = IdMap.Find(Tracks[T].ObjectId)) { FOKSceneTrack Track = Tracks[T]; Track.ObjectId = *To; Tracks.Add(MoveTemp(Track)); }
+	for (int32 T = 0, Count = TimelineTracks.Num(); T < Count; ++T)
+		if (const int32* To = IdMap.Find(TimelineTracks[T].ObjectId)) { FOKSceneTimelineTrack Tl = TimelineTracks[T]; Tl.ObjectId = *To; TimelineTracks.Add(MoveTemp(Tl)); }
+	for (int32 CIdx = 0, Count = Constraints.Num(); CIdx < Count; ++CIdx)
+	{
+		const FOKSceneConstraint& Con = Constraints[CIdx];
+		const int32* NewChild = IdMap.Find(Con.ChildId);
+		const int32* NewParent = Con.ParentId == -2 ? nullptr : IdMap.Find(Con.ParentId);
+		if (NewChild && (Con.ParentId == -2 || NewParent))
+		{
+			FOKSceneConstraint Copy = Con;
+			Copy.ChildId = *NewChild;
+			if (NewParent) Copy.ParentId = *NewParent;
+			Constraints.Add(MoveTemp(Copy));
+		}
+	}
 	NotifyChanged();
 	return IdMap[Id];
 }
@@ -221,6 +236,11 @@ FString UOKSceneDocument::ToJson() const
 		Root->SetArrayField(TEXT("timeline_tracks"), TlJson);
 	}
 	if (bLoopTimeline) Root->SetBoolField(TEXT("loop_timeline"), true);
+	if (!FMath::IsNearlyEqual(TimelineSpeed, 1.f, 1e-4f)) Root->SetNumberField(TEXT("timeline_speed"), TimelineSpeed);
+	if (TimelineDivisions != 10) Root->SetNumberField(TEXT("timeline_divisions"), TimelineDivisions);
+	if (!FMath::IsNearlyEqual(TimelineBlockLength, 1.f, 1e-4f)) Root->SetNumberField(TEXT("timeline_block_length"), TimelineBlockLength);
+	if (!Vnge.IsEmpty())
+		if (TSharedPtr<FJsonObject> VngeJson = FJsonObjectConverter::UStructToJsonObject(Vnge)) Root->SetObjectField(TEXT("vnge"), VngeJson);
 	if (StudioCameraId >= 0)
 	{
 		Root->SetNumberField(TEXT("studio_camera_id"), StudioCameraId);
@@ -253,6 +273,7 @@ FString UOKSceneDocument::ToJson() const
 		if (O.Kind != EOKSceneObjectKind::Light) J->RemoveField(TEXT("light"));
 		if (O.Kind != EOKSceneObjectKind::Camera) J->RemoveField(TEXT("camera"));
 		if (O.Kind != EOKSceneObjectKind::Effect) J->RemoveField(TEXT("effect"));
+		if (O.LiveMaterialEdits.IsEmpty()) J->RemoveField(TEXT("liveMaterialEdits"));
 		Items.Add(MakeShared<FJsonValueObject>(J));
 	}
 	Root->SetArrayField(TEXT("objects"), Items);
@@ -346,6 +367,14 @@ bool UOKSceneDocument::FromJson(const FString& Json, FString& OutError)
 		}
 	bLoopTimeline = false;
 	Root->TryGetBoolField(TEXT("loop_timeline"), bLoopTimeline);
+	TimelineSpeed = Root->HasField(TEXT("timeline_speed")) ? FMath::Max(0.01f, float(Root->GetNumberField(TEXT("timeline_speed")))) : 1.f;
+	TimelineDivisions = Root->HasField(TEXT("timeline_divisions")) ? FMath::Max(1, int32(Root->GetNumberField(TEXT("timeline_divisions")))) : 10;
+	TimelineBlockLength = Root->HasField(TEXT("timeline_block_length")) ? FMath::Max(0.01f, float(Root->GetNumberField(TEXT("timeline_block_length")))) : 1.f;
+	LastTimelineScale = 1.f;
+	Vnge = FOKSceneVngeData();
+	const TSharedPtr<FJsonObject>* VngeJson = nullptr;
+	if (Root->TryGetObjectField(TEXT("vnge"), VngeJson) && VngeJson && VngeJson->IsValid())
+		FJsonObjectConverter::JsonObjectToUStruct(VngeJson->ToSharedRef(), &Vnge);
 	StudioCameraId = Root->HasField(TEXT("studio_camera_id")) ? int32(Root->GetNumberField(TEXT("studio_camera_id"))) : -1;
 	StudioCameraOrbitTarget = FVector::ZeroVector;
 	StudioCameraOrbitRot = FVector::ZeroVector;
@@ -396,7 +425,7 @@ namespace
 {
 	/** Objects of a fragment or scene added to a document under new ids (parents inside the set follow; the set's top
 	 *  objects go under Parent). Tracks of the objects come along. */
-	TArray<int32> AddObjectsRemapped(UOKSceneDocument& Doc, TArray<FOKSceneObject>&& In, const TArray<FOKSceneTrack>& InTracks, int32 Parent)
+	TArray<int32> AddObjectsRemapped(UOKSceneDocument& Doc, TArray<FOKSceneObject>&& In, const TArray<FOKSceneTrack>& InTracks, int32 Parent, const TSharedPtr<FJsonObject>& ExtraRoot = nullptr)
 	{
 		TMap<int32, int32> IdMap;
 		for (FOKSceneObject& O : In) IdMap.Add(O.Id, Doc.NextId++);
@@ -411,6 +440,51 @@ namespace
 		}
 		for (const FOKSceneTrack& T : InTracks)
 			if (const int32* To = IdMap.Find(T.ObjectId)) { FOKSceneTrack Copy = T; Copy.ObjectId = *To; Doc.Tracks.Add(MoveTemp(Copy)); }
+		if (ExtraRoot)
+		{
+			const TArray<TSharedPtr<FJsonValue>>* TlJson = nullptr;
+			if (ExtraRoot->TryGetArrayField(TEXT("timeline_tracks"), TlJson))
+				for (const TSharedPtr<FJsonValue>& V : *TlJson)
+				{
+					FOKSceneTimelineTrack Tr;
+					if (!V->AsObject() || !FJsonObjectConverter::JsonObjectToUStruct(V->AsObject().ToSharedRef(), &Tr)) continue;
+					if (Tr.ObjectId >= 0)
+					{
+						const int32* To = IdMap.Find(Tr.ObjectId);
+						if (!To) continue;
+						Tr.ObjectId = *To;
+					}
+					Doc.TimelineTracks.Add(MoveTemp(Tr));
+				}
+			const TArray<TSharedPtr<FJsonValue>>* ConJson = nullptr;
+			if (ExtraRoot->TryGetArrayField(TEXT("constraints"), ConJson))
+				for (const TSharedPtr<FJsonValue>& V : *ConJson)
+				{
+					FOKSceneConstraint Con;
+					if (!V->AsObject() || !FJsonObjectConverter::JsonObjectToUStruct(V->AsObject().ToSharedRef(), &Con)) continue;
+					const int32* NewChild = IdMap.Find(Con.ChildId);
+					const int32* NewParent = Con.ParentId == -2 ? nullptr : IdMap.Find(Con.ParentId);
+					if (!NewChild || (Con.ParentId != -2 && !NewParent)) continue;
+					Con.ChildId = *NewChild;
+					if (NewParent) Con.ParentId = *NewParent;
+					Doc.Constraints.Add(MoveTemp(Con));
+				}
+			const TSharedPtr<FJsonObject>* VngeJson = nullptr;
+			if (ExtraRoot->TryGetObjectField(TEXT("vnge"), VngeJson) && VngeJson && VngeJson->IsValid())
+			{
+				FOKSceneVngeData MergedVnge;
+				if (FJsonObjectConverter::JsonObjectToUStruct(VngeJson->ToSharedRef(), &MergedVnge))
+				{
+					MergedVnge.RemapObjectIds(IdMap);
+					Doc.Vnge.Registry.Actors.Append(MergedVnge.Registry.Actors);
+					Doc.Vnge.Registry.Props.Append(MergedVnge.Registry.Props);
+					Doc.Vnge.Clips.Append(MergedVnge.Clips);
+					Doc.Vnge.Texts.Append(MergedVnge.Texts);
+					Doc.Vnge.Sounds.Append(MergedVnge.Sounds);
+					Doc.Vnge.Physics.Rules.Append(MergedVnge.Physics.Rules);
+				}
+			}
+		}
 		return Tops;
 	}
 
@@ -468,6 +542,11 @@ FString UOKSceneDocument::ExportFragment(const TArray<int32>& Ids) const
 		Root->SetArrayField(TEXT("timeline_tracks"), TlJson);
 	}
 	if (bLoopTimeline) Root->SetBoolField(TEXT("loop_timeline"), true);
+	if (!FMath::IsNearlyEqual(TimelineSpeed, 1.f, 1e-4f)) Root->SetNumberField(TEXT("timeline_speed"), TimelineSpeed);
+	if (TimelineDivisions != 10) Root->SetNumberField(TEXT("timeline_divisions"), TimelineDivisions);
+	if (!FMath::IsNearlyEqual(TimelineBlockLength, 1.f, 1e-4f)) Root->SetNumberField(TEXT("timeline_block_length"), TimelineBlockLength);
+	if (!Vnge.IsEmpty())
+		if (TSharedPtr<FJsonObject> VngeJson = FJsonObjectConverter::UStructToJsonObject(Vnge)) Root->SetObjectField(TEXT("vnge"), VngeJson);
 	if (StudioCameraId >= 0)
 	{
 		Root->SetNumberField(TEXT("studio_camera_id"), StudioCameraId);
@@ -494,7 +573,7 @@ TArray<int32> UOKSceneDocument::PasteFragment(const FString& Json, int32 Parent,
 	TArray<FOKSceneObject> In;
 	TArray<FOKSceneTrack> InTracks;
 	if (!ParseObjects(Root, In, InTracks, OutError)) return {};
-	TArray<int32> Tops = AddObjectsRemapped(*this, MoveTemp(In), InTracks, Parent);
+	TArray<int32> Tops = AddObjectsRemapped(*this, MoveTemp(In), InTracks, Parent, Root);
 	NotifyChanged();
 	return Tops;
 }
@@ -509,7 +588,7 @@ TArray<int32> UOKSceneDocument::Merge(const FString& SceneJson, FString& OutErro
 	TSet<int32> Ids;
 	for (const FOKSceneObject& O : In) Ids.Add(O.Id);
 	for (FOKSceneObject& O : In) if (!Ids.Contains(O.Parent)) O.Parent = -1;
-	TArray<int32> Tops = AddObjectsRemapped(*this, MoveTemp(In), InTracks, -1);
+	TArray<int32> Tops = AddObjectsRemapped(*this, MoveTemp(In), InTracks, -1, Root);
 	if (Root->HasField(TEXT("duration"))) Duration = FMath::Max(Duration, float(Root->GetNumberField(TEXT("duration"))));
 	NotifyChanged();
 	return Tops;
@@ -1029,6 +1108,39 @@ namespace
 	}
 }
 
+namespace
+{
+	void UpsertLiveMaterialEdit(TArray<FOKSceneMaterialEdit>& Arr, const FString& Material, const FString& Property, EOKSceneMaterialEditKind Kind, const FLinearColor& Val)
+	{
+		if (Property.IsEmpty()) return;
+		FOKSceneMaterialEdit* Entry = Arr.FindByPredicate([&](const FOKSceneMaterialEdit& E) { return E.Material == Material && E.Property == Property && E.Kind == Kind; });
+		if (!Entry)
+		{
+			Entry = &Arr.AddDefaulted_GetRef();
+			Entry->Material = Material;
+			Entry->Property = Property;
+			Entry->Kind = Kind;
+		}
+		Entry->Value = Val;
+	}
+
+	FString DocLeafNodeName(const FString& Path)
+	{
+		FString Trimmed = Path;
+		Trimmed.TrimStartAndEndInline();
+		int32 Slash = INDEX_NONE;
+		if (Trimmed.FindLastChar(TEXT('/'), Slash)) Trimmed = Trimmed.Mid(Slash + 1);
+		if (Trimmed.EndsWith(TEXT("(work)"))) Trimmed.LeftChopInline(6);
+		Trimmed.TrimStartAndEndInline();
+		return Trimmed;
+	}
+}
+
+float UOKSceneDocument::EvaluateTimelineCurve01(const TArray<FOKSceneTimelineCurvePt>& Curve, float RawU)
+{
+	return EvalTimelineCurve(Curve, RawU);
+}
+
 void UOKSceneDocument::EvaluateTimeline(float Time)
 {
 	bool bAny = false;
@@ -1114,6 +1226,7 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 	}
 	if (!TimelineTracks.IsEmpty())
 	{
+		LastTimelineScale = 1.f;
 		const float EvalTime = (bLoopTimeline && Duration > 1e-4f && Time >= 0.f) ? FMath::Fmod(Time, Duration) : Time;
 		FVector OrbitPos = StudioCameraOrbitTarget;
 		FVector OrbitRot = StudioCameraOrbitRot;
@@ -1122,10 +1235,12 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 		bool bDirectCamPos = false, bDirectCamRot = false, bCamFov = false;
 		FVector DirectCamPos = FVector::ZeroVector, DirectCamRotEuler = FVector::ZeroVector;
 		float CamVertFov = 23.f;
+		TMap<TPair<int32, FString>, FVector> GuideEulerAccum;
+		TMap<TPair<int32, FString>, FVector> BoneEulerAccum;
 
 		for (const FOKSceneTimelineTrack& Tr : TimelineTracks)
 		{
-			if (Tr.Keyframes.IsEmpty()) continue;
+			if (!Tr.bEnabled || Tr.Keyframes.IsEmpty()) continue;
 			const int32 Next = Tr.Keyframes.IndexOfByPredicate([EvalTime](const FOKSceneTimelineKeyframe& K) { return K.Time > EvalTime; });
 			const FOKSceneTimelineKeyframe* K0 = nullptr;
 			const FOKSceneTimelineKeyframe* K1 = nullptr;
@@ -1143,6 +1258,14 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 			auto Sample1 = [&]() -> float
 			{
 				return K1 && K1->Values.Num() >= 1 ? FMath::Lerp(K0->Values[0], K1->Values[0], Factor) : K0->Values[0];
+			};
+			auto SampleAngleDeg = [&]() -> float
+			{
+				if (!K1 || K1->Values.Num() < 1) return K0->Values[0];
+				const float Delta = FMath::FindDeltaAngleDegrees(K0->Values[0], K1->Values[0]);
+				float Out = FMath::Fmod(K0->Values[0] + Delta * Factor, 360.f);
+				if (Out < 0.f) Out += 360.f;
+				return Out;
 			};
 			auto Sample3 = [&]() -> FVector
 			{
@@ -1167,6 +1290,44 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 				else if (Tr.InterpolableId == TEXT("cameraPos")) { DirectCamPos = Sample3(); bDirectCamPos = true; bAny = true; }
 				else if (Tr.InterpolableId == TEXT("cameraRot")) { DirectCamRotEuler = SampleUnityQuatSlerpEuler(K0->Values, K1 ? &K1->Values : nullptr, Factor); bDirectCamRot = true; bAny = true; }
 				else if (Tr.InterpolableId == TEXT("cameraFOV")) { CamVertFov = Sample1(); bCamFov = true; bAny = true; }
+				else if (Tr.InterpolableId == TEXT("timeScale")) { LastTimelineScale = FMath::Max(0.01f, Sample1()); bAny = true; }
+				else if (Tr.InterpolableId == TEXT("cameraData") && K0->Values.Num() >= 10)
+				{
+					auto LerpIdx = [&](int32 Idx) -> float
+					{
+						return K1 && K1->Values.IsValidIndex(Idx) ? FMath::Lerp(K0->Values[Idx], K1->Values[Idx], Factor) : K0->Values[Idx];
+					};
+					auto LerpDegIdx = [&](int32 Idx) -> float
+					{
+						if (!K1 || !K1->Values.IsValidIndex(Idx)) return K0->Values[Idx];
+						const float D = FMath::FindDeltaAngleDegrees(K0->Values[Idx], K1->Values[Idx]);
+						float Out = FMath::Fmod(K0->Values[Idx] + D * Factor, 360.f);
+						return Out < 0.f ? Out + 360.f : Out;
+					};
+					OrbitPos = FVector(LerpIdx(0), LerpIdx(1), LerpIdx(2));
+					OrbitRot = FVector(LerpDegIdx(3), LerpDegIdx(4), LerpDegIdx(5));
+					OrbitDist = FVector(LerpIdx(6), LerpIdx(7), LerpIdx(8));
+					CamVertFov = LerpIdx(9);
+					bOrbitTouched = true;
+					bCamFov = true;
+					bAny = true;
+				}
+				continue;
+			}
+			if (Tr.Owner == TEXT("NodesConstraints") && Tr.InterpolableId != TEXT("constraintEnabled"))
+			{
+				if (Tr.InterpolableId == TEXT("constraintPos"))
+				{
+					const float W = FMath::Clamp(Sample1(), 0.f, 1.f);
+					for (FOKSceneConstraint& Con : Constraints)
+						if (Con.LoadId == Tr.ParamInt) { Con.PosFactor = W; Con.bPosition = W > 1e-4f; bAny = true; }
+				}
+				else if (Tr.InterpolableId == TEXT("constraintRos") || Tr.InterpolableId == TEXT("constraintRot"))
+				{
+					const float W = FMath::Clamp(Sample1(), 0.f, 1.f);
+					for (FOKSceneConstraint& Con : Constraints)
+						if (Con.LoadId == Tr.ParamInt) { Con.RotFactor = W; Con.bRotation = W > 1e-4f; bAny = true; }
+				}
 				continue;
 			}
 			if (Tr.Owner == TEXT("NodesConstraints") && Tr.InterpolableId == TEXT("constraintEnabled"))
@@ -1274,6 +1435,28 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 					else if (Tr.InterpolableId == TEXT("blush")) O->Character.Blush = FMath::Clamp(Sample1(), 0.f, 1.f);
 					else if (Tr.InterpolableId == TEXT("tears")) O->Character.TearsLevel = FMath::Clamp(FMath::RoundToInt(K0->Values[0]), 0, 3);
 					else if (Tr.InterpolableId == TEXT("femaleNipples")) O->Character.NipStand = FMath::Clamp(Sample1(), 0.f, 1.f);
+					else if (Tr.InterpolableId == TEXT("characterEyebrowsOpen")) O->Character.EyebrowsOpen = FMath::Clamp(Sample1(), 0.f, 1.f);
+					else if (Tr.InterpolableId == TEXT("characterNeck"))
+					{
+						const int32 Mode = FMath::Clamp(FMath::RoundToInt(K0->Values[0]), 0, 4);
+						O->Character.NeckLook = Mode == 0 ? EOKSceneLook::Animation : Mode == 1 ? EOKSceneLook::Camera : Mode == 2 ? EOKSceneLook::Away : Mode == 3 ? EOKSceneLook::Fixed : EOKSceneLook::Point;
+					}
+					else if (Tr.InterpolableId == TEXT("charAnimation") && K0->Values.Num() >= 3)
+					{
+						const int32 Grp = FMath::RoundToInt(K0->Values[0]);
+						const int32 Cat = FMath::RoundToInt(K0->Values[1]);
+						const int32 No = FMath::RoundToInt(K0->Values[2]);
+						const int32 Kind = FOKStudioCatalog::Get().FindAnim(0, Grp, Cat, No) ? 0 : (FOKStudioCatalog::Get().FindAnim(1, Grp, Cat, No) ? 1 : O->Character.StudioAnimeKind);
+						O->Character.StudioAnimeKind = Kind;
+						O->Character.StudioAnimeGroup = Grp;
+						O->Character.StudioAnimeCategory = Cat;
+						O->Character.StudioAnimeNo = No;
+					}
+					else if (Tr.InterpolableId == TEXT("juice") && Tr.ParamInt >= 0 && Tr.ParamInt < 5)
+					{
+						if (O->Character.Fluids.Num() < 5) O->Character.Fluids.Init(0, 5);
+						O->Character.Fluids[Tr.ParamInt] = uint8(FMath::Clamp(FMath::RoundToInt(K0->Values[0]), 0, 2));
+					}
 					else if (Tr.InterpolableId == TEXT("charClothes") && O->Character.ClothesStates.IsValidIndex(Tr.ParamInt))
 					{
 						const uint8 St = uint8(FMath::Clamp(FMath::RoundToInt(K0->Values[0]), 0, 3));
@@ -1292,6 +1475,29 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 					else if (Tr.InterpolableId == TEXT("itemLightCancel")) O->Item.LightCancel = Sample1();
 					else if (Tr.InterpolableId == TEXT("itemLineWidth")) O->Item.LineWidth = FMath::Max(0.f, Sample1());
 					else if (Tr.InterpolableId == TEXT("itemLineColor")) O->Item.LineColor = SampleColor();
+					else if (Tr.InterpolableId == TEXT("itemPanelColor"))
+					{
+						if (O->Item.Colors.IsEmpty()) O->Item.Colors.Add(FLinearColor::White);
+						O->Item.Colors[0] = SampleColor();
+					}
+					else if (Tr.InterpolableId.StartsWith(TEXT("itemPattern")) || Tr.InterpolableId.StartsWith(TEXT("itemPanelPattern")))
+					{
+						const bool bPanel = Tr.InterpolableId.StartsWith(TEXT("itemPanelPattern"));
+						const int32 Slot = bPanel ? 0 : (Tr.InterpolableId[Tr.InterpolableId.Len() - 1] - TEXT('1'));
+						if (Slot >= 0 && Slot < 3)
+						{
+							while (O->Item.Patterns.Num() <= Slot) O->Item.Patterns.AddDefaulted();
+							FOKSceneItemPattern& Pat = O->Item.Patterns[Slot];
+							const FString Core = bPanel ? Tr.InterpolableId.Mid(16) : Tr.InterpolableId.Mid(11, Tr.InterpolableId.Len() - 12);
+							if (Core == TEXT("Color")) Pat.Color = SampleColor();
+							else if (Core == TEXT("Clamp")) Pat.bClamp = K0->Values[0] > 0.5f;
+							else if (Core == TEXT("UOffset")) Pat.Uv.X = Sample1();
+							else if (Core == TEXT("VOffset")) Pat.Uv.Y = Sample1();
+							else if (Core == TEXT("UTiling")) Pat.Uv.Z = Sample1();
+							else if (Core == TEXT("VTiling")) Pat.Uv.W = Sample1();
+							else if (Core == TEXT("Rot")) Pat.Rotation = Sample1();
+						}
+					}
 					else if (Tr.InterpolableId.StartsWith(TEXT("itemColor")) && Tr.InterpolableId.Len() == 10)
 					{
 						const int32 Slot = Tr.InterpolableId[9] - TEXT('1');
@@ -1313,6 +1519,28 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 					else if (Tr.InterpolableId == TEXT("boneRot")) { const FVector E = SampleUnityQuatSlerpEuler(K0->Values, K1 ? &K1->Values : nullptr, Factor); UpsertBoneOverride(*Bones, Tr.TargetBone, nullptr, &E, nullptr); }
 					else if (Tr.InterpolableId == TEXT("boneScale")) { const FVector S = Sample3(); UpsertBoneOverride(*Bones, Tr.TargetBone, nullptr, nullptr, &S); }
 				}
+				if (O->Kind == EOKSceneObjectKind::Character)
+				{
+					if (Tr.InterpolableId == TEXT("fbbikWeight"))
+					{
+						O->Character.IkWeight = FMath::Clamp(Sample1(), 0.f, 1.f);
+					}
+					else if (Tr.TargetIkEffector >= 0 && Tr.InterpolableId.StartsWith(TEXT("fbbik")))
+					{
+						FOKSceneIkTarget* Ik = O->Character.Ik.FindByPredicate([&](const FOKSceneIkTarget& X) { return X.Effector == Tr.TargetIkEffector; });
+						if (!Ik) { Ik = &O->Character.Ik.AddDefaulted_GetRef(); Ik->Effector = Tr.TargetIkEffector; }
+						const float W = FMath::Clamp(Sample1(), 0.f, 1.f);
+						if (Tr.InterpolableId.StartsWith(TEXT("fbbikEffectorRotationWeight")))
+						{
+							Ik->RotationWeight = W;
+							Ik->bUseRotation = W > 1e-4f;
+						}
+						else
+						{
+							Ik->Weight = W;
+						}
+					}
+				}
 				if (Morphs && !Tr.TargetPath.IsEmpty())
 				{
 					if (Tr.InterpolableId == TEXT("lastBlendShape") && Tr.ParamInt >= 0)
@@ -1326,6 +1554,208 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 							const float W = K1 && K1->Values.IsValidIndex(M) ? FMath::Lerp(K0->Values[M], K1->Values[M], Factor) : K0->Values[M];
 							const FString Nm = K0->Names.IsValidIndex(M) ? K0->Names[M] : FString();
 							UpsertMorphOverride(*Morphs, Tr.TargetPath, M, Nm, W);
+						}
+					}
+				}
+			}
+			else if (Tr.Owner == TEXT("RendererEditor"))
+			{
+				const FString Prop = !Tr.ParamStr.IsEmpty() ? Tr.ParamStr : Tr.InterpolableId;
+				if (Tr.InterpolableId == TEXT("targetEnabled"))
+				{
+					const FString Rend = DocLeafNodeName(Tr.TargetPath);
+					if (!Rend.IsEmpty()) UpsertLiveMaterialEdit(O->LiveMaterialEdits, Rend, TEXT("Enabled"), EOKSceneMaterialEditKind::Renderer, FLinearColor(K0->Values[0] > 0.5f ? 1.f : 0.f, 0.f, 0.f, 0.f));
+				}
+				else if (Tr.InterpolableId.StartsWith(TEXT("Float_")))
+				{
+					UpsertLiveMaterialEdit(O->LiveMaterialEdits, FString(), Prop, EOKSceneMaterialEditKind::Float, FLinearColor(Sample1(), 0.f, 0.f, 0.f));
+				}
+				else if (Tr.InterpolableId.StartsWith(TEXT("Color_")))
+				{
+					UpsertLiveMaterialEdit(O->LiveMaterialEdits, FString(), Prop, EOKSceneMaterialEditKind::Color, SampleColor());
+				}
+				else if (Tr.InterpolableId.StartsWith(TEXT("Vector_")))
+				{
+					UpsertLiveMaterialEdit(O->LiveMaterialEdits, FString(), Prop, EOKSceneMaterialEditKind::Vector, SampleColor());
+				}
+				else if ((Tr.InterpolableId.StartsWith(TEXT("TextureScale_")) || Tr.InterpolableId.StartsWith(TEXT("TextureOffset_"))) && K0->Values.Num() >= 2)
+				{
+					const float Vx = K1 && K1->Values.Num() >= 2 ? FMath::Lerp(K0->Values[0], K1->Values[0], Factor) : K0->Values[0];
+					const float Vy = K1 && K1->Values.Num() >= 2 ? FMath::Lerp(K0->Values[1], K1->Values[1], Factor) : K0->Values[1];
+					FOKSceneMaterialEdit* Existing = O->LiveMaterialEdits.FindByPredicate([&](const FOKSceneMaterialEdit& E) { return E.Material.IsEmpty() && E.Property == Prop && E.Kind == EOKSceneMaterialEditKind::TextureST; });
+					FLinearColor St = Existing ? Existing->Value : FLinearColor(1.f, 1.f, 0.f, 0.f);
+					if (Tr.InterpolableId.StartsWith(TEXT("TextureScale_"))) { St.R = Vx; St.G = Vy; }
+					else { St.B = Vx; St.A = Vy; }
+					UpsertLiveMaterialEdit(O->LiveMaterialEdits, FString(), Prop, EOKSceneMaterialEditKind::TextureST, St);
+				}
+			}
+			else if (Tr.Owner == TEXT("MaterialEditor"))
+			{
+				TArray<FString> Parts;
+				Tr.ParamStr.ParseIntoArray(Parts, TEXT("|"), false);
+				const FString Mat = Parts.IsValidIndex(0) ? Parts[0] : FString();
+				const FString Prop = Parts.IsValidIndex(1) ? Parts[1] : FString();
+				if (!Prop.IsEmpty())
+				{
+					if (Tr.InterpolableId == TEXT("floatProperty"))
+						UpsertLiveMaterialEdit(O->LiveMaterialEdits, Mat, Prop, EOKSceneMaterialEditKind::Float, FLinearColor(Sample1(), 0.f, 0.f, 0.f));
+					else if (Tr.InterpolableId == TEXT("colorProperty"))
+						UpsertLiveMaterialEdit(O->LiveMaterialEdits, Mat, Prop, EOKSceneMaterialEditKind::Color, SampleColor());
+					else if ((Tr.InterpolableId == TEXT("textureScaleProperty") || Tr.InterpolableId == TEXT("textureOffsetProperty")) && K0->Values.Num() >= 2)
+					{
+						const float Vx = K1 && K1->Values.Num() >= 2 ? FMath::Lerp(K0->Values[0], K1->Values[0], Factor) : K0->Values[0];
+						const float Vy = K1 && K1->Values.Num() >= 2 ? FMath::Lerp(K0->Values[1], K1->Values[1], Factor) : K0->Values[1];
+						FOKSceneMaterialEdit* Existing = O->LiveMaterialEdits.FindByPredicate([&](const FOKSceneMaterialEdit& E) { return E.Material == Mat && E.Property == Prop && E.Kind == EOKSceneMaterialEditKind::TextureST; });
+						FLinearColor St = Existing ? Existing->Value : FLinearColor(1.f, 1.f, 0.f, 0.f);
+						if (Tr.InterpolableId == TEXT("textureScaleProperty")) { St.R = Vx; St.G = Vy; }
+						else { St.B = Vx; St.A = Vy; }
+						UpsertLiveMaterialEdit(O->LiveMaterialEdits, Mat, Prop, EOKSceneMaterialEditKind::TextureST, St);
+					}
+				}
+			}
+			else if (Tr.Owner == TEXT("PregnancyPlus") && O->Kind == EOKSceneObjectKind::Character)
+			{
+				const float Inflation = FMath::Clamp(Sample1(), -10.f, 40.f);
+				const float ScaleFactor = FMath::Max(0.5f, 1.f + Inflation * 0.022f);
+				const FVector BellyScale(ScaleFactor, 1.f + Inflation * 0.008f, ScaleFactor);
+				UpsertBoneOverride(O->Character.BoneOverrides, TEXT("cf_s_waist01"), nullptr, nullptr, &BellyScale);
+			}
+			else if (Tr.Owner == TEXT("ShalltyUtils"))
+			{
+				auto AxisOf = [](const FString& Id, const TCHAR* Prefix) -> int32
+				{
+					if (Id == FString::Printf(TEXT("%sXPos"), Prefix) || Id == FString::Printf(TEXT("%sXRot"), Prefix) || Id == FString::Printf(TEXT("%sXScale"), Prefix)) return 0;
+					if (Id == FString::Printf(TEXT("%sYPos"), Prefix) || Id == FString::Printf(TEXT("%sYRot"), Prefix) || Id == FString::Printf(TEXT("%sYScale"), Prefix)) return 1;
+					if (Id == FString::Printf(TEXT("%sZPos"), Prefix) || Id == FString::Printf(TEXT("%sZRot"), Prefix) || Id == FString::Printf(TEXT("%sZScale"), Prefix)) return 2;
+					return -1;
+				};
+				const int32 GuideAxis = AxisOf(Tr.InterpolableId, TEXT("guideObject"));
+				const int32 BoneAxis = AxisOf(Tr.InterpolableId, TEXT("bone"));
+				if (GuideAxis >= 0 && Tr.InterpolableId.EndsWith(TEXT("Pos")))
+				{
+					const float Val = Sample1();
+					if (Tr.TargetPath.IsEmpty())
+					{
+						FVector LocUe = O->Transform.GetLocation();
+						if (GuideAxis == 0) LocUe.X = -Val * 100.0;
+						else if (GuideAxis == 1) LocUe.Z = Val * 100.0;
+						else LocUe.Y = Val * 100.0;
+						O->Transform.SetLocation(LocUe);
+					}
+					else if (Tr.TargetIkEffector >= 0 && O->Kind == EOKSceneObjectKind::Character)
+					{
+						FOKSceneIkTarget* Ik = O->Character.Ik.FindByPredicate([&](const FOKSceneIkTarget& X) { return X.Effector == Tr.TargetIkEffector; });
+						if (!Ik) { Ik = &O->Character.Ik.AddDefaulted_GetRef(); Ik->Effector = Tr.TargetIkEffector; Ik->bUseRotation = (Tr.TargetIkEffector >= 5 && Tr.TargetIkEffector <= 8); }
+						if (GuideAxis == 0) Ik->Position.X = -Val * 100.0;
+						else if (GuideAxis == 1) Ik->Position.Z = Val * 100.0;
+						else Ik->Position.Y = Val * 100.0;
+					}
+					else if (!Tr.TargetBone.IsEmpty())
+					{
+						TArray<FOKSceneBoneTrs>* Bones = O->Kind == EOKSceneObjectKind::Character ? &O->Character.BoneOverrides : (O->Kind == EOKSceneObjectKind::Item ? &O->Item.BoneOverrides : nullptr);
+						if (Bones)
+						{
+							FOKSceneBoneTrs* Entry = Bones->FindByPredicate([&](const FOKSceneBoneTrs& B) { return B.Bone == Tr.TargetBone; });
+							FVector P = (Entry && Entry->bHasPos) ? Entry->Pos : FVector::ZeroVector;
+							P[GuideAxis] = Val;
+							UpsertBoneOverride(*Bones, Tr.TargetBone, &P, nullptr, nullptr);
+						}
+					}
+				}
+				else if (GuideAxis >= 0 && Tr.InterpolableId.EndsWith(TEXT("Rot")))
+				{
+					const float Deg = SampleAngleDeg();
+					const TPair<int32, FString> Key(Tr.ObjectId, Tr.TargetPath);
+					if (Tr.TargetPath.IsEmpty())
+					{
+						FVector* Cached = GuideEulerAccum.Find(Key);
+						if (!Cached)
+						{
+							FQuat Q = O->Transform.GetRotation();
+							if (O->Kind == EOKSceneObjectKind::Camera || O->Kind == EOKSceneObjectKind::Light)
+								Q = Q * FQuat(FVector::UpVector, -UE_HALF_PI);
+							Q.Normalize();
+							const float Uq[4] = { float(-Q.X), float(Q.Z), float(Q.Y), float(Q.W) };
+							float InitEuler[3] = { 0.f, 0.f, 0.f };
+							ok_unity_quat_to_euler(Uq, InitEuler);
+							Cached = &GuideEulerAccum.Add(Key, FVector(InitEuler[0], InitEuler[1], InitEuler[2]));
+						}
+						(*Cached)[GuideAxis] = Deg;
+						FQuat QOut = DocUnityToUe(FVector::ZeroVector, *Cached, FVector::OneVector).GetRotation();
+						if (O->Kind == EOKSceneObjectKind::Camera || O->Kind == EOKSceneObjectKind::Light)
+							QOut = QOut * FQuat(FVector::UpVector, UE_HALF_PI);
+						O->Transform.SetRotation(QOut);
+					}
+					else if (Tr.TargetIkEffector >= 0 && O->Kind == EOKSceneObjectKind::Character)
+					{
+						FOKSceneIkTarget* Ik = O->Character.Ik.FindByPredicate([&](const FOKSceneIkTarget& X) { return X.Effector == Tr.TargetIkEffector; });
+						if (!Ik) { Ik = &O->Character.Ik.AddDefaulted_GetRef(); Ik->Effector = Tr.TargetIkEffector; }
+						Ik->Euler[GuideAxis] = Deg;
+						Ik->bUseRotation = (Tr.TargetIkEffector >= 5 && Tr.TargetIkEffector <= 8);
+					}
+					else if (!Tr.TargetBone.IsEmpty())
+					{
+						TArray<FOKSceneFkBone>* FkArr = O->Kind == EOKSceneObjectKind::Character ? &O->Character.Fk : (O->Kind == EOKSceneObjectKind::Item ? &O->Item.Fk : nullptr);
+						if (FkArr)
+						{
+							FOKSceneFkBone* Fk = FkArr->FindByPredicate([&](const FOKSceneFkBone& X) { return X.Bone == Tr.TargetBone; });
+							if (!Fk) { Fk = &FkArr->AddDefaulted_GetRef(); Fk->Bone = Tr.TargetBone; }
+							Fk->Euler[GuideAxis] = Deg;
+						}
+					}
+				}
+				else if (GuideAxis >= 0 && Tr.InterpolableId.EndsWith(TEXT("Scale")))
+				{
+					const float Val = Sample1();
+					if (Tr.TargetPath.IsEmpty())
+					{
+						FVector ScaleUe = O->Transform.GetScale3D();
+						if (GuideAxis == 0) ScaleUe.X = Val;
+						else if (GuideAxis == 1) ScaleUe.Z = Val;
+						else ScaleUe.Y = Val;
+						O->Transform.SetScale3D(ScaleUe);
+					}
+					else if (!Tr.TargetBone.IsEmpty())
+					{
+						TArray<FOKSceneBoneTrs>* Bones = O->Kind == EOKSceneObjectKind::Character ? &O->Character.BoneOverrides : (O->Kind == EOKSceneObjectKind::Item ? &O->Item.BoneOverrides : nullptr);
+						if (Bones)
+						{
+							FOKSceneBoneTrs* Entry = Bones->FindByPredicate([&](const FOKSceneBoneTrs& B) { return B.Bone == Tr.TargetBone; });
+							FVector S = (Entry && Entry->bHasScale) ? Entry->Scale : FVector::OneVector;
+							S[GuideAxis] = Val;
+							UpsertBoneOverride(*Bones, Tr.TargetBone, nullptr, nullptr, &S);
+						}
+					}
+				}
+				else if (BoneAxis >= 0 && !Tr.TargetBone.IsEmpty())
+				{
+					TArray<FOKSceneBoneTrs>* Bones = O->Kind == EOKSceneObjectKind::Character ? &O->Character.BoneOverrides : (O->Kind == EOKSceneObjectKind::Item ? &O->Item.BoneOverrides : nullptr);
+					if (Bones)
+					{
+						FOKSceneBoneTrs* Entry = Bones->FindByPredicate([&](const FOKSceneBoneTrs& B) { return B.Bone == Tr.TargetBone; });
+						if (Tr.InterpolableId.EndsWith(TEXT("Pos")))
+						{
+							FVector P = (Entry && Entry->bHasPos) ? Entry->Pos : FVector::ZeroVector;
+							P[BoneAxis] = Sample1();
+							UpsertBoneOverride(*Bones, Tr.TargetBone, &P, nullptr, nullptr);
+						}
+						else if (Tr.InterpolableId.EndsWith(TEXT("Rot")))
+						{
+							const TPair<int32, FString> Key(Tr.ObjectId, Tr.TargetBone);
+							FVector* Cached = BoneEulerAccum.Find(Key);
+							if (!Cached)
+							{
+								const FVector InitE = (Entry && Entry->bHasRot) ? Entry->Euler : FVector::ZeroVector;
+								Cached = &BoneEulerAccum.Add(Key, InitE);
+							}
+							(*Cached)[BoneAxis] = SampleAngleDeg();
+							UpsertBoneOverride(*Bones, Tr.TargetBone, nullptr, Cached, nullptr);
+						}
+						else if (Tr.InterpolableId.EndsWith(TEXT("Scale")))
+						{
+							FVector S = (Entry && Entry->bHasScale) ? Entry->Scale : FVector::OneVector;
+							S[BoneAxis] = Sample1();
+							UpsertBoneOverride(*Bones, Tr.TargetBone, nullptr, nullptr, &S);
 						}
 					}
 				}
@@ -1377,6 +1807,565 @@ void UOKSceneDocument::EvaluateTimeline(float Time)
 		}
 	}
 	if (bAny) NotifyChanged();
+}
+
+FString UOKSceneDocument::DescribeTimelineTrack(const FOKSceneTimelineTrack& Track) const
+{
+	const FOKSceneObject* Obj = Track.ObjectId >= 0 ? Find(Track.ObjectId) : nullptr;
+	const FString TargetLabel = Obj ? Obj->Name : (Track.ObjectId < 0 ? TEXT("全局/镜头") : FString::Printf(TEXT("#%d"), Track.ObjectId));
+	if (!Track.Alias.IsEmpty())
+	{
+		return FString::Printf(TEXT("[%s] %s"), *TargetLabel, *Track.Alias);
+	}
+	FString PropLabel = Track.InterpolableId;
+	if (Track.Owner == TEXT("Timeline"))
+	{
+		if (Track.InterpolableId == TEXT("cameraOPos")) PropLabel = TEXT("镜头环绕焦点");
+		else if (Track.InterpolableId == TEXT("cameraORot")) PropLabel = TEXT("镜头环绕旋转");
+		else if (Track.InterpolableId == TEXT("cameraOZoom")) PropLabel = TEXT("镜头环绕推拉");
+		else if (Track.InterpolableId == TEXT("cameraPos")) PropLabel = TEXT("镜头坐标");
+		else if (Track.InterpolableId == TEXT("cameraRot")) PropLabel = TEXT("镜头旋转");
+		else if (Track.InterpolableId == TEXT("cameraFOV")) PropLabel = TEXT("镜头视场角 FOV");
+		else if (Track.InterpolableId == TEXT("cameraData")) PropLabel = TEXT("镜头全参数");
+		else if (Track.InterpolableId == TEXT("timeScale")) PropLabel = TEXT("时间轴倍速");
+		else if (Track.InterpolableId == TEXT("guideObjectPos")) PropLabel = Track.TargetPath.IsEmpty() ? TEXT("位置") : FString::Printf(TEXT("节点位置 (%s)"), *DocLeafNodeName(Track.TargetPath));
+		else if (Track.InterpolableId == TEXT("guideObjectRot")) PropLabel = Track.TargetPath.IsEmpty() ? TEXT("旋转") : FString::Printf(TEXT("节点旋转 (%s)"), *DocLeafNodeName(Track.TargetPath));
+		else if (Track.InterpolableId == TEXT("guideObjectScale")) PropLabel = Track.TargetPath.IsEmpty() ? TEXT("缩放") : FString::Printf(TEXT("节点缩放 (%s)"), *DocLeafNodeName(Track.TargetPath));
+		else if (Track.InterpolableId == TEXT("objectEnabled")) PropLabel = TEXT("显隐开关");
+		else if (Track.InterpolableId == TEXT("objectAnimationSpeed")) PropLabel = TEXT("动作速度");
+		else if (Track.InterpolableId == TEXT("charAnimation")) PropLabel = TEXT("角色动作切换");
+		else if (Track.InterpolableId == TEXT("charAnimationTime")) PropLabel = TEXT("角色动作时间");
+		else if (Track.InterpolableId == TEXT("charAnimationPattern")) PropLabel = TEXT("动作混合 Pattern");
+		else if (Track.InterpolableId == TEXT("characterEyes")) PropLabel = TEXT("眼型");
+		else if (Track.InterpolableId == TEXT("characterEyesOpen")) PropLabel = TEXT("眨眼开合");
+		else if (Track.InterpolableId == TEXT("characterEyebrows")) PropLabel = TEXT("眉型");
+		else if (Track.InterpolableId == TEXT("characterEyebrowsOpen")) PropLabel = TEXT("眉毛高度");
+		else if (Track.InterpolableId == TEXT("characterMouth")) PropLabel = TEXT("嘴型");
+		else if (Track.InterpolableId == TEXT("characterMouthOpen")) PropLabel = TEXT("嘴巴开合");
+		else if (Track.InterpolableId == TEXT("characterNeck")) PropLabel = TEXT("颈部朝向模式");
+		else if (Track.InterpolableId == TEXT("characterLeftHand")) PropLabel = TEXT("左手手势");
+		else if (Track.InterpolableId == TEXT("characterRightHand")) PropLabel = TEXT("右手手势");
+		else if (Track.InterpolableId == TEXT("blush")) PropLabel = TEXT("脸红");
+		else if (Track.InterpolableId == TEXT("tears")) PropLabel = TEXT("眼泪等级");
+		else if (Track.InterpolableId == TEXT("femaleNipples")) PropLabel = TEXT("胸部激凸");
+		else if (Track.InterpolableId == TEXT("charClothes")) PropLabel = FString::Printf(TEXT("服装状态 #%d"), Track.ParamInt + 1);
+		else if (Track.InterpolableId == TEXT("juice")) PropLabel = FString::Printf(TEXT("液体等级 #%d"), Track.ParamInt + 1);
+		else if (Track.InterpolableId == TEXT("lightOnOff")) PropLabel = TEXT("灯光开关");
+		else if (Track.InterpolableId == TEXT("lightColor")) PropLabel = TEXT("灯光颜色");
+		else if (Track.InterpolableId == TEXT("lightStrength")) PropLabel = TEXT("灯光强度");
+		else if (Track.InterpolableId == TEXT("lightRange")) PropLabel = TEXT("灯光范围");
+		else if (Track.InterpolableId == TEXT("lightSpotAngle")) PropLabel = TEXT("聚光角度");
+		else if (Track.InterpolableId == TEXT("lightShadows")) PropLabel = TEXT("灯光阴影");
+		else if (Track.InterpolableId == TEXT("itemAlpha")) PropLabel = TEXT("道具透明度");
+		else if (Track.InterpolableId == TEXT("itemEmissionColor")) PropLabel = TEXT("自发光颜色");
+		else if (Track.InterpolableId == TEXT("itemEmissionPower")) PropLabel = TEXT("自发光强度");
+		else if (Track.InterpolableId == TEXT("itemShadowColor")) PropLabel = TEXT("阴影颜色");
+		else if (Track.InterpolableId == TEXT("itemLightCancel")) PropLabel = TEXT("受光抵消");
+		else if (Track.InterpolableId == TEXT("itemLineWidth")) PropLabel = TEXT("描边粗细");
+		else if (Track.InterpolableId == TEXT("itemLineColor")) PropLabel = TEXT("描边颜色");
+	}
+	else if (Track.Owner == TEXT("KKPE"))
+	{
+		if (Track.InterpolableId == TEXT("bonePos")) PropLabel = FString::Printf(TEXT("KKPE 骨骼位移 (%s)"), *Track.TargetBone);
+		else if (Track.InterpolableId == TEXT("boneRot")) PropLabel = FString::Printf(TEXT("KKPE 骨骼旋转 (%s)"), *Track.TargetBone);
+		else if (Track.InterpolableId == TEXT("boneScale")) PropLabel = FString::Printf(TEXT("KKPE 骨骼缩放 (%s)"), *Track.TargetBone);
+		else if (Track.InterpolableId == TEXT("lastBlendShape")) PropLabel = FString::Printf(TEXT("BlendShape #%d (%s)"), Track.ParamInt, *DocLeafNodeName(Track.TargetPath));
+		else if (Track.InterpolableId.StartsWith(TEXT("groupBlendShape"))) PropLabel = FString::Printf(TEXT("BlendShape 组 (%s)"), *DocLeafNodeName(Track.TargetPath));
+		else if (Track.InterpolableId == TEXT("fbbikWeight")) PropLabel = TEXT("IK 整体权重");
+		else if (Track.InterpolableId.StartsWith(TEXT("fbbik"))) PropLabel = FString::Printf(TEXT("IK 权重 (%s)"), *Track.InterpolableId.Mid(5));
+		else PropLabel = FString::Printf(TEXT("KKPE · %s"), *Track.InterpolableId);
+	}
+	else if (Track.Owner == TEXT("NodesConstraints"))
+	{
+		PropLabel = FString::Printf(TEXT("约束 #%d · %s"), Track.ParamInt, *Track.InterpolableId);
+	}
+	else if (Track.Owner == TEXT("MaterialEditor") || Track.Owner == TEXT("RendererEditor"))
+	{
+		PropLabel = FString::Printf(TEXT("材质 · %s (%s)"), *Track.InterpolableId, *Track.ParamStr);
+	}
+	else
+	{
+		PropLabel = FString::Printf(TEXT("%s::%s"), *Track.Owner, *Track.InterpolableId);
+	}
+	return FString::Printf(TEXT("[%s] %s"), *TargetLabel, *PropLabel);
+}
+
+bool UOKSceneDocument::SampleCurrentTimelineValue(const FOKSceneTimelineTrack& Track, TArray<float>& OutValues, TArray<FString>* OutNames) const
+{
+	OutValues.Reset();
+	if (OutNames) OutNames->Reset();
+	auto PushUnityQuatFromEuler = [&](const FVector& EulerDeg)
+	{
+		const FQuat Qx(FVector(1, 0, 0), FMath::DegreesToRadians(EulerDeg.X));
+		const FQuat Qy(FVector(0, 1, 0), FMath::DegreesToRadians(EulerDeg.Y));
+		const FQuat Qz(FVector(0, 0, 1), FMath::DegreesToRadians(EulerDeg.Z));
+		const FQuat U = (Qy * Qx * Qz).GetNormalized();
+		OutValues = { float(U.X), float(U.Y), float(U.Z), float(U.W) };
+	};
+	auto PushUnityQuatFromUeQuat = [&](FQuat Q, bool bCamOrLight)
+	{
+		if (bCamOrLight) Q = Q * FQuat(FVector::UpVector, -UE_HALF_PI);
+		Q.Normalize();
+		OutValues = { float(-Q.X), float(Q.Z), float(Q.Y), float(Q.W) };
+	};
+
+	if (Track.Owner == TEXT("Timeline") && Track.ObjectId < 0)
+	{
+		const int32 CamId = StudioCameraId >= 0 ? StudioCameraId : ActiveCamera;
+		const FOKSceneObject* CamObj = Find(CamId);
+		if (Track.InterpolableId == TEXT("timeScale")) { OutValues = { LastTimelineScale }; return true; }
+		if (Track.InterpolableId == TEXT("cameraOPos")) { OutValues = { float(StudioCameraOrbitTarget.X), float(StudioCameraOrbitTarget.Y), float(StudioCameraOrbitTarget.Z) }; return true; }
+		if (Track.InterpolableId == TEXT("cameraORot")) { PushUnityQuatFromEuler(StudioCameraOrbitRot); return true; }
+		if (Track.InterpolableId == TEXT("cameraOZoom")) { OutValues = { float(StudioCameraOrbitDist.Z) }; return true; }
+		if (Track.InterpolableId == TEXT("cameraPos"))
+		{
+			const FVector Loc = CamObj ? CamObj->Transform.GetLocation() / 100.0 : FVector::ZeroVector;
+			OutValues = { float(-Loc.X), float(Loc.Z), float(Loc.Y) };
+			return true;
+		}
+		if (Track.InterpolableId == TEXT("cameraRot"))
+		{
+			PushUnityQuatFromUeQuat(CamObj ? CamObj->Transform.GetRotation() : FQuat::Identity, true);
+			return true;
+		}
+		if (Track.InterpolableId == TEXT("cameraFOV"))
+		{
+			const double HorzRad = FMath::DegreesToRadians(double(CamObj ? CamObj->Camera.Fov : FreeView.Fov));
+			const float VertDeg = float(FMath::RadiansToDegrees(2.0 * FMath::Atan(FMath::Tan(HorzRad * 0.5) * 9.0 / 16.0)));
+			OutValues = { VertDeg };
+			return true;
+		}
+		if (Track.InterpolableId == TEXT("cameraData"))
+		{
+			const double HorzRad = FMath::DegreesToRadians(double(CamObj ? CamObj->Camera.Fov : FreeView.Fov));
+			const float VertDeg = float(FMath::RadiansToDegrees(2.0 * FMath::Atan(FMath::Tan(HorzRad * 0.5) * 9.0 / 16.0)));
+			OutValues = {
+				float(StudioCameraOrbitTarget.X), float(StudioCameraOrbitTarget.Y), float(StudioCameraOrbitTarget.Z),
+				float(StudioCameraOrbitRot.X), float(StudioCameraOrbitRot.Y), float(StudioCameraOrbitRot.Z),
+				float(StudioCameraOrbitDist.X), float(StudioCameraOrbitDist.Y), float(StudioCameraOrbitDist.Z),
+				VertDeg
+			};
+			return true;
+		}
+		return false;
+	}
+	if (Track.Owner == TEXT("NodesConstraints"))
+	{
+		const FOKSceneConstraint* Con = Constraints.FindByPredicate([&](const FOKSceneConstraint& C) { return C.LoadId == Track.ParamInt; });
+		if (Track.InterpolableId == TEXT("constraintEnabled")) { OutValues = { (Con && Con->bEnabled) ? 1.f : 0.f }; return true; }
+		if (Track.InterpolableId == TEXT("constraintPos")) { OutValues = { Con ? Con->PosFactor : 1.f }; return true; }
+		if (Track.InterpolableId == TEXT("constraintRos") || Track.InterpolableId == TEXT("constraintRot")) { OutValues = { Con ? Con->RotFactor : 1.f }; return true; }
+		return false;
+	}
+
+	const FOKSceneObject* O = Find(Track.ObjectId);
+	if (!O) return false;
+
+	if (Track.Owner == TEXT("Timeline"))
+	{
+		if (Track.InterpolableId == TEXT("objectEnabled") || Track.InterpolableId == TEXT("lightOnOff")) { OutValues = { O->bVisible ? 1.f : 0.f }; return true; }
+		if (Track.InterpolableId == TEXT("guideObjectPos"))
+		{
+			if (Track.TargetPath.IsEmpty())
+			{
+				const FVector L = O->Transform.GetLocation() / 100.0;
+				OutValues = { float(-L.X), float(L.Z), float(L.Y) };
+				return true;
+			}
+			if (Track.TargetIkEffector >= 0 && O->Kind == EOKSceneObjectKind::Character)
+			{
+				const FOKSceneIkTarget* Ik = O->Character.Ik.FindByPredicate([&](const FOKSceneIkTarget& X) { return X.Effector == Track.TargetIkEffector; });
+				const FVector L = Ik ? Ik->Position / 100.0 : FVector::ZeroVector;
+				OutValues = { float(-L.X), float(L.Z), float(L.Y) };
+				return true;
+			}
+			const TArray<FOKSceneBoneTrs>* Bones = O->Kind == EOKSceneObjectKind::Character ? &O->Character.BoneOverrides : (O->Kind == EOKSceneObjectKind::Item ? &O->Item.BoneOverrides : nullptr);
+			const FOKSceneBoneTrs* B = Bones ? Bones->FindByPredicate([&](const FOKSceneBoneTrs& X) { return X.Bone == Track.TargetBone; }) : nullptr;
+			const FVector P = (B && B->bHasPos) ? B->Pos : FVector::ZeroVector;
+			OutValues = { float(P.X), float(P.Y), float(P.Z) };
+			return true;
+		}
+		if (Track.InterpolableId == TEXT("guideObjectRot"))
+		{
+			if (Track.TargetPath.IsEmpty())
+			{
+				PushUnityQuatFromUeQuat(O->Transform.GetRotation(), O->Kind == EOKSceneObjectKind::Camera || O->Kind == EOKSceneObjectKind::Light);
+				return true;
+			}
+			if (Track.TargetIkEffector >= 0 && O->Kind == EOKSceneObjectKind::Character)
+			{
+				const FOKSceneIkTarget* Ik = O->Character.Ik.FindByPredicate([&](const FOKSceneIkTarget& X) { return X.Effector == Track.TargetIkEffector; });
+				PushUnityQuatFromEuler(Ik ? Ik->Euler : FVector::ZeroVector);
+				return true;
+			}
+			const TArray<FOKSceneFkBone>* FkArr = O->Kind == EOKSceneObjectKind::Character ? &O->Character.Fk : (O->Kind == EOKSceneObjectKind::Item ? &O->Item.Fk : nullptr);
+			const FOKSceneFkBone* Fk = FkArr ? FkArr->FindByPredicate([&](const FOKSceneFkBone& X) { return X.Bone == Track.TargetBone; }) : nullptr;
+			PushUnityQuatFromEuler(Fk ? Fk->Euler : FVector::ZeroVector);
+			return true;
+		}
+		if (Track.InterpolableId == TEXT("guideObjectScale"))
+		{
+			if (Track.TargetPath.IsEmpty())
+			{
+				const FVector S = O->Transform.GetScale3D();
+				OutValues = { float(S.X), float(S.Z), float(S.Y) };
+				return true;
+			}
+			const TArray<FOKSceneBoneTrs>* Bones = O->Kind == EOKSceneObjectKind::Character ? &O->Character.BoneOverrides : (O->Kind == EOKSceneObjectKind::Item ? &O->Item.BoneOverrides : nullptr);
+			const FOKSceneBoneTrs* B = Bones ? Bones->FindByPredicate([&](const FOKSceneBoneTrs& X) { return X.Bone == Track.TargetBone; }) : nullptr;
+			const FVector S = (B && B->bHasScale) ? B->Scale : FVector::OneVector;
+			OutValues = { float(S.X), float(S.Y), float(S.Z) };
+			return true;
+		}
+		if (O->Kind == EOKSceneObjectKind::Light)
+		{
+			if (Track.InterpolableId == TEXT("lightColor")) { OutValues = { O->Light.Color.R, O->Light.Color.G, O->Light.Color.B, O->Light.Color.A }; return true; }
+			if (Track.InterpolableId == TEXT("lightStrength")) { OutValues = { O->Light.Intensity / (O->Light.Type == EOKSceneLightType::Directional ? 4.f : 800.f) }; return true; }
+			if (Track.InterpolableId == TEXT("lightRange")) { OutValues = { O->Light.Range / 100.f }; return true; }
+			if (Track.InterpolableId == TEXT("lightSpotAngle")) { OutValues = { O->Light.SpotAngle }; return true; }
+			if (Track.InterpolableId == TEXT("lightShadows")) { OutValues = { O->Light.bShadows ? 1.f : 0.f }; return true; }
+		}
+		if (O->Kind == EOKSceneObjectKind::Character)
+		{
+			const FOKSceneCharacter& C = O->Character;
+			if (Track.InterpolableId == TEXT("objectAnimationSpeed")) { OutValues = { C.Speed }; return true; }
+			if (Track.InterpolableId == TEXT("charAnimationTime")) { OutValues = { C.Time }; return true; }
+			if (Track.InterpolableId == TEXT("charAnimation")) { OutValues = { float(FMath::Max(0, C.StudioAnimeGroup)), float(FMath::Max(0, C.StudioAnimeCategory)), float(FMath::Max(0, C.StudioAnimeNo)) }; return true; }
+			if (Track.InterpolableId == TEXT("charAnimationPattern"))
+			{
+				const FOKSceneAnimFloat* Af = C.AnimFloats.FindByPredicate([](const FOKSceneAnimFloat& F) { return F.Name == TEXT("pattern"); });
+				OutValues = { Af ? Af->Value : 0.f };
+				return true;
+			}
+			if (Track.InterpolableId == TEXT("characterEyes")) { OutValues = { float(FMath::Max(0, C.EyesPattern)) }; return true; }
+			if (Track.InterpolableId == TEXT("characterEyesOpen")) { OutValues = { C.EyesOpen >= 0.f ? C.EyesOpen : 1.f }; return true; }
+			if (Track.InterpolableId == TEXT("characterEyebrows")) { OutValues = { float(FMath::Max(0, C.EyebrowPattern)) }; return true; }
+			if (Track.InterpolableId == TEXT("characterEyebrowsOpen")) { OutValues = { C.EyebrowsOpen >= 0.f ? C.EyebrowsOpen : 1.f }; return true; }
+			if (Track.InterpolableId == TEXT("characterMouth")) { OutValues = { float(FMath::Max(0, C.MouthPattern)) }; return true; }
+			if (Track.InterpolableId == TEXT("characterMouthOpen")) { OutValues = { C.MouthOpen >= 0.f ? C.MouthOpen : 0.f }; return true; }
+			if (Track.InterpolableId == TEXT("characterNeck"))
+			{
+				const int32 M = C.NeckLook == EOKSceneLook::Animation ? 0 : C.NeckLook == EOKSceneLook::Camera ? 1 : C.NeckLook == EOKSceneLook::Away ? 2 : C.NeckLook == EOKSceneLook::Fixed ? 3 : 4;
+				OutValues = { float(M) };
+				return true;
+			}
+			if (Track.InterpolableId == TEXT("characterLeftHand")) { OutValues = { float(FMath::Max(0, C.HandLeft)) }; return true; }
+			if (Track.InterpolableId == TEXT("characterRightHand")) { OutValues = { float(FMath::Max(0, C.HandRight)) }; return true; }
+			if (Track.InterpolableId == TEXT("blush")) { OutValues = { FMath::Max(0.f, C.Blush) }; return true; }
+			if (Track.InterpolableId == TEXT("tears")) { OutValues = { float(FMath::Max(0, C.TearsLevel)) }; return true; }
+			if (Track.InterpolableId == TEXT("femaleNipples")) { OutValues = { FMath::Max(0.f, C.NipStand) }; return true; }
+			if (Track.InterpolableId == TEXT("charClothes") && C.ClothesStates.IsValidIndex(Track.ParamInt)) { OutValues = { float(C.ClothesStates[Track.ParamInt]) }; return true; }
+			if (Track.InterpolableId == TEXT("juice")) { OutValues = { C.Fluids.IsValidIndex(Track.ParamInt) ? float(C.Fluids[Track.ParamInt]) : 0.f }; return true; }
+		}
+		if (O->Kind == EOKSceneObjectKind::Item)
+		{
+			const FOKSceneItem& It = O->Item;
+			if (Track.InterpolableId == TEXT("objectAnimationSpeed")) { OutValues = { It.AnimeSpeed }; return true; }
+			if (Track.InterpolableId == TEXT("itemAnimationTime")) { OutValues = { It.AnimeTime }; return true; }
+			if (Track.InterpolableId == TEXT("itemAlpha")) { OutValues = { It.Alpha }; return true; }
+			if (Track.InterpolableId == TEXT("itemShadowColor")) { const FLinearColor C = It.ShadowColor.A >= 0.f ? It.ShadowColor : FLinearColor::Black; OutValues = { C.R, C.G, C.B, 1.f }; return true; }
+			if (Track.InterpolableId == TEXT("itemEmissionColor")) { const FLinearColor C = It.EmissionColor.A >= 0.f ? It.EmissionColor : FLinearColor::White; OutValues = { C.R, C.G, C.B, 1.f }; return true; }
+			if (Track.InterpolableId == TEXT("itemEmissionPower")) { OutValues = { FMath::Max(0.f, It.EmissionPower) }; return true; }
+			if (Track.InterpolableId == TEXT("itemLightCancel")) { OutValues = { FMath::Max(0.f, It.LightCancel) }; return true; }
+			if (Track.InterpolableId == TEXT("itemLineWidth")) { OutValues = { It.LineWidth }; return true; }
+			if (Track.InterpolableId == TEXT("itemLineColor")) { const FLinearColor C = It.LineColor.A >= 0.f ? It.LineColor : FLinearColor::Black; OutValues = { C.R, C.G, C.B, 1.f }; return true; }
+			if (Track.InterpolableId.StartsWith(TEXT("itemColor")) && Track.InterpolableId.Len() == 10)
+			{
+				const int32 Slot = Track.InterpolableId[9] - TEXT('1');
+				const FLinearColor C = It.Colors.IsValidIndex(Slot) && It.Colors[Slot].A >= 0.f ? It.Colors[Slot] : FLinearColor::White;
+				OutValues = { C.R, C.G, C.B, C.A };
+				return true;
+			}
+		}
+	}
+	else if (Track.Owner == TEXT("KKPE"))
+	{
+		const TArray<FOKSceneBoneTrs>* Bones = O->Kind == EOKSceneObjectKind::Character ? &O->Character.BoneOverrides : (O->Kind == EOKSceneObjectKind::Item ? &O->Item.BoneOverrides : nullptr);
+		const FOKSceneBoneTrs* B = Bones ? Bones->FindByPredicate([&](const FOKSceneBoneTrs& X) { return X.Bone == Track.TargetBone; }) : nullptr;
+		if (Track.InterpolableId == TEXT("bonePos")) { const FVector P = (B && B->bHasPos) ? B->Pos : FVector::ZeroVector; OutValues = { float(P.X), float(P.Y), float(P.Z) }; return true; }
+		if (Track.InterpolableId == TEXT("boneRot")) { PushUnityQuatFromEuler((B && B->bHasRot) ? B->Euler : FVector::ZeroVector); return true; }
+		if (Track.InterpolableId == TEXT("boneScale")) { const FVector S = (B && B->bHasScale) ? B->Scale : FVector::OneVector; OutValues = { float(S.X), float(S.Y), float(S.Z) }; return true; }
+		if (Track.InterpolableId == TEXT("fbbikWeight") && O->Kind == EOKSceneObjectKind::Character) { OutValues = { O->Character.IkWeight }; return true; }
+		if (Track.TargetIkEffector >= 0 && O->Kind == EOKSceneObjectKind::Character)
+		{
+			const FOKSceneIkTarget* Ik = O->Character.Ik.FindByPredicate([&](const FOKSceneIkTarget& X) { return X.Effector == Track.TargetIkEffector; });
+			OutValues = { Ik ? (Track.InterpolableId.StartsWith(TEXT("fbbikEffectorRotationWeight")) ? Ik->RotationWeight : Ik->Weight) : 1.f };
+			return true;
+		}
+		if (Track.InterpolableId == TEXT("lastBlendShape"))
+		{
+			const TArray<FOKSceneMorphOverride>* Morphs = O->Kind == EOKSceneObjectKind::Character ? &O->Character.MorphOverrides : (O->Kind == EOKSceneObjectKind::Item ? &O->Item.MorphOverrides : nullptr);
+			const FOKSceneMorphOverride* M = Morphs ? Morphs->FindByPredicate([&](const FOKSceneMorphOverride& X) { return X.Renderer == Track.TargetPath && X.Index == Track.ParamInt; }) : nullptr;
+			OutValues = { M ? M->Weight : 0.f };
+			return true;
+		}
+	}
+	OutValues = { 0.f };
+	return true;
+}
+
+int32 UOKSceneDocument::AddTimelineInterpolableTrack(const FString& Owner, const FString& InterpolableId, int32 ObjectId, const FString& TargetPath, const FString& TargetBone, int32 TargetIkEffector, int32 ParamInt, const FString& ParamStr, const FString& Alias, const FString& GroupPath)
+{
+	int32 Existing = TimelineTracks.IndexOfByPredicate([&](const FOKSceneTimelineTrack& T)
+	{
+		return T.Owner == Owner && T.InterpolableId == InterpolableId && T.ObjectId == ObjectId
+			&& T.TargetPath == TargetPath && T.TargetBone == TargetBone
+			&& T.TargetIkEffector == TargetIkEffector && T.ParamInt == ParamInt && T.ParamStr == ParamStr;
+	});
+	if (Existing == INDEX_NONE)
+	{
+		FOKSceneTimelineTrack& NewTr = TimelineTracks.AddDefaulted_GetRef();
+		NewTr.bEnabled = true;
+		NewTr.Owner = Owner;
+		NewTr.InterpolableId = InterpolableId;
+		NewTr.ObjectId = ObjectId;
+		NewTr.TargetPath = TargetPath;
+		NewTr.TargetBone = TargetBone;
+		NewTr.TargetIkEffector = TargetIkEffector;
+		NewTr.ParamInt = ParamInt;
+		NewTr.ParamStr = ParamStr;
+		NewTr.Alias = Alias;
+		NewTr.GroupPath = GroupPath;
+		Existing = TimelineTracks.Num() - 1;
+	}
+	SetTimelineTrackKey(Existing, Playhead);
+	return Existing;
+}
+
+int32 UOKSceneDocument::SetTimelineTrackKey(int32 TrackIndex, float Time)
+{
+	if (!TimelineTracks.IsValidIndex(TrackIndex)) return INDEX_NONE;
+	FOKSceneTimelineTrack& Tr = TimelineTracks[TrackIndex];
+	TArray<float> Vals;
+	TArray<FString> Names;
+	if (!SampleCurrentTimelineValue(Tr, Vals, &Names)) Vals = { 0.f };
+	const float ClampedTime = FMath::Max(0.f, Time);
+	int32 ExistingIdx = Tr.Keyframes.IndexOfByPredicate([ClampedTime](const FOKSceneTimelineKeyframe& K) { return FMath::Abs(K.Time - ClampedTime) < (1.f / 60.f); });
+	TArray<FOKSceneTimelineCurvePt> SavedCurve;
+	if (ExistingIdx != INDEX_NONE)
+	{
+		SavedCurve = Tr.Keyframes[ExistingIdx].Curve;
+		Tr.Keyframes.RemoveAt(ExistingIdx);
+	}
+	if (SavedCurve.Num() < 2)
+	{
+		FOKSceneTimelineCurvePt P0, P1;
+		P0.Time = 0.f; P0.Value = 0.f; P0.InTangent = 1.f; P0.OutTangent = 1.f;
+		P1.Time = 1.f; P1.Value = 1.f; P1.InTangent = 1.f; P1.OutTangent = 1.f;
+		SavedCurve = { P0, P1 };
+	}
+	FOKSceneTimelineKeyframe Kf;
+	Kf.Time = ClampedTime;
+	Kf.Values = MoveTemp(Vals);
+	Kf.Names = MoveTemp(Names);
+	Kf.Curve = MoveTemp(SavedCurve);
+	Tr.Keyframes.Add(MoveTemp(Kf));
+	Tr.Keyframes.Sort([](const FOKSceneTimelineKeyframe& A, const FOKSceneTimelineKeyframe& B) { return A.Time < B.Time; });
+	Duration = FMath::Max(Duration, ClampedTime);
+	NotifyChanged();
+	return Tr.Keyframes.IndexOfByPredicate([ClampedTime](const FOKSceneTimelineKeyframe& K) { return FMath::IsNearlyEqual(K.Time, ClampedTime, 1e-4f); });
+}
+
+bool UOKSceneDocument::ImportTimelineXmlFile(const FString& Path, int32 TargetObjectId, bool bSingleFile, FString& OutError)
+{
+	const FTCHARToUTF8 Utf8Path(*Path);
+	const int32 BindKey = bSingleFile ? TargetObjectId : -1;
+	int32 Needed = ok_studio_timeline_read_xml(Utf8Path.Get(), 1, BindKey, nullptr, 0);
+	if (Needed <= 0)
+	{
+		OutError = TEXT("无法解析 Timeline XML 文件：") + Path;
+		return false;
+	}
+	TArray<char> Buf;
+	Buf.SetNumZeroed(Needed + 4);
+	const int32 Written = ok_studio_timeline_read_xml(Utf8Path.Get(), 1, BindKey, Buf.GetData(), Buf.Num());
+	if (Written <= 0)
+	{
+		OutError = TEXT("读取 Timeline XML 数据失败：") + Path;
+		return false;
+	}
+	const FString JsonStr = UTF8_TO_TCHAR(Buf.GetData());
+	TSharedPtr<FJsonObject> TlObj;
+	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(JsonStr), TlObj) || !TlObj)
+	{
+		OutError = TEXT("Timeline JSON 反序列化失败");
+		return false;
+	}
+	if (!bSingleFile)
+	{
+		if (TlObj->HasField(TEXT("duration"))) Duration = FMath::Max(0.1f, float(TlObj->GetNumberField(TEXT("duration"))));
+		if (TlObj->HasField(TEXT("speed"))) TimelineSpeed = FMath::Max(0.01f, float(TlObj->GetNumberField(TEXT("speed"))));
+		if (TlObj->HasField(TEXT("divisions"))) TimelineDivisions = FMath::Max(1, int32(TlObj->GetNumberField(TEXT("divisions"))));
+		if (TlObj->HasField(TEXT("block_length"))) TimelineBlockLength = FMath::Max(0.01f, float(TlObj->GetNumberField(TEXT("block_length"))));
+		if (TlObj->HasField(TEXT("is_looping"))) bLoopTimeline = TlObj->GetBoolField(TEXT("is_looping"));
+	}
+	// Map sorted object indices when importing a full-scene XML (dic_key comes in as 0..N-1 when sorted_keys was empty in FFI)
+	TArray<int32> SortedObjectIds;
+	for (const FOKSceneObject& O : Objects) SortedObjectIds.Add(O.Id);
+	SortedObjectIds.Sort();
+
+	const TArray<TSharedPtr<FJsonValue>>* TracksArr = nullptr;
+	if (TlObj->TryGetArrayField(TEXT("tracks"), TracksArr))
+	{
+		for (const TSharedPtr<FJsonValue>& Tv : *TracksArr)
+		{
+			const TSharedPtr<FJsonObject> To = Tv ? Tv->AsObject() : nullptr;
+			if (!To) continue;
+			FOKSceneTimelineTrack Tr;
+			To->TryGetBoolField(TEXT("enabled"), Tr.bEnabled);
+			Tr.Owner = To->GetStringField(TEXT("owner"));
+			Tr.InterpolableId = To->GetStringField(TEXT("id"));
+			const int32 RawKey = To->HasField(TEXT("dic_key")) ? int32(To->GetNumberField(TEXT("dic_key"))) : -1;
+			if (RawKey < 0) Tr.ObjectId = -1;
+			else if (bSingleFile) Tr.ObjectId = TargetObjectId;
+			else if (SortedObjectIds.IsValidIndex(RawKey)) Tr.ObjectId = SortedObjectIds[RawKey];
+			else if (Find(RawKey)) Tr.ObjectId = RawKey;
+			else continue;
+
+			To->TryGetStringField(TEXT("alias"), Tr.Alias);
+			To->TryGetStringField(TEXT("group_path"), Tr.GroupPath);
+			To->TryGetStringField(TEXT("target_path"), Tr.TargetPath);
+			To->TryGetStringField(TEXT("target_bone"), Tr.TargetBone);
+			To->TryGetStringField(TEXT("param_str"), Tr.ParamStr);
+			if (To->HasField(TEXT("target_ik_effector"))) Tr.TargetIkEffector = int32(To->GetNumberField(TEXT("target_ik_effector")));
+			if (To->HasField(TEXT("param_int"))) Tr.ParamInt = int32(To->GetNumberField(TEXT("param_int")));
+			const TArray<TSharedPtr<FJsonValue>>* ColArr = nullptr;
+			if (To->TryGetArrayField(TEXT("color"), ColArr) && ColArr->Num() >= 3)
+				Tr.Color = FLinearColor(float((*ColArr)[0]->AsNumber()), float((*ColArr)[1]->AsNumber()), float((*ColArr)[2]->AsNumber()), 1.f);
+
+			const TArray<TSharedPtr<FJsonValue>>* KfsArr = nullptr;
+			if (To->TryGetArrayField(TEXT("keyframes"), KfsArr))
+			{
+				for (const TSharedPtr<FJsonValue>& Kv : *KfsArr)
+				{
+					const TSharedPtr<FJsonObject> Ko = Kv ? Kv->AsObject() : nullptr;
+					if (!Ko) continue;
+					FOKSceneTimelineKeyframe Kf;
+					Kf.Time = float(Ko->GetNumberField(TEXT("time")));
+					Duration = FMath::Max(Duration, Kf.Time);
+					const TArray<TSharedPtr<FJsonValue>>* ValArr = nullptr;
+					if (Ko->TryGetArrayField(TEXT("values"), ValArr))
+						for (const TSharedPtr<FJsonValue>& Vv : *ValArr) Kf.Values.Add(float(Vv->AsNumber()));
+					const TArray<TSharedPtr<FJsonValue>>* NameArr = nullptr;
+					if (Ko->TryGetArrayField(TEXT("names"), NameArr))
+						for (const TSharedPtr<FJsonValue>& Nv : *NameArr) Kf.Names.Add(Nv->AsString());
+					const TArray<TSharedPtr<FJsonValue>>* CrvArr = nullptr;
+					if (Ko->TryGetArrayField(TEXT("curve"), CrvArr))
+						for (const TSharedPtr<FJsonValue>& Cv : *CrvArr)
+							if (const TSharedPtr<FJsonObject> Co = Cv ? Cv->AsObject() : nullptr)
+							{
+								FOKSceneTimelineCurvePt Pt;
+								Pt.Time = float(Co->GetNumberField(TEXT("t")));
+								Pt.Value = float(Co->GetNumberField(TEXT("v")));
+								Pt.InTangent = float(Co->GetNumberField(TEXT("in_t")));
+								Pt.OutTangent = float(Co->GetNumberField(TEXT("out_t")));
+								Kf.Curve.Add(Pt);
+							}
+					Tr.Keyframes.Add(MoveTemp(Kf));
+				}
+			}
+			if (!Tr.Keyframes.IsEmpty())
+			{
+				const int32 Dup = TimelineTracks.IndexOfByPredicate([&](const FOKSceneTimelineTrack& X)
+				{
+					return X.Owner == Tr.Owner && X.InterpolableId == Tr.InterpolableId && X.ObjectId == Tr.ObjectId
+						&& X.TargetPath == Tr.TargetPath && X.ParamInt == Tr.ParamInt && X.ParamStr == Tr.ParamStr;
+				});
+				if (Dup != INDEX_NONE) TimelineTracks[Dup] = MoveTemp(Tr);
+				else TimelineTracks.Add(MoveTemp(Tr));
+			}
+		}
+	}
+	EvaluateTimeline(Playhead);
+	NotifyChanged();
+	return true;
+}
+
+bool UOKSceneDocument::ExportTimelineXmlFile(const FString& Path, int32 TargetObjectId, bool bSingleFile, FString& OutError) const
+{
+	TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+	Root->SetNumberField(TEXT("duration"), FMath::Max(0.1f, Duration));
+	Root->SetNumberField(TEXT("speed"), FMath::Max(0.01f, TimelineSpeed));
+	Root->SetNumberField(TEXT("divisions"), FMath::Max(1, TimelineDivisions));
+	Root->SetNumberField(TEXT("block_length"), FMath::Max(0.01f, TimelineBlockLength));
+	Root->SetBoolField(TEXT("is_looping"), bLoopTimeline);
+	if (!bSingleFile)
+	{
+		TArray<int32> SortedIds;
+		for (const FOKSceneObject& O : Objects) SortedIds.Add(O.Id);
+		SortedIds.Sort();
+		TArray<TSharedPtr<FJsonValue>> SortedKeysJson;
+		for (int32 Id : SortedIds) SortedKeysJson.Add(MakeShared<FJsonValueNumber>(Id));
+		Root->SetArrayField(TEXT("sorted_keys"), SortedKeysJson);
+	}
+
+	TArray<TSharedPtr<FJsonValue>> TracksArr;
+	for (const FOKSceneTimelineTrack& Tr : TimelineTracks)
+	{
+		if (bSingleFile && TargetObjectId >= 0 && Tr.ObjectId != TargetObjectId) continue;
+		TSharedRef<FJsonObject> To = MakeShared<FJsonObject>();
+		To->SetBoolField(TEXT("enabled"), Tr.bEnabled);
+		To->SetStringField(TEXT("owner"), Tr.Owner);
+		To->SetStringField(TEXT("id"), Tr.InterpolableId);
+		To->SetNumberField(TEXT("dic_key"), Tr.ObjectId);
+		if (!Tr.Alias.IsEmpty()) To->SetStringField(TEXT("alias"), Tr.Alias);
+		if (!Tr.GroupPath.IsEmpty()) To->SetStringField(TEXT("group_path"), Tr.GroupPath);
+		if (!Tr.TargetPath.IsEmpty()) To->SetStringField(TEXT("target_path"), Tr.TargetPath);
+		if (!Tr.TargetBone.IsEmpty()) To->SetStringField(TEXT("target_bone"), Tr.TargetBone);
+		if (Tr.TargetIkEffector >= 0) To->SetNumberField(TEXT("target_ik_effector"), Tr.TargetIkEffector);
+		if (Tr.ParamInt >= 0) To->SetNumberField(TEXT("param_int"), Tr.ParamInt);
+		if (!Tr.ParamStr.IsEmpty()) To->SetStringField(TEXT("param_str"), Tr.ParamStr);
+		To->SetArrayField(TEXT("color"), {
+			MakeShared<FJsonValueNumber>(Tr.Color.R),
+			MakeShared<FJsonValueNumber>(Tr.Color.G),
+			MakeShared<FJsonValueNumber>(Tr.Color.B)
+		});
+		TArray<TSharedPtr<FJsonValue>> KfsArr;
+		for (const FOKSceneTimelineKeyframe& Kf : Tr.Keyframes)
+		{
+			TSharedRef<FJsonObject> Ko = MakeShared<FJsonObject>();
+			Ko->SetNumberField(TEXT("time"), Kf.Time);
+			TArray<TSharedPtr<FJsonValue>> ValArr;
+			for (float V : Kf.Values) ValArr.Add(MakeShared<FJsonValueNumber>(V));
+			Ko->SetArrayField(TEXT("values"), ValArr);
+			if (!Kf.Names.IsEmpty())
+			{
+				TArray<TSharedPtr<FJsonValue>> NmArr;
+				for (const FString& Nm : Kf.Names) NmArr.Add(MakeShared<FJsonValueString>(Nm));
+				Ko->SetArrayField(TEXT("names"), NmArr);
+			}
+			if (!Kf.Curve.IsEmpty())
+			{
+				TArray<TSharedPtr<FJsonValue>> CrvArr;
+				for (const FOKSceneTimelineCurvePt& Pt : Kf.Curve)
+				{
+					TSharedRef<FJsonObject> Co = MakeShared<FJsonObject>();
+					Co->SetNumberField(TEXT("t"), Pt.Time);
+					Co->SetNumberField(TEXT("v"), Pt.Value);
+					Co->SetNumberField(TEXT("in_t"), Pt.InTangent);
+					Co->SetNumberField(TEXT("out_t"), Pt.OutTangent);
+					CrvArr.Add(MakeShared<FJsonValueObject>(Co));
+				}
+				Ko->SetArrayField(TEXT("curve"), CrvArr);
+			}
+			KfsArr.Add(MakeShared<FJsonValueObject>(Ko));
+		}
+		To->SetArrayField(TEXT("keyframes"), KfsArr);
+		TracksArr.Add(MakeShared<FJsonValueObject>(To));
+	}
+	Root->SetArrayField(TEXT("tracks"), TracksArr);
+
+	FString JsonStr;
+	FJsonSerializer::Serialize(Root, TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&JsonStr));
+	const FTCHARToUTF8 Utf8Path(*Path);
+	const FTCHARToUTF8 Utf8Json(*JsonStr);
+	char ErrBuf[512] = {};
+	if (ok_studio_timeline_write_xml(Utf8Path.Get(), Utf8Json.Get(), bSingleFile ? 1 : 0, ErrBuf, sizeof(ErrBuf)) != 0)
+	{
+		OutError = ErrBuf[0] ? FString(UTF8_TO_TCHAR(ErrBuf)) : (TEXT("写入 Timeline XML 失败：") + Path);
+		return false;
+	}
+	return true;
 }
 
 TMap<FName, FLinearColor> FOKScenePost::ShaderGlobals() const

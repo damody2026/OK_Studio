@@ -381,8 +381,15 @@ pub(crate) fn apply_material_editor_remove_rim(
 }
 
 pub(crate) fn material_editor_removes_rim(game_root: &Path) -> bool {
-    if !game_root.join("BepInEx/plugins/KKS_Plugins/KKS_MaterialEditor.dll").ok_is_file()
-        && !game_root.join("BepInEx/plugins/KKS_MaterialEditor.dll").ok_is_file() { return false; }
+    let has_me = [
+        "BepInEx/plugins/KKS_Plugins/KKS_MaterialEditor.dll",
+        "BepInEx/plugins/KKS_MaterialEditor.dll",
+        "BepInEx/plugins/KK_Plugins/KK_MaterialEditor.dll",
+        "BepInEx/plugins/KK_MaterialEditor.dll",
+    ]
+    .iter()
+    .any(|p| game_root.join(p).ok_is_file());
+    if !has_me { return false; }
     let path = game_root.join("BepInEx/config/com.deathweasel.bepinex.materialeditor.cfg");
     crate::gamefs::read_to_string(path).ok().and_then(|cfg| {
         cfg.lines().find_map(|line| line.trim().strip_prefix("Remove Rim Lighting =")
@@ -410,7 +417,10 @@ pub(crate) fn material_has_rim_property(mat: &crate::unity::MeshMaterial) -> boo
         | "shader forge/main_item_studio"
         | "shader forge/main_opaque"
         | "shader forge/main_opaque2"
-        | "shader forge/main_skin")
+        | "shader forge/main_skin"
+        | "kkutshair"
+        | "kkutshair_tess"
+        | "kkuss")
 }
 
 /// The game's clothes albedo is a runtime RenderTexture produced by
@@ -606,7 +616,7 @@ pub(crate) fn set_material_color(mesh: &mut ExtractedMesh, property: &str, value
 // matDraw after CreateFaceTexture. MaterialEditor then overrides that material.
 pub(crate) fn apply_native_face_overlays(game: &Path, vanilla: &ChaListCatalog, mods: &ChaListCatalog,
     card: &CardInfo, outfit: i32, mesh: &mut ExtractedMesh) {
-    let is_skin = |s: &str| matches!(s.to_ascii_lowercase().as_str(), "koikano/main_skin" | "shader forge/main_skin" | "kkuss" | "xukmi/skinplus");
+    let is_skin = |s: &str| matches!(s.to_ascii_lowercase().as_str(), "koikano/main_skin" | "shader forge/main_skin" | "kkuss" | "kkussalpha" | "kkuts" | "kkuts_tess" | "kkutsalpha" | "kkutsalpha_tess" | "xukmi/skinplus");
     if !mesh.mat.as_ref().is_some_and(|m| is_skin(&m.shader)
         || card.me_shader.get(&(4, 0, 0, crate::card::me_mat_key(&m.name))).is_some_and(|(target, _)| is_skin(target))) {return;}
     let mut hoho=mesh.mat.as_ref().and_then(|m|m.color("_overcolor2")).unwrap_or([1.;4]);
@@ -808,6 +818,15 @@ pub(crate) fn over_body_mask_png(
 /// alpha bake that a later Material Editor override can erase.
 /// The face's draw blend: "masked" when its _AlphaMask (with the material's _alpha_a/_alpha_b) can clip anything.
 pub(crate) fn face_alpha_blend(mesh: &mut ExtractedMesh) -> &'static str {
+    if let Some(s) = mesh.mat.as_ref().map(|m| m.shader.to_ascii_lowercase()) {
+        if matches!(s.as_str(), "kkutsalpha" | "kkutsalpha_tess" | "kkuts" | "kkuts_tess" | "kkussalpha" | "kkuss") {
+            if let Some(mask) = mesh.alpha_mask_png.take() {
+                let enabled = ["_alpha_a", "_alpha_b"].map(|key| mesh.mat.as_ref().and_then(|m| m.float(key)).unwrap_or(1.0) != 0.0);
+                mesh.alpha_mask_png = if enabled == [false, false] { None } else { body_mask_for_alpha_state(&mask, enabled) };
+            }
+            return if s.starts_with("kkutsalpha") || s == "kkussalpha" { "translucent" } else { "masked" };
+        }
+    }
     let Some(mask) = mesh.alpha_mask_png.take() else { return "opaque" };
     let enabled = ["_alpha_a", "_alpha_b"].map(|key| mesh.mat.as_ref().and_then(|m| m.float(key)).unwrap_or(1.0) != 0.0);
     mesh.alpha_mask_png = if enabled == [false, false] { None } else { body_mask_for_alpha_state(&mask, enabled) };

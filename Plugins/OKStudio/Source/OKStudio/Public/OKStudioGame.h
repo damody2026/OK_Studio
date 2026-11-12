@@ -268,6 +268,8 @@ public:
 	float TimelineSpeed = 1.f;
 	float LoopStart = 0.f, LoopEnd = 0.f;
 	void SetTimelineTime(float Time);
+	FOKStudioVngeRuntime& Vnge();
+	const FOKStudioVngeRuntime* GetVnge() const { return VngeRuntime.Get(); }
 
 	/** Prevents mouse orbit/pan/zoom/fly in the viewport from clearing Document->ActiveCamera = -1 while following an MMD/scene camera. */
 	bool bLockActiveCamera = false;
@@ -503,6 +505,7 @@ private:
 	/** The voice clips and the scene's sound over the export's range as a WAV (false: none sound there). */
 	bool WriteExportMix(const FString& Wav);
 	void UpdateViewer();
+	TSharedPtr<FOKStudioVngeRuntime> VngeRuntime;
 	void SyncNow();
 	/** Whether a shown preview still draws stand-in materials or runtime shaders are compiling (pictures would miss it). */
 	bool MaterialsPending() const;

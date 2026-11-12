@@ -767,7 +767,12 @@ fn layer_entries<'a>(base: &ChaListCatalog, added: impl Iterator<Item = (&'a Pat
         for (k, e) in part.by_id.iter() {
             if by_id.contains_key(k) { continue; }
             match base.by_id.get(k) {
-                Some(winner) => { if zip < Path::new(winner.extra.get("__zip")?) { by_id.insert(*k, e.clone()); } }
+                Some(winner) => {
+                    let w_zip = Path::new(winner.extra.get("__zip")?);
+                    if (!crate::gamefs::library_zip_unbacked(zip) && crate::gamefs::library_zip_unbacked(w_zip)) || zip < w_zip {
+                        by_id.insert(*k, e.clone());
+                    }
+                }
                 None => { by_id.insert(*k, e.clone()); }
             }
         }
@@ -824,9 +829,19 @@ fn view_catalog(_mods_dir: &Path, zips: &[std::path::PathBuf]) -> Option<ChaList
         }
     }
     let read = t.elapsed();
+    let unbacked = crate::gamefs::library_zips_unbacked(zips);
     let mut cat = ChaListCatalog::default();
     cat.by_id.reserve(parts.iter().map(|p| p.by_id.len()).max().unwrap_or(0) * 4);
-    for part in &parts { for (k, e) in part.by_id.iter() { cat.by_id.entry(*k).or_insert_with(|| e.clone()); } }
+    for (part, u) in parts.iter().zip(&unbacked) {
+        if !*u {
+            for (k, e) in part.by_id.iter() { cat.by_id.entry(*k).or_insert_with(|| e.clone()); }
+        }
+    }
+    for (part, u) in parts.iter().zip(&unbacked) {
+        if *u {
+            for (k, e) in part.by_id.iter() { cat.by_id.entry(*k).or_insert_with(|| e.clone()); }
+        }
+    }
     if std::env::var_os("OK_PROFILE").is_some() {
         eprintln!("ok-extract: view catalog zips={} entries={} parts_ms={:.1} merge_ms={:.1}", zips.len(), cat.by_id.len(),
             read.as_secs_f64() * 1000.0, (t.elapsed() - read).as_secs_f64() * 1000.0);

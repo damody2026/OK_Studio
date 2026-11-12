@@ -186,7 +186,17 @@ void SOKStudioPanel::RegisterFloats()
 {
 	// Default places: HS2Studio6's (layout spec) where it has the window, else beside the menus.
 	// Under the object panel, off the characters at the middle of the view and the pages at the left (U219).
-	AddFloat(TEXT("timeline"), TEXT("時間軸"), FMargin(1070.f, 490.f, 520.f, 260.f), [this] { return BuildTimeline(); });
+	AddFloat(TEXT("timeline"), TEXT("时间轴"), FMargin(950.f, 455.f, 630.f, 295.f), [this] { return BuildTimeline(); });
+	AddFloat(TEXT("timeline_curve"), TEXT("时间轴曲线编辑器"), FMargin(510.f, 320.f, 430.f, 430.f), [this] { return BuildTimelineCurve(); });
+	AddFloat(TEXT("vnge_hub"), TEXT("VNGE 工作台"), FMargin(140.f, 47.f, 360.f, 460.f), [this] { return VngeUi->BuildHub(); });
+	AddFloat(TEXT("vnge_sss"), TEXT("VNGE 分幕与相机 (SSS)"), FMargin(510.f, 47.f, 450.f, 500.f), [this] { return VngeUi->BuildSss(); });
+	AddFloat(TEXT("vnge_poselib"), TEXT("VNGE 姿势表情库"), FMargin(510.f, 47.f, 470.f, 520.f), [this] { return VngeUi->BuildPoseLib(); });
+	AddFloat(TEXT("vnge_anime"), TEXT("VNGE 动作剪辑 (VNAnime)"), FMargin(510.f, 47.f, 470.f, 500.f), [this] { return VngeUi->BuildAnime(); });
+	AddFloat(TEXT("vnge_text"), TEXT("VNGE 字幕与空间文字"), FMargin(510.f, 47.f, 430.f, 480.f), [this] { return VngeUi->BuildText(); });
+	AddFloat(TEXT("vnge_sound"), TEXT("VNGE 音效与口型"), FMargin(510.f, 47.f, 430.f, 460.f), [this] { return VngeUi->BuildSound(); });
+	AddFloat(TEXT("vnge_physics"), TEXT("VNGE 物理触发"), FMargin(510.f, 47.f, 440.f, 480.f), [this] { return VngeUi->BuildPhysics(); });
+	AddFloat(TEXT("vnge_utils"), TEXT("VNGE 场景工具与状态复制"), FMargin(510.f, 47.f, 440.f, 520.f), [this] { return VngeUi->BuildUtils(); });
+	AddFloat(TEXT("vnge_script"), TEXT("VNGE 演出剧本 (VNSS)"), FMargin(510.f, 47.f, 460.f, 520.f), [this] { return VngeUi->BuildScript(); });
 	AddFloat(TEXT("mmd"), TEXT("MMD 導演／設定（MMDD / KKVMD）"), FMargin(140.f, 47.f, 430.f, 560.f), [this] { return BuildMmdDirector(); });
 	AddFloat(TEXT("cards"), TEXT("角色卡"), FMargin(142.f, 36.f, 620.f, 420.f), [this] { return BuildCardBrowser(); });
 	AddFloat(TEXT("scenes"), TEXT("場景檔"), FMargin(142.f, 36.f, 620.f, 420.f), [this] { return BuildSceneBrowser(); });
@@ -302,6 +312,7 @@ void SOKStudioPanel::CloseFloat(const FString& InId)
 	F->bOpen = false;
 	OpenOrder.Remove(Id);
 	if (Id == TEXT("timeline")) TimelineView.Reset();
+	if (Id == TEXT("timeline_curve")) CurveView.Reset();
 	bLayoutDirty = true;
 	// The body goes after this event (a widget cannot be destroyed inside its own callback).
 	RegisterActiveTimer(0.f, FWidgetActiveTimerDelegate::CreateLambda([this, Id](double, float) { if (FFloat* X = Floats.Find(Id); X && !X->bOpen && X->Body) X->Body->SetContent(SNullWidget::NullWidget); return EActiveTimerReturnType::Stop; }));
@@ -2389,9 +2400,423 @@ TSharedRef<SWidget> SOKStudioPanel::BuildShot()
 
 // --- Timeline window and export ---
 
+TSharedRef<SWidget> SOKStudioPanel::BuildTimelineCurve()
+{
+	return SAssignNew(CurveView, SOKStudioTimelineCurve)
+		.Game(Game)
+		.GetActiveKey([this](int32& OutTrack, float& OutTime)
+		{
+			if (!Game.IsValid() || !Game->Document || Game->Document->TimelineTracks.IsEmpty()) return false;
+			OutTrack = FMath::Clamp(ActiveInterpTrack, 0, Game->Document->TimelineTracks.Num() - 1);
+			OutTime = ActiveInterpKeyTime;
+			return true;
+		})
+		.SetActiveKey([this](int32 InTrack, float InTime)
+		{
+			ActiveInterpTrack = InTrack;
+			ActiveInterpKeyTime = InTime;
+			if (TimelineView) TimelineView->FocusedInterpTrack = InTrack;
+			Changed();
+		})
+		.OnStatus([this](const FString& S) { SetStatus(S); });
+}
+
+void SOKStudioPanel::ShowInterpTrackMenu(int32 TrackIdx, float KeyTime, const FVector2D& At)
+{
+	if (!Game.IsValid() || !Game->Document || !Game->Document->TimelineTracks.IsValidIndex(TrackIdx)) return;
+	ActiveInterpTrack = TrackIdx;
+	if (KeyTime >= 0.f) ActiveInterpKeyTime = KeyTime;
+	if (TimelineView) TimelineView->FocusedInterpTrack = TrackIdx;
+
+	const FOKSceneTimelineTrack& Tr = Game->Document->TimelineTracks[TrackIdx];
+	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
+	Box->AddSlot().AutoHeight().Padding(2.f, 0.f, 2.f, 3.f)
+		[OKStudioStyle::Label(FText::FromString(Game->Document->DescribeTimelineTrack(Tr)), 10.f, TextHint())];
+
+	Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)
+		[Button(FText::FromString(TEXT("打开三次 Hermite 曲线与数值编辑器…")), [this, TrackIdx, KeyTime]
+		{
+			FSlateApplication::Get().DismissAllMenus();
+			ActiveInterpTrack = TrackIdx;
+			if (KeyTime >= 0.f) ActiveInterpKeyTime = KeyTime;
+			OpenFloat(TEXT("timeline_curve"), false);
+			if (CurveView) CurveView->RefreshContent();
+		}, 210.f, 19.f, false, 10.f, On())];
+
+	Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)
+		[Button(FText::FromString(TEXT("◆ 在当前播放头采样打帧")), [this, TrackIdx]
+		{
+			FSlateApplication::Get().DismissAllMenus();
+			if (!Game.IsValid() || !Game->Document || !Game->Document->TimelineTracks.IsValidIndex(TrackIdx)) return;
+			const float T = TimelineView ? TimelineView->Snap(Game->TimelineTime) : Game->TimelineTime;
+			Game->Document->SetTimelineTrackKey(TrackIdx, T);
+			ActiveInterpKeyTime = T;
+			Changed();
+			if (CurveView) CurveView->RefreshContent();
+			SetStatus(FString::Printf(TEXT("已在 %.2f 秒为「%s」打上插值关键帧"), T, *Game->Document->DescribeTimelineTrack(Game->Document->TimelineTracks[TrackIdx])));
+		}, 210.f, 18.f, false, 10.f)];
+
+	Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)
+		[Button(FText::FromString(Tr.bEnabled ? TEXT("禁用此插值轨（暂停求值）") : TEXT("启用此插值轨")), [this, TrackIdx]
+		{
+			FSlateApplication::Get().DismissAllMenus();
+			if (!Game.IsValid() || !Game->Document || !Game->Document->TimelineTracks.IsValidIndex(TrackIdx)) return;
+			bool& bEn = Game->Document->TimelineTracks[TrackIdx].bEnabled;
+			bEn = !bEn;
+			Changed();
+			Game->SetTimelineTime(Game->TimelineTime);
+			SetStatus(bEn ? TEXT("已启用插值轨") : TEXT("已禁用插值轨"));
+		}, 210.f, 18.f, false, 10.f)];
+
+	Box->AddSlot().AutoHeight().Padding(2.f, 3.f, 2.f, 1.f)[OKStudioStyle::Label(FText::FromString(TEXT("轨道颜色标记")), 9.5f, TextHint())];
+	{
+		struct FColPreset { const TCHAR* Name; FLinearColor Col; };
+		static const FColPreset Cols[] = {
+			{ TEXT("白"), FLinearColor(0.92f, 0.94f, 0.98f, 1.f) },
+			{ TEXT("青"), FLinearColor(0.28f, 0.80f, 0.95f, 1.f) },
+			{ TEXT("绿"), FLinearColor(0.32f, 0.86f, 0.48f, 1.f) },
+			{ TEXT("黄"), FLinearColor(0.95f, 0.82f, 0.25f, 1.f) },
+			{ TEXT("橙"), FLinearColor(0.96f, 0.54f, 0.22f, 1.f) },
+			{ TEXT("粉"), FLinearColor(0.95f, 0.42f, 0.68f, 1.f) },
+			{ TEXT("紫"), FLinearColor(0.68f, 0.46f, 0.96f, 1.f) },
+		};
+		TSharedRef<SHorizontalBox> ColRow = SNew(SHorizontalBox);
+		for (const FColPreset& C : Cols)
+		{
+			ColRow->AddSlot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)
+				[Button(FText::FromString(C.Name), [this, TrackIdx, Col = C.Col]
+				{
+					FSlateApplication::Get().DismissAllMenus();
+					if (Game.IsValid() && Game->Document && Game->Document->TimelineTracks.IsValidIndex(TrackIdx))
+					{
+						Game->Document->TimelineTracks[TrackIdx].Color = Col;
+						Changed();
+					}
+				}, 0.f, 17.f, false, 9.f, C.Col * 0.65f)];
+		}
+		Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)[ColRow];
+	}
+
+	Box->AddSlot().AutoHeight().Padding(2.f, 3.f, 2.f, 1.f)[OKStudioStyle::Label(FText::FromString(TEXT("关键帧曲线预设")), 9.5f, TextHint())];
+	static const TCHAR* PresetNames[] = { TEXT("线性"), TEXT("缓入缓出"), TEXT("缓入"), TEXT("缓出"), TEXT("阶跃常值"), TEXT("过冲回弹") };
+	for (int32 P = 0; P < 6; ++P)
+	{
+		Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)
+			[Button(FText::FromString(PresetNames[P]), [this, TrackIdx, KeyTime, P]
+			{
+				FSlateApplication::Get().DismissAllMenus();
+				if (!Game.IsValid() || !Game->Document) return;
+				if (TimelineView && TimelineView->Selected.ContainsByPredicate([](const SOKStudioTimeline::FKeyRef& R) { return R.IsInterp(); }))
+				{
+					TimelineView->SetCurvePresetOnSelected(P);
+				}
+				else if (Game->Document->TimelineTracks.IsValidIndex(TrackIdx))
+				{
+					FOKSceneTimelineTrack& T = Game->Document->TimelineTracks[TrackIdx];
+					const float TargetT = KeyTime >= 0.f ? KeyTime : Game->TimelineTime;
+					int32 Best = INDEX_NONE;
+					float BestDist = 1e9f;
+					for (int32 K = 0; K < T.Keyframes.Num(); ++K)
+					{
+						const float D = FMath::Abs(T.Keyframes[K].Time - TargetT);
+						if (D < BestDist) { BestDist = D; Best = K; }
+					}
+					if (T.Keyframes.IsValidIndex(Best))
+					{
+						SOKStudioTimelineCurve::ApplyPresetToCurve(T.Keyframes[Best].Curve, P);
+						Changed();
+						Game->SetTimelineTime(Game->TimelineTime);
+					}
+				}
+				if (CurveView) CurveView->RefreshContent();
+			}, 210.f, 17.f, false, 9.5f)];
+	}
+
+	if (KeyTime >= 0.f)
+	{
+		Box->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 1.f)
+			[Button(FText::FromString(TEXT("删除此插值关键帧")), [this, TrackIdx, KeyTime]
+			{
+				FSlateApplication::Get().DismissAllMenus();
+				if (!Game.IsValid() || !Game->Document || !Game->Document->TimelineTracks.IsValidIndex(TrackIdx)) return;
+				TArray<FOKSceneTimelineKeyframe>& Kfs = Game->Document->TimelineTracks[TrackIdx].Keyframes;
+				Kfs.RemoveAll([KeyTime](const FOKSceneTimelineKeyframe& K) { return FMath::Abs(K.Time - KeyTime) < 1e-3f; });
+				Changed();
+				Game->SetTimelineTime(Game->TimelineTime);
+				if (CurveView) CurveView->RefreshContent();
+				SetStatus(TEXT("已删除插值关键帧"));
+			}, 210.f, 18.f, false, 9.5f)];
+	}
+
+	Box->AddSlot().AutoHeight().Padding(0.f, 2.f, 0.f, 0.f)
+		[Button(FText::FromString(TEXT("删除整条插值轨")), [this, TrackIdx]
+		{
+			FSlateApplication::Get().DismissAllMenus();
+			if (!Game.IsValid() || !Game->Document || !Game->Document->TimelineTracks.IsValidIndex(TrackIdx)) return;
+			const FString Desc = Game->Document->DescribeTimelineTrack(Game->Document->TimelineTracks[TrackIdx]);
+			Game->Document->TimelineTracks.RemoveAt(TrackIdx);
+			ActiveInterpTrack = FMath::Clamp(ActiveInterpTrack, 0, FMath::Max(0, Game->Document->TimelineTracks.Num() - 1));
+			if (TimelineView) TimelineView->FocusedInterpTrack = Game->Document->TimelineTracks.IsValidIndex(ActiveInterpTrack) ? ActiveInterpTrack : -1;
+			Changed();
+			Game->SetTimelineTime(Game->TimelineTime);
+			if (CurveView) CurveView->RefreshContent();
+			SetStatus(TEXT("已删除插值轨：") + Desc);
+		}, 210.f, 18.f, false, 9.5f)];
+
+	FSlateApplication::Get().PushMenu(AsShared(), FWidgetPath(), MenuScaled(SNew(SBorder).BorderImage(Brush(Panel())).Padding(5.f)[Box]), At, FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));
+}
+
+void SOKStudioPanel::ShowAddInterpolableMenu(const FVector2D& At)
+{
+	if (!Game.IsValid() || !Game->Document) return;
+	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
+	auto Header = [&Box](const FString& Title)
+	{
+		Box->AddSlot().AutoHeight().Padding(2.f, 4.f, 2.f, 1.f)
+			[OKStudioStyle::Label(FText::FromString(Title), 9.5f, TextHint())];
+	};
+	auto AddItem = [this, &Box](const FString& Title, const FString& Owner, const FString& InterpId, int32 ObjId,
+		const FString& TargetPath = FString(), const FString& TargetBone = FString(), int32 IkEff = -1, int32 ParamI = -1)
+	{
+		Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)
+			[Button(FText::FromString(Title), [this, Owner, InterpId, ObjId, TargetPath, TargetBone, IkEff, ParamI]
+			{
+				FSlateApplication::Get().DismissAllMenus();
+				if (!Game.IsValid() || !Game->Document) return;
+				const int32 Idx = Game->Document->AddTimelineInterpolableTrack(Owner, InterpId, ObjId, TargetPath, TargetBone, IkEff, ParamI);
+				if (Idx >= 0)
+				{
+					ActiveInterpTrack = Idx;
+					ActiveInterpKeyTime = Game->TimelineTime;
+					if (TimelineView) TimelineView->FocusedInterpTrack = Idx;
+					Changed();
+					if (CurveView) CurveView->RefreshContent();
+					SetStatus(FString::Printf(TEXT("已添加插值轨并采样打帧：%s"), *Game->Document->DescribeTimelineTrack(Game->Document->TimelineTracks[Idx])));
+				}
+			}, 235.f, 18.f, false, 9.5f)];
+	};
+
+	Header(TEXT("全局与镜头插值轨 (Timeline)"));
+	AddItem(TEXT("全局时间流速 (timeScale)"), TEXT("Timeline"), TEXT("timeScale"), -1);
+	AddItem(TEXT("镜头环绕焦点 (cameraOPos)"), TEXT("Timeline"), TEXT("cameraOPos"), -1);
+	AddItem(TEXT("镜头环绕旋转 (cameraORot)"), TEXT("Timeline"), TEXT("cameraORot"), -1);
+	AddItem(TEXT("镜头环绕推拉 (cameraOZoom)"), TEXT("Timeline"), TEXT("cameraOZoom"), -1);
+	AddItem(TEXT("镜头坐标 (cameraPos)"), TEXT("Timeline"), TEXT("cameraPos"), -1);
+	AddItem(TEXT("镜头旋转 (cameraRot)"), TEXT("Timeline"), TEXT("cameraRot"), -1);
+	AddItem(TEXT("镜头视场角 FOV (cameraFOV)"), TEXT("Timeline"), TEXT("cameraFOV"), -1);
+	AddItem(TEXT("镜头全参数包 (cameraData)"), TEXT("Timeline"), TEXT("cameraData"), -1);
+
+	if (const FOKSceneObject* O = Game->Document->Find(Game->SelectedId))
+	{
+		Header(FString::Printf(TEXT("所选对象通用变换与显隐（#%d %s）"), O->Id, *O->Name));
+		AddItem(TEXT("对象位置 (guideObjectPos)"), TEXT("Timeline"), TEXT("guideObjectPos"), O->Id);
+		AddItem(TEXT("对象旋转 (guideObjectRot)"), TEXT("Timeline"), TEXT("guideObjectRot"), O->Id);
+		AddItem(TEXT("对象缩放 (guideObjectScale)"), TEXT("Timeline"), TEXT("guideObjectScale"), O->Id);
+		AddItem(TEXT("显隐开关 (objectEnabled)"), TEXT("Timeline"), TEXT("objectEnabled"), O->Id);
+
+		if (O->Kind == EOKSceneObjectKind::Character)
+		{
+			Header(TEXT("角色动作、表情与状态"));
+			AddItem(TEXT("动作播放速度 (objectAnimationSpeed)"), TEXT("Timeline"), TEXT("objectAnimationSpeed"), O->Id);
+			AddItem(TEXT("角色动作切换 (charAnimation)"), TEXT("Timeline"), TEXT("charAnimation"), O->Id);
+			AddItem(TEXT("角色动作时间 (charAnimationTime)"), TEXT("Timeline"), TEXT("charAnimationTime"), O->Id);
+			AddItem(TEXT("眨眼开合度 (characterEyesOpen)"), TEXT("Timeline"), TEXT("characterEyesOpen"), O->Id);
+			AddItem(TEXT("眼型切换 (characterEyes)"), TEXT("Timeline"), TEXT("characterEyes"), O->Id);
+			AddItem(TEXT("眉毛高度 (characterEyebrowsOpen)"), TEXT("Timeline"), TEXT("characterEyebrowsOpen"), O->Id);
+			AddItem(TEXT("眉型切换 (characterEyebrows)"), TEXT("Timeline"), TEXT("characterEyebrows"), O->Id);
+			AddItem(TEXT("嘴巴开合度 (characterMouthOpen)"), TEXT("Timeline"), TEXT("characterMouthOpen"), O->Id);
+			AddItem(TEXT("嘴型切换 (characterMouth)"), TEXT("Timeline"), TEXT("characterMouth"), O->Id);
+			AddItem(TEXT("颈部朝向模式 (characterNeck)"), TEXT("Timeline"), TEXT("characterNeck"), O->Id);
+			AddItem(TEXT("左手手势 (characterLeftHand)"), TEXT("Timeline"), TEXT("characterLeftHand"), O->Id);
+			AddItem(TEXT("右手手势 (characterRightHand)"), TEXT("Timeline"), TEXT("characterRightHand"), O->Id);
+			AddItem(TEXT("脸红程度 (blush)"), TEXT("Timeline"), TEXT("blush"), O->Id);
+			AddItem(TEXT("眼泪等级 (tears)"), TEXT("Timeline"), TEXT("tears"), O->Id);
+			AddItem(TEXT("胸部激凸 (femaleNipples)"), TEXT("Timeline"), TEXT("femaleNipples"), O->Id);
+			for (int32 Slot = 0; Slot < 4; ++Slot)
+				AddItem(FString::Printf(TEXT("服装状态 #%d (charClothes)"), Slot + 1), TEXT("Timeline"), TEXT("charClothes"), O->Id, FString(), FString(), -1, Slot);
+
+			Header(TEXT("角色骨骼与 IK 插值轨 (Timeline / KKPE)"));
+			if (!FkBone.IsEmpty())
+			{
+				AddItem(FString::Printf(TEXT("FK 骨骼旋转 (%s)"), *FkBone), TEXT("Timeline"), TEXT("guideObjectRot"), O->Id, FkBone, FkBone);
+				AddItem(FString::Printf(TEXT("KKPE 骨骼位移 (%s)"), *FkBone), TEXT("KKPE"), TEXT("bonePos"), O->Id, FkBone, FkBone);
+				AddItem(FString::Printf(TEXT("KKPE 骨骼旋转 (%s)"), *FkBone), TEXT("KKPE"), TEXT("boneRot"), O->Id, FkBone, FkBone);
+				AddItem(FString::Printf(TEXT("KKPE 骨骼缩放 (%s)"), *FkBone), TEXT("KKPE"), TEXT("boneScale"), O->Id, FkBone, FkBone);
+			}
+			else
+			{
+				Box->AddSlot().AutoHeight().Padding(2.f, 1.f)
+					[OKStudioStyle::Label(FText::FromString(TEXT("（在骨骼栏选定骨骼后可添加单骨 FK / KKPE 轨）")), 9.f, TextSoft())];
+			}
+			struct FIkEntry { const TCHAR* Name; int32 Eff; bool bRot; };
+			static const FIkEntry IkEntries[] = {
+				{ TEXT("腰臀 IK 位置"), 0, false },
+				{ TEXT("左手 IK 位置"), 5, false }, { TEXT("左手 IK 旋转"), 5, true },
+				{ TEXT("右手 IK 位置"), 6, false }, { TEXT("右手 IK 旋转"), 6, true },
+				{ TEXT("左脚 IK 位置"), 7, false }, { TEXT("左脚 IK 旋转"), 7, true },
+				{ TEXT("右脚 IK 位置"), 8, false }, { TEXT("右脚 IK 旋转"), 8, true },
+			};
+			for (const FIkEntry& Ik : IkEntries)
+			{
+				const FString IkTag = FString::Printf(TEXT("ik_%d"), Ik.Eff);
+				AddItem(Ik.Name, TEXT("Timeline"), Ik.bRot ? TEXT("guideObjectRot") : TEXT("guideObjectPos"), O->Id, IkTag, FString(), Ik.Eff);
+			}
+		}
+		else if (O->Kind == EOKSceneObjectKind::Item)
+		{
+			Header(TEXT("道具材质与动画插值轨"));
+			AddItem(TEXT("道具动作速度 (objectAnimationSpeed)"), TEXT("Timeline"), TEXT("objectAnimationSpeed"), O->Id);
+			AddItem(TEXT("道具透明度 (itemAlpha)"), TEXT("Timeline"), TEXT("itemAlpha"), O->Id);
+			AddItem(TEXT("自发光强度 (itemEmissionPower)"), TEXT("Timeline"), TEXT("itemEmissionPower"), O->Id);
+			AddItem(TEXT("自发光颜色 (itemEmissionColor)"), TEXT("Timeline"), TEXT("itemEmissionColor"), O->Id);
+			AddItem(TEXT("阴影颜色 (itemShadowColor)"), TEXT("Timeline"), TEXT("itemShadowColor"), O->Id);
+			AddItem(TEXT("受光抵消 (itemLightCancel)"), TEXT("Timeline"), TEXT("itemLightCancel"), O->Id);
+			AddItem(TEXT("描边粗细 (itemLineWidth)"), TEXT("Timeline"), TEXT("itemLineWidth"), O->Id);
+			AddItem(TEXT("道具颜色槽 1 (itemColor1)"), TEXT("Timeline"), TEXT("itemColor1"), O->Id);
+		}
+		else if (O->Kind == EOKSceneObjectKind::Light)
+		{
+			Header(TEXT("灯光插值轨"));
+			AddItem(TEXT("灯光开关 (lightOnOff)"), TEXT("Timeline"), TEXT("lightOnOff"), O->Id);
+			AddItem(TEXT("灯光颜色 (lightColor)"), TEXT("Timeline"), TEXT("lightColor"), O->Id);
+			AddItem(TEXT("灯光强度 (lightStrength)"), TEXT("Timeline"), TEXT("lightStrength"), O->Id);
+			AddItem(TEXT("灯光范围 (lightRange)"), TEXT("Timeline"), TEXT("lightRange"), O->Id);
+			AddItem(TEXT("聚光角度 (lightSpotAngle)"), TEXT("Timeline"), TEXT("lightSpotAngle"), O->Id);
+			AddItem(TEXT("灯光阴影 (lightShadows)"), TEXT("Timeline"), TEXT("lightShadows"), O->Id);
+		}
+	}
+	else
+	{
+		Box->AddSlot().AutoHeight().Padding(2.f, 4.f)
+			[OKStudioStyle::Label(FText::FromString(TEXT("提示：先在场景选中角色/道具/灯光，即可添加该对象的专属插值轨")), 9.f, TextSoft())];
+	}
+
+	if (!Game->Document->Constraints.IsEmpty())
+	{
+		Header(TEXT("节点约束权重轨 (NodesConstraints)"));
+		for (const FOKSceneConstraint& Con : Game->Document->Constraints)
+		{
+			AddItem(FString::Printf(TEXT("约束 #%d 启用开关"), Con.LoadId), TEXT("NodesConstraints"), TEXT("constraintEnabled"), -1, FString(), FString(), -1, Con.LoadId);
+			AddItem(FString::Printf(TEXT("约束 #%d 位移权重"), Con.LoadId), TEXT("NodesConstraints"), TEXT("constraintPos"), -1, FString(), FString(), -1, Con.LoadId);
+			AddItem(FString::Printf(TEXT("约束 #%d 旋转权重"), Con.LoadId), TEXT("NodesConstraints"), TEXT("constraintRot"), -1, FString(), FString(), -1, Con.LoadId);
+		}
+	}
+
+	TSharedRef<SWidget> MenuBody = SNew(SBorder).BorderImage(Brush(Panel())).Padding(5.f)
+		[SNew(SBox).WidthOverride(252.f).MaxDesiredHeight(420.f)[SNew(SScrollBox).ScrollBarThickness(FVector2D(4.f, 4.f)) + SScrollBox::Slot()[Box]]];
+	FSlateApplication::Get().PushMenu(AsShared(), FWidgetPath(), MenuScaled(MenuBody), At, FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));
+}
+
+void SOKStudioPanel::ShowTimelineXmlMenu(const FVector2D& At)
+{
+	if (!Game.IsValid() || !Game->Document) return;
+	if (TimelineXmlPath.IsEmpty())
+	{
+		const FString ExportDir = FPaths::ProjectDir() / TEXT("UserData/Studio/timeline");
+		IFileManager::Get().MakeDirectory(*ExportDir, true);
+		TimelineXmlPath = ExportDir / TEXT("timeline_export.xml");
+	}
+
+	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
+	Box->AddSlot().AutoHeight().Padding(2.f, 0.f, 2.f, 3.f)
+		[OKStudioStyle::Label(FText::FromString(TEXT("Timeline.dll XML 读写（兼容全场景 XML 与 Single Files 单对象轨）")), 9.5f, TextHint())];
+
+	Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 3.f)
+		[SNew(SBox).WidthOverride(330.f).HeightOverride(20.f)
+			[TextBox([this] { return TimelineXmlPath; }, [this](const FString& V) { TimelineXmlPath = V.TrimStartAndEnd().TrimQuotes(); }, TEXT("输入 .xml 路径"))]];
+
+	auto DoXmlOp = [this](bool bImport, bool bSingle)
+	{
+		FSlateApplication::Get().DismissAllMenus();
+		if (!Game.IsValid() || !Game->Document) return;
+		const FString File = TimelineXmlPath.TrimStartAndEnd().TrimQuotes();
+		if (File.IsEmpty()) { SetStatus(TEXT("请先指定 XML 文件路径")); return; }
+		const int32 TargetId = bSingle ? Game->SelectedId : -1;
+		if (bSingle && TargetId < 0) { SetStatus(TEXT("单对象 Single File 模式需先选中目标角色或道具")); return; }
+		FString Err;
+		const bool bOk = bImport
+			? Game->Document->ImportTimelineXmlFile(File, TargetId, bSingle, Err)
+			: Game->Document->ExportTimelineXmlFile(File, TargetId, bSingle, Err);
+		if (bOk && bImport)
+		{
+			Changed();
+			Game->SetTimelineTime(Game->TimelineTime);
+			if (CurveView) CurveView->RefreshContent();
+		}
+		SetStatus(bOk
+			? FString::Printf(TEXT("%s成功：%s（当前共 %d 条插值轨）"), bImport ? TEXT("导入 Timeline XML ") : TEXT("导出 Timeline XML "), *FPaths::GetCleanFilename(File), Game->Document->TimelineTracks.Num())
+			: FString::Printf(TEXT("%s失败：%s"), bImport ? TEXT("导入 ") : TEXT("导出 "), *Err));
+	};
+
+	Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)
+		[SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 2.f, 0.f)[Button(FText::FromString(TEXT("导入 Single File (绑定所选)")), [DoXmlOp] { DoXmlOp(true, true); }, 0.f, 20.f, false, 9.5f, On())]
+			+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("导入全场景 XML")), [DoXmlOp] { DoXmlOp(true, false); }, 0.f, 20.f, false, 9.5f)]];
+	Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 4.f)
+		[SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 2.f, 0.f)[Button(FText::FromString(TEXT("导出所选为 Single File")), [DoXmlOp] { DoXmlOp(false, true); }, 0.f, 20.f, false, 9.5f)]
+			+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("导出全场景 XML")), [DoXmlOp] { DoXmlOp(false, false); }, 0.f, 20.f, false, 9.5f)]];
+
+	TArray<TPair<FString, bool>> FoundXmls;
+	auto ScanDir = [&FoundXmls](const FString& Dir, bool bSingleDefault)
+	{
+		if (!FPaths::DirectoryExists(Dir)) return;
+		TArray<FString> Files;
+		IFileManager::Get().FindFilesRecursive(Files, *Dir, TEXT("*.xml"), true, false);
+		Files.Sort();
+		for (const FString& F : Files) FoundXmls.Add({ F, bSingleDefault });
+	};
+	ScanDir(TEXT("E:/Koikatu/BepInEx/plugins/Timeline/Single Files"), true);
+	ScanDir(FPaths::ProjectDir() / TEXT("UserData/Studio/timeline"), false);
+
+	if (!FoundXmls.IsEmpty())
+	{
+		Box->AddSlot().AutoHeight().Padding(2.f, 2.f, 2.f, 2.f)
+			[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("本机预设库快速导入（共 %d 个 XML，点击直接套用）"), FoundXmls.Num())), 9.5f, TextHint())];
+		TSharedRef<SVerticalBox> ListBox = SNew(SVerticalBox);
+		for (const TPair<FString, bool>& Item : FoundXmls)
+		{
+			const FString Full = Item.Key;
+			const bool bSingle = Item.Value;
+			const FString Label = FString::Printf(TEXT("%s  %s"), bSingle ? TEXT("[单对象]") : TEXT("[场景/预设]"), *FPaths::GetBaseFilename(Full));
+			ListBox->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)
+				[Button(FText::FromString(Label), [this, Full, bSingle]
+				{
+					TimelineXmlPath = Full;
+					FSlateApplication::Get().DismissAllMenus();
+					if (!Game.IsValid() || !Game->Document) return;
+					int32 TargetId = Game->SelectedId;
+					if (bSingle && TargetId < 0)
+					{
+						for (const FOKSceneObject& Obj : Game->Document->Objects)
+							if (Obj.Kind == EOKSceneObjectKind::Character) { TargetId = Obj.Id; break; }
+					}
+					if (bSingle && TargetId < 0) { SetStatus(TEXT("请先在场景中添加或选中一个目标对象再导入 Single File XML")); return; }
+					FString Err;
+					const bool bOk = Game->Document->ImportTimelineXmlFile(Full, bSingle ? TargetId : -1, bSingle, Err);
+					if (bOk)
+					{
+						Changed();
+						Game->SetTimelineTime(Game->TimelineTime);
+						if (CurveView) CurveView->RefreshContent();
+					}
+					SetStatus(bOk
+						? FString::Printf(TEXT("已导入预设 %s（共 %d 条插值轨）"), *FPaths::GetCleanFilename(Full), Game->Document->TimelineTracks.Num())
+						: (TEXT("导入失败：") + Err));
+				}, 320.f, 18.f, false, 9.f)];
+		}
+		Box->AddSlot().AutoHeight()
+			[SNew(SBox).WidthOverride(330.f).MaxDesiredHeight(210.f)
+				[SNew(SBorder).BorderImage(Brush(ListArea())).Padding(2.f)
+					[SNew(SScrollBox).ScrollBarThickness(FVector2D(4.f, 4.f)) + SScrollBox::Slot()[ListBox]]]];
+	}
+
+	FSlateApplication::Get().PushMenu(AsShared(), FWidgetPath(), MenuScaled(SNew(SBorder).BorderImage(Brush(Panel())).Padding(5.f)[Box]), At, FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));
+}
+
 void SOKStudioPanel::ShowEaseMenu(const FVector2D& At)
 {
-	static const TCHAR* Names[] = { TEXT("線性"), TEXT("緩入緩出"), TEXT("緩入"), TEXT("緩出"), TEXT("跳格") };
+	static const TCHAR* Names[] = { TEXT("线性"), TEXT("缓入缓出"), TEXT("缓入"), TEXT("缓出"), TEXT("跳格") };
 	TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
 	for (int32 I = 0; I < 5; ++I)
 		Box->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)[Button(FText::FromString(Names[I]), [this, I] { FSlateApplication::Get().DismissAllMenus(); if (TimelineView) TimelineView->SetEase(EOKSceneEase(I)); }, 100.f, 18.f, false, 10.f)];
@@ -2448,13 +2873,19 @@ TSharedRef<SWidget> SOKStudioPanel::BuildTimeline()
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[Icon(TEXT("next"), TEXT("下一幀"), TEXT("timeline.next"))]
 		+ SHorizontalBox::Slot().AutoWidth()[Icon(TEXT("last"), TEXT("結尾"), TEXT("timeline.last"))]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f).VAlign(VAlign_Center)
-		[OKStudioStyle::Label(TAttribute<FText>::CreateLambda([this] { return FText::FromString(Game.IsValid() ? FString::Printf(TEXT("%.2f 秒 / 幀 %d"), Game->TimelineTime, FMath::RoundToInt(Game->TimelineTime * 30.f)) : FString()); }), 10.f)]
+		[OKStudioStyle::Label(TAttribute<FText>::CreateLambda([this] { return FText::FromString(Game.IsValid() ? FString::Printf(TEXT("%.2f 秒 / 帧 %d"), Game->TimelineTime, FMath::RoundToInt(Game->TimelineTime * 30.f)) : FString()); }), 10.f)]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(6.f, 0.f, 2.f, 0.f).VAlign(VAlign_Center)
+		[SNew(SBox).ToolTipText(FText::FromString(TEXT("Timeline.dll 全程循环 (isLooping)：关闭时播放到末尾自动停止")))
+			[CheckBox(TEXT("全程循环"), [this] { return Game.IsValid() && Game->Document && Game->Document->bLoopTimeline; },
+				[this](bool B) { if (Game.IsValid() && Game->Document) { Game->Document->bLoopTimeline = B; Changed(); } })]]
 		+ SHorizontalBox::Slot().FillWidth(1.f)
 		+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 6.f, 0.f)[Button(FText::FromString(TEXT("輸出…")), Cmd(TEXT("timeline.export")), 50.f, 20.f, false, 10.f)]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[OKStudioStyle::Label(FText::FromString(TEXT("時長")), 10.f)]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f)[SNew(SBox).WidthOverride(48.f).HeightOverride(18.f)[Spin([this] { return Game.IsValid() ? Game->Document->Duration : 10.f; }, [this](float V) { if (Game.IsValid()) { Game->Document->Duration = FMath::Max(V, 0.1f); Changed(); } }, 0.1f, 3600.f, 0.1f)]]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[OKStudioStyle::Label(FText::FromString(TEXT("速度")), 10.f)]
-		+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f)[SNew(SBox).WidthOverride(40.f).HeightOverride(18.f)[Spin([this] { return Game.IsValid() ? Game->TimelineSpeed : 1.f; }, [this](float V) { if (Game.IsValid()) Game->TimelineSpeed = FMath::Clamp(V, 0.05f, 8.f); }, 0.05f, 8.f, 0.05f)]];
+		+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f)[SNew(SBox).WidthOverride(42.f).HeightOverride(18.f)[Spin([this] { return Game.IsValid() && Game->Document ? Game->Document->TimelineSpeed : 1.f; }, [this](float V) { if (Game.IsValid()) { const float S = FMath::Clamp(V, 0.05f, 8.f); Game->TimelineSpeed = S; if (Game->Document) { Game->Document->TimelineSpeed = S; Changed(); } } }, 0.05f, 8.f, 0.05f)]]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(3.f, 0.f, 0.f, 0.f)[OKStudioStyle::Label(FText::FromString(TEXT("细分")), 10.f)]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f)[SNew(SBox).WidthOverride(34.f).HeightOverride(18.f)[Spin([this] { return float(Game.IsValid() && Game->Document ? Game->Document->TimelineDivisions : 10); }, [this](float V) { if (Game.IsValid() && Game->Document) { Game->Document->TimelineDivisions = FMath::Clamp(FMath::RoundToInt(V), 1, 120); Changed(); } }, 1.f, 120.f, 1.f)]];
 	// The cut menu opens under its button (U122: at the system cursor it opened elsewhere for keyboard and simulated clicks).
 	TSharedRef<TWeakPtr<SWidget>> CutSelf = MakeShared<TWeakPtr<SWidget>>();
 	TSharedRef<SWidget> CutButton = Button(FText::FromString(TEXT("切鏡頭 ▼")), [this, CutSelf]
@@ -2504,6 +2935,38 @@ TSharedRef<SWidget> SOKStudioPanel::BuildTimeline()
 		+ SHorizontalBox::Slot().AutoWidth().Padding(4.f, 0.f, 1.f, 0.f).VAlign(VAlign_Center)[SNew(SBox).WidthOverride(84.f)[CheckBox(TEXT("30fps 吸附"), [this] { return !TimelineView || TimelineView->SnapFps > 0.f; }, [this](bool B) { if (TimelineView) TimelineView->SnapFps = B ? 30.f : 0.f; })]]
 		+ SHorizontalBox::Slot().FillWidth(1.f);
 	// Bone keys without the FK page (HS2Studio6's bone search, 打骨骼帧 / 删骨骼帧).
+	TSharedRef<TWeakPtr<SWidget>> AddInterpSelf = MakeShared<TWeakPtr<SWidget>>();
+	TSharedRef<SWidget> AddInterpBtn = Button(FText::FromString(TEXT("+ 添加插值轨 ▼")), [this, AddInterpSelf]
+	{
+		const TSharedPtr<SWidget> W = AddInterpSelf->Pin();
+		const FGeometry& G = W ? W->GetCachedGeometry() : FGeometry();
+		ShowAddInterpolableMenu(W ? FVector2D(G.LocalToAbsolute(FVector2f(0.f, G.GetLocalSize().Y))) : FSlateApplication::Get().GetCursorPos());
+	}, 88.f, 20.f, false, 9.5f, On());
+	*AddInterpSelf = AddInterpBtn;
+
+	TSharedRef<TWeakPtr<SWidget>> XmlSelf = MakeShared<TWeakPtr<SWidget>>();
+	TSharedRef<SWidget> XmlBtn = Button(FText::FromString(TEXT("XML 读写 ▼")), [this, XmlSelf]
+	{
+		const TSharedPtr<SWidget> W = XmlSelf->Pin();
+		const FGeometry& G = W ? W->GetCachedGeometry() : FGeometry();
+		ShowTimelineXmlMenu(W ? FVector2D(G.LocalToAbsolute(FVector2f(0.f, G.GetLocalSize().Y))) : FSlateApplication::Get().GetCursorPos());
+	}, 72.f, 20.f, false, 9.5f);
+	*XmlSelf = XmlBtn;
+
+	TSharedRef<SWidget> RowInterp = SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().AutoWidth()[AddInterpBtn]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f)[SNew(SBox).ToolTipText(FText::FromString(TEXT("对当前聚焦的 Timeline 插值轨在播放头采样打关键帧")))[Button(FText::FromString(TEXT("◆ 插值打帧")), Cmd(TEXT("timeline.interp.key")), 68.f, 20.f, false, 9.5f)]]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f, 0.f)[SNew(SBox).ToolTipText(FText::FromString(TEXT("打开三次 Hermite 曲线与分量编辑器（双击插值关键帧也可打开）")))[Button(FText::FromString(TEXT("曲线窗口")), Cmd(TEXT("toggle.timeline_curve")), 58.f, 20.f, TAttribute<bool>::CreateLambda([this] { return IsFloatOpen(TEXT("timeline_curve")); }), 9.5f)]]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f)[XmlBtn]
+		+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(6.f, 0.f)
+		[OKStudioStyle::Label(TAttribute<FText>::CreateLambda([this]
+		{
+			const int32 N = Game.IsValid() && Game->Document ? Game->Document->TimelineTracks.Num() : 0;
+			if (N == 0) return FText::FromString(TEXT("插值轨：0 条（可添加属性轨或导入 XML）"));
+			const int32 FocusIdx = FMath::Clamp(ActiveInterpTrack, 0, N - 1);
+			return FText::FromString(FString::Printf(TEXT("插值轨 %d 条 · 当前：%s"), N, *Game->Document->DescribeTimelineTrack(Game->Document->TimelineTracks[FocusIdx])));
+		}), 9.5f, TextSoft())];
+
 	TSharedRef<SWidget> Row3 = SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 3.f, 0.f)[OKStudioStyle::Label(FText::FromString(TEXT("骨骼")), 10.f)]
 		+ SHorizontalBox::Slot().AutoWidth()[SNew(SBox).WidthOverride(90.f).HeightOverride(18.f)[TextBox([] { return FString(); }, [this](const FString& V) { if (!V.TrimStartAndEnd().IsEmpty()) RunCommand(TEXT("pose.bone"), V); }, TEXT("搜尋，Enter 選")) ]]
@@ -2521,9 +2984,25 @@ TSharedRef<SWidget> SOKStudioPanel::BuildTimeline()
 	return SNew(SVerticalBox)
 		+ SVerticalBox::Slot().AutoHeight()[Row1]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)[Row2]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)[RowInterp]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)[Row3]
 		+ SVerticalBox::Slot().FillHeight(1.f)[SAssignNew(TimelineView, SOKStudioTimeline).Game(Game)
-			.OnEaseMenu([this](const FVector2D& At) { ShowEaseMenu(At); }).OnStatus([this](const FString& S) { SetStatus(S); })];
+			.OnEaseMenu([this](const FVector2D& At) { ShowEaseMenu(At); })
+			.OnInterpMenu([this](int32 TrIdx, float KeyT, const FVector2D& At) { ShowInterpTrackMenu(TrIdx, KeyT, At); })
+			.OnOpenCurve([this](int32 TrIdx, float KeyT)
+			{
+				ActiveInterpTrack = TrIdx;
+				if (KeyT >= 0.f) ActiveInterpKeyTime = KeyT;
+				OpenFloat(TEXT("timeline_curve"), false);
+				if (CurveView) CurveView->RefreshContent();
+			})
+			.OnSelectInterpKey([this](int32 TrIdx, float KeyT)
+			{
+				ActiveInterpTrack = TrIdx;
+				if (KeyT >= 0.f) ActiveInterpKeyTime = KeyT;
+				if (CurveView) CurveView->RefreshContent();
+			})
+			.OnStatus([this](const FString& S) { SetStatus(S); })];
 }
 
 TSharedRef<SWidget> SOKStudioPanel::BuildExport()
@@ -3104,6 +3583,24 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMmdDirector()
 		+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 2.f, 0.f)[Button(FText::FromString(TEXT("開啟完整時間軸視窗")), Cmd(TEXT("toggle.timeline")), 0.f, 22.f, TAttribute<bool>::CreateLambda([this] { return IsFloatOpen(TEXT("timeline")); }), 10.f)]
 		+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 2.f, 0.f)[Button(FText::FromString(TEXT("輸出影片 / MP4…")), Cmd(TEXT("timeline.export")), 0.f, 22.f, TAttribute<bool>::CreateLambda([this] { return IsFloatOpen(TEXT("export")); }), 10.f)]
 		+ SHorizontalBox::Slot().FillWidth(0.8f)[Button(FText::FromString(TEXT("儲存場景")), Cmd(TEXT("scene.save")), 0.f, 22.f, false, 10.f)]
+	];
+
+	Body->AddSlot().AutoHeight().Padding(0.f, 6.f, 0.f, 3.f)[SectionHeader(TEXT("五、Timeline 插值轨与 VNGE 联动"))];
+	if (Game.IsValid() && Game->Document)
+	{
+		const FOKSceneVngeData& V = Game->Document->Vnge;
+		Body->AddSlot().AutoHeight().Padding(2.f, 1.f)
+			[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("• Timeline.dll 连续插值轨：%d 条（全程循环：%s，全局倍速：%.2fx）"),
+				Game->Document->TimelineTracks.Num(), Game->Document->bLoopTimeline ? TEXT("开") : TEXT("关"), Game->Document->TimelineSpeed)), 9.5f, TextSoft())];
+		Body->AddSlot().AutoHeight().Padding(2.f, 1.f)
+			[OKStudioStyle::Label(FText::FromString(FString::Printf(TEXT("• VNGE 演出数据：分幕 %d · 机位 %d · KFA 剪辑 %d · 字幕 %d · 音源 %d · 剧本块 %d"),
+				V.Sss.States.Num(), V.Sss.Cameras.Num(), V.Clips.Num(), V.Texts.Num(), V.Sounds.Num(), V.Script.Blocks.Num())), 9.5f, TextSoft())];
+	}
+	Body->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 2.f)
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 2.f, 0.f)[Button(FText::FromString(TEXT("打开曲线编辑器")), Cmd(TEXT("toggle.timeline_curve")), 0.f, 22.f, TAttribute<bool>::CreateLambda([this] { return IsFloatOpen(TEXT("timeline_curve")); }), 10.f)]
+		+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("打开 VNGE 工作台")), Cmd(TEXT("toggle.vnge")), 0.f, 22.f, TAttribute<bool>::CreateLambda([this] { return IsFloatOpen(TEXT("vnge_hub")); }), 10.f, On())]
 	];
 
 	return SNew(SScrollBox).ScrollBarThickness(FVector2D(4.f, 4.f))

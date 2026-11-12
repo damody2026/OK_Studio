@@ -22,6 +22,14 @@ public class OKPhysXSecondary : ModuleRules
 		string Plugin = Path.GetFullPath(Path.Combine(ModuleDirectory, "..", ".."));
 		PrivateIncludePaths.Add(Path.Combine(Plugin, "Source", "ThirdParty", "PhysX", "include"));
 		string FlexLib = Path.Combine(EngineDirectory, "Plugins", "GameWorks", "Flex", "Source", "ThirdParty", "PhysX58", "lib", "Win64");
+		bool AllowUnpatched = System.Environment.GetEnvironmentVariable("OK_ALLOW_UNPATCHED_ENGINE") == "1";
+		if (AllowUnpatched && !File.Exists(Path.Combine(FlexLib, "PhysX.lib")))
+		{
+			PrivateDefinitions.Add("OK_PHYSX_SECONDARY_STUB=1");
+			PrivateDefinitions.Add("OK_SECONDARY_COMPARISON_BACKENDS=0");
+			return;
+		}
+		PrivateDefinitions.Add("OK_PHYSX_SECONDARY_STUB=0");
 		foreach (string Name in new[] { "PhysX", "PhysXCommon", "PhysXFoundation", "PhysXCooking", "PhysXExtensions_static", "PhysXPvdSDK_static" })
 		{
 			string Library = Path.Combine(FlexLib, Name + ".lib");

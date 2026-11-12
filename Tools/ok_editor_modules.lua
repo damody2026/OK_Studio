@@ -64,7 +64,7 @@ function M.build(project_root, engine_root)
   local project = path.join(project_root, "OpenKoikatsu.uproject")
   io.write("Building OpenKoikatsuEditor (", engine_root, ") ...\n"); io.flush()
   local r = proc.run({ (bat:gsub("/", "\\")), "OpenKoikatsuEditor", "Win64", "Development", "-Project=" .. (project:gsub("/", "\\")),
-    "-NoEngineChanges", "-WaitMutex" }, { cwd = project_root })
+    "-NoEngineChanges", "-WaitMutex" }, { cwd = project_root, env = { OK_ALLOW_UNPATCHED_ENGINE = "1" } })
   if not r.ok then error(("OpenKoikatsuEditor build failed (exit %d); see the output above."):format(r.code), 0) end
 end
 

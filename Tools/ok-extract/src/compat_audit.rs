@@ -155,6 +155,18 @@ pub fn classify_shader_supported(shader: &str) -> &'static str {
                 | "standard"
                 | "kkuss"
                 | "kkussitem"
+                | "kkussalpha"
+                | "kkusshair"
+                | "kkuts"
+                | "kkuts_tess"
+                | "kkutsitem"
+                | "kkutsitem_tess"
+                | "kkutsalpha"
+                | "kkutsalpha_tess"
+                | "kkutshair"
+                | "kkutshair_tess"
+                | "kkutseye"
+                | "kkutseyew"
                 | "ibl_shader"
                 | "ibl_shader_alpha"
                 | "goo"
@@ -196,9 +208,15 @@ fn classify_card_plugin(id: &str) -> &'static str {
     {
         "supported"
     } else if low.contains("additionalcardinfo")
+        || low.contains("additional_card_info")
+        || low.contains("authordata")
+        || low == "migrationhelper"
+        || low == "pluginlisttool"
+        || low == "aaaaaaaaaaaa_data"
+        || low.contains("gamedialoghelper")
         || low.contains("autosave")
         || low.contains("charamaker")
-        || low.contains("ClothingUnlocker")
+        || low.contains("clothingunlocker")
         || low.contains("maker")
         || low.contains("sliders")
         || low.contains("title")
@@ -235,18 +253,26 @@ fn classify_scene_plugin(id: &str) -> &'static str {
         | "LightSettingsData"
         | "com.rikkibalboa.bepinex.lightsettings"
         | "lightSwitch"
+        | "rendererEditor"
         | "vnge_kfa"
         | "vnge_kfa2"
         | "vnge_sss"
+        | "vnge_sssadv"
+        | "vnge_sssb"
+        | "vnge_actor"
+        | "vnge_physics"
+        | "vnge_sound"
+        | "vnge_sound_extdata"
         | "vnge_vnss" => "supported",
-        "vnge_actor" | "vnge_physics" | "vnge_rig" | "vnge_sound" | "vnge_sound_extdata" | "vnge_sssadv" | "vnge_sssb" => "partial",
+        "vnge_rig" => "partial",
         "CharaStudioTweak" | "com.shallty.shalltyutils" | "RSkoi_ComponentUtil" => "ui_or_meta",
         _ => "unsupported",
     }
 }
 
 fn classify_timeline_interpolable(owner: &str, id: &str) -> &'static str {
-    match (owner, id) {
+    let norm_owner = if owner == "HSPE" { "KKPE" } else { owner };
+    match (norm_owner, id) {
         (
             "Timeline",
             "cameraOPos"
@@ -255,12 +281,14 @@ fn classify_timeline_interpolable(owner: &str, id: &str) -> &'static str {
             | "cameraFOV"
             | "cameraPos"
             | "cameraRot"
+            | "cameraData"
             | "timeScale"
             | "objectEnabled"
             | "guideObjectPos"
             | "guideObjectRot"
             | "guideObjectScale"
             | "objectAnimationSpeed"
+            | "charAnimation"
             | "charAnimationPattern"
             | "itemAnimationTime"
             | "charAnimationTime"
@@ -319,9 +347,77 @@ fn classify_timeline_interpolable(owner: &str, id: &str) -> &'static str {
             | "boneScale"
             | "lastBlendShape"
             | "groupBlendShape"
-            | "groupBlendShapeLink",
+            | "groupBlendShapeLink"
+            | "leftBoobEnabled"
+            | "rightBoobEnabled"
+            | "leftButtEnabled"
+            | "rightButtEnabled"
+            | "leftBoobGravity"
+            | "rightBoobGravity"
+            | "leftButtGravity"
+            | "rightButtGravity"
+            | "leftBoobForce"
+            | "rightBoobForce"
+            | "leftButtForce"
+            | "rightButtForce"
+            | "dynamicBoneEnabled"
+            | "dynamicBoneForce"
+            | "dynamicBoneGravity"
+            | "dynamicBoneWeight"
+            | "dynamicBoneDamping"
+            | "dynamicBoneElasticity"
+            | "dynamicBoneStiffness"
+            | "dynamicBoneInertia"
+            | "dynamicBoneRadius"
+            | "dynamicBoneFreezeAxis"
+            | "colliderRadius"
+            | "colliderHeight"
+            | "colliderBaseCenter"
+            | "colliderBaseDirection"
+            | "colliderBaseBound"
+            | "ikPositionWeight",
         )
-        | ("NodesConstraints", "constraintEnabled") => "supported",
+        | (
+            "ShalltyUtils",
+            "guideObjectXPos"
+            | "guideObjectYPos"
+            | "guideObjectZPos"
+            | "guideObjectXRot"
+            | "guideObjectYRot"
+            | "guideObjectZRot"
+            | "guideObjectXScale"
+            | "guideObjectYScale"
+            | "guideObjectZScale"
+            | "boneXPos"
+            | "boneYPos"
+            | "boneZPos"
+            | "boneXRot"
+            | "boneYRot"
+            | "boneZRot"
+            | "boneXScale"
+            | "boneYScale"
+            | "boneZScale",
+        )
+        | ("NodesConstraints", "constraintEnabled" | "constraintPos" | "constraintRos")
+        | ("MaterialEditor", "floatProperty" | "colorProperty" | "textureOffsetProperty" | "textureScaleProperty")
+        | ("PregnancyPlus", "0" | "inflation")
+        | ("Eye Shaking", "shakingEnabled")
+        | ("RendererEditor", "targetEnabled") => "supported",
+        ("KKPE", x)
+            if x.starts_with("fbbikEffectorPositionWeight")
+                || x.starts_with("fbbikEffectorRotationWeight")
+                || x.starts_with("fbbikConstraintBendWeight") =>
+        {
+            "supported"
+        }
+        ("RendererEditor", x)
+            if x.starts_with("Float_")
+                || x.starts_with("Color_")
+                || x.starts_with("Vector4_")
+                || (x.starts_with("Texture_") && (x.ends_with("Offset") || x.ends_with("Scale"))) =>
+        {
+            "supported"
+        }
         _ => "unsupported",
     }
 }

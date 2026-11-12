@@ -229,6 +229,7 @@ private:
 		TArray<FOKSceneFkBone> AppliedFk;
 		TArray<FOKSceneBoneTrs> AppliedBoneOverrides;
 		TArray<FOKSceneMorphOverride> AppliedMorphOverrides;
+		TArray<FOKSceneMaterialEdit> AppliedLiveMaterialEdits;
 		TArray<FOKSceneIkTarget> AppliedIk;
 		int32 AppliedFkPartsOff = 0, AppliedIkPartsOff = 0;
 		float AppliedIkWeight = 1.f;
@@ -253,6 +254,8 @@ private:
 		/** The character's eye opening before the scene set one (-1: the scene never did). */
 		float EyesOpenBefore = -1.f;
 		bool bEyesManualBefore = false;
+		float EyebrowsOpenBefore = -1.f;
+		bool bEyebrowsManualBefore = false;
 		/** PlaceAttached's placement generation this object was last placed at (static placements skip until it changes). */
 		uint32 PlacedGeneration = 0;
 	};

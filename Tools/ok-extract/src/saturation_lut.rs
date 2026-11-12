@@ -83,7 +83,16 @@ fn byte(v: f32) -> u8 { (v * 255.0).round_ties_even().clamp(0.0, 255.0) as u8 }
 /// Writes `<dir>/KKSDefaultSaturationLUT.png` (512×512) and `<dir>/KKSDefaultSaturationLUT16.png` (256×16, Unreal's
 /// colour-grading layout) from the game's BetterColorPicker plugin. Returns the plugin path read.
 pub fn convert(game: &Path, dir: &Path) -> Result<String, String> {
-    let dll = game.join("BepInEx/plugins/KKS_BetterColorPicker.dll");
+    let candidates = [
+        "BepInEx/plugins/KKS_BetterColorPicker.dll",
+        "BepInEx/plugins/KK_BetterColorPicker.dll",
+        "BepInEx/plugins/KK_Plugins/KK_BetterColorPicker.dll",
+    ];
+    let dll = candidates
+        .iter()
+        .map(|rel| game.join(rel))
+        .find(|p| p.is_file())
+        .unwrap_or_else(|| game.join(candidates[0]));
     let bytes = std::fs::read(&dll).map_err(|e| format!("{}: {e}", dll.display()))?;
     let forward = forward_cube(&cube_from_atlas(&embedded_atlas(&bytes).map_err(|e| format!("{}: {e}", dll.display()))?));
     let mut atlas = image::RgbImage::new(512, 512);

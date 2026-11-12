@@ -382,7 +382,7 @@ function M.translate(lines, output_registers, return_statement)
         out[#out + 1] = cos_line
         goto continue
       end
-      if name == "sample" or name == "sample_l" then
+      if name == "sample" or name == "sample_l" or name == "sample_d" then
         local tnum, tsw = args[3]:match("^t(%d+)%.([xyzw]+)$")
         local sampler = math.tointeger(tonumber(args[4]:sub(2)))
         local t = tonumber(tnum)
@@ -392,8 +392,17 @@ function M.translate(lines, output_registers, return_statement)
         if dim == "xy" then
           coords = "float2((" .. coords .. ").x,lerp((" .. coords .. ").y,1.0-(" .. coords .. ").y,UVFlip))"
         end
-        local call = "Texture" .. t .. ".Sample" .. (name == "sample_l" and "Level" or "") .. "(Sampler" .. sampler .. "," .. coords
+        local suffix = name == "sample_l" and "Level" or (name == "sample_d" and "Grad" or "")
+        local call = "Texture" .. t .. ".Sample" .. suffix .. "(Sampler" .. sampler .. "," .. coords
         if name == "sample_l" then call = call .. "," .. operand(args[5], "x") end
+        if name == "sample_d" then
+          local ddx, ddy = operand(args[5], dim), operand(args[6], dim)
+          if dim == "xy" then
+            ddx = "float2((" .. ddx .. ").x,lerp((" .. ddx .. ").y,-(" .. ddx .. ").y,UVFlip))"
+            ddy = "float2((" .. ddy .. ").x,lerp((" .. ddy .. ").y,-(" .. ddy .. ").y,UVFlip))"
+          end
+          call = call .. "," .. ddx .. "," .. ddy
+        end
         call = call .. ")"
         local picked = {}
         for c in mask:gmatch(".") do
@@ -601,6 +610,15 @@ function M.samplers_of(asm, index)
 end
 
 M.FXC = "C:/Program Files (x86)/Windows Kits/10/bin/10.0.19041.0/x64/fxc.exe"
+if not path.is_file(M.FXC) then
+  local kits = "C:/Program Files (x86)/Windows Kits/10/bin"
+  if path.is_dir(kits) then
+    for _, ver in ipairs(path.list(kits)) do
+      local candidate = kits .. "/" .. ver .. "/x64/fxc.exe"
+      if ver:match("^10%.0%.") and path.is_file(candidate) then M.FXC = candidate end
+    end
+  end
+end
 -- subprocess.run([fxc, '/dumpbin', '/nologo', path], capture_output=True, check=True).stdout.decode()
 function M.dumpbin(file)
   local res = ok.proc.run({ M.FXC, "/dumpbin", "/nologo", (path.norm(file):gsub("/", "\\")) }, { capture = true, text = false })

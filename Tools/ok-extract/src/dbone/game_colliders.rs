@@ -16,7 +16,12 @@ impl Default for Settings {
 }
 impl Settings {
     pub fn load(root: &Path) -> Self {
-        let installed = ["BepInEx/plugins/KKS_Plugins/KKS_Colliders.dll", "BepInEx/plugins/KKS_Colliders.dll"]
+        let installed = [
+            "BepInEx/plugins/KKS_Plugins/KKS_Colliders.dll",
+            "BepInEx/plugins/KKS_Colliders.dll",
+            "BepInEx/plugins/KK_Plugins/KK_Colliders.dll",
+            "BepInEx/plugins/KK_Colliders.dll",
+        ]
             .iter().any(|p| root.join(p).ok_is_file());
         let text = crate::gamefs::read_to_string(root.join("BepInEx/config/com.deathweasel.bepinex.colliders.cfg")).unwrap_or_default();
         Self::parse(installed, &text)

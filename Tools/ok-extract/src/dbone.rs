@@ -3410,7 +3410,12 @@ impl AttachedDynamicSet {
 /// IllusionFixes DynamicBonesFix.Hooks patches ordinary and Ver02 skip,
 /// but deliberately leaves Ver01's different algorithm alone.
 pub(crate) fn dynamic_bones_fix_enabled(game_root: &Path) -> bool {
-    ["BepInEx/plugins/IllusionFixes/KKS_Fix_DynamicBones.dll", "BepInEx/plugins/KKS_Fix_DynamicBones.dll"]
+    [
+        "BepInEx/plugins/IllusionFixes/KKS_Fix_DynamicBones.dll",
+        "BepInEx/plugins/KKS_Fix_DynamicBones.dll",
+        "BepInEx/plugins/IllusionFixes/KK_Fix_DynamicBones.dll",
+        "BepInEx/plugins/KK_Fix_DynamicBones.dll",
+    ]
         .iter().any(|path| game_root.join(path).ok_is_file())
 }
 

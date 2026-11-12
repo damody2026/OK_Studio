@@ -18,6 +18,7 @@
 #include "KKRuntimeSharedMaterial.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialExpressionCustom.h"
+#include "Materials/MaterialExpressionMultiply.h"
 #include "Materials/MaterialExpressionScalarParameter.h"
 #include "Materials/MaterialExpressionSceneTexture.h"
 #include "Materials/MaterialExpressionSceneDepth.h"
@@ -52,8 +53,13 @@ bool PrepareForegroundMaterials(const FString& AssetRoot,const FString& Root,con
   // Only translucent parents can drop the depth test; the eye / brow recipes all are.
   if(!IsTranslucentBlendMode(Parent->BlendMode)){Skipped.Add(MakeShared<FJsonValueString>(Name+TEXT(": not translucent")));continue;}
   auto* Mat=DuplicateObject<UMaterial>(Parent,CreatePackage(*Path),*Name);Mat->SetFlags(RF_Public|RF_Standalone);Keep.Emplace(Mat);
-  auto* Ed=Mat->GetEditorOnlyData();UMaterialExpression* Program=Ed->EmissiveColor.Expression;
-  if(!Program||Ed->Opacity.Expression!=Program){UE_LOG(LogTemp,Error,TEXT("%s: emissive / opacity are not one program"),*Source);return false;}
+  auto* Ed=Mat->GetEditorOnlyData();UMaterialExpression* Program=nullptr;
+  if(Ed->EmissiveColor.Expression&&Ed->Opacity.Expression==Ed->EmissiveColor.Expression)Program=Ed->EmissiveColor.Expression;
+  else if(const auto* Mul=Cast<UMaterialExpressionMultiply>(Ed->EmissiveColor.Expression)){
+   if(const auto* DepthTest=Cast<UMaterialExpressionCustom>(Ed->Opacity.Expression))
+    for(const FCustomInput& In:DepthTest->Inputs)if(In.InputName==TEXT("Opacity")&&Mul->A.Expression&&Mul->A.Expression==In.Input.Expression){Program=Mul->A.Expression;break;}
+  }
+  if(!Program){UE_LOG(LogTemp,Error,TEXT("%s: emissive / opacity are not one program"),*Source);return false;}
   auto Register=[&](UMaterialExpression* E){E->Material=Mat;Mat->GetExpressionCollection().AddExpression(E);return E;};
   auto* Test=NewObject<UMaterialExpressionCustom>(Mat);Test->OutputType=CMOT_Float4;Test->Description=TEXT("OK foreground eyes / eyebrows");Test->Inputs.Reset();
   auto Input=[&](const TCHAR* N,UMaterialExpression* E){auto& I=Test->Inputs.AddDefaulted_GetRef();I.InputName=N;I.Input.Expression=Register(E);};
@@ -75,8 +81,10 @@ bool PrepareForegroundMaterials(const FString& AssetRoot,const FString& Root,con
    "float hair=Id>0.5&&abs(Stencil.x-Id)<0.5&&abs(Custom.x-Depth.x)<=max(0.5,Depth.x*0.002)&&dot(normalize(Normal),Camera)>0&&own;"
    "float shown=max(open,hair);"))+(Premultiplied?TEXT("return Color*shown;"):TEXT("return float4(Color.rgb,Color.a*shown);"));
   Register(Test);
-  Ed->EmissiveColor.Expression=Test;Ed->Opacity.Expression=Test;if(Ed->OpacityMask.Expression==Program)Ed->OpacityMask.Expression=Test;
-  Mat->bDisableDepthTest=true;
+  Ed->EmissiveColor.Expression=Test;Ed->EmissiveColor.OutputIndex=0;Ed->EmissiveColor.SetMask(1,1,1,1,0);
+  Ed->Opacity.Expression=Test;Ed->Opacity.OutputIndex=0;Ed->Opacity.SetMask(1,0,0,0,1);
+  if(Ed->OpacityMask.Expression==Program){Ed->OpacityMask.Expression=Test;Ed->OpacityMask.OutputIndex=0;Ed->OpacityMask.SetMask(1,0,0,0,1);}
+  Mat->bDisableDepthTest=true;Mat->AllowTranslucentCustomDepthWrites=false;
   Mat->UpdateCachedExpressionData();Mat->PostEditChange();Mat->CacheShaders(EMaterialShaderPrecompileMode::Synchronous);
   if(auto* Pending=Mat->GetMaterialResource(GMaxRHIShaderPlatform))Pending->FinishCompilation();
   const FMaterialResource* Resource=Mat->GetMaterialResource(GMaxRHIShaderPlatform);

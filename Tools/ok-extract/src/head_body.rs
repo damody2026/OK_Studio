@@ -10,6 +10,7 @@ pub(crate) fn head_uses_item_draw(mesh: &ExtractedMesh) -> bool {
 pub(crate) fn head_uses_eye_draw(mesh:&ExtractedMesh)->bool {
     mesh.mat.as_ref().is_some_and(|m| m.shader.eq_ignore_ascii_case("Koikano/main_eye")
         || m.shader.eq_ignore_ascii_case("Shader Forge/toon_eye_lod0")
+        || m.shader.eq_ignore_ascii_case("KKUTSeye")
         || (m.shader.is_empty() && m.float("_KanoVerShift").is_some()
             && m.float("_rotation1").is_some() && m.slot("_overtex1").is_some()))
 }
@@ -22,7 +23,7 @@ pub(crate) fn source_eye_draw(game:&Path,vanilla:&ChaListCatalog,mods:&ChaListCa
     apply_me_floats(&card.me_float,0,"head",None,&mut mesh);
     if !head_uses_eye_draw(&mesh) {eprintln!("ok-extract: eye draw none {} shader={}",raw.name,mesh.mat.as_ref().map_or("",|m|m.shader.as_str()));return None;}
     let mat=mesh.mat.as_ref()?;
-    let kind=if mat.shader.eq_ignore_ascii_case("Shader Forge/toon_eye_lod0") {2}else{1};
+    let kind=if mat.shader.eq_ignore_ascii_case("Shader Forge/toon_eye_lod0") || mat.shader.eq_ignore_ascii_case("KKUTSeye") {2}else{1};
     let lerp=|a:f32,b:f32,t:f32|a+(b-a)*t.clamp(0.,1.);
     let color=|key:&str,default:[f32;4]|me_material_color(Some(&card.me_color),0,"head",None,&mesh,key)
         .unwrap_or(default);
@@ -66,8 +67,10 @@ pub(crate) fn source_eye_draw(game:&Path,vanilla:&ChaListCatalog,mods:&ChaListCa
 
 /// Material identity also covers mod heads with renamed mouth submeshes.
 pub(crate) fn apply_head_draw_material_overrides(card: &CardInfo, mesh: &mut ExtractedMesh) {
-    if !head_uses_item_draw(mesh) && !mesh.mat.as_ref().is_some_and(|m|m.shader.eq_ignore_ascii_case("xukmi/MainItemPlus")) { return; }
-    let native_item=mesh.mat.as_ref().is_some_and(|m|m.shader.eq_ignore_ascii_case("xukmi/MainItemPlus"));
+    let kkuts_non_detail = head_detail_source_spec(card, &mesh.name.to_ascii_lowercase()).is_none()
+        && mesh.mat.as_ref().is_some_and(|m| crate::is_kkuts_shader(&m.shader) || crate::is_kkuss_shader(&m.shader));
+    if !head_uses_item_draw(mesh) && !kkuts_non_detail && !mesh.mat.as_ref().is_some_and(|m|m.shader.eq_ignore_ascii_case("xukmi/MainItemPlus")) { return; }
+    let native_item=kkuts_non_detail || mesh.mat.as_ref().is_some_and(|m|m.shader.eq_ignore_ascii_case("xukmi/MainItemPlus"));
     let Some(name) = mesh.mat.as_ref().map(|m| crate::card::me_mat_key(&m.name)) else { return; };
     for ((object, coord, slot, material, prop), value) in &card.me_color {
         if *object == 4 && *coord == 0 && *slot == 0 && *material == name {
@@ -193,7 +196,64 @@ pub(crate) fn resolve_head_detail_texture(
     apply_me_shader(game_root, Some(&card.me_shader), 0, "head", None, mesh);
     apply_me_floats(&card.me_float, 0, "head", None, mesh);
     apply_head_draw_material_overrides(card, mesh);
-    if mesh.mat.as_ref().is_some_and(|m|m.shader.eq_ignore_ascii_case("xukmi/MainItemPlus")) {
+    let detail_spec = head_detail_source_spec(card, &ln);
+    let is_kkuts = mesh.mat.as_ref().is_some_and(|m| crate::is_kkuts_shader(&m.shader) || crate::is_kkuss_shader(&m.shader));
+    if is_kkuts && detail_spec.is_some() {
+        let cat = detail_spec.as_ref().map_or(0, |s| s.0);
+        let cpu_tints_color = matches!(cat, 406 | 412 | 413);
+        if let Some(name) = mesh.mat.as_ref().map(|m| crate::card::me_mat_key(&m.name)) {
+            for ((object, coord, slot, material, prop), value) in &card.me_color {
+                if *object == 4 && *coord == 0 && *slot == 0 && *material == name {
+                    let key = if prop.starts_with('_') { prop.clone() } else { format!("_{prop}") };
+                    if cpu_tints_color && key.eq_ignore_ascii_case("_Color") { continue; }
+                    set_material_color(mesh, &key, *value);
+                }
+            }
+            if cpu_tints_color { set_material_color(mesh, "_Color", [1.0; 4]); }
+        }
+        let convert_normals = material_editor_converts_normals(game_root);
+        if let Some(png) = me_texture(Some(&card.me_tex), 0, "head", None, mesh, "normalmap").map(|p| p.to_vec()) {
+            mesh.normal_map_png = Some(png);
+            mark_material_editor_texture(mesh, "_NormalMap");
+        }
+        if convert_normals {
+            if let Some(png) = mesh.normal_map_png.take() {
+                let overridden = me_texture(Some(&card.me_tex), 0, "head", None, mesh, "normalmap").is_some();
+                let srgb = overridden || mesh.runtime_textures.get("_OKSourceNormalMap").is_some_and(|s| s[3] == 1);
+                let converted = convert_runtime_normal_map_rows(png, srgb, !overridden);
+                mark_native_runtime_normal_texture(mesh, "_NormalMap");
+                mesh.normal_map_png = Some(linear_texture_to_srgb_png(&converted).unwrap_or(converted));
+            }
+        }
+        for (prop, target) in [("detailmask", "_DetailMask"), ("linemask", "_LineMask"), ("alphamask", "_AlphaMask"), ("colormask", "_ColorMask")] {
+            if let Some(png) = me_texture(Some(&card.me_tex), 0, "head", None, mesh, prop).map(|p| p.to_vec()) {
+                mark_material_editor_texture(mesh, target);
+                match prop {
+                    "detailmask" => mesh.detail_mask_png = Some(png),
+                    "linemask" => mesh.line_mask_png = Some(png),
+                    "alphamask" => mesh.alpha_mask_png = Some(png),
+                    _ => mesh.color_mask_png = Some(png),
+                }
+            }
+        }
+        let non_iris_extra: &[&str] = if !ln.contains("hitomi") { &["_overtex1", "_overtex2", "_overtex3", "_expression"] } else { &[] };
+        for &slot in crate::KKUTS_EXTRA_TEXTURE_SLOTS.iter().chain(non_iris_extra.iter()) {
+            let key = slot.trim_start_matches('_').to_ascii_lowercase();
+            let replacement = me_texture(Some(&card.me_tex), 0, "head", None, mesh, &key).map(|p| p.to_vec());
+            let replaced = replacement.is_some();
+            if let Some(png) = replacement.or_else(|| mesh.shader_extra_textures.remove(slot)) {
+                if replaced { mark_material_editor_texture(mesh, slot); }
+                let png = if matches!(slot, "_NormalMapForMatCap" | "_NormalMapa") && convert_normals {
+                    let srgb = replaced || mesh.runtime_textures.get(&format!("_OKSource{}", slot.trim_start_matches('_'))).is_some_and(|s| s[3] == 1);
+                    mark_native_runtime_normal_texture(mesh, slot);
+                    let converted = convert_runtime_normal_map_rows(png, srgb, !replaced);
+                    linear_texture_to_srgb_png(&converted).unwrap_or(converted)
+                } else if !replaced { flip_png_v(&png).unwrap_or(png) } else { png };
+                mesh.shader_extra_textures.insert(slot.into(), png);
+            }
+        }
+    }
+    if (is_kkuts && detail_spec.is_none()) || mesh.mat.as_ref().is_some_and(|m|m.shader.eq_ignore_ascii_case("xukmi/MainItemPlus")) {
         // Head draw materials can also be replaced by the installed native
         // item program. Keep its raw albedo and use the same runtime normal
         // encoding/row boundary as native accessories, without CPU tinting.
@@ -209,13 +269,13 @@ pub(crate) fn resolve_head_detail_texture(
             mesh.texture_png=mesh.texture_png.take().map(|png|flip_png_v(&png).unwrap_or(png));
         }
         if mesh.texture_png.is_none() {mesh.texture_png=crate::unity::solid_png([1.;4],8,8);}
-        for name in ["_NormalMapDetail","_AnotherRamp","_EmissionMask","_ReflectionMapCap","_ReflectMapDetail","_Texture2","_Texture3","_liquidmask"] {
+        for name in ["_NormalMapDetail","_AnotherRamp","_EmissionMask","_ReflectionMapCap","_ReflectMapDetail","_Texture2","_Texture3","_liquidmask"].into_iter().chain(if is_kkuts { crate::KKUTS_EXTRA_TEXTURE_SLOTS } else { &[] }.iter().copied()).chain(if is_kkuts { ["_overtex1","_overtex2","_overtex3","_expression"].as_slice() } else { &[] }.iter().copied()) {
             let key=name.trim_start_matches('_').to_ascii_lowercase();
             let replacement=me_texture(Some(&card.me_tex),0,"head",None,mesh,&key).map(|png|png.to_vec());
             let replaced=replacement.is_some();
             if let Some(png)=replacement.or_else(||mesh.shader_extra_textures.remove(name)) {
                 if replaced {mark_material_editor_texture(mesh,name);}
-                let png=if name=="_NormalMapDetail"&&convert_normals {
+                let png=if matches!(name,"_NormalMapDetail"|"_NormalMapForMatCap"|"_NormalMapa")&&convert_normals {
                     mark_native_runtime_normal_texture(mesh,name);
                     let converted=convert_runtime_normal_map(png);
                     linear_texture_to_srgb_png(&converted).unwrap_or(converted)
@@ -396,7 +456,8 @@ pub(crate) fn resolve_head_detail_texture(
             // unchanged in that helper. MaterialEditor PNG replacements returned
             // above. Native GPU coverage verifies all three source paths; PNG
             // readback alone cannot identify the original texture provenance.
-            let tinted = crate::appearance::timings::measure("detail.tint",||crate::unity::tint_png(&png, tint)).unwrap_or(png);
+            let draw_tint = if is_kkuts { me_material_color(Some(&card.me_color), 0, "head", None, mesh, "color").unwrap_or(tint) } else { tint };
+            let tinted = crate::appearance::timings::measure("detail.tint",||crate::unity::tint_png(&png, draw_tint)).unwrap_or(png);
             let flip = if direct {
                 false
             } else {

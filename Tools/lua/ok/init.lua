@@ -85,14 +85,14 @@ local game_root_cache
 function ok.game_root(soft, sep)
   if not game_root_cache then
     local env = fs.getenv("OK_GAME_ROOT")
-    local candidates = { env and env:gsub("\\", "/"):gsub("/+$", "") or nil, ok.LEGACY_GAME_ROOT, "D:/KoikatuSunshine", "E:/KoikatuSunshine" }
-    for i = 1, 4 do
+    local candidates = { env and env:gsub("\\", "/"):gsub("/+$", "") or nil, ok.LEGACY_GAME_ROOT, "D:/KoikatuSunshine", "E:/KoikatuSunshine", "E:/Koikatu", "D:/Koikatu" }
+    for i = 1, 6 do
       if is_game_root(candidates[i]) then game_root_cache = candidates[i] break end
     end
   end
   local r = game_root_cache
   if not r then
-    if not soft then error("Koikatsu Sunshine installation not found; set OK_GAME_ROOT", 2) end
+    if not soft then error("Koikatsu / Koikatsu Sunshine installation not found; set OK_GAME_ROOT", 2) end
     r = ok.LEGACY_GAME_ROOT
   end
   return sep and (r:gsub("/", sep)) or r

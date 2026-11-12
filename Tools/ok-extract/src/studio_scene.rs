@@ -126,7 +126,19 @@ pub enum Object {
         /// Playing when saved, back to the start after the last point, the children turned along the path (0 none, 1 XY, 2 Y).
         active: bool, looped: bool, orient: i32 },
     Camera { key: i32, change: ChangeAmount, visible: bool, name: String, active: bool },
-    Text { key: i32, change: ChangeAmount, visible: bool, id: i32 },
+    Text {
+        key: i32,
+        change: ChangeAmount,
+        visible: bool,
+        id: i32,
+        color: Color,
+        outline_color: Color,
+        outline_spread: f32,
+        text: String,
+        text_color: Color,
+        font_size: i32,
+        direction: i32,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -796,10 +808,52 @@ fn object(r: &mut Reader, v: &Version, kind: i32, depth: usize) -> Result<Object
         7 => {
             let (key, change, visible) = base(r, true)?;
             let id = r.i32()?;
-            r.json_color()?; r.json_color()?; r.f32()?;
+            let color = r.json_color()?;
+            let outline_color = r.json_color()?;
+            let outline_spread = r.f32()?;
             let n = r.bytes_len("text data")?;
-            r.take(n)?;
-            Ok(Object::Text { key, change, visible, id })
+            let raw = r.take(n)?;
+            let (mut text, mut text_color, mut font_size, mut direction) = (
+                String::new(),
+                Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+                32,
+                0,
+            );
+            let mut tr = Reader { b: raw, p: 0 };
+            if let Ok(cnt) = tr.count("text slots") {
+                for slot_idx in 0..cnt {
+                    let Ok(tc) = tr.json_color() else { break };
+                    let Ok(_oc) = tr.json_color() else { break };
+                    let Ok(_osp) = tr.f32() else { break };
+                    let Ok(_font_id) = tr.i32() else { break };
+                    let Ok(fsize) = tr.i32() else { break };
+                    let Ok(_line_sp) = tr.f32() else { break };
+                    let Ok(tdir) = tr.i32() else { break };
+                    let Ok(s) = tr.string() else { break };
+                    if v.at_least("1.0.4.2") {
+                        let _ = (tr.f32(), tr.f32(), tr.f32(), tr.f32());
+                    }
+                    if slot_idx == 0 || text.is_empty() {
+                        text = s;
+                        text_color = tc;
+                        font_size = fsize;
+                        direction = tdir;
+                    }
+                }
+            }
+            Ok(Object::Text {
+                key,
+                change,
+                visible,
+                id,
+                color,
+                outline_color,
+                outline_spread,
+                text,
+                text_color,
+                font_size,
+                direction,
+            })
         }
         other => Err(format!("unknown object type {other}")),
     }
@@ -1253,7 +1307,7 @@ pub fn export(scene_path: &std::path::Path, out_dir: &std::path::Path) -> Result
     let vmd = scene_vmd(&bytes);
     let no_vmd = std::collections::HashMap::new();
     let vmd_chars = vmd.as_ref().map(|v| &v.1).unwrap_or(&no_vmd);
-    let vnge = crate::vnge::extract_vnge(&scene, &bytes);
+    let vnge = crate::vnge::extract_vnge_with_dir(&scene, &bytes, Some(out_dir));
     let mmdd = crate::mmdd::extract_mmdd(&bytes, &scene, Some(&vnge), Some(scene_path), out_dir);
     let mut mmdd_okanims = std::collections::HashMap::new();
     if let Some(m) = &mmdd {

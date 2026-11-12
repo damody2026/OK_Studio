@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
+#include "OKStudioVnge.h"
 #include "OKSceneDocument.generated.h"
 
 /** Where a character's eyes or neck look. */
@@ -292,6 +293,10 @@ struct OKSTUDIO_API FOKSceneCharacter
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face", meta = (UIMin = "-1", UIMax = "1"))
 	float EyesOpen = -1.f;
 
+	/** Eyebrow opening 0..1 (-1 keeps the character's; Timeline::characterEyebrowsOpen). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face", meta = (UIMin = "-1", UIMax = "1"))
+	float EyebrowsOpen = -1.f;
+
 	/** How far the neck turns towards its look target, 0..1 (HS2Studio6 跟隨強度; 1 fully). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose", meta = (UIMin = "0", UIMax = "1"))
 	float NeckFollow = 1.f;
@@ -493,6 +498,7 @@ enum class EOKSceneMaterialEditKind : uint8
 	TextureST,	// the texture's scale (R, G) and offset (B, A)
 	Shader,		// Text: the shader the material switches to; Value.R: its render queue (-1: unchanged)
 	Renderer,	// Material names the renderer (GameObject); Property: Enabled / ShadowCastingMode; Value.R
+	Vector,		// Value (X, Y, Z, W)
 };
 
 /** A Material Editor style edit of an item's material or renderer (Material Editor's scene data). */
@@ -783,6 +789,10 @@ struct OKSTUDIO_API FOKSceneObject
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effect", meta = (EditCondition = "Kind == EOKSceneObjectKind::Effect", EditConditionHides))
 	FOKSceneEffect Effect;
+
+	/** Live shader / renderer property edits driven by Timeline (MaterialEditor / RendererEditor) without rebuilding. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Material")
+	TArray<FOKSceneMaterialEdit> LiveMaterialEdits;
 };
 
 DECLARE_MULTICAST_DELEGATE(FOKSceneChanged);
@@ -1267,6 +1277,18 @@ struct OKSTUDIO_API FOKSceneTimelineTrack
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
 	FString InterpolableId;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	bool bEnabled = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	FString Alias;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	FString GroupPath;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	FLinearColor Color = FLinearColor::White;
+
 	/** -1 for global camera/scene tracks; > 0 for object tracks. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
 	int32 ObjectId = -1;
@@ -1284,7 +1306,12 @@ struct OKSTUDIO_API FOKSceneTimelineTrack
 	int32 ParamInt = -1;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	FString ParamStr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
 	TArray<FOKSceneTimelineKeyframe> Keyframes;
+
+	bool operator==(const FOKSceneTimelineTrack& O) const = default;
 };
 
 /** Timeline keys of one object, in time order. */
@@ -1380,6 +1407,22 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
 	bool bLoopTimeline = false;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	float TimelineSpeed = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	int32 TimelineDivisions = 10;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	float TimelineBlockLength = 1.f;
+
+	/** Dynamic timeScale evaluated from Timeline::timeScale track (default 1.0). */
+	float LastTimelineScale = 1.f;
+
+	/** Extended VNGE scene data (SSS, PoseLib, VNAnime/KFA, VNText, VNSound, VNPhysics, VNSceneScript). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VNGE")
+	FOKSceneVngeData Vnge;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
 	int32 StudioCameraId = -1;
 
@@ -1436,6 +1479,20 @@ public:
 	static FString KeyedState(const FOKSceneObject& O, const FOKSceneKey& Key);
 	/** The eased blend (0..1) between two keys at fraction U of the way. */
 	static float EaseAlpha(EOKSceneEase Ease, float U);
+	/** Evaluates a [0, 1] cubic-Hermite keyframe curve (Timeline.dll curveKeyframe list). */
+	static float EvaluateTimelineCurve01(const TArray<FOKSceneTimelineCurvePt>& Curve, float RawU);
+	/** Samples the scene's current value for a Timeline.dll interpolable track into OutValues. */
+	bool SampleCurrentTimelineValue(const FOKSceneTimelineTrack& Track, TArray<float>& OutValues, TArray<FString>* OutNames = nullptr) const;
+	/** Adds or finds an interpolable track and keys its current value at Playhead; returns the track index in TimelineTracks. */
+	int32 AddTimelineInterpolableTrack(const FString& Owner, const FString& InterpolableId, int32 ObjectId, const FString& TargetPath = FString(), const FString& TargetBone = FString(), int32 TargetIkEffector = -1, int32 ParamInt = -1, const FString& ParamStr = FString(), const FString& Alias = FString(), const FString& GroupPath = FString());
+	/** Keys an existing TimelineTracks[TrackIndex] with the object/scene's current value at Time; returns the keyframe index. */
+	int32 SetTimelineTrackKey(int32 TrackIndex, float Time);
+	/** Imports Timeline XML (full scene XML or Single Files/*.xml bound onto TargetObjectId). */
+	bool ImportTimelineXmlFile(const FString& Path, int32 TargetObjectId, bool bSingleFile, FString& OutError);
+	/** Exports TimelineTracks into a Timeline.dll-compatible XML file (full scene XML or Single Files/*.xml). */
+	bool ExportTimelineXmlFile(const FString& Path, int32 TargetObjectId, bool bSingleFile, FString& OutError) const;
+	/** Human-readable Simplified Chinese label for a Timeline.dll interpolable track. */
+	FString DescribeTimelineTrack(const FOKSceneTimelineTrack& Track) const;
 	/** Poses every keyed object at Time (between keys: linear position and scale, slerped rotation). */
 	void EvaluateTimeline(float Time);
 	const FOKSceneTrack* TrackOf(int32 Id) const;

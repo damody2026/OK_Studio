@@ -619,7 +619,12 @@ pub(crate) fn stamp_text(game_root: &Path, card: &Path, outfit: i32) -> String {
         let modified = m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_micros();
         Some((m.len(), modified))
     });
-    let me_plugins: Vec<_> = ["BepInEx/plugins/KKS_Plugins/KKS_MaterialEditor.dll", "BepInEx/plugins/KKS_MaterialEditor.dll"]
+    let me_plugins: Vec<_> = [
+        "BepInEx/plugins/KKS_Plugins/KKS_MaterialEditor.dll",
+        "BepInEx/plugins/KKS_MaterialEditor.dll",
+        "BepInEx/plugins/KK_Plugins/KK_MaterialEditor.dll",
+        "BepInEx/plugins/KK_MaterialEditor.dll",
+    ]
         .iter().map(|path| crate::gamefs::metadata(game_root.join(path)).ok().and_then(|m| {
             let modified = m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_micros();
             Some((m.len(), modified))

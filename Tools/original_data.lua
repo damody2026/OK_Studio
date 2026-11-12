@@ -365,9 +365,9 @@ local function cmd_restore(o)
   step("preview", "shadow ramps and the display colour transform (Content/KKPreview)", function()
     local preview = ROOT .. "/Content/KKPreview"
     run_logged(log, { ramps_exe, game, preview .. "/Ramps" })
-    -- The KKS display colour transform comes from the BetterColorPicker plugin; without it previews show the plain colours.
-    if path.is_file(game .. "/BepInEx/plugins/KKS_BetterColorPicker.dll") then x("saturation-lut", preview)
-    else print("  no BepInEx/plugins/KKS_BetterColorPicker.dll: no display colour transform (plain colours)") end
+    -- The display colour transform comes from the BetterColorPicker plugin; without it previews show the plain colours.
+    if path.is_file(game .. "/BepInEx/plugins/KKS_BetterColorPicker.dll") or path.is_file(game .. "/BepInEx/plugins/KK_BetterColorPicker.dll") then x("saturation-lut", preview)
+    else print("  no BetterColorPicker.dll under BepInEx/plugins/: no display colour transform (plain colours)") end
     -- The Minimalist shadow ramp (Docs/CHARACTER_MINIMALIST_NO_SHADOW.md), from its zipmod when the game has it.
     local zipmod
     if path.is_dir(game .. "/mods") then path.walk(game .. "/mods", function(dir, _, files)

@@ -437,7 +437,7 @@ fn try_seed(conn: &mut Connection, mods_dir: &Path, stamps: &[(PathBuf, i64, i64
     if list_mt < max_mt {
         return false;
     }
-    let guid_path = mods_dir.join(".ok_guid_index.txt");
+    let guid_path = mods_dir.join(".ok_guid_index_v2.txt");
     let over_path = mods_dir.join(".ok_override_index.tsv");
     let guid_mt = file_stamp(&guid_path).map(|(_, mt)| mt).unwrap_or(0);
     if guid_mt < max_mt {
@@ -479,12 +479,13 @@ fn try_seed(conn: &mut Connection, mods_dir: &Path, stamps: &[(PathBuf, i64, i64
     }
     if let Ok(text) = crate::gamefs::read_to_string(&guid_path) {
         for line in text.lines() {
-            let Some((g, p)) = line.split_once('\t') else {
+            let Some((g, rest)) = line.split_once('\t') else {
                 continue;
             };
             if g == "__FULL__" || g.is_empty() {
                 continue;
             }
+            let p = rest.split_once('\t').map_or(rest, |(p, _)| p);
             if tx.execute(
                 "INSERT OR IGNORE INTO zip_guid(path,guid) VALUES(?1,?2)",
                 params![p, g],
@@ -643,12 +644,33 @@ fn load_mem(conn: &Connection, mods_dir: &Path, sig: String) -> ModsMem {
             }
         }
     }
-    let mut guids = HashMap::new();
-    if let Ok(mut stmt) = conn.prepare("SELECT guid,path FROM zip_guid") {
+    let mut guids: HashMap<String, PathBuf> = HashMap::new();
+    let mut guid_key_by_lc: HashMap<String, String> = HashMap::new();
+    let mut dup_best_ver: HashMap<String, crate::mods::ParsedModVersion> = HashMap::new();
+    if let Ok(mut stmt) = conn.prepare("SELECT guid,path FROM zip_guid ORDER BY path") {
         let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)));
         if let Ok(rows) = rows {
             for (g, p) in rows.flatten() {
-                guids.entry(g).or_insert_with(|| PathBuf::from(p));
+                let lc = g.to_ascii_lowercase();
+                let candidate = PathBuf::from(&p);
+                if let Some(existing_key) = guid_key_by_lc.get(&lc).cloned() {
+                    let cur_ver = dup_best_ver.entry(lc.clone()).or_insert_with(|| {
+                        let cur_path = &guids[&existing_key];
+                        crate::mods::zipmod_version_for_guid(cur_path, &existing_key)
+                    });
+                    let new_ver = crate::mods::zipmod_version_for_guid(&candidate, &g);
+                    if new_ver > *cur_ver {
+                        *cur_ver = new_ver;
+                        if existing_key != g {
+                            guids.remove(&existing_key);
+                            guid_key_by_lc.insert(lc, g.clone());
+                        }
+                        guids.insert(g, candidate);
+                    }
+                } else {
+                    guid_key_by_lc.insert(lc, g.clone());
+                    guids.insert(g, candidate);
+                }
             }
         }
     }
