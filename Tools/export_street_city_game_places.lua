@@ -411,6 +411,38 @@ for p = 2, #parts do
     end
   end
 end
+-- Walk-through passages inside buildings: the raster has every building as 'o', so a shop opened at both ends adds no
+-- points. Each passage is a chain of points (world cm) on its clear floor, its two ends tied to the nearest road points.
+-- S32: the shop row S26-S43 stood 222 m unbroken; its ground floor got a back door in the west wall (x 43000,
+-- y 28440-28600) facing the shop door on the east (x 45020, y 28780-28980), map cut 11-13 by
+-- Tools/street_city_shop_passage_payload.lua (collision grid in places-v1/shop-passage-after-1113.json).
+local PASSAGES = {
+  { id = 's32', pts = { { 42760, 28520 }, { 43200, 28520 }, { 43800, 28520 }, { 44400, 28520 }, { 44800, 28560 }, { 44800, 28880 }, { 45160, 28880 } } },
+}
+local PASSAGE_TIE_CM, PASSAGE_TIES = 800, 3
+for _, pass in ipairs(PASSAGES) do
+  local ids = {}
+  for n, p in ipairs(pass.pts) do
+    nodes[#nodes + 1] = { k = (p[1] - ox) / step + 1, i = (p[2] - oy) / step + 1, links = {} }
+    ids[n] = #nodes
+    if n > 1 then local a, b = ids[n - 1], ids[n]; nodes[a].links[#nodes[a].links + 1] = b; nodes[b].links[#nodes[b].links + 1] = a end
+  end
+  local tied = 0
+  for _, e in ipairs({ ids[1], ids[#ids] }) do
+    local near = {}
+    for _, y in ipairs(biggest) do
+      local d = math.sqrt((nodes[e].k - nodes[y].k) ^ 2 + (nodes[e].i - nodes[y].i) ^ 2) * step
+      if d <= PASSAGE_TIE_CM then near[#near + 1] = { d = d, y = y } end
+    end
+    table.sort(near, function(l, r) return l.d < r.d end)
+    for n = 1, math.min(#near, PASSAGE_TIES) do
+      local y = near[n].y; nodes[e].links[#nodes[e].links + 1] = y; nodes[y].links[#nodes[y].links + 1] = e; tied = tied + 1
+    end
+  end
+  for _, x in ipairs(ids) do biggest[#biggest + 1] = x end
+  if tied < 2 then problem('passage ' .. pass.id .. ': ' .. tied .. ' ties to the roads') end
+  print(('road graph: passage %s, %d points, %d ties'):format(pass.id, #ids, tied))
+end
 local keep = {}
 for order, index in ipairs(biggest) do keep[index] = order - 1 end
 local node_rows, link_rows = {}, {}

@@ -57,6 +57,20 @@ def motel_world_shop_passage():
     s+='#' if bx and by else ('|' if bx else ('-' if by else '.'));x+=st
    rows.append(s);y+=st
   r['grid']=dict(box=g['box'],z=z,step=st,rows=rows)
+ # rebuild: re-point the drawn mesh at its collision source so the cooked collision follows an edited source
+ for a in [a for a in SUB.get_all_level_actors() if a.get_actor_label() in set(cfg.get('rebuild',[]))]:
+  for c in a.get_components_by_class(unreal.StaticMeshComponent):
+   m=c.static_mesh;src=m.get_editor_property('complex_collision_mesh') if m else None
+   if src:
+    m.set_editor_property('complex_collision_mesh',None);m.set_editor_property('complex_collision_mesh',src)
+    if APPLY:unreal.EditorAssetLibrary.save_loaded_asset(m,False)
+    c.recreate_physics_state() if hasattr(c,'recreate_physics_state') else None
+ # what a trace meets: [x0,y0,z,x1,y1] -> actor, component, point
+ r['traces']=[]
+ for t in cfg.get('traces',[]):
+  h=unreal.SystemLibrary.line_trace_single(world,V(t[0],t[1],t[2]),V(t[3],t[4],t[2]),Q,True,[],NONE,True)
+  h=h.to_tuple() if h else (False,)
+  r['traces'].append(dict(at=t,hit=bool(h[0]),actor=h[9].get_actor_label() if h[0] and h[9] else None,component=h[10].get_name() if h[0] and h[10] else None,point=[round(h[4].x),round(h[4].y),round(h[4].z)] if h[0] else None))
  if APPLY:
   def load(m):
    d=unreal.DynamicMesh();o=unreal.GeometryScriptCopyMeshFromAssetOptions();l=unreal.GeometryScriptMeshReadLOD()
@@ -76,7 +90,7 @@ def motel_world_shop_passage():
      xf=c.get_world_transform();src=m.get_editor_property('complex_collision_mesh')
      lo=xf.inverse_transform_location(V(x0,y0,z0));hi=xf.inverse_transform_location(V(x1,y1,z1))
      bmin=V(min(lo.x,hi.x),min(lo.y,hi.y),min(lo.z,hi.z));bmax=V(max(lo.x,hi.x),max(lo.y,hi.y),max(lo.z,hi.z))
-     for key,mesh in (('drawn',m),('solid',src)):
+     for key,mesh in (('solid',src),('drawn',m)):
       if not mesh:continue
       try:
        d=load(mesh);n0=QF.get_num_triangle_i_ds(d)
@@ -89,7 +103,7 @@ def motel_world_shop_passage():
        if n1!=n0:save(d,mesh);ent['saved']=True
        row['meshes'].append(ent)
       except Exception:row['meshes'].append(dict(actor=a.get_actor_label(),key=key,error=traceback.format_exc()[-500:]))
-     if src:m.set_editor_property('complex_collision_mesh',src);unreal.EditorAssetLibrary.save_loaded_asset(m,False)
+     if src:m.set_editor_property('complex_collision_mesh',None);m.set_editor_property('complex_collision_mesh',src);unreal.EditorAssetLibrary.save_loaded_asset(m,False)
    r['cuts'].append(row)
  out.write_text(json.dumps(r,indent=1),'utf8')
  return dict(status='passed',apply=APPLY,actors=len(r['actors']),cuts=len(r['cuts']))
