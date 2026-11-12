@@ -445,7 +445,14 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character,const FString& TryCard,i
  // Right where she stands, facing as she does (user, 2026-11-01: into the one-on-one on the street itself, no change of
  // scene): her high model takes her place, his is set by the pair; the street goes on around them.
  const FOKStreetAgentSim* Her=S.Agents.FindByPredicate([Character](const FOKStreetAgentSim& A){return A.Slot==Character;});
- const FTransform There(FRotator(0.,S.RenderedRotations.IsValidIndex(Character)?S.RenderedRotations[Character].Yaw:0.,0.),Her?Her->Position:S.Male);
+ FVector HerAt=Her?Her->Position:S.Male;double HerYaw=S.RenderedRotations.IsValidIndex(Character)?S.RenderedRotations[Character].Yaw:0.;
+ // Nothing to stand on under her (held in her room upstairs, z 365, where the street has no floor): the pair floated
+ // over the dorm's walls (三月七, user 2026-11-12). Then it is where he stands, facing her.
+ if(Her){FHitResult Floor;FCollisionQueryParams Q(SCENE_QUERY_STAT(StreetPrivateFloor),false,this);
+  const bool bFloor=GetWorld()->LineTraceSingleByChannel(Floor,HerAt+FVector(0,0,50),HerAt-FVector(0,0,60),ECC_WorldStatic,Q);
+  if(!bFloor){UE_LOG(LogTemp,Display,TEXT("Private: no floor under her at %s, at him instead (%s)"),*HerAt.ToCompactString(),*S.Male.ToCompactString());
+   const FVector To=HerAt-S.Male;HerAt=S.Male;if(To.SizeSquared2D()>1.)HerYaw=To.Rotation().Yaw+180.;}}
+ const FTransform There(FRotator(0.,HerYaw,0.),HerAt);
  const bool TryOn=!TryCard.IsEmpty();const int32 Worn=S.HighOutfits.IsValidIndex(Character)?S.HighOutfits[Character]:0;
  auto* Mode=AOKInteractionMode::EnterCards(GetWorld()->GetFirstPlayerController(),TryOn?TryCard:S.HighCards[Character],S.HighCards[0],TryOn&&TryOutfit>=0?TryOutfit:Worn,&There);
  if(!Mode){OKStreetPrivateEnvRestore();S.ContactsNotice=OKT(TEXT("ui.contacts.interaction_load_failed"));RefreshUI();return;}
@@ -500,8 +507,8 @@ void AOKStreetSocialScene::BeginPrivate(int32 Character,const FString& TryCard,i
     .Text(FText::FromString(OKT(TryOn?TEXT("ui.clothes.try_done"):TEXT("ui.contacts.leave_one_on_one"))))
     .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->FinishPrivate();return FReply::Handled();})]];
   GEngine->GameViewport->AddViewportWidgetContent(S.PrivateLeave.ToSharedRef(),20);
-  // The microphone too (user, 2026-11-12): the street's panel with it is put away here. Top left, over the scene.
-  if(!TryOn){S.PrivateMic=SNew(SBox).HAlign(HAlign_Left).VAlign(VAlign_Top).Padding(FMargin(16,16,0,0))[SNew(SBox).WidthOverride(340)[SNew(SBorder).BorderImage(OKStreetGlassPanel()).Padding(10)[SAssignNew(S.PrivateMicHolder,SBox)]]];
+  // The microphone too (user, 2026-11-12): the street's panel with it is put away here. Bottom left, under the H panel's settings buttons (top left).
+  if(!TryOn){S.PrivateMic=SNew(SBox).HAlign(HAlign_Left).VAlign(VAlign_Bottom).Padding(FMargin(16,0,0,16))[SNew(SBox).WidthOverride(340)[SNew(SBorder).BorderImage(OKStreetGlassPanel()).Padding(10)[SAssignNew(S.PrivateMicHolder,SBox)]]];
    RefreshPrivateMic();GEngine->GameViewport->AddViewportWidgetContent(S.PrivateMic.ToSharedRef(),20);}}
 }
 // The original's result after an H scene (HSceneResult): her level then and now, each place's development before and

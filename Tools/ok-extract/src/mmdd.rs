@@ -5399,6 +5399,7 @@ mod tests {
             studio_ik: Vec::new(),
             studio_ik_rotations: Vec::new(),
             studio_ik_weights: Vec::new(),
+            studio_ik_arm_pull_saved: None,
             correct: tpl.correct.clone(),
             sex: 1,
             type_bone: 0,

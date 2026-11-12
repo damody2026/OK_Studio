@@ -465,7 +465,7 @@ private:
     TArray<int32> HandEff;TArray<FVector> HandAt,HandHeld;void GripHim(class AKKPreviewActor* Girl,class AKKPreviewActor* Him,const FVector& Lips,const FVector& Root,const FVector& Axis);
     // IK targets of HoldFeet while the pair plays: sent when both sessions are idle (ReadPairSessions) instead of waiting
     // for the solve (SyncPair) each time they move. Each actor's latest set replaces the one before.
-    struct FPendingIk{TWeakObjectPtr<class AKKPreviewActor> Who;TArray<int32> Eff;TArray<FVector> At;uint64 Frame=0;};TArray<FPendingIk> PendingIk;
+    struct FPendingIk{TWeakObjectPtr<class AKKPreviewActor> Who;TArray<int32> Eff;TArray<FVector> At;uint64 Frame=0;float ArmPull=-1.f;};TArray<FPendingIk> PendingIk;
     void SendPendingIk(bool bWait);void DropPendingIk(class AKKPreviewActor* A);
     void MoveParts(class AKKPreviewActor* A,const FVector& Want,FVector& Applied);void HoldFeet(class AKKPreviewActor* A,bool bStands,const FVector& Offset,const FVector (&Feet)[2],FVector (&Kept)[2],bool& bIk,bool bPin=false,const FVector* PinHands=nullptr,FVector* KeptHands=nullptr,int32* KeptSet=nullptr);
     bool bPinFeet=true; // FeetPinToggle: while he is in her their soles stay where the clip put them (IK)

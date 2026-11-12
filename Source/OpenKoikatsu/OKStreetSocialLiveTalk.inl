@@ -591,7 +591,7 @@ void AOKStreetSocialScene::FreeTalkSetHeadphones(bool bOn){
 }
 
 // The microphone block: what it hears, the headphones setting, and the input to record from. The street's panel shows
-// it under free talk; in the one-on-one (whose panel replaces the street's) it stands on its own at the top left.
+// it under free talk; in the one-on-one (whose panel replaces the street's) it stands on its own at the bottom left.
 TSharedRef<SWidget> AOKStreetSocialScene::MicPanel(){
  auto& S=*State;const TWeakObjectPtr<AOKStreetSocialScene> Weak(this);
  auto Box=SNew(SVerticalBox);

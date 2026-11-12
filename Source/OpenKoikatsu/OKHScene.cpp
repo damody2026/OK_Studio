@@ -469,7 +469,7 @@ TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
       if(IConsoleVariable* Enabled=IConsoleManager::Get().FindConsoleVariable(TEXT("OKPhysXSecondary.Enabled")))Enabled->Set(0,ECVF_SetByConsole);
       if(Gallery)Gallery->FillPhysicsBackendCombo();UE_LOG(LogTemp,Display,TEXT("H scene: defaults physics Verlet, skin toon"));}}SettingSliders.Reset();bCoordinateList=false;CoordButtons.Reset();CoordImages.Reset();CoordTextures.Reset();CoordLoad.Reset();
      auto Label=[&](const FString& Words,float Size,const FLinearColor& Color){auto* T=WidgetTree->ConstructWidget<UTextBlock>();FSlateFontInfo F=T->GetFont();F.Size=Size;T->SetFont(F);T->SetColorAndOpacity(FSlateColor(Color));T->SetText(FText::FromString(Words));return T;};
-     auto Button=[&](int32 Kind,const TCHAR* Key){auto* B=WidgetTree->ConstructWidget<UOKHSceneButton>();B->Kind=Kind;B->Owner=this;B->OnClicked.AddDynamic(B,&UOKHSceneButton::HandleClick);B->SetContent(Label(OKT(Key),10.f,FLinearColor::Black));return B;};
+     auto Button=[&](int32 Kind,const TCHAR* Key){auto* B=WidgetTree->ConstructWidget<UOKHSceneButton>();B->Kind=Kind;B->Owner=this;B->OnClicked.AddDynamic(B,&UOKHSceneButton::HandleClick);B->SetContent(Label(OKT(Key),10.f,FLinearColor::White));return B;};
      UVerticalBox* Left=WidgetTree->ConstructWidget<UVerticalBox>();
      if(auto* S=Root->AddChildToHorizontalBox(Left)){S->SetPadding(FMargin(16,72,0,16));S->SetVerticalAlignment(VAlign_Fill);}
      // The settings, and the panel on the right put away to see them (user 2026-11-09): this side stays to bring it back.
@@ -3114,19 +3114,22 @@ void UOKHScenePanel::HoldFeet(AKKPreviewActor* A,bool bStands,const FVector& Off
         // While the pair plays the set waits for its idle point (SendPendingIk): set here it waited for the solve every
         // frame his hands followed her (2026-11-09: 100 against 115 pose Hz while he moved in her).
         const bool bDefer=Gallery&&IsValid(Gallery->PairedPlayback.Get())&&ReadingPlayback.Get()==Gallery->PairedPlayback.Get();
+        // His hands pinned to her (limb IK "hands"): the arms reach alone. With the authored pull they dragged his body,
+        // the alignment moved him back the next frame and he shook 5 cm to a metre a frame (user, 2026-11-12).
+        const float ArmPull=bHandTargets?0.f:-1.f;
         bool bSent=false;
         if(bDefer){FPendingIk* Pending=PendingIk.FindByPredicate([A](const FPendingIk& P){return P.Who.Get()==A;});if(!Pending)Pending=&PendingIk.AddDefaulted_GetRef();
-            Pending->Who=A;Pending->Eff=Eff;Pending->At=At;Pending->Frame=GFrameCounter;bSent=true;}
-        else{DropPendingIk(A);SyncPair();bSent=A->Session.SetStudioIk(Eff,At);}
+            Pending->Who=A;Pending->Eff=Eff;Pending->At=At;Pending->Frame=GFrameCounter;Pending->ArmPull=ArmPull;bSent=true;}
+        else{DropPendingIk(A);SyncPair();bSent=A->Session.SetStudioIk(Eff,At);A->Session.SetStudioIkArmPull(ArmPull);}
         if(bSent){bIk=true;HandHeld=bHands?HandsAt:TArray<FVector>();
             if(bFeet){Kept[0]=At[0];Kept[1]=At[1];}if(bHandTargets){KeptHands[0]=PinHands[0];KeptHands[1]=PinHands[1];}}
-    }else if(bIk){DropPendingIk(A);SyncPair();A->Session.SetStudioIk({},{});bIk=false;HandHeld.Reset();if(KeptSet)*KeptSet=0;}
+    }else if(bIk){DropPendingIk(A);SyncPair();A->Session.SetStudioIkArmPull(-1.f);A->Session.SetStudioIk({},{});bIk=false;HandHeld.Reset();if(KeptSet)*KeptSet=0;}
 }
 void UOKHScenePanel::DropPendingIk(AKKPreviewActor* A){PendingIk.RemoveAll([A](const FPendingIk& P){return !P.Who.IsValid()||P.Who.Get()==A;});}
 void UOKHScenePanel::SendPendingIk(bool bWait){
     if(PendingIk.IsEmpty())return;
     if(bWait)SyncPair();
-    for(const FPendingIk& P:PendingIk)if(AKKPreviewActor* Who=P.Who.Get();IsValid(Who)&&Who->Session.IsOpen()&&!Who->Session.SetStudioIk(P.Eff,P.At))
+    for(const FPendingIk& P:PendingIk)if(AKKPreviewActor* Who=P.Who.Get();IsValid(Who)&&Who->Session.IsOpen()&&!(Who->Session.SetStudioIk(P.Eff,P.At)&&(Who->Session.SetStudioIkArmPull(P.ArmPull),true)))
         UE_LOG(LogTemp,Warning,TEXT("H align: IK targets for %s not taken"),*Who->GetName());
     PendingIk.Reset();
 }

@@ -1284,6 +1284,8 @@ pub struct OkSession {
     pub(crate) studio_ik_rotations: Vec<(usize, [f32;4])>,
     /// Studio IK weights, one per `studio_ik` target (missing: 1, the target is reached).
     pub(crate) studio_ik_weights: Vec<f32>,
+    /// The arms' authored FBBIK pull (left, right), kept while set_studio_ik_arm_pull changes it.
+    pub(crate) studio_ik_arm_pull_saved: Option<[f32; 2]>,
     /// A Studio character's ExpressionBone categories (pose::EXPRESSION_ALL bits, Studio's joint correction toggles).
     /// Studio gives every character the component, so a set mask runs it whatever the clip or source; None keeps
     /// the clip-scene rule (all categories, Studio clips with a game source only).
@@ -4440,6 +4442,7 @@ impl SessionBlob {
             studio_ik: Vec::new(),
             studio_ik_rotations: Vec::new(),
             studio_ik_weights: Vec::new(),
+            studio_ik_arm_pull_saved: None,
             expression_mask: None,
             correct: self.correct,
             sex: self.sex,

@@ -2379,6 +2379,7 @@ pub(crate) fn extract_session_from_info(
         studio_ik: Vec::new(),
             studio_ik_rotations: Vec::new(),
             studio_ik_weights: Vec::new(),
+            studio_ik_arm_pull_saved: None,
             expression_mask: None,
         correct,
         sex,
