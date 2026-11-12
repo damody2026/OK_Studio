@@ -44,7 +44,7 @@ void UOKCharacterController::OnOpenProperties(){
  if(PropertyPanel->GetVisibility()!=ESlateVisibility::Collapsed&&!EditorProperties.IsEmpty()){++PropertyGeneration;PropertyPanel->SetVisibility(ESlateVisibility::Collapsed);return;}
  if(!EditorProperties.IsEmpty()&&PropertySource==Entries[SelectedIndex].Path&&PropertyOutfit==OutfitIndex){PropertyPanel->SetVisibility(ESlateVisibility::Visible);RebuildPropertyControls();return;}
  PropertyPanel->SetVisibility(ESlateVisibility::Visible);++PropertyGeneration;PendingProperties.Reset();EditorProperties.Reset();PropertyRows->ClearChildren();PropertySource=Entries[SelectedIndex].Path;PropertyOutfit=OutfitIndex;
- const FString Folder=FPaths::ProjectSavedDir()/TEXT("AppearanceEditor"),Input=Folder/(FGuid::NewGuid().ToString(EGuidFormats::Digits)+TEXT(".properties.png"));IFileManager::Get().MakeDirectory(*Folder,true);
+ const FString Folder=AppearanceWorkFolder(Entries[SelectedIndex].Path),Input=Folder/(FGuid::NewGuid().ToString(EGuidFormats::Digits)+TEXT(".properties.png"));IFileManager::Get().MakeDirectory(*Folder,true);
  auto CardJob=MakeShared<FOKAppearanceCardJob,ESPMode::ThreadSafe>(Selected);
  if(auto* Root=UKKGameRoot::Get())AppearanceRoot=Root->Root;
  auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),TEXT("properties"));R->SetStringField(TEXT("card"),Input);R->SetNumberField(TEXT("outfit"),OutfitIndex);bPropertyBusy=true;PropertyStatus->SetText(FText::FromString(TEXT("讀取目前角色的可編輯設定…")));const int32 Selection=SelectedIndex,Generation=LoadGeneration,Outfit=OutfitIndex;
@@ -87,7 +87,7 @@ void UOKCharacterController::RebuildPropertyControls(){
 void UOKCharacterController::OnApplyProperties(){
  if(bPropertyBusy||bAppearanceBusy||bLoadInFlight||bAnimationPreparing||PendingProperties.IsEmpty()||!Entries.IsValidIndex(SelectedIndex))return;
  if(PropertySource!=Entries[SelectedIndex].Path||PropertyOutfit!=OutfitIndex){PropertyStatus->SetText(FText::FromString(TEXT("角色或服裝已切換，請關閉並重新開啟詳細編輯後再修改。")));return;}
- const FString Folder=FPaths::ProjectSavedDir()/TEXT("AppearanceEditor"),Id=FGuid::NewGuid().ToString(EGuidFormats::Digits),Input=Folder/(Id+TEXT(".input.png")),Output=Folder/(Id+TEXT(".png"));
+ const FString Folder=AppearanceWorkFolder(Entries[SelectedIndex].Path),Id=FGuid::NewGuid().ToString(EGuidFormats::Digits),Input=Folder/(Id+TEXT(".input.png")),Output=Folder/(Id+TEXT(".png"));
  auto CardJob=MakeShared<FOKAppearanceCardJob,ESPMode::ThreadSafe>(Selected);
  TArray<TSharedPtr<FJsonValue>> Edits;for(auto& E:PendingProperties){auto V=MakeShared<FJsonObject>();V->SetStringField(TEXT("key"),E.Key);V->SetField(TEXT("value"),E.Value);Edits.Add(MakeShared<FJsonValueObject>(V));}
  auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),TEXT("properties_apply"));R->SetStringField(TEXT("card"),Input);R->SetStringField(TEXT("output"),Output);R->SetStringField(TEXT("resources"),FPaths::ProjectContentDir()/TEXT("IndependentResources/v1"));R->SetNumberField(TEXT("outfit"),OutfitIndex);R->SetArrayField(TEXT("edits"),Edits);

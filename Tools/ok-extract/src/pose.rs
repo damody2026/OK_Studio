@@ -1787,6 +1787,9 @@ pub(crate) struct SkelGraph {
     asset_roots: std::collections::HashMap<String, Vec<i64>>,
     tfs: std::collections::HashMap<i64, Tf>,
     smr_bones: std::collections::HashMap<i64, Vec<Vec<i64>>>,
+    // Renderer path id -> (its Mesh, its own bone list). Several prefabs can share one Mesh asset with different
+    // private armatures (a glove mesh in every variant of a glove pack): each renderer skins against its own.
+    renderer_bones: std::collections::HashMap<i64, (i64, Vec<i64>)>,
     go_name: std::collections::HashMap<i64, String>,
     go_tf: std::collections::HashMap<i64, i64>,
     // A Mesh asset can be referenced by several prefab renderer objects.
@@ -1798,6 +1801,7 @@ pub(crate) fn build_skel_graph(serialized: &SerializedFile) -> SkelGraph {
     let mut go_name: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
     let mut tfs: std::collections::HashMap<i64, Tf> = std::collections::HashMap::new();
     let mut smr_bones: std::collections::HashMap<i64, Vec<Vec<i64>>> = std::collections::HashMap::new();
+    let mut renderer_bones: std::collections::HashMap<i64, (i64, Vec<i64>)> = std::collections::HashMap::new();
     let mut go_tf: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
     let mut mesh_go: std::collections::HashMap<i64, Vec<i64>> = std::collections::HashMap::new();
     // Each transform's children and game object, for the sibling indexes and names once every object is read (parsed once).
@@ -1855,6 +1859,7 @@ pub(crate) fn build_skel_graph(serialized: &SerializedFile) -> SkelGraph {
                         }
                     }
                 }
+                renderer_bones.insert(info.path_id, (mesh, bones.clone()));
                 smr_bones.entry(mesh).or_default().push(bones);
             }
             _ => {}
@@ -1878,6 +1883,7 @@ pub(crate) fn build_skel_graph(serialized: &SerializedFile) -> SkelGraph {
         asset_roots: crate::unity::prefab_asset_roots(serialized),
         tfs,
         smr_bones,
+        renderer_bones,
         go_name,
         go_tf,
         mesh_go,
@@ -2194,7 +2200,7 @@ fn prefab_mesh_gameobjects(graph: &SkelGraph, main_data: &str)
 fn shared_mesh_gameobjects_are_selected_within_prefab() {
     let mut graph = SkelGraph {
         asset_roots: [("blue".into(), vec![10]), ("studio".into(), vec![20])].into(),
-        tfs: Default::default(), smr_bones: Default::default(), go_name: Default::default(),
+        tfs: Default::default(), smr_bones: Default::default(), renderer_bones: Default::default(), go_name: Default::default(),
         go_tf: [(10, 100), (11, 110), (20, 200), (21, 210), (30, 300)].into(),
         mesh_go: [(410, vec![21, 30, 11]), (411, vec![30])].into(),
     };
@@ -2214,11 +2220,35 @@ fn shared_mesh_gameobjects_are_selected_within_prefab() {
 
 #[cfg(test)]
 #[test]
+fn shared_mesh_renderers_keep_their_own_armature() {
+    // One glove Mesh (500) skinned by two prefabs' renderers (61, 62), each with its own armature (1 / 2).
+    let mut graph = SkelGraph {
+        asset_roots: Default::default(), tfs: Default::default(),
+        smr_bones: [(500, vec![vec![11], vec![21]]), (501, vec![vec![11]])].into(),
+        renderer_bones: [(61, (500, vec![11])), (62, (500, vec![21])), (63, (501, vec![11]))].into(),
+        go_name: Default::default(), go_tf: Default::default(), mesh_go: Default::default(),
+    };
+    for (id, parent) in [(1, None), (11, Some(1)), (2, None), (21, Some(2))] {
+        graph.tfs.insert(id, Tf { sibling_index: None, name: if id > 10 {"hand".into()} else {"root".into()}, parent,
+            pos: [id as f32, 0., 0.], rot: [0., 0., 0., 1.], scale: [1.; 3] });
+    }
+    let own: std::collections::HashMap<i64, Skeleton> =
+        renderer_skeletons_from_graph(&graph, &[(500, 61), (500, 62), (501, 63)]).into_iter().collect();
+    assert_eq!(own[&61].bone_ids, [11]);
+    assert!(own[&61].tfs.contains_key(&1) && !own[&61].tfs.contains_key(&2));
+    assert_eq!(own[&62].bone_ids, [21]);
+    assert!(own[&62].tfs.contains_key(&2) && !own[&62].tfs.contains_key(&1));
+    // A Mesh with one bone list keeps the per-Mesh answer.
+    assert!(!own.contains_key(&63));
+}
+
+#[cfg(test)]
+#[test]
 fn duplicate_prefab_names_keep_all_transform_roots() {
     let graph = SkelGraph {
         asset_roots: Default::default(),
         tfs: Default::default(),
-        smr_bones: Default::default(),
+        smr_bones: Default::default(), renderer_bones: Default::default(),
         go_name: [(30, "p_AS01".to_string()), (10, "AS01".to_string()),
                   (20, "p_AS01".to_string()), (40, "unrelated".to_string())].into(),
         go_tf: [(30, 300), (10, 100), (20, 200), (40, 400)].into(),
@@ -2513,6 +2543,23 @@ fn skeleton_from_graph(graph: &SkelGraph, mesh_path_id: i64) -> Option<Skeleton>
         .iter()
         .max_by_key(|b| b.len())?
         .clone();
+    skeleton_from_bones(graph, bones, mesh_path_id)
+}
+
+/// The private skeleton of each given (Mesh, renderer) whose Mesh is shared by renderers with different bone lists
+/// (`skeleton_from_graph` answers per Mesh, so it can hand one prefab another prefab's armature). Renderers whose
+/// Mesh has a single bone list are left out: the per-Mesh skeleton is already theirs.
+pub(crate) fn renderer_skeletons_from_graph(graph: &SkelGraph, pairs: &[(i64, i64)]) -> Vec<(i64, Skeleton)> {
+    pairs.iter().filter_map(|&(mesh, renderer)| {
+        let lists = graph.smr_bones.get(&mesh)?;
+        if lists.iter().all(|l| *l == lists[0]) { return None; }
+        let (owned_mesh, bones) = graph.renderer_bones.get(&renderer)?;
+        if *owned_mesh != mesh { return None; }
+        Some((renderer, skeleton_from_bones(graph, bones.clone(), mesh)?))
+    }).collect()
+}
+
+fn skeleton_from_bones(graph: &SkelGraph, bones: Vec<i64>, mesh_path_id: i64) -> Option<Skeleton> {
     if bones.is_empty() {
         return None;
     }

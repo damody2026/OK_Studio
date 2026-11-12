@@ -630,6 +630,10 @@ public:
  void FinishPortableSave(const FString& Source,const FString& Output,const FString& Message,bool CopyStates);
  void FinishOkCardSave(const FString& Output,const FString& Message);
  static bool OKPngHasChunk(const FString& Path,const ANSICHAR* Type);
+ /** Where the appearance and property editors write the working cards of `CardPath` (OKGalleryAppearance.cpp): a folder
+  *  per original card directory holding links to that directory's zipmods, since a card's loose zipmods are found
+  *  beside it. Saved/AppearanceEditor itself when the card has none. */
+ static FString AppearanceWorkFolder(const FString& CardPath);
 	FString PreviewCardPath;
 	FString PreviewResourceSignature,PendingPreviewResourceSignature;
 	int32 PreviewOutfitIndex = INDEX_NONE;

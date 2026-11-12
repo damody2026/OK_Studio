@@ -1121,6 +1121,11 @@ namespace
 			const bool bSpin = IsSpin(*Found[Index]);
 			// The spin box enters its text mode on a direct focus and hands the focus to its text field.
 			App.SetKeyboardFocus(Found[Index], bSpin ? EFocusCause::SetDirectly : EFocusCause::Mouse);
+			// A window opened a moment ago that Slate has not laid out yet has no path to its fields: the focus stays where it
+			// was and the keys went there (the save-as name lost under load, U270). Then say so; the caller tries again.
+			bool bFocused = false;
+			for (TSharedPtr<SWidget> W = App.GetKeyboardFocusedWidget(); W && !bFocused; W = W->GetParentWidget()) bFocused = W == Found[Index];
+			if (!bFocused) return Result(false, TEXT("the field is not ready for the keyboard yet"));
 			TypeIn();
 			TSharedRef<FJsonObject> O = Result(true);
 			O->SetNumberField(TEXT("matches"), Found.Num());

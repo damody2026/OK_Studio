@@ -239,6 +239,15 @@ pub(crate) fn clothing_source(path:&Path,png:&[u8],metadata:&serde_json::Value)-
  let root=explicit.or_else(||source.ancestors().find(|p|p.join("abdata").ok_is_dir()).map(Path::to_path_buf)).ok_or("original clothing resources unavailable")?;Ok((root,source))
 }
 
+/// An original card's session as the reader shows it: with a base library configured, the library plus the zipmods
+/// beside the card and the installation's (oklib::open_original_card); otherwise the installation alone. Opened from
+/// the installation only, the editors' export lost the card's own zipmods: 花火's clothes from the zipmod beside her
+/// card were gone after 套用 (2026-11-12).
+fn open_source(game:&Path,card:&Path,outfit:i32)->Result<OkSession,String> {
+    if let Some(result)=crate::oklib::open_original_card(game,card,outfit) {return result;}
+    crate::session::open(game,Some(card),outfit)
+}
+
 fn load_clothes_variant(path:&Path,png:&[u8],outfit:i32,count:usize,states:[u8;9])->Result<OkSession,String> {
     use sha2::{Digest,Sha256};
     let digest=format!("{:x}",Sha256::digest(png));
@@ -267,7 +276,10 @@ fn load_clothes_variant(path:&Path,png:&[u8],outfit:i32,count:usize,states:[u8;9
         .map_err(|e|e.to_string())?;
     if metadata["apng_sha256"].as_str()!=Some(digest.as_str()) {return Err("APNG conversion receipt hash mismatch; clothing state preparation refused".into());}
     let (root,source)=clothing_source(path,png,&metadata)?;
-    let mut session=crate::session::open(&root,Some(&source),outfit)?;
+    // An embedded original is kept in `.okstates/`: its zipmods are the ones beside the portable card.
+    let mut session=if source.starts_with(parent.join(".okstates")) {
+        match crate::oklib::open_original_card_beside(&root,&source,parent,outfit) { Some(result)=>result?, None=>open_source(&root,&source,outfit)? }
+    } else { open_source(&root,&source,outfit)? };
     session.refresh_portable_render();
     let payload=encode_clothing(&session,png,path,outfit)?;
     // Decode before publication, including all borrowed-resource hashes.
@@ -541,7 +553,7 @@ pub(crate) fn shared_edited_outfit(game:&Path,card:&Path,base:&Path,resources:&P
     let previous=crate::card::parse_card_bytes_mode(&original,index as i32,false)?;
     if previous.coordinate_count!=info.coordinate_count{return Err("edited outfit count changed unexpectedly".into());}
     for key in ["OK_GPU_SKIN","OK_SKELMESH","OK_NOPOSE","OK_UE_ANIM","OK_HEAD_GPUSKIN"]{std::env::set_var(key,"1");}
-    let source=crate::session::open(game,Some(card),index as i32)?;
+    let source=open_source(game,card,index as i32)?;
     let (raw,_)=crate::portable_resources::split(&source,&info,resources,&format!("edited#outfit{index}"))?;
     let snapshot=bincode::deserialize(&raw).map_err(|e|e.to_string())?;
     let payload=crate::portable_outfits::replace_outfit(payload,snapshot,index,resources)?;
@@ -565,7 +577,7 @@ pub fn shared(game:&Path,card:&Path,resources:&Path,output:&Path)->Result<serde_
     let mut snapshots=Vec::new();let mut reports=Vec::new();
     for outfit in 0..count {
         eprintln!("shared outfit {}/{}",outfit+1,count);
-        let source=crate::session::open(game,Some(card),outfit as i32)?;
+        let source=open_source(game,card,outfit as i32)?;
         let info=crate::card::parse_card_bytes_mode(&original,outfit as i32,false)?;
         let (raw,mut report)=crate::portable_resources::split(&source,&info,resources,
             &format!("{}#outfit{outfit}",card.file_name().unwrap_or_default().to_string_lossy()))?;
@@ -655,7 +667,7 @@ pub fn embed(card: &Path, pack: &Path, output: &Path) -> Result<serde_json::Valu
 pub fn export(game: &Path, card: &Path, output: &Path) -> Result<serde_json::Value, String> {
     for key in ["OK_GPU_SKIN", "OK_SKELMESH", "OK_NOPOSE", "OK_UE_ANIM", "OK_HEAD_GPUSKIN"] { std::env::set_var(key, "1"); }
     let start = Instant::now();
-    let source = crate::session::open(game, Some(card), 0)?;
+    let source = open_source(game, card, 0)?;
     let raw = source.to_preview_bytes()?;
     if raw.len() as u64 > MAX_BYTES { return Err("snapshot too large".into()); }
     let mut bytes = Vec::from(MAGIC.as_slice());

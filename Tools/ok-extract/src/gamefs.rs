@@ -217,8 +217,10 @@ pub struct Fallback {
 }
 static FALLBACK: RwLock<Vec<Fallback>> = RwLock::new(Vec::new());
 fn fallback_roots() -> Option<std::sync::RwLockReadGuard<'static, Vec<Fallback>>> {
-    if crate::oklib::is_outside_opens() { None } else { Some(FALLBACK.read().unwrap()) }
+    if crate::oklib::is_outside_opens() && !crate::oklib::sees_fallback() { None } else { Some(FALLBACK.read().unwrap()) }
 }
+/// Whether a fallback is set (an original card open with its zipmods, see `oklib::pack_parallel`).
+pub fn fallback_active() -> bool { !FALLBACK.read().unwrap().is_empty() }
 
 /// Game settings files (logical keys) read from the installation when one is given (see `read`).
 const INSTALLATION_SETTINGS: &[&str] = &["userdata/config/system.xml", "bepinex/config/com.deathweasel.bepinex.uncensorselector.cfg"];
@@ -311,7 +313,7 @@ pub fn fallback_generation() -> u64 { FALLBACK_GENERATION.load(std::sync::atomic
 /// memos key on it (MaterialEditor shader registrations, library memos), ~1000 times a card conversion at ~1 ms each
 /// (a stat of every archive and a listing of the card directory).
 pub fn fallback_identity() -> String {
-    if crate::oklib::is_outside_opens() { return String::new(); }
+    if crate::oklib::is_outside_opens() && !crate::oklib::sees_fallback() { return String::new(); }
     static LAST: Mutex<Option<(u64, String)>> = Mutex::new(None);
     let generation = FALLBACK_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
     if let Some((g, identity)) = LAST.lock().unwrap_or_else(|e| e.into_inner()).as_ref() { if *g == generation { return identity.clone(); } }

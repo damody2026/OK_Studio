@@ -28,6 +28,37 @@
 #include "Serialization/JsonSerializer.h"
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
+#include "Misc/SecureHash.h"
+#if PLATFORM_WINDOWS
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include <windows.h>
+#include "Windows/HideWindowsPlatformTypes.h"
+#endif
+
+FString UOKCharacterController::AppearanceWorkFolder(const FString& CardPath)
+{
+ // An original card opens with the zipmods lying beside it (oklib's card directory fallback). The editors write the
+ // edited card here and open it again: in the one shared folder it lost them, and a card whose clothes come from its
+ // own zipmod came back in underwear after 套用 (花火, 2026-11-12). Each original directory gets its own folder with
+ // links to its zipmods; an edited card's next edit stays in that folder.
+ const FString Root=FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir()/TEXT("AppearanceEditor"));
+ IFileManager& Files=IFileManager::Get();Files.MakeDirectory(*Root,true);
+ const FString Directory=FPaths::GetPath(FPaths::ConvertRelativePathToFull(CardPath));
+ if(Directory.IsEmpty()||FPaths::IsUnderDirectory(Directory,Root))return Directory.IsEmpty()?Root:Directory;
+ TArray<FString> Zipmods;Files.FindFiles(Zipmods,*(Directory/TEXT("*.zipmod")),true,false);
+ if(Zipmods.IsEmpty())return Root;
+ const FString Folder=Root/(TEXT("mods_")+FMD5::HashAnsiString(*Directory.ToLower()).Left(12));Files.MakeDirectory(*Folder,true);
+ for(const FString& Name:Zipmods){
+  const FString From=Directory/Name,To=Folder/Name;
+  if(Files.FileSize(*To)==Files.FileSize(*From)&&Files.GetTimeStamp(*To)>=Files.GetTimeStamp(*From))continue;
+  Files.Delete(*To,false,true,true);
+#if PLATFORM_WINDOWS
+  if(::CreateHardLinkW(*To,*From,nullptr))continue;	// another drive: copied below
+#endif
+  if(Files.Copy(*To,*From)!=COPY_OK)UE_LOG(LogTemp,Warning,TEXT("Appearance editor: could not bring %s beside the working card"),*From);
+ }
+ return Folder;
+}
 
 namespace {
 void CopyPendingHeadEdits(const FKKCharacterFile& Source,FKKCharacterFile& Destination){
@@ -143,7 +174,7 @@ bool UOKCharacterController::MaterializeAppearance(TFunction<void(UOKCharacterCo
  if(!Selected.DeferredPreview)return false;
  if(bAppearanceBusy||bPropertyBusy||bLoadInFlight||!Entries.IsValidIndex(SelectedIndex))return true;
  auto Job=MakeShared<FOKAppearanceCardJob,ESPMode::ThreadSafe>(Selected);
- const FString Output=FPaths::ProjectSavedDir()/TEXT("AppearanceEditor")/(FGuid::NewGuid().ToString(EGuidFormats::Digits)+TEXT(".png"));
+ const FString Output=AppearanceWorkFolder(Entries[SelectedIndex].Path)/(FGuid::NewGuid().ToString(EGuidFormats::Digits)+TEXT(".png"));
  const FString Before=Entries[SelectedIndex].Path;const int32 Selection=SelectedIndex,Generation=LoadGeneration,Outfit=OutfitIndex;
  bAppearanceBusy=true;SetIsEnabled(false);TWeakObjectPtr<UOKCharacterController> Weak(this);
  Async(EAsyncExecution::ThreadPool,[Weak,Job,Output,Before,Selection,Generation,Outfit,Complete=MoveTemp(Complete)]() mutable {
@@ -290,7 +321,7 @@ void UOKCharacterController::ApplyAppearanceItem(const FString& Key){
  if(bAppearanceBusy||bPropertyBusy||bLoadInFlight||bAnimationPreparing||PendingAnimationKind>=0||!Entries.IsValidIndex(SelectedIndex)||(!bAddSlot&&AppearanceTargetKey.IsEmpty()))return;
  if(!bAddSlot&&ApplyPreparedAppearance(Key))return;
  if(bAddSlot){auto* Root=UKKGameRoot::Get();AppearanceRoot=Root?Root->Root:FString();}
- const FString Folder=FPaths::ProjectSavedDir()/TEXT("AppearanceEditor"),Id=FGuid::NewGuid().ToString(EGuidFormats::Digits),Input=Folder/(Id+TEXT(".input.png")),Output=Folder/(Id+TEXT(".png"));IFileManager::Get().MakeDirectory(*Folder,true);
+ const FString Folder=AppearanceWorkFolder(Entries[SelectedIndex].Path),Id=FGuid::NewGuid().ToString(EGuidFormats::Digits),Input=Folder/(Id+TEXT(".input.png")),Output=Folder/(Id+TEXT(".png"));IFileManager::Get().MakeDirectory(*Folder,true);
  auto CardJob=MakeShared<FOKAppearanceCardJob,ESPMode::ThreadSafe>(Selected);
  bAppearanceBusy=true;if(ShapePanel)ShapePanel->SetIsEnabled(false);AppearancePanel->SetVisibility(ESlateVisibility::Visible);AppearanceTarget->SetIsEnabled(false);AppearanceSearch->SetIsEnabled(false);AppearanceStatus->SetText(FText::FromString(TEXT("正在套用素材與建立可保存資源，完成後更新角色…")));auto R=MakeShared<FJsonObject>();R->SetStringField(TEXT("action"),bAddSlot?TEXT("accessory_slot_add"):TEXT("apply"));R->SetStringField(TEXT("card"),Input);R->SetStringField(TEXT("output"),Output);R->SetStringField(TEXT("resources"),FPaths::ProjectContentDir()/TEXT("IndependentResources/v1"));R->SetStringField(TEXT("target"),AppearanceTargetKey);R->SetStringField(TEXT("item"),Key);R->SetNumberField(TEXT("outfit"),OutfitIndex);
  const int32 Selection=SelectedIndex,Generation=LoadGeneration,Outfit=OutfitIndex;const FString Target=AppearanceTargetKey;
