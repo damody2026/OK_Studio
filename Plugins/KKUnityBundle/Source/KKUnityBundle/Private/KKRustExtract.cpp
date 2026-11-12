@@ -443,6 +443,10 @@ bool FOkSession::SetStudioIkWeights(const TArray<float>& Weights)
 {
 	return Handle && ok_session_set_studio_ik_weights(Handle,Weights.GetData(),Weights.Num())==0;
 }
+bool FOkSession::SetStudioIkArmPull(float Pull)
+{
+	return Handle && ok_session_set_studio_ik_arm_pull(Handle,Pull)==0;
+}
 bool FOkSession::SetExpressionMask(uint32 Mask)
 {
 	return Handle && ok_session_set_expression_mask(Handle,Mask)==0;

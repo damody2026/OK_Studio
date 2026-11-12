@@ -73,7 +73,9 @@ impl Cloud {
             .ok_or_else(|| anyhow!("no Alibaba Cloud API key (DASHSCOPE_API_KEY, or aliyun.api_key in the player's settings)"))?;
         let base_url = setting(cfg, "DASHSCOPE_BASE_URL", "base_url").unwrap_or_else(|| "https://dashscope.aliyuncs.com".into());
         let model = model.map(str::to_string).or_else(|| setting(cfg, "OK_TTS_CLOUD_MODEL", "tts_model")).unwrap_or_else(|| DEFAULT_MODEL.into());
-        let voices_path = voices_dir().join(format!("ok-tts-cloud-voices-{}.json", model));
+        // A designed voice belongs to the account that made it: one file per key (a short hash of it, never the key).
+        let account = { let mut h = Sha1::new(); h.update(key.trim().as_bytes()); h.digest().to_string()[..10].to_string() };
+        let voices_path = voices_dir().join(format!("ok-tts-cloud-voices-{model}-{account}.json"));
         let voices: HashMap<String, String> = std::fs::read_to_string(&voices_path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
         let agent = ureq::AgentBuilder::new().try_proxy_from_env(true).timeout_connect(Duration::from_secs(15)).timeout_read(Duration::from_secs(60)).build();
         crate::log!("ok-tts: cloud voices ({model} at {base_url}), {} designed earlier ({})", voices.len(), voices_path.display());

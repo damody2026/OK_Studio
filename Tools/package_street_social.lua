@@ -16,6 +16,17 @@
 --     DASHSCOPE_API_KEY) are searched for in every text file of the package: one found stops it.
 -- --check stops after the report. The stage keeps its game files; its junctions into Content are not copied (the
 -- launcher makes them on the first start, pointing at the package's own Content).
+--
+-- A private package (2026-11-12: a build for one tester, kept on this machine, never pushed or published):
+--   --private            the original data the street reads goes in (Tools/original_data_manifest.json, all groups but
+--                        --skip-group's, by default h-voices and studio-scenes), and original assets cooked into the
+--                        paks no longer stop it; the tester needs no game of their own
+--   --cards <folder>     only these OK cards: copied to Content/CharacterCards/StreetHeroines and made the default
+--                        heroines (Launch/heroines.json, at most ten), with the male card (Launch/runtime.json male_card)
+--   --voice cloud        the new player's settings choose the cloud voices and voice input (keys still empty: ok-tts
+--                        loads no local model until the key is typed into the settings)
+--   --readme <file>      copied to the package's root
+-- Keys still never go in.
 local ok = require "ok"
 local json, path, proc, util = ok.json, ok.path, ok.proc, ok.util
 local player_settings = require "street_player_settings"
@@ -134,7 +145,13 @@ local function main()
   p:flag("--check")
   p:flag("--no-voice-servers")
   p:opt("--allow", { multiple = true })
+  p:flag("--private")
+  p:opt("--cards")
+  p:opt("--voice")
+  p:opt("--readme")
+  p:opt("--skip-group", { multiple = true })
   local a = p:parse(arg)
+  if a.voice and a.voice ~= "cloud" and a.voice ~= "builtin" then error("--voice must be cloud or builtin", 0) end
   local root = ok.root
   local out = path.abs(a.out):gsub("/+$", "")
   if out:sub(1, #root + 1) == root .. "/" then error("--out must be outside the repository: " .. win(out), 0) end
@@ -172,7 +189,9 @@ local function main()
   for _, rel in ipairs(tracked(root, { "Tools" })) do if rel:match("^Tools/[^/]+%.lua$") then add(path.join(root, rel), rel) end end
   -- Built tools the launcher and the restore use (the player has no cargo).
   for _, rel in ipairs({ "Tools/ok-rules/target/release/ok_rules.dll", "Tools/ok-mind/target/release/ok_mind.dll",
-      "Tools/ok-story/target/release/ok_story.dll", "Tools/ok-extract/target/release/ok-extract.exe" }) do
+      "Tools/ok-story/target/release/ok_story.dll", "Tools/ok-extract/target/release/ok-extract.exe",
+      -- Tools/lua/ok/kit.lua: the launcher's card checks (prepare_street_social_selection.lua) decode with it.
+      "Tools/ok-luakit/target/release/ok-luakit.exe" }) do
     if path.is_file(path.join(root, rel)) then add(path.join(root, rel), rel) else say("Not built, left out: " .. rel) end
   end
   if not a.no_voice_servers then
@@ -186,6 +205,44 @@ local function main()
       else say("Voice server not built, left out: Build/" .. server) end
     end
   end
+  -- Private: the original data (the tester has no game to restore it from).
+  if a.private then
+    local skip = {}
+    for _, g in ipairs((a.skip_group and #a.skip_group > 0) and a.skip_group or { "h-voices", "studio-scenes" }) do skip[g] = true end
+    local m = json.decode(path.read_text(path.join(root, "Tools/original_data_manifest.json")))
+    local have, missing, groups = 0, 0, {}
+    for _, f in ipairs(m.files) do
+      if not skip[f.group] then
+        local src = path.join(root, f.path)
+        if path.is_file(src) then add(src, f.path); have = have + 1; groups[f.group] = (groups[f.group] or 0) + f.bytes
+        else missing = missing + 1 end
+      end
+    end
+    local names = {}
+    for g, n in pairs(groups) do names[#names + 1] = ("%s %s"):format(g, gb(n)) end
+    table.sort(names)
+    say(("Original data (private): %d files (%s); %d missing here; left out: %s"):format(have, table.concat(names, ", "), missing,
+      table.concat((a.skip_group and #a.skip_group > 0) and a.skip_group or { "h-voices", "studio-scenes" }, ", ")))
+  end
+  -- Private: only the given cards, and they are the heroines.
+  local roster
+  if a.cards then
+    if not a.private then error("--cards needs --private (character cards never go into a public package)", 0) end
+    local dir = path.abs(a.cards)
+    roster = json.array({})
+    for _, n in ipairs(path.list(dir)) do
+      if n:lower():match("%.png$") then
+        local rel = "Content/CharacterCards/StreetHeroines/" .. n
+        add(path.join(dir, n), rel)
+        if #roster < 10 then roster[#roster + 1] = rel end
+      end
+    end
+    if #roster == 0 then error("no PNG cards in " .. win(dir), 0) end
+    if path.is_file(path.join(root, launch.male_card)) then add(path.join(root, launch.male_card), launch.male_card)
+    else say("Male card missing: " .. launch.male_card) end
+    say(("Cards: %d heroines from %s"):format(#roster, win(dir)))
+  end
+  if a.readme then add(path.abs(a.readme), path.name(a.readme)) end
   for _, e in ipairs(plan) do bytes = bytes + (path.size and path.size(e[1]) or 0) end
 
   -- Nothing original in the paks; nothing unaccounted for.
@@ -193,7 +250,9 @@ local function main()
   say(("Paks: %d project assets tracked in git"):format(report.tracked))
   for top, e in pairs(report.allowed) do say(("  allowed (--allow): %d under %s, e.g. %s"):format(e.count, top, e.example)) end
   local stop = false
-  if #report.original > 0 then
+  if #report.original > 0 and a.private then
+    say(("Private: %d assets converted from the original game data are in the paks (allowed)"):format(#report.original))
+  elseif #report.original > 0 then
     stop = true
     say(("STOP: %d assets converted from the original game data are cooked into the paks:"):format(#report.original))
     for i = 1, math.min(#report.original, 20) do say("  " .. report.original[i]) end
@@ -206,7 +265,9 @@ local function main()
 
   -- No key of this machine in any text file.
   local keys = local_keys(root)
-  local template = player_settings.encode(player_settings.template())
+  local new_player = player_settings.template()
+  if a.voice == "cloud" then new_player.voice.voice_mode = "cloud"; new_player.asr.mode = "cloud" end
+  local template = player_settings.encode(new_player)
   local leaks = {}
   for _, e in ipairs(plan) do
     local ext = (e[2]:match("%.([%w]+)$") or ""):lower()
@@ -235,6 +296,11 @@ local function main()
   -- A new player's settings: built-in voices, no keys (they fill them in the settings menu at the top left).
   path.mkdir(path.join(out, "Saved/StreetSocial"), true)
   path.write_text(path.join(out, "Saved/StreetSocial/player.json"), template, { newline = "\n" })
+  if roster then
+    local file = path.join(out, "Content/IndependentResources/StreetSocialData/Launch/heroines.json")
+    path.write_text(file, json.encode(json.object({ { "note", "This package's heroines (Tools/package_street_social.lua --cards)." }, { "cards", roster } }),
+      { indent = 2, ensure_ascii = false }) .. "\n", { newline = "\n" })
+  end
   local listing = json.array({})
   for _, e in ipairs(plan) do listing[#listing + 1] = e[2] end
   path.write_text(path.join(out, "PACKAGE.json"), json.encode(json.object({ { "schema", 1 }, { "made", os.date("!%Y-%m-%dT%H:%M:%SZ") },
@@ -243,7 +309,10 @@ local function main()
   say("Packed into " .. win(out))
   if a.zip then
     local zip = path.abs(a.zip)
-    proc.run({ "tar", "-a", "-c", "-f", win(zip), "-C", win(out), "." }, { check = true })
+    -- 7-Zip when it is installed: Windows' tar crashed (0xC0000005) zipping a 16 GB package with a Chinese file name.
+    local seven = "C:/Program Files/7-Zip/7z.exe"
+    if path.is_file(seven) then proc.run({ win(seven), "a", "-tzip", "-mx=1", "-mmt=8", win(zip), win(out) .. "\\*" }, { check = true })
+    else proc.run({ "tar", "-a", "-c", "-f", win(zip), "-C", win(out), "." }, { check = true }) end
     say("Zip: " .. win(zip))
   end
 end

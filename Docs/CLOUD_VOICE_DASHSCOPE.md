@@ -51,6 +51,14 @@
 - 免持聽寫（`/listen/*`）因為要開實體麥克風而沒有測，它和 `/transcribe` 共用同一個辨識函式。
 - 沒有人工試聽雲端音色是否貼近本機的聲音。
 
+## 2026-11-12
+
+- **AI 對話也能走阿里雲**：沒填 DeepSeek 金鑰時，自由對話（`OKStreetSocialFreeTalk.cpp`）與女主角的 AI（`ok-mind` `config.rs`）改用 `aliyun.api_key`。端點是 `<base_url>/compatible-mode/v1/chat/completions`，模型取 `aliyun.chat_model`，預設 `qwen-plus`；ok-mind 另外送 `enable_thinking`。實測 `qwen-plus` 的 JSON 回覆每句約 2.5 秒，`qwen-flash` 也能用；百煉上沒有 `deepseek-v3.2`。
+- **音色檔一個帳號一份**：設計好的音色屬於設計它的帳號，所以檔名改成 `ok-tts-cloud-voices-<模型>-<金鑰雜湊前 10 碼>.json`。只存雜湊，不存金鑰；換了金鑰就重新設計。
+- **選了雲端但還沒填金鑰**：`ok-tts` 不載入也不下載本機模型，只開著伺服器等。玩家在「設定」填好金鑰後，遊戲用 `POST /cloud` 打開雲端，不必重開；在那之前用內建錄音。這是給沒附金鑰的整合包用的。
+- 實測（新的阿里雲金鑰，F 的 `-Editor` 沙盒）：只填阿里雲金鑰時，ok-mind 的 trace 記到 `qwen-plus`。洛天依、克拉拉、兰音都正常回話，配音全部 `voice=cloud`。雲端合成的一句交給雲端辨識，聽回來與原文相同（2.88 秒的音訊辨識花 1.7 秒）。
+- 啟動器會把空的 `deepseek.api_key` 從 `%LOCALAPPDATA%\OpenKoikatsu\deepseek.json` 補回來（舊設定的遷移）。在有那個檔的機器上測「只有阿里雲」時，沙盒的 DeepSeek 金鑰要填一個空白字元，而不是空字串。
+
 ## 已處理（2026-11-10）
 
 - 第一次出聲要先設計音色：改成預先設計（見上方「預先設計」）。直接打伺服器實測：兩個新音色同時設計，分別花 6.8 秒、7.8 秒；設計完後那個性格的第一句 `/synthesize` 只要 1.8 秒。

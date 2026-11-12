@@ -256,6 +256,8 @@ public:
     bool SetStudioIkPose(const TArray<int32>& Effectors,const TArray<FVector>& UnityPositions,const TArray<FQuat>& UnityRotations,const TArray<uint8>& UseRotations);
 	/** Weights 0..1 for the targets just set, in their order (empty: all 1). */
 	bool SetStudioIkWeights(const TArray<float>& Weights);
+	// Whether a hand target drags the body (FBBIK arm pull): >= 0 sets both arms (0: the arm alone reaches), < 0 the authored values.
+	bool SetStudioIkArmPull(float Pull);
 	/** Studio joint correction: ExpressionBone categories to run (bit i = category i, 0..9; 0x3ff all). */
 	bool SetExpressionMask(uint32 Mask);
     bool SetStudioFixedNeck(const TArray<FQuat>& UnityRotations);

@@ -15,9 +15,21 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+impl Shared {
+    /// The model settings. Read again while there is no key: a key the player enters in the game's settings (a package
+    /// ships without one) is taken by the next call instead of after a restart (2026-11-13).
+    fn llm(&self) -> Result<LlmSettings, String> {
+        let mut current = self.llm.lock().unwrap();
+        if current.is_err() {
+            *current = self.cfg.llm();
+        }
+        current.clone()
+    }
+}
+
 struct Shared {
     cfg: Config,
-    llm: Result<LlmSettings, String>,
+    llm: Mutex<Result<LlmSettings, String>>,
     queue: Queue,
     gate: RateGate,
     results: Mutex<Vec<Value>>,
@@ -61,7 +73,7 @@ impl Mind {
         crate::text::init(cfg.data_dir.as_deref());
         let state = store::load_state(&cfg.save_dir)?;
         let shared = Arc::new(Shared {
-            llm: cfg.llm(),
+            llm: Mutex::new(cfg.llm()),
             queue: Queue::new(),
             gate: RateGate::new(cfg.per_minute),
             results: Mutex::new(Vec::new()),
@@ -161,7 +173,7 @@ impl Mind {
         let s = &self.shared;
         match q["kind"].as_str() {
             Some("status") => {
-                let (model, llm_error) = match &s.llm {
+                let (model, llm_error) = match &s.llm() {
                     Ok(l) => (Value::from(l.model.clone()), Value::Null),
                     Err(e) => (Value::Null, Value::from(e.clone())),
                 };
@@ -438,7 +450,7 @@ fn call_llm(s: &Shared, agent: &ureq::Agent, job: &Job, step: &str, req: &ChatRe
         r
     });
     let req = localized.as_ref().unwrap_or(req);
-    let llm = match &s.llm {
+    let llm = &match s.llm() {
         Ok(l) => l,
         Err(e) => return Called { reply: Err(e.clone()), attempts: 0, ms: 0 },
     };

@@ -86,7 +86,7 @@ local function main()
     if path.exists(path.join(root, "Content/UniversityCity/Maps/UniversityCityWP.umap")) then maps = maps .. "+/Game/UniversityCity/Maps/UniversityCityWP" end
     local cook_args = { '"' .. win(root) .. '/OpenKoikatsu.uproject"', "-run=Cook", "-TargetPlatform=Windows",
       "-MAP=" .. maps, "-SkipZenStore", "-CustomConfig=CrowdCookSM6",
-      "-DisablePlugins=BpGeneratorUltimate", "-unattended", "-nosound", "-NoSplash", "-corelimit=24",
+      "-DisablePlugins=BpGeneratorUltimate", "-unattended", "-nosound", "-NoSplash", "-corelimit=8", "-MaxParallelActions=8",
       "-PACKAGE=/Engine/EngineMaterials/FastBlueNoise_scalar_128x128x64+/Engine/EngineMaterials/FastBlueNoise_vec2_128x128x64+/Engine/EngineMaterials/FastBlueNoise_scalar_128x128x8+/Engine/EngineMaterials/Hair/Hair_DualScattering+/Engine/EngineMaterials/Hair/Hair_DirectionalAlbedo+/Engine/EngineMaterials/Hair/Hair_Coverage",
       '-OutputDir="' .. win(cooked) .. '"', '-abslog="' .. win(path.join(logs, "cook.log")) .. '"' }
     -- Like Start-Process: the arguments are joined verbatim (they carry their own quotes), hidden window, output discarded.
@@ -119,7 +119,7 @@ local function main()
     end
     local uat = proc.run({ win(path.join(engine, "Engine/Build/BatchFiles/RunUAT.bat")), "BuildCookRun",
       "-project=" .. win(path.join(host_dir, "OpenKoikatsu.uproject")), "-nop4", "-nocompile", "-nocompileeditor", "-skipbuild",
-      "-skipcook", "-stage", "-pak", "-platform=Win64", "-clientconfig=Development", "-stagingdirectory=" .. win(base) },
+      "-skipcook", "-stage", "-pak", "-platform=Win64", "-clientconfig=Development", "-stagingdirectory=" .. win(base), "-MaxParallelActions=8" },
       { stdout_file = path.join(logs, "stage-base.log"), merge = true })
     if not uat.ok then error("base staging failed: " .. win(path.join(logs, "stage-base.log")), 0) end
     if #path.glob(path.join(base, "Windows/OpenKoikatsu/Content/Paks"), "*.pak") == 0 then error("base staging produced no pak", 0) end

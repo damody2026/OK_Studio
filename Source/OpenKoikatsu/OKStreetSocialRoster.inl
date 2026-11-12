@@ -294,6 +294,7 @@ TSharedRef<SWidget> AOKStreetSocialScene::BuildRosterPanel(){
   if(Her>0){
    Line->AddSlot().AutoWidth().Padding(2)[Button(OKT(TEXT("ui.roster.settings")),[Her](AOKStreetSocialScene& A){A.RosterEditHer(Her,TEXT("settings"));})];
    Line->AddSlot().AutoWidth().Padding(2)[Button(OKT(TEXT("ui.roster.memory")),[Her](AOKStreetSocialScene& A){A.RosterEditHer(Her,TEXT("memory"));})];}
+  Line->AddSlot().AutoWidth().Padding(2)[Button(OKT(TEXT("ui.roster.voice_wav")),[Her,Path](AOKStreetSocialScene& A){A.PickVoiceWav(Her,Path);},!S.RosterBusy)];
   List->AddSlot().AutoHeight().Padding(2)[Line];}
  if(Rows.IsEmpty())List->AddSlot().AutoHeight().Padding(4)[Label(OKT(TEXT("ui.roster.empty")),Dim)];
  Left->AddSlot().FillHeight(1).Padding(2,6)[SNew(SScrollBox)+SScrollBox::Slot()[List]];

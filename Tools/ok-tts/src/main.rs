@@ -238,6 +238,13 @@ fn cmd_serve(args: &Args) -> Result<()> {
         let cloud = std::sync::Arc::new(cloud::Cloud::new(&aliyun, args.opts.get("cloud-model").map(String::as_str))?);
         return server::serve(port, 8, voice_table, None, Some(cloud), || bail!("the cloud backend loads no model"));
     }
+    // The player chose the cloud but has no key yet (a package handed out without one): no local model is loaded or
+    // downloaded. The server waits; the key typed into the game's settings turns the cloud on (POST /cloud), and until
+    // then the game plays its recorded lines.
+    if asked.is_none() && settings.pointer("/voice/voice_mode").and_then(|m| m.as_str()) == Some("cloud") {
+        crate::log!("ok-tts: cloud voices chosen but no Alibaba Cloud key yet: no local model; waiting for POST /cloud");
+        return server::serve(port, 8, voice_table, None, None, || Err(server::WaitForCloud.into()));
+    }
     if backend == "base" {
         // The Base model: --base, else one on this machine, else downloaded below (in the background).
         let size = base_size(args.opts.get("base-size").map(String::as_str))?;

@@ -6,6 +6,7 @@
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "Components/ButtonSlot.h"
+#include "Components/AudioComponent.h"
 #include "Components/CheckBox.h"
 #include "HAL/IConsoleManager.h"
 #include "OKCharacterController.h"
@@ -95,6 +96,20 @@ void OKHNoteCry(const FString& Path); // her cries' loudness (PlayHVoice)
 #include "Misc/ScopeLock.h"
 
 void UOKHSceneButton::HandleClick(){if(Owner)Owner->Click(Kind);}
+// Every button of the one-on-one panel in high contrast (user, 2026-11-12: light grey with white words was unreadable).
+static void OKHContrastStyle(UButton* B,bool bChosen){
+    FButtonStyle Style=B->GetStyle();const FLinearColor Face=bChosen?FLinearColor(.85f,.16f,.48f):FLinearColor(.05f,.06f,.09f);
+    for(FSlateBrush* Brush:{&Style.Normal,&Style.Hovered,&Style.Pressed,&Style.Disabled}){Brush->DrawAs=ESlateBrushDrawType::RoundedBox;Brush->OutlineSettings=FSlateBrushOutlineSettings(4.f,FSlateColor(FLinearColor(.8f,.82f,.9f)),1.f);Brush->TintColor=FSlateColor(Face);}
+    Style.Hovered.TintColor=FSlateColor(bChosen?FLinearColor(1.f,.3f,.6f):FLinearColor(.22f,.26f,.36f));Style.Pressed.TintColor=FSlateColor(FLinearColor(.45f,.5f,.62f));
+    Style.Disabled.TintColor=FSlateColor(FLinearColor(.2f,.2f,.22f));Style.Disabled.OutlineSettings=FSlateBrushOutlineSettings(4.f,FSlateColor(FLinearColor(.4f,.4f,.45f)),1.f);
+    B->SetStyle(Style);B->SetBackgroundColor(FLinearColor::White);
+    if(UWidget* Content=B->GetContent())UWidgetTree::ForWidgetAndChildren(Content,[](UWidget* W){if(auto* T=Cast<UTextBlock>(W))T->SetColorAndOpacity(FSlateColor(FLinearColor::White));});
+}
+TSharedRef<SWidget> UOKHSceneButton::RebuildWidget(){
+    if(!GetBackgroundColor().Equals(FLinearColor::White))bChosen=true;
+    OKHContrastStyle(this,bChosen);return Super::RebuildWidget();
+}
+void UOKHSceneButton::SetChosen(bool bInChosen){bChosen=bInChosen;OKHContrastStyle(this,bChosen);}
 
 // The authored metadata of every pose, by "AnimationInfo_XX:id" (ok-hposes from the original h/list).
 static const TMap<FString,TSharedPtr<FJsonObject>>& HPoseMeta(){
@@ -182,6 +197,7 @@ static TAutoConsoleVariable<int32> CVarHPuddleCount(TEXT("ok.HScene.PuddleCount"
 static TAutoConsoleVariable<float> CVarHPuddleSize(TEXT("ok.HScene.PuddleSize"),90.f,TEXT("The puddles' size, 20 to 300 cm across"));
 static TAutoConsoleVariable<float> CVarHPuddleShine(TEXT("ok.HScene.PuddleShine"),1.f,TEXT("How much the puddles reflect, 0 (dark water, only a glint) to 1 (a dark mirror)"));
 static TAutoConsoleVariable<float> CVarHTongueLength(TEXT("ok.HScene.TongueLength"),1.f,TEXT("How long her tongue comes out, 1 as the card has it"));
+static TAutoConsoleVariable<int32> CVarHVoice(TEXT("ok.HScene.Voice"),1,TEXT("1: their voices heard (lines, cries, free talk); 0 silent (VoiceToggle, user 2026-11-12)"));
 static TAutoConsoleVariable<int32> CVarHSkinLit(TEXT("ok.HScene.SkinLit"),0,TEXT("1: their skin lit by the scene (the _Lit parents, Launch/materials.json lit_root); 0 the original's toon"));
 static TAutoConsoleVariable<int32> CVarHDrool(TEXT("ok.HScene.Drooling"),0,TEXT("1: she drools (kissing, ahegao); 0 not (user 2026-11-09: her mouth no longer drools; renamed from Drool so a saved 1 is not taken)"));
 static TAutoConsoleVariable<int32> CVarHTears(TEXT("ok.HScene.Tears"),0,TEXT("1: tears run down her cheeks sucking him; 0 not (user 2026-11-09: no tears)"));
@@ -287,6 +303,7 @@ static const FHSetting HSettings[]={
     {TEXT("Props"),TEXT("ui.hscene.set_props"),0.f,1.f,1.f,0.f},
     {TEXT("BustArmContact"),TEXT("ui.hscene.set_bust_arm"),0.f,1.f,1.f,0.f},
     {TEXT("SkinLit"),TEXT("ui.hscene.set_skin_lit"),0.f,1.f,1.f,0.f},
+    {TEXT("Voice"),TEXT("ui.hscene.set_voice_heard"),0.f,1.f,1.f,1.f},
     {nullptr,TEXT("ui.hscene.set_mirror_group")},
     {TEXT("Mirror"),TEXT("ui.hscene.set_mirror"),0.f,1.f,1.f,0.f},
     {TEXT("MirrorYaw"),TEXT("ui.hscene.set_mirror_yaw"),0.f,360.f,5.f,90.f},
@@ -309,7 +326,7 @@ static void HSettingSet(const TCHAR* Name,float Value){if(auto* Var=HSettingVar(
 static const TCHAR* const HLightVars[]={TEXT("LightFrom"),TEXT("LightTint"),TEXT("LightRamp")};
 static void HSettingsLoad(){
     TArray<FString> Lines;FFileHelper::LoadFileToStringArray(Lines,*HSettingsFile());
-    for(const FString& Line:Lines){FString Name,Value;if(Line.Split(TEXT("="),&Name,&Value)){for(const FHSetting& S:HSettings)if(S.Var&&Name==S.Var)HSettingSet(S.Var,FCString::Atof(*Value));
+    for(const FString& Line:Lines){FString Name,Value;if(Line.Split(TEXT("="),&Name,&Value)){if(Name==TEXT("SkinLit"))continue; /* every one-on-one starts toon (user, 2026-11-12): not carried over */for(const FHSetting& S:HSettings)if(S.Var&&Name==S.Var)HSettingSet(S.Var,FCString::Atof(*Value));
         for(const TCHAR* Light:HLightVars)if(Name==Light)if(auto* Var=HSettingVar(Light))Var->Set(*Value,ECVF_SetByConsole);}}
 }
 static void HSettingsSave(){
@@ -446,9 +463,14 @@ void UOKHScenePanel::Note(const FString& Text,bool bReact){Events.Add(Text);if(G
 TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
     if(!WidgetTree)WidgetTree=NewObject<UWidgetTree>(this);
     UHorizontalBox* Root=WidgetTree->ConstructWidget<UHorizontalBox>();WidgetTree->RootWidget=Root;
-    {HSettingsLoad();SettingSliders.Reset();bCoordinateList=false;CoordButtons.Reset();CoordImages.Reset();CoordTextures.Reset();CoordLoad.Reset();
+    {HSettingsLoad();
+     // Each one-on-one starts with the original Verlet physics and the toon skin (user, 2026-11-12); switched in the
+     // scene they stay for it (the panel is rebuilt many times: once per panel).
+     {static TWeakObjectPtr<UOKHScenePanel> DefaultsFor;if(DefaultsFor.Get()!=this){DefaultsFor=this;HSettingSet(TEXT("SkinLit"),0.f);
+      if(IConsoleVariable* Enabled=IConsoleManager::Get().FindConsoleVariable(TEXT("OKPhysXSecondary.Enabled")))Enabled->Set(0,ECVF_SetByConsole);
+      if(Gallery)Gallery->FillPhysicsBackendCombo();UE_LOG(LogTemp,Display,TEXT("H scene: defaults physics Verlet, skin toon"));}}SettingSliders.Reset();bCoordinateList=false;CoordButtons.Reset();CoordImages.Reset();CoordTextures.Reset();CoordLoad.Reset();
      auto Label=[&](const FString& Words,float Size,const FLinearColor& Color){auto* T=WidgetTree->ConstructWidget<UTextBlock>();FSlateFontInfo F=T->GetFont();F.Size=Size;T->SetFont(F);T->SetColorAndOpacity(FSlateColor(Color));T->SetText(FText::FromString(Words));return T;};
-     auto Button=[&](int32 Kind,const TCHAR* Key){auto* B=WidgetTree->ConstructWidget<UOKHSceneButton>();B->Kind=Kind;B->Owner=this;B->OnClicked.AddDynamic(B,&UOKHSceneButton::HandleClick);B->SetContent(Label(OKT(Key),10.f,FLinearColor::Black));return B;};
+     auto Button=[&](int32 Kind,const TCHAR* Key){auto* B=WidgetTree->ConstructWidget<UOKHSceneButton>();B->Kind=Kind;B->Owner=this;B->OnClicked.AddDynamic(B,&UOKHSceneButton::HandleClick);B->SetContent(Label(OKT(Key),10.f,FLinearColor::White));return B;};
      UVerticalBox* Left=WidgetTree->ConstructWidget<UVerticalBox>();
      if(auto* S=Root->AddChildToHorizontalBox(Left)){S->SetPadding(FMargin(16,72,0,16));S->SetVerticalAlignment(VAlign_Fill);}
      // The settings, and the panel on the right put away to see them (user 2026-11-09): this side stays to bring it back.
@@ -902,6 +924,7 @@ void UOKHScenePanel::Click(int32 Kind){
     if(Kind==LockHis){bLockHis=!bLockHis;ActionsKey.Reset();return;}
     if((Kind==ToggleMale||Kind==MaleBottom)&&Mode==0)return; // he is not there in a caress
     if(Kind==GrayRoomToggle){SetGrayRoom(!bGrayRoom);ActionsKey.Reset();return;}
+    if(Kind==VoiceToggle){HSettingSet(TEXT("Voice"),CVarHVoice.GetValueOnGameThread()?0.f:1.f);HSettingsSave();ActionsKey.Reset();UE_LOG(LogTemp,Display,TEXT("H scene: voices %s"),CVarHVoice.GetValueOnGameThread()?TEXT("on"):TEXT("off"));return;}
     if(Kind==SkinLitToggle){HSettingSet(TEXT("SkinLit"),CVarHSkinLit.GetValueOnGameThread()?0.f:1.f);HSettingsSave();ActionsKey.Reset();UE_LOG(LogTemp,Display,TEXT("H scene: skin %s"),CVarHSkinLit.GetValueOnGameThread()?TEXT("lit by the scene"):TEXT("toon"));return;}
     if(Kind==HandsPinToggle){bPinHands=!bPinHands;ActionsKey.Reset();UE_LOG(LogTemp,Display,TEXT("H scene: hands pinned while in her %s"),bPinHands?TEXT("on"):TEXT("off"));return;}
     if(Kind==FeetPinToggle){bPinFeet=!bPinFeet;ActionsKey.Reset();UE_LOG(LogTemp,Display,TEXT("H scene: soles pinned while in her %s"),bPinFeet?TEXT("on"):TEXT("off"));return;}
@@ -1354,7 +1377,7 @@ void UOKHScenePanel::BuildActions(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HBuildActi
         auto* L=WidgetTree->ConstructWidget<UTextBlock>();L->SetText(FText::FromString(Gallery->PhysicsBackendCombo->GetSelectedOption()));B->SetContent(L);Actions->AddChildToWrapBox(B);};
     // In every interaction, also while one loads (user, 2026-11-06: each shows its own menu, none loses these).
     Add(HeadCameraToggle,bHeadCamera?TEXT("ui.hscene.head_camera_on"):TEXT("ui.hscene.head_camera_off"));Add(EyesCameraToggle,HEyesOnCamera()?TEXT("ui.hscene.eyes_camera_on"):TEXT("ui.hscene.eyes_camera_off"));
-    AddPhysics();Add(GrayRoomToggle,bGrayRoom?TEXT("ui.hscene.gray_room_on"):TEXT("ui.hscene.gray_room_off"));Add(FluidClear,TEXT("ui.hscene.fluid_clear"));Add(FeetPinToggle,bPinFeet?TEXT("ui.hscene.feet_pin_on"):TEXT("ui.hscene.feet_pin_off"));Add(HandsPinToggle,bPinHands?TEXT("ui.hscene.hands_pin_on"):TEXT("ui.hscene.hands_pin_off"));Add(SkinLitToggle,CVarHSkinLit.GetValueOnGameThread()?TEXT("ui.hscene.skin_lit_on"):TEXT("ui.hscene.skin_lit_off"));
+    AddPhysics();Add(GrayRoomToggle,bGrayRoom?TEXT("ui.hscene.gray_room_on"):TEXT("ui.hscene.gray_room_off"));Add(FluidClear,TEXT("ui.hscene.fluid_clear"));Add(FeetPinToggle,bPinFeet?TEXT("ui.hscene.feet_pin_on"):TEXT("ui.hscene.feet_pin_off"));Add(HandsPinToggle,bPinHands?TEXT("ui.hscene.hands_pin_on"):TEXT("ui.hscene.hands_pin_off"));Add(SkinLitToggle,CVarHSkinLit.GetValueOnGameThread()?TEXT("ui.hscene.skin_lit_on"):TEXT("ui.hscene.skin_lit_off"));Add(VoiceToggle,CVarHVoice.GetValueOnGameThread()?TEXT("ui.hscene.voice_on"):TEXT("ui.hscene.voice_off"));
     // By herself, or the two women: only her gauge to hold. Peeping has none.
     if(Mode==0&&SoloInfo&&ActiveAibu!=INDEX_NONE&&PendingAibu==INDEX_NONE){if(SoloInfo!=4)Add(LockHer,bLockHer?TEXT("ui.hscene.act_unlock_her"):TEXT("ui.hscene.act_lock_her"));return;}
     if(Mode==0&&ActiveAibu!=INDEX_NONE&&PendingAibu==INDEX_NONE){
@@ -1452,6 +1475,9 @@ void UOKHScenePanel::TickScene(float Delta){
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickMirror);TickMirror();}
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickPuddles);TickPuddles();}
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSkinLit);TickSkinLit(false);}
+    // Voices off (VoiceToggle): what they say still runs (mouths, timing), only silent.
+    {const float Loud=CVarHVoice.GetValueOnGameThread()?1.f:.001f; /* -60 dB, not 0: a silent sound may be cut off and its line never end */for(AKKPreviewActor* A:{Gallery?Gallery->PreviewActor.Get():nullptr,Gallery?Gallery->PartnerActor.Get():nullptr})
+        if(IsValid(A)&&A->SpeechAudio&&A->SpeechAudio->VolumeMultiplier!=Loud)A->SpeechAudio->SetVolumeMultiplier(Loud);}
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickClothBias);TickClothBias(false);}
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickCameraLight);TickCameraLight(false);}
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickTremble);Tremble(FPlatformTime::Seconds());}
@@ -3137,19 +3163,22 @@ void UOKHScenePanel::HoldFeet(AKKPreviewActor* A,bool bStands,const FVector& Off
         // While the pair plays the set waits for its idle point (SendPendingIk): set here it waited for the solve every
         // frame his hands followed her (2026-11-09: 100 against 115 pose Hz while he moved in her).
         const bool bDefer=Gallery&&IsValid(Gallery->PairedPlayback.Get())&&ReadingPlayback.Get()==Gallery->PairedPlayback.Get();
+        // His hands pinned to her (limb IK "hands"): the arms reach alone. With the authored pull they dragged his body,
+        // the alignment moved him back the next frame and he shook 5 cm to a metre a frame (user, 2026-11-12).
+        const float ArmPull=bHandTargets?0.f:-1.f;
         bool bSent=false;
         if(bDefer){FPendingIk* Pending=PendingIk.FindByPredicate([A](const FPendingIk& P){return P.Who.Get()==A;});if(!Pending)Pending=&PendingIk.AddDefaulted_GetRef();
-            Pending->Who=A;Pending->Eff=Eff;Pending->At=At;Pending->Frame=GFrameCounter;bSent=true;}
-        else{DropPendingIk(A);SyncPair();bSent=A->Session.SetStudioIk(Eff,At);}
+            Pending->Who=A;Pending->Eff=Eff;Pending->At=At;Pending->Frame=GFrameCounter;Pending->ArmPull=ArmPull;bSent=true;}
+        else{DropPendingIk(A);SyncPair();bSent=A->Session.SetStudioIk(Eff,At);A->Session.SetStudioIkArmPull(ArmPull);}
         if(bSent){bIk=true;HandHeld=bHands?HandsAt:TArray<FVector>();
             if(bFeet){Kept[0]=At[0];Kept[1]=At[1];}if(bHandTargets){KeptHands[0]=PinHands[0];KeptHands[1]=PinHands[1];}}
-    }else if(bIk){DropPendingIk(A);SyncPair();A->Session.SetStudioIk({},{});bIk=false;HandHeld.Reset();if(KeptSet)*KeptSet=0;}
+    }else if(bIk){DropPendingIk(A);SyncPair();A->Session.SetStudioIkArmPull(-1.f);A->Session.SetStudioIk({},{});bIk=false;HandHeld.Reset();if(KeptSet)*KeptSet=0;}
 }
 void UOKHScenePanel::DropPendingIk(AKKPreviewActor* A){PendingIk.RemoveAll([A](const FPendingIk& P){return !P.Who.IsValid()||P.Who.Get()==A;});}
 void UOKHScenePanel::SendPendingIk(bool bWait){
     if(PendingIk.IsEmpty())return;
     if(bWait)SyncPair();
-    for(const FPendingIk& P:PendingIk)if(AKKPreviewActor* Who=P.Who.Get();IsValid(Who)&&Who->Session.IsOpen()&&!Who->Session.SetStudioIk(P.Eff,P.At))
+    for(const FPendingIk& P:PendingIk)if(AKKPreviewActor* Who=P.Who.Get();IsValid(Who)&&Who->Session.IsOpen()&&!(Who->Session.SetStudioIk(P.Eff,P.At)&&(Who->Session.SetStudioIkArmPull(P.ArmPull),true)))
         UE_LOG(LogTemp,Warning,TEXT("H align: IK targets for %s not taken"),*Who->GetName());
     PendingIk.Reset();
 }
@@ -4061,7 +4090,7 @@ void UOKHScenePanel::ShowCoordinates(){
 void UOKHScenePanel::ShowAccessories(){if(CoordAccessories)CoordAccessories->SetText(FText::FromString(OKT(bCoordinateAccessories?TEXT("ui.hscene.coordinate_with_accessories"):TEXT("ui.hscene.coordinate_clothes_only"))));}
 void UOKHScenePanel::MarkCoordinate(){
     const AOKInteractionMode* M=Interaction();const FString Worn=M?M->WornCoordinate:FString();
-    for(int32 I=0;I<CoordButtons.Num();++I)CoordButtons[I]->SetBackgroundColor(!Worn.IsEmpty()&&FPaths::IsSamePath(CoordinateCards[I],Worn)?FLinearColor(1.f,.45f,.7f):FLinearColor::White);
+    for(int32 I=0;I<CoordButtons.Num();++I)CoordButtons[I]->SetChosen(!Worn.IsEmpty()&&FPaths::IsSamePath(CoordinateCards[I],Worn));
 }
 void UOKHScenePanel::TickCoordinates(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickCoordinates);
     if(!CoordLoad)return;

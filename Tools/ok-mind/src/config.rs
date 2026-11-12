@@ -80,7 +80,20 @@ struct SettingsFile {
     model: Option<String>,
     /// api-keys.json (the user's key file for every service): the same three fields under "deepseek".
     deepseek: Option<DeepSeekSection>,
+    /// player.json's Alibaba Cloud section: without a DeepSeek key its key reaches Model Studio's OpenAI-compatible
+    /// endpoint (chat_model, default qwen-plus), the same key as the cloud voices.
+    aliyun: Option<AliyunSection>,
 }
+
+#[derive(Deserialize, Default)]
+struct AliyunSection {
+    api_key: Option<String>,
+    base_url: Option<String>,
+    chat_model: Option<String>,
+}
+
+pub const ALIYUN_DEFAULT_BASE: &str = "https://dashscope.aliyuncs.com";
+pub const ALIYUN_DEFAULT_MODEL: &str = "qwen-plus";
 
 #[derive(Deserialize, Default)]
 struct DeepSeekSection {
@@ -109,15 +122,16 @@ impl Config {
 
     /// Key: environment, then config (tests), then the settings file. Endpoint and model: config, then file, then default.
     pub fn llm(&self) -> Result<LlmSettings, String> {
-        let file: SettingsFile = match &self.deepseek_settings {
+        let mut file: SettingsFile = match &self.deepseek_settings {
             Some(path) if path.exists() => {
                 let text = std::fs::read_to_string(path).map_err(|e| format!("deepseek_settings_unreadable: {e}"))?;
                 serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|e| format!("deepseek_settings_invalid: {e}"))?
             }
             _ => SettingsFile::default(),
         };
+        let aliyun = file.aliyun.take().filter(|a| a.api_key.as_deref().is_some_and(|k| !k.trim().is_empty()));
         let file = match file.deepseek {
-            Some(d) => SettingsFile { api_key: d.api_key, endpoint: d.endpoint, model: d.model, deepseek: None },
+            Some(d) => SettingsFile { api_key: d.api_key, endpoint: d.endpoint, model: d.model, deepseek: None, aliyun: None },
             None => file,
         };
         let key = std::env::var("DEEPSEEK_API_KEY")
@@ -126,12 +140,44 @@ impl Config {
             .or_else(|| self.api_key.clone())
             .or(file.api_key)
             .map(|k| k.trim().to_string())
-            .filter(|k| !k.is_empty())
-            .ok_or_else(|| "no_api_key: set DEEPSEEK_API_KEY or the deepseek api_key in %LOCALAPPDATA%/OpenKoikatsu/api-keys.json".to_string())?;
+            .filter(|k| !k.is_empty());
+        let Some(key) = key else {
+            let a = aliyun.ok_or_else(|| "no_api_key: set DEEPSEEK_API_KEY, the deepseek api_key, or the aliyun api_key in the player's settings".to_string())?;
+            let base = a.base_url.as_deref().map(str::trim).filter(|b| !b.is_empty()).unwrap_or(ALIYUN_DEFAULT_BASE).trim_end_matches('/').to_string();
+            return Ok(LlmSettings {
+                endpoint: format!("{base}/compatible-mode/v1/chat/completions"),
+                model: a.chat_model.filter(|m| !m.trim().is_empty()).unwrap_or_else(|| ALIYUN_DEFAULT_MODEL.into()),
+                api_key: a.api_key.unwrap_or_default().trim().to_string(),
+            });
+        };
         Ok(LlmSettings {
             endpoint: self.endpoint.clone().or(file.endpoint).unwrap_or_else(|| DEFAULT_ENDPOINT.into()),
             model: self.model.clone().or(file.model).unwrap_or_else(|| DEFAULT_MODEL.into()),
             api_key: key,
         })
+    }
+}
+
+#[cfg(test)]
+mod aliyun_tests {
+    use super::*;
+
+    #[test]
+    fn aliyun_key_without_deepseek_key_goes_to_model_studio() {
+        if std::env::var("DEEPSEEK_API_KEY").map(|k| !k.trim().is_empty()).unwrap_or(false) {
+            return; // the environment's key wins; nothing to test here
+        }
+        let dir = std::env::temp_dir().join(format!("ok-mind-aliyun-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("player.json");
+        std::fs::write(&file, r#"{"deepseek": {"api_key": ""}, "aliyun": {"api_key": " sk-test "}}"#).unwrap();
+        let cfg = Config { save_dir: dir.clone(), deepseek_settings: Some(file.clone()), ..Config::default() };
+        let llm = cfg.llm().unwrap();
+        assert_eq!(llm.endpoint, "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions");
+        assert_eq!(llm.model, "qwen-plus");
+        assert_eq!(llm.api_key, "sk-test");
+        std::fs::write(&file, r#"{"deepseek": {"api_key": "sk-deep"}, "aliyun": {"api_key": "sk-test"}}"#).unwrap();
+        assert_eq!(cfg.llm().unwrap().model, DEFAULT_MODEL, "a DeepSeek key keeps DeepSeek");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

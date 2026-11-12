@@ -8,7 +8,7 @@
 //!   POST /cloud {"api_key", "base_url", "tts_model"} -> lines are made in the cloud from now on ("" key: locally again)
 //!   POST /cancel {"channel", "below"} -> requests of that channel with generation < below stop (queued or generating)
 //!   GET  /requests[?id=..] -> what became of a request (complete / cancelled / hangup / failed) and its timings
-//!   /voice/candidates, /voice/fix, /voice/card, /voice/card/remove: choosing and fixing voices (Base backend, voicemgr.rs)
+//!   /voice/candidates, /voice/fix, /voice/card, /voice/card/remove, /voice/from_wav: choosing and fixing voices (Base backend, voicemgr.rs)
 //! Optional request fields (protocol 2): "request_id", "channel", "generation", "segment_index", "card" (her card: a
 //! voice stored in it is used), and for measuring
 //! "stream_later_frames".
@@ -186,6 +186,14 @@ impl Trace {
     }
 }
 
+/// Returned by a loader that has nothing to load: the server waits for POST /cloud instead of exiting.
+#[derive(Debug)]
+pub struct WaitForCloud;
+impl std::fmt::Display for WaitForCloud {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("waiting for the Alibaba Cloud key (POST /cloud)") }
+}
+impl std::error::Error for WaitForCloud {}
+
 pub fn serve(port: u16, workers: usize, voices: Voices, base: Option<Arc<BaseVoices>>, cloud: Option<Arc<crate::cloud::Cloud>>,
              load: impl FnOnce() -> Result<Engine> + Send + 'static) -> Result<()> {
     let server = tiny_http::Server::http(("127.0.0.1", port)).map_err(|e| anyhow::anyhow!("bind 127.0.0.1:{port}: {e}"))?;
@@ -211,6 +219,9 @@ pub fn serve(port: u16, workers: usize, voices: Voices, base: Option<Arc<BaseVoi
                 crate::hfget::set_status(String::new());
                 crate::log!("ok-tts: READY");
             }
+            // Cloud voices chosen without a key yet (a package shipped without one): no local model to load, and the
+            // server stays up for the game's POST /cloud once the player enters the key (it exited here, 2026-11-13).
+            Err(e) if e.downcast_ref::<WaitForCloud>().is_some() => crate::log!("ok-tts: no local model; waiting for POST /cloud"),
             Err(e) => {
                 crate::log!("ok-tts: LOAD FAILED: {e:#}");
                 *state.load_error.lock().unwrap() = Some(format!("{e:#}"));
@@ -336,13 +347,14 @@ fn handle(state: &Arc<State>, mut req: tiny_http::Request) {
                 Err(e) => respond(req, 400, json!({"ok": false, "error": format!("{e:#}")})),
             }
         }
-        (tiny_http::Method::Post, p @ ("/voice/candidates" | "/voice/fix" | "/voice/card/remove")) => {
+        (tiny_http::Method::Post, p @ ("/voice/candidates" | "/voice/fix" | "/voice/card/remove" | "/voice/from_wav")) => {
             let p = p.to_string();
             let result = read_body(&mut req).and_then(|b| Ok(serde_json::from_str::<Value>(&b)?)).and_then(|body| {
                 let b = state.base.as_ref().ok_or_else(|| anyhow::anyhow!("choosing voices needs the Base backend (ok-tts profile)"))?;
                 match p.as_str() {
                     "/voice/candidates" => voicemgr::candidates(&state.engine, b, &state.voices, &body),
                     "/voice/fix" => voicemgr::fix(&state.engine, b, &state.voices, &body),
+                    "/voice/from_wav" => voicemgr::from_wav(b, &state.voices, &body),
                     _ => voicemgr::card_remove(b, &body),
                 }
             });

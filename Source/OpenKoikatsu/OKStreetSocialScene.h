@@ -240,6 +240,8 @@ private:
  // (original KKS cards made into OK cards), and this save's own settings and memories for each heroine.
  void OpenRoster();void CloseRoster();void RosterRebuild();TSharedRef<class SWidget> BuildRosterPanel();TSharedRef<class SWidget> RosterDropZone();
  void RosterRun(const FString& Command,const TArray<FString>& Files);void RosterApply();
+ // Her voice from a WAV the player picks (a file dialog), kept in her card by the TTS server (OKStreetSocialVoicePick.inl).
+ void PickVoiceWav(int32 Her,const FString& RosterPath);
  void RosterEditHer(int32 Her,const FString& Tab);void RosterSaveSettings();void RosterSaveMemory();void RosterForgetContext();
  bool ApplyRosterToManifest(const FString& ManifestPath,FString& Json);void ApplyHeroineSettings();
  FString RosterLiveDir() const;
@@ -472,6 +474,7 @@ private:
  void FreeTalkMicToggle();
  void FreeTalkMicRefresh();
  void FreeTalkMicSelect(const FString& Name);
+ void FreeTalkSetHeadphones(bool bOn);TSharedRef<class SWidget> MicPanel();void RefreshPrivateMic(); // OKStreetSocialLiveTalk.inl
  void SpawnStreetPlaces();
  void TickPlaceTour(double Now);
  void RideElevator(int32 PlaceIndex,int32 Floor);

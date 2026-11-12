@@ -551,6 +551,26 @@ pub unsafe extern "C" fn ok_session_set_studio_ik_weights(s: *mut OkSession, wei
     s.studio_ik_weights = w.to_vec();
     0
 }
+/// Whether a Studio IK hand target drags the body along (FinalIK FBBIK arm chain pull): pull >= 0 sets both arms (0:
+/// the arm alone reaches, the body stays where the pose and its mover put it; 1: the prefab's usual pull), < 0 puts the
+/// authored values back. A hand pinned while the H scene moves his body for the thrust: with the arms pulling, the
+/// hand and the alignment fought over his hips and the pair shook by tens of centimetres a frame (2026-11-12).
+/// -1 when the session has no Studio IK yet.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_set_studio_ik_arm_pull(s: *mut OkSession, pull: f32) -> i32 {
+    let Some(s) = sess_ref(s) else { return -1; };
+    let Some(solver) = s.studio_ik_solver.as_mut() else { return -1; };
+    if solver.chains.len() < 3 { return -1; }
+    let saved = *s.studio_ik_arm_pull_saved.get_or_insert([solver.chains[1].pull, solver.chains[2].pull]);
+    if pull.is_finite() && pull >= 0. {
+        solver.chains[1].pull = pull.min(1.);
+        solver.chains[2].pull = pull.min(1.);
+    } else {
+        solver.chains[1].pull = saved[0];
+        solver.chains[2].pull = saved[1];
+    }
+    0
+}
 /// A Studio character's joint correction: ExpressionBone runs every frame with these categories, bit i =
 /// ExpressionCategory i (0..9; 0x3ff all), whatever the clip or source (Studio gives every character the component).
 #[no_mangle]
