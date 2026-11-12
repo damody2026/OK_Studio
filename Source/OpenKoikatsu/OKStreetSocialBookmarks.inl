@@ -34,8 +34,15 @@ void AOKStreetSocialScene::Bookmark(int32 Girl){
 // For her words: the last five, and the lines of the one he asks about (bookmarks_facts).
 FString AOKStreetSocialScene::BookmarkFacts(int32 Character,const FString& Said) const{
  const auto& S=*State;if(Character<=0||!S.Manifest.Characters.IsValidIndex(Character))return FString();
- auto Request=OKRulesRequest(TEXT("bookmarks_facts"));OKRulesPutExt(S,Request);Request->SetStringField(TEXT("girl"),OKStreetStableId(S.Manifest.Characters[Character]));Request->SetStringField(TEXT("said"),Said);
- const TSharedPtr<FJsonObject> Out=OKRulesEval(S,Request);return Out.IsValid()?Out->GetStringField(TEXT("text")):FString();
+ // The same answer while her bookmarks (the save's ext), her and his words are the same: the one-on-one's own lines to
+ // her (the H scene's notes, the same words each time) asked it again every turn, 2.4 ms of the frame each (2026-11-12).
+ const FString Girl=OKStreetStableId(S.Manifest.Characters[Character]);
+ const FString Key=FString::Printf(TEXT("%s|%u|%d|%s"),*Girl,FCrc::StrCrc32(*S.Store.Ext),S.Store.CalendarDay,*Said);
+ static FString LastKey,LastText;if(IsInGameThread()&&Key==LastKey)return LastText;
+ auto Request=OKRulesRequest(TEXT("bookmarks_facts"));OKRulesPutExt(S,Request);Request->SetStringField(TEXT("girl"),Girl);Request->SetStringField(TEXT("said"),Said);
+ const TSharedPtr<FJsonObject> Out=OKRulesEval(S,Request);const FString Text=Out.IsValid()?Out->GetStringField(TEXT("text")):FString();
+ if(IsInGameThread()&&Out.IsValid()){LastKey=Key;LastText=Text;}
+ return Text;
 }
 
 // The phone's bookmarks page for her thread: newest first with the thumbnail; one opened shows its lines.

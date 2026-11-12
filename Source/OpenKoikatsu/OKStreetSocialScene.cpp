@@ -2011,15 +2011,15 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
 void AOKStreetSocialScene::ApplyFreeTalkFavor(int32 Character,int32 Delta,const FString& Reason){
  auto& S=*State;
  const FString Id=OKStreetStableId(S.Manifest.Characters[Character]);
- const auto Before=OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget);
- const float Limit=OKStreetFreeTalkStatusOf(S,Before).FavorLimit;
+ FOKStreetRelation Before;float Limit=0;{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FavorBefore);Before=OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget);
+ Limit=OKStreetFreeTalkStatusOf(S,Before).FavorLimit;}
  // The rules scale a gain by how many lovers he already has (mind.rs favor_gain): one more is harder to win.
  if(Delta!=0){int32 Lovers=0;for(const auto& R:S.Store.Relations)if(R.Id!=Id&&R.Stage==TEXT("lover"))++Lovers;
   auto Request=OKRulesRequest(TEXT("favor_gain"));Request->SetStringField(TEXT("stage"),Before.Stage);Request->SetNumberField(TEXT("favor"),Before.Favor);
   Request->SetNumberField(TEXT("limit"),Limit);Request->SetNumberField(TEXT("delta"),Delta);Request->SetNumberField(TEXT("lovers"),Lovers);
-  const TSharedPtr<FJsonObject> Gain=OKRulesEval(S,Request);
-  SetCharacterStat(Character,0,Gain.IsValid()?float(Gain->GetNumberField(TEXT("favor"))):FMath::Clamp(Before.Favor+Delta,0.f,Limit));}
- const float After=OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget).Favor;
+  TSharedPtr<FJsonObject> Gain;{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FavorRule);Gain=OKRulesEval(S,Request);}
+  QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FavorSet);SetCharacterStat(Character,0,Gain.IsValid()?float(Gain->GetNumberField(TEXT("favor"))):FMath::Clamp(Before.Favor+Delta,0.f,Limit));}
+ QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FavorAfter);const float After=OKStreetViewRelation(S.Store,Id,S.Manifest.TalkBudget).Favor;
  S.FreeTalkNotice=OKMsg(TEXT("ui.scene.favor_change"), {{TEXT("before"), FMath::RoundToInt(Before.Favor)}, {TEXT("after"), FMath::RoundToInt(After)}, {TEXT("delta"), FMath::RoundToInt(After)-FMath::RoundToInt(Before.Favor)}})+(Reason.IsEmpty()?FString():OKT(TEXT("ui.accounts_app.ideographic_space"))+Reason);
 }
 
@@ -2579,7 +2579,7 @@ void AOKStreetSocialScene::ApplyMouseMode(bool Focused){
 void AOKStreetSocialScene::SetCharacterStat(int32 Character,int32 Field,float Value){
  if(!State||Character<=0||!State->Manifest.Characters.IsValidIndex(Character)||!OKHeroineStats().IsValidIndex(Field)||!FMath::IsFinite(Value))return;auto& S=*State;
  // Start with the latest relation and change only this field, preserving voice effects and other updates.
- auto Candidate=S.Store;const FString Id=OKStreetStableId(S.Manifest.Characters[Character]);
+ QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_SetCharacterStat);auto Candidate=S.Store;const FString Id=OKStreetStableId(S.Manifest.Characters[Character]);
  auto& R=Candidate.Relations[OKStreetRelationIndex(Candidate,Id,S.Manifest.TalkBudget,true)];
  const FOKHeroineStat& Stat=OKHeroineStats()[Field];float Max=Stat.Max;
  if(Field==0){const int32 Limit=OKRulesFavorLimit(S,R,R.Stage);if(Limit!=INDEX_NONE)Max=FMath::Min(Max,float(Limit));} // favor stays under her stage's cap
