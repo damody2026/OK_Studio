@@ -292,6 +292,9 @@ struct FOKStreetSceneState {
  // ok_mind.dll, when it loaded; null keeps the old behaviour.
  TUniquePtr<FOKStreetRules> Rules;int32 RulesDefaultsGeneration=-1;TArray<TSharedPtr<FJsonObject>> PendingRulesEffects;float BondStartFavor=10.f;int64 BondTickMinutes=15,NeedsTickMinutes=15;
  TUniquePtr<FOKStreetMind> Mind;TMap<uint64,FOKStreetMindTalk> MindTalks;
+ // His line's job, handed to the mind the frame after it was prepared (SendFreeTalk); and the heroines the mind is
+ // known to hold a context for (no legacy history goes with their jobs).
+ struct FPendingMindTalk{int32 Character=INDEX_NONE;FString Id,System,User,Text;};TOptional<FPendingMindTalk> PendingMindTalk;TSet<FString> MindContextKnown;
  // The heroine the last mind talk was with; when talk moves on, her meeting is summarised into memories.
  int32 MindTalkPartner=INDEX_NONE;
  // Heroine profiles from the mind (plan §4.1) and their traits (§4.2a), by stable id.
@@ -1379,7 +1382,10 @@ void AOKStreetSocialScene::SendFreeTalk(){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_
  S.FreeTalkBusy=true;S.FreeTalkSentAt=SceneTime();++S.FreeTalkSent;S.FreeTalkDraft.Reset();S.FreeTalkNotice=OKT(TEXT("ui.scene.she_is_thinking"));
  // The heroine mind keeps her whole context and the full state of every turn (plan §7.0); without it,
  // the request goes straight to DeepSeek with the trimmed local memory.
- if(!SubmitFreeTalkToMind(Character,Id,System,UserMessage,Text))FinishFreeTalk(Character,Id,Text,nullptr,OKT(TEXT("ui.scene.ai_service_off_reply")));
+ // Handed over in the next frame (Tick): building and submitting the job was another 0.7 ms in the frame his line
+ // went out, after the 2.9 of preparing it (2026-11-12). FreeTalkBusy keeps another line from going out meanwhile.
+ if(!S.Mind)FinishFreeTalk(Character,Id,Text,nullptr,OKT(TEXT("ui.scene.ai_service_off_reply")));
+ else S.PendingMindTalk=FOKStreetSceneState::FPendingMindTalk{Character,Id,System,UserMessage,Text};
  RefreshUI();
 }
 
@@ -2213,6 +2219,7 @@ void AOKStreetSocialScene::FreeTalkEnsureLog(){
  const FString LogFile=FreeTalkFilePath(TEXT("free-talk-log.json")),MemoryFile=FreeTalkFilePath(TEXT("free-talk-memory.json"));
  OKStreetFlushSaves();if(!LogFile.IsEmpty())OKStreetFreeTalkLoadLog(LogFile,S.FreeTalkLog);
  if(!MemoryFile.IsEmpty())OKStreetFreeTalkLoadMemory(MemoryFile,S.FreeTalkMemory);
+ S.MindContextKnown.Reset(); // another save: its mind is asked again
  for(const auto& Line:S.FreeTalkLog)S.FreeTalkSerial=FMath::Max(S.FreeTalkSerial,Line.Serial);
 }
 
@@ -4254,6 +4261,8 @@ void AOKStreetSocialScene::Tick(float Dt){
  if(!S.CatchLight.IsValid()){auto* L=NewObject<UPointLightComponent>(this);L->SetMobility(EComponentMobility::Movable);L->SetLightingChannels(false,false,true);L->SetCastShadows(false);
   L->SetIntensityUnits(ELightUnits::Candelas);L->SetIntensity(S.Lit?0.f:100.f); /* 100 cd: a clear wet shine, short of glare (300 burns out) */L->SetAttenuationRadius(800.f);L->SetSourceRadius(2.f);L->RegisterComponent();AddInstanceComponent(L);S.CatchLight=L;}
  if(PC->PlayerCameraManager)S.CatchLight->SetWorldLocation(PC->PlayerCameraManager->GetCameraLocation()+FVector(0,0,25));
+ if(S.PendingMindTalk.IsSet()){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_PendingMindTalk);const auto P=S.PendingMindTalk.GetValue();S.PendingMindTalk.Reset();
+  if(!SubmitFreeTalkToMind(P.Character,P.Id,P.System,P.User,P.Text)){FinishFreeTalk(P.Character,P.Id,P.Text,nullptr,OKT(TEXT("ui.scene.ai_service_off_reply")));RefreshUI();}}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkReplay);TickFreeTalkReplay(Now);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkSpeech);TickFreeTalkHisVoice(SceneTime());TickFreeTalkSpeech(FPlatformTime::Seconds());TickDeferredNotes();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkLive);TickFreeTalkLive(Now);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkTrace);TickFreeTalkTrace(Now);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickOrderNotice);TickOrderNotice();}
  // The street clock paused: the kitchen and the eating wait too (nothing on the table is eaten while time stands still).
  if(S.ClockPaused)for(auto& P:S.Serves)P.At+=Dt;

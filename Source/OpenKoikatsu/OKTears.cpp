@@ -5,6 +5,7 @@
 #include "GameFramework/Actor.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "ProceduralMeshComponent.h"
+#include "KKAffineProceduralMeshComponent.h"
 
 namespace{
  constexpr int32 MaxTears=8;
@@ -30,7 +31,7 @@ void FOKTears::Add(AActor* Owner,USceneComponent* Attach,FName Bone,const TArray
  T.Speed=FMath::FRandRange(1.6f,3.f);
  auto Hang=[&](USceneComponent* C){C->RegisterComponent();C->AttachToComponent(Attach,FAttachmentTransformRules::SnapToTargetIncludingScale,Bone);};
  for(int32 Layer=0;Layer<2;++Layer){
-  auto* M=NewObject<UProceduralMeshComponent>(Owner);M->SetCastShadow(false);M->SetCollisionEnabled(ECollisionEnabled::NoCollision);M->bUseAsyncCooking=false;
+  auto* M=NewObject<UKKAffineProceduralMeshComponent>(Owner);/* PSOs precached; stock procedural meshes collect none */M->SetCastShadow(false);M->SetCollisionEnabled(ECollisionEnabled::NoCollision);M->bUseAsyncCooking=false;
   M->SetTranslucentSortPriority(1+Layer);Hang(M);
   UMaterialInstanceDynamic* Mat=Tinted(Owner,Layer?ShineTint:WetTint);(Layer?T.Shine:T.Streak)=M;(Layer?T.Gleam:T.Wet)=Mat;
  }

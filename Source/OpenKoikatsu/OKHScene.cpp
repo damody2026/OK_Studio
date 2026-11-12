@@ -20,6 +20,7 @@
 #include "OKStreetSocialText.h"
 #include "OKMotionLabelZh.h"
 #include "KKPreviewActor.h"
+#include "KKAffineProceduralMeshComponent.h"
 #include "KKPairedPlayback.h"
 #include "KKRustExtract.h"
 #include "ok_extract.h"
@@ -2020,7 +2021,8 @@ void UOKHScenePanel::TickOneMirror(int32 Index,bool& bTaken){
         USceneComponent* Root=NewObject<USceneComponent>(M.Actor,TEXT("MirrorRoot"));M.Actor->SetRootComponent(Root);Root->RegisterComponent();
         // The quad in the mirror's own space: X out of it toward them, Y the capture's right (looking out of the mirror at them):
         // u along +Y from the image's left, v down Z from its top.
-        M.Quad=NewObject<UProceduralMeshComponent>(M.Actor,TEXT("MirrorQuad"));M.Quad->SetupAttachment(Root);M.Quad->RegisterComponent();
+        M.Quad=NewObject<UKKAffineProceduralMeshComponent>(M.Actor,TEXT("MirrorQuad")); // its PSOs precached (stock procedural meshes collect none)
+        M.Quad->SetupAttachment(Root);M.Quad->RegisterComponent();
         M.Quad->CreateMeshSection(0,{FVector(0,-Half,-Half),FVector(0,Half,-Half),FVector(0,Half,Half),FVector(0,-Half,Half)},{0,1,2,0,2,3},{FVector(1,0,0),FVector(1,0,0),FVector(1,0,0),FVector(1,0,0)},
             {FVector2D(0,1),FVector2D(1,1),FVector2D(1,0),FVector2D(0,0)},{},{},false);
         M.Shown=UMaterialInstanceDynamic::Create(Parent,M.Actor);M.Shown->SetVectorParameterValue(TEXT("PreviewTint"),FLinearColor::White);
@@ -2217,7 +2219,7 @@ void UOKHScenePanel::TickPuddles(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickPuddl
             FRandomStream R(I*104729+7);const float Scale=I==0?1.f:float(R.FRandRange(.55f,1.05f)),Half=Size*Scale*.5f;
             const float Angle=I*137.5f+float(R.FRandRange(-25.f,25.f)),Away=I==0?0.f:float(R.FRandRange(Size*.7f,Size*1.6f));
             const FVector At(FMath::Cos(FMath::DegreesToRadians(Angle))*Away,FMath::Sin(FMath::DegreesToRadians(Angle))*Away,0.);
-            auto* Quad=NewObject<UProceduralMeshComponent>(Puddles,*FString::Printf(TEXT("Puddle%d"),I));Quad->SetupAttachment(Root);Quad->RegisterComponent();
+            auto* Quad=NewObject<UKKAffineProceduralMeshComponent>(Puddles,*FString::Printf(TEXT("Puddle%d"),I));Quad->SetupAttachment(Root);Quad->RegisterComponent();
             const FQuat Turn(FVector::UpVector,FMath::DegreesToRadians(R.FRandRange(0.f,360.f)));
             TArray<FVector> V;for(const FVector& C:{FVector(-Half,-Half,0),FVector(Half,-Half,0),FVector(Half,Half,0),FVector(-Half,Half,0)})V.Add(At+Turn.RotateVector(C));
             Quad->CreateMeshSection(0,V,{0,2,1,0,3,2},{FVector::UpVector,FVector::UpVector,FVector::UpVector,FVector::UpVector},{FVector2D(0,0),FVector2D(1,0),FVector2D(1,1),FVector2D(0,1)},{},{},false);
