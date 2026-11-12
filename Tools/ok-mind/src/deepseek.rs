@@ -83,6 +83,10 @@ pub fn provider_body(endpoint: &str, mut body: Value, req: &ChatRequest) -> Valu
     if endpoint.contains("openrouter.ai") {
         body["reasoning"] = json!({ "enabled": req.thinking });
     }
+    // Alibaba Cloud Model Studio (Qwen3 models think unless told not to).
+    if endpoint.contains("dashscope") {
+        body["enable_thinking"] = json!(req.thinking);
+    }
     body
 }
 

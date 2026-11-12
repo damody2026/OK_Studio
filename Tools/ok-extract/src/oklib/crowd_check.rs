@@ -32,12 +32,14 @@ const EYES: &[(&str, i32)] = &[
 /// Renderers the runtime never draws (default-hidden genitals).
 const HIDDEN: &[&str] = &["o_dankon", "o_dan_f", "cm_o_dan00", "cm_o_dan_f"];
 
-fn supported(shader: Option<&str>, kind: u8, blend: &str, unlit: bool, eye: i32) -> bool {
+fn supported(shader: Option<&str>, kind: u8, blend: &str, unlit: bool, eye: i32, role: &str) -> bool {
     if shader.is_some_and(|s| ANY_KIND.contains(&s) || crate::is_kkuss_shader(s) || crate::is_kkuts_shader(s)) { return true; }
     let is = |want: &str| shader.is_some_and(|s| s.eq_ignore_ascii_case(want));
     let translucent = blend.eq_ignore_ascii_case("translucent");
     match kind {
-        0 => translucent && unlit && EYES.iter().any(|&(s, k)| k == eye && is(s)),
+        // An accessory or garment in an unknown mod shader draws as a plain studio item (2026-11-12).
+        0 => (translucent && unlit && EYES.iter().any(|&(s, k)| k == eye && is(s)))
+            || ((role == "accessory" || role.starts_with("clothes")) && shader.is_some_and(|s| !s.is_empty())),
         // By family: xukmi's MainItemStudioAlphaPlus draws as main_item_studio_alpha.
         4 => translucent && unlit && shader.is_some_and(|s| crate::shader_family(s) == "shader forge/main_item_studio_alpha"),
         1 => blend.eq_ignore_ascii_case("masked") && unlit && (is("Shader Forge/main_hair") || is("Shader Forge/main_hair_front")),
@@ -67,7 +69,7 @@ pub fn check(lib: &Path, game: &Path, card: &Path) -> Result<Verdict, String> {
         if (!p.render_visible && !tear) || HIDDEN.iter().any(|h| p.name.eq_ignore_ascii_case(h)) { continue; }
         let shader = p.source_material.as_ref().map(|m| m.shader.as_str());
         let eye = p.eye_draw.as_ref().map_or(0, |d| d.kind);
-        if !supported(shader, p.shader_kind, &p.blend, p.unlit, eye) {
+        if !supported(shader, p.shader_kind, &p.blend, p.unlit, eye, &p.role) {
             // A tear the runtime cannot draw is left out, not a failure.
             if tear { continue; }
             unsupported.push(format!("{}:{}:{}:{}", p.name, shader.unwrap_or("-"), p.shader_kind, p.blend));

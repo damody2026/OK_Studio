@@ -46,11 +46,27 @@ static bool OKStreetFreeTalkReadSettings(FOKFreeTalkSettings& Out, FString& Erro
  if (OKStreetFreeTalkReadJson(Path, Root)) {
   // player.json keeps them in its "deepseek" section; a file given by OK_FREE_TALK_SETTINGS may still be an older
   // deepseek.json with the fields at the top.
+  const TSharedPtr<FJsonObject> File = Root;
   const TSharedPtr<FJsonObject>* Section = nullptr;
   if (Root->TryGetObjectField(TEXT("deepseek"), Section) && Section->IsValid()) Root = *Section;
   if (Out.ApiKey.IsEmpty()) Root->TryGetStringField(TEXT("api_key"), Out.ApiKey);
   Root->TryGetStringField(TEXT("endpoint"), Out.Endpoint);
   Root->TryGetStringField(TEXT("model"), Out.Model);
+  // No DeepSeek key but an Alibaba Cloud one (the same key as the cloud voices): the conversations go to Model Studio's
+  // OpenAI-compatible endpoint (aliyun.chat_model, default qwen-plus), so one key is enough for everything.
+  Out.ApiKey.TrimStartAndEndInline();
+  const TSharedPtr<FJsonObject>* Ali = nullptr;
+  FString AliKey;
+  if (Out.ApiKey.IsEmpty() && File->TryGetObjectField(TEXT("aliyun"), Ali) && Ali->IsValid() && (*Ali)->TryGetStringField(TEXT("api_key"), AliKey) && !AliKey.TrimStartAndEnd().IsEmpty()) {
+   FString Base = TEXT("https://dashscope.aliyuncs.com"), Model = TEXT("qwen-plus");
+   (*Ali)->TryGetStringField(TEXT("base_url"), Base);
+   (*Ali)->TryGetStringField(TEXT("chat_model"), Model);
+   Base.TrimStartAndEndInline();
+   while (Base.EndsWith(TEXT("/"))) Base.LeftChopInline(1);
+   Out.ApiKey = AliKey.TrimStartAndEnd();
+   Out.Endpoint = Base + TEXT("/compatible-mode/v1/chat/completions");
+   Out.Model = Model.IsEmpty() ? FString(TEXT("qwen-plus")) : Model;
+  }
  }
  Out.ApiKey.TrimStartAndEndInline();
  if (Out.ApiKey.IsEmpty()) {

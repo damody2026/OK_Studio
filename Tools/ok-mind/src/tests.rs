@@ -241,9 +241,14 @@ fn api_keys_file_deepseek_section() {
         assert_eq!(llm.model, "m1");
         assert_eq!(llm.endpoint, config::DEFAULT_ENDPOINT);
     }
-    // No deepseek key: the service is off.
+    // No deepseek key: the Alibaba Cloud key reaches Model Studio (2026-11-12); with neither the service is off.
     std::fs::write(&path, "{\"deepseek\":{\"api_key\":\"\"},\"aliyun\":{\"api_key\":\"ak\"}}").unwrap();
     if std::env::var("DEEPSEEK_API_KEY").map(|k| k.trim().is_empty()).unwrap_or(true) {
+        let llm = cfg.llm().unwrap();
+        assert_eq!(llm.api_key, "ak");
+        assert_eq!(llm.model, config::ALIYUN_DEFAULT_MODEL);
+        assert!(llm.endpoint.contains("dashscope.aliyuncs.com/compatible-mode"));
+        std::fs::write(&path, "{\"deepseek\":{\"api_key\":\"\"},\"aliyun\":{\"api_key\":\"\"}}").unwrap();
         assert!(cfg.llm().unwrap_err().starts_with("no_api_key"));
     }
 }
