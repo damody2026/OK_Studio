@@ -147,6 +147,14 @@ void AOKStreetSocialScene::RestartWithSave(const FString& Action,const FString& 
  if(!FFileHelper::SaveStringToFile(Out,*Pending,FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))return;
  UE_LOG(LogTemp,Display,TEXT("Street saves: restarting the map for %s %s"),*Action,*Slot);
  S.SaveRestarting=true;S.SaveNotice=OKT(TEXT("ui.saves.restarting"));RefreshUI();
+ // The map loads again in one frame (28-45 s with the source city): with nothing drawn the window stopped answering and
+ // looked hung, and the player closed it while switching to the HG style (R6-254). A loading screen covers the load on
+ // the movie player's own thread, so the window stays live; it ends when the new map has started.
+ if(!IsRunningCommandlet()&&FSlateApplication::IsInitialized())if(IGameMoviePlayer* Movie=GetMoviePlayer();Movie&&Movie->IsInitialized()){
+  FLoadingScreenAttributes L;L.bAutoCompleteWhenLoadingCompletes=true;L.bWaitForManualStop=false;L.bAllowEngineTick=false;L.MinimumLoadingScreenDisplayTime=-1.f;
+  L.WidgetLoadingScreen=SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(FLinearColor::Black).HAlign(HAlign_Center).VAlign(VAlign_Center)
+   [SNew(STextBlock).Text(FText::FromString(S.SaveNotice)).ColorAndOpacity(FLinearColor::White).Font(FCoreStyle::GetDefaultFontStyle("Regular",24))];
+  Movie->SetupLoadingScreen(L);}
  // The map package this scene lives in, started again (the command line, the manifest and -Control stay).
  UGameplayStatics::OpenLevel(this,FName(*GetWorld()->GetOutermost()->GetName()),true,OKStreetCityMode()?TEXT("game=/Script/OpenKoikatsu.OKCrowdGameMode"):TEXT("")); // the city's map has no game mode of its own
 }
