@@ -1016,6 +1016,23 @@ do
   -- north side again (conq1112i). The spot is now on the open floor south of the benches, 1.2 m in from the park's door,
   -- facing south (yaw + 90 = 180): him there, her 110 cm on, the fountain behind them; outside the festival's box
   if byid.park then for _, a in ipairs(byid.park.anchors) do if a.name == 'fountain' then a.yaw = 90; a.pos = P(37850, 37761, 1198.1) end end end
+  -- the festival's box (its props' spread) ran on over the torii to x 39827, across the shrine's approach: the two boxes
+  -- shared 7 m and the lanterns strung over the approach were the festival's (c-conquest 11-12). The festival ends where
+  -- the shrine starts; festival anchors inside the shrine's box go to the shrine, any left outside both are dropped
+  if byid.festival and byid.shrine and byid.shrine.rooms and byid.shrine.rooms[1] then
+    local s = byid.shrine.rooms[1]
+    local function inbox(r, p) return p[1] >= r.min[1] and p[1] <= r.max[1] and p[2] >= r.min[2] and p[2] <= r.max[2] end
+    for _, r in ipairs(byid.festival.rooms or {}) do
+      if r.max[1] > s.min[1] and r.min[1] < s.min[1] and r.max[2] > s.min[2] and r.min[2] < s.max[2] then r.max = P(s.min[1] - 1, r.max[2], r.max[3]) end
+    end
+    local keep = {}
+    for _, a in ipairs(byid.festival.anchors) do
+      if inbox(s, a.pos) then local sa = byid.shrine.anchors; sa[#sa + 1] = a
+      else local inside = false; for _, r in ipairs(byid.festival.rooms or {}) do if inbox(r, a.pos) then inside = true end end
+        if inside then keep[#keep + 1] = a end end
+    end
+    byid.festival.anchors = keep
+  end
   table.sort(GAME_PLACES, function(a, b) return a.id < b.id end)
 end
 -- kitchens and baths in the homes (c-conquest 8.2 住家): every lockable room gets kitchen / stove / bath anchors from
