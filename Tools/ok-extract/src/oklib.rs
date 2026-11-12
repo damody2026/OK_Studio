@@ -1062,6 +1062,10 @@ fn own_scope() -> Option<Arc<PackScope>> { PACK_SCOPE.with(|c| c.borrow().clone(
 thread_local! { static OUTSIDE_OPENS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 pub fn mark_outside_opens() { OUTSIDE_OPENS.with(|o| o.set(true)); }
 pub fn is_outside_opens() -> bool { OUTSIDE_OPENS.with(|o| o.get()) }
+thread_local! { static SEES_FALLBACK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+/// A thread outside every open's pack that still reads the zipmod fallback (gamefs::fallback_roots): the scan pool of an
+/// open with no pack (an original card with its zipmods beside it), see `pack_parallel`.
+pub fn sees_fallback() -> bool { SEES_FALLBACK.with(|o| o.get()) }
 /// Scopes of the opens running now (the fallback for a thread outside every open's pool).
 static ACTIVE_SCOPES: Mutex<Vec<std::sync::Weak<PackScope>>> = Mutex::new(Vec::new());
 /// The pack of the open this thread works for: its own, else the only one open (a rayon worker outside every open's
@@ -1093,6 +1097,16 @@ pub fn pack_parallel<R: Send>(work: impl FnOnce() -> R + Send) -> R {
         // card was opening alone, whose strict open then failed on thousands of gaps it did not have (the ok-extract tests,
         // run in parallel, 2026-11-07). A worker of the shared pool stays: it may be a job of that open.
         if rayon::current_thread_index().is_some() { return work(); }
+        // An open without a pack (an original card, its zipmods beside it) scans the tree its zipmod fallback extends. The
+        // pool below does not see that fallback (the prewarm's threads must not take a card's), so the scan lost the card's
+        // own zipmods: their GUIDs read as none and 花火's skirt, gloves and ornaments went missing (2026-11-12). Its scans
+        // go to a pool that belongs to no pack either but reads the fallback.
+        if !is_outside_opens() && crate::gamefs::fallback_active() {
+            static WITH_FALLBACK: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
+            let pool = WITH_FALLBACK.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(crate::cpu_threads().clamp(2, 8))
+                .thread_name(|i| format!("OKFallbackScan{i}")).start_handler(|_| { mark_outside_opens(); SEES_FALLBACK.with(|o| o.set(true)); }).build().ok());
+            return match pool { Some(pool) => pool.install(work), None => work() };
+        }
         static OUTSIDE: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
         let pool = OUTSIDE.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(crate::cpu_threads().clamp(2, 8))
             .thread_name(|i| format!("OKOutsideOpens{i}")).start_handler(|_| mark_outside_opens()).build().ok());
@@ -1661,6 +1675,17 @@ pub fn open_original_card(game: &Path, card: &Path, outfit: i32) -> Option<Resul
     Some(open_with_zipmods(&lib, game, card, outfit))
 }
 
+thread_local! { static CARD_DIR: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) }; }
+/// `open_original_card` for a card kept somewhere other than its zipmods: `dir` stands in for the card's directory (the
+/// loose zipmods beside it). A portable card's clothing states open its embedded original from `.okstates/<hash>/`,
+/// which lost the zipmods beside the portable card: 花火 had no skirt, gloves or ornaments after 套用 (2026-11-12).
+pub fn open_original_card_beside(game: &Path, card: &Path, dir: &Path, outfit: i32) -> Option<Result<crate::session::OkSession, String>> {
+    struct Reset(Option<PathBuf>);
+    impl Drop for Reset { fn drop(&mut self) { let previous = self.0.take(); CARD_DIR.with(|c| *c.borrow_mut() = previous); } }
+    let _reset = Reset(CARD_DIR.with(|c| c.replace(Some(dir.to_owned()))));
+    open_original_card(game, card, outfit)
+}
+
 /// `open_original_card` for an explicit library (tools).
 pub fn open_with_zipmods(lib: &Path, game: &Path, card: &Path, outfit: i32) -> Result<crate::session::OkSession, String> {
     with_zipmods(lib, game, card, || {
@@ -1714,7 +1739,8 @@ fn with_zipmods_and<R>(lib: &Path, game: &Path, card: &Path, extra: &[PathBuf], 
     let (game, settings) = zipmod_source(game);
     let game = game.as_path();
     let mut roots = Vec::new();
-    if let Some(dir) = card.parent() { roots.push(crate::gamefs::Fallback { root: dir.to_owned(), loose_mods: true, files: Vec::new(), installation: false, settings: false }); }
+    let dir = CARD_DIR.with(|c| c.borrow().clone()).or_else(|| card.parent().map(Path::to_path_buf));
+    if let Some(dir) = dir { roots.push(crate::gamefs::Fallback { root: dir.to_owned(), loose_mods: true, files: Vec::new(), installation: false, settings: false }); }
     if !game.as_os_str().is_empty() && game.is_dir() && crate::gamefs::normalize(game) != crate::gamefs::normalize(lib) {
         let t = std::time::Instant::now();
         let mut files = card_zipmods(game, card);
