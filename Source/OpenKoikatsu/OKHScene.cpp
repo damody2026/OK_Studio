@@ -793,7 +793,7 @@ void UOKHScenePanel::AskNoCondoms(){
     if(Gallery)Gallery->NoteAction(TEXT("said"),OKT(TEXT("ui.hscene.ask_no_condoms")));
     Outbox.Add({OKT(TEXT("ui.hscene.ask_no_condoms")),OKT(TEXT("ui.hscene.no_condoms_note"))});
 }
-void UOKHScenePanel::Finish(const TCHAR* Kind){
+void UOKHScenePanel::Finish(const TCHAR* Kind){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HFinish);
     const FString K=Kind;++LineEpoch;
     JustCameAt=FPlatformTime::Seconds();JustCame=K.StartsWith(TEXT("org"))?1:K.StartsWith(TEXT("same"))?2:0;
     if(Mode==1){
@@ -1432,8 +1432,29 @@ void UOKHScenePanel::TickScene(float Delta){
     // After the scene has settled (3 s): a line asked while her first pose was put on was dropped as from before it.
     if(!bForcedSaid&&Forced()&&ForcedSayAt==0.)ForcedSayAt=FPlatformTime::Seconds()+3.;
     if(!bForcedSaid&&Forced()&&FPlatformTime::Seconds()>=ForcedSayAt){bForcedSaid=true;const FString Event=OKT(TEXT("ui.hscene.forced_event"));Note(Event,false);React(Event,OKT(TEXT("ui.hscene.forced_react_note")));}
-    TickChatter();
-    TickSolo(Delta);TickSecond(Delta);TickDrips(Delta);TickFluids(Delta);TickEyeDull(Delta);TickStyle(Delta);TickDeepFace(Delta);if(bTickingBeside)bIdleTickOwed=true;else TickAhegao();TickTongue();TickMirror();TickPuddles();TickSkinLit(false);TickClothBias(false);TickCameraLight(false);Tremble(FPlatformTime::Seconds());if(!bTickingBeside)TickHands();TickEyesCamera();TickCoordinates();TickSounds();SwellBust(Delta);ApplyPregnancy(FPlatformTime::Seconds());
+    // Each part of the tick timed on its own (a 10 ms tick every 5 to 10 s had no part named, 2026-11-12).
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickChatter);TickChatter();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSolo);TickSolo(Delta);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSecond);TickSecond(Delta);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickDrips);TickDrips(Delta);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickFluids);TickFluids(Delta);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickEyeDull);TickEyeDull(Delta);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickStyle);TickStyle(Delta);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickDeepFace);TickDeepFace(Delta);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickAhegao);if(bTickingBeside)bIdleTickOwed=true;else TickAhegao();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickTongue);TickTongue();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickMirror);TickMirror();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickPuddles);TickPuddles();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSkinLit);TickSkinLit(false);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickClothBias);TickClothBias(false);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickCameraLight);TickCameraLight(false);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickTremble);Tremble(FPlatformTime::Seconds());}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickHands);if(!bTickingBeside)TickHands();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickEyesCamera);TickEyesCamera();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickCoordinates);TickCoordinates();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSounds);TickSounds();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSwellBust);SwellBust(Delta);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickPregnancy);ApplyPregnancy(FPlatformTime::Seconds());}
     // Her breathing as the original picks it (HVoiceCtrl): her gauge past 50 and his fast motion (voice.speedMotion,
     // with its own up and down marks) change the cries, her experience the bank. A change starts the matching set
     // (user, 2026-11-01: in her it kept the first, quiet set the caress also uses).
@@ -1448,7 +1469,7 @@ void UOKHScenePanel::TickScene(float Delta){
     // states 7 and 8 to 3 for everyone there.
     if(AKKPreviewActor* Girl=Gallery->PreviewActor.Get();IsValid(Girl)&&ShoesOffFor!=Girl){ShoesOffFor=Girl;uint8* S=Gallery->ClothesStates;
         if(S[7]!=3||S[8]!=3){S[7]=S[8]=3;Girl->SetClothingPartsHidden(S);Gallery->RefreshClothesStateLabels();}}
-    UpdateFace();UpdateBlush(Delta);FrameCamera();
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickFace);UpdateFace();UpdateBlush(Delta);}{TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickFrameCamera);FrameCamera();}
     // The original writes the liquid every frame; her materials are remade when her clothes or pose parts change.
     if(Siru[0]+Siru[1]+Siru[2]+Siru[3]+Siru[4]>0&&(SiruRefresh-=Delta)<=0.f){SiruRefresh=.5f;ApplySiru();}
     {const int32 Kind=Mode==0?(AibuPoses.IsValidIndex(ActiveAibu)?AibuPoses[ActiveAibu].Prop:0):(Poses.IsValidIndex(ActivePose)?Poses[ActivePose].Prop:0);
@@ -1472,8 +1493,9 @@ void UOKHScenePanel::TickScene(float Delta){
     // Only once the pair plays: while his parts and materials are still being prepared, hiding his clothes or swapping his
     // materials keeps that preparation from ever finishing (the room timed out).
     const bool PairPlaying=Gallery->PairedPlayback&&Gallery->PairedPlayback->GetElapsed()>0.f;
-    if(Mode!=0&&PairPlaying&&Gallery->PartnerActor&&(MaleLookFor!=Gallery->PartnerActor.Get()||bXRayInHer!=XRayInHer()))ApplyMaleLook(); // he was (re)made for the pair, or he went into her / out of her
-    AlignHim(Delta); // measures while the pair plays; a new pose or mode puts them back
+    if(Mode!=0&&PairPlaying&&Gallery->PartnerActor&&(MaleLookFor!=Gallery->PartnerActor.Get()||bXRayInHer!=XRayInHer())){TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickMaleLook);ApplyMaleLook();} // he was (re)made for the pair, or he went into her / out of her
+    TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickLate); // the rest of the tick
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickAlign);AlignHim(Delta);} // measures while the pair plays; a new pose or mode puts them back
     const double Now=FPlatformTime::Seconds();
     auto* Playback=Gallery->PairedPlayback.Get();
     // The scene opens on the pair list's first pose (a hand service): the original opens on the first caress that fits the
@@ -1503,9 +1525,10 @@ void UOKHScenePanel::TickScene(float Delta){
     }
     if(CondomMouthFrom!=INDEX_NONE&&PendingPose==INDEX_NONE&&CondomMouthAt>0.&&Now>=CondomMouthAt){
         const int32 Back=CondomMouthFrom;CondomMouthFrom=INDEX_NONE;CondomMouthAt=0.;PutCondomOn();bCondomMouthBack=true;SelectPose(Back);}
+    TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickFlow);
     const FString Cur=Current(),Base=Mode==0?Cur:HBase(Cur);
     if(Mode==2&&Base.Contains(TEXT("Loop"))){float& Deepest=Cur.StartsWith(TEXT("A_"))?AnalDeepest:CrotchDeepest;Deepest=FMath::Max(Deepest,AlignDeep);}
-    if(Cur!=LastState){
+    if(Cur!=LastState){TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickStateChanged);
         const FString Before=HBase(LastState);
         LastState=Cur;StateSeen=Now;
         // Inserted once the insertion has played (SetInsertKokan / SetInsertAnal): her first time is then.
@@ -1538,7 +1561,7 @@ void UOKHScenePanel::TickScene(float Delta){
     }
     if(!Wanted.IsEmpty()&&Cur==Wanted)Wanted.Reset();
     if(Mode==0&&!Wanted.IsEmpty()){PlaySolo(Wanted);Wanted.Reset();}
-    if(!Wanted.IsEmpty()&&Playback&&!Gallery->bPairPreparing&&Now-LastRequest>.75&&Gallery->PairStateCombo){
+    if(!Wanted.IsEmpty()&&Playback&&!Gallery->bPairPreparing&&Now-LastRequest>.75&&Gallery->PairStateCombo){TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickWantState);
         LastRequest=Now;
         if(Gallery->PairStateCombo->GetSelectedOption()!=Wanted)Gallery->PairStateCombo->SetSelectedOption(Wanted);
         else Gallery->OnPairStateSelected(Wanted,ESelectInfo::Direct);
@@ -1579,19 +1602,20 @@ void UOKHScenePanel::TickScene(float Delta){
     Her=FMath::Clamp(Her,0.f,100.f);His=FMath::Clamp(His,0.f,100.f);
     // In her mouth she decides herself if he waits (HHoushi Oral_Idle: drink or spit after a while).
     if(Queue.IsEmpty()&&Base==TEXT("Oral_Idle")&&OralIdleSince>0.&&Now-OralIdleSince>8.){OralIdleSince=0.;static const float DrinkChance[]={.2f,.35f,.6f,.85f};Click(FMath::FRand()<DrinkChance[FMath::Clamp(Level(),0,3)]?Drink:Vomit);} // her own choice: the more used to it, the likelier she swallows
-    ApplySpeed();
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSpeed);ApplySpeed();}
     // Her spoken answer is over: her breathing goes on (the line stopped it).
     // What is being put on stays on screen until it is on: without it the wait looks like a hang (user 2026-11-07).
     if(!OutfitLoadingText.IsEmpty()){AOKInteractionMode* Changing=Interaction();if(!Changing||!Changing->IsChangingOutfit())OutfitLoadingText.Reset();else if(Hint)Hint->SetText(FText::FromString(OutfitLoadingText));}
     // Chat opens and closes by itself; what he said while it was closed she answers as soon as it opens.
-    {const bool bChat=!CannotAnswer();if(bChat!=bChatOpen){bChatOpen=bChat;if(Input)Input->SetHintText(FText::FromString(OKT(bChat?TEXT("ui.hscene.say_hint"):TEXT("ui.hscene.say_hint_busy"))));if(bChat)ReleaseHeld(TEXT("ui.hscene.held_note_calm"));}}
+    {const bool bChat=!CannotAnswer();if(bChat!=bChatOpen){TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickChatOpen);bChatOpen=bChat;if(Input)Input->SetHintText(FText::FromString(OKT(bChat?TEXT("ui.hscene.say_hint"):TEXT("ui.hscene.say_hint_busy"))));if(bChat)ReleaseHeld(TEXT("ui.hscene.held_note_calm"));}}
     // Her breathing waits for the whole answer, not each of its lines (bReplyPending: more of it is still to be said).
-    if(bTalkSpoken&&!bReplyPending&&Gallery->PreviewActor&&!Gallery->PreviewActor->IsSpeaking()){bTalkSpoken=false;if(Mode==0)CaressBreath();else if(Gallery->PairedPlayback)Gallery->StartPairBreath();}
+    if(bTalkSpoken&&!bReplyPending&&Gallery->PreviewActor&&!Gallery->PreviewActor->IsSpeaking()){TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickBreathBack);bTalkSpoken=false;if(Mode==0)CaressBreath();else if(Gallery->PairedPlayback)Gallery->StartPairBreath();}
+    TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickTexts);
     if(HerGauge)HerGauge->SetPercent(Her/100.f);if(HisGauge)HisGauge->SetPercent(His/100.f);
     // Her developments as the scene uses them, each climax there (his finish in her mouth) shown as it adds 10
     // (Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md P3); kissing and her caressed places with what this scene's touch adds when it
     // ends (hexp h_session_end: a second of kissing a point, of touch half a point; user 2026-11-03: kiss and butt shown).
-    if(DevLine&&Now>=DevLineAt){DevLineAt=Now+.25;auto Pct=[this](const TCHAR* A){return int32(FMath::RoundToFloat(Dev(A)*100.f));};
+    if(DevLine&&Now>=DevLineAt){TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickDevLine);DevLineAt=Now+.25;auto Pct=[this](const TCHAR* A){return int32(FMath::RoundToFloat(Dev(A)*100.f));};
         auto Gain=[](int32 N){return N>0?OKMsg(TEXT("ui.hscene.dev_gain"),{{TEXT("n"),N}}):FString();};
         auto Touch=[&](int32 Area,float PerSecond){const float Was=AreaExperience(Area);return Gain(int32(FMath::Min(100.f,Was+AreaSeconds[Area]*PerSecond))-int32(Was));};
         OKHSetText(DevLine,(OKMsg(TEXT("ui.hscene.dev_line"),{{TEXT("kiss"),Pct(TEXT("kiss"))},{TEXT("kiss_gain"),Touch(0,1.f)},
@@ -1609,7 +1633,7 @@ void UOKHScenePanel::TickScene(float Delta){
         const FString PoseName=Mode==0&&AibuPoses.IsValidIndex(ActiveAibu)?AibuPoses[ActiveAibu].Name:Poses.IsValidIndex(PendingPose)?Poses[PendingPose].Name+OKT(TEXT("ui.hscene.loading")):Poses.IsValidIndex(ActivePose)?Poses[ActivePose].Name:FString(OKT(TEXT("ui.hscene.pick_pose")));
         OKHSetText(Status,(Cur.IsEmpty()?PoseName:FString::Printf(TEXT("%s · %s · ×%.1f%s"),*PoseName,*StateWords(Mode==0?Cur:HBase(Cur)),PlaybackSpeed(),Mode==2?(bCondom?OKT(TEXT("ui.hscene.condom_mark")):TEXT("")):TEXT(""))));
     }
-    BuildActions();
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickActions);BuildActions();}
 }
 
 static TAutoConsoleVariable<float> CVarHChatEvery(TEXT("ok.HScene.ChatEvery"),5.f,TEXT("She says something by herself after this many quiet seconds, whenever she can talk (0: only answers and reactions)"));

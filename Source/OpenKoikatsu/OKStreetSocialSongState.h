@@ -28,6 +28,8 @@ struct FOKSongState {
  FString Endpoint;
  // Songs are on unless the player turns them off (saved in songs.json); the control channel can still test.
  bool Enabled=true,Loaded=false,Override=false,RequestPending=false,PollPending=false,SayPending=false,SpeechStarted=false;
+ // Lines counted since the last save (SongCountLines): written within 20 s (TickSong) or at the end, not on every line.
+ bool SaveDirty=false;double DirtySince=0;
  // This event's milestone (song_milestone: confession, favor100, favor150, lines; empty for a test song), whether it
  // is due (a song made ahead waits until it is), and Replay: she sings one of her earlier songs again (no milestone).
  FString Occasion;bool Due=false,Replay=false;

@@ -54,7 +54,7 @@ static const FOKStreetRelation* OKSongRelation(const FOKStreetSceneState& S,int3
 }
 
 void AOKStreetSocialScene::SongSave(){
- auto& S=*State;auto& G=S.Song;const FString Path=OKSongFile(S);if(Path.IsEmpty()||S.SelfTest)return;
+ auto& S=*State;auto& G=S.Song;G.SaveDirty=false;const FString Path=OKSongFile(S);if(Path.IsEmpty()||S.SelfTest)return;
  auto Root=MakeShared<FJsonObject>();Root->SetNumberField(TEXT("schema"),2);Root->SetStringField(TEXT("save_id"),G.SaveId);Root->SetBoolField(TEXT("enabled"),G.Enabled);
  Root->SetNumberField(TEXT("sung_day"),G.SungDay);Root->SetNumberField(TEXT("sung_today"),G.SungToday);
  // Her milestones and lines since her last song, and the songs she sang (to hear again).
@@ -317,7 +317,8 @@ void AOKStreetSocialScene::SongRecord(const FString& Line,const FString& Note){
 // she sings again.
 void AOKStreetSocialScene::SongCountLines(int32 Girl,int32 Lines){
  if(!State||Lines<=0||!State->Manifest.Characters.IsValidIndex(Girl)||Girl==0)return;auto& G=State->Song;if(!G.Loaded)SongLoad();
- G.Progress.FindOrAdd(OKStreetStableId(State->Manifest.Characters[Girl])).Lines+=Lines;SongSave();
+ // Saved later (TickSong, EndPlay): writing songs.json on every line of hers cost 4 to 6 ms of that frame (2026-11-12).
+ G.Progress.FindOrAdd(OKStreetStableId(State->Manifest.Characters[Girl])).Lines+=Lines;if(!G.SaveDirty){G.SaveDirty=true;G.DirtySince=FPlatformTime::Seconds();}
 }
 
 // She sings one of her earlier songs again (the panel's memories, while he talks with her): the same mix and staging,
@@ -595,6 +596,7 @@ bool AOKStreetSocialScene::SongCameraShot(double Now,float Dt,FVector& Location,
 void AOKStreetSocialScene::TickSong(double Now){
  if(!State||State->SelfTest)return;auto& S=*State;auto& G=S.Song;
  if(!G.Loaded)SongLoad();
+ if(G.SaveDirty&&FPlatformTime::Seconds()-G.DirtySince>20.)SongSave();
  if(G.Endpoint.IsEmpty())return;
  // Begun in the same breath as sitting down together ("sit on the bench, sing it now": the judge read both): put back
  // until they sit, as if accepted while they were sitting down.

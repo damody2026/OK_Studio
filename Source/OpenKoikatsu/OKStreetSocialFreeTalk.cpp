@@ -5,6 +5,7 @@
 #include "PlatformHttp.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
+#include "Misc/ScopeLock.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
@@ -170,6 +171,19 @@ static bool OKStreetFreeTalkReadPersona(const FString& Name, FOKFreeTalkPersona&
 }
 
 FString OKStreetFreeTalkSystemPrompt(const FOKFreeTalkPersona& Persona, const FString& World) {
+ // The same words every turn of a girl (her persona, the rules, the place catalogue, the language's tables): formatted
+ // once and kept, not on every line she says (2026-11-12). The tables' own text is in the key, so a language change
+ // makes it again.
+ static FCriticalSection Lock; static TMap<FString, FString> Made;
+ const FString Key = Persona.DisplayName + TEXT("\x1f") + Persona.Profile + TEXT("\x1f") + FString::Join(Persona.Rules, TEXT("\x1e")) + TEXT("\x1f") + World
+  + TEXT("\x1f") + OKT(TEXT("ui.free_talk.persona_system_prompt")) + OKT(TEXT("ui.free_talk.rules_prompt"));
+ { FScopeLock Guard(&Lock); if (const FString* Hit = Made.Find(Key)) return *Hit; }
+ FString Out = OKStreetFreeTalkSystemPromptBuild(Persona, World);
+ FScopeLock Guard(&Lock); if (Made.Num() > 64) Made.Reset(); Made.Add(Key, Out);
+ return Out;
+}
+
+FString OKStreetFreeTalkSystemPromptBuild(const FOKFreeTalkPersona& Persona, const FString& World) {
  FString Out = OKMsg(TEXT("ui.free_talk.persona_system_prompt"), {{TEXT("persona_name"), *Persona.DisplayName}, {TEXT("persona_profile"), *Persona.Profile}});
  for (int32 I = 0; I < Persona.Rules.Num(); ++I) Out += FString::Printf(TEXT("%d. %s\n"), I + 1, *Persona.Rules[I]);
  // What she may fill in her JSON and how (favor, lines, orders, acts, promises, activities): the text tables

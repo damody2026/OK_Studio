@@ -112,6 +112,8 @@ void OKStreetFreeTalkClearPersonaOverrides();
 // Stable for a girl: persona, rules and the reply format only.
 // `World` is the street catalogue (places and activities), also stable.
 FString OKStreetFreeTalkSystemPrompt(const FOKFreeTalkPersona& Persona, const FString& World);
+// The prompt formatted anew (OKStreetFreeTalkSystemPrompt keeps what this made).
+FString OKStreetFreeTalkSystemPromptBuild(const FOKFreeTalkPersona& Persona, const FString& World);
 // The last user message: her current values, then what the player said.
 FString OKStreetFreeTalkUserMessage(const FOKFreeTalkStatus& Status, const FString& PlayerText);
 // The chat messages for her turn: the system prompt, her conversation so far, this turn (sent through ok-mind).

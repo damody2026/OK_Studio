@@ -9,6 +9,8 @@
 #include "Components/Slider.h"
 #include "Components/TextBlock.h"
 #include "Misc/ScopeExit.h"
+#include "Async/Async.h"
+#include "KKSpeech.h"
 #include "KKGameRoot.h"
 #include "Misc/Paths.h"
 
@@ -119,6 +121,10 @@ void UOKCharacterController::StartPairBreath() {
     const bool MovingReady=Mode>=0&&(bHScene?KKSpeech::CollectHBreath(Root,Personality,Mode,State,AnimId,Moving,PairMovingBreaths,MovingError):KKSpeech::CollectHBreath(Root,Personality,Mode,State,AnimId,true,PairMovingBreaths,MovingError));
     const bool StillReady=Mode>=0&&(bHScene?KKSpeech::CollectHBreath(Root,Personality,Mode,State,AnimId,Still,PairStillBreaths,StillError):KKSpeech::CollectHBreath(Root,Personality,Mode,State,AnimId,false,PairStillBreaths,StillError));
     const auto& Cues=bMoving?PairMovingBreaths:PairStillBreaths;Error=bMoving?MovingError:StillError;
+    // Both sets decoded off the game thread into the speech cache (KKSpeech::DecodeOgg): the next cry of the loop, and the
+    // set a change of speed switches to, then start without a decode in the frame (2026-11-12).
+    {TArray<FString> Paths;for(const auto* Set:{&PairMovingBreaths,&PairStillBreaths})for(const FKKHBreathCue& C:*Set)Paths.AddUnique(C.Path);
+     Async(EAsyncExecution::ThreadPool,[Paths=MoveTemp(Paths)](){for(const FString& P:Paths){TSharedPtr<const FKKSpeechPcm,ESPMode::ThreadSafe> Pcm;FString Why;KKSpeech::DecodeOgg(P,Pcm,Why);}});}
     // A state with no breathing of its own (the insertion, OLoop before her climax): in the room she goes on as she was
     // (stopped first, it went silent there); elsewhere it stops as before.
     if(!(bMoving?MovingReady:StillReady)&&bHScene){UE_LOG(LogTemp,Display,TEXT("Pair breath: none for mode %d %s, she goes on as before: %s"),Mode,*State,*Error);return;}

@@ -7,6 +7,7 @@
 #include "OKStreetSocialSongState.h"
 #include "OKInteractionMode.h"
 #include "KKRustExtract.h"
+#include "KKSpeech.h"
 #include "Async/Async.h"
 #include "OKStreetSocialRules.h"
 #include "OKStreetHeroine.h"
@@ -1279,18 +1280,19 @@ bool AOKStreetSocialScene::PrepareFreeTalk(int32 Character,const FString& Text,F
  // His name as the game has it (the group prompt says it too), once she knows it: past a stranger, or he told her. A
  // stranger meeting him called him by name and said 爱丽丝 had told her (R4-1).
  if(S.Manifest.Characters.IsValidIndex(0)&&!S.Manifest.Characters[0].Name.IsEmpty()){const FString& HisName=S.Manifest.Characters[0].Name;
-  bool Knows=HerRelation.Stage!=TEXT("stranger");
+  QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkHisName);bool Knows=HerRelation.Stage!=TEXT("stranger");
   if(!Knows)for(const FOKStreetHistoryEntry& E:HistoryOf(Id))if(E.Who==TEXT("him")&&E.Text.Contains(HisName)){Knows=true;break;}
   // Not known yet: said so, or she takes a name from around her (刻晴 greeted him "早，安可" the first time, R5-1).
   Status.Relation+=Knows?OKMsg(TEXT("ui.free_talk.his_name_note"), {{TEXT("name"), *HisName}}):FString(OKT(TEXT("ui.free_talk.his_name_unknown_note")));}
  // Apart (a phone message or call): what they are doing face to face does not apply (OKStreetSocialPhoneInbox.inl).
- {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkDoing);Status.Doing=RemoteWith(Character)?RemoteDoing(Character):FreeTalkDoing()+FreeTalkExtras();}Status.Nearby=RemoteWith(Character)?FString(OKT(TEXT("ui.free_talk.remote_nearby_unknown"))):FreeTalkNearby();
- // Alone with him in the private room (the H scene): not where the street left her, nobody around to see or hear.
- if(S.PrivateGirl==Character&&S.PrivateMode.IsValid()){Status.Doing=OKT(TEXT("ui.free_talk.private_doing"));Status.Nearby=OKT(TEXT("ui.free_talk.private_nearby"));} // the places around him are not around her on the phone
+ // Alone with him in the private room (the H scene): not where the street left her, nobody around to see or hear (the
+ // street's, made and thrown away there, are not made, 2026-11-12).
+ if(S.PrivateGirl==Character&&S.PrivateMode.IsValid()){Status.Doing=OKT(TEXT("ui.free_talk.private_doing"));Status.Nearby=OKT(TEXT("ui.free_talk.private_nearby"));}
+ else{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkDoing);Status.Doing=RemoteWith(Character)?RemoteDoing(Character):FreeTalkDoing()+FreeTalkExtras();Status.Nearby=RemoteWith(Character)?FString(OKT(TEXT("ui.free_talk.remote_nearby_unknown"))):FreeTalkNearby();} // the places around him are not around her on the phone
  {const double Hours=OKStreetClockHours(S.ClockStartHours,FPlatformTime::Seconds()-S.ClockStartWall);Status.Now=OKStreetFreeTalkDateTime(OKStreetCalendarDateTime(S.Store.CalendarDay,Hours));Status.StreetTime=OKStreetFreeTalkClock(Hours);}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkRecall);Status.Memories=MindRecallText(Id,Text);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkHistory);Status.Memories+=HistoryPromptText(Character);}
  // The moments he bookmarked with her (bookmarks.rs): the last five, and the lines of one he asks about.
- {const FString Marks=BookmarkFacts(Character,Text);if(!Marks.IsEmpty())Status.Memories+=(Status.Memories.IsEmpty()?FString():FString(OKT(TEXT("ui.economy.semicolon_mark"))))+Marks;}
+ {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkBookmarks);const FString Marks=BookmarkFacts(Character,Text);if(!Marks.IsEmpty())Status.Memories+=(Status.Memories.IsEmpty()?FString():FString(OKT(TEXT("ui.economy.semicolon_mark"))))+Marks;}
  // Just after a scene, still together (OKStreetSocialBookmarks.inl): the places around are the street's again.
  if(S.AfterGirl==Character&&S.PrivateGirl==INDEX_NONE)Status.Doing=OKT(TEXT("ui.bookmarks.after_doing"));
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkMindStatus);FillMindStatus(Character,Status);}
@@ -1298,7 +1300,7 @@ bool AOKStreetSocialScene::PrepareFreeTalk(int32 Character,const FString& Text,F
  // at satiety 23 she is hungry there too).
  // Nor the street place's scene line (the lounge, the crowd, who of hers is standing a few metres away): the room is theirs.
  if(S.PrivateGirl==Character&&S.PrivateMode.IsValid()){Status.Menu.Reset();Status.Choices.Reset();Status.Invite.Reset();Status.Scene=OKT(TEXT("ui.free_talk.private_scene"));}
- System=OKStreetFreeTalkSystemPrompt(Persona,OKStreetPlaceCatalogue());UserMessage=OKStreetFreeTalkUserMessage(Status,Text);
+ {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkSystemPrompt);System=OKStreetFreeTalkSystemPrompt(Persona,OKStreetPlaceCatalogue());}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkUserMessage);UserMessage=OKStreetFreeTalkUserMessage(Status,Text);}
  return true;
 }
 
@@ -1405,6 +1407,7 @@ void AOKStreetSocialScene::FinishFreeTalk(int32 Character,const FString& Id,cons
  FOKFreeTalkReply PrivateReply;const bool InPrivate=S.PrivateGirl==Character&&S.PrivateMode.IsValid();
  if(InPrivate){PrivateReply=*Reply;PrivateReply.Action.Reset();PrivateReply.ActKind.Reset();PrivateReply.ActArg.Reset();PrivateReply.Orders.Reset();PrivateReply.Payer.Reset();
   PrivateReply.ProposeId.Reset();PrivateReply.ResolveId.Reset();Reply=&PrivateReply;}
+ QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkRest);
  S.FreeTalkAnswered=S.FreeTalkSent; // the open choices were in that request (TickChoices)
  // Her memory keeps the exchange (her turn in the same JSON form she answers in); the values travel
  // only with the newest message. With the mind open this copy is only the fallback's memory.
@@ -1424,14 +1427,16 @@ void AOKStreetSocialScene::FinishFreeTalk(int32 Character,const FString& Id,cons
  {FOKFreeTalkReply Applied=*Reply;if(OKStreetFreeTalkIsNudge(Text)&&!Applied.Payer.IsEmpty()&&Applied.Payer!=TEXT("her")&&!S.Choices.ContainsByPredicate([](const FOKStreetPendingChoice& C){return C.Kind==TEXT("checkout");})){
    UE_LOG(LogTemp,Display,TEXT("Street pay: actor=%d payer \"%s\" on a game note, not settled by them"),Character,*Applied.Payer);Applied.Payer.Reset();}
   QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkChoice);ApplyChoiceReply(Character,Applied);}
- {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkExpression);ApplyMindExpression(Character,Reply->Emotion,Reply);}
+ // Not in the private room: her street actor is hidden there and the room's model has its own face (UOKHScenePanel); the
+ // street face cost 5.7 ms of the frame her answer came in (2026-11-12).
+ if(!InPrivate){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkExpression);ApplyMindExpression(Character,Reply->Emotion,Reply);}
  // And her body: the gesture she makes with it (motions.toml), face to face only.
  // Every line, as long as she speaks it: with no gesture from the model, one for her mood (motions.toml mood). A still
  // pose under every line left her standing in her idle (the raised finger) through the whole talk.
  if(RemoteKind(Character)==0){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkGesture);int32 Chars=0;for(const FString& L:Reply->Lines)Chars+=L.Len();PlayGesture(Character,Reply->Gesture,Reply->Emotion,0.6f+0.22f*Chars);}
  // Free-talk replies have no recorded clip, so they always go to the TTS server (independent of the
  // V voice-mode toggle, which only chooses for scripted lines); the text stays on screen either way.
- SongCountLines(Character,Reply->Lines.Num()); // her lines count toward her next song (every 500, OKStreetSocialSong.inl)
+ {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkSong);SongCountLines(Character,Reply->Lines.Num());} // her lines count toward her next song (every 500, OKStreetSocialSong.inl)
  if(!S.TtsCacheDir.IsEmpty()&&RemoteKind(Character)!=1){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkSpeak);SpeakFreeTalk(Character,Reply->Lines,Serial);} // a text message is read, not heard
  // What happens next (going somewhere now, an act, or a promise for later) is judged by DeepSeek from his words and hers,
  // not by keyword rules (JudgeFreeTalk). Without words of his (a nudge, a notice) she does her own acts but never starts
@@ -1465,7 +1470,7 @@ void AOKStreetSocialScene::FinishFreeTalk(int32 Character,const FString& Id,cons
   if(!Reply->Reply.IsEmpty())S.HerNoteLine.Add(Character,Reply->Reply);
  }
  // In the private room his words still do things there: stop, pull out, another pose, faster, end (JudgeHTalk).
- else if(InPrivate)JudgeHTalk(Character,S.PlayerAskedText.IsEmpty()?Text:S.PlayerAskedText,Reply->Reply);
+ else if(InPrivate){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkHJudge);JudgeHTalk(Character,S.PlayerAskedText.IsEmpty()?Text:S.PlayerAskedText,Reply->Reply);}
  else if(!InPrivate){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkJudge);TArray<FString> Ordered;for(const auto& O:Reply->Orders)Ordered.Add(O.Id);JudgeFreeTalk(Character,Id,S.PlayerAskedText.IsEmpty()?Text:S.PlayerAskedText,Reply->Reply,Reply->Action,Ordered);}
  S.PlayerAskedText.Reset();
  S.ReplyRemoteGirl=INDEX_NONE;{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkUi);RefreshUI();}
@@ -2119,6 +2124,9 @@ void AOKStreetSocialScene::RequestFreeTalkSegment(int32 Generation,int32 Index){
    if(!(J->TryGetBoolField(TEXT("ok"),Ok)&&Ok&&J->TryGetStringField(TEXT("path"),Path))){Ok=false;J->TryGetStringField(TEXT("error"),Error);}
   }
   L.FreeTalkSpeechPaths[Index]=Ok?Path:FString();
+  // Decoded now, off the game thread, into the speech cache (KKSpeech::DecodeOgg): in the one-on-one the line waits for
+  // the one before it and was decoded in the frame it began (5 to 10 ms each, 2026-11-12).
+  if(Ok)Async(EAsyncExecution::ThreadPool,[Path](){TSharedPtr<const FKKSpeechPcm,ESPMode::ThreadSafe> Pcm;FString Why;KKSpeech::DecodeOgg(Path,Pcm,Why);});
   const bool Streaming=L.FreeTalkSpeechStreams[Index].IsValid();
   if(!Streaming&&L.FreeTalkSpeechReady[Index]==0)L.FreeTalkSpeechReady[Index]=Ok?1:2;
   if(!Ok&&!Streaming)L.FreeTalkNotice=OKT(TEXT("ui.scene.tts_failed_text_only"))+Error;
@@ -5073,7 +5081,7 @@ void AOKStreetSocialScene::WriteReport(bool Passed){
  if(S.SelfTest||S.RetargetSelfTest||!Passed)FPlatformMisc::RequestExitWithStatus(false,Passed?0:1);
 }
 
-void AOKStreetSocialScene::EndPlay(const EEndPlayReason::Type Reason){EndGalgame();OKControlStop();if(State){WaitFinQuery();if(State->FreeTalkLogDirty)FreeTalkSaveLog();SaveCalendar();OKStreetFlushSaves();if(!State->SaveRestarting&&State->Started)SaveToSlot(TEXT("auto"));if(State->Mind)OKStreetSetActiveMind(nullptr);if(State->Rules)OKStreetSetActiveRules(nullptr);}StopAmbientActivity();DestroyStreetPlaces();if(State&&State->FreeTalkLive)OKStreetFreeTalkAsrPost(TEXT("listen/stop"),TEXT("{}"),nullptr);if(State){FinishPrivate();}if(State){State->Pair.CapturePending=false;FinishPhoto();}EndTalk();if(State){for(auto& Row:State->ReadingProps)for(auto& Prop:Row.Value)if(Prop.IsValid())Prop->Destroy();State->ReadingProps.Reset();if(State->MouseInput.IsValid()&&FSlateApplication::IsInitialized())FSlateApplication::Get().UnregisterInputPreProcessor(State->MouseInput);for(auto& Prop:State->FacilityProps)if(Prop.IsValid())Prop->Destroy();for(auto& Pickup:State->TopicPickups)if(Pickup.IsValid())Pickup->Destroy();if(State->BackgroundGround.IsValid())State->BackgroundGround->Destroy();if(State->BackgroundFog.IsValid())State->BackgroundFog->Destroy();}if(State&&State->Overlay.IsValid()&&GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(State->Overlay.ToSharedRef());State.Reset();Super::EndPlay(Reason);}
+void AOKStreetSocialScene::EndPlay(const EEndPlayReason::Type Reason){EndGalgame();OKControlStop();if(State){WaitFinQuery();if(State->FreeTalkLogDirty)FreeTalkSaveLog();SaveCalendar();if(State->Song.SaveDirty)SongSave();OKStreetFlushSaves();if(!State->SaveRestarting&&State->Started)SaveToSlot(TEXT("auto"));if(State->Mind)OKStreetSetActiveMind(nullptr);if(State->Rules)OKStreetSetActiveRules(nullptr);}StopAmbientActivity();DestroyStreetPlaces();if(State&&State->FreeTalkLive)OKStreetFreeTalkAsrPost(TEXT("listen/stop"),TEXT("{}"),nullptr);if(State){FinishPrivate();}if(State){State->Pair.CapturePending=false;FinishPhoto();}EndTalk();if(State){for(auto& Row:State->ReadingProps)for(auto& Prop:Row.Value)if(Prop.IsValid())Prop->Destroy();State->ReadingProps.Reset();if(State->MouseInput.IsValid()&&FSlateApplication::IsInitialized())FSlateApplication::Get().UnregisterInputPreProcessor(State->MouseInput);for(auto& Prop:State->FacilityProps)if(Prop.IsValid())Prop->Destroy();for(auto& Pickup:State->TopicPickups)if(Pickup.IsValid())Pickup->Destroy();if(State->BackgroundGround.IsValid())State->BackgroundGround->Destroy();if(State->BackgroundFog.IsValid())State->BackgroundFog->Destroy();}if(State&&State->Overlay.IsValid()&&GEngine&&GEngine->GameViewport)GEngine->GameViewport->RemoveViewportWidgetContent(State->Overlay.ToSharedRef());State.Reset();Super::EndPlay(Reason);}
 
 #if WITH_EDITOR
 #include "Materials/Material.h"

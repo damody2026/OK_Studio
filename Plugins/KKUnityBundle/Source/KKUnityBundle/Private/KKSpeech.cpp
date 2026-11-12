@@ -122,7 +122,27 @@ FLinesResult LoadLinesUncached(const FString& Root,int32 Personality) {
 }
 }
 
+namespace {
+// Decoded clips by path, size and time (the PCM is immutable, shared): her breathing loops two or three cries, each
+// decoded again on the game thread every time it came round (StartPairBreath 9 ms after each of her lines in the
+// one-on-one, 2026-11-12). Bounded by bytes; the oldest go first.
+struct FDecodedOgg{FString Key;TSharedPtr<const FKKSpeechPcm,ESPMode::ThreadSafe> Pcm;};
+FCriticalSection DecodedLock;TArray<FDecodedOgg> Decoded;int64 DecodedBytes=0;
+constexpr int64 DecodedLimit=64ll*1024*1024;
+}
 bool KKSpeech::DecodeOgg(const FString& Path,TSharedPtr<const FKKSpeechPcm,ESPMode::ThreadSafe>& Out,FString& Error) {
+    Out.Reset();Error.Reset();const int64 Size=IFileManager::Get().FileSize(*Path);
+    if(Size<4||Size>128*1024*1024){Error=TEXT("音檔不存在、為空或超過128MiB");return false;}
+    const FString Key=FString::Printf(TEXT("%s|%lld|%lld"),*Path,Size,IFileManager::Get().GetTimeStamp(*Path).GetTicks());
+    {FScopeLock Lock(&DecodedLock);const int32 Hit=Decoded.IndexOfByPredicate([&](const FDecodedOgg& D){return D.Key==Key;});
+     if(Hit!=INDEX_NONE){FDecodedOgg Found=MoveTemp(Decoded[Hit]);Decoded.RemoveAt(Hit);Out=Found.Pcm;Decoded.Add(MoveTemp(Found));return true;}}
+    if(!DecodeOggUncached(Path,Out,Error))return false;
+    FScopeLock Lock(&DecodedLock);const int64 Bytes=int64(Out->Samples.Num())*sizeof(int16);
+    if(Bytes<=DecodedLimit/4){Decoded.Add({Key,Out});DecodedBytes+=Bytes;
+        while(DecodedBytes>DecodedLimit&&Decoded.Num()>1){DecodedBytes-=int64(Decoded[0].Pcm->Samples.Num())*sizeof(int16);Decoded.RemoveAt(0);}}
+    return true;
+}
+bool KKSpeech::DecodeOggUncached(const FString& Path,TSharedPtr<const FKKSpeechPcm,ESPMode::ThreadSafe>& Out,FString& Error) {
     Out.Reset();Error.Reset();const int64 Size=IFileManager::Get().FileSize(*Path);
     if(Size<4||Size>128*1024*1024){Error=TEXT("音檔不存在、為空或超過128MiB");return false;}
     TArray<uint8> Bytes;
