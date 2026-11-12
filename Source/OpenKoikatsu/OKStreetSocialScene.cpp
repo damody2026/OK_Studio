@@ -7,7 +7,6 @@
 #include "OKStreetSocialSongState.h"
 #include "OKInteractionMode.h"
 #include "KKRustExtract.h"
-void OKHSceneInstallPrecacheAhead(); // OKHScene.h
 #include "KKSpeech.h"
 #include "Async/Async.h"
 #include "OKStreetSocialRules.h"
@@ -825,11 +824,7 @@ void AOKStreetSocialScene::BeginPlay(){
    bPrewarmed=true;Async(EAsyncExecution::Thread,[](){FOkSession::Prewarm(FString());});
   }
  }
- // Shaders never compile in a frame that waits for them: a draw whose PSO is still being compiled (precached late, a cold
- // driver cache) is left out of that frame instead of the frame waiting for it, 100-200 ms each at the one-on-one's
- // start (user 2026-11-12: a one-off event must not hold up frame generation). Command line / console still override.
- if(auto* V=IConsoleManager::Get().FindConsoleVariable(TEXT("r.SkipDrawOnPSOPrecaching")))V->Set(1,ECVF_SetByProjectSetting);
- OKHSceneInstallPrecacheAhead(); // the high model's _Bias twins precached as it loads
+ // r.SkipDrawOnPSOPrecaching and the H scene's precache-ahead hook: set for every mode at engine start (OpenKoikatsu.cpp).
  State=MakeShared<FOKStreetSceneState>();auto& S=*State;
  S.TouchReactionOnlyTest=FParse::Param(FCommandLine::Get(),TEXT("StreetSocialTouchReactionSelfTest"));
  S.ContextOnlyTest=FParse::Param(FCommandLine::Get(),TEXT("StreetSocialDialogueContextSelfTest"));
