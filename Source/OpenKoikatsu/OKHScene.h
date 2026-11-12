@@ -50,6 +50,12 @@ public:
     int32 Kind=INDEX_NONE;
     UPROPERTY() TObjectPtr<UOKHScenePanel> Owner;
     UFUNCTION() void HandleClick();
+    // High contrast (user, 2026-11-12): dark face and white words, the chosen one bright pink. A pink background set
+    // before the button is built counts as chosen.
+    void SetChosen(bool bInChosen);
+protected:
+    virtual TSharedRef<SWidget> RebuildWidget() override;
+    bool bChosen=false;
 };
 
 // A row of the settings panel on the left: a console variable (UOKHScenePanel, HSettings).
@@ -171,7 +177,7 @@ public:
         PanelHideToggle=2304, // the panel on the right away and back (user 2026-11-09)
         LeaveToggle=2305, // back to the card reader (its one-on-one only; the street has its own leave button)
         PoseBase=1000,
-        Faster=2001,Slower=2002,Toggle=2003,Inside=2004,Outside=2005,Drink=2006,Vomit=2007,Again=2008,Insert=2009,InsertAnal=2010,Pull=2011,Condom=2012,Stop=2014,Continue=2015,ToggleMale=2016,LockHer=2017,LockHis=2018,MaleBottom=2019,PenisXRayToggle=2020,PhysicsNext=2021,GrayRoomToggle=2022,PenisPanelToggle=2023,PenisReset=2024,FluidClear=2025,FeetPinToggle=2026,HandsPinToggle=2027,SkinLitToggle=2028,
+        Faster=2001,Slower=2002,Toggle=2003,Inside=2004,Outside=2005,Drink=2006,Vomit=2007,Again=2008,Insert=2009,InsertAnal=2010,Pull=2011,Condom=2012,Stop=2014,Continue=2015,ToggleMale=2016,LockHer=2017,LockHis=2018,MaleBottom=2019,PenisXRayToggle=2020,PhysicsNext=2021,GrayRoomToggle=2022,PenisPanelToggle=2023,PenisReset=2024,FluidClear=2025,FeetPinToggle=2026,HandsPinToggle=2027,SkinLitToggle=2028,VoiceToggle=2029,
         SecondChange=3690,SecondClothes=3691,SecondBase=3700, // the second heroine (lesbian, 3P)
         ClothesBase=3000,RoomBase=3200,OutfitBase=3300,CoordinateToggle=3310,CoordinateAccessories=3311,CoordinateBase=3400,
     };
