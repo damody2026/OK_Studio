@@ -1005,6 +1005,10 @@ do
       if g then for _, a in ipairs(g.anchors) do if a.name == s.name then a.pos = P(s.pos[1], s.pos[2], s.pos[3]); a.source = (a.source or '') .. ' (customer side)' end end end
     end
   end
+  -- the park's fountain photo: facing north (yaw -75.7, the landmark's own) they were put on the fountain's north side, in
+  -- the festival square, and the camera stood among the stalls (cotton candy, shooting, a tandem bike in front of them;
+  -- c-conquest conq1112g, 11-12). Facing south they stand on the open south side, outside the festival's box
+  if byid.park then for _, a in ipairs(byid.park.anchors) do if a.name == 'fountain' then a.yaw = 90 end end end
   table.sort(GAME_PLACES, function(a, b) return a.id < b.id end)
 end
 -- kitchens and baths in the homes (c-conquest 8.2 住家): every lockable room gets kitchen / stove / bath anchors from
