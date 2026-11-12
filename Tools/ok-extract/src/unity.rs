@@ -2335,6 +2335,15 @@ impl ParsedBundle {
             })
     }
     pub fn skeleton(&self,path_id:i64)->Option<crate::pose::Skeleton> {self.memo("skeleton",&path_id,||self.skeleton_unity(path_id))}
+    /// Private skeletons of (Mesh, renderer) pairs whose Mesh is shared by renderers with different bone lists.
+    pub(crate) fn renderer_skeletons(&self,pairs:&[(i64,i64)])->Vec<(i64,crate::pose::Skeleton)> {
+        if pairs.is_empty() {return Vec::new();}
+        // A library model recorded before this query has no answer (and no Unity files to compute one): it keeps the
+        // per-Mesh skeleton instead of reporting a gap.
+        if self.library_model()&&!crate::oklib::memo_known(self.lib.as_ref(),"renderer_skeletons",pairs) {return Vec::new();}
+        self.memo("renderer_skeletons",pairs,||self.transform_graphs().iter()
+            .flat_map(|graph|crate::pose::renderer_skeletons_from_graph(graph,pairs)).collect())
+    }
     pub fn skeleton_full_named(&self,probe:&str)->Option<crate::pose::Skeleton> {self.memo("skeleton_full_named",probe,||self.skeleton_full_named_unity(probe))}
     pub fn skeleton_for_prefab_name(&self,prefab_name:&str)->Option<crate::pose::Skeleton> {let _spot=crate::profile::spot("skeleton_for_prefab_name");self.memo_prefab("skeleton_for_prefab_name",prefab_name,prefab_name,||self.skeleton_for_prefab_name_unity(prefab_name))}
     pub fn textures_keep_base(&self)->Vec<(String,Vec<u8>)> {let _spot=crate::profile::spot("textures_keep_base");
@@ -3992,11 +4001,19 @@ impl ParsedBundle {
                 .flat_map(|file| file.objects.iter().filter(|info| matches!(info.type_id,23|137))
                     .map(|info|(info.path_id,info.type_id==137))).collect()));
             *self.renderer_kinds.borrow_mut() = Some(r.clone()); r } };
-        for m in meshes {
+        for m in meshes.iter_mut() {
             let kinds: std::collections::HashSet<_> = m.renderer_ids.iter()
                 .filter_map(|id|renderer_types.get(id).copied()).collect();
             m.renderer_skinned = if kinds.len()==1 {kinds.iter().copied().next()} else {None};
-            if let Some(s) = self.skeleton(m.path_id).filter(|_|m.renderer_skinned!=Some(false)) {
+        }
+        // One Mesh asset can be skinned by renderers of different prefabs, each with its own armature: the renderer's
+        // own skeleton, not whichever prefab the per-Mesh lookup found first.
+        let pairs:Vec<(i64,i64)>=meshes.iter().filter(|m|m.renderer_skinned!=Some(false)&&m.renderer_ids.len()==1)
+            .map(|m|(m.path_id,m.renderer_ids[0])).collect();
+        let own:HashMap<i64,crate::pose::Skeleton>=self.renderer_skeletons(&pairs).into_iter().collect();
+        for m in meshes {
+            let renderer_own=m.renderer_ids.first().filter(|_|m.renderer_ids.len()==1).and_then(|r|own.get(r).cloned());
+            if let Some(s) = renderer_own.or_else(||self.skeleton(m.path_id)).filter(|_|m.renderer_skinned!=Some(false)) {
                 m.bone_names = s.names.clone();
                 m.smr_skel = Some(s);
             }
