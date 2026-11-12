@@ -200,7 +200,7 @@ fn one_piece(card:&[u8],outfit:usize)->Result<bool,String>{
  static N:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
  let tmp=std::env::temp_dir().join(format!("ok-dress-{}-{}.png",std::process::id(),N.fetch_add(1,std::sync::atomic::Ordering::Relaxed)));
  fs::write(&tmp,card).map_err(|e|e.to_string())?;
- let rules=crate::clothing_rules::load(Path::new(""),&tmp,outfit as i32);let _=fs::remove_file(&tmp);
+ let rules=crate::clothing_rules::load_uncached(Path::new(""),&tmp,outfit as i32);let _=fs::remove_file(&tmp);
  Ok(rules.is_ok_and(|r|r.hides_bottoms()))
 }
 

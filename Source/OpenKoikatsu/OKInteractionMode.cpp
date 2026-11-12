@@ -299,6 +299,12 @@ void AOKInteractionMode::PumpWardrobe(){
 }
 void AOKInteractionMode::TickOutfitSwap(){
     if(!bWardrobePlanned){bWardrobePlanned=true;PlanWardrobe();
+        // Her clothing rules for each outfit worked out off the game thread (ok-extract keeps them): a pose's undoing of her
+        // clothes asks for them, and the first ask cost 0.8 s a piece in the frame (3.9 s for the side position, 2026-11-12).
+        {const FString Root=OpenedRoot(),Card=OpenedFemaleCard();const int32 Count=FMath::Clamp(Controller->Selected.Outfits.Num(),1,8),Worn=Controller->OutfitIndex;
+         Async(EAsyncExecution::Thread,[Root,Card,Count,Worn](){const double T0=FPlatformTime::Seconds();
+             for(int32 I=-1;I<Count;++I){const int32 Outfit=I<0?Worn:I;if(I>=0&&Outfit==Worn)continue;uint8 Zero[9]={},Out[9];FString Why;FOkSession::ClothingTransition(Root,Card,Outfit,Zero,0,Out,Why);}
+             UE_LOG(LogTemp,Display,TEXT("H scene clothing rules prepared for %d outfits in %.0f ms"),Count,(FPlatformTime::Seconds()-T0)*1000.);});}
         // Brought over from the card reader, she has only the state she was opened in: her clothes again, with them all.
         if(bClonedFemale)StartSwap(Controller->OutfitIndex,FString(),false);}
     if(OutfitChanging){

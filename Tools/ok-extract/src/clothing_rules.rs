@@ -60,7 +60,21 @@ pub(crate) fn validate(bytes:&[u8],digest:&str)->Result<Rules,String>{
     let data:Prepared=serde_json::from_slice(bytes).map_err(|e|e.to_string())?;
     if data.schema!=1||data.resource_sha256!=digest||data.rules.types.iter().flatten().any(|v|*v>3){return Err("clothing rule metadata mismatch".into());}Ok(data.rules)
 }
+/// One card's rules per process, by its file (path, size, time) and outfit: working them out reads her card, the item
+/// lists and the mods (about 0.8 s, trace 2026-11-12), and a pose undoing five pieces asked five times on the game thread.
+type CacheKey=(std::path::PathBuf,std::path::PathBuf,u64,std::time::SystemTime,i32);
+fn cache()->&'static std::sync::Mutex<std::collections::HashMap<CacheKey,Rules>>{
+    static CACHE:std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<CacheKey,Rules>>>=std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
 pub(crate) fn load(game:&Path,path:&Path,outfit:i32)->Result<Rules,String>{
+    let key=fs::metadata(path).ok().and_then(|m|Some((game.to_path_buf(),path.to_path_buf(),m.len(),m.modified().ok()?,outfit)));
+    if let Some(key)=&key{if let Some(rules)=cache().lock().unwrap_or_else(|e|e.into_inner()).get(key){return Ok(rules.clone());}}
+    let rules=load_uncached(game,path,outfit)?;
+    if let Some(key)=key{let mut map=cache().lock().unwrap_or_else(|e|e.into_inner());if map.len()>256{map.clear();}map.insert(key,rules.clone());}
+    Ok(rules)
+}
+pub(crate) fn load_uncached(game:&Path,path:&Path,outfit:i32)->Result<Rules,String>{
     use sha2::{Digest,Sha256};
     let bytes=crate::gamefs::read(path).map_err(|e|e.to_string())?;
     if !bytes.starts_with(b"\x89PNG\r\n\x1a\n")||crate::portable::png_snapshot(&bytes)?.1.is_none(){

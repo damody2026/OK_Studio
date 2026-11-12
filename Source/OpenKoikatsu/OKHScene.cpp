@@ -1138,6 +1138,9 @@ void UOKHScenePanel::ApplyPregnancy(double Now){ TRACE_CPUPROFILER_EVENT_SCOPE(O
     TSharedPtr<FJsonObject> Mods;if(!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Gallery->EditorModsJson()),Mods)||!Mods.IsValid())return;
     const TSharedPtr<FJsonObject>* Own=nullptr;TSharedPtr<FJsonObject> P=Mods->TryGetObjectField(TEXT("pregnancy"),Own)?*Own:MakeShared<FJsonObject>();
     double Card=0;P->TryGetNumberField(TEXT("inflationSize"),Card);bool bShaped=P->HasField(TEXT("inflationMultiplier"));
+    // Nothing to show on a model just built (no belly, none on her card): it is as loaded, and sending her mods again cost
+    // 430 ms in the scene's first frames (trace 2026-11-12).
+    if(Belly<=0.f&&PregBellyShown<=0.f&&Card<=0.){PregActor=Girl;PregOutfit=Gallery->OutfitIndex;return;}
     if(!bShaped)for(const auto& KV:OKPregStandard)P->SetNumberField(KV[0],FCString::Atof(KV[1]));
     P->SetBoolField(TEXT("GameplayEnabled"),true);P->SetNumberField(TEXT("inflationSize"),FMath::Max(Card,40.*Belly));Mods->SetObjectField(TEXT("pregnancy"),P);
     FString Json;FJsonSerializer::Serialize(Mods.ToSharedRef(),TJsonWriterFactory<>::Create(&Json));bool Geometry=false;
