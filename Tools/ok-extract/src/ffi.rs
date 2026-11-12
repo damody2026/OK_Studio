@@ -173,6 +173,11 @@ pub unsafe extern "C" fn ok_belly_wrap_deltas(s:*mut OkSession,at:*const f32,rad
     moves.len() as i32
 }
 #[no_mangle]
+pub unsafe extern "C" fn ok_belly_wrap_prepare(s:*mut OkSession) {
+    // Her wrap's vertex table built ahead on a thread of its own (belly_bulge::wrap_prepare), the session idle.
+    if let Some(s)=sess_ref(s){crate::belly_bulge::wrap_prepare(s);}
+}
+#[no_mangle]
 pub unsafe extern "C" fn ok_belly_wrap_start(s:*mut OkSession,at:*const f32,radius:f32,wrap:i32,cover:i32)->i32 {
     // This frame's wrap and clothes on the wrap worker (belly_bulge::wrap_start), the session idle: at as
     // ok_belly_wrap_deltas, wrap 0 her skin left alone (her breasts still push her clothes), cover 0 her clothes left
@@ -639,6 +644,16 @@ pub unsafe extern "C" fn ok_session_clothes_parts_shown(s:*mut OkSession,states:
     let values:[u8;9]=std::slice::from_raw_parts(states,9).try_into().unwrap();
     for(index,part)in s.parts.iter().enumerate().take(cap.max(0) as usize){*out.add(index)=crate::unity::state_nodes_shown(&part.runtime_textures,&values) as u8;}
     s.parts.len() as i32
+}
+/// `ok_session_wardrobe_body_mask` from her body's own mask (its top-state-0 mask), no session: thread-safe, so the
+/// three states can be made ahead off the game thread (the result is kept by content, png_transform_cache).
+#[no_mangle]
+pub unsafe extern "C" fn ok_body_mask_for_top_state(mask:*const u8,len:i32,top_state:i32,out:*mut u8,cap:i32)->i32 {
+    if mask.is_null()||len<=0{return -1;}
+    let mask=std::slice::from_raw_parts(mask,len as usize);
+    let Some(png)=crate::clothes_texture::body_mask_for_alpha_state(mask,crate::clothes_texture::clothes_alpha_state(top_state.clamp(0,3) as u8)) else{return 0;};
+    if !out.is_null()&&cap as usize>=png.len(){std::ptr::copy_nonoverlapping(png.as_ptr(),out,png.len());}
+    png.len() as i32
 }
 /// The mask her body takes with her top in this state (`ChaControl.ChangeAlphaMask`); its length, 0 when none, -1 when
 /// `out` is too small for it.

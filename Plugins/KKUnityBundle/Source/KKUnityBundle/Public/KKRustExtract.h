@@ -192,6 +192,8 @@ public:
 	bool ClothesPartsShown(const uint8 States[9],TArray<uint8>& Out) const;
 	/** The PNG mask her body takes with her top in this state (empty: none). */
 	bool WardrobeBodyMask(int32 TopState,TArray<uint8>& Out) const;
+	// WardrobeBodyMask from her body's own mask (WardrobeBodyMask(0, ...)), no session: any thread.
+	static bool BodyMaskForTopState(const TArray<uint8>& Mask,int32 TopState,TArray<uint8>& Out);
 	// The parts the display hides (one byte a session part): their chains are not solved or skinned while hidden.
 	bool SetPartsHidden(TConstArrayView<uint8> Hidden);
 	static bool WardrobeSwap(FOkSession& Live,FOkSession& Donor,FString& Error);
@@ -267,6 +269,8 @@ public:
 	// This frame's wrap and clothes on the wrap worker, the session idle (ok_belly_wrap_start): as BellyWrapDeltas, bWrap false
 	// her skin left alone, bCover false her clothes left alone.
 	bool BellyWrapStart(bool bWrap,const FVector& From,const FVector& To,const FVector& Up,float RadiusM,bool bCover);
+	// Her wrap's vertex table built ahead off the game thread, the session idle (ok_belly_wrap_prepare): cheap to ask again.
+	void BellyWrapPrepare();
 	// The finished job, the session idle: false when none is ready. Her body's moves as BellyWrapDeltas, her garments' as
 	// ClothCoverDeltas, the garments to draw from their CPU vertices as SetClothCover.
 	bool BellyWrapTake(bool bCover,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,TArray<FVector3f>& OutNormalDeltas,TArray<int32>& OutClothParts,TArray<uint32>& OutClothIndices,TArray<FVector3f>& OutClothDeltas,TArray<int32>& OutCpuParts);

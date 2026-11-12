@@ -261,6 +261,10 @@ bool FOkSession::WardrobeBodyMask(int32 TopState,TArray<uint8>& Out) const{
  Out.Reset();if(!Handle)return false;const int32 Length=ok_session_wardrobe_body_mask(Handle,TopState,nullptr,0);if(Length<=0)return false;
  Out.SetNumUninitialized(Length);return ok_session_wardrobe_body_mask(Handle,TopState,Out.GetData(),Length)==Length;
 }
+bool FOkSession::BodyMaskForTopState(const TArray<uint8>& Mask,int32 TopState,TArray<uint8>& Out){
+ Out.Reset();const int32 Length=ok_body_mask_for_top_state(Mask.GetData(),Mask.Num(),TopState,nullptr,0);if(Length<=0)return false;
+ Out.SetNumUninitialized(Length);return ok_body_mask_for_top_state(Mask.GetData(),Mask.Num(),TopState,Out.GetData(),Length)==Length;
+}
 bool FOkSession::WardrobeSwap(FOkSession& Live,FOkSession& Donor,FString& Error){
  if(!Live.Handle||!Donor.Handle){Error=TEXT("wardrobe: no session");return false;}
  char Buffer[512]={};if(ok_session_wardrobe_swap(Live.Handle,Donor.Handle,Buffer,UE_ARRAY_COUNT(Buffer))!=0){Error=UTF8_TO_TCHAR(Buffer);return false;}
@@ -301,6 +305,7 @@ bool FOkSession::BellyWrapStart(bool bWrap,const FVector& From,const FVector& To
 	if(!Handle)return false;
 	const float At[9]={float(From.X),float(From.Y),float(From.Z),float(To.X),float(To.Y),float(To.Z),float(Up.X),float(Up.Y),float(Up.Z)};
 	return ok_belly_wrap_start(Handle,At,RadiusM,bWrap?1:0,bCover?1:0)==1; }
+void FOkSession::BellyWrapPrepare(){if(Handle)ok_belly_wrap_prepare(Handle);}
 bool FOkSession::BellyWrapTake(bool bCover,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,TArray<FVector3f>& OutNormalDeltas,TArray<int32>& OutClothParts,TArray<uint32>& OutClothIndices,TArray<FVector3f>& OutClothDeltas,TArray<int32>& OutCpuParts){
 	OutIndices.Reset();OutDeltas.Reset();OutNormalDeltas.Reset();OutClothParts.Reset();OutClothIndices.Reset();OutClothDeltas.Reset();OutCpuParts.Reset();if(!Handle)return false;
 	static constexpr int32 Most=65536;

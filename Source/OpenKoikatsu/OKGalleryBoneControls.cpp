@@ -1,6 +1,8 @@
 #include "OKGalleryWidget.h"
 #include "Hash/xxhash.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
+#include "Async/Async.h"
+#include "Misc/ScopeLock.h"
 #include "OKComboBox.h"
 #include "OKShapeSlider.h"
 #include "OKBoneControls.h"
@@ -41,15 +43,26 @@ FString OriginalCategory(bool Body,int32 Index){
 TSharedPtr<FJsonObject> DefaultData(){auto D=MakeShared<FJsonObject>();D->SetArrayField(TEXT("scale"),Vec3(1,1,1));D->SetNumberField(TEXT("length"),1);D->SetArrayField(TEXT("pos"),Vec3(0,0,0));D->SetArrayField(TEXT("rot"),Vec3(0,0,0));return D;}
 }
 
+FString OKEditorModsJsonOf(const TArray<uint8>& Block);
 FString UOKCharacterController::EditorModsJson() const {
  // Decoding the card's KKEx block (ABMX, MaterialEditor, ...) took up to ~40 ms, and every load, clothing warm-up and
  // cached preview asks for it: the last result is kept for identical bytes.
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_GalleryEditorModsJson);
  static const TArray<uint8> Empty;const TArray<uint8>* Block=Selected.RawBlocks.Find(TEXT("KKEx"));if(!Block)Block=&Empty;
- static FXxHash64 LastHash;static int32 LastSize=-1;static FString LastJson;
- const FXxHash64 Hash=FXxHash64::HashBuffer(Block->GetData(),Block->Num());
- if(Block->Num()!=LastSize||Hash!=LastHash){LastJson=FOkSession::DecodeEditorMods(*Block);LastHash=Hash;LastSize=Block->Num();}
- return LastJson;
+ return OKEditorModsJsonOf(*Block);
+}
+namespace{FCriticalSection GEditorModsLock;TMap<FXxHash64,FString> GEditorModsMade;}
+// A few cards' decoded mods, by their bytes; any thread (PrepareEditorModsJson makes one ahead on a worker).
+FString OKEditorModsJsonOf(const TArray<uint8>& Block){
+ const FXxHash64 Hash=FXxHash64::HashBuffer(Block.GetData(),Block.Num());
+ {FScopeLock Lock(&GEditorModsLock);if(const FString* Known=GEditorModsMade.Find(Hash))return *Known;}
+ FString Json=FOkSession::DecodeEditorMods(Block);
+ FScopeLock Lock(&GEditorModsLock);if(GEditorModsMade.Num()>=8)GEditorModsMade.Reset();GEditorModsMade.Add(Hash,Json);return Json;
+}
+void UOKCharacterController::PrepareEditorModsJson() const{
+ // The first decode of her card's mods took 70 to 90 ms of the frame her one-on-one opened (2026-11-12).
+ const TArray<uint8>* Block=Selected.RawBlocks.Find(TEXT("KKEx"));if(!Block)return;
+ Async(EAsyncExecution::Thread,[Copy=*Block](){OKEditorModsJsonOf(Copy);});
 }
 void UOKCharacterController::BuildBoneControls(){
  BoneSliders.Reset();

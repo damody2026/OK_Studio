@@ -197,7 +197,7 @@ void AOKInteractionMode::LoadFemale(const FString& Path,int32 Outfit){
             if(!Job->Ok){Mode->Fail(Job->Error.IsEmpty()?TEXT("女角高模載入失敗"):Job->Error);return;}
             C->Selected=MoveTemp(Job->Card);C->Entries.Reset();auto& E=C->Entries.AddDefaulted_GetRef();E.Path=Path;E.FileName=FPaths::GetCleanFilename(Path);C->SelectedIndex=0;C->OutfitIndex=Outfit;C->PreviewOutfitIndex=Outfit;C->PreviewCardPath=Path;C->bModelLayout=true;
             if(!Job->Pairs.IsEmpty()){C->PendingLoadPairJson=MoveTemp(Job->Pairs);C->PendingLoadPairGeneration=C->LoadGeneration;}
-            Mode->LoadingFemale=Mode->GetWorld()->SpawnActor<AKKPreviewActor>();if(!Mode->LoadingFemale){Mode->Fail(TEXT("無法建立高模角色"));return;}Mode->LoadingFemale->bPreserveSourceWorld=true;if(Mode->bInPlace)Mode->LoadingFemale->SetActorTransform(FTransform(Mode->InPlaceAt.GetRotation(),Mode->InPlaceAt.GetLocation()));else Mode->LoadingFemale->SetActorLocation(FVector::ZeroVector);Mode->LoadingFemale->SetActorHiddenInGame(true);Mode->LoadingFemale->Session=MoveTemp(Job->Session);
+            Mode->LoadingFemale=Mode->GetWorld()->SpawnActor<AKKPreviewActor>();if(!Mode->LoadingFemale){Mode->Fail(TEXT("無法建立高模角色"));return;}Mode->LoadingFemale->bPreserveSourceWorld=true;if(Mode->bInPlace)Mode->LoadingFemale->SetActorTransform(FTransform(Mode->InPlaceAt.GetRotation(),Mode->InPlaceAt.GetLocation()));else Mode->LoadingFemale->SetActorLocation(FVector::ZeroVector);Mode->LoadingFemale->SetActorHiddenInGame(true);Mode->LoadingFemale->Session=MoveTemp(Job->Session);Mode->LoadingFemale->PrepareWornBodyMasks();if(Mode->Controller)Mode->Controller->PrepareEditorModsJson();
             FString Error;if(!Mode->LoadingFemale->BeginSessionLoad(Error)){Mode->Fail(Error);return;}
         });
     });
@@ -508,16 +508,19 @@ void AOKInteractionMode::Tick(float Delta){
         const TSharedPtr<SWidget> Focus=FSlateApplication::IsInitialized()?FSlateApplication::Get().GetKeyboardFocusedWidget():nullptr;
         if(!Focus||!Focus->GetType().ToString().Contains(TEXT("EditableText")))SetHPaused(!Controller->PairedPlayback->IsPaused());}
     if(FPlatformTime::Seconds()-Started>180&&!Ready&&(!Activated||ReturnLabel==TEXT("返回多人街區"))){Fail(TEXT("一對一互動準備逾時"));return;}
-    if(LoadingFemale){FString Why;
+    if(LoadingFemale){TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_HerLoaded);FString Why;
         if(!LoadingFemale->ContinueSessionLoad(Why)){Fail(Why);return;}
         if(!LoadingFemale->IsSessionLoadComplete())return;
         bool FullOff=true;for(uint8 State:Controller->ClothesStates)FullOff&=State==3;
-        LoadingFemale->bAllClothesStates=!bClonedFemale;LoadingFemale->SetClothingPartsHidden(Controller->ClothesStates);
-        if(FullOff)LoadingFemale->SetClothingHidden(true);
-        if(!LoadingFemale->BeginProgressiveMaterials())return;
+        {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_HerClothes);LoadingFemale->bAllClothesStates=!bClonedFemale;LoadingFemale->SetClothingPartsHidden(Controller->ClothesStates);
+        if(FullOff)LoadingFemale->SetClothingHidden(true);}
+        {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_HerMaterials);if(!LoadingFemale->BeginProgressiveMaterials())return;}
         Controller->PreviewActor=LoadingFemale;LoadingFemale=nullptr;Controller->PreviewActor->SetActorTickEnabled(false);Controller->bLoadInFlight=false;
-        Controller->PreviewActor->ApplyShapes(Controller->Selected.Face.ShapeValueFace,Controller->Selected.Body.ShapeValueBody);
-        Controller->PreviewActor->SetupStudioView(true);Controller->PreviewActor->SetActorHiddenInGame(false);Controller->RefreshPairs();
+        // Only when they differ from what she was opened with (as ActivateInteraction): the same again was 220 ms of the frame.
+        {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_HerShapes);auto* Her=Controller->PreviewActor.Get();
+         if(Her->bShapeDirty||Her->Session.ShapeBody()!=Controller->Selected.Body.ShapeValueBody||Her->Session.ShapeFace()!=Controller->Selected.Face.ShapeValueFace)Her->ApplyShapes(Controller->Selected.Face.ShapeValueFace,Controller->Selected.Body.ShapeValueBody);}
+        {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_HerView);Controller->PreviewActor->SetupStudioView(true);Controller->PreviewActor->SetActorHiddenInGame(false);}
+        {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_RefreshPairs);Controller->RefreshPairs();}
         // SetupStudioView stands her at the world's origin, which on the street is a square outdoors: she tried the shop's
         // dress on in the open. A fitting stays where she was, in the shop, and the camera takes the side with the most room.
         if(bFitting&&bInPlace){auto* Her=Controller->PreviewActor.Get();const FVector Feet=InPlaceAt.GetLocation();const FVector Chest=Feet+FVector(0.,0.,100.);
@@ -540,16 +543,16 @@ void AOKInteractionMode::Tick(float Delta){
             Her->OrbitFocus=FVector(Feet.X,Feet.Y,Feet.Z+Her->OrbitFocus.Z);Her->OrbitYaw=InPlaceAt.Rotator().Yaw;Her->ApplyOrbitCamera();
             UE_LOG(LogTemp,Display,TEXT("One-on-one: in place at %s yaw %.0f"),*Feet.ToCompactString(),InPlaceAt.Rotator().Yaw);}
     }
-    if(!OwnController)Controller->TickPreviewPreparation();
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_PreviewPreparation);if(!OwnController)Controller->TickPreviewPreparation();}
     if(!Activated){
         if(Controller->bLoadInFlight)return;
-        Controller->InteractionReturnLabel=ReturnLabel;Controller->ActivateInteraction();
+        {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_Activate);Controller->InteractionReturnLabel=ReturnLabel;Controller->ActivateInteraction();}
         if(!Controller->InteractionWidget)return;
         Activated=true;OriginalPosition=Controller->PreviewActor->GetActorLocation();
         if(bFitting){Controller->InteractionWidget->SetVisibility(ESlateVisibility::Collapsed);if(auto* PC=Cast<AOpenKoikatsuPlayerController>(Controller->GetOwningPlayer()))PC->SetPaintPreviewActive(false);}
-        else if(!MalePath.IsEmpty())Controller->LoadPartnerFromPath(MalePath);
+        else if(!MalePath.IsEmpty()){TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_LoadPartner);Controller->LoadPartnerFromPath(MalePath);}
     }
-    UpdatePairPhysics();
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_PairPhysics);UpdatePairPhysics();}
     if(bFitting&&!Ready&&IsValid(Controller->PreviewActor)&&Controller->PreviewActor->PreparePlaybackMaterials(false)){
         auto* Her=Controller->PreviewActor.Get();
         if(!Her->SetGameSceneMode(3,false)||!Her->SetGameAnimation(TEXT("states:studio@5B2273747564696F2F616E696D652F30302E756E6974793364222C227461636869222C22222C22225D|tachi / [Studio layer 0] Base Layer.f_tachi_00_00")))UE_LOG(LogTemp,Warning,TEXT("Fitting: the standing clip did not play"));
@@ -568,9 +571,9 @@ void AOKInteractionMode::Tick(float Delta){
         Evidence->SetNumberField(TEXT("playback_start_seconds"),Controller->PairedPlayback->GetElapsed());
         if(!ReportPath.IsEmpty())FScreenshotRequest::RequestScreenshot(FPaths::GetPath(ReportPath)/TEXT("high-interaction.png"),true,false);
     }
-    if(Ready)TickOutfitSwap();
+    if(Ready){TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_OutfitSwap);TickOutfitSwap();}
 #if !UE_BUILD_SHIPPING
-    if(Ready&&!TickFeatureAudit())return;
+    if(Ready){TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_FeatureAudit);if(!TickFeatureAudit())return;}
 #endif
     if(Ready&&AutoReturnSeconds>0&&FPlatformTime::Seconds()-ReadyAt>=AutoReturnSeconds)Exit();
 }

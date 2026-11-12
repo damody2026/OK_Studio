@@ -119,6 +119,8 @@ int32_t ok_session_wardrobe_strip(OkSession* s);
 int32_t ok_session_wardrobe_first(OkSession* s);
 int32_t ok_session_clothes_parts_shown(OkSession* s,const uint8_t* states,uint8_t* out,int32_t cap);
 int32_t ok_session_wardrobe_body_mask(OkSession* s,int32_t top_state,uint8_t* out,int32_t cap);
+/* ok_session_wardrobe_body_mask from her body's own (top state 0) mask, no session: thread-safe. */
+int32_t ok_body_mask_for_top_state(const uint8_t* mask,int32_t len,int32_t top_state,uint8_t* out,int32_t cap);
 int32_t ok_session_set_parts_hidden(OkSession* s,const uint8_t* mask,int32_t count);
 int32_t ok_session_wardrobe_swap(OkSession* live,OkSession* donor,char* err,int32_t cap);
 /* Whether an Unreal animation drives this body: 1 yes, 0 the session samples its game animation, -1 follow OK_UE_ANIM
@@ -139,6 +141,8 @@ int32_t ok_belly_wrap_deltas(OkSession* s,const float* at,float radius,uint32_t*
 /* This frame's wrap and clothes on the wrap worker, the session idle: at as ok_belly_wrap_deltas, wrap 0 her skin left
    alone, cover 0 her clothes left alone. 1 started, 0 the last one still runs, -1 bad input. */
 int32_t ok_belly_wrap_start(OkSession* s,const float* at,float radius,int32_t wrap,int32_t cover);
+/* Her wrap's vertex table built ahead on a thread of its own, the session idle (once; nothing when it is there). */
+void ok_belly_wrap_prepare(OkSession* s);
 /* The finished job of ok_belly_wrap_start, the session idle: her body's moves as ok_belly_wrap_deltas (the count returned;
    -2 none ready, -1 bad input), her garments' as ok_cover_deltas (cloth_n), the garments to draw from their CPU vertices
    as ok_set_cover (cpu_n). */

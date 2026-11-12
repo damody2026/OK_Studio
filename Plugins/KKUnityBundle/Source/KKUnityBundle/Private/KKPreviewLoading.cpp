@@ -244,7 +244,7 @@ bool AKKPreviewActor::HasClothingKind(int32 Kind) const{
  return false;
 }
 
-void AKKPreviewActor::SetClothingPartsHidden(const uint8 States[9]){
+void AKKPreviewActor::SetClothingPartsHidden(const uint8 States[9]){ TRACE_CPUPROFILER_EVENT_SCOPE(KK_SetClothingPartsHidden);
  if(bClothingHidden)SetClothingHidden(false);
  for(UMeshComponent* Component:PartHiddenClothingComponents)if(IsValid(Component))Component->SetVisibility(true,false);
  PartHiddenClothingComponents.Reset();
@@ -267,7 +267,7 @@ void AKKPreviewActor::SetClothingPartsHidden(const uint8 States[9]){
  // A part shown again was not skinned while hidden: paused, no frame is solved, and it stood where it was last drawn (her
  // shoes on the floor). Its chains start over on the next solved frame, which this asks for.
  if(HiddenParts!=SentHiddenParts){SentHiddenParts=HiddenParts;bBodyReactionPoseDirty=true;}
- Session.SetPartsHidden(HiddenParts);
+ {TRACE_CPUPROFILER_EVENT_SCOPE(KK_SetPartsHidden);Session.SetPartsHidden(HiddenParts);}
  if(bAllClothesStates)SetBodyMask(WornBodyMask(States[0]));
  if(Any)OpenBodyMasks();else RestoreBodyMasks();
  UE_LOG(LogTemp,Display,TEXT("OK clothing parts hidden=%d masks=%d"),PartHiddenClothingComponents.Num(),ClothingMaskMaterials.Num());

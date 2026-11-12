@@ -582,6 +582,10 @@ private:
     UPROPERTY() TArray<TObjectPtr<UTexture2D>> WornTextures; // the textures only her current clothes use
     void SetBodyMask(UTexture* Mask);
     UTexture* WornBodyMask(int32 TopState);
+public:
+    // WornBodyMask's masks made and decoded ahead off the game thread (call with the session idle, once it is open).
+    void PrepareWornBodyMasks();
+private:
     UPROPERTY() TMap<int32,TObjectPtr<UTexture2D>> WornBodyMasks; // by clothes_alpha_state's three cases, for what she wears
     bool BuildSessionPartRange(FOkSession& Source,FPartBuildOutput& Output,int32 Begin,int32 End,FString& OutError);
 	TSharedPtr<FSessionLoadState> SessionLoadState;

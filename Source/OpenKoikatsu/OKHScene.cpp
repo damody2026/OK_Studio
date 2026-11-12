@@ -2134,7 +2134,7 @@ void UOKHScenePanel::TickEyeDull(float Delta){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_
         if(PupilShakeClock>=1.f){PupilShakeClock=FMath::Fractional(PupilShakeClock);PupilShakeFrom=PupilShakeTo;PupilShakeTo=FVector2f(FMath::RandPointInCircle(Range));}
         PupilShakeNow=FMath::Lerp(PupilShakeFrom,PupilShakeTo,PupilShakeClock);Girl->SetPupilOffset(PupilShakeNow.X,PupilShakeNow.Y);}
     else if(!PupilShakeNow.IsZero()){PupilShakeNow=PupilShakeFrom=PupilShakeTo=FVector2f::ZeroVector;Girl->SetPupilOffset(0.f,0.f);}
-    TickEyeLook(Girl,Delta);
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickEyeLook);TickEyeLook(Girl,Delta);}
     const bool bHide=Want>1.f||CVarHPupilHighlight.GetValueOnGameThread()==0;const float Sized=Want*CVarHPupilSize.GetValueOnGameThread();
     const float Now=EyeDullScale>0.f?FMath::FInterpConstantTo(EyeDullScale,Sized,Delta,.3f):Sized;
     if(Now==EyeDullScale&&bHide==bEyeDullHidden)return;
@@ -3053,6 +3053,8 @@ void UOKHScenePanel::ReadBulge(AKKPreviewActor* Girl,const FVector& Tip,const FV
          // Last frame's, then this frame's on its way: body and clothes both from it, shown together (CoverClothes).
          {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HWrapTake);bHave=Girl->Session.BellyWrapTake(bCover,Idx,D,N,ClothParts,ClothIdx,ClothD,ClothCpu);}bClothTaken=bHave;bClothPiped=true;
          const bool bIn=!E.IsZero()&&TipInside>=6.f;
+         // Her wrap's vertex table built ahead off the game thread: built the frame he first went in, it took 190 ms.
+         if(!bIn&&!bWrapTipKnown)Girl->Session.BellyWrapPrepare();
          const FVector Ahead=bIn&&bWrapTipKnown?(Tip-WrapLastTip).GetClampedToMaxSize(5.)*CVarHWrapLead.GetValueOnGameThread():FVector::ZeroVector;
          WrapLastTip=Tip;bWrapTipKnown=bIn;
          TRACE_CPUPROFILER_EVENT_SCOPE(OK_HWrapStart);Girl->Session.BellyWrapStart(bIn,ToUnity(E),ToUnity(Tip+Ahead),Front.IsZero()?FVector::ZeroVector:(ToUnity(Kokan+Front*10.)-ToUnity(Kokan)).GetSafeNormal(),(Radius+.5f)/100.f,bCover);}

@@ -19,6 +19,7 @@
 #include "KKRustExtract.h"
 #include "KKTextureRuntime.h"
 #include "Async/ParallelFor.h"
+#include "Async/Async.h"
 #include "Misc/SecureHash.h"
 #include "KKMainItemPlus.h"
 #include "KKForgeItem.h"
@@ -7396,11 +7397,23 @@ struct AKKPreviewActor::FWardrobeStage {
  }
 };
 
+void AKKPreviewActor::PrepareWornBodyMasks()
+{
+ // Her body's mask for each state of her top made and decoded ahead off the game thread (pixels only; the texture is
+ // still made on first use): decoding the first one was 140 ms of the frame her one-on-one opened (2026-11-12).
+ TArray<uint8> Own;if(!Session.WardrobeBodyMask(0,Own))return;
+ Async(EAsyncExecution::Thread,[Own=MoveTemp(Own)](){
+  for(const int32 Top:{0,1,3}){TArray<uint8> Png;if(Top==0)Png=Own;else if(!FOkSession::BodyMaskForTopState(Own,Top,Png))continue;OKPrecacheRuntimePng(Png,false);}
+ });
+}
+
 UTexture* AKKPreviewActor::WornBodyMask(int32 TopState)
 {
+ TRACE_CPUPROFILER_EVENT_SCOPE(KK_WornBodyMask);
  const int32 Key=TopState==0?0:TopState==3?2:1;
  if(const TObjectPtr<UTexture2D>* Known=WornBodyMasks.Find(Key))return Known->Get();
- TArray<uint8> Png;UTexture2D* Mask=Session.WardrobeBodyMask(TopState,Png)?LinearTextureFromPngBytes(Png.GetData(),Png.Num()):nullptr;
+ TArray<uint8> Png;bool bHave;{TRACE_CPUPROFILER_EVENT_SCOPE(KK_WornBodyMaskPng);bHave=Session.WardrobeBodyMask(TopState,Png);}
+ UTexture2D* Mask=nullptr;if(bHave){TRACE_CPUPROFILER_EVENT_SCOPE(KK_WornBodyMaskTexture);Mask=LinearTextureFromPngBytes(Png.GetData(),Png.Num());}
  WornBodyMasks.Add(Key,Mask);return Mask;
 }
 
@@ -9589,9 +9602,10 @@ bool AKKPreviewActor::SetPupilMarks(const FOKIrisMarks& Marks)
 }
 bool AKKPreviewActor::SetEyeDull(float PupilScale,bool bHideHighlight)
 {
-    if(!Session.SetPupilScale(PupilScale)) return false;
+    TRACE_CPUPROFILER_EVENT_SCOPE(KK_SetEyeDull);
+    {TRACE_CPUPROFILER_EVENT_SCOPE(KK_SetPupilScale);if(!Session.SetPupilScale(PupilScale)) return false;}
     EyePupilScale=PupilScale;bEyeHighlightHidden=bHideHighlight;
-    const bool bDrawn=SetEyeGaze(EyeGazeAsked[0],EyeGazeAsked[1],EyeGazeAsked[2]);
+    bool bDrawn;{TRACE_CPUPROFILER_EVENT_SCOPE(KK_EyeDullGaze);bDrawn=SetEyeGaze(EyeGazeAsked[0],EyeGazeAsked[1],EyeGazeAsked[2]);}
     static const TCHAR* const HighlightLayers[]={TEXT("_overcolor1"),TEXT("_overcolor2"),TEXT("_overcolor3")};
     auto Gate=[&](UMaterialInstanceDynamic* M){if(!M)return;const FVector4f* Card=EyeHighlightBase.Find(M);
         if(!Card){float Gated=0.f;if(!M->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("_isHighLight")),Gated))return;FVector4f Kept(Gated,0.f,0.f,0.f);
