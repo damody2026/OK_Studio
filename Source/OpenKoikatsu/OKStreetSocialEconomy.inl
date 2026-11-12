@@ -501,6 +501,10 @@ void AOKStreetSocialScene::TickPlaceClosing(){
  const FString Place=PlaceHere(S.Male);
  if(Place.IsEmpty()){S.ClosedNoticePlace.Reset();return;}
  FString Why;if(!PlaceClosedNow(Place,Why)){S.ClosedNoticePlace.Reset();return;}
+ // Doing something that belongs to another place, open now, whose spot lies inside this one: the park's fountain photo
+ // stands in the festival plaza, closed in the morning, and 三月七's photo at 9:44 ended as "the festival is closed" (R6-244).
+ if(S.ActGirl!=INDEX_NONE)if(const FOKStreetActivity* A=OKStreetFindActivity(S.ActId);A&&A->Place&&*A->Place&&Place!=A->Place){
+  FString Own;if(!PlaceClosedNow(A->Place,Own)){S.ClosedNoticePlace.Reset();return;}}
  // Staff early for a shift here (within the hour): he waits inside for the doors to open, not shown out as a customer.
  {const int64 NowMinute=OKStreetMindNow(S);if(S.Store.Appointments.ContainsByPredicate([&](const FOKStreetAppointment& A){return A.Kind==TEXT("shift")&&A.Place==Place&&A.Start>=NowMinute&&A.Start-NowMinute<=60;}))return;}
  // Not open yet but opening within a quarter of an hour (they came for breakfast at 6:56): they wait, nothing closes.
