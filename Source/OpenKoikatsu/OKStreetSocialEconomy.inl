@@ -487,6 +487,10 @@ void AOKStreetSocialScene::TickShopArrival(){
  // fountain went shrine, festival, shrine; each step forgot the last, the shrine's "here is what it sells" came twice in a
  // minute and 三月七 said "why are we back at the shrine again" (R6-248).
  if(const double* Told=S.ShopPromptedAt.Find(Place);Told&&SceneTime()-*Told<300.0){UE_LOG(LogTemp,Display,TEXT("Street shop arrival: %s was told %.0f s ago; no menu prompt"),*Place,SceneTime()-*Told);return;}
+ // On a stroll, one shop's prompt for a while, whichever: round the fountain 刻晴 was told the park's, the shrine's and
+ // the festival's in turn, ordered two omikuji nobody asked for and said "back at the shrine again" (R6-250).
+ if(S.OutingGirl!=INDEX_NONE&&(S.OutingActivity==TEXT("stroll")||S.OutingActivity==TEXT("walk")))for(const auto& T:S.ShopPromptedAt)if(SceneTime()-T.Value<180.0){
+  UE_LOG(LogTemp,Display,TEXT("Street shop arrival: %s on a stroll, %s was told %.0f s ago; no menu prompt"),*Place,*T.Key,SceneTime()-T.Value);return;}
  S.ShopPromptedAt.Add(Place,SceneTime());
  const auto* Where=OKStreetFindPlace(Place);
  // A bookshop or a pet shop: what is on sale, not "order what you feel like eating" (she said "nothing to eat here, don't order").
