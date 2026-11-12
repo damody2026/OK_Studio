@@ -14,6 +14,8 @@
 #include "PrimitiveSceneInfo.h"
 #include "ScenePrivate.h"
 #include "SceneRendering.h"
+#include "SceneRenderTargetParameters.h"
+#include "SceneTexturesConfig.h"
 
 static bool OKShouldCompileSourceMesh(const FMeshMaterialShaderPermutationParameters& P){
  const auto& M=P.MaterialParameters;
@@ -61,8 +63,15 @@ public:
 BEGIN_SHADER_PARAMETER_STRUCT(FOKSourceMeshPassParameters,)
  SHADER_PARAMETER_STRUCT_INCLUDE(FViewShaderParameters,View)
  SHADER_PARAMETER_STRUCT_INCLUDE(FInstanceCullingDrawParams,InstanceCullingDrawParams)
+ SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneTextureUniformParameters,SceneTextures)
  RENDER_TARGET_BINDING_SLOTS()
 END_SHADER_PARAMETER_STRUCT()
+// Translucent source materials made since StreetDisplay27/StudioDisplay31 read CustomDepth/CustomStencil (the Unity
+// draw-order depth test, OKAddUnityTranslucentDepthTest); without a bound scene-texture buffer the draw is a fatal
+// error. Custom depth only: this pass writes the scene depth, so it cannot also read it.
+static TRDGUniformBufferRef<FSceneTextureUniformParameters> OKSourceSceneTextures(FRDGBuilder& G,const FSceneView& View){
+ return View.bIsViewInfo?CreateSceneTextureUniformBuffer(G,View,ESceneTextureSetupMode::CustomDepth):nullptr;
+}
 bool OKAddSourceMaterialScenePass(FRDGBuilder& G,const FSceneView& View,FRDGTexture* Color,FRDGTexture* Depth,const FMeshBatch& Mesh,const FPrimitiveSceneProxy* Proxy,const FOKSourceRasterBinding& B){
  check(IsInRenderingThread());
  if(!Color||!Depth||Color->Desc.Extent!=Depth->Desc.Extent||!Mesh.MaterialRenderProxy||!Mesh.VertexFactory||Mesh.Elements.IsEmpty())return false;
@@ -70,7 +79,7 @@ bool OKAddSourceMaterialScenePass(FRDGBuilder& G,const FSceneView& View,FRDGText
  if(!Material||!OKSourceMaterialMeshShadersAvailable(*Material,Mesh.VertexFactory->GetType()))return false;
  auto* Owned=G.AllocObject<FMeshBatch>(Mesh);auto* P=G.AllocParameters<FOKSourceMeshPassParameters>();
  P->InstanceCullingDrawParams.InstanceCulling=FInstanceCullingContext::CreateDummyInstanceCullingUniformBuffer(G);if(Proxy)P->InstanceCullingDrawParams.Scene=GetSceneUniformBufferRef(G,View);
- P->View.View=View.ViewUniformBuffer;P->View.InstancedView=View.GetInstancedViewUniformBuffer();
+ P->View.View=View.ViewUniformBuffer;P->View.InstancedView=View.GetInstancedViewUniformBuffer();P->SceneTextures=OKSourceSceneTextures(G,View);
  P->RenderTargets[0]=FRenderTargetBinding(Color,ERenderTargetLoadAction::ELoad);
  P->RenderTargets.DepthStencil=FDepthStencilBinding(Depth,ERenderTargetLoadAction::ELoad,ERenderTargetLoadAction::ELoad,FExclusiveDepthStencil::DepthWrite_StencilWrite);
  AddDrawDynamicMeshPass(G,RDG_EVENT_NAME("Crowd.SourceMaterialDiagnostic"),P,View,FIntRect(FIntPoint::ZeroValue,Color->Desc.Extent),[Owned,B,&View,Proxy](FDynamicPassMeshDrawListContext* Context){FOKSourceMeshProcessor Processor(View,Context,B);Processor.AddMeshBatch(*Owned,~0ull,Proxy);},true);
@@ -123,7 +132,7 @@ uint32 OKAddCachedSourceMaterialScenePass(FRDGBuilder& G,const FSceneView& View,
  // caught by the fields compared above, so an old entry is never drawn for a new primitive.
  for(auto It=Cache->Entries.CreateIterator();It;++It)if(!Live.Contains(It.Key())&&GFrameCounterRenderThread-It.Value().UsedFrame>600)It.RemoveCurrent();
  if(!Submitted)return 0;
- auto* P=G.AllocParameters<FOKSourceMeshPassParameters>();P->View.View=View.ViewUniformBuffer;P->View.InstancedView=View.GetInstancedViewUniformBuffer();P->InstanceCullingDrawParams.Scene=GetSceneUniformBufferRef(G,View);
+ auto* P=G.AllocParameters<FOKSourceMeshPassParameters>();P->View.View=View.ViewUniformBuffer;P->View.InstancedView=View.GetInstancedViewUniformBuffer();P->InstanceCullingDrawParams.Scene=GetSceneUniformBufferRef(G,View);P->SceneTextures=OKSourceSceneTextures(G,View);
  P->RenderTargets[0]=FRenderTargetBinding(Color,ERenderTargetLoadAction::ELoad);P->RenderTargets.DepthStencil=FDepthStencilBinding(Depth,ERenderTargetLoadAction::ELoad,ERenderTargetLoadAction::ELoad,FExclusiveDepthStencil::DepthWrite_StencilWrite);
  Pass->BuildRenderingCommands(G,View,*View.Family->Scene->GetRenderScene(),P->InstanceCullingDrawParams);
  // BuildRenderingCommands clears the draw-parameter struct before filling it.
