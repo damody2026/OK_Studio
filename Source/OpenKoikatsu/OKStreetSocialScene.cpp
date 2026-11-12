@@ -588,6 +588,9 @@ FString VoicePickDescription,VoicePickNotice,TtsVoiceInstruct;int32 VoicePickTar
  TSharedPtr<SBorder> InteractionPanel,DialoguePanel;
  // The UI shell's holders, one per region (RebuildUI), and the right panel's scroll box (it keeps its position).
  TSharedPtr<SBox> UiRightHolder,UiShopHolder,UiDebugHolder,UiBottomHolder,UiBluffHolder,UiHistoryHolder,UiAppHolder,UiSaveHolder,UiMenuHolder,UiRosterHolder;TSharedPtr<SScrollBox> UiRightScroll;uint32 UiDirtyRegions=0;
+ // The right panel's settings rows (RebuildUI) and the values they showed: kept while those are unchanged; and the panel
+ // they are in, to take them out of before the next one.
+ TSharedPtr<SVerticalBox> UiRightBox,UiSettingsBlock;FString UiSettingsKey;
  // The player's settings (OKStreetSocialSettings.inl): voices (builtin | tts | cloud | off), voice input (local |
  // cloud), the API keys, and the menu at the top left that sets them.
  FString VoiceMode=TEXT("builtin"),AsrMode=TEXT("local"),DeepSeekKey,AliyunKey,AliyunBaseUrl,AliyunTtsModel,AliyunAsrModel,SettingsNotice;bool SettingsOpen=false;TSharedPtr<SBox> UiSettingsHolder;
@@ -2787,26 +2790,37 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
  // The right panel; its scroll box stays, so the scroll position is kept (set again in case the content got shorter).
  if(Regions&OKStreetUi::Right){
  auto Box=SNew(SVerticalBox);S.PresentationTopicButtons=0;
+ const bool Busy=OKStreetConversationBusy(S.Node!=INDEX_NONE,S.CollectedActive,S.RelationshipPending,S.TouchActive);
+ // The settings rows (his name, voices, language, look, saves, region, his tone) are built again only when what they
+ // show changed: every refresh rebuilt them, 1.4 ms of the 4 a talk turn's refresh took (2026-11-12). The heading
+ // and the combo labels read the state live. His name as he types it stays in the kept box.
+ const FString SettingsKey=FString::Printf(TEXT("%s|%s|%d|%d|%d|%d|%s|%d|%d|%d|%s|%s|%s|%d|%d|%s|%s|%d|%d|%s|%s|%s"),S.Manifest.Characters.IsValidIndex(0)?*S.Manifest.Characters[0].Name:TEXT(""),*S.PlayerCardName,
+  Busy?1:0,S.OtherLanguage.Nodes.IsEmpty()?1:0,S.Japanese?1:0,S.TtsCacheDir.IsEmpty()?1:0,*S.VoiceMode,S.Target!=INDEX_NONE?1:0,S.TtsEnabled?1:0,S.TtsSettingsPath.IsEmpty()?1:0,*S.TtsBaseSize,*S.Lang,*RenderStyle(),
+  S.Lit?1:0,S.SelfTest?1:0,*S.Store.Region,*S.MaleTone,S.ShowDebug?1:0,S.Target,*S.TtsVoiceInfo,*S.TouchNotice,*S.TalkFailureNotice);
+ TSharedPtr<SVerticalBox> Settings=S.UiSettingsBlock.IsValid()&&S.UiSettingsKey==SettingsKey?S.UiSettingsBlock:nullptr;
+ const bool BuildSettings=!Settings.IsValid();
+ if(BuildSettings){Settings=SNew(SVerticalBox);S.UiSettingsBlock=Settings;S.UiSettingsKey=SettingsKey;}
+ else if(S.UiRightBox.IsValid())S.UiRightBox->ClearChildren(); // the kept rows out of the panel they are in (replaced below)
+ if(BuildSettings){
  // Player name, editable any time; applies from the next line (subtitles and TTS).
- if(S.Manifest.Characters.IsValidIndex(0))Box->AddSlot().AutoHeight().Padding(4)[SNew(SHorizontalBox)
+ if(S.Manifest.Characters.IsValidIndex(0))Settings->AddSlot().AutoHeight().Padding(4)[SNew(SHorizontalBox)
   +SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0,0,6,0)[SNew(STextBlock).Text(FText::FromString(OKT(TEXT("ui.scene.hero_name_label"))))]
   +SHorizontalBox::Slot().FillWidth(1)[SNew(SEditableTextBox).Text(FText::FromString(S.PlayerNameDraft.IsEmpty()?S.Manifest.Characters[0].Name:S.PlayerNameDraft)).HintText(FText::FromString(S.PlayerCardName)).ClearKeyboardFocusOnCommit(true)
    .OnTextChanged_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](const FText& Text){if(Weak.IsValid()&&Weak->State)Weak->State->PlayerNameDraft=Text.ToString();})
    .OnTextCommitted_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](const FText& Text,ETextCommit::Type){if(Weak.IsValid()&&Weak->State){Weak->State->PlayerNameDraft.Reset();Weak->SetPlayerName(Text.ToString());}})]];
- const bool Busy=OKStreetConversationBusy(S.Node!=INDEX_NONE,S.CollectedActive,S.RelationshipPending,S.TouchActive);
  auto Heading=[Weak=TWeakPtr<FOKStreetSceneState>(State)](){auto L=Weak.Pin();if(!L||L->Target==INDEX_NONE)return FText::FromString(OKT(TEXT("ui.scene.app_title_apng")));const auto Relation=OKStreetViewRelation(L->Store,OKStreetStableId(L->Manifest.Characters[L->Target]),L->Manifest.TalkBudget);const float Spirits=Relation.MoodLevel*FMath::Pow(.5f,float(FMath::Max<int64>(0,OKStreetMindNow(*L)-Relation.MoodMinute))/360.f); // her spirits (R3-269)
  return FText::FromString(OKStreetScriptedName(L->Manifest.Characters[L->Target].Name)+OKMsg(TEXT("ui.scene.stats_line"), {{TEXT("favor"), Relation.Favor}, {TEXT("arousal"), Relation.Lewdness}, {TEXT("mood"), OKStreetMoodBand(Spirits)},{TEXT("stage"), Relation.Stage==TEXT("lover")?OKT(TEXT("ui.bonds.lover_stage")):Relation.Stage==TEXT("friend")?OKT(TEXT("ui.bonds.friend_stage")):OKT(TEXT("ui.scene.stage_new"))}}));};
- Box->AddSlot().AutoHeight().Padding(8)[SNew(STextBlock).Text_Lambda(Heading).AutoWrapText(true).WrapTextAt(360).Font(FCoreStyle::GetDefaultFontStyle("Bold",20))];
- if(!S.TouchNotice.IsEmpty())Box->AddSlot().AutoHeight().Padding(8)[SNew(STextBlock).Text(FText::FromString(S.TouchNotice)).AutoWrapText(true).WrapTextAt(360)];
- if(!S.TalkFailureNotice.IsEmpty())Box->AddSlot().AutoHeight().Padding(8)[SNew(STextBlock).Text(FText::FromString(S.TalkFailureNotice)).AutoWrapText(true).WrapTextAt(360)];
- Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).IsFocusable(S.Target!=INDEX_NONE).IsEnabled(!Busy&&!S.OtherLanguage.Nodes.IsEmpty()).Text(FText::FromString(S.Japanese?OKT(TEXT("ui.scene.voice_ja")):OKT(TEXT("ui.scene.voice_zh")))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->ToggleLanguage();return FReply::Handled();})];
- Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).IsFocusable(S.Target!=INDEX_NONE).IsEnabled(!S.TtsCacheDir.IsEmpty()).Text(FText::FromString(OKT(*(TEXT("ui.scene.voice_")+S.VoiceMode)))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->ToggleVoiceSource();return FReply::Handled();})];
+ Settings->AddSlot().AutoHeight().Padding(8)[SNew(STextBlock).Text_Lambda(Heading).AutoWrapText(true).WrapTextAt(360).Font(FCoreStyle::GetDefaultFontStyle("Bold",20))];
+ if(!S.TouchNotice.IsEmpty())Settings->AddSlot().AutoHeight().Padding(8)[SNew(STextBlock).Text(FText::FromString(S.TouchNotice)).AutoWrapText(true).WrapTextAt(360)];
+ if(!S.TalkFailureNotice.IsEmpty())Settings->AddSlot().AutoHeight().Padding(8)[SNew(STextBlock).Text(FText::FromString(S.TalkFailureNotice)).AutoWrapText(true).WrapTextAt(360)];
+ Settings->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).IsFocusable(S.Target!=INDEX_NONE).IsEnabled(!Busy&&!S.OtherLanguage.Nodes.IsEmpty()).Text(FText::FromString(S.Japanese?OKT(TEXT("ui.scene.voice_ja")):OKT(TEXT("ui.scene.voice_zh")))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->ToggleLanguage();return FReply::Handled();})];
+ Settings->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).IsFocusable(S.Target!=INDEX_NONE).IsEnabled(!S.TtsCacheDir.IsEmpty()).Text(FText::FromString(OKT(*(TEXT("ui.scene.voice_")+S.VoiceMode)))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->ToggleVoiceSource();return FReply::Handled();})];
  // The TTS model (from the next start): 1.7B sounds closer to each heroine, 0.6B takes about 1 GB less VRAM.
- if(S.TtsEnabled&&!S.TtsSettingsPath.IsEmpty())Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).IsFocusable(S.Target!=INDEX_NONE)
+ if(S.TtsEnabled&&!S.TtsSettingsPath.IsEmpty())Settings->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).IsFocusable(S.Target!=INDEX_NONE)
   .Text(FText::FromString(OKMsg(TEXT("ui.scene.tts_model"),{{TEXT("size"),*S.TtsBaseSize}}))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->ToggleTtsBaseSize();return FReply::Handled();})];
  {if(S.LangOptions.IsEmpty())for(const TCHAR* L:{TEXT("zh-TW"),TEXT("zh-CN"),TEXT("en")})S.LangOptions.Add(MakeShared<FString>(L));
   const int32 LangIndex=FMath::Max(0,S.LangOptions.IndexOfByPredicate([&](const TSharedPtr<FString>& L){return *L==S.Lang;}));
-  Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SComboBox<TSharedPtr<FString>>).OptionsSource(&S.LangOptions).InitiallySelectedItem(S.LangOptions[LangIndex])
+  Settings->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SComboBox<TSharedPtr<FString>>).OptionsSource(&S.LangOptions).InitiallySelectedItem(S.LangOptions[LangIndex])
    .OnGenerateWidget_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](TSharedPtr<FString> Item){return SNew(STextBlock).Text(FText::FromString(Item.IsValid()&&Weak.IsValid()?Weak->T(*(TEXT("ui.settings.lang_")+*Item)):FString()));})
    .OnSelectionChanged_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](TSharedPtr<FString> Item,ESelectInfo::Type Info){if(Weak.IsValid()&&Item.IsValid()&&Info!=ESelectInfo::Direct)Weak->SetLanguage(*Item);})
    [SNew(STextBlock).Text_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(!Weak.IsValid())return FText::GetEmpty();const FString Name=Weak->T(*(TEXT("ui.settings.lang_")+Weak->State->Lang));
@@ -2815,19 +2829,19 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
  // The characters' look: each card's own ramp, one of the game's shadow ramps (live), or HG (reloads on "auto").
  {if(S.RenderStyleOptions.IsEmpty()){S.RenderStyleOptions.Add(MakeShared<FString>(TEXT("koikatsu")));for(const auto& R:OKRenderRamps())S.RenderStyleOptions.Add(MakeShared<FString>(TEXT("ramp:")+R.Key));S.RenderStyleOptions.Add(MakeShared<FString>(TEXT("hg")));}
   const FString Style=RenderStyle();const int32 StyleIndex=FMath::Max(0,S.RenderStyleOptions.IndexOfByPredicate([&](const TSharedPtr<FString>& R){return *R==Style;}));
-  Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SComboBox<TSharedPtr<FString>>).OptionsSource(&S.RenderStyleOptions).InitiallySelectedItem(S.RenderStyleOptions[StyleIndex])
+  Settings->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SComboBox<TSharedPtr<FString>>).OptionsSource(&S.RenderStyleOptions).InitiallySelectedItem(S.RenderStyleOptions[StyleIndex])
    .OnGenerateWidget_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](TSharedPtr<FString> Item){return SNew(STextBlock).Text(FText::FromString(Item.IsValid()&&Weak.IsValid()?Weak->RenderStyleLabel(*Item):FString()));})
    .OnSelectionChanged_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](TSharedPtr<FString> Item,ESelectInfo::Type Info){if(Weak.IsValid()&&Item.IsValid()&&Info!=ESelectInfo::Direct)Weak->SetRenderStyle(*Item);})
    [SNew(STextBlock).Text(FText::FromString(OKMsg(TEXT("ui.settings.render_style"),{{TEXT("name"),RenderStyleLabel(Style)}})))]];}
  // Lit / unlit (user 2026-11-09): the characters lit by the street's lights instead of their own toon, switched live.
- Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(OKT(S.Lit?TEXT("ui.settings.lit_on"):TEXT("ui.settings.lit_off"))))
+ Settings->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(OKT(S.Lit?TEXT("ui.settings.lit_on"):TEXT("ui.settings.lit_off"))))
   .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->SetLit(!Weak->State->Lit);return FReply::Handled();})];
- if(!S.SelfTest)Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(OKT(TEXT("ui.saves.open_button"))))
+ if(!S.SelfTest)Settings->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(OKT(TEXT("ui.saves.open_button"))))
   .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->OpenSaveMenu(TEXT("game"));return FReply::Handled();})];
   // The setting (Taiwan, mainland China, a US college town): its money and prices; the save's money is converted.
  {if(S.RegionOptions.IsEmpty())for(const TCHAR* R:{TEXT("TW"),TEXT("CN"),TEXT("US")})S.RegionOptions.Add(MakeShared<FString>(R));
   const int32 RegionIndex=FMath::Max(0,S.RegionOptions.IndexOfByPredicate([&](const TSharedPtr<FString>& R){return *R==S.Store.Region;}));
-  Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SComboBox<TSharedPtr<FString>>).OptionsSource(&S.RegionOptions).InitiallySelectedItem(S.RegionOptions[RegionIndex])
+  Settings->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SComboBox<TSharedPtr<FString>>).OptionsSource(&S.RegionOptions).InitiallySelectedItem(S.RegionOptions[RegionIndex])
    .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item){return SNew(STextBlock).Text(FText::FromString(Item.IsValid()?FString(OKT(*(TEXT("ui.region.name_")+*Item))):FString()));})
    .OnSelectionChanged_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](TSharedPtr<FString> Item,ESelectInfo::Type Info){if(Weak.IsValid()&&Item.IsValid()&&Info!=ESelectInfo::Direct)Weak->ChangeRegion(*Item);})
    [SNew(STextBlock).Text_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(!Weak.IsValid())return FText::GetEmpty();
@@ -2835,12 +2849,16 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
  if(S.TtsEnabled&&!S.TtsCacheDir.IsEmpty()){
   if(S.MaleToneOptions.IsEmpty())for(const TCHAR* Name:OKStreetMaleToneNames)S.MaleToneOptions.Add(MakeShared<FString>(Name));
   const int32 ToneIndex=FMath::Max(0,OKStreetMaleToneIndex(S.MaleTone));
-  Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SComboBox<TSharedPtr<FString>>).OptionsSource(&S.MaleToneOptions).InitiallySelectedItem(S.MaleToneOptions[ToneIndex])
+  Settings->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SComboBox<TSharedPtr<FString>>).OptionsSource(&S.MaleToneOptions).InitiallySelectedItem(S.MaleToneOptions[ToneIndex])
    .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item){return SNew(STextBlock).Text(FText::FromString(Item.IsValid()?*Item:FString()));})
    .OnSelectionChanged_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](TSharedPtr<FString> Item,ESelectInfo::Type Info){if(!Weak.IsValid()||!Item.IsValid()||Info==ESelectInfo::Direct)return;const int32 I=Weak->State->MaleToneOptions.IndexOfByKey(Item);if(I!=INDEX_NONE)Weak->SetMaleTone(I);})
    [SNew(STextBlock).Text_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){return FText::FromString(OKT(TEXT("ui.scene.his_tone_label"))+(Weak.IsValid()?Weak->MaleToneLabel():FString()));})]];
   // The raw voice instruction: only with the stats panel (F10).
-  if(S.ShowDebug&&S.Target!=INDEX_NONE&&!S.TtsVoiceInfo.IsEmpty())Box->AddSlot().AutoHeight().Padding(8,2)[SNew(STextBlock).Text(FText::FromString(S.TtsVoiceInfo)).AutoWrapText(true).WrapTextAt(360).Font(FCoreStyle::GetDefaultFontStyle("Regular",11))];
+  if(S.ShowDebug&&S.Target!=INDEX_NONE&&!S.TtsVoiceInfo.IsEmpty())Settings->AddSlot().AutoHeight().Padding(8,2)[SNew(STextBlock).Text(FText::FromString(S.TtsVoiceInfo)).AutoWrapText(true).WrapTextAt(360).Font(FCoreStyle::GetDefaultFontStyle("Regular",11))];
+ }
+ }
+ Box->AddSlot().AutoHeight()[Settings.ToSharedRef()];
+ if(S.TtsEnabled&&!S.TtsCacheDir.IsEmpty()){
   Mark(TEXT("voicepick"));AddVoicePickUI(Box);
   Mark(TEXT("song"));BuildSongRow(Box);
   Mark(TEXT("look2"));
@@ -3005,7 +3023,7 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
  // The shop rows: a region of their own (the menu changes as he walks into a shop or it closes).
  Box->AddSlot().AutoHeight()[SAssignNew(S.UiShopHolder,SBox)];
  Mark(TEXT("finance"));BuildFinanceRows(Box);Mark(TEXT("campus"));BuildCampusRows(Box);Mark(TEXT("phone"));BuildPhoneRow(Box);Mark(TEXT("company"));BuildCompanyRow(Box);Mark(TEXT("appointments"));BuildAppointmentRows(Box);
- Mark(TEXT("swap"));S.UiRightHolder->SetContent(Box);S.UiRightScroll->SetScrollOffset(S.RightScrollOffset);
+ Mark(TEXT("swap"));S.UiRightHolder->SetContent(Box);S.UiRightBox=Box;S.UiRightScroll->SetScrollOffset(S.RightScrollOffset);
  Regions|=OKStreetUi::Shop;
  }
  Mark(TEXT("shop"));
