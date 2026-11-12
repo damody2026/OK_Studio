@@ -1,4 +1,4 @@
-﻿// OK Studio control channel, open while a studio runs: POST http://127.0.0.1:<port>/studio/<op> with a JSON body (port:
+// OK Studio control channel, open while a studio runs: POST http://127.0.0.1:<port>/studio/<op> with a JSON body (port:
 // -StudioControlPort, else port_base + 30, Saved/OKControl/<pid>.json);
 // the reply is {"ok": true, ...} or {"ok": false, "error": ...}. Tools/ok-game-mcp's studio_* tools speak it
 // (Docs/OK_STUDIO_MCP.md). Edits wait while the user drags, a scene loads, the timeline plays or exports ("busy").
@@ -177,7 +177,33 @@ namespace
 		T->SetNumberField(TEXT("time"), G.TimelineTime);
 		T->SetNumberField(TEXT("duration"), G.Document->Duration);
 		T->SetBoolField(TEXT("playing"), G.bTimelinePlaying);
+		T->SetBoolField(TEXT("loop"), G.Document->bLoopTimeline);
+		T->SetNumberField(TEXT("speed"), G.Document->TimelineSpeed);
+		T->SetNumberField(TEXT("divisions"), G.Document->TimelineDivisions);
+		T->SetNumberField(TEXT("interp_tracks"), G.Document->TimelineTracks.Num());
 		O->SetObjectField(TEXT("timeline"), T);
+		{
+			const FOKSceneVngeData& V = G.Document->Vnge;
+			TSharedRef<FJsonObject> Vj = MakeShared<FJsonObject>();
+			Vj->SetBoolField(TEXT("has_data"), !V.IsEmpty());
+			Vj->SetNumberField(TEXT("sss_states"), V.Sss.States.Num());
+			Vj->SetNumberField(TEXT("sss_active_state"), V.Sss.ActiveStateIndex);
+			Vj->SetNumberField(TEXT("sss_cameras"), V.Sss.Cameras.Num());
+			Vj->SetNumberField(TEXT("sss_active_camera"), V.Sss.ActiveCameraSlot);
+			Vj->SetNumberField(TEXT("clips"), V.Clips.Num());
+			Vj->SetNumberField(TEXT("texts"), V.Texts.Num());
+			Vj->SetNumberField(TEXT("sounds"), V.Sounds.Num());
+			Vj->SetNumberField(TEXT("physics_rules"), V.Physics.Rules.Num());
+			Vj->SetNumberField(TEXT("script_blocks"), V.Script.Blocks.Num());
+			if (const FOKStudioVngeRuntime* Vr = G.GetVnge())
+			{
+				Vj->SetStringField(TEXT("who_say"), Vr->ActiveWhoSay);
+				Vj->SetStringField(TEXT("what_say"), Vr->ActiveWhatSay);
+				Vj->SetNumberField(TEXT("script_block"), Vr->ActiveScriptBlock);
+				Vj->SetNumberField(TEXT("script_line"), Vr->ActiveScriptLine);
+			}
+			O->SetObjectField(TEXT("vnge"), Vj);
+		}
 		TSharedRef<FJsonObject> E = MakeShared<FJsonObject>();
 		E->SetBoolField(TEXT("running"), G.IsExporting());
 		O->SetNumberField(TEXT("voice_sounding"), G.VoiceClipsSounding());
@@ -1170,15 +1196,15 @@ namespace
 					{
 						X->SetStringField(TEXT("material"), Material->GetPathName());
 						X->SetStringField(TEXT("base"), Material->GetBaseMaterial() ? Material->GetBaseMaterial()->GetPathName() : FString());
-						TSharedRef<FJsonObject> P = MakeShared<FJsonObject>();
-						for (const FMaterialParameterInfo& I : Scalars) { float V = 0.f; if (Material->GetScalarParameterValue(I, V)) P->SetNumberField(I.Name.ToString(), V); }
-						for (const FMaterialParameterInfo& I : Vectors) { FLinearColor V; if (Material->GetVectorParameterValue(I, V)) P->SetStringField(I.Name.ToString(), V.ToString()); }
+						TSharedRef<FJsonObject> Mp = MakeShared<FJsonObject>();
+						for (const FMaterialParameterInfo& I : Scalars) { float V = 0.f; if (Material->GetScalarParameterValue(I, V)) Mp->SetNumberField(I.Name.ToString(), V); }
+						for (const FMaterialParameterInfo& I : Vectors) { FLinearColor V; if (Material->GetVectorParameterValue(I, V)) Mp->SetStringField(I.Name.ToString(), V.ToString()); }
 						for (const FMaterialParameterInfo& I : Textures)
 						{
 							UTexture* T = nullptr;
-							if (Material->GetTextureParameterValue(I, T)) P->SetStringField(I.Name.ToString(), T ? FString::Printf(TEXT("%s %dx%d"), *T->GetName(), int32(T->GetSurfaceWidth()), int32(T->GetSurfaceHeight())) : TEXT("null"));
+							if (Material->GetTextureParameterValue(I, T)) Mp->SetStringField(I.Name.ToString(), T ? FString::Printf(TEXT("%s %dx%d"), *T->GetName(), int32(T->GetSurfaceWidth()), int32(T->GetSurfaceHeight())) : TEXT("null"));
 						}
-						X->SetObjectField(TEXT("params"), P);
+						X->SetObjectField(TEXT("params"), Mp);
 					}
 					Out.Add(MakeShared<FJsonValueObject>(X));
 				}
@@ -1191,7 +1217,7 @@ namespace
 		{
 			FString Name;
 			J->TryGetStringField(TEXT("name"), Name);
-			if (UOKStudioGame* G = UOKStudioGame::Get()) G->RequestStop();
+			G.RequestStop();
 			TSharedRef<FJsonObject> O = Result(true);
 			if (!Name.IsEmpty())
 			{
@@ -1200,6 +1226,379 @@ namespace
 				FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([File](float) { FScreenshotRequest::RequestScreenshot(File, true, false); return false; }), 1.f);
 				O->SetStringField(TEXT("file"), File);
 			}
+			return O;
+		}
+		if (Op == TEXT("timeline_interp"))
+		{
+			FString Action = TEXT("list");
+			J->TryGetStringField(TEXT("action"), Action);
+			if (Action == TEXT("add"))
+			{
+				FString Owner = TEXT("Timeline"), InterpId, TargetPath, TargetBone, ParamStr, Alias, GroupPath;
+				J->TryGetStringField(TEXT("owner"), Owner);
+				J->TryGetStringField(TEXT("interpolable_id"), InterpId);
+				J->TryGetStringField(TEXT("target_path"), TargetPath);
+				J->TryGetStringField(TEXT("target_bone"), TargetBone);
+				J->TryGetStringField(TEXT("param_str"), ParamStr);
+				J->TryGetStringField(TEXT("alias"), Alias);
+				J->TryGetStringField(TEXT("group_path"), GroupPath);
+				const int32 ObjId = ReadId(J, TEXT("id"), -1);
+				const int32 IkEff = ReadId(J, TEXT("ik_effector"), -1);
+				const int32 ParamI = ReadId(J, TEXT("param_int"), -1);
+				if (InterpId.IsEmpty()) return Result(false, TEXT("interpolable_id required"));
+				const int32 Idx = Doc->AddTimelineInterpolableTrack(Owner, InterpId, ObjId, TargetPath, TargetBone, IkEff, ParamI, ParamStr, Alias, GroupPath);
+				if (Idx < 0) return Result(false, TEXT("could not add or sample interpolable track"));
+				P.ActiveInterpTrack = Idx;
+				P.ActiveInterpKeyTime = G.TimelineTime;
+				if (P.TimelineView) P.TimelineView->FocusedInterpTrack = Idx;
+				if (P.CurveView) P.CurveView->RefreshContent();
+			}
+			else if (Action == TEXT("key"))
+			{
+				const int32 Idx = ReadId(J, TEXT("track"), P.ActiveInterpTrack);
+				if (!Doc->TimelineTracks.IsValidIndex(Idx)) return Result(false, TEXT("invalid track index"));
+				double Time = G.TimelineTime;
+				J->TryGetNumberField(TEXT("time"), Time);
+				Doc->SetTimelineTrackKey(Idx, float(Time));
+				P.ActiveInterpTrack = Idx;
+				P.ActiveInterpKeyTime = float(Time);
+				if (P.CurveView) P.CurveView->RefreshContent();
+			}
+			else if (Action == TEXT("enable"))
+			{
+				const int32 Idx = ReadId(J, TEXT("track"), P.ActiveInterpTrack);
+				if (!Doc->TimelineTracks.IsValidIndex(Idx)) return Result(false, TEXT("invalid track index"));
+				bool bEn = true;
+				J->TryGetBoolField(TEXT("enabled"), bEn);
+				Doc->TimelineTracks[Idx].bEnabled = bEn;
+				Doc->NotifyChanged();
+				G.SetTimelineTime(G.TimelineTime);
+			}
+			else if (Action == TEXT("curve_preset"))
+			{
+				const int32 Idx = ReadId(J, TEXT("track"), P.ActiveInterpTrack);
+				int32 Preset = ReadId(J, TEXT("preset"), -1);
+				if (Preset < 0)
+				{
+					FString PresetName;
+					if (J->TryGetStringField(TEXT("preset"), PresetName))
+					{
+						PresetName = PresetName.ToLower();
+						if (PresetName == TEXT("ease_in_out") || PresetName == TEXT("smooth")) Preset = 1;
+						else if (PresetName == TEXT("ease_in")) Preset = 2;
+						else if (PresetName == TEXT("ease_out")) Preset = 3;
+						else if (PresetName == TEXT("step") || PresetName == TEXT("constant")) Preset = 4;
+						else if (PresetName == TEXT("overshoot")) Preset = 5;
+						else Preset = 0;
+					}
+					else Preset = 0;
+				}
+				Preset = FMath::Clamp(Preset, 0, 5);
+				if (!Doc->TimelineTracks.IsValidIndex(Idx)) return Result(false, TEXT("invalid track index"));
+				bool bAll = false;
+				J->TryGetBoolField(TEXT("all_keys"), bAll);
+				double Time = G.TimelineTime;
+				const bool bHasTime = J->TryGetNumberField(TEXT("time"), Time);
+				FOKSceneTimelineTrack& Tr = Doc->TimelineTracks[Idx];
+				if (bAll || !bHasTime)
+				{
+					for (FOKSceneTimelineKeyframe& Kf : Tr.Keyframes) SOKStudioTimelineCurve::ApplyPresetToCurve(Kf.Curve, Preset);
+				}
+				else
+				{
+					for (FOKSceneTimelineKeyframe& Kf : Tr.Keyframes)
+						if (FMath::Abs(Kf.Time - float(Time)) < 1e-2f) SOKStudioTimelineCurve::ApplyPresetToCurve(Kf.Curve, Preset);
+				}
+				Doc->NotifyChanged();
+				G.SetTimelineTime(G.TimelineTime);
+				if (P.CurveView) P.CurveView->RefreshContent();
+			}
+			else if (Action == TEXT("remove"))
+			{
+				const int32 Idx = ReadId(J, TEXT("track"), P.ActiveInterpTrack);
+				if (!Doc->TimelineTracks.IsValidIndex(Idx)) return Result(false, TEXT("invalid track index"));
+				double KeyT = -1.0;
+				if (J->TryGetNumberField(TEXT("time"), KeyT))
+				{
+					Doc->TimelineTracks[Idx].Keyframes.RemoveAll([KeyT](const FOKSceneTimelineKeyframe& K) { return FMath::Abs(K.Time - float(KeyT)) < 1e-3f; });
+				}
+				else
+				{
+					Doc->TimelineTracks.RemoveAt(Idx);
+				}
+				Doc->NotifyChanged();
+				G.SetTimelineTime(G.TimelineTime);
+				if (P.CurveView) P.CurveView->RefreshContent();
+			}
+			else if (Action == TEXT("import_xml") || Action == TEXT("export_xml"))
+			{
+				FString Path;
+				J->TryGetStringField(TEXT("path"), Path);
+				if (FPaths::IsRelative(Path) && !Path.IsEmpty()) Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / Path);
+				bool bSingle = false;
+				J->TryGetBoolField(TEXT("single_file"), bSingle);
+				const int32 TargetId = ReadId(J, TEXT("id"), G.SelectedId);
+				FString Err;
+				const bool bOk = Action == TEXT("import_xml")
+					? Doc->ImportTimelineXmlFile(Path, bSingle ? TargetId : -1, bSingle, Err)
+					: Doc->ExportTimelineXmlFile(Path, bSingle ? TargetId : -1, bSingle, Err);
+				if (!bOk) return Result(false, Err);
+				if (Action == TEXT("import_xml"))
+				{
+					Doc->NotifyChanged();
+					G.SetTimelineTime(G.TimelineTime);
+					if (P.CurveView) P.CurveView->RefreshContent();
+				}
+			}
+			else if (Action != TEXT("list") && !Action.IsEmpty())
+			{
+				return Result(false, TEXT("action: list, add, key, enable, curve_preset, remove, import_xml or export_xml"));
+			}
+
+			TArray<TSharedPtr<FJsonValue>> TracksJson;
+			for (int32 I = 0; I < Doc->TimelineTracks.Num(); ++I)
+			{
+				const FOKSceneTimelineTrack& Tr = Doc->TimelineTracks[I];
+				TSharedRef<FJsonObject> Tj = MakeShared<FJsonObject>();
+				Tj->SetNumberField(TEXT("index"), I);
+				Tj->SetBoolField(TEXT("enabled"), Tr.bEnabled);
+				Tj->SetStringField(TEXT("owner"), Tr.Owner);
+				Tj->SetStringField(TEXT("interpolable_id"), Tr.InterpolableId);
+				Tj->SetNumberField(TEXT("object_id"), Tr.ObjectId);
+				Tj->SetStringField(TEXT("description"), Doc->DescribeTimelineTrack(Tr));
+				Tj->SetStringField(TEXT("group_path"), Tr.GroupPath);
+				Tj->SetNumberField(TEXT("keyframes"), Tr.Keyframes.Num());
+				TracksJson.Add(MakeShared<FJsonValueObject>(Tj));
+			}
+			TSharedRef<FJsonObject> O = Result(true);
+			O->SetNumberField(TEXT("count"), Doc->TimelineTracks.Num());
+			O->SetBoolField(TEXT("loop"), Doc->bLoopTimeline);
+			O->SetNumberField(TEXT("speed"), Doc->TimelineSpeed);
+			O->SetNumberField(TEXT("divisions"), Doc->TimelineDivisions);
+			O->SetArrayField(TEXT("tracks"), TracksJson);
+			return O;
+		}
+		if (Op == TEXT("vnge"))
+		{
+			FOKStudioVngeRuntime& Vr = G.Vnge();
+			FString Action = TEXT("state");
+			J->TryGetStringField(TEXT("action"), Action);
+
+			const int32 Index = ReadId(J, TEXT("index"), 0);
+			const int32 Id = ReadId(J, TEXT("id"), G.SelectedId);
+
+			if (Action == TEXT("poselib_list"))
+			{
+				FString Cat = TEXT("ffaces"), Search;
+				J->TryGetStringField(TEXT("category"), Cat);
+				J->TryGetStringField(TEXT("search"), Search);
+				TArray<TSharedPtr<FJsonValue>> Items;
+				for (const FOKVngePosePresetItem& It : Vr.ScanPosePresets(Cat, Search))
+				{
+					TSharedRef<FJsonObject> Ij = MakeShared<FJsonObject>();
+					Ij->SetStringField(TEXT("name"), It.Name);
+					Ij->SetStringField(TEXT("category"), It.Category);
+					Ij->SetStringField(TEXT("path"), It.FullPath);
+					Ij->SetBoolField(TEXT("is_png"), It.bIsPng);
+					Items.Add(MakeShared<FJsonValueObject>(Ij));
+				}
+				TArray<TSharedPtr<FJsonValue>> Cats;
+				for (const FString& C : FOKStudioVngeRuntime::GetPoseLibCategories()) Cats.Add(MakeShared<FJsonValueString>(C));
+				TSharedRef<FJsonObject> O = Result(true);
+				O->SetStringField(TEXT("root"), FOKStudioVngeRuntime::ResolvePoseLibRoot());
+				O->SetArrayField(TEXT("categories"), Cats);
+				O->SetArrayField(TEXT("presets"), Items);
+				return O;
+			}
+			else if (Action == TEXT("poselib_apply"))
+			{
+				FString Path, Err;
+				J->TryGetStringField(TEXT("path"), Path);
+				if (!Vr.ApplyPosePreset(Path, Id, Err)) return Result(false, Err);
+			}
+			else if (Action == TEXT("poselib_save"))
+			{
+				FString Cat = TEXT("posef"), Name, SavedPath, Err;
+				J->TryGetStringField(TEXT("category"), Cat);
+				J->TryGetStringField(TEXT("name"), Name);
+				bool bPng = true;
+				J->TryGetBoolField(TEXT("png"), bPng);
+				if (!Vr.SavePosePreset(Cat, Name, Id, bPng, SavedPath, Err)) return Result(false, Err);
+				if (P.VngeUi) P.VngeUi->RefreshAllOpenVngeWindows();
+				TSharedRef<FJsonObject> O = Result(true);
+				O->SetStringField(TEXT("saved_path"), SavedPath);
+				return O;
+			}
+			else if (Action == TEXT("apply_state"))
+			{
+				bool bSmooth = true;
+				J->TryGetBoolField(TEXT("smooth"), bSmooth);
+				if (!Vr.ApplySssState(Index, bSmooth)) return Result(false, TEXT("invalid SSS state index"));
+			}
+			else if (Action == TEXT("capture_state"))
+			{
+				FString CustomId, Who, What;
+				J->TryGetStringField(TEXT("state_id"), CustomId);
+				J->TryGetStringField(TEXT("who_say"), Who);
+				J->TryGetStringField(TEXT("what_say"), What);
+				Vr.CaptureCurrentSssState(CustomId, Who, What);
+			}
+			else if (Action == TEXT("apply_camera"))
+			{
+				double Dur = -1.0;
+				J->TryGetNumberField(TEXT("duration"), Dur);
+				if (!Vr.ApplySssCamera(Index, float(Dur))) return Result(false, TEXT("invalid SSS camera slot"));
+			}
+			else if (Action == TEXT("capture_camera"))
+			{
+				FString Who, What;
+				J->TryGetStringField(TEXT("who_say"), Who);
+				J->TryGetStringField(TEXT("what_say"), What);
+				Vr.CaptureCurrentSssCamera(Who, What);
+			}
+			else if (Action == TEXT("clip_play"))
+			{
+				bool bReset = false;
+				J->TryGetBoolField(TEXT("reset"), bReset);
+				if (!Vr.PlayClip(Index, bReset)) return Result(false, TEXT("invalid clip index"));
+			}
+			else if (Action == TEXT("clip_pause")) Vr.PauseClip(Index);
+			else if (Action == TEXT("clip_stop"))
+			{
+				if (Index >= 0 && J->HasField(TEXT("index"))) Vr.StopClip(Index);
+				else Vr.StopAllClips();
+			}
+			else if (Action == TEXT("clip_bake"))
+			{
+				bool bReplace = false;
+				J->TryGetBoolField(TEXT("replace"), bReplace);
+				if (!Vr.BakeClipToTimeline(Index, bReplace)) return Result(false, TEXT("could not bake clip to timeline"));
+				if (P.CurveView) P.CurveView->RefreshContent();
+			}
+			else if (Action == TEXT("text_add"))
+			{
+				FString Txt = TEXT("新字幕");
+				J->TryGetStringField(TEXT("text"), Txt);
+				bool b3D = false;
+				J->TryGetBoolField(TEXT("is_3d"), b3D);
+				Vr.AddTextEntry(Txt, b3D);
+			}
+			else if (Action == TEXT("sound_play"))
+			{
+				FString Err;
+				if (!Vr.PlaySoundSource(Index, Err)) return Result(false, Err);
+			}
+			else if (Action == TEXT("sound_stop"))
+			{
+				if (Index >= 0 && J->HasField(TEXT("index"))) Vr.StopSoundSource(Index);
+				else Vr.StopAllSounds();
+			}
+			else if (Action == TEXT("physics_trigger"))
+			{
+				if (!Vr.TriggerPhysicsRuleNow(Index)) return Result(false, TEXT("invalid physics rule index"));
+			}
+			else if (Action == TEXT("status_copy"))
+			{
+				if (!Vr.CopyCharacterStatus(Id)) return Result(false, TEXT("target is not a character"));
+			}
+			else if (Action == TEXT("status_paste"))
+			{
+				TArray<int32> Targets = ReadIds(J, TEXT("ids"));
+				if (Targets.IsEmpty() && Id >= 0) Targets.Add(Id);
+				FOKVngeCopyMask Mask = P.VngeUi ? P.VngeUi->CopyMask : FOKVngeCopyMask();
+				J->TryGetBoolField(TEXT("face"), Mask.bFace);
+				J->TryGetBoolField(TEXT("pose"), Mask.bPose);
+				J->TryGetBoolField(TEXT("hands"), Mask.bHands);
+				J->TryGetBoolField(TEXT("look"), Mask.bLook);
+				J->TryGetBoolField(TEXT("clothes"), Mask.bClothes);
+				J->TryGetBoolField(TEXT("state"), Mask.bState);
+				if (Vr.PasteCharacterStatus(Targets, Mask) <= 0) return Result(false, TEXT("nothing pasted (copy first and select target character)"));
+			}
+			else if (Action == TEXT("script_step")) Vr.StepScriptNext();
+			else if (Action == TEXT("script_jump"))
+			{
+				FString Block;
+				J->TryGetStringField(TEXT("block"), Block);
+				if (!Vr.JumpScriptBlock(Block)) return Result(false, TEXT("no such script block: ") + Block);
+			}
+			else if (Action == TEXT("script_reset")) Vr.ResetScript();
+			else if (Action != TEXT("state") && !Action.IsEmpty())
+			{
+				return Result(false, TEXT("unknown vnge action: ") + Action);
+			}
+
+			if (P.VngeUi) P.VngeUi->RefreshAllOpenVngeWindows();
+
+			const FOKSceneVngeData& V = Doc->Vnge;
+			TSharedRef<FJsonObject> O = Result(true);
+			TArray<TSharedPtr<FJsonValue>> StatesJson, ClipsJson, TextsJson, SoundsJson, BlocksJson;
+			for (int32 I = 0; I < V.Sss.States.Num(); ++I)
+			{
+				const FOKVngeSceneState& St = V.Sss.States[I];
+				TSharedRef<FJsonObject> Sj = MakeShared<FJsonObject>();
+				Sj->SetNumberField(TEXT("index"), I);
+				Sj->SetStringField(TEXT("id"), St.Id);
+				Sj->SetStringField(TEXT("who_say"), St.WhoSay);
+				Sj->SetStringField(TEXT("what_say"), St.WhatSay);
+				Sj->SetNumberField(TEXT("actors"), St.Actors.Num());
+				Sj->SetNumberField(TEXT("props"), St.Props.Num());
+				StatesJson.Add(MakeShared<FJsonValueObject>(Sj));
+			}
+			for (int32 I = 0; I < V.Clips.Num(); ++I)
+			{
+				const FOKVngeClip& Cl = V.Clips[I];
+				const FOKStudioVngeRuntime::FClipPlayState* Ps = Vr.GetClipPlayState(I);
+				TSharedRef<FJsonObject> Cj = MakeShared<FJsonObject>();
+				Cj->SetNumberField(TEXT("index"), I);
+				Cj->SetStringField(TEXT("name"), Cl.Name);
+				Cj->SetNumberField(TEXT("duration"), Cl.Duration);
+				Cj->SetNumberField(TEXT("tracks"), Cl.Tracks.Num());
+				Cj->SetBoolField(TEXT("playing"), Ps && Ps->bPlaying);
+				Cj->SetNumberField(TEXT("time"), Ps ? Ps->Time : 0.f);
+				ClipsJson.Add(MakeShared<FJsonValueObject>(Cj));
+			}
+			for (int32 I = 0; I < V.Texts.Num(); ++I)
+			{
+				const FOKVngeTextEntry& Tx = V.Texts[I];
+				TSharedRef<FJsonObject> Tj = MakeShared<FJsonObject>();
+				Tj->SetNumberField(TEXT("index"), I);
+				Tj->SetStringField(TEXT("text"), Tx.Text);
+				Tj->SetBoolField(TEXT("visible"), Tx.bVisible);
+				Tj->SetBoolField(TEXT("is_3d"), Tx.bIs3D);
+				TextsJson.Add(MakeShared<FJsonValueObject>(Tj));
+			}
+			for (int32 I = 0; I < V.Sounds.Num(); ++I)
+			{
+				const FOKVngeSoundSource& Sd = V.Sounds[I];
+				TSharedRef<FJsonObject> Sj = MakeShared<FJsonObject>();
+				Sj->SetNumberField(TEXT("index"), I);
+				Sj->SetStringField(TEXT("id"), Sd.Id);
+				Sj->SetStringField(TEXT("path"), Sd.ExtractedPath.IsEmpty() ? Sd.Path : Sd.ExtractedPath);
+				Sj->SetBoolField(TEXT("playing"), Vr.IsSoundPlaying(I));
+				SoundsJson.Add(MakeShared<FJsonValueObject>(Sj));
+			}
+			for (int32 I = 0; I < V.Script.Blocks.Num(); ++I)
+			{
+				const FOKVngeScriptBlock& Blk = V.Script.Blocks[I];
+				TSharedRef<FJsonObject> Bj = MakeShared<FJsonObject>();
+				Bj->SetNumberField(TEXT("index"), I);
+				Bj->SetStringField(TEXT("name"), Blk.Name);
+				Bj->SetNumberField(TEXT("lines"), Blk.Lines.Num());
+				BlocksJson.Add(MakeShared<FJsonValueObject>(Bj));
+			}
+			O->SetNumberField(TEXT("active_state"), V.Sss.ActiveStateIndex);
+			O->SetNumberField(TEXT("active_camera"), V.Sss.ActiveCameraSlot);
+			O->SetNumberField(TEXT("cameras"), V.Sss.Cameras.Num());
+			O->SetArrayField(TEXT("states"), StatesJson);
+			O->SetArrayField(TEXT("clips"), ClipsJson);
+			O->SetArrayField(TEXT("texts"), TextsJson);
+			O->SetArrayField(TEXT("sounds"), SoundsJson);
+			O->SetNumberField(TEXT("physics_rules"), V.Physics.Rules.Num());
+			O->SetArrayField(TEXT("script_blocks"), BlocksJson);
+			O->SetStringField(TEXT("who_say"), Vr.ActiveWhoSay);
+			O->SetStringField(TEXT("what_say"), Vr.ActiveWhatSay);
+			O->SetNumberField(TEXT("script_block"), Vr.ActiveScriptBlock);
+			O->SetNumberField(TEXT("script_line"), Vr.ActiveScriptLine);
 			return O;
 		}
 		return nullptr;
@@ -1212,6 +1611,8 @@ namespace
 		if (Read.Contains(Op)) return true;
 		if (Op == TEXT("scene")) return J->Values.Num() == 0;
 		if (Op == TEXT("keys")) { FString A; J->TryGetStringField(TEXT("action"), A); return A.IsEmpty() || A == TEXT("list"); }
+		if (Op == TEXT("timeline_interp")) { FString A; J->TryGetStringField(TEXT("action"), A); return A.IsEmpty() || A == TEXT("list"); }
+		if (Op == TEXT("vnge")) { FString A; J->TryGetStringField(TEXT("action"), A); return A.IsEmpty() || A == TEXT("state") || A == TEXT("poselib_list"); }
 		return false;
 	}
 
@@ -1245,7 +1646,7 @@ namespace
 			const FString Busy = G->BusyReason();
 			// The timeline op itself may stop playback; buttons and fields work during playback as they do for the user
 			// (the stop button among them), and a capture only looks.
-			static const TSet<FString> WhilePlaying = { TEXT("timeline"), TEXT("click"), TEXT("mouse"), TEXT("type"), TEXT("capture") };
+			static const TSet<FString> WhilePlaying = { TEXT("timeline"), TEXT("timeline_interp"), TEXT("vnge"), TEXT("click"), TEXT("mouse"), TEXT("type"), TEXT("capture") };
 			// U210: the mouse works during an export as it does for the user (closing the window, 取消).
 			static const TSet<FString> WhileExporting = { TEXT("click"), TEXT("mouse") };
 			// U255: a scene opens over many frames and the user can act meanwhile; what they can do, the tests must reach.
@@ -1548,12 +1949,20 @@ namespace
 			// In this order: scrubbing pauses, so {"time":0,"play":true} never played.
 			if (J->TryGetNumberField(TEXT("time"), D)) P->ScrubTo(float(D));
 			if (J->TryGetBoolField(TEXT("play"), bPlay)) G->bTimelinePlaying = bPlay;
+			bool bLoop = false;
+			if (J->TryGetBoolField(TEXT("loop"), bLoop)) Doc->bLoopTimeline = bLoop;
+			if (J->TryGetNumberField(TEXT("speed"), D)) { Doc->TimelineSpeed = FMath::Clamp(float(D), 0.01f, 20.f); G->TimelineSpeed = Doc->TimelineSpeed; }
+			int32 Divs = 0;
+			if (J->TryGetNumberField(TEXT("divisions"), Divs)) Doc->TimelineDivisions = FMath::Clamp(Divs, 1, 120);
 			const TSharedPtr<FJsonObject>* Key = nullptr;
 			if (J->TryGetObjectField(TEXT("key"), Key)) for (int32 Id : ReadIds((*Key).ToSharedRef(), TEXT("ids"))) Doc->SetKey(Id, G->TimelineTime);
 			TSharedRef<FJsonObject> O = Result(true);
 			O->SetNumberField(TEXT("time"), G->TimelineTime);
 			O->SetNumberField(TEXT("duration"), Doc->Duration);
 			O->SetBoolField(TEXT("playing"), G->bTimelinePlaying);
+			O->SetBoolField(TEXT("loop"), Doc->bLoopTimeline);
+			O->SetNumberField(TEXT("speed"), Doc->TimelineSpeed);
+			O->SetNumberField(TEXT("divisions"), Doc->TimelineDivisions);
 			return O;
 		}
 		if (TSharedPtr<FJsonObject> More = RunMore(*G, *P, Op, J)) return More.ToSharedRef();
@@ -1570,7 +1979,7 @@ namespace OKStudioControl
 		if (!OKControl::Listen(TEXT("studio"), 30, Port)) return;
 		static const TCHAR* Ops[] = { TEXT("state"), TEXT("inspect"), TEXT("catalog_search"), TEXT("spawn"), TEXT("transform"), TEXT("reparent"), TEXT("delete"), TEXT("select"),
 			TEXT("pose"), TEXT("camera"), TEXT("capture"), TEXT("save"), TEXT("load"), TEXT("undo"), TEXT("redo"), TEXT("cmd"), TEXT("timeline"),
-			TEXT("patch"), TEXT("style_tuning"), TEXT("scene"), TEXT("bones"), TEXT("bounds"), TEXT("catalog"), TEXT("keys"), TEXT("duplicate"), TEXT("export"), TEXT("scenes"), TEXT("report"), TEXT("ui_shot"), TEXT("ui_fit"), TEXT("click"), TEXT("mouse"), TEXT("key"), TEXT("combo"), TEXT("type"), TEXT("leave"), TEXT("exec"), TEXT("parts") };
+			TEXT("patch"), TEXT("style_tuning"), TEXT("scene"), TEXT("bones"), TEXT("bounds"), TEXT("catalog"), TEXT("keys"), TEXT("duplicate"), TEXT("export"), TEXT("scenes"), TEXT("report"), TEXT("ui_shot"), TEXT("ui_fit"), TEXT("click"), TEXT("mouse"), TEXT("key"), TEXT("combo"), TEXT("type"), TEXT("leave"), TEXT("exec"), TEXT("parts"), TEXT("timeline_interp"), TEXT("vnge") };
 		for (const TCHAR* Op : Ops)
 		{
 			const FString Name = Op;

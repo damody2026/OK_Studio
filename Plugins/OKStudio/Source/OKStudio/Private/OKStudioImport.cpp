@@ -12,6 +12,7 @@
 #include "OKStudioPose.h"
 #include "OKStudioImportSettings.h"
 #include "OKStudioPost.h"
+#include "OKStudioVnge.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -258,7 +259,11 @@ namespace
 			else if (Kind == TEXT("Text"))
 			{
 				++Report->Texts;
-				Note(TEXT("text objects are skipped"));
+				FString TextVal;
+				O->TryGetStringField(TEXT("text"), TextVal);
+				const FString Label = TextVal.IsEmpty() ? TEXT("[文字]") : (TEXT("[文字] ") + TextVal.Left(24).Replace(TEXT("\n"), TEXT(" ")));
+				const int32 Id = Add(EOKSceneObjectKind::Folder, Label, Parent, O);
+				Children(O, Id);
 			}
 			else if (Kind == TEXT("Camera"))
 			{
@@ -350,6 +355,8 @@ namespace
 					{
 						I.MaterialEdits = *Edits;
 						Note(TEXT("items carry Material Editor edits"));
+						for (const FOKSceneMaterialEdit& ME : *Edits)
+							if (ME.Kind == EOKSceneMaterialEditKind::Renderer) Doc->Find(Id)->LiveMaterialEdits.Add(ME);
 					}
                     double ItemTime=0., ItemSpeed=1.; int32 ItemPattern=0;
                     O->TryGetNumberField(TEXT("anime_time"), ItemTime); O->TryGetNumberField(TEXT("anime_speed"), ItemSpeed); O->TryGetNumberField(TEXT("anime_pattern"), ItemPattern);
@@ -491,6 +498,10 @@ namespace
 				}
 				const int32 Id = Add(EOKSceneObjectKind::Character, CharacterName, Parent, O);
 				FOKSceneCharacter& C = Doc->Find(Id)->Character;
+				if (const TArray<FOKSceneMaterialEdit>* CharEdits = MaterialEdits.Find(Key))
+				{
+					Doc->Find(Id)->LiveMaterialEdits = *CharEdits;
+				}
 				C.EyesLook = EOKSceneLook::Animation;
 				C.Card = bCard ? OkCard : KksCard;
 				double Mouth = -1.;
@@ -832,7 +843,7 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 			Edit.Property = E->GetStringField(TEXT("property"));
 			static const TMap<FString, EOKSceneMaterialEditKind> Kinds = { { TEXT("float"), EOKSceneMaterialEditKind::Float }, { TEXT("color"), EOKSceneMaterialEditKind::Color },
 				{ TEXT("texture"), EOKSceneMaterialEditKind::Texture }, { TEXT("texture_st"), EOKSceneMaterialEditKind::TextureST },
-				{ TEXT("shader"), EOKSceneMaterialEditKind::Shader }, { TEXT("renderer"), EOKSceneMaterialEditKind::Renderer } };
+				{ TEXT("shader"), EOKSceneMaterialEditKind::Shader }, { TEXT("renderer"), EOKSceneMaterialEditKind::Renderer }, { TEXT("vector"), EOKSceneMaterialEditKind::Vector } };
 			const EOKSceneMaterialEditKind* Kind = Kinds.Find(E->GetStringField(TEXT("kind")));
 			if (!Kind) continue;
 			Edit.Kind = *Kind;
@@ -1241,7 +1252,7 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 	}
 	// VNGE (Visual Novel Game Engine) KFA keyframe clips and SceneSaveState (SSS) tracks.
 	const TSharedPtr<FJsonObject>* Vnge = nullptr;
-	if (Scene->TryGetObjectField(TEXT("vnge"), Vnge) && Vnge && (*Vnge).IsValid())
+	if (Scene->TryGetObjectField(TEXT("vnge_legacy_unused"), Vnge) && Vnge && (*Vnge).IsValid())
 	{
 		const TArray<TSharedPtr<FJsonValue>>* Clips = nullptr;
 		if ((*Vnge)->TryGetArrayField(TEXT("clips"), Clips) && !Clips->IsEmpty())
@@ -1621,6 +1632,15 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 			double TlDuration = 0.;
 			if ((*TimelineObj)->TryGetNumberField(TEXT("duration"), TlDuration) && TlDuration > 0.)
 				Document->Duration = FMath::Max(Document->Duration, float(TlDuration));
+			double TlSpeed = 1., TlBlock = 1.;
+			int32 TlDivs = 10;
+			if ((*TimelineObj)->TryGetNumberField(TEXT("speed"), TlSpeed) && TlSpeed > 0.)
+				Document->TimelineSpeed = float(FMath::Clamp(TlSpeed, 0.01, 20.0));
+			if ((*TimelineObj)->TryGetNumberField(TEXT("divisions"), TlDivs) && TlDivs > 0)
+				Document->TimelineDivisions = FMath::Clamp(TlDivs, 1, 240);
+			if ((*TimelineObj)->TryGetNumberField(TEXT("block_length"), TlBlock) && TlBlock > 0.)
+				Document->TimelineBlockLength = float(FMath::Clamp(TlBlock, 0.05, 600.0));
+			(*TimelineObj)->TryGetBoolField(TEXT("is_looping"), Document->bLoopTimeline);
 			const TArray<TSharedPtr<FJsonValue>>* TlTracks = nullptr;
 			if ((*TimelineObj)->TryGetArrayField(TEXT("tracks"), TlTracks) && !TlTracks->IsEmpty())
 			{
@@ -1640,6 +1660,13 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 					T->TryGetStringField(TEXT("target_bone"), Track.TargetBone);
 					T->TryGetNumberField(TEXT("target_ik_effector"), Track.TargetIkEffector);
 					T->TryGetNumberField(TEXT("param_int"), Track.ParamInt);
+					T->TryGetBoolField(TEXT("enabled"), Track.bEnabled);
+					T->TryGetStringField(TEXT("alias"), Track.Alias);
+					T->TryGetStringField(TEXT("group_path"), Track.GroupPath);
+					T->TryGetStringField(TEXT("param_str"), Track.ParamStr);
+					TArray<float> ColVec;
+					if (JsonFloats(T, TEXT("color"), ColVec) && ColVec.Num() >= 3)
+						Track.Color = FLinearColor(ColVec[0], ColVec[1], ColVec[2], 1.f);
 					const TArray<TSharedPtr<FJsonValue>>* Kfs = nullptr;
 					if (!T->TryGetArrayField(TEXT("keyframes"), Kfs) || Kfs->IsEmpty()) continue;
 					Track.Keyframes.Reserve(Kfs->Num());
@@ -1675,12 +1702,16 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 				}
 				if (!Document->TimelineTracks.IsEmpty())
 				{
-					Document->bLoopTimeline = true;
+					(*TimelineObj)->TryGetBoolField(TEXT("is_looping"), Document->bLoopTimeline);
 					Document->EvaluateTimeline(0.f);
 					Importer.Note(TEXT("Timeline tracks imported"));
 				}
 			}
 		}
+	}
+	if (Scene->TryGetObjectField(TEXT("vnge"), Vnge) && Vnge && (*Vnge).IsValid())
+	{
+		FOKStudioVngeRuntime::ImportFromSceneJson(*Vnge, Importer.KeyToId, *Document, Report.Notes);
 	}
 	for (const TPair<FString, int32>& N : Importer.Notes) Report.Notes.Add(FString::Printf(TEXT("%s (%d)"), *N.Key, N.Value));
 	Document->NotifyChanged();

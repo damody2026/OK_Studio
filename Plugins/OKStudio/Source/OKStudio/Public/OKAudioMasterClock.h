@@ -33,6 +33,7 @@ struct OKSTUDIO_API FOKAudioMasterClock
 		float LoopEnd = 10.f;
 		/** True on the exact tick SceneAudio was freshly spawned so pre-spawn DeltaTime does not skip initial audio. */
 		bool bJustStartedThisTick = false;
+		bool bLoop = true;
 	};
 
 	struct FStepResult
@@ -42,6 +43,7 @@ struct OKSTUDIO_API FOKAudioMasterClock
 		bool bLooped = false;
 		bool bCrossedSoundDelay = false;
 		bool bAudioReachedEnd = false;
+		bool bReachedEnd = false;
 	};
 
 	uint64 SeekGeneration = 0;
@@ -222,8 +224,18 @@ struct OKSTUDIO_API FOKAudioMasterClock
 
 		if (Next > End)
 		{
-			Next = Begin + FMath::Fmod(Next - Begin, FMath::Max(End - Begin, 0.01f));
-			Out.bLooped = true;
+			if (In.bLoop)
+			{
+				Next = Begin + FMath::Fmod(Next - Begin, FMath::Max(End - Begin, 0.01f));
+				Out.bLooped = true;
+	
+			}
+			else
+			{
+				Next = End;
+				Out.bReachedEnd = true;
+			}
+
 			if (bAudioActive)
 			{
 				StopPlayback();

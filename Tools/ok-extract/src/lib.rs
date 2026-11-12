@@ -1,5 +1,7 @@
 #[allow(unused_imports)] use crate::gamefs::GamePath as _;
 pub mod appearance;
+pub mod fbx_export;
+pub use fbx_export::export_card_fbx;
 pub mod recycle_alloc;
 mod anim;
 #[cfg(test)]
@@ -90,6 +92,7 @@ mod studio_child_animation;
 mod studio_pose;
 mod studio_scene;
 pub mod vnge;
+pub mod vnge_ext;
 pub mod vmd;
 pub mod mmdd;
 pub mod compat_audit;

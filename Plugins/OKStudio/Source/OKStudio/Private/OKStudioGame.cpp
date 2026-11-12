@@ -91,6 +91,12 @@ namespace
 
 UOKStudioGame* UOKStudioGame::Get() { return GRunning.Get(); }
 
+FOKStudioVngeRuntime& UOKStudioGame::Vnge()
+{
+	if (!VngeRuntime.IsValid()) VngeRuntime = MakeShared<FOKStudioVngeRuntime>(this);
+	return *VngeRuntime;
+}
+
 UWorld* UOKStudioGame::GetTickableGameObjectWorld() const { return SceneActor ? SceneActor->GetWorld() : nullptr; }
 
 TArray<FString> UOKStudioGame::AvailableCards()
@@ -189,7 +195,7 @@ UOKStudioGame* UOKStudioGame::Start(UWorld* World, const FString& InFile, FStrin
 		PC->SetInputMode(FInputModeUIOnly());
 	}
 	if (!InFile.IsEmpty()) { if (!Game->Load(InFile, OutError)) UE_LOG(LogTemp, Warning, TEXT("OK studio: %s"), *OutError); }
-	else Game->AddMainLight();
+	else { Game->AddMainLight(); Game->Vnge().OnSceneOpened(); }
 	if (GEngine && GEngine->GameViewport)
 	{
 		Game->Panel = SNew(SOKStudioPanel).Game(Game);
@@ -394,6 +400,7 @@ void UOKStudioGame::Stop()
 	StopStudioSounds();
 	SceneAudioPcm.Reset();
 	LoadedSoundFile.Reset();
+	if (VngeRuntime.IsValid()) { VngeRuntime->StopAllSounds(); VngeRuntime->StopAllClips(); VngeRuntime.Reset(); }
 	OKStudioControl::Stop();
 	OKStudioSetPerspectiveFar(0.f);
 	if (SceneActor && SceneActor->GetWorld())
@@ -875,12 +882,14 @@ bool UOKStudioGame::Load(const FString& Path, FString& OutError)
 		bTimelinePlaying = true;
 		SetTimelineTime(0.f);
 		if (Panel) Panel->OpenFloat(TEXT("mmd"), false);
+		Vnge().OnSceneOpened();
 	}
 	else
 	{
 		bLockActiveCamera = false;
 		bTimelinePlaying = !Document->TimelineTracks.IsEmpty();
 		if (bTimelinePlaying) SetTimelineTime(0.f);
+		Vnge().OnSceneOpened();
 	}
 	ResetHistory();
 	bDirty = false;
@@ -891,6 +900,7 @@ void UOKStudioGame::ReleaseSceneResources()
 {
 	++SceneSerial;
 	bTimelineUsed = false;
+	if (VngeRuntime.IsValid()) { VngeRuntime->StopAllSounds(); VngeRuntime->StopAllClips(); }
 	Select(-1);
 	StopSceneAudio();
 	StopStudioSounds();
@@ -1947,7 +1957,7 @@ void UOKStudioGame::UpdateSceneAudio()
 		StopSceneAudio();
 		return;
 	}
-	const float EffectiveSpeed = FOKAudioMasterClock::ClampAudioSpeed(TimelineSpeed);
+	const float EffectiveSpeed = FOKAudioMasterClock::ClampAudioSpeed(TimelineSpeed * (Document ? FMath::Max(0.01f, Document->TimelineSpeed * Document->LastTimelineScale) : 1.f));
 	const float ClampedVolume = FMath::Clamp(SoundVolume, 0.f, 2.f);
 	if (SceneAudio.IsValid() && SceneAudio->IsPlaying() && AudioMasterClock.bAudioActive)
 	{
@@ -2192,7 +2202,8 @@ void UOKStudioGame::Tick(float DeltaTime)
 		StepIn.CurrentTimelineTime = TimelineTime;
 		StepIn.RenderDeltaSeconds = DeltaTime;
 		StepIn.NowWallSeconds = FPlatformTime::Seconds();
-		StepIn.TimelineSpeed = TimelineSpeed;
+		StepIn.TimelineSpeed = TimelineSpeed * FMath::Max(0.01f, Document->TimelineSpeed * Document->LastTimelineScale);
+		StepIn.bLoop = Document->bLoopTimeline || (LoopEnd > LoopStart);
 		StepIn.SoundDelay = Document->SoundDelay;
 		StepIn.LoopBegin = Begin;
 		StepIn.LoopEnd = End;
@@ -2204,7 +2215,13 @@ void UOKStudioGame::Tick(float DeltaTime)
 			SetTimelineTime(Step.NextTimelineTime);
 		}
 
-		if (Step.bLooped || Step.bAudioReachedEnd)
+		if (Step.bReachedEnd)
+		{
+			bTimelinePlaying = false;
+			StopSceneAudio();
+			StopVoiceClipAudio();
+		}
+		else if (Step.bLooped || Step.bAudioReachedEnd)
 		{
 			StopSceneAudio();
 		}
@@ -2226,6 +2243,7 @@ void UOKStudioGame::Tick(float DeltaTime)
 		UpdateStudioSound(StudioOutside, OutsideSound, Document->Sound.bOutsidePlay && !bDuplicateOutside, Document->Sound.bOutsideRepeat);
 		UpdateCharacterVoices();
 		UpdateVoiceClips();
+		if (VngeRuntime.IsValid()) VngeRuntime->Tick(DeltaTime);
 	}
 	// Auto backup every few minutes, not while something is moving or loading.
 	const int32 Minutes = FOKStudioSettings::Get().BackupMinutes;

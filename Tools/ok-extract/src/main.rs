@@ -218,6 +218,35 @@ fn main() {
         }
         return;
     }
+    if out == "--export-fbx" {
+        // ok-extract <game> --export-fbx <card.png> <out dir> [--outfit N]
+        let card = PathBuf::from(args.next().expect("card path required"));
+        let dir = PathBuf::from(args.next().expect("output dir required"));
+        let mut outfit = std::env::var("OK_OUTFIT").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+        while let Some(arg) = args.next() {
+            if arg == "--outfit" {
+                outfit = args.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+            }
+        }
+        match ok_extract::export_card_fbx(&game, &card, &dir, outfit) {
+            Ok(summary) => {
+                println!(
+                    "exported FBX to {}: parts={} bones={} vertices={} triangles={} blend_shapes={}",
+                    dir.display(),
+                    summary["total_parts"],
+                    summary["total_bones"],
+                    summary["total_vertices"],
+                    summary["total_triangles"],
+                    summary["total_blend_shapes"],
+                );
+            }
+            Err(e) => {
+                eprintln!("ok-extract fbx export error: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if out == "--export-runtime-clip" {
         let key=args.next().expect("qualified source|clip required");
         let output=args.next().expect("output path required");

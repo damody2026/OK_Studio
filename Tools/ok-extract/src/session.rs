@@ -234,6 +234,33 @@ impl AccessoryRuntime {
     pub(crate) fn private_rig(&self) -> Option<(&Skeleton, &str)> {
         self.source.smr_skel.as_ref().map(|rig| (rig, self.parent_key.as_str()))
     }
+    pub(crate) fn fbx_slot_skeleton(
+        &self,
+        body: Option<&Skeleton>,
+        head: Option<&Skeleton>,
+    ) -> Option<(&Skeleton, Vec<crate::pose::Mat4>, &str, bool)> {
+        let parent = match self.private_skin_parent_key() {
+            Some(key) => crate::bone_world(body, head, key).unwrap_or_else(crate::pose::ident),
+            None => crate::pose::ident(),
+        };
+        let placement = crate::pose::mat_mul_pub(&parent, &self.local_placement);
+        let (private, correction) = if let Some(state) = self.state.as_ref() {
+            (&state.skel, state.placement_correction())
+        } else {
+            (self.source.smr_skel.as_ref()?, placement)
+        };
+        let worlds: Vec<crate::pose::Mat4> = if self.copy_weights_body {
+            self.effective_worlds(private, &correction, body, false, None, None)
+                .into_owned()
+        } else {
+            private
+                .worlds
+                .iter()
+                .map(|w| crate::pose::mat_mul_pub(&correction, w))
+                .collect()
+        };
+        Some((private, worlds, self.parent_key.as_str(), self.copy_weights_body))
+    }
     pub(crate) fn skin_contract(&self) -> Result<Vec<u8>, bincode::Error> {
         let mut implanted: Vec<_> = self.implanted_bones.iter().copied().collect();
         let mut removed: Vec<_> = self.removed_accessory_bones.iter().copied().collect();

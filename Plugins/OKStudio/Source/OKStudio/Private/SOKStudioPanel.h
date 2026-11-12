@@ -6,6 +6,8 @@
 #include "OKStudioSettings.h"
 #include "OKStudioThumbnails.h"
 #include "SOKStudioTimeline.h"
+#include "SOKStudioTimelineCurve.h"
+#include "SOKStudioVngePanels.h"
 #include "Async/Async.h"
 #include <atomic>
 #include "Framework/Application/IInputProcessor.h"
@@ -309,6 +311,13 @@ public:
 		Game = Args._Game;
 		for (const FString& Card : UOKStudioGame::AvailableCards()) Cards.Add(MakeShared<FString>(Card));
 		RegisterCommands();
+		VngeUi = MakeShared<FOKStudioVngeUi>();
+		VngeUi->Game = Game;
+		VngeUi->OnStatus = [this](const FString& S) { SetStatus(S); };
+		VngeUi->OnOpenWindow = [this](const FString& Id) { OpenFloat(Id, false); };
+		VngeUi->OnRefreshWindow = [this](const FString& Id) { DeferFloat(Id); };
+		VngeUi->OnSceneChanged = [this] { Changed(); };
+		VngeUi->GetCardBrowserPreview = [this] { return CardPreview; };
 		using namespace OKStudioStyle;
 		// Canvas anchoring of the spec: left groups from the top-left, right groups from the top-right (the spec's right
 		// edge is 1768.9 units at its 2194x1010 capture), the transform bar from the bottom-left.
@@ -318,6 +327,7 @@ public:
 		[
 			SNew(SOverlay)
 			+ SOverlay::Slot()[SAssignNew(View, SOKStudioView).Game(Game).Owner(this)]
+			+ SOverlay::Slot()[SAssignNew(VngeOverlay, SOKStudioVngeOverlay).Game(Game).IsUiHidden([this] { return false; }).OnScriptUpdated([this] { DeferFloat(TEXT("vnge_script")); })]
 			+ SOverlay::Slot()
 			[
 				SNew(SDPIScaler).Visibility_Lambda([this] { return bHideUi ? EVisibility::Collapsed : EVisibility::SelfHitTestInvisible; })
@@ -333,7 +343,7 @@ public:
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(0.f, 0.f)).Offset(FMargin(4.f, 458.f, 33.f, 33.f))
 						[Tagged(TEXT("QuickSearchButton"), IconButton(TEXT("search"), Tip(TEXT("快搜"), TEXT("app.quicksearch")), Cmd(TEXT("app.quicksearch")), 33.f, 33.f, TAttribute<bool>::CreateLambda([this] { return IsFloatOpen(TEXT("quick")); })))]
 					// One tool wider than HS2Studio6's row: the timeline toggle beside MMD 導演 (U111).
-					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(1.f, 0.f)).Offset(FMargin(Right(1408.9f), 7.f, 353.f, 33.f))[Tagged(TEXT("TopTools"), MakeTopTools())]
+					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(1.f, 0.f)).Offset(FMargin(Right(1363.9f), 7.f, 398.f, 33.f))[Tagged(TEXT("TopTools"), MakeTopTools())]
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(1.f, 0.f)).Offset(FMargin(Right(1284.9f), 47.f, 240.f, 429.f))
 						[Tagged(TEXT("CharacterGroupPanel"), SNew(SBox).Visibility_Lambda([this] { return bShowGroups ? EVisibility::Visible : EVisibility::Collapsed; })[MakeGroupPanel()])]
 					+ SConstraintCanvas::Slot().Alignment(FVector2D(0.f, 0.f)).Anchors(FAnchors(1.f, 0.f)).Offset(FMargin(Right(1528.9f), 47.f, 240.f, 429.f))
@@ -422,6 +432,10 @@ public:
 				Game->Document->Map = -1; Game->Document->Post = FOKScenePost(); Game->Document->Sound = FOKSceneSound(); Game->Document->FreeView = FOKSceneCamera(); Game->File.Reset();
 				// The timeline starts over too (the playhead stayed where the last scene was paused).
 				Game->Document->Duration = 10.f; Game->bTimelinePlaying = false; Game->TimelineTime = Game->Document->Playhead = 0.f; Game->LoopStart = Game->LoopEnd = 0.f;
+				Game->Document->TimelineSpeed = 1.f; Game->Document->TimelineDivisions = 10; Game->Document->Vnge = FOKSceneVngeData();
+				Game->Vnge().OnSceneOpened();
+				if (VngeUi) { VngeUi->ResetTransientCaches(); VngeUi->RefreshAllOpenVngeWindows(); }
+				if (CurveView) CurveView->RefreshContent();
 				// Not the last scene's name to overwrite; the save window names it by the time it opens (U165: a scene
 				// saved minutes later was named by the time it was made).
 				SaveAsName.Reset();
@@ -925,7 +939,45 @@ public:
 		AddCommand(TEXT("timeline.time"), TEXT("播放頭"), [this](const FString& Arg) { ScrubTo(FCString::Atof(*Arg)); return true; });
 		AddCommand(TEXT("timeline.duration"), TEXT("時長"), [this](const FString& Arg) { const float D = FCString::Atof(*Arg); if (D <= 0.f) return false; Game->Document->Duration = D; Changed(); return true; });
 		AddCommand(TEXT("timeline.ease"), TEXT("曲線"), [this](const FString& Arg) { if (!TimelineView) return false; TimelineView->SetEase(EOKSceneEase(FMath::Clamp(FCString::Atoi(*Arg), 0, 4))); return true; });
-		Float_(TEXT("timeline.export"), TEXT("輸出"), TEXT("export"));
+		Float_(TEXT("timeline.export"), TEXT("输出动画"), TEXT("export"));
+		Float_(TEXT("toggle.timeline_curve"), TEXT("时间轴曲线编辑器"), TEXT("timeline_curve"));
+		Simple(TEXT("timeline.interp.key"), TEXT("插值轨打帧"), [this]
+		{
+			if (TimelineView) TimelineView->KeyInterpolable();
+			else if (Game.IsValid() && Game->Document && Game->Document->TimelineTracks.IsValidIndex(ActiveInterpTrack))
+			{
+				Game->Document->SetTimelineTrackKey(ActiveInterpTrack, Game->TimelineTime);
+				Changed();
+				SetStatus(FString::Printf(TEXT("已在 %.2f 秒为插值轨 #%d 打上关键帧"), Game->TimelineTime, ActiveInterpTrack));
+			}
+			else SetStatus(TEXT("当前尚未选中插值轨，请先点击「+ 添加插值轨」"));
+			if (CurveView) CurveView->RefreshContent();
+		});
+		AddCommand(TEXT("timeline.curve_preset"), TEXT("插值曲线预设"), [this](const FString& Arg)
+		{
+			const int32 Preset = FMath::Clamp(FCString::Atoi(*Arg), 0, 5);
+			if (TimelineView) TimelineView->SetCurvePresetOnSelected(Preset);
+			if (CurveView) CurveView->RefreshContent();
+			return true;
+		});
+		Float_(TEXT("toggle.vnge"), TEXT("VNGE 工作台"), TEXT("vnge_hub"));
+		Float_(TEXT("vnge.sss"), TEXT("VNGE 分幕与相机 (SSS)"), TEXT("vnge_sss"));
+		Float_(TEXT("vnge.poselib"), TEXT("VNGE 姿势表情库"), TEXT("vnge_poselib"));
+		Float_(TEXT("vnge.anime"), TEXT("VNGE 动作剪辑 (VNAnime)"), TEXT("vnge_anime"));
+		Float_(TEXT("vnge.text"), TEXT("VNGE 字幕与空间文字"), TEXT("vnge_text"));
+		Float_(TEXT("vnge.sound"), TEXT("VNGE 音效与口型"), TEXT("vnge_sound"));
+		Float_(TEXT("vnge.physics"), TEXT("VNGE 物理触发"), TEXT("vnge_physics"));
+		Float_(TEXT("vnge.utils"), TEXT("VNGE 场景工具与状态复制"), TEXT("vnge_utils"));
+		Float_(TEXT("vnge.script"), TEXT("VNGE 演出剧本 (VNSS)"), TEXT("vnge_script"));
+		Simple(TEXT("vnge.step"), TEXT("VNGE 推进下一句剧本"), [this]
+		{
+			if (Game.IsValid())
+			{
+				const bool bMoved = Game->Vnge().StepScriptNext();
+				SetStatus(bMoved ? TEXT("已推进 VNGE 剧本下一行") : TEXT("VNGE 剧本已到达末尾或正在等待分支选项"));
+				DeferFloat(TEXT("vnge_script"));
+			}
+		});
 		// Animation files and video motion pairs.
 		AddCommand(TEXT("anim.file"), TEXT("播放 OK 動畫檔"), [this](const FString& Arg) { FOKSceneObject* X = Obj(); return X && !Arg.IsEmpty() && PickAnimFile(*X, Arg); });
 		AddCommand(TEXT("anim.pair"), TEXT("雙人影片動作"), [this](const FString& Arg) { return PickVideoPair(Arg); });
@@ -1068,6 +1120,10 @@ public:
 		J->SetNumberField(TEXT("selected"), Game.IsValid() ? Game->SelectedId : -1);
 		J->SetBoolField(TEXT("timeline"), IsFloatOpen(TEXT("timeline")));
 		J->SetBoolField(TEXT("mmd"), IsFloatOpen(TEXT("mmd")));
+		J->SetBoolField(TEXT("timeline_curve"), IsFloatOpen(TEXT("timeline_curve")));
+		J->SetBoolField(TEXT("vnge_hub"), IsFloatOpen(TEXT("vnge_hub")));
+		J->SetNumberField(TEXT("interp_tracks"), Game.IsValid() && Game->Document ? Game->Document->TimelineTracks.Num() : 0);
+		J->SetBoolField(TEXT("vnge_has_data"), Game.IsValid() && Game->Document && !Game->Document->Vnge.IsEmpty());
 		J->SetNumberField(TEXT("active_camera"), Game.IsValid() && Game->Document ? Game->Document->ActiveCamera : -1);
 		J->SetBoolField(TEXT("lock_camera"), Game.IsValid() && Game->bLockActiveCamera);
 		J->SetNumberField(TEXT("timeline_time"), Game.IsValid() ? Game->TimelineTime : 0.f);
@@ -1222,7 +1278,7 @@ public:
 			{ TEXT("屬性"), TEXT("page.object"), On(EPage::Object), O != nullptr }, { TEXT("姿勢庫"), TEXT("app.poselibrary"), Win(TEXT("poselib")), bChar }, { TEXT("語音"), TEXT("app.voice"), Win(TEXT("voice")), bChar }, { TEXT("MMD 導演"), TEXT("toggle.mmd"), Win(TEXT("mmd")) } };
 		case 2: return { { TEXT("背景音樂"), TEXT("app.bgm"), Win(TEXT("bgm")) }, { TEXT("外部音源"), TEXT("app.outsidesound"), Win(TEXT("outside")) } };
 		case 3: return { { TEXT("新場景"), TEXT("scene.new"), nullptr }, { TEXT("開啟／儲存"), TEXT("scene.browser"), Win(TEXT("scenes")) }, { TEXT("另存新檔"), TEXT("scene.saveas"), nullptr },
-			{ TEXT("畫面設定"), TEXT("page.scene"), On(EPage::Scene) }, { TEXT("時間軸"), TEXT("toggle.timeline"), Win(TEXT("timeline")) }, { TEXT("MMD 導演"), TEXT("toggle.mmd"), Win(TEXT("mmd")) },
+			{ TEXT("畫面設定"), TEXT("page.scene"), On(EPage::Scene) }, { TEXT("時間軸"), TEXT("toggle.timeline"), Win(TEXT("timeline")) }, { TEXT("VNGE 工作台"), TEXT("toggle.vnge"), Win(TEXT("vnge_hub")) }, { TEXT("MMD 導演"), TEXT("toggle.mmd"), Win(TEXT("mmd")) },
 			{ TEXT("截圖"), TEXT("app.screenshot"), Win(TEXT("shot")) },
 			{ TEXT("備份恢復"), TEXT("scene.backups"), Win(TEXT("backups")) }, { TEXT("資源檢查"), TEXT("scene.resources"), Win(TEXT("resources")) }, { TEXT("匯入原作"), TEXT("scene.import"), nullptr },
 			{ TEXT("播放故事"), TEXT("app.story"), Win(TEXT("stories")) }, { TEXT("設定"), TEXT("app.settings"), Win(TEXT("settings")) }, { TEXT("最近場景"), TEXT("scene.recent"), Win(TEXT("recent")) }, { TEXT("返回標題"), TEXT("app.quit"), nullptr } };
@@ -1261,6 +1317,7 @@ public:
 		const FTool Tools[] = {
 			{ TEXT("角色分組"), TEXT("toggle.groups"), [this] { return bShowGroups; }, TEXT("groups") },
 			{ TEXT("MMD 導演／設定"), TEXT("toggle.mmd"), [this] { return IsFloatOpen(TEXT("mmd")); }, TEXT("mmd") },
+			{ TEXT("VNGE 工作台"), TEXT("toggle.vnge"), [this] { return IsFloatOpen(TEXT("vnge_hub")); }, TEXT("vnge") },
 			{ TEXT("時間軸"), TEXT("toggle.timeline"), [this] { return IsFloatOpen(TEXT("timeline")); }, TEXT("timeline") },
 			{ TEXT("主選單"), TEXT("toggle.root"), [this] { return bShowRoot; }, TEXT("menu") },
 			{ TEXT("工作區"), TEXT("toggle.workspace"), [this] { return bShowWorkspace; }, TEXT("tree") },
@@ -1276,6 +1333,21 @@ public:
 			TFunction<bool()> On = T.On;
 			if (!T.Command) { Box->AddSlot().AutoWidth().Padding(0.f, 0.f, 7.f, 0.f)[SNew(SBox).WidthOverride(33.f)]; continue; }
 			// U213: a film slate reads as the timeline; the first thing tried for one opened this window.
+			if (FCString::Strcmp(T.Command, TEXT("toggle.vnge")) == 0)
+			{
+				Box->AddSlot().AutoWidth().Padding(0.f, 0.f, 7.f, 0.f)
+					[Tagged(*FString::Printf(TEXT("TopTool_%d"), I), SNew(SBox).WidthOverride(38.f).HeightOverride(33.f).ToolTipText(FText::FromString(Tip(T.Label, T.Command)))
+						[SNew(SBorder).Padding(0.f).BorderImage_Lambda([this, On]
+						{
+							if (On()) return Brush(OKStudioStyle::On());
+							const bool bHasVnge = Game.IsValid() && Game->Document && !Game->Document->Vnge.IsEmpty();
+							return Brush(bHasVnge ? FLinearColor(0.14f, 0.36f, 0.50f, 0.96f) : ButtonFill());
+						})
+						[SNew(SButton).ButtonStyle(&FlatButton()).HAlign(HAlign_Center).VAlign(VAlign_Center).ContentPadding(FMargin(1.f, 0.f))
+							.OnClicked_Lambda([this, Command = FString(T.Command)] { RunCommand(Command); return FReply::Handled(); })
+							[OKStudioStyle::Label(FText::FromString(TEXT("VNGE")), 9.5f)]]])];
+				continue;
+			}
 			if (FCString::Strcmp(T.Command, TEXT("toggle.mmd")) == 0)
 			{
 				Box->AddSlot().AutoWidth().Padding(0.f, 0.f, 7.f, 0.f)
@@ -1341,8 +1413,9 @@ public:
 			+ SVerticalBox::Slot().AutoHeight().Padding(2.f, 8.f, 3.f, 0.f)
 			[
 				SNew(SHorizontalBox)
-				+ SHorizontalBox::Slot().AutoWidth()[IconButton(TEXT("timeline"), Tip(TEXT("時間軸"), TEXT("toggle.timeline")), Cmd(TEXT("toggle.timeline")), 64.f, 22.f, TAttribute<bool>::CreateLambda([this] { return IsFloatOpen(TEXT("timeline")); }))]
-				+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("MMD")), Cmd(TEXT("toggle.mmd")), 38.f, 22.f, TAttribute<bool>::CreateLambda([this] { return IsFloatOpen(TEXT("mmd")); }), 10.f)]
+				+ SHorizontalBox::Slot().AutoWidth()[IconButton(TEXT("timeline"), Tip(TEXT("时间轴"), TEXT("toggle.timeline")), Cmd(TEXT("toggle.timeline")), 38.f, 22.f, TAttribute<bool>::CreateLambda([this] { return IsFloatOpen(TEXT("timeline")); }))]
+				+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("MMD")), Cmd(TEXT("toggle.mmd")), 32.f, 22.f, TAttribute<bool>::CreateLambda([this] { return IsFloatOpen(TEXT("mmd")); }), 9.5f)]
+				+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("VNGE")), Cmd(TEXT("toggle.vnge")), 36.f, 22.f, TAttribute<bool>::CreateLambda([this] { return IsFloatOpen(TEXT("vnge_hub")); }), 9.f)]
 				+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)
 				[
 					SNew(SBox).WidthOverride(22.f).HeightOverride(22.f).ToolTipText_Lambda([this]
@@ -2036,6 +2109,16 @@ public:
 	FString MmdVmdPath;
 	TSharedRef<SWidget> BuildExport();
 	TSharedRef<SWidget> BuildMmdDirector();
+	TSharedPtr<SOKStudioTimelineCurve> CurveView;
+	int32 ActiveInterpTrack = 0;
+	float ActiveInterpKeyTime = 0.f;
+	FString TimelineXmlPath;
+	TSharedRef<SWidget> BuildTimelineCurve();
+	void ShowInterpTrackMenu(int32 TrackIdx, float KeyTime, const FVector2D& At);
+	void ShowAddInterpolableMenu(const FVector2D& At);
+	void ShowTimelineXmlMenu(const FVector2D& At);
+	TSharedPtr<FOKStudioVngeUi> VngeUi;
+	TSharedPtr<SOKStudioVngeOverlay> VngeOverlay;
 
 	// --- Scene files (U7). ---
 	FString SceneFolder, SceneSearch, ScenePick, SceneNewName, SaveAsName;
@@ -2255,7 +2338,16 @@ public:
 		PaintStatus(TEXT("開啟中…") + FPaths::GetBaseFilename(Path));
 		const bool bOk = Game->Load(Path, E);
 		SetStatus(bOk ? TEXT("已讀取 ") + FPaths::GetBaseFilename(Path) : E);
-		if (bOk) { ReportPending = 90; SaveAsName = FPaths::GetBaseFilename(Path); ForgetExport(); }
+		if (bOk)
+		{
+			ReportPending = 90; SaveAsName = FPaths::GetBaseFilename(Path); ForgetExport();
+			ActiveInterpTrack = 0; ActiveInterpKeyTime = 0.f;
+			if (VngeUi) { VngeUi->ResetTransientCaches(); VngeUi->RefreshAllOpenVngeWindows(); }
+			if (CurveView) CurveView->RefreshContent();
+			if (Game->Document && !Game->Document->Vnge.IsEmpty())
+				SetStatus(FString::Printf(TEXT("已读取 %s（含 VNGE 数据：分幕 %d、剪辑 %d、剧本块 %d；点击顶栏 VNGE 打开工作台）"),
+					*FPaths::GetBaseFilename(Path), Game->Document->Vnge.Sss.States.Num(), Game->Document->Vnge.Clips.Num(), Game->Document->Vnge.Script.Blocks.Num()));
+		}
 		// A backup opens as an unsaved scene however it is opened (備份窗, scene browser, scene.load): saving asks for a
 		// name and the backup stays as it is.
 		if (bOk && FPaths::IsUnderDirectory(FPaths::ConvertRelativePathToFull(Path), FPaths::ConvertRelativePathToFull(UOKStudioGame::BackupDirectory())))

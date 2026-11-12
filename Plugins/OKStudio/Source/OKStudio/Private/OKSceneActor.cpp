@@ -310,6 +310,7 @@ namespace
 			case EOKSceneMaterialEditKind::Float: Add(Name, EOKMaterialOverrideKind::Scalar, E.Value.R, E.Value, nullptr); break;
 			case EOKSceneMaterialEditKind::Color: Add(Name, EOKMaterialOverrideKind::Color, 0.f, E.Value, nullptr); break;
 			case EOKSceneMaterialEditKind::TextureST: Add(Name + TEXT("_ST"), EOKMaterialOverrideKind::Vector, 0.f, E.Value, nullptr); break;
+			case EOKSceneMaterialEditKind::Vector: Add(Name, EOKMaterialOverrideKind::Vector, 0.f, E.Value, nullptr); break;
 			case EOKSceneMaterialEditKind::Texture:
 			{
 				const TPair<UTexture2D*, UTexture2D*> Texture = EditTexture(E.Text);
@@ -1006,6 +1007,8 @@ void AOKSceneActor::Release(FShown& Item)
 	Item.AppliedFixedEyes.Reset();
 	Item.AppliedBoneOverrides.Reset();
 	Item.AppliedMorphOverrides.Reset();
+	Item.AppliedLiveMaterialEdits.Reset();
+	Item.EyebrowsOpenBefore = -1.f;
 	Item.AppliedFixedEyesPattern = -1;
 	Item.EyesOpenBefore = -1.f;
 	Item.Component = nullptr;
@@ -1039,6 +1042,17 @@ void AOKSceneActor::ApplyCharacterState(const FOKSceneObject& Object, FShown& It
 		Actor->FaceOpen01[0] = Item.EyesOpenBefore;
 		Actor->bManualFaceControl[0] = Item.bEyesManualBefore;
 		Item.EyesOpenBefore = -1.f;
+	}
+	if (!bHasAnimFace && C.EyebrowsOpen >= 0.f)
+	{
+		if (Item.EyebrowsOpenBefore < 0.f) { Item.EyebrowsOpenBefore = Actor->FaceOpen01[1]; Item.bEyebrowsManualBefore = Actor->bManualFaceControl[1]; }
+		Actor->SetFaceControl(2, Actor->FacePattern[1], C.EyebrowsOpen, false);
+	}
+	else if (Item.EyebrowsOpenBefore >= 0.f)
+	{
+		Actor->FaceOpen01[1] = Item.EyebrowsOpenBefore;
+		Actor->bManualFaceControl[1] = Item.bEyebrowsManualBefore;
+		Item.EyebrowsOpenBefore = -1.f;
 	}
 	if (!InitCurves.Contains(TEXT("face.blush")) && C.Blush >= 0.f && !FMath::IsNearlyEqual(C.Blush, Actor->BlushRate, 1.e-3f))
 	{
@@ -1285,6 +1299,37 @@ void AOKSceneActor::Sync()
 			}
 			Item->AppliedMorphOverrides = Object.Item.MorphOverrides;
 			Item->Item.MorphOverrides = Object.Item.MorphOverrides;
+		}
+		if (Item->AppliedLiveMaterialEdits != Object.LiveMaterialEdits)
+		{
+			if (AKKPreviewActor* Preview = Item->Preview.Get())
+			{
+				TArray<FOKMaterialOverride> Overrides = Object.Kind == EOKSceneObjectKind::Item ? PatternOverrides(Object.Item) : TArray<FOKMaterialOverride>();
+				for (const FOKSceneMaterialEdit& E : Object.LiveMaterialEdits)
+				{
+					if (E.Kind == EOKSceneMaterialEditKind::Renderer && E.Property == TEXT("Enabled") && !E.Material.IsEmpty())
+					{
+						TInlineComponentArray<UMeshComponent*> Meshes(Preview);
+						for (UMeshComponent* M : Meshes)
+							if (M && M->GetName().Contains(E.Material, ESearchCase::IgnoreCase))
+								M->SetVisibility(E.Value.R > 0.5f, false);
+						continue;
+					}
+					if (E.Property.IsEmpty()) continue;
+					const FString ParamName = E.Property.StartsWith(TEXT("_")) ? E.Property : TEXT("_") + E.Property;
+					FOKMaterialOverride Ov;
+					Ov.Material = E.Material;
+					Ov.Parameter = FName(*ParamName);
+					if (E.Kind == EOKSceneMaterialEditKind::Float) { Ov.Kind = EOKMaterialOverrideKind::Scalar; Ov.Scalar = E.Value.R; }
+					else if (E.Kind == EOKSceneMaterialEditKind::Color) { Ov.Kind = EOKMaterialOverrideKind::Color; Ov.Vector = E.Value; }
+					else if (E.Kind == EOKSceneMaterialEditKind::Vector) { Ov.Kind = EOKMaterialOverrideKind::Vector; Ov.Vector = E.Value; }
+					else if (E.Kind == EOKSceneMaterialEditKind::TextureST) { Ov.Parameter = FName(*(ParamName + TEXT("_ST"))); Ov.Kind = EOKMaterialOverrideKind::Vector; Ov.Vector = E.Value; }
+					else continue;
+					Overrides.Add(MoveTemp(Ov));
+				}
+				Preview->SetMaterialOverrides(Overrides);
+			}
+			Item->AppliedLiveMaterialEdits = Object.LiveMaterialEdits;
 		}
 		if (Object.Kind == EOKSceneObjectKind::Camera)
 		{
@@ -2441,8 +2486,9 @@ void AOKSceneActor::SolveConstraints()
 			else if (ParentObj->Kind == EOKSceneObjectKind::Item)
 			{
 				FString Model, Prefab, DummyErr;
-				FVector NodePos, NodeScale;
-				FQuat NodeRot;
+				FVector NodePos = FVector::ZeroVector, NodeScale = FVector::OneVector;
+				FQuat NodeRot = FQuat::Identity;
+
 				if (ItemModel(ParentObj->Item, Model, Prefab, DummyErr)
 					&& FOkSession::OkModelNodeWorld(LibraryDirectory(), Model, Prefab, Con.ParentBone, NodePos, NodeRot, NodeScale))
 				{

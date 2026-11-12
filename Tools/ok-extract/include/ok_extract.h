@@ -632,6 +632,12 @@ int32_t ok_session_set_pupil_stretch(OkSession* s, float across, float down);
 int32_t ok_iris_recolor(uint8_t* pixels, int32_t width, int32_t height, float hue, float saturation, float value);
 int32_t ok_iris_mark(uint8_t* pixels, int32_t width, int32_t height, int32_t shape, float across, float down, float opacity, float hue, float saturation, float value);
 int32_t ok_iris_without_highlights(uint8_t* pixels, int32_t width, int32_t height);
+/* Size-then-copy (`out == NULL || cap <= 0` returns required bytes incl. NUL; `-1` on error). `target_dic_key < 0` parses full-scene XML. */
+int32_t ok_studio_timeline_read_xml(const char* path_or_xml, int32_t is_path, int32_t target_dic_key, char* out, int32_t cap);
+int32_t ok_studio_timeline_write_xml(const char* path, const char* json, int32_t single_file, char* err, int32_t cap);
+/* Size-then-copy (`out == NULL || cap <= 0` returns required bytes incl. NUL; `-1` on error). */
+int32_t ok_studio_vnge_pose_read(const char* path, char* out, int32_t cap);
+int32_t ok_studio_vnge_pose_write(const char* path, const char* category, const char* json, const uint8_t* png_bytes, int32_t png_len, char* err, int32_t cap);
 
 #ifdef __cplusplus
 }

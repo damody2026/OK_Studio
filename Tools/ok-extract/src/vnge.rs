@@ -2053,10 +2053,24 @@ pub struct VngeSceneData {
     pub registry: VngeRegistry,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sss: Option<VngeSssData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sss_adv: Option<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ministates: Vec<crate::vnge_ext::VngeMinistate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sssb: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_settings: Option<Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub clips: Vec<VngeClip>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub script: Option<VngeScript>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sound: Option<crate::vnge_ext::VngeSoundData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub physics: Option<crate::vnge_ext::VngePhysicsData>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub texts: Vec<crate::vnge_ext::VngeTextEntry>,
 }
 
 impl VngeSceneData {
@@ -2064,22 +2078,47 @@ impl VngeSceneData {
         self.registry.actors.is_empty()
             && self.registry.props.is_empty()
             && self.sss.is_none()
+            && self.sss_adv.is_none()
+            && self.ministates.is_empty()
+            && self.sssb.is_none()
+            && self.actor_settings.is_none()
             && self.clips.is_empty()
             && self.script.is_none()
+            && self.sound.is_none()
+            && self.physics.is_none()
+            && self.texts.is_empty()
     }
 }
 
 pub fn extract_vnge(scene: &Scene, bytes: &[u8]) -> VngeSceneData {
+    extract_vnge_with_dir(scene, bytes, None)
+}
+
+pub fn extract_vnge_with_dir(scene: &Scene, bytes: &[u8], out_dir: Option<&std::path::Path>) -> VngeSceneData {
     let blocks = crate::studio_scene::scene_plugins(bytes);
     let registry = register_actors_props(scene);
     let sss = parse_sss(scene, blocks.as_ref(), &registry);
+    let sss_adv = crate::vnge_ext::parse_json_plugin(blocks.as_ref(), "vnge_sssadv");
+    let ministates = crate::vnge_ext::parse_ministates(scene);
+    let sssb = crate::vnge_ext::parse_json_plugin(blocks.as_ref(), "vnge_sssb");
+    let actor_settings = crate::vnge_ext::parse_json_plugin(blocks.as_ref(), "vnge_actor");
     let clips = parse_kfa(scene, blocks.as_ref(), &registry);
     let script = parse_vnss(scene, blocks.as_ref());
+    let sound = crate::vnge_ext::parse_vnsound(blocks.as_ref(), &registry, out_dir);
+    let physics = crate::vnge_ext::parse_vnphysics(blocks.as_ref());
+    let texts = crate::vnge_ext::parse_vntexts(scene);
     VngeSceneData {
         registry,
         sss,
+        sss_adv,
+        ministates,
+        sssb,
+        actor_settings,
         clips,
         script,
+        sound,
+        physics,
+        texts,
     }
 }
 
