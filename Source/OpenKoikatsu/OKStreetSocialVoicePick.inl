@@ -149,3 +149,48 @@ void AOKStreetSocialScene::AddVoicePickUI(TSharedRef<SVerticalBox> Box){
    .OnClicked_Lambda([Weak](){if(Weak.IsValid())Weak->RemoveCardVoice();return FReply::Handled();})];
  }
 }
+
+#if PLATFORM_WINDOWS
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include <commdlg.h>
+#include "Windows/HideWindowsPlatformTypes.h"
+#endif
+
+// The roster's "voice" button: he picks a WAV (anyone speaking), the TTS server makes her voice from it and keeps it in
+// her card (/voice/from_wav), so her lines are spoken in it from then on. Her: her slot in this world (0: a card in the
+// folder not living here yet, its file is used).
+void AOKStreetSocialScene::PickVoiceWav(int32 Her,const FString& RosterPath){
+ if(!State)return;auto& S=*State;
+ const FString Name=Her>0&&S.Manifest.Characters.IsValidIndex(Her)?S.Manifest.Characters[Her].Name:FPaths::GetBaseFilename(RosterPath);
+ if(!S.TtsEnabled||S.TtsEndpoint.IsEmpty()){S.RosterNotice=OKT(TEXT("ui.roster.voice_wav_needs_tts"));RosterRebuild();return;}
+ FString Card=Her>0?OKStreetCardFor(S,Her):FString();
+ if(Card.IsEmpty()){const FString Full=FPaths::ConvertRelativePathToFull(RosterPath);if(IFileManager::Get().FileExists(*Full))Card=Full;}
+ if(Card.IsEmpty()){S.RosterNotice=OKT(TEXT("ui.voice.voice_pick_no_card"));RosterRebuild();return;}
+ FString Wav;
+#if PLATFORM_WINDOWS
+ {TCHAR File[4096]={0};const FString Title=OKT(TEXT("ui.roster.voice_wav_title"));
+  OPENFILENAMEW Dialog{};Dialog.lStructSize=sizeof(Dialog);
+  if(GEngine&&GEngine->GameViewport)if(TSharedPtr<SWindow> Window=GEngine->GameViewport->GetWindow())if(Window->GetNativeWindow().IsValid())Dialog.hwndOwner=(HWND)Window->GetNativeWindow()->GetOSWindowHandle();
+  Dialog.lpstrFilter=TEXT("WAV\0*.wav\0*.*\0*.*\0");Dialog.lpstrFile=File;Dialog.nMaxFile=UE_ARRAY_COUNT(File);Dialog.lpstrTitle=*Title;
+  Dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;
+  if(!GetOpenFileNameW(&Dialog))return; // cancelled
+  Wav=File;}
+#endif
+ if(Wav.IsEmpty())return;
+ auto Body=MakeShared<FJsonObject>();Body->SetStringField(TEXT("card"),Card);Body->SetStringField(TEXT("wav"),Wav);Body->SetNumberField(TEXT("age"),S.TtsAge);
+ if(Her>0&&S.Manifest.Characters.IsValidIndex(Her))Body->SetStringField(TEXT("personality"),FString::FromInt(S.Manifest.Characters[Her].PersonalityId));
+ const FString File=FPaths::GetCleanFilename(Wav);
+ S.RosterNotice=OKMsg(TEXT("ui.roster.voice_wav_busy"),{{TEXT("name"),Name},{TEXT("file"),File}});RosterRebuild();
+ auto Request=OKVoicePickPost(S.TtsEndpoint/TEXT("voice/from_wav"),Body,60.f);
+ Request->OnProcessRequestComplete().BindWeakLambda(this,[this,Her,Name,File,Card](FHttpRequestPtr,FHttpResponsePtr Response,bool Connected){
+  if(!State)return;auto& L=*State;FString Error;
+  const auto J=OKVoicePickAnswer(Response,Connected,Error);
+  if(!J){L.RosterNotice=OKMsg(TEXT("ui.roster.voice_wav_failed"),{{TEXT("error"),Error}});UE_LOG(LogTemp,Warning,TEXT("Street voice from wav failed: %s"),*Error);}
+  else{double Seconds=0;J->TryGetNumberField(TEXT("seconds"),Seconds);
+   L.RosterNotice=OKMsg(TEXT("ui.roster.voice_wav_done"),{{TEXT("name"),Name},{TEXT("file"),File},{TEXT("seconds"),FString::Printf(TEXT("%.0f"),Seconds)}});
+   if(Her>0&&L.Target==Her)L.CardHasVoice=true;
+   UE_LOG(LogTemp,Display,TEXT("Street voice from wav: actor=%d %s -> %s (%.1f s)"),Her,*File,*Card,Seconds);}
+  if(L.RosterOpen)RosterRebuild();RefreshUI();
+ });
+ Request->ProcessRequest();
+}

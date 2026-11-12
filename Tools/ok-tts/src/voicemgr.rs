@@ -237,3 +237,34 @@ pub fn card_remove(bv: &BaseVoices, body: &Value) -> Result<Value> {
     bv.cards.lock().unwrap().remove(&card);
     Ok(json!({"ok": true}))
 }
+
+/// Her voice from a recording the player picked (a WAV of anyone speaking): its speaker embedding becomes her voice,
+/// kept in her card like a chosen candidate. -> {"ok", "tag", "seconds", "card"}
+/// Body: {"card": <absolute card path>, "wav": <absolute WAV path>, "personality", "age"}.
+pub fn from_wav(bv: &BaseVoices, voices: &Voices, body: &Value) -> Result<Value> {
+    let (personality, age) = personality_age(body);
+    let voice = voices.choose(&personality, age);
+    let card = card_path(body)?.context("card is required")?;
+    let wav = PathBuf::from(str_field(body, "wav").context("wav is required")?);
+    if !wav.is_file() {
+        bail!("wav must be an existing file: {}", wav.display());
+    }
+    let mut samples = crate::consistency::wav_samples(&std::fs::read(&wav).with_context(|| format!("read {}", wav.display()))?)
+        .with_context(|| format!("read {} as WAV", wav.display()))?;
+    // A long recording: its first 30 s are plenty for the embedding (and keep the card small).
+    samples.truncate(SAMPLE_RATE as usize * 30);
+    let samples = finish_reference(samples)?;
+    let seconds = samples.len() as f64 / SAMPLE_RATE as f64;
+    let name = wav.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let meta = VoiceMeta {
+        schema: SCHEMA, id: profile_id(&voice), source: "wav".into(), description: name, seed: 0, ref_text: String::new(),
+        ref_audio_sha1: String::new(), design_model: String::new(), base_model: snapshot_name(&bv.base_model),
+        encoder: ENCODER.into(), created: now_utc(),
+    };
+    let p = make_profile(bv.encoder()?, &samples, meta)?;
+    let tag = p.tag();
+    cardvoice::write_file(&card, Some(&p))?;
+    bv.cards.lock().unwrap().remove(&card);
+    crate::log!("ok-tts: VOICE from wav {} ({seconds:.1} s) tag={tag} card={}", wav.display(), card.display());
+    Ok(json!({"ok": true, "tag": tag, "seconds": seconds, "card": card}))
+}

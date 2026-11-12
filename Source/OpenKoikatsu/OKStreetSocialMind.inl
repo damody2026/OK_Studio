@@ -163,6 +163,8 @@ void AOKStreetSocialScene::TickCalendarAndMind(){
  if(Hour!=S.CalendarSavedHour){S.CalendarSavedHour=Hour;{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_SaveCalendar);SaveCalendar();}}
  // He walked somewhere else: saved too (at most every 20 s), so a game closed any way continues near where he was.
  else if(!S.SelfTest&&FVector::Dist2D(S.Male,S.SpotSavedMale)>500.f&&FPlatformTime::Seconds()-S.SpotSavedAt>20.0)SaveCalendar();
+ // Paused by him: nobody decides, comes over, calls or asks anything until he continues (the replies still arrive below).
+ if(!S.UserPaused){
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickChoices);TickChoices();}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickNeeds);TickNeeds();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickBonds);TickBonds();}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickApproach);TickApproach();}
@@ -175,6 +177,7 @@ void AOKStreetSocialScene::TickCalendarAndMind(){
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickInitiative);TickInitiative();}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickDirector);TickDirector();}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFinance);TickFinance();}
+ }
  if(S.Mind){
   // Talk moved on from her (another partner, or none for a while): summarise the meeting into her memories.
   const int32 Partner=FreeTalkPartner();

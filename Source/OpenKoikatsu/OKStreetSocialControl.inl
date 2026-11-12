@@ -125,7 +125,7 @@ void AOKStreetSocialScene::StartControlServer(){
   if(FreeTalkPartner()==INDEX_NONE){OKControlReply(Done,OKControlResult(false,TEXT("nobody to talk to")));return;}
   if(S.FreeTalkBusy){OKControlReply(Done,OKControlResult(false,TEXT("busy: she is still answering")));return;}
   if(SongIsSinging()&&S.Song.Girl==FreeTalkPartner()){OKControlReply(Done,OKControlResult(false,TEXT("busy: she is singing")));return;}
-  S.SystemNote=false;S.FreeTalkHeard=Text;S.FreeTalkDraft=Text;SendFreeTalk();
+  S.SystemNote=false;S.FreeTalkFromAsr=true;S.FreeTalkHeard=Text;S.FreeTalkDraft=Text;SendFreeTalk();
   OKControlReply(Done,OKControlResult(true));
  });
 
@@ -503,7 +503,7 @@ void AOKStreetSocialScene::StartControlServer(){
    if(ClockBody->TryGetArrayField(TEXT("sky_gain"),Rgb)&&Rgb->Num()>=3)S.SkyGainOverride=FLinearColor(float((*Rgb)[0]->AsNumber()),float((*Rgb)[1]->AsNumber()),float((*Rgb)[2]->AsNumber()));
    else if(ClockBody->TryGetNumberField(TEXT("sky_gain"),G))S.SkyGainOverride=FLinearColor(float(G),float(G),float(G));
    if(ClockBody->HasField(TEXT("sky_gain")))S.NextSunUpdate=0;}
-  if(Paused!=S.ClockPaused){const double Wall=FPlatformTime::Seconds();if(Paused)S.ClockStartHours=OKStreetClockHours(S.ClockStartHours,Wall-S.ClockStartWall);S.ClockStartWall=Wall;S.ClockPaused=Paused;RefreshUI();}
+  if(Paused!=S.ClockPaused){const double Wall=FPlatformTime::Seconds();if(Paused)S.ClockStartHours=OKStreetClockHours(S.ClockStartHours,Wall-S.ClockStartWall);S.ClockStartWall=Wall;S.ClockPaused=Paused;OKStreetSetUserPaused(S,Paused);RefreshUI();}
   auto O=OKControlResult(true);O->SetBoolField(TEXT("paused"),S.ClockPaused);OKControlReply(Done,O);
  });
 

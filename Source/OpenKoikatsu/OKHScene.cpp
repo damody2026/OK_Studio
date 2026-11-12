@@ -308,7 +308,7 @@ static void HSettingSet(const TCHAR* Name,float Value){if(auto* Var=HSettingVar(
 static const TCHAR* const HLightVars[]={TEXT("LightFrom"),TEXT("LightTint"),TEXT("LightRamp")};
 static void HSettingsLoad(){
     TArray<FString> Lines;FFileHelper::LoadFileToStringArray(Lines,*HSettingsFile());
-    for(const FString& Line:Lines){FString Name,Value;if(Line.Split(TEXT("="),&Name,&Value)){for(const FHSetting& S:HSettings)if(S.Var&&Name==S.Var)HSettingSet(S.Var,FCString::Atof(*Value));
+    for(const FString& Line:Lines){FString Name,Value;if(Line.Split(TEXT("="),&Name,&Value)){if(Name==TEXT("SkinLit"))continue; /* every one-on-one starts toon (user, 2026-11-12): not carried over */for(const FHSetting& S:HSettings)if(S.Var&&Name==S.Var)HSettingSet(S.Var,FCString::Atof(*Value));
         for(const TCHAR* Light:HLightVars)if(Name==Light)if(auto* Var=HSettingVar(Light))Var->Set(*Value,ECVF_SetByConsole);}}
 }
 static void HSettingsSave(){
@@ -445,7 +445,12 @@ void UOKHScenePanel::Note(const FString& Text,bool bReact){Events.Add(Text);if(G
 TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
     if(!WidgetTree)WidgetTree=NewObject<UWidgetTree>(this);
     UHorizontalBox* Root=WidgetTree->ConstructWidget<UHorizontalBox>();WidgetTree->RootWidget=Root;
-    {HSettingsLoad();SettingSliders.Reset();bCoordinateList=false;CoordButtons.Reset();CoordImages.Reset();CoordTextures.Reset();CoordLoad.Reset();
+    {HSettingsLoad();
+     // Each one-on-one starts with the original Verlet physics and the toon skin (user, 2026-11-12); switched in the
+     // scene they stay for it (the panel is rebuilt many times: once per panel).
+     {static TWeakObjectPtr<UOKHScenePanel> DefaultsFor;if(DefaultsFor.Get()!=this){DefaultsFor=this;HSettingSet(TEXT("SkinLit"),0.f);
+      if(IConsoleVariable* Enabled=IConsoleManager::Get().FindConsoleVariable(TEXT("OKPhysXSecondary.Enabled")))Enabled->Set(0,ECVF_SetByConsole);
+      if(Gallery)Gallery->FillPhysicsBackendCombo();UE_LOG(LogTemp,Display,TEXT("H scene: defaults physics Verlet, skin toon"));}}SettingSliders.Reset();bCoordinateList=false;CoordButtons.Reset();CoordImages.Reset();CoordTextures.Reset();CoordLoad.Reset();
      auto Label=[&](const FString& Words,float Size,const FLinearColor& Color){auto* T=WidgetTree->ConstructWidget<UTextBlock>();FSlateFontInfo F=T->GetFont();F.Size=Size;T->SetFont(F);T->SetColorAndOpacity(FSlateColor(Color));T->SetText(FText::FromString(Words));return T;};
      auto Button=[&](int32 Kind,const TCHAR* Key){auto* B=WidgetTree->ConstructWidget<UOKHSceneButton>();B->Kind=Kind;B->Owner=this;B->OnClicked.AddDynamic(B,&UOKHSceneButton::HandleClick);B->SetContent(Label(OKT(Key),10.f,FLinearColor::Black));return B;};
      UVerticalBox* Left=WidgetTree->ConstructWidget<UVerticalBox>();

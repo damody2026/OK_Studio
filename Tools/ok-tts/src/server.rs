@@ -8,7 +8,7 @@
 //!   POST /cloud {"api_key", "base_url", "tts_model"} -> lines are made in the cloud from now on ("" key: locally again)
 //!   POST /cancel {"channel", "below"} -> requests of that channel with generation < below stop (queued or generating)
 //!   GET  /requests[?id=..] -> what became of a request (complete / cancelled / hangup / failed) and its timings
-//!   /voice/candidates, /voice/fix, /voice/card, /voice/card/remove: choosing and fixing voices (Base backend, voicemgr.rs)
+//!   /voice/candidates, /voice/fix, /voice/card, /voice/card/remove, /voice/from_wav: choosing and fixing voices (Base backend, voicemgr.rs)
 //! Optional request fields (protocol 2): "request_id", "channel", "generation", "segment_index", "card" (her card: a
 //! voice stored in it is used), and for measuring
 //! "stream_later_frames".
@@ -336,13 +336,14 @@ fn handle(state: &Arc<State>, mut req: tiny_http::Request) {
                 Err(e) => respond(req, 400, json!({"ok": false, "error": format!("{e:#}")})),
             }
         }
-        (tiny_http::Method::Post, p @ ("/voice/candidates" | "/voice/fix" | "/voice/card/remove")) => {
+        (tiny_http::Method::Post, p @ ("/voice/candidates" | "/voice/fix" | "/voice/card/remove" | "/voice/from_wav")) => {
             let p = p.to_string();
             let result = read_body(&mut req).and_then(|b| Ok(serde_json::from_str::<Value>(&b)?)).and_then(|body| {
                 let b = state.base.as_ref().ok_or_else(|| anyhow::anyhow!("choosing voices needs the Base backend (ok-tts profile)"))?;
                 match p.as_str() {
                     "/voice/candidates" => voicemgr::candidates(&state.engine, b, &state.voices, &body),
                     "/voice/fix" => voicemgr::fix(&state.engine, b, &state.voices, &body),
+                    "/voice/from_wav" => voicemgr::from_wav(b, &state.voices, &body),
                     _ => voicemgr::card_remove(b, &body),
                 }
             });

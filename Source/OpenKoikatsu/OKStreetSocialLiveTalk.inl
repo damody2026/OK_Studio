@@ -156,7 +156,7 @@ void AOKStreetSocialScene::TickFreeTalkLive(double Now){
  }
  }
  if(!S.FreeTalkBusy&&!S.FreeTalkLivePending.IsEmpty()){
-  S.SystemNote=false;S.FreeTalkDraft=S.FreeTalkLivePending;S.FreeTalkLivePending.Reset();
+  S.SystemNote=false;S.FreeTalkFromAsr=true;S.FreeTalkDraft=S.FreeTalkLivePending;S.FreeTalkLivePending.Reset();
   SendFreeTalk();
  }
  // Not open (failed start, server restarted, device lost): keep trying.
