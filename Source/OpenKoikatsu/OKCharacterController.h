@@ -254,6 +254,10 @@ public:
 	void OnSave();
 	UFUNCTION()
 	void OnSaveApng();
+	/** The shown character as a plain KKS card (OKGallerySaveKks.cpp): her sliders and bone edits, the character style
+	 *  baked into the sliders and ABMX bones, the preview without the OK card's frames and chunks. */
+	UFUNCTION()
+	void OnSaveKks();
 	/** OK clothes (.okclothes, OKGalleryClothing.cpp): export the shown outfit, wear one as the shown outfit (a new
 	 *  card in the save folder), or turn a game coordinate card into one. */
 	UFUNCTION()
