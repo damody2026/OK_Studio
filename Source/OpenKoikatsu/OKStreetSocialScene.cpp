@@ -2169,6 +2169,11 @@ void AOKStreetSocialScene::TickFreeTalkSpeech(double Now){
  // Several of them (a party): one at a time. The next girl waits until whoever spoke before her is done, not only
  // until she herself is quiet (two heroines talked over each other).
  for(const int32 Other:S.FreeTalkSpeechSpeakers)if(Other!=Character&&OKCrowdRuntimeSpeechActive(this,Other))return;
+ // Held back for over a minute (her song ran in between): the moment has passed, its caption was shown then. 胡桃 said
+ // "here are the two hot cocoas" 83 s late, after the song, with the cocoa long drunk (R6-243).
+ if(FPlatformTime::Seconds()-S.FreeTalkSpeechRepliedAt>60.0){
+  UE_LOG(LogTemp,Display,TEXT("Free talk: %d line(s) not spoken, %.0fs after the reply"),S.FreeTalkSpeechLines.Num()-S.FreeTalkSpeechPlayed,FPlatformTime::Seconds()-S.FreeTalkSpeechRepliedAt);
+  S.FreeTalkSpeechPlayed=S.FreeTalkSpeechLines.Num();return;}
  const int32 Index=S.FreeTalkSpeechPlayed;
  // A stream that has buffered enough (or finished short) is playable before its file exists.
  if(const auto& Stream=S.FreeTalkSpeechStreams[Index];Stream&&S.FreeTalkSpeechReady[Index]==0&&S.FreeTalkSpeechStreamed[Index]!=2&&(Stream->Num()>=OKFreeTalkStreamStartSamples||(Stream->IsComplete()&&Stream->Num()>0)))S.FreeTalkSpeechReady[Index]=3;
