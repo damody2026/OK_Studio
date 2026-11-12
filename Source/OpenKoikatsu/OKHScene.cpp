@@ -2124,14 +2124,17 @@ TSharedPtr<FJsonObject> UOKHScenePanel::MirrorJson(int32 Index) const{
 }
 // The puddles (user 2026-11-12: water on the ground, reflecting with screen space reflections): flat quads a few millimetres
 // over her floor round the pair's origin (the first under them), each with an outline of its own (a few round blobs run
-// together, its mask), M_OKPuddleLit (Tools/prepare_face_materials.lua) in the scene's material root. They stay with the
+// together, its mask), M_OKPuddleMirror (Tools/prepare_face_materials.lua) in the scene's material root. Where nothing on
+// screen is reflected they show the floor under them, darker (user 2026-11-12, "why so black"): a photo of the floor from
+// above (OKTakePuddleFloor) that the material glows with. Translucent water was tried (its own screen space reflections
+// are grainy and faint) and decals (the street floor takes none). They stay with the
 // pair's origin as the mirrors do. Screen space reflections are what shows them in the water: while puddles are down
 // r.ReflectionMethod is 2 (SSR, the project's default) and r.SSR.Quality at least 2 (the university city turns it off).
 static const FString& OKPuddleMaterialPath(){
     static const FString Path=[]{FString Manifest,Json,Found;TSharedPtr<FJsonObject> Object;
         if(FParse::Value(FCommandLine::Get(),TEXT("StreetSocialManifest="),Manifest)&&FFileHelper::LoadFileToString(Json,*Manifest)&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Object)&&Object)Object->TryGetStringField(TEXT("material_root"),Found);
         if(Found.IsEmpty())Found=TEXT("/Game/IndependentResources/RuntimeMaterials/StreetDisplay26");
-        return Found/TEXT("M_OKPuddleLit.M_OKPuddleLit");}();
+        return Found/TEXT("M_OKPuddleMirror.M_OKPuddleMirror");}();
     return Path;
 }
 // One puddle's outline, 128 x 128, white where the water is: blobs round its middle, their edges eased (the material clips at
@@ -2152,12 +2155,33 @@ static UTexture2D* OKPuddleMask(int32 Seed){
     Tex->SRGB=false;Tex->Filter=TF_Bilinear;Tex->AddressX=Tex->AddressY=TA_Clamp;Tex->NeverStream=true;Tex->UpdateResource();
     return Tex;
 }
+// The floor under the puddles, photographed straight down (orthographic, 256 x 256, linear scene colour) with nothing but
+// the floor in it: the part a trace straight down from her hips meets, or, when that finds nothing, the scene without the
+// two of them, the puddles and the mirrors. Screen up is +X and screen right +Y (pitch -90, yaw 0), as the material reads it.
+static void OKTakePuddleFloor(UWorld* World,AActor* Puddles,AKKPreviewActor* Girl,AActor* Him,TArrayView<AActor* const> Mirrors,
+    TObjectPtr<USceneCaptureComponent2D>& Capture,TObjectPtr<UTextureRenderTarget2D>& Target,float Width,TArrayView<const TObjectPtr<UMaterialInstanceDynamic>> Shown){
+    if(!Target){Target=NewObject<UTextureRenderTarget2D>(Puddles);Target->RenderTargetFormat=RTF_RGBA16f;Target->ClearColor=FLinearColor::Black;Target->InitAutoFormat(256,256);Target->UpdateResourceImmediate(true);}
+    if(!Capture){Capture=NewObject<USceneCaptureComponent2D>(Puddles,TEXT("PuddleFloor"));Capture->SetupAttachment(Puddles->GetRootComponent());Capture->SetUsingAbsoluteRotation(true);
+        Capture->ProjectionType=ECameraProjectionMode::Orthographic;Capture->bCaptureEveryFrame=false;Capture->bCaptureOnMovement=false;
+        Capture->CaptureSource=SCS_SceneColorHDR;Capture->ShowFlags.SetScreenSpaceReflections(false);Capture->ShowFlags.SetMotionBlur(false);Capture->ShowFlags.SetTemporalAA(false);
+        Capture->TextureTarget=Target;Capture->RegisterComponent();}
+    Capture->SetRelativeLocation(FVector(0.,0.,300.));Capture->SetWorldRotation(FRotator(-90.f,0.f,0.f));Capture->OrthoWidth=Width;
+    Capture->ShowOnlyActors.Reset();Capture->ShowOnlyComponents.Reset();Capture->HiddenActors.Reset();
+    FHitResult Hit;FCollisionQueryParams Query(TEXT("OKPuddleFloor"),false);Query.AddIgnoredActor(Girl);Query.AddIgnoredActor(Puddles);if(Him)Query.AddIgnoredActor(Him);for(AActor* M:Mirrors)if(M)Query.AddIgnoredActor(M);
+    const FVector From=Girl->GetActorLocation()+FVector(0.,0.,60.);
+    if(World->LineTraceSingleByChannel(Hit,From,From-FVector(0.,0.,200.),ECC_Visibility,Query)&&Hit.GetComponent()){Capture->PrimitiveRenderMode=ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;Capture->ShowOnlyComponents.Add(Hit.GetComponent());}
+    else{Capture->PrimitiveRenderMode=ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;Capture->HiddenActors.Add(Girl);Capture->HiddenActors.Add(Puddles);if(Him)Capture->HiddenActors.Add(Him);for(AActor* M:Mirrors)if(M)Capture->HiddenActors.Add(M);}
+    Capture->CaptureScene();
+    const FVector At=Capture->GetComponentLocation();
+    for(UMaterialInstanceDynamic* M:Shown)if(M){M->SetTextureParameterValue(TEXT("PuddleFloor"),Target);M->SetVectorParameterValue(TEXT("PuddleFloorRect"),FLinearColor(float(At.X),float(At.Y),1.f/Width,0.f));}
+    static bool bSaid=false;if(!bSaid){bSaid=true;UE_LOG(LogTemp,Display,TEXT("H scene: puddle floor photo %.0f cm, %s"),Width,Capture->ShowOnlyComponents.Num()?*GetNameSafe(Hit.GetActor()):TEXT("scene without them"));}
+}
 void UOKHScenePanel::TickPuddles(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickPuddles);
     AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;
     if(CVarHPuddles.GetValueOnGameThread()<.5f||!IsValid(Girl)||!GetWorld()){RemovePuddles();return;}
     const int32 Count=FMath::Clamp(CVarHPuddleCount.GetValueOnGameThread(),1,8);const float Size=FMath::Clamp(CVarHPuddleSize.GetValueOnGameThread(),20.f,300.f);
     if(!IsValid(Puddles)||PuddlesMade!=Count||PuddlesSize!=Size){
-        if(IsValid(Puddles))Puddles->Destroy();Puddles=nullptr;PuddleShown.Reset();PuddleShineShown=-1.f;
+        if(IsValid(Puddles))Puddles->Destroy();Puddles=nullptr;PuddleShown.Reset();PuddleShineShown=-1.f;PuddleFloorCapture=nullptr;PuddleFloorTarget=nullptr;PuddleFloorTakenAt=-1.;
         UMaterialInterface* Parent=LoadObject<UMaterialInterface>(nullptr,*OKPuddleMaterialPath(),nullptr,LOAD_NoWarn);
         if(!Parent){static bool bSaid=false;if(!bSaid){bSaid=true;UE_LOG(LogTemp,Warning,TEXT("H scene: no puddle material %s (Tools/prepare_face_materials.lua, then the patch)"),*OKPuddleMaterialPath());}return;}
         FActorSpawnParameters Params;Params.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -2175,23 +2199,30 @@ void UOKHScenePanel::TickPuddles(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickPuddl
             Quad->CreateMeshSection(0,V,{0,2,1,0,3,2},{FVector::UpVector,FVector::UpVector,FVector::UpVector,FVector::UpVector},{FVector2D(0,0),FVector2D(1,0),FVector2D(1,1),FVector2D(0,1)},{},{},false);
             auto* Shown=UMaterialInstanceDynamic::Create(Parent,Puddles);if(PuddleMasks.IsValidIndex(I)&&PuddleMasks[I])Shown->SetTextureParameterValue(TEXT("PuddleMask"),PuddleMasks[I]);
             PuddleShown.Add(Shown);Quad->SetMaterial(0,Shown);Quad->SetCastShadow(false);Quad->SetCollisionEnabled(ECollisionEnabled::NoCollision);}
-        PuddlesMade=Count;PuddlesSize=Size;
+        PuddlesMade=Count;PuddlesSize=Size;PuddleFloorWidth=Size*4.4f+40.f; // reaches the farthest puddle's far edge (1.6 + .53 sizes out)
         // Screen space reflections, for as long as they lie there.
         if(IConsoleVariable* Method=IConsoleManager::Get().FindConsoleVariable(TEXT("r.ReflectionMethod"));Method&&PreviousReflectionMethod<0){PreviousReflectionMethod=Method->GetInt();if(PreviousReflectionMethod!=2)Method->Set(2,ECVF_SetByConsole);}
         if(IConsoleVariable* Ssr=IConsoleManager::Get().FindConsoleVariable(TEXT("r.SSR.Quality"));Ssr&&PreviousSsrQuality<0){PreviousSsrQuality=Ssr->GetInt();if(PreviousSsrQuality<2)Ssr->Set(3,ECVF_SetByConsole);}
         UE_LOG(LogTemp,Display,TEXT("H scene: %d puddles down, %.0f cm (reflections: method %d, ssr %d)"),Count,Size,PreviousReflectionMethod,PreviousSsrQuality);}
-    // How much they reflect: water by itself (F0 2 to 4 %) shows almost nothing looked at from above, so the slider
-    // turns it towards a dark mirror (metallic, the reflectance its colour), where screen space reflections show them.
+    // How much they reflect: 0 wet floor with water's own faint glint, 1 a mirror (metallic, reflectance .95) over the floor's
+    // glow; the floor's photo darker the more it reflects, so the floor does not wash the reflection out.
     if(const float Shine=FMath::Clamp(CVarHPuddleShine.GetValueOnGameThread(),0.f,1.f);Shine!=PuddleShineShown){PuddleShineShown=Shine;
-        const FLinearColor Color=FMath::Lerp(FLinearColor(.012f,.014f,.018f),FLinearColor(.62f,.65f,.7f),Shine);
-        for(UMaterialInstanceDynamic* Shown:PuddleShown)if(Shown){Shown->SetVectorParameterValue(TEXT("PuddleColor"),Color);Shown->SetScalarParameterValue(TEXT("PuddleMetallic"),Shine);Shown->SetScalarParameterValue(TEXT("PuddleSpecular"),FMath::Lerp(.5f,1.f,Shine));}}
+        const FLinearColor Color=FLinearColor(.95f,.95f,.97f)*Shine;
+        for(UMaterialInstanceDynamic* Shown:PuddleShown)if(Shown){Shown->SetVectorParameterValue(TEXT("PuddleColor"),Color);Shown->SetScalarParameterValue(TEXT("PuddleMetallic"),Shine);
+            Shown->SetScalarParameterValue(TEXT("PuddleDarken"),FMath::Lerp(.75f,.5f,Shine));Shown->SetScalarParameterValue(TEXT("PuddleSpecular"),FMath::Lerp(.5f,1.f,Shine));}}
     // On her floor round the pair's origin, a few millimetres up (no fighting with the floor's depth).
     const FTransform Frame=Girl->PairFrame();
     Puddles->SetActorLocationAndRotation(FVector(Frame.GetLocation().X,Frame.GetLocation().Y,Girl->GetActorLocation().Z+.4f),FRotator(0.f,Frame.Rotator().Yaw,0.f));
+    // The floor's photo again when they have moved or every two seconds (the light may change); one small capture.
+    const double Now=FPlatformTime::Seconds();
+    if(PuddleFloorTakenAt<0.||Now-PuddleFloorTakenAt>2.||FVector::DistSquared(Puddles->GetActorLocation(),PuddleFloorAt)>4.){
+        AActor* const MirrorActors[2]={Mirrors[0].Actor.Get(),Mirrors[1].Actor.Get()};
+        OKTakePuddleFloor(GetWorld(),Puddles,Girl,Gallery->PartnerActor.Get(),MirrorActors,PuddleFloorCapture,PuddleFloorTarget,PuddleFloorWidth,PuddleShown);
+        PuddleFloorTakenAt=Now;PuddleFloorAt=Puddles->GetActorLocation();}
 }
 void UOKHScenePanel::RemovePuddles(){
     if(IsValid(Puddles)){Puddles->Destroy();UE_LOG(LogTemp,Display,TEXT("H scene: puddles up"));}
-    Puddles=nullptr;PuddleShown.Reset();PuddleShineShown=-1.f;PuddlesMade=0;PuddlesSize=0.f;
+    Puddles=nullptr;PuddleShown.Reset();PuddleShineShown=-1.f;PuddleFloorCapture=nullptr;PuddleFloorTarget=nullptr;PuddleFloorTakenAt=-1.;PuddlesMade=0;PuddlesSize=0.f;
     if(PreviousReflectionMethod>=0){if(IConsoleVariable* Method=IConsoleManager::Get().FindConsoleVariable(TEXT("r.ReflectionMethod")))Method->Set(PreviousReflectionMethod,ECVF_SetByConsole);PreviousReflectionMethod=-1;}
     if(PreviousSsrQuality>=0){if(IConsoleVariable* Ssr=IConsoleManager::Get().FindConsoleVariable(TEXT("r.SSR.Quality")))Ssr->Set(PreviousSsrQuality,ECVF_SetByConsole);PreviousSsrQuality=-1;}
 }

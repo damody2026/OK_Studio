@@ -215,9 +215,12 @@ private:
     UPROPERTY() FOKHMirror Mirrors[2];int32 MirrorTurn=0;
     void TickMirror();void TickOneMirror(int32 Index,bool& bTaken);void RemoveMirror();void RemoveMirror(int32 Index);
     // Puddles on the floor round them (user 2026-11-12; TickPuddles, ok.HScene.Puddles / PuddleCount / PuddleSize,
-    // {"puddles":{...}} on /hscene): nearly smooth lit water (M_OKPuddleLit) in which screen space reflections show them.
+    // {"puddles":{...}} on /hscene): nearly smooth water (M_OKPuddleMirror) in which screen space reflections show them,
+    // glowing with a photo of the floor under it (PuddleFloorCapture) so it is wet floor, not black, where nothing is reflected.
     UPROPERTY() TObjectPtr<AActor> Puddles;UPROPERTY() TArray<TObjectPtr<class UTexture2D>> PuddleMasks;
     UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> PuddleShown;float PuddleShineShown=-1.f;
+    UPROPERTY() TObjectPtr<USceneCaptureComponent2D> PuddleFloorCapture;UPROPERTY() TObjectPtr<UTextureRenderTarget2D> PuddleFloorTarget;
+    FVector PuddleFloorAt=FVector::ZeroVector;double PuddleFloorTakenAt=-1.;float PuddleFloorWidth=0.f;
     int32 PuddlesMade=0;float PuddlesSize=0.f;int32 PreviousSsrQuality=-1,PreviousReflectionMethod=-1;
     void TickPuddles();void RemovePuddles();
 public:
