@@ -9600,6 +9600,18 @@ bool AKKPreviewActor::SetPupilMarks(const FOKIrisMarks& Marks)
     EyePupilMarks=Marks;
     return SetEyeDull(EyePupilScale>0.f?EyePupilScale:1.f,bEyeHighlightHidden);
 }
+void AKKPreviewActor::PrepareEyeDull()
+{
+    // SetEyeDull's irises without their highlights made ahead, off the game thread (OKPrepareIrisWithoutHighlights).
+    TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrepareEyeDull);
+    auto Ask=[](UMaterialInterface* Material){UTexture* Iris=nullptr;if(Material&&Material->GetTextureParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex")),Iris)&&Iris)OKPrepareIrisWithoutHighlights(Iris);};
+    TInlineComponentArray<UMeshComponent*> Meshes(this);
+    for(const auto& Part:Parts){if(Session.EyeMaterialSetting(Part.SessionIndex,-1)==0.f)continue;Ask(Part.GpuEyeMaterial);
+        const FName PartTags[]={*FString::Printf(TEXT("KKSessionPart_%d"),Part.SessionIndex),*FString::Printf(TEXT("KKMorphPart_%d"),Part.SessionIndex)};
+        for(UMeshComponent* Drawn:Meshes)if(Drawn&&(Drawn==Part.Comp||Drawn->ComponentHasTag(PartTags[0])||Drawn->ComponentHasTag(PartTags[1])))
+            for(int32 Slot=0;Slot<Drawn->GetNumMaterials();++Slot)if(auto* Dynamic=Cast<UMaterialInstanceDynamic>(Drawn->GetMaterial(Slot)))if(!EyeIrisBase.Contains(Dynamic))Ask(Dynamic);}
+}
+
 bool AKKPreviewActor::SetEyeDull(float PupilScale,bool bHideHighlight)
 {
     TRACE_CPUPROFILER_EVENT_SCOPE(KK_SetEyeDull);

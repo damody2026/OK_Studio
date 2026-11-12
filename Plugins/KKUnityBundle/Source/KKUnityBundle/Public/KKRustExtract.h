@@ -18,6 +18,9 @@ class UTexture;
 /** This iris texture with the highlights painted into it taken out (a card's overlay can hold them; the eye material's own
  *  gate does not reach those). Iris itself when it has none. Made once per texture, on the game thread. */
 KKUNITYBUNDLE_API UTexture* OKIrisWithoutHighlights(UTexture* Iris);
+/** OKIrisWithoutHighlights made ahead without waiting on the game thread (read back on the render thread, painted on a
+ *  worker); nothing when it is made or on its way. */
+KKUNITYBUNDLE_API void OKPrepareIrisWithoutHighlights(UTexture* Iris);
 /** Marks of ours over the middle of an iris, the first under the second: Shape (x; 0 none), across, down, opacity, and each one's
  *  Colour (hue in degrees, saturation, value). */
 struct FOKIrisMarks

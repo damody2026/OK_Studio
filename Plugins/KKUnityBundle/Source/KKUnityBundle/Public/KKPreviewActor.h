@@ -407,6 +407,8 @@ public:
 	float EyeGazeAsked[3] = {0.f,0.f,0.f};
 	/** Her pupils PupilScale times as large and her eye highlights off (a yandere's, or worn out); 1 and false: her card's. */
 	bool SetEyeDull(float PupilScale, bool bHideHighlight);
+	// SetEyeDull's irises without highlights made ahead off the game thread; cheap to ask again.
+	void PrepareEyeDull();
 	/** Her pupils drawn off their place, in iris texture units (a tremble); 0 is where they belong. */
 	bool SetPupilOffset(float X, float Y);
 	/** Her pupils across and down, on top of SetEyeDull's scale; 1 is as they are. */

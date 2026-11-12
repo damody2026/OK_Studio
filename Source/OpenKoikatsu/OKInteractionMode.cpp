@@ -28,6 +28,7 @@
 #include "Components/ComboBoxString.h"
 #include "ProceduralMeshComponent.h"
 #include "Misc/FileHelper.h"
+#include "KKAnimationCatalog.h"
 #include "Serialization/JsonSerializer.h"
 #include "UnrealClient.h"
 #include "Engine/GameViewportClient.h"
@@ -197,7 +198,7 @@ void AOKInteractionMode::LoadFemale(const FString& Path,int32 Outfit){
             if(!Job->Ok){Mode->Fail(Job->Error.IsEmpty()?TEXT("女角高模載入失敗"):Job->Error);return;}
             C->Selected=MoveTemp(Job->Card);C->Entries.Reset();auto& E=C->Entries.AddDefaulted_GetRef();E.Path=Path;E.FileName=FPaths::GetCleanFilename(Path);C->SelectedIndex=0;C->OutfitIndex=Outfit;C->PreviewOutfitIndex=Outfit;C->PreviewCardPath=Path;C->bModelLayout=true;
             if(!Job->Pairs.IsEmpty()){C->PendingLoadPairJson=MoveTemp(Job->Pairs);C->PendingLoadPairGeneration=C->LoadGeneration;}
-            Mode->LoadingFemale=Mode->GetWorld()->SpawnActor<AKKPreviewActor>();if(!Mode->LoadingFemale){Mode->Fail(TEXT("無法建立高模角色"));return;}Mode->LoadingFemale->bPreserveSourceWorld=true;if(Mode->bInPlace)Mode->LoadingFemale->SetActorTransform(FTransform(Mode->InPlaceAt.GetRotation(),Mode->InPlaceAt.GetLocation()));else Mode->LoadingFemale->SetActorLocation(FVector::ZeroVector);Mode->LoadingFemale->SetActorHiddenInGame(true);Mode->LoadingFemale->Session=MoveTemp(Job->Session);Mode->LoadingFemale->PrepareWornBodyMasks();if(Mode->Controller)Mode->Controller->PrepareEditorModsJson();
+            Mode->LoadingFemale=Mode->GetWorld()->SpawnActor<AKKPreviewActor>();if(!Mode->LoadingFemale){Mode->Fail(TEXT("無法建立高模角色"));return;}Mode->LoadingFemale->bPreserveSourceWorld=true;if(Mode->bInPlace)Mode->LoadingFemale->SetActorTransform(FTransform(Mode->InPlaceAt.GetRotation(),Mode->InPlaceAt.GetLocation()));else Mode->LoadingFemale->SetActorLocation(FVector::ZeroVector);Mode->LoadingFemale->SetActorHiddenInGame(true);Mode->LoadingFemale->Session=MoveTemp(Job->Session);Mode->LoadingFemale->PrepareWornBodyMasks();if(Mode->Controller)Mode->Controller->PrepareEditorModsJson();UKKAnimationCatalog::PreloadDefaultCatalog();
             FString Error;if(!Mode->LoadingFemale->BeginSessionLoad(Error)){Mode->Fail(Error);return;}
         });
     });
@@ -510,6 +511,8 @@ void AOKInteractionMode::Tick(float Delta){
     if(FPlatformTime::Seconds()-Started>180&&!Ready&&(!Activated||ReturnLabel==TEXT("返回多人街區"))){Fail(TEXT("一對一互動準備逾時"));return;}
     if(LoadingFemale){TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_HerLoaded);FString Why;
         if(!LoadingFemale->ContinueSessionLoad(Why)){Fail(Why);return;}
+        // Her irises without highlights read back and painted while she loads (her H panel may ask for them at once).
+        LoadingFemale->PrepareEyeDull();
         if(!LoadingFemale->IsSessionLoadComplete())return;
         bool FullOff=true;for(uint8 State:Controller->ClothesStates)FullOff&=State==3;
         {TRACE_CPUPROFILER_EVENT_SCOPE(OK_IM_HerClothes);LoadingFemale->bAllClothesStates=!bClonedFemale;LoadingFemale->SetClothingPartsHidden(Controller->ClothesStates);

@@ -14,6 +14,7 @@
 #include "RenderingThread.h"
 #include "RHICommandList.h"
 #include "TextureResource.h"
+#include "Async/Async.h"
 
 static void ExtendEncodedMipChain(TArray<FOKEncodedMip>& Mips);
 TArray<FOKEncodedMip> OKBuildEncodedMipChain(const TArray<uint8>& BGRA, int32 Width, int32 Height)
@@ -128,10 +129,41 @@ UTexture* OKIrisRecolored(UTexture* Iris,float Hue,float Saturation,float Value,
     UTexture* Shown=OKIrisLike(Source,Pixels);if(!Shown)return Iris;
     R.Asked=Asked;R.Marked=Marks;R.Shown.Reset(Shown);return Shown;
 }
+// Each iris's own without its highlights, once (OKIrisWithoutHighlights, or OKPrepareIrisWithoutHighlights ahead).
+static TMap<TObjectKey<UTexture>,TStrongObjectPtr<UTexture>> GIrisWithoutHighlights;
+static TSet<TObjectKey<UTexture>> GIrisPreparing;
+void OKPrepareIrisWithoutHighlights(UTexture* Iris)
+{
+    // OKIrisWithoutHighlights' work without its waits (it flushed rendering twice, read the iris back and built its mips
+    // on the game thread: 140 ms of the frame her one-on-one opened, 2026-11-12). Read back on the render thread, painted
+    // and its mips made on a worker, the texture made on the game thread; till then OKIrisWithoutHighlights does it all
+    // itself, as before.
+    check(IsInGameThread());
+    UTexture2D* Source=Cast<UTexture2D>(Iris);FTextureResource* Resource=Source?Source->GetResource():nullptr;
+    if(!Resource||GIrisWithoutHighlights.Contains(Iris)||GIrisPreparing.Contains(Iris))return;
+    GIrisPreparing.Add(Iris);UE_LOG(LogTemp,Display,TEXT("Iris highlights preparing: %s"),*Iris->GetName());
+    const int32 Width=Source->GetSizeX(),Height=Source->GetSizeY();const TWeakObjectPtr<UTexture2D> Weak(Source);
+    ENQUEUE_RENDER_COMMAND(OKPrepareIris)([Resource,Width,Height,Weak](FRHICommandListImmediate& Commands){
+        TArray<FColor> Pixels;if(FRHITexture* Texture=Resource->GetTexture2DRHI())Commands.ReadSurfaceData(Texture,FIntRect(0,0,Width,Height),Pixels,FReadSurfaceDataFlags(RCM_UNorm));
+        Async(EAsyncExecution::ThreadPool,[Pixels=MoveTemp(Pixels),Width,Height,Weak]()mutable{
+            const bool bRead=Pixels.Num()==Width*Height;
+            const bool bPainted=bRead&&ok_iris_without_highlights(reinterpret_cast<uint8_t*>(Pixels.GetData()),Width,Height)!=0;
+            TArray<FOKEncodedMip> Mips;
+            if(bPainted){TArray<uint8> BGRA;BGRA.Append(reinterpret_cast<const uint8*>(Pixels.GetData()),Pixels.Num()*sizeof(FColor));Mips=OKBuildEncodedMipChain(BGRA,Width,Height);}
+            AsyncTask(ENamedThreads::GameThread,[Mips=MoveTemp(Mips),bRead,bPainted,Weak](){
+                UTexture2D* Source=Weak.Get();if(Source)GIrisPreparing.Remove(Source);
+                if(!Source||!bRead||GIrisWithoutHighlights.Contains(Source))return;
+                UTexture* Result=Source;
+                if(bPainted)if(UTexture2D* Made=CreatePreparedTexture(Mips,nullptr,true)){Made->SRGB=Source->SRGB;Made->Filter=Source->Filter;Made->AddressX=Source->AddressX;Made->AddressY=Source->AddressY;Made->UpdateResource();Result=Made;}
+                UE_LOG(LogTemp,Display,TEXT("Iris highlights prepared: %s painted out=%d"),*Source->GetName(),int32(bPainted));
+                GIrisWithoutHighlights.Add(Source,TStrongObjectPtr<UTexture>(Result));});
+        });
+    });
+}
 UTexture* OKIrisWithoutHighlights(UTexture* Iris)
 {
     check(IsInGameThread());
-    static TMap<TObjectKey<UTexture>,TStrongObjectPtr<UTexture>> Made;
+    auto& Made=GIrisWithoutHighlights;
     if(!Iris)return nullptr;
     if(const auto* Known=Made.Find(Iris))return Known->Get();
     UTexture2D* Source=Cast<UTexture2D>(Iris);TArray<FColor> Pixels;

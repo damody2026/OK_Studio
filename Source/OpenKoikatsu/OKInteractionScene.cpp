@@ -432,12 +432,12 @@ void UOKCharacterController::ActivateInteraction() {
     if(!InteractionWidget){InteractionScene->Destroy();InteractionScene=nullptr;return;}
     InteractionWidget->BodyPrepareAttempt=PreviewActor;InteractionWidget->BodyPreparationError=BodyError;
     bInteractionPreviousPoseSharing=PreviewActor->bShareIdenticalPose;
-    PreviewActor->bShareIdenticalPose=true;PreviewActor->bUsePrivateGpuPlayback=true;PreviewActor->RefreshSkinnedDisplay();
-    if(PartnerActor){PartnerActor->bUsePrivateGpuPlayback=true;PartnerActor->RefreshSkinnedDisplay();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_SkinnedDisplay);PreviewActor->bShareIdenticalPose=true;PreviewActor->bUsePrivateGpuPlayback=true;PreviewActor->RefreshSkinnedDisplay();
+    if(PartnerActor){PartnerActor->bUsePrivateGpuPlayback=true;PartnerActor->RefreshSkinnedDisplay();}}
     PreviewActor->bReuseSpeechAudio=true;
-    RefreshInteractionMotionSources();
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_MotionSources);RefreshInteractionMotionSources();}
     InteractionWidget->Gallery=this;InteractionWidget->Scene=InteractionScene;
-    SetModelLayout(true);InteractionWidget->AddToViewport(110);if(bHScene&&(HPanel=CreateWidget<UOKHScenePanel>(GetOwningPlayer()))!=nullptr){HPanel->Gallery=this;HPanel->AddToViewport(111);}if(SpeechCombo)SpeechCombo->OnSelectionChanged.AddDynamic(InteractionWidget,&UOKInteractionWidget::OnSpeechSelection);InteractionWidget->PreloadSpeech();SetVisibility(ESlateVisibility::Collapsed);
+    TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_Widgets);SetModelLayout(true);InteractionWidget->AddToViewport(110);if(bHScene&&(HPanel=CreateWidget<UOKHScenePanel>(GetOwningPlayer()))!=nullptr){HPanel->Gallery=this;HPanel->AddToViewport(111);}if(SpeechCombo)SpeechCombo->OnSelectionChanged.AddDynamic(InteractionWidget,&UOKInteractionWidget::OnSpeechSelection);InteractionWidget->PreloadSpeech();SetVisibility(ESlateVisibility::Collapsed);
     if(auto* PC=Cast<AOpenKoikatsuPlayerController>(GetOwningPlayer()))PC->SetPaintPreviewActive(true);
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_Act_Speech);OnLoadSpeech();}
     UE_LOG(LogTemp,Display,TEXT("OK interaction entered actor=%s card=%s"),*PreviewActor->GetName(),*PreviewCardPath);
