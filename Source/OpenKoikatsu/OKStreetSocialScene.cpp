@@ -7,6 +7,7 @@
 #include "OKStreetSocialSongState.h"
 #include "OKInteractionMode.h"
 #include "KKRustExtract.h"
+void OKHSceneInstallPrecacheAhead(); // OKHScene.h
 #include "KKSpeech.h"
 #include "Async/Async.h"
 #include "OKStreetSocialRules.h"
@@ -824,6 +825,11 @@ void AOKStreetSocialScene::BeginPlay(){
    bPrewarmed=true;Async(EAsyncExecution::Thread,[](){FOkSession::Prewarm(FString());});
   }
  }
+ // Shaders never compile in a frame that waits for them: a draw whose PSO is still being compiled (precached late, a cold
+ // driver cache) is left out of that frame instead of the frame waiting for it, 100-200 ms each at the one-on-one's
+ // start (user 2026-11-12: a one-off event must not hold up frame generation). Command line / console still override.
+ if(auto* V=IConsoleManager::Get().FindConsoleVariable(TEXT("r.SkipDrawOnPSOPrecaching")))V->Set(1,ECVF_SetByProjectSetting);
+ OKHSceneInstallPrecacheAhead(); // the high model's _Bias twins precached as it loads
  State=MakeShared<FOKStreetSceneState>();auto& S=*State;
  S.TouchReactionOnlyTest=FParse::Param(FCommandLine::Get(),TEXT("StreetSocialTouchReactionSelfTest"));
  S.ContextOnlyTest=FParse::Param(FCommandLine::Get(),TEXT("StreetSocialDialogueContextSelfTest"));
@@ -2634,6 +2640,7 @@ static void OKStreetDigestMessage(FOKStreetSceneState& S){
  if(!Hint.IsEmpty()&&Hint!=S.HintText){S.HintText=Hint;S.HintUnread=!S.HintOpen;}
 }
 
+static TAutoConsoleVariable<int32> CVarOKStreetUiRegionsPerFrame(TEXT("ok.Street.UiRegionsPerFrame"),1,TEXT("1: a refresh rebuilds one region of the street panel a frame (the right panel first); 0: every region it names in one frame (a whole refresh was ~4 ms of one frame, 2026-11-12)."));
 static TAutoConsoleVariable<int32> CVarOKStreetLogUiRebuilds(TEXT("ok.Street.LogUiRebuilds"),0,TEXT("1: log each rebuild of the right panel with the RefreshUI call that asked for it (file:line). A rebuild costs ~10 ms."));
 void AOKStreetSocialScene::RefreshUI(uint32 Regions,std::source_location Where){if(State){State->UiDirty=true;State->UiDirtyRegions|=Regions;State->UiDirtyFile=Where.file_name();State->UiDirtyLine=Where.line();}}
 
@@ -3109,7 +3116,7 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
   S.UiSaveHolder->SetContent(S.SaveMenu.IsEmpty()?SNullWidget::NullWidget:BuildSaveMenu());
  }
  Mark(TEXT("end"));
- if(CVarOKStreetLogUiRebuilds.GetValueOnGameThread()&&FPlatformTime::ToMilliseconds64(Marks.Last().Value-Marks[0].Value)>5){FString Parts;for(int32 I=1;I<Marks.Num();++I)Parts+=FString::Printf(TEXT(" %s %.1f"),Marks[I-1].Key,FPlatformTime::ToMilliseconds64(Marks[I].Value-Marks[I-1].Value));UE_LOG(LogTemp,Display,TEXT("Street UI rebuild %.1f ms:%s"),FPlatformTime::ToMilliseconds64(Marks.Last().Value-Marks[0].Value),*Parts);}
+ if(CVarOKStreetLogUiRebuilds.GetValueOnGameThread()&&FPlatformTime::ToMilliseconds64(Marks.Last().Value-Marks[0].Value)>2){FString Parts;for(int32 I=1;I<Marks.Num();++I)Parts+=FString::Printf(TEXT(" %s %.1f"),Marks[I-1].Key,FPlatformTime::ToMilliseconds64(Marks[I].Value-Marks[I-1].Value));UE_LOG(LogTemp,Display,TEXT("Street UI rebuild %.1f ms:%s"),FPlatformTime::ToMilliseconds64(Marks.Last().Value-Marks[0].Value),*Parts);}
 }
 
 #include "OKStreetSocialContacts.inl"
@@ -4256,7 +4263,14 @@ void AOKStreetSocialScene::Tick(float Dt){
  }
  if(S.FreeTalkLogDirty&&FPlatformTime::Seconds()-S.FreeTalkLogSavedAt>1.0){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FreeTalkSaveLog);S.FreeTalkLogDirty=false;S.FreeTalkLogSavedAt=FPlatformTime::Seconds();FreeTalkSaveLog();}
  OKStreetDigestMessage(S);
- if(S.UiDirty){S.UiDirty=false;const uint32 Regions=S.UiDirtyRegions?S.UiDirtyRegions:uint32(OKStreetUi::All);S.UiDirtyRegions=0;if(CVarOKStreetLogUiRebuilds.GetValueOnGameThread())UE_LOG(LogTemp,Display,TEXT("Street UI rebuild asked by %s:%u (regions %u)"),*FPaths::GetCleanFilename(ANSI_TO_TCHAR(S.UiDirtyFile)),S.UiDirtyLine,Regions);{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_RebuildUI);RebuildUI(Regions);}}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickControl);TickControl();}
+ // The panel put away (the one-on-one's private room collapses it): what was asked for waits, rebuilt once it shows
+ // again; each line of the talk there rebuilt all of it twice, 4 ms each, never seen (2026-11-12). Shown, one region a
+ // frame (ok.Street.UiRegionsPerFrame), the right panel first.
+ if(S.UiDirty&&!(S.Overlay.IsValid()&&S.Overlay->GetVisibility()==EVisibility::Collapsed)){
+  const uint32 Regions=S.UiDirtyRegions?S.UiDirtyRegions:uint32(OKStreetUi::All);
+  const uint32 Now=S.Overlay.IsValid()&&!(Regions&OKStreetUi::Shell)&&CVarOKStreetUiRegionsPerFrame.GetValueOnGameThread()!=0?(Regions&(~Regions+1)):Regions;
+  S.UiDirtyRegions=Regions&~Now;S.UiDirty=S.UiDirtyRegions!=0;
+  if(CVarOKStreetLogUiRebuilds.GetValueOnGameThread())UE_LOG(LogTemp,Display,TEXT("Street UI rebuild asked by %s:%u (regions %u, now %u)"),*FPaths::GetCleanFilename(ANSI_TO_TCHAR(S.UiDirtyFile)),S.UiDirtyLine,Regions,Now);{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_RebuildUI);RebuildUI(Now);}}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickControl);TickControl();}
  const double Now=SceneTime();auto* PC=GetWorld()->GetFirstPlayerController();if(!PC)return;
  if(!S.CatchLight.IsValid()){auto* L=NewObject<UPointLightComponent>(this);L->SetMobility(EComponentMobility::Movable);L->SetLightingChannels(false,false,true);L->SetCastShadows(false);
   L->SetIntensityUnits(ELightUnits::Candelas);L->SetIntensity(S.Lit?0.f:100.f); /* 100 cd: a clear wet shine, short of glare (300 burns out) */L->SetAttenuationRadius(800.f);L->SetSourceRadius(2.f);L->RegisterComponent();AddInstanceComponent(L);S.CatchLight=L;}

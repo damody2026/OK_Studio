@@ -10,6 +10,9 @@
 #include "KKRustExtract.h"
 #include "OKHScene.generated.h"
 
+// The H scene's material twins asked for ahead (its _Bias clothes): installed once, by the host scene at start.
+void OKHSceneInstallPrecacheAhead();
+
 // The street one-on-one as the original H scene (HSceneProc / HSprite, D:\KoikatuSunshine\H_scene.md): a menu of the
 // authored poses by mode (service by hand, mouth, breasts; intercourse), each pose's state flow (Idle → Insert →
 // InsertIdle → WLoop/SLoop → OLoop → finish → after), both gauges, speed, condom, the finish choices, her clothes; what

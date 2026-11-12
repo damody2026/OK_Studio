@@ -26,6 +26,9 @@
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "PSOPrecache.h"
+#include "PSOPrecacheMaterial.h"
+#include "Misc/App.h"
+#include "UObject/StrongObjectPtr.h"
 
 static TAutoConsoleVariable<int32> CVarKKStreamParallel(TEXT("ok.Stream.ParallelPacking"),0,TEXT("Pack independent animated vertices in parallel; 0 retains serial packing. Enable only after workload measurement."));
 static TAutoConsoleVariable<int32> CVarKKStreamBatch(TEXT("ok.Stream.BatchPacking"),1,TEXT("0 serial oracle; 1 pack large multi-section animation batches; 2 force batch packing for verification."));
@@ -734,6 +737,39 @@ void UKKAffineProceduralMeshComponent::CollectPSOPrecacheData(const FPSOPrecache
         P.PSOPrecacheParams = Base;
         P.PSOPrecacheParams.bCastShadow = false;
     }
+}
+
+void UKKAffineProceduralMeshComponent::PrecacheAhead(UMaterialInterface* Material)
+{
+#if UE_WITH_PSO_PRECACHING
+    check(IsInGameThread());
+    if (!Material || !FApp::CanEverRender() || !IsComponentPSOPrecachingEnabled()) return;
+    static TSet<TWeakObjectPtr<UMaterialInterface>> Done;
+    if (Done.Contains(Material)) return;
+    Done.Add(Material);
+    // The parameters come from a component as the preview actor makes them (defaults: movable, casting shadows).
+    static TStrongObjectPtr<UKKAffineProceduralMeshComponent> Template;
+    if (!Template.IsValid()) Template.Reset(NewObject<UKKAffineProceduralMeshComponent>(GetTransientPackage()));
+    TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrecacheAhead);
+    FPSOPrecacheParams Base;
+    Template->SetupPrecachePSOParams(Base);
+    Base.bAnyMaterialHasWorldPositionOffset = Material->IsUsingWorldPositionOffset_Concurrent(GMaxRHIShaderPlatform);
+    FMaterialInterfacePSOPrecacheParamsList List;
+    FMaterialInterfacePSOPrecacheParams& P = List[List.AddDefaulted()];
+    P.MaterialInterface = Material;
+    P.VertexFactoryDataList.Add(FPSOPrecacheVertexFactoryData(&FLocalVertexFactory::StaticType));
+    P.PSOPrecacheParams = Base;
+    TArray<FMaterialPSOPrecacheRequestID> Ids;
+    FGraphEventArray Events;
+    ::PrecacheMaterialPSOs(List, Ids, Events);
+    if (PrecacheAheadVariants()) PrecacheAheadVariants()(Material);
+#endif
+}
+
+TFunction<void(UMaterialInterface*)>& UKKAffineProceduralMeshComponent::PrecacheAheadVariants()
+{
+    static TFunction<void(UMaterialInterface*)> Hook;
+    return Hook;
 }
 
 static void FlushCurrentGpuStreamBatch();

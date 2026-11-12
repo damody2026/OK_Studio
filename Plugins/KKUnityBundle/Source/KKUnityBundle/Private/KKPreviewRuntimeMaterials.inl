@@ -117,6 +117,9 @@ static int32 OKPrepareCookedRole(AKKPreviewActor* Actor,FString& Error,double Bu
         UMaterialInterface* Flat=Part.Role==TEXT("head")?FlatParent(Parent):nullptr;
         auto* Material=OKCreateRuntimeSharedMaterial(Part,Textures,Flat?Flat:Parent,Scene,Error);
         if(Material&&Flat)Actor->FlatFaceMaterials.Add(Material);
+        // Its PSOs asked for now, while the high model is still loading: asked when its part first drew, a cold driver
+        // cache had them still compiling and the one-on-one's first frame waited 100-200 ms each (2026-11-12).
+        UKKAffineProceduralMeshComponent::PrecacheAhead(Flat?Flat:Parent);
 #if WITH_EDITOR
         if(!Material){UE_LOG(LogTemp,Warning,TEXT("Shared material for part %d (%s): %s; its own graph instead"),Part.NativePart,*Name,*Error);Error.Reset();++Uncovered;return 1;}
 #endif
@@ -132,6 +135,7 @@ static int32 OKPrepareCookedRole(AKKPreviewActor* Actor,FString& Error,double Bu
             auto* OutlineParent=LoadParent(true);
             UMaterialInterface* OutlineFlat=Part.Role==TEXT("head")?FlatParent(OutlineParent):nullptr;
             auto* Outline=OKCreateRuntimeSharedMaterial(Part,Textures,OutlineFlat?OutlineFlat:OutlineParent,Scene,Error,true);
+            UKKAffineProceduralMeshComponent::PrecacheAhead(OutlineFlat?OutlineFlat:OutlineParent);
             if(Outline&&OutlineFlat)Actor->FlatFaceMaterials.Add(Outline);
 #if WITH_EDITOR
             if(!Outline){UE_LOG(LogTemp,Warning,TEXT("Shared outline for part %d (%s): %s"),Part.NativePart,*OutlineName,*Error);Error.Reset();}

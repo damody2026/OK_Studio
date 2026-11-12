@@ -2095,6 +2095,15 @@ static const FString& OKBiasMaterialRoot(){
         return Found.IsEmpty()?FString(TEXT("/Game/IndependentResources/RuntimeMaterials/StreetBias03")):Found;}();
     return Root;
 }
+// Each high-model parent's _Bias twin asked for as the high model loads (UKKAffineProceduralMeshComponent::PrecacheAhead):
+// swapped in at the first H frame, a cold driver cache had its PSOs still compiling there (2026-11-12).
+void OKHSceneInstallPrecacheAhead(){
+    UKKAffineProceduralMeshComponent::PrecacheAheadVariants()=[](UMaterialInterface* Parent){
+        if(!Parent||CVarHClothViewBias.GetValueOnGameThread()<=0.f||Parent->GetName().EndsWith(TEXT("_Bias"))||Parent->GetPathName().Contains(TEXT("/StreetHG")))return;
+        const FString Name=Parent->GetName()+TEXT("_Bias"),Path=OKBiasMaterialRoot()/Name;
+        if(!FPackageName::DoesPackageExist(Path))return;
+        if(UMaterialInterface* Bias=LoadObject<UMaterialInterface>(nullptr,*(Path+TEXT(".")+Name)))UKKAffineProceduralMeshComponent::PrecacheAhead(Bias);};
+}
 void UOKHScenePanel::TickClothBias(bool bEnd){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickClothBias);
     const float Bias=bEnd?0.f:FMath::Max(CVarHClothViewBias.GetValueOnGameThread(),0.f);
     if(Bias<=0.f&&!bClothBiasShown)return;
