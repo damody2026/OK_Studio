@@ -2217,8 +2217,11 @@ void UOKHScenePanel::TickPuddles(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickPuddl
     const int32 Count=FMath::Clamp(CVarHPuddleCount.GetValueOnGameThread(),1,8);const float Size=FMath::Clamp(CVarHPuddleSize.GetValueOnGameThread(),20.f,300.f);
     if(!IsValid(Puddles)||PuddlesMade!=Count||PuddlesSize!=Size){
         if(IsValid(Puddles))Puddles->Destroy();Puddles=nullptr;PuddleShown.Reset();PuddleShineShown=-1.f;PuddleFloorCapture=nullptr;PuddleFloorTarget=nullptr;PuddleFloorTakenAt=-1.;
+        // Looked for once: a missing parent stays missing for the run, and asking again every frame was a synchronous
+        // package load (FlushAsyncLoading) each frame of the 1-on-1, ~0.1 ms (2026-11-12, the StreetDisplay27 root without it).
+        static bool bNoParent=false;if(bNoParent)return;
         UMaterialInterface* Parent=LoadObject<UMaterialInterface>(nullptr,*OKPuddleMaterialPath(),nullptr,LOAD_NoWarn);
-        if(!Parent){static bool bSaid=false;if(!bSaid){bSaid=true;UE_LOG(LogTemp,Warning,TEXT("H scene: no puddle material %s (Tools/prepare_face_materials.lua, then the patch)"),*OKPuddleMaterialPath());}return;}
+        if(!Parent){bNoParent=true;static bool bSaid=false;if(!bSaid){bSaid=true;UE_LOG(LogTemp,Warning,TEXT("H scene: no puddle material %s (Tools/prepare_face_materials.lua, then the patch)"),*OKPuddleMaterialPath());}return;}
         FActorSpawnParameters Params;Params.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
         Puddles=GetWorld()->SpawnActor<AActor>(AActor::StaticClass(),FTransform::Identity,Params);if(!IsValid(Puddles))return;
         USceneComponent* Root=NewObject<USceneComponent>(Puddles,TEXT("PuddlesRoot"));Puddles->SetRootComponent(Root);Root->RegisterComponent();
