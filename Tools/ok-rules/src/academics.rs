@@ -266,6 +266,8 @@ struct Heroine {
 #[serde(default)]
 struct State {
     seen_in_class: Vec<usize>,
+    /// Minutes he has been in the course's building during its slot (course index → minutes).
+    class_minutes: BTreeMap<usize, i32>,
     class_closed: String,
     exams_done: Vec<String>,
     studying: bool,
@@ -352,8 +354,12 @@ pub fn tick(r: &Value) -> Result<Value, String> {
             }
             if minute >= SLOT_START[slot] && minute < SLOT_END[slot] {
                 for (k, x) in me.courses.iter().enumerate() {
-                    if x.weekday == weekday && x.slot == slot as i32 && here == x.building && !st.seen_in_class.contains(&k) {
-                        st.seen_in_class.push(k);
+                    if x.weekday == weekday && x.slot == slot as i32 && here == x.building {
+                        if !st.seen_in_class.contains(&k) {
+                            st.seen_in_class.push(k);
+                        }
+                        // The time since the last tick, not before the slot began.
+                        *st.class_minutes.entry(k).or_insert(0) += elapsed.clamp(0, minute - SLOT_START[slot] + 1);
                     }
                 }
             }
@@ -376,8 +382,17 @@ pub fn tick(r: &Value) -> Result<Value, String> {
                         }
                     }
                 };
+                // Half the class in its building: three minutes in the building 50 minutes late counted the three-hour
+                // class attended (R6-192). A save from before the minutes were kept counts being seen.
+                let half = (SLOT_END[slot] - SLOT_START[slot]) / 2;
+                let minutes = st.class_minutes.clone();
                 let seen = st.seen_in_class.clone();
-                mark(&mut me, &|k, _| seen.contains(&k));
+                let went = |k: usize| match minutes.get(&k) {
+                    Some(m) => *m >= half,
+                    None => seen.contains(&k),
+                };
+                mark(&mut me, &|k, _| went(k));
+                let short = seen.iter().copied().find(|k| !went(*k));
                 for h in heroines.iter_mut() {
                     let at = h.slot_class[slot].clone();
                     if let Some(a) = h.academic.as_mut() {
@@ -385,13 +400,25 @@ pub fn tick(r: &Value) -> Result<Value, String> {
                     }
                 }
                 changed = true;
-                if !st.seen_in_class.is_empty() {
+                if let Some(k) = short {
+                    let x = &me.courses[k];
+                    message = crate::tr::m(
+                        "academics.class_too_short",
+                        &[
+                            ("name", crate::tr::a(&x.name)),
+                            ("minutes", crate::tr::a(&minutes.get(&k).copied().unwrap_or(0))),
+                            ("attended", crate::tr::a(&x.attended)),
+                            ("held", crate::tr::a(&x.held)),
+                        ],
+                    );
+                } else if !st.seen_in_class.is_empty() {
                     message = crate::tr::t("academics.class_attended").into();
                 } else if let Some(x) = me.courses.iter().find(|x| me.status == "enrolled" && x.weekday == weekday && x.slot == slot as i32) {
                     // Missed: said, with the count (more than half missed and the course is failed).
                     message = crate::tr::m("academics.class_missed", &[("name", crate::tr::a(&x.name)), ("attended", crate::tr::a(&x.attended)), ("held", crate::tr::a(&x.held))]);
                 }
                 st.seen_in_class.clear();
+                st.class_minutes.clear();
             }
         }
     }
@@ -741,6 +768,16 @@ mod tests {
             let v6 = tick(&json!({"day": 12, "minute": end + 5, "first": true, "player": me, "heroines": [], "state": {}})).unwrap();
             assert_eq!(v6["player"]["courses"][k]["held"], me.courses[k].held);
             assert_eq!(v6["message"], "");
+            // In for three minutes, fifty late: not half the class, absent (R6-192); an hour there counts its minutes.
+            let k_s = k.to_string();
+            let v7 = tick(&json!({"day": 12, "minute": end, "player": me, "heroines": [], "state": {"seen_in_class": [k], "class_minutes": {k_s.clone(): 3}, "class_closed": "12|0"}})).unwrap();
+            assert_eq!(v7["player"]["courses"][k]["attended"], me.courses[k].attended);
+            assert!(v7["message"].as_str().unwrap().contains("3 分鐘"), "{}", v7["message"]);
+            let mid = SLOT_START[c.slot as usize] + 60;
+            let v8 = tick(&json!({"day": 12, "minute": mid, "elapsed": 60, "here": c.building, "player": me, "heroines": [], "state": {"class_closed": "12|0"}})).unwrap();
+            assert_eq!(v8["state"]["class_minutes"][&k_s], 60);
+            let v9 = tick(&json!({"day": 12, "minute": end, "player": me, "heroines": [], "state": {"seen_in_class": [k], "class_minutes": {k_s: 120}, "class_closed": "12|0"}})).unwrap();
+            assert_eq!(v9["player"]["courses"][k]["attended"], me.courses[k].attended + 1);
         }
         // After both slots closed, later ticks the same evening count nothing again.
         let mut st = json!({});

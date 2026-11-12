@@ -440,7 +440,7 @@ pub(crate) fn prepare_accessory_snapshot(game:&Path,info:&crate::card::CardInfo,
     checkpoint!("split_part_resources");
     let replacement=OkSession::prepare_preview_part_replacement(snapshot,&removed,SplitSnapshot{schema:1,residue,references,unique})?;
     checkpoint!("patch_parts");
-    Ok(Some(PreparedAccessorySnapshot{replacement,parts:source.parts,timings}))
+    Ok(Some(PreparedAccessorySnapshot{replacement,parts:std::mem::take(&mut source.parts),timings}))
 }
 
 /// Patch exact source-identified accessory renderers. Missing legacy extraction

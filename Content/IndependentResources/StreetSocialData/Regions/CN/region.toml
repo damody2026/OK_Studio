@@ -24,3 +24,7 @@ dorm = 600
 card_limit = 3000
 loan_year_cap = 6000
 allowance = 1700
+# Getting about town (ok-rules transit.rs): a bus ride a person, a taxi's flag fall (first 3 km) and each km after.
+bus_fare = 1
+taxi_flag = 10
+taxi_per_km = 2

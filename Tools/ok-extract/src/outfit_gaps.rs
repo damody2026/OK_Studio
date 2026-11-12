@@ -117,7 +117,11 @@ pub fn scan(game: &Path, card: &Path) -> Result<Vec<OutfitGaps>, String> {
     let mods = crate::list::load_mods_catalog_shared(&mods_dir);
     let mut outfits = Vec::new();
     for outfit in 0..7 {
-        let Ok(info) = crate::card::parse_card_bytes_mode(&bytes, outfit, false) else { break };
+        let Ok(mut info) = crate::card::parse_card_bytes_mode(&bytes, outfit, false) else { break };
+        // The open drops what a StripAll migration removes before it asks which archives hold the card's GUIDs
+        // (extract_session_from_info): asked with those GUIDs too, an OK card has no answer and every mod item reads as
+        // missing (拾光.png: kks.co_bra_00 in outfit 3).
+        crate::mods::apply_strip_all_migrations(&root, &mut info);
         let wanted: HashSet<String> = info.resolves.iter().map(|r| r.mod_id.clone()).collect();
         let index = if wanted.is_empty() { HashMap::new() } else { crate::mods::find_guids(&mods_dir, Some(&wanted)) };
         let gaps = of_outfit(&info, outfit, &vanilla, &mods, &index);

@@ -39,7 +39,8 @@ void AOKStreetSocialScene::StartCalendarAndMind(){
    FString Mode;if(Player->TryGetStringField(TEXT("drama_mode"),Mode)&&(Mode==TEXT("A")||Mode==TEXT("B")||Mode==TEXT("C")))S.DramaMode=Mode[0];
    FString Locale;if(Player->TryGetStringField(TEXT("locale"),Locale)&&(Locale==TEXT("zh-TW")||Locale==TEXT("zh-CN")||Locale==TEXT("en")))S.Lang=Locale;
    // Before any character loads: their materials follow it (SetRenderStyle).
-   FString Style;if(Player->TryGetStringField(TEXT("render_style"),Style))ApplyRenderStyleSetting(Style);}}
+   FString Style;if(Player->TryGetStringField(TEXT("render_style"),Style))ApplyRenderStyleSetting(Style);
+   Player->TryGetBoolField(TEXT("lit"),S.Lit);}}
  LoadUiTexts();
  // Development: OK_STREET_START_DAY=YYYY-MM-DD and OK_STREET_START_CLOCK=HH:MM start the save on that day and time
  // (e.g. a class day on campus). They move the save's calendar, so use them on a test save.
@@ -518,7 +519,7 @@ void AOKStreetSocialScene::ApplyChoiceReply(int32 Character,const FOKFreeTalkRep
    // add on top (R6-43: 惠惠 accepted his treat aloud, the rules pushed back for her and the bill timed out to her paying).
    // Still wanting her way, she says so in this reply (propose).
    if(Reply.ProposeId!=Reply.ResolveId)if(auto* M=S.Choices.FindByPredicate([&](const FOKStreetPendingChoice& X){return X.Id==Reply.ResolveId;});M&&M->Heroine==Character&&M->Options.Contains(Reply.ResolveOption))M->HerLean=Reply.ResolveOption;
-   ResolveChoice(Reply.ResolveId,Reply.ResolveOption,Reply.ResolveInsist);}}
+   S.ChoiceByHerReply=true;ResolveChoice(Reply.ResolveId,Reply.ResolveOption,Reply.ResolveInsist);S.ChoiceByHerReply=false;}}
  // Meetings are booked by the judge, which reads his line and hers (her own promise field cannot tell whether he said yes).
  HandleFinanceReply(Character,Reply.Predict,Reply.Trade,Reply.Bet);
  // Ordering by chat (plan §8.2): only items this place sells; then checkout when asked.

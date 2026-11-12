@@ -78,6 +78,15 @@ struct SettingsFile {
     api_key: Option<String>,
     endpoint: Option<String>,
     model: Option<String>,
+    /// api-keys.json (the user's key file for every service): the same three fields under "deepseek".
+    deepseek: Option<DeepSeekSection>,
+}
+
+#[derive(Deserialize, Default)]
+struct DeepSeekSection {
+    api_key: Option<String>,
+    endpoint: Option<String>,
+    model: Option<String>,
 }
 
 impl Config {
@@ -107,6 +116,10 @@ impl Config {
             }
             _ => SettingsFile::default(),
         };
+        let file = match file.deepseek {
+            Some(d) => SettingsFile { api_key: d.api_key, endpoint: d.endpoint, model: d.model, deepseek: None },
+            None => file,
+        };
         let key = std::env::var("DEEPSEEK_API_KEY")
             .ok()
             .filter(|k| !k.trim().is_empty())
@@ -114,7 +127,7 @@ impl Config {
             .or(file.api_key)
             .map(|k| k.trim().to_string())
             .filter(|k| !k.is_empty())
-            .ok_or_else(|| "no_api_key: set DEEPSEEK_API_KEY or Saved/StreetSocial/deepseek.json".to_string())?;
+            .ok_or_else(|| "no_api_key: set DEEPSEEK_API_KEY or the deepseek api_key in %LOCALAPPDATA%/OpenKoikatsu/api-keys.json".to_string())?;
         Ok(LlmSettings {
             endpoint: self.endpoint.clone().or(file.endpoint).unwrap_or_else(|| DEFAULT_ENDPOINT.into()),
             model: self.model.clone().or(file.model).unwrap_or_else(|| DEFAULT_MODEL.into()),

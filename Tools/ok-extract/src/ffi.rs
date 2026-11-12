@@ -239,6 +239,32 @@ pub unsafe extern "C" fn ok_cover_deltas(s:*mut OkSession,body_idx:*const u32,bo
     k as i32
 }
 #[no_mangle]
+pub unsafe extern "C" fn ok_thigh_jiggle(s:*mut OkSession,dt:f32,gain:f32,out_part:*mut i32,out_idx:*mut u32,out_d:*mut f32,max:u32)->i32 {
+    // Her thighs' and buttocks' jiggle dt seconds on (thigh_jiggle; 0 steps nothing and gives the moves again, for a
+    // larger buffer). gain scales the swing limits (0 turns it off and forgets her springs). out_part: her body's session
+    // part index. Writes up to max (vertex index, move in the mesh's own space, Unity metres: 3 floats each); returns how
+    // many there are, -2 none (no female body), -1 bad input.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if out_part.is_null()||out_idx.is_null()||out_d.is_null()||!dt.is_finite()||!gain.is_finite() {return -1;}
+    let Some((part,moves))=crate::thigh_jiggle::thigh_jiggle(s,dt,gain) else{return -2;};
+    *out_part=part as i32;
+    for (k,(j,d)) in moves.iter().enumerate().take(max as usize){*out_idx.add(k)=*j;for a in 0..3{*out_d.add(k*3+a)=d[a];}}
+    moves.len() as i32
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_thigh_jiggle_cloth(s:*mut OkSession,out_part:*mut u32,out_idx:*mut u32,out_d:*mut f32,max:u32)->i32 {
+    // Her clothes' share of the jiggle (thigh_jiggle::cloth_moves): (part, vertex, move in the mesh's own space) for her
+    // garments on her body skeleton; vertex u32::MAX marks a garment with its own rig to draw from its CPU vertices.
+    // Writes up to max; returns how many there are, -1 bad input.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if out_part.is_null()||out_idx.is_null()||out_d.is_null() {return -1;}
+    let (cpu,moves)=crate::thigh_jiggle::cloth_moves(s);
+    let all=cpu.iter().map(|&p|(p,u32::MAX,[0f32;3])).chain(moves.iter().flat_map(|(p,m)|m.iter().map(move|(j,d)|(*p,*j,*d))));
+    let mut k=0usize;
+    for (p,j,d) in all {if k<max as usize{*out_part.add(k)=p as u32;*out_idx.add(k)=j;for a in 0..3{*out_d.add(k*3+a)=d[a];}}k+=1;}
+    k as i32
+}
+#[no_mangle]
 pub unsafe extern "C" fn ok_back_exit(s:*mut OkSession,at:*const f32,out:*mut f32)->i32 {
     // Where the line from her entrance to his glans comes out of her through her back (belly_bulge::back_exit): at = her
     // entrance, his glans, the way her belly faces (her skeleton space, metres, 9 floats); out = the place and her skin's
@@ -1396,15 +1422,18 @@ unsafe fn animation_pair_frame_impl(female:*mut OkSession,male:*mut OkSession,ti
         // feet bend (one-on-one fitting of different heights keeps the taller one's feet on the floor).
         // His FK (his penis root turned toward her belly, belly_bulge::aim_penis) and hers (her body trembling as she comes,
         // OKHScene) over what the contacts set.
-        for s in [&mut *female,&mut *male] {
-            let Some(sk)=s.body_skel.as_mut() else{continue;};
-            let fk=!s.user_fk.is_empty()&&crate::session::apply_user_fk_locals(sk,&s.user_fk,&mut s.user_fk_ids);
-            if crate::belly_bulge::apply_penis_size(sk,&mut s.penis_size)||fk {sk.rebuild_worlds();}
-        }
-        for s in [&mut *female,&mut *male] {
-            if s.studio_ik.is_empty() {continue;}
-            if let Some(sk)=s.body_skel.as_mut() {crate::session::apply_studio_ik(sk,&mut s.studio_ik_solver,&s.studio_ik,&s.studio_ik_rotations,&s.studio_ik_weights);}
-        }
+        // Each on its own skeleton: both at once (0.3 ms of the frame's longest path one after the other, trace 2026-11-10).
+        let finish=|s:&mut OkSession|{
+            if let Some(sk)=s.body_skel.as_mut() {
+                let fk=!s.user_fk.is_empty()&&crate::session::apply_user_fk_locals(sk,&s.user_fk,&mut s.user_fk_ids);
+                if crate::belly_bulge::apply_penis_size(sk,&mut s.penis_size)||fk {sk.rebuild_worlds();}
+            }
+            if !s.studio_ik.is_empty() {
+                if let Some(sk)=s.body_skel.as_mut() {crate::session::apply_studio_ik(sk,&mut s.studio_ik_solver,&s.studio_ik,&s.studio_ik_rotations,&s.studio_ik_weights);}
+            }
+        };
+        if std::env::var("OK_PAIR_FINISH_SERIAL").ok().as_deref()==Some("1") {finish(&mut *female);finish(&mut *male);}
+        else {crate::session::native_parallel_work(||rayon::join(||finish(&mut *female),||finish(&mut *male)));}
         let contacted=start.elapsed();
         // Contact solving is a barrier: both sampled actors must be visible
         // to the coupled solver before either actor advances private physics.
@@ -1412,6 +1441,11 @@ unsafe fn animation_pair_frame_impl(female:*mut OkSession,male:*mut OkSession,ti
             ||female.finish_paired_dynamics_filtered(dt,observer,excluded.0),||rayon::join(||male.finish_paired_dynamics_filtered(dt,observer.map(|o|PrivateSkinObserver{role:1,..o}),excluded.1),
                 ||if let Some(t)=third.as_deref_mut(){t.finish_paired_dynamics_filtered(dt,None,&[])})));}
         if profile{eprintln!("OK animation pair validate_ms={:.3} sample_ms={:.3} contacts_ms={:.3} dynamics_ms={:.3}",validated.as_secs_f64()*1000.,(sampled-validated).as_secs_f64()*1000.,(contacted-sampled).as_secs_f64()*1000.,(start.elapsed()-contacted).as_secs_f64()*1000.);}
+        // OKAnim.Profile: the whole solve on its own thread, its sampling and contacts, its dynamics.
+        let total=start.elapsed();
+        crate::okanim::prof::add_us(32,total.as_micros() as u64);
+        crate::okanim::prof::add_us(33,(contacted-validated).as_micros() as u64);
+        crate::okanim::prof::add_us(34,(total-contacted).as_micros() as u64);
         Ok::<usize,String>(contacts)
         };
         let _trace=crate::native_profile::Scope::new(24);

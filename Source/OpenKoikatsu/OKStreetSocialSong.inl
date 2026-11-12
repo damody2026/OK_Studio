@@ -212,6 +212,9 @@ void AOKStreetSocialScene::SongCallOver(double Now){
  // then she comes once that is over.
  if(const FOKStreetPlanBlock* B=LifeBlock(I,int32(OKStreetMindNow(S)%1440));B&&(B->Kind==TEXT("class")||B->Kind==TEXT("work")||B->Kind==TEXT("promise")||B->Kind==TEXT("sleep"))){
   UE_LOG(LogTemp,Display,TEXT("Street song: actor %d comes over after her %s"),I,*B->Kind);return;}
+ // Within the distance anyone walks over to him (TickApproach: further, a message): across the city she set out from 1 km
+ // and could not catch him up (R6-176). She comes when they are near each other.
+ if(FVector::Dist2D(S.Agents[I-1].Position,S.Male)>6000.f){UE_LOG(LogTemp,Display,TEXT("Street song: actor %d comes over once he is near"),I);return;}
  if(!SongHasRoom(S.Male)){UE_LOG(LogTemp,Display,TEXT("Street song: actor %d comes over once he is somewhere roomier"),I);return;}
  auto Path=ContactRoute(S.Agents[I-1].Position,S.Male);if(Path.IsEmpty()){UE_LOG(LogTemp,Display,TEXT("Street song: actor %d has no way to him now"),I);return;}
  if(S.ScheduleHeld.Contains(I))ReleaseFromSchedule(I);

@@ -38,6 +38,7 @@ void AOKStreetSocialScene::TickAcademics(){
  Request->SetArrayField(TEXT("heroines"),Heroines);
  auto State_=MakeShared<FJsonObject>();
  {TArray<TSharedPtr<FJsonValue>> Seen;for(const int32 C:S.SeenInClass)Seen.Add(MakeShared<FJsonValueNumber>(C));State_->SetArrayField(TEXT("seen_in_class"),Seen);}
+ {auto Mins=MakeShared<FJsonObject>();for(const auto& P:S.ClassMinutes)Mins->SetNumberField(FString::FromInt(P.Key),P.Value);State_->SetObjectField(TEXT("class_minutes"),Mins);}
  State_->SetStringField(TEXT("class_closed"),S.ClassClosed);
  {TArray<TSharedPtr<FJsonValue>> Done;for(const FString& D:S.ExamsDone)Done.Add(MakeShared<FJsonValueString>(D));State_->SetArrayField(TEXT("exams_done"),Done);}
  State_->SetBoolField(TEXT("studying"),S.Studying);State_->SetNumberField(TEXT("study_minutes"),S.StudyMinutes);State_->SetNumberField(TEXT("study_applied"),S.StudyApplied);State_->SetNumberField(TEXT("study_partner"),Partner);
@@ -51,6 +52,7 @@ void AOKStreetSocialScene::TickAcademics(){
  // Scene state.
  const TSharedPtr<FJsonObject> St=Answer->GetObjectField(TEXT("state"));
  S.SeenInClass.Reset();for(const auto& V:St->GetArrayField(TEXT("seen_in_class")))S.SeenInClass.Add(int32(V->AsNumber()));
+ S.ClassMinutes.Reset();{const TSharedPtr<FJsonObject>* Mins=nullptr;if(St->TryGetObjectField(TEXT("class_minutes"),Mins))for(const auto& P:(*Mins)->Values)S.ClassMinutes.Add(FCString::Atoi(*FString(*P.Key)),int32(P.Value->AsNumber()));}
  S.ClassClosed=St->GetStringField(TEXT("class_closed"));
  S.ExamsDone.Reset();for(const auto& V:St->GetArrayField(TEXT("exams_done")))S.ExamsDone.Add(V->AsString());
  S.Studying=St->GetBoolField(TEXT("studying"));S.StudyMinutes=int32(St->GetNumberField(TEXT("study_minutes")));S.StudyApplied=int32(St->GetNumberField(TEXT("study_applied")));

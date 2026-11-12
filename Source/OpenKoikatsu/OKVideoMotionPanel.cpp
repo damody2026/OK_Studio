@@ -112,6 +112,11 @@ void UOKVideoMotionPanel::Build(UWidgetTree* Tree, UPanelWidget* Column, UOKChar
 	StaticCamera->SetContent(Label(Tree, TEXT("鏡頭固定不動（建議：腳架或固定機位的影片勾選）"), 13));
 	StaticCamera->SetToolTipText(FText::FromString(TEXT("勾選時直接假設鏡頭不動，結果最穩定。手持或跟拍的影片請取消，會另外估算鏡頭移動。")));
 	Column->AddChild(StaticCamera);
+	UseFlowHMR = Tree->ConstructWidget<UCheckBox>();
+	UseFlowHMR->SetIsChecked(false);
+	UseFlowHMR->SetContent(Label(Tree, TEXT("用 FlowHMR 估計 3D 動作（不勾＝GVHMR）"), 13));
+	UseFlowHMR->SetToolTipText(FText::FromString(TEXT("FlowHMR 是較新的模型，動作較符合物理、少滑步。目前只支援單人影片，需要 FlowHMR 權重與 SAM 3D Body 影像特徵，見 Docs/VIDEO_MOTION.md。")));
+	Column->AddChild(UseFlowHMR);
 	PairVideo = Tree->ConstructWidget<UCheckBox>();
 	PairVideo->SetIsChecked(false);
 	PairVideo->SetContent(Label(Tree, TEXT("雙人影片（一男一女，各自產生動作並貼合身體）"), 13));
@@ -292,12 +297,15 @@ FString UOKVideoMotionPanel::ImporterExe()
 	return FString();
 }
 
-bool UOKVideoMotionPanel::StartImport(const FString& Path, const FString& Name, bool bStatic, bool bPair, bool bMaleLeft)
+bool UOKVideoMotionPanel::StartImport(const FString& Path, const FString& Name, bool bStatic, bool bPair, bool bMaleLeft, const FString& Method)
 {
 	if (Proc.IsValid() || !PathBox || !NameBox) return false;
+	if (!Method.IsEmpty() && !Method.Equals(TEXT("gvhmr"), ESearchCase::IgnoreCase) && !Method.Equals(TEXT("flowhmr"), ESearchCase::IgnoreCase))
+	{ SetStatus(TEXT("method 只能是 gvhmr 或 flowhmr：") + Method, true); return false; }
 	PathBox->SetText(FText::FromString(Path));
 	NameBox->SetText(FText::FromString(Name));
 	if (StaticCamera) StaticCamera->SetIsChecked(bStatic);
+	if (UseFlowHMR && !Method.IsEmpty()) UseFlowHMR->SetIsChecked(Method.Equals(TEXT("flowhmr"), ESearchCase::IgnoreCase));
 	if (PairVideo) PairVideo->SetIsChecked(bPair);
 	if (MaleLeft) MaleLeft->SetIsChecked(bMaleLeft);
 	OnStart();
@@ -331,6 +339,12 @@ void UOKVideoMotionPanel::OnStart()
 	FString Args = FString::Printf(TEXT("import \"%s\" --name \"%s\" --arm-reach %.3f --collar-scale %.3f --smooth %.3f"),
 		*Path, *Name, Number(ArmReachBox, 1.f, 0.f, 1.f), Number(CollarBox, .5f, 0.f, 1.f), Number(SmoothBox, 1.f, 0.f, 2.5f));
 	if (StaticCamera->IsChecked()) Args += TEXT(" -s");
+	if (UseFlowHMR && UseFlowHMR->IsChecked())
+	{
+		if (PairVideo && PairVideo->IsChecked())
+		{ SetStatus(TEXT("雙人影片目前只支援 GVHMR，請取消「用 FlowHMR 估計 3D 動作」。"), true); return; }
+		Args += TEXT(" --method flowhmr");
+	}
 	const UKKGameRoot* Game = UKKGameRoot::Get();
 	const FString Root = Game ? Game->Root : FString();
 	if (PairVideo && PairVideo->IsChecked())

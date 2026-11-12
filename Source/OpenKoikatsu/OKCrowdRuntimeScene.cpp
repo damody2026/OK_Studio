@@ -80,6 +80,9 @@
 #include "ProfilingDebugging/TraceAuxiliary.h"
 #include "Serialization/BufferArchive.h"
 
+// OKSetCrowdRuntimeSpeechMuted: lines play at volume 0.
+static bool GOKCrowdRuntimeSpeechMuted=false;
+
 namespace OKRuntimeScene {
 // Bounded simultaneous admissions. Upload acknowledgement is not activation:
 // the game thread publishes that actor's clip catalog and CPU keys first.
@@ -1235,7 +1238,7 @@ auto& T=Timings[GpuWindow?1:0];T.Frame.Add((Now-LastWall)*1000);T.Game.Add(FPlat
     QUICK_SCOPE_CYCLE_COUNTER(STAT_OKCrowd_SpeechBegin);
     Audio->Stop();auto* Wave=NewObject<UKKRuntimeSpeechWave>(Owner.Get());if(Prepared.Stream)Wave->InitializeStream(Prepared.Stream,Device->GetSampleRate());else Wave->Initialize(Prepared.Pcm,Device->GetSampleRate());E.SpeechWave.Reset(Wave);E.LinePeak=0;E.LineMouth=0;E.EnvelopeRate=float(Device->GetSampleRate());E.LastSpeechFrames=0;E.SpeechProgressAt=Now;Audio->SetSound(Wave);
     if(!E.PendingSpeechAction.IsEmpty()){QUICK_SCOPE_CYCLE_COUNTER(STAT_OKCrowd_SpeechAction);FString ActionError;if(!OKPlayCrowdRuntimeAction(Owner.Get(),A,E.PendingSpeechAction,ActionError))UE_LOG(LogTemp,Warning,TEXT("Runtime speech action: %s"),*ActionError);}E.PendingSpeechAction.Reset();Audio->SetWorldLocation(E.Transform.TransformPosition(FVector(0,0,150)));Audio->SetPitchMultiplier(E.MouthEnvelope.Num()?1.f:E.VoicePitch);
-    {QUICK_SCOPE_CYCLE_COUNTER(STAT_OKCrowd_SpeechPlay);Audio->Play();}E.SpeechState=EOKRuntimeSpeechState::Playing;
+    {QUICK_SCOPE_CYCLE_COUNTER(STAT_OKCrowd_SpeechPlay);Audio->SetVolumeMultiplier(GOKCrowdRuntimeSpeechMuted?0.f:1.f);Audio->Play();}E.SpeechState=EOKRuntimeSpeechState::Playing;
    }else {FString StopError;OKStopCrowdRuntimeSpeech(Owner.Get(),A,StopError);E.SpeechState=EOKRuntimeSpeechState::Failed;E.SpeechError=TEXT("Runtime voice has no audio device");UE_LOG(LogTemp,Warning,TEXT("Runtime voice has no audio device"));}}
    // Instanced skinned mesh component transforms do not follow their actor instances.
    if(E.SpeechAudio.IsValid())E.SpeechAudio->SetWorldLocation(E.Transform.TransformPosition(FVector(0,0,150)));
@@ -1541,6 +1544,8 @@ void OKSetCrowdRuntimeSpeechRemote(AActor* Owner,int32 Character){
  check(IsInGameThread());const auto* Weak=OKRuntimeScene::ActiveScenes.Find(Owner);const auto State=Weak?Weak->Pin():nullptr;
  if(State)State->RemoteSpeech=Character;
 }
+void OKSetCrowdRuntimeSpeechMuted(bool Muted){GOKCrowdRuntimeSpeechMuted=Muted;}
+
 bool OKStopCrowdRuntimeSpeech(AActor* Owner,int32 Character,FString& Error){
  check(IsInGameThread());const auto* Weak=OKRuntimeScene::ActiveScenes.Find(Owner);const auto State=Weak?Weak->Pin():nullptr;
  if(!State||State->Stopped||!State->Installed||!State->Entries.IsValidIndex(Character)||State->Entries[Character]->BankActor==INDEX_NONE){Error=TEXT("Runtime character not ready");return false;}

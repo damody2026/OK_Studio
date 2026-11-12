@@ -4,13 +4,16 @@ use std::path::Path;
 use std::time::Instant;
 
 mod crop;
+mod flowhmr;
 mod geom;
 mod gvhmr;
 mod npy;
 mod models;
+mod mhr;
 mod pairalign;
 mod pickle;
 mod pipeline;
+mod sam3d;
 mod smplx;
 mod track;
 mod video;
@@ -60,7 +63,7 @@ fn project_root() -> std::path::PathBuf {
     std::env::current_dir().unwrap_or_default()
 }
 
-const IMPORT_USAGE: &str = "ok-video import <影片> [--name 名稱] [-s] [--f_mm N] [--pair --left male|female --game <遊戲目錄>] [--arm-reach 1.0] [--collar-scale 0.5] [--smooth 1.0] [--models <checkpoints>] [--out-dir <dir>] [--card <png>] [--ok-extract <exe>] [--skip-gvhmr] [--no-validate]";
+const IMPORT_USAGE: &str = "ok-video import <影片> [--name 名稱] [--method gvhmr|flowhmr] [--features <SAM 特徵.npy>] [--seed 42] [-s] [--f_mm N] [--pair --left male|female --game <遊戲目錄>] [--arm-reach 1.0] [--collar-scale 0.5] [--smooth 1.0] [--models <checkpoints>] [--out-dir <dir>] [--card <png>] [--ok-extract <exe>] [--skip-gvhmr] [--no-validate]";
 
 fn import(args: &[String]) -> Result<(), String> {
     let root = project_root();
@@ -81,7 +84,7 @@ fn import(args: &[String]) -> Result<(), String> {
     };
     while let Some(a) = it.next() {
         if a.starts_with('-') {
-            if matches!(a.as_str(), "--name" | "--f_mm" | "--left" | "--game" | "--arm-reach" | "--collar-scale" | "--smooth" | "--models" | "--out-dir" | "--card" | "--ok-extract" | "--data") {
+            if matches!(a.as_str(), "--name" | "--f_mm" | "--left" | "--game" | "--arm-reach" | "--collar-scale" | "--smooth" | "--models" | "--out-dir" | "--card" | "--ok-extract" | "--data" | "--method" | "--seed" | "--features") {
                 let v = it.next();
                 if a == "--name" {
                     name = v.cloned();
@@ -141,6 +144,9 @@ fn import(args: &[String]) -> Result<(), String> {
         collar_scale: num("--collar-scale", 0.5)?,
         smooth: num("--smooth", 1.)?,
         skip_gvhmr: skip,
+        method: models::Method::parse(&value("--method").unwrap_or_else(|| "gvhmr".into()))?,
+        seed: value("--seed").map(|v| v.parse::<u64>().map_err(|_| format!("--seed 需要非負整數：{v}"))).transpose()?.unwrap_or(42),
+        features: value("--features").map(Into::into),
     };
     let _ = &mut flag;
     pipeline::run(&o)
@@ -482,6 +488,127 @@ fn weights(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// `flowhmr-golden <flowhmr.safetensors> <inputs.npz> <out.npz> [--steps N]`: runs the FlowHMR sampler
+/// on reference inputs (`feature` (T,3072), `camera_R` (T,9), `noise` (T,491)) and writes `latent`
+/// (T,491) plus the decoded `global_orient` / `body_pose` (axis-angle) and `pelvis`, for comparison
+/// with the PyTorch implementation.
+fn flowhmr_golden(args: &[String]) -> Result<(), String> {
+    let (ck, inp, out) = match args {
+        [a, b, c, ..] => (a, b, c),
+        _ => return Err("用法：ok-video flowhmr-golden <flowhmr.safetensors> <inputs.npz> <out.npz> [--steps N]".into()),
+    };
+    let steps = args.iter().position(|a| a == "--steps").and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(flowhmr::STEPS);
+    let m = npy::read_npz(Path::new(inp), &["feature", "camera_R", "noise"])?;
+    let f32s = |k: &str| m[k].data.iter().map(|v| *v as f32).collect::<Vec<f32>>();
+    let dev = device();
+    let net = flowhmr::Network::load(Path::new(ck), &dev)?;
+    let t = Instant::now();
+    let latent = net.sample(&f32s("feature"), &f32s("camera_R"), &f32s("noise"), steps, &|_| {})?;
+    let l = latent.len() / flowhmr::LATENT;
+    println!("sampled {l} frames, {steps} steps in {:.2}s", t.elapsed().as_secs_f64());
+    let d = flowhmr::decode(&net, &latent)?;
+    let flat3 = |v: &[[f64; 3]]| v.iter().flat_map(|a| a.iter().map(|x| *x as f32)).collect::<Vec<f32>>();
+    let go = flat3(&d.global_orient);
+    let bp: Vec<f32> = d.body_pose.iter().flat_map(|p| p.iter().flat_map(|a| a.iter().map(|x| *x as f32))).collect();
+    let pel = flat3(&d.pelvis);
+    npy::write_npz(
+        Path::new(out),
+        &[
+            ("latent", npy::Out::F32(&latent, vec![l, flowhmr::LATENT])),
+            ("global_orient", npy::Out::F32(&go, vec![l, 3])),
+            ("body_pose", npy::Out::F32(&bp, vec![l, 63])),
+            ("pelvis", npy::Out::F32(&pel, vec![l, 3])),
+        ],
+    )?;
+    println!("wrote {out}");
+    Ok(())
+}
+
+/// `sam3d-golden <sam3d_body.safetensors> <mhr.safetensors> <dump.npz> [--fp32]`: runs SAM 3D Body on
+/// the frame / box / K of a reference dump (scratch sam_dump.py) and prints the largest difference of
+/// each stage against the PyTorch values. `--fp32` runs the backbone in f32 (dump made with --fp32).
+fn sam3d_golden(args: &[String]) -> Result<(), String> {
+    let (ck, mhr, dump) = match args {
+        [a, b, c, ..] => (a, b, c),
+        _ => return Err("用法：ok-video sam3d-golden <sam3d_body.safetensors> <mhr.safetensors> <dump.npz> [--fp32]".into()),
+    };
+    let fp32 = args.iter().any(|a| a == "--fp32");
+    let d = npy::read_npz(Path::new(dump), &[])?;
+    let frame = &d["frame"];
+    let (h, w) = (frame.shape[0], frame.shape[1]);
+    let img: Vec<u8> = frame.data.iter().map(|v| *v as u8).collect();
+    let b = &d["box"].data;
+    let kd = &d["K"].data;
+    let k: [f64; 9] = std::array::from_fn(|i| kd[i] as f32 as f64);
+    let dev = device();
+    let t = Instant::now();
+    let model = sam3d::Model::load(Path::new(ck), Path::new(mhr), &dev, fp32)?;
+    println!("loaded in {:.1}s", t.elapsed().as_secs_f64());
+    let mut trace = sam3d::Trace::new();
+    let t = Instant::now();
+    let tok = model.tokens(&[&img], w, h, &[[b[0] as f32, b[1] as f32, b[2] as f32, b[3] as f32]], &k, Some(&mut trace))?;
+    println!("tokens in {:.2}s", t.elapsed().as_secs_f64());
+    trace.insert("tokens".into(), tok);
+    // (mine, reference key, reference is channel-major (C, N) and mine is (N, C))
+    let mut checks: Vec<(String, String, bool, usize)> = vec![
+        ("body_img".into(), "body_img".into(), false, 0),
+        ("backbone".into(), "backbone_out_0".into(), true, 0),
+        ("ray".into(), "ray_cond_emb_out".into(), true, 0),
+        ("decoder_out".into(), "decoder_out".into(), false, 0),
+        ("hand_xyxy_0".into(), "left_xyxy".into(), false, 0),
+        ("hand_xyxy_1".into(), "right_xyxy".into(), false, 0),
+        ("hand_img_0".into(), "hand_img_0".into(), false, 0),
+        ("backbone_hand".into(), "backbone_out_1".into(), true, 0),
+        ("ray_hand".into(), "ray_cond_emb_hand_out_0".into(), true, 0),
+        ("decoder_hand_out".into(), "decoder_hand_out_0".into(), false, 0),
+        ("decoder_hand_out".into(), "decoder_hand_out_1".into(), false, 1),
+        ("tokens".into(), "tokens".into(), false, 0),
+    ];
+    for l in 0..6 {
+        checks.insert(3 + l, (format!("decoder_l{l}"), format!("decoder_l{l}"), false, 0));
+        if l < 5 {
+            checks.push((format!("params_l{l}"), format!("head_pose_params_{l}"), false, 0));
+            checks.push((format!("kp3d_l{l}"), format!("head_pose_kp3d_{l}"), false, 0));
+            checks.push((format!("kp3d_hand_l{l}"), format!("head_pose_hand_kp3d_{l}"), false, 0));
+        }
+        checks.push((format!("decoder_hand_l{l}"), format!("decoder_hand_l{l}_0"), false, 0));
+    }
+    for (mine, theirs, cmajor, item) in checks {
+        let (Some(a), Some(r)) = (trace.get(&mine), d.get(&theirs)) else {
+            println!("{mine:>18}: (missing {})", if trace.contains_key(&mine) { theirs } else { mine.clone() });
+            continue;
+        };
+        let n = r.data.len();
+        let a = &a[(item * n).min(a.len())..];
+        let mut max = 0f64;
+        let mut at = (0, 0., 0.);
+        let mut scale = 0f64;
+        let c = if cmajor { r.shape[r.shape.len() - 3] } else { 1 };
+        let p = n / c;
+        // Reference crops are ToTensor output; mine are normalized.
+        let norm = theirs.contains("_img");
+        for i in 0..n.min(a.len()) {
+            let mut rv = if cmajor { r.data[(i % c) * p + i / c] } else { r.data[i] };
+            if norm {
+                let ch = i / (n / 3);
+                rv = (rv - [0.485, 0.456, 0.406][ch]) / [0.229, 0.224, 0.225][ch];
+            }
+            if (a[i] as f64 - rv).abs() > max {
+                max = (a[i] as f64 - rv).abs();
+                at = (i, a[i] as f64, rv);
+            }
+            scale = scale.max(rv.abs());
+        }
+        println!("{mine:>18} vs {theirs:<26} max |Δ| {max:.3e} at {} ({:.5} vs {:.5})  (max |ref| {scale:.3e}, n {n})", at.0, at.1, at.2);
+    }
+    if let Some(out) = args.iter().position(|a| a == "--out").and_then(|i| args.get(i + 1)) {
+        let arrays: Vec<(&str, npy::Out)> = trace.iter().map(|(k, v)| (k.as_str(), npy::Out::F32(v, vec![v.len()]))).collect();
+        npy::write_npz(Path::new(out), &arrays)?;
+        println!("wrote {out}");
+    }
+    Ok(())
+}
+
 fn device() -> Device {
     match Device::new_cuda(0) {
         Ok(d) => d,
@@ -546,6 +673,14 @@ fn main() {
             1
         }),
         Some("gvhmr-golden") => gvhmr_golden(&args[2..]).map(|_| 0).unwrap_or_else(|e| {
+            eprintln!("[錯誤] {e}");
+            1
+        }),
+        Some("sam3d-golden") => sam3d_golden(&args[2..]).map(|_| 0).unwrap_or_else(|e| {
+            eprintln!("[錯誤] {e}");
+            1
+        }),
+        Some("flowhmr-golden") => flowhmr_golden(&args[2..]).map(|_| 0).unwrap_or_else(|e| {
             eprintln!("[錯誤] {e}");
             1
         }),

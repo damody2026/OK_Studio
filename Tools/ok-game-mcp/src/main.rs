@@ -61,6 +61,8 @@ fn street_tools() -> Value {
         t("game_trace_start", "Start recording an Unreal Insights trace (Trace.File) to Saved/Profiling/<name>.utrace. channels default: default,cpu,gpu,frame,bookmark,loadtime.",
           json!({"name": {"type": "string"}, "channels": {"type": "string"}}), &[]),
         t("game_trace_stop", "Stop the trace being recorded (Trace.Stop); returns the file.", json!({}), &[]),
+        t("image_stats", "How bright a screenshot is (a lighting check: blown-out white, crushed black): mean luma 0..255 and the shares of pixels at 250+ and at 10 or under, over region [x0, y0, x1, y1] in fractions of the image (default [0.19, 0, 0.77, 0.72]: the 3D view between the minimap, the side panel and the dialogue box).",
+          json!({"file": {"type": "string"}, "region": {"type": "array", "items": {"type": "number"}}}), &["file"]),
         t("game_call", "Any other control endpoint, POST with a JSON body (GET when body is omitted): /saves {op: open|save|load|new, slot}, /rules {action: status|reload|eval, request}, /mind {action}, /song {action, girl}, /money {amount}, /cursor {on}, /summon {slots}, /locale {lang, region}, /menu, /camera {actor, bone, yaw, pitch, distance}, /mic {ignore}, /navigate {stop: true}, /bluff {do, cards}.",
           json!({"path": {"type": "string"}, "body": {"type": "object"}}), &["path"]),
     ])
@@ -311,6 +313,7 @@ fn run(game: &Game, name: &str, a: &Value) -> Result<Value> {
         }
         "game_phone" => json_text(game.call("/phone", Some(&json!({"text": a["text"]})))?),
         "game_screenshot" => screenshot(game, arg_f(a, "scale", 1.0))?,
+        "image_stats" => json_text(image_stats(a["file"].as_str().context("file is required")?, &a["region"])?),
         "game_inspect" => {
             if a["off"] == true {
                 return Ok(json_text(game.call("/inspect", Some(&json!({"off": true})))?));
@@ -363,6 +366,27 @@ fn screenshot(game: &Game, scale: f64) -> Result<Value> {
             json!({"content": [{"type": "text", "text": file}, image_part(&file)?], "isError": false})
         }
     })
+}
+
+/// Brightness of a region of an image (Rec. 709 luma of the 8-bit pixels): mean, and the shares clipped white and black.
+fn image_stats(file: &str, region: &Value) -> Result<Value> {
+    let img = image::open(file)?.to_rgb8();
+    let r: Vec<f64> = region.as_array().map(|v| v.iter().filter_map(|x| x.as_f64()).collect()).filter(|v: &Vec<f64>| v.len() == 4).unwrap_or(vec![0.19, 0.0, 0.77, 0.72]);
+    let (w, h) = (img.width() as f64, img.height() as f64);
+    let (x0, y0, x1, y1) = ((r[0] * w) as u32, (r[1] * h) as u32, ((r[2] * w) as u32).min(img.width()), ((r[3] * h) as u32).min(img.height()));
+    let (mut sum, mut white, mut black, mut n) = (0.0, 0u64, 0u64, 0u64);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let p = img.get_pixel(x, y);
+            let l = 0.2126 * p[0] as f64 + 0.7152 * p[1] as f64 + 0.0722 * p[2] as f64;
+            sum += l;
+            n += 1;
+            if l >= 250.0 { white += 1; }
+            if l <= 10.0 { black += 1; }
+        }
+    }
+    let n = n.max(1) as f64;
+    Ok(json!({"file": file, "mean": (sum / n * 10.0).round() / 10.0, "white": (white as f64 / n * 1000.0).round() / 1000.0, "black": (black as f64 / n * 1000.0).round() / 1000.0}))
 }
 
 /// An image file as MCP image content (JPEG, at most 1600 wide). It is written a frame or two after the request: waits

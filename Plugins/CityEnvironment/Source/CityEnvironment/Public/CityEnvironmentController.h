@@ -96,6 +96,8 @@ public:
 	void UseGameClock();
 	/** A level that streamed in after BeginPlay: its lamps and signs join the registry; what is there stays. */
 	void RegisterLevel(ULevel* Level);
+	// The lights it sets itself (its lamps, sun, sky): the game leaves those to it and scales the rest (the source map's room lamps).
+	void GetManagedLights(TSet<const ULightComponentBase*>& Out) const;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="City|Environment")
 	FDateTime LocalDateTime;

@@ -35,7 +35,8 @@ public:
 	FString StatusText() const;
 	bool IsImporting() const { return Proc.IsValid(); }
 	// Fills the import fields and presses 開始轉換 (MCP / tests); false when it did not start.
-	bool StartImport(const FString& Path, const FString& Name, bool bStatic, bool bPair, bool bMaleLeft);
+	/** Method: "gvhmr" or "flowhmr" sets the estimator checkbox; empty keeps it. */
+	bool StartImport(const FString& Path, const FString& Name, bool bStatic, bool bPair, bool bMaleLeft, const FString& Method = FString());
 	// Replaces the editor's playback (studio): MaleKey is empty for a single-person motion.
 	TFunction<void(const FString& FemaleKey, const FString& MaleKey, const FString& Label)> PlayOverride;
 
@@ -60,6 +61,8 @@ private:
 	UPROPERTY() TObjectPtr<UEditableTextBox> PathBox;
 	UPROPERTY() TObjectPtr<UEditableTextBox> NameBox;
 	UPROPERTY() TObjectPtr<UCheckBox> StaticCamera;
+	/** Checked: FlowHMR estimates the 3D motion; unchecked: GVHMR. */
+	UPROPERTY() TObjectPtr<UCheckBox> UseFlowHMR;
 	UPROPERTY() TObjectPtr<UCheckBox> PairVideo;
 	UPROPERTY() TObjectPtr<UCheckBox> MaleLeft;
 	UPROPERTY() TObjectPtr<UEditableTextBox> ArmReachBox;

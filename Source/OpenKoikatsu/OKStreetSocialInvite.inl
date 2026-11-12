@@ -174,6 +174,17 @@ void AOKStreetSocialScene::StepApproach(){
    return;
   }
  }
+ // He went off elsewhere while she was still far off, not coming to a meeting: she lets it go. 安可 set out from 1 km away to
+ // sing for him, he ran across the city to someone else, and "安可 is coming over" stood for four hours and kept him
+ // from sleeping (R6-176).
+ {const float D=FVector::Dist2D(A.Position,S.Male);
+  if(S.ApproachClosestFor!=S.ApproachStarted){S.ApproachClosestFor=S.ApproachStarted;S.ApproachClosest=D;}else S.ApproachClosest=FMath::Min(S.ApproachClosest,D);
+  // Twice as far as she has come at the nearest too: him walking on into the cafeteria (48 m to 83 m from 安可) is no
+  // going off, she comes on after him.
+  if(!S.ApproachAppointment&&!S.ApproachPrivate&&D>6000.f&&D>FMath::Max(S.ApproachClosest+3000.f,S.ApproachClosest*2.f)){
+   UE_LOG(LogTemp,Display,TEXT("Street approach: actor=%d gave up, he went off (%.0f m away, %.0f m at the nearest)"),I,D/100.f,S.ApproachClosest/100.f);
+   if(S.Manifest.Characters.IsValidIndex(I)){S.FreeTalkNotice=OKMsg(TEXT("ui.invite.approach_he_left"),{{TEXT("name"),*S.Manifest.Characters[I].Name}});RefreshUI();}
+   Stop();return;}}
  // Not on her way to their meeting: 胡桃, coming to their 12:00 lunch, turned back 37 m off (out of sight) at 11:25 because he
  // was talking with 安可, and never came. She comes on and joins them (below).
  if(FPlatformTime::Seconds()-S.ApproachStarted>S.ApproachLimit||(S.Target!=INDEX_NONE&&S.Target!=I&&!S.ApproachJoin&&!S.ApproachAppointment)){

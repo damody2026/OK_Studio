@@ -97,15 +97,18 @@ void OKStreetFreeTalkSplitTexts(const TArray<FString>& Texts, TArray<FString>& O
 // The segments as one line (no spaces in Chinese; spaces in English).
 FString OKStreetFreeTalkJoinLines(const TArray<FString>& Lines);
 
-// Key comes from DEEPSEEK_API_KEY, or Saved/StreetSocial/deepseek.json (gitignored).
-// Where the DeepSeek settings (api_key, endpoint, model) are read from: OK_FREE_TALK_SETTINGS, the project's
-// Saved/StreetSocial/deepseek.json, or the user's own copy (%LOCALAPPDATA%/OpenKoikatsu/deepseek.json), the first that
-// exists. The key is a secret, so it is never in Content or git; the user's copy (refreshed from the project's)
-// survives Saved/ being wiped.
+// The player's settings file, where the DeepSeek settings are its "deepseek" section {"api_key", "endpoint", "model"}
+// (Docs/API_KEYS.md): OK_FREE_TALK_SETTINGS (the launcher passes the run's player.json), else the project's
+// Saved/StreetSocial/player.json. DEEPSEEK_API_KEY wins over the file's key. Without a key there is no free talk: the
+// conversations keep to the built-in choices. The key is a secret, so it is never in Content or git.
 FString OKStreetFreeTalkSettingsPath();
 bool OKStreetFreeTalkLoadSettings(FOKFreeTalkSettings& Out, FString& Error);
 // Matches the manifest display name against free_talk_personas.json, else _default.
 bool OKStreetFreeTalkLoadPersona(const FString& Name, FOKFreeTalkPersona& Out, FString& Error);
+// A save's own setting for her (the roster menu, heroine-settings.json): her persona text under this name, and the name
+// whose shipped persona she keeps when only her name changed. Never written into her card.
+void OKStreetFreeTalkSetPersonaOverride(const FString& Name, const FString& BaseName, const FString& Profile);
+void OKStreetFreeTalkClearPersonaOverrides();
 // Stable for a girl: persona, rules and the reply format only.
 // `World` is the street catalogue (places and activities), also stable.
 FString OKStreetFreeTalkSystemPrompt(const FOKFreeTalkPersona& Persona, const FString& World);

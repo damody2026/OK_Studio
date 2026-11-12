@@ -2254,6 +2254,12 @@ pub(crate) struct BodyColliderSet { colliders: Vec<(String, BodyCollider)> }
 impl BodyColliderSet {
     #[cfg(test)]
     pub(crate) fn count(&self)->usize {self.colliders.len()}
+    /// Which colliders she has (names and bones), not where they are: for caches of what depends on them.
+    pub(crate) fn layout_hash(&self, h:&mut impl std::hash::Hasher) {
+        use std::hash::Hash;
+        self.colliders.len().hash(h);
+        for (name,c) in &self.colliders {name.hash(h);c.transform.hash(h);}
+    }
     pub(crate) fn extend_serialized(&mut self, file: &SerializedFile, source: &Skeleton, scripts:&crate::unity::references::Scripts) {
         let colliders = parse_colliders_resolved(file, Some(source),scripts);
         let children: HashMap<_, _> = file.objects.iter().filter(|o| o.type_id == 4).filter_map(|o| {
@@ -2308,6 +2314,10 @@ impl CharacterColliderFrame {
         let native=native.bound(body).into_iter().map(|c|collider_pose_cached(c,body,&mut worlds)).collect();
         let ordinary=std::array::from_fn(|i|game_colliders::ordinary_colliders(body,flags,i==1).into_iter().map(|c|collider_pose_cached(c,body,&mut worlds)).collect());
         Self {native,ordinary,flags}
+    }
+    /// The bones the colliders hang on.
+    pub(crate) fn bone_ids(&self)->Vec<i64> {
+        self.native.iter().chain(self.ordinary.iter().flatten()).map(|(c,_,_)|c.transform).collect()
     }
 }
 
@@ -2688,6 +2698,7 @@ impl AttachedDynamicSet {
     /// Number of attachment ancestors this state was built on (0: placed without a chain).
     pub(crate) fn attachment_len(&self)->usize{self.attachment_ids.len()}
     /// The bones this set's chains move (sorted): renderers of one prefab carry the same set.
+    pub(crate) fn chain_count(&self)->usize {self.chains.len()}
     pub(crate) fn particle_ids(&self)->Vec<i64>{
         let mut ids:Vec<i64>=self.chains.iter().flat_map(|chain|chain.particles.iter().filter_map(|p|p.id)).collect();
         ids.sort_unstable();ids.dedup();ids
@@ -3205,7 +3216,7 @@ impl AttachedDynamicSet {
             let solved = {
                 // Chains PhysX cannot express (a single particle, dt 0) keep the built-in solver; the rest is one batch.
                 let mut inputs: Vec<&mut crate::px::ChainInput> = plans.iter_mut().filter_map(|plan| plan.input.as_mut()).collect();
-                !inputs.is_empty() && crate::px::solve_batch(&self.px_batch, &mut inputs)
+                let _trace=crate::native_profile::Scope::new(64);!inputs.is_empty() && crate::px::solve_batch(&self.px_batch, &mut inputs)
             };
             for (chain, plan) in self.chains.iter_mut().zip(plans) {
                 let db = &chain.db;

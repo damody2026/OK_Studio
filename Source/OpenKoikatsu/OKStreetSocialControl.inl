@@ -332,7 +332,8 @@ void AOKStreetSocialScene::StartControlServer(){
  // the map on it). Answers the one in use and every style there is.
  Bind(TEXT("/render"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   const auto Body=OKControlBody(Req);FString Style;if(Body->TryGetStringField(TEXT("style"),Style))SetRenderStyle(Style);
-  auto O=OKControlResult(true);O->SetStringField(TEXT("style"),RenderStyle());O->SetStringField(TEXT("label"),RenderStyleLabel(RenderStyle()));O->SetBoolField(TEXT("restarting"),State->SaveRestarting);
+  bool bLit;if(Body->TryGetBoolField(TEXT("lit"),bLit))SetLit(bLit);
+  auto O=OKControlResult(true);O->SetBoolField(TEXT("lit"),State->Lit);O->SetStringField(TEXT("style"),RenderStyle());O->SetStringField(TEXT("label"),RenderStyleLabel(RenderStyle()));O->SetBoolField(TEXT("restarting"),State->SaveRestarting);
   TArray<TSharedPtr<FJsonValue>> Styles;Styles.Add(MakeShared<FJsonValueString>(TEXT("koikatsu")));for(const auto& R:OKRenderRamps())Styles.Add(MakeShared<FJsonValueString>(TEXT("ramp:")+R.Key));Styles.Add(MakeShared<FJsonValueString>(TEXT("hg")));O->SetArrayField(TEXT("styles"),Styles);
   OKControlReply(Done,O);
  });
@@ -350,6 +351,132 @@ void AOKStreetSocialScene::StartControlServer(){
    TSharedPtr<FJsonObject> Story;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(G.Live.State()),Story)&&Story.IsValid())O->SetObjectField(TEXT("story"),Story);
   }else O->SetBoolField(TEXT("active"),false);
   OKControlReply(Done,O);});
+ // Every place, checked for walking (development): its door tied to the road graph's connected part, the way in from the
+ // door to its inside spot, and from there to each activity's anchor on that floor, by a full grid search (no time limit,
+ // unlike a walk's). {"only": "id,id"} for some. Each place: {id, door_links, door_on_roads, in, anchors:[{activity,
+ // anchor, ok, why}], problems:[...]}; the reply also counts the places with problems.
+ Bind(TEXT("/places_check"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
+  const auto Body=OKControlBody(Req);FString OnlyText;Body->TryGetStringField(TEXT("only"),OnlyText);TArray<FString> Only;OnlyText.ParseIntoArray(Only,TEXT(","));
+  const double Began=FPlatformTime::Seconds();const FOKStreetCityData& City=OKStreetCity();
+  auto Walk=[this](const FVector& From,const FVector& To,int32& Points)->bool{
+   if(FMath::Abs(From.Z-To.Z)>=150.f){Points=-1;return true;} // another floor: by the lift, not this check
+   if(FVector::Dist2D(From,To)<30.f){Points=1;return true;}
+   FOKStreetGridSearch G;G.From=From;G.To=To;GridSearchStep(G,TNumericLimits<double>::Max());Points=G.Route.Num();return G.Route.Num()>=2;};
+  TArray<TSharedPtr<FJsonValue>> Rows;int32 Bad=0;
+  for(const auto& P:OKStreetPlaces()){
+   if(Only.Num()&&!Only.Contains(P.Id))continue;
+   auto Row=MakeShared<FJsonObject>();Row->SetStringField(TEXT("id"),P.Id);TArray<TSharedPtr<FJsonValue>> Problems;
+   auto Problem=[&Problems](const FString& Text){Problems.Add(MakeShared<FJsonValueString>(Text));};
+   // The door on the graph: the point tied to it (OKStreetCityCheckRoads), its links, and whether it is in the kept part.
+   int32 DoorNode=INDEX_NONE;for(int32 N=City.Nodes.Num()-1;N>=0;--N)if(FVector::DistSquared2D(City.Nodes[N],P.Door)<1.0){DoorNode=N;break;}
+   const int32 Links=City.Links.IsValidIndex(DoorNode)?City.Links[DoorNode].Num():0;
+   const bool OnRoads=DoorNode!=INDEX_NONE&&Links>0&&(City.Kept.IsEmpty()||City.Kept[DoorNode]==City.KeptPart);
+   Row->SetNumberField(TEXT("door_links"),Links);Row->SetBoolField(TEXT("door_on_roads"),OnRoads);
+   // The way a walk takes from the roads (a point of the kept part) to the door, each leg walkable: clear for his body, or
+   // a grid way between its ends.
+   {const int32 HubNode=City.Kept.IndexOfByKey(City.KeptPart);
+    if(City.Nodes.IsValidIndex(HubNode)&&!OKStreetUpstairs(P.Door)){const TArray<FVector> Route=CityRoute(City.Nodes[HubNode],P.Door);Row->SetNumberField(TEXT("route_points"),Route.Num());
+     if(Route.Num()<2||!Route.Last().Equals(P.Door,50.f))Problem(TEXT("no road route to the door"));
+     for(int32 I=1;I<Route.Num();++I){int32 Points=0;if(OKStreetCityClear(GetWorld(),Route[I-1],Route[I],18.f)||Walk(Route[I-1],Route[I],Points))continue;
+      Problem(FString::Printf(TEXT("road leg %d/%d blocked: %s -> %s (%.0f m)"),I,Route.Num()-1,*Route[I-1].ToCompactString(),*Route[I].ToCompactString(),FVector::Dist2D(Route[I-1],Route[I])/100.f));break;}}}
+   float Ground=P.Door.Z;if(!OKStreetGroundZ(GetWorld(),P.Door,Ground,this))Problem(TEXT("no ground at the door"));
+   else if(FMath::IsNearlyEqual(Ground,P.Door.Z+70.f,1.f))Problem(TEXT("door point inside something solid"));else if(FMath::Abs(Ground-P.Door.Z)>60.f)Problem(FString::Printf(TEXT("door %.0f cm off the ground"),Ground-P.Door.Z));
+   // In from the door.
+   FVector Inside=P.Door;
+   if(!P.Rooms.IsEmpty()){Inside=PlaceInsideSpot(P);int32 Points=0;const bool In=Walk(P.Door,Inside,Points);Row->SetNumberField(TEXT("in_points"),Points);
+    if(!In)Problem(TEXT("no way from the door to the inside spot"));
+    if(PlaceHere(Inside)!=P.Id)Problem(FString::Printf(TEXT("inside spot counts as %s"),*PlaceHere(Inside)));}
+   // To each activity's anchor.
+   TArray<TSharedPtr<FJsonValue>> Anchors;
+   for(const auto& A:OKStreetActivities()){if(!A.Place||FCString::Strcmp(A.Place,P.Id)!=0||!A.Anchor||!*A.Anchor)continue;
+    auto Item=MakeShared<FJsonObject>();Item->SetStringField(TEXT("activity"),A.Id);Item->SetStringField(TEXT("anchor"),A.Anchor);
+    const FOKStreetModelAnchor* Spot=OKStreetPlaceAnchor(P,A.Anchor);FString Why;
+    if(!Spot)Why=TEXT("no such anchor");
+    else{int32 Points=0;const bool Ok=Walk(Inside,Spot->Position,Points)||Walk(P.Door,Spot->Position,Points);
+     if(Points==-1)Why=TEXT("another floor");else if(!Ok)Why=TEXT("no way to it");
+     float G=Spot->Position.Z;if(Why.IsEmpty()&&!OKStreetGroundZ(GetWorld(),Spot->Position,G,this))Why=TEXT("no ground under it");}
+    Item->SetBoolField(TEXT("ok"),Why.IsEmpty()||Why==TEXT("another floor"));Item->SetStringField(TEXT("why"),Why);
+    if(!Why.IsEmpty()&&Why!=TEXT("another floor"))Problem(FString::Printf(TEXT("%s (%s): %s"),A.Id,A.Anchor,*Why));
+    Anchors.Add(MakeShared<FJsonValueObject>(Item));}
+   Row->SetArrayField(TEXT("anchors"),Anchors);Row->SetArrayField(TEXT("problems"),Problems);if(Problems.Num())++Bad;
+   Rows.Add(MakeShared<FJsonValueObject>(Row));
+  }
+  auto O=OKControlResult(true);O->SetNumberField(TEXT("places"),Rows.Num());O->SetNumberField(TEXT("with_problems"),Bad);
+  O->SetNumberField(TEXT("ms"),(FPlatformTime::Seconds()-Began)*1000.0);O->SetArrayField(TEXT("rows"),Rows);OKControlReply(Done,O);
+ });
+ // Every activity, tried for real (development, Tools/street_activity_audit.lua): {"op":"start", girl, id} ends what
+ // is going on, puts him at the place's door and her beside him (held), and starts the outing to it as an agreed
+ // invitation does (no asking); {"op":"status"} tells what runs now (walking there, pair, solo, facility, restroom,
+ // sleep, stroll) and where the two stand against the activity's anchor and the ground; {"op":"end"} ends it all.
+ Bind(TEXT("/activity_try"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
+  auto& S=*State;const auto B=OKControlBody(Req);FString Op=TEXT("status"),Id;B->TryGetStringField(TEXT("op"),Op);B->TryGetStringField(TEXT("id"),Id);double GirlNum=0;B->TryGetNumberField(TEXT("girl"),GirlNum);
+  auto EndAll=[this,&S](){if(S.OutingGirl!=INDEX_NONE)CancelOuting(FString());if(S.Pair.Partner!=INDEX_NONE)FinishPhoto();if(S.SoloGirl!=INDEX_NONE)EndSolo();if(S.Facility!=INDEX_NONE)FinishFacility();
+   if(S.RestroomGirl!=INDEX_NONE)EndRestroom(false);if(S.SleepPhase!=0)AbortSleep(FString());if(S.Companion!=INDEX_NONE)FinishCompanion();S.StrollActivity.Reset();EndTalk();};
+  if(Op==TEXT("end")){EndAll();OKControlReply(Done,OKControlResult(true));return;}
+  if(Op==TEXT("start")){
+   const FOKStreetActivity* A=OKStreetFindActivity(Id);const int32 Girl=int32(GirlNum);
+   if(!A||!S.Agents.IsValidIndex(Girl-1)){OKControlReply(Done,OKControlResult(false,TEXT("girl and a known activity id required")));return;}
+   const FOKStreetPlace* P=A->Place&&*A->Place?OKStreetFindPlace(A->Place):nullptr;
+   EndAll();StopNavigation(FString());
+   if(P){S.Male=P->Door;float G=S.Male.Z;if(OKStreetGroundZ(GetWorld(),S.Male,G,this))S.Male.Z=G;}
+   auto& Her=S.Agents[Girl-1];Her.Position=S.Male+FRotator(0,S.Rotations[0].Yaw+90.f,0).RotateVector(FVector(120,0,0));S.Commutes.Remove(Girl);S.LiftWalks.Remove(Girl);Her.Held=true;S.ScheduleHeld.Add(Girl);
+   FString Error;const bool Ok=BeginOuting(Girl,Id,Error);
+   auto O=OKControlResult(Ok,Error);O->SetStringField(TEXT("place"),P?P->Id:TEXT(""));O->SetNumberField(TEXT("kind"),int32(A->Kind));O->SetStringField(TEXT("anchor"),A->Anchor?A->Anchor:TEXT(""));
+   OKControlReply(Done,O);return;}
+  // status
+  auto O=OKControlResult(true);
+  FString Running=TEXT("none");int32 Girl=INDEX_NONE;
+  if(S.OutingGirl!=INDEX_NONE&&S.OutingActivity==TEXT("stroll")){Running=TEXT("stroll");Girl=S.OutingGirl;}
+  else if(S.OutingGirl!=INDEX_NONE){Running=TEXT("walking");Girl=S.OutingGirl;O->SetNumberField(TEXT("route_step"),S.OutingStep);O->SetNumberField(TEXT("route_points"),S.OutingRoute.Num());O->SetStringField(TEXT("activity"),S.OutingActivity);}
+  else if(S.Pair.Partner!=INDEX_NONE){Running=TEXT("pair");Girl=S.Pair.Partner;O->SetNumberField(TEXT("pair_phase"),S.Pair.Phase);O->SetStringField(TEXT("female_clip"),S.Pair.FemaleClip);O->SetStringField(TEXT("male_clip"),S.Pair.MaleClip);}
+  else if(S.SoloGirl!=INDEX_NONE){Running=TEXT("solo");Girl=S.SoloGirl;}
+  else if(S.Facility!=INDEX_NONE){Running=TEXT("facility");Girl=S.FacilityCharacter;}
+  else if(S.RestroomGirl!=INDEX_NONE){Running=TEXT("restroom");Girl=S.RestroomGirl;}
+  else if(S.SleepPhase!=0){Running=TEXT("sleep");Girl=S.SleepGirl;}
+  else if(!S.StrollActivity.IsEmpty()&&S.Companion!=INDEX_NONE){Running=TEXT("stroll");Girl=S.Companion;}
+  O->SetStringField(TEXT("running"),Running);O->SetStringField(TEXT("message"),S.Message);O->SetStringField(TEXT("last_activity"),S.LastActivity);O->SetStringField(TEXT("here"),PlaceHere(S.Male));
+  auto Where=[this](const FVector& At,TSharedRef<FJsonObject> Into,const TCHAR* Name){auto W=MakeShared<FJsonObject>();W->SetNumberField(TEXT("x"),At.X);W->SetNumberField(TEXT("y"),At.Y);W->SetNumberField(TEXT("z"),At.Z);
+   float G=At.Z;const bool HasGround=OKStreetGroundZ(GetWorld(),At,G,this);W->SetBoolField(TEXT("ground"),HasGround);if(HasGround)W->SetNumberField(TEXT("above_ground"),At.Z-G);
+   W->SetBoolField(TEXT("in_obstacle"),OKStreetBlockedPoint(At,0.f));
+   // The map's own meshes (a shelf, a wall): a thin body from chest to head where he stands. From the knees up it was the
+   // table's edge at every meal (a seated pair is at the table on purpose).
+   FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetActivityTry),false,this);
+   W->SetBoolField(TEXT("in_mesh"),GetWorld()->OverlapAnyTestByChannel(FVector(At.X,At.Y,(HasGround?G:At.Z)+140.f),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(12.f,30.f),Query));
+   Into->SetObjectField(Name,W);};
+  Where(S.Male,O,TEXT("male"));if(S.Agents.IsValidIndex(Girl-1)){Where(S.Agents[Girl-1].Position,O,TEXT("female"));O->SetNumberField(TEXT("girl"),Girl);O->SetNumberField(TEXT("apart"),FVector::Dist(S.Male,S.Agents[Girl-1].Position));}
+  const FOKStreetActivity* A=OKStreetFindActivity(Id.IsEmpty()?S.LastActivity:Id);const FOKStreetPlace* P=A&&A->Place?OKStreetFindPlace(A->Place):nullptr;
+  if(const FOKStreetModelAnchor* Spot=P&&A->Anchor?OKStreetPlaceAnchor(*P,A->Anchor):nullptr){Where(Spot->Position,O,TEXT("anchor"));O->SetNumberField(TEXT("male_from_anchor"),FVector::Dist2D(S.Male,Spot->Position));O->SetNumberField(TEXT("male_dz_anchor"),S.Male.Z-Spot->Position.Z);}
+  OKControlReply(Done,O);
+ });
+ // The roster menu (OKStreetSocialRoster.inl), as a person uses it: {} or {"op":"state"} reads it; open | close | scan;
+ // import {files}; pick {path, on}; apply; edit {her, tab: settings|memory}; set {field: name|persona|profile|memory,
+ // value}; save (the tab being edited); forget (her conversation context).
+ Bind(TEXT("/roster"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
+  auto& S=*State;const auto Body=OKControlBody(Req);FString Op,Path,Field,Value,Tab;Body->TryGetStringField(TEXT("op"),Op);
+  Body->TryGetStringField(TEXT("path"),Path);Body->TryGetStringField(TEXT("field"),Field);Body->TryGetStringField(TEXT("value"),Value);Body->TryGetStringField(TEXT("tab"),Tab);
+  bool On=true;Body->TryGetBoolField(TEXT("on"),On);double Her=0;Body->TryGetNumberField(TEXT("her"),Her);
+  FString Error;
+  if(Op==TEXT("open"))OpenRoster();else if(Op==TEXT("close"))CloseRoster();
+  else if(Op==TEXT("scan")||Op==TEXT("import")){TArray<FString> Files;const TArray<TSharedPtr<FJsonValue>>* A=nullptr;if(Body->TryGetArrayField(TEXT("files"),A))for(const auto& V:*A)Files.Add(V->AsString());
+   if(!S.RosterOpen)OpenRoster();if(Op==TEXT("import")||Files.Num())RosterRun(TEXT("import"),Files);else if(!S.RosterBusy)RosterRun(TEXT("scan"),{});}
+  else if(Op==TEXT("pick")){S.RosterPicked.RemoveAll([&](const FString& P){return OKStreetRosterKey(P)==OKStreetRosterKey(Path);});
+   if(On){if(S.RosterPicked.Num()>=OKStreetFemaleCount)Error=TEXT("at most ten heroines");else if(!FPaths::FileExists(Path))Error=TEXT("no such card");else S.RosterPicked.Add(Path);}RosterRebuild();}
+  else if(Op==TEXT("edit"))RosterEditHer(int32(Her),Tab.IsEmpty()?TEXT("settings"):Tab);
+  else if(Op==TEXT("set")){if(Field==TEXT("name"))S.RosterName=Value;else if(Field==TEXT("persona"))S.RosterPersona=Value;else if(Field==TEXT("profile"))S.RosterProfile=Value;else if(Field==TEXT("memory"))S.RosterMemory=Value;else Error=TEXT("field must be name|persona|profile|memory");RosterRebuild();}
+  else if(Op==TEXT("save")){if(S.RosterEdit<1)Error=TEXT("nobody is being edited");else if(S.RosterTab==TEXT("memory"))RosterSaveMemory();else RosterSaveSettings();}
+  else if(Op==TEXT("forget"))RosterForgetContext();
+  else if(!Op.IsEmpty()&&Op!=TEXT("state")&&Op!=TEXT("apply"))Error=TEXT("op must be state|open|close|scan|import|pick|apply|edit|set|save|forget");
+  auto O=OKControlResult(Error.IsEmpty(),Error);O->SetBoolField(TEXT("open"),S.RosterOpen);O->SetBoolField(TEXT("busy"),S.RosterBusy);O->SetStringField(TEXT("notice"),S.RosterNotice);
+  O->SetStringField(TEXT("dir"),OKStreetRosterDir());
+  TArray<TSharedPtr<FJsonValue>> Cards;for(const auto& C:S.RosterCards)Cards.Add(MakeShared<FJsonValueObject>(C));O->SetArrayField(TEXT("cards"),Cards);
+  auto Strings=[](const TArray<FString>& L){TArray<TSharedPtr<FJsonValue>> A;for(const FString& X:L)A.Add(MakeShared<FJsonValueString>(X));return A;};
+  O->SetArrayField(TEXT("picked"),Strings(S.RosterPicked));O->SetArrayField(TEXT("world"),Strings(S.RosterWorld));
+  TArray<FString> Names;for(int32 I=1;I<S.Manifest.Characters.Num();++I)Names.Add(S.Manifest.Characters[I].Name);O->SetArrayField(TEXT("heroines"),Strings(Names)); // her = index + 1
+  O->SetNumberField(TEXT("editing"),S.RosterEdit);O->SetStringField(TEXT("tab"),S.RosterTab);
+  if(S.RosterEdit>0){O->SetStringField(TEXT("name"),S.RosterName);O->SetStringField(TEXT("persona"),S.RosterPersona);O->SetStringField(TEXT("profile"),S.RosterProfile);O->SetStringField(TEXT("memory"),S.RosterMemory);}
+  OKControlReply(Done,O);
+  if(Op==TEXT("apply")&&Error.IsEmpty())RosterApply(); // last: the map starts again
+ });
  Bind(TEXT("/saves"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   auto& S=*State;const auto Body=OKControlBody(Req);FString Op,Slot;Body->TryGetStringField(TEXT("op"),Op);Body->TryGetStringField(TEXT("slot"),Slot);
   if(int32 N=0;Slot.IsEmpty()&&Body->TryGetNumberField(TEXT("slot"),N))Slot=FString::FromInt(N);

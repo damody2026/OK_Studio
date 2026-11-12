@@ -4,6 +4,10 @@
 -- --hg-shading authors the HG render style parents (Plugins/OKHGShading) instead of the Koikatsu ones.
 -- --wrap-only authors only the skin parents and their outlines as <name>_Wrap, with the 1-on-1 scene's DPG world position
 -- offset (her skin pushed off his penis; Launch/materials.json wrap_root, e.g. StreetWrap01).
+-- --lit-only authors only the skin parents as <name>_Lit: DefaultLit, the family program fully lit as the base colour,
+-- with the wrap offset (the 1-on-1 scene's lit skin switch; Launch/materials.json lit_root, e.g. StreetLit01).
+-- --bias-only authors every family but the skin as <name>_Bias: drawn __OK_ViewBias cm toward the camera (the 1-on-1
+-- scene's clothes over her skin; Launch/materials.json bias_root, e.g. StreetBias01).
 --
 --   Tools\lua\lua.exe Tools\prepare_runtime_shared_material.lua --tag StreetHG01 [--hg-shading] [--engine DIR]
 -- require "prepare_runtime_shared_material" gives M.prepare_bake_host() (also used by rebuild_street_social_patch.lua).
@@ -73,6 +77,8 @@ local function main()
   p:opt("--engine", { default = ok.engine_root() })
   p:flag("--hg-shading")
   p:flag("--wrap-only")
+  p:flag("--lit-only")
+  p:flag("--bias-only")
   local a = p:parse(arg)
   if not a.tag:match("^[%w_%-]+$") then error("--tag must match ^[A-Za-z0-9_-]+$", 0) end
   local engine = path.norm(a.engine)
@@ -91,6 +97,8 @@ local function main()
     '-abslog="' .. win(base) .. '.log"' }
   if a.hg_shading then args[#args + 1] = "-HGShading" end
   if a.wrap_only then args[#args + 1] = "-WrapOnly" end
+  if a.lit_only then args[#args + 1] = "-LitOnly" end
+  if a.bias_only then args[#args + 1] = "-BiasOnly" end
   local line = '"' .. win(path.join(engine, "Engine/Binaries/Win64/UnrealEditor-Cmd.exe")) .. '"' .. " " .. table.concat(args, " ")
   local child = proc.popen(line, { shell = false, hide = true, stdout = "NUL", stderr = "NUL" })
   path.write_text(base .. ".pid", tostring(child:pid()) .. "\n")

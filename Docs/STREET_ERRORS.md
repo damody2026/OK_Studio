@@ -2152,3 +2152,52 @@
 - 2026-11-07 e-galgame 全狀態開卡只用雷電將軍測就回報，刻晴換裝失敗（OK 卡缺骨架答案）：留下全部狀態後，`meshes_for_maindata` 改選到別的網格骨架，只有 OK 卡重播時才會出錯。卡片相關改動要把全部女主的每套衣服都開一次（`wardrobe::tests::every_outfit_opens_with_all_states`）。
 - 2026-11-08 e-galgame 用 TaskStop 停掉量測腳本，它剛開的遊戲沒關，下一輪 ABA 變成兩個遊戲同時跑，B 和第二個 A 都慢了三成，差點當成結果。量測腳本每次開遊戲前先 game_stop，停腳本後要看還有沒有自己的遊戲。
 - 2026-11-08 e-galgame 隱藏部件不再解算後，暫停中按「全部穿上」，鞋子停在最後一次畫的位置（掉在地上）：暫停時沒有解算幀。可見性一變就要求一幀姿勢更新，暫停也解算一次。
+- 2026-11-08 c-conquest 恢復攻略時 game_launch 沒加 `-CitySource`，進了舊街區地圖；關遊戲前先備份 sandbox，才把大學城的存檔還原回來。大學城的攻略一律加 `-CitySource`（還沒 cook 前），開遊戲後先看 game_state 的位置與地點。
+- 2026-11-08 c-conquest 和 E 組都用 `-PortBase 48160`，E 的 game_stop 照埠號關到 C 的遊戲（R6-175）。各 checkout 的 sandbox 要用不同的 PortBase；C 攻略改用 48460。
+- 2026-11-09 c-conquest 用 ok-game-mcp call／curl 在命令列送中文（改女主名字），Git bash 送出的不是 UTF-8，存檔寫進亂碼名字。含中文的請求一律先寫成 UTF-8 檔再 `--data-binary @檔案` 送出。
+- 2026-11-09 c-conquest 名單面板的核取方塊與文字框是純 Slate，ui_widgets 讀不到；另加街區控制路由 `/roster`（game_call）讓 MCP 讀寫。新的 Slate 控制要同時給控制通道入口。
+- 2026-11-09 c-conquest 大學城的地點資料從建築自己的座標轉世界座標時漏了建築的旋轉（`build_street_city_places.lua` 的 BW 只加原點），朝東的 16 家店門點落在背牆上；之前只靠「走得到門口附近」判斷沒發現。新增 `/places_check` 逐段模擬路線，匯出時以建築 yaw 判斷正面並鏡射修正。
+- 2026-11-09 c-conquest 道路點陣圖把校園圍牆的門口畫成「擋住」，匯出的路網從沒有線穿過門口；以前把校內幾塊路網「就近綁到主路網」看起來連通，遊戲載入時那些綁線被圍牆擋掉，整個校園斷開。點陣圖缺的通道（門口）要用建造資料（flat-campus-v1/install.json）補開，不能靠就近綁線。
+- 2026-11-09 c-conquest `/places_check` 第一版把「門口沒綁到路網點」當問題，幾乎每個地點都報錯；遊戲實際是在最後一段用格子找路進門。檢查要照遊戲真正的路線（CityRoute）逐段模擬，不要拿中間資料結構當判準。
+- 2026-11-09 c-conquest 以為白天室內過曝是天光沒被屋頂擋住，先在遊戲裡關天光試：關到 0 仍 46% 白，才逐一關燈光類型找到是室內燈。光照問題照規矩逐一切換再下結論，這次有照做才沒改錯地方。
+- 2026-11-09 c-conquest 來源地圖（`-CitySource`）的室內燈是真實流明，只有串流副本在製作時乘 1/8，打包測試與使用者看到的來源地圖一直 8 倍亮；STREET_ERRORS 早有「城市燈只在 WP 副本乘 0.125」卻沒人補遊戲端。副本做的修正，來源地圖也要在遊戲載入時做一次。
+- 2026-11-09 c-conquest 統一乘 1/8 後百貨公司仍 55% 白，再乘到 0.015 還是 48%：少數極亮的面光燈（每盞 6 萬流明）主導，統一倍率修不好，要按燈的種類封頂。
+- 2026-11-09 c-conquest 拿「天空亮度係數」修戶外整片白：先寫成主控台變數才發現遊戲每秒用 `OKStreetSkyLuminanceAt` 覆寫，且係數降到 0.0005 畫面也不變，白天空不是這個造成的。改數值前先確認那個值有沒有被別處覆寫、改了畫面會不會動。
+- 2026-11-09 c-conquest 活動錨點常是東西本身（櫃檯、餐桌、販賣機），活動把兩人直接放在錨點上，人在東西裡、相機也在裡面；一開始用截圖看不出來（對話相機只拍到她），改用地面射線與碰撞膠囊數值檢查才抓到。站位檢查要用數值，不要只看對話相機的截圖。
+- 2026-11-09 c-conquest 我寫的門點自動移位只看「看得到路網點」，把聖誕樹的門點移到校園圍牆另一側，去聖誕樹變成繞校門一圈；戶外地點移門要偏向地點本身那側。
+- 2026-11-08 e-120fps 量測腳本沿用舊 session 的 `-PortBase 48160`（控制埠 48170），C 組攻略也用同一組埠；`ok-game-mcp` 的 `game_stop` 是找誰在聽那個埠再 taskkill，不分 checkout，19:03:59 第一次 `game_stop` 關掉了 C 組正在跑的遊戲（之前紀錄的「遊戲無聲結束」也是這個原因）。另外整合後姿勢清單多了「背面騎乘位　New」，腳本用前 5 字比對選到它，結束時狀態是 Idle（沒插入），那輪數字作廢。修正：E 改用 PortBase 48610（控制埠 48620）；關遊戲前先查聽埠的程序執行檔在 E:\OpenKoikatsu 才關那個 PID，不用 `game_stop`；姿勢用全名比對，量完檢查結束狀態。
+- 2026-11-08 e-120fps 手掌 IK 判斷「他的手扶在她腰上」時，把他的手加上對位位移（HimApplied）再跟她顯示中的腰骨比，抽插每幀的位移讓手在腰上晃 2～3 cm、整體位移讓手離腰 30～57 cm，三個姿勢沒有一隻手被判成扶腰，後背位他的手腳都浮在空中（使用者截圖）。原作的 MotionIK 只在配對解算裡把他的手綁在她身上，對位位移是解算之後才加的。修正：在 ReadPairSessions（兩邊 session 閒置、骨頭是同一幀）用配對空間比對（他的手不加位移、她的腰骨扣掉 HerApplied），後背位、正常位雙手都判成扶腰（散佈 0.8～1.0 cm）；射完後位移還在，釘腳與手也要留著。
+- 2026-11-08 e-120fps 舌頭抬高用 `J_MouthBase_s` 當嘴唇位置，這張頭沒有這根骨頭，整個功能不動作（`raised:false`）。改用兩嘴角中點，並在 `/hscene` 回傳的 `tongue` 裡列出缺少的骨頭；新功能要先用 MCP 讀回狀態確認有生效再看截圖。
+- 2026-11-09 e-120fps 皮膚 lit 時為了讓補光只照兩人，改了她各元件的光照通道（`SetLightingChannels`）；這會重建元件的渲染狀態，affine 元件（頭髮、飾品）重建後退回靜止時的頂點位置，臉和頭髮消失、頭髮飾品跑位。改成不動任何元件的通道，主光、補光改為放在兩人附近、衰減半徑只到他們的點光源。
+- 2026-11-09 e-120fps lit 母材質沿用模型的頂點法線，胸部的法線朝內（乳房形變），在 Unreal 打光下整片全黑；卡通著色光從鏡頭打、全亮，看不出來。lit 材質改成明顯背向鏡頭（點積 < -0.25）的法線翻回來。
+- 2026-11-09 e-120fps lit 切換只每幀把原材質的參數複製到 lit 替身，沒想到別的程式也會直接寫「元件目前的材質」：衣服半脫時的 `_alpha_a`／`_alpha_b`、身體遮罩寫進 lit 替身，下一幀被原材質的舊值蓋回，原材質也從沒收到新值，半脫的上衣胸口 lit、unlit 都變黑（使用者回報）。另外我以為頭髮在 lit 下跑位是 source mesh pass 只編 unlit，查證後 1 對 1 根本沒走那個 pass，是猜錯。修正：`KKLitSync.h` 每次同步先把寫到替身的參數（和上次同步留下的不同者）轉寫回原材質，再從原材質複製；頭髮、衣服、飾品不再排除（`ok.Lit.Affine`）。
+- 2026-11-09 e-120fps 街區切到 lit 後角色整個發白：街區有一顆只照角色通道、給眼淚反光用的 100 cd catch light，角色是 unlit 時不受影響，換成吃光的材質就被它打爆。lit 時關掉它，回 unlit 再開回 100 cd。另外「全部穿上→全部半脫」身體變白，查了遮罩（三種狀態的身體遮罩內容完全相同、沒裁到東西）、lit 參數同步都不是；實際是社團服的全身褲襪 `o_body_allbodytights_top_a` 上衣半脫才露出來，它的軀幹貼圖是 alpha 233 的白。通則：外觀異常先逐件切換找出是哪個部件，再查材質。
+- 2026-11-09 c-street-city 拆掉 S44 開橫巷後重建地點，`city_anchors.json` 還留著 `s44-0301.balcony`：陽台錨點直接取自舊的 lover-spots 安裝紀錄，不管那間房還在不在。修正：`Tools/street_city_new_anchors.lua` 只在房間仍是地點區域時放陽台。通則：從舊安裝紀錄補錨點時，要先確認它所屬的地點還在目前的地點表裡。
+- 2026-11-09 c-conquest 整合後重建 stage（`--skip-cook --skip-base`）帶進的 `ok_mind.dll` 是整合前編的：它還找已退役的 `Saved/StreetSocial/deepseek.json`，金鑰已搬進 `player.json`，每句回覆都「no_api_key」。stage 腳本與開發啟動器只複製 `target/release` 的 DLL、不重編 ok-mind（ok-rules／ok-story 有）。修正：`stage_street_social.lua` 複製前先 `cargo build --release` 三個 DLL，`run_street_social_development.lua` 也先編 ok-mind。通則：整合後產生 stage，旁邊每個 Rust DLL 都要先重編，不要只信 target 裡現成的那份。
+- 2026-11-09 c-conquest 去咖啡店／餐廳時她坐下就說「我要拿铁、柠檬塔」，那句是遊戲提示後的回覆，沒有判斷器；回覆的 orders 又是空的。他接著說「都算我的」，判斷器只看他這句和她下一句，只點了他的美式，她的始終沒上（兩次重現）。修正：遊戲提示後她的話留給下一次判斷（`judge_her_note_line`），她那句說要點、還沒點到的，他答應或請客時填進 orders。
+- 2026-11-09 c-conquest 我用 `game_goto` 走向她時，她已經迎上來開口說話；我沒看狀態又叫一次 goto，goto 先結束對話，她記成「他一句話都沒回就走了」，生氣離開。操作 MCP 時，每次動作前先看 `talk open`，對話開著就用 `game_talk`。
+- 2026-11-09 c-conquest 遊戲裡「她停下來等他 10 秒」用牆上時間，時鐘暫停時照樣倒數；玩家按暫停或 MCP 逐步操作時，她一恢復就走掉、E 永遠搆不到。凡是「讓角色等一下」的計時，都要跟遊戲時鐘一起停。
+- 2026-11-09 R6-188：導航的「脫困」分支重排路線時沒看 `NavRide`，去電梯途中被重排成地面路線，樓上永遠走不下來。重排路線的每個分支都要顧到正在進行的電梯行程。
+- 2026-11-09 c-street-city S44 橫巷後的 WP 重建：轉換（WorldPartitionConvertCommandlet）成功，接著的 HLOD builder 在 18:20:24 停在編譯 shader 的中間，exit 1、log 沒有 fatal／Error，也沒有 crash 目錄、WER dump 或事件檢視器的記憶體耗盡紀錄（當時可用實體記憶體約 81 GB）；同一時間使用者下了「全部停止」，是行程被外部結束（taskkill 的結束碼就是 1），不是 HLOD 本身壞掉。通則：commandlet exit 非 0 又沒有 fatal 行時，先對照當時有沒有人停工，再重跑，不要去改地圖。
+- 2026-11-09 R6-188c：測試時遊戲視窗被最小化，拍照就讓遊戲當掉（D3D12 截圖複製越界）。截圖請求要在視窗可畫時才送出。
+- 2026-11-10 R6-188e：用 `game_select` 選過自己的舊遊戲後重啟，`game_launch` 等了 30 分鐘才逾時，期間遊戲沒暫停一直在跑。重啟前要先 `game_select 0`。
+- 2026-11-10：c-conquest 關掉遊戲去重建 stage 時沒有釋放 Unreal slot2（從 22:45 一直占著），f-cover、f-refcards 只能排隊。關遊戲就 release，建好再 claim --wait。
+
+- 2026-11-10 02:2x 協調者：c-conquest 在 c-street-city 的 UniversityCityWP HLOD 重建（UnrealEditor-Cmd 84 GB）旁開了遊戲 conq1110c（27 GB），可用 commit 掉到 2 GB。依 2026-11-08 規則（WP 編輯器開著時不能再開遊戲），協調者強制結束遊戲 PID 32948。修正：claim 的記憶體門檻要把「另一個 slot 是 WP 編輯器」算進去，WP 編輯器在跑時第二個 slot 不發。
+- 2026-11-10 03:0x 同一件事第二次：c-conquest 重開 conq1110c，可用 commit 再掉到 1 GB，協調者再次結束遊戲（PID 17744），釋放 c-conquest 的 slot2 並以 coordinator-hold 暫占，HLOD 完成後釋放。
+- 2026-11-10 04:2x 第三次：c-street-city 的 WP 編輯器（56 GB，會再長）和 c-conquest 的遊戲（33 GB）同時開，可用 commit 剩 7.7 GB。依使用者優先序（C 街區攻略 > C 街道城市），協調者結束 WP 編輯器 PID 98456 並釋放 c-street-city 的 slot1。根本修法仍是：WP 編輯器在跑時 slot 工具不發第二個 slot，反之有遊戲在跑時不發 --need-gb 105 的 claim。
+- 2026-11-10 c-street-city 我 04:11 以 `--need-gb 105` 拿 slot1 開 WP 編輯器時另一個 slot 是空的，47 秒後攻略的遊戲也拿到 slot2（它只要 35 GB，當時夠），編輯器長到 56 GB、遊戲 33 GB，可用 commit 剩 7.7 GB，協調者關掉了我的編輯器。`--need-gb` 只在 claim 那一刻檢查，之後誰都能再拿。修正：`Tools/unreal_slot.lua` 的 claim 需要 60 GB 以上時，要等其他 slot 全空，持有期間別人也拿不到（owner.txt 記 `[need N]`）。
+- 2026-11-10 c-conquest：在凌晨按「早上」想睡到天亮，結果回到前一天早上，又重玩了一段；先存了 slot 8 才發現日期不對。之後跳時間後先看存檔的日期再存（已修 R6-189）。
+- 2026-11-10 c-street-city S44 橫巷重建後實走，遊戲仍在巷內 x≈43780 被一面牆（`StaticMeshActor_129`）擋住，回頭繞舊路。來源地圖探測那裡什麼都沒有；那是 11-07 轉換的 S44 actor，遊戲讀主專案 `Content/` 的 WP 副本，而 `Tools/migrate_street_city_content.lua` 只複製新檔、從不刪舊檔，我的流程也漏了這一步。修正：migrate 刪掉來源已沒有的 WP actor 檔，WP 重建後一定要跑 migrate 再實走。通則：遊戲行為跟來源地圖對不上時，先查遊戲實際讀的那份內容是不是最新。
+- 2026-11-10 c-conquest：R6-189 只驗了「晚上往後到隔天早上」（往前 9 小時），沒驗「中午往後到隔天早上」（往前 20 小時），漏掉 `OKStreetDayStartsPassed` 超過 12 小時回 0 的保護，又玩錯一天（R6-189b）。改時間相關的程式要驗不同跨度。
+- 2026-11-10 c-conquest：R6-201 判斷「她提議別處」只比對 action 和出遊目的地，沒排除 walk（一起走＝正在做的事），她說「繼續走吧」也停下遠路（R6-204）。新增依 action 打斷出遊的規則，先列出哪些 action 是「照現在這樣」。
+- 2026-11-09 e-120fps 褲襪軀幹改半透明，第一版只壓了部件的 `png`，遊戲實際畫的是材質自己的 `_MainTex`（`shader_textures`），整合後的 EGalPerf70 胸口仍是一片白；離線 OBJ 匯出也看不出差別（它寫的是抽取前的網格貼圖）。又以為一對一的 lit 走 `OKLitSwap`，改了沒效，一對一其實走 `AKKPreviewActor::SetSkinLit`。修正：`_MainTex` 一起壓到 35%；lit 時半透明材質不換 lit 替身（lit 半透明顏色遠大於 1，35% 也蓋成全白），兩處切換都改。通則：改貼圖要確認畫面讀的是哪一張，改切換要先確認畫面走的是哪條程式。
+- 2026-11-10 c-street-city：大學城的地點資料 `lecture` 是整棟 T2，和 `campus_t2` 同房間、同電梯錨點，遊戲在同一井道建了兩部電梯（R6-188h）。產生器替遊戲地點挑建築時，沒檢查同一棟是否已經是另一個地點；現在 `lecture` 只是 T2 1F 的一間教室。座位歸屬用面積排序，`table.sort` 不穩定，同一棟的兩個地點每次跑結果都不同，改成固定次序。
+- 2026-11-10 c-street-city：c-conquest 回報 T2 2F 電梯口封閉、百貨 9F 拉麵店到電梯找不到路，在原始地圖上用步行探測（`Tools/street_city_walk_probe_payload.lua`）都走得通：遊戲用的是 11-07 cook 的 BaseCity1107，2F 電梯門 11-08 才在地圖上打開。回報地圖問題時要先對照遊戲用的 base 日期和原始地圖。9F 另有 `food` 錨點取房間中心，落在拉麵吧台的座位上，匯出時改把房間中心來的錨點移出擺設。
+- 2026-11-10 c-street-city：溫泉 S19 的門取 entry-A（西側），S48 後來蓋在它旁邊 1 m，門口對著牆，實際出口是北側 entry-front-N；百貨西側正門在兩條格線之間，道路圖沒有穿過門口的連線，從百貨到速食店繞南側 406 m（直線 187 m，R6-200）。建築的門要用步行探測確認走得出去；道路烘焙加了從門口步行接到外面的步驟。
+- 2026-11-11 R6-208 的「最近的已達格」退路沒看格子在牆的哪一邊，從咖啡廳門口找她時挑到牆外人行道，他撞牆 30 次（R6-211）。退路要求格子和目標同一個地點。
+- 2026-11-11 c-street-city：ee-0205 等 EE 教室的牆、地板、天花板是藍綠色斑駁花紋。10-22 的 romance PBR（`Tools/street_city_romance_pbr.lua`）按槽位名稱分類，室內漆、可洗漆、600mm 瓷磚地板的名稱命中 `paint|washable|porcelain` 被當成 `wall`，換成整棟的外牆材質：多數棟是淡色灰泥看不出來，EE（lagoon_mineral_plaster_v2）、LI、T4（lagoon_ceramic_v1）是藍綠斑駁，SP 另由 sports finish 改過。`Tools/street_city_interior_walls_payload.lua` 把 EE、LI、T4 的 45 個室內槽位改回 romance 前的材質。分類材質時要對照前一輪的室內／外牆標記（world-wall-grok 的 `role`），不能只看名稱。另外 R6-213 咖啡廳「關著的玻璃門」是內開 90 度的雙開門門扇，門口到座位的斜線會撞到，地圖不用改。
+- 2026-11-11 17:4x 協調者：可用 commit 掉到 1 GB。c-street-city 只拿一個 slot（slot2），卻同時開了兩個 StreetSocialCity 編輯器（run_street_city_unreal_deferred.py，各約 39 GB）；協調者結束較新的 PID 22756，可用 commit 回到 41 GB。規則：一個 slot 只能開一個 Unreal 程序，要開第二個先再 claim。
+- 2026-11-11 c-street-city：用 TaskStop 停掉在排隊的背景腳本 wp1.sh（等 slot 的 `while … sleep` 迴圈），只結束了外層，腳本本身繼續跑，之後 claim、移走舊 WP、啟動 worker，和下一個腳本 li5.sh 的 worker 同時開，兩邊 run_id 對不上，工作全部被擋（沒有改到地圖）。停背景腳本後要用程序清單確認它真的不在了；腳本開頭應寫 PID 檔或在迴圈裡檢查停止旗標。
+- 2026-11-11 同一天兩次在 Contacts.inl 新增的區域變數（Inside、D）和外層同名，C4456 在 host 專案是錯誤，第一次還讓 f-q-fork 建不起 C 的 stage。在既有長函式裡加變數前先搜同名。
+- 2026-11-11 c-conquest：活動巡檢工具用 Lua 字元類 `[–-]` 比對「營業 17–24 點」，全形破折號是 UTF-8 多位元組，字元類只比一個位元組，從未比對到，晚上才開的店一直沒重試。比對中文時用固定字串（「營業%s*(%d+)」），不要把多位元組字元放進 `[]`。

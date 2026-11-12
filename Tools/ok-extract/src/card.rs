@@ -67,6 +67,10 @@ pub struct CardInfo {
     pub sex: i32,
     /// Custom.body.typeBone (0 = vanilla bone layout).
     pub type_bone: i32,
+    /// The Pushup setting of the garments this outfit wears, already in `shape_body` (`unpushed_body` before it). A
+    /// session pushes the sliders the editor sends with it again (`OkSession::shaping_body`).
+    pub pushup: Option<PushupCloth>,
+    pub unpushed_body: Option<Vec<f32>>,
     /// Status.nipStandRate blends body shape index 13.
     pub nip_stand_rate: f32,
     /// ChaFileStatus.eyesOpenMax; the saved status can be 1, while ChaControl
@@ -704,8 +708,8 @@ const PUSHUP_SHAPE_KEYS: [&str; 10] = [
     "VerticalAngle", "Depth", "Roundness", "AreolaDepth", "NippleWidth", "NippleDepth",
 ];
 
-#[derive(Clone, Copy)]
-struct PushupCloth {
+#[derive(Debug, Clone, Copy)]
+pub struct PushupCloth {
     shape: [f32; 10],
     firmness: f32,
     lift: f32,
@@ -751,10 +755,11 @@ fn pushup_coord(inner: &Value, key: &str, outfit: i32, fallback: &[f32]) -> Opti
 }
 
 /// Port of PushupController.CalculatePush/CalculatePushFromClothes.  A missing
-/// plugin record leaves the original card sliders untouched.
-fn apply_pushup_shape(plugin: &Value, outfit: i32, clothes: &[i32], shape: &mut [f32]) {
-    if shape.len() < 14 { return; }
-    let Some(inner) = me_plugin_data(plugin) else { return; };
+/// plugin record leaves the original card sliders untouched.  The garments' setting is kept (`CardInfo::pushup`): the
+/// sliders the editor sends later are the card's own, and the session pushes them again (`OkSession::shaping_body`).
+fn apply_pushup_shape(plugin: &Value, outfit: i32, clothes: &[i32], shape: &mut [f32]) -> Option<PushupCloth> {
+    if shape.len() < 14 { return None; }
+    let inner = me_plugin_data(plugin)?;
     let base = pushup_value(inner, "Pushup_BodyData")
         .map(|v| pushup_shape(&v, shape)).unwrap_or_else(|| pushup_shape(&Value::Nil, shape));
     let bra = pushup_coord(inner, "Pushup_BraData", outfit, shape)
@@ -762,7 +767,7 @@ fn apply_pushup_shape(plugin: &Value, outfit: i32, clothes: &[i32], shape: &mut 
     let top = pushup_coord(inner, "Pushup_TopData", outfit, shape)
         .filter(|c| c.enabled && clothes.first().copied().unwrap_or(0) != 0);
     let selected = match (bra, top) {
-        (None, None) => return,
+        (None, None) => return None,
         (Some(b), None) => b,
         (None, Some(t)) => t,
         (Some(_), Some(t)) if t.advanced => t,
@@ -774,20 +779,34 @@ fn apply_pushup_shape(plugin: &Value, outfit: i32, clothes: &[i32], shape: &mut 
             advanced: false, enabled: true, shape: base,
         },
     };
-    let mut effective = if selected.advanced { selected.shape } else { base };
-    if !selected.advanced {
-        effective[1] = base[1].max(selected.lift);
-        effective[2] = base[2].min(1.0 - selected.together);
-        effective[3] = base[3].min(1.0 - selected.together);
-        let depth_limit = 1.0 - selected.squeeze;
+    shape[4..14].copy_from_slice(&selected.push(&base));
+    Some(selected)
+}
+
+impl PushupCloth {
+    /// The breast sliders (body 4..14) worn under these garments, from `base` (the sliders without them).
+    fn push(&self, base: &[f32; 10]) -> [f32; 10] {
+        if self.advanced { return self.shape; }
+        let mut effective = *base;
+        effective[1] = base[1].max(self.lift);
+        effective[2] = base[2].min(1.0 - self.together);
+        effective[3] = base[3].min(1.0 - self.together);
+        let depth_limit = 1.0 - self.squeeze;
         if depth_limit < base[5] {
             effective[5] = depth_limit;
             effective[0] = base[0] + (base[5] - depth_limit) / 10.0;
         }
-        effective[4] = 0.5 - (0.5 - base[4]) * (1.0 - selected.center);
-        if selected.flatten { effective[7] = 0.0; effective[9] = 0.0; }
+        effective[4] = 0.5 - (0.5 - base[4]) * (1.0 - self.center);
+        if self.flatten { effective[7] = 0.0; effective[9] = 0.0; }
+        effective
     }
-    shape[4..14].copy_from_slice(&effective);
+    /// `push` on a whole body slider list (unchanged when it is too short).
+    pub fn push_body(&self, shape: &mut [f32]) {
+        if shape.len() < 14 { return; }
+        let mut base = [0.0; 10];
+        base.copy_from_slice(&shape[4..14]);
+        shape[4..14].copy_from_slice(&self.push(&base));
+    }
 }
 
 /// Material Editor stores the textures the maker assigned (`TextureDictionary`
@@ -2266,6 +2285,8 @@ pub(crate) fn parse_card_bytes_mode_cached(data:&[u8],outfit:i32,apply_shape_plu
         sex: 1,
         type_bone: 0,
         nip_stand_rate: 0.0,
+        pushup: None,
+        unpushed_body: None,
         eyes_open_max: 1.0,
         eyebrow_open_max: 1.0,
         eyes_blink: true,
@@ -2592,7 +2613,9 @@ pub(crate) fn parse_card_bytes_mode_cached(data:&[u8],outfit:i32,apply_shape_plu
     }
     if apply_shape_plugins {
         if let Some(plugin) = pushup_plugin.as_ref() {
-            apply_pushup_shape(plugin, outfit, &info.clothes_ids, &mut info.shape_body);
+            let unpushed = info.shape_body.clone();
+            info.pushup = apply_pushup_shape(plugin, outfit, &info.clothes_ids, &mut info.shape_body);
+            if info.pushup.is_some() { info.unpushed_body = Some(unpushed); }
         }
     }
     if !info.hair_acc.is_empty() && card_diagnostics_enabled() {

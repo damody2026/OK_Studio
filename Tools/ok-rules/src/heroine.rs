@@ -139,8 +139,25 @@ pub fn private_chance(r: &Relation, t: &Traits, charm: f32) -> (f32, f32, String
     if friend && r.favor > 100.0 {
         chance = chance.max((0.7 + (r.favor - 100.0) / 100.0 * 0.25).clamp(0.7, 0.95));
     }
+    if crate::invite::eager(r) {
+        chance = 1.0;
+    }
     let why = if chance <= 0.0 { crate::tr::m("heroine.not_easy_charm_resistance", &[("charm", crate::tr::a(&charm)), ("resistance", crate::tr::a(&resistance))]) } else { String::new() };
     (chance, resistance, why)
+}
+
+/// Favor she loses when he asks her to be alone again after she said no, and takes her anyway (user 2026-11-09: the
+/// second ask is a one-on-one for any heroine, at a cost in favor).
+pub const PRIVATE_FORCED_FAVOR: f32 = 20.0;
+/// Resentment it leaves.
+pub const PRIVATE_FORCED_RESENTMENT: f32 = 10.0;
+
+/// He asked again after her no and took her alone anyway: her favor and resentment, and what she remembers.
+pub fn private_forced(r: &Relation) -> (Relation, String) {
+    let mut rel = r.clone();
+    rel.favor = (rel.favor - PRIVATE_FORCED_FAVOR).max(0.0);
+    rel.resentment = (rel.resentment + PRIVATE_FORCED_RESENTMENT).min(100.0);
+    (rel, crate::tr::t("heroine.he_forced_alone").to_string())
 }
 
 /// The words of her reaction, for her history.
@@ -300,6 +317,11 @@ pub fn eval(acts: &ActsTuning, places: &PlacesTuning, kind: &str, request: &Valu
             json!({"awkward": awkward, "reaction": reaction as i32, "at_ease": !hushed && matches!(reaction, Reaction::Fine | Reaction::Thrilled)})
         }),
         "heroine_chastity" => Ctx::from_request(request).map(|c| json!({"chastity": chastity(&c.rel, &c.traits)})),
+        // request: relation -> {relation (patch), favor_lost, notes}: asked again after her no, taken alone anyway.
+        "heroine_private_forced" => Ctx::from_request(request).map(|c| {
+            let (rel, text) = private_forced(&c.rel);
+            json!({"relation": rel.patch(&c.rel), "favor_lost": c.rel.favor - rel.favor, "notes": [{"act": "private_forced", "text": text, "importance": 0.7}]})
+        }),
         "heroine_stranger_cap" => Ctx::from_request(request).map(|c| json!({"stranger_cap": stranger_cap(&c.traits)})),
         "heroine_private" => Ctx::from_request(request).map(|c| {
             let charm = request.get("charm").and_then(Value::as_f64).unwrap_or(0.0) as f32;
@@ -334,6 +356,18 @@ mod tests {
             assert!(!ease(place, 15.0), "{place}");
         }
         assert!(ease("park", 20.0));
+    }
+
+    #[test]
+    fn asked_again_costs_favor() {
+        let t = Tuning::builtin();
+        let r = req(json!({"relation": {"id": "a", "stage": "lover", "favor": 50, "resentment": 5}}));
+        let v = eval(&t.acts, &t.places, "heroine_private_forced", &r).unwrap().unwrap();
+        assert_eq!(v["relation"]["favor"], 30.0, "{v}");
+        assert_eq!(v["relation"]["resentment"], 15.0, "{v}");
+        assert_eq!(v["favor_lost"], 20.0);
+        let low = req(json!({"relation": {"id": "a", "favor": 5}}));
+        assert_eq!(eval(&t.acts, &t.places, "heroine_private_forced", &low).unwrap().unwrap()["relation"]["favor"], 0.0);
     }
 
     #[test]

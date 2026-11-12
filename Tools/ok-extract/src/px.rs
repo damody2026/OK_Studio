@@ -196,6 +196,14 @@ impl PxKey {
     pub(crate) fn new() -> Self { PxKey(NEXT_KEY.fetch_add(1, Ordering::Relaxed)) }
     pub(crate) fn id(&self) -> u64 { self.0 }
 }
+/// Forgets a character on the host (its body capsules and ragdoll) when its session goes away: left behind, the body
+/// stood as a phantom partner that the next session's breasts collided with.
+pub(crate) fn release_group(group: u64) {
+    let p = RELEASE.load(Ordering::Acquire);
+    if p.is_null() || group == 0 { return; }
+    // SAFETY: stored from a ReleaseFn by `ok_set_physx_dynamic_solver`; the host also drops a group under that id.
+    unsafe { std::mem::transmute::<*mut (), ReleaseFn>(p)(group) }
+}
 impl Default for PxKey { fn default() -> Self { Self::new() } }
 impl Clone for PxKey { fn clone(&self) -> Self { Self::new() } }
 impl Drop for PxKey {

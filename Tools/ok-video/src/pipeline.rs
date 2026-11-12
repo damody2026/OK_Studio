@@ -5,9 +5,10 @@
 //! `[錯誤]` causes; ok-extract's `round …` / `pair fit …` lines are passed through.
 
 use crate::gvhmr::{self, Output};
-use crate::models::Paths;
+use crate::flowhmr;
+use crate::models::{Method, Paths};
 use crate::npy::{write_npz, Out};
-use crate::{crop, pairalign, smplx, track, video, vit, vo, yolo};
+use crate::{crop, pairalign, sam3d, smplx, track, video, vit, vo, yolo};
 use candle_core::Device;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -30,6 +31,12 @@ pub struct Options {
     pub collar_scale: f64,
     pub smooth: f64,
     pub skip_gvhmr: bool,
+    /// 3D estimator: GVHMR (default) or FlowHMR.
+    pub method: Method,
+    /// FlowHMR noise seed (the reference uses 42).
+    pub seed: u64,
+    /// FlowHMR: precomputed SAM 3D Body tokens (.npy, frames × 3072).
+    pub features: Option<PathBuf>,
 }
 
 fn say(s: &str) {
@@ -107,8 +114,10 @@ fn features(dev: &Device, o: &Options, info: &video::Info, boxes: &[Vec<[f64; 3]
 }
 
 /// SimpleVO replacement: every 8th half-resolution frame (plus the last), relative rotations,
-/// slerp in between, cam_angvel. Failed pairs keep the camera still and are reported.
-fn camera_rotation(o: &Options, info: &video::Info, n: usize) -> Result<Vec<[f64; 6]>, String> {
+/// slerp in between. Returns each frame's world→camera rotation relative to the first frame
+/// (GVHMR takes its cam_angvel, FlowHMR the rotations themselves). Failed pairs keep the camera
+/// still and are reported.
+fn camera_rotation(o: &Options, info: &video::Info, n: usize) -> Result<Vec<crate::geom::M3>, String> {
     let mut samples: Vec<usize> = (0..n).step_by(8).collect();
     if *samples.last().unwrap() != n - 1 {
         samples.push(n - 1);
@@ -146,7 +155,7 @@ fn camera_rotation(o: &Options, info: &video::Info, n: usize) -> Result<Vec<[f64
         }
     }
     say(&format!("[資訊] 鏡頭轉動：{} 組取樣，累計 {:.1}°，{} 組特徵不足視為不動", samples.len() - 1, total_deg, failed));
-    Ok(vo::cam_angvel(&vo::interpolate(&samples, &deltas, n)))
+    Ok(vo::interpolate(&samples, &deltas, n))
 }
 
 fn intrinsics(info: &video::Info, f_mm: Option<f64>) -> (f64, f64, f64) {
@@ -252,7 +261,84 @@ fn write_json(path: &Path, v: &serde_json::Value) -> Result<(), String> {
     std::fs::write(path, serde_json::to_string_pretty(v).unwrap()).map_err(|e| format!("無法寫入 {}：{e}", path.display()))
 }
 
+/// Single person: motion.npz → ok-extract (retarget, repair, validation) → <name>.okanim + <name>.json.
+fn convert(o: &Options, motion_single: &Path, params: serde_json::Value) -> Result<(), String> {
+    say("[2/2] 轉換到戀活骨架並自動修復");
+    std::fs::create_dir_all(&o.out_dir).map_err(|e| e.to_string())?;
+    let skeleton = o.data.join("rest_skeleton.json");
+    let target = o.out_dir.join(format!("{}.okanim", o.name));
+    let mut args = vec!["x".into(), "--video-clip".into(), motion_single.display().to_string(), target.display().to_string(), "--skeleton".into(), skeleton.display().to_string()];
+    args.extend(common_args(o));
+    if let Some(card) = &o.card {
+        args.extend(["--card".into(), card.display().to_string()]);
+        if !portable_card(card) {
+            let game = o.game.as_ref().ok_or_else(|| format!("驗證卡 {} 是遊戲原版卡（沒有獨立資源快照），需要 --game 遊戲目錄", card.display()))?;
+            args.extend(["--game".into(), game.display().to_string()]);
+        }
+    }
+    let mut info = ok_extract(o, args, "轉換")?;
+    info["name"] = o.name.clone().into();
+    info["video"] = o.video.display().to_string().into();
+    info["static_cam"] = o.static_cam.into();
+    info["work"] = o.name.clone().into();
+    info["params"] = params;
+    info["converter"] = "ok-video".into();
+    info["method"] = o.method.name().into();
+    write_json(&o.out_dir.join(format!("{}.json", o.name)), &info)?;
+    say(&format!("wrote {} ({} frames, {:.2}s, {} frames still flagged)", target.display(), info["frames"], info["duration_seconds"].as_f64().unwrap_or(0.), info["bad_frames"]));
+    Ok(())
+}
+
+/// Frames per SAM 3D Body batch (the hands run as a batch of twice this).
+const SAM3D_BATCH: usize = 8;
+
+/// SAM 3D Body pose tokens (body, left hand, right hand; T × 3072) for FlowHMR, computed natively
+/// (sam3d.rs) from the tracked person boxes (xyxy); `--features <tokens.npy>` (float32, frames × 3072,
+/// as FlowHMR's runtime_sam_features.py writes them) replaces them.
+fn sam3d_tokens(o: &Options, dev: &Device, info: &video::Info, boxes: &[[f32; 4]]) -> Result<Vec<f32>, String> {
+    let n = boxes.len();
+    if let Some(path) = &o.features {
+        let a = crate::npy::read_npy(path)?;
+        if a.shape.len() != 2 || a.shape[1] != flowhmr::FEATURE {
+            return Err(format!("{} 的形狀是 {:?}，應為 (幀數, {})", path.display(), a.shape, flowhmr::FEATURE));
+        }
+        if a.shape[0] != n {
+            return Err(format!("{} 有 {} 幀特徵，影片有 {n} 幀", path.display(), a.shape[0]));
+        }
+        return Ok(a.data.iter().map(|v| *v as f32).collect());
+    }
+    let model = sam3d::Model::load(&o.models.cached("sam3d_body.safetensors"), &o.models.cached("mhr.safetensors"), dev, false)?;
+    let (f, cx, cy) = intrinsics(info, o.f_mm);
+    let f = f as f32 as f64;
+    let k = [f, 0., cx, 0., f, cy, 0., 0., 1.];
+    let mut reader = video::Reader::open(&o.video, info, 1.)?;
+    let mut frames: Vec<Vec<u8>> = Vec::with_capacity(SAM3D_BATCH);
+    let mut out = Vec::with_capacity(n * flowhmr::FEATURE);
+    let started = Instant::now();
+    let mut t = 0;
+    while t < n {
+        frames.clear();
+        while frames.len() < SAM3D_BATCH && t + frames.len() < n {
+            let mut buf = Vec::new();
+            if !reader.next(&mut buf)? {
+                return Err(format!("影片只讀到 {} 幀（偵測時有 {n} 幀）", t + frames.len()));
+            }
+            frames.push(buf);
+        }
+        let refs: Vec<&[u8]> = frames.iter().map(|v| v.as_slice()).collect();
+        out.extend(model.tokens(&refs, reader.width, reader.height, &boxes[t..t + frames.len()], &k, None)?);
+        t += frames.len();
+        if t % (SAM3D_BATCH * 8) == 0 || t == n {
+            say(&format!("[資訊] SAM 3D Body {t}/{n} 幀（{:.1} 幀/秒）", t as f64 / started.elapsed().as_secs_f64()));
+        }
+    }
+    Ok(out)
+}
+
 pub fn run(o: &Options) -> Result<(), String> {
+    if o.pair && o.method == Method::Flowhmr {
+        return Err("雙人影片目前只支援 GVHMR：FlowHMR 沒有相機位置，無法把兩人放進同一個世界座標".into());
+    }
     if o.name.is_empty() || o.name.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) || o.name.contains("..") {
         return Err(format!("動作名稱不可空白，也不可包含 \\ / : * ? \" < > | 或 ..：{}", o.name));
     }
@@ -262,11 +348,15 @@ pub fn run(o: &Options) -> Result<(), String> {
     let params = serde_json::json!({"arm_reach": o.arm_reach, "collar_scale": o.collar_scale, "smooth": o.smooth, "f_mm": o.f_mm});
     let motion_single = work.join("motion.npz");
     let (female_npz, male_npz, aligned_npz) = (work.join("motion_female.npz"), work.join("motion_male.npz"), work.join("motion_male_aligned.npz"));
-    let have = if o.pair { aligned_npz.is_file() && female_npz.is_file() } else { motion_single.is_file() };
+    // `--skip-gvhmr` reuses the motion only when the same estimator made it (no marker = GVHMR, older runs).
+    let marker = work.join("method.txt");
+    let made_by = std::fs::read_to_string(&marker).map(|s| s.trim().to_string()).unwrap_or_else(|_| Method::Gvhmr.name().into());
+    let have = made_by == o.method.name() && if o.pair { aligned_npz.is_file() && female_npz.is_file() } else { motion_single.is_file() };
 
     if !(o.skip_gvhmr && have) {
-        say(&format!("[1/{total}] {}", if o.pair { "GVHMR：分配兩人並估計各自的 3D 姿勢" } else { "GVHMR：偵測人物與估計 3D 姿勢" }));
-        step("準備模型", || o.models.prepare(&say))?;
+        let _ = std::fs::remove_file(&marker);
+        say(&format!("[1/{total}] {}：{}", o.method.name(), if o.pair { "分配兩人並估計各自的 3D 姿勢" } else { "偵測人物與估計 3D 姿勢" }));
+        step("準備模型", || o.models.prepare(o.method, &say))?;
         let info = step("讀取影片資訊", || video::probe(&o.video))?;
         say(&format!("[資訊] 影片 {}×{}，{:.2} fps，{} 幀", info.width, info.height, info.fps, info.frames));
         if (info.fps - 30.).abs() > 0.5 {
@@ -293,6 +383,7 @@ pub fn run(o: &Options) -> Result<(), String> {
             return Err(format!("影片只有 {n} 幀，無法估計動作"));
         }
         // (role name, boxes): single = one main track; pair = male / female.
+        let mut main_xyxy: Vec<[f32; 4]> = Vec::new();
         let roles: Vec<(&str, Vec<[f64; 3]>)> = if o.pair {
             let p = step("分配兩人（左右）", || track::pair(&dets, info.width as usize))?;
             let (male, female, cm, cf) = if o.left_male { (p.left, p.right, p.cover_left, p.cover_right) } else { (p.right, p.left, p.cover_right, p.cover_left) };
@@ -305,11 +396,33 @@ pub fn run(o: &Options) -> Result<(), String> {
             vec![("male", male.iter().map(track::bbx_xys).collect()), ("female", female.iter().map(track::bbx_xys).collect())]
         } else {
             let main = step("追蹤主要人物", || track::single(&dets, info.width as usize, info.height as usize))?;
-            vec![("single", main.iter().map(track::bbx_xys).collect())]
+            let r = vec![("single", main.iter().map(track::bbx_xys).collect())];
+            main_xyxy = main;
+            r
         };
         let boxes: Vec<Vec<[f64; 3]>> = roles.iter().map(|r| r.1.clone()).collect();
+        if o.method == Method::Flowhmr {
+            let cam_r = if o.static_cam { vec![crate::geom::I3; n] } else { step("估計鏡頭轉動", || camera_rotation(o, &info, n))? };
+            let flat: Vec<f32> = main_xyxy.iter().flatten().copied().collect();
+            write_npz(&work.join("boxes.npz"), &[("boxes", Out::F32(&flat, vec![n, 4]))])?;
+            let feature = step("影像特徵（SAM 3D Body）", || sam3d_tokens(o, &dev, &info, &main_xyxy))?;
+            let started = Instant::now();
+            let output = step("推論 3D 動作（FlowHMR）", || {
+                let net = flowhmr::Network::load(&o.models.cached("flowhmr.safetensors"), &dev)?;
+                let skel = gvhmr::Skeleton::load(&o.models.smplx())?;
+                let inp = flowhmr::Inputs { feature, cam_r, seed: o.seed, steps: flowhmr::STEPS };
+                flowhmr::predict(&net, &skel, &inp, &|s| {
+                    if s % 5 == 0 {
+                        say(&format!("[資訊] FlowHMR 取樣 {s}/{}（{:.1} 秒）", flowhmr::STEPS, started.elapsed().as_secs_f64()));
+                    }
+                })
+            })?;
+            step("寫入 motion.npz", || write_motion(&motion_single, &output, None, None))?;
+            std::fs::write(&marker, o.method.name()).map_err(|e| format!("無法寫入 {}：{e}", marker.display()))?;
+            return convert(o, &motion_single, params);
+        }
         let people = step("2D 關節（ViTPose）與影像特徵（HMR2）", || features(&dev, o, &info, &boxes))?;
-        let angvel = if o.static_cam { vec![[1., 0., 0., 0., 1., 0.]; n] } else { step("估計鏡頭轉動", || camera_rotation(o, &info, n))? };
+        let angvel = vo::cam_angvel(&if o.static_cam { vec![crate::geom::I3; n] } else { step("估計鏡頭轉動", || camera_rotation(o, &info, n))? });
         let (focal, cx, cy) = intrinsics(&info, o.f_mm);
         let outputs: Vec<Output> = step("推論 3D 動作（GVHMR）", || {
             let net = gvhmr::Network::load(&o.models.cached("gvhmr.safetensors"), &dev)?;
@@ -347,32 +460,13 @@ pub fn run(o: &Options) -> Result<(), String> {
         } else {
             step("寫入 motion.npz", || write_motion(&motion_single, &outputs[0], None, None))?;
         }
+        std::fs::write(&marker, o.method.name()).map_err(|e| format!("無法寫入 {}：{e}", marker.display()))?;
     }
 
     let skeleton = o.data.join("rest_skeleton.json");
     std::fs::create_dir_all(&o.out_dir).map_err(|e| e.to_string())?;
     if !o.pair {
-        say(&format!("[2/{total}] 轉換到戀活骨架並自動修復"));
-        let target = o.out_dir.join(format!("{}.okanim", o.name));
-        let mut args = vec!["x".into(), "--video-clip".into(), motion_single.display().to_string(), target.display().to_string(), "--skeleton".into(), skeleton.display().to_string()];
-        args.extend(common_args(o));
-        if let Some(card) = &o.card {
-            args.extend(["--card".into(), card.display().to_string()]);
-            if !portable_card(card) {
-                let game = o.game.as_ref().ok_or_else(|| format!("驗證卡 {} 是遊戲原版卡（沒有獨立資源快照），需要 --game 遊戲目錄", card.display()))?;
-                args.extend(["--game".into(), game.display().to_string()]);
-            }
-        }
-        let mut info = ok_extract(o, args, "轉換")?;
-        info["name"] = o.name.clone().into();
-        info["video"] = o.video.display().to_string().into();
-        info["static_cam"] = o.static_cam.into();
-        info["work"] = o.name.clone().into();
-        info["params"] = params;
-        info["converter"] = "ok-video".into();
-        write_json(&o.out_dir.join(format!("{}.json", o.name)), &info)?;
-        say(&format!("wrote {} ({} frames, {:.2}s, {} frames still flagged)", target.display(), info["frames"], info["duration_seconds"].as_f64().unwrap_or(0.), info["bad_frames"]));
-        return Ok(());
+        return convert(o, &motion_single, params);
     }
     say(&format!("[3/{total}] 轉換到戀活骨架、貼合兩人身體並自動修復"));
     let game = o.game.clone().ok_or("雙人影片需要 --game 指向含 UserData/chara/male/*.png 的遊戲目錄")?;

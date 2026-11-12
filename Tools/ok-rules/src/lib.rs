@@ -47,6 +47,7 @@ pub mod social;
 pub mod song;
 pub mod talk;
 pub mod traits;
+pub mod transit;
 pub mod venture;
 pub mod weather;
 pub mod work;
@@ -195,6 +196,7 @@ impl Rules {
                     .or_else(|| work::eval(&kind, &request))
                     .or_else(|| series::eval(&kind, &request))
                     .or_else(|| weather::eval(&kind, &request))
+                    .or_else(|| transit::eval(&kind, &request))
                     .or_else(|| errand::eval(&kind, &request))
                     .or_else(|| contacts::eval(&kind, &request))
                     .or_else(|| events::eval(&kind, &request))

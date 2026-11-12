@@ -10,7 +10,29 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static SELECTED: AtomicU32 = AtomicU32::new(0);
+/// The game this server started (game_launch): with nothing selected the tools act on it, not on the newest game of the
+/// checkout. The newest was another session's sandbox game, and that session's game_stop closed it (2026-11-08, the
+/// conquest game's "silent ends" at 00:24, 01:15 and 19:04: the window closed, no error in the log).
+static OWN: AtomicU32 = AtomicU32::new(0);
 static LAST_ID: AtomicU64 = AtomicU64::new(0);
+
+/// Starting a game makes it the one the tools act on: a pid selected before (game_select) is dropped with it. Kept, the
+/// launch waited on the selected game, closed for the restart, and timed out after half an hour (R6-188).
+pub fn set_own(pid: u32) {
+    OWN.store(pid, Ordering::Relaxed);
+    SELECTED.store(0, Ordering::Relaxed);
+}
+
+/// This server's own game, when it started one that still runs and has written its channels.
+pub fn own_ready(root: &Path) -> bool {
+    let own = OWN.load(Ordering::Relaxed);
+    own != 0 && instances(root).iter().any(|v| v["pid"].as_u64() == Some(own.into()) && v["port_street"].is_string())
+}
+
+/// Whether the game the tools act on now is one this server may stop: selected (game_select), or started here.
+pub fn may_stop(root: &Path) -> bool {
+    SELECTED.load(Ordering::Relaxed) != 0 || own_ready(root)
+}
 
 /// The pids alive now.
 fn live_pids() -> Vec<u32> {
@@ -38,6 +60,12 @@ fn target(root: &Path, key: &str) -> Option<Value> {
     let selected = SELECTED.load(Ordering::Relaxed);
     if selected != 0 {
         return all.into_iter().find(|v| v["pid"].as_u64() == Some(selected.into()));
+    }
+    let own = OWN.load(Ordering::Relaxed);
+    if own != 0 {
+        if let Some(v) = all.iter().find(|v| v["pid"].as_u64() == Some(own.into())) {
+            return v[key].is_string().then(|| v.clone());
+        }
     }
     all.into_iter().rev().find(|v| v[key].is_string())
 }

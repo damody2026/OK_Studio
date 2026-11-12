@@ -115,6 +115,20 @@ impl Contexts {
         Ok(Some(ctx))
     }
 
+    /// Her conversation context dropped (the player edited who she is or what she remembers): the next turn starts a new
+    /// one from the system prompt the game sends.
+    pub fn forget(&self, heroine: &str) -> Result<(), String> {
+        let slot = self.slot(heroine);
+        let mut guard = slot.lock().unwrap();
+        *guard = None;
+        let path = self.dir.join(file_name(heroine));
+        crate::store::settle(&path);
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| format!("context_remove: {e}"))?;
+        }
+        Ok(())
+    }
+
     pub fn save(&self, ctx: &Context) -> Result<(), String> {
         std::fs::create_dir_all(&self.dir).map_err(|e| format!("context_dir: {e}"))?;
         let text = serde_json::to_string(ctx).map_err(|e| e.to_string())?;

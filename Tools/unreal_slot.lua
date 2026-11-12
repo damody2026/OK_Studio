@@ -7,7 +7,7 @@
 --   Tools\lua\lua.exe Tools\unreal_slot.lua status
 --
 -- claim only succeeds when no agent of higher priority is queued, a slot is free, fewer than two Unreal processes
--- run and enough commit is free (default 35 GB, --need-gb N). It re-reads owner.txt after writing (another agent may have written the same slot) and leaves the queue in the
+-- run and enough commit is free (default 35 GB, --need-gb N); --need-gb 60 or more also needs every other slot free and keeps the others closed while held. It re-reads owner.txt after writing (another agent may have written the same slot) and leaves the queue in the
 -- same step, so a stale queue file never makes a lower-priority agent wait for someone who already runs.
 local ok = require "ok"
 local path, proc = ok.path, ok.proc
@@ -16,8 +16,11 @@ local ROOT = os.getenv("OK_UNREAL_SLOTS") or "C:/portable/OpenKoikatsu/Saved/Unr
 local SLOTS = 2
 -- claim also waits until this much commit is free; pass --need-gb 105 before opening the editor on UniversityCityWP.
 local DEFAULT_NEED_GB = 35
+-- A claim needing this much or more (the WP editor) takes the whole machine: it waits until no other slot is held, and
+-- while it holds its slot nobody else gets one (2026-11-10: a game claimed beside the 56 GB editor, free commit fell to 7 GB).
+local EXCLUSIVE_GB = 60
 -- Lower runs first; agents not listed rank after these.
-local PRIORITY = { ["c-street-city"] = -1, ["c-conquest"] = 0, FStyle = 1, ["e-galgame"] = 2, ["e-fork"] = 2, ["e-fork-2"] = 2, F = 3, ["e-okcard"] = 4 }
+local PRIORITY = { ["e-120fps"] = -2, ["c-street-city"] = -1, ["c-conquest"] = 0, FStyle = 1, ["e-galgame"] = 2, ["e-fork"] = 2, ["e-fork-2"] = 2, F = 3, ["e-okcard"] = 4 }
 
 local function rank(agent) return PRIORITY[agent] or 9 end
 local function owner_file(i) return path.join(ROOT, "slot" .. i, "owner.txt") end
@@ -79,13 +82,21 @@ local function try_claim(agent, note, need_gb)
   for i = 1, SLOTS do if owner(i) == agent then return i end end
   local blocker = waiting_above(agent)
   if blocker then return nil, blocker .. " has higher priority and is waiting" end
+  for i = 1, SLOTS do
+    local who, text = owner(i)
+    if who and who ~= agent then
+      local held = tonumber((text or ""):match("%[need (%d+)%]")) or 0
+      if held >= EXCLUSIVE_GB then return nil, who .. " holds the whole machine (" .. held .. " GB)" end
+      if need_gb >= EXCLUSIVE_GB then return nil, who .. " holds slot" .. i .. "; " .. need_gb .. " GB needs every slot free" end
+    end
+  end
   if unreal_count() >= SLOTS then return nil, SLOTS .. " Unreal processes already run" end
   local free = free_commit_gb()
   if free < need_gb then return nil, "only " .. free .. " GB commit free, need " .. need_gb end
   for i = 1, SLOTS do
     if not owner(i) then
       path.mkdir(path.parent(owner_file(i)), true)
-      path.write_text(owner_file(i), agent .. " " .. note .. " " .. now() .. "\n")
+      path.write_text(owner_file(i), agent .. " " .. note .. " " .. now() .. (need_gb >= EXCLUSIVE_GB and (" [need " .. need_gb .. "]") or "") .. "\n")
       if owner(i) == agent then return i end
     end
   end
@@ -97,7 +108,8 @@ local function claim(agent, note, wait, need_gb)
   while true do
     local i, why = try_claim(agent, note, need_gb)
     if i then
-      path.remove(queue_file(agent))
+      -- the queue entry may already be gone (another session cleaned the queue); the slot is ours either way
+      pcall(path.remove, queue_file(agent))
       io.write("slot", i, "\n")
       return 0
     end

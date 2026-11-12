@@ -544,12 +544,13 @@ void AOKStreetSocialScene::FreeTalkMicSelect(const FString& Name){
   // Clicking through the list quickly: only the last choice reports and is remembered, answers may arrive late.
   if(L->FreeTalkMic!=Name)return;
   L->FreeTalkNotice=Ok?OKT(TEXT("ui.live_talk.switched_microphone_label"))+Name:Error;
-  // Remember it for the next launch (the launcher passes the project's asr-settings.json).
+  // Remember it for the next launch (the launcher passes the player's settings, player.json: asr.device).
   const FString Path=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_ASR_SETTINGS"));
   if(Ok&&!Path.IsEmpty()){
    FString Text;TSharedPtr<FJsonObject> Root;
    if(!FFileHelper::LoadFileToString(Text,*Path)||!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text),Root)||!Root.IsValid())Root=MakeShared<FJsonObject>();
-   Root->SetStringField(TEXT("device"),Name);
+   const TSharedPtr<FJsonObject>* Have=nullptr;TSharedPtr<FJsonObject> Asr=Root->TryGetObjectField(TEXT("asr"),Have)&&Have->IsValid()?*Have:MakeShared<FJsonObject>();
+   Asr->SetStringField(TEXT("device"),Name);Root->SetObjectField(TEXT("asr"),Asr);
    FString Out;FJsonSerializer::Serialize(Root.ToSharedRef(),TJsonWriterFactory<>::Create(&Out));
    if(!FFileHelper::SaveStringToFile(Out,*Path,FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))L->FreeTalkNotice+=OKT(TEXT("ui.live_talk.cannot_save_settings"));
   }

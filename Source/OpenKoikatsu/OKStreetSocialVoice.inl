@@ -12,13 +12,36 @@ static const TCHAR* const OKStreetMaleToneIds[]={TEXT("off"),TEXT("m0"),TEXT("m1
 static const TCHAR* const OKStreetMaleToneNames[]={TEXT("不說話"),TEXT("溫柔體貼"),TEXT("爽朗陽光"),TEXT("冷靜沉穩"),TEXT("害羞靦腆"),TEXT("自信霸氣"),TEXT("慵懶隨性"),TEXT("斯文書生"),TEXT("調皮搞笑"),TEXT("清爽少年"),TEXT("成熟大叔"),TEXT("溫柔學長"),TEXT("熱血少年"),TEXT("優雅貴公子"),TEXT("痞帥浪子"),TEXT("木訥老實"),TEXT("溫潤醫生"),TEXT("開朗暖男"),TEXT("冷酷寡言"),TEXT("偶像少年"),TEXT("可靠大哥"),TEXT("文藝青年"),TEXT("腹黑笑面")};
 static int32 OKStreetMaleToneIndex(const FString& Id){for(int32 I=0;I<UE_ARRAY_COUNT(OKStreetMaleToneIds);++I)if(Id==OKStreetMaleToneIds[I])return I;return INDEX_NONE;}
 
+// ---- The player's settings file: player.json beside the save (Tools/street_player_settings.lua, Docs/API_KEYS.md).
+// One file for everything that belongs to the player: locale and look at the top, then the sections "voice"
+// (voice_mode builtin | tts | cloud | off, tts_age, male_tone, tts_base_size, player_name, ...), "asr" (mode, device),
+// "deepseek" and "aliyun" (the API keys). Each writer reads the whole file and changes only its own part.
+static TSharedRef<FJsonObject> OKStreetReadPlayerFile(const FString& Path){
+ FString Body;TSharedPtr<FJsonObject> J;
+ if(FFileHelper::LoadFileToString(Body,*Path)&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Body),J)&&J.IsValid())return J.ToSharedRef();
+ return MakeShared<FJsonObject>();
+}
+// The named section of the file, made (and attached) when it is not there.
+static TSharedRef<FJsonObject> OKStreetPlayerSection(const TSharedRef<FJsonObject>& Player,const TCHAR* Name){
+ const TSharedPtr<FJsonObject>* Have=nullptr;
+ if(Player->TryGetObjectField(Name,Have)&&Have->IsValid())return Have->ToSharedRef();
+ TSharedRef<FJsonObject> Made=MakeShared<FJsonObject>();Player->SetObjectField(Name,Made);return Made;
+}
+static bool OKStreetWritePlayerFile(const FString& Path,const TSharedRef<FJsonObject>& Player,FString& Error){
+ FString Out;FJsonSerializer::Serialize(Player,TJsonWriterFactory<>::Create(&Out));
+ return OKStreetAtomicSave(Path,Out,Error);
+}
+FString AOKStreetSocialScene::PlayerSettingsPath() const{
+ return State&&!State->Manifest.SavePath.IsEmpty()?FPaths::GetPath(State->Manifest.SavePath)/TEXT("player.json"):FString();
+}
+
 // Player (male) name: the card name unless the player typed one in the right panel; kept in
-// voice-settings.json as player_name. Self-tests keep the card name so their evidence stays exact.
+// player.json as voice.player_name. Self-tests keep the card name so their evidence stays exact.
 void AOKStreetSocialScene::LoadPlayerName(){
  auto& S=*State;if(!S.Manifest.Characters.IsValidIndex(0))return;S.PlayerCardName=S.Manifest.Characters[0].Name;
  if(S.SelfTest||S.RetargetSelfTest||S.Manifest.SavePath.IsEmpty())return;
- FString Body,Name;TSharedPtr<FJsonObject> J;
- if(FFileHelper::LoadFileToString(Body,*(FPaths::GetPath(S.Manifest.SavePath)/TEXT("voice-settings.json")))&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Body),J)&&J.IsValid()&&J->TryGetStringField(TEXT("player_name"),Name)){
+ FString Name;
+ if(OKStreetPlayerSection(OKStreetReadPlayerFile(PlayerSettingsPath()),TEXT("voice"))->TryGetStringField(TEXT("player_name"),Name)){
   Name.TrimStartAndEndInline();if(!Name.IsEmpty())S.Manifest.Characters[0].Name=Name.Left(24);
  }
 }
@@ -29,11 +52,9 @@ void AOKStreetSocialScene::SetPlayerName(const FString& Typed){
  if(Name==S.Manifest.Characters[0].Name)return;
  S.Manifest.Characters[0].Name=Name.IsEmpty()?S.PlayerCardName:Name;
  if(!S.SelfTest&&!S.RetargetSelfTest&&!S.Manifest.SavePath.IsEmpty()){
-  const FString Path=FPaths::GetPath(S.Manifest.SavePath)/TEXT("voice-settings.json");FString Body,Out,Error;TSharedPtr<FJsonObject> J;
-  if(!FFileHelper::LoadFileToString(Body,*Path)||!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Body),J)||!J.IsValid())J=MakeShared<FJsonObject>();
+  const FString Path=PlayerSettingsPath();FString Error;const TSharedRef<FJsonObject> Player=OKStreetReadPlayerFile(Path);const TSharedRef<FJsonObject> J=OKStreetPlayerSection(Player,TEXT("voice"));
   if(Name.IsEmpty())J->RemoveField(TEXT("player_name"));else J->SetStringField(TEXT("player_name"),Name);
-  FJsonSerializer::Serialize(J.ToSharedRef(),TJsonWriterFactory<>::Create(&Out));
-  if(!OKStreetAtomicSave(Path,Out,Error)){S.TtsNotice=OKT(TEXT("ui.voice.hero_name_save_failed"))+Error;RefreshUI();return;}
+  if(!OKStreetWritePlayerFile(Path,Player,Error)){S.TtsNotice=OKT(TEXT("ui.voice.hero_name_save_failed"))+Error;RefreshUI();return;}
  }
  S.TtsNotice=OKT(TEXT("ui.voice.hero_name_label"))+S.Manifest.Characters[0].Name+OKT(TEXT("ui.voice.next_line_applies"));RefreshUI();
 }
@@ -47,12 +68,14 @@ void AOKStreetSocialScene::LoadVoiceSettings(const TSharedPtr<FJsonObject>& Mani
  if(LaunchedTtsLocal)S.TtsEndpoint=LaunchedTts;
  if(Manifest.IsValid())Manifest->TryGetStringField(TEXT("generated_voice_root"),S.TtsCacheDir);
  if(S.SelfTest||S.RetargetSelfTest||S.TtsCacheDir.IsEmpty()||S.Manifest.SavePath.IsEmpty()){S.TtsCacheDir.Reset();return;}
- S.TtsSettingsPath=FPaths::GetPath(S.Manifest.SavePath)/TEXT("voice-settings.json");
- S.TtsSmoke=FParse::Param(FCommandLine::Get(),TEXT("StreetSocialTtsSmoke"));if(S.TtsSmoke){S.TtsEnabled=true;return;}
- FString Body;TSharedPtr<FJsonObject> J;
- if(!FFileHelper::LoadFileToString(Body,*S.TtsSettingsPath)||!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Body),J)||!J.IsValid())return;
+ S.TtsSettingsPath=PlayerSettingsPath();
+ S.TtsSmoke=FParse::Param(FCommandLine::Get(),TEXT("StreetSocialTtsSmoke"));if(S.TtsSmoke){S.TtsEnabled=true;S.VoiceMode=TEXT("tts");return;}
+ const TSharedRef<FJsonObject> J=OKStreetPlayerSection(OKStreetReadPlayerFile(S.TtsSettingsPath),TEXT("voice"));
  FString Mode,Endpoint;double Age=0,Timeout=0;
- if(J->TryGetStringField(TEXT("voice_mode"),Mode))S.TtsEnabled=Mode==TEXT("tts");
+ // builtin: the recorded clips; tts: the local TTS; cloud: the TTS server in the cloud (needs the Alibaba Cloud key,
+ // else the local TTS); off: no voices (lines play silently, OKSetCrowdRuntimeSpeechMuted).
+ if(J->TryGetStringField(TEXT("voice_mode"),Mode)&&(Mode==TEXT("builtin")||Mode==TEXT("tts")||Mode==TEXT("cloud")||Mode==TEXT("off")))S.VoiceMode=Mode;
+ S.TtsEnabled=S.VoiceMode==TEXT("tts")||S.VoiceMode==TEXT("cloud");OKSetCrowdRuntimeSpeechMuted(S.VoiceMode==TEXT("off"));
  // Local server only; dialogue text is never sent off this machine.
  if(!LaunchedTtsLocal&&J->TryGetStringField(TEXT("tts_endpoint"),Endpoint)&&(Endpoint.StartsWith(TEXT("http://127.0.0.1:"))||Endpoint.StartsWith(TEXT("http://localhost:"))))S.TtsEndpoint=Endpoint;
  if(J->TryGetNumberField(TEXT("tts_age"),Age))S.TtsAge=FMath::Clamp(int32(Age),12,45);
@@ -64,14 +87,13 @@ void AOKStreetSocialScene::LoadVoiceSettings(const TSharedPtr<FJsonObject>& Mani
 
 void AOKStreetSocialScene::SaveVoiceSettings(){
  auto& S=*State;if(S.TtsSettingsPath.IsEmpty())return;
- // Keep keys this scene does not own (the launcher reads tts_server_command).
- FString Body;TSharedPtr<FJsonObject> J;
- if(!FFileHelper::LoadFileToString(Body,*S.TtsSettingsPath)||!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Body),J)||!J.IsValid())J=MakeShared<FJsonObject>();
- J->SetStringField(TEXT("voice_mode"),S.TtsEnabled?TEXT("tts"):TEXT("builtin"));J->SetStringField(TEXT("tts_endpoint"),S.TtsEndpoint);
+ // Keep keys this scene does not own: the rest of player.json, and the voice section's other fields.
+ const TSharedRef<FJsonObject> Player=OKStreetReadPlayerFile(S.TtsSettingsPath);const TSharedRef<FJsonObject> J=OKStreetPlayerSection(Player,TEXT("voice"));
+ J->SetStringField(TEXT("voice_mode"),S.VoiceMode);J->SetStringField(TEXT("tts_endpoint"),S.TtsEndpoint);
  J->SetNumberField(TEXT("tts_age"),S.TtsAge);J->SetNumberField(TEXT("tts_timeout_seconds"),S.TtsTimeout);J->SetStringField(TEXT("male_tone"),S.MaleTone);
  J->SetStringField(TEXT("tts_base_size"),S.TtsBaseSize);
- FString Out,Error;FJsonSerializer::Serialize(J.ToSharedRef(),TJsonWriterFactory<>::Create(&Out));
- if(!OKStreetAtomicSave(S.TtsSettingsPath,Out,Error))S.TtsNotice=OKT(TEXT("ui.voice.voice_settings_save_failed"))+Error;
+ FString Error;
+ if(!OKStreetWritePlayerFile(S.TtsSettingsPath,Player,Error))S.TtsNotice=OKT(TEXT("ui.voice.voice_settings_save_failed"))+Error;
 }
 
 // The TTS model for the next start (the launcher reads tts_base_size; ok-tts downloads a model it does not have).
@@ -81,11 +103,12 @@ void AOKStreetSocialScene::ToggleTtsBaseSize(){
  S.TtsNotice=OKMsg(TEXT("ui.voice.tts_model_next_start"),{{TEXT("size"),*S.TtsBaseSize}});RefreshUI();
 }
 
+// V / the voice button: the next voice mode the player can use (the cloud only with an Alibaba Cloud key).
 void AOKStreetSocialScene::ToggleVoiceSource(){
  if(!State)return;auto& S=*State;
  if(S.TtsCacheDir.IsEmpty()){S.TtsNotice=OKT(TEXT("ui.voice.no_tts_cache_dir"));RefreshUI();return;}
- S.TtsEnabled=!S.TtsEnabled;S.TtsNotice=S.TtsEnabled?OKT(TEXT("ui.voice.voice_tts_next_line")):OKT(TEXT("ui.voice.voice_builtin_recording"));
- SaveVoiceSettings();if(S.TtsEnabled)ProbeTtsServer();ProbeVoiceInfo();RefreshUI();
+ TArray<FString> Modes={TEXT("builtin"),TEXT("tts")};if(!S.AliyunKey.IsEmpty())Modes.Add(TEXT("cloud"));Modes.Add(TEXT("off"));
+ SetVoiceMode(Modes[(Modes.IndexOfByKey(S.VoiceMode)+1)%Modes.Num()]);
 }
 
 void AOKStreetSocialScene::SetMaleTone(int32 Index){
@@ -126,7 +149,9 @@ void AOKStreetSocialScene::ProbeTtsServer(int32 Attempt){
   // While it downloads its model (first start) or prepares the voices for it, it says so: wait as long as it does.
   FString Loading;double Percent=-1;
   if(Connected&&Response.IsValid()&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()),J)&&J.IsValid()){
-   J->TryGetBoolField(TEXT("ready"),Ready);J->TryGetStringField(TEXT("loading"),Loading);if(!J->TryGetNumberField(TEXT("loading_percent"),Percent))Percent=-1;}
+   J->TryGetBoolField(TEXT("ready"),Ready);J->TryGetStringField(TEXT("loading"),Loading);if(!J->TryGetNumberField(TEXT("loading_percent"),Percent))Percent=-1;
+   // Started on the cloud (player.json at launch): have every voice of this world designed now.
+   FString Backend;if(Ready&&J->TryGetStringField(TEXT("backend"),Backend)&&Backend==TEXT("cloud"))PrepareCloudVoices();}
   const bool Waiting=!Ready&&(Attempt<40||!Loading.IsEmpty());const FString Before=State->TtsNotice;
   State->TtsNotice=Ready?OKT(TEXT("ui.voice.voice_tts_server_ready"))
    :Percent>=0?OKMsg(TEXT("ui.voice.voice_tts_downloading"),{{TEXT("percent"),int32(Percent)}})
@@ -136,6 +161,25 @@ void AOKStreetSocialScene::ProbeTtsServer(int32 Attempt){
   if(Waiting)GetWorldTimerManager().SetTimer(TtsProbeTimer,FTimerDelegate::CreateWeakLambda(this,[this,Attempt](){if(State&&State->TtsEnabled)ProbeTtsServer(Attempt+1);}),2.f,false);
   // Only a changed notice rebuilds the panel (the probe repeats every 2 s while the server loads).
   if(State->TtsNotice!=Before)RefreshUI();
+ });
+ Request->ProcessRequest();
+}
+
+// The cloud designs a voice the first time it is used (~12 s, ok-tts /voice/prepare), longer than a line may wait
+// (TtsTimeout): ask for every heroine's voice and his tone up front, in the background, once per world.
+void AOKStreetSocialScene::PrepareCloudVoices(){
+ if(!State)return;auto& S=*State;if(S.CloudVoicesPrepared||S.Manifest.Characters.IsEmpty())return;S.CloudVoicesPrepared=true;
+ TArray<TSharedPtr<FJsonValue>> Voices;
+ for(const auto& Her:S.Manifest.Characters){auto V=MakeShared<FJsonObject>();V->SetStringField(TEXT("personality"),FString::FromInt(Her.PersonalityId));V->SetNumberField(TEXT("age"),S.TtsAge);Voices.Add(MakeShared<FJsonValueObject>(V));}
+ if(S.MaleTone!=TEXT("off")){auto V=MakeShared<FJsonObject>();V->SetStringField(TEXT("personality"),S.MaleTone);V->SetNumberField(TEXT("age"),0);Voices.Add(MakeShared<FJsonValueObject>(V));}
+ auto Body=MakeShared<FJsonObject>();Body->SetArrayField(TEXT("voices"),Voices);FString Payload;FJsonSerializer::Serialize(Body,TJsonWriterFactory<>::Create(&Payload));
+ auto Request=FHttpModule::Get().CreateRequest();
+ Request->SetURL(S.TtsEndpoint/TEXT("voice/prepare"));Request->SetVerb(TEXT("POST"));Request->SetHeader(TEXT("Content-Type"),TEXT("application/json; charset=utf-8"));Request->SetContentAsString(Payload);Request->SetTimeout(5);
+ Request->OnProcessRequestComplete().BindWeakLambda(this,[this](FHttpRequestPtr,FHttpResponsePtr Response,bool Connected){
+  // An older server without /voice/prepare (404) or no answer: designed on first use instead, as before.
+  const FString Reply=Connected&&Response.IsValid()?Response->GetContentAsString():FString(TEXT("no answer"));
+  UE_LOG(LogTemp,Display,TEXT("Street voices: cloud voices prepared ahead: %s"),*Reply);
+  if(State&&(!Connected||!Response.IsValid()||Response->GetResponseCode()!=200))State->CloudVoicesPrepared=false;
  });
  Request->ProcessRequest();
 }

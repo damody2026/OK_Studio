@@ -17,6 +17,9 @@
 #include <atomic>
 
 namespace {
+// The decoded image before it is shrunk to OKRuntimeTextureMaxDimension: 16384x16384 BGRA (1 GiB, still within
+// TArray's int32 count) at most, held only while its mips are built.
+constexpr uint64 OKRuntimeTextureDecodeLimit=16384ull*16384*4;
 // Immutable prepared pixels only; each card retains its own material bindings.
 struct FPreparedTextureCacheEntry {TArray<uint8> Encoded;FKKRuntimePreparedTexture Prepared;uint64 Bytes=0;};
 FCriticalSection PreparedTextureCacheLock;
@@ -56,7 +59,7 @@ FKKRuntimeTextureMip Resize(const FKKRuntimeTextureMip& A,const FKKRuntimeTextur
 }
 
 bool OKBuildRuntimeTextureMips(TArray<uint8> BGRA,int32 Width,int32 Height,const FKKRuntimeTextureSettings& Settings,TArray<FKKRuntimeTextureMip>& Out,FString& Error){
- if(Width<=0||Height<=0||int64(Width)*Height*4!=BGRA.Num()||BGRA.Num()>128*1024*1024){Error=TEXT("Invalid runtime texture source pixels");return false;}
+ if(Width<=0||Height<=0||int64(Width)*Height*4!=BGRA.Num()||uint64(BGRA.Num())>OKRuntimeTextureDecodeLimit){Error=TEXT("Invalid runtime texture source pixels");return false;}
  FKKRuntimeTextureMip M;M.Width=Width;M.Height=Height;M.BGRA=MoveTemp(BGRA);
  int32 TargetWidth=Width,TargetHeight=Height;while(TargetWidth>OKRuntimeTextureMaxDimension||TargetHeight>OKRuntimeTextureMaxDimension){TargetWidth=FMath::Max(1,TargetWidth/2);TargetHeight=FMath::Max(1,TargetHeight/2);}
  if(TargetWidth!=Width||TargetHeight!=Height)M=Resize(M,Settings,TargetWidth,TargetHeight);
@@ -97,14 +100,16 @@ bool PrepareSharedRuntimeTexture(const FString& Key,const FString& Hash,const ui
  auto* Images=IsEngineExitRequested()?nullptr:FModuleManager::GetModulePtr<IImageWrapperModule>(TEXT("ImageWrapper"));
  if(!Images){Error=TEXT("Runtime texture preparation stopped: the game is quitting");return false;}
  auto W=Images->CreateImageWrapper(EImageFormat::PNG);if(!W||!W->SetCompressed(Bytes,Length)){Error=TEXT("Runtime PNG decode header failed");return false;}
- Width=W->GetWidth();Height=W->GetHeight();if(Width<=0||Height<=0||uint64(Width)*Height*4>128ull*1024*1024){Error=TEXT("Runtime PNG decoded size exceeds budget");return false;}
+ // Decoding takes up to OKRuntimeTextureDecodeLimit; OKBuildRuntimeTextureMips then shrinks anything over
+ // OKRuntimeTextureMaxDimension, so a mod's 8192x8192 sheet costs a moment, not the whole character.
+ Width=W->GetWidth();Height=W->GetHeight();if(Width<=0||Height<=0||uint64(Width)*Height*4>OKRuntimeTextureDecodeLimit){Error=TEXT("Runtime PNG decoded size exceeds budget");return false;}
  // A grayscale PNG is one value per pixel: every colour channel gets it, explicitly rather than through the
  // wrapper's BGRA conversion.
  if(W->GetFormat()==ERGBFormat::Gray){TArray<uint8> Gray;if(!W->GetRaw(ERGBFormat::Gray,8,Gray)||uint64(Gray.Num())!=uint64(Width)*Height){Error=TEXT("Runtime PNG gray pixels invalid");return false;}
   M.BGRA.SetNumUninitialized(Gray.Num()*4);for(int32 I=0;I<Gray.Num();++I){uint8* P=&M.BGRA[I*4];P[0]=P[1]=P[2]=Gray[I];P[3]=255;}}
  else if(!W->GetRaw(ERGBFormat::BGRA,8,M.BGRA)||uint64(M.BGRA.Num())!=uint64(Width)*Height*4){Error=TEXT("Runtime PNG pixels invalid");return false;}
  }
- if(uint64(Width)*Height*4>128ull*1024*1024){Error=TEXT("Runtime PNG decoded size exceeds budget");return false;}
+ if(uint64(Width)*Height*4>OKRuntimeTextureDecodeLimit){Error=TEXT("Runtime PNG decoded size exceeds budget");return false;}
  M.Width=Width;M.Height=Height;
  auto& T=Flight->Prepared;T.SourceHash=Hash;T.Settings=Settings;T.SourceWidth=Width;T.SourceHeight=Height;
  if(!OKBuildRuntimeTextureMips(MoveTemp(M.BGRA),Width,Height,Settings,T.Mips,Error))return false;

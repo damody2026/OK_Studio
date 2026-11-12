@@ -29,28 +29,23 @@ static bool OKStreetFreeTalkWriteJson(const FString& Path, const TSharedRef<FJso
 }
 
 FString OKStreetFreeTalkSettingsPath() {
+ // The runner passes the player's settings (player.json) by path, because a staged build's Saved folder is not the
+ // project's.
  const FString Env = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_FREE_TALK_SETTINGS"));
- const FString Project = FPaths::ProjectSavedDir() / TEXT("StreetSocial/deepseek.json");
- const FString Local = FPlatformMisc::GetEnvironmentVariable(TEXT("LOCALAPPDATA"));
- const FString User = Local.IsEmpty() ? FString() : Local / TEXT("OpenKoikatsu/deepseek.json");
- auto& Files = IFileManager::Get();
- for (const FString& Path : {Env, Project, User}) {
-  if (Path.IsEmpty() || !Files.FileExists(*Path)) continue;
-  // The project's copy is kept at the user's too (it changes when the key is replaced).
-  if (!User.IsEmpty() && Path != User && Files.GetTimeStamp(*Path) > Files.GetTimeStamp(*User)) { Files.MakeDirectory(*FPaths::GetPath(User), true); Files.Copy(*User, *Path, true, true); }
-  return Path;
- }
- return Env.IsEmpty() ? Project : Env;
+ return Env.IsEmpty() ? FPaths::ProjectSavedDir() / TEXT("StreetSocial/player.json") : Env;
 }
 
 static bool OKStreetFreeTalkReadSettings(FOKFreeTalkSettings& Out, FString& Error) {
  Out.Endpoint = TEXT("https://api.deepseek.com/chat/completions");
  Out.Model = TEXT("deepseek-v4-flash");
  Out.ApiKey = FPlatformMisc::GetEnvironmentVariable(TEXT("DEEPSEEK_API_KEY"));
- // The runner passes the project path, because a staged build's Saved folder is not the project's.
  const FString Path = OKStreetFreeTalkSettingsPath();
  TSharedPtr<FJsonObject> Root;
  if (OKStreetFreeTalkReadJson(Path, Root)) {
+  // player.json keeps them in its "deepseek" section; a file given by OK_FREE_TALK_SETTINGS may still be an older
+  // deepseek.json with the fields at the top.
+  const TSharedPtr<FJsonObject>* Section = nullptr;
+  if (Root->TryGetObjectField(TEXT("deepseek"), Section) && Section->IsValid()) Root = *Section;
   if (Out.ApiKey.IsEmpty()) Root->TryGetStringField(TEXT("api_key"), Out.ApiKey);
   Root->TryGetStringField(TEXT("endpoint"), Out.Endpoint);
   Root->TryGetStringField(TEXT("model"), Out.Model);
@@ -79,13 +74,40 @@ bool OKStreetFreeTalkLoadSettings(FOKFreeTalkSettings& Out, FString& Error) {
 }
 
 static bool OKStreetFreeTalkReadPersona(const FString& Name, FOKFreeTalkPersona& Out, FString& Error);
+struct FOKFreeTalkPersonaOverride { FString BaseName, Profile; };
+static FCriticalSection GOKPersonaOverridesLock;
+static TMap<FString, FOKFreeTalkPersonaOverride> GOKPersonaOverrides;
+static TAtomic<int32> GOKPersonaOverridesGeneration{0};
+
+void OKStreetFreeTalkSetPersonaOverride(const FString& Name, const FString& BaseName, const FString& Profile) {
+ FScopeLock Lock(&GOKPersonaOverridesLock);GOKPersonaOverrides.Add(Name, {BaseName, Profile});++GOKPersonaOverridesGeneration;
+}
+
+void OKStreetFreeTalkClearPersonaOverrides() {
+ FScopeLock Lock(&GOKPersonaOverridesLock);GOKPersonaOverrides.Reset();++GOKPersonaOverridesGeneration;
+}
+
+// Her persona: the save's own setting when it has one (her shipped persona under her card's name, the text replaced when
+// the player wrote one), else the shipped one.
+static bool OKStreetFreeTalkReadPersonaOverridden(const FString& Name, FOKFreeTalkPersona& Out, FString& Error) {
+ FOKFreeTalkPersonaOverride Override;bool Has = false;
+ {FScopeLock Lock(&GOKPersonaOverridesLock);if (const auto* O = GOKPersonaOverrides.Find(Name)) {Override = *O;Has = true;}}
+ if (!Has) return OKStreetFreeTalkReadPersona(Name, Out, Error);
+ const bool Base = OKStreetFreeTalkReadPersona(Override.BaseName.IsEmpty() ? Name : Override.BaseName, Out, Error);
+ Out.DisplayName = Name;
+ if (!Override.Profile.IsEmpty()) {Out.Profile = Override.Profile;Error.Reset();return true;}
+ return Base;
+}
+
 bool OKStreetFreeTalkLoadPersona(const FString& Name, FOKFreeTalkPersona& Out, FString& Error) {
- if (!IsInGameThread()) return OKStreetFreeTalkReadPersona(Name, Out, Error);
+ if (!IsInGameThread()) return OKStreetFreeTalkReadPersonaOverridden(Name, Out, Error);
  struct FEntry { FOKFreeTalkPersona Value; FString Error; bool Ok = false; double At = -1e9; };
  static TMap<FString, FEntry> Cache;
  const double Now = FPlatformTime::Seconds();
  FEntry& Entry = Cache.FindOrAdd(OKStreetCppText().Lang + TEXT("\n") + Name);
- if (Now - Entry.At > OKFreeTalkFilesFresh) { Entry.Value = FOKFreeTalkPersona(); Entry.Error.Reset(); Entry.Ok = OKStreetFreeTalkReadPersona(Name, Entry.Value, Entry.Error); Entry.At = Now; }
+ static int32 Generation = -1; // a changed override reads every persona again
+ if (Generation != GOKPersonaOverridesGeneration) {Generation = GOKPersonaOverridesGeneration;for (auto& E : Cache) E.Value.At = -1e9;}
+ if (Now - Entry.At > OKFreeTalkFilesFresh) { Entry.Value = FOKFreeTalkPersona(); Entry.Error.Reset(); Entry.Ok = OKStreetFreeTalkReadPersonaOverridden(Name, Entry.Value, Entry.Error); Entry.At = Now; }
  Out = Entry.Value;
  if (!Entry.Ok) Error = Entry.Error;
  return Entry.Ok;
@@ -515,14 +537,14 @@ void OKStreetFreeTalkEnsureAsrServer() {
  const FString Exe = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_ASR_SERVER"));
  if (Exe.IsEmpty() || !FPaths::FileExists(Exe)) { UE_LOG(LogTemp, Warning, TEXT("Free talk: ok-asr is not answering and OK_ASR_SERVER is not set")); return; }
  LastStart = Now;
- FString Device, Text;TSharedPtr<FJsonObject> Root;
+ // The player's settings (player.json): the server reads the microphone (asr.device) and the recognizer (asr.mode,
+ // aliyun key) from it, as UTF-8, so a Chinese device name never has to survive a command line.
  const FString Settings = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_ASR_SETTINGS"));
- if (!Settings.IsEmpty() && FFileHelper::LoadFileToString(Text, *Settings) && FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text), Root) && Root.IsValid()) Root->TryGetStringField(TEXT("device"), Device);
  // --parent-pid: the server exits with the game, so a closed game never leaves it (and the microphone) running.
  // On the port the game polls: started without it, it took the default 47861 (another checkout's) while this game kept
  // calling its own.
  const FString Parent = FString::Printf(TEXT(" --port %d --parent-pid %u"), int32(FPlatformHttp::GetUrlPort(OKStreetFreeTalkAsrEndpoint()).Get(47861)), FPlatformProcess::GetCurrentProcessId());
- const FString Params = (Device.IsEmpty() ? FString(TEXT("serve")) : FString::Printf(TEXT("serve --device \"%s\""), *Device.Replace(TEXT("\""), TEXT("")))) + Parent;
+ const FString Params = (Settings.IsEmpty() || !FPaths::FileExists(Settings) ? FString(TEXT("serve")) : FString::Printf(TEXT("serve --settings \"%s\""), *Settings)) + Parent;
  FProcHandle Proc = FPlatformProcess::CreateProc(*Exe, *Params, true, true, true, nullptr, 0, *FPaths::GetPath(Exe), nullptr);
  UE_LOG(LogTemp, Display, TEXT("Free talk: ok-asr was not answering; started %s %s (%s)"), *Exe, *Params, Proc.IsValid() ? TEXT("ok") : TEXT("failed"));
  FPlatformProcess::CloseProc(Proc);

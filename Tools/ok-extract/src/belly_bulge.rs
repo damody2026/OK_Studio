@@ -590,10 +590,12 @@ fn depth(skin: &[SkinNow], at: [f32; 3]) -> Option<(f32, f32)> {
 /// distance grows (unit, her skeleton space: the way out of her there), and the rest distance from her entrance of the
 /// nearest skin. None where no skin is within NEAR_SKIN_M. Her skin is placed once for all of them.
 pub fn skin_check(session: &OkSession, at: &[[f32; 3]]) -> Vec<Option<(f32, [f32; 3], f32)>> {
-    let Some(skin) = skin_now(session) else { return vec![None; at.len()]; };
+    let skin = { let _trace = crate::native_profile::Scope::new(51); skin_now(session) };
+    let Some(skin) = skin else { return vec![None; at.len()]; };
     // Seven readings a point, each over all of her skin round her entrance: in a grid of it instead (the same nearest
     // vertices, SkinGrid::depth).
-    let grid = SkinGrid::new(&skin);
+    let grid = { let _trace = crate::native_profile::Scope::new(52); SkinGrid::new(&skin) };
+    let _trace = crate::native_profile::Scope::new(53);
     at.iter().map(|&a| {
         let (d, rest) = grid.depth(&skin, a)?;
         let mut g = [0f32; 3];
@@ -620,6 +622,7 @@ fn bulge_verts(part: &SessionPart) -> std::sync::Arc<Vec<u32>> {
 }
 
 pub fn past(session: &OkSession, tip: [f32; 3]) -> Option<(f32, f32, String, f32)> {
+    let _trace = crate::native_profile::Scope::new(55);
     let skel = session.body_skel.as_ref()?;
     let part = session.parts.iter().find(|p| p.blend_shapes.iter().any(|(n, _)| is_bulge(n)))?;
     let (worlds, binds) = crate::skel_export::palettes(skel, part);

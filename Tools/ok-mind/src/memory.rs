@@ -217,6 +217,35 @@ impl Memories {
         })
     }
 
+    /// The player's edit of her memories (the game's roster menu): a record with a known id keeps everything else and
+    /// takes the edited summary and importance; one without an id is new (a note in her own words, from now); a record
+    /// left out is forgotten. Returns how many records she now has.
+    pub fn replace(&self, heroine: &str, edited: &[MemoryRecord], now: i64) -> Result<usize, String> {
+        self.with(heroine, |file| {
+            let old: HashMap<String, MemoryRecord> = file.records.drain(..).map(|r| (r.id.clone(), r)).collect();
+            for e in edited {
+                let summary = e.summary.trim();
+                if summary.is_empty() {
+                    continue;
+                }
+                let mut r = match old.get(&e.id) {
+                    Some(r) if !e.id.is_empty() => r.clone(),
+                    _ => {
+                        let id = format!("m{}", file.next);
+                        file.next += 1;
+                        MemoryRecord { id, owner: heroine.to_string(), t: now, kind_type: "observation".into(), kind: "note".into(),
+                                       source: "self".into(), confidence: 1.0, author: "player".into(), ..Default::default() }
+                    }
+                };
+                r.summary = summary.to_string();
+                r.importance = e.importance.clamp(0.0, 1.0);
+                file.records.push(r);
+            }
+            self.persist(file)?;
+            Ok(file.records.len())
+        })
+    }
+
     pub fn all(&self, heroine: &str) -> Result<Vec<MemoryRecord>, String> {
         self.with(heroine, |file| Ok(file.records.clone()))
     }

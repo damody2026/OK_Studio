@@ -41,6 +41,7 @@ fn parse(bytes: &[u8]) -> Result<Array, String> {
         "<i8" => body.chunks_exact(8).take(n).map(|c| i64::from_le_bytes(c.try_into().unwrap()) as f64).collect(),
         "<i4" => body.chunks_exact(4).take(n).map(|c| i32::from_le_bytes(c.try_into().unwrap()) as f64).collect(),
         "<u4" => body.chunks_exact(4).take(n).map(|c| u32::from_le_bytes(c.try_into().unwrap()) as f64).collect(),
+        "|u1" => body.iter().take(n).map(|&c| c as f64).collect(),
         other => return Err(format!("unsupported dtype {other}")),
     };
     if data.len() != n { return Err("truncated npy".into()); }
@@ -57,6 +58,12 @@ fn parse(bytes: &[u8]) -> Result<Array, String> {
         return Ok(Array { shape, data: out });
     }
     Ok(Array { shape, data })
+}
+
+/// Reads one .npy file.
+pub fn read_npy(path: &Path) -> Result<Array, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    parse(&bytes).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Reads the named arrays (all supported ones when `want` is empty).

@@ -36,10 +36,18 @@ local function sync(src)
   total = total + a.size; stream = stream + 1
   if b and b.size == a.size and b.modification >= a.modification then skipped = skipped + 1 else copy(src, dst); copied = copied + 1; bytes = bytes + a.size end
 end
+-- a conversion gives every actor a new file, so files of the previous one left in Content stay loaded with the map (2026-11-10:
+-- a wall of the removed S44 blocked the new alley in game); whatever the source folder no longer has is deleted here
+local stale = 0
 for _, d in ipairs({ '__ExternalActors__', '__ExternalObjects__' }) do
   local p = 'StreetSocialCity/Content/' .. d .. '/UniversityCity/Maps/UniversityCityWP'
   if lfs.attributes(p) then walk(p, sync) end
+  local q = 'Content/' .. d .. '/UniversityCity/Maps/UniversityCityWP'
+  if lfs.attributes(q) then walk(q, function(dst)
+    if not lfs.attributes('StreetSocialCity/' .. dst) then assert(os.remove(dst)); stale = stale + 1 end
+  end) end
 end
+print('stale World Partition files deleted', stale)
 for n in lfs.dir('StreetSocialCity/Content/UniversityCity/Maps') do if n:find('^UniversityCityWP') and not n:find('%.ini$') then sync('StreetSocialCity/Content/UniversityCity/Maps/' .. n) end end
 print('World Partition files', stream)
 print(string.format('packages %d, files copied %d, unchanged %d, copied %.2f GB, total %.2f GB', #c.packages, copied, skipped, bytes / 2 ^ 30, total / 2 ^ 30))

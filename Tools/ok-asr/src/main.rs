@@ -9,6 +9,12 @@
 //! --device NAME (or OK_ASR_DEVICE) picks the first input device whose name contains NAME;
 //! otherwise the Windows default recording device is used.
 //!
+//! --settings FILE is the player's settings (Saved/StreetSocial/player.json, Docs/API_KEYS.md): the microphone
+//! (asr.device) and the recognizer (asr.mode "local" | "cloud"; the cloud needs aliyun.api_key there or
+//! DASHSCOPE_API_KEY). --backend local|cloud or OK_ASR_BACKEND wins over asr.mode. The cloud sends the audio to
+//! Alibaba Cloud Model Studio (DashScope, --cloud-model qwen3-asr-flash) and loads no local model; the microphone and
+//! voice activity cuts stay local (cloud.rs). The game also switches it while running (POST /cloud).
+//!
 //! CUDA DLLs (cublas64_12, cublasLt64_12, nvrtc64_120_0, nvrtc-builtins) are searched next to the exe,
 //! in <exe>/cuda, in --cuda-dir, then on PATH. Only the NVIDIA driver must be installed.
 
@@ -17,6 +23,7 @@ mod parent;
 mod audio;
 mod decoder;
 mod encoder;
+mod cloud;
 mod engine;
 mod gpu;
 mod listen;
@@ -28,7 +35,7 @@ mod weights;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 use crate::engine::{default_model_dir, Engine};
 
@@ -84,12 +91,17 @@ fn model_dir(args: &Args) -> Result<PathBuf> {
     }
 }
 
-/// `--settings FILE`: the game's asr-settings.json ({"device": ...}), read here as UTF-8 so a Chinese device name
-/// never has to survive a command line.
-fn settings_device(args: &Args) -> Option<String> {
+/// `--settings FILE`: the player's settings (Saved/StreetSocial/player.json; Docs/API_KEYS.md), read as UTF-8 so a
+/// Chinese device name never has to survive a command line.
+fn settings(args: &Args) -> Option<serde_json::Value> {
     let text = std::fs::read_to_string(args.opts.get("settings")?).ok()?;
-    let json: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()?;
-    json.get("device")?.as_str().map(str::to_owned)
+    serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()
+}
+
+/// The microphone: asr.device of player.json (or "device" at the top: the older asr-settings.json).
+fn settings_device(args: &Args) -> Option<String> {
+    let json = settings(args)?;
+    json.pointer("/asr/device").or_else(|| json.get("device"))?.as_str().map(str::to_owned)
 }
 
 fn device(args: &Args) -> Option<String> {
@@ -134,11 +146,41 @@ fn main() {
     }
 }
 
+/// The "aliyun" section of --settings (player.json).
+fn aliyun(args: &Args) -> serde_json::Value {
+    cloud::section(args.opts.get("settings").map(Path::new))
+}
+
+/// --backend, else OK_ASR_BACKEND, else the player's choice in --settings (asr.mode "cloud", with a key) -> the cloud.
+fn use_cloud(args: &Args) -> Result<bool> {
+    let asked = args.opts.get("backend").cloned().or_else(|| std::env::var("OK_ASR_BACKEND").ok().filter(|v| !v.trim().is_empty()))
+        .or_else(|| settings(args).and_then(|j| j.pointer("/asr/mode").and_then(|m| m.as_str()).map(str::to_owned)));
+    match asked.as_deref().map(str::trim) {
+        Some("cloud") => Ok(cloud::has_key(&aliyun(args)) || args.opts.contains_key("backend")),
+        Some("local") | None => Ok(false),
+        Some(other) => bail!("--backend must be local or cloud, not {other}"),
+    }
+}
+
+/// The engine of a one-shot command (transcribe, record, vad).
+fn engine(args: &Args) -> Result<Engine> {
+    if use_cloud(args)? {
+        return Engine::cloud(&aliyun(args), args.opts.get("cloud-model").map(String::as_str));
+    }
+    Engine::load(&model_dir(args)?, max_positions(args))
+}
+
 fn cmd_serve(args: &Args) -> Result<()> {
-    let model = model_dir(args)?;
     let port: u16 = args.opts.get("port").map(|p| p.parse()).transpose()?.unwrap_or(47861);
+    if use_cloud(args)? {
+        // Cloud only: no local model is loaded (the game can still turn the cloud off, and then has no recognizer
+        // until the next start).
+        let cloud = cloud::Cloud::new(&aliyun(args), args.opts.get("cloud-model").map(String::as_str))?;
+        return server::serve(port, device(args), Some(cloud), None);
+    }
+    let model = model_dir(args)?;
     let positions = max_positions(args);
-    server::serve(port, device(args), move || Engine::load(&model, positions))
+    server::serve(port, device(args), None, Some(Box::new(move || Engine::load(&model, positions))))
 }
 
 fn print(t: &engine::Transcript) {
@@ -147,7 +189,7 @@ fn print(t: &engine::Transcript) {
 }
 
 fn cmd_transcribe(args: &Args) -> Result<()> {
-    let engine = Engine::load(&model_dir(args)?, max_positions(args))?;
+    let engine = engine(args)?;
     let (samples, rate) = audio::read_wav(Path::new(args.opts.get("wav").context("--wav is required")?))?;
     let language = args.opts.get("language").map(String::as_str);
     let audio = audio::to_model_rate(&samples, rate);
@@ -159,7 +201,7 @@ fn cmd_transcribe(args: &Args) -> Result<()> {
 }
 
 fn cmd_record(args: &Args) -> Result<()> {
-    let engine = Engine::load(&model_dir(args)?, max_positions(args))?;
+    let engine = engine(args)?;
     let seconds: f32 = args.opts.get("seconds").and_then(|s| s.parse().ok()).unwrap_or(4.0);
     let recorder = audio::Recorder::new(std::sync::Arc::new(std::sync::Mutex::new(device(args))));
     crate::log!("ok-asr: recording {seconds}s from {} ...", recorder.start()?);
@@ -172,7 +214,7 @@ fn cmd_record(args: &Args) -> Result<()> {
 }
 
 fn cmd_vad(args: &Args) -> Result<()> {
-    let engine = Engine::load(&model_dir(args)?, max_positions(args))?;
+    let engine = engine(args)?;
     let (samples, rate) = audio::read_wav(Path::new(args.opts.get("wav").context("--wav is required")?))?;
     for (i, u) in listen::split_utterances(&samples, rate).iter().enumerate() {
         let audio = audio::to_model_rate(u, rate);

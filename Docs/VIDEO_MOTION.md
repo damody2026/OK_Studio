@@ -77,6 +77,29 @@ Tools\ok-video\target\release\ok-video.exe import 影片.mp4 --name 動作名稱
 
 影片會先檢查：檔案是否存在、作業系統能否讀取（附系統錯誤碼）、ffprobe 能否讀出影像串流與幀數。Rust 轉換失敗時，會轉印 `ok-extract` 的錯誤原文。遊戲介面在程序結束後才讀到的最後幾行也會解析，失敗時列出全部 `[錯誤]` 行與結束代碼；無法建立管道或啟動程序時，顯示 Win32 錯誤碼。
 
+## FlowHMR（第二種 3D 估計模型，2026-11-10）
+
+[FlowHMR](https://github.com/flowhmr/flowhmr)（arXiv 2610.03691）是 flow-matching 的影片動作模型，`flowhmr_latest` 另以物理追蹤分數做過後訓練，腳步與接觸通常比 GVHMR 穩。兩種模型可以切換：
+
+- 遊戲介面：勾選「用 FlowHMR 估計 3D 動作（不勾＝GVHMR）」。
+- 命令列：`ok-video import 影片.mp4 --method flowhmr [--seed 42] [--features <特徵.npy>]`，預設仍是 `--method gvhmr`。特徵預設由內建的 SAM 3D Body 計算，`--features` 只在要沿用已算好的特徵時才用。
+- 角色編輯 MCP：`reader_call` 的 `video_import` 加 `"method": "flowhmr"`。
+
+流程：YOLOv8x 偵測與追蹤（與 GVHMR 共用）→ 鏡頭轉動（`-s` 時視為不動，否則用同一套 SimpleVO 取代原作的 VGGT-Omega，FlowHMR 只需要各幀相對第一幀的旋轉）→ SAM 3D Body 影像特徵（每幀身體、左手、右手各 1024 維）→ FlowHMR 去噪網路（Rust＋CUDA，`Tools/ok-video/src/flowhmr.rs`，Euler 20 步，雜訊與官方同為 `torch.randn` seed 42）→ 解碼成 SMPL-H，取身體 22 關節當 SMPL-X 身體寫進 `motion.npz`（betas 為 0，骨盆放在 FlowHMR 的骨盆位置）→ 之後與 GVHMR 相同，由 `ok-extract` 轉換、修復、驗證。
+
+| 項目 | 狀態 |
+|---|---|
+| 去噪網路、取樣、解碼 | 已移植並與官方 PyTorch 比對：T=150、20 步，latent 最大誤差 1.8e-6，關節旋轉 7.5e-5°，骨盆 1e-7 m（`ok-video flowhmr-golden`）。RTX 5090 上 150 幀約 0.9 秒。 |
+| SAM 3D Body 影像特徵 | 已移植（2026-11-10，`Tools/ok-video/src/sam3d.rs`、`mhr.rs`）：裁切（OpenCV 定點雙線性）、DINOv3 ViT-H+/16 主幹（bf16，與官方相同）、射線編碼、提示式解碼器 6 層與每層的 MHR 關鍵點更新、手部框、左右手（左手鏡像）。MHR 只蒙皮前 70 個關鍵點用到的 468 個頂點與 50 個關節。以主幹 f32 與官方 PyTorch 逐階段比對：裁切 3e-7、主幹 1e-4、解碼器各層 ≤7e-5、MHR 關鍵點 ≤6e-7 m、最終 3072 維特徵 6e-6（`ok-video sam3d-golden`）。`--features <特徵.npy>`（`float32`，`(幀數, 3072)`）仍可直接指定已算好的特徵。 |
+| 雙人影片 | 不支援：FlowHMR 只輸出世界座標，沒有相機位置，無法把兩人對齊；勾選雙人時請用 GVHMR。 |
+| 手部 | FlowHMR 有手指關節（SMPL-H），目前只取身體 22 關節，與 GVHMR 輸出一致。 |
+
+權重放在模型根目錄（與 GVHMR 相同，見上方「使用：命令列」的模型位置）的 `flowhmr/flowhmr_latest.ckpt`，來源 <https://huggingface.co/fafsaf1/flowhmr-0.46B>（`flowhmr_latest/flowhmr_latest.ckpt`，1,841,702,021 bytes）。**權重授權限非商業用途**（程式碼是 Apache-2.0），不能放進版控或隨遊戲散布。第一次使用時轉成 `Saved/VideoMotions/models/flowhmr.safetensors`。網路的正規化統計也存在 checkpoint 裡，不需要另外的 `motion_stats.json`。
+
+SAM 3D Body 權重放在模型根目錄的 `sam3d_body/model.ckpt` 與 `sam3d_body/assets/mhr_model.pt`，來源 <https://huggingface.co/facebook/sam-3d-body-dinov3>（需在 Hugging Face 申請，審核通過後 `hf download facebook/sam-3d-body-dinov3 --local-dir <模型根目錄>/sam3d_body`）。**授權為 SAM License**，同樣不能放進版控或隨遊戲散布。第一次使用時轉成 `Saved/VideoMotions/models/sam3d_body.safetensors` 與 `mhr.safetensors`（MHR 的 TorchScript 由 Rust 的 pickle 讀取器直接讀，不需要 Python）。人物框用 ok-video 的 YOLOv8x 追蹤結果（官方用 YOLOX＋ByteTrack），內參與 GVHMR 相同（預設對角線焦距）；每次轉換的框存在 `work/<名稱>/boxes.npz`。
+
+比對工具：`ok-video sam3d-golden <sam3d_body.safetensors> <mhr.safetensors> <dump.npz> [--fp32] [--out trace.npz]` 用官方程式逐階段輸出的參考值（一幀的影像、框、K 與各階段結果）比對；`ok-video flowhmr-golden <flowhmr.safetensors> <inputs.npz> <out.npz> [--steps N]`，`inputs.npz` 含 `feature`（T,3072）、`camera_R`（T,9）、`noise`（T,491），輸出 `latent` 與解碼後的 `global_orient`、`body_pose`、`pelvis`，用來和官方實作（`ref/FlowHMR`，不進版控）在同一組輸入下的結果比較。
+
 ## 雙人影片（一男一女）
 
 介面勾選「雙人影片」（以及「男性在畫面左邊」）即可，命令列則是 `ok-video.exe import 影片.mp4 --name 名稱 --pair --left male --game <KKS 目錄>`。分配兩人、各自推論、對齊與表面距離都在 `ok-video` 內完成（`src/track.rs`、`src/pairalign.rs`、`src/smplx.rs`）。

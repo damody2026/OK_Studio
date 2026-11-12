@@ -430,7 +430,7 @@ namespace
 		{
 			FOKStudioStyleTuning& T = OKStudioStyleTuning();
 			const TPair<const TCHAR*, float*> Fields[] = { { TEXT("heads"), &T.Heads }, { TEXT("head_size"), &T.HeadSize }, { TEXT("hips"), &T.Hips }, { TEXT("shoulders"), &T.Shoulders },
-				{ TEXT("upper"), &T.Upper }, { TEXT("waist"), &T.Waist }, { TEXT("leg_length"), &T.LegLength }, { TEXT("upper_arm"), &T.UpperArm }, { TEXT("forearm"), &T.Forearm }, { TEXT("thigh"), &T.Thigh }, { TEXT("calf"), &T.Calf }, { TEXT("bust"), &T.Bust }, { TEXT("hem"), &T.Hem }, { TEXT("breast"), &T.Breast }, { TEXT("arm_growth"), &T.ArmGrowth }, { TEXT("real_jaw"), &T.RealJaw }, { TEXT("real_face"), &T.RealFace }, { TEXT("real_eye"), &T.RealEye }, { TEXT("real_chin"), &T.RealChin }, { TEXT("chibi_chin"), &T.ChibiChin }, { TEXT("chibi_head"), &T.ChibiHead }, { TEXT("chibi_jaw"), &T.ChibiJaw } };
+				{ TEXT("upper"), &T.Upper }, { TEXT("waist"), &T.Waist }, { TEXT("leg_length"), &T.LegLength }, { TEXT("upper_arm"), &T.UpperArm }, { TEXT("forearm"), &T.Forearm }, { TEXT("thigh"), &T.Thigh }, { TEXT("calf"), &T.Calf }, { TEXT("bust"), &T.Bust }, { TEXT("hem"), &T.Hem }, { TEXT("breast_scale"), &T.BreastScale }, { TEXT("bust_height"), &T.BustHeight }, { TEXT("arm_growth"), &T.ArmGrowth }, { TEXT("real_jaw"), &T.RealJaw }, { TEXT("real_face"), &T.RealFace }, { TEXT("real_eye"), &T.RealEye }, { TEXT("real_chin"), &T.RealChin }, { TEXT("chibi_chin"), &T.ChibiChin }, { TEXT("chibi_head"), &T.ChibiHead }, { TEXT("chibi_jaw"), &T.ChibiJaw } };
 			TSharedRef<FJsonObject> O = Result(true);
 			bool bChanged = false;
 			for (const TPair<const TCHAR*, float*>& F : Fields)

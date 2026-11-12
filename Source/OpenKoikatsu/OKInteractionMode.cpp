@@ -3,6 +3,8 @@
 #include "OKCharacterController.h"
 #include "OKInteractionScene.h"
 #include "OKHScene.h"
+#include "OKStreetSocialText.h"
+#include "OKStreetRules.h"
 #include "Framework/Application/SlateApplication.h"
 #include "KKPreviewActor.h"
 #include "ok_extract.h"
@@ -71,6 +73,38 @@ AOKInteractionMode* AOKInteractionMode::Enter(UOKCharacterController* Input,cons
     Input->InteractionReturned=[Weak=TWeakObjectPtr<AOKInteractionMode>(Mode)](){if(Weak.IsValid())Weak->Exit();};
     return Mode;
 }
+// What the street's rules (ok-rules hexp.rs h_experience) answer for a lover who has done everything: every pose, kiss,
+// touch and raw allowed, nothing used up today.
+static TSharedPtr<FJsonObject> ReaderExperience(const UOKCharacterController* Source){
+    auto X=MakeShared<FJsonObject>();
+    auto Areas=MakeShared<FJsonObject>(),TouchOk=MakeShared<FJsonObject>(),UsedTo=MakeShared<FJsonObject>();
+    for(const TCHAR* K:{TEXT("kiss"),TEXT("chest"),TEXT("crotch"),TEXT("anal"),TEXT("butt"),TEXT("nipple"),TEXT("oral")})Areas->SetNumberField(K,100.);
+    for(const TCHAR* K:{TEXT("head"),TEXT("hand"),TEXT("thigh"),TEXT("calf"),TEXT("foot"),TEXT("lips")}){
+        if(FCString::Strcmp(K,TEXT("lips"))!=0)Areas->SetNumberField(K,100.);
+        auto Ok=MakeShared<FJsonObject>();Ok->SetBoolField(TEXT("touch"),true);Ok->SetBoolField(TEXT("kiss"),true);TouchOk->SetObjectField(K,Ok);}
+    UsedTo->SetBoolField(TEXT("crotch"),true);UsedTo->SetBoolField(TEXT("anal"),true);
+    X->SetObjectField(TEXT("areas"),Areas);X->SetObjectField(TEXT("touch_ok"),TouchOk);X->SetObjectField(TEXT("used_to"),UsedTo);
+    X->SetNumberField(TEXT("level"),3);X->SetStringField(TEXT("level_name"),OKT(TEXT("hexp.level_lewd")));
+    for(const TCHAR* K:{TEXT("raw_ok"),TEXT("kiss_ok"),TEXT("used"),TEXT("kissed"),TEXT("addicted")})X->SetBoolField(K,true);
+    for(const TCHAR* K:{TEXT("virgin"),TEXT("anal_virgin"),TEXT("hymen_restored"),TEXT("resentful"),TEXT("anal_refused_today"),TEXT("had_enough")})X->SetBoolField(K,false);
+    X->SetNumberField(TEXT("anal_chance"),1.);X->SetNumberField(TEXT("service_rounds"),6);X->SetNumberField(TEXT("climax_limit"),10);X->SetNumberField(TEXT("climax_wanted"),10);
+    X->SetNumberField(TEXT("today_orgasms"),0);X->SetNumberField(TEXT("today_service"),0);X->SetNumberField(TEXT("chastity"),0.);
+    X->SetNumberField(TEXT("her_condoms"),10);X->SetNumberField(TEXT("his_condoms"),10);
+    X->SetNumberField(TEXT("sex_desire"),100.);X->SetNumberField(TEXT("favor"),100.);X->SetNumberField(TEXT("energy"),100.);X->SetNumberField(TEXT("satiety"),100.);
+    X->SetNumberField(TEXT("personality"),Source->Selected.Personality);X->SetNumberField(TEXT("bust"),Source->Selected.Body.ShapeValueBody.IsValidIndex(4)?Source->Selected.Body.ShapeValueBody[4]:.5f);
+    X->SetArrayField(TEXT("poses_played"),{});
+    // The folder's other girls: the lesbian and 3P poses' second (OKHScene LoadSecond), as willing and as experienced.
+    TArray<TSharedPtr<FJsonValue>> Others;
+    for(int32 I=0;I<Source->Entries.Num();++I){const FKKCardListEntry& E=Source->Entries[I];
+        if(E.Sex!=1||E.Path==Source->PreviewCardPath||!FPaths::FileExists(E.Path))continue;
+        auto O=MakeShared<FJsonObject>();const FString Full=(E.LastName+TEXT(" ")+E.FirstName).TrimStartAndEnd();
+        O->SetStringField(TEXT("name"),!Full.IsEmpty()?Full:!E.Nickname.IsEmpty()?E.Nickname:FPaths::GetBaseFilename(E.Path));
+        O->SetStringField(TEXT("card"),E.Path);O->SetNumberField(TEXT("girl"),I+1);O->SetStringField(TEXT("id"),E.Path);
+        O->SetBoolField(TEXT("willing"),true);O->SetNumberField(TEXT("level"),2);Others.Add(MakeShared<FJsonValueObject>(O));
+        if(Others.Num()>=12)break;}
+    X->SetArrayField(TEXT("others"),Others);
+    return X;
+}
 AOKInteractionMode* AOKInteractionMode::EnterReader(UOKCharacterController* Source){
     if(!Source||Source->InteractionWidget||Source->bLoadInFlight||Source->Selected.Sex!=1)return nullptr;
     if(!IsValid(Source->PreviewActor)||!Source->PreviewActor->Session.IsOpen()){
@@ -79,7 +113,12 @@ AOKInteractionMode* AOKInteractionMode::EnterReader(UOKCharacterController* Sour
     Source->ApplyPendingEditorMods();if(Source->bEditorModsDirty)return nullptr;
     auto* Shared=CreateWidget<UOKCharacterController>(Source->GetOwningPlayer());if(!Shared)return nullptr;
     Shared->bInteractionOnly=true;Shared->bIndependentCards=Source->bIndependentCards;Shared->Selected=Source->Selected;
-    Shared->Entries=Source->Entries;Shared->SelectedIndex=Source->SelectedIndex;Shared->OutfitIndex=Source->OutfitIndex;
+    // Only her card, as the street's (EnterCards): the wardrobe and outfit change take Entries[0] as the card she came from
+    // (the whole folder here put the first card's rig on her: "the donor's rig differs from hers").
+    {const FKKCardListEntry* Hers=Source->Entries.FindByPredicate([Source](const FKKCardListEntry& E){return E.Path==Source->PreviewCardPath;});
+     if(!Hers&&Source->Entries.IsValidIndex(Source->SelectedIndex))Hers=&Source->Entries[Source->SelectedIndex];
+     if(Hers)Shared->Entries={*Hers};else{auto& E=Shared->Entries.AddDefaulted_GetRef();E.Path=Source->PreviewCardPath;E.FileName=FPaths::GetCleanFilename(E.Path);}Shared->SelectedIndex=0;}
+   Shared->OutfitIndex=Source->OutfitIndex;
     Shared->PreviewOutfitIndex=Source->PreviewOutfitIndex;Shared->PreviewCardPath=Source->PreviewCardPath;Shared->CurrentCardDirectory=Source->CurrentCardDirectory;Shared->bModelLayout=true;
     FMemory::Memcpy(Shared->ClothesStates,Source->ClothesStates,9);FMemory::Memcpy(Shared->LoadedClothesStates,Source->LoadedClothesStates,9);
     Shared->InitializeInteractionControls();
@@ -92,6 +131,24 @@ AOKInteractionMode* AOKInteractionMode::EnterReader(UOKCharacterController* Sour
     FString Error;if(!Mode->LoadingFemale->BeginSessionLoad(Error)){Mode->Fail(Error);return nullptr;}
     if(Source->PartnerMalePaths.IsValidIndex(Source->SelectedPartnerMale))Mode->MalePath=Source->PartnerMalePaths[Source->SelectedPartnerMale];
     else if(!Shared->PartnerMalePaths.IsEmpty())Mode->MalePath=Shared->PartnerMalePaths[0];
+    // The same one-on-one as the street's (user 2026-11-09: the card reader's scene and UI as StreetSocial's): its H panel,
+    // her as his lover who has done it all (no street relation here to gate anything), the folder's other girls for 3P.
+    {auto Name=[](const FString& Last,const FString& First,const FString& Nick,const FString& Path){
+         const FString Full=(Last+TEXT(" ")+First).TrimStartAndEnd();return !Full.IsEmpty()?Full:!Nick.IsEmpty()?Nick:FPaths::GetBaseFilename(Path);};
+     const FString Her=Name(Source->Selected.LastName,Source->Selected.FirstName,Source->Selected.Nickname,Source->PreviewCardPath);
+     FString Him=FPaths::GetBaseFilename(Mode->MalePath);
+     for(const FKKCardListEntry& E:Source->Entries)if(E.Path==Mode->MalePath){Him=Name(E.LastName,E.FirstName,E.Nickname,E.Path);break;}
+     // The H panel's words come from the rules' text tables (OKT); only the street opens them. A copy of the DLL, so a
+     // rules build elsewhere is not blocked by this process holding it (as the street sandboxes do).
+     if(!OKStreetActiveRules()||!OKStreetActiveRules()->IsOpen()){
+         static TUniquePtr<FOKStreetRules> ReaderRules;
+         const FString Built=FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()/TEXT("Tools/ok-rules/target/release/ok_rules.dll"));
+         const FString Copy=FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir()/TEXT("CardReader/rules")/FString::Printf(TEXT("ok_rules_%u.dll"),FPlatformProcess::GetCurrentProcessId()));
+         if(FPaths::FileExists(Built)&&IFileManager::Get().Copy(*Copy,*Built)==COPY_OK)FPlatformMisc::SetEnvironmentVar(TEXT("OK_RULES_DLL"),*Copy);
+         ReaderRules=MakeUnique<FOKStreetRules>();FString RulesError;
+         if(ReaderRules->Open(RulesError))OKStreetSetActiveRules(ReaderRules.Get());
+         else{UE_LOG(LogTemp,Warning,TEXT("Card reader one-on-one: rules not open, the H panel shows its text ids: %s"),*RulesError);ReaderRules.Reset();}}
+     Mode->BeginHScene(Her,TEXT("lover"),ReaderExperience(Source),Him);}
     const auto SourceVisibility=Source->GetVisibility();Source->SetVisibility(ESlateVisibility::Collapsed);
     Mode->Returned=[Weak=TWeakObjectPtr<UOKCharacterController>(Source),SourceVisibility](TSharedRef<FJsonObject>){if(Weak.IsValid()){Weak->SetVisibility(SourceVisibility);Weak->ApplyClickInputMode();}};
     return Mode;
@@ -288,9 +345,20 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
         if(Body->TryGetStringField(TEXT("coordinate"),Coordinate)&&!Coordinate.IsEmpty()&&!Panel->WearOutfit(Controller->OutfitIndex,Coordinate,OutfitWhy)){Why=OutfitWhy;return nullptr;}
         // {"height":{"her":0..1,"him":0..1}}: their height slider (ChaFile shapeBody[0]) for testing the pair at other sizes.
         double BlushValue;if(Body->TryGetNumberField(TEXT("blush"),BlushValue))Panel->BlushTest=float(BlushValue);
+        // {"limb_ik":{"feet":b,"hands":b,"feet_to_hers":b,"floor_near":cm,"hand_spread":cm,"hand_far":cm,"reread":b}}: their limbs' IK
+        // while he is in her (the answer's limb_ik has them; a hand setting reads his hands again).
+        const TSharedPtr<FJsonObject>* LimbIk=nullptr;if(Body->TryGetObjectField(TEXT("limb_ik"),LimbIk))Panel->SetLimbIk(*LimbIk);
+        // {"tongue":{"up":cm,"pitch":deg,"length":x}}: her tongue out (ok.HScene.TongueUp / TonguePitch / TongueLength).
+        const TSharedPtr<FJsonObject>* TongueSet=nullptr;if(Body->TryGetObjectField(TEXT("tongue"),TongueSet))Panel->SetTongue(*TongueSet);
+        // {"mirror":{"on":b,"yaw":deg,"distance":cm}}: the 200 x 200 cm mirror round them (ok.HScene.Mirror / MirrorYaw / MirrorDistance).
+        const TSharedPtr<FJsonObject>* MirrorSet=nullptr;if(Body->TryGetObjectField(TEXT("mirror"),MirrorSet))Panel->SetMirror(*MirrorSet);
+        // {"skin_lit":true|false}: their skin lit by the scene or the original's toon (ok.HScene.SkinLit).
+        bool SkinLit=false;if(Body->TryGetBoolField(TEXT("skin_lit"),SkinLit))if(auto* Var=IConsoleManager::Get().FindConsoleVariable(TEXT("ok.HScene.SkinLit")))Var->Set(SkinLit?1:0,ECVF_SetByConsole);
         // {"orbit":[yaw,pitch,distance]}: the camera round her hips, turned from where she faces (pose checks from the side and the front).
         const TArray<TSharedPtr<FJsonValue>>* Orbit=nullptr;if(Body->TryGetArrayField(TEXT("orbit"),Orbit)&&Orbit->Num()==3&&IsValid(Controller->PreviewActor)){auto* Girl=Controller->PreviewActor.Get();
-            FVector Hips=Girl->GetActorLocation();if(Girl->BodySkel){const int32 Bone=Girl->BodySkel->GetBoneIndex(TEXT("j_hips"));if(Bone!=INDEX_NONE)Hips=Girl->BodySkel->GetBoneTransform(Bone).GetLocation();}
+            // "orbit_bone": round another of her bones (cf_J_FaceBase for her face) instead of her hips.
+            FString OrbitBone=TEXT("j_hips");Body->TryGetStringField(TEXT("orbit_bone"),OrbitBone);
+            FVector Hips=Girl->GetActorLocation();if(Girl->BodySkel){int32 Bone=Girl->BodySkel->GetBoneIndex(*OrbitBone);if(Bone==INDEX_NONE)Bone=Girl->BodySkel->GetBoneIndex(*(TEXT("cf_")+OrbitBone));if(Bone==INDEX_NONE)Bone=Girl->BodySkel->GetBoneIndex(TEXT("j_hips"));if(Bone!=INDEX_NONE)Hips=Girl->BodySkel->GetBoneTransform(Bone).GetLocation();}
             Girl->OrbitFocus=Hips;Girl->OrbitYaw=float((*Orbit)[0]->AsNumber())+Girl->GetActorRotation().Yaw;Girl->OrbitPitch=float((*Orbit)[1]->AsNumber());Girl->OrbitDistance=float((*Orbit)[2]->AsNumber());Girl->ApplyOrbitCamera();}
 #if !UE_BUILD_SHIPPING
         // {"spray":true|false}: the player's water gun (A + left button) at what the camera looks at; game.log says what landed.
@@ -341,6 +409,11 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
     bool Faces=false;if(View.IsValid()&&Body.IsValid()&&Body->TryGetBoolField(TEXT("faces"),Faces)&&Faces&&IsValid(Controller->PreviewActor))
         for(int32 Control=1;Control<=2;++Control){TArray<TSharedPtr<FJsonValue>> L;for(int32 P=0;P<Controller->PreviewActor->GetFacePatternCount(Control);++P)L.Add(MakeShared<FJsonValueString>(Controller->PreviewActor->GetFacePatternLabel(Control,P)));View->SetArrayField(Control==1?TEXT("eyes"):TEXT("brows"),L);}
     if(Faces&&View.IsValid()&&IsValid(Controller->PreviewActor)){TArray<TSharedPtr<FJsonValue>> L;for(int32 P=0;P<Controller->PreviewActor->GetMouthPatternCount();++P)L.Add(MakeShared<FJsonValueString>(Controller->PreviewActor->GetMouthPatternLabel(P)));View->SetArrayField(TEXT("mouths"),L);}
+    // {"save_masks":"<folder>"}: her body's mask for each state of her top (on, half, off) as PNG files there.
+    FString MaskDir;if(View.IsValid()&&Body.IsValid()&&Body->TryGetStringField(TEXT("save_masks"),MaskDir)&&!MaskDir.IsEmpty()&&IsValid(Controller->PreviewActor)){
+        TArray<TSharedPtr<FJsonValue>> L;for(int32 TopState:{0,1,3}){TArray<uint8> Png;
+            if(Controller->PreviewActor->Session.WardrobeBodyMask(TopState,Png)&&FFileHelper::SaveArrayToFile(Png,*(MaskDir/FString::Printf(TEXT("body_mask_top%d.png"),TopState))))L.Add(MakeShared<FJsonValueNumber>(TopState));}
+        View->SetArrayField(TEXT("saved_masks"),L);}
     // {"parts":true}: every mesh component on her (role, class, shown), to see what draws.
     bool PartsDump=false;if(View.IsValid()&&Body.IsValid()&&Body->TryGetBoolField(TEXT("parts"),PartsDump)&&PartsDump&&IsValid(Controller->PreviewActor)){
         TArray<TSharedPtr<FJsonValue>> L;TInlineComponentArray<UMeshComponent*> Components;Controller->PreviewActor->GetComponents(Components);
@@ -348,7 +421,10 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
             FString PartRole;OkMeshView V{};if(Index!=INDEX_NONE&&Controller->PreviewActor->Session.PartAt(Index,V)&&V.role)PartRole=UTF8_TO_TCHAR(V.role);
             // Each slot's material: its name, d for a dynamic instance, st when it has the iris tiling (_MainTex_ST), rows when gaze rows.
             FString Mats;for(int32 S=0;S<C->GetNumMaterials();++S)if(UMaterialInterface* M=C->GetMaterial(S)){FLinearColor P;
-                Mats+=FString::Printf(TEXT(" %s%s%s%s"),*M->GetName(),M->IsA<UMaterialInstanceDynamic>()?TEXT(":d"):TEXT(""),M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex_ST")),P)?TEXT(":st"):TEXT(""),M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("KKEyeUV0Row0")),P)?TEXT(":rows"):TEXT(""));}
+                Mats+=FString::Printf(TEXT(" %s%s%s%s"),*(M->GetName()+(Cast<UMaterialInstance>(M)&&Cast<UMaterialInstance>(M)->Parent?TEXT("<")+Cast<UMaterialInstance>(M)->Parent->GetName():FString())),M->IsA<UMaterialInstanceDynamic>()?TEXT(":d"):TEXT(""),M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex_ST")),P)?TEXT(":st"):TEXT(""),M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("KKEyeUV0Row0")),P)?TEXT(":rows"):TEXT(""));
+                // Its main texture and colour (a piece drawn black: user 2026-11-09, her half-off top).
+                UTexture* Tex=nullptr;if(M->GetTextureParameterValue(FHashedMaterialParameterInfo(TEXT("_MainTex")),Tex)&&Tex)Mats+=FString::Printf(TEXT("[tex=%s %dx%d]"),*Tex->GetName(),int32(Tex->GetSurfaceWidth()),int32(Tex->GetSurfaceHeight()));
+                if(M->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("_Color")),P))Mats+=FString::Printf(TEXT("[col=%.2f,%.2f,%.2f]"),P.R,P.G,P.B);}
             L.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("%d %s %s %s vis=%d hig=%d main=%d parent=%s mats=%s"),Index,*PartRole,*C->GetClass()->GetName(),*C->GetName(),C->IsVisible(),C->bHiddenInGame,C->bRenderInMainPass,C->GetAttachParent()?*C->GetAttachParent()->GetName():TEXT("-"),*Mats)));}
         View->SetArrayField(TEXT("parts"),L);}
     // {"his_parts":true}: the same for him, with each part's renderer name (the penis is o_dankon / cm_o_dan00).
@@ -382,11 +458,20 @@ void AOKInteractionMode::HSceneShowLine(const FString& Text){if(Controller&&Cont
 FString AOKInteractionMode::HSceneJudgeFacts() const{return Controller&&Controller->HPanel?Controller->HPanel->JudgeFacts():FString();}
 bool AOKInteractionMode::HSceneApplyTalk(const TSharedPtr<FJsonObject>& Verdict){return Controller&&Controller->HPanel&&Controller->HPanel->ApplyTalk(Verdict);}
 extern TAutoConsoleVariable<int32> CVarHTtsLines; // OKHScene.cpp
+float OKHVoiceRms(const FKKSpeechPcm& Pcm);float OKHCryRms(); // OKHScene.cpp
 bool AOKInteractionMode::HSceneSpeak(const FString& Path){
     if(!CVarHTtsLines.GetValueOnGameThread())return false;
     if(!Controller||!IsValid(Controller->PreviewActor))return false;auto* Her=Controller->PreviewActor.Get();
     if(Controller->HPanel&&Controller->HPanel->LineIsStale())return false; // said to what happened before (UOKHScenePanel::ShowLine)
-    Her->StopHBreath();FString Why;const bool Ok=Her->PlaySpeechFile(Path,1.f,Why);
+    // As loud as her cries (OKHCryRms): the TTS came out much quieter (user 2026-11-09). Its samples scaled up, the
+    // loudest kept below full scale.
+    Her->StopHBreath();FString Why;bool Ok=false;
+    {TSharedPtr<const FKKSpeechPcm,ESPMode::ThreadSafe> Pcm;
+     if(KKSpeech::DecodeOgg(Path,Pcm,Why)&&Pcm){const float Rms=OKHVoiceRms(*Pcm);int32 Peak=1;for(const int16 S:Pcm->Samples)Peak=FMath::Max(Peak,FMath::Abs(int32(S)));
+        const float Gain=Rms>0.f?FMath::Clamp(FMath::Min(OKHCryRms()/Rms,32000.f/Peak*1.5f),1.f,8.f):1.f;
+        if(Gain>1.01f){auto Loud=MakeShared<FKKSpeechPcm,ESPMode::ThreadSafe>(*Pcm);for(int16& S:Loud->Samples){const float V=S*Gain;S=int16(FMath::Clamp(V>29000.f?29000.f+(V-29000.f)*.15f:V<-29000.f?-29000.f+(V+29000.f)*.15f:V,-32767.f,32767.f));}Pcm=Loud;}
+        UE_LOG(LogTemp,Display,TEXT("H scene: her line loudness %.3f -> x%.2f (her cries %.3f)"),Rms,Gain,OKHCryRms());
+        Ok=Her->PlaySpeechPcm(Pcm,1.f,Why);}}
     if(!Ok)UE_LOG(LogTemp,Warning,TEXT("H scene: her line did not play: %s"),*Why);
     if(Ok)UE_LOG(LogTemp,Display,TEXT("H scene: her line spoken on her (%s)"),*FPaths::GetCleanFilename(Path));
     if(Ok&&Controller->HPanel)Controller->HPanel->SpokeLine();

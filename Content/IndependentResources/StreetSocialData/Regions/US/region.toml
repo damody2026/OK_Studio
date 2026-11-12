@@ -27,6 +27,10 @@ dorm = 2600
 card_limit = 1000
 loan_year_cap = 5000
 allowance = 600
+# Getting about town (ok-rules transit.rs): a bus ride a person, a taxi's flag fall (first 3 km) and each km after.
+bus_fare = 1.5
+taxi_flag = 3
+taxi_per_km = 1.5
 
 # FICA (Social Security and Medicare), federal unemployment, the 2010 federal income tax for a single filer (yearly
 # brackets with the quick deduction; standard deduction and exemption as the monthly threshold); no VAT (sales tax is

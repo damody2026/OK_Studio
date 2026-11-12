@@ -7,7 +7,7 @@ use std::path::Path;
 pub struct CardOverrides {
     pub breast: Option<bool>, pub floor: Option<bool>, pub skirt: Option<bool>,
 }
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Flags { pub installed: bool, pub breast: bool, pub floor: bool, pub skirt: bool }
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Settings { installed: bool, global: Flags, studio_default: u8 }

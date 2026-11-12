@@ -11,8 +11,10 @@
 #include "RenderCommandFence.h"
 #include "ProceduralMeshComponent.h"
 #include "Containers/Ticker.h"
+#include "Templates/PimplPtr.h"
 class FOkAnimPlayer;
 
+#include "KKLitSync.h"
 #include "KKPreviewActor.generated.h"
 
 class UProceduralMeshComponent;
@@ -163,11 +165,16 @@ struct FKKLoadedPart
 	TArray<FVector4f> RuntimeSourceTangents;
 	// Last uploaded native streams for large non-morph renderers.
 	TArray<float> RuntimeSourceGeometry;
+	// The session's streams copied for a deferred stream frame (ok.Anim.PairSplitDisplay) when the snapshot above is off.
+	TArray<float> RuntimeDeferredGeometry;
     // Authored rest normals are immutable for this loaded part. Built with the
     // exact legacy GetSafeNormal formula whenever RuntimeRestNormals is assigned.
     TArray<FVector> RuntimeUnitRestNormals;
     bool bNativeDisplayPrepared=false;
     TSharedPtr<FKKPrivateGpuDisplay> PrivateGpuDisplay;
+    // The display last given up for a passing reason (its proxy not ready): its captured source, draw and bounds reused by
+    // the next capture of the same source revision.
+    TSharedPtr<FKKPrivateGpuDisplay> PrivateGpuSpare;
     uint64 PrivateGpuRejectedEpoch=0;
     uint64 PrivateGpuRejectedRevision=0;
 };
@@ -335,6 +342,20 @@ public:
     // Session parts drawn from their CPU-skinned vertices even then (her clothes pushed out over her skin as they are
     // skinned, belly_bulge::CoverField; the private GPU route skins its own copy of the rest mesh).
     TSet<int32> CpuSkinnedParts;
+    // Her garments with their own rig over her thighs' jiggle, drawn from their CPU vertices while it is on (moved with her
+    // skin as they are skinned, thigh_jiggle::follow_own); and her garments on her body skeleton showing its morph.
+    TSet<int32> JiggleCpuParts;
+    TSet<int32> JiggleClothShown;
+    // An owner keeps her clothes over her skin itself (the H scene: belly_bulge::cover_deltas with her belly moves); this
+    // actor's own cover (UpdateClothCover, ok.ClothCover) then leaves her clothes alone.
+    bool bExternalClothCover=false;
+    // Her clothes pushed out over her breasts and nipples after each pose (ok.ClothCover; user, 2026-11-09: however large
+    // her breasts, her nipples never come through her clothes): the parts it moved, with a hash of each one's moves.
+    TMap<int32,uint32> ClothCoverShown;
+    void UpdateClothCover();
+    void ClearClothCover();
+    void KeepClothCoverCpu();
+    bool bClothCoverCpu=false;
     // The card reader's shown character: its game-animation frame is solved on a worker during the previous frame
     // (drawn one frame later), so the game thread does not wait ~4-6 ms for it (ok.Animation.AsyncNativePose).
     bool bAsyncNativePose=false;bool bTickPose=false;bool bLaunchAsyncPose=false;float AsyncPoseDelta=0.f;
@@ -695,7 +716,17 @@ public:
 	bool SetPartMorphWeight(int32 SessionPartIndex, FName Name, float Percent);
 	// A part's skin moved this frame by per-vertex moves (vertex index, Unity metres in the mesh's own space; belly_bulge::
 	// wrap_deltas), drawn as an external morph set on its renderers and rebuilt on each call. Empty clears it.
-	bool SetPartWrapDeltas(int32 SessionPartIndex, const TArray<uint32>& Indices, const TArray<FVector3f>& UnityDeltas, const TArray<FVector3f>& UnityNormalDeltas = TArray<FVector3f>());
+	bool SetPartWrapDeltas(int32 SessionPartIndex, const TArray<uint32>& Indices, const TArray<FVector3f>& UnityDeltas, const TArray<FVector3f>& UnityNormalDeltas = TArray<FVector3f>(), int32 SetId = 0x4F4B5752);
+	// Her thighs' and buttocks' jiggle (thigh_jiggle, ref/zzz_thigh_jiggle.md) DeltaSeconds on, drawn as its own morph set
+	// of her body (ok.ThighJiggle scales it, 0 off). The paired playback (the one-on-one scene, the H scene) calls it each
+	// frame it shows; ClearThighJiggle takes it away and forgets her springs.
+	void UpdateThighJiggle(float DeltaSeconds);
+	void ClearThighJiggle();
+	void UpdateThighJiggleCloth();
+	int32 ThighJigglePart=INDEX_NONE;
+	// The wrap morph a renderer draws now (SetPartWrapDeltas, weight 1, mesh-local), for code that skins it on the CPU
+	// (the water gun's coating) instead of reading the vertices back (GetCPUSkinnedVertices waits for the render thread).
+	static const TArray<struct FMorphTargetDelta>* WrapMorphDeltas(const class USkinnedMeshComponent* Mesh);
 	// External morph sets replaced, kept until the render thread is past them.
 	struct FOkWrapRelease { TSharedPtr<struct FExternalMorphSet> Set; FRenderCommandFence Fence; uint64 Frame=0; bool bReleased=false; };
 	TArray<TUniquePtr<FOkWrapRelease>> WrapReleases;
@@ -707,6 +738,26 @@ public:
 	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> WrapInstanceOf;
 	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> WrapOriginalOf;
 	bool bWrapParentMissingLogged = false;
+	// Her lit by the scene (the 1-on-1 scene's switch): every instance whose parent has a _Lit one swapped for one under
+	// LitRoot (Tools/prepare_runtime_shared_material.lua --lit-only), their values copied from hers on every call; false
+	// gives hers back. The _Lit parents carry the wrap offset too (SetWrapLine sets it on them in place).
+	bool SetSkinLit(bool bOn, const FString& LitRoot);
+	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> LitInstanceOf;
+	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> LitOriginalOf;
+	TSet<TWeakObjectPtr<class UMaterialInstanceDynamic>> LitWrapped;
+	TMap<TWeakObjectPtr<class UMaterialInstanceDynamic>,FKKLitSnapshot> LitSnapshots; // KKLitSync.h
+	TSet<FString> LitParentMissing;
+	// Her clothes drawn BiasCm toward the camera along each view ray (the 1-on-1 scene: skin a few millimetres through a
+	// tight garment stays under it on screen): every garment instance swapped for one of its <name>_Bias parent under
+	// BiasRoot (Tools/prepare_runtime_shared_material.lua --bias-only), its values copied from hers on every call; each
+	// layer StepCm further out than the one under it (panst/socks, bra/shorts, gloves, bottoms, tops, the rest), so two
+	// garments laid on the same surface no longer fight for depth. 0 gives hers back. False when none was found.
+	// InflateCm: each garment also pushed out along its surface by up to that at her silhouette (its edge seen side-on).
+	bool SetClothViewBias(float BiasCm, float StepCm, const FString& BiasRoot, float InflateCm=0.f);
+	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> BiasInstanceOf;
+	UPROPERTY(Transient) TMap<TObjectPtr<class UMaterialInstanceDynamic>, TObjectPtr<class UMaterialInstanceDynamic>> BiasOriginalOf;
+	TSet<FString> BiasParentMissing;
+	TMap<TWeakObjectPtr<class UMaterialInstanceDynamic>,FKKLitSnapshot> BiasSnapshots; // KKLitSync.h
 	// Insertion depth within the current pose. Authored vagina.open only; bone
 	// spread is used when that morph is absent. Range is owned by paired playback.
 	void DriveVaginaOpening(const AKKPreviewActor& Male, float& RangeMin, float& RangeMax, bool& bRange);
@@ -729,6 +780,11 @@ public:
  bool RefreshEditorGeometry();
 	void RefreshSkinnedDisplay();
 	void RefreshRuntimeAccessories();
+	/** The two halves of RefreshRuntimeAccessories: the session read on the game thread, and the conversion, generation
+	 *  and upload from copies, which the pair runs after launching its next solve (ok.Anim.PairSplitDisplay). */
+	void PrepareRuntimeAccessories();
+	void FinishRuntimeAccessories();
+	TPimplPtr<struct FKKAccessoryStreamFrame> PendingStreams;
     // Refresh CPU query vertices from the already solved native pose without
     // publishing CPU render streams over an installed GPU generation.
     void EnsurePrivateGpuQueryGeometry(UProceduralMeshComponent* Component=nullptr,int32 Section=INDEX_NONE);

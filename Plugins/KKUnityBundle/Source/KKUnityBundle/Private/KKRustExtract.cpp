@@ -28,33 +28,48 @@ namespace { UKKSharedAnimation* FindSharedCurveAsset(const FString& Key); }
 
 namespace {
 #if CPUPROFILERTRACE_ENABLED
-uint32 NativeTraceSpecs[51];
+const ANSICHAR* const NativeTraceNames[]={"KK_NativeValidate","KK_NativeSampleWait","KK_NativeContacts","KK_NativeDynamicsWait",
+    "KK_NativeBodyPhysics","KK_NativeClothesPhysics","KK_NativeExport","KK_NativeAccessoryDispatch",
+    "KK_NativeAccessorySync","KK_NativeAccessorySetup","KK_NativeAccessoryStep","KK_NativeSkinPrepare",
+    "KK_NativeSkinLBS","KK_NativeSkinCorrection","KK_NativeRoleSample",
+    "KK_NativeAnimatorReset","KK_NativeAnimatorCurves","KK_NativeAnimatorModifiers",
+    "KK_NativeDynamicTopology","KK_NativeDynamicColliders","KK_NativeDynamicForces",
+    "KK_NativeDynamicParticles","KK_NativeDynamicApply","KK_NativeDynamicWorlds","KK_NativeFrameWait",
+    "KK_NativeShapeRestore","KK_NativeShapeBody","KK_NativeShapeHead","KK_NativeShapeFullHead","KK_NativeShapeReferences",
+    "KK_NativeContactCorrectBefore","KK_NativeContactFreeze","KK_NativeContactSolve","KK_NativeContactCorrectAfter",
+    "KK_NativePalettePrepare","KK_NativePaletteRead","KK_NativePalettePublish",
+    "KK_NativeMotionPlan","KK_NativeMotionLeaves","KK_NativeMotionBlend","KK_NativeLeafSnapshot","KK_NativeLeafChannels","KK_NativeChannelLookup","KK_NativeChannelSample",
+    "KK_NativeAccFrames","KK_NativeAccRadii","KK_NativeAccLeaders","KK_NativeCoverField","KK_NativeCoverPush","KK_NativeCoverLift","KK_NativeCoverPushFrom",
+    "KK_NativeSkinNow","KK_NativeSkinGrid","KK_NativeSkinQueries","KK_NativeKeepCover","KK_NativeBulgePast","KK_NativeBackExit",
+    "KK_NativeLiftRise","KK_NativeLiftClear","KK_NativeLiftRings","KK_NativePushAt","KK_NativePushRings","KK_NativePushFlip","KK_NativeClothesStep","KK_NativePxBatch"};
+std::atomic<uint32> NativeTraceSpecs[UE_ARRAY_COUNT(NativeTraceNames)];
+// Each event's spec is sent the first time it runs with the CPU channel on, as UE's own scopes do: sent at startup (the
+// channel still off until Trace.File / -Trace) it was dropped, and Insights then had no name for any native event.
+// Each thread remembers which of its open scopes were sent, so an end matches its begin when the channel turns on or
+// off in between.
+thread_local uint64 NativeTraceOpen=0;thread_local int32 NativeTraceDepth=0;
 void NativeCpuTrace(uint32_t Event,int32_t Begin){
-    if(Event>=UE_ARRAY_COUNT(NativeTraceSpecs))return;
-    if(Begin)FCpuProfilerTrace::OutputBeginEvent(NativeTraceSpecs[Event]);
-    else FCpuProfilerTrace::OutputEndEvent();
+    if(Event>=UE_ARRAY_COUNT(NativeTraceNames))return;
+    if(Begin){
+        const bool bOn=UE_TRACE_CHANNELEXPR_IS_ENABLED(CpuChannel)!=0;
+        if(bOn){uint32 Spec=NativeTraceSpecs[Event].load(std::memory_order_acquire);
+            if(!Spec){Spec=FCpuProfilerTrace::OutputEventType(NativeTraceNames[Event],__FILE__,__LINE__);NativeTraceSpecs[Event].store(Spec,std::memory_order_release);}
+            FCpuProfilerTrace::OutputBeginEvent(Spec);}
+        if(NativeTraceDepth<64){if(bOn)NativeTraceOpen|=uint64(1)<<NativeTraceDepth;else NativeTraceOpen&=~(uint64(1)<<NativeTraceDepth);}
+        ++NativeTraceDepth;
+    }else if(NativeTraceDepth>0){
+        --NativeTraceDepth;
+        if(NativeTraceDepth<64&&(NativeTraceOpen>>NativeTraceDepth&1))FCpuProfilerTrace::OutputEndEvent();
+    }
 }
 #endif
 void RegisterNativeCpuTrace(){
     static const bool Registered=[](){
 #if CPUPROFILERTRACE_ENABLED
         if(FParse::Param(FCommandLine::Get(),TEXT("OKNativeTrace"))){
-            const ANSICHAR* Names[]={"KK_NativeValidate","KK_NativeSampleWait","KK_NativeContacts","KK_NativeDynamicsWait",
-                "KK_NativeBodyPhysics","KK_NativeClothesPhysics","KK_NativeExport","KK_NativeAccessoryDispatch",
-                "KK_NativeAccessorySync","KK_NativeAccessorySetup","KK_NativeAccessoryStep","KK_NativeSkinPrepare",
-                "KK_NativeSkinLBS","KK_NativeSkinCorrection","KK_NativeRoleSample",
-                "KK_NativeAnimatorReset","KK_NativeAnimatorCurves","KK_NativeAnimatorModifiers",
-                "KK_NativeDynamicTopology","KK_NativeDynamicColliders","KK_NativeDynamicForces",
-                "KK_NativeDynamicParticles","KK_NativeDynamicApply","KK_NativeDynamicWorlds","KK_NativeFrameWait",
-                "KK_NativeShapeRestore","KK_NativeShapeBody","KK_NativeShapeHead","KK_NativeShapeFullHead","KK_NativeShapeReferences",
-                "KK_NativeContactCorrectBefore","KK_NativeContactFreeze","KK_NativeContactSolve","KK_NativeContactCorrectAfter",
-                "KK_NativePalettePrepare","KK_NativePaletteRead","KK_NativePalettePublish",
-                "KK_NativeMotionPlan","KK_NativeMotionLeaves","KK_NativeMotionBlend","KK_NativeLeafSnapshot","KK_NativeLeafChannels","KK_NativeChannelLookup","KK_NativeChannelSample",
-                "KK_NativeAccFrames","KK_NativeAccRadii","KK_NativeAccLeaders","KK_NativeCoverField","KK_NativeCoverPush","KK_NativeCoverLift","KK_NativeCoverPushFrom"};
-            static_assert(UE_ARRAY_COUNT(Names)==UE_ARRAY_COUNT(NativeTraceSpecs),"Native CPU trace event storage must match the registered events");
-            for(int32 I=0;I<UE_ARRAY_COUNT(Names);++I)NativeTraceSpecs[I]=FCpuProfilerTrace::OutputEventType(Names[I],__FILE__,__LINE__);
             const int32 Result=ok_set_cpu_trace_callback(NativeCpuTrace);
             checkf(Result==0,TEXT("Native CPU trace callback registration failed"));
+            UE_LOG(LogOkExtract,Display,TEXT("Native CPU trace on (%d events, named when the cpu channel is on)"),int32(UE_ARRAY_COUNT(NativeTraceNames)));
         }
 #endif
         return true;
@@ -323,6 +338,25 @@ bool FOkSession::ClothCoverDeltas(const TArray<uint32>& BodyIndices,const TArray
 	if(N>Idx.Num()){Part.SetNumUninitialized(N);Idx.SetNumUninitialized(N);D.SetNumUninitialized(N*3);
 		N=ok_cover_deltas(Handle,BodyIndices.GetData(),In.GetData(),uint32(BodyIndices.Num()),Part.GetData(),Idx.GetData(),D.GetData(),uint32(Idx.Num()));if(N<0)return false;}
 	for(int32 I=0;I<N;++I){OutParts.Add(int32(Part[I]));OutIndices.Add(Idx[I]);OutDeltas.Add(FVector3f(D[I*3],D[I*3+1],D[I*3+2]));}
+	return true; }
+bool FOkSession::ThighJiggle(float DeltaSeconds,float Gain,int32& OutPart,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas) const {
+	OutPart=INDEX_NONE;OutIndices.Reset();OutDeltas.Reset();if(!Handle)return false;
+	TArray<uint32> Idx;TArray<float> D;Idx.SetNumUninitialized(4096);D.SetNumUninitialized(4096*3);int32 Part=-1;
+	int32 N=ok_thigh_jiggle(Handle,DeltaSeconds,Gain,&Part,Idx.GetData(),D.GetData(),uint32(Idx.Num()));
+	// More than fit: the same moves again (0 steps nothing) into room for them all.
+	if(N>Idx.Num()){Idx.SetNumUninitialized(N);D.SetNumUninitialized(N*3);N=ok_thigh_jiggle(Handle,0.f,Gain,&Part,Idx.GetData(),D.GetData(),uint32(Idx.Num()));}
+	if(N<0)return false;
+	OutPart=Part;OutIndices.Append(Idx.GetData(),N);OutDeltas.Reserve(N);
+	for(int32 I=0;I<N;++I)OutDeltas.Add(FVector3f(D[I*3],D[I*3+1],D[I*3+2]));
+	return true; }
+bool FOkSession::ThighJiggleCloth(TArray<int32>& OutCpuParts,TArray<int32>& OutParts,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas) const {
+	OutCpuParts.Reset();OutParts.Reset();OutIndices.Reset();OutDeltas.Reset();if(!Handle)return false;
+	TArray<uint32> Part,Idx;TArray<float> D;Part.SetNumUninitialized(8192);Idx.SetNumUninitialized(8192);D.SetNumUninitialized(8192*3);
+	int32 N=ok_thigh_jiggle_cloth(Handle,Part.GetData(),Idx.GetData(),D.GetData(),uint32(Idx.Num()));
+	if(N>Idx.Num()){Part.SetNumUninitialized(N);Idx.SetNumUninitialized(N);D.SetNumUninitialized(N*3);N=ok_thigh_jiggle_cloth(Handle,Part.GetData(),Idx.GetData(),D.GetData(),uint32(Idx.Num()));}
+	if(N<0)return false;N=FMath::Min(N,Idx.Num());
+	for(int32 I=0;I<N;++I){if(Idx[I]==0xFFFFFFFFu){OutCpuParts.Add(int32(Part[I]));continue;}
+		OutParts.Add(int32(Part[I]));OutIndices.Add(Idx[I]);OutDeltas.Add(FVector3f(D[I*3],D[I*3+1],D[I*3+2]));}
 	return true; }
 bool FOkSession::PenisClipDeltas(const FVector& At,const FVector& Normal,const FVector& Axis,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,float InsetM) const {
 	OutIndices.Reset();OutDeltas.Reset();if(!Handle)return false;
@@ -1635,6 +1669,16 @@ bool FOkSession::AbsentCardMods(const FString& Card,TArray<FString>& Absent,FStr
  if(Result!=0){Error=Text;return false;}
  Text.ParseIntoArrayLines(Absent);return true;
 }
+// The native library reads its OK_* switches from the process environment as it runs: this flips one in a running game
+// (in-process A/B of a switch, without restarting between the two halves).
+static FAutoConsoleCommand GOKEnvCommand(TEXT("OK.Env"),
+ TEXT("OK.Env <NAME> [value]: sets (no value: clears) an environment variable of this process; prints it when only the name is given with '?'."),
+ FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args){
+  if(Args.Num()<1){UE_LOG(LogTemp,Error,TEXT("OK.Env: name required"));return;}
+  if(Args.Num()>1&&Args[1]==TEXT("?")){UE_LOG(LogTemp,Display,TEXT("OK.Env %s=%s"),*Args[0],*FPlatformMisc::GetEnvironmentVariable(*Args[0]));return;}
+  FPlatformMisc::SetEnvironmentVar(*Args[0],Args.Num()>1?*Args[1]:nullptr);
+  UE_LOG(LogTemp,Display,TEXT("OK.Env %s=%s"),*Args[0],Args.Num()>1?*Args[1]:TEXT("(cleared)"));
+ }));
 static FAutoConsoleCommand GOKMakeOkCardCommand(TEXT("OK.MakeOkCard"),
  TEXT("OK.MakeOkCard <card.png> [out.png]: converts an original KKS card (with its zipmods from the KKS installation) or an edited OK card into an OK card for the OK base library; default output <card>.ok.png."),
  FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args){

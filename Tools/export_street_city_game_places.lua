@@ -52,6 +52,223 @@ local function floorof(room)
   end
   return math.max(2, 1 + math.floor((z0 - 1200) / 400 + .5))
 end
+-- A door inside something solid: the open-air places took the middle of their landmark for the door (the park's fountain,
+-- the skating rental hut, the BBQ grill, the ferris wheel), so a walk there ended against it and the playground's, in its
+-- climbing frame, could not be reached at all (11-09). Such a door moves out of the thing to the side nearest a road, onto
+-- open ground. The solid things are the map's props and furniture (actors.json), not the buildings' shells, whose doors are
+-- in their walls on purpose.
+local ACTORS = ROOT .. 'output/street-social-city-production/places-v1/actors.json'
+local RASTER = ROOT .. 'output/street-social-city-production/world-edge-v1/road-raster.json'
+local solids = {}
+do
+  local f = io.open(ACTORS, 'rb')
+  if f then
+    local all = json.decode(f:read('a')).actors; f:close()
+    for _, a in ipairs(all) do
+      if a.c and a.e then
+        local label = a.label or ''
+        local prop = label:match('^LoverSpot_') or label:match('^Landmark_') or label:match('_Block$')
+          or (a.cls == 'StaticMeshActor' and math.max(a.e[1], a.e[2]) < 300 and not label:match('^S%d+_F%d'))
+        if prop and math.max(a.e[1], a.e[2]) < 2000 then solids[#solids + 1] = a end
+      end
+    end
+  else problem('no ' .. ACTORS .. ': doors not checked against the props') end
+end
+local function solid_at(x, y, z, margin)
+  for _, a in ipairs(solids) do
+    if math.abs(x - a.c[1]) <= a.e[1] + margin and math.abs(y - a.c[2]) <= a.e[2] + margin
+      and z + 170 >= a.c[3] - a.e[3] and z + 15 <= a.c[3] + a.e[3] then return a end
+  end
+end
+local door_raster
+local function open_ground(x, y)
+  door_raster = door_raster or json.decode(read(RASTER))
+  local R = door_raster
+  local k = math.floor((x - R.origin[1]) / R.step_cm + 1.5); local i = math.floor((y - R.origin[2]) / R.step_cm + 1.5)
+  local row = R.rows[i]; local c = row and row:sub(k, k) or ''
+  if c ~= 'r' and c ~= 'g' then return nil end
+  -- how far the nearest road cell is (cells), up to 15 m
+  for r = 0, 8 do for di = -r, r do for dk = -r, r do
+    if math.max(math.abs(di), math.abs(dk)) == r then local w = R.rows[i + di]; if w and w:sub(k + dk, k + dk) == 'r' then return r end end
+  end end end
+  return 9
+end
+local moved_doors = 0
+for _, p in ipairs(places) do
+  local d = p.door
+  local hit = d and #d == 3 and solid_at(d[1], d[2], d[3], 0)
+  if hit then
+    local best, score
+    for ring = 1, 6 do
+      local m = 40 + ring * 30
+      local hx, hy = hit.e[1] + m, hit.e[2] + m
+      for s = 0, 31 do
+        local t = s / 32 * 2 * math.pi
+        local cx, cy = math.cos(t), math.sin(t)
+        local scale = math.min(hx / math.max(math.abs(cx), 1e-6), hy / math.max(math.abs(cy), 1e-6))
+        local x, y = hit.c[1] + cx * scale, hit.c[2] + cy * scale
+        -- on a pier over the water the road picture has no ground: any spot clear of things, nearest first
+        local free = not solid_at(x, y, d[3], 35)
+        local road_cells = free and (open_ground(x, y) or (ring >= 2 and 20))
+        if road_cells then
+          local sc = road_cells * 1000 + ring * 100 + math.sqrt((x - d[1]) ^ 2 + (y - d[2]) ^ 2) / 100
+          if not score or sc < score then best, score = { x, y, d[3] }, sc end
+        end
+      end
+      if best then break end
+    end
+    if best then
+      print(('door: %s moved out of %s, %.0f,%.0f -> %.0f,%.0f'):format(p.id, hit.label, d[1], d[2], best[1], best[2]))
+      p.door = best; moved_doors = moved_doors + 1
+    else problem(p.id .. ': door inside ' .. hit.label .. ' and no open ground round it') end
+  end
+end
+if moved_doors > 0 then print(('%d doors moved out of props'):format(moved_doors)) end
+-- A spot taken from a room's middle (its source is the room id, 'M1-0901 ...') can land in the furniture: the department
+-- store's 'food' was in the ramen shop's counter seats, and a walk there from the 9F lift found no way (R6-197, 11-10). Such an
+-- anchor moves to the nearest spot clear of the props round it, on its own floor.
+do
+  local moved = 0
+  for _, p in ipairs(places) do
+    for _, an in ipairs(p.anchors or {}) do
+      local q = an.pos
+      local hit = (an.source or ''):match('^%w+%-%d%d%d%d') and q and solid_at(q[1], q[2], q[3], 35)
+      if hit then
+        local best, far
+        for r = 50, 400, 25 do
+          for s = 0, 31 do
+            local t = s / 32 * 2 * math.pi; local x, y = q[1] + math.cos(t) * r, q[2] + math.sin(t) * r
+            if not solid_at(x, y, q[3], 35) then local d = (x - q[1]) ^ 2 + (y - q[2]) ^ 2; if not far or d < far then best, far = { x, y, q[3] }, d end end
+          end
+          if best then break end
+        end
+        if best then
+          print(('anchor: %s %s moved out of %s, %.0f,%.0f -> %.0f,%.0f'):format(p.id, an.name, hit.label, q[1], q[2], best[1], best[2]))
+          an.pos = best; moved = moved + 1
+        else problem(p.id .. ' ' .. an.name .. ': inside ' .. hit.label .. ' and no clear spot within 4 m') end
+      end
+    end
+  end
+  if moved > 0 then print(('%d room anchors moved out of props'):format(moved)) end
+end
+-- A shop upstairs in the mall took the street entrance below it for its door, the same spot on every floor; on the 2F, 8F and
+-- 10F that spot is over the atrium, with no floor under it (the game's places_check, 11-09), and a walk to the lingerie
+-- shop, the arcade or the observation cafe ended in the air. Its door is its own spot on its floor nearest that entrance:
+-- an anchor (each stands on the floor, places-v1/anchor-ground.json), not a lift, stair or gate.
+do
+  local shared = {}
+  for _, p in ipairs(places) do
+    local d = p.door
+    if d and #d == 3 and d[3] >= 1450 then local key = ('%.0f,%.0f'):format(d[1], d[2]); shared[key] = (shared[key] or 0) + 1 end
+  end
+  for _, p in ipairs(places) do
+    local d = p.door
+    if d and #d == 3 and d[3] >= 1450 and shared[('%.0f,%.0f'):format(d[1], d[2])] > 1 then
+      local best, far
+      for _, an in ipairs(p.anchors or {}) do
+        local name = an.name or ''
+        if not (name:match('^lift') or name:match('^stair') or name:match('^gate')) and math.abs(an.pos[3] - d[3]) < 100 then
+          local dist = (an.pos[1] - d[1]) ^ 2 + (an.pos[2] - d[2]) ^ 2
+          if not far or dist < far then best, far = an, dist end
+        end
+      end
+      if best then
+        print(('door: %s upstairs, from the entrance below to its %s, %.0f,%.0f -> %.0f,%.0f'):format(p.id, best.name, d[1], d[2], best.pos[1], best.pos[2]))
+        p.door = { best.pos[1], best.pos[2], d[3] }
+      end
+    end
+  end
+end
+
+-- A shop turned to face east (its ground floor S##_F01 at yaw -90) had its door on its back wall: the street entrance was
+-- read in the building's own frame without its turn, so it came out mirrored. The front wall is cut open and rebuilt with
+-- the door (shop-refits-v1), the back is whole, and a walk to the karaoke, the bowling alley, the nursery and eight more
+-- ended against the back wall (the game's places_check, 11-09). A door on a shop's back half moves to the same spot on its
+-- front: mirrored through the building's middle. The street the shops face is between the rows, so the front is +X at yaw
+-- -90 and -X at yaw 90.
+do
+  local f = io.open(ACTORS, 'rb')
+  if f then
+    local floors = {}
+    for _, a in ipairs(json.decode(f:read('a')).actors) do if (a.label or ''):match('^S%d+_F01$') and a.c and a.e then floors[#floors + 1] = a end end
+    f:close()
+    local mirrored = 0
+    for _, p in ipairs(places) do
+      local d = p.door
+      -- door_measured: chosen and walked through (build_street_city_places.lua ENTRY), not a mirrored entry-A
+      if d and #d == 3 and d[3] < 1450 and not p.door_measured then
+        for _, a in ipairs(floors) do
+          if math.abs(d[1] - a.c[1]) <= a.e[1] + 20 and math.abs(d[2] - a.c[2]) <= a.e[2] + 20 then
+            local t = math.rad(a.yaw or 0)
+            local fx, fy = -math.sin(t), math.cos(t)
+            local along = (d[1] - a.c[1]) * fx + (d[2] - a.c[2]) * fy
+            local depth = math.abs(fx) > .5 and a.e[1] or a.e[2]
+            if along < -(depth - 100) then
+              local x, y = 2 * a.c[1] - d[1], 2 * a.c[2] - d[2]
+              print(('door: %s on the back of %s, %.0f,%.0f -> %.0f,%.0f'):format(p.id, a.label, d[1], d[2], x, y))
+              p.door = { x, y, d[3] }; mirrored = mirrored + 1
+            end
+            break
+          end
+        end
+      end
+    end
+    if mirrored > 0 then print(('%d shop doors moved from the back wall to the front'):format(mirrored)) end
+  end
+end
+
+-- A gate's spot inside one of its posts: the campus gate's anchor (and door) was the left post's middle, so in the game no
+-- road point could be tied to it, the fence cut the whole campus off the roads (3043 points dropped) and every walk to a
+-- lecture hall, the dorms or the sports ground ended at the fence (the game's places_check, 11-09). The spot is the middle of
+-- the opening between that post and the nearest other post of the same gate.
+do
+  local posts = {}
+  local f = io.open(ACTORS, 'rb')
+  if f then
+    for _, a in ipairs(json.decode(f:read('a')).actors) do
+      if a.c and a.e and (a.label or ''):lower():match('gate') and math.max(a.e[1], a.e[2]) < 500 then posts[#posts + 1] = a end
+    end
+    f:close()
+  end
+  local function inside(a, x, y, z) return math.abs(x - a.c[1]) <= a.e[1] and math.abs(y - a.c[2]) <= a.e[2] and z + 100 >= a.c[3] - a.e[3] and z <= a.c[3] + a.e[3] end
+  local function opening(x, y, z)
+    for _, a in ipairs(posts) do
+      if inside(a, x, y, z) then
+        local other, far
+        for _, b in ipairs(posts) do
+          local d = (b.c[1] - a.c[1]) ^ 2 + (b.c[2] - a.c[2]) ^ 2
+          if b ~= a and d < 1000 ^ 2 and math.abs(b.c[3] - a.c[3]) < 300 and (not far or d < far) then other, far = b, d end
+        end
+        if other then
+          -- across the axis the two posts stand apart on, the middle between their inner faces
+          local gx, gy = (a.c[1] + other.c[1]) / 2, (a.c[2] + other.c[2]) / 2
+          if math.abs(other.c[1] - a.c[1]) >= math.abs(other.c[2] - a.c[2]) then
+            local lo, hi = a, other; if lo.c[1] > hi.c[1] then lo, hi = hi, lo end
+            gx = ((lo.c[1] + lo.e[1]) + (hi.c[1] - hi.e[1])) / 2
+          else
+            local lo, hi = a, other; if lo.c[2] > hi.c[2] then lo, hi = hi, lo end
+            gy = ((lo.c[2] + lo.e[2]) + (hi.c[2] - hi.e[2])) / 2
+          end
+          return gx, gy, a.label
+        end
+      end
+    end
+  end
+  for _, p in ipairs(places) do
+    for _, an in ipairs(p.anchors or {}) do
+      if (an.name or ''):match('^gate') then
+        local x, y, post = opening(an.pos[1], an.pos[2], an.pos[3])
+        if x then
+          local d = p.door
+          if d and math.abs(d[1] - an.pos[1]) < 1 and math.abs(d[2] - an.pos[2]) < 1 then p.door = { x, y, d[3] } end
+          print(('gate: %s %s out of %s, %.0f,%.0f -> %.0f,%.0f'):format(p.id, an.name, post, an.pos[1], an.pos[2], x, y))
+          an.pos = { x, y, an.pos[3] }
+        end
+      end
+    end
+  end
+end
+
 for _, p in ipairs(places) do
   if not p.door or #p.door ~= 3 then problem(p.id .. ': no door') end
   if not p.rooms or #p.rooms == 0 then problem(p.id .. ': no rooms') end
@@ -97,6 +314,32 @@ end
 local LATTICE, GROUND_Z = 3, 1200 -- 6 m: fine enough to find the gates in the fences
 local raster = json.decode(read(ROOT .. 'output/street-social-city-production/world-edge-v1/road-raster.json'))
 local rows, step, ox, oy = raster.rows, raster.step_cm, raster.origin[1], raster.origin[2]
+-- The campus fence's five gates are 'o' in the picture, the fence round them too, so no link went through a gate: the parts
+-- inside were tied on across the fence, the game dropped those ties, and the whole campus (3043 points) was cut off the roads
+-- (11-09). Each gate's passage (flat-campus-v1/install.json: centre, yaw facing out, clear width) is opened, 12 m each way.
+do
+  local f = io.open(ROOT .. 'output/street-social-city-production/flat-campus-v1/install.json', 'rb')
+  if f then
+    local gates = ((json.decode(f:read('a')).enclosure or {}).gates) or {}; f:close()
+    local rows_ = {}
+    for i, row in ipairs(rows) do rows_[i] = {} for k = 1, #row do rows_[i][k] = row:sub(k, k) end end
+    for _, g in ipairs(gates) do
+      local yaw = math.rad(g.yaw or 0)
+      local nx, ny = math.cos(yaw), math.sin(yaw)
+      local half = (g.clear_width_cm or g.width or 800) / 2 - 100
+      for along = -1200, 1200, step / 2 do
+        for across = -half, half, step / 2 do
+          local x, y = g.center[1] + nx * along - ny * across, g.center[2] + ny * along + nx * across
+          local k, i = math.floor((x - ox) / step + 1.5), math.floor((y - oy) / step + 1.5)
+          if rows_[i] and rows_[i][k] == 'o' then rows_[i][k] = 'g' end
+        end
+      end
+      print(('road graph: opened the %s gate at %.0f,%.0f'):format(g.id, g.center[1], g.center[2]))
+    end
+    rows = {}
+    for i, cells in ipairs(rows_) do rows[i] = table.concat(cells) end
+  else problem('no flat-campus-v1/install.json: the campus gates are not opened') end
+end
 local function road(k, i) local row = rows[i]; if not row then return false end; local c = row:sub(k, k); return c == 'r' or c == 'g' end
 local grid, nodes = {}, {}
 for i = 1, #rows, LATTICE do

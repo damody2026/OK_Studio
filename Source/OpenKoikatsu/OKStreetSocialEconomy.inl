@@ -67,6 +67,10 @@ FString AOKStreetSocialScene::ShopPlaceHere() const{
  if(const auto* F=S.Facility!=INDEX_NONE?OKStreetFacilityActivity(S.Facility):nullptr)
   if(S.Catalog.Items.ContainsByPredicate([&](const FOKStreetCatalogItem& I){return I.Place==F->Place;}))return F->Place;
  for(const auto& Place:OKStreetPlaces())if(OKStreetInsidePlace(Place,S.Male)&&S.Catalog.Items.ContainsByPredicate([&](const FOKStreetCatalogItem& I){return I.Place==Place.Id;}))return Place.Id;
+ // At an open-air stall's own tables and seats, set out in front of its counter outside its box: still the stall. At the
+ // beach house's table 三月七 and he ordered two plates of fried noodles that "are not on the menu here" (R6-188d).
+ for(const auto& Place:OKStreetPlaces())if(Place.Outdoor&&S.Catalog.Items.ContainsByPredicate([&](const FOKStreetCatalogItem& I){return I.Place==Place.Id;}))
+  for(const auto& A:Place.Anchors)if((A.Name.StartsWith(TEXT("table"))||A.Name.StartsWith(TEXT("seat")))&&FVector::Dist2D(A.Position,S.Male)<150.f&&FMath::Abs(A.Position.Z-S.Male.Z)<150.f)return Place.Id;
  // Just outside the shop where their table is (she came out to the doorstep to meet him, her cocoa already served
  // inside): still that shop. His latte and panini were "not sold here" and she made up a kitchen out of milk (R6-139).
  if(!S.Table.IsEmpty()&&!S.MealPlace.IsEmpty())if(const FOKStreetPlace* P=OKStreetFindPlace(S.MealPlace))
@@ -751,6 +755,16 @@ void AOKStreetSocialScene::FinishCheckout(const FString& Option,int32 Her,const 
  if(S.Cart.IsEmpty())return;
  const bool WithHer=Her!=INDEX_NONE&&S.Manifest.Characters.IsValidIndex(Her);const FString Id=WithHer?OKStreetStableId(S.Manifest.Characters[Her]):FString();
  const FString PlaceName=OKStreetFindPlace(S.ShopPlace)?FString(OKStreetFindPlace(S.ShopPlace)->Name):S.ShopPlace;
+ // Last orders: something to eat or drink at a place closing within the quarter of an hour a meal there is given
+ // (StartActivity) is not taken. 三月七 took his chicken rice at 18:59 in the cafeteria closing at 19:00; she heard the
+ // meal there had failed, then that the place closed, then that it was paid (so "open again?"), and then it was served (R6-174).
+ {FString Why;const bool Food=S.Cart.ContainsByPredicate([&S](const FOKStreetCartLine& L){const auto* I=S.Catalog.Find(L.ItemId);return I&&I->Consumable&&(I->IsDrink()||I->Effects.Contains(TEXT("satiety")));});
+  if(Food&&!S.ShopPlace.IsEmpty()&&PlaceClosedAt(S.ShopPlace,StreetNow()+FTimespan::FromMinutes(15),Why)){
+   UE_LOG(LogTemp,Display,TEXT("Street checkout: refused, %s closes within 15 minutes (%s); %d lines dropped"),*S.ShopPlace,*Why,S.Cart.Num());
+   S.Cart.Reset();S.OrderDroppedMinute=OKStreetMindNow(S);
+   S.FreeTalkNotice=OKMsg(TEXT("ui.economy.last_order_notice"),{{TEXT("place_name"),*PlaceName}});
+   if(WithHer)S.TellHer.Add(OKMsg(TEXT("ui.economy.last_order_note"),{{TEXT("place_name"),*PlaceName}}));
+   RefreshUI();return;}}
  auto Request=WithHer?OKRulesHeroineRequest(S,TEXT("checkout"),Id):OKRulesRequest(TEXT("checkout"));
  Request->SetStringField(TEXT("option"),Option);Request->SetNumberField(TEXT("service"),S.Catalog.Places.Contains(S.ShopPlace)?S.Catalog.Places[S.ShopPlace].Service:0);
  Request->SetNumberField(TEXT("player_cash"),double(S.Store.PlayerCash));Request->SetStringField(TEXT("place"),S.ShopPlace);Request->SetStringField(TEXT("place_name"),PlaceName);
@@ -894,15 +908,23 @@ void AOKStreetSocialScene::StartLoan(int32 Amount){
  // A loan to her already on offer (his words and the button for the same money): one, not two (as StartGift).
  if(S.Choices.ContainsByPredicate([Her](const FOKStreetPendingChoice& C){return C.Kind==TEXT("loan")&&C.Heroine==Her;})){UE_LOG(LogTemp,Display,TEXT("Street loan: already offered to actor %d"),Her);return;}
  TWeakObjectPtr<AOKStreetSocialScene> Weak(this);
+ // She is told he holds the money out to her and answers it in her next turn, as with a gift: the button alone moved the
+ // money without a word to her, and 貞德 went on asking why he said nothing (he pressed it twice and lent twice).
+ const FString Held=OKMsg(TEXT("ui.economy.loan_held_out_note"),{{TEXT("amount"),Amount},{TEXT("choice_id"),FString::Printf(TEXT("c%d"),S.NextChoice)}});
  OpenChoice(Her,TEXT("loan"),OKMsg(TEXT("ui.economy.loan_her_button"), {{TEXT("amount"), Amount}}),{TEXT("accept"),TEXT("decline")},Offer->GetStringField(TEXT("lean")),float(Offer->GetNumberField(TEXT("insist"))),15,
-  [Weak,Her,Amount](const FString& Option){if(!Weak.IsValid())return;auto& L=*Weak->State;
+  [Weak,Her,Amount,Held](const FString& Option){if(!Weak.IsValid())return;auto& L=*Weak->State;
+   // Settled by his button before she answered: what happened, in place of the offer she has not heard yet.
+   const bool Unheard=L.TellHer.Remove(Held)>0;const bool HerWord=L.ChoiceByHerReply;
    if(Option!=TEXT("accept")){L.FreeTalkNotice=OKT(TEXT("ui.economy.she_declined"));Weak->RefreshUI();return;}
    if(L.Store.PlayerCash<Amount)return;
    auto Settle=OKRulesHeroineRequest(L,TEXT("loan_settle"),OKStreetStableId(L.Manifest.Characters[Her]));Settle->SetNumberField(TEXT("amount"),Amount);Settle->SetStringField(TEXT("name"),L.Manifest.Characters[Her].Name);
    const TSharedPtr<FJsonObject> Answer=OKRulesEval(L,Settle);if(!Answer)return;
    auto Candidate=L.Store;Weak->ApplyRulesEffects(Candidate,*Answer);
-   if(Weak->CommitStore(MoveTemp(Candidate))){Weak->FlushRulesEffects();L.FreeTalkNotice=OKT(TEXT("ui.economy.she_accepted_loan_promise"));}
+   if(Weak->CommitStore(MoveTemp(Candidate))){Weak->FlushRulesEffects();L.FreeTalkNotice=OKT(TEXT("ui.economy.she_accepted_loan_promise"));
+    if((Unheard||!HerWord)&&Weak->FreeTalkPartner()==Her)L.TellHer.Add(OKMsg(TEXT("ui.scene.game_fact_note"),{{TEXT("fact"),OKMsg(TEXT("ui.economy.loan_taken_fact"),{{TEXT("amount"),Amount}})}}));
+    UE_LOG(LogTemp,Display,TEXT("Street loan: actor %d took %d (%s)"),Her,Amount,HerWord?TEXT("her answer"):TEXT("his button"));}
    Weak->RefreshUI();});
+ S.TellHer.Add(Held);
  S.FreeTalkNotice=OKMsg(TEXT("ui.economy.loan_ask_pending"), {{TEXT("amount"), Amount}});
  RefreshUI();
 }

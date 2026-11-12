@@ -147,6 +147,7 @@ struct FOKStreetPlace {
  TArray<FBox> Rooms; // world, from the model
  TArray<int32> RoomLevels; // floor of each room (1 = ground), from the rooms' heights
  TArray<FOKStreetModelAnchor> Anchors; // world positions and yaw
+ bool Outdoor = false; // the city's data: open ground (a park, a beach) rather than a building entered by its door
 };
 
 // The floor (1-based) of the place's room the point stands in, or 0 when outside. 3D: an upper floor's room
@@ -398,14 +399,53 @@ inline void OKStreetCityCheckRoads(UWorld* World) {
  FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetCityRoads), false);
  int32 Dropped = 0;
  if (!World->GetWorldPartition()) {
- for (FVector& Node : City.Nodes) { FHitResult Hit; if (World->LineTraceSingleByChannel(Hit, Node + FVector(0, 0, 400), Node - FVector(0, 0, 600), ECC_WorldStatic, Query)) Node.Z = Hit.ImpactPoint.Z; }
+ // The ground at the point's own height first (the picture puts every point at 1200): traced from 4 m up, the first thing
+ // hit was a wall's or a planter's top beside the road, points stood 1.8 m up on them, and a walk along that road was
+ // stepped into the wall at every point, 20 s each (R6-180). From 4 m up only where nothing is under the point's height
+ // (a hill).
+ for (FVector& Node : City.Nodes) { FHitResult Hit;
+  if (World->LineTraceSingleByChannel(Hit, Node + FVector(0, 0, 60), Node - FVector(0, 0, 600), ECC_WorldStatic, Query) || World->LineTraceSingleByChannel(Hit, Node + FVector(0, 0, 400), Node - FVector(0, 0, 600), ECC_WorldStatic, Query)) Node.Z = Hit.ImpactPoint.Z; }
  for (int32 A = 0; A < City.Nodes.Num(); ++A) for (int32 I = City.Links[A].Num() - 1; I >= 0; --I) {
   const int32 B = City.Links[A][I];
   if (B > A && !OKStreetCityClear(World, City.Nodes[A], City.Nodes[B])) { City.Links[A].RemoveAt(I); City.Links[B].Remove(A); ++Dropped; }
  }
+ const int32 Lattice = City.Nodes.Num();
+ // A door with no floor under it or inside something (the ramen shop's on its 9F counter seat, the Christmas tree's in the
+ // campus fence, the north restroom's; places_check 11-09): the data's doors come from the models' anchors and the picture
+ // of the roads, which know nothing solid. Such a door moves to the nearest spot round it with a floor at its height and
+ // room for a body, one in sight of a road point first (outdoors), so a walk there ends on its feet beside it.
+ {
+  auto Fine = [&](FVector& At) {
+   FHitResult Hit;
+   if (!World->LineTraceSingleByChannel(Hit, At + FVector(0, 0, 70), At - FVector(0, 0, 120), ECC_WorldStatic, Query) || Hit.bStartPenetrating || Hit.ImpactPoint.Z > At.Z + 50.f) return false;
+   const float Ground = float(Hit.ImpactPoint.Z);
+   if (World->OverlapAnyTestByChannel(FVector(At.X, At.Y, Ground + 105.f), FQuat::Identity, ECC_WorldStatic, FCollisionShape::MakeCapsule(25.f, 60.f), Query)) return false;
+   At.Z = Ground; return true; };
+  auto SeesRoad = [&](const FVector& At) {
+   for (int32 N = 0; N < Lattice; ++N) if (FVector::DistSquared2D(City.Nodes[N], At) < FMath::Square(1500.f) && FMath::Abs(City.Nodes[N].Z - At.Z) < 200.f && OKStreetCityClear(World, At, City.Nodes[N])) return true;
+   return false; };
+  int32 Moved = 0;
+  for (FOKStreetPlace& P : const_cast<TArray<FOKStreetPlace>&>(OKStreetPlaces())) {
+   FVector Here = P.Door; if (Fine(Here)) continue;
+   FVector Best = P.Door; double BestScore = TNumericLimits<double>::Max();
+   for (float R = 40.f; R <= 400.f; R += 30.f) {
+    for (int32 K = 0; K < 24; ++K) {
+     const float T = 2.f * PI * K / 24.f; FVector At = P.Door + FVector(FMath::Cos(T) * R, FMath::Sin(T) * R, 0);
+     if (!Fine(At)) continue;
+     // Open air, the side the place is on: the Christmas tree's door went over the campus fence, 40 cm nearer than the
+     // street side, and every walk to the tree went round by the gate.
+     FVector Middle = P.Door; if (P.Outdoor && !P.Rooms.IsEmpty()) Middle = P.Rooms[0].GetCenter();
+     const double Score = R + (P.Door.Z < 1450.f && !SeesRoad(At) ? 2000.0 : 0.0) + (P.Outdoor ? FVector::Dist2D(At, Middle) * .5 : 0.0);
+     if (Score < BestScore) { BestScore = Score; Best = At; }
+    }
+   }
+   if (BestScore < TNumericLimits<double>::Max()) { UE_LOG(LogTemp, Display, TEXT("Street city: door of %s inside something or over no floor, %s -> %s"), P.Id, *P.Door.ToCompactString(), *Best.ToCompactString()); P.Door = Best; ++Moved; }
+   else UE_LOG(LogTemp, Warning, TEXT("Street city: door of %s inside something or over no floor, and no spot round it"), P.Id);
+  }
+  UE_LOG(LogTemp, Display, TEXT("Street city: %d doors moved onto open floor"), Moved);
+ }
  // Every door is on the graph too, tied to the points it can reach: the picture of the roads knows no doors either.
  // So is every gate: a door on either side of a fence is how the two sides meet.
- const int32 Lattice = City.Nodes.Num();
  auto Tie = [&](const FVector& At) {
   const int32 Door = City.Nodes.Add(At); City.Links.AddDefaulted();
   for (int32 N = 0; N < Lattice; ++N) if (FVector::DistSquared2D(City.Nodes[N], At) < FMath::Square(1500.f) && FMath::Abs(City.Nodes[N].Z - At.Z) < 200.f && OKStreetCityClear(World, At, City.Nodes[N])) { City.Links[Door].Add(N); City.Links[N].Add(Door); } };
@@ -493,6 +533,7 @@ inline void OKStreetApplyCityPlaces(TArray<FOKStreetPlace>& Out) {
   else { P.Id = Keep(Id); P.Name = Keep(Name); P.About = P.Name; }
   P.Parts.Reset(); P.Model.Reset(); P.Rooms.Reset(); P.RoomLevels.Reset(); P.Anchors.Reset();
   P.Door = OKStreetJsonVector(*O, TEXT("door"));
+  { bool Open = false; P.Outdoor = O->TryGetBoolField(TEXT("outdoor"), Open) && Open; }
   for (const auto& R : O->GetArrayField(TEXT("rooms"))) {
    const TSharedPtr<FJsonObject> Room = R->AsObject();
    P.Rooms.Add(FBox(OKStreetJsonVector(*Room, TEXT("min")), OKStreetJsonVector(*Room, TEXT("max"))));
@@ -505,7 +546,9 @@ inline void OKStreetApplyCityPlaces(TArray<FOKStreetPlace>& Out) {
   }
   Next.Add(MoveTemp(P));
  }
- auto Volume = [](const FOKStreetPlace& P) { double V = 0; for (const FBox& R : P.Rooms) V += R.GetVolume(); return V; };
+ // The smaller place first, so a spot in one inside another is the inner one's: by the ground it covers, not its volume
+ // (the BBQ area's box is 37 m tall over a corner of the playground, and the playground took every spot of it).
+ auto Volume = [](const FOKStreetPlace& P) { double V = 0; for (const FBox& R : P.Rooms) V += (R.Max.X - R.Min.X) * (R.Max.Y - R.Min.Y); return V; };
  Next.StableSort([&](const FOKStreetPlace& A, const FOKStreetPlace& B) {
   const double VA = Volume(A), VB = Volume(B);
   if (!FMath::IsNearlyEqual(VA, VB, 1.0)) return VA < VB;
@@ -515,7 +558,7 @@ inline void OKStreetApplyCityPlaces(TArray<FOKStreetPlace>& Out) {
 }
 
 inline const TArray<FOKStreetPlace>& OKStreetPlaces() {
- static const TArray<FOKStreetPlace> All = [] {
+ static TArray<FOKStreetPlace> All = [] { // not const: OKStreetCityCheckRoads moves a door the map shows to be inside something
   using M = EOKStreetMaterial;
   TArray<FOKStreetPlace> Out;
   auto Make = [&Out](const TCHAR* Id, const TCHAR* Name, const TCHAR* About) -> FOKStreetPlace& {

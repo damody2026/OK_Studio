@@ -31,6 +31,19 @@ public:
  void FinClickDone(const FString& MessageBefore);
 private:
  TSharedPtr<FOKStreetSceneState> State;
+ // Settings menu (OKStreetSocialSettings.inl): the API key boxes (UMG, so ok-game-mcp ui_set can fill them).
+ UPROPERTY(Transient) TObjectPtr<class UEditableTextBox> SettingsDeepSeekBox;
+ UPROPERTY(Transient) TObjectPtr<class UEditableTextBox> SettingsAliyunBox;
+ FString PlayerSettingsPath() const; // player.json beside the save: the player's settings, keys included
+ void LoadPlayerSettings();
+ void SetVoiceMode(const FString& Mode); // builtin | tts | cloud | off
+ void SetAsrMode(const FString& Mode); // local | cloud
+ void SaveApiKeys();
+ void PrepareCloudVoices(); // ok-tts /voice/prepare: design this world's cloud voices ahead (OKStreetSocialVoice.inl)
+ void PushCloudSetting(bool Voice); // tell ok-tts (Voice) or ok-asr whether to use the cloud now
+ void ToggleSettingsMenu();
+ void RebuildSettingsPanel();
+ FString VoiceModeLabel(const FString& Mode) const;
  // Conversations as galgame scenes (OKStreetSocialGalgame.inl).
  TSharedPtr<struct FOKStreetGalgame> Galgame;
  void TickGalgame(float Dt);
@@ -104,7 +117,7 @@ private:
  bool SeatedWith(int32 Girl) const;
  bool ContactLover(int32 Character) const;
  TArray<FVector> ContactRoute(const FVector& From,const FVector& To) const;
- TArray<FVector> CityRoute(const FVector& From,const FVector& To) const;
+ TArray<FVector> CityRoute(const FVector& From,const FVector& To,float NearCm=0) const; // NearCm: GridRoute's
  void SelectContact(int32 Character);
  void NavigateGirl(int32 Character);
  void NavigatePoint(const FVector& Goal,const FString& Name);
@@ -201,6 +214,8 @@ private:
  void SetRenderStyle(const FString& Style);
  bool ApplyRenderStyleSetting(const FString& Style); // the cvars only (startup, from player.json)
  FString RenderStyleLabel(const FString& Style) const;
+ // Lit / unlit characters (player.json "lit"; OKLitSwap.h), live.
+ void SetLit(bool bOn);
  // Regions (OKStreetSocialLocale.inl; the rules decide every amount, ok-rules region.rs): an amount of the scene's own
  // in the save's region (kind: cash | wage | salary | rent | property | goods | price, or a [fixed] key), the save moved
  // to another region (all its money converted by the rules), and finance's yuan wallet amounts crossing to the region.
@@ -220,6 +235,13 @@ private:
  void CloseSaveMenu();
  void TickSaves();
  TSharedRef<class SWidget> BuildSaveMenu();
+ // The roster menu (OKStreetSocialRoster.inl): who lives in this world, cards dropped or copied into the heroine folder
+ // (original KKS cards made into OK cards), and this save's own settings and memories for each heroine.
+ void OpenRoster();void CloseRoster();void RosterRebuild();TSharedRef<class SWidget> BuildRosterPanel();TSharedRef<class SWidget> RosterDropZone();
+ void RosterRun(const FString& Command,const TArray<FString>& Files);void RosterApply();
+ void RosterEditHer(int32 Her,const FString& Tab);void RosterSaveSettings();void RosterSaveMemory();void RosterForgetContext();
+ bool ApplyRosterToManifest(const FString& ManifestPath,FString& Json);void ApplyHeroineSettings();
+ FString RosterLiveDir() const;
  TSharedPtr<FJsonObject> FinWallet(const TCHAR* Dir,const FString& Op,const TSharedPtr<FJsonObject>& Value) const;
  FString CardTableOuting(const FString& Said); // the activity to walk to for cards agreed on outdoors (bluff.rs card_table_place) // the place he names in what he said (social.rs place_named), "" if none // Who (0: him) has one of these (a meal, a drink) on the table, unfinished, or in the cart
  void BuyForGift(const FString& ItemId);void HerBuys(int32 Her,const FString& ItemId);
@@ -522,7 +544,7 @@ private:
  void PhoneSave();
  int32 RemoteKind(int32 Character) const;
  bool PanelConsent(int32 Girl,const FString& Action,bool bNotify=true);
- bool PrivateConsent(int32 Girl);
+ bool PrivateConsent(int32 Girl);bool PrivateConsentAsked(int32 Girl);
  // The heroine interaction module (OKStreetSocialHeroine.inl, OKStreetHeroine.h): every interaction goes through Interact.
  struct FOKHeroineResult Interact(int32 Girl,const FString& ActId,const struct FOKHeroineArgs& Args);
  void HeroineRefuseGate(int32 Girl,const FString& ActId,const class FJsonObject& Answer);
@@ -659,7 +681,7 @@ private:
  // One walking step for him: straight, else sliding along the obstacle; never trapped inside one. Returns From if stuck.
  FVector StreetStep(const FVector& From,const FVector& Direction,float Distance) const;
  // Grid A* over the walkable street at From's floor (lazy 40 cm cells, same clearance as walking). Empty if none.
- TArray<FVector> GridRoute(const FVector& From,const FVector& To) const;
+ TArray<FVector> GridRoute(const FVector& From,const FVector& To,float NearCm=0) const; // NearCm: FOKStreetGridSearch's
  // GridRoute's search a slice at a time (Deadline: FPlatformTime seconds): true once done, the route in its Route.
  bool GridSearchStep(struct FOKStreetGridSearch& G,double Deadline) const;
  // PlaceRoute's waypoint graph (another floor, or no grid way).
@@ -677,6 +699,8 @@ private:
  bool NavCellFree(const FIntPoint& Cell,float Z) const;
  TArray<const struct FOKStreetPlace*> NearbyPlaces(float Radius) const;
  bool BeginOuting(int32 Girl,const FString& ActivityId,FString& Error);
+ bool ActivitySettles(const TCHAR* Anchor) const;
+ void SettleOnFloor(FVector& At,float Yaw,const TCHAR* Why) const;
  // activities.rs: whether an activity may start now (weather, who, what it uses up, once a day); bConsume takes the items.
  bool ActivityCheck(int32 Girl,const FString& ActivityId,FString& Why,bool bConsume,bool bAtEnd=false);
  TSharedRef<FJsonObject> ActivityContext(int32 Girl,const TCHAR* Rule) const;
@@ -684,6 +708,10 @@ private:
  FString ThingsFacts(int32 Character) const; // OKStreetSocialMind.inl: her things and what is lent between them (items.rs)
  void ReturnBorrowed(int32 Her,const FString& ItemId); // OKStreetSocialMind.inl: he gives back what he borrowed from her
  void CancelOuting(const FString& Message);
+ // OKStreetSocialTransit.inl (R6-203): the bus and the taxi for a long walk (ok-rules transit.rs); the quote, its words
+ // for her, and the ride itself (fare, minutes gone by, and the two of them set down where it stops).
+ FString QuoteTransit(int32 Girl,float WalkCm,const FVector& Drop);
+ bool TakeTransit(const FString& Mode,bool HerIdea);
  float StepOuting(float Dt);
  void ArriveOuting();
  bool StartOutingActivity(int32 Girl,const FString& ActivityId,FString& Error);

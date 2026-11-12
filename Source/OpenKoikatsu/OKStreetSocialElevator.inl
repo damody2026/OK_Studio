@@ -41,6 +41,11 @@ void AOKStreetSocialScene::SpawnElevators(){
   }
   // The shaft centre is 1.6 m behind every landing spot.
   E.Centre=Lifts[0]->Position-E.Out[0]*160.f;E.Centre.Z=0;E.Axis=E.Out[0];E.Side=FVector(-E.Axis.Y,E.Axis.X,0);
+  // One car a shaft: two places of the data that are one building (lecture and campus_t2, the same rooms and lift
+  // anchors) got a car each in it, and the other's car standing closed at 2F shut him in at its doors (R6-188h). The
+  // second place uses the first one's (ElevatorOfPlace finds it by the shaft).
+  if(const FOKStreetElevator* Same=S.Elevators.FindByPredicate([&E](const FOKStreetElevator& O){return FVector::Dist2D(O.Centre,E.Centre)<10.f;})){
+   UE_LOG(LogTemp,Display,TEXT("Street elevator: %s shares the shaft of %s"),Place.Id,OKStreetPlaces()[Same->Place].Id);continue;}
   for(int32 F=1;F<Lifts.Num();++F){FVector C=Lifts[F]->Position-E.Out[F]*160.f;C.Z=0;if(FVector::Dist2D(C,E.Centre)>10.f)UE_LOG(LogTemp,Warning,TEXT("Street elevator: %s floor %d shaft at %s, not %s"),Place.Id,F+1,*C.ToCompactString(),*E.Centre.ToCompactString());}
   E.CarZ=E.StopZ[0];
   auto Part=[&](FVector Size,FLinearColor Colour,TArray<FOKStreetLiftPart>& Into,FVector Local){
@@ -103,7 +108,7 @@ void AOKStreetSocialScene::SetLiftDoorBlock(int32 Index,int32 Floor,bool Closed)
  const FBox Box(FVector(Mid.X-Half.X,Mid.Y-Half.Y,E.StopZ[Floor]),FVector(Mid.X+Half.X,Mid.Y+Half.Y,E.StopZ[Floor]+OKLiftDoorHeight+40.f));
  auto& Blocks=OKStreetRuntimeBlocks();
  if(Closed)Blocks.Add(Box);else Blocks.RemoveAll([&Box](const FBox& B){return B.Min.Equals(Box.Min,.5)&&B.Max.Equals(Box.Max,.5);});
- State->NavGrid.Reset();
+ State->NavGrid.Reset();State->NavGround.Reset();
 }
 
 void AOKStreetSocialScene::PlaceElevatorParts(int32 Index){
@@ -296,7 +301,12 @@ float AOKStreetSocialScene::StepLiftRide(float Dt){
 // Is the goal on another floor than him: another height, or upstairs in a building he is not upstairs in (the same
 // height in two buildings is two floors, joined only through the street).
 bool AOKStreetSocialScene::NavNeedsLift(const FVector& Goal) const{
- const auto& S=*State;if(FMath::Abs(Goal.Z-S.Male.Z)>=150.f)return true;
+ const auto& S=*State;
+ // Both out in the open (in no building's rooms, on no roof): the ground's own rise is no floor. From the hill to her in
+ // the flower field, 87 m over grass, was "she is on another floor, no way there" (R6-205).
+ if(OKStreetCityMode()){auto Open=[](const FVector& P){if(OKStreetStairRoof(P))return false;for(const auto& Pl:OKStreetPlaces())if(!Pl.Outdoor&&OKStreetPlaceFloor(Pl,P)!=0)return false;return true;};
+  if(Open(S.Male)&&Open(Goal))return false;}
+ if(FMath::Abs(Goal.Z-S.Male.Z)>=150.f)return true;
  if(!OKStreetUpstairs(S.Male))return false;
  // On a roof: each roof is its own, joined to the others only by its stairs down to the street.
  const FBox* Mine=nullptr;const FBox* Hers=nullptr;

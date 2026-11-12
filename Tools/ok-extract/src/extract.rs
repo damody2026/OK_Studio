@@ -914,11 +914,14 @@ pub(crate) fn extract_session_from_info(
         for m in head_meshes.iter() {
             if m.name.to_ascii_lowercase().contains("face") {
                 eprintln!(
-                    "ok-extract: HEADFACE {} path={} v={} tris={}",
+                    "ok-extract: HEADFACE {} path={} sub={} v={} tris={} material={:?} shader={:?}",
                     m.name,
                     m.path_id,
+                    m.submesh_index,
                     m.positions.len(),
-                    m.indices.len() / 3
+                    m.indices.len() / 3,
+                    m.mat.as_ref().map(|x| x.name.as_str()),
+                    m.mat.as_ref().map(|x| x.shader.as_str())
                 );
             }
         }
@@ -928,7 +931,7 @@ pub(crate) fn extract_session_from_info(
     // id, or falling back to the largest mesh, bound the face texture to
     // `cf_O_eyeline` and never emitted the face. KK_091207's session had no
     // `cf_O_face`; the editor drew that eyeline opaque.
-    let face_mesh = pick_named(&head_meshes, "cf_O_face").cloned().or_else(|| {
+    let face_mesh = crate::unity::pick_face(&head_meshes).cloned().or_else(|| {
         eprintln!(
             "ok-extract: cf_O_face missing from head prefab '{head_main}', using vanilla p_cf_head_00"
         );
@@ -938,7 +941,7 @@ pub(crate) fn extract_session_from_info(
         }
         let parsed = crate::unity::parse_bundle_cached(vb);
         let (ms, _) = parsed.meshes_for_maindata("p_cf_head_00");
-        pick_named(&ms, "cf_O_face").cloned()
+        crate::unity::pick_face(&ms).cloned()
     });
     if let Some(mut mesh) = face_mesh.filter(|_| std::env::var("OK_SKIP_FACE").is_err()) {
         if let Some(mat) = mesh.mat.as_ref() {
@@ -1181,7 +1184,10 @@ pub(crate) fn extract_session_from_info(
         // FBS target references are authoritative, including inactive tears
         // and arbitrarily named mod meshes. Visibility must not remove their
         // controller channels from the session.
-        let fbs_target = head_mouth_patterns.contains_key(&key)
+        // The face renderer's further submeshes (pick_face): drawn with their own materials, like any head detail.
+        let face_submesh = key == "cf_o_face" && mesh.submesh_index > 0;
+        let fbs_target = face_submesh
+            || head_mouth_patterns.contains_key(&key)
             || head_eye_patterns.contains_key(&key)
             || head_eyebrow_patterns.contains_key(&key);
         let shown_gag = studio_eyes.as_ref().is_some_and(|set| crate::eye_set::eye_reference(&mesh.name) >= 3
@@ -1220,6 +1226,12 @@ pub(crate) fn extract_session_from_info(
             if (ln == "cf_ohitomi_l" || ln == "cf_ohitomi_r") {
                 continue;
             }
+        }
+        // Named apart from the face (the renderer treats `cf_O_face` with a skin shader as the face: overlays, normals),
+        // its face expressions still read from the face renderer's blend shapes.
+        if face_submesh {
+            mesh.name = format!("cf_O_face_sub{}", mesh.submesh_index);
+            head_fbs_sources.insert(mesh.name.to_ascii_lowercase(), key.clone());
         }
         let head_key = mesh.name.to_ascii_lowercase();
         if !seen_head.insert(head_key.clone()) || !seen_meshes.insert(head_key) {
@@ -2196,7 +2208,7 @@ pub(crate) fn extract_session_from_info(
         .as_ref()
         .map(|c| {
             (
-                c.shape_body.clone(),
+                c.unpushed_body.clone().unwrap_or_else(|| c.shape_body.clone()),
                 c.shape_face.clone(),
                 c.sex,
                 c.type_bone,
@@ -2205,6 +2217,7 @@ pub(crate) fn extract_session_from_info(
             )
         })
         .unwrap_or_else(|| (Vec::new(), Vec::new(), 0, 0, 0.0, Vec::new()));
+    let pushup = parsed_card.as_ref().and_then(|c| c.pushup);
     let sexfaces_installed = [
         "BepInEx/plugins/KKS_SexFaces.dll",
         "BepInEx/plugins/KK_SexFaces.dll",
@@ -2371,6 +2384,7 @@ pub(crate) fn extract_session_from_info(
         sex,
         type_bone,
         nip_stand_rate: nip,
+        pushup,
         shape_body,
         shape_face,
         abm,
@@ -2392,6 +2406,7 @@ pub(crate) fn extract_session_from_info(
         wardrobe_quick_settle: false,
         hidden_parts: Vec::new(),
         cover_ready: None,
+        acc_cache: Default::default(),
         face_runtime: Default::default(),
         anim_parameters: std::collections::HashMap::new(),
         anim_clock:Default::default(),anim_crossfade:None,anim_layer_crossfades:Default::default(),

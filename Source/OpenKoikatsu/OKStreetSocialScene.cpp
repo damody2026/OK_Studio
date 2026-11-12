@@ -45,6 +45,7 @@
 #include "OKStreetSocialHistory.h"
 #include "OKStreetSocialBluff.h"
 #include "Widgets/Input/SEditableTextBox.h"
+#include "Components/EditableTextBox.h"
 #include "ProceduralMeshComponent.h"
 #include "ProceduralMeshConversion.h"
 #include "MeshDescription.h"
@@ -63,6 +64,7 @@
 #include "Widgets/Layout/SWrapBox.h"
 #include "Widgets/Notifications/SProgressBar.h"
 #include "OKStreetSocialExpression.h"
+#include "OKLitSwap.h"
 #include "OKCrowdRuntimeScene.h"
 #include "OKCrowdRoom.h"
 #include "HighResScreenshot.h"
@@ -85,6 +87,8 @@ static const FVector OKStreetOffstage(0.,0.,-100000.);
 #include "GameFramework/PlayerController.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Components/PointLightComponent.h"
+#include "Engine/PointLight.h"
+#include "Components/RectLightComponent.h"
 #include "InputCoreTypes.h"
 #include "Misc/CommandLine.h"
 #include "Misc/DateTime.h"
@@ -163,6 +167,7 @@ struct FOKStreetCandidateProbeSnapshot {
 // Reusable two-actor reservation/preparation/capture lifecycle. No card-specific resources.
 struct FOKStreetPairSession {
  int32 Partner=INDEX_NONE,Phase=0;
+ bool YawChecked=false; // the way round chosen for room in the city (pair phase 0)
  FString MaleClip,FemaleClip,CapturePath;
  // At a meal: the clip each of the two (0 him, 1 her) plays now and the one asked for (eating while there is something
  // of theirs to eat, else seated idle: she ate an empty table while only he had ordered).
@@ -205,6 +210,7 @@ struct FOKStreetLoverReact {int32 Girl=INDEX_NONE;FString Clip,MaleClip;int32 Ph
 // slice a frame (TickRouteJobs), since a search through cells not yet tested (each a physics overlap) took 20-37 ms.
 struct FOKStreetGridSearch {
  FVector From=FVector::ZeroVector,To=FVector::ZeroVector;float Z=0;FIntPoint Start,Goal,Lo,Hi;int32 Phase=0; // 0 not begun, 1 searching, 3 pulling the string, 2 done
+ float NearCm=0; // the goal closed in: a route to the reached cell nearest it, within this (0: none); his walk to her (R6-208)
  // Pulling: the cells found, the corner kept last (PullI) and the farthest cell still to try from it (PullJ, -1 none yet).
  // One long route's pull took 10 ms in a frame.
  TArray<FIntPoint> Path;int32 PullI=0,PullJ=-1;
@@ -288,7 +294,7 @@ struct FOKStreetSceneState {
  // Heroine profiles from the mind (plan §4.1) and their traits (§4.2a), by stable id.
  TMap<FString,TSharedPtr<FJsonObject>> MindProfiles;
  // Plan §7.1 open choices (checkout, gift, invite...), resolved by chat or menu.
- TArray<FOKStreetPendingChoice> Choices;int32 NextChoice=1;
+ TArray<FOKStreetPendingChoice> Choices;int32 NextChoice=1;bool ChoiceByHerReply=false; /* the choice being resolved is her own answer in her reply, not his button */
  // Plan §8: the catalogue, the order being built, and the shop he stands in.
  FOKStreetCatalog Catalog;TArray<FOKStreetCartLine> Cart;FString ShopPlace;bool ShopOpen=false;
  // Plan §9: what just happened in front of others, per heroine id, told to her on the next turn; last needs tick.
@@ -312,7 +318,7 @@ struct FOKStreetSceneState {
  TWeakObjectPtr<AActor> Rain;TWeakObjectPtr<class UInstancedStaticMeshComponent> RainMesh;TArray<FVector> RainDrops;
  // Plan §12/§13: his look base, this turn's invitation answers, refusals (cooldown and pestering), follow mode,
  // the heroine walking over on her own, and a second sleeper.
- float PlayerLookBase=50.f;TMap<FString,TArray<bool>> InviteStance;TMap<FString,double> InviteRefusedAt;TMap<FString,int32> InviteRefusals;
+ float PlayerLookBase=50.f;TMap<FString,TArray<bool>> InviteStance;TMap<FString,double> InviteRefusedAt;TMap<FString,double> PrivateRefusedAt;int32 PrivateForcedGirl=INDEX_NONE;TMap<FString,int32> InviteRefusals; // PrivateRefusedAt: her last no to being alone with him (PrivateConsent)
  int32 FollowMode=0,LedReplans=0;double LedBlockedSince=0;FVector LedLastPos=FVector::ZeroVector,LedReplanPos=FVector::ZeroVector;float FollowGirlWalk=0;FVector FollowLead=FVector::ZeroVector;bool FollowLeadInit=false;
  TArray<double> ApproachNext;int32 ApproachGirl=INDEX_NONE;TArray<FVector> ApproachPath;double ApproachLimit=90,ApproachStarted=0,ApproachLast=-1e9,ApproachRouteAt=0;bool ApproachInvite=false;bool ApproachAppointment=false,ApproachJoin=false,ApproachSong=false,ApproachPrivate=false;int32 ApproachRetries=0,ApproachWaitLogged=INDEX_NONE;
   // A date called off on the phone (R3-268): who, how he put it (the judge's cancel_grace; -1: hers), the date the
@@ -353,7 +359,7 @@ struct FOKStreetSceneState {
  // NPC idles: when each last moved, how long she has stood still, and whether her current stop was lengthened.
  TMap<int32,int32> IdlePose;TMap<int32,double> LastMovedAt,StillSince;TMap<int32,float> LastWalk,PrevDwell;int32 ProbeStep=-1;double ProbeAt=0;FString ProbeWhy;TArray<TSharedPtr<FJsonValue>> ProbeRows; // OK_STREET_UI_PROBE
  // Campus (OKStreetSocialCampus.inl): upstairs commute targets, studying, stair/office proximity, attendance, exams.
- TMap<int32,FVector> CommuteFinal;bool FreeTalkLogDirty=false;double FreeTalkLogSavedAt=0; /* free-talk-log.json written at most once a second (Tick) */TArray<FIntVector> PendingEncounters; /* met pairs (a, b, overheard) waiting for their turn: one a frame (TickEncounters) */FString EntryPlace;int32 EntryMinutes=0;bool bEntryPlaceKnown=false,bEntrySettled=true;int32 EntryHer=INDEX_NONE; /* the place he is in, minutes in a row, admission asked (PayEntry), the girl with him then */FString EntryHerPlace; /* where EntryHer was last set (R3-267) */bool bAbsentCastChecked=false; /* meetings with heroines not in this cast set aside (SetAsideAbsentMeetings), once the rules are open */TMap<int32,TPair<int64,double>> PendingGiveMoney; /* her act's give_money, waiting for the judge (amount, wall time) */TSet<int32> ReleaseAtDoor; /* walking out of a place to roam the street: let go at its door */bool Studying=false,ShowTranscript=false;int32 StudyMinutes=0,StudyApplied=0,StairKey=-1;TSet<int32> StudiedWith,SeenInClass;int32 HerInvestMinute=-1;TMap<int32,int32> HerStudy;FString OfficeKey,DeptOffice,ClassClosed;TSet<FString> ExamsDone;int64 AcademicMinute=-1;
+ TMap<int32,FVector> CommuteFinal;bool FreeTalkLogDirty=false;double FreeTalkLogSavedAt=0; /* free-talk-log.json written at most once a second (Tick) */TArray<FIntVector> PendingEncounters; /* met pairs (a, b, overheard) waiting for their turn: one a frame (TickEncounters) */FString EntryPlace;int32 EntryMinutes=0;bool bEntryPlaceKnown=false,bEntrySettled=true;int32 EntryHer=INDEX_NONE; /* the place he is in, minutes in a row, admission asked (PayEntry), the girl with him then */FString EntryHerPlace; /* where EntryHer was last set (R3-267) */bool bAbsentCastChecked=false; /* meetings with heroines not in this cast set aside (SetAsideAbsentMeetings), once the rules are open */TMap<int32,TPair<int64,double>> PendingGiveMoney; /* her act's give_money, waiting for the judge (amount, wall time) */TSet<int32> ReleaseAtDoor; /* walking out of a place to roam the street: let go at its door */bool Studying=false,ShowTranscript=false;int32 StudyMinutes=0,StudyApplied=0,StairKey=-1;TSet<int32> StudiedWith,SeenInClass;int32 HerInvestMinute=-1;TMap<int32,int32> HerStudy,ClassMinutes;FString OfficeKey,DeptOffice,ClassClosed;TSet<FString> ExamsDone;int64 AcademicMinute=-1;
  // Bank app, price alerts, net worth chart and the heroines' own accounts (OKStreetSocialBank.inl).
  FString AtmTab=TEXT("cash"),BankAmount=TEXT("1000"),AlertValue;int32 WorthRange=30;TSharedPtr<FOKChartData> WorthChart;TSharedPtr<FJsonObject> FinAlerts,HerAccount;
  bool ShowDebug=!FPlatformMisc::GetEnvironmentVariable(TEXT("OK_STREET_DEV")).IsEmpty(); // the "女角數值" panel (F10)
@@ -370,6 +376,7 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  bool ApproachBlockedNear=false; // she walking over is held up by something within a couple of steps of him: close enough
  int64 ApproachLastMinute=-100000; // game minute the last girl set off to come over to him (TickApproach paces by game time)
  double ApproachBlockedSince=0; // when she walking over to him was last held up (0: walking freely)
+ double ApproachClosestFor=-1;float ApproachClosest=0; // the nearest she has come to him on this walk over (for ApproachStarted)
  int64 OrderDroppedMinute=-100000; // game minute an order was taken back or could not be paid (no implicit menu meal billed then)
  FString FeesDueText; // "pay tuition by 9/27" while the window is open and unpaid (bank.rs bank_daily fees_due)
  int32 FeesDueDay=-1; // the calendar day FeesDueText was worked out for (-1: not yet, e.g. right after loading a save)
@@ -379,6 +386,8 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  FOKStreetBluff Bluff;double ShopArrivalAt=-1000;TSet<FString> PartyMoodChecked;TMap<int32,double> PartyLeaving,PartedAt;TArray<int32> Party,FreeTalkSpeechSpeakers;TArray<FString> PartyEvents,PartyLog;TMap<int32,double> PartyGapRef,PartyGapAt;double ManualMoveAt=-100;bool ManualReplan=false;bool UiDirty=false;const char* UiDirtyFile="";uint32 UiDirtyLine=0;double UiShopCheckAt=0;FString UiShopKey;FString PlayerAskedText;FString LastPlayerSaid;double ApproachBlockLogAt=0;int32 CompanionGapFor=INDEX_NONE;double CompanionGapRef=0,CompanionGapRefAt=0;double FaceOffSince=0,FaceSetYaw=0,FaceLogAt=0;int32 HeadLookGirl=INDEX_NONE;TArray<FOKStreetDish> Table;int32 ServeBatch=0;FString MealPlace;double MealAwayAt=0,MealBookAt=0;bool StopEating=false,FullTold=false;TArray<FString> TellHer;int32 AutoPickTried=INDEX_NONE;bool FreeTalkUserClosed=false;double FreeTalkLeftAt=0;FString RetryAction;int32 RetryGirl=INDEX_NONE;double RetryUntil=0;FString ThenAction;int32 ThenGirl=INDEX_NONE;int64 ThenUntil=0,ThenStayMinutes=0,ThenReadyAt=0;TSet<int32> ArriveAfterLift;int32 FarewellAfterMeal=INDEX_NONE;double FarewellAfterMealAt=0;double TableClearedAt=-1;bool FarewellPending=false,FarewellAsked=false,FarewellFromTalk=false;double FarewellAt=0,FarewellVoiceAt=0,PlaceClosingAt=0;FString ClosedNoticePlace;double DecisionShotAt=0;FString DecisionShotTag;int32 DecisionShots=0;FString ShopArrivalPlace,ShopSeenPlace;bool ShopEnteredWith=false;TArray<FOKStreetPendingServe> Serves;double OrderNoticeDue=0;FString OrderNoticeSig;FString TraceSig;double TraceAt=0;FVector TracePos=FVector::ZeroVector;int32 TraceGirl=INDEX_NONE;double StrayPoseAt=0;TMap<int32,int32> StrayPose; float RightScrollOffset=0;FString FreeTalkHeard; bool AppointmentsOpen=false; // the right panel's list of appointments to cancel
  int32 PayAgreedWith=INDEX_NONE;FString PayAgreedHow,PayAgreedShop;int64 PayAgreedAt=0; // who pays, as the AI read what they settled (her reply's payer, the judge's)
  TMap<int32,double> ChatOrderAwaitsJudge; // her reply's order, billed once the judge says who pays (wall time it waits from; R4-3)
+ TMap<int32,TPair<int64,FString>> HerUnbooked; // a meeting with her not booked (closed then), when, at which place: the next plan is a new one
+ TMap<int32,FString> HerNoteLine; // her words on a game note (no judge ran on them), for the judge of his next line (R6-187)
  TArray<FString> SaidToHer;int32 SaidToHerWith=INDEX_NONE; // his last lines to her in this conversation: "I'll treat you" said on the way still counts at the table
  // She asked to borrow before he offered (her act skipped): his next line handing it over makes the loan.
  int32 LendAskGirl=INDEX_NONE;int32 LendAskAmount=0;int64 LendAskMinute=-100000;
@@ -390,7 +399,7 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  bool LookReloadPending=false;int32 LookGirl=INDEX_NONE; // her clothes, face or hair changed: the street reloads as soon as nobody is with him, and she stands beside him when it is back (TickAppointments)
  double FreeTalkLiveResyncAt=0;bool ControlMicIgnored=false; // control channel: what the room microphone hears is not his (a tester talking nearby)
  bool FreeTalkMicPausedClock=false,FreeTalkMicOpen=false,FreeTalkLiveReady=false,FreeTalkLiveStarting=false,FreeTalkLeavePending=false;double FreeTalkSilenceSince=0,FreeTalkNudgeAt=0,FreeTalkLiveTickAt=0;int32 FreeTalkSilencePenalties=0;float FreeTalkSilenceScale=1;int32 LiveTestPhase=-1,LiveTestNudges=0,LiveTestPenalties=0;float LiveTestFavor=0;bool LiveTestLeft=false,LiveTestInterrupted=false,LiveTestHerReply=false;double LiveTestAt=0;FString LiveTestWav;double FreeTalkLiveRetryAt=0;int32 FreeTalkLivePollFails=0;float FreeTalkMicLevel=0;FString FreeTalkMic;TArray<FString> FreeTalkMics;
- FString OutingActivity,OutingPlace;TArray<FVector> OutingRoute;int32 OutingStep=0;double OutingProgressAt=0;bool OutingWaitDoor=false;bool OutingRun=false;FString StrollActivity;int64 StrollStartMinute=0;bool QuietTalk=false;TArray<TWeakObjectPtr<AActor>> PlaceActors;TArray<TWeakObjectPtr<ADirectionalLight>> PlaceFills;float NextPairYaw=0;FString NextPairFemaleClip,NextPairMaleClip;int32 SoloGirl=INDEX_NONE,SoloPhase=0,SoloMinutes=0;double SoloAt=0;int64 SoloStartMinute=0;FVector SoloSpot=FVector::ZeroVector;float SoloYaw=0;FString SoloFemale,SoloMale,SoloWhat,SoloId;bool SleepPaired=false;int32 SleepPhase=0,SleepGirl=INDEX_NONE;double SleepAt=0;FVector SleepBed=FVector::ZeroVector,SleepGirlBed=FVector::ZeroVector;float SleepYaw=0,SleepGirlYaw=0;FString SleepPlace;int32 RestroomGirl=INDEX_NONE;double RestroomUntil=0;FString RestroomPlace;double RestroomBlockedAt=0;struct FPlaceLayers {int32 Place=INDEX_NONE;TWeakObjectPtr<UPrimitiveComponent> Roof;TMap<int32,TWeakObjectPtr<UPrimitiveComponent>> Levels;};TArray<FPlaceLayers> PlaceRoofs;FString PlaceTourDir;int32 PlaceTourIndex=-1;double PlaceTourAt=0;bool PlaceTourShot=false;TMap<int32,FVector> CommuteShown;
+ FString OutingActivity,OutingPlace;TArray<FVector> OutingRoute;int32 OutingStep=0;TSharedPtr<FJsonObject> TransitQuote;int32 TransitFor=INDEX_NONE;FVector TransitDrop=FVector::ZeroVector; /* the bus or taxi offered for this walk (OKStreetSocialTransit.inl) */double OutingProgressAt=0;bool OutingWaitDoor=false;bool OutingRun=false;FString StrollActivity;int64 StrollStartMinute=0;bool QuietTalk=false;TArray<TWeakObjectPtr<AActor>> PlaceActors;TArray<TWeakObjectPtr<ADirectionalLight>> PlaceFills;float NextPairYaw=0;FString NextPairFemaleClip,NextPairMaleClip;int32 SoloGirl=INDEX_NONE,SoloPhase=0,SoloMinutes=0;double SoloAt=0;int64 SoloStartMinute=0;FVector SoloSpot=FVector::ZeroVector,SoloHerOffset=FVector::ZeroVector;float SoloYaw=0;FString SoloFemale,SoloMale,SoloWhat,SoloId;bool SleepPaired=false;int32 SleepPhase=0,SleepGirl=INDEX_NONE;double SleepAt=0;FVector SleepBed=FVector::ZeroVector,SleepGirlBed=FVector::ZeroVector;float SleepYaw=0,SleepGirlYaw=0;FString SleepPlace;int32 RestroomGirl=INDEX_NONE;double RestroomUntil=0;FString RestroomPlace;double RestroomBlockedAt=0;struct FPlaceLayers {int32 Place=INDEX_NONE;TWeakObjectPtr<UPrimitiveComponent> Roof;TMap<int32,TWeakObjectPtr<UPrimitiveComponent>> Levels;};TArray<FPlaceLayers> PlaceRoofs;FString PlaceTourDir;int32 PlaceTourIndex=-1;double PlaceTourAt=0;bool PlaceTourShot=false;TMap<int32,FVector> CommuteShown;
  TArray<FString> FreeTalkSpeechLines,FreeTalkSpeechPaths,FreeTalkReplayParts;TArray<uint8> FreeTalkSpeechReady,FreeTalkSpeechStreamed;TArray<TSharedPtr<FKKRuntimeSpeechStream,ESPMode::ThreadSafe>> FreeTalkSpeechStreams;int32 FreeTalkSpeechGeneration=0,FreeTalkSpeechCharacter=INDEX_NONE,FreeTalkSpeechPlayed=0,FreeTalkSpeechFiles=0;int64 FreeTalkSpeechSerial=0;double FreeTalkSpeechNext=0,FreeTalkSpeechRepliedAt=0;FString FreeTalkSpeechChannel;TArray<double> FreeTalkSpeechSentAt;
  FString FreeTalkCaptionPlayer,FreeTalkCaptionHer;TArray<int64> FreeTalkReplay;int32 FreeTalkReplayTotal=0,FreeTalkReplaySpeaker=INDEX_NONE;double FreeTalkReplayNext=0;
  // The replayed line now playing, for the galgame scene (its box and portrait): bumped per line.
@@ -415,7 +424,7 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  FString ContactsNotice;
  // Auto navigation: NavGirl follows her, NavPoint a spot picked on the big map (M). The male walks the
  // gold route himself; any WASD input hands control back and cancels it.
- bool NavPointActive=false,BigMapOpen=false,BigMapSavedMouse=false;FVector NavPoint=FVector::ZeroVector;FString NavPointName;int32 NavStep=1;double NavProgressAt=0;int32 NavReplans=0;TArray<FOKStreetElevator> Elevators;TMap<int32,FOKStreetLiftWalk> LiftWalks;TMap<int32,double> LiftCalledAt;TMap<int32,FVector> LiftPins;FOKStreetLiftRide LiftRide;FOKStreetLoverPose LoverPose;FOKStreetLoverReact LoverReact;TSet<FString> LoverContacts;TMap<int32,FVector> LastShown;TMap<int32,TMap<FIntPoint,bool>> NavGrid;TSharedPtr<class SOKStreetBigMap> BigMap;
+ bool NavPointActive=false,BigMapOpen=false,BigMapSavedMouse=false;FVector NavPoint=FVector::ZeroVector;FString NavPointName;int32 NavStep=1;double NavProgressAt=0;int32 NavReplans=0;TArray<FOKStreetElevator> Elevators;TMap<int32,FOKStreetLiftWalk> LiftWalks;TMap<int32,double> LiftCalledAt;TMap<int32,FVector> LiftPins;FOKStreetLiftRide LiftRide;FOKStreetLoverPose LoverPose;FOKStreetLoverReact LoverReact;TSet<FString> LoverContacts;TMap<int32,FVector> LastShown;TMap<int32,TMap<FIntPoint,bool>> NavGrid;TMap<int32,TMap<FIntPoint,float>> NavGround; /* the city ground under each cell tested (NavCellFree) */FVector NavBlockedAt=FVector(1e9);TSharedPtr<class SOKStreetBigMap> BigMap;
  bool PrivateMouse=false;
  int32 PrivateAnyCase=0,PrivateAnyPhase=0;double PrivateAnyProfileWait=0;FString PrivateAnySave;TArray<TSharedPtr<FJsonValue>> PrivateAnyEvidence;
  FOKStreetCandidateProbeSnapshot ContactsSnapshot;FOKStreetStore ContactsProbeStore;TArray<FOKStreetAgentSim> ContactsProbeAgents;
@@ -541,7 +550,7 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  // Voice source: built-in clips or the local TTS server (OKStreetSocialVoice.inl).
  // The TTS Base model the launcher starts ok-tts with (voice-settings.json tts_base_size): 1.7B, or 0.6B (less VRAM).
  FString TtsBaseSize=TEXT("1.7B");
- bool TtsEnabled=false,TtsPending=false;FString TtsEndpoint=TEXT("http://127.0.0.1:47860"),TtsCacheDir,TtsSettingsPath,TtsNotice;int32 TtsAge=18,TtsLines=0,TtsFallbacks=0;uint32 TtsSerial=0;double TtsRequestedAt=0,TtsTimeout=15;bool TtsSmoke=false,TtsSmokeStarted=false;
+ bool TtsEnabled=false,TtsPending=false,CloudVoicesPrepared=false;FString TtsEndpoint=TEXT("http://127.0.0.1:47860"),TtsCacheDir,TtsSettingsPath,TtsNotice;int32 TtsAge=18,TtsLines=0,TtsFallbacks=0;uint32 TtsSerial=0;double TtsRequestedAt=0,TtsTimeout=15;bool TtsSmoke=false,TtsSmokeStarted=false;
  // Player (male) TTS line before her reply: MalePhase 0 none, 1 waiting for the clip, 2 speaking, 3 done/skipped.
  FString PlayerCardName,PlayerNameDraft,MaleTone=TEXT("m0"),MaleVoiceId,MaleLineOverride,LastBranchId,TtsVoiceInfo;bool MaleTtsPending=false,MaleAddressed=false;int32 MalePhase=0,TtsSmokeTopics=0;double MaleRequestedAt=0;uint32 MaleSerial=0;TArray<TSharedPtr<FString>> MaleToneOptions;
  // Her own voice (OKStreetSocialVoicePick.inl): candidates from ok-tts, whether her card holds a voice.
@@ -566,9 +575,16 @@ FString VoicePickDescription,VoicePickNotice,TtsVoiceInstruct;int32 VoicePickTar
  TSharedPtr<SWidget> Overlay;
  TSharedPtr<SBorder> InteractionPanel,DialoguePanel;
  // The UI shell's holders, one per region (RebuildUI), and the right panel's scroll box (it keeps its position).
- TSharedPtr<SBox> UiRightHolder,UiShopHolder,UiDebugHolder,UiBottomHolder,UiBluffHolder,UiHistoryHolder,UiAppHolder,UiSaveHolder,UiMenuHolder;TSharedPtr<SScrollBox> UiRightScroll;uint32 UiDirtyRegions=0;
+ TSharedPtr<SBox> UiRightHolder,UiShopHolder,UiDebugHolder,UiBottomHolder,UiBluffHolder,UiHistoryHolder,UiAppHolder,UiSaveHolder,UiMenuHolder,UiRosterHolder;TSharedPtr<SScrollBox> UiRightScroll;uint32 UiDirtyRegions=0;
+ // The player's settings (OKStreetSocialSettings.inl): voices (builtin | tts | cloud | off), voice input (local |
+ // cloud), the API keys, and the menu at the top left that sets them.
+ FString VoiceMode=TEXT("builtin"),AsrMode=TEXT("local"),DeepSeekKey,AliyunKey,AliyunBaseUrl,AliyunTtsModel,AliyunAsrModel,SettingsNotice;bool SettingsOpen=false;TSharedPtr<SBox> UiSettingsHolder;
  TSharedPtr<SOKStreetMinimap> Minimap;
  TSharedPtr<SWidget> MinimapPanel;
+ // The roster menu (OKStreetSocialRoster.inl): the cards in the heroine folder, the ones picked for this world, and the
+ // heroine being edited (her name, persona and profile, or her memories), as typed.
+ bool RosterOpen=false,RosterBusy=false,RosterPausedClock=false;FString RosterNotice,RosterTab,RosterName,RosterPersona,RosterProfile,RosterMemory;
+ TArray<TSharedPtr<FJsonObject>> RosterCards;TArray<FString> RosterPicked,RosterWorld;int32 RosterEdit=INDEX_NONE;FString RosterPersonaLoaded;TMap<FString,FString> RosterBaseNames; // her card's own name, by id
  bool MinimapShowNames=true,MinimapProbeShowNames=true;
  bool MinimapChecked=false,MinimapOnlyTest=false;
  int32 MinimapProbePhase=0;
@@ -582,6 +598,7 @@ FString VoicePickDescription,VoicePickNotice,TtsVoiceInstruct;int32 VoicePickTar
  bool RuntimeBackdropReady=false;
  FVector Male=OKStreetMaleSpawn();
  FString Lang=TEXT("zh-TW");int32 MoneyDigits=0;TArray<TSharedPtr<FString>> LangOptions,RegionOptions,RenderStyleOptions; // OKStreetSocialLocale.inl
+ bool Lit=false,LitShown=false; // the characters lit by the scene (player.json "lit", SetLit)
  mutable TMap<FString,int64> LocalAmounts; // Local(): region|kind|base -> amount, cleared when the region changes
  FString BluffOnArrival;double BluffDealBy=0; // ...and the time to wait for the others to sit down // the outing that takes them in to play cards: the game is dealt when it arrives (ArriveOuting)
  FVector SpotSavedMale=OKStreetMaleSpawn();double SpotSavedAt=0; // his position in the save, and when it was written (SaveCalendar)
@@ -834,6 +851,14 @@ void AOKStreetSocialScene::BeginPlay(){
  if(!FParse::Value(FCommandLine::Get(),TEXT("StreetSocialManifest="),ManifestPath)||!FFileHelper::LoadFileToString(Json,*ManifestPath)||!OKStreetReadManifestSocial(ManifestPath,Json,S.Manifest)){
   S.Errors.Add(TEXT("Invalid StreetSocial selection: ")+S.Manifest.Error);WriteReport(false);return;
  }
+ // The heroines this save lives with (OKStreetSocialRoster.inl): the load or new game asked for last run is taken first,
+ // then the selection gets the save's roster and the save's own names for them.
+ if(!S.SelfTest&&!S.RetargetSelfTest&&S.LiveTestPhase<0){
+  ApplyPendingSave();
+  if(ApplyRosterToManifest(ManifestPath,Json)){S.Manifest=FOKStreetManifestSocial();
+   if(!OKStreetReadManifestSocial(ManifestPath,Json,S.Manifest)){S.Errors.Add(TEXT("Invalid roster selection: ")+S.Manifest.Error);WriteReport(false);return;}}
+  ApplyHeroineSettings();
+ }
  TSharedPtr<FJsonObject> SelectionRoot;
  if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),SelectionRoot)&&SelectionRoot){
   const TArray<TSharedPtr<FJsonValue>>* HostCards=nullptr;if(SelectionRoot->TryGetArrayField(TEXT("cards"),HostCards))for(const auto& C:*HostCards)S.HighCards.Add(OKStreetResolveAgainst(ManifestPath,C->AsString()));
@@ -866,6 +891,7 @@ void AOKStreetSocialScene::BeginPlay(){
  {TSharedPtr<FJsonObject> ManifestObject;FString JapanesePath,JapaneseBody;
   if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),ManifestObject)&&ManifestObject.IsValid()&&ManifestObject->TryGetStringField(TEXT("dialogue_catalogue_ja"),JapanesePath)&&FFileHelper::LoadFileToString(JapaneseBody,*JapanesePath))S.OtherLanguage=OKStreetParseCatalogue(JapaneseBody,JapanesePath);
   LoadVoiceSettings(ManifestObject);
+  LoadPlayerSettings();
   LoadPlayerName();
  }
  {TSharedPtr<FJsonObject> M;FString Path;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),M)&&M->TryGetStringField(TEXT("invitation_catalogue"),Path)&&!OKStreetLoadInvitations(Path,S.Catalogue,S.OtherLanguage,S.Invitations,Error)){S.Errors.Add(Error);WriteReport(false);return;}}
@@ -1401,10 +1427,30 @@ void AOKStreetSocialScene::FinishFreeTalk(int32 Character,const FString& Id,cons
  if(OKStreetFreeTalkIsNudge(Text)){
   if(S.ChatOrderAwaitsJudge.Remove(Character)>0&&!S.Cart.IsEmpty())PlaceChatOrder(Character,Reply->Reply); // no judge comes for a nudge
   const FString A=Reply->Action;
-  if(!A.IsEmpty()&&!(A.StartsWith(TEXT("go:"))||A==TEXT("stroll")||A==TEXT("walk")||OKStreetFindActivity(A)||OKStreetFindPlace(A)))ExecuteFreeTalkAction(Character,Id,A);
+  // Told how long the walk is, she finds it too far ("five hours? let's stay near"): the trip is off. She said so and
+  // they walked on toward the boat dock anyway (R6-194).
+  // Her line left empty ("……"): asked again to say it, so the trip is not off without a word (R6-202).
+  if(A==TEXT("cancel_outing")){if(S.OutingGirl==Character){UE_LOG(LogTemp,Display,TEXT("Street outing: actor=%d finds it too far, called off"),Character);CancelOuting(OKT(TEXT("ui.outing.she_called_off_far")));
+    FString Said=Reply->Reply;for(const TCHAR* Mark:{TEXT("…"),TEXT("."),TEXT("。"),TEXT(" "),TEXT("　"),TEXT("\n")})Said.ReplaceInline(Mark,TEXT(""));
+    if(Said.IsEmpty()&&S.Target==Character){UE_LOG(LogTemp,Display,TEXT("Street outing: actor=%d called it off without a word, asked to say it"),Character);S.TellHer.Add(OKT(TEXT("ui.outing.say_why_called_off")));}}}
+  // Her idea to ride the rest (told the bus and taxi with the walk's minutes): they ride, he pays (R6-203).
+  else if((A==TEXT("take_bus")||A==TEXT("take_taxi"))&&S.OutingGirl==Character)TakeTransit(A.Mid(5),true);
+  else if(!A.IsEmpty()&&!(A.StartsWith(TEXT("go:"))||A==TEXT("stroll")||A==TEXT("walk")||OKStreetFindActivity(A)||OKStreetFindPlace(A)))ExecuteFreeTalkAction(Character,Id,A);
   // Hers to propose, his to agree: kept for the judge of his next line. On arriving at the park she said "let's find a
   // bench" (park_seat); he said "sure, that bench", and the judge took them as already sitting there.
-  else if(!A.IsEmpty()&&A!=TEXT("none"))S.HerProposed.Add(Character,A);
+  else if(!A.IsEmpty()&&A!=TEXT("none")){
+   // Somewhere else instead of the long way left ("two in the morning? let's just talk at the convenience store"): the
+   // long walk stops here, her plan waits for his word. It was kept and they walked on to the dorm (R6-201).
+   auto Bare=[](const FString& X){return X.StartsWith(TEXT("go:"))?X.Mid(3):X;};
+   // "walk" is walking on with him, which they are doing: "let's keep going, the dorm is just ahead" stopped the walk to
+   // the dorm and she was put to bed there at midnight (R6-204).
+   const bool Elsewhere=S.OutingGirl==Character&&A!=TEXT("walk")&&Bare(S.OutingActivity)!=Bare(A)&&!S.OutingRoute.IsEmpty()&&FVector::Dist2D(S.Male,S.OutingRoute.Last())>30*275.f;
+   if(Elsewhere){UE_LOG(LogTemp,Display,TEXT("Street outing: actor=%d would rather %s than the long way; stopped"),Character,*A);CancelOuting(FString());}
+   S.HerProposed.Add(Character,A);}
+  // Her words too: sat down at the cafe she said "a latte and a lemon tart for me", the note's reply ordered nothing,
+  // he said "the latte and the tart are on me", and the judge, seeing only his line and her next one, ordered his
+  // americano alone; her latte never came (R6-187).
+  if(!Reply->Reply.IsEmpty())S.HerNoteLine.Add(Character,Reply->Reply);
  }
  // In the private room his words still do things there: stop, pull out, another pose, faster, end (JudgeHTalk).
  else if(InPrivate)JudgeHTalk(Character,S.PlayerAskedText.IsEmpty()?Text:S.PlayerAskedText,Reply->Reply);
@@ -1419,11 +1465,17 @@ void AOKStreetSocialScene::ExecuteFreeTalkAction(int32 Character,const FString& 
  // The model sometimes writes its act prefix in the activity field ("act:stroll", "act:eat"): the same thing without it.
  const FString ActionNow=RawAction.StartsWith(TEXT("act:"))?RawAction.Mid(4):RawAction;
  if(ActionNow.IsEmpty())return;
+ // The bus or the taxi on the long way they are walking (R6-203, OKStreetSocialTransit.inl).
+ if(ActionNow==TEXT("take_bus")||ActionNow==TEXT("take_taxi")){if(S.OutingGirl==Character)TakeTransit(ActionNow.Mid(5),false);return;}
  // Her acts (the treat she promised, a goodbye) are not activities: ApplyChoiceReply handles them.
  if(OKStreetReplyActOnly(ActionNow)){UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s is her act, not an activity"),*ActionNow);return;}
  if(S.ActGirl==Character&&S.ActId==ActionNow){UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s is what they are already doing"),*ActionNow);return;}
  // On the way somewhere together, "let's walk" is what they are doing: it does not cancel the trip for a loop nearby.
- if(S.OutingGirl==Character&&(ActionNow==TEXT("walk")||ActionNow==TEXT("stroll"))){UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s while already on the way (%s)"),*ActionNow,*S.OutingActivity);return;}
+ // Unless the way left is long (half an hour or more): "too far, let's just walk around here" is the trip given up for a
+ // stroll; they walked on toward the boat dock five hours off (R6-194).
+ if(S.OutingGirl==Character&&(ActionNow==TEXT("walk")||ActionNow==TEXT("stroll"))&&!S.OutingRoute.IsEmpty()&&FVector::Dist2D(S.Male,S.OutingRoute.Last())>30*275.f){
+  UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s instead of the long way to %s"),*ActionNow,*S.OutingActivity);CancelOuting(FString());}
+ else if(S.OutingGirl==Character&&(ActionNow==TEXT("walk")||ActionNow==TEXT("stroll"))){UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s while already on the way (%s)"),*ActionNow,*S.OutingActivity);return;}
  // Already on the way there, or already in that place: not again (the walk would start over).
  {const FOKStreetPlace* P=OKStreetFindPlace(ActionNow.StartsWith(TEXT("go:"))?ActionNow.Mid(3):ActionNow);
   if(S.OutingGirl!=INDEX_NONE&&(S.OutingActivity==ActionNow||(P&&S.OutingPlace==P->Name))){UE_LOG(LogTemp,Display,TEXT("Street free talk action: already on the way (%s)"),*ActionNow);return;}
@@ -1459,7 +1511,11 @@ void AOKStreetSocialScene::ExecuteFreeTalkAction(int32 Character,const FString& 
     else if(!Known&&EatActBlocked(Character,Action))Handled=true;
     else if(!Known&&OKHeroineFind(Action)){Handled=DoActHers(Character,Action);UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s done as an act (%d)"),*Action,Handled?1:0);}
    }
-   if(!Handled&&Known&&Known->Kind==EOKStreetActivityKind::Photo&&S.Pair.Partner==Character&&(S.Pair.Meal||S.Pair.Drink||S.Pair.PhoneUse||S.Pair.Read)){ // just sitting and talking is no reason: they get up for it
+   // Eating or drinking only while something is left on the table: with all of it eaten the meal session runs on (they
+   // sit), and 三月七's "let's take a photo of the sunset" at the beach house was held back as "still holding chopsticks"
+   // after "everything eaten" (R6-188f).
+   const bool StillEating=(S.Pair.Meal||S.Pair.Drink)&&S.Table.ContainsByPredicate([](const FOKStreetDish& D){return !D.Served||D.Percent>0.f;});
+   if(!Handled&&Known&&Known->Kind==EOKStreetActivityKind::Photo&&S.Pair.Partner==Character&&(StillEating||S.Pair.PhoneUse||S.Pair.Read)){ // just sitting and talking is no reason: they get up for it
     Handled=true;S.FreeTalkNotice=OKT(TEXT("ui.scene.other_activity_no_photo"));S.MindRecent.Add(Id,OKT(TEXT("ui.scene.photo_later_eating")));
     S.TellHer.Add(OKT(TEXT("ui.scene.no_photo_eating_note")));
     UE_LOG(LogTemp,Display,TEXT("Street free talk action: photo held back during meal=%d seated=%d drink=%d"),S.Pair.Meal?1:0,S.Pair.Seated?1:0,S.Pair.Drink?1:0);
@@ -1473,7 +1529,9 @@ void AOKStreetSocialScene::ExecuteFreeTalkAction(int32 Character,const FString& 
    if(Stance&&Stance->IsValidIndex(Kind)&&!(*Stance)[Kind])UE_LOG(LogTemp,Display,TEXT("Street free talk action: %s agreed aloud although her rolled stance was no; going"),*Action);
    S.InviteRefusals.Remove(Her);}
   // On her shift (making drinks at the shop): a spoken yes does not take her off work; she is told so, and so is he.
-  if(!Handled)if(const int32 Until=ShiftUntil(Character);Until>0){Handled=true;
+  // Not her leaving him to go to it: 惠惠 said "off to the counter now" at 16:58 sitting over cocoa with him in the cafe she
+  // works at, her "leave" was refused as "on shift till 22:00", and she sat on at his table through her shift (R6-181).
+  if(!Handled&&Action!=TEXT("leave"))if(const int32 Until=ShiftUntil(Character);Until>0){Handled=true;
    const FOKStreetPlanBlock* B=BlockNow(Character,int32(OKStreetMindNow(S)%1440));const FOKStreetPlace* P=B?OKStreetFindPlace(B->Place):nullptr;
    const FString Place=P?FString(P->Name):B?B->Place:FString();const FString At=FString::Printf(TEXT("%d:%02d"),Until/60,Until%60);
    // The activity is at the shop she is working in and he is there: he is her customer (his order is the shop's), not
@@ -1555,6 +1613,9 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
  QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_JudgeContext);
  // The menu where they stand (empty elsewhere or when closed) and what her reply already ordered.
  FString OnTable;for(const auto& D:S.Table)if(D.ForHer&&D.Her==Character&&D.Percent>0)OnTable+=OKMsg(TEXT("ui.scene.dish_entry"), {{TEXT("dish_name"), *D.Name}, {TEXT("served_suffix"), D.Served?TEXT(""):OKT(TEXT("ui.scene.preparing_food"))}});
+ // And what is in the cart for her, not paid yet: she ordered the ramen, he said "my treat", and the judge ordered her a
+ // second bowl; both were billed and served (R6-196).
+ for(const auto& C:S.Cart)if(C.ForHer&&(C.Girl==INDEX_NONE||C.Girl==Character))if(const auto* I=S.Catalog.Find(C.ItemId))OnTable+=OKMsg(TEXT("ui.scene.dish_entry"), {{TEXT("dish_name"), *I->Name}, {TEXT("served_suffix"), OKT(TEXT("ui.scene.in_cart_unpaid"))}});
  FString Menu;{const FString Here=OrderShopHere(Character);const FString Shop=Here.IsEmpty()?OutingShop(Character):Here;FString Closed;if(!Shop.IsEmpty()&&!PlaceClosedNow(Shop,Closed))for(const auto* I:Here.IsEmpty()?OKStreetItemsAt(S.Catalog,Shop,StreetNow().GetMonth()):ItemsHere(Shop))Menu+=OKMsg(TEXT("ui.party.menu_id_name_entry"), {{TEXT("id"), *I->Id}, {TEXT("name"), *I->Name}});}
  // Meetings with her the game already has, so the same plan is not booked twice.
  // His own work shifts too: "see you at the shop at five" said by two who both work at the cafe was booked at the
@@ -1591,6 +1652,11 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
  // Her day ahead, with place ids: where "come along with me first" goes (JudgePlanLine).
  User+=JudgePlanLine(Character);
  if(FString Proposed;S.HerProposed.RemoveAndCopyValue(Character,Proposed))User+=OKMsg(TEXT("ui.scene.judge_her_proposed"),{{TEXT("action"),Proposed}});
+ // The meeting they planned was not booked (closed then): what they agree on now is a new plan, not that one (R6-193).
+ if(const auto* Unbooked=S.HerUnbooked.Find(Character)){if(OKStreetMindNow(S)-Unbooked->Key<=60)User+=OKMsg(TEXT("ui.scene.judge_unbooked"),{{TEXT("place_name"),Unbooked->Value}});else S.HerUnbooked.Remove(Character);}
+ if(FString NoteLine;S.HerNoteLine.RemoveAndCopyValue(Character,NoteLine))User+=OKMsg(TEXT("ui.scene.judge_her_note_line"),{{TEXT("line"),NoteLine}});
+ // On a long walk with a ride offered: his "let's take a taxi" is the ride (R6-203).
+ if(S.OutingGirl==Character&&S.TransitFor==Character&&S.TransitQuote.IsValid())User+=OKT(TEXT("ui.transit.judge_ride"));
  TArray<TSharedPtr<FJsonValue>> Messages;
  auto AddMessage=[&Messages](const TCHAR* Who,const FString& Content){TSharedRef<FJsonObject> O=MakeShared<FJsonObject>();O->SetStringField(TEXT("role"),Who);O->SetStringField(TEXT("content"),Content);Messages.Add(MakeShared<FJsonValueObject>(O));};
  // The lines before these two ("breakfast at the cafeteria?" ... "it's past seven, let's walk over"): what "there" and
@@ -2584,6 +2650,12 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
    if(Delta>0&&OKStreetDayStartsPassed(Was,To)>0){if(Owner.IsValid())Owner->NextDay();}
    else if(Delta<0&&OKStreetDayStartsPassed(To,Was)>0&&L->Store.CalendarDay>0){if(L->DayRewound<0)L->DayRewound=L->Store.CalendarDay;--L->Store.CalendarDay;}};
   auto ClockButton=[](const TCHAR* Label,TFunction<void()> Do)->TSharedRef<SWidget>{return SNew(SButton).ButtonStyle(OKStreetGlassButton()).HAlign(HAlign_Center).Text(FText::FromString(Label)).OnClicked_Lambda([Do](){Do();return FReply::Handled();});};
+  // Morning / noon / dusk / night move on to the next such hour, the way +1h does (a new game day across 04:00). Only
+  // setting the hour kept the game day, so "morning" at 01:22 went back to the previous date's 08:00 (R6-189).
+  // The day start is counted here: OKStreetDayStartsPassed ignores a step of more than 12 hours (a tick's guard), so
+  // "morning" at 12:03 went back to that day's 08:00 (R6-189b).
+  auto AheadTo=[SetClock,ClockNow,Owner=TWeakObjectPtr<AOKStreetSocialScene>(this)](double Hours){const double Was=ClockNow(),Delta=FMath::Fmod(Hours-Was+48.0,24.0);if(Delta<=1.0/60)return;
+   double First=FMath::Fmod(double(OKStreetDayStartHour)-Was+48.0,24.0);if(First<=0)First=24.0;SetClock(Was+Delta);if(Delta>=First&&Owner.IsValid())Owner->NextDay();};
   TSharedRef<SWidget> ClockRow=SNew(SVerticalBox)
    +SVerticalBox::Slot().AutoHeight().Padding(2)[SNew(SHorizontalBox)
     +SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center).Padding(4,0)[SNew(STextBlock).ColorAndOpacity(FLinearColor::White).Text_Lambda([ClockState,ClockNow](){auto L=ClockState.Pin();if(!L)return FText::GetEmpty();const int32 M=FMath::FloorToInt32(ClockNow()*60);return FText::FromString(OKMsg(TEXT("ui.scene.clock_display"), {{TEXT("hour"), M/60}, {TEXT("minute"), M%60}, {TEXT("paused_suffix"), L->ClockPaused?OKT(TEXT("ui.scene.paused_label")):TEXT("")}}));})]
@@ -2593,10 +2665,10 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
      .Text_Lambda([ClockState](){auto L=ClockState.Pin();return FText::FromString(L&&L->ClockPaused?OKT(TEXT("ui.scene.continue_button")):OKT(TEXT("ui.scene.pause_button")));})
      .OnClicked_Lambda([ClockState,SetClock,ClockNow](){if(auto L=ClockState.Pin()){const double Hours=ClockNow();L->ClockPaused=!L->ClockPaused;SetClock(Hours);}return FReply::Handled();})]]
    +SVerticalBox::Slot().AutoHeight().Padding(2)[SNew(SHorizontalBox)
-    +SHorizontalBox::Slot().FillWidth(1).Padding(2,0)[ClockButton(OKT(TEXT("ui.scene.morning_label")),[SetClock](){SetClock(8.0);})]
-    +SHorizontalBox::Slot().FillWidth(1).Padding(2,0)[ClockButton(OKT(TEXT("ui.free_talk.noon_period")),[SetClock](){SetClock(12.5);})]
-    +SHorizontalBox::Slot().FillWidth(1).Padding(2,0)[ClockButton(OKT(TEXT("ui.free_talk.evening_dusk_period")),[SetClock](){SetClock(17.5);})]
-    +SHorizontalBox::Slot().FillWidth(1).Padding(2,0)[ClockButton(OKT(TEXT("ui.free_talk.night_period")),[SetClock](){SetClock(21.0);})]];
+    +SHorizontalBox::Slot().FillWidth(1).Padding(2,0)[ClockButton(OKT(TEXT("ui.scene.morning_label")),[AheadTo](){AheadTo(8.0);})]
+    +SHorizontalBox::Slot().FillWidth(1).Padding(2,0)[ClockButton(OKT(TEXT("ui.free_talk.noon_period")),[AheadTo](){AheadTo(12.5);})]
+    +SHorizontalBox::Slot().FillWidth(1).Padding(2,0)[ClockButton(OKT(TEXT("ui.free_talk.evening_dusk_period")),[AheadTo](){AheadTo(17.5);})]
+    +SHorizontalBox::Slot().FillWidth(1).Padding(2,0)[ClockButton(OKT(TEXT("ui.free_talk.night_period")),[AheadTo](){AheadTo(21.0);})]];
   // Bed: a "sleep here" button while the player stands by one.
   TSharedRef<SWidget> SleepRow=SNew(SBox).Visibility_Lambda([ClockState](){auto L=ClockState.Pin();return L&&L->SleepPhase==0&&OKStreetNearestBed(L->Male,260,nullptr)?EVisibility::Visible:EVisibility::Collapsed;})
    [SNew(SButton).ButtonStyle(OKStreetGlassButton()).HAlign(HAlign_Center).Text(FText::FromString(OKT(TEXT("ui.scene.sleep_in_bed"))))
@@ -2626,7 +2698,14 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
       return FText::FromString(Inside()?OKMsg(TEXT("ui.scene.elevator_inside"), {{TEXT("place_name"), Place.Name}, {TEXT("where"), *Where}}):OKMsg(TEXT("ui.scene.elevator_at"), {{TEXT("place_name"), Place.Name}, {TEXT("where"), *Where}}));})]
     +SVerticalBox::Slot().AutoHeight()[SNew(SBox).Visibility_Lambda([Inside](){return Inside()?EVisibility::Visible:EVisibility::Collapsed;})[Wrap]]];
   }
-  S.Overlay=SNew(SOverlay)+SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top).Padding(16)[S.MinimapPanel.ToSharedRef()]
+  // Top left: the settings menu (OKStreetSocialSettings.inl) and heroine roster (OKStreetSocialRoster.inl) buttons above the minimap; the open settings menu covers the minimap.
+  S.Overlay=SNew(SOverlay)+SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top).Padding(16)[SNew(SVerticalBox)
+   +SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Left).Padding(0,0,0,6)[SNew(SHorizontalBox)
+    +SHorizontalBox::Slot().AutoWidth()[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(OKT(TEXT("ui.settings.menu_button"))))
+     .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->ToggleSettingsMenu();return FReply::Handled();})]
+    +SHorizontalBox::Slot().AutoWidth().Padding(6,0,0,0)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(OKT(TEXT("ui.roster.open"))))
+     .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid()){if(Weak->State->RosterOpen)Weak->CloseRoster();else Weak->OpenRoster();}return FReply::Handled();})]]
+   +SVerticalBox::Slot().AutoHeight()[SNew(SOverlay)+SOverlay::Slot()[S.MinimapPanel.ToSharedRef()]+SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top)[SAssignNew(S.UiSettingsHolder,SBox)]]]
   +SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Bottom).Padding(356,16,0,24)[SNew(SBox).MaxDesiredWidth(1140).MinDesiredWidth(1140)[SNew(SVerticalBox)
    // His cards at the card table, held in front of him right above the dialogue box, which grows upward under them (OKStreetSocialBluff.inl).
    +SVerticalBox::Slot().AutoHeight().Padding(0,0,0,6)[SAssignNew(S.UiBluffHolder,SBox).Visibility(EVisibility::SelfHitTestInvisible)]
@@ -2659,6 +2738,9 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
   // the space above the dialogue box: centred on the whole screen it covered the "heard" and order rows above the box.
   +SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center).Padding(0,16,0,250)[SAssignNew(S.UiMenuHolder,SBox).Visibility(EVisibility::SelfHitTestInvisible)]
   +SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)[SAssignNew(S.UiAppHolder,SBox).Visibility(EVisibility::SelfHitTestInvisible)]
+  +SOverlay::Slot()[SAssignNew(S.UiRosterHolder,SBox).Visibility(EVisibility::SelfHitTestInvisible)]
+  // Cards dragged onto the window from Explorer: while a drag is on, a drop zone over everything (OKStreetSocialRoster.inl).
+  +SOverlay::Slot()[RosterDropZone()]
   +SOverlay::Slot()[SAssignNew(S.UiSaveHolder,SBox).Visibility(EVisibility::SelfHitTestInvisible)];
   GEngine->GameViewport->AddViewportWidgetContent(S.Overlay.ToSharedRef(),10);
  }
@@ -2679,7 +2761,7 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
  if(!S.TouchNotice.IsEmpty())Box->AddSlot().AutoHeight().Padding(8)[SNew(STextBlock).Text(FText::FromString(S.TouchNotice)).AutoWrapText(true).WrapTextAt(360)];
  if(!S.TalkFailureNotice.IsEmpty())Box->AddSlot().AutoHeight().Padding(8)[SNew(STextBlock).Text(FText::FromString(S.TalkFailureNotice)).AutoWrapText(true).WrapTextAt(360)];
  Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).IsFocusable(S.Target!=INDEX_NONE).IsEnabled(!Busy&&!S.OtherLanguage.Nodes.IsEmpty()).Text(FText::FromString(S.Japanese?OKT(TEXT("ui.scene.voice_ja")):OKT(TEXT("ui.scene.voice_zh")))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->ToggleLanguage();return FReply::Handled();})];
- Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).IsFocusable(S.Target!=INDEX_NONE).IsEnabled(!S.TtsCacheDir.IsEmpty()).Text(FText::FromString(S.TtsEnabled?OKT(TEXT("ui.scene.voice_tts")):OKT(TEXT("ui.scene.voice_builtin")))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->ToggleVoiceSource();return FReply::Handled();})];
+ Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).IsFocusable(S.Target!=INDEX_NONE).IsEnabled(!S.TtsCacheDir.IsEmpty()).Text(FText::FromString(OKT(*(TEXT("ui.scene.voice_")+S.VoiceMode)))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->ToggleVoiceSource();return FReply::Handled();})];
  // The TTS model (from the next start): 1.7B sounds closer to each heroine, 0.6B takes about 1 GB less VRAM.
  if(S.TtsEnabled&&!S.TtsSettingsPath.IsEmpty())Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).IsFocusable(S.Target!=INDEX_NONE)
   .Text(FText::FromString(OKMsg(TEXT("ui.scene.tts_model"),{{TEXT("size"),*S.TtsBaseSize}}))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->ToggleTtsBaseSize();return FReply::Handled();})];
@@ -2698,6 +2780,9 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
    .OnGenerateWidget_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](TSharedPtr<FString> Item){return SNew(STextBlock).Text(FText::FromString(Item.IsValid()&&Weak.IsValid()?Weak->RenderStyleLabel(*Item):FString()));})
    .OnSelectionChanged_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](TSharedPtr<FString> Item,ESelectInfo::Type Info){if(Weak.IsValid()&&Item.IsValid()&&Info!=ESelectInfo::Direct)Weak->SetRenderStyle(*Item);})
    [SNew(STextBlock).Text(FText::FromString(OKMsg(TEXT("ui.settings.render_style"),{{TEXT("name"),RenderStyleLabel(Style)}})))]];}
+ // Lit / unlit (user 2026-11-09): the characters lit by the street's lights instead of their own toon, switched live.
+ Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(OKT(S.Lit?TEXT("ui.settings.lit_on"):TEXT("ui.settings.lit_off"))))
+  .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->SetLit(!Weak->State->Lit);return FReply::Handled();})];
  if(!S.SelfTest)Box->AddSlot().AutoHeight().HAlign(HAlign_Left).Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(OKT(TEXT("ui.saves.open_button"))))
   .OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid())Weak->OpenSaveMenu(TEXT("game"));return FReply::Handled();})];
   // The setting (Taiwan, mainland China, a US college town): its money and prices; the save's money is converted.
@@ -2768,6 +2853,12 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
  }
  if(S.Companion!=INDEX_NONE){
   Box->AddSlot().AutoHeight().Padding(4)[SNew(STextBlock).AutoWrapText(true).WrapTextAt(360).Text(FText::FromString(S.OutingGirl!=INDEX_NONE?OKMsg(TEXT("ui.scene.walking_together_hint_2"), {{TEXT("companion"), *S.Manifest.Characters[S.Companion].Name}, {TEXT("place"), *S.OutingPlace}}):S.Manifest.Characters[S.Companion].Name+OKT(TEXT("ui.scene.walking_together_hint"))))];
+  // The bus and the taxi for the rest of a long walk (R6-203, OKStreetSocialTransit.inl).
+  if(S.OutingGirl!=INDEX_NONE&&S.TransitFor==S.OutingGirl&&S.TransitQuote.IsValid())for(const TCHAR* Mode:{TEXT("bus"),TEXT("taxi")}){
+   const TSharedPtr<FJsonObject>* Offer=nullptr;if(!S.TransitQuote->TryGetObjectField(Mode,Offer)||!Offer||!Offer->IsValid())continue;
+   const FString Label=OKMsg(*(FString(TEXT("ui.transit."))+Mode+TEXT("_button")),{{TEXT("minutes"),int64((*Offer)->GetNumberField(TEXT("minutes")))},{TEXT("fare"),int64((*Offer)->GetNumberField(TEXT("fare")))}});
+   Box->AddSlot().AutoHeight().Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(Label)).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this),M=FString(Mode)](){if(Weak.IsValid())Weak->TakeTransit(M,false);return FReply::Handled();})];
+  }
   Box->AddSlot().AutoHeight().Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(S.OutingGirl!=INDEX_NONE?OKT(TEXT("ui.scene.cancel_going")):OKT(TEXT("ui.scene.end_walking_together")))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid()){if(Weak->State->OutingGirl!=INDEX_NONE)Weak->CancelOuting(OKT(TEXT("ui.scene.go_cancelled")));else Weak->FarewellCompanion();}return FReply::Handled();})];
  }
  Mark(TEXT("party"));BluffUI(Box); // 吹牛 with the group (OKStreetSocialBluff.inl)
@@ -2834,7 +2925,12 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
  }
  Mark(TEXT("freetalk"));
  // Free talk follows its partner: the conversation target, or the girl walking or doing an activity with the player.
- if(FreeTalkPartner()!=INDEX_NONE){
+ // Without a DeepSeek key there is no free talk to open: the conversation keeps to the built-in choices, and a line
+ // says where the key goes (the settings menu, OKStreetSocialSettings.inl). Self-tests keep the button.
+ FOKFreeTalkSettings FreeTalkAi;FString FreeTalkWhy;
+ const bool FreeTalkUsable=S.SelfTest||S.FreeTalkOpen||OKStreetFreeTalkLoadSettings(FreeTalkAi,FreeTalkWhy);
+ if(FreeTalkPartner()!=INDEX_NONE&&!FreeTalkUsable)Box->AddSlot().AutoHeight().Padding(6,4)[SNew(STextBlock).AutoWrapText(true).WrapTextAt(360).ColorAndOpacity(FLinearColor(.75f,.75f,.75f)).Text(FText::FromString(OKT(TEXT("ui.settings.free_talk_needs_key"))))];
+ if(FreeTalkPartner()!=INDEX_NONE&&FreeTalkUsable){
   Box->AddSlot().AutoHeight().Padding(4)[SNew(SButton).ButtonStyle(OKStreetGlassButton()).Text(FText::FromString(S.FreeTalkOpen?OKT(TEXT("ui.scene.collapse_free_talk")):OKT(TEXT("ui.scene.free_talk_label")))).OnClicked_Lambda([Weak=TWeakObjectPtr<AOKStreetSocialScene>(this)](){if(Weak.IsValid()){auto& W=*Weak->State;W.FreeTalkOpen=!W.FreeTalkOpen;W.FreeTalkUserClosed=!W.FreeTalkOpen;Weak->FreeTalkLiveSet(W.FreeTalkOpen);Weak->RefreshUI();}return FReply::Handled();})];
   if(S.FreeTalkOpen){
    auto FreeTalk=SNew(SVerticalBox);
@@ -2991,6 +3087,7 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
 
 #include "OKStreetSocialContacts.inl"
 #include "OKStreetSocialSaves.inl"
+#include "OKStreetSocialSettings.inl" // after the voice settings (player.json helpers) and the glass panel
 
 void AOKStreetSocialScene::ResumeConversationPose(int32 Character,FString& Error){
  if(State&&State->PrivateGirl!=INDEX_NONE&&(Character==0||Character==State->PrivateGirl)){OKPlayCrowdRuntimeAction(this,Character,Character==0?TEXT("talk_gesture_03.okanim"):TEXT("talk_gesture_00.okanim"),Error);return;}
@@ -3011,6 +3108,7 @@ static FTransform OKStreetPhonePartTransform(const FTransform& Hand,int32 Part){
 static int64 OKStreetMindNow(const FOKStreetSceneState& S);
 #include "OKStreetSocialBooks.inl"
 #include "OKStreetSocialOuting.inl"
+#include "OKStreetSocialTransit.inl"
 #include "OKStreetSocialElevator.inl"
 #include "OKStreetSocialHeroine.inl"
 #include "OKStreetSocialLover.inl"
@@ -3046,6 +3144,7 @@ static int64 OKStreetMindNow(const FOKStreetSceneState& S);
 #include "OKStreetSocialBank.inl"
 #include "OKStreetSocialInspector.inl"
 #include "OKStreetSocialUiProbe.inl"
+#include "OKStreetSocialRoster.inl"
 #include "OKStreetSocialControl.inl"
 #include "OKStreetSocialClinic.inl"
 #include "OKStreetSocialWardrobe.inl"
@@ -3118,6 +3217,17 @@ void AOKStreetSocialScene::TickPhoto(double Now){
  if(!OKGetCrowdRuntimeCharacterStatus(this,0,Male)||!OKGetCrowdRuntimeCharacterStatus(this,P.Partner,Npc)||!Male.Visible||!Npc.Visible||!Male.Error.IsEmpty()||!Npc.Error.IsEmpty()||!OKGetCrowdRuntimeActionStatus(this,0,A)||!OKGetCrowdRuntimeActionStatus(this,P.Partner,B)){UE_LOG(LogTemp,Display,TEXT("Street pair: ended at Scene.cpp:%d (phase %d)"),__LINE__,S.Pair.Phase);FinishPhoto();return;}
  if(P.Phase==0){
   if(Now-P.RequestedAt>60){UE_LOG(LogTemp,Display,TEXT("Street pair: ended at Scene.cpp:%d (phase %d)"),__LINE__,S.Pair.Phase);FinishPhoto();S.Message=OKT(TEXT("ui.scene.dual_activity_prep_timeout"));RefreshUI();return;}
+  // The pair is laid out round him by its own offsets (a meal 1.7 m to his side, a drink 1.5 m, the seats 1.55 m): in a
+  // narrow city shop that side was the shop window, she sat behind the glass and the view was one white pane (the snack
+  // bar's dessert, activity audit 11-09). The first way round with room for her and nothing between them: as laid out,
+  // turned round, or to either side.
+  if(!P.YawChecked){P.YawChecked=true;
+   const FVector Off=P.Read?FVector(85,0,0):P.Splash?FVector(0,160,0):P.PhoneUse?FVector(0,150,0):P.Drink?FVector(0,150,0):P.Watermelon?FVector(120,0,0):P.Meal?FVector(0,170,0):P.Seated?FVector(0,155,0):FVector::ZeroVector;
+   if(OKStreetCityMode()&&!Off.IsZero()){FCollisionQueryParams Q(SCENE_QUERY_STAT(StreetPairRoom),false,this);
+    auto Room=[&](float Yaw){const FVector To=S.Male+FRotator(0,Yaw,0).RotateVector(Off);float G=To.Z;if(!OKStreetGroundZ(GetWorld(),To,G,this)||FMath::Abs(G-S.Male.Z)>60.f)return false;
+     return !GetWorld()->SweepTestByChannel(S.Male+FVector(0,0,120),FVector(To.X,To.Y,G+120.f),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeSphere(15.f),Q)
+      &&!GetWorld()->OverlapAnyTestByChannel(FVector(To.X,To.Y,G+110.f),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(20.f,65.f),Q);};
+    for(const float Turn:{0.f,180.f,90.f,-90.f})if(Room(P.Yaw+Turn)){if(Turn!=0.f)UE_LOG(LogTemp,Display,TEXT("Street pair: no room for her as laid out, turned %.0f degrees"),Turn);P.Yaw+=Turn;break;}}}
   // Turn into the authored paired orientation before starting the clips / props.
   // Otherwise a rate-limited actor would sit sideways through a table or chair.
   const FRotator PairFacing(0,P.Yaw,0);
@@ -3735,11 +3845,14 @@ float AOKStreetSocialScene::StepCompanion(float Dt){
  // Walking with several of them: the group's formation (TickParty) walks her, not her trail behind him.
  if(S.GroupWalkPartner==S.Companion&&!S.Party.IsEmpty()){S.CompanionTrail.Reset();S.CompanionTrail.Add(S.Male);S.CompanionLastMale=S.Male;return S.GroupWalkPartnerSpeed;}
  auto& Agent=S.Agents[S.Companion-1];
+ // In the city the ground rises and falls: she walks on it at his level, not at the height she last had. Up from the
+ // cafeteria's chair (1398) 胡桃 walked beside him to the park two metres above the pavement (R6-179).
+ auto Ground=[&](FVector& P){if(!OKStreetCityMode())return;float Z=S.Male.Z;P.Z=OKStreetGroundZ(GetWorld(),FVector(P.X,P.Y,S.Male.Z),Z,this)?Z:S.Male.Z;};
  auto StandBeside=[&]()->bool{
   for(int32 K=0;K<12;++K){
    const FVector Try=S.Male+FRotator(0,K*30.f,0).RotateVector(FVector(130,0,0));bool Free=!OKStreetBlockedPoint(Try,28);
    for(const auto& Other:S.Agents)if(Other.Slot!=Agent.Slot&&FVector::Dist2D(Try,Other.Position)<70)Free=false;
-   if(Free){Agent.Position=FVector(Try.X,Try.Y,Agent.Position.Z);S.CompanionBlockedAt=0;S.CompanionTrail.Reset();S.CompanionTrail.Add(S.Male);S.CompanionLastMale=S.Male;return true;}
+   if(Free){Agent.Position=FVector(Try.X,Try.Y,Agent.Position.Z);Ground(Agent.Position);S.CompanionBlockedAt=0;S.CompanionTrail.Reset();S.CompanionTrail.Add(S.Male);S.CompanionLastMale=S.Male;return true;}
   }
   return false;
  };
@@ -3790,7 +3903,7 @@ float AOKStreetSocialScene::StepCompanion(float Dt){
   }
   return 0;
  }
- S.CompanionBlockedAt=0;const FVector Moved=Chosen-Agent.Position;Agent.Position=Chosen;S.Rotations[Agent.Slot]=OKStreetFacingMovement(Moved,S.Rotations[Agent.Slot]);S.CompanionTravel+=Moved.Size();
+ S.CompanionBlockedAt=0;const FVector Moved=Chosen-Agent.Position;Agent.Position=Chosen;Ground(Agent.Position);S.Rotations[Agent.Slot]=OKStreetFacingMovement(Moved,S.Rotations[Agent.Slot]);S.CompanionTravel+=Moved.Size();
  return Dt>0?Step.Size()/(FMath::Min(Dt,.05f)*OKStreetWalkSpeed):0;
 }
 void AOKStreetSocialScene::RunCompanionProbe(double Now){
@@ -3944,6 +4057,25 @@ static TWeakObjectPtr<USkyLightComponent> GOKStreetCitySkyLight;static float GOK
 // 9 of 15 ms on the street for the point and spot lights. Only the sun casts here; the rest are drawn in one clustered pass.
 // Nothing in the map has a cull distance: the smaller a mesh, the sooner it goes. An instanced component spans hundreds of
 // metres, so its own bounds cull nothing: each instance goes by the size of the mesh it draws.
+// The source map's lighting for the game's fixed exposure, live (tuned in the running game with game_exec; 11-09).
+static TArray<TPair<TWeakObjectPtr<ULocalLightComponent>,float>> GOKStreetSourceLamps; // lamps the controller does not set, their own intensity
+static TArray<TWeakObjectPtr<UPointLightComponent>> GOKStreetAddedLamps; // ceiling lights put in rooms with none
+// A lamp's intensity in the game: its own at the scale, and a rect light (the shops' ceiling panels, 60000 lumens each) at most
+// the cap: at 1/8 they still left the department store's floor 55% blown-out white, gone at 120 lumens (11-09, in the game).
+static float OKStreetSourceLampIntensity(const ULocalLightComponent* L,float Own);
+static void OKStreetSourceLampsApply(){for(const auto& L:GOKStreetSourceLamps)if(auto* C=L.Key.Get())C->SetIntensity(OKStreetSourceLampIntensity(C,L.Value));}
+static TAutoConsoleVariable<float> CVarOKStreetCitySourceLampScale(TEXT("ok.Street.CitySourceLampScale"),.125f,
+ TEXT("The source map's own lamps (not the city controller's) against their real lumens: the streamed copy has them at 1/8."),
+ FConsoleVariableDelegate::CreateLambda([](IConsoleVariable*){OKStreetSourceLampsApply();}));
+static TAutoConsoleVariable<float> CVarOKStreetCitySourceRectMax(TEXT("ok.Street.CitySourceRectMax"),150.f,
+ TEXT("The source map's rect lights (ceiling panels, in lumens) at most this, after the scale."),
+ FConsoleVariableDelegate::CreateLambda([](IConsoleVariable*){OKStreetSourceLampsApply();}));
+static float OKStreetSourceLampIntensity(const ULocalLightComponent* L,float Own){
+ float V=Own*CVarOKStreetCitySourceLampScale.GetValueOnGameThread();
+ if(L->IsA<URectLightComponent>()&&L->IntensityUnits==ELightUnits::Lumens)V=FMath::Min(V,CVarOKStreetCitySourceRectMax.GetValueOnGameThread());
+ return V;}
+static TAutoConsoleVariable<int32> CVarOKStreetCityRoomLights(TEXT("ok.Street.CityRoomLights"),1,TEXT("Ceiling lights in the source map's rooms that have no lamp: 1 on, 0 off."),
+ FConsoleVariableDelegate::CreateLambda([](IConsoleVariable* V){for(const auto& L:GOKStreetAddedLamps)if(auto* C=L.Get())C->SetVisibility(V->GetInt()!=0);}));
 static void OKStreetCityDress(ULevel* Level){
  auto FarFor=[](float Radius){return Radius<100.f?6000.f:Radius<300.f?15000.f:Radius<1000.f?40000.f:0.f;};
  // The city's own controller lights the sun for a metered exposure and every frame; the game runs a fixed one its characters are
@@ -3952,13 +4084,35 @@ static void OKStreetCityDress(ULevel* Level){
  for(AActor* Actor:Level->Actors)if(auto* Controller=Cast<ACityEnvironmentController>(Actor)){Controller->UseGameClock();GOKStreetCityEnv=Controller;}
  // Its own lamps and signs come in with the world: it looks through this piece only, not the whole map again (60-78 ms).
  if(auto* Env=GOKStreetCityEnv.Get();Env&&Env->GetLevel()!=Level)Env->RegisterLevel(Level);
+ // The source map (-CitySource) as the streamed copy has it (street_city_stream_prep_payload.lua): its lamps are in real lumens
+ // for a metered exposure, the game's is fixed at 1, and only the copy had them at 1/8. The convenience store, the bookshop and
+ // every lit room were 50-70% blown-out white, day and night (11-09; the local lights off took it to 2%). The controller's own
+ // lamps keep their scale (it sets them, at 1/8 on the game's clock); every other local light here goes to 1/8, once.
+ if(UWorld* World=Level->GetWorld();World&&!World->GetWorldPartition()){
+  TSet<const ULightComponentBase*> Managed;if(auto* Env=GOKStreetCityEnv.Get())Env->GetManagedLights(Managed);
+  static const FName Scaled(TEXT("OKSourceLumens"));int32 Count=0;TArray<FVector> Lamps;
+  TInlineComponentArray<ULocalLightComponent*> Locals;
+  for(AActor* Actor:Level->Actors)if(Actor){Actor->GetComponents(Locals);for(ULocalLightComponent* Light:Locals){Lamps.Add(Light->GetComponentLocation());
+   if(Managed.Contains(Light)||Light->ComponentTags.Contains(Scaled))continue;GOKStreetSourceLamps.Emplace(Light,Light->Intensity);Light->SetIntensity(OKStreetSourceLampIntensity(Light,Light->Intensity));Light->ComponentTags.Add(Scaled);++Count;}}
+  // A room with no lamp of its own goes black at night once the sky light is down: the copy has ceiling lights put in, up to
+  // four a room, as bright as a shop lamp at 1/8. Here each indoor place's floor without a lamp gets the same.
+  int32 Added=0;
+  if(Level==World->PersistentLevel)for(const auto& P:OKStreetPlaces()){if(P.Outdoor)continue;
+   for(const FBox& Room:P.Rooms){if(Lamps.ContainsByPredicate([&](const FVector& L){return L.X>=Room.Min.X&&L.X<=Room.Max.X&&L.Y>=Room.Min.Y&&L.Y<=Room.Max.Y&&L.Z>=Room.Min.Z-20.f&&L.Z<=Room.Max.Z+60.f;}))continue;
+    const FVector Size=Room.GetSize();const int32 NX=Size.X<900.f?1:2,NY=Size.Y<900.f?1:2;
+    for(int32 I=0;I<NX;++I)for(int32 J=0;J<NY;++J){
+     auto* Lamp=World->SpawnActor<APointLight>(FVector(Room.Min.X+Size.X*(I+.5f)/NX,Room.Min.Y+Size.Y*(J+.5f)/NY,Room.Min.Z+30.f+260.f),FRotator::ZeroRotator);if(!Lamp)continue;
+     UPointLightComponent* L=Lamp->PointLightComponent.Get();L->SetMobility(EComponentMobility::Movable);L->SetIntensityUnits(ELightUnits::Lumens);L->SetIntensity(275.f);L->SetAttenuationRadius(800.f);L->SetCastShadows(false);
+     L->SetLightColor(FLinearColor(FColor(255,240,220)));L->ComponentTags.Add(Scaled);L->MaxDrawDistance=12000.f;L->MaxDistanceFadeRange=2000.f;L->SetVisibility(CVarOKStreetCityRoomLights.GetValueOnGameThread()!=0);
+     GOKStreetAddedLamps.Add(L);++Added;Lamps.Add(L->GetComponentLocation());}}}
+  UE_LOG(LogTemp,Display,TEXT("Street city: source map lamps at 1/8: %d scaled, %d kept by the controller, %d room lights added"),Count,Managed.Num(),Added);
+ }
  for(AActor* Actor:Level->Actors)if(auto* Light=Cast<ADirectionalLight>(Actor)){auto* Part=Light->GetLightComponent();Part->SetMobility(EComponentMobility::Movable);ADirectionalLight* Sun=GOKStreetCitySun.Get();
   if(!Sun||Part->Intensity>Sun->GetLightComponent()->Intensity){if(Sun)Sun->GetLightComponent()->SetVisibility(false);GOKStreetCitySun=Light;Part->SetVisibility(true);}else Part->SetVisibility(false);}
  TInlineComponentArray<UActorComponent*> Parts;
  for(AActor* Actor:Level->Actors)if(Actor){Actor->GetComponents(Parts);for(UActorComponent* Part:Parts){
   if(auto* Mirror=Cast<UPlanarReflectionComponent>(Part)){Mirror->SetVisibility(false);GOKStreetCityMirrors.Add(Mirror);}
-  else if(auto* Sky=Cast<USkyLightComponent>(Part)){if(!GOKStreetCitySkyLight.IsValid()){GOKStreetCitySkyLight=Sky;GOKStreetCitySkyDay=Sky->Intensity;}}
-  else if(auto* Light=Cast<ULocalLightComponent>(Part)){if(Light->MaxDrawDistance!=12000.f||Light->MaxDistanceFadeRange!=2000.f){Light->MaxDrawDistance=12000.f;Light->MaxDistanceFadeRange=2000.f;Light->MarkRenderStateDirty();}if(Light->CastShadows)Light->SetCastShadows(false);}
+  else if(auto* Sky=Cast<USkyLightComponent>(Part)){if(!GOKStreetCitySkyLight.IsValid()){GOKStreetCitySkyLight=Sky;GOKStreetCitySkyDay=Sky->Intensity;}}  else if(auto* Light=Cast<ULocalLightComponent>(Part)){if(Light->MaxDrawDistance!=12000.f||Light->MaxDistanceFadeRange!=2000.f){Light->MaxDrawDistance=12000.f;Light->MaxDistanceFadeRange=2000.f;Light->MarkRenderStateDirty();}if(Light->CastShadows)Light->SetCastShadows(false);}
   else if(auto* Instanced=Cast<UInstancedStaticMeshComponent>(Part)){if(Instanced->GetStaticMesh()&&Instanced->InstanceEndCullDistance<=0){const float Far=FarFor(Instanced->GetStaticMesh()->GetBounds().SphereRadius);if(Far>0.f)Instanced->SetCullDistances(int32(Far*.9f),int32(Far));}}
   else if(auto* Mesh=Cast<UStaticMeshComponent>(Part)){if(Mesh->LDMaxDrawDistance<=0.f){const float Far=FarFor(Mesh->Bounds.SphereRadius);if(Far>0.f)Mesh->SetCullDistance(Far);}}}}
 }
@@ -4053,6 +4207,11 @@ static void OKStreetCityMirrorFace(AActor* Scene,int32 Slots,const FVector& Eye,
 
 void AOKStreetSocialScene::Tick(float Dt){
  Super::Tick(Dt);
+ // Lit: every frame while on (the originals' values copied, new parts swapped as they load), once to give them back.
+ // The catch light (100 cd on the characters' channel, for the lit tears' shine) burnt them white once they took light: off
+ // while they are lit, back when they are not.
+ if(State&&(State->Lit||State->LitShown)){if(State->Lit!=State->LitShown&&State->CatchLight.IsValid())State->CatchLight->SetIntensity(State->Lit?0.f:100.f);
+  OKSetActorLit(this,State->Lit,OKLitMaterialRootPath());State->LitShown=State->Lit;}
  if(APlayerController* Eyes=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr;OKStreetCityMode()&&State&&Eyes&&Eyes->PlayerCameraManager)OKStreetCityMirrors(GetWorld(),State->Male+FVector(0,0,150),Eyes->PlayerCameraManager->GetCameraLocation(),Eyes->PlayerCameraManager->GetCameraRotation().Vector(),Dt);
  if(OKStreetCityMode()&&State&&GOKStreetCitySun.IsValid()&&State->Sun!=GOKStreetCitySun){State->Sun=GOKStreetCitySun;State->ClockDrivesSun=true;State->NextSunUpdate=0;}
  if(OKStreetCityMode()&&State)if(auto* Env=GOKStreetCityEnv.Get()){static double NextHour=0;const double Wall=FPlatformTime::Seconds();if(Wall>=NextHour){NextHour=Wall+5;const double Hours=OKStreetClockHours(State->ClockStartHours,Wall-State->ClockStartWall);Env->SetHour(Hours);
@@ -4073,11 +4232,14 @@ void AOKStreetSocialScene::Tick(float Dt){
  if(S.UiDirty){S.UiDirty=false;const uint32 Regions=S.UiDirtyRegions?S.UiDirtyRegions:uint32(OKStreetUi::All);S.UiDirtyRegions=0;if(CVarOKStreetLogUiRebuilds.GetValueOnGameThread())UE_LOG(LogTemp,Display,TEXT("Street UI rebuild asked by %s:%u (regions %u)"),*FPaths::GetCleanFilename(ANSI_TO_TCHAR(S.UiDirtyFile)),S.UiDirtyLine,Regions);{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_RebuildUI);RebuildUI(Regions);}}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickControl);TickControl();}
  const double Now=SceneTime();auto* PC=GetWorld()->GetFirstPlayerController();if(!PC)return;
  if(!S.CatchLight.IsValid()){auto* L=NewObject<UPointLightComponent>(this);L->SetMobility(EComponentMobility::Movable);L->SetLightingChannels(false,false,true);L->SetCastShadows(false);
-  L->SetIntensityUnits(ELightUnits::Candelas);L->SetIntensity(100.f); /* 100 cd: a clear wet shine, short of glare (300 burns out) */L->SetAttenuationRadius(800.f);L->SetSourceRadius(2.f);L->RegisterComponent();AddInstanceComponent(L);S.CatchLight=L;}
+  L->SetIntensityUnits(ELightUnits::Candelas);L->SetIntensity(S.Lit?0.f:100.f); /* 100 cd: a clear wet shine, short of glare (300 burns out) */L->SetAttenuationRadius(800.f);L->SetSourceRadius(2.f);L->RegisterComponent();AddInstanceComponent(L);S.CatchLight=L;}
  if(PC->PlayerCameraManager)S.CatchLight->SetWorldLocation(PC->PlayerCameraManager->GetCameraLocation()+FVector(0,0,25));
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkReplay);TickFreeTalkReplay(Now);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkSpeech);TickFreeTalkHisVoice(SceneTime());TickFreeTalkSpeech(FPlatformTime::Seconds());TickDeferredNotes();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkLive);TickFreeTalkLive(Now);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkTrace);TickFreeTalkTrace(Now);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickOrderNotice);TickOrderNotice();}
  // The street clock paused: the kitchen and the eating wait too (nothing on the table is eaten while time stands still).
  if(S.ClockPaused)for(auto& P:S.Serves)P.At+=Dt;
+ // And a girl he walked up to keeps waiting for him: her moment counted on in wall time, and paused beside 贞德·Alter for
+ // a few seconds he found her gone when the clock ran again, E said "nobody within reach" four times (R6-187).
+ if(S.ClockPaused)for(auto& P:S.CommutePausedUntil)P.Value+=Dt;
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickServes);TickServes();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickShopArrival);TickShopArrival();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickMeal);TickMeal(S.ClockPaused?0.f:Dt);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickRetryAction);TickRetryAction();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickThenAction);TickThenAction();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickEnsureFreeTalk);TickEnsureFreeTalk();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFaceTalkPartner);TickFaceTalkPartner();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickParty);TickParty(Dt);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickBluff);TickBluff();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFarewell);TickFarewell();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickPlaceClosing);TickPlaceClosing();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickPlaceTour);TickPlaceTour(Now);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickLiveTalkTest);TickLiveTalkTest(Now);}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickRestroom);TickRestroom();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickSleep);TickSleep();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickSolo);TickSolo();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickCalendarAndMind);TickCalendarAndMind();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickSaves);TickSaves();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickRouteJobs);TickRouteJobs();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickNavSearch);TickNavSearch();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickDestroyQueue);TickDestroyQueue();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickCommutes);TickCommutes(Dt);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickUiProbe);TickUiProbe();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickCounterProximity);TickCounterProximity();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickAcademics);TickAcademics();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickCampusProximity);TickCampusProximity();}
  // Reading together ends when the player walks away from her.
@@ -4310,6 +4472,17 @@ void AOKStreetSocialScene::Tick(float Dt){
   if(S.Pair.Watermelon&&S.Pair.Phase==1){Focus=(S.Male+S.Agents[S.Pair.Partner-1].Position)*.5f+FVector(0,35,80);Pivot=Focus;}
   GalgameWalkFocus(Focus,Pivot); // walking and talking: between him and her (OKStreetSocialGalgame.inl)
   const FRotator View(S.Pitch,S.Yaw,0);const FVector Wanted=Pivot-View.Vector()*S.Distance+(S.Target!=INDEX_NONE?FRotationMatrix(View).GetUnitAxis(EAxis::Y)*(S.Pair.Conversation()?-120.f:110.f):FVector::ZeroVector);FHitResult Hit;FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetCamera),false,this);const bool Blocked=GetWorld()->SweepSingleByChannel(Hit,Pivot,Wanted,FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeSphere(8),Query);FVector Shot=Blocked?Hit.Location:Wanted;
+  // At an activity's spot by a wall (the department store's teddy bear, the snack bar's window seat) the lens closed in to
+  // his back and the view was his bag (activity audit 11-09): pulled under 40% of its distance, the way round them with
+  // the most room is taken instead (a quarter, half or three quarters round), kept until it is blocked too.
+  if(OKStreetCityMode()&&S.Pair.Partner!=INDEX_NONE){static float Turn=0.f;static int32 For=INDEX_NONE;if(For!=S.Pair.Partner){For=S.Pair.Partner;Turn=0.f;}
+   auto Try=[&](float T,FVector& Out){const FRotator V(S.Pitch,S.Yaw+T,0);const FVector W=Pivot-V.Vector()*S.Distance+FRotationMatrix(V).GetUnitAxis(EAxis::Y)*(S.Pair.Conversation()?-120.f:110.f);FHitResult H;
+    Out=GetWorld()->SweepSingleByChannel(H,Pivot,W,FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeSphere(8),Query)?H.Location:W;
+    // A prop without collision (the Christmas tree: the photo's view was all branches) counts as no room at all.
+    if(OKStreetBlockedPoint(Out,10.f))return 0.f;return float(FVector::Dist(Pivot,Out));};
+   FVector Best;float Room=Try(Turn,Best);
+   if(Room<S.Distance*.4f)for(const float T:{0.f,90.f,180.f,-90.f}){FVector C;const float R=Try(T,C);if(R>Room+50.f){Room=R;Best=C;Turn=T;}}
+   Shot=Best;}
   // The city's street is full of posts, fences and trees, and its ground has kerbs: a lens that jumps to whatever it touches shook
   // him all the way down the road. It closes in fast and backs out slowly, and his height is followed, not copied.
   if(OKStreetCityMode()&&S.Target==INDEX_NONE){static float Reach=-1.f,Height=0.f;const float Free=float(FVector::Dist(Pivot,Shot));const float RawZ=float(Pivot.Z);

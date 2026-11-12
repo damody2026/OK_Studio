@@ -190,12 +190,15 @@ for n = 1, 96 do
 end
 local motel_floors = { H1 = { [2] = true, [3] = true, [4] = true, [5] = true } } -- replaced by the motel suites
 local entry = {}  -- building -> street entrance (world)
+-- the entrance used where entry-A opens on to a wall: the onsen S19's west door is 1 m from the side of S48, and a walk from it
+-- went nowhere; its north door is the way out (walk probe, places-v1/walk-probe.json, 11-10)
+local ENTRY = { S19 = 'S19-entry-front-N' }
 local inst = {}   -- every anchor-kind instance: {b, floor, owner, kind, pos, yaw}
 for _, rep in ipairs(reports) do
   local b = rep[1]
   if origin[b] then
     local R = load(rep[2])
-    for _, d in ipairs(R.doors or {}) do if d.id == b .. '-entry-A' then entry[b] = BW(b, d.position_m[1], d.position_m[2], 0) end end
+    for _, d in ipairs(R.doors or {}) do if d.id == (ENTRY[b] or (b .. '-entry-A')) then entry[b] = BW(b, d.position_m[1], d.position_m[2], 0) end end
     for _, i in ipairs(R.instances or {}) do
       if not entry[b] and i.asset == 'entryframe' and i.position_m then entry[b] = BW(b, i.position_m[1], i.position_m[2], 0) end
       local kind = ANCHOR[i.asset]
@@ -321,7 +324,11 @@ local function roomplace(id, gid, roomid, wants, extra)
 end
 local t = roomplace('library', 'library', 'LI-0101', {}, { first(pick('seat', { b = 'LI' }), 'seat'), (function() local c = roomcentre('LI-0201'); return c and A('shelf', c, 0, 'LI-0201 文學書庫') end)() }); t.door = entry.LI or t.door; t.rooms = { bbox('LI') }; t.privacy = 0; def('library', t)
 t = roomplace('cafeteria', 'cafeteria', 'SC-0101', { table = 'table' }); t.door = entry.SC or t.door; t.rooms = { bbox('SC') }; t.privacy = 0; def('cafeteria', t)
-do -- school = T1 (two classrooms) + the SC music club room
+-- school = the first T1 ground-floor classroom (its seat), with the 2F classroom and the SC music club room as anchors in other
+-- places' boxes (the game walks through the building a spot is in). It was the whole T1, the same box as campus_t1: a spot
+-- in it counted as campus_t1 (the game takes the college's id on a tie) and places_check said the school's own inside
+-- spot was not the school's (11-11); lecture had the same with T2 (R6-188h)
+do
   local seats = pick('seat', { b = 'T1', floor = 1 }); local rooms1 = {}
   for _, a in ipairs(seats) do rooms1[a.owner] = rooms1[a.owner] or a end
   local ids = {}; for k in pairs(rooms1) do ids[#ids + 1] = k end; table.sort(ids)
@@ -329,9 +336,16 @@ do -- school = T1 (two classrooms) + the SC music club room
   -- class2 = "the second-floor classroom" (c-conquest 11-03): the first seat on T1 2F
   local s2 = pick('seat', { b = 'T1', floor = 2 }); table.sort(s2, function(x, y) return x.owner < y.owner end); local c2 = s2[1]
   local an = { ids[1] and A('seat', rooms1[ids[1]].pos, rooms1[ids[1]].yaw, ids[1]) or nil, c2 and A('class2', c2.pos, c2.yaw, c2.owner) or nil, mc and A('music', md or mc, 0, 'SC-0301 音樂社練習室') or nil }
-  def('school', { building = 'T1', name = bname.T1, door = entry.T1, rooms = { bbox('T1') }, anchors = an, privacy = 0 })
+  local _, _, cbox = roomcentre(ids[1] or '')
+  def('school', { building = 'T1', name = bname.T1 .. (cbox and planrooms[ids[1]] and (' ' .. planrooms[ids[1]].name) or ''), door = entry.T1, rooms = { cbox or bbox('T1') }, anchors = an, privacy = 0, note = 'a room of campus_t1: the building, its lifts and stairs are campus_t1' })
 end
-do local s = pick('seat', { b = 'T2', floor = 1 }); def('lecture', { building = 'T2', name = bname.T2, door = entry.T2, rooms = { bbox('T2') }, anchors = { first(s, 'seat') }, privacy = 0 }) end
+-- lecture = the T2 ground-floor classroom with the most seats, a room inside campus_t2 (the whole T2). It was the whole
+-- building, the same rooms and lift anchors as campus_t2, and the game built a second car in the same shaft (R6-188h, 11-10)
+do local s = pick('seat', { b = 'T2', floor = 1 }); local n, best = {}, nil
+  for _, a in ipairs(s) do n[a.owner] = (n[a.owner] or 0) + 1; if not best or n[a.owner] > n[best] or (n[a.owner] == n[best] and a.owner < best) then best = a.owner end end
+  local c, door, box = roomcentre(best or '')
+  local mine = {}; for _, a in ipairs(s) do if a.owner == best then mine[#mine + 1] = a end end
+  def('lecture', { building = 'T2', name = bname.T2 .. ' ' .. (planrooms[best] and planrooms[best].name or best or ''), door = door or c or entry.T2, rooms = { box or bbox('T2') }, anchors = { first(mine, 'seat') }, privacy = 0, note = 'a room of campus_t2: the building, its lifts and stairs are campus_t2' }) end
 do -- campus_sports = SP with the outdoor track as the field
   local tr = alabel['Outdoor_campus_track']
   def('campus_sports', { building = 'SP', name = bname.SP, door = entry.SP, rooms = { bbox('SP'), tr and { min = P(tr.c[1] - tr.e[1], tr.c[2] - tr.e[2], tr.c[3] - tr.e[3]), max = P(tr.c[1] + tr.e[1], tr.c[2] + tr.e[2], tr.c[3] + tr.e[3] + 300) } or nil },
@@ -463,7 +477,7 @@ do
   -- SC, SP, LI and CV have the same lift shafts: without anchors the game could not take him to the club rooms, the gym, the
   -- aquarium or the cinema upstairs ("on another floor, no way there", 11-08). CV had no place for the whole building: 'civic'.
   def('civic', { building = 'CV', name = bname.CV or '市民中心', door = entry.CV, rooms = { bbox('CV') }, anchors = {}, privacy = 0 })
-  local multi = { girls_dorm = true, boys_dorm = true, department = true, hotel = true, school = true, lecture = true, cafeteria = true, campus_sports = true, library = true, civic = true }
+  local multi = { girls_dorm = true, boys_dorm = true, department = true, hotel = true, cafeteria = true, campus_sports = true, library = true, civic = true }
   for _, g in ipairs(G) do
     if multi[g.id] or (g.id:match('^campus_') and g.building) then
       if multi[g.id] then cores(g.building, g.anchors) end
@@ -515,6 +529,8 @@ do
     end
   end
 end
+-- a door from ENTRY was walked through (walk probe): the exporter leaves it where it is
+for _, g in ipairs(G) do if g.building and ENTRY[g.building] and g.door == entry[g.building] then g.door_measured = true end end
 -- new-game spawn (c-conquest Q16): 3 m out from the boys' dorm entrance, away from the building, facing the door
 for _, g in ipairs(G) do
   local whole = g.id == 'boys_dorm' and g.door and bbox(g.building)
@@ -955,7 +971,13 @@ if exists(root .. 'places-v1/seats-fit.json') then
     for _, r in ipairs(g.rooms or {}) do local lo, hi = box(r)
       if lo then B[#B + 1] = { g = g, lo = lo, hi = hi, v = (hi[1] - lo[1]) * (hi[2] - lo[2]) } end end
   end
-  table.sort(B, function(a, b) return a.v < b.v end)
+  -- school and campus_t1 are the same T1 box: table.sort is not stable, so a tie went either way from run to run (11-10);
+  -- now the game place (school) gets them, then by id
+  table.sort(B, function(a, b)
+    if a.v ~= b.v then return a.v < b.v end
+    local ca, cb = a.g.id:match('^campus_') ~= nil, b.g.id:match('^campus_') ~= nil
+    if ca ~= cb then return cb end
+    return a.g.id < b.g.id end)
   local function owner(p)
     for _, b in ipairs(B) do if p[1] >= b.lo[1] and p[1] <= b.hi[1] and p[2] >= b.lo[2] and p[2] <= b.hi[2] and p[3] >= b.lo[3] - 30 and p[3] <= b.hi[3] + 30 then return b.g end end
     for _, g in ipairs(GAME_PLACES) do if g.outdoor and not (g.rooms and #g.rooms > 0) and g.door then
