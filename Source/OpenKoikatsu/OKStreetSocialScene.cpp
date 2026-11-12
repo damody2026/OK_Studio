@@ -605,6 +605,8 @@ FString VoicePickDescription,VoicePickNotice,TtsVoiceInstruct;int32 VoicePickTar
  // The player's settings (OKStreetSocialSettings.inl): voices (builtin | tts | cloud | off), voice input (local |
  // cloud), the API keys, and the menu at the top left that sets them.
  FString VoiceMode=TEXT("builtin"),AsrMode=TEXT("local"),DeepSeekKey,AliyunKey,AliyunBaseUrl,AliyunTtsModel,AliyunAsrModel,SettingsNotice;bool SettingsOpen=false;TSharedPtr<SBox> UiSettingsHolder;
+ // player.json chose the cloud but had no Alibaba Cloud key yet (a package ships without one): the key saved later turns it on.
+ bool CloudVoiceWanted=false,CloudAsrWanted=false;
  TSharedPtr<SOKStreetMinimap> Minimap;
  TSharedPtr<SWidget> MinimapPanel;
  // The roster menu (OKStreetSocialRoster.inl): the cards in the heroine folder, the ones picked for this world, and the

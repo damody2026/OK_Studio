@@ -243,7 +243,7 @@ fn cmd_serve(args: &Args) -> Result<()> {
     // then the game plays its recorded lines.
     if asked.is_none() && settings.pointer("/voice/voice_mode").and_then(|m| m.as_str()) == Some("cloud") {
         crate::log!("ok-tts: cloud voices chosen but no Alibaba Cloud key yet: no local model; waiting for POST /cloud");
-        return server::serve(port, 8, voice_table, None, None, || bail!("cloud voices chosen without a key: enter the Alibaba Cloud key in the settings"));
+        return server::serve(port, 8, voice_table, None, None, || Err(server::WaitForCloud.into()));
     }
     if backend == "base" {
         // The Base model: --base, else one on this machine, else downloaded below (in the background).

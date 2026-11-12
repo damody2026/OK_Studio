@@ -23,8 +23,8 @@ void AOKStreetSocialScene::LoadPlayerSettings(){
  Ali->TryGetStringField(TEXT("base_url"),S.AliyunBaseUrl);Ali->TryGetStringField(TEXT("tts_model"),S.AliyunTtsModel);Ali->TryGetStringField(TEXT("asr_model"),S.AliyunAsrModel);
  FString Mode;if(Asr->TryGetStringField(TEXT("mode"),Mode)&&(Mode==TEXT("local")||Mode==TEXT("cloud")))S.AsrMode=Mode;
  // A cloud choice with no key left: the local voices / recognizer (the server was started that way too).
- if(S.AliyunKey.IsEmpty()&&S.VoiceMode==TEXT("cloud")){S.VoiceMode=TEXT("tts");S.TtsEnabled=true;}
- if(S.AliyunKey.IsEmpty())S.AsrMode=TEXT("local");
+ if(S.AliyunKey.IsEmpty()&&S.VoiceMode==TEXT("cloud")){S.VoiceMode=TEXT("tts");S.TtsEnabled=true;S.CloudVoiceWanted=true;}
+ if(S.AliyunKey.IsEmpty()&&S.AsrMode==TEXT("cloud")){S.AsrMode=TEXT("local");S.CloudAsrWanted=true;}
 }
 
 // The Alibaba Cloud section as the voice servers take it on POST /cloud ({"api_key": ""}: back to the local model).
@@ -62,6 +62,7 @@ void AOKStreetSocialScene::SetVoiceMode(const FString& Mode){
  if(!State)return;auto& S=*State;
  if(Mode!=TEXT("builtin")&&Mode!=TEXT("tts")&&Mode!=TEXT("cloud")&&Mode!=TEXT("off"))return;
  if(Mode==TEXT("cloud")&&S.AliyunKey.IsEmpty()){S.SettingsNotice=OKT(TEXT("ui.settings.cloud_needs_key"));RebuildSettingsPanel();return;}
+ S.CloudVoiceWanted=false; // the player's own choice from now on
  const bool WasOff=S.VoiceMode==TEXT("off");
  S.VoiceMode=Mode;S.TtsEnabled=Mode==TEXT("tts")||Mode==TEXT("cloud");OKSetCrowdRuntimeSpeechMuted(Mode==TEXT("off"));
  S.SettingsNotice.Reset();
@@ -78,7 +79,7 @@ void AOKStreetSocialScene::SetAsrMode(const FString& Mode){
  if(!State)return;auto& S=*State;
  if(Mode!=TEXT("local")&&Mode!=TEXT("cloud"))return;
  if(Mode==TEXT("cloud")&&S.AliyunKey.IsEmpty()){S.SettingsNotice=OKT(TEXT("ui.settings.cloud_needs_key"));RebuildSettingsPanel();return;}
- S.AsrMode=Mode;S.SettingsNotice.Reset();
+ S.AsrMode=Mode;S.CloudAsrWanted=false;S.SettingsNotice.Reset();
  if(!S.SelfTest&&!S.Manifest.SavePath.IsEmpty()){
   const FString Path=PlayerSettingsPath();const TSharedRef<FJsonObject> Player=OKStreetReadPlayerFile(Path);
   OKStreetPlayerSection(Player,TEXT("asr"))->SetStringField(TEXT("mode"),Mode);
@@ -105,9 +106,13 @@ void AOKStreetSocialScene::SaveApiKeys(){
   if(S.VoiceMode==TEXT("cloud"))SetVoiceMode(TEXT("tts"));
   if(S.AsrMode==TEXT("cloud"))SetAsrMode(TEXT("local"));
  }else if(AliChanged){
-  // A new key for choices already on the cloud.
-  if(S.VoiceMode==TEXT("cloud"))PushCloudSetting(true);
-  if(S.AsrMode==TEXT("cloud"))PushCloudSetting(false);
+  // The first key for cloud choices made without one (player.json of a package): turn them on now, no restart.
+  const bool Voice=S.CloudVoiceWanted&&S.VoiceMode!=TEXT("cloud"),Asr=S.CloudAsrWanted&&S.AsrMode!=TEXT("cloud");
+  S.CloudVoiceWanted=S.CloudAsrWanted=false;
+  if(Voice)SetVoiceMode(TEXT("cloud"));
+  else if(S.VoiceMode==TEXT("cloud"))PushCloudSetting(true); // a new key for choices already on the cloud
+  if(Asr)SetAsrMode(TEXT("cloud"));
+  else if(S.AsrMode==TEXT("cloud"))PushCloudSetting(false);
  }
  RefreshUI();RebuildSettingsPanel();
 }

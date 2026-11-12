@@ -186,6 +186,14 @@ impl Trace {
     }
 }
 
+/// Returned by a loader that has nothing to load: the server waits for POST /cloud instead of exiting.
+#[derive(Debug)]
+pub struct WaitForCloud;
+impl std::fmt::Display for WaitForCloud {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("waiting for the Alibaba Cloud key (POST /cloud)") }
+}
+impl std::error::Error for WaitForCloud {}
+
 pub fn serve(port: u16, workers: usize, voices: Voices, base: Option<Arc<BaseVoices>>, cloud: Option<Arc<crate::cloud::Cloud>>,
              load: impl FnOnce() -> Result<Engine> + Send + 'static) -> Result<()> {
     let server = tiny_http::Server::http(("127.0.0.1", port)).map_err(|e| anyhow::anyhow!("bind 127.0.0.1:{port}: {e}"))?;
@@ -211,6 +219,9 @@ pub fn serve(port: u16, workers: usize, voices: Voices, base: Option<Arc<BaseVoi
                 crate::hfget::set_status(String::new());
                 crate::log!("ok-tts: READY");
             }
+            // Cloud voices chosen without a key yet (a package shipped without one): no local model to load, and the
+            // server stays up for the game's POST /cloud once the player enters the key (it exited here, 2026-11-13).
+            Err(e) if e.downcast_ref::<WaitForCloud>().is_some() => crate::log!("ok-tts: no local model; waiting for POST /cloud"),
             Err(e) => {
                 crate::log!("ok-tts: LOAD FAILED: {e:#}");
                 *state.load_error.lock().unwrap() = Some(format!("{e:#}"));
