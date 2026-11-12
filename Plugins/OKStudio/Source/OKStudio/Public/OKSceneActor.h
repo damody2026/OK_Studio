@@ -275,6 +275,10 @@ private:
 	// The map's time of day (SunLightInfo.Set): which time its parts show and its own sun light then.
 	UPROPERTY(Transient)
 	TObjectPtr<class UDirectionalLightComponent> MapSun;
+	/** The part of the sun its shadows keep (Light.shadowStrength < 1), as a light that casts none: virtual shadow maps
+	 *  ignore ShadowAmount (U271). Only while the map's sun has such a strength. */
+	UPROPERTY(Transient)
+	TObjectPtr<class UDirectionalLightComponent> MapSunFill;
 	int32 ShownMapTime = -2;
 	/** The times of day the map has (bit per time) and whether its light is baked into its lightmaps. */
 	int32 MapTimes = 0;

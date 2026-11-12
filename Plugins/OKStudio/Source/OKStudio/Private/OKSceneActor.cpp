@@ -1482,6 +1482,11 @@ void AOKSceneActor::SyncMap()
 static TAutoConsoleVariable<int32> CVarOkStudioMapSun(TEXT("ok.Studio.MapSun"), 1,
 	TEXT("1: light a Studio map with its own sun (SunLightInfo._targetLight at the scene's time of day, casting shadows); 0: maps show only their lightmaps and emission."));
 
+// Diagnostics: which of the map's own lamps light what (a colour difference against the game, map 55's shadows).
+static TAutoConsoleVariable<int32> CVarOkStudioMapLampsOff(TEXT("ok.Studio.MapLampsOff"), 0,
+	TEXT("Bit i hides the map's i-th lamp (load order, see the 'map lamp' log lines); -1 hides them all. Applied when the map's time is shown again."));
+static int32 GShownMapLampsOff = 0;
+
 /** The map sun's Light.shadowStrength, where it is not 1: what is left of the sun in its shadows. The library does not record
  *  it (its records are binary, a new field means converting every map again); read from the game with
  *  `run_map_tour.lua --lights-only` over every map (U269). */
@@ -1526,7 +1531,9 @@ void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
 	MapTimes = 0;
 	for (int32 T = 0; T < 4; ++T) { FLinearColor Probe; if (Value(TEXT("Color"), T, Probe)) MapTimes |= 1 << T; }
 	bMapSunBaked = bBakedSun;
-	if (Time == ShownMapTime && Components == ShownMapComponents && (MapSun != nullptr) == bSun && (!bSun || ShownMapSunPlace.Equals(GetActorTransform()))) return;
+	const int32 LampsOff = CVarOkStudioMapLampsOff.GetValueOnGameThread();
+	if (Time == ShownMapTime && Components == ShownMapComponents && (MapSun != nullptr) == bSun && (!bSun || ShownMapSunPlace.Equals(GetActorTransform())) && LampsOff == GShownMapLampsOff) return;
+	GShownMapLampsOff = LampsOff;
 	ShownMapTime = Time;
 	ShownMapComponents = Components;
 	ShownMapSunPlace = GetActorTransform();
@@ -1548,13 +1555,19 @@ void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
 		}
 	}
 	// The map's lamps of a time of day show with that time's list (SunLightInfo.Set), the others always.
+	int32 LampIndex = 0;
 	for (const TPair<TWeakObjectPtr<ULightComponent>, uint32>& L : MapLights)
-		if (L.Key.IsValid()) L.Key->SetVisibility(L.Value == 0 || (Time >= 0 && ((L.Value >> Time) & 1) != 0));
+	{
+		const bool bOff = LampsOff == -1 || (LampIndex < 31 && ((LampsOff >> LampIndex) & 1) != 0);
+		++LampIndex;
+		if (L.Key.IsValid()) L.Key->SetVisibility(!bOff && (L.Value == 0 || (Time >= 0 && ((L.Value >> Time) & 1) != 0)));
+	}
 	ItemsLit.Reset();
 	MapSunMask = 0;
 	if (!bSun)
 	{
 		if (MapSun) { MapSun->DestroyComponent(); MapSun = nullptr; }
+		if (MapSunFill) { MapSunFill->DestroyComponent(); MapSunFill = nullptr; }
 		return;
 	}
 	Value(TEXT("Color"), Time, Color);
@@ -1581,8 +1594,29 @@ void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
     // before that quantization, preserving the source spectral ratios.
     const float Energy=FMath::Max3(Irradiance.R,Irradiance.G,Irradiance.B);
     MapSun->SetLightColor(Energy>0 ? FLinearColor(Irradiance.R/Energy,Irradiance.G/Energy,Irradiance.B/Energy,1) : FLinearColor::Black);
-    MapSun->SetIntensity(Energy*UE_PI);
-    MapSun->SetShadowAmount(OKStudioMapSunShadow(Document->Map));
+    // Light.shadowStrength s < 1 leaves 1 - s of the sun in its shadows. UE's ShadowAmount does that, but virtual shadow
+    // maps (the project's shadows) ignore it: the shadows stayed fully dark and map 55's turned blue under its blue lamp
+    // (U271). So the sun is split: s of it casts the shadows, 1 - s lights everything as a light that casts none.
+    const float ShadowStrength = FMath::Clamp(OKStudioMapSunShadow(Document->Map), 0.f, 1.f);
+    MapSun->SetIntensity(Energy*UE_PI*ShadowStrength);
+    if (ShadowStrength < 1.f)
+    {
+        if (!MapSunFill)
+        {
+            MapSunFill = NewObject<UDirectionalLightComponent>(this, TEXT("MapSunFill"));
+            MapSunFill->ForwardShadingPriority = 999;
+            MapSunFill->SetMobility(EComponentMobility::Movable);
+            MapSunFill->SetupAttachment(RootComponent);
+            MapSunFill->SetCastShadows(false);
+            MapSunFill->LightingChannels.bChannel0 = false;
+            MapSunFill->LightingChannels.bChannel2 = true;
+            MapSunFill->RegisterComponent();
+        }
+        MapSunFill->SetWorldRotation(MapSun->GetComponentQuat());
+        MapSunFill->SetLightColor(MapSun->GetLightColor());
+        MapSunFill->SetIntensity(Energy*UE_PI*(1.f-ShadowStrength));
+    }
+    else if (MapSunFill) { MapSunFill->DestroyComponent(); MapSunFill = nullptr; }
 	// The items' forward light when it reaches their layer (UpdateItemLighting): Unity (-x, z, y) towards the light.
 	FLinearColor Lo, Hi, Low24;
 	if (Map->Session.MaterialValue(0, "_OKSunCullingLo", Lo) && Map->Session.MaterialValue(0, "_OKSunCullingHi", Hi))
@@ -3041,6 +3075,7 @@ void AOKSceneActor::ReleaseScene()
 	ShownMapTime = -2;
 	ShownMapComponents = 0;
 	if (MapSun) { MapSun->DestroyComponent(); MapSun = nullptr; }
+	if (MapSunFill) { MapSunFill->DestroyComponent(); MapSunFill = nullptr; }
 	for (FScenePicture* Picture : { &Background, &Frame })
 	{
 		if (Picture->Plane) Picture->Plane->DestroyComponent();
