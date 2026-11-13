@@ -75,6 +75,7 @@ void AKKPairedPlayback::SetThird(AKKPreviewActor* Actor,const FString& Motion,bo
 	if(Actor){Actor->SetCoordinatedPlayback(true);Actor->SetActorTickEnabled(false);}
 }
 bool AKKPairedPlayback::SetSpeed(float Value) {if(!FMath::IsFinite(Value)||Value<0.f||Value>4.f) return false;Speed=Value;return true;}
+bool OKPairLateDisplayOn(); // KKPreviewActor.cpp
 bool AKKPairedPlayback::Advance(float Delta,FString& Error)
 {
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairAdvance);
@@ -90,6 +91,8 @@ bool AKKPairedPlayback::Advance(float Delta,FString& Error)
 	// is launched below, while it runs (ok.Anim.PairSplitDisplay; any way out of here finishes them).
 	ON_SCOPE_EXIT{FinishDeferredStreams();};
 	if(bSolvePending){SyncAsync(true);if(!bSolveOk){Error=TEXT("OK pair frame: ")+OkReport;return false;}}
+	// The H scene's morph uploads in its reads (RunLate) go with this frame's late display, done after the launch below.
+	TGuardValue<bool> LateWindow(AKKPreviewActor::GLateDisplayWindow,OKPairLateDisplayOn());
 	OnSessionsIdle.Broadcast();
 	if(!bActive||!IsValid(FemaleActor)||!IsValid(MaleActor))return true; // a listener stopped the pair
     const bool Reactions[2]={FemaleActor->Session.IsBodyReactionPlaying(),MaleActor->Session.IsBodyReactionPlaying()};
@@ -143,10 +146,10 @@ uint64 GKKPairFramesShown=0;
 extern int32 GKKStreamParallelMinVertices; // KKStreamMeshProxy.cpp
 extern bool GKKDeferRuntimeStreams; // KKPreviewActor.cpp
 extern bool GKKDeferLateDisplay; // KKPreviewActor.cpp
-bool OKPairLateDisplayOn(); // KKPreviewActor.cpp
 void AKKPairedPlayback::FinishDeferredStreams()
 {
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairDeferredStreams);
+ AKKPreviewActor::GLateDisplayWindow=false; // anything later runs at once
  TGuardValue<int32> ParallelStreams(GKKStreamParallelMinVertices,4096);
  FKKGpuStreamBatchScope GpuFrame;
  for(AKKPreviewActor* PreviewRole : {FemaleActor.Get(),MaleActor.Get(),ThirdActor.Get()})if(IsValid(PreviewRole)){PreviewRole->FinishRuntimeAccessories();PreviewRole->FinishLateDisplay();}

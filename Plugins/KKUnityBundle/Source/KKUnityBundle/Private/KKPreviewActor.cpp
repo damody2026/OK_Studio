@@ -7916,6 +7916,7 @@ bool GKKDeferLateDisplay=false;
 static TAutoConsoleVariable<int32> CVarOkPairLateDisplay(TEXT("ok.Anim.PairLateDisplay"),1,
     TEXT("1: the pair's display work that reads nothing of the session (her face parts' pose, the thigh jiggle's morph uploads) is done after its next frame is launched, beside the solve; the same frame is shown."));
 bool OKPairLateDisplayOn(){return CVarOkPairLateDisplay.GetValueOnGameThread()!=0;}
+bool AKKPreviewActor::GLateDisplayWindow=false;
 void AKKPreviewActor::FinishLateDisplay()
 {
     if(!bLateMouthPending&&LateDisplay.IsEmpty())return;

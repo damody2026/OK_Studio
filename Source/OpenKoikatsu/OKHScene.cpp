@@ -3339,7 +3339,8 @@ void UOKHScenePanel::ReadBulge(AKKPreviewActor* Girl,const FVector& Tip,const FV
          TRACE_CPUPROFILER_EVENT_SCOPE(OK_HWrapStart);Girl->Session.BellyWrapStart(bIn,ToUnity(E),ToUnity(Tip+Ahead),Front.IsZero()?FVector::ZeroVector:(ToUnity(Kokan+Front*10.)-ToUnity(Kokan)).GetSafeNormal(),(Radius+.5f)/100.f,bCover);}
      else if(!E.IsZero()&&(WrapMode==1||WrapMode==3)&&TipInside>=6.f)Girl->Session.BellyWrapDeltas(ToUnity(E),ToUnity(Tip),Front.IsZero()?FVector::ZeroVector:(ToUnity(Kokan+Front*10.)-ToUnity(Kokan)).GetSafeNormal(),(Radius+.5f)/100.f,Idx,D,&N,WrapMode==3);
      WrapSolveMs=float((FPlatformTime::Seconds()-WrapT0)*1000.);if(const float Test=CVarHWrapTest.GetValueOnGameThread();Test!=0.f)for(FVector3f& V:D)V=FVector3f(0.f,Test,0.f);
-     if(bHave){if(D.Num()||bWrapShown){Girl->SetPartWrapDeltas(BulgePart,Idx,D,N);bWrapShown=D.Num()>0;}WrapVerts=D.Num();WrapIdxShown=Idx;WrapDShown=D;WrapNShown=N;}
+     // The upload reads nothing of the session: beside the next solve with the pair's late display (RunLate).
+     if(bHave){if(D.Num()||bWrapShown){Girl->RunLate([Girl,Part=BulgePart,Idx,D,N]{Girl->SetPartWrapDeltas(Part,Idx,D,N);});bWrapShown=D.Num()>0;}WrapVerts=D.Num();WrapIdxShown=Idx;WrapDShown=D;WrapNShown=N;}
      // ok.HScene.Wrap 2 (the material route, to compare): her skin parents with the wrap offset push her skin off the
      // segment from her entrance to his glans, his radius and half a centimetre (as above) out; nothing while he is in
      // her entrance alone.
@@ -3377,7 +3378,7 @@ void UOKHScenePanel::ReadBulge(AKKPreviewActor* Girl,const FVector& Tip,const FV
          Him->Session.PenisClipDeltas(HisPos(WAt),HisDir(WN),HisDir((Tip-E).GetSafeNormal()),Idx,D,FMath::Max(0.f,Inset)/100.f);
          // Moves under a tenth of a millimetre dropped: a set of only those has no morph batches and the engine asserts.
          for(int32 I=D.Num()-1;I>=0;--I)if(D[I].SizeSquared()<1e-8f){D.RemoveAtSwap(I);Idx.RemoveAtSwap(I);}}
-     if(IsValid(Him)&&ClipPart!=INDEX_NONE&&(D.Num()||bClipShown)){Him->SetPartWrapDeltas(ClipPart,Idx,D);bClipShown=D.Num()>0;}ClipVerts=D.Num();}
+     if(IsValid(Him)&&ClipPart!=INDEX_NONE&&(D.Num()||bClipShown)){bClipShown=D.Num()>0;ClipVerts=D.Num();Him->RunLate([Him,Part=ClipPart,Idx=MoveTemp(Idx),D=MoveTemp(D)]{Him->SetPartWrapDeltas(Part,Idx,D);});}else ClipVerts=D.Num();}
     // His glans alone read out for the panel (bulge_at, belly_out): each reading skins all her swells' skin again, and
     // with the fine grid that for every point of him took the game from 100 FPS to 25.
     bool bAny=false;float Most=0.f;TRACE_CPUPROFILER_EVENT_SCOPE(OK_HBellyPast);

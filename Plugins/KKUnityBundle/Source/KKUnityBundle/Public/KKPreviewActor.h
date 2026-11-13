@@ -819,6 +819,10 @@ public:
 	void FinishLateDisplay();
 	bool bLateMouthPending=false;
 	TArray<TFunction<void()>> LateDisplay;
+	/** Work that reads nothing of the session (a morph upload): held for FinishLateDisplay while the pair is between its
+	 *  display and the launch of its next solve with the late display on (the H scene's reads, OnSessionsIdle), else now. */
+	void RunLate(TFunction<void()> Do){if(GLateDisplayWindow)LateDisplay.Add(MoveTemp(Do));else Do();}
+	static bool GLateDisplayWindow;
 	// Defer display rebuilds while native face setters still update their state.
 	void BeginFaceDisplayUpdate() { ++FaceDisplayBatchDepth; }
 	void EndFaceDisplayUpdate();
