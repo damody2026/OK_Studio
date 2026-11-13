@@ -24,12 +24,48 @@ local function editor(args, path)
   return ok.proc.run(cmd, { hide = true }).code
 end
 -- --hlod: only the distance models, on a map that is already converted
-if arg[1] ~= '--hlod' then
+-- --batches N: build the HLODs in N separate editor runs (setup writes a manifest splitting the HLOD actors
+--   into N groups, then one run per group). One run over all 123 HLODs peaked at 146 GiB commit (11-13);
+--   a fresh process per group keeps the peak to the heaviest group.
+-- --from I: with --batches, start at group I (the setup and earlier groups are already done)
+local hlod_only, batches, from = false, nil, 0
+local i = 1
+while arg[i] do
+  if arg[i] == '--hlod' then hlod_only = true
+  elseif arg[i] == '--batches' then i = i + 1; batches = assert(tonumber(arg[i]), '--batches N')
+  elseif arg[i] == '--from' then i = i + 1; from = assert(tonumber(arg[i]), '--from I'); hlod_only = true
+  else error('unknown argument ' .. arg[i]) end
+  i = i + 1
+end
+if not hlod_only then
   local code = editor({ '-run=WorldPartitionConvertCommandlet', '-Verbose' }, log)
   print('convert exit', code, log)
   if code ~= 0 then os.exit(1) end
 end
 local hlog = log:gsub('convert%-', 'hlod-')
-local code = editor({ '-run=WorldPartitionBuilderCommandlet', '-Builder=WorldPartitionHLODsBuilder' }, hlog)
-print('hlod exit', code, hlog)
-os.exit(code == 0 and 0 or 1)
+local builder = { '-run=WorldPartitionBuilderCommandlet', '-Builder=WorldPartitionHLODsBuilder' }
+local function hlod(extra, path)
+  local a = {}
+  for _, v in ipairs(builder) do a[#a + 1] = v end
+  for _, v in ipairs(extra) do a[#a + 1] = v end
+  return editor(a, path)
+end
+if not batches then
+  local code = hlod({}, hlog)
+  print('hlod exit', code, hlog)
+  os.exit(code == 0 and 0 or 1)
+end
+local manifest = 'C:/portable/OpenKoikatsu/' .. out .. 'hlod-manifest.ini'
+if from == 0 then
+  local code = hlod({ '-SetupHLODs', '-BuildManifest=' .. manifest, '-BuilderCount=' .. batches }, (hlog:gsub('%.log$', '-setup.log')))
+  print('hlod setup exit', code, manifest)
+  if code ~= 0 then os.exit(1) end
+end
+for b = from, batches - 1 do
+  local path = hlog:gsub('%.log$', '-b' .. b .. '.log')
+  local code = hlod({ '-BuildHLODs', '-BuildManifest=' .. manifest, '-BuilderIdx=' .. b }, path)
+  print('hlod batch', b, 'exit', code, path)
+  io.stdout:flush()
+  if code ~= 0 then os.exit(1) end
+end
+os.exit(0)
