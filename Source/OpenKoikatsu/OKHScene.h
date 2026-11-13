@@ -237,7 +237,9 @@ private:
     // outline and colour, DressStainFloor the floor's photo while puddles lie there.
     UPROPERTY() TArray<TObjectPtr<class UTexture2D>> StainMasks;TArray<TWeakObjectPtr<UMaterialInstanceDynamic>> StainShown;
 public:
-    void DressStain(UMaterialInstanceDynamic* M);
+    // Color: its reflectance (her fluid's whitish by default); bOutline: a blob outline of its own (a flat quad's UVs;
+    // her wet marks, flattened spheres, keep their round edge).
+    void DressStain(UMaterialInstanceDynamic* M,const FLinearColor& Color=FLinearColor(.95f,.95f,.92f),bool bOutline=true);
 private:
     void DressStainFloor(UMaterialInstanceDynamic* M) const;void DressStainsOf(class AOKPaintSprayer* Sprayer);
 public:

@@ -2300,13 +2300,13 @@ void UOKHScenePanel::TickPuddles(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickPuddl
 // Her fluids' stains on the floor (AOKPaintSprayer::Splash), the puddles' water (user 2026-11-12: every water stain on the
 // floor with screen space reflections): a blob outline of its own, her fluid's whitish colour lit as it lies, nearly smooth
 // so the reflections show in it, and while puddles lie there the floor's photo under it as theirs.
-void UOKHScenePanel::DressStain(UMaterialInstanceDynamic* M){
+void UOKHScenePanel::DressStain(UMaterialInstanceDynamic* M,const FLinearColor& Color,bool bOutline){
     if(!M)return;
-    while(StainMasks.Num()<4)StainMasks.Add(OKPuddleMask(100+StainMasks.Num()));
-    if(UTexture2D* Mask=StainMasks[FMath::RandRange(0,StainMasks.Num()-1)])M->SetTextureParameterValue(TEXT("PuddleMask"),Mask);
+    while(bOutline&&StainMasks.Num()<4)StainMasks.Add(OKPuddleMask(100+StainMasks.Num()));
+    if(bOutline)if(UTexture2D* Mask=StainMasks[FMath::RandRange(0,StainMasks.Num()-1)])M->SetTextureParameterValue(TEXT("PuddleMask"),Mask);
     // Nearly the puddles' mirror with a little milk in it: a dielectric (11-12) or half metal (11-13) lit its white body so
     // brightly that only the light's glint showed and none of what stands by it.
-    M->SetVectorParameterValue(TEXT("PuddleColor"),FLinearColor(.95f,.95f,.92f));M->SetScalarParameterValue(TEXT("PuddleMetallic"),.9f);
+    M->SetVectorParameterValue(TEXT("PuddleColor"),Color);M->SetScalarParameterValue(TEXT("PuddleMetallic"),.9f);
     M->SetScalarParameterValue(TEXT("PuddleSpecular"),1.f);M->SetScalarParameterValue(TEXT("PuddleRoughness"),.03f);M->SetScalarParameterValue(TEXT("PuddleDarken"),.5f);
     DressStainFloor(M);StainShown.Add(M);UseSsr(true);
 }
@@ -2688,6 +2688,11 @@ bool UOKHScenePanel::StreetOnani() const{bool On=false;return Gallery&&Gallery->
 void UOKHScenePanel::TickDrips(float Delta){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickDrips);
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;
     auto* Two=SecondHere()?Second.Get():nullptr;
+    // Her wet marks on the floor are the puddles' water too (user 2026-11-13: every water stain on the floor with screen
+    // space reflections): their translucent tint showed nothing of her feet beside them.
+    if(!Drips.MarkParent.IsValid())if(UMaterialInterface* Water=OKPuddleParent()){Drips.MarkParent=Water;
+        Drips.DressMark=[Weak=TWeakObjectPtr<UOKHScenePanel>(this)](UMaterialInstanceDynamic* M,uint8 Colour){if(UOKHScenePanel* P=Weak.Get()){
+            const FLinearColor Tint=OKArousal::Tint(Colour);P->DressStain(M,Colour==OKArousal::Clear?FLinearColor(.95f,.95f,.97f):FLinearColor(Tint.R,Tint.G,Tint.B),false);}};}
     auto Where=[Girl,Two](int32 Who,FName Bone,FVector& At){AKKPreviewActor* A=Who==1?Two:Girl;return IsValid(A)&&HBone(A,*Bone.ToString(),At);};
     const float Desire=HerDesire();const double Now=FPlatformTime::Seconds();
     const AActor* Ignore[]={Girl,Gallery?Gallery->PartnerActor.Get():nullptr};
@@ -3779,7 +3784,8 @@ void UOKHScenePanel::NativeDestruct(){FastPaths(false);DropSecond();RestoreEyeLo
     TickCameraLight(true);TickSkinLit(true);TickClothBias(true);
     SetGrayRoom(false);RemoveMirror();StainShown.Reset();
     if(auto* PC=Cast<AOpenKoikatsuPlayerController>(GetOwningPlayer());PC&&IsValid(PC->PaintSprayer)&&PC->PaintSprayer->FloorStainMaterial){PC->PaintSprayer->FloorStainMaterial=nullptr;PC->PaintSprayer->OnFloorStain=nullptr;}
-    RemovePuddles();Drips.Reset();Tears.Reset();RestoreAlign();Super::NativeDestruct();}
+    // The room closes: its stains and marks go with it, so the reflections go back as they were (they stayed on while any lay there).
+    StainShown.Reset();RemovePuddles();Drips.Reset();Tears.Reset();RestoreAlign();Super::NativeDestruct();}
 // Off for now (user, 2026-11-02: the box, table and chair hid the bugs being looked at): ok.HScene.Props 1 sets them again.
 static TAutoConsoleVariable<int32> CVarHProps(TEXT("ok.HScene.Props"),0,TEXT("1: a box, table or chair under her for the poses that lean on one; 0: none"));
 void UOKHScenePanel::PlaceProps(int32 Kind){

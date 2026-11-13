@@ -17,6 +17,7 @@ namespace{
 
 UMaterialInstanceDynamic* FOKArousalDrops::Material(AActor* Owner,uint8 Colour,bool bMark){
  auto& M=Materials[Colour+(bMark?OKArousal::Colours:0)];if(M.IsValid())return M.Get();
+ if(bMark&&MarkParent.IsValid()){M=UMaterialInstanceDynamic::Create(MarkParent.Get(),Owner);if(DressMark)DressMark(M.Get(),Colour);return M.Get();}
  UMaterialInterface* Parent=LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/IndependentResources/PreviewMaterials/M_PreviewTranslucent.M_PreviewTranslucent"));
  if(!Parent){UE_LOG(LogTemp,Warning,TEXT("Arousal drops: no translucent material"));return nullptr;}
  M=UMaterialInstanceDynamic::Create(Parent,Owner);M->SetVectorParameterValue(TEXT("PreviewTint"),bMark?OKArousal::MarkTint(Colour):OKArousal::Tint(Colour));return M.Get();
