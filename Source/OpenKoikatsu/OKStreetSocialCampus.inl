@@ -190,6 +190,9 @@ bool AOKStreetSocialScene::NavByShopStairs(const FVector& Goal){
    TArray<FVector> Path=PlaceRoute(S.Male,Foot);if(Path.Num()<2)return false;
    S.NavPath=MoveTemp(Path);S.NavStep=1;S.NavReplans=0;S.NavProgressAt=SceneTime();return true;}}
  if(!Hers||!OKStreetUpstairs(Goal))return false;
+ // He is upstairs in another building: its lift down first, as for a roof. From T1's 4F to 胡桃 on the bookstore's 2F
+ // the street route to its door was walked on the 4F, into the wall, "the way is blocked" over and over (R6-260).
+ if(OKStreetUpstairs(S.Male))return false;
  if(FVector::Dist2D(S.Male,Hers->Door)<120.f){MoveFloor(Beside(*Hers));S.ManualReplan=true;return true;} // at her shop: up
  if(S.NavPath.Num()>=2&&FVector::Dist2D(S.NavPath.Last(),Hers->Door)<5.f)return true; // on the way to its door
  TArray<FVector> Path=PlaceRoute(S.Male,Hers->Door);if(Path.Num()<2)return false;

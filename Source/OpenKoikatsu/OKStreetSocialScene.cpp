@@ -1538,10 +1538,14 @@ void AOKStreetSocialScene::ExecuteFreeTalkAction(int32 Character,const FString& 
   const FOKStreetActivity* Act=OKStreetFindActivity(ActionNow);
   const FOKStreetPlace* Where=OKStreetFindPlace(ActionNow.StartsWith(TEXT("go:"))?ActionNow.Mid(3):Act&&Act->Place?FString(Act->Place):ActionNow);
   const FString HerId=OKStreetStableId(S.Manifest.Characters[Character]);const int64 Now=OKStreetMindNow(S);
-  if(Where&&!S.Store.Appointments.ContainsByPredicate([&](const FOKStreetAppointment& A){return A.Status==TEXT("pending")&&A.Heroine==HerId&&FMath::Abs(A.Start-Now)<90;})){
+  // Not a second one beside the meeting the same words booked there (promise_from_chat, set for when he can walk over:
+  // 91 minutes off, past the 90 looked at, and 胡桃 had two at the bookstore, one already "48 minutes late").
+  if(Where&&!S.Store.Appointments.ContainsByPredicate([&](const FOKStreetAppointment& A){return A.Status==TEXT("pending")&&A.Heroine==HerId&&(FMath::Abs(A.Start-Now)<90||A.Place==Where->Id&&A.Start>=Now-30&&A.Start/1440==Now/1440);})){
    const FString Label=OKMsg(TEXT("ui.appointments.meet_with_summary"), {{TEXT("character_name"), *S.Manifest.Characters[Character].Name}, {TEXT("what"), OKT(TEXT("ui.appointments.meeting_label"))}, {TEXT("person_name"), Where->Name}});
-   AddAppointment(TEXT("date"),Character,Where->Id,Now+20,PatienceOf(Character),Label);
-   UE_LOG(LogTemp,Display,TEXT("Street phone: actor=%d comes over to %s now; meeting in 20 minutes"),Character,Where->Id);return;}
+   // And at the time he can be there (R6-251), not in 20 minutes from across town.
+   const int64 Reach=OKStreetInsidePlace(*Where,S.Male)?Now:Now+FMath::CeilToInt(FVector::Dist2D(S.Male,Where->Door)/100.f*1.3f/OKStreetOutingWalkMPerMin);
+   AddAppointment(TEXT("date"),Character,Where->Id,FMath::Max(Now+20,Reach),PatienceOf(Character),Label);
+   UE_LOG(LogTemp,Display,TEXT("Street phone: actor=%d comes over to %s now; meeting at minute %lld"),Character,Where->Id,FMath::Max(Now+20,Reach));return;}
   S.FreeTalkNotice=OKT(TEXT("ui.scene.she_agreed_not_together"));return;}
  {
   FString Error;
