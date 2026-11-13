@@ -38,6 +38,8 @@ FString OKStreetFreeTalkSettingsPath() {
 }
 
 static bool OKStreetFreeTalkReadSettings(FOKFreeTalkSettings& Out, FString& Error) {
+ // The launcher's -NoCloud (OK_NO_CLOUD=1): no DeepSeek or Model Studio call whatever key a file or the environment holds.
+ if (!FPlatformMisc::GetEnvironmentVariable(TEXT("OK_NO_CLOUD")).IsEmpty()) { Error = OKT(TEXT("ui.free_talk.deepseek_key_missing")); return false; }
  Out.Endpoint = TEXT("https://api.deepseek.com/chat/completions");
  Out.Model = TEXT("deepseek-v4-flash");
  Out.ApiKey = FPlatformMisc::GetEnvironmentVariable(TEXT("DEEPSEEK_API_KEY"));

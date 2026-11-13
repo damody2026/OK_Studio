@@ -505,6 +505,8 @@ local function main()
     OK_MIND_DLL = path.is_file(mind_dll) and mind_dll or "",
     -- The build the mind's hot reload watches (ok-game-mcp game_call /mind reload).
     OK_MIND_SOURCE_DLL = mind_source,
+    -- -NoCloud: the game, the heroines' mind and the voice servers take no cloud path at all, whatever key they find.
+    OK_NO_CLOUD = o.nocloud and "1" or "",
   }
   -- Paths in Windows form; the voice endpoints are URLs ("http://127.0.0.1:47861") and stay as they are.
   for k, v in pairs(env) do

@@ -122,6 +122,10 @@ impl Config {
 
     /// Key: environment, then config (tests), then the settings file. Endpoint and model: config, then file, then default.
     pub fn llm(&self) -> Result<LlmSettings, String> {
+        // The launcher's -NoCloud (OK_NO_CLOUD=1): no model call at all, whatever key the environment or a file holds.
+        if std::env::var("OK_NO_CLOUD").map(|v| !v.trim().is_empty()).unwrap_or(false) {
+            return Err("no_api_key: OK_NO_CLOUD is set (the launcher's -NoCloud)".into());
+        }
         let mut file: SettingsFile = match &self.deepseek_settings {
             Some(path) if path.exists() => {
                 let text = std::fs::read_to_string(path).map_err(|e| format!("deepseek_settings_unreadable: {e}"))?;

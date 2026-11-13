@@ -43,9 +43,14 @@ fn setting(cfg: &Value, env: &str, field: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
+/// The launcher's -NoCloud (OK_NO_CLOUD=1): no cloud voice whatever key the settings, the environment or POST /cloud hold.
+pub fn forbidden() -> bool {
+    std::env::var("OK_NO_CLOUD").map(|v| !v.trim().is_empty()).unwrap_or(false)
+}
+
 /// An "aliyun" section has a key (or DASHSCOPE_API_KEY is set).
 pub fn has_key(aliyun: &Value) -> bool {
-    setting(aliyun, "DASHSCOPE_API_KEY", "api_key").is_some()
+    !forbidden() && setting(aliyun, "DASHSCOPE_API_KEY", "api_key").is_some()
 }
 
 /// Where the cloud voices designed for this account are remembered (not a setting: a cache of voice ids).
@@ -69,6 +74,9 @@ pub struct Cloud {
 impl Cloud {
     /// From an "aliyun" section ({"api_key", "base_url", "tts_model"}: the settings file's, or POST /cloud's body).
     pub fn new(cfg: &Value, model: Option<&str>) -> Result<Self> {
+        if forbidden() {
+            return Err(anyhow!("no cloud: OK_NO_CLOUD is set (the launcher's -NoCloud)"));
+        }
         let key = setting(cfg, "DASHSCOPE_API_KEY", "api_key")
             .ok_or_else(|| anyhow!("no Alibaba Cloud API key (DASHSCOPE_API_KEY, or aliyun.api_key in the player's settings)"))?;
         let base_url = setting(cfg, "DASHSCOPE_BASE_URL", "base_url").unwrap_or_else(|| "https://dashscope.aliyuncs.com".into());
