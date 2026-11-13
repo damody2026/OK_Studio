@@ -4378,3 +4378,14 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
   - 第二批的腳本用「第一批的輸出檔有內容」當作開始條件，但 PowerShell 的 `Out-File` 一開始有輸出就建立檔案。
   - 兩個腳本都以 `e-120fps` claim。`unreal_slot.lua` 看到 slot 已是同一個 agent 持有，就直接放行，沒有擋第二個。
 - 修正：同一個量測流程只用一個腳本依序跑，分段時在同一個腳本裡 release 後立刻 claim。不要用兩個背景腳本接力，也不要用輸出檔判斷前一批是否結束。
+
+## 2026-11-13 一對一量測時以為清空沙盒金鑰就不會連雲端，其實 17:22～20:28 打了 DeepSeek 163 次（E 組 e-120fps）
+
+- 現象：使用者說量測時不能打雲端。我把沙盒 `Saved/StreetSocial/Sandbox/E120/player.json` 的 `deepseek.api_key` 清空後就照常量測，沒有回頭檢查。c-conquest 回報後我才去看 `mind/trace.jsonl`：17:22～20:28 共有 163 筆 deepseek-chat 對話（女角的自由對話）。
+- 原因：
+  - 啟動器每次都會跑 `street_player_settings.migrate`，沙盒金鑰是空的，就會從 `%LOCALAPPDATA%\OpenKoikatsu\deepseek.json` 補回來。
+  - 我只看了自己改的設定，沒有用 `mind/trace.jsonl` 確認是否真的沒有連外。
+- 修正：
+  - 沙盒的 `deepseek.endpoint` 和 `aliyun.base_url` 改成 `http://127.0.0.1:9/no-cloud`，`deepseek.api_key` 填佔位字串。金鑰不是空的，啟動器就不會補，請求只會打到本機、連不上。驗證那輪 trace 只有一筆 ok=false，4 次嘗試都連不上本機。
+  - 之後每次量測前後都檢查 `trace.jsonl` 新增的列。
+  - 正式做法等 c-conquest 的啟動器 `-NoCloud`。
