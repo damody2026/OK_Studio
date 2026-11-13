@@ -426,6 +426,18 @@ end
 local PASSAGES = {
   { id = 's32', pts = { { 42760, 28520 }, { 43200, 28520 }, { 43800, 28520 }, { 44400, 28570 }, { 44800, 28570 }, { 44800, 28880 }, { 45160, 28880 } } },
   { id = 'sp_gym', pts = { { 77174.7, 34274.6 }, { 77000, 34350 }, { 77000, 35400 }, { 77000, 36400 }, { 77000, 37400 }, { 77000, 38400 }, { 77000, 39500 } } },
+  -- 11-13 batch (map cut on the source map, Tools/street_city_shop_passage_payload.lua / street_city_fence_gaps_payload.lua;
+  -- boxes and walk probes in places-v1/shop-passage-batch*-apply-1113.json, fence-gaps-dorm-apply-1113.json,
+  -- walk-probe-batch2-after-1113.json). The shops have no game place on the ground floor; their 3F homes stay.
+  -- S56: west shop row (x 33300-35060), cut through at y 31240-31480 (front wall, inner walls, back wall).
+  { id = 's56', pts = { { 32700, 31360 }, { 33300, 31360 }, { 34000, 31360 }, { 34700, 31360 }, { 35300, 31360 }, { 35700, 31360 } } },
+  -- S64: west shop row (x 33200-35160), front and back wall cut at y 41200-41440.
+  { id = 's64', pts = { { 32800, 41320 }, { 33300, 41320 }, { 34000, 41320 }, { 34700, 41320 }, { 35300, 41320 }, { 35700, 41320 } } },
+  -- S38: east shop row (x 43100-44880), west wall cut at y 36380-36580; the east side was open at y 36740-36920.
+  { id = 's38', pts = { { 42800, 36460 }, { 43300, 36460 }, { 44000, 36460 }, { 44420, 36480 }, { 44420, 36820 }, { 45000, 36830 }, { 45400, 36830 } } },
+  -- Campus east fence (x 97000) beside the girls' dorm D1: 17 pieces taken out at y 39760-40190 (the fence ran unbroken
+  -- from y 20000 to 47800; girls_dorm -> playground was 551 m for 100 m straight).
+  { id = 'fence_d1', pts = { { 96500, 39975 }, { 97000, 39975 }, { 97500, 39975 } } },
 }
 local PASSAGE_TIE_CM, PASSAGE_TIES = 800, 3
 for _, pass in ipairs(PASSAGES) do
