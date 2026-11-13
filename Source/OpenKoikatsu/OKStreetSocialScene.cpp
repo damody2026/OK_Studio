@@ -277,6 +277,7 @@ struct FOKStreetSceneState {
  int32 DayRewound=-1; // the game day the hour buttons went back from (R3-225): reached again, it is not begun twice
  FVector OutingStuckPos=FVector::ZeroVector;int32 OutingStuckCount=0; // an outing held up in the same spot again and again (R3-234)
  TMap<int32,int64> WaitsForHim; // she wrote him where she is: until this minute she stays there for him (R3-230)
+ TSet<int32> NowMeetingIds; // "I'm coming over now" meetings, booked for when he can be there: met face to face, kept (R6-256)
  TMap<int32,FIntPoint> HomeAfterWalk; // walked home by him: X = the minute she arrived, Y = until when she stays in (R6-102)
  // Who was with him in the save, by stable id, until each is put back (R3-238); the one who walks with him again, and until when it is tried.
  TMap<FString,FOKStreetStore::FWithHim> ResumeWithHim;int32 ResumeFollow=INDEX_NONE;double ResumeFollowUntil=0;TArray<int32> ResumeParty;
@@ -1892,7 +1893,8 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
     else if(Cancel&&Place.IsEmpty()){FString Scope;Verdict->TryGetStringField(TEXT("cancel_scope"),Scope);double Grace=-1;Verdict->TryGetNumberField(TEXT("cancel_grace"),Grace);
      L->CancelCallGirl=Character;L->CancelCallGrace=Grace;L->CancelCallSaid.Reset();
      UE_LOG(LogTemp,Display,TEXT("Street judge: actor=%d the promise is called off on the phone (%s, grace %.0f)"),Character,*Scope,Grace);Weak->CancelPromiseWith(Character,Scope);}}
-   {bool Kept=false;Verdict->TryGetBoolField(TEXT("kept_promise"),Kept);if(Kept&&Weak.IsValid())Weak->KeepPromiseNow(Character);}
+   {bool Kept=false;Verdict->TryGetBoolField(TEXT("kept_promise"),Kept);if(Kept&&Weak.IsValid())Weak->KeepPromiseNow(Character);
+    else if(Weak.IsValid())Weak->KeepNowMeetingFaceToFace(Character);}
    // "Take it, it was for you anyway" — "thank you": the gift is given (her own act field may forget it). Only something
    // he still carries (her act may have given it already).
    {FString Gift;Verdict->TryGetStringField(TEXT("gift"),Gift);

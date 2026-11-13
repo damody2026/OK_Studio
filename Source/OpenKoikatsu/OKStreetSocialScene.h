@@ -297,6 +297,7 @@ private:
  int32 AddAppointment(const FString& Kind,int32 Heroine,const FString& Place,int64 Start,int32 Grace,const FString& Label,int32 Minutes=0,const FString& Status=TEXT("pending"));
  int32 CharacterOf(const FString& Id) const;
  int32 PatienceOf(int32 Character) const;
+ void KeepNowMeetingFaceToFace(int32 Character);
  void AddPromiseFromChat(int32 Character,const FString& Day,const FString& Time,const FString& Place,const FString& What,const FString& Words,const FString& His,bool bReplaces=false,float Hours=0);
  void CancelPromiseWith(int32 Character,const FString& Scope=FString());
  void KeepPromiseNow(int32 Character);

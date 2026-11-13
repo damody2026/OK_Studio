@@ -104,13 +104,19 @@ void AOKStreetSocialScene::AddPromiseFromChat(int32 Character,const FString& Day
  {FString Met;if(!P&&Out->TryGetStringField(TEXT("place"),Met)&&!Met.IsEmpty())if(const FOKStreetPlace* MetP=OKStreetFindPlace(Met)){Place=Met;P=MetP;}}
  // An ignored promise has no start or minute.
  double StartAt=0,MinuteAt=0;Out->TryGetNumberField(TEXT("start"),StartAt);Out->TryGetNumberField(TEXT("minute"),MinuteAt);
- int64 Start=int64(StartAt);int32 Minute=int32(MinuteAt);
+ int64 Start=int64(StartAt);int32 Minute=int32(MinuteAt);bool NowMeeting=false;
  // "Now" (his "I'm coming over now", she reads it as this minute): he still has to walk there. Booked for the minute it
  // was said, his 21-minute walk to the crepe shop counted as 21 minutes late and cost favor (R6-251). A meeting
  // about now starts when he can be there; a time he named himself stays as he said it.
  if(P&&Action!=TEXT("ignore")&&!OKStreetInsidePlace(*P,S.Male)){const int64 Now=OKStreetMindNow(S);
   const int64 Reach=Now+FMath::CeilToInt(FVector::Dist2D(S.Male,P->Door)/100.f*1.3f/OKStreetOutingWalkMPerMin);
-  if(Start>=Now-30&&Start<=Now+5&&Start<Reach){UE_LOG(LogTemp,Display,TEXT("Street promise: meeting at %s now, starts when he can be there (minute %lld -> %lld)"),*Place,Start,Reach);Start=Reach;Minute=int32(Reach%1440);}}
+  // The judge's minute for "now" is not the clock's: his "I'm coming over now" at 18:25 came back as 18:34 and stayed
+  // booked unwalkable (R6-251 again). Any meeting within the next half hour that he cannot reach in time is "now".
+  if(Start>=Now-30&&Start<=Now+30&&Start<Reach){UE_LOG(LogTemp,Display,TEXT("Street promise: meeting at %s now, starts when he can be there (minute %lld -> %lld)"),*Place,Start,Reach);Start=Reach;Minute=int32(Reach%1440);NowMeeting=true;
+   // She is there and said she waits ("I'm at the restaurant, come"): she stays till he comes, not off to the park
+   // in the two hours before the booked minute (R6-255).
+   if(S.Agents.IsValidIndex(Character-1)&&OKStreetInsidePlace(*P,S.Agents[Character-1].Position)){S.WaitsForHim.Add(Character,Reach+15);
+    UE_LOG(LogTemp,Display,TEXT("Street promise: actor=%d is at %s, waits there for him"),Character,*Place);}}}
  if(Action==TEXT("ignore")){UE_LOG(LogTemp,Display,TEXT("Street promise ignored (%s): day \"%s\" time \"%s\" at %s"),*Reason,*Day,*Time,*Place);
   // The judge's "+365" (days from today) said as a date: it showed as it was, "+365 at the park: no time yet" (R6-24).
   const FString DaySaid=Day.StartsWith(TEXT("+"))&&Day.Mid(1).IsNumeric()?[&]{const FDateTime T=OKStreetCalendarDateTime(S.Store.CalendarDay+FCString::Atoi(*Day.Mid(1)),12.0);return OKMsg(TEXT("ui.calendar.date_full"),{{TEXT("year"),T.GetYear()},{TEXT("month"),T.GetMonth()},{TEXT("day"),T.GetDay()},{TEXT("weekday"),OKMsg(TEXT("ui.calendar.weekday_name"),{{TEXT("d"),int32(T.GetDayOfWeek())}})}});}():Day;
@@ -161,6 +167,7 @@ void AOKStreetSocialScene::AddPromiseFromChat(int32 Character,const FString& Day
  // Another girl is already booked near that time: he is told (both stay booked; it is his to sort out).
  {const FString Clash=Out->GetStringField(TEXT("clash"));if(!Clash.IsEmpty()){S.FreeTalkNotice=OKMsg(TEXT("ui.appointments.clash_notice"), {{TEXT("label"), *Clash}});UE_LOG(LogTemp,Display,TEXT("Street appointment: clashes with %s"),*Clash);RefreshUI();}}
  if(S.Store.Appointments.Num())S.PromiseBookedAt.Add(S.Store.Appointments.Last().Id,FPlatformTime::Seconds());
+ if(NowMeeting&&S.Store.Appointments.Num())S.NowMeetingIds.Add(S.Store.Appointments.Last().Id);
  // At its door before it opens: she hears when it opens (promise.rs opens_at), not "it is open then, I checked" (R6-114).
  {FString Opens;if(Out->TryGetStringField(TEXT("opens_at"),Opens)&&!Opens.IsEmpty()){S.TellHer.Add(OKMsg(TEXT("ui.appointments.opens_later_note"),{{TEXT("place_name"),P->Name},{TEXT("time"),*Opens}}));
   S.FreeTalkNotice=OKMsg(TEXT("ui.appointments.opens_later_notice"),{{TEXT("place_name"),P->Name},{TEXT("time"),*Opens}});UE_LOG(LogTemp,Display,TEXT("Street appointment: at %s before it opens at %s"),*Place,*Opens);RefreshUI();}}
@@ -205,6 +212,19 @@ void AOKStreetSocialScene::KeepPromiseNow(int32 Character){
  for(auto& A:Candidate.Appointments)if(A.Status==TEXT("pending")&&A.Heroine==Id&&A.Kind==TEXT("date")&&A.Start/1440==Now/1440&&Now<=A.Start+A.Grace&&(!Soonest||A.Start<Soonest->Start))Soonest=&A;
  if(!Soonest)return;Soonest->Status=TEXT("done");const FString Label=Soonest->Label;
  if(CommitStore(MoveTemp(Candidate))){UE_LOG(LogTemp,Display,TEXT("Street appointment: actor=%d kept early (%s)"),Character,*Label);PlanPromisesToday(Character);}
+}
+
+// "I'm coming over now", booked for when he can walk there: its minute is only his walk. He met her before it — at the
+// place or on the way — and they talked face to face: that was the meeting. 安可 waited at the restaurant, he came
+// early and they talked the money over; the meeting still stood an hour on and would have counted him missing (R6-256).
+void AOKStreetSocialScene::KeepNowMeetingFaceToFace(int32 Character){
+ auto& S=*State;if(S.NowMeetingIds.IsEmpty()||!S.Manifest.Characters.IsValidIndex(Character)||!S.Agents.IsValidIndex(Character-1))return;
+ if(FVector::Dist2D(S.Agents[Character-1].Position,S.Male)>600.f)return; // a phone line, not face to face
+ const FString Id=OKStreetStableId(S.Manifest.Characters[Character]);auto Candidate=S.Store;FString Label;int32 Kept=INDEX_NONE;
+ for(auto& A:Candidate.Appointments)if(S.NowMeetingIds.Contains(A.Id)&&A.Status==TEXT("pending")&&A.Heroine==Id){A.Status=TEXT("done");Label=A.Label;Kept=A.Id;break;}
+ if(Kept==INDEX_NONE)return;
+ if(CommitStore(MoveTemp(Candidate))){S.NowMeetingIds.Remove(Kept);S.WaitsForHim.Remove(Character);
+  UE_LOG(LogTemp,Display,TEXT("Street appointment: actor=%d met face to face, \"coming over now\" meeting kept (%s)"),Character,*Label);PlanPromisesToday(Character);RefreshUI();}
 }
 
 void AOKStreetSocialScene::CancelPromiseWith(int32 Character,const FString& Scope){
