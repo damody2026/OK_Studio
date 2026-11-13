@@ -4,6 +4,9 @@
 // <play folder>/ui_probe.json. OS-level synthetic input is not reliable from the tool environment, so this is the check.
 
 static void OKProbeCollect(const TSharedRef<SWidget>& W,TSharedPtr<SWidget> Button,TArray<TPair<FString,TSharedPtr<SWidget>>>& Out){
+ // Not under a collapsed or hidden panel: its buttons keep the size they had when last shown, and the elevator's 1F-5F
+ // were listed (and clickable) on the street long after the ride, buttons the player cannot see.
+ {const EVisibility V=W->GetVisibility();if(V==EVisibility::Collapsed||V==EVisibility::Hidden)return;}
  if(W->GetType()==FName(TEXT("SButton")))Button=W;
  if(W->GetType()==FName(TEXT("STextBlock"))&&Button.IsValid())Out.Add(TPair<FString,TSharedPtr<SWidget>>(StaticCastSharedRef<STextBlock>(W)->GetText().ToString(),Button));
  FChildren* C=W->GetChildren();if(!C)return;
