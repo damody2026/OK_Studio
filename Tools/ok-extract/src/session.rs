@@ -41,8 +41,6 @@ pub(crate) fn native_workers_broadcast(f:impl Fn()+Sync) {
 /// Each accessory part's solve and cover push last frame (microseconds), by session and part: the order its next frame's
 /// parts start in (update_dynamic_accessories_pass, longest first).
 static ACC_COST:std::sync::LazyLock<std::sync::Mutex<HashMap<(u64,usize),u64>>>=std::sync::LazyLock::new(Default::default);
-/// The native pool once built (belly_bulge::CoverField::cover_late spawns its pushes on it).
-pub(crate) fn native_pool_spawn()->Option<&'static rayon::ThreadPool> {native_pool(false)}
 fn native_pool(start:bool)->Option<&'static rayon::ThreadPool> {
     static POOL:std::sync::OnceLock<Option<rayon::ThreadPool>>=std::sync::OnceLock::new();
     if !start { return POOL.get()?.as_ref(); }
@@ -1338,7 +1336,7 @@ pub struct OkSession {
     pub(crate) hidden_parts: Vec<bool>,
     /// The cover field built beside her clothes chains this frame (finish_paired_dynamics_filtered), for the accessories
     /// that follow; None: built there as before.
-    pub(crate) cover_ready: Option<Option<std::sync::Arc<crate::belly_bulge::CoverField>>>,
+    pub(crate) cover_ready: Option<Option<crate::belly_bulge::CoverField>>,
     /// What the accessory pass works out from her parts alone, kept while they stay the same (AccCache).
     pub(crate) acc_cache: AccCache,
     pub(crate) face_runtime: FaceRuntimeState,
@@ -2485,7 +2483,7 @@ impl OkSession {
         // Her thighs' jiggle stepped with this pose before her clothes are skinned over it (thigh_jiggle::solve_step).
         if self.cover_ready.is_none(){if let Some(b)=body{crate::thigh_jiggle::solve_step(&*self,b,dt);}}
         let jiggle_key=self as *const Self as usize;
-        let cover_field=match self.cover_ready.take(){Some(built)=>built,None=>{let _trace=crate::native_profile::Scope::new(47);let t=std::time::Instant::now();let f=crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body).map(std::sync::Arc::new);if f.is_some(){crate::okanim::prof::add(26,t);}f}};let cover=&cover_field;
+        let cover_field=match self.cover_ready.take(){Some(built)=>built,None=>{let _trace=crate::native_profile::Scope::new(47);let t=std::time::Instant::now();let f=crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body);if f.is_some(){crate::okanim::prof::add(26,t);}f}};let cover=&cover_field;
         let update=|(index,part):(usize,&mut SessionPart)| {
             if leader_of[index].is_some()||hidden(index)||!pass.wants(index) {return;}
             let Some(runtime) = &mut part.runtime_accessory else { return; };
@@ -2505,7 +2503,7 @@ impl OkSession {
             let render_us=t_part.elapsed().as_micros() as u64;let start_us=t_part.duration_since(t_parts).as_micros() as u64;let mut cover_us=0u64;
             if let Some((mut positions, normals,tangents)) = rendered {
                 skinned.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
-                if let Some(cover)=cover {let t_cover=std::time::Instant::now();cover.cover_late(group,index,part,&mut positions);cover_us=t_cover.elapsed().as_micros() as u64;}
+                if let Some(cover)=cover {let t_cover=std::time::Instant::now();cover.cover(index,part,&mut positions);cover_us=t_cover.elapsed().as_micros() as u64;}
                 crate::thigh_jiggle::follow_own(jiggle_key,index,part,&mut positions,&normals);
                 part.positions = positions;
                 part.normals = normals;
@@ -2576,7 +2574,7 @@ impl OkSession {
                 };
                 if let Some((mut positions,normals,tangents))=rendered {
                     skinned.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
-                    if let Some(cover)=cover {cover.cover_late(group,index,part,&mut positions);}
+                    if let Some(cover)=cover {cover.cover(index,part,&mut positions);}
                     crate::thigh_jiggle::follow_own(jiggle_key,index,part,&mut positions,&normals);
                     part.positions=positions;part.normals=normals;part.rest_tangents=tangents;
                     if let Some(observer)=observer{observer.emit(index,part);}
@@ -3149,11 +3147,11 @@ impl OkSession {
                 let garment=sel.iter().zip(&self.parts).any(|(e,p)|*e&&p.role.starts_with("clothes")&&p.role!="clothes_shoes");
                 let (pose_ref,colliders_ref)=(&pose,&colliders);
                 let (_,built)=rayon::join(||{let _trace=crate::native_profile::Scope::new(63);Self::step_clothes_alone(&mut state,pose_ref,colliders_ref,flags,delta_seconds,group,physx,solver)},||{
-                    let (now,later)=if garment {(prep.and_then(crate::belly_bulge::CoverField::build).map(std::sync::Arc::new),None)} else {(None,prep)};
+                    let (now,later)=if garment {(prep.and_then(crate::belly_bulge::CoverField::build),None)} else {(None,prep)};
                     self.cover_ready=Some(now);
                     let early_pass=||{let _trace=crate::native_profile::Scope::new(7);
                         self.update_dynamic_accessories_pass(delta_seconds,palette_only,true,observer,excluded,AccPass::Early(sel),Some((pose_ref,colliders_ref)));};
-                    rayon::join(early_pass,move||later.and_then(crate::belly_bulge::CoverField::build).map(std::sync::Arc::new)).1
+                    rayon::join(early_pass,move||later.and_then(crate::belly_bulge::CoverField::build)).1
                 });
                 if !garment {self.cover_ready=Some(built);}
                 self.body_colliders=colliders;self.body_skel=Some(pose);
@@ -3163,7 +3161,7 @@ impl OkSession {
                 self.clothes_dynamic_runtime=Some((flags,state));
             } else {
             let built=match prep {
-                Some(prep)=>{let (_,built)=rayon::join(||self.update_clothes_dynamics(delta_seconds),move||crate::belly_bulge::CoverField::build(prep).map(std::sync::Arc::new));built}
+                Some(prep)=>{let (_,built)=rayon::join(||self.update_clothes_dynamics(delta_seconds),move||crate::belly_bulge::CoverField::build(prep));built}
                 None=>{self.update_clothes_dynamics(delta_seconds);None}
             };
             self.cover_ready=Some(built);}}

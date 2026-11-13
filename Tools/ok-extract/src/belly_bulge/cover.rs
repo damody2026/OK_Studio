@@ -64,7 +64,7 @@ pub fn keep_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])
     let _trace = crate::native_profile::Scope::new(54);
     let key = session as *const OkSession as usize;
     let mut all = COVER.lock().unwrap();all.retain(|(k, _)| *k != key);
-    if !on { drop(all);forget_late(key as u64);return Vec::new(); }
+    if !on { return Vec::new(); }
     // Only the garments that reach her pushing skin (every eighth vertex as its renderer draws it, against the cells it
     // lists); while none does they all stay on the GPU route.
     all.push((key, body_moves));drop(all);
@@ -103,34 +103,6 @@ pub fn keep_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])
     if held.len() >= 16 { held.remove(0); }
     held.push((key, REACH_HOLD, own.clone()));
     own
-}
-/// `CoverField::cover_late`: by session and part, the garment's vertex and index counts and its push worked out last frame.
-static LATE: std::sync::LazyLock<std::sync::Mutex<HashMap<(u64, usize), (usize, usize, std::sync::Arc<Vec<[f32; 3]>>)>>> = std::sync::LazyLock::new(Default::default);
-/// By session and part: whether its late push is still being worked out.
-static LATE_BUSY: std::sync::LazyLock<std::sync::Mutex<HashMap<(u64, usize), std::sync::Arc<std::sync::atomic::AtomicBool>>>> = std::sync::LazyLock::new(Default::default);
-/// By session and part: a copy of its triangles for the late push (taken once; a garment's triangles do not change).
-static LATE_INDICES: std::sync::LazyLock<std::sync::Mutex<HashMap<(u64, usize), std::sync::Arc<Vec<u32>>>>> = std::sync::LazyLock::new(Default::default);
-fn cover_late_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("OK_COVER_LATE").ok().as_deref() != Some("0"))
-}
-fn late_busy(group: u64, index: usize) -> std::sync::Arc<std::sync::atomic::AtomicBool> { LATE_BUSY.lock().unwrap().entry((group, index)).or_default().clone() }
-fn late_indices(group: u64, index: usize, indices: &[u32]) -> std::sync::Arc<Vec<u32>> {
-    let mut all = LATE_INDICES.lock().unwrap();
-    if let Some(i) = all.get(&(group, index)).filter(|i| i.as_slice() == indices) { return i.clone(); }
-    let i = std::sync::Arc::new(indices.to_vec());all.insert((group, index), i.clone());i
-}
-/// Waits for the late pushes of session `group` still being worked out (helping the pool with them), before they are
-/// thrown away.
-fn wait_late(group: u64) {
-    let busy: Vec<_> = LATE_BUSY.lock().unwrap().iter().filter(|(k, _)| k.0 == group).map(|(_, b)| b.clone()).collect();
-    for b in busy { while b.load(std::sync::atomic::Ordering::Acquire) { if rayon::yield_now().is_none() { std::thread::yield_now(); } } }
-}
-/// Forgets session `group`'s late pushes (her cover went off: turned on again, the garments start from nothing).
-fn forget_late(group: u64) {
-    wait_late(group);
-    LATE.lock().unwrap().retain(|k, _| k.0 != group);
-    LATE_INDICES.lock().unwrap().retain(|k, _| k.0 != group);
 }
 /// Frames a reaching garment set is kept before the test again (`keep_cover`).
 const REACH_HOLD: u32 = 8;
@@ -310,45 +282,6 @@ impl CoverField {
         let warm = std::sync::Arc::as_ptr(&nbr) as usize;
         let Some(push) = self.pushes(margin(&part.role), positions, &nbr, &part.indices, Some(warm)) else { return; };
         for (p, v) in positions.iter_mut().zip(push) { for a in 0..3 { p[a] += v[a]; } }
-    }
-
-    /// As `cover`, a frame late (the user's choice, 2026-11-13: a fully dressed heroine's 32 garments pushed over her skin
-    /// were 10 ms of work a frame on the pair solve's longest stretch): the garment is moved by what it was pushed last
-    /// frame, so it stays on her body as it is now, and this frame's push is worked out on the pool while the game thread
-    /// shows the frame (the garment waits for its own next frame, `LATE_BUSY`). A garment seen the first time (or changed) is pushed
-    /// now. `group`: her session (as the pass keys it). OK_COVER_LATE=0: `cover` (now, on the longest stretch).
-    pub(crate) fn cover_late(self: &std::sync::Arc<Self>, group: u64, index: usize, part: &SessionPart, positions: &mut [[f32; 3]]) {
-        if !cover_late_on() { return self.cover(index, part, positions); }
-        if !covers(&part.role) || part.runtime_accessory.is_none() || positions.len() != part.rest_positions.len() { return; }
-        let _trace = crate::native_profile::Scope::new(48);
-        let n = positions.len();
-        // Its push from last frame, if still being worked out (it started as that frame was shown).
-        let busy = late_busy(group, index);
-        while busy.load(std::sync::atomic::Ordering::Acquire) { if rayon::yield_now().is_none() { std::thread::yield_now(); } }
-        let last = LATE.lock().unwrap().get(&(group, index)).filter(|l| l.0 == n && l.1 == part.indices.len()).map(|l| l.2.clone());
-        let Some(last) = last else {
-            // Pushed now; what it moved is what the next frame starts from.
-            let was = positions.to_vec();
-            self.cover(index, part, positions);
-            let push: Vec<[f32; 3]> = positions.iter().zip(&was).map(|(p, w)| [p[0] - w[0], p[1] - w[1], p[2] - w[2]]).collect();
-            LATE.lock().unwrap().insert((group, index), (n, part.indices.len(), std::sync::Arc::new(push)));
-            return;
-        };
-        let posed = positions.to_vec();
-        for (p, v) in positions.iter_mut().zip(last.iter()) { for a in 0..3 { p[a] += v[a]; } }
-        let nbr = neighbours(&part.indices, &part.rest_positions);
-        let indices = late_indices(group, index, &part.indices);
-        let keep = margin(&part.role);
-        let field = self.clone();
-        busy.store(true, std::sync::atomic::Ordering::Release);
-        let job = move || {
-            let _time = Timed(std::time::Instant::now(), 27);
-            let warm = std::sync::Arc::as_ptr(&nbr) as usize;
-            let push = field.pushes(keep, &posed, &nbr, &indices, Some(warm)).unwrap_or_else(|| vec![[0.; 3]; posed.len()]);
-            LATE.lock().unwrap().insert((group, index), (n, indices.len(), std::sync::Arc::new(push)));
-            busy.store(false, std::sync::atomic::Ordering::Release);
-        };
-        match crate::session::native_pool_spawn() { Some(pool) => pool.spawn(job), None => rayon::spawn(job) }
     }
 
     /// How far each of `positions` (a garment posed) moves with the skin under it that swelled out, and whether it hugs
@@ -734,10 +667,6 @@ pub(crate) fn clothes_changed() {
     FOLLOW_MAP.lock().unwrap().clear();
     COVER.lock().unwrap().clear();
     REACH_HELD.lock().unwrap().clear();
-    let groups: Vec<u64> = LATE_BUSY.lock().unwrap().keys().map(|k| k.0).collect();
-    for g in groups { wait_late(g); }
-    LATE.lock().unwrap().clear();
-    LATE_INDICES.lock().unwrap().clear();
 }
 
 fn cover_still(parts: &[SessionPart], skel: &Skeleton) -> Option<std::sync::Arc<CoverStill>> {
