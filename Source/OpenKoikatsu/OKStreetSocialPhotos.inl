@@ -175,8 +175,9 @@ void AOKStreetSocialScene::ReadBooks(int32 Girl,int32 Minutes,const FString& Onl
  Request->SetArrayField(TEXT("readers"),Readers);
  const TSharedPtr<FJsonObject> Out=OKRulesEval(S,Request);if(!Out.IsValid())return;
  auto Candidate=S.Store;OKRulesTakeExt(Candidate,*Out);if(!CommitStore(MoveTemp(Candidate)))return;
- // Alone, the hour goes by (never past the day's end); together the activity already took its time.
- if(Girl==INDEX_NONE&&!S.ClockPaused){const double Hours=OKStreetClockHours(S.ClockStartHours,FPlatformTime::Seconds()-S.ClockStartWall);const double Add=FMath::Min(Minutes/60.0,FMath::Max(0.0,23.75-Hours));if(Add>0){S.ClockStartHours+=Add;S.NextSunUpdate=0;for(auto& Due:S.Serves)Due.At=FMath::Min(Due.At,SceneTime());}}
+ // Alone, the hour goes by (never past the day's end); together the activity already took its time. Also with the
+ // clock stopped (the phone just closed, the menu open): the book moved on an hour and the clock stayed at 07:12 (R6-263).
+ if(Girl==INDEX_NONE){const double Hours=S.ClockPaused?S.ClockStartHours:OKStreetClockHours(S.ClockStartHours,FPlatformTime::Seconds()-S.ClockStartWall);const double Add=FMath::Min(Minutes/60.0,FMath::Max(0.0,23.75-Hours));if(Add>0){S.ClockStartHours+=Add;S.NextSunUpdate=0;for(auto& Due:S.Serves)Due.At=FMath::Min(Due.At,SceneTime());}}
  const FString Notice=Out->GetStringField(TEXT("notice"));if(!Notice.IsEmpty())S.FreeTalkNotice=Notice;
  UE_LOG(LogTemp,Display,TEXT("Street reading: %d min, girl=%d: %d readers moved on (%s)"),Minutes,Girl,Out->GetArrayField(TEXT("read")).Num(),*Notice);RefreshUI();
 }

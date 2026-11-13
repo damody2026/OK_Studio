@@ -1837,6 +1837,13 @@ void AOKStreetSocialScene::JudgeFreeTalk(int32 Character,const FString& Id,const
    // off to the playground (R6-121).
    {bool Waits=false;Verdict->TryGetBoolField(TEXT("she_waits_here"),Waits);
     if(Waits){L->WaitsForHim.Add(Character,OKStreetMindNow(*L)+30);UE_LOG(LogTemp,Display,TEXT("Street judge: actor=%d waits here for him (30 min)"),Character);}}
+   // "I'll be ten-odd minutes late" and her "take your time, I'll wait at the door": their meeting today starts that much
+   // later. 爱丽丝 said so at 12:18 for their 12:15 lunch, and when he came at 12:47 the 32 minutes still cost her 10
+   // favor (R6-264).
+   {double Late=0;Verdict->TryGetNumberField(TEXT("he_runs_late"),Late);
+    if(Late>0){const FString HerId=OKStreetStableId(L->Manifest.Characters[Character]);const int64 MindNow=OKStreetMindNow(*L);FOKStreetAppointment* Next=nullptr;
+     for(auto& A:L->Store.Appointments)if(A.Heroine==HerId&&A.Status==TEXT("pending")&&A.Kind==TEXT("date")&&A.Start/1440==MindNow/1440&&A.Start>=MindNow-60&&(!Next||A.Start<Next->Start))Next=&A;
+     if(Next){const int32 By=FMath::Clamp(FMath::RoundToInt(Late),5,60);UE_LOG(LogTemp,Display,TEXT("Street appointment %d: he runs %d min late and she waits; it starts at minute %lld"),Next->Id,By,Next->Start+By);Next->Start+=By;}}}
    // Agreed that he goes no further ("I can only take you this far", "fine, go"): the walk ends here. 雷电将军 said
    // "you have plans, go", and he was still led on to her dorm, late for 三月七 (R6-119).
    {bool HereOnly=false;Verdict->TryGetBoolField(TEXT("walk_ends_here"),HereOnly);
