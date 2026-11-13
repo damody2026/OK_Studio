@@ -1453,8 +1453,14 @@ void AOKStreetSocialScene::FinishFreeTalk(int32 Character,const FString& Id,cons
  int64 Serial=0;{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkLines);if(!OKStreetFreeTalkIsNudge(Text))FreeTalkAddLine(Character,true,Text);
  Serial=FreeTalkAddLine(Character,false,Reply->Reply);}
  S.FreeTalkCaptionHer=OKStreetScriptedName(S.Manifest.Characters[Character].Name)+OKT(TEXT("ui.economy.colon_mark"))+Reply->Reply;
- {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkFavor);ApplyFreeTalkFavor(Character,Reply->FavorDelta,Reply->Reason);}
- {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkRelation);ApplyMindRelation(Character,Reply->RelDelta,Reply->Emotion);}
+ // Her opening line (he walked up, or they met as agreed): he has not said a word yet, so nothing of his moves her
+ // favor or her values. The note asks favor_delta 0, and still 贞德·Alter's opener took 1 off and added resentment again
+ // for a wrong-thread message she had already been cross about when it came (R6-262).
+ const FString OpenerText=Text.TrimStartAndEnd();
+ const bool Opener=OpenerText==FString(OKT(TEXT("ui.scene.he_comes_to_talk_note"))).TrimStartAndEnd()||OpenerText==FString(OKT(TEXT("ui.scene.meeting_greet_note"))).TrimStartAndEnd();
+ if(Opener&&(Reply->FavorDelta!=0||Reply->RelDelta.IsValid()))UE_LOG(LogTemp,Display,TEXT("Street talk: actor=%d her opener's favor %d and values are not applied (he has said nothing yet)"),Character,Reply->FavorDelta);
+ {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkFavor);ApplyFreeTalkFavor(Character,Opener?0:Reply->FavorDelta,Reply->Reason);}
+ {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_FinishTalkRelation);ApplyMindRelation(Character,Opener?TSharedPtr<FJsonObject>():Reply->RelDelta,Reply->Emotion);}
  // Who pays is what they settled: a game note ("you just walked in, order something") is no talk between them, so her
  // "payer" on it is a guess ("him" on entering the cafe, nobody had said a word). Not dropped while a checkout
  // choice is open: then the note asks her exactly that. "her" stays: her own money is hers to offer ("到啦。要不要喝罐饮料？
