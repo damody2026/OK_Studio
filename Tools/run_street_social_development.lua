@@ -10,6 +10,7 @@
 --     [-GpuRig | -NoGpuRig]  (heroine poses from the GPU runtime rig, Docs/CROWD_ROOM100.md, or from her own solved banks)
 --     [-GpuRigVerify N]  (also solve full banks and compare N frames of the rig with them: runtime.json "gpu_rig", rig.bin)
 --     [-Sandbox NAME [-PortBase N] [-RulesDll DLL]] [-Exec "CMD,CMD"] [-Trace [CHANNELS]] [-GameArgs "-SWITCH ..."]
+--     [-NoCloud]  (with -Sandbox: the sandbox's DeepSeek / Alibaba Cloud keys emptied for the run; no cloud calls)
 --     [-Heroine N|PNG]  (test: only the male and this one heroine, N counting from 1 in the selection, nobody else
 --       loaded; a save made with the full roster is not for it)
 --     [-Inspect [N]]  (straight into the inspection room with heroine N: her alone in an empty room, the camera round her
@@ -31,7 +32,7 @@ local fs = require "okfs"
 local instance = require "ok_instance"
 local player_settings = require "street_player_settings"
 
-local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, mainsave = true, editor = true, nogpurig = true, gpurig = true, city = true, citysource = true }
+local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, mainsave = true, editor = true, nogpurig = true, gpurig = true, city = true, citysource = true, nocloud = true }
 local VALUES = { selectionfile = true, malecard = true, retargetfile = true, renderscale = true, executable = true,
   controlport = true, clock = true, window = true, sandbox = true, portbase = true, rulesdll = true, exec = true, trace = true, gpucachedir = true,
   gameargs = true, gpurigverify = true, heroine = true }
@@ -366,6 +367,24 @@ local function main()
   end
   -- The settings this run uses (the sandbox's own when there is one).
   local settings_file = sandbox and path.join(sandbox, "player.json") or main_settings
+  -- -NoCloud: no DeepSeek or Alibaba Cloud call this run (tests while the cloud is off limits). The sandbox's keys are
+  -- emptied after the migration above, which otherwise refills an empty key from %LOCALAPPDATA%\OpenKoikatsu every launch
+  -- (an emptied sandbox key came back at the next start and the heroines' mind called DeepSeek). The shared copies there
+  -- are left alone, so the keys come back once the run is made without -NoCloud and the sandbox file is restored.
+  if o.nocloud then
+    if not sandbox then error("-NoCloud needs -Sandbox (it empties the run's own player.json, never the main one)", 0) end
+    local p = json.decode(path.read_text(settings_file))
+    local cleared = 0
+    for _, name in ipairs({ "deepseek", "aliyun" }) do
+      if json.is_object(p[name]) and type(p[name].api_key) == "string" and p[name].api_key ~= "" then p[name].api_key = ""; cleared = cleared + 1 end
+    end
+    if cleared > 0 then
+      local tmp = settings_file .. ".nocloud"
+      path.write_text(tmp, json.encode(p, { ensure_ascii = false, indent = 2 }))
+      os.remove(settings_file); assert(os.rename(tmp, settings_file))
+    end
+    say("No cloud: " .. cleared .. " key(s) emptied in " .. settings_file .. "; the heroines' mind and the voices stay local")
+  end
   local settings = player_settings.read(settings_file)
 
   -- This checkout's ports and voice servers (local-instance.json, Tools/ok_instance.lua).
