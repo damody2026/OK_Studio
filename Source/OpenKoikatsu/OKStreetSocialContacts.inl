@@ -90,7 +90,14 @@ void AOKStreetSocialScene::NavigatePointAlong(const FVector& Goal,const FString&
  auto& S=*State;
  // A place's door: on through it into its ground floor. Stopped at the door he was outside it, and its buttons (the
  // menu, applying for a job) were not there.
- FVector Target=Goal;for(const auto& P:OKStreetPlaces())if(!P.Rooms.IsEmpty()&&FVector::Dist2D(P.Door,Goal)<5.f&&FMath::Abs(P.Door.Z-Goal.Z)<100.f){Target=PlaceInsideSpot(P);if(!Target.Equals(Goal,1.f)&&!Path.IsEmpty())Path.Add(Target);break;}
+ // A door several places share (the building and the restroom inside it, the cafeteria's door is the student centre's
+ // restroom's too): the one by that name, else the biggest (the building). The first of the size-sorted list was the
+ // restroom, and "the cafeteria" took him into it, where he stood stuck (R6-257).
+ FVector Target=Goal;{const FOKStreetPlace* Pick=nullptr;double PickArea=-1;
+  for(const auto& P:OKStreetPlaces())if(!P.Rooms.IsEmpty()&&FVector::Dist2D(P.Door,Goal)<5.f&&FMath::Abs(P.Door.Z-Goal.Z)<100.f){
+   if(!Name.IsEmpty()&&(Name==P.Name||Name==P.Id)){Pick=&P;break;}
+   double Area=0;for(const FBox& R:P.Rooms)Area+=(R.Max.X-R.Min.X)*(R.Max.Y-R.Min.Y);if(Area>PickArea){Pick=&P;PickArea=Area;}}
+  if(Pick){Target=PlaceInsideSpot(*Pick);if(!Target.Equals(Goal,1.f)&&!Path.IsEmpty())Path.Add(Target);}}
  UE_LOG(LogTemp,Display,TEXT("Street navigation: goal=%s name=%s points=%d"),*Goal.ToCompactString(),*Name,Path.Num());
  // On another floor (he upstairs, or the spot upstairs): the navigation takes an elevator (PlanNavLift); no street
  // route is needed from upstairs.

@@ -202,7 +202,11 @@ void AOKStreetSocialScene::TickRestroom(){
   if(!Women||!Wait)continue;
   for(const FBox& Room:Place.Rooms){
    const bool WomenRoom=Women->Position.X>=Room.Min.X&&Women->Position.X<=Room.Max.X&&Women->Position.Y>=Room.Min.Y&&Women->Position.Y<=Room.Max.Y;
-   if(WomenRoom&&S.Male.X>=Room.Min.X&&S.Male.X<=Room.Max.X&&S.Male.Y>=Room.Min.Y&&S.Male.Y<=Room.Max.Y){
+   // The city's restrooms are one room holding both sides (its wait spot and the women's door): kept out only on the
+   // women's side, nearer their door than the wait spot. Pushed back onto the wait spot inside that same room, he was
+   // pushed again every frame and stood stuck there for an hour on his way to the cafeteria (R6-257). And on its floor.
+   const bool WomensSide=FVector::Dist2D(S.Male,Women->Position)<FVector::Dist2D(S.Male,Wait->Position);
+   if(WomenRoom&&WomensSide&&S.Male.X>=Room.Min.X&&S.Male.X<=Room.Max.X&&S.Male.Y>=Room.Min.Y&&S.Male.Y<=Room.Max.Y&&S.Male.Z>=Room.Min.Z-60.f&&S.Male.Z<Room.Max.Z-60.f){
     S.Male=Wait->Position;
     if(Now-S.RestroomBlockedAt>3){S.RestroomBlockedAt=Now;S.Message=OKT(TEXT("ui.outing.ladies_room_no_men"));RefreshUI();UE_LOG(LogTemp,Display,TEXT("Street restroom: kept the player out of the women's room at %s"),Place.Id);}
    }

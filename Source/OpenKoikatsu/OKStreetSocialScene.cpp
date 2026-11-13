@@ -4344,7 +4344,9 @@ void AOKStreetSocialScene::Tick(float Dt){
   if(!SubmitFreeTalkToMind(P.Character,P.Id,P.System,P.User,P.Text)){FinishFreeTalk(P.Character,P.Id,P.Text,nullptr,OKT(TEXT("ui.scene.ai_service_off_reply")));RefreshUI();}}
  {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkReplay);TickFreeTalkReplay(Now);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkSpeech);TickFreeTalkHisVoice(SceneTime());TickFreeTalkSpeech(FPlatformTime::Seconds());TickDeferredNotes();}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkLive);TickFreeTalkLive(Now);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickFreeTalkTrace);TickFreeTalkTrace(Now);}{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_TickOrderNotice);TickOrderNotice();}
  // The street clock paused: the kitchen and the eating wait too (nothing on the table is eaten while time stands still).
- if(S.ClockPaused)for(auto& P:S.Serves)P.At+=Dt;
+ // Not while he paused the game: SceneTime stands still then already, and pushed on as well his 卤肉饭 drew further off
+ // the longer the pause, and it never came (R6-258).
+ if(S.ClockPaused&&!S.UserPaused&&S.PrivateGirl==INDEX_NONE)for(auto& P:S.Serves)P.At+=Dt;
  // And a girl he walked up to keeps waiting for him: her moment counted on in wall time, and paused beside 贞德·Alter for
  // a few seconds he found her gone when the clock ran again, E said "nobody within reach" four times (R6-187).
  if(S.ClockPaused)for(auto& P:S.CommutePausedUntil)P.Value+=Dt;
