@@ -4389,3 +4389,19 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
   - 沙盒的 `deepseek.endpoint` 和 `aliyun.base_url` 改成 `http://127.0.0.1:9/no-cloud`，`deepseek.api_key` 填佔位字串。金鑰不是空的，啟動器就不會補，請求只會打到本機、連不上。驗證那輪 trace 只有一筆 ok=false，4 次嘗試都連不上本機。
   - 之後每次量測前後都檢查 `trace.jsonl` 新增的列。
   - 正式做法等 c-conquest 的啟動器 `-NoCloud`。
+
+## 2026-11-14 一對一講情話摸臉：手的 IK 目標超出手臂時把他整個身體上下拉 35 cm
+
+- 錯誤：
+  - 情話時他雙手去摸她的臉。目標在手臂長度邊緣時，他的腰上下跳 35 cm，雙手飛到頭上或床下。
+  - 我先猜是前傾 FK 的方向，寫了「試一個方向，肩膀變遠就反過來」的回授，結果反覆翻轉，他整個人亂揮。
+  - 前後編了 8 次左右在猜骨骼名稱和軸向，沒有先開即時探針（使用者：「你應該要多開mcp api才不用一直編譯」）。
+- 原因：
+  - FinalIK FBBIK 的 `pull_body_vertical`（預設 0.5）會讓手超出手臂長度時把身體往目標拉。
+  - `ok_session_set_studio_ik_arm_pull(0)` 只關了手臂鏈的 `pull`，沒有關這個。
+  - 一對一的對位每幀又把他的腰移回去，兩邊互相拉扯。
+- 修正：
+  - ArmPull 改成同時縮放 `pull_body_vertical/horizontal`（< 0 時還原）。
+  - 前傾固定用 +X（`ok.HScene.Fk` 實測向前），並依手臂缺的長度做比例控制。
+  - 他的 FK 只在值改變時才設定，設定前先 `SyncPair()`。
+  - 新增 `ok.HScene.Bones`／`ok.HScene.Fk` 兩個即時探針，參數全部改成 cvar，之後就在遊戲裡即時調。

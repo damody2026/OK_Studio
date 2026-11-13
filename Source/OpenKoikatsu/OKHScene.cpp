@@ -9,6 +9,7 @@
 #include "Components/AudioComponent.h"
 #include "Components/CheckBox.h"
 #include "HAL/IConsoleManager.h"
+#include "UObject/UObjectIterator.h"
 #include "OKCharacterController.h"
 #include "OKInteractionMode.h"
 #include "KKGameRoot.h"
@@ -1691,6 +1692,7 @@ bool UOKHScenePanel::CannotAnswer() const{
 void UOKHScenePanel::Say(const FString& Raw){
     const FString Text=Raw.TrimStartAndEnd();if(Text.IsEmpty())return;
     if(Gallery)Gallery->NoteAction(TEXT("said"),Text);
+    SweetSaidAt=FPlatformTime::Seconds(); // his words: SweetTouch
     if(CannotAnswer()){Held.Add(Text);if(Hint)Hint->SetText(FText::FromString(OKT(TEXT("ui.hscene.cannot_answer"))));return;}
     Outbox.Add({Text,FString()});
 }
@@ -2831,6 +2833,8 @@ void UOKHScenePanel::ApplyHerFk(AKKPreviewActor* Girl,TArray<FString>& Names,TAr
     // Opening is out to her own side: the left thigh turns one way about its forward axis, the right the other.
     if(!FMath::IsNearlyZero(ThighOpen[0])){Names.Add(TEXT("+cf_j_thigh00_L"));Turns.Add(FVector(0.f,0.f,-ThighOpen[0]));}
     if(!FMath::IsNearlyZero(ThighOpen[1])){Names.Add(TEXT("+cf_j_thigh00_R"));Turns.Add(FVector(0.f,0.f,ThighOpen[1]));}
+    Names.Append(SweetLeanBones);Turns.Append(SweetLeanTurns); // her lean toward his face (SweetTouch)
+    Names.Append(DebugFkHerNames);Turns.Append(DebugFkHerTurns); // ok.HScene.Fk her ...
     // Changed while the pair is paused: the paused pair solves one more frame (it only does for a reason to).
     const FVector4f Set(AnkleTurn,ThighOpen[0],ThighOpen[1],0.f);if(Set!=HerPoseShown){HerPoseShown=Set;Girl->bHeadLookPoseDirty=true;}
     if(!Names.IsEmpty()){Girl->Session.SetFk(Names,Turns);bTrembling=true;}
@@ -2926,7 +2930,7 @@ void UOKHScenePanel::TickHideOccluders(APlayerController* PC,const FVector& Eye,
         for(const auto& P:OccluderHidden)Show(P.Get());OccluderHidden.Reset();OccluderUntil.Reset();OccluderBoxes.Reset();OccluderBoxesAt=FVector(1.e30);return;}
     AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;AKKPreviewActor* Him=Gallery?Gallery->PartnerActor.Get():nullptr;
     AActor* Two=SecondHere()?Second.Get():nullptr;
-    static const TCHAR* Bones[]={TEXT("J_Head"),TEXT("J_Neck"),TEXT("J_Spine03"),TEXT("J_Spine01"),TEXT("j_hips"),TEXT("J_Kosi01"),
+    static const TCHAR* Bones[]={TEXT("j_head"),TEXT("j_neck"),TEXT("J_Spine03"),TEXT("J_Spine01"),TEXT("j_hips"),TEXT("J_Kosi01"),TEXT("j_thigh00_L"),TEXT("j_thigh00_R"),TEXT("j_leg01_L"),TEXT("j_leg01_R"),TEXT("j_foot_L"),TEXT("j_foot_R"),TEXT("j_arm00_L"),TEXT("j_arm00_R"),TEXT("j_forearm01_L"),TEXT("j_forearm01_R"),TEXT("j_hand_L"),TEXT("j_hand_R"),
         TEXT("J_LegUp00_L"),TEXT("J_LegUp00_R"),TEXT("J_LegLow01_L"),TEXT("J_LegLow01_R"),TEXT("J_Foot01_L"),TEXT("J_Foot01_R"),
         TEXT("J_ArmUp00_L"),TEXT("J_ArmUp00_R"),TEXT("J_ArmLow01_L"),TEXT("J_ArmLow01_R"),TEXT("J_Hand_L"),TEXT("J_Hand_R")};
     // Torso: the first six (head to hips). What they are on is near those, not near a raised foot: her feet up by the
@@ -3334,6 +3338,151 @@ void UOKHScenePanel::HoldFeet(AKKPreviewActor* A,bool bStands,const FVector& Off
             if(bFeet){Kept[0]=At[0];Kept[1]=At[1];}if(bHandTargets){KeptHands[0]=PinHands[0];KeptHands[1]=PinHands[1];}}
     }else if(bIk){DropPendingIk(A);SyncPair();A->Session.SetStudioIkArmPull(-1.f);A->Session.SetStudioIk({},{});bIk=false;HandHeld.Reset();if(KeptSet)*KeptSet=0;}
 }
+// Sweet words in her (user, 2026-11-14: in the original they often hold each other's face in both hands while saying
+// loving words; the upper body does it, the lower body keeps the thrusting). The source does this in its two-person scenes
+// (TwoShot: a pose and MotionIK per personality), not in H, so here it is her and his hand IK: while she speaks a line
+// (not a breath) or he has just said something, the one whose hands reach the other's face (him first) brings both
+// wrists from where the clip has them to the other's cheeks, in 0.4 s, and back after the words. Only the hand targets
+// change (the arms reach alone, ArmPull 0); hips, legs and the thrust are the clip's.
+static TAutoConsoleVariable<int32> CVarHSweetTouch(TEXT("ok.HScene.SweetTouch"),1,TEXT("1 (default): while she speaks a line or he has just said one, in her, the one who reaches holds the other's face in both hands; 0 off"));
+static TAutoConsoleVariable<float> CVarHSweetHold(TEXT("ok.HScene.SweetHold"),4.f,TEXT("ok.HScene.SweetTouch: seconds his said line keeps the hands on (her lines: while she speaks, and a second after)"));
+static FVector SweetLeanTestValue();static TAutoConsoleVariable<FString> CVarHSweetLeanTest(TEXT("ok.HScene.SweetLeanTest"),TEXT(""),TEXT("Test: the toucher's lean held at this Unity euler (x,y,z degrees over two spine bones), no feedback"));
+static FVector SweetLeanTestValue(){TArray<FString> P;CVarHSweetLeanTest.GetValueOnGameThread().ParseIntoArray(P,TEXT(","));return P.Num()==3?FVector(FCString::Atof(*P[0]),FCString::Atof(*P[1]),FCString::Atof(*P[2])):FVector::ZeroVector;}
+static TAutoConsoleVariable<int32> CVarHSweetTest(TEXT("ok.HScene.SweetTest"),0,TEXT("Test: 1 the hands held on whatever is said"));
+static TAutoConsoleVariable<FString> CVarHSweetLeanAxis(TEXT("ok.HScene.SweetLeanAxis"),TEXT("1,0,0"),TEXT("ok.HScene.SweetTouch: the lean's Unity euler axis on the spine bones (+X bends forward, probe 2026-11-14)"));
+static TAutoConsoleVariable<FString> CVarHSweetLeanBones(TEXT("ok.HScene.SweetLeanBones"),TEXT("j_spine02,j_spine03"),TEXT("ok.HScene.SweetTouch: the bones the lean is shared over (no cf_/cm_)"));
+static TAutoConsoleVariable<float> CVarHSweetLeanMax(TEXT("ok.HScene.SweetLeanMax"),40.f,TEXT("ok.HScene.SweetTouch: most lean, degrees (all bones together)"));
+static TAutoConsoleVariable<float> CVarHSweetLeanGain(TEXT("ok.HScene.SweetLeanGain"),3.f,TEXT("ok.HScene.SweetTouch: degrees a second per cm the arms are short (shortfall clamped to 10 cm)"));
+static TAutoConsoleVariable<float> CVarHSweetLeanAim(TEXT("ok.HScene.SweetLeanAim"),4.f,TEXT("ok.HScene.SweetTouch: the lean stops when the cheeks are this far (cm) inside the arms' reach"));
+static TAutoConsoleVariable<float> CVarHSweetLeanBack(TEXT("ok.HScene.SweetLeanBack"),60.f,TEXT("ok.HScene.SweetTouch: degrees a second back upright after the words"));
+static TAutoConsoleVariable<float> CVarHSweetReach(TEXT("ok.HScene.SweetReach"),6.f,TEXT("ok.HScene.SweetTouch: hands go on when the arms are this short (cm) or less"));
+static TAutoConsoleVariable<float> CVarHSweetReachOff(TEXT("ok.HScene.SweetReachOff"),14.f,TEXT("ok.HScene.SweetTouch: hands come off only past this shortfall (cm), so the thrust does not shake them off"));
+static TAutoConsoleVariable<float> CVarHSweetWho(TEXT("ok.HScene.SweetWho"),35.f,TEXT("ok.HScene.SweetTouch: the toucher's arms at most this short (cm) to start"));
+static TAutoConsoleVariable<float> CVarHSweetBlend(TEXT("ok.HScene.SweetBlend"),.4f,TEXT("ok.HScene.SweetTouch: seconds for the hands to go on / come off"));
+static TAutoConsoleVariable<FString> CVarHSweetCheek(TEXT("ok.HScene.SweetCheek"),TEXT("6.5,0,0"),TEXT("ok.HScene.SweetTouch: the cheek from the mouth's middle, cm: out, up, forward"));
+static TAutoConsoleVariable<FString> CVarHSweetWrist(TEXT("ok.HScene.SweetWrist"),TEXT("3,-12,-1"),TEXT("ok.HScene.SweetTouch: the wrist from the cheek, cm: out, up, forward"));
+static FVector HVec3(const TAutoConsoleVariable<FString>& V,const FVector& Def){TArray<FString> P;V.GetValueOnGameThread().ParseIntoArray(P,TEXT(","));return P.Num()==3?FVector(FCString::Atof(*P[0]),FCString::Atof(*P[1]),FCString::Atof(*P[2])):Def;}
+void UOKHScenePanel::SweetTouch(AKKPreviewActor* Girl,AKKPreviewActor* Him,const FVector& HimAhead,const FVector& HerAhead,FVector (&HisPin)[2],FVector (&HerPin)[2],float Delta){
+    const double Now=FPlatformTime::Seconds();const FString Base=HBase(Current());
+    const bool bIn=Mode==2&&(HIsLoop(Base)||Base==TEXT("InsertIdle")||Base==TEXT("A_InsertIdle"));
+    const bool bWords=CVarHSweetTest.GetValueOnGameThread()!=0||(IsValid(Girl)&&Girl->IsSpeaking()&&!Girl->bHBreath)||Now-SweetSaidAt<CVarHSweetHold.GetValueOnGameThread();
+    if(CVarHSweetTouch.GetValueOnGameThread()&&bIn&&bWords)SweetUntil=FMath::Max(SweetUntil,Now+1.);
+    const bool bOn=bIn&&Now<SweetUntil;
+    {static double LoggedAt=0.;if(CVarHSweetTest.GetValueOnGameThread()&&Now-LoggedAt>3.){LoggedAt=Now;UE_LOG(LogTemp,Display,TEXT("H scene: sweet words test: in %d (%s) on %d who %d w %.2f"),bIn,*Base,bOn,SweetWho,SweetW);}}
+    // A face: its middle (the mouth's, else 6 cm up and 8 forward of the head), the way across it and up it.
+    struct FFace{FVector Mid,Side,Up,Fwd;};
+    auto FaceOf=[](AKKPreviewActor* A,AKKPreviewActor* Other,FFace& F){FVector Head,Neck,L,R;
+        if(!HBone(A,TEXT("j_head"),Head)||!HBone(A,TEXT("j_neck"),Neck))return false;F.Up=(Head-Neck).GetSafeNormal();
+        FVector SL,SR;if(!HBone(A,TEXT("j_arm00_L"),SL)||!HBone(A,TEXT("j_arm00_R"),SR))return false;
+        if(HBone(A,TEXT("J_Mouth_L"),L)&&HBone(A,TEXT("J_Mouth_R"),R)){F.Mid=(L+R)*.5f;F.Side=(L-R);}else{F.Side=SL-SR;F.Mid=FVector::ZeroVector;}
+        F.Side=(F.Side-F.Up*(F.Side|F.Up)).GetSafeNormal();if(F.Side.IsNearlyZero()||F.Up.IsNearlyZero())return false;
+        F.Fwd=FVector::CrossProduct(F.Side,F.Up).GetSafeNormal();
+        if(F.Mid.IsZero()){FVector OtherHead;if(HBone(Other,TEXT("j_head"),OtherHead)&&((OtherHead-Head)|F.Fwd)<0.f)F.Fwd=-F.Fwd;F.Mid=Head+F.Up*6.f+F.Fwd*8.f;}
+        else if(((F.Mid-Head)|F.Fwd)<0.f)F.Fwd=-F.Fwd;
+        return true;};
+    // The wrists for a palm on each cheek (fingers up the side of the face): 6.5 cm out of the mouth's middle is the cheek,
+    // the wrist 12 cm under it, 3 out and 1 back (the hand is not turned: higher, the fingers covered her eyes; tuned live
+    // on Lan in 正常位, 2026-11-14, ok.HScene.SweetCheek / SweetWrist).
+    const FVector CheekAt=HVec3(CVarHSweetCheek,FVector(6.5f,0.f,0.f)),WristAt=HVec3(CVarHSweetWrist,FVector(3.f,-12.f,-1.f));
+    auto Wrists=[CheekAt,WristAt](const FFace& F,FVector (&W)[2]){for(int32 S=0;S<2;++S){const float Out=S?-1.f:1.f;
+        const FVector Cheek=F.Mid+F.Side*(CheekAt.X*Out)+F.Up*CheekAt.Y+F.Fwd*CheekAt.Z;W[S]=Cheek+F.Side*(WristAt.X*Out)+F.Up*WristAt.Y+F.Fwd*WristAt.Z;}};
+    // How far the wrists are past the arm's reach (upper arm and forearm, 95%) from the shoulders: the farther hand.
+    auto Short=[](AKKPreviewActor* A,const FVector (&W)[2]){float Most=-1.e9f;
+        for(int32 S=0;S<2;++S){FVector Up,Low,Hand;if(!HBone(A,S?TEXT("j_arm00_R"):TEXT("j_arm00_L"),Up)||!HBone(A,S?TEXT("j_forearm01_R"):TEXT("j_forearm01_L"),Low)||!HBone(A,S?TEXT("j_hand_R"):TEXT("j_hand_L"),Hand))return 1.e9f;
+            const float Arm=FVector::Dist(Up,Low)+FVector::Dist(Low,Hand);Most=FMath::Max(Most,FMath::Min(FVector::Dist(Up,W[0]),FVector::Dist(Up,W[1]))-.95f*Arm);}
+        return Most;};
+    // Whose: the one with the less to lean (him on a tie within 5 cm); the upper body leans to make up 35 cm at most.
+    const bool bBusy=SweetW>0.f||SweetLean>0.f;
+    if(!bBusy){SweetWho=0;
+        if(bOn&&IsValid(Girl)&&IsValid(Him)){FFace HerFace0,HisFace0;FVector W[2];float HisShort=1.e9f,HerShort=1.e9f;
+            if(FaceOf(Girl,Him,HerFace0)){Wrists(HerFace0,W);HisShort=Short(Him,W);}
+            if(FaceOf(Him,Girl,HisFace0)){Wrists(HisFace0,W);HerShort=Short(Girl,W);}
+            if(FMath::Min(HisShort,HerShort)<=CVarHSweetWho.GetValueOnGameThread()){SweetWho=HisShort<=HerShort+5.f?1:2;SweetLean=0.f;SweetLeanErr=-1.f;SweetLeanWas=0.f;bSweetHands=false;}
+            if(SweetWho){UE_LOG(LogTemp,Display,TEXT("H scene: sweet words, %s face in both hands (his arms %.0f cm short, hers %.0f)"),SweetWho==1?TEXT("his hands on her"):TEXT("her hands on his"),HisShort,HerShort);}
+            else if(FMath::Fmod(Now,3.)<Delta){UE_LOG(LogTemp,Display,TEXT("H scene: sweet words, no one reaches (his arms %.0f cm short, hers %.0f)"),HisShort,HerShort);}}}
+    AKKPreviewActor* Toucher=SweetWho==1?Him:SweetWho==2?Girl:nullptr;AKKPreviewActor* Touched=SweetWho==1?Girl:Him;
+    FFace F;FVector W[2];const bool bFace=Toucher&&IsValid(Toucher)&&IsValid(Touched)&&FaceOf(Touched,Toucher,F);if(bFace){Wrists(F,W);SweetWrists[0]=W[0];SweetWrists[1]=W[1];}
+    // The lean: forward (ok.HScene.SweetLeanAxis, +X) more while the arms are short (SweetLeanGain degrees a second per cm),
+    // less once past, never past SweetLeanMax; back upright as the words end. (A lean that tried both ways and turned round
+    // when the shoulders went farther flailed with the thrust: the probe found +X forward on both of them, 2026-11-14.)
+    const float LeanMax=FMath::Max(CVarHSweetLeanMax.GetValueOnGameThread(),0.f);
+    if(SweetLeanTestValue()!=FVector::ZeroVector&&bFace){SweetLean=1.f;SweetLeanSign=1.f;SweetLeanErr=Short(Toucher,W);}
+    else if(bOn&&bFace){const float Err=Short(Toucher,W);SweetLeanErr=Err;SweetLeanSign=1.f;
+        SweetLean=FMath::Clamp(SweetLean+FMath::Clamp(Err+CVarHSweetLeanAim.GetValueOnGameThread(),-10.f,10.f)*CVarHSweetLeanGain.GetValueOnGameThread()*Delta,0.f,LeanMax);}
+    else{SweetLean=FMath::FInterpConstantTo(SweetLean,0.f,Delta,CVarHSweetLeanBack.GetValueOnGameThread());SweetLeanErr=-1.f;}
+    // Hands go on once the arms nearly reach (or the lean is all there is), and stay on until they are well short.
+    if(!(bOn&&bFace))bSweetHands=false;
+    else if(!bSweetHands)bSweetHands=SweetLeanErr<CVarHSweetReach.GetValueOnGameThread()||SweetLean>=LeanMax-1.f;
+    else bSweetHands=SweetLeanErr<CVarHSweetReachOff.GetValueOnGameThread()||SweetLean>=LeanMax-1.f;
+    SweetW=FMath::FInterpConstantTo(SweetW,bSweetHands?1.f:0.f,Delta,1.f/FMath::Max(CVarHSweetBlend.GetValueOnGameThread(),.05f));
+    // The lean as FK on two spine bones (on top of the clip): his set here, hers with her own (ApplyHerFk).
+    {SweetLeanBones.Reset();SweetLeanTurns.Reset();AKKPreviewActor* Leaner=Toucher?Toucher:(bSweetLeanHim?Him:nullptr);
+     TArray<FString> LeanBones;CVarHSweetLeanBones.GetValueOnGameThread().ParseIntoArray(LeanBones,TEXT(","));
+     const FVector Axis=HVec3(CVarHSweetLeanAxis,FVector(1.f,0.f,0.f)).GetSafeNormal();const float Share=1.f/FMath::Max(LeanBones.Num(),1);
+     if(SweetLean>0.f&&IsValid(Leaner)&&Leaner->BodySkel)for(const FString& Bone:LeanBones)for(const TCHAR* P:{TEXT("cf_"),TEXT("cm_")}){
+        const FString Name=FString(P)+Bone.TrimStartAndEnd();if(Leaner->BodySkel->GetBoneIndex(FName(*Name))==INDEX_NONE)continue;
+        SweetLeanBones.Add(TEXT("+")+Name);{const FVector Test=SweetLeanTestValue();SweetLeanTurns.Add(Test!=FVector::ZeroVector?Test*Share:Axis*(SweetLean*SweetLeanSign*Share));}break;}
+     if(IsValid(Him)&&(Toucher==Him||bSweetLeanHim)){
+        // The pair solves in the background: wait for it before his session is touched, and only when the lean changed.
+        if(!SweetLeanBones.IsEmpty()&&Toucher==Him){if(!bSweetLeanHim||SweetLeanHimSent!=SweetLeanTurns){SyncPair();Him->Session.SetFk(SweetLeanBones,SweetLeanTurns);SweetLeanHimSent=SweetLeanTurns;}bSweetLeanHim=true;}
+        else if(bSweetLeanHim){SyncPair();Him->Session.SetFk({},{});bSweetLeanHim=false;SweetLeanHimSent.Reset();}}
+     if(Toucher!=Girl){SweetLeanBones.Reset();SweetLeanTurns.Reset();}}
+    if(CVarHSweetTest.GetValueOnGameThread()&&bFace&&FMath::Fmod(Now,3.)<Delta){FVector L,R;
+        if(HBone(Toucher,TEXT("j_hand_L"),L)&&HBone(Toucher,TEXT("j_hand_R"),R))UE_LOG(LogTemp,Display,TEXT("H scene: sweet words test: wrists %.1f / %.1f cm from where they go (lean %.0f, arms short %.1f, w %.2f)"),
+            FMath::Min(FVector::Dist(L,W[0]),FVector::Dist(L,W[1])),FMath::Min(FVector::Dist(R,W[0]),FVector::Dist(R,W[1])),SweetLean*SweetLeanSign,SweetLeanErr,SweetW);}
+    if(SweetW<=0.f||!bFace)return;
+    FVector (&Pin)[2]=SweetWho==1?HisPin:HerPin;const FVector& Ahead=SweetWho==1?HimAhead:HerAhead;
+    const FVector T[2]={HToSession(Toucher,W[0],Ahead),HToSession(Toucher,W[1],Ahead)};
+    // Each hand to the cheek nearer it (from where the clip has them).
+    const bool bSwap=FVector::Dist(Pin[0],T[1])+FVector::Dist(Pin[1],T[0])<FVector::Dist(Pin[0],T[0])+FVector::Dist(Pin[1],T[1]);
+    const float S=FMath::SmoothStep(0.f,1.f,SweetW);
+    for(int32 Hand=0;Hand<2;++Hand)Pin[Hand]=FMath::Lerp(Pin[Hand],T[bSwap?1-Hand:Hand],S);
+    if(CVarHSweetTest.GetValueOnGameThread()&&FMath::Fmod(Now,3.)<Delta){FVector L;if(HBone(Toucher,TEXT("j_hand_L"),L)){const FVector Ls=HToSession(Toucher,L,Ahead);
+        UE_LOG(LogTemp,Display,TEXT("H scene: sweet words test: pin0 %s target %s hand_L now %s (ik set %d, his ik %d)"),*Pin[0].ToString(),*T[bSwap?1:0].ToString(),*Ls.ToString(),HisIkSet,bHisIk);}}
+}
+// Live probes (user, 2026-11-14: "open more MCP API so it need not be built again and again"), through the console or
+// ok-game game_exec. ok.HScene.Bones sweet: the face touch's state; ok.HScene.Bones her.j_hand_L him.j_head ...: those
+// bones in the world and each one's distance from the first. ok.HScene.Fk her|him +cf_j_spine02=30,0,0;...: FK on top of
+// the clip (Unity euler degrees), held (her: every frame; him: until his next FK); ok.HScene.Fk her|him clear.
+FString UOKHScenePanel::DebugBones(const TArray<FString>& Args){
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;AKKPreviewActor* Him=Gallery?Gallery->PartnerActor.Get():nullptr;
+    FString Out;
+    if(Args.Num()==1&&Args[0]==TEXT("sweet")){
+        Out=FString::Printf(TEXT("sweet: who %d (1 his hands, 2 hers) w %.2f hands %d lean %.1f short %.1f until %.1f s, said %.1f s ago\n"),SweetWho,SweetW,bSweetHands,SweetLean*SweetLeanSign,SweetLeanErr,
+            float(SweetUntil-FPlatformTime::Seconds()),float(FPlatformTime::Seconds()-SweetSaidAt));
+        for(int32 I=0;I<SweetLeanBones.Num()&&I<SweetLeanTurns.Num();++I)Out+=FString::Printf(TEXT("  her fk %s %s\n"),*SweetLeanBones[I],*SweetLeanTurns[I].ToString());
+        for(int32 I=0;I<SweetLeanHimSent.Num();++I)Out+=FString::Printf(TEXT("  his fk %s\n"),*SweetLeanHimSent[I].ToString());
+        if(AKKPreviewActor* Toucher=SweetWho==1?Him:SweetWho==2?Girl:nullptr){FVector L,R;
+            if(HBone(Toucher,TEXT("j_hand_L"),L)&&HBone(Toucher,TEXT("j_hand_R"),R))Out+=FString::Printf(TEXT("  wrists %.1f / %.1f cm from the targets (%s / %s)\n"),
+                FMath::Min(FVector::Dist(L,SweetWrists[0]),FVector::Dist(L,SweetWrists[1])),FMath::Min(FVector::Dist(R,SweetWrists[0]),FVector::Dist(R,SweetWrists[1])),*SweetWrists[0].ToString(),*SweetWrists[1].ToString());}
+        return Out;}
+    TArray<FVector> At;
+    for(const FString& A:Args){FString Who,Bone;if(!A.Split(TEXT("."),&Who,&Bone)){Who=TEXT("her");Bone=A;}
+        AKKPreviewActor* Act=Who==TEXT("him")?Him:Girl;FVector P;
+        if(!HBone(Act,*Bone,P)){Out+=FString::Printf(TEXT("%s: no such bone (cf_/cm_ + name)\n"),*A);continue;}
+        At.Add(P);Out+=FString::Printf(TEXT("%s: %.1f %.1f %.1f"),*A,P.X,P.Y,P.Z);
+        if(At.Num()>1)Out+=FString::Printf(TEXT("  (%.1f cm from %s)"),float(FVector::Dist(At[0],P)),*Args[0]);
+        Out+=TEXT("\n");}
+    return Out.IsEmpty()?TEXT("ok.HScene.Bones sweet | [her.|him.]bone ..."):Out;
+}
+FString UOKHScenePanel::DebugFk(const TArray<FString>& Args){
+    if(Args.Num()<2)return TEXT("ok.HScene.Fk her|him +cf_j_spine02=30,0,0;+cf_j_spine03=30,0,0 | clear");
+    AKKPreviewActor* Him=Gallery?Gallery->PartnerActor.Get():nullptr;const bool bHim=Args[0]==TEXT("him");
+    TArray<FString> Names;TArray<FVector> Turns;
+    if(Args[1]!=TEXT("clear")){TArray<FString> Items;FString::Join(TArray<FString>(Args.GetData()+1,Args.Num()-1),TEXT(" ")).ParseIntoArray(Items,TEXT(";"));
+        for(const FString& Item:Items){FString Name,Euler;if(!Item.TrimStartAndEnd().Split(TEXT("="),&Name,&Euler))continue;TArray<FString> P;Euler.ParseIntoArray(P,TEXT(","));
+            if(P.Num()!=3)continue;Names.Add(Name);Turns.Add(FVector(FCString::Atof(*P[0]),FCString::Atof(*P[1]),FCString::Atof(*P[2])));}}
+    if(bHim){if(!IsValid(Him))return TEXT("no him");SyncPair();Him->Session.SetFk(Names,Turns);}
+    else{DebugFkHerNames=Names;DebugFkHerTurns=Turns;}
+    return FString::Printf(TEXT("%s fk: %d bone(s)"),bHim?TEXT("his"):TEXT("her"),Names.Num());
+}
+static UOKHScenePanel* HPanelOf(UWorld* World){for(TObjectIterator<UOKHScenePanel> It;It;++It)if(!It->HasAnyFlags(RF_ClassDefaultObject)&&It->GetWorld()==World&&It->Gallery)return *It;return nullptr;}
+static FAutoConsoleCommandWithWorldArgsAndOutputDevice GHSceneBonesCommand(TEXT("ok.HScene.Bones"),TEXT("ok.HScene.Bones sweet | [her.|him.]bone ... : bone positions and distances (live probe)"),
+    FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args,UWorld* World,FOutputDevice& Ar){
+        UOKHScenePanel* P=HPanelOf(World);Ar.Log(P?P->DebugBones(Args):TEXT("no H scene"));}));
+static FAutoConsoleCommandWithWorldArgsAndOutputDevice GHSceneFkCommand(TEXT("ok.HScene.Fk"),TEXT("ok.HScene.Fk her|him +bone=x,y,z;... | clear : FK on top of the clip (live probe)"),
+    FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args,UWorld* World,FOutputDevice& Ar){
+        UOKHScenePanel* P=HPanelOf(World);Ar.Log(P?P->DebugFk(Args):TEXT("no H scene"));}));
 void UOKHScenePanel::DropPendingIk(AKKPreviewActor* A){PendingIk.RemoveAll([A](const FPendingIk& P){return !P.Who.IsValid()||P.Who.Get()==A;});}
 void UOKHScenePanel::SendPendingIk(bool bWait){
     if(PendingIk.IsEmpty())return;
@@ -3918,7 +4067,9 @@ void UOKHScenePanel::AlignHim(float Delta){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HAl
         const bool bHandsPin=bPinHands&&bHeld&&bHandsRead;FVector HisPin[2],HerPin[2];
         if(bHandsPin){auto PinShift=[](AKKPreviewActor* Who,const FVector& By){return AKKPreviewActor::ActorLocalToUnity(Who->GetRootComponent()->GetComponentTransform().InverseTransformVectorNoScale(By));};
             const FVector HisShift=PinShift(Him,HimAhead),HerShift=PinShift(Girl,HerAhead);
-            for(int32 HandIndex=0;HandIndex<2;++HandIndex){FTransform WaistT;HisPin[HandIndex]=!HisHandOn[HandIndex].IsNone()&&HBoneTransform(Girl,*HisHandOn[HandIndex].ToString(),WaistT)?HToSession(Him,WaistT.TransformPosition(HisHandLocal[HandIndex]),HimAhead):HisHands[HandIndex]-HisShift;HerPin[HandIndex]=HerHands[HandIndex]-HerShift;}}
+            for(int32 HandIndex=0;HandIndex<2;++HandIndex){FTransform WaistT;HisPin[HandIndex]=!HisHandOn[HandIndex].IsNone()&&HBoneTransform(Girl,*HisHandOn[HandIndex].ToString(),WaistT)?HToSession(Him,WaistT.TransformPosition(HisHandLocal[HandIndex]),HimAhead):HisHands[HandIndex]-HisShift;HerPin[HandIndex]=HerHands[HandIndex]-HerShift;}
+            SweetTouch(Girl,Him,HimAhead,HerAhead,HisPin,HerPin,Delta);}
+        else{SweetW=0.f;SweetLean=0.f;SweetLeanBones.Reset();SweetLeanTurns.Reset();if(bSweetLeanHim&&IsValid(Him)){SyncPair();Him->Session.SetFk({},{});bSweetLeanHim=false;SweetLeanHimSent.Reset();}}
         FVector HisFeetAt[2]={HisFeet[0],HisFeet[1]};if(bPin&&bFeetToHers)FeetToHers(Girl,Him,HisFeetAt);
         HoldFeet(Him,bHisStands,HimAhead,HisFeetAt,HisHeld,bHisIk,bPin,bHandsPin?HisPin:nullptr,HisHandsKept,&HisIkSet);
         HoldFeet(Girl,bHerStands,HerAhead,HerFeet,HerHeld,bHerIk,bPin,bHandsPin?HerPin:nullptr,HerHandsKept,&HerIkSet);}

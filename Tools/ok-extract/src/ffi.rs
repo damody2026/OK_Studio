@@ -566,13 +566,19 @@ pub unsafe extern "C" fn ok_session_set_studio_ik_arm_pull(s: *mut OkSession, pu
     let Some(s) = sess_ref(s) else { return -1; };
     let Some(solver) = s.studio_ik_solver.as_mut() else { return -1; };
     if solver.chains.len() < 3 { return -1; }
-    let saved = *s.studio_ik_arm_pull_saved.get_or_insert([solver.chains[1].pull, solver.chains[2].pull]);
+    let saved = *s.studio_ik_arm_pull_saved.get_or_insert([solver.chains[1].pull, solver.chains[2].pull, solver.pull_body_vertical, solver.pull_body_horizontal]);
+    // The hands' body pull (FBBIK pullBodyVertical / Horizontal) goes with it: a hand target out of the arm's reach dragged
+    // his body up and down 35 cm with the chain pull at 0 (his hands on her face, 2026-11-14), so it is scaled the same way.
     if pull.is_finite() && pull >= 0. {
         solver.chains[1].pull = pull.min(1.);
         solver.chains[2].pull = pull.min(1.);
+        solver.pull_body_vertical = saved[2] * pull.min(1.);
+        solver.pull_body_horizontal = saved[3] * pull.min(1.);
     } else {
         solver.chains[1].pull = saved[0];
         solver.chains[2].pull = saved[1];
+        solver.pull_body_vertical = saved[2];
+        solver.pull_body_horizontal = saved[3];
     }
     0
 }
