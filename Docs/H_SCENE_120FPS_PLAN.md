@@ -227,3 +227,26 @@ native trace（EGalPerfCity4，-OKNativeTrace -statnamedevents，抽插）：
 ## 不要重走
 
 百人矩陣路線（平行 bone packing、GPU matrix gather、exact pose 重用、`RHICmd` 批次、16 workers）都沒有收益。一對一候選裡 `GeometryJobs`、`CoatingParallel`、`WorldReuse`、`AssignedWorldFrame`、`SharedBodyIndex`、`FrozenTransform` 也試過無效。60 Hz pose bank 不能代替雙人即時解算。`ParallelFor` 不加 `BackgroundPriority` 曾凍結主執行緒。多一個 scene renderer 就有固定成本。
+
+### 最重女角全穿（2026-11-13 晚，蘭＝第 9 位，正常位）
+
+- City10（5b8a7a96f）：配件／衣服的平行派工照上一幀耗時由大到小排。效果在雜訊內。
+- City11（1b3b99986）：包覆的翻面修正只重驗變動的三角形，跟隨表改成密集陣列並平行。結果不變，FPS 也在雜訊內。
+- 單執行緒剖析（OK_NATIVE_WORKERS=1、RAYON_NUM_THREADS=1、OKAnim.Profile），每幀工作：
+  - 包覆 9.8 ms：格子推開 3.3、翻面 1.8、外圈 1.3、抬起 clear 1.3、抬起 rise 0.9、跟隨 0.6
+  - 衣服蒙皮約 3.9 ms
+  - 8 執行緒時配件 pass 牆鐘約 6 ms，平行效率只有約 40%。
+- 上限診斷（City11）：
+
+  | 條件 | loop FPS |
+  |---|---|
+  | 全穿 | 約 80 |
+  | 全穿，關掉包覆（`ok.HScene.ClothCover 0`） | 104 |
+  | 裸體 | 145 |
+
+  就算包覆完全不做，全穿也到不了 120。差的部分是 CPU 蒙皮的衣服本身：約 32 件衣服的 CPU 蒙皮、主執行緒上傳頂點（KK_SourceRanges 約 1.8 ms），以及 render 從 4.6 ms 增加到 6.4 ms。
+- 要讓全穿到 120，只剩結構性的路：
+  - 衣服回到 GPU 蒙皮，包覆的推開改成 GPU 上的位移（compute，或每幀上傳的稀疏位移），不再整件從 CPU 上傳；
+  - 或把包覆算進下一次解算（晚一幀顯示，像 WrapAsync）。
+
+  兩條都要先由使用者決定。
