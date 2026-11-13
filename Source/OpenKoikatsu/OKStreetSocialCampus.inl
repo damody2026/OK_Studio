@@ -140,7 +140,7 @@ void AOKStreetSocialScene::TakeStairs(int32 Dir){
  if(APlayerController* Pc=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr)if(Pc->PlayerCameraManager)Pc->PlayerCameraManager->StartCameraFade(1.f,0.f,0.7f,FLinearColor::Black,false,false);
  // Whoever walks with him climbs too.
  for(const int32 I:{S.Companion,S.OutingGirl})if(S.Agents.IsValidIndex(I-1)&&FVector::Dist(S.Agents[I-1].Position,S.Male-Delta)<500)S.Agents[I-1].Position+=Delta;
- S.Message=OKMsg(TEXT("ui.campus.walk_stairs_to"), {{TEXT("floor"), Floor+Dir}});S.StairKey=-1;RefreshUI();
+ S.Message=OKMsg(TEXT("ui.campus.walk_stairs_to"), {{TEXT("floor"), Floor+Dir}});S.StairKey=-1;S.CampusCheckedAt=FVector(TNumericLimits<double>::Max());RefreshUI();
 }
 
 // A shop with rooms upstairs but neither lift nor stair anchors (the bookstore's 3F): the girls sat there and he could not
@@ -165,7 +165,7 @@ void AOKStreetSocialScene::MoveFloor(const FVector& To){
  auto& S=*State;const FVector From=S.Male;S.Male=To;
  if(APlayerController* Pc=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr)if(Pc->PlayerCameraManager)Pc->PlayerCameraManager->StartCameraFade(1.f,0.f,0.7f,FLinearColor::Black,false,false);
  for(const int32 I:{S.Companion,S.OutingGirl})if(S.Agents.IsValidIndex(I-1)&&FVector::Dist(S.Agents[I-1].Position,From)<500)S.Agents[I-1].Position=To+(S.Agents[I-1].Position-From);
- S.StairKey=-1;RefreshUI();
+ S.StairKey=-1;S.CampusCheckedAt=FVector(TNumericLimits<double>::Max());RefreshUI();
 }
 // The navigation through such a shop: true while it has a way. He goes on from where this leaves him.
 bool AOKStreetSocialScene::NavByShopStairs(const FVector& Goal){
@@ -197,7 +197,8 @@ bool AOKStreetSocialScene::NavByShopStairs(const FVector& Goal){
 }
 
 void AOKStreetSocialScene::TickCampusProximity(){
- auto& S=*State;int32 P=INDEX_NONE,F=0;int32 Stair=StairHere(P,F)?P*10+F:-1;
+ auto& S=*State;if(S.Male==S.CampusCheckedAt)return;S.CampusCheckedAt=S.Male; // where he stands decides it all
+ int32 P=INDEX_NONE,F=0;int32 Stair=StairHere(P,F)?P*10+F:-1;
  // In a shop with floors: its stair buttons change with the floor.
  if(Stair==-1)if(const FOKStreetPlace* Shop=OKStreetShopWithFloors(S.Male))Stair=-2-int32(Shop-OKStreetPlaces().GetData())*16-OKStreetPlaceFloor(*Shop,S.Male);
  const FString Office=OfficeHere();

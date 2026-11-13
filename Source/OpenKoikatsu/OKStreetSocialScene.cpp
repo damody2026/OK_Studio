@@ -356,6 +356,10 @@ struct FOKStreetSceneState {
  TMap<int32,FOKStreetPendingMove> PendingMoves; // heroines whose walk is still being routed (TickRouteJobs)
  TMap<int32,float> StreetBlockedFor;TMap<int32,double> StreetDetourAt; // a free heroine held up on her street walk, and when she may be routed round again
  uint32 AutoFriendshipNext=0; // whose turn it is to be asked (TickAutoFriendship)
+ double AutoFriendshipAt=0; // wall time of the next girl's turn: every 0.1 s, not every frame (0.15 ms a frame, 2026-11-13)
+ // Where he stood when the restroom and the campus stairs/office were last looked at: both depend only on that, and
+ // looked at every frame they cost 0.15 ms while he stood still (the one-on-one, 2026-11-13).
+ FVector RestroomCheckedAt=FVector(TNumericLimits<double>::Max()),CampusCheckedAt=FVector(TNumericLimits<double>::Max());
  bool AcademicsInFlight=false; // campus_tick asked, its answer not back yet (TickAcademics)
  // bonds_tick asked off the game thread (TickBonds); BondsSerial counts bond events, so an answer computed before one
  // (its favours are absolute) is dropped and those minutes asked again.
@@ -4205,7 +4209,8 @@ static void OKStreetCityDress(ULevel* Level){
   if(!Sun||Part->Intensity>Sun->GetLightComponent()->Intensity){if(Sun)Sun->GetLightComponent()->SetVisibility(false);GOKStreetCitySun=Light;Part->SetVisibility(true);}else Part->SetVisibility(false);}
  TInlineComponentArray<UActorComponent*> Parts;
  for(AActor* Actor:Level->Actors)if(Actor){Actor->GetComponents(Parts);for(UActorComponent* Part:Parts){
-  if(auto* Mirror=Cast<UPlanarReflectionComponent>(Part)){Mirror->SetVisibility(false);GOKStreetCityMirrors.Add(Mirror);}
+  // Hidden, and not ticked either: their tick does nothing, yet ~640 of them cost the game thread 0.2 ms a frame (2026-11-13).
+  if(auto* Mirror=Cast<UPlanarReflectionComponent>(Part)){Mirror->SetVisibility(false);Mirror->SetComponentTickEnabled(false);GOKStreetCityMirrors.Add(Mirror);}
   else if(auto* Sky=Cast<USkyLightComponent>(Part)){if(!GOKStreetCitySkyLight.IsValid()){GOKStreetCitySkyLight=Sky;GOKStreetCitySkyDay=Sky->Intensity;}}  else if(auto* Light=Cast<ULocalLightComponent>(Part)){if(Light->MaxDrawDistance!=12000.f||Light->MaxDistanceFadeRange!=2000.f){Light->MaxDrawDistance=12000.f;Light->MaxDistanceFadeRange=2000.f;Light->MarkRenderStateDirty();}if(Light->CastShadows)Light->SetCastShadows(false);}
   else if(auto* Instanced=Cast<UInstancedStaticMeshComponent>(Part)){if(Instanced->GetStaticMesh()&&Instanced->InstanceEndCullDistance<=0){const float Far=FarFor(Instanced->GetStaticMesh()->GetBounds().SphereRadius);if(Far>0.f)Instanced->SetCullDistances(int32(Far*.9f),int32(Far));}}
   else if(auto* Mesh=Cast<UStaticMeshComponent>(Part)){if(Mesh->LDMaxDrawDistance<=0.f){const float Far=FarFor(Mesh->Bounds.SphereRadius);if(Far>0.f)Mesh->SetCullDistance(Far);}}}}

@@ -196,6 +196,8 @@ void AOKStreetSocialScene::TickPlaceTour(double Now){
 void AOKStreetSocialScene::TickRestroom(){
  auto& S=*State;const double Now=SceneTime();
  if(S.RestroomGirl!=INDEX_NONE&&Now>=S.RestroomUntil)EndRestroom(true);
+ // Only where he stands decides it: looked at again once he has moved.
+ if(S.Male==S.RestroomCheckedAt)return;S.RestroomCheckedAt=S.Male;
  for(const auto& Place:OKStreetPlaces()){
   const FOKStreetModelAnchor* Women=OKStreetPlaceAnchor(Place,TEXT("women"));
   const FOKStreetModelAnchor* Wait=OKStreetPlaceAnchor(Place,TEXT("wait"));
@@ -203,7 +205,7 @@ void AOKStreetSocialScene::TickRestroom(){
   for(const FBox& Room:Place.Rooms){
    const bool WomenRoom=Women->Position.X>=Room.Min.X&&Women->Position.X<=Room.Max.X&&Women->Position.Y>=Room.Min.Y&&Women->Position.Y<=Room.Max.Y;
    if(WomenRoom&&S.Male.X>=Room.Min.X&&S.Male.X<=Room.Max.X&&S.Male.Y>=Room.Min.Y&&S.Male.Y<=Room.Max.Y){
-    S.Male=Wait->Position;
+    S.Male=Wait->Position;S.RestroomCheckedAt=S.Male;
     if(Now-S.RestroomBlockedAt>3){S.RestroomBlockedAt=Now;S.Message=OKT(TEXT("ui.outing.ladies_room_no_men"));RefreshUI();UE_LOG(LogTemp,Display,TEXT("Street restroom: kept the player out of the women's room at %s"),Place.Id);}
    }
   }
