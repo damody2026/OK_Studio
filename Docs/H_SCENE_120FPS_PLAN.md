@@ -250,3 +250,9 @@ native trace（EGalPerfCity4，-OKNativeTrace -statnamedevents，抽插）：
   - 或把包覆算進下一次解算（晚一幀顯示，像 WrapAsync）。
 
   兩條都要先由使用者決定。
+
+- 晚一幀顯示（使用者選的，c675cad99，已撤回）：
+  - 做法：衣服先套用上一幀算好的推開，這幀的推開丟到 native pool 背景算。
+  - 結果：蘭全穿 loop 74～76 FPS，沒有比當幀算快；同一個執行檔關掉晚一幀還有 85。
+  - 原因：背景工作和下一次解算搶同一個 8 執行緒的 pool，沒有離開最長路徑。
+  - 剩下的路：衣服回 GPU 蒙皮，推開改成 GPU 位移。
