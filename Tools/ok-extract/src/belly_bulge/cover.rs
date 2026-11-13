@@ -75,6 +75,16 @@ pub fn keep_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])
     // (BellyWrapTake, trace EGalPerf19 after he came). The order of the list stays the parts' order.
     use rayon::prelude::*;
     let own: Vec<usize> = session.parts.iter().enumerate().filter(|(_, p)| p.render_visible && covers(&p.role) && p.runtime_accessory.is_some()).map(|(i, _)| i).collect();
+    // Once one reaches, the same garments are kept on the CPU for REACH_HOLD frames before they are looked at again: the
+    // test (a palette per garment) was most of BellyWrapTake's 0.31 ms a frame (2026-11-13). Not reaching is still looked at
+    // every frame, so a garment goes to the CPU the frame her skin reaches it; one left there a few frames longer has no
+    // push to draw and looks the same.
+    {
+        let mut held = REACH_HELD.lock().unwrap();
+        if let Some(e) = held.iter_mut().find(|e| e.0 == key) {
+            if e.1 > 0 && e.2 == own { e.1 -= 1; return own; }
+        }
+    }
     let reached: Vec<usize> = crate::session::native_parallel_work(|| own.par_iter().filter_map(|&i| {
         let runtime = session.parts[i].runtime_accessory.as_ref()?;
         let (mesh, palette) = runtime.export_skin_palette(runtime.skin_body(session.body_skel.as_ref(), clothes), head)?;
@@ -88,8 +98,16 @@ pub fn keep_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])
     }).collect());
     // One reaching: all of them on the CPU. Garments laid on one another (fishnet over tights, the same tights in two
     // slots) drawn one from the CPU and one from the GPU fought for depth all down her legs (user, 2026-11-11).
-    if reached.is_empty() { reached } else { own }
+    let mut held = REACH_HELD.lock().unwrap();held.retain(|e| e.0 != key);
+    if reached.is_empty() { return reached; }
+    if held.len() >= 16 { held.remove(0); }
+    held.push((key, REACH_HOLD, own.clone()));
+    own
 }
+/// Frames a reaching garment set is kept before the test again (`keep_cover`).
+const REACH_HOLD: u32 = 8;
+/// Per session: the frames left before the test again, and the garments kept on the CPU.
+static REACH_HELD: std::sync::Mutex<Vec<(usize, u32, Vec<usize>)>> = std::sync::Mutex::new(Vec::new());
 
 /// Per garment (its neighbour table): the frame count, the vertices `push_at` moved last frame, its vertex count.
 static WARM: std::sync::LazyLock<std::sync::Mutex<HashMap<usize, (u32, Vec<u32>, usize)>>> = std::sync::LazyLock::new(Default::default);
@@ -639,6 +657,7 @@ pub(crate) fn clothes_changed() {
     WARM.lock().unwrap().clear();
     FOLLOW_MAP.lock().unwrap().clear();
     COVER.lock().unwrap().clear();
+    REACH_HELD.lock().unwrap().clear();
 }
 
 fn cover_still(parts: &[SessionPart], skel: &Skeleton) -> Option<std::sync::Arc<CoverStill>> {

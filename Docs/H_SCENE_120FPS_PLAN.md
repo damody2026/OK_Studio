@@ -180,6 +180,21 @@ EGalPerfCity1 的改動：
 - 廁所與校園樓梯／辦公室判斷只在男主角移動後才重算。
 
 trace 估計省約 0.4 ms，但 ABA 的差距落在雜訊（±3 FPS）內。剩下的大項仍是配對解算鏈：等 worker 1.0 ms、顯示 1.8 ms、讀取 1.0 ms。
+
+大學城第二輪（2026-11-13，EGalPerfCity1 ↔ EGalPerfCity3 ABA，獨佔整台機器）：
+
+| 版 | 閒置 | 抽插 | 加快 | 射精後 |
+|---|---|---|---|---|
+| EGalPerfCity1 | 166／172 | 156／151 | 140／141 | 137／136 |
+| EGalPerfCity3 | 188／180 | 148／158 | 146／140 | 133／142 |
+
+trace（-statnamedevents，抽插）：
+- 整幀 7.11 → 6.71 ms。
+- keep_cover：衣服碰到她被推的皮膚後，同一批先留在 CPU 路線 8 幀再重驗；沒碰到仍每幀查。OK_HWrapTake 0.31 → 0.08 ms。
+- 街區 Tick 0.39 → 0.09 ms（EGalPerfCity1 的節流）。
+- skin_now 平行化反而變慢：OK_HSkinCheck 0.23 → 0.28 ms，因為解算正佔著 worker pool。已撤回。
+
+主執行緒省下的時間全變成等解算：KK_PairOKWait 0.65 → 1.40 ms。關鍵路徑已經是背景的配對解算本身，下一步要縮短解算，或讓顯示與下一次解算重疊。
 ## 量測規則（來自街區經驗）
 
 - 正式數字一律無 trace、編譯行程 0、只有一個 Unreal；trace 只用來定位。

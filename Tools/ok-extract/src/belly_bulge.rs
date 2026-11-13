@@ -505,6 +505,7 @@ fn skin_now(session: &OkSession) -> Option<Vec<SkinNow>> {
             (d < PROBE_M && d > PROBE_INNER_M).then_some((j as u32, d))
         }).collect()
     });
+    // One after another: on the pool beside the pair solve it was slower (OK_HSkinCheck 0.23 -> 0.28 ms, 2026-11-13).
     Some(probe.iter().filter_map(|&(j, rest)| {
         let j = j as usize;
         let (skin, _, _) = skin_of(part, j, &worlds, &binds, &[], &[])?;
