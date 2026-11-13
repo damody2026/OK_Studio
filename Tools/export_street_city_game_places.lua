@@ -418,8 +418,14 @@ end
 -- Tools/street_city_shop_passage_payload.lua (collision grid in places-v1/shop-passage-after-1113.json). East of x 44400 the
 -- line keeps to y 28570: the shop counter (ShopV1_S32_Refit) stands at x 44615-44720 up to y 28525, and the game's road check
 -- (30 cm capsule) dropped the passage there (places-v1/passage-sweep2.json, 11-13).
+-- SP gym corridor: the gym_hall door (77174.7, 34274.6) opens on a 240 cm corridor between the SP walls at x 76880 and 77120
+-- that runs north out of the SP block (its north wall, y ~37900-39132, is closed everywhere else). No road point lay in it,
+-- so the gym was walked round the whole SP block: campus_e1 72 m straight, 891 m by road. A 30 cm capsule at +105 is clear
+-- along x 76950-77050 from y 34500 to 39800 (places-v1/gym-passage-sweep.json, walk probe places-v1/walk-probe.json, 11-13).
+-- The north end stops at y 39500, within the tie distance of the y 39100 road row.
 local PASSAGES = {
   { id = 's32', pts = { { 42760, 28520 }, { 43200, 28520 }, { 43800, 28520 }, { 44400, 28570 }, { 44800, 28570 }, { 44800, 28880 }, { 45160, 28880 } } },
+  { id = 'sp_gym', pts = { { 77174.7, 34274.6 }, { 77000, 34350 }, { 77000, 35400 }, { 77000, 36400 }, { 77000, 37400 }, { 77000, 38400 }, { 77000, 39500 } } },
 }
 local PASSAGE_TIE_CM, PASSAGE_TIES = 800, 3
 for _, pass in ipairs(PASSAGES) do
