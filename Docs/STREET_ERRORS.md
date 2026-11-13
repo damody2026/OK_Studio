@@ -2210,3 +2210,4 @@
 | 2026-11-12 | R6-237 改英文 `payer_format_instruction` 時在 TOML 基本字串裡放了沒跳脫的雙引號（"I'll get it for you"），提交後遊戲一開就因規則庫讀不進 `en/ui_text.toml`（第 1404 行）而自行退出 | 用 PowerShell 字串替換改 toml，沒檢查引號；當時的遊戲只重載了 zh-CN，沒發現 | 改 Localization 的 toml 後，先用新開的遊戲（或 ok_rules open）確認三語都讀得進去才提交；字串裡的雙引號一律寫成 `\"` |
 - 2026-11-13 c-street-city：在店面 S56、S64 一樓開穿越門時，只看 `shop-passage` 在 z 1290（離地 90 cm）用 line trace 畫的牆格，就判斷後牆 y 31120–31520 本來就有開口，只切了前牆。步行探測在離地 60 cm 撞到後牆（那裡是窗，窗下有牆），第一次套用白做，要再開一次編輯器補切後門。判斷「這裡是開的」要用步行探測或離地 60 cm 與 140 cm 的掃描，不能只看單一高度的牆格。
 - 2026-11-13 c-conquest：以為 `game_phone` 能指定女角，在電話畫面開著別人的對話串時直接送出要給胡桃的訊息，結果傳給貞德·Alter（她回「你發錯人了吧」，好感 31→29、resentment+1）。`game_phone` 只會送進目前開著的對話串；送之前要先 `game_click` 那位女角的名字，用截圖確認標題是她才送。
+- 2026-11-13 c-conquest：清沙盒 player.json 的雲端金鑰時，用自己寫的 Lua 以 "wb" 開檔後才呼叫 json 編碼，Tools/lua/json.lua 沒有 encode，報錯時檔案已被截成 0 bytes；靠事先複製的 player.json.bak-20261113 還原。改設定檔一律先寫暫存檔、成功後再換掉原檔，而且動手前先備份。
