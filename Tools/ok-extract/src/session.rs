@@ -38,6 +38,9 @@ pub(crate) fn native_parallel_work<F,R>(work:F)->R where F:FnOnce()->R+Send,R:Se
 pub(crate) fn native_workers_broadcast(f:impl Fn()+Sync) {
     if let Some(pool)=native_pool(false) { pool.broadcast(|_|f()); }
 }
+/// Each accessory part's solve and cover push last frame (microseconds), by session and part: the order its next frame's
+/// parts start in (update_dynamic_accessories_pass, longest first).
+static ACC_COST:std::sync::LazyLock<std::sync::Mutex<HashMap<(u64,usize),u64>>>=std::sync::LazyLock::new(Default::default);
 fn native_pool(start:bool)->Option<&'static rayon::ThreadPool> {
     static POOL:std::sync::OnceLock<Option<rayon::ThreadPool>>=std::sync::OnceLock::new();
     if !start { return POOL.get()?.as_ref(); }
@@ -2507,6 +2510,8 @@ impl OkSession {
                 part.rest_tangents=tangents;
                 if let Some(observer)=observer{observer.emit(index,part);}
             }
+            // What it took, for the order of the next frame's parts (longest first).
+            if let Ok(mut costs)=ACC_COST.lock(){if costs.len()>4096{costs.clear();}costs.insert((group,index),render_us+cover_us);}
             // OK_ACC_PART_PROFILE=<frames>: every that many frames of a part, when it started after the parts began, its solve
             // (physics and skinning) and its cover push, averaged; to stderr, and to OK_ACC_PART_PROFILE_FILE when set.
             if let Some(every)=acc_part_profile_every() {
@@ -2522,12 +2527,20 @@ impl OkSession {
             }
         };
         if parallel&&self.parts.iter().filter(|p|p.runtime_accessory.is_some()).count()>=8 {
-            use rayon::prelude::*;
             // The biggest first (longest job first): her body tights, at index 35 of 36, started 0.6 ms after the others and
             // its cover push ended the whole solve (OK_ACC_PART_PROFILE, 2026-11-10). Each part is still solved on its own.
-            let mut order:Vec<(usize,&mut SessionPart)>=self.parts.iter_mut().enumerate().filter(|(_,p)|p.runtime_accessory.is_some()).collect();
-            order.sort_by_key(|(index,part)|(std::cmp::Reverse(part.rest_positions.len()),*index));
-            native_parallel_work(||order.into_par_iter().with_max_len(1).for_each(update));
+            let order:Vec<(usize,&mut SessionPart)>=self.parts.iter_mut().enumerate().filter(|(_,p)|p.runtime_accessory.is_some()).collect();
+            // By what each took last frame (its solve and its cover push), else its size: a fully dressed heroine's top,
+            // started 2.6 ms in by its size, took 1.9 ms pushing her clothes over her skin and ended the solve 5 ms in
+            // (OK_ACC_PART_PROFILE, 2026-11-13). Only the order changes: each part is solved as before.
+            let costs=ACC_COST.lock().ok().map(|c|order.iter().map(|(index,_)|c.get(&(group,*index)).copied().unwrap_or(0)).collect::<Vec<u64>>()).unwrap_or_default();
+            let mut keyed:Vec<(u64,usize,(usize,&mut SessionPart))>=order.into_iter().enumerate().map(|(k,e)|(costs.get(k).copied().unwrap_or(0),e.1.rest_positions.len(),e)).collect();
+            keyed.sort_by_key(|(cost,size,(index,_))|(std::cmp::Reverse(*cost),std::cmp::Reverse(*size),*index));
+            let order:Vec<(usize,&mut SessionPart)>=keyed.into_iter().map(|(_,_,e)|e).collect();
+            // Started in that order (FIFO): a parallel iterator splits the list in halves and the workers took the back half
+            // first, so her bras, second in line, still started 2.3 ms in (2026-11-13).
+            let update=&update;
+            native_parallel_work(||rayon::scope_fifo(|s|for item in order {s.spawn_fifo(move|_|update(item));}));
         } else {self.parts.iter_mut().enumerate().for_each(update);}
         // The early pass leaves the followers and the cover field to the pass after her clothes.
         if pass.early() {self.cover_ready=Some(cover_field);if let Some(k)=keep {self.acc_cache.leaders=Some((k,leaders_owned,particle_ids));}crate::okanim::prof::add(19,t_parts);return;}

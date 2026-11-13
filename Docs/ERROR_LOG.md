@@ -4370,3 +4370,11 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - **和三月七 1 對 1 時兩人浮在宿舍牆頂上（像飛到天上）**（2026-11-12，F 組）：1 對 1 直接放在女主當下的座標。她在宿舍樓上自己房間（`held`，z=365），街區在那個高度沒有地板，兩人就站在空中。修正：開場前從她腳下往下找地板（60 cm 內），找不到就改放在主角站的地方、面向原本她的方向。
 - **整合包第一次在遊戲裡填阿里雲金鑰：配音與 AI 對話都不會開（2026-11-13，F 組）**：沙盒測試時金鑰在啟動前就寫在 player.json，而且這台機器的啟動器會把 `%LOCALAPPDATA%` 的 DeepSeek 金鑰補回來，所以「在遊戲裡才填金鑰」這條路從沒真的走過，克拉拉的對話其實走的是 `deepseek-chat`。實際走一次有三個問題：(1) `ok-tts` 選了雲端卻沒有金鑰時，載入函式回錯誤，伺服器把它當成載入失敗直接結束，之後的 `POST /cloud` 沒人收；(2) 遊戲讀設定時看到沒金鑰就把 `cloud` 降成本機，存了金鑰後只有「原本就是 cloud」才會送 `/cloud`，降過的不會回到雲端；(3) `ok-mind` 只在開啟時讀一次金鑰，事後填的永遠看不到（`no_api_key`）。修正：`ok-tts` 用 `WaitForCloud` 標記這種情況，不結束、繼續等；遊戲記下「設定檔原本要雲端」（`CloudVoiceWanted`／`CloudAsrWanted`），第一次存金鑰時切回雲端；`ok-mind` 沒有金鑰時每次呼叫都重讀設定。測「只有阿里雲」要把沙盒的 DeepSeek 金鑰設成一個空白，並且從沒有金鑰的設定開始，在遊戲裡填。
 - **大學城複製到 E 後整條街是空的：一對一背景全黑、腳下沒地板，水窪與液滴映不出腿**（2026-11-13，E 組 e-120fps）：整合時只把 `Content\UniversityCity` 複製到 E，World Partition 地圖 `UniversityCityWP` 的 actor 卻存在 `Content\__ExternalActors__\UniversityCity`（28,629 檔）與 `Content\__ExternalObjects__\UniversityCity`（454 檔），這兩個資料夾被 `.gitignore` 排除、沒有一起複製。cook 只留下一行警告 `UniversityCityWP has a dependency on /Game/__ExternalActors__/... which does not exist`，就產出沒有任何 cell 的地圖：遊戲裡 `wp.Runtime.ToggleDrawRuntimeHash2D` 一個 cell 也沒有，`Private: no floor under her`，水窪的地板照片是「scene without them」。我先誤以為是 SSR 被關（實際 `r.SSR.Quality` 3、`r.ReflectionMethod` 2 都正常），又把液滴材質當成主因多試了兩輪。修正：從 C 用 robocopy 補齊兩個外部資料夾，重新 cook。教訓：畫面整片黑先看街道本身有沒有東西（WP 除錯圖、cook 的 dependency 警告），再查材質；複製 World Partition 地圖要連 `__ExternalActors__`／`__ExternalObjects__` 下同名資料夾一起帶。
+
+## 2026-11-13 兩個量測腳本用同一個 slot 名稱同時跑（E 組 e-120fps）
+
+- 現象：最壞情況量測的第一批與 HG 那批同時進行，兩邊對同一個控制埠（48620）的遊戲下指令、互相關掉對方，這輪數字全部作廢。
+- 原因：
+  - 第二批的腳本用「第一批的輸出檔有內容」當作開始條件，但 PowerShell 的 `Out-File` 一開始有輸出就建立檔案。
+  - 兩個腳本都以 `e-120fps` claim。`unreal_slot.lua` 看到 slot 已是同一個 agent 持有，就直接放行，沒有擋第二個。
+- 修正：同一個量測流程只用一個腳本依序跑，分段時在同一個腳本裡 release 後立刻 claim。不要用兩個背景腳本接力，也不要用輸出檔判斷前一批是否結束。
