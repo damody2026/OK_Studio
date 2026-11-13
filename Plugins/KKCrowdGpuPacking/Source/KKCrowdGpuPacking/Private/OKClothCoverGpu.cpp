@@ -68,7 +68,8 @@ static FRDGBufferRef OKClothBlob(FRDGBuilder& G,const TSharedPtr<const TArray<ui
  for(int32 I=0;I<GOKClothBlobs.Num();++I)if(GOKClothBlobs[I].Data==Data){FOKClothBlob Hit=GOKClothBlobs[I];GOKClothBlobs.RemoveAt(I);GOKClothBlobs.Add(Hit);return G.RegisterExternalBuffer(Hit.Buffer);}
  const uint32 Bytes=FMath::Max<uint32>(16,uint32(Data->Num())*4);
  auto* Buffer=G.CreateBuffer(FRDGBufferDesc::CreateByteAddressDesc(Bytes),Name);
- G.QueueBufferUpload(Buffer,Data->GetData(),uint64(Data->Num())*4);
+ // Not copied: the array stays held by GOKClothBlobs (and the job) past this graph's execution.
+ G.QueueBufferUpload(Buffer,Data->GetData(),uint64(Data->Num())*4,ERDGInitialDataFlags::NoCopy);
  FOKClothBlob Entry{Data,G.ConvertToExternalBuffer(Buffer)};GOKClothBlobs.Add(Entry);
  // A field a frame per heroine and each garment's still data: the oldest go.
  while(GOKClothBlobs.Num()>96)GOKClothBlobs.RemoveAt(0);

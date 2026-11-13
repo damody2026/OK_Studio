@@ -347,5 +347,15 @@ CPU 蒙皮加晃動跟隨約 1.8 ms。每幀大約是解算時間再加 3 ms 顯
 | 2，一個 pass | 107 | 8.4 | 7.7 | 5.8～8.0 |
 
 - 截圖（兩個角度）與模式 0 一致。剩下的差距 game、render、GPU 三條線各差約 1 ms，都要再壓。
+- Rust `gpu_ready` 每幀為了確認晃動對照表在不在，把整張表寫出來：改成只檢查（EGalCloth9：118 FPS，配對推進 4.2 ms）。
+- 皮膚場每幀只讀一次（記住上次大小），上傳 GPU 時不再多複製一份（EGalCloth10）：
+
+| 設定 | idle | loop | fast | after | 配對推進 |
+|---|---|---|---|---|---|
+| 0（預設） | 89 | 78 | 77 | 72 | 9.3 ms |
+| 2（第一次） | 143 | 121 | 120 | 118 | 4.1 ms |
+| 2（第二次） | 141 | 120 | 122 | 117 | 4.0 ms |
+
+- 蘭全穿正常位，模式 2 達到約 120 FPS。還沒做：其他體位與其他女角的截圖比對、把預設改成 2（要等使用者決定）。
 - 診斷 cvar：`ok.ClothGpuSkip`（每個步驟一個位元，只用來找成本，結果會錯）。
 - 打包注意：global shader 改了，要自己的 runtime patch（`rebuild_street_social_patch.lua --output`），並以 `-PatchDir` 啟動；共用 patch 的 `RuntimeGlobalShaderPatch-*_P.pak` 會蓋過新 base 的 shader（見 `Docs/ERROR_LOG.md`）。

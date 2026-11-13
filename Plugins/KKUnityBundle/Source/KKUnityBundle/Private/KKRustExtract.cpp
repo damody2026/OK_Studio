@@ -367,17 +367,20 @@ bool FOkSession::ThighJiggleCloth(TArray<int32>& OutCpuParts,TArray<int32>& OutP
 	return true; }
 void FOkSession::SetClothGpu(int32 Mode){ok_cloth_gpu_set(Mode);}
 int32 FOkSession::ClothGpuJob(int32 Part) const {return Handle&&Part>=0?ok_cloth_gpu_job(Handle,Part):-1;}
-static bool OKClothWords(TArray<uint32>& Out,TFunctionRef<int32(uint32*,uint32)> Read){
-	Out.SetNumUninitialized(1<<16);int32 N=Read(Out.GetData(),uint32(Out.Num()));
+// Read once at the size last seen (a field is read every frame and is bigger than any first guess: read twice otherwise).
+static bool OKClothWords(TArray<uint32>& Out,TFunctionRef<int32(uint32*,uint32)> Read,int32& SizeHint){
+	Out.SetNumUninitialized(FMath::Max(SizeHint,1<<12));int32 N=Read(Out.GetData(),uint32(Out.Num()));
 	if(N>Out.Num()){Out.SetNumUninitialized(N);N=Read(Out.GetData(),uint32(Out.Num()));}
 	if(N<=0||N>Out.Num()){Out.Reset();return false;}
-	Out.SetNum(N,EAllowShrinking::No);return true; }
+	SizeHint=FMath::Max(SizeHint,N);Out.SetNum(N,EAllowShrinking::No);return true; }
 bool FOkSession::ClothGpuField(TArray<uint32>& Out) const {
 	if(!Handle){Out.Reset();return false;}
-	return OKClothWords(Out,[this](uint32* P,uint32 Max){return ok_cloth_gpu_field(Handle,P,Max);}); }
+	static int32 SizeHint=0; // game thread
+	return OKClothWords(Out,[this](uint32* P,uint32 Max){return ok_cloth_gpu_field(Handle,P,Max);},SizeHint); }
 bool FOkSession::ClothGpuGarment(int32 Part,TArray<uint32>& Out) const {
 	if(!Handle||Part<0){Out.Reset();return false;}
-	return OKClothWords(Out,[this,Part](uint32* P,uint32 Max){return ok_cloth_gpu_garment(Handle,Part,P,Max);}); }
+	int32 SizeHint=1<<16; // once a garment change: no need to remember
+	return OKClothWords(Out,[this,Part](uint32* P,uint32 Max){return ok_cloth_gpu_garment(Handle,Part,P,Max);},SizeHint); }
 bool FOkSession::ClothGpuMoves(int32 Part,int32 SourceCount,TArray<FVector4f>& OutPerSource,float& OutLongest) const {
 	OutPerSource.Reset();OutLongest=0.f;if(!Handle||Part<0||SourceCount<=0)return false;
 	TArray<uint32> Idx;TArray<float> D;Idx.SetNumUninitialized(8192);D.SetNumUninitialized(8192*3);
