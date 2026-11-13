@@ -1483,6 +1483,7 @@ void UOKHScenePanel::TickScene(float Delta){
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickTremble);Tremble(FPlatformTime::Seconds());}
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickHands);if(!bTickingBeside)TickHands();}
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickEyesCamera);TickEyesCamera();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickLeadsOnTop);TickLeadsOnTop();}
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickCoordinates);TickCoordinates();}
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSounds);TickSounds();}
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSwellBust);SwellBust(Delta);}
@@ -2838,6 +2839,53 @@ void UOKHScenePanel::ApplyHerFk(AKKPreviewActor* Girl,TArray<FString>& Names,TAr
 // unticking it on the panel (the eye look box) leaves them; the ahegao keeps and gives back what it found.
 static TAutoConsoleVariable<int32> CVarHEyesCamera(TEXT("ok.HScene.EyesCamera"),1,TEXT("1: in H her eyes follow the camera from the start (the panel's eye look box can turn it off)"));
 bool UOKHScenePanel::HEyesOnCamera() const{return CVarHEyesCamera.GetValueOnGameThread()!=0;}
+// Nothing of the scene drawn over the two (user, 2026-11-13: a wall between the camera and them, or the floor where a body
+// dips a little under it, hid them): every part of hers and his is a first-person primitive (UE's first person rendering)
+// and the camera draws those scaled toward itself by ok.HScene.LeadsOnTopScale. Each pixel stays where it was on the
+// screen and the two keep their order between themselves (one scale for all), but their depth is that much nearer, so in
+// the depth test the scene's pixels lose wherever they are. The scale is the smallest that keeps the nearest of them past
+// the near clip plane (0: so; else that scale). While it is on the near clip plane is brought in to
+// ok.HScene.LeadsOnTopNear cm: at 10 cm a camera backed against a wall still had the wall in front of them, 1 cm cleared it
+// (2026-11-13). On by default (user, 2026-11-13: all of the scene, nothing over the two).
+static TAutoConsoleVariable<int32> CVarHLeadsOnTop(TEXT("ok.HScene.LeadsOnTop"),1,TEXT("1 (default): nothing of the scene is drawn over her and him (they are drawn as first-person primitives scaled toward the camera); 0 off. They then cast no shadow on the scene and show in no screen space reflection (UE draws first-person primitives so)"));
+static TAutoConsoleVariable<float> CVarHLeadsOnTopScale(TEXT("ok.HScene.LeadsOnTopScale"),0.f,TEXT("The scale toward the camera ok.HScene.LeadsOnTop draws them with (0: the smallest that keeps the nearest past the near clip plane)"));
+static TAutoConsoleVariable<float> CVarHLeadsOnTopNear(TEXT("ok.HScene.LeadsOnTopNear"),1.f,TEXT("The near clip plane (cm) while ok.HScene.LeadsOnTop is on (0: left as it is)"));
+void UOKHScenePanel::TickLeadsOnTop(){
+    const bool bOn=!bLeadsOnTopEnd&&CVarHLeadsOnTop.GetValueOnGameThread()!=0;
+    // The near clip plane: brought in while on, put back after (r.SetNearClipPlane also tells the render thread).
+    {const float Near=bOn?CVarHLeadsOnTopNear.GetValueOnGameThread():0.f;
+     if(Near>0.f&&!FMath::IsNearlyEqual(GNearClippingPlane,Near)){if(LeadsOnTopNear<0.f)LeadsOnTopNear=GNearClippingPlane;if(GEngine)GEngine->Exec(GetWorld(),*FString::Printf(TEXT("r.SetNearClipPlane %g"),Near));}
+     else if(Near<=0.f&&LeadsOnTopNear>0.f){if(GEngine)GEngine->Exec(GetWorld(),*FString::Printf(TEXT("r.SetNearClipPlane %g"),LeadsOnTopNear));LeadsOnTopNear=-1.f;}}
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;AKKPreviewActor* Him=Gallery?Gallery->PartnerActor.Get():nullptr;
+    APlayerController* PC=GetOwningPlayer();
+    UCameraComponent* Lens=nullptr;
+    if(PC&&PC->PlayerCameraManager)if(AActor* Target=PC->PlayerCameraManager->GetViewTarget())Lens=Target->FindComponentByClass<UCameraComponent>();
+    // Off, or the lens changed: what was set goes back.
+    if(UCameraComponent* Was=LeadsOnTopLens.Get();Was&&(!bOn||Was!=Lens)){Was->SetEnableFirstPersonScale(false);LeadsOnTopLens=nullptr;}
+    if(!bOn){for(const auto& P:LeadsOnTopParts)if(UPrimitiveComponent* C=P.Get())C->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::None);LeadsOnTopParts.Reset();return;}
+    // Their own parts and whatever hangs from them (the paint on her skin is the sprayer's, drawn over her parts): not what
+    // lies by them (the puddles and stains on the floor are the scene's).
+    // Only what is on them (within 1.2 m of their hips): her fluids' drops left on a desk across the room are hers too, and
+    // were drawn through the wall in front of it.
+    TArray<UPrimitiveComponent*> Parts;
+    for(AKKPreviewActor* A:{Girl,Him})if(IsValid(A)){
+        FVector Hips;const FBox Body=HBone(A,TEXT("j_hips"),Hips)?FBox(Hips-FVector(120.),Hips+FVector(120.)):FBox(A->GetActorLocation()-FVector(120.),A->GetActorLocation()+FVector(120.));
+        TInlineComponentArray<UPrimitiveComponent*> Own(A);
+        TArray<USceneComponent*> Hanging;
+        for(UPrimitiveComponent* C:Own){C->GetChildrenComponents(true,Hanging);if(Body.Intersect(C->Bounds.GetBox()))Parts.AddUnique(C);}
+        for(USceneComponent* C:Hanging)if(auto* P=Cast<UPrimitiveComponent>(C);P&&P->GetOwner()!=A&&Body.Intersect(P->Bounds.GetBox()))Parts.AddUnique(P);}
+    // What left them (a drop fallen away) goes back to the scene.
+    LeadsOnTopParts.RemoveAll([&](const TWeakObjectPtr<UPrimitiveComponent>& P){UPrimitiveComponent* C=P.Get();if(!C)return true;
+        if(Parts.Contains(C))return false;C->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::None);return true;});
+    double Nearest=TNumericLimits<double>::Max();const FVector Eye=Lens?Lens->GetComponentLocation():FVector::ZeroVector;
+    for(UPrimitiveComponent* C:Parts){if(!IsValid(C)||!C->IsRegistered()||!C->IsVisible())continue;
+        if(C->FirstPersonPrimitiveType!=EFirstPersonPrimitiveType::FirstPerson){C->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::FirstPerson);LeadsOnTopParts.Add(C);}
+        if(Lens)Nearest=FMath::Min(Nearest,FMath::Sqrt(C->Bounds.GetBox().ComputeSquaredDistanceToPoint(Eye)));}
+    if(!Lens)return;
+    float Scale=CVarHLeadsOnTopScale.GetValueOnGameThread();
+    if(Scale<=0.f){const double Near=FMath::Max(double(GNearClippingPlane),1.);Scale=float(FMath::Clamp(1.5*Near/FMath::Max(Nearest,1.),0.001,1.));}
+    Lens->SetEnableFirstPersonScale(true);Lens->SetFirstPersonScale(FMath::Clamp(Scale,0.001f,1.f));LeadsOnTopLens=Lens;
+}
 void UOKHScenePanel::TickEyesCamera(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickEyesCamera);
     AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;
     // Her head as the button on the right has it (user 2026-11-04), given to whichever self of hers is shown.
@@ -3785,7 +3833,7 @@ void UOKHScenePanel::ClearProps(){for(AStaticMeshActor* A:Props)if(IsValid(A))A-
 void UOKHScenePanel::NativeDestruct(){FastPaths(false);DropSecond();RestoreEyeLook();RestoreStyle();if(IsValid(Fluid)){Fluid->StopSpray();Fluid->Destroy();Fluid=nullptr;}if(Siru[0]+Siru[1]+Siru[2]+Siru[3]+Siru[4]>0){FMemory::Memzero(Siru);ApplySiru();}if(bCovered)Cover(false,FPlatformTime::Seconds());ClearProps();RestoreBlush();
     if(auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl))EndDeepFace(Girl);
     if(bAhegaoShown){bAhegaoShown=false;TickAhegao();if(auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl)){Girl->SetEyeGaze(0.f,0.f,0.f);Girl->SetMouthPattern(0);}} // her eyes, mouth and hands back from ahegao
-    TickCameraLight(true);TickSkinLit(true);TickClothBias(true);
+    TickCameraLight(true);TickSkinLit(true);TickClothBias(true);bLeadsOnTopEnd=true;TickLeadsOnTop();
     SetGrayRoom(false);RemoveMirror();StainShown.Reset();
     if(auto* PC=Cast<AOpenKoikatsuPlayerController>(GetOwningPlayer());PC&&IsValid(PC->PaintSprayer)&&PC->PaintSprayer->FloorStainMaterial){PC->PaintSprayer->FloorStainMaterial=nullptr;PC->PaintSprayer->OnFloorStain=nullptr;}
     // The room closes: its stains and marks go with it, so the reflections go back as they were (they stayed on while any lay there).

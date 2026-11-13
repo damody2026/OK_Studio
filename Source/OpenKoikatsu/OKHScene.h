@@ -329,7 +329,11 @@ private:
     UPROPERTY() TObjectPtr<class USizeBox> HalfInner;UPROPERTY() TObjectPtr<class USizeBox> PanelWidth;
     UPROPERTY() TObjectPtr<USlider> LengthSlider;
     UPROPERTY() TObjectPtr<USlider> TongueSlider;UPROPERTY() TObjectPtr<USlider> AnkleSlider;UPROPERTY() TObjectPtr<USlider> ThighSliders[2];UPROPERTY() TObjectPtr<class UComboBoxString> HandCombos[2];
-    float AnkleTurn=0.f,ThighOpen[2]={0.f,0.f};int32 HandPattern[2]={-1,-1},HandShown[2]={-1,-1},HandOptions=-1;TWeakObjectPtr<class AKKPreviewActor> HandGirl,EyesCameraGirl;void TickEyesCamera();FVector4f HerPoseShown=FVector4f(0.f,0.f,0.f,0.f);
+    float AnkleTurn=0.f,ThighOpen[2]={0.f,0.f};int32 HandPattern[2]={-1,-1},HandShown[2]={-1,-1},HandOptions=-1;TWeakObjectPtr<class AKKPreviewActor> HandGirl,EyesCameraGirl;void TickEyesCamera();
+    // ok.HScene.LeadsOnTop: the two drawn in front of the scene (TickLeadsOnTop); the parts and the lens it set, to undo.
+    void TickLeadsOnTop();TArray<TWeakObjectPtr<class UPrimitiveComponent>> LeadsOnTopParts;TWeakObjectPtr<class UCameraComponent> LeadsOnTopLens;
+    // bLeadsOnTopEnd: the scene ends (all of it undone); LeadsOnTopNear: the near clip plane before it was brought in (<0 none).
+    bool bLeadsOnTopEnd=false;float LeadsOnTopNear=-1.f;FVector4f HerPoseShown=FVector4f(0.f,0.f,0.f,0.f);
     // Her FK this frame: her trembling (Tremble) and the pose he set, together (her session holds one FK list).
     void ApplyHerFk(class AKKPreviewActor* Girl,TArray<FString>& Names,TArray<FVector>& Turns);void TickHands();
     double PaizuriMilkAt=0;
