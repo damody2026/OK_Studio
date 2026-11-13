@@ -438,6 +438,13 @@ local PASSAGES = {
   -- Campus east fence (x 97000) beside the girls' dorm D1: 17 pieces taken out at y 39760-40190 (the fence ran unbroken
   -- from y 20000 to 47800; girls_dorm -> playground was 551 m for 100 m straight).
   { id = 'fence_d1', pts = { { 96500, 39975 }, { 97000, 39975 }, { 97500, 39975 } } },
+  -- S16 (west shop row, backs at x 48960 shut off the campus South Walk gate from the shops): front door y 39940-40110,
+  -- inside south of the wall at x 48280-48400, out through the back opening y 40220-40420 whose 140 cm panel was cut.
+  -- Points follow walk-probe-s16-final-1113.json.
+  { id = 's16', pts = { { 46300, 40260 }, { 46780, 40260 }, { 46940, 40100 }, { 47420, 40060 }, { 47900, 40060 }, { 48060, 40060 }, { 48220, 40180 }, { 48380, 40260 }, { 48860, 40260 }, { 49340, 40260 }, { 49500, 40380 }, { 49820, 40300 } } },
+  -- Campus north fence (y 77000) was shut from x 54800 to 79600 though the campus_gate place stands on it: two fence
+  -- panels removed at x 57980-58776 (fence-gaps-north-apply-1113 / apply2-1113).
+  { id = 'campus_north', pts = { { 58400, 76200 }, { 58400, 76700 }, { 58400, 77000 }, { 58400, 77300 }, { 58400, 77800 } } },
 }
 local PASSAGE_TIE_CM, PASSAGE_TIES = 800, 3
 for _, pass in ipairs(PASSAGES) do
