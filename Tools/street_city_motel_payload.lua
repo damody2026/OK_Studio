@@ -18,6 +18,10 @@ def motel_inventory():
 def motel_serve():
  global MOTEL_STATE,MOTEL_HANDLE
  jobs=OUT/'jobs';jobs.mkdir(exist_ok=True);MOTEL_STATE=dict(busy=False,last_poll=0)
+ # Requests left by an earlier serve that was killed must not run here (an old quit or world job would run first).
+ for path in jobs.glob('*.request.json'):
+  result=path.with_name(path.name.replace('.request.json','.result.json'))
+  if not result.exists():result.write_text(json.dumps(dict(status='stale',id=path.name.replace('.request.json',''),reason='left before this serve started')),'utf8')
  write('serve-ready',dict(status='passed',map_sha256=LOAD_SHA,jobs=str(jobs),scope='Only motel-v1 task-local queue; no other chat coordination.'))
  def poll(dt):
   global LOAD_SHA
