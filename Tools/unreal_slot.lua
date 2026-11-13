@@ -20,7 +20,7 @@ local DEFAULT_NEED_GB = 35
 -- while it holds its slot nobody else gets one (2026-11-10: a game claimed beside the 56 GB editor, free commit fell to 7 GB).
 local EXCLUSIVE_GB = 60
 -- Lower runs first; agents not listed rank after these.
-local PRIORITY = { ["f-cover"] = -3, ["e-120fps"] = -2, ["c-street-city"] = -1, ["c-conquest"] = 0, FStyle = 1, ["e-galgame"] = 2, ["e-fork"] = 2, ["e-fork-2"] = 2, F = 3, ["e-okcard"] = 4 }
+local PRIORITY = { ["e-120fps"] = -5, ["e-120fps-quiet"] = -5, ["f-cover"] = -3, ["c-street-city"] = -1, ["c-conquest"] = 0, FStyle = 1, ["e-galgame"] = 2, ["e-fork"] = 2, ["e-fork-2"] = 2, F = 3, ["e-okcard"] = 4 }
 
 local function rank(agent) return PRIORITY[agent] or 9 end
 local function owner_file(i) return path.join(ROOT, "slot" .. i, "owner.txt") end
