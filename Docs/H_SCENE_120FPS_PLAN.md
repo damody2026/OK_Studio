@@ -256,3 +256,10 @@ native trace（EGalPerfCity4，-OKNativeTrace -statnamedevents，抽插）：
   - 結果：蘭全穿 loop 74～76 FPS，沒有比當幀算快；同一個執行檔關掉晚一幀還有 85。
   - 原因：背景工作和下一次解算搶同一個 8 執行緒的 pool，沒有離開最長路徑。
   - 剩下的路：衣服回 GPU 蒙皮，推開改成 GPU 位移。
+### 分流與上限（2026-11-14）
+
+- 9a1f1def9：`ok.HScene.ClothCoverSplit` 也分開大腿晃動的衣服（預設 0）。衣服跟隨皮膚的對照表包含她全身的皮膚，原本只要衣服貼著身體就被當成碰到晃動。改成只看晃動區域後，蘭的 CPU 衣服從 25 件降到 20 件。FPS 只有 after 78→81，其他階段不變；剩下 20 件確實在推開或晃動範圍內。
+- 診斷指令 `ok.PrivateGpuGates`：列出每個部件走 GPU 或 CPU 的原因。
+- 上限（EGalSplit4，蘭全穿，`ok.HScene.ClothCover 0` 加 `ok.ThighJiggle 0`，衣服全走 GPU）：idle 132～145、loop 132～134、fast 124～136、after 127～147 FPS。所以只要推開和晃動不把衣服留在 CPU，全穿就能過 120。
+- 蘭全脫（EGalOcc5）：idle 164～172、loop 154～156、fast 146～158、after 145～153 FPS，正常。
+- 還沒做（使用者 2026-11-14：做不到就算了）：推開與晃動改成 GPU 上的位移。Rust 照舊在背景算蒙皮與位移，但只輸出有動到的頂點；`RuntimeDeform.usf` 在 PostTransform 之後、轉 UE 座標之前加上每頂點位移；`OKEvaluatePrivateGpuPosition` 也加同一份位移。CPU 路徑上這兩者都只改位置、不改法線，所以結果可以和 CPU 相同。

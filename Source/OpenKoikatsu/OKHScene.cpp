@@ -2885,7 +2885,10 @@ void UOKHScenePanel::TickLeadsOnTop(){
         if(Lens)Nearest=FMath::Min(Nearest,FMath::Sqrt(C->Bounds.GetBox().ComputeSquaredDistanceToPoint(Eye)));}
     if(!Lens)return;
     float Scale=CVarHLeadsOnTopScale.GetValueOnGameThread();
-    if(Scale<=0.f){const double Near=FMath::Max(double(GNearClippingPlane),1.);Scale=float(FMath::Clamp(1.5*Near/FMath::Max(Nearest,1.),0.001,1.));}
+    // The nearest at least 10 cm: zoomed in, the camera was inside a part's box (nearest 0, scale 0.015) and all of her
+    // within 66 cm came nearer than the 1 cm near plane and was cut off; only her raised legs farther away were drawn
+    // (user, 2026-11-14). Nearer than 10 cm the camera is in her anyway.
+    if(Scale<=0.f){const double Near=FMath::Max(double(GNearClippingPlane),1.);Scale=float(FMath::Clamp(1.5*Near/FMath::Max(Nearest,10.),0.001,1.));}
     Lens->SetEnableFirstPersonScale(true);Lens->SetFirstPersonScale(FMath::Clamp(Scale,0.001f,1.f));LeadsOnTopLens=Lens;
 }
 // What of the scene stands between the camera and the two is not drawn at all (user, 2026-11-14: of a bunk bed with them on
@@ -2926,8 +2929,10 @@ void UOKHScenePanel::TickHideOccluders(APlayerController* PC,const FVector& Eye,
     static const TCHAR* Bones[]={TEXT("J_Head"),TEXT("J_Neck"),TEXT("J_Spine03"),TEXT("J_Spine01"),TEXT("j_hips"),TEXT("J_Kosi01"),
         TEXT("J_LegUp00_L"),TEXT("J_LegUp00_R"),TEXT("J_LegLow01_L"),TEXT("J_LegLow01_R"),TEXT("J_Foot01_L"),TEXT("J_Foot01_R"),
         TEXT("J_ArmUp00_L"),TEXT("J_ArmUp00_R"),TEXT("J_ArmLow01_L"),TEXT("J_ArmLow01_R"),TEXT("J_Hand_L"),TEXT("J_Hand_R")};
-    TArray<FVector,TInlineAllocator<64>> Points;
-    for(AActor* A:{(AActor*)Girl,(AActor*)Him,Two})if(auto* K=Cast<AKKPreviewActor>(A);IsValid(K))for(const TCHAR* B:Bones){FVector P;if(HBone(K,B,P))Points.Add(P);}
+    // Torso: the first six (head to hips). What they are on is near those, not near a raised foot: her feet up by the
+    // upper bunk kept it as hers and it hid her (user, 2026-11-14).
+    TArray<FVector,TInlineAllocator<64>> Points,Torso;
+    for(AActor* A:{(AActor*)Girl,(AActor*)Him,Two})if(auto* K=Cast<AKKPreviewActor>(A);IsValid(K))for(int32 I=0;I<UE_ARRAY_COUNT(Bones);++I){FVector P;if(HBone(K,Bones[I],P)){Points.Add(P);if(I<6)Torso.Add(P);}}
     const double Now=World->GetTimeSeconds();
     if(!Points.IsEmpty()){
         FVector Mid=FVector::ZeroVector;for(const FVector& P:Points)Mid+=P;Mid/=Points.Num();
@@ -2954,7 +2959,7 @@ void UOKHScenePanel::TickHideOccluders(APlayerController* PC,const FVector& Eye,
                 const FVector S=T.GetScale3D().GetAbs();FTurned O{FBox(LocalB.GetBox().Min*S,LocalB.GetBox().Max*S),FTransform(T.GetRotation(),T.GetLocation()),false};
                 O.bSmall=O.Local.GetSize().GetMax()<=400.;return O;};
             auto Dist=[](const FTurned& O,const FVector& P){return FMath::Sqrt(O.Local.ComputeSquaredDistanceToPoint(O.R.InverseTransformPositionNoScale(P)));};
-            auto IsTheirs=[&](const FTurned& O){if(!O.bSmall)return false;for(const FVector& P:Points)if(Dist(O,P)<=Near)return true;return false;};
+            auto IsTheirs=[&](const FTurned& O){if(!O.bSmall)return false;for(const FVector& P:Torso)if(Dist(O,P)<=Near)return true;return false;};
             auto Mark=[&](UPrimitiveComponent* C){OccluderUntil.Add(C,Now+Hold);
                 if(!OccluderHidden.Contains(C)){Hide(C);OccluderHidden.Add(C);
                     if(bLog)UE_LOG(LogTemp,Display,TEXT("OK hide occluders: hidden %s (%s)"),*GetNameSafe(C->GetOwner()),*C->GetName());}};
