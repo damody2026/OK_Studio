@@ -1,6 +1,9 @@
 #include "OKStreetSocialScene.h"
 #include "Widgets/SViewport.h"
 #include "MoviePlayer.h"
+#if PLATFORM_WINDOWS
+extern "C" __declspec(dllimport) void __stdcall DisableProcessWindowsGhosting(void); // user32
+#endif
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Styling/CoreStyle.h"

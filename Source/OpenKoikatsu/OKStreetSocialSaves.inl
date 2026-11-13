@@ -154,7 +154,13 @@ void AOKStreetSocialScene::RestartWithSave(const FString& Action,const FString& 
   FLoadingScreenAttributes L;L.bAutoCompleteWhenLoadingCompletes=true;L.bWaitForManualStop=false;L.bAllowEngineTick=false;L.MinimumLoadingScreenDisplayTime=-1.f;
   L.WidgetLoadingScreen=SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"))).BorderBackgroundColor(FLinearColor::Black).HAlign(HAlign_Center).VAlign(VAlign_Center)
    [SNew(STextBlock).Text(FText::FromString(S.SaveNotice)).ColorAndOpacity(FLinearColor::White).Font(FCoreStyle::GetDefaultFontStyle("Regular",24))];
-  Movie->SetupLoadingScreen(L);}
+  Movie->SetupLoadingScreen(L);
+  // The game thread sits in LoadMap for 30-50 s and pumps no window messages; Windows would swap the window for a
+  // grey "not responding" ghost over the loading screen, and a click there offers to close the game.
+#if PLATFORM_WINDOWS
+  DisableProcessWindowsGhosting();
+#endif
+ }
  // The map package this scene lives in, started again (the command line, the manifest and -Control stay).
  UGameplayStatics::OpenLevel(this,FName(*GetWorld()->GetOutermost()->GetName()),true,OKStreetCityMode()?TEXT("game=/Script/OpenKoikatsu.OKCrowdGameMode"):TEXT("")); // the city's map has no game mode of its own
 }
