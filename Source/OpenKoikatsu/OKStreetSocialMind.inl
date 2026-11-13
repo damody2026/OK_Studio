@@ -110,6 +110,12 @@ void AOKStreetSocialScene::SaveCalendar(){
  // room holds him, not while riding an elevator.
  if(ElevatorWithMale()==INDEX_NONE&&S.LiftRide.Elevator==INDEX_NONE){Candidate.HasPlayerSpot=true;Candidate.PlayerSpot=S.FacilityEntered?S.FacilitySavedMale:S.InspectSlot!=INDEX_NONE?S.InspectMaleBack:S.Male;Candidate.PlayerYaw=S.FacilityEntered?S.FacilitySavedMaleRotation.Yaw:S.Rotations[0].Yaw;Candidate.ViewYaw=S.FacilityEntered?S.FacilitySavedYaw:S.Yaw;S.SpotSavedMale=Candidate.PlayerSpot;S.SpotSavedAt=FPlatformTime::Seconds();}
  Candidate.CalendarMinute=FMath::Clamp(FMath::FloorToInt32(OKStreetClockHours(S.ClockStartHours,FPlatformTime::Seconds()-S.ClockStartWall)*60.0),0,24*60-1);
+ // The class he is sitting in, as far as it went (R6-265): a load in the middle of it goes on counting from there.
+ {auto Class=MakeShared<FJsonObject>();
+  TArray<TSharedPtr<FJsonValue>> Seen;for(const int32 C:S.SeenInClass)Seen.Add(MakeShared<FJsonValueNumber>(C));Class->SetArrayField(TEXT("seen_in_class"),Seen);
+  auto Mins=MakeShared<FJsonObject>();for(const auto& P:S.ClassMinutes)Mins->SetNumberField(FString::FromInt(P.Key),P.Value);Class->SetObjectField(TEXT("class_minutes"),Mins);
+  Class->SetStringField(TEXT("class_closed"),S.ClassClosed);
+  Candidate.ClassState.Reset();if(!S.SeenInClass.IsEmpty()||!S.ClassMinutes.IsEmpty()||!S.ClassClosed.IsEmpty()){auto W=TJsonWriterFactory<TCHAR,TCondensedJsonPrintPolicy<TCHAR>>::Create(&Candidate.ClassState);FJsonSerializer::Serialize(Class,W);}}
  // Who is with him (R3-238): walking or out with him follows him again after a load; sitting, talking or in a set with
  // him waits beside him. Not put back yet from the last load: kept as it was saved.
  if(S.ResumeWithHim.IsEmpty()&&Candidate.HasPlayerSpot){Candidate.WithHim.Reset();const FVector His=Candidate.PlayerSpot;

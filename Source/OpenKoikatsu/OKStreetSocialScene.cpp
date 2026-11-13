@@ -968,6 +968,12 @@ void AOKStreetSocialScene::BeginPlay(){
  {TSharedPtr<FJsonObject> M;FString Path;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),M)&&M&&M->TryGetStringField(TEXT("relationship_catalogue"),Path)&&!(OKStreetLoadRelationshipDialogue(Path,S.Catalogue,S.OtherLanguage,S.RelationshipDialogues,Error)&&(FillSubtitleScripts(),true))){S.Errors.Add(Error);WriteReport(false);return;}}
  OKStreetMakeAgents(S.Agents,S.Manifest.Characters.Num()-1);S.Rotations.SetNumZeroed(S.Manifest.Characters.Num());S.RenderedRotations.SetNumZeroed(S.Manifest.Characters.Num());
  if(S.Store.HasPlayerSpot&&!S.SelfTest)S.Rotations[0]=S.RenderedRotations[0]=FRotator(0,S.Store.PlayerYaw,0); // facing the way he was (StartCalendarAndMind)
+ // The class he was in when the game was saved, as far as it went (R6-265; SaveCalendar).
+ {TSharedPtr<FJsonObject> Class;if(!S.Store.ClassState.IsEmpty()&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(S.Store.ClassState),Class)&&Class.IsValid()){
+  const TArray<TSharedPtr<FJsonValue>>* Seen=nullptr;if(Class->TryGetArrayField(TEXT("seen_in_class"),Seen))for(const auto& V:*Seen)S.SeenInClass.Add(int32(V->AsNumber()));
+  const TSharedPtr<FJsonObject>* Mins=nullptr;if(Class->TryGetObjectField(TEXT("class_minutes"),Mins))for(const auto& P:(*Mins)->Values)S.ClassMinutes.Add(FCString::Atoi(*FString(*P.Key)),int32(P.Value->AsNumber()));
+  Class->TryGetStringField(TEXT("class_closed"),S.ClassClosed);
+  UE_LOG(LogTemp,Display,TEXT("Street academics: the class as saved: %d seen, %d with minutes, closed '%s'"),S.SeenInClass.Num(),S.ClassMinutes.Num(),*S.ClassClosed);}}
  // Her face and hair as the clinics and the salon left them (OKStreetSocialClinic.inl): the crowd reads her restyled card.
  const FString CrowdSelection=ApplyAppearanceToSelection(ManifestPath,Json);
  if(!OKStartCrowdRuntimeScene(this,CrowdSelection,Error)){S.Errors.Add(Error);WriteReport(false);return;}

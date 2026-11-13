@@ -352,6 +352,9 @@ struct FOKStreetStore {
  bool HasPlayerSpot = false;
  FVector PlayerSpot = FVector::ZeroVector;
  float PlayerYaw = 0.f, ViewYaw = 90.f; // his facing, and the camera's
+ // The class he was sitting in then (academics.rs seen_in_class, class_minutes, class_closed as one JSON object): saved at
+ // 10:50 in a class from nine, loaded, and only the 70 minutes after the load counted, so he missed it (R6-265).
+ FString ClassState;
  // Who was with him then (walking, out, sitting or talking with him): put back there on load, not sent off by her plan (R3-238).
  struct FWithHim { FString Id, Mode; FVector Spot = FVector::ZeroVector; float Yaw = 0.f; }; // Mode: follow | stay
  TArray<FWithHim> WithHim;
@@ -1237,6 +1240,7 @@ inline FString OKStreetWriteSave(const FOKStreetStore& Store) {
    Calendar->SetArrayField(TEXT("table"),TableRows);Calendar->SetStringField(TEXT("table_place"),Store.TablePlace);}
   if(!Store.Cart.IsEmpty()){TArray<TSharedPtr<FJsonValue>> CartRows;for(const auto& L:Store.Cart){auto O=MakeShared<FJsonObject>();O->SetStringField(TEXT("item"),L.ItemId);O->SetStringField(TEXT("size"),L.Size);O->SetStringField(TEXT("sweetness"),L.Sweetness);O->SetStringField(TEXT("ice"),L.Ice);O->SetStringField(TEXT("girl"),L.Girl);O->SetBoolField(TEXT("for_her"),L.ForHer);O->SetBoolField(TEXT("her_own"),L.HerOwn);CartRows.Add(MakeShared<FJsonValueObject>(O));}
    Calendar->SetArrayField(TEXT("cart"),CartRows);Calendar->SetStringField(TEXT("cart_place"),Store.CartPlace);Calendar->SetStringField(TEXT("cart_her"),Store.CartHer);}
+  if(!Store.ClassState.IsEmpty()){TSharedPtr<FJsonObject> Class;if(FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Store.ClassState),Class)&&Class.IsValid())Calendar->SetObjectField(TEXT("class"),Class);}
   Root->SetObjectField(TEXT("calendar"),Calendar);}
  {TArray<TSharedPtr<FJsonValue>> ApptRows;for(const auto& A:Store.Appointments){auto O=MakeShared<FJsonObject>();O->SetNumberField(TEXT("id"),A.Id);O->SetStringField(TEXT("kind"),A.Kind);O->SetStringField(TEXT("heroine"),A.Heroine);O->SetStringField(TEXT("place"),A.Place);O->SetStringField(TEXT("label"),A.Label);O->SetNumberField(TEXT("start"),double(A.Start));O->SetNumberField(TEXT("grace"),A.Grace);if(A.Minutes>0)O->SetNumberField(TEXT("minutes"),A.Minutes);O->SetStringField(TEXT("status"),A.Status);if(!A.Payer.IsEmpty())O->SetStringField(TEXT("payer"),A.Payer);if(A.WorkedFrom>=0)O->SetNumberField(TEXT("worked_from"),double(A.WorkedFrom));if(A.ComingAt>=0)O->SetNumberField(TEXT("coming_at"),double(A.ComingAt));ApptRows.Add(MakeShared<FJsonValueObject>(O));}
   Root->SetArrayField(TEXT("appointments"),ApptRows);Root->SetNumberField(TEXT("next_appointment"),Store.NextAppointment);
@@ -1387,6 +1391,7 @@ inline EOKStreetLoad OKStreetParseSave(const FString& Json, FOKStreetStore& Stor
    double View = 90; if ((*Spot)->TryGetNumberField(TEXT("view"), View) && FMath::IsFinite(View)) Store.ViewYaw = float(View);
    Store.HasPlayerSpot = true; Store.PlayerSpot = FVector(X, Y, Z); Store.PlayerYaw = FMath::IsFinite(SpotYaw) ? float(SpotYaw) : 0.f;
   }
+  { const TSharedPtr<FJsonObject>* Class = nullptr; if ((*Calendar)->TryGetObjectField(TEXT("class"), Class) && Class->IsValid()) { FString Out; auto W = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Out); FJsonSerializer::Serialize(Class->ToSharedRef(), W); Store.ClassState = Out; } }
   const TArray<TSharedPtr<FJsonValue>>* With = nullptr;
   if ((*Calendar)->TryGetArrayField(TEXT("with_him"), With)) for (const auto& V : *With) {
    const TSharedPtr<FJsonObject> O = V.IsValid() ? V->AsObject() : nullptr; FOKStreetStore::FWithHim W; double WX = 0, WY = 0, WZ = 0, WYaw = 0;
