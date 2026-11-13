@@ -50,6 +50,7 @@ void OKHNoteCry(const FString& Path); // her cries' loudness (PlayHVoice)
 #include "Misc/PackageName.h"
 #include "Engine/StaticMesh.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Components/PoseableMeshComponent.h"
 #include "Async/Async.h"
 #include "Blueprint/WidgetTree.h"
@@ -2860,6 +2861,7 @@ void UOKHScenePanel::TickLeadsOnTop(){
     APlayerController* PC=GetOwningPlayer();
     UCameraComponent* Lens=nullptr;
     if(PC&&PC->PlayerCameraManager)if(AActor* Target=PC->PlayerCameraManager->GetViewTarget())Lens=Target->FindComponentByClass<UCameraComponent>();
+    TickHideOccluders(PC,PC&&PC->PlayerCameraManager?PC->PlayerCameraManager->GetCameraLocation():FVector::ZeroVector,!bLeadsOnTopEnd&&PC&&PC->PlayerCameraManager);
     // Off, or the lens changed: what was set goes back.
     if(UCameraComponent* Was=LeadsOnTopLens.Get();Was&&(!bOn||Was!=Lens)){Was->SetEnableFirstPersonScale(false);LeadsOnTopLens=nullptr;}
     if(!bOn){for(const auto& P:LeadsOnTopParts)if(UPrimitiveComponent* C=P.Get())C->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::None);LeadsOnTopParts.Reset();return;}
@@ -2885,6 +2887,104 @@ void UOKHScenePanel::TickLeadsOnTop(){
     float Scale=CVarHLeadsOnTopScale.GetValueOnGameThread();
     if(Scale<=0.f){const double Near=FMath::Max(double(GNearClippingPlane),1.);Scale=float(FMath::Clamp(1.5*Near/FMath::Max(Nearest,1.),0.001,1.));}
     Lens->SetEnableFirstPersonScale(true);Lens->SetFirstPersonScale(FMath::Clamp(Scale,0.001f,1.f));LeadsOnTopLens=Lens;
+}
+// What of the scene stands between the camera and the two is not drawn at all (user, 2026-11-14: of a bunk bed with them on
+// the lower one, the lower bed and them are to be seen, not the upper bed with them drawn over it). A cylinder from the
+// camera to the middle of the two, as wide as the farthest of their bones from its axis (and ok.HScene.HideOccludersPad cm):
+// every drawn part of the scene whose box (turned as it is) reaches into it is hidden from this view (the player
+// controller's hidden components; the scene itself is left as it is), kept hidden ok.HScene.HideOccludersHold s after it
+// last stood in the way so it does not flicker. What they are on is kept (user, 2026-11-14: the bed under her stays): a part
+// whose box comes within ok.HScene.HideOccludersNear cm of one of their bones (the bed they lie on, the floor under their
+// feet, a room or building around them). Boxes, not shapes, so collision is not needed; a whole part goes (one mesh of
+// both beds would hide both).
+static TAutoConsoleVariable<int32> CVarHHideOccluders(TEXT("ok.HScene.HideOccluders"),1,TEXT("1 (default): what of the scene stands between the camera and her and him is not drawn; 0 off"));
+static TAutoConsoleVariable<float> CVarHHideOccludersPad(TEXT("ok.HScene.HideOccludersPad"),10.f,TEXT("ok.HScene.HideOccluders: the cylinder this many cm wider than the farthest of their bones from its axis"));
+static TAutoConsoleVariable<float> CVarHHideOccludersNear(TEXT("ok.HScene.HideOccludersNear"),30.f,TEXT("ok.HScene.HideOccluders: kept what comes within this many cm of one of their bones (what they are on)"));
+static TAutoConsoleVariable<float> CVarHHideOccludersGap(TEXT("ok.HScene.HideOccludersGap"),15.f,TEXT("ok.HScene.HideOccluders: a wall or floor (anything with collision) met on the line to a bone within this many cm of it is not in the way"));
+static TAutoConsoleVariable<float> CVarHHideOccludersHold(TEXT("ok.HScene.HideOccludersHold"),0.5f,TEXT("ok.HScene.HideOccluders: kept hidden this many seconds after it last stood in the way"));
+static TAutoConsoleVariable<float> CVarHHideOccludersGlass(TEXT("ok.HScene.HideOccludersGlass"),0.f,TEXT("ok.HScene.HideOccluders: what stands in the way drawn as glass this opaque (a see-through wall; 0: not drawn at all)"));
+static TAutoConsoleVariable<int32> CVarHHideOccludersLog(TEXT("ok.HScene.HideOccludersLog"),0,TEXT("1: log what ok.HScene.HideOccluders hides and shows again"));
+void UOKHScenePanel::TickHideOccluders(APlayerController* PC,const FVector& Eye,bool bOn){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickHideOccluders);
+    UWorld* World=GetWorld();const bool bLog=CVarHHideOccludersLog.GetValueOnGameThread()!=0;
+    auto Show=[&](UPrimitiveComponent* C){if(!C)return;
+        if(auto* M=Cast<UMeshComponent>(C);M&&OccluderMats.Contains(M)){const auto Mats=OccluderMats.FindAndRemoveChecked(M);for(int32 I=0;I<Mats.Num();++I)M->SetMaterial(I,Mats[I].Get());}
+        else if(PC)PC->HiddenPrimitiveComponents.Remove(C);
+        if(bLog)UE_LOG(LogTemp,Display,TEXT("OK hide occluders: shown %s"),*GetNameSafe(C->GetOwner()));};
+    // A mesh is drawn as faint glass (ok.HScene.HideOccludersGlass alpha; 0 hides it), anything else hidden from this view.
+    auto Hide=[&](UPrimitiveComponent* C){
+        const float Alpha=CVarHHideOccludersGlass.GetValueOnGameThread();
+        if(!OccluderGlass&&Alpha>0.f)if(UMaterialInterface* Parent=LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/IndependentResources/PreviewMaterials/M_PreviewTranslucent.M_PreviewTranslucent")))OccluderGlass=UMaterialInstanceDynamic::Create(Parent,this);
+        if(OccluderGlass)OccluderGlass->SetVectorParameterValue(TEXT("PreviewTint"),FLinearColor(.85f,.92f,1.f,Alpha));
+        if(auto* M=Cast<UMeshComponent>(C);M&&OccluderGlass&&Alpha>0.f&&M->GetNumMaterials()>0){
+            TArray<TWeakObjectPtr<UMaterialInterface>> Mats;for(int32 I=0;I<M->GetNumMaterials();++I){Mats.Add(M->GetMaterial(I));M->SetMaterial(I,OccluderGlass);}
+            OccluderMats.Add(M,MoveTemp(Mats));}
+        else PC->HiddenPrimitiveComponents.Add(C);};
+    if(!bOn||!World||!PC||CVarHHideOccluders.GetValueOnGameThread()==0){
+        for(const auto& P:OccluderHidden)Show(P.Get());OccluderHidden.Reset();OccluderUntil.Reset();OccluderBoxes.Reset();OccluderBoxesAt=FVector(1.e30);return;}
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;AKKPreviewActor* Him=Gallery?Gallery->PartnerActor.Get():nullptr;
+    AActor* Two=SecondHere()?Second.Get():nullptr;
+    static const TCHAR* Bones[]={TEXT("J_Head"),TEXT("J_Neck"),TEXT("J_Spine03"),TEXT("J_Spine01"),TEXT("j_hips"),TEXT("J_Kosi01"),
+        TEXT("J_LegUp00_L"),TEXT("J_LegUp00_R"),TEXT("J_LegLow01_L"),TEXT("J_LegLow01_R"),TEXT("J_Foot01_L"),TEXT("J_Foot01_R"),
+        TEXT("J_ArmUp00_L"),TEXT("J_ArmUp00_R"),TEXT("J_ArmLow01_L"),TEXT("J_ArmLow01_R"),TEXT("J_Hand_L"),TEXT("J_Hand_R")};
+    TArray<FVector,TInlineAllocator<64>> Points;
+    for(AActor* A:{(AActor*)Girl,(AActor*)Him,Two})if(auto* K=Cast<AKKPreviewActor>(A);IsValid(K))for(const TCHAR* B:Bones){FVector P;if(HBone(K,B,P))Points.Add(P);}
+    const double Now=World->GetTimeSeconds();
+    if(!Points.IsEmpty()){
+        FVector Mid=FVector::ZeroVector;for(const FVector& P:Points)Mid+=P;Mid/=Points.Num();
+        // The scene's drawn parts round them, found once where they are (again when they are 5 m from there).
+        if(FVector::DistSquared(Mid,OccluderBoxesAt)>500.*500.){TRACE_CPUPROFILER_EVENT_SCOPE(OK_HHideOccludersGather);
+            OccluderBoxes.Reset();OccluderBoxesAt=Mid;
+            for(TActorIterator<AActor> It(World);It;++It){AActor* A=*It;if(!A||A==Girl||A==Him||A==Two||A->IsA<AKKPreviewActor>())continue;
+                if(FVector::DistSquared(A->GetActorLocation(),Mid)>3000.*3000.){FVector O,E;A->GetActorBounds(true,O,E);if(FVector::DistSquared(O,Mid)>FMath::Square(3000.+E.Size()))continue;}
+                TInlineComponentArray<UPrimitiveComponent*> Own(A);for(UPrimitiveComponent* C:Own)if(C&&C->IsRegistered()&&!C->bHiddenInGame&&!C->IsA<UInstancedStaticMeshComponent>())OccluderBoxes.Add(C);}
+            if(bLog)UE_LOG(LogTemp,Display,TEXT("OK hide occluders: %d parts round them"),OccluderBoxes.Num());}
+        const FVector Way=Mid-Eye;const double Len=Way.Size();
+        if(Len>1.){const FVector Axis=Way/Len;double Radius=0.;
+            for(const FVector& P:Points){const FVector D=P-Eye;Radius=FMath::Max(Radius,(D-Axis*FVector::DotProduct(D,Axis)).Size());}
+            Radius+=FMath::Max(0.f,CVarHHideOccludersPad.GetValueOnGameThread());
+            const double Near=FMath::Max(0.f,CVarHHideOccludersNear.GetValueOnGameThread());
+            const double Hold=FMath::Max(0.f,CVarHHideOccludersHold.GetValueOnGameThread());
+            TSet<const UPrimitiveComponent*> Theirs;for(const auto& P:LeadsOnTopParts)if(UPrimitiveComponent* C=P.Get())Theirs.Add(C);
+            // The axis sampled every half radius: the cylinder reaches a box where one sample comes within the radius of it.
+            const int32 Steps=FMath::Clamp(int32(Len/FMath::Max(Radius*.5,5.)),2,400);
+            // Its own box, turned as it is (scale in the box); "theirs": a piece of furniture (no side over 4 m) within Near
+            // of one of their bones. A wall or a building in one mesh has a box round them too: only its shape decides.
+            struct FTurned{FBox Local;FTransform R;bool bSmall;};
+            auto Turned=[&](UPrimitiveComponent* C){const FTransform T=C->GetComponentTransform();const FBoxSphereBounds LocalB=C->CalcBounds(FTransform::Identity);
+                const FVector S=T.GetScale3D().GetAbs();FTurned O{FBox(LocalB.GetBox().Min*S,LocalB.GetBox().Max*S),FTransform(T.GetRotation(),T.GetLocation()),false};
+                O.bSmall=O.Local.GetSize().GetMax()<=400.;return O;};
+            auto Dist=[](const FTurned& O,const FVector& P){return FMath::Sqrt(O.Local.ComputeSquaredDistanceToPoint(O.R.InverseTransformPositionNoScale(P)));};
+            auto IsTheirs=[&](const FTurned& O){if(!O.bSmall)return false;for(const FVector& P:Points)if(Dist(O,P)<=Near)return true;return false;};
+            auto Mark=[&](UPrimitiveComponent* C){OccluderUntil.Add(C,Now+Hold);
+                if(!OccluderHidden.Contains(C)){Hide(C);OccluderHidden.Add(C);
+                    if(bLog)UE_LOG(LogTemp,Display,TEXT("OK hide occluders: hidden %s (%s)"),*GetNameSafe(C->GetOwner()),*C->GetName());}};
+            auto Skip=[&](UPrimitiveComponent* C){if(!C||!C->IsRegistered()||!C->IsVisible()||Theirs.Contains(C))return true;AActor* O=C->GetOwner();return O==Girl||O==Him||O==Two;};
+            // Furniture and small things: their boxes against the cylinder.
+            for(const auto& W:OccluderBoxes){UPrimitiveComponent* C=W.Get();if(Skip(C))continue;
+                const FBox Box=C->Bounds.GetBox();if(!Box.IsValid)continue;
+                const FBox Cyl=FBox(Eye,Mid).ExpandBy(Radius);if(!Box.Intersect(Cyl))continue;
+                const FTurned O=Turned(C);if(!O.bSmall||IsTheirs(O))continue;
+                bool bIn=false;for(int32 K=0;K<=Steps&&!bIn;++K)bIn=Dist(O,Eye+Way*(double(K)/Steps))<=Radius;
+                if(bIn)Mark(C);
+            }
+            // Walls, floors, buildings (and anything with collision): lines from the camera to their bones, through up to six
+            // things each; a thing met within ok.HScene.HideOccludersGap cm of the bone is under or at them, not in the way.
+            {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HHideOccludersLines);
+            const double Gap=FMath::Max(0.f,CVarHHideOccludersGap.GetValueOnGameThread());
+            FCollisionQueryParams Params(SCENE_QUERY_STAT(OKHideOccluders),true);
+            for(AActor* A:{(AActor*)Girl,(AActor*)Him,Two})if(A)Params.AddIgnoredActor(A);
+            const FCollisionObjectQueryParams Objects(FCollisionObjectQueryParams::InitType::AllObjects);
+            for(const FVector& P:Points){const FVector To=P-Eye;const double L=To.Size();if(L<=Gap+1.)continue;
+                const FVector End=Eye+To*((L-Gap)/L);FCollisionQueryParams Line=Params;
+                for(int32 K=0;K<6;++K){FHitResult Hit;if(!World->LineTraceSingleByObjectType(Hit,Eye,End,Objects,Line))break;
+                    UPrimitiveComponent* C=Hit.GetComponent();if(!C)break;Line.AddIgnoredComponent(C);
+                    if(Skip(C)||IsTheirs(Turned(C)))continue;Mark(C);}
+            }}
+        }
+    }
+    for(int32 I=OccluderHidden.Num()-1;I>=0;--I){UPrimitiveComponent* C=OccluderHidden[I].Get();
+        const double* Until=C?OccluderUntil.Find(C):nullptr;
+        if(!C||!Until||*Until<Now){Show(C);if(C)OccluderUntil.Remove(C);OccluderHidden.RemoveAt(I);}}
 }
 void UOKHScenePanel::TickEyesCamera(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickEyesCamera);
     AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;

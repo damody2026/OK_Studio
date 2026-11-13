@@ -334,6 +334,14 @@ private:
     void TickLeadsOnTop();TArray<TWeakObjectPtr<class UPrimitiveComponent>> LeadsOnTopParts;TWeakObjectPtr<class UCameraComponent> LeadsOnTopLens;
     // bLeadsOnTopEnd: the scene ends (all of it undone); LeadsOnTopNear: the near clip plane before it was brought in (<0 none).
     bool bLeadsOnTopEnd=false;float LeadsOnTopNear=-1.f;FVector4f HerPoseShown=FVector4f(0.f,0.f,0.f,0.f);
+    // ok.HScene.HideOccluders: what of the scene stands between the camera and the two, not drawn (TickHideOccluders), and
+    // until when (seconds, world time) it stays so; OccluderHidden what this view hides now.
+    void TickHideOccluders(class APlayerController* PC,const FVector& Eye,bool bOn);TMap<TWeakObjectPtr<class UPrimitiveComponent>,double> OccluderUntil;TArray<TWeakObjectPtr<class UPrimitiveComponent>> OccluderHidden;
+    // The scene's drawn parts with no collision near them (found once where they are; again when they are 5 m from there).
+    TArray<TWeakObjectPtr<class UPrimitiveComponent>> OccluderBoxes;FVector OccluderBoxesAt=FVector(1.e30);
+    // Drawn as faint glass instead (a see-through wall): their own materials, put back when they no longer stand in the way.
+    TMap<TWeakObjectPtr<class UMeshComponent>,TArray<TWeakObjectPtr<class UMaterialInterface>>> OccluderMats;
+    UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> OccluderGlass;
     // Her FK this frame: her trembling (Tremble) and the pose he set, together (her session holds one FK list).
     void ApplyHerFk(class AKKPreviewActor* Girl,TArray<FString>& Names,TArray<FVector>& Turns);void TickHands();
     double PaizuriMilkAt=0;
