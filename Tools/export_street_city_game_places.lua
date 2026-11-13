@@ -415,9 +415,11 @@ end
 -- points. Each passage is a chain of points (world cm) on its clear floor, its two ends tied to the nearest road points.
 -- S32: the shop row S26-S43 stood 222 m unbroken; its ground floor got a back door in the west wall (x 43000,
 -- y 28440-28600) facing the shop door on the east (x 45020, y 28780-28980), map cut 11-13 by
--- Tools/street_city_shop_passage_payload.lua (collision grid in places-v1/shop-passage-after-1113.json).
+-- Tools/street_city_shop_passage_payload.lua (collision grid in places-v1/shop-passage-after-1113.json). East of x 44400 the
+-- line keeps to y 28570: the shop counter (ShopV1_S32_Refit) stands at x 44615-44720 up to y 28525, and the game's road check
+-- (30 cm capsule) dropped the passage there (places-v1/passage-sweep2.json, 11-13).
 local PASSAGES = {
-  { id = 's32', pts = { { 42760, 28520 }, { 43200, 28520 }, { 43800, 28520 }, { 44400, 28520 }, { 44800, 28560 }, { 44800, 28880 }, { 45160, 28880 } } },
+  { id = 's32', pts = { { 42760, 28520 }, { 43200, 28520 }, { 43800, 28520 }, { 44400, 28570 }, { 44800, 28570 }, { 44800, 28880 }, { 45160, 28880 } } },
 }
 local PASSAGE_TIE_CM, PASSAGE_TIES = 800, 3
 for _, pass in ipairs(PASSAGES) do
