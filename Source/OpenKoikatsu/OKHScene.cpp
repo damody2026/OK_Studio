@@ -3353,6 +3353,7 @@ static TAutoConsoleVariable<FString> CVarHSweetLeanAxis(TEXT("ok.HScene.SweetLea
 static TAutoConsoleVariable<FString> CVarHSweetLeanBones(TEXT("ok.HScene.SweetLeanBones"),TEXT("j_spine02,j_spine03"),TEXT("ok.HScene.SweetTouch: the bones the lean is shared over (no cf_/cm_)"));
 static TAutoConsoleVariable<float> CVarHSweetLeanMax(TEXT("ok.HScene.SweetLeanMax"),40.f,TEXT("ok.HScene.SweetTouch: most lean, degrees (all bones together)"));
 static TAutoConsoleVariable<float> CVarHSweetLeanGain(TEXT("ok.HScene.SweetLeanGain"),3.f,TEXT("ok.HScene.SweetTouch: degrees a second per cm the arms are short (shortfall clamped to 10 cm)"));
+static TAutoConsoleVariable<float> CVarHSweetFacing(TEXT("ok.HScene.SweetFacing"),-.3f,TEXT("ok.HScene.SweetTouch: only while their faces' forward ways have at most this dot product (face to face; 後背位 not)"));
 static TAutoConsoleVariable<float> CVarHSweetLeanAim(TEXT("ok.HScene.SweetLeanAim"),4.f,TEXT("ok.HScene.SweetTouch: the lean stops when the cheeks are this far (cm) inside the arms' reach"));
 static TAutoConsoleVariable<float> CVarHSweetLeanBack(TEXT("ok.HScene.SweetLeanBack"),60.f,TEXT("ok.HScene.SweetTouch: degrees a second back upright after the words"));
 static TAutoConsoleVariable<float> CVarHSweetReach(TEXT("ok.HScene.SweetReach"),6.f,TEXT("ok.HScene.SweetTouch: hands go on when the arms are this short (cm) or less"));
@@ -3395,8 +3396,13 @@ void UOKHScenePanel::SweetTouch(AKKPreviewActor* Girl,AKKPreviewActor* Him,const
     const bool bBusy=SweetW>0.f||SweetLean>0.f;
     if(!bBusy){SweetWho=0;
         if(bOn&&IsValid(Girl)&&IsValid(Him)){FFace HerFace0,HisFace0;FVector W[2];float HisShort=1.e9f,HerShort=1.e9f;
-            if(FaceOf(Girl,Him,HerFace0)){Wrists(HerFace0,W);HisShort=Short(Him,W);}
-            if(FaceOf(Him,Girl,HisFace0)){Wrists(HisFace0,W);HerShort=Short(Girl,W);}
+            // Only face to face (the faces' forward ways at least SweetFacing apart: 後背位 had her hands reach back to his
+            // face, 2026-11-14), and not his hands while he carries her (he stands, she does not: 站立抱起).
+            const bool bHerFace=FaceOf(Girl,Him,HerFace0),bHisFace=FaceOf(Him,Girl,HisFace0);
+            const bool bFacing=bHerFace&&bHisFace&&(HerFace0.Fwd|HisFace0.Fwd)<=CVarHSweetFacing.GetValueOnGameThread();
+            const bool bCarries=bFeetRead&&bHisStands&&!bHerStands;SweetFaceDot=bHerFace&&bHisFace?float(HerFace0.Fwd|HisFace0.Fwd):2.f;bSweetCarries=bCarries;
+            if(bFacing&&!bCarries){Wrists(HerFace0,W);HisShort=Short(Him,W);}
+            if(bFacing){Wrists(HisFace0,W);HerShort=Short(Girl,W);}
             if(FMath::Min(HisShort,HerShort)<=CVarHSweetWho.GetValueOnGameThread()){SweetWho=HisShort<=HerShort+5.f?1:2;SweetLean=0.f;SweetLeanErr=-1.f;SweetLeanWas=0.f;bSweetHands=false;}
             if(SweetWho){UE_LOG(LogTemp,Display,TEXT("H scene: sweet words, %s face in both hands (his arms %.0f cm short, hers %.0f)"),SweetWho==1?TEXT("his hands on her"):TEXT("her hands on his"),HisShort,HerShort);}
             else if(FMath::Fmod(Now,3.)<Delta){UE_LOG(LogTemp,Display,TEXT("H scene: sweet words, no one reaches (his arms %.0f cm short, hers %.0f)"),HisShort,HerShort);}}}
@@ -3448,8 +3454,8 @@ FString UOKHScenePanel::DebugBones(const TArray<FString>& Args){
     AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;AKKPreviewActor* Him=Gallery?Gallery->PartnerActor.Get():nullptr;
     FString Out;
     if(Args.Num()==1&&Args[0]==TEXT("sweet")){
-        Out=FString::Printf(TEXT("sweet: who %d (1 his hands, 2 hers) w %.2f hands %d lean %.1f short %.1f until %.1f s, said %.1f s ago\n"),SweetWho,SweetW,bSweetHands,SweetLean*SweetLeanSign,SweetLeanErr,
-            float(SweetUntil-FPlatformTime::Seconds()),float(FPlatformTime::Seconds()-SweetSaidAt));
+        Out=FString::Printf(TEXT("sweet: who %d (1 his hands, 2 hers) w %.2f hands %d lean %.1f short %.1f until %.1f s, said %.1f s ago; faces' dot %.2f, he carries her %d\n"),SweetWho,SweetW,bSweetHands,SweetLean*SweetLeanSign,SweetLeanErr,
+            float(SweetUntil-FPlatformTime::Seconds()),float(FPlatformTime::Seconds()-SweetSaidAt),SweetFaceDot,bSweetCarries);
         for(int32 I=0;I<SweetLeanBones.Num()&&I<SweetLeanTurns.Num();++I)Out+=FString::Printf(TEXT("  her fk %s %s\n"),*SweetLeanBones[I],*SweetLeanTurns[I].ToString());
         for(int32 I=0;I<SweetLeanHimSent.Num();++I)Out+=FString::Printf(TEXT("  his fk %s\n"),*SweetLeanHimSent[I].ToString());
         if(AKKPreviewActor* Toucher=SweetWho==1?Him:SweetWho==2?Girl:nullptr){FVector L,R;

@@ -506,6 +506,7 @@ private:
     // far the shoulders still are (ok.HScene.SweetLeanAxis the way, +X Unity euler bends forward); SweetLeanErr last
     // frame's shortfall; bSweetHands the hands on (on under SweetReach, off over SweetReachOff).
     float SweetLean=0.f,SweetLeanSign=1.f,SweetLeanErr=-1.f,SweetLeanWas=0.f;bool bSweetLeanHim=false,bSweetHands=false;
+    float SweetFaceDot=2.f;bool bSweetCarries=false; // last choice's faces' forward dot (2: no faces), he carries her
     TArray<FVector> SweetLeanHimSent;FVector SweetWrists[2]; // his lean as last set (set again only when it changes); the wrist targets (world)
     TArray<FString> SweetLeanBones;TArray<FVector> SweetLeanTurns;
     // Their limbs' IK, set from the control channel too ({"limb_ik":{...}} on /hscene; LimbIkJson in the answer):
