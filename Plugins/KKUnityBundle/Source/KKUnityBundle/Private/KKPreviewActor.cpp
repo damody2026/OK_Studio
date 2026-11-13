@@ -8052,6 +8052,24 @@ void AKKPreviewActor::SkinPrivateDisplay()
 
 // ok.PrivateGpuLog 1: log each private GPU display a part loses or captures again (what makes it re-capture each frame).
 static TAutoConsoleVariable<int32> CVarOkPrivateGpuLog(TEXT("ok.PrivateGpuLog"),0,TEXT("1: log each private GPU display reset and capture with its reason"));
+// ok.PrivateGpuGates: for every character, each runtime part's private GPU route and what holds it on the CPU (the gate of
+// UpdatePrivateGpuDisplay), to the log and the console.
+static FAutoConsoleCommandWithWorldArgsAndOutputDevice GOkPrivateGpuGates(TEXT("ok.PrivateGpuGates"),TEXT("List each character's runtime parts: on the private GPU route or what keeps it on the CPU"),
+ FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>&,UWorld* World,FOutputDevice& Out){
+  if(!World)return;
+  for(TActorIterator<AKKPreviewActor> It(World);It;++It){AKKPreviewActor* A=*It;int32 Gpu=0,Cpu=0;
+   Out.Logf(TEXT("%s: private GPU playback %d, streams %d"),*A->GetName(),A->bUsePrivateGpuPlayback,CVarOkPrivateGpuStreams.GetValueOnGameThread());
+   for(const FKKLoadedPart& P:A->Parts){if(!P.bRuntimeAccessory)continue;
+    auto* C=Cast<UKKAffineProceduralMeshComponent>(P.Comp);
+    TArray<FString> Why;
+    if(!C)Why.Add(TEXT("not affine"));if(P.bSlotAttached)Why.Add(TEXT("slot"));if(P.bFaceSphereNormals)Why.Add(TEXT("face normals"));
+    if(P.SessionIndex==INDEX_NONE)Why.Add(TEXT("no session part"));else if(A->Session.MorphCount(P.SessionIndex)!=0)Why.Add(FString::Printf(TEXT("morphs %d"),A->Session.MorphCount(P.SessionIndex)));
+    if(A->CpuSkinnedParts.Contains(P.SessionIndex))Why.Add(TEXT("cpu skinned (cover)"));if(A->JiggleCpuParts.Contains(P.SessionIndex))Why.Add(TEXT("jiggle"));
+    if(C&&(!C->SceneProxy||!C->UsesAnimatedStreams()))Why.Add(TEXT("no proxy/streams"));if(C&&C->GetCollisionEnabled()!=ECollisionEnabled::NoCollision)Why.Add(TEXT("collision"));
+    const bool bOn=P.PrivateGpuDisplay.IsValid();(bOn?Gpu:Cpu)++;
+    Out.Logf(TEXT("  part %d %s %s verts=%d gpu=%d %s"),P.SessionIndex,*P.Role,*P.Comp->GetName(),C&&C->GetNumSections()?C->GetProcMeshSection(0)->ProcVertexBuffer.Num():0,bOn,*FString::Join(Why,TEXT(",")));}
+   Out.Logf(TEXT("%s: %d parts on the GPU route, %d on the CPU"),*A->GetName(),Gpu,Cpu);}
+ }));
 bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrepare,TArray<FKKGpuStreamSectionRequest>& Requests)
 {
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrivateGpuDisplay);QUICK_SCOPE_CYCLE_COUNTER(STAT_KK_PrivateGpuDisplay);

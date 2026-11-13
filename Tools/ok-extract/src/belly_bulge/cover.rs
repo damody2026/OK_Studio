@@ -111,6 +111,7 @@ pub fn keep_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])
 /// Only the garments that reach her pushing skin drawn from the CPU (`keep_cover`); set by `ok_cover_split`.
 static COVER_SPLIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 pub(crate) fn set_cover_split(on: bool) { COVER_SPLIT.store(on, std::sync::atomic::Ordering::Relaxed); }
+pub(crate) fn cover_split() -> bool { COVER_SPLIT.load(std::sync::atomic::Ordering::Relaxed) }
 /// Frames a reaching garment set is kept before the test again (`keep_cover`).
 const REACH_HOLD: u32 = 8;
 /// Per session: the frames left before the test again, her garments looked at, and those kept on the CPU.
