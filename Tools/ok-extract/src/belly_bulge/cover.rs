@@ -82,7 +82,7 @@ pub fn keep_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])
     {
         let mut held = REACH_HELD.lock().unwrap();
         if let Some(e) = held.iter_mut().find(|e| e.0 == key) {
-            if e.1 > 0 && e.2 == own { e.1 -= 1; return own; }
+            if e.1 > 0 && e.2 == own { e.1 -= 1; return e.3.clone(); }
         }
     }
     let reached: Vec<usize> = crate::session::native_parallel_work(|| own.par_iter().filter_map(|&i| {
@@ -100,14 +100,21 @@ pub fn keep_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])
     // slots) drawn one from the CPU and one from the GPU fought for depth all down her legs (user, 2026-11-11).
     let mut held = REACH_HELD.lock().unwrap();held.retain(|e| e.0 != key);
     if reached.is_empty() { return reached; }
+    // COVER_SPLIT (ok.HScene.ClothCoverSplit, off by default): only the garments that reach go to the CPU, the rest stay
+    // on the GPU route (a fully dressed heroine's 32 garments skinned on the CPU and streamed every frame held her at
+    // 80 FPS, 2026-11-13); the layered-garment fight above is what it must be checked against.
+    let out = if COVER_SPLIT.load(std::sync::atomic::Ordering::Relaxed) { reached } else { own.clone() };
     if held.len() >= 16 { held.remove(0); }
-    held.push((key, REACH_HOLD, own.clone()));
-    own
+    held.push((key, REACH_HOLD, own, out.clone()));
+    out
 }
+/// Only the garments that reach her pushing skin drawn from the CPU (`keep_cover`); set by `ok_cover_split`.
+static COVER_SPLIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(crate) fn set_cover_split(on: bool) { COVER_SPLIT.store(on, std::sync::atomic::Ordering::Relaxed); }
 /// Frames a reaching garment set is kept before the test again (`keep_cover`).
 const REACH_HOLD: u32 = 8;
-/// Per session: the frames left before the test again, and the garments kept on the CPU.
-static REACH_HELD: std::sync::Mutex<Vec<(usize, u32, Vec<usize>)>> = std::sync::Mutex::new(Vec::new());
+/// Per session: the frames left before the test again, her garments looked at, and those kept on the CPU.
+static REACH_HELD: std::sync::Mutex<Vec<(usize, u32, Vec<usize>, Vec<usize>)>> = std::sync::Mutex::new(Vec::new());
 
 /// Per garment (its neighbour table): the frame count, the vertices `push_at` moved last frame, its vertex count.
 static WARM: std::sync::LazyLock<std::sync::Mutex<HashMap<usize, (u32, Vec<u32>, usize)>>> = std::sync::LazyLock::new(Default::default);

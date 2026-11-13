@@ -292,6 +292,9 @@ public:
 	// Her garments with their own rig kept over her skin as they are skinned on the CPU (ok_set_cover), or no longer; her
 	// body's skin moves now as for ClothCoverDeltas. OutParts: the garments it moves (to be drawn from their CPU vertices).
 	bool SetClothCover(bool bOn,const TArray<uint32>& BodyIndices,const TArray<FVector3f>& BodyDeltas,const TArray<FVector3f>& BodyNormalDeltas,TArray<int32>& OutParts);
+	// On: SetClothCover / the wrap job name only the garments that reach her pushing skin (the rest stay on the GPU route);
+	// off (default): all of her garments once one reaches (ok_cover_split, every session).
+	static void SetClothCoverSplit(bool bOn);
 	bool ClothCoverDeltas(const TArray<uint32>& BodyIndices,const TArray<FVector3f>& BodyDeltas,const TArray<FVector3f>& BodyNormalDeltas,TArray<int32>& OutParts,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas) const;
 	// Her thighs' and buttocks' jiggle DeltaSeconds on (ok_thigh_jiggle; Gain scales the swing limits, 0 off): her body's
 	// session part index and its vertices' moves (the mesh's own space, Unity metres). False: none (no female body).

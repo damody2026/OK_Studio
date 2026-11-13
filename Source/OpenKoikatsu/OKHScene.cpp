@@ -2968,6 +2968,7 @@ static constexpr float RootDodgeMaxCm=20.f;
 static TAutoConsoleVariable<float> CVarHWrapTest(TEXT("ok.HScene.WrapTest"),0.f,TEXT("Test: every wrapped skin moved this many metres up her mesh instead (0 off)"));
 static TAutoConsoleVariable<float> CVarHBackClipLead(TEXT("ok.HScene.BackClipLead"),8.f,TEXT("His penis folded under her back this many frames of his glans' way out further in (the morph is drawn after his pose is read)"));
 static TAutoConsoleVariable<int32> CVarHClothCover(TEXT("ok.HScene.ClothCover"),1,TEXT("1: her clothes are pushed out over her breasts and her belly lifted over his penis (belly_bulge::cover_deltas); 0 off"));
+static TAutoConsoleVariable<int32> CVarHClothCoverSplit(TEXT("ok.HScene.ClothCoverSplit"),0,TEXT("1: only her garments that reach her pushing skin are skinned on the CPU (the rest stay on the GPU route); 0: all of them once one reaches (layered garments drawn by both routes fought for depth, 2026-11-11)"));
 static TAutoConsoleVariable<int32> CVarHWrapAsync(TEXT("ok.HScene.WrapAsync"),1,TEXT("1: her skin wrap and clothes cover worked out on their own thread, shown a frame later; 0 on the game thread"));
 static TAutoConsoleVariable<float> CVarHWrapLead(TEXT("ok.HScene.WrapLead"),1.f,TEXT("The wrap worked out this many frames of his glans' way further on (it is shown a frame late)"));
 static TAutoConsoleVariable<int32> CVarHBackClip(TEXT("ok.HScene.BackClip"),1,TEXT("1: his penis out through her back folded under her skin there, not drawn (belly_bulge::clip_deltas); 0 drawn"));
@@ -3465,6 +3466,8 @@ void UOKHScenePanel::CoverClothes(AKKPreviewActor* Girl){ TRACE_CPUPROFILER_EVEN
     // the private GPU route skins its own copy of the rest mesh); those on her body skeleton below, as a morph.
     // Kept there two seconds after it last reached her pushing skin: switching a garment between the routes each frame
     // rebuilt its GPU display every time.
+    // ok.HScene.ClothCoverSplit 1: only the garments that reach go to the CPU (off by default: once one reaches, all do).
+    {static int32 SplitWas=-1;const int32 Split=CVarHClothCoverSplit.GetValueOnGameThread()!=0;if(Split!=SplitWas){FOkSession::SetClothCoverSplit(Split!=0);SplitWas=Split;}}
     {TArray<int32> Cpu;if(bPiped)Cpu=ClothCpu;else Girl->Session.SetClothCover(CVarHClothCover.GetValueOnGameThread()!=0,WrapIdxShown,WrapDShown,WrapNShown,Cpu);
      const double Now=FPlatformTime::Seconds();for(int32 Part:Cpu)ClothCpuUntil.Add(Part,Now+2.);
      for(auto It=ClothCpuUntil.CreateIterator();It;++It)if(It.Value()<Now||Cpu.IsEmpty()&&CVarHClothCover.GetValueOnGameThread()==0)It.RemoveCurrent();

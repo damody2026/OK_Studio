@@ -333,6 +333,7 @@ bool FOkSession::SetClothCover(bool bOn,const TArray<uint32>& BodyIndices,const 
 	OutParts.SetNumZeroed(64);
 	const int32 N=ok_set_cover(Handle,bOn?1:0,BodyIndices.GetData(),In.GetData(),uint32(BodyIndices.Num()),OutParts.GetData(),uint32(OutParts.Num()));
 	if(N<0){OutParts.Reset();return false;}OutParts.SetNum(FMath::Min(N,OutParts.Num()));return true; }
+void FOkSession::SetClothCoverSplit(bool bOn){ok_cover_split(bOn?1:0);}
 bool FOkSession::ClothCoverDeltas(const TArray<uint32>& BodyIndices,const TArray<FVector3f>& BodyDeltas,const TArray<FVector3f>& BodyNormalDeltas,TArray<int32>& OutParts,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas) const {
 	OutParts.Reset();OutIndices.Reset();OutDeltas.Reset();if(!Handle||BodyIndices.Num()!=BodyDeltas.Num())return false;
 	TArray<float> In;In.SetNumZeroed(BodyIndices.Num()*6);

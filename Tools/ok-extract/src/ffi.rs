@@ -237,6 +237,11 @@ pub unsafe extern "C" fn ok_set_cover(s:*mut OkSession,on:i32,body_idx:*const u3
     parts.len() as i32
 }
 #[no_mangle]
+pub extern "C" fn ok_cover_split(on:i32) {
+    // Only the garments that reach her pushing skin drawn from the CPU (belly_bulge cover::COVER_SPLIT).
+    crate::belly_bulge::set_cover_split(on!=0);
+}
+#[no_mangle]
 pub unsafe extern "C" fn ok_cover_deltas(s:*mut OkSession,body_idx:*const u32,body_d:*const f32,n:u32,out_part:*mut u32,out_idx:*mut u32,out_d:*mut f32,max:u32)->i32 {
     // Her clothes kept over her skin this frame (belly_bulge::cover_deltas): her body's skin moves as ok_belly_wrap_deltas
     // gave them (n of them, may be 0). Writes up to max (session part index, vertex index, move in the mesh's own space,
