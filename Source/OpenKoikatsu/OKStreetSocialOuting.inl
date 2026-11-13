@@ -619,7 +619,8 @@ bool AOKStreetSocialScene::BeginOuting(int32 Girl,const FString& ActivityId,FStr
  S.TransitQuote.Reset();S.TransitFor=INDEX_NONE;
  // Same follow as the shared walk: she trails the player's breadcrumbs.
  S.Companion=Girl;S.Agents[Girl-1].Held=true;S.CompanionTrail.Reset();S.CompanionTrail.Add(S.Male);S.CompanionLastMale=S.Male;S.CompanionBlockedAt=0;S.CompanionTravel=0;S.CompanionWalk=0;
- S.Message=OKMsg(TEXT("ui.outing.walk_to_place_together"), {{TEXT("girl_name"), *S.Manifest.Characters[Girl].Name}, {TEXT("place_name"), Place->Name}});
+ // Already inside (the cafeteria's door, now its table): to a seat, not "walking to the cafeteria" said in it.
+ S.Message=OKMsg(OKStreetInsidePlace(*Place,S.Male)?TEXT("ui.outing.walk_to_seat_together"):TEXT("ui.outing.walk_to_place_together"), {{TEXT("girl_name"), *S.Manifest.Characters[Girl].Name}, {TEXT("place_name"), Place->Name}});
  UE_LOG(LogTemp,Display,TEXT("Street outing: actor=%d activity=%s route_points=%d"),Girl,*ActivityId,Route.Num());
  TellOutingWalk(Girl,*Place,Route);
  RefreshUI();
