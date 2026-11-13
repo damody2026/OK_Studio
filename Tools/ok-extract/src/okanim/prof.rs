@@ -2,12 +2,12 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub const PHASES: [&str; 37] = ["pose", "placement", "walk", "posture", "ik", "feet", "finish", "finish.body_dyn", "finish.clothes", "finish.export", "finish.accessories", "apply_total",
+pub const PHASES: [&str; 41] = ["pose", "placement", "walk", "posture", "ik", "feet", "finish", "finish.body_dyn", "finish.clothes", "finish.export", "finish.accessories", "apply_total",
     "finish.shape", "finish.hands_fk", "finish.expression", "finish.abm", "finish.studio_ik", "finish.interaction",
     "acc.prepare", "acc.parts", "acc.cpu_skinned_parts", "acc.palette_only",
-    "clothes.sync", "clothes.colliders", "clothes.step", "clothes.copy", "cover.field", "cover.garments", "cover.nbr", "cover.push_at", "cover.rings", "cover.flip", "pair.solve", "pair.sample_contacts", "pair.dynamics", "acc.early", "acc.key"];
-static TOTAL: [AtomicU64; 37] = [const { AtomicU64::new(0) }; 37];
-static COUNT: [AtomicU64; 37] = [const { AtomicU64::new(0) }; 37];
+    "clothes.sync", "clothes.colliders", "clothes.step", "clothes.copy", "cover.field", "cover.garments", "cover.nbr", "cover.push_at", "cover.rings", "cover.flip", "pair.solve", "pair.sample_contacts", "pair.dynamics", "acc.early", "acc.key", "cover.follows", "cover.lift_rise", "cover.lift_clear", "cover.lift_rings"];
+static TOTAL: [AtomicU64; 41] = [const { AtomicU64::new(0) }; 41];
+static COUNT: [AtomicU64; 41] = [const { AtomicU64::new(0) }; 41];
 
 pub fn add(phase: usize, since: std::time::Instant) {
     if phase < PHASES.len() {
