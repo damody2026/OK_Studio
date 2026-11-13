@@ -487,5 +487,9 @@ pub(crate) fn gpu_map(session: usize, index: usize, verts: usize, out: &mut Vec<
     for near in m.iter() { for (k, _) in near { out.push(*k); } for (_, w) in near { out.push(w.to_bits()); } }
     true
 }
+/// Whether a garment's map is found (`gpu_map` without writing it out: asked every frame).
+pub(crate) fn gpu_has_map(session: usize, index: usize, verts: usize) -> bool {
+    MAPS.lock().unwrap().get(&(session, index, verts)).is_some_and(|m| m.len() == verts)
+}
 /// Whether the jiggle moves any of her skin this frame (then a garment needs its map: `gpu_map`).
 pub(crate) fn gpu_any(session: usize) -> bool { follow_of(session).is_some_and(|f| f.any) }

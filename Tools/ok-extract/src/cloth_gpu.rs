@@ -79,8 +79,8 @@ pub fn field(session: usize) -> Option<std::sync::Arc<Vec<u32>>> { FIELD.lock().
 /// which finds them). Some(revision) when it can.
 pub fn gpu_ready(session: usize, index: usize, part: &crate::session::SessionPart, follows_any: bool) -> Option<u32> {
     let cover_map = crate::belly_bulge::gpu_has_follow_map(part);
-    let mut probe = Vec::new();
-    let jiggle_map = crate::thigh_jiggle::gpu_map(session, index, part.rest_positions.len(), &mut probe);
+    // Asked every frame: only whether the jiggle map is there (writing it out cost ~1 ms a frame over her garments).
+    let jiggle_map = crate::thigh_jiggle::gpu_has_map(session, index, part.rest_positions.len());
     if follows_any && !cover_map { return None; }
     if crate::thigh_jiggle::gpu_any(session) && !jiggle_map { return None; }
     Some(1 + cover_map as u32 + 2 * jiggle_map as u32)
