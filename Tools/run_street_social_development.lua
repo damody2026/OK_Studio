@@ -34,7 +34,7 @@ local player_settings = require "street_player_settings"
 local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, mainsave = true, editor = true, nogpurig = true, gpurig = true, city = true, citysource = true }
 local VALUES = { selectionfile = true, malecard = true, retargetfile = true, renderscale = true, executable = true,
   controlport = true, clock = true, window = true, sandbox = true, portbase = true, rulesdll = true, exec = true, trace = true, gpucachedir = true,
-  gameargs = true, gpurigverify = true, heroine = true }
+  gameargs = true, gpurigverify = true, heroine = true, patchdir = true }
 
 local function parse(argv)
   local o, i = {}, 1
@@ -199,7 +199,9 @@ local function main()
     -- Saved/ is disposable: everything the launch needs comes from Content (Launch/runtime.json); the executable is the
     -- newest stage, rebuilt from Content + Source when none is left.
     launch = read_json(path.join(root, "Content/IndependentResources/StreetSocialData/Launch/runtime.json"))
-    build = { executable = "", patch = path.join(root, launch.patch), catalogue = path.join(root, launch.catalogue),
+    -- -PatchDir: another runtime patch folder (Tools/rebuild_street_social_patch.lua --output) instead of the shared one, e.g.
+    -- a stage whose global shaders changed: the shared patch's RuntimeGlobalShaderPatch-*_P.pak would override its base's.
+    build = { executable = "", patch = o.patchdir and path.abs(o.patchdir) or path.join(root, launch.patch), catalogue = path.join(root, launch.catalogue),
       material_manifest = path.join(root, launch.materials), runtime_render_quality = launch.render_quality }
     if o.editor then o.executable = path.join(ok.engine_root(), "Engine/Binaries/Win64/UnrealEditor.exe") end
     if not o.executable then

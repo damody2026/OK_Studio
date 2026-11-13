@@ -372,6 +372,8 @@ public:
         }
         FOKResidentDeformFrame Frame;
         const FMatrix44f* Post=Request.HasPostCorrection?&Request.PostCorrection:nullptr;
+        S.GpuDeform->SetDisplacement(Request.Displacement); // her cloth's push / jiggle (ok.ClothGpu); empty clears
+        S.GpuDeform->SetClothCoverJob(Request.ClothCover); // or worked out on the GPU (ok.ClothGpu 2)
         const bool Ok=Install?S.GpuDeform->Install(Graph,Request.Source,Request.Draw,Request.Palette,Request.FallbackSlot,Post,Request.ExpectedGeneration,Frame,Error,512ull*1024*1024,Request.NativeUnitySpace)
             :S.GpuDeform->Update(Graph,Request.Palette,Post,Request.ExpectedGeneration,Frame,Error);
         if(Ok){

@@ -473,3 +473,19 @@ pub(crate) fn debug_islands(session: &OkSession) {
         eprintln!("{:10} bone {:3} verts {:4} peak {:.2} head [{:.3} {:.3} {:.3}]", SPECS[i.spec].name, i.bone, i.verts.len(), peak, i.head[0], i.head[1], i.head[2]);
     }
 }
+
+// ---- cloth_gpu (ok.ClothGpu 2): the jiggle's share of a garment worked out on the GPU (`follow_own` there).
+/// This frame's moves of her skin round the islands (by `Near` slot) when any moved.
+pub(crate) fn gpu_moves(session: usize) -> Option<Vec<[f32; 3]>> {
+    let f = follow_of(session)?;
+    f.any.then(|| f.moves.clone())
+}
+/// A garment's jiggle map (four (slot, weight) a vertex: 8 words), once `follow_own` found it; None before.
+pub(crate) fn gpu_map(session: usize, index: usize, verts: usize, out: &mut Vec<u32>) -> bool {
+    let Some(m) = MAPS.lock().unwrap().get(&(session, index, verts)).cloned() else { return false; };
+    if m.len() != verts { return false; }
+    for near in m.iter() { for (k, _) in near { out.push(*k); } for (_, w) in near { out.push(w.to_bits()); } }
+    true
+}
+/// Whether the jiggle moves any of her skin this frame (then a garment needs its map: `gpu_map`).
+pub(crate) fn gpu_any(session: usize) -> bool { follow_of(session).is_some_and(|f| f.any) }

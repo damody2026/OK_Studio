@@ -166,6 +166,13 @@ static TAutoConsoleVariable<int32> CVarOkSourceRangeVertices(TEXT("ok.Animation.
 static TAutoConsoleVariable<int32> CVarOkSourceIndexedStreams(TEXT("ok.Animation.SourceIndexedStreams"),0,TEXT("Convert canonical sources once and pack their disjoint section draw ranges in the same job."));
 static TAutoConsoleVariable<int32> CVarOkNativeDisplayStreams(TEXT("ok.Animation.NativeDisplayStreams"),0,TEXT("Pack private display streams on native skin completion workers (blocking frame-local observer)."));
 static TAutoConsoleVariable<int32> CVarOkPrivateGpuStreams(TEXT("ok.Animation.PrivateGpuStreams"),1,TEXT("Runtime high-detail private-rig GPU streams for opted-in interaction actors; 0 retains CPU rendering."));
+// Her garments with their own rig that the cloth push (ok.ClothCover) or the thighs' jiggle moves: 0 (default) drawn from
+// their CPU vertices as before; 1 kept on the private GPU route, the solve giving only their vertices' moves (Rust
+// cloth_gpu) and the GPU adding them after the post correction, where the CPU route has them (user, 2026-11-14: all of
+// Lan's clothes on the GPU for 120 FPS).
+static TAutoConsoleVariable<int32> CVarOkClothGpu(TEXT("ok.ClothGpu"),0,TEXT("1: her garments the cloth push / thigh jiggle moves stay on the GPU route, the moves added on the GPU; 2: the push and the jiggle themselves worked out on the GPU (ClothCover.usf); 0 (default) drawn from CPU vertices"));
+static int32 OKClothGpuMode(){const int32 Mode=FMath::Clamp(CVarOkClothGpu.GetValueOnGameThread(),0,2);static int32 Sent=-1;if(Sent!=Mode){Sent=Mode;FOkSession::SetClothGpu(Mode);}return Mode;}
+static bool OKClothGpuOn(){return OKClothGpuMode()>=1;}
 static TAutoConsoleVariable<int32> CVarOkNativeDisplayParity(TEXT("ok.Animation.NativeDisplayParity"),0,TEXT("Verify native worker display against uncached canonical draw formula."));
 static TAutoConsoleVariable<int32> CVarOkRestNormalCache(TEXT("ok.Animation.RestNormalCache"),1,TEXT("Reuse exact immutable rest-normal normalization built at runtime character load."));
 static TAutoConsoleVariable<int32> CVarOkZeroOffsetRotation(TEXT("ok.Animation.ZeroOffsetRotation"),1,TEXT("Skip identity rotation of zero-offset base surfaces; retain source-position addition."));
@@ -8031,6 +8038,8 @@ bool AKKPreviewActor::RefreshEditorGeometry()
 
 struct FKKPrivateGpuDisplay {
  FKKPrivateGpuSource Source;FKKPrivateGpuBounds Bounds;
+ // ok.ClothGpu 2: the garment's still data for ClothCover.usf, and its revision (Rust cloth_gpu job).
+ TSharedPtr<const TArray<uint32>,ESPMode::ThreadSafe> ClothGarment;int32 ClothGarmentRevision=0;
  TArray<TArray<FOKGpuDeformDraw>> Draw;
  TArray<TSharedPtr<FKKGpuStreamReceipt,ESPMode::ThreadSafe>> Receipts;
  TArray<uint64> Generations;
@@ -8086,7 +8095,8 @@ bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrep
   return false;
  };
  bool bGated;{TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrivateGpuGate);
- bGated=!CVarOkPrivateGpuStreams.GetValueOnGameThread()||!bUsePrivateGpuPlayback||!Component||!Part.bRuntimeAccessory||Part.bSlotAttached||Part.bFaceSphereNormals||Part.SessionIndex==INDEX_NONE||Session.MorphCount(Part.SessionIndex)!=0||CpuSkinnedParts.Contains(Part.SessionIndex)||JiggleCpuParts.Contains(Part.SessionIndex);}
+ // ok.ClothGpu: the garments the push or the jiggle moves stay on this route, their moves added by the GPU (cloth_gpu).
+ bGated=!CVarOkPrivateGpuStreams.GetValueOnGameThread()||!bUsePrivateGpuPlayback||!Component||!Part.bRuntimeAccessory||Part.bSlotAttached||Part.bFaceSphereNormals||Part.SessionIndex==INDEX_NONE||Session.MorphCount(Part.SessionIndex)!=0||(!OKClothGpuOn()&&(CpuSkinnedParts.Contains(Part.SessionIndex)||JiggleCpuParts.Contains(Part.SessionIndex)));}
  if(bGated)return Restore(FString(),false);
  if(Part.PrivateGpuDisplay&&Part.PrivateGpuDisplay->Epoch!=Epoch)Restore(FString(),false);
  // No scene proxy (a hidden part: her hair ornament and top halves not shown in this pose): nothing to install, so no
@@ -8156,6 +8166,23 @@ bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrep
  auto& State=*Part.PrivateGpuDisplay;FBox Box(ForceInit);
  if(bPreparedBox)Box=PreparedBox;
  else{TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrivateGpuBounds);if(!OKEvaluatePrivateGpuBounds(State.Bounds,Pose,Box,Error))return Restore(Error,true);}
+ // ok.ClothGpu: this pose's push / jiggle moves of the garment, added on the GPU (and by the sparse queries); the bounds
+ // grow by the longest (centimetres).
+ // ok.ClothGpu 2: once the solve leaves the garment to the GPU (its job), the GPU works the moves out itself (ClothCover.usf;
+ // the bounds grow by the tallest lift the cloth can take, 15 cm). The sparse queries then see it unpushed.
+ FOKClothCoverJob ClothJob;
+ if(OKClothGpuOn()){TRACE_CPUPROFILER_EVENT_SCOPE(KK_ClothGpuMoves);
+  const int32 Job=OKClothGpuMode()>=2?Session.ClothGpuJob(Part.SessionIndex):0;
+  if(Job>0){
+   if(State.ClothGarmentRevision!=Job||!State.ClothGarment.IsValid()){TArray<uint32> Garment;
+    if(Session.ClothGpuGarment(Part.SessionIndex,Garment)){State.ClothGarment=MakeShared<const TArray<uint32>,ESPMode::ThreadSafe>(MoveTemp(Garment));State.ClothGarmentRevision=Job;}}
+   if(ClothFieldFrame!=GFrameCounter){ClothFieldFrame=GFrameCounter;TArray<uint32> Field;ClothField.Reset();if(Session.ClothGpuField(Field))ClothField=MakeShared<const TArray<uint32>,ESPMode::ThreadSafe>(MoveTemp(Field));}
+   ClothJob.Field=ClothField;ClothJob.Garment=State.ClothGarment;
+   if(!OKMakeClothCoverJob(ClothJob)||ClothJob.VertexCount!=uint32(State.Source.Vertices.Num()))ClothJob=FOKClothCoverJob();
+   else if(Box.IsValid)Box=Box.ExpandBy(15.);
+  }
+  float Longest=0.f;
+  if(!ClothJob.IsValid()&&Session.ClothGpuMoves(Part.SessionIndex,State.Source.Vertices.Num(),Pose.Displacement,Longest)&&Longest>0.f&&Box.IsValid)Box=Box.ExpandBy(double(Longest)*100.+.1);}
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrivateGpuRequests);
  for(int32 S=0;S<State.Draw.Num();++S){
   const auto* CPU=Component->GetProcMeshSection(S);
@@ -8164,6 +8191,7 @@ bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrep
  for(int32 S=0;S<State.Draw.Num();++S){
   FKKGpuStreamRequest Request;Request.ProxyEpoch=Epoch;Request.ExpectedGeneration=State.Generations[S];
   Request.Palette=Pose.Palette;Request.PostCorrection=Pose.PostCorrection;Request.HasPostCorrection=true;Request.NativeUnitySpace=true;
+  Request.Displacement=Pose.Displacement;Request.ClothCover=ClothJob;
   Request.FallbackSlot=State.Source.FallbackSlot;Request.ConservativeLocalBounds=Box;
   if(!State.HasGeneration)Request.QueryGenerationOnly=true;
   else if(!State.InstallQueued){Request.Source=State.Source.Vertices;Request.Draw=State.Draw[S];}

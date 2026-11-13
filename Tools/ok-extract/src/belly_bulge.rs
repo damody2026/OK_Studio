@@ -15,7 +15,7 @@ mod clip;
 pub use clip::{back_exit, clip_deltas};
 mod cover;
 pub use cover::{cover_deltas, keep_cover, set_cover, CoverField};
-pub(crate) use cover::{clothes_changed, cover_split, set_cover_split};
+pub(crate) use cover::{clothes_changed, cover_split, set_cover_split, gpu_garment, gpu_has_follow_map, GPU_CONSTS};
 
 /// Where the swells are along her crotch-to-upper-spine line (fractions of it): her belly only, from just over her
 /// crotch up (user 2026-11-01: the swells under it, on her upper thighs and by her entrance, moved her thighs).

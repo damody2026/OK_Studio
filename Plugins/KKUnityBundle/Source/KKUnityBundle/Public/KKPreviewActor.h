@@ -843,6 +843,8 @@ public:
 	uint32 ShadowCapturePhase=MAX_uint32;
 	// The frame whose private GPU palettes SolveScenePose already read on its worker (RefreshRuntimeAccessories then skips the read).
 	uint64 GpuPosesPreparedFrame=MAX_uint64;
+	// ok.ClothGpu 2: this frame's skin field for ClothCover.usf, read once for all her garments.
+	uint64 ClothFieldFrame=MAX_uint64;TSharedPtr<const TArray<uint32>,ESPMode::ThreadSafe> ClothField;
 	bool AuditBodyDynamicsDisplay(const FString& TracePath, bool bExternal = false);
 	bool AuditStudioPVDisplay();
 

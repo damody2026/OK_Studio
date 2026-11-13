@@ -302,6 +302,14 @@ public:
 	// Her clothes' share of the jiggle now (ok_thigh_jiggle_cloth): the garments with their own rig to draw from their CPU
 	// vertices, and per vertex of her garments on her body skeleton (part, vertex, move in the mesh's own space).
 	bool ThighJiggleCloth(TArray<int32>& OutCpuParts,TArray<int32>& OutParts,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas) const;
+	// ok.ClothGpu (ok_cloth_gpu_set / ok_cloth_gpu_moves): her garments with their own rig stay on the GPU route under the
+	// push and the jiggle; this pose's moves of one, dense per source vertex (native metres after the post correction),
+	// empty when none moved. False: bad input.
+	static void SetClothGpu(int32 Mode); // ok.ClothGpu: 0 CPU, 1 moves added on the GPU, 2 worked out on the GPU
+	int32 ClothGpuJob(int32 Part) const; // -1 not this route, 0 moves (ClothGpuMoves), >0 on the GPU (garment revision)
+	bool ClothGpuField(TArray<uint32>& Out) const; // this pose's skin field for ClothCover.usf
+	bool ClothGpuGarment(int32 Part,TArray<uint32>& Out) const; // a garment's still data for ClothCover.usf
+	bool ClothGpuMoves(int32 Part,int32 SourceCount,TArray<FVector4f>& OutPerSource,float& OutLongest) const;
 	// His penis past her skin folded under it (ok_penis_clip_deltas, his skeleton space): At where he comes out, Normal
 	// her skin's outward normal there, Axis the way he points, InsetM how much further under her skin; his penis vertex
 	// indices and moves in the mesh's own space.

@@ -263,3 +263,89 @@ native trace（EGalPerfCity4，-OKNativeTrace -statnamedevents，抽插）：
 - 上限（EGalSplit4，蘭全穿，`ok.HScene.ClothCover 0` 加 `ok.ThighJiggle 0`，衣服全走 GPU）：idle 132～145、loop 132～134、fast 124～136、after 127～147 FPS。所以只要推開和晃動不把衣服留在 CPU，全穿就能過 120。
 - 蘭全脫（EGalOcc5）：idle 164～172、loop 154～156、fast 146～158、after 145～153 FPS，正常。
 - 還沒做（使用者 2026-11-14：做不到就算了）：推開與晃動改成 GPU 上的位移。Rust 照舊在背景算蒙皮與位移，但只輸出有動到的頂點；`RuntimeDeform.usf` 在 PostTransform 之後、轉 UE 座標之前加上每頂點位移；`OKEvaluatePrivateGpuPosition` 也加同一份位移。CPU 路徑上這兩者都只改位置、不改法線，所以結果可以和 CPU 相同。
+### 衣服推開與晃動上 GPU（2026-11-14，使用者：「把 lan 的衣服物理全部都用 gpu 算，優化到 120fps」）
+
+量測：EGal1114c，蘭全穿，正常位。
+
+| 設定 | loop FPS | 配對解算 |
+|---|---|---|
+| 預設 | 77 | 9.1 ms |
+| 推開關掉 | 106 | 5.8 ms |
+| 晃動關掉 | 84 | 8.3 ms |
+| 兩個都關 | 146 | 4.0 ms |
+
+`OKAnim.Profile`：推開本身在解算執行緒上佔約 3.3 ms，`cover.garments` 各執行緒合計 9.2 ms/幀。
+- push_at 3.1 ms
+- flip 1.6 ms
+- rings 1.2 ms
+- lift_clear 1.0 ms
+- follows 1.0 ms
+- lift_rise 0.7 ms
+
+CPU 蒙皮加晃動跟隨約 1.8 ms。每幀大約是解算時間再加 3 ms 顯示。
+
+結論：只把上傳搬到 GPU（Rust 照樣在 CPU 蒙皮和推開，只把位移交給 GPU 加）最多到約 83 FPS。這部分已寫好：`ok.ClothGpu`、Rust `cloth_gpu.rs`、`RuntimeDeform.usf` 的 `Displacements`。要到 120，推開演算法本身也要在 GPU 上算，同一套算法、不用近似：
+
+1. 每幀的皮膚場在 CPU 建一次（`CoverField::from_still`，已和衣服鏈平行），上傳後所有衣服共用：
+   - skin (p0, p, n)
+   - grid（展平成 CSR）
+   - follow
+   - Lift 的 way／side／skin／belly／grid
+   - 大腿晃動的 moves
+2. 每件衣服的固定資料在 CPU 算一次，上傳一次：
+   - 鄰接表（CSR）、三角形
+   - follows 的四近鄰對照（`map_to_skin`）
+   - 晃動的四近鄰對照（`map_for`）
+   - 兩張對照都在第一次看到這件衣服時，用 CPU 蒙皮的位置建。
+3. 每件衣服每幀的 GPU pass：
+   1. 蒙皮到 native 空間（PostTransform 之後）。
+   2. follows：用對照表從 follow 加總。
+   3. Lift：
+      - rise 每頂點平行算。
+      - clear 依三角形順序逐一累加，每個三角形讀到前面改過的 rise，所以在 GPU 上也要單執行緒依序做，只處理落在 Lift 範圍內的三角形。
+      - rings 六輪：原本就用上一輪的快照，等於 Jacobi，可以平行。
+   4. push_at 每頂點平行。
+   5. rings 六輪（同樣 Jacobi）。
+   6. flip 六輪：每輪平行檢查三角形，每個頂點乘上 0.5 的翻面三角形數次方。CPU 原本對同一頂點每個翻面三角形各減半一次，乘 2 的冪在浮點數上是精確的。
+   7. 晃動跟隨：用對照表加總。
+   8. 加到位置上，再轉 UE 座標並打包（現有的 DeformPacked）。
+4. 開關 `ok.ClothGpu 2`（預設 0）：1 是只把上傳搬到 GPU，2 是推開也在 GPU 上算。逐段比對 CPU 路徑的頂點，再截圖比對外觀與貼合。
+
+#### 實作與量測（2026-11-14 上午）
+
+- `ok.ClothGpu 2` 已接上：
+  - Rust 每幀把皮膚場整理成一塊 `uint32`，依修訂版號給出每件衣服的固定資料（`cloth_gpu.rs`、`cover.rs gpu_field/gpu_garment`）。
+  - C++ 每個 actor 每幀讀一次皮膚場，衣服固定資料依版號快取。
+  - `ClothCover.usf` 照上面的步驟計算，結果交給 `RuntimeDeform.usf` 加上去。
+- 截圖（正常位，兩個角度，`ok.ClothGpu 0/1/2/0`）：
+  - 模式 1、2 的外觀與貼合相同。
+  - 和模式 0 只差膝上一個花紋貼片的深淺：模式 1 本來就這樣，屬於 GPU 顯示路線，不是推開造成的。
+- 每件衣服的多個 section 原本各算一次，改成第一個 section 算完，其餘沿用；GPU view 每件衣服只建一次。
+- 量測：
+
+| 設定 | loop FPS | game | render | GPU | 配對推進 |
+|---|---|---|---|---|---|
+| 0（預設） | 78 | 12.8 | 6.7 | 4.2 | 9.1 ms |
+| 1 | 79 | 13.0 | 7.4 | 4.4 | 9.2 ms |
+| 2 | 71～73 | 7.0 | 15～16 | 6.8～8.4 | 4.9 ms |
+| 2，跳過 clear（只診斷，結果不對） | 101 | 10.1 | 7.9 | 6.9 | — |
+
+- Insights trace：模式 2 每幀多出約 10 ms GPU 時間（`FXSystemPreRender` 範圍內），來源是 clear 的單執行緒迴圈。
+- clear 改法（結果不變）：
+  - `ClearHits` 平行找出每個三角形內的皮膚取樣點，記下權重和要到的高度；這兩者都不讀 rise。
+  - `Clear` 用一個 64 執行緒的 group 分批讀入命中數，第一個執行緒照三角形順序只做加減。
+  - 命中超過容量時退回原本的單執行緒迴圈。
+  - 結果（EGalCloth6）：模式 2 loop 98 FPS（預設 81），game 8.1、render 9.8、GPU 5.9 ms，配對推進 5.1 ms；截圖與先前一致。
+- 接著把 rings 每輪的擴張與平均合成一個 pass：兩組 buffer 輪流讀寫，算式不變，每件衣服少 12 個 pass（EGalCloth7）：101 FPS，render 只少 0.3 ms。
+- Insights：render thread 每兩幀建一次 private GPU graph，每次約 4.2 ms，大多是 RDG 處理每個 pass 的開銷（約 11 件衣服 × 33 個 pass）。
+- 改成每件衣服一個 RDG pass，各步驟在 pass 裡依序 dispatch，中間插 UAV barrier；GPU 上做的事相同（`ok.ClothGpuOnePass`，預設 1，0 是每步一個 pass）。EGalCloth8：
+
+| 設定 | loop FPS | game | render | GPU |
+|---|---|---|---|---|
+| 0（預設） | 82 | 12.7 | 6.9 | 4.2 |
+| 2，每步一個 pass | 103 | 9.4 | 8.8 | 6.6 |
+| 2，一個 pass | 107 | 8.4 | 7.7 | 5.8～8.0 |
+
+- 截圖（兩個角度）與模式 0 一致。剩下的差距 game、render、GPU 三條線各差約 1 ms，都要再壓。
+- 診斷 cvar：`ok.ClothGpuSkip`（每個步驟一個位元，只用來找成本，結果會錯）。
+- 打包注意：global shader 改了，要自己的 runtime patch（`rebuild_street_social_patch.lua --output`），並以 `-PatchDir` 啟動；共用 patch 的 `RuntimeGlobalShaderPatch-*_P.pak` 會蓋過新 base 的 shader（見 `Docs/ERROR_LOG.md`）。

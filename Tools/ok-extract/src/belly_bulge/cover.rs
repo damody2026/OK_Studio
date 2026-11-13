@@ -834,3 +834,61 @@ mod lift_tests {
 /// A garment's cover time, added to OKAnim.Profile's `cover.garments` when it ends.
 struct Timed(std::time::Instant, usize);
 impl Drop for Timed { fn drop(&mut self) { crate::okanim::prof::add(self.1, self.0); } }
+
+// ---- cloth_gpu (ok.ClothGpu 2): the same push worked out on the GPU. The field (per frame, all her garments share it) and
+// each garment's still data packed as 32-bit words for a ByteAddressBuffer; the layout is read by ClothCover.usf.
+pub(crate) const GPU_CONSTS: [f32; 12] = [FOLLOW_M, REACH_M, BUST_REACH_M, NEAR_M, FULL_M, LIFT_REACH_M, FAR_M, UNDER_M, HUG_M, 0., 0., 0.];
+fn wf(v: f32) -> u32 { v.to_bits() }
+impl CoverField {
+    /// Whether any of her skin swelled out this frame (cloth then follows it: a garment needs its follow map).
+    pub(crate) fn follows_any(&self) -> bool { self.follows_any }
+    /// The field: header (40 words), then skin (p0, p, n, lifted: 10 words each), the grid (cell offsets, cell items), her
+    /// skin's follow moves (by body vertex: xyz, valid), and the Lift (skin: across, across, top, base; its grid).
+    pub(crate) fn gpu_field(&self, out: &mut Vec<u32>) {
+        let base = out.len();out.resize(base + 40, 0);
+        let mut h = [0u32; 40];
+        h[0] = 1;h[1] = 1 | if self.follows_any { 2 } else { 0 } | if self.lift.is_some() { 4 } else { 0 };
+        h[2] = self.skin.len() as u32;h[3] = (out.len() - base) as u32;
+        for (i, (p0, p, n)) in self.skin.iter().enumerate() { for v in p0.iter().chain(p).chain(n) { out.push(wf(*v)); } out.push(self.lifted[i] as u32); }
+        for a in 0..3 { h[4 + a] = self.lo[a] as i32 as u32;h[7 + a] = self.hi[a] as i32 as u32; }
+        h[10] = (out.len() - base) as u32;
+        let mut at = 0u32;out.push(0);for c in &self.grid { at += c.len() as u32;out.push(at); }
+        h[11] = (out.len() - base) as u32;for c in &self.grid { out.extend(c.iter().copied()); }
+        h[12] = self.follow.len() as u32;h[13] = (out.len() - base) as u32;
+        for f in &self.follow { match f { Some(d) => { out.extend([wf(d[0]), wf(d[1]), wf(d[2]), 1]); } None => out.extend([0, 0, 0, 0]) } }
+        if let Some(l) = &self.lift {
+            h[14] = l.skin.len() as u32;h[15] = (out.len() - base) as u32;
+            for (q, top, b) in &l.skin { out.extend([wf(q[0]), wf(q[1]), wf(*top), wf(*b)]); }
+            for a in 0..3 { h[16 + a] = wf(l.way[a]);h[19 + a] = wf(l.side[0][a]);h[22 + a] = wf(l.side[1][a]);h[25 + a] = wf(l.belly[a]); }
+            for a in 0..2 { h[28 + a] = l.lo[a] as i32 as u32;h[30 + a] = l.hi[a] as i32 as u32; }
+            h[32] = (out.len() - base) as u32;let mut at = 0u32;out.push(0);for c in &l.grid { at += c.len() as u32;out.push(at); }
+            h[33] = (out.len() - base) as u32;for c in &l.grid { out.extend(c.iter().copied()); }
+        }
+        out[base..base + 40].copy_from_slice(&h);
+    }
+}
+/// A garment's cover data that stays (its neighbour table and triangles; the skin each vertex follows once found): n,
+/// keep, neighbour offsets / items, triangles, follow map (four (skin, weight) and the gap: 9 words a vertex) or 0.
+pub(crate) fn gpu_garment(part: &SessionPart, out: &mut Vec<u32>) -> bool {
+    if !covers(&part.role) { return false; }
+    let n = part.rest_positions.len();
+    let nbr = neighbours(&part.indices, &part.rest_positions);
+    let base = out.len();out.resize(base + 16, 0);let mut h = [0u32; 16];
+    h[0] = n as u32;h[1] = wf(margin(&part.role));
+    h[2] = (out.len() - base) as u32;let mut at = 0u32;out.push(0);for l in nbr.iter() { at += l.len() as u32;out.push(at); }
+    h[3] = (out.len() - base) as u32;for l in nbr.iter() { out.extend(l.iter().copied()); }
+    let tris: Vec<&[u32]> = part.indices.chunks_exact(3).collect();
+    h[4] = tris.len() as u32;h[5] = (out.len() - base) as u32;for t in &tris { out.extend(t.iter().copied()); }
+    let map = FOLLOW_MAP.lock().unwrap().get(&(nbr.as_ptr() as usize)).filter(|m| m.len() == n).cloned();
+    if let Some(m) = map {
+        h[6] = 1;h[7] = (out.len() - base) as u32;
+        for (near, gap) in m.iter() { for (i, _) in near { out.push(*i); } for (_, w) in near { out.push(wf(*w)); } out.push(wf(*gap)); }
+    }
+    out[base..base + 16].copy_from_slice(&h);
+    true
+}
+/// Whether the garment's follow map is found (needed on the GPU while her skin swells out: `follows`).
+pub(crate) fn gpu_has_follow_map(part: &SessionPart) -> bool {
+    let nbr = neighbours(&part.indices, &part.rest_positions);
+    FOLLOW_MAP.lock().unwrap().get(&(nbr.as_ptr() as usize)).is_some_and(|m| m.len() == part.rest_positions.len())
+}

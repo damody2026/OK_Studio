@@ -1388,8 +1388,25 @@ pub(crate) struct FaceRuntimeState {
 
 // The body proxies are published under the session's address: the host keeps them until told, and a closed session's
 // body stayed as a phantom partner (a reloaded card's breasts were pushed square or flat by the old one).
+/// cloth_gpu (ok_cloth_gpu_set): a garment drawn on the GPU route that the cover or the jiggle moves. Skinned here as the
+/// CPU route would draw it (render_solved: no physics step), pushed over her skin and moved with her thighs as there, and
+/// only its moves kept for the GPU to add.
+fn cloth_gpu_moves(key:usize,index:usize,part:&SessionPart,body:Option<&Skeleton>,head:Option<&Skeleton>,policy:AccessoryFramePolicy,
+    assigned:Option<&AssignedWorldFrame>,cover:Option<&crate::belly_bulge::CoverField>) {
+    // ok.ClothGpu 2: the GPU works it out (ClothCover.usf) once the maps it needs are found; until then, as below (which
+    // finds them).
+    if crate::cloth_gpu::on_gpu() {
+        if let Some(revision)=crate::cloth_gpu::gpu_ready(key,index,part,cover.is_some_and(|c|c.follows_any())) {crate::cloth_gpu::put_gpu(key,index,revision);return;}
+    }
+    let Some(runtime)=part.runtime_accessory.as_ref() else{return;};
+    let Some((positions,normals,_))=runtime.render_solved(body,head,policy,assigned) else{crate::cloth_gpu::put(key,index,Vec::new());return;};
+    let mut moved=positions.clone();
+    if let Some(cover)=cover{cover.cover(index,part,&mut moved);}
+    crate::thigh_jiggle::follow_own(key,index,part,&mut moved,&normals);
+    crate::cloth_gpu::put(key,index,crate::cloth_gpu::diff(&positions,&moved));
+}
 impl Drop for OkSession {
-    fn drop(&mut self) { crate::px::release_group(self as *const Self as u64); }
+    fn drop(&mut self) { crate::px::release_group(self as *const Self as u64); crate::cloth_gpu::forget(self as *const Self as usize); }
 }
 
 impl OkSession {
@@ -2485,6 +2502,7 @@ impl OkSession {
         if self.cover_ready.is_none(){if let Some(b)=body{crate::thigh_jiggle::solve_step(&*self,b,dt);}}
         let jiggle_key=self as *const Self as usize;
         let cover_field=match self.cover_ready.take(){Some(built)=>built,None=>{let _trace=crate::native_profile::Scope::new(47);let t=std::time::Instant::now();let f=crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body);if f.is_some(){crate::okanim::prof::add(26,t);}f}};let cover=&cover_field;
+        if crate::cloth_gpu::on_gpu()&&!pass.early(){crate::cloth_gpu::build_field(jiggle_key,cover.as_ref());}
         let update=|(index,part):(usize,&mut SessionPart)| {
             if leader_of[index].is_some()||hidden(index)||!pass.wants(index) {return;}
             let Some(runtime) = &mut part.runtime_accessory else { return; };
@@ -2511,6 +2529,8 @@ impl OkSession {
                 part.rest_tangents=tangents;
                 if let Some(observer)=observer{observer.emit(index,part);}
             }
+            if (palette_only||excluded.binary_search(&index).is_ok())&&crate::cloth_gpu::wants(jiggle_key,index){
+                let t_cover=std::time::Instant::now();cloth_gpu_moves(jiggle_key,index,part,source,head,policy,assigned,cover.as_ref());cover_us+=t_cover.elapsed().as_micros() as u64;}
             // What it took, for the order of the next frame's parts (longest first).
             if let Ok(mut costs)=ACC_COST.lock(){if costs.len()>4096{costs.clear();}costs.insert((group,index),render_us+cover_us);}
             // OK_ACC_PART_PROFILE=<frames>: every that many frames of a part, when it started after the parts began, its solve
@@ -2580,6 +2600,7 @@ impl OkSession {
                     part.positions=positions;part.normals=normals;part.rest_tangents=tangents;
                     if let Some(observer)=observer{observer.emit(index,part);}
                 }
+                if !emit&&crate::cloth_gpu::wants(jiggle_key,index){cloth_gpu_moves(jiggle_key,index,part,source,head,policy,assigned,cover.as_ref());}
             };
             if parallel&&leader_of.iter().filter(|l|l.is_some()).count()>=8 {
                 use rayon::prelude::*;
@@ -2613,10 +2634,13 @@ impl OkSession {
         let assigned_clothes=AssignedWorldFrame::prepare(clothes,&self.parts,true);
         let cover=crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body);
         let jiggle_key=self as *const Self as usize;
+        if crate::cloth_gpu::on_gpu(){crate::cloth_gpu::build_field(jiggle_key,cover.as_ref());}
         let render=|(index,part):(usize,&mut SessionPart)| {
-            if excluded.binary_search(&index).is_ok(){return;}
             let Some(runtime)=part.runtime_accessory.as_ref() else{return;};
             let assigned=if runtime.coordinated{assigned_clothes.as_ref()}else{assigned_body.as_ref()};
+            if excluded.binary_search(&index).is_ok(){
+                if crate::cloth_gpu::wants(jiggle_key,index){let source=if runtime.coordinated{clothes}else{body};cloth_gpu_moves(jiggle_key,index,part,source,head,policy,assigned,cover.as_ref());}
+                return;}
             if let Some((mut positions,normals,tangents))=runtime.render_solved(if runtime.coordinated{clothes}else{body},head,policy,assigned) {
                 if let Some(cover)=&cover {cover.cover(index,part,&mut positions);}
                 crate::thigh_jiggle::follow_own(jiggle_key,index,part,&mut positions,&normals);

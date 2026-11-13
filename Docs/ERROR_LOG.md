@@ -4415,3 +4415,18 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
   - 兩人臉的前方要大致相對才觸發（`ok.HScene.SweetFacing`，內積 ≤ -0.3）。
   - 他站著、她雙腳離地時，不選他去摸。
   - 已在正常位、站立抱起（改由她摸他）、騎乘位、後背位（不觸發）各實測一次；也用他的台詞實際觸發過一次。
+## 2026-11-14 改了 global shader 的參數，卻用 --skip-cook 打包，遊戲一開一對一就當
+
+- 錯誤：
+  - `RuntimeDeform.usf` 和 `FOKRuntimeGpuDeform*CS` 的參數結構加了 `Displacements`。
+  - 我照平常用 `--skip-cook --skip-base` 打包 EGalCloth1，開關不管開或關都一樣當掉。
+  - 錯誤訊息：`Assertion failed: Bindings.StructureLayoutHash == ParametersMetadata->GetLayoutHash()`，`FOKRuntimeGpuDeformPackedCS's parameter structure has changed without recompilation of the shader`。
+- 原因：global shader 是 cook 時編進 base 的。跳過 cook 時，執行檔用新的參數結構，base 裡還是舊的 shader。
+- 修正：只要改到 shader 或 shader 參數結構，就跑完整的 cook，並用新的 `--base-dir`（cook 約 6 分鐘，base 約 1 分鐘）。
+- 完整 cook、換新 base 之後還是當（EGalCloth2 同一個 assert；EGalCloth3 則是 `Missing global shader FOKClothCoverCS`）：
+  - 啟動器另外以 `-pakdir` 掛載 `Launch/runtime.json` 的共用 runtime patch（`StreetDisplay39Puddle.patch`）。
+  - 那份 patch 的 `RuntimeGlobalShaderPatch-*_P.pak` 是 11-12 的 global shader，優先權比 base 高，把新 cook 的 shader 整個蓋掉了。
+  - 我起初以為是 DDC 快取了舊 layout，在 `RuntimeDeform.usf` 加了 `OK_RUNTIME_DEFORM_LAYOUT 2`。這個猜測沒有查證，真正原因是 patch（那行已移除）。
+  - 修正：
+    - 啟動器新增 `-PatchDir <資料夾>`。
+    - 改了 global shader 的 stage 要用 `Tools/rebuild_street_social_patch.lua --output <新資料夾>` 產生自己的 patch，並以 `-PatchDir` 指定；不要覆寫共用 patch，否則別人較舊的執行檔會因參數結構不符而當掉。

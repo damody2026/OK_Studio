@@ -30,9 +30,11 @@ KKCROWDGPUPACKING_API bool OKPrepareGpuDeformPalette(TConstArrayView<FMatrix44f>
 // NativeUnitySpace converts position/directions to UE (-X,Z,Y) only AFTER
 // both native normalization stages. Draw offsets/normals remain UE coordinates.
 // False adds no pass and leaves the previous output untouched.
+// Displacement (optional): one float4 per source vertex (xyz native metres), added after the post-skin correction and
+// before the UE conversion, where the CPU route's pushed cloth positions are (one-on-one cloth on the GPU, ok.ClothGpu).
 KKCROWDGPUPACKING_API bool OKAddRuntimeGpuDeformPass(FRDGBuilder& Graph,
  FRDGBufferRef Source,FRDGBufferRef Draw,FRDGBufferRef Palette,FRDGBufferRef Output,
- uint32 DrawCount,uint32 PaletteCount,uint32 FallbackSlot,const FMatrix44f* PostSkinCorrection=nullptr,bool NativeUnitySpace=false);
+ uint32 DrawCount,uint32 PaletteCount,uint32 FallbackSlot,const FMatrix44f* PostSkinCorrection=nullptr,bool NativeUnitySpace=false,FRDGBufferRef Displacement=nullptr);
 
 // LocalVertexFactory streams: float3 position, FPackedNormal tangent X/Z.
 // Byte-address outputs must also have VertexBuffer usage. No CPU readback.
@@ -44,4 +46,4 @@ KKCROWDGPUPACKING_API bool OKGpuPackAvailable();
 KKCROWDGPUPACKING_API bool OKGpuDeformPackedAvailable();
 KKCROWDGPUPACKING_API bool OKAddRuntimeGpuDeformPackedPass(FRDGBuilder& Graph,
  FRDGBufferRef Source,FRDGBufferRef Draw,FRDGBufferRef Palette,FRDGBufferRef Positions,FRDGBufferRef Tangents,
- uint32 DrawCount,uint32 PaletteCount,uint32 FallbackSlot,const FMatrix44f* PostSkinCorrection=nullptr,bool NativeUnitySpace=false);
+ uint32 DrawCount,uint32 PaletteCount,uint32 FallbackSlot,const FMatrix44f* PostSkinCorrection=nullptr,bool NativeUnitySpace=false,FRDGBufferRef Displacement=nullptr);

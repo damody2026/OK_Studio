@@ -365,6 +365,29 @@ bool FOkSession::ThighJiggleCloth(TArray<int32>& OutCpuParts,TArray<int32>& OutP
 	for(int32 I=0;I<N;++I){if(Idx[I]==0xFFFFFFFFu){OutCpuParts.Add(int32(Part[I]));continue;}
 		OutParts.Add(int32(Part[I]));OutIndices.Add(Idx[I]);OutDeltas.Add(FVector3f(D[I*3],D[I*3+1],D[I*3+2]));}
 	return true; }
+void FOkSession::SetClothGpu(int32 Mode){ok_cloth_gpu_set(Mode);}
+int32 FOkSession::ClothGpuJob(int32 Part) const {return Handle&&Part>=0?ok_cloth_gpu_job(Handle,Part):-1;}
+static bool OKClothWords(TArray<uint32>& Out,TFunctionRef<int32(uint32*,uint32)> Read){
+	Out.SetNumUninitialized(1<<16);int32 N=Read(Out.GetData(),uint32(Out.Num()));
+	if(N>Out.Num()){Out.SetNumUninitialized(N);N=Read(Out.GetData(),uint32(Out.Num()));}
+	if(N<=0||N>Out.Num()){Out.Reset();return false;}
+	Out.SetNum(N,EAllowShrinking::No);return true; }
+bool FOkSession::ClothGpuField(TArray<uint32>& Out) const {
+	if(!Handle){Out.Reset();return false;}
+	return OKClothWords(Out,[this](uint32* P,uint32 Max){return ok_cloth_gpu_field(Handle,P,Max);}); }
+bool FOkSession::ClothGpuGarment(int32 Part,TArray<uint32>& Out) const {
+	if(!Handle||Part<0){Out.Reset();return false;}
+	return OKClothWords(Out,[this,Part](uint32* P,uint32 Max){return ok_cloth_gpu_garment(Handle,Part,P,Max);}); }
+bool FOkSession::ClothGpuMoves(int32 Part,int32 SourceCount,TArray<FVector4f>& OutPerSource,float& OutLongest) const {
+	OutPerSource.Reset();OutLongest=0.f;if(!Handle||Part<0||SourceCount<=0)return false;
+	TArray<uint32> Idx;TArray<float> D;Idx.SetNumUninitialized(8192);D.SetNumUninitialized(8192*3);
+	int32 N=ok_cloth_gpu_moves(Handle,Part,Idx.GetData(),D.GetData(),uint32(Idx.Num()));
+	if(N>Idx.Num()){Idx.SetNumUninitialized(N);D.SetNumUninitialized(N*3);N=ok_cloth_gpu_moves(Handle,Part,Idx.GetData(),D.GetData(),uint32(Idx.Num()));}
+	if(N<0)return false;N=FMath::Min(N,Idx.Num());if(N==0)return true;
+	OutPerSource.SetNumZeroed(SourceCount);
+	for(int32 I=0;I<N;++I){if(Idx[I]>=uint32(SourceCount))continue;const FVector3f V(D[I*3],D[I*3+1],D[I*3+2]);
+		OutPerSource[Idx[I]]=FVector4f(V,0.f);OutLongest=FMath::Max(OutLongest,V.Size());}
+	return true; }
 bool FOkSession::PenisClipDeltas(const FVector& At,const FVector& Normal,const FVector& Axis,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,float InsetM) const {
 	OutIndices.Reset();OutDeltas.Reset();if(!Handle)return false;
 	const float In[10]={float(At.X),float(At.Y),float(At.Z),float(Normal.X),float(Normal.Y),float(Normal.Z),float(Axis.X),float(Axis.Y),float(Axis.Z),InsetM};

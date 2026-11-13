@@ -170,6 +170,14 @@ int32_t ok_thigh_jiggle(OkSession* s,float dt,float gain,int32_t* out_part,uint3
    mesh's own space, 3 floats) for her garments on her body skeleton; a vertex index of 0xFFFFFFFF marks a garment with
    its own rig to draw from its CPU vertices (moved there as it is skinned). Returns the count, -1 bad input. */
 int32_t ok_thigh_jiggle_cloth(OkSession* s,uint32_t* out_part,uint32_t* out_idx,float* out_d,uint32_t max);
+/* Her garments with their own rig stay on the GPU route while pushed over her skin / following her thighs' jiggle
+   (cloth_gpu): on 1, 0 off (the CPU route). ok_cloth_gpu_moves: this pose's moves of one such garment, up to max
+   (vertex, xyz in the session's Unity space after the placement correction, metres); returns the count, -1 bad input. */
+void ok_cloth_gpu_set(int32_t on); /* 2: the push and the jiggle themselves on the GPU (ClothCover.usf) */
+int32_t ok_cloth_gpu_job(OkSession* s,int32_t part);
+int32_t ok_cloth_gpu_field(OkSession* s,uint32_t* out,uint32_t max);
+int32_t ok_cloth_gpu_garment(OkSession* s,int32_t part,uint32_t* out,uint32_t max);
+int32_t ok_cloth_gpu_moves(OkSession* s,int32_t part,uint32_t* out_idx,float* out_d,uint32_t max);
 /* As ok_belly_wrap_deltas, her skin moved by her belly bones, pushed by his penis as BetterPenetration's colliders push
    its belly DynamicBone (belly_bulge::bone_deltas). Same input and output. */
 int32_t ok_belly_bone_deltas(OkSession* s,const float* at,float radius,uint32_t* out_idx,float* out_d,uint32_t max);
