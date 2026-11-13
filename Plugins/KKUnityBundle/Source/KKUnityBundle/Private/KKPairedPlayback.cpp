@@ -142,17 +142,21 @@ bool AKKPairedPlayback::Advance(float Delta,FString& Error)
 uint64 GKKPairFramesShown=0;
 extern int32 GKKStreamParallelMinVertices; // KKStreamMeshProxy.cpp
 extern bool GKKDeferRuntimeStreams; // KKPreviewActor.cpp
+extern bool GKKDeferLateDisplay; // KKPreviewActor.cpp
+bool OKPairLateDisplayOn(); // KKPreviewActor.cpp
 void AKKPairedPlayback::FinishDeferredStreams()
 {
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_PairDeferredStreams);
  TGuardValue<int32> ParallelStreams(GKKStreamParallelMinVertices,4096);
  FKKGpuStreamBatchScope GpuFrame;
- for(AKKPreviewActor* PreviewRole : {FemaleActor.Get(),MaleActor.Get(),ThirdActor.Get()})if(IsValid(PreviewRole))PreviewRole->FinishRuntimeAccessories();
+ for(AKKPreviewActor* PreviewRole : {FemaleActor.Get(),MaleActor.Get(),ThirdActor.Get()})if(IsValid(PreviewRole)){PreviewRole->FinishRuntimeAccessories();PreviewRole->FinishLateDisplay();}
 }
 bool AKKPairedPlayback::ShowFrame(float Delta,const bool Reactions[2],FString& Error,bool bDeferStreams)
 {
  ++GKKPairFramesShown;
  TGuardValue<bool> DeferStreams(GKKDeferRuntimeStreams,bDeferStreams);
+ // Both roles' late display from this same solved frame, done together after the next launch (FinishDeferredStreams).
+ TGuardValue<bool> DeferLate(GKKDeferLateDisplay,bDeferStreams&&OKPairLateDisplayOn());
  TGuardValue<int32> ParallelStreams(GKKStreamParallelMinVertices,4096); // her and his streams packed on the pool (+13 Hz, 2026-11-08)
 
  FKKGpuStreamBatchScope GpuFrame;

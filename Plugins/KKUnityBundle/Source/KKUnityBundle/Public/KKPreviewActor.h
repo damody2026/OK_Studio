@@ -814,6 +814,11 @@ public:
 	void CaptureRigidFollowerNeutral();
 	void UpdateRigidFollowers();
 	void SyncMouthPose();
+	/** The pair's display work that reads nothing of the session (ok.Anim.PairLateDisplay): her face parts' pose and the
+	 *  thigh jiggle's morph uploads, held while GKKDeferLateDisplay and done here, after the next solve is launched. */
+	void FinishLateDisplay();
+	bool bLateMouthPending=false;
+	TArray<TFunction<void()>> LateDisplay;
 	// Defer display rebuilds while native face setters still update their state.
 	void BeginFaceDisplayUpdate() { ++FaceDisplayBatchDepth; }
 	void EndFaceDisplayUpdate();

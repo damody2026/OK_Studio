@@ -7910,9 +7910,24 @@ void AKKPreviewActor::SetCoordinatedPlayback(bool bEnabled){
         if(Cast<UKKRuntimeSkeletalMeshComponent>(Mesh))Own(Mesh);
 }
 
+// ok.Anim.PairLateDisplay: set by the pair's ShowFrame while it defers its streams (GKKDeferRuntimeStreams).
+bool GKKDeferLateDisplay=false;
+// On by default since 2026-11-13: ABA EGalPerfCity5 0/1 loop 156/131 -> 166/147, fast 136/141 -> 148/141, face checked.
+static TAutoConsoleVariable<int32> CVarOkPairLateDisplay(TEXT("ok.Anim.PairLateDisplay"),1,
+    TEXT("1: the pair's display work that reads nothing of the session (her face parts' pose, the thigh jiggle's morph uploads) is done after its next frame is launched, beside the solve; the same frame is shown."));
+bool OKPairLateDisplayOn(){return CVarOkPairLateDisplay.GetValueOnGameThread()!=0;}
+void AKKPreviewActor::FinishLateDisplay()
+{
+    if(!bLateMouthPending&&LateDisplay.IsEmpty())return;
+    TRACE_CPUPROFILER_EVENT_SCOPE(KK_LateDisplay);
+    if(bLateMouthPending){bLateMouthPending=false;SyncMouthPose();}
+    TArray<TFunction<void()>> Work=MoveTemp(LateDisplay);LateDisplay.Reset();
+    for(auto& Do:Work)Do();
+}
 void AKKPreviewActor::RefreshSkinnedDisplay()
 {
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_PreviewSkinDisplay);
+ FinishLateDisplay(); // one left from before goes first: it belongs to the frame before this one
  const bool Profile=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_ANIM_PROFILE"))==TEXT("1");
  const double Begin=FPlatformTime::Seconds();
  // Shared portable playback solves private-rig palettes without emitting
@@ -7963,7 +7978,9 @@ void AKKPreviewActor::RefreshSkinnedDisplay()
             else if(auto* Follower=Cast<UKKRuntimePoseableMeshComponent>(F))Follower->VerifyExactLeader(Pose);
 		}
 	}}
-	{QUICK_SCOPE_CYCLE_COUNTER(STAT_KK_SyncMouthPose);SyncMouthPose();}
+	// Her face parts take the body's bones (read from BodySkel, not the session): with the pair's late display, after the
+	// next solve is launched (FinishLateDisplay).
+	{QUICK_SCOPE_CYCLE_COUNTER(STAT_KK_SyncMouthPose);if(GKKDeferLateDisplay)bLateMouthPending=true;else SyncMouthPose();}
 
  const double BonesDone=FPlatformTime::Seconds();
  if(Profile)UE_LOG(LogTemp,Display,TEXT("OK animation skeleton skin_ms=%.3f build_ms=%.3f apply_ms=%.3f"),(SkinDone-Begin)*1000.,(PoseBuilt-SkinDone)*1000.,(BonesDone-PoseBuilt)*1000.);
@@ -10481,6 +10498,7 @@ static FAutoConsoleCommand GOKThighJiggleStats(TEXT("ok.ThighJiggleStats"),TEXT(
     FConsoleCommandDelegate::CreateLambda([]{UE_LOG(LogTemp,Display,TEXT("Thigh jiggle: most %.2f mm, %d vertices, %d frames"),GThighJiggleMost*1000.f,GThighJiggleVerts,GThighJiggleFrames);GThighJiggleMost=0.f;GThighJiggleVerts=0;GThighJiggleFrames=0;}));
 void AKKPreviewActor::ClearThighJiggle()
 {
+    FinishLateDisplay(); // uploads still waiting would put the jiggle back after this
     if(ThighJigglePart!=INDEX_NONE)SetPartWrapDeltas(ThighJigglePart,{},{},{},GOkThighJiggleSet);
     ThighJigglePart=INDEX_NONE;
     for(int32 Part:TSet<int32>(JiggleClothShown))SetPartWrapDeltas(Part,{},{},{},GOkThighJiggleSet);
@@ -10497,8 +10515,11 @@ void AKKPreviewActor::UpdateThighJiggleCloth()
     JiggleCpuParts=TSet<int32>(Cpu);
     TMap<int32,TPair<TArray<uint32>,TArray<FVector3f>>> ByPart;
     for(int32 I=0;I<ClothParts.Num();++I){auto& P=ByPart.FindOrAdd(ClothParts[I]);P.Key.Add(Idx[I]);P.Value.Add(D[I]);}
-    for(auto It=JiggleClothShown.CreateIterator();It;++It)if(!ByPart.Contains(*It)){SetPartWrapDeltas(*It,{},{},{},GOkThighJiggleSet);It.RemoveCurrent();}
-    for(const auto& P:ByPart)if(SetPartWrapDeltas(P.Key,P.Value.Key,P.Value.Value,{},GOkThighJiggleSet))JiggleClothShown.Add(P.Key);else JiggleClothShown.Remove(P.Key);
+    // The uploads read nothing of the session: with the pair's late display, beside the next solve (FinishLateDisplay).
+    auto Upload=[this,ByPart=MoveTemp(ByPart)]{
+        for(auto It=JiggleClothShown.CreateIterator();It;++It)if(!ByPart.Contains(*It)){SetPartWrapDeltas(*It,{},{},{},GOkThighJiggleSet);It.RemoveCurrent();}
+        for(const auto& P:ByPart)if(SetPartWrapDeltas(P.Key,P.Value.Key,P.Value.Value,{},GOkThighJiggleSet))JiggleClothShown.Add(P.Key);else JiggleClothShown.Remove(P.Key);};
+    if(GKKDeferLateDisplay)LateDisplay.Add(MoveTemp(Upload));else Upload();
 }
 void AKKPreviewActor::UpdateThighJiggle(float DeltaSeconds)
 {
@@ -10510,11 +10531,15 @@ void AKKPreviewActor::UpdateThighJiggle(float DeltaSeconds)
     UpdateThighJiggleCloth();
     // Still (no move over a tenth of a millimetre) and nothing shown: nothing to rebuild.
     if(Idx.IsEmpty()&&ThighJigglePart==INDEX_NONE)return;
-    if(ThighJigglePart!=INDEX_NONE&&ThighJigglePart!=Part)SetPartWrapDeltas(ThighJigglePart,{},{},{},GOkThighJiggleSet);
-    SetPartWrapDeltas(Part,Idx,D,{},GOkThighJiggleSet);
-    ThighJigglePart=Idx.IsEmpty()?INDEX_NONE:Part;
     for(const FVector3f& V:D)GThighJiggleMost=FMath::Max(GThighJiggleMost,V.Size());
     GThighJiggleVerts=FMath::Max(GThighJiggleVerts,Idx.Num());++GThighJiggleFrames;
+    // As her clothes' share (UpdateThighJiggleCloth): uploaded beside the next solve with the pair's late display.
+    const bool bEmpty=Idx.IsEmpty();
+    auto Upload=[this,Old=ThighJigglePart,Part,Idx=MoveTemp(Idx),D=MoveTemp(D)]{
+        if(Old!=INDEX_NONE&&Old!=Part)SetPartWrapDeltas(Old,{},{},{},GOkThighJiggleSet);
+        SetPartWrapDeltas(Part,Idx,D,{},GOkThighJiggleSet);};
+    if(GKKDeferLateDisplay)LateDisplay.Add(MoveTemp(Upload));else Upload();
+    ThighJigglePart=bEmpty?INDEX_NONE:Part;
 }
 
 // Her clothes kept over her breasts and nipples in every mode, not only the H scene (user, 2026-11-09: however large her
