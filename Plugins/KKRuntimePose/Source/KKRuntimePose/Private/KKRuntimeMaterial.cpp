@@ -13,6 +13,8 @@
 #include "Misc/ScopeExit.h"
 #include "HAL/Event.h"
 #include "Async/ParallelFor.h"
+#include "RHIGlobals.h"
+#include "HAL/IConsoleManager.h"
 #include "Async/TaskGraphInterfaces.h"
 #include <atomic>
 
@@ -243,6 +245,20 @@ FString RuntimeTextureIdentity(const FKKRuntimePreparedTexture& T){
 }
 }
 FKKRuntimeTextureCacheStats OKRuntimeTextureCacheStats(){check(IsInGameThread());auto Result=RuntimeTextureStats;Result.Entries=RuntimeTextureCache.Num();Result.PreparedCacheHits=PreparedCacheHits.Load();Result.PreparedDecodeJobs=PreparedDecodeJobs.Load();Result.PreparedJoinedJobs=PreparedJoinedJobs.Load();return Result;}
+static TAutoConsoleVariable<int32> CVarOKRuntimeTextureLowMemoryMaxSize(TEXT("kk.RuntimeTextureLowMemoryMaxSize"),512,
+ TEXT("Largest runtime character texture (pixels) on a low-memory PC (OKRuntimeLowMemory); larger ones start at a smaller mip."));
+bool OKRuntimeLowMemory(){
+ // Decided once, after the RHI knows the adapter: the street's 10 heroines took 1.9 GB of uncompressed 1024x1024 textures
+ // in VRAM and the same again in RAM (2026-11-14, a 64 GB / 16 GB VRAM laptop could not run the city).
+ static const bool Low=[]{
+  if(FParse::Param(FCommandLine::Get(),TEXT("OKNoLowMemory")))return false;
+  if(FParse::Param(FCommandLine::Get(),TEXT("OKLowMemory")))return true;
+  const uint64 Ram=FPlatformMemory::GetConstants().TotalPhysical,Vram=GRHIGlobals.GpuInfo.DedicatedVideoMemory;
+  const bool L=Ram<48ull*1024*1024*1024||(Vram>0&&Vram<12ull*1024*1024*1024);
+  UE_LOG(LogTemp,Display,TEXT("Runtime low-memory mode %s (RAM %.1f GB, VRAM %.1f GB)"),L?TEXT("on"):TEXT("off"),Ram/1073741824.0,Vram/1073741824.0);
+  return L;}();
+ return Low;
+}
 UTexture2D* OKCreateRuntimePreparedTexture(const FKKRuntimePreparedTexture& T,FString& Error){
  check(IsInGameThread());if(T.Settings.Filter<0||T.Settings.Filter>2||T.Settings.WrapU<0||T.Settings.WrapU>2||T.Settings.WrapV<0||T.Settings.WrapV>2){Error=TEXT("Runtime texture sampler invalid");return nullptr;}if(T.Mips.IsEmpty()){Error=TEXT("Runtime texture mips absent");return nullptr;}
  int32 Width=T.Mips[0].Width,Height=T.Mips[0].Height;
@@ -254,8 +270,13 @@ UTexture2D* OKCreateRuntimePreparedTexture(const FKKRuntimePreparedTexture& T,FS
  // Weak ownership permits collection after the last material leaves a scene.
  // Amortized pruning bounds stale metadata without a full scan every frame.
  if(RuntimeTextureStats.Requests%256==0)for(auto It=RuntimeTextureCache.CreateIterator();It;++It)if(!It.Value().IsValid())It.RemoveCurrent();
- auto* Tex=UTexture2D::CreateTransient(T.Mips[0].Width,T.Mips[0].Height,PF_B8G8R8A8);if(!Tex){Error=TEXT("Runtime texture allocation failed");return nullptr;}
- for(int32 I=0;I<T.Mips.Num();++I){auto* M=I?new FTexture2DMipMap():&Tex->GetPlatformData()->Mips[0];if(I)Tex->GetPlatformData()->Mips.Add(M);M->SizeX=T.Mips[I].Width;M->SizeY=T.Mips[I].Height;M->SizeZ=1;M->BulkData.Lock(LOCK_READ_WRITE);void* Bytes=M->BulkData.Realloc(T.Mips[I].BGRA.Num());FMemory::Memcpy(Bytes,T.Mips[I].BGRA.GetData(),T.Mips[I].BGRA.Num());M->BulkData.Unlock();}
+ // Low-memory PC: start at the first mip within the cap (the identity above stays the full chain's, so the cache is one
+ // per source either way), and the CPU copy of the pixels goes once the GPU has them.
+ const bool Low=OKRuntimeLowMemory();int32 First=0;
+ if(Low){const int32 Cap=FMath::Max(16,CVarOKRuntimeTextureLowMemoryMaxSize.GetValueOnGameThread());while(First+1<T.Mips.Num()&&FMath::Max(T.Mips[First].Width,T.Mips[First].Height)>Cap)++First;}
+ auto* Tex=UTexture2D::CreateTransient(T.Mips[First].Width,T.Mips[First].Height,PF_B8G8R8A8);if(!Tex){Error=TEXT("Runtime texture allocation failed");return nullptr;}
+ for(int32 I=First;I<T.Mips.Num();++I){auto* M=I>First?new FTexture2DMipMap():&Tex->GetPlatformData()->Mips[0];if(I>First)Tex->GetPlatformData()->Mips.Add(M);M->SizeX=T.Mips[I].Width;M->SizeY=T.Mips[I].Height;M->SizeZ=1;M->BulkData.Lock(LOCK_READ_WRITE);void* Bytes=M->BulkData.Realloc(T.Mips[I].BGRA.Num());FMemory::Memcpy(Bytes,T.Mips[I].BGRA.GetData(),T.Mips[I].BGRA.Num());M->BulkData.Unlock();
+  if(Low)M->BulkData.SetBulkDataFlags(BULKDATA_SingleUse);}
  auto Wrap=[](int32 V){return V==1?TA_Clamp:V==2?TA_Mirror:TA_Wrap;};Tex->SRGB=T.Settings.SRGB;Tex->Filter=T.Settings.Filter==0?TF_Nearest:T.Settings.Filter==2?TF_Trilinear:TF_Bilinear;Tex->AddressX=Wrap(T.Settings.WrapU);Tex->AddressY=Wrap(T.Settings.WrapV);
  // Transient textures own their complete small mip chain; this is not cooked streaming.
  Tex->NeverStream=true;Tex->UpdateResource();RuntimeTextureCache.Add(Identity,Tex);KeepRecentRuntimeTexture(Tex);++RuntimeTextureStats.Created;Error.Reset();return Tex;

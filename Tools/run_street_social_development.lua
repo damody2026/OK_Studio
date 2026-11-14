@@ -568,6 +568,9 @@ local function main()
   end
   -- Profiling (development): -Exec "stat dumphitches,t.HitchFrameTimeThreshold 60" runs console commands at start;
   -- -Trace records an Unreal Insights trace (default channels default,cpu,gpu,frame,bookmark) to trace.utrace beside game.log.
+  -- No Nanite (user 2026-11-15): builds cooked before Config/DefaultEngine.ini's r.Nanite.ProjectEnabled=False draw the
+  -- regular meshes too.
+  execs[#execs + 1] = "r.Nanite 0"
   if o.exec then execs[#execs + 1] = o.exec end
   -- -GameArgs "-A -B=1": more command-line switches for the game itself (development diagnostics such as -RuntimeFaceDiag).
   if o.gameargs then for a in tostring(o.gameargs):gmatch("%S+") do game[#game + 1] = a end end

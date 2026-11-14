@@ -40,6 +40,10 @@ KKRUNTIMEPOSE_API bool OKDescribeRuntimeMaterialPart(OkSession*,int32 NativePart
 // Returned textures are immutable and may be shared across characters. A caller
 // needing editable pixels must create a private texture rather than mutate these.
 KKRUNTIMEPOSE_API UTexture2D* OKCreateRuntimePreparedTexture(const FKKRuntimePreparedTexture&,FString& Error);
+// Low-memory PC (Docs/STREET_CITY_STREAMING_LOWSPEC_20261114.md): on when the machine has under 48 GB of RAM or under
+// 12 GB of VRAM, or with -OKLowMemory; -OKNoLowMemory turns it off. Runtime character textures are then capped to
+// kk.RuntimeTextureLowMemoryMaxSize (512) and their CPU copy is dropped once uploaded.
+KKRUNTIMEPOSE_API bool OKRuntimeLowMemory();
 struct FKKRuntimeTextureCacheStats {uint64 Requests=0,Hits=0,Created=0,AvoidedPixelBytes=0,PreparedCacheHits=0,PreparedDecodeJobs=0,PreparedJoinedJobs=0;uint32 Entries=0;};
 KKRUNTIMEPOSE_API FKKRuntimeTextureCacheStats OKRuntimeTextureCacheStats();
 
