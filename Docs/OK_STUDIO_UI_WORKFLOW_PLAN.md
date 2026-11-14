@@ -1580,11 +1580,11 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
 
 使用者要求：場景檔不必先放進 `UserData/Studio/scene` 才能開。
 
-- 從檔案總管把檔案拖進工作室視窗任何位置就會開啟：`.okscene`、OK 場景卡、原版 KKS／KK 的 KStudio 場景 PNG。開啟流程和場景瀏覽器相同（`OpenScene`）：先問未儲存的變更；KStudio 場景走匯入，在它旁邊存成 OK 場景並把角色拆成卡。
+- 從檔案總管把檔案拖進工作室視窗任何位置就會開啟：`.okscene`、OK 場景卡、原版 KKS／KK 的 KStudio 場景 PNG。開啟流程和場景瀏覽器相同（`OpenScene`）：先問未儲存的變更；KStudio 場景走匯入：轉成 OK 場景存進 `UserData/Studio/scene`（同名），角色拆成卡，原檔不動。
 - 拖資料夾進來：場景瀏覽器切到那個資料夾並打開。
 - 一次拖多個檔案時，只開第一個場景檔或資料夾。拖進其他種類的檔案，狀態列會說明不是場景檔。
 - 實作：`SOKStudioPanel::OnDragOver`／`OnDrop` 接收外部拖放（`FExternalDragOperation`），下一幀才開檔；不是場景的 PNG（例如角色卡）不開，不卡住系統的拖放呼叫。控制通道指令 `scene.drop <路徑>` 走同一段處理，方便自動測試。
-- 驗證：Editor 與 Game 都建置成功。實際從檔案總管拖放還沒測，因為 Unreal slot 被別組獨佔。
+- 驗證（2026-11-14）：Editor 與 Game 建置成功；以 `scene.drop` 測四項都通過：放在 `Saved/Tests/DropTest1114` 的原版 KKS 場景 PNG 匯入並開啟（443 個物件）、拖資料夾後場景瀏覽器列出裡面的場景、非場景 PNG 不開並在狀態列說明、資料夾裡的 `.okscene` 直接開啟。真正用滑鼠從檔案總管拖放還沒測。
 
 ### U271 補驗：另外 13 張陰影強度小於 1 的地圖（2026-11-12，F 組）
 
