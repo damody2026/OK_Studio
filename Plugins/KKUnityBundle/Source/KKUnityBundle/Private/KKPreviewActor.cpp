@@ -1273,7 +1273,24 @@ static UMaterialInterface* MakePartMaterial(UTexture2D* Tex, const FString& Blen
 			}
 			ToWorld->Input.Expression = RampTangentNormal;
 			Mat->GetExpressionCollection().AddExpression(ToWorld);
-			MappedWorldNormal = ToWorld;
+			// A mesh with zero source tangents (map 53's container) has no tangent basis: the transform gives NaN, and the
+			// lightmap, probe and reflection sums read 0 (U272). Unity's TBN then leaves the vertex normal.
+			UMaterialExpressionCustom* SafeNormal = NewObject<UMaterialExpressionCustom>(Mat);
+			SafeNormal->Material = Mat;
+			SafeNormal->OutputType = CMOT_Float3;
+			SafeNormal->Description = TEXT("Vertex normal where the mesh has no tangent");
+			SafeNormal->Code = TEXT("return dot(VTangent, VTangent) < 1e-8 ? VNormal : Mapped;");
+			auto SafeInput = [&](const TCHAR* Name, UMaterialExpression* E)
+			{
+				E->Material = Mat;
+				if (E != ToWorld) Mat->GetExpressionCollection().AddExpression(E);
+				FCustomInput& In = SafeNormal->Inputs.AddDefaulted_GetRef(); In.InputName = Name; In.Input.Expression = E;
+			};
+			SafeInput(TEXT("Mapped"), ToWorld);
+			SafeInput(TEXT("VTangent"), NewObject<UMaterialExpressionVertexTangentWS>(Mat));
+			SafeInput(TEXT("VNormal"), NewObject<UMaterialExpressionVertexNormalWS>(Mat));
+			Mat->GetExpressionCollection().AddExpression(SafeNormal);
+			MappedWorldNormal = SafeNormal;
 		}
 		if (bEye && FPlatformMisc::GetEnvironmentVariable(TEXT("OK_UV_DEBUG")) == TEXT("1"))
 		{
@@ -2858,6 +2875,69 @@ return Base.rgb * sh;
                 FCustomInput Probe;Probe.InputName=TEXT("ProbeDiffuse");Probe.Input.Expression=OKMakeRuntimeProbeAmbient(Mat);Decode->Inputs.Add(Probe);
                 Code += TEXT("total += ProbeDiffuse * a * ") + FString::SanitizeFloat(Shadow->LightmapDiffuse)
                     + (bMetalMap ? TEXT(" * (1.0 - Metal.r);\n") : TEXT(";\n"));
+                if (FPlatformMisc::GetEnvironmentVariable(TEXT("OK_STUDIO_LIGHTING_AUDIT")) == TEXT("1"))
+                    UE_LOG(LogTemp, Display, TEXT("OK map probe material diffuse=%.3f metal_map=%d metallic=%s reflection=%d native_reflection=%d"),
+                        Shadow->LightmapDiffuse, bMetalMap ? 1 : 0, *Metallic, Shadow->ReflectionTex != nullptr, Shadow->bNativeReflection ? 1 : 0);
+                // probe: the probe's diffuse light alone; pnormal: the pixel normal it is read with (Unity axes, *0.5+0.5).
+                if (LightmapDiag == TEXT("probe")) Code += TEXT("return ProbeDiffuse;\n");
+                if (LightmapDiag == TEXT("pnormal"))
+                {
+                    FCustomInput DiagNormal; DiagNormal.InputName = TEXT("DiagNormal");
+                    UMaterialExpression* PixelNormal = NewObject<UMaterialExpressionPixelNormalWS>(Mat);
+                    PixelNormal->Material = Mat; Mat->GetExpressionCollection().AddExpression(PixelNormal);
+                    DiagNormal.Input.Expression = PixelNormal; Decode->Inputs.Add(DiagNormal);
+                    Code += TEXT("return normalize(float3(-DiagNormal.x, DiagNormal.z, DiagNormal.y)) * 0.5 + 0.5;\n");
+                }
+                // vnormal: the vertex normal; tnormal: the material's Normal pin (tangent space, *0.5+0.5).
+                // sha: the probe's L0+L1 from the vertex normal and the material's own unity_SHA*; l2: its L2 term
+                // (magenta where not finite, else 0.5 + 4 x the value).
+                if (LightmapDiag == TEXT("sha") || LightmapDiag == TEXT("l2"))
+                {
+                    auto AddDiag = [&](const TCHAR* Name, UMaterialExpression* E) { E->Material = Mat; Mat->GetExpressionCollection().AddExpression(E); FCustomInput& In = Decode->Inputs.AddDefaulted_GetRef(); In.InputName = Name; In.Input.Expression = E; };
+                    if (LightmapDiag == TEXT("sha"))
+                    {
+                        AddDiag(TEXT("DiagVN"), NewObject<UMaterialExpressionVertexNormalWS>(Mat));
+                        for (const TCHAR* Sh : { TEXT("unity_SHAr"), TEXT("unity_SHAg"), TEXT("unity_SHAb") })
+                        {
+                            auto* RGB = NewObject<UMaterialExpressionVectorParameter>(Mat); RGB->ParameterName = Sh; RGB->Material = Mat; Mat->GetExpressionCollection().AddExpression(RGB);
+                            auto* A = NewObject<UMaterialExpressionScalarParameter>(Mat); A->ParameterName = FName(FString(Sh) + TEXT("__A")); A->Material = Mat; Mat->GetExpressionCollection().AddExpression(A);
+                            auto* V = NewObject<UMaterialExpressionAppendVector>(Mat); V->A.Expression = RGB; V->B.Expression = A;
+                            AddDiag(*(FString(TEXT("Diag")) + Sh), V);
+                        }
+                        Code += TEXT("float4 dn = float4(normalize(float3(-DiagVN.x, DiagVN.z, DiagVN.y)), 1);\nreturn max(float3(dot(Diagunity_SHAr, dn), dot(Diagunity_SHAg, dn), dot(Diagunity_SHAb, dn)), 0);\n");
+                    }
+                    else
+                    {
+                        FKKRuntimeMaterialScene EmptyScene;
+                        FCustomInput& In = Decode->Inputs.AddDefaulted_GetRef(); In.InputName = TEXT("DiagL2"); In.Input.Expression = OKMakeRuntimeVertexAmbient(Mat, EmptyScene);
+                        Code += TEXT("return !(dot(DiagL2, DiagL2) >= 0) ? float3(1, 0, 1) : DiagL2 * 4 + 0.5;\n");
+                    }
+                }
+                if (LightmapDiag == TEXT("vtangent"))
+                {
+                    FCustomInput DiagTangent; DiagTangent.InputName = TEXT("DiagTangent");
+                    UMaterialExpression* VertexTangent = NewObject<UMaterialExpressionVertexTangentWS>(Mat);
+                    VertexTangent->Material = Mat; Mat->GetExpressionCollection().AddExpression(VertexTangent);
+                    DiagTangent.Input.Expression = VertexTangent; Decode->Inputs.Add(DiagTangent);
+                    Code += TEXT("return any(isnan(DiagTangent)) ? float3(1, 0, 1) : (length(DiagTangent) < 1e-4 ? float3(1, 1, 0) : normalize(float3(-DiagTangent.x, DiagTangent.z, DiagTangent.y)) * 0.5 + 0.5);\n");
+                }
+                if (LightmapDiag == TEXT("vnormal") || LightmapDiag == TEXT("tnormal"))
+                {
+                    FCustomInput DiagNormal; DiagNormal.InputName = TEXT("DiagNormal");
+                    if (LightmapDiag == TEXT("vnormal"))
+                    {
+                        UMaterialExpression* VertexNormal = NewObject<UMaterialExpressionVertexNormalWS>(Mat);
+                        VertexNormal->Material = Mat; Mat->GetExpressionCollection().AddExpression(VertexNormal);
+                        DiagNormal.Input.Expression = VertexNormal;
+                        Code += TEXT("return normalize(float3(-DiagNormal.x, DiagNormal.z, DiagNormal.y)) * 0.5 + 0.5;\n");
+                    }
+                    else
+                    {
+                        if (!LmEd->Normal.Expression) { Code += TEXT("return float3(1, 0, 1);\n"); DiagNormal.Input.Expression = nullptr; }
+                        else { DiagNormal.Input = LmEd->Normal; Code += TEXT("return DiagNormal * 0.5 + 0.5;\n"); }
+                    }
+                    Decode->Inputs.Add(DiagNormal);
+                }
             }
 			if (Shadow->ReflectionTex || Shadow->bNativeReflection)
 			{
@@ -2923,6 +3003,7 @@ total += surfaceReduction * env * Intensity * lerp(specColor, grazing.xxx, pow(1
 				if (LightmapDiag != TEXT("whitenoenv")) Code+=ReflectionCode;
 				if (LightmapDiag == TEXT("env")) Code += TEXT("total = env * Intensity;\n");
 			}
+			// whitetotal: the white-albedo sum alone, without Unreal's own lighting on top.
 			Decode->Code = Code + (bStandardLinear ? TEXT("return max(total, 0.0);") : TEXT("return pow(max(total, 0.0), 2.2);"));
 			Mat->GetExpressionCollection().AddExpression(Decode);
 			if (LmEd->EmissiveColor.Expression)
@@ -2938,7 +3019,7 @@ total += surfaceReduction * env * Intensity * lerp(specColor, grazing.xxx, pow(1
 			}
 			else LmEd->EmissiveColor.Expression = Decode;
 			// The uv diagnostic shows only the coordinate: no lit base colour on top of it.
-			if (LightmapDiag == TEXT("uv") || LightmapDiag.StartsWith(TEXT("lm")) || LightmapDiag.StartsWith(TEXT("dir")))
+			if (LightmapDiag == TEXT("uv") || LightmapDiag.StartsWith(TEXT("lm")) || LightmapDiag.StartsWith(TEXT("dir")) || LightmapDiag == TEXT("probe") || LightmapDiag == TEXT("whitetotal") || LightmapDiag.EndsWith(TEXT("normal")) || LightmapDiag == TEXT("vtangent") || LightmapDiag == TEXT("sha") || LightmapDiag == TEXT("l2"))
 			{
 				// No Unreal lighting on top of the coded colour: no base colour and no specular.
 				LmEd->BaseColor.Expression = nullptr; LmEd->Metallic.Expression = nullptr; LmEd->EmissiveColor.Expression = Decode;

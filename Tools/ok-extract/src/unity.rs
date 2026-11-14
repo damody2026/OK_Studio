@@ -1226,6 +1226,11 @@ pub struct PrefabSunInfo { pub kind: i32, pub visible: Vec<i32>, pub angle: [f32
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct PrefabLightMode { pub node: i32, pub lightmapping: i32, pub culling_mask: u32, pub shadows: i32, pub active: bool }
 
+/// A prefab Light's cookie (`prefab_light_cookie_maps`): the texture as PNG, Light.cookieSize (a directional light's
+/// tile, metres) and whether the texture clamps (m_WrapU 1) instead of repeating.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct PrefabLightCookie { pub node: i32, pub size: f32, pub clamp: bool, pub png: Vec<u8> }
+
 /// A Studio map's SunLightInfo: the sun Light's node, type, culling mask and baking mode (m_Lightmapping 4 realtime),
 /// and the times of day it has (SunLightInfo.Info.Type 0 morning, 1 day, 2 evening, 3 night).
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -2220,6 +2225,30 @@ impl ParsedBundle {
                         p.get("m_Cookie").and_then(uv_pptr).filter(|id| *id != 0).map(|_| node as i32)
                     }).collect()
                 });
+            }
+            Vec::new()
+        })
+    }
+    /// The cookies of a prefab's Lights (`prefab_light_cookies` gives which): texture, size and wrap.
+    pub fn prefab_light_cookie_maps(&self, prefab: &str) -> Vec<PrefabLightCookie> {
+        self.memo_prefab("prefab_light_cookie_maps", prefab, prefab, || {
+            for (gi, graph) in self.transform_graphs().iter().enumerate() {
+                let (h, go_node) = crate::pose::prefab_hierarchy_in(graph, prefab);
+                if h.nodes.is_empty() { continue; }
+                let found: Vec<(i32, f32, String, bool)> = self.with_serialized(|sers| {
+                    let Some(ser) = sers.get(gi) else { return Vec::new(); };
+                    ser.objects_of_type(108).into_iter().filter_map(|info| {
+                        let obj = ser.scene_object(info).ok()?;
+                        let p = obj.class.properties();
+                        let node = p.get("m_GameObject").and_then(uv_pptr).and_then(|go| go_node.get(&go)).copied()?;
+                        let id = p.get("m_Cookie").and_then(uv_pptr).filter(|id| *id != 0)?;
+                        let size = p.get("m_CookieSize").map(uv_f32).unwrap_or(10.);
+                        let texture = sers.iter().find_map(|s| s.objects_of_type(28).into_iter().find(|i| i.path_id == id).and_then(|i| s.scene_object(i).ok()))?;
+                        let clamp = texture.class.properties().get("m_TextureSettings").and_then(|t| uv_obj(t, "m_WrapU")).map(uv_i32) == Some(1);
+                        Some((node as i32, size, texture.name()?, clamp))
+                    }).collect()
+                });
+                return found.into_iter().filter_map(|(node, size, name, clamp)| Some(PrefabLightCookie { node, size, clamp, png: self.decode_tex(&name)? })).collect();
             }
             Vec::new()
         })

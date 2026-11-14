@@ -1593,6 +1593,21 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
     - 材質的 `unity_SHA*` 正常：水平 (0.26, 0.39, 0.48)、朝上 (0.17, 0.48, 0.79)。
     - `OK_LIGHTMAP_DIAG=white` 與 `whitenoenv`（反照率當白、不加環境反射）下，這面牆只有線性 (0.017, 0.05, 0.11)，約是朝上 SH 的一成；同畫面的地板陰影、欄杆、水桶的環境光都正常。被太陽照到的側面正常（白色模式下仍顯示紅色紋理，因為那部分走 UE 的光照）。
     - 所以是這個零件的環境光項被某個約 0.1 的乘數壓掉，或法線讀錯。下一步：對 Part_148 用 `OK_LIGHTMAP_DIAG` 加一個輸出 `ProbeDiffuse` 與 `PixelNormalWS` 的模式，分開看是法線還是乘數。
+    - 2026-11-14 進度（F 組）：
+      - 貨櫃網格的切線全是 0（`vtangent` 模式是黃色）：
+        - 探針環境光 `ProbeDiffuse` 和法線貼圖的 TBN 都因此讀成 NaN。
+        - 改成切線為 0 時用頂點法線（Unity 的 TBN 在切線為 0 時也只剩頂點法線）。
+        - `probe` 模式下牆面從接近 0 變成 (96, 140, 178)。
+      - 牆面最後的顏色仍是 (12, 0, 0)：
+        - 原生 tsv 顯示這面牆用的材質是 `m_ks_m03_con00_00`，`_Metallic` 0.83，漫反射只剩約 0.16。
+        - `whitetotal` 模式量到的漫反射比例也約是 0.2。
+        - 紅色要靠反射，而 `studio/map_reflections.json` 的地圖 53 是 `texture: null`，OK 綁的是全黑 cube。
+      - 地圖燈（含商店 cookie 燈）都和這面牆無關：`ok.Studio.MapLampsOff -1` 全關也一樣。
+      - 還缺原作地圖 53 的 `reflection_default`（Tour 的 tsv 沒錄這項），要用原作遊戲量；F 組沒有原作遊戲，要先問使用者。
+      - 順便完成：
+        - 地圖的 cookie 方向燈改用 light function 建出（Unity 規則：燈的本地 xy / cookie 大小 + 0.5，讀 alpha；只在編輯器建置，Game 目標照舊略過）。
+        - 地圖 53、50 sun0/sun1 的亮度和修改前一致，沒有變亮。
+      - 對照圖：`Saved/Tests/MapShadow1114U272e/`。
   - **U273 地圖 54 遮陽傘顏色**：原作橘色，OK 藍色（同一個物件的另一個顏色），海面也有雜點。
   - **U274 KK 時代地圖讀原作場景的時段**：原作 Studio 對學校地圖設 sunType 1 顯示「夕」，OK 依 U138 把 1 當「昼」。讀原作場景檔（`sunLightType`）時兩邊會差一格，要查原作 UI 怎麼對應再決定。
 

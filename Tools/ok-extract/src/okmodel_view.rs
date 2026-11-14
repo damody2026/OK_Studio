@@ -452,14 +452,21 @@ impl ModelView {
         let sun = scene_times(self.parsed.prefab_sun_light(prefab));
         let modes = self.parsed.prefab_light_modes(prefab);
         let cookies = self.parsed.prefab_light_cookies(prefab);
+        let maps = self.parsed.prefab_light_cookie_maps(prefab);
         h.lights.iter().filter(|l| l.enabled && l.node != sun.light_node).filter_map(|l| {
             let mode = modes.iter().find(|m| m.node == l.node)?;
             if !mode.active || mode.lightmapping == 2 || l.intensity <= 0. { return None; }
             let (pos, rot, _) = h.node_world(l.node as usize)?;
             Some(serde_json::json!({"node": l.node, "name": h.nodes[l.node as usize].name, "kind": l.kind, "pos": pos, "rot": rot,
                 "color": l.color, "intensity": l.intensity, "range": l.range, "spot_angle": l.spot_angle,
-                "culling_mask": mode.culling_mask, "shadows": mode.shadows, "lightmapping": mode.lightmapping, "cookie": cookies.contains(&l.node), "times": sun_mask(&sun, &h, l.node)}))
+                "culling_mask": mode.culling_mask, "shadows": mode.shadows, "lightmapping": mode.lightmapping, "cookie": cookies.contains(&l.node), "times": sun_mask(&sun, &h, l.node),
+                "cookie_map": maps.iter().any(|c| c.node == l.node), "cookie_size": maps.iter().find(|c| c.node == l.node).map(|c| c.size),
+                "cookie_clamp": maps.iter().any(|c| c.node == l.node && c.clamp)}))
         }).collect()
+    }
+    /// A map lamp's cookie texture (PNG), when `map_lights` gives it a `cookie_map`.
+    pub fn map_light_cookie(&self, prefab: &str, node: i32) -> Option<Vec<u8>> {
+        self.parsed.prefab_light_cookie_maps(prefab).into_iter().find(|c| c.node == node).map(|c| c.png)
     }
     pub fn fk_bones(&self, prefab: &str) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();

@@ -840,6 +840,12 @@ bool FOkModel::TexturePng(const FString& Library, const FString& ModelId, const 
 	return OkModelBytes([&](uint8* Out, int32 Cap) { return ok_okmodel_texture_png(L.Get(), I.Get(), T.Get(), Out, Cap); }, OutPng);
 }
 
+bool FOkSession::OkModelMapLightCookie(const FString& Library, const FString& ModelId, const FString& Prefab, int32 Node, TArray<uint8>& OutPng)
+{
+	const FTCHARToUTF8 L(*Library), I(*ModelId), P(*Prefab);
+	return OkModelBytes([&](uint8* Out, int32 Cap) { return ok_okmodel_map_light_cookie(L.Get(), I.Get(), P.Get(), Node, Out, Cap); }, OutPng);
+}
+
 namespace { std::atomic<int32> GBackgroundCloses{0}; thread_local const FOkSessionHandle* GSolvingHandle = nullptr; }
 namespace { thread_local int32 GSharedSolve = 0; }
 FOkSharedSolveScope::FOkSharedSolveScope() { ++GSharedSolve; }

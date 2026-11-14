@@ -4443,3 +4443,30 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - 修正：
   - 新增 `UOKHScenePanel::HoldAlignment`：換衣服 commit 前把對位偏移從她所有元件拿掉，commit 後再整批加回去，新元件也拿到同樣的偏移。
   - 懷孕肚子重建模型（`RefreshEditorGeometry`／`LoadSession`）也用同一個方法處理。
+## 2026-11-14 U272：把地圖 53 貨櫃背光面變黑歸給商店的 cookie 燈，還沿用舊截圖、讀了 D: 的遊戲（F 組）
+
+- 錯誤：
+  - 我以為貨櫃背光面（原作 (141, 9, 17)，OK (12, 0, 0)）是因為商店的 cookie 方向燈沒建，就把 cookie 做成 light function。
+  - 判斷時拿的是之前輪次的 OK 截圖，沒有在新程式上重拍。
+  - cookie 資料當初是從 D: 的遊戲記錄的，但 F 組只能用 F:。
+- 查證：
+  - 新程式重拍後牆面還是 (12, 0, 0)；用 `ok.Studio.MapLampsOff -1` 關掉所有地圖燈也一樣，所以這面牆和這些燈無關。
+  - `ShowFlag.LightFunctions 0` 不能拿來做這個測試：燈的 `DisabledBrightness` 是 0，關掉 light function 時燈會整個變黑。
+- 真正原因（還沒修）：
+  - 貨櫃材質 `m_ks_m03_con00_00` 的 `_Metallic` 是 0.83，漫反射只剩約 0.16，紅色要靠反射。
+  - `studio/map_reflections.json` 裡地圖 53 是 `texture: null`，OK 綁的是全黑 cube。
+  - 原作的反射應該是天空盒產生的，但 F 這邊沒有原作地圖 53 的 `reflection_default` 紀錄。
+- 做法：
+  - 判斷前一律在當前程式上重拍，存到新的資料夾。
+  - 要原作資料時先問使用者，不讀 D:。
+## 2026-11-14 cookie light function 編譯失敗，地圖整片被照亮（F 組）
+
+- 錯誤：
+  - 地圖 53 加了 cookie 方向燈之後，碼頭地面比原作亮很多（y0 下半部 (68, 125, 140)，原作 (26, 68, 112)）。
+  - log 有 `Failed to compile Material ... Sampler type is Linear Color, should be Color for DefaultTexture`。
+- 原因：
+  - `TextureSampleParameter2D` 設成 LinearColor，但參數的預設貼圖是引擎的 sRGB `DefaultTexture`，材質編譯失敗。
+  - UE 因此改用預設 light function，等於沒有 cookie。
+- 修正：
+  - 參數預設貼圖改成一張 1×1 的線性白貼圖（`SRGB=false`）。
+  - 修正後地圖 53、50 的 sun0/sun1 四個方向都回到原作附近，log 沒有編譯錯誤。

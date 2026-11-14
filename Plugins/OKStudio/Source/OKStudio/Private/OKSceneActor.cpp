@@ -51,6 +51,13 @@
 #include "UObject/StrongObjectPtr.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#if WITH_EDITOR
+#include "Materials/Material.h"
+#include "Materials/MaterialExpressionCustom.h"
+#include "Materials/MaterialExpressionLightVector.h"
+#include "Materials/MaterialExpressionScalarParameter.h"
+#include "Materials/MaterialExpressionTextureSampleParameter2D.h"
+#endif
 
 AOKSceneActor::AOKSceneActor()
 {
@@ -1661,6 +1668,57 @@ void AOKSceneActor::ApplyMapTime(const FTransform& MapPlace)
 // A Studio map's realtime lamps (point, spot and extra directional lights the map scene keeps unbaked): Unreal lights
 // on the map's lighting channel, at their node of the map prefab. Unity's point / spot attenuation (its falloff
 // texture, 1 / (1 + 25 (d / range)^2), cut at the range) is approximated by Unreal's non-inverse-squared falloff.
+namespace
+{
+	// Unity's directional cookie: the lamp's local (x, y) / cookie size + 0.5 reads the cookie's alpha. A UE light
+	// function sees the light-space position swizzled to (local z, local y, local x) over LightFunctionScale (1 here);
+	// this lamp's local y and z are Unity's x and y (AddMapLights' rotation), in centimetres.
+	UMaterialInterface* OKMapCookieLightFunction()
+	{
+#if WITH_EDITOR
+		static TStrongObjectPtr<UMaterial> Cached;
+		if (Cached) return Cached.Get();
+		UMaterial* Mat = NewObject<UMaterial>(GetTransientPackage(), NAME_None, RF_Transient);
+		UMaterialEditorOnlyData* Ed = Mat ? Mat->GetEditorOnlyData() : nullptr;
+		if (!Ed) return nullptr;
+		Mat->MaterialDomain = MD_LightFunction;
+		Mat->SetShadingModel(MSM_Unlit);
+		auto Register = [Mat](UMaterialExpression* E) { E->Material = Mat; Mat->GetExpressionCollection().AddExpression(E); };
+		auto* Light = NewObject<UMaterialExpressionLightVector>(Mat); Register(Light);
+		auto* InvSize = NewObject<UMaterialExpressionScalarParameter>(Mat); InvSize->ParameterName = TEXT("InvSize"); InvSize->DefaultValue = 0.f; Register(InvSize);
+		auto* Uv = NewObject<UMaterialExpressionCustom>(Mat); Uv->OutputType = CMOT_Float2; Uv->Description = TEXT("Unity directional cookie UV");
+		Uv->Code = TEXT("return float2(L.y*S+.5,.5-L.x*S);");
+		{ FCustomInput& I = Uv->Inputs.AddDefaulted_GetRef(); I.InputName = TEXT("L"); I.Input.Expression = Light; }
+		{ FCustomInput& I = Uv->Inputs.AddDefaulted_GetRef(); I.InputName = TEXT("S"); I.Input.Expression = InvSize; }
+		Register(Uv);
+		auto* Cookie = NewObject<UMaterialExpressionTextureSampleParameter2D>(Mat); Cookie->ParameterName = TEXT("Cookie");
+		Cookie->SamplerType = SAMPLERTYPE_LinearColor; Cookie->Coordinates.Expression = Uv; Register(Cookie);
+		// The parameter's default must be a linear texture too: with the engine's sRGB DefaultTexture the material fails to
+		// compile ("should be Color") and UE lights with the default light function, the whole map lit.
+		static TStrongObjectPtr<UTexture2D> LinearWhite;
+		if (!LinearWhite)
+		{
+			UTexture2D* White = UTexture2D::CreateTransient(1, 1, PF_B8G8R8A8);
+			if (!White) return nullptr;
+			White->SRGB = false;
+			uint8* Texel = static_cast<uint8*>(White->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE));
+			FMemory::Memset(Texel, 0xFF, 4);
+			White->GetPlatformData()->Mips[0].BulkData.Unlock();
+			White->UpdateResource();
+			LinearWhite.Reset(White);
+		}
+		Cookie->Texture = LinearWhite.Get();
+		Ed->EmissiveColor.Expression = Cookie; Ed->EmissiveColor.OutputIndex = 4; // alpha
+		Mat->PreEditChange(nullptr);
+		Mat->PostEditChange();
+		Cached.Reset(Mat);
+		return Mat;
+#else
+		return nullptr;
+#endif
+	}
+}
+
 void AOKSceneActor::AddMapLights(AKKPreviewActor* Map, const FString& Model, const FString& Root)
 {
 	const FString Json = FOkSession::OkModelMapLights(LibraryDirectory(), Model, Root);
@@ -1690,9 +1748,17 @@ void AOKSceneActor::AddMapLights(AKKPreviewActor* Map, const FString& Model, con
 		// night's low light gave its sea too much blue, map 50's high one too little foam.
 		const float Height = FMath::Max(2.f * (R[3] * R[0] - R[1] * R[2]), 0.f) / .6f;
 		if (L->GetStringField(TEXT("name")).Contains(TEXT("_water"))) MapWaterLights.Emplace(Irradiance * Height, uint32(L->GetNumberField(TEXT("times"))));
-		// A directional light's cookie lights one tile of the map; there is no cookie here, and without it the whole map
-		// got the light (map 50's night ground, far over native's).
-		if (Kind == 1 && bCookie) continue;
+		// A directional light's cookie lights one tile of the map: without its texture the whole map got the light (map 50's
+		// night ground, far over native's), so a cookie lamp is made only with it, as a light function (U272: map 53's shop).
+		bool bCookieMap = false;
+		L->TryGetBoolField(TEXT("cookie_map"), bCookieMap);
+		TArray<uint8> CookiePng;
+		UTexture2D* CookieTexture = nullptr;
+		if (Kind == 1 && bCookie && bCookieMap && FOkSession::OkModelMapLightCookie(LibraryDirectory(), Model, Root, L->GetIntegerField(TEXT("node")), CookiePng))
+			CookieTexture = FImageUtils::ImportBufferAsTexture2D(CookiePng);
+		const double CookieSize = L->HasTypedField<EJson::Number>(TEXT("cookie_size")) ? L->GetNumberField(TEXT("cookie_size")) : 0.;
+		UMaterialInterface* CookieFunction = CookieTexture && CookieSize > 0. ? OKMapCookieLightFunction() : nullptr;
+		if (Kind == 1 && bCookie && !CookieFunction) continue;
 		const float Range = float(L->GetNumberField(TEXT("range"))) * 100.f;
 		ULightComponent* Light = nullptr;
 		if (Kind == 1) { UDirectionalLightComponent* Sun = NewObject<UDirectionalLightComponent>(Map); Sun->ForwardShadingPriority = DirectionalPriority++; Light = Sun; }
@@ -1725,6 +1791,22 @@ void AOKSceneActor::AddMapLights(AKKPreviewActor* Map, const FString& Model, con
 		const uint32 Mask = uint32(L->GetNumberField(TEXT("culling_mask")));
 		Light->LightingChannels.bChannel0 = (Mask & (1u << 10)) != 0;
 		Light->LightingChannels.bChannel2 = (Mask & (1u << 11)) != 0;
+		if (CookieFunction)
+		{
+			bool bClamp = false;
+			L->TryGetBoolField(TEXT("cookie_clamp"), bClamp);
+			CookieTexture->AddressX = CookieTexture->AddressY = bClamp ? TA_Clamp : TA_Wrap;
+			CookieTexture->SRGB = false;
+			CookieTexture->UpdateResource();
+			UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(CookieFunction, Light);
+			Mid->SetTextureParameterValue(TEXT("Cookie"), CookieTexture);
+			Mid->SetScalarParameterValue(TEXT("InvSize"), float(1. / (CookieSize * 100.)));
+			Light->LightFunctionMaterial = Mid;
+			Light->LightFunctionScale = FVector::OneVector;
+			// Unity's cookie has no fade: it holds at any distance, and nothing is lit where it is off.
+			Light->LightFunctionFadeDistance = 1e9f;
+			Light->DisabledBrightness = 0.f;
+		}
 		Light->RegisterComponent();
 		MapLights.Emplace(Light, uint32(L->GetNumberField(TEXT("times"))));
 		UE_LOG(LogTemp, Display, TEXT("OK studio: map lamp %s kind=%d intensity=%.2f range=%.1f mask=%u times=%u"), *L->GetStringField(TEXT("name")), Kind,

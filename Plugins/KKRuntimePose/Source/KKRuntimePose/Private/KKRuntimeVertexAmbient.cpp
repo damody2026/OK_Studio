@@ -4,6 +4,7 @@
 #include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialExpressionVertexInterpolator.h"
 #include "Materials/MaterialExpressionVertexNormalWS.h"
+#include "Materials/MaterialExpressionVertexTangentWS.h"
 #include "Materials/MaterialExpressionPixelNormalWS.h"
 #include "Materials/MaterialExpressionVectorParameter.h"
 #include "Materials/MaterialExpressionScalarParameter.h"
@@ -67,6 +68,8 @@ UMaterialExpression* OKMakeRuntimeProbeAmbient(UMaterial* Material)
     auto Add=[&](FName Name,UMaterialExpression* E){Register(E);auto& I=Eval->Inputs.AddDefaulted_GetRef();I.InputName=Name;I.Input.Expression=E;};
     {auto& I=Eval->Inputs.AddDefaulted_GetRef();I.InputName=TEXT("L2");I.Input.Expression=OKMakeRuntimeVertexAmbient(Material,Empty);}
     Add(TEXT("Normal"),NewObject<UMaterialExpressionPixelNormalWS>(Material));
+    Add(TEXT("VNormal"),NewObject<UMaterialExpressionVertexNormalWS>(Material));
+    Add(TEXT("VTangent"),NewObject<UMaterialExpressionVertexTangentWS>(Material));
     const TCHAR* Names[]={TEXT("unity_SHAr"),TEXT("unity_SHAg"),TEXT("unity_SHAb")};
     const TCHAR* Inputs[]={TEXT("SHAr"),TEXT("SHAg"),TEXT("SHAb")};
     for(int32 I=0;I<3;++I){
@@ -74,7 +77,11 @@ UMaterialExpression* OKMakeRuntimeProbeAmbient(UMaterial* Material)
         auto* A=NewObject<UMaterialExpressionScalarParameter>(Material);A->ParameterName=FName(FString(Names[I])+TEXT("__A"));A->DefaultValue=0;Register(A);
         auto* V=NewObject<UMaterialExpressionAppendVector>(Material);V->A.Expression=RGB;V->B.Expression=A;Add(Inputs[I],V);
     }
-    Eval->Code=TEXT("float4 n=float4(normalize(float3(-Normal.x,Normal.z,Normal.y)),1);return max(L2+float3(dot(SHAr,n),dot(SHAg,n),dot(SHAb,n)),0);");
+    // A mesh whose source tangents are zero (map 53's container) has no tangent basis in UE: the normal-mapped pixel normal
+    // comes out NaN and the ambient read 0, its shaded walls black (U272). Unity's TBN with a zero tangent leaves the
+    // vertex normal, so that is the one used then. The test is on the vertex tangent, not on the NaN normal: the shader
+    // compiler's fast math drops isnan and even a test of the NaN's bits.
+    Eval->Code=TEXT("float3 m=dot(VTangent,VTangent)<1e-8?VNormal:Normal;float4 n=float4(normalize(float3(-m.x,m.z,m.y)),1);return max(L2+float3(dot(SHAr,n),dot(SHAg,n),dot(SHAb,n)),0);");
     Register(Eval);return Eval;
 #else
     return nullptr;

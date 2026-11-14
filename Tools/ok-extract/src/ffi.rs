@@ -3120,6 +3120,15 @@ pub unsafe extern "C" fn ok_okmodel_map_lights(lib: *const c_char, id: *const c_
     let lights = crate::run_no_panic(|| crate::okmodel_view::with_library(std::path::Path::new(&root), || okmodel_view(lib, id).map(|v| v.map_lights(&prefab)))).unwrap_or_default();
     copy_text(&serde_json::to_string(&lights).unwrap(), out, cap)
 }
+/// PNG of a map lamp's cookie (okmodel_view::map_light_cookie). Returns the length; -1 when the lamp has none.
+#[no_mangle]
+pub unsafe extern "C" fn ok_okmodel_map_light_cookie(lib: *const c_char, id: *const c_char, prefab: *const c_char, node: i32, out: *mut u8, cap: i32) -> i32 {
+    let (prefab, root) = (cstr_opt(prefab).unwrap_or_default(), cstr_opt(lib).unwrap_or_default());
+    match crate::run_no_panic(|| crate::okmodel_view::with_library(std::path::Path::new(&root), || okmodel_view(lib, id)?.map_light_cookie(&prefab, node).ok_or_else(|| "no cookie".to_string()))) {
+        Ok(png) => { if !out.is_null() && cap as usize >= png.len() { ptr::copy_nonoverlapping(png.as_ptr(), out, png.len()); } png.len() as i32 }
+        Err(_) => -1,
+    }
+}
 /// Current edits (JSON) of a model.
 #[no_mangle]
 pub unsafe extern "C" fn ok_okmodel_edits_get(lib: *const c_char, id: *const c_char, out: *mut u8, cap: i32) -> i32 {
