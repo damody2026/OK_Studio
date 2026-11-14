@@ -473,6 +473,11 @@ local PASSAGES = {
   { id = 'infirmary_north', tie = { false, false }, min_ties = 0, pts = { { 63840, 53399 }, { 63980, 53480 }, { 63980, 54200 }, { 63980, 55000 }, { 63980, 55600 }, { 64000, 56400 }, { 64000, 56900 }, { 64100, 57500 } } },
   { id = 'restroom_north_in', tie = { true, false }, pts = { { 93200, 44100 }, { 93200, 44400 }, { 93200, 44700 }, { 93200, 44800 }, { 93900, 44800 }, { 94600, 44800 }, { 94600, 44550 } } },
 }
+-- OK_EXTRA_PASSAGES=<json list of {id, pts}>: passages a batch run has just cut (Tools/street_city_passage_batch.lua picks
+-- the line in each shop and writes them); once the run is checked they are copied into the list above.
+if os.getenv('OK_EXTRA_PASSAGES') then
+  for _, p in ipairs(json.decode(read(os.getenv('OK_EXTRA_PASSAGES')))) do PASSAGES[#PASSAGES + 1] = p end
+end
 local PASSAGE_TIE_CM, PASSAGE_TIES = 800, 3
 for _, pass in ipairs(PASSAGES) do
   local ids = {}
