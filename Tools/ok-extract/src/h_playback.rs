@@ -1083,8 +1083,12 @@ pub fn h_breath_table(game:&Path)->String {
                 let (Some(personality),Some(action))=(rest.get(..2).and_then(num),name.get(name.len()-2..).and_then(num)) else {continue;};
                 for row in list {
                     let id=int(field(row,"id"));
-                    let open=field(row,"openMinMouth").and_then(|v|v.as_f64()).unwrap_or(0.0);
-                    mouths.insert((personality,action,id),serde_json::json!({"p":personality,"m":action,"id":id,"mouth":int(field(row,"mouth")),"open":open}));
+                    let float=|k:&str,d:f64|field(row,k).and_then(|v|v.as_f64()).unwrap_or(d);
+                    // The whole face FaceListCtrl.SetFace puts on with the voice: brow, eyes (and how far they open), mouth
+                    // (and its floor), tears, cheek flush, eye highlight and blinking.
+                    mouths.insert((personality,action,id),serde_json::json!({"p":personality,"m":action,"id":id,"mouth":int(field(row,"mouth")),"open":float("openMinMouth",0.0),
+                        "eye":int(field(row,"eye")),"brow":int(field(row,"eyebrow")),"eyeOpen":float("openMaxEye",1.0),"tears":int(field(row,"tears")),
+                        "cheek":float("cheek",0.0),"highlight":field(row,"highlight").map_or(true,|v|int(Some(v))!=0),"blink":field(row,"eyesblink").map_or(true,|v|int(Some(v))!=0)}));
                 }
             } else if let Some(mode)=name.strip_prefix("AnimationInfo_").filter(|r|r.len()==2).and_then(num) {
                 for row in list {

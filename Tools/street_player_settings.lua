@@ -61,11 +61,13 @@ end
 -- dir/player.json made from, or completed with, the older settings files. Files in dir that were read are renamed
 -- *.migrated (nothing reads them any more); the shared copies under %LOCALAPPDATA%\OpenKoikatsu are left for the
 -- other checkouts, except api-keys.json (only this version wrote it), which goes once its keys are in.
-function M.migrate(dir)
+-- opts.shared = false (a package): the shared copies under %LOCALAPPDATA%\OpenKoikatsu are not read, so no key comes in.
+function M.migrate(dir, opts)
   local file = path.join(dir, "player.json")
   local player = read(file) or json.object()
   local notes, used = {}, {}
-  local user = os.getenv("LOCALAPPDATA") and path.join(os.getenv("LOCALAPPDATA"), "OpenKoikatsu")
+  local shared = not (opts and opts.shared == false)
+  local user = shared and os.getenv("LOCALAPPDATA") and path.join(os.getenv("LOCALAPPDATA"), "OpenKoikatsu") or nil
 
   local vs = read(path.join(dir, "voice-settings.json"))
   if vs then

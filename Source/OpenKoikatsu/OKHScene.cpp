@@ -779,9 +779,14 @@ void UOKHScenePanel::Chain(const TArray<FString>& States){
     if(!Queue.IsEmpty())Want(Queue[0]);
 }
 
+static TAutoConsoleVariable<float> CVarHSprintSpeed(TEXT("ok.HScene.SprintSpeed"),0.f,TEXT("The sprint (OLoop) plays at least this fast (PlaybackSpeed scale; 0: his loop's speed, as the original)"));
+static TAutoConsoleVariable<float> CVarHSprintSeconds(TEXT("ok.HScene.SprintSeconds"),4.f,TEXT("The sprint (OLoop) before his finish or her climax lasts at least this long (the original: as long as her finish line)"));
 void UOKHScenePanel::ApplySpeed(){
     if(!Gallery||!Gallery->PairedPlayback)return;
-    const float Target=HIsLoop(HBase(Current()))?PlaybackSpeed():1.f;
+    // The sprint (OLoop) goes on at his speed: the original leaves flags.speed as the loop had it (HSonyu / HHoushi only
+    // stop recomputing it there); at 1 it slowed down right before he came (players 2026-11-15: no sprint).
+    const FString B=HBase(Current());
+    const float Target=HIsLoop(B)||B==TEXT("OLoop")?FMath::Max(PlaybackSpeed(),B==TEXT("OLoop")?CVarHSprintSpeed.GetValueOnGameThread():0.f):1.f;
     if(!FMath::IsNearlyEqual(Gallery->PairedPlayback->GetSpeed(),Target,.01f))Gallery->OnPairSpeed(Target/4.f);
 }
 
@@ -1607,7 +1612,7 @@ void UOKHScenePanel::TickScene(float Delta){
                 const float Elapsed=Mode==0?float(Now-SoloStarted):Playback->GetElapsed(),Length=FMath::Max(.2f,Gallery->PreviewActor?Gallery->PreviewActor->AnimDuration:1.f);
                 const bool LoopLike=Base.EndsWith(TEXT("_Loop"))||Base==TEXT("OLoop")||Base==TEXT("Oral_Idle_IN");
                 const bool HerClimax=Mode==2&&(Base.EndsWith(TEXT("F_IN_Loop"))||Base.EndsWith(TEXT("S_IN_Loop")));
-                if(HerClimax?Elapsed>=ClimaxLoopFor&&!(bTalkSpoken&&Gallery->PreviewActor&&Gallery->PreviewActor->IsSpeaking()):Elapsed>=(LoopLike?FMath::Max(Length*2.f,2.5f):Length*.98f)){Queue.RemoveAt(0);Want(Queue[0]);}
+                if(HerClimax?Elapsed>=ClimaxLoopFor&&!(bTalkSpoken&&Gallery->PreviewActor&&Gallery->PreviewActor->IsSpeaking()):Elapsed>=(LoopLike?FMath::Max(Length*2.f,Base==TEXT("OLoop")&&Mode!=0?CVarHSprintSeconds.GetValueOnGameThread()*FMath::Max(1.f,Playback->GetSpeed()):2.5f):Length*.98f)){Queue.RemoveAt(0);Want(Queue[0]);}
             }
         }else if(Wanted!=Queue[0])Want(Queue[0]);
     }
@@ -1996,7 +2001,9 @@ static int32 HEyeSetBlend(int32 Ptn){
 static TAutoConsoleVariable<FString> CVarHAhegaoFace(TEXT("ok.HScene.AhegaoFace"),TEXT("25,2,43"),TEXT("Ahegao: eye set, brow and mouth patterns (the original's Eye ID 25, Eyebrow ID 2; mouth 43 SexFaces' ahegao, the original's 24 when it lacks)"));
 // The ahegao's eye set read ahead off the game thread (its first read, from the base library's lists, was 72 ms of the
 // frame her scene came up, 2026-11-12); any thread.
-void OKHScenePrepareFace(){TArray<FString> AF;CVarHAhegaoFace.GetValueOnAnyThread().ParseIntoArray(AF,TEXT(","));HEyeSetBlend(AF.IsValidIndex(0)?FCString::Atoi(*AF[0]):25);}
+// With it every eye set her breathing's faces use (HFaceList eye ids stay under 40).
+void OKHScenePrepareFace(){TArray<FString> AF;CVarHAhegaoFace.GetValueOnAnyThread().ParseIntoArray(AF,TEXT(","));HEyeSetBlend(AF.IsValidIndex(0)?FCString::Atoi(*AF[0]):25);for(int32 I=0;I<40;++I)HEyeSetBlend(I);}
+static TAutoConsoleVariable<int32> CVarHVoiceFace(TEXT("ok.HScene.VoiceFace"),1,TEXT("1: her face follows her breathing and cries as the original's face list (FaceListCtrl.SetFace); 0: the scene's own faces by state"));
 static TAutoConsoleVariable<int32> CVarHAhegaoClimaxes(TEXT("ok.HScene.AhegaoClimaxes"),4,TEXT("Her climaxes in one scene after which she shows the ahegao (0 only when worn out for the day)"));
 static TAutoConsoleVariable<int32> CVarHAhegaoTest(TEXT("ok.HScene.AhegaoTest"),0,TEXT("1: the ahegao now (testing)"));
 // The double peace of her ahegao: both hands up by her face (Studio FBBIK hand effectors 5 left, 6 right, at her head
@@ -2652,6 +2659,11 @@ void UOKHScenePanel::UpdateFace(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HUpdateFace)
     // Sucking him (her mouth developed, Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md): her eyes roll up under lids that fall
     // the harder she sucks (her gaze up alone hardly showed, 2026-11-02); in steps, not every frame.
     else if(Mode==1&&OralSuck>.3f){Eye=8;Brow=11;Open=FMath::GridSnap(FMath::Lerp(.85f,.45f,OralSuck),.05f);}
+    // The face her breathing or cry came with (the original's FaceListCtrl.SetFace from the voice's lstFaceNormal, per
+    // personality and state; players 2026-11-15: no expressions in the one-on-one). The faces below only when her
+    // breath has none (an index exported before the whole face was, or no breath playing).
+    else if(Girl->bHBreath&&Girl->HBreathFace.Eye>=0&&CVarHVoiceFace.GetValueOnGameThread()){
+        const FKKHFace& F=Girl->HBreathFace;const int32 Blend=HEyeSetBlend(F.Eye);Eye=Blend>=0&&Blend<Girl->GetFacePatternCount(1)?Blend:Eye;Brow=F.Brow>=0&&F.Brow<Girl->GetFacePatternCount(2)?F.Brow:Brow;Open=FMath::Clamp(F.EyeOpen,0.f,1.f);}
     else if(Mode==0&&(Base==TEXT("K_Loop")||Base==TEXT("K_Touch"))){Eye=1;Brow=2;Open=0.f;}
     else if(Base.StartsWith(TEXT("Orgasm"))||(Mode!=0&&!HIsLoop(Base)&&StateWords(Base)==OKT(TEXT("ui.hscene.state_finishing")))){Eye=24;Brow=2;Open=0.f;}
     else if(StateWords(Base)==OKT(TEXT("ui.hscene.state_after"))){Eye=7;Brow=2;Open=.45f;}
@@ -2680,6 +2692,7 @@ void UOKHScenePanel::UpdateBlush(float Delta){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_
     float Target=Base.StartsWith(TEXT("Orgasm"))?1.f:FMath::Clamp(Her/100.f,0.f,1.f);
     if(Mode!=0&&StateWords(Base)==OKT(TEXT("ui.hscene.state_after")))Target=FMath::Max(Target,.7f);
     if(HerOrgasms>0)Target=FMath::Max(Target,.35f);
+    if(Girl->bHBreath&&Girl->HBreathFace.Eye>=0&&CVarHVoiceFace.GetValueOnGameThread())Target=FMath::Max(Target,FMath::Clamp(Girl->HBreathFace.Cheek,0.f,1.f)); // her breath's face (cheek)
     // Up in a few seconds, down over twenty: the flush outlasts the moment.
     Blush=BlushTest>=0.f?BlushTest:Blush<0.f?Target:Target>Blush?FMath::Min(Target,Blush+Delta*.5f):FMath::Max(Target,Blush-Delta*.05f);
     const float Shown=FMath::RoundToFloat(Blush*40.f)/40.f;if(Shown==BlushShown)return;BlushShown=Shown;

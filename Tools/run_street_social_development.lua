@@ -390,14 +390,18 @@ Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11
   -- The player's settings, keys included, are one file: Saved/StreetSocial/player.json (Tools/street_player_settings.lua,
   -- Docs/API_KEYS.md); the older voice / microphone / DeepSeek files are read into it once. Saved/ is disposable, so
   -- it is kept at %LOCALAPPDATA%\OpenKoikatsu\player.json too and put back from there when Saved/ was cleared.
-  local user_dir = os.getenv("LOCALAPPDATA") and path.join(os.getenv("LOCALAPPDATA"), "OpenKoikatsu")
+  -- A package (Tools/package_street_social.lua, PACKAGE.json at its root) never takes from or writes to that shared copy:
+  -- it ships without keys and keeps them empty until the player enters their own (a play test on the build machine put the
+  -- machine's DeepSeek key into the package's player.json, 2026-11-14).
+  local packaged = path.is_file(path.join(root, "PACKAGE.json"))
+  local user_dir = not packaged and os.getenv("LOCALAPPDATA") and path.join(os.getenv("LOCALAPPDATA"), "OpenKoikatsu") or nil
   local main_settings = path.join(root, "Saved/StreetSocial/player.json")
   path.mkdir(path.join(root, "Saved/StreetSocial"), true)
   if user_dir and not path.is_file(main_settings) and path.is_file(path.join(user_dir, "player.json")) then
     pcall(path.copy, path.join(user_dir, "player.json"), main_settings); say("Restored player.json from " .. user_dir)
   end
   do
-    local _, notes = player_settings.migrate(path.join(root, "Saved/StreetSocial"))
+    local _, notes = player_settings.migrate(path.join(root, "Saved/StreetSocial"), { shared = not packaged })
     if #notes > 0 then say("Player settings: moved " .. table.concat(notes, ", ") .. " into " .. main_settings) end
   end
   if user_dir then path.mkdir(user_dir, true); pcall(path.copy, main_settings, path.join(user_dir, "player.json")) end
@@ -414,7 +418,7 @@ Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11
     local m = json.decode(path.read_text(manifest))
     m.save_path = (path.join(sandbox, "relationships.json"):gsub("/", "\\"))
     path.write_text(manifest, json.encode(m, { ensure_ascii = false, indent = 2 }))
-    player_settings.migrate(sandbox)
+    player_settings.migrate(sandbox, { shared = not packaged })
     say("Sandbox " .. o.sandbox .. ": save and settings in " .. sandbox)
   end
   -- The settings this run uses (the sandbox's own when there is one).

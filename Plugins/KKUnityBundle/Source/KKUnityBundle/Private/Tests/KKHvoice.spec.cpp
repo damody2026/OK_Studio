@@ -44,4 +44,21 @@ bool FKKHBreathCache::RunTest(const FString&){
     TestTrue(TEXT("Changed source invalidates shared index"),KKSpeech::CollectHBreath(Root,0,2,TEXT("WLoop"),0,true,Cues,Error)&&Cues.Num()==1&&Cues[0].Name==TEXT("sample_b_long"));
     return true;
 }
+// The whole face of the face list comes with a breath (FaceListCtrl.SetFace); an index without it gives Eye -1.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FKKHBreathFace,"OpenKoikatsu.Speech.HBreathFace",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FKKHBreathFace::RunTest(const FString&){
+    const FString Root=FPaths::ProjectSavedDir()/TEXT("Tests/HBreathFace")/FGuid::NewGuid().ToString();
+    IFileManager::Get().MakeDirectory(*(Root/TEXT("audio/c00/h")),true);
+    auto Write=[&](const TCHAR* Face){const FString Json=FString::Printf(TEXT("{\"patterns\":[{\"m\":2,\"anim\":\"WLoop\",\"info\":[{\"ids\":[-1],\"cond\":[],\"voices\":[75]}]}],\"clips\":[{\"p\":0,\"m\":2,\"id\":75,\"file\":\"moan\",\"faces\":[3]}],\"mouths\":[%s]}"),Face);
+        return FFileHelper::SaveStringToFile(TEXT("fixture"),*(Root/TEXT("audio/c00/h/moan.ogg")))&&FFileHelper::SaveStringToFile(Json,*(Root/TEXT("h_breath_index.json")));};
+    if(!TestTrue(TEXT("Write index with the whole face"),Write(TEXT("{\"p\":0,\"m\":2,\"id\":3,\"mouth\":10,\"open\":0.5,\"eye\":4,\"brow\":2,\"eyeOpen\":0.9,\"tears\":1,\"cheek\":0.75,\"highlight\":false,\"blink\":true}"))))return false;
+    TArray<FKKHBreathCue> Cues;FString Error;
+    if(!TestTrue(TEXT("Breath found"),KKSpeech::CollectHBreath(Root,0,2,TEXT("WLoop"),0,true,Cues,Error)&&Cues.Num()==1&&Cues[0].Faces.Num()==1)){AddError(Error);return false;}
+    const FKKHFace& F=Cues[0].Faces[0];
+    TestEqual(TEXT("eye"),F.Eye,4);TestEqual(TEXT("brow"),F.Brow,2);TestEqual(TEXT("mouth"),F.Mouth,10);TestEqual(TEXT("tears"),F.Tears,1);
+    TestTrue(TEXT("eye open"),FMath::IsNearlyEqual(F.EyeOpen,.9f,1e-4f));TestTrue(TEXT("cheek"),FMath::IsNearlyEqual(F.Cheek,.75f,1e-4f));TestFalse(TEXT("highlight"),F.bHighlight);
+    if(!TestTrue(TEXT("Write index with only the mouth"),Write(TEXT("{\"p\":0,\"m\":2,\"id\":3,\"mouth\":10,\"open\":0.5}"))))return false;
+    TestTrue(TEXT("Old index: no face"),KKSpeech::CollectHBreath(Root,0,2,TEXT("WLoop"),0,true,Cues,Error)&&Cues.Num()==1&&Cues[0].Faces.Num()==1&&Cues[0].Faces[0].Eye==-1&&Cues[0].Mouths[0]==10);
+    return true;
+}
 #endif

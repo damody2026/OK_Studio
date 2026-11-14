@@ -4455,3 +4455,26 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - 修正：
   - 這次用 `Tools/rebuild_street_social_patch.lua --output Saved/StreetSocial/Build/Conq1114dCloth.patch` cook 自己的 patch，以 `-PatchDir` 啟動。共用 runtime.json 不動。
   - 規則：整合合併了含新 global shader 的改動後，C／E／F 每棵樹都要重新 cook 共用 patch（或改指新的 patch），並實際啟動一次 stage。否則該樹之後的 stage 一啟動就因為缺 global shader 當掉。合併 runtime.json 不會把 patch 檔帶過來。
+## 2026-11-14 打包後的試跑呼叫了雲端
+
+- 錯誤：從打包資料夾直接執行 `StreetSocial.cmd -Control -Sandbox PkgTest` 試跑，沒有加 `-NoCloud`。包裡的 `player.json` 金鑰是空的，但遊戲讀到這台機器使用者目錄的 `%LOCALAPPDATA%\OpenKoikatsu\deepseek.json`／`player.json`，Lan 用 DeepSeek 回了一句話，違反「測試時不呼叫雲端」。
+- 原因：以為包裡沒有金鑰就不會連雲端；金鑰還會從使用者目錄與環境變數讀。
+- 修正：任何試跑（含打包後的包）一律加 `-NoCloud`（需搭配 `-Sandbox`）。包本身仍不含金鑰（逐字搜本機 2 把金鑰與金鑰格式，整包 0 筆）。
+- 清理試跑留下的檔案時，又犯了一個錯：用 `Get-Content` 讀 `PACKAGE.json` 沒指定 `-Encoding UTF8`，中文檔名變成亂碼，把 7 個在清單上的檔案（`VideoMotionDemos/網球示範.*`、`base_v1/studio/bg/宇宙空間0N.png`）當成多餘的刪掉；之後用 UTF-8 重新比對，從專案補回。PowerShell 5.1 讀 UTF-8 JSON 一律加 `-Encoding UTF8`。
+
+## 2026-11-14 試跑打包後的包，金鑰被寫進包裡的 player.json
+
+- 錯誤：打包並確認沒有金鑰之後，我從包裡啟動試跑。啟動器看到包的 `Saved/StreetSocial/player.json` 金鑰空白，就從這台機器的 `%LOCALAPPDATA%\OpenKoikatsu` 共用副本補回 DeepSeek 金鑰（`street_player_settings.lua` 的設計，讓玩家清掉 Saved 後不用重填）。包裡因此有了金鑰；兩個包（含與不含 H 語音）都是。
+- 原因：把「打包時沒有金鑰」當成最終狀態，試跑後沒有重新搜。
+- 修正：兩個包的 `player.json` 用 `street_player_settings.template()` 重寫成金鑰空白，再以本機金鑰逐字搜加格式搜整包，0 筆。之後在開發機試跑包，一律在試跑後重寫 `player.json` 並重新搜金鑰（`Docs/STREET_SOCIAL_PACKAGE.md`）。
+
+## 2026-11-15 一對一沒有原作表情，射精前的衝刺變慢
+
+- 錯誤：玩家回報一對一「沒接入表情，少了衝刺階段」。
+  - 表情：原作每句喘息與叫聲都帶一組表情（`personality_breath` 的 `lstFaceNormal` → `HFaceList_cNN_00_AA`，`FaceListCtrl.SetFace` 換眉、眼、眼睛張開程度、嘴、眼淚、臉紅、高光、眨眼）。我們的索引 `h_breath_index.json` 只抽了嘴型，一對一的 `UpdateFace` 用的是手寫的幾組固定表情。
+  - 衝刺：原作在決定射精或高潮後先播 `OLoop`，速度沿用剛才的抽插速度（`flags.speed` 不歸零），一直播到她那句話講完才進結束動作。我們的 `ApplySpeed` 只讓 Loop 狀態用玩家的速度，`OLoop` 被降回 1 倍速，而且只播約 2.5 秒（播放器的 `Elapsed` 乘了速度）。結果高速抽插到最後反而慢下來，看起來沒有衝刺。
+- 原因：移植時只看了嘴型欄位，沒有對照 `FaceListCtrl.SetFace` 的整組欄位；`OLoop` 被當成一般單次狀態處理。
+- 修正：
+  - `h_breath_table` 的 `mouths` 每列加上 `eye`／`brow`／`eyeOpen`／`tears`／`cheek`／`highlight`／`blink`（舊欄位不變），`KKHvoice.cpp` 讀成 `FKKHFace`。播喘息時 `AKKPreviewActor::HBreathFace` 記下當句的表情；`UpdateFace` 在阿黑顏、厭惡、深插、口交吸吮之後，優先用這組表情（眼睛先經過 `cha_eyeset` 換成我們的眼睛圖樣），臉紅取當句的 `cheek` 與高潮度的較大者。`ok.HScene.VoiceFace 0` 可以切回原本的固定表情。眼淚、高光、眨眼還沒有接。
+  - `OLoop` 沿用 Loop 的速度（`ok.HScene.SprintSpeed` 可設下限），至少播 `ok.HScene.SprintSeconds`（4 秒，以實際秒數計）。
+  - 基礎庫的 `h/voice/h_breath_index.json` 用新的 `ok-hbreath` 重新匯出（其他表與欄位逐項比對相同）。
