@@ -15,7 +15,7 @@ mod clip;
 pub use clip::{back_exit, clip_deltas};
 mod cover;
 pub use cover::{cover_deltas, keep_cover, set_cover, CoverField};
-pub(crate) use cover::clothes_changed;
+pub(crate) use cover::{clothes_changed, cover_split, set_cover_split, gpu_garment, gpu_has_follow_map, GPU_CONSTS};
 
 /// Where the swells are along her crotch-to-upper-spine line (fractions of it): her belly only, from just over her
 /// crotch up (user 2026-11-01: the swells under it, on her upper thighs and by her entrance, moved her thighs).
@@ -505,6 +505,7 @@ fn skin_now(session: &OkSession) -> Option<Vec<SkinNow>> {
             (d < PROBE_M && d > PROBE_INNER_M).then_some((j as u32, d))
         }).collect()
     });
+    // One after another: on the pool beside the pair solve it was slower (OK_HSkinCheck 0.23 -> 0.28 ms, 2026-11-13).
     Some(probe.iter().filter_map(|&(j, rest)| {
         let j = j as usize;
         let (skin, _, _) = skin_of(part, j, &worlds, &binds, &[], &[])?;

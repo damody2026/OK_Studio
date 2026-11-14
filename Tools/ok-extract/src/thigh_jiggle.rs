@@ -42,7 +42,10 @@ pub struct ThighJiggle { body: usize, verts: usize, islands: Vec<Island>, spring
     near: std::sync::Arc<Near>, posed: Vec<[f32; 3]>, skins: Vec<Mat4>, stepped: bool, gain: f32 }
 
 /// Her body's vertices as bound: what her clothes look for under them (the island skin moves, the rest stays).
-struct Near { body: Vec<u32>, rest: Vec<[f32; 3]>, normals: Vec<[f32; 3]>, bones: Vec<[u16; 4]>, weights: Vec<[f32; 4]>, slot: std::collections::HashMap<u32, u32> }
+struct Near { body: Vec<u32>, rest: Vec<[f32; 3]>, normals: Vec<[f32; 3]>, bones: Vec<[u16; 4]>, weights: Vec<[f32; 4]>, slot: std::collections::HashMap<u32, u32>,
+    /// By near slot: the skin vertex is on an island (the only skin that moves; the rest of her skin is there for cloth to
+    /// find the skin it lies on).
+    jiggles: Vec<bool> }
 /// Cloth this far from her skin follows it some (all of it within `HUG_M`): the jiggle moved her skin and left the tights
 /// and the bodysuit over it where they were, so the back of her thighs came through them (user, 2026-11-11).
 const FOLLOW_M: f32 = 0.04;
@@ -139,7 +142,8 @@ impl ThighJiggle {
         let springs = vec![Spring::default(); islands.len()];
         // All her skin: cloth finds the skin it lies on, not merely the jiggling skin nearest it (her gloves' fingers
         // and forearms by her buttocks followed her buttocks and showed her arms, bunny suit, user 2026-11-11).
-        let mut near = Near { body: Vec::new(), rest: Vec::new(), normals: Vec::new(), bones: Vec::new(), weights: Vec::new(), slot: Default::default() };
+        let mut near = Near { body: Vec::new(), rest: Vec::new(), normals: Vec::new(), bones: Vec::new(), weights: Vec::new(), slot: Default::default(),
+            jiggles: taken.iter().map(|t| *t > 0.).collect() };
         for (j, v) in part.rest_positions.iter().enumerate() {
             near.slot.insert(j as u32, near.body.len() as u32);near.body.push(j as u32);near.rest.push(*v);near.normals.push(part.rest_normals.get(j).copied().unwrap_or_default());
             near.bones.push(part.bone_idx.get(j).copied().unwrap_or_default());near.weights.push(part.weights.get(j).copied().unwrap_or_default());
@@ -312,6 +316,7 @@ pub(crate) fn follow_own(session: usize, index: usize, part: &SessionPart, posit
     }
 }
 static DEBUG_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static CLOTH_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 /// OK_JIGGLE_DEBUG=1: her clothes' share of the jiggle in the log now and then.
 fn debug() -> bool { static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();*ON.get_or_init(|| std::env::var("OK_JIGGLE_DEBUG").is_ok_and(|v| v == "1")) }
 
@@ -338,7 +343,8 @@ pub fn cloth_moves(session: &OkSession) -> (Vec<usize>, Vec<(usize, Vec<(u32, [f
     let head = session.head_full_posed.as_ref().or(session.head_skel.as_ref());
     let clothes = session.clothes_dynamic_runtime.as_ref().map(|(_, state)| &state.skel);
     let own: Vec<usize> = session.parts.iter().enumerate().filter(|(_, p)| p.render_visible && covers(&p.role) && p.runtime_accessory.is_some()).map(|(i, _)| i).collect();
-    let reached = own.iter().any(|&i| {
+    let split = crate::belly_bulge::cover_split();
+    let reaches = |&i: &usize| {
         // Posed as its renderer draws it, the first frame only (the map is kept).
         // Only to decide: the map her skinned vertices follow is made from them (follow_own); this posing was not where the
         // renderer draws the bunny suit's tights, which then followed the wrong skin.
@@ -352,13 +358,25 @@ pub fn cloth_moves(session: &OkSession) -> (Vec<usize>, Vec<(usize, Vec<(u32, [f
                 c
             }).collect(), None)
         });
-        map.iter().any(|n| n[0].1 > 0.)
-    });
-    if debug() && DEBUG_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
-        let roles: Vec<String> = own.iter().map(|&i| format!("{i}:{}", session.parts[i].role)).collect();
-        crate::ffi::ffi_log(1, &format!("OK thigh jiggle cloth any={} reached={reached} own=[{}]", f.any, roles.join(" ")));
+        // Split: only cloth on her islands' skin (the rest of her skin never moves); otherwise any cloth lying on her skin.
+        if split { map.iter().any(|n| n.iter().any(|&(k, w)| w > 0. && f.near.jiggles.get(k as usize).copied().unwrap_or(true))) }
+        else { map.iter().any(|n| n[0].1 > 0.) }
+    };
+    // ok.HScene.ClothCoverSplit (belly_bulge cover split, off by default): only the garments whose map reaches her jiggling
+    // skin go to the CPU. The others follow only skin that never moves, so follow_own moves none of them: on the GPU route
+    // they are drawn the same. A fully dressed heroine's 25 garments were all on the CPU for her shorts and tights
+    // (2026-11-13); her map takes all her skin (her gloves by her buttocks), so lying on her skin is not reaching the jiggle.
+    let reached_parts: Vec<usize> = if split { own.iter().copied().filter(|i| reaches(i)).collect() } else { Vec::new() };
+    let reached = if split { !reached_parts.is_empty() } else { own.iter().any(reaches) };
+    if debug() && CLOTH_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 600 == 0 {
+        let roles: Vec<String> = own.iter().map(|&i| {
+            let m = MAPS.lock().unwrap().get(&(key, i | 1 << 40, session.parts[i].rest_positions.len())).cloned();
+            let mapped = m.map_or(0, |m| m.iter().filter(|n| n.iter().any(|&(k, w)| w > 0. && f.near.jiggles.get(k as usize).copied().unwrap_or(true))).count());
+            format!("{i}:{}:{mapped}/{}", session.parts[i].role, session.parts[i].rest_positions.len())
+        }).collect();
+        crate::ffi::ffi_log(1, &format!("OK thigh jiggle cloth any={} reached={reached} split={split} cpu={:?} own=[{}]", f.any, reached_parts, roles.join(" ")));
     }
-    let cpu = if reached { own } else { Vec::new() };
+    let cpu = if split { reached_parts } else if reached { own } else { Vec::new() };
     let mut out = Vec::new();
     if f.any {
         for (i, p) in session.parts.iter().enumerate() {
@@ -455,3 +473,23 @@ pub(crate) fn debug_islands(session: &OkSession) {
         eprintln!("{:10} bone {:3} verts {:4} peak {:.2} head [{:.3} {:.3} {:.3}]", SPECS[i.spec].name, i.bone, i.verts.len(), peak, i.head[0], i.head[1], i.head[2]);
     }
 }
+
+// ---- cloth_gpu (ok.ClothGpu 2): the jiggle's share of a garment worked out on the GPU (`follow_own` there).
+/// This frame's moves of her skin round the islands (by `Near` slot) when any moved.
+pub(crate) fn gpu_moves(session: usize) -> Option<Vec<[f32; 3]>> {
+    let f = follow_of(session)?;
+    f.any.then(|| f.moves.clone())
+}
+/// A garment's jiggle map (four (slot, weight) a vertex: 8 words), once `follow_own` found it; None before.
+pub(crate) fn gpu_map(session: usize, index: usize, verts: usize, out: &mut Vec<u32>) -> bool {
+    let Some(m) = MAPS.lock().unwrap().get(&(session, index, verts)).cloned() else { return false; };
+    if m.len() != verts { return false; }
+    for near in m.iter() { for (k, _) in near { out.push(*k); } for (_, w) in near { out.push(w.to_bits()); } }
+    true
+}
+/// Whether a garment's map is found (`gpu_map` without writing it out: asked every frame).
+pub(crate) fn gpu_has_map(session: usize, index: usize, verts: usize) -> bool {
+    MAPS.lock().unwrap().get(&(session, index, verts)).is_some_and(|m| m.len() == verts)
+}
+/// Whether the jiggle moves any of her skin this frame (then a garment needs its map: `gpu_map`).
+pub(crate) fn gpu_any(session: usize) -> bool { follow_of(session).is_some_and(|f| f.any) }

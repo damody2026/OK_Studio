@@ -34,7 +34,7 @@ fn street_tools() -> Value {
           json!({"full": {"type": "boolean"}, "girls": {"type": "integer", "description": "how many heroines to list (default 5)"}}), &[]),
         t("game_talk", "Say something to the heroine he is talking with (as typed or spoken), let the clock run until she has answered and stopped speaking, then pause it. Returns her lines and the notice (favor change).",
           json!({"text": {"type": "string"}, "timeout_s": {"type": "number"}}), &["text"]),
-        t("game_say", "Say something without waiting for her answer.", json!({"text": {"type": "string"}}), &["text"]),
+        t("game_say", "Say something without waiting for her answer. send=false: only heard by the microphone (his subtitle), nothing sent to her mind.", json!({"text": {"type": "string"}, "send": {"type": "boolean", "description": "default true"}}), &["text"]),
         t("game_key", "Press a key as the player: E (talk), F, Escape, Tab, N (next morning), One..Four, LeftShift, or W/A/S/D held for seconds. Keys only act while the clock runs and the cursor is off (run_clock does that).",
           json!({"key": {"type": "string"}, "seconds": {"type": "number"}, "run_clock": {"type": "boolean", "description": "default true: run the clock around the press, turn the cursor off, pause after"}}), &["key"]),
         t("game_buttons", "Labels of the buttons on screen.", json!({}), &[]),
@@ -171,7 +171,7 @@ fn run(game: &Game, name: &str, a: &Value) -> Result<Value> {
             let st = game.call("/state", None)?;
             if a["full"] == true { json_text(st) } else { text(summary(&st, a["girls"].as_u64().unwrap_or(5) as usize)) }
         }
-        "game_say" => json_text(game.call("/say", Some(&json!({"text": a["text"]})))?),
+        "game_say" => json_text(game.call("/say", Some(&json!({"text": a["text"], "send": a["send"].as_bool().unwrap_or(true)})))?),
         "game_talk" => {
             let r = game.call("/say", Some(&json!({"text": a["text"]})))?;
             if r["ok"] != true {

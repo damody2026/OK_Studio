@@ -333,6 +333,7 @@ bool FOkSession::SetClothCover(bool bOn,const TArray<uint32>& BodyIndices,const 
 	OutParts.SetNumZeroed(64);
 	const int32 N=ok_set_cover(Handle,bOn?1:0,BodyIndices.GetData(),In.GetData(),uint32(BodyIndices.Num()),OutParts.GetData(),uint32(OutParts.Num()));
 	if(N<0){OutParts.Reset();return false;}OutParts.SetNum(FMath::Min(N,OutParts.Num()));return true; }
+void FOkSession::SetClothCoverSplit(bool bOn){ok_cover_split(bOn?1:0);}
 bool FOkSession::ClothCoverDeltas(const TArray<uint32>& BodyIndices,const TArray<FVector3f>& BodyDeltas,const TArray<FVector3f>& BodyNormalDeltas,TArray<int32>& OutParts,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas) const {
 	OutParts.Reset();OutIndices.Reset();OutDeltas.Reset();if(!Handle||BodyIndices.Num()!=BodyDeltas.Num())return false;
 	TArray<float> In;In.SetNumZeroed(BodyIndices.Num()*6);
@@ -363,6 +364,32 @@ bool FOkSession::ThighJiggleCloth(TArray<int32>& OutCpuParts,TArray<int32>& OutP
 	if(N<0)return false;N=FMath::Min(N,Idx.Num());
 	for(int32 I=0;I<N;++I){if(Idx[I]==0xFFFFFFFFu){OutCpuParts.Add(int32(Part[I]));continue;}
 		OutParts.Add(int32(Part[I]));OutIndices.Add(Idx[I]);OutDeltas.Add(FVector3f(D[I*3],D[I*3+1],D[I*3+2]));}
+	return true; }
+void FOkSession::SetClothGpu(int32 Mode){ok_cloth_gpu_set(Mode);}
+int32 FOkSession::ClothGpuJob(int32 Part) const {return Handle&&Part>=0?ok_cloth_gpu_job(Handle,Part):-1;}
+// Read once at the size last seen (a field is read every frame and is bigger than any first guess: read twice otherwise).
+static bool OKClothWords(TArray<uint32>& Out,TFunctionRef<int32(uint32*,uint32)> Read,int32& SizeHint){
+	Out.SetNumUninitialized(FMath::Max(SizeHint,1<<12));int32 N=Read(Out.GetData(),uint32(Out.Num()));
+	if(N>Out.Num()){Out.SetNumUninitialized(N);N=Read(Out.GetData(),uint32(Out.Num()));}
+	if(N<=0||N>Out.Num()){Out.Reset();return false;}
+	SizeHint=FMath::Max(SizeHint,N);Out.SetNum(N,EAllowShrinking::No);return true; }
+bool FOkSession::ClothGpuField(TArray<uint32>& Out) const {
+	if(!Handle){Out.Reset();return false;}
+	static int32 SizeHint=0; // game thread
+	return OKClothWords(Out,[this](uint32* P,uint32 Max){return ok_cloth_gpu_field(Handle,P,Max);},SizeHint); }
+bool FOkSession::ClothGpuGarment(int32 Part,TArray<uint32>& Out) const {
+	if(!Handle||Part<0){Out.Reset();return false;}
+	int32 SizeHint=1<<16; // once a garment change: no need to remember
+	return OKClothWords(Out,[this,Part](uint32* P,uint32 Max){return ok_cloth_gpu_garment(Handle,Part,P,Max);},SizeHint); }
+bool FOkSession::ClothGpuMoves(int32 Part,int32 SourceCount,TArray<FVector4f>& OutPerSource,float& OutLongest) const {
+	OutPerSource.Reset();OutLongest=0.f;if(!Handle||Part<0||SourceCount<=0)return false;
+	TArray<uint32> Idx;TArray<float> D;Idx.SetNumUninitialized(8192);D.SetNumUninitialized(8192*3);
+	int32 N=ok_cloth_gpu_moves(Handle,Part,Idx.GetData(),D.GetData(),uint32(Idx.Num()));
+	if(N>Idx.Num()){Idx.SetNumUninitialized(N);D.SetNumUninitialized(N*3);N=ok_cloth_gpu_moves(Handle,Part,Idx.GetData(),D.GetData(),uint32(Idx.Num()));}
+	if(N<0)return false;N=FMath::Min(N,Idx.Num());if(N==0)return true;
+	OutPerSource.SetNumZeroed(SourceCount);
+	for(int32 I=0;I<N;++I){if(Idx[I]>=uint32(SourceCount))continue;const FVector3f V(D[I*3],D[I*3+1],D[I*3+2]);
+		OutPerSource[Idx[I]]=FVector4f(V,0.f);OutLongest=FMath::Max(OutLongest,V.Size());}
 	return true; }
 bool FOkSession::PenisClipDeltas(const FVector& At,const FVector& Normal,const FVector& Axis,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,float InsetM) const {
 	OutIndices.Reset();OutDeltas.Reset();if(!Handle)return false;

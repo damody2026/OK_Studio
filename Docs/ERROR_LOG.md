@@ -4370,3 +4370,76 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - **和三月七 1 對 1 時兩人浮在宿舍牆頂上（像飛到天上）**（2026-11-12，F 組）：1 對 1 直接放在女主當下的座標。她在宿舍樓上自己房間（`held`，z=365），街區在那個高度沒有地板，兩人就站在空中。修正：開場前從她腳下往下找地板（60 cm 內），找不到就改放在主角站的地方、面向原本她的方向。
 - **整合包第一次在遊戲裡填阿里雲金鑰：配音與 AI 對話都不會開（2026-11-13，F 組）**：沙盒測試時金鑰在啟動前就寫在 player.json，而且這台機器的啟動器會把 `%LOCALAPPDATA%` 的 DeepSeek 金鑰補回來，所以「在遊戲裡才填金鑰」這條路從沒真的走過，克拉拉的對話其實走的是 `deepseek-chat`。實際走一次有三個問題：(1) `ok-tts` 選了雲端卻沒有金鑰時，載入函式回錯誤，伺服器把它當成載入失敗直接結束，之後的 `POST /cloud` 沒人收；(2) 遊戲讀設定時看到沒金鑰就把 `cloud` 降成本機，存了金鑰後只有「原本就是 cloud」才會送 `/cloud`，降過的不會回到雲端；(3) `ok-mind` 只在開啟時讀一次金鑰，事後填的永遠看不到（`no_api_key`）。修正：`ok-tts` 用 `WaitForCloud` 標記這種情況，不結束、繼續等；遊戲記下「設定檔原本要雲端」（`CloudVoiceWanted`／`CloudAsrWanted`），第一次存金鑰時切回雲端；`ok-mind` 沒有金鑰時每次呼叫都重讀設定。測「只有阿里雲」要把沙盒的 DeepSeek 金鑰設成一個空白，並且從沒有金鑰的設定開始，在遊戲裡填。
 - **整合時只複製了 `Content/UniversityCity`，E／F cook 出來的大學城整條街是空的**（2026-11-13，協調者）：大學城是 World Partition 地圖，actor 存在 `Content/__ExternalActors__/UniversityCity`（28,629 檔）與 `Content/__ExternalObjects__/UniversityCity`（454 檔），三個資料夾都被 .gitignore 排除、只在 C；只搬地圖資料夾，cook 出來沒有任何 cell（全黑、沒地板）。修正：三個資料夾一起複製到 E、F（robocopy /MT:8），之後的 stage 要重新 cook。
+- **大學城複製到 E 後整條街是空的：一對一背景全黑、腳下沒地板，水窪與液滴映不出腿**（2026-11-13，E 組 e-120fps）：整合時只把 `Content\UniversityCity` 複製到 E，World Partition 地圖 `UniversityCityWP` 的 actor 卻存在 `Content\__ExternalActors__\UniversityCity`（28,629 檔）與 `Content\__ExternalObjects__\UniversityCity`（454 檔），這兩個資料夾被 `.gitignore` 排除、沒有一起複製。cook 只留下一行警告 `UniversityCityWP has a dependency on /Game/__ExternalActors__/... which does not exist`，就產出沒有任何 cell 的地圖：遊戲裡 `wp.Runtime.ToggleDrawRuntimeHash2D` 一個 cell 也沒有，`Private: no floor under her`，水窪的地板照片是「scene without them」。我先誤以為是 SSR 被關（實際 `r.SSR.Quality` 3、`r.ReflectionMethod` 2 都正常），又把液滴材質當成主因多試了兩輪。修正：從 C 用 robocopy 補齊兩個外部資料夾，重新 cook。教訓：畫面整片黑先看街道本身有沒有東西（WP 除錯圖、cook 的 dependency 警告），再查材質；複製 World Partition 地圖要連 `__ExternalActors__`／`__ExternalObjects__` 下同名資料夾一起帶。
+
+## 2026-11-13 兩個量測腳本用同一個 slot 名稱同時跑（E 組 e-120fps）
+
+- 現象：最壞情況量測的第一批與 HG 那批同時進行，兩邊對同一個控制埠（48620）的遊戲下指令、互相關掉對方，這輪數字全部作廢。
+- 原因：
+  - 第二批的腳本用「第一批的輸出檔有內容」當作開始條件，但 PowerShell 的 `Out-File` 一開始有輸出就建立檔案。
+  - 兩個腳本都以 `e-120fps` claim。`unreal_slot.lua` 看到 slot 已是同一個 agent 持有，就直接放行，沒有擋第二個。
+- 修正：同一個量測流程只用一個腳本依序跑，分段時在同一個腳本裡 release 後立刻 claim。不要用兩個背景腳本接力，也不要用輸出檔判斷前一批是否結束。
+
+## 2026-11-13 一對一量測時以為清空沙盒金鑰就不會連雲端，其實 17:22～20:28 打了 DeepSeek 163 次（E 組 e-120fps）
+
+- 現象：使用者說量測時不能打雲端。我把沙盒 `Saved/StreetSocial/Sandbox/E120/player.json` 的 `deepseek.api_key` 清空後就照常量測，沒有回頭檢查。c-conquest 回報後我才去看 `mind/trace.jsonl`：17:22～20:28 共有 163 筆 deepseek-chat 對話（女角的自由對話）。
+- 原因：
+  - 啟動器每次都會跑 `street_player_settings.migrate`，沙盒金鑰是空的，就會從 `%LOCALAPPDATA%\OpenKoikatsu\deepseek.json` 補回來。
+  - 我只看了自己改的設定，沒有用 `mind/trace.jsonl` 確認是否真的沒有連外。
+- 修正：
+  - 沙盒的 `deepseek.endpoint` 和 `aliyun.base_url` 改成 `http://127.0.0.1:9/no-cloud`，`deepseek.api_key` 填佔位字串。金鑰不是空的，啟動器就不會補，請求只會打到本機、連不上。驗證那輪 trace 只有一筆 ok=false，4 次嘗試都連不上本機。
+  - 之後每次量測前後都檢查 `trace.jsonl` 新增的列。
+  - 正式做法等 c-conquest 的啟動器 `-NoCloud`。
+
+## 2026-11-14 一對一講情話摸臉：手的 IK 目標超出手臂時把他整個身體上下拉 35 cm
+
+- 錯誤：
+  - 情話時他雙手去摸她的臉。目標在手臂長度邊緣時，他的腰上下跳 35 cm，雙手飛到頭上或床下。
+  - 我先猜是前傾 FK 的方向，寫了「試一個方向，肩膀變遠就反過來」的回授，結果反覆翻轉，他整個人亂揮。
+  - 前後編了 8 次左右在猜骨骼名稱和軸向，沒有先開即時探針（使用者：「你應該要多開mcp api才不用一直編譯」）。
+- 原因：
+  - FinalIK FBBIK 的 `pull_body_vertical`（預設 0.5）會讓手超出手臂長度時把身體往目標拉。
+  - `ok_session_set_studio_ik_arm_pull(0)` 只關了手臂鏈的 `pull`，沒有關這個。
+  - 一對一的對位每幀又把他的腰移回去，兩邊互相拉扯。
+- 修正：
+  - ArmPull 改成同時縮放 `pull_body_vertical/horizontal`（< 0 時還原）。
+  - 前傾固定用 +X（`ok.HScene.Fk` 實測向前），並依手臂缺的長度做比例控制。
+  - 他的 FK 只在值改變時才設定，設定前先 `SyncPair()`。
+  - 新增 `ok.HScene.Bones`／`ok.HScene.Fk` 兩個即時探針，參數全部改成 cvar，之後就在遊戲裡即時調。
+## 2026-11-14 一對一講情話摸臉：只在正常位驗證就提交，後背位和站立抱起都出錯
+
+- 錯誤：
+  - 7dd06e742 只用測試開關在正常位試過就提交了。
+  - 後背位：她背對他，卻被選去反手摸他的臉，手腕離目標 31 cm。
+  - 站立抱起：他正抱著她，卻把手放開去摸她的臉。
+- 修正：
+  - 兩人臉的前方要大致相對才觸發（`ok.HScene.SweetFacing`，內積 ≤ -0.3）。
+  - 他站著、她雙腳離地時，不選他去摸。
+  - 已在正常位、站立抱起（改由她摸他）、騎乘位、後背位（不觸發）各實測一次；也用他的台詞實際觸發過一次。
+## 2026-11-14 改了 global shader 的參數，卻用 --skip-cook 打包，遊戲一開一對一就當
+
+- 錯誤：
+  - `RuntimeDeform.usf` 和 `FOKRuntimeGpuDeform*CS` 的參數結構加了 `Displacements`。
+  - 我照平常用 `--skip-cook --skip-base` 打包 EGalCloth1，開關不管開或關都一樣當掉。
+  - 錯誤訊息：`Assertion failed: Bindings.StructureLayoutHash == ParametersMetadata->GetLayoutHash()`，`FOKRuntimeGpuDeformPackedCS's parameter structure has changed without recompilation of the shader`。
+- 原因：global shader 是 cook 時編進 base 的。跳過 cook 時，執行檔用新的參數結構，base 裡還是舊的 shader。
+- 修正：只要改到 shader 或 shader 參數結構，就跑完整的 cook，並用新的 `--base-dir`（cook 約 6 分鐘，base 約 1 分鐘）。
+- 完整 cook、換新 base 之後還是當（EGalCloth2 同一個 assert；EGalCloth3 則是 `Missing global shader FOKClothCoverCS`）：
+  - 啟動器另外以 `-pakdir` 掛載 `Launch/runtime.json` 的共用 runtime patch（`StreetDisplay39Puddle.patch`）。
+  - 那份 patch 的 `RuntimeGlobalShaderPatch-*_P.pak` 是 11-12 的 global shader，優先權比 base 高，把新 cook 的 shader 整個蓋掉了。
+  - 我起初以為是 DDC 快取了舊 layout，在 `RuntimeDeform.usf` 加了 `OK_RUNTIME_DEFORM_LAYOUT 2`。這個猜測沒有查證，真正原因是 patch（那行已移除）。
+  - 修正：
+    - 啟動器新增 `-PatchDir <資料夾>`。
+    - 改了 global shader 的 stage 要用 `Tools/rebuild_street_social_patch.lua --output <新資料夾>` 產生自己的 patch，並以 `-PatchDir` 指定；不要覆寫共用 patch，否則別人較舊的執行檔會因參數結構不符而當掉。
+## 2026-11-14 一對一：改過陰莖長度後換衣服，Lan 的頭髮比頭高
+
+- 錯誤：
+  - 插入動作播放中改了陰莖長度與粗細，再換衣服（outfit 0~4），Lan 的頭髮與頭飾整個往上、往後偏，額頭露出來；臉不動。之後再換回去也不會恢復。
+  - 我在沙盒重現了好幾次都沒出現，一開始懷疑剛性飾品的中立姿勢（`CaptureRigidFollowerNeutral`）在擺姿勢時被重抓，也逐一排除了 `ok.ClothGpu`、`ok.HScene.ClothViewBias`、`ok.HScene.LeadsOnTop` 與物理模式。
+- 原因：
+  - H 場景的對位（`UOKHScenePanel::MoveParts`）是把偏移直接加在她 actor 根下每個元件的相對位置上。
+  - 換衣服（`CommitWardrobeStage`）新建的元件（頭髮跟著私有骨架的 follower）放在根下時沒有這份偏移。
+  - 陰莖變長後對位把她放得更低，新元件少了這段下移，看起來就比頭高。預設陰莖時這個姿勢的偏移接近 0，所以沙盒用預設值重現不出來。
+- 修正：
+  - 新增 `UOKHScenePanel::HoldAlignment`：換衣服 commit 前把對位偏移從她所有元件拿掉，commit 後再整批加回去，新元件也拿到同樣的偏移。
+  - 懷孕肚子重建模型（`RefreshEditorGeometry`／`LoadSession`）也用同一個方法處理。

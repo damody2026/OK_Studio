@@ -38,6 +38,9 @@ pub(crate) fn native_parallel_work<F,R>(work:F)->R where F:FnOnce()->R+Send,R:Se
 pub(crate) fn native_workers_broadcast(f:impl Fn()+Sync) {
     if let Some(pool)=native_pool(false) { pool.broadcast(|_|f()); }
 }
+/// Each accessory part's solve and cover push last frame (microseconds), by session and part: the order its next frame's
+/// parts start in (update_dynamic_accessories_pass, longest first).
+static ACC_COST:std::sync::LazyLock<std::sync::Mutex<HashMap<(u64,usize),u64>>>=std::sync::LazyLock::new(Default::default);
 fn native_pool(start:bool)->Option<&'static rayon::ThreadPool> {
     static POOL:std::sync::OnceLock<Option<rayon::ThreadPool>>=std::sync::OnceLock::new();
     if !start { return POOL.get()?.as_ref(); }
@@ -1284,8 +1287,9 @@ pub struct OkSession {
     pub(crate) studio_ik_rotations: Vec<(usize, [f32;4])>,
     /// Studio IK weights, one per `studio_ik` target (missing: 1, the target is reached).
     pub(crate) studio_ik_weights: Vec<f32>,
-    /// The arms' authored FBBIK pull (left, right), kept while set_studio_ik_arm_pull changes it.
-    pub(crate) studio_ik_arm_pull_saved: Option<[f32; 2]>,
+    /// The arms' authored FBBIK pull (left, right) and the hands' body pull (vertical, horizontal), kept while
+    /// set_studio_ik_arm_pull changes them.
+    pub(crate) studio_ik_arm_pull_saved: Option<[f32; 4]>,
     /// A Studio character's ExpressionBone categories (pose::EXPRESSION_ALL bits, Studio's joint correction toggles).
     /// Studio gives every character the component, so a set mask runs it whatever the clip or source; None keeps
     /// the clip-scene rule (all categories, Studio clips with a game source only).
@@ -1384,8 +1388,25 @@ pub(crate) struct FaceRuntimeState {
 
 // The body proxies are published under the session's address: the host keeps them until told, and a closed session's
 // body stayed as a phantom partner (a reloaded card's breasts were pushed square or flat by the old one).
+/// cloth_gpu (ok_cloth_gpu_set): a garment drawn on the GPU route that the cover or the jiggle moves. Skinned here as the
+/// CPU route would draw it (render_solved: no physics step), pushed over her skin and moved with her thighs as there, and
+/// only its moves kept for the GPU to add.
+fn cloth_gpu_moves(key:usize,index:usize,part:&SessionPart,body:Option<&Skeleton>,head:Option<&Skeleton>,policy:AccessoryFramePolicy,
+    assigned:Option<&AssignedWorldFrame>,cover:Option<&crate::belly_bulge::CoverField>) {
+    // ok.ClothGpu 2: the GPU works it out (ClothCover.usf) once the maps it needs are found; until then, as below (which
+    // finds them).
+    if crate::cloth_gpu::on_gpu() {
+        if let Some(revision)=crate::cloth_gpu::gpu_ready(key,index,part,cover.is_some_and(|c|c.follows_any())) {crate::cloth_gpu::put_gpu(key,index,revision);return;}
+    }
+    let Some(runtime)=part.runtime_accessory.as_ref() else{return;};
+    let Some((positions,normals,_))=runtime.render_solved(body,head,policy,assigned) else{crate::cloth_gpu::put(key,index,Vec::new());return;};
+    let mut moved=positions.clone();
+    if let Some(cover)=cover{cover.cover(index,part,&mut moved);}
+    crate::thigh_jiggle::follow_own(key,index,part,&mut moved,&normals);
+    crate::cloth_gpu::put(key,index,crate::cloth_gpu::diff(&positions,&moved));
+}
 impl Drop for OkSession {
-    fn drop(&mut self) { crate::px::release_group(self as *const Self as u64); }
+    fn drop(&mut self) { crate::px::release_group(self as *const Self as u64); crate::cloth_gpu::forget(self as *const Self as usize); }
 }
 
 impl OkSession {
@@ -2481,6 +2502,7 @@ impl OkSession {
         if self.cover_ready.is_none(){if let Some(b)=body{crate::thigh_jiggle::solve_step(&*self,b,dt);}}
         let jiggle_key=self as *const Self as usize;
         let cover_field=match self.cover_ready.take(){Some(built)=>built,None=>{let _trace=crate::native_profile::Scope::new(47);let t=std::time::Instant::now();let f=crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body);if f.is_some(){crate::okanim::prof::add(26,t);}f}};let cover=&cover_field;
+        if crate::cloth_gpu::on_gpu()&&!pass.early(){crate::cloth_gpu::build_field(jiggle_key,cover.as_ref());}
         let update=|(index,part):(usize,&mut SessionPart)| {
             if leader_of[index].is_some()||hidden(index)||!pass.wants(index) {return;}
             let Some(runtime) = &mut part.runtime_accessory else { return; };
@@ -2507,6 +2529,10 @@ impl OkSession {
                 part.rest_tangents=tangents;
                 if let Some(observer)=observer{observer.emit(index,part);}
             }
+            if (palette_only||excluded.binary_search(&index).is_ok())&&crate::cloth_gpu::wants(jiggle_key,index){
+                let t_cover=std::time::Instant::now();cloth_gpu_moves(jiggle_key,index,part,source,head,policy,assigned,cover.as_ref());cover_us+=t_cover.elapsed().as_micros() as u64;}
+            // What it took, for the order of the next frame's parts (longest first).
+            if let Ok(mut costs)=ACC_COST.lock(){if costs.len()>4096{costs.clear();}costs.insert((group,index),render_us+cover_us);}
             // OK_ACC_PART_PROFILE=<frames>: every that many frames of a part, when it started after the parts began, its solve
             // (physics and skinning) and its cover push, averaged; to stderr, and to OK_ACC_PART_PROFILE_FILE when set.
             if let Some(every)=acc_part_profile_every() {
@@ -2522,12 +2548,20 @@ impl OkSession {
             }
         };
         if parallel&&self.parts.iter().filter(|p|p.runtime_accessory.is_some()).count()>=8 {
-            use rayon::prelude::*;
             // The biggest first (longest job first): her body tights, at index 35 of 36, started 0.6 ms after the others and
             // its cover push ended the whole solve (OK_ACC_PART_PROFILE, 2026-11-10). Each part is still solved on its own.
-            let mut order:Vec<(usize,&mut SessionPart)>=self.parts.iter_mut().enumerate().filter(|(_,p)|p.runtime_accessory.is_some()).collect();
-            order.sort_by_key(|(index,part)|(std::cmp::Reverse(part.rest_positions.len()),*index));
-            native_parallel_work(||order.into_par_iter().with_max_len(1).for_each(update));
+            let order:Vec<(usize,&mut SessionPart)>=self.parts.iter_mut().enumerate().filter(|(_,p)|p.runtime_accessory.is_some()).collect();
+            // By what each took last frame (its solve and its cover push), else its size: a fully dressed heroine's top,
+            // started 2.6 ms in by its size, took 1.9 ms pushing her clothes over her skin and ended the solve 5 ms in
+            // (OK_ACC_PART_PROFILE, 2026-11-13). Only the order changes: each part is solved as before.
+            let costs=ACC_COST.lock().ok().map(|c|order.iter().map(|(index,_)|c.get(&(group,*index)).copied().unwrap_or(0)).collect::<Vec<u64>>()).unwrap_or_default();
+            let mut keyed:Vec<(u64,usize,(usize,&mut SessionPart))>=order.into_iter().enumerate().map(|(k,e)|(costs.get(k).copied().unwrap_or(0),e.1.rest_positions.len(),e)).collect();
+            keyed.sort_by_key(|(cost,size,(index,_))|(std::cmp::Reverse(*cost),std::cmp::Reverse(*size),*index));
+            let order:Vec<(usize,&mut SessionPart)>=keyed.into_iter().map(|(_,_,e)|e).collect();
+            // Started in that order (FIFO): a parallel iterator splits the list in halves and the workers took the back half
+            // first, so her bras, second in line, still started 2.3 ms in (2026-11-13).
+            let update=&update;
+            native_parallel_work(||rayon::scope_fifo(|s|for item in order {s.spawn_fifo(move|_|update(item));}));
         } else {self.parts.iter_mut().enumerate().for_each(update);}
         // The early pass leaves the followers and the cover field to the pass after her clothes.
         if pass.early() {self.cover_ready=Some(cover_field);if let Some(k)=keep {self.acc_cache.leaders=Some((k,leaders_owned,particle_ids));}crate::okanim::prof::add(19,t_parts);return;}
@@ -2566,6 +2600,7 @@ impl OkSession {
                     part.positions=positions;part.normals=normals;part.rest_tangents=tangents;
                     if let Some(observer)=observer{observer.emit(index,part);}
                 }
+                if !emit&&crate::cloth_gpu::wants(jiggle_key,index){cloth_gpu_moves(jiggle_key,index,part,source,head,policy,assigned,cover.as_ref());}
             };
             if parallel&&leader_of.iter().filter(|l|l.is_some()).count()>=8 {
                 use rayon::prelude::*;
@@ -2599,10 +2634,13 @@ impl OkSession {
         let assigned_clothes=AssignedWorldFrame::prepare(clothes,&self.parts,true);
         let cover=crate::belly_bulge::CoverField::for_frame(self as *const Self as usize,&self.parts,body);
         let jiggle_key=self as *const Self as usize;
+        if crate::cloth_gpu::on_gpu(){crate::cloth_gpu::build_field(jiggle_key,cover.as_ref());}
         let render=|(index,part):(usize,&mut SessionPart)| {
-            if excluded.binary_search(&index).is_ok(){return;}
             let Some(runtime)=part.runtime_accessory.as_ref() else{return;};
             let assigned=if runtime.coordinated{assigned_clothes.as_ref()}else{assigned_body.as_ref()};
+            if excluded.binary_search(&index).is_ok(){
+                if crate::cloth_gpu::wants(jiggle_key,index){let source=if runtime.coordinated{clothes}else{body};cloth_gpu_moves(jiggle_key,index,part,source,head,policy,assigned,cover.as_ref());}
+                return;}
             if let Some((mut positions,normals,tangents))=runtime.render_solved(if runtime.coordinated{clothes}else{body},head,policy,assigned) {
                 if let Some(cover)=&cover {cover.cover(index,part,&mut positions);}
                 crate::thigh_jiggle::follow_own(jiggle_key,index,part,&mut positions,&normals);

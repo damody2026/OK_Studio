@@ -208,6 +208,7 @@ pub unsafe extern "C" fn ok_belly_wrap_take(s:*mut OkSession,cover:i32,out_idx:*
         if k<cloth_max as usize{*cloth_part.add(k)=*part as u32;*cloth_idx.add(k)=*j;for a in 0..3{*cloth_d.add(k*3+a)=d[a];}k+=1;}}}
     *cloth_n=k as u32;
     let parts=crate::belly_bulge::keep_cover(s,cover!=0,done.body,done.field.as_deref());
+    crate::cloth_gpu::note(&*s as *const OkSession as usize,0,&parts);
     for (i,p) in parts.iter().take(cpu_max as usize).enumerate(){*cpu_parts.add(i)=*p as i32;}
     *cpu_n=parts.len().min(cpu_max as usize) as u32;
     n
@@ -233,8 +234,14 @@ pub unsafe extern "C" fn ok_set_cover(s:*mut OkSession,on:i32,body_idx:*const u3
     if (n>0&&(body_idx.is_null()||body_d.is_null()))||(max>0&&out_parts.is_null()) {return -1;}
     let moves:Vec<(u32,[f32;6])>=(0..n as usize).map(|i|(*body_idx.add(i),std::array::from_fn(|k|*body_d.add(i*6+k)))).collect();
     let parts=crate::belly_bulge::set_cover(s,on!=0,moves);
+    crate::cloth_gpu::note(&*s as *const OkSession as usize,0,&parts);
     for (i,p) in parts.iter().take(max as usize).enumerate(){*out_parts.add(i)=*p as i32;}
     parts.len() as i32
+}
+#[no_mangle]
+pub extern "C" fn ok_cover_split(on:i32) {
+    // Only the garments that reach her pushing skin drawn from the CPU (belly_bulge cover::COVER_SPLIT).
+    crate::belly_bulge::set_cover_split(on!=0);
 }
 #[no_mangle]
 pub unsafe extern "C" fn ok_cover_deltas(s:*mut OkSession,body_idx:*const u32,body_d:*const f32,n:u32,out_part:*mut u32,out_idx:*mut u32,out_d:*mut f32,max:u32)->i32 {
@@ -270,10 +277,56 @@ pub unsafe extern "C" fn ok_thigh_jiggle_cloth(s:*mut OkSession,out_part:*mut u3
     let Some(s)=sess_ref(s) else{return -1;};
     if out_part.is_null()||out_idx.is_null()||out_d.is_null() {return -1;}
     let (cpu,moves)=crate::thigh_jiggle::cloth_moves(s);
+    crate::cloth_gpu::note(&*s as *const OkSession as usize,1,&cpu);
     let all=cpu.iter().map(|&p|(p,u32::MAX,[0f32;3])).chain(moves.iter().flat_map(|(p,m)|m.iter().map(move|(j,d)|(*p,*j,*d))));
     let mut k=0usize;
     for (p,j,d) in all {if k<max as usize{*out_part.add(k)=p as u32;*out_idx.add(k)=j;for a in 0..3{*out_d.add(k*3+a)=d[a];}}k+=1;}
     k as i32
+}
+#[no_mangle]
+pub extern "C" fn ok_cloth_gpu_set(on:i32) {
+    // Her garments with their own rig stay on the GPU route while her clothes are pushed over her skin and follow her
+    // thighs' jiggle: their moves come from ok_cloth_gpu_moves (cloth_gpu). 0 off (the CPU route, as before).
+    // 2: the push and the jiggle themselves worked out on the GPU (ok_cloth_gpu_job / _field / _garment, ClothCover.usf).
+    crate::cloth_gpu::set_mode(on);
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_cloth_gpu_job(s:*mut OkSession,part:i32)->i32 {
+    // A garment's route this pose (ok.ClothGpu): -1 none of this, 0 its moves (ok_cloth_gpu_moves), >0 done on the GPU
+    // (the revision of its still data: ok_cloth_gpu_garment again when it changes).
+    let Some(s)=sess_ref(s) else{return -1;};
+    if part<0 {return -1;}
+    crate::cloth_gpu::job(&*s as *const OkSession as usize,part as usize)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_cloth_gpu_field(s:*mut OkSession,out:*mut u32,max:u32)->i32 {
+    // This pose's field of her skin for ClothCover.usf (cloth_gpu::build_field): up to max words; returns how many there
+    // are, 0 none, -1 bad input.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if max>0&&out.is_null() {return -1;}
+    let Some(f)=crate::cloth_gpu::field(&*s as *const OkSession as usize) else{return 0;};
+    for (i,w) in f.iter().take(max as usize).enumerate(){*out.add(i)=*w;}
+    f.len() as i32
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_cloth_gpu_garment(s:*mut OkSession,part:i32,out:*mut u32,max:u32)->i32 {
+    // A garment's still data for ClothCover.usf (cloth_gpu::garment): up to max words; returns how many, 0 none, -1 bad input.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if part<0||(max>0&&out.is_null()) {return -1;}
+    let Some(p)=s.parts.get(part as usize) else{return -1;};
+    let g=crate::cloth_gpu::garment(&*s as *const OkSession as usize,part as usize,p);
+    for (i,w) in g.iter().take(max as usize).enumerate(){*out.add(i)=*w;}
+    g.len() as i32
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_cloth_gpu_moves(s:*mut OkSession,part:i32,out_idx:*mut u32,out_d:*mut f32,max:u32)->i32 {
+    // This pose's moves of a garment kept on the GPU route (cloth_gpu): up to max (vertex, move in the session's Unity
+    // space after the placement correction, metres: 3 floats each); returns how many there are, -1 bad input.
+    let Some(s)=sess_ref(s) else{return -1;};
+    if part<0||(max>0&&(out_idx.is_null()||out_d.is_null())) {return -1;}
+    let moves=crate::cloth_gpu::moves(&*s as *const OkSession as usize,part as usize);
+    for (k,(j,d)) in moves.iter().enumerate().take(max as usize){*out_idx.add(k)=*j;for a in 0..3{*out_d.add(k*3+a)=d[a];}}
+    moves.len() as i32
 }
 #[no_mangle]
 pub unsafe extern "C" fn ok_back_exit(s:*mut OkSession,at:*const f32,out:*mut f32)->i32 {
@@ -561,13 +614,19 @@ pub unsafe extern "C" fn ok_session_set_studio_ik_arm_pull(s: *mut OkSession, pu
     let Some(s) = sess_ref(s) else { return -1; };
     let Some(solver) = s.studio_ik_solver.as_mut() else { return -1; };
     if solver.chains.len() < 3 { return -1; }
-    let saved = *s.studio_ik_arm_pull_saved.get_or_insert([solver.chains[1].pull, solver.chains[2].pull]);
+    let saved = *s.studio_ik_arm_pull_saved.get_or_insert([solver.chains[1].pull, solver.chains[2].pull, solver.pull_body_vertical, solver.pull_body_horizontal]);
+    // The hands' body pull (FBBIK pullBodyVertical / Horizontal) goes with it: a hand target out of the arm's reach dragged
+    // his body up and down 35 cm with the chain pull at 0 (his hands on her face, 2026-11-14), so it is scaled the same way.
     if pull.is_finite() && pull >= 0. {
         solver.chains[1].pull = pull.min(1.);
         solver.chains[2].pull = pull.min(1.);
+        solver.pull_body_vertical = saved[2] * pull.min(1.);
+        solver.pull_body_horizontal = saved[3] * pull.min(1.);
     } else {
         solver.chains[1].pull = saved[0];
         solver.chains[2].pull = saved[1];
+        solver.pull_body_vertical = saved[2];
+        solver.pull_body_horizontal = saved[3];
     }
     0
 }

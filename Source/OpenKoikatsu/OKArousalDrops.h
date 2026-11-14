@@ -44,6 +44,11 @@ struct FOKArousalDrops{
  void Reset();
  // The floor under At: the first thing a line down meets, not Ignore; Fallback when nothing within 3 m.
  static float GroundBelow(const AActor* Owner,const FVector& At,TArrayView<const AActor* const> Ignore,float Fallback);
+ // The wet marks drawn as water that reflects instead of the translucent tint (the one-on-one: its puddles' material,
+ // user 2026-11-13 "every water stain on the floor with screen space reflections"; translucency takes none). Set before
+ // the first mark; DressMark gives each colour's material its look.
+ TWeakObjectPtr<class UMaterialInterface> MarkParent;
+ TFunction<void(UMaterialInstanceDynamic* M,uint8 Colour)> DressMark;
 private:
  // Glint: the light it catches (user, 2026-11-01: it has to shine to look like water), a white highlight on the side
  // toward the camera, on each drop and each wet mark.

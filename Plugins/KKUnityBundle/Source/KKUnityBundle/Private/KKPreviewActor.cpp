@@ -166,6 +166,14 @@ static TAutoConsoleVariable<int32> CVarOkSourceRangeVertices(TEXT("ok.Animation.
 static TAutoConsoleVariable<int32> CVarOkSourceIndexedStreams(TEXT("ok.Animation.SourceIndexedStreams"),0,TEXT("Convert canonical sources once and pack their disjoint section draw ranges in the same job."));
 static TAutoConsoleVariable<int32> CVarOkNativeDisplayStreams(TEXT("ok.Animation.NativeDisplayStreams"),0,TEXT("Pack private display streams on native skin completion workers (blocking frame-local observer)."));
 static TAutoConsoleVariable<int32> CVarOkPrivateGpuStreams(TEXT("ok.Animation.PrivateGpuStreams"),1,TEXT("Runtime high-detail private-rig GPU streams for opted-in interaction actors; 0 retains CPU rendering."));
+// Her garments with their own rig that the cloth push (ok.ClothCover) or the thighs' jiggle moves: 0 drawn from their CPU
+// vertices as before; 1 kept on the private GPU route, the solve giving only their vertices' moves (Rust cloth_gpu) and the
+// GPU adding them after the post correction, where the CPU route has them; 2 (default) the push and the jiggle worked out
+// on the GPU too (user, 2026-11-14: all of Lan's clothes on the GPU for 120 FPS; default from 2026-11-14 once Lan fully
+// dressed held 125+ FPS in every phase with the same look as 0, Docs/H_SCENE_120FPS_PLAN.md).
+static TAutoConsoleVariable<int32> CVarOkClothGpu(TEXT("ok.ClothGpu"),2,TEXT("2 (default): her garments' cloth push and thigh jiggle worked out on the GPU (ClothCover.usf); 1: only the moves added on the GPU; 0: drawn from CPU vertices"));
+static int32 OKClothGpuMode(){const int32 Mode=FMath::Clamp(CVarOkClothGpu.GetValueOnGameThread(),0,2);static int32 Sent=-1;if(Sent!=Mode){Sent=Mode;FOkSession::SetClothGpu(Mode);}return Mode;}
+static bool OKClothGpuOn(){return OKClothGpuMode()>=1;}
 static TAutoConsoleVariable<int32> CVarOkNativeDisplayParity(TEXT("ok.Animation.NativeDisplayParity"),0,TEXT("Verify native worker display against uncached canonical draw formula."));
 static TAutoConsoleVariable<int32> CVarOkRestNormalCache(TEXT("ok.Animation.RestNormalCache"),1,TEXT("Reuse exact immutable rest-normal normalization built at runtime character load."));
 static TAutoConsoleVariable<int32> CVarOkZeroOffsetRotation(TEXT("ok.Animation.ZeroOffsetRotation"),1,TEXT("Skip identity rotation of zero-offset base surfaces; retain source-position addition."));
@@ -7910,9 +7918,25 @@ void AKKPreviewActor::SetCoordinatedPlayback(bool bEnabled){
         if(Cast<UKKRuntimeSkeletalMeshComponent>(Mesh))Own(Mesh);
 }
 
+// ok.Anim.PairLateDisplay: set by the pair's ShowFrame while it defers its streams (GKKDeferRuntimeStreams).
+bool GKKDeferLateDisplay=false;
+// On by default since 2026-11-13: ABA EGalPerfCity5 0/1 loop 156/131 -> 166/147, fast 136/141 -> 148/141, face checked.
+static TAutoConsoleVariable<int32> CVarOkPairLateDisplay(TEXT("ok.Anim.PairLateDisplay"),1,
+    TEXT("1: the pair's display work that reads nothing of the session (her face parts' pose, the thigh jiggle's morph uploads) is done after its next frame is launched, beside the solve; the same frame is shown."));
+bool OKPairLateDisplayOn(){return CVarOkPairLateDisplay.GetValueOnGameThread()!=0;}
+bool AKKPreviewActor::GLateDisplayWindow=false;
+void AKKPreviewActor::FinishLateDisplay()
+{
+    if(!bLateMouthPending&&LateDisplay.IsEmpty())return;
+    TRACE_CPUPROFILER_EVENT_SCOPE(KK_LateDisplay);
+    if(bLateMouthPending){bLateMouthPending=false;SyncMouthPose();}
+    TArray<TFunction<void()>> Work=MoveTemp(LateDisplay);LateDisplay.Reset();
+    for(auto& Do:Work)Do();
+}
 void AKKPreviewActor::RefreshSkinnedDisplay()
 {
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_PreviewSkinDisplay);
+ FinishLateDisplay(); // one left from before goes first: it belongs to the frame before this one
  const bool Profile=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_ANIM_PROFILE"))==TEXT("1");
  const double Begin=FPlatformTime::Seconds();
  // Shared portable playback solves private-rig palettes without emitting
@@ -7963,7 +7987,9 @@ void AKKPreviewActor::RefreshSkinnedDisplay()
             else if(auto* Follower=Cast<UKKRuntimePoseableMeshComponent>(F))Follower->VerifyExactLeader(Pose);
 		}
 	}}
-	{QUICK_SCOPE_CYCLE_COUNTER(STAT_KK_SyncMouthPose);SyncMouthPose();}
+	// Her face parts take the body's bones (read from BodySkel, not the session): with the pair's late display, after the
+	// next solve is launched (FinishLateDisplay).
+	{QUICK_SCOPE_CYCLE_COUNTER(STAT_KK_SyncMouthPose);if(GKKDeferLateDisplay)bLateMouthPending=true;else SyncMouthPose();}
 
  const double BonesDone=FPlatformTime::Seconds();
  if(Profile)UE_LOG(LogTemp,Display,TEXT("OK animation skeleton skin_ms=%.3f build_ms=%.3f apply_ms=%.3f"),(SkinDone-Begin)*1000.,(PoseBuilt-SkinDone)*1000.,(BonesDone-PoseBuilt)*1000.);
@@ -8013,6 +8039,8 @@ bool AKKPreviewActor::RefreshEditorGeometry()
 
 struct FKKPrivateGpuDisplay {
  FKKPrivateGpuSource Source;FKKPrivateGpuBounds Bounds;
+ // ok.ClothGpu 2: the garment's still data for ClothCover.usf, and its revision (Rust cloth_gpu job).
+ TSharedPtr<const TArray<uint32>,ESPMode::ThreadSafe> ClothGarment;int32 ClothGarmentRevision=0;
  TArray<TArray<FOKGpuDeformDraw>> Draw;
  TArray<TSharedPtr<FKKGpuStreamReceipt,ESPMode::ThreadSafe>> Receipts;
  TArray<uint64> Generations;
@@ -8034,6 +8062,24 @@ void AKKPreviewActor::SkinPrivateDisplay()
 
 // ok.PrivateGpuLog 1: log each private GPU display a part loses or captures again (what makes it re-capture each frame).
 static TAutoConsoleVariable<int32> CVarOkPrivateGpuLog(TEXT("ok.PrivateGpuLog"),0,TEXT("1: log each private GPU display reset and capture with its reason"));
+// ok.PrivateGpuGates: for every character, each runtime part's private GPU route and what holds it on the CPU (the gate of
+// UpdatePrivateGpuDisplay), to the log and the console.
+static FAutoConsoleCommandWithWorldArgsAndOutputDevice GOkPrivateGpuGates(TEXT("ok.PrivateGpuGates"),TEXT("List each character's runtime parts: on the private GPU route or what keeps it on the CPU"),
+ FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>&,UWorld* World,FOutputDevice& Out){
+  if(!World)return;
+  for(TActorIterator<AKKPreviewActor> It(World);It;++It){AKKPreviewActor* A=*It;int32 Gpu=0,Cpu=0;
+   Out.Logf(TEXT("%s: private GPU playback %d, streams %d"),*A->GetName(),A->bUsePrivateGpuPlayback,CVarOkPrivateGpuStreams.GetValueOnGameThread());
+   for(const FKKLoadedPart& P:A->Parts){if(!P.bRuntimeAccessory)continue;
+    auto* C=Cast<UKKAffineProceduralMeshComponent>(P.Comp);
+    TArray<FString> Why;
+    if(!C)Why.Add(TEXT("not affine"));if(P.bSlotAttached)Why.Add(TEXT("slot"));if(P.bFaceSphereNormals)Why.Add(TEXT("face normals"));
+    if(P.SessionIndex==INDEX_NONE)Why.Add(TEXT("no session part"));else if(A->Session.MorphCount(P.SessionIndex)!=0)Why.Add(FString::Printf(TEXT("morphs %d"),A->Session.MorphCount(P.SessionIndex)));
+    if(A->CpuSkinnedParts.Contains(P.SessionIndex))Why.Add(TEXT("cpu skinned (cover)"));if(A->JiggleCpuParts.Contains(P.SessionIndex))Why.Add(TEXT("jiggle"));
+    if(C&&(!C->SceneProxy||!C->UsesAnimatedStreams()))Why.Add(TEXT("no proxy/streams"));if(C&&C->GetCollisionEnabled()!=ECollisionEnabled::NoCollision)Why.Add(TEXT("collision"));
+    const bool bOn=P.PrivateGpuDisplay.IsValid();(bOn?Gpu:Cpu)++;
+    Out.Logf(TEXT("  part %d %s %s verts=%d gpu=%d %s"),P.SessionIndex,*P.Role,*P.Comp->GetName(),C&&C->GetNumSections()?C->GetProcMeshSection(0)->ProcVertexBuffer.Num():0,bOn,*FString::Join(Why,TEXT(",")));}
+   Out.Logf(TEXT("%s: %d parts on the GPU route, %d on the CPU"),*A->GetName(),Gpu,Cpu);}
+ }));
 bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrepare,TArray<FKKGpuStreamSectionRequest>& Requests)
 {
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrivateGpuDisplay);QUICK_SCOPE_CYCLE_COUNTER(STAT_KK_PrivateGpuDisplay);
@@ -8050,7 +8096,8 @@ bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrep
   return false;
  };
  bool bGated;{TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrivateGpuGate);
- bGated=!CVarOkPrivateGpuStreams.GetValueOnGameThread()||!bUsePrivateGpuPlayback||!Component||!Part.bRuntimeAccessory||Part.bSlotAttached||Part.bFaceSphereNormals||Part.SessionIndex==INDEX_NONE||Session.MorphCount(Part.SessionIndex)!=0||CpuSkinnedParts.Contains(Part.SessionIndex)||JiggleCpuParts.Contains(Part.SessionIndex);}
+ // ok.ClothGpu: the garments the push or the jiggle moves stay on this route, their moves added by the GPU (cloth_gpu).
+ bGated=!CVarOkPrivateGpuStreams.GetValueOnGameThread()||!bUsePrivateGpuPlayback||!Component||!Part.bRuntimeAccessory||Part.bSlotAttached||Part.bFaceSphereNormals||Part.SessionIndex==INDEX_NONE||Session.MorphCount(Part.SessionIndex)!=0||(!OKClothGpuOn()&&(CpuSkinnedParts.Contains(Part.SessionIndex)||JiggleCpuParts.Contains(Part.SessionIndex)));}
  if(bGated)return Restore(FString(),false);
  if(Part.PrivateGpuDisplay&&Part.PrivateGpuDisplay->Epoch!=Epoch)Restore(FString(),false);
  // No scene proxy (a hidden part: her hair ornament and top halves not shown in this pose): nothing to install, so no
@@ -8120,6 +8167,23 @@ bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrep
  auto& State=*Part.PrivateGpuDisplay;FBox Box(ForceInit);
  if(bPreparedBox)Box=PreparedBox;
  else{TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrivateGpuBounds);if(!OKEvaluatePrivateGpuBounds(State.Bounds,Pose,Box,Error))return Restore(Error,true);}
+ // ok.ClothGpu: this pose's push / jiggle moves of the garment, added on the GPU (and by the sparse queries); the bounds
+ // grow by the longest (centimetres).
+ // ok.ClothGpu 2: once the solve leaves the garment to the GPU (its job), the GPU works the moves out itself (ClothCover.usf;
+ // the bounds grow by the tallest lift the cloth can take, 15 cm). The sparse queries then see it unpushed.
+ FOKClothCoverJob ClothJob;
+ if(OKClothGpuOn()){TRACE_CPUPROFILER_EVENT_SCOPE(KK_ClothGpuMoves);
+  const int32 Job=OKClothGpuMode()>=2?Session.ClothGpuJob(Part.SessionIndex):0;
+  if(Job>0){
+   if(State.ClothGarmentRevision!=Job||!State.ClothGarment.IsValid()){TArray<uint32> Garment;
+    if(Session.ClothGpuGarment(Part.SessionIndex,Garment)){State.ClothGarment=MakeShared<const TArray<uint32>,ESPMode::ThreadSafe>(MoveTemp(Garment));State.ClothGarmentRevision=Job;}}
+   if(ClothFieldFrame!=GFrameCounter){ClothFieldFrame=GFrameCounter;TArray<uint32> Field;ClothField.Reset();if(Session.ClothGpuField(Field))ClothField=MakeShared<const TArray<uint32>,ESPMode::ThreadSafe>(MoveTemp(Field));}
+   ClothJob.Field=ClothField;ClothJob.Garment=State.ClothGarment;
+   if(!OKMakeClothCoverJob(ClothJob)||ClothJob.VertexCount!=uint32(State.Source.Vertices.Num()))ClothJob=FOKClothCoverJob();
+   else if(Box.IsValid)Box=Box.ExpandBy(15.);
+  }
+  float Longest=0.f;
+  if(!ClothJob.IsValid()&&Session.ClothGpuMoves(Part.SessionIndex,State.Source.Vertices.Num(),Pose.Displacement,Longest)&&Longest>0.f&&Box.IsValid)Box=Box.ExpandBy(double(Longest)*100.+.1);}
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_PrivateGpuRequests);
  for(int32 S=0;S<State.Draw.Num();++S){
   const auto* CPU=Component->GetProcMeshSection(S);
@@ -8128,6 +8192,7 @@ bool AKKPreviewActor::UpdatePrivateGpuDisplay(FKKLoadedPart& Part,bool AllowPrep
  for(int32 S=0;S<State.Draw.Num();++S){
   FKKGpuStreamRequest Request;Request.ProxyEpoch=Epoch;Request.ExpectedGeneration=State.Generations[S];
   Request.Palette=Pose.Palette;Request.PostCorrection=Pose.PostCorrection;Request.HasPostCorrection=true;Request.NativeUnitySpace=true;
+  Request.Displacement=Pose.Displacement;Request.ClothCover=ClothJob;
   Request.FallbackSlot=State.Source.FallbackSlot;Request.ConservativeLocalBounds=Box;
   if(!State.HasGeneration)Request.QueryGenerationOnly=true;
   else if(!State.InstallQueued){Request.Source=State.Source.Vertices;Request.Draw=State.Draw[S];}
@@ -10481,6 +10546,7 @@ static FAutoConsoleCommand GOKThighJiggleStats(TEXT("ok.ThighJiggleStats"),TEXT(
     FConsoleCommandDelegate::CreateLambda([]{UE_LOG(LogTemp,Display,TEXT("Thigh jiggle: most %.2f mm, %d vertices, %d frames"),GThighJiggleMost*1000.f,GThighJiggleVerts,GThighJiggleFrames);GThighJiggleMost=0.f;GThighJiggleVerts=0;GThighJiggleFrames=0;}));
 void AKKPreviewActor::ClearThighJiggle()
 {
+    FinishLateDisplay(); // uploads still waiting would put the jiggle back after this
     if(ThighJigglePart!=INDEX_NONE)SetPartWrapDeltas(ThighJigglePart,{},{},{},GOkThighJiggleSet);
     ThighJigglePart=INDEX_NONE;
     for(int32 Part:TSet<int32>(JiggleClothShown))SetPartWrapDeltas(Part,{},{},{},GOkThighJiggleSet);
@@ -10497,8 +10563,11 @@ void AKKPreviewActor::UpdateThighJiggleCloth()
     JiggleCpuParts=TSet<int32>(Cpu);
     TMap<int32,TPair<TArray<uint32>,TArray<FVector3f>>> ByPart;
     for(int32 I=0;I<ClothParts.Num();++I){auto& P=ByPart.FindOrAdd(ClothParts[I]);P.Key.Add(Idx[I]);P.Value.Add(D[I]);}
-    for(auto It=JiggleClothShown.CreateIterator();It;++It)if(!ByPart.Contains(*It)){SetPartWrapDeltas(*It,{},{},{},GOkThighJiggleSet);It.RemoveCurrent();}
-    for(const auto& P:ByPart)if(SetPartWrapDeltas(P.Key,P.Value.Key,P.Value.Value,{},GOkThighJiggleSet))JiggleClothShown.Add(P.Key);else JiggleClothShown.Remove(P.Key);
+    // The uploads read nothing of the session: with the pair's late display, beside the next solve (FinishLateDisplay).
+    auto Upload=[this,ByPart=MoveTemp(ByPart)]{
+        for(auto It=JiggleClothShown.CreateIterator();It;++It)if(!ByPart.Contains(*It)){SetPartWrapDeltas(*It,{},{},{},GOkThighJiggleSet);It.RemoveCurrent();}
+        for(const auto& P:ByPart)if(SetPartWrapDeltas(P.Key,P.Value.Key,P.Value.Value,{},GOkThighJiggleSet))JiggleClothShown.Add(P.Key);else JiggleClothShown.Remove(P.Key);};
+    if(GKKDeferLateDisplay)LateDisplay.Add(MoveTemp(Upload));else Upload();
 }
 void AKKPreviewActor::UpdateThighJiggle(float DeltaSeconds)
 {
@@ -10510,11 +10579,15 @@ void AKKPreviewActor::UpdateThighJiggle(float DeltaSeconds)
     UpdateThighJiggleCloth();
     // Still (no move over a tenth of a millimetre) and nothing shown: nothing to rebuild.
     if(Idx.IsEmpty()&&ThighJigglePart==INDEX_NONE)return;
-    if(ThighJigglePart!=INDEX_NONE&&ThighJigglePart!=Part)SetPartWrapDeltas(ThighJigglePart,{},{},{},GOkThighJiggleSet);
-    SetPartWrapDeltas(Part,Idx,D,{},GOkThighJiggleSet);
-    ThighJigglePart=Idx.IsEmpty()?INDEX_NONE:Part;
     for(const FVector3f& V:D)GThighJiggleMost=FMath::Max(GThighJiggleMost,V.Size());
     GThighJiggleVerts=FMath::Max(GThighJiggleVerts,Idx.Num());++GThighJiggleFrames;
+    // As her clothes' share (UpdateThighJiggleCloth): uploaded beside the next solve with the pair's late display.
+    const bool bEmpty=Idx.IsEmpty();
+    auto Upload=[this,Old=ThighJigglePart,Part,Idx=MoveTemp(Idx),D=MoveTemp(D)]{
+        if(Old!=INDEX_NONE&&Old!=Part)SetPartWrapDeltas(Old,{},{},{},GOkThighJiggleSet);
+        SetPartWrapDeltas(Part,Idx,D,{},GOkThighJiggleSet);};
+    if(GKKDeferLateDisplay)LateDisplay.Add(MoveTemp(Upload));else Upload();
+    ThighJigglePart=bEmpty?INDEX_NONE:Part;
 }
 
 // Her clothes kept over her breasts and nipples in every mode, not only the H scene (user, 2026-11-09: however large her

@@ -196,6 +196,8 @@ void AOKStreetSocialScene::TickPlaceTour(double Now){
 void AOKStreetSocialScene::TickRestroom(){
  auto& S=*State;const double Now=SceneTime();
  if(S.RestroomGirl!=INDEX_NONE&&Now>=S.RestroomUntil)EndRestroom(true);
+ // Only where he stands decides it: looked at again once he has moved.
+ if(S.Male==S.RestroomCheckedAt)return;S.RestroomCheckedAt=S.Male;
  for(const auto& Place:OKStreetPlaces()){
   const FOKStreetModelAnchor* Women=OKStreetPlaceAnchor(Place,TEXT("women"));
   const FOKStreetModelAnchor* Wait=OKStreetPlaceAnchor(Place,TEXT("wait"));
@@ -207,7 +209,8 @@ void AOKStreetSocialScene::TickRestroom(){
    // pushed again every frame and stood stuck there for an hour on his way to the cafeteria (R6-257). And on its floor.
    const bool WomensSide=FVector::Dist2D(S.Male,Women->Position)<FVector::Dist2D(S.Male,Wait->Position);
    if(WomenRoom&&WomensSide&&S.Male.X>=Room.Min.X&&S.Male.X<=Room.Max.X&&S.Male.Y>=Room.Min.Y&&S.Male.Y<=Room.Max.Y&&S.Male.Z>=Room.Min.Z-60.f&&S.Male.Z<Room.Max.Z-60.f){
-    S.Male=Wait->Position;
+    // Where he now stands is where he was put, so this spot is not looked at again.
+    S.Male=Wait->Position;S.RestroomCheckedAt=S.Male;
     if(Now-S.RestroomBlockedAt>3){S.RestroomBlockedAt=Now;S.Message=OKT(TEXT("ui.outing.ladies_room_no_men"));RefreshUI();UE_LOG(LogTemp,Display,TEXT("Street restroom: kept the player out of the women's room at %s"),Place.Id);}
    }
   }

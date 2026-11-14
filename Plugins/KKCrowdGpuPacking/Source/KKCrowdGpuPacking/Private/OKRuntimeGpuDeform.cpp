@@ -31,6 +31,11 @@ bool OKValidateGpuDeformSource(TConstArrayView<FOKGpuDeformSource> Source,TConst
  Error.Reset();return true;
 }
 
+// The per-source displacement buffer, or a one-element zero stand-in (HasDisplacement 0) for the shader's binding.
+static FRDGBufferRef OKDisplacementOrNone(FRDGBuilder& G,FRDGBufferRef Displacement,uint32& Has){
+ if(Displacement&&Displacement->Desc.BytesPerElement==sizeof(FVector4f)&&Displacement->Desc.NumElements>0){Has=1;return Displacement;}
+ Has=0;static const FVector4f Zero(0,0,0,0);return CreateStructuredBuffer(G,TEXT("RuntimeDeform.NoDisplacement"),sizeof(FVector4f),1,&Zero,sizeof(FVector4f));
+}
 class FOKRuntimeGpuDeformCS:public FGlobalShader {
  DECLARE_GLOBAL_SHADER(FOKRuntimeGpuDeformCS);
  SHADER_USE_PARAMETER_STRUCT(FOKRuntimeGpuDeformCS,FGlobalShader);
@@ -38,6 +43,8 @@ class FOKRuntimeGpuDeformCS:public FGlobalShader {
   SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FSource>,Sources)
   SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FDraw>,Draws)
   SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>,PaletteRows)
+  SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>,Displacements)
+  SHADER_PARAMETER(uint32,HasDisplacement)
   SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FOutput>,Output)
   SHADER_PARAMETER(uint32,DrawCount)
   SHADER_PARAMETER(uint32,PaletteCount)
@@ -53,7 +60,7 @@ class FOKRuntimeGpuDeformCS:public FGlobalShader {
 IMPLEMENT_GLOBAL_SHADER(FOKRuntimeGpuDeformCS,"/Plugin/KKCrowdGpuPacking/RuntimeDeform.usf","MainCS",SF_Compute);
 bool OKGpuDeformAvailable(){auto* Map=GetGlobalShaderMap(GMaxRHIFeatureLevel);return Map&&Map->HasShader(&FOKRuntimeGpuDeformCS::GetStaticType(),0);}
 bool OKAddRuntimeGpuDeformPass(FRDGBuilder& G,FRDGBufferRef Source,FRDGBufferRef Draw,FRDGBufferRef Palette,FRDGBufferRef Output,
- uint32 DrawCount,uint32 PaletteCount,uint32 FallbackSlot,const FMatrix44f* PostSkinCorrection,bool NativeUnitySpace){
+ uint32 DrawCount,uint32 PaletteCount,uint32 FallbackSlot,const FMatrix44f* PostSkinCorrection,bool NativeUnitySpace,FRDGBufferRef Displacement){
  if(!Source||!Draw||!Palette||!Output||!DrawCount||!PaletteCount||FallbackSlot>=PaletteCount)return false;
  if(Source->Desc.BytesPerElement!=sizeof(FOKGpuDeformSource)||Draw->Desc.BytesPerElement!=sizeof(FOKGpuDeformDraw)
   ||Palette->Desc.BytesPerElement!=sizeof(FVector4f)||Output->Desc.BytesPerElement!=sizeof(FOKGpuDeformOutput)
@@ -64,6 +71,7 @@ bool OKAddRuntimeGpuDeformPass(FRDGBuilder& G,FRDGBufferRef Source,FRDGBufferRef
  if(!OKPrepareGpuDeformPalette(MakeArrayView(&Placement,1),Correction,Error))return false;
  auto* P=G.AllocParameters<FOKRuntimeGpuDeformCS::FParameters>();
  P->Sources=G.CreateSRV(Source);P->Draws=G.CreateSRV(Draw);P->PaletteRows=G.CreateSRV(Palette);P->Output=G.CreateUAV(Output);
+ {uint32 Has=0;P->Displacements=G.CreateSRV(OKDisplacementOrNone(G,Displacement,Has));P->HasDisplacement=Has;}
  P->DrawCount=DrawCount;P->PaletteCount=PaletteCount;P->FallbackSlot=FallbackSlot;
  P->HasPostSkinCorrection=PostSkinCorrection?1:0;
  P->NativeUnitySpace=NativeUnitySpace?1:0;
@@ -106,6 +114,8 @@ class FOKRuntimeGpuDeformPackedCS:public FGlobalShader {
   SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FSource>,Sources)
   SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FDraw>,Draws)
   SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>,PaletteRows)
+  SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>,Displacements)
+  SHADER_PARAMETER(uint32,HasDisplacement)
   SHADER_PARAMETER_RDG_BUFFER_UAV(RWByteAddressBuffer,PositionBytes)
   SHADER_PARAMETER_RDG_BUFFER_UAV(RWByteAddressBuffer,TangentBytes)
   SHADER_PARAMETER(uint32,DrawCount)
@@ -122,7 +132,7 @@ class FOKRuntimeGpuDeformPackedCS:public FGlobalShader {
 IMPLEMENT_GLOBAL_SHADER(FOKRuntimeGpuDeformPackedCS,"/Plugin/KKCrowdGpuPacking/RuntimeDeform.usf","DeformPackedCS",SF_Compute);
 bool OKGpuDeformPackedAvailable(){auto* Map=GetGlobalShaderMap(GMaxRHIFeatureLevel);return Map&&Map->HasShader(&FOKRuntimeGpuDeformPackedCS::GetStaticType(),0);}
 bool OKAddRuntimeGpuDeformPackedPass(FRDGBuilder& G,FRDGBufferRef Source,FRDGBufferRef Draw,FRDGBufferRef Palette,FRDGBufferRef Positions,FRDGBufferRef Tangents,
- uint32 DrawCount,uint32 PaletteCount,uint32 FallbackSlot,const FMatrix44f* PostSkinCorrection,bool NativeUnitySpace){
+ uint32 DrawCount,uint32 PaletteCount,uint32 FallbackSlot,const FMatrix44f* PostSkinCorrection,bool NativeUnitySpace,FRDGBufferRef Displacement){
  if(!OKGpuDeformPackedAvailable()||!Source||!Draw||!Palette||!Positions||!Tangents||!DrawCount||!PaletteCount||FallbackSlot>=PaletteCount)return false;
  if(Source->Desc.BytesPerElement!=sizeof(FOKGpuDeformSource)||Draw->Desc.BytesPerElement!=sizeof(FOKGpuDeformDraw)||Palette->Desc.BytesPerElement!=sizeof(FVector4f)
   ||!Source->Desc.NumElements||Draw->Desc.NumElements<DrawCount||uint64(Palette->Desc.NumElements)<uint64(PaletteCount)*3
@@ -134,6 +144,7 @@ bool OKAddRuntimeGpuDeformPackedPass(FRDGBuilder& G,FRDGBufferRef Source,FRDGBuf
  TArray<FVector4f> Correction;FString Error;const FMatrix44f& Placement=PostSkinCorrection?*PostSkinCorrection:FMatrix44f::Identity;
  if(!OKPrepareGpuDeformPalette(MakeArrayView(&Placement,1),Correction,Error))return false;
  auto* P=G.AllocParameters<FOKRuntimeGpuDeformPackedCS::FParameters>();P->Sources=G.CreateSRV(Source);P->Draws=G.CreateSRV(Draw);P->PaletteRows=G.CreateSRV(Palette);
+ {uint32 Has=0;P->Displacements=G.CreateSRV(OKDisplacementOrNone(G,Displacement,Has));P->HasDisplacement=Has;}
  P->PositionBytes=G.CreateUAV(Positions);P->TangentBytes=G.CreateUAV(Tangents);P->DrawCount=DrawCount;P->PaletteCount=PaletteCount;P->FallbackSlot=FallbackSlot;
  P->HasPostSkinCorrection=PostSkinCorrection?1:0;P->NativeUnitySpace=NativeUnitySpace?1:0;P->PostSkinRow0=Correction[0];P->PostSkinRow1=Correction[1];P->PostSkinRow2=Correction[2];
  TShaderMapRef<FOKRuntimeGpuDeformPackedCS> Shader(GetGlobalShaderMap(GMaxRHIFeatureLevel));

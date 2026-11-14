@@ -9,6 +9,7 @@
 #include "Components/AudioComponent.h"
 #include "Components/CheckBox.h"
 #include "HAL/IConsoleManager.h"
+#include "UObject/UObjectIterator.h"
 #include "OKCharacterController.h"
 #include "OKInteractionMode.h"
 #include "KKGameRoot.h"
@@ -50,6 +51,7 @@ void OKHNoteCry(const FString& Path); // her cries' loudness (PlayHVoice)
 #include "Misc/PackageName.h"
 #include "Engine/StaticMesh.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Components/PoseableMeshComponent.h"
 #include "Async/Async.h"
 #include "Blueprint/WidgetTree.h"
@@ -326,7 +328,8 @@ static void HSettingSet(const TCHAR* Name,float Value){if(auto* Var=HSettingVar(
 static const TCHAR* const HLightVars[]={TEXT("LightFrom"),TEXT("LightTint"),TEXT("LightRamp")};
 static void HSettingsLoad(){
     TArray<FString> Lines;FFileHelper::LoadFileToStringArray(Lines,*HSettingsFile());
-    for(const FString& Line:Lines){FString Name,Value;if(Line.Split(TEXT("="),&Name,&Value)){if(Name==TEXT("SkinLit"))continue; /* every one-on-one starts toon (user, 2026-11-12): not carried over */for(const FHSetting& S:HSettings)if(S.Var&&Name==S.Var)HSettingSet(S.Var,FCString::Atof(*Value));
+    for(const FString& Line:Lines){FString Name,Value;if(Line.Split(TEXT("="),&Name,&Value)){if(Name==TEXT("SkinLit"))continue; /* every one-on-one starts toon (user, 2026-11-12): not carried over */
+        if(Name==TEXT("TongueLength"))continue; /* her tongue as her card has it, 1, in every one-on-one (user, 2026-11-14) */for(const FHSetting& S:HSettings)if(S.Var&&Name==S.Var)HSettingSet(S.Var,FCString::Atof(*Value));
         for(const TCHAR* Light:HLightVars)if(Name==Light)if(auto* Var=HSettingVar(Light))Var->Set(*Value,ECVF_SetByConsole);}}
 }
 static void HSettingsSave(){
@@ -462,7 +465,22 @@ void UOKHScenePanel::Note(const FString& Text,bool bReact){Events.Add(Text);if(G
 
 TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
     if(!WidgetTree)WidgetTree=NewObject<UWidgetTree>(this);
-    UHorizontalBox* Root=WidgetTree->ConstructWidget<UHorizontalBox>();WidgetTree->RootWidget=Root;
+    // The panels, and over them both their last lines as subtitles at the bottom: hers (pink) above his (light blue).
+    UOverlay* Layer=WidgetTree->ConstructWidget<UOverlay>();WidgetTree->RootWidget=Layer;
+    UHorizontalBox* Root=WidgetTree->ConstructWidget<UHorizontalBox>();
+    if(UOverlaySlot* S=Layer->AddChildToOverlay(Root)){S->SetHorizontalAlignment(HAlign_Fill);S->SetVerticalAlignment(VAlign_Fill);}
+    {UVerticalBox* Lines=WidgetTree->ConstructWidget<UVerticalBox>();Lines->SetVisibility(ESlateVisibility::HitTestInvisible);
+     // Wide: from beside the microphone panel on the left to the H panel on the right (user 2026-11-14: too narrow).
+     if(UOverlaySlot* S=Layer->AddChildToOverlay(Lines)){S->SetHorizontalAlignment(HAlign_Fill);S->SetVerticalAlignment(VAlign_Bottom);S->SetPadding(FMargin(380,0,360,40));}
+     const FLinearColor Colors[2]={FLinearColor(1.f,.62f,.82f),FLinearColor(.62f,.85f,1.f)};
+     for(int32 Who=0;Who<2;++Who){
+         SubtitleBack[Who]=WidgetTree->ConstructWidget<UBorder>();SubtitleBack[Who]->SetBrushColor(FLinearColor(0.f,0.f,0.f,.55f));SubtitleBack[Who]->SetPadding(FMargin(18,6));
+         Subtitle[Who]=WidgetTree->ConstructWidget<UTextBlock>();{FSlateFontInfo F=Subtitle[Who]->GetFont();F.Size=20;F.OutlineSettings.OutlineSize=1;Subtitle[Who]->SetFont(F);}
+         Subtitle[Who]->SetColorAndOpacity(FSlateColor(Colors[Who]));Subtitle[Who]->SetAutoWrapText(true);Subtitle[Who]->SetJustification(ETextJustify::Center);SubtitleBack[Who]->SetContent(Subtitle[Who]);
+         if(UVerticalBoxSlot* S=Lines->AddChildToVerticalBox(SubtitleBack[Who])){S->SetHorizontalAlignment(HAlign_Fill);S->SetPadding(FMargin(0,3));}
+         // The panel is built again many times: a line still within its time stays.
+         const bool bShown=SubtitleUntil[Who]>FPlatformTime::Seconds();Subtitle[Who]->SetText(FText::FromString(bShown?SubtitleText[Who]:FString()));
+         SubtitleBack[Who]->SetVisibility(bShown?ESlateVisibility::HitTestInvisible:ESlateVisibility::Collapsed);}}
     {HSettingsLoad();
      // Each one-on-one starts with the original Verlet physics and the toon skin (user, 2026-11-12); switched in the
      // scene they stay for it (the panel is rebuilt many times: once per panel).
@@ -1189,7 +1207,7 @@ void UOKHScenePanel::ApplyPregnancy(double Now){ TRACE_CPUPROFILER_EVENT_SCOPE(O
     P->SetBoolField(TEXT("GameplayEnabled"),true);P->SetNumberField(TEXT("inflationSize"),FMath::Max(Card,40.*Belly));Mods->SetObjectField(TEXT("pregnancy"),P);
     FString Json;FJsonSerializer::Serialize(Mods.ToSharedRef(),TJsonWriterFactory<>::Create(&Json));bool Geometry=false;
     if(!Girl->Session.ApplyEditorMods(Json,Gallery->OutfitIndex,&Geometry)){UE_LOG(LogTemp,Warning,TEXT("H scene: her pregnant belly %.2f not applied"),Belly);return;}
-    if(Geometry){const float Phase=Girl->AnimPhase;const int32 PoseMode=Girl->PoseMode;FString Error;if(!Girl->RefreshEditorGeometry())Girl->LoadSession(Error);Girl->AnimPhase=Phase;Girl->PoseMode=PoseMode;
+    if(Geometry){const float Phase=Girl->AnimPhase;const int32 PoseMode=Girl->PoseMode;FString Error;HoldAlignment(true);if(!Girl->RefreshEditorGeometry())Girl->LoadSession(Error);HoldAlignment(false);Girl->AnimPhase=Phase;Girl->PoseMode=PoseMode;
         Girl->ApplyShapes(HerFace(),HerBody());EyeFrameShown=0.f;}
     UE_LOG(LogTemp,Display,TEXT("H scene: her pregnant belly %.2f (size %.1f, geometry %d)"),Belly,FMath::Max(Card,40.*Belly),Geometry?1:0);
     PregBellyShown=Belly;PregActor=Girl;PregOutfit=Gallery->OutfitIndex;
@@ -1426,6 +1444,7 @@ void UOKHScenePanel::BuildActions(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HBuildActi
 void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     TRACE_CPUPROFILER_EVENT_SCOPE(OK_HScenePanelTick);
     Super::NativeTick(Geometry,Delta);
+    for(int32 Who=0;Who<2;++Who)if(SubtitleUntil[Who]>0.&&FPlatformTime::Seconds()>=SubtitleUntil[Who]){SubtitleUntil[Who]=0.;if(SubtitleBack[Who])SubtitleBack[Who]->SetVisibility(ESlateVisibility::Collapsed);}
     if(bGrayRoom&&GetWorld()&&GetWorld()->GetTimeSeconds()>=GrayCheckAt){GrayCheckAt=GetWorld()->GetTimeSeconds()+1.;HideWorld();}
     if(HalfInner&&PanelWidth){const float High=2.f*float(PanelWidth->GetCachedGeometry().GetLocalSize().Y);if(High>10.f&&!FMath::IsNearlyEqual(High,HalfInner->GetHeightOverride(),1.f))HalfInner->SetHeightOverride(High);}
     if(!Gallery)return;
@@ -1483,6 +1502,7 @@ void UOKHScenePanel::TickScene(float Delta){
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickTremble);Tremble(FPlatformTime::Seconds());}
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickHands);if(!bTickingBeside)TickHands();}
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickEyesCamera);TickEyesCamera();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickLeadsOnTop);TickLeadsOnTop();}
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickCoordinates);TickCoordinates();}
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSounds);TickSounds();}
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSwellBust);SwellBust(Delta);}
@@ -1689,6 +1709,7 @@ bool UOKHScenePanel::CannotAnswer() const{
 void UOKHScenePanel::Say(const FString& Raw){
     const FString Text=Raw.TrimStartAndEnd();if(Text.IsEmpty())return;
     if(Gallery)Gallery->NoteAction(TEXT("said"),Text);
+    SweetSaidAt=FPlatformTime::Seconds(); // his words: SweetTouch
     if(CannotAnswer()){Held.Add(Text);if(Hint)Hint->SetText(FText::FromString(OKT(TEXT("ui.hscene.cannot_answer"))));return;}
     Outbox.Add({Text,FString()});
 }
@@ -1699,7 +1720,7 @@ void UOKHScenePanel::ReleaseHeld(const TCHAR* NoteKey){
 bool UOKHScenePanel::TakeLine(FString& Text,FString& Out,bool& System){
     if(Outbox.IsEmpty())return false;
     Text=Outbox[0].Text;System=Outbox[0].System;Out=Context();SentEpoch=LineEpoch;if(!Outbox[0].Note.IsEmpty())Out+=TEXT("\n")+Outbox[0].Note;Outbox.RemoveAt(0);
-    if(!System&&Caption&&Gallery)Caption->SetText(FText::FromString(Gallery->HPlayerName+TEXT("：")+Text));
+    if(!System&&Caption&&Gallery){Caption->SetText(FText::FromString(Gallery->HPlayerName+TEXT("：")+Text));ShowSubtitle(1,Gallery->HPlayerName+TEXT("：")+Text);}
     return true;
 }
 void UOKHScenePanel::React(const FString& Event,const FString& Extra){
@@ -1886,12 +1907,20 @@ bool UOKHScenePanel::Hear(const FString& Raw,FString& Out){
     const FString Text=Raw.TrimStartAndEnd();if(Text.IsEmpty())return false;
     if(Gallery)Gallery->NoteAction(TEXT("said"),Text);
     if(CannotAnswer()){Held.Add(Text);if(Hint)Hint->SetText(FText::FromString(OKT(TEXT("ui.hscene.cannot_answer"))));return false;}
-    Out=Context();SentEpoch=LineEpoch;if(Caption&&Gallery)Caption->SetText(FText::FromString(Gallery->HPlayerName+TEXT("：")+Text));return true;
+    Out=Context();SentEpoch=LineEpoch;if(Caption&&Gallery){Caption->SetText(FText::FromString(Gallery->HPlayerName+TEXT("：")+Text));ShowSubtitle(1,Gallery->HPlayerName+TEXT("：")+Text);}return true;
 }
 void UOKHScenePanel::ShowLine(const FString& Text){
     bStaleLine=SentEpoch!=LineEpoch;if(bStaleLine){UE_LOG(LogTemp,Display,TEXT("H scene: her line from before the last climax / finish / pose not shown: %s"),*Text.Left(60));return;}
     if(Caption)Caption->SetText(FText::FromString(Text));
+    ShowSubtitle(0,Text);
     QuietSince=FPlatformTime::Seconds();
+}
+// His words at the bottom of the screen: what the microphone heard, then the line sent.
+void UOKHScenePanel::ShowPlayerLine(const FString& Text){ShowSubtitle(1,Text);}
+// One of the two subtitles (0 hers, 1 his): its last line, shown for 15 s after it came.
+void UOKHScenePanel::ShowSubtitle(int32 Who,const FString& Text){
+    if(Text.IsEmpty()||Who<0||Who>1||!Subtitle[Who]||!SubtitleBack[Who])return;
+    SubtitleText[Who]=Text;Subtitle[Who]->SetText(FText::FromString(Text));SubtitleBack[Who]->SetVisibility(ESlateVisibility::HitTestInvisible);SubtitleUntil[Who]=FPlatformTime::Seconds()+15.;
 }
 // What his words in the scene asked for (the street's H judge, ui.scene.h_judge_prompt): the pose and what is going on
 // now, and every pose and caress by name.
@@ -2300,13 +2329,13 @@ void UOKHScenePanel::TickPuddles(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_H_TickPuddl
 // Her fluids' stains on the floor (AOKPaintSprayer::Splash), the puddles' water (user 2026-11-12: every water stain on the
 // floor with screen space reflections): a blob outline of its own, her fluid's whitish colour lit as it lies, nearly smooth
 // so the reflections show in it, and while puddles lie there the floor's photo under it as theirs.
-void UOKHScenePanel::DressStain(UMaterialInstanceDynamic* M){
+void UOKHScenePanel::DressStain(UMaterialInstanceDynamic* M,const FLinearColor& Color,bool bOutline){
     if(!M)return;
-    while(StainMasks.Num()<4)StainMasks.Add(OKPuddleMask(100+StainMasks.Num()));
-    if(UTexture2D* Mask=StainMasks[FMath::RandRange(0,StainMasks.Num()-1)])M->SetTextureParameterValue(TEXT("PuddleMask"),Mask);
+    while(bOutline&&StainMasks.Num()<4)StainMasks.Add(OKPuddleMask(100+StainMasks.Num()));
+    if(bOutline)if(UTexture2D* Mask=StainMasks[FMath::RandRange(0,StainMasks.Num()-1)])M->SetTextureParameterValue(TEXT("PuddleMask"),Mask);
     // Nearly the puddles' mirror with a little milk in it: a dielectric (11-12) or half metal (11-13) lit its white body so
     // brightly that only the light's glint showed and none of what stands by it.
-    M->SetVectorParameterValue(TEXT("PuddleColor"),FLinearColor(.95f,.95f,.92f));M->SetScalarParameterValue(TEXT("PuddleMetallic"),.9f);
+    M->SetVectorParameterValue(TEXT("PuddleColor"),Color);M->SetScalarParameterValue(TEXT("PuddleMetallic"),.9f);
     M->SetScalarParameterValue(TEXT("PuddleSpecular"),1.f);M->SetScalarParameterValue(TEXT("PuddleRoughness"),.03f);M->SetScalarParameterValue(TEXT("PuddleDarken"),.5f);
     DressStainFloor(M);StainShown.Add(M);UseSsr(true);
 }
@@ -2688,6 +2717,11 @@ bool UOKHScenePanel::StreetOnani() const{bool On=false;return Gallery&&Gallery->
 void UOKHScenePanel::TickDrips(float Delta){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickDrips);
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;
     auto* Two=SecondHere()?Second.Get():nullptr;
+    // Her wet marks on the floor are the puddles' water too (user 2026-11-13: every water stain on the floor with screen
+    // space reflections): their translucent tint showed nothing of her feet beside them.
+    if(!Drips.MarkParent.IsValid())if(UMaterialInterface* Water=OKPuddleParent()){Drips.MarkParent=Water;
+        Drips.DressMark=[Weak=TWeakObjectPtr<UOKHScenePanel>(this)](UMaterialInstanceDynamic* M,uint8 Colour){if(UOKHScenePanel* P=Weak.Get()){
+            const FLinearColor Tint=OKArousal::Tint(Colour);P->DressStain(M,Colour==OKArousal::Clear?FLinearColor(.95f,.95f,.97f):FLinearColor(Tint.R,Tint.G,Tint.B),false);}};}
     auto Where=[Girl,Two](int32 Who,FName Bone,FVector& At){AKKPreviewActor* A=Who==1?Two:Girl;return IsValid(A)&&HBone(A,*Bone.ToString(),At);};
     const float Desire=HerDesire();const double Now=FPlatformTime::Seconds();
     const AActor* Ignore[]={Girl,Gallery?Gallery->PartnerActor.Get():nullptr};
@@ -2824,6 +2858,8 @@ void UOKHScenePanel::ApplyHerFk(AKKPreviewActor* Girl,TArray<FString>& Names,TAr
     // Opening is out to her own side: the left thigh turns one way about its forward axis, the right the other.
     if(!FMath::IsNearlyZero(ThighOpen[0])){Names.Add(TEXT("+cf_j_thigh00_L"));Turns.Add(FVector(0.f,0.f,-ThighOpen[0]));}
     if(!FMath::IsNearlyZero(ThighOpen[1])){Names.Add(TEXT("+cf_j_thigh00_R"));Turns.Add(FVector(0.f,0.f,ThighOpen[1]));}
+    Names.Append(SweetLeanBones);Turns.Append(SweetLeanTurns); // her lean toward his face (SweetTouch)
+    Names.Append(DebugFkHerNames);Turns.Append(DebugFkHerTurns); // ok.HScene.Fk her ...
     // Changed while the pair is paused: the paused pair solves one more frame (it only does for a reason to).
     const FVector4f Set(AnkleTurn,ThighOpen[0],ThighOpen[1],0.f);if(Set!=HerPoseShown){HerPoseShown=Set;Girl->bHeadLookPoseDirty=true;}
     if(!Names.IsEmpty()){Girl->Session.SetFk(Names,Turns);bTrembling=true;}
@@ -2833,6 +2869,157 @@ void UOKHScenePanel::ApplyHerFk(AKKPreviewActor* Girl,TArray<FString>& Names,TAr
 // unticking it on the panel (the eye look box) leaves them; the ahegao keeps and gives back what it found.
 static TAutoConsoleVariable<int32> CVarHEyesCamera(TEXT("ok.HScene.EyesCamera"),1,TEXT("1: in H her eyes follow the camera from the start (the panel's eye look box can turn it off)"));
 bool UOKHScenePanel::HEyesOnCamera() const{return CVarHEyesCamera.GetValueOnGameThread()!=0;}
+// Nothing of the scene drawn over the two (user, 2026-11-13: a wall between the camera and them, or the floor where a body
+// dips a little under it, hid them): every part of hers and his is a first-person primitive (UE's first person rendering)
+// and the camera draws those scaled toward itself by ok.HScene.LeadsOnTopScale. Each pixel stays where it was on the
+// screen and the two keep their order between themselves (one scale for all), but their depth is that much nearer, so in
+// the depth test the scene's pixels lose wherever they are. The scale is the smallest that keeps the nearest of them past
+// the near clip plane (0: so; else that scale). While it is on the near clip plane is brought in to
+// ok.HScene.LeadsOnTopNear cm: at 10 cm a camera backed against a wall still had the wall in front of them, 1 cm cleared it
+// (2026-11-13). On by default (user, 2026-11-13: all of the scene, nothing over the two).
+static TAutoConsoleVariable<int32> CVarHLeadsOnTop(TEXT("ok.HScene.LeadsOnTop"),1,TEXT("1 (default): nothing of the scene is drawn over her and him (they are drawn as first-person primitives scaled toward the camera); 0 off. They then cast no shadow on the scene and show in no screen space reflection (UE draws first-person primitives so)"));
+static TAutoConsoleVariable<float> CVarHLeadsOnTopScale(TEXT("ok.HScene.LeadsOnTopScale"),0.f,TEXT("The scale toward the camera ok.HScene.LeadsOnTop draws them with (0: the smallest that keeps the nearest past the near clip plane)"));
+static TAutoConsoleVariable<float> CVarHLeadsOnTopNear(TEXT("ok.HScene.LeadsOnTopNear"),1.f,TEXT("The near clip plane (cm) while ok.HScene.LeadsOnTop is on (0: left as it is)"));
+void UOKHScenePanel::TickLeadsOnTop(){
+    const bool bOn=!bLeadsOnTopEnd&&CVarHLeadsOnTop.GetValueOnGameThread()!=0;
+    // The near clip plane: brought in while on, put back after (r.SetNearClipPlane also tells the render thread).
+    {const float Near=bOn?CVarHLeadsOnTopNear.GetValueOnGameThread():0.f;
+     if(Near>0.f&&!FMath::IsNearlyEqual(GNearClippingPlane,Near)){if(LeadsOnTopNear<0.f)LeadsOnTopNear=GNearClippingPlane;if(GEngine)GEngine->Exec(GetWorld(),*FString::Printf(TEXT("r.SetNearClipPlane %g"),Near));}
+     else if(Near<=0.f&&LeadsOnTopNear>0.f){if(GEngine)GEngine->Exec(GetWorld(),*FString::Printf(TEXT("r.SetNearClipPlane %g"),LeadsOnTopNear));LeadsOnTopNear=-1.f;}}
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;AKKPreviewActor* Him=Gallery?Gallery->PartnerActor.Get():nullptr;
+    APlayerController* PC=GetOwningPlayer();
+    UCameraComponent* Lens=nullptr;
+    if(PC&&PC->PlayerCameraManager)if(AActor* Target=PC->PlayerCameraManager->GetViewTarget())Lens=Target->FindComponentByClass<UCameraComponent>();
+    TickHideOccluders(PC,PC&&PC->PlayerCameraManager?PC->PlayerCameraManager->GetCameraLocation():FVector::ZeroVector,!bLeadsOnTopEnd&&PC&&PC->PlayerCameraManager);
+    // Off, or the lens changed: what was set goes back.
+    if(UCameraComponent* Was=LeadsOnTopLens.Get();Was&&(!bOn||Was!=Lens)){Was->SetEnableFirstPersonScale(false);LeadsOnTopLens=nullptr;}
+    if(!bOn){for(const auto& P:LeadsOnTopParts)if(UPrimitiveComponent* C=P.Get())C->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::None);LeadsOnTopParts.Reset();return;}
+    // Their own parts and whatever hangs from them (the paint on her skin is the sprayer's, drawn over her parts): not what
+    // lies by them (the puddles and stains on the floor are the scene's).
+    // Only what is on them (within 1.2 m of their hips): her fluids' drops left on a desk across the room are hers too, and
+    // were drawn through the wall in front of it.
+    TArray<UPrimitiveComponent*> Parts;
+    for(AKKPreviewActor* A:{Girl,Him})if(IsValid(A)){
+        FVector Hips;const FBox Body=HBone(A,TEXT("j_hips"),Hips)?FBox(Hips-FVector(120.),Hips+FVector(120.)):FBox(A->GetActorLocation()-FVector(120.),A->GetActorLocation()+FVector(120.));
+        TInlineComponentArray<UPrimitiveComponent*> Own(A);
+        TArray<USceneComponent*> Hanging;
+        for(UPrimitiveComponent* C:Own){C->GetChildrenComponents(true,Hanging);if(Body.Intersect(C->Bounds.GetBox()))Parts.AddUnique(C);}
+        for(USceneComponent* C:Hanging)if(auto* P=Cast<UPrimitiveComponent>(C);P&&P->GetOwner()!=A&&Body.Intersect(P->Bounds.GetBox()))Parts.AddUnique(P);}
+    // What left them (a drop fallen away) goes back to the scene.
+    LeadsOnTopParts.RemoveAll([&](const TWeakObjectPtr<UPrimitiveComponent>& P){UPrimitiveComponent* C=P.Get();if(!C)return true;
+        if(Parts.Contains(C))return false;C->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::None);return true;});
+    double Nearest=TNumericLimits<double>::Max();const FVector Eye=Lens?Lens->GetComponentLocation():FVector::ZeroVector;
+    for(UPrimitiveComponent* C:Parts){if(!IsValid(C)||!C->IsRegistered()||!C->IsVisible())continue;
+        if(C->FirstPersonPrimitiveType!=EFirstPersonPrimitiveType::FirstPerson){C->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::FirstPerson);LeadsOnTopParts.Add(C);}
+        if(Lens)Nearest=FMath::Min(Nearest,FMath::Sqrt(C->Bounds.GetBox().ComputeSquaredDistanceToPoint(Eye)));}
+    if(!Lens)return;
+    float Scale=CVarHLeadsOnTopScale.GetValueOnGameThread();
+    // The nearest at least 10 cm: zoomed in, the camera was inside a part's box (nearest 0, scale 0.015) and all of her
+    // within 66 cm came nearer than the 1 cm near plane and was cut off; only her raised legs farther away were drawn
+    // (user, 2026-11-14). Nearer than 10 cm the camera is in her anyway.
+    if(Scale<=0.f){const double Near=FMath::Max(double(GNearClippingPlane),1.);Scale=float(FMath::Clamp(1.5*Near/FMath::Max(Nearest,10.),0.001,1.));}
+    Lens->SetEnableFirstPersonScale(true);Lens->SetFirstPersonScale(FMath::Clamp(Scale,0.001f,1.f));LeadsOnTopLens=Lens;
+}
+// What of the scene stands between the camera and the two is not drawn at all (user, 2026-11-14: of a bunk bed with them on
+// the lower one, the lower bed and them are to be seen, not the upper bed with them drawn over it). A cylinder from the
+// camera to the middle of the two, as wide as the farthest of their bones from its axis (and ok.HScene.HideOccludersPad cm):
+// every drawn part of the scene whose box (turned as it is) reaches into it is hidden from this view (the player
+// controller's hidden components; the scene itself is left as it is), kept hidden ok.HScene.HideOccludersHold s after it
+// last stood in the way so it does not flicker. What they are on is kept (user, 2026-11-14: the bed under her stays): a part
+// whose box comes within ok.HScene.HideOccludersNear cm of one of their bones (the bed they lie on, the floor under their
+// feet, a room or building around them). Boxes, not shapes, so collision is not needed; a whole part goes (one mesh of
+// both beds would hide both).
+static TAutoConsoleVariable<int32> CVarHHideOccluders(TEXT("ok.HScene.HideOccluders"),1,TEXT("1 (default): what of the scene stands between the camera and her and him is not drawn; 0 off"));
+static TAutoConsoleVariable<float> CVarHHideOccludersPad(TEXT("ok.HScene.HideOccludersPad"),10.f,TEXT("ok.HScene.HideOccluders: the cylinder this many cm wider than the farthest of their bones from its axis"));
+static TAutoConsoleVariable<float> CVarHHideOccludersNear(TEXT("ok.HScene.HideOccludersNear"),30.f,TEXT("ok.HScene.HideOccluders: kept what comes within this many cm of one of their bones (what they are on)"));
+static TAutoConsoleVariable<float> CVarHHideOccludersGap(TEXT("ok.HScene.HideOccludersGap"),15.f,TEXT("ok.HScene.HideOccluders: a wall or floor (anything with collision) met on the line to a bone within this many cm of it is not in the way"));
+static TAutoConsoleVariable<float> CVarHHideOccludersHold(TEXT("ok.HScene.HideOccludersHold"),0.5f,TEXT("ok.HScene.HideOccluders: kept hidden this many seconds after it last stood in the way"));
+static TAutoConsoleVariable<float> CVarHHideOccludersGlass(TEXT("ok.HScene.HideOccludersGlass"),0.f,TEXT("ok.HScene.HideOccluders: what stands in the way drawn as glass this opaque (a see-through wall; 0: not drawn at all)"));
+static TAutoConsoleVariable<int32> CVarHHideOccludersLog(TEXT("ok.HScene.HideOccludersLog"),0,TEXT("1: log what ok.HScene.HideOccluders hides and shows again"));
+void UOKHScenePanel::TickHideOccluders(APlayerController* PC,const FVector& Eye,bool bOn){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickHideOccluders);
+    UWorld* World=GetWorld();const bool bLog=CVarHHideOccludersLog.GetValueOnGameThread()!=0;
+    auto Show=[&](UPrimitiveComponent* C){if(!C)return;
+        if(auto* M=Cast<UMeshComponent>(C);M&&OccluderMats.Contains(M)){const auto Mats=OccluderMats.FindAndRemoveChecked(M);for(int32 I=0;I<Mats.Num();++I)M->SetMaterial(I,Mats[I].Get());}
+        else if(PC)PC->HiddenPrimitiveComponents.Remove(C);
+        if(bLog)UE_LOG(LogTemp,Display,TEXT("OK hide occluders: shown %s"),*GetNameSafe(C->GetOwner()));};
+    // A mesh is drawn as faint glass (ok.HScene.HideOccludersGlass alpha; 0 hides it), anything else hidden from this view.
+    auto Hide=[&](UPrimitiveComponent* C){
+        const float Alpha=CVarHHideOccludersGlass.GetValueOnGameThread();
+        if(!OccluderGlass&&Alpha>0.f)if(UMaterialInterface* Parent=LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/IndependentResources/PreviewMaterials/M_PreviewTranslucent.M_PreviewTranslucent")))OccluderGlass=UMaterialInstanceDynamic::Create(Parent,this);
+        if(OccluderGlass)OccluderGlass->SetVectorParameterValue(TEXT("PreviewTint"),FLinearColor(.85f,.92f,1.f,Alpha));
+        if(auto* M=Cast<UMeshComponent>(C);M&&OccluderGlass&&Alpha>0.f&&M->GetNumMaterials()>0){
+            TArray<TWeakObjectPtr<UMaterialInterface>> Mats;for(int32 I=0;I<M->GetNumMaterials();++I){Mats.Add(M->GetMaterial(I));M->SetMaterial(I,OccluderGlass);}
+            OccluderMats.Add(M,MoveTemp(Mats));}
+        else PC->HiddenPrimitiveComponents.Add(C);};
+    if(!bOn||!World||!PC||CVarHHideOccluders.GetValueOnGameThread()==0){
+        for(const auto& P:OccluderHidden)Show(P.Get());OccluderHidden.Reset();OccluderUntil.Reset();OccluderBoxes.Reset();OccluderBoxesAt=FVector(1.e30);return;}
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;AKKPreviewActor* Him=Gallery?Gallery->PartnerActor.Get():nullptr;
+    AActor* Two=SecondHere()?Second.Get():nullptr;
+    static const TCHAR* Bones[]={TEXT("j_head"),TEXT("j_neck"),TEXT("J_Spine03"),TEXT("J_Spine01"),TEXT("j_hips"),TEXT("J_Kosi01"),TEXT("j_thigh00_L"),TEXT("j_thigh00_R"),TEXT("j_leg01_L"),TEXT("j_leg01_R"),TEXT("j_foot_L"),TEXT("j_foot_R"),TEXT("j_arm00_L"),TEXT("j_arm00_R"),TEXT("j_forearm01_L"),TEXT("j_forearm01_R"),TEXT("j_hand_L"),TEXT("j_hand_R"),
+        TEXT("J_LegUp00_L"),TEXT("J_LegUp00_R"),TEXT("J_LegLow01_L"),TEXT("J_LegLow01_R"),TEXT("J_Foot01_L"),TEXT("J_Foot01_R"),
+        TEXT("J_ArmUp00_L"),TEXT("J_ArmUp00_R"),TEXT("J_ArmLow01_L"),TEXT("J_ArmLow01_R"),TEXT("J_Hand_L"),TEXT("J_Hand_R")};
+    // Torso: the first six (head to hips). What they are on is near those, not near a raised foot: her feet up by the
+    // upper bunk kept it as hers and it hid her (user, 2026-11-14).
+    TArray<FVector,TInlineAllocator<64>> Points,Torso;
+    for(AActor* A:{(AActor*)Girl,(AActor*)Him,Two})if(auto* K=Cast<AKKPreviewActor>(A);IsValid(K))for(int32 I=0;I<UE_ARRAY_COUNT(Bones);++I){FVector P;if(HBone(K,Bones[I],P)){Points.Add(P);if(I<6)Torso.Add(P);}}
+    const double Now=World->GetTimeSeconds();
+    if(!Points.IsEmpty()){
+        FVector Mid=FVector::ZeroVector;for(const FVector& P:Points)Mid+=P;Mid/=Points.Num();
+        // The scene's drawn parts round them, found once where they are (again when they are 5 m from there).
+        if(FVector::DistSquared(Mid,OccluderBoxesAt)>500.*500.){TRACE_CPUPROFILER_EVENT_SCOPE(OK_HHideOccludersGather);
+            OccluderBoxes.Reset();OccluderBoxesAt=Mid;
+            for(TActorIterator<AActor> It(World);It;++It){AActor* A=*It;if(!A||A==Girl||A==Him||A==Two||A->IsA<AKKPreviewActor>())continue;
+                if(FVector::DistSquared(A->GetActorLocation(),Mid)>3000.*3000.){FVector O,E;A->GetActorBounds(true,O,E);if(FVector::DistSquared(O,Mid)>FMath::Square(3000.+E.Size()))continue;}
+                TInlineComponentArray<UPrimitiveComponent*> Own(A);for(UPrimitiveComponent* C:Own)if(C&&C->IsRegistered()&&!C->bHiddenInGame&&!C->IsA<UInstancedStaticMeshComponent>())OccluderBoxes.Add(C);}
+            if(bLog)UE_LOG(LogTemp,Display,TEXT("OK hide occluders: %d parts round them"),OccluderBoxes.Num());}
+        const FVector Way=Mid-Eye;const double Len=Way.Size();
+        if(Len>1.){const FVector Axis=Way/Len;double Radius=0.;
+            for(const FVector& P:Points){const FVector D=P-Eye;Radius=FMath::Max(Radius,(D-Axis*FVector::DotProduct(D,Axis)).Size());}
+            Radius+=FMath::Max(0.f,CVarHHideOccludersPad.GetValueOnGameThread());
+            const double Near=FMath::Max(0.f,CVarHHideOccludersNear.GetValueOnGameThread());
+            const double Hold=FMath::Max(0.f,CVarHHideOccludersHold.GetValueOnGameThread());
+            TSet<const UPrimitiveComponent*> Theirs;for(const auto& P:LeadsOnTopParts)if(UPrimitiveComponent* C=P.Get())Theirs.Add(C);
+            // The axis sampled every half radius: the cylinder reaches a box where one sample comes within the radius of it.
+            const int32 Steps=FMath::Clamp(int32(Len/FMath::Max(Radius*.5,5.)),2,400);
+            // Its own box, turned as it is (scale in the box); "theirs": a piece of furniture (no side over 4 m) within Near
+            // of one of their bones. A wall or a building in one mesh has a box round them too: only its shape decides.
+            struct FTurned{FBox Local;FTransform R;bool bSmall;};
+            auto Turned=[&](UPrimitiveComponent* C){const FTransform T=C->GetComponentTransform();const FBoxSphereBounds LocalB=C->CalcBounds(FTransform::Identity);
+                const FVector S=T.GetScale3D().GetAbs();FTurned O{FBox(LocalB.GetBox().Min*S,LocalB.GetBox().Max*S),FTransform(T.GetRotation(),T.GetLocation()),false};
+                O.bSmall=O.Local.GetSize().GetMax()<=400.;return O;};
+            auto Dist=[](const FTurned& O,const FVector& P){return FMath::Sqrt(O.Local.ComputeSquaredDistanceToPoint(O.R.InverseTransformPositionNoScale(P)));};
+            auto IsTheirs=[&](const FTurned& O){if(!O.bSmall)return false;for(const FVector& P:Torso)if(Dist(O,P)<=Near)return true;return false;};
+            auto Mark=[&](UPrimitiveComponent* C){OccluderUntil.Add(C,Now+Hold);
+                if(!OccluderHidden.Contains(C)){Hide(C);OccluderHidden.Add(C);
+                    if(bLog)UE_LOG(LogTemp,Display,TEXT("OK hide occluders: hidden %s (%s)"),*GetNameSafe(C->GetOwner()),*C->GetName());}};
+            auto Skip=[&](UPrimitiveComponent* C){if(!C||!C->IsRegistered()||!C->IsVisible()||Theirs.Contains(C))return true;AActor* O=C->GetOwner();return O==Girl||O==Him||O==Two;};
+            // Furniture and small things: their boxes against the cylinder.
+            for(const auto& W:OccluderBoxes){UPrimitiveComponent* C=W.Get();if(Skip(C))continue;
+                const FBox Box=C->Bounds.GetBox();if(!Box.IsValid)continue;
+                const FBox Cyl=FBox(Eye,Mid).ExpandBy(Radius);if(!Box.Intersect(Cyl))continue;
+                const FTurned O=Turned(C);if(!O.bSmall||IsTheirs(O))continue;
+                bool bIn=false;for(int32 K=0;K<=Steps&&!bIn;++K)bIn=Dist(O,Eye+Way*(double(K)/Steps))<=Radius;
+                if(bIn)Mark(C);
+            }
+            // Walls, floors, buildings (and anything with collision): lines from the camera to their bones, through up to six
+            // things each; a thing met within ok.HScene.HideOccludersGap cm of the bone is under or at them, not in the way.
+            {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HHideOccludersLines);
+            const double Gap=FMath::Max(0.f,CVarHHideOccludersGap.GetValueOnGameThread());
+            FCollisionQueryParams Params(SCENE_QUERY_STAT(OKHideOccluders),true);
+            for(AActor* A:{(AActor*)Girl,(AActor*)Him,Two})if(A)Params.AddIgnoredActor(A);
+            const FCollisionObjectQueryParams Objects(FCollisionObjectQueryParams::InitType::AllObjects);
+            for(const FVector& P:Points){const FVector To=P-Eye;const double L=To.Size();if(L<=Gap+1.)continue;
+                const FVector End=Eye+To*((L-Gap)/L);FCollisionQueryParams Line=Params;
+                for(int32 K=0;K<6;++K){FHitResult Hit;if(!World->LineTraceSingleByObjectType(Hit,Eye,End,Objects,Line))break;
+                    UPrimitiveComponent* C=Hit.GetComponent();if(!C)break;Line.AddIgnoredComponent(C);
+                    if(Skip(C)||IsTheirs(Turned(C)))continue;Mark(C);}
+            }}
+        }
+    }
+    for(int32 I=OccluderHidden.Num()-1;I>=0;--I){UPrimitiveComponent* C=OccluderHidden[I].Get();
+        const double* Until=C?OccluderUntil.Find(C):nullptr;
+        if(!C||!Until||*Until<Now){Show(C);if(C)OccluderUntil.Remove(C);OccluderHidden.RemoveAt(I);}}
+}
 void UOKHScenePanel::TickEyesCamera(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickEyesCamera);
     AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;
     // Her head as the button on the right has it (user 2026-11-04), given to whichever self of hers is shown.
@@ -2963,6 +3150,7 @@ static constexpr float RootDodgeMaxCm=20.f;
 static TAutoConsoleVariable<float> CVarHWrapTest(TEXT("ok.HScene.WrapTest"),0.f,TEXT("Test: every wrapped skin moved this many metres up her mesh instead (0 off)"));
 static TAutoConsoleVariable<float> CVarHBackClipLead(TEXT("ok.HScene.BackClipLead"),8.f,TEXT("His penis folded under her back this many frames of his glans' way out further in (the morph is drawn after his pose is read)"));
 static TAutoConsoleVariable<int32> CVarHClothCover(TEXT("ok.HScene.ClothCover"),1,TEXT("1: her clothes are pushed out over her breasts and her belly lifted over his penis (belly_bulge::cover_deltas); 0 off"));
+static TAutoConsoleVariable<int32> CVarHClothCoverSplit(TEXT("ok.HScene.ClothCoverSplit"),0,TEXT("1: only her garments that reach her pushing skin (cover) or her jiggling thighs are skinned on the CPU (the rest stay on the GPU route, drawn the same); 0: all of them once one reaches (layered garments drawn by both routes fought for depth, 2026-11-11)"));
 static TAutoConsoleVariable<int32> CVarHWrapAsync(TEXT("ok.HScene.WrapAsync"),1,TEXT("1: her skin wrap and clothes cover worked out on their own thread, shown a frame later; 0 on the game thread"));
 static TAutoConsoleVariable<float> CVarHWrapLead(TEXT("ok.HScene.WrapLead"),1.f,TEXT("The wrap worked out this many frames of his glans' way further on (it is shown a frame late)"));
 static TAutoConsoleVariable<int32> CVarHBackClip(TEXT("ok.HScene.BackClip"),1,TEXT("1: his penis out through her back folded under her skin there, not drawn (belly_bulge::clip_deltas); 0 drawn"));
@@ -3131,6 +3319,14 @@ void UOKHScenePanel::MoveParts(AKKPreviewActor* A,const FVector& Want,FVector& A
     if(USceneComponent* Root=A->GetRootComponent()){const FVector Local=Root->GetComponentTransform().InverseTransformVectorNoScale(Step);
         for(USceneComponent* Child:Root->GetAttachChildren())if(IsValid(Child))Child->AddRelativeLocation(Local);}
 }
+// A change of clothes (and her model built again) makes parts at her actor's root without the offset MoveParts gave the
+// others: it is taken off them all first and given back to them all after (user 2026-11-14: Lan's hair sat higher than her
+// head after a change of clothes once his penis was made longer, the alignment lowering her further).
+void UOKHScenePanel::HoldAlignment(bool bBefore){
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;
+    if(bBefore){if(HerHolds++==0&&IsValid(Girl)&&AlignedHer==Girl){HerAlignHeld=HerApplied;MoveParts(Girl,FVector::ZeroVector,HerApplied);}}
+    else if(HerHolds>0&&--HerHolds==0){const FVector Want=HerAlignHeld;HerAlignHeld=FVector::ZeroVector;if(IsValid(Girl)&&AlignedHer==Girl)MoveParts(Girl,Want,HerApplied);}
+}
 void UOKHScenePanel::SyncPair(){if(Gallery&&Gallery->PairedPlayback)Gallery->PairedPlayback->SyncAsync();}
 void UOKHScenePanel::HoldFeet(AKKPreviewActor* A,bool bStands,const FVector& Offset,const FVector (&Feet)[2],FVector (&Kept)[2],bool& bIk,bool bPin,const FVector* PinHands,FVector* KeptHands,int32* KeptSet){
     if(!IsValid(A)||!A->Session.IsOpen())return;
@@ -3175,6 +3371,157 @@ void UOKHScenePanel::HoldFeet(AKKPreviewActor* A,bool bStands,const FVector& Off
             if(bFeet){Kept[0]=At[0];Kept[1]=At[1];}if(bHandTargets){KeptHands[0]=PinHands[0];KeptHands[1]=PinHands[1];}}
     }else if(bIk){DropPendingIk(A);SyncPair();A->Session.SetStudioIkArmPull(-1.f);A->Session.SetStudioIk({},{});bIk=false;HandHeld.Reset();if(KeptSet)*KeptSet=0;}
 }
+// Sweet words in her (user, 2026-11-14: in the original they often hold each other's face in both hands while saying
+// loving words; the upper body does it, the lower body keeps the thrusting). The source does this in its two-person scenes
+// (TwoShot: a pose and MotionIK per personality), not in H, so here it is her and his hand IK: while she speaks a line
+// (not a breath) or he has just said something, the one whose hands reach the other's face (him first) brings both
+// wrists from where the clip has them to the other's cheeks, in 0.4 s, and back after the words. Only the hand targets
+// change (the arms reach alone, ArmPull 0); hips, legs and the thrust are the clip's.
+static TAutoConsoleVariable<int32> CVarHSweetTouch(TEXT("ok.HScene.SweetTouch"),1,TEXT("1 (default): while she speaks a line or he has just said one, in her, the one who reaches holds the other's face in both hands; 0 off"));
+static TAutoConsoleVariable<float> CVarHSweetHold(TEXT("ok.HScene.SweetHold"),4.f,TEXT("ok.HScene.SweetTouch: seconds his said line keeps the hands on (her lines: while she speaks, and a second after)"));
+static FVector SweetLeanTestValue();static TAutoConsoleVariable<FString> CVarHSweetLeanTest(TEXT("ok.HScene.SweetLeanTest"),TEXT(""),TEXT("Test: the toucher's lean held at this Unity euler (x,y,z degrees over two spine bones), no feedback"));
+static FVector SweetLeanTestValue(){TArray<FString> P;CVarHSweetLeanTest.GetValueOnGameThread().ParseIntoArray(P,TEXT(","));return P.Num()==3?FVector(FCString::Atof(*P[0]),FCString::Atof(*P[1]),FCString::Atof(*P[2])):FVector::ZeroVector;}
+static TAutoConsoleVariable<int32> CVarHSweetTest(TEXT("ok.HScene.SweetTest"),0,TEXT("Test: 1 the hands held on whatever is said"));
+static TAutoConsoleVariable<FString> CVarHSweetLeanAxis(TEXT("ok.HScene.SweetLeanAxis"),TEXT("1,0,0"),TEXT("ok.HScene.SweetTouch: the lean's Unity euler axis on the spine bones (+X bends forward, probe 2026-11-14)"));
+static TAutoConsoleVariable<FString> CVarHSweetLeanBones(TEXT("ok.HScene.SweetLeanBones"),TEXT("j_spine02,j_spine03"),TEXT("ok.HScene.SweetTouch: the bones the lean is shared over (no cf_/cm_)"));
+static TAutoConsoleVariable<float> CVarHSweetLeanMax(TEXT("ok.HScene.SweetLeanMax"),40.f,TEXT("ok.HScene.SweetTouch: most lean, degrees (all bones together)"));
+static TAutoConsoleVariable<float> CVarHSweetLeanGain(TEXT("ok.HScene.SweetLeanGain"),3.f,TEXT("ok.HScene.SweetTouch: degrees a second per cm the arms are short (shortfall clamped to 10 cm)"));
+static TAutoConsoleVariable<float> CVarHSweetFacing(TEXT("ok.HScene.SweetFacing"),-.3f,TEXT("ok.HScene.SweetTouch: only while their faces' forward ways have at most this dot product (face to face; 後背位 not)"));
+static TAutoConsoleVariable<float> CVarHSweetLeanAim(TEXT("ok.HScene.SweetLeanAim"),4.f,TEXT("ok.HScene.SweetTouch: the lean stops when the cheeks are this far (cm) inside the arms' reach"));
+static TAutoConsoleVariable<float> CVarHSweetLeanBack(TEXT("ok.HScene.SweetLeanBack"),60.f,TEXT("ok.HScene.SweetTouch: degrees a second back upright after the words"));
+static TAutoConsoleVariable<float> CVarHSweetReach(TEXT("ok.HScene.SweetReach"),6.f,TEXT("ok.HScene.SweetTouch: hands go on when the arms are this short (cm) or less"));
+static TAutoConsoleVariable<float> CVarHSweetReachOff(TEXT("ok.HScene.SweetReachOff"),14.f,TEXT("ok.HScene.SweetTouch: hands come off only past this shortfall (cm), so the thrust does not shake them off"));
+static TAutoConsoleVariable<float> CVarHSweetWho(TEXT("ok.HScene.SweetWho"),35.f,TEXT("ok.HScene.SweetTouch: the toucher's arms at most this short (cm) to start"));
+static TAutoConsoleVariable<float> CVarHSweetBlend(TEXT("ok.HScene.SweetBlend"),.4f,TEXT("ok.HScene.SweetTouch: seconds for the hands to go on / come off"));
+static TAutoConsoleVariable<FString> CVarHSweetCheek(TEXT("ok.HScene.SweetCheek"),TEXT("6.5,0,0"),TEXT("ok.HScene.SweetTouch: the cheek from the mouth's middle, cm: out, up, forward"));
+static TAutoConsoleVariable<FString> CVarHSweetWrist(TEXT("ok.HScene.SweetWrist"),TEXT("3,-12,-1"),TEXT("ok.HScene.SweetTouch: the wrist from the cheek, cm: out, up, forward"));
+static FVector HVec3(const TAutoConsoleVariable<FString>& V,const FVector& Def){TArray<FString> P;V.GetValueOnGameThread().ParseIntoArray(P,TEXT(","));return P.Num()==3?FVector(FCString::Atof(*P[0]),FCString::Atof(*P[1]),FCString::Atof(*P[2])):Def;}
+void UOKHScenePanel::SweetTouch(AKKPreviewActor* Girl,AKKPreviewActor* Him,const FVector& HimAhead,const FVector& HerAhead,FVector (&HisPin)[2],FVector (&HerPin)[2],float Delta){
+    const double Now=FPlatformTime::Seconds();const FString Base=HBase(Current());
+    const bool bIn=Mode==2&&(HIsLoop(Base)||Base==TEXT("InsertIdle")||Base==TEXT("A_InsertIdle"));
+    const bool bWords=CVarHSweetTest.GetValueOnGameThread()!=0||(IsValid(Girl)&&Girl->IsSpeaking()&&!Girl->bHBreath)||Now-SweetSaidAt<CVarHSweetHold.GetValueOnGameThread();
+    if(CVarHSweetTouch.GetValueOnGameThread()&&bIn&&bWords)SweetUntil=FMath::Max(SweetUntil,Now+1.);
+    const bool bOn=bIn&&Now<SweetUntil;
+    {static double LoggedAt=0.;if(CVarHSweetTest.GetValueOnGameThread()&&Now-LoggedAt>3.){LoggedAt=Now;UE_LOG(LogTemp,Display,TEXT("H scene: sweet words test: in %d (%s) on %d who %d w %.2f"),bIn,*Base,bOn,SweetWho,SweetW);}}
+    // A face: its middle (the mouth's, else 6 cm up and 8 forward of the head), the way across it and up it.
+    struct FFace{FVector Mid,Side,Up,Fwd;};
+    auto FaceOf=[](AKKPreviewActor* A,AKKPreviewActor* Other,FFace& F){FVector Head,Neck,L,R;
+        if(!HBone(A,TEXT("j_head"),Head)||!HBone(A,TEXT("j_neck"),Neck))return false;F.Up=(Head-Neck).GetSafeNormal();
+        FVector SL,SR;if(!HBone(A,TEXT("j_arm00_L"),SL)||!HBone(A,TEXT("j_arm00_R"),SR))return false;
+        if(HBone(A,TEXT("J_Mouth_L"),L)&&HBone(A,TEXT("J_Mouth_R"),R)){F.Mid=(L+R)*.5f;F.Side=(L-R);}else{F.Side=SL-SR;F.Mid=FVector::ZeroVector;}
+        F.Side=(F.Side-F.Up*(F.Side|F.Up)).GetSafeNormal();if(F.Side.IsNearlyZero()||F.Up.IsNearlyZero())return false;
+        F.Fwd=FVector::CrossProduct(F.Side,F.Up).GetSafeNormal();
+        if(F.Mid.IsZero()){FVector OtherHead;if(HBone(Other,TEXT("j_head"),OtherHead)&&((OtherHead-Head)|F.Fwd)<0.f)F.Fwd=-F.Fwd;F.Mid=Head+F.Up*6.f+F.Fwd*8.f;}
+        else if(((F.Mid-Head)|F.Fwd)<0.f)F.Fwd=-F.Fwd;
+        return true;};
+    // The wrists for a palm on each cheek (fingers up the side of the face): 6.5 cm out of the mouth's middle is the cheek,
+    // the wrist 12 cm under it, 3 out and 1 back (the hand is not turned: higher, the fingers covered her eyes; tuned live
+    // on Lan in 正常位, 2026-11-14, ok.HScene.SweetCheek / SweetWrist).
+    const FVector CheekAt=HVec3(CVarHSweetCheek,FVector(6.5f,0.f,0.f)),WristAt=HVec3(CVarHSweetWrist,FVector(3.f,-12.f,-1.f));
+    auto Wrists=[CheekAt,WristAt](const FFace& F,FVector (&W)[2]){for(int32 S=0;S<2;++S){const float Out=S?-1.f:1.f;
+        const FVector Cheek=F.Mid+F.Side*(CheekAt.X*Out)+F.Up*CheekAt.Y+F.Fwd*CheekAt.Z;W[S]=Cheek+F.Side*(WristAt.X*Out)+F.Up*WristAt.Y+F.Fwd*WristAt.Z;}};
+    // How far the wrists are past the arm's reach (upper arm and forearm, 95%) from the shoulders: the farther hand.
+    auto Short=[](AKKPreviewActor* A,const FVector (&W)[2]){float Most=-1.e9f;
+        for(int32 S=0;S<2;++S){FVector Up,Low,Hand;if(!HBone(A,S?TEXT("j_arm00_R"):TEXT("j_arm00_L"),Up)||!HBone(A,S?TEXT("j_forearm01_R"):TEXT("j_forearm01_L"),Low)||!HBone(A,S?TEXT("j_hand_R"):TEXT("j_hand_L"),Hand))return 1.e9f;
+            const float Arm=FVector::Dist(Up,Low)+FVector::Dist(Low,Hand);Most=FMath::Max(Most,FMath::Min(FVector::Dist(Up,W[0]),FVector::Dist(Up,W[1]))-.95f*Arm);}
+        return Most;};
+    // Whose: the one with the less to lean (him on a tie within 5 cm); the upper body leans to make up 35 cm at most.
+    const bool bBusy=SweetW>0.f||SweetLean>0.f;
+    if(!bBusy){SweetWho=0;
+        if(bOn&&IsValid(Girl)&&IsValid(Him)){FFace HerFace0,HisFace0;FVector W[2];float HisShort=1.e9f,HerShort=1.e9f;
+            // Only face to face (the faces' forward ways at least SweetFacing apart: 後背位 had her hands reach back to his
+            // face, 2026-11-14), and not his hands while he carries her (he stands, she does not: 站立抱起).
+            const bool bHerFace=FaceOf(Girl,Him,HerFace0),bHisFace=FaceOf(Him,Girl,HisFace0);
+            const bool bFacing=bHerFace&&bHisFace&&(HerFace0.Fwd|HisFace0.Fwd)<=CVarHSweetFacing.GetValueOnGameThread();
+            const bool bCarries=bFeetRead&&bHisStands&&!bHerStands;SweetFaceDot=bHerFace&&bHisFace?float(HerFace0.Fwd|HisFace0.Fwd):2.f;bSweetCarries=bCarries;
+            if(bFacing&&!bCarries){Wrists(HerFace0,W);HisShort=Short(Him,W);}
+            if(bFacing){Wrists(HisFace0,W);HerShort=Short(Girl,W);}
+            if(FMath::Min(HisShort,HerShort)<=CVarHSweetWho.GetValueOnGameThread()){SweetWho=HisShort<=HerShort+5.f?1:2;SweetLean=0.f;SweetLeanErr=-1.f;SweetLeanWas=0.f;bSweetHands=false;}
+            if(SweetWho){UE_LOG(LogTemp,Display,TEXT("H scene: sweet words, %s face in both hands (his arms %.0f cm short, hers %.0f)"),SweetWho==1?TEXT("his hands on her"):TEXT("her hands on his"),HisShort,HerShort);}
+            else if(FMath::Fmod(Now,3.)<Delta){UE_LOG(LogTemp,Display,TEXT("H scene: sweet words, no one reaches (his arms %.0f cm short, hers %.0f)"),HisShort,HerShort);}}}
+    AKKPreviewActor* Toucher=SweetWho==1?Him:SweetWho==2?Girl:nullptr;AKKPreviewActor* Touched=SweetWho==1?Girl:Him;
+    FFace F;FVector W[2];const bool bFace=Toucher&&IsValid(Toucher)&&IsValid(Touched)&&FaceOf(Touched,Toucher,F);if(bFace){Wrists(F,W);SweetWrists[0]=W[0];SweetWrists[1]=W[1];}
+    // The lean: forward (ok.HScene.SweetLeanAxis, +X) more while the arms are short (SweetLeanGain degrees a second per cm),
+    // less once past, never past SweetLeanMax; back upright as the words end. (A lean that tried both ways and turned round
+    // when the shoulders went farther flailed with the thrust: the probe found +X forward on both of them, 2026-11-14.)
+    const float LeanMax=FMath::Max(CVarHSweetLeanMax.GetValueOnGameThread(),0.f);
+    if(SweetLeanTestValue()!=FVector::ZeroVector&&bFace){SweetLean=1.f;SweetLeanSign=1.f;SweetLeanErr=Short(Toucher,W);}
+    else if(bOn&&bFace){const float Err=Short(Toucher,W);SweetLeanErr=Err;SweetLeanSign=1.f;
+        SweetLean=FMath::Clamp(SweetLean+FMath::Clamp(Err+CVarHSweetLeanAim.GetValueOnGameThread(),-10.f,10.f)*CVarHSweetLeanGain.GetValueOnGameThread()*Delta,0.f,LeanMax);}
+    else{SweetLean=FMath::FInterpConstantTo(SweetLean,0.f,Delta,CVarHSweetLeanBack.GetValueOnGameThread());SweetLeanErr=-1.f;}
+    // Hands go on once the arms nearly reach (or the lean is all there is), and stay on until they are well short.
+    if(!(bOn&&bFace))bSweetHands=false;
+    else if(!bSweetHands)bSweetHands=SweetLeanErr<CVarHSweetReach.GetValueOnGameThread()||SweetLean>=LeanMax-1.f;
+    else bSweetHands=SweetLeanErr<CVarHSweetReachOff.GetValueOnGameThread()||SweetLean>=LeanMax-1.f;
+    SweetW=FMath::FInterpConstantTo(SweetW,bSweetHands?1.f:0.f,Delta,1.f/FMath::Max(CVarHSweetBlend.GetValueOnGameThread(),.05f));
+    // The lean as FK on two spine bones (on top of the clip): his set here, hers with her own (ApplyHerFk).
+    {SweetLeanBones.Reset();SweetLeanTurns.Reset();AKKPreviewActor* Leaner=Toucher?Toucher:(bSweetLeanHim?Him:nullptr);
+     TArray<FString> LeanBones;CVarHSweetLeanBones.GetValueOnGameThread().ParseIntoArray(LeanBones,TEXT(","));
+     const FVector Axis=HVec3(CVarHSweetLeanAxis,FVector(1.f,0.f,0.f)).GetSafeNormal();const float Share=1.f/FMath::Max(LeanBones.Num(),1);
+     if(SweetLean>0.f&&IsValid(Leaner)&&Leaner->BodySkel)for(const FString& Bone:LeanBones)for(const TCHAR* P:{TEXT("cf_"),TEXT("cm_")}){
+        const FString Name=FString(P)+Bone.TrimStartAndEnd();if(Leaner->BodySkel->GetBoneIndex(FName(*Name))==INDEX_NONE)continue;
+        SweetLeanBones.Add(TEXT("+")+Name);{const FVector Test=SweetLeanTestValue();SweetLeanTurns.Add(Test!=FVector::ZeroVector?Test*Share:Axis*(SweetLean*SweetLeanSign*Share));}break;}
+     if(IsValid(Him)&&(Toucher==Him||bSweetLeanHim)){
+        // The pair solves in the background: wait for it before his session is touched, and only when the lean changed.
+        if(!SweetLeanBones.IsEmpty()&&Toucher==Him){if(!bSweetLeanHim||SweetLeanHimSent!=SweetLeanTurns){SyncPair();Him->Session.SetFk(SweetLeanBones,SweetLeanTurns);SweetLeanHimSent=SweetLeanTurns;}bSweetLeanHim=true;}
+        else if(bSweetLeanHim){SyncPair();Him->Session.SetFk({},{});bSweetLeanHim=false;SweetLeanHimSent.Reset();}}
+     if(Toucher!=Girl){SweetLeanBones.Reset();SweetLeanTurns.Reset();}}
+    if(CVarHSweetTest.GetValueOnGameThread()&&bFace&&FMath::Fmod(Now,3.)<Delta){FVector L,R;
+        if(HBone(Toucher,TEXT("j_hand_L"),L)&&HBone(Toucher,TEXT("j_hand_R"),R))UE_LOG(LogTemp,Display,TEXT("H scene: sweet words test: wrists %.1f / %.1f cm from where they go (lean %.0f, arms short %.1f, w %.2f)"),
+            FMath::Min(FVector::Dist(L,W[0]),FVector::Dist(L,W[1])),FMath::Min(FVector::Dist(R,W[0]),FVector::Dist(R,W[1])),SweetLean*SweetLeanSign,SweetLeanErr,SweetW);}
+    if(SweetW<=0.f||!bFace)return;
+    FVector (&Pin)[2]=SweetWho==1?HisPin:HerPin;const FVector& Ahead=SweetWho==1?HimAhead:HerAhead;
+    const FVector T[2]={HToSession(Toucher,W[0],Ahead),HToSession(Toucher,W[1],Ahead)};
+    // Each hand to the cheek nearer it (from where the clip has them).
+    const bool bSwap=FVector::Dist(Pin[0],T[1])+FVector::Dist(Pin[1],T[0])<FVector::Dist(Pin[0],T[0])+FVector::Dist(Pin[1],T[1]);
+    const float S=FMath::SmoothStep(0.f,1.f,SweetW);
+    for(int32 Hand=0;Hand<2;++Hand)Pin[Hand]=FMath::Lerp(Pin[Hand],T[bSwap?1-Hand:Hand],S);
+    if(CVarHSweetTest.GetValueOnGameThread()&&FMath::Fmod(Now,3.)<Delta){FVector L;if(HBone(Toucher,TEXT("j_hand_L"),L)){const FVector Ls=HToSession(Toucher,L,Ahead);
+        UE_LOG(LogTemp,Display,TEXT("H scene: sweet words test: pin0 %s target %s hand_L now %s (ik set %d, his ik %d)"),*Pin[0].ToString(),*T[bSwap?1:0].ToString(),*Ls.ToString(),HisIkSet,bHisIk);}}
+}
+// Live probes (user, 2026-11-14: "open more MCP API so it need not be built again and again"), through the console or
+// ok-game game_exec. ok.HScene.Bones sweet: the face touch's state; ok.HScene.Bones her.j_hand_L him.j_head ...: those
+// bones in the world and each one's distance from the first. ok.HScene.Fk her|him +cf_j_spine02=30,0,0;...: FK on top of
+// the clip (Unity euler degrees), held (her: every frame; him: until his next FK); ok.HScene.Fk her|him clear.
+FString UOKHScenePanel::DebugBones(const TArray<FString>& Args){
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;AKKPreviewActor* Him=Gallery?Gallery->PartnerActor.Get():nullptr;
+    FString Out;
+    if(Args.Num()==1&&Args[0]==TEXT("sweet")){
+        Out=FString::Printf(TEXT("sweet: who %d (1 his hands, 2 hers) w %.2f hands %d lean %.1f short %.1f until %.1f s, said %.1f s ago; faces' dot %.2f, he carries her %d\n"),SweetWho,SweetW,bSweetHands,SweetLean*SweetLeanSign,SweetLeanErr,
+            float(SweetUntil-FPlatformTime::Seconds()),float(FPlatformTime::Seconds()-SweetSaidAt),SweetFaceDot,bSweetCarries);
+        for(int32 I=0;I<SweetLeanBones.Num()&&I<SweetLeanTurns.Num();++I)Out+=FString::Printf(TEXT("  her fk %s %s\n"),*SweetLeanBones[I],*SweetLeanTurns[I].ToString());
+        for(int32 I=0;I<SweetLeanHimSent.Num();++I)Out+=FString::Printf(TEXT("  his fk %s\n"),*SweetLeanHimSent[I].ToString());
+        if(AKKPreviewActor* Toucher=SweetWho==1?Him:SweetWho==2?Girl:nullptr){FVector L,R;
+            if(HBone(Toucher,TEXT("j_hand_L"),L)&&HBone(Toucher,TEXT("j_hand_R"),R))Out+=FString::Printf(TEXT("  wrists %.1f / %.1f cm from the targets (%s / %s)\n"),
+                FMath::Min(FVector::Dist(L,SweetWrists[0]),FVector::Dist(L,SweetWrists[1])),FMath::Min(FVector::Dist(R,SweetWrists[0]),FVector::Dist(R,SweetWrists[1])),*SweetWrists[0].ToString(),*SweetWrists[1].ToString());}
+        return Out;}
+    TArray<FVector> At;
+    for(const FString& A:Args){FString Who,Bone;if(!A.Split(TEXT("."),&Who,&Bone)){Who=TEXT("her");Bone=A;}
+        AKKPreviewActor* Act=Who==TEXT("him")?Him:Girl;FVector P;
+        if(!HBone(Act,*Bone,P)){Out+=FString::Printf(TEXT("%s: no such bone (cf_/cm_ + name)\n"),*A);continue;}
+        At.Add(P);Out+=FString::Printf(TEXT("%s: %.1f %.1f %.1f"),*A,P.X,P.Y,P.Z);
+        if(At.Num()>1)Out+=FString::Printf(TEXT("  (%.1f cm from %s)"),float(FVector::Dist(At[0],P)),*Args[0]);
+        Out+=TEXT("\n");}
+    return Out.IsEmpty()?TEXT("ok.HScene.Bones sweet | [her.|him.]bone ..."):Out;
+}
+FString UOKHScenePanel::DebugFk(const TArray<FString>& Args){
+    if(Args.Num()<2)return TEXT("ok.HScene.Fk her|him +cf_j_spine02=30,0,0;+cf_j_spine03=30,0,0 | clear");
+    AKKPreviewActor* Him=Gallery?Gallery->PartnerActor.Get():nullptr;const bool bHim=Args[0]==TEXT("him");
+    TArray<FString> Names;TArray<FVector> Turns;
+    if(Args[1]!=TEXT("clear")){TArray<FString> Items;FString::Join(TArray<FString>(Args.GetData()+1,Args.Num()-1),TEXT(" ")).ParseIntoArray(Items,TEXT(";"));
+        for(const FString& Item:Items){FString Name,Euler;if(!Item.TrimStartAndEnd().Split(TEXT("="),&Name,&Euler))continue;TArray<FString> P;Euler.ParseIntoArray(P,TEXT(","));
+            if(P.Num()!=3)continue;Names.Add(Name);Turns.Add(FVector(FCString::Atof(*P[0]),FCString::Atof(*P[1]),FCString::Atof(*P[2])));}}
+    if(bHim){if(!IsValid(Him))return TEXT("no him");SyncPair();Him->Session.SetFk(Names,Turns);}
+    else{DebugFkHerNames=Names;DebugFkHerTurns=Turns;}
+    return FString::Printf(TEXT("%s fk: %d bone(s)"),bHim?TEXT("his"):TEXT("her"),Names.Num());
+}
+static UOKHScenePanel* HPanelOf(UWorld* World){for(TObjectIterator<UOKHScenePanel> It;It;++It)if(!It->HasAnyFlags(RF_ClassDefaultObject)&&It->GetWorld()==World&&It->Gallery)return *It;return nullptr;}
+static FAutoConsoleCommandWithWorldArgsAndOutputDevice GHSceneBonesCommand(TEXT("ok.HScene.Bones"),TEXT("ok.HScene.Bones sweet | [her.|him.]bone ... : bone positions and distances (live probe)"),
+    FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args,UWorld* World,FOutputDevice& Ar){
+        UOKHScenePanel* P=HPanelOf(World);Ar.Log(P?P->DebugBones(Args):TEXT("no H scene"));}));
+static FAutoConsoleCommandWithWorldArgsAndOutputDevice GHSceneFkCommand(TEXT("ok.HScene.Fk"),TEXT("ok.HScene.Fk her|him +bone=x,y,z;... | clear : FK on top of the clip (live probe)"),
+    FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args,UWorld* World,FOutputDevice& Ar){
+        UOKHScenePanel* P=HPanelOf(World);Ar.Log(P?P->DebugFk(Args):TEXT("no H scene"));}));
 void UOKHScenePanel::DropPendingIk(AKKPreviewActor* A){PendingIk.RemoveAll([A](const FPendingIk& P){return !P.Who.IsValid()||P.Who.Get()==A;});}
 void UOKHScenePanel::SendPendingIk(bool bWait){
     if(PendingIk.IsEmpty())return;
@@ -3334,7 +3681,8 @@ void UOKHScenePanel::ReadBulge(AKKPreviewActor* Girl,const FVector& Tip,const FV
          TRACE_CPUPROFILER_EVENT_SCOPE(OK_HWrapStart);Girl->Session.BellyWrapStart(bIn,ToUnity(E),ToUnity(Tip+Ahead),Front.IsZero()?FVector::ZeroVector:(ToUnity(Kokan+Front*10.)-ToUnity(Kokan)).GetSafeNormal(),(Radius+.5f)/100.f,bCover);}
      else if(!E.IsZero()&&(WrapMode==1||WrapMode==3)&&TipInside>=6.f)Girl->Session.BellyWrapDeltas(ToUnity(E),ToUnity(Tip),Front.IsZero()?FVector::ZeroVector:(ToUnity(Kokan+Front*10.)-ToUnity(Kokan)).GetSafeNormal(),(Radius+.5f)/100.f,Idx,D,&N,WrapMode==3);
      WrapSolveMs=float((FPlatformTime::Seconds()-WrapT0)*1000.);if(const float Test=CVarHWrapTest.GetValueOnGameThread();Test!=0.f)for(FVector3f& V:D)V=FVector3f(0.f,Test,0.f);
-     if(bHave){if(D.Num()||bWrapShown){Girl->SetPartWrapDeltas(BulgePart,Idx,D,N);bWrapShown=D.Num()>0;}WrapVerts=D.Num();WrapIdxShown=Idx;WrapDShown=D;WrapNShown=N;}
+     // The upload reads nothing of the session: beside the next solve with the pair's late display (RunLate).
+     if(bHave){if(D.Num()||bWrapShown){Girl->RunLate([Girl,Part=BulgePart,Idx,D,N]{Girl->SetPartWrapDeltas(Part,Idx,D,N);});bWrapShown=D.Num()>0;}WrapVerts=D.Num();WrapIdxShown=Idx;WrapDShown=D;WrapNShown=N;}
      // ok.HScene.Wrap 2 (the material route, to compare): her skin parents with the wrap offset push her skin off the
      // segment from her entrance to his glans, his radius and half a centimetre (as above) out; nothing while he is in
      // her entrance alone.
@@ -3372,7 +3720,7 @@ void UOKHScenePanel::ReadBulge(AKKPreviewActor* Girl,const FVector& Tip,const FV
          Him->Session.PenisClipDeltas(HisPos(WAt),HisDir(WN),HisDir((Tip-E).GetSafeNormal()),Idx,D,FMath::Max(0.f,Inset)/100.f);
          // Moves under a tenth of a millimetre dropped: a set of only those has no morph batches and the engine asserts.
          for(int32 I=D.Num()-1;I>=0;--I)if(D[I].SizeSquared()<1e-8f){D.RemoveAtSwap(I);Idx.RemoveAtSwap(I);}}
-     if(IsValid(Him)&&ClipPart!=INDEX_NONE&&(D.Num()||bClipShown)){Him->SetPartWrapDeltas(ClipPart,Idx,D);bClipShown=D.Num()>0;}ClipVerts=D.Num();}
+     if(IsValid(Him)&&ClipPart!=INDEX_NONE&&(D.Num()||bClipShown)){bClipShown=D.Num()>0;ClipVerts=D.Num();Him->RunLate([Him,Part=ClipPart,Idx=MoveTemp(Idx),D=MoveTemp(D)]{Him->SetPartWrapDeltas(Part,Idx,D);});}else ClipVerts=D.Num();}
     // His glans alone read out for the panel (bulge_at, belly_out): each reading skins all her swells' skin again, and
     // with the fine grid that for every point of him took the game from 100 FPS to 25.
     bool bAny=false;float Most=0.f;TRACE_CPUPROFILER_EVENT_SCOPE(OK_HBellyPast);
@@ -3459,6 +3807,8 @@ void UOKHScenePanel::CoverClothes(AKKPreviewActor* Girl){ TRACE_CPUPROFILER_EVEN
     // the private GPU route skins its own copy of the rest mesh); those on her body skeleton below, as a morph.
     // Kept there two seconds after it last reached her pushing skin: switching a garment between the routes each frame
     // rebuilt its GPU display every time.
+    // ok.HScene.ClothCoverSplit 1: only the garments that reach go to the CPU (off by default: once one reaches, all do).
+    {static int32 SplitWas=-1;const int32 Split=CVarHClothCoverSplit.GetValueOnGameThread()!=0;if(Split!=SplitWas){FOkSession::SetClothCoverSplit(Split!=0);SplitWas=Split;}}
     {TArray<int32> Cpu;if(bPiped)Cpu=ClothCpu;else Girl->Session.SetClothCover(CVarHClothCover.GetValueOnGameThread()!=0,WrapIdxShown,WrapDShown,WrapNShown,Cpu);
      const double Now=FPlatformTime::Seconds();for(int32 Part:Cpu)ClothCpuUntil.Add(Part,Now+2.);
      for(auto It=ClothCpuUntil.CreateIterator();It;++It)if(It.Value()<Now||Cpu.IsEmpty()&&CVarHClothCover.GetValueOnGameThread()==0)It.RemoveCurrent();
@@ -3756,7 +4106,9 @@ void UOKHScenePanel::AlignHim(float Delta){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HAl
         const bool bHandsPin=bPinHands&&bHeld&&bHandsRead;FVector HisPin[2],HerPin[2];
         if(bHandsPin){auto PinShift=[](AKKPreviewActor* Who,const FVector& By){return AKKPreviewActor::ActorLocalToUnity(Who->GetRootComponent()->GetComponentTransform().InverseTransformVectorNoScale(By));};
             const FVector HisShift=PinShift(Him,HimAhead),HerShift=PinShift(Girl,HerAhead);
-            for(int32 HandIndex=0;HandIndex<2;++HandIndex){FTransform WaistT;HisPin[HandIndex]=!HisHandOn[HandIndex].IsNone()&&HBoneTransform(Girl,*HisHandOn[HandIndex].ToString(),WaistT)?HToSession(Him,WaistT.TransformPosition(HisHandLocal[HandIndex]),HimAhead):HisHands[HandIndex]-HisShift;HerPin[HandIndex]=HerHands[HandIndex]-HerShift;}}
+            for(int32 HandIndex=0;HandIndex<2;++HandIndex){FTransform WaistT;HisPin[HandIndex]=!HisHandOn[HandIndex].IsNone()&&HBoneTransform(Girl,*HisHandOn[HandIndex].ToString(),WaistT)?HToSession(Him,WaistT.TransformPosition(HisHandLocal[HandIndex]),HimAhead):HisHands[HandIndex]-HisShift;HerPin[HandIndex]=HerHands[HandIndex]-HerShift;}
+            SweetTouch(Girl,Him,HimAhead,HerAhead,HisPin,HerPin,Delta);}
+        else{SweetW=0.f;SweetLean=0.f;SweetLeanBones.Reset();SweetLeanTurns.Reset();if(bSweetLeanHim&&IsValid(Him)){SyncPair();Him->Session.SetFk({},{});bSweetLeanHim=false;SweetLeanHimSent.Reset();}}
         FVector HisFeetAt[2]={HisFeet[0],HisFeet[1]};if(bPin&&bFeetToHers)FeetToHers(Girl,Him,HisFeetAt);
         HoldFeet(Him,bHisStands,HimAhead,HisFeetAt,HisHeld,bHisIk,bPin,bHandsPin?HisPin:nullptr,HisHandsKept,&HisIkSet);
         HoldFeet(Girl,bHerStands,HerAhead,HerFeet,HerHeld,bHerIk,bPin,bHandsPin?HerPin:nullptr,HerHandsKept,&HerIkSet);}
@@ -3776,10 +4128,11 @@ void UOKHScenePanel::ClearProps(){for(AStaticMeshActor* A:Props)if(IsValid(A))A-
 void UOKHScenePanel::NativeDestruct(){FastPaths(false);DropSecond();RestoreEyeLook();RestoreStyle();if(IsValid(Fluid)){Fluid->StopSpray();Fluid->Destroy();Fluid=nullptr;}if(Siru[0]+Siru[1]+Siru[2]+Siru[3]+Siru[4]>0){FMemory::Memzero(Siru);ApplySiru();}if(bCovered)Cover(false,FPlatformTime::Seconds());ClearProps();RestoreBlush();
     if(auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl))EndDeepFace(Girl);
     if(bAhegaoShown){bAhegaoShown=false;TickAhegao();if(auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl)){Girl->SetEyeGaze(0.f,0.f,0.f);Girl->SetMouthPattern(0);}} // her eyes, mouth and hands back from ahegao
-    TickCameraLight(true);TickSkinLit(true);TickClothBias(true);
+    TickCameraLight(true);TickSkinLit(true);TickClothBias(true);bLeadsOnTopEnd=true;TickLeadsOnTop();
     SetGrayRoom(false);RemoveMirror();StainShown.Reset();
     if(auto* PC=Cast<AOpenKoikatsuPlayerController>(GetOwningPlayer());PC&&IsValid(PC->PaintSprayer)&&PC->PaintSprayer->FloorStainMaterial){PC->PaintSprayer->FloorStainMaterial=nullptr;PC->PaintSprayer->OnFloorStain=nullptr;}
-    RemovePuddles();Drips.Reset();Tears.Reset();RestoreAlign();Super::NativeDestruct();}
+    // The room closes: its stains and marks go with it, so the reflections go back as they were (they stayed on while any lay there).
+    StainShown.Reset();RemovePuddles();Drips.Reset();Tears.Reset();RestoreAlign();Super::NativeDestruct();}
 // Off for now (user, 2026-11-02: the box, table and chair hid the bugs being looked at): ok.HScene.Props 1 sets them again.
 static TAutoConsoleVariable<int32> CVarHProps(TEXT("ok.HScene.Props"),0,TEXT("1: a box, table or chair under her for the poses that lean on one; 0: none"));
 void UOKHScenePanel::PlaceProps(int32 Kind){

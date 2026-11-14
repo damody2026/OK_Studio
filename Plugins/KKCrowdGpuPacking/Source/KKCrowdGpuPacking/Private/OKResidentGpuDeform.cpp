@@ -1,4 +1,5 @@
 #include "OKResidentGpuDeform.h"
+#include "OKClothCoverGpu.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "RenderingThread.h"
@@ -8,7 +9,9 @@ static TAutoConsoleVariable<int32> CVarResidentDeformFusedPacking(TEXT("ok.GpuDe
 
 struct FOKResidentGpuDeform::FState {
  TRefCountPtr<FRDGPooledBuffer> Source,Draw,Positions[2],Tangents[2];
- uint32 PaletteCount=0,Fallback=0,DrawCount=0,Current=0;bool HasFrame=false,HasPrevious=false;
+ uint32 PaletteCount=0,Fallback=0,DrawCount=0,Current=0,SourceCount=0;bool HasFrame=false,HasPrevious=false;
+ TArray<FVector4f> Displacement; // SetDisplacement: per source, empty none
+ FOKClothCoverJob ClothCover; // SetClothCoverJob
  bool NativeUnitySpace=false;
  FOKResidentDeformStats Stats;
 };
@@ -18,6 +21,8 @@ FOKResidentGpuDeform::~FOKResidentGpuDeform(){
 }
 FOKResidentDeformStats FOKResidentGpuDeform::GetStats() const{check(IsInRenderingThread());return State->Stats;}
 void FOKResidentGpuDeform::Release(){check(IsInRenderingThread());auto Stats=State->Stats;++Stats.Generation;Stats.ResidentBytes=0;State=MakeUnique<FState>();State->Stats=Stats;}
+void FOKResidentGpuDeform::SetDisplacement(TArray<FVector4f> PerSource){check(IsInRenderingThread());State->Displacement=MoveTemp(PerSource);}
+void FOKResidentGpuDeform::SetClothCoverJob(const FOKClothCoverJob& Job){check(IsInRenderingThread());State->ClothCover=Job;}
 bool FOKResidentGpuDeform::GetCurrent(FRDGBuilder& G,uint64 Generation,FOKResidentDeformFrame& Result) const{
  check(IsInRenderingThread());const auto& S=*State;if(!S.HasFrame||Generation!=S.Stats.Generation)return false;
  FOKResidentDeformFrame Next;Next.Generation=Generation;Next.DrawCount=S.DrawCount;
@@ -34,10 +39,13 @@ bool FOKResidentGpuDeform::Dispatch(FRDGBuilder& G,FState& S,TConstArrayView<FVe
  auto* Palette=CreateStructuredBuffer(G,TEXT("ResidentDeform.Palette"),sizeof(FVector4f),Rows.Num(),Rows.GetData(),Rows.Num()*sizeof(FVector4f));
  auto* Positions=G.RegisterExternalBuffer(S.Positions[Slot]);auto* Tangents=G.RegisterExternalBuffer(S.Tangents[Slot]);
  auto* Source=G.RegisterExternalBuffer(S.Source);auto* Draw=G.RegisterExternalBuffer(S.Draw);
- const bool Fused=CVarResidentDeformFusedPacking.GetValueOnRenderThread()!=0&&OKAddRuntimeGpuDeformPackedPass(G,Source,Draw,Palette,Positions,Tangents,S.DrawCount,S.PaletteCount,S.Fallback,Post,S.NativeUnitySpace);
+ FRDGBufferRef Displacement=nullptr;
+ if(S.ClothCover.IsValid()&&S.ClothCover.VertexCount==S.SourceCount)Displacement=OKAddClothCoverPasses(G,Source,Palette,S.PaletteCount,S.Fallback,Post,S.ClothCover);
+ else if(!S.Displacement.IsEmpty()&&uint32(S.Displacement.Num())==S.SourceCount)Displacement=CreateStructuredBuffer(G,TEXT("ResidentDeform.Displacement"),sizeof(FVector4f),S.Displacement.Num(),S.Displacement.GetData(),S.Displacement.Num()*sizeof(FVector4f));
+ const bool Fused=CVarResidentDeformFusedPacking.GetValueOnRenderThread()!=0&&OKAddRuntimeGpuDeformPackedPass(G,Source,Draw,Palette,Positions,Tangents,S.DrawCount,S.PaletteCount,S.Fallback,Post,S.NativeUnitySpace,Displacement);
  if(!Fused){
   auto* Deformed=G.CreateBuffer(FRDGBufferDesc::CreateStructuredDesc(sizeof(FOKGpuDeformOutput),S.DrawCount),TEXT("ResidentDeform.Scratch"));
-  if(!OKAddRuntimeGpuDeformPass(G,Source,Draw,Palette,Deformed,S.DrawCount,S.PaletteCount,S.Fallback,Post,S.NativeUnitySpace))return false;
+  if(!OKAddRuntimeGpuDeformPass(G,Source,Draw,Palette,Deformed,S.DrawCount,S.PaletteCount,S.Fallback,Post,S.NativeUnitySpace,Displacement))return false;
   const bool Packed=OKAddRuntimeGpuPackPass(G,Deformed,Positions,Tangents,S.DrawCount);check(Packed);
  }
  G.SetBufferAccessFinal(Positions,ERHIAccess::VertexOrIndexBuffer|ERHIAccess::SRVGraphics);
@@ -63,7 +71,7 @@ bool FOKResidentGpuDeform::Install(FRDGBuilder& G,TConstArrayView<FOKGpuDeformSo
  auto Next=MakeUnique<FState>();Next->Stats=State->Stats;++Next->Stats.Generation;++Next->Stats.Installations;
  Next->Stats.ResidentBytes=Resident;Next->Stats.PeakLogicalBytes=FMath::Max(Next->Stats.PeakLogicalBytes,State->Stats.ResidentBytes+Peak);
  Next->Stats.ImmutableUploadBytes+=Immutable;Next->PaletteCount=Matrices.Num();Next->Fallback=Fallback;Next->DrawCount=Draw.Num();
- Next->NativeUnitySpace=NativeUnitySpace;
+ Next->NativeUnitySpace=NativeUnitySpace;Next->SourceCount=Source.Num();Next->Displacement=MoveTemp(State->Displacement);Next->ClothCover=State->ClothCover;
  Next->Source=G.ConvertToExternalBuffer(CreateStructuredBuffer(G,TEXT("ResidentDeform.Source"),sizeof(FOKGpuDeformSource),Source.Num(),Source.GetData(),Source.Num()*sizeof(FOKGpuDeformSource)));
  Next->Draw=G.ConvertToExternalBuffer(CreateStructuredBuffer(G,TEXT("ResidentDeform.Draw"),sizeof(FOKGpuDeformDraw),Draw.Num(),Draw.GetData(),Draw.Num()*sizeof(FOKGpuDeformDraw)));
  for(uint32 Slot=0;Slot<2;++Slot){

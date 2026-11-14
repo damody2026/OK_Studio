@@ -108,6 +108,22 @@ fn read_authored_poses(paths:&[std::path::PathBuf])->(Vec<Pair>,bool) {
 #[cfg(test)]
 mod catalogue_cache_tests {
     use super::*;
+    /// Dump: the source's per-state layer lists (AnimatorLayerCtrl: al_<controller file>) and omitmask.
+    #[test] #[ignore]
+    fn dump_state_layers(){
+        let game=crate::test_support::game_path("");
+        for path in catalogue_paths(&game).unwrap(){
+            let bytes=crate::gamefs::read(&path).unwrap();let parsed=crate::unity::parse_bundle_cached(bytes);
+            parsed.with_serialized(|files|for file in files {for info in file.objects_of_type(114) {
+                let Ok(obj)=UnityObject::from_serialized_file(file,&info) else {continue;};
+                let Some(name)=obj.name().filter(|n|n.starts_with("al_")||*n=="omitmask") else {continue;};
+                let Some(rows)=obj.class.properties().get("param").and_then(|v|v.as_array()) else {continue;};
+                let list:Vec<String>=rows.iter().map(|r|format!("{}={:?}",text(field(r,"anim")),field(r,"layer").and_then(|v|v.as_array()).map(|a|a.iter().filter_map(|x|x.as_i64()).collect::<Vec<_>>()).unwrap_or_default())).collect();
+                eprintln!("AL {} {} :: {}",path.file_name().unwrap().to_string_lossy(),name,list.join(" "));
+            }});
+        }
+        for p in pairs(&game){eprintln!("PAIR {} {} {} fl={} ml={} f={} m={}",p.category,p.id,p.name,p.female_layer,p.male_layer,p.female_motion,p.male_motion);}
+    }
     struct Fixture(std::path::PathBuf);
     impl Fixture {
         fn new()->Self {

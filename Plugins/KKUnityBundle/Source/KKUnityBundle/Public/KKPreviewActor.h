@@ -814,6 +814,15 @@ public:
 	void CaptureRigidFollowerNeutral();
 	void UpdateRigidFollowers();
 	void SyncMouthPose();
+	/** The pair's display work that reads nothing of the session (ok.Anim.PairLateDisplay): her face parts' pose and the
+	 *  thigh jiggle's morph uploads, held while GKKDeferLateDisplay and done here, after the next solve is launched. */
+	void FinishLateDisplay();
+	bool bLateMouthPending=false;
+	TArray<TFunction<void()>> LateDisplay;
+	/** Work that reads nothing of the session (a morph upload): held for FinishLateDisplay while the pair is between its
+	 *  display and the launch of its next solve with the late display on (the H scene's reads, OnSessionsIdle), else now. */
+	void RunLate(TFunction<void()> Do){if(GLateDisplayWindow)LateDisplay.Add(MoveTemp(Do));else Do();}
+	static bool GLateDisplayWindow;
 	// Defer display rebuilds while native face setters still update their state.
 	void BeginFaceDisplayUpdate() { ++FaceDisplayBatchDepth; }
 	void EndFaceDisplayUpdate();
@@ -834,6 +843,8 @@ public:
 	uint32 ShadowCapturePhase=MAX_uint32;
 	// The frame whose private GPU palettes SolveScenePose already read on its worker (RefreshRuntimeAccessories then skips the read).
 	uint64 GpuPosesPreparedFrame=MAX_uint64;
+	// ok.ClothGpu 2: this frame's skin field for ClothCover.usf, read once for all her garments.
+	uint64 ClothFieldFrame=MAX_uint64;TSharedPtr<const TArray<uint32>,ESPMode::ThreadSafe> ClothField;
 	bool AuditBodyDynamicsDisplay(const FString& TracePath, bool bExternal = false);
 	bool AuditStudioPVDisplay();
 

@@ -75,6 +75,16 @@ pub fn keep_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])
     // (BellyWrapTake, trace EGalPerf19 after he came). The order of the list stays the parts' order.
     use rayon::prelude::*;
     let own: Vec<usize> = session.parts.iter().enumerate().filter(|(_, p)| p.render_visible && covers(&p.role) && p.runtime_accessory.is_some()).map(|(i, _)| i).collect();
+    // Once one reaches, the same garments are kept on the CPU for REACH_HOLD frames before they are looked at again: the
+    // test (a palette per garment) was most of BellyWrapTake's 0.31 ms a frame (2026-11-13). Not reaching is still looked at
+    // every frame, so a garment goes to the CPU the frame her skin reaches it; one left there a few frames longer has no
+    // push to draw and looks the same.
+    {
+        let mut held = REACH_HELD.lock().unwrap();
+        if let Some(e) = held.iter_mut().find(|e| e.0 == key) {
+            if e.1 > 0 && e.2 == own { e.1 -= 1; return e.3.clone(); }
+        }
+    }
     let reached: Vec<usize> = crate::session::native_parallel_work(|| own.par_iter().filter_map(|&i| {
         let runtime = session.parts[i].runtime_accessory.as_ref()?;
         let (mesh, palette) = runtime.export_skin_palette(runtime.skin_body(session.body_skel.as_ref(), clothes), head)?;
@@ -88,8 +98,24 @@ pub fn keep_cover(session: &OkSession, on: bool, body_moves: Vec<(u32, [f32; 6])
     }).collect());
     // One reaching: all of them on the CPU. Garments laid on one another (fishnet over tights, the same tights in two
     // slots) drawn one from the CPU and one from the GPU fought for depth all down her legs (user, 2026-11-11).
-    if reached.is_empty() { reached } else { own }
+    let mut held = REACH_HELD.lock().unwrap();held.retain(|e| e.0 != key);
+    if reached.is_empty() { return reached; }
+    // COVER_SPLIT (ok.HScene.ClothCoverSplit, off by default): only the garments that reach go to the CPU, the rest stay
+    // on the GPU route (a fully dressed heroine's 32 garments skinned on the CPU and streamed every frame held her at
+    // 80 FPS, 2026-11-13); the layered-garment fight above is what it must be checked against.
+    let out = if COVER_SPLIT.load(std::sync::atomic::Ordering::Relaxed) { reached } else { own.clone() };
+    if held.len() >= 16 { held.remove(0); }
+    held.push((key, REACH_HOLD, own, out.clone()));
+    out
 }
+/// Only the garments that reach her pushing skin drawn from the CPU (`keep_cover`); set by `ok_cover_split`.
+static COVER_SPLIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(crate) fn set_cover_split(on: bool) { COVER_SPLIT.store(on, std::sync::atomic::Ordering::Relaxed); }
+pub(crate) fn cover_split() -> bool { COVER_SPLIT.load(std::sync::atomic::Ordering::Relaxed) }
+/// Frames a reaching garment set is kept before the test again (`keep_cover`).
+const REACH_HOLD: u32 = 8;
+/// Per session: the frames left before the test again, her garments looked at, and those kept on the CPU.
+static REACH_HELD: std::sync::Mutex<Vec<(usize, u32, Vec<usize>, Vec<usize>)>> = std::sync::Mutex::new(Vec::new());
 
 /// Per garment (its neighbour table): the frame count, the vertices `push_at` moved last frame, its vertex count.
 static WARM: std::sync::LazyLock<std::sync::Mutex<HashMap<usize, (u32, Vec<u32>, usize)>>> = std::sync::LazyLock::new(Default::default);
@@ -134,7 +160,7 @@ pub(crate) struct CoverPrep { still: std::sync::Arc<CoverStill>, worlds: Vec<Mat
 /// `follow`: her skin that swelled out this frame (body vertex, how far it went, her skeleton space): the cloth hugging it
 /// moves as far (`follows`). `still`, `skins`: to pose all her skin once, for a garment seen the first time.
 pub struct CoverField { skin: Vec<([f32; 3], [f32; 3], [f32; 3])>, lifted: Vec<bool>, grid: Vec<Vec<u32>>, lo: [i64; 3], hi: [i64; 3], lift: Option<Lift>,
-    follow: HashMap<u32, [f32; 3]>, still: std::sync::Arc<CoverStill>, skins: Vec<Mat4>, posed: std::sync::OnceLock<Vec<[f32; 3]>> }
+    follow: Vec<Option<[f32; 3]>>, follows_any: bool, still: std::sync::Arc<CoverStill>, skins: Vec<Mat4>, posed: std::sync::OnceLock<Vec<[f32; 3]>> }
 
 /// Her skin that was lifted, seen along the way it went (`way`): where across it (in `side`) and how high along it now, one
 /// for each `THIN_M` square, the highest; in squares `LIFT_REACH_M` wide, each listing what is in it and round it. `belly`:
@@ -160,7 +186,8 @@ impl CoverField {
         let moved: HashMap<u32, [f32; 6]> = body_moves.iter().copied().collect();
         let mut skin = Vec::new();let mut taken: std::collections::HashSet<([i64; 3], bool)> = std::collections::HashSet::new();
         let mut lifted: Vec<([f32; 3], [f32; 3])> = Vec::new();
-        let mut follow: HashMap<u32, [f32; 3]> = HashMap::new();
+        // By her body vertex (a hash map of them was looked up four times for every cloth vertex hugging her: follows).
+        let mut follow: Vec<Option<[f32; 3]>> = vec![None; still.rest.len()];let mut follows_any = false;
         for j in 0..still.rest.len() {
             let delta = moved.get(&(j as u32));
             let on_bust = still.on_bust[j];
@@ -181,7 +208,7 @@ impl CoverField {
             // Against her normal as it was: on the flank of the hill the normal now lies across the move.
             let Some(n0) = unit(sub(point(&m, *rn), o)) else { continue; };
             if dot(sub(p, p0), n0) >= OUT_M { lifted.push((p0, p)); }
-            if delta.is_some() && dot(sub(p, p0), n0) > 0. { follow.insert(j as u32, sub(p, p0)); }
+            if delta.is_some() && dot(sub(p, p0), n0) > 0. { follow[j] = Some(sub(p, p0));follows_any = true; }
             // Moved skin is followed (`follows`) and lifted over (`Lift`), not pushed off along its normal.
             if p != p0 { continue; }
             if !on_bust && dot(sub(p, p0), n) < OUT_M { continue; }
@@ -189,7 +216,7 @@ impl CoverField {
             if !taken.insert((p.map(|v| (v / thin).floor() as i64), fine)) { continue; }
             skin.push((p0, p, n));
         }
-        if skin.is_empty() && follow.is_empty() { return None; }
+        if skin.is_empty() && !follows_any { return None; }
         let lift = Lift::new(&lifted);
         let lifted = vec![false; skin.len()];
         // In every cell from where the skin was to where it is: the cloth over it lies back where it was. The cells, a box
@@ -228,7 +255,7 @@ impl CoverField {
             cells.sort_unstable();cells.dedup();
             for &c in &cells { grid[c].push(i as u32); }
         }
-        Some(CoverField { skin, lifted, grid, lo, hi, lift, follow, still: still.clone(), skins, posed: std::sync::OnceLock::new() })
+        Some(CoverField { skin, lifted, grid, lo, hi, lift, follow, follows_any, still: still.clone(), skins, posed: std::sync::OnceLock::new() })
     }
 
     /// What `build` needs, read off her skeleton before her clothes chains move (they write their own bones into it):
@@ -269,23 +296,25 @@ impl CoverField {
     /// her skin at all. Every layer of cloth over one place moves as far, so they stay in their order: each pushed to one
     /// height over the skin, her fishnets and tights lay on one surface and fought for depth (user, 2026-11-11).
     fn follows(&self, positions: &[[f32; 3]], key: usize) -> Option<(Vec<[f32; 3]>, Vec<bool>)> {
-        if self.follow.is_empty() { return None; }
+        if !self.follows_any { return None; }
         let found = FOLLOW_MAP.lock().unwrap().get(&key).filter(|m| m.len() == positions.len()).cloned();
         let map = match found { Some(m) => m, None => {
             let m = std::sync::Arc::new(self.map_to_skin(positions));
             let mut all = FOLLOW_MAP.lock().unwrap();if all.len() > 256 { all.clear(); }
             all.insert(key, m.clone());m
         } };
-        let mut hugs = vec![false; positions.len()];let mut any = false;
-        let moves: Vec<[f32; 3]> = map.iter().enumerate().map(|(j, (near, gap))| {
-            if near[0].1 <= 0. { return [0.; 3]; }
-            hugs[j] = true;
+        let _time = Timed(std::time::Instant::now(), 37);
+        // Each cloth vertex on its own, on the pool.
+        use rayon::prelude::*;
+        let each: Vec<([f32; 3], bool)> = map.par_iter().map(|(near, gap)| {
+            if near[0].1 <= 0. { return ([0.; 3], false); }
             let hug = (1. - (gap - HUG_M).max(0.) / (FOLLOW_M - HUG_M)).clamp(0., 1.);
             let mut v = [0f32; 3];
-            for &(i, w) in near { if w <= 0. { break; } if let Some(d) = self.follow.get(&i) { for a in 0..3 { v[a] += d[a] * w * hug; } } }
-            if dot(v, v) > 0. { any = true; }
-            v
+            for &(i, w) in near { if w <= 0. { break; } if let Some(Some(d)) = self.follow.get(i as usize) { for a in 0..3 { v[a] += d[a] * w * hug; } } }
+            (v, true)
         }).collect();
+        let any = each.iter().any(|(v, _)| dot(*v, *v) > 0.);
+        let (moves, hugs): (Vec<[f32; 3]>, Vec<bool>) = each.into_iter().unzip();
         any.then_some((moves, hugs))
     }
 
@@ -418,20 +447,26 @@ impl CoverField {
         // triangles that can turn are found once.
         let cross = |u: [f32; 3], v: [f32; 3]| [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
         let moved = |push: &[[f32; 3]], k: usize| { let (p, v) = (positions[k], push[k]);[p[0] + v[0], p[1] + v[1], p[2] + v[2]] };
-        let pushed: Vec<[usize; 3]> = indices.chunks_exact(3).map(|t| [t[0] as usize, t[1] as usize, t[2] as usize])
+        // Each with its normal as posed and that normal's length, worked out once (the same numbers every round).
+        let pushed: Vec<([usize; 3], [f32; 3], f32)> = indices.chunks_exact(3).map(|t| [t[0] as usize, t[1] as usize, t[2] as usize])
             .filter(|t| t.iter().all(|&k| k < push.len()) && !t.iter().all(|&k| dot(push[k], push[k]) == 0.))
             // A triangle with no area (a seam's sliver) never counts as upright: it halved its corners all six times.
-            .filter(|&[a, b, c]| { let w = cross(sub(positions[b], positions[a]), sub(positions[c], positions[a]));dot(w, w) > 1e-16 }).collect();
-        for _ in 0..6 {
+            .filter_map(|[a, b, c]| { let w = cross(sub(positions[b], positions[a]), sub(positions[c], positions[a]));(dot(w, w) > 1e-16).then(|| ([a, b, c], w, dot(w, w).sqrt())) }).collect();
+        // After the first round only a triangle with a corner halved in the round before can turn over (the others' corners
+        // are where they were): 1.7 ms a frame of a fully dressed heroine went through every triangle six times (2026-11-13).
+        let mut changed = vec![false; push.len()];let mut last: Vec<usize> = Vec::new();
+        for round in 0..6 {
             let mut halve: Vec<usize> = Vec::new();
-            for &[a, b, c] in &pushed {
+            for &([a, b, c], was, was_len) in &pushed {
+                if round > 0 && !(changed[a] || changed[b] || changed[c]) { continue; }
                 if [a, b, c].iter().all(|&k| dot(push[k], push[k]) == 0.) { continue; }
-                let was = cross(sub(positions[b], positions[a]), sub(positions[c], positions[a]));
                 let now = cross(sub(moved(&push, b), moved(&push, a)), sub(moved(&push, c), moved(&push, a)));
-                if dot(was, now) <= 0.2 * dot(was, was).sqrt() * dot(now, now).sqrt() { halve.extend([a, b, c]); }
+                if dot(was, now) <= 0.2 * was_len * dot(now, now).sqrt() { halve.extend([a, b, c]); }
             }
             if halve.is_empty() { break; }
-            for k in halve { push[k] = push[k].map(|v| v * 0.5); }
+            for &k in &last { changed[k] = false; }
+            for &k in &halve { changed[k] = true;push[k] = push[k].map(|v| v * 0.5); }
+            last = halve;
         }
         Some(push)
     }
@@ -598,10 +633,10 @@ impl Lift {
         // Each vertex on its own, on the pool; the rings grown by marking, as pushes_from's (sorting each ring with its
         // neighbours was most of the lift: 1 ms of a garment on the pair solve's longest path, trace 2026-11-10).
         use rayon::prelude::*;
-        let mut rise: Vec<f32> = { let _trace = crate::native_profile::Scope::new(57); positions.par_iter().enumerate().map(|(j, &c)| if held(j) { 0. } else { self.rise(keep, c) }).collect() };
-        { let _trace = crate::native_profile::Scope::new(58); self.clear(keep, positions, &mut rise, indices); }
+        let mut rise: Vec<f32> = { let _trace = crate::native_profile::Scope::new(57);let _time = Timed(std::time::Instant::now(), 38); positions.par_iter().enumerate().map(|(j, &c)| if held(j) { 0. } else { self.rise(keep, c) }).collect() };
+        { let _trace = crate::native_profile::Scope::new(58);let _time = Timed(std::time::Instant::now(), 39); self.clear(keep, positions, &mut rise, indices); }
         for j in 0..rise.len() { if held(j) { rise[j] = 0.; } }
-        let _rings_trace = crate::native_profile::Scope::new(59);
+        let _rings_trace = crate::native_profile::Scope::new(59);let _rings_time = Timed(std::time::Instant::now(), 40);
         let mut near: Vec<u32> = (0..rise.len() as u32).filter(|&j| rise[j as usize] > 0.).collect();
         if near.is_empty() { return None; }
         let mut taken = vec![false; rise.len()];
@@ -639,6 +674,7 @@ pub(crate) fn clothes_changed() {
     WARM.lock().unwrap().clear();
     FOLLOW_MAP.lock().unwrap().clear();
     COVER.lock().unwrap().clear();
+    REACH_HELD.lock().unwrap().clear();
 }
 
 fn cover_still(parts: &[SessionPart], skel: &Skeleton) -> Option<std::sync::Arc<CoverStill>> {
@@ -798,3 +834,61 @@ mod lift_tests {
 /// A garment's cover time, added to OKAnim.Profile's `cover.garments` when it ends.
 struct Timed(std::time::Instant, usize);
 impl Drop for Timed { fn drop(&mut self) { crate::okanim::prof::add(self.1, self.0); } }
+
+// ---- cloth_gpu (ok.ClothGpu 2): the same push worked out on the GPU. The field (per frame, all her garments share it) and
+// each garment's still data packed as 32-bit words for a ByteAddressBuffer; the layout is read by ClothCover.usf.
+pub(crate) const GPU_CONSTS: [f32; 12] = [FOLLOW_M, REACH_M, BUST_REACH_M, NEAR_M, FULL_M, LIFT_REACH_M, FAR_M, UNDER_M, HUG_M, 0., 0., 0.];
+fn wf(v: f32) -> u32 { v.to_bits() }
+impl CoverField {
+    /// Whether any of her skin swelled out this frame (cloth then follows it: a garment needs its follow map).
+    pub(crate) fn follows_any(&self) -> bool { self.follows_any }
+    /// The field: header (40 words), then skin (p0, p, n, lifted: 10 words each), the grid (cell offsets, cell items), her
+    /// skin's follow moves (by body vertex: xyz, valid), and the Lift (skin: across, across, top, base; its grid).
+    pub(crate) fn gpu_field(&self, out: &mut Vec<u32>) {
+        let base = out.len();out.resize(base + 40, 0);
+        let mut h = [0u32; 40];
+        h[0] = 1;h[1] = 1 | if self.follows_any { 2 } else { 0 } | if self.lift.is_some() { 4 } else { 0 };
+        h[2] = self.skin.len() as u32;h[3] = (out.len() - base) as u32;
+        for (i, (p0, p, n)) in self.skin.iter().enumerate() { for v in p0.iter().chain(p).chain(n) { out.push(wf(*v)); } out.push(self.lifted[i] as u32); }
+        for a in 0..3 { h[4 + a] = self.lo[a] as i32 as u32;h[7 + a] = self.hi[a] as i32 as u32; }
+        h[10] = (out.len() - base) as u32;
+        let mut at = 0u32;out.push(0);for c in &self.grid { at += c.len() as u32;out.push(at); }
+        h[11] = (out.len() - base) as u32;for c in &self.grid { out.extend(c.iter().copied()); }
+        h[12] = self.follow.len() as u32;h[13] = (out.len() - base) as u32;
+        for f in &self.follow { match f { Some(d) => { out.extend([wf(d[0]), wf(d[1]), wf(d[2]), 1]); } None => out.extend([0, 0, 0, 0]) } }
+        if let Some(l) = &self.lift {
+            h[14] = l.skin.len() as u32;h[15] = (out.len() - base) as u32;
+            for (q, top, b) in &l.skin { out.extend([wf(q[0]), wf(q[1]), wf(*top), wf(*b)]); }
+            for a in 0..3 { h[16 + a] = wf(l.way[a]);h[19 + a] = wf(l.side[0][a]);h[22 + a] = wf(l.side[1][a]);h[25 + a] = wf(l.belly[a]); }
+            for a in 0..2 { h[28 + a] = l.lo[a] as i32 as u32;h[30 + a] = l.hi[a] as i32 as u32; }
+            h[32] = (out.len() - base) as u32;let mut at = 0u32;out.push(0);for c in &l.grid { at += c.len() as u32;out.push(at); }
+            h[33] = (out.len() - base) as u32;for c in &l.grid { out.extend(c.iter().copied()); }
+        }
+        out[base..base + 40].copy_from_slice(&h);
+    }
+}
+/// A garment's cover data that stays (its neighbour table and triangles; the skin each vertex follows once found): n,
+/// keep, neighbour offsets / items, triangles, follow map (four (skin, weight) and the gap: 9 words a vertex) or 0.
+pub(crate) fn gpu_garment(part: &SessionPart, out: &mut Vec<u32>) -> bool {
+    if !covers(&part.role) { return false; }
+    let n = part.rest_positions.len();
+    let nbr = neighbours(&part.indices, &part.rest_positions);
+    let base = out.len();out.resize(base + 16, 0);let mut h = [0u32; 16];
+    h[0] = n as u32;h[1] = wf(margin(&part.role));
+    h[2] = (out.len() - base) as u32;let mut at = 0u32;out.push(0);for l in nbr.iter() { at += l.len() as u32;out.push(at); }
+    h[3] = (out.len() - base) as u32;for l in nbr.iter() { out.extend(l.iter().copied()); }
+    let tris: Vec<&[u32]> = part.indices.chunks_exact(3).collect();
+    h[4] = tris.len() as u32;h[5] = (out.len() - base) as u32;for t in &tris { out.extend(t.iter().copied()); }
+    let map = FOLLOW_MAP.lock().unwrap().get(&(nbr.as_ptr() as usize)).filter(|m| m.len() == n).cloned();
+    if let Some(m) = map {
+        h[6] = 1;h[7] = (out.len() - base) as u32;
+        for (near, gap) in m.iter() { for (i, _) in near { out.push(*i); } for (_, w) in near { out.push(wf(*w)); } out.push(wf(*gap)); }
+    }
+    out[base..base + 16].copy_from_slice(&h);
+    true
+}
+/// Whether the garment's follow map is found (needed on the GPU while her skin swells out: `follows`).
+pub(crate) fn gpu_has_follow_map(part: &SessionPart) -> bool {
+    let nbr = neighbours(&part.indices, &part.rest_positions);
+    FOLLOW_MAP.lock().unwrap().get(&(nbr.as_ptr() as usize)).is_some_and(|m| m.len() == part.rest_positions.len())
+}

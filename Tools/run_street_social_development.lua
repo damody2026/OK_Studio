@@ -5,7 +5,7 @@
 --
 --   Tools\lua\lua.exe Tools\run_street_social_development.lua [-Control [-ControlPort N]] [-Clock HH:MM] [-SelfTest]
 --     [-ValidateOnly] [-Strict] [-Executable EXE] [-SelectionFile JSON] [-MaleCard PNG] [-RetargetFile JSON]
---     [-RenderScale 100..200] [-Window WxH]  (window size, default 1920x1080; a smaller one leaves room for other work)
+--     [-RenderScale 100..200 (default 100)] [-Window WxH]  (window size, default 1920x1080; a smaller one leaves room for other work)
 --     [-Editor]  (development: runs the map in the built editor with -game instead of a staged build; no cook needed)
 --     [-GpuRig | -NoGpuRig]  (heroine poses from the GPU runtime rig, Docs/CROWD_ROOM100.md, or from her own solved banks)
 --     [-GpuRigVerify N]  (also solve full banks and compare N frames of the rig with them: runtime.json "gpu_rig", rig.bin)
@@ -35,7 +35,7 @@ local player_settings = require "street_player_settings"
 local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, mainsave = true, editor = true, nogpurig = true, gpurig = true, city = true, citysource = true, nocloud = true }
 local VALUES = { selectionfile = true, malecard = true, retargetfile = true, renderscale = true, executable = true,
   controlport = true, clock = true, window = true, sandbox = true, portbase = true, rulesdll = true, exec = true, trace = true, gpucachedir = true,
-  gameargs = true, gpurigverify = true, heroine = true }
+  gameargs = true, gpurigverify = true, heroine = true, patchdir = true }
 
 local function parse(argv)
   local o, i = {}, 1
@@ -200,7 +200,9 @@ local function main()
     -- Saved/ is disposable: everything the launch needs comes from Content (Launch/runtime.json); the executable is the
     -- newest stage, rebuilt from Content + Source when none is left.
     launch = read_json(path.join(root, "Content/IndependentResources/StreetSocialData/Launch/runtime.json"))
-    build = { executable = "", patch = path.join(root, launch.patch), catalogue = path.join(root, launch.catalogue),
+    -- -PatchDir: another runtime patch folder (Tools/rebuild_street_social_patch.lua --output) instead of the shared one, e.g.
+    -- a stage whose global shaders changed: the shared patch's RuntimeGlobalShaderPatch-*_P.pak would override its base's.
+    build = { executable = "", patch = o.patchdir and path.abs(o.patchdir) or path.join(root, launch.patch), catalogue = path.join(root, launch.catalogue),
       material_manifest = path.join(root, launch.materials), runtime_render_quality = launch.render_quality }
     if o.editor then o.executable = path.join(ok.engine_root(), "Engine/Binaries/Win64/UnrealEditor.exe") end
     if not o.executable then
@@ -249,7 +251,7 @@ local function main()
   end
   local render_scale = tonumber(o.renderscale or "0")
   if not render_scale or render_scale < 0 or render_scale > 200 or (render_scale > 0 and render_scale < 100) then
-    error("RenderScale must be 0 (verified default), or 100..200 percent", 0)
+    error("RenderScale must be 0 (default, 100 percent), or 100..200 percent", 0)
   end
   if o.strict then strict_checks(build) end
   o.selectionfile = o.selectionfile or path.join(root, "Saved/StreetSocial/heroines.json")
@@ -539,7 +541,9 @@ local function main()
   local q = build.runtime_render_quality
   local execs = {}
   if q then
-    local scale = render_scale > 0 and render_scale or q.screen_percentage
+    -- 100% unless -RenderScale asks for more (user 2026-11-14): the verified 150% rendered 5760x2962 in a maximised 4K
+    -- window, 48-82 FPS against 99-105 at 100%.
+    local scale = render_scale > 0 and render_scale or 100
     execs[#execs + 1] = ("r.AntiAliasingMethod %s,r.ScreenPercentage %s"):format(util.str(q.antialiasing_method), util.str(scale))
   end
   -- Profiling (development): -Exec "stat dumphitches,t.HitchFrameTimeThreshold 60" runs console commands at start;

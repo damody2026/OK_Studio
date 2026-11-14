@@ -115,6 +115,9 @@ class OPENKOIKATSU_API UOKHScenePanel : public UUserWidget {
     GENERATED_BODY()
 public:
     void PoseFailed(const FString& Why); // the pair player would not start it
+    // Live probes for the console / ok-game game_exec (ok.HScene.Bones, ok.HScene.Fk): read bone positions, set FK.
+    FString DebugBones(const TArray<FString>& Args);FString DebugFk(const TArray<FString>& Args);
+    TArray<FString> DebugFkHerNames;TArray<FVector> DebugFkHerTurns; // held with her FK every frame (ApplyHerFk)
     UPROPERTY() TObjectPtr<UOKCharacterController> Gallery;
     virtual TSharedRef<SWidget> RebuildWidget() override;
     virtual void NativeTick(const FGeometry& Geometry,float Delta) override;
@@ -141,6 +144,7 @@ public:
     // His words from elsewhere (the microphone): false when she cannot answer now (held for her climax).
     bool Hear(const FString& Text,FString& Context);
     void ShowLine(const FString& Text);
+    void ShowPlayerLine(const FString& Text);
     void SpokeLine(){bTalkSpoken=true;}
     void SetReplyPending(bool bPending){bReplyPending=bPending;}
     UFUNCTION() void OnInputCommitted(const FText& Text,ETextCommit::Type Commit);
@@ -154,6 +158,8 @@ public:
     bool WearOutfit(int32 Outfit,const FString& Coordinate,FString& Why);
     void OutfitChanged(bool bOk);
     void ForgetClothCover();
+    // Her alignment offset (MoveParts) taken off her parts before they are made again and put back after.
+    void HoldAlignment(bool bBefore);
     UFUNCTION() void OnPenisLength(float Value);
     UFUNCTION() void OnPenisScale(float Value);
     // Her pose set by him (user, 2026-11-02), on top of whatever plays: her ankles bent (degrees, both), each thigh opened
@@ -237,7 +243,9 @@ private:
     // outline and colour, DressStainFloor the floor's photo while puddles lie there.
     UPROPERTY() TArray<TObjectPtr<class UTexture2D>> StainMasks;TArray<TWeakObjectPtr<UMaterialInstanceDynamic>> StainShown;
 public:
-    void DressStain(UMaterialInstanceDynamic* M);
+    // Color: its reflectance (her fluid's whitish by default); bOutline: a blob outline of its own (a flat quad's UVs;
+    // her wet marks, flattened spheres, keep their round edge).
+    void DressStain(UMaterialInstanceDynamic* M,const FLinearColor& Color=FLinearColor(.95f,.95f,.92f),bool bOutline=true);
 private:
     void DressStainFloor(UMaterialInstanceDynamic* M) const;void DressStainsOf(class AOKPaintSprayer* Sprayer);
 public:
@@ -327,7 +335,19 @@ private:
     UPROPERTY() TObjectPtr<class USizeBox> HalfInner;UPROPERTY() TObjectPtr<class USizeBox> PanelWidth;
     UPROPERTY() TObjectPtr<USlider> LengthSlider;
     UPROPERTY() TObjectPtr<USlider> TongueSlider;UPROPERTY() TObjectPtr<USlider> AnkleSlider;UPROPERTY() TObjectPtr<USlider> ThighSliders[2];UPROPERTY() TObjectPtr<class UComboBoxString> HandCombos[2];
-    float AnkleTurn=0.f,ThighOpen[2]={0.f,0.f};int32 HandPattern[2]={-1,-1},HandShown[2]={-1,-1},HandOptions=-1;TWeakObjectPtr<class AKKPreviewActor> HandGirl,EyesCameraGirl;void TickEyesCamera();FVector4f HerPoseShown=FVector4f(0.f,0.f,0.f,0.f);
+    float AnkleTurn=0.f,ThighOpen[2]={0.f,0.f};int32 HandPattern[2]={-1,-1},HandShown[2]={-1,-1},HandOptions=-1;TWeakObjectPtr<class AKKPreviewActor> HandGirl,EyesCameraGirl;void TickEyesCamera();
+    // ok.HScene.LeadsOnTop: the two drawn in front of the scene (TickLeadsOnTop); the parts and the lens it set, to undo.
+    void TickLeadsOnTop();TArray<TWeakObjectPtr<class UPrimitiveComponent>> LeadsOnTopParts;TWeakObjectPtr<class UCameraComponent> LeadsOnTopLens;
+    // bLeadsOnTopEnd: the scene ends (all of it undone); LeadsOnTopNear: the near clip plane before it was brought in (<0 none).
+    bool bLeadsOnTopEnd=false;float LeadsOnTopNear=-1.f;FVector4f HerPoseShown=FVector4f(0.f,0.f,0.f,0.f);
+    // ok.HScene.HideOccluders: what of the scene stands between the camera and the two, not drawn (TickHideOccluders), and
+    // until when (seconds, world time) it stays so; OccluderHidden what this view hides now.
+    void TickHideOccluders(class APlayerController* PC,const FVector& Eye,bool bOn);TMap<TWeakObjectPtr<class UPrimitiveComponent>,double> OccluderUntil;TArray<TWeakObjectPtr<class UPrimitiveComponent>> OccluderHidden;
+    // The scene's drawn parts with no collision near them (found once where they are; again when they are 5 m from there).
+    TArray<TWeakObjectPtr<class UPrimitiveComponent>> OccluderBoxes;FVector OccluderBoxesAt=FVector(1.e30);
+    // Drawn as faint glass instead (a see-through wall): their own materials, put back when they no longer stand in the way.
+    TMap<TWeakObjectPtr<class UMeshComponent>,TArray<TWeakObjectPtr<class UMaterialInterface>>> OccluderMats;
+    UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> OccluderGlass;
     // Her FK this frame: her trembling (Tremble) and the pose he set, together (her session holds one FK list).
     void ApplyHerFk(class AKKPreviewActor* Girl,TArray<FString>& Names,TArray<FVector>& Turns);void TickHands();
     double PaizuriMilkAt=0;
@@ -353,6 +373,8 @@ private:
     UPROPERTY() TObjectPtr<UScrollBox> List;
     UPROPERTY() TObjectPtr<class UEditableTextBox> Input;
     UPROPERTY() TObjectPtr<UTextBlock> Caption;
+    // Both their last lines as subtitles at the bottom (user 2026-11-14): [0] hers in pink, [1] his in light blue, each 15 s.
+    UPROPERTY() TObjectPtr<UTextBlock> Subtitle[2];UPROPERTY() TObjectPtr<class UBorder> SubtitleBack[2];double SubtitleUntil[2]={0.,0.};FString SubtitleText[2];void ShowSubtitle(int32 Who,const FString& Text);
     struct FHLine {FString Text,Note;bool System=false;};
     TArray<FHLine> Outbox;
     TArray<FString> Held;
@@ -467,7 +489,7 @@ private:
     FVector HimOffset=FVector::ZeroVector,HimApplied=FVector::ZeroVector;FString AlignedKey;bool bAlignLogged=false;TWeakObjectPtr<class AKKPreviewActor> AlignedHim;
     // The taller one bends the knees instead of sinking through the floor or floating over it: he is lowered with his feet
     // held where they were (Studio IK foot targets); when he would have to rise, she is lowered the same way.
-    FVector HerOffset=FVector::ZeroVector,HerApplied=FVector::ZeroVector;TWeakObjectPtr<class AKKPreviewActor> AlignedHer;
+    FVector HerOffset=FVector::ZeroVector,HerApplied=FVector::ZeroVector,HerAlignHeld=FVector::ZeroVector;TWeakObjectPtr<class AKKPreviewActor> AlignedHer;int32 HerHolds=0;
     int32 FeetWait=0,HandsWait=0;bool bFeetRead=false,bHisStands=false,bHerStands=false,bHisIk=false,bHerIk=false;FVector HisFeet[2],HerFeet[2],HisHeld[2],HerHeld[2];
     // Her hands on his penis while she sucks him (GripHim): IK effectors (5, 6) and where, her skeleton space; what was set.
     TArray<int32> HandEff;TArray<FVector> HandAt,HandHeld;void GripHim(class AKKPreviewActor* Girl,class AKKPreviewActor* Him,const FVector& Lips,const FVector& Root,const FVector& Axis);
@@ -481,6 +503,17 @@ private:
     bool bPinHands=true,bHandsRead=false;FVector HisHands[2],HerHands[2],HisHandsKept[2],HerHandsKept[2],HisHandLocal[2];FName HisHandOn[2];int32 HisIkSet=0,HerIkSet=0;FVector HimOffsetWas=FVector::ZeroVector,HerOffsetWas=FVector::ZeroVector;
     FVector HandOnSum[2][3],HandOnSq[2][3],HandOnLast[2][3];int32 HandOnN[2][3]={}; // his hands on each of her waist bones over the read (ReadHands)
     bool bHandsReading=false;void ReadHands(class AKKPreviewActor* Girl,class AKKPreviewActor* Him);
+    // Sweet words (SweetTouch): while she or he speaks in her, the one who reaches holds the other's face in both hands.
+    // SweetW how far the hands are on the way there (0..1), SweetWho 1 his on her face, 2 hers on his, SweetUntil held to.
+    void SweetTouch(class AKKPreviewActor* Girl,class AKKPreviewActor* Him,const FVector& HimAhead,const FVector& HerAhead,FVector (&HisPin)[2],FVector (&HerPin)[2],float Delta);
+    float SweetW=0.f;int32 SweetWho=0;double SweetUntil=0.,SweetSaidAt=-1.e9;
+    // The toucher's upper body leaned toward the face (degrees over two spine bones, FK on top of the clip), found by how
+    // far the shoulders still are (ok.HScene.SweetLeanAxis the way, +X Unity euler bends forward); SweetLeanErr last
+    // frame's shortfall; bSweetHands the hands on (on under SweetReach, off over SweetReachOff).
+    float SweetLean=0.f,SweetLeanSign=1.f,SweetLeanErr=-1.f,SweetLeanWas=0.f;bool bSweetLeanHim=false,bSweetHands=false;
+    float SweetFaceDot=2.f;bool bSweetCarries=false; // last choice's faces' forward dot (2: no faces), he carries her
+    TArray<FVector> SweetLeanHimSent;FVector SweetWrists[2]; // his lean as last set (set again only when it changes); the wrist targets (world)
+    TArray<FString> SweetLeanBones;TArray<FVector> SweetLeanTurns;
     // Their limbs' IK, set from the control channel too ({"limb_ik":{...}} on /hscene; LimbIkJson in the answer):
     // a hand of his holds her waist bone it keeps within HandSpreadMax cm of, no farther than HandFarMax cm off it;
     // bFeetToHers puts his soles as high as hers while both are within FeetFloorNear cm of the floor.

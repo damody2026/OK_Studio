@@ -1,6 +1,7 @@
 #pragma once
 #include "OKRuntimeGpuDeform.h"
 #include "OKRuntimeGpuCoating.h"
+#include "OKClothCoverGpu.h"
 #include "Templates/Atomic.h"
 
 // Owned packet: source/draw present only for installation; updates contain only
@@ -8,6 +9,8 @@
 struct FKKGpuStreamRequest {
  TArray<FOKGpuDeformSource> Source;TArray<FOKGpuDeformDraw> Draw;
  TArray<FMatrix44f> Palette;FMatrix44f PostCorrection=FMatrix44f::Identity;
+ TArray<FVector4f> Displacement; // per source vertex, native metres after the post correction (ok.ClothGpu); empty none
+ FOKClothCoverJob ClothCover; // ok.ClothGpu 2: the displacement worked out on the GPU instead (invalid: none)
  FBox ConservativeLocalBounds=FBox(ForceInit);
  uint64 ProxyEpoch=0,ExpectedGeneration=0;uint32 FallbackSlot=0;
  bool HasPostCorrection=false;

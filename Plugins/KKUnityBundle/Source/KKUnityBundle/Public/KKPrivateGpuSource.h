@@ -11,6 +11,9 @@ struct FKKPrivateGpuSource {
 struct FKKPrivateGpuPose {
  uint64 Revision=0;TArray<FMatrix44f> Palette;
  FMatrix44f PostCorrection=FMatrix44f::Identity;
+ // Her cloth's push / jiggle this pose (ok.ClothGpu, Rust cloth_gpu): per source vertex, native metres added after the
+ // post correction (the GPU stream adds the same). Empty: none.
+ TArray<FVector4f> Displacement;
 };
 // Capture on the game thread. Consume inside a blocking operation before the
 // actor's next pose/source publication; workers never inspect UObjects.

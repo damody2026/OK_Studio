@@ -4,6 +4,10 @@ struct FDraw {uint4 Binding;float4 Offset,SectionNormal,RestNormal;};
 StructuredBuffer<FSource> Sources;
 StructuredBuffer<FDraw> Draws;
 StructuredBuffer<float4> PaletteRows;
+// Per source vertex, added after the post-skin correction in native space (the cloth push / jiggle moves the CPU route
+// adds to its skinned positions there); HasDisplacement 0: none bound.
+StructuredBuffer<float4> Displacements;
+uint HasDisplacement;
 RWStructuredBuffer<FOutput> Output;
 uint DrawCount;
 uint PaletteCount;
@@ -44,6 +48,7 @@ FOutput EvaluateDeform(uint Index){
  else {P=Transform(FallbackSlot,S.Position.xyz,1);N=Transform(FallbackSlot,S.Normal.xyz,0);T=Transform(FallbackSlot,S.Tangent.xyz,0);}
  N=NativeNormal(N);T=NativeNormal(T);
  if(HasPostSkinCorrection!=0){P=PostTransform(P,1);N=PostNormal(N);T=PostNormal(T);}
+ if(HasDisplacement!=0)P+=Displacements[D.Binding.x].xyz;
  // Keep both native normalization fallbacks in Unity space, including a
  // collapsed post that retains the incoming vector. Convert only afterwards.
  // Secondary draw offsets/rest normals already use component UE coordinates.

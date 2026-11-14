@@ -43,6 +43,7 @@ public:
     bool HSceneTakeLine(FString& Text,FString& Context,bool& System);
     bool HSceneHear(const FString& Text,FString& Context);
     void HSceneShowLine(const FString& Text);
+    void HSceneShowPlayerLine(const FString& Text);
     FString HSceneJudgeFacts() const;
     bool HSceneApplyTalk(const TSharedPtr<FJsonObject>& Verdict);
     void HSceneReplyPending(bool bPending);

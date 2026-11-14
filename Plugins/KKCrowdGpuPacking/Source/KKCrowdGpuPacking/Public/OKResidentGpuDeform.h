@@ -24,6 +24,12 @@ public:
  bool Update(FRDGBuilder&,TConstArrayView<FMatrix44f>,const FMatrix44f* PostCorrection,
   uint64 ExpectedGeneration,FOKResidentDeformFrame& Result,FString& Error);
  bool GetCurrent(FRDGBuilder&,uint64 ExpectedGeneration,FOKResidentDeformFrame& Result) const;
+ // Per source vertex (xyz native metres, added after the post correction) for the following dispatches; empty clears.
+ // Ignored while its length is not the installed source count. Render thread.
+ void SetDisplacement(TArray<FVector4f> PerSource);
+ // ok.ClothGpu 2: the displacement worked out on the GPU (OKClothCoverGpu) for the following dispatches instead; an
+ // invalid job clears it. Render thread.
+ void SetClothCoverJob(const struct FOKClothCoverJob& Job);
  void Release();
  FOKResidentDeformStats GetStats() const;
 private:

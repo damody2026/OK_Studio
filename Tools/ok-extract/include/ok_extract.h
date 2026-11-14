@@ -158,6 +158,9 @@ int32_t ok_belly_wrap_take(OkSession* s,int32_t cover,uint32_t* out_idx,float* o
 /* Her garments with their own rig kept over her skin as they are skinned on the CPU (on 1) or not (belly_bulge::set_cover);
    body moves as for ok_cover_deltas. Writes up to max of the garments it moves (part indices); returns the count. */
 int32_t ok_set_cover(OkSession* s,int32_t on,const uint32_t* body_idx,const float* body_d,uint32_t n,int32_t* out_parts,uint32_t max);
+/* on 1: ok_set_cover / ok_belly_wrap_take name only the garments that reach her pushing skin (the rest stay on the GPU
+   route); 0 (default): all of her garments once one reaches (ok.HScene.ClothCoverSplit). */
+void ok_cover_split(int32_t on);
 int32_t ok_cover_deltas(OkSession* s,const uint32_t* body_idx,const float* body_d,uint32_t n,uint32_t* out_part,uint32_t* out_idx,float* out_d,uint32_t max);
 /* Her thighs' and buttocks' jiggle dt seconds on (0 steps nothing and gives the moves again; gain 0 turns it off): her
    body's session part index in out_part, up to max (vertex index, move in the mesh's own space, 3 floats); returns the
@@ -167,6 +170,14 @@ int32_t ok_thigh_jiggle(OkSession* s,float dt,float gain,int32_t* out_part,uint3
    mesh's own space, 3 floats) for her garments on her body skeleton; a vertex index of 0xFFFFFFFF marks a garment with
    its own rig to draw from its CPU vertices (moved there as it is skinned). Returns the count, -1 bad input. */
 int32_t ok_thigh_jiggle_cloth(OkSession* s,uint32_t* out_part,uint32_t* out_idx,float* out_d,uint32_t max);
+/* Her garments with their own rig stay on the GPU route while pushed over her skin / following her thighs' jiggle
+   (cloth_gpu): on 1, 0 off (the CPU route). ok_cloth_gpu_moves: this pose's moves of one such garment, up to max
+   (vertex, xyz in the session's Unity space after the placement correction, metres); returns the count, -1 bad input. */
+void ok_cloth_gpu_set(int32_t on); /* 2: the push and the jiggle themselves on the GPU (ClothCover.usf) */
+int32_t ok_cloth_gpu_job(OkSession* s,int32_t part);
+int32_t ok_cloth_gpu_field(OkSession* s,uint32_t* out,uint32_t max);
+int32_t ok_cloth_gpu_garment(OkSession* s,int32_t part,uint32_t* out,uint32_t max);
+int32_t ok_cloth_gpu_moves(OkSession* s,int32_t part,uint32_t* out_idx,float* out_d,uint32_t max);
 /* As ok_belly_wrap_deltas, her skin moved by her belly bones, pushed by his penis as BetterPenetration's colliders push
    its belly DynamicBone (belly_bulge::bone_deltas). Same input and output. */
 int32_t ok_belly_bone_deltas(OkSession* s,const float* at,float radius,uint32_t* out_idx,float* out_d,uint32_t max);

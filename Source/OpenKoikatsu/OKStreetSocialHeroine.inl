@@ -134,6 +134,8 @@ void AOKStreetSocialScene::TickAutoFriendship(){
  }
  // One girl a frame, in turn (each is asked every ~10 frames): asking the rules for all of them every frame cost ~1.2 ms
  // a frame.
+ // Then one every 0.1 s instead of every frame (TickAutoFriendship took 0.15 ms a frame at 120 FPS, 2026-11-13).
+ if(const double Wall=FPlatformTime::Seconds();Wall<S.AutoFriendshipAt)return;else S.AutoFriendshipAt=Wall+.1;
  const int32 Count=S.Manifest.Characters.Num()-1;
  for(int32 Tried=0;Tried<Count;++Tried){
   const int32 Girl=1+int32(S.AutoFriendshipNext++%uint32(FMath::Max(1,Count)));

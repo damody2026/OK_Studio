@@ -79,7 +79,9 @@ bool OKEvaluatePrivateGpuPosition(const FKKPrivateGpuSource& Source,const FKKPri
   P+=FVector3f(Pose.Palette[Bone].TransformPosition(Reference))*Weight;if(NormalNeeded)N+=FVector3f(Pose.Palette[Bone].TransformVector(RestNormal))*Weight;Total+=Weight;
  }
  if(Total>1.e-5f){P/=Total;if(NormalNeeded)N/=Total;}else{P=FVector3f(Pose.Palette[Source.FallbackSlot].TransformPosition(Reference));if(NormalNeeded)N=FVector3f(Pose.Palette[Source.FallbackSlot].TransformVector(RestNormal));}
- P=FVector3f(Pose.PostCorrection.TransformPosition(P));FVector Result(-double(P.X)*100.,double(P.Z)*100.,double(P.Y)*100.);
+ P=FVector3f(Pose.PostCorrection.TransformPosition(P));
+ if(Pose.Displacement.IsValidIndex(Draw.Binding.X)){const FVector4f& D=Pose.Displacement[Draw.Binding.X];P+=FVector3f(D.X,D.Y,D.Z);} // as RuntimeDeform.usf
+ FVector Result(-double(P.X)*100.,double(P.Z)*100.,double(P.Y)*100.);
  if(NormalNeeded){const float Length=N.Size();N=Length>1.e-8f?N/Length:FVector3f(0,0,1);const FVector3f PostN(Pose.PostCorrection.TransformVector(N));const float PostLength=PostN.Size();if(PostLength>1.e-8f)N=PostN/PostLength;
   const FVector Current=FVector(-N.X,N.Z,N.Y).GetSafeNormal(),Rest=FVector(Draw.RestNormal.X,Draw.RestNormal.Y,Draw.RestNormal.Z).GetSafeNormal();const FQuat Rotation=Rest.IsNearlyZero()||Current.IsNearlyZero()?FQuat::Identity:FQuat::FindBetweenNormals(Rest,Current);Result+=Rotation.RotateVector(Offset);
  }
