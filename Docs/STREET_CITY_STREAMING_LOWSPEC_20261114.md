@@ -148,6 +148,34 @@ LLM（nh1115b，10 女角，低配）：commit 15.8 GB，组成如下。
 | nh-5-low | 5 | **11.3 GB** | 10.4 GB | 8.5 GB | **3.8 GB** | 内存 ≤ 12 GB 通过、显存 ≤ 8 GB 通过 |
 | nh-10-on（参考） | 10 | 18.9 GB | 16–18 GB | 12.5 GB | 5.5 GB | 内存不通过 |
 
+### 4.5 每名女角为什么占这么多内存，以及 CrowdRoom100 的做法（2026-11-15 01:40 起）
+
+使用者的问题：一名女角为什么占这么多内存，能不能减半；路上没有太多互动的人，不应该吃那么多内存。
+
+拆分（nh1115b，低配）：
+- 10 名比 5 名多 4.1 GB，每名约 0.82 GB；1 名到 5 名，每名约 0.44 GB。后几张卡的渲染骨多得多（selection-006、009 各约 4,400–4,700 根，selection-000 只有 1,187 根），所以每名的开销不一样。
+- LLM：每多一名女角，约 0.65 GB 落在 Untracked（不经过 UE 的分配器），贴图约 64 MB，EngineMisc 约 58 MB，Graphics 约 155 MB。
+- cdb `!heap -s`：1 名到 5 名时，进程预设堆（Rust 使用）从 880 MB 增加到 1,464 MB，每名约 146 MB。女角的 Rust 会话在准备完成后已经 `session_free`，但 bundle 解码缓存、基础库模型和运行时 PNG 缓存（低配上限 512 MB）一直没有释放。
+
+照 CrowdRoom100 的做法改（006b7d92b，stage lowmem1115b）：
+- 启动器在低配时默认 `-GpuRig`：姿势由 GPU rig 依共享 clip 计算，不再给每名女角各存一份解算好的姿势库。`-NoGpuRig` 可关回去；patch 里没有 rig shader 时，会退回原本的姿势库。
+- `OKCrowdRuntimeScene`：低配模式下，全部女角装好、且没有准备工作在跑时，呼叫 `AKKPreviewActor::ReleaseSceneCaches`。之后要开卡（互动）时会重新解码，只是第一次比较慢。日志会印出 `Low-memory mode: source caches released after N heroines`（N 含主角）。
+
+| tag | 女角 | 设定 | 闲置 commit | 峰值 commit（含巡游） | 峰值工作集 | 峰值显存 |
+|---|---|---|---|---|---|---|
+| rig-10-low（nh1115b，不巡游） | 10 | rig | 14.2 GB | 15.2 GB | 11.4 GB | 4.7 GB |
+| rel-10-low | 10 | rig＋释放 | **13.5 GB** | 14.3 GB | 10.8 GB | 4.5 GB |
+| rel-5-norig | 5 | 只有释放 | 10.8 GB | 13.7 GB | 9.7 GB | 4.8 GB |
+| rel-5-low | 5 | rig＋释放 | 10.1 GB | 13.1 GB | 9.1 GB | 4.8 GB |
+| rel-5-rig2（同上再跑一次） | 5 | rig＋释放 | 10.3 GB | **11.9 GB** | 8.4 GB | 4.3 GB |
+
+- 10 名女角的峰值从 18.9 GB 降到 14.3 GB，闲置时从 15.4 GB 降到 13.5 GB。
+- 5 名女角闲置约 10 GB。峰值出现在瞬移到体育馆、溜冰场之后，刚好在 12 GB 上下，两次分别是 13.1 和 11.9 GB。瞬移会让整片格子同时载入；实际走路是慢慢串流，不会这样。
+- 显存在每种设定下都低于 5 GB。
+- 结论：每名女角约减少 0.15–0.3 GB，**还没有减半**。剩下的大头，一是每名女角各自的网格和材质（不同卡的渲染骨与面数差很多），二是驱动映射的显存。
+
+下一步（还没做）：路上不在互动的女角，改用 CrowdRoom100 的低模（`-RuntimeLowPoly`，卡旁的 `.lowpoly.okmap`）。街区的女角卡目前都没有 okmap（`Content/CharacterCards/StreetHeroines` 一个都没有），要先用 `ok-lowpoly.exe` 产生。互动中的女角要换回原网格，这一步要改 C++。
+
 ## 5. 给使用者的决定：要不要改远景
 
 16 GB 判定：**不通过**（10 女角 32.1 GB；1 女角 21.1 GB）。分两块做：
