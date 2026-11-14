@@ -2,6 +2,7 @@
 -- Content/, same /Game paths. Rerun after a map round: unchanged files are skipped. A file that already exists in Content with
 -- other bytes and is not ours (outside UniversityCity) is never overwritten, it is listed and the run fails.
 --   Tools\lua\lua.exe Tools\migrate_street_city_content.lua
+--   Tools\lua\lua.exe Tools\migrate_street_city_content.lua --refs-only   (only the reference step below: adds missing packages)
 package.path = 'Tools/lua/?.lua;' .. package.path
 local j = require('ok.json'); local lfs = require('lfs')
 local out = 'output/street-social-city-production/migrate-v1/'
@@ -13,6 +14,38 @@ local function copy(a, b)
   i:close(); o:close()
 end
 local copied, skipped, bytes, total, missing, clash = 0, 0, 0, 0, {}, {}
+-- The World Partition actor files are synced whole, but closure.json only lists what the map named when it was made, so
+-- whatever a later map round's actors use (Grok wall materials, Source_* textures) never came over: the editor logged
+-- "dependent package ... was not available" and those walls drew without their material (11-14, 281 packages). This step
+-- reads every /Game path in Content's WP files and adds those Content lacks and the source has, following each new package's
+-- own references. It only adds files; nothing that exists is overwritten.
+local exts = { '.uasset', '.umap', '.uexp', '.ubulk', '.uptnl' }
+local function follow_references()
+  local queue, seen, added, added_bytes = {}, {}, 0, 0
+  local function walk(d) if not lfs.attributes(d) then return end
+    for n in lfs.dir(d) do if n ~= '.' and n ~= '..' then local p = d .. '/' .. n
+      if lfs.attributes(p, 'mode') == 'directory' then walk(p) elseif n:find('%.uasset$') or n:find('%.umap$') then queue[#queue + 1] = p end end end end
+  walk('Content/__ExternalActors__/UniversityCity/Maps/UniversityCityWP'); walk('Content/__ExternalObjects__/UniversityCity/Maps/UniversityCityWP')
+  for n in lfs.dir('Content/UniversityCity/Maps') do if n:find('^UniversityCityWP') and n:find('%.umap$') then queue[#queue + 1] = 'Content/UniversityCity/Maps/' .. n end end
+  local i = 1
+  while i <= #queue do
+    local fh = assert(io.open(queue[i], 'rb')); local s = fh:read('*a'); fh:close(); i = i + 1
+    for p in s:gmatch('/Game/[%w_/%-]+') do if not seen[p] then seen[p] = true
+      local rel = p:gsub('^/Game/', ''); local here, there = false, {}
+      for _, ext in ipairs(exts) do
+        if lfs.attributes('Content/' .. rel .. ext) then here = true end
+        if lfs.attributes('StreetSocialCity/Content/' .. rel .. ext, 'mode') == 'file' then there[#there + 1] = ext end
+      end
+      if not here and #there > 0 then
+        for _, ext in ipairs(there) do local src = 'StreetSocialCity/Content/' .. rel .. ext
+          copy(src, 'Content/' .. rel .. ext); added_bytes = added_bytes + lfs.attributes(src, 'size')
+          if ext == '.uasset' or ext == '.umap' then queue[#queue + 1] = src end end
+        added = added + 1
+      end end end
+  end
+  print(string.format('referenced packages added %d (%.2f GB), files read %d', added, added_bytes / 2 ^ 30, #queue))
+end
+if arg[1] == '--refs-only' then follow_references(); os.exit(0) end
 for _, p in ipairs(c.packages) do
   local rel = p:gsub('^/Game/', ''); local found = false
   for _, ext in ipairs({ '.uasset', '.umap', '.uexp', '.ubulk', '.uptnl' }) do
@@ -50,6 +83,7 @@ end
 print('stale World Partition files deleted', stale)
 for n in lfs.dir('StreetSocialCity/Content/UniversityCity/Maps') do if n:find('^UniversityCityWP') and not n:find('%.ini$') then sync('StreetSocialCity/Content/UniversityCity/Maps/' .. n) end end
 print('World Partition files', stream)
+follow_references()
 print(string.format('packages %d, files copied %d, unchanged %d, copied %.2f GB, total %.2f GB', #c.packages, copied, skipped, bytes / 2 ^ 30, total / 2 ^ 30))
 print('missing', #missing); for i = 1, math.min(#missing, 20) do print('  ' .. missing[i]) end
 print('clash', #clash); for i = 1, math.min(#clash, 20) do print('  ' .. clash[i]) end
