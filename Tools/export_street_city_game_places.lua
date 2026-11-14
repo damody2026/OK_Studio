@@ -430,7 +430,9 @@ local PASSAGES = {
   -- boxes and walk probes in places-v1/shop-passage-batch*-apply-1113.json, fence-gaps-dorm-apply-1113.json,
   -- walk-probe-batch2-after-1113.json). The shops have no game place on the ground floor; their 3F homes stay.
   -- S56: west shop row (x 33300-35060), cut through at y 31240-31480 (front wall, inner walls, back wall).
-  { id = 's56', pts = { { 32700, 31360 }, { 33300, 31360 }, { 34000, 31360 }, { 34700, 31360 }, { 35300, 31360 }, { 35700, 31360 } } },
+  -- The west door's first two points at y 31270: on the 31360 line the game character stuck at x 33170 on a planter and
+  -- hose rack just inside (the probe's thinner capsule got by); walked through at 31260-31272 both ways in the WP (11-14).
+  { id = 's56', pts = { { 32700, 31270 }, { 33300, 31270 }, { 34000, 31360 }, { 34700, 31360 }, { 35300, 31360 }, { 35700, 31360 } } },
   -- S64: west shop row (x 33200-35160), front and back wall cut at y 41200-41440.
   { id = 's64', pts = { { 32800, 41320 }, { 33300, 41320 }, { 34000, 41320 }, { 34700, 41320 }, { 35300, 41320 }, { 35700, 41320 } } },
   -- S38: east shop row (x 43100-44880), west wall cut at y 36380-36580; the east side was open at y 36740-36920.
