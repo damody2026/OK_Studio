@@ -73,13 +73,36 @@
 
 **16 GB 判定：目前不通过**（10 女角 32 GB；只有 1 位女角也要 21 GB）。不 cook 能调的东西（半径、HLOD 开关）量过都没有效果。
 
+### 4.1 第二轮拆分（2026-11-14 23:43 起，`-llm -llmcsv` 与 cdb `!address -summary`）
+
+显存目标（使用者 23:5x）：**≤ 8 GB，要能在 RTX 4060 上跑**。
+
+LLM（commit，最后一笔）：
+
+| 类别 | 1 女角 | 10 女角 |
+|---|---|---|
+| 总计 | 21.4 GB | 31.6 GB |
+| UE 未追踪 | 10.3 | 15.1 |
+| Textures | 3.1 | 5.9 |
+| NavigationCollision + Physics/ChaosTrimesh | 4.8 | 4.8 |
+| Untagged | 0.4 | 2.2 |
+
+- cdb（1 女角，23 GB commit）：Windows 堆只有 1.1 GB（Rust 的分配在这里），堆栈 1 GB，**PAGE_WRITECOMBINE 的已提交区段 10.7 GB**，约等于当时使用的显存（10.4 GB）。所谓「未追踪」主要是驱动把显存资源映射进进程的部分，不是 Rust。所以降低显存也会同等降低 commit。
+- D3D12：`UAVBuffer StandAlone` 10.3 GB 里有 9.7 GB 是 Nanite 的保留地址（`Reserved Buffer Memory (Uncommitted)`），不占实际内存；实际 Buffers 5 GB（HLOD 合并网格约 3 GB）、Textures 2.6 GB。
+- 贴图：`/Game/UniversityCity/ResortArchitectureV1` 有 **1,221 张未压缩、不串流的贴图，共 2.5 GB**，开图就全部常驻（素材设定：不压缩、NeverStream、没有 mip）。`Localization` 的 UI 贴图 180 MB 不串流，可以保留。
+- 每多 1 位女角：commit +1.1 GB（其中约 0.3 GB 是显存的映射）、显存 +0.3 GB。
+
+估算（做完 (a)：不建 HLOD + Resort 贴图改压缩与串流）：
+- 显存：约 5 GB + 每位女角 0.3 GB，10 位时约 7.6 GB，刚好在 8 GB 内。
+- commit：约 11 GB + 每位女角 1.1 GB，10 位时约 21 GB。所以 (b) 还要把每位女角的成本减半，才进得了 16 GB。
+
 ## 5. 给使用者的决定：要不要改远景
 
 16 GB 判定：**不通过**（10 女角 32.1 GB；1 女角 21.1 GB）。分两块做：
 
 | | 内容 | 谁做 | 需要 | 预期省下（依本次量测估算） |
 |---|---|---|---|---|
-| (a) 城市远景 | HLOD 去碰撞、去 Instanced 层、合并层简化或完全不要远景，再 cook | c-street-city（地图）+ cook | 使用者同意改远景外观与 cook；约 90 GB、整台机器的 HLOD 重建（来源地图的 HLOD 现在是做到一半的版本） | 远景常驻网格 2.8 GB + 全城常驻原始网格约 2 GB（显存为主）+ 碰撞 4.5 GB（内存），合计约 7–9 GB |
+| (a) 城市远景与贴图 | HLOD 去碰撞、去 Instanced 层、合并层简化或完全不要远景；`ResortArchitectureV1` 的 1,221 张贴图改为 BC 压缩、开串流、产生 mip；再 cook。使用者 23:4x 同意重建与 cook，先做「不建远景」 | c-street-city（地图）+ cook | 使用者同意改远景外观与 cook；约 90 GB、整台机器的 HLOD 重建（来源地图的 HLOD 现在是做到一半的版本） | 远景常驻网格 2.8 GB + 全城常驻原始网格约 2 GB（显存为主）+ 碰撞 4.5 GB（内存），合计约 7–9 GB |
 | (b) 女角与引擎 | 拆清 UE 分配器外的 13 GB；依实体内存限制姿势缓冲、贴图缓存、串流池；固定载入半径 | c-lowspec（我） | Source 改动、skip-cook 建置，不用 cook | 目标每位女角从 1.2 GB 降到 0.5 GB 以下（约 6 GB），外加缓存上限 |
 
 要点：
