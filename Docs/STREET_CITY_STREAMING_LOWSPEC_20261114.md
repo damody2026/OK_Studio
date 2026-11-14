@@ -48,9 +48,43 @@
 
 ## 4. 结果
 
-（量测排在 c-street-city 的 WP 重建之后，结果补在这里。）
+2026-11-14 23:10–23:41，本机（128 GB、RTX 5090 32 GB），测试者的包 `Pack1114.stage` + `StreetDisplay40Cloth.patch`，`-NoCloud`。23:11 起机器上另有使用者自己的读卡程序（CardReaderDevelopment）在跑。原始数据：`Saved/StreetSocial/MemProbe/*.csv|json`，memreport 在 `Saved/StreetSocial/MemProbe/Pack1114.stage/Windows/OpenKoikatsu/Saved/Profiling/MemReports/`。
 
-## 5. 后续（依量测结果）
+| tag | 地图 | 女角 | 其他 | 峰值 commit | 峰值显存 | 载入格子 |
+|---|---|---|---|---|---|---|
+| pack-source-10 | 源地图（修正前测试者打开的） | 10 | | 29.7 GB | 10.7 GB | 整张 |
+| pack-wp-10 | WP | 10 | 窗口在载入完被使用者关掉，作废 | (22.6) | (8.8) | |
+| pack-wp-10b | WP | 10 | 瞬移 6 处 | **32.1 GB** | **13.3 GB** | 61 |
+| pack-wp-10-r128 | WP | 10 | 半径 128 m | 32.4 GB | 13.6 GB | |
+| pack-wp-h1b | WP | 1 | | 21.1 GB | 10.4 GB | 65 |
+| pack-wp-h1b-r64 | WP | 1 | 半径 64 m | 21.1 GB | 10.4 GB | 45（主网格只剩 4 格） |
+| pack-wp-h1-hlod0 | WP | 1 | `wp.Runtime.HLOD 0` | 21.0 GB | 10.4 GB | 64 |
 
-- 若串流版 256 m 超过 16 GB：在 C++ 于 `UWorldPartitionSubsystem::OnWorldPartitionSubsystemInitialized` 套用载入半径（`-StreetCityLoadingRange=N`，或依实体内存自动选），每次开图（含读档重开地图）都生效；控制台指令在地图重开时会被引擎清掉，不能只靠 `-ExecCmds`。
-- E 组的包要用新启动器重新打包，测试者才会开串流版。
+结论：
+1. **改开串流地图不会降低内存**（32.1 vs 29.7 GB）。启动器修正仍要保留（之后的 WP 才能发挥作用），但它单独不能让低配机器跑起来。
+2. 串流半径确实生效（64 m 时主网格只载 4 格），瞬移时格子也确实载入/卸载，可是内存不动。原因是这版 cook 的 WP：
+   - 36 个合并 HLOD 网格（`StaticMesh_UniversityCityWP_HLODLayer_Merged_*`）存在 **地图包本身**（`/Game/UniversityCity/Maps/UniversityCityWP`），开图就整批载入：2.8 GB 网格，最大一个 585 MB（VB 189 MB）。
+   - HLOD 远景格子（`HLOD0_256m_767m`，约 40 个）的 Instanced 层用原始网格做实例（3,756 个 `HLODInstancedStaticMeshComponent`），全城约 1,900 个网格资产（EnvironmentV1 1.0 GB、MotelRoomsV2、ShopSamplesV1…）因此常驻。
+   - 这些网格都带碰撞：`NavCollision` 2.5 GB + `BodySetup` 2.0 GB（CPU）。
+   - `wp.Runtime.HLOD 0` 只隐藏、不卸载（合并网格在地图包里）。
+3. 女角：每多 1 位约 +1.2 GB commit、+0.3 GB 显存（10 位 32 GB vs 1 位 21 GB）。
+4. 1 位女角时 UE 分配器（FMalloc）只占 7.9 GB，commit 却有 21 GB：其余约 13 GB 在 D3D12 与 Rust（ok_extract 会话、解码缓存）那边，这部分还没拆细。
+5. 测试者为什么崩溃：本机量到的 30 GB commit 放得进 64 GB；显存 10.7–13.3 GB（本机贴图池按 32 GB 显卡的 70% 配）在 16 GB 笔电显卡上已接近满载。需要测试者那台机器的 `game.log` 和 `Saved/Crashes` 才能确定是显存、TDR 还是别的。
+
+**16 GB 判定：目前不通过**（10 女角 32 GB；只有 1 位女角也要 21 GB）。不 cook 能调的东西（半径、HLOD 开关）量过都没有效果。
+
+## 5. 要达到 16 GB 必须做的事
+
+城市（需要 WP 重建 HLOD + cook，c-street-city 的地图）：
+1. HLOD 层不要碰撞、不要 NavCollision：合并层与实例层都设 `bNoCollision`／HLOD 网格关碰撞（省约 4.5 GB CPU 的大部分）。
+2. 去掉 Instanced HLOD 层，或只用于小物件；远景只保留合并层（Instanced 层让全城原始网格常驻）。
+3. 合并层简化：开 mesh simplification（`MeshSimplify`／`ApproximateMesh`）并降低合并贴图尺寸，目标总量 < 300 MB；或直接不建远景（使用者已接受远景缺失），WP 只留主网格。
+4. 项目没有用导航网格：关掉静态网格的 NavCollision 生成（cook 设置），全城一起省。
+5. 改完后先 HLOD 分批重建（约 90 GB，需整台机器）再 cook（使用者许可后）。
+
+女角与引擎（不需要 cook，Source 改动）：
+6. 拆清楚 1 位女角时 D3D12 + Rust 的 13 GB（下一轮量测：Rust 侧用 ok_extract 的内存统计，D3D12 侧看 `D3D12 Memory` 统计组）。
+7. 依实体内存设预算：贴图缓存（`KKTextureRuntime` 的 PNG 缓存已是 RAM/8）、姿势缓冲 `StagedPose.Keys`（10 位 872 MB 显存）、Nanite 串流池（528 MB）、贴图串流池。
+8. 半径：在 C++ 于 `UWorldPartitionSubsystem::OnWorldPartitionSubsystemInitialized` 套用（`-StreetCityLoadingRange=N`），每次开图都生效；控制台指令在地图重开时会被引擎清掉。等第 1–3 项做完才看得出效果。
+
+分发：E 组的包要用新启动器（6c2fcfd8d）重新打包。
