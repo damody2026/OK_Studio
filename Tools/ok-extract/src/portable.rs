@@ -14,7 +14,7 @@ const CHUNK: &[u8; 4] = b"okPv";
 
 #[path = "portable_hair.rs"]
 mod custom_hair;
-pub use custom_hair::{inspect_hair_base, import_hair_card};
+pub use custom_hair::{inspect_hair_base, import_hair_card, hairdeck};
 
 pub(crate) fn png_snapshot(bytes: &[u8]) -> Result<(usize, Option<std::ops::Range<usize>>), String> {
     if bytes.len()<8 || &bytes[..8]!=PNG {return Err("invalid PNG signature".into());}

@@ -276,6 +276,15 @@ void FOkSession::ApplyPhysXSecondary() const { if(Handle){ok_session_set_physx_s
 bool FOkSession::SetExternalAnimation(bool bExternal) { ExternalAnimation=bExternal?1:0; return !Handle||ok_session_set_external_animation(Handle,ExternalAnimation)==0; }
 bool FOkSession::PenisTip(FVector& OutUnity) const { float P[3]; if(!Handle||ok_penis_tip(Handle,P)!=0)return false;OutUnity=FVector(P[0],P[1],P[2]);return true; }
 int32 FOkSession::HangHair(bool bOn){return Handle?ok_hang_hair(Handle,bOn?1:0):-1;}
+bool FOkSession::ApplyHairDeck(const FString& CardsJson,const FString& OptsJson,FString& OutReport)
+{
+	if(!Handle){OutReport=TEXT("no session");return false;}
+	TArray<ANSICHAR> Buf;Buf.SetNumZeroed(1<<16);
+	const int32 R=ok_session_apply_hairdeck(Handle,TCHAR_TO_UTF8(*CardsJson),TCHAR_TO_UTF8(*OptsJson),Buf.GetData(),Buf.Num());
+	OutReport=UTF8_TO_TCHAR(Buf.GetData());
+	return R==0;
+}
+
 bool FOkSession::AimPenis(const FVector& UnityDir,float& OutDegrees){OutDegrees=0.f;const float D[3]={float(UnityDir.X),float(UnityDir.Y),float(UnityDir.Z)};return Handle&&ok_aim_penis(Handle,D,&OutDegrees)==0;}
 bool FOkSession::SkinCheck(const TArray<FVector>& UnityAt,TArray<float>& Out) const{
 	TArray<float> At;At.Reserve(UnityAt.Num()*3);for(const FVector& V:UnityAt){At.Add(float(V.X));At.Add(float(V.Y));At.Add(float(V.Z));}

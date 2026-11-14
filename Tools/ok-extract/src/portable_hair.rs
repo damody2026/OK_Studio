@@ -7,6 +7,8 @@ use serde::{Serialize,Deserialize};
 use std::{collections::BTreeMap,ffi::CString};
 #[path="portable_hair_soft.rs"]
 mod soft;
+#[path="portable_hairdeck.rs"]
+pub mod hairdeck;
 
 #[derive(Serialize,Deserialize)]
 struct HairMesh {
@@ -24,6 +26,8 @@ struct HairMesh {
     /// separate parts cloned from the native hair donor, so several authored
     /// layers can coexist; re-importing the same layer replaces it.
     #[serde(default)] layer:Option<String>,
+    /// Native hair shader (ramps, gloss, constants) of the character's own visible hair instead of a donor card.
+    #[serde(default)] native_self:bool,
 }
 fn part_name(m:&HairMesh)->String {
     match &m.layer {Some(l)=>format!("Tripo_Hair_{l}_{}",m.indices.len()/3),None=>format!("Tripo_Golden_Hair_{}",m.indices.len()/3)}
@@ -66,6 +70,10 @@ fn install(s:&mut OkSession,m:&HairMesh,texture:&[u8],pbr:Option<&[Vec<u8>;3]>)-
     let bone_count=sk.names.len();if h>u16::MAX as usize{return Err("head bone index overflow".into());}
     let native_hair=|p:&crate::session::SessionPart|(p.role.starts_with("hair") || (p.role=="accessory" && p.name=="Hair")) && !is_custom(p);
     let donor=s.parts.iter().position(|p|native_hair(p)).ok_or("base has no hair material donor")?;
+    let self_native=if m.native_self {
+        Some(s.parts.iter().find(|p|native_hair(p) && p.render_visible && matches!(p.shader_kind,1|10))
+            .or_else(||s.parts.iter().find(|p|native_hair(p) && matches!(p.shader_kind,1|10))).cloned().ok_or("the character's hair has no native hair shader")?)
+    } else {None};
     if m.hide_source_accessory {
         if let Some(source)=s.parts[donor].source_property.clone() {
             for part in &mut s.parts {
@@ -115,12 +123,17 @@ fn install(s:&mut OkSession,m:&HairMesh,texture:&[u8],pbr:Option<&[Vec<u8>;3]>)-
         p.runtime_textures.insert("_MainTex".into(),[1,0,0,1,1]);
         for slot in ["_NormalMap","_RoughnessMap","_MetallicMap"]{p.runtime_textures.insert(slot.into(),[1,0,0,0,1]);}
     }
-    if let Some(path)=&m.native_material_card {
+    if m.native_material_card.is_some() || self_native.is_some() {
         if pbr.is_some(){return Err("native hair and PBR modes are mutually exclusive".into());}
-        let donor=load(Path::new(path))?;
-        let d=donor.parts.iter().find(|p|p.render_visible && p.shader_kind==1)
-            .or_else(||donor.parts.iter().find(|p|p.render_visible && p.shader_kind==10))
-            .ok_or("donor has no native hair shader")?;
+        let d=match (&self_native,&m.native_material_card) {
+            (Some(d),_)=>d.clone(),
+            (None,Some(path))=>{let donor=load(Path::new(path))?;
+                donor.parts.iter().find(|p|p.render_visible && p.shader_kind==1)
+                    .or_else(||donor.parts.iter().find(|p|p.render_visible && p.shader_kind==10)).cloned()
+                    .ok_or("donor has no native hair shader")?}
+            (None,None)=>unreachable!(),
+        };
+        let d=&d;
         // Keep all serialized native hair ramps, gloss and material constants.
         // Replace only the mesh, base texture and attachment with the imported hair.
         let authored=p.clone(); *p=d.clone();
@@ -137,7 +150,7 @@ fn install(s:&mut OkSession,m:&HairMesh,texture:&[u8],pbr:Option<&[Vec<u8>;3]>)-
         p.alpha_mask=None;p.blend="opaque".into();p.blend_c=CString::new("opaque").unwrap();
         if let Some(mat)=p.source_material.as_mut(){mat.render_queue=2000;for key in ["_Color","_Color2","_Color3"]{mat.colors.insert(key.into(),[1.;4]);}}
         p.overcolor=[1.;4];p.overcolor2=[1.;4];
-        if let Some(id)=&m.native_gloss_asset {
+        if let (Some(id),Some(path))=(&m.native_gloss_asset,&m.native_material_card) {
             let root=crate::portable_resources::root(Path::new(path))?;
             let raw=crate::portable_resources::decode(&crate::gamefs::read(root.join("assets").join(format!("{id}.okasset"))).map_err(|e|e.to_string())?,"texture",id)?;
             let gloss:Vec<u8>=bincode::deserialize(&raw).map_err(|e|e.to_string())?;
@@ -243,7 +256,7 @@ pub fn import_hair_card(input:&Path,mesh:&Path,output:&Path)->Result<serde_json:
 mod tests {
     use super::*;
     #[test] fn rejects_invalid_and_over_budget_hair(){
-        let mut m=HairMesh{positions:vec![[0.;3];3],normals:vec![[0.,0.,1.];3],tangents:vec![[1.,0.,0.,1.];3],uvs:vec![[0.;2];3],indices:vec![0,1,2],texture:"x.png".into(),normal:None,roughness:None,metallic:None,native_material_card:None,native_gloss_asset:None,gloss_uvs:Vec::new(),soft_rig:None,hide_source_accessory:false,layer:None};
+        let mut m=HairMesh{positions:vec![[0.;3];3],normals:vec![[0.,0.,1.];3],tangents:vec![[1.,0.,0.,1.];3],uvs:vec![[0.;2];3],indices:vec![0,1,2],texture:"x.png".into(),normal:None,roughness:None,metallic:None,native_material_card:None,native_gloss_asset:None,gloss_uvs:Vec::new(),soft_rig:None,hide_source_accessory:false,layer:None,native_self:false};
         assert!(validate(&m).is_ok());m.indices=vec![0,1,2].repeat(50001);assert!(validate(&m).is_err());m.indices=vec![0,1,3];assert!(validate(&m).is_err());m.indices=vec![0,1,2];m.positions[0][0]=f32::NAN;assert!(validate(&m).is_err());
     }
 }

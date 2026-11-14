@@ -318,6 +318,8 @@ public:
 	bool PenisClipDeltas(const FVector& At,const FVector& Normal,const FVector& Axis,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,float InsetM=0.f) const;
 	// Her hair hangs under its weight (true) or keeps the card's DynamicBone parameters: the chains changed now.
 	int32 HangHair(bool bOn);
+	/** Replaces her hair with a HairDeck result (cards_seed<s>.json, chains beside it); rebuild the meshes after. */
+	bool ApplyHairDeck(const FString& CardsJson,const FString& OptsJson,FString& OutReport);
 	// His penis root turned so his penis points along UnityDir (his skeleton space): written as his FK, applied after the
 	// pair contacts. False: no penis. OutDegrees: turned now.
 	bool AimPenis(const FVector& UnityDir,float& OutDegrees);

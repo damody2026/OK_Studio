@@ -245,6 +245,9 @@ public:
  // Card PNGs dragged from Explorer onto the reader window load (OKGalleryCardDrop.cpp).
  bool CanAcceptDroppedCard() const;
  bool OpenDroppedCard(const FString& Path);
+ // HairDeck hair (OKGalleryHairDeck.cpp): replace her hair with a generated cards_seed<s>.json and rebuild her meshes.
+ bool ApplyHairDeckHair(const FString& CardsJson,const FString& OptsJson,FString& OutReport);
+ bool HasPreviewCharacter() const { return PreviewActor!=nullptr; }
  void StartCardDrop();
  void StopCardDrop();
  TSharedPtr<class IInputProcessor> CardDropProcessor;

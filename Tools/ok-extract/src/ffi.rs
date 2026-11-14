@@ -521,6 +521,20 @@ pub unsafe extern "C" fn ok_session_renderer_parts(
     total
 }
 /// Studio IK: builds the solver from the shared resources root (once per session). 0 ok, 1 error (message in `err`).
+/// Replaces her hair with a HairDeck result: `cards` is a `cards_seed<s>.json` (its `chains_seed<s>.json` beside it
+/// gives the hair bones), `opts` a JSON object of `portable::hairdeck::HairDeckOpts` (empty: the defaults). Writes the
+/// report JSON (or the error) to `out`; 0 on success. The caller rebuilds her meshes (LoadSession).
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_apply_hairdeck(s:*mut OkSession,cards:*const c_char,opts:*const c_char,out:*mut c_char,cap:i32)->i32 {
+    let Some(s)=sess_ref(s) else{return -1;};
+    let cards=cstr_opt(cards).unwrap_or_default();
+    let opts=cstr_opt(opts).filter(|o|!o.trim().is_empty()).unwrap_or_else(||"{}".into());
+    let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||{
+        let o:crate::portable::hairdeck::HairDeckOpts=serde_json::from_str(&opts).map_err(|e|format!("hairdeck opts: {e}"))?;
+        crate::portable::hairdeck::apply_files(s,std::path::Path::new(&cards),&o)
+    })).unwrap_or_else(|_|Err("HairDeck hair panicked".into()));
+    match result { Ok(r)=>{write_err(out,cap,&r.to_string());0}, Err(e)=>{write_err(out,cap,&e);1} }
+}
 #[no_mangle]
 pub unsafe extern "C" fn ok_session_prepare_studio_ik(s:*mut OkSession,root:*const c_char,err:*mut c_char,cap:i32)->i32 {
     let Some(s)=sess_ref(s) else{return -1;};
