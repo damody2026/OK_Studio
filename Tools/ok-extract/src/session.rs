@@ -844,6 +844,70 @@ fn studio_alpha_texture(role: &str, mesh: &ExtractedMesh) -> Option<Vec<u8>> {
 }
 
 impl SessionPart {
+    /// `ChaCopyBodyMaterial.CopyMaterial`: this renderer draws `ChaControl.customMatBody` (the body's material with its
+    /// textures, overlays and draw settings) with `_alpha_a`/`_alpha_b` at 0, so the body's clothes alpha mask never
+    /// clips it, and `customRenderQueue` when it lies in 0..=5000. The renderer keeps its own mesh.
+    pub(crate) fn copy_body_material(&mut self, body: &SessionPart, custom_render_queue: i32) {
+        let mut mat = body.source_material.clone();
+        if let Some(m) = mat.as_mut() {
+            m.floats.insert("_alpha_a".into(), 0.);
+            m.floats.insert("_alpha_b".into(), 0.);
+            if (0..=5000).contains(&custom_render_queue) { m.render_queue = custom_render_queue as _; }
+        }
+        self.source_material = mat;
+        self.runtime_textures = body.runtime_textures.clone();
+        self.shader_textures = body.shader_textures.clone();
+        self.shader_textures.remove("_AlphaMask");
+        self.alpha_mask = None;
+        self.item_draw = None;
+        self.overtex_png = body.overtex_png.clone();
+        self.overcolor = body.overcolor;
+        self.overtex2_png = body.overtex2_png.clone();
+        self.overcolor2 = body.overcolor2;
+        self.nip_size = body.nip_size;
+        self.nip_specular = body.nip_specular;
+        self.nip_toggle = body.nip_toggle;
+        self.tex1_mask = body.tex1_mask;
+        self.texcoord2_st = body.texcoord2_st;
+        self.texcoord3_st = body.texcoord3_st;
+        self.shadow_color = body.shadow_color;
+        self.line_color = body.line_color;
+        self.source_outline_enabled = body.source_outline_enabled;
+        self.shadow_extend = body.shadow_extend;
+        self.shadow_extend_another = body.shadow_extend_another;
+        self.main_tex_st = body.main_tex_st;
+        self.alpha_mask_st = body.alpha_mask_st;
+        self.normal_map_st = body.normal_map_st;
+        self.normal_detail_st = body.normal_detail_st;
+        self.normal_mask_st = body.normal_mask_st;
+        self.detail_mask_st = body.detail_mask_st;
+        self.line_mask_st = body.line_mask_st;
+        self.normal_detail_scale = body.normal_detail_scale;
+        self.face_normal = body.face_normal;
+        self.face_shadow = body.face_shadow;
+        self.line_tex_on = body.line_tex_on;
+        self.skin_line_width = body.skin_line_width;
+        self.hair_gloss_st = body.hair_gloss_st;
+        self.spec_height = body.spec_height;
+        self.specular_power = body.specular_power;
+        self.specular_power_nail = body.specular_power_nail;
+        self.specular_color = body.specular_color;
+        self.no_tex_specular = body.no_tex_specular;
+        self.metallic = body.metallic;
+        self.smoothness = body.smoothness;
+        self.shader_kind = body.shader_kind;
+        self.png = body.png.clone();
+        self.hair_gloss = body.hair_gloss.clone();
+        self.detail_mask = body.detail_mask.clone();
+        self.line_mask = body.line_mask.clone();
+        self.normal_map = body.normal_map.clone();
+        self.normal_detail = body.normal_detail.clone();
+        self.normal_mask = body.normal_mask.clone();
+        self.blend = body.blend.clone();
+        self.blend_c = std::ffi::CString::new(self.blend.clone()).unwrap_or_default();
+        self.unlit = body.unlit;
+    }
+
     /// Native face overlays are already customized in source_material. Legacy
     /// body overlay fields retain neutral defaults on old face snapshots.
     /// Resolve at the view boundary so existing portable cards are corrected too.

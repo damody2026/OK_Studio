@@ -532,6 +532,17 @@ public:
 	// studio view (SetupStudioView without PreserveWorld) owns this light.
 	void UpdateCameraKeyLight();
 	bool bCameraKeyLight = false;
+	/** Card reader lighting style. The camera key light turns KeyLightYaw degrees around the camera's up axis (positive:
+	 *  toward the camera's right) at KeyLightPitch degrees of elevation (40: the maker's own). */
+	float KeyLightYaw = 0.f;
+	float KeyLightPitch = 40.f;
+	/** Scales of the materials' _LightColor0 and of their ambient (_ambientshadowG rgb, unity_AmbientSky, unity_SHA*):
+	 *  1 keeps what the binding resolved. Applied by ApplyLightingScales (idempotent; new instances pick it up). */
+	float KeyLightIntensity = 1.f;
+	float AmbientScale = 1.f;
+	/** Returns the number of material parameters written. */
+	int32 ApplyLightingScales();
+	TMap<TWeakObjectPtr<UMaterialInstanceDynamic>, TMap<FName, FLinearColor>> LightingBaseValues;
 	TWeakObjectPtr<class ADirectionalLight> StudioKeyLight;
 	// Face close-up: ramp (null keeps the card ramp) plus a key light that arcs from the
 	// character's left, across the front, to her right. The tick runs the arc; false if one

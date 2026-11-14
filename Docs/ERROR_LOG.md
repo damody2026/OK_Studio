@@ -4478,3 +4478,50 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
   - `h_breath_table` 的 `mouths` 每列加上 `eye`／`brow`／`eyeOpen`／`tears`／`cheek`／`highlight`／`blink`（舊欄位不變），`KKHvoice.cpp` 讀成 `FKKHFace`。播喘息時 `AKKPreviewActor::HBreathFace` 記下當句的表情；`UpdateFace` 在阿黑顏、厭惡、深插、口交吸吮之後，優先用這組表情（眼睛先經過 `cha_eyeset` 換成我們的眼睛圖樣），臉紅取當句的 `cheek` 與高潮度的較大者。`ok.HScene.VoiceFace 0` 可以切回原本的固定表情。眼淚、高光、眨眼還沒有接。
   - `OLoop` 沿用 Loop 的速度（`ok.HScene.SprintSpeed` 可設下限），至少播 `ok.HScene.SprintSeconds`（4 秒，以實際秒數計）。
   - 基礎庫的 `h/voice/h_breath_index.json` 用新的 `ok-hbreath` 重新匯出（其他表與欄位逐項比對相同）。
+## 2026-11-14 U272：把地圖 53 貨櫃背光面變黑歸給商店的 cookie 燈，還沿用舊截圖、讀了 D: 的遊戲（F 組）
+
+- 錯誤：
+  - 我以為貨櫃背光面（原作 (141, 9, 17)，OK (12, 0, 0)）是因為商店的 cookie 方向燈沒建，就把 cookie 做成 light function。
+  - 判斷時拿的是之前輪次的 OK 截圖，沒有在新程式上重拍。
+  - cookie 資料當初是從 D: 的遊戲記錄的，但 F 組只能用 F:。
+- 查證：
+  - 新程式重拍後牆面還是 (12, 0, 0)；用 `ok.Studio.MapLampsOff -1` 關掉所有地圖燈也一樣，所以這面牆和這些燈無關。
+  - `ShowFlag.LightFunctions 0` 不能拿來做這個測試：燈的 `DisabledBrightness` 是 0，關掉 light function 時燈會整個變黑。
+- 真正原因（還沒修）：
+  - 貨櫃材質 `m_ks_m03_con00_00` 的 `_Metallic` 是 0.83，漫反射只剩約 0.16，紅色要靠反射。
+  - `studio/map_reflections.json` 裡地圖 53 是 `texture: null`，OK 綁的是全黑 cube。
+  - 原作的反射應該是天空盒產生的，但 F 這邊沒有原作地圖 53 的 `reflection_default` 紀錄。
+- 做法：
+  - 判斷前一律在當前程式上重拍，存到新的資料夾。
+  - 要原作資料時先問使用者，不讀 D:。
+## 2026-11-14 cookie light function 編譯失敗，地圖整片被照亮（F 組）
+
+- 錯誤：
+  - 地圖 53 加了 cookie 方向燈之後，碼頭地面比原作亮很多（y0 下半部 (68, 125, 140)，原作 (26, 68, 112)）。
+  - log 有 `Failed to compile Material ... Sampler type is Linear Color, should be Color for DefaultTexture`。
+- 原因：
+  - `TextureSampleParameter2D` 設成 LinearColor，但參數的預設貼圖是引擎的 sRGB `DefaultTexture`，材質編譯失敗。
+  - UE 因此改用預設 light function，等於沒有 cookie。
+- 修正：
+  - 參數預設貼圖改成一張 1×1 的線性白貼圖（`SRGB=false`）。
+  - 修正後地圖 53、50 的 sun0/sun1 四個方向都回到原作附近，log 沒有編譯錯誤。
+
+## 2026-11-14 讀卡器：くいこみサイハイ的大腿網格畫成白色、皮膚從方塊縫透出（F 組）
+- 現象：`Yvonne [KKS] C041` 服裝二，兩條大腿是白色緊身褲狀的面，中間夾著不規則的皮膚色方塊。
+- 原因：襪子 `nakay.kuikomi.thigh.cbs`（くいこみサイハイ１）的 prefab 帶 `KK_CopyChaBodyMat.ChaCopyBodyMaterial`，原作在 `CopyMaterial` 把 `rendTarget` 的兩塊大腿網格（`o_thihisocks_thigh_L/R`）換成 `ChaControl.customMatBody` 並把 `_alpha_a`／`_alpha_b` 設 0。我們沒移植這個外掛：兩塊網格沒有貼圖、畫成白色；身體本身被襪子的低解析衣物遮罩切掉，沒切乾淨的格子露出皮膚，就成了方塊。
+- 修正：`unity::copy_body_material_targets`（新的可選查詢，讀元件的 `rendTarget`／`customRenderQueue`）＋ `SessionPart::copy_body_material`，開卡最後（身體材質確定後）把身體的材質、貼圖、疊圖與繪製設定複製給這些網格，`_alpha_a/_alpha_b`=0、不帶 `_AlphaMask`，只換第一個 submesh（`Renderer.material` 的行為）。
+- 舊 OK 卡沒錄這個查詢，照舊開（不算缺口）但不會套用；要重轉（`ok-extract <遊戲> --oklib card base_v1 <卡> <輸出>`）才有。F 本機 C041 已重轉，原卡備份在 `Saved/CardBackups/20261114-copybodymat/`。
+- 教訓：mod 的 MonoBehaviour 會改材質時，先查 `kks_decomp/plugins` 有沒有對應外掛；`CHARACTER_EDITOR_FEATURE_INVENTORY.md` 裡「待逐功能核對」的外掛就是這類破圖的來源。
+
+## 2026-11-15 U272：量到舊截圖，又把原因當成「缺天空預設反射」（F 組）
+
+- 錯誤：
+  - 診斷腳本用 `studio/capture` 存同名檔，但 capture 不覆寫已有的檔案，好幾輪量到的都是第一輪的舊圖，誤以為「法線保護沒效」。
+  - 之後把貨櫃牆變暗歸給「地圖 53 沒有天空預設反射」，協調也照這個方向找原作數值。
+- 查證：
+  - 原生 `reflection_default` 紀錄：開著 Funly 天空的地圖本來就是 `UnityBlackCube`，所以全黑預設反射和原作一致。
+  - 在原作關燈／關反射探針對照：關所有燈牆面只從 141 掉到 124；關反射探針掉到 42。原因是兩個 Realtime 模式的反射探針，OK 轉換時略過了。
+- 做法：
+  - 截圖前先刪舊檔（或每輪用新資料夾），量測前確認檔案時間是這一輪的。
+  - 光源來源不明時，先在原作逐項關掉（燈、反射探針）量差異，再決定要移植什麼。
+- 備註：這次原作量測（`run_map_tour.lua`）與基礎庫重錄（`studio-nodes`）用的是 `D:\KoikatuSunshine`（本機唯一的原作，協調者指定反編譯源碼也在那裡）；F 組其他工作仍以 F: 為準。

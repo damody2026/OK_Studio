@@ -91,6 +91,7 @@ int32_t ok_session_renderer_parts(const OkSession* s,const char* renderer,int32_
 int32_t ok_session_bone_euler(OkSession* s,const char* name,float* out3);
 /* Studio IK (FullBodyBipedIK): prepare from the shared resources root; targets are effector indexes 0..8 (body, L/R
    shoulder, L/R thigh, L/R hand, L/R foot) with skeleton-space positions (Unity metres); count 0 clears. */
+int32_t ok_session_apply_hairdeck(OkSession* s,const char* cards,const char* opts,char* out,int32_t cap);
 int32_t ok_session_prepare_studio_ik(OkSession* s,const char* root,char* err,int32_t cap);
 int32_t ok_session_set_studio_ik(OkSession* s,const int32_t* effectors,const float* positions,int32_t count);
 int32_t ok_session_set_studio_ik_pose(OkSession* s,const int32_t* effectors,const float* positions,const float* rotations,const uint8_t* enabled,int32_t count);
@@ -643,8 +644,12 @@ int32_t ok_okmodel_fk_bones(const char* library, const char* id_hex, const char*
 int32_t ok_okmodel_render_cameras(const char* library, const char* id_hex, const char* prefab, uint8_t* out, int32_t cap);
 /* Realtime lights of a prefab (a Studio map's lamps: not baked, not its SunLightInfo sun): JSON array of {node, name, kind
  * (0 spot, 1 directional, 2 point), pos[3], rot[4] (Unity prefab space), color[4], intensity, range, spot_angle, culling_mask,
- * shadows, lightmapping, times (time-of-day mask, 0: always)}; out null / cap 0: size. */
+ * shadows, lightmapping, times (time-of-day mask, 0: always), cookie, cookie_map (its texture recorded), cookie_size (Unity m),
+ * cookie_clamp}; out null / cap 0: size. */
 int32_t ok_okmodel_map_lights(const char* library, const char* id_hex, const char* prefab, uint8_t* out, int32_t cap);
+/* PNG of a map lamp's cookie (the lamp's `node` in ok_okmodel_map_lights). Returns the length (larger than cap: nothing
+ * written); -1 when the lamp has no recorded cookie. */
+int32_t ok_okmodel_map_light_cookie(const char* library, const char* id_hex, const char* prefab, int32_t node, uint8_t* out, int32_t cap);
 int32_t ok_okmodel_edits_get(const char* library, const char* id_hex, uint8_t* out, int32_t cap);
 int32_t ok_okmodel_edits_set(const char* library, const char* id_hex, const char* json, char* err, int32_t cap);
 int32_t ok_okmodel_first_prefab(const char* library, const char* id_hex, char* out, int32_t cap);

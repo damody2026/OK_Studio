@@ -151,6 +151,8 @@ public:
 	static FString OkModelRenderCameras(const FString& Library, const FString& ModelId, const FString& Prefab);
 	/** Realtime lamps of a model prefab (a Studio map's unbaked lights) as JSON (`ok_okmodel_map_lights`); empty when none. */
 	static FString OkModelMapLights(const FString& Library, const FString& ModelId, const FString& Prefab);
+	/** A map lamp's cookie texture (PNG; `ok_okmodel_map_light_cookie`), by the lamp's node; false when none. */
+	static bool OkModelMapLightCookie(const FString& Library, const FString& ModelId, const FString& Prefab, int32 Node, TArray<uint8>& OutPng);
 	/** Prefab-space transform of a named node of a library model (Unity: metres, quaternion, scale); false when not recorded. */
 	static bool OkModelNodeWorld(const FString& Library, const FString& ModelId, const FString& Prefab, const FString& Node, FVector& OutPosition, FQuat& OutRotation, FVector& OutScale);
  bool ExportAnimationSnapshot(TArray<uint8>& Out) const;
@@ -316,6 +318,8 @@ public:
 	bool PenisClipDeltas(const FVector& At,const FVector& Normal,const FVector& Axis,TArray<uint32>& OutIndices,TArray<FVector3f>& OutDeltas,float InsetM=0.f) const;
 	// Her hair hangs under its weight (true) or keeps the card's DynamicBone parameters: the chains changed now.
 	int32 HangHair(bool bOn);
+	/** Replaces her hair with a HairDeck result (cards_seed<s>.json, chains beside it); rebuild the meshes after. */
+	bool ApplyHairDeck(const FString& CardsJson,const FString& OptsJson,FString& OutReport);
 	// His penis root turned so his penis points along UnityDir (his skeleton space): written as his FK, applied after the
 	// pair contacts. False: no penis. OutDegrees: turned now.
 	bool AimPenis(const FVector& UnityDir,float& OutDegrees);

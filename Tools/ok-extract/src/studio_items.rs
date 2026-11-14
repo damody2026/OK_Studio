@@ -691,7 +691,7 @@ pub fn record_hierarchies(game: &Path, lib: &Path, threads: usize) -> Result<(),
                         if let Some(name) = mat.slot(slot) { parsed.texture_png_named(name); parsed.texture_sampling_named(name); }
                     }
                 }
-                parsed.prefab_render_textures(p); parsed.prefab_reflection_probes(p); parsed.prefab_animated_materials(p); parsed.prefab_renderer_visibility(p); parsed.prefab_sun_light(p); parsed.prefab_light_modes(p); parsed.prefab_light_cookies(p);
+                parsed.prefab_render_textures(p); parsed.prefab_reflection_probes(p); parsed.prefab_animated_materials(p); parsed.prefab_renderer_visibility(p); parsed.prefab_sun_light(p); parsed.prefab_light_modes(p); parsed.prefab_light_cookies(p); parsed.prefab_light_cookie_maps(p);
                 // The prefab's meshes, where already recorded: OKLIB_REFRESH=meshes_for_maindata records them again
                 // after a decoding fix (main UV: TexCoord0 over the lightmap's TexCoord1).
                 for disabled in [false, true] {

@@ -327,6 +327,17 @@ private:
 	void UpdateMirrors();
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<class USceneCaptureComponent2D>> MirrorCaptures;
+	/** A map's realtime reflection probes (Unity renders them at run time; no cubemap in the bundle): a cube capture at
+	 *  each probe's node, bound as unity_SpecCube0 of the renderers it serves (U272: map 53's harbour). */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class USceneCaptureComponentCube>> RealtimeProbes;
+	TArray<TPair<TWeakObjectPtr<class AKKPreviewActor>, int32>> RealtimeProbeNodes;
+	/** Frames the realtime probes still capture (after a map part or the time of day changed). */
+	int32 RealtimeProbeFrames = 0;
+	int32 RealtimeProbeTime = -2;
+	/** The realtime probe of this map node (made on first use); its HDR decode is (intensity, 1, 0, 0). */
+	class UTexture* RealtimeProbe(class AKKPreviewActor* Map, int32 Node, int32 Size, const FVector& UnityPosition);
+	void UpdateRealtimeProbes();
 	TArray<TWeakObjectPtr<class UMaterialInstanceDynamic>> MirrorCaptureMaterials;
 	void Release(FShown& Item);
 	/** A motion changed by the timeline, on the live character (U230); anything else the next step rebuilds. */

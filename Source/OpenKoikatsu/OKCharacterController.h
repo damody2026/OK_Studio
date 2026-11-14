@@ -225,6 +225,33 @@ public:
  UPROPERTY() TObjectPtr<AKKPreviewActor> StyledActor;
  UPROPERTY() TObjectPtr<UVerticalBox> StyleBox;
  UPROPERTY() TArray<TObjectPtr<UOKShapeSlider>> StyleSliders;
+ // 光影風格 (right panel, OKGalleryLightingControls.cpp): the shown character's shadow ramp, key light and ambient.
+ void BuildLightingControls(class UVerticalBox* Parent);
+ void ApplyLighting(bool bForce);
+ void SyncLightingWidgets();
+ UFUNCTION() void OnLightingPreset(FString Value,ESelectInfo::Type Type);
+ UFUNCTION() void OnLightingRamp(FString Value,ESelectInfo::Type Type);
+ UFUNCTION() void OnLightingSlider(float Value);
+ UPROPERTY() TObjectPtr<class UComboBoxString> LightingPresetCombo;
+ UPROPERTY() TObjectPtr<class UComboBoxString> LightingRampCombo;
+ UPROPERTY() TObjectPtr<class USlider> LightingYawSlider;
+ UPROPERTY() TObjectPtr<class USlider> LightingPitchSlider;
+ UPROPERTY() TObjectPtr<class USlider> LightingIntensitySlider;
+ UPROPERTY() TObjectPtr<class USlider> LightingAmbientSlider;
+ TArray<TPair<class USlider*,class UTextBlock*>> LightingValueLabels;
+ TArray<FString> LightingRampKeys;	// parallel to LightingRampCombo's options; "" = the card's own ramp
+ UPROPERTY() TObjectPtr<AKKPreviewActor> LitActor;
+ double LightingAppliedAt=0.;
+ // Card PNGs dragged from Explorer onto the reader window load (OKGalleryCardDrop.cpp).
+ bool CanAcceptDroppedCard() const;
+ bool OpenDroppedCard(const FString& Path);
+ // HairDeck hair (OKGalleryHairDeck.cpp): replace her hair with a generated cards_seed<s>.json and rebuild her meshes.
+ bool ApplyHairDeckHair(const FString& CardsJson,const FString& OptsJson,FString& OutReport);
+ bool HasPreviewCharacter() const { return PreviewActor!=nullptr; }
+ void StartCardDrop();
+ void StopCardDrop();
+ TSharedPtr<class IInputProcessor> CardDropProcessor;
+ bool bApplyingLightingPreset=false;	// a preset sets the other controls: their callbacks keep the preset
  void OnBodyPhysicsChanged(const FString& Parameter,float Value);
  void OnPregnancyChanged(const FString& Parameter,float Value);
  UFUNCTION() void OnPregnancyEnabled(bool Value);

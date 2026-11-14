@@ -471,3 +471,21 @@ best＋C5 下，cooked 路徑還有兩段工作和 cooked 材質已準備好的�
 - 最近用過的貼圖（讀卡器 768 MB、共用材質 512 MB 上限）保留強參照，切回看過的服裝不必重建。
 
 量測（同一張 Alice、1920×1080，機器上同時有別的 session 的街頭遊戲吃約 8 核）：切服裝期間最長單幀 105–330 ms → 約 40 ms；穩定時 GT 12 ms → 8–9 ms。測試序列：`OK_AUTO_SEQUENCE="!t.HitchFrameTimeThreshold 9,!stat dumphitches,alice,~20,#站立 02,~20,@1,~20,#站立 05,~20,@0,~20"`（開卡後要先等 `~15` 讓衣服預熱換上的 Actor 就位再選動作，否則動作會套到被換掉的 Actor）。
+
+## 光影風格（右側「動作與表情」最上方）
+
+只影響目前顯示的角色，設定存在 GameUserSettings 的 `[OpenKoikatsu.ReaderLighting]`，下次開讀卡器沿用（`OKGalleryLightingControls.cpp`）。
+
+- **光影預設**：原作預設、柔和卡通、強對比卡通、側光、逆光、無陰影（平光）；改了下面任一項就變「自訂」。
+- **陰影風格**：角色卡原本的陰影，或原作「圖形設定」的 49 種陰影 ramp（原版 13 種＋mod，`Content/KKPreview/Ramps`，中文名取自街區的 zh-TW `ui.toml`），即時換掉所有材質的 `_RampG`。
+- **主光水平角／仰角**：跟著鏡頭的主光（`AKKPreviewActor::KeyLightYaw/KeyLightPitch`），0°／40° 是原作捏人畫面的位置。
+- **主光亮度、環境光**：材質的 `_LightColor0`，與 `_ambientshadowG` 的 rgb、`unity_AmbientSky`、`unity_SHA*` 的倍率（`ApplyLightingScales`，記住每個材質實例原本的值，1 就還原）。
+
+AI 操作：`reader_call controls` 列出 `control.LightingPresetCombo`、`control.LightingRampCombo`、`control.LightingYawSlider`、`control.LightingPitchSlider`、`control.LightingIntensitySlider`、`control.LightingAmbientSlider`，用 `control_set` 改；`ui_widgets`／`ui_set` 的鍵是 `OKGalleryWidget/LightingPresetCombo`、`OKGalleryWidget/LightingAmbient` 等。2026-11-14 以 C041 實測：預設、ramp、角度、環境光都即時生效。
+
+## 拖入角色卡
+
+從檔案總管把角色卡 PNG（原作 KKS 卡或 OK 卡，任何資料夾）拖進 `CardReaderDevelopment.cmd` 開的讀卡器視窗任何位置（卡片牆、3D 預覽、左右面板都可以），左鍵、右鍵拖都行，放開就和按「載入 3D」一樣載入；不在目前清單的卡會加進清單。一次拖多個檔案時只載第一張 PNG。正在載入／套用、還有未套用的修改、在 1 對 1 或工作室畫面時不載入，畫面上方會顯示原因。
+
+- 實作（`OKGalleryCardDrop.cpp`）：UMG 不把外部拖放交給 UUserWidget，3D 區底下也沒有元件接，所以用 Slate 輸入前處理器：系統拖放在 Slate 裡是滑鼠移動與放開，拖著角色卡時回報「可複製」，放開時取消 Slate 的拖放、下一幀載卡。
+- 測試：`ui_exec ok.ReaderDrop <卡片路徑>` 走同一段載卡。2026-11-15 以真正的 OLE 拖放（模擬右鍵與左鍵拖）實測：原作卡拖到卡片牆、OK 卡 C041 拖到 3D 區都載入成功。

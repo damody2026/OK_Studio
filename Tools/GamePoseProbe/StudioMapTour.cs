@@ -52,6 +52,11 @@ public sealed partial class GamePoseProbe {
                         LightProbes.GetInterpolatedProbe(renderer.bounds.center, renderer, out sh);
                         for (int c = 0; c < 3; ++c) writer.WriteLine("renderer_sh\t" + PathOf(renderer.transform) + "\t" + c + "\t" + sh[c, 0].ToString("R") + "\t" + sh[c, 1].ToString("R") + "\t" + sh[c, 2].ToString("R") + "\t" + sh[c, 3].ToString("R") + "\t" + sh[c, 6].ToString("R"));
                     }
+                    // The reflection probes the renderer blends (a realtime probe has no baked cubemap in the map's bundle).
+                    var probes = new System.Collections.Generic.List<UnityEngine.Rendering.ReflectionProbeBlendInfo>();
+                    renderer.GetClosestReflectionProbes(probes);
+                    foreach (var blend in probes)
+                        writer.WriteLine("renderer_probe\t" + PathOf(renderer.transform) + "\t" + PathOf(blend.probe.transform) + "\t" + blend.weight.ToString("R") + "\t" + blend.probe.mode + "\t" + blend.probe.refreshMode + "\t" + blend.probe.intensity.ToString("R") + "\t" + (blend.probe.texture == null ? "null" : blend.probe.texture.name + ":" + blend.probe.texture.width));
                     if (!seen.Add(material)) continue;
                     writer.WriteLine("material\t" + material.name + "\t" + material.shader.name + "\t" + material.renderQueue + "\t" + String.Join(",", material.shaderKeywords));
                     for (int p = 0; p < material.shader.GetPropertyCount(); ++p)
@@ -131,6 +136,16 @@ public sealed partial class GamePoseProbe {
             if (!String.IsNullOrEmpty(Environment.GetEnvironmentVariable("OK_PROBE_TOUR_LIGHTS_ONLY"))) { WriteTourStop(map, output + ".map" + no + "_lights.tsv"); continue; }
             if (map.isSunLightInfo && !map.IsTimeZone(sun)) continue;
             map.sunType = (SunLightInfo.Info.Type)sun;
+            // OK_PROBE_TOUR_LIGHTS_OFF=<a,b>: lights whose path contains one of these are switched off (which light lights
+            // a surface; U272: map 53's container under the shop's cookie lamp).
+            string off = Environment.GetEnvironmentVariable("OK_PROBE_TOUR_LIGHTS_OFF");
+            if (!String.IsNullOrEmpty(off))
+                foreach (Light light in UnityEngine.Object.FindObjectsOfType<Light>())
+                    foreach (string part in off.Split(','))
+                        if (part.Length > 0 && PathOf(light.transform).Contains(part)) light.enabled = false;
+            // OK_PROBE_TOUR_PROBES_OFF=1: every reflection probe switched off (what the renderers reflect without them).
+            if (!String.IsNullOrEmpty(Environment.GetEnvironmentVariable("OK_PROBE_TOUR_PROBES_OFF")))
+                foreach (ReflectionProbe probe in UnityEngine.Object.FindObjectsOfType<ReflectionProbe>()) probe.enabled = false;
             for (int frame = 0; frame < 60; ++frame) yield return null;
             yield return new WaitForEndOfFrame();
             string name = output + ".map" + no + "_sun" + sun;

@@ -962,6 +962,75 @@ fn clothes_renderer_map_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &
     None
 }
 
+/// `KK_CopyChaBodyMat.ChaCopyBodyMaterial` components inside the named prefab subtree: the renderers of `rendTarget`
+/// (path ids) with the component's `customRenderQueue`. The plugin assigns `ChaControl.customMatBody` to them, sets
+/// `_alpha_a`/`_alpha_b` to 0 and, for a queue in 0..=5000, that render queue (ChaCopyBodyMaterial.CopyMaterial):
+/// e.g. the thigh flesh meshes of nakay's くいこみ socks draw with the body's skin material.
+/// Optional query: an OK card converted before it records nothing and answers "none" (no gap).
+pub fn copy_body_material_targets<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> Vec<(i64, i32)> {
+    crate::oklib::memo_bytes_optional(bytes.bundle_bytes(), "copy_body_material_targets", prefab_name, || copy_body_material_targets_unity(bytes, prefab_name))
+}
+fn copy_body_material_targets_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> Vec<(i64, i32)> {
+    let Ok(bundle) = load_bundle_source(bytes.to_source(), false) else { return Vec::new() };
+    let bundle = Arc::new(bundle);
+    let want = prefab_name.to_ascii_lowercase();
+    let want_trim = prefab_name.trim_start_matches("p_").to_ascii_lowercase();
+    let mut out = Vec::new();
+    for node in &bundle.nodes {
+        let file = unity_asset_binary::bundle::BundleFileInfo::new(node.name.clone(), node.offset, node.size);
+        let Ok(ser) = parse_shared_serialized(BundleFileBytes { bundle: bundle.clone(), file }) else { continue };
+        let mut scripts: HashMap<i64, String> = HashMap::new();
+        for info in ser.objects_of_type(115) {
+            if let Ok(obj) = ser.scene_object(&info) {
+                let props = obj.class.properties();
+                let class = props.get("m_ClassName").or_else(|| props.get("m_Name")).and_then(|v| v.as_str()).unwrap_or("");
+                scripts.insert(info.path_id, class.to_string());
+            }
+        }
+        let mut go_names: HashMap<i64, String> = HashMap::new();
+        let mut parent_go: HashMap<i64, i64> = HashMap::new();
+        let mut tf_go: HashMap<i64, i64> = HashMap::new();
+        let mut tf_father: HashMap<i64, i64> = HashMap::new();
+        for info in ser.objects_of_type(1) {
+            if let Ok(obj) = ser.scene_object(&info) { if let Some(n) = obj.name() { go_names.insert(info.path_id, n); } }
+        }
+        for info in ser.objects_of_type(4) {
+            if let Ok(obj) = ser.scene_object(&info) {
+                let props = obj.class.properties();
+                if let Some(g) = props.get("m_GameObject").and_then(pptr_path_id) { tf_go.insert(info.path_id, g); }
+                if let Some(f) = props.get("m_Father").and_then(pptr_path_id) { tf_father.insert(info.path_id, f); }
+            }
+        }
+        for (tf, go) in &tf_go {
+            if let Some(pgo) = tf_father.get(tf).and_then(|f| tf_go.get(f)) { parent_go.insert(*go, *pgo); }
+        }
+        let in_prefab = |mut go: i64| {
+            for _ in 0..=parent_go.len() {
+                let l = go_names.get(&go).map(|n| n.to_ascii_lowercase()).unwrap_or_default();
+                if l == want || (!want_trim.is_empty() && l == want_trim) { return true; }
+                let Some(p) = parent_go.get(&go) else { return false };
+                go = *p;
+            }
+            false
+        };
+        for info in ser.objects_of_type(114) {
+            let Ok(obj) = ser.scene_object(&info) else { continue };
+            let props = obj.class.properties();
+            let class = props.get("m_Script").and_then(pptr_path_id).and_then(|id| scripts.get(&id)).cloned().unwrap_or_default();
+            // The script may live in another serialized file; its two serialized fields identify it then.
+            if class != "ChaCopyBodyMaterial" && !(class.is_empty() && props.contains_key("rendTarget") && props.contains_key("customRenderQueue")) { continue; }
+            let Some(go) = props.get("m_GameObject").and_then(pptr_path_id) else { continue };
+            if !in_prefab(go) { continue; }
+            let queue = props.get("customRenderQueue").map(uv_i32).unwrap_or(-1);
+            for id in props.get("rendTarget").map(uv_arr).unwrap_or_default().iter().filter_map(pptr_path_id).filter(|id| *id != 0) {
+                out.push((id, queue));
+            }
+        }
+        if !out.is_empty() { break; }
+    }
+    out
+}
+
 /// Node existence used by `ChaControl.AddClothesStateKind` through
 /// `ChaReference.GetReferenceInfo`. This walks the named prefab subtree, so a
 /// sibling prefab in the same asset bundle cannot lend it a reference node.
@@ -1226,6 +1295,11 @@ pub struct PrefabSunInfo { pub kind: i32, pub visible: Vec<i32>, pub angle: [f32
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct PrefabLightMode { pub node: i32, pub lightmapping: i32, pub culling_mask: u32, pub shadows: i32, pub active: bool }
 
+/// A prefab Light's cookie (`prefab_light_cookie_maps`): the texture as PNG, Light.cookieSize (a directional light's
+/// tile, metres) and whether the texture clamps (m_WrapU 1) instead of repeating.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct PrefabLightCookie { pub node: i32, pub size: f32, pub clamp: bool, pub png: Vec<u8> }
+
 /// A Studio map's SunLightInfo: the sun Light's node, type, culling mask and baking mode (m_Lightmapping 4 realtime),
 /// and the times of day it has (SunLightInfo.Info.Type 0 morning, 1 day, 2 evening, 3 night).
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -1247,6 +1321,10 @@ pub struct PrefabReflectionProbe {
     /// The cubemap as one PNG: the six faces (+X, -X, +Y, -Y, +Z, -Z, as Unity stores them) side by side, each mip
     /// below the previous one (mip k starts at row size * (2 - 2^(1-k))); 8-bit display values (BC6H clamped to 0..1).
     pub atlas: Vec<u8>,
+    /// A realtime probe (m_Mode 1, no baked cubemap): Unity renders it at run time from the node at `size` pixels
+    /// (map 53's harbour, U272); `atlas` is empty and the viewer captures the scene there.
+    #[serde(default)]
+    pub realtime: bool,
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -2224,6 +2302,30 @@ impl ParsedBundle {
             Vec::new()
         })
     }
+    /// The cookies of a prefab's Lights (`prefab_light_cookies` gives which): texture, size and wrap.
+    pub fn prefab_light_cookie_maps(&self, prefab: &str) -> Vec<PrefabLightCookie> {
+        self.memo_prefab("prefab_light_cookie_maps", prefab, prefab, || {
+            for (gi, graph) in self.transform_graphs().iter().enumerate() {
+                let (h, go_node) = crate::pose::prefab_hierarchy_in(graph, prefab);
+                if h.nodes.is_empty() { continue; }
+                let found: Vec<(i32, f32, String, bool)> = self.with_serialized(|sers| {
+                    let Some(ser) = sers.get(gi) else { return Vec::new(); };
+                    ser.objects_of_type(108).into_iter().filter_map(|info| {
+                        let obj = ser.scene_object(info).ok()?;
+                        let p = obj.class.properties();
+                        let node = p.get("m_GameObject").and_then(uv_pptr).and_then(|go| go_node.get(&go)).copied()?;
+                        let id = p.get("m_Cookie").and_then(uv_pptr).filter(|id| *id != 0)?;
+                        let size = p.get("m_CookieSize").map(uv_f32).unwrap_or(10.);
+                        let texture = sers.iter().find_map(|s| s.objects_of_type(28).into_iter().find(|i| i.path_id == id).and_then(|i| s.scene_object(i).ok()))?;
+                        let clamp = texture.class.properties().get("m_TextureSettings").and_then(|t| uv_obj(t, "m_WrapU")).map(uv_i32) == Some(1);
+                        Some((node as i32, size, texture.name()?, clamp))
+                    }).collect()
+                });
+                return found.into_iter().filter_map(|(node, size, name, clamp)| Some(PrefabLightCookie { node, size, clamp, png: self.decode_tex(&name)? })).collect();
+            }
+            Vec::new()
+        })
+    }
     /// Per-renderer-instance activeInHierarchy, including static activeSelf and settled Animator curves.
     /// SunLightInfo list roots remain eligible and are gated separately by the selected time of day.
     pub fn prefab_renderer_visibility(&self, prefab: &str) -> Vec<(i32, bool)> {
@@ -2949,15 +3051,21 @@ impl ParsedBundle {
                     let Some(node)=p.get("m_GameObject").and_then(uv_pptr).and_then(|go|go_node.get(&go)).copied() else {continue;};
                     if !p.get("m_Enabled").map(uv_bool).unwrap_or(true) {continue;}
                     let baked=p.get("m_CustomBakedTexture").filter(|v|uv_pptr(v).is_some_and(|id|id!=0)).or_else(||p.get("m_BakedTexture"));
-                    let Some((size,mips,atlas))=baked.and_then(cubemap) else {continue;};
-                    probes.push(PrefabReflectionProbe{node,box_size:vec3(p.get("m_BoxSize"),10.),box_offset:vec3(p.get("m_BoxOffset"),0.),
-                        importance:p.get("m_Importance").map(uv_i32).unwrap_or(1),intensity:p.get("m_IntensityMultiplier").map(uv_f32).unwrap_or(1.),size,mips,atlas});
+                    let (box_size,box_offset)=(vec3(p.get("m_BoxSize"),10.),vec3(p.get("m_BoxOffset"),0.));
+                    let (importance,intensity)=(p.get("m_Importance").map(uv_i32).unwrap_or(1),p.get("m_IntensityMultiplier").map(uv_f32).unwrap_or(1.));
+                    if let Some((size,mips,atlas))=baked.and_then(cubemap) {
+                        probes.push(PrefabReflectionProbe{node,box_size,box_offset,importance,intensity,size,mips,atlas,realtime:false});
+                    } else if p.get("m_Mode").map(uv_i32)==Some(1) {
+                        // Realtime: rendered by Unity at run time (ReflectionProbe m_Resolution square faces, full mip chain).
+                        let size=(p.get("m_Resolution").map(uv_i32).unwrap_or(128).max(16) as u32).next_power_of_two();
+                        probes.push(PrefabReflectionProbe{node,box_size,box_offset,importance,intensity,size,mips:size.ilog2()+1,atlas:Vec::new(),realtime:true});
+                    }
                 }
                 for info in ser.objects_of_type(104) {
                     let Ok(obj)=ser.scene_object(info) else {continue;};
                     let p=obj.class.properties();
                     if let Some((size,mips,atlas))=p.get("m_GeneratedSkyboxReflection").and_then(cubemap) {
-                        probes.push(PrefabReflectionProbe{node:-1,box_size:[0.;3],box_offset:[0.;3],importance:0,intensity:p.get("m_ReflectionIntensity").map(uv_f32).unwrap_or(1.),size,mips,atlas});
+                        probes.push(PrefabReflectionProbe{node:-1,box_size:[0.;3],box_offset:[0.;3],importance:0,intensity:p.get("m_ReflectionIntensity").map(uv_f32).unwrap_or(1.),size,mips,atlas,realtime:false});
                     }
                 }
                 PrefabReflectionProbes{probes}

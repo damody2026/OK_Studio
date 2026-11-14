@@ -1576,6 +1576,16 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
 | 12 | 三張地圖縮圖全黑 | 已修（U257），体育館ライブ、ロッカールーム個室本來就暗，圖偏暗 | 確認 | 完成 |
 | 13 | 「儲存中…」後面留著舊字 | 已修（U257） | 確認 | 完成 |
 
+### U275　拖曳檔案進視窗直接開場景（2026-11-14，F 組）
+
+使用者要求：場景檔不必先放進 `UserData/Studio/scene` 才能開。
+
+- 從檔案總管把檔案拖進工作室視窗任何位置就會開啟：`.okscene`、OK 場景卡、原版 KKS／KK 的 KStudio 場景 PNG。開啟流程和場景瀏覽器相同（`OpenScene`）：先問未儲存的變更；KStudio 場景走匯入：轉成 OK 場景存進 `UserData/Studio/scene`（同名），角色拆成卡，原檔不動。
+- 拖資料夾進來：場景瀏覽器切到那個資料夾並打開。
+- 一次拖多個檔案時，只開第一個場景檔或資料夾。拖進其他種類的檔案，狀態列會說明不是場景檔。
+- 實作：`SOKStudioPanel::OnDragOver`／`OnDrop` 接收外部拖放（`FExternalDragOperation`），下一幀才開檔；不是場景的 PNG（例如角色卡）不開，不卡住系統的拖放呼叫。控制通道指令 `scene.drop <路徑>` 走同一段處理，方便自動測試。
+- 驗證（2026-11-14）：Editor 與 Game 建置成功；以 `scene.drop` 測四項都通過：放在 `Saved/Tests/DropTest1114` 的原版 KKS 場景 PNG 匯入並開啟（443 個物件）、拖資料夾後場景瀏覽器列出裡面的場景、非場景 PNG 不開並在狀態列說明、資料夾裡的 `.okscene` 直接開啟。真正用滑鼠從檔案總管拖放還沒測。
+
 ### U271 補驗：另外 13 張陰影強度小於 1 的地圖（2026-11-12，F 組）
 
 原作用 `run_map_tour.lua --tag MapShadow1112 --height 1.5` 拍 5、11、16、40、50～54、56～58 的昼與 73 的朝（73 沒有昼），每個時段四個方向（pitch −15）。OK 在同位置拍（相機 (0, 0, 150) cm，yaw = 90 + 原作 yaw）。注意：
@@ -1593,6 +1603,37 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
     - 材質的 `unity_SHA*` 正常：水平 (0.26, 0.39, 0.48)、朝上 (0.17, 0.48, 0.79)。
     - `OK_LIGHTMAP_DIAG=white` 與 `whitenoenv`（反照率當白、不加環境反射）下，這面牆只有線性 (0.017, 0.05, 0.11)，約是朝上 SH 的一成；同畫面的地板陰影、欄杆、水桶的環境光都正常。被太陽照到的側面正常（白色模式下仍顯示紅色紋理，因為那部分走 UE 的光照）。
     - 所以是這個零件的環境光項被某個約 0.1 的乘數壓掉，或法線讀錯。下一步：對 Part_148 用 `OK_LIGHTMAP_DIAG` 加一個輸出 `ProbeDiffuse` 與 `PixelNormalWS` 的模式，分開看是法線還是乘數。
+    - 2026-11-14 進度（F 組）：
+      - 貨櫃網格的切線全是 0（`vtangent` 模式是黃色）：
+        - 探針環境光 `ProbeDiffuse` 和法線貼圖的 TBN 都因此讀成 NaN。
+        - 改成切線為 0 時用頂點法線（Unity 的 TBN 在切線為 0 時也只剩頂點法線）。
+        - `probe` 模式下牆面從接近 0 變成 (96, 140, 178)。
+      - 牆面最後的顏色仍是 (12, 0, 0)：
+        - 原生 tsv 顯示這面牆用的材質是 `m_ks_m03_con00_00`，`_Metallic` 0.83，漫反射只剩約 0.16。
+        - `whitetotal` 模式量到的漫反射比例也約是 0.2。
+        - 紅色要靠反射，而 `studio/map_reflections.json` 的地圖 53 是 `texture: null`，OK 綁的是全黑 cube。
+      - 地圖燈（含商店 cookie 燈）都和這面牆無關：`ok.Studio.MapLampsOff -1` 全關也一樣。
+      - 還缺原作地圖 53 的 `reflection_default`（Tour 的 tsv 沒錄這項），要用原作遊戲量；F 組沒有原作遊戲，要先問使用者。
+      - 順便完成：
+        - 地圖的 cookie 方向燈改用 light function 建出（Unity 規則：燈的本地 xy / cookie 大小 + 0.5，讀 alpha；只在編輯器建置，Game 目標照舊略過）。
+        - 地圖 53、50 sun0/sun1 的亮度和修改前一致，沒有變亮。
+      - 對照圖：`Saved/Tests/MapShadow1114U272e/`。
+    - 2026-11-15 修好（F 組）：
+      - **真正原因：地圖的即時反射探針。** 貨櫃用的是兩個 Realtime 模式的 ReflectionProbe，執行期才渲染、32×32，各占一半權重：`Map/PPV-Harbor/Reflection Probe`（每幀，強度 1.1）、`Map/light/Reflection Probe`（OnAwake，1.5）。OK 只收有烘焙貼圖的探針，這兩個被略過，只剩全黑反射。
+      - 在原作量測（`run_map_tour.lua` 新增 `--lights-off`、`--probes-off`，tsv 新增 `renderer_probe`），y90 牆面：
+        | 原作條件 | 牆面 |
+        |---|---|
+        | 照常 | (141, 9, 17) |
+        | 關 shop 燈 | (140, 9, 17) |
+        | 關所有燈 | (124, 5, 13) |
+        | 關反射探針 | (42, 0, 0)，和修改前的 OK 一樣暗 |
+      - 「缺天空預設反射」不是原因：原作開著 Funly 天空時 `reflection_default` 本來就是 `UnityBlackCube`（二十多筆原生紀錄）。
+      - 修法：
+        - Rust：`PrefabReflectionProbe` 加 `realtime`；Realtime 模式、沒有烘焙貼圖的探針照解析度收進來，照原規則分配給範圍內的物件，材質帶 `_OKReflectionRealtime`（面大小）與 `_OKReflectionPos*`（探針位置）。
+        - UE：部件打上 `OKReflectionRealtime=<節點>;<大小>;<強度>;<x>;<y>;<z>` 標記；`AOKSceneActor` 在探針位置放 `USceneCaptureComponentCube`（HDR、自動 mip），地圖建好或換時段後連拍 30 幀，綁成那些部件的 `unity_SpecCube0`（HDR = 強度, 1, 0, 0）。
+        - 取樣反射後夾在 0～64：擷取的 cube 一旦有 NaN，取樣它的材質整塊變黑，再被下一次擷取拍進去。第一次沒夾時 y180 的旗子、招牌全黑。
+      - 結果（`Saved/Tests/MapProbe1115OK2/`，原作 `Saved/Tests/MapProbe1115on/`）：y90 牆面 (124, 7, 19)，原作 (141, 9, 17)，修改前 (12, 0, 0)。y0 原本就偏黑的碼頭柱子與棧橋也恢復；y180、y270 和原作接近。還有差：y0 那艘船仍偏暗（另一個問題，未追）。
+      - 本機基礎庫要重錄：`OKLIB_REFRESH=prefab_reflection_probes ok-extract <遊戲> --oklib studio-nodes <base_v1> 8`（F 本機已重錄，替換 62 筆）。沒重錄的 checkout 照舊是全黑反射。
   - **U273 地圖 54 遮陽傘顏色**：原作橘色，OK 藍色（同一個物件的另一個顏色），海面也有雜點。
   - **U274 KK 時代地圖讀原作場景的時段**：原作 Studio 對學校地圖設 sunType 1 顯示「夕」，OK 依 U138 把 1 當「昼」。讀原作場景檔（`sunLightType`）時兩邊會差一格，要查原作 UI 怎麼對應再決定。
 
