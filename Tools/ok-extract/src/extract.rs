@@ -60,6 +60,8 @@ pub(crate) fn extract_session_from_info(
         }
     }
     let mut session_parts: Vec<crate::session::SessionPart> = Vec::new();
+    // KK_CopyChaBodyMat targets: (card property, renderer GameObject names, customRenderQueue).
+    let mut copy_body_targets: Vec<(String, Vec<String>, i32)> = Vec::new();
     let mut active_shoe_meta: Option<(String, String, String)> = None;
     let mut manifest = Manifest::default();
     manifest.clothes_states = crate::unity::clothes_states();
@@ -1874,6 +1876,8 @@ pub(crate) fn extract_session_from_info(
                             if kind == 8 { 1 } else { 0 },
                         );
                     }
+                    note_copy_body_targets(&mut copy_body_targets, &meshes, &format!("outfit{outfit}.clothes{kind}"),
+                        &crate::unity::copy_body_material_targets(&b, &entry.main_data));
                     crate::unity::clothes_renderer_map(&b, &entry.main_data)
                 });
             profile_tick("clothes renderer map", t_part);
@@ -2063,6 +2067,8 @@ pub(crate) fn extract_session_from_info(
                             if kind == 8 { 1 } else { 0 },
                         );
                     }
+                    note_copy_body_targets(&mut copy_body_targets, &meshes, &format!("outfit{outfit}.clothesTopParts{kind}"),
+                        &crate::unity::copy_body_material_targets(&b, &entry.main_data));
                     crate::unity::clothes_renderer_map(&b, &entry.main_data)
                 });
                 let (baked, used_mask) = bake_clothes_create_memo(game_root, card, outfit, &format!("sub{kind}"), zip.as_deref(),
@@ -2331,6 +2337,7 @@ pub(crate) fn extract_session_from_info(
             part.render_visible = false;
         }
     }
+    apply_copy_body_material(&mut session_parts, &copy_body_targets);
     assign_draw_layers(&mut session_parts);
     Ok(crate::session::OkSession {
         pair_third:None,
@@ -2990,4 +2997,28 @@ fn lists_stage(game_root: &Path, parsed_card: &Option<CardInfo>, outfit: i32, ou
         selected_top_type, selected_top_subparts, state_types, linked_not_bot, linked_not_shorts, requested_states,
         reference_flags, resolved_states, selected_hair_gloss, clothes_scope: _clothes_scope,
         prefetch_guard: _prefetch_guard })
+}
+
+/// Renderers of a clothes prefab that a `ChaCopyBodyMaterial` component retargets (`unity::copy_body_material_targets`).
+/// `Renderer.material =` replaces the first material only: later submeshes keep theirs.
+fn note_copy_body_targets(out: &mut Vec<(String, Vec<String>, i32)>, meshes: &[ExtractedMesh], property: &str, targets: &[(i64, i32)]) {
+    for mesh in meshes.iter().filter(|m| m.submesh_index == 0 && !m.renderer_names.is_empty()) {
+        if let Some((_, queue)) = targets.iter().find(|(id, _)| mesh.renderer_ids.contains(id)) {
+            out.push((property.to_string(), mesh.renderer_names.clone(), *queue));
+        }
+    }
+}
+
+/// `ChaCopyBodyMaterial.CopyMaterial` once the body's draw material is final (`ChaControl.customMatBody`).
+fn apply_copy_body_material(parts: &mut [crate::session::SessionPart], targets: &[(String, Vec<String>, i32)]) {
+    if targets.is_empty() { return; }
+    // The body renderer is emitted first among the "body" parts (genitals follow it).
+    let Some(body) = parts.iter().position(|p| p.role == "body") else { return };
+    let body = parts[body].clone();
+    for part in parts.iter_mut() {
+        let Some((_, _, queue)) = targets.iter().find(|(prop, names, _)| part.source_property.as_deref() == Some(prop.as_str())
+            && part.source_renderer_names == *names) else { continue };
+        eprintln!("ok-extract: copy body material -> {} ({:?}) queue={queue}", part.name, part.source_property);
+        part.copy_body_material(&body, *queue);
+    }
 }

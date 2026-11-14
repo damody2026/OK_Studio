@@ -11221,6 +11221,54 @@ static void ApplyOwnKeyLight(AKKPreviewActor* Actor, const FVector& Dir, bool bO
 	}
 }
 
+int32 AKKPreviewActor::ApplyLightingScales()
+{
+	// Each instance's own resolved value is remembered the first time it is seen, so scaling is never compounded and
+	// 1/1 restores it. Instances made later (progressive stand-ins, outfit changes) are taken in on the next call.
+	static const FName LightNames[] = { TEXT("_LightColor0") };
+	static const FName AmbientNames[] = { TEXT("_ambientshadowG"), TEXT("unity_AmbientSky"), TEXT("unity_SHAr"), TEXT("unity_SHAg"), TEXT("unity_SHAb") };
+	TSet<UMaterialInstanceDynamic*> Seen;
+	int32 Writes = 0;
+	auto Scale = [&](UMaterialInstanceDynamic* M)
+	{
+		if (!M || Seen.Contains(M)) return;
+		Seen.Add(M);
+		TMap<FName, FLinearColor>* Base = LightingBaseValues.Find(M);
+		if (!Base)
+		{
+			if (FMath::IsNearlyEqual(KeyLightIntensity, 1.f) && FMath::IsNearlyEqual(AmbientScale, 1.f)) return;
+			Base = &LightingBaseValues.Add(M);
+			// Only values this instance sets itself: one it inherits follows its (scaled) parent instance.
+			for (const FVectorParameterValue& P : M->VectorParameterValues)
+			{
+				const FName N = P.ParameterInfo.Name;
+				bool bWanted = N == LightNames[0];
+				for (const FName& A : AmbientNames) bWanted |= N == A;
+				if (bWanted) Base->Add(N, P.ParameterValue);
+			}
+		}
+		for (const TPair<FName, FLinearColor>& E : *Base)
+		{
+			const bool bLight = E.Key == LightNames[0];
+			const float S = bLight ? KeyLightIntensity : AmbientScale;
+			// _ambientshadowG's alpha is the card's shadow depth, the colours' alpha unused: only the SH terms scale all four.
+			FLinearColor Want = E.Value * S;
+			if (!E.Key.ToString().StartsWith(TEXT("unity_SHA"))) Want.A = E.Value.A;
+			FLinearColor Current;
+			if (M->GetVectorParameterValue(FMaterialParameterInfo(E.Key), Current) && !Current.Equals(Want))
+			{
+				M->SetVectorParameterValue(E.Key, Want);
+				++Writes;
+			}
+		}
+	};
+	for (UMaterialInstanceDynamic* M : CookedRoleMaterials) Scale(M);
+	TInlineComponentArray<UMeshComponent*> Meshes(this);
+	for (UMeshComponent* Mesh : Meshes)
+		for (int32 Slot = 0; Slot < Mesh->GetNumMaterials(); ++Slot) Scale(Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(Slot)));
+	return Writes;
+}
+
 int32 AKKPreviewActor::SetDisplayRamp(UTexture2D* Ramp)
 {
 	TSet<UMaterialInstanceDynamic*> Seen;
@@ -11332,7 +11380,10 @@ void AKKPreviewActor::UpdateCameraKeyLight()
 	{
 		const FVector Forward = StudioCam->GetActorForwardVector();
 		const FVector Up = StudioCam->GetActorUpVector();
-		Towards = (-Forward * 0.7660446f + Up * 0.6427876f).GetSafeNormal();
+		// KeyLightYaw/KeyLightPitch (card reader 光影風格): 0/40 is the maker's (-Forward*cos40 + Up*sin40).
+		const FVector Horizontal = (-Forward).RotateAngleAxis(KeyLightYaw, Up);
+		const float Pitch = FMath::DegreesToRadians(FMath::Clamp(KeyLightPitch, -89.f, 89.f));
+		Towards = (Horizontal * FMath::Cos(Pitch) + Up * FMath::Sin(Pitch)).GetSafeNormal();
 	}
 	if (Towards.IsNearlyZero())
 	{

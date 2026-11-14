@@ -4470,3 +4470,10 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - 修正：
   - 參數預設貼圖改成一張 1×1 的線性白貼圖（`SRGB=false`）。
   - 修正後地圖 53、50 的 sun0/sun1 四個方向都回到原作附近，log 沒有編譯錯誤。
+
+## 2026-11-14 讀卡器：くいこみサイハイ的大腿網格畫成白色、皮膚從方塊縫透出（F 組）
+- 現象：`Yvonne [KKS] C041` 服裝二，兩條大腿是白色緊身褲狀的面，中間夾著不規則的皮膚色方塊。
+- 原因：襪子 `nakay.kuikomi.thigh.cbs`（くいこみサイハイ１）的 prefab 帶 `KK_CopyChaBodyMat.ChaCopyBodyMaterial`，原作在 `CopyMaterial` 把 `rendTarget` 的兩塊大腿網格（`o_thihisocks_thigh_L/R`）換成 `ChaControl.customMatBody` 並把 `_alpha_a`／`_alpha_b` 設 0。我們沒移植這個外掛：兩塊網格沒有貼圖、畫成白色；身體本身被襪子的低解析衣物遮罩切掉，沒切乾淨的格子露出皮膚，就成了方塊。
+- 修正：`unity::copy_body_material_targets`（新的可選查詢，讀元件的 `rendTarget`／`customRenderQueue`）＋ `SessionPart::copy_body_material`，開卡最後（身體材質確定後）把身體的材質、貼圖、疊圖與繪製設定複製給這些網格，`_alpha_a/_alpha_b`=0、不帶 `_AlphaMask`，只換第一個 submesh（`Renderer.material` 的行為）。
+- 舊 OK 卡沒錄這個查詢，照舊開（不算缺口）但不會套用；要重轉（`ok-extract <遊戲> --oklib card base_v1 <卡> <輸出>`）才有。F 本機 C041 已重轉，原卡備份在 `Saved/CardBackups/20261114-copybodymat/`。
+- 教訓：mod 的 MonoBehaviour 會改材質時，先查 `kks_decomp/plugins` 有沒有對應外掛；`CHARACTER_EDITOR_FEATURE_INVENTORY.md` 裡「待逐功能核對」的外掛就是這類破圖的來源。

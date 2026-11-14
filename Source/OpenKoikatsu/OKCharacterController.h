@@ -225,6 +225,24 @@ public:
  UPROPERTY() TObjectPtr<AKKPreviewActor> StyledActor;
  UPROPERTY() TObjectPtr<UVerticalBox> StyleBox;
  UPROPERTY() TArray<TObjectPtr<UOKShapeSlider>> StyleSliders;
+ // 光影風格 (right panel, OKGalleryLightingControls.cpp): the shown character's shadow ramp, key light and ambient.
+ void BuildLightingControls(class UVerticalBox* Parent);
+ void ApplyLighting(bool bForce);
+ void SyncLightingWidgets();
+ UFUNCTION() void OnLightingPreset(FString Value,ESelectInfo::Type Type);
+ UFUNCTION() void OnLightingRamp(FString Value,ESelectInfo::Type Type);
+ UFUNCTION() void OnLightingSlider(float Value);
+ UPROPERTY() TObjectPtr<class UComboBoxString> LightingPresetCombo;
+ UPROPERTY() TObjectPtr<class UComboBoxString> LightingRampCombo;
+ UPROPERTY() TObjectPtr<class USlider> LightingYawSlider;
+ UPROPERTY() TObjectPtr<class USlider> LightingPitchSlider;
+ UPROPERTY() TObjectPtr<class USlider> LightingIntensitySlider;
+ UPROPERTY() TObjectPtr<class USlider> LightingAmbientSlider;
+ TArray<TPair<class USlider*,class UTextBlock*>> LightingValueLabels;
+ TArray<FString> LightingRampKeys;	// parallel to LightingRampCombo's options; "" = the card's own ramp
+ UPROPERTY() TObjectPtr<AKKPreviewActor> LitActor;
+ double LightingAppliedAt=0.;
+ bool bApplyingLightingPreset=false;	// a preset sets the other controls: their callbacks keep the preset
  void OnBodyPhysicsChanged(const FString& Parameter,float Value);
  void OnPregnancyChanged(const FString& Parameter,float Value);
  UFUNCTION() void OnPregnancyEnabled(bool Value);

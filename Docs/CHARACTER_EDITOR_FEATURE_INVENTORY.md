@@ -495,7 +495,7 @@
 | `KKS_ClothingBlendShape.dll` | 有同名來源目錄 | 待逐功能核對；未宣稱全部已支援 |
 | `KKS_ClothingBlendShapeCoroutineFix/KKS_ClothingBlendShapeCoroutineFix.dll` | 有同名來源目錄 | 待逐功能核對；未宣稱全部已支援 |
 | `KKS_ClothingStateMenu.dll` | 有同名來源目錄 | 待逐功能核對；未宣稱全部已支援 |
-| `KKS_CopyChaBodyMat.dll` | 有同名來源目錄 | 待逐功能核對；未宣稱全部已支援 |
+| `KKS_CopyChaBodyMat.dll` | 有同名來源目錄 | 已移植 `ChaCopyBodyMaterial`（衣服網格改用身體材質，2026-11-14）；舊 OK 卡需重轉才套用 |
 | `KKS_DisableHipDynamicBones.dll` | 有同名來源目錄 | 待逐功能核對；未宣稱全部已支援 |
 | `KKS_EditFangs.dll` | 有同名來源目錄 | 待逐功能核對；未宣稱全部已支援 |
 | `KKS_ExpandMaleMaker.dll` | 有同名來源目錄 | 待逐功能核對；未宣稱全部已支援 |

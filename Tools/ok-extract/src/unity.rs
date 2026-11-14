@@ -962,6 +962,75 @@ fn clothes_renderer_map_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &
     None
 }
 
+/// `KK_CopyChaBodyMat.ChaCopyBodyMaterial` components inside the named prefab subtree: the renderers of `rendTarget`
+/// (path ids) with the component's `customRenderQueue`. The plugin assigns `ChaControl.customMatBody` to them, sets
+/// `_alpha_a`/`_alpha_b` to 0 and, for a queue in 0..=5000, that render queue (ChaCopyBodyMaterial.CopyMaterial):
+/// e.g. the thigh flesh meshes of nakay's くいこみ socks draw with the body's skin material.
+/// Optional query: an OK card converted before it records nothing and answers "none" (no gap).
+pub fn copy_body_material_targets<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> Vec<(i64, i32)> {
+    crate::oklib::memo_bytes_optional(bytes.bundle_bytes(), "copy_body_material_targets", prefab_name, || copy_body_material_targets_unity(bytes, prefab_name))
+}
+fn copy_body_material_targets_unity<B: BundleInput + ?Sized>(bytes: &B, prefab_name: &str) -> Vec<(i64, i32)> {
+    let Ok(bundle) = load_bundle_source(bytes.to_source(), false) else { return Vec::new() };
+    let bundle = Arc::new(bundle);
+    let want = prefab_name.to_ascii_lowercase();
+    let want_trim = prefab_name.trim_start_matches("p_").to_ascii_lowercase();
+    let mut out = Vec::new();
+    for node in &bundle.nodes {
+        let file = unity_asset_binary::bundle::BundleFileInfo::new(node.name.clone(), node.offset, node.size);
+        let Ok(ser) = parse_shared_serialized(BundleFileBytes { bundle: bundle.clone(), file }) else { continue };
+        let mut scripts: HashMap<i64, String> = HashMap::new();
+        for info in ser.objects_of_type(115) {
+            if let Ok(obj) = ser.scene_object(&info) {
+                let props = obj.class.properties();
+                let class = props.get("m_ClassName").or_else(|| props.get("m_Name")).and_then(|v| v.as_str()).unwrap_or("");
+                scripts.insert(info.path_id, class.to_string());
+            }
+        }
+        let mut go_names: HashMap<i64, String> = HashMap::new();
+        let mut parent_go: HashMap<i64, i64> = HashMap::new();
+        let mut tf_go: HashMap<i64, i64> = HashMap::new();
+        let mut tf_father: HashMap<i64, i64> = HashMap::new();
+        for info in ser.objects_of_type(1) {
+            if let Ok(obj) = ser.scene_object(&info) { if let Some(n) = obj.name() { go_names.insert(info.path_id, n); } }
+        }
+        for info in ser.objects_of_type(4) {
+            if let Ok(obj) = ser.scene_object(&info) {
+                let props = obj.class.properties();
+                if let Some(g) = props.get("m_GameObject").and_then(pptr_path_id) { tf_go.insert(info.path_id, g); }
+                if let Some(f) = props.get("m_Father").and_then(pptr_path_id) { tf_father.insert(info.path_id, f); }
+            }
+        }
+        for (tf, go) in &tf_go {
+            if let Some(pgo) = tf_father.get(tf).and_then(|f| tf_go.get(f)) { parent_go.insert(*go, *pgo); }
+        }
+        let in_prefab = |mut go: i64| {
+            for _ in 0..=parent_go.len() {
+                let l = go_names.get(&go).map(|n| n.to_ascii_lowercase()).unwrap_or_default();
+                if l == want || (!want_trim.is_empty() && l == want_trim) { return true; }
+                let Some(p) = parent_go.get(&go) else { return false };
+                go = *p;
+            }
+            false
+        };
+        for info in ser.objects_of_type(114) {
+            let Ok(obj) = ser.scene_object(&info) else { continue };
+            let props = obj.class.properties();
+            let class = props.get("m_Script").and_then(pptr_path_id).and_then(|id| scripts.get(&id)).cloned().unwrap_or_default();
+            // The script may live in another serialized file; its two serialized fields identify it then.
+            if class != "ChaCopyBodyMaterial" && !(class.is_empty() && props.contains_key("rendTarget") && props.contains_key("customRenderQueue")) { continue; }
+            let Some(go) = props.get("m_GameObject").and_then(pptr_path_id) else { continue };
+            if !in_prefab(go) { continue; }
+            let queue = props.get("customRenderQueue").map(uv_i32).unwrap_or(-1);
+            for id in props.get("rendTarget").map(uv_arr).unwrap_or_default().iter().filter_map(pptr_path_id).filter(|id| *id != 0) {
+                out.push((id, queue));
+            }
+        }
+        if !out.is_empty() { break; }
+    }
+    out
+}
+
 /// Node existence used by `ChaControl.AddClothesStateKind` through
 /// `ChaReference.GetReferenceInfo`. This walks the named prefab subtree, so a
 /// sibling prefab in the same asset bundle cannot lend it a reference node.
