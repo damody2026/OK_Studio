@@ -4450,3 +4450,9 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - 原因：以為包裡沒有金鑰就不會連雲端；金鑰還會從使用者目錄與環境變數讀。
 - 修正：任何試跑（含打包後的包）一律加 `-NoCloud`（需搭配 `-Sandbox`）。包本身仍不含金鑰（逐字搜本機 2 把金鑰與金鑰格式，整包 0 筆）。
 - 清理試跑留下的檔案時，又犯了一個錯：用 `Get-Content` 讀 `PACKAGE.json` 沒指定 `-Encoding UTF8`，中文檔名變成亂碼，把 7 個在清單上的檔案（`VideoMotionDemos/網球示範.*`、`base_v1/studio/bg/宇宙空間0N.png`）當成多餘的刪掉；之後用 UTF-8 重新比對，從專案補回。PowerShell 5.1 讀 UTF-8 JSON 一律加 `-Encoding UTF8`。
+
+## 2026-11-14 試跑打包後的包，金鑰被寫進包裡的 player.json
+
+- 錯誤：打包並確認沒有金鑰之後，我從包裡啟動試跑。啟動器看到包的 `Saved/StreetSocial/player.json` 金鑰空白，就從這台機器的 `%LOCALAPPDATA%\OpenKoikatsu` 共用副本補回 DeepSeek 金鑰（`street_player_settings.lua` 的設計，讓玩家清掉 Saved 後不用重填）。包裡因此有了金鑰；兩個包（含與不含 H 語音）都是。
+- 原因：把「打包時沒有金鑰」當成最終狀態，試跑後沒有重新搜。
+- 修正：兩個包的 `player.json` 用 `street_player_settings.template()` 重寫成金鑰空白，再以本機金鑰逐字搜加格式搜整包，0 筆。之後在開發機試跑包，一律在試跑後重寫 `player.json` 並重新搜金鑰（`Docs/STREET_SOCIAL_PACKAGE.md`）。

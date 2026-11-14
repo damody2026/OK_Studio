@@ -49,3 +49,11 @@
 - 預估 4,645 個檔案、22.16 GB。
 
 還沒實際複製出一份完整的包，也還沒在另一台機器上試玩過。
+
+## 在開發機上試跑包（2026-11-14）
+
+- 一律加 `-Sandbox <名稱> -NoCloud`，不呼叫雲端。
+- 啟動器會把這台機器 `%LOCALAPPDATA%\OpenKoikatsu` 的金鑰補進包裡空白的 `Saved/StreetSocial/player.json`。試跑後要：
+  1. 用 `street_player_settings.template()` 重寫包的 `player.json`（金鑰空白）；
+  2. 刪掉試跑留下的檔案（`PACKAGE.json` 沒列的：`Saved/StreetSocial/Play-*`、`Sandbox`、`TTSCache`、`Saved/OKControl`、`base_v1/work`、語音伺服器 logs、stage 內的 `Saved`），以及 stage 裡指向包內 Content 的兩個 junction（只刪連結）；PowerShell 讀 `PACKAGE.json` 要加 `-Encoding UTF8`；
+  3. 再搜一次本機金鑰（逐字搜整包含 pak，加 `sk-` 與 `"api_key"` 格式搜）。
