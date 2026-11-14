@@ -5,7 +5,7 @@
 --
 --   Tools\lua\lua.exe Tools\run_street_social_development.lua [-Control [-ControlPort N]] [-Clock HH:MM] [-SelfTest]
 --     [-ValidateOnly] [-Strict] [-Executable EXE] [-SelectionFile JSON] [-MaleCard PNG] [-RetargetFile JSON]
---     [-RenderScale 100..200] [-Window WxH]  (window size, default 1920x1080; a smaller one leaves room for other work)
+--     [-RenderScale 100..200 (default 100)] [-Window WxH]  (window size, default 1920x1080; a smaller one leaves room for other work)
 --     [-Editor]  (development: runs the map in the built editor with -game instead of a staged build; no cook needed)
 --     [-GpuRig | -NoGpuRig]  (heroine poses from the GPU runtime rig, Docs/CROWD_ROOM100.md, or from her own solved banks)
 --     [-GpuRigVerify N]  (also solve full banks and compare N frames of the rig with them: runtime.json "gpu_rig", rig.bin)
@@ -250,7 +250,7 @@ local function main()
   end
   local render_scale = tonumber(o.renderscale or "0")
   if not render_scale or render_scale < 0 or render_scale > 200 or (render_scale > 0 and render_scale < 100) then
-    error("RenderScale must be 0 (verified default), or 100..200 percent", 0)
+    error("RenderScale must be 0 (default, 100 percent), or 100..200 percent", 0)
   end
   if o.strict then strict_checks(build) end
   o.selectionfile = o.selectionfile or path.join(root, "Saved/StreetSocial/heroines.json")
@@ -520,7 +520,9 @@ local function main()
   local q = build.runtime_render_quality
   local execs = {}
   if q then
-    local scale = render_scale > 0 and render_scale or q.screen_percentage
+    -- 100% unless -RenderScale asks for more (user 2026-11-14): the verified 150% rendered 5760x2962 in a maximised 4K
+    -- window, 48-82 FPS against 99-105 at 100%.
+    local scale = render_scale > 0 and render_scale or 100
     execs[#execs + 1] = ("r.AntiAliasingMethod %s,r.ScreenPercentage %s"):format(util.str(q.antialiasing_method), util.str(scale))
   end
   -- Profiling (development): -Exec "stat dumphitches,t.HitchFrameTimeThreshold 60" runs console commands at start;

@@ -328,7 +328,8 @@ static void HSettingSet(const TCHAR* Name,float Value){if(auto* Var=HSettingVar(
 static const TCHAR* const HLightVars[]={TEXT("LightFrom"),TEXT("LightTint"),TEXT("LightRamp")};
 static void HSettingsLoad(){
     TArray<FString> Lines;FFileHelper::LoadFileToStringArray(Lines,*HSettingsFile());
-    for(const FString& Line:Lines){FString Name,Value;if(Line.Split(TEXT("="),&Name,&Value)){if(Name==TEXT("SkinLit"))continue; /* every one-on-one starts toon (user, 2026-11-12): not carried over */for(const FHSetting& S:HSettings)if(S.Var&&Name==S.Var)HSettingSet(S.Var,FCString::Atof(*Value));
+    for(const FString& Line:Lines){FString Name,Value;if(Line.Split(TEXT("="),&Name,&Value)){if(Name==TEXT("SkinLit"))continue; /* every one-on-one starts toon (user, 2026-11-12): not carried over */
+        if(Name==TEXT("TongueLength"))continue; /* her tongue as her card has it, 1, in every one-on-one (user, 2026-11-14) */for(const FHSetting& S:HSettings)if(S.Var&&Name==S.Var)HSettingSet(S.Var,FCString::Atof(*Value));
         for(const TCHAR* Light:HLightVars)if(Name==Light)if(auto* Var=HSettingVar(Light))Var->Set(*Value,ECVF_SetByConsole);}}
 }
 static void HSettingsSave(){
