@@ -1635,7 +1635,17 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
       - 結果（`Saved/Tests/MapProbe1115OK2/`，原作 `Saved/Tests/MapProbe1115on/`）：y90 牆面 (124, 7, 19)，原作 (141, 9, 17)，修改前 (12, 0, 0)。y0 原本就偏黑的碼頭柱子與棧橋也恢復；y180、y270 和原作接近。還有差：y0 那艘船仍偏暗（另一個問題，未追）。
       - 本機基礎庫要重錄：`OKLIB_REFRESH=prefab_reflection_probes ok-extract <遊戲> --oklib studio-nodes <base_v1> 8`（F 本機已重錄，替換 62 筆）。沒重錄的 checkout 照舊是全黑反射。
   - **U273 地圖 54 遮陽傘顏色**：原作橘色，OK 藍色（同一個物件的另一個顏色），海面也有雜點。
+    - 2026-11-15 修好顏色（F 組）：
+      - 原因：遮陽傘網格是多個實體共用的，每個實體的 renderer 各自掛不同的材質（橘或藍），而且一個 renderer 有好幾個材質（每個 submesh 一個）。`prefab_standard_materials` 只收「剛好一個材質」的 renderer，所以這些實體都沿用網格第一次出現時的藍色。
+      - 修法：Rust 新增 memo 查詢 `prefab_standard_material_lists`，收「有多個材質且其中有 Standard」的 renderer，以節點記下每個 submesh 的材質；`node_material` 依 `submesh_index` 取用（只取 Standard 材質）。`studio-nodes` 錄貼圖時也收這些材質的貼圖。
+      - 結果（`Saved/Tests/MapParasol1115OK/`）：y270 傘面平均 (188, 119, 4)，原作 (191, 122, 5)，修改前 (11, 69, 194)。原作傘面上有樹葉的斑駁影子，OK 比較淡，沒追。
+      - 海面雜點還沒查。
+      - 本機基礎庫要重錄（新查詢）：`ok-extract <遊戲> --oklib studio-nodes <base_v1> 8`（F 本機已重錄）。
   - **U274 KK 時代地圖讀原作場景的時段**：原作 Studio 對學校地圖設 sunType 1 顯示「夕」，OK 依 U138 把 1 當「昼」。讀原作場景檔（`sunLightType`）時兩邊會差一格，要查原作 UI 怎麼對應再決定。
+    - 2026-11-15 完成（F 組）：
+      - 原作 Studio 直接拿 `sunLightType` 去找地圖 SunLightInfo 裡同編號的那一筆，找不到就用第一個時段。KK 時代地圖的時段編號是 0、1、2（昼、夕、夜），OK 的 `scene_times` 把它們各加 1。
+      - 修法：Rust `OkModelView::sun_times_shifted`（原始時段編號排序後剛好是 [0, 1, 2]），C ABI `ok_okmodel_sun_times_shifted`，`FOkSession::OkModelSunTimesShifted`。匯入 KStudio 場景時，地圖任一 root 有位移，`SunType` 就改成 0～2 → 原值 + 1，其他值 → 1（昼），報告加一行 note。
+      - 驗證：`scene.drop` 匯入 `koikatu_cs0000383.png`（地圖 13）得到 sunType 1，note「map 13 numbers its times as KK did: sunLightType 0 is OK time 1」；KKS 地圖的 `ill_ss_sample_04.png`（地圖 54）不變、沒有 note。
 
 對照圖：`Saved/Tests/MapShadow1112/`（原作）、`Saved/Tests/MapShadow1112OK2/`（OK，FOV 91.49）。
 

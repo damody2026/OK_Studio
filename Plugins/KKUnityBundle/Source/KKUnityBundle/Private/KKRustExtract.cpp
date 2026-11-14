@@ -718,6 +718,12 @@ bool FOkSession::OkModelNodeWorld(const FString& Library, const FString& ModelId
 	return true;
 }
 
+bool FOkSession::OkModelSunTimesShifted(const FString& Library, const FString& ModelId, const FString& Prefab)
+{
+	const FTCHARToUTF8 LibUtf(*Library), IdUtf(*ModelId), PrefabUtf(*Prefab);
+	return ok_okmodel_sun_times_shifted(LibUtf.Get(), IdUtf.Get(), PrefabUtf.Get()) == 1;
+}
+
 FString FOkSession::OkModelMapLights(const FString& Library, const FString& ModelId, const FString& Prefab)
 {
 	if (!InitBindings()) return FString();

@@ -893,7 +893,24 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 		// Studio restores its saved shader mode after loading characters; system.xml is only the card default.
 		if (E.TryGetNumberField(TEXT("shader_type"), Value)) Document->Post.ShaderType = int32(Value);
 		// SceneInfo.sunLightType: the map's time of day (its own sky, when it has one, follows it).
-		if (E.TryGetNumberField(TEXT("sun_light_type"), Value)) Document->Post.SunType = int32(Value);
+		if (E.TryGetNumberField(TEXT("sun_light_type"), Value))
+		{
+			Document->Post.SunType = int32(Value);
+			// Native Studio shows the map's SunLightInfo entry of that very number; a KK-era map's are day, evening and
+			// night as 0, 1, 2, which OK numbers 1, 2, 3 (U138), so a school scene saved at 1 is evening (U274). A number the
+			// map lacks falls back to its first time (Map.RangeTimeZone), the day.
+			if (const FOKStudioCatalogMap* MapEntry = Document->Map >= 0 ? FOKStudioCatalog::Get().FindMap(Document->Map) : nullptr)
+			{
+				bool bShifted = false;
+				for (const FString& Root : MapEntry->Roots) bShifted |= FOkSession::OkModelSunTimesShifted(AOKSceneActor::LibraryDirectory(), MapEntry->Model, Root);
+				if (bShifted)
+				{
+					const int32 Native = Document->Post.SunType;
+					Document->Post.SunType = Native >= 0 && Native <= 2 ? Native + 1 : 1;
+					Report.Notes.Add(FString::Printf(TEXT("map %d numbers its times as KK did: sunLightType %d is OK time %d"), Document->Map, Native, Document->Post.SunType));
+				}
+			}
+		}
 		// SceneInfo.caMap: Studio's map position / rotation (MapCtrl.Reflect sets the map root's local transform).
 		Document->MapTransform = UnityToUe(Vec3(*Effects, TEXT("map_pos")), Vec3(*Effects, TEXT("map_rot")), FVector::OneVector);
 		// Fog, ambient occlusion and sun shafts (SystemButtonCtrl FogInfo, AmplifyOcculusionEffectInfo, SunShaftsInfo).
