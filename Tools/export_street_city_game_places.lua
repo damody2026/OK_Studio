@@ -456,6 +456,17 @@ local PASSAGES = {
   -- its door point had no link at all and every walk there left the road graph (11-14). A line due north from the y 109900
   -- road row to the door; its north end is the door itself (no lattice there to tie to, the 'ties' problem is expected).
   { id = 'flower_field', pts = { { 71700, 110000 }, { 71700, 111200 }, { 71700, 112400 }, { 71700, 113400 }, { 71700, 114400 } } },
+  -- campus_sports 1F corridor (x 76860-77080, floor 1200): the lattice ran along x 77000 but stopped at y 25200/25600 and
+  -- 29200/29800 and turned back west, so lift1:1F (76760,21300) -> gym_hall went 323 m for 41 m (11-14). The floor scan
+  -- (z 1290 and 1250, grid 20 cm) has the corridor clear from y 24400 to 31000; a middle point closes each gap.
+  -- This lattice is indoors and only city_roads.json (the bake) has it, so here the ends find nothing to tie to; the
+  -- roads add (street_city_roads_add.lua) matches them to the baked points by x,y.
+  { id = 'sports_1f_a', min_ties = 0, pts = { { 77000, 25200 }, { 77000, 25400 }, { 77000, 25600 } } },
+  { id = 'sports_1f_b', min_ties = 0, pts = { { 77000, 29200 }, { 77000, 29500 }, { 77000, 29800 } } },
+  -- D3 1F WC (restroom_north, room 94400-95100 x 44410-44630): its door is the building entrance (93200,44100) and no road
+  -- went in, so walks there went straight at the walls at x 93380 and 94170 and were stopped three times (11-14). The floor
+  -- scan (z 1290, 20 cm) is clear up x 93200, along y 44720-44900 and into the room's open north side at x 94600.
+  { id = 'restroom_north_in', tie = { true, false }, pts = { { 93200, 44100 }, { 93200, 44400 }, { 93200, 44700 }, { 93200, 44800 }, { 93900, 44800 }, { 94600, 44800 }, { 94600, 44550 } } },
 }
 local PASSAGE_TIE_CM, PASSAGE_TIES = 800, 3
 for _, pass in ipairs(PASSAGES) do
@@ -466,8 +477,11 @@ for _, pass in ipairs(PASSAGES) do
     if n > 1 then local a, b = ids[n - 1], ids[n]; nodes[a].links[#nodes[a].links + 1] = b; nodes[b].links[#nodes[b].links + 1] = a end
   end
   local tied = 0
-  for _, e in ipairs({ ids[1], ids[#ids] }) do
+  -- pass.tie = { first, last }: false leaves that end untied (an end inside a room would tie through its walls to the
+  -- street outside); pass.min_ties: fewer ties expected, e.g. a corridor whose lattice the baked graph has but this one not
+  for side, e in ipairs({ ids[1], ids[#ids] }) do
     local near = {}
+    if pass.tie and pass.tie[side] == false then goto untied end
     for _, y in ipairs(biggest) do
       local d = math.sqrt((nodes[e].k - nodes[y].k) ^ 2 + (nodes[e].i - nodes[y].i) ^ 2) * step
       if d <= PASSAGE_TIE_CM then near[#near + 1] = { d = d, y = y } end
@@ -476,9 +490,10 @@ for _, pass in ipairs(PASSAGES) do
     for n = 1, math.min(#near, PASSAGE_TIES) do
       local y = near[n].y; nodes[e].links[#nodes[e].links + 1] = y; nodes[y].links[#nodes[y].links + 1] = e; tied = tied + 1
     end
+    ::untied::
   end
   for _, x in ipairs(ids) do biggest[#biggest + 1] = x end
-  if tied < 2 then problem('passage ' .. pass.id .. ': ' .. tied .. ' ties to the roads') end
+  if tied < (pass.min_ties or 2) then problem('passage ' .. pass.id .. ': ' .. tied .. ' ties to the roads') end
   print(('road graph: passage %s, %d points, %d ties'):format(pass.id, #ids, tied))
 end
 local keep = {}
