@@ -497,6 +497,10 @@ void AOKStreetSocialScene::StartControlServer(){
   else if(Op==TEXT("save")&&!Slot.IsEmpty()){bool Background=false;Body->TryGetBoolField(TEXT("background"),Background);SaveToSlot(Slot,Background);}
   auto O=OKControlResult(true);O->SetStringField(TEXT("menu"),S.SaveMenu);O->SetStringField(TEXT("notice"),S.SaveNotice);
   auto Slots=MakeShared<FJsonObject>();Slots->SetStringField(TEXT("auto"),SaveSlotSummary(TEXT("auto")));for(int32 I=1;I<=OKStreetSaveSlotCount;++I)Slots->SetStringField(FString::FromInt(I),SaveSlotSummary(FString::FromInt(I)));
+  // The channel saves to any slot ({"slot":22}), the menu shows 1-8 only: the ones past the menu are listed too, or a save
+  // there looked lost (9 and 22 went missing from the list in round 7, 2026-11-14).
+  {TArray<FString> Dirs;IFileManager::Get().FindFiles(Dirs,*(FPaths::GetPath(SaveSlotDir(TEXT("auto")))/TEXT("*")),false,true);
+   for(const FString& D:Dirs)if(D.IsNumeric()&&FCString::Atoi(*D)>OKStreetSaveSlotCount){const FString Summary=SaveSlotSummary(D);if(!Summary.IsEmpty())Slots->SetStringField(D,Summary);}}
   O->SetObjectField(TEXT("slots"),Slots);OKControlReply(Done,O);
   // Last: the map starts again, and this scene (and these routes) end.
   if(Op==TEXT("load")&&!Slot.IsEmpty())RestartWithSave(TEXT("load"),Slot);else if(Op==TEXT("new"))RestartWithSave(TEXT("new"),FString());
