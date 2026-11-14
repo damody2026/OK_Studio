@@ -28,29 +28,47 @@ TArray<FVector> AOKStreetSocialScene::CityRoute(const FVector& From,const FVecto
  // street's roads down on the ground, which led him into the 4F's wall till "the way is blocked" (R6-177).
  // The grid finding nothing (its 25 ms across the sports building's 130 m 1F): the graph's corridor points of that floor,
  // not a straight line into the wall, replanned 30 times till "the way is blocked" (gym_hall -> gym, 2026-11-15).
- if(Into&&Into==OutOf&&FMath::Abs(From.Z-To.Z)<150.f){TArray<FVector> Here=GridRoute(From,To,NearCm);if(Here.Num()>=2)return Here;
-  TArray<FVector> Graph=OKStreetCityRoute(From,To);
-  const int32 OffFloor=Graph.FilterByPredicate([&](const FVector& P){return FMath::Abs(P.Z-From.Z)>150.f;}).Num();
-  UE_LOG(LogTemp,Display,TEXT("Street navigation: inside %s by the road graph (%d points, %.0f m, %d off the floor)"),Into->Id,Graph.Num(),FVector::Dist2D(From,To)/100.f,OffFloor);
-  if(Graph.Num()<3||OffFloor>0)return TArray<FVector>{From,To};
-  if(!OKStreetCityClear(GetWorld(),From,Graph[1],18.f)){TArray<FVector> Out=GridRoute(From,Graph[1]);if(Out.Num()>=2){Graph.RemoveAt(0,2);Out.Append(Graph);Graph=MoveTemp(Out);}}
+ // One floor of a building, the grid finding nothing: the graph's points of that floor, the first and last legs by the grid.
+ auto FloorGraph=[&](const FOKStreetPlace* P,const FVector& A,const FVector& B)->TArray<FVector>{
+  TArray<FVector> Graph=OKStreetCityRoute(A,B);
+  const int32 OffFloor=Graph.FilterByPredicate([&](const FVector& Q){return FMath::Abs(Q.Z-A.Z)>150.f;}).Num();
+  UE_LOG(LogTemp,Display,TEXT("Street navigation: inside %s by the road graph (%d points, %.0f m, %d off the floor)"),P->Id,Graph.Num(),FVector::Dist2D(A,B)/100.f,OffFloor);
+  if(Graph.Num()<3||OffFloor>0)return {};
+  if(!OKStreetCityClear(GetWorld(),A,Graph[1],18.f)){TArray<FVector> Out=GridRoute(A,Graph[1]);if(Out.Num()>=2){Graph.RemoveAt(0,2);Out.Append(Graph);Graph=MoveTemp(Out);}}
   const int32 End=Graph.Num()-1;
-  if(End>=1&&!OKStreetCityClear(GetWorld(),Graph[End-1],To,18.f)){TArray<FVector> In=GridRoute(Graph[End-1],To,NearCm);if(In.Num()>=2){Graph.RemoveAt(End-1,2);Graph.Append(In);}}
-  return Graph;}
- if(Into&&Into!=OutOf&&FVector::Dist2D(Into->Door,To)>50.f){
-  const FVector Door=Into->Door;TArray<FVector> Route=CityRoute(From,Door);if(Route.IsEmpty())Route={From};
+  if(End>=1&&!OKStreetCityClear(GetWorld(),Graph[End-1],B,18.f)){TArray<FVector> In=GridRoute(Graph[End-1],B,NearCm);if(In.Num()>=2){Graph.RemoveAt(End-1,2);Graph.Append(In);}}
+  return Graph;};
+ // The building's way in and out: its door, or an "entrance" anchor on the door's floor, whichever makes the way shorter.
+ // The sports building's one door is at its south end (77000,21000); gym_hall's door at y 34275 went round by it although
+ // the north side has a way in (27 of the place pairs over twice the straight distance, 2026-11-15).
+ auto Entrance=[&](const FOKStreetPlace* P)->FVector{FVector Best=P->Door;double Cost=FVector::Dist2D(From,Best)+FVector::Dist2D(Best,To);
+  for(const auto& A:P->Anchors)if(A.Name.StartsWith(TEXT("entrance"))&&FMath::Abs(A.Position.Z-P->Door.Z)<150.f){
+   const double C=FVector::Dist2D(From,A.Position)+FVector::Dist2D(A.Position,To);if(C<Cost){Cost=C;Best=A.Position;}}
+  return Best;};
+ if(Into&&Into==OutOf&&FMath::Abs(From.Z-To.Z)<150.f){TArray<FVector> Here=GridRoute(From,To,NearCm);if(Here.Num()>=2)return Here;
+  TArray<FVector> Graph=FloorGraph(Into,From,To);return Graph.Num()>=2?Graph:TArray<FVector>{From,To};}
+ const FVector IntoDoor=Into?Entrance(Into):FVector::ZeroVector;
+ if(Into&&Into!=OutOf&&FVector::Dist2D(IntoDoor,To)>50.f){
+  const FVector Door=IntoDoor;TArray<FVector> Route=CityRoute(From,Door);if(Route.IsEmpty())Route={From};
+  if(!Door.Equals(Into->Door,1.f))UE_LOG(LogTemp,Display,TEXT("Street navigation: into %s by its entrance %s"),Into->Id,*Door.ToCompactString());
   // On her floor, in from the door; upstairs the navigation plans the lift from the door (PlanNavLift).
   // The search from the spot just inside, not the door: the café's doorway is narrower than a free cell, the search from
   // it never got in, and its nearest cell to her was the pavement behind the café's wall (R6-211).
-  if(FMath::Abs(Door.Z-To.Z)<150.f){const FVector Within=PlaceInsideSpot(*Into);
+  // (The spot just inside is the main door's: from an entrance the search starts at the entrance.)
+  const bool Main=Door.Equals(Into->Door,1.f);
+  if(FMath::Abs(Door.Z-To.Z)<150.f){const FVector Within=Main?PlaceInsideSpot(*Into):Door;
    TArray<FVector> In=Within.Equals(Door,1.f)?TArray<FVector>():GridRoute(Within,To,NearCm);
    if(In.Num()>=2)Route.Append(In);
    else if((In=GridRoute(Door,To,NearCm)).Num()>=2){In.RemoveAt(0);Route.Append(In);}
-   else{const FVector Inside=PlaceInsideSpot(*Into);if(!Inside.Equals(Door,1.f))Route.Add(Inside);Route.Add(To);}}
+   else if((In=FloorGraph(Into,Door,To)).Num()>=2){In.RemoveAt(0);Route.Append(In);}
+   else{const FVector Inside=Main?PlaceInsideSpot(*Into):Door;if(!Inside.Equals(Door,1.f))Route.Add(Inside);Route.Add(To);}}
   return Route;}
- if(OutOf&&OutOf!=Into&&FVector::Dist2D(OutOf->Door,From)>50.f&&FMath::Abs(OutOf->Door.Z-From.Z)<150.f){
-  const FVector Door=OutOf->Door;TArray<FVector> Route=GridRoute(From,Door);
-  if(Route.Num()<2){Route={From};const FVector Inside=PlaceInsideSpot(*OutOf);if(!Inside.Equals(Door,1.f))Route.Add(Inside);Route.Add(Door);}
+ const FVector OutDoor=OutOf?Entrance(OutOf):FVector::ZeroVector;
+ if(OutOf&&OutOf!=Into&&FVector::Dist2D(OutDoor,From)>50.f&&FMath::Abs(OutDoor.Z-From.Z)<150.f){
+  const FVector Door=OutDoor;const bool Main=Door.Equals(OutOf->Door,1.f);TArray<FVector> Route=GridRoute(From,Door);
+  if(!Main)UE_LOG(LogTemp,Display,TEXT("Street navigation: out of %s by its entrance %s"),OutOf->Id,*Door.ToCompactString());
+  if(Route.Num()<2)Route=FloorGraph(OutOf,From,Door);
+  if(Route.Num()<2){Route={From};const FVector Inside=Main?PlaceInsideSpot(*OutOf):Door;if(!Inside.Equals(Door,1.f))Route.Add(Inside);Route.Add(Door);}
   TArray<FVector> Rest=CityRoute(Door,To);if(!Rest.IsEmpty())Rest.RemoveAt(0);Route.Append(Rest);
   return Route;}
  TArray<FVector> Route=OKStreetCityRoute(From,To);if(Route.Num()<3)return Route;
@@ -430,7 +448,9 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
     // On the way to a lift: the way again is to its landing (the route's end). The street route from there left the ride
     // behind: loaded at the ramen shop on the department store's 9F, he walked the 9F wall toward the ground for an hour
     // (R6-188).
-    if(Out){auto Path=S.NavRide.Elevator!=INDEX_NONE&&!S.NavPath.IsEmpty()?GridRoute(S.Male,S.NavPath.Last()):S.NavPointActive?PlaceRoute(S.Male,Goal):ContactRoute(S.Male,Goal);
+    // A landing far off (the cafe's wedge on the way to the T2 building's lift, 500 m): the road graph there, not the
+    // grid's nothing and a straight line through the cafe's wall, replanned 30 times (round 9, 2026-11-15).
+    if(Out){auto Path=S.NavRide.Elevator!=INDEX_NONE&&!S.NavPath.IsEmpty()?WalkToLanding(S.Male,S.NavPath.Last()):S.NavPointActive?PlaceRoute(S.Male,Goal):ContactRoute(S.Male,Goal);
      if(S.NavRide.Elevator!=INDEX_NONE&&Path.Num()<2&&!S.NavPath.IsEmpty())Path={S.Male,S.NavPath.Last()};
      if(Path.Num()>=2){S.NavPath=MoveTemp(Path);S.NavStep=1;}return 0;}
    }
@@ -439,6 +459,8 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
    if(S.NavReplans==1){S.NavAround=MakeShared<FOKStreetGridSearch>();S.NavAround->From=S.Male;S.NavAround->To=Next;S.NavAround->NearCm=S.NavPointActive?0.f:200.f;}
    else if(S.NavRide.Elevator==INDEX_NONE){auto Path=S.NavPointActive?PlaceRoute(S.Male,Goal):ContactRoute(S.Male,Goal);
     if(Path.Num()>=2){S.NavPath=MoveTemp(Path);S.NavStep=1;}}
+   // On the way to a lift: the way to its landing again, every second time (the way round the next point found nothing).
+   else if(S.NavReplans%2==0&&!S.NavPath.IsEmpty()){auto Path=WalkToLanding(S.Male,S.NavPath.Last());if(Path.Num()>2){S.NavPath=MoveTemp(Path);S.NavStep=1;}}
    {
     // What is in the way: the clearance gap on his side, and the first thing a body-sized sweep toward the next point hits.
     FString Hit=TEXT("none");FCollisionQueryParams Q(SCENE_QUERY_STAT(StreetNavWhy),false,this);FHitResult H;const FVector Dir=Delta/Distance;

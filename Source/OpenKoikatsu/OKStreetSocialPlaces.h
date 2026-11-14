@@ -478,7 +478,8 @@ inline void OKStreetCityCheckRoads(UWorld* World) {
  auto Tie = [&](const FVector& At) {
   const int32 Door = City.Nodes.Add(At); City.Links.AddDefaulted();
   for (int32 N = 0; N < Lattice; ++N) if (FVector::DistSquared2D(City.Nodes[N], At) < FMath::Square(1500.f) && FMath::Abs(City.Nodes[N].Z - At.Z) < 200.f && OKStreetCityClear(World, At, City.Nodes[N])) { City.Links[Door].Add(N); City.Links[N].Add(Door); } };
- for (const auto& P : OKStreetPlaces()) { Tie(P.Door); for (const auto& A : P.Anchors) if (A.Name.StartsWith(TEXT("gate"))) Tie(A.Position); }
+ // And a building's other entrances ("entrance" anchors, CityRoute's way in and out besides the door).
+ for (const auto& P : OKStreetPlaces()) { Tie(P.Door); for (const auto& A : P.Anchors) if (A.Name.StartsWith(TEXT("gate")) || A.Name.StartsWith(TEXT("entrance"))) Tie(A.Position); }
  }
  TArray<int32> Part; Part.Init(INDEX_NONE, City.Nodes.Num());
  int32 Biggest = INDEX_NONE, BiggestSize = 0;
