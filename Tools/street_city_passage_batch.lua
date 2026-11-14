@@ -2,6 +2,8 @@
 --   Tools\lua\lua.exe Tools\street_city_passage_batch.lua --batch r1114 [--from STEP] [--check-only]
 -- STEP: claim, serve, measure, apply, probe, prep, stream, migrate, roads (default: claim, the whole run).
 -- --check-only: claim, measure and stop (nothing in the map changes).
+-- --no-hlod: the WP without distance models, claim 60 GB; --skip measure,apply,probe when the cuts are already applied:
+--   Tools\lua\lua.exe Tools\street_city_passage_batch.lua --batch r1114 --no-hlod --skip measure,apply,probe
 -- The slot (need 130 GB, the run is alone on the machine) is claimed first and released at the end or on any failure.
 --
 -- Per passage (a line along x through one shop):
@@ -65,18 +67,26 @@ if arg[1] == '--watch' then
 end
 
 local batch_id, from, check_only = (arg[1] == '--judge') and 'r1114' or nil, 'claim', false
+local no_hlod, skip = false, {}
 local i = (arg[1] == '--judge') and #arg + 1 or 1
 while arg[i] do
   if arg[i] == '--batch' then batch_id = arg[i + 1]; i = i + 2
   elseif arg[i] == '--from' then from = arg[i + 1]; i = i + 2
   elseif arg[i] == '--check-only' then check_only = true; i = i + 1
+  -- --no-hlod: the WP without distance models (build_street_city_stream.lua --no-hlod); the convert peaks at 48 GB and
+  --   the map editor before it holds about 37, so the claim needs 60 instead of 130 (11-14)
+  elseif arg[i] == '--no-hlod' then no_hlod = true; i = i + 1
+  -- --skip a,b: leave those steps out (e.g. --skip measure,apply,probe when the cuts are already in the map)
+  elseif arg[i] == '--skip' then for s in arg[i + 1]:gmatch('[^,]+') do skip[s] = true end; i = i + 2
   else error('unknown argument ' .. arg[i], 0) end
 end
 local B = assert(BATCHES[batch_id or ''], '--batch <id>: ' .. table.concat((function() local t = {} for k in pairs(BATCHES) do t[#t + 1] = k end return t end)(), ', '))
 local STEPS = { 'claim', 'serve', 'measure', 'apply', 'probe', 'prep', 'stream', 'migrate', 'roads' }
 local order = {}; for n, s in ipairs(STEPS) do order[s] = n end
 assert(order[from], '--from: ' .. table.concat(STEPS, ', '))
-local function due(step) return order[step] >= order[from] end
+for s in pairs(skip) do assert(order[s], '--skip: ' .. table.concat(STEPS, ', ')) end
+local function due(step) return order[step] >= order[from] and not skip[step] end
+local NEED = no_hlod and 60 or 130
 
 local REPORT = PLACES .. 'passage-batch-' .. batch_id .. '.json'
 local LOG = PLACES .. 'passage-batch-' .. batch_id .. '.log'
@@ -196,12 +206,12 @@ local function main()
 -- 1 claim: exclusive, and only with 130 GB free commit and no other Unreal running
 if due('claim') then
   if read('Saved/pause-street-city.flag') then fail('Saved/pause-street-city.flag is set') end
-  log('claiming the slot (need 130)')
-  local code, out = lua({ 'Tools/unreal_slot.lua', 'claim', 'c-street-city', 'passage batch ' .. batch_id .. ': cuts + WP rebuild (exclusive)', '--wait', '--need-gb', '130' })
+  log('claiming the slot (need ' .. NEED .. ')')
+  local code, out = lua({ 'Tools/unreal_slot.lua', 'claim', 'c-street-city', 'passage batch ' .. batch_id .. ': cuts + WP rebuild' .. (no_hlod and ', no HLOD' or '') .. ' (exclusive)', '--wait', '--need-gb', tostring(NEED) })
   if code ~= 0 then fail('claim: ' .. out) end
   held = true
   local waited = 0
-  while free_commit_gb() < 130 or unreal_running() > 0 do
+  while free_commit_gb() < NEED or unreal_running() > 0 do
     if waited >= 1800 then fail(('after 30 min: %d GB free commit, %d Unreal running'):format(free_commit_gb(), unreal_running())) end
     ok.time.sleep(60); waited = waited + 60
   end
@@ -317,7 +327,7 @@ if due('stream') then
   local wlog, stop = PLACES .. 'passage-batch-' .. batch_id .. '-mem.log', PLACES .. 'passage-batch-' .. batch_id .. '.watchstop'
   os.remove(stop)
   ok.proc.spawn({ L, 'Tools/street_city_passage_batch.lua', '--watch', wlog, stop }, { hide = true })
-  local code, out = lua({ 'Tools/build_street_city_stream.lua', '--batches', '8' })
+  local code, out = lua(no_hlod and { 'Tools/build_street_city_stream.lua', '--no-hlod' } or { 'Tools/build_street_city_stream.lua', '--batches', '8' })
   write(stop, '1')
   log('stream exit ' .. code)
   if (read(wlog) or ''):find('KILLED') then fail('the watcher killed the editor (free commit below 4 GB): not migrating') end

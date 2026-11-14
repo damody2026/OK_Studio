@@ -51,6 +51,8 @@ if arg[1] == '--refs-only' then follow_references(); os.exit(0) end
 -- error(s)" (Tools/build_street_city_stream.lua logs). 11-14: a run stopped in HLOD batch 1 of 8 left a converted map
 -- with most distance models unbuilt in StreetSocialCity, over the old complete one; nothing must copy that into Content.
 -- --allow-incomplete-hlod copies anyway (only when that is what you want).
+-- A conversion made with build_street_city_stream.lua --no-hlod (stream-v1/no-hlod-<its stamp>.ini, HLODActors=0) has no
+-- distance models on purpose and is copied, unless an HLOD run was started on it after all (then that run must finish).
 do
   local dir = 'output/street-social-city-production/stream-v1/'
   local function ok_log(p) local f = io.open(dir .. p, 'rb'); if not f then return false end; local s = f:read('*a'); f:close(); return s:find('Success %- 0 error%(s%)') ~= nil end
@@ -67,7 +69,10 @@ do
       local sb, b = n:match('^hlod%-(%d+%-%d+)%-b(%d+)%.log$'); if sb and sb >= convert and (not batch[b] or sb > batch[b]) then batch[b] = sb end
       local s1 = n:match('^hlod%-(%d+%-%d+)%.log$'); if s1 and s1 >= convert and (not single or s1 > single) then single = s1 end
     end
-    if setup then
+    local nf = io.open(dir .. 'no-hlod-' .. convert .. '.ini', 'rb'); local nh = nf and nf:read('*a'); if nf then nf:close() end
+    local no_hlod = nh and nh:find('NoHLOD=1', 1, true) and nh:find('HLODActors=0', 1, true)
+    if no_hlod and not setup and not single and not next(batch) then print('this WP has no distance models (no-HLOD conversion ' .. convert .. ')')
+    elseif setup then
       local mf = io.open(dir .. 'hlod-manifest.ini', 'rb'); local count = mf and tonumber(mf:read('*a'):match('BuilderCount=(%d+)')); if mf then mf:close() end
       if not ok_log('hlod-' .. setup .. '-setup.log') then why = 'the HLOD setup (' .. setup .. ') did not end with Success'
       elseif not count then why = 'hlod-manifest.ini has no BuilderCount'
