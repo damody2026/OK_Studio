@@ -2227,3 +2227,4 @@
   - 遊戲要到室內地點時，會先導向外層那棟建築的門（CityRoute 的 Outer）。pool 的外層是 campus_sports，門在 (77000,21000)。
   - 我的走廊南端停在泳池門口，沒有接到大門前的路點。
   離線算的「超過 2 倍地點對」直接用各地點自己的門，沒有照遊戲這條規則，所以看起來修好了，遊戲裡其實沒變。之後補路網時，兩端都要接到外層建築大門附近的路點，並且一定要進遊戲看 navigation 的 points 數有沒有變少。
+- 2026-11-15 c-street-city：鬼屋驗收（nh1115f、控制埠 48070、Sandbox CityWalk1115c）完後只 release 了 slot，遊戲 PID 24608 還開著（game_stop 沒真的關掉，我也沒查行程），全機兩個 Unreal 的上限被我和 c-conquest 佔滿，最優先的 c-lowspec 排不進來，直到協調者 03:5x 提醒才關。修正：測完先關遊戲、用 Win32_Process 確認自己那個控制埠的 OpenKoikatsu.exe 已不在，再 release slot；沒有 slot 的行程不能留在機器上。
