@@ -369,5 +369,19 @@ CPU 蒙皮加晃動跟隨約 1.8 ms。每幀大約是解算時間再加 3 ms 顯
 | 0 | 92.0 | 80.8 | 81.6 | 75.7 | 6.5 ms |
 
 - 模式 2 的 after（插入後）只有 116～119，四段沒有全部 ≥ 120，預設維持 0。下一個瓶頸看 after 段的 render thread（7.7～10 ms，模式 0 只有 6.5）。
+- 找瓶頸（after 段 Insights＋`profilegpu`）：render thread 的 VisibilityCommands 每幀等約 3 ms，等的是 occlusion query，也就是等 GPU；GPU 上 WorldTick 的衣服 graph 有 7.9 ms，其中 ClothCover 6.6 ms，Step4（ClearK）3.65 ms（23 件，最長 0.585 ms）。ClearK 是一條 thread 依序走過所有三角形（大件衣服 3～7 萬個三角形，大多沒有取樣），每步都等全域記憶體。render thread 落後時，下一幀的回條還沒好，衣服 graph 變成兩幀才送一次（`KKPreviewActor.cpp` 的 Pending）。
+- ClearK 改寫（只改 `ClothCover.usf`，EGalCloth11.patch）：每 512 個三角形由 64 條 thread 並行讀取樣數、依原順序列出有取樣的；每 64 個一批，各 thread 並行讀自己三角形的角與高度，算出前面哪些與它共用角；之後一輪一輪跑，前面共用角的都做完了才跑。同一輪跑的不共用任何角，每個角收到的加法和順序與一條 thread 依序做時相同，算式也相同。
+- 安靜機器 ABAB（EGalCloth10 執行檔＋EGalCloth11.patch）：
+
+| 設定 | idle | loop | fast | after |
+|---|---|---|---|---|
+| 2 | 141.3 | 128.2 | 128.4 | 126.3 |
+| 0 | 93.1 | 82.3 | 81.9 | 76.6 |
+| 2 | 138.0 | 126.8 | 127.0 | 125.7 |
+| 0 | 93.6 | 83.3 | 82.4 | 62.3 |
+
+- 截圖（蘭，正常位、騎乘位、側位、後背位，各兩個角度，0→2→0）：8 組裡 5 組 A < B，另外 3 組 A 只比 B 多 5～15%，看圖衣服一致，差在動作本身。
+- 四段都 ≥ 120，預設改成 `ok.ClothGpu 2`（協調者代使用者決定：目標就是 120 FPS，畫面已驗證）。
 - 診斷 cvar：`ok.ClothGpuSkip`（每個步驟一個位元，只用來找成本，結果會錯）。
 - 打包注意：global shader 改了，要自己的 runtime patch（`rebuild_street_social_patch.lua --output`），並以 `-PatchDir` 啟動；共用 patch 的 `RuntimeGlobalShaderPatch-*_P.pak` 會蓋過新 base 的 shader（見 `Docs/ERROR_LOG.md`）。
+- 預設改 2 後的建置（EGalCloth12，不下任何指令）：idle 137.3、loop 129.9、fast 128.7、after 128.0；雷電將軍正常位、騎乘位各兩個角度 A 都小於 B。

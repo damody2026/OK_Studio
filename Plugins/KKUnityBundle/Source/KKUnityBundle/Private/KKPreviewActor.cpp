@@ -166,11 +166,12 @@ static TAutoConsoleVariable<int32> CVarOkSourceRangeVertices(TEXT("ok.Animation.
 static TAutoConsoleVariable<int32> CVarOkSourceIndexedStreams(TEXT("ok.Animation.SourceIndexedStreams"),0,TEXT("Convert canonical sources once and pack their disjoint section draw ranges in the same job."));
 static TAutoConsoleVariable<int32> CVarOkNativeDisplayStreams(TEXT("ok.Animation.NativeDisplayStreams"),0,TEXT("Pack private display streams on native skin completion workers (blocking frame-local observer)."));
 static TAutoConsoleVariable<int32> CVarOkPrivateGpuStreams(TEXT("ok.Animation.PrivateGpuStreams"),1,TEXT("Runtime high-detail private-rig GPU streams for opted-in interaction actors; 0 retains CPU rendering."));
-// Her garments with their own rig that the cloth push (ok.ClothCover) or the thighs' jiggle moves: 0 (default) drawn from
-// their CPU vertices as before; 1 kept on the private GPU route, the solve giving only their vertices' moves (Rust
-// cloth_gpu) and the GPU adding them after the post correction, where the CPU route has them (user, 2026-11-14: all of
-// Lan's clothes on the GPU for 120 FPS).
-static TAutoConsoleVariable<int32> CVarOkClothGpu(TEXT("ok.ClothGpu"),0,TEXT("1: her garments the cloth push / thigh jiggle moves stay on the GPU route, the moves added on the GPU; 2: the push and the jiggle themselves worked out on the GPU (ClothCover.usf); 0 (default) drawn from CPU vertices"));
+// Her garments with their own rig that the cloth push (ok.ClothCover) or the thighs' jiggle moves: 0 drawn from their CPU
+// vertices as before; 1 kept on the private GPU route, the solve giving only their vertices' moves (Rust cloth_gpu) and the
+// GPU adding them after the post correction, where the CPU route has them; 2 (default) the push and the jiggle worked out
+// on the GPU too (user, 2026-11-14: all of Lan's clothes on the GPU for 120 FPS; default from 2026-11-14 once Lan fully
+// dressed held 125+ FPS in every phase with the same look as 0, Docs/H_SCENE_120FPS_PLAN.md).
+static TAutoConsoleVariable<int32> CVarOkClothGpu(TEXT("ok.ClothGpu"),2,TEXT("2 (default): her garments' cloth push and thigh jiggle worked out on the GPU (ClothCover.usf); 1: only the moves added on the GPU; 0: drawn from CPU vertices"));
 static int32 OKClothGpuMode(){const int32 Mode=FMath::Clamp(CVarOkClothGpu.GetValueOnGameThread(),0,2);static int32 Sent=-1;if(Sent!=Mode){Sent=Mode;FOkSession::SetClothGpu(Mode);}return Mode;}
 static bool OKClothGpuOn(){return OKClothGpuMode()>=1;}
 static TAutoConsoleVariable<int32> CVarOkNativeDisplayParity(TEXT("ok.Animation.NativeDisplayParity"),0,TEXT("Verify native worker display against uncached canonical draw formula."));

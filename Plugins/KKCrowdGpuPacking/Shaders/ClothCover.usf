@@ -156,22 +156,72 @@ void ClearHitsK(uint3 Id){
  ClearHitsOf(T,true,Start);TriStart[T]=Start;TriHits[T]=Count;
 }
 void ClearLongK();
-groupshared uint GClearHits[64];
+// Clear (cover.rs Lift::clear): each triangle in order reads the rise the ones before it raised. One group of 64:
+//  - every 512 triangles, the ones with samples (ClearHitsK) are listed in order (each thread counts 8 of them);
+//  - 64 of the list at a time: each thread reads its triangle's corners and their heights, and which of the ones before it
+//    share a corner with it; then rounds: a triangle whose earlier corner-sharers are all done runs its samples (in order).
+//    The ones running in a round share no corner, so every corner sees the same additions in the same order as one thread
+//    going through them all (the arithmetic is the same), only the triangles that touch nothing in common run side by side.
+#define CLEAR_SPAN 8u
+groupshared uint GClearList[64*CLEAR_SPAN];
+groupshared uint GClearOff[65];
+groupshared uint GClearK[192];
+groupshared float GClearZ[192];
+groupshared uint GClearCount[64];
 groupshared uint GClearStart[64];
-// Each triangle in order reads the rise the ones before it raised (cover.rs Lift::clear): one group; its threads read 64
-// triangles' sample counts at a time, the first goes through them in order (only the arithmetic left: ClearHitsK).
+groupshared uint GClearDone[2];
+void ClearRun(uint Slot){
+ uint K0=GClearK[Slot*3],K1=GClearK[Slot*3+1],K2=GClearK[Slot*3+2];float Az=GClearZ[Slot*3],Bz=GClearZ[Slot*3+1],Cz=GClearZ[Slot*3+2];
+ uint Start=GClearStart[Slot],Count=GClearCount[Slot];
+ for(uint E=0;E<Count;++E){float4 Hh=Hits[Start+E];
+  float Z=(Az+Rise[K0])*Hh.x+(Bz+Rise[K1])*Hh.y+(Cz+Rise[K2])*Hh.z;
+  float Short=Hh.w-Z;
+  if(Short>0.){Rise[K0]+=Short;Rise[K1]+=Short;Rise[K2]+=Short;}
+ }
+}
 void ClearK(uint3 Id){
  uint Lane=Id.x;
  if(Flags[5]!=0){if(Lane==0)ClearLongK();return;}
- for(uint Base0=0;Base0<TriangleCount;Base0+=64){
-  uint T=Base0+Lane;GClearHits[Lane]=T<TriangleCount?TriHits[T]:0;GClearStart[Lane]=T<TriangleCount?TriStart[T]:0;
+ for(uint Base0=0;Base0<TriangleCount;Base0+=64*CLEAR_SPAN){
+  // The listed triangles, in order.
+  uint First=Base0+Lane*CLEAR_SPAN;uint Mine=0;
+  for(uint I=0;I<CLEAR_SPAN;++I){uint T=First+I;if(T<TriangleCount&&TriHits[T]!=0)++Mine;}
+  GClearOff[Lane+1]=Mine;if(Lane==0)GClearOff[0]=0;
   GroupMemoryBarrierWithGroupSync();
-  if(Lane==0)for(uint I=0;I<64;++I){uint Count=GClearHits[I];if(Count==0)continue;
-   uint B=GW(5)+(Base0+I)*3;uint K0=GW(B),K1=GW(B+1),K2=GW(B+2);float3 A,Bv,C;Seen(K0,A);Seen(K1,Bv);Seen(K2,C);
-   for(uint E=0;E<Count;++E){float4 Hh=Hits[GClearStart[I]+E];
-    float Z=(A.z+Rise[K0])*Hh.x+(Bv.z+Rise[K1])*Hh.y+(C.z+Rise[K2])*Hh.z;
-    float Short=Hh.w-Z;
-    if(Short>0.){Rise[K0]+=Short;Rise[K1]+=Short;Rise[K2]+=Short;}
+  if(Lane==0)for(uint I=1;I<=64;++I)GClearOff[I]+=GClearOff[I-1];
+  GroupMemoryBarrierWithGroupSync();
+  const uint Total=GClearOff[64];
+  if(Total!=0){
+   uint At=GClearOff[Lane];
+   for(uint I=0;I<CLEAR_SPAN;++I){uint T=First+I;if(T<TriangleCount&&TriHits[T]!=0)GClearList[At++]=T;}
+   GroupMemoryBarrierWithGroupSync();
+   for(uint C0=0;C0<Total;C0+=64){
+    const uint N=min(64u,Total-C0);const bool Has=Lane<N;
+    if(Has){uint T=GClearList[C0+Lane];uint B=GW(5)+T*3;uint K0=GW(B),K1=GW(B+1),K2=GW(B+2);
+     float3 A,Bv,C;Seen(K0,A);Seen(K1,Bv);Seen(K2,C);
+     GClearK[Lane*3]=K0;GClearK[Lane*3+1]=K1;GClearK[Lane*3+2]=K2;GClearZ[Lane*3]=A.z;GClearZ[Lane*3+1]=Bv.z;GClearZ[Lane*3+2]=C.z;
+     GClearCount[Lane]=TriHits[T];GClearStart[Lane]=TriStart[T];}
+    if(Lane==0){GClearDone[0]=0;GClearDone[1]=0;}
+    GroupMemoryBarrierWithGroupSync();
+    // The earlier ones in this chunk sharing a corner.
+    uint D0=0,D1=0;
+    if(Has){uint K0=GClearK[Lane*3],K1=GClearK[Lane*3+1],K2=GClearK[Lane*3+2];
+     for(uint J=0;J<Lane;++J){uint J0=GClearK[J*3],J1=GClearK[J*3+1],J2=GClearK[J*3+2];
+      bool S=K0==J0||K0==J1||K0==J2||K1==J0||K1==J1||K1==J2||K2==J0||K2==J1||K2==J2;
+      if(S){if(J<32)D0|=1u<<J;else D1|=1u<<(J-32);}}}
+    const uint Full0=N>=32?0xFFFFFFFFu:((1u<<N)-1u);const uint Full1=N<=32?0u:(N==64?0xFFFFFFFFu:((1u<<(N-32))-1u));
+    const uint Bit0=Lane<32?(1u<<Lane):0u,Bit1=Lane>=32?(1u<<(Lane-32)):0u;
+    bool Done=!Has;
+    [loop]for(;;){
+     AllMemoryBarrierWithGroupSync();
+     const uint Dn0=GClearDone[0],Dn1=GClearDone[1];
+     if(Dn0==Full0&&Dn1==Full1)break;
+     const bool Ready=!Done&&(D0&~Dn0)==0&&(D1&~Dn1)==0;
+     if(Ready){ClearRun(Lane);Done=true;}
+     AllMemoryBarrierWithGroupSync();
+     if(Ready){InterlockedOr(GClearDone[0],Bit0);InterlockedOr(GClearDone[1],Bit1);}
+    }
+    GroupMemoryBarrierWithGroupSync();
    }
   }
   GroupMemoryBarrierWithGroupSync();
