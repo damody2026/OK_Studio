@@ -1618,6 +1618,22 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
         - 地圖的 cookie 方向燈改用 light function 建出（Unity 規則：燈的本地 xy / cookie 大小 + 0.5，讀 alpha；只在編輯器建置，Game 目標照舊略過）。
         - 地圖 53、50 sun0/sun1 的亮度和修改前一致，沒有變亮。
       - 對照圖：`Saved/Tests/MapShadow1114U272e/`。
+    - 2026-11-15 修好（F 組）：
+      - **真正原因：地圖的即時反射探針。** 貨櫃用的是兩個 Realtime 模式的 ReflectionProbe，執行期才渲染、32×32，各占一半權重：`Map/PPV-Harbor/Reflection Probe`（每幀，強度 1.1）、`Map/light/Reflection Probe`（OnAwake，1.5）。OK 只收有烘焙貼圖的探針，這兩個被略過，只剩全黑反射。
+      - 在原作量測（`run_map_tour.lua` 新增 `--lights-off`、`--probes-off`，tsv 新增 `renderer_probe`），y90 牆面：
+        | 原作條件 | 牆面 |
+        |---|---|
+        | 照常 | (141, 9, 17) |
+        | 關 shop 燈 | (140, 9, 17) |
+        | 關所有燈 | (124, 5, 13) |
+        | 關反射探針 | (42, 0, 0)，和修改前的 OK 一樣暗 |
+      - 「缺天空預設反射」不是原因：原作開著 Funly 天空時 `reflection_default` 本來就是 `UnityBlackCube`（二十多筆原生紀錄）。
+      - 修法：
+        - Rust：`PrefabReflectionProbe` 加 `realtime`；Realtime 模式、沒有烘焙貼圖的探針照解析度收進來，照原規則分配給範圍內的物件，材質帶 `_OKReflectionRealtime`（面大小）與 `_OKReflectionPos*`（探針位置）。
+        - UE：部件打上 `OKReflectionRealtime=<節點>;<大小>;<強度>;<x>;<y>;<z>` 標記；`AOKSceneActor` 在探針位置放 `USceneCaptureComponentCube`（HDR、自動 mip），地圖建好或換時段後連拍 30 幀，綁成那些部件的 `unity_SpecCube0`（HDR = 強度, 1, 0, 0）。
+        - 取樣反射後夾在 0～64：擷取的 cube 一旦有 NaN，取樣它的材質整塊變黑，再被下一次擷取拍進去。第一次沒夾時 y180 的旗子、招牌全黑。
+      - 結果（`Saved/Tests/MapProbe1115OK2/`，原作 `Saved/Tests/MapProbe1115on/`）：y90 牆面 (124, 7, 19)，原作 (141, 9, 17)，修改前 (12, 0, 0)。y0 原本就偏黑的碼頭柱子與棧橋也恢復；y180、y270 和原作接近。還有差：y0 那艘船仍偏暗（另一個問題，未追）。
+      - 本機基礎庫要重錄：`OKLIB_REFRESH=prefab_reflection_probes ok-extract <遊戲> --oklib studio-nodes <base_v1> 8`（F 本機已重錄，替換 62 筆）。沒重錄的 checkout 照舊是全黑反射。
   - **U273 地圖 54 遮陽傘顏色**：原作橘色，OK 藍色（同一個物件的另一個顏色），海面也有雜點。
   - **U274 KK 時代地圖讀原作場景的時段**：原作 Studio 對學校地圖設 sunType 1 顯示「夕」，OK 依 U138 把 1 當「昼」。讀原作場景檔（`sunLightType`）時兩邊會差一格，要查原作 UI 怎麼對應再決定。
 

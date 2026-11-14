@@ -2998,7 +2998,9 @@ total += surfaceReduction * env * Intensity * lerp(specColor, grazing.xxx, pow(1
                 {
                     const int32 Begin=ReflectionCode.Find(TEXT("float3 ad = abs(d);"));
                     const int32 End=ReflectionCode.Find(TEXT("float3 specColor ="));
-                    ReflectionCode=ReflectionCode.Left(Begin)+TEXT("float pr=1.0-smooth;float lod=pr*(1.7-.7*pr)*6.0;float3 env=TextureCubeSampleLevel(NativeCube,NativeCubeSampler,d,lod).rgb;Intensity=NativeHDR.r;\n")+ReflectionCode.Mid(End);
+                    // A realtime probe is a capture of the scene (U272): what it holds is clamped, so a NaN or overflow
+                    // there (min/max return the other operand) neither blacks the pixel nor feeds the next capture.
+                    ReflectionCode=ReflectionCode.Left(Begin)+TEXT("float pr=1.0-smooth;float lod=pr*(1.7-.7*pr)*6.0;float3 env=TextureCubeSampleLevel(NativeCube,NativeCubeSampler,d,lod).rgb;env=min(max(env,0.),64.);Intensity=NativeHDR.r;\n")+ReflectionCode.Mid(End);
                 }
 				if (LightmapDiag != TEXT("whitenoenv")) Code+=ReflectionCode;
 				if (LightmapDiag == TEXT("env")) Code += TEXT("total = env * Intensity;\n");
@@ -7102,6 +7104,14 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
         {
             FLinearColor ProbeNode(-1,0,0,0);Source.MaterialValue(i,"_OKReflectionNode",ProbeNode);
             Comp->ComponentTags.Add(FName(*FString::Printf(TEXT("OKReflectionProbe=%d"),FMath::RoundToInt(ProbeNode.R))));
+            // A realtime probe (no baked cubemap; Unity renders it at run time): its node, face size, intensity and place
+            // (prefab space, Unity metres), for the scene to capture there (U272: map 53's harbour).
+            FLinearColor Realtime(0,0,0,0),Intensity(1,0,0,0),X(0,0,0,0),Y(0,0,0,0),Z(0,0,0,0);
+            if(Source.MaterialValue(i,"_OKReflectionRealtime",Realtime)&&Realtime.R>0.f)
+            {
+                Source.MaterialValue(i,"_OKReflectionIntensity",Intensity);Source.MaterialValue(i,"_OKReflectionPosX",X);Source.MaterialValue(i,"_OKReflectionPosY",Y);Source.MaterialValue(i,"_OKReflectionPosZ",Z);
+                Comp->ComponentTags.Add(FName(*FString::Printf(TEXT("OKReflectionRealtime=%d;%d;%g;%g;%g;%g"),FMath::RoundToInt(ProbeNode.R),FMath::RoundToInt(Realtime.R),Intensity.R,X.R,Y.R,Z.R)));
+            }
         }
 		FLinearColor RendererMode;
 		if (Comp && Source.MaterialValue(i, "_OKRendererShadowMode", RendererMode))

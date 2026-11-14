@@ -167,6 +167,15 @@ fn assign_reflection_probes(meshes: &mut [ExtractedMesh], probes: &crate::unity:
         mat.floats.insert("_OKReflectionNode".into(),probe.node as f32);
         mat.floats.insert("_OKReflectionMips".into(), probe.mips as f32);
         mat.floats.insert("_OKReflectionIntensity".into(), probe.intensity);
+        if probe.realtime {
+            // A realtime probe: the viewer renders the scene from its node (prefab space, Unity metres) at this size.
+            mat.floats.insert("_OKReflectionRealtime".into(), probe.size as f32);
+            if let Some(w) = usize::try_from(probe.node).ok().and_then(|n| worlds.get(n)) {
+                let c = crate::pose::mat_pos(w);
+                for (k, axis) in ["X", "Y", "Z"].iter().enumerate() { mat.floats.insert(format!("_OKReflectionPos{axis}"), c[k]); }
+            }
+            continue;
+        }
         if !carried[index] {
             m.shader_extra_textures.insert("_OKReflection".into(), probe.atlas.clone());
             carried[index] = true;

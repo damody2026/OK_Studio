@@ -1321,6 +1321,10 @@ pub struct PrefabReflectionProbe {
     /// The cubemap as one PNG: the six faces (+X, -X, +Y, -Y, +Z, -Z, as Unity stores them) side by side, each mip
     /// below the previous one (mip k starts at row size * (2 - 2^(1-k))); 8-bit display values (BC6H clamped to 0..1).
     pub atlas: Vec<u8>,
+    /// A realtime probe (m_Mode 1, no baked cubemap): Unity renders it at run time from the node at `size` pixels
+    /// (map 53's harbour, U272); `atlas` is empty and the viewer captures the scene there.
+    #[serde(default)]
+    pub realtime: bool,
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -3047,15 +3051,21 @@ impl ParsedBundle {
                     let Some(node)=p.get("m_GameObject").and_then(uv_pptr).and_then(|go|go_node.get(&go)).copied() else {continue;};
                     if !p.get("m_Enabled").map(uv_bool).unwrap_or(true) {continue;}
                     let baked=p.get("m_CustomBakedTexture").filter(|v|uv_pptr(v).is_some_and(|id|id!=0)).or_else(||p.get("m_BakedTexture"));
-                    let Some((size,mips,atlas))=baked.and_then(cubemap) else {continue;};
-                    probes.push(PrefabReflectionProbe{node,box_size:vec3(p.get("m_BoxSize"),10.),box_offset:vec3(p.get("m_BoxOffset"),0.),
-                        importance:p.get("m_Importance").map(uv_i32).unwrap_or(1),intensity:p.get("m_IntensityMultiplier").map(uv_f32).unwrap_or(1.),size,mips,atlas});
+                    let (box_size,box_offset)=(vec3(p.get("m_BoxSize"),10.),vec3(p.get("m_BoxOffset"),0.));
+                    let (importance,intensity)=(p.get("m_Importance").map(uv_i32).unwrap_or(1),p.get("m_IntensityMultiplier").map(uv_f32).unwrap_or(1.));
+                    if let Some((size,mips,atlas))=baked.and_then(cubemap) {
+                        probes.push(PrefabReflectionProbe{node,box_size,box_offset,importance,intensity,size,mips,atlas,realtime:false});
+                    } else if p.get("m_Mode").map(uv_i32)==Some(1) {
+                        // Realtime: rendered by Unity at run time (ReflectionProbe m_Resolution square faces, full mip chain).
+                        let size=(p.get("m_Resolution").map(uv_i32).unwrap_or(128).max(16) as u32).next_power_of_two();
+                        probes.push(PrefabReflectionProbe{node,box_size,box_offset,importance,intensity,size,mips:size.ilog2()+1,atlas:Vec::new(),realtime:true});
+                    }
                 }
                 for info in ser.objects_of_type(104) {
                     let Ok(obj)=ser.scene_object(info) else {continue;};
                     let p=obj.class.properties();
                     if let Some((size,mips,atlas))=p.get("m_GeneratedSkyboxReflection").and_then(cubemap) {
-                        probes.push(PrefabReflectionProbe{node:-1,box_size:[0.;3],box_offset:[0.;3],importance:0,intensity:p.get("m_ReflectionIntensity").map(uv_f32).unwrap_or(1.),size,mips,atlas});
+                        probes.push(PrefabReflectionProbe{node:-1,box_size:[0.;3],box_offset:[0.;3],importance:0,intensity:p.get("m_ReflectionIntensity").map(uv_f32).unwrap_or(1.),size,mips,atlas,realtime:false});
                     }
                 }
                 PrefabReflectionProbes{probes}

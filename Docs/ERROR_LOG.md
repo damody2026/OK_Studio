@@ -4477,3 +4477,16 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - 修正：`unity::copy_body_material_targets`（新的可選查詢，讀元件的 `rendTarget`／`customRenderQueue`）＋ `SessionPart::copy_body_material`，開卡最後（身體材質確定後）把身體的材質、貼圖、疊圖與繪製設定複製給這些網格，`_alpha_a/_alpha_b`=0、不帶 `_AlphaMask`，只換第一個 submesh（`Renderer.material` 的行為）。
 - 舊 OK 卡沒錄這個查詢，照舊開（不算缺口）但不會套用；要重轉（`ok-extract <遊戲> --oklib card base_v1 <卡> <輸出>`）才有。F 本機 C041 已重轉，原卡備份在 `Saved/CardBackups/20261114-copybodymat/`。
 - 教訓：mod 的 MonoBehaviour 會改材質時，先查 `kks_decomp/plugins` 有沒有對應外掛；`CHARACTER_EDITOR_FEATURE_INVENTORY.md` 裡「待逐功能核對」的外掛就是這類破圖的來源。
+
+## 2026-11-15 U272：量到舊截圖，又把原因當成「缺天空預設反射」（F 組）
+
+- 錯誤：
+  - 診斷腳本用 `studio/capture` 存同名檔，但 capture 不覆寫已有的檔案，好幾輪量到的都是第一輪的舊圖，誤以為「法線保護沒效」。
+  - 之後把貨櫃牆變暗歸給「地圖 53 沒有天空預設反射」，協調也照這個方向找原作數值。
+- 查證：
+  - 原生 `reflection_default` 紀錄：開著 Funly 天空的地圖本來就是 `UnityBlackCube`，所以全黑預設反射和原作一致。
+  - 在原作關燈／關反射探針對照：關所有燈牆面只從 141 掉到 124；關反射探針掉到 42。原因是兩個 Realtime 模式的反射探針，OK 轉換時略過了。
+- 做法：
+  - 截圖前先刪舊檔（或每輪用新資料夾），量測前確認檔案時間是這一輪的。
+  - 光源來源不明時，先在原作逐項關掉（燈、反射探針）量差異，再決定要移植什麼。
+- 備註：這次原作量測（`run_map_tour.lua`）與基礎庫重錄（`studio-nodes`）用的是 `D:\KoikatuSunshine`（本機唯一的原作，協調者指定反編譯源碼也在那裡）；F 組其他工作仍以 F: 為準。

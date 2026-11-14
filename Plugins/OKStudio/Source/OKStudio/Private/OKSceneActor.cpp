@@ -14,6 +14,8 @@
 #include "Components/RectLightComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Engine/TextureRenderTarget2D.h"
+#include "Components/SceneCaptureComponentCube.h"
+#include "Engine/TextureRenderTargetCube.h"
 #include "Dom/JsonObject.h"
 #include "Engine/World.h"
 #include "HAL/PlatformMisc.h"
@@ -2203,6 +2205,52 @@ void AOKSceneActor::Tick(float DeltaSeconds)
 	{QUICK_SCOPE_CYCLE_COUNTER(STAT_OKScene_PlaceAttached);PlaceAttached();}
 	{QUICK_SCOPE_CYCLE_COUNTER(STAT_OKScene_ItemLighting);UpdateItemLighting();}
 	{QUICK_SCOPE_CYCLE_COUNTER(STAT_OKScene_Mirrors);UpdateMirrors();}
+	{QUICK_SCOPE_CYCLE_COUNTER(STAT_OKScene_RealtimeProbes);UpdateRealtimeProbes();}
+}
+
+UTexture* AOKSceneActor::RealtimeProbe(AKKPreviewActor* Map, int32 Node, int32 Size, const FVector& UnityPosition)
+{
+	if (!Map) return nullptr;
+	for (int32 I = 0; I < RealtimeProbeNodes.Num(); ++I)
+		if (RealtimeProbeNodes[I].Key.Get() == Map && RealtimeProbeNodes[I].Value == Node && RealtimeProbes.IsValidIndex(I) && RealtimeProbes[I])
+			return RealtimeProbes[I]->TextureTarget;
+	UTextureRenderTargetCube* Target = NewObject<UTextureRenderTargetCube>(this);
+	Target->bHDR = true;
+	// Unity's realtime probe: a full mip chain, which the Standard shader's roughness picks from.
+	Target->bAutoGenerateMips = true;
+	Target->MipsSamplerFilter = TF_Trilinear;
+	Target->Init(FMath::Clamp(FMath::RoundUpToPowerOfTwo(uint32(FMath::Max(Size, 16))), 16u, 256u), PF_FloatRGBA);
+	Target->ClearColor = FLinearColor::Black;
+	USceneCaptureComponentCube* Capture = NewObject<USceneCaptureComponentCube>(this);
+	Capture->TextureTarget = Target;
+	Capture->bCaptureEveryFrame = false;
+	Capture->bCaptureOnMovement = false;
+	Capture->SetupAttachment(Map->GetRootComponent());
+	// Unity prefab space (-x, z, y), metres; the probe renders from its node.
+	Capture->SetRelativeLocation(FVector(-UnityPosition.X, UnityPosition.Z, UnityPosition.Y) * 100.0);
+	Capture->RegisterComponent();
+	RealtimeProbes.Add(Capture);
+	RealtimeProbeNodes.Emplace(Map, Node);
+	RealtimeProbeFrames = FMath::Max(RealtimeProbeFrames, 30);
+	UE_LOG(LogTemp, Display, TEXT("OK studio: realtime reflection probe node=%d size=%d at unity (%.2f, %.2f, %.2f)"), Node, Target->SizeX, UnityPosition.X, UnityPosition.Y, UnityPosition.Z);
+	return Target;
+}
+
+void AOKSceneActor::UpdateRealtimeProbes()
+{
+	for (int32 I = RealtimeProbes.Num() - 1; I >= 0; --I)
+	{
+		if (RealtimeProbeNodes.IsValidIndex(I) && RealtimeProbeNodes[I].Key.IsValid() && RealtimeProbes[I]) continue;
+		if (RealtimeProbes[I]) RealtimeProbes[I]->DestroyComponent();
+		RealtimeProbes.RemoveAt(I);
+		if (RealtimeProbeNodes.IsValidIndex(I)) RealtimeProbeNodes.RemoveAt(I);
+	}
+	if (RealtimeProbes.IsEmpty()) return;
+	// Captured again for a while after the map changes (parts still arriving, another time of day): the map stands still.
+	if (ShownMapTime != RealtimeProbeTime || bBuildsPending) { RealtimeProbeTime = ShownMapTime; RealtimeProbeFrames = FMath::Max(RealtimeProbeFrames, 30); }
+	if (RealtimeProbeFrames <= 0) return;
+	--RealtimeProbeFrames;
+	for (USceneCaptureComponentCube* Capture : RealtimeProbes) if (Capture) Capture->CaptureScene();
 }
 
 void AOKSceneActor::UpdateMirrors()
@@ -2373,7 +2421,22 @@ void AOKSceneActor::UpdateItemLighting()
         {
             FString Root;
             for(const FName Tag:Preview->Tags){const FString T=Tag.ToString();const FString Prefix=TEXT("OKStudioMapRoot=");if(T.StartsWith(Prefix))Root=T.Mid(Prefix.Len());}
-            Preview->BindSourceReflectionProbes([&](int32 Node,FLinearColor& HDR)->UTexture*{if(Node<0&&bSkyLit)return nullptr;UTexture* Cube=OKStudioMapReflection(Document->Map,HDR,Root,Node);return Cube||bSkyLit?Cube:OKStudioBlackReflection();});
+            // Realtime probes (no cubemap in the bundle): the renderers they serve carry their node, face size, intensity
+            // and place; the scene is captured there (native map 53: with its probes off the container's red falls from
+            // 141 to 42, OK's dark; U272).
+            struct FRealtime { int32 Size = 0; float Intensity = 1.f; FVector Place = FVector::ZeroVector; };
+            TMap<int32,FRealtime> Realtime;
+            TInlineComponentArray<UMeshComponent*> Meshes(Preview);
+            for(UMeshComponent* Mesh:Meshes)for(const FName Tag:Mesh->ComponentTags)
+            {
+                const FString T=Tag.ToString(),Prefix=TEXT("OKReflectionRealtime=");if(!T.StartsWith(Prefix))continue;
+                TArray<FString> F;T.Mid(Prefix.Len()).ParseIntoArray(F,TEXT(";"));if(F.Num()!=6)continue;
+                FRealtime& R=Realtime.FindOrAdd(FCString::Atoi(*F[0]));R.Size=FCString::Atoi(*F[1]);R.Intensity=FCString::Atof(*F[2]);
+                R.Place=FVector(FCString::Atof(*F[3]),FCString::Atof(*F[4]),FCString::Atof(*F[5]));
+            }
+            Preview->BindSourceReflectionProbes([&](int32 Node,FLinearColor& HDR)->UTexture*{
+                if(const FRealtime* R=Realtime.Find(Node);R&&R->Size>0){HDR=FLinearColor(R->Intensity,1,0,0);if(UTexture* Cube=RealtimeProbe(Preview,Node,R->Size,R->Place))return Cube;}
+                if(Node<0&&bSkyLit)return nullptr;UTexture* Cube=OKStudioMapReflection(Document->Map,HDR,Root,Node);return Cube||bSkyLit?Cube:OKStudioBlackReflection();});
         }
 		AmbientLit.Add(Preview);
 	}
@@ -3158,6 +3221,10 @@ void AOKSceneActor::ReleaseScene()
 	ShownMapComponents = 0;
 	if (MapSun) { MapSun->DestroyComponent(); MapSun = nullptr; }
 	if (MapSunFill) { MapSunFill->DestroyComponent(); MapSunFill = nullptr; }
+	for (USceneCaptureComponentCube* Capture : RealtimeProbes) if (Capture) Capture->DestroyComponent();
+	RealtimeProbes.Reset();
+	RealtimeProbeNodes.Reset();
+	RealtimeProbeFrames = 0;
 	for (FScenePicture* Picture : { &Background, &Frame })
 	{
 		if (Picture->Plane) Picture->Plane->DestroyComponent();

@@ -1,6 +1,8 @@
 -- Sky and sea of original Studio maps at each time of day, for the comparison with OK Studio (OK_PROBE_MAP_TOUR).
 -- Build Tools/GamePoseProbe/build.lua first. Uses a temporary installed probe; the pictures stay in Saved/Tests/<tag>.
 --   Tools\lua\lua.exe Tools\GamePoseProbe\run_map_tour.lua --tag MapTour01 --stops 56:0,56:1,56:2,56:3 [--height 30]
+--   --lights-off <a,b>: lights whose path contains a or b are switched off (which light lights a surface)
+--   --probes-off: every reflection probe switched off
 local ok = require "ok"
 local fs = require "okfs"
 local path = ok.path
@@ -10,6 +12,8 @@ parser:opt("--tag", { required = true })
 parser:opt("--height", { default = "30" })
 parser:opt("--timeout", { default = "1200" })
 parser:flag("--lights-only")
+parser:opt("--lights-off", { default = "" })
+parser:flag("--probes-off")
 local a = parser:parse(arg)
 assert(a.tag:match("^[%w_%-]+$"), "Invalid tag")
 assert(a.stops:match("^[%d:,]+$"), "Stops are map:sun,map:sun")
@@ -30,6 +34,8 @@ local success, err = xpcall(function()
     fs.setenv("OK_PROBE_TOUR_HEIGHT", a.height)
     fs.setenv("OK_GAME_POSE_OUTPUT", prefix)
     fs.setenv("OK_PROBE_TOUR_LIGHTS_ONLY", a.lights_only and "1" or "")
+    fs.setenv("OK_PROBE_TOUR_LIGHTS_OFF", a.lights_off or "")
+    fs.setenv("OK_PROBE_TOUR_PROBES_OFF", a.probes_off and "1" or "")
     owned = ok.proc.popen({ path.join(game, "CharaStudio.exe"), "-windowed", "-screen-width", "1280", "-screen-height", "720" },
         { hide = true, stdout = "NUL", stderr = "NUL" })
     local deadline = ok.time.time() + tonumber(a.timeout)
