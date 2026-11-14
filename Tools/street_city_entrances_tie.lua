@@ -49,11 +49,11 @@ print(('entrances: %d on the roads already, %d tied, %d without a road point nea
 -- Floors above the street with no road of their own: a line of points from the lift to a place's door, each leg clear on
 -- that floor's scans (two heights, 40 cm clearance). Without it the game's graph route between two spots of one floor went
 -- down to the street (10 of 12 points off the floor) and fell back to a straight line into the wall.
---   civic 2F, lift2:2F to the bank (door: its counter): the straight line from the bank hit the south wall's corner
+--   civic 2F, lift2:2F to the bank's door (by hand in export_street_city_game_places.lua, its open south side): the straight line from the bank hit the south wall's corner
 --   (StaticMeshActor_496 at 31904,58773, nh1115k 11-15); the scans (z 1710 and 1640) have the way out of the bank's open
---   south side and through the gap at x 31100-31850 in the corridor's south wall, 35 m for 32; the last leg goes east of the counter's low panel (x 32800-32850 at z 1640).
+--   south side and through the gap at x 31100-31850 in the corridor's south wall, 35 m for 32.
 local FLOOR_PATHS = {
-  { id = 'civic_2f_bank', z = 1620, pts = { { 31260, 56500 }, { 31380, 56630 }, { 31780, 58780 }, { 31880, 58880 }, { 32930, 59250 }, { 32860, 59393 } } },
+  { id = 'civic_2f_bank', z = 1620, pts = { { 31260, 56500 }, { 31380, 56630 }, { 31780, 58780 }, { 31880, 58880 }, { 32400, 59150 } } },
 }
 for _, path in ipairs(FLOOR_PATHS) do
   local prev, new = nil, 0

@@ -183,6 +183,15 @@ do
   end
 end
 
+-- Doors picked by hand where the nearest anchor is in a mesh: the bank's (civic 2F) was its counter, inside the counter's
+-- collision (StaticMeshActor_496, pen=1), and every walk from the bank began wedged (nh1115k, 11-15). Its room is open to the
+-- corridor along the south (floor scans z 1710 and 1640): the door is in that opening.
+local DOORS = { bank = { 32400, 59150, 1620 } }
+for _, p in ipairs(places) do
+  local d = DOORS[p.id]
+  if d then print(('door: %s by hand, %.0f,%.0f -> %.0f,%.0f'):format(p.id, p.door[1], p.door[2], d[1], d[2])); p.door = { d[1], d[2], d[3] } end
+end
+
 -- A shop turned to face east (its ground floor S##_F01 at yaw -90) had its door on its back wall: the street entrance was
 -- read in the building's own frame without its turn, so it came out mirrored. The front wall is cut open and rebuilt with
 -- the door (shop-refits-v1), the back is whole, and a walk to the karaoke, the bowling alley, the nursery and eight more
