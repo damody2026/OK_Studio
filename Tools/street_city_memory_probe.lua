@@ -7,6 +7,8 @@
 --     --seconds N   sample this long after the map is up before the tour (default 60)
 --     --no-tour     no warps (only the start position)
 --     --no-slot     the caller holds an Unreal slot already (Tools/unreal_slot.lua)
+--     --exec "A;B"  console commands sent through the control channel once the map is up (before the idle samples),
+--                   e.g. "wp.Runtime.OverrideRuntimeSpatialHashLoadingRange -grid=0 -range=12800" (until the map reloads)
 --     after --      passed to Tools/run_street_social_development.lua, e.g. -- -CitySource
 --
 -- Output: Saved/StreetSocial/MemProbe/<tag>.csv (one row per sample) and <tag>.json (peaks).
@@ -22,6 +24,7 @@ while arg[i] do
   elseif a == "--seconds" then i = i + 1; o.seconds = assert(tonumber(arg[i]), "--seconds N")
   elseif a == "--no-tour" then o.notour = true
   elseif a == "--no-slot" then o.noslot = true
+  elseif a == "--exec" then i = i + 1; o.exec = arg[i]
   else error("unknown argument " .. a, 0) end
   i = i + 1
 end
@@ -109,6 +112,7 @@ local ok_run, err = pcall(function()
     sleep(2)
   end
   peak.load_seconds = os.time() - started
+  if o.exec then for c in o.exec:gmatch("[^;]+") do say("exec " .. c .. ": " .. http("POST", "/exec", json.encode({ command = c }))) end end
   phase = "idle"
   local idle_end = os.time() + o.seconds
   while os.time() < idle_end do record(); sleep(2) end
