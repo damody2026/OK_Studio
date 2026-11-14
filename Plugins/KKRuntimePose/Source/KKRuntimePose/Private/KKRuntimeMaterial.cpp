@@ -250,14 +250,17 @@ static TAutoConsoleVariable<int32> CVarOKRuntimeTextureLowMemoryMaxSize(TEXT("kk
 bool OKRuntimeLowMemory(){
  // Decided once, after the RHI knows the adapter: the street's 10 heroines took 1.9 GB of uncompressed 1024x1024 textures
  // in VRAM and the same again in RAM (2026-11-14, a 64 GB / 16 GB VRAM laptop could not run the city).
- static const bool Low=[]{
-  if(FParse::Param(FCommandLine::Get(),TEXT("OKNoLowMemory")))return false;
-  if(FParse::Param(FCommandLine::Get(),TEXT("OKLowMemory")))return true;
-  const uint64 Ram=FPlatformMemory::GetConstants().TotalPhysical,Vram=GRHIGlobals.GpuInfo.DedicatedVideoMemory;
-  const bool L=Ram<48ull*1024*1024*1024||(Vram>0&&Vram<12ull*1024*1024*1024);
-  UE_LOG(LogTemp,Display,TEXT("Runtime low-memory mode %s (RAM %.1f GB, VRAM %.1f GB)"),L?TEXT("on"):TEXT("off"),Ram/1073741824.0,Vram/1073741824.0);
-  return L;}();
- return Low;
+ // Kept once the adapter's VRAM is known (before the RHI starts it is 0 and only the RAM and the switches decide).
+ static std::atomic<int32> Decided{-1};
+ const int32 Known=Decided.load();if(Known>=0)return Known!=0;
+ bool L;bool Final=true;const TCHAR* Why=TEXT("RAM / VRAM");
+ if(FParse::Param(FCommandLine::Get(),TEXT("OKNoLowMemory"))){L=false;Why=TEXT("-OKNoLowMemory");}
+ else if(FParse::Param(FCommandLine::Get(),TEXT("OKLowMemory"))){L=true;Why=TEXT("-OKLowMemory");}
+ else{const uint64 Vram=GRHIGlobals.GpuInfo.DedicatedVideoMemory;Final=Vram>0;
+  L=FPlatformMemory::GetConstants().TotalPhysical<48ull*1024*1024*1024||(Vram>0&&Vram<20ull*1024*1024*1024);}
+ if(Final&&Decided.exchange(L?1:0)<0)
+  UE_LOG(LogTemp,Display,TEXT("Runtime low-memory mode %s (%s; RAM %.1f GB, VRAM %.1f GB)"),L?TEXT("on"):TEXT("off"),Why,FPlatformMemory::GetConstants().TotalPhysical/1073741824.0,GRHIGlobals.GpuInfo.DedicatedVideoMemory/1073741824.0);
+ return L;
 }
 UTexture2D* OKCreateRuntimePreparedTexture(const FKKRuntimePreparedTexture& T,FString& Error){
  check(IsInGameThread());if(T.Settings.Filter<0||T.Settings.Filter>2||T.Settings.WrapU<0||T.Settings.WrapU>2||T.Settings.WrapV<0||T.Settings.WrapV>2){Error=TEXT("Runtime texture sampler invalid");return nullptr;}if(T.Mips.IsEmpty()){Error=TEXT("Runtime texture mips absent");return nullptr;}

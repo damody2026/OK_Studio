@@ -16,6 +16,7 @@
 #include "RHICommandList.h"
 #include "TextureResource.h"
 #include "Async/Async.h"
+#include "KKRuntimeMaterial.h"
 
 static void ExtendEncodedMipChain(TArray<FOKEncodedMip>& Mips);
 TArray<FOKEncodedMip> OKBuildEncodedMipChain(const TArray<uint8>& BGRA, int32 Width, int32 Height)
@@ -75,19 +76,32 @@ static void OKApplyRuntimeTextureSettings(UTexture2D* Tex,const OkTextureSetting
     const double UploadStart=FPlatformTime::Seconds();Tex->UpdateResource();OKTextureCreateStats().UploadSeconds+=FPlatformTime::Seconds()-UploadStart;
 }
 
+// Low-memory PC (OKRuntimeLowMemory, KKRuntimeMaterial.h): the first mip within kk.RuntimeTextureLowMemoryMaxSize, and
+// the CPU copy of the pixels dropped once the GPU has them (Docs/STREET_CITY_STREAMING_LOWSPEC_20261114.md: ten
+// heroines held 1.9 GB of uncompressed 1024x1024 textures in VRAM and the same again in RAM).
+template<typename TMipArray,typename TSize>
+static int32 OKLowMemoryFirstMip(const TMipArray& Mips,TSize Size){
+    if(!OKRuntimeLowMemory())return 0;
+    static IConsoleVariable* Cap=IConsoleManager::Get().FindConsoleVariable(TEXT("kk.RuntimeTextureLowMemoryMaxSize"));
+    const int32 Max=FMath::Max(16,Cap?Cap->GetInt():512);int32 First=0;
+    while(First+1<Mips.Num()&&Size(Mips[First])>Max)++First;
+    return First;
+}
 static UTexture2D* CreatePreparedTexture(const TArray<FOKEncodedMip>& Mips,
     const OkTextureSettings* Settings,bool bFallbackClamp)
 {
     if(Mips.IsEmpty())return nullptr;
-    UTexture2D* Tex=UTexture2D::CreateTransient(Mips[0].Width,Mips[0].Height,PF_B8G8R8A8);
+    const int32 First=OKLowMemoryFirstMip(Mips,[](const FOKEncodedMip& M){return FMath::Max(M.Width,M.Height);});
+    UTexture2D* Tex=UTexture2D::CreateTransient(Mips[First].Width,Mips[First].Height,PF_B8G8R8A8);
     if(!Tex)return nullptr;
-    for (int32 I=0; I<Mips.Num(); ++I) {
-        FTexture2DMipMap* Mip=I==0 ? &Tex->GetPlatformData()->Mips[0] : new FTexture2DMipMap();
-        if (I>0) Tex->GetPlatformData()->Mips.Add(Mip);
+    for (int32 I=First; I<Mips.Num(); ++I) {
+        FTexture2DMipMap* Mip=I==First ? &Tex->GetPlatformData()->Mips[0] : new FTexture2DMipMap();
+        if (I>First) Tex->GetPlatformData()->Mips.Add(Mip);
         Mip->SizeX=Mips[I].Width;Mip->SizeY=Mips[I].Height;Mip->SizeZ=1;
         Mip->BulkData.Lock(LOCK_READ_WRITE);
         void* Data=Mip->BulkData.Realloc(Mips[I].Bytes.Num());
         FMemory::Memcpy(Data,Mips[I].Bytes.GetData(),Mips[I].Bytes.Num());Mip->BulkData.Unlock();
+        if(OKRuntimeLowMemory())Mip->BulkData.SetBulkDataFlags(BULKDATA_SingleUse);
     }
     OKApplyRuntimeTextureSettings(Tex,Settings,bFallbackClamp);return Tex;
 }
@@ -219,18 +233,23 @@ UTexture2D* CreatePackedTexture(const FPreparedPng& Entry,const OkTextureSetting
   // OK_FIRSTLOAD=C2: the top level goes in with the texture's creation (CreateTransient's image data) instead of
   // a zero-filled allocation that is then reallocated and overwritten.
   static const bool bDirectTop=[]{TArray<FString> O;FPlatformMisc::GetEnvironmentVariable(TEXT("OK_FIRSTLOAD")).ParseIntoArray(O,TEXT(","));for(FString& S:O)S.TrimStartAndEndInline();return O.Contains(TEXT("C2"))||O.Contains(TEXT("all"));}();
-  UTexture2D* Tex=bDirectTop
+  // Low-memory PC: the first mip within the cap (OKLowMemoryFirstMip), so the direct top-level path is for full chains only.
+  const int32 First=OKLowMemoryFirstMip(Entry.Mips,[](const FPackedMip& M){return FMath::Max(M.Width,M.Height);});
+  const bool bDirect=bDirectTop&&First==0;
+  UTexture2D* Tex=bDirect
    ?UTexture2D::CreateTransient(Entry.Mips[0].Width,Entry.Mips[0].Height,PF_B8G8R8A8,NAME_None,TConstArrayView64<uint8>(Entry.Mips[0].Payload.GetData(),Entry.Mips[0].Payload.Num()))
-   :UTexture2D::CreateTransient(Entry.Mips[0].Width,Entry.Mips[0].Height,PF_B8G8R8A8);
+   :UTexture2D::CreateTransient(Entry.Mips[First].Width,Entry.Mips[First].Height,PF_B8G8R8A8);
   if(!Tex)return nullptr;
-  for(int32 I=bDirectTop?1:0;I<Entry.Mips.Num();++I){
-   FTexture2DMipMap* Mip=I==0?&Tex->GetPlatformData()->Mips[0]:new FTexture2DMipMap();
-   if(I>0)Tex->GetPlatformData()->Mips.Add(Mip);
+  for(int32 I=bDirect?1:First;I<Entry.Mips.Num();++I){
+   FTexture2DMipMap* Mip=I==First?&Tex->GetPlatformData()->Mips[0]:new FTexture2DMipMap();
+   if(I>First)Tex->GetPlatformData()->Mips.Add(Mip);
    Mip->SizeX=Entry.Mips[I].Width;Mip->SizeY=Entry.Mips[I].Height;Mip->SizeZ=1;
    Mip->BulkData.Lock(LOCK_READ_WRITE);
    FMemory::Memcpy(Mip->BulkData.Realloc(Entry.Mips[I].Payload.Num()),Entry.Mips[I].Payload.GetData(),Entry.Mips[I].Payload.Num());
    Mip->BulkData.Unlock();
+   if(OKRuntimeLowMemory())Mip->BulkData.SetBulkDataFlags(BULKDATA_SingleUse);
   }
+  if(bDirect&&OKRuntimeLowMemory())Tex->GetPlatformData()->Mips[0].BulkData.SetBulkDataFlags(BULKDATA_SingleUse);
   OKApplyRuntimeTextureSettings(Tex,Settings,Clamp);
   return Tex;
  }
@@ -247,7 +266,8 @@ FCriticalSection PngMutex;
 FOKPngCacheStats PngStats;uint64 PngClock=0;
 // Uncompressed mips (a heavy card holds ~2 GiB of 2048 maps with their chains): an eighth of the physical memory,
 // 1..8 GiB. A budget below one card makes its own textures evict each other and decode again on the game thread.
-static int64 PngCacheBudgetBytes(){static const int64 Budget=FMath::Clamp<int64>(int64(FPlatformMemory::GetConstants().TotalPhysical/8),1ll<<30,8ll<<30);return Budget;}
+// Low-memory PC (OKRuntimeLowMemory): 512 MiB; the street decodes each heroine once, the reload cost is the card reader's.
+static int64 PngCacheBudgetBytes(){return OKRuntimeLowMemory()?(512ll<<20):FMath::Clamp<int64>(int64(FPlatformMemory::GetConstants().TotalPhysical/8),1ll<<30,8ll<<30);}
 }
 FOKTextureCreateStats& OKTextureCreateStats(){static FOKTextureCreateStats Stats;return Stats;}
 FOKPngCacheStats OKRuntimePngCacheStats(){check(IsInGameThread());FScopeLock Lock(&PngMutex);auto Stats=PngStats;Stats.Entries=PreparedPngs.Num();return Stats;}
