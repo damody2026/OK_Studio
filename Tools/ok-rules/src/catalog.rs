@@ -327,7 +327,10 @@ pub fn eval(c: &Catalog, kind: &str, r: &Value) -> Option<Result<Value, String>>
             let place = s("place");
             let open = c.place_open(&place, r.get("hours").and_then(Value::as_f64).unwrap_or(12.0), r.get("weekday").and_then(Value::as_i64).unwrap_or(0) as i32);
             let weekday = r.get("weekday").and_then(Value::as_i64).unwrap_or(0) as i32;
-            Ok(json!({"open": open, "why": if open { String::new() } else { c.closed_why(&place, weekday) }}))
+            // known: the place has hours of its own here; one without (the arcade on the department store's 8F) keeps the
+            // hours of the building it is in, which the game knows (OKStreetSocialEconomy.inl PlaceClosedAt).
+            let known = c.places.get(&place).is_some_and(|p| !p.open.is_empty() || !p.weekend_open.is_empty() || !p.closed_weekdays.is_empty());
+            Ok(json!({"open": open, "known": known, "why": if open { String::new() } else { c.closed_why(&place, weekday) }}))
         }
         // A drink's sweetness and ice as levels, as this item can be made: no ice choice for a smoothie (no "ice" in its
         // options), no warm or hot for juice (no "hot"). The shop's default (全糖, 全冰) for what was not said; what

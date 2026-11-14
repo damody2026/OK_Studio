@@ -96,7 +96,13 @@ bool AOKStreetSocialScene::PlaceClosedNow(const FString& PlaceId,FString& Why) c
 bool AOKStreetSocialScene::PlaceClosedAt(const FString& PlaceId,const FDateTime& Now,FString& Why) const{
  auto Request=OKRulesRequest(TEXT("place_open"));Request->SetStringField(TEXT("place"),PlaceId);
  Request->SetNumberField(TEXT("hours"),Now.GetHour()+Now.GetMinute()/60.0);Request->SetNumberField(TEXT("weekday"),int32(Now.GetDayOfWeek()));
- const TSharedPtr<FJsonObject> Answer=OKRulesEval(*State,Request);if(!Answer||Answer->GetBoolField(TEXT("open")))return false;
+ const TSharedPtr<FJsonObject> Answer=OKRulesEval(*State,Request);if(!Answer)return false;
+ // A shop with no hours of its own keeps the building's: the arcade on the department store's 8F was walked into at 8:47,
+ // the store opening at 11 (round 11, 2026-11-15).
+ bool Known=true;Answer->TryGetBoolField(TEXT("known"),Known);
+ if(!Known)if(const FOKStreetPlace* P=OKStreetFindPlace(PlaceId)){
+  for(const auto& Q:OKStreetPlaces())if(&Q!=P&&!Q.Outdoor&&!Q.Rooms.IsEmpty()&&OKStreetInsidePlace(Q,P->Door)&&!OKStreetInsidePlace(*P,Q.Door))return PlaceClosedAt(Q.Id,Now,Why);}
+ if(Answer->GetBoolField(TEXT("open")))return false;
  Why=Answer->GetStringField(TEXT("why"));return true;
 }
 
