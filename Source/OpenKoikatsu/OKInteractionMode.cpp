@@ -328,7 +328,10 @@ void AOKInteractionMode::TickOutfitSwap(){
                 // A frame being solved shows first: the trade below is between frames.
                 if(Controller->HPanel)Controller->HPanel->ForgetClothCover();
                 if(Controller->PairedPlayback)Controller->PairedPlayback->SyncAsync();
-                if(!Girl->CommitWardrobeStage(Why)){Failed(Why);return;}
+                if(Controller->HPanel)Controller->HPanel->HoldAlignment(true);
+                const bool bCommitted=Girl->CommitWardrobeStage(Why);
+                if(Controller->HPanel)Controller->HPanel->HoldAlignment(false);
+                if(!bCommitted){Failed(Why);return;}
                 // The item now holds what she took off.
                 const FString Opened=Item->Opened;const FString WasKey=SwapWas.Key();
                 Item->Want=SwapWas;Item->Opened=OpenedFemaleCard();Item->bReady=false;Item->bOpened=false;

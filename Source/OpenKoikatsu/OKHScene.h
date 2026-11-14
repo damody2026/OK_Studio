@@ -157,6 +157,8 @@ public:
     bool WearOutfit(int32 Outfit,const FString& Coordinate,FString& Why);
     void OutfitChanged(bool bOk);
     void ForgetClothCover();
+    // Her alignment offset (MoveParts) taken off her parts before they are made again and put back after.
+    void HoldAlignment(bool bBefore);
     UFUNCTION() void OnPenisLength(float Value);
     UFUNCTION() void OnPenisScale(float Value);
     // Her pose set by him (user, 2026-11-02), on top of whatever plays: her ankles bent (degrees, both), each thigh opened
@@ -484,7 +486,7 @@ private:
     FVector HimOffset=FVector::ZeroVector,HimApplied=FVector::ZeroVector;FString AlignedKey;bool bAlignLogged=false;TWeakObjectPtr<class AKKPreviewActor> AlignedHim;
     // The taller one bends the knees instead of sinking through the floor or floating over it: he is lowered with his feet
     // held where they were (Studio IK foot targets); when he would have to rise, she is lowered the same way.
-    FVector HerOffset=FVector::ZeroVector,HerApplied=FVector::ZeroVector;TWeakObjectPtr<class AKKPreviewActor> AlignedHer;
+    FVector HerOffset=FVector::ZeroVector,HerApplied=FVector::ZeroVector,HerAlignHeld=FVector::ZeroVector;TWeakObjectPtr<class AKKPreviewActor> AlignedHer;int32 HerHolds=0;
     int32 FeetWait=0,HandsWait=0;bool bFeetRead=false,bHisStands=false,bHerStands=false,bHisIk=false,bHerIk=false;FVector HisFeet[2],HerFeet[2],HisHeld[2],HerHeld[2];
     // Her hands on his penis while she sucks him (GripHim): IK effectors (5, 6) and where, her skeleton space; what was set.
     TArray<int32> HandEff;TArray<FVector> HandAt,HandHeld;void GripHim(class AKKPreviewActor* Girl,class AKKPreviewActor* Him,const FVector& Lips,const FVector& Root,const FVector& Axis);

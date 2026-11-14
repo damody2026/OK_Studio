@@ -1191,7 +1191,7 @@ void UOKHScenePanel::ApplyPregnancy(double Now){ TRACE_CPUPROFILER_EVENT_SCOPE(O
     P->SetBoolField(TEXT("GameplayEnabled"),true);P->SetNumberField(TEXT("inflationSize"),FMath::Max(Card,40.*Belly));Mods->SetObjectField(TEXT("pregnancy"),P);
     FString Json;FJsonSerializer::Serialize(Mods.ToSharedRef(),TJsonWriterFactory<>::Create(&Json));bool Geometry=false;
     if(!Girl->Session.ApplyEditorMods(Json,Gallery->OutfitIndex,&Geometry)){UE_LOG(LogTemp,Warning,TEXT("H scene: her pregnant belly %.2f not applied"),Belly);return;}
-    if(Geometry){const float Phase=Girl->AnimPhase;const int32 PoseMode=Girl->PoseMode;FString Error;if(!Girl->RefreshEditorGeometry())Girl->LoadSession(Error);Girl->AnimPhase=Phase;Girl->PoseMode=PoseMode;
+    if(Geometry){const float Phase=Girl->AnimPhase;const int32 PoseMode=Girl->PoseMode;FString Error;HoldAlignment(true);if(!Girl->RefreshEditorGeometry())Girl->LoadSession(Error);HoldAlignment(false);Girl->AnimPhase=Phase;Girl->PoseMode=PoseMode;
         Girl->ApplyShapes(HerFace(),HerBody());EyeFrameShown=0.f;}
     UE_LOG(LogTemp,Display,TEXT("H scene: her pregnant belly %.2f (size %.1f, geometry %d)"),Belly,FMath::Max(Card,40.*Belly),Geometry?1:0);
     PregBellyShown=Belly;PregActor=Girl;PregOutfit=Gallery->OutfitIndex;
@@ -3293,6 +3293,14 @@ void UOKHScenePanel::MoveParts(AKKPreviewActor* A,const FVector& Want,FVector& A
     const FVector Step=Want-Applied;if(!IsValid(A)||Step.IsNearlyZero(.01f))return;Applied=Want;
     if(USceneComponent* Root=A->GetRootComponent()){const FVector Local=Root->GetComponentTransform().InverseTransformVectorNoScale(Step);
         for(USceneComponent* Child:Root->GetAttachChildren())if(IsValid(Child))Child->AddRelativeLocation(Local);}
+}
+// A change of clothes (and her model built again) makes parts at her actor's root without the offset MoveParts gave the
+// others: it is taken off them all first and given back to them all after (user 2026-11-14: Lan's hair sat higher than her
+// head after a change of clothes once his penis was made longer, the alignment lowering her further).
+void UOKHScenePanel::HoldAlignment(bool bBefore){
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;
+    if(bBefore){if(HerHolds++==0&&IsValid(Girl)&&AlignedHer==Girl){HerAlignHeld=HerApplied;MoveParts(Girl,FVector::ZeroVector,HerApplied);}}
+    else if(HerHolds>0&&--HerHolds==0){const FVector Want=HerAlignHeld;HerAlignHeld=FVector::ZeroVector;if(IsValid(Girl)&&AlignedHer==Girl)MoveParts(Girl,Want,HerApplied);}
 }
 void UOKHScenePanel::SyncPair(){if(Gallery&&Gallery->PairedPlayback)Gallery->PairedPlayback->SyncAsync();}
 void UOKHScenePanel::HoldFeet(AKKPreviewActor* A,bool bStands,const FVector& Offset,const FVector (&Feet)[2],FVector (&Kept)[2],bool& bIk,bool bPin,const FVector* PinHands,FVector* KeptHands,int32* KeptSet){

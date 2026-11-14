@@ -4430,3 +4430,15 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
   - 修正：
     - 啟動器新增 `-PatchDir <資料夾>`。
     - 改了 global shader 的 stage 要用 `Tools/rebuild_street_social_patch.lua --output <新資料夾>` 產生自己的 patch，並以 `-PatchDir` 指定；不要覆寫共用 patch，否則別人較舊的執行檔會因參數結構不符而當掉。
+## 2026-11-14 一對一：改過陰莖長度後換衣服，Lan 的頭髮比頭高
+
+- 錯誤：
+  - 插入動作播放中改了陰莖長度與粗細，再換衣服（outfit 0~4），Lan 的頭髮與頭飾整個往上、往後偏，額頭露出來；臉不動。之後再換回去也不會恢復。
+  - 我在沙盒重現了好幾次都沒出現，一開始懷疑剛性飾品的中立姿勢（`CaptureRigidFollowerNeutral`）在擺姿勢時被重抓，也逐一排除了 `ok.ClothGpu`、`ok.HScene.ClothViewBias`、`ok.HScene.LeadsOnTop` 與物理模式。
+- 原因：
+  - H 場景的對位（`UOKHScenePanel::MoveParts`）是把偏移直接加在她 actor 根下每個元件的相對位置上。
+  - 換衣服（`CommitWardrobeStage`）新建的元件（頭髮跟著私有骨架的 follower）放在根下時沒有這份偏移。
+  - 陰莖變長後對位把她放得更低，新元件少了這段下移，看起來就比頭高。預設陰莖時這個姿勢的偏移接近 0，所以沙盒用預設值重現不出來。
+- 修正：
+  - 新增 `UOKHScenePanel::HoldAlignment`：換衣服 commit 前把對位偏移從她所有元件拿掉，commit 後再整批加回去，新元件也拿到同樣的偏移。
+  - 懷孕肚子重建模型（`RefreshEditorGeometry`／`LoadSession`）也用同一個方法處理。
