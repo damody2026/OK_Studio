@@ -368,6 +368,35 @@ inline FOKStreetCityData& OKStreetCity() {
  }();
  return City;
 }
+// What the maps draw of the road graph: its points stand on a 6 m lattice over every road and square, so the maps fill each
+// point's cell (runs of a row merged into one box, ~1,600 in all) instead of drawing its 90,000 links, which buried the big
+// map in a grey sheet and took it to 10 FPS (2026-11-14). Only linked points of the kept part; doors off the lattice are left
+// out. Built again when the graph changes (the checked roads replace the picture's once the map is up).
+inline const TArray<FBox2D>& OKStreetCityRoadAreas() {
+ const FOKStreetCityData& City = OKStreetCity();
+ static TArray<FBox2D> Areas; static int32 Nodes = -1, Part = -2, Kept = -1;
+ if (Nodes == City.Nodes.Num() && Part == City.KeptPart && Kept == City.Kept.Num()) return Areas;
+ Nodes = City.Nodes.Num(); Part = City.KeptPart; Kept = City.Kept.Num(); Areas.Reset();
+ if (City.Nodes.IsEmpty()) return Areas;
+ const double Step = 600, OX = City.Nodes[0].X, OY = City.Nodes[0].Y;
+ TMap<int64, TArray<int64>> Rows;
+ for (int32 N = 0; N < City.Nodes.Num() && N < City.Links.Num(); ++N) {
+  if (City.Links[N].IsEmpty() || (City.KeptPart != INDEX_NONE && (!City.Kept.IsValidIndex(N) || City.Kept[N] != City.KeptPart))) continue;
+  const double FX = (City.Nodes[N].X - OX) / Step, FY = (City.Nodes[N].Y - OY) / Step;
+  const int64 IX = FMath::RoundToInt64(FX), IY = FMath::RoundToInt64(FY);
+  if (FMath::Abs(FX - IX) > .01 || FMath::Abs(FY - IY) > .01) continue;
+  Rows.FindOrAdd(IY).Add(IX);
+ }
+ for (auto& Row : Rows) {
+  Row.Value.Sort();
+  auto Emit = [&](int64 A, int64 B) { Areas.Add(FBox2D(FVector2D(OX + (A - .5) * Step, OY + (Row.Key - .5) * Step), FVector2D(OX + (B + .5) * Step, OY + (Row.Key + .5) * Step))); };
+  int64 Start = Row.Value[0], Prev = Start;
+  for (int32 I = 1; I < Row.Value.Num(); ++I) { if (Row.Value[I] > Prev + 1) { Emit(Start, Prev); Start = Row.Value[I]; } Prev = Row.Value[I]; }
+  Emit(Start, Prev);
+ }
+ UE_LOG(LogTemp, Display, TEXT("Street city: the maps draw the road graph as %d boxes"), Areas.Num());
+ return Areas;
+}
 
 // Is a body's way clear between two points of the street (he walks 105 cm over the ground, so a kerb is no wall)?
 // Radius: a thinner body from where he stands, since he may stand closer to a fence than the 30 cm of the graph's links.

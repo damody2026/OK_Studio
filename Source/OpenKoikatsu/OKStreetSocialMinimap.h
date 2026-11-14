@@ -43,7 +43,7 @@ inline FLinearColor OKStreetMinimapCharacterColor(int32 Slot){
  return Colors[FMath::Abs(Slot)%UE_ARRAY_COUNT(Colors)];
 }
 struct FOKStreetMinimapMarker {int32 Slot=0;FString Name;FVector Position=FVector::ZeroVector;float Favor=0;int32 Stage=0;bool FavorFull=false;bool Selected=false;};
-struct FOKStreetMinimapData {FVector Player=FVector::ZeroVector;float FacingYaw=0;bool ShowNames=true;TArray<FOKStreetMinimapMarker> Girls;TArray<TArray<FVector>> Paths;TArray<FVector> Navigation;TArray<TPair<FString,FVector>> Places;};
+struct FOKStreetMinimapData {FVector Player=FVector::ZeroVector;float FacingYaw=0;bool ShowNames=true;TArray<FOKStreetMinimapMarker> Girls;TArray<TArray<FVector>> Paths;TArray<FBox2D> Areas/*world X/Y boxes he can walk (the city's road graph)*/;TArray<FVector> Navigation;TArray<TPair<FString,FVector>> Places;};
 class SOKStreetMinimap final:public SLeafWidget {
 public:
  SLATE_BEGIN_ARGS(SOKStreetMinimap){} SLATE_END_ARGS()
@@ -62,6 +62,7 @@ public:
   Text(FVector2D(12,8),OKT(TEXT("ui.minimap.minimap_range_header")));
   const FVector2D Center(165,155);
   Out.PushClip(FSlateClippingZone(G.MakeChild(FVector2D(306,250),FSlateLayoutTransform(FVector2D(12,30))).GetLayoutBoundingRect()));
+  for(const FBox2D& Area:D.Areas){const FVector2D P=Center+OKStreetMinimapOffset(FVector(Area.Min.X,Area.Min.Y,0),D.Player,false),Q=Center+OKStreetMinimapOffset(FVector(Area.Max.X,Area.Max.Y,0),D.Player,false);Box(FVector2D(FMath::Min(P.X,Q.X),FMath::Min(P.Y,Q.Y)),(P-Q).GetAbs(),FLinearColor(.2f,.24f,.29f),1);}
   for(int32 I=-3;I<=3;++I){const float V=I*120.f/3.5f;Line({Center+FVector2D(V,-120),Center+FVector2D(V,120)},FLinearColor(.15f,.2f,.26f));Line({Center+FVector2D(-120,V),Center+FVector2D(120,V)},FLinearColor(.15f,.2f,.26f));}
   for(const auto& Path:D.Paths){TArray<FVector2D> Points;for(const auto& W:Path)Points.Add(Center+OKStreetMinimapOffset(W,D.Player,false));if(Points.Num()>1)Line(Points,FLinearColor(.35f,.4f,.45f),3);}
   if(D.Navigation.Num()>1){TArray<FVector2D> P;for(const auto& W:D.Navigation)P.Add(Center+OKStreetMinimapOffset(W,D.Player,false));Line(P,FLinearColor(1,.8f,.15f),4);}
@@ -114,7 +115,7 @@ public:
  // World bounds (min X/Y, max X/Y) of everything drawn, padded; fitted into the map area keeping aspect.
  struct FFrame{FVector2D Origin;float Scale=1;double MaxX=0,MinY=0;FVector2D ToMap(const FVector& W)const{return Origin+FVector2D((W.Y-MinY)*Scale,(MaxX-W.X)*Scale);}FVector ToWorld(FVector2D P)const{P-=Origin;return FVector(MaxX-P.Y/Scale,MinY+P.X/Scale,0);}};
  static FFrame Fit(const FOKStreetMinimapData& D,FVector2D Area,FVector2D Offset){
-  FBox Box(ForceInit);Box+=D.Player;for(const auto& Path:D.Paths)for(const auto& P:Path)Box+=P;for(const auto& P:D.Places)Box+=P.Value;for(const auto& G:D.Girls)Box+=G.Position;
+  FBox Box(ForceInit);Box+=D.Player;for(const auto& Path:D.Paths)for(const auto& P:Path)Box+=P;for(const FBox2D& A:D.Areas){Box+=FVector(A.Min.X,A.Min.Y,0);Box+=FVector(A.Max.X,A.Max.Y,0);}for(const auto& P:D.Places)Box+=P.Value;for(const auto& G:D.Girls)Box+=G.Position;
   Box=Box.ExpandBy(FVector(800,800,0));const FVector Size=Box.GetSize();
   FFrame F;F.Scale=float(FMath::Min(Area.X/FMath::Max(Size.Y,1.),Area.Y/FMath::Max(Size.X,1.)));F.MaxX=Box.Max.X;F.MinY=Box.Min.Y;
   F.Origin=Offset+(Area-FVector2D(Size.Y*F.Scale,Size.X*F.Scale))*.5f;return F;
@@ -141,6 +142,7 @@ public:
   auto Line=[&](const TArray<FVector2D>& P,FLinearColor Color,float Width){FSlateDrawElement::MakeLines(Out,Layer+1,G.ToPaintGeometry(),P,ESlateDrawEffect::None,Color,true,Width);};
   Box(FVector2D::ZeroVector,FVector2D(960,720),FLinearColor(.018f,.03f,.055f,.95f),0);
   Text(FVector2D(16,10),OKT(TEXT("ui.minimap.world_map_help")),FLinearColor(.85f,.9f,1),12);
+  for(const FBox2D& Area:D.Areas){const FVector2D P=F.ToMap(FVector(Area.Min.X,Area.Min.Y,0)),Q=F.ToMap(FVector(Area.Max.X,Area.Max.Y,0));Box(FVector2D(FMath::Min(P.X,Q.X),FMath::Min(P.Y,Q.Y)),(P-Q).GetAbs(),FLinearColor(.2f,.24f,.29f),1);}
   for(const auto& Path:D.Paths){TArray<FVector2D> P;for(const auto& W:Path)P.Add(F.ToMap(W));if(P.Num()>1)Line(P,FLinearColor(.35f,.4f,.45f),4);}
   if(D.Navigation.Num()>1){TArray<FVector2D> P;for(const auto& W:D.Navigation)P.Add(F.ToMap(W));Line(P,FLinearColor(1,.8f,.15f),4);}
   for(const auto& Place:D.Places){const FVector2D At=F.ToMap(Place.Value);const FLinearColor Color(.95f,.82f,.5f);Box(At-FVector2D(5,5),FVector2D(10,10),Color,2);Text(At+FVector2D(8,-11),Place.Key,Color,10);}
