@@ -336,9 +336,11 @@ public:
 				return true;
 			}
 			const FString Ext = FPaths::GetExtension(Path).ToLower();
-			if (FPaths::FileExists(Path) && (Ext == TEXT("okscene") || Ext == TEXT("png"))) return LoadFile(Path);
+			// As the scene browser opens it: an original KKS/KK KStudio scene is imported (an OK scene beside it, its
+			// characters as cards), and unsaved changes are asked about first.
+			if (FPaths::FileExists(Path) && (Ext == TEXT("okscene") || FOKSceneCard::Kind(Path) != FOKSceneCard::EKind::None)) return OpenScene(Path, false);
 		}
-		SetStatus(TEXT("拖進來的不是場景檔（.okscene、場景 PNG）或資料夾"));
+		SetStatus(TEXT("拖進來的不是場景檔（.okscene、OK 場景卡、原版 KStudio 場景 PNG）或資料夾"));
 		return false;
 	}
 
