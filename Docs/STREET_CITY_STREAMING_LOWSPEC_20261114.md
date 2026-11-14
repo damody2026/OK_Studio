@@ -113,6 +113,21 @@ LLM（commit，最后一笔）：
 
 运行时贴图（memreport）：1.87 GB（10 女角 + 男主，1024² 为主）→ 0.63 GB（512²）。剩下的大头是城市本身（旧 WP 的 HLOD、碰撞、未压缩贴图），要等 c-street-city 的新 cook（`City1115NoHLOD`：不建远景 + 贴图压缩 + 关 Nanite）。
 
+### 4.3 新 stage：City1115NoHLOD（不建远景 + 城市贴图压缩 + 关 Nanite），patch NH1115（2026-11-15 00:49 起）
+
+| tag | 女角 | 低配 | 峰值 commit | 稳定 commit | 巡游中 commit | 峰值工作集 | 峰值显存 | 载入格子 |
+|---|---|---|---|---|---|---|---|---|
+| nh-10-on | 10 | 开 | 18.9 GB（含 memreport 约 1 GB） | 15.4 GB | 16.1–18.0 GB | 12.5 GB | **5.5 GB** | 17 |
+| nh-10-off | 10 | 关 | 25.6 GB | 23.2 GB | | | 8.3 GB | |
+| nh-1-on | 1 | 开 | 8.5 GB | 8.3 GB | | | 3.1 GB | |
+
+- 对照修改前（测试者包、旧 WP、10 女角）：峰值 commit 32.1 → 18.9 GB，显存 13.3 → 5.5 GB。
+- 城市部分（memreport）：StaticMesh 1,946 → 589 个，碰撞（NavCollision + BodySetup）4.5 → 1.2 GB，贴图 2.7 → 1.2 GB。
+- **显存 ≤ 8 GB：通过**（5.5 GB；本机 5090 上的数字，8 GB 显卡上引擎的贴图池会再缩）。
+- **内存 16 GB**：实际占用的实体内存（工作集）峰值 12.5 GB，通过；commit 稳定 15.4 GB，瞬移巡游时 16–18 GB。commit 里约 4–5 GB 是驱动映射的显存（见 4.1），16 GB 内存的机器靠分页档可以容纳。若要连 commit 都压在 16 GB 内，下一步是女角数量少于 10 时的上限，或按距离卸载远处女角的贴图。
+- **启动修正**：新 base 配旧共享 patch 一启动就当（`Missing global shader FVolumetricFogLightScatteringCS`）。已用当前树重建 `NH1115.patch`，`runtime.json` 改指它（015860b0f）。
+- **画面**：远景拿掉、关 Nanite 后，近处建筑与地面正常。原本夜里天光只有白天的 10–20%，百货 1F 21:50 几乎全黑。依使用者要求（「环境光要维持在大家都看得到」）天光下限改为：夜里 35–45%、白天不低于 45%。00:32 的百货 1F 与 01:14 的户外截图都清楚可见。截图在 `Saved/StreetSocial/Play-20261115T004905/control_shots/`（改前）与 `Saved/StreetSocial/Play-20261115T010100/control_shots/`（改后）。
+
 ## 5. 给使用者的决定：要不要改远景
 
 16 GB 判定：**不通过**（10 女角 32.1 GB；1 女角 21.1 GB）。分两块做：

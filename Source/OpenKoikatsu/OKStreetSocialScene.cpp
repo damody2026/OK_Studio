@@ -4361,8 +4361,10 @@ void AOKStreetSocialScene::Tick(float Dt){
  if(OKStreetCityMode()&&State&&GOKStreetCitySun.IsValid()&&State->Sun!=GOKStreetCitySun){State->Sun=GOKStreetCitySun;State->ClockDrivesSun=true;State->NextSunUpdate=0;}
  if(OKStreetCityMode()&&State)if(auto* Env=GOKStreetCityEnv.Get()){static double NextHour=0;const double Wall=FPlatformTime::Seconds();if(Wall>=NextHour){NextHour=Wall+5;const double Hours=OKStreetClockHours(State->ClockStartHours,Wall-State->ClockStartWall);Env->SetHour(Hours);
    // The sky light goes with the sun: left at its daytime value, midnight looked like noon. The moon counts for little: it is
-   // bright for the street's sake (1.6 against the sun's 2.5), which held the sky light at 64% all night. Dusk meets the day's .2.
-   if(auto* Sky=GOKStreetCitySkyLight.Get()){const FOKStreetSunState Sun=OKStreetSunAt(Hours);Sky->SetIntensity(GOKStreetCitySkyDay*(Sun.Day?FMath::Clamp(Sun.Intensity/2.5f,.2f,1.f):FMath::Lerp(.2f,.1f,FMath::Clamp((Sun.Intensity-.8f)/.8f,0.f,1.f))));}}}
+   // bright for the street's sake (1.6 against the sun's 2.5), which held the sky light at 64% all night. Dusk meets the day's floor.
+   // The floor is what everyone sees by when the lamps cannot (user 2026-11-15: not too dark): a low-memory PC loads only the
+   // lamps within 128 m, and rooms at night were black at 10% (the department 1F at 21:50). Night 45-35%, day never under 45%.
+   if(auto* Sky=GOKStreetCitySkyLight.Get()){const FOKStreetSunState Sun=OKStreetSunAt(Hours);Sky->SetIntensity(GOKStreetCitySkyDay*(Sun.Day?FMath::Clamp(Sun.Intensity/2.5f,.45f,1.f):FMath::Lerp(.45f,.35f,FMath::Clamp((Sun.Intensity-.8f)/.8f,0.f,1.f))));}}}
  // Walls, buildings and floors not drawn from behind (OKStreetBacks.h), in the street and in the room alike.
  if(APlayerController* PC=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr;PC&&PC->PlayerCameraManager)OKHideStreetBacks(GetWorld(),PC->PlayerCameraManager->GetCameraLocation());if(!State||!State->Started||State->Reported)return;auto& S=*State;GOKStreetTalkLimit=S.SelfTest; // the self-tests check the budget arithmetic; normal play has no daily talk limit
  // Walking into or out of a shop, or its opening hours passing: the shop part of the right panel has to follow without waiting for

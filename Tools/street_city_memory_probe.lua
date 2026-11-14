@@ -8,6 +8,7 @@
 --     --no-tour     no warps (only the start position)
 --     --no-slot     the caller holds an Unreal slot already (Tools/unreal_slot.lua)
 --     --memreport   "memreport -full" at the end of the idle samples
+--     --shots       a screenshot 10 s after each warp (control_shots beside the run's report)
 --     --exec "A;B"  console commands sent through the control channel once the map is up (before the idle samples),
 --                   e.g. "wp.Runtime.OverrideRuntimeSpatialHashLoadingRange -grid=0 -range=12800" (until the map reloads)
 --     after --      passed to Tools/run_street_social_development.lua, e.g. -- -CitySource
@@ -27,6 +28,7 @@ while arg[i] do
   elseif a == "--no-slot" then o.noslot = true
   elseif a == "--exec" then i = i + 1; o.exec = arg[i]
   elseif a == "--memreport" then o.memreport = true
+  elseif a == "--shots" then o.shots = true
   else error("unknown argument " .. a, 0) end
   i = i + 1
 end
@@ -130,8 +132,11 @@ local ok_run, err = pcall(function()
     for _, place in ipairs({ "department", "boys_dorm", "skating", "gym", "church", "department" }) do
       phase = "tour:" .. place
       say("warp " .. place .. ": " .. http("POST", "/warp", json.encode({ place = place })))
-      local t_end = os.time() + 25
-      while os.time() < t_end do record(); sleep(2) end
+      local t_end, shot = os.time() + 25, os.time() + 10
+      while os.time() < t_end do
+        record(); sleep(2)
+        if o.shots and shot and os.time() >= shot then say("shot " .. place .. ": " .. http("POST", "/screenshot", "{}")); shot = nil end
+      end
     end
   end
 end)
