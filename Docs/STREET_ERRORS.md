@@ -2218,3 +2218,7 @@
 - 2026-11-14 c-street-city：`migrate_street_city_content.lua` 只照 11-08 產生的 closure.json 複製套件，WP actor 檔卻是整批同步。之後幾輪地圖新增的 actor 引用到的套件（WorldWallGrok 牆面材質、各棟的 Source_* 貼圖）一直沒有複製過來：編輯器 log 出現 `dependent package ... was not available`，那些牆會顯示成沒有材質。一次掃描找到 281 個。修正：遷移時讀 WP actor 檔裡的 /Game 參照，缺的就從來源補（`--refs-only` 可以單獨跑這一步，99fdec4aa），補完重掃缺 0。
 - 2026-11-14 c-street-city：r1114 批次第一次執行，量完要備份 mesh 時，因為 collision 是 JSON null（不是字串）而崩掉，沒有走到失敗收尾。之後用 `--from measure` 接續，腳本以為地圖程序沒開，所以結束時沒去關它，37 GB 的編輯器一直掛著。接著 `--check-only` 結束時把 slot 放掉，c-conquest 就在這個空檔開了第 8 輪，整批重建因此延後。修正：主流程包在 xpcall 裡，任何錯誤都會還原旗標與設定、關地圖程序、放 slot；從 serve 之後接續時視為地圖程序還開著；只處理字串型的 mesh 路徑。另外，選線規則原本會把店外的花台當成薄牆，改成線上的每道牆都要落在店體 actor 自己的牆段上。以後拿到整台機器時，不要用 `--check-only` 先量，直接跑完整批。
 - 2026-11-14 c-street-city：r1114 的自動選線三棟只有 A2 通過，而且 A2 切完後走路探測仍走不通。原因有兩個。第一，20 cm 格點在線上那一格剛好沒抓到 S69 東牆（x35100），實心的牆就沒列進切框。第二，切口只有 2.2 m 寬，店內線上有家具，探測會偏到線外走，撞上切口外留著的牆。A1、C 被判成「不是店體的牆」，其實是店體的隔間牆，和牆段差了 40～60 cm。改用手動的做法：把店體所有跨線的牆段（以 slice 的 walls 為準）各切一個 4.4 m 寬的口，再用 world_walk_probe 正反兩方向探測，三棟都走通了。路網點改沿探測走的路徑放。批次工具也補上「店體牆段跨線一律切」與 pts。格點只能當參考，能不能過要以探測為準。
+- 2026-11-15 c-street-city：拉麵店的門點（R6-197）是吧台座位 counter_seat4，人從 9F 電梯走過去，停在吧台前（StaticMeshActor_17137）。原因是樓上商店的門取自「離入口最近的錨點」，這一步沒有排除座位類錨點。改正：seat、chair、bed、sofa、bench 不能當門。共有 6 間店的門點跟著換：bank、cinema、lingerie、observation、planetarium、ramen。在 nh1115b 上實走時也看到另外三件事，還沒修：
+  - S38 的 link 28742-28743 撞到店內的貨架 StaticMeshActor_111，那個轉角點還在店裡面。
+  - A2 有一段線剛好貼在切口邊緣 y47080，撞到 StaticMeshActor_204。
+  - 體育館從 gym_hall 往電梯走，用的是 GridRoute 拉一條直線，撞到 StaticMeshActor_372 就失敗；這要改 C++，交給 C++ 組。

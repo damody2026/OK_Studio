@@ -167,7 +167,10 @@ do
       local best, far
       for _, an in ipairs(p.anchors or {}) do
         local name = an.name or ''
-        if not (name:match('^lift') or name:match('^stair') or name:match('^gate')) and math.abs(an.pos[3] - d[3]) < 100 then
+        -- nor a spot to sit or lie on: the ramen shop's door was its counter_seat4, behind the counter, and the walk from
+        -- the 9F lift stopped at the counter (R6-197, 11-15)
+        local sit = name:find('seat') or name:find('chair') or name:find('bed') or name:find('sofa') or name:find('bench')
+        if not (name:match('^lift') or name:match('^stair') or name:match('^gate') or sit) and math.abs(an.pos[3] - d[3]) < 100 then
           local dist = (an.pos[1] - d[1]) ^ 2 + (an.pos[2] - d[2]) ^ 2
           if not far or dist < far then best, far = an, dist end
         end
