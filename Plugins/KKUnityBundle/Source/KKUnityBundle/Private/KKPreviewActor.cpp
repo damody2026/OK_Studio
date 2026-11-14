@@ -12127,6 +12127,10 @@ void AKKPreviewActor::SetupStudioView(bool PreserveWorld)
         // renderer CVars, show flags, lights, HUD or the camera manager's FOV.
         if(StudioCam){
             auto& Settings=StudioCam->GetCameraComponent()->PostProcessSettings;
+            // No bloom, as the street's own camera (OKApplyRuntimeDisplayProfile): the city's shop lamps and signs are far above
+            // the fixed exposure, and the world's bloom spread them over half the screen and her in white whenever one came
+            // into the frame (1-on-1 on the street background, 11-14).
+            Settings.bOverride_BloomIntensity=true;Settings.BloomIntensity=0.f;
             UTexture2D* Lut=TextureFromPngFile(FPaths::ProjectContentDir()/TEXT("KKPreview/KKSDefaultSaturationLUT16.png"),true);
             if(Lut){Lut->SRGB=false;Lut->LODGroup=TEXTUREGROUP_ColorLookupTable;Lut->UpdateResource();Settings.bOverride_ColorGradingLUT=true;Settings.ColorGradingLUT=Lut;Settings.bOverride_ColorGradingIntensity=true;Settings.ColorGradingIntensity=1.f;}
             if(auto* PC=World->GetFirstPlayerController())PC->SetViewTarget(StudioCam);
