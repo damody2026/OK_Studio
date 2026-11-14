@@ -4443,3 +4443,15 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - 修正：
   - 新增 `UOKHScenePanel::HoldAlignment`：換衣服 commit 前把對位偏移從她所有元件拿掉，commit 後再整批加回去，新元件也拿到同樣的偏移。
   - 懷孕肚子重建模型（`RefreshEditorGeometry`／`LoadSession`）也用同一個方法處理。
+
+## 2026-11-14 整合後的 C stage 一啟動就缺 global shader（FOKClothCoverCS）
+
+- 錯誤：
+  - 整合（2aded93f4）合併了 E 組新增 global shader `FOKClothCoverCS` 的改動。之後我在 C 樹建的 exe-only stage `conq1114d` 一啟動就當掉：`Missing global shader FOKClothCoverCS's permutation 0`。
+- 原因：
+  - 啟動器以 `-pakdir` 掛載 `Launch/runtime.json` 的共用 patch。master 裡的 runtime.json 還指向 `StreetDisplay39Puddle.patch`。改指 `StreetDisplay40Cloth.patch` 是 E 樹 b84d0b511 的改動，在整合之後才提交，也沒有推送。
+  - patch 在 `Saved/`，不進版控。就算 runtime.json 合併過來，每棵樹也還要自己 cook 一份同名的 patch。E 有 40Cloth，C 與 F 只有 39Puddle。
+  - 39Puddle 的 `RuntimeGlobalShaderPatch-*_P.pak` 是 11-12 的 global shader 快取，優先權比 base 高，把新的 shader 蓋掉了。
+- 修正：
+  - 這次用 `Tools/rebuild_street_social_patch.lua --output Saved/StreetSocial/Build/Conq1114dCloth.patch` cook 自己的 patch，以 `-PatchDir` 啟動。共用 runtime.json 不動。
+  - 規則：整合合併了含新 global shader 的改動後，C／E／F 每棵樹都要重新 cook 共用 patch（或改指新的 patch），並實際啟動一次 stage。否則該樹之後的 stage 一啟動就因為缺 global shader 當掉。合併 runtime.json 不會把 patch 檔帶過來。
