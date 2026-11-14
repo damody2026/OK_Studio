@@ -91,3 +91,5 @@ c-street-city 量過：電梯口 (45760,58150) 到拉麵店，以約 60 cm 寬�
 4. **時間預算**：樓上同步搜尋只有 25 ms，超過就沒有路線、退回直線；學到的格子會留著，下次走得更遠，所以第一次常失敗、多試幾次才通。
 
 進遊戲時這樣查：讀第 24 格附近，導航到拉麵店，再導航回 9F 電梯口。看 log 的 `Street navigation: blocked why` 與 `learned blocked` 格子座標，對照上面四項。第 1 項若成立，先請 c-street-city 把 ramen 門點移到店門口，再驗一次。
+
+c-street-city 11-14 回覆：門點不是手放的，是 `build_street_city_places.lua` 取建築稽核資料房間 m1-0901 的中心 (48025,60123)，counter_seat4 剛好也在那點；整層沒有高隔間，電梯口到房間是通的，所以是門點選錯。修法：在 build_street_city_places.lua 給 ramen 指定門點 (46600,59000,4560)（房間西南角、靠電梯走道，格點上是空的，離電梯口約 12 m），重新 build places 再 export，只改資料、不重建 WP。使用者叫它先停手，等它恢復並改好後通知我進遊戲驗。
