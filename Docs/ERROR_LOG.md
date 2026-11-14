@@ -4456,3 +4456,14 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - 錯誤：打包並確認沒有金鑰之後，我從包裡啟動試跑。啟動器看到包的 `Saved/StreetSocial/player.json` 金鑰空白，就從這台機器的 `%LOCALAPPDATA%\OpenKoikatsu` 共用副本補回 DeepSeek 金鑰（`street_player_settings.lua` 的設計，讓玩家清掉 Saved 後不用重填）。包裡因此有了金鑰；兩個包（含與不含 H 語音）都是。
 - 原因：把「打包時沒有金鑰」當成最終狀態，試跑後沒有重新搜。
 - 修正：兩個包的 `player.json` 用 `street_player_settings.template()` 重寫成金鑰空白，再以本機金鑰逐字搜加格式搜整包，0 筆。之後在開發機試跑包，一律在試跑後重寫 `player.json` 並重新搜金鑰（`Docs/STREET_SOCIAL_PACKAGE.md`）。
+
+## 2026-11-15 一對一沒有原作表情，射精前的衝刺變慢
+
+- 錯誤：玩家回報一對一「沒接入表情，少了衝刺階段」。
+  - 表情：原作每句喘息與叫聲都帶一組表情（`personality_breath` 的 `lstFaceNormal` → `HFaceList_cNN_00_AA`，`FaceListCtrl.SetFace` 換眉、眼、眼睛張開程度、嘴、眼淚、臉紅、高光、眨眼）。我們的索引 `h_breath_index.json` 只抽了嘴型，一對一的 `UpdateFace` 用的是手寫的幾組固定表情。
+  - 衝刺：原作在決定射精或高潮後先播 `OLoop`，速度沿用剛才的抽插速度（`flags.speed` 不歸零），一直播到她那句話講完才進結束動作。我們的 `ApplySpeed` 只讓 Loop 狀態用玩家的速度，`OLoop` 被降回 1 倍速，而且只播約 2.5 秒（播放器的 `Elapsed` 乘了速度）。結果高速抽插到最後反而慢下來，看起來沒有衝刺。
+- 原因：移植時只看了嘴型欄位，沒有對照 `FaceListCtrl.SetFace` 的整組欄位；`OLoop` 被當成一般單次狀態處理。
+- 修正：
+  - `h_breath_table` 的 `mouths` 每列加上 `eye`／`brow`／`eyeOpen`／`tears`／`cheek`／`highlight`／`blink`（舊欄位不變），`KKHvoice.cpp` 讀成 `FKKHFace`。播喘息時 `AKKPreviewActor::HBreathFace` 記下當句的表情；`UpdateFace` 在阿黑顏、厭惡、深插、口交吸吮之後，優先用這組表情（眼睛先經過 `cha_eyeset` 換成我們的眼睛圖樣），臉紅取當句的 `cheek` 與高潮度的較大者。`ok.HScene.VoiceFace 0` 可以切回原本的固定表情。眼淚、高光、眨眼還沒有接。
+  - `OLoop` 沿用 Loop 的速度（`ok.HScene.SprintSpeed` 可設下限），至少播 `ok.HScene.SprintSeconds`（4 秒，以實際秒數計）。
+  - 基礎庫的 `h/voice/h_breath_index.json` 用新的 `ok-hbreath` 重新匯出（其他表與欄位逐項比對相同）。

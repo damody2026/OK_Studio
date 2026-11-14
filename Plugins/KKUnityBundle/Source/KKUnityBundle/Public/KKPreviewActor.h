@@ -386,6 +386,9 @@ public:
 	bool bHBreathQueuePending=false;
 	void QueueHBreathCues(const TArray<FKKHBreathCue>& Cues){if(bHBreath){PendingHBreaths=Cues;bHBreathQueuePending=true;}}
 	int32 HBreathIndex=0,SavedMouthPattern=0;
+	// The face the playing breath put on (the original's FaceListCtrl.SetFace with the voice); the H scene shows it.
+	// HBreathFaceSerial counts the faces given (0: none yet), so a new breath with the same face shows again.
+	FKKHFace HBreathFace;int32 HBreathFaceSerial=0;
 	float SavedMouthOpen=0.f;
 	void SetMouthPattern(int32 Pattern, bool bBlend = true);
 	int32 GetMouthPatternCount() const;

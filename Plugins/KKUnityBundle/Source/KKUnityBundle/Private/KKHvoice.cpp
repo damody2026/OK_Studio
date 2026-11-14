@@ -18,6 +18,7 @@ struct FBreathIndex {
     TMap<FString,TArray<int32>> Faces;
     TMap<FString,int32> Mouths;
     TMap<FString,float> OpenMins;
+    TMap<FString,FKKHFace> FaceRows; // the whole face of each face id
     TMap<FString,int32> MainVoice;
     TMap<int32,TArray<FBreathInfo>> Voices; // the intercourse voice table's rows (voice_03_00)
     TMap<FString,TArray<FString>> VoiceFiles; // personality|id: its file in each bank
@@ -74,6 +75,11 @@ bool LoadIndex(const FString& Root,TSharedPtr<const FBreathIndex,ESPMode::Thread
         double P=0.,M=0.,Id=0.,Mouth=0.,Open=0.;
         if(!Row->TryGetNumberField(TEXT("p"),P)||!Row->TryGetNumberField(TEXT("m"),M)||!Row->TryGetNumberField(TEXT("id"),Id)||!Row->TryGetNumberField(TEXT("mouth"),Mouth)||!Row->TryGetNumberField(TEXT("open"),Open))continue;
         const FString Key=Key3(int32(P),int32(M),int32(Id));Fresh.Mouths.Add(Key,int32(Mouth));Fresh.OpenMins.Add(Key,float(Open));
+        FKKHFace Face;Face.Mouth=int32(Mouth);Face.MouthOpen=float(Open);double V=0.;
+        if(Row->TryGetNumberField(TEXT("eye"),V)){Face.Eye=int32(V);if(Row->TryGetNumberField(TEXT("brow"),V))Face.Brow=int32(V);
+            if(Row->TryGetNumberField(TEXT("eyeOpen"),V))Face.EyeOpen=float(V);if(Row->TryGetNumberField(TEXT("tears"),V))Face.Tears=int32(V);
+            if(Row->TryGetNumberField(TEXT("cheek"),V))Face.Cheek=float(V);Row->TryGetBoolField(TEXT("highlight"),Face.bHighlight);Row->TryGetBoolField(TEXT("blink"),Face.bBlink);}
+        Fresh.FaceRows.Add(Key,Face);
     }
     const TArray<TSharedPtr<FJsonValue>>* Voices=nullptr;
     if(Json->TryGetArrayField(TEXT("mainVoice"),Voices))for(const TSharedPtr<FJsonValue>& Value:*Voices){
@@ -185,7 +191,7 @@ bool CollectBreath(const FString& Root,int32 Personality,int32 Mode,const FStrin
             if(!IFileManager::Get().FileExists(*Cue.Path))continue;
             if(const TArray<int32>* FaceIds=Index.Faces.Find(Key3(Personality,ClipMode,Voice)))for(const int32 Face:*FaceIds){
                 const FString FaceKey=Key3(Personality,Mode,Face);
-                if(const int32* Mouth=Index.Mouths.Find(FaceKey)){Cue.Mouths.Add(*Mouth);Cue.OpenMins.Add(Index.OpenMins.FindRef(FaceKey));}
+                if(const int32* Mouth=Index.Mouths.Find(FaceKey)){Cue.Mouths.Add(*Mouth);Cue.OpenMins.Add(Index.OpenMins.FindRef(FaceKey));Cue.Faces.Add(Index.FaceRows.FindRef(FaceKey));}
             }
             Seen.Add(Voice);Out.Add(MoveTemp(Cue));
         }

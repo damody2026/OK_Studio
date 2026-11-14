@@ -56,11 +56,19 @@ struct FKKSpeechMeter {
         return false;
     }
 };
+// One face of the original's H face list (HFaceList_cNN_KK_AA, FaceListCtrl.SetFace): Eye -1 in an index exported before
+// the whole face was (only the mouth then).
+struct FKKHFace {
+    int32 Eye=-1,Brow=-1,Mouth=0,Tears=0;
+    float EyeOpen=1.f,MouthOpen=0.f,Cheek=0.f;
+    bool bHighlight=true,bBlink=true;
+};
 struct FKKHBreathCue {
     FString Path;
     FString Name;
     TArray<int32> Mouths;
     TArray<float> OpenMins;
+    TArray<FKKHFace> Faces; // as Mouths, the whole face
 };
 // What HVoiceCtrl.IsBreathPtnConditions and GetStateSelect read when they pick her breathing: her pleasure gauge (0..100;
 // conditions 0 / 1 split at 50), his fast motion (voice.speedMotion, conditions 4 / 5), whether they move (12 / 13), and

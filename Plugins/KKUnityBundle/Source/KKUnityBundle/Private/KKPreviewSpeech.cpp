@@ -48,7 +48,7 @@ bool AKKPreviewActor::BeginHBreath(const TArray<FKKHBreathCue>& Cues,float Pitch
 }
 void AKKPreviewActor::StopHBreath() {
     const bool bRestore=bHBreath;const int32 Mouth=SavedMouthPattern;const float Open=SavedMouthOpen;
-    bHBreath=false;HBreaths.Reset();PendingHBreaths.Reset();bHBreathQueuePending=false;HBreathIndex=0;StopSpeech();
+    bHBreath=false;HBreathFace=FKKHFace();HBreaths.Reset();PendingHBreaths.Reset();bHBreathQueuePending=false;HBreathIndex=0;StopSpeech();
     if(bRestore){SetMouthPattern(Mouth,false);SetMouthOpen(Open);}
 }
 void AKKPreviewActor::SetSpeechPaused(bool bPaused) {
@@ -61,8 +61,9 @@ bool AKKPreviewActor::PlayHCue(FString& Error) {
         if(!KKSpeech::DecodeOgg(Cue.Path,Pcm,Error)||!PlaySpeechPcm(KKSpeech::TimeStretch(Pcm,SpeechTempo),SpeechPitch,Error))return false;}
     else if(!PlaySpeechFile(Cue.Path,SpeechPitch,Error))return false;
     // StopSpeech inside playback clears the floor; the face list puts it back.
-    if(Cue.Mouths.Num()&&!bManualSpeechPattern){
-        const int32 Pick=FMath::RandRange(0,Cue.Mouths.Num()-1);
+    const int32 Pick=Cue.Mouths.Num()?FMath::RandRange(0,Cue.Mouths.Num()-1):INDEX_NONE;
+    if(Cue.Faces.IsValidIndex(Pick)&&Cue.Faces[Pick].Eye>=0){HBreathFace=Cue.Faces[Pick];++HBreathFaceSerial;}
+    if(Pick!=INDEX_NONE&&!bManualSpeechPattern){
         SpeechOpenMin=FMath::Clamp(Cue.OpenMins.IsValidIndex(Pick)?Cue.OpenMins[Pick]:0.f,0.f,1.f);
         SetMouthPattern(Cue.Mouths[Pick],true);
     }else {SpeechOpenMin=0.f;ApplyMouth();}
