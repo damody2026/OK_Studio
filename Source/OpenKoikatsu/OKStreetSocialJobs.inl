@@ -104,6 +104,9 @@ void AOKStreetSocialScene::TickJobs(){
     S.ShiftAppointment=A.Id;S.ShiftJob=J;S.ShiftStart=A.WorkedFrom>=A.Start?FMath::Min<int64>(A.WorkedFrom,Now):FMath::Max<int64>(A.Start,Now);
     for(auto& Mine:S.Store.Appointments)if(Mine.Id==A.Id)Mine.WorkedFrom=S.ShiftStart;S.ShiftEnd=A.Start-A.Start%1440+int64(H.Y*60);S.ShiftAwaySince=-1;S.ShiftChats=0;
     S.FreeTalkNotice=OKMsg(TEXT("ui.jobs.shift_started_notice"), {{TEXT("job_title"), *Job->Title}, {TEXT("end_hour"), (S.ShiftEnd%1440)/60}, {TEXT("end_minute"), S.ShiftEnd%60}});
+    // The line under the view says so too: it still read "closed, the staff ask you to leave" from when he came early,
+    // through his whole shift (round 7, 2026-11-14).
+    S.Message=S.FreeTalkNotice;
     StandAtWork(Job->Place,Job->Stations);RefreshUI();
    }
    if(S.ShiftAppointment)break;
@@ -165,7 +168,13 @@ void AOKStreetSocialScene::BuildJobRows(const TSharedRef<SVerticalBox>& Panel){
  for(const auto& Job:S.Catalog.Jobs){if(Job.Place!=Place)continue;Any=true;const FString Id=Job.Id;
   if(!S.Store.PlayerJobs.Contains(Id)){Row->AddSlot().Padding(1)[Button(OKMsg(TEXT("ui.jobs.apply_job_label"), {{TEXT("job_title"), *Job.Title}, {TEXT("wage"), Job.Wage}}),[Weak,Id](){Weak->ApplyJob(Id);})];continue;}
   int32 Open=0;
-  for(int32 Shift=0;Shift<Job.Shifts.Num();++Shift){FString Why;if(PlaceClosedAt(Job.Place,OKStreetCalendarDateTime(S.Store.CalendarDay+1,Job.Shifts[Shift].X+0.25),Why))continue;++Open;// Over one of his classes: said on the button (academics.rs class_clash); booking it is still his choice.
+  for(int32 Shift=0;Shift<Job.Shifts.Num();++Shift){FString Why;if(PlaceClosedAt(Job.Place,OKStreetCalendarDateTime(S.Store.CalendarDay+1,Job.Shifts[Shift].X+0.25),Why))continue;++Open;
+   // Booked already: said so instead of the button, which stayed the same after booking and did nothing on a second
+   // click (round 7, 2026-11-14).
+   {const int64 Start=int64(S.Store.CalendarDay+1)*1440+int64(Job.Shifts[Shift].X*60);
+    if(S.Store.Appointments.ContainsByPredicate([&](const FOKStreetAppointment& A){return A.Kind==TEXT("shift")&&A.Start==Start&&A.Status==TEXT("pending");})){
+     Row->AddSlot().Padding(4)[SNew(STextBlock).Text(FText::FromString(OKMsg(TEXT("ui.jobs.shift_booked_tomorrow"),{{TEXT("job_title"),*Job.Title},{TEXT("start_hour"),Job.Shifts[Shift].X},{TEXT("end_hour"),int32(Job.Shifts[Shift].Y)%24}})))];continue;}}
+   // Over one of his classes: said on the button (academics.rs class_clash); booking it is still his choice.
    FString Clash;{auto Ask=OKRulesRequest(TEXT("class_clash"));Ask->SetObjectField(TEXT("player"),OKStreetAcademicJson(S.Store.PlayerAcademic));Ask->SetNumberField(TEXT("day"),S.Store.CalendarDay+1);Ask->SetNumberField(TEXT("from"),Job.Shifts[Shift].X);Ask->SetNumberField(TEXT("to"),Job.Shifts[Shift].Y);
     if(const TSharedPtr<FJsonObject> Out=OKRulesEval(S,Ask)){const FString Course=Out->GetStringField(TEXT("course"));if(!Course.IsEmpty())Clash=OKMsg(TEXT("ui.jobs.class_clash_suffix"),{{TEXT("course"),Course}});}}
    Row->AddSlot().Padding(1)[Button(OKMsg(TEXT("ui.jobs.schedule_tomorrow_shift"), {{TEXT("job_title"), *Job.Title}, {TEXT("start_hour"), Job.Shifts[Shift].X}, {TEXT("end_hour"), int32(Job.Shifts[Shift].Y)%24}})+Clash,[Weak,Id,Shift](){Weak->BookShift(Id,Shift);})];}

@@ -470,7 +470,11 @@ void AOKStreetSocialScene::TickChoices(){
  auto& S=*State;const double Now=SceneTime();
  // Her give_money still waiting after half a minute: the judge never answered; it goes through as she said.
  {TArray<int32> Waiting;S.PendingGiveMoney.GetKeys(Waiting);for(const int32 G:Waiting)SettleMoneyHandover(G,0,false);}
+ // No AI talk (-NoCloud, no key): no reply of hers ever comes, so her lean is taken at once. A checkout waited out its
+ // deadline and 105 s more with nothing to pick, the clock ran 50 minutes before the order went in (round 7, 2026-11-14).
+ FOKFreeTalkSettings Ai;FString AiWhy;const bool AiReady=S.SelfTest||S.Choices.IsEmpty()||OKStreetFreeTalkLoadSettings(Ai,AiWhy);
  for(int32 I=S.Choices.Num()-1;I>=0;--I){
+  if(!AiReady&&S.Choices[I].Deadline>0)S.Choices[I].Deadline=FMath::Min(S.Choices[I].Deadline,Now);
   // A bill not settled when they walk out of the shop: nothing is bought there. It timed out a minute later in the park
   // and her latte was paid for and "served in 30 s" by the pond (R6-8).
   if(const auto& C=S.Choices[I];!C.Place.IsEmpty()&&ShopPlaceHere()!=C.Place){
@@ -483,7 +487,7 @@ void AOKStreetSocialScene::TickChoices(){
   // nor while she is still saying it: a gift was taken on its 15 s deadline while she talked on about dango, and she
   // then asked whose cake that was. At most a minute and a half longer, if she never gets a turn.
   {const auto& C=S.Choices[I];
-   if(C.Heroine==FreeTalkPartner()&&(S.FreeTalkBusy||FreeTalkHerVoiceBusy()||S.FreeTalkAnswered<=C.SentAtOpen)&&Now<C.OpenedAt+105.0){S.Choices[I].Deadline=Now+5.0;continue;}}
+   if(AiReady&&C.Heroine==FreeTalkPartner()&&(S.FreeTalkBusy||FreeTalkHerVoiceBusy()||S.FreeTalkAnswered<=C.SentAtOpen)&&Now<C.OpenedAt+105.0){S.Choices[I].Deadline=Now+5.0;continue;}}
   FOKStreetPendingChoice Done=MoveTemp(S.Choices[I]);S.Choices.RemoveAt(I);
   FString Final=!Done.HerLean.IsEmpty()?Done.HerLean:(Done.Options.IsEmpty()?FString():Done.Options[0]);
   // Her wish to be close: his silence is not a yes (R3-228).

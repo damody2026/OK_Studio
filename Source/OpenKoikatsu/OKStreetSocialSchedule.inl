@@ -1,4 +1,4 @@
-﻿// Included by OKStreetSocialScene.cpp: plan §6.1–6.3 the heroines' own days — rule-written plans and a small
+// Included by OKStreetSocialScene.cpp: plan §6.1–6.3 the heroines' own days — rule-written plans and a small
 // behaviour tree per heroine. No LLM call happens here (plan §6.0).
 
 bool AOKStreetSocialScene::BusyWithPlayer(int32 I) const{
@@ -46,7 +46,18 @@ FVector AOKStreetSocialScene::SpotFor(int32 I,const FString& PlaceId,const FStri
   const FBox& Room=P->Rooms[0];Spot+=Away*300.f;
   Spot.X=FMath::Clamp(Spot.X,Room.Min.X+60.f,FMath::Max(Room.Min.X+60.f,Room.Max.X-60.f));Spot.Y=FMath::Clamp(Spot.Y,Room.Min.Y+60.f,FMath::Max(Room.Min.Y+60.f,Room.Max.Y-60.f));}
  // Side by side in rows of five (65 cm apart), a second row behind for heroines 6..10.
- return Spot+FRotator(0,Yaw,0).RotateVector(FVector(-((I-1)/5)*70.f,(((I-1)%5)-2)*65.f,0));
+ // A row spot inside furniture is moved: the drink shop's work fell back to a seat, the second row 70 cm behind it was
+ // in its table, and the ground snap stood 爱丽丝 on the tabletop for her whole shift (round 7, 2026-11-14). The row
+ // in front, then the line without a row, then the anchor itself; nothing clear (or the world not loaded there): as before.
+ const FRotator Turn(0,Yaw,0);const float Side=(((I-1)%5)-2)*65.f,Row=((I-1)/5)*70.f;
+ const FVector RowSpot=Spot+Turn.RotateVector(FVector(-Row,Side,0));
+ if(OKStreetCityMode()&&GetWorld()){
+  auto Clear=[&](const FVector& At){FCollisionQueryParams Q(SCENE_QUERY_STAT(StreetSpotClear),false,this);
+   float G=At.Z;if(OKStreetGroundZ(GetWorld(),At,G,this)&&G>At.Z+20.f)return false; // a seat or a tabletop under her feet
+   return !GetWorld()->OverlapAnyTestByChannel(At+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(25,OKStreetBodyHalf()),Q);};
+  if(!Clear(RowSpot))for(const FVector& Try:{Spot+Turn.RotateVector(FVector(Row,Side,0)),Spot+Turn.RotateVector(FVector(0,Side,0)),Spot})if(Clear(Try)){
+   UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d at %s, %s is in furniture, %s instead"),I,*PlaceId,*RowSpot.ToCompactString(),*Try.ToCompactString());return Try;}}
+ return RowSpot;
 }
 
 // He sits down with her (a meal, a drink, a seat) where other heroines' plans already stood them: the cafeteria's table
