@@ -41,13 +41,22 @@ TArray<FVector> AOKStreetSocialScene::CityRoute(const FVector& From,const FVecto
  // The building's way in and out: its door, or an "entrance" anchor on the door's floor, whichever makes the way shorter.
  // The sports building's one door is at its south end (77000,21000); gym_hall's door at y 34275 went round by it although
  // the north side has a way in (27 of the place pairs over twice the straight distance, 2026-11-15).
- auto Entrance=[&](const FOKStreetPlace* P)->FVector{FVector Best=P->Door;double Cost=FVector::Dist2D(From,Best)+FVector::Dist2D(Best,To);
+ // The outside leg by the road graph's length, not the straight line: the civic centre's north entrance is nearer the bank
+ // as the crow flies, with a building between, and bank -> clinic went from 54 m to 102 m (c-street-city, 2026-11-15).
+ auto GraphLength=[](const FVector& A,const FVector& B)->double{const TArray<FVector> R=OKStreetCityRoute(A,B);if(R.Num()<2)return FVector::Dist2D(A,B)*3.0;
+  double L=FVector::Dist2D(A,R[0]);for(int32 I=1;I<R.Num();++I)L+=FVector::Dist2D(R[I-1],R[I]);return L+FVector::Dist2D(R.Last(),B);};
+ auto Entrance=[&](const FOKStreetPlace* P,bool bInto)->FVector{
+  auto Cost=[&](const FVector& E){return bInto?GraphLength(From,E)+FVector::Dist2D(E,To):FVector::Dist2D(From,E)+GraphLength(E,To);};
+  FVector Best=P->Door;bool Any=false;
+  for(const auto& A:P->Anchors)if(A.Name.StartsWith(TEXT("entrance"))&&FMath::Abs(A.Position.Z-P->Door.Z)<150.f){Any=true;break;}
+  if(!Any)return Best;
+  double BestCost=Cost(Best);
   for(const auto& A:P->Anchors)if(A.Name.StartsWith(TEXT("entrance"))&&FMath::Abs(A.Position.Z-P->Door.Z)<150.f){
-   const double C=FVector::Dist2D(From,A.Position)+FVector::Dist2D(A.Position,To);if(C<Cost){Cost=C;Best=A.Position;}}
+   const double C=Cost(A.Position);if(C<BestCost){BestCost=C;Best=A.Position;}}
   return Best;};
  if(Into&&Into==OutOf&&FMath::Abs(From.Z-To.Z)<150.f){TArray<FVector> Here=GridRoute(From,To,NearCm);if(Here.Num()>=2)return Here;
   TArray<FVector> Graph=FloorGraph(Into,From,To);return Graph.Num()>=2?Graph:TArray<FVector>{From,To};}
- const FVector IntoDoor=Into?Entrance(Into):FVector::ZeroVector;
+ const FVector IntoDoor=Into?Entrance(Into,true):FVector::ZeroVector;
  if(Into&&Into!=OutOf&&FVector::Dist2D(IntoDoor,To)>50.f){
   const FVector Door=IntoDoor;TArray<FVector> Route=CityRoute(From,Door);if(Route.IsEmpty())Route={From};
   if(!Door.Equals(Into->Door,1.f))UE_LOG(LogTemp,Display,TEXT("Street navigation: into %s by its entrance %s"),Into->Id,*Door.ToCompactString());
@@ -63,7 +72,7 @@ TArray<FVector> AOKStreetSocialScene::CityRoute(const FVector& From,const FVecto
    else if((In=FloorGraph(Into,Door,To)).Num()>=2){In.RemoveAt(0);Route.Append(In);}
    else{const FVector Inside=Main?PlaceInsideSpot(*Into):Door;if(!Inside.Equals(Door,1.f))Route.Add(Inside);Route.Add(To);}}
   return Route;}
- const FVector OutDoor=OutOf?Entrance(OutOf):FVector::ZeroVector;
+ const FVector OutDoor=OutOf?Entrance(OutOf,false):FVector::ZeroVector;
  if(OutOf&&OutOf!=Into&&FVector::Dist2D(OutDoor,From)>50.f&&FMath::Abs(OutDoor.Z-From.Z)<150.f){
   const FVector Door=OutDoor;const bool Main=Door.Equals(OutOf->Door,1.f);TArray<FVector> Route=GridRoute(From,Door);
   if(!Main)UE_LOG(LogTemp,Display,TEXT("Street navigation: out of %s by its entrance %s"),OutOf->Id,*Door.ToCompactString());
