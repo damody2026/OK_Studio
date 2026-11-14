@@ -440,8 +440,10 @@ local PASSAGES = {
   { id = 's64', pts = { { 32800, 41320 }, { 33300, 41320 }, { 34000, 41320 }, { 34700, 41320 }, { 35300, 41320 }, { 35700, 41320 } } },
   -- S38: east shop row (x 43100-44880), west wall cut at y 36380-36580; the east side was open at y 36740-36920.
   -- Inside, a counter (x 44280-44380, y 36480-36720) had its south edge on the old y 36480 line and stopped the walk
-  -- (11-14); the line goes along y 36400 and turns north at x 44480, both clear in the S38 floor scan (z 1290).
-  { id = 's38', pts = { { 42800, 36460 }, { 43300, 36460 }, { 44000, 36400 }, { 44480, 36400 }, { 44480, 36820 }, { 45000, 36830 }, { 45400, 36830 } } },
+  -- (11-14); the line goes along y 36400 and turns north at x 44720. 11-15: the turn at x 44480 ran into low tables and
+  -- chairs (x 44400-44660, y 36490-36710, StaticMeshActor_111 on nh1115b) that a scan at z 1290 does not see; x 44720 is
+  -- clear at z 1290 and 1220 (70 cm from the furniture, 170 from the east wall).
+  { id = 's38', pts = { { 42800, 36460 }, { 43300, 36460 }, { 44000, 36400 }, { 44720, 36400 }, { 44720, 36830 }, { 45000, 36830 }, { 45400, 36830 } } },
   -- Campus east fence (x 97000) beside the girls' dorm D1: 17 pieces taken out at y 39760-40190 (the fence ran unbroken
   -- from y 20000 to 47800; girls_dorm -> playground was 551 m for 100 m straight).
   { id = 'fence_d1', pts = { { 96500, 39975 }, { 97000, 39975 }, { 97500, 39975 } } },
