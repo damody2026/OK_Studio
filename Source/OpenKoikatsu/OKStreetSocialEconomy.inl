@@ -569,7 +569,8 @@ void AOKStreetSocialScene::TickMeal(float Dt){
   const bool House=!Top[0]&&!Top[1]&&S.Pair.Meal&&S.Pair.Partner!=INDEX_NONE&&S.MealHouseSince>=0;
   int32 HouseKind=5;
   if(House){const FString Here=PlaceHere(S.Male);
-   HouseKind=Here.Contains(TEXT("ramen"))||Here.Contains(TEXT("noodle"))?1:Here.Contains(TEXT("fastfood"))||Here.Contains(TEXT("burger"))?2:Here.Contains(TEXT("cafe"))||Here.Contains(TEXT("bakery"))?8:Here.Contains(TEXT("cafeteria"))||Here.Contains(TEXT("bento"))?0:5;}
+   // (cafeteria before cafe: the student cafeteria's rice was drawn as the cafe's dessert.)
+   HouseKind=Here.Contains(TEXT("ramen"))||Here.Contains(TEXT("noodle"))?1:Here.Contains(TEXT("fastfood"))||Here.Contains(TEXT("burger"))?2:Here.Contains(TEXT("cafeteria"))||Here.Contains(TEXT("bento"))?0:Here.Contains(TEXT("cafe"))||Here.Contains(TEXT("bakery"))||Here.Contains(TEXT("snack"))?8:5;}
   const FString Shown=House?FString::Printf(TEXT("house%d"),HouseKind):(Top[0]?Top[0]->ItemId:FString())+TEXT("|")+(Top[1]?Top[1]->ItemId:FString());
   if(Shown!=S.MealDishShown){S.MealDishShown=Shown;for(auto& Prop:S.MealDishProps)DestroyLater(Prop.Get());S.MealDishProps.Reset();
    const int32 Before=S.PairProps.Num();
