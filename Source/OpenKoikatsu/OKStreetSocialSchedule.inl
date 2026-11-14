@@ -53,10 +53,16 @@ FVector AOKStreetSocialScene::SpotFor(int32 I,const FString& PlaceId,const FStri
  const FVector RowSpot=Spot+Turn.RotateVector(FVector(-Row,Side,0));
  if(OKStreetCityMode()&&GetWorld()){
   auto Clear=[&](const FVector& At){FCollisionQueryParams Q(SCENE_QUERY_STAT(StreetSpotClear),false,this);
+   // Not where another heroine already stands (刻晴 and 爱丽丝 were both moved to the same free spot by the booth).
+   for(const auto& Other:State->Agents)if(Other.Slot!=I&&FVector::Dist2D(Other.Position,At)<50.f&&FMath::Abs(Other.Position.Z-At.Z)<100.f)return false;
    // A seat or a tabletop under her feet, traced from above her head (the ground snap's 70 cm start is under a table's top).
    {FHitResult Top;if(GetWorld()->LineTraceSingleByChannel(Top,At+FVector(0,0,150),At-FVector(0,0,30),ECC_WorldStatic,Q)&&Top.ImpactPoint.Z>At.Z+20.f)return false;}
    return !GetWorld()->OverlapAnyTestByChannel(At+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(25,OKStreetBodyHalf()),Q);};
-  if(!Clear(RowSpot))for(const FVector& Try:{Spot+Turn.RotateVector(FVector(Row,Side,0)),Spot+Turn.RotateVector(FVector(0,Side,0)),Spot})if(Clear(Try)){
+  // The anchor may be the seat itself (the drink shop's booth: work fell back to a seat, the bench is under every one of
+  // the three): then round it, 80 then 140 cm out, still inside the place.
+  TArray<FVector> Tries={Spot+Turn.RotateVector(FVector(Row,Side,0)),Spot+Turn.RotateVector(FVector(0,Side,0)),Spot};
+  for(const float R:{80.f,140.f})for(int32 K=0;K<8;++K){const FVector Try=Spot+Turn.RotateVector(FRotator(0,K*45.f,0).RotateVector(FVector(R,0,0)));if(OKStreetInsidePlace(*P,Try))Tries.Add(Try);}
+  if(!Clear(RowSpot))for(const FVector& Try:Tries)if(Clear(Try)){
    static TSet<FString> Said;if(!Said.Contains(FString::Printf(TEXT("%d %s"),I,*PlaceId))){Said.Add(FString::Printf(TEXT("%d %s"),I,*PlaceId)); // asked every 2 s: said once
     UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d at %s, %s is in furniture, %s instead"),I,*PlaceId,*RowSpot.ToCompactString(),*Try.ToCompactString());}
    return Try;}}
