@@ -276,9 +276,31 @@ end
 -- nearest the walk (CityRoute, entrance* anchors on the door's floor). The sports building's door is its south end
 -- (77000,21000) and the gym hall's 34274, so campus_e1 -> gym_hall went 341 m for 72 and 27 pairs over 2x (11-15); its north
 -- way in is where the e1_pool corridor enters (77030,39080), a road point, clear at z 1290 and 1220 with 40 cm clearance.
--- Each entrance must be a point of city_roads.json, like a door.
+-- Each entrance must be a point of city_roads.json, like a door: Tools/street_city_entrances_tie.lua ties them in.
+-- The rest (11-15): floor scans (z 1290 and 1220, 50 cm, every big ground-floor building and 10 m round it); from a spot
+-- 9 m inside the door, with the door shut, the shortest way out of the rooms, the narrowest point where it leaves them, then
+-- that shut too and again; kept 25 m or more from the door and from each other (the campus blocks' side corridor ends and
+-- back doors, the dorms', the library's...). Not the hotel: its door is 10 m south of the building, the search began outside.
 local ENTRANCES = {
-  campus_sports = { { name = 'entrance', pos = { 77030, 39080, 1200 } } },
+  campus_sports = { { name = 'entrance', pos = { 77030, 39080, 1200 } }, { name = 'entrance2', pos = { 66925, 21625, 1200 } },
+    { name = 'entrance3', pos = { 66725, 25475, 1200 } }, { name = 'entrance4', pos = { 66925, 38425, 1200 } },
+    { name = 'entrance5', pos = { 66925, 29825, 1200 } }, { name = 'entrance6', pos = { 66925, 34075, 1200 } } },
+  boys_dorm = { { name = 'entrance', pos = { 90625, 60343, 1200 } }, { name = 'entrance2', pos = { 93125, 65993, 1200 } } },
+  cafeteria = { { name = 'entrance', pos = { 66925, 44793, 1200 } }, { name = 'entrance2', pos = { 69425, 49193, 1200 } } },
+  campus_ad = { { name = 'entrance', pos = { 64425, 69793, 1200 } }, { name = 'entrance2', pos = { 66925, 74193, 1200 } } },
+  campus_e1 = { { name = 'entrance', pos = { 76025, 44543, 1200 } }, { name = 'entrance2', pos = { 78225, 50693, 1200 } } },
+  campus_ee = { { name = 'entrance', pos = { 80425, 62643, 1200 } }, { name = 'entrance2', pos = { 82925, 65493, 1200 } } },
+  campus_ib = { { name = 'entrance', pos = { 57925, 74493, 1200 } }, { name = 'entrance2', pos = { 55425, 71843, 1200 } } },
+  campus_ma = { { name = 'entrance', pos = { 74425, 62643, 1200 } }, { name = 'entrance2', pos = { 76925, 65493, 1200 } } },
+  campus_rb = { { name = 'entrance', pos = { 57975, 48843, 1200 } }, { name = 'entrance2', pos = { 55425, 45843, 1200 } } },
+  campus_t1 = { { name = 'entrance', pos = { 61425, 53643, 1200 } }, { name = 'entrance2', pos = { 63925, 56493, 1200 } } },
+  campus_t2 = { { name = 'entrance', pos = { 74175, 71393, 1200 } }, { name = 'entrance2', pos = { 76925, 74493, 1200 } } },
+  campus_t4 = { { name = 'entrance', pos = { 61425, 45643, 1200 } }, { name = 'entrance2', pos = { 63925, 48493, 1200 } } },
+  civic = { { name = 'entrance', pos = { 31447, 63930, 1200 } } },
+  department = { { name = 'entrance', pos = { 40825, 65425, 1200 } }, { name = 'entrance2', pos = { 45925, 73225, 1200 } } },
+  girls_dorm = { { name = 'entrance', pos = { 90625, 36343, 1200 } }, { name = 'entrance2', pos = { 93125, 41993, 1200 } } },
+  library = { { name = 'entrance', pos = { 55425, 62293, 1200 } }, { name = 'entrance2', pos = { 57925, 66693, 1200 } } },
+  station = { { name = 'entrance', pos = { 20835, 15825, 1200 } } },
 }
 for _, p in ipairs(places) do
   for _, e in ipairs(ENTRANCES[p.id] or {}) do
