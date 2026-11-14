@@ -450,6 +450,10 @@ local PASSAGES = {
   -- x ~58600 and a lamp south of it, so the crossing keeps to x 58680 (walked both ways at x 58650 and 58700 in the WP
   -- on 11-14; x 58400 and 58600 stuck).
   { id = 'campus_north', pts = { { 58400, 76200 }, { 58680, 76700 }, { 58680, 77000 }, { 58680, 77300 }, { 58400, 77800 } } },
+  -- Flower field: the road raster (world-edge-v1) ends at y ~110000 and the field (door 71700,114400) lies north of it, so
+  -- its door point had no link at all and every walk there left the road graph (11-14). A line due north from the y 109900
+  -- road row to the door; its north end is the door itself (no lattice there to tie to, the 'ties' problem is expected).
+  { id = 'flower_field', pts = { { 71700, 110000 }, { 71700, 111200 }, { 71700, 112400 }, { 71700, 113400 }, { 71700, 114400 } } },
 }
 local PASSAGE_TIE_CM, PASSAGE_TIES = 800, 3
 for _, pass in ipairs(PASSAGES) do
