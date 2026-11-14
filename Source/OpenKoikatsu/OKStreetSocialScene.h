@@ -496,6 +496,7 @@ private:
  float StepLiftRide(float Dt);
  int32 AdvanceLiftRide(struct FOKStreetLiftRide& Ride,float Dt,float& Rate); // OKStreetSocialElevator.inl
  bool PlanNavLift(const FVector& Goal);
+ TArray<FVector> WalkToLanding(const FVector& From,const FVector& Landing) const; // OKStreetSocialElevator.inl
  FVector NavApproachSpot(const FVector& Her) const; // OKStreetSocialContacts.inl
  FVector PlaceInsideSpot(const struct FOKStreetPlace& Place) const; // OKStreetSocialOuting.inl
  bool NavNeedsLift(const FVector& Goal) const;

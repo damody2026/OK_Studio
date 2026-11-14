@@ -331,6 +331,19 @@ bool AOKStreetSocialScene::NavNeedsLift(const FVector& Goal) const{
  return In;
 }
 
+// His walk to the lift landing in the building he is in. The grid alone (25 ms) found nothing across the gym's 130 m 1F, and
+// the ride walked a two-point straight line into a wall, replanned 30 times and gave up (gym_hall -> gym, gym_storage,
+// 2026-11-15): the road graph (its 1F corridor points) when the grid finds no way or it is far. Upstairs only a way that
+// stays on his floor (the street graph would take him down and out).
+TArray<FVector> AOKStreetSocialScene::WalkToLanding(const FVector& From,const FVector& Landing) const{
+ if(!OKStreetCityFar(From,Landing)){TArray<FVector> Grid=GridRoute(From,Landing);if(Grid.Num()>=2)return Grid;}
+ TArray<FVector> Way=PlaceRouteWaypoints(From,Landing);
+ if(Way.Num()<2||Way.ContainsByPredicate([&](const FVector& P){return FMath::Abs(P.Z-From.Z)>150.f;}))return {};
+ if(FVector::Dist2D(Way.Last(),Landing)>50.f)Way.Add(Landing);
+ UE_LOG(LogTemp,Display,TEXT("Street navigation: to the lift landing by the road graph (%d points, %.0f m)"),Way.Num(),FVector::Dist2D(From,Landing)/100.f);
+ return Way;
+}
+
 bool AOKStreetSocialScene::PlanNavLift(const FVector& Goal){
  auto& S=*State;const auto& Places=OKStreetPlaces();
  auto FloorOf=[](const TArray<const FOKStreetModelAnchor*>& Lifts,float Z){int32 Best=0;for(int32 F=0;F<Lifts.Num();++F)if(FMath::Abs(Lifts[F]->Position.Z-Z)<FMath::Abs(Lifts[Best]->Position.Z-Z))Best=F;return Best;};
@@ -348,15 +361,15 @@ bool AOKStreetSocialScene::PlanNavLift(const FVector& Goal){
   if(!OKStreetInsidePlace(Places[P],S.Male))continue;const auto Lifts=OKStreetPlaceLifts(Places[P]);if(Lifts.IsEmpty()||ElevatorOfPlace(P)==INDEX_NONE)continue;
   const int32 From=FloorOf(Lifts,S.Male.Z);const bool Same=OKStreetInsidePlace(Places[P],Goal);const int32 To=Same?FloorOf(Lifts,Goal.Z):0;
   if(From==To)return false;
-  return Ride(P,To,!Same,GridRoute(S.Male,Lifts[From]->Position),Lifts[From]->Position);
+  return Ride(P,To,!Same,WalkToLanding(S.Male,Lifts[From]->Position),Lifts[From]->Position);
  }
  // On the ground: up in the building she (or the spot) is in.
  if(OKStreetUpstairs(Goal))for(int32 P=0;P<Places.Num();++P){
   if(!OKStreetInsidePlace(Places[P],Goal))continue;const auto Lifts=OKStreetPlaceLifts(Places[P]);if(Lifts.IsEmpty()||ElevatorOfPlace(P)==INDEX_NONE)continue;
   TArray<FVector> Walk;
-  if(OKStreetInsidePlace(Places[P],S.Male))Walk=GridRoute(S.Male,Lifts[0]->Position);
+  if(OKStreetInsidePlace(Places[P],S.Male))Walk=WalkToLanding(S.Male,Lifts[0]->Position);
   else{Walk=FVector::Dist2D(S.Male,Places[P].Door)<200?TArray<FVector>{S.Male,Places[P].Door}:PlaceRoute(S.Male,Places[P].Door);if(Walk.Num()<2)return false;
-   TArray<FVector> In=GridRoute(Walk.Last(),Lifts[0]->Position);if(In.Num()>=2){In.RemoveAt(0);Walk.Append(In);}else Walk.Add(Lifts[0]->Position);}
+   TArray<FVector> In=WalkToLanding(Walk.Last(),Lifts[0]->Position);if(In.Num()>=2){In.RemoveAt(0);Walk.Append(In);}else Walk.Add(Lifts[0]->Position);}
   return Ride(P,FloorOf(Lifts,Goal.Z),false,Walk,Lifts[0]->Position);
  }
  return false;
