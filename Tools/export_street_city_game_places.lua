@@ -191,6 +191,18 @@ for _, p in ipairs(places) do
   local d = DOORS[p.id]
   if d then print(('door: %s by hand, %.0f,%.0f -> %.0f,%.0f'):format(p.id, p.door[1], p.door[2], d[1], d[2])); p.door = { d[1], d[2], d[3] } end
 end
+-- Spots picked by hand where the anchor is inside furniture the props list (actors.json) does not have: the cafeteria's
+-- 'table' (COMMON-CITY-dining) was in the middle of its long table (StaticMeshActor_362, swept at 70223,42655 z 1275), so
+-- he stood in it after a meal, no grid route found a first cell, and each walk out hit the table 30 times and gave up
+-- (nh1115m, rounds 10 and 11). The aisle south of it (floor scans z 1290 and 1220) is open 1.5 m wide along y 42400-42500;
+-- the spot is there, 85 cm off the table's edge at y 42555, facing it as before (yaw 90).
+local SPOTS = { ['cafeteria table'] = { 70230, 42470, 1200 } }
+for _, p in ipairs(places) do
+  for _, an in ipairs(p.anchors or {}) do
+    local s = SPOTS[p.id .. ' ' .. an.name]
+    if s then print(('anchor: %s %s by hand, %.0f,%.0f -> %.0f,%.0f'):format(p.id, an.name, an.pos[1], an.pos[2], s[1], s[2])); an.pos = { s[1], s[2], s[3] } end
+  end
+end
 
 -- A shop turned to face east (its ground floor S##_F01 at yaw -90) had its door on its back wall: the street entrance was
 -- read in the building's own frame without its turn, so it came out mirrored. The front wall is cut open and rebuilt with
