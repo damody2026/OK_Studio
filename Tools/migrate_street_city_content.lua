@@ -3,6 +3,7 @@
 -- other bytes and is not ours (outside UniversityCity) is never overwritten, it is listed and the run fails.
 --   Tools\lua\lua.exe Tools\migrate_street_city_content.lua
 --   Tools\lua\lua.exe Tools\migrate_street_city_content.lua --refs-only   (only the reference step below: adds missing packages)
+-- A full run refuses (exit 2) while an HLOD batch of the last WP conversion has not ended with Success (check below).
 package.path = 'Tools/lua/?.lua;' .. package.path
 local j = require('ok.json'); local lfs = require('lfs')
 local out = 'output/street-social-city-production/migrate-v1/'
@@ -46,6 +47,49 @@ local function follow_references()
   print(string.format('referenced packages added %d (%.2f GB), files read %d', added, added_bytes / 2 ^ 30, #queue))
 end
 if arg[1] == '--refs-only' then follow_references(); os.exit(0) end
+-- The WP copy only goes into the game when its last conversion and every HLOD batch after it ended with "Success - 0
+-- error(s)" (Tools/build_street_city_stream.lua logs). 11-14: a run stopped in HLOD batch 1 of 8 left a converted map
+-- with most distance models unbuilt in StreetSocialCity, over the old complete one; nothing must copy that into Content.
+-- --allow-incomplete-hlod copies anyway (only when that is what you want).
+do
+  local dir = 'output/street-social-city-production/stream-v1/'
+  local function ok_log(p) local f = io.open(dir .. p, 'rb'); if not f then return false end; local s = f:read('*a'); f:close(); return s:find('Success %- 0 error%(s%)') ~= nil end
+  local convert, setup, batch, single = nil, nil, {}, nil
+  for n in lfs.dir(dir) do
+    local st = n:match('^convert%-(%d+%-%d+)%.log$'); if st and (not convert or st > convert) then convert = st end
+  end
+  local why
+  if not convert then why = 'no conversion log in ' .. dir
+  elseif not ok_log('convert-' .. convert .. '.log') then why = 'the last conversion (' .. convert .. ') did not end with Success'
+  else
+    for n in lfs.dir(dir) do
+      local st = n:match('^hlod%-(%d+%-%d+)%-setup%.log$'); if st and st >= convert and (not setup or st > setup) then setup = st end
+      local sb, b = n:match('^hlod%-(%d+%-%d+)%-b(%d+)%.log$'); if sb and sb >= convert and (not batch[b] or sb > batch[b]) then batch[b] = sb end
+      local s1 = n:match('^hlod%-(%d+%-%d+)%.log$'); if s1 and s1 >= convert and (not single or s1 > single) then single = s1 end
+    end
+    if setup then
+      local mf = io.open(dir .. 'hlod-manifest.ini', 'rb'); local count = mf and tonumber(mf:read('*a'):match('BuilderCount=(%d+)')); if mf then mf:close() end
+      if not ok_log('hlod-' .. setup .. '-setup.log') then why = 'the HLOD setup (' .. setup .. ') did not end with Success'
+      elseif not count then why = 'hlod-manifest.ini has no BuilderCount'
+      else
+        for b = 0, count - 1 do
+          local st = batch[tostring(b)]
+          if not st then why = ('HLOD batch %d of %d was not built after the conversion %s'):format(b, count, convert); break end
+          if not ok_log(('hlod-%s-b%d.log'):format(st, b)) then why = ('HLOD batch %d (%s) did not end with Success'):format(b, st); break end
+        end
+      end
+    elseif not (single and ok_log('hlod-' .. single .. '.log')) then why = 'no successful HLOD run after the conversion ' .. convert
+    end
+  end
+  if why then
+    if arg[1] == '--allow-incomplete-hlod' then print('WARNING, copying anyway: ' .. why)
+    else
+      print('refused: the World Partition copy in StreetSocialCity is not complete: ' .. why)
+      print('  build the rest (Tools/build_street_city_stream.lua --batches 8 --from <first missing batch>) or pass --allow-incomplete-hlod')
+      os.exit(2)
+    end
+  end
+end
 for _, p in ipairs(c.packages) do
   local rel = p:gsub('^/Game/', ''); local found = false
   for _, ext in ipairs({ '.uasset', '.umap', '.uexp', '.ubulk', '.uptnl' }) do

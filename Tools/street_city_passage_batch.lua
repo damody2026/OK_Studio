@@ -329,6 +329,8 @@ if due('migrate') then
   local code, out = lua({ 'Tools/migrate_street_city_content.lua' })
   log('migrate exit ' .. code .. ' ' .. out:sub(-300):gsub('\n', ' | '))
   if code ~= 0 then fail('migrate') end
+  -- the note left for anyone opening the source project while its WP copy was incomplete (11-14)
+  os.remove('StreetSocialCity/Content/UniversityCity/Maps/UniversityCityWP.INCOMPLETE.txt')
 end
 release()
 
