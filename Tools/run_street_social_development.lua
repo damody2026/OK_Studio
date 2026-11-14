@@ -10,6 +10,8 @@
 --     [-GpuRig | -NoGpuRig]  (heroine poses from the GPU runtime rig, Docs/CROWD_ROOM100.md, or from her own solved banks)
 --     [-GpuRigVerify N]  (also solve full banks and compare N frames of the rig with them: runtime.json "gpu_rig", rig.bin)
 --     [-Sandbox NAME [-PortBase N] [-RulesDll DLL]] [-Exec "CMD,CMD"] [-Trace [CHANNELS]] [-GameArgs "-SWITCH ..."]
+--     [-LowMemory | -NoLowMemory] [-MaxHeroines N]  (low-memory PC, automatic under 48 GB RAM or 20 GB VRAM: the first N (5)
+--       heroines of the selection, small character textures, 128 m of the streamed city)
 --     [-NoCloud]  (with -Sandbox: the sandbox's DeepSeek / Alibaba Cloud keys emptied for the run; no cloud calls)
 --     [-Heroine N|PNG]  (test: only the male and this one heroine, N counting from 1 in the selection, nobody else
 --       loaded; a save made with the full roster is not for it)
@@ -32,10 +34,10 @@ local fs = require "okfs"
 local instance = require "ok_instance"
 local player_settings = require "street_player_settings"
 
-local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, mainsave = true, editor = true, nogpurig = true, gpurig = true, city = true, citysource = true, nocloud = true }
+local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, mainsave = true, editor = true, nogpurig = true, gpurig = true, city = true, citysource = true, nocloud = true, lowmemory = true, nolowmemory = true }
 local VALUES = { selectionfile = true, malecard = true, retargetfile = true, renderscale = true, executable = true,
   controlport = true, clock = true, window = true, sandbox = true, portbase = true, rulesdll = true, exec = true, trace = true, gpucachedir = true,
-  gameargs = true, gpurigverify = true, heroine = true, patchdir = true }
+  gameargs = true, gpurigverify = true, heroine = true, patchdir = true, maxheroines = true }
 
 local function parse(argv)
   local o, i = {}, 1
@@ -269,6 +271,36 @@ local function main()
     path.write_text(only, json.encode(json.object({ { "cards", json.array({ card }) } }), { indent = 2, ensure_ascii = false }))
     o.selectionfile = only
     say("Heroine only: " .. card)
+  end
+  -- Low-memory PC (user 2026-11-15: at most 8 GB of VRAM and 12 GB of memory; five heroines are enough there): under 48 GB
+  -- of RAM or 20 GB of VRAM, or -LowMemory; -NoLowMemory turns it off. The game gets -OKLowMemory (OKRuntimeLowMemory: small
+  -- character textures, 128 m of the streamed city) and only the first -MaxHeroines (5) of the selection come. The others'
+  -- relationships stay in the save: it keeps every heroine by id, loaded or not (Docs/STREET_CITY_STREAMING_LOWSPEC_20261114.md).
+  local low_memory = o.lowmemory and true or false
+  if not o.lowmemory and not o.nolowmemory then
+    local probe = proc.run({ "powershell", "-NoProfile", "-Command", [[
+$ram = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
+$vram = 0
+Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0*' -ErrorAction SilentlyContinue |
+  ForEach-Object { $m = $_.'HardwareInformation.qwMemorySize'; if ($m -and [int64]$m -gt $vram) { $vram = [int64]$m } }
+"$ram $vram"]] }, { hide = true, capture = true })
+    local ram, vram = (probe.stdout or ""):match("(%d+)%s+(%d+)")
+    ram, vram = tonumber(ram) or 0, tonumber(vram) or 0
+    low_memory = (ram > 0 and ram < 48 * 2 ^ 30) or (vram > 0 and vram < 20 * 2 ^ 30)
+    say(("Memory: RAM %.1f GB, VRAM %.1f GB -> %s"):format(ram / 2 ^ 30, vram / 2 ^ 30, low_memory and "low-memory mode" or "full"))
+  end
+  if low_memory then
+    local max = tonumber(o.maxheroines or "5") or 5
+    local cards = read_json(o.selectionfile).cards or {}
+    if #cards > max then
+      local kept = json.array({})
+      for i = 1, max do kept[#kept + 1] = cards[i] end
+      local capped = path.join(root, "Saved/StreetSocial/heroines-lowmem" .. (o.sandbox and ("-" .. o.sandbox) or "") .. ".json")
+      path.mkdir(path.parent(capped), true)
+      path.write_text(capped, json.encode(json.object({ { "cards", kept } }), { indent = 2, ensure_ascii = false }))
+      o.selectionfile = capped
+      say(("Low-memory mode: %d of %d heroines (-MaxHeroines N for another number, -NoLowMemory for all)"):format(max, #cards))
+    end
   end
   -- The patch is not an input check outside -Strict: it was rebuilt above when missing (it carries the material roots).
   -- The original dialogue catalogue is optional (original game data, Tools/original_data.lua): without it, free talk only.
@@ -552,6 +584,7 @@ local function main()
   if o.editor then table.insert(game, 2, path.join(root, "OpenKoikatsu.uproject")); game[#game + 1] = "-game"
   elseif path.exists(build.patch) then game[#game + 1] = "-pakdir=" .. build.patch end
   if o.city then game[#game + 1] = "-StreetCity" end
+  game[#game + 1] = low_memory and "-OKLowMemory" or "-OKNoLowMemory"
   game[#game + 1] = "-abslog=" .. path.join(output, "game.log")
   game[#game + 1] = "-RuntimeGpuCacheMiB=4096"
   -- The GPU rig's shaders are verified at startup only when asked for (OKGpuRig.cpp): with gpu_rig on, the patch has them.

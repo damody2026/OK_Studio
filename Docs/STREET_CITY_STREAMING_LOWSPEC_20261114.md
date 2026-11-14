@@ -128,6 +128,26 @@ LLM（commit，最后一笔）：
 - **启动修正**：新 base 配旧共享 patch 一启动就当（`Missing global shader FVolumetricFogLightScatteringCS`）。已用当前树重建 `NH1115.patch`，`runtime.json` 改指它（015860b0f）。
 - **画面**：远景拿掉、关 Nanite 后，近处建筑与地面正常。原本夜里天光只有白天的 10–20%，百货 1F 21:50 几乎全黑。依使用者要求（「环境光要维持在大家都看得到」）天光下限改为：夜里 35–45%、白天不低于 45%。00:32 的百货 1F 与 01:14 的户外截图都清楚可见。截图在 `Saved/StreetSocial/Play-20261115T004905/control_shots/`（改前）与 `Saved/StreetSocial/Play-20261115T010100/control_shots/`（改后）。
 
+### 4.4 低配目标：显存 ≤ 8 GB、内存 ≤ 12 GB，低配只载入 5 名女角（使用者 2026-11-15）
+
+LLM（nh1115b，10 女角，低配）：commit 15.8 GB，组成如下。
+- 未追踪 9.2 GB：约 4.5 GB 是驱动映射的显存，其余是 Rust、驱动与执行档。
+- Untagged 2.0 GB（女角）。
+- 贴图 1.2 GB。
+- 碰撞 1.5 GB。
+
+所以 10 位女角进不了 12 GB；使用者同意低配只载入 5 名。
+
+启动器（`Tools/run_street_social_development.lua`）：
+- 实体内存 < 48 GB 或显存 < 20 GB 时进入低配，或用 `-LowMemory` 强制、`-NoLowMemory` 关闭。显存从显卡驱动的登录项 `HardwareInformation.qwMemorySize` 读取。
+- 低配时只取选卡清单前 5 名（`-MaxHeroines N` 可改），并传 `-OKLowMemory` 给游戏。
+- 没载入的女角，关系资料仍留在存档里：存档按 id 保存，量测时 1 女角的 run 之后再开 10 女角，好感度都还在。
+
+| tag | 女角 | 峰值 commit | 巡游中 commit | 峰值工作集 | 峰值显存 | 判定 |
+|---|---|---|---|---|---|---|
+| nh-5-low | 5 | **11.3 GB** | 10.4 GB | 8.5 GB | **3.8 GB** | 内存 ≤ 12 GB 通过、显存 ≤ 8 GB 通过 |
+| nh-10-on（参考） | 10 | 18.9 GB | 16–18 GB | 12.5 GB | 5.5 GB | 内存不通过 |
+
 ## 5. 给使用者的决定：要不要改远景
 
 16 GB 判定：**不通过**（10 女角 32.1 GB；1 女角 21.1 GB）。分两块做：
