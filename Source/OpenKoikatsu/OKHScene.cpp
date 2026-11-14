@@ -470,13 +470,14 @@ TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
     UHorizontalBox* Root=WidgetTree->ConstructWidget<UHorizontalBox>();
     if(UOverlaySlot* S=Layer->AddChildToOverlay(Root)){S->SetHorizontalAlignment(HAlign_Fill);S->SetVerticalAlignment(VAlign_Fill);}
     {UVerticalBox* Lines=WidgetTree->ConstructWidget<UVerticalBox>();Lines->SetVisibility(ESlateVisibility::HitTestInvisible);
-     if(UOverlaySlot* S=Layer->AddChildToOverlay(Lines)){S->SetHorizontalAlignment(HAlign_Center);S->SetVerticalAlignment(VAlign_Bottom);S->SetPadding(FMargin(380,0,380,48));}
+     // Wide: from beside the microphone panel on the left to the H panel on the right (user 2026-11-14: too narrow).
+     if(UOverlaySlot* S=Layer->AddChildToOverlay(Lines)){S->SetHorizontalAlignment(HAlign_Fill);S->SetVerticalAlignment(VAlign_Bottom);S->SetPadding(FMargin(380,0,360,40));}
      const FLinearColor Colors[2]={FLinearColor(1.f,.62f,.82f),FLinearColor(.62f,.85f,1.f)};
      for(int32 Who=0;Who<2;++Who){
          SubtitleBack[Who]=WidgetTree->ConstructWidget<UBorder>();SubtitleBack[Who]->SetBrushColor(FLinearColor(0.f,0.f,0.f,.55f));SubtitleBack[Who]->SetPadding(FMargin(18,6));
          Subtitle[Who]=WidgetTree->ConstructWidget<UTextBlock>();{FSlateFontInfo F=Subtitle[Who]->GetFont();F.Size=20;F.OutlineSettings.OutlineSize=1;Subtitle[Who]->SetFont(F);}
          Subtitle[Who]->SetColorAndOpacity(FSlateColor(Colors[Who]));Subtitle[Who]->SetAutoWrapText(true);Subtitle[Who]->SetJustification(ETextJustify::Center);SubtitleBack[Who]->SetContent(Subtitle[Who]);
-         if(UVerticalBoxSlot* S=Lines->AddChildToVerticalBox(SubtitleBack[Who])){S->SetHorizontalAlignment(HAlign_Center);S->SetPadding(FMargin(0,3));}
+         if(UVerticalBoxSlot* S=Lines->AddChildToVerticalBox(SubtitleBack[Who])){S->SetHorizontalAlignment(HAlign_Fill);S->SetPadding(FMargin(0,3));}
          // The panel is built again many times: a line still within its time stays.
          const bool bShown=SubtitleUntil[Who]>FPlatformTime::Seconds();Subtitle[Who]->SetText(FText::FromString(bShown?SubtitleText[Who]:FString()));
          SubtitleBack[Who]->SetVisibility(bShown?ESlateVisibility::HitTestInvisible:ESlateVisibility::Collapsed);}}
@@ -1719,7 +1720,7 @@ void UOKHScenePanel::ReleaseHeld(const TCHAR* NoteKey){
 bool UOKHScenePanel::TakeLine(FString& Text,FString& Out,bool& System){
     if(Outbox.IsEmpty())return false;
     Text=Outbox[0].Text;System=Outbox[0].System;Out=Context();SentEpoch=LineEpoch;if(!Outbox[0].Note.IsEmpty())Out+=TEXT("\n")+Outbox[0].Note;Outbox.RemoveAt(0);
-    if(!System&&Caption&&Gallery)Caption->SetText(FText::FromString(Gallery->HPlayerName+TEXT("：")+Text));
+    if(!System&&Caption&&Gallery){Caption->SetText(FText::FromString(Gallery->HPlayerName+TEXT("：")+Text));ShowSubtitle(1,Gallery->HPlayerName+TEXT("：")+Text);}
     return true;
 }
 void UOKHScenePanel::React(const FString& Event,const FString& Extra){
@@ -1906,7 +1907,7 @@ bool UOKHScenePanel::Hear(const FString& Raw,FString& Out){
     const FString Text=Raw.TrimStartAndEnd();if(Text.IsEmpty())return false;
     if(Gallery)Gallery->NoteAction(TEXT("said"),Text);
     if(CannotAnswer()){Held.Add(Text);if(Hint)Hint->SetText(FText::FromString(OKT(TEXT("ui.hscene.cannot_answer"))));return false;}
-    Out=Context();SentEpoch=LineEpoch;if(Caption&&Gallery)Caption->SetText(FText::FromString(Gallery->HPlayerName+TEXT("：")+Text));return true;
+    Out=Context();SentEpoch=LineEpoch;if(Caption&&Gallery){Caption->SetText(FText::FromString(Gallery->HPlayerName+TEXT("：")+Text));ShowSubtitle(1,Gallery->HPlayerName+TEXT("：")+Text);}return true;
 }
 void UOKHScenePanel::ShowLine(const FString& Text){
     bStaleLine=SentEpoch!=LineEpoch;if(bStaleLine){UE_LOG(LogTemp,Display,TEXT("H scene: her line from before the last climax / finish / pose not shown: %s"),*Text.Left(60));return;}

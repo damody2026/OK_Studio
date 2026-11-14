@@ -374,7 +374,7 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
   if(Clear)Next=Goal;
  }
  FVector Delta=Next-S.Male;Delta.Z=0;const float Distance=Delta.Size();if(Distance<1)return 0;
- const float Step=FMath::Min(Distance,OKStreetMaleRunSpeed*FMath::Min(Dt,.05f));
+ const float Step=FMath::Min(Distance,OKStreetMaleRunSpeed*OKStreetMoveScale()*FMath::Min(Dt,.05f)); // the speed slider
  const double Now=SceneTime();
  const FVector Moved=StreetStep(S.Male,Delta/Distance,Step);
  if(Moved==S.Male){
@@ -654,6 +654,8 @@ bool AOKStreetSocialScene::TickPrivate(double Now){
   // the line as sent (typed lines too).
   {const FString& Said=S.FreeTalkHeard!=S.PrivateHeardShown?S.FreeTalkHeard:S.FreeTalkCaptionPlayer!=S.PrivateSaidShown?S.FreeTalkCaptionPlayer:FString();
    if(S.FreeTalkHeard!=S.PrivateHeardShown||S.FreeTalkCaptionPlayer!=S.PrivateSaidShown){S.PrivateHeardShown=S.FreeTalkHeard;S.PrivateSaidShown=S.FreeTalkCaptionPlayer;if(!Said.IsEmpty())S.PrivateMode->HSceneShowPlayerLine(Said);}}
+  // His scripted lines (topics, relationship scenes: PlayerLine) too.
+  if(S.PlayerLine!=S.PrivatePlayerLineShown){S.PrivatePlayerLineShown=S.PlayerLine;if(!S.PlayerLine.IsEmpty())S.PrivateMode->HSceneShowPlayerLine(S.PlayerLine);}
   S.PrivateMode->HSceneReplyPending(HerReplyUnspoken());
   return true;
  }
