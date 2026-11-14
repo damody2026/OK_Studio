@@ -952,6 +952,7 @@ void UOKGalleryWidget::NativeConstruct()
 	Super::NativeConstruct();
  AKKPreviewActor::PreparePreviewMaterialParents();
 	ApplyClickInputMode();
+	StartCardDrop();
 
 	ScanAndShow();
 	// Once per process: build the native memos every open shares (lists, mods scans, pair metadata) while the
@@ -2478,7 +2479,7 @@ void UOKCharacterController::RefreshGameAnimationParameters()
     }
 }
 
-void UOKCharacterController::NativeDestruct(){CancelCharacterMCP();++LoadGeneration;if(IsValid(PreparingPreview))PreparingPreview->Destroy();PreparingPreview=nullptr;if(bEditorDisplayDirty)SaveEditorDisplaySettings();ResetClothingPreviews();ResetNeighborPreload();CancelPairCatalogue();OnExitInteraction();if(auto* PC=Cast<AOpenKoikatsuPlayerController>(GetOwningPlayer()))PC->SetPaintPreviewActive(false);OnStopPair();Super::NativeDestruct();}
+void UOKCharacterController::NativeDestruct(){StopCardDrop();CancelCharacterMCP();++LoadGeneration;if(IsValid(PreparingPreview))PreparingPreview->Destroy();PreparingPreview=nullptr;if(bEditorDisplayDirty)SaveEditorDisplaySettings();ResetClothingPreviews();ResetNeighborPreload();CancelPairCatalogue();OnExitInteraction();if(auto* PC=Cast<AOpenKoikatsuPlayerController>(GetOwningPlayer()))PC->SetPaintPreviewActive(false);OnStopPair();Super::NativeDestruct();}
 void UOKCharacterController::CancelPairPreparation(){
     PairRequestAt=0.;
     bPairAutoStartPending=false;

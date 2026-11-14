@@ -482,3 +482,10 @@ best＋C5 下，cooked 路徑還有兩段工作和 cooked 材質已準備好的�
 - **主光亮度、環境光**：材質的 `_LightColor0`，與 `_ambientshadowG` 的 rgb、`unity_AmbientSky`、`unity_SHA*` 的倍率（`ApplyLightingScales`，記住每個材質實例原本的值，1 就還原）。
 
 AI 操作：`reader_call controls` 列出 `control.LightingPresetCombo`、`control.LightingRampCombo`、`control.LightingYawSlider`、`control.LightingPitchSlider`、`control.LightingIntensitySlider`、`control.LightingAmbientSlider`，用 `control_set` 改；`ui_widgets`／`ui_set` 的鍵是 `OKGalleryWidget/LightingPresetCombo`、`OKGalleryWidget/LightingAmbient` 等。2026-11-14 以 C041 實測：預設、ramp、角度、環境光都即時生效。
+
+## 拖入角色卡
+
+從檔案總管把角色卡 PNG（原作 KKS 卡或 OK 卡，任何資料夾）拖進 `CardReaderDevelopment.cmd` 開的讀卡器視窗任何位置（卡片牆、3D 預覽、左右面板都可以），左鍵、右鍵拖都行，放開就和按「載入 3D」一樣載入；不在目前清單的卡會加進清單。一次拖多個檔案時只載第一張 PNG。正在載入／套用、還有未套用的修改、在 1 對 1 或工作室畫面時不載入，畫面上方會顯示原因。
+
+- 實作（`OKGalleryCardDrop.cpp`）：UMG 不把外部拖放交給 UUserWidget，3D 區底下也沒有元件接，所以用 Slate 輸入前處理器：系統拖放在 Slate 裡是滑鼠移動與放開，拖著角色卡時回報「可複製」，放開時取消 Slate 的拖放、下一幀載卡。
+- 測試：`ui_exec ok.ReaderDrop <卡片路徑>` 走同一段載卡。2026-11-15 以真正的 OLE 拖放（模擬右鍵與左鍵拖）實測：原作卡拖到卡片牆、OK 卡 C041 拖到 3D 區都載入成功。

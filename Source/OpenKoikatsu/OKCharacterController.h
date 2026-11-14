@@ -242,6 +242,12 @@ public:
  TArray<FString> LightingRampKeys;	// parallel to LightingRampCombo's options; "" = the card's own ramp
  UPROPERTY() TObjectPtr<AKKPreviewActor> LitActor;
  double LightingAppliedAt=0.;
+ // Card PNGs dragged from Explorer onto the reader window load (OKGalleryCardDrop.cpp).
+ bool CanAcceptDroppedCard() const;
+ bool OpenDroppedCard(const FString& Path);
+ void StartCardDrop();
+ void StopCardDrop();
+ TSharedPtr<class IInputProcessor> CardDropProcessor;
  bool bApplyingLightingPreset=false;	// a preset sets the other controls: their callbacks keep the preset
  void OnBodyPhysicsChanged(const FString& Parameter,float Value);
  void OnPregnancyChanged(const FString& Parameter,float Value);
