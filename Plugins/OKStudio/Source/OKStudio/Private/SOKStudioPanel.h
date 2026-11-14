@@ -306,6 +306,42 @@ public:
 		if (PreviewActor.IsValid()) PreviewActor->Destroy();
 	}
 
+	// Files dragged in from outside (Explorer) anywhere on the studio window: a scene file (.okscene, OK scene card, KStudio
+	// scene PNG) opens wherever it is, a folder opens in the scene browser. No need to copy it into UserData/Studio/scene.
+	virtual FReply OnDragOver(const FGeometry&, const FDragDropEvent& E) override
+	{
+		const TSharedPtr<FExternalDragOperation> Op = E.GetOperationAs<FExternalDragOperation>();
+		return Op && Op->HasFiles() ? FReply::Handled() : FReply::Unhandled();
+	}
+	virtual FReply OnDrop(const FGeometry&, const FDragDropEvent& E) override
+	{
+		const TSharedPtr<FExternalDragOperation> Op = E.GetOperationAs<FExternalDragOperation>();
+		if (!Op || !Op->HasFiles()) return FReply::Unhandled();
+		// Opened on the next frame, out of the system's drop call (a scene takes seconds to open).
+		const TArray<FString> Files = Op->GetFiles();
+		TWeakPtr<SOKStudioPanel> Weak = StaticCastSharedRef<SOKStudioPanel>(AsShared());
+		AsyncTask(ENamedThreads::GameThread, [Weak, Files]() { if (const TSharedPtr<SOKStudioPanel> Panel = Weak.Pin()) Panel->OpenDropped(Files); });
+		return FReply::Handled();
+	}
+	/** What a drop opens: the first scene file, or the first folder in the scene browser. */
+	bool OpenDropped(const TArray<FString>& Files)
+	{
+		for (const FString& Raw : Files)
+		{
+			const FString Path = FPaths::ConvertRelativePathToFull(Raw);
+			if (FPaths::DirectoryExists(Path))
+			{
+				bSceneSaveMode = false; SceneFolder = Path; ScenePick.Reset(); ScanScenes(); OpenFloat(TEXT("scenes"));
+				SetStatus(TEXT("場景資料夾 ") + Path);
+				return true;
+			}
+			const FString Ext = FPaths::GetExtension(Path).ToLower();
+			if (FPaths::FileExists(Path) && (Ext == TEXT("okscene") || Ext == TEXT("png"))) return LoadFile(Path);
+		}
+		SetStatus(TEXT("拖進來的不是場景檔（.okscene、場景 PNG）或資料夾"));
+		return false;
+	}
+
 	void Construct(const FArguments& Args)
 	{
 		Game = Args._Game;
@@ -463,6 +499,8 @@ public:
 		});
 		Simple(TEXT("scene.browser"), TEXT("開啟場景"), [this] { bSceneSaveMode = false; OpenFloat(TEXT("scenes"), true); });
 		AddCommand(TEXT("scene.load"), TEXT("讀取"), [this](const FString& Arg) { return !Arg.IsEmpty() && LoadFile(Arg); });
+		// What dropping that file or folder on the window does (the drag itself comes from the system).
+		AddCommand(TEXT("scene.drop"), TEXT("拖入"), [this](const FString& Arg) { return !Arg.IsEmpty() && OpenDropped({ Arg }); });
 		AddCommand(TEXT("scene.merge"), TEXT("疊加"), [this](const FString& Arg) { return !Arg.IsEmpty() && OpenScene(Arg, true); });
 		AddCommand(TEXT("scene.import"), TEXT("匯入 KStudio"), [this](const FString& Arg) { if (Arg.IsEmpty()) { bSceneSaveMode = false; SceneFolder = KStudioFolder(); OpenFloat(TEXT("scenes")); return true; } return ImportKStudio(Arg); });
 		AddCommand(TEXT("scene.backup"), TEXT("立即備份"), [this](const FString&) { const FString F = Game->BackupNow(true); SetStatus(F.IsEmpty() ? FString(TEXT("備份失敗")) : TEXT("已備份 ") + F); return !F.IsEmpty(); });
