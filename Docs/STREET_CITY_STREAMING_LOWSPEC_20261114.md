@@ -96,6 +96,23 @@ LLM（commit，最后一笔）：
 - 显存：约 5 GB + 每位女角 0.3 GB，10 位时约 7.6 GB，刚好在 8 GB 内。
 - commit：约 11 GB + 每位女角 1.1 GB，10 位时约 21 GB。所以 (b) 还要把每位女角的成本减半，才进得了 16 GB。
 
+### 4.2 低配模式（f06a91068、6c45152b1），同一 base（BaseCity1113b，旧 WP），10 女角
+
+`OKRuntimeLowMemory()`：实体内存 < 48 GB 或显存 < 20 GB 自动开（`-OKLowMemory`／`-OKNoLowMemory`）。开启时：
+- 角色运行时贴图从 512 以内的 mip 开始，上传后释放 CPU 端数据（KKRuntimeMaterial 与 KKTextureRuntime 两条路径）；
+- PNG 解码缓存 512 MB（否则是实体内存的 1/8，开发机 8 GB）；
+- 串流地图载入半径 128 m，每个分区世界初始化时套用（读档重开地图也有效，game.log 有 `Streamed map loading range 12800 cm`）。
+
+另外关闭 Nanite：`r.Nanite.ProjectEnabled=False`（下次 cook 生效），启动器对旧包加 `r.Nanite 0`。
+
+| tag | stage | 低配 | 待机末 commit | 待机末显存 | 峰值 commit | 峰值显存 |
+|---|---|---|---|---|---|---|
+| lowmem-10-off | lowmem1114 | 关 | 29.5 GB | 12.1 GB | 30.3 GB | 12.1 GB |
+| lowmem-10-on | lowmem1114 | 开（只有第一条贴图路径） | 27.4 GB | 11.1 GB | 28.7 GB | 11.8 GB |
+| lowmem1115-10-on | lowmem1115 | 开（两条路径） | 27.2 GB | 10.9 GB | 29.0 GB | 11.8 GB |
+
+运行时贴图（memreport）：1.87 GB（10 女角 + 男主，1024² 为主）→ 0.63 GB（512²）。剩下的大头是城市本身（旧 WP 的 HLOD、碰撞、未压缩贴图），要等 c-street-city 的新 cook（`City1115NoHLOD`：不建远景 + 贴图压缩 + 关 Nanite）。
+
 ## 5. 给使用者的决定：要不要改远景
 
 16 GB 判定：**不通过**（10 女角 32.1 GB；1 女角 21.1 GB）。分两块做：
