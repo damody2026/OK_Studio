@@ -466,6 +466,11 @@ local PASSAGES = {
   -- D3 1F WC (restroom_north, room 94400-95100 x 44410-44630): its door is the building entrance (93200,44100) and no road
   -- went in, so walks there went straight at the walls at x 93380 and 94170 and were stopped three times (11-14). The floor
   -- scan (z 1290, 20 cm) is clear up x 93200, along y 44720-44900 and into the room's open north side at x 94600.
+  -- Infirmary (door 63840,53398 on the east face of the T1 block): the roads went south round the block, infirmary ->
+  -- library 189 m for 77 m (11-14). The floor scan (z 1290, 40 cm) has a passage 1.6 m wide between walls at x 63880 and
+  -- 64080 from y 53200 to 55360 (both cross walls open at x 63920-64080) and open ground north of it up to y 57800. Both
+  -- ends are baked points (the door, 64100,57500), so no ties: one through the walls would land inside T1.
+  { id = 'infirmary_north', tie = { false, false }, min_ties = 0, pts = { { 63840, 53399 }, { 63980, 53480 }, { 63980, 54200 }, { 63980, 55000 }, { 63980, 55600 }, { 64000, 56400 }, { 64000, 56900 }, { 64100, 57500 } } },
   { id = 'restroom_north_in', tie = { true, false }, pts = { { 93200, 44100 }, { 93200, 44400 }, { 93200, 44700 }, { 93200, 44800 }, { 93900, 44800 }, { 94600, 44800 }, { 94600, 44550 } } },
 }
 local PASSAGE_TIE_CM, PASSAGE_TIES = 800, 3
