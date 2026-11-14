@@ -563,12 +563,21 @@ void AOKStreetSocialScene::TickMeal(float Dt){
  if(S.MealDishDraw){const FOKStreetDish* Top[2]={nullptr,nullptr};
   for(const auto& D:S.Table)if(D.Served&&D.Percent>0.f)if(const auto* I=S.Catalog.Find(D.ItemId);I&&!I->IsDrink()){const FOKStreetDish*& T=Top[D.ForHer?1:0];
    const auto* Was=T?S.Catalog.Find(T->ItemId):nullptr;if(!T||(I->Category==TEXT("meal")&&Was&&Was->Category!=TEXT("meal")))T=&D;}
-  const FString Shown=(Top[0]?Top[0]->ItemId:FString())+TEXT("|")+(Top[1]?Top[1]->ItemId:FString());
+  // Nothing ordered from the menu: the meal is the activity's own (its bill and its food, activity_end), so the place's
+  // dish is on both plates and they eat it. 胡桃's "eat together" at the restaurant was billed (her treat, ¥24) and filled
+  // her up, while the two sat at empty plates "with nothing to eat" (round 9, 2026-11-15).
+  const bool House=!Top[0]&&!Top[1]&&S.Pair.Meal&&S.Pair.Partner!=INDEX_NONE;
+  int32 HouseKind=5;
+  if(House){const FString Here=PlaceHere(S.Male);
+   HouseKind=Here.Contains(TEXT("ramen"))||Here.Contains(TEXT("noodle"))?1:Here.Contains(TEXT("fastfood"))||Here.Contains(TEXT("burger"))?2:Here.Contains(TEXT("cafe"))||Here.Contains(TEXT("bakery"))?8:Here.Contains(TEXT("cafeteria"))||Here.Contains(TEXT("bento"))?0:5;}
+  const FString Shown=House?FString::Printf(TEXT("house%d"),HouseKind):(Top[0]?Top[0]->ItemId:FString())+TEXT("|")+(Top[1]?Top[1]->ItemId:FString());
   if(Shown!=S.MealDishShown){S.MealDishShown=Shown;for(auto& Prop:S.MealDishProps)DestroyLater(Prop.Get());S.MealDishProps.Reset();
    const int32 Before=S.PairProps.Num();
+   if(House){S.MealDishDraw(HouseKind,60.f);S.MealDishDraw(HouseKind,110.f);UE_LOG(LogTemp,Display,TEXT("Street meal: nothing ordered, the house dish (kind %d) on both plates"),HouseKind);}
    if(Top[0])S.MealDishDraw(OKStreetDishKind(Top[0]->ItemId),60.f);
    if(Top[1])S.MealDishDraw(OKStreetDishKind(Top[1]->ItemId),110.f);
-   for(int32 K=Before;K<S.PairProps.Num();++K)S.MealDishProps.Add(S.PairProps[K]);S.PairProps.SetNum(Before);}}
+   for(int32 K=Before;K<S.PairProps.Num();++K)S.MealDishProps.Add(S.PairProps[K]);S.PairProps.SetNum(Before);}
+  if(House){const double Wall=FPlatformTime::Seconds();S.MealAteAt.Add(0,Wall);S.MealAteAt.Add(S.Pair.Partner,Wall);}}
  if(S.Table.IsEmpty())return;const double Wall=FPlatformTime::Seconds();
  // The meal is with the girl the dishes were ordered with (each dish keeps her): talking to another one at the table
  // (the drink one girl bought him, then he turns to her friend) does not make it the new one's meal.
