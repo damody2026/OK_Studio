@@ -477,6 +477,9 @@ local PASSAGES = {
   -- ends are baked points (the door, 64100,57500), so no ties: one through the walls would land inside T1.
   { id = 'infirmary_north', tie = { false, false }, min_ties = 0, pts = { { 63840, 53399 }, { 63980, 53480 }, { 63980, 54200 }, { 63980, 55000 }, { 63980, 55600 }, { 64000, 56400 }, { 64000, 56900 }, { 64100, 57500 } } },
   { id = 'restroom_north_in', tie = { true, false }, pts = { { 93200, 44100 }, { 93200, 44400 }, { 93200, 44700 }, { 93200, 44800 }, { 93900, 44800 }, { 94600, 44800 }, { 94600, 44550 } } },
+  -- campus_e1 to the pool: straight through the sports building's ground floor (x 77000-77200), open at z 1290 and 1220 with
+  -- 40 cm clearance on a 50 cm grid of the box between the doors (11-15); the road went round by x 87100, 390 m for 194
+  { id = 'e1_pool', pts = { { 78330, 41430 }, { 77180, 39480 }, { 77030, 39080 }, { 77030, 34300 }, { 77030, 29830 }, { 76980, 29780 }, { 76980, 25400 }, { 76980, 22130 }, { 77130, 21980 } } },
   -- r1114 (11-14, Tools/street_city_passage_batch.lua): walls cut through S59, S69 and S84, the paths the walk probe took
   { id = 'r1114_a1', pts = { { 32700, 34760 }, { 33260, 34760 }, { 33820, 34760 }, { 34140, 34880 }, { 34620, 34720 }, { 35160, 34740 }, { 35700, 34760 } } },
   -- A2 east of 33820: up x 33980 and out along y 47360 (11-15). The probe's path went on through a room closed to the
