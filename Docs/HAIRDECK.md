@@ -1,0 +1,75 @@
+# HairDeck：參考圖生成頭髮
+
+日期：2026-11-15。參考 [HairDeck](https://github.com/hyz317/HairDeck)（程式與權重 Apache-2.0）：從一張角色圖生成頭髮片（hair cards）、每片頭髮的顏色與彈簧骨鏈。這裡把推論改寫成 Rust（`Tools/ok-hairdeck`，candle＋CUDA），不需要 Python；生成的頭髮換到角色身上（`ok-extract` 的 `portable_hairdeck.rs`），在 OK Studio 與讀卡器都能用。
+
+## 需要的檔案
+
+權重放在 HairDeck 的工作資料夾，預設 `F:\HairDeckData`（`--weights` 或環境變數 `HAIRDECK_ROOT` 可改）：
+
+| 檔案 | 來源 |
+|---|---|
+| `ckpt/image_model`、`ckpt/color_model`、`ckpt/chain_model`、`ckpt/card_vae` | HairDeck 的 `scripts/setup/download_weights.py`（`--only hairdeck`） |
+| `data/token_stats_head.json`、`data/spring/chain_stats_head.json` | 同上 |
+| `third_party/weights/dinov3/model.safetensors` | DINOv3 ViT-L/16（DINOv3 License，需在 Hugging Face 同意授權；`--gated-source modelscope` 可從 ModelScope 下載，SHA-256 `dcb2e451…8179`） |
+
+SAM 3 與 BiRefNet 不需要：Rust 版的前處理改用圖片自己的 alpha（或從純色背景算出遮罩）與自動／手動的裁切框。
+
+權重與 DINOv3 都不進版控。
+
+## 建置與指令
+
+```
+Tools\ok-hairdeck\cargo-cuda.cmd build --release
+Tools\ok-hairdeck\target\release\ok-hairdeck.exe generate --image <參考圖> --out <資料夾> [--box x0,y0,x1,y1] [--seed 0] [--n 1]
+```
+
+輸出 `model_input.png`（模型看到的 448×448 裁切）、`cards_seed<s>.json`、`chains_seed<s>.json`、`info.json`，格式與 HairDeck 相同。RTX 5090 上載入約 12 秒、每個變化約 2 秒。
+
+不給 `--box` 時從角色遮罩估頭部：取角色上方、寬度與角色上半一致的正方形（全身圖取身高的三分之一）。原作是 SAM 3 找頭髮＋臉的範圍再外擴 8%；長髮或構圖特殊時請手動給框。
+
+## 換到角色上
+
+`ok-extract` 的 `portable::hairdeck`：
+
+- 頭髮片照 HairDeck 的 `cards_vf` 建網格（Bishop frame，每個控制點 4 個頂點）。
+- HairDeck 的頭部座標（y 上、臉朝 +z、右手系）以 x 鏡射轉成 Unity，三角形繞序對調。
+- 對位：HairDeck 的頭骨橢球（半徑 0.405W、0.5W、0.5W）對到角色臉部網格：縮放用頭頂 45% 的頭寬（排除耳朵），前後用額頭，高度用頭頂。遊戲的 `cf_O_face` 沒有後腦，不能用網格深度。遊戲的頭頂比 HairDeck 的頭骨方，照原尺寸額頭上緣會從瀏海間露出來，所以再放大 4%、上移 0.13 個半徑、前移 0.07 個半徑（C041 實測）。
+- 顏色：每片頭髮 16 段顏色畫進一張圖集（每片 4×32 像素）。
+- 骨鏈：最多 32 條、每條 3–12 個點，成為私有柔性髮骨（`portable_hair_soft`），每片頭髮跟最近的骨鏈，髮根跟頭。
+- 取代角色原本的頭髮：頭髮部件，以及 renderer 名稱或 shader 名稱含 hair 的配件（同一個配件裡的角、緞帶保留；同配件中名稱含 shadow／kage 的頭髮陰影一起隱藏）。角色原髮是原生頭髮 shader 時沿用它的 ramp 與高光，否則用 main_item。新部件不留原 renderer 名稱，卡片的 MaterialEditor 設定不會套到它身上。
+- 再次套用同一份頭髮不做事（材質名稱記著頭髮檔與選項的雜湊）；換另一份頭髮時取代上一份。
+
+離線檢查：`ok-hair-pack deck <基礎庫> <角色卡> <cards_seed0.json> <輸出.obj>` 輸出頭部與頭髮的 OBJ（頭部座標）。
+
+## OK Studio 與讀卡器
+
+- OK Studio：選角色 → 物件屬性「髮型生成（HairDeck）」：填參考圖路徑，按「生成」，完成後自動換上；「頭髮檔」可直接填既有的 `cards_seed<s>.json`；「原本頭髮」換回角色卡的頭髮。場景會記住 `HairDeck`／`HairDeckOpts`／`HairDeckImage`，重開場景時重新套用。指令：`chara.hairdeck <參考圖>`、`chara.hairdeck.apply <cards json>`（MCP `studio_cmd` 可用）。生成結果在 `Saved/OKStudio/HairDeck/<時間>/`。
+- 讀卡器：主控台 `ok.ReaderHairDeck <cards_seed0.json> [選項 JSON]`。角色身上記著這份頭髮（`AKKPreviewActor::HairDeckCards`），之後這個角色載入的每個 session（換衣服狀態、重開）都會再套上。
+- 換頭髮後要清掉 session 的 `RuntimeMaterials` 與角色的共用材質實例（`CookedRoleMaterials`）：讀卡器用預先烘好的共用材質，不清的話新頭髮會拿舊頭髮的材質與貼圖。
+
+選項 JSON（`HairDeckOpts`）：`scale`（再乘的縮放）、`offset`（頭部座標的位移，公尺）、`native`（沿用原髮 shader，預設 true）、`rigid`（不用骨鏈）、`hair_color`。
+
+## 驗證
+
+`F:\OpenKoikatsu\output\characters-2026-09-30-anime\references\02-nightclub-face-reference.png`，同一裁切框與同一組初始雜訊，對照 HairDeck 原版（PyTorch bf16）：
+
+| 項目 | Python | Rust |
+|---|---|---|
+| 頭髮片 | 52 | 53 |
+| 髮根位置差（中位數） | — | 0.7 mm（頭寬約 128 mm） |
+| 髮尾位置差（中位數） | — | 2.7 mm |
+| 顏色差（平均，0–1） | — | 0.0013 |
+| 骨鏈 | 10 | 10（關節數 9 條相同） |
+
+差異來自 bf16 與 f32 的數值誤差。
+
+遊戲內（2026-11-15，C041 Yvonne）：
+- 讀卡器：02-nightclub 參考圖的深藍高馬尾換上，正面、側面、背面確認位置；角保留，原本的雙馬尾隱藏。
+- OK Studio：`chara.hairdeck` 用 01-campus 參考圖，從生成到換上約 27 秒，金色長直髮。
+
+## 限制
+
+- 雜訊用自己的亂數，同一個 seed 不會和 Python 版相同（要重現時用 `--noise`）。
+- 沒有 SAM 3：參考圖背景要單純，或自己去背成透明 PNG，或手動給框。
+- 頭髮材質目前是顏色圖集；沒有法線圖與 HairDeck 的 VRM 材質。
+- 只換到目前的 session：讀卡器換的頭髮不會存回卡片；OK Studio 存在場景裡。

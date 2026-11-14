@@ -68,11 +68,23 @@ fn install(s:&mut OkSession,m:&HairMesh,texture:&[u8],pbr:Option<&[Vec<u8>;3]>)-
     let sk=s.body_skel.as_ref().ok_or("missing body skeleton")?;let h=head(sk)?;
     let head_world=sk.worlds[h];
     let bone_count=sk.names.len();if h>u16::MAX as usize{return Err("head bone index overflow".into());}
-    let native_hair=|p:&crate::session::SessionPart|(p.role.starts_with("hair") || (p.role=="accessory" && p.name=="Hair")) && !is_custom(p);
-    let donor=s.parts.iter().position(|p|native_hair(p)).ok_or("base has no hair material donor")?;
+    // Hair: the hair parts, and accessories that are hair (named Hair, or drawn with the game's hair shader: many cards
+    // wear their hairstyle as an accessory).
+    // (By the renderer and shader, not the accessory's name: one accessory can hold horns or ribbons beside its hair.)
+    let native_hair=|p:&crate::session::SessionPart|(p.role.starts_with("hair") || (p.role=="accessory" && (p.name=="Hair" || matches!(p.shader_kind,1|10)
+        || p.source_renderer_names.iter().any(|r|r.to_ascii_lowercase().contains("hair"))
+        || p.source_material.as_ref().is_some_and(|m|m.shader.to_ascii_lowercase().contains("hair"))))) && !is_custom(p);
+    // The hair's shadow layer on the face (a renderer of the same accessory) goes with it.
+    let hair_slots:Vec<String>=s.parts.iter().filter(|p|native_hair(p)).filter_map(|p|p.source_property.clone()).collect();
+    let hair_shadow=|p:&crate::session::SessionPart|p.role=="accessory" && !is_custom(p) && p.source_property.as_ref().is_some_and(|sp|hair_slots.contains(sp))
+        && p.source_renderer_names.iter().any(|r|{let r=r.to_ascii_lowercase();r.contains("shadow")||r.contains("kage")});
+    // Putting authored hair on again takes the slot of the earlier one (the card's hair parts are hidden by then).
+    let donor=s.parts.iter().position(|p|native_hair(p)).or_else(||if m.layer.is_none(){s.parts.iter().position(|p|is_custom(p)&&p.render_visible)}else{None}).ok_or_else(||format!("base has no hair material donor (parts: {})",
+        s.parts.iter().map(|p|format!("{}:{}:{}:{}",p.role,p.name,p.shader_kind,p.source_material.as_ref().map_or("",|m|m.shader.as_str()))).collect::<Vec<_>>().join(", ")))?;
     let self_native=if m.native_self {
         Some(s.parts.iter().find(|p|native_hair(p) && p.render_visible && matches!(p.shader_kind,1|10))
-            .or_else(||s.parts.iter().find(|p|native_hair(p) && matches!(p.shader_kind,1|10))).cloned().ok_or("the character's hair has no native hair shader")?)
+            .or_else(||s.parts.iter().find(|p|native_hair(p) && matches!(p.shader_kind,1|10))).cloned())
+            .flatten()
     } else {None};
     if m.hide_source_accessory {
         if let Some(source)=s.parts[donor].source_property.clone() {
@@ -91,12 +103,13 @@ fn install(s:&mut OkSession,m:&HairMesh,texture:&[u8],pbr:Option<&[Vec<u8>;3]>)-
         if existing.is_some(){s.parts[index]=s.parts[donor].clone();}
         index
     } else {donor};
-    for p in s.parts.iter_mut().filter(|p|native_hair(p)){p.render_visible=false;}
+    for p in s.parts.iter_mut().filter(|p|native_hair(p)||hair_shadow(p)){p.render_visible=false;}
     if m.layer.is_none() {for p in s.parts.iter_mut().filter(|p|is_custom(p)){p.render_visible=false;}}
     let p=&mut s.parts[slot];
     p.role=match m.layer.as_deref(){Some(l)=>format!("hair_{l}"),None=>"hair_back".into()};p.role_c=CString::new(p.role.clone()).unwrap();
     p.name=part_name(m);p.name_c=CString::new(p.name.clone()).unwrap();p.render_visible=true;
-    p.source_property=None;p.runtime_accessory=None;p.item_draw=None;
+    // No source renderer: the card's MaterialEditor edits and source shader lookups name the donor's renderers.
+    p.source_property=None;p.source_renderer_names.clear();p.runtime_accessory=None;p.item_draw=None;
     let mut material=crate::unity::MeshMaterial::default();
     material.name="Tripo_Golden_Hair".into();material.shader="Shader Forge/main_item".into();material.render_queue=2000;
     material.colors.insert("_Color".into(),[1.;4]);material.colors.insert("_Color2".into(),[1.;4]);material.colors.insert("_Color3".into(),[1.;4]);

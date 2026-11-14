@@ -462,7 +462,17 @@ namespace
 {
 	FString PrepareKey(const FOKSceneCharacter& C)
 	{
-		return FString::Printf(TEXT("%s|%d|%s|%s"), *C.Card, C.Outfit, *BytesToHex(C.ClothesStates.GetData(), C.ClothesStates.Num()), *StatusJson(C));
+		return FString::Printf(TEXT("%s|%d|%s|%s|%s|%s"), *C.Card, C.Outfit, *BytesToHex(C.ClothesStates.GetData(), C.ClothesStates.Num()), *StatusJson(C), *C.HairDeck, *C.HairDeckOpts);
+	}
+
+	/** The character's HairDeck hair in place of the card's (before the session's meshes are made). */
+	void ApplyHairDeck(FOkSession& Session, const FOKSceneCharacter& C, const FString& Name)
+	{
+		if (C.HairDeck.IsEmpty()) return;
+		const FString Path = FPaths::IsRelative(C.HairDeck) ? FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / C.HairDeck) : C.HairDeck;
+		FString Report;
+		if (Session.ApplyHairDeck(Path, C.HairDeckOpts, Report)) { UE_LOG(LogTemp, Display, TEXT("OK studio: %s HairDeck hair %s"), *Name, *Report); }
+		else { UE_LOG(LogTemp, Warning, TEXT("OK studio: %s HairDeck hair not applied (%s): %s"), *Name, *Path, *Report); }
 	}
 }
 
@@ -589,6 +599,7 @@ bool AOKSceneActor::PrepareCharacter(const FOKSceneObject& Object)
 	AKKPreviewActor* Actor = P->Actor.Get();
 	if (P->bOpened && !Actor)
 	{
+		ApplyHairDeck(P->Session, Object.Character, Object.Name);
 		Actor = SpawnPreview(GetWorld(), MoveTemp(P->Session), Error, {}, {}, nullptr, false,
 			Document ? Document->Post.ShaderGlobals() : TMap<FName, FLinearColor>(), Document ? Document->Post.RampG : -1, true);
 		if (Actor) { Actor->SetActorHiddenInGame(true); P->Actor = Actor; }
@@ -651,6 +662,7 @@ bool AOKSceneActor::Build(const FOKSceneObject& Object, FShown& Out, FString& Ou
 			const double OpenStart = FPlatformTime::Seconds();
 			if (!Session.Open(FString(), CardPath(Object.Character.Card), Object.Character.Outfit, OutError, States.GetData(), StatusJson(Object.Character))) return false;
 			UE_LOG(LogTemp, Display, TEXT("OK studio: %s session opened in %.2f s"), *Object.Name, FPlatformTime::Seconds() - OpenStart);
+			ApplyHairDeck(Session, Object.Character, Object.Name);
 			Actor = SpawnPreview(World, MoveTemp(Session), OutError, {}, {}, nullptr, false,
 				Document ? Document->Post.ShaderGlobals() : TMap<FName, FLinearColor>(), Document ? Document->Post.RampG : -1);
 			if (!Actor) return false;

@@ -4525,3 +4525,19 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
   - 截圖前先刪舊檔（或每輪用新資料夾），量測前確認檔案時間是這一輪的。
   - 光源來源不明時，先在原作逐項關掉（燈、反射探針）量差異，再決定要移植什麼。
 - 備註：這次原作量測（`run_map_tour.lua`）與基礎庫重錄（`studio-nodes`）用的是 `D:\KoikatuSunshine`（本機唯一的原作，協調者指定反編譯源碼也在那裡）；F 組其他工作仍以 F: 為準。
+
+## 2026-11-15 HairDeck 頭髮：用臉部網格的前後深度對頭骨，又只認「Hair」名稱的頭髮（F 組）
+
+- 錯誤：
+  - 第一版把 HairDeck 的頭骨橢球對到 `cf_O_face` 上半部的寬與前後深度取平均。遊戲的臉部網格沒有後腦（頭髮蓋住），深度只有前半，縮放被拉小到 1.37，頭髮浮在臉前。Yvonne 是精靈耳，耳朵也撐大整個網格的寬。
+  - 換髮只找 role 是 `hair*` 或名叫 `Hair` 的配件。很多卡（C041 Yvonne）把髮型做成配件（`Yvonne_hair`，shader 是 `KKUTShair`／`xukmi/MainItemStudioAlphaPlus`），結果找不到頭髮。
+  - OK Studio 的 `if (...) UE_LOG(...); else UE_LOG(...);` 編譯失敗（C2181）：`UE_LOG` 展開成區塊，接 `else` 要加大括號。
+- 做法：
+  - 縮放只用頭頂 45%（耳朵以上）的頭寬；前後用額頭最前面對頭骨前緣；高度用頭頂。用 `ok-hair-pack deck` 輸出 OBJ、畫正面與側面投影確認位置，再進 Unreal。
+  - 頭髮判定加上名稱或 shader 名稱含 `hair` 的配件；沒有原生頭髮 shader 時改用 main_item，不報錯。
+- 讀卡器換上後頭髮仍是原本的粉紅與青色貼圖，換成全綠也一樣：
+  - 先以為是 `RefreshEditorGeometry` 只換幾何，改成整個 `LoadSession` 還是一樣。
+  - 再以為是卡片的 MaterialEditor 依 renderer 名稱套用，清掉名稱後角回來了，但顏色仍錯。
+  - 真正原因：讀卡器用預先烘好的共用材質（`OKPrepareCookedRole`），角色已有 `CookedRoleMaterials` 就直接沿用，session 的 `RuntimeMaterials` 也有快取。換頭髮後兩者都要清。
+  - 另外，讀卡器在背景為衣服狀態另開的 session 是卡片原本的；頭髮要記在角色上，每次載入都再套。
+- 下次：對位之前先看網格實際涵蓋範圍（逐高度印 x／z 範圍），不要假設頭部網格是完整的頭。改 session 的部件材質後，先查有沒有預先烘好或快取的材質，用「換成純色」的對照測試確定貼圖到底有沒有用到。

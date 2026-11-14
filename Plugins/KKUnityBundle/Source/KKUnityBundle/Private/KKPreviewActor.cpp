@@ -5523,13 +5523,29 @@ bool AKKPreviewActor::ApplyHeadTextureCandidate(FOkAppearanceContext& Context,FO
  UE_LOG(LogTemp,Display,TEXT("Appearance candidate committed parts=%d geometry_rebuilt=0 shader_rebuilt=0"),Updates.Num());return true;
 }
 
+bool AKKPreviewActor::ApplyHairDeckToSession(FString* OutReport)
+{
+ // A session put in afterwards (clothing variants, reopened outfits) is the card's own: its HairDeck hair comes back
+ // here. Applying it again to a session that has it already changes nothing.
+ if (HairDeckCards.IsEmpty()) return true;
+ FString Report;
+ const bool bOk = Session.ApplyHairDeck(HairDeckCards, HairDeckOpts, Report);
+ if (!bOk) { UE_LOG(LogTemp, Warning, TEXT("OK HairDeck hair not applied (%s): %s"), *HairDeckCards, *Report); }
+ // The shared-parent instances made for the old hair (OKPrepareCookedRole keeps them while any exist) are rebuilt.
+ else if (!Report.Contains(TEXT("\"already\":true"))) { CookedRoleMaterials.Reset(); CookedRoleOutlines.Reset(); CookedRoleBuild.Reset(); }
+ if (OutReport) *OutReport = Report;
+ return bOk;
+}
+
 bool AKKPreviewActor::LoadSession(FString& OutError)
 {
+ ApplyHairDeckToSession();
  return LoadSessionBatch(OutError, MAX_int32, false);
 }
 
 bool AKKPreviewActor::BeginSessionLoad(FString& OutError)
 {
+ ApplyHairDeckToSession();
  return LoadSessionBatch(OutError, 0, false);
 }
 

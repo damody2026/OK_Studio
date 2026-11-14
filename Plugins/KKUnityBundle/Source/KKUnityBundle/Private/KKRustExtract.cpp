@@ -282,6 +282,8 @@ bool FOkSession::ApplyHairDeck(const FString& CardsJson,const FString& OptsJson,
 	TArray<ANSICHAR> Buf;Buf.SetNumZeroed(1<<16);
 	const int32 R=ok_session_apply_hairdeck(Handle,TCHAR_TO_UTF8(*CardsJson),TCHAR_TO_UTF8(*OptsJson),Buf.GetData(),Buf.Num());
 	OutReport=UTF8_TO_TCHAR(Buf.GetData());
+	// New hair: the materials captured from the session before (PrepareRuntimeMaterials) are the old hair's.
+	if(R==0&&!OutReport.Contains(TEXT("\"already\":true")))RuntimeMaterials.Reset();
 	return R==0;
 }
 
