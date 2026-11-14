@@ -87,7 +87,8 @@ local function lua(args, env) local list = { L }; for _, a in ipairs(args) do li
   local r = ok.proc.run(list, { capture = true, merge = true, env = env }); return r.code, r.stdout or '' end
 
 -- slot + serve bookkeeping, undone on any exit
-local held, serving = false, false
+-- a run picked up after the serve step (--from measure..prep) finds the editor of the run before still serving
+local held, serving = false, (order[from] > order["serve"] and order[from] <= order["prep"])
 local function quit_serve() if serving then lua({ 'Tools/street_city_motel_job.lua', 'quit', 'Tools/street_city_shop_passage_payload.lua' }); serving = false; ok.time.sleep(40) end end
 local function release() if held then quit_serve(); lua({ 'Tools/unreal_slot.lua', 'release', 'c-street-city' }); held = false; log('slot released') end end
 local SHOP_CFG = PLACES .. 'shop-passage.json'
@@ -126,8 +127,19 @@ local function blocked(grids, x, y)
   end
   return false
 end
+-- distance from a point to the shop's own wall segments at the scan height (the scan's actors[].walls)
+local function near_shop(segs, x, y)
+  if not segs then return true end
+  for _, s in ipairs(segs) do
+    local ax, ay, bx, by = s[1][1], s[1][2], s[2][1], s[2][2]
+    local dx, dy = bx - ax, by - ay; local l2 = dx * dx + dy * dy
+    local t = l2 > 0 and math.max(0, math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) or 0
+    if math.sqrt((ax + t * dx - x) ^ 2 + (ay + t * dy - y) ^ 2) <= 40 then return true end
+  end
+  return false
+end
 -- pick the line: walls crossing it become cut boxes, the 60 cm band must be free otherwise
-local function judge(p, y, grids)
+local function judge(p, y, grids, segs)
   local step = 20; local walls = {}; local run
   for x = p.x0, p.x1, step do
     local hit = blocked(grids, x, y)
@@ -138,6 +150,9 @@ local function judge(p, y, grids)
   for _, w in ipairs(walls) do
     if w[2] + step - w[1] > 60 then return nil, ('block at x %d-%d is %d cm thick (not a wall)'):format(w[1], w[2] + step, w[2] + step - w[1]) end
     if w[1] < p.x0 + 200 or w[2] > p.x1 - 200 then return nil, ('blocked within 2 m of an end at x %d'):format(w[1]) end
+    -- the cut only removes the shop's own meshes: a block that is not on one of its walls (a planter outside it on
+    -- 11-14, the line y 35000 by S59) stays, so that line is no good
+    if not near_shop(segs, (w[1] + w[2]) / 2 + 10, y) then return nil, ('block at x %d-%d is not a wall of %s'):format(w[1], w[2] + step, table.concat(p.actors, '/')) end
   end
   local cuts = {}
   for n, w in ipairs(walls) do cuts[n] = { name = p.id .. '_' .. n, box = { w[1] - 40, y - 110, 1195, w[2] + step + 40, y + 110, 1430 }, actors = p.actors } end
@@ -165,6 +180,8 @@ if arg[1] == '--judge' then
   return
 end
 
+-- the run itself: any error on the way still puts the flag and config back, quits the editor and releases the slot
+local function main()
 -- 1 claim: exclusive, and only with 130 GB free commit and no other Unreal running
 if due('claim') then
   if read('Saved/pause-street-city.flag') then fail('Saved/pause-street-city.flag is set') end
@@ -199,14 +216,19 @@ end
 if due('measure') then
   rep.passages = {}; rep.extra = {}
   for _, p in ipairs(B.passages) do
-    local grids = {}
-    for _, z in ipairs({ 1290, 1220 }) do grids[#grids + 1] = scan({ actors = p.actors, z = z, grid = { box = band(p), z = z, step = 20 } }).grid end
-    local entry = { id = p.id, actors = p.actors, tried = {} }
+    local grids, segs = {}, {}
+    for _, z in ipairs({ 1290, 1220 }) do
+      local res = scan({ actors = p.actors, z = z, grid = { box = band(p), z = z, step = 20 } })
+      grids[#grids + 1] = res.grid
+      for _, row in ipairs(res.actors or {}) do for _, s in ipairs(type(row.walls) == 'table' and row.walls or {}) do segs[#segs + 1] = s end end
+    end
+    if #segs == 0 then fail(p.id .. ': the scan gave no wall segments of ' .. table.concat(p.actors, '/')) end
+    local entry = { id = p.id, actors = p.actors, tried = {}, grids = grids, wall_segments = #segs }
     -- every candidate is judged; the fewest 20 cm columns with something beside the line wins, then the fewest blocks
     -- to cut (an extra block is mostly furniture on the line, which the cut would not remove), then the earlier one
     local best
     for _, y in ipairs(p.ys) do
-      local cuts, why, warn = judge(p, y, grids)
+      local cuts, why, warn = judge(p, y, grids, segs)
       entry.tried[#entry.tried + 1] = { y = y, ok = cuts ~= nil, why = why, walls = cuts and #cuts or nil, beside = warn and #warn or nil, first_beside = warn and warn[1] or nil }
       if cuts and (not best or #warn < best[1] or (#warn == best[1] and #cuts < best[2])) then best = { #warn, #cuts }; entry.y = y; entry.cuts = cuts end
     end
@@ -233,7 +255,7 @@ if due('apply') then
   ok.path.mkdir(backup, true)
   for _, row in ipairs(info.actors or {}) do
     for _, m in ipairs({ row.mesh, row.collision }) do
-      if m then local rel = m:gsub('%..*$', ''):gsub('^/Game/', '')
+      if type(m) == 'string' then local rel = m:gsub('%..*$', ''):gsub('^/Game/', '')
         for _, ext in ipairs({ '.uasset', '.uexp', '.ubulk' }) do
           local src = 'StreetSocialCity/Content/' .. rel .. ext
           local s = read(src); if s then local dst = backup .. rel:gsub('/', '@') .. ext; if not read(dst) then write(dst, s) end end
@@ -323,3 +345,6 @@ if due('roads') then
   rep.passages_file = file; save()
   log('done: copy ' .. file .. ' into PASSAGES of export_street_city_game_places.lua')
 end
+end
+local done, err = xpcall(main, debug.traceback)
+if not done then fail(tostring(err)) end
