@@ -237,6 +237,7 @@ local function main()
     end
     build.executable = path.abs(o.executable)
     say("StreetSocial build: " .. build.executable)
+    say("Patch: " .. build.patch .. (path.exists(build.patch) and "" or " (missing: not mounted)"))
     -- A stage from a package (Tools/package_street_social.lua) comes without its junctions into this folder's Content
     -- (IndependentResources, and KKPreview once the original data is restored): made here when missing.
     -- Only a stage's own game (…/X.stage/Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.exe): -Editor runs the
@@ -295,7 +296,7 @@ local function main()
   -- character textures, 128 m of the streamed city) and only the first -MaxHeroines (5) of the selection come. The others'
   -- relationships stay in the save: it keeps every heroine by id, loaded or not (Docs/STREET_CITY_STREAMING_LOWSPEC_20261114.md).
   local low_memory = o.lowmemory and true or false
-  if not o.lowmemory and not o.nolowmemory then
+  do
     local probe = proc.run({ "powershell", "-NoProfile", "-Command", [[
 $ram = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
 $vram = 0
@@ -304,8 +305,11 @@ Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11
 "$ram $vram"]] }, { hide = true, capture = true })
     local ram, vram = (probe.stdout or ""):match("(%d+)%s+(%d+)")
     ram, vram = tonumber(ram) or 0, tonumber(vram) or 0
-    low_memory = (ram > 0 and ram < 48 * 2 ^ 30) or (vram > 0 and vram < 20 * 2 ^ 30)
-    say(("Memory: RAM %.1f GB, VRAM %.1f GB -> %s"):format(ram / 2 ^ 30, vram / 2 ^ 30, low_memory and "low-memory mode" or "full"))
+    -- always printed (a tester's report shows the machine); -LowMemory / -NoLowMemory decide over the sizes
+    local how = "by size"
+    if o.lowmemory then how = "-LowMemory" elseif o.nolowmemory then how = "-NoLowMemory"
+    else low_memory = (ram > 0 and ram < 48 * 2 ^ 30) or (vram > 0 and vram < 20 * 2 ^ 30) end
+    say(("Memory: RAM %.1f GB, VRAM %.1f GB -> %s (%s)"):format(ram / 2 ^ 30, vram / 2 ^ 30, low_memory and "low-memory mode" or "full", how))
   end
   -- Low memory: poses from the GPU rig like CrowdRoom100 (shared clips, not each heroine's solved banks; 10 heroines
   -- 18.9 -> 15.2 GB peak commit, 2026-11-15). -NoGpuRig keeps the banks; a patch without the rig's shaders falls back to them.

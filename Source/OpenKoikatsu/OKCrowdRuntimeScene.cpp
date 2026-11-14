@@ -8,6 +8,8 @@
 #include "KKRustExtract.h"
 #include "KKPreviewActor.h"
 #include "KKRuntimeMaterial.h"
+#include <atomic>
+extern std::atomic<int32> GOKRuntimeCharactersInstalled; // OKMemoryDiagnostics.cpp: the OKMem lines in game.log
 #include "KKRuntimeSpeech.h"
 #include "KKRuntimeGpuDiskCache.h"
 #include "Components/AudioComponent.h"
@@ -1177,7 +1179,7 @@ auto& T=Timings[GpuWindow?1:0];T.Frame.Add((Now-LastWall)*1000);T.Game.Add(FPlat
    if(FPlatformTime::Seconds()>=CommitDeadline)break;
   }
   if(Submitted){LoadingUploadFence.BeginFence(FRenderCommandFence::ESyncDepth::RHIThread);LoadingUploadPending=true;}
-  for(auto& E:Entries)if(E->Stage==6&&E->PackedBank.IsReady()&&E->RevealQueued&&E->RevealFence.IsFenceComplete()){auto Prepared=E->PackedBank.Consume();E->Bank=MoveTemp(Prepared.Validated);if(!E->Bank){Fail(*E,Prepared.Error.IsEmpty()?TEXT("Background private GPU bank packing failed"):Prepared.Error);continue;}E->AnimationBounds=Prepared.Bounds;E->CpuKeys=MoveTemp(Prepared.CpuKeys);for(int32 I=0;I<E->Clips.Num();++I)E->Clips[I].Tracks=MoveTemp(Prepared.CpuTracks[I]);E->Stage=5;--Active;++Complete;ShowLoadingCharacter(*E);}
+  for(auto& E:Entries)if(E->Stage==6&&E->PackedBank.IsReady()&&E->RevealQueued&&E->RevealFence.IsFenceComplete()){auto Prepared=E->PackedBank.Consume();E->Bank=MoveTemp(Prepared.Validated);if(!E->Bank){Fail(*E,Prepared.Error.IsEmpty()?TEXT("Background private GPU bank packing failed"):Prepared.Error);continue;}E->AnimationBounds=Prepared.Bounds;E->CpuKeys=MoveTemp(Prepared.CpuKeys);for(int32 I=0;I<E->Clips.Num();++I)E->Clips[I].Tracks=MoveTemp(Prepared.CpuTracks[I]);E->Stage=5;--Active;++Complete;GOKRuntimeCharactersInstalled=Complete;ShowLoadingCharacter(*E);}
   // Low-memory PC (OKRuntimeLowMemory): every heroine is installed and no prepare runs, so the decoded source bundles,
   // library models and PNGs her opens kept are not needed any more (a later open decodes them again).
   if(!SourceCachesReleased&&Complete==Entries.Num()&&Active==0&&!Entries.IsEmpty()&&OKRuntimeLowMemory()){SourceCachesReleased=true;AKKPreviewActor::ReleaseSceneCaches();UE_LOG(LogTemp,Display,TEXT("Low-memory mode: source caches released after %d heroines"),Entries.Num());}

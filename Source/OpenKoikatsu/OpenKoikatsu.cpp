@@ -10,6 +10,7 @@
 #include "Engine/World.h"
 
 void OKHSceneInstallPrecacheAhead(); // OKHScene.h
+void OKStartMemoryDiagnostics(); // OKMemoryDiagnostics.cpp
 
 class FOpenKoikatsuModule final : public FDefaultGameModuleImpl {
 public:
@@ -19,6 +20,9 @@ public:
         // registrations before any World is created, including minimal runtime stages.
         FModuleManager::LoadModuleChecked<INiagaraModule>(TEXT("Niagara"));
         OKGameControl::Start();
+        // OKMachine / OKMem lines in game.log (machine, memory and VRAM every 30 s, out-of-memory), so a tester's crash
+        // can be read from the log.
+        OKStartMemoryDiagnostics();
         // Every mode (street, card reader, studio): shaders never compile in a frame that waits for them. A draw whose PSO
         // is still compiling (precached late, a cold driver cache) is left out of that frame instead of the frame waiting,
         // 100-200 ms each at the one-on-one's start (user 2026-11-12: a one-off event must not hold up frame generation).
