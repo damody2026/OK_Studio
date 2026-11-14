@@ -385,6 +385,7 @@ private:
     void ReleaseHeld(const TCHAR* NoteKey=TEXT("ui.hscene.held_note"));
     // Her eyes and brows follow the moment (state, her gauge, how used to it she is), as the original's H face lists do.
     void UpdateFace();
+    bool bVoiceNoHighlight=false; // her breath's face hides her eye highlight (UpdateFace -> TickEyeDull)
     // Her cheeks flush with her excitement (the face's blush overlay, ChangeHohoAkaRate's _overcolor2 alpha = lerp(0, .2, rate)):
     // it rises with her gauge and fades slowly after, so she is still flushed after she comes. Her card's own blush is the floor.
     void UpdateBlush(float Delta);void RestoreBlush();

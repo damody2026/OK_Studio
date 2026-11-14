@@ -2440,7 +2440,7 @@ void UOKHScenePanel::TickEyeDull(float Delta){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_
         PupilShakeNow=FMath::Lerp(PupilShakeFrom,PupilShakeTo,PupilShakeClock);Girl->SetPupilOffset(PupilShakeNow.X,PupilShakeNow.Y);}
     else if(!PupilShakeNow.IsZero()){PupilShakeNow=PupilShakeFrom=PupilShakeTo=FVector2f::ZeroVector;Girl->SetPupilOffset(0.f,0.f);}
     {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickEyeLook);TickEyeLook(Girl,Delta);}
-    const bool bHide=Want>1.f||CVarHPupilHighlight.GetValueOnGameThread()==0;const float Sized=Want*CVarHPupilSize.GetValueOnGameThread();
+    const bool bHide=Want>1.f||CVarHPupilHighlight.GetValueOnGameThread()==0||bVoiceNoHighlight;const float Sized=Want*CVarHPupilSize.GetValueOnGameThread();
     const float Now=EyeDullScale>0.f?FMath::FInterpConstantTo(EyeDullScale,Sized,Delta,.3f):Sized;
     if(Now==EyeDullScale&&bHide==bEyeDullHidden)return;
     EyeDullScale=Now;bEyeDullHidden=bHide;Girl->SetEyeDull(Now,bHide);
@@ -2631,7 +2631,7 @@ void UOKHScenePanel::UpdateFace(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HUpdateFace)
     // up, brows raised, mouth open with her tongue out. The card has no such eye pattern; it is the tere eyes with her
     // gaze up and the mouth pattern whose name has the tongue (name / sita).
     // Or four climaxes in this scene (user 2026-11-03: 高潮 4 次後啊黑顏，雙手比 ya、流口水、翻白眼、吐舌頭; TickAhegao).
-    const int32 AheAt=CVarHAhegaoClimaxes.GetValueOnGameThread();
+    const int32 AheAt=CVarHAhegaoClimaxes.GetValueOnGameThread();bool bVoiceFace=false;
     // After her climaxes as the original: in a loop going fast, caress or insertion, not kissing (she has her normal face
     // between). Worn out for the day it shows whenever she is not refusing (user 2026-11-01).
     const bool bKiss=Mode==0&&(Base==TEXT("K_Loop")||Base==TEXT("K_Touch"));
@@ -2663,7 +2663,7 @@ void UOKHScenePanel::UpdateFace(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HUpdateFace)
     // personality and state; players 2026-11-15: no expressions in the one-on-one). The faces below only when her
     // breath has none (an index exported before the whole face was, or no breath playing).
     else if(Girl->bHBreath&&Girl->HBreathFace.Eye>=0&&CVarHVoiceFace.GetValueOnGameThread()){
-        const FKKHFace& F=Girl->HBreathFace;const int32 Blend=HEyeSetBlend(F.Eye);Eye=Blend>=0&&Blend<Girl->GetFacePatternCount(1)?Blend:Eye;Brow=F.Brow>=0&&F.Brow<Girl->GetFacePatternCount(2)?F.Brow:Brow;Open=FMath::Clamp(F.EyeOpen,0.f,1.f);}
+        bVoiceFace=true;const FKKHFace& F=Girl->HBreathFace;const int32 Blend=HEyeSetBlend(F.Eye);Eye=Blend>=0&&Blend<Girl->GetFacePatternCount(1)?Blend:Eye;Brow=F.Brow>=0&&F.Brow<Girl->GetFacePatternCount(2)?F.Brow:Brow;Open=FMath::Clamp(F.EyeOpen,0.f,1.f);}
     else if(Mode==0&&(Base==TEXT("K_Loop")||Base==TEXT("K_Touch"))){Eye=1;Brow=2;Open=0.f;}
     else if(Base.StartsWith(TEXT("Orgasm"))||(Mode!=0&&!HIsLoop(Base)&&StateWords(Base)==OKT(TEXT("ui.hscene.state_finishing")))){Eye=24;Brow=2;Open=0.f;}
     else if(StateWords(Base)==OKT(TEXT("ui.hscene.state_after"))){Eye=7;Brow=2;Open=.45f;}
@@ -2671,6 +2671,11 @@ void UOKHScenePanel::UpdateFace(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HUpdateFace)
     else if(Base==TEXT("SLoop")||Base==TEXT("WLoop")||(Mode==0&&TouchArea!=INDEX_NONE)){Eye=L>=3?8:7;Brow=L<=1?11:2;Open=Base==TEXT("SLoop")?.55f:.7f;}
     else if(Base==TEXT("Insert")||Base==TEXT("InsertIdle")){Eye=L<=1?12:8;Brow=L<=1?11:2;Open=.7f;}
     else if(L>=2){Eye=4;Brow=0;Open=.9f;}
+    // The rest of her breath's face (FaceListCtrl.SetFace): blinking or not, her tears (they stay until a face says
+    // otherwise, as tearsLv does) and her eye highlight (TickEyeDull). The scene's own faces never blink (as before).
+    Girl->bHBreathFaceBlink=bVoiceFace&&Girl->HBreathFace.bBlink;
+    if(bVoiceFace)Girl->SetTearsLevel(FMath::Clamp(Girl->HBreathFace.Tears,0,3));
+    bVoiceNoHighlight=bVoiceFace&&!Girl->HBreathFace.bHighlight;
     const FString Key=FString::Printf(TEXT("%d/%d/%.2f"),Eye,Brow,Open);if(Key==FaceKey)return;FaceKey=Key;
     TRACE_CPUPROFILER_EVENT_SCOPE(OK_HFaceControls);Girl->SetFaceControl(1,Eye,Open,true);Girl->SetFaceControl(2,Brow,1.f,true);
 }
@@ -4139,6 +4144,7 @@ void UOKHScenePanel::HideWallsInTheWay(){
 }
 void UOKHScenePanel::ClearProps(){for(AStaticMeshActor* A:Props)if(IsValid(A))A->Destroy();Props.Reset();}
 void UOKHScenePanel::NativeDestruct(){FastPaths(false);DropSecond();RestoreEyeLook();RestoreStyle();if(IsValid(Fluid)){Fluid->StopSpray();Fluid->Destroy();Fluid=nullptr;}if(Siru[0]+Siru[1]+Siru[2]+Siru[3]+Siru[4]>0){FMemory::Memzero(Siru);ApplySiru();}if(bCovered)Cover(false,FPlatformTime::Seconds());ClearProps();RestoreBlush();
+    if(auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl)){Girl->bHBreathFaceBlink=false;Girl->SetTearsLevel(-1);} // her breath's face lets go of her blink and tears
     if(auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl))EndDeepFace(Girl);
     if(bAhegaoShown){bAhegaoShown=false;TickAhegao();if(auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(Girl)){Girl->SetEyeGaze(0.f,0.f,0.f);Girl->SetMouthPattern(0);}} // her eyes, mouth and hands back from ahegao
     TickCameraLight(true);TickSkinLit(true);TickClothBias(true);bLeadsOnTopEnd=true;TickLeadsOnTop();
@@ -4334,6 +4340,8 @@ TSharedRef<FJsonObject> UOKHScenePanel::Describe() const{
     {auto D=MakeShared<FJsonObject>();for(const TCHAR* A:{TEXT("crotch"),TEXT("anal"),TEXT("oral"),TEXT("chest"),TEXT("nipple")})D->SetNumberField(A,FMath::RoundToFloat(Dev(A)*100.f));O->SetObjectField(TEXT("dev"),D);
      const double Now=FPlatformTime::Seconds();O->SetNumberField(TEXT("climax_left"),FMath::Max(0.,ClimaxUntil-Now));O->SetNumberField(TEXT("nipple_left"),FMath::Max(0.,NippleUntil-Now));}O->SetNumberField(TEXT("speed"),SpeedValue);O->SetBoolField(TEXT("condom"),bCondom);O->SetBoolField(TEXT("anal_play"),bAnalPlay);
     O->SetStringField(TEXT("title"),Title?Title->GetText().ToString():FString());O->SetStringField(TEXT("hint"),Hint?Hint->GetText().ToString():FString());O->SetStringField(TEXT("face"),FaceKey); /* eye/brow/openness now (UpdateFace) */
+    // Her breath's face beyond eyes and brows (FaceListCtrl.SetFace): blinking, the blink's openness now, tears shown.
+    if(auto* G=Gallery?Gallery->PreviewActor.Get():nullptr;IsValid(G)){O->SetBoolField(TEXT("blink"),G->bHBreathFaceBlink);O->SetNumberField(TEXT("blink_rate"),G->BlinkEyeRate);O->SetNumberField(TEXT("tears"),G->TearsLevel);}
     if(Gallery&&Gallery->PreviewActor){O->SetBoolField(TEXT("breath"),Gallery->PreviewActor->bHBreath);O->SetBoolField(TEXT("speaking"),Gallery->PreviewActor->IsSpeaking());O->SetNumberField(TEXT("mouth"),Gallery->PreviewActor->EffectiveFaceRate(0));}
     if(Gallery&&Gallery->HExperience.IsValid())O->SetObjectField(TEXT("experience"),Gallery->HExperience); // what she allows (hexp.rs h_experience)
     auto Buttons=[](UPanelWidget* Panel){TArray<TSharedPtr<FJsonValue>> Out;if(Panel)for(int32 I=0;I<Panel->GetChildrenCount();++I)if(auto* B=Cast<UOKHSceneButton>(Panel->GetChildAt(I))){auto R=MakeShared<FJsonObject>();R->SetNumberField(TEXT("kind"),B->Kind);R->SetBoolField(TEXT("enabled"),B->GetIsEnabled());

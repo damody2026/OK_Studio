@@ -4475,7 +4475,7 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
   - 衝刺：原作在決定射精或高潮後先播 `OLoop`，速度沿用剛才的抽插速度（`flags.speed` 不歸零），一直播到她那句話講完才進結束動作。我們的 `ApplySpeed` 只讓 Loop 狀態用玩家的速度，`OLoop` 被降回 1 倍速，而且只播約 2.5 秒（播放器的 `Elapsed` 乘了速度）。結果高速抽插到最後反而慢下來，看起來沒有衝刺。
 - 原因：移植時只看了嘴型欄位，沒有對照 `FaceListCtrl.SetFace` 的整組欄位；`OLoop` 被當成一般單次狀態處理。
 - 修正：
-  - `h_breath_table` 的 `mouths` 每列加上 `eye`／`brow`／`eyeOpen`／`tears`／`cheek`／`highlight`／`blink`（舊欄位不變），`KKHvoice.cpp` 讀成 `FKKHFace`。播喘息時 `AKKPreviewActor::HBreathFace` 記下當句的表情；`UpdateFace` 在阿黑顏、厭惡、深插、口交吸吮之後，優先用這組表情（眼睛先經過 `cha_eyeset` 換成我們的眼睛圖樣），臉紅取當句的 `cheek` 與高潮度的較大者。`ok.HScene.VoiceFace 0` 可以切回原本的固定表情。眼淚、高光、眨眼還沒有接。
+  - `h_breath_table` 的 `mouths` 每列加上 `eye`／`brow`／`eyeOpen`／`tears`／`cheek`／`highlight`／`blink`（舊欄位不變），`KKHvoice.cpp` 讀成 `FKKHFace`。播喘息時 `AKKPreviewActor::HBreathFace` 記下當句的表情；`UpdateFace` 在阿黑顏、厭惡、深插、口交吸吮之後，優先用這組表情（眼睛先經過 `cha_eyeset` 換成我們的眼睛圖樣），臉紅取當句的 `cheek` 與高潮度的較大者。`ok.HScene.VoiceFace 0` 可以切回原本的固定表情。眨眼、眼淚、高光 2026-11-15 補上：H 用手動表情時原本完全不眨眼，改成依表情的 `eyesblink`；眼淚網格（`cf_O_namida_S/M/L`）改成照建、先隱藏，`SetTearsLevel` 即時切換；高光依 `highlight` 隱藏。原作喘息表情裡沒有一筆帶眼淚或關高光（24,640 筆中只有 3,240 筆停眨眼），這兩項要等接上說話用的表情才會出現。
   - `OLoop` 沿用 Loop 的速度（`ok.HScene.SprintSpeed` 可設下限），至少播 `ok.HScene.SprintSeconds`（4 秒，以實際秒數計）。
   - 基礎庫的 `h/voice/h_breath_index.json` 用新的 `ok-hbreath` 重新匯出（其他表與欄位逐項比對相同）。
 ## 2026-11-14 U272：把地圖 53 貨櫃背光面變黑歸給商店的 cookie 燈，還沿用舊截圖、讀了 D: 的遊戲（F 組）
