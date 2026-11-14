@@ -78,7 +78,16 @@ local function main()
   path.mkdir(path.parent(plugin_manifest))
   path.write_text(plugin_manifest, json.encode(json.object({ { "Contents", plugin_entries } }), { indent = 4, ensure_ascii = false }) .. "\n",
     { bom = true })
-  io.write(stage_street_social.stage(path.join(host_root, "Binaries/Win64/OpenKoikatsu.exe"), a.destination, a.base_dir), "\n")
+  local staged = stage_street_social.stage(path.join(host_root, "Binaries/Win64/OpenKoikatsu.exe"), a.destination, a.base_dir)
+  -- stage.json: when and from what this stage was made. The launcher picks the newest stage by staged_at (the staged
+  -- exe is a hard link of the host's, so its time is the last relink, not when the stage was made).
+  local git = proc.run({ "git", "-C", project_root, "rev-parse", "HEAD" }, { capture = true, hide = true })
+  local dirty = proc.run({ "git", "-C", project_root, "status", "--porcelain", "--untracked-files=no" }, { capture = true, hide = true })
+  path.write_text(path.join(stage, "stage.json"), json.encode(json.object({
+    { "staged_at", os.time() }, { "staged_at_text", os.date("%Y-%m-%d %H:%M:%S") },
+    { "commit", ((git.stdout or ""):match("%x+")) or "" }, { "dirty", ((dirty.stdout or ""):match("%S")) ~= nil },
+    { "host", host_root }, { "base", path.abs(path.join(project_root, a.base_dir)) } }), { indent = 2 }) .. "\n")
+  io.write(staged, "\n")
 end
 
 ok.main(main)

@@ -170,18 +170,33 @@ local function strict_inputs(build)
   end
 end
 
--- Newest StreetSocial stage executable (CrowdRoom*.stage is the crowd room's).
+-- Newest StreetSocial stage executable (CrowdRoom*.stage is the crowd room's), by when the stage was made: its
+-- stage.json staged_at (Tools/stage_interaction_runtime.lua), else the stage folder's creation time. Not the exe's
+-- time: the staged exe is a hard link of the host's, unchanged when a new stage reuses an exe that was not relinked.
+-- Returns the exe, the stage's name and how its time was known.
 local function newest_stage(root)
-  local dir, best, best_time = path.join(root, "Saved/StreetSocial/Build"), nil, -1
+  local lfs = require "lfs"
+  local dir, best, best_time, best_name, best_how = path.join(root, "Saved/StreetSocial/Build"), nil, -1, nil, nil
   if not path.is_dir(dir) then return nil end
   for _, n in ipairs(path.list(dir)) do
     if n:lower():match("%.stage$") and not n:lower():match("^crowdroom") then
       local exe = path.join(dir, n, "Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.exe")
-      local t = path.mtime(exe)
-      if t and t > best_time then best, best_time = exe, t end
+      if path.is_file(exe) then
+        local t, how
+        local meta = path.join(dir, n, "stage.json")
+        if path.is_file(meta) then
+          local okj, m = pcall(json.decode, path.read_text(meta))
+          if okj and type(m) == "table" and tonumber(m.staged_at) then
+            t, how = tonumber(m.staged_at), ("stage.json %s, commit %s%s"):format(m.staged_at_text or "?", tostring(m.commit or "?"):sub(1, 9), m.dirty and " +local changes" or "")
+          end
+        end
+        -- lfs "change" is the creation time on Windows
+        if not t then t = lfs.attributes(path.join(dir, n), "change"); how = t and ("folder created " .. os.date("%Y-%m-%d %H:%M:%S", t)) end
+        if t and t > best_time then best, best_time, best_name, best_how = exe, t, n, how end
+      end
     end
   end
-  return best
+  return best, best_name, best_how
 end
 
 local function main()
@@ -208,14 +223,17 @@ local function main()
       material_manifest = path.join(root, launch.materials), runtime_render_quality = launch.render_quality }
     if o.editor then o.executable = path.join(ok.engine_root(), "Engine/Binaries/Win64/UnrealEditor.exe") end
     if not o.executable then
-      local latest = newest_stage(root)
+      local latest, name, how = newest_stage(root)
       if not latest then
         say("No StreetSocial build under Saved/: rebuilding it from Content + Source (this takes a while)...")
         tool("rebuild_street_social_runtime.lua", { "--tag", "StreetAuto" .. os.date("%Y%m%d%H%M") })
-        latest = newest_stage(root)
+        latest, name, how = newest_stage(root)
         if not latest then error("StreetSocial rebuild did not produce a stage", 0) end
       end
       o.executable = latest
+      say("==================================================================")
+      say(("  Stage: %s  (newest; %s)"):format(name, how or "?"))
+      say("==================================================================")
     end
     build.executable = path.abs(o.executable)
     say("StreetSocial build: " .. build.executable)
@@ -585,6 +603,8 @@ Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11
   elseif path.exists(build.patch) then game[#game + 1] = "-pakdir=" .. build.patch end
   if o.city then game[#game + 1] = "-StreetCity" end
   game[#game + 1] = low_memory and "-OKLowMemory" or "-OKNoLowMemory"
+  -- which stage runs, in game.log's command line (a wrong pick shows at a glance)
+  do local stage = build.executable:match("([^/\\]+%.stage)[/\\]") if stage then game[#game + 1] = "-OKStage=" .. stage end end
   game[#game + 1] = "-abslog=" .. path.join(output, "game.log")
   game[#game + 1] = "-RuntimeGpuCacheMiB=4096"
   -- The GPU rig's shaders are verified at startup only when asked for (OKGpuRig.cpp): with gpu_rig on, the patch has them.

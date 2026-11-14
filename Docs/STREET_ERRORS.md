@@ -2222,3 +2222,4 @@
   - S38 的 link 28742-28743 撞到店內的貨架 StaticMeshActor_111，那個轉角點還在店裡面。
   - A2 有一段線剛好貼在切口邊緣 y47080，撞到 StaticMeshActor_204。
   - 體育館從 gym_hall 往電梯走，用的是 GridRoute 拉一條直線，撞到 StaticMeshActor_372 就失敗；這要改 C++，交給 C++ 組。
+- 2026-11-15 c-lowspec：`StreetSocial.cmd` 以 stage 裡 exe 的修改時間挑「最新 stage」。stage 的 exe 是 host exe 的硬連結，新 stage 沒重新連結執行檔時，exe 時間仍是舊的，於是可能開到舊 stage，而且畫面上沒有任何提示。改正：`stage_interaction_runtime.lua` 在每個 stage 寫 `stage.json`（staged_at、commit、是否有本機修改、host、base），啟動器依 staged_at 挑；舊 stage 沒有這個檔時，改看 stage 資料夾的建立時間。主控台會用醒目的一行印出選到的 stage 與判斷依據，game.log 的 Command Line 也帶 `-OKStage=<名稱>`。
