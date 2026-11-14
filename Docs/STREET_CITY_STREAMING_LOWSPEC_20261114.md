@@ -174,7 +174,11 @@ LLM（nh1115b，10 女角，低配）：commit 15.8 GB，组成如下。
 - 显存在每种设定下都低于 5 GB。
 - 结论：每名女角约减少 0.15–0.3 GB，**还没有减半**。剩下的大头，一是每名女角各自的网格和材质（不同卡的渲染骨与面数差很多），二是驱动映射的显存。
 
-下一步（还没做）：路上不在互动的女角，改用 CrowdRoom100 的低模（`-RuntimeLowPoly`，卡旁的 `.lowpoly.okmap`）。街区的女角卡目前都没有 okmap（`Content/CharacterCards/StreetHeroines` 一个都没有），要先用 `ok-lowpoly.exe` 产生。互动中的女角要换回原网格，这一步要改 C++。
+低模的情况（2026-11-15 核对）：
+- 现在的 `CrowdRoom100.cmd` 已经不用 Instant Meshes 低模（`-RuntimeLowPoly`）。`Content/CharacterCards/CrowdAPNG` 一个 `.lowpoly.okmap` 都没有，`Docs/APNG_LOWPOLY.md` 写的是 10-10 当时的做法。
+- 百人房间每一名都是在执行时由 `OKReduceRuntimeMeshesAsync` 减面（QEM）：身体合计 15,000 面，衣服 15,000 面，其他 30,000 面；脸和头发不减。
+- 街区女角走的是同一个 `OKCrowdRuntimeScene`，`preserve_source_geometry` 没人打开，所以已经和百人房间一样减面了。
+- 因此，CrowdRoom100 的做法里街区还没用上的只有 GPU rig，这次已经打开。要再省，就要再压减面预算，或是只给远处的女角更低的预算。
 
 ## 5. 给使用者的决定：要不要改远景
 
