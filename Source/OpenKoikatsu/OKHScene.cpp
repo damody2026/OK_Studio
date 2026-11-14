@@ -465,7 +465,21 @@ void UOKHScenePanel::Note(const FString& Text,bool bReact){Events.Add(Text);if(G
 
 TSharedRef<SWidget> UOKHScenePanel::RebuildWidget(){
     if(!WidgetTree)WidgetTree=NewObject<UWidgetTree>(this);
-    UHorizontalBox* Root=WidgetTree->ConstructWidget<UHorizontalBox>();WidgetTree->RootWidget=Root;
+    // The panels, and over them both their last lines as subtitles at the bottom: hers (pink) above his (light blue).
+    UOverlay* Layer=WidgetTree->ConstructWidget<UOverlay>();WidgetTree->RootWidget=Layer;
+    UHorizontalBox* Root=WidgetTree->ConstructWidget<UHorizontalBox>();
+    if(UOverlaySlot* S=Layer->AddChildToOverlay(Root)){S->SetHorizontalAlignment(HAlign_Fill);S->SetVerticalAlignment(VAlign_Fill);}
+    {UVerticalBox* Lines=WidgetTree->ConstructWidget<UVerticalBox>();Lines->SetVisibility(ESlateVisibility::HitTestInvisible);
+     if(UOverlaySlot* S=Layer->AddChildToOverlay(Lines)){S->SetHorizontalAlignment(HAlign_Center);S->SetVerticalAlignment(VAlign_Bottom);S->SetPadding(FMargin(380,0,380,48));}
+     const FLinearColor Colors[2]={FLinearColor(1.f,.62f,.82f),FLinearColor(.62f,.85f,1.f)};
+     for(int32 Who=0;Who<2;++Who){
+         SubtitleBack[Who]=WidgetTree->ConstructWidget<UBorder>();SubtitleBack[Who]->SetBrushColor(FLinearColor(0.f,0.f,0.f,.55f));SubtitleBack[Who]->SetPadding(FMargin(18,6));
+         Subtitle[Who]=WidgetTree->ConstructWidget<UTextBlock>();{FSlateFontInfo F=Subtitle[Who]->GetFont();F.Size=20;F.OutlineSettings.OutlineSize=1;Subtitle[Who]->SetFont(F);}
+         Subtitle[Who]->SetColorAndOpacity(FSlateColor(Colors[Who]));Subtitle[Who]->SetAutoWrapText(true);Subtitle[Who]->SetJustification(ETextJustify::Center);SubtitleBack[Who]->SetContent(Subtitle[Who]);
+         if(UVerticalBoxSlot* S=Lines->AddChildToVerticalBox(SubtitleBack[Who])){S->SetHorizontalAlignment(HAlign_Center);S->SetPadding(FMargin(0,3));}
+         // The panel is built again many times: a line still within its time stays.
+         const bool bShown=SubtitleUntil[Who]>FPlatformTime::Seconds();Subtitle[Who]->SetText(FText::FromString(bShown?SubtitleText[Who]:FString()));
+         SubtitleBack[Who]->SetVisibility(bShown?ESlateVisibility::HitTestInvisible:ESlateVisibility::Collapsed);}}
     {HSettingsLoad();
      // Each one-on-one starts with the original Verlet physics and the toon skin (user, 2026-11-12); switched in the
      // scene they stay for it (the panel is rebuilt many times: once per panel).
@@ -1429,6 +1443,7 @@ void UOKHScenePanel::BuildActions(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HBuildActi
 void UOKHScenePanel::NativeTick(const FGeometry& Geometry,float Delta){
     TRACE_CPUPROFILER_EVENT_SCOPE(OK_HScenePanelTick);
     Super::NativeTick(Geometry,Delta);
+    for(int32 Who=0;Who<2;++Who)if(SubtitleUntil[Who]>0.&&FPlatformTime::Seconds()>=SubtitleUntil[Who]){SubtitleUntil[Who]=0.;if(SubtitleBack[Who])SubtitleBack[Who]->SetVisibility(ESlateVisibility::Collapsed);}
     if(bGrayRoom&&GetWorld()&&GetWorld()->GetTimeSeconds()>=GrayCheckAt){GrayCheckAt=GetWorld()->GetTimeSeconds()+1.;HideWorld();}
     if(HalfInner&&PanelWidth){const float High=2.f*float(PanelWidth->GetCachedGeometry().GetLocalSize().Y);if(High>10.f&&!FMath::IsNearlyEqual(High,HalfInner->GetHeightOverride(),1.f))HalfInner->SetHeightOverride(High);}
     if(!Gallery)return;
@@ -1896,7 +1911,15 @@ bool UOKHScenePanel::Hear(const FString& Raw,FString& Out){
 void UOKHScenePanel::ShowLine(const FString& Text){
     bStaleLine=SentEpoch!=LineEpoch;if(bStaleLine){UE_LOG(LogTemp,Display,TEXT("H scene: her line from before the last climax / finish / pose not shown: %s"),*Text.Left(60));return;}
     if(Caption)Caption->SetText(FText::FromString(Text));
+    ShowSubtitle(0,Text);
     QuietSince=FPlatformTime::Seconds();
+}
+// His words at the bottom of the screen: what the microphone heard, then the line sent.
+void UOKHScenePanel::ShowPlayerLine(const FString& Text){ShowSubtitle(1,Text);}
+// One of the two subtitles (0 hers, 1 his): its last line, shown for 15 s after it came.
+void UOKHScenePanel::ShowSubtitle(int32 Who,const FString& Text){
+    if(Text.IsEmpty()||Who<0||Who>1||!Subtitle[Who]||!SubtitleBack[Who])return;
+    SubtitleText[Who]=Text;Subtitle[Who]->SetText(FText::FromString(Text));SubtitleBack[Who]->SetVisibility(ESlateVisibility::HitTestInvisible);SubtitleUntil[Who]=FPlatformTime::Seconds()+15.;
 }
 // What his words in the scene asked for (the street's H judge, ui.scene.h_judge_prompt): the pose and what is going on
 // now, and every pose and caress by name.

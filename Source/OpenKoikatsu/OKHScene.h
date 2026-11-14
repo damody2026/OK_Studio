@@ -144,6 +144,7 @@ public:
     // His words from elsewhere (the microphone): false when she cannot answer now (held for her climax).
     bool Hear(const FString& Text,FString& Context);
     void ShowLine(const FString& Text);
+    void ShowPlayerLine(const FString& Text);
     void SpokeLine(){bTalkSpoken=true;}
     void SetReplyPending(bool bPending){bReplyPending=bPending;}
     UFUNCTION() void OnInputCommitted(const FText& Text,ETextCommit::Type Commit);
@@ -372,6 +373,8 @@ private:
     UPROPERTY() TObjectPtr<UScrollBox> List;
     UPROPERTY() TObjectPtr<class UEditableTextBox> Input;
     UPROPERTY() TObjectPtr<UTextBlock> Caption;
+    // Both their last lines as subtitles at the bottom (user 2026-11-14): [0] hers in pink, [1] his in light blue, each 15 s.
+    UPROPERTY() TObjectPtr<UTextBlock> Subtitle[2];UPROPERTY() TObjectPtr<class UBorder> SubtitleBack[2];double SubtitleUntil[2]={0.,0.};FString SubtitleText[2];void ShowSubtitle(int32 Who,const FString& Text);
     struct FHLine {FString Text,Note;bool System=false;};
     TArray<FHLine> Outbox;
     TArray<FString> Held;

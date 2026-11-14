@@ -650,6 +650,10 @@ bool AOKStreetSocialScene::TickPrivate(double Now){
    S.FreeTalkSpeechPlayed=S.FreeTalkSpeechLines.Num();}
   if(!S.FreeTalkBusy&&S.FreeTalkDraft.IsEmpty()&&!HerReplyUnspoken()&&S.PrivateMode->HSceneTakeLine(Line,Context,System)){S.PrivateTalkContext=Context;S.FreeTalkDraft=Line;S.SystemNote=System;S.PrivateReplyIsReaction=System;SendFreeTalk();}
   if(S.FreeTalkCaptionHer!=S.PrivateShownLine){S.PrivateShownLine=S.FreeTalkCaptionHer;S.PrivateMode->HSceneShowLine(S.FreeTalkCaptionHer);}
+  // His words as a subtitle at the bottom (user 2026-11-14): what the microphone heard as soon as it is heard, then
+  // the line as sent (typed lines too).
+  {const FString& Said=S.FreeTalkHeard!=S.PrivateHeardShown?S.FreeTalkHeard:S.FreeTalkCaptionPlayer!=S.PrivateSaidShown?S.FreeTalkCaptionPlayer:FString();
+   if(S.FreeTalkHeard!=S.PrivateHeardShown||S.FreeTalkCaptionPlayer!=S.PrivateSaidShown){S.PrivateHeardShown=S.FreeTalkHeard;S.PrivateSaidShown=S.FreeTalkCaptionPlayer;if(!Said.IsEmpty())S.PrivateMode->HSceneShowPlayerLine(Said);}}
   S.PrivateMode->HSceneReplyPending(HerReplyUnspoken());
   return true;
  }

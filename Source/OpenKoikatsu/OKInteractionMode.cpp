@@ -485,6 +485,7 @@ TSharedPtr<FJsonObject> AOKInteractionMode::HSceneControl(const TSharedPtr<FJson
 bool AOKInteractionMode::HSceneTakeLine(FString& Text,FString& Context,bool& System){return Controller&&Controller->HPanel&&Controller->HPanel->TakeLine(Text,Context,System);}
 bool AOKInteractionMode::HSceneHear(const FString& Text,FString& Context){return Controller&&Controller->HPanel&&Controller->HPanel->Hear(Text,Context);}
 void AOKInteractionMode::HSceneShowLine(const FString& Text){if(Controller&&Controller->HPanel)Controller->HPanel->ShowLine(Text);}
+void AOKInteractionMode::HSceneShowPlayerLine(const FString& Text){if(Controller&&Controller->HPanel)Controller->HPanel->ShowPlayerLine(Text);}
 FString AOKInteractionMode::HSceneJudgeFacts() const{return Controller&&Controller->HPanel?Controller->HPanel->JudgeFacts():FString();}
 bool AOKInteractionMode::HSceneApplyTalk(const TSharedPtr<FJsonObject>& Verdict){return Controller&&Controller->HPanel&&Controller->HPanel->ApplyTalk(Verdict);}
 extern TAutoConsoleVariable<int32> CVarHTtsLines; // OKHScene.cpp

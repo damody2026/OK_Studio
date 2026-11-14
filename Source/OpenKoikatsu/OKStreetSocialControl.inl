@@ -122,6 +122,10 @@ void AOKStreetSocialScene::StartControlServer(){
  Bind(TEXT("/say"),EHttpServerRequestVerbs::VERB_POST,[this](const FHttpServerRequest& Req,const FHttpResultCallback& Done){
   auto& S=*State;FString Said;OKControlBody(Req)->TryGetStringField(TEXT("text"),Said);const FString Text=Said.TrimStartAndEnd();
   if(Text.IsEmpty()){OKControlReply(Done,OKControlResult(false,TEXT("empty text")));return;}
+  // "send":false: only heard, as the recogniser shows what it heard before it is sent (his subtitle, the heard line),
+  // with nothing asked of her mind (no cloud call while testing).
+  bool Send=true;OKControlBody(Req)->TryGetBoolField(TEXT("send"),Send);
+  if(!Send){S.FreeTalkHeard=Text;OKControlReply(Done,OKControlResult(true));return;}
   if(FreeTalkPartner()==INDEX_NONE){OKControlReply(Done,OKControlResult(false,TEXT("nobody to talk to")));return;}
   if(S.FreeTalkBusy){OKControlReply(Done,OKControlResult(false,TEXT("busy: she is still answering")));return;}
   if(SongIsSinging()&&S.Song.Girl==FreeTalkPartner()){OKControlReply(Done,OKControlResult(false,TEXT("busy: she is singing")));return;}
