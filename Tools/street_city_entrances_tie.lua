@@ -46,6 +46,30 @@ for _, p in ipairs(places) do
   end
 end
 print(('entrances: %d on the roads already, %d tied, %d without a road point near'):format(kept, added, failed))
+-- Floors above the street with no road of their own: a line of points from the lift to a place's door, each leg clear on
+-- that floor's scans (two heights, 40 cm clearance). Without it the game's graph route between two spots of one floor went
+-- down to the street (10 of 12 points off the floor) and fell back to a straight line into the wall.
+--   civic 2F, lift2:2F to the bank (door: its counter): the straight line from the bank hit the south wall's corner
+--   (StaticMeshActor_496 at 31904,58773, nh1115k 11-15); the scans (z 1710 and 1640) have the way out of the bank's open
+--   south side and through the gap at x 31100-31850 in the corridor's south wall, 35 m for 32; the last leg goes east of the counter's low panel (x 32800-32850 at z 1640).
+local FLOOR_PATHS = {
+  { id = 'civic_2f_bank', z = 1620, pts = { { 31260, 56500 }, { 31380, 56630 }, { 31780, 58780 }, { 31880, 58880 }, { 32930, 59250 }, { 32860, 59393 } } },
+}
+for _, path in ipairs(FLOOR_PATHS) do
+  local prev, new = nil, 0
+  for _, q in ipairs(path.pts) do
+    local id
+    for n, r in ipairs(roads.nodes) do if d2(r, q) <= 50 and math.abs(r[3] - path.z) < 100 then id = n - 1; break end end
+    if not id then roads.nodes[#roads.nodes + 1] = { q[1], q[2], path.z }; id = #roads.nodes - 1; new = new + 1 end
+    if prev and prev ~= id then
+      local have = false
+      for _, l in ipairs(roads.links) do if (l[1] == prev and l[2] == id) or (l[1] == id and l[2] == prev) then have = true; break end end
+      if not have then roads.links[#roads.links + 1] = { prev, id }; added = added + 1 end
+    end
+    prev = id
+  end
+  print(('floor path %s: %d points, %d new'):format(path.id, #path.pts, new))
+end
 if dry or added == 0 then if dry then print('--dry: not written') end; os.exit(failed == 0 and 0 or 1) end
 local rows, lrows = {}, {}
 for n, p in ipairs(roads.nodes) do rows[n] = ('[%.1f,%.1f,%.1f]'):format(p[1], p[2], p[3]) end
