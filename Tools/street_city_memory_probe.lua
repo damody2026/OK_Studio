@@ -9,6 +9,9 @@
 --     --no-slot     the caller holds an Unreal slot already (Tools/unreal_slot.lua)
 --     --memreport   "memreport -full" at the end of the idle samples
 --     --shots       a screenshot 10 s after each warp (control_shots beside the run's report)
+--     --soak MIN    after the tour, MIN minutes of rounds: warp to a far place, then walk to a heroine for 45 s (the
+--                   autopilot, /navigate); each round's lowest commit goes to <tag>.json soak_rounds, so memory that
+--                   keeps climbing shows as a rising floor (soak_floor_first_gb / soak_floor_last_gb)
 --     --exec "A;B"  console commands sent through the control channel once the map is up (before the idle samples),
 --                   e.g. "wp.Runtime.OverrideRuntimeSpatialHashLoadingRange -grid=0 -range=12800" (until the map reloads)
 --     after --      passed to Tools/run_street_social_development.lua, e.g. -- -CitySource
@@ -29,6 +32,7 @@ while arg[i] do
   elseif a == "--exec" then i = i + 1; o.exec = arg[i]
   elseif a == "--memreport" then o.memreport = true
   elseif a == "--shots" then o.shots = true
+  elseif a == "--soak" then i = i + 1; o.soak = assert(tonumber(arg[i]), "--soak MINUTES")
   else error("unknown argument " .. a, 0) end
   i = i + 1
 end
@@ -101,6 +105,7 @@ local ok_run, err = pcall(function()
     peak.gpu = math.max(peak.gpu, s.gpu); peak.min_free_commit = math.min(peak.min_free_commit, s.free_commit)
     peak[phase] = math.max(peak[phase] or 0, s.commit)
     say(("%4ds %-10s commit %.1f GB (peak %.1f)  ws %.1f GB  gpu %.1f GB  free commit %.0f GB"):format(t, phase, gb(s.commit), gb(s.peak_commit), gb(s.ws), gb(s.gpu), gb(s.free_commit)))
+    return s
   end
   -- Loading: until game.log says the map is up and the control channel answers, at most 15 minutes. The launcher's
   -- last line is its output folder (game.log beside selection.json).
@@ -139,6 +144,26 @@ local ok_run, err = pcall(function()
       end
     end
   end
+  if o.soak then
+    local places = { "department", "boys_dorm", "skating", "gym", "church", "cinema", "ramen", "bank" }
+    local soak_end, round = os.time() + math.floor(o.soak * 60), 0
+    peak.soak_rounds = {}
+    while os.time() < soak_end do
+      round = round + 1
+      local place, girl = places[(round - 1) % #places + 1], (round - 1) % 5 + 1
+      phase = ("soak%d:%s"):format(round, place)
+      say("warp " .. place .. ": " .. http("POST", "/warp", json.encode({ place = place })))
+      local floor_before = math.huge
+      local t_end = os.time() + 20
+      while os.time() < t_end do record(); sleep(2) end
+      say("walk to girl " .. girl .. ": " .. http("POST", "/navigate", json.encode({ girl = girl })))
+      t_end = os.time() + 45
+      while os.time() < t_end do local s = record(); if s then floor_before = math.min(floor_before, s.commit) end; sleep(2) end
+      peak.soak_rounds[#peak.soak_rounds + 1] = gb(floor_before)
+      say(("round %d floor %.2f GB"):format(round, gb(floor_before)))
+    end
+    http("POST", "/navigate", json.encode({ stop = true }))
+  end
 end)
 csv:close()
 if pid then proc.run({ "taskkill", "/PID", tostring(pid), "/T", "/F" }, { hide = true, capture = true }) end
@@ -147,6 +172,13 @@ local summary = { tag = o.tag, launcher_args = launcher_args, completed = ok_run
   peak_commit_gb = gb(peak.commit), peak_working_set_gb = gb(peak.ws), peak_gpu_dedicated_gb = gb(peak.gpu),
   min_system_free_commit_gb = peak.min_free_commit < math.huge and gb(peak.min_free_commit) or nil, load_seconds = peak.load_seconds }
 for k, v in pairs(peak) do if type(k) == "string" and (k == "load" or k == "idle" or k:match("^tour:")) then summary["commit_gb_" .. k] = gb(v) end end
+if peak.soak_rounds and #peak.soak_rounds > 0 then
+  local r = peak.soak_rounds
+  summary.soak_rounds = r
+  summary.soak_floor_first_gb, summary.soak_floor_last_gb = r[1], r[#r]
+  local hi = 0; for k, v in pairs(peak) do if type(k) == "string" and k:match("^soak") and type(v) == "number" then hi = math.max(hi, v) end end
+  summary.soak_peak_commit_gb = gb(hi)
+end
 path.write_text(path.join(out_dir, o.tag .. ".json"), json.encode(summary, { indent = 2 }))
 say(json.encode(summary, { indent = 2 }))
 if not ok_run then os.exit(1) end
