@@ -21,6 +21,17 @@
 - **显存 ≤ 8 GB：通过**，峰值 5.2 GB。
 - **内存 ≤ 12 GB**：实际占用的实体内存（工作集）峰值 10.0 GB，**通过**。commit 待机约 10 GB，**通过**；但瞬移后会有短暂峰值 13–14.4 GB，**超过 12 GB**。commit 里约 4 GB 是驱动把显存映射进进程的部分（4.1），12 GB 的机器靠分页档可以容纳。正常走路是渐进载入，不会像瞬移那样整片格子同时载入。
 
+第二次长测（nh1115h，含 R9-1、R9-2 与多入口，2026-11-15 04:41–05:25）完整跑完 35 分钟、32 轮，过程中没有当机。各圈每轮最低 commit 的平均依序是 10.38、10.31、10.59、10.70 GB。和第一次（10.16、10.53、10.64、10.08）放在一起看，是跑与跑之间的起伏，没有累积。峰值 commit 15.7 GB（载入与巡游时；长测中的峰值是 14.3 GB），工作集峰值 10.9 GB，显存峰值 5.4 GB。每 2 秒的取样在 `Saved/StreetSocial/MemProbe/soak2-5-low.csv`，这个档案是逐行写入的，就算游戏中途被关掉，已经取样的部分也会留下来。
+
+**测试者的当机多半不是内存造成的**：测试者的机器是 64 GB 内存、16 GB 显存；照这里量到的数字，修改前整城一次载入也只有 30–32 GB commit、10.7–13.3 GB 显存，都放得下。所以内存不是已知的瓶颈，原因要看测试者的 `game.log` 与 `Saved/Crashes` 才能判断（§6）。为了让下一次当机看得出原因，做了以下几件事（646c07267）：
+- game.log 一开始写一行 `OKMachine`：CPU、RAM、commit 上限、GPU 与驱动版本、显存与驱动给的预算、是否低配、stage、patch。
+- 之后每 30 秒写一行 `OKMem`：本进程的 commit 与工作集、系统剩余 commit、本进程显存与驱动预算（DXGI `QueryVideoMemoryInfo`）、已载入的串流 level 数、已装好的女角数。`-OKMemLogSeconds=N` 可以改间隔，0 为关闭。
+- 显存超过驱动预算，或系统剩余 commit 低于 2 GB 时，写一行 Warning。引擎配置内存失败时（out-of-memory 委派），会在死掉之前写一行 `Out of memory. OKMem: …`。每写一行就 flush，所以进程被系统或驱动直接杀掉时，已经写的内容不会丢。
+- 启动器的黑色视窗一定会印出 `Memory: RAM … VRAM … -> …（判定来源）` 与 `Patch: …`；挑选最新 stage 时还会印 `Stage: …`。
+- 打包版当机会不会留下 dump：用 nh1115h 执行 `debug crash` 实测过。`<stage>\Windows\OpenKoikatsu\Saved\Crashes\UECC-Windows-…\` 里有 `UEMinidump.dmp`（2.2 MB）、`game.log` 与 `CrashContext.runtime-xml`。stage 里没有 `CrashReportClient`，所以当机后视窗会卡住约 60 秒才自己关掉；dump 在当机的那一刻就已经写好了。
+
+本机的样例：`OKMachine: CPU AMD Ryzen 9 9950X3D … RAM 125.6 GB, commit limit 185.6 GB, GPU NVIDIA GeForce RTX 5090 (driver 610.88, D3D12), VRAM 31.4 GB (budget 30.7 GB), low-memory on, stage lowmem1115d.stage, patch …NH1115.patch`；`OKMem: commit 12.75 GB (peak 12.83), working set 8.87 GB, system free commit 86.2 of 185.6 GB, VRAM 4.62 GB of budget 30.68 GB, streaming levels loaded 16, characters 6`（characters 含主角）。
+
 做了哪些事：
 
 | 项目 | commit／stage | 效果 |
@@ -250,6 +261,8 @@ LLM（nh1115b，10 女角，低配）：commit 15.8 GB，组成如下。
 > 3. 黑色视窗（启动器）最上面几行的截图或复制文字：里面有 `Memory: RAM … VRAM … -> low-memory mode`（是否进入低配）与 `Stage:`。
 > 4. `%LOCALAPPDATA%\CrashDumps\` 里名称含 `OpenKoikatsu` 的 `.dmp`（如果有）。
 > 5. 显卡资讯：按 `Win + R` 输入 `dxdiag`，等它跑完按「储存所有资讯」，存成 `dxdiag.txt`。
+>
+> 当机时视窗可能会先卡住大约 1 分钟才关掉，这是正常的（当机记录已经写好了），请等它自己关掉，或用工作管理员结束。
 >
 > 打包方式：把上面的文件放进同一个资料夹，按右键 →「压缩成 ZIP 档」。不要放 `Saved\StreetSocial\player.json` 或 `Sandbox`（里面可能有你的金钥），也不要放角色卡。
 
