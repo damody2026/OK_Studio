@@ -2228,3 +2228,5 @@
   - 我的走廊南端停在泳池門口，沒有接到大門前的路點。
   離線算的「超過 2 倍地點對」直接用各地點自己的門，沒有照遊戲這條規則，所以看起來修好了，遊戲裡其實沒變。之後補路網時，兩端都要接到外層建築大門附近的路點，並且一定要進遊戲看 navigation 的 points 數有沒有變少。
 - 2026-11-15 c-street-city：鬼屋驗收（nh1115f、控制埠 48070、Sandbox CityWalk1115c）完後只 release 了 slot，遊戲 PID 24608 還開著（game_stop 沒真的關掉，我也沒查行程），全機兩個 Unreal 的上限被我和 c-conquest 佔滿，最優先的 c-lowspec 排不進來，直到協調者 03:5x 提醒才關。修正：測完先關遊戲、用 Win32_Process 確認自己那個控制埠的 OpenKoikatsu.exe 已不在，再 release slot；沒有 slot 的行程不能留在機器上。
+
+| 2026-11-15 | c-conquest 關自己的 nh1115h 遊戲時，連 c-lowspec 正在跑的 soak 測試 lowmem1115c（PID 30240）一起關掉 | 用 `CommandLine -match 'nh1115'` 找自己的行程；別人的命令列有 `-pakdir …/NH1115.patch`，-match 不分大小寫就命中 | 只關自己啟動時記下的 PID 或自己連接埠（48670）的擁有者；不用命令列子字串比對殺行程，殺之前先印出完整命令列核對 |
