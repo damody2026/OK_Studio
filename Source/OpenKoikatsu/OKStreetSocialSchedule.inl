@@ -53,10 +53,13 @@ FVector AOKStreetSocialScene::SpotFor(int32 I,const FString& PlaceId,const FStri
  const FVector RowSpot=Spot+Turn.RotateVector(FVector(-Row,Side,0));
  if(OKStreetCityMode()&&GetWorld()){
   auto Clear=[&](const FVector& At){FCollisionQueryParams Q(SCENE_QUERY_STAT(StreetSpotClear),false,this);
-   float G=At.Z;if(OKStreetGroundZ(GetWorld(),At,G,this)&&G>At.Z+20.f)return false; // a seat or a tabletop under her feet
+   // A seat or a tabletop under her feet, traced from above her head (the ground snap's 70 cm start is under a table's top).
+   {FHitResult Top;if(GetWorld()->LineTraceSingleByChannel(Top,At+FVector(0,0,150),At-FVector(0,0,30),ECC_WorldStatic,Q)&&Top.ImpactPoint.Z>At.Z+20.f)return false;}
    return !GetWorld()->OverlapAnyTestByChannel(At+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(25,OKStreetBodyHalf()),Q);};
   if(!Clear(RowSpot))for(const FVector& Try:{Spot+Turn.RotateVector(FVector(Row,Side,0)),Spot+Turn.RotateVector(FVector(0,Side,0)),Spot})if(Clear(Try)){
-   UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d at %s, %s is in furniture, %s instead"),I,*PlaceId,*RowSpot.ToCompactString(),*Try.ToCompactString());return Try;}}
+   static TSet<FString> Said;if(!Said.Contains(FString::Printf(TEXT("%d %s"),I,*PlaceId))){Said.Add(FString::Printf(TEXT("%d %s"),I,*PlaceId)); // asked every 2 s: said once
+    UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d at %s, %s is in furniture, %s instead"),I,*PlaceId,*RowSpot.ToCompactString(),*Try.ToCompactString());}
+   return Try;}}
  return RowSpot;
 }
 

@@ -4518,7 +4518,17 @@ void AOKStreetSocialScene::Tick(float Dt){
     UE_LOG(LogTemp,Display,TEXT("Street walk: actor %d is inside %s, a wall before her next stop %s: out on the grid"),Agent.Slot,P.Id,*Stop.ToCompactString());
     break;}
   const FVector Before=Agent.Position;if(!S.UserPaused&&Agent.Slot!=S.PairRestoredActor||GFrameCounter!=S.PairRestoredFrame)OKStreetStepAgent(Agent,FMath::Min(Dt,.05f),Snapshot,TravelSpeed);
-  if(OKStreetCityMode()){float GroundZ=Agent.Position.Z;if(OKStreetGroundZ(GetWorld(),Agent.Position,GroundZ,this))Agent.Position.Z=GroundZ;}
+  if(OKStreetCityMode()){float GroundZ=Agent.Position.Z;if(OKStreetGroundZ(GetWorld(),Agent.Position,GroundZ,this)){
+   // Stood at her plan's spot and lifted over 35 cm: a table or a seat under her. Placed while the map there was not loaded
+   // (18 km from him) the spot check saw no furniture; now it is loaded her spot is worked out again (爱丽丝 on the drink
+   // shop's table for her shift, round 7, 2026-11-14).
+   static TMap<int32,double> SpotRetry; // at most every 2 s each (a seated pose stands over its seat every frame)
+   if(GroundZ>Agent.Position.Z+35.f&&Agent.Held&&S.ScheduleHeld.Contains(Agent.Slot)&&!S.Commutes.Contains(Agent.Slot)&&!S.PendingMoves.Contains(Agent.Slot)&&SceneTime()>=SpotRetry.FindRef(Agent.Slot)&&(SpotRetry.Add(Agent.Slot,SceneTime()+2.0),true))
+    if(const FOKStreetPlanBlock* B=LifeBlock(Agent.Slot,int32(OKStreetMindNow(S)%1440));B&&!B->Place.IsEmpty()){
+     float Yaw=0;const FVector Spot=SpotFor(Agent.Slot,B->Place,B->Kind==TEXT("class")&&!B->Activity.IsEmpty()?B->Activity:B->Kind,Yaw);
+     if(FVector::Dist2D(Spot,Agent.Position)>10.f){UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d would stand %.0f cm up at %s, moved to %s"),Agent.Slot,GroundZ-Agent.Position.Z,*Agent.Position.ToCompactString(),*Spot.ToCompactString());
+      Agent.Position=Spot;S.Rotations[Agent.Slot]=FRotator(0,Yaw,0);GroundZ=Spot.Z;OKStreetGroundZ(GetWorld(),Agent.Position,GroundZ,this);}}
+   Agent.Position.Z=GroundZ;}}
   // Her street walk heads straight for its next stop; a building in between (the block across from the dorm door) held
   // her walking at its wall, and the stuck rule only turned her to the next stop behind it too. Held up 1.5 s, she
   // walks round to that stop on the grid (its cells tested against the buildings), then the street walk goes on (R3-211).
