@@ -492,7 +492,7 @@ int64 BankruptCheckHour=-1,BankruptLogTick=-1;double BankruptShowAt=0;TArray<FSt
  FOKStreetPairSession SplashProbeSession;
  TArray<TWeakObjectPtr<AStaticMeshActor>> PairProps;
  // The food on their plates at a meal table: drawn from what is served (TickMeal), not picked when they sit down.
- TFunction<void(int32,float)> MealDishDraw;TArray<TWeakObjectPtr<AStaticMeshActor>> MealDishProps;FString MealDishShown;
+ TFunction<void(int32,float)> MealDishDraw;TArray<TWeakObjectPtr<AStaticMeshActor>> MealDishProps;FString MealDishShown; double MealHouseSince=0; // when the house dish (nothing ordered) was put on the plates (TickMeal)
  TMap<int32,TArray<TWeakObjectPtr<AStaticMeshActor>>> ReadingProps;
  int32 ReadingActorsVerified=0,ReadingProbePhase=0,ReadingForceWalk=INDEX_NONE;
  FOKStreetAgentSim ReadingSavedAgent;double ReadingProbeAt=0;FString ReadingProbeSave;
@@ -3345,7 +3345,7 @@ void AOKStreetSocialScene::FinishPhoto(bool bKeepTalking){
  if(P.Conversation()&&S.ActGirl==P.Partner)S.ActTimeCut=true;
  const auto Before=P;P=FOKStreetPairSession();if(Before.Conversation())EndTalk();
  for(auto& Prop:S.PairProps)DestroyLater(Prop.Get());S.PairProps.Reset();S.MealHandProps.Reset();
- for(auto& Prop:S.MealDishProps)DestroyLater(Prop.Get());S.MealDishProps.Reset();S.MealDishDraw=nullptr;S.MealDishShown.Reset();
+ for(auto& Prop:S.MealDishProps)DestroyLater(Prop.Get());S.MealDishProps.Reset();S.MealDishDraw=nullptr;S.MealDishShown.Reset();S.MealHouseSince=0;
  const auto& Restore=Before;FString Error;ResumeBehavior(0,Error);ResumeBehavior(Restore.Partner,Error);
  S.PairRestoredFrame=GFrameCounter;S.PairRestoredActor=Restore.Partner;
  {auto& Agent=S.Agents[Restore.Partner-1];Agent.Held=false;Agent.Mode=EOKStreetMove::Walking;Agent.Stuck=0;}S.Yaw=Restore.SavedYaw;S.Pitch=Restore.SavedPitch;S.Distance=Restore.SavedDistance;S.MouseUI=Restore.SavedMouseUI;ApplyMouseMode(S.ViewportFocused);
