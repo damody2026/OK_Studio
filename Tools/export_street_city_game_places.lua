@@ -472,6 +472,10 @@ local PASSAGES = {
   -- ends are baked points (the door, 64100,57500), so no ties: one through the walls would land inside T1.
   { id = 'infirmary_north', tie = { false, false }, min_ties = 0, pts = { { 63840, 53399 }, { 63980, 53480 }, { 63980, 54200 }, { 63980, 55000 }, { 63980, 55600 }, { 64000, 56400 }, { 64000, 56900 }, { 64100, 57500 } } },
   { id = 'restroom_north_in', tie = { true, false }, pts = { { 93200, 44100 }, { 93200, 44400 }, { 93200, 44700 }, { 93200, 44800 }, { 93900, 44800 }, { 94600, 44800 }, { 94600, 44550 } } },
+  -- r1114 (11-14, Tools/street_city_passage_batch.lua): walls cut through S59, S69 and S84, the paths the walk probe took
+  { id = 'r1114_a1', pts = { { 32700, 34760 }, { 33260, 34760 }, { 33820, 34760 }, { 34140, 34880 }, { 34620, 34720 }, { 35160, 34740 }, { 35700, 34760 } } },
+  { id = 'r1114_a2', pts = { { 32700, 47300 }, { 33180, 46980 }, { 33820, 46940 }, { 34140, 46820 }, { 34460, 46980 }, { 35020, 47080 }, { 35580, 47180 }, { 35700, 47300 } } },
+  { id = 'r1114_c', pts = { { 29200, 36520 }, { 29840, 36520 }, { 30480, 36520 }, { 30960, 36640 }, { 31440, 36640 }, { 31600, 36520 } } },
 }
 -- OK_EXTRA_PASSAGES=<json list of {id, pts}>: passages a batch run has just cut (Tools/street_city_passage_batch.lua picks
 -- the line in each shop and writes them); once the run is checked they are copied into the list above.
