@@ -524,7 +524,27 @@ local function main()
   -- Since 2026-11-13 the university city is the only map: the old built street (/Game/Scenes/StreetSocial) is not played.
   o.city = true
   if o.citysource then o.city = true end
-  local city_map = (not o.citysource and path.exists(path.join(root, "Content/UniversityCity/Maps/UniversityCityWP.umap"))) and "UniversityCityWP" or "UniversityCity"
+  -- The streamed map (UniversityCityWP: 128 m cells, only those within 256 m of him loaded) is chosen from what the game
+  -- will actually read: a staged build's own cooked file list, the project's Content only for -Editor. Content/UniversityCity
+  -- is not in git nor in a package (Tools/package_street_social.lua), so the old project-Content test sent every tester's
+  -- launch to the whole-city source map, all 28,600 actors at once, which a 64 GB / 16 GB VRAM PC could not load
+  -- (Docs/STREET_CITY_STREAMING_LOWSPEC_20261114.md).
+  local function has_streamed_city()
+    if o.editor then return path.exists(path.join(root, "Content/UniversityCity/Maps/UniversityCityWP.umap")) end
+    local exe = build.executable:gsub("\\", "/")
+    local windows = exe:match("^(.*)/[^/]+/Binaries/Win64/[^/]+$")
+    local listing = windows and path.join(windows, "Manifest_UFSFiles_Win64.txt")
+    if listing and path.is_file(listing) then
+      return path.read_text(listing):find("Content/UniversityCity/Maps/UniversityCityWP.umap", 1, true) ~= nil
+    end
+    -- An executable outside a stage: the project's Content says what was cooked with it.
+    return path.exists(path.join(root, "Content/UniversityCity/Maps/UniversityCityWP.umap"))
+  end
+  local city_map = (not o.citysource and has_streamed_city()) and "UniversityCityWP" or "UniversityCity"
+  if city_map == "UniversityCity" and not o.citysource then
+    say("WARNING: this build has no streamed city (UniversityCityWP): the whole city loads at once and needs a 128 GB PC.")
+  end
+  say("City map: " .. city_map .. (city_map == "UniversityCityWP" and " (streamed: only his surroundings are loaded)" or " (whole map at once)"))
   local map = o.city and ("/Game/UniversityCity/Maps/" .. city_map .. "?game=/Script/OpenKoikatsu.OKCrowdGameMode") or "/Game/Scenes/StreetSocial/StreetSocial"
   local game = { build.executable, map, "-D3D12", "-SM6", "-windowed", "-ResX=" .. win_w, "-ResY=" .. win_h, "-WinX=40", "-WinY=40",
     "-StreetSocialManifest=" .. manifest }
