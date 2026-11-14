@@ -307,6 +307,9 @@ Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11
     low_memory = (ram > 0 and ram < 48 * 2 ^ 30) or (vram > 0 and vram < 20 * 2 ^ 30)
     say(("Memory: RAM %.1f GB, VRAM %.1f GB -> %s"):format(ram / 2 ^ 30, vram / 2 ^ 30, low_memory and "low-memory mode" or "full"))
   end
+  -- Low memory: poses from the GPU rig like CrowdRoom100 (shared clips, not each heroine's solved banks; 10 heroines
+  -- 18.9 -> 15.2 GB peak commit, 2026-11-15). -NoGpuRig keeps the banks; a patch without the rig's shaders falls back to them.
+  if low_memory and not o.nogpurig then o.gpurig = true end
   if low_memory then
     local max = tonumber(o.maxheroines or "5") or 5
     local cards = read_json(o.selectionfile).cards or {}
