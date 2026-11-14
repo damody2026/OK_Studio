@@ -8,6 +8,7 @@
 #include "OKArousalDrops.h"
 #include "OKTears.h"
 #include "KKRustExtract.h"
+#include "KKSpeech.h"
 #include "OKHScene.generated.h"
 
 // The H scene's material twins asked for ahead (its _Bias clothes): installed once, by the host scene at start.
@@ -314,6 +315,8 @@ private:
     UPROPERTY() TArray<TObjectPtr<USoundBase>> SoundsPlaying;
     // One of her lines from the intercourse voice table (HSonyu playVoices - 300), in her experience bank.
     bool PlayHVoice(int32 Row);
+    // The face her line (voice table) puts on, held as long as the line runs, heard or not (ok.HScene.LineFace).
+    void ShowLineFace(const struct FKKHBreathCue& Cue);
     void ApplySpeed();float BellyPullback=0.f;bool bPullbackLogged=false;float SkinFacing=0.f;bool bBellySide=false;int32 BulgeRefused=0;float WrapMs=0.f,WrapSolveMs=0.f,SwellMs=0.f;bool bWrapShown=false,bWrapLineShown=false;int32 WrapVerts=0; /* her skin moved over him (ReadBulge) */FVector BellyFront=FVector::ZeroVector;float TipInside=-1.f; // cm his glans is past her entrance along himself (-1 none)
     FString Current() const;
     int32 Level() const;
@@ -385,6 +388,10 @@ private:
     void ReleaseHeld(const TCHAR* NoteKey=TEXT("ui.hscene.held_note"));
     // Her eyes and brows follow the moment (state, her gauge, how used to it she is), as the original's H face lists do.
     void UpdateFace();
+    FKKHFace LineFace;double LineFaceUntil=0.;int32 LineFaceSerial=0;
+    // The face list's face on her now: her line's while it runs, else her breath's (null: none, or ok.HScene.VoiceFace 0).
+    const FKKHFace* ActiveVoiceFace(const class AKKPreviewActor* Girl) const;
+    int32 FaceTears=0,TearFaceSerial=0; // that face's tearsLv, and the face it was read from (once per face)
     bool bVoiceNoHighlight=false; // her breath's face hides her eye highlight (UpdateFace -> TickEyeDull)
     // Her cheeks flush with her excitement (the face's blush overlay, ChangeHohoAkaRate's _overcolor2 alpha = lerp(0, .2, rate)):
     // it rises with her gauge and fades slowly after, so she is still flushed after she comes. Her card's own blush is the floor.

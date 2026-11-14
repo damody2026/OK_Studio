@@ -4478,6 +4478,19 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
   - `h_breath_table` 的 `mouths` 每列加上 `eye`／`brow`／`eyeOpen`／`tears`／`cheek`／`highlight`／`blink`（舊欄位不變），`KKHvoice.cpp` 讀成 `FKKHFace`。播喘息時 `AKKPreviewActor::HBreathFace` 記下當句的表情；`UpdateFace` 在阿黑顏、厭惡、深插、口交吸吮之後，優先用這組表情（眼睛先經過 `cha_eyeset` 換成我們的眼睛圖樣），臉紅取當句的 `cheek` 與高潮度的較大者。`ok.HScene.VoiceFace 0` 可以切回原本的固定表情。眨眼、眼淚、高光 2026-11-15 補上：H 用手動表情時原本完全不眨眼，改成依表情的 `eyesblink`；眼淚網格（`cf_O_namida_S/M/L`）改成照建、先隱藏，`SetTearsLevel` 即時切換；高光依 `highlight` 隱藏。原作喘息表情裡沒有一筆帶眼淚或關高光（24,640 筆中只有 3,240 筆停眨眼），這兩項要等接上說話用的表情才會出現。
   - `OLoop` 沿用 Loop 的速度（`ok.HScene.SprintSpeed` 可設下限），至少播 `ok.HScene.SprintSeconds`（4 秒，以實際秒數計）。
   - 基礎庫的 `h/voice/h_breath_index.json` 用新的 `ok-hbreath` 重新匯出（其他表與欄位逐項比對相同）。
+## 2026-11-15 一對一的眼淚接成原作淚痕網格，違反使用者「不要原作的淚痕」與「不要眼淚」
+
+- 錯誤：補表情的眼淚時，我把原作的淚痕網格（`cf_O_namida_S/M/L`）改成即時切換顯示（`b30f676ba`）。但 `Docs/H_DEVELOPMENT_EXPERIENCE_PLAN.md` 寫著使用者 2026-11-02「不要原作的淚痕」（改用 Unreal 自己的淚痕 `FOKTears`），2026-11-09 又決定「不要眼淚」（`ok.HScene.Tears` 預設 0）。我沒先查既有的眼淚決定。另外說「眼淚與關高光要等接上說話用的表情」，卻沒去查原作哪一句才會出現。
+- 原因：只對照了 `FaceListCtrl.SetFace` 的欄位，沒有搜尋專案裡同一功能的既有實作與使用者決定。
+- 原作條件（`HVoiceCtrl`、`FaceListCtrl`、`HSonyu`）：
+  - 喘息用 `HFaceList_cNN_00_AA`（24,640 筆，沒有眼淚、沒有關高光）；台詞與叫聲用 `HFaceList_cNN_01_AA`（`VoiceInfo.face`，依經驗 bank 各一個），短聲用 `_02_00`。
+  - 插入的台詞第 7／8 列（`playVoices` 307／308，女方主導是第 45 列）在條件 14（處女第一次）或 16（肛門第一次）時，第 0、1 bank 的表情帶眼淚：只有「第一次被插入」那句會流淚，下一句喘息的表情（`tears` 0）就收掉。
+  - 一對一會用到的表情表都沒有關高光的資料。
+  - 高潮叫聲（第 25／26 列）的表情全部不眨眼（閉眼）。
+- 修正：
+  - `h_breath_table` 另匯出 `voiceFaces`（`HFaceList_cNN_01_03`）與 `voiceClips` 每個 bank 的 `faces`；`CollectHVoice` 帶上該 bank 的表情。
+  - 一對一的 `ShowLineFace`：插入與高潮的台詞（不管有沒有播出聲音，`ok.HScene.SpokenLines` 預設不播）在台詞長度內套用它的表情，優先於喘息表情；`ok.HScene.LineFace 0` 可關掉。
+  - 表情的眼淚改走 `FOKTears`，並受 `ok.HScene.Tears` 控制（預設不流）；一對一不再切換原作淚痕網格。`/hscene` 回報 `tears`（表情的淚量）、`tears_running`、`line_face`。
 ## 2026-11-14 U272：把地圖 53 貨櫃背光面變黑歸給商店的 cookie 燈，還沿用舊截圖、讀了 D: 的遊戲（F 組）
 
 - 錯誤：

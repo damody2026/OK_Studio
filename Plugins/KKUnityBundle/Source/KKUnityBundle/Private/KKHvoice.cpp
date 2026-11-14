@@ -22,7 +22,18 @@ struct FBreathIndex {
     TMap<FString,int32> MainVoice;
     TMap<int32,TArray<FBreathInfo>> Voices; // the intercourse voice table's rows (voice_03_00)
     TMap<FString,TArray<FString>> VoiceFiles; // personality|id: its file in each bank
+    TMap<FString,TArray<int32>> VoiceFaceIds; // personality|id: the face each bank puts on (VoiceInfo.face)
+    TMap<FString,FKKHFace> VoiceFaceRows;     // personality|face: HFaceList_cNN_01_03 (the voices' faces)
 };
+bool ReadFace(const TSharedPtr<FJsonObject>& Row,FKKHFace& Face){
+    double Mouth=0.,Open=0.,V=0.;
+    if(!Row->TryGetNumberField(TEXT("mouth"),Mouth)||!Row->TryGetNumberField(TEXT("open"),Open))return false;
+    Face.Mouth=int32(Mouth);Face.MouthOpen=float(Open);
+    if(Row->TryGetNumberField(TEXT("eye"),V)){Face.Eye=int32(V);if(Row->TryGetNumberField(TEXT("brow"),V))Face.Brow=int32(V);
+        if(Row->TryGetNumberField(TEXT("eyeOpen"),V))Face.EyeOpen=float(V);if(Row->TryGetNumberField(TEXT("tears"),V))Face.Tears=int32(V);
+        if(Row->TryGetNumberField(TEXT("cheek"),V))Face.Cheek=float(V);Row->TryGetBoolField(TEXT("highlight"),Face.bHighlight);Row->TryGetBoolField(TEXT("blink"),Face.bBlink);}
+    return true;
+}
 FString Key3(int32 A,int32 B,int32 C){return FString::Printf(TEXT("%d|%d|%d"),A,B,C);}
 FString Key2(int32 A,int32 B){return FString::Printf(TEXT("%d|%d"),A,B);}
 bool ReadInts(const TSharedPtr<FJsonObject>& Row,const TCHAR* Field,TArray<int32>& Out){
@@ -72,14 +83,16 @@ bool LoadIndex(const FString& Root,TSharedPtr<const FBreathIndex,ESPMode::Thread
     const TArray<TSharedPtr<FJsonValue>>* Mouths=nullptr;
     if(Json->TryGetArrayField(TEXT("mouths"),Mouths))for(const TSharedPtr<FJsonValue>& Value:*Mouths){
         const TSharedPtr<FJsonObject> Row=Value.IsValid()?Value->AsObject():nullptr;if(!Row.IsValid())continue;
-        double P=0.,M=0.,Id=0.,Mouth=0.,Open=0.;
-        if(!Row->TryGetNumberField(TEXT("p"),P)||!Row->TryGetNumberField(TEXT("m"),M)||!Row->TryGetNumberField(TEXT("id"),Id)||!Row->TryGetNumberField(TEXT("mouth"),Mouth)||!Row->TryGetNumberField(TEXT("open"),Open))continue;
-        const FString Key=Key3(int32(P),int32(M),int32(Id));Fresh.Mouths.Add(Key,int32(Mouth));Fresh.OpenMins.Add(Key,float(Open));
-        FKKHFace Face;Face.Mouth=int32(Mouth);Face.MouthOpen=float(Open);double V=0.;
-        if(Row->TryGetNumberField(TEXT("eye"),V)){Face.Eye=int32(V);if(Row->TryGetNumberField(TEXT("brow"),V))Face.Brow=int32(V);
-            if(Row->TryGetNumberField(TEXT("eyeOpen"),V))Face.EyeOpen=float(V);if(Row->TryGetNumberField(TEXT("tears"),V))Face.Tears=int32(V);
-            if(Row->TryGetNumberField(TEXT("cheek"),V))Face.Cheek=float(V);Row->TryGetBoolField(TEXT("highlight"),Face.bHighlight);Row->TryGetBoolField(TEXT("blink"),Face.bBlink);}
+        double P=0.,M=0.,Id=0.;FKKHFace Face;
+        if(!Row->TryGetNumberField(TEXT("p"),P)||!Row->TryGetNumberField(TEXT("m"),M)||!Row->TryGetNumberField(TEXT("id"),Id)||!ReadFace(Row,Face))continue;
+        const FString Key=Key3(int32(P),int32(M),int32(Id));Fresh.Mouths.Add(Key,Face.Mouth);Fresh.OpenMins.Add(Key,Face.MouthOpen);
         Fresh.FaceRows.Add(Key,Face);
+    }
+    const TArray<TSharedPtr<FJsonValue>>* VoiceFaces=nullptr;
+    if(Json->TryGetArrayField(TEXT("voiceFaces"),VoiceFaces))for(const TSharedPtr<FJsonValue>& Value:*VoiceFaces){
+        const TSharedPtr<FJsonObject> Row=Value.IsValid()?Value->AsObject():nullptr;if(!Row.IsValid())continue;
+        double P=0.,Id=0.;FKKHFace Face;
+        if(Row->TryGetNumberField(TEXT("p"),P)&&Row->TryGetNumberField(TEXT("id"),Id)&&ReadFace(Row,Face))Fresh.VoiceFaceRows.Add(Key2(int32(P),int32(Id)),Face);
     }
     const TArray<TSharedPtr<FJsonValue>>* Voices=nullptr;
     if(Json->TryGetArrayField(TEXT("mainVoice"),Voices))for(const TSharedPtr<FJsonValue>& Value:*Voices){
@@ -101,6 +114,7 @@ bool LoadIndex(const FString& Root,TSharedPtr<const FBreathIndex,ESPMode::Thread
         const TSharedPtr<FJsonObject> Row=Value.IsValid()?Value->AsObject():nullptr;if(!Row.IsValid())continue;
         double P=0.,Id=0.;const TArray<TSharedPtr<FJsonValue>>* Files=nullptr;if(!Row->TryGetNumberField(TEXT("p"),P)||!Row->TryGetNumberField(TEXT("id"),Id)||!Row->TryGetArrayField(TEXT("files"),Files))continue;
         TArray<FString>& Bank=Fresh.VoiceFiles.Add(Key2(int32(P),int32(Id)));for(const auto& F:*Files)Bank.Add(F.IsValid()?F->AsString():FString());
+        TArray<int32> FaceIds;if(ReadInts(Row,TEXT("faces"),FaceIds))Fresh.VoiceFaceIds.Add(Key2(int32(P),int32(Id)),MoveTemp(FaceIds));
     }
     if(Fresh.Patterns.IsEmpty()||Fresh.Files.IsEmpty()){Error=TEXT("性愛喘息索引是空的");return false;}
     Index=MakeShared<FBreathIndex,ESPMode::ThreadSafe>(MoveTemp(Fresh));
@@ -215,9 +229,13 @@ bool KKSpeech::CollectHVoice(const FString& Root,int32 Personality,int32 Row,int
         if(!bAllowed)continue;
         const int32 B=BankFor(Info.State,Context);
         for(const int32 Voice:Info.Voices){const TArray<FString>* Banks=Index.VoiceFiles.Find(Key2(Personality,Voice));if(!Banks||Banks->IsEmpty())continue;
-            const FString& File=Banks->IsValidIndex(B)&&!(*Banks)[B].IsEmpty()?(*Banks)[B]:(*Banks)[0];if(Seen.Contains(File))continue;
+            const int32 Used=Banks->IsValidIndex(B)&&!(*Banks)[B].IsEmpty()?B:0;const FString& File=(*Banks)[Used];if(Seen.Contains(File))continue;
             FKKHBreathCue Cue;Cue.Name=File;Cue.Path=Root/FString::Printf(TEXT("audio/c%02d/h/%s.ogg"),Personality,*File);
-            if(!IFileManager::Get().FileExists(*Cue.Path))continue;Seen.Add(File);Out.Add(MoveTemp(Cue));}
+            if(!IFileManager::Get().FileExists(*Cue.Path))continue;
+            // The face this bank's line puts on (FaceListCtrl.SetFace(voiceInfo.face, kind 1, action 3)): one, as the voice.
+            if(const TArray<int32>* FaceIds=Index.VoiceFaceIds.Find(Key2(Personality,Voice));FaceIds&&FaceIds->IsValidIndex(Used))
+                if(const FKKHFace* Face=Index.VoiceFaceRows.Find(Key2(Personality,(*FaceIds)[Used]))){Cue.Mouths.Add(Face->Mouth);Cue.OpenMins.Add(Face->MouthOpen);Cue.Faces.Add(*Face);}
+            Seen.Add(File);Out.Add(MoveTemp(Cue));}
     }
     if(Out.IsEmpty()){Error=FString::Printf(TEXT("第 %d 列沒有已擷取的叫聲"),Row);return false;}
     return true;

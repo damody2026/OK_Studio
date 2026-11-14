@@ -1032,7 +1032,7 @@ pub fn h_breath_table(game:&Path)->String {
     let ints=|v:Option<&UnityValue>|->Vec<i64>{v.and_then(|v|v.as_array()).map(|a|a.iter().filter_map(|x|x.as_i64()).collect()).unwrap_or_default()};
     let num=|s:&str|s.parse::<i64>().ok();
     let (mut patterns,mut clips,mut mouths,mut main_voice)=(std::collections::BTreeMap::new(),std::collections::BTreeMap::new(),std::collections::BTreeMap::new(),std::collections::BTreeMap::new());
-    let (mut voices,mut voice_clips)=(std::collections::BTreeMap::new(),std::collections::BTreeMap::new());
+    let (mut voices,mut voice_clips,mut voice_faces)=(std::collections::BTreeMap::new(),std::collections::BTreeMap::new(),std::collections::BTreeMap::new());
     const VOICE_TABLE:i64=3;
     for path in &paths {
         let Ok(bytes)=crate::gamefs::read(path) else {continue;};
@@ -1073,20 +1073,28 @@ pub fn h_breath_table(game:&Path)->String {
             } else if let Some(personality)=name.strip_prefix("personality_voice_c").and_then(|r|r.get(..2)).and_then(num) {
                 for row in list.iter().filter(|r|field(r,"mode").and_then(|v|v.as_i64())==Some(VOICE_TABLE)) {
                     for datum in field(row,"data").and_then(|v|v.as_array()).map(|a|a.as_slice()).unwrap_or(&[]) {
-                        let files:Vec<String>=field(datum,"info").and_then(|v|v.as_array()).map(|a|a.iter().map(|b|text(field(b,"nameFile"))).collect()).unwrap_or_default();
+                        let banks:Vec<&UnityValue>=field(datum,"info").and_then(|v|v.as_array()).map(|a|a.iter().collect()).unwrap_or_default();
+                        let files:Vec<String>=banks.iter().map(|b|text(field(b,"nameFile"))).collect();
                         if files.first().is_none_or(|f|f.is_empty()){continue;}
+                        // The face each bank puts on with the cry (VoiceInfo.face, HVoiceCtrl.cs:642), a row of HFaceList_cNN_01_03.
+                        let faces:Vec<i64>=banks.iter().map(|b|field(b,"face").and_then(|v|v.as_i64()).unwrap_or(-1)).collect();
                         let id=int(field(datum,"id"));
-                        voice_clips.insert((personality,id),serde_json::json!({"p":personality,"t":VOICE_TABLE,"id":id,"files":files}));
+                        voice_clips.insert((personality,id),serde_json::json!({"p":personality,"t":VOICE_TABLE,"id":id,"files":files,"faces":faces}));
                     }
                 }
-            } else if let Some(rest)=name.strip_prefix("HFaceList_c").filter(|_|name.contains("_00_")) {
-                let (Some(personality),Some(action))=(rest.get(..2).and_then(num),name.get(name.len()-2..).and_then(num)) else {continue;};
+            } else if let Some(rest)=name.strip_prefix("HFaceList_c").filter(|r|r.len()==8) {
+                // HFaceList_<personality>_<voice kind>_<action> (FaceListCtrl.LoadInfo): kind 0 the breaths, kind 1 the
+                // spoken voices; of those only the intercourse cries (action 3) play here and go to `voiceFaces`.
+                let (Some(personality),Some(kind),Some(action))=(rest.get(..2).and_then(num),rest.get(3..5).and_then(num),rest.get(6..).and_then(num)) else {continue;};
+                if !(kind==0||kind==1&&action==VOICE_TABLE){continue;}
+                let spoken=kind==1;
                 for row in list {
                     let id=int(field(row,"id"));
                     let float=|k:&str,d:f64|field(row,k).and_then(|v|v.as_f64()).unwrap_or(d);
                     // The whole face FaceListCtrl.SetFace puts on with the voice: brow, eyes (and how far they open), mouth
                     // (and its floor), tears, cheek flush, eye highlight and blinking.
-                    mouths.insert((personality,action,id),serde_json::json!({"p":personality,"m":action,"id":id,"mouth":int(field(row,"mouth")),"open":float("openMinMouth",0.0),
+                    let target=if spoken{&mut voice_faces}else{&mut mouths};
+                    target.insert((personality,action,id),serde_json::json!({"p":personality,"m":action,"id":id,"mouth":int(field(row,"mouth")),"open":float("openMinMouth",0.0),
                         "eye":int(field(row,"eye")),"brow":int(field(row,"eyebrow")),"eyeOpen":float("openMaxEye",1.0),"tears":int(field(row,"tears")),
                         "cheek":float("cheek",0.0),"highlight":field(row,"highlight").map_or(true,|v|int(Some(v))!=0),"blink":field(row,"eyesblink").map_or(true,|v|int(Some(v))!=0)}));
                 }
@@ -1100,7 +1108,8 @@ pub fn h_breath_table(game:&Path)->String {
     }
     serde_json::json!({"version":2,"patterns":patterns.into_values().collect::<Vec<_>>(),"clips":clips.into_values().collect::<Vec<_>>(),
         "mouths":mouths.into_values().collect::<Vec<_>>(),"mainVoice":main_voice.into_values().collect::<Vec<_>>(),
-        "voices":voices.into_values().collect::<Vec<_>>(),"voiceClips":voice_clips.into_values().collect::<Vec<_>>()}).to_string()
+        "voices":voices.into_values().collect::<Vec<_>>(),"voiceClips":voice_clips.into_values().collect::<Vec<_>>(),
+        "voiceFaces":voice_faces.into_values().collect::<Vec<_>>()}).to_string()
 }
 /// The original H sound effects (HSeCtrl): each pose's HSEData (AnimationInfo paramFemale.fileSe) and, per state, the
 /// normalized time and clip of each sound: `{"poses":[{"m","id","file"}],"files":{file:[{anim,key,loop,switch,bundle,se,
