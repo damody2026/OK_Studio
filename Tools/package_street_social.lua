@@ -23,6 +23,8 @@
 --                        paks no longer stop it; the tester needs no game of their own
 --   --cards <folder>     only these OK cards: copied to Content/CharacterCards/StreetHeroines and made the default
 --                        heroines (Launch/heroines.json, at most ten), with the male card (Launch/runtime.json male_card)
+--   --roster <json>      with --cards: the default heroines are the cards this heroines.json lists (by file name, in
+--                        its order) instead of the folder's first ten
 --   --voice cloud        the new player's settings choose the cloud voices and voice input (keys still empty: ok-tts
 --                        loads no local model until the key is typed into the settings)
 --   --readme <file>      copied to the package's root
@@ -147,6 +149,7 @@ local function main()
   p:opt("--allow", { multiple = true })
   p:flag("--private")
   p:opt("--cards")
+  p:opt("--roster")
   p:opt("--voice")
   p:opt("--readme")
   p:opt("--skip-group", { multiple = true })
@@ -235,6 +238,16 @@ local function main()
         local rel = "Content/CharacterCards/StreetHeroines/" .. n
         add(path.join(dir, n), rel)
         if #roster < 10 then roster[#roster + 1] = rel end
+      end
+    end
+    if a.roster then
+      -- The heroines in the order the given heroines.json has them (its cards must be in the folder).
+      local want = json.decode(path.read_text(path.abs(a.roster))).cards or {}
+      roster = json.array({})
+      for _, c in ipairs(want) do
+        local n = path.name(c)
+        if not path.is_file(path.join(dir, n)) then error("--roster names a card not in " .. win(dir) .. ": " .. n, 0) end
+        if #roster < 10 then roster[#roster + 1] = "Content/CharacterCards/StreetHeroines/" .. n end
       end
     end
     if #roster == 0 then error("no PNG cards in " .. win(dir), 0) end

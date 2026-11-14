@@ -4443,3 +4443,9 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - 修正：
   - 新增 `UOKHScenePanel::HoldAlignment`：換衣服 commit 前把對位偏移從她所有元件拿掉，commit 後再整批加回去，新元件也拿到同樣的偏移。
   - 懷孕肚子重建模型（`RefreshEditorGeometry`／`LoadSession`）也用同一個方法處理。
+
+## 2026-11-14 打包後的試跑呼叫了雲端
+
+- 錯誤：從打包資料夾直接執行 `StreetSocial.cmd -Control -Sandbox PkgTest` 試跑，沒有加 `-NoCloud`。包裡的 `player.json` 金鑰是空的，但遊戲讀到這台機器使用者目錄的 `%LOCALAPPDATA%\OpenKoikatsu\deepseek.json`／`player.json`，Lan 用 DeepSeek 回了一句話，違反「測試時不呼叫雲端」。
+- 原因：以為包裡沒有金鑰就不會連雲端；金鑰還會從使用者目錄與環境變數讀。
+- 修正：任何試跑（含打包後的包）一律加 `-NoCloud`（需搭配 `-Sandbox`）。包本身仍不含金鑰（逐字搜本機 2 把金鑰與金鑰格式，整包 0 筆）。
