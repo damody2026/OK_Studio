@@ -102,6 +102,8 @@ void AOKStreetSocialScene::HeroineCheckoutLean(int32 Girl,int32 Total,FString& L
  auto& S=*State;const FString Id=OKStreetStableId(S.Manifest.Characters[Girl]);
  const bool Promise=HerTreatPromised(Girl);
  auto Request=OKRulesHeroineRequest(S,TEXT("checkout_lean"),Id);Request->SetNumberField(TEXT("total"),Total);Request->SetBoolField(TEXT("promise"),Promise);
+ // He picked her dish himself (not her own order): his treat on offer (shop.rs lean).
+ Request->SetBoolField(TEXT("he_ordered_for_her"),S.Cart.ContainsByPredicate([](const FOKStreetCartLine& L){return L.ForHer&&!L.HerOwn&&L.Girl==INDEX_NONE;}));
  Lean=TEXT("player_pays");Insist=0.f;
  if(const TSharedPtr<FJsonObject> Answer=OKRulesEval(S,Request)){Lean=Answer->GetStringField(TEXT("lean"));Insist=float(Answer->GetNumberField(TEXT("insist")));}
 }
@@ -185,10 +187,10 @@ void AOKStreetSocialScene::BuildHeroinePanel(const TSharedRef<SVerticalBox>& Pan
  const FOKStreetRelation R=OKStreetViewRelation(S.Store,OKStreetStableId(S.Manifest.Characters[Her]),S.Manifest.TalkBudget);
  const bool Here=!RemoteWith(Her);const FString Place=PlaceHere(S.Male);
  auto Row=SNew(SWrapBox).UseAllottedSize(true);
- // The bag: share it, feed her, or give it.
+ // The bag: share it, feed her, or give it. A drink is drunk together, not eaten ("一起吃红茶", round 7).
  TSet<FString> Seen;
  for(const FString& ItemId:S.Store.Inventory){if(Seen.Contains(ItemId)||!Here)continue;Seen.Add(ItemId);const auto* I=S.Catalog.Find(ItemId);if(!I)continue;
-  if(I->Consumable&&!I->Giftable){Row->AddSlot().Padding(1)[Button(OKT(TEXT("ui.heroine.eat_together"))+I->Name,[Weak,ItemId](){if(Weak.IsValid())Weak->EatFromBag(ItemId,false);})];Row->AddSlot().Padding(1)[Button(OKT(TEXT("ui.heroine.feed_her"))+I->Name,[Weak,ItemId](){if(Weak.IsValid())Weak->EatFromBag(ItemId,true);})];}
+  if(I->Consumable&&!I->Giftable){Row->AddSlot().Padding(1)[Button(OKT(I->IsDrink()?TEXT("ui.heroine.drink_together_item"):TEXT("ui.heroine.eat_together"))+I->Name,[Weak,ItemId](){if(Weak.IsValid())Weak->EatFromBag(ItemId,false);})];Row->AddSlot().Padding(1)[Button(OKT(TEXT("ui.heroine.feed_her"))+I->Name,[Weak,ItemId](){if(Weak.IsValid())Weak->EatFromBag(ItemId,true);})];}
   else Row->AddSlot().Padding(1)[Button(OKT(TEXT("ui.heroine.gift_her"))+I->Name,[Weak,ItemId](){if(Weak.IsValid())Weak->StartGift(ItemId);})];}
  // What he borrowed from her: give it back (items.rs items_view).
  if(Here){auto Request=OKRulesRequest(TEXT("items_view"));OKRulesPutExt(S,Request);

@@ -42,6 +42,12 @@ fn lean(r: &Value) -> Result<Value, String> {
         lean = "player_pays";
         insist = insist.min(0.3);
     }
+    // He chose her dish ("帮她点", not her own order): his treat on offer. Owing him favours she pays her own part, not
+    // the whole bill with his meal in it (安可 and 刻晴 paid for both after he ordered for them, round 7, 2026-11-14).
+    if b(r, "he_ordered_for_her") && lean == "she_pays" {
+        lean = "split";
+        insist = insist.min(0.6);
+    }
     if b(r, "promise") && rel.cash >= total as i64 {
         lean = "she_pays";
         insist = 1.0;
@@ -1126,6 +1132,19 @@ mod tests {
         assert_eq!(super::checkout_timeout(&json!({"lean": "player_pays"}))["option"], "split", "nothing settled");
         assert_eq!(super::checkout_timeout(&json!({"lean": "player_pays", "agreed": "him"}))["option"], "player_pays");
         assert_eq!(super::checkout_timeout(&json!({"lean": "she_pays"}))["option"], "she_pays");
+    }
+
+    /// Owing him treats she leans to pay; he chose her dish himself: her own part only, not his meal too (round 7).
+    #[test]
+    fn lean_after_he_ordered_for_her_is_her_part() {
+        let ask = |extra: Value| {
+            let mut r = json!({"total": 94, "relation": rel(json!({"cash": 300, "stage": "lover", "treat_balance": 3})), "profile": {"money": {"reciprocity": 70}}});
+            r.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            super::lean(&r).unwrap()["lean"].as_str().unwrap().to_string()
+        };
+        assert_eq!(ask(json!({})), "she_pays", "her turn to treat");
+        assert_eq!(ask(json!({"he_ordered_for_her": true})), "split");
+        assert_eq!(ask(json!({"he_ordered_for_her": true, "promise": true})), "she_pays", "she said this one is on her");
     }
 
     /// The meal of an activity on one floor comes from that floor (R4-5: the 9F food court billed 10F hot coffee).

@@ -335,7 +335,7 @@ struct FOKStreetSceneState {
  TMap<int32,FOKNpcLift> NpcLifts;int32 ActGirl=INDEX_NONE,LastActivityGirl=INDEX_NONE;int32 ArrivedWith=INDEX_NONE;FString ArrivedPlace;int64 ArrivedMinute=-1; /* the last walk he and a girl ended together, for appointments_tick (R5-13) */bool ActCutShort=false,ActTimeCut=false;int64 ActStart=0,LifeBlocksMinute=-1;int32 ActFirstAppointment=0; /* the appointments made during it are for later (ActivityAftermath) */ FString ActId,ActSig,LastActivity;int32 HerPaidGirl=INDEX_NONE;int64 HerPaidAmount=0,HerPaidAt=0;bool HerPaidAgreed=false;FString ShopPromptedPlace; /* the place whose menu prompt she was given (TickShopArrival) */int32 PaidBackGirl=INDEX_NONE;int64 PaidBackAmount=0,PaidBackAt=0;FString HerPaidNote;FString HerPaidShop; /* her own bill just paid (RecordPayAgreed) */ /* ActSig: what kind of activity ActId is (TickActivityWatch) */ TSet<FString> LifeDone;double BiasCheckAt=0;TMap<int32,double> PossessiveAt;
  // Round 3 (Docs/STREET_BEHAVIOR_PLAN_20261012b.md).
  TMap<int32,int32> PlanBlockSince;TMap<FString,int32> PaidShiftMinutes;bool ActIsHers=false,ActLover=false;int32 IntroFriend=INDEX_NONE;double IntroAt=0,GatePenaltyAt=-100,LastActivityAt=-100;TMap<FString,int64> ActDoneAt;
- TMap<int32,TArray<int64>> SelfTexts;int32 SentRemoteGirl=INDEX_NONE,SentRemoteMode=0,ReplyRemoteGirl=INDEX_NONE,ReplyRemoteMode=0;int64 LastCheckoutMinute=-1;FString LastCheckoutPlace,NotServedNote,CheckoutNote;int32 NotServedTurns=0;TMap<FString,int32> JobRejected;
+ TMap<int32,TArray<int64>> SelfTexts;int32 SentRemoteGirl=INDEX_NONE,SentRemoteMode=0,ReplyRemoteGirl=INDEX_NONE,ReplyRemoteMode=0;int64 LastCheckoutMinute=-1;TArray<FInt64Point> ClockSkips;FString LastCheckoutPlace,NotServedNote,CheckoutNote;int32 NotServedTurns=0;TMap<FString,int32> JobRejected;
  // His company (OKStreetSocialCompany*.inl).
  FString CompanyTab=TEXT("overview"),CompanyAmount,HeroJobSig,PayslipNote;TMap<int32,float> NpcLiftArrivedZ;bool FinMenuOpen=false; // the money buttons open under one "理財" (BuildFinanceRows)
  // The books (OKStreetSocialBooks.inl, OKStreetSocialAccountsApp.inl): journals by book, what each account was last seen at, posts already written.
@@ -2745,7 +2745,7 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
   // the game day is the one before. Only the clock was set, so 05:12 back to 03:23 showed the next date and the next
   // 04:00 began another day: two days on for an hour back (R3-225).
   auto StepClock=[ClockState,SetClock,ClockNow,Owner=TWeakObjectPtr<AOKStreetSocialScene>(this)](double Delta){
-   auto L=ClockState.Pin();if(!L)return;const double Was=ClockNow(),To=FMath::Fmod(Was+Delta+48.0,24.0);SetClock(Was+Delta);
+   auto L=ClockState.Pin();if(!L)return;const double Was=ClockNow(),To=FMath::Fmod(Was+Delta+48.0,24.0);if(Delta>0)L->ClockSkips.Add(FInt64Point(OKStreetMindNow(*L),FMath::RoundToInt64(Delta*60)));SetClock(Was+Delta);
    // (Back over a day already begun and on again: NextDay only gives the date back.)
    if(Delta>0&&OKStreetDayStartsPassed(Was,To)>0){if(Owner.IsValid())Owner->NextDay();}
    else if(Delta<0&&OKStreetDayStartsPassed(To,Was)>0&&L->Store.CalendarDay>0){if(L->DayRewound<0)L->DayRewound=L->Store.CalendarDay;--L->Store.CalendarDay;}};
@@ -2754,7 +2754,9 @@ void AOKStreetSocialScene::RebuildUI(uint32 Regions){
   // setting the hour kept the game day, so "morning" at 01:22 went back to the previous date's 08:00 (R6-189).
   // The day start is counted here: OKStreetDayStartsPassed ignores a step of more than 12 hours (a tick's guard), so
   // "morning" at 12:03 went back to that day's 08:00 (R6-189b).
-  auto AheadTo=[SetClock,ClockNow,Owner=TWeakObjectPtr<AOKStreetSocialScene>(this)](double Hours){const double Was=ClockNow(),Delta=FMath::Fmod(Hours-Was+48.0,24.0);if(Delta<=1.0/60)return;
+  auto AheadTo=[SetClock,ClockNow,ClockState,Owner=TWeakObjectPtr<AOKStreetSocialScene>(this)](double Hours){const double Was=ClockNow(),Delta=FMath::Fmod(Hours-Was+48.0,24.0);if(Delta<=1.0/60)return;
+   // Skipped, not spent: an activity that ends after it is not that much longer (ActivityAftermath, round 7: "约 1259 分钟").
+   if(auto L=ClockState.Pin())L->ClockSkips.Add(FInt64Point(OKStreetMindNow(*L),FMath::RoundToInt64(Delta*60)));
    double First=FMath::Fmod(double(OKStreetDayStartHour)-Was+48.0,24.0);if(First<=0)First=24.0;SetClock(Was+Delta);if(Delta>=First&&Owner.IsValid())Owner->NextDay();};
   TSharedRef<SWidget> ClockRow=SNew(SVerticalBox)
    +SVerticalBox::Slot().AutoHeight().Padding(2)[SNew(SHorizontalBox)

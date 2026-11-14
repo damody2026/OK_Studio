@@ -450,7 +450,9 @@ void AOKStreetSocialScene::ActivityAftermath(const FString& ActivityId,int32 Gir
   if(Batches.Num())UE_LOG(LogTemp,Display,TEXT("Street activity: %d orders at %s were the machine's drink (%d dishes)"),Batches.Num(),*PlaceId,Gone);}
  // Cut short (the place closed on them): the minutes that really went by, not the activity's whole length.
  if(S.ActCutShort)Request->SetNumberField(TEXT("spent"),double(FMath::Max<int64>(0,OKStreetMindNow(S)-StartMinute)));Request->SetNumberField(TEXT("menu_seed"),int32(StartMinute)+Girl*31);Request->SetStringField(TEXT("agreed"),PayAgreed(Girl)); // who pays, as they settled it (the AI's reading)
- Request->SetNumberField(TEXT("elapsed"),double(FMath::Max<int64>(0,OKStreetMindNow(S)-StartMinute)));
+ // Less the hours the clock buttons skipped meanwhile (a meal ended after "morning": "约 1259 分钟", round 7).
+ {int64 Skipped=0;for(const FInt64Point& K:S.ClockSkips)if(K.X>=StartMinute)Skipped+=K.Y;S.ClockSkips.RemoveAll([&S](const FInt64Point& K){return K.X<OKStreetMindNow(S)-2*1440;});
+  Request->SetNumberField(TEXT("elapsed"),double(FMath::Max<int64>(0,OKStreetMindNow(S)-StartMinute-Skipped)));}
  Request->SetBoolField(TEXT("cut_short"),S.ActCutShort||S.ActTimeCut); // the clock is not filled up to the activity's minutes
  Request->SetNumberField(TEXT("player_cash"),double(S.Store.PlayerCash));Request->SetNumberField(TEXT("seed"),FMath::Rand());
  // A ticket inside is priced as at the door: the student price for a student card (shop.rs activity_end, R6-3).
