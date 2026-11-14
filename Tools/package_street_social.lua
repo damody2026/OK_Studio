@@ -184,7 +184,7 @@ local function main()
     end
   else say("Runtime patch missing (the player's launcher rebuilds it only with the editor): " .. win(patch)) end
   -- Versioned files: the launcher and its tools, the street's data, the settings guide.
-  for _, rel in ipairs(tracked(root, { "StreetSocial.cmd", "Content/IndependentResources", "Tools/lua", "Config",
+  for _, rel in ipairs(tracked(root, { "StreetSocial.cmd", "OKStudio.cmd", "Content/IndependentResources", "Tools/lua", "Config",
       "Tools/original_data_manifest.json", "Tools/base_library_shared_mods.txt",
       "Docs/API_KEYS.md", "Docs/SHARED_RESOURCES_SETUP.md", "Docs/STREET_SOCIAL_PLAY_GUIDE.md", "Docs/STREET_SOCIAL_PACKAGE.md" })) do
     add(path.join(root, rel), rel)

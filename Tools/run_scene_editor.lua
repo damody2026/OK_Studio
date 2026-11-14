@@ -50,6 +50,32 @@ local function size(o, key, default, lo, hi)
   return v
 end
 
+-- Newest StreetSocial stage game (CrowdRoom*.stage is the crowd room's), as in run_street_social_development.lua.
+local function newest_stage(root)
+  local dir, best, best_time = path.join(root, "Saved/StreetSocial/Build"), nil, -1
+  if not path.is_dir(dir) then return nil end
+  for _, n in ipairs(path.list(dir)) do
+    if n:lower():match("%.stage$") and not n:lower():match("^crowdroom") then
+      local exe = path.join(dir, n, "Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.exe")
+      local t = path.mtime(exe)
+      if t and t > best_time then best, best_time = exe, t end
+    end
+  end
+  return best
+end
+
+-- A packaged stage comes without its junctions into this folder's Content: made here when missing.
+local function link_stage_content(root, exe)
+  local content = path.join(path.parent(path.parent(path.parent(exe))), "Content")
+  for _, name in ipairs({ "IndependentResources", "KKPreview" }) do
+    local link, target = path.join(content, name), path.join(root, "Content", name)
+    if path.is_dir(content) and not path.exists(link) and path.is_dir(target) then
+      local made = proc.run({ "cmd", "/c", "mklink", "/J", (link:gsub("/", "\\")), (target:gsub("/", "\\")) }, { quiet = true })
+      io.write(made.ok and "Linked " or "Could not link ", link, " -> ", target, "\n")
+    end
+  end
+end
+
 local function main()
   local o = parse(arg)
   local root = ok.root
@@ -64,7 +90,12 @@ local function main()
   local story = o.story and path.abs(o.story)
   if story and not path.is_file(story) then error("Story file does not exist: " .. story, 0) end
 
-  editor.ensure(root, engine, { build = not o.nobuild and not o.dryrun })
+  -- A package (Tools/package_street_social.lua) has no project or engine: the studio runs in the packaged game
+  -- (the newest Saved/StreetSocial/Build/*.stage, OKStudio is in it and /Engine/Maps/Entry is cooked).
+  local project = path.join(root, "OpenKoikatsu.uproject")
+  local editor_exe = path.join(engine, "Engine/Binaries/Win64/UnrealEditor.exe")
+  local stage_exe = (not path.is_file(project) or not path.is_file(editor_exe)) and newest_stage(root) or nil
+  if not stage_exe then editor.ensure(root, engine, { build = not o.nobuild and not o.dryrun }) end
 
   -- The story director (Tools/ok-story): built here when cargo is there (a no-op when up to date); the editor loads a copy
   -- so cargo can rebuild while it runs, and OKStory.Reload swaps the new build in.
@@ -90,9 +121,8 @@ local function main()
     if okp and ports and ports.voice and ports.tts then env.OK_TTS_ENDPOINT = "http://127.0.0.1:" .. ports.tts end
   end
 
-  local project = path.join(root, "OpenKoikatsu.uproject")
-  local exe = path.join(engine, "Engine/Binaries/Win64/UnrealEditor.exe")
-  for _, f in ipairs({ project, exe }) do
+  local exe = stage_exe or editor_exe
+  for _, f in ipairs(stage_exe and { exe } or { project, exe }) do
     if not path.is_file(f) then error("Missing launch dependency: " .. f, 0) end
   end
 
@@ -100,8 +130,21 @@ local function main()
   local tag = os.date("%Y%m%d-%H%M%S") .. ("-%08x"):format(math.random(0, 0x7fffffff))
   local log = path.join(log_root, tag .. ".log")
   -- Explicit map and game mode: the project's default game mode is the card reader's.
-  local args = { exe, project, "/Engine/Maps/Entry?game=/Script/OKStudio.OKStudioGameMode", "-game", "-windowed",
-    "-ResX=" .. width, "-ResY=" .. height, "-NoSplash", "-nop4", "-abslog=" .. log }
+  local map = "/Engine/Maps/Entry?game=/Script/OKStudio.OKStudioGameMode"
+  local args = stage_exe and { exe, map, "-D3D12", "-SM6" } or { exe, project, map, "-game" }
+  for _, a in ipairs({ "-windowed", "-ResX=" .. width, "-ResY=" .. height, "-NoSplash", "-nop4", "-abslog=" .. log }) do
+    args[#args + 1] = a
+  end
+  if stage_exe then
+    -- Like StreetSocial.cmd: the stage's Content links to this folder's resources, the runtime patch is mounted, and
+    -- the cooked game reads the shared resources by absolute path.
+    link_stage_content(root, stage_exe)
+    local launch_file = path.join(root, "Content/IndependentResources/StreetSocialData/Launch/runtime.json")
+    local launch = path.is_file(launch_file) and json.decode(path.read_text(launch_file)) or {}
+    local patch = launch.patch and path.join(root, launch.patch)
+    if patch and path.exists(patch) then args[#args + 1] = "-pakdir=" .. patch end
+    env.OK_BUILTIN_RESOURCES = (path.join(root, "Content/IndependentResources/v1"):gsub("/", "\\"))
+  end
   if scene then args[#args + 1] = "-OKScene=" .. scene end
   if story then args[#args + 1] = "-OKStory=" .. story end
   if story and o.storyselftest then args[#args + 1] = "-OKStorySelfTest" end
