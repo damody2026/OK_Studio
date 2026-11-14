@@ -485,9 +485,12 @@ end
 -- so the gym was walked round the whole SP block: campus_e1 72 m straight, 891 m by road. A 30 cm capsule at +105 is clear
 -- along x 76950-77050 from y 34500 to 39800 (places-v1/gym-passage-sweep.json, walk probe places-v1/walk-probe.json, 11-13).
 -- The north end stops at y 39500, within the tie distance of the y 39100 road row.
+-- The door goes through the gap in the corridor's east wall (x 77100-77150), open at y 34200-34350 on the scans (z 1290 and
+-- 1220); the first corridor point keeps to the door's y 34275, the gap's middle. At y 34350 the line ran along the gap's
+-- north edge and the walk from gym_hall hit the wall there (StaticMeshActor_372 at 77128,34310, nh1115m 11-15).
 local PASSAGES = {
   { id = 's32', pts = { { 42760, 28520 }, { 43200, 28520 }, { 43800, 28520 }, { 44400, 28570 }, { 44800, 28570 }, { 44800, 28880 }, { 45160, 28880 } } },
-  { id = 'sp_gym', pts = { { 77174.7, 34274.6 }, { 77000, 34350 }, { 77000, 35400 }, { 77000, 36400 }, { 77000, 37400 }, { 77000, 38400 }, { 77000, 39500 } } },
+  { id = 'sp_gym', pts = { { 77174.7, 34274.6 }, { 77000, 34275 }, { 77000, 35400 }, { 77000, 36400 }, { 77000, 37400 }, { 77000, 38400 }, { 77000, 39500 } } },
   -- 11-13 batch (map cut on the source map, Tools/street_city_shop_passage_payload.lua / street_city_fence_gaps_payload.lua;
   -- boxes and walk probes in places-v1/shop-passage-batch*-apply-1113.json, fence-gaps-dorm-apply-1113.json,
   -- walk-probe-batch2-after-1113.json). The shops have no game place on the ground floor; their 3F homes stay.
