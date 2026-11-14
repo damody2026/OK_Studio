@@ -154,6 +154,17 @@ local function judge(p, y, grids, segs)
     -- 11-14, the line y 35000 by S59) stays, so that line is no good
     if not near_shop(segs, (w[1] + w[2]) / 2 + 10, y) then return nil, ('block at x %d-%d is not a wall of %s'):format(w[1], w[2] + step, table.concat(p.actors, '/')) end
   end
+  -- every wall of the shop that crosses the line is cut too, where the 20 cm scan happened to show a gap on the line
+  -- itself (11-14: S69's east wall at x 35080 was open in the cell on y 47300 and the walk was stopped by it after the cut)
+  local function covered(x) for _, w in ipairs(walls) do if x >= w[1] - 30 and x <= w[2] + step + 30 then return true end end return false end
+  for _, s in ipairs(segs or {}) do
+    local ay, by = s[1][2], s[2][2]
+    if (ay - y) * (by - y) <= 0 and ay ~= by then
+      local x = s[1][1] + (y - ay) / (by - ay) * (s[2][1] - s[1][1])
+      if x > p.x0 + 200 and x < p.x1 - 200 and not covered(x) then walls[#walls + 1] = { x - 10, x - 10 } end
+    end
+  end
+  table.sort(walls, function(a, b) return a[1] < b[1] end)
   local cuts = {}
   for n, w in ipairs(walls) do cuts[n] = { name = p.id .. '_' .. n, box = { w[1] - 40, y - 110, 1195, w[2] + step + 40, y + 110, 1430 }, actors = p.actors } end
   -- things within 60 cm beside the line outside the cut boxes are warnings, not a rejection: on 11-13 scans the S64 line
@@ -327,8 +338,9 @@ if due('roads') then
   for _, e in ipairs(rep.passages) do
     if e.cuts and e.walked then
       local p; for _, q in ipairs(B.passages) do if q.id == e.id then p = q end end
-      local pts, n = {}, math.max(2, math.ceil((p.x1 - p.x0) / 600))
-      for k = 0, n do pts[#pts + 1] = { math.floor(p.x0 + (p.x1 - p.x0) * k / n + 0.5), e.y } end
+      -- e.pts: the path the walk probe took (set when a passage was cut by hand), else the straight line
+      local pts, n = e.pts, math.max(2, math.ceil((p.x1 - p.x0) / 600))
+      if not pts then pts = {}; for k = 0, n do pts[#pts + 1] = { math.floor(p.x0 + (p.x1 - p.x0) * k / n + 0.5), e.y } end end
       extra[#extra + 1] = { id = batch_id .. '_' .. e.id, pts = pts }
     end
   end
