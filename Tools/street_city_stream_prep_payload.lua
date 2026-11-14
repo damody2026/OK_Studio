@@ -74,11 +74,18 @@ def motel_world_stream_prep():
    elif c.get_editor_property('ld_max_draw_distance')<=0:
     f=far(unreal.SystemLibrary.get_component_bounds(c)[2])
     if f>0:c.set_editor_property('ld_max_draw_distance',f);culled+=1
+ # an actor whose meshes are all made invisible (the LoverSpot *_Block blockers, balcony *_Floor: collision only) is hidden in
+ # the game as well: the game's camera-inside-a-shape hiding (OKStreetBacks) set such a cube visible again when the camera
+ # left it, and the carousel's 6 m blocker stood as a white box in front of the haunted house (11-15)
+ ghosts=0
+ for a in SUB.get_all_level_actors():
+  cs=list(a.get_components_by_class(unreal.StaticMeshComponent))
+  if cs and all(not c.is_visible() for c in cs):a.set_actor_hidden_in_game(True);ghosts+=1
  # the clock, lamps and sky run from this one actor: in a cell it was unloaded and began again at every return, 60-78 ms a scan of the map
  ctl=[a for a in SUB_.get_all_level_actors() if a.get_actor_label()=='CityEnvironmentController']
  if ctl:ctl[0].refresh_bindings();ctl[0].prepare_for_save();ctl[0].set_editor_property('is_spatially_loaded',False)
  assert unreal.EditorLoadingAndSavingUtils.save_map(world,DEST),DEST
  o=ROOT/'output/street-social-city-production/stream-v1';o.mkdir(parents=True,exist_ok=True)
- r=dict(status='passed',map=DEST,split_actors=len(gone),instances=inst,cell_actors=made,kept_small=kept,lights=lights,light_scale=LIGHT_SCALE,dark_rooms=darkrooms,room_lights=added,lights_dressed=dressed,culled=culled,controller=len(ctl))
+ r=dict(status='passed',map=DEST,split_actors=len(gone),instances=inst,cell_actors=made,kept_small=kept,lights=lights,light_scale=LIGHT_SCALE,dark_rooms=darkrooms,room_lights=added,lights_dressed=dressed,culled=culled,controller=len(ctl),hidden_in_game=ghosts)
  (o/'prep.json').write_text(json.dumps(r,indent=1),'utf8');return r
 ]====]
