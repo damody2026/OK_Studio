@@ -27,7 +27,10 @@ void OKHideStreetBacks(UWorld* World,const FVector& Eye){
  const double Now=World->GetTimeSeconds();
  TRACE_CPUPROFILER_EVENT_SCOPE(Street_HideBacks);
  if(B.FoundAt<0.||Now-B.FoundAt>2.){B.FoundAt=Now;B.Shapes.Reset();B.bLooked=false;
-  for(TActorIterator<AStaticMeshActor> It(World);It;++It)if(UStaticMeshComponent* C=It->GetStaticMeshComponent();IsStreetShape(C))B.Shapes.Add(C);}
+  // Only shapes drawn to begin with: the map's hidden collision cubes (carousel1_Block, a 6 m white cube on the
+  // amusement park's carousel) were hidden here with the eye inside, then "restored" visible when it left (2026-11-15).
+  // One this pass hid is still in B.Hidden and stays a shape until the eye leaves it.
+  for(TActorIterator<AStaticMeshActor> It(World);It;++It)if(UStaticMeshComponent* C=It->GetStaticMeshComponent();IsStreetShape(C)&&(C->IsVisible()||B.Hidden.Contains(C)))B.Shapes.Add(C);}
  // The same eye over the same shapes hides the same ones: a still camera (the one-on-one's, mostly) costs nothing. Every
  // frame it took 0.4 ms of the game thread in the university city (2026-11-12).
  else if(B.bLooked&&B.bOn==bOn&&FVector::DistSquared(B.Eye,Eye)<1.)return;
