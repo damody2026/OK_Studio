@@ -272,6 +272,22 @@ do
   end
 end
 
+-- More ways into a building than its door: the game goes into and out of a place indoors by the outermost building's way in
+-- nearest the walk (CityRoute, entrance* anchors on the door's floor). The sports building's door is its south end
+-- (77000,21000) and the gym hall's 34274, so campus_e1 -> gym_hall went 341 m for 72 and 27 pairs over 2x (11-15); its north
+-- way in is where the e1_pool corridor enters (77030,39080), a road point, clear at z 1290 and 1220 with 40 cm clearance.
+-- Each entrance must be a point of city_roads.json, like a door.
+local ENTRANCES = {
+  campus_sports = { { name = 'entrance', pos = { 77030, 39080, 1200 } } },
+}
+for _, p in ipairs(places) do
+  for _, e in ipairs(ENTRANCES[p.id] or {}) do
+    p.anchors = p.anchors or {}
+    if p.door and math.abs(e.pos[3] - p.door[3]) >= 150 then problem(p.id .. ': ' .. e.name .. ' not on the door\'s floor') end
+    p.anchors[#p.anchors + 1] = { name = e.name, pos = e.pos, yaw = 0 }
+  end
+end
+
 for _, p in ipairs(places) do
   if not p.door or #p.door ~= 3 then problem(p.id .. ': no door') end
   if not p.rooms or #p.rooms == 0 then problem(p.id .. ': no rooms') end
