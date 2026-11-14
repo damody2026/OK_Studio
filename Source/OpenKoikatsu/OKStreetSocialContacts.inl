@@ -26,7 +26,17 @@ TArray<FVector> AOKStreetSocialScene::CityRoute(const FVector& From,const FVecto
  const FOKStreetPlace* Into=Outer(Indoor(To));const FOKStreetPlace* OutOf=Outer(Indoor(From));
  // Both in one building on one floor (47 m apart on the EE building's 4F, 優香 at her class): the floor's own way, not the
  // street's roads down on the ground, which led him into the 4F's wall till "the way is blocked" (R6-177).
- if(Into&&Into==OutOf&&FMath::Abs(From.Z-To.Z)<150.f){TArray<FVector> Here=GridRoute(From,To,NearCm);return Here.Num()>=2?Here:TArray<FVector>{From,To};}
+ // The grid finding nothing (its 25 ms across the sports building's 130 m 1F): the graph's corridor points of that floor,
+ // not a straight line into the wall, replanned 30 times till "the way is blocked" (gym_hall -> gym, 2026-11-15).
+ if(Into&&Into==OutOf&&FMath::Abs(From.Z-To.Z)<150.f){TArray<FVector> Here=GridRoute(From,To,NearCm);if(Here.Num()>=2)return Here;
+  TArray<FVector> Graph=OKStreetCityRoute(From,To);
+  const int32 OffFloor=Graph.FilterByPredicate([&](const FVector& P){return FMath::Abs(P.Z-From.Z)>150.f;}).Num();
+  UE_LOG(LogTemp,Display,TEXT("Street navigation: inside %s by the road graph (%d points, %.0f m, %d off the floor)"),Into->Id,Graph.Num(),FVector::Dist2D(From,To)/100.f,OffFloor);
+  if(Graph.Num()<3||OffFloor>0)return TArray<FVector>{From,To};
+  if(!OKStreetCityClear(GetWorld(),From,Graph[1],18.f)){TArray<FVector> Out=GridRoute(From,Graph[1]);if(Out.Num()>=2){Graph.RemoveAt(0,2);Out.Append(Graph);Graph=MoveTemp(Out);}}
+  const int32 End=Graph.Num()-1;
+  if(End>=1&&!OKStreetCityClear(GetWorld(),Graph[End-1],To,18.f)){TArray<FVector> In=GridRoute(Graph[End-1],To,NearCm);if(In.Num()>=2){Graph.RemoveAt(End-1,2);Graph.Append(In);}}
+  return Graph;}
  if(Into&&Into!=OutOf&&FVector::Dist2D(Into->Door,To)>50.f){
   const FVector Door=Into->Door;TArray<FVector> Route=CityRoute(From,Door);if(Route.IsEmpty())Route={From};
   // On her floor, in from the door; upstairs the navigation plans the lift from the door (PlanNavLift).
