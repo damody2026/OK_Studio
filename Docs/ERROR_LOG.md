@@ -4449,3 +4449,4 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - 錯誤：從打包資料夾直接執行 `StreetSocial.cmd -Control -Sandbox PkgTest` 試跑，沒有加 `-NoCloud`。包裡的 `player.json` 金鑰是空的，但遊戲讀到這台機器使用者目錄的 `%LOCALAPPDATA%\OpenKoikatsu\deepseek.json`／`player.json`，Lan 用 DeepSeek 回了一句話，違反「測試時不呼叫雲端」。
 - 原因：以為包裡沒有金鑰就不會連雲端；金鑰還會從使用者目錄與環境變數讀。
 - 修正：任何試跑（含打包後的包）一律加 `-NoCloud`（需搭配 `-Sandbox`）。包本身仍不含金鑰（逐字搜本機 2 把金鑰與金鑰格式，整包 0 筆）。
+- 清理試跑留下的檔案時，又犯了一個錯：用 `Get-Content` 讀 `PACKAGE.json` 沒指定 `-Encoding UTF8`，中文檔名變成亂碼，把 7 個在清單上的檔案（`VideoMotionDemos/網球示範.*`、`base_v1/studio/bg/宇宙空間0N.png`）當成多餘的刪掉；之後用 UTF-8 重新比對，從專案補回。PowerShell 5.1 讀 UTF-8 JSON 一律加 `-Encoding UTF8`。
