@@ -16,7 +16,10 @@ local function exists(p) local f = io.open(p, 'rb'); if f then f:close() end; re
 local lfs = require('lfs')
 local function ls(dir)
   local names = {}
-  if lfs.attributes(dir, 'mode') == 'directory' then for n in lfs.dir(dir) do if n ~= '.' and n ~= '..' then names[#names + 1] = n end end end
+  -- every folder listed here is an input: missing or empty is an error, never a silently smaller table
+  assert(lfs.attributes(dir, 'mode') == 'directory', 'input folder missing: ' .. dir)
+  for n in lfs.dir(dir) do if n ~= '.' and n ~= '..' then names[#names + 1] = n end end
+  assert(#names > 0, 'input folder empty: ' .. dir)
   table.sort(names); return names
 end
 local function r1(v) return math.floor(v * 10 + .5) / 10 end

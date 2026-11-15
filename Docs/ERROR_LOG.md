@@ -4587,3 +4587,14 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 2. stage 是共用資源：啟動器預設挑最新的，建了新 stage 就可能被別人拿去跑。要清只清確定沒人用的，或等到沒有任何遊戲在跑時再清；自己啟動時在命令裡寫死 stage 名字。
 3. 不要遞迴刪含 junction 的 `.stage`：先移除 reparse point（最深的先），再刪目錄。
 這次 c-lowspec 的 range128 量測作廢，改用 nh1115y 重跑。
+
+## 2026-11-15 Lua 工具用 io.popen 列目錄，從 PowerShell 啟動時回空白（c-street-city）
+
+`Tools/build_street_city_places.lua` 用 `io.popen('ls -1 "<目錄>"')` 列三個輸入目錄。Windows 的 `io.popen` 一律經過 cmd；從 Git bash 啟動時 PATH 裡有 Git 的 `ls.exe`，所以能列；從 PowerShell 或 .cmd 啟動時沒有 `ls`，cmd 只在 stderr 報錯，stdout 是空的，迴圈跑零次，不會失敗。結果鏡子、lover-spots install、建築報告整批被略過，city_anchors 由 25374 列縮成 14873 列、game_places 由 113 縮成 58，還被誤判成「install 檔遺失」（Docs/STREET_CITY_PLACES_BUILD_DRIFT.md）。
+
+規則：
+1. Lua 工具不要用 `io.popen` 跑 `ls`、`dir`、`find` 之類的指令列目錄，改用 `lfs.dir`（或 `ok.path.list`），不經過 shell，從哪裡啟動結果都一樣。
+2. 列的是必要輸入時，目錄不存在或列出零個就直接失敗，不要當成空目錄繼續做；無聲略過輸入比列錯順序嚴重得多。
+3. 輸出突然縮水，先查輸入有沒有讀到，再猜檔案遺失。
+
+已修：build_street_city_places.lua 改用 lfs，目錄缺少或是空的就 assert 失敗（7a3d4bf30 與後續提交）。11-15 掃過 `Tools/`：其他 `io.popen` 幾乎都是 `python -` 管線、`curl`、`git` 或 `cd`，不是列目錄；還有兩處相近的要另外處理：`Tools/check_ok_studio_buttons.lua:94`（`dir /b ... 2>nul` 比對存檔前後的姿勢檔，目錄不存在時當成空）、`Tools/make_stage_portable.lua:26`（解析 `cmd /c dir /s /al` 的英文或繁中輸出找 junction，語系或代碼頁不同時會一個都找不到）。
