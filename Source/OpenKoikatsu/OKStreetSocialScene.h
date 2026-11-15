@@ -702,7 +702,7 @@ private:
  // Props that are done with: hidden and without collision now, destroyed a few a frame (TickDestroyQueue).
  void DestroyLater(AActor* Actor);
  void TickDestroyQueue();
- bool NavCellFree(const FIntPoint& Cell,float Z) const;
+ bool NavCellFree(const FIntPoint& Cell,float Z,float Clearance=0.f) const; // Clearance 0: the planning one (OKStreetNavClearance)
  TArray<const struct FOKStreetPlace*> NearbyPlaces(float Radius) const;
  bool BeginOuting(int32 Girl,const FString& ActivityId,FString& Error);
  bool ActivitySettles(const TCHAR* Anchor) const;

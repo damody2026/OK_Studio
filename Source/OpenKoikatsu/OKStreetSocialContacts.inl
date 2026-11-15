@@ -161,8 +161,18 @@ void AOKStreetSocialScene::ToggleBigMap(){
 // Walkable-street grid: a cell is free when a body standing there keeps the same clearance walking needs (30 cm from
 // street obstacles and place blocks, no overlap with world collision). Cells are tested when A* first reaches them.
 static constexpr float OKStreetNavCell=40.f;
-bool AOKStreetSocialScene::NavCellFree(const FIntPoint& Cell,float Z) const{
- auto& Grid=State->NavGrid.FindOrAdd(FMath::RoundToInt(Z/100.f));
+// The body's clearance a cell is tested with. Planned at 40 cm (wider than his 28: a cell beside an awning or a sign is not
+// a way); a route that does not get there at 40 is planned again, whole, at 30 cm, the clearance the straight stretches and
+// the road checks use (OKStreetObstacleGap 30). At 40 the karaoke booths' doors, the café's way in and the seats inside
+// were "no way", though the body (28) passes, and he walked into the café's wall 30 times. Only after both it is none.
+static TAutoConsoleVariable<float> CVarOKStreetNavClearance(TEXT("ok.street.NavClearance"),40.f,TEXT("Street grid routes: the body clearance (cm) cells are first planned with."));
+static TAutoConsoleVariable<float> CVarOKStreetNavNarrowClearance(TEXT("ok.street.NavNarrowClearance"),30.f,TEXT("Street grid routes: the clearance (cm) a route that failed is planned again with (<= 0 or not below the first: no second pass)."));
+static float OKStreetNavClearance(){return FMath::Max(1.f,CVarOKStreetNavClearance.GetValueOnGameThread());}
+static float OKStreetNavNarrowClearance(){return CVarOKStreetNavNarrowClearance.GetValueOnGameThread();}
+bool AOKStreetSocialScene::NavCellFree(const FIntPoint& Cell,float Z,float Clearance) const{
+ if(Clearance<=0.f)Clearance=OKStreetNavClearance();
+ // A cache per floor and clearance: a cell free at 30 is not free at 40.
+ auto& Grid=State->NavGrid.FindOrAdd(FMath::RoundToInt(Z/100.f)*1000+FMath::RoundToInt(Clearance));
  if(const bool* Known=Grid.Find(Cell))return *Known;
  QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_NavCellTest);
  const FVector P(Cell.X*OKStreetNavCell,Cell.Y*OKStreetNavCell,Z);
@@ -174,7 +184,7 @@ bool AOKStreetSocialScene::NavCellFree(const FIntPoint& Cell,float Z) const{
  // (2460 -> 2303, "she is on another floor"). The street keeps its slopes.
  if(Free&&OKStreetCityMode()&&GroundZ<Z-60.f&&OKStreetUpstairs(P))Free=false;
  if(Free&&OKStreetCityMode())State->NavGround.FindOrAdd(FMath::RoundToInt(Z/100.f)).Add(Cell,GroundZ);
- if(Free){FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetNavCell),false,this);Free=!GetWorld()->OverlapAnyTestByChannel(FVector(P.X,P.Y,GroundZ)+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(40,OKStreetBodyHalf()),Query);} // wider than his 28: a cell beside an awning or a sign is not a way
+ if(Free){FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetNavCell),false,this);Free=!GetWorld()->OverlapAnyTestByChannel(FVector(P.X,P.Y,GroundZ)+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(Clearance,OKStreetBodyHalf()),Query);}
  Grid.Add(Cell,Free);return Free;
 }
 TArray<FVector> AOKStreetSocialScene::GridRoute(const FVector& From,const FVector& To,float NearCm) const{
@@ -192,14 +202,22 @@ bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline
  const float Z=G.From.Z;const FVector From=G.From,To=G.To;
  auto ToCell=[](const FVector& P){return FIntPoint(FMath::RoundToInt(P.X/OKStreetNavCell),FMath::RoundToInt(P.Y/OKStreetNavCell));};
  auto Centre=[Z](const FIntPoint& C){return FVector(C.X*OKStreetNavCell,C.Y*OKStreetNavCell,Z);};
+ const float Body=G.Clearance;
+ // Failed at the planning clearance: the whole route again at the narrow one (not only the door's cells: a way joined from
+ // narrow and wide cells would lead where the body cannot go on). Once; after that it is none.
+ auto Narrower=[&G,this](const TCHAR* Why)->bool{
+  const float Wide=G.Clearance>0.f?G.Clearance:OKStreetNavClearance(),Narrow=OKStreetNavNarrowClearance();
+  if(Narrow<=0.f||Narrow>=Wide)return false;
+  UE_LOG(LogTemp,Display,TEXT("Street grid route: %s at %.0f cm from %s to %s, planned again at %.0f cm"),Why,Wide,*G.From.ToCompactString(),*G.To.ToCompactString(),Narrow);
+  const FVector F=G.From,T=G.To;const float Near=G.NearCm;G=FOKStreetGridSearch();G.From=F;G.To=T;G.NearCm=Near;G.Clearance=Narrow;return true;};
  if(G.Phase==0){
   G.Z=Z;G.Start=ToCell(From);G.Goal=ToCell(To);G.Phase=2;
   // A goal on a counter, a door frame or a bench: the nearest free cell around it.
-  if(!NavCellFree(G.Goal,Z)){
+  if(!NavCellFree(G.Goal,Z,Body)){
    bool Found=false;
    for(int32 R=1;R<=6&&!Found;++R)for(int32 DX=-R;DX<=R&&!Found;++DX)for(int32 DY=-R;DY<=R;++DY){
-    if(FMath::Max(FMath::Abs(DX),FMath::Abs(DY))!=R)continue;const FIntPoint C=G.Goal+FIntPoint(DX,DY);if(NavCellFree(C,Z)){G.Goal=C;Found=true;break;}}
-   if(!Found)return true;
+    if(FMath::Max(FMath::Abs(DX),FMath::Abs(DY))!=R)continue;const FIntPoint C=G.Goal+FIntPoint(DX,DY);if(NavCellFree(C,Z,Body)){G.Goal=C;Found=true;break;}}
+   if(!Found){if(Narrower(TEXT("no free cell by the goal")))return GridSearchStep(G,Deadline);return true;}
   }
   if(G.Start==G.Goal){G.Route={From,To};return true;}
   G.Lo=FIntPoint(FMath::Min(G.Start.X,G.Goal.X)-60,FMath::Min(G.Start.Y,G.Goal.Y)-60);G.Hi=FIntPoint(FMath::Max(G.Start.X,G.Goal.X)+60,FMath::Max(G.Start.Y,G.Goal.Y)+60);
@@ -215,8 +233,8 @@ bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline
  const int32 W=G.W;
  auto Index=[&](const FIntPoint& C){return (C.X-Lo.X)+(C.Y-Lo.Y)*W;};
  auto Known=[&](const FIntPoint& C)->uint8{
-  if(C.X<Lo.X||C.Y<Lo.Y||C.X>Hi.X||C.Y>Hi.Y)return 1|(NavCellFree(C,Z)?2:0)|(Learned&&Learned->Contains(C)?4:0);
-  uint8& K=G.Cell[Index(C)];if(!K)K=1|(NavCellFree(C,Z)?2:0)|(Learned&&Learned->Contains(C)?4:0);return K;};
+  if(C.X<Lo.X||C.Y<Lo.Y||C.X>Hi.X||C.Y>Hi.Y)return 1|(NavCellFree(C,Z,Body)?2:0)|(Learned&&Learned->Contains(C)?4:0);
+  uint8& K=G.Cell[Index(C)];if(!K)K=1|(NavCellFree(C,Z,Body)?2:0)|(Learned&&Learned->Contains(C)?4:0);return K;};
  auto Passable=[&](const FIntPoint& C){const uint8 K=Known(C);if(K&4)return false;return (K&2)||FMath::Max(FMath::Abs(C.X-Start.X),FMath::Abs(C.Y-Start.Y))<=1;};
  auto Heuristic=[&](const FIntPoint& C){const float DX=FMath::Abs(C.X-Goal.X),DY=FMath::Abs(C.Y-Goal.Y);return DX+DY+(UE_SQRT_2-2.f)*FMath::Min(DX,DY);};
  auto& Came=G.Came;auto& Cost=G.Cost;auto& Open=G.Open;
@@ -255,6 +273,8 @@ bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline
  auto Sees=[&](const FVector& P){FHitResult Hit;for(const float Height:{120.f,165.f})
   if(!GetWorld()->LineTraceSingleByChannel(Hit,FVector(P.X,P.Y,To.Z)+FVector(0,0,Height),To+FVector(0,0,Height),ECC_Visibility,SightQuery)||FVector::Dist(Hit.ImpactPoint,To+FVector(0,0,Height))<80.f)return true;
   return false;};
+ // Before closing in on a cell near the goal: the goal itself at the narrow clearance (the seat past the café's way in).
+ if(!Reached&&Narrower(Open.IsEmpty()?TEXT("closed in"):TEXT("too far"))){Release();return GridSearchStep(G,Deadline);}
  if(!Reached&&Open.IsEmpty()&&G.NearCm>0){float Best=FMath::Square(G.NearCm/OKStreetNavCell)+.01f;bool Near=false;
   for(int32 I=0;I<Cost.Num();++I)if(Cost[I]<TNumericLimits<float>::Max()){const FIntPoint C(Lo.X+I%W,Lo.Y+I/W);const float D=float((C-Goal).SizeSquared());if(D<Best&&C!=Start&&Sees(Centre(C))){Best=D;End=C;Near=true;}}
   if(Near){Reached=true;G.Goal=End;UE_LOG(LogTemp,Display,TEXT("Street grid route: %s closed in, to the nearest reached cell %.0f cm from it"),*To.ToCompactString(),FMath::Sqrt(Best)*OKStreetNavCell);}}

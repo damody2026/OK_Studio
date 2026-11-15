@@ -222,6 +222,7 @@ struct FOKStreetLoverReact {int32 Girl=INDEX_NONE;FString Clip,MaleClip;int32 Ph
 struct FOKStreetGridSearch {
  FVector From=FVector::ZeroVector,To=FVector::ZeroVector;float Z=0;FIntPoint Start,Goal,Lo,Hi;int32 Phase=0; // 0 not begun, 1 searching, 3 pulling the string, 2 done
  float NearCm=0; // the goal closed in: a route to the reached cell nearest it, within this (0: none); his walk to her (R6-208)
+ float Clearance=0; // the body's clearance the cells are tested with: 0 the planning one, then the narrow one (second pass)
  // Pulling: the cells found, the corner kept last (PullI) and the farthest cell still to try from it (PullJ, -1 none yet).
  // One long route's pull took 10 ms in a frame.
  TArray<FIntPoint> Path;int32 PullI=0,PullJ=-1;
