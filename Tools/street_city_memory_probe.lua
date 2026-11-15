@@ -189,6 +189,10 @@ local ok_run, err = pcall(function()
         phase = ("load%d"):format(peak.soak_segments)
         launch()
         wait_loaded()
+        -- the heroines are still being installed when the map is up: settle like the first segment's idle samples,
+        -- so this segment's first round floor is not taken mid-load
+        local settle_end = os.time() + o.seconds
+        while os.time() < settle_end do record(); sleep(2) end
       end
       local round_start = os.time()
       round = round + 1
@@ -211,7 +215,7 @@ end)
 csv:close()
 if pid then proc.run({ "taskkill", "/PID", tostring(pid), "/T", "/F" }, { hide = true, capture = true }) end
 release()
-local summary = { tag = o.tag, launcher_args = launcher_args, completed = ok_run, error = ok_run and nil or tostring(err),
+local summary = { tag = o.tag, launcher_args = launcher_args, completed = ok_run, error = (not ok_run) and tostring(err) or nil,
   peak_commit_gb = gb(peak.commit), peak_working_set_gb = gb(peak.ws), peak_gpu_dedicated_gb = gb(peak.gpu),
   min_system_free_commit_gb = peak.min_free_commit < math.huge and gb(peak.min_free_commit) or nil, load_seconds = peak.load_seconds }
 for k, v in pairs(peak) do if type(k) == "string" and (k == "load" or k == "idle" or k:match("^tour:")) then summary["commit_gb_" .. k] = gb(v) end end
