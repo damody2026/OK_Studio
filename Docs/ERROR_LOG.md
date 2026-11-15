@@ -4629,3 +4629,11 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - 規則：
   - 在共用工作樹上，自己的修改未提交前，每次建置與測試前先確認 diff 還在。
   - 數字幾乎沒變時，先懷疑測的根本不是新程式。
+
+## 2026-11-15 讀卡器：C041 服裝 7 兔女郎胯下與臀部沒畫出來（F 組）
+
+- 錯誤：GF mods「Ricca Bunnysuit Bra」（bra 欄）的 prefab 有三個 renderer：`n_top_a/top_a`、`n_top_a/strings_a`，以及掛在 `n_bot_a` 節點上的胯下／臀部。三個網格都叫 `bunny_top_a`，其中 `top_a` 和 `n_bot_a` 的材質也相同（`ricca_bunny_top`）。`push_meshes` 用「網格名＋卡片屬性＋submesh＋材質」去重，所以 `n_bot_a`（1241 頂點）被當成重複丟掉。結果連身衣只剩胸腹，胯下露出身體。原作有畫這一塊（使用者確認）。
+- 查的過程：原作 `ChaControl` 的身體 alpha mask 只讀上衣的 `OverBodyMask`，沒有上衣時身體不藏，所以不是 mask 的問題。狀態規則（bra 的 `n_bot_*` 依內褲狀態）也和原作一致。最後用 `OK_STATEDIAG=ricca` 列出 prefab 階層，用 `OK_DEDUPDIAG` 看到第三個網格在去重時被丟掉。
+- 修正：衣服欄位的去重鍵加上網格資源（`path_id`）。同一欄位裡不同的網格資源都畫，同一份網格資源才算重複。讀卡器實測服裝 7 在蹦跳動作中胯下有蓋住。
+- 另：診斷旗標 `OK_STATEDIAG` 可以給名稱片段（例如 `ricca`），列出含這段名稱的 prefab 節點鏈。
+- 也記一筆：同一天我用 `git checkout` 還原 `KKPreviewActor.cpp`（perl 改壞 CRLF），把 f-studio 尚未提交的 U273 修改一起還原了，就是上一筆「未提交的修改被別人還原」的原因。以後要還原檔案，先看 `git diff` 裡有沒有別人的 hunk，只還原自己的部分。
