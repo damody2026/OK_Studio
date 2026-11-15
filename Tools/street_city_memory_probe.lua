@@ -8,7 +8,7 @@
 --     --no-tour     no warps (only the start position)
 --     --no-slot     the caller holds an Unreal slot already (Tools/unreal_slot.lua)
 --     --memreport   "memreport -full" at the end of the idle samples
---     --shots       a screenshot 10 s after each warp (control_shots beside the run's report)
+--     --shots       a screenshot 10 s after each warp, and on --walk (control_shots beside the run's report)
 --     --soak MIN    after the tour, MIN minutes of rounds: warp to a far place, then walk to a heroine for 45 s (the
 --                   autopilot, /navigate); each round's lowest commit goes to <tag>.json soak_rounds, so memory that
 --                   keeps climbing shows as a rising floor (soak_floor_first_gb / soak_floor_last_gb)
@@ -16,6 +16,8 @@
 --                   department (no warps while walking: the seamless streaming a player sees); walk_peak_* in the json
 --                   are the samples taken while walking, walk_legs how each leg ended (arrived / stuck / timeout)
 --     --leg SEC     longest a walking leg may take (default 360)
+--     --dwell SEC   after the last leg he stands there this long (default 45; phase walk:at_<place>); with --shots a
+--                   screenshot at each door and four looks round while standing (pop-in at the loading range's edge)
 --     --route A,B,C place ids to walk instead (the walk starts with a warp to A's door). A place the autopilot walks him
 --                   into (gym: its facility opens) ends the walk there: map navigation is refused inside a facility,
 --                   so the next leg reports "autopilot stopped"; start a second run from that door with --route
@@ -32,7 +34,7 @@ local ok = require "ok"
 local json, path, proc = ok.json, ok.path, ok.proc
 
 local AGENT = "c-lowspec"
-local o, launcher_args, i = { seconds = 60, segment = 18, leg = 360 }, {}, 1
+local o, launcher_args, i = { seconds = 60, segment = 18, leg = 360, dwell = 45 }, {}, 1
 while arg[i] do
   local a = arg[i]
   if a == "--" then for j = i + 1, #arg do launcher_args[#launcher_args + 1] = arg[j] end break
@@ -47,6 +49,7 @@ while arg[i] do
   elseif a == "--segment" then i = i + 1; o.segment = assert(tonumber(arg[i]), "--segment MINUTES")
   elseif a == "--walk" then o.walk = true
   elseif a == "--route" then i = i + 1; o.route = arg[i]
+  elseif a == "--dwell" then i = i + 1; o.dwell = assert(tonumber(arg[i]), "--dwell SECONDS")
   elseif a == "--leg" then i = i + 1; o.leg = assert(tonumber(arg[i]), "--leg SECONDS")
   else error("unknown argument " .. a, 0) end
   i = i + 1
@@ -243,8 +246,11 @@ local ok_run, err = pcall(function()
       local door = doors[dest]
       local leg_start, still_since, lx, ly = os.time(), os.time(), nil, nil
       local why = "timeout"
+      local next_shot = os.time() + 30
       while os.time() - leg_start < o.leg do
         record(); sleep(2)
+        -- --shots: the camera behind him looks down the street ahead, where the loading range's edge is
+        if o.shots and os.time() >= next_shot then say("shot walking: " .. http("POST", "/screenshot", "{}")); next_shot = os.time() + 30 end
         local x, y, nav = where()
         if x then
           if door and math.sqrt((x - door[1]) ^ 2 + (y - door[2]) ^ 2) < 600 then why = "arrived"; break end
@@ -256,8 +262,26 @@ local ok_run, err = pcall(function()
       end
       peak.walk_legs[#peak.walk_legs + 1] = ("%s -> %s: %s after %d s"):format(from, dest, why, os.time() - leg_start)
       say(peak.walk_legs[#peak.walk_legs])
+      if o.shots then say("shot at " .. dest .. ": " .. http("POST", "/screenshot", "{}")) end
     end
     http("POST", "/navigate", json.encode({ stop = true }))
+    -- standing where the walk ended (he walked there: still a walking sample, the cells round him settle); with
+    -- --shots a look round (four yaws) for buildings popping in at the edge of the loading range
+    if o.dwell > 0 then
+      phase = "walk:at_" .. route[#route]
+      local t_end = os.time() + o.dwell
+      local yaws = o.shots and { 0, 90, 180, 270 } or {}
+      local k = 1
+      while os.time() < t_end do
+        record(); sleep(2)
+        if yaws[k] and os.time() >= t_end - o.dwell + 8 * k then
+          http("POST", "/look", json.encode({ yaw = yaws[k], pitch = -5 }))
+          sleep(2)
+          say(("shot yaw %d: %s"):format(yaws[k], http("POST", "/screenshot", "{}")))
+          k = k + 1
+        end
+      end
+    end
   end
   if o.soak then
     local places = { "department", "boys_dorm", "skating", "gym", "church", "cinema", "ramen", "bank" }

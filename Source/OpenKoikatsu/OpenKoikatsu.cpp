@@ -31,13 +31,14 @@ public:
             if (auto* V = IConsoleManager::Get().FindConsoleVariable(TEXT("r.SkipDrawOnPSOPrecaching"))) V->Set(1, ECVF_SetByProjectSetting);
             OKHSceneInstallPrecacheAhead();
         });
-        // Streamed map (UniversityCityWP): -StreetCityLoadingRange=N (cm), or 128 m on a low-memory PC (OKRuntimeLowMemory),
-        // in place of the map's 256 m. Set as each partitioned game world starts: the engine forgets the override whenever a
-        // world goes (a save loaded reopens the map), so a console command at launch only held until then
-        // (Docs/STREET_CITY_STREAMING_LOWSPEC_20261114.md).
+        // Streamed map (UniversityCityWP): -StreetCityLoadingRange=N (cm), or 96 m on a low-memory PC (OKRuntimeLowMemory),
+        // in place of the map's 256 m. 96 m, not 128 m: walking to the department store the dense shop street held commit
+        // at 12.4 GB with 128 m and 10.9 GB with 96 m, no hole or pop-in near by (2026-11-15). Set as each partitioned game
+        // world starts: the engine forgets the override whenever a world goes (a save loaded reopens the map), so a console
+        // command at launch only held until then (Docs/STREET_CITY_STREAMING_LOWSPEC_20261114.md).
         UWorldPartitionSubsystem::OnWorldPartitionSubsystemInitialized.AddLambda([](UWorldPartitionSubsystem*, UWorld* World) {
             if (!World || !World->IsGameWorld() || !GEngine) return;
-            int32 Range = OKRuntimeLowMemory() ? 12800 : 0;
+            int32 Range = OKRuntimeLowMemory() ? 9600 : 0;
             FParse::Value(FCommandLine::Get(), TEXT("StreetCityLoadingRange="), Range);
             if (Range <= 0) return;
             GEngine->Exec(World, *FString::Printf(TEXT("wp.Runtime.OverrideRuntimeSpatialHashLoadingRange -grid=0 -range=%d"), Range));
