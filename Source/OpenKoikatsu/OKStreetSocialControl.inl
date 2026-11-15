@@ -371,7 +371,13 @@ void AOKStreetSocialScene::StartControlServer(){
    if(FMath::Abs(From.Z-To.Z)>=150.f){Points=-1;return true;} // another floor: by the lift, not this check
    if(FVector::Dist2D(From,To)<30.f){Points=1;return true;}
    FOKStreetGridSearch G;G.From=From;G.To=To;GridSearchStep(G,TNumericLimits<double>::Max());Points=G.Route.Num();return G.Route.Num()>=2;};
-  TArray<TSharedPtr<FJsonValue>> Rows;int32 Bad=0;
+  // Only where the world is loaded: 400 m from him World Partition had not loaded the cinema's 4F, the door's ground trace
+  // hit nothing and it said "no ground at the door" (and "no free cell" for its seat), a floor that is there (c-street-city
+  // spent a slot on it, 11-15). Anything at all 50 m above or below: loaded (the city has ground or a floor everywhere).
+  // Not loaded: not checked, said so, not a problem. Stand near the place (or warp there) and ask again.
+  auto Loaded=[this](const FVector& At){FHitResult Hit;FCollisionQueryParams Q(SCENE_QUERY_STAT(StreetPlacesLoaded),false,this);
+   return GetWorld()->LineTraceSingleByChannel(Hit,At+FVector(0,0,5000),At-FVector(0,0,5000),ECC_WorldStatic,Q);};
+  TArray<TSharedPtr<FJsonValue>> Rows;int32 Bad=0,NotLoaded=0;
   for(const auto& P:OKStreetPlaces()){
    if(Only.Num()&&!Only.Contains(P.Id))continue;
    auto Row=MakeShared<FJsonObject>();Row->SetStringField(TEXT("id"),P.Id);TArray<TSharedPtr<FJsonValue>> Problems;
@@ -386,8 +392,12 @@ void AOKStreetSocialScene::StartControlServer(){
    {const int32 HubNode=City.Kept.IndexOfByKey(City.KeptPart);
     if(City.Nodes.IsValidIndex(HubNode)&&!OKStreetUpstairs(P.Door)){const TArray<FVector> Route=CityRoute(City.Nodes[HubNode],P.Door);Row->SetNumberField(TEXT("route_points"),Route.Num());
      if(Route.Num()<2||!Route.Last().Equals(P.Door,50.f))Problem(TEXT("no road route to the door"));
+     int32 LegsNotLoaded=0;
      for(int32 I=1;I<Route.Num();++I){int32 Points=0;if(OKStreetCityClear(GetWorld(),Route[I-1],Route[I],18.f)||Walk(Route[I-1],Route[I],Points))continue;
+      if(!Loaded(Route[I-1])||!Loaded(Route[I])){++LegsNotLoaded;Row->SetNumberField(TEXT("road_legs_not_loaded"),LegsNotLoaded);continue;}
       Problem(FString::Printf(TEXT("road leg %d/%d blocked: %s -> %s (%.0f m)"),I,Route.Num()-1,*Route[I-1].ToCompactString(),*Route[I].ToCompactString(),FVector::Dist2D(Route[I-1],Route[I])/100.f));break;}}}
+   if(!Loaded(P.Door)){Row->SetBoolField(TEXT("loaded"),false);Row->SetStringField(TEXT("not_checked"),TEXT("area not loaded: stand near it and check again"));
+    Row->SetArrayField(TEXT("problems"),Problems);if(Problems.Num())++Bad;++NotLoaded;Rows.Add(MakeShared<FJsonValueObject>(Row));continue;}
    float Ground=P.Door.Z;if(!OKStreetGroundZ(GetWorld(),P.Door,Ground,this))Problem(TEXT("no ground at the door"));
    else if(FMath::IsNearlyEqual(Ground,P.Door.Z+70.f,1.f))Problem(TEXT("door point inside something solid"));else if(FMath::Abs(Ground-P.Door.Z)>60.f)Problem(FString::Printf(TEXT("door %.0f cm off the ground"),Ground-P.Door.Z));
    // In from the door.
@@ -401,6 +411,7 @@ void AOKStreetSocialScene::StartControlServer(){
     auto Item=MakeShared<FJsonObject>();Item->SetStringField(TEXT("activity"),A.Id);Item->SetStringField(TEXT("anchor"),A.Anchor);
     const FOKStreetModelAnchor* Spot=OKStreetPlaceAnchor(P,A.Anchor);FString Why;
     if(!Spot)Why=TEXT("no such anchor");
+    else if(!Loaded(Spot->Position)){Item->SetBoolField(TEXT("ok"),true);Item->SetStringField(TEXT("why"),TEXT("area not loaded"));Anchors.Add(MakeShared<FJsonValueObject>(Item));continue;}
     else{int32 Points=0;const bool Ok=Walk(Inside,Spot->Position,Points)||Walk(P.Door,Spot->Position,Points);
      if(Points==-1)Why=TEXT("another floor");else if(!Ok)Why=TEXT("no way to it");
      float G=Spot->Position.Z;if(Why.IsEmpty()&&!OKStreetGroundZ(GetWorld(),Spot->Position,G,this))Why=TEXT("no ground under it");}
@@ -410,7 +421,7 @@ void AOKStreetSocialScene::StartControlServer(){
    Row->SetArrayField(TEXT("anchors"),Anchors);Row->SetArrayField(TEXT("problems"),Problems);if(Problems.Num())++Bad;
    Rows.Add(MakeShared<FJsonValueObject>(Row));
   }
-  auto O=OKControlResult(true);O->SetNumberField(TEXT("places"),Rows.Num());O->SetNumberField(TEXT("with_problems"),Bad);
+  auto O=OKControlResult(true);O->SetNumberField(TEXT("places"),Rows.Num());O->SetNumberField(TEXT("with_problems"),Bad);O->SetNumberField(TEXT("not_loaded"),NotLoaded);
   O->SetNumberField(TEXT("ms"),(FPlatformTime::Seconds()-Began)*1000.0);O->SetArrayField(TEXT("rows"),Rows);OKControlReply(Done,O);
  });
  // Every activity, tried for real (development, Tools/street_activity_audit.lua): {"op":"start", girl, id} ends what
