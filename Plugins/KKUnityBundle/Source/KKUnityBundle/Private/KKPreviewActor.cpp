@@ -47,6 +47,7 @@
 #include "KKRuntimeSkinBounds.h"
 #include "KKRuntimeMaterial.h"
 #include "KKRuntimeSharedMaterial.h"
+#include "KKPreviewDebug.h"
 #include "KKRuntimeDisplayProfile.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/PoseableMeshComponent.h"
@@ -6768,6 +6769,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 				const FName FollowName = ComponentName(UKKRuntimePoseableMeshComponent::StaticClass(),FString::Printf(TEXT("Skel_%d"), Published));
 				UPoseableMeshComponent* Follow = NewObject<UKKRuntimePoseableMeshComponent>(this, FollowName);
 				Follow->ComponentTags.Add(*FString::Printf(TEXT("KKSessionPart_%d"),Published));
+				OKTagPreviewPart(Follow, Name);
 				Follow->SetupAttachment(RootComponent);
 				Install(Follow);
 				Follow->SetSkinnedAssetAndUpdate(SkMesh);
@@ -6839,6 +6841,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 						Outline->SetCastShadow(false);
 						Outline->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 						Outline->ComponentTags.Add(TEXT("KKPreviewOutline"));
+						OKTagPreviewPart(Outline, Name);
 						Outline->SetMaterial(0, MakeOutlineMaterial(Tex, Part.LineColor, false, bSkinOutline, View.line_width, DetailTex, &ShadowParams, AlphaMaskTex, !bSkinOutline));
 						Output.Followers.Add(Outline);
 						if (OKIsGenitalMesh(Lower)) Output.GenitalPrimitives.Add(Outline);
@@ -6873,6 +6876,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 					}
 					// Which session part it draws, for whoever looks parts up by tag (the hidden follower keeps KKSessionPart_).
 					MouthComp->ComponentTags.Add(*FString::Printf(TEXT("KKMorphPart_%d"), Published));
+					OKTagPreviewPart(MouthComp, Name);
 					FOkMouthSlot Slot;
 					Slot.Comp = MouthComp;
 					Slot.SessionPartIndex = Published;
@@ -6895,6 +6899,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 							Shell->SetCastShadow(false);
 							Shell->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 							Shell->ComponentTags.Add(TEXT("KKPreviewOutline"));
+							OKTagPreviewPart(Shell, Name);
 							Shell->SetMaterial(0, MakeOutlineMaterial(Tex, Part.LineColor, false, true, View.line_width, DetailTex, &ShadowParams, AlphaMaskTex));
 							Shell->ComponentTags.Add(*FString::Printf(TEXT("KKMorphPart_%d"), Published));
 							Slot.OutlineComp = Shell;
@@ -6957,6 +6962,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 		if (Comp)
 		{
 			Part.SurfaceMat = Comp->GetMaterial(0);
+			OKTagPreviewPart(Comp, Name);
 			// OK_HIDE_SHADER=<prefix>,... (debugging): parts whose source shader starts with one of them are hidden.
 			static const TArray<FString> HiddenShaders = [] { TArray<FString> Out; FPlatformMisc::GetEnvironmentVariable(TEXT("OK_HIDE_SHADER")).ParseIntoArray(Out, TEXT(",")); return Out; }();
 			if (HiddenShaders.Num())

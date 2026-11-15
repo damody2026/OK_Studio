@@ -4700,3 +4700,11 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 修正：`OKInnerGarmentSortBase`：透明材質的褲襪／襪子 sort priority -200、胸罩／內褲 -100（外加原本的 Material Editor 疊層序），一定先於外衣與飾品（0）畫，等於 Unity 依距離把裡層排在外層之前。
 - 驗證：讀卡器 C079 七套跳躍前後截圖，服裝 1 前後都看不到內褲。
 - 未處理：同一件旗袍正面下襬 `cf_o_bot_china_d`（queue 3000）與 `_g`（Koikano/main_clothes_alpha, queue 3150）在不同相位時而顯示花紋、時而純紅，屬同一件衣服內的排序，待查。
+
+## 2026-11-16 讀卡器：身體遮罩誤用前綴相同的貼圖，腿被裁掉並露出黑色外框殼（C037、C077、C078、C085，F 組）
+- 症狀：C077 服裝 4、5 腿上與手臂有大片黑塊；C037 服裝 1、2、3、5 腿部黑白碎塊。原作（GamePoseProbe，`Saved/Tests/ZW077Native/`）腿完整，身體 `_AlphaMask` 為 null。
+- 錯誤：這些 mod 上衣的 `OverBodyMask` 填的是上衣自己的 prefab 名（例如 `R2T1AogusitaMd10011_top`），bundle 裡沒有這個名字的貼圖，遊戲的 `LoadAsset<Texture2D>` 拿到 null。`load_over_clothes_mask` 用排名比對（前綴相同就算），拿了另一張名稱相近的貼圖當身體遮罩，腿被裁掉；身體的外框殼沒被同一張遮罩裁，從洞裡看到它黑色的內面。
+- 先誤判：一開始以為是「原作會寫深度的半透明衣服」順序問題，做了讀卡器半透明部件依 Unity 順序排序加深度測試，逐像素比對沒有改善（C077 還多出破片），已撤掉。用 `ok.Debug.HideParts`／`ok.Debug.Outline` 逐一隱藏後，才確定黑塊來自身體加外框殼。
+- 修正：衣服遮罩只取完全同名（`name` 或 `name_low`）的貼圖，取不到就沒有遮罩，與遊戲一致；`--mask-report` 新增 `near` 類別，列出「只有名稱相近的貼圖」的服裝。開卡快取版本 44。
+- 驗證：100 張 CrowdAPNG 原卡的 mask-report，`near` 共 10 套，即 C037（服裝 1、2、3、5）、C077（4、5）、C078（4、5）、C085（4、5）。四張重轉並通過 `ok_cards.lua verify`，裝回 CrowdAPNG；C077 服裝 4 讀卡器畫面與原作一致，C037 服裝 1 腿部乾淨。
+- 未處理：身體外框殼不受 `_AlphaMask` 裁切，身體有合法遮罩、外衣又半透明時仍可能看到黑色內面，待查。

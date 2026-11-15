@@ -1322,7 +1322,8 @@ pub fn session_cache_location() -> Option<PathBuf> {
 /// renderers whose meshes share a name and material (push_meshes keys by the mesh asset).
 /// 42: an accessory id taken by number from a mod hangs on its list Parent; BetterPenetration body DynamicBones (cf_J_Vagina/cf_J_Belly) are held outside H scenes.
 /// 43: a skinned part's bones follow its bind poses when the skeleton was another renderer's (rig::align_bones_to_bind_poses).
-const SESSION_CACHE_REVISION: u32 = 43;
+/// 44: a clothes mask (OverBodyMask/OverBraMask/OverInnerMask) is the texture of that exact name or none, as the game loads it.
+const SESSION_CACHE_REVISION: u32 = 44;
 /// What the library contributes to an open, by content (not file times): the same library in another clone, after a
 /// git checkout or a copy gives the same identity, so its cached opens stay valid there. Memoized per process.
 fn library_identity(lib: &Path) -> String {
