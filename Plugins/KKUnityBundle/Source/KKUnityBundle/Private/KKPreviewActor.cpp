@@ -1106,6 +1106,20 @@ static int32 OKInnerGarmentSortBase(const FString& Role, const FString& Blend)
 	return 0;
 }
 
+/** Unity draws blended materials by render queue first (kks encore outfit 0: the qipao's pattern layer
+ *  Koikano/main_clothes_alpha at 3150 always over its cloth at 3000; ours flipped with distance). The queue is the sort's
+ *  main key, 1000 per step from Transparent (3000, so 0 there: the inner-layer and stacking ranks above stay the order
+ *  within one queue). Only blended parts: an opaque part's priority orders the opaque base pass instead. */
+static int32 OKUnityQueueSortOffset(const FOkSession& Source, int32 Index, const FString& Blend)
+{
+	if (!Blend.Equals(TEXT("translucent"), ESearchCase::IgnoreCase)) return 0;
+	FLinearColor Queue(-1.f, 0.f, 0.f, 0.f);
+	Source.MaterialValue(Index, "_OKRenderQueue", Queue);
+	if (Queue.R < 0.f) Source.MaterialValue(Index, "_OKShaderQueue", Queue);
+	if (Queue.R < 0.f) return 0;
+	return FMath::Clamp(FMath::RoundToInt(Queue.R) - 3000, -2000, 2000) * 1000;
+}
+
 static UMaterialInterface* MakePartMaterial(UTexture2D* Tex, const FString& Blend, bool bUnlit, bool bTwoSided, bool bEye = false, UTexture2D* GlossTex = nullptr, UTexture2D* OverTex = nullptr, FLinearColor OverColor = FLinearColor::White, bool bNoZ = false, bool bPdo = false, bool bVcOverlay = false, UTexture2D* RampTex = nullptr, FLinearColor ShadowTint = FLinearColor(0.628f, 0.628f, 0.628f, 1.f), UTexture2D* DetailTex = nullptr, UTexture2D* LineTex = nullptr, UTexture2D* NormalTex = nullptr, UTexture2D* NormalMaskTex = nullptr, float ShadowExtend = 1.f, int32 ShaderKind = 0, const FOKToonShadowParameters* Shadow = nullptr, UTexture2D* AlphaMaskTex = nullptr, UTexture2D* OverTex2 = nullptr, bool bBodyOverlay = false)
 {
 	if (Shadow && Shadow->TripoPBR) return Shadow->TripoPBR;
@@ -6799,9 +6813,9 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 				{
 					// A later layer of the same surface (Material Editor copy, duplicated accessory) draws after the
 					// earlier ones and keeps equal-depth pixels, as Unity's LEqual (engine r.OK.OpaqueSortPriority).
-					Follow->SetTranslucentSortPriority(OKInnerGarmentSortBase(Part.Role, Blend) + FMath::Min(View.draw_layer, 99));
+					Follow->SetTranslucentSortPriority(OKUnityQueueSortOffset(Source, i, Blend) + OKInnerGarmentSortBase(Part.Role, Blend) + FMath::Min(View.draw_layer, 99));
 				}
-				else if (const int32 Inner = OKInnerGarmentSortBase(Part.Role, Blend))
+				else if (const int32 Inner = OKUnityQueueSortOffset(Source, i, Blend) + OKInnerGarmentSortBase(Part.Role, Blend))
 				{
 					Follow->SetTranslucentSortPriority(Inner);
 				}
@@ -7313,7 +7327,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 				*PartRole, *Name, *ParentBone, View.n_verts, View.n_idx,
 				PositionHash, IndexHash, UvHash);
 			int32& Depth = Output.TranslucentDepth.FindOrAdd(StackKey);
-			Comp->TranslucencySortPriority = OKInnerGarmentSortBase(PartRole, Blend) + FMath::Min(Depth, 99);
+			Comp->TranslucencySortPriority = OKUnityQueueSortOffset(Source, i, Blend) + OKInnerGarmentSortBase(PartRole, Blend) + FMath::Min(Depth, 99);
 			++Depth;
 		}
 		else if (View.draw_layer > 0)
