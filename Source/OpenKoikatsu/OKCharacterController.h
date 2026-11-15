@@ -238,6 +238,7 @@ public:
  UPROPERTY() TObjectPtr<class USlider> LightingPitchSlider;
  UPROPERTY() TObjectPtr<class USlider> LightingIntensitySlider;
  UPROPERTY() TObjectPtr<class USlider> LightingAmbientSlider;
+ UPROPERTY() TObjectPtr<class USlider> LightingShadeSlider;
  TArray<TPair<class USlider*,class UTextBlock*>> LightingValueLabels;
  TArray<FString> LightingRampKeys;	// parallel to LightingRampCombo's options; "" = the card's own ramp
  UPROPERTY() TObjectPtr<AKKPreviewActor> LitActor;

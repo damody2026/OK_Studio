@@ -546,6 +546,9 @@ public:
 	 *  1 keeps what the binding resolved. Applied by ApplyLightingScales (idempotent; new instances pick it up). */
 	float KeyLightIntensity = 1.f;
 	float AmbientScale = 1.f;
+	/** Card-shader (UTS2 / KKUTS) shade depth: _1st/_2nd_ShadeColor lerped from _BaseColor (0, no shade) to the card's
+	 *  own colours (1). Those shaders shade with these colours and never read _RampG, so the ramp choice misses them. */
+	float CardShaderShade = 1.f;
 	/** Returns the number of material parameters written. */
 	int32 ApplyLightingScales();
 	TMap<TWeakObjectPtr<UMaterialInstanceDynamic>, TMap<FName, FLinearColor>> LightingBaseValues;

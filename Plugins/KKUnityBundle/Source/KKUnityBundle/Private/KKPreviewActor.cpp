@@ -11302,6 +11302,9 @@ int32 AKKPreviewActor::ApplyLightingScales()
 	// 1/1 restores it. Instances made later (progressive stand-ins, outfit changes) are taken in on the next call.
 	static const FName LightNames[] = { TEXT("_LightColor0") };
 	static const FName AmbientNames[] = { TEXT("_ambientshadowG"), TEXT("unity_AmbientSky"), TEXT("unity_SHAr"), TEXT("unity_SHAg"), TEXT("unity_SHAb") };
+	// UTS2 (KKUTS) shades with its own colours, not _RampG: CardShaderShade pulls them toward _BaseColor (0: no shade).
+	static const FName ShadeNames[] = { TEXT("_1st_ShadeColor"), TEXT("_2nd_ShadeColor") };
+	static const FName BaseColorName = TEXT("_BaseColor");
 	TSet<UMaterialInstanceDynamic*> Seen;
 	int32 Writes = 0;
 	auto Scale = [&](UMaterialInstanceDynamic* M)
@@ -11311,7 +11314,7 @@ int32 AKKPreviewActor::ApplyLightingScales()
 		TMap<FName, FLinearColor>* Base = LightingBaseValues.Find(M);
 		if (!Base)
 		{
-			if (FMath::IsNearlyEqual(KeyLightIntensity, 1.f) && FMath::IsNearlyEqual(AmbientScale, 1.f)) return;
+			if (FMath::IsNearlyEqual(KeyLightIntensity, 1.f) && FMath::IsNearlyEqual(AmbientScale, 1.f) && FMath::IsNearlyEqual(CardShaderShade, 1.f)) return;
 			Base = &LightingBaseValues.Add(M);
 			// Only values this instance sets itself: one it inherits follows its (scaled) parent instance.
 			for (const FVectorParameterValue& P : M->VectorParameterValues)
@@ -11319,16 +11322,35 @@ int32 AKKPreviewActor::ApplyLightingScales()
 				const FName N = P.ParameterInfo.Name;
 				bool bWanted = N == LightNames[0];
 				for (const FName& A : AmbientNames) bWanted |= N == A;
+				for (const FName& A : ShadeNames) bWanted |= N == A;
 				if (bWanted) Base->Add(N, P.ParameterValue);
+			}
+			// The shade colours' target: the base colour this instance resolves (its own or inherited).
+			FLinearColor BaseColor = FLinearColor::White;
+			if (Base->Contains(ShadeNames[0]) || Base->Contains(ShadeNames[1]))
+			{
+				M->GetVectorParameterValue(FMaterialParameterInfo(BaseColorName), BaseColor);
+				Base->Add(BaseColorName, BaseColor);
 			}
 		}
 		for (const TPair<FName, FLinearColor>& E : *Base)
 		{
-			const bool bLight = E.Key == LightNames[0];
-			const float S = bLight ? KeyLightIntensity : AmbientScale;
-			// _ambientshadowG's alpha is the card's shadow depth, the colours' alpha unused: only the SH terms scale all four.
-			FLinearColor Want = E.Value * S;
-			if (!E.Key.ToString().StartsWith(TEXT("unity_SHA"))) Want.A = E.Value.A;
+			if (E.Key == BaseColorName) continue;
+			FLinearColor Want;
+			if (E.Key == ShadeNames[0] || E.Key == ShadeNames[1])
+			{
+				const FLinearColor* Target = Base->Find(BaseColorName);
+				Want = FMath::Lerp(Target ? *Target : FLinearColor::White, E.Value, FMath::Clamp(CardShaderShade, 0.f, 1.f));
+				Want.A = E.Value.A;
+			}
+			else
+			{
+				const bool bLight = E.Key == LightNames[0];
+				const float S = bLight ? KeyLightIntensity : AmbientScale;
+				// _ambientshadowG's alpha is the card's shadow depth, the colours' alpha unused: only the SH terms scale all four.
+				Want = E.Value * S;
+				if (!E.Key.ToString().StartsWith(TEXT("unity_SHA"))) Want.A = E.Value.A;
+			}
 			FLinearColor Current;
 			if (M->GetVectorParameterValue(FMaterialParameterInfo(E.Key), Current) && !Current.Equals(Want))
 			{

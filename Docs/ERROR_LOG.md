@@ -4585,3 +4585,16 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
   - 啟動器（`*.cmd`、`run_*.lua`）實際開的程序名稱與指令列，要先看一次再寫關閉邏輯。編輯器、`-game` 模式、打包的 `OpenKoikatsu.exe` 都可能出現。
   - release 前一律確認自己的 Unreal 已經不在。
   - 同一天第 2 批又出事：停掉在 `claim --wait` 的背景腳本時，只有 claim 被殺，腳本把 claim 結束當成拿到 slot，沒持有 slot 就開了讀卡器（PID 44464）。現在 claim 失敗就退出，claim 之後再用 `unreal_slot.lua status` 確認自己真的持有 slot，才啟動 Unreal；要停批次就把整棵程序樹（`taskkill /T`）一起關掉。
+
+## 2026-11-15 讀卡器：C041 大腿方塊在 C／E 沒修好，衣服陰影調不動（F 組）
+
+- 錯誤一：11-14 的くいこみサイハイ修正（`ChaCopyBodyMaterial`）要重轉 OK 卡才會套用，當時只重轉了 F 本機的 C041。C、E 兩棵樹的 C041 還是 11-04 的舊卡，服裝 2 的大腿照舊是白面夾皮膚方塊。使用者在 E 的讀卡器看到，以為沒修。
+- 修正一：把 F 重轉的 C041 複製到 C、E，舊卡備份在各樹的 `Saved/CardBackups/20261115-copybodymat/`。
+- 錯誤二：C041 的衣服與頭髮用卡片指定的 KKUTS（UTS2）shader，陰影由材質的 `_1st_ShadeColor`／`_2nd_ShadeColor` 決定，不讀 `_RampG`。讀卡器的「陰影風格」只換 `_RampG`，環境光也碰不到這兩個顏色，所以褲子兩側的深灰陰影怎麼調都不變。
+- 修正二：
+  - `AKKPreviewActor::CardShaderShade` 把這兩個顏色從 `_BaseColor`（0，無陰影）內插到卡片原值（1）。
+  - 讀卡器「光影風格」新增滑桿「衣服陰影深淺（卡片 UTS shader）」，記在 GameUserSettings。
+  - 「無陰影（平光）」預設設為 0，「柔和卡通」設為 0.6。
+- 下次：
+  - 修正要重轉卡才生效時，C／E／F 本機的同一張卡都要重轉或複製，並在回報裡寫明。
+  - 新增光影控制時，要逐一確認每一種 shader 家族（Forge、KKUTS、xukmi……）都吃得到。
