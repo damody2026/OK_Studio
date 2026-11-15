@@ -122,20 +122,20 @@ void AOKStreetSocialScene::StudiedTogether(int32 Girl,int32 Minutes){
 
 // ------------------------------------------------------------------------------------------------ stairs
 
-// The stair landing he stands on: (place index, floor) or false.
+// The stair landing he stands on: (place index, floor) or false. Any place's landings ("stairN"): the campus and the
+// dorms beside their lifts, and the shops whose upper floors only stairs reach (2026-11-16; it used to be the campus and
+// the dorms only, and a shop's landings hid its floor buttons).
 bool AOKStreetSocialScene::StairHere(int32& PlaceIndex,int32& Floor) const{
  const auto& Places=OKStreetPlaces();const FVector M=State->Male;
- for(int32 P=0;P<Places.Num();++P){
-  if(!Places[P].Id||!(FString(Places[P].Id).StartsWith(TEXT("campus_"))||FString(Places[P].Id)==TEXT("girls_dorm")||FString(Places[P].Id)==TEXT("boys_dorm")))continue; // the dorms have a stair beside the lift too
-  for(const auto& A:Places[P].Anchors)if(A.Name.StartsWith(TEXT("stair"))&&FVector::Dist2D(A.Position,M)<170.f&&FMath::Abs(A.Position.Z-M.Z)<100.f){PlaceIndex=P;Floor=FCString::Atoi(*A.Name.Mid(5));return true;}
- }
+ for(int32 P=0;P<Places.Num();++P)
+  for(const auto& A:Places[P].Anchors)if(const int32 F=OKStreetStairFloor(A);F>0&&FVector::Dist2D(A.Position,M)<170.f&&FMath::Abs(A.Position.Z-M.Z)<100.f){PlaceIndex=P;Floor=F;return true;}
  return false;
 }
 
 void AOKStreetSocialScene::TakeStairs(int32 Dir){
  auto& S=*State;int32 PlaceIndex=INDEX_NONE,Floor=0;if(!StairHere(PlaceIndex,Floor))return;
- const auto& P=OKStreetPlaces()[PlaceIndex];const FString Want=FString::Printf(TEXT("stair%d"),Floor+Dir);
- const auto* To=P.Anchors.FindByPredicate([&](const FOKStreetModelAnchor& A){return A.Name==Want;});if(!To)return;
+ const auto& P=OKStreetPlaces()[PlaceIndex];
+ const auto* To=OKStreetStairLanding(P,Floor+Dir,S.Male);if(!To)return;
  const FVector Delta=To->Position-S.Male;S.Male=To->Position;
  if(APlayerController* Pc=GetWorld()?GetWorld()->GetFirstPlayerController():nullptr)if(Pc->PlayerCameraManager)Pc->PlayerCameraManager->StartCameraFade(1.f,0.f,0.7f,FLinearColor::Black,false,false);
  // Whoever walks with him climbs too.
@@ -169,7 +169,25 @@ void AOKStreetSocialScene::MoveFloor(const FVector& To){
 }
 // The navigation through such a shop: true while it has a way. He goes on from where this leaves him.
 bool AOKStreetSocialScene::NavByShopStairs(const FVector& Goal){
- auto& S=*State;const FOKStreetPlace* Mine=OKStreetShopWithFloors(S.Male);const FOKStreetPlace* Hers=OKStreetShopWithFloors(Goal);
+ auto& S=*State;
+ auto WalkTo=[&](const FVector& To){
+  if(S.NavPath.Num()>=2&&FVector::Dist2D(S.NavPath.Last(),To)<5.f)return true; // on the way there
+  TArray<FVector> Path=PlaceRoute(S.Male,To);if(Path.Num()<2)return false;
+  S.NavPath=MoveTemp(Path);S.NavStep=1;S.NavReplans=0;S.NavProgressAt=SceneTime();return true;};
+ // A shop whose floors only its stairs join (landings "stairN", no lift): he walks to the landing on his floor and climbs,
+ // as she does (QueueHeroineWalk): down first when he is upstairs in it, then up from its 1F landing to hers.
+ {const FOKStreetPlace* MyShop=OKStreetStairShop(S.Male);const int32 MyF=MyShop?OKStreetPlaceFloor(*MyShop,S.Male):0;
+  const FOKStreetPlace* HerShop=OKStreetStairShop(Goal);const int32 HerF=HerShop?OKStreetPlaceFloor(*HerShop,Goal):0;
+  const bool SameFloor=MyShop&&MyShop==HerShop&&MyF==HerF;
+  if(MyShop&&MyF>1&&!SameFloor){const int32 ToF=MyShop==HerShop&&HerF>0?HerF:1;
+   const auto* From=OKStreetStairLanding(*MyShop,MyF,S.Male);const auto* To=From?OKStreetStairLanding(*MyShop,ToF,From->Position):nullptr;
+   if(From&&To){if(FVector::Dist2D(S.Male,From->Position)<120.f){MoveFloor(To->Position);S.Message=OKMsg(TEXT("ui.campus.walk_stairs_to"),{{TEXT("floor"),ToF}});S.ManualReplan=true;return true;}
+    return WalkTo(From->Position);}}
+  if(HerShop&&HerF>1&&!SameFloor&&!OKStreetUpstairs(S.Male)){
+   const auto* Up=OKStreetStairLanding(*HerShop,HerF,Goal);const auto* Foot=Up?OKStreetStairLanding(*HerShop,1,Up->Position):nullptr;
+   if(Up&&Foot){if(FVector::Dist2D(S.Male,Foot->Position)<120.f&&FMath::Abs(S.Male.Z-Foot->Position.Z)<100.f){MoveFloor(Up->Position);S.Message=OKMsg(TEXT("ui.campus.walk_stairs_to"),{{TEXT("floor"),HerF}});S.ManualReplan=true;return true;}
+    return WalkTo(Foot->Position);}}}
+ const FOKStreetPlace* Mine=OKStreetShopWithFloors(S.Male);const FOKStreetPlace* Hers=OKStreetShopWithFloors(Goal);
  // Beside her on her floor's ground: her spot is at the height of her seat, and he came out on top of her.
  auto Beside=[&Goal](const FOKStreetPlace& P){FVector Floor;const float Z=OKStreetShopFloorSpot(P,OKStreetPlaceFloor(P,Goal),Floor)?Floor.Z:Goal.Z;
   for(int32 A=0;A<8;++A){const float Angle=A*45.f*PI/180.f;const FVector Near=FVector(Goal.X,Goal.Y,Z)+FVector(FMath::Cos(Angle),FMath::Sin(Angle),0)*120.f;if(OKStreetInsidePlace(P,Near)&&!OKStreetBlockedPoint(Near,30))return Near;}
@@ -201,7 +219,7 @@ bool AOKStreetSocialScene::NavByShopStairs(const FVector& Goal){
 
 void AOKStreetSocialScene::TickCampusProximity(){
  auto& S=*State;if(S.Male==S.CampusCheckedAt)return;S.CampusCheckedAt=S.Male; // where he stands decides it all
- int32 P=INDEX_NONE,F=0;int32 Stair=StairHere(P,F)?P*10+F:-1;
+ int32 P=INDEX_NONE,F=0;int32 Stair=StairHere(P,F)?P*100+F:-1; // P*10 ran the department's 10F into the next place's 0
  // In a shop with floors: its stair buttons change with the floor.
  if(Stair==-1)if(const FOKStreetPlace* Shop=OKStreetShopWithFloors(S.Male))Stair=-2-int32(Shop-OKStreetPlaces().GetData())*16-OKStreetPlaceFloor(*Shop,S.Male);
  const FString Office=OfficeHere();
@@ -241,7 +259,7 @@ void AOKStreetSocialScene::BuildCampusRows(const TSharedRef<SVerticalBox>& Panel
  auto Row=SNew(SWrapBox).UseAllottedSize(true);
  int32 P=INDEX_NONE,F=0;
  if(StairHere(P,F)){
-  const auto& Place=OKStreetPlaces()[P];auto Has=[&](int32 K){const FString N=FString::Printf(TEXT("stair%d"),K);return Place.Anchors.ContainsByPredicate([&](const FOKStreetModelAnchor& A){return A.Name==N;});};
+  const auto& Place=OKStreetPlaces()[P];auto Has=[&](int32 K){return OKStreetStairLanding(Place,K,S.Male)!=nullptr;};
   if(Has(F+1))Row->AddSlot().Padding(2)[OKFinButton(Weak,OKMsg(TEXT("ui.campus.stairs_up_to"), {{TEXT("floor"), F+1}}),[Weak](){Weak->TakeStairs(1);})];
   if(Has(F-1))Row->AddSlot().Padding(2)[OKFinButton(Weak,OKMsg(TEXT("ui.campus.stairs_down_to"), {{TEXT("floor"), F-1}}),[Weak](){Weak->TakeStairs(-1);})];
  }

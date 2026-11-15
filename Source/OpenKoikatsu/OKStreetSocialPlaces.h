@@ -171,6 +171,19 @@ inline TArray<const FOKStreetModelAnchor*> OKStreetPlaceLifts(const FOKStreetPla
  Out.Sort([](const FOKStreetModelAnchor& A, const FOKStreetModelAnchor& B) { return A.Position.Z < B.Position.Z; });
  return Out;
 }
+// Stair landings: anchors "stairN" (N the floor, "stair2b" a second one on 2F) where the stairs meet that floor. Not the
+// rooftop's "stair_bottom...". 0 when the anchor is none.
+inline int32 OKStreetStairFloor(const FOKStreetModelAnchor& A) {
+ if (A.Name.Len() < 6 || !A.Name.StartsWith(TEXT("stair")) || !FChar::IsDigit(A.Name[5])) return 0;
+ return FCString::Atoi(*A.Name.Mid(5));
+}
+// The landing of that floor closest to a point (2D: the one above or below the landing he stands on), or null.
+inline const FOKStreetModelAnchor* OKStreetStairLanding(const FOKStreetPlace& Place, int32 Floor, const FVector& Near) {
+ const FOKStreetModelAnchor* Best = nullptr; double BestSq = TNumericLimits<double>::Max();
+ if (Floor < 1) return nullptr; // 0 is "not a landing": every other anchor (a "down to 0F" button on the campus's 1F)
+ for (const auto& A : Place.Anchors) if (OKStreetStairFloor(A) == Floor) { const double D = FVector::DistSquared2D(A.Position, Near); if (D < BestSq) { BestSq = D; Best = &A; } }
+ return Best;
+}
 // A stop's label in the game's language (the models keep the data's own Chinese; filled when the language changes).
 inline TMap<FString, FString>& OKStreetLiftLabelTexts() { static TMap<FString, FString> Texts; return Texts; }
 inline FString OKStreetLiftLabel(const FOKStreetModelAnchor& Lift) {
@@ -194,6 +207,17 @@ inline bool OKStreetInsidePlace(const FOKStreetPlace& Place, const FVector& Poin
  return false;
 }
 
+// A place with rooms upstairs reached only by its stairs (landings, no lift: the shops along the streets): the one At is
+// in, if any. Places with a lift ride it; their landings are his buttons only (StairHere).
+inline const TArray<FOKStreetPlace>& OKStreetPlaces();
+inline const FOKStreetPlace* OKStreetStairShop(const FVector& At) {
+ for (const auto& P : OKStreetPlaces()) {
+  if (!OKStreetInsidePlace(P, At) || !OKStreetPlaceLifts(P).IsEmpty()) continue;
+  if (P.Anchors.ContainsByPredicate([](const FOKStreetModelAnchor& A) { return OKStreetStairFloor(A) > 1; })) return &P;
+ }
+ return nullptr;
+}
+
 // A roof reached by its own stairs from the street (the campus rooftop: no lift goes above 5F, only the stairs at each
 // building's wall, anchors "stair_bottom..." on the ground). The place At is on, if it is one, and the room (roof) it is on.
 inline const TArray<FOKStreetPlace>& OKStreetPlaces();
@@ -201,6 +225,8 @@ inline const FOKStreetPlace* OKStreetStairRoof(const FVector& At, const FBox** R
  for (const auto& P : OKStreetPlaces()) {
   if (P.Anchors.ContainsByPredicate([](const FOKStreetModelAnchor& A) { return A.Name.StartsWith(TEXT("lift")); })) continue;
   if (!P.Anchors.ContainsByPredicate([](const FOKStreetModelAnchor& A) { return A.Name.StartsWith(TEXT("stair_bottom")); })) continue;
+  // A shop with its own landings is floors, not a roof, even with a stair_bottom at its door.
+  if (P.Anchors.ContainsByPredicate([](const FOKStreetModelAnchor& A) { return OKStreetStairFloor(A) > 0; })) continue;
   for (const FBox& Room : P.Rooms) if (At.X >= Room.Min.X && At.X <= Room.Max.X && At.Y >= Room.Min.Y && At.Y <= Room.Max.Y && At.Z >= Room.Min.Z - 60.f && At.Z < Room.Max.Z - 60.f) {
    if (Roof) *Roof = &Room;
    return &P;

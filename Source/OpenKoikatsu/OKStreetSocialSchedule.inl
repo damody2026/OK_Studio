@@ -72,7 +72,9 @@ FVector AOKStreetSocialScene::SpotFor(int32 I,const FString& PlaceId,const FStri
    // asked every 2 s it searched the grid and logged 30 times a minute for two heroines in the cafe, round 13).
    static TMap<FString,TPair<FVector,double>> Retry;
    if(const auto* Held=Retry.Find(Key);Held&&FPlatformTime::Seconds()<Held->Value)return Held->Key;
-   const FVector Inside=PlaceInsideSpot(*P);const FVector* First=nullptr;
+   // Upstairs: from that floor's stair landing, where she comes out (from the 1F door the grid never reaches a floor above).
+   FVector Inside=PlaceInsideSpot(*P);const FVector* First=nullptr;
+   if(const int32 Floor=OKStreetPlaceFloor(*P,RowSpot);Floor>1)if(const auto* Landing=OKStreetStairLanding(*P,Floor,RowSpot))Inside=Landing->Position;
    for(const FVector& Try:Tries)if(Clear(Try)){if(!First)First=&Try;
     const TArray<FVector> Way=GridRoute(Inside,Try,0.f);if(Way.Num()<2||FVector::Dist2D(Way.Last(),Try)>60.f)continue;
     UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d at %s, %s is in furniture, %s instead"),I,*PlaceId,*RowSpot.ToCompactString(),*Try.ToCompactString());
@@ -97,7 +99,7 @@ void AOKStreetSocialScene::MakeRoomAround(int32 Partner){
   float Yaw=0;const FVector Spot=SpotFor(I,B->Place,B->Kind==TEXT("class")&&!B->Activity.IsEmpty()?B->Activity:B->Kind,Yaw);
   if(FVector::Dist2D(Spot,S.Male)<250.f)continue;
   auto Path=PlaceRoute(A.Position,Spot);if(Path.IsEmpty())continue;
-  S.Commutes.Add(I,MoveTemp(Path));S.CommuteFinal.Remove(I);
+  S.Commutes.Add(I,MoveTemp(Path));S.CommuteFinal.Remove(I);S.StairHops.Remove(I);
   UE_LOG(LogTemp,Display,TEXT("Street plan: actor %d makes room at %s (%.0f from him, walks %.0f)"),I,*Here,FVector::Dist2D(A.Position,S.Male),FVector::Dist2D(A.Position,Spot));
  }
 }
@@ -404,7 +406,30 @@ void AOKStreetSocialScene::TickDestroyQueue(){
 }
 void AOKStreetSocialScene::QueueHeroineWalk(int32 I,const FVector& From,const FVector& To,bool Leave,bool HasFinal,const FVector& Final,const FVector& Fallback,float Yaw,const FString& Place){
  auto& S=*State;FOKStreetPendingMove Move;Move.Leave=Leave;Move.HasFinal=HasFinal;Move.Final=Final;Move.Fallback=Fallback;Move.Yaw=Yaw;Move.Place=Place;
- S.PendingMoves.Remove(I);
+ S.PendingMoves.Remove(I);S.StairHops.Remove(I);
+ // A shop whose floors only its stairs join (landings "stairN", no lift): she walks to the landing on her floor, comes
+ // out on the other floor's and walks on from there. She used to walk to its door and be put on her seat upstairs, and
+ // down from it there was no way at all (2026-11-16, the shops given stairs). Down first when she is upstairs in one;
+ // then up from the 1F landing of the one she is going to.
+ {const FVector Goal=HasFinal?Final:To;
+  const FOKStreetPlace* FromShop=OKStreetStairShop(From);const int32 FromF=FromShop?OKStreetPlaceFloor(*FromShop,From):0;
+  const FOKStreetPlace* ToShop=OKStreetStairShop(Goal);const int32 ToF=ToShop?OKStreetPlaceFloor(*ToShop,Goal):0;
+  const bool Same=FromShop&&FromShop==ToShop&&FromF==ToF;
+  const FOKStreetModelAnchor* At=nullptr;const FOKStreetModelAnchor* Out=nullptr;int32 OutF=0;
+  if(FromShop&&FromF>1&&!Same){OutF=FromShop==ToShop&&ToF>0?ToF:1;At=OKStreetStairLanding(*FromShop,FromF,From);Out=At?OKStreetStairLanding(*FromShop,OutF,At->Position):nullptr;}
+  else if(ToShop&&ToF>1&&!Same){OutF=ToF;Out=OKStreetStairLanding(*ToShop,ToF,Goal);At=Out?OKStreetStairLanding(*ToShop,FromShop==ToShop&&FromF>0?FromF:1,Out->Position):nullptr;}
+  if(At&&Out){
+   // Out on her goal's floor: on to the goal itself (the schedule's walk goes to the shop's door, her seat upstairs its Final).
+   const FVector ThenTo=ToShop&&OKStreetPlaceFloor(*ToShop,Out->Position)==ToF&&OKStreetInsidePlace(*ToShop,Out->Position)?Goal:To;
+   UE_LOG(LogTemp,Display,TEXT("Street stairs: actor %d takes the stairs at %s to %dF (%s)"),I,*At->Name,OutF,*Place);
+   if(FVector::Dist2D(From,At->Position)<60.f&&FMath::Abs(From.Z-At->Position.Z)<100.f){ // at the landing already: up (or down) now
+    if(S.Agents.IsValidIndex(I-1))S.Agents[I-1].Position=Out->Position;
+    QueueHeroineWalk(I,Out->Position,ThenTo,Leave,HasFinal,Final,Fallback,Yaw,Place);return;}
+   QueueHeroineWalk(I,From,At->Position,false,false,At->Position,Fallback,Yaw,Place);
+   // Still on her way to it (not put at her spot because no way was found): the rest when she gets there (TickCommutes).
+   if(S.Commutes.Contains(I)||S.PendingMoves.Contains(I)||S.NpcLifts.Contains(I)){
+    FOKStreetStairHop Hop;Hop.At=At->Position;Hop.Landing=Out->Position;Hop.To=ThenTo;Hop.Then=Move;S.StairHops.Add(I,MoveTemp(Hop));}
+   return;}}
  if(FMath::Abs(From.Z-To.Z)>=150.f){TArray<FVector> Path=PlaceRouteWaypoints(From,To);
   // Upstairs with no route down (雷电将军 on the department store's 8F, 1.3 m from him, off to the park): she was put in
   // the park at once, gone before his eyes (R6-101). Seen by him, she rides the lift down to the door, then walks on.
@@ -431,6 +456,7 @@ void AOKStreetSocialScene::FinishHeroineWalk(int32 I,const FOKStreetPendingMove&
   else if(Move.HasFinal)S.CommuteFinal.Add(I,Move.Final);else S.CommuteFinal.Remove(I);
   return;
  }
+ S.StairHops.Remove(I); // no way to the stairs: put at her spot, as any walk without a way
  if(Move.Leave){A.Position=Move.Fallback;if(S.ScheduleHeld.Contains(I)){A.Held=false;S.ScheduleHeld.Remove(I);S.Commutes.Remove(I);}
   else A.Held=false; // off her street walk inside a place (Tick): at the door, the street walk again
   return;}
@@ -468,5 +494,11 @@ void AOKStreetSocialScene::TickCommutes(float Dt){
   const FVector Delta=Path[1]-A.Position;const FVector Step=Delta.GetSafeNormal2D()*FMath::Min(float(Delta.Size2D()),OKStreetWalkSpeed*Dt);
   A.Position+=Step;A.Position.Z=Path[1].Z;S.Rotations[I]=OKStreetFacingMovement(Step,S.Rotations[I]);
  }
- for(const int32 I:Done){S.Commutes.Remove(I);if(S.ReleaseAtDoor.Remove(I)&&S.Agents.IsValidIndex(I-1)){S.Agents[I-1].Held=false;S.ScheduleHeld.Remove(I);}if(const FVector* F=S.CommuteFinal.Find(I)){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_CommuteLift);if(S.Agents.IsValidIndex(I-1)&&!StartNpcLift(I,*F))S.Agents[I-1].Position=*F;S.CommuteFinal.Remove(I);}} // seen: up by lift (Life.inl)
+ for(const int32 I:Done){S.Commutes.Remove(I);
+  // At a shop's stair landing (QueueHeroineWalk): out on the other floor's, and on with the rest of her walk.
+  if(const FOKStreetStairHop* Hop=S.StairHops.Find(I)){const FOKStreetStairHop H=*Hop;S.StairHops.Remove(I);
+   if(S.Agents.IsValidIndex(I-1)&&FVector::Dist2D(S.Agents[I-1].Position,H.At)<150.f&&FMath::Abs(S.Agents[I-1].Position.Z-H.At.Z)<100.f){
+    S.Agents[I-1].Position=H.Landing;UE_LOG(LogTemp,Display,TEXT("Street stairs: actor %d up/down the stairs, z %.0f -> %.0f"),I,H.At.Z,H.Landing.Z);
+    QueueHeroineWalk(I,H.Landing,H.To,H.Then.Leave,H.Then.HasFinal,H.Then.Final,H.Then.Fallback,H.Then.Yaw,H.Then.Place);continue;}}
+  if(S.ReleaseAtDoor.Remove(I)&&S.Agents.IsValidIndex(I-1)){S.Agents[I-1].Held=false;S.ScheduleHeld.Remove(I);}if(const FVector* F=S.CommuteFinal.Find(I)){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_CommuteLift);if(S.Agents.IsValidIndex(I-1)&&!StartNpcLift(I,*F))S.Agents[I-1].Position=*F;S.CommuteFinal.Remove(I);}} // seen: up by lift (Life.inl)
 }

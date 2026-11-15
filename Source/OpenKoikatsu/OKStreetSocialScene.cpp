@@ -236,6 +236,9 @@ struct FOKStreetGridSearch {
 struct FOKStreetPendingMove {
  TSharedPtr<FOKStreetGridSearch> Search;FVector Final=FVector::ZeroVector,Fallback=FVector::ZeroVector;bool HasFinal=false,Leave=false;float Yaw=0;FString Place;
 };
+// A heroine climbing a shop's stairs (QueueHeroineWalk): walking to the landing At; there she comes out on Landing and
+// walks on to To with the rest of the walk.
+struct FOKStreetStairHop {FVector At=FVector::ZeroVector,Landing=FVector::ZeroVector,To=FVector::ZeroVector;FOKStreetPendingMove Then;};
 
 // What her card says of her body (read once, OKStreetHerCard): bust size (shapeBody 4, 0..1) and KK_SkinEffects' settings.
 struct FOKStreetHerCard {bool Read=false,HymenRegen=false,HymenStretched=false,Fragile=false;float Bust=0.f;};
@@ -359,6 +362,7 @@ struct FOKStreetSceneState {
  // Plan §6: today's plans per heroine, the block each is in, walks in progress, meals eaten this block, who the
  // schedule is holding in place, and where he spends his time.
  TMap<int32,FOKStreetPendingMove> PendingMoves; // heroines whose walk is still being routed (TickRouteJobs)
+ TMap<int32,FOKStreetStairHop> StairHops; // heroines on their way to a shop's stairs
  TMap<int32,float> StreetBlockedFor;TMap<int32,double> StreetDetourAt; // a free heroine held up on her street walk, and when she may be routed round again
  uint32 AutoFriendshipNext=0; // whose turn it is to be asked (TickAutoFriendship)
  double AutoFriendshipAt=0; // wall time of the next girl's turn: every 0.1 s, not every frame (0.15 ms a frame, 2026-11-13)
