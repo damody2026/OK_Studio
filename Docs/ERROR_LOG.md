@@ -4584,3 +4584,4 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - 下次：
   - 啟動器（`*.cmd`、`run_*.lua`）實際開的程序名稱與指令列，要先看一次再寫關閉邏輯。編輯器、`-game` 模式、打包的 `OpenKoikatsu.exe` 都可能出現。
   - release 前一律確認自己的 Unreal 已經不在。
+  - 同一天第 2 批又出事：停掉在 `claim --wait` 的背景腳本時，只有 claim 被殺，腳本把 claim 結束當成拿到 slot，沒持有 slot 就開了讀卡器（PID 44464）。現在 claim 失敗就退出，claim 之後再用 `unreal_slot.lua status` 確認自己真的持有 slot，才啟動 Unreal；要停批次就把整棵程序樹（`taskkill /T`）一起關掉。
