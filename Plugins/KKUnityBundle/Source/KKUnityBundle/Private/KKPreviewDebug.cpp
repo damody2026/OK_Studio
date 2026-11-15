@@ -7,6 +7,7 @@
 #include "HAL/IConsoleManager.h"
 #include "UObject/UObjectIterator.h"
 #include "Misc/OutputDevice.h"
+#include "Misc/FileHelper.h"
 
 namespace
 {
@@ -158,6 +159,36 @@ static FAutoConsoleCommandWithWorldArgsAndOutputDevice GOKNormalCheckCommand(TEX
 					Odd.IsValid ? *Odd.Min.ToCompactString() : TEXT("-"), Odd.IsValid ? *Odd.Max.ToCompactString() : TEXT("-"), Part.PrivateGpuDisplay ? 1 : 0);
 			}
 		}
+	}));
+
+// The part as drawn now (her CPU-side vertices through the component), in Unity's metres and axes, to set beside a
+// native capture's baked mesh or ok-extract --posed-objs.
+static FAutoConsoleCommandWithWorldArgsAndOutputDevice GOKDumpPartObjCommand(TEXT("ok.Debug.DumpPartObj"),
+	TEXT("ok.Debug.DumpPartObj <part> <file.obj>: the first character's part of that name, vertices now, as an OBJ in Unity metres and axes."),
+	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World, FOutputDevice& Ar)
+	{
+		if (Args.Num() < 2) { Ar.Logf(TEXT("ok.Debug.DumpPartObj <part> <file.obj>")); return; }
+		const FString File = Args.Last();
+		const FString Wanted = FString::Join(TArrayView<const FString>(Args.GetData(), Args.Num() - 1), TEXT(" "));
+		for (TObjectIterator<AKKPreviewActor> It; It; ++It)
+		{
+			if (It->HasAnyFlags(RF_ClassDefaultObject) || (World && It->GetWorld() != World) || !It->Session.IsOpen()) continue;
+			for (const FKKLoadedPart& Part : It->Parts)
+			{
+				if (!Part.Comp || PartName(Part.Comp) != Wanted) continue;
+				FString Text = FString::Printf(TEXT("# %s %s\n"), *It->GetName(), *Part.Comp->GetName());
+				const FTransform Transform = Part.Comp->GetComponentTransform();
+				for (const FVector& Vertex : Part.BaseVertices)
+				{
+					const FVector W = Transform.TransformPosition(Vertex);
+					Text += FString::Printf(TEXT("v %.6f %.6f %.6f\n"), -W.X / 100.0, W.Z / 100.0, W.Y / 100.0);
+				}
+				const bool Ok = FFileHelper::SaveStringToFile(Text, *File);
+				Ar.Logf(TEXT("OK dump part %s actor=%s vertices=%d file=%s ok=%d"), *Wanted, *It->GetName(), Part.BaseVertices.Num(), *File, Ok ? 1 : 0);
+				return;
+			}
+		}
+		Ar.Logf(TEXT("OK dump part %s: none"), *Wanted);
 	}));
 
 void OKTagPreviewPart(UPrimitiveComponent* Component, const FString& Name)
