@@ -497,12 +497,15 @@ void AOKStreetSocialScene::ActivityAftermath(const FString& ActivityId,int32 Gir
  TMap<FString,float> Feed;for(const auto& E:Answer->GetObjectField(TEXT("feed"))->Values)Feed.Add(FString(*E.Key),float(E.Value->AsNumber()));
  FeedHer(Girl,Feed);
  S.FreeTalkNotice=Answer->GetStringField(TEXT("notice"));RefreshUI();
+ const bool TimeCut=S.ActCutShort||S.ActTimeCut;
  S.ActCutShort=false;S.ActTimeCut=false;
  // What it used up (the fish food), now that it is over (activities.rs at_end).
  {FString Ignore;ActivityCheck(Girl,ActivityId,Ignore,true,true);}
  // Done with her today (activities.rs once_per_day).
  {const int64 Day=OKStreetMindNow(S)/1440;if(S.ActivitiesDoneDay!=Day){S.ActivitiesDone.Reset();S.ActivitiesDoneDay=Day;}S.ActivitiesDone.FindOrAdd(Girl).AddUnique(ActivityId);}
- UE_LOG(LogTemp,Display,TEXT("Street activity aftermath: actor=%d %s minutes=%d price=%d payer=%s again=%d"),Girl,*ActivityId,Want,Price,*Answer->GetStringField(TEXT("payer")),Again);
+ // The minutes that went by (as her notice says them), and the activity's own length: "minutes=50" here beside "about 30
+ // minutes" on screen read as a schedule bug; the meal had been cut short by her next block, and 30 was right (round 14).
+ UE_LOG(LogTemp,Display,TEXT("Street activity aftermath: actor=%d %s minutes=%lld (its length %d%s) price=%d payer=%s again=%d"),Girl,*ActivityId,OKStreetMindNow(S)-StartMinute,Want,TimeCut?TEXT(", cut short"):TEXT(""),Price,*Answer->GetStringField(TEXT("payer")),Again);
  // A date with her there later today is kept by this (social.rs appointment_done_early): dinner promised for 19:00 and
  // eaten at 16:30 stayed pending, and skipping to the morning counted him a no-show.
  {const FString HerId=OKStreetStableId(S.Manifest.Characters[Girl]);auto Ask=OKRulesRequest(TEXT("appointment_done_early"));
