@@ -4570,3 +4570,17 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - 下次：
   - 批次驗收不要只驗一張卡，先跑完整批再下結論。
   - 新的判定規則先離線對整批卡列出會影響的部件名稱，看有沒有誤傷，再進遊戲。
+
+## 2026-11-15 批次腳本關錯程序：release slot 後讀卡器仍在跑（F 組）
+
+- 錯誤：
+  - HairDeck CrowdAPNG 第 1 批的批次腳本，跑完時用 `tasklist` 比對啟動前後的 `OpenKoikatsu.exe` 來關讀卡器，然後 release slot。
+  - `CardReaderDevelopment.cmd` 啟動的讀卡器其實是 `UnrealEditor.exe <uproject> ... -game -windowed`，不是 `OpenKoikatsu.exe`，所以什麼都沒關到。
+  - 結果 slot 已經放掉，機器上還開著自己的 Unreal（PID 30024），下一位拿到 slot 時等於兩個人在用。是協調 session 發現的。
+- 做法：
+  - 讀卡器 ready 後，用 `Get-CimInstance Win32_Process` 找 `UnrealEditor.exe`，條件是指令列含 `F:/OpenKoikatsu/OpenKoikatsu.uproject` 與 `OpenKoikatsuGameMode`（讀卡器的 GameMode），且啟動前沒有這個 PID。這個 PID 就是自己的。
+  - 跑完先 `taskkill` 那個 PID，確認它已結束，才 `unreal_slot.lua release`。
+  - 不用「啟動前後所有 `UnrealEditor.exe` 的差集」：別人的 slot 在這段時間開的 Unreal 也會被算進去而誤關。
+- 下次：
+  - 啟動器（`*.cmd`、`run_*.lua`）實際開的程序名稱與指令列，要先看一次再寫關閉邏輯。編輯器、`-game` 模式、打包的 `OpenKoikatsu.exe` 都可能出現。
+  - release 前一律確認自己的 Unreal 已經不在。
