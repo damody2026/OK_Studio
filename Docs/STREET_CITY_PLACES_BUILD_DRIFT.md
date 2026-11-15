@@ -1,6 +1,6 @@
 # build_street_city_places.lua 重跑會漂移（2026-11-15 c-street-city 記錄）
 
-`Tools/build_street_city_places.lua` 現在重跑，輸出和已提交的表對不上，所以 `city_anchors.json` 和 `places-v1/places.json` 目前只能手改、不能重生。照正常流程重跑一次，整座城的錨點會無聲變動。這是欠帳，之後要回頭對帳，這次不修。
+`Tools/build_street_city_places.lua` 現在重跑，輸出和已提交的表對不上，所以 `city_anchors.json` 和 `places-v1/places.json` 目前只能手改、不能重生。照正常流程重跑一次，整座城的錨點會無聲變動。這是欠帳，之後要回頭對帳。11-15 已查明主因並修好（見「原因」），剩下錨點編號不固定的問題。
 
 ## 試跑結果（11-15，跑完已全部還原）
 
@@ -28,14 +28,36 @@
 
 city_anchors 有 892 列：public 467、park 99、s 93、minshuku 64、civic 42。
 
-## 推測的原因（未證實）
+## 原因（11-15 查明，取代先前的推測）
 
-- **最可能的一項**：建置工具只讀 `output/street-social-city-production/world-edge-v1/` 裡**檔名最新**的 `lover-spots-install-*.json`（第 273–283 行），現在最新的是 `20261107-161611`。但現有的 places.json（11-12 15:49）裡有 11-07 以後才裝的店，例如 izakaya、sushi、fastfood、yakiniku 的 R2 道具。所以當時用的應該是更新的 install 檔，而那份檔現在不在本機 `output/`，它不進版控，可能被清掉或改名了。消失的 55 個地點和大部分錨點都對得上這一點。
-- **其他輸入**：`places-v1/actors.json`（11-09）、`motel-v1/motel-install.json`（11-07）、`round6-*`、`anchor-fit`、`seats-fit` 等在 places.json 產生之後是否又變過，沒有逐一比對。位置變動（public 長椅、campus、civic）可能來自這些量測檔。
-- **11-12 以後手改的部分**：重跑時一定會被覆蓋，例如 9c49ed12b 的 off_ 標記（建置工具已接上共用規則）、導出器的 SPOTS 與 PASSAGES。導出器那些改的是 city_places.json，不受建置工具影響。
+- **真正的原因**：建置工具用 `io.popen('ls ...')` 列目錄（共 3 處：`world-edge-v1/` 的鏡子與 lover-spots install 檔、`campus-v1/buildings` 與 `world-completion-v1/buildings` 的建築報告）。從 PowerShell 啟動 `Tools\lua\lua.exe` 時，`io.popen` 經過 cmd，cmd 沒有 `ls`，回傳空白，也不報錯。所以這些目錄全被當成空的，對應的輸入整批略過，表就縮水了。從 Git bash 跑時有 `ls`，所以看起來「有時正常」。
+- **先前的推測是錯的**：install 檔沒有遺失，不需要從地圖重新匯出。
+- **已修**：改用 lfs 列目錄（`ls(dir)`，排序後回傳；目錄不存在時回傳空表）。修正後從 PowerShell 重跑，`places-v1/places.json` 與已提交的版本**逐位元組相同**。
 
-## 之後對帳要做的事
+## 修正後還剩的差異：city_anchors 的編號不固定
 
-1. 找回或重建 11-07 以後各輪的 lover-spots install 結果。來源地圖裡的 LoverSpot actor 還在，可以從地圖重新匯出一份 install 檔。
-2. 輸入補齊後重跑，和已提交的表逐列對帳，只接受能解釋的差異。
-3. 把建置工具依賴的 `output/` 輸入列成清單，缺檔時直接失敗，不要默默輸出縮水的表。
+修正後重跑，`city_anchors.json` 列數一樣（25374），但 id 會換：
+
+| 比較 | 新增／消失 | 位置變動（>1 cm） | kinds 變動 |
+|---|---:|---:|---:|
+| 已提交 vs 修正後重跑 | 64 對 id 互換 | 2847 | 0 |
+| 修正後重跑 A vs 重跑 B（同輸入） | 46 / 46 | 1955 | 0 |
+
+同一份輸入跑兩次結果就不同，代表錨點名稱的流水號取決於迭代順序（推測是 `pairs()` 的順序），不是輸入的問題。錨點本身的集合（位置與 kinds）沒有變，變的只是哪個 id 配到哪個點。但 `activities.toml`、導出器的 SPOTS 等用 id 指名錨點（例如 `seat3`），所以重生一次，這些指名就可能指到別的座位。
+
+## 對帳要比的欄位
+
+以 `(place, pos 四捨五入到 1 cm, kinds)` 當鍵配對，不用 id 配對，再比：
+
+| 欄位 | 用途 |
+|---|---|
+| `id` | 同一個點換了 id 的列，要列出被規則或 SPOTS 指名的那些 |
+| `pos` | 配對鍵；配不到的列就是真正新增或消失的點 |
+| `kinds` | 配對鍵的一部分；同點 kinds 不同另外列出 |
+| `seat_pos` | 座位類錨點的坐下位置，同點不同就是量測輸入變了 |
+
+## 之後要做的事（這次不重生表）
+
+1. 讓編號固定：流水號依座標排序後再發，不靠迭代順序。改完連跑兩次要完全相同。
+2. 用上面的鍵對帳，已提交的 id 盡量保留（點沒變就沿用舊 id），只對真正新增的點發新 id。
+3. 建置工具依賴的 `output/` 目錄缺檔或列不出內容時直接失敗，不要默默輸出縮水的表。

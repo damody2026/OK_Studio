@@ -10,6 +10,15 @@ local json = require('ok.json')
 local root = 'C:/portable/OpenKoikatsu/output/street-social-city-production/'
 local function load(p) local f = assert(io.open(root .. p, 'rb'), p); local s = f:read('a'); f:close(); return json.decode(s) end
 local function exists(p) local f = io.open(p, 'rb'); if f then f:close() end; return f ~= nil end
+-- a folder's names, sorted like `ls -1`: io.popen('ls ...') found nothing when the tool was run from PowerShell (no ls
+-- there), so the lover-spot install and the mirrors were silently left out and 55 game places went missing (11-15,
+-- Docs/STREET_CITY_PLACES_BUILD_DRIFT.md)
+local lfs = require('lfs')
+local function ls(dir)
+  local names = {}
+  if lfs.attributes(dir, 'mode') == 'directory' then for n in lfs.dir(dir) do if n ~= '.' and n ~= '..' then names[#names + 1] = n end end end
+  table.sort(names); return names
+end
 local function r1(v) return math.floor(v * 10 + .5) / 10 end
 local function P(x, y, z) return { r1(x), r1(y), r1(z) } end
 
@@ -17,7 +26,7 @@ local actors = load('places-v1/actors.json')
 local install, plan = load('motel-v1/motel-install.json'), load('motel-v1/motel-plan.json')
 local planned = {}; for _, q in ipairs(plan.rooms) do planned[q.id] = q end
 local latest
-for name in io.popen('ls -1 "' .. root .. 'world-edge-v1" 2>nul'):lines() do
+for _, name in ipairs(ls(root .. 'world-edge-v1')) do
   if name:match('^bed%-mirrors%-install%-.*%.json$') and (not latest or name > latest) then latest = name end
 end
 local mirrors = {}
@@ -180,7 +189,7 @@ local ANCHOR = { -- asset -> anchor kind
 local PRIV = { dorm = 2, apartment = 2, suite = 2, deluxe = 2, executive = 2, inn = 2, nap = 1, spa = 1 }
 local reports = {}
 for _, dir in ipairs({ 'campus-v1/buildings', 'world-completion-v1/buildings' }) do
-  for b in io.popen('ls -1 "' .. root .. dir .. '"'):lines() do
+  for _, b in ipairs(ls(root .. dir)) do
     if exists(root .. dir .. '/' .. b .. '/assembly-report.json') then reports[#reports + 1] = { b, dir .. '/' .. b .. '/assembly-report.json' } end
   end
 end
@@ -277,7 +286,7 @@ local function abase(a) return P(a.c[1], a.c[2], a.c[3] - a.e[3]) end
 local newitems = {}
 do
   local last
-  for name in io.popen('ls -1 "' .. root .. 'world-edge-v1" 2>nul'):lines() do
+  for _, name in ipairs(ls(root .. 'world-edge-v1')) do
     if name:match('^lover%-spots%-install%-.*%.json$') and (not last or name > last) then last = name end
   end
   if last then local inst_ = load('world-edge-v1/' .. last); for _, it in ipairs(inst_.items or {}) do newitems[it.place .. ':' .. it.anchor] = it end; LOTS = inst_.lots end
