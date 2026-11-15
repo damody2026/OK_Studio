@@ -1320,7 +1320,8 @@ pub fn session_cache_location() -> Option<PathBuf> {
 /// 38-39: KKUTS and KKUSS character/item/alpha/hair/eye shaders, outlines, extra texture slots, ME copies, ShadowsOnly, and backed zipmod priority.
 /// 40: coordinate-specific ABMX takes the open's outfit (abmx::for_outfit), not outfit 0; a garment prefab keeps
 /// renderers whose meshes share a name and material (push_meshes keys by the mesh asset).
-const SESSION_CACHE_REVISION: u32 = 40;
+/// 42: an accessory id taken by number from a mod hangs on its list Parent; BetterPenetration body DynamicBones (cf_J_Vagina/cf_J_Belly) are held outside H scenes.
+const SESSION_CACHE_REVISION: u32 = 42;
 /// What the library contributes to an open, by content (not file times): the same library in another clone, after a
 /// git checkout or a copy gives the same identity, so its cached opens stay valid there. Memoized per process.
 fn library_identity(lib: &Path) -> String {

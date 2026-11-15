@@ -4648,3 +4648,12 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - 誤判紀錄：C000 服裝 6（高衩緊身衣）與 C055 服裝 7（兔女郎）背面露臀，我一開始當成穿模。三張截圖（含暫停）看到衣服背面本來就是丁字剪裁，臀溝裡有布條，是設計，不是錯誤。
 - 規則：看到「身體穿出衣服」時，先比對播放中與暫停時的截圖，並確認衣服本身的剪裁，再判斷是物理問題、幾何問題還是設計。
 - 診斷用環境變數：`OK_CLOTHBONES=<網格名>`，列出衣服每根骨骼的頂點數，以及身體有沒有這根骨骼；`OK_BODYBONES=y0,y1,z`，列出身體某個區段的骨骼權重。
+
+## 2026-11-15 讀卡器：C011 軍官帽蓋臉、C016 服裝 6 跳躍時胯下穿出褲襪（F 組）
+
+- 錯誤一：C011（原卡 KK_103523）slot 18 是 ao_head 514 號，卡上沒有 Sideloader resolve，原作也沒有 514。Sideloader 的 `CompatibilityResolve`（UniversalAutoResolver.cs:1231）按號碼找到唯一列出 122/514 的 mod：WW_Accs 軍官帽 B（清單掛點 `a_n_headtop`）。卡片的 `a_n_headside` 是作者當年的 hardmod 用的，帽子 prefab 的 `nc` 節點又往下 9.4 cm，帽子整頂蓋在臉上。我先以為是 addMove 單位或掛點骨骼位置算錯，查了 bind pose 和 N_move 鏈才確認幾何沒錯、是選到的物件不對。
+- 修正一：照使用者決定，按號碼補上的飾品（`accessory_extract::by_number` 標記，`extract.rs` 與 `accessory_extract.rs` 兩處 mod_catalog 退路）改掛清單的 Parent，不用卡片的 parentKey。遊戲本身會照卡片掛在 `a_n_headside`，這是刻意和遊戲不同。
+- 錯誤二：C016 服裝 6 是褲襪 `o_panst_00_a` 貼在 BP Profundis 身體上，身體自帶 13 個 `cf_J_Vagina*`／`cf_J_Belly` DynamicBone，我們一直在模擬，跳躍時胯下甩出褲襪。KKS_BetterPenetration 的 `AfterCharacterReload` 在非 H 場景 `SetBPBoneWeights(chara, 0)`（CoreGame.cs:269），遊戲裡這些骨頭不動。
+- 修正二：`DBoneSet::without_bp_weight_zero` 在 `retarget_body` 前移除這些 component。H 場景（BP 設 weight 1）若要它們，另外處理。
+- 驗證：離線 posed-objs 帽子 y 1.51–1.63（臉頂 1.53）；讀卡器蹦跳 C011 七套、C016 七套前後兩相位截圖，帽子在頭頂、胯下不再穿出。
+- 規則：飾品「位置錯」先確認選到的是不是卡片要的物件（resolve 資訊、原作有沒有該號碼），再查骨骼與位移。外掛會改的物理元件，先查 `D:\KoikatuSunshine\kks_decomp\plugins` 的外掛原始碼在非 H 場景怎麼設定。

@@ -513,7 +513,7 @@ pub(crate) fn extract_session_from_info(
                         sk.merge_missing_tree_transforms(source_skeleton);
                         if let Some(rest)=body_rest.as_mut() {rest.merge_missing_tree_transforms(source_skeleton);}
                         let dynamics=parsed.dynamic_bones_for_skeleton(source_skeleton)
-                            .with_game_fixes(game_root).retarget_body(source_skeleton,sk);
+                            .with_game_fixes(game_root).without_bp_weight_zero(source_skeleton).retarget_body(source_skeleton,sk);
                         eprintln!("ok-extract: replacement body DynamicBone components={}",dynamics.len());
                         clothes_dynamics.extend(dynamics);
                     }
@@ -1738,7 +1738,7 @@ pub(crate) fn extract_session_from_info(
             let entry = vanilla
                 .get(a.type_id, a.id)
                 .cloned()
-                .or_else(|| mod_catalog.get(a.type_id, a.id).cloned());
+                .or_else(|| mod_catalog.get(a.type_id, a.id).cloned().map(crate::accessory_extract::by_number));
             let Some(entry) = entry else {
                 eprintln!(
                     "ok-extract: accessory[{slot_i}] cat={} id={} not in catalog",

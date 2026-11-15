@@ -2369,6 +2369,19 @@ mod collider_frame_tests {
 impl DBoneSet {
     pub(crate) fn extend(&mut self, other: Self) { self.bones.extend(other.bones); self.colliders.extend(other.colliders); self.rigs.extend(other.rigs); }
 
+    /// BetterPenetration `AfterCharacterReload`: `SetBPBoneWeights(chara, inHScene ? 1 : 0)` sets weight 0 on every
+    /// DynamicBone whose GameObject name contains `cf_J_Vagina` or `cf_J_Belly` outside an H scene (CoreGame.cs:269),
+    /// so they hold the animated pose. Simulating them let the crotch swing out through tight legwear on a jump
+    /// (C016 outfit 6, BP Profundis body under pantyhose).
+    pub(crate) fn without_bp_weight_zero(mut self, source: &Skeleton) -> Self {
+        let held = |db: &DBone| db.component_transform.and_then(|id| source.tfs.get(&id))
+            .is_some_and(|t| t.name.contains("cf_J_Vagina") || t.name.contains("cf_J_Belly"));
+        let before = self.bones.len();
+        self.bones.retain(|db| !held(db));
+        if self.bones.len() != before { eprintln!("ok-extract: BetterPenetration weight 0 on {} body DynamicBones (not an H scene)", before - self.bones.len()); }
+        self
+    }
+
     /// Body replacement components survive UncensorSelector.RebindSkinning.
     /// Resolve their local PPtrs by Transform name, preserving their authored
     /// colliders and both ordinary DynamicBone versions. Clothes-copy rules
