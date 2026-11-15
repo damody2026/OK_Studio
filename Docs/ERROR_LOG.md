@@ -4570,3 +4570,9 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - 下次：
   - 批次驗收不要只驗一張卡，先跑完整批再下結論。
   - 新的判定規則先離線對整批卡列出會影響的部件名稱，看有沒有誤傷，再進遊戲。
+
+## 2026-11-15 整合後其他樹缺 RuntimeAnimations 檔案，街區啟動失敗
+
+C 組的擁抱動作提交 `dcef41d79` 需要 `Content/IndependentResources/RuntimeAnimations/lover_hug_male.okanim`，但 `RuntimeAnimations/` 是原作衍生資料、不進版控（`Tools/original_data_manifest.json`）。整合把程式碼同步到 E／F 之後，那兩個樹沒有這個檔案，遊戲啟動時找不到就失敗。E 組用 `Tools/lua/lua.exe Tools/original_data.lua restore --game D:/KoikatuSunshine --only runtime-clips` 從原作重新產生才能啟動。
+
+**往後**：任何提交新增或改名 `RuntimeAnimations/`、`base_v1/` 等不進版控的原作衍生資料時，整合後要通知每個樹各自跑對應的 `original_data.lua restore --only <類別>`；整合檢查表加這一項。另外注意遊戲本體在 `D:/KoikatuSunshine`，`C:\portable\KoikatuSunshine` 已不存在（用錯路徑時 ok-extract 只會回 `bundles=0/90`，不會報錯）。
