@@ -219,6 +219,10 @@ local SPOTS = { ['cafeteria table'] = { 70230, 42470, 1200 }, ['cafe seat'] = { 
   -- The gyn clinic's seat20 is in the 30 cm slot between its cubicle (x 32305-32405) and the waiting room's wall (x 32435,
   -- City_CV_F01): the slot's open north end, the nearest cell a 40 cm box reaches from the street (room survey 11-16), 1.2 m off
   ['clinic_gyn seat20'] = { 32415, 57315, 1200 },
+  -- its waiting room's bench (LoverSpot_Gyn_Bench_Seat, x 32475-32525): seat, seat2, seat3 stood on the seat board; at
+  -- its front edge now, the cells a 40 cm box reaches once crib3 moved (Tools/street_city_moved_props.lua, 11-16)
+  ['clinic_gyn seat'] = { 32555, 57347, 1200 }, ['clinic_gyn seat2'] = { 32555, 57397, 1200 },
+  ['clinic_gyn seat3'] = { 32555, 57447, 1200 },
   -- The civic 5F lounge (x 30455-30800, y 61285-61560): seat6 and seat7 stood in the desk in front of their chairs
   -- (City_CV_F05, StaticMeshActor_499, x 30535-30595) and seat/seat2 in the sofa; the game's grid found no first cell
   -- (c-conquest, city1116a). Each stands at the nearest cell a 40 cm box reaches from the 5F corridor (room survey 11-16,
@@ -242,6 +246,10 @@ end
 -- Anchors of furniture taken off the source map (the karaoke's KTV_2, 11-15): dropped here and from city_anchors.json
 -- below (Tools/street_city_removed_anchors.lua, shared with Tools/build_street_city_places.lua)
 local REMOVED = dofile('Tools/street_city_removed_anchors.lua')
+-- anchors of props moved on the source map after the install (Tools/street_city_moved_props.lua) move with them
+do local PROPS = dofile('Tools/street_city_moved_props.lua')
+  for _, p in ipairs(places) do for _, an in ipairs(p.anchors or {}) do local q = PROPS.shift(p.id, an.name, an.pos)
+    if q then print(('anchor: %s %s moved with its prop'):format(p.id, an.name)); an.pos = q end end end end
 for _, p in ipairs(places) do
   if p.anchors then local kept = {}
     for _, an in ipairs(p.anchors) do
@@ -437,6 +445,11 @@ do
     if not (r.pos and r.pos[1] == s.pos[1] and r.pos[2] == s.pos[2] and r.pos[3] == s.pos[3]) then r.moved = true end
     r.pos = { s.pos[1], s.pos[2], s.pos[3] }; r.building = like and like.building or r.building; r.floor = fl > 1 and fl or nil
   end end
+  -- anchors of props moved on the source map (Tools/street_city_moved_props.lua): with them
+  local PROPS = dofile('Tools/street_city_moved_props.lua')
+  for _, r in ipairs(T.anchors) do local q = PROPS.shift(r.place, r.name, r.pos)
+    if q then print(('anchor: %s %s moved with its prop, %.0f,%.0f -> %.0f,%.0f'):format(r.place, r.name, r.pos[1], r.pos[2], q[1], q[2]))
+      r.pos = q; r.moved = true end end
   local moved = 0; for _, r in ipairs(T.anchors) do if r.moved then moved = moved + 1; r.moved = nil end end
   print(('city_anchors.json: %d rows back from off (the place has stairs now), %d stair rows added'):format(back, stairs))
   local kept, dropped = {}, 0

@@ -308,7 +308,11 @@ do
   for _, name in ipairs(ls(root .. 'world-edge-v1')) do
     if name:match('^lover%-spots%-install%-.*%.json$') and (not last or name > last) then last = name end
   end
-  if last then local inst_ = load('world-edge-v1/' .. last); for _, it in ipairs(inst_.items or {}) do newitems[it.place .. ':' .. it.anchor] = it end; LOTS = inst_.lots end
+  -- props moved on the source map after the install (Tools/street_city_moved_props.lua): their items where they are now
+  local PROPS = dofile('Tools/street_city_moved_props.lua')
+  if last then local inst_ = load('world-edge-v1/' .. last); for _, it in ipairs(inst_.items or {}) do
+    local q = PROPS.shift_item(it.actor, it.pos); if q then it.pos = q end
+    newitems[it.place .. ':' .. it.anchor] = it end; LOTS = inst_.lots end
 end
 -- building AABB over all its floor actors
 local function bbox(b)
