@@ -4706,3 +4706,9 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 錯誤：啟動器今天改成依 stage.json 選最新 stage、沒有 stage.json 就跳過（fbbea3d69、e936b8ba0），Tools/package_street_social.lua 卻只複製 stage 的 Windows/。重打的 E:\OKPackage\StreetSocial-20261114-hvoice 一啟動就印「Skipped stage Pack1115.stage: no stage.json」，改去從原始碼重建 host 而失敗。打包後我沒有用包裡的啟動器試一次。
 - 修正：打包時寫入 stage 的 stage.json（staged_at、commit、dirty，不帶本機的 host／base 路徑），沒有可用的 stage.json 就停止打包；現有包與 zip 補上這個檔案。
 - 驗證：包裡執行 `run_street_social_development.lua -ValidateOnly` 選到 Pack1115.stage；之後移除驗證時建立的 junction 與 heroines.json，讓資料夾與 zip 一致。
+
+## 2026-11-16 一對一實測：把 2137（結束、事後溫存）當成放開（E 組）
+
+- 錯誤：愛撫實測時用 `/hscene {"kind":2137}` 想放開手，2137 其實是「結束，事後溫存」（Afterglow），放開是 2107（Release）。兩次都把她換成仰躺愛撫並鎖住姿勢，之後選「站立愛撫」沒有作用，鏡頭也沒對到她。上一輪「愛撫數值實測」最後的截圖是仰躺愛撫，就是這個原因。
+- 修正：查 `Source/OpenKoikatsu/OKHScene.h` 的動作編號再送；放開用 2107。
+- 影響：只影響測試步驟，程式沒有錯。站立姿勢的「摸一下放開」改在仰躺愛撫看。
