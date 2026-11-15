@@ -8,7 +8,8 @@
 //!
 //! The card mesh is HairDeck's `hairdeck.infer.glb.cards_vf` (5-point stencil tangents, Bishop transport of the root
 //! direction, four vertices per ring, the same faces). The skull ellipsoid is fitted to the upper part of the
-//! character's own head mesh, the frame mirrored on x into Unity's left-handed one (winding swapped). Card colours go
+//! character's own head mesh (its width, the forehead and the top: the face mesh has no back of the skull), the frame
+//! mirrored on x into Unity's left-handed one (winding swapped). Card colours go
 //! to an atlas (one cell per card, the colours along v), the chains become the private soft hair rig of
 //! `portable_hair_soft` (root = the head; card roots stay on it).
 use super::*;
@@ -161,9 +162,12 @@ fn fit(s: &OkSession, head_world: &Mat4, opts: &HairDeckOpts) -> Result<(Fit, se
     let (z0, z1) = ext(2);
     let half_x = (x1 - x0) / 2.0;
     let half_z = (z1 - z0) / 2.0;
-    let k = 0.5 * (half_x / radii[0] + half_z / radii[2]) * opts.scale as f64;
-    // Skull top onto the head's top; centred on x, the cranium's middle on z.
-    let target_centre = [(x0 + x1) / 2.0, ymax - radii[1] * k, (z0 + z1) / 2.0];
+    // The game's face mesh has no back of the skull (the hair covers it): the scale comes from the cranium's width,
+    // the skull's front from the forehead, its top from the head's top.
+    // The game's cranium is boxier than HairDeck's (VRoid-like) skull: at the fitted size the top of the forehead
+    // shows through the bangs. 4% larger, 0.13 radius higher and 0.07 radius forward covered it (C041, 2026-11-15).
+    let k = half_x / radii[0] * 1.04 * opts.scale as f64;
+    let target_centre = [(x0 + x1) / 2.0, ymax - radii[1] * k + 0.13 * radii[1] * k, z1 - radii[2] * k + 0.07 * radii[2] * k];
     let to = add(target_centre, opts.offset.map(|x| x as f64));
     let report = serde_json::json!({"frame_w": w, "frame_o": o, "scale": k, "head_top": ymax, "cranium_half_x": half_x, "cranium_half_z": half_z, "centre": to});
     Ok((Fit { scale: k, from: centre, to }, report))
@@ -267,7 +271,7 @@ pub(super) fn build(s: &OkSession, cards_json: &[u8], chains_json: Option<&[u8]>
         "atlas": [width, height], "chains_in": chains.len(), "chains_used": soft_rig.as_ref().map_or(0, |r| r.chains.len()), "fit": fit_report});
     let mesh = HairMesh { positions, normals: out_normals, tangents, uvs, indices, texture: String::new(), normal: None, roughness: None, metallic: None,
         native_material_card: None, native_gloss_asset: None, gloss_uvs: if opts.native { gloss_uvs } else { Vec::new() },
-        soft_rig, hide_source_accessory: true, layer: None, native_self: opts.native };
+        soft_rig, hide_source_accessory: false, layer: None, native_self: opts.native };
     Ok((mesh, png, report))
 }
 
@@ -326,12 +330,56 @@ fn rig(chains: &[DeckChain], fit: &Fit, positions: &[[f32; 3]], card_of: &[usize
 
 /// Replaces the character's hair in a live session with a HairDeck result (the reader's and OK Studio's path).
 pub fn apply(s: &mut OkSession, cards_json: &[u8], chains_json: Option<&[u8]>, opts: &HairDeckOpts) -> Result<serde_json::Value, String> {
+    // The same hair already on this session (the reader and OK Studio put it on every session they load): nothing to do.
+    let stamp = format!("{:08x}{:08x}{}", crc(cards_json), chains_json.map_or(0, crc), serde_json::to_string(opts).unwrap_or_default());
+    if s.parts.iter().any(|p| p.render_visible && p.name.starts_with("Tripo_") && p.source_material.as_ref().is_some_and(|m| m.name == stamp)) {
+        return Ok(serde_json::json!({"already": true}));
+    }
     let (mesh, png, mut report) = build(s, cards_json, chains_json, opts)?;
     validate(&mesh)?;
+    // Hair accessories whatever their meshes and shaders are called (C031's hair is a main_item named Body.049): the
+    // renderers of a hair-category accessory (121) the game tints with her hair colour (ChaAccessoryComponent.rendHair
+    // gets the hair's base colour). The category alone is too wide: ribbons, pins and hoods are hair accessories too,
+    // and keep their own colours. HairAccessoryCustomizer's slots count too (C071's hair cap 53_mesh is in one), by the same
+    // colour test: necklaces and pins have such slots as well.
+    let (slots, hair_color) = card_hair_slots(s);
+    let mut hidden = Vec::new();
+    for p in s.parts.iter_mut().filter(|p| p.role == "accessory" && p.render_visible) {
+        let Some(sp) = p.source_property.as_ref() else { continue };
+        if !slots.iter().any(|k| sp == k || sp.strip_prefix(k.as_str()).is_some_and(|r| r.starts_with('.'))) { continue; }
+        let Some(c) = p.source_material.as_ref().and_then(|m| m.colors.get("_Color").copied()) else { continue };
+        // White is also every untinted material's colour (C095's white hair matched her horn): no guide then.
+        if hair_color[..3].iter().any(|v| *v < 0.99) && (0..3).all(|i| (c[i] - hair_color[i]).abs() < 0.004) {
+            p.render_visible = false;
+            hidden.push(p.name.clone());
+        }
+    }
+    report["hidden_hair_tinted"] = serde_json::json!(hidden);
     install(s, &mesh, &png, None)?;
+    if let Some(p) = s.parts.iter_mut().find(|p| p.name == part_name(&mesh) && p.render_visible) {
+        // Without a native hair shader on the character the hair is drawn with the item shader: its colour atlas is
+        // sRGB like any colour texture (read raw it came out pale violet), and the item outline traces every card.
+        if p.shader_kind == 8 { p.runtime_textures.insert("_MainTex".into(), [1, 0, 0, 1, 1]); p.source_outline_enabled = false; }
+        if let Some(m) = p.source_material.as_mut() { m.name = stamp; }
+    }
     report["part"] = serde_json::json!(part_name(&mesh));
     Ok(report)
 }
+/// `outfit<o>.accessory<k>` of every hair-category (121, 髪) accessory of the session's card and every slot
+/// HairAccessoryCustomizer keeps data for, and her hair's base colour. Nothing without the card file.
+fn card_hair_slots(s: &OkSession) -> (Vec<String>, [f32; 4]) {
+    let Some(path) = s.card_path.as_deref() else { return (Vec::new(), [0.0; 4]) };
+    let Ok(first) = crate::card::parse_card_outfit(path, 0) else { return (Vec::new(), [0.0; 4]) };
+    let mut out = Vec::new();
+    for o in 0..first.coordinate_count.max(1) as i32 {
+        let info = if o == 0 { first.clone() } else { match crate::card::parse_card_outfit(path, o) { Ok(i) => i, Err(_) => continue } };
+        for (k, a) in info.accessory.iter().enumerate() {
+            if a.type_id == 121 || info.hair_acc.contains_key(&(o, k as i32)) { out.push(format!("outfit{o}.accessory{k}")); }
+        }
+    }
+    (out, first.hair_color)
+}
+
 /// `apply` from files: `cards_seed<s>.json`, and `chains_seed<s>.json` beside it when it exists.
 pub fn apply_files(s: &mut OkSession, cards: &Path, opts: &HairDeckOpts) -> Result<serde_json::Value, String> {
     let c = crate::gamefs::read(cards).map_err(|e| format!("{}: {e}", cards.display()))?;
@@ -341,4 +389,42 @@ pub fn apply_files(s: &mut OkSession, cards: &Path, opts: &HairDeckOpts) -> Resu
     let mut r = apply(s, &c, ch.as_deref(), opts)?;
     r["chains_file"] = serde_json::json!(ch.as_ref().map(|_| chains));
     Ok(r)
+}
+
+/// Checks a HairDeck result on a card without the game: opens the card (as the reader does), puts the hair on and
+/// writes `out` (.obj, head-local): the head mesh, the hair and the hair bones (lines), plus the report.
+pub fn preview_obj(lib: &Path, card: &Path, cards: &Path, opts: &HairDeckOpts, out: &Path) -> Result<serde_json::Value, String> {
+    let mut s = match crate::oklib::open_original_card(Path::new(""), card, 0) { Some(r) => r?, None => crate::session::open(lib, Some(card), 0)? };
+    s.card_path = Some(card.to_path_buf());
+    let before: Vec<serde_json::Value> = s.parts.iter().filter(|p| p.role == "accessory" || p.role.starts_with("hair"))
+        .map(|p| serde_json::json!([p.role, p.name, p.source_renderer_names, p.source_material.as_ref().map(|m| m.shader.clone()), p.render_visible, p.source_property])).collect();
+    let mut report = apply_files(&mut s, cards, opts)?;
+    report["hair_parts_before"] = serde_json::json!(before);
+    let sk = s.body_skel.as_ref().ok_or("missing body skeleton")?;
+    let inv = crate::pose::mat_inv_pub(&sk.worlds[head(sk)?]);
+    let mut obj = String::from("# head-local (Unity, metres)\n");
+    let mut base = 1usize;
+    let mut emit = |name: &str, pos: &[[f32; 3]], idx: &[u32], obj: &mut String| {
+        obj.push_str(&format!("o {name}\n"));
+        for p in pos { obj.push_str(&format!("v {} {} {}\n", p[0], p[1], p[2])); }
+        for t in idx.chunks(3) { obj.push_str(&format!("f {} {} {}\n", base + t[0] as usize, base + t[1] as usize, base + t[2] as usize)); }
+        base += pos.len();
+    };
+    if let Some(h) = s.parts.iter().find(|p| p.role == "head") {
+        let pos: Vec<[f32; 3]> = h.positions.iter().map(|p| crate::pose::mat_vec(&inv, *p)).collect();
+        emit("head", &pos, &h.indices, &mut obj);
+    }
+    let name = report["part"].as_str().unwrap_or("").to_string();
+    let hair = s.parts.iter().find(|p| p.name == name).ok_or("hair part missing")?;
+    emit("hair", &hair.rest_positions, &hair.indices, &mut obj);
+    report["hair_material"] = serde_json::json!({"shader_kind": hair.shader_kind, "shader": hair.source_material.as_ref().map(|m| m.shader.clone()),
+        "png": hair.png.as_ref().map(|p| p.len()), "shader_textures": hair.shader_textures.iter().map(|(k, v)| (k.clone(), v.len())).collect::<Vec<_>>(),
+        "runtime_textures": hair.runtime_textures, "blend": hair.blend, "unlit": hair.unlit, "item_draw": hair.item_draw.is_some(),
+        "overtex": hair.overtex_png.as_ref().map(|p| p.len()), "renderer_names": hair.source_renderer_names, "skel_kind": hair.skel_kind,
+        "visible_after": s.parts.iter().filter(|p| p.render_visible && (p.role == "accessory" || p.role.starts_with("hair"))).map(|p| serde_json::json!([p.role, p.name, p.source_material.as_ref().map(|m| m.shader.clone())])).collect::<Vec<_>>(),
+        "visible_hair": s.parts.iter().filter(|p| p.render_visible && (p.role.starts_with("hair") || p.name.to_ascii_lowercase().contains("hair"))).map(|p| p.name.clone()).collect::<Vec<_>>()});
+    std::fs::write(out, obj).map_err(|e| e.to_string())?;
+    if let Some(png) = &hair.png { std::fs::write(out.with_extension("png"), png).map_err(|e| e.to_string())?; }
+    report["obj"] = serde_json::json!(out);
+    Ok(report)
 }

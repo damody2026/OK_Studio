@@ -1392,6 +1392,8 @@ pub struct OkSession {
     pub(crate) mmdd_face_bone_dirty: bool,
     /// Active shoe metadata `(entry_name, main_data, mod_guid)` for the outfit's `shoesType` slot.
     pub(crate) active_shoe_meta: Option<(String, String, String)>,
+    /// The card file the session was opened from (ffi session_open): HairDeck reads its hair accessory slots.
+    pub(crate) card_path: Option<std::path::PathBuf>,
     /// On a wardrobe donor (`wardrobe.rs`): the mask this outfit gives her body.
     pub(crate) wardrobe_body_mask: Option<Vec<u8>>,
     /// Her clothes chains were just replaced on a live model: the game starts them where she stands, with no warm-up.
@@ -4567,6 +4569,7 @@ impl SessionBlob {
             mmdd_world_lock: false,
             mmdd_face_bone_dirty: false,
             active_shoe_meta: None,
+            card_path: None,
             wardrobe_body_mask: None,
             wardrobe_quick_settle: false,
             hidden_parts: Vec::new(),

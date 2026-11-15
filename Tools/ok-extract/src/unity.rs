@@ -2183,6 +2183,27 @@ impl ParsedBundle {
     pub fn prefab_water_materials(&self,prefab:&str)->Vec<(i32,MeshMaterial)> {self.memo_prefab("prefab_water_materials",prefab,prefab,||self.prefab_node_materials_unity(prefab,|mats|mats.first().filter(|mat|mat.shader.starts_with("Lux Water/"))))}
     /// The same for single-material Standard renderers (map 50's grass and sand are one Plane mesh).
     pub fn prefab_standard_materials(&self,prefab:&str)->Vec<(i32,MeshMaterial)> {self.memo_prefab("prefab_standard_materials",prefab,prefab,||self.prefab_node_materials_unity(prefab,|mats|if mats.len()==1 {mats.first().filter(|mat|mat.shader.starts_with("Standard"))} else {None}))}
+    /// The materials of a prefab's renderers with several (one per submesh) when one is Standard: each instance of a
+    /// shared mesh draws its own (map 54's parasols are orange or blue by instance, U273). Recorded by `studio-nodes`.
+    pub fn prefab_standard_material_lists(&self,prefab:&str)->Vec<(i32,Vec<MeshMaterial>)> {
+        self.memo_prefab("prefab_standard_material_lists",prefab,prefab,||{
+            let maps=self.resolved_material_maps();
+            for (gi,graph) in self.transform_graphs().iter().enumerate() {
+                let (h,go_node)=crate::pose::prefab_hierarchy_in(graph,prefab);
+                if h.nodes.is_empty() {continue;}
+                return self.with_serialized(|sers| {
+                    let Some(ser)=sers.get(gi) else {return Vec::new();};
+                    ser.objects_of_type(23).into_iter().filter_map(|info| {
+                        let obj=ser.scene_object(info).ok()?;
+                        let node=*go_node.get(&obj.class.properties().get("m_GameObject").and_then(uv_pptr)?)?;
+                        let mats=maps.1.get(&info.path_id)?;
+                        (mats.len()>1 && mats.iter().any(|m|m.shader.starts_with("Standard"))).then(||(node,mats.clone()))
+                    }).collect()
+                });
+            }
+            Vec::new()
+        })
+    }
     /// Baked reflection probes of a prefab and the scene's skybox reflection (recorded by `studio-nodes`).
     pub fn prefab_reflection_probes(&self,prefab:&str)->PrefabReflectionProbes {self.memo_prefab("prefab_reflection_probes",prefab,prefab,||self.prefab_reflection_probes_unity(prefab))}
     /// Converter-only read, independent of model/session memo formats.

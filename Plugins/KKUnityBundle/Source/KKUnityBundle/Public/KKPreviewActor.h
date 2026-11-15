@@ -584,6 +584,10 @@ public:
     TMap<TWeakObjectPtr<UActorComponent>,bool> CoordinatedComponentTicks;
 
 	bool LoadSession(FString& OutError);
+	/** HairDeck hair (cards_seed<s>.json, chains beside it) put on every session this actor loads; empty: the card's. */
+	FString HairDeckCards;
+	FString HairDeckOpts;
+	bool ApplyHairDeckToSession(FString* OutReport = nullptr);
     bool ApplyHeadTextureSession(const FOkSession& Source,FString& Error);
     bool ApplyHeadTextureCandidate(class FOkAppearanceContext& Context,class FOkAppearanceCandidate& Candidate,FString& Error);
     // Exact-slot accessory transaction: stages unregistered renderers, then

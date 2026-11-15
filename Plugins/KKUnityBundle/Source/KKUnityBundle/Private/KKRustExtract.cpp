@@ -282,6 +282,8 @@ bool FOkSession::ApplyHairDeck(const FString& CardsJson,const FString& OptsJson,
 	TArray<ANSICHAR> Buf;Buf.SetNumZeroed(1<<16);
 	const int32 R=ok_session_apply_hairdeck(Handle,TCHAR_TO_UTF8(*CardsJson),TCHAR_TO_UTF8(*OptsJson),Buf.GetData(),Buf.Num());
 	OutReport=UTF8_TO_TCHAR(Buf.GetData());
+	// New hair: the materials captured from the session before (PrepareRuntimeMaterials) are the old hair's.
+	if(R==0&&!OutReport.Contains(TEXT("\"already\":true")))RuntimeMaterials.Reset();
 	return R==0;
 }
 
@@ -716,6 +718,12 @@ bool FOkSession::OkModelNodeWorld(const FString& Library, const FString& ModelId
 	OutRotation = FQuat(V[3], V[4], V[5], V[6]);
 	OutScale = FVector(V[7], V[8], V[9]);
 	return true;
+}
+
+bool FOkSession::OkModelSunTimesShifted(const FString& Library, const FString& ModelId, const FString& Prefab)
+{
+	const FTCHARToUTF8 LibUtf(*Library), IdUtf(*ModelId), PrefabUtf(*Prefab);
+	return ok_okmodel_sun_times_shifted(LibUtf.Get(), IdUtf.Get(), PrefabUtf.Get()) == 1;
 }
 
 FString FOkSession::OkModelMapLights(const FString& Library, const FString& ModelId, const FString& Prefab)

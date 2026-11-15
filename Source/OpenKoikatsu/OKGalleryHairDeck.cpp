@@ -9,10 +9,14 @@
 bool UOKCharacterController::ApplyHairDeckHair(const FString& CardsJson,const FString& OptsJson,FString& OutReport)
 {
 	if(!PreviewActor){OutReport=TEXT("沒有載入的角色");return false;}
-	if(!PreviewActor->Session.ApplyHairDeck(CardsJson,OptsJson,OutReport))return false;
+	// Every session this character loads from now on (clothing variants, reopened outfits) gets it too.
+	const FString OldCards=PreviewActor->HairDeckCards,OldOpts=PreviewActor->HairDeckOpts;
+	PreviewActor->HairDeckCards=CardsJson;PreviewActor->HairDeckOpts=OptsJson;
+	if(!PreviewActor->ApplyHairDeckToSession(&OutReport)){PreviewActor->HairDeckCards=OldCards;PreviewActor->HairDeckOpts=OldOpts;return false;}
 	const float Phase=PreviewActor->AnimPhase;const int32 Mode=PreviewActor->PoseMode;
 	FString Error;
-	if(!PreviewActor->RefreshEditorGeometry()&&!PreviewActor->LoadSession(Error)){OutReport=Error;return false;}
+	// A full rebuild: the hair slot gets a new material and texture, which RefreshEditorGeometry (geometry only) keeps.
+	if(!PreviewActor->LoadSession(Error)){OutReport=Error;return false;}
 	PreviewActor->AnimPhase=Phase;PreviewActor->PoseMode=Mode;
 	PreviewActor->ApplyShapes(Selected.Face.ShapeValueFace,Selected.Body.ShapeValueBody);
 	return true;

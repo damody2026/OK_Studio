@@ -1681,6 +1681,7 @@ pub(crate) unsafe extern "C" fn session_open(
         Ok(mut sess) => {
             // Her belly bulge targets (belly_bulge.rs), on every way a body opens: original cards, OK cards, packs.
             crate::belly_bulge::add(&mut sess);
+            sess.card_path = card_for_meta.as_deref().map(std::path::PathBuf::from);
             if sess.active_shoe_meta.is_none() {
                 if let Some(cp) = card_for_meta.as_deref() {
                     crate::mmdd::populate_session_shoe_meta(&mut sess, std::path::Path::new(cp), outfit);
@@ -3133,6 +3134,15 @@ pub unsafe extern "C" fn ok_okmodel_map_lights(lib: *const c_char, id: *const c_
     let (prefab, root) = (cstr_opt(prefab).unwrap_or_default(), cstr_opt(lib).unwrap_or_default());
     let lights = crate::run_no_panic(|| crate::okmodel_view::with_library(std::path::Path::new(&root), || okmodel_view(lib, id).map(|v| v.map_lights(&prefab)))).unwrap_or_default();
     copy_text(&serde_json::to_string(&lights).unwrap(), out, cap)
+}
+/// 1 when a map prefab's SunLightInfo times are a KK-era map's (0, 1, 2 = day, evening, night) that OK numbers one higher
+/// (okmodel_view::sun_times_shifted); 0 when not; -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn ok_okmodel_sun_times_shifted(lib: *const c_char, id: *const c_char, prefab: *const c_char) -> i32 {
+    let (prefab, root) = (cstr_opt(prefab).unwrap_or_default(), cstr_opt(lib).unwrap_or_default());
+    match crate::run_no_panic(|| crate::okmodel_view::with_library(std::path::Path::new(&root), || Ok(okmodel_view(lib, id)?.sun_times_shifted(&prefab)))) {
+        Ok(true) => 1, Ok(false) => 0, Err(_) => -1,
+    }
 }
 /// PNG of a map lamp's cookie (okmodel_view::map_light_cookie). Returns the length; -1 when the lamp has none.
 #[no_mangle]

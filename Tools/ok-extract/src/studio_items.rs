@@ -686,7 +686,8 @@ pub fn record_hierarchies(game: &Path, lib: &Path, threads: usize) -> Result<(),
                 for (_, mat) in parsed.prefab_water_materials(p) {
                     if let Some(bump) = mat.slot("_BumpMap") { parsed.texture_png_named(bump); parsed.texture_sampling_named(bump); }
                 }
-                for (_, mat) in parsed.prefab_standard_materials(p) {
+                let lists = parsed.prefab_standard_material_lists(p);
+                for mat in parsed.prefab_standard_materials(p).into_iter().map(|(_, m)| m).chain(lists.into_iter().flat_map(|(_, l)| l)) {
                     for slot in crate::okmodel_view::STANDARD_NODE_SLOTS.iter().chain(["_MainTex"].iter()) {
                         if let Some(name) = mat.slot(slot) { parsed.texture_png_named(name); parsed.texture_sampling_named(name); }
                     }

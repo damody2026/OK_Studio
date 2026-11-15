@@ -5192,6 +5192,19 @@ void AKKPreviewActor::BindSourceReflectionProbes(TFunctionRef<UTexture*(int32,FL
     }
 }
 
+// Every external morph set of a renderer about to go (her thighs' jiggle 'OKTJ', the belly wrap, any other set), taken
+// off and its GPU buffers released: a set still on a component when the GC deletes it asserts "A FRenderResource was
+// deleted without being released first" (the reader crashed so after many reloads, 2026-11-15). The caller flushes.
+static void OkReleaseExternalMorphSets(USkinnedMeshComponent* Mesh,TArray<TSharedPtr<FExternalMorphSet>>& Keep)
+{
+	if(!Mesh)return;
+	const TArray<FExternalMorphSets> Sets=Mesh->GetExternalMorphSetsArray();
+	for(int32 Lod=0;Lod<Sets.Num();++Lod)for(const auto& Entry:Sets[Lod]){
+		Mesh->RemoveExternalMorphSet(Lod,Entry.Key);
+		if(Entry.Value.IsValid()){BeginReleaseResource(&Entry.Value->MorphBuffers);Keep.Add(Entry.Value);}
+	}
+}
+
 void AKKPreviewActor::Destroyed()
 {
 	// Editor actors may be destroyed before BeginPlay. Keep cleanup idempotent
@@ -5210,6 +5223,9 @@ void AKKPreviewActor::DestroyAllParts()
 	// Wrap morph sets released before their renderers go (their GPU buffers must be released first).
 	for(const FOkMouthSlot& Slot:TArray<FOkMouthSlot>(MouthSlots))SetPartWrapDeltas(Slot.SessionPartIndex,{},{});
 	if(!WrapReleases.IsEmpty()){for(auto& R:WrapReleases)if(!R->bReleased)BeginReleaseResource(&R->Set->MorphBuffers);FlushRenderingCommands();WrapReleases.Reset();}
+	{TArray<TSharedPtr<FExternalMorphSet>> Released;TInlineComponentArray<USkinnedMeshComponent*> All(this);
+	 for(USkinnedMeshComponent* C:All)OkReleaseExternalMorphSets(C,Released);
+	 if(!Released.IsEmpty()){FlushRenderingCommands();Released.Reset();}}
  CookedRoleMaterials.Reset();CookedRoleOutlines.Reset();CookedRoleBuild.Reset();
 	bProductSweep = false; bProductLightLatched = false; ProductCardRamps.Reset(); ProductRampSlots = 0;
 	bSessionLoadComplete = false; SessionLoadNextPart = 0; SessionLoadWhiteRamp = nullptr;
@@ -5544,13 +5560,29 @@ void AKKPreviewActor::ApplyTears(){
   if(C->bHiddenInGame==bShown)C->SetHiddenInGame(!bShown);break;}
 }
 
+bool AKKPreviewActor::ApplyHairDeckToSession(FString* OutReport)
+{
+ // A session put in afterwards (clothing variants, reopened outfits) is the card's own: its HairDeck hair comes back
+ // here. Applying it again to a session that has it already changes nothing.
+ if (HairDeckCards.IsEmpty()) return true;
+ FString Report;
+ const bool bOk = Session.ApplyHairDeck(HairDeckCards, HairDeckOpts, Report);
+ if (!bOk) { UE_LOG(LogTemp, Warning, TEXT("OK HairDeck hair not applied (%s): %s"), *HairDeckCards, *Report); }
+ // The shared-parent instances made for the old hair (OKPrepareCookedRole keeps them while any exist) are rebuilt.
+ else if (!Report.Contains(TEXT("\"already\":true"))) { CookedRoleMaterials.Reset(); CookedRoleOutlines.Reset(); CookedRoleBuild.Reset(); }
+ if (OutReport) *OutReport = Report;
+ return bOk;
+}
+
 bool AKKPreviewActor::LoadSession(FString& OutError)
 {
+ ApplyHairDeckToSession();
  return LoadSessionBatch(OutError, MAX_int32, false);
 }
 
 bool AKKPreviewActor::BeginSessionLoad(FString& OutError)
 {
+ ApplyHairDeckToSession();
  return LoadSessionBatch(OutError, 0, false);
 }
 
@@ -7444,8 +7476,11 @@ bool AKKPreviewActor::ApplyAccessoryGeometryCandidate(FOkAppearanceContext& Cont
  if(!Context.CommitGeometry(Candidate,Session,true,Error)){Rollback();return false;}
  const double NativeDone=FPlatformTime::Seconds();
  // UE publication: no fallible step below. Retire the replaced slot first.
+ TArray<TSharedPtr<FExternalMorphSet>> RetiredSets;
+ ON_SCOPE_EXIT{if(!RetiredSets.IsEmpty())FlushRenderingCommands();};
  auto Retire=[&](UPrimitiveComponent* Component){
   if(!Component)return;GenitalPrimitives.Remove(Component);
+  OkReleaseExternalMorphSets(Cast<USkinnedMeshComponent>(Component),RetiredSets);
   if(ToonShadowCapture)ToonShadowCapture->RemoveShowOnlyComponent(Component);
   Component->DestroyComponent();
  };
@@ -7606,8 +7641,11 @@ bool AKKPreviewActor::CommitWardrobeStage(FString& Error)
  if(!WrapReleases.IsEmpty()){for(auto& R:WrapReleases)if(!R->bReleased)BeginReleaseResource(&R->Set->MorphBuffers);FlushRenderingCommands();WrapReleases.Reset();}
  if(!FOkSession::WardrobeSwap(Session,*W.Donor,Error)){CancelWardrobeStage();return false;}
  // Nothing below can fail: what she took off goes.
+ TArray<TSharedPtr<FExternalMorphSet>> RetiredSets;
+ ON_SCOPE_EXIT{if(!RetiredSets.IsEmpty())FlushRenderingCommands();};
  auto Retire=[&](UPrimitiveComponent* Component){
   if(!Component)return;GenitalPrimitives.Remove(Component);
+  OkReleaseExternalMorphSets(Cast<USkinnedMeshComponent>(Component),RetiredSets);
   if(ToonShadowCapture)ToonShadowCapture->RemoveShowOnlyComponent(Component);
   PendingPreviewMaterials.RemoveAll([&](const FKKPreviewMaterialSlot& Entry){return Entry.Component==Component;});
   Component->DestroyComponent();

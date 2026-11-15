@@ -247,6 +247,23 @@ struct OKSTUDIO_API FOKSceneCharacter
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character", meta = (ClampMin = "0", ClampMax = "6"))
 	int32 Outfit = 0;
 
+	/** HairDeck hair (ok-hairdeck / HairDeck's cards_seed<s>.json, its chains_seed<s>.json beside it) in place of the
+	 *  card's hair: absolute, or relative to the project directory; empty keeps the card's hair. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character")
+	FString HairDeck;
+
+	/** Options of the HairDeck hair (JSON of ok-extract's HairDeckOpts: scale, offset, native, rigid). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character")
+	FString HairDeckOpts;
+
+	/** The reference picture the HairDeck hair was (or is to be) generated from. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character")
+	FString HairDeckImage;
+
+	/** The head's square in the reference picture, "x0,y0,x1,y1" in pixels (empty: found from the picture). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character")
+	FString HairDeckBox;
+
 	/** OK animation asset (object path); empty: the neutral pose. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character", meta = (AllowedClasses = "/Script/OKAnimation.OKAnimationAsset"))
 	FSoftObjectPath Animation;
@@ -455,7 +472,7 @@ struct OKSTUDIO_API FOKSceneCharacter
 
 	bool SameContent(const FOKSceneCharacter& O) const
 	{
-		return Card == O.Card && Outfit == O.Outfit && ClothesStates == O.ClothesStates && Animation == O.Animation && AnimFile == O.AnimFile && SameState(O)
+		return Card == O.Card && Outfit == O.Outfit && HairDeck == O.HairDeck && HairDeckOpts == O.HairDeckOpts && ClothesStates == O.ClothesStates && Animation == O.Animation && AnimFile == O.AnimFile && SameState(O)
 			&& StudioAnimeKind == O.StudioAnimeKind && StudioAnimeGroup == O.StudioAnimeGroup && StudioAnimeCategory == O.StudioAnimeCategory && StudioAnimeNo == O.StudioAnimeNo;
 	}
 };

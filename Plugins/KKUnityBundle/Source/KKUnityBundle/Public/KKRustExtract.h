@@ -151,6 +151,8 @@ public:
 	static FString OkModelRenderCameras(const FString& Library, const FString& ModelId, const FString& Prefab);
 	/** Realtime lamps of a model prefab (a Studio map's unbaked lights) as JSON (`ok_okmodel_map_lights`); empty when none. */
 	static FString OkModelMapLights(const FString& Library, const FString& ModelId, const FString& Prefab);
+	/** True when a map prefab's times are a KK-era map's (0, 1, 2 = day, evening, night), which OK numbers one higher. */
+	static bool OkModelSunTimesShifted(const FString& Library, const FString& ModelId, const FString& Prefab);
 	/** A map lamp's cookie texture (PNG; `ok_okmodel_map_light_cookie`), by the lamp's node; false when none. */
 	static bool OkModelMapLightCookie(const FString& Library, const FString& ModelId, const FString& Prefab, int32 Node, TArray<uint8>& OutPng);
 	/** Prefab-space transform of a named node of a library model (Unity: metres, quaternion, scale); false when not recorded. */

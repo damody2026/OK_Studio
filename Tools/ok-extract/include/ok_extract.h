@@ -649,6 +649,9 @@ int32_t ok_okmodel_render_cameras(const char* library, const char* id_hex, const
 int32_t ok_okmodel_map_lights(const char* library, const char* id_hex, const char* prefab, uint8_t* out, int32_t cap);
 /* PNG of a map lamp's cookie (the lamp's `node` in ok_okmodel_map_lights). Returns the length (larger than cap: nothing
  * written); -1 when the lamp has no recorded cookie. */
+/* 1 when a map prefab's times are a KK-era map's (day, evening, night as 0, 1, 2), which OK numbers one higher; 0 when
+ * not; -1 on error. */
+int32_t ok_okmodel_sun_times_shifted(const char* library, const char* id_hex, const char* prefab);
 int32_t ok_okmodel_map_light_cookie(const char* library, const char* id_hex, const char* prefab, int32_t node, uint8_t* out, int32_t cap);
 int32_t ok_okmodel_edits_get(const char* library, const char* id_hex, uint8_t* out, int32_t cap);
 int32_t ok_okmodel_edits_set(const char* library, const char* id_hex, const char* json, char* err, int32_t cap);

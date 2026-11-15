@@ -439,6 +439,13 @@ impl ModelView {
     pub fn prefab_renderer_settings(&self, prefab: &str) -> Vec<(i32,i32,i32,bool)> { self.parsed.prefab_renderer_settings(prefab) }
     /// A map's SunLightInfo (recorded by `studio-nodes`).
     pub fn parsed_sun_light(&self, prefab: &str) -> crate::unity::PrefabSunLight { scene_times(self.parsed.prefab_sun_light(prefab)) }
+    /// Whether `scene_times` moved this map's times by one (a KK-era map's day, evening, night as 0, 1, 2): a KStudio
+    /// scene's sunLightType is that raw number (native Studio finds the info of that type), OK's is one more (U274).
+    pub fn sun_times_shifted(&self, prefab: &str) -> bool {
+        let mut kinds: Vec<i32> = self.parsed.prefab_sun_light(prefab).infos.iter().map(|i| i.kind).collect();
+        kinds.sort_unstable();
+        kinds == [0, 1, 2]
+    }
 
     /// Bones a prefab's shown skinned meshes follow: what Studio item FK can turn.
     /// The enabled cameras of a prefab drawing into a RenderTexture (a Studio camera item), with their node's
@@ -640,8 +647,12 @@ impl ModelView {
         let standard_materials: BTreeMap<i32, crate::unity::MeshMaterial> = if meshes.iter().any(|m| m.mat.as_ref().is_some_and(|mat| mat.shader.starts_with("Standard"))) {
             self.parsed.prefab_standard_materials(prefab).into_iter().collect()
         } else { BTreeMap::new() };
+        // Renderers with several materials: the one of this submesh (U273: map 54's parasol instances, orange or blue).
+        let standard_lists: BTreeMap<i32, Vec<crate::unity::MeshMaterial>> = if standard_materials.is_empty() && !meshes.iter().any(|m| m.mat.as_ref().is_some_and(|mat| mat.shader.starts_with("Standard"))) { BTreeMap::new() }
+            else { self.parsed.prefab_standard_material_lists(prefab).into_iter().collect() };
         let node_material = |m: &mut ExtractedMesh, node: i32| {
-            if let Some(own) = standard_materials.get(&node).filter(|own| m.mat.as_ref().is_some_and(|mat| mat.shader.starts_with("Standard") && mat.name != own.name)) {
+            let listed = standard_lists.get(&node).and_then(|l| l.get(m.submesh_index)).filter(|own| own.shader.starts_with("Standard"));
+            if let Some(own) = standard_materials.get(&node).or(listed).filter(|own| m.mat.as_ref().is_some_and(|mat| mat.shader.starts_with("Standard") && mat.name != own.name)) {
                 m.texture_name = own.slot("_MainTex").unwrap_or_default().to_owned();
                 m.texture_png = own.slot("_MainTex").and_then(|name| self.parsed.texture_png_named(name));
                 for slot in STANDARD_NODE_SLOTS {

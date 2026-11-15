@@ -503,6 +503,17 @@ public:
 		AddCommand(TEXT("scene.load"), TEXT("讀取"), [this](const FString& Arg) { return !Arg.IsEmpty() && LoadFile(Arg); });
 		// What dropping that file or folder on the window does (the drag itself comes from the system).
 		AddCommand(TEXT("scene.drop"), TEXT("拖入"), [this](const FString& Arg) { return !Arg.IsEmpty() && OpenDropped({ Arg }); });
+		// HairDeck hair on the selected character: generate from a reference picture (argument: its path; empty: the
+		// one set on her), or put on an existing cards_seed<s>.json (empty: back to the card's hair).
+		AddCommand(TEXT("chara.hairdeck"), TEXT("用參考圖生成頭髮"), [this](const FString& Arg) { return StartHairDeck(Game->SelectedId, Arg.TrimStartAndEnd().TrimQuotes()); });
+		AddCommand(TEXT("chara.hairdeck.apply"), TEXT("換上 HairDeck 頭髮檔"), [this](const FString& Arg)
+		{
+			FOKSceneObject* O = Obj();
+			if (!O || O->Kind != EOKSceneObjectKind::Character) return false;
+			O->Character.HairDeck = Arg.TrimStartAndEnd().TrimQuotes();
+			Changed(); DeferRebuild();
+			return true;
+		});
 		AddCommand(TEXT("scene.merge"), TEXT("疊加"), [this](const FString& Arg) { return !Arg.IsEmpty() && OpenScene(Arg, true); });
 		AddCommand(TEXT("scene.import"), TEXT("匯入 KStudio"), [this](const FString& Arg) { if (Arg.IsEmpty()) { bSceneSaveMode = false; SceneFolder = KStudioFolder(); OpenFloat(TEXT("scenes")); return true; } return ImportKStudio(Arg); });
 		AddCommand(TEXT("scene.backup"), TEXT("立即備份"), [this](const FString&) { const FString F = Game->BackupNow(true); SetStatus(F.IsEmpty() ? FString(TEXT("備份失敗")) : TEXT("已備份 ") + F); return !F.IsEmpty(); });
@@ -2318,6 +2329,55 @@ public:
 		return true;
 	}
 	void SetStatus(const FString& Text) { StatusMinWidth = 0.f; if (Status) Status->SetText(FText::FromString(Text)); }
+	// ---------------------------------------------------------------- HairDeck hair
+	bool bHairDeckBusy = false;
+	static FString HairDeckExe()
+	{
+		for (const FString& P : { FPaths::ProjectDir() / TEXT("Tools/ok-hairdeck/target/release/ok-hairdeck.exe"), FPaths::ProjectDir() / TEXT("Tools/ok-hairdeck/ok-hairdeck.exe"),
+			FPaths::LaunchDir() / TEXT("ok-hairdeck/ok-hairdeck.exe") })
+			if (FPaths::FileExists(P)) return FPaths::ConvertRelativePathToFull(P);
+		return FString();
+	}
+	/** Generates hair from the character's reference picture with ok-hairdeck (a worker thread), then puts it on her. */
+	bool StartHairDeck(int32 Id, const FString& Picture = FString())
+	{
+		FOKSceneObject* O = Game.IsValid() ? Game->Document->Find(Id) : nullptr;
+		if (!O || O->Kind != EOKSceneObjectKind::Character || bHairDeckBusy) return false;
+		if (!Picture.IsEmpty()) O->Character.HairDeckImage = Picture;
+		const FString Image = FPaths::IsRelative(O->Character.HairDeckImage) ? FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / O->Character.HairDeckImage) : O->Character.HairDeckImage;
+		if (O->Character.HairDeckImage.IsEmpty() || !FPaths::FileExists(Image)) { SetStatus(TEXT("找不到參考圖：") + Image); return false; }
+		const FString Exe = HairDeckExe();
+		if (Exe.IsEmpty()) { SetStatus(TEXT("找不到 ok-hairdeck.exe，請先建置 Tools/ok-hairdeck（cargo-cuda.cmd build --release）")); return false; }
+		const FString Out = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("OKStudio/HairDeck") / FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S")));
+		FString Args = FString::Printf(TEXT("generate --image \"%s\" --out \"%s\""), *Image, *Out);
+		if (!O->Character.HairDeckBox.IsEmpty()) Args += FString::Printf(TEXT(" --box %s"), *O->Character.HairDeckBox.Replace(TEXT(" "), TEXT("")));
+		bHairDeckBusy = true;
+		SetStatus(TEXT("生成頭髮中…（載入模型約半分鐘）"));
+		TWeakPtr<SOKStudioPanel> Weak = StaticCastSharedRef<SOKStudioPanel>(AsShared());
+		Async(EAsyncExecution::Thread, [Weak, Id, Exe, Args, Out]
+		{
+			int32 Code = -1; FString StdOut, StdErr;
+			FPlatformProcess::ExecProcess(*Exe, *Args, &Code, &StdOut, &StdErr);
+			AsyncTask(ENamedThreads::GameThread, [Weak, Id, Out, Code, StdErr]
+			{
+				TSharedPtr<SOKStudioPanel> Self = Weak.Pin();
+				if (!Self) return;
+				Self->bHairDeckBusy = false;
+				const FString Cards = Out / TEXT("cards_seed0.json");
+				FOKSceneObject* X = Self->Game.IsValid() ? Self->Game->Document->Find(Id) : nullptr;
+				if (Code != 0 || !FPaths::FileExists(Cards)) { Self->SetStatus(TEXT("頭髮生成失敗：") + StdErr.TrimStartAndEnd().Right(300)); return; }
+				if (!X) { Self->SetStatus(TEXT("頭髮已生成，但角色已不在場景：") + Cards); return; }
+				Self->Game->BeginStep();
+				X->Character.HairDeck = Cards;
+				Self->Game->EndStep();
+				Self->Changed();
+				Self->DeferRebuild();
+				Self->SetStatus(TEXT("已換上生成的頭髮：") + Cards);
+			});
+		});
+		return true;
+	}
+
 	/** The status line before something that holds the frame: painted now, or nobody sees it until it is over (U256). */
 	void PaintStatus(const FString& Text)
 	{
@@ -2837,6 +2897,14 @@ public:
 			Row(TEXT("卡片"), OKStudioStyle::Button(TAttribute<FText>::CreateLambda([this] { FOKSceneObject* X = Obj(); return FText::FromString(X ? FPaths::GetCleanFilename(X->Character.Card) : FString()); }),
 				[this] { OpenFloat(TEXT("cards")); }, 0.f, 18.f, false, 10.f, OKStudioStyle::Input()), 0.3f);
 			Choice(TEXT("服裝組"), { TEXT("1"), TEXT("2"), TEXT("3"), TEXT("4"), TEXT("5"), TEXT("6"), TEXT("7") }, [](FOKSceneObject& X) { return X.Character.Outfit; }, [](FOKSceneObject& X, int32 V) { X.Character.Outfit = V; });
+			// HairDeck: hair generated from a reference picture (ok-hairdeck) in place of the card's.
+			Label(TEXT("髮型生成（HairDeck）"));
+			Text(TEXT("參考圖"), [](FOKSceneObject& X) { return X.Character.HairDeckImage; }, [](FOKSceneObject& X, const FString& V) { X.Character.HairDeckImage = V.TrimStartAndEnd().TrimQuotes(); });
+			Text(TEXT("頭部框"), [](FOKSceneObject& X) { return X.Character.HairDeckBox; }, [](FOKSceneObject& X, const FString& V) { X.Character.HairDeckBox = V.TrimStartAndEnd(); });
+			Action(TEXT("生成"), [this](FOKSceneObject&) { return bHairDeckBusy ? FString(TEXT("生成中…")) : FString(TEXT("用參考圖生成並換上")); }, [this](FOKSceneObject& X) { StartHairDeck(X.Id); });
+			Text(TEXT("頭髮檔"), [](FOKSceneObject& X) { return X.Character.HairDeck; }, [](FOKSceneObject& X, const FString& V) { X.Character.HairDeck = V.TrimStartAndEnd().TrimQuotes(); });
+			if (!O->Character.HairDeck.IsEmpty())
+				Action(TEXT("原本頭髮"), [](FOKSceneObject&) { return FString(TEXT("換回角色卡的頭髮")); }, [](FOKSceneObject& X) { X.Character.HairDeck.Reset(); });
 			// U179: this line was only text, and finding the 角色 menu took five clicks.
 			{
 				TSharedRef<SHorizontalBox> Pages = SNew(SHorizontalBox);

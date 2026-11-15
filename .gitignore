@@ -46,6 +46,7 @@ Tools/character_mcp/rust/target/
 Tools/character_mcp/bin/
 Tools/ok-extract/target/
 Tools/ok-video/target/
+Tools/ok-hairdeck/target/
 Tools/ok-extract/target-appearance/
 Tools/ok-extract-face346-validation/target/
 

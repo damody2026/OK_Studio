@@ -4538,3 +4538,35 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
   - 截圖前先刪舊檔（或每輪用新資料夾），量測前確認檔案時間是這一輪的。
   - 光源來源不明時，先在原作逐項關掉（燈、反射探針）量差異，再決定要移植什麼。
 - 備註：這次原作量測（`run_map_tour.lua`）與基礎庫重錄（`studio-nodes`）用的是 `D:\KoikatuSunshine`（本機唯一的原作，協調者指定反編譯源碼也在那裡）；F 組其他工作仍以 F: 為準。
+
+## 2026-11-15 HairDeck 頭髮：用臉部網格的前後深度對頭骨，又只認「Hair」名稱的頭髮（F 組）
+
+- 錯誤：
+  - 第一版把 HairDeck 的頭骨橢球對到 `cf_O_face` 上半部的寬與前後深度取平均。遊戲的臉部網格沒有後腦（頭髮蓋住），深度只有前半，縮放被拉小到 1.37，頭髮浮在臉前。Yvonne 是精靈耳，耳朵也撐大整個網格的寬。
+  - 換髮只找 role 是 `hair*` 或名叫 `Hair` 的配件。很多卡（C041 Yvonne）把髮型做成配件（`Yvonne_hair`，shader 是 `KKUTShair`／`xukmi/MainItemStudioAlphaPlus`），結果找不到頭髮。
+  - OK Studio 的 `if (...) UE_LOG(...); else UE_LOG(...);` 編譯失敗（C2181）：`UE_LOG` 展開成區塊，接 `else` 要加大括號。
+- 做法：
+  - 縮放只用頭頂 45%（耳朵以上）的頭寬；前後用額頭最前面對頭骨前緣；高度用頭頂。用 `ok-hair-pack deck` 輸出 OBJ、畫正面與側面投影確認位置，再進 Unreal。
+  - 頭髮判定加上名稱或 shader 名稱含 `hair` 的配件；沒有原生頭髮 shader 時改用 main_item，不報錯。
+- 讀卡器換上後頭髮仍是原本的粉紅與青色貼圖，換成全綠也一樣：
+  - 先以為是 `RefreshEditorGeometry` 只換幾何，改成整個 `LoadSession` 還是一樣。
+  - 再以為是卡片的 MaterialEditor 依 renderer 名稱套用，清掉名稱後角回來了，但顏色仍錯。
+  - 真正原因：讀卡器用預先烘好的共用材質（`OKPrepareCookedRole`），角色已有 `CookedRoleMaterials` 就直接沿用，session 的 `RuntimeMaterials` 也有快取。換頭髮後兩者都要清。
+  - 另外，讀卡器在背景為衣服狀態另開的 session 是卡片原本的；頭髮要記在角色上，每次載入都再套。
+- 下次：對位之前先看網格實際涵蓋範圍（逐高度印 x／z 範圍），不要假設頭部網格是完整的頭。改 session 的部件材質後，先查有沒有預先烘好或快取的材質，用「換成純色」的對照測試確定貼圖到底有沒有用到。
+
+## 2026-11-15 HairDeck CrowdAPNG 批次：main_item 顏色洗白、原髮疊層沒藏、讀卡器 GC 當機（F 組）
+
+- 錯誤：
+  - 角色原髮不是原生頭髮 shader 時，HairDeck 頭髮改用 main_item，顏色圖集卻標成「不做 sRGB 解碼」，又開著外框。24 張卡的深藍變淡紫，每片頭髮都描黑邊。先前只驗了 C041，還把它誤記成正確。
+  - 原髮只藏主層。同一個網格在同一配件再畫一次的半透明層（`main_item_studio_alpha`、`main_alpha`）留著，14 張卡露出原本的頭髮。
+  - 第一版用卡片的類別 121（髮）與 HairAccessoryCustomizer 的槽位當頭髮，結果髮夾、緞帶、兜帽、項鍊都被藏。這兩個依據都太寬。改看 `_Color` 是否等於髮色後，白髮卡又把白色的角藏掉了。
+  - 讀卡器重拍時當機：「A FRenderResource was deleted without being released first!」。`DestroyAllParts` 只拿掉嘴型的 external morph set，大腿晃動（OKTJ）等其他 set 還掛在要銷毀的元件上，GC 時 GPU buffer 還沒 release。
+- 做法：
+  - main_item 退回時，`_MainTex` 標 sRGB、關掉外框。
+  - 同槽位、同網格的疊層一起藏；名稱含 `_kami` 的配件也算頭髮。
+  - 類別 121 的配件中，只藏顏色等於卡片髮色的 renderer，髮色純白時不用這條。
+  - 拆零件與換衣退場前，把元件身上所有 external morph set 拿下、release、flush。
+- 下次：
+  - 批次驗收不要只驗一張卡，先跑完整批再下結論。
+  - 新的判定規則先離線對整批卡列出會影響的部件名稱，看有沒有誤傷，再進遊戲。
