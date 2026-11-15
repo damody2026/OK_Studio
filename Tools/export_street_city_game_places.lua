@@ -506,6 +506,11 @@ end
 -- north edge and the walk from gym_hall hit the wall there (StaticMeshActor_372 at 77128,34310, nh1115m 11-15).
 local PASSAGES = {
   { id = 's32', pts = { { 42760, 28520 }, { 43200, 28520 }, { 43800, 28520 }, { 44400, 28570 }, { 44800, 28570 }, { 44800, 28880 }, { 45160, 28880 } } },
+  -- The restaurant's door (46810,24880) opens into a 2 m vestibule whose south wall ends at (46925,24750)
+  -- (StaticMeshActor_9): the straight line from the door to the 'seat' anchor (47078,24670) cut that corner, he wedged
+  -- there for 70 game minutes (c-conquest, nh1115y). A point past the vestibule (scans z 1270/1245: open y 24775-24975),
+  -- not tied to the street, so the road graph's nearest point inside the restaurant is in it, not behind its walls.
+  { id = 'restaurant_in', pts = { { 46810, 24880 }, { 47000, 24875 } }, tie = { true, false }, min_ties = 1 },
   { id = 'sp_gym', pts = { { 77174.7, 34274.6 }, { 77000, 34275 }, { 77000, 35400 }, { 77000, 36400 }, { 77000, 37400 }, { 77000, 38400 }, { 77000, 39500 } } },
   -- 11-13 batch (map cut on the source map, Tools/street_city_shop_passage_payload.lua / street_city_fence_gaps_payload.lua;
   -- boxes and walk probes in places-v1/shop-passage-batch*-apply-1113.json, fence-gaps-dorm-apply-1113.json,
