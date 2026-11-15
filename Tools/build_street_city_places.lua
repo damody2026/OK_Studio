@@ -7,6 +7,22 @@
 -- Output: places-v1/places.json and places-v1/props.json (section 5). Coordinates are UE cm, +X north, +Y east (the game's frame). Anchor yaw follows the
 -- game's OKStreetSocialPlaces.h convention: a character standing on the anchor faces yaw + 90.
 local json = require('ok.json')
+-- pairs in key order: the order Lua's own pairs walks a table differs from run to run, and this tool's output followed
+-- it (which shop anchor came first, which overlapping area a public seat went to, the anchor numbers of
+-- city_anchors.json: 2922 rows renamed between two runs on the same input, 11-16, Docs/STREET_CITY_PLACES_BUILD_DRIFT.md)
+local rawpairs = pairs
+local function keyorder(a, b)
+  local ta, tb = type(a), type(b)
+  if ta ~= tb then return ta < tb end
+  if ta == 'number' or ta == 'string' then return a < b end
+  return tostring(a) < tostring(b)
+end
+local function pairs(t)
+  local keys = {}; for k in rawpairs(t) do keys[#keys + 1] = k end
+  table.sort(keys, keyorder)
+  local i = 0
+  return function() i = i + 1; local k = keys[i]; if k ~= nil then return k, t[k] end end
+end
 local root = 'C:/portable/OpenKoikatsu/output/street-social-city-production/'
 local function load(p) local f = assert(io.open(root .. p, 'rb'), p); local s = f:read('a'); f:close(); return json.decode(s) end
 local function exists(p) local f = io.open(p, 'rb'); if f then f:close() end; return f ~= nil end
@@ -1336,12 +1352,72 @@ do
   end
   -- upstairs in a street-level place with no lift or stair anchor: off_<name>, no kinds, tag off (the rule shared with
   -- Tools/export_street_city_game_places.lua, Tools/street_city_upstairs_off.lua; Docs/STREET_CITY_UPSTAIRS_NO_STAIRS.md)
+  -- the shops' stairs (Tools/street_city_shop_stairs.lua, shared with the exporter): stairN in the places, so the rule
+  -- below sees their way up, and a stair row each, as the exporter writes them
+  local STAIRS = dofile('Tools/street_city_shop_stairs.lua')
+  do
+    local n = 0
+    for _, g in ipairs(GAME_PLACES) do for _, s in ipairs(STAIRS[g.id] or {}) do
+      g.anchors = g.anchors or {}; local had = false
+      for _, an in ipairs(g.anchors) do if an.name == s.name then had = true end end
+      if not had then g.anchors[#g.anchors + 1] = { name = s.name, pos = { s.pos[1], s.pos[2], s.pos[3] }, yaw = 0 } end
+    end end
+    local ids = {}; for id in pairs(STAIRS) do ids[#ids + 1] = id end; table.sort(ids)
+    for _, id in ipairs(ids) do for _, s in ipairs(STAIRS[id]) do
+      local fl = tonumber(s.name:match('^stair(%d+)')); local like
+      for _, r in ipairs(rows) do if r.place == id and (r.floor or 1) == fl and r.building then like = r; break end end
+      if not like then for _, r in ipairs(rows) do if r.place == id and r.building then like = r; break end end end
+      rows[#rows + 1] = { id = id .. '.' .. s.name, place = id, name = s.name, kinds = {}, outdoor = false, privacy = 0, yaw = 0,
+        pos = { s.pos[1], s.pos[2], s.pos[3] }, building = like and like.building, floor = fl > 1 and fl or nil }; n = n + 1
+    end end
+    print('shop stair rows', n)
+  end
   do
     local UP, n = dofile('Tools/street_city_upstairs_off.lua')(GAME_PLACES), 0
     for _, r in ipairs(rows) do if UP.off(r.place, r.pos) and UP.mark(r) then
-      r.id = r.place .. '.' .. r.name; r.kinds = {}; r.tags = r.tags or {}; r.tags[#r.tags + 1] = 'off'; n = n + 1 end end
+      r.id = r.place .. '.' .. r.name; r.off_kinds = r.kinds; r.kinds = {}; r.tags = r.tags or {}; r.tags[#r.tags + 1] = 'off'; n = n + 1 end end
     table.sort(rows, function(a, b) return a.id < b.id end)
     print('anchors upstairs without stairs, off', n)
+  end
+  -- Names kept from the table already there: a row on the same point (place, position to 1 cm, kinds) takes the name it
+  -- had, so the rules and the exporter's named anchors (seat3, ...) still mean the same seat after a rebuild; a new
+  -- point gets the generated name, or the next free number of its prefix when that name is taken (11-16)
+  do
+    local PATH = 'Content/IndependentResources/StreetSocialData/city_anchors.json'
+    local ff = io.open(PATH, 'rb')
+    if ff then
+      local old = json.decode(ff:read('a')); ff:close()
+      local function base(n) return (n:gsub('^off_', '')) end
+      local function key(r)
+        local k = {}; for _, x in ipairs(r.off_kinds or r.kinds or {}) do k[#k + 1] = x end; table.sort(k)
+        return r.place .. '|' .. math.floor(r.pos[1] + .5) .. ',' .. math.floor(r.pos[2] + .5) .. ',' .. math.floor(r.pos[3] + .5) .. '|' .. table.concat(k, ',')
+      end
+      local had = {}
+      for _, r in ipairs(old.anchors or {}) do local k = key(r); had[k] = had[k] or {}; table.insert(had[k], base(r.name)) end
+      for _, l in pairs(had) do table.sort(l) end
+      local taken, kept, renamed = {}, 0, 0
+      local pending = {}
+      for _, r in ipairs(rows) do
+        local l = had[key(r)]
+        local name = l and table.remove(l, 1)
+        if name then r.keep = name; taken[r.place .. '.' .. name] = true; kept = kept + 1 else pending[#pending + 1] = r end
+      end
+      for _, r in ipairs(pending) do
+        local b = base(r.name)
+        if taken[r.place .. '.' .. b] then
+          local pre = b:gsub('%d+$', ''); local k = 2
+          while taken[r.place .. '.' .. pre .. k] do k = k + 1 end
+          b = pre .. k; renamed = renamed + 1
+        end
+        r.keep = b; taken[r.place .. '.' .. b] = true
+      end
+      for _, r in ipairs(rows) do
+        local off = r.name:sub(1, 4) == 'off_'
+        r.name = (off and 'off_' or '') .. r.keep; r.id = r.place .. '.' .. r.name; r.keep = nil
+      end
+      table.sort(rows, function(a, b) return a.id < b.id end)
+      print('anchor names kept from the table there', kept, 'new points', #pending, 'of them renumbered', renamed)
+    end
   end
   -- furniture taken off the map (KTV_2): its anchors go (Tools/street_city_removed_anchors.lua, shared with the exporter)
   do

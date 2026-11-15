@@ -1,7 +1,14 @@
-# build_street_city_places.lua 重跑會漂移（2026-11-15 c-street-city 記錄，同日已解決）
+# build_street_city_places.lua 重跑會漂移（2026-11-15 c-street-city 記錄，11-16 全部解決）
 
-**狀態：已解決（7a3d4bf30）。** 原因是列目錄的 `io.popen('ls')` 從 PowerShell 跑時回傳空白，不是 install 檔遺失；改用 lfs 後 `places-v1/places.json` 重跑與已提交版本逐位元組相同，表可以重生。剩下一項：`city_anchors.json` 的錨點編號不固定（見下文），重生前要先處理。以下「試跑結果」是修正前的紀錄。
+**狀態：已解決。** 表可以從輸入重建，連跑兩次逐位元組相同，重建的 city_anchors.json 與已提交的逐列逐欄位相同。
 
+- 11-15（7a3d4bf30）：漏讀輸入的原因是 `io.popen('ls')` 從 PowerShell 跑時回傳空白。改用 lfs，輸入目錄缺少或是空的就直接失敗（20a01f236）。
+- 11-16：編號不固定的原因是 Lua 的 `pairs` 每次跑的順序不同，生成器有 40 處遍歷跟著它走（例如第 325 行依店名遍歷 cafe、書店等 5 家店，誰的錨點排前面；同一點落在幾個重疊區域時，公共座位歸哪一區；city_anchors 的流水號）。改法：生成器開頭用依鍵排序的 `pairs` 遮蔽原本的（`Tools/street_city_new_anchors.lua` 的兩處本來就排好序）。改完同一份輸入連跑兩次，city_anchors.json、places.json、props.json 都逐位元組相同。
+- 11-16：名字沿用。寫出 city_anchors.json 前讀現有的表，同一點（地點、位置到 1 cm、kinds；off 的列用 `off_kinds`）沿用原名；新點用生成的名字，名字被占用時改用同前綴的下一個空號。生成器也照導出器的做法加上商店樓梯（`Tools/street_city_shop_stairs.lua`，89 列），標 off 時保存 `off_kinds`。
+- 驗證（11-16）：從輸入重建，25459 列中沿用原名 25459 列，另有 4 個新點（KTV_2 的錨點，接著照 `street_city_removed_anchors.lua` 拿掉）。與已提交的表逐列逐欄位比對，差異 0 列（JSON 排版不同，內容相同），所以已提交的表不用動。
+- 本機的 `places-v1/places.json`（不進版控，是導出器的輸入）重建後名字全部相同，只有順序不同：5 家店的錨點先後、46 個公共座位的區域、1 間房。下次用重建的 places.json 導出時，city_places.json 裡這幾家店的錨點順序會跟著變，名字不變。
+
+以下是 11-15 修正前的紀錄。
 ## 試跑結果（11-15，跑完已全部還原）
 
 試跑在 9c49ed12b 之後，比較對象是當時已提交或本機現有的檔案：
@@ -56,7 +63,7 @@ city_anchors 有 892 列：public 467、park 99、s 93、minshuku 64、civic 42�
 | `kinds` | 配對鍵的一部分；同點 kinds 不同另外列出 |
 | `seat_pos` | 座位類錨點的坐下位置，同點不同就是量測輸入變了 |
 
-## 之後要做的事（這次不重生表）
+## 之後要做的事（11-16 已全部完成，見頂端）
 
 1. 讓編號固定：流水號依座標排序後再發，不靠迭代順序。改完連跑兩次要完全相同。
 2. 用上面的鍵對帳，已提交的 id 盡量保留（點沒變就沿用舊 id），只對真正新增的點發新 id。
