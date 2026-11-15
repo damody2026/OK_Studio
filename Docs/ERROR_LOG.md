@@ -4576,3 +4576,10 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 C 組的擁抱動作提交 `dcef41d79` 需要 `Content/IndependentResources/RuntimeAnimations/lover_hug_male.okanim`，但 `RuntimeAnimations/` 是原作衍生資料、不進版控（`Tools/original_data_manifest.json`）。整合把程式碼同步到 E／F 之後，那兩個樹沒有這個檔案，遊戲啟動時找不到就失敗。E 組用 `Tools/lua/lua.exe Tools/original_data.lua restore --game D:/KoikatuSunshine --only runtime-clips` 從原作重新產生才能啟動。
 
 **往後**：任何提交新增或改名 `RuntimeAnimations/`、`base_v1/` 等不進版控的原作衍生資料時，整合後要通知每個樹各自跑對應的 `original_data.lua restore --only <類別>`；整合檢查表加這一項。另外注意遊戲本體在 `D:/KoikatuSunshine`，`C:\portable\KoikatuSunshine` 已不存在（用錯路徑時 ok-extract 只會回 `bundles=0/90`，不會報錯）。
+
+
+## 2026-11-15 刪自己的 stage 時別人正在跑它（c-conquest）
+
+c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格子），為了不留舊 stage 就照規矩先 `rmdir` junction 再 `rmdir /s /q`；但 c-lowspec 的遊戲（PID 12844）正跑著這個 exe——啟動器預設挑**最新**的 stage，我剛建好的就成了別人的預設。junction 目標（base）沒事，但那個 stage 已無法再啟動，執行中的遊戲經 stage 路徑讀散檔也可能失敗。
+
+**往後**：刪 stage 前先 `Get-CimInstance Win32_Process -Filter "Name='OpenKoikatsu.exe'"` 看命令列有沒有這個 stage；要撤回的建置不要建成新 tag 讓別人預設挑到，或建好後立刻告知。
