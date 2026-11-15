@@ -180,6 +180,7 @@ public:
         TouchChest=2101,TouchCrotch=2102,TouchAnal=2103,TouchButt=2104,TouchNipple=2105,Kiss=2106,Release=2107,
         TouchHead=2130,TouchHand=2131,TouchThigh=2132,TouchCalf=2133,TouchFoot=2134,TouchLips=2135,LickToggle=2136, // H_SCENE_ADDITIONS_PLAN 3
         Afterglow=2137, // H_SCENE_ADDITIONS_PLAN 12
+        StrokeToggle=2138, // caress: keep stroking the place, or touch it once (user 2026-11-15)
         SettingsToggle=2300,SettingsReset=2301, // the settings panel on the left
         HeadCameraToggle=2302,EyesCameraToggle=2303, // her head, her eyes on the camera
         PanelHideToggle=2304, // the panel on the right away and back (user 2026-11-09)
@@ -279,6 +280,12 @@ private:
     TWeakObjectPtr<AKKPreviewActor> AheGazeFor;float AheGazeSet=0.f;int32 AheMouthSet=INDEX_NONE;bool bAheManualWas=false;double AheTongueUntil=0.; // her tongue out after a climax (CountHerOrgasm, UpdateFace) // her rolled-up gaze given (TickAhegao)
     bool bAheEyeLook=false,bAheEyeFollow=false;int32 AheEyePattern=1;FVector AheEyeTarget=FVector::ZeroVector; // her look, given back after it
     double FlinchUntil=0.,FlinchNext=0.;FString FlinchBone;FVector FlinchTurn=FVector::ZeroVector;
+    // Caress speed (HFlag.speed of HAibu, 0..speedMaxAibuBody 1.5): her X_Idle / K_Loop blend on "motion" and run at
+    // "speedBody". Stroking (bStrokeOnce false) holds it at the panel's speed; a single touch lets go after OnceUntil.
+    // A place with no caress clip (head, hand, legs, lips) is stroked by swaying its bone (StrokeBone, StrokeTurn).
+    bool bStrokeOnce=false;float CaressSpeed=0.f,CaressMotionShown=-1.f,CaressBodyShown=-1.f,StrokePhase=0.f;double OnceUntil=0.,CaressShownStarted=0.;
+    FString CaressShownState,StrokeBone;FVector StrokeAxis=FVector::ZeroVector,StrokeTurn=FVector::ZeroVector;
+    void UpdateCaress(float Delta);
     bool bAibuLoaded=false;
     void LoadAibuPoses();
     void SelectAibu(int32 Index);

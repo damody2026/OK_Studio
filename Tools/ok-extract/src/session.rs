@@ -3316,6 +3316,13 @@ impl OkSession {
     }
 
     pub(crate) fn set_anim_float(&mut self,name:&str,value:f32)->bool {
+        // A native pair clip (H scene) has no controller entry to list its floats: the pair setup seeds the ones its blend
+        // trees read (h_playback::set_native_pair_parameters: height, motion), and those stay settable. The pair's clock is
+        // its own (the playback's elapsed), so nothing here rescales it.
+        if value.is_finite()&&!self.is_anim_transitioning()&&self.anim_parameters.contains_key(name)
+            &&crate::anim::animation_float_parameters(&self.game_root,&self.anim_clip).is_empty()&&!crate::anim::crossfade::declared_float(&self.game_root,&self.anim_clip,name) {
+            self.anim_parameters.insert(name.to_string(),value);return true;
+        }
         if self.is_anim_transitioning()||!value.is_finite()||!(crate::anim::animation_float_parameters(&self.game_root,&self.anim_clip).iter().any(|p|p.name==name)||crate::anim::crossfade::declared_float(&self.game_root,&self.anim_clip,name)) {return false;}
         let previous=self.anim_duration();
         let mut candidate=self.anim_parameters.clone();
