@@ -118,6 +118,10 @@ void AOKStreetSocialScene::NavigateGirl(int32 Character){
  // Talking or in an activity he cannot walk off: say so (as the map does) instead of accepting a route he never walks.
  if(S.Target!=INDEX_NONE||S.Pair.Partner!=INDEX_NONE||S.OutingGirl!=INDEX_NONE||S.Facility!=INDEX_NONE){S.Message=OKT(TEXT("ui.contacts.end_activity_before_nav"));S.ContactsNotice=S.Message;return;}
  // She is on another floor: the navigation takes the elevator (PlanNavLift, in StepNavigation).
+ // A new walk: the cells the last one learned blocked were for its way round. Kept, one failed walk on civic's 5F had the
+ // lift landing's cell learned blocked, and every walk from that floor after it said "no way" till the game was restarted
+ // (c-street-city, nav1116d, 2026-11-16).
+ S.NavLearned.Reset();
  S.NavAround.Reset();S.NavRide=FOKStreetLiftRide();S.NavGirl=Character;S.NavPointActive=false;S.NavAt=0;S.NavStep=1;S.NavReplans=0;S.NavBlockedAt=FVector(1e9);S.NavProgressAt=SceneTime();S.NavPath=ContactRoute(S.Male,S.Agents[Character-1].Position);S.ContactsNotice=OKT(TEXT("ui.contacts.auto_travel_to_her_hint"));}
 void AOKStreetSocialScene::NavigatePoint(const FVector& Spot,const FString& Name){
  if(!State)return;auto& S=*State;
@@ -125,7 +129,7 @@ void AOKStreetSocialScene::NavigatePoint(const FVector& Spot,const FString& Name
  if(S.Target!=INDEX_NONE||S.PrivateGirl!=INDEX_NONE||S.Pair.Partner!=INDEX_NONE||S.OutingGirl!=INDEX_NONE||S.Facility!=INDEX_NONE){S.Message=OKT(TEXT("ui.contacts.end_activity_before_map_nav"));return;}
  // On his floor the street grid is searched a slice a frame (TickNavSearch, 3 ms each): a long route held the frame
  // 6-8 ms. Another floor: the place graph (doors and corridors), at once.
- S.NavSearch.Reset();
+ S.NavSearch.Reset();S.NavLearned.Reset(); // a new walk: not the last one's learned cells (NavigateGirl)
  if(OKStreetCityMode()&&OKStreetCityFar(S.Male,Goal)){NavigatePointAlong(Goal,Name,CityRoute(S.Male,Goal));return;}
  if(FMath::Abs(S.Male.Z-Goal.Z)<150.f){S.NavSearch=MakeShared<FOKStreetGridSearch>();S.NavSearch->From=S.Male;S.NavSearch->To=Goal;S.NavSearchGoal=Goal;S.NavSearchName=Name;return;}
  NavigatePointAlong(Goal,Name,PlaceRouteWaypoints(S.Male,Goal));
