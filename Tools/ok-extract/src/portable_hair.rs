@@ -72,7 +72,8 @@ fn install(s:&mut OkSession,m:&HairMesh,texture:&[u8],pbr:Option<&[Vec<u8>;3]>)-
     // wear their hairstyle as an accessory).
     // (By the renderer and shader, not the accessory's name: one accessory can hold horns or ribbons beside its hair.)
     let native_hair=|p:&crate::session::SessionPart|(p.role.starts_with("hair") || (p.role=="accessory" && (p.name=="Hair" || matches!(p.shader_kind,1|10)
-        || p.source_renderer_names.iter().any(|r|r.to_ascii_lowercase().contains("hair"))
+        // 'kami' (髪): mods made in Japanese name their hair meshes so (C071's AS01_O_kami_*).
+        || p.source_renderer_names.iter().chain(std::iter::once(&p.name)).any(|r|{let r=r.to_ascii_lowercase();r.contains("hair")||r.contains("_kami")})
         || p.source_material.as_ref().is_some_and(|m|m.shader.to_ascii_lowercase().contains("hair"))))) && !is_custom(p);
     // The hair's shadow layer on the face (a renderer of the same accessory) goes with it.
     let hair_slots:Vec<String>=s.parts.iter().filter(|p|native_hair(p)).filter_map(|p|p.source_property.clone()).collect();
@@ -103,6 +104,13 @@ fn install(s:&mut OkSession,m:&HairMesh,texture:&[u8],pbr:Option<&[Vec<u8>;3]>)-
         if existing.is_some(){s.parts[index]=s.parts[donor].clone();}
         index
     } else {donor};
+    // A hair mesh drawn again under another material of the same accessory: an alpha layer (studio_alpha, main_alpha)
+    // or a MaterialEditor copy over it, or the same texture (C070, C084, C088 kept these).
+    let overlays:Vec<usize>=s.parts.iter().enumerate().filter(|(_,p)|p.role=="accessory" && !is_custom(p) && !native_hair(p) && p.source_property.is_some()
+        && s.parts.iter().any(|h|native_hair(h) && h.role=="accessory" && h.name==p.name && h.source_property==p.source_property
+            && (p.source_material.as_ref().is_some_and(|m|{let sh=m.shader.to_ascii_lowercase();sh.contains("alpha")||m.name.to_ascii_lowercase().contains("copy")})
+                || (p.png.is_some() && h.png==p.png)))).map(|(i,_)|i).collect();
+    for i in overlays {s.parts[i].render_visible=false;}
     for p in s.parts.iter_mut().filter(|p|native_hair(p)||hair_shadow(p)){p.render_visible=false;}
     if m.layer.is_none() {for p in s.parts.iter_mut().filter(|p|is_custom(p)){p.render_visible=false;}}
     let p=&mut s.parts[slot];

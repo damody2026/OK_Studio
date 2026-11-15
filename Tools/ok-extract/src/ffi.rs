@@ -1681,6 +1681,7 @@ pub(crate) unsafe extern "C" fn session_open(
         Ok(mut sess) => {
             // Her belly bulge targets (belly_bulge.rs), on every way a body opens: original cards, OK cards, packs.
             crate::belly_bulge::add(&mut sess);
+            sess.card_path = card_for_meta.as_deref().map(std::path::PathBuf::from);
             if sess.active_shoe_meta.is_none() {
                 if let Some(cp) = card_for_meta.as_deref() {
                     crate::mmdd::populate_session_shoe_meta(&mut sess, std::path::Path::new(cp), outfit);

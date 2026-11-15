@@ -5419,6 +5419,7 @@ mod tests {
             mmdd_world_lock: false,
             mmdd_face_bone_dirty: false,
             active_shoe_meta: None,
+            card_path: None,
             wardrobe_body_mask: None,
             wardrobe_quick_settle: false,
             hidden_parts: Vec::new(),

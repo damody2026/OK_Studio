@@ -36,7 +36,12 @@ Tools\ok-hairdeck\target\release\ok-hairdeck.exe generate --image <參考圖> --
 - 對位：HairDeck 的頭骨橢球（半徑 0.405W、0.5W、0.5W）對到角色臉部網格：縮放用頭頂 45% 的頭寬（排除耳朵），前後用額頭，高度用頭頂。遊戲的 `cf_O_face` 沒有後腦，不能用網格深度。遊戲的頭頂比 HairDeck 的頭骨方，照原尺寸額頭上緣會從瀏海間露出來，所以再放大 4%、上移 0.13 個半徑、前移 0.07 個半徑（C041 實測）。
 - 顏色：每片頭髮 16 段顏色畫進一張圖集（每片 4×32 像素）。
 - 骨鏈：最多 32 條、每條 3–12 個點，成為私有柔性髮骨（`portable_hair_soft`），每片頭髮跟最近的骨鏈，髮根跟頭。
-- 取代角色原本的頭髮：頭髮部件，以及 renderer 名稱或 shader 名稱含 hair 的配件（同一個配件裡的角、緞帶保留；同配件中名稱含 shadow／kage 的頭髮陰影一起隱藏）。角色原髮是原生頭髮 shader 時沿用它的 ramp 與高光，否則用 main_item。新部件不留原 renderer 名稱，卡片的 MaterialEditor 設定不會套到它身上。
+- 取代角色原本的頭髮（同一個配件裡的角、緞帶保留）：
+  - 頭髮部件，以及部件名稱、renderer 名稱或 shader 名稱含 hair、名稱含 `_kami`（日文「髪」）的配件。
+  - 同配件中名稱含 shadow／kage 的頭髮陰影。
+  - 同一個頭髮網格在同配件再畫一次的疊層：半透明材質（`main_item_studio_alpha`、`main_alpha`）、MaterialEditor 的 copy，或同一張貼圖。
+  - 卡片上類別 121（髮）的配件、HairAccessoryCustomizer 有資料的配件槽：其中 `_Color` 等於卡片髮色的 renderer（原作把髮色染到 `rendHair`）。這兩種槽位也有髮夾、緞帶、兜帽、項鍊，它們保留自己的顏色，所以不會被藏。卡片髮色是純白時不用這條：沒染色的材質也是白色。這條要知道卡片路徑，session 開卡時記下（`OkSession::card_path`）。
+- 材質：角色原髮是原生頭髮 shader 時沿用它的 ramp 與高光。否則用 main_item，顏色圖集標成 sRGB、不畫外框；直接讀會讓深藍變淡紫，外框會描出每一片頭髮。新部件不留原 renderer 名稱，卡片的 MaterialEditor 設定不會套到它身上。
 - 再次套用同一份頭髮不做事（材質名稱記著頭髮檔與選項的雜湊）；換另一份頭髮時取代上一份。
 
 離線檢查：`ok-hair-pack deck <基礎庫> <角色卡> <cards_seed0.json> <輸出.obj>` 輸出頭部與頭髮的 OBJ（頭部座標）。
@@ -66,6 +71,8 @@ Tools\ok-hairdeck\target\release\ok-hairdeck.exe generate --image <參考圖> --
 遊戲內（2026-11-15，C041 Yvonne）：
 - 讀卡器：02-nightclub 參考圖的深藍高馬尾換上，正面、側面、背面確認位置；角保留，原本的雙馬尾隱藏。
 - OK Studio：`chara.hairdeck` 用 01-campus 參考圖，從生成到換上約 27 秒，金色長直髮。
+
+CrowdAPNG 101 張批次（2026-11-15，讀卡器，nightclub 頭髮）：100 張頭髮位置、顏色、原髮隱藏都正確。C086 頭上的兜帽本來就保留，屬預期行為。C031 的白髮（`Body.049`，main_item）留著：卡片髮色是純白，跟沒染色的飾品分不出來。
 
 ## 限制
 

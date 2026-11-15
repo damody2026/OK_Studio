@@ -2410,6 +2410,7 @@ pub(crate) fn extract_session_from_info(
         mmdd_world_lock: false,
         mmdd_face_bone_dirty: false,
         active_shoe_meta,
+        card_path: None,
         wardrobe_body_mask: None,
         wardrobe_quick_settle: false,
         hidden_parts: Vec::new(),
