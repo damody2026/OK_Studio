@@ -572,6 +572,11 @@ public:
 
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void TickActor(float DeltaSeconds, ELevelTick TickType, FActorTickFunction& ThisTickFunction) override;
+	/** Frames ok.Anim.Step still has to advance while ok.Anim.Pause holds her clocks (1/60 s each, one per tick). */
+	int32 PendingAnimSteps = 0;
+	/** ok.Anim.SetTime: her dynamics back to rest, then her animation replayed from 0 to Seconds in 1/60 s steps, so the
+	 *  same time gives the same pose and cloth. False without a playing animation. */
+	bool ReplayAnimationTo(float Seconds);
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Destroyed() override;
 	// Render the frozen pose's depth without advancing animation/face/physics.

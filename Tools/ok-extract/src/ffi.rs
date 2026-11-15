@@ -2947,6 +2947,12 @@ pub unsafe extern "C" fn ok_session_refresh_body_physics(s:*mut OkSession)->i32 
  // only when the shape changed: the modes showed no difference in H, 2026-11-03).
  let Some(s)=sess_ref(s)else{return -1;};s.body_dynamic_runtime=None;0
 }
+/// Her dynamics (accessory and hair chains, clothes chains, body) back to rest, built again on the next step: a replay
+/// from a known start reaches the same pose at the same time (the reader's ok.Anim.SetTime). 0 on success.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_reset_dynamics(s:*mut OkSession)->i32 {
+ let Some(s)=sess_ref(s)else{return -1;};s.reset_dynamic_accessories();s.body_dynamic_runtime=None;s.clothes_dynamic_runtime=None;0
+}
 #[no_mangle]
 pub unsafe extern "C" fn ok_editor_body_physics(s:*mut OkSession,softness:f32,weight:f32)->i32 {
  let Some(s)=sess_ref(s)else{return -1;};if !softness.is_finite()||!weight.is_finite(){return -1;}

@@ -11547,8 +11547,61 @@ void AKKPreviewActor::OrbitZoom(float WheelNotches)
  OrbitDistance=FMath::Max(0.f,OrbitDistance-WheelNotches*50.f);ApplyOrbitCamera();
 }
 
+// Holding a moment for inspection (ok-game-mcp ui_exec): every character's clocks stand still (animation, physics, face),
+// so two shots of it are the same; ok.Anim.Step moves them on by whole 1/60 s frames, ok.Anim.SetTime replays to a time.
+static TAutoConsoleVariable<int32> CVarOkAnimPause(TEXT("ok.Anim.Pause"),0,
+    TEXT("1: every character's animation, physics and face clocks stand still (ok.Anim.Step / ok.Anim.SetTime move them); 0: they run."));
+static constexpr float OKAnimStepSeconds=1.f/60.f;
+static void OKForEachPlayingActor(UWorld* World,TFunctionRef<void(AKKPreviewActor&)> Do)
+{
+    for(TObjectIterator<AKKPreviewActor> It;It;++It)
+        if(IsValid(*It)&&!It->IsTemplate()&&(!World||It->GetWorld()==World)&&It->Session.IsOpen())Do(**It);
+}
+static FAutoConsoleCommandWithWorldArgsAndOutputDevice GOkAnimStep(TEXT("ok.Anim.Step"),
+    TEXT("ok.Anim.Step [frames=1]: while ok.Anim.Pause is 1, move every character on by that many 1/60 s frames (one per tick)."),
+    FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args,UWorld* World,FOutputDevice& Ar){
+        const int32 Frames=Args.Num()?FCString::Atoi(*Args[0]):1;
+        if(Frames<=0||CVarOkAnimPause.GetValueOnGameThread()==0){Ar.Logf(TEXT("ok.Anim.Step needs ok.Anim.Pause 1 and frames > 0"));return;}
+        int32 Count=0;OKForEachPlayingActor(World,[&](AKKPreviewActor& A){A.PendingAnimSteps+=Frames;A.SetActorTickEnabled(true);++Count;});
+        Ar.Logf(TEXT("ok.Anim.Step frames=%d actors=%d"),Frames,Count);
+    }));
+static FAutoConsoleCommandWithWorldArgsAndOutputDevice GOkAnimSetTime(TEXT("ok.Anim.SetTime"),
+    TEXT("ok.Anim.SetTime <seconds | N%>: every character's dynamics back to rest, her animation replayed from 0 to that time (N% of the clip) and held "
+         "(sets ok.Anim.Pause 1). No argument: print each character's time."),
+    FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args,UWorld* World,FOutputDevice& Ar){
+        if(!Args.Num()){OKForEachPlayingActor(World,[&](AKKPreviewActor& A){Ar.Logf(TEXT("ok.Anim time actor=%s pose_mode=%d time=%.4f duration=%.4f pending_steps=%d"),
+            *A.GetName(),A.PoseMode,A.AnimPhase,A.AnimDuration,A.PendingAnimSteps);});return;}
+        const bool bPercent=Args[0].EndsWith(TEXT("%"));const float Value=FCString::Atof(*Args[0].LeftChop(bPercent?1:0));
+        if(!FMath::IsFinite(Value)||Value<0.f){Ar.Logf(TEXT("ok.Anim.SetTime: not a time: %s"),*Args[0]);return;}
+        if(IConsoleVariable* Pause=IConsoleManager::Get().FindConsoleVariable(TEXT("ok.Anim.Pause")))Pause->Set(1,ECVF_SetByConsole);
+        OKForEachPlayingActor(World,[&](AKKPreviewActor& A){
+            const float Seconds=bPercent?A.AnimDuration*Value/100.f:Value;
+            const bool Ok=A.ReplayAnimationTo(Seconds);
+            Ar.Logf(TEXT("ok.Anim.SetTime actor=%s ok=%d time=%.4f duration=%.4f"),*A.GetName(),Ok?1:0,A.AnimPhase,A.AnimDuration);
+        });
+    }));
+
+bool AKKPreviewActor::ReplayAnimationTo(float Seconds)
+{
+    if(!Session.IsOpen()||!FMath::IsFinite(Seconds)||Seconds<0.f||(PoseMode!=1&&PoseMode!=2&&PoseMode!=3))return false;
+    if(Session.HasAsyncAnimFrame())Session.FinishAsyncAnimFrame();
+    PendingAnimSteps=0;
+    if(!Session.ResetDynamics())return false;
+    // From 0 in whole frames: the same time always takes the same steps.
+    const int32 Steps=FMath::RoundToInt(Seconds/OKAnimStepSeconds);
+    AnimPhase=0.f;
+    ApplyPoseFrame(0.f,false);
+    for(int32 Step=0;Step<Steps;++Step)ApplyPoseFrame(OKAnimStepSeconds,true);
+    return true;
+}
+
 void AKKPreviewActor::TickActor(float DeltaSeconds,ELevelTick TickType,FActorTickFunction& ThisTickFunction)
 {
+    // ok.Anim.Pause: no time passes for her, but ok.Anim.Step's frames, one per tick.
+    if(CVarOkAnimPause.GetValueOnGameThread()!=0){
+        if(PendingAnimSteps>0){--PendingAnimSteps;DeltaSeconds=OKAnimStepSeconds;}
+        else DeltaSeconds=0.f;
+    }
     const bool PreviousWorldTick=bWorldPoseTick;
     const float PreviousDelta=WorldPoseDelta;
     bWorldPoseTick=true;

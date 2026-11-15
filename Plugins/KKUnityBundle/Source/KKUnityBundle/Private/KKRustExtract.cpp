@@ -1699,6 +1699,7 @@ bool FOkSession::ApplyEditorMods(const FString& Json,int32 Coordinate,bool* Geom
 
 bool FOkSession::ApplyBodyPhysics(float Softness,float Weight){return Handle&&ok_editor_body_physics(Handle,Softness,Weight)==0;}
 bool FOkSession::RefreshBodyPhysics(){return Handle&&ok_session_refresh_body_physics(Handle)==0;}
+bool FOkSession::ResetDynamics(){return Handle&&ok_session_reset_dynamics(Handle)==0;}
 int32 FOkSession::RefineBelly(){return Handle?ok_session_refine_belly(Handle):-1;}
 
 extern "C" int32_t ok_appearance_request(const char*,const char*,const char*,char*,int32_t);

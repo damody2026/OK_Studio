@@ -538,6 +538,9 @@ int32_t ok_editor_body_physics(OkSession* session,float softness,float weight);
  * ok_session_refresh_body_physics, load or shape change. 0 on success. */
 int32_t ok_set_body_part_physics(int32_t part,int32_t mode,float softness);
 int32_t ok_session_refresh_body_physics(OkSession* session);
+/* Her dynamics (accessory/hair chains, clothes chains, body) back to rest, built again on the next step: a replay
+ * from a known start reaches the same pose at the same time (ok.Anim.SetTime). 0 on success. */
+int32_t ok_session_reset_dynamics(OkSession* session);
 /* Her skin where he lifts it cut finer, one-on-one only: once, after opening, before the mesh is built. The vertices
  * added, -1 without a session. */
 int32_t ok_session_refine_belly(OkSession* session);
