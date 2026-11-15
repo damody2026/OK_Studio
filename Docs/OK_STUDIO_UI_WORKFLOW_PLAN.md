@@ -1633,6 +1633,7 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
         - UE：部件打上 `OKReflectionRealtime=<節點>;<大小>;<強度>;<x>;<y>;<z>` 標記；`AOKSceneActor` 在探針位置放 `USceneCaptureComponentCube`（HDR、自動 mip），地圖建好或換時段後連拍 30 幀，綁成那些部件的 `unity_SpecCube0`（HDR = 強度, 1, 0, 0）。
         - 取樣反射後夾在 0～64：擷取的 cube 一旦有 NaN，取樣它的材質整塊變黑，再被下一次擷取拍進去。第一次沒夾時 y180 的旗子、招牌全黑。
       - 結果（`Saved/Tests/MapProbe1115OK2/`，原作 `Saved/Tests/MapProbe1115on/`）：y90 牆面 (124, 7, 19)，原作 (141, 9, 17)，修改前 (12, 0, 0)。y0 原本就偏黑的碼頭柱子與棧橋也恢復；y180、y270 和原作接近。還有差：y0 那艘船仍偏暗（另一個問題，未追）。
+        - 2026-11-16 重拍（master 4bf0e98c1 加上工作樹別人未提交的排序修改）：y0 的船已經是白色，和原作一致（`Saved/Tests/MapBoat1116_normal/`），不用再追。`OK_LIGHTMAP_DIAG=whitenoenv` 船身受光正常；`white`、`env` 兩種模式下船與棧橋都是全黑，是診斷模式本身在這張地圖的行為，不是畫面問題。
       - 本機基礎庫要重錄：`OKLIB_REFRESH=prefab_reflection_probes ok-extract <遊戲> --oklib studio-nodes <base_v1> 8`（F 本機已重錄，替換 62 筆）。沒重錄的 checkout 照舊是全黑反射。
   - **U273 地圖 54 遮陽傘顏色**：原作橘色，OK 藍色（同一個物件的另一個顏色），海面也有雜點。
     - 2026-11-15 修好顏色（F 組）：
