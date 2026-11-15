@@ -5,7 +5,10 @@
 -- Tools/street_city_room_survey_payload.lua (heights: a line down per 20 cm cell from over the upper floor; a flight is a
 -- straight run of rising heights), 2026-11-16, c-street-city. Read by Tools/export_street_city_game_places.lua: a place
 -- with stair anchors is no longer "upstairs with no way up" (Tools/street_city_upstairs_off.lua).
--- Left out: bike_shop (its box spans the whole row; the flight found is another shop's); crepe (no ground-floor foot found); nail (no ground-floor foot found); photo_studio (no flight in the scan)
+-- Left out: bike_shop (its two rooms are two shops 116 m apart, S35 and S81; the flight found is S81's); photo_studio (no flight in
+-- the scan). crepe and nail (added 11-16 by hand): the same switchback, but the first flight's lowest metre has no collision
+-- (the line down hits the ground floor there), so no foot was found; their stair1/stair2 are the cafe's (same S-row
+-- template, same orientation) moved by the offset of the flights' start (nail -13660,+12800; crepe -13800,+25200).
 -- stair1 moved (walk probe 11-16, door -> stair1): the flight's foot is behind the stair's side wall, 1.1-1.3 m from
 -- the nearest cell walked to from the door; stair1 is that cell (the game reaches a stair within 170 cm): bookstore, bowling, breakfast, bridal, cafe, cat_cafe, clothing_s10, clothing_s30, clothing_s46, clothing_s94, conveni, craft, district_office, drinkshop, fastfood, fortune, fruitshop, izakaya, livehouse, lottery, nursery, petshop, police, realty, restaurant, salon, snack, sushi, yakiniku, yukata
 -- Four more whose flight's foot is a pocket walled off by the shop's fittings (the stair is 80 cm wide between walls):
@@ -14,6 +17,14 @@
 -- stair1 is on the shop's main aisle, 6 m off. (The west room itself got its 1.2 m hole on 11-16 and is walked in and
 -- out of in the game, city1116a.)
 return {
+  crepe = {
+    { name = "stair1", pos = { 34630, 47380, 1200 } },
+    { name = "stair2", pos = { 34610, 47430, 1580 } },
+  },
+  nail = {
+    { name = "stair1", pos = { 34770, 34980, 1200 } },
+    { name = "stair2", pos = { 34750, 35030, 1580 } },
+  },
   bookstore = {
     { name = "stair1", pos = { 48430, 29340, 1200 } }, -- was 48450, 29210
     { name = "stair2", pos = { 48410, 29390, 1580 } },

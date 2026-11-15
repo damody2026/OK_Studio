@@ -7,7 +7,7 @@
 --   thin: a 10x10x187 cm box 3 cm over the floor per cell; '.' clear, ' ' no floor within 15 cm, otherwise the letter of
 --     the actor it hits (legend: letter -> label)
 --   fat: the same with a 40x40 cm box (the game's route capsule); '.' clear, '#' blocked
--- Optional find = { words = [...], places = [{ name, box = [x0,y0,z0,x1,y1,z1] }] }: every actor whose label or mesh path
+-- Optional find = { words = [...], places = [{ name, box = [x0,y0,z0,x1,y1,z1] }] }: every actor whose label, object name or mesh path
 --   holds a word, inside a place's box (result `found`), e.g. the stairs of the shops with floors and no stair anchors
 -- Optional heights = [{ name, box = [x0,y0,x1,y1], top, low, step }]: a line down per cell from `top` (just over the upper
 --   floor) to `low` (the floor below); the first hit's height as a digit 0..9 between them, ' ' nothing. A stair between
@@ -72,13 +72,13 @@ def motel_world_room_survey():
   words=[w.lower() for w in fd['words']]
   for a in acts:
    lab=a.get_actor_label();ms=[c.static_mesh.get_path_name() for c in a.get_components_by_class(unreal.StaticMeshComponent) if c.static_mesh]
-   text=(lab+' '+' '.join(ms)).lower()
+   text=(lab+' '+a.get_name()+' '+' '.join(ms)).lower()
    if not any(w in text for w in words):continue
    o,e=a.get_actor_bounds(False)
    for p in fd['places']:
     x0,y0,z0,x1,y1,z1=p['box']
     if o.x+e.x<x0 or o.x-e.x>x1 or o.y+e.y<y0 or o.y-e.y>y1 or o.z+e.z<z0 or o.z-e.z>z1:continue
-    found.append(dict(place=p['name'],label=lab,c=[round(o.x),round(o.y),round(o.z)],e=[round(e.x),round(e.y),round(e.z)],yaw=round(a.get_actor_rotation().yaw,1),meshes=ms))
+    found.append(dict(place=p['name'],label=lab,name=a.get_name(),c=[round(o.x),round(o.y),round(o.z)],e=[round(e.x),round(e.y),round(e.z)],yaw=round(a.get_actor_rotation().yaw,1),meshes=ms))
  # heights: per cell a line straight down from `top` to `low`-20; the first hit's height as a digit 0 (at `low`) .. 9 (at
  # `top`), ' ' nothing. A floor slab shows as its digit, a stair as a run of rising digits, a hole in the slab as low digits.
  heights=[]

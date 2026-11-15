@@ -215,7 +215,20 @@ local SPOTS = { ['cafeteria table'] = { 70230, 42470, 1200 }, ['cafe seat'] = { 
   -- 30 cm, 11-15): they stand at the conveyor's other side in the east aisle (x 34560) and in the hall west of the booth.
   ['sushi conveyor_seat'] = { 34560, 48520, 1200, 180 }, ['sushi conveyor_seat2'] = { 34560, 48440, 1200, 180 },
   ['sushi conveyor_seat3'] = { 34560, 48360, 1200, 180 }, ['sushi conveyor_seat4'] = { 34560, 48240, 1200, 180 },
-  ['sushi seat33'] = { 33720, 48440, 1200, 0 }, ['sushi seat34'] = { 33720, 48520, 1200, 0 } }
+  ['sushi seat33'] = { 33720, 48440, 1200, 0 }, ['sushi seat34'] = { 33720, 48520, 1200, 0 },
+  -- The gyn clinic's seat20 is in the 30 cm slot between its cubicle (x 32305-32405) and the waiting room's wall (x 32435,
+  -- City_CV_F01): the slot's open north end, the nearest cell a 40 cm box reaches from the street (room survey 11-16), 1.2 m off
+  ['clinic_gyn seat20'] = { 32415, 57315, 1200 },
+  -- The civic 5F lounge (x 30455-30800, y 61285-61560): seat6 and seat7 stood in the desk in front of their chairs
+  -- (City_CV_F05, StaticMeshActor_499, x 30535-30595) and seat/seat2 in the sofa; the game's grid found no first cell
+  -- (c-conquest, city1116a). Each stands at the nearest cell a 40 cm box reaches from the 5F corridor (room survey 11-16,
+  -- box x 29000-31700 y 61100-64000: the lounge opens west and north), and still sits down on its seat (under 1.5 m).
+  ['civic seat6'] = { 30615, 61325, 2910 }, ['civic seat7'] = { 30615, 61525, 2910 },
+  ['civic seat'] = { 30715, 61545, 2910 }, ['civic seat2'] = { 30805, 61515, 2910 },
+  -- The nail salon's 2F chairs: each stand spot was 16 cm off its chair's collision (S59_F02, the editor walk probe from
+  -- stair2 stopped 40 cm short of seat6, 11-16); 40 cm further from the chair, the seat stays 80 cm off
+  ['nail seat6'] = { 33470, 34510, 1580 }, ['nail seat8'] = { 33470, 34890, 1580 },
+  ['nail seat10'] = { 33890, 34510, 1580 }, ['nail seat12'] = { 33890, 34890, 1580 } }
 for _, p in ipairs(places) do
   for _, an in ipairs(p.anchors or {}) do
     local s = SPOTS[p.id .. ' ' .. an.name]
@@ -447,7 +460,7 @@ do
     '下表是剩下的：這幾家沒有可用的樓梯，維持 off，不再追。', '',
     '| 地點 | 樓層 | 類別 | 錨點數 | 規則錨點數 | 錨點 | 為什麼還 off |', '|---|---:|---|---:|---:|---|---|' }, 0
   local WHY = {
-    bike_shop = '地點範圍橫跨一整排店，範圍裡量到的樓梯是別家的；它自己的樓上只有規則表的停車架與高處物件',
+    bike_shop = '地點是相距 116 m 的兩家店（S35、S81，street_city_lover_spots_payload.lua 併成一個，門只在 S35），量到的樓梯在 S81；樓上只有規則表的停車架與高處物件',
     crepe = '只量到上半段樓梯，找不到 1F 的樓梯腳；樓上沒有座位',
     nail = '只量到上半段樓梯，找不到 1F 的樓梯腳',
     photo_studio = '樓上沒有量到任何樓梯；樓上沒有座位',
