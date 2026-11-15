@@ -7,6 +7,12 @@
 --   thin: a 10x10x187 cm box 3 cm over the floor per cell; '.' clear, ' ' no floor within 15 cm, otherwise the letter of
 --     the actor it hits (legend: letter -> label)
 --   fat: the same with a 40x40 cm box (the game's route capsule); '.' clear, '#' blocked
+-- Optional find = { words = [...], places = [{ name, box = [x0,y0,z0,x1,y1,z1] }] }: every actor whose label or mesh path
+--   holds a word, inside a place's box (result `found`), e.g. the stairs of the shops with floors and no stair anchors
+-- Optional heights = [{ name, box = [x0,y0,x1,y1], top, low, step }]: a line down per cell from `top` (just over the upper
+--   floor) to `low` (the floor below); the first hit's height as a digit 0..9 between them, ' ' nothing. A stair between
+--   the floors is a run of rising digits, a hole in the slab low digits (result `heights`, `mid_cells` = cells 2..7)
+-- No areas: pass areas = [] (2026-11-16: the 40 shops' stairs are not separate actors, none matched by name)
 -- (2026-11-15, c-street-city: clinic_beauty seat room and izakaya NE room)
 return [====[
 def motel_world_room_survey():
@@ -59,6 +65,37 @@ def motel_world_room_survey():
     x+=STEP
    thin.append(''.join(rt));fat.append(''.join(rf));y+=STEP
   areas.append(dict(name=ar['name'],box=ar['box'],z=Z,step=STEP,actors=inside,legend={v:k for k,v in leg.items()},thin=thin,fat=fat))
- out.write_text(json.dumps(dict(status='passed',areas=areas),indent=1,ensure_ascii=False),'utf8')
- return dict(status='passed',areas=len(areas))
+ # find: actors whose label or mesh path holds one of the words (lower case), inside each place's box (its rooms' extent)
+ found=[]
+ fd=cfg.get('find')
+ if fd:
+  words=[w.lower() for w in fd['words']]
+  for a in acts:
+   lab=a.get_actor_label();ms=[c.static_mesh.get_path_name() for c in a.get_components_by_class(unreal.StaticMeshComponent) if c.static_mesh]
+   text=(lab+' '+' '.join(ms)).lower()
+   if not any(w in text for w in words):continue
+   o,e=a.get_actor_bounds(False)
+   for p in fd['places']:
+    x0,y0,z0,x1,y1,z1=p['box']
+    if o.x+e.x<x0 or o.x-e.x>x1 or o.y+e.y<y0 or o.y-e.y>y1 or o.z+e.z<z0 or o.z-e.z>z1:continue
+    found.append(dict(place=p['name'],label=lab,c=[round(o.x),round(o.y),round(o.z)],e=[round(e.x),round(e.y),round(e.z)],yaw=round(a.get_actor_rotation().yaw,1),meshes=ms))
+ # heights: per cell a line straight down from `top` to `low`-20; the first hit's height as a digit 0 (at `low`) .. 9 (at
+ # `top`), ' ' nothing. A floor slab shows as its digit, a stair as a run of rising digits, a hole in the slab as low digits.
+ heights=[]
+ for hg in cfg.get('heights',[]):
+  X0,Y0,X1,Y1=hg['box'];top=float(hg['top']);low=float(hg['low']);STEP=float(hg.get('step',20));rows=[];mid=0
+  y=Y0+STEP/2
+  while y<Y1:
+   row=[];x=X0+STEP/2
+   while x<X1:
+    r=unreal.SystemLibrary.line_trace_single(world,V(x,y,top),V(x,y,low-20),Q,True,[],NONE,True);h=r.to_tuple() if r else [False]
+    if not h[0]:row.append(' ')
+    else:
+     d=max(0,min(9,int(round((h[4].z-low)/(top-low)*9))));row.append(str(d))
+     if 2<=d<=7:mid+=1
+    x+=STEP
+   rows.append(''.join(row));y+=STEP
+  heights.append(dict(name=hg['name'],box=hg['box'],top=top,low=low,step=STEP,mid_cells=mid,rows=rows))
+ out.write_text(json.dumps(dict(status='passed',areas=areas,found=found,heights=heights),indent=1,ensure_ascii=False),'utf8')
+ return dict(status='passed',areas=len(areas),found=len(found),heights=len(heights))
 ]====]
