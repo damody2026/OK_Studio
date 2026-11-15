@@ -43,6 +43,10 @@ pub struct Anchor {
     pub outdoor: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// An anchor upstairs in a place with no stairs yet ("off" in tags, kinds empty): its kinds as they were, kept for
+    /// when the place gets its stairs (Tools/export_street_city_game_places.lua). Not used by the rules.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub off_kinds: Vec<String>,
 }
 
 impl Anchor {

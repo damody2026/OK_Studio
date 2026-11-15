@@ -4538,7 +4538,9 @@ void AOKStreetSocialScene::Tick(float Dt){
    // shop's table for her shift, round 7, 2026-11-14).
    static TMap<int32,double> SpotRetry; // at most every 2 s each (a seated pose stands over its seat every frame)
    if(GroundZ>Agent.Position.Z+35.f&&Agent.Held&&S.ScheduleHeld.Contains(Agent.Slot)&&!S.Commutes.Contains(Agent.Slot)&&!S.PendingMoves.Contains(Agent.Slot)&&SceneTime()>=SpotRetry.FindRef(Agent.Slot)&&(SpotRetry.Add(Agent.Slot,SceneTime()+2.0),true))
-    if(const FOKStreetPlanBlock* B=LifeBlock(Agent.Slot,int32(OKStreetMindNow(S)%1440));B&&!B->Place.IsEmpty()){
+    // Only at her plan's place: summoned beside him at the drink shop, 三月七 stood on its step and was put back on her
+    // class seat 346 m away (round 15).
+    if(const FOKStreetPlanBlock* B=LifeBlock(Agent.Slot,int32(OKStreetMindNow(S)%1440));B&&!B->Place.IsEmpty()&&PlaceHere(Agent.Position)==B->Place){
      float Yaw=0;const FVector Spot=SpotFor(Agent.Slot,B->Place,B->Kind==TEXT("class")&&!B->Activity.IsEmpty()?B->Activity:B->Kind,Yaw);
      if(FVector::Dist2D(Spot,Agent.Position)>10.f){UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d would stand %.0f cm up at %s, moved to %s"),Agent.Slot,GroundZ-Agent.Position.Z,*Agent.Position.ToCompactString(),*Spot.ToCompactString());
       Agent.Position=Spot;S.Rotations[Agent.Slot]=FRotator(0,Yaw,0);GroundZ=Spot.Z;OKStreetGroundZ(GetWorld(),Agent.Position,GroundZ,this);}}

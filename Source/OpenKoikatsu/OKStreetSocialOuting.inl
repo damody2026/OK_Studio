@@ -1147,9 +1147,10 @@ void AOKStreetSocialScene::StartActivityFromPanel(int32 Girl,const FString& Acti
  // "Eat together" where they are, when it is a place to eat (its own code 5 pair activity: the cafeteria's meal, the
  // cafe's light meal): 三月七 asked in the cafeteria at noon was walked 111 minutes to the family restaurant (round 10),
  // and the panel's "一起吃饭" in the cafe still walked 胡桃 to the restaurant (round 14: only the invitation looked here).
+ // "Drink together" the same way (code 2): in the drink shop 刻晴 and he were walked to the snack bar first (round 15).
  FString Id=ActivityId;
- if(Id==TEXT("meal")){const FString Here=PlaceHere(State->Male);
-  if(!Here.IsEmpty())for(const auto& A:OKStreetActivities())if(A.Code==5&&A.Kind==EOKStreetActivityKind::Pair&&A.Place&&Here==A.Place){FString Why;if(ActivityCheck(Girl,A.Id,Why,false)){Id=A.Id;break;}}
-  if(Id!=ActivityId)UE_LOG(LogTemp,Display,TEXT("Street activity: eat together here at %s (%s)"),*Here,*Id);}
+ if(const int32 Code=Id==TEXT("meal")?5:Id==TEXT("drink")?2:0){const FString Here=PlaceHere(State->Male);
+  if(!Here.IsEmpty())for(const auto& A:OKStreetActivities())if(A.Code==Code&&A.Kind==EOKStreetActivityKind::Pair&&A.Place&&Here==A.Place){FString Why;if(ActivityCheck(Girl,A.Id,Why,false)){Id=A.Id;break;}}
+  if(Id!=ActivityId)UE_LOG(LogTemp,Display,TEXT("Street activity: %s together here at %s (%s)"),*ActivityId,*Here,*Id);}
  if(!BeginOuting(Girl,Id,Error)){State->Message=Error;RefreshUI();}
 }

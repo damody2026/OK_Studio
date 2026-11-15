@@ -288,7 +288,16 @@ bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline
  // A straight line between two cell centres can still clip the corner of something between the cell centres: the body-sized
  // sweep along it must also be clear, or the walk stops at that corner ("the way is blocked") in the open street.
  FCollisionQueryParams SweepQuery(SCENE_QUERY_STAT(StreetGridClear),false,this);
+ // Into or out of a building the walk keeps the cells the search went through there (its door, or whatever opening it
+ // found): a pulled line from outside to a point inside cut along the door's frame, the convenience store's south jamb and
+ // the drink shop's south wall (round 15, "the way is blocked" 30 times on the same route). Putting the door in instead
+ // walked 刻晴 to the restaurant's front door and back round the block to the opening the search had used.
+ auto CrossesAWall=[](const FVector& A,const FVector& B){
+  if(FVector::Dist2D(A,B)<=OKStreetNavCell*1.5f)return false; // neighbouring cells: that is the crossing itself
+  for(const auto& P:OKStreetPlaces())if(!P.Outdoor&&!P.Rooms.IsEmpty()&&OKStreetInsidePlace(P,A)!=OKStreetInsidePlace(P,B))return true;
+  return false;};
  auto Clear=[&](const FVector& A,const FVector& B){
+  if(CrossesAWall(A,B))return false;
   const int32 N=FMath::Max(1,FMath::CeilToInt(FVector::Dist2D(A,B)/(OKStreetNavCell*.5f)));
   for(int32 I=1;I<N;++I)if(!Passable(ToCell(FMath::Lerp(A,B,float(I)/N))))return false;
   FHitResult Hit;

@@ -12,6 +12,7 @@
 #include "OKPaintSprayer.h"
 #include "OKPaintDemo.h"
 #include "Framework/Application/IInputProcessor.h"
+#include "MoviePlayer.h"
 
 AKKPreviewActor* AOpenKoikatsuPlayerController::GetPreviewCameraOwner() const
 {
@@ -71,6 +72,16 @@ public:
 void AOpenKoikatsuPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
+	// A load's loading screen (OKStreetSocialSaves.inl RestartWithSave) is drawn by the movie player on its own thread until
+	// the map has loaded; from here on the game thread sets the viewport's capture and builds the UI. Both at once drew the
+	// window with no back buffer and the game closed on "load" (2026-11-16: D3D12 SetRenderTargets on a null texture in
+	// Slate, 4 s after the street's BeginPlay, the map still loading). The loading screen ends here first, as it would at
+	// the end of the load (the movie player's OnPostLoadMap).
+	if (IGameMoviePlayer* Movie = GetMoviePlayer(); Movie && Movie->IsInitialized() && !Movie->IsLoadingFinished())
+	{
+		Movie->WaitForMovieToFinish();
+		UE_LOG(LogTemp, Display, TEXT("OK loading screen ended before the player's viewport and UI are set up"));
+	}
 	if(GetWorld()->GetAuthGameMode<AOKPaintDemoGameMode>())SetPaintPreviewActive(true);
 	if(FSlateApplication::IsInitialized()){PaintInput=MakeShared<FOKPaintInput>(this);FSlateApplication::Get().RegisterInputPreProcessor(PaintInput);}
 	bShowMouseCursor = true;

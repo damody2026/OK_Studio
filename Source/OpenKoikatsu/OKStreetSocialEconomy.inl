@@ -564,6 +564,10 @@ static int32 OKStreetDishKind(const FString& Id){
 
 void AOKStreetSocialScene::TickMeal(float Dt){
  auto& S=*State;
+ // A drink with nothing ordered (the panel's "一起喝饮料", no menu): over once a cup would be drunk, as the house dish is
+ // eaten below. 惠惠's at the cafe ran from 15:18 past 17:30 with nobody to end it (-NoCloud, round 15).
+ if(S.Pair.Drink&&S.Pair.Partner!=INDEX_NONE&&S.Pair.Phase==1&&S.Pair.PlayingAt>0&&S.Table.IsEmpty()&&S.Cart.IsEmpty()&&SceneTime()-S.Pair.PlayingAt>OKStreetEatSeconds){
+  UE_LOG(LogTemp,Display,TEXT("Street drink: nothing ordered, the drink is over after %.0f s"),SceneTime()-S.Pair.PlayingAt);FinishPhoto();return;}
  // What is on their plates is what was served: 惠惠's hamburger steak came as a slice of cake and a cup, and he had a plate
  // of food without ordering, as the dishes were picked at random on sitting down.
  if(S.MealDishDraw){const FOKStreetDish* Top[2]={nullptr,nullptr};
