@@ -10,7 +10,9 @@
 -- the nearest cell walked to from the door; stair1 is that cell (the game reaches a stair within 170 cm): bookstore, bowling, breakfast, bridal, cafe, cat_cafe, clothing_s10, clothing_s30, clothing_s46, clothing_s94, conveni, craft, district_office, drinkshop, fastfood, fortune, fruitshop, izakaya, livehouse, lottery, nursery, petshop, police, realty, restaurant, salon, snack, sushi, yakiniku, yukata
 -- Four more whose flight's foot is a pocket walled off by the shop's fittings (the stair is 80 cm wide between walls):
 -- stair1 is the nearest cell reached from the door, 3.4-7.5 m off (clinic_beauty, manga_cafe, supermarket, swimwear).
--- karaoke: its stair stands in the west room shut off by KTV_1's back wall; stair1 kept until that wall has its hole.
+-- karaoke: its stair stands in the west room; the partition got a 1.2 m hole on 11-16 (Tools/street_city_wall_hole_payload.lua),
+-- but the way to it is a 1 m gap between KTV_1's side wall and the record racks, too narrow for the editor's walk probe:
+-- stair1 is on the shop's main aisle, 6 m off, until the game's own routes are seen to get through.
 return {
   bookstore = {
     { name = "stair1", pos = { 48430, 29340, 1200 } }, -- was 48450, 29210
@@ -97,7 +99,7 @@ return {
     { name = "stair2", pos = { 34910, 26810, 1580 } },
   },
   karaoke = {
-    { name = "stair1", pos = { 43550, 48270, 1200 } },
+    { name = "stair1", pos = { 44150, 48640, 1200 } }, -- was 43550, 48270: in the west room, 6 m away
     { name = "stair2", pos = { 43590, 48090, 1580 } },
     { name = "stair3", pos = { 43590, 48090, 1960 } },
   },
