@@ -36,6 +36,9 @@
 - **重建后仍成立**（2026-11-15 17:02，大学城 WP 重建后完整 cook，stage city1115k，base BaseCity1115K）：
   - Nanite 仍关闭（`r.Nanite.ProjectEnabled = 0`），cook 出来的 WP 地图没有任何 HLOD actor。
   - 低配半径 96 m、5 名女角，走路量测 commit 11.0 GB、工作集 7.9 GB、显存 4.1 GB，和重建前一致。
+- **第二次重建后仍成立**（2026-11-16 04:31，stage city1116a，base BaseCity1116A；带进美容诊所门洞、karaoke 西侧隔墙洞、5 家 stair1 调整、36 家商店楼梯锚点）：
+  - cook 53,208 个 package，0 错误，约 12 分钟。cook 出来的城市没有任何 HLOD 文件，Nanite 仍关闭（`r.Nanite.ProjectEnabled = 0`、`r.Nanite = 0`）。
+  - game.log 里的载入半径是 9600 cm，低配载入 10 名中的 5 名。教堂走到百货：commit 11.1 GB、工作集 7.9 GB、显存 4.1 GB（整段峰值 11.1／8.0／4.1），和 city1115k 一致。
 - **还在等**：测试员当机的 `game.log` 与 `Saved\Crashes`。测试员的机器是 64 GB／16 GB，内存不是已知瓶颈，要看 log 才知道原因。
 
 以下是过程中的各轮结论与数字。
