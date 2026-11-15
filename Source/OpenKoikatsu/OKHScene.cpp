@@ -452,7 +452,9 @@ void UOKHScenePanel::TouchBody(int32 Area){
     if(!Ok){Note(OKMsg(TEXT("ui.hscene.event_body_refused"),{{TEXT("how"),How},{TEXT("part"),Part}}));Chain({TEXT("Front_Dislikes"),TEXT("Idle")});TouchArea=INDEX_NONE;bLipsTouch=false;return;}
     if(TouchArea!=Area||(Area==0)){const bool First=Area!=0&&AreaExperience(Area)<.05f&&AreaSeconds[Area]<=0.f;
         Note(OKMsg(First?TEXT("ui.hscene.event_first_body"):TEXT("ui.hscene.event_body"),{{TEXT("how"),How},{TEXT("part"),Part}}));}
-    TouchArea=Area;Flinch(Area);
+    const bool bNewPlace=TouchArea!=Area||StrokeBone.IsEmpty();TouchArea=Area;Flinch(Area);
+    // Stroked there: the part sways with his hand, a third of its flinch, on one axis kept while he stays on it.
+    if(bNewPlace){StrokeBone=FlinchBone;StrokePhase=0.f;StrokeAxis=FVector(FMath::FRandRange(-1.f,1.f),FMath::FRandRange(-1.f,1.f),FMath::FRandRange(-1.f,1.f)).GetSafeNormal()*FlinchTurn.Size()*.35f;}
 }
 void UOKHScenePanel::Flinch(int32 Area){
     static const TCHAR* Bones[]={TEXT("cf_j_head"),TEXT("cf_j_forearm01_"),TEXT("cf_j_thigh00_"),TEXT("cf_j_leg01_"),TEXT("cf_j_leg03_")};
@@ -798,6 +800,34 @@ static float OKCurveMotion(float X){
     X=FMath::Clamp(X,0.f,1.f);const int32 I=X<K[1][0]?0:1;const float Dt=K[I+1][0]-K[I][0],T=(X-K[I][0])/Dt,T2=T*T,T3=T2*T;
     return (2.f*T3-3.f*T2+1.f)*K[I][1]+(T3-2.f*T2+T)*K[I][2]*Dt+(-2.f*T3+3.f*T2)*K[I+1][1]+(T3-T2)*K[I+1][2]*Dt;
 }
+// HAibu Proc: every frame speedBody = 1 + speed and motion = InverseLerp(0, speedMaxAibuBody * 0.7, speed) on her. His
+// hand there (the original's clicks and drags, HFlag.SpeedUpClickAibu) is the panel's speed while he keeps stroking
+// (0..1 of it to 0..speedMaxAibuBody); let go, it falls off (WaitSpeedProcAibu, rateSpeedSub) and she settles.
+static TAutoConsoleVariable<float> CVarHCaressFall(TEXT("ok.HScene.CaressFall"),.8f,TEXT("How fast the caress speed falls off once his hand is still or gone (speed per second; speedMaxAibuBody is 1.5)"));
+void UOKHScenePanel::UpdateCaress(float Delta){
+    static constexpr float SpeedMax=1.5f; // speedMaxAibuBody
+    if(Mode!=0||SoloInfo||!Gallery||!IsValid(Gallery->PreviewActor)){CaressSpeed=0.f;StrokeTurn=FVector::ZeroVector;CaressShownState.Reset();return;}
+    const double Now=FPlatformTime::Seconds();
+    // A single touch is over: she lets go of the place (a caress clip back to her Idle).
+    if(OnceUntil>0.&&Now>=OnceUntil&&Queue.IsEmpty()){OnceUntil=0.;
+        if(TouchArea!=INDEX_NONE){const bool bClip=!BodyTouching();TouchArea=INDEX_NONE;bLipsTouch=false;if(bClip)Chain({TEXT("Idle")});ActionsKey.Reset();}}
+    const FString& State=SoloState;
+    const bool bHolding=TouchArea!=INDEX_NONE&&Queue.IsEmpty()&&(BodyTouching()||State.EndsWith(TEXT("_Idle"))||State==TEXT("K_Loop"));
+    if(bHolding&&!bStrokeOnce)CaressSpeed=FMath::FInterpTo(CaressSpeed,SpeedValue*SpeedMax,Delta,10.f); // timeSpeedUpStartAibu 0.1 s
+    else CaressSpeed=FMath::Max(0.f,CaressSpeed-Delta*CVarHCaressFall.GetValueOnGameThread());
+    // A place with no caress clip: it sways with his hand, faster as he strokes faster.
+    if(BodyTouching()&&CaressSpeed>.01f){StrokePhase=FMath::Fmod(StrokePhase+Delta*2.f*PI*(.6f+.9f*CaressSpeed),2.f*PI);StrokeTurn=StrokeAxis*FMath::Sin(StrokePhase)*FMath::Min(1.f,CaressSpeed/.3f);}
+    else{StrokeTurn=FVector::ZeroVector;if(!BodyTouching())StrokeBone.Reset();}
+    // Her state anew (its parameters cleared) gets them again; else only a change worth it.
+    const float Motion=FMath::Clamp(CaressSpeed/(SpeedMax*.7f),0.f,1.f),Body=1.f+CaressSpeed;
+    const bool bAnew=State!=CaressShownState||SoloStarted!=CaressShownStarted;
+    if(!bAnew&&FMath::Abs(Motion-CaressMotionShown)<.002f&&FMath::Abs(Body-CaressBodyShown)<.002f)return;
+    AKKPreviewActor* Girl=Gallery->PreviewActor.Get();
+    // A state without them (Touch, Dislikes, Orgasm) refuses: -1 shown, tried again on her next state.
+    CaressMotionShown=Girl->SetGameAnimationFloat(TEXT("motion"),Motion)?Motion:-1.f;CaressBodyShown=Girl->SetGameAnimationFloat(TEXT("speedBody"),Body)?Body:-1.f;
+    CaressShownState=State;CaressShownStarted=SoloStarted;
+    if(bAnew)UE_LOG(LogTemp,Display,TEXT("H scene: caress %s speed %.2f motion %.2f (shown %.2f, speedBody %.2f)"),*State,CaressSpeed,Motion,CaressMotionShown,CaressBodyShown);
+}
 void UOKHScenePanel::UpdateMotion(float Delta){
     if(CVarHMotion.GetValueOnGameThread()==0){HMotion=0.f;bMotionEasing=false;return;}
     // HSonyu / HHoushi Proc: an easing under way goes on in any state of the pose.
@@ -974,10 +1004,14 @@ void UOKHScenePanel::Click(int32 Kind){
     if(Kind>=PoseBase&&Kind<PoseBase+1000){SelectPose(Kind-PoseBase);return;}
     if(Kind>=AibuBase&&Kind<PoseBase){SelectAibu(Kind-AibuBase);return;}
     if(Kind>=RoomBase&&Kind<=RoomBase+1){Room=Kind-RoomBase;PropKey.Reset();Note(OKT(Room==1?TEXT("ui.hscene.event_room_bed"):TEXT("ui.hscene.event_room_floor")),false);BuildList();return;}
-    if(Kind>=TouchChest&&Kind<=Kiss&&Mode==0){static const int32 Areas[]={1,2,3,4,5,0};bLipsTouch=false;Touch(Areas[Kind-TouchChest]);ActionsKey.Reset();return;}
-    if(Kind>=TouchHead&&Kind<=TouchFoot&&Mode==0){Touch(6+Kind-TouchHead);ActionsKey.Reset();return;}
-    if(Kind==TouchLips&&Mode==0){bLipsTouch=true;Touch(0);ActionsKey.Reset();return;}
+    // A single touch (bStrokeOnce) lets go by itself: a place with its caress clip once the touch has played and her
+    // hand-held moment is over, the others after their flinch.
+    auto Once=[this](){OnceUntil=bStrokeOnce&&TouchArea!=INDEX_NONE?FPlatformTime::Seconds()+(BodyTouching()?1.5:3.5):0.;};
+    if(Kind>=TouchChest&&Kind<=Kiss&&Mode==0){static const int32 Areas[]={1,2,3,4,5,0};bLipsTouch=false;Touch(Areas[Kind-TouchChest]);Once();ActionsKey.Reset();return;}
+    if(Kind>=TouchHead&&Kind<=TouchFoot&&Mode==0){Touch(6+Kind-TouchHead);Once();ActionsKey.Reset();return;}
+    if(Kind==TouchLips&&Mode==0){bLipsTouch=true;Touch(0);Once();ActionsKey.Reset();return;}
     if(Kind==LickToggle&&Mode==0){bLickMode=!bLickMode;ActionsKey.Reset();return;}
+    if(Kind==StrokeToggle&&Mode==0){bStrokeOnce=!bStrokeOnce;OnceUntil=0.;ActionsKey.Reset();UE_LOG(LogTemp,Display,TEXT("H scene: caress %s"),bStrokeOnce?TEXT("touch once"):TEXT("keep stroking"));return;}
     if(Mode==0&&Kind>=Faster&&Kind<=Continue)return; // pair actions while caressing (a stale button or the control channel)
     // An action counts only when the panel offers it now (finishing outside at an empty gauge, inserting during a
     // service): the same rule for a click, a stale button and the control channel.
@@ -1006,7 +1040,7 @@ void UOKHScenePanel::Click(int32 Kind){
     if(Kind==PenisXRayToggle){bPenisXRay=!bPenisXRay;ApplyMaleLook();ActionsKey.Reset();return;}
     if(Kind==ToggleMale){MaleView=(MaleView+1)%3;bMaleHidden=MaleView==2;ApplyMaleLook();BuildList();return;}
     if(Kind==MaleBottom){bMaleBottomOff=!bMaleBottomOff;ApplyMaleLook();BuildList();return;}
-    if(Kind==Release&&Mode==0){TouchArea=INDEX_NONE;Chain({TEXT("Idle")});ActionsKey.Reset();return;}
+    if(Kind==Release&&Mode==0){TouchArea=INDEX_NONE;bLipsTouch=false;OnceUntil=0.;Chain({TEXT("Idle")});ActionsKey.Reset();return;}
     if(Kind==CoordinateToggle){bCoordinateList=!bCoordinateList;if(bCoordinateList){FindCoordinateCards();if(bSettingsOpen)Click(SettingsToggle);}ShowCoordinates();BuildList();return;}
     if(Kind==HeadCameraToggle){bHeadCamera=!bHeadCamera;HeadCameraGirl=nullptr;ActionsKey.Reset();return;}
     if(Kind==EyesCameraToggle){const bool On=!HEyesOnCamera();HSettingSet(TEXT("EyesCamera"),On?1.f:0.f);HSettingsSave();for(UOKHSettingSlider* Slider:SettingSliders)if(Slider)Slider->Show();
@@ -1459,6 +1493,7 @@ void UOKHScenePanel::BuildActions(){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HBuildActi
             // Touch or kiss (H_SCENE_ADDITIONS_PLAN 3): her mouth (her lips / a kiss), chest, nipples, head, butt, crotch,
             // anus, the back of her hand, thigh, calf, foot.
             {Add(LickToggle,bLickMode?TEXT("ui.hscene.act_mode_kiss"):TEXT("ui.hscene.act_mode_touch"));
+             Add(StrokeToggle,bStrokeOnce?TEXT("ui.hscene.act_stroke_once"):TEXT("ui.hscene.act_stroke_keep"));
              if(bLickMode){Add(Kiss,TEXT("ui.hscene.act_kiss"));Add(TouchChest,TEXT("ui.hscene.act_kiss_chest"));Add(TouchNipple,TEXT("ui.hscene.act_kiss_nipple"));Add(TouchHead,TEXT("ui.hscene.act_kiss_head"));
                  Add(TouchButt,TEXT("ui.hscene.act_kiss_butt"));Add(TouchCrotch,TEXT("ui.hscene.act_kiss_crotch"));Add(TouchAnal,TEXT("ui.hscene.act_kiss_anal"));
                  Add(TouchHand,TEXT("ui.hscene.act_kiss_hand"));Add(TouchThigh,TEXT("ui.hscene.act_kiss_thigh"));Add(TouchCalf,TEXT("ui.hscene.act_kiss_calf"));Add(TouchFoot,TEXT("ui.hscene.act_kiss_foot"));}
@@ -1710,7 +1745,7 @@ void UOKHScenePanel::TickScene(float Delta){
     Her=FMath::Clamp(Her,0.f,100.f);His=FMath::Clamp(His,0.f,100.f);
     // In her mouth she decides herself if he waits (HHoushi Oral_Idle: drink or spit after a while).
     if(Queue.IsEmpty()&&Base==TEXT("Oral_Idle")&&OralIdleSince>0.&&Now-OralIdleSince>8.){OralIdleSince=0.;static const float DrinkChance[]={.2f,.35f,.6f,.85f};Click(FMath::FRand()<DrinkChance[FMath::Clamp(Level(),0,3)]?Drink:Vomit);} // her own choice: the more used to it, the likelier she swallows
-    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSpeed);ApplySpeed();UpdateMotion(Delta);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSpeed);ApplySpeed();UpdateMotion(Delta);UpdateCaress(Delta);}
     // Her spoken answer is over: her breathing goes on (the line stopped it).
     // What is being put on stays on screen until it is on: without it the wait looks like a hang (user 2026-11-07).
     if(!OutfitLoadingText.IsEmpty()){AOKInteractionMode* Changing=Interaction();if(!Changing||!Changing->IsChangingOutfit())OutfitLoadingText.Reset();else if(Hint)Hint->SetText(FText::FromString(OutfitLoadingText));}
@@ -2934,6 +2969,8 @@ void UOKHScenePanel::Tremble(double Now){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTrem
 void UOKHScenePanel::ApplyHerFk(AKKPreviewActor* Girl,TArray<FString>& Names,TArray<FVector>& Turns){
     {const double Now=FPlatformTime::Seconds();if(Now<FlinchUntil&&!FlinchBone.IsEmpty()){const float T=1.f-float((FlinchUntil-Now)/.45);
         Names.Add(FlinchBone);Turns.Add(FlinchTurn*FMath::Sin(T*PI));Girl->bHeadLookPoseDirty=true;}}
+    if(!StrokeTurn.IsNearlyZero()&&!StrokeBone.IsEmpty()){const int32 At=Names.Find(StrokeBone); // the same bone flinching: one turn
+        if(At!=INDEX_NONE)Turns[At]+=StrokeTurn;else{Names.Add(StrokeBone);Turns.Add(StrokeTurn);}Girl->bHeadLookPoseDirty=true;}
     if(!FMath::IsNearlyZero(AnkleTurn))for(const TCHAR* Bone:{TEXT("+cf_j_leg03_L"),TEXT("+cf_j_leg03_R")}){Names.Add(Bone);Turns.Add(FVector(AnkleTurn,0.f,0.f));}
     // Opening is out to her own side: the left thigh turns one way about its forward axis, the right the other.
     if(!FMath::IsNearlyZero(ThighOpen[0])){Names.Add(TEXT("+cf_j_thigh00_L"));Turns.Add(FVector(0.f,0.f,-ThighOpen[0]));}
@@ -4395,6 +4432,8 @@ TSharedRef<FJsonObject> UOKHScenePanel::Describe() const{
     O->SetStringField(TEXT("state"),Current());O->SetStringField(TEXT("wanted"),Wanted);O->SetNumberField(TEXT("mode"),Mode);
     TArray<TSharedPtr<FJsonValue>> Q;for(const FString& S:Queue)Q.Add(MakeShared<FJsonValueString>(S));O->SetArrayField(TEXT("queue"),Q);
     O->SetNumberField(TEXT("motion"),HMotion);O->SetNumberField(TEXT("motion_to"),bMotionEasing?MotionTo:HMotion);O->SetNumberField(TEXT("motion_her"),MotionReadHer);O->SetNumberField(TEXT("motion_him"),MotionReadHim);
+    O->SetBoolField(TEXT("stroke_once"),bStrokeOnce);O->SetNumberField(TEXT("caress_speed"),CaressSpeed);O->SetNumberField(TEXT("caress_motion"),CaressMotionShown);O->SetNumberField(TEXT("caress_body"),CaressBodyShown);
+    O->SetNumberField(TEXT("touch_area"),TouchArea);O->SetStringField(TEXT("stroke_bone"),StrokeTurn.IsNearlyZero()?FString():StrokeBone);O->SetNumberField(TEXT("stroke_turn"),StrokeTurn.Size());
     O->SetNumberField(TEXT("playback_speed"),PlaybackSpeed());if(Gallery&&Gallery->PreviewActor)O->SetNumberField(TEXT("breath_rate"),Gallery->PreviewActor->SpeechTempo);O->SetBoolField(TEXT("hooked"),Hooked());O->SetNumberField(TEXT("oral_suck"),OralSuckSet);O->SetNumberField(TEXT("oral_pull"),OralPullSet);O->SetNumberField(TEXT("mouth_turned"),bMouthAimed?MouthTurned:0.f);O->SetStringField(TEXT("mouth_dbg"),MouthDbg.ToString());O->SetNumberField(TEXT("mouth_hidden_verts"),MouthClipVerts);O->SetNumberField(TEXT("bust_swell"),BustSwellSet);O->SetNumberField(TEXT("preg_belly"),PregBellyShown);O->SetNumberField(TEXT("preg_nipples"),PregNipples());O->SetNumberField(TEXT("depth_top"),AlignDeep);O->SetNumberField(TEXT("belly_out"),BulgeTarget.IsNone()?-1.f:BulgePast);O->SetNumberField(TEXT("belly_allow"),FMath::Max(0.f,BulgeMoves-2.5f));O->SetNumberField(TEXT("pullback"),BellyPullback);O->SetNumberField(TEXT("tip_inside"),TipInside);O->SetNumberField(TEXT("aim_relax"),AimRelax);O->SetNumberField(TEXT("skin_out"),SkinOutMost);O->SetNumberField(TEXT("skin_under"),SkinUnderMost);O->SetNumberField(TEXT("skin_worst"),SkinWorst);O->SetNumberField(TEXT("skin_rest"),SkinRest);O->SetNumberField(TEXT("skin_along"),SkinWorstAlong);O->SetNumberField(TEXT("root_dodge"),RootDodge.Size());O->SetNumberField(TEXT("depth_cap"),DepthCap);{auto Wr=MakeShared<FJsonObject>();for(const auto& W:Bulge)if(W.Value>1.f)Wr->SetNumberField(W.Key.ToString(),FMath::RoundToFloat(W.Value));O->SetObjectField(TEXT("swells"),Wr);O->SetNumberField(TEXT("swells_refused"),BulgeRefused);O->SetNumberField(TEXT("wrap_ms"),WrapMs);O->SetNumberField(TEXT("wrap_solve_ms"),WrapSolveMs);O->SetNumberField(TEXT("wrap_verts"),WrapVerts);O->SetNumberField(TEXT("cloth_verts"),ClothVerts);O->SetNumberField(TEXT("cloth_ms"),ClothMs);O->SetNumberField(TEXT("clip_verts"),ClipVerts);O->SetNumberField(TEXT("back_exit"),BackExitCm);O->SetNumberField(TEXT("clip_lead"),ClipLeadCm);O->SetNumberField(TEXT("swell_ms"),SwellMs);O->SetNumberField(TEXT("swell_part"),BulgePart);}O->SetNumberField(TEXT("skin_facing"),SkinFacing);O->SetBoolField(TEXT("belly_side"),bBellySide);if(Gallery&&Gallery->PreviewActor){const FTransform& HerT=Gallery->PreviewActor->GetActorTransform();auto Vec=[&](const TCHAR* Name,const FVector& V){FVector U=AKKPreviewActor::ActorLocalToUnity(HerT.InverseTransformVectorNoScale(V))*100.;float K[16];if(Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_j_kokan"),K)||Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_J_Kokan"),K)){const FVector X(K[0],K[4],K[8]),Y(K[1],K[5],K[9]),Z(K[2],K[6],K[10]);U=FVector(U|X.GetSafeNormal(),U|Y.GetSafeNormal(),U|Z.GetSafeNormal());}TArray<TSharedPtr<FJsonValue>> A;A.Add(MakeShared<FJsonValueNumber>(U.X));A.Add(MakeShared<FJsonValueNumber>(U.Y));A.Add(MakeShared<FJsonValueNumber>(U.Z));O->SetArrayField(Name,A);};Vec(TEXT("dodge_her"),RootDodge);Vec(TEXT("skin_normal_her"),SkinNormal);Vec(TEXT("front_her"),BellyFront);}O->SetNumberField(TEXT("root_scale"),RootPadScale);O->SetBoolField(TEXT("xray"),bPenisXRay);if(Gallery&&Gallery->PairedPlayback)O->SetNumberField(TEXT("pair_rate"),Gallery->PairedPlayback->GetSpeed());O->SetNumberField(TEXT("held"),Held.Num());O->SetStringField(TEXT("caption"),Caption?Caption->GetText().ToString():FString());
     {const TSharedPtr<FJsonObject>* Areas=nullptr;if(Gallery&&Gallery->HExperience.IsValid()&&Gallery->HExperience->TryGetObjectField(TEXT("areas"),Areas))O->SetObjectField(TEXT("areas"),*Areas);}
     if(IsValid(Second)){auto Two=MakeShared<FJsonObject>();Two->SetStringField(TEXT("name"),SecondName);Two->SetBoolField(TEXT("ready"),bSecondReady);Two->SetStringField(TEXT("state"),SecondState);Two->SetStringField(TEXT("face"),SecondFaceKey);Two->SetBoolField(TEXT("bare"),bSecondBare);Two->SetNumberField(TEXT("orgasms"),SecondRuns.IsValidIndex(SecondRun)?SecondRuns[SecondRun].Orgasms:0);O->SetObjectField(TEXT("second"),Two);}
