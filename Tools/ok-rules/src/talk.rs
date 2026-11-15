@@ -1073,6 +1073,8 @@ pub fn shy_confession(res: &mut EventResult, shyness: i32, others_near: i32, pla
         return;
     }
     let crowded = others_near > 0 || crate::places::crowd_at(place, hours) >= SHY_CROWD;
+    // A refusal anyway stays a plain refusal: 雷电将军 at favor 88 said no, lost 25, and was told "find a time when it is
+    // just the two of you", which would have been no as well (round 12, 2026-11-15).
     if crowded {
         if !res.refusal {
             res.refusal = true;
@@ -1080,9 +1082,9 @@ pub fn shy_confession(res: &mut EventResult, shyness: i32, others_near: i32, pla
             res.effect.reset_favor = false;
             res.effect.favor = 0.0;
             res.effect.set_flags.clear();
+            res.reason = "confession_shy_onlookers".into();
+            res.shy = "onlookers".into();
         }
-        res.reason = "confession_shy_onlookers".into();
-        res.shy = "onlookers".into();
     } else if !res.refusal && shy_roll.rem_euclid(100) < ((shyness - 60) * 3).clamp(0, 100) {
         res.shy = "runs_away".into();
     }
@@ -1607,7 +1609,7 @@ mod tests {
         let mut no = confession(&d, &rel(json!({"stage": "friend", "favor": 101})), &who(), 99);
         assert!(no.refusal);
         super::shy_confession(&mut no, 85, 1, "park", 15.0, 0);
-        assert!(no.shy == "onlookers" && no.effect.favor == super::CONFESS_REFUSE_FAVOR);
+        assert!(no.shy.is_empty() && no.reason != "confession_shy_onlookers" && no.effect.favor == super::CONFESS_REFUSE_FAVOR);
         // Alone on a quiet street at night: yes, often by running off (75 % at 85).
         let mut c = yes();
         super::shy_confession(&mut c, 85, 0, "", 22.5, 74);
