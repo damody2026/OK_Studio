@@ -1,5 +1,6 @@
 -- Adds road points of city_places.json that the baked graph (city_roads.json) has not got yet, inside a box, with their links.
---   Tools\lua\lua.exe Tools\street_city_roads_add.lua [--box x0,y0,x1,y1] [--dry]
+--   Tools\lua\lua.exe Tools\street_city_roads_add.lua [--box x0,y0,x1,y1] [--dry] [--spur]
+-- --spur: a dead end into a room from one road point (the izakaya's north-east room off its door, 11-16): one tie is enough.
 -- The streamed map (UniversityCityWP) cannot sweep its links at start, so it reads city_roads.json, which only a run on the
 -- source map makes (-CityBakeRoads, then Tools/street_city_road_bake_payload.lua). A passage opened since then
 -- (export_street_city_game_places.lua PASSAGES, e.g. S32 on 11-13) is in city_places.json alone and the streamed map's
@@ -11,13 +12,14 @@ package.path = 'Tools/lua/?.lua;' .. package.path
 local j = require('ok.json')
 local DIR = 'Content/IndependentResources/StreetSocialData/'
 local box = { 42600, 28300, 45300, 29000 }
-local dry = false
+local dry, spur = false, false
 local i = 1
 while arg[i] do
   if arg[i] == '--box' then
     box = {}; for v in arg[i + 1]:gmatch('[^,]+') do box[#box + 1] = assert(tonumber(v), '--box x0,y0,x1,y1') end
     assert(#box == 4, '--box x0,y0,x1,y1'); i = i + 2
   elseif arg[i] == '--dry' then dry = true; i = i + 1
+  elseif arg[i] == '--spur' then spur = true; i = i + 1
   else error('unknown argument ' .. arg[i], 0) end
 end
 local function read(p) local f = assert(io.open(p, 'rb')); local s = f:read('a'); f:close(); return j.decode(s) end
@@ -74,7 +76,7 @@ end
 print(('box %s: %d points added (%d..%d), %d links, %d of them to baked points'):format(table.concat(box, ','), added,
   #roads.nodes - added, #roads.nodes - 1, links, ties))
 for _, n in ipairs(new) do local p = places.nodes[n]; print(('  %d,%d  z %.1f'):format(p[1], p[2], z[n])) end
-if ties < 2 then error('fewer than two ties to the baked roads: not written', 0) end
+if ties < (spur and 1 or 2) then error('fewer than two ties to the baked roads: not written', 0) end
 if dry then print('--dry: not written'); return end
 -- same layout as the bake writes (street_city_road_bake_payload.lua)
 local rows, lrows = {}, {}

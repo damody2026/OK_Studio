@@ -615,6 +615,12 @@ local PASSAGES = {
   -- there for 70 game minutes (c-conquest, nh1115y). A point past the vestibule (scans z 1270/1245: open y 24775-24975),
   -- not tied to the street, so the road graph's nearest point inside the restaurant is in it, not behind its walls.
   { id = 'restaurant_in', pts = { { 46810, 24880 }, { 47000, 24875 } }, tie = { true, false }, min_ties = 1 },
+  -- The izakaya's north-east room (booths, counter stools): its doorway off the hall is 1 m (x 33890-33990 at y 26000,
+  -- S52_F01's partition), then a 1.2 m corridor x 33820-33930 north to y 26290 and east into the room (10 cm scan 11-16).
+  -- The grid route cut the doorway's west jamb, 24 replans before he got out (c-street-city, city1116a). Through the
+  -- doorway's middle: from the shop's door (the hall has no road point; the street's are 8 m off, outside) along the
+  -- line the editor's walk probe took across the hall, the far end untied (it is in the room).
+  { id = 'izakaya_ne', pts = { { 33050, 25880 }, { 33400, 25900 }, { 33860, 25900 }, { 33940, 26000 }, { 33875, 26140 }, { 33875, 26290 }, { 34100, 26290 } }, tie = { true, false }, min_ties = 1 },
   { id = 'sp_gym', pts = { { 77174.7, 34274.6 }, { 77000, 34275 }, { 77000, 35400 }, { 77000, 36400 }, { 77000, 37400 }, { 77000, 38400 }, { 77000, 39500 } } },
   -- 11-13 batch (map cut on the source map, Tools/street_city_shop_passage_payload.lua / street_city_fence_gaps_payload.lua;
   -- boxes and walk probes in places-v1/shop-passage-batch*-apply-1113.json, fence-gaps-dorm-apply-1113.json,
