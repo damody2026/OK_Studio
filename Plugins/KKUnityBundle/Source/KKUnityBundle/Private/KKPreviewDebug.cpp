@@ -191,6 +191,41 @@ static FAutoConsoleCommandWithWorldArgsAndOutputDevice GOKDumpPartObjCommand(TEX
 		Ar.Logf(TEXT("OK dump part %s: none"), *Wanted);
 	}));
 
+// Her body bones' local rotations in the current pose (Unity Euler degrees), from the session: a shape-driven helper
+// (cf_d_sk_04_00, the qipao's back flare) can be checked against the native capture's transforms.tsv.
+static FAutoConsoleCommandWithWorldArgsAndOutputDevice GOKBoneLocalCommand(TEXT("ok.Debug.BoneLocal"),
+	TEXT("ok.Debug.BoneLocal <bone>...: each character's local rotation (Unity Euler degrees) of those body bones now."),
+	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World, FOutputDevice& Ar)
+	{
+		for (TObjectIterator<AKKPreviewActor> It; It; ++It)
+		{
+			if (It->HasAnyFlags(RF_ClassDefaultObject) || (World && It->GetWorld() != World) || !It->Session.IsOpen()) continue;
+			for (const FString& Bone : Args)
+			{
+				FVector Euler;
+				if (It->Session.BoneEuler(Bone, Euler))
+					Ar.Logf(TEXT("OK bone local %s actor=%s pose_mode=%d euler=(%.4f, %.4f, %.4f)"), *Bone, *It->GetName(), It->PoseMode, Euler.X, Euler.Y, Euler.Z);
+				else
+					Ar.Logf(TEXT("OK bone local %s actor=%s: none"), *Bone, *It->GetName());
+			}
+		}
+	}));
+
+static FAutoConsoleCommandWithWorldArgsAndOutputDevice GOKDynamicChainsCommand(TEXT("ok.Debug.DynamicChains"),
+	TEXT("ok.Debug.DynamicChains <file>: each character's dynamic chains as read (owner, component, root, parameters, colliders) written as JSON to <file> (actor name appended)."),
+	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World, FOutputDevice& Ar)
+	{
+		if (Args.Num() < 1) { Ar.Logf(TEXT("usage: ok.Debug.DynamicChains <file>")); return; }
+		for (TObjectIterator<AKKPreviewActor> It; It; ++It)
+		{
+			if (It->HasAnyFlags(RF_ClassDefaultObject) || (World && It->GetWorld() != World) || !It->Session.IsOpen()) continue;
+			const FString Path = FPaths::GetBaseFilename(Args[0], false) + TEXT("_") + It->GetName() + TEXT(".json");
+			const FString Json = It->Session.DynamicChainsJson();
+			const bool bOk = !Json.IsEmpty() && FFileHelper::SaveStringToFile(Json, *Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+			Ar.Logf(TEXT("OK dynamic chains actor=%s %s %s"), *It->GetName(), bOk ? TEXT("->") : TEXT("failed"), *Path);
+		}
+	}));
+
 void OKTagPreviewPart(UPrimitiveComponent* Component, const FString& Name)
 {
 	if (!Component || Name.IsEmpty()) return;

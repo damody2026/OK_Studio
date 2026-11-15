@@ -1871,3 +1871,13 @@ bool FOkAppearanceContext::CommitGeometry(FOkAppearanceGeometryCandidate& Candid
  const int32 Result=ok_appearance_geometry_commit(Handle,Candidate.Handle,Session.Handle,Apply?1:0,Buffer,UE_ARRAY_COUNT(Buffer));Error=UTF8_TO_TCHAR(Buffer);
  if(Result==0&&Apply)Session.RuntimeMaterials.Reset();return Result==0;
 }
+
+FString FOkSession::DynamicChainsJson() const
+{
+    if (!Handle) return {};
+    const int32 Size=ok_session_dynamic_chains_json(Handle,nullptr,0);
+    if (Size<=0) return {};
+    TArray<uint8> Bytes; Bytes.SetNumZeroed(Size+1);
+    if (ok_session_dynamic_chains_json(Handle,Bytes.GetData(),Size)!=Size) return {};
+    return UTF8_TO_TCHAR(reinterpret_cast<const char*>(Bytes.GetData()));
+}

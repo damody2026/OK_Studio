@@ -7,6 +7,7 @@
 --     [--capture-effects] [--renderer-controls] [--material-texture-controls] [--accessory-physics]
 --     [--texture-coverage] [--face-create] [--body-create] [--body-morph] [--state-only] [--outfit 0..6]
 --     [--studio-shadow-depth 0..1] [--capture-view x,y,z,tx,ty,tz]
+--     [--post-physics]  the transforms again after 1, 10 and 60 frames of physics (.post-physics-<frame>.tsv)
 -- Build the probe first: Tools\lua\lua.exe Tools\GamePoseProbe\build.lua
 local ok = require "ok"
 local path, fs, util = ok.path, ok.fs, ok.util
@@ -60,7 +61,8 @@ local function main()
   p:opt("--clothes-create-names", { nargs = "*", default = {} })
   for _, f in ipairs({ "--texture-mips", "--light-audit", "--ramp-audit", "--capture-face", "--capture-body",
     "--capture-isolations", "--capture-effects", "--renderer-controls", "--material-texture-controls",
-    "--accessory-physics", "--texture-coverage", "--face-create", "--body-create", "--body-morph", "--state-only" }) do
+    "--accessory-physics", "--texture-coverage", "--face-create", "--body-create", "--body-morph", "--state-only",
+    "--post-physics" }) do
     p:flag(f)
   end
   p:opt("--outfit", { type = "int", default = 0 })
@@ -108,6 +110,7 @@ local function main()
   setenv("OK_PROBE_RAMP", flag(a.ramp_audit))
   setenv("OK_PROBE_RENDERER_FULL_BODY", flag(a.capture_body))
   setenv("OK_PROBE_CAPTURE_VIEW", a.capture_view)
+  setenv("OK_PROBE_POST_PHYSICS", flag(a.post_physics))
   setenv("OK_PROBE_RENDERER_FACE", flag(a.capture_face or a.capture_body))
   setenv("OK_PROBE_RENDERER_ISOLATIONS", flag(a.capture_isolations))
   setenv("OK_PROBE_RENDERER_EFFECTS", flag(a.capture_effects))

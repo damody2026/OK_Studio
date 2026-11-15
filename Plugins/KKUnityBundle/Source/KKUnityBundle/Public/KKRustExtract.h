@@ -239,6 +239,8 @@ public:
  bool RefreshBodyPhysics();
  // Her dynamics back to rest (built again on the next step), for a replay from a known start (ok.Anim.SetTime).
  bool ResetDynamics();
+ // Her dynamic chains as read (owner, component, root, parameters, colliders), JSON, for ok.Debug.DynamicChains.
+ FString DynamicChainsJson() const;
  // Her skin where he lifts it cut finer (one-on-one): once, after Open, before her mesh is built. The vertices added.
  int32 RefineBelly();
  bool ApplyEditorMods(const FString& Json,int32 Coordinate,bool* GeometryChanged=nullptr);

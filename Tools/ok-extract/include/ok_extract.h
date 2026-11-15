@@ -541,6 +541,8 @@ int32_t ok_session_refresh_body_physics(OkSession* session);
 /* Her dynamics (accessory/hair chains, clothes chains, body) back to rest, built again on the next step: a replay
  * from a known start reaches the same pose at the same time (ok.Anim.SetTime). 0 on success. */
 int32_t ok_session_reset_dynamics(OkSession* session);
+/* Her dynamic chains as read: owner, component, root, parameters and colliders, JSON. Size with a null out. */
+int32_t ok_session_dynamic_chains_json(OkSession* session, uint8_t* out, int32_t cap);
 /* Her skin where he lifts it cut finer, one-on-one only: once, after opening, before the mesh is built. The vertices
  * added, -1 without a session. */
 int32_t ok_session_refine_belly(OkSession* session);

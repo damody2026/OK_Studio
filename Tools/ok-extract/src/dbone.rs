@@ -3438,6 +3438,32 @@ impl AttachedDynamicSet {
                 update_rate: db.update_rate, mirror, particles, colliders }
         }).collect()
     }
+
+    /// Each chain as it is simulated now, by name (the reader's ok.Debug.DynamicChains): to set beside the native
+    /// capture's DynamicBone rows (component, root, gravity/force, the particles' damping .. radius, the colliders).
+    pub(crate) fn report(&self, body: Option<&Skeleton>) -> Vec<serde_json::Value> {
+        let name = |id: i64, in_body: bool| {
+            let own = self.skel.tfs.get(&id).map(|tf| tf.name.clone());
+            let body = body.and_then(|b| b.tfs.get(&id)).map(|tf| tf.name.clone());
+            (if in_body { body.or(own) } else { own.or(body) }).unwrap_or_else(|| format!("#{id}"))
+        };
+        self.chains.iter().zip(self.gpu_view()).map(|(chain, view)| {
+            let first = view.particles.first();
+            serde_json::json!({
+                "component": chain.db.component_name, "root": name(view.root, false), "ver01": view.ver01,
+                "gravity": view.gravity, "force": view.force, "freeze_axis": view.freeze_axis, "update_rate": view.update_rate,
+                "particles": view.particles.len(),
+                "damping": first.map(|p| p.damping), "elasticity": first.map(|p| p.elasticity), "stiffness": first.map(|p| p.stiffness),
+                "inert": first.map(|p| p.inert), "radius": first.map(|p| p.radius),
+                "base": {"damping": chain.db.damping, "elasticity": chain.db.elasticity, "stiffness": chain.db.stiffness, "inert": chain.db.inert, "radius": chain.db.radius,
+                    "colliders": chain.db.collider_refs.len()},
+                "per_particle": view.particles.iter().map(|p| serde_json::json!({"bone": p.id.map(|id| name(id, false)), "damping": p.damping,
+                    "elasticity": p.elasticity, "stiffness": p.stiffness, "inert": p.inert, "radius": p.radius})).collect::<Vec<_>>(),
+                "colliders": view.colliders.iter().map(|c| serde_json::json!({"bone": name(c.transform, c.in_body), "in_body": c.in_body,
+                    "radius": c.radius, "height": c.height, "center": c.center, "direction": c.direction, "inside": c.inside})).collect::<Vec<_>>(),
+            })
+        }).collect()
+    }
 }
 
 /// IllusionFixes DynamicBonesFix.Hooks patches ordinary and Ver02 skip,

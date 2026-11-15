@@ -460,6 +460,29 @@ public sealed partial class GamePoseProbe : BaseUnityPlugin
                     foreach(Material material in renderer.sharedMaterials)
                         if(material!=null&&material.HasProperty("_outline"))
                             metadata.WriteLine("outline\t"+renderer.name+"\t"+material.name+"\t"+material.shader.name+"\t"+material.GetFloat("_outline").ToString("R",CultureInfo.InvariantCulture)+"\t"+renderer.enabled+"\t"+renderer.gameObject.activeInHierarchy);
+            // Each clothes/body DynamicBone (Ver01) as it stands at the capture: whether it runs and what pulls its chain.
+            if(fullBody)
+                foreach(DynamicBone db in cha.GetComponentsInChildren<DynamicBone>(true))
+                    metadata.WriteLine("dynamic_bone\t"+PathOf(db.transform)+"\t"+(db.m_Root==null?"null":db.m_Root.name)+"\t"+db.enabled+"\t"+db.gameObject.activeInHierarchy
+                        +"\tgravity="+db.m_Gravity.ToString("R")+"\tforce="+db.m_Force.ToString("R")+"\tdamping="+db.m_Damping.ToString("R")+"\telasticity="+db.m_Elasticity.ToString("R")
+                        +"\tstiffness="+db.m_Stiffness.ToString("R")+"\tinert="+db.m_Inert.ToString("R")+"\tradius="+db.m_Radius.ToString("R")+"\tcolliders="+(db.m_Colliders==null?0:db.m_Colliders.Count)
+                        +"\tfreeze="+db.m_FreezeAxis);
+            // Each such chain's colliders by name, and the per-particle values it runs with (base times its distribution curves).
+            if(fullBody)
+                foreach(DynamicBone db in cha.GetComponentsInChildren<DynamicBone>(true)) {
+                    string root=db.m_Root==null?"null":db.m_Root.name;
+                    if(db.m_Colliders!=null)
+                        foreach(DynamicBoneCollider c in db.m_Colliders)
+                            metadata.WriteLine("dynamic_bone_collider\t"+root+"\t"+(c==null?"null":PathOf(c.transform)+"\t"+c.GetType().Name+"\t"+c.enabled+"\t"+c.gameObject.activeInHierarchy
+                                +(c is DynamicBoneCollider?"\tradius="+((DynamicBoneCollider)c).m_Radius.ToString("R")+"\theight="+((DynamicBoneCollider)c).m_Height.ToString("R")+"\tcenter="+((DynamicBoneCollider)c).m_Center.ToString("R")+"\tdirection="+((DynamicBoneCollider)c).m_Direction+"\tbound="+((DynamicBoneCollider)c).m_Bound:"")));
+                    FieldInfo particlesField=typeof(DynamicBone).GetField("m_Particles",BindingFlags.Instance|BindingFlags.NonPublic|BindingFlags.Public);
+                    System.Collections.IList particles=particlesField==null?null:particlesField.GetValue(db) as System.Collections.IList;
+                    if(particles!=null)
+                        foreach(object p in particles) {
+                            Func<string,string> f=name=>{FieldInfo fi=p.GetType().GetField(name,BindingFlags.Instance|BindingFlags.NonPublic|BindingFlags.Public);object v=fi==null?null:fi.GetValue(p);return v is float?((float)v).ToString("R",CultureInfo.InvariantCulture):v is Transform?((Transform)v).name:v==null?"null":v.ToString();};
+                            metadata.WriteLine("dynamic_bone_particle\t"+root+"\t"+f("m_Transform")+"\tdamping="+f("m_Damping")+"\telasticity="+f("m_Elasticity")+"\tstiffness="+f("m_Stiffness")+"\tinert="+f("m_Inert")+"\tradius="+f("m_Radius"));
+                        }
+                }
             metadata.WriteLine("camera\t"+camera.actualRenderingPath+"\t"+camera.cullingMask+"\t"+camera.aspect+"\t"+distance);
             metadata.WriteLine("capture_camera\tsource_main\t"+sourceCamera.name);
             foreach(UnityEngine.Rendering.CameraEvent ev in Enum.GetValues(typeof(UnityEngine.Rendering.CameraEvent)))
@@ -2629,6 +2652,13 @@ public sealed partial class GamePoseProbe : BaseUnityPlugin
                 if(Environment.GetEnvironmentVariable("OK_PROBE_BODY_MORPH")=="1")WriteBodyMorphControls(cha);
                 if(Environment.GetEnvironmentVariable("OK_PROBE_FACE_CREATE")=="1")CaptureFaceOverlays(cha);WriteRendererSnapshot(cha);Save(new Dump{error="",clip="Native Renderer/Material snapshot"});}
             catch(Exception ex){Save(new Dump{error=ex.ToString()});}
+            // The snapshot's transforms are read before DynamicBone's LateUpdate writes its chains: the same bones again
+            // after frames have run their physics (.post-physics-<frame>.tsv at frames 1, 10 and 60).
+            if(Environment.GetEnvironmentVariable("OK_PROBE_POST_PHYSICS")=="1")
+                for(int frame=1;frame<=60;++frame) {
+                    yield return new WaitForEndOfFrame();
+                    if(frame==1||frame==10||frame==60)WriteTransforms(cha,".post-physics-"+frame+".tsv");
+                }
             finished=true;Application.Quit();yield break;
         }
         if(Environment.GetEnvironmentVariable("OK_PROBE_MATERIALS")=="1") {

@@ -4724,6 +4724,16 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 修正：`ok.Anim.Pause 0` 後重做；之後用 `ok.Debug.DumpPartObj` 量頂點，三種物理後端結果逐位相同，才確定不是物理。
 - 預防：用過 SetTime／Step 之後要測會隨時間變化的東西，先 `ok.Anim.Pause 0`；比較畫面「完全沒變」時先懷疑時鐘是否在跑。
 
+## 2026-11-16 讀卡器頭髮／飾品動態鏈沒有身體 collider（F 組，未修）
+- 現象：C074 服裝 1 的 `ok.Debug.DynamicChains` 顯示頭髮與飾品鏈（Hair_*、Piao_*、Bip001Head）的 colliders 為空；原作（CharaStudio 截取 `dynamic_bone_collider` 列，F:/OpenKoikatsu/Saved/Tests/ZW074Db3）每條 DynamicBone 都帶同一份 36 個（24 個身體 hit + KKS_Colliders 12 個）。頭髮會穿進身體。
+- 狀態：只記錄未追；疑與裙鏈 collider 綁定同一路徑，待旗袍臀部的求解語義釐清後一起修。
+
+## 2026-11-16 原作 dump 是物理前的狀態，拿它當畫面最終姿勢比對（F 組，旗袍 O1）
+- 查 C074（kks encore）服裝 1 臀部露出內褲時，拿原作截取（GamePoseProbe `--mesh-names`／transforms.tsv）的旗袍後片 z=-0.19 當基準，判定讀卡器的 -0.122 是錯的，再往「體型外張被動畫蓋掉」追。`ok.Debug.BoneLocal` 實測讀卡器 cf_d_sk_04_00＝21.96°（與原作 22° 相同），假設不成立。
+- 實情：原作 dump 裡 cf_j_sk_* 全為精確單位旋轉——這是「DynamicBone 還沒寫入」的指紋，dump 發生在 LateUpdate 之前；z=-0.19 是物理前的值。原作畫面（物理後）沒有破洞才是最終姿勢的對照。讀卡器的收攏來自裙鏈動態骨（cf_j_sk_04_00／01 每節 -7～-11°）。
+- 教訓：**拿原作 dump 當 ground truth 前，先標明它是物理前還是物理後**；動態骨鏈的 local 全為單位旋轉時，就是物理前。
+- 補量（原作探針 `--post-physics`：WaitForEndOfFrame 後第 1／10／60 幀，三者相同）：原作靜止姿勢 cf_j_sk_04_00／01／02／03 = -2.2°／-3.1°／-16.2°／0°；讀卡器同姿勢（T-pose，手臂 -2.52°、大腿 1.0° 與原作相同）= -7.2°／-7.1°／-7.0°／-1.9°。總彎曲相同（約 21.5°），分布不同：原作上段幾乎不折、集中在第 3 節，讀卡器每節平均折，後片上段就貼到臀部。鏈參數（force、damping、inert、逐粒子 elasticity／stiffness／radius）與原作逐項相同；collider 讀卡器少了 KKS_Colliders 的 12 個（原作每條 DynamicBone 都帶），試加大腿 6 個只把跳躍第 0 幀的 -9.69°／-10.98° 改成 -8.95°／-9.17°，背面仍露內褲，已撤回。差異在 DynamicBone 求解本身，待查。
+
 ## 2026-11-16 sed 抓行號失敗，一行插到整個檔案每一行後面（F 組，工作室 U273）
 - 想把 `KKPreviewActor.cpp` 裡的 `okNuv` 那一行移回原位，用 `grep -n` 抓行號再交給 `sed "${n}a ..."`。grep 的樣式跳脫錯了，`n` 是空的，`sed a` 對每一行都生效，檔案多了 13,999 行。
 - 修正：所有完全等於這一行的行都刪掉（`grep -v -x -F`），再用 Edit 插回一次；和 HEAD 加上別人未提交修改的行數核對（13,986 + 14），diff 只剩別人的排序修改。

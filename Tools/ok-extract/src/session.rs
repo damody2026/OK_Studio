@@ -2372,6 +2372,21 @@ impl OkSession {
         }
     }
 
+    /// Her clothes' and accessories' DynamicBone chains as simulated now (ok_session_dynamic_chains_json): each with the
+    /// part (or "clothes" for the shared clothes set) it belongs to.
+    pub(crate) fn dynamic_chains_report(&self) -> serde_json::Value {
+        let body = self.body_skel.as_ref();
+        let mut out = Vec::new();
+        if let Some((_, set)) = &self.clothes_dynamic_runtime {
+            for chain in set.report(body) { out.push(serde_json::json!({"owner": "clothes", "chain": chain})); }
+        }
+        for part in &self.parts {
+            let Some(set) = part.runtime_accessory.as_ref().and_then(|r| r.state.as_ref()) else { continue; };
+            for chain in set.report(body) { out.push(serde_json::json!({"owner": part.name, "chain": chain})); }
+        }
+        serde_json::Value::Array(out)
+    }
+
     pub(crate) fn update_dynamic_accessories(&mut self, dt: f32) {
         self.update_dynamic_accessories_impl(dt, crate::anim::is_shared_root(&self.game_root));
     }
