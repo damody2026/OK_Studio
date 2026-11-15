@@ -442,7 +442,24 @@ public sealed partial class GamePoseProbe : BaseUnityPlugin
         float distance=bounds.extents.y*1.4f/Mathf.Tan(camera.fieldOfView*.5f*Mathf.Deg2Rad);
         camera.transform.position=bounds.center+new Vector3(0f,0f,distance);
         camera.transform.LookAt(bounds.center);
+        // OK_PROBE_CAPTURE_VIEW="x,y,z,tx,ty,tz": the camera at bounds.center+(x,y,z) looking at bounds.center+(tx,ty,tz),
+        // metres in world space (a low shot up under a hem, say), the same framing the reader's camera can take.
+        string view=Environment.GetEnvironmentVariable("OK_PROBE_CAPTURE_VIEW");
+        if(fullBody&&!string.IsNullOrEmpty(view)) {
+            string[] v=view.Split(',');
+            if(v.Length!=6) throw new Exception("OK_PROBE_CAPTURE_VIEW needs x,y,z,tx,ty,tz");
+            Func<int,float> at=i=>float.Parse(v[i],CultureInfo.InvariantCulture);
+            camera.transform.position=bounds.center+new Vector3(at(0),at(1),at(2));
+            camera.transform.LookAt(bounds.center+new Vector3(at(3),at(4),at(5)));
+        }
         using(StreamWriter metadata=new StreamWriter(path+".renderers.tsv")) {
+            metadata.WriteLine("view\t"+camera.transform.position.ToString("F4")+"\t"+camera.transform.forward.ToString("F4")+"\t"+bounds.center.ToString("F4"));
+            // Each drawn material's outline switch (main_alpha and the other Forge outlines clip back faces when _outline is 1).
+            if(fullBody)
+                foreach(Renderer renderer in cha.GetComponentsInChildren<Renderer>(true))
+                    foreach(Material material in renderer.sharedMaterials)
+                        if(material!=null&&material.HasProperty("_outline"))
+                            metadata.WriteLine("outline\t"+renderer.name+"\t"+material.name+"\t"+material.shader.name+"\t"+material.GetFloat("_outline").ToString("R",CultureInfo.InvariantCulture)+"\t"+renderer.enabled+"\t"+renderer.gameObject.activeInHierarchy);
             metadata.WriteLine("camera\t"+camera.actualRenderingPath+"\t"+camera.cullingMask+"\t"+camera.aspect+"\t"+distance);
             metadata.WriteLine("capture_camera\tsource_main\t"+sourceCamera.name);
             foreach(UnityEngine.Rendering.CameraEvent ev in Enum.GetValues(typeof(UnityEngine.Rendering.CameraEvent)))
