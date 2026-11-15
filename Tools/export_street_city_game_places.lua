@@ -209,7 +209,13 @@ local SPOTS = { ['cafeteria table'] = { 70230, 42470, 1200 }, ['cafe seat'] = { 
   ['cafe seat3'] = { 47320, 21600, 1200, 90 }, ['cafe seat7'] = { 47400, 21600, 1200, 90 }, ['cafe seat8'] = { 47480, 21600, 1200, 90 },
   ['cafe seat9'] = { 47560, 21600, 1200, 90 }, ['cafe seat14'] = { 47640, 21600, 1200, 90 },
   ['cafe seat19'] = { 47920, 21840, 1200, 180 }, ['cafe seat23'] = { 47920, 21960, 1200, 180 }, ['cafe seat24'] = { 47920, 22080, 1200, 180 },
-  ['cafe seat25'] = { 47920, 22200, 1200, 180 }, ['cafe seat31'] = { 48080, 22000, 1200, 180 } }
+  ['cafe seat25'] = { 47920, 22200, 1200, 180 }, ['cafe seat31'] = { 48080, 22000, 1200, 180 },
+  -- The sushi bar's conveyor stools (x 34307) and booth1's bench are in the shop's north-east room (x 33880-34400,
+  -- y 48120-48960), walled off from the hall like the izakaya's (same S-row template; scans z 1270/1245, grid at 40 and
+  -- 30 cm, 11-15): they stand at the conveyor's other side in the east aisle (x 34560) and in the hall west of the booth.
+  ['sushi conveyor_seat'] = { 34560, 48520, 1200, 180 }, ['sushi conveyor_seat2'] = { 34560, 48440, 1200, 180 },
+  ['sushi conveyor_seat3'] = { 34560, 48360, 1200, 180 }, ['sushi conveyor_seat4'] = { 34560, 48240, 1200, 180 },
+  ['sushi seat33'] = { 33720, 48440, 1200, 0 }, ['sushi seat34'] = { 33720, 48520, 1200, 0 } }
 for _, p in ipairs(places) do
   for _, an in ipairs(p.anchors or {}) do
     local s = SPOTS[p.id .. ' ' .. an.name]

@@ -500,13 +500,16 @@ def motel_world_lover_spots_install():
   o,e,reg=sb;z=1200.;tag='LoverSpot_KTV';booths=[]
   items.append(dict(place='karaoke',anchor='door',pos=num(d),yaw=0,actor='S48_F01',building='S48',name='KTV（S48 唱片小室）',rooms=[dict(min=num(o-e),max=num(o+e))]))
   for k in range(3):
-   got=_ls_search(world,unreal.Vector(o.x,o.y,z),z,320,260,250,[0,90,180,270],rmax=1200,avoid=[d]+booths,wall=False,region=reg,step=25)
+   # the box searched holds the booth and a 1.3 m apron in front of its door: KTV_1's 80 cm door opened onto the side
+   # wall of KTV_2 50 cm away and nobody could walk in or out (c-street-city in game 11-15, StaticMeshActor_16227)
+   got=_ls_search(world,unreal.Vector(o.x,o.y,z),z,320,390,250,[0,90,180,270],rmax=1200,avoid=[d]+booths,wall=False,region=reg,step=25)
    if not got:break
-   c,yaw=got;booths.append(c);t=tag+'_%d'%(k+1)
-   # walls: back (behind the sofa), two sides, front with a 90 cm door gap on the right
+   c,yaw=got;c=_ls_off(c,yaw,-65);booths.append(c);t=tag+'_%d'%(k+1)
+   # walls: back (behind the sofa), two sides, front with a 120 cm door gap on the right (side +30..+150; a real
+   # booth door, and wide enough for the game's 40 cm route grid; it was 80 cm)
    _ls_box(t+'_WallBack',_ls_off(c,yaw,-125),yaw,(10,320,250),M['sofa'])
    for s in (-155,155):_ls_box(t+'_WallSide%+d'%s,_ls_off(c,yaw,0,s),yaw,(260,10,250),M['sofa'])
-   _ls_box(t+'_WallFront',_ls_off(c,yaw,125,-45),yaw,(10,230,250),M['sofa'])
+   _ls_box(t+'_WallFront',_ls_off(c,yaw,125,-65),yaw,(10,190,250),M['sofa'])
    _ls_box(t+'_SofaBase',_ls_off(c,yaw,-75),yaw,(80,220,42),M['cushion']);_ls_box(t+'_SofaBack',_ls_off(c,yaw,-108),yaw,(16,220,80),M['cushion'])
    _ls_box(t+'_Table',_ls_off(c,yaw,10),yaw,(50,100,40),M['wood'])
    _ls_box(t+'_Screen',_ls_off(c,yaw,116,-60,110),yaw,(4,130,75),M['dark']);_ls_box(t+'_ScreenGlow',_ls_off(c,yaw,113.5,-60,113),yaw,(.6,122,67),M['screen'],False)
