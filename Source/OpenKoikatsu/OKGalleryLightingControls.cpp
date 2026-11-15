@@ -253,10 +253,10 @@ void UOKCharacterController::ApplyLighting(bool bForce)
 	// The card's own ramp needs no write until a ramp was chosen on this character (SetDisplayRamp gives every
 	// material it touches its own instance; ProductCardRamps remembers the card ramps it replaced).
 	if (Ramp || A->ProductCardRamps.Num() > 0) A->SetDisplayRamp(Ramp);
-	A->ApplyLightingScales();
+	const int32 Scaled = A->ApplyLightingScales();
 	A->UpdateCameraKeyLight();
 	if (bNewActor || bForce)
-		UE_LOG(LogTemp, Display, TEXT("OK reader lighting preset=%s ramp=%s yaw=%.0f pitch=%.0f light=%.2f ambient=%.2f shade=%.2f"),
-			*LightingPresetCombo->GetSelectedOption(), Key.IsEmpty() ? TEXT("card") : *Key, A->KeyLightYaw, A->KeyLightPitch, A->KeyLightIntensity, A->AmbientScale, A->CardShaderShade);
+		UE_LOG(LogTemp, Display, TEXT("OK reader lighting preset=%s ramp=%s yaw=%.0f pitch=%.0f light=%.2f ambient=%.2f shade=%.2f scaled=%d"),
+			*LightingPresetCombo->GetSelectedOption(), Key.IsEmpty() ? TEXT("card") : *Key, A->KeyLightYaw, A->KeyLightPitch, A->KeyLightIntensity, A->AmbientScale, A->CardShaderShade, Scaled);
 	LitActor = PreviewActor;
 }
