@@ -33,6 +33,9 @@
   - game.log 开头有 `OKMachine`（机器、显卡、驱动、是否低配、stage），之后每 30 秒一行 `OKMem`（内存、显存、已载入的区块与女角数），内存不足时会先写一行错误。
   - 打包版当机会在 `Saved\Crashes` 留下 dump；当机后视窗会卡约 1 分钟才关。
 - **启动器**：可用 `-Stage <名称>` 指定 stage。自动挑最新时，会跳过还没建完或删到一半的 stage 并印出原因，以前挑到删了一半的 stage 会出现「找不到 tbbmalloc.dll」。
+- **重建后仍成立**（2026-11-15 17:02，大学城 WP 重建后完整 cook，stage city1115k，base BaseCity1115K）：
+  - Nanite 仍关闭（`r.Nanite.ProjectEnabled = 0`），cook 出来的 WP 地图没有任何 HLOD actor。
+  - 低配半径 96 m、5 名女角，走路量测 commit 11.0 GB、工作集 7.9 GB、显存 4.1 GB，和重建前一致。
 - **还在等**：测试员当机的 `game.log` 与 `Saved\Crashes`。测试员的机器是 64 GB／16 GB，内存不是已知瓶颈，要看 log 才知道原因。
 
 以下是过程中的各轮结论与数字。
