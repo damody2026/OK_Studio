@@ -443,6 +443,13 @@ fn profile_comes_from_content_when_the_save_has_none() {
     edited.age_in_setting = 25;
     profiles.save(&edited).unwrap();
     assert_eq!(profiles.load("apng-seed").unwrap().unwrap().age_in_setting, 25, "the save's own file wins");
+    // What she likes to be given is a design setting: the shipped one, also in a save seeded before it was written.
+    let mut shipped_now = p.clone();
+    shipped_now.tastes.gift_likes = vec!["sweet".into()];
+    shipped_now.tastes.gift_style = "practical".into();
+    crate::profile::Profiles::new(&shipped, None).save(&shipped_now).unwrap();
+    let again = profiles.load("apng-seed").unwrap().unwrap();
+    assert_eq!((again.tastes.gift_likes.clone(), again.tastes.gift_style.as_str(), again.age_in_setting), (vec!["sweet".to_string()], "practical", 25));
 }
 
 #[test]

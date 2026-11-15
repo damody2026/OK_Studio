@@ -380,11 +380,21 @@ impl Profiles {
         let mut p: Profile = serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|e| format!("profile_invalid: {e}"))?;
         // Her design settings are the shipped profile's, not the save's (a save from before they were written has none):
         // her appetite (satiety_max), 病嬌 (traits.yandere) and 陰部脆弱 (traits.vagina_fragile).
-        if let Some(shipped) = self.seed.as_ref().map(|d| d.join(file_name(id))).filter(|s| s.exists() && *s != path) {
+        if let Some(shipped) = self.seed.as_ref().map(|d| d.join(file_name(id))).filter(|s| {
+            crate::store::settle(s);
+            s.exists() && *s != path
+        }) {
             if let Some(s) = std::fs::read_to_string(&shipped).ok().and_then(|t| serde_json::from_str::<Profile>(t.trim_start_matches('\u{feff}')).ok()) {
                 if s.satiety_max.is_some() { p.satiety_max = s.satiety_max; }
                 p.traits.yandere = s.traits.yandere;
                 p.traits.vagina_fragile = s.traits.vagina_fragile;
+                // What she likes to be given (round 14): written after the saves were seeded, which kept all ten on "cute"
+                // with nothing they liked or disliked.
+                if !s.tastes.gift_likes.is_empty() || !s.tastes.gift_dislikes.is_empty() {
+                    p.tastes.gift_likes = s.tastes.gift_likes;
+                    p.tastes.gift_dislikes = s.tastes.gift_dislikes;
+                    p.tastes.gift_style = s.tastes.gift_style;
+                }
             }
         }
         if p.money.currency != "CNY" {
