@@ -1,17 +1,19 @@
--- StreetSocial development launcher (StreetSocial.cmd). Runs the newest staged build (Saved/StreetSocial/Build/*.stage)
--- unless -Executable is given; CrowdRoom*.stage lives there too but is the crowd room's build. Integrity (SHA256) checks
+-- StreetSocial development launcher (StreetSocial.cmd). Runs the newest complete staged build (Saved/StreetSocial/Build/
+-- *.stage with its stage.json; incomplete ones are skipped and listed) unless -Stage NAME or -Executable is given;
+-- CrowdRoom*.stage lives there too but is the crowd room's build. Measurements name their stage (-Stage): another
+-- group's new stage is otherwise picked up mid-way. Integrity (SHA256) checks
 -- against receipt.json only run with -Strict: several agents rebuild shared data and stages at the same time, so the
 -- default just needs the files to exist.
 --
 --   Tools\lua\lua.exe Tools\run_street_social_development.lua [-Control [-ControlPort N]] [-Clock HH:MM] [-SelfTest]
---     [-ValidateOnly] [-Strict] [-Executable EXE] [-SelectionFile JSON] [-MaleCard PNG] [-RetargetFile JSON]
+--     [-ValidateOnly] [-Strict] [-Stage NAME | -Executable EXE] [-SelectionFile JSON] [-MaleCard PNG] [-RetargetFile JSON]
 --     [-RenderScale 100..200 (default 100)] [-Window WxH]  (window size, default 1920x1080; a smaller one leaves room for other work)
 --     [-Editor]  (development: runs the map in the built editor with -game instead of a staged build; no cook needed)
 --     [-GpuRig | -NoGpuRig]  (heroine poses from the GPU runtime rig, Docs/CROWD_ROOM100.md, or from her own solved banks)
 --     [-GpuRigVerify N]  (also solve full banks and compare N frames of the rig with them: runtime.json "gpu_rig", rig.bin)
 --     [-Sandbox NAME [-PortBase N] [-RulesDll DLL]] [-Exec "CMD,CMD"] [-Trace [CHANNELS]] [-GameArgs "-SWITCH ..."]
 --     [-LowMemory | -NoLowMemory] [-MaxHeroines N]  (low-memory PC, automatic under 48 GB RAM or 20 GB VRAM: the first N (5)
---       heroines of the selection, small character textures, 128 m of the streamed city)
+--       heroines of the selection, small character textures, 96 m of the streamed city)
 --     [-NoCloud]  (with -Sandbox: the sandbox's DeepSeek / Alibaba Cloud keys emptied for the run; no cloud calls)
 --     [-Heroine N|PNG]  (test: only the male and this one heroine, N counting from 1 in the selection, nobody else
 --       loaded; a save made with the full roster is not for it)
@@ -37,7 +39,7 @@ local player_settings = require "street_player_settings"
 local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, mainsave = true, editor = true, nogpurig = true, gpurig = true, city = true, citysource = true, nocloud = true, lowmemory = true, nolowmemory = true }
 local VALUES = { selectionfile = true, malecard = true, retargetfile = true, renderscale = true, executable = true,
   controlport = true, clock = true, window = true, sandbox = true, portbase = true, rulesdll = true, exec = true, trace = true, gpucachedir = true,
-  gameargs = true, gpurigverify = true, heroine = true, patchdir = true, maxheroines = true }
+  gameargs = true, gpurigverify = true, heroine = true, patchdir = true, maxheroines = true, stage = true }
 
 local function parse(argv)
   local o, i = {}, 1
@@ -170,33 +172,45 @@ local function strict_inputs(build)
   end
 end
 
--- Newest StreetSocial stage executable (CrowdRoom*.stage is the crowd room's), by when the stage was made: its
--- stage.json staged_at (Tools/stage_interaction_runtime.lua), else the stage folder's creation time. Not the exe's
--- time: the staged exe is a hard link of the host's, unchanged when a new stage reuses an exe that was not relinked.
--- Returns the exe, the stage's name and how its time was known.
+-- One stage folder: its exe, when it was staged (stage.json staged_at, written by Tools/stage_interaction_runtime.lua
+-- as the last step) and what makes it unusable. A stage without stage.json is still being made (or was half deleted):
+-- picking one ran a game that died on start (nh1115z, 2026-11-15: its Engine/Binaries junction already gone, the
+-- player got "tbbmalloc.dll not found"). Not the exe's time: the staged exe is a hard link of the host's, unchanged
+-- when a new stage reuses an exe that was not relinked.
+local function stage_info(dir, n)
+  local exe = path.join(dir, n, "Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.exe")
+  if not path.is_file(exe) then return nil, nil, nil, "no OpenKoikatsu.exe" end
+  if not path.is_dir(path.join(dir, n, "Windows/Engine/Binaries")) then return exe, nil, nil, "Engine/Binaries missing (junction removed)" end
+  local meta = path.join(dir, n, "stage.json")
+  if not path.is_file(meta) then return exe, nil, nil, "no stage.json (still being staged, or half deleted)" end
+  local okj, m = pcall(json.decode, path.read_text(meta))
+  if not okj or type(m) ~= "table" or not tonumber(m.staged_at) then return exe, nil, nil, "stage.json without staged_at" end
+  return exe, tonumber(m.staged_at), ("staged_at %s, commit %s%s"):format(m.staged_at_text or "?", tostring(m.commit or "?"):sub(1, 9), m.dirty and " +local changes" or "")
+end
+
+-- Newest complete StreetSocial stage (CrowdRoom*.stage is the crowd room's), by its stage.json staged_at. Stages
+-- left out are printed with the reason. Returns the exe, the stage's name and its staged_at line.
 local function newest_stage(root)
-  local lfs = require "lfs"
   local dir, best, best_time, best_name, best_how = path.join(root, "Saved/StreetSocial/Build"), nil, -1, nil, nil
   if not path.is_dir(dir) then return nil end
   for _, n in ipairs(path.list(dir)) do
     if n:lower():match("%.stage$") and not n:lower():match("^crowdroom") then
-      local exe = path.join(dir, n, "Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.exe")
-      if path.is_file(exe) then
-        local t, how
-        local meta = path.join(dir, n, "stage.json")
-        if path.is_file(meta) then
-          local okj, m = pcall(json.decode, path.read_text(meta))
-          if okj and type(m) == "table" and tonumber(m.staged_at) then
-            t, how = tonumber(m.staged_at), ("stage.json %s, commit %s%s"):format(m.staged_at_text or "?", tostring(m.commit or "?"):sub(1, 9), m.dirty and " +local changes" or "")
-          end
-        end
-        -- lfs "change" is the creation time on Windows
-        if not t then t = lfs.attributes(path.join(dir, n), "change"); how = t and ("folder created " .. os.date("%Y-%m-%d %H:%M:%S", t)) end
-        if t and t > best_time then best, best_time, best_name, best_how = exe, t, n, how end
-      end
+      local exe, t, how, problem = stage_info(dir, n)
+      if problem then say(("  Skipped stage %s: %s"):format(n, problem))
+      elseif t > best_time then best, best_time, best_name, best_how = exe, t, n, how end
     end
   end
   return best, best_name, best_how
+end
+
+-- -Stage NAME (with or without .stage): that stage, whatever is newer. A stage that is not complete is refused.
+local function named_stage(root, name)
+  local dir = path.join(root, "Saved/StreetSocial/Build")
+  local n = name:lower():match("%.stage$") and name or (name .. ".stage")
+  if not path.is_dir(path.join(dir, n)) then error(("-Stage %s: no %s in %s"):format(name, n, dir), 0) end
+  local exe, _, how, problem = stage_info(dir, n)
+  if problem then error(("-Stage %s: %s"):format(name, problem), 0) end
+  return exe, n, how
 end
 
 local function main()
@@ -222,6 +236,14 @@ local function main()
     build = { executable = "", patch = o.patchdir and path.abs(o.patchdir) or path.join(root, launch.patch), catalogue = path.join(root, launch.catalogue),
       material_manifest = path.join(root, launch.materials), runtime_render_quality = launch.render_quality }
     if o.editor then o.executable = path.join(ok.engine_root(), "Engine/Binaries/Win64/UnrealEditor.exe") end
+    if o.stage and o.executable then error("-Stage and -Executable both name the game: give one", 0) end
+    if o.stage then
+      local exe, name, how = named_stage(root, o.stage)
+      o.executable = exe
+      say("==================================================================")
+      say(("  Stage: %s  (-Stage; %s)"):format(name, how))
+      say("==================================================================")
+    end
     if not o.executable then
       local latest, name, how = newest_stage(root)
       if not latest then
@@ -293,7 +315,7 @@ local function main()
   end
   -- Low-memory PC (user 2026-11-15: at most 8 GB of VRAM and 12 GB of memory; five heroines are enough there): under 48 GB
   -- of RAM or 20 GB of VRAM, or -LowMemory; -NoLowMemory turns it off. The game gets -OKLowMemory (OKRuntimeLowMemory: small
-  -- character textures, 128 m of the streamed city) and only the first -MaxHeroines (5) of the selection come. The others'
+  -- character textures, 96 m of the streamed city) and only the first -MaxHeroines (5) of the selection come. The others'
   -- relationships stay in the save: it keeps every heroine by id, loaded or not (Docs/STREET_CITY_STREAMING_LOWSPEC_20261114.md).
   local low_memory = o.lowmemory and true or false
   do
