@@ -1322,6 +1322,15 @@ do
       end
     end
   end
+  -- upstairs in a street-level place with no lift or stair anchor: off_<name>, no kinds, tag off (the rule shared with
+  -- Tools/export_street_city_game_places.lua, Tools/street_city_upstairs_off.lua; Docs/STREET_CITY_UPSTAIRS_NO_STAIRS.md)
+  do
+    local UP, n = dofile('Tools/street_city_upstairs_off.lua')(GAME_PLACES), 0
+    for _, r in ipairs(rows) do if UP.off(r.place, r.pos) and UP.mark(r) then
+      r.id = r.place .. '.' .. r.name; r.kinds = {}; r.tags = r.tags or {}; r.tags[#r.tags + 1] = 'off'; n = n + 1 end end
+    table.sort(rows, function(a, b) return a.id < b.id end)
+    print('anchors upstairs without stairs, off', n)
+  end
   local f = assert(io.open('Content/IndependentResources/StreetSocialData/city_anchors.json', 'wb'))
   f:write(json.encode({ schema = 1, map_sha256 = actors.map_sha256, frame = 'UE cm, +X north, +Y east; a character on an anchor faces yaw + 90', anchors = rows })); f:close()
   local c = {}; for _, r in ipairs(rows) do for _, k in ipairs(r.kinds) do c[k] = (c[k] or 0) + 1 end end

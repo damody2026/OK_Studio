@@ -53,7 +53,8 @@ name = "在飲料店裡坐著喝飲料聊天"
 place = "drinkshop"
 kind = "pair"
 code = 1
-anchor = "seat"
+# 1F 的座位：seat／seat2 在 3F，這棟沒有樓梯錨點（Docs/STREET_CITY_UPSTAIRS_NO_STAIRS.md），補了樓梯再指回 seat
+anchor = "seat3"
 female_clip = "venue_drink_seated.okanim"
 male_clip = "venue_drink_seated.okanim"
 
@@ -176,7 +177,9 @@ name = "在便利店內用區一起吃"
 place = "conveni"
 kind = "pair"
 code = 5
-anchor = "dining|table|seat"
+# 內用區（dining／table／seat）在 2F、3F，這棟沒有樓梯錨點（Docs/STREET_CITY_UPSTAIRS_NO_STAIRS.md），1F 沒有座位：
+# 補了樓梯前在 1F 走道 aisle 站著吃，補了樓梯後拿掉 aisle
+anchor = "dining|table|seat|aisle"
 
 
 [[activity]]
@@ -1659,7 +1662,8 @@ name = "在彩券行一起刮刮樂"
 place = "lottery"
 kind = "pair"
 code = 1
-anchor = "seat"
+# 1F 的座位：seat 在 2F，這棟沒有樓梯錨點（Docs/STREET_CITY_UPSTAIRS_NO_STAIRS.md），補了樓梯再指回 seat
+anchor = "seat2"
 feed = { fun = 5 }
 
 [[activity]]

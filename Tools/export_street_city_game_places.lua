@@ -353,32 +353,35 @@ for _, p in ipairs(places) do
   end
 end
 
--- Upstairs anchors of a street-level place with no lift or stair anchor at all: no route leads up there (the game finds
--- a floor's way up by its lift/stair anchors, OKStreetPlaceLifts), yet the schedule sent heroines up and they stood stuck
--- (the cafe's 2F seats, 11-15). Kept, not dropped: renamed off_<name> so no activity's anchor prefix picks them, with
--- "off" saying why; the list (place, floor, a real floor or a high object, anchors) is the work list for adding stairs,
--- written to Docs/STREET_CITY_UPSTAIRS_NO_STAIRS.md. 2.5 m over the door: an upper floor or something high indoors.
+-- Upstairs anchors of a street-level place with no lift or stair anchor at all (Tools/street_city_upstairs_off.lua, the
+-- one rule shared with Tools/build_street_city_places.lua for city_anchors.json): no route leads up there, yet the
+-- schedule sent heroines up and they stood stuck (the cafe's 2F seats, 11-15). Kept, not dropped: renamed off_<name> so
+-- no activity's anchor prefix picks them, with "off" saying why; the list is the work list for adding stairs, written
+-- to Docs/STREET_CITY_UPSTAIRS_NO_STAIRS.md. The rules' rows of the same anchors get the same name and no kinds.
 local UPSTAIRS_FIRST = { 'cafe', 'restaurant', 'conveni', 'fastfood', 'izakaya', 'karaoke', 'manga_cafe', 'onsen' }
+local UP = dofile('Tools/street_city_upstairs_off.lua')(places)
 local offrows = {}
+local function offrow(id, o) local key = id .. ' ' .. tostring(o.floor or '-')
+  local row = offrows[key]; if not row then row = { place = id, floor = o.floor, real = o.real, names = {}, rules = 0 }; offrows[key] = row end
+  return row end
 for _, p in ipairs(places) do
-  -- school: a campus building whose floors are reached through campus_t1's lifts
-  if not p.outdoor and p.id ~= 'school' and p.door and #p.door == 3 and p.door[3] < 1300 then
-    local lifted = false
-    for _, an in ipairs(p.anchors or {}) do if an.name:match('^lift') or an.name:match('^stair') then lifted = true end end
-    if not lifted then
-      for _, an in ipairs(p.anchors or {}) do if an.pos[3] > p.door[3] + 250 then
-        local fl
-        for _, room in ipairs(p.rooms or {}) do if room.min and room.max and an.pos[1] >= room.min[1] and an.pos[1] <= room.max[1]
-          and an.pos[2] >= room.min[2] and an.pos[2] <= room.max[2] and an.pos[3] >= room.min[3] - 50 and an.pos[3] < room.max[3] then fl = room.floor end end
-        -- the ground-floor room of a shop often reaches 4 m up, over its 2F (z 1580); 3.8 m a storey
-        local dz = an.pos[3] - p.door[3]; if dz >= 300 and (not fl or fl < 2) then fl = math.floor(dz / 380 + .5) + 1 end
-        local key = p.id .. ' ' .. tostring(fl or '-'); local real = dz >= 300
-        local row = offrows[key]; if not row then row = { place = p.id, floor = fl, real = real, names = {} }; offrows[key] = row end
-        row.names[#row.names + 1] = an.name
-        an.name = 'off_' .. an.name; an.off = 'no lift or stair in the place'
-      end end
-    end
+  for _, an in ipairs(p.anchors or {}) do local o = UP.off(p.id, an.pos)
+    if o then local row = offrow(p.id, o); row.names[#row.names + 1] = (an.name:gsub('^' .. UP.PREFIX, '')); UP.mark(an); an.off = 'no lift or stair in the place' end
   end
+end
+-- city_anchors.json: the same rows marked in place (Tools/build_street_city_places.lua marks them too when it is re-run;
+-- its output drifted from the committed table on 11-15, so the table is not rebuilt here); a second run changes nothing
+do
+  local path = 'Content/IndependentResources/StreetSocialData/city_anchors.json'
+  local f = assert(io.open(path, 'rb')); local s = f:read('a'); f:close()
+  local okj = require('ok.json'); local T = okj.decode(s); local n = 0
+  for _, r in ipairs(T.anchors) do local o = UP.off(r.place, r.pos)
+    if o then local row = offrow(r.place, o); row.rules = row.rules + 1
+      if UP.mark(r) then r.id = r.place .. '.' .. r.name; r.kinds = {}; r.tags = r.tags or {}; r.tags[#r.tags + 1] = 'off'; n = n + 1 end end
+  end
+  table.sort(T.anchors, function(a, b) return a.id < b.id end)
+  if n > 0 then local out = okj.encode(T); f = assert(io.open(path, 'wb')); f:write(out); f:close() end
+  print(('city_anchors.json: %d rows marked off now'):format(n))
 end
 do
   local rank = {}; for i, id in ipairs(UPSTAIRS_FIRST) do rank[id] = i end
@@ -386,11 +389,12 @@ do
   table.sort(rows, function(l, r) local a, b = rank[l.place] or 99, rank[r.place] or 99
     if a ~= b then return a < b end; if l.place ~= r.place then return l.place < r.place end; return (l.floor or 0) < (r.floor or 0) end)
   local md, total = { '# 樓上沒有樓梯的地點（導出器產生，勿手改）', '',
-    '`Tools/export_street_city_game_places.lua` 產生：一樓有門、整個地點沒有任何 lift／stair 錨點時，門以上 2.5 m 的錨點改名為 `off_<原名>` 並加上 `"off"`，女主排程選不到它們（2026-11-15 止血）。補上樓梯錨點並實測「從 1F 走到該樓層座位再走回店門」之後，從這份清單拿掉。',
+    '`Tools/export_street_city_game_places.lua` 產生，規則在 `Tools/street_city_upstairs_off.lua`（與 `Tools/build_street_city_places.lua` 共用，city_anchors.json 的同一批列一起標）：一樓有門、整個地點沒有任何 lift／stair 錨點時，門以上 2.5 m 的錨點改名為 `off_<原名>` 並加上 `"off"`，女主排程選不到它們（2026-11-15 止血）。補上樓梯錨點並實測「從 1F 走到該樓層座位再走回店門」之後，從這份清單拿掉。',
     '', '「真樓層」：錨點比門高 3 m 以上（一層 3.8 m，樓層由 room 或高度推得）；「高處物件」：比門高 2.5–3 m（不必補樓梯，標不可用即結案）。school 是校舍、經 campus_t1 的電梯上樓，不在此列。排序：排程與邀約常去的店在前。', '',
-    '| 地點 | 樓層 | 類別 | 錨點數 | 錨點 |', '|---|---:|---|---:|---|' }, 0
+    '「規則錨點數」：city_anchors.json 裡同一地點同一樓層被標掉的列（清空 kinds、加 tag `off`），含員工間、廁所等只在規則表裡的錨點。', '',
+    '| 地點 | 樓層 | 類別 | 錨點數 | 規則錨點數 | 錨點 |', '|---|---:|---|---:|---:|---|' }, 0
   for _, r in ipairs(rows) do total = total + #r.names
-    md[#md + 1] = ('| %s | %s | %s | %d | %s |'):format(r.place, r.floor and tostring(r.floor) or '-', r.real and '真樓層' or '高處物件', #r.names, table.concat(r.names, ' ')) end
+    md[#md + 1] = ('| %s | %s | %s | %d | %d | %s |'):format(r.place, r.floor and tostring(r.floor) or '-', r.real and '真樓層' or '高處物件', #r.names, r.rules, table.concat(r.names, ' ')) end
   md[#md + 1] = ''; md[#md + 1] = ('共 %d 個地點樓層、%d 個錨點。'):format(#rows, total)
   local f = assert(io.open('Docs/STREET_CITY_UPSTAIRS_NO_STAIRS.md', 'wb')); f:write(table.concat(md, '\n') .. '\n'); f:close()
   print(('upstairs without stairs: %d place floors, %d anchors marked off'):format(#rows, total))
