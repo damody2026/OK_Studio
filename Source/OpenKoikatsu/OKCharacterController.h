@@ -698,6 +698,9 @@ public:
 	UPROPERTY()
 	TObjectPtr<class AKKPreviewActor> PreviewActor;
 
+	// The shown character kept while the next one loads. A UPROPERTY so a retired (destroyed) actor reads as null: an
+	// untracked pointer that a failed load put back as PreviewActor crashed IsValid (UObjectArray Index >= 0).
+	UPROPERTY(Transient)
 	TObjectPtr<class AKKPreviewActor> StalePreview;
 
 	UPROPERTY()

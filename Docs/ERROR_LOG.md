@@ -4598,3 +4598,21 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - 下次：
   - 修正要重轉卡才生效時，C／E／F 本機的同一張卡都要重轉或複製，並在回報裡寫明。
   - 新增光影控制時，要逐一確認每一種 shader 家族（Forge、KKUTS、xukmi……）都吃得到。
+
+## 2026-11-15 HairDeck 批次：連續開卡掩蓋了缺資料的卡；開卡失敗後讀卡器當機（F 組）
+
+- 錯誤一：上午 101 張在同一個讀卡器程序裡連著跑，全部回報能開。分批重跑時，C050–C060 每張新開的讀卡器都拒開：OK 卡缺 `okLt me-shader xukmi/eyewplustess`。
+  - 原因：`me_shader_registration` 的結果用 `pack_memo` 記在程序裡，前面帶答案的卡留下的結果被後面缺答案的卡沿用，嚴格開卡就沒有發現缺口。
+  - 我當時只把這 21 張記成「已知缺 shader」，還寫了「讀卡器照樣能開」，那個結論不可信。
+  - 更糟的是，開卡失敗那次算出的結果也被記住：同一個讀卡器裡，C050–C060 第一輪全部失敗，第二輪中間沒有任何正常的卡，卻全部「開成功」，而且用的是沒有答案時的退回值。
+  - 整批 `ok_cards.lua verify` 實際查出 26 張缺資料：21 張 `xukmi/eyewplustess`、3 張 `da/chara/oil painting`、2 張 `ibl_shader_alpha`，比當初記的 21 張多。
+- 做法一：用遊戲 `D:/KoikatuSunshine`（有 `[xukmi][KKS] Vanilla Plus v1.7.2.zipmod`）重新 seal 缺答案的卡（`okId` 不變），再用 `Tools/ok_cards.lua verify` 檢查。
+- 修正一之二：`pack_memo`／`view_memo` 在 `make()` 期間若記到嚴格開卡的缺口，就不保留結果（`okstrict::gaps_on_thread`）。實測舊版 C050 在同一個讀卡器連開三次都被擋下。
+- 規則：驗證開卡一律每張新開程序（`ok_cards.lua verify` 就是這樣），或至少讓記憶體裡的結果不能跨卡沿用。同一個讀卡器連開多張卡的結果，只能當顯示檢查，不能當「開得了卡」的證據。
+- 錯誤二：連續開卡失敗後，讀卡器在 `UOKCharacterController::FinishPreparedPreview` 的失敗分支當機（`IsValid(PreviewActor)` → `Assertion failed: Index >= 0`，UObjectArray.h:1083）。
+  - 原因：`StalePreview`（新卡載入期間保留的舊角色）不是 `UPROPERTY`。舊角色在載入期間被回收後，失敗分支仍把這個懸空指標搬回 `PreviewActor`。
+  - 用 minidump 加 `llvm-symbolizer` 對 `UnrealEditor-OpenKoikatsu.pdb` 反查定位。
+- 做法二：
+  - `StalePreview` 改成 `UPROPERTY(Transient)`。
+  - 失敗時只在它仍有效時才放回。
+  - 衣服預覽快取的取代與淘汰、鄰卡預載的重設，都不回收正在顯示、暫存中或準備中的角色。

@@ -1919,7 +1919,7 @@ void UOKCharacterController::FinishLoad3D(int32 Generation, FOkSession Session, 
  UWorld* World=GetWorld();
  const bool KeepView=AppearanceGeometryLoadGeneration==Generation&&IsValid(StalePreview)&&IsValid(StalePreview->StudioCam);
  AKKPreviewActor* Actor=World?World->SpawnActor<AKKPreviewActor>(KeepView?StalePreview->GetActorLocation():FVector(0,0,100),KeepView?StalePreview->GetActorRotation():FRotator::ZeroRotator):nullptr;
- if(!Actor){SetLoadBusy(false);PreviewActor=StalePreview;StalePreview=nullptr;if(InspectorText)InspectorText->SetText(FText::FromString(TEXT("載入立體角色失敗：無法建立預覽")));return;}
+ if(!Actor){SetLoadBusy(false);PreviewActor=IsValid(StalePreview)?StalePreview.Get():nullptr;StalePreview=nullptr;if(InspectorText)InspectorText->SetText(FText::FromString(TEXT("載入立體角色失敗：無法建立預覽")));return;}
  Actor->SetActorHiddenInGame(true);Actor->SetActorTickEnabled(false);
  Actor->Session=MoveTemp(Session);
  Actor->UseGalleryPhysics();
@@ -2130,9 +2130,10 @@ void UOKCharacterController::FinishPreparedPreview(AKKPreviewActor* Actor,bool b
 	else
 	{
 		Actor->Destroy();
+		// The previous character comes back only if nothing retired it meanwhile.
 		if (StalePreview)
 		{
-			PreviewActor = StalePreview;
+			PreviewActor = IsValid(StalePreview) ? StalePreview.Get() : nullptr;
 			StalePreview = nullptr;
 		}
 		Report = LocalErr.IsEmpty() ? TEXT("加載3D失败") : LocalErr;

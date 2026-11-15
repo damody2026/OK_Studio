@@ -50,12 +50,14 @@ void UOKCharacterController::CacheClothingPreview(AKKPreviewActor* Actor,const F
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_GalleryCacheClothing);
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_GalleryCacheBody);if(IsValid(Actor))Actor->SetClothingHidden(false);
  if(!IsValid(Actor)||ClothingPreviewContext.IsEmpty()||!Key.StartsWith(ClothingPreviewContext+TEXT("|clothes="))){if(IsValid(Actor))OKRetireActor(Actor);return;}
- if(auto* Existing=ClothingPreviews.Find(Key))if(IsValid(*Existing)&&*Existing!=Actor)OKRetireActor(*Existing);
+ // Never retire the shown character or the one kept while the next loads (a failed load puts it back).
+ auto Retirable=[this](AKKPreviewActor* A){return IsValid(A)&&A!=PreviewActor&&A!=StalePreview&&A!=PreparingPreview;};
+ if(auto* Existing=ClothingPreviews.Find(Key))if(Retirable(*Existing)&&*Existing!=Actor)OKRetireActor(*Existing);
  {TRACE_CPUPROFILER_EVENT_SCOPE(KK_GalleryHideClothing);Actor->StopSpeech();Actor->SuspendDisplayTicks(true);Actor->SetActorTickEnabled(false);Actor->SetActorHiddenInGame(true);Actor->SetActorEnableCollision(false);}
  ClothingPreviews.Add(Key,Actor);ClothingPreviewMods.Add(Key,EditorModsJson());ClothingPreviewOrder.Remove(Key);ClothingPreviewOrder.Add(Key);
  // At most three inactive native sessions and GPU displays, regardless of
  // the number of garment combinations. Oldest inactive state is evicted.
- while(ClothingPreviewOrder.Num()>3){TRACE_CPUPROFILER_EVENT_SCOPE(KK_GalleryEvictClothing);const FString Old=ClothingPreviewOrder[0];ClothingPreviewOrder.RemoveAt(0);if(auto* Entry=ClothingPreviews.Find(Old))if(IsValid(*Entry))OKRetireActor(*Entry);ClothingPreviews.Remove(Old);ClothingPreviewMods.Remove(Old);}
+ while(ClothingPreviewOrder.Num()>3){TRACE_CPUPROFILER_EVENT_SCOPE(KK_GalleryEvictClothing);const FString Old=ClothingPreviewOrder[0];ClothingPreviewOrder.RemoveAt(0);if(auto* Entry=ClothingPreviews.Find(Old))if(Retirable(*Entry))OKRetireActor(*Entry);ClothingPreviews.Remove(Old);ClothingPreviewMods.Remove(Old);}
 }
 bool UOKCharacterController::TryClothingPreview(const FString& Key){
  TRACE_CPUPROFILER_EVENT_SCOPE(KK_GalleryTryClothing);
