@@ -4582,4 +4582,8 @@ C 組的擁抱動作提交 `dcef41d79` 需要 `Content/IndependentResources/Runt
 
 c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格子），為了不留舊 stage 就照規矩先 `rmdir` junction 再 `rmdir /s /q`；但 c-lowspec 的遊戲（PID 12844）正跑著這個 exe——啟動器預設挑**最新**的 stage，我剛建好的就成了別人的預設。junction 目標（base）沒事，但那個 stage 已無法再啟動，執行中的遊戲經 stage 路徑讀散檔也可能失敗。
 
-**往後**：刪 stage 前先 `Get-CimInstance Win32_Process -Filter "Name='OpenKoikatsu.exe'"` 看命令列有沒有這個 stage；要撤回的建置不要建成新 tag 讓別人預設挑到，或建好後立刻告知。
+**往後**（協調者定的規矩）：
+1. 刪任何 stage 前，先確認沒有行程在跑它：`Get-CimInstance Win32_Process -Filter "Name='OpenKoikatsu.exe'"` 看 CommandLine 有沒有那個 stage 路徑，有就別動，先問。
+2. stage 是共用資源：啟動器預設挑最新的，建了新 stage 就可能被別人拿去跑。要清只清確定沒人用的，或等到沒有任何遊戲在跑時再清；自己啟動時在命令裡寫死 stage 名字。
+3. 不要遞迴刪含 junction 的 `.stage`：先移除 reparse point（最深的先），再刪目錄。
+這次 c-lowspec 的 range128 量測作廢，改用 nh1115y 重跑。
