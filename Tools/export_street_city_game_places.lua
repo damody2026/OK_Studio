@@ -442,9 +442,18 @@ do
     '`Tools/export_street_city_game_places.lua` 產生，規則在 `Tools/street_city_upstairs_off.lua`（與 `Tools/build_street_city_places.lua` 共用，city_anchors.json 的同一批列一起標）：一樓有門、整個地點沒有任何 lift／stair 錨點時，門以上 2.5 m 的錨點改名為 `off_<原名>` 並加上 `"off"`，女主排程選不到它們（2026-11-15 止血）。補上樓梯錨點並實測「從 1F 走到該樓層座位再走回店門」之後，從這份清單拿掉。',
     '', '「真樓層」：錨點比門高 3 m 以上（一層 3.8 m，樓層由 room 或高度推得）；「高處物件」：比門高 2.5–3 m（不必補樓梯，標不可用即結案）。school 是校舍、經 campus_t1 的電梯上樓，不在此列。排序：排程與邀約常去的店在前。', '',
     '「規則錨點數」：city_anchors.json 裡同一地點同一樓層被標掉的列（清空 kinds、加 tag `off`），含員工間、廁所等只在規則表裡的錨點。', '',
-    '| 地點 | 樓層 | 類別 | 錨點數 | 規則錨點數 | 錨點 |', '|---|---:|---|---:|---:|---|' }, 0
+    '## 現況（2026-11-16）', '',
+    '11-15 止血時是 34 個地點、58 個樓層、233 個錨點。11-16 從來源地圖量出 S 排店面的折返樓梯（做在店殼網格裡），36 家補上 stairN（`Tools/street_city_shop_stairs.lua`，2dc5b8ee8，遊戲那邊是 c-conquest 的商店樓梯 C++ 76bbbbe65）：這 233 個錨點恢復可用，規則表 off 的 376 列還原 355 列（原 kinds 存在 `off_kinds`）。city1116a 遊戲內 36 家逐一驗過：站在 stair1 有「上樓到 2F」，按下後到 2F 樓梯口。', '',
+    '下表是剩下的：這幾家沒有可用的樓梯，維持 off，不再追。', '',
+    '| 地點 | 樓層 | 類別 | 錨點數 | 規則錨點數 | 錨點 | 為什麼還 off |', '|---|---:|---|---:|---:|---|---|' }, 0
+  local WHY = {
+    bike_shop = '地點範圍橫跨一整排店，範圍裡量到的樓梯是別家的；它自己的樓上只有規則表的停車架與高處物件',
+    crepe = '只量到上半段樓梯，找不到 1F 的樓梯腳；樓上沒有座位',
+    nail = '只量到上半段樓梯，找不到 1F 的樓梯腳',
+    photo_studio = '樓上沒有量到任何樓梯；樓上沒有座位',
+  }
   for _, r in ipairs(rows) do total = total + #r.names
-    md[#md + 1] = ('| %s | %s | %s | %d | %d | %s |'):format(r.place, r.floor and tostring(r.floor) or '-', r.real and '真樓層' or '高處物件', #r.names, r.rules, table.concat(r.names, ' ')) end
+    md[#md + 1] = ('| %s | %s | %s | %d | %d | %s | %s |'):format(r.place, r.floor and tostring(r.floor) or '-', r.real and '真樓層' or '高處物件', #r.names, r.rules, table.concat(r.names, ' '), WHY[r.place] or '沒有樓梯') end
   md[#md + 1] = ''; md[#md + 1] = ('共 %d 個地點樓層、%d 個錨點。'):format(#rows, total)
   local f = assert(io.open('Docs/STREET_CITY_UPSTAIRS_NO_STAIRS.md', 'wb')); f:write(table.concat(md, '\n') .. '\n'); f:close()
   print(('upstairs without stairs: %d place floors, %d anchors marked off'):format(#rows, total))
