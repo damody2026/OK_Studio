@@ -354,6 +354,11 @@ bool AOKStreetSocialScene::PlanNavLift(const FVector& Goal){
  auto FloorOf=[](const TArray<const FOKStreetModelAnchor*>& Lifts,float Z){int32 Best=0;for(int32 F=0;F<Lifts.Num();++F)if(FMath::Abs(Lifts[F]->Position.Z-Z)<FMath::Abs(Lifts[Best]->Position.Z-Z))Best=F;return Best;};
  auto Ride=[&](int32 PlaceIx,int32 Floor,bool Descend,const TArray<FVector>& Walk,const FVector& Landing){
   if(FCString::Strcmp(Places[PlaceIx].Id,TEXT("girls_dorm"))==0&&Floor>0){StopNavigation(OKT(TEXT("ui.elevator.dorm_upstairs_restricted")));return true;}
+  // No walk to the landing: the straight line from him only when it is clear. Through a wall it is no way (civic's real
+  // seat6, in StaticMeshActor_499: the ride walked into it, 11 replans, nav1116c, 2026-11-16).
+  if(Walk.Num()<2&&!OKStreetCityClear(GetWorld(),S.Male,Landing,18.f)){
+   UE_LOG(LogTemp,Display,TEXT("Street navigation: no way to the lift landing of %s: no walk there, and the straight line %s -> %s is through a wall"),Places[PlaceIx].Id,*S.Male.ToCompactString(),*Landing.ToCompactString());
+   StopNavigation(OKT(TEXT("ui.contacts.unreachable_try_elsewhere")));return true;}
   S.NavRide=FOKStreetLiftRide();S.NavRide.Elevator=ElevatorOfPlace(PlaceIx);S.NavRide.Floor=Floor;S.NavRide.Descend=Descend;S.NavRide.Spot=Goal;
   S.NavPath=Walk.Num()>=2?Walk:TArray<FVector>{S.Male,Landing};S.NavStep=1;S.NavReplans=0;S.NavProgressAt=SceneTime();
   S.Message=OKMsg(TEXT("ui.contacts.nav_by_elevator"),{{TEXT("place_name"),Places[PlaceIx].Name}});RefreshUI();
@@ -374,7 +379,10 @@ bool AOKStreetSocialScene::PlanNavLift(const FVector& Goal){
   TArray<FVector> Walk;
   if(OKStreetInsidePlace(Places[P],S.Male))Walk=WalkToLanding(S.Male,Lifts[0]->Position);
   else{Walk=FVector::Dist2D(S.Male,Places[P].Door)<200?TArray<FVector>{S.Male,Places[P].Door}:PlaceRoute(S.Male,Places[P].Door);if(Walk.Num()<2)return false;
-   TArray<FVector> In=WalkToLanding(Walk.Last(),Lifts[0]->Position);if(In.Num()>=2){In.RemoveAt(0);Walk.Append(In);}else Walk.Add(Lifts[0]->Position);}
+   TArray<FVector> In=WalkToLanding(Walk.Last(),Lifts[0]->Position);if(In.Num()>=2){In.RemoveAt(0);Walk.Append(In);}
+   else if(OKStreetCityClear(GetWorld(),Walk.Last(),Lifts[0]->Position,18.f))Walk.Add(Lifts[0]->Position);
+   else{UE_LOG(LogTemp,Display,TEXT("Street navigation: no way from the door of %s to its lift landing: the straight line is through a wall"),Places[P].Id);
+    StopNavigation(OKT(TEXT("ui.contacts.unreachable_try_elsewhere")));return true;}}
   return Ride(P,FloorOf(Lifts,Goal.Z),false,Walk,Lifts[0]->Position);
  }
  return false;
