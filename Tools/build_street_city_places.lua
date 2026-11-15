@@ -1343,6 +1343,12 @@ do
     table.sort(rows, function(a, b) return a.id < b.id end)
     print('anchors upstairs without stairs, off', n)
   end
+  -- furniture taken off the map (KTV_2): its anchors go (Tools/street_city_removed_anchors.lua, shared with the exporter)
+  do
+    local REMOVED, kept = dofile('Tools/street_city_removed_anchors.lua'), {}
+    for _, r in ipairs(rows) do if not REMOVED.gone(r.place, r.name) then kept[#kept + 1] = r end end
+    print('anchors of removed furniture dropped', #rows - #kept); rows = kept
+  end
   local f = assert(io.open('Content/IndependentResources/StreetSocialData/city_anchors.json', 'wb'))
   f:write(json.encode({ schema = 1, map_sha256 = actors.map_sha256, frame = 'UE cm, +X north, +Y east; a character on an anchor faces yaw + 90', anchors = rows })); f:close()
   local c = {}; for _, r in ipairs(rows) do for _, k in ipairs(r.kinds) do c[k] = (c[k] or 0) + 1 end end

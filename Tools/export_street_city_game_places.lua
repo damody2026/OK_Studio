@@ -226,6 +226,17 @@ for _, p in ipairs(places) do
   end
 end
 
+-- Anchors of furniture taken off the source map (the karaoke's KTV_2, 11-15): dropped here and from city_anchors.json
+-- below (Tools/street_city_removed_anchors.lua, shared with Tools/build_street_city_places.lua)
+local REMOVED = dofile('Tools/street_city_removed_anchors.lua')
+for _, p in ipairs(places) do
+  if p.anchors then local kept = {}
+    for _, an in ipairs(p.anchors) do
+      if REMOVED.gone(p.id, an.name) then print(('anchor: %s %s dropped, %s'):format(p.id, an.name, REMOVED.gone(p.id, an.name))) else kept[#kept + 1] = an end
+    end
+    p.anchors = kept end
+end
+
 -- A shop turned to face east (its ground floor S##_F01 at yaw -90) had its door on its back wall: the street entrance was
 -- read in the building's own frame without its turn, so it came out mirrored. The front wall is cut open and rebuilt with
 -- the door (shop-refits-v1), the back is whole, and a walk to the karaoke, the bowling alley, the nursery and eight more
@@ -379,9 +390,12 @@ do
     if o then local row = offrow(r.place, o); row.rules = row.rules + 1
       if UP.mark(r) then r.id = r.place .. '.' .. r.name; r.kinds = {}; r.tags = r.tags or {}; r.tags[#r.tags + 1] = 'off'; n = n + 1 end end
   end
+  local kept, dropped = {}, 0
+  for _, r in ipairs(T.anchors) do if REMOVED.gone(r.place, r.name) then dropped = dropped + 1 else kept[#kept + 1] = r end end
+  T.anchors = kept
   table.sort(T.anchors, function(a, b) return a.id < b.id end)
-  if n > 0 then local out = okj.encode(T); f = assert(io.open(path, 'wb')); f:write(out); f:close() end
-  print(('city_anchors.json: %d rows marked off now'):format(n))
+  if n > 0 or dropped > 0 then local out = okj.encode(T); f = assert(io.open(path, 'wb')); f:write(out); f:close() end
+  print(('city_anchors.json: %d rows marked off now, %d rows of removed furniture dropped'):format(n, dropped))
 end
 do
   local rank = {}; for i, id in ipairs(UPSTAIRS_FIRST) do rank[id] = i end
