@@ -12,6 +12,10 @@
 --     --soak MIN    after the tour, MIN minutes of rounds: warp to a far place, then walk to a heroine for 45 s (the
 --                   autopilot, /navigate); each round's lowest commit goes to <tag>.json soak_rounds, so memory that
 --                   keeps climbing shows as a rising floor (soak_floor_first_gb / soak_floor_last_gb)
+--     --segment MIN one test holds the machine at most 20 minutes (user 2026-11-15): the soak runs in segments of MIN
+--                   minutes from the claim, load included (default 18); between them the game stops, the slot is
+--                   released and claimed again, and the next segment relaunches (rows keep going into the same CSV,
+--                   phase load2, load3...). Each segment is a new process, so a rising floor shows within a segment.
 --     --exec "A;B"  console commands sent through the control channel once the map is up (before the idle samples),
 --                   e.g. "wp.Runtime.OverrideRuntimeSpatialHashLoadingRange -grid=0 -range=12800" (until the map reloads)
 --     after --      passed to Tools/run_street_social_development.lua, e.g. -- -CitySource
@@ -21,7 +25,7 @@ local ok = require "ok"
 local json, path, proc = ok.json, ok.path, ok.proc
 
 local AGENT = "c-lowspec"
-local o, launcher_args, i = { seconds = 60 }, {}, 1
+local o, launcher_args, i = { seconds = 60, segment = 18 }, {}, 1
 while arg[i] do
   local a = arg[i]
   if a == "--" then for j = i + 1, #arg do launcher_args[#launcher_args + 1] = arg[j] end break
@@ -33,6 +37,7 @@ while arg[i] do
   elseif a == "--memreport" then o.memreport = true
   elseif a == "--shots" then o.shots = true
   elseif a == "--soak" then i = i + 1; o.soak = assert(tonumber(arg[i]), "--soak MINUTES")
+  elseif a == "--segment" then i = i + 1; o.segment = assert(tonumber(arg[i]), "--segment MINUTES")
   else error("unknown argument " .. a, 0) end
   i = i + 1
 end
@@ -73,9 +78,20 @@ local function http(method, route, body)
   return r.stdout or ""
 end
 
-if not o.noslot then
+-- One test holds the machine at most 20 minutes (user 2026-11-15, Tools/unreal_slot.lua): a soak runs in segments of
+-- --segment minutes from the claim (load included); between them the game is stopped, the slot released and claimed
+-- again (queueing behind whoever waits), and the next segment relaunches and appends to the same CSV.
+local slot_held = false
+local function claim()
+  if o.noslot then return end
   local c = proc.run({ path.join(root, "Tools/lua/lua.exe"), path.join(root, "Tools/unreal_slot.lua"), "claim", AGENT, "memory probe " .. o.tag, "--wait", "--need-gb", "40" })
   if not c.ok then error("could not claim an Unreal slot", 0) end
+  slot_held = true
+end
+local function release()
+  if o.noslot or not slot_held then return end
+  proc.run({ path.join(root, "Tools/lua/lua.exe"), path.join(root, "Tools/unreal_slot.lua"), "release", AGENT })
+  slot_held = false
 end
 
 local gb = function(b) return b and b / 1073741824 or 0 end
@@ -85,15 +101,23 @@ csv:write("t,phase,commit_gb,ws_gb,peak_commit_gb,peak_ws_gb,gpu_dedicated_gb,sy
 local started = os.time()
 local pid
 local ok_run, err = pcall(function()
-  local cmd = { path.join(root, "Tools/lua/lua.exe"), path.join(root, "Tools/run_street_social_development.lua"),
-    "-Sandbox", sandbox, "-PortBase", tostring(port_base), "-NoCloud", "-Control", "-Window", "1280x720" }
-  for _, a in ipairs(launcher_args) do cmd[#cmd + 1] = a end
-  say("launch: " .. table.concat(cmd, " "))
-  local r = proc.run(cmd, { capture = true })
-  io.write(r.stdout or "")
-  pid = tonumber((r.stdout or ""):match("game pid (%d+)"))
-  if not pid then error("the launcher did not start a game", 0) end
   local phase = "load"
+  local log
+  local function launch()
+    local cmd = { path.join(root, "Tools/lua/lua.exe"), path.join(root, "Tools/run_street_social_development.lua"),
+      "-Sandbox", sandbox, "-PortBase", tostring(port_base), "-NoCloud", "-Control", "-Window", "1280x720" }
+    for _, a in ipairs(launcher_args) do cmd[#cmd + 1] = a end
+    say("launch: " .. table.concat(cmd, " "))
+    local r = proc.run(cmd, { capture = true })
+    io.write(r.stdout or "")
+    pid = tonumber((r.stdout or ""):match("game pid (%d+)"))
+    if not pid then error("the launcher did not start a game", 0) end
+    -- The launcher's last line is its output folder (game.log beside selection.json).
+    local output
+    for line in (r.stdout or ""):gmatch("[^\r\n]+") do if path.is_file(path.join(line, "selection.json")) then output = line end end
+    log = output and path.join(output, "game.log")
+    say("game " .. pid .. ", log " .. tostring(log))
+  end
   local function record()
     local s = sample(pid)
     if s == nil then error("game " .. pid .. " exited during " .. phase, 0) end
@@ -107,19 +131,20 @@ local ok_run, err = pcall(function()
     say(("%4ds %-10s commit %.1f GB (peak %.1f)  ws %.1f GB  gpu %.1f GB  free commit %.0f GB"):format(t, phase, gb(s.commit), gb(s.peak_commit), gb(s.ws), gb(s.gpu), gb(s.free_commit)))
     return s
   end
-  -- Loading: until game.log says the map is up and the control channel answers, at most 15 minutes. The launcher's
-  -- last line is its output folder (game.log beside selection.json).
-  local output
-  for line in (r.stdout or ""):gmatch("[^\r\n]+") do if path.is_file(path.join(line, "selection.json")) then output = line end end
-  local log = output and path.join(output, "game.log")
-  say("game " .. pid .. ", log " .. tostring(log))
-  local deadline = os.time() + 900
-  while os.time() < deadline do
-    record()
-    local text = log and path.is_file(log) and path.read_text(log) or ""
-    if text:find("Load map complete", 1, true) and http("GET", "/health"):match('"ok"%s*:%s*true') then break end
-    sleep(2)
+  -- Loading: until game.log says the map is up and the control channel answers, at most 15 minutes.
+  local function wait_loaded()
+    local deadline = os.time() + 900
+    while os.time() < deadline do
+      record()
+      local text = log and path.is_file(log) and path.read_text(log) or ""
+      if text:find("Load map complete", 1, true) and http("GET", "/health"):match('"ok"%s*:%s*true') then return end
+      sleep(2)
+    end
   end
+  claim()
+  local segment_start = os.time()
+  launch()
+  wait_loaded()
   peak.load_seconds = os.time() - started
   if o.exec then for c in o.exec:gmatch("[^;]+") do say("exec " .. c .. ": " .. http("POST", "/exec", json.encode({ command = c }))) end end
   phase = "idle"
@@ -146,9 +171,26 @@ local ok_run, err = pcall(function()
   end
   if o.soak then
     local places = { "department", "boys_dorm", "skating", "gym", "church", "cinema", "ramen", "bank" }
-    local soak_end, round = os.time() + math.floor(o.soak * 60), 0
+    local soak_left, round = math.floor(o.soak * 60), 0
+    local segment_limit = math.floor(o.segment * 60)
     peak.soak_rounds = {}
-    while os.time() < soak_end do
+    peak.soak_segments = 1
+    while soak_left > 0 do
+      -- No room for another round (~70 s) in this segment: stop the game, give the machine back, queue again, relaunch.
+      if os.time() - segment_start + 70 > segment_limit then
+        http("POST", "/navigate", json.encode({ stop = true }))
+        proc.run({ "taskkill", "/PID", tostring(pid), "/T", "/F" }, { hide = true, capture = true })
+        pid = nil
+        release()
+        say(("segment %d done (%.0f min held); %.0f min of soak left, queueing again"):format(peak.soak_segments, (os.time() - segment_start) / 60, soak_left / 60))
+        claim()
+        segment_start = os.time()
+        peak.soak_segments = peak.soak_segments + 1
+        phase = ("load%d"):format(peak.soak_segments)
+        launch()
+        wait_loaded()
+      end
+      local round_start = os.time()
       round = round + 1
       local place, girl = places[(round - 1) % #places + 1], (round - 1) % 5 + 1
       phase = ("soak%d:%s"):format(round, place)
@@ -161,13 +203,14 @@ local ok_run, err = pcall(function()
       while os.time() < t_end do local s = record(); if s then floor_before = math.min(floor_before, s.commit) end; sleep(2) end
       peak.soak_rounds[#peak.soak_rounds + 1] = gb(floor_before)
       say(("round %d floor %.2f GB"):format(round, gb(floor_before)))
+      soak_left = soak_left - (os.time() - round_start)
     end
     http("POST", "/navigate", json.encode({ stop = true }))
   end
 end)
 csv:close()
 if pid then proc.run({ "taskkill", "/PID", tostring(pid), "/T", "/F" }, { hide = true, capture = true }) end
-if not o.noslot then proc.run({ path.join(root, "Tools/lua/lua.exe"), path.join(root, "Tools/unreal_slot.lua"), "release", AGENT }) end
+release()
 local summary = { tag = o.tag, launcher_args = launcher_args, completed = ok_run, error = ok_run and nil or tostring(err),
   peak_commit_gb = gb(peak.commit), peak_working_set_gb = gb(peak.ws), peak_gpu_dedicated_gb = gb(peak.gpu),
   min_system_free_commit_gb = peak.min_free_commit < math.huge and gb(peak.min_free_commit) or nil, load_seconds = peak.load_seconds }
@@ -175,6 +218,7 @@ for k, v in pairs(peak) do if type(k) == "string" and (k == "load" or k == "idle
 if peak.soak_rounds and #peak.soak_rounds > 0 then
   local r = peak.soak_rounds
   summary.soak_rounds = r
+  summary.soak_segments = peak.soak_segments
   summary.soak_floor_first_gb, summary.soak_floor_last_gb = r[1], r[#r]
   local hi = 0; for k, v in pairs(peak) do if type(k) == "string" and k:match("^soak") and type(v) == "number" then hi = math.max(hi, v) end end
   summary.soak_peak_commit_gb = gb(hi)
