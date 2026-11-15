@@ -670,6 +670,7 @@ pub(crate) fn push_meshes<'a>(
             );
             continue;
         }
+        crate::rig::align_bones_to_bind_poses(&mut mesh);
         apply_me_shader(game_root, me_shader, outfit, role, property.as_deref(), &mut mesh);
         if let Some(overrides)=me_float { apply_me_floats(overrides,outfit,role,property.as_deref(),&mut mesh); }
         apply_material_editor_remove_rim(remove_rim, me_float, outfit, role, property.as_deref(), &mut mesh);

@@ -4649,6 +4649,15 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - 規則：看到「身體穿出衣服」時，先比對播放中與暫停時的截圖，並確認衣服本身的剪裁，再判斷是物理問題、幾何問題還是設計。
 - 診斷用環境變數：`OK_CLOTHBONES=<網格名>`，列出衣服每根骨骼的頂點數，以及身體有沒有這根骨骼；`OK_BODYBONES=y0,y1,z`，列出身體某個區段的骨骼權重。
 
+## 2026-11-15 讀卡器蹦跳：長裙側片被 PhysX 甩到頭上；C007 騎士襪左腿跑到右膝前（F 組）
+
+- 錯誤一：C051／C052 服裝 4 的長裙（ボックススカート）逐服裝 ABMX 把 `cf_d_sk_02_00`、`cf_d_sk_06_00` 的 z 縮放設成 0（兩側片壓扁）。849a7736b 修好逐服裝 ABMX 之後，這兩條裙鏈的骨架矩陣退化（三軸共面），動畫姿勢下鏈段只剩 1.8 cm。讀卡器的衣服物理預設走 PhysX（OKPhysXSecondary），它用剛性骨長關節與平面限制解這種退化鏈，蹦跳時側片被甩出，最後拉成越過頭頂的黑白大三角面。遊戲本身的 DynamicBone（Verlet）只是跟著走，不會爆：離線 Rust 解算器 300 幀沒爆，讀卡器 `OKPhysXSecondary.Enabled 0` 也正常。
+- 修正一：`dbone::px_input_ordinary` 偵測鏈上骨架世界矩陣退化（|det| 對三軸長度乘積 < 0.05，零縮放就是 0），這條鏈的根旗標改要求宿主用遊戲的 DynamicBone（solver 6）；批次分類不覆蓋已選的解算器。其他鏈照舊走 PhysX。
+- 錯誤二：C007 服裝 4／5 的 `cf_o_socks_knight`，骨架取自同一個 Mesh 資源的另一個 renderer（每個 Mesh 第一個找到的 prefab；基礎庫／OK 卡在 `renderer_skeletons` 之前錄的模型重播時只有這個答案），骨名順序和網格自己的 bind pose 對不上（100 根裡 87 根錯位）。左腿頂點被綁到右腿、腳、肛門骨，左腿襪子就掛到右膝前，看起來像飾品或物理鏈爆開。其實靜止時就錯，和蹦跳、PhysX 都無關（關掉 PhysX 照樣錯）。
+- 修正二：`rig::align_bones_to_bind_poses`（`push_meshes` 呼叫）：bind pose 是骨頭靜止世界矩陣的反矩陣，名稱對不上 bind pose 的骨頭，在同一份清單裡重新配對；每個 bind pose 都找到骨頭、結果只是同一批骨頭換順序才套用，否則不動。`SESSION_CACHE_REVISION` 改為 43。離線掃 101 張 CrowdAPNG 卡 × 7 套服裝（707 次開卡），只有 C007 服裝 4／5 這件襪子觸發。
+- 另：849a7736b 加的 `OK_CLOTHBONES` 診斷拿網格的骨索引去對 rig 的名稱表，數字是錯的；改用網格自己的 `bone_names`，並印出各骨頂點平均位置與 bind pose 位置。新增 ignored 測試 `session::jump_probe_tests::jump_probe`（`OK_JUMP_CARD`、`OK_JUMP_OUTFIT`）可離線重現蹦跳。
+- 規則：看到「物理爆開」先分兩步確認：關掉 PhysX（`OKPhysXSecondary.Enabled 0`）還在不在、暫停或離線靜止姿勢有沒有錯。C007 一開始被當成物理鏈爆開，實際是蒙皮綁錯骨。
+
 ## 2026-11-15 讀卡器：C011 軍官帽蓋臉、C016 服裝 6 跳躍時胯下穿出褲襪（F 組）
 
 - 錯誤一：C011（原卡 KK_103523）slot 18 是 ao_head 514 號，卡上沒有 Sideloader resolve，原作也沒有 514。Sideloader 的 `CompatibilityResolve`（UniversalAutoResolver.cs:1231）按號碼找到唯一列出 122/514 的 mod：WW_Accs 軍官帽 B（清單掛點 `a_n_headtop`）。卡片的 `a_n_headside` 是作者當年的 hardmod 用的，帽子 prefab 的 `nc` 節點又往下 9.4 cm，帽子整頂蓋在臉上。我先以為是 addMove 單位或掛點骨骼位置算錯，查了 bind pose 和 N_move 鏈才確認幾何沒錯、是選到的物件不對。

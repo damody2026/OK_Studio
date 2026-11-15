@@ -333,12 +333,23 @@ impl AccessoryRuntime {
             crate::dbone::implant::prepare(&mut rig,body,&raw.bone_implants,parent_world)
         } else {Default::default()};
         let skel = &rig;
-        // OK_CLOTHBONES=<mesh name part>: the garment's bones, how many vertices each carries, and whether the body has it.
+        // OK_CLOTHBONES=<mesh name part>: the garment's bones, how many vertices each carries (and where they are at
+        // rest), whether the body has it and where the body bone is.
         if std::env::var("OK_CLOTHBONES").is_ok_and(|filter| raw.name.to_ascii_lowercase().contains(&filter.to_ascii_lowercase())) {
-            let mut count = vec![0usize; rig.names.len()];
-            for (b, w) in raw.bone_idx.iter().zip(&raw.weights) { for k in 0..4 { if w[k] > 0.0 { if let Some(c) = count.get_mut(b[k] as usize) { *c += 1; } } } }
-            for (i, n) in rig.names.iter().enumerate() {
-                eprintln!("ok-extract: CLOTHBONES {} [{i}] {n} verts={} body={}", raw.name, count[i], body.index_of(n).is_some());
+            // The mesh bone indices name raw.bone_names (its renderer's bones), not the rig.
+            let mut count = vec![(0usize, [0f32; 3]); raw.bone_names.len()];
+            let rest = if raw.rest_positions.len() == raw.weights.len() { &raw.rest_positions } else { &raw.positions };
+            for ((b, w), p) in raw.bone_idx.iter().zip(&raw.weights).zip(rest) {
+                let k = (0..4).max_by(|&x, &y| w[x].total_cmp(&w[y])).unwrap_or(0);
+                if let Some(c) = count.get_mut(b[k] as usize) { c.0 += 1; for a in 0..3 { c.1[a] += p[a]; } }
+            }
+            for (i, n) in raw.bone_names.iter().enumerate() {
+                let (c, s) = count[i];
+                let m = s.map(|v| v / c.max(1) as f32);
+                let at = body.world_tf(n).map(|w| format!("[{:.3},{:.3},{:.3}]", w[0][3], w[1][3], w[2][3])).unwrap_or_default();
+                let bind = raw.bind_poses.get(i).map(|b| { let w = crate::pose::mat_inv_pub(b); format!("[{:.3},{:.3},{:.3}]", w[0][3], w[1][3], w[2][3]) }).unwrap_or_default();
+                // bind: the bone's rest position by the mesh's own bind pose (it should be at that bone).
+                eprintln!("ok-extract: CLOTHBONES {} [{i}] {n} verts={c} mean=[{:.3},{:.3},{:.3}] body={at} bind={bind}", raw.name, m[0], m[1], m[2]);
             }
         }
         let mut owned = raw.deferred_dbones.clone().unwrap_or_default()
@@ -8157,4 +8168,46 @@ fn acc_part_profile_every() -> Option<u32> {
 fn acc_shared_solve() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("OK_ACC_SHARED_SOLVE").ok().as_deref() != Some("0"))
+}
+
+#[cfg(test)]
+mod jump_probe_tests {
+    /// OK_JUMP_CARD=<OK card> OK_JUMP_OUTFIT=<n> (OK_BASE_LIBRARY set): open as the reader does (no game root), play the
+    /// jump demo ("Demo：蹦跳"; OK_JUMP_CLIP another) for OK_JUMP_FRAMES frames with the built-in solver, and report each
+    /// part's farthest vertex from the hips. OK_JUMP_DESCRIBE=1 prints the clothes chains and skirt bone frames.
+    #[test]
+    #[ignore="local OK card via OK_JUMP_CARD"]
+    fn jump_probe() {
+        let card=std::env::var("OK_JUMP_CARD").unwrap();
+        let outfit:i32=std::env::var("OK_JUMP_OUTFIT").ok().and_then(|v|v.parse().ok()).unwrap_or(0);
+        let game=std::ffi::CString::new("").unwrap();let c=std::ffi::CString::new(card.clone()).unwrap();
+        let mut out=std::ptr::null_mut();let mut err=[0i8;512];
+        let r=unsafe{crate::ffi::session_open(game.as_ptr(),c.as_ptr(),outfit,&mut out,err.as_mut_ptr(),512)};
+        assert_eq!(r,0,"{}",unsafe{std::ffi::CStr::from_ptr(err.as_ptr())}.to_string_lossy());
+        let s=unsafe{&mut *out};
+        for b in &s.abm { if b.name.contains("sk_") { eprintln!("abm {} {:?}",b.name,b.coord); } }
+        let clip=std::ffi::CString::new(std::env::var("OK_JUMP_CLIP").unwrap_or("states:controller@5B22637573746F6D2F637573746F6D706F73652E756E6974793364222C22637573746F6D5F706F7365222C22222C22225D|custom_pose / [Controller layer 0] Base Layer.Stand_D_01".into())).unwrap();
+        let root=std::ffi::CString::new(std::env::var("OK_BASE_LIBRARY").unwrap()+"/paired").unwrap();unsafe{assert_eq!(crate::ffi::ok_select_common_animation(s,root.as_ptr(),clip.as_ptr()),0);}
+        let frames:usize=std::env::var("OK_JUMP_FRAMES").ok().and_then(|v|v.parse().ok()).unwrap_or(400);
+        let dt=1.0/60.0;let mut t=0.0f32;
+        let rt:Vec<usize>=(0..s.parts.len()).filter(|i|s.parts[*i].runtime_accessory.is_some()).collect();
+        let mut worst:Vec<f32>=vec![0.;s.parts.len()];
+        for f in 0..frames {
+            t+=dt;s.apply_anim_frame(t,dt);
+            if f==1 && std::env::var("OK_JUMP_DESCRIBE").is_ok() { if let Some((_,st))=s.clothes_dynamic_runtime.as_ref() {
+                eprintln!("CLOTHES CHAINS\n{}",st.describe_chains());
+                let mut names:Vec<&String>=st.skel.tfs.values().map(|t|&t.name).filter(|n|n.contains("_sk_")).collect();names.sort();names.dedup();
+                for n in names { if let Some(m)=st.skel.world_tf(n) { let c=|k:usize|(m[0][k]*m[0][k]+m[1][k]*m[1][k]+m[2][k]*m[2][k]).sqrt(); eprintln!("BONE {n} pos=[{:.3},{:.3},{:.3}] scale=[{:.3},{:.3},{:.3}]",m[0][3],m[1][3],m[2][3],c(0),c(1),c(2)); } }
+            } }
+            s.skin_all();let _=s.query_private_geometries(&rt);
+            let hip=crate::placement::bone_world(s.body_skel.as_ref(),s.head_skel.as_ref(),"cf_j_hips").map(|m|[m[0][3],m[1][3],m[2][3]]).unwrap_or([0.;3]);
+            for (i,p) in s.parts.iter().enumerate() {
+                let d=p.positions.iter().map(|v|((v[0]-hip[0]).powi(2)+(v[1]-hip[1]).powi(2)+(v[2]-hip[2]).powi(2)).sqrt()).fold(0f32,f32::max);
+                if !d.is_finite()||d>worst[i]*1.5&&d>2.0 { eprintln!("frame {f} t={t:.3} part[{i}] {} far={d:.3} (prev worst {:.3})",p.name,worst[i]); }
+                if d.is_finite()&&d>worst[i]{worst[i]=d;}
+            }
+        }
+        for (i,p) in s.parts.iter().enumerate() { eprintln!("worst part[{i}] {} rt={} {:.3}",p.name,p.runtime_accessory.is_some(),worst[i]); }
+        unsafe{crate::ffi::session_free(out);}
+    }
 }

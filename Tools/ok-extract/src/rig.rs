@@ -11,6 +11,53 @@ pub(crate) fn rig_memo(key: Option<String>, mesh: &mut ExtractedMesh, rig: impl 
     *mesh = crate::view_memo(format!("rig|{key}"), move || { let mut made = input; rig(&mut made); made });
 }
 
+/// Puts a skinned mesh's bone list back in its bind-pose order. Unity pairs `bindposes[i]` with the renderer's
+/// `m_Bones[i]`, and the clothes are then remapped onto the body by those names. When the skeleton came from another
+/// renderer of the same Mesh asset (the per-Mesh lookup; library and OK-card models recorded before renderer_skeletons
+/// keep it), its bones are another order: C007's knight socks put the left leg's vertices on right-leg, foot and anus
+/// bones, and the left sock hung in front of the right knee. Each bind pose is the inverse of its bone's rest world, so
+/// the bones that do not match their bind pose are matched again among the list itself. Nothing changes unless every
+/// bind pose finds its bone and the result is a reordering of the same bones. Returns how many bones moved.
+pub(crate) fn align_bones_to_bind_poses(mesh: &mut ExtractedMesh) -> usize {
+    let n = mesh.bind_poses.len();
+    let Some(skel) = mesh.smr_skel.as_ref() else { return 0 };
+    if n < 2 || skel.names.len() < n || skel.rest.len() < n || mesh.bone_names.len() < n { return 0; }
+    const TOLERANCE: f32 = 2e-3;
+    let fits = |bind: &crate::pose::Mat4, rest: &crate::pose::Mat4| {
+        let inverse = crate::pose::mat_inv_pub(bind);
+        (0..3).all(|r| (0..4).all(|c| (inverse[r][c] - rest[r][c]).abs() <= TOLERANCE))
+    };
+    if (0..n).all(|i| fits(&mesh.bind_poses[i], &skel.rest[i])) { return 0; }
+    let mut order: Vec<usize> = (0..n).collect();
+    let mut used = vec![false; n];
+    // Bones already at their place stay; the others take the first unused bone their bind pose fits.
+    let matched: Vec<bool> = (0..n).map(|i| fits(&mesh.bind_poses[i], &skel.rest[i])).collect();
+    for i in 0..n { if matched[i] { used[i] = true; } }
+    for i in (0..n).filter(|&i| !matched[i]) {
+        let Some(j) = (0..n).find(|&j| !used[j] && fits(&mesh.bind_poses[i], &skel.rest[j])) else { return 0 };
+        used[j] = true;
+        order[i] = j;
+    }
+    let moved = (0..n).filter(|&i| order[i] != i).count();
+    if moved == 0 { return 0; }
+    let mut skel = mesh.smr_skel.take().unwrap();
+    fn reorder<T: Clone>(v: &mut [T], order: &[usize]) {
+        if v.len() < order.len() { return; }
+        let moved: Vec<T> = order.iter().map(|&j| v[j].clone()).collect();
+        v[..order.len()].clone_from_slice(&moved);
+    }
+    reorder(&mut skel.names, &order);
+    reorder(&mut skel.rest, &order);
+    reorder(&mut skel.worlds, &order);
+    reorder(&mut skel.bone_ids, &order);
+    let names = skel.names[..n].to_vec();
+    mesh.bone_names[..n].clone_from_slice(&names);
+    let note = format!("ok-extract: {} bones reordered to the mesh's bind poses ({moved} of {n}; the skeleton was another renderer's)", mesh.name);
+    eprintln!("{note}"); crate::ffi::ffi_log(0, &note);
+    mesh.smr_skel = Some(skel);
+    moved
+}
+
 pub(crate) fn rig_mesh(
     mesh: &mut ExtractedMesh,
     role: &str,
