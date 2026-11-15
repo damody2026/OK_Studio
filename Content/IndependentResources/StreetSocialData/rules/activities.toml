@@ -162,6 +162,24 @@ yields = ["study"]
 male_clip = "venue_study_seated.okanim"
 
 [[activity]]
+id = "cafe_meal"
+name = "在咖啡廳一起吃輕食"
+place = "cafe"
+kind = "pair"
+code = 5
+anchor = "dining|seat"
+
+
+[[activity]]
+id = "conveni_meal"
+name = "在便利店內用區一起吃"
+place = "conveni"
+kind = "pair"
+code = 5
+anchor = "dining|table|seat"
+
+
+[[activity]]
 id = "cafeteria_meal"
 name = "在學生餐廳一起吃飯"
 place = "cafeteria"

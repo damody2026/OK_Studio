@@ -29,13 +29,8 @@ void AOKStreetSocialScene::FinishInvitation(){
  if(!Result.Applied||!OKStreetAtomicSave(S.Manifest.SavePath,OKStreetWriteSave(Candidate),SaveError)){FailTalk(TEXT("Invitation atomic commit failed: ")+Result.Reason+SaveError);return;}
  S.Store=MoveTemp(Candidate);S.Transactions.Add(Transaction);
  FString Error;ResumeConversationPose(Character,Error);ResumeConversationPose(0,Error);
- // "Eat together" where they are, when it is a place to eat (the student cafeteria's own meal): 三月七 asked in the
- // cafeteria at noon was walked 111 minutes to the family restaurant by the bookstore (round 10, 2026-11-15).
- FString Meal=TEXT("meal");
- if(Accept&&Command==3){const FString Here=PlaceHere(S.Male);
-  if(!Here.IsEmpty())for(const auto& A:OKStreetActivities())if(A.Code==5&&A.Kind==EOKStreetActivityKind::Pair&&A.Place&&Here==A.Place){FString Why;if(ActivityCheck(Character,A.Id,Why,false)){Meal=A.Id;break;}}
-  if(Meal!=TEXT("meal"))UE_LOG(LogTemp,Display,TEXT("Street invitation: eat together here at %s (%s)"),*Here,*Meal);}
- if(Accept){++S.InvitationAccepts;if(Command==3)StartActivityFromPanel(Character,Meal,true);else if(Command==4)BeginCompanion(Character);}
+ // "Eat together" where they are when it is a place to eat: StartActivityFromPanel picks the place's own meal.
+ if(Accept){++S.InvitationAccepts;if(Command==3)StartActivityFromPanel(Character,TEXT("meal"),true);else if(Command==4)BeginCompanion(Character);}
  else{++S.InvitationRefusals;S.Message=OKT(TEXT("ui.invitations.invite_declined"));RefreshUI();}
 }
 void AOKStreetSocialScene::RunInvitationProbe(double Now){

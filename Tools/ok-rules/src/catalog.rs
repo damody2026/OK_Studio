@@ -305,6 +305,17 @@ pub fn gift_score(profile: &Value, item: &Item, price: i32, stage: &str, greed: 
     let taste = taste_of(profile, item, "", "");
     let style = profile.get("tastes").and_then(|t| t.get("gift_style")).and_then(Value::as_str).unwrap_or("");
     let mut score = 0.3 + taste as f32 * 0.2;
+    // What she likes to be given, apart from what she orders (tastes.likes picks her meals: a "sweet" there had her eat
+    // dessert for dinner). Ids, tags or words of the name. Every profile liked the same pearl milk and latte and nothing
+    // else matched, so a chocolate and a novel moved all ten the same (round 14).
+    if let Some(t) = profile.get("tastes") {
+        let has = |field: &str| strings(t, field).iter().any(|s| *s == item.id || item.tags.contains(s) || (!s.is_empty() && item.name.contains(s.as_str())));
+        if has("gift_dislikes") {
+            score -= 0.6;
+        } else if has("gift_likes") {
+            score += 0.4;
+        }
+    }
     if (style == "cute" && item.tags.iter().any(|t| t == "cute")) || (style == "luxury" && item.tags.iter().any(|t| t == "luxury")) || (style == "practical" && item.category == "goods") {
         score += 0.3;
     }

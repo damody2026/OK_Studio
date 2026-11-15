@@ -762,6 +762,12 @@ float AOKStreetSocialScene::StepOuting(float Dt){
    // round the pond and back, two minutes (activity audit 11-09); the rowing boat is 8 m off the bank. The activity puts them
    // on its spot anyway: within 10 m of an activity's last point he takes it.
    const bool AtLast=S.OutingStep==S.OutingRoute.Num()-1&&FVector::Dist2D(S.Male,S.OutingRoute[S.OutingStep])<(OKStreetFindActivity(S.OutingActivity)?1000.f:200.f);
+   // Inside the place already and held up again: on to its last point (the seat). In the restaurant with 雷电 he was
+   // stepped past into a table and stood 1 cm from where he was, the route round the tables led back to it, 40 minutes
+   // of the clock (round 14 nh1115w, 19:37-20:17).
+   if(!AtLast&&S.OutingStuckCount>=2&&OKStreetFindActivity(S.OutingActivity)&&!S.OutingPlace.IsEmpty()&&!S.OutingRoute.IsEmpty())
+    if(const FOKStreetPlace* Here=OKStreetFindPlace(PlaceHere(S.Male));Here&&Here->Name==S.OutingPlace){
+    UE_LOG(LogTemp,Display,TEXT("Street outing: inside %s and held up, on to its last point"),*S.OutingPlace);S.OutingStep=S.OutingRoute.Num()-1;S.OutingStuckCount=5;}
    // Upstairs with no way found on the floor twice (the cafeteria's 3F to its music room, the EE building's 2F): the next
    // point is on this floor, he steps past rather than standing there until she gives up.
    if((S.OutingStuckCount>=5||AtLast||(Upstairs&&Again.Num()<2&&S.OutingStuckCount>=2))&&S.OutingRoute.IsValidIndex(S.OutingStep)){
@@ -1138,5 +1144,12 @@ FString AOKStreetSocialScene::FreeTalkNearby() const{
 void AOKStreetSocialScene::StartActivityFromPanel(int32 Girl,const FString& ActivityId,bool bAgreed){
  FString Error;
  if(!bAgreed&&!PanelConsent(Girl,ActivityId))return; // the same yes or no as everywhere (Life.inl)
- if(!BeginOuting(Girl,ActivityId,Error)){State->Message=Error;RefreshUI();}
+ // "Eat together" where they are, when it is a place to eat (its own code 5 pair activity: the cafeteria's meal, the
+ // cafe's light meal): 三月七 asked in the cafeteria at noon was walked 111 minutes to the family restaurant (round 10),
+ // and the panel's "一起吃饭" in the cafe still walked 胡桃 to the restaurant (round 14: only the invitation looked here).
+ FString Id=ActivityId;
+ if(Id==TEXT("meal")){const FString Here=PlaceHere(State->Male);
+  if(!Here.IsEmpty())for(const auto& A:OKStreetActivities())if(A.Code==5&&A.Kind==EOKStreetActivityKind::Pair&&A.Place&&Here==A.Place){FString Why;if(ActivityCheck(Girl,A.Id,Why,false)){Id=A.Id;break;}}
+  if(Id!=ActivityId)UE_LOG(LogTemp,Display,TEXT("Street activity: eat together here at %s (%s)"),*Here,*Id);}
+ if(!BeginOuting(Girl,Id,Error)){State->Message=Error;RefreshUI();}
 }

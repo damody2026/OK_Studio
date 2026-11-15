@@ -103,6 +103,9 @@ pub struct Tastes {
     pub alcohol: String,
     /// practical | cute | luxury | handmade | experience
     pub gift_style: String,
+    /// What she likes / dislikes to be given (item ids, tags or name words), apart from what she orders (likes).
+    pub gift_likes: Vec<String>,
+    pub gift_dislikes: Vec<String>,
     pub lucky_numbers: Vec<i32>,
     pub favorite_teams: Vec<String>,
 }

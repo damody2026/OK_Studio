@@ -269,6 +269,13 @@ fn gift_offer(c: &Catalog, r: &Value) -> Result<Value, String> {
     Ok(json!({"score": score, "lean": if score >= 0.0 { "accept" } else { "decline" }, "insist": score.abs().clamp(0.0, 1.0)}))
 }
 
+const GIFTS_FLAG: &str = "gifts:";
+
+/// How many gifts she took from him today (her flag "gifts:<day>:<count>"; another day's counts none).
+fn gifts_today(rel: &crate::relation::Relation) -> i32 {
+    rel.flags.iter().filter_map(|f| f.strip_prefix(GIFTS_FLAG)).filter_map(|f| f.split_once(':')).find(|(d, _)| d.parse::<i32>().ok() == Some(rel.day)).and_then(|(_, n)| n.parse().ok()).unwrap_or(0).max(0)
+}
+
 /// Her answer to a gift. Request: item, option, score, relation. Answer: accepted, effects.
 fn gift_settle(c: &Catalog, r: &Value) -> Result<Value, String> {
     let mut rel = rel_of(r.get("relation"))?.ok_or("missing_field: relation")?;
@@ -279,7 +286,13 @@ fn gift_settle(c: &Catalog, r: &Value) -> Result<Value, String> {
     let mut fx = Effects::default();
     let accepted = s(r, "option") == "accept";
     if accepted {
-        rel.add_liking(2.0 + score.max(0.0) * 4.0);
+        // The second gift of the day counts for half, the third a third: 雷电 went 58.6 -> 72.3 -> 86.0 for a ¥5 chocolate
+        // and a ¥8 mooncake handed over a minute apart (round 14). Kept as a flag "gifts:<day>:<count>" (flags go to every
+        // rule; the cooldowns only to the talk rules, and a patch of them here replaced her talk cooldowns).
+        let given = gifts_today(&rel);
+        rel.flags.retain(|f| !f.starts_with(GIFTS_FLAG));
+        rel.flags.push(format!("{GIFTS_FLAG}{}:{}", rel.day, given + 1));
+        rel.add_liking((2.0 + score.max(0.0) * 4.0) / (1 + given) as f32);
         rel.attraction = (rel.attraction + 1.0).clamp(0.0, 100.0);
         rel.perceived_wealth = (rel.perceived_wealth + (price as f32 / crate::region::amount("goods", 85) as f32).min(15.0)).clamp(0.0, 100.0);
         if item.tags.iter().any(|t| t == "luxury") {
@@ -951,6 +964,26 @@ mod tests {
         assert_eq!(order_second_dish(&json!({"has_like": true, "for_her": true, "satiety": 20.0}))["order"], true);
         assert_eq!(order_second_dish(&json!({"has_like": true, "same_dish": true, "for_her": true, "satiety": 20.0}))["order"], false);
         assert_eq!(order_second_dish(&json!({"has_like": true, "same_dish": true, "nearly_gone": true}))["order"], true);
+    }
+
+    #[test]
+    fn a_second_gift_the_same_day_counts_for_less() {
+        let mut c = Catalog::default();
+        c.items.push(crate::catalog::Item { id: "choc".into(), name: "choc".into(), price: [(String::new(), 5)].into_iter().collect(), ..Default::default() });
+        let give = |rel: Value| gift_settle(&c, &json!({"item": "choc", "option": "accept", "score": 0.3, "relation": rel})).unwrap();
+        let set = |v: &Value| v["effects"].as_array().unwrap().iter().find(|e| e["op"] == "relation").unwrap()["set"].clone();
+        let base = json!({"id": "a", "stage": "lover", "favor": 58.6, "day": 7});
+        let first = set(&give(base.clone()));
+        let once = first["favor"].as_f64().unwrap() - 58.6;
+        let mut after = base.clone();
+        after["favor"] = first["favor"].clone();
+        assert!(first.get("cooldowns").is_none(), "her talk cooldowns are not touched");
+        after["flags"] = first["flags"].clone();
+        let twice = set(&give(after.clone()))["favor"].as_f64().unwrap() - first["favor"].as_f64().unwrap();
+        assert!((twice - once / 2.0).abs() < 0.01, "second of the day half: {once} then {twice}");
+        after["day"] = json!(8);
+        let next_day = set(&give(after))["favor"].as_f64().unwrap() - first["favor"].as_f64().unwrap();
+        assert!((next_day - once).abs() < 0.01, "a new day counts in full again: {next_day}");
     }
 
     #[test]

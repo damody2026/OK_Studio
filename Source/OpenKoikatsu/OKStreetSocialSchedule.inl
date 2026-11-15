@@ -251,6 +251,24 @@ void AOKStreetSocialScene::TickSchedules(){
   int32 Index=INDEX_NONE;const FOKStreetPlanBlock* Block=BlockNow(I,Minute,&Index);const int32 PlanIndex=Index;
   FOKStreetPlanBlock Urgent;
   if(const auto* U=Urgents.Find(I)){Urgent=U->Value;Block=&Urgent;Index=U->Key;}
+  // A class or shift somewhere else next: she sets out in time for it, by the way there at the outing's pace (the way
+  // 1.3 times the straight line, 4 m a game minute) and ten minutes more. 刻晴 left the dorm at her 09:00 class's start
+  // and walked into it at 10:43, the campus 284 m away (round 14, 2026-11-15). Not from a class, shift or promise, nor
+  // from a meal she has not eaten yet (taken away, the hunger rule put her back at the table each tick).
+  else if(const auto* Plan=S.Plans.Find(I);Plan&&!OKStreetFixedBlock(Block)){
+   // Set out already: that stays until it starts. Arrived (or placed there, far from him) the way left is short and the
+   // lead with it; taken back, actor 3 was placed at the dorm and at the cafe each tick, 13:27-13:31 (round 14 nh1115v).
+   // Before the meal check: setting out clears what she ate, and her breakfast took her back each tick (08:25-08:28 w).
+   const int32 Was=S.PlanBlock.FindRef(I,INDEX_NONE);
+   if(Plan->IsValidIndex(Was)&&(*Plan)[Was].Start>Minute&&(*Plan)[Was].Start<=Minute+150&&((*Plan)[Was].Kind==TEXT("class")||(*Plan)[Was].Kind==TEXT("work"))){Block=&(*Plan)[Was];Index=Was;}
+   else if(!(Block&&Block->Kind==TEXT("meal")&&!S.PlanEaten.Contains(I)))for(int32 K=0;K<Plan->Num();++K){const FOKStreetPlanBlock& Next=(*Plan)[K];
+    if(Next.Start<=Minute||Next.Start>Minute+150)continue;
+    if(Next.Kind!=TEXT("class")&&Next.Kind!=TEXT("work"))continue;
+    const FOKStreetPlace* To=OKStreetFindPlace(Next.Place);if(!To||To->Door.IsNearlyZero()||(Block&&Block->Place==Next.Place))break;
+    const FVector& At=S.Agents[I-1].Position;if(OKStreetInsidePlace(*To,At))break;
+    const int32 Lead=FMath::CeilToInt(FVector::Dist2D(At,To->Door)/100.f*1.3f/OKStreetOutingWalkMPerMin)+10;
+    if(Minute>=Next.Start-Lead){Block=&Next;Index=K;}
+    break;}}
   const int32 Previous=S.PlanBlock.FindRef(I,INDEX_NONE);
   // Nothing recorded yet: the day (or the game) just started, she is put where her block is. A gap in her plan
   // (INDEX_NONE recorded: no block then) is not a start; from it she walks on like from any block.
@@ -290,6 +308,7 @@ void AOKStreetSocialScene::TickSchedules(){
     const auto& W=(*Plan)[Previous];const int32 Wage=HerWage(W);const int32 Pay=HerShiftPay(I,W,Wage,Minute);
     {QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_BlockPayNet);if(R.Cash>=0)R.Cash+=OKRulesNetPay(S,Pay,float(Pay)/float(FMath::Max(1,Wage))/176.f);}
     QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_BlockPayObserve);MindObserve(I,TEXT("shared_shift"),OKMsg(TEXT("ui.schedule.worked_part_time"), {{TEXT("place"), OKStreetFindPlace(W.Place)?OKStreetFindPlace(W.Place)->Name:*W.Place}, {TEXT("hours"), (W.End-W.Start)/60}, {TEXT("pay"), Pay}}),W.Place,0.2f);}
+   if(Block&&Index>=0&&Block->Start>Minute)UE_LOG(LogTemp,Display,TEXT("Street plan: actor %d sets out %d min early for her %02d:%02d %s at %s"),I,Block->Start-Minute,Block->Start/60,Block->Start%60,*Block->Kind,*Block->Place);
    S.PlanBlock.Add(I,Index);S.PlanBlockSince.Add(I,Minute);S.PlanEaten.Remove(I);
    auto& A=S.Agents[I-1];
    // Nowhere in particular (the street): let go to roam. Inside a place she first goes out of its door (she stayed in the
@@ -310,6 +329,18 @@ void AOKStreetSocialScene::TickSchedules(){
     TSharedPtr<FJsonObject> Answer;{QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_PlanAlternative);Answer=OKRulesEval(S,Request);}if(!Answer)continue;Alt=OKRulesReadBlock(*Answer->GetObjectField(TEXT("block")));
     UE_LOG(LogTemp,Display,TEXT("Street plan: actor %d finds %s closed, goes to %s (%s) instead"),I,*Block->Place,*Alt.Place,*Alt.Kind);
     if(auto* Plan=S.Plans.Find(I);Plan&&Plan->IsValidIndex(Index)){(*Plan)[Index]=Alt;Block=&(*Plan)[Index];}else Block=&Alt;}
+   // Walked (seen by him): too far to get there before the block ends, a meal at the nearest place she eats at and
+   // anything else where she is (plan.rs plan_reachable). Out of his sight she is simply there.
+   else if(!Fresh&&FVector::Dist2D(A.Position,S.Male)<4000&&!OKStreetFixedBlock(Block)){
+    auto Request=OKRulesRequest(TEXT("plan_reachable"));Request->SetObjectField(TEXT("block"),OKRulesBlockJson(*Block));Request->SetObjectField(TEXT("doors"),OKRulesDoors());
+    Request->SetArrayField(TEXT("from"),{MakeShared<FJsonValueNumber>(A.Position.X),MakeShared<FJsonValueNumber>(A.Position.Y)});
+    {const FDateTime T=StreetNow();Request->SetNumberField(TEXT("hours"),T.GetHour()+T.GetMinute()/60.0);Request->SetNumberField(TEXT("weekday"),int32(T.GetDayOfWeek()));}
+    Request->SetNumberField(TEXT("minute"),Minute);Request->SetStringField(TEXT("here"),PlaceHere(A.Position));Request->SetNumberField(TEXT("pace"),OKStreetOutingWalkMPerMin);
+    Request->SetStringField(TEXT("home"),OKStreetProfileString(S.MindProfiles.FindRef(Id),nullptr,TEXT("home_place_id")));
+    if(const TSharedPtr<FJsonObject> Answer=OKRulesEval(S,Request);Answer&&Answer->GetBoolField(TEXT("changed"))){
+     Alt=OKRulesReadBlock(*Answer->GetObjectField(TEXT("block")));
+     UE_LOG(LogTemp,Display,TEXT("Street plan: actor %d cannot reach %s before %02d:%02d, %s at %s instead (%d min away)"),I,*Block->Place,Block->End/60%24,Block->End%60,*Alt.Kind,*Alt.Place,int32(Answer->GetNumberField(TEXT("minutes"))));
+     if(auto* Plan=S.Plans.Find(I);Plan&&Plan->IsValidIndex(Index)){(*Plan)[Index]=Alt;Block=&(*Plan)[Index];}else Block=&Alt;}}
    // Her own day, block by block, is hers to remember (with its time); meal, work, errand and social write their own.
    if(Block->Kind!=TEXT("meal")&&Block->Kind!=TEXT("work")&&Block->Kind!=TEXT("errand")&&Block->Kind!=TEXT("social")){
     const FOKStreetPlace* P=OKStreetFindPlace(Block->Place);

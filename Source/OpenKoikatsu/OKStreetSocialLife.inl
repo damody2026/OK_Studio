@@ -48,6 +48,8 @@ const FOKStreetPlanBlock* AOKStreetSocialScene::LifeBlock(int32 I,int32 Minute) 
   FOKStreetPlanBlock& U=*Slot;U.Kind=Index==-2?TEXT("meal"):Index==-3?TEXT("rest"):TEXT("bath");
   U.Place=S.Agents.IsValidIndex(I-1)?PlaceHere(S.Agents[I-1].Position):FString();U.Start=Minute;U.End=Minute+1;return &U;
  }
+ // Set out early for a class or shift (TickSchedules): that one is hers now, not the meal she left.
+ if(Index>=0)if(const auto* Plan=S.Plans.Find(I);Plan&&Plan->IsValidIndex(Index)&&(*Plan)[Index].Start>Minute&&(*Plan)[Index].Start<=Minute+150)return &(*Plan)[Index];
  return BlockNow(I,Minute);
 }
 

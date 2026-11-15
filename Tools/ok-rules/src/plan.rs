@@ -122,6 +122,40 @@ const SKIP_BREAKFAST_SATIETY: f32 = 60.0;
 /// The least time between the end of her lunch and her dinner.
 const MEAL_GAP: i32 = 180;
 
+/// Where her own meals are (besides home): every one is a place where he can ask her to eat together there (an
+/// activities.toml code 5 pair activity), and the everyday places to eat together are where she eats on her own too:
+/// one list both ways. She had breakfast at the cafe while "eat together" there sent them to the restaurant (closed
+/// until 11, round 13, 2026-11-15); the ramen, fast-food, sushi and yakiniku places were his alone.
+pub const MEAL_PLACES: &[&str] = &["cafeteria", "conveni", "cafe", "breakfast", "restaurant", "department", "fastfood", "sushi", "yakiniku"];
+/// Places to eat together that are not where she has her meals, and why.
+pub const NOT_HER_MEALS: &[(&str, &str)] = &[
+    ("snack", "desserts"), ("crepe", "desserts"), ("fruitshop", "fruit"), ("amusement", "a snack at the park"),
+    ("festival", "only at the festival"), ("beach_house", "only at the beach"), ("bbq", "an outing"), ("orchard", "an outing"),
+    ("izakaya", "a drinking place"), ("ramen", "no dishes in the catalogue for her to order"),
+];
+/// Places whose meals are beyond a small budget.
+const EXPENSIVE: &[&str] = &["sushi", "yakiniku"];
+
+/// One of the places to eat out, by weight, from a draw in [0, 1): the expensive ones turn into the department store's
+/// food court when her budget is small.
+fn eat_out(r: f32, budget: i32, choices: &[(&'static str, f32)]) -> &'static str {
+    let total: f32 = choices.iter().map(|c| c.1).sum();
+    let mut at = r.clamp(0.0, 0.999_999) * total;
+    let mut pick = choices.last().map(|c| c.0).unwrap_or("restaurant");
+    for (place, weight) in choices {
+        if at < *weight {
+            pick = place;
+            break;
+        }
+        at -= weight;
+    }
+    if EXPENSIVE.contains(&pick) && budget < crate::region::amount("goods", 50) as i32 {
+        "department"
+    } else {
+        pick
+    }
+}
+
 fn lighten(b: &mut Block) {
     b.budget = -b.budget.abs().max(1);
     b.end = b.end.min(b.start + LIGHT_MEAL_MINUTES);
@@ -194,10 +228,8 @@ pub fn plan_day(i: &Inputs, c: &Catalog) -> Vec<Block> {
     }) as i32;
     let lunch = if i.money_stress > 50.0 || (primary == "student" && !weekend) {
         "cafeteria".to_string()
-    } else if rng.frand() < 0.5 {
-        "restaurant".to_string()
     } else {
-        "department".to_string()
+        eat_out(rng.frand(), budget, &[("restaurant", 0.35), ("department", 0.25), ("fastfood", 0.15), ("cafe", 0.1), ("sushi", 0.08), ("yakiniku", 0.07)]).to_string()
     };
     let meal = |day: &mut Vec<Block>, starts: &[i32], len: i32, place: &str, b: i32| {
         for s in starts {
@@ -218,8 +250,10 @@ pub fn plan_day(i: &Inputs, c: &Catalog) -> Vec<Block> {
             "conveni".to_string()
         } else if primary == "student" && !weekend {
             "cafeteria".to_string()
-        } else {
+        } else if r < 0.83 {
             "cafe".to_string()
+        } else {
+            "breakfast".to_string()
         }
     };
     let morning: &[i32] = match (rng.frand() * 3.0) as i32 { 0 => &[420, 450, 480], 1 => &[450, 480, 510], _ => &[480, 510, 450] };
@@ -254,12 +288,9 @@ pub fn plan_day(i: &Inputs, c: &Catalog) -> Vec<Block> {
             "cafeteria"
         } else if budget < crate::region::amount("goods", 40) as i32 && r < 0.75 {
             if student_day { "cafeteria" } else { "department" }
-        } else if r < 0.6 {
-            "restaurant"
-        } else if r < 0.85 {
-            "department"
         } else {
-            "cafe"
+            // The rest of her draw over the places to eat out (the same r: no extra draw, so seeds keep their days).
+            eat_out(r, budget, &[("restaurant", 0.45), ("department", 0.17), ("fastfood", 0.1), ("sushi", 0.1), ("yakiniku", 0.08), ("cafe", 0.1)])
         }
     };
     let starts: &[i32] = match (rng.frand() * 3.0) as i32 { 0 => &[1050, 1080, 1020, 960, 1320], 1 => &[1080, 1110, 1020, 960, 1290], _ => &[1110, 1080, 1050, 960, 1290] };
@@ -943,6 +974,48 @@ pub fn open_alternative(c: &Catalog, places: &PlacesTuning, r: &Value) -> Result
     Ok(json!({"block": alt}))
 }
 
+/// Her next block is too far to reach before it ends (her walk, seen by him, at `pace` m a game minute along a way 1.3
+/// times the straight line): a meal at the nearest open place she eats at, anything else free where she is (in a place;
+/// on the street she goes on). A class, shift, promise or the night is kept. 刻晴 left the cafeteria at 13:51 and was on
+/// her way all afternoon, the errand, the dorm, the sushi bar, the cafe, the drink shop, each an hour, each farther than
+/// an hour's walk: at 20:00 she had got nowhere and had no dinner (round 14, 2026-11-15).
+/// Request: block, doors {id: [x, y]}, from [x, y], minute, hours, weekday, here, pace. Answer: block, changed, minutes.
+pub fn reachable(c: &Catalog, r: &Value) -> Result<Value, String> {
+    let mut b: Block = serde_json::from_value(r.get("block").cloned().ok_or("missing_field: block")?).map_err(|e| format!("block: {e}"))?;
+    let doors: BTreeMap<String, (f32, f32)> = serde_json::from_value(r.get("doors").cloned().unwrap_or(json!({}))).unwrap_or_default();
+    let from: (f32, f32) = serde_json::from_value(r.get("from").cloned().unwrap_or(json!([0, 0]))).unwrap_or((0.0, 0.0));
+    let minute = r.get("minute").and_then(Value::as_i64).unwrap_or(0) as i32;
+    let hours = r.get("hours").and_then(Value::as_f64).unwrap_or(12.0);
+    let weekday = r.get("weekday").and_then(Value::as_i64).unwrap_or(0) as i32;
+    let here = r.get("here").and_then(Value::as_str).unwrap_or("");
+    let pace = r.get("pace").and_then(Value::as_f64).unwrap_or(4.0).max(0.5) as f32;
+    let walk = |id: &str| doors.get(id).map(|d| (((d.0 - from.0).powi(2) + (d.1 - from.1).powi(2)).sqrt() / 100.0 * 1.3 / pace).ceil() as i32);
+    let left = b.end - minute;
+    let need = if here == b.place { Some(0) } else { walk(&b.place) };
+    let keep = |b: &Block, minutes: Option<i32>| json!({"block": b, "changed": false, "minutes": minutes.unwrap_or(-1)});
+    if fixed(&b) || b.kind == "sleep" || need.is_none_or(|m| m <= left) {
+        return Ok(keep(&b, need));
+    }
+    if b.kind == "meal" {
+        // Home is where she eats too (breakfast at home, plan_day): 刻晴 walked 82 minutes from the dorm to a 30-minute
+        // breakfast at the cafeteria, nothing nearer.
+        let home = r.get("home").and_then(Value::as_str).filter(|h| !h.is_empty()).unwrap_or("girls_dorm");
+        let best = MEAL_PLACES.iter().copied().chain(std::iter::once(home)).filter(|p| *p == here || *p == home || c.place_open(p, hours, weekday)).filter_map(|p| (if p == here { Some(0) } else { walk(p) }).map(|m| (m, p))).min();
+        match best {
+            Some((m, p)) if Some(m) < need => {
+                b.place = p.to_string();
+                return Ok(json!({"block": b, "changed": true, "minutes": m}));
+            }
+            _ => return Ok(keep(&b, need)),
+        }
+    }
+    if here.is_empty() {
+        return Ok(keep(&b, need));
+    }
+    b.place = here.to_string();
+    Ok(json!({"block": b, "changed": true, "minutes": 0}))
+}
+
 /// Her day with today's meetings with him as they stand now (one made, moved or called off after the day was planned:
 /// "lunch at noon?" said at nine). Earlier promise blocks go; each meeting takes [start, start + 90) and the blocks it
 /// overlaps are cut back or dropped. Request: blocks [Block], promises [{start, place}]. Answer: blocks.
@@ -989,6 +1062,7 @@ pub fn eval(c: &Catalog, places: &PlacesTuning, kind: &str, r: &Value) -> Option
         "plan_meal" => meal(c, r),
         "meal_pick" => meal_pick(c, r),
         "plan_alternative" => open_alternative(c, places, r),
+        "plan_reachable" => reachable(c, r),
         "plan_set_promises" => plan_set_promises(c, r),
         "weather" => Ok(json!({"raining": raining_at(day(), r.get("minute").and_then(Value::as_i64).unwrap_or(0) as i32)})),
         "holiday" => Ok(json!({"holiday": holiday_on(day())})),
@@ -1000,6 +1074,63 @@ pub fn eval(c: &Catalog, places: &PlacesTuning, kind: &str, r: &Value) -> Option
 mod tests {
     use super::*;
     use crate::tuning::Tuning;
+
+    #[test]
+    fn where_she_eats_is_where_they_can_eat_together() {
+        let t = Tuning::builtin();
+        let together: Vec<&str> = t.activities.activity.iter().filter(|a| a.code == 5 && a.kind == "pair").map(|a| a.place.as_str()).collect();
+        for p in MEAL_PLACES {
+            assert!(together.contains(p), "she eats at {p} but he cannot ask her to eat together there (activities.toml)");
+            assert!(t.catalog.items.iter().any(|it| it.place == *p && it.consumable), "she eats at {p}: nothing there to order");
+        }
+        for p in &together {
+            assert!(MEAL_PLACES.contains(p) || NOT_HER_MEALS.iter().any(|n| n.0 == *p), "they can eat together at {p}: put it in MEAL_PLACES or NOT_HER_MEALS");
+        }
+        // Every place her day plans a meal at is one of them (or home).
+        let c = &t.catalog;
+        for seed in 0..400 {
+            for weekday in 0..7 {
+                let profile = json!({"occupation": {"primary": if seed % 2 == 0 { "student" } else { "office" }}});
+                let i = Inputs { profile: &profile, weekday, money_stress: (seed % 5) as f32 * 20.0, energy: 80.0, satiety: 50.0, wealth: (seed as i64 % 3) * 20000,
+                    promises: vec![], stalk_place: String::new(), rainy: false, exam_week: false, company_place: String::new(), company_role: String::new(),
+                    classes: vec![], timetable: false, seed };
+                for b in plan_day(&i, c).iter().filter(|b| b.kind == "meal") {
+                    assert!(b.place == "girls_dorm" || MEAL_PLACES.contains(&b.place.as_str()), "seed {seed} day {weekday}: a meal at {}", b.place);
+                }
+            }
+        }
+        // The draw reaches every place to eat out, and a small budget never sits down at the sushi bar.
+        let list = [("restaurant", 0.4), ("sushi", 0.3), ("fastfood", 0.3)];
+        assert_eq!(eat_out(0.1, 1000, &list), "restaurant");
+        assert_eq!(eat_out(0.5, 1000, &list), "sushi");
+        assert_eq!(eat_out(0.99, 1000, &list), "fastfood");
+        assert_eq!(eat_out(0.5, 1, &list), "department");
+    }
+
+    #[test]
+    fn a_block_too_far_to_reach_in_time() {
+        let c = Tuning::builtin().catalog;
+        // Doors 20 000 cm apart: 260 m of way at 4 m a minute, 65 minutes.
+        let doors = json!({"sushi": [20000.0, 0.0], "cafe": [1000.0, 0.0], "park": [0.0, 0.0], "lecture": [20000.0, 0.0]});
+        let ask = |block: Value, here: &str| reachable(&c, &json!({"block": block, "doors": doors, "from": [0, 0], "minute": 1060, "hours": 17.7, "weekday": 2, "here": here, "pace": 4.0})).unwrap();
+        // Dinner at the far sushi bar, an hour long: the nearest open place she eats at (the cafe, 4 minutes).
+        let a = ask(json!({"start": 1060, "end": 1120, "place": "sushi", "kind": "meal"}), "park");
+        assert_eq!((a["changed"].as_bool(), a["block"]["place"].as_str()), (Some(true), Some("cafe")), "{a}");
+        // Long enough to get there: kept.
+        let a = ask(json!({"start": 1060, "end": 1200, "place": "sushi", "kind": "meal"}), "park");
+        assert_eq!(a["changed"], false);
+        // Breakfast far away and nothing nearer open: at home, where she is.
+        let a = reachable(&c, &json!({"block": {"start": 450, "end": 480, "place": "sushi", "kind": "meal"}, "doors": doors, "from": [0, 0], "minute": 450, "hours": 7.5, "weekday": 2, "here": "girls_dorm", "home": "girls_dorm", "pace": 4.0})).unwrap();
+        assert_eq!(a["block"]["place"], "girls_dorm", "{a}");
+        // Leisure too far: she stays in the park; on the street she goes on.
+        let a = ask(json!({"start": 1060, "end": 1100, "place": "sushi", "kind": "leisure"}), "park");
+        assert_eq!(a["block"]["place"], "park");
+        let a = ask(json!({"start": 1060, "end": 1100, "place": "sushi", "kind": "leisure"}), "");
+        assert_eq!((a["changed"].as_bool(), a["block"]["place"].as_str()), (Some(false), Some("sushi")));
+        // A class is a class.
+        let a = ask(json!({"start": 1060, "end": 1100, "place": "lecture", "kind": "class"}), "park");
+        assert_eq!(a["changed"], false);
+    }
 
     #[test]
     fn a_meeting_made_today_goes_into_her_day() {
