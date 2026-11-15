@@ -442,6 +442,7 @@ void UOKHScenePanel::Touch(int32 Area){
 // Her head, hand, thigh, calf, foot (or her lips) touched or kissed: no caress clip of hers in the original, which plays
 // its HitReaction there (HandCtrl reac_head / reac_arm / reac_leg): the part flinches, again every few seconds while he
 // keeps at it, less the more it is developed. Whether she lets him: hexp.rs touch_ok (her relation, the place developed).
+static TAutoConsoleVariable<float> CVarHStrokeAmp(TEXT("ok.HScene.StrokeAmp"),1.f,TEXT("A place with no caress clip, stroked, sways this much of its flinch (at least 4 degrees before this scale)"));
 static const TCHAR* HBodyKey(int32 Area){static const TCHAR* K[]={TEXT("head"),TEXT("hand"),TEXT("thigh"),TEXT("calf"),TEXT("foot")};return Area==0?TEXT("lips"):Area>=6&&Area<11?K[Area-6]:TEXT("");}
 bool UOKHScenePanel::BodyTouching() const{return TouchArea>=6||(TouchArea==0&&bLipsTouch);}
 void UOKHScenePanel::TouchBody(int32 Area){
@@ -453,8 +454,9 @@ void UOKHScenePanel::TouchBody(int32 Area){
     if(TouchArea!=Area||(Area==0)){const bool First=Area!=0&&AreaExperience(Area)<.05f&&AreaSeconds[Area]<=0.f;
         Note(OKMsg(First?TEXT("ui.hscene.event_first_body"):TEXT("ui.hscene.event_body"),{{TEXT("how"),How},{TEXT("part"),Part}}));}
     const bool bNewPlace=TouchArea!=Area||StrokeBone.IsEmpty();TouchArea=Area;Flinch(Area);
-    // Stroked there: the part sways with his hand, a third of its flinch, on one axis kept while he stays on it.
-    if(bNewPlace){StrokeBone=FlinchBone;StrokePhase=0.f;StrokeAxis=FVector(FMath::FRandRange(-1.f,1.f),FMath::FRandRange(-1.f,1.f),FMath::FRandRange(-1.f,1.f)).GetSafeNormal()*FlinchTurn.Size()*.35f;}
+    // Stroked there: the part sways with his hand, as far as it flinches (at least 4 degrees), on one axis kept while he
+    // stays on it. A third of the flinch (0.3..4 degrees) could not be seen (2026-11-16).
+    if(bNewPlace){StrokeBone=FlinchBone;StrokePhase=0.f;StrokeAxis=FVector(FMath::FRandRange(-1.f,1.f),FMath::FRandRange(-1.f,1.f),FMath::FRandRange(-1.f,1.f)).GetSafeNormal()*FMath::Max(FlinchTurn.Size(),4.f)*CVarHStrokeAmp.GetValueOnGameThread();}
 }
 void UOKHScenePanel::Flinch(int32 Area){
     static const TCHAR* Bones[]={TEXT("cf_j_head"),TEXT("cf_j_forearm01_"),TEXT("cf_j_thigh00_"),TEXT("cf_j_leg01_"),TEXT("cf_j_leg03_")};
