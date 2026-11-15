@@ -238,6 +238,7 @@ public:
  UPROPERTY() TObjectPtr<class USlider> LightingPitchSlider;
  UPROPERTY() TObjectPtr<class USlider> LightingIntensitySlider;
  UPROPERTY() TObjectPtr<class USlider> LightingAmbientSlider;
+ UPROPERTY() TObjectPtr<class USlider> LightingShadeSlider;
  TArray<TPair<class USlider*,class UTextBlock*>> LightingValueLabels;
  TArray<FString> LightingRampKeys;	// parallel to LightingRampCombo's options; "" = the card's own ramp
  UPROPERTY() TObjectPtr<AKKPreviewActor> LitActor;
@@ -697,6 +698,9 @@ public:
 	UPROPERTY()
 	TObjectPtr<class AKKPreviewActor> PreviewActor;
 
+	// The shown character kept while the next one loads. A UPROPERTY so a retired (destroyed) actor reads as null: an
+	// untracked pointer that a failed load put back as PreviewActor crashed IsValid (UObjectArray Index >= 0).
+	UPROPERTY(Transient)
 	TObjectPtr<class AKKPreviewActor> StalePreview;
 
 	UPROPERTY()

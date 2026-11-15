@@ -1639,7 +1639,13 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
       - 原因：遮陽傘網格是多個實體共用的，每個實體的 renderer 各自掛不同的材質（橘或藍），而且一個 renderer 有好幾個材質（每個 submesh 一個）。`prefab_standard_materials` 只收「剛好一個材質」的 renderer，所以這些實體都沿用網格第一次出現時的藍色。
       - 修法：Rust 新增 memo 查詢 `prefab_standard_material_lists`，收「有多個材質且其中有 Standard」的 renderer，以節點記下每個 submesh 的材質；`node_material` 依 `submesh_index` 取用（只取 Standard 材質）。`studio-nodes` 錄貼圖時也收這些材質的貼圖。
       - 結果（`Saved/Tests/MapParasol1115OK/`）：y270 傘面平均 (188, 119, 4)，原作 (191, 122, 5)，修改前 (11, 69, 194)。原作傘面上有樹葉的斑駁影子，OK 比較淡，沒追。
-      - 海面雜點還沒查。
+      - 海面雜點（2026-11-15 減輕，未除盡）：
+        - 原因：Lux 的 deep foam 在 OK 用每像素法線長度算，地圖 54 海面整片白點。
+        - 修法：改用 Lux 的作法，用 mip bias `_DeepFoamBlur` 取樣泡沫貼圖。地圖 54 是 7.26，結果是柔和的霧；燈塔（地圖 56）是 1.26，仍接近像素。
+        - 結果（`Saved/Tests/MapSea1115OK/`）：
+          - 地圖 54 y0 海面平均 R 從 143 降到 97（原作 67）。
+          - 地圖 56 四個方向和原作的差距都持平或略小。
+        - 剩下細小白點，判斷不是泡沫，可能是 `pow(nh, 256)` 太陽高光。改用模糊法線算 ripple 試過無效，沒有保留。
       - 本機基礎庫要重錄（新查詢）：`ok-extract <遊戲> --oklib studio-nodes <base_v1> 8`（F 本機已重錄）。
   - **U274 KK 時代地圖讀原作場景的時段**：原作 Studio 對學校地圖設 sunType 1 顯示「夕」，OK 依 U138 把 1 當「昼」。讀原作場景檔（`sunLightType`）時兩邊會差一格，要查原作 UI 怎麼對應再決定。
     - 2026-11-15 完成（F 組）：

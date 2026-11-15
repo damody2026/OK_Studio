@@ -670,6 +670,7 @@ pub(crate) fn push_meshes<'a>(
             );
             continue;
         }
+        crate::rig::align_bones_to_bind_poses(&mut mesh);
         apply_me_shader(game_root, me_shader, outfit, role, property.as_deref(), &mut mesh);
         if let Some(overrides)=me_float { apply_me_floats(overrides,outfit,role,property.as_deref(),&mut mesh); }
         apply_material_editor_remove_rim(remove_rim, me_float, outfit, role, property.as_deref(), &mut mesh);
@@ -695,10 +696,15 @@ pub(crate) fn push_meshes<'a>(
         // without the property the second slot is dropped and the accessory
         // renders as half.
         let material_key = mesh.mat.as_ref().map(|m| crate::card::me_mat_key(&m.name)).unwrap_or_default();
+        // A garment prefab draws every renderer its state nodes show, and two of them can carry meshes of the same
+        // name and material (GF Ricca Bunnysuit: top_a under n_top_a, the crotch under n_bot_a, both "bunny_top_a"):
+        // a garment slot keys by the mesh asset too, so only the same mesh twice is a duplicate.
+        let mesh_asset = if role.starts_with("clothes") { format!("|mesh{}", mesh.path_id) } else { String::new() };
         let mesh_key = match property.as_deref() {
-            Some(p) if !p.is_empty() => format!("{}|{p}|sub{}|{material_key}", mesh.name.to_ascii_lowercase(), mesh.submesh_index),
-            _ => format!("{}|sub{}|{material_key}", mesh.name.to_ascii_lowercase(), mesh.submesh_index),
+            Some(p) if !p.is_empty() => format!("{}|{p}|sub{}|{material_key}{mesh_asset}", mesh.name.to_ascii_lowercase(), mesh.submesh_index),
+            _ => format!("{}|sub{}|{material_key}{mesh_asset}", mesh.name.to_ascii_lowercase(), mesh.submesh_index),
         };
+        if std::env::var("OK_DEDUPDIAG").is_ok() { eprintln!("ok-extract: DEDUP key={mesh_key} renderers={:?} verts={}", mesh.renderer_names, mesh.positions.len()); }
         if !seen_meshes.insert(mesh_key) {
             continue;
         }

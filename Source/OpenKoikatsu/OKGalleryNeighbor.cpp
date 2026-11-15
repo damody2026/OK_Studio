@@ -27,9 +27,9 @@ bool NeighborEnabled(){static const bool On=FPlatformMisc::GetEnvironmentVariabl
 
 void UOKCharacterController::ResetNeighborPreload(){
  ++NeighborGeneration;
- if(NeighborJob)if(auto* Actor=NeighborJob->Actor.Get())if(Actor!=PreviewActor)OKRetireActor(Actor);
+ if(NeighborJob)if(auto* Actor=NeighborJob->Actor.Get())if(Actor!=PreviewActor&&Actor!=StalePreview)OKRetireActor(Actor);
  NeighborJob.Reset();
- if(IsValid(NeighborActor)&&NeighborActor!=PreviewActor)OKRetireActor(NeighborActor);
+ if(IsValid(NeighborActor)&&NeighborActor!=PreviewActor&&NeighborActor!=StalePreview)OKRetireActor(NeighborActor);
  NeighborActor=nullptr;NeighborPath.Reset();
 }
 

@@ -65,7 +65,9 @@ pub(crate) fn view_memo<T: Clone + 'static>(key: String, make: impl FnOnce() -> 
     static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *OFF.get_or_init(|| std::env::var_os("OK_NO_VIEW_MEMO").is_some()) || !IN_VIEW.with(|v| v.get()) { return make(); }
     if let Some(hit) = VIEW_MEMO.with(|m| m.borrow().get(&key).and_then(|v| v.downcast_ref::<T>().cloned())) { return hit; }
+    let gaps = crate::okstrict::gaps_on_thread();
     let made = make();
+    if crate::okstrict::gaps_on_thread() != gaps { return made; }
     VIEW_MEMO.with(|m| m.borrow_mut().insert(key, std::rc::Rc::new(made.clone())));
     made
 }
@@ -97,7 +99,10 @@ pub(crate) fn pack_memo<T: Clone + Send + Sync + 'static>(key: String, make: imp
     static SHARED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Slot>>> = std::sync::LazyLock::new(Default::default);
     let shared_key = format!("{pack}|{}|{key}", crate::gamefs::fallback_generation());
     if let Some(hit) = SHARED.lock().unwrap_or_else(|e| e.into_inner()).get(&shared_key).and_then(|v| v.downcast_ref::<T>().cloned()) { return hit; }
+    let gaps = crate::okstrict::gaps_on_thread();
     let made = make();
+    // A value made while the strict open met a gap is a stand-in: keeping it let the next open skip the gap.
+    if crate::okstrict::gaps_on_thread() != gaps { return made; }
     let mut shared = SHARED.lock().unwrap_or_else(|e| e.into_inner());
     if shared.len() > 100_000 { shared.clear(); }
     shared.insert(shared_key, std::sync::Arc::new(made.clone()));

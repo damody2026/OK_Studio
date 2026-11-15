@@ -128,6 +128,13 @@ fn color(game:&Path,card:&CardInfo,outfit:i32,source:&Source,context:&Context,me
         meshes,&context.head_textures,&context.body_textures,context.hair_gloss.as_deref()));
 }
 
+/// An accessory id with no Sideloader resolve that the game does not have either: the card was made with an old
+/// hardmod item, and Sideloader's compatibility resolve takes the mod that lists that number. The card's parentKey
+/// was chosen for the lost item, so the substitute hangs on its own list Parent (C011: KK_103523 slot 18 id 514 on
+/// a_n_headside became the WW_Accs officer cap made for a_n_headtop and covered the face).
+pub(crate) const BY_NUMBER: &str = "__by_number";
+pub(crate) fn by_number(mut entry: ListEntry) -> ListEntry { entry.extra.insert(BY_NUMBER.into(), "1".into()); entry }
+
 #[allow(clippy::too_many_arguments)]
 fn finish<'a>(game:&'a Path,card:&'a CardInfo,outfit:i32,source:&Source,context:&'a Context,
     out:Option<&'a Path>,manifest:&mut Vec<ManifestPart>,parts:&mut Vec<SessionPart>,seen:&mut HashSet<String>,
@@ -140,7 +147,8 @@ fn finish<'a>(game:&'a Path,card:&'a CardInfo,outfit:i32,source:&Source,context:
     let local=crate::acc_local_for(card,&source.property);
     let parent=if source.guid.is_none() {
         crate::accessory_slot_from_property(&source.property).and_then(|i|card.accessory.get(i))
-            .map(|a|crate::resolve_acc_parent(&a.parent_key,&source.entry.parent))
+            .map(|a|if source.entry.extra.contains_key(BY_NUMBER)&&!source.entry.parent.is_empty() {source.entry.parent.clone()}
+                else {crate::resolve_acc_parent(&a.parent_key,&source.entry.parent)})
     }else{crate::parent_for_part(card,&source.property,&source.entry.parent,role)};
     let assignment=crate::appearance::timings::measure("slot.assignment",||crate::accessory_assignment(game,source.zip.as_deref(),&source.entry));
     crate::appearance::timings::measure("slot.push_meshes",||crate::push_meshes(manifest,parts,out,game,role,meshes,Some(source.id),Some(source.category),
@@ -180,7 +188,7 @@ pub(crate) fn source_for_slot(game:&Path,card:&CardInfo,outfit:i32,slot:usize)->
     if a.type_id==120||!crate::is_mesh_category(a.type_id){return Ok(None);}
     if !(121..=130).contains(&a.type_id){return Err("invalid accessory category".into());}
     let entry=vanilla.get(a.type_id,a.id).cloned().or_else(||{
-        crate::list::load_mods_catalog(&game.join("mods")).get(a.type_id,a.id).cloned()
+        crate::list::load_mods_catalog(&game.join("mods")).get(a.type_id,a.id).cloned().map(by_number)
     })
         .ok_or("accessory item is absent from source catalog")?;
     if crate::is_dummy_part(&entry.main_data,Some(&entry.name)){return Ok(None);}

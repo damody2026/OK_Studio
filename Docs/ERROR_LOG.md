@@ -4598,3 +4598,105 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 3. 輸出突然縮水，先查輸入有沒有讀到，再猜檔案遺失。
 
 已修：build_street_city_places.lua 改用 lfs，目錄缺少或是空的就 assert 失敗（7a3d4bf30 與後續提交）。11-15 掃過 `Tools/`：其他 `io.popen` 幾乎都是 `python -` 管線、`curl`、`git` 或 `cd`，不是列目錄；還有兩處相近的要另外處理：`Tools/check_ok_studio_buttons.lua:94`（`dir /b ... 2>nul` 比對存檔前後的姿勢檔，目錄不存在時當成空）、`Tools/make_stage_portable.lua:26`（解析 `cmd /c dir /s /al` 的英文或繁中輸出找 junction，語系或代碼頁不同時會一個都找不到）。
+## 2026-11-15 批次腳本關錯程序：release slot 後讀卡器仍在跑（F 組）
+
+- 錯誤：
+  - HairDeck CrowdAPNG 第 1 批的批次腳本，跑完時用 `tasklist` 比對啟動前後的 `OpenKoikatsu.exe` 來關讀卡器，然後 release slot。
+  - `CardReaderDevelopment.cmd` 啟動的讀卡器其實是 `UnrealEditor.exe <uproject> ... -game -windowed`，不是 `OpenKoikatsu.exe`，所以什麼都沒關到。
+  - 結果 slot 已經放掉，機器上還開著自己的 Unreal（PID 30024），下一位拿到 slot 時等於兩個人在用。是協調 session 發現的。
+- 做法：
+  - 讀卡器 ready 後，用 `Get-CimInstance Win32_Process` 找 `UnrealEditor.exe`，條件是指令列含 `F:/OpenKoikatsu/OpenKoikatsu.uproject` 與 `OpenKoikatsuGameMode`（讀卡器的 GameMode），且啟動前沒有這個 PID。這個 PID 就是自己的。
+  - 跑完先 `taskkill` 那個 PID，確認它已結束，才 `unreal_slot.lua release`。
+  - 不用「啟動前後所有 `UnrealEditor.exe` 的差集」：別人的 slot 在這段時間開的 Unreal 也會被算進去而誤關。
+- 下次：
+  - 啟動器（`*.cmd`、`run_*.lua`）實際開的程序名稱與指令列，要先看一次再寫關閉邏輯。編輯器、`-game` 模式、打包的 `OpenKoikatsu.exe` 都可能出現。
+  - release 前一律確認自己的 Unreal 已經不在。
+  - 同一天第 2 批又出事：停掉在 `claim --wait` 的背景腳本時，只有 claim 被殺，腳本把 claim 結束當成拿到 slot，沒持有 slot 就開了讀卡器（PID 44464）。現在 claim 失敗就退出，claim 之後再用 `unreal_slot.lua status` 確認自己真的持有 slot，才啟動 Unreal；要停批次就把整棵程序樹（`taskkill /T`）一起關掉。
+
+## 2026-11-15 讀卡器：C041 大腿方塊在 C／E 沒修好，衣服陰影調不動（F 組）
+
+- 錯誤一：11-14 的くいこみサイハイ修正（`ChaCopyBodyMaterial`）要重轉 OK 卡才會套用，當時只重轉了 F 本機的 C041。C、E 兩棵樹的 C041 還是 11-04 的舊卡，服裝 2 的大腿照舊是白面夾皮膚方塊。使用者在 E 的讀卡器看到，以為沒修。
+- 修正一：把 F 重轉的 C041 複製到 C、E，舊卡備份在各樹的 `Saved/CardBackups/20261115-copybodymat/`。
+- 錯誤二：C041 的衣服與頭髮用卡片指定的 KKUTS（UTS2）shader，陰影由材質的 `_1st_ShadeColor`／`_2nd_ShadeColor` 決定，不讀 `_RampG`。讀卡器的「陰影風格」只換 `_RampG`，環境光也碰不到這兩個顏色，所以褲子兩側的深灰陰影怎麼調都不變。
+- 修正二：
+  - `AKKPreviewActor::CardShaderShade` 把這兩個顏色從 `_BaseColor`（0，無陰影）內插到卡片原值（1）。
+  - 讀卡器「光影風格」新增滑桿「衣服陰影深淺（卡片 UTS shader）」，記在 GameUserSettings。
+  - 「無陰影（平光）」預設設為 0，「柔和卡通」設為 0.6。
+- 下次：
+  - 修正要重轉卡才生效時，C／E／F 本機的同一張卡都要重轉或複製，並在回報裡寫明。
+  - 新增光影控制時，要逐一確認每一種 shader 家族（Forge、KKUTS、xukmi……）都吃得到。
+
+## 2026-11-15 HairDeck 批次：連續開卡掩蓋了缺資料的卡；開卡失敗後讀卡器當機（F 組）
+
+- 錯誤一：上午 101 張在同一個讀卡器程序裡連著跑，全部回報能開。分批重跑時，C050–C060 每張新開的讀卡器都拒開：OK 卡缺 `okLt me-shader xukmi/eyewplustess`。
+  - 原因：`me_shader_registration` 的結果用 `pack_memo` 記在程序裡，前面帶答案的卡留下的結果被後面缺答案的卡沿用，嚴格開卡就沒有發現缺口。
+  - 我當時只把這 21 張記成「已知缺 shader」，還寫了「讀卡器照樣能開」，那個結論不可信。
+  - 更糟的是，開卡失敗那次算出的結果也被記住：同一個讀卡器裡，C050–C060 第一輪全部失敗，第二輪中間沒有任何正常的卡，卻全部「開成功」，而且用的是沒有答案時的退回值。
+  - 整批 `ok_cards.lua verify` 實際查出 26 張缺資料：21 張 `xukmi/eyewplustess`、3 張 `da/chara/oil painting`、2 張 `ibl_shader_alpha`，比當初記的 21 張多。
+- 做法一：用遊戲 `D:/KoikatuSunshine`（有 `[xukmi][KKS] Vanilla Plus v1.7.2.zipmod`）重新 seal 缺答案的卡（`okId` 不變），再用 `Tools/ok_cards.lua verify` 檢查。
+- 修正一之二：`pack_memo`／`view_memo` 在 `make()` 期間若記到嚴格開卡的缺口，就不保留結果（`okstrict::gaps_on_thread`）。實測舊版 C050 在同一個讀卡器連開三次都被擋下。
+- 規則：驗證開卡一律每張新開程序（`ok_cards.lua verify` 就是這樣），或至少讓記憶體裡的結果不能跨卡沿用。同一個讀卡器連開多張卡的結果，只能當顯示檢查，不能當「開得了卡」的證據。
+- 錯誤二：連續開卡失敗後，讀卡器在 `UOKCharacterController::FinishPreparedPreview` 的失敗分支當機（`IsValid(PreviewActor)` → `Assertion failed: Index >= 0`，UObjectArray.h:1083）。
+  - 原因：`StalePreview`（新卡載入期間保留的舊角色）不是 `UPROPERTY`。舊角色在載入期間被回收後，失敗分支仍把這個懸空指標搬回 `PreviewActor`。
+  - 用 minidump 加 `llvm-symbolizer` 對 `UnrealEditor-OpenKoikatsu.pdb` 反查定位。
+- 做法二：
+  - `StalePreview` 改成 `UPROPERTY(Transient)`。
+  - 失敗時只在它仍有效時才放回。
+  - 衣服預覽快取的取代與淘汰、鄰卡預載的重設，都不回收正在顯示、暫存中或準備中的角色。
+
+## 2026-11-15 未提交的修改被別人還原，測試照跑卻沒發現（F 組 U273 海面）
+
+- 錯誤：
+  - U273 海面泡沫的修改改在 `KKPreviewActor.cpp` 但還沒提交，期間同檔的別組提交（讀卡器陰影滑桿）把工作樹還原了。
+  - 之後別人重編的 Editor 也不含我的修改，而我照樣跑了海面測試。
+  - 結果和修改前幾乎一樣，我差點把結論寫成「mip bias 無效」。
+- 做法：
+  - 測試腳本開頭先 `git diff --quiet <檔>`，修改不在就停止。
+  - 長測試前另存一份 patch 到 scratchpad。
+- 規則：
+  - 在共用工作樹上，自己的修改未提交前，每次建置與測試前先確認 diff 還在。
+  - 數字幾乎沒變時，先懷疑測的根本不是新程式。
+
+## 2026-11-15 讀卡器：C041 服裝 7 兔女郎胯下與臀部沒畫出來（F 組）
+
+- 錯誤：GF mods「Ricca Bunnysuit Bra」（bra 欄）的 prefab 有三個 renderer：`n_top_a/top_a`、`n_top_a/strings_a`，以及掛在 `n_bot_a` 節點上的胯下／臀部。三個網格都叫 `bunny_top_a`，其中 `top_a` 和 `n_bot_a` 的材質也相同（`ricca_bunny_top`）。`push_meshes` 用「網格名＋卡片屬性＋submesh＋材質」去重，所以 `n_bot_a`（1241 頂點）被當成重複丟掉。結果連身衣只剩胸腹，胯下露出身體。原作有畫這一塊（使用者確認）。
+- 查的過程：原作 `ChaControl` 的身體 alpha mask 只讀上衣的 `OverBodyMask`，沒有上衣時身體不藏，所以不是 mask 的問題。狀態規則（bra 的 `n_bot_*` 依內褲狀態）也和原作一致。最後用 `OK_STATEDIAG=ricca` 列出 prefab 階層，用 `OK_DEDUPDIAG` 看到第三個網格在去重時被丟掉。
+- 修正：衣服欄位的去重鍵加上網格資源（`path_id`）。同一欄位裡不同的網格資源都畫，同一份網格資源才算重複。讀卡器實測服裝 7 在蹦跳動作中胯下有蓋住。
+- 另：診斷旗標 `OK_STATEDIAG` 可以給名稱片段（例如 `ricca`），列出含這段名稱的 prefab 節點鏈。
+- 也記一筆：同一天我用 `git checkout` 還原 `KKPreviewActor.cpp`（perl 改壞 CRLF），把 f-studio 尚未提交的 U273 修改一起還原了，就是上一筆「未提交的修改被別人還原」的原因。以後要還原檔案，先看 `git diff` 裡有沒有別人的 hunk，只還原自己的部分。
+
+## 2026-11-15 讀卡器：逐服裝的 ABMX 一律用第 1 套；OK 卡沒有 KKS_Colliders，長裙被大腿穿過（F 組）
+
+- 錯誤一：KKABMX 的逐服裝修改（`CoordinateModifiers`，卡內 `ncoord=7`）原作取目前服裝（`coordinateType`）那一套。我們的 session 與姿勢程式碼的 `apply_abm(…, 0, …)` 全部寫死第 0 套。C051 服裝 1 把裙子縮成 `cf_d_sk_top [0.9, 0.9, 0.7]`，服裝 4 是長裙 `[0.94, 2.1, 0.9]`。讀卡器把服裝 4 的長裙也照服裝 1 壓扁，靜止時大腿就從裙子裡穿出兩道破洞。
+- 修正一：`abmx::for_outfit` 在開卡一開始就把逐服裝的 ABMX 收斂成這次開的服裝；`SESSION_CACHE_REVISION` 改為 40，舊開卡快取重建。讀卡器實測 C051 服裝 4 暫停時裙子完整。
+- 錯誤二：`KKS_Colliders`（大腿推開裙子、手臂推開胸部、地板）是否安裝，是看遊戲目錄有沒有外掛 dll。OK 卡沒錄這個設定，讀卡器開 OK 卡時沒有遊戲目錄，就一律當成沒裝，大腿完全沒有碰撞體。原作有裝，設定是 `Skirt Colliders = true`。
+- 修正二：沒有遊戲目錄時，依序用卡片一起給的遊戲，再用專案 `Config/KKS_Colliders.cfg`（`OK_COLLIDERS_CONFIG` 可覆寫，作法同 UncensorSelector）。開卡快取記錄這份設定，換設定就重建。開卡時 log 會印一行 `ok-extract: KKS_Colliders {...}`。
+- 尚未解決：C051 服裝 4 蹦跳的某些瞬間，大腿還是會在裙子正面戳出兩道縫（暫停時沒有）。
+- 誤判紀錄：C000 服裝 6（高衩緊身衣）與 C055 服裝 7（兔女郎）背面露臀，我一開始當成穿模。三張截圖（含暫停）看到衣服背面本來就是丁字剪裁，臀溝裡有布條，是設計，不是錯誤。
+- 規則：看到「身體穿出衣服」時，先比對播放中與暫停時的截圖，並確認衣服本身的剪裁，再判斷是物理問題、幾何問題還是設計。
+- 診斷用環境變數：`OK_CLOTHBONES=<網格名>`，列出衣服每根骨骼的頂點數，以及身體有沒有這根骨骼；`OK_BODYBONES=y0,y1,z`，列出身體某個區段的骨骼權重。
+
+## 2026-11-15 讀卡器蹦跳：長裙側片被 PhysX 甩到頭上；C007 騎士襪左腿跑到右膝前（F 組）
+
+- 錯誤一：C051／C052 服裝 4 的長裙（ボックススカート）逐服裝 ABMX 把 `cf_d_sk_02_00`、`cf_d_sk_06_00` 的 z 縮放設成 0（兩側片壓扁）。849a7736b 修好逐服裝 ABMX 之後，這兩條裙鏈的骨架矩陣退化（三軸共面），動畫姿勢下鏈段只剩 1.8 cm。讀卡器的衣服物理預設走 PhysX（OKPhysXSecondary），它用剛性骨長關節與平面限制解這種退化鏈，蹦跳時側片被甩出，最後拉成越過頭頂的黑白大三角面。遊戲本身的 DynamicBone（Verlet）只是跟著走，不會爆：離線 Rust 解算器 300 幀沒爆，讀卡器 `OKPhysXSecondary.Enabled 0` 也正常。
+- 修正一：`dbone::px_input_ordinary` 偵測鏈上骨架世界矩陣退化（|det| 對三軸長度乘積 < 0.05，零縮放就是 0），這條鏈的根旗標改要求宿主用遊戲的 DynamicBone（solver 6）；批次分類不覆蓋已選的解算器。其他鏈照舊走 PhysX。
+- 錯誤二：C007 服裝 4／5 的 `cf_o_socks_knight`，骨架取自同一個 Mesh 資源的另一個 renderer（每個 Mesh 第一個找到的 prefab；基礎庫／OK 卡在 `renderer_skeletons` 之前錄的模型重播時只有這個答案），骨名順序和網格自己的 bind pose 對不上（100 根裡 87 根錯位）。左腿頂點被綁到右腿、腳、肛門骨，左腿襪子就掛到右膝前，看起來像飾品或物理鏈爆開。其實靜止時就錯，和蹦跳、PhysX 都無關（關掉 PhysX 照樣錯）。
+- 修正二：`rig::align_bones_to_bind_poses`（`push_meshes` 呼叫）：bind pose 是骨頭靜止世界矩陣的反矩陣，名稱對不上 bind pose 的骨頭，在同一份清單裡重新配對；每個 bind pose 都找到骨頭、結果只是同一批骨頭換順序才套用，否則不動。`SESSION_CACHE_REVISION` 改為 43。離線掃 101 張 CrowdAPNG 卡 × 7 套服裝（707 次開卡），只有 C007 服裝 4／5 這件襪子觸發。
+- 另：849a7736b 加的 `OK_CLOTHBONES` 診斷拿網格的骨索引去對 rig 的名稱表，數字是錯的；改用網格自己的 `bone_names`，並印出各骨頂點平均位置與 bind pose 位置。新增 ignored 測試 `session::jump_probe_tests::jump_probe`（`OK_JUMP_CARD`、`OK_JUMP_OUTFIT`）可離線重現蹦跳。
+- 規則：看到「物理爆開」先分兩步確認：關掉 PhysX（`OKPhysXSecondary.Enabled 0`）還在不在、暫停或離線靜止姿勢有沒有錯。C007 一開始被當成物理鏈爆開，實際是蒙皮綁錯骨。
+
+## 2026-11-15 讀卡器：C011 軍官帽蓋臉、C016 服裝 6 跳躍時胯下穿出褲襪（F 組）
+
+- 錯誤一：C011（原卡 KK_103523）slot 18 是 ao_head 514 號，卡上沒有 Sideloader resolve，原作也沒有 514。Sideloader 的 `CompatibilityResolve`（UniversalAutoResolver.cs:1231）按號碼找到唯一列出 122/514 的 mod：WW_Accs 軍官帽 B（清單掛點 `a_n_headtop`）。卡片的 `a_n_headside` 是作者當年的 hardmod 用的，帽子 prefab 的 `nc` 節點又往下 9.4 cm，帽子整頂蓋在臉上。我先以為是 addMove 單位或掛點骨骼位置算錯，查了 bind pose 和 N_move 鏈才確認幾何沒錯、是選到的物件不對。
+- 修正一：照使用者決定，按號碼補上的飾品（`accessory_extract::by_number` 標記，`extract.rs` 與 `accessory_extract.rs` 兩處 mod_catalog 退路）改掛清單的 Parent，不用卡片的 parentKey。遊戲本身會照卡片掛在 `a_n_headside`，這是刻意和遊戲不同。
+- 錯誤二：C016 服裝 6 是褲襪 `o_panst_00_a` 貼在 BP Profundis 身體上，身體自帶 13 個 `cf_J_Vagina*`／`cf_J_Belly` DynamicBone，我們一直在模擬，跳躍時胯下甩出褲襪。KKS_BetterPenetration 的 `AfterCharacterReload` 在非 H 場景 `SetBPBoneWeights(chara, 0)`（CoreGame.cs:269），遊戲裡這些骨頭不動。
+- 修正二：`DBoneSet::without_bp_weight_zero` 在 `retarget_body` 前移除這些 component。H 場景（BP 設 weight 1）若要它們，另外處理。
+- 驗證：離線 posed-objs 帽子 y 1.51–1.63（臉頂 1.53）；讀卡器蹦跳 C011 七套、C016 七套前後兩相位截圖，帽子在頭頂、胯下不再穿出。
+- 規則：飾品「位置錯」先確認選到的是不是卡片要的物件（resolve 資訊、原作有沒有該號碼），再查骨骼與位移。外掛會改的物理元件，先查 `D:\KoikatuSunshine\kks_decomp\plugins` 的外掛原始碼在非 H 場景怎麼設定。
+
+## 2026-11-15 讀卡器：C079 服裝 1 內褲畫在旗袍外面（F 組）
+
+- 錯誤：這張卡用 Material Editor 把旗袍各部件和內褲 `o_shorts_a` 都換成 `Shader Forge/main_item_studio_alpha`（queue 3000、不寫深度）。同 queue 的透明物件只靠 UE 的距離排序；角色各部件共用同一個原點，排序打平，內褲有時最後畫，蓋在旗袍上。Studio 場景物件有照 Unity 的 queue 與距離排序（OKSceneActor::RankBlendedParts），角色衣服沒有。
+- 修正：`OKInnerGarmentSortBase`：透明材質的褲襪／襪子 sort priority -200、胸罩／內褲 -100（外加原本的 Material Editor 疊層序），一定先於外衣與飾品（0）畫，等於 Unity 依距離把裡層排在外層之前。
+- 驗證：讀卡器 C079 七套跳躍前後截圖，服裝 1 前後都看不到內褲。
+- 未處理：同一件旗袍正面下襬 `cf_o_bot_china_d`（queue 3000）與 `_g`（Koikano/main_clothes_alpha, queue 3150）在不同相位時而顯示花紋、時而純紅，屬同一件衣服內的排序，待查。

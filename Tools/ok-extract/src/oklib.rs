@@ -1318,7 +1318,11 @@ pub fn session_cache_location() -> Option<PathBuf> {
 /// 36: Standard parts take their renderer's own material; Standard's _DetailAlbedoMap; an empty _MainTex is white.
 /// 37: Koikano/main_item_map parts are lit as Standard (the lighthouse's rocks).
 /// 38-39: KKUTS and KKUSS character/item/alpha/hair/eye shaders, outlines, extra texture slots, ME copies, ShadowsOnly, and backed zipmod priority.
-const SESSION_CACHE_REVISION: u32 = 39;
+/// 40: coordinate-specific ABMX takes the open's outfit (abmx::for_outfit), not outfit 0; a garment prefab keeps
+/// renderers whose meshes share a name and material (push_meshes keys by the mesh asset).
+/// 42: an accessory id taken by number from a mod hangs on its list Parent; BetterPenetration body DynamicBones (cf_J_Vagina/cf_J_Belly) are held outside H scenes.
+/// 43: a skinned part's bones follow its bind poses when the skeleton was another renderer's (rig::align_bones_to_bind_poses).
+const SESSION_CACHE_REVISION: u32 = 43;
 /// What the library contributes to an open, by content (not file times): the same library in another clone, after a
 /// git checkout or a copy gives the same identity, so its cached opens stay valid there. Memoized per process.
 fn library_identity(lib: &Path) -> String {
@@ -1435,8 +1439,8 @@ pub fn session_cache_load(key: &str) -> Option<Vec<u8>> {
     // An entry without the configuration identity is from before it was stored and is rebuilt.
     let (fallback, config) = inputs.split_once(ENTRY_INPUT_SEPARATOR)?;
     if !fallback.is_empty() && fallback != crate::gamefs::fallback_identity() { return None; }
-    if config != crate::mods::uncensor_config_identity() {
-        eprintln!("ok-extract: open cache {key} was built with another UncensorSelector configuration ({config}); rebuilding");
+    if config != open_config_identity() {
+        eprintln!("ok-extract: open cache {key} was built with another UncensorSelector or KKS_Colliders configuration ({config}); rebuilding");
         return None;
     }
     let out = lz4_flex::block::decompress_size_prepended(&bytes[8 + n..]).ok()?;
@@ -1469,7 +1473,10 @@ pub struct DeferCacheStore(bool);
 impl DeferCacheStore { pub fn begin() -> Self { Self(DEFER_STORE.with(|d| d.replace(true))) } }
 impl Drop for DeferCacheStore { fn drop(&mut self) { DEFER_STORE.with(|d| d.set(self.0)); } }
 pub fn defer_cache_store() -> bool { DEFER_STORE.with(|d| d.get()) }
-pub fn session_cache_inputs(fallback: &str) -> String { format!("{fallback}{ENTRY_INPUT_SEPARATOR}{}", crate::mods::uncensor_config_identity()) }
+pub fn session_cache_inputs(fallback: &str) -> String { format!("{fallback}{ENTRY_INPUT_SEPARATOR}{}", open_config_identity()) }
+/// The configurations an open read without an installation: UncensorSelector (the body) and KKS_Colliders (skirt and
+/// breast colliders). An entry built with others is rebuilt.
+fn open_config_identity() -> String { format!("{}|{}", crate::mods::uncensor_config_identity(), crate::dbone::game_colliders::Settings::library_identity()) }
 /// session_cache_store with the inputs read on the opening thread (a store finished on another thread).
 pub fn session_cache_store_prepared(key: &str, preview: &[u8], inputs: &str) {
     let Some(dir) = session_cache_dir() else { return; };

@@ -91,19 +91,35 @@ check(click("全部").ok, "anim tab 全部 clicked")
 
 -- Pose page: save a pose file (the page's own button), back to the T-pose, then step to the file.
 local poses = "UserData/Studio/pose"
-local function pose_files() local t = {} local p = io.popen('dir /b "' .. poses:gsub("/", "\\") .. '\\*.dat" 2>nul') for l in p:lines() do t[l] = true end p:close() return t end
-local had = pose_files()
+-- Listed with lfs: `dir /b ... 2>nul` read a missing folder as an empty one, so "no new file" could be a false result.
+-- Before saving, a missing folder is the only empty case (the save creates it); after, it must exist with a new .dat.
+local okpath = require "ok.path"
+local function pose_files(must_exist)
+  local t = {}
+  if not okpath.is_dir(poses) then
+    if must_exist then error("pose folder " .. poses .. " is missing after 存成 KK 姿勢") end
+    return t
+  end
+  for _, name in ipairs(okpath.list(poses)) do if name:lower():match("%.dat$") then t[name] = true end end
+  return t
+end
+local had = pose_files(false)
 call("pose", { id = id, fk = { { bone = "cf_j_neck", euler = { 20, 0, 0 } } } }); wait(20)
 call("cmd", { id = "page.bones" }); call("cmd", { id = "bones.page", arg = "6" }); wait(20)
 local function fk_set() for _, b in ipairs(bones().fk or {}) do if b.set then return true end end return false end
 check(click("存成 KK 姿勢").ok, "存成 KK 姿勢 clicked")
+wait(20)
+local saved = {}
+for name in pairs(pose_files(true)) do if not had[name] then saved[#saved + 1] = name end end
+if #saved == 0 then error("存成 KK 姿勢 wrote no new .dat in " .. poses) end
+check(true, "存成 KK 姿勢 wrote " .. table.concat(saved, ", "))
 check(click("復位 T-pose").ok and not fk_set(), "復位 T-pose clears FK")
 wait(20)
 local r = click("▶", 0)
 wait(30)
 check(r.ok and fk_set(), "pose ▶ loads the saved pose file (" .. tostring(r.error or r.clicked) .. ")")
 check(click("復位 T-pose").ok and not fk_set(), "復位 T-pose clears it again")
-for name in pairs(pose_files()) do if not had[name] then os.remove(poses .. "/" .. name) end end
+for _, name in ipairs(saved) do assert(os.remove(poses .. "/" .. name)) end
 
 -- U19: the tree's tools (群組／解散／鎖定／獨顯／錯開複製) on the character.
 local function objects() local t = {} for _, o in ipairs(call("state").objects or {}) do t[o.id] = o end return t end

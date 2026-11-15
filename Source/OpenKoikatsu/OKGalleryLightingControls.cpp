@@ -24,15 +24,15 @@ namespace
 	constexpr const TCHAR* LightingSection = TEXT("OpenKoikatsu.ReaderLighting");
 	constexpr const TCHAR* CardRampLabel = TEXT("角色卡原本的陰影");
 
-	struct FLightingPreset { const TCHAR* Name; const TCHAR* Ramp; float Yaw, Pitch, Intensity, Ambient; };
+	struct FLightingPreset { const TCHAR* Name; const TCHAR* Ramp; float Yaw, Pitch, Intensity, Ambient, Shade; };
 	// Ramp keys from Content/KKPreview/Ramps/ramps.json; "" keeps each material's card ramp.
 	const FLightingPreset LightingPresets[] = {
-		{ TEXT("原作預設"), TEXT(""), 0.f, 40.f, 1.f, 1.f },
-		{ TEXT("柔和卡通"), TEXT("kk_0"), 0.f, 40.f, 0.95f, 1.6f },
-		{ TEXT("強對比卡通"), TEXT("kk_1"), 35.f, 30.f, 1.15f, 0.5f },
-		{ TEXT("側光"), TEXT(""), 90.f, 20.f, 1.f, 0.8f },
-		{ TEXT("逆光"), TEXT(""), 180.f, 25.f, 1.f, 1.3f },
-		{ TEXT("無陰影（平光）"), TEXT("kk_6"), 0.f, 40.f, 1.f, 1.f },
+		{ TEXT("原作預設"), TEXT(""), 0.f, 40.f, 1.f, 1.f, 1.f },
+		{ TEXT("柔和卡通"), TEXT("kk_0"), 0.f, 40.f, 0.95f, 1.6f, 0.6f },
+		{ TEXT("強對比卡通"), TEXT("kk_1"), 35.f, 30.f, 1.15f, 0.5f, 1.f },
+		{ TEXT("側光"), TEXT(""), 90.f, 20.f, 1.f, 0.8f, 1.f },
+		{ TEXT("逆光"), TEXT(""), 180.f, 25.f, 1.f, 1.3f, 1.f },
+		{ TEXT("無陰影（平光）"), TEXT("kk_6"), 0.f, 40.f, 1.f, 1.f, 0.f },
 	};
 	constexpr const TCHAR* CustomPresetName = TEXT("自訂");
 
@@ -151,6 +151,8 @@ void UOKCharacterController::BuildLightingControls(UVerticalBox* Parent)
 	LightingPitchSlider = Slider(TEXT("主光仰角"), TEXT("LightingPitch"), -30.f, 89.f, 1.f, Float(TEXT("Pitch"), 40.f));
 	LightingIntensitySlider = Slider(TEXT("主光亮度"), TEXT("LightingIntensity"), 0.f, 2.f, 0.01f, Float(TEXT("Intensity"), 1.f));
 	LightingAmbientSlider = Slider(TEXT("環境光"), TEXT("LightingAmbient"), 0.f, 4.f, 0.01f, Float(TEXT("Ambient"), 1.f));
+	// Clothes etc. on a card shader (UTS2) shade with their own colours, which the ramp above never reaches.
+	LightingShadeSlider = Slider(TEXT("衣服陰影深淺（卡片 UTS shader）"), TEXT("LightingShade"), 0.f, 1.f, 0.01f, Float(TEXT("Shade"), 1.f));
 	for (const auto& L : LightingValueLabels) L.Value->SetText(FText::FromString(FormatLighting(this, L.Key)));
 	Parent->AddChildToVerticalBox(WidgetTree->ConstructWidget<USizeBox>())->SetPadding(FMargin(0.f, 0.f, 0.f, 10.f));
 }
@@ -166,6 +168,7 @@ void UOKCharacterController::SyncLightingWidgets()
 	GConfig->SetFloat(LightingSection, TEXT("Pitch"), LightingPitchSlider->GetValue(), GGameUserSettingsIni);
 	GConfig->SetFloat(LightingSection, TEXT("Intensity"), LightingIntensitySlider->GetValue(), GGameUserSettingsIni);
 	GConfig->SetFloat(LightingSection, TEXT("Ambient"), LightingAmbientSlider->GetValue(), GGameUserSettingsIni);
+	GConfig->SetFloat(LightingSection, TEXT("Shade"), LightingShadeSlider->GetValue(), GGameUserSettingsIni);
 	GConfig->Flush(false, GGameUserSettingsIni);
 }
 
@@ -181,6 +184,7 @@ void UOKCharacterController::OnLightingPreset(FString Value, ESelectInfo::Type T
 		LightingPitchSlider->SetValue(P.Pitch);
 		LightingIntensitySlider->SetValue(P.Intensity);
 		LightingAmbientSlider->SetValue(P.Ambient);
+		LightingShadeSlider->SetValue(P.Shade);
 		break;
 	}
 	ApplyLighting(true);
@@ -211,7 +215,7 @@ void UOKCharacterController::OnLightingSlider(float Value)
 		for (const FLightingPreset& P : LightingPresets)
 			if (LightingPresetCombo->GetSelectedOption() == P.Name &&
 				(!FMath::IsNearlyEqual(LightingYawSlider->GetValue(), P.Yaw, .5f) || !FMath::IsNearlyEqual(LightingPitchSlider->GetValue(), P.Pitch, .5f) ||
-				 !FMath::IsNearlyEqual(LightingIntensitySlider->GetValue(), P.Intensity, .005f) || !FMath::IsNearlyEqual(LightingAmbientSlider->GetValue(), P.Ambient, .005f)))
+				 !FMath::IsNearlyEqual(LightingIntensitySlider->GetValue(), P.Intensity, .005f) || !FMath::IsNearlyEqual(LightingAmbientSlider->GetValue(), P.Ambient, .005f) || !FMath::IsNearlyEqual(LightingShadeSlider->GetValue(), P.Shade, .005f)))
 			{
 				auto Changed = LightingPresetCombo->OnSelectionChanged;
 				LightingPresetCombo->OnSelectionChanged.Clear();
@@ -236,6 +240,7 @@ void UOKCharacterController::ApplyLighting(bool bForce)
 	A->KeyLightPitch = LightingPitchSlider->GetValue();
 	A->KeyLightIntensity = LightingIntensitySlider->GetValue();
 	A->AmbientScale = LightingAmbientSlider->GetValue();
+	A->CardShaderShade = LightingShadeSlider ? LightingShadeSlider->GetValue() : 1.f;
 	const int32 RampIndex = LightingRampCombo->GetSelectedIndex();
 	const FString Key = LightingRampKeys.IsValidIndex(RampIndex) ? LightingRampKeys[RampIndex] : FString();
 	UTexture2D* Ramp = nullptr;
@@ -248,10 +253,10 @@ void UOKCharacterController::ApplyLighting(bool bForce)
 	// The card's own ramp needs no write until a ramp was chosen on this character (SetDisplayRamp gives every
 	// material it touches its own instance; ProductCardRamps remembers the card ramps it replaced).
 	if (Ramp || A->ProductCardRamps.Num() > 0) A->SetDisplayRamp(Ramp);
-	A->ApplyLightingScales();
+	const int32 Scaled = A->ApplyLightingScales();
 	A->UpdateCameraKeyLight();
 	if (bNewActor || bForce)
-		UE_LOG(LogTemp, Display, TEXT("OK reader lighting preset=%s ramp=%s yaw=%.0f pitch=%.0f light=%.2f ambient=%.2f"),
-			*LightingPresetCombo->GetSelectedOption(), Key.IsEmpty() ? TEXT("card") : *Key, A->KeyLightYaw, A->KeyLightPitch, A->KeyLightIntensity, A->AmbientScale);
+		UE_LOG(LogTemp, Display, TEXT("OK reader lighting preset=%s ramp=%s yaw=%.0f pitch=%.0f light=%.2f ambient=%.2f shade=%.2f scaled=%d"),
+			*LightingPresetCombo->GetSelectedOption(), Key.IsEmpty() ? TEXT("card") : *Key, A->KeyLightYaw, A->KeyLightPitch, A->KeyLightIntensity, A->AmbientScale, A->CardShaderShade, Scaled);
 	LitActor = PreviewActor;
 }

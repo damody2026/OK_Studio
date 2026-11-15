@@ -38,6 +38,15 @@ pub struct AbmBone {
     pub coord: Vec<AbmData>,
 }
 
+/// The modifiers of one outfit: KKABMX applies a coordinate-specific modifier's `CoordinateModifiers[coordinateType]`
+/// (the worn outfit). The session and its pose code apply coordinate 0, so an open keeps only its outfit's: a card that
+/// narrows a skirt for one outfit (C051: cf_d_sk_top z 0.7) narrowed it in every outfit, and the legs went through it.
+pub fn for_outfit(abm: &[AbmBone], outfit: usize) -> Vec<AbmBone> {
+    abm.iter().map(|b| if b.coord.len() > 1 {
+        AbmBone { name: b.name.clone(), location: b.location, coord: vec![b.coord.get(outfit).copied().unwrap_or_default()] }
+    } else { b.clone() }).collect()
+}
+
 impl AbmBone {
     /// Modifier for a coordinate (0 when not coordinate-specific).
     pub fn for_coord(&self, coord: usize) -> AbmData {

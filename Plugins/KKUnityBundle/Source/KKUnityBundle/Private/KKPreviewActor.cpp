@@ -1093,6 +1093,18 @@ static UMaterial* MakeVertexColorMaterial(const FString& Blend, bool bTwoSided, 
 #endif
 }
 
+/** A blended garment worn under others: Unity draws equal-queue transparents by distance, and an inner garment lies
+ *  behind the one over it. Parts here share one origin, so UE's distance sort tied and could draw the inner one last
+ *  (C079 outfit 1: Material Editor puts the qipao and the panties both on main_item_studio_alpha, queue 3000, no depth
+ *  write, and the panties drew over the dress). Inner layers rank below everything at 0. */
+static int32 OKInnerGarmentSortBase(const FString& Role, const FString& Blend)
+{
+	if (!Blend.Equals(TEXT("translucent"), ESearchCase::IgnoreCase)) return 0;
+	if (Role == TEXT("clothes_panst") || Role == TEXT("clothes_socks")) return -200;
+	if (Role == TEXT("clothes_bra") || Role == TEXT("clothes_shorts")) return -100;
+	return 0;
+}
+
 static UMaterialInterface* MakePartMaterial(UTexture2D* Tex, const FString& Blend, bool bUnlit, bool bTwoSided, bool bEye = false, UTexture2D* GlossTex = nullptr, UTexture2D* OverTex = nullptr, FLinearColor OverColor = FLinearColor::White, bool bNoZ = false, bool bPdo = false, bool bVcOverlay = false, UTexture2D* RampTex = nullptr, FLinearColor ShadowTint = FLinearColor(0.628f, 0.628f, 0.628f, 1.f), UTexture2D* DetailTex = nullptr, UTexture2D* LineTex = nullptr, UTexture2D* NormalTex = nullptr, UTexture2D* NormalMaskTex = nullptr, float ShadowExtend = 1.f, int32 ShaderKind = 0, const FOKToonShadowParameters* Shadow = nullptr, UTexture2D* AlphaMaskTex = nullptr, UTexture2D* OverTex2 = nullptr, bool bBodyOverlay = false)
 {
 	if (Shadow && Shadow->TripoPBR) return Shadow->TripoPBR;
@@ -3993,6 +4005,7 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 	// The map's lights only for the water ("Directional Light_water": 3.5 by day) and the deep foam they light.
 	Vector(TEXT("_OKWaterLight"), FLinearColor::Black);
 	Vector(TEXT("_OKDeepFoam"), FLinearColor(0.f, 0.f, 0.f, 0.f));
+	Scalar(TEXT("_OKDeepFoamBlur"), 0.f);
 	// The sky controller's sun or moon Light: the lighthouse's evening sea is brown from it (measured, not Lux Water's terms).
 	Vector(TEXT("_OKSkyLight"), FLinearColor::Black);
 	Scalar(TEXT("_RimSize"), 0.75f); Scalar(TEXT("_Tiling"), 0.9f); Scalar(TEXT("_RefractionAmount"), 0.055f);
@@ -4039,6 +4052,7 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 		"r1 = Worldspacetiling * r2 + r1;\n"
 		"r2.xy = 1.0 - float2(Tiling, Transparency);\n"
 		"r3 = r1.zwzw * r2.x + r0;\n"
+		"float2 okNuv = r3.xy;\n"
 		"r1 = r1 * r2.x;\n"
 		"r0 = r1 * Rimtiling + r0.yxxy;\n"
 		"#define SAMPLE(t, uv) Texture2DSample(t, t##Sampler, float2((uv).x, 1.0 - (uv).y))\n"
@@ -4102,7 +4116,11 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 		// Lux's _FarBumpSampleParams: its normals are gone by 300 m (without it the far sea was noise).
 		"float nearW = saturate(1.0 - distance(cam, wp) / 300.0);\n"
 		"float ripple = 1.0 + 0.5 * (n.x + n.z) * nearW;\n"
-		"float foam = lerp(0.25, saturate(length(n.xz) * 4.0), nearW);\n"
+		// Lux's deep foam is its foam texture at mip bias _DeepFoamBlur: the beach's 7.26 is a soft haze, where the
+		// per-pixel normals were white speckles over its sea (U273); the lighthouse's 1.26 stays near the pixel.
+		"float4 okFb = Texture2DSampleBias(Normals, NormalsSampler, float2(okNuv.x, 1.0 - okNuv.y), OKDeepFoamBlur);\n"
+		"float2 okFn = okFb.wy * 2.0 - 1.0;\n"
+		"float foam = lerp(0.25, saturate(length(okFn) * 4.0), nearW);\n"
 		"foam *= foam * OKDeepFoam.a * OKDeepFoam.a * OKDeepFoam.a;\n"
 		"return float4(WaterColor.rgb * (OKAmbient.rgb + 0.2 * diffuse * LightColor0.rgb) * ripple + (0.25 * OKScatter.rgb + foam * OKDeepFoam.rgb) * OKWaterLight.rgb + OKSkyLight.rgb + pow(nh, 256.0) * LightColor0.rgb, saturate(deep * 4.0 + 0.5));\n"
 		"}\n"
@@ -6779,7 +6797,11 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 				{
 					// A later layer of the same surface (Material Editor copy, duplicated accessory) draws after the
 					// earlier ones and keeps equal-depth pixels, as Unity's LEqual (engine r.OK.OpaqueSortPriority).
-					Follow->SetTranslucentSortPriority(FMath::Min(View.draw_layer, 99));
+					Follow->SetTranslucentSortPriority(OKInnerGarmentSortBase(Part.Role, Blend) + FMath::Min(View.draw_layer, 99));
+				}
+				else if (const int32 Inner = OKInnerGarmentSortBase(Part.Role, Blend))
+				{
+					Follow->SetTranslucentSortPriority(Inner);
 				}
 				if (Comp)
 				{
@@ -7030,6 +7052,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 						if (Source.MaterialValue(i, "_TranslucencyColor", V) && Source.MaterialValue(i, "_TranslucencyIntensity", Intensity))
 							Dynamic->SetVectorParameterValue(TEXT("_OKScatter"), FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), 1.f) * Intensity.R);
 						if (Source.MaterialValue(i, "_DeepFoamColor", V)) Dynamic->SetVectorParameterValue(TEXT("_OKDeepFoam"), FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), V.A));
+						if (Source.MaterialValue(i, "_DeepFoamBlur", V)) Dynamic->SetScalarParameterValue(TEXT("_OKDeepFoamBlur"), V.R);
 						Color("_UnderWaterReflCol", TEXT("_FresnelColor"), .35f);
 						Color("_FoamColor", TEXT("_RimColor"), .25f);
 						if (Source.MaterialValue(i, "_BumpTiling", V)) Dynamic->SetScalarParameterValue(TEXT("_Tiling"), 1.f - FMath::Clamp(V.R, .01f, .9f));
@@ -7284,7 +7307,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 				*PartRole, *Name, *ParentBone, View.n_verts, View.n_idx,
 				PositionHash, IndexHash, UvHash);
 			int32& Depth = Output.TranslucentDepth.FindOrAdd(StackKey);
-			Comp->TranslucencySortPriority = FMath::Min(Depth, 99);
+			Comp->TranslucencySortPriority = OKInnerGarmentSortBase(PartRole, Blend) + FMath::Min(Depth, 99);
 			++Depth;
 		}
 		else if (View.draw_layer > 0)
@@ -11302,6 +11325,9 @@ int32 AKKPreviewActor::ApplyLightingScales()
 	// 1/1 restores it. Instances made later (progressive stand-ins, outfit changes) are taken in on the next call.
 	static const FName LightNames[] = { TEXT("_LightColor0") };
 	static const FName AmbientNames[] = { TEXT("_ambientshadowG"), TEXT("unity_AmbientSky"), TEXT("unity_SHAr"), TEXT("unity_SHAg"), TEXT("unity_SHAb") };
+	// UTS2 (KKUTS) shades with its own colours, not _RampG: CardShaderShade pulls them toward _BaseColor (0: no shade).
+	static const FName ShadeNames[] = { TEXT("_1st_ShadeColor"), TEXT("_2nd_ShadeColor") };
+	static const FName BaseColorName = TEXT("_BaseColor");
 	TSet<UMaterialInstanceDynamic*> Seen;
 	int32 Writes = 0;
 	auto Scale = [&](UMaterialInstanceDynamic* M)
@@ -11311,7 +11337,7 @@ int32 AKKPreviewActor::ApplyLightingScales()
 		TMap<FName, FLinearColor>* Base = LightingBaseValues.Find(M);
 		if (!Base)
 		{
-			if (FMath::IsNearlyEqual(KeyLightIntensity, 1.f) && FMath::IsNearlyEqual(AmbientScale, 1.f)) return;
+			if (FMath::IsNearlyEqual(KeyLightIntensity, 1.f) && FMath::IsNearlyEqual(AmbientScale, 1.f) && FMath::IsNearlyEqual(CardShaderShade, 1.f)) return;
 			Base = &LightingBaseValues.Add(M);
 			// Only values this instance sets itself: one it inherits follows its (scaled) parent instance.
 			for (const FVectorParameterValue& P : M->VectorParameterValues)
@@ -11319,16 +11345,35 @@ int32 AKKPreviewActor::ApplyLightingScales()
 				const FName N = P.ParameterInfo.Name;
 				bool bWanted = N == LightNames[0];
 				for (const FName& A : AmbientNames) bWanted |= N == A;
+				for (const FName& A : ShadeNames) bWanted |= N == A;
 				if (bWanted) Base->Add(N, P.ParameterValue);
+			}
+			// The shade colours' target: the base colour this instance resolves (its own or inherited).
+			FLinearColor BaseColor = FLinearColor::White;
+			if (Base->Contains(ShadeNames[0]) || Base->Contains(ShadeNames[1]))
+			{
+				M->GetVectorParameterValue(FMaterialParameterInfo(BaseColorName), BaseColor);
+				Base->Add(BaseColorName, BaseColor);
 			}
 		}
 		for (const TPair<FName, FLinearColor>& E : *Base)
 		{
-			const bool bLight = E.Key == LightNames[0];
-			const float S = bLight ? KeyLightIntensity : AmbientScale;
-			// _ambientshadowG's alpha is the card's shadow depth, the colours' alpha unused: only the SH terms scale all four.
-			FLinearColor Want = E.Value * S;
-			if (!E.Key.ToString().StartsWith(TEXT("unity_SHA"))) Want.A = E.Value.A;
+			if (E.Key == BaseColorName) continue;
+			FLinearColor Want;
+			if (E.Key == ShadeNames[0] || E.Key == ShadeNames[1])
+			{
+				const FLinearColor* Target = Base->Find(BaseColorName);
+				Want = FMath::Lerp(Target ? *Target : FLinearColor::White, E.Value, FMath::Clamp(CardShaderShade, 0.f, 1.f));
+				Want.A = E.Value.A;
+			}
+			else
+			{
+				const bool bLight = E.Key == LightNames[0];
+				const float S = bLight ? KeyLightIntensity : AmbientScale;
+				// _ambientshadowG's alpha is the card's shadow depth, the colours' alpha unused: only the SH terms scale all four.
+				Want = E.Value * S;
+				if (!E.Key.ToString().StartsWith(TEXT("unity_SHA"))) Want.A = E.Value.A;
+			}
 			FLinearColor Current;
 			if (M->GetVectorParameterValue(FMaterialParameterInfo(E.Key), Current) && !Current.Equals(Want))
 			{

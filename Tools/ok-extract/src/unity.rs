@@ -4110,10 +4110,12 @@ impl ParsedBundle {
                         let Some(pgo) = tf_go.get(father) else { break };
                         cur = *pgo;
                     }
-                    if std::env::var("OK_STATEDIAG").is_ok()
-                        && chain.iter().any(|c| c.contains("skirt09") || c.contains("shorts"))
-                    {
-                        eprintln!("ok-extract: STATE chain={chain:?}");
+                    // OK_STATEDIAG=<name part> prints the chains containing it (1: skirt09 / shorts).
+                    if let Ok(filter) = std::env::var("OK_STATEDIAG") {
+                        let filter = filter.to_ascii_lowercase();
+                        let hit = chain.iter().any(|c| if filter.len() > 1 { c.to_ascii_lowercase().contains(&filter) }
+                            else { c.contains("skirt09") || c.contains("shorts") });
+                        if hit { eprintln!("ok-extract: STATE chain={chain:?}"); }
                     }
                     out.push((*mesh, chain));
                 }

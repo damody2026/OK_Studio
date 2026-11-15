@@ -99,9 +99,18 @@ pub fn scanning<R: Send>(scan: impl FnOnce() -> R + Send) -> R {
     match pool { Some(pool) => pool.install(scan), None => { SCANNING.with(|s| s.set(true)); let r = scan(); SCANNING.with(|s| s.set(false)); r } }
 }
 
+thread_local! {
+    static GAPS_ON_THREAD: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many gaps this thread has met: a memo (entries.rs `pack_memo`) keeps nothing made while one was met, or the
+/// next open of the card reused the stand-in answer and opened without the gap (C050..C060 2026-11-15).
+pub fn gaps_on_thread() -> u64 { GAPS_ON_THREAD.with(std::cell::Cell::get) }
+
 /// A gap of the strict open on this thread (nothing when there is none).
 pub fn gap(what: impl FnOnce() -> String) {
     let Some(s) = active() else { return };
+    GAPS_ON_THREAD.with(|n| n.set(n.get() + 1));
     let what = what();
     // OK_STRICT_TRACE=<text>: where a gap containing it comes from.
     if std::env::var("OK_STRICT_TRACE").is_ok_and(|t| what.contains(&t)) { eprintln!("ok-extract: strict gap {what} at\n{}", std::backtrace::Backtrace::force_capture()); }

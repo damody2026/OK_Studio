@@ -57,7 +57,9 @@ pub fn instances(root: &Path) -> Vec<Value> {
 /// The game the tools act on for this value: the selected one, else the newest that has it.
 fn target(root: &Path, key: &str) -> Option<Value> {
     let all = instances(root);
-    let selected = SELECTED.load(Ordering::Relaxed);
+    // OK_GAME_PID picks the game as game_select does, for `ok-game-mcp call` (a process per call keeps no selection).
+    let env_pid = std::env::var("OK_GAME_PID").ok().and_then(|p| p.trim().parse::<u32>().ok()).unwrap_or(0);
+    let selected = if env_pid != 0 { env_pid } else { SELECTED.load(Ordering::Relaxed) };
     if selected != 0 {
         return all.into_iter().find(|v| v["pid"].as_u64() == Some(selected.into()));
     }
