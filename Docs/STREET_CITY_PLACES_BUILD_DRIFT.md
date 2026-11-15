@@ -1,6 +1,6 @@
-# build_street_city_places.lua 重跑會漂移（2026-11-15 c-street-city 記錄）
+# build_street_city_places.lua 重跑會漂移（2026-11-15 c-street-city 記錄，同日已解決）
 
-`Tools/build_street_city_places.lua` 現在重跑，輸出和已提交的表對不上，所以 `city_anchors.json` 和 `places-v1/places.json` 目前只能手改、不能重生。照正常流程重跑一次，整座城的錨點會無聲變動。這是欠帳，之後要回頭對帳。11-15 已查明主因並修好（見「原因」），剩下錨點編號不固定的問題。
+**狀態：已解決（7a3d4bf30）。** 原因是列目錄的 `io.popen('ls')` 從 PowerShell 跑時回傳空白，不是 install 檔遺失；改用 lfs 後 `places-v1/places.json` 重跑與已提交版本逐位元組相同，表可以重生。剩下一項：`city_anchors.json` 的錨點編號不固定（見下文），重生前要先處理。以下「試跑結果」是修正前的紀錄。
 
 ## 試跑結果（11-15，跑完已全部還原）
 
