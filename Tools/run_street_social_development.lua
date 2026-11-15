@@ -35,6 +35,7 @@ local json, path, proc, hash, util = ok.json, ok.path, ok.proc, ok.hash, ok.util
 local fs = require "okfs"
 local instance = require "ok_instance"
 local player_settings = require "street_player_settings"
+local street_stage = require "street_stage"
 
 local SWITCHES = { validateonly = true, selftest = true, strict = true, control = true, mainsave = true, editor = true, nogpurig = true, gpurig = true, city = true, citysource = true, nocloud = true, lowmemory = true, nolowmemory = true }
 local VALUES = { selectionfile = true, malecard = true, retargetfile = true, renderscale = true, executable = true,
@@ -172,44 +173,15 @@ local function strict_inputs(build)
   end
 end
 
--- One stage folder: its exe, when it was staged (stage.json staged_at, written by Tools/stage_interaction_runtime.lua
--- as the last step) and what makes it unusable. A stage without stage.json is still being made (or was half deleted):
--- picking one ran a game that died on start (nh1115z, 2026-11-15: its Engine/Binaries junction already gone, the
--- player got "tbbmalloc.dll not found"). Not the exe's time: the staged exe is a hard link of the host's, unchanged
--- when a new stage reuses an exe that was not relinked.
-local function stage_info(dir, n)
-  local exe = path.join(dir, n, "Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.exe")
-  if not path.is_file(exe) then return nil, nil, nil, "no OpenKoikatsu.exe" end
-  if not path.is_dir(path.join(dir, n, "Windows/Engine/Binaries")) then return exe, nil, nil, "Engine/Binaries missing (junction removed)" end
-  local meta = path.join(dir, n, "stage.json")
-  if not path.is_file(meta) then return exe, nil, nil, "no stage.json (still being staged, or half deleted)" end
-  local okj, m = pcall(json.decode, path.read_text(meta))
-  if not okj or type(m) ~= "table" or not tonumber(m.staged_at) then return exe, nil, nil, "stage.json without staged_at" end
-  return exe, tonumber(m.staged_at), ("staged_at %s, commit %s%s"):format(m.staged_at_text or "?", tostring(m.commit or "?"):sub(1, 9), m.dirty and " +local changes" or "")
-end
-
--- Newest complete StreetSocial stage (CrowdRoom*.stage is the crowd room's), by its stage.json staged_at. Stages
--- left out are printed with the reason. Returns the exe, the stage's name and its staged_at line.
+-- Which stage runs: the newest usable one, or -Stage NAME (Tools/street_stage.lua, shared with the scene editor and the
+-- packer; the rules live only there).
 local function newest_stage(root)
-  local dir, best, best_time, best_name, best_how = path.join(root, "Saved/StreetSocial/Build"), nil, -1, nil, nil
-  if not path.is_dir(dir) then return nil end
-  for _, n in ipairs(path.list(dir)) do
-    if n:lower():match("%.stage$") and not n:lower():match("^crowdroom") then
-      local exe, t, how, problem = stage_info(dir, n)
-      if problem then say(("  Skipped stage %s: %s"):format(n, problem))
-      elseif t > best_time then best, best_time, best_name, best_how = exe, t, n, how end
-    end
-  end
-  return best, best_name, best_how
+  local exe, _, name, how = street_stage.newest(root, say)
+  return exe, name, how
 end
 
--- -Stage NAME (with or without .stage): that stage, whatever is newer. A stage that is not complete is refused.
 local function named_stage(root, name)
-  local dir = path.join(root, "Saved/StreetSocial/Build")
-  local n = name:lower():match("%.stage$") and name or (name .. ".stage")
-  if not path.is_dir(path.join(dir, n)) then error(("-Stage %s: no %s in %s"):format(name, n, dir), 0) end
-  local exe, _, how, problem = stage_info(dir, n)
-  if problem then error(("-Stage %s: %s"):format(name, problem), 0) end
+  local exe, _, n, how = street_stage.named(root, name, "-Stage")
   return exe, n, how
 end
 

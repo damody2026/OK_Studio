@@ -1,7 +1,8 @@
 -- Stages an Interaction host's Development game build under Saved/StreetSocial/Build/<name>.stage: Paks and the engine
 -- folders are junctions into --base-dir, IndependentResources and KKPreview junctions into Content, the receipt's plugin
 -- descriptors (with Resources/Shaders) and project plugin runtime files are copied, and the plugin manifest is written;
--- then stage_street_social.lua links the rest of the base and copies the executable. Prints the staged executable path.
+-- then stage_street_social.lua links the rest of the base, copies the executable and writes stage.json. Prints the
+-- staged executable path.
 --
 --   Tools\lua\lua.exe Tools\stage_interaction_runtime.lua [--host-path Saved/Interaction/FreeTalk01Host]
 --     [--destination Saved/StreetSocial/Build/X.stage] [--base-dir Saved/StreetSocial/Base]
@@ -78,15 +79,8 @@ local function main()
   path.mkdir(path.parent(plugin_manifest))
   path.write_text(plugin_manifest, json.encode(json.object({ { "Contents", plugin_entries } }), { indent = 4, ensure_ascii = false }) .. "\n",
     { bom = true })
+  -- Writes the stage's stage.json as its last step (Tools/street_stage.lua).
   local staged = stage_street_social.stage(path.join(host_root, "Binaries/Win64/OpenKoikatsu.exe"), a.destination, a.base_dir)
-  -- stage.json: when and from what this stage was made. The launcher picks the newest stage by staged_at (the staged
-  -- exe is a hard link of the host's, so its time is the last relink, not when the stage was made).
-  local git = proc.run({ "git", "-C", project_root, "rev-parse", "HEAD" }, { capture = true, hide = true })
-  local dirty = proc.run({ "git", "-C", project_root, "status", "--porcelain", "--untracked-files=no" }, { capture = true, hide = true })
-  path.write_text(path.join(stage, "stage.json"), json.encode(json.object({
-    { "staged_at", os.time() }, { "staged_at_text", os.date("%Y-%m-%d %H:%M:%S") },
-    { "commit", ((git.stdout or ""):match("%x+")) or "" }, { "dirty", ((dirty.stdout or ""):match("%S")) ~= nil },
-    { "host", host_root }, { "base", path.abs(path.join(project_root, a.base_dir)) } }), { indent = 2 }) .. "\n")
   io.write(staged, "\n")
 end
 

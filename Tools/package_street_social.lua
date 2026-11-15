@@ -47,16 +47,14 @@ local function tracked(root, specs)
   return out
 end
 
-local function newest_stage(root)
-  local dir, best, best_time = path.join(root, "Saved/StreetSocial/Build"), nil, -1
-  if not path.is_dir(dir) then return nil end
-  for _, n in ipairs(path.list(dir)) do
-    if n:lower():match("%.stage$") and not n:lower():match("^crowdroom") then
-      local t = path.mtime(path.join(dir, n, "Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.exe"))
-      if t and t > best_time then best, best_time = path.join(dir, n), t end
-    end
-  end
-  return best
+-- The stage to pack: --stage, else the newest usable one; the same rules as StreetSocial.cmd (Tools/street_stage.lua),
+-- so the package's launcher accepts what is packed.
+local function pick_stage(root, named)
+  local _, stage, name, how
+  if named then _, stage, name, how = street_stage.named(root, named, "--stage")
+  else _, stage, name, how = street_stage.newest(root, say) end
+  if stage then say(("Stage: %s (%s; %s)"):format(name, named and "--stage" or "newest", how)) end
+  return stage
 end
 
 -- Every file under dir (following junctions), as {abs, rel}.
@@ -160,8 +158,8 @@ local function main()
   if out:sub(1, #root + 1) == root .. "/" then error("--out must be outside the repository: " .. win(out), 0) end
   if path.exists(out) and #path.list(out) > 0 and not a.check then error("--out must be a new or empty folder: " .. win(out), 0) end
 
-  local stage = a.stage and path.abs(a.stage):gsub("/+$", "") or newest_stage(root)
-  if not stage or not path.is_file(path.join(stage, "Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.exe")) then
+  local stage = pick_stage(root, a.stage)
+  if not stage then
     error("No StreetSocial stage (Saved/StreetSocial/Build/*.stage); build one with Tools/rebuild_street_social_runtime.lua or pass --stage", 0)
   end
   local launch = json.decode(path.read_text(path.join(root, "Content/IndependentResources/StreetSocialData/Launch/runtime.json")))

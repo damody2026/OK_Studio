@@ -4700,3 +4700,28 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 修正：`OKInnerGarmentSortBase`：透明材質的褲襪／襪子 sort priority -200、胸罩／內褲 -100（外加原本的 Material Editor 疊層序），一定先於外衣與飾品（0）畫，等於 Unity 依距離把裡層排在外層之前。
 - 驗證：讀卡器 C079 七套跳躍前後截圖，服裝 1 前後都看不到內褲。
 - 未處理：同一件旗袍正面下襬 `cf_o_bot_china_d`（queue 3000）與 `_g`（Koikano/main_clothes_alpha, queue 3150）在不同相位時而顯示花紋、時而純紅，屬同一件衣服內的排序，待查。
+
+## 2026-11-15 街區：挑 stage 的規則散在四個地方，啟動器改了打包沒跟上，打包的遊戲開不起來（C 組 c-lowspec）
+
+- 錯誤：挑「最新、能用的 stage」的規則有四份。
+  - 啟動器 `Tools/run_street_social_development.lua` 自己一份。
+  - `Tools/run_scene_editor.lua` 複製了一份。
+  - `Tools/package_street_social.lua` 又複製了一份。
+  - 寫 `stage.json` 的地方是第四處，只寫在 `Tools/stage_interaction_runtime.lua` 最後一步，`stage_street_social.lua` 單獨跑時不寫。
+
+  `e936b8ba0` 只改了啟動器：從那之後，沒有 `stage.json`（或少了 `Windows/Engine/Binaries`）的 stage 一律跳過，以免挑到做到一半的 nh1115z。另外兩份還是按 exe 的修改時間挑。打包腳本又只複製 stage 的 `Windows/`，`stage.json` 沒帶進包裡。
+- 後果：打包出來的遊戲，啟動器判定包裡唯一的 stage 不能用，改去重建，接著失敗，遊戲開不起來。E 組 `4ef744ea1` 改打包腳本，把 `stage.json` 帶進去。另外兩處會挑到做到一半的 stage，而且挑到的可能和 `StreetSocial.cmd` 不是同一個。
+- 修正：新增 `Tools/street_stage.lua`，挑版本的規則只留這一份：
+  - `write_meta`：寫 `stage.json`。
+  - `info`：判斷一個 stage 能不能用。
+  - `newest`：挑最新的，並印出每個被跳過的 stage 和原因。
+  - `named`：用 `-Stage`／`--stage` 指定，名稱或路徑都可以。
+
+  `stage.json` 改在 `stage_street_social.stage()` 最後一步寫，CLI 單跑也有，`stage_interaction_runtime.lua` 不再自己寫。啟動器、場景編輯器、打包三處都呼叫 `street_stage.newest`／`named`，並印出選中的 stage。
+- 驗證：
+  - 本機實際的 Build 資料夾：`newest` 選中 `city1115k`。
+  - 假 stage：寫 `stage.json` 前被跳過，寫了之後可以用。
+  - 啟動器 `-ValidateOnly`：預設選中 city1115k；`-Stage lowmem1115f` 選中它；`-Stage nope` 報錯。
+  - 五個腳本都能載入。
+  - 打包 `--check` 與 SceneEditor 從包內啟動沒有實跑。
+- 教訓：同一條規則只能有一份。改規則前先 grep 所有挑 stage、讀 stage 的地方（`newest_stage`、`.stage`、`stage.json`），把會一起受影響的生產端（打包、單獨的 stager）一起改。

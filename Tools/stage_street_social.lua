@@ -2,10 +2,11 @@
 --
 --   Tools\lua\lua.exe Tools\stage_street_social.lua --executable <OpenKoikatsu.exe> [--destination Saved/StreetSocial/Build/X.stage]
 --     [--base-dir Saved/StreetSocial/Base]
--- Prints the staged executable path as the last stdout line.
+-- Prints the staged executable path as the last stdout line. Writes the stage's stage.json last (Tools/street_stage.lua).
 local ok = require "ok"
 local path, proc = ok.path, ok.proc
 local lfs = require "lfs"
+local street_stage = require "street_stage"
 
 local function win(p) return (path.norm(p):gsub("/", "\\")) end
 
@@ -71,6 +72,10 @@ function M.stage(executable, destination, base_dir)
   -- Conversation presentation (Tools/ok-story): optional; without it the old dialogue box is used.
   local story = path.join(root, "Tools/ok-story/target/release/ok_story.dll")
   if path.exists(story) then path.copy(story, path.join(path.parent(exe), "ok_story.dll")) end
+  -- stage.json last: until it is there the launcher, scene editor and packer skip this stage as still being made
+  -- (Tools/street_stage.lua). Written here so a stage made by this tool alone has it too, not only one made through
+  -- stage_interaction_runtime.lua.
+  street_stage.write_meta(target, executable, base)
   return win(exe)
 end
 

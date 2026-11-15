@@ -13,6 +13,7 @@
 local ok = require "ok"
 local json, path, proc = ok.json, ok.path, ok.proc
 local editor = require "ok_editor_modules"
+local street_stage = require "street_stage"
 
 local SWITCHES = { nobuild = true, dryrun = true, storyselftest = true }
 local VALUES = { scene = true, story = true, windowwidth = true, windowheight = true, engine = true }
@@ -50,18 +51,11 @@ local function size(o, key, default, lo, hi)
   return v
 end
 
--- Newest StreetSocial stage game (CrowdRoom*.stage is the crowd room's), as in run_street_social_development.lua.
+-- Newest usable StreetSocial stage game: the same pick as StreetSocial.cmd (Tools/street_stage.lua).
 local function newest_stage(root)
-  local dir, best, best_time = path.join(root, "Saved/StreetSocial/Build"), nil, -1
-  if not path.is_dir(dir) then return nil end
-  for _, n in ipairs(path.list(dir)) do
-    if n:lower():match("%.stage$") and not n:lower():match("^crowdroom") then
-      local exe = path.join(dir, n, "Windows/OpenKoikatsu/Binaries/Win64/OpenKoikatsu.exe")
-      local t = path.mtime(exe)
-      if t and t > best_time then best, best_time = exe, t end
-    end
-  end
-  return best
+  local exe, _, name, how = street_stage.newest(root)
+  if exe then io.write(("Stage: %s (newest; %s)\n"):format(name, how)) end
+  return exe
 end
 
 -- A packaged stage comes without its junctions into this folder's Content: made here when missing.
