@@ -182,6 +182,27 @@ LLM（commit，最后一笔）：
 - **启动修正**：新 base 配旧共享 patch 一启动就当（`Missing global shader FVolumetricFogLightScatteringCS`）。已用当前树重建 `NH1115.patch`，`runtime.json` 改指它（015860b0f）。
 - **画面**：远景拿掉、关 Nanite 后，近处建筑与地面正常。原本夜里天光只有白天的 10–20%，百货 1F 21:50 几乎全黑。依使用者要求（「环境光要维持在大家都看得到」）天光下限改为：夜里 35–45%、白天不低于 45%。00:32 的百货 1F 与 01:14 的户外截图都清楚可见。截图在 `Saved/StreetSocial/Play-20261115T004905/control_shots/`（改前）与 `Saved/StreetSocial/Play-20261115T010100/control_shots/`（改后）。
 
+#### 关闭 Nanite 后的城市外观验收（2026-11-15 11:20–12:05，stage nh1115w = a88b81fbb +本机改动）
+
+**结论：已目视验收，没有异常。** 没有看到破面、缺面、LOD 跳动或接缝，所以没有要列出的 actor 或 mesh。`r.Nanite.ProjectEnabled=False` 这个设置可以随版本发给玩家。
+
+- **游戏里的实际设置**：用 `/exec` 读出的值是 `r.Nanite.ProjectEnabled = 0`（ProjectSetting）、`r.Nanite = 0`，确认是在 Nanite 关闭的状态下检查的。
+- **第一轮（地面视角）**：18 处，每处 3 个朝向，白天 13:00、夜晚 22:00 各一次（时钟暂停）。
+  - 18 处是：车站、公园、溜冰场、祭典、校门、校舍、屋顶、图书馆、百货 1F 室内、展望台室内、游乐园、船屋、钓鱼池、海滩、教堂、山丘、动物园、圣诞树。
+  - 截图在 `Saved/StreetSocial/Play-20261115T112044/control_shots/`，`sheets/` 里是每处 2×2 的拼图。
+  - 这一轮的第 4 张远景机位钻到地面以下（`/camera` 的 pitch 为负时机位在角色下方），不能用。
+- **第二轮（俯瞰）**：12 处，每处 4 个方向，距离 25 m、俯角 30°，另加一张 60 m、俯角 60°；白天、夜晚各一次。截图不带 UI（`/screenshot {scale:1.5}`）。
+  - 12 处是：车站、公园、祭典、校门、校舍、屋顶、游乐园、船屋、钓鱼池、海滩、教堂、动物园。
+  - 截图在 `Saved/StreetSocial/Play-20261115T113954/control_shots/`，`sheets/` 里每处一张拼图。
+- **看到的情况**：
+  - 建筑外墙与屋顶、栏杆、路灯、树、摩天轮与云霄飞车轨道、教堂、海滩设施，近看和俯瞰都是完整的几何。
+  - 远处建筑没有缺块，相邻网格之间没有缝。
+  - 夜里路灯和店内灯光正常，环境光够亮。
+- **和 Nanite 无关的现象**（不算异常）：
+  - 车站和校舍的平屋顶是一整片亮白色，那是材质本身的颜色，几何是完整的。
+  - 少数截图是相机贴近墙面或穿进男主身体，属于机位问题。
+- **为什么风险本来就低**：城市模型的汇入脚本都设了 `build_nanite=False`（`Tools/street_city_unreal_import.py`、`street_city_resort_native.lua`、`street_city_activity_native_payload.lua`、`street_city_resort_architecture_payload.lua`）。也就是说，大部分模型本来就是一般网格，只有少数模型是靠 fallback 网格显示的。
+
 ### 4.4 低配目标：显存 ≤ 8 GB、内存 ≤ 12 GB，低配只载入 5 名女角（使用者 2026-11-15）
 
 LLM（nh1115b，10 女角，低配）：commit 15.8 GB，组成如下。
