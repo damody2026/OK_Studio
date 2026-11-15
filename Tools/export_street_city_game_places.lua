@@ -237,6 +237,19 @@ for _, p in ipairs(places) do
     p.anchors = kept end
 end
 
+-- The shops' stairs (Tools/street_city_shop_stairs.lua, found on the source map 11-16): stairN on each floor's end of the
+-- stair, the game's way up in a shop with no lift (c-conquest's shop stairs, stair1116c). Shared with
+-- Tools/build_street_city_places.lua; with them the place is no longer upstairs-off (Tools/street_city_upstairs_off.lua).
+local STAIRS = dofile('Tools/street_city_shop_stairs.lua')
+for _, p in ipairs(places) do
+  for _, s in ipairs(STAIRS[p.id] or {}) do
+    p.anchors = p.anchors or {}
+    local had = false
+    for _, an in ipairs(p.anchors) do if an.name == s.name then an.pos = { s.pos[1], s.pos[2], s.pos[3] }; had = true end end
+    if not had then p.anchors[#p.anchors + 1] = { name = s.name, pos = { s.pos[1], s.pos[2], s.pos[3] }, yaw = 0 } end
+  end
+end
+
 -- A shop turned to face east (its ground floor S##_F01 at yaw -90) had its door on its back wall: the street entrance was
 -- read in the building's own frame without its turn, so it came out mirrored. The front wall is cut open and rebuilt with
 -- the door (shop-refits-v1), the back is whole, and a walk to the karaoke, the bowling alley, the nursery and eight more
@@ -386,15 +399,38 @@ do
   local path = 'Content/IndependentResources/StreetSocialData/city_anchors.json'
   local f = assert(io.open(path, 'rb')); local s = f:read('a'); f:close()
   local okj = require('ok.json'); local T = okj.decode(s); local n = 0
+  local back = 0
   for _, r in ipairs(T.anchors) do local o = UP.off(r.place, r.pos)
     if o then local row = offrow(r.place, o); row.rules = row.rules + 1
-      if UP.mark(r) then r.id = r.place .. '.' .. r.name; r.kinds = {}; r.tags = r.tags or {}; r.tags[#r.tags + 1] = 'off'; n = n + 1 end end
+      -- the kinds are kept beside it (off_kinds), for when the place gets its stairs
+      if UP.mark(r) then r.id = r.place .. '.' .. r.name; r.off_kinds = r.kinds; r.kinds = {}; r.tags = r.tags or {}; r.tags[#r.tags + 1] = 'off'; n = n + 1 end
+    elseif r.tags and r.name:sub(1, #UP.PREFIX) == UP.PREFIX then
+      -- off before, its place has a way up now (the shops' stairs): its name, kinds and tags back
+      local tags = {}; for _, t in ipairs(r.tags) do if t ~= 'off' then tags[#tags + 1] = t end end
+      if #tags < #r.tags and r.off_kinds then UP.unmark(r); r.id = r.place .. '.' .. r.name; r.kinds = r.off_kinds; r.off_kinds = nil
+        r.tags = #tags > 0 and tags or nil; back = back + 1 end
+    end
   end
+  -- the stair rows (Tools/street_city_shop_stairs.lua), as the dorms' and the campus's: no kinds, the building and floor
+  -- of the place's rows on that floor
+  local have, stairs = {}, 0
+  for _, r in ipairs(T.anchors) do have[r.id] = r end
+  for id, list in pairs(STAIRS) do for k, s in ipairs(list) do
+    local fl = tonumber(s.name:match('^stair(%d+)')); local like
+    for _, r in ipairs(T.anchors) do if r.place == id and (r.floor or 1) == fl and r.building then like = r; break end end
+    if not like then for _, r in ipairs(T.anchors) do if r.place == id and r.building then like = r; break end end end
+    local rid = id .. '.' .. s.name; local r = have[rid]
+    if not r then r = { id = rid, place = id, name = s.name, kinds = {}, outdoor = false, privacy = 0, yaw = 0 }; T.anchors[#T.anchors + 1] = r; have[rid] = r; stairs = stairs + 1 end
+    if not (r.pos and r.pos[1] == s.pos[1] and r.pos[2] == s.pos[2] and r.pos[3] == s.pos[3]) then r.moved = true end
+    r.pos = { s.pos[1], s.pos[2], s.pos[3] }; r.building = like and like.building or r.building; r.floor = fl > 1 and fl or nil
+  end end
+  local moved = 0; for _, r in ipairs(T.anchors) do if r.moved then moved = moved + 1; r.moved = nil end end
+  print(('city_anchors.json: %d rows back from off (the place has stairs now), %d stair rows added'):format(back, stairs))
   local kept, dropped = {}, 0
   for _, r in ipairs(T.anchors) do if REMOVED.gone(r.place, r.name) then dropped = dropped + 1 else kept[#kept + 1] = r end end
   T.anchors = kept
   table.sort(T.anchors, function(a, b) return a.id < b.id end)
-  if n > 0 or dropped > 0 then local out = okj.encode(T); f = assert(io.open(path, 'wb')); f:write(out); f:close() end
+  if n > 0 or dropped > 0 or back > 0 or moved > 0 then local out = okj.encode(T); f = assert(io.open(path, 'wb')); f:write(out); f:close() end
   print(('city_anchors.json: %d rows marked off now, %d rows of removed furniture dropped'):format(n, dropped))
 end
 do

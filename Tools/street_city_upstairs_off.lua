@@ -8,6 +8,7 @@
 --   local U = dofile('Tools/street_city_upstairs_off.lua')(places)   -- places: { id, door, outdoor, rooms, anchors }
 --   U.off(place_id, pos)  -> nil, or { floor = n, real = bool } for an anchor of that place at pos
 --   U.mark(row)           -> renames row.name off_<name> once (true when it was marked now)
+--   U.unmark(row)         -> renames off_<name> back to <name> (true when it was off)
 --   U.PREFIX              -> 'off_'
 local PREFIX, SKIP = 'off_', { school = true }
 return function(places)
@@ -33,6 +34,11 @@ return function(places)
   function U.mark(row)
     if row.name:sub(1, #PREFIX) == PREFIX then return false end
     row.name = PREFIX .. row.name; return true
+  end
+  -- Back to its own name once the place has a way up (Tools/street_city_shop_stairs.lua, 11-16): true when it was off.
+  function U.unmark(row)
+    if row.name:sub(1, #PREFIX) ~= PREFIX then return false end
+    row.name = row.name:sub(#PREFIX + 1); return true
   end
   return U
 end
