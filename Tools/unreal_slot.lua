@@ -23,6 +23,8 @@ local EXCLUSIVE_GB = 60
 local PRIORITY = { ["c-lowspec"] = -9, ["e-120fps"] = -5, ["e-120fps-quiet"] = -5, ["f-cover"] = -3, ["c-street-city"] = -1, ["c-conquest"] = 0, FStyle = 1, ["e-galgame"] = 2, ["e-fork"] = 2, ["e-fork-2"] = 2, F = 3, ["e-okcard"] = 4 }
 
 local function rank(agent) return PRIORITY[agent] or 9 end
+-- A test run holds a slot for at most this long: past it, whoever is queued gets the machine (2026-11-15, the user's rule).
+local MAX_HOLD_MIN = 20
 local function owner_file(i) return path.join(ROOT, "slot" .. i, "owner.txt") end
 local function queue_file(agent) return path.join(ROOT, "queue", agent .. ".txt") end
 local function now() return os.date("%Y-%m-%d %H:%M:%S") end
@@ -64,6 +66,29 @@ local function queued()
     end
   end
   return list
+end
+
+-- Minutes the slot has been held, from the timestamp claim wrote at the end of owner.txt.
+local function held_min(i)
+  local _, text = owner(i)
+  if not text then return nil end
+  local y, mo, d, h, mi, se = text:match("(%d%d%d%d)-(%d%d)-(%d%d) (%d%d):(%d%d):(%d%d)%s*$")
+  if not y then return nil end
+  local t = os.time({ year = tonumber(y), month = tonumber(mo), day = tonumber(d),
+                      hour = tonumber(h), min = tonumber(mi), sec = tonumber(se) })
+  return math.floor(os.difftime(os.time(), t) / 60)
+end
+
+-- The longest any of this agent's slots has been held.
+local function held_min_agent(agent)
+  local held
+  for i = 1, SLOTS do
+    if owner(i) == agent then
+      local m = held_min(i)
+      if m and (not held or m > held) then held = m end
+    end
+  end
+  return held
 end
 
 local function waiting_above(agent)
@@ -131,7 +156,13 @@ end
 local function status()
   for i = 1, SLOTS do
     local who, text = owner(i)
-    io.write("slot", i, ": ", who and (text:gsub("%s+$", "")) or "(free)", "\n")
+    local held = who and held_min(i)
+    local tail = ""
+    if held then
+      tail = held >= MAX_HOLD_MIN and (" [held " .. held .. " min, over the " .. MAX_HOLD_MIN .. " min cap]")
+                                   or (" [held " .. held .. " min]")
+    end
+    print(("slot" .. i .. ": " .. (who and (text:gsub("%s+$", "") .. tail) or "(free)")))
   end
   io.write("queue: ", table.concat(queued(), ", "), "\n")
   io.write("unreal processes: ", unreal_count(), "\n")
