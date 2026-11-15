@@ -12,6 +12,13 @@
 --     --soak MIN    after the tour, MIN minutes of rounds: warp to a far place, then walk to a heroine for 45 s (the
 --                   autopilot, /navigate); each round's lowest commit goes to <tag>.json soak_rounds, so memory that
 --                   keeps climbing shows as a rising floor (soak_floor_first_gb / soak_floor_last_gb)
+--     --walk        after the tour, the autopilot walks him department -> boys_dorm -> skating -> gym -> church ->
+--                   department (no warps while walking: the seamless streaming a player sees); walk_peak_* in the json
+--                   are the samples taken while walking, walk_legs how each leg ended (arrived / stuck / timeout)
+--     --leg SEC     longest a walking leg may take (default 360)
+--     --route A,B,C place ids to walk instead (the walk starts with a warp to A's door). A place the autopilot walks him
+--                   into (gym: its facility opens) ends the walk there: map navigation is refused inside a facility,
+--                   so the next leg reports "autopilot stopped"; start a second run from that door with --route
 --     --segment MIN one test holds the machine at most 20 minutes (user 2026-11-15): the soak runs in segments of MIN
 --                   minutes from the claim, load included (default 18); between them the game stops, the slot is
 --                   released and claimed again, and the next segment relaunches (rows keep going into the same CSV,
@@ -25,7 +32,7 @@ local ok = require "ok"
 local json, path, proc = ok.json, ok.path, ok.proc
 
 local AGENT = "c-lowspec"
-local o, launcher_args, i = { seconds = 60, segment = 18 }, {}, 1
+local o, launcher_args, i = { seconds = 60, segment = 18, leg = 360 }, {}, 1
 while arg[i] do
   local a = arg[i]
   if a == "--" then for j = i + 1, #arg do launcher_args[#launcher_args + 1] = arg[j] end break
@@ -38,6 +45,9 @@ while arg[i] do
   elseif a == "--shots" then o.shots = true
   elseif a == "--soak" then i = i + 1; o.soak = assert(tonumber(arg[i]), "--soak MINUTES")
   elseif a == "--segment" then i = i + 1; o.segment = assert(tonumber(arg[i]), "--segment MINUTES")
+  elseif a == "--walk" then o.walk = true
+  elseif a == "--route" then i = i + 1; o.route = arg[i]
+  elseif a == "--leg" then i = i + 1; o.leg = assert(tonumber(arg[i]), "--leg SECONDS")
   else error("unknown argument " .. a, 0) end
   i = i + 1
 end
@@ -128,6 +138,12 @@ local ok_run, err = pcall(function()
     peak.commit = math.max(peak.commit, s.peak_commit, s.commit); peak.ws = math.max(peak.ws, s.peak_ws, s.ws)
     peak.gpu = math.max(peak.gpu, s.gpu); peak.min_free_commit = math.min(peak.min_free_commit, s.free_commit)
     peak[phase] = math.max(peak[phase] or 0, s.commit)
+    -- walking only (--walk): the samples taken while he walks, not the load or the warp to a segment's start
+    if phase:match("^walk:") then
+      local w = peak.walk or { commit = 0, ws = 0, gpu = 0 }
+      w.commit, w.ws, w.gpu = math.max(w.commit, s.commit), math.max(w.ws, s.ws), math.max(w.gpu, s.gpu)
+      peak.walk = w
+    end
     say(("%4ds %-10s commit %.1f GB (peak %.1f)  ws %.1f GB  gpu %.1f GB  free commit %.0f GB"):format(t, phase, gb(s.commit), gb(s.peak_commit), gb(s.ws), gb(s.gpu), gb(s.free_commit)))
     return s
   end
@@ -143,9 +159,28 @@ local ok_run, err = pcall(function()
   end
   claim()
   local segment_start = os.time()
+  local segment_limit = math.floor(o.segment * 60)
+  peak.segments = 1
   launch()
   wait_loaded()
   peak.load_seconds = os.time() - started
+  -- The next segment (one test holds the machine at most 20 minutes): stop the game, give the machine back, queue
+  -- again, relaunch, and let the heroines finish installing before going on.
+  local function new_segment(left)
+    http("POST", "/navigate", json.encode({ stop = true }))
+    proc.run({ "taskkill", "/PID", tostring(pid), "/T", "/F" }, { hide = true, capture = true })
+    pid = nil
+    release()
+    say(("segment %d done (%.0f min held); %s left, queueing again"):format(peak.segments, (os.time() - segment_start) / 60, left))
+    claim()
+    segment_start = os.time()
+    peak.segments = peak.segments + 1
+    phase = ("load%d"):format(peak.segments)
+    launch()
+    wait_loaded()
+    local settle_end = os.time() + o.seconds
+    while os.time() < settle_end do record(); sleep(2) end
+  end
   if o.exec then for c in o.exec:gmatch("[^;]+") do say("exec " .. c .. ": " .. http("POST", "/exec", json.encode({ command = c }))) end end
   phase = "idle"
   local idle_end = os.time() + o.seconds
@@ -169,31 +204,68 @@ local ok_run, err = pcall(function()
       end
     end
   end
+  if o.walk then
+    -- Walking across the city (players do not warp): the autopilot walks him door to door through the tour's places;
+    -- the streamed map loads ahead of him and drops what he left. One warp, to the first place, before the walk starts
+    -- (and one at the start of each later segment, after its load), never during it. A leg ends at the door (within
+    -- 6 m), when the autopilot has let go (nav_point false), when he has not moved 1 m in 45 s, or after --leg seconds.
+    local doors = {}
+    do
+      local text = path.read_text(path.join(root, "Content/IndependentResources/StreetSocialData/city_places.json"))
+      for _, p in ipairs(json.decode(text).places) do doors[p.id] = p.door end
+    end
+    local route = { "department", "boys_dorm", "skating", "gym", "church", "department" }
+    if o.route then route = {}; for id in o.route:gmatch("[^,]+") do route[#route + 1] = id end end
+    local function where()
+      local st = http("GET", "/state")
+      local ok_s, t = pcall(json.decode, st)
+      if not ok_s or type(t) ~= "table" or type(t.player) ~= "table" then return nil end
+      -- his position is under "player"; activity.nav_point is true while the autopilot leads him to a spot or door
+      return tonumber(t.player.x), tonumber(t.player.y), type(t.activity) == "table" and t.activity.nav_point
+    end
+    local function to_start(place)
+      phase = "walk_start"
+      say("warp " .. place .. " (start of the walk): " .. http("POST", "/warp", json.encode({ place = place })))
+      local t_end = os.time() + 30
+      while os.time() < t_end do record(); sleep(2) end
+    end
+    peak.walk_legs = {}
+    to_start(route[1])
+    for leg = 2, #route do
+      local from, dest = route[leg - 1], route[leg]
+      -- a leg needs room in this segment (--leg seconds); else the next segment starts him where this leg begins
+      if os.time() - segment_start + o.leg > segment_limit then
+        new_segment(("walk %s -> %s and on"):format(from, dest))
+        to_start(from)
+      end
+      phase = "walk:" .. dest
+      say(("walk %s -> %s: %s"):format(from, dest, http("POST", "/navigate", json.encode({ place = dest }))))
+      local door = doors[dest]
+      local leg_start, still_since, lx, ly = os.time(), os.time(), nil, nil
+      local why = "timeout"
+      while os.time() - leg_start < o.leg do
+        record(); sleep(2)
+        local x, y, nav = where()
+        if x then
+          if door and math.sqrt((x - door[1]) ^ 2 + (y - door[2]) ^ 2) < 600 then why = "arrived"; break end
+          if lx and math.sqrt((x - lx) ^ 2 + (y - ly) ^ 2) > 100 then still_since = os.time() end
+          if not lx or math.sqrt((x - lx) ^ 2 + (y - ly) ^ 2) > 100 then lx, ly = x, y end
+          if os.time() - still_since > 45 then why = "stuck"; break end
+          if os.time() - leg_start > 10 and nav ~= true then why = "autopilot stopped"; break end
+        end
+      end
+      peak.walk_legs[#peak.walk_legs + 1] = ("%s -> %s: %s after %d s"):format(from, dest, why, os.time() - leg_start)
+      say(peak.walk_legs[#peak.walk_legs])
+    end
+    http("POST", "/navigate", json.encode({ stop = true }))
+  end
   if o.soak then
     local places = { "department", "boys_dorm", "skating", "gym", "church", "cinema", "ramen", "bank" }
     local soak_left, round = math.floor(o.soak * 60), 0
-    local segment_limit = math.floor(o.segment * 60)
     peak.soak_rounds = {}
-    peak.soak_segments = 1
     while soak_left > 0 do
-      -- No room for another round (~70 s) in this segment: stop the game, give the machine back, queue again, relaunch.
-      if os.time() - segment_start + 70 > segment_limit then
-        http("POST", "/navigate", json.encode({ stop = true }))
-        proc.run({ "taskkill", "/PID", tostring(pid), "/T", "/F" }, { hide = true, capture = true })
-        pid = nil
-        release()
-        say(("segment %d done (%.0f min held); %.0f min of soak left, queueing again"):format(peak.soak_segments, (os.time() - segment_start) / 60, soak_left / 60))
-        claim()
-        segment_start = os.time()
-        peak.soak_segments = peak.soak_segments + 1
-        phase = ("load%d"):format(peak.soak_segments)
-        launch()
-        wait_loaded()
-        -- the heroines are still being installed when the map is up: settle like the first segment's idle samples,
-        -- so this segment's first round floor is not taken mid-load
-        local settle_end = os.time() + o.seconds
-        while os.time() < settle_end do record(); sleep(2) end
-      end
+      -- No room for another round (~70 s) in this segment: the next one (its first floor is taken after it settles).
+      if os.time() - segment_start + 70 > segment_limit then new_segment(("%.0f min of soak"):format(soak_left / 60)) end
       local round_start = os.time()
       round = round + 1
       local place, girl = places[(round - 1) % #places + 1], (round - 1) % 5 + 1
@@ -218,11 +290,15 @@ release()
 local summary = { tag = o.tag, launcher_args = launcher_args, completed = ok_run, error = (not ok_run) and tostring(err) or nil,
   peak_commit_gb = gb(peak.commit), peak_working_set_gb = gb(peak.ws), peak_gpu_dedicated_gb = gb(peak.gpu),
   min_system_free_commit_gb = peak.min_free_commit < math.huge and gb(peak.min_free_commit) or nil, load_seconds = peak.load_seconds }
-for k, v in pairs(peak) do if type(k) == "string" and (k == "load" or k == "idle" or k:match("^tour:")) then summary["commit_gb_" .. k] = gb(v) end end
+for k, v in pairs(peak) do if type(k) == "string" and (k == "load" or k == "idle" or k:match("^tour:") or k:match("^walk:")) then summary["commit_gb_" .. k] = gb(v) end end
+summary.segments = peak.segments
+if peak.walk then
+  summary.walk_peak_commit_gb, summary.walk_peak_working_set_gb, summary.walk_peak_gpu_dedicated_gb = gb(peak.walk.commit), gb(peak.walk.ws), gb(peak.walk.gpu)
+end
+summary.walk_legs = peak.walk_legs
 if peak.soak_rounds and #peak.soak_rounds > 0 then
   local r = peak.soak_rounds
   summary.soak_rounds = r
-  summary.soak_segments = peak.soak_segments
   summary.soak_floor_first_gb, summary.soak_floor_last_gb = r[1], r[#r]
   local hi = 0; for k, v in pairs(peak) do if type(k) == "string" and k:match("^soak") and type(v) == "number" then hi = math.max(hi, v) end end
   summary.soak_peak_commit_gb = gb(hi)
