@@ -1093,6 +1093,18 @@ static UMaterial* MakeVertexColorMaterial(const FString& Blend, bool bTwoSided, 
 #endif
 }
 
+/** A blended garment worn under others: Unity draws equal-queue transparents by distance, and an inner garment lies
+ *  behind the one over it. Parts here share one origin, so UE's distance sort tied and could draw the inner one last
+ *  (C079 outfit 1: Material Editor puts the qipao and the panties both on main_item_studio_alpha, queue 3000, no depth
+ *  write, and the panties drew over the dress). Inner layers rank below everything at 0. */
+static int32 OKInnerGarmentSortBase(const FString& Role, const FString& Blend)
+{
+	if (!Blend.Equals(TEXT("translucent"), ESearchCase::IgnoreCase)) return 0;
+	if (Role == TEXT("clothes_panst") || Role == TEXT("clothes_socks")) return -200;
+	if (Role == TEXT("clothes_bra") || Role == TEXT("clothes_shorts")) return -100;
+	return 0;
+}
+
 static UMaterialInterface* MakePartMaterial(UTexture2D* Tex, const FString& Blend, bool bUnlit, bool bTwoSided, bool bEye = false, UTexture2D* GlossTex = nullptr, UTexture2D* OverTex = nullptr, FLinearColor OverColor = FLinearColor::White, bool bNoZ = false, bool bPdo = false, bool bVcOverlay = false, UTexture2D* RampTex = nullptr, FLinearColor ShadowTint = FLinearColor(0.628f, 0.628f, 0.628f, 1.f), UTexture2D* DetailTex = nullptr, UTexture2D* LineTex = nullptr, UTexture2D* NormalTex = nullptr, UTexture2D* NormalMaskTex = nullptr, float ShadowExtend = 1.f, int32 ShaderKind = 0, const FOKToonShadowParameters* Shadow = nullptr, UTexture2D* AlphaMaskTex = nullptr, UTexture2D* OverTex2 = nullptr, bool bBodyOverlay = false)
 {
 	if (Shadow && Shadow->TripoPBR) return Shadow->TripoPBR;
@@ -6785,7 +6797,11 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 				{
 					// A later layer of the same surface (Material Editor copy, duplicated accessory) draws after the
 					// earlier ones and keeps equal-depth pixels, as Unity's LEqual (engine r.OK.OpaqueSortPriority).
-					Follow->SetTranslucentSortPriority(FMath::Min(View.draw_layer, 99));
+					Follow->SetTranslucentSortPriority(OKInnerGarmentSortBase(Part.Role, Blend) + FMath::Min(View.draw_layer, 99));
+				}
+				else if (const int32 Inner = OKInnerGarmentSortBase(Part.Role, Blend))
+				{
+					Follow->SetTranslucentSortPriority(Inner);
 				}
 				if (Comp)
 				{
@@ -7291,7 +7307,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 				*PartRole, *Name, *ParentBone, View.n_verts, View.n_idx,
 				PositionHash, IndexHash, UvHash);
 			int32& Depth = Output.TranslucentDepth.FindOrAdd(StackKey);
-			Comp->TranslucencySortPriority = FMath::Min(Depth, 99);
+			Comp->TranslucencySortPriority = OKInnerGarmentSortBase(PartRole, Blend) + FMath::Min(Depth, 99);
 			++Depth;
 		}
 		else if (View.draw_layer > 0)

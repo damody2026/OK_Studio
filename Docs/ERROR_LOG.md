@@ -4666,3 +4666,10 @@ raw平均21/21 PASS、functional valid=1、792真實slider events、9張影像�
 - 修正二：`DBoneSet::without_bp_weight_zero` 在 `retarget_body` 前移除這些 component。H 場景（BP 設 weight 1）若要它們，另外處理。
 - 驗證：離線 posed-objs 帽子 y 1.51–1.63（臉頂 1.53）；讀卡器蹦跳 C011 七套、C016 七套前後兩相位截圖，帽子在頭頂、胯下不再穿出。
 - 規則：飾品「位置錯」先確認選到的是不是卡片要的物件（resolve 資訊、原作有沒有該號碼），再查骨骼與位移。外掛會改的物理元件，先查 `D:\KoikatuSunshine\kks_decomp\plugins` 的外掛原始碼在非 H 場景怎麼設定。
+
+## 2026-11-15 讀卡器：C079 服裝 1 內褲畫在旗袍外面（F 組）
+
+- 錯誤：這張卡用 Material Editor 把旗袍各部件和內褲 `o_shorts_a` 都換成 `Shader Forge/main_item_studio_alpha`（queue 3000、不寫深度）。同 queue 的透明物件只靠 UE 的距離排序；角色各部件共用同一個原點，排序打平，內褲有時最後畫，蓋在旗袍上。Studio 場景物件有照 Unity 的 queue 與距離排序（OKSceneActor::RankBlendedParts），角色衣服沒有。
+- 修正：`OKInnerGarmentSortBase`：透明材質的褲襪／襪子 sort priority -200、胸罩／內褲 -100（外加原本的 Material Editor 疊層序），一定先於外衣與飾品（0）畫，等於 Unity 依距離把裡層排在外層之前。
+- 驗證：讀卡器 C079 七套跳躍前後截圖，服裝 1 前後都看不到內褲。
+- 未處理：同一件旗袍正面下襬 `cf_o_bot_china_d`（queue 3000）與 `_g`（Koikano/main_clothes_alpha, queue 3150）在不同相位時而顯示花紋、時而純紅，屬同一件衣服內的排序，待查。
