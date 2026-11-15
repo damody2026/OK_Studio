@@ -822,10 +822,9 @@ void UOKHScenePanel::ApplyMotion(AKKPreviewActor* Girl,AKKPreviewActor* Him){
     const FString& State=Playback->GetState();const float Elapsed=Playback->GetElapsed();
     const bool bAnew=State!=MotionAppliedState||Elapsed+1e-3f<MotionAppliedElapsed||MotionAppliedHer!=Girl;MotionAppliedElapsed=Elapsed;
     if(!bAnew&&FMath::Abs(HMotion-MotionApplied)<.002f)return;
-    Girl->Session.SetAnimationFloat(TEXT("motion"),HMotion);Him->Session.SetAnimationFloat(TEXT("motion"),HMotion);
+    // A pair clip lists no floats (AnimationFloatCount is 0), so what each session took is the setter's answer: -1 refused.
+    MotionReadHer=Girl->Session.SetAnimationFloat(TEXT("motion"),HMotion)?HMotion:-1.f;MotionReadHim=Him->Session.SetAnimationFloat(TEXT("motion"),HMotion)?HMotion:-1.f;
     MotionApplied=HMotion;MotionAppliedState=State;MotionAppliedHer=Girl;
-    auto Read=[](const FOkSession& S){FString Name;float V,Lo,Hi;for(int32 I=0,N=S.AnimationFloatCount();I<N;++I)if(S.AnimationFloatAt(I,Name,V,Lo,Hi)&&Name==TEXT("motion"))return V;return -1.f;};
-    MotionReadHer=Read(Girl->Session);MotionReadHim=Read(Him->Session);
     if(bAnew)UE_LOG(LogTemp,Display,TEXT("H scene: %s motion %.2f (her %.2f, him %.2f)"),*State,HMotion,MotionReadHer,MotionReadHim);
 }
 
