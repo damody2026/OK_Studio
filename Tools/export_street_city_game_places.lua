@@ -202,7 +202,10 @@ end
 -- seat3 (惠惠) or seat14 (三月七) was moved to a clear spot nobody could walk to (nh1115q round 13). These ten have no
 -- reachable spot within the 80/140 cm rings SpotFor tries; they stand in the aisle in front of the block (y 21600) and
 -- in the open aisle east of it (x 47920-48080), each checked clear and reachable on that grid, facing the tables (4th value: yaw).
-local SPOTS = { ['cafeteria table'] = { 70230, 42470, 1200 },
+-- The cafe's 'seat' (47378,21800, a chair of the first row) is also the activity anchor cafe_seat and cafe_meal pick: the
+-- game's grid found no way to it from the door or from inside, at 40 nor at 30 cm (c-conquest /places_check, nh1115y);
+-- it stands in the open aisle by the counter (y 21520) facing the tables, 80 cm off the row at y 21600.
+local SPOTS = { ['cafeteria table'] = { 70230, 42470, 1200 }, ['cafe seat'] = { 47440, 21520, 1200, 90 },
   ['cafe seat3'] = { 47320, 21600, 1200, 90 }, ['cafe seat7'] = { 47400, 21600, 1200, 90 }, ['cafe seat8'] = { 47480, 21600, 1200, 90 },
   ['cafe seat9'] = { 47560, 21600, 1200, 90 }, ['cafe seat14'] = { 47640, 21600, 1200, 90 },
   ['cafe seat19'] = { 47920, 21840, 1200, 180 }, ['cafe seat23'] = { 47920, 21960, 1200, 180 }, ['cafe seat24'] = { 47920, 22080, 1200, 180 },
