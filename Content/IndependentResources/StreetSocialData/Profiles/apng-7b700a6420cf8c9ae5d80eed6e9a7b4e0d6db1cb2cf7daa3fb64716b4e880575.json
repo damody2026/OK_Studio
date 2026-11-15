@@ -91,7 +91,9 @@
     },
     "spice": 1,
     "alcohol": "social",
-    "gift_style": "cute",
+    "gift_style": "handmade",
+    "gift_likes": ["novel", "book"],
+    "gift_dislikes": ["alcohol"],
     "lucky_numbers": [
       7,
       14

@@ -100,6 +100,8 @@
     "spice": 1,
     "alcohol": "social",
     "gift_style": "cute",
+    "gift_likes": ["cute", "picturebook"],
+    "gift_dislikes": ["popsci"],
     "lucky_numbers": [
       7,
       3

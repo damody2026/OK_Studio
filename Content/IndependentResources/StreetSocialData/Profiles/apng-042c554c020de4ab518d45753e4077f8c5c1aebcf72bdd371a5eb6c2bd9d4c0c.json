@@ -94,7 +94,9 @@
     },
     "spice": 1,
     "alcohol": "social",
-    "gift_style": "cute",
+    "gift_style": "practical",
+    "gift_likes": ["filling", "sweet"],
+    "gift_dislikes": [],
     "lucky_numbers": [
       7,
       12

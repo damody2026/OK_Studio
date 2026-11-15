@@ -93,7 +93,9 @@
     },
     "spice": 1,
     "alcohol": "social",
-    "gift_style": "cute",
+    "gift_style": "practical",
+    "gift_likes": ["book", "popsci", "healthy"],
+    "gift_dislikes": ["sweet"],
     "lucky_numbers": [
       7
     ],

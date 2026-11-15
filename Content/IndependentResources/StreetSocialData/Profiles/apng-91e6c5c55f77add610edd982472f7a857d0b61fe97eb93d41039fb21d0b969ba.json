@@ -96,7 +96,9 @@
     },
     "spice": 2,
     "alcohol": "social",
-    "gift_style": "cute",
+    "gift_style": "luxury",
+    "gift_likes": ["luxury", "novel"],
+    "gift_dislikes": ["cute"],
     "lucky_numbers": [
       3,
       18

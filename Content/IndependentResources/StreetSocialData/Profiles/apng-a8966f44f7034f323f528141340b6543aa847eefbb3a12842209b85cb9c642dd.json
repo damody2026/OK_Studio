@@ -97,7 +97,9 @@
     },
     "spice": 1,
     "alcohol": "never",
-    "gift_style": "cute",
+    "gift_style": "handmade",
+    "gift_likes": ["romantic", "picturebook"],
+    "gift_dislikes": ["alcohol"],
     "lucky_numbers": [
       3,
       11

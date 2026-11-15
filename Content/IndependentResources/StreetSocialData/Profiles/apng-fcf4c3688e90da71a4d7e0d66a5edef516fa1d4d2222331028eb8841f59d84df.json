@@ -85,6 +85,8 @@
     "spice": 1,
     "alcohol": "social",
     "gift_style": "cute",
+    "gift_likes": ["cute", "sweet"],
+    "gift_dislikes": ["book"],
     "lucky_numbers": [
       7
     ],

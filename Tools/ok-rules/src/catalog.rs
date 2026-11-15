@@ -368,6 +368,17 @@ mod tests {
     use crate::tuning::Tuning;
 
     #[test]
+    fn gifts_she_likes_and_dislikes_differ() {
+        let choc = Item { id: "cv_choco".into(), name: "巧克力".into(), tags: vec!["sweet".into()], price: [(String::new(), 5)].into_iter().collect(), ..Default::default() };
+        let plain = json!({"tastes": {"likes": ["dk_pearl_milk"]}});
+        let sweet_tooth = json!({"tastes": {"likes": ["dk_pearl_milk"], "gift_likes": ["sweet"]}});
+        let no_sweets = json!({"tastes": {"likes": ["dk_pearl_milk"], "gift_dislikes": ["sweet"]}});
+        let (a, b, c) = (gift_score(&plain, &choc, 5, "friend", 0.0), gift_score(&sweet_tooth, &choc, 5, "friend", 0.0), gift_score(&no_sweets, &choc, 5, "friend", 0.0));
+        assert!(b > a && a > c, "liked {b} > plain {a} > disliked {c}");
+        assert!(c < 0.0, "a chocolate to one who does not want sweets leans to decline: {c}");
+    }
+
+    #[test]
     fn hours_overnight_and_closed_days() {
         let mut c = Catalog::default();
         c.places.insert("bar".into(), Place { open: vec![(18.0, 26.0)], weekend_open: vec![], closed_weekdays: vec![0], ..Default::default() });
