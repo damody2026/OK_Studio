@@ -217,21 +217,23 @@ local SPOTS = { ['cafeteria table'] = { 70230, 42470, 1200 }, ['cafe seat'] = { 
   ['sushi conveyor_seat3'] = { 34560, 48360, 1200, 180 }, ['sushi conveyor_seat4'] = { 34560, 48240, 1200, 180 },
   ['sushi seat33'] = { 33720, 48440, 1200, 0 }, ['sushi seat34'] = { 33720, 48520, 1200, 0 },
   -- The gyn clinic's seat20 is in the 30 cm slot between its cubicle (x 32305-32405) and the waiting room's wall (x 32435,
-  -- City_CV_F01): the slot's open north end, the nearest cell a 40 cm box reaches from the street (room survey 11-16), 1.2 m off
-  ['clinic_gyn seat20'] = { 32415, 57315, 1200 },
+  -- City_CV_F01): the slot's open north end, the nearest open cell a 40 cm box reaches from the street (room survey 11-16)
   -- its waiting room's bench (LoverSpot_Gyn_Bench_Seat, x 32475-32525): seat, seat2, seat3 stood on the seat board; at
   -- its front edge now, the cells a 40 cm box reaches once crib3 moved (Tools/street_city_moved_props.lua, 11-16)
-  ['clinic_gyn seat'] = { 32555, 57347, 1200 }, ['clinic_gyn seat2'] = { 32555, 57397, 1200 },
-  ['clinic_gyn seat3'] = { 32555, 57447, 1200 },
-  -- The civic 5F lounge (x 30455-30800, y 61285-61560): seat6 and seat7 stood in the desk in front of their chairs
-  -- (City_CV_F05, StaticMeshActor_499, x 30535-30595) and seat/seat2 in the sofa; the game's grid found no first cell
-  -- (c-conquest, city1116a). Each stands at the nearest cell a 40 cm box reaches from the 5F corridor (room survey 11-16,
-  -- box x 29000-31700 y 61100-64000: the lounge opens west and north), and still sits down on its seat (under 1.5 m).
-  -- seat6 in the open floor north of the desks: the cell beside its chair (30615,61325) is a 40 cm strip between the desk and
-  -- the lounge's wall, and the game's 30 cm grid was closed in there (6 cells, nav1116c); 1.8 m off its chair, so it is a
-  -- stand spot now
-  ['civic seat6'] = { 30560, 61545, 2910 }, ['civic seat7'] = { 30615, 61525, 2910 },
-  ['civic seat'] = { 30715, 61545, 2910 }, ['civic seat2'] = { 30805, 61515, 2910 },
+  -- (each also clear 20 cm round it on that grid: the game's 30 cm cells closed in on spots in 40 cm strips, nav1116c;
+  -- seat3 has no such cell by the bench, it stands in the waiting room's middle)
+  ['clinic_gyn seat'] = { 32605, 57345, 1200 }, ['clinic_gyn seat2'] = { 32605, 57385, 1200 },
+  ['clinic_gyn seat3'] = { 32700, 57400, 1200 }, ['clinic_gyn seat20'] = { 32395, 57295, 1200 },
+  -- The civic 5F lounges (City_CV_F05, StaticMeshActor_499): seat6 seat7 seat8 seat9 stood in the desks in front of their
+  -- chairs (x 30535-30595), seat seat2 seat3 seat4 in the sofas; the game started each walk embedded in 499 (pen=1,
+  -- c-conquest nav1116d). The cells by the chairs are 40 cm strips between desk, sofa and wall, where the game's 30 cm grid
+  -- was closed in (6 cells, nav1116c). They stand in the open floor between the two lounges (y 61545-61705), each cell
+  -- reached by a 40 cm box from the 5F corridor and clear 30 cm round it (room survey 11-16, box x 29000-31700
+  -- y 61100-64000; the first box, to x 30200 only, missed the lounges' way in), 1.5-3 m off their seats: stand spots.
+  ['civic seat6'] = { 30575, 61585, 2910 }, ['civic seat7'] = { 30645, 61585, 2910 },
+  ['civic seat'] = { 30715, 61585, 2910 }, ['civic seat2'] = { 30805, 61585, 2910 },
+  ['civic seat8'] = { 30575, 61665, 2910 }, ['civic seat9'] = { 30645, 61665, 2910 },
+  ['civic seat3'] = { 30715, 61665, 2910 }, ['civic seat4'] = { 30805, 61665, 2910 },
   -- The nail salon's 2F chairs: each stand spot was 16 cm off its chair's collision (S59_F02, the editor walk probe from
   -- stair2 stopped 40 cm short of seat6, 11-16); 40 cm further from the chair, the seat stays 80 cm off
   ['nail seat6'] = { 33470, 34510, 1580 }, ['nail seat8'] = { 33470, 34890, 1580 },
@@ -244,6 +246,16 @@ for _, p in ipairs(places) do
       if an.seat_pos and math.sqrt((an.seat_pos[1] - s[1]) ^ 2 + (an.seat_pos[2] - s[2]) ^ 2) > 150 then an.seat_pos = nil end
       an.pos = { s[1], s[2], s[3] }; if s[4] then an.yaw = s[4] end end
   end
+end
+-- The same spots for the rules' rows (city_anchors.json, below): the game's activities and c-conquest's navigation read the
+-- anchors from there, and until 11-16 the spots were only in city_places.json (nav1116d still started civic seat6 in the desk)
+local function spot_row(r)
+  local s = SPOTS[(r.place or '') .. ' ' .. (r.name or '')]
+  if not s or r.slots then return false end
+  if r.pos and r.pos[1] == s[1] and r.pos[2] == s[2] and r.pos[3] == s[3] then return false end
+  if r.seat_pos and math.sqrt((r.seat_pos[1] - s[1]) ^ 2 + (r.seat_pos[2] - s[2]) ^ 2) > 150 then r.seat_pos = nil end
+  r.pos = { s[1], s[2], s[3] }; if s[4] then r.yaw = s[4] end
+  return true
 end
 
 -- Anchors of furniture taken off the source map (the karaoke's KTV_2, 11-15): dropped here and from city_anchors.json
@@ -449,6 +461,9 @@ do
     r.pos = { s.pos[1], s.pos[2], s.pos[3] }; r.building = like and like.building or r.building; r.floor = fl > 1 and fl or nil
   end end
   -- anchors of props moved on the source map (Tools/street_city_moved_props.lua): with them
+  local spotted = 0
+  for _, r in ipairs(T.anchors) do if spot_row(r) then r.moved = true; spotted = spotted + 1 end end
+  print(('city_anchors.json: %d rows moved to their spots by hand'):format(spotted))
   local PROPS = dofile('Tools/street_city_moved_props.lua')
   for _, r in ipairs(T.anchors) do local q = PROPS.shift(r.place, r.name, r.pos)
     if q then print(('anchor: %s %s moved with its prop, %.0f,%.0f -> %.0f,%.0f'):format(r.place, r.name, r.pos[1], r.pos[2], q[1], q[2]))
