@@ -3993,6 +3993,7 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 	// The map's lights only for the water ("Directional Light_water": 3.5 by day) and the deep foam they light.
 	Vector(TEXT("_OKWaterLight"), FLinearColor::Black);
 	Vector(TEXT("_OKDeepFoam"), FLinearColor(0.f, 0.f, 0.f, 0.f));
+	Scalar(TEXT("_OKDeepFoamBlur"), 0.f);
 	// The sky controller's sun or moon Light: the lighthouse's evening sea is brown from it (measured, not Lux Water's terms).
 	Vector(TEXT("_OKSkyLight"), FLinearColor::Black);
 	Scalar(TEXT("_RimSize"), 0.75f); Scalar(TEXT("_Tiling"), 0.9f); Scalar(TEXT("_RefractionAmount"), 0.055f);
@@ -4039,6 +4040,7 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 		"r1 = Worldspacetiling * r2 + r1;\n"
 		"r2.xy = 1.0 - float2(Tiling, Transparency);\n"
 		"r3 = r1.zwzw * r2.x + r0;\n"
+		"float2 okNuv = r3.xy;\n"
 		"r1 = r1 * r2.x;\n"
 		"r0 = r1 * Rimtiling + r0.yxxy;\n"
 		"#define SAMPLE(t, uv) Texture2DSample(t, t##Sampler, float2((uv).x, 1.0 - (uv).y))\n"
@@ -4102,7 +4104,11 @@ static UMaterialInterface* OKStylizedWaterMaterial()
 		// Lux's _FarBumpSampleParams: its normals are gone by 300 m (without it the far sea was noise).
 		"float nearW = saturate(1.0 - distance(cam, wp) / 300.0);\n"
 		"float ripple = 1.0 + 0.5 * (n.x + n.z) * nearW;\n"
-		"float foam = lerp(0.25, saturate(length(n.xz) * 4.0), nearW);\n"
+		// Lux's deep foam is its foam texture at mip bias _DeepFoamBlur: the beach's 7.26 is a soft haze, where the
+		// per-pixel normals were white speckles over its sea (U273); the lighthouse's 1.26 stays near the pixel.
+		"float4 okFb = Texture2DSampleBias(Normals, NormalsSampler, float2(okNuv.x, 1.0 - okNuv.y), OKDeepFoamBlur);\n"
+		"float2 okFn = okFb.wy * 2.0 - 1.0;\n"
+		"float foam = lerp(0.25, saturate(length(okFn) * 4.0), nearW);\n"
 		"foam *= foam * OKDeepFoam.a * OKDeepFoam.a * OKDeepFoam.a;\n"
 		"return float4(WaterColor.rgb * (OKAmbient.rgb + 0.2 * diffuse * LightColor0.rgb) * ripple + (0.25 * OKScatter.rgb + foam * OKDeepFoam.rgb) * OKWaterLight.rgb + OKSkyLight.rgb + pow(nh, 256.0) * LightColor0.rgb, saturate(deep * 4.0 + 0.5));\n"
 		"}\n"
@@ -7030,6 +7036,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 						if (Source.MaterialValue(i, "_TranslucencyColor", V) && Source.MaterialValue(i, "_TranslucencyIntensity", Intensity))
 							Dynamic->SetVectorParameterValue(TEXT("_OKScatter"), FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), 1.f) * Intensity.R);
 						if (Source.MaterialValue(i, "_DeepFoamColor", V)) Dynamic->SetVectorParameterValue(TEXT("_OKDeepFoam"), FLinearColor(Linear(V.R), Linear(V.G), Linear(V.B), V.A));
+						if (Source.MaterialValue(i, "_DeepFoamBlur", V)) Dynamic->SetScalarParameterValue(TEXT("_OKDeepFoamBlur"), V.R);
 						Color("_UnderWaterReflCol", TEXT("_FresnelColor"), .35f);
 						Color("_FoamColor", TEXT("_RimColor"), .25f);
 						if (Source.MaterialValue(i, "_BumpTiling", V)) Dynamic->SetScalarParameterValue(TEXT("_Tiling"), 1.f - FMath::Clamp(V.R, .01f, .9f));
