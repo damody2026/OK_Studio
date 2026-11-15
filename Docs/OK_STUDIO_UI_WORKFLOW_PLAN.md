@@ -1646,7 +1646,12 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
           - 地圖 54 y0 海面平均 R 從 143 降到 97（原作 67）。
           - 地圖 56 四個方向和原作的差距都持平或略小。
         - 剩下細小白點，判斷不是泡沫，可能是 `pow(nh, 256)` 太陽高光。改用模糊法線算 ripple 試過無效，沒有保留。
-        - 2026-11-16 試過讓高光跟波紋一樣在 300 m 內淡出（`lerp(vn, n, nearW)`）：地圖 54 y0 放大比對與平均色都沒變（`Saved/Tests/MapSea1116OK/`），因為白點都在 300 m 內，淡出權重接近 1。沒有保留。下一步要在遊戲裡分別關掉高光、ripple、泡沫，確定白點是哪一項。
+        - 2026-11-16 試過讓高光跟波紋一樣在 300 m 內淡出（`lerp(vn, n, nearW)`）：地圖 54 y0 放大比對與平均色都沒變（`Saved/Tests/MapSea1116OK/`），因為白點都在 300 m 內，淡出權重接近 1。沒有保留。
+        - 2026-11-16 逐項關掉（臨時環境變數，已移除）：白點是泡沫項。關掉高光或 ripple 地圖 54 y0 海面 R 都還是 97，只關泡沫則為 38（原作 67），而且整片沒有白點。
+          - mip bias 沒作用的原因：海面的 `_BumpMap` 在 OK 只有一層 mip（512×512，`mips=1`）。執行期貼圖要 `mip_policy = 1` 才會建 mip 鏈。給了 mip 鏈之後白點消失，但用法線長度湊的泡沫變成整片均勻偏白（R 112）。
+          - 原作 Lux 的深水泡沫來源是材質的 `_MainTex`（「Foam [Normal] [Mask]」，1024²），相關值是 `_DeepFoamTiling` 0.3、`_DeepFoamCoverage` 2.5、`_DeepFoamBlur` 7.26，材質有 `GEOM_TYPE_FROND` 關鍵字。地圖零件的 `_MainTex` 不在 shader 貼圖表裡，要從零件主貼圖（`View.png`）取。用 `OK_PART_PNG_DUMP=Ocean` 匯出後量到：RGB 是一般法線貼圖（B 全是 255），A 是遮罩（平均 103，範圍 16～231）。
+          - 用 A × coverage 加到顏色上試過：地圖 54 R 233（整片飽和），地圖 56 也比原本偏離原作。缺的是 Lux 深水泡沫實際怎麼用 coverage、怎麼混進顏色（看起來不是相加），沒有原作 shader 不再猜。修改全部撤回，試作 patch 留在 F 組 scratchpad（`u273foam-final-attempt.patch`）。
+          - 下一步：取得 Lux Water 的 shader 原始碼或反組譯，再照它的公式改，`_MainTex` 的 mip 鏈與 `View.png` 取法可以沿用。
       - 本機基礎庫要重錄（新查詢）：`ok-extract <遊戲> --oklib studio-nodes <base_v1> 8`（F 本機已重錄）。
   - **U274 KK 時代地圖讀原作場景的時段**：原作 Studio 對學校地圖設 sunType 1 顯示「夕」，OK 依 U138 把 1 當「昼」。讀原作場景檔（`sunLightType`）時兩邊會差一格，要查原作 UI 怎麼對應再決定。
     - 2026-11-15 完成（F 組）：
