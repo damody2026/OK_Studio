@@ -227,7 +227,10 @@ local SPOTS = { ['cafeteria table'] = { 70230, 42470, 1200 }, ['cafe seat'] = { 
   -- (City_CV_F05, StaticMeshActor_499, x 30535-30595) and seat/seat2 in the sofa; the game's grid found no first cell
   -- (c-conquest, city1116a). Each stands at the nearest cell a 40 cm box reaches from the 5F corridor (room survey 11-16,
   -- box x 29000-31700 y 61100-64000: the lounge opens west and north), and still sits down on its seat (under 1.5 m).
-  ['civic seat6'] = { 30615, 61325, 2910 }, ['civic seat7'] = { 30615, 61525, 2910 },
+  -- seat6 in the open floor north of the desks: the cell beside its chair (30615,61325) is a 40 cm strip between the desk and
+  -- the lounge's wall, and the game's 30 cm grid was closed in there (6 cells, nav1116c); 1.8 m off its chair, so it is a
+  -- stand spot now
+  ['civic seat6'] = { 30560, 61545, 2910 }, ['civic seat7'] = { 30615, 61525, 2910 },
   ['civic seat'] = { 30715, 61545, 2910 }, ['civic seat2'] = { 30805, 61515, 2910 },
   -- The nail salon's 2F chairs: each stand spot was 16 cm off its chair's collision (S59_F02, the editor walk probe from
   -- stair2 stopped 40 cm short of seat6, 11-16); 40 cm further from the chair, the seat stays 80 cm off
