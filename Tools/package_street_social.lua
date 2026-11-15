@@ -306,6 +306,15 @@ local function main()
     path.copy(e[1], dst)
     if i % 2000 == 0 then say(("  %d / %d files"):format(i, #plan)) end
   end
+  -- The stage's stage.json: the launcher skips a stage without it (fbbea3d69 / e936b8ba0; 2026-11-15 the package
+  -- copied only Windows/ and would not start). This machine's host and base paths are left out.
+  do
+    local okj, m = pcall(json.decode, path.read_text(path.join(stage, "stage.json")))
+    if not okj or type(m) ~= "table" or not tonumber(m.staged_at) then error("The stage has no usable stage.json: " .. win(stage), 0) end
+    path.write_text(path.join(out, stage_rel, "stage.json"), json.encode(json.object({ { "staged_at", tonumber(m.staged_at) },
+      { "staged_at_text", m.staged_at_text or "" }, { "commit", m.commit or "" }, { "dirty", m.dirty and true or false } }),
+      { indent = 2 }) .. "\n", { newline = "\n" })
+  end
   -- A new player's settings: built-in voices, no keys (they fill them in the settings menu at the top left).
   path.mkdir(path.join(out, "Saved/StreetSocial"), true)
   path.write_text(path.join(out, "Saved/StreetSocial/player.json"), template, { newline = "\n" })

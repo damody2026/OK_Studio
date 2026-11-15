@@ -4700,3 +4700,9 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 修正：`OKInnerGarmentSortBase`：透明材質的褲襪／襪子 sort priority -200、胸罩／內褲 -100（外加原本的 Material Editor 疊層序），一定先於外衣與飾品（0）畫，等於 Unity 依距離把裡層排在外層之前。
 - 驗證：讀卡器 C079 七套跳躍前後截圖，服裝 1 前後都看不到內褲。
 - 未處理：同一件旗袍正面下襬 `cf_o_bot_china_d`（queue 3000）與 `_g`（Koikano/main_clothes_alpha, queue 3150）在不同相位時而顯示花紋、時而純紅，屬同一件衣服內的排序，待查。
+
+## 2026-11-15 打包：包裡的 stage 沒有 stage.json，啟動器不選它（E 組）
+
+- 錯誤：啟動器今天改成依 stage.json 選最新 stage、沒有 stage.json 就跳過（fbbea3d69、e936b8ba0），Tools/package_street_social.lua 卻只複製 stage 的 Windows/。重打的 E:\OKPackage\StreetSocial-20261114-hvoice 一啟動就印「Skipped stage Pack1115.stage: no stage.json」，改去從原始碼重建 host 而失敗。打包後我沒有用包裡的啟動器試一次。
+- 修正：打包時寫入 stage 的 stage.json（staged_at、commit、dirty，不帶本機的 host／base 路徑），沒有可用的 stage.json 就停止打包；現有包與 zip 補上這個檔案。
+- 驗證：包裡執行 `run_street_social_development.lua -ValidateOnly` 選到 Pack1115.stage；之後移除驗證時建立的 junction 與 heroines.json，讓資料夾與 zip 一致。
