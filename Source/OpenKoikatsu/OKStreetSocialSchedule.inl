@@ -62,10 +62,18 @@ FVector AOKStreetSocialScene::SpotFor(int32 I,const FString& PlaceId,const FStri
   // the three): then round it, 80 then 140 cm out, still inside the place.
   TArray<FVector> Tries={Spot+Turn.RotateVector(FVector(Row,Side,0)),Spot+Turn.RotateVector(FVector(0,Side,0)),Spot};
   for(const float R:{80.f,140.f})for(int32 K=0;K<8;++K){const FVector Try=Spot+Turn.RotateVector(FRotator(0,K*45.f,0).RotateVector(FVector(R,0,0)));if(OKStreetInsidePlace(*P,Try))Tries.Add(Try);}
-  if(!Clear(RowSpot))for(const FVector& Try:Tries)if(Clear(Try)){
-   static TSet<FString> Said;if(!Said.Contains(FString::Printf(TEXT("%d %s"),I,*PlaceId))){Said.Add(FString::Printf(TEXT("%d %s"),I,*PlaceId)); // asked every 2 s: said once
-    UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d at %s, %s is in furniture, %s instead"),I,*PlaceId,*RowSpot.ToCompactString(),*Try.ToCompactString());}
-   return Try;}}
+  // Only a spot he can walk to from inside the door: 雷电将军's was moved into the cafe's corner behind a row of chairs
+  // and a stub of wall, and he walked into that wall 30 times (round 12, 2026-11-15). Chosen once per heroine, place
+  // and spot (asked every 2 s); none reachable: the first clear one, as before.
+  if(!Clear(RowSpot)){
+   static TMap<FString,FVector> Chosen;const FString Key=FString::Printf(TEXT("%d %s %.0f %.0f"),I,*PlaceId,RowSpot.X,RowSpot.Y);
+   if(const FVector* Was=Chosen.Find(Key))return *Was;
+   const FVector Inside=PlaceInsideSpot(*P);const FVector* First=nullptr;
+   for(const FVector& Try:Tries)if(Clear(Try)){if(!First)First=&Try;
+    const TArray<FVector> Way=GridRoute(Inside,Try,0.f);if(Way.Num()<2||FVector::Dist2D(Way.Last(),Try)>60.f)continue;
+    UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d at %s, %s is in furniture, %s instead"),I,*PlaceId,*RowSpot.ToCompactString(),*Try.ToCompactString());
+    Chosen.Add(Key,Try);return Try;}
+   if(First){UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d at %s, %s is in furniture, %s instead (none walkable from the door)"),I,*PlaceId,*RowSpot.ToCompactString(),*First->ToCompactString());return *First;}}} // the fallback is not kept: the world there may not be loaded yet
  return RowSpot;
 }
 
