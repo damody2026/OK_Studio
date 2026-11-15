@@ -20,18 +20,30 @@ local function skipped(rel)
   return false
 end
 
--- Junctions under dir, deepest first, with their targets (from `dir /al`, which names the target in brackets).
+-- Junctions (and directory symlinks) under dir, deepest first, with their targets: read from each entry's own attributes
+-- (lfs.symlinkattributes: mode "link" for a reparse point, and its target), never followed. This used to parse `dir /s
+-- /al`'s English or Traditional Chinese text; under another language or code page it found none, and the copy below
+-- would have gone through the junctions and filled the stage with the whole base. What cannot be told is an error, not
+-- "no junction": an entry without attributes, a link without its target, a kind we do not know.
 local function junctions(dir)
   local found = {}
-  local r = proc.run({ "cmd", "/c", "dir", "/s", "/al", (dir:gsub("/", "\\")) }, { capture = true })
-  local current
-  for line in (r.stdout or ""):gmatch("[^\r\n]+") do
-    local d = line:match("^ Directory of (.+)$") or line:match("^ (.+) 的目錄$")
-    if d then current = d end
-    local name, target = line:match("<JUNCTION>%s+(.-) %[(.+)%]$")
-    if not name then name, target = line:match("<SYMLINKD>%s+(.-) %[(.+)%]$") end
-    if name and current then found[#found + 1] = { path = path.join(current, name), target = target } end
+  local function walk(d)
+    local okd, iter, state = pcall(lfs.dir, d)
+    if not okd then error("Cannot list " .. d .. ": " .. tostring(iter), 0) end
+    for e in iter, state do
+      if e ~= "." and e ~= ".." then
+        local p = path.join(d, e)
+        local a, why = lfs.symlinkattributes(p)
+        if not a then error("Cannot read the attributes of " .. p .. ": " .. tostring(why), 0) end
+        if a.mode == "link" then
+          if not a.target or a.target == "" then error("A link without a readable target: " .. p, 0) end
+          found[#found + 1] = { path = p, target = a.target }
+        elseif a.mode == "directory" then walk(p)
+        elseif a.mode ~= "file" then error("Unknown kind " .. tostring(a.mode) .. ": " .. p, 0) end
+      end
+    end
   end
+  walk(dir)
   table.sort(found, function(a, b) return #a.path > #b.path end)
   return found
 end
@@ -42,7 +54,11 @@ local function mirror(src, dst, rel, stats, dry)
     local a, b = path.join(src, n), path.join(dst, n)
     local r = rel == "" and n or (rel .. "/" .. n)
     if not skipped(r) then
-      if path.is_dir(a) then mirror(a, b, r, stats, dry)
+      -- A link inside the target is not followed (it could lead anywhere, the whole base): stop and say where.
+      local attr = lfs.symlinkattributes(a)
+      if not attr then error("Cannot read the attributes of " .. a, 0) end
+      if attr.mode == "link" then error("A link inside a junction's target, not followed: " .. a .. " -> " .. tostring(attr.target), 0) end
+      if attr.mode == "directory" then mirror(a, b, r, stats, dry)
       else
         stats.files = stats.files + 1
         stats.bytes = stats.bytes + (path.size(a) or 0)
