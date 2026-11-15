@@ -24,6 +24,14 @@ TArray<FVector> AOKStreetSocialScene::CityRoute(const FVector& From,const FVecto
    if(!Around)break;P=Around;}
   return P;};
  const FOKStreetPlace* Into=Outer(Indoor(To));const FOKStreetPlace* OutOf=Outer(Indoor(From));
+ // When the grid and the graph both find nothing, what is left is the straight line between the two ends. Through a wall
+ // that is no way, and walking it ran him into the wall 30 times before "the way is blocked" (civic 5F seat6 and the
+ // gynaecologist's exam room, both shut in by their collision, city1116a, 2026-11-16): a straight line is a way only
+ // when it is clear; otherwise none, and the walk says so at once.
+ auto Straight=[&](TArray<FVector> Line,const TCHAR* Why)->TArray<FVector>{
+  for(int32 I=1;I<Line.Num();++I)if(!OKStreetCityClear(GetWorld(),Line[I-1],Line[I],18.f)){
+   UE_LOG(LogTemp,Display,TEXT("Street navigation: no way %s: grid and road graph found none, and the straight line %s -> %s is through a wall"),Why,*Line[I-1].ToCompactString(),*Line[I].ToCompactString());return {};}
+  return Line;};
  // Both in one building on one floor (47 m apart on the EE building's 4F, 優香 at her class): the floor's own way, not the
  // street's roads down on the ground, which led him into the 4F's wall till "the way is blocked" (R6-177).
  // The grid finding nothing (its 25 ms across the sports building's 130 m 1F): the graph's corridor points of that floor,
@@ -34,9 +42,11 @@ TArray<FVector> AOKStreetSocialScene::CityRoute(const FVector& From,const FVecto
   const int32 OffFloor=Graph.FilterByPredicate([&](const FVector& Q){return FMath::Abs(Q.Z-A.Z)>150.f;}).Num();
   UE_LOG(LogTemp,Display,TEXT("Street navigation: inside %s by the road graph (%d points, %.0f m, %d off the floor)"),P->Id,Graph.Num(),FVector::Dist2D(A,B)/100.f,OffFloor);
   if(Graph.Num()<3||OffFloor>0)return {};
-  if(!OKStreetCityClear(GetWorld(),A,Graph[1],18.f)){TArray<FVector> Out=GridRoute(A,Graph[1]);if(Out.Num()>=2){Graph.RemoveAt(0,2);Out.Append(Graph);Graph=MoveTemp(Out);}}
+  // The first and last legs: the grid's way, and if it has none, the straight leg through the wall is no way either (the
+  // gynaecologist's exam room, shut in by its collision: 182 replans on the graph's first leg, nav1116b, 2026-11-16).
+  if(!OKStreetCityClear(GetWorld(),A,Graph[1],18.f)){TArray<FVector> Out=GridRoute(A,Graph[1]);if(Out.Num()<2)return Straight({A,Graph[1]},TEXT("to the floor's road graph"));Graph.RemoveAt(0,2);Out.Append(Graph);Graph=MoveTemp(Out);}
   const int32 End=Graph.Num()-1;
-  if(End>=1&&!OKStreetCityClear(GetWorld(),Graph[End-1],B,18.f)){TArray<FVector> In=GridRoute(Graph[End-1],B,NearCm);if(In.Num()>=2){Graph.RemoveAt(End-1,2);Graph.Append(In);}}
+  if(End>=1&&!OKStreetCityClear(GetWorld(),Graph[End-1],B,18.f)){TArray<FVector> In=GridRoute(Graph[End-1],B,NearCm);if(In.Num()<2)return Straight({Graph[End-1],B},TEXT("from the floor's road graph"));Graph.RemoveAt(End-1,2);Graph.Append(In);}
   return Graph;};
  // The building's way in and out: its door, or an "entrance" anchor on the door's floor, whichever makes the way shorter.
  // The sports building's one door is at its south end (77000,21000); gym_hall's door at y 34275 went round by it although
@@ -55,7 +65,7 @@ TArray<FVector> AOKStreetSocialScene::CityRoute(const FVector& From,const FVecto
    const double C=Cost(A.Position);if(C<BestCost){BestCost=C;Best=A.Position;}}
   return Best;};
  if(Into&&Into==OutOf&&FMath::Abs(From.Z-To.Z)<150.f){TArray<FVector> Here=GridRoute(From,To,NearCm);if(Here.Num()>=2)return Here;
-  TArray<FVector> Graph=FloorGraph(Into,From,To);return Graph.Num()>=2?Graph:TArray<FVector>{From,To};}
+  TArray<FVector> Graph=FloorGraph(Into,From,To);return Graph.Num()>=2?Graph:Straight({From,To},TEXT("on this floor"));}
  const FVector IntoDoor=Into?Entrance(Into,true):FVector::ZeroVector;
  if(Into&&Into!=OutOf&&FVector::Dist2D(IntoDoor,To)>50.f){
   const FVector Door=IntoDoor;TArray<FVector> Route=CityRoute(From,Door);if(Route.IsEmpty())Route={From};
@@ -70,20 +80,25 @@ TArray<FVector> AOKStreetSocialScene::CityRoute(const FVector& From,const FVecto
    if(In.Num()>=2)Route.Append(In);
    else if((In=GridRoute(Door,To,NearCm)).Num()>=2){In.RemoveAt(0);Route.Append(In);}
    else if((In=FloorGraph(Into,Door,To)).Num()>=2){In.RemoveAt(0);Route.Append(In);}
-   else{const FVector Inside=Main?PlaceInsideSpot(*Into):Door;if(!Inside.Equals(Door,1.f))Route.Add(Inside);Route.Add(To);}}
+   else{TArray<FVector> Line={Door};const FVector Inside=Main?PlaceInsideSpot(*Into):Door;if(!Inside.Equals(Door,1.f))Line.Add(Inside);Line.Add(To);
+    Line=Straight(MoveTemp(Line),TEXT("in from the door"));if(Line.IsEmpty())return {};Line.RemoveAt(0);Route.Append(Line);}}
   return Route;}
  const FVector OutDoor=OutOf?Entrance(OutOf,false):FVector::ZeroVector;
  if(OutOf&&OutOf!=Into&&FVector::Dist2D(OutDoor,From)>50.f&&FMath::Abs(OutDoor.Z-From.Z)<150.f){
   const FVector Door=OutDoor;const bool Main=Door.Equals(OutOf->Door,1.f);TArray<FVector> Route=GridRoute(From,Door);
   if(!Main)UE_LOG(LogTemp,Display,TEXT("Street navigation: out of %s by its entrance %s"),OutOf->Id,*Door.ToCompactString());
   if(Route.Num()<2)Route=FloorGraph(OutOf,From,Door);
-  if(Route.Num()<2){Route={From};const FVector Inside=Main?PlaceInsideSpot(*OutOf):Door;if(!Inside.Equals(Door,1.f))Route.Add(Inside);Route.Add(Door);}
+  if(Route.Num()<2){Route={From};const FVector Inside=Main?PlaceInsideSpot(*OutOf):Door;if(!Inside.Equals(Door,1.f))Route.Add(Inside);Route.Add(Door);
+   Route=Straight(MoveTemp(Route),TEXT("out to the door"));if(Route.IsEmpty())return {};}
   TArray<FVector> Rest=CityRoute(Door,To);if(!Rest.IsEmpty())Rest.RemoveAt(0);Route.Append(Rest);
   return Route;}
- TArray<FVector> Route=OKStreetCityRoute(From,To);if(Route.Num()<3)return Route;
- if(!OKStreetCityClear(GetWorld(),From,Route[1],18.f)){TArray<FVector> Out=GridRoute(From,Route[1]);if(Out.Num()>=2){Route.RemoveAt(0,2);Out.Append(Route);Route=MoveTemp(Out);}}
+ TArray<FVector> Route=OKStreetCityRoute(From,To);if(Route.Num()<3){
+  // Out in the street the line can be stopped by a lamp or a bench the grid goes round: the grid first, then no way.
+  if(Route.Num()==2&&!OKStreetCityClear(GetWorld(),Route[0],Route[1],18.f)){TArray<FVector> Round=GridRoute(From,To,NearCm);return Round.Num()>=2?Round:Straight(MoveTemp(Route),TEXT("with no road between"));}
+  return Route;}
+ if(!OKStreetCityClear(GetWorld(),From,Route[1],18.f)){TArray<FVector> Out=GridRoute(From,Route[1]);if(Out.Num()<2)return Straight({From,Route[1]},TEXT("to the road graph"));Route.RemoveAt(0,2);Out.Append(Route);Route=MoveTemp(Out);}
  const int32 Last=Route.Num()-1;
- if(Last>=1&&!OKStreetCityClear(GetWorld(),Route[Last-1],To,18.f)){TArray<FVector> In=GridRoute(Route[Last-1],To,NearCm);if(In.Num()>=2){Route.RemoveAt(Last-1,2);Route.Append(In);}}
+ if(Last>=1&&!OKStreetCityClear(GetWorld(),Route[Last-1],To,18.f)){TArray<FVector> In=GridRoute(Route[Last-1],To,NearCm);if(In.Num()<2)return Straight({Route[Last-1],To},TEXT("from the road graph"));Route.RemoveAt(Last-1,2);Route.Append(In);}
  return Route;
 }
 TArray<FVector> AOKStreetSocialScene::ContactRoute(const FVector& From,const FVector& To) const {

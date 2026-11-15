@@ -340,6 +340,11 @@ TArray<FVector> AOKStreetSocialScene::WalkToLanding(const FVector& From,const FV
  TArray<FVector> Way=PlaceRouteWaypoints(From,Landing);
  if(Way.Num()<2||Way.ContainsByPredicate([&](const FVector& P){return FMath::Abs(P.Z-From.Z)>150.f;}))return {};
  if(FVector::Dist2D(Way.Last(),Landing)>50.f)Way.Add(Landing);
+ // The graph has no point on this floor (civic's 5F): its "way" is the straight line from him to the landing. Through a
+ // wall that is no way: he walked into it, replanned 30 times and stopped (civic 5F seat6 -> clinic_gyn, city1116a, the
+ // grid closed in by the furniture round the seat). None, so the walk says at once that there is no way.
+ if(Way.Num()==2&&!OKStreetCityClear(GetWorld(),Way[0],Way[1],18.f)){
+  UE_LOG(LogTemp,Display,TEXT("Street navigation: to the lift landing, the grid found no way and the road graph's is a straight line through a wall (%.0f m)"),FVector::Dist2D(From,Landing)/100.f);return {};}
  UE_LOG(LogTemp,Display,TEXT("Street navigation: to the lift landing by the road graph (%d points, %.0f m)"),Way.Num(),FVector::Dist2D(From,Landing)/100.f);
  return Way;
 }
