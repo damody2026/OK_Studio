@@ -5523,6 +5523,27 @@ bool AKKPreviewActor::ApplyHeadTextureCandidate(FOkAppearanceContext& Context,FO
  UE_LOG(LogTemp,Display,TEXT("Appearance candidate committed parts=%d geometry_rebuilt=0 shader_rebuilt=0"),Updates.Num());return true;
 }
 
+// Her tears object's level (ChaControl.ChangeTearsLv): cf_O_namida_S 1, _M 2, _L 3; 0 not tears.
+static int32 OKTearLevel(const char* Name){
+ if(!Name)return 0;const FString N=FString(UTF8_TO_TCHAR(Name)).ToLower();
+ return N.Contains(TEXT("cf_o_namida_s"))?1:N.Contains(TEXT("cf_o_namida_m"))?2:N.Contains(TEXT("cf_o_namida_l"))?3:0;
+}
+bool AKKPreviewActor::SetTearsLevel(int32 Level){
+ Level=FMath::Clamp(Level,-1,3);if(Level==TearsLevel)return false;TearsLevel=Level;ApplyTears();return true;
+}
+// The tears drawn: the level asked (SetTearsLevel), or with none asked (-1) those the card's state shows. The part's drawn
+// component is its morph one when it has it (the follower under it stays hidden), else the follower.
+void AKKPreviewActor::ApplyTears(){
+ TInlineComponentArray<UPrimitiveComponent*> Comps;GetComponents(Comps);TSet<int32> Morphed;
+ for(UPrimitiveComponent* C:Comps)for(const FName& Tag:C->ComponentTags){const FString T=Tag.ToString();if(T.StartsWith(TEXT("KKMorphPart_")))Morphed.Add(FCString::Atoi(*T.Mid(12)));}
+ for(UPrimitiveComponent* C:Comps)for(const FName& Tag:C->ComponentTags){const FString T=Tag.ToString();
+  const bool bMorph=T.StartsWith(TEXT("KKMorphPart_"));if(!bMorph&&!T.StartsWith(TEXT("KKSessionPart_")))continue;
+  const int32 Index=FCString::Atoi(*T.Mid(bMorph?12:14));if(!bMorph&&Morphed.Contains(Index))break;
+  OkMeshView V{};if(!Session.PartAt(Index,V))break;const int32 Level=OKTearLevel(V.name);if(Level==0)break;
+  const bool bShown=TearsLevel<0?bool(V.render_visible):Level==TearsLevel;
+  if(C->bHiddenInGame==bShown)C->SetHiddenInGame(!bShown);break;}
+}
+
 bool AKKPreviewActor::LoadSession(FString& OutError)
 {
  return LoadSessionBatch(OutError, MAX_int32, false);
@@ -5593,7 +5614,9 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 		{
 			continue;
 		}
-		if (!View.render_visible)
+		// The tears (cf_O_namida_S/M/L) are built hidden too: a scene shows a level of them live (SetTearsLevel, as the
+		// original's ChangeTearsLv); ApplyTears keeps the card's hidden ones hidden.
+		if (!View.render_visible && OKTearLevel(View.name) == 0)
 		{
 			UE_LOG(LogTemp, Display, TEXT("OK part source inactive name=%s"),
 				View.name ? UTF8_TO_TCHAR(View.name) : TEXT(""));
@@ -7470,7 +7493,7 @@ bool AKKPreviewActor::ApplyAccessoryGeometryCandidate(FOkAppearanceContext& Cont
  if(ToonShadowCapture)for(UActorComponent* Component:Staged)if(auto* Primitive=Cast<UPrimitiveComponent>(Component))
   if(Primitive->IsVisible()&&Primitive->bRenderInMainPass&&!Primitive->ComponentHasTag(TEXT("KKPreviewOutline")))ToonShadowCapture->ShowOnlyComponent(Primitive);
  if(SuspendedDisplayTicks.Num()>0)SuspendDisplayTicks(true);
- SyncMouthPose();RefreshSkinnedDisplay();ApplyMouth();ApplyGenitalVisibility();
+ SyncMouthPose();RefreshSkinnedDisplay();ApplyMouth();ApplyGenitalVisibility();ApplyTears();
  if(!MaterialOverrides.IsEmpty())ApplyMaterialOverrides();
  const double Done=FPlatformTime::Seconds();
  if(Timing){
@@ -7639,7 +7662,7 @@ bool AKKPreviewActor::CommitWardrobeStage(FString& Error)
   if(Primitive->IsVisible()&&Primitive->bRenderInMainPass&&!Primitive->ComponentHasTag(TEXT("KKPreviewOutline")))ToonShadowCapture->ShowOnlyComponent(Primitive);
  if(bCharacterDisplayShadows){ToonShadowBoundIndex=INDEX_NONE;if(ToonShadowTargets.IsValidIndex(ToonShadowReadIndex))BindToonShadowTarget(ToonShadowReadIndex);UpdateToonShadowProjection();}
  if(SuspendedDisplayTicks.Num()>0)SuspendDisplayTicks(true);
- SyncMouthPose();RefreshSkinnedDisplay();ApplyMouth();ApplyGenitalVisibility();
+ SyncMouthPose();RefreshSkinnedDisplay();ApplyMouth();ApplyGenitalVisibility();ApplyTears();
  if(!MaterialOverrides.IsEmpty())ApplyMaterialOverrides();
  const int32 Components=W.Staged.Num();
  WardrobeStage.Reset();WardrobeStaged.Reset();
@@ -7911,7 +7934,7 @@ bool AKKPreviewActor::LoadSessionBatch(FString& OutError, int32 PartLimit, bool 
 		MouthSlots.Num(), GetMouthPatternCount());
 	InitializeFaceControls();
 	ApplyMouth();
-	ApplyGenitalVisibility();
+	ApplyGenitalVisibility();ApplyTears();
 	const auto ReadonlyTextureStats = OKReadonlyRuntimeTextureCacheStats();
 	UE_LOG(LogTemp, Display, TEXT("OK readonly GPU textures hits=%llu misses=%llu metadata_rejections=%llu source_bytes=%lld entries=%d"),
         ReadonlyTextureStats.Hits,ReadonlyTextureStats.Misses,ReadonlyTextureStats.MetadataRejections,
@@ -9621,7 +9644,8 @@ float AKKPreviewActor::EffectiveFaceRate(int32 Control) const
     if(Control==0&&MouthOpenHeld>=0.f) return MouthOpenHeld;
     if(Control==0) return FMath::Max(MouthOpenFloor,bSpeechActive&&bSpeechDrivesMouth?FMath::Lerp(SpeechOpenMin,1.f,SpeechOpen):MouthOpen01);
     const int32 Index=Control-1;
-    if(bManualFaceControl[Index]) return FaceOpen01[Index];
+    // Set by hand, the H scene's face list may still blink them (FBSCtrlEyes: the blink closes from the face's open max).
+    if(bManualFaceControl[Index]) return bHBreathFaceBlink?FaceOpen01[Index]*(Index==0?BlinkEyeRate:(bBrowSyncBlink?BlinkBrowRate:1.f)):FaceOpen01[Index];
     const float Fixed=Session.FaceRuntimeSetting(6+Index);
     if(Fixed>=0.f) return Fixed;
     float Maximum=Session.FaceDefaultRate(Control);
@@ -9853,6 +9877,9 @@ void AKKPreviewActor::AdvanceFaceAnimation(float DeltaSeconds)
     bool Changed=false;
     for(auto& Transition:FaceTransitions) Changed|=Transition.Advance(DeltaSeconds);
     FaceClock+=DeltaSeconds;
+    // The H scene's face list turns the blink on or off (ChaControl.ChangeEyesBlinkFlag); back to the card's when it stops.
+    if(bHBreathFaceBlink!=bHBreathFaceBlinkApplied){bHBreathFaceBlinkApplied=bHBreathFaceBlink;
+        FaceBlink.FixedFlags=(bHBreathFaceBlink||bAutomaticBlink)?0:1;if(FaceBlink.FixedFlags)BlinkEyeRate=BlinkBrowRate=1.f;Changed=true;}
     FaceBlink.Calculate(FaceClock,[](float Min,float Max){return FMath::FRandRange(Min,Max);},
         [](int32 Min,int32 ExclusiveMax){return ExclusiveMax>Min?FMath::RandRange(Min,ExclusiveMax-1):Min;});
     if(FaceBlink.FixedFlags==0)
@@ -10100,7 +10127,7 @@ void AKKPreviewActor::DriveVaginaOpening(const AKKPreviewActor& Male, float& Ran
 void AKKPreviewActor::SetGenitalVisible(bool bVisible)
 {
 	bGenitalVisible = bVisible;
-	ApplyGenitalVisibility();
+	ApplyGenitalVisibility();ApplyTears();
 }
 
 void AKKPreviewActor::ApplyGenitalVisibility()

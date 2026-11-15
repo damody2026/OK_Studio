@@ -410,6 +410,12 @@ public:
 	float EyeGazeAsked[3] = {0.f,0.f,0.f};
 	/** Her pupils PupilScale times as large and her eye highlights off (a yandere's, or worn out); 1 and false: her card's. */
 	bool SetEyeDull(float PupilScale, bool bHideHighlight);
+	/** Her tears (ChaControl.ChangeTearsLv): 1..3 the small / medium / large tears object, 0 none, -1 as her card's state has them. */
+	bool SetTearsLevel(int32 Level);
+	int32 TearsLevel = -1;
+	void ApplyTears();
+	/** The H scene's face list blinks or holds her eyes (FaceListCtrl.SetFace eyesblink) while her eyes are set by hand. */
+	bool bHBreathFaceBlink = false, bHBreathFaceBlinkApplied = false;
 	// SetEyeDull's irises without highlights made ahead off the game thread; cheap to ask again.
 	void PrepareEyeDull();
 	/** Her pupils drawn off their place, in iris texture units (a tremble); 0 is where they belong. */

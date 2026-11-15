@@ -61,4 +61,21 @@ bool FKKHBreathFace::RunTest(const FString&){
     TestTrue(TEXT("Old index: no face"),KKSpeech::CollectHBreath(Root,0,2,TEXT("WLoop"),0,true,Cues,Error)&&Cues.Num()==1&&Cues[0].Faces.Num()==1&&Cues[0].Faces[0].Eye==-1&&Cues[0].Mouths[0]==10);
     return true;
 }
+// A voice-table line brings the face of the bank it plays from (VoiceInfo.face -> HFaceList_cNN_01_03).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FKKHVoiceFace,"OpenKoikatsu.Speech.HVoiceFace",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FKKHVoiceFace::RunTest(const FString&){
+    const FString Root=FPaths::ProjectSavedDir()/TEXT("Tests/HVoiceFace")/FGuid::NewGuid().ToString();
+    IFileManager::Get().MakeDirectory(*(Root/TEXT("audio/c00/h")),true);
+    const FString Json=TEXT("{\"patterns\":[{\"m\":2,\"anim\":\"WLoop\",\"info\":[{\"ids\":[-1],\"cond\":[],\"voices\":[75]}]}],\"clips\":[{\"p\":0,\"m\":2,\"id\":75,\"file\":\"moan\",\"faces\":[]}],")
+        TEXT("\"voices\":[{\"t\":3,\"id\":7,\"info\":[{\"ids\":[-1],\"cond\":[14],\"voices\":[14],\"state\":0}]}],")
+        TEXT("\"voiceClips\":[{\"p\":0,\"t\":3,\"id\":14,\"files\":[\"first\",\"unused\",\"used\",\"lewd\"],\"faces\":[20,21,22,23]}],")
+        TEXT("\"voiceFaces\":[{\"p\":0,\"m\":3,\"id\":20,\"mouth\":5,\"open\":0.2,\"eye\":13,\"brow\":1,\"eyeOpen\":0.4,\"tears\":2,\"cheek\":1,\"highlight\":true,\"blink\":false}]}");
+    if(!TestTrue(TEXT("Write index"),FFileHelper::SaveStringToFile(TEXT("fixture"),*(Root/TEXT("audio/c00/h/first.ogg")))&&FFileHelper::SaveStringToFile(Json,*(Root/TEXT("h_breath_index.json")))))return false;
+    FKKHBreathContext Context;Context.bVirginFirst=true;Context.Experience=0;
+    TArray<FKKHBreathCue> Cues;FString Error;
+    if(!TestTrue(TEXT("First-time insert line found"),KKSpeech::CollectHVoice(Root,0,7,0,Context,Cues,Error)&&Cues.Num()==1&&Cues[0].Faces.Num()==1)){AddError(Error);return false;}
+    const FKKHFace& F=Cues[0].Faces[0];
+    TestEqual(TEXT("eye"),F.Eye,13);TestEqual(TEXT("tears"),F.Tears,2);TestFalse(TEXT("blink"),F.bBlink);TestEqual(TEXT("mouth"),Cues[0].Mouths[0],5);
+    return true;
+}
 #endif
