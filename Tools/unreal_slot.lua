@@ -187,6 +187,18 @@ local function main()
   elseif cmd == "yield" and agent then
     local other = waiting_above(agent)
     if other then io.write("yield to ", other, "\n"); os.exit(3) end
+    -- No slot is held for more than 20 minutes (2026-11-15, the user's rule): past the cap, give it back,
+    -- to whoever is queued if anyone is, otherwise just release and re-claim if more time is needed.
+    local held = held_min_agent(agent)
+    if held and held >= MAX_HOLD_MIN then
+      local first = queued()[1]
+      if first and first ~= agent then
+        print("yield to " .. first .. " (held " .. held .. " min, cap " .. MAX_HOLD_MIN .. ")")
+      else
+        print("release (held " .. held .. " min, cap " .. MAX_HOLD_MIN .. ", nobody waiting)")
+      end
+      os.exit(3)
+    end
     io.write("keep\n"); os.exit(0)
   elseif cmd == "status" or not cmd then os.exit(status())
   else error("usage: unreal_slot.lua claim|release|yield <agent> [note] [--wait] | status", 0) end
