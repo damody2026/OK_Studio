@@ -196,11 +196,24 @@ end
 -- he stood in it after a meal, no grid route found a first cell, and each walk out hit the table 30 times and gave up
 -- (nh1115m, rounds 10 and 11). The aisle south of it (floor scans z 1290 and 1220) is open 1.5 m wide along y 42400-42500;
 -- the spot is there, 85 cm off the table's edge at y 42555, facing it as before (yaw 90).
-local SPOTS = { ['cafeteria table'] = { 70230, 42470, 1200 } }
+-- The cafe's 1F seats behind its first row of chairs: the game's nav grid (40 cm cells, a 40 cm capsule) floods from the
+-- door only to y 21720 in the west seating block (x 47100-47800, chair rows at y 21775-21800 and 22100-22175, tables
+-- between, the wall stub StaticMeshActor_6795 at its door end; scans z 1270 and 1245 at 25 cm), so a heroine sent to
+-- seat3 (惠惠) or seat14 (三月七) was moved to a clear spot nobody could walk to (nh1115q round 13). These ten have no
+-- reachable spot within the 80/140 cm rings SpotFor tries; they stand in the aisle in front of the block (y 21600) and
+-- in the open aisle east of it (x 47920-48080), each checked clear and reachable on that grid, facing the tables (4th value: yaw).
+local SPOTS = { ['cafeteria table'] = { 70230, 42470, 1200 },
+  ['cafe seat3'] = { 47320, 21600, 1200, 90 }, ['cafe seat7'] = { 47400, 21600, 1200, 90 }, ['cafe seat8'] = { 47480, 21600, 1200, 90 },
+  ['cafe seat9'] = { 47560, 21600, 1200, 90 }, ['cafe seat14'] = { 47640, 21600, 1200, 90 },
+  ['cafe seat19'] = { 47920, 21840, 1200, 180 }, ['cafe seat23'] = { 47920, 21960, 1200, 180 }, ['cafe seat24'] = { 47920, 22080, 1200, 180 },
+  ['cafe seat25'] = { 47920, 22200, 1200, 180 }, ['cafe seat31'] = { 48080, 22000, 1200, 180 } }
 for _, p in ipairs(places) do
   for _, an in ipairs(p.anchors or {}) do
     local s = SPOTS[p.id .. ' ' .. an.name]
-    if s then print(('anchor: %s %s by hand, %.0f,%.0f -> %.0f,%.0f'):format(p.id, an.name, an.pos[1], an.pos[2], s[1], s[2])); an.pos = { s[1], s[2], s[3] } end
+    if s then print(('anchor: %s %s by hand, %.0f,%.0f -> %.0f,%.0f'):format(p.id, an.name, an.pos[1], an.pos[2], s[1], s[2]))
+      -- moved off its seat (the cafe's back rows): a stand spot now, not sat down on a chair metres away
+      if an.seat_pos and math.sqrt((an.seat_pos[1] - s[1]) ^ 2 + (an.seat_pos[2] - s[2]) ^ 2) > 150 then an.seat_pos = nil end
+      an.pos = { s[1], s[2], s[3] }; if s[4] then an.yaw = s[4] end end
   end
 end
 
