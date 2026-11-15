@@ -22,8 +22,11 @@ lover_hand_male.okanim	studio/anime/00.unity3d|mc_m_stand_00_00
 lover_hand_shy.okanim	studio/anime/00.unity3d|f_reaction_00_09_M
 lover_hold_female.okanim	action/animator/00.unity3d|f_twoshot_00_03
 lover_hold_male.okanim	action/animator/00.unity3d|m_twoshot_00_00
+lover_hug_female.okanim	studio/anime/00.unity3d|f_stand_00_00
+lover_hug_male.okanim	studio/anime/00.unity3d|mc_m_stand_00_00
 lover_kiss_female.okanim	action/animator/00.unity3d|f_twoshot_00_kiss
 lover_kiss_male.okanim	action/animator/00.unity3d|m_twoshot_00_kiss
+lover_pat_male.okanim	studio/anime/00.unity3d|mc_m_stand_00_00
 lover_shy_1.okanim	studio/anime/00.unity3d|f_reaction_00_00_M
 lover_shy_2.okanim	studio/anime/00.unity3d|f_reaction_00_01_M
 lover_shy_3.okanim	studio/anime/00.unity3d|f_reaction_00_02_M

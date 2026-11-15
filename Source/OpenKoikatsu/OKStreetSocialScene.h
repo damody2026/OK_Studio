@@ -510,7 +510,7 @@ private:
  // OKStreetSocialLife.inl: the loop her schedule block shows (motions.toml, life), the same for the whole block.
  FString LifeClip(int32 Actor,const struct FOKStreetPlanBlock& Block);
  void ReadMotionTable();
- void StartLoverReaction(int32 Girl,const FString& Clip,float Seconds,const FString& MaleClip=FString(),const TCHAR* FemaleRecipe=nullptr);
+ void StartLoverReaction(int32 Girl,const FString& Clip,float Seconds,const FString& MaleClip=FString(),const TCHAR* FemaleRecipe=nullptr,const TCHAR* MaleRecipe=nullptr);
  void TickLover();
  bool S_ValidGirl(int32 Girl) const;
  bool HandleWorldAct(int32 Girl,const FString& Kind,const FString& Arg);

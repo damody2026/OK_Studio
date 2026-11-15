@@ -5413,6 +5413,18 @@
    "sha256": "fed28be2dedddc9e305b127648b3d257497b995beda5269e2bdf712edb302c23"
   },
   {
+   "bytes": 349519,
+   "group": "runtime-clips",
+   "path": "Content/IndependentResources/RuntimeAnimations/lover_hug_female.okanim",
+   "sha256": "29487ac5cf50580aaf308578d73ac381d75fb5f83df614384ac48b1e7964427b"
+  },
+  {
+   "bytes": 336799,
+   "group": "runtime-clips",
+   "path": "Content/IndependentResources/RuntimeAnimations/lover_hug_male.okanim",
+   "sha256": "1594edc3fc5b80617bb4145271778730b6225b110235d62e52fd27db563887f6"
+  },
+  {
    "bytes": 155167,
    "group": "runtime-clips",
    "path": "Content/IndependentResources/RuntimeAnimations/lover_kiss_female.okanim",
@@ -5423,6 +5435,12 @@
    "group": "runtime-clips",
    "path": "Content/IndependentResources/RuntimeAnimations/lover_kiss_male.okanim",
    "sha256": "01a18fa72e37a6a15d6dca841f11501d8a34b6a34e71fb1ee2ee483849ca5f87"
+  },
+  {
+   "bytes": 336799,
+   "group": "runtime-clips",
+   "path": "Content/IndependentResources/RuntimeAnimations/lover_pat_male.okanim",
+   "sha256": "1594edc3fc5b80617bb4145271778730b6225b110235d62e52fd27db563887f6"
   },
   {
    "bytes": 763219,

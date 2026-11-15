@@ -3,7 +3,7 @@
 use crate::{pose::Skeleton,finalik::*};
 use serde::Deserialize;
 #[derive(Deserialize)]
-pub(crate) struct Recipe {pub start:f32,pub peak:f32,pub end:f32,pub constraints:Vec<Contact>}
+pub(crate) struct Recipe {pub start:f32,pub peak:f32,#[serde(default)]pub hold:Option<f32>,pub end:f32,pub constraints:Vec<Contact>}
 #[derive(Deserialize)]
 pub(crate) struct Contact {pub effector:String,pub tip:[f32;3],pub target:[f32;3],#[serde(default)]pub target_bone:Option<String>,pub chain:Vec<Joint>}
 #[derive(Deserialize)]
@@ -13,7 +13,7 @@ impl Recipe {
  pub fn parse(json:&[u8])->Option<Self>{
   if json.is_empty()||json.len()>16384{return None;}
   let r:Self=serde_json::from_slice(json).ok()?;
-  if ![r.start,r.peak,r.end].iter().all(|v|v.is_finite())||r.start<0.||r.end>1.||r.start>=r.peak||r.peak>=r.end||r.constraints.is_empty()||r.constraints.len()>4{return None;}
+  if ![r.start,r.peak,r.end].iter().all(|v|v.is_finite())||r.start<0.||r.end>1.||r.start>=r.peak||r.peak>=r.end||r.hold.is_some_and(|h|!h.is_finite()||h<r.peak||h>=r.end)||r.constraints.is_empty()||r.constraints.len()>4{return None;}
   for c in &r.constraints {if c.effector.is_empty()||c.effector.len()>128||c.target_bone.as_ref().is_some_and(|b|b.is_empty()||b.len()>128)||!c.tip.iter().chain(&c.target).all(|v|v.is_finite()&&v.abs()<10.)||c.chain.is_empty()||c.chain.len()>12{return None;}for j in &c.chain{if j.name.is_empty()||j.name.len()>128||!j.max_degrees.is_finite()||j.max_degrees<=0.||j.max_degrees>150.{return None;}}}
   Some(r)
  }
@@ -28,7 +28,9 @@ impl Recipe {
    if c.target_bone.as_ref().is_some_and(|b|!sk.tfs.values().any(|t|t.name.eq_ignore_ascii_case(b))){return false;}
   }
   if !phase.is_finite(){return false;}
-  let u=if phase<self.peak{(phase-self.start)/(self.peak-self.start)}else{(self.end-phase)/(self.end-self.peak)}.clamp(0.,1.);
+  // Up by the peak, held until `hold` (the peak when absent), down by the end.
+  let hold=self.hold.unwrap_or(self.peak);
+  let u=if phase<self.peak{(phase-self.start)/(self.peak-self.start)}else if phase<=hold{1.}else{(self.end-phase)/(self.end-hold)}.clamp(0.,1.);
   let weight=u*u*(3.-2.*u);if weight==0.{return true;}
   for c in &self.constraints {
    let target=match &c.target_bone{Some(b)=>point(sk,b,c.target),None=>c.target};
@@ -68,6 +70,7 @@ impl Recipe {
   let mut sk=rig();let before=sk.clone();assert!(recipe.apply(&mut sk,0.1));assert_eq!(serde_json::to_vec(&before).unwrap(),serde_json::to_vec(&sk).unwrap());
   assert!(recipe.apply(&mut sk,0.5));let residual=vlen(vsub(point(&sk,"hand",[0.5,0.,0.]),[0.8,0.8,0.]));assert!(residual<0.002,"residual {residual}");
   for (id,t) in &sk.tfs{assert_eq!(t.pos,before.tfs[id].pos);assert_eq!(t.scale,before.tfs[id].scale);assert!(t.rot.iter().all(|v|v.is_finite()));}
+  let held=Recipe::parse(br#"{"start":0.2,"peak":0.3,"hold":0.7,"end":0.8,"constraints":[{"effector":"hand","tip":[0.5,0,0],"target":[0.8,0.8,0],"chain":[{"name":"arm","max_degrees":120},{"name":"root","max_degrees":120}]}]}"#).unwrap();let mut sk2=rig();assert!(held.apply(&mut sk2,0.6));assert!(vlen(vsub(point(&sk2,"hand",[0.5,0.,0.]),[0.8,0.8,0.]))<0.002);assert!(Recipe::parse(br#"{"start":0.2,"peak":0.3,"hold":0.9,"end":0.8,"constraints":[{"effector":"x","tip":[0,0,0],"target":[0,0,0],"chain":[{"name":"y","max_degrees":90}]}]}"#).is_none());
   let mut invalid=recipe;invalid.constraints[0].chain[0].name="missing".into();let saved=serde_json::to_vec(&sk).unwrap();assert!(!invalid.apply(&mut sk,0.5));assert_eq!(saved,serde_json::to_vec(&sk).unwrap());
  }
  #[test] fn contact_recipe_rejects_nonfinite_and_unbounded_inputs(){
@@ -91,6 +94,24 @@ impl Recipe {
    s.sample_paired_frame(s.anim_duration()*r.peak);let sk=s.body_skel.as_mut().unwrap();assert!(r.apply(sk,r.peak));
    let tip=super::point(sk,"k_f_handR_00",r.constraints[0].tip);let error=vlen(vsub(tip,r.constraints[0].target));
    eprintln!("OK{n:02} shoulder={shoulder:.3} target={:?} error_m={error:.3}",r.constraints[0].target);assert!(error<0.07);
+  }
+ }
+ // Any card + common curve + recipe: OK_CONTACT_CARDS (';'-separated OK cards), OK_CONTACT_CLIP (.okanim), OK_CONTACT_RECIPE
+ // (json file). Prints landmarks in the rig frame and each effector's miss at the recipe's peak.
+ #[test] #[ignore="reads the given OK cards, clip and recipe"]
+ fn ok_card_contact_reach(){
+  std::env::set_var("OK_BASE_LIBRARY",crate::test_support::project_path!("Content/IndependentResources/base_v1"));
+  let clip=std::fs::read(std::env::var("OK_CONTACT_CLIP").unwrap()).unwrap();let json=std::fs::read(std::env::var("OK_CONTACT_RECIPE").unwrap()).unwrap();
+  for card in std::env::var("OK_CONTACT_CARDS").unwrap().split(';').filter(|c|!c.is_empty()){
+   let p=std::path::PathBuf::from(card);
+   let mut s=crate::session::open(&crate::oklib::root_for_card(std::path::Path::new(""),Some(&p)),Some(&p),0).unwrap();
+   let (root,key)=crate::anim::install_shared_clip(&clip).unwrap();s.game_root=root;s.anim_clip=key;s.anim_parameters.clear();s.anim_scene_mode=0;s.anim_time=0.;s.reset_anim_clock();s.pv_mask=15;
+   let r=super::Recipe::parse(&json).unwrap();s.sample_paired_frame(s.anim_duration()*r.peak);let sk=s.body_skel.as_mut().unwrap();
+   let marks:Vec<String>=["cf_j_head","cf_j_neck","cf_j_spine03","cf_j_shoulder_R","cf_j_shoulder_L","k_f_handR_00"].iter().map(|n|{let v=super::point(sk,n,[0.;3]);format!("{n}=[{:.3},{:.3},{:.3}]",v[0],v[1],v[2])}).collect();
+   assert!(r.apply(sk,r.peak),"recipe names do not match {card}");
+   let miss:Vec<String>=r.constraints.iter().map(|c|{let t=match &c.target_bone{Some(b)=>super::point(sk,b,c.target),None=>c.target};format!("{}={:.3}@[{:.3},{:.3},{:.3}]",c.effector,vlen(vsub(super::point(sk,&c.effector,c.tip),t)),t[0],t[1],t[2])}).collect();
+   let elbows:Vec<String>=["cf_j_arm00_R","cf_j_forearm01_R","k_f_handR_00","cf_j_arm00_L","cf_j_forearm01_L","k_f_handL_00"].iter().map(|n|{let v=super::point(sk,n,[0.;3]);format!("{n}=[{:.3},{:.3},{:.3}]",v[0],v[1],v[2])}).collect();
+   eprintln!("{card}: {} | miss {} | solved {}",marks.join(" "),miss.join(" "),elbows.join(" "));
   }
  }
 }

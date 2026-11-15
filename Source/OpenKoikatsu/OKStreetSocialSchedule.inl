@@ -68,12 +68,16 @@ FVector AOKStreetSocialScene::SpotFor(int32 I,const FString& PlaceId,const FStri
   if(!Clear(RowSpot)){
    static TMap<FString,FVector> Chosen;const FString Key=FString::Printf(TEXT("%d %s %.0f %.0f"),I,*PlaceId,RowSpot.X,RowSpot.Y);
    if(const FVector* Was=Chosen.Find(Key))return *Was;
+   // None reachable: the first clear one, kept 30 s and then asked again (the world there may not have been loaded;
+   // asked every 2 s it searched the grid and logged 30 times a minute for two heroines in the cafe, round 13).
+   static TMap<FString,TPair<FVector,double>> Retry;
+   if(const auto* Held=Retry.Find(Key);Held&&FPlatformTime::Seconds()<Held->Value)return Held->Key;
    const FVector Inside=PlaceInsideSpot(*P);const FVector* First=nullptr;
    for(const FVector& Try:Tries)if(Clear(Try)){if(!First)First=&Try;
     const TArray<FVector> Way=GridRoute(Inside,Try,0.f);if(Way.Num()<2||FVector::Dist2D(Way.Last(),Try)>60.f)continue;
     UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d at %s, %s is in furniture, %s instead"),I,*PlaceId,*RowSpot.ToCompactString(),*Try.ToCompactString());
     Chosen.Add(Key,Try);return Try;}
-   if(First){UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d at %s, %s is in furniture, %s instead (none walkable from the door)"),I,*PlaceId,*RowSpot.ToCompactString(),*First->ToCompactString());return *First;}}} // the fallback is not kept: the world there may not be loaded yet
+   if(First){Retry.Add(Key,TPair<FVector,double>(*First,FPlatformTime::Seconds()+30.0));UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d at %s, %s is in furniture, %s instead (none walkable from the door; asked again in 30 s)"),I,*PlaceId,*RowSpot.ToCompactString(),*First->ToCompactString());return *First;}}}
  return RowSpot;
 }
 

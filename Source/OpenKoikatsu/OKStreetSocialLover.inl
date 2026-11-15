@@ -1,15 +1,27 @@
 // Lover moments (included by OKStreetSocialScene.cpp after the elevators): what DoAct's acts look like.
 //
-// DoAct (OKStreetSocialMind.inl) decides how she takes it in this place (§9 etiquette); here she shows it. A kiss or
-// an embrace is the original two-shot pose (lover.manifest.json, both actors at one anchor like the photo two-shots),
-// held a few seconds and followed by her shy reaction; taking her hand or patting her head is her reaction alone.
+// DoAct (OKStreetSocialMind.inl) decides how she takes it in this place (§9 etiquette); here she shows it. A kiss is
+// the original two-shot kiss (lover.manifest.json, both actors at one anchor like the photo two-shots), held a few
+// seconds and followed by her shy reaction. The original has no embrace, and its touches are first person (her reaction
+// alone, no hand of his), so holding hands, a head pat and an embrace are the original stands (his mc_m_stand_00_00,
+// her f_stand_00_00 for the embrace) with arm contacts solved on each private rig. (The embrace used to borrow the
+// photo flow's selfie two-shot: his phone hand at his face, the two side by side.)
 
 namespace {
 constexpr float OKLoverPoseSeconds=6.f,OKLoverReactSeconds=5.f,OKLoverTouchSeconds=3.9f;
 // His hand contact, in his own frame (Unity metres: +y up, +z forward, +x his right), one 4 s loop of his stand:
-// the hand rises to the target by the peak and back down by the end. (A head-pat contact was tried and removed: the
-// runtime could not evaluate his arm up to her head, "authored frame evaluation failed"; the pat is her reaction.)
+// the hand rises to the target by the peak and back down by the end. (An earlier head-pat contact failed at run time,
+// "authored frame evaluation failed"; OKLoverPatRecipe below solves offline and is checked in game.)
 const TCHAR* OKLoverHandRecipe=TEXT(R"({"start":0.08,"peak":0.45,"end":0.92,"constraints":[{"effector":"k_f_handR_00","tip":[0,0,0],"target":[0.16,0.86,0.25],"chain":[{"name":"cf_j_hand_R","max_degrees":90},{"name":"cf_j_forearm01_R","max_degrees":150},{"name":"cf_j_arm00_R","max_degrees":150},{"name":"cf_j_shoulder_R","max_degrees":90}]}]})");
+// The embrace, in each one's own frame with her standing OKLoverHugGap in front of him: elbows out past the other's
+// sides first, then the hands onto the other's back (his around her upper back, hers lower, around his waist). Up by
+// the peak and held; solved within 4 cm on Male01 and the ten conquest heroines (point_contact ok_card_contact_reach).
+constexpr float OKLoverHugGap=24.f,OKLoverPatGap=38.f,OKLoverHugSeconds=3.9f;
+const TCHAR* OKLoverHugMaleRecipe=TEXT(R"({"start":0.02,"peak":0.18,"hold":0.8,"end":0.97,"constraints":[{"effector":"cf_j_forearm01_R","tip":[0,0,0],"target":[0.21,1.13,0.19],"chain":[{"name":"cf_j_arm00_R","max_degrees":150},{"name":"cf_j_shoulder_R","max_degrees":45}]},{"effector":"k_f_handR_00","tip":[0,0,0],"target":[0.06,1.06,0.33],"chain":[{"name":"cf_j_hand_R","max_degrees":60},{"name":"cf_j_forearm01_R","max_degrees":150}]},{"effector":"cf_j_forearm01_L","tip":[0,0,0],"target":[-0.23,1.13,0.19],"chain":[{"name":"cf_j_arm00_L","max_degrees":150},{"name":"cf_j_shoulder_L","max_degrees":45}]},{"effector":"k_f_handL_00","tip":[0,0,0],"target":[-0.08,1.01,0.33],"chain":[{"name":"cf_j_hand_L","max_degrees":60},{"name":"cf_j_forearm01_L","max_degrees":150}]}]})");
+const TCHAR* OKLoverHugFemaleRecipe=TEXT(R"({"start":0.02,"peak":0.15,"hold":0.66,"end":0.82,"constraints":[{"effector":"cf_j_forearm01_R","tip":[0,0,0],"target":[0.23,1.0,0.12],"chain":[{"name":"cf_j_arm00_R","max_degrees":150},{"name":"cf_j_shoulder_R","max_degrees":45}]},{"effector":"k_f_handR_00","tip":[0,0,0],"target":[0.10,0.95,0.31],"chain":[{"name":"cf_j_hand_R","max_degrees":60},{"name":"cf_j_forearm01_R","max_degrees":150}]},{"effector":"cf_j_forearm01_L","tip":[0,0,0],"target":[-0.18,1.0,0.12],"chain":[{"name":"cf_j_arm00_L","max_degrees":150},{"name":"cf_j_shoulder_L","max_degrees":45}]},{"effector":"k_f_handL_00","tip":[0,0,0],"target":[-0.05,0.91,0.31],"chain":[{"name":"cf_j_hand_L","max_degrees":60},{"name":"cf_j_forearm01_L","max_degrees":150}]}]})");
+// His right hand resting on her head (elbow out to his side first, the wrist nearly straight), she OKLoverPatGap in
+// front of him: the wrist over her forehead, the fingers on her head (1.49 m held it above and behind March 7th's).
+const TCHAR* OKLoverPatRecipe=TEXT(R"({"start":0.04,"peak":0.25,"hold":0.75,"end":0.97,"constraints":[{"effector":"cf_j_forearm01_R","tip":[0,0,0],"target":[0.18,1.30,0.17],"chain":[{"name":"cf_j_arm00_R","max_degrees":150},{"name":"cf_j_shoulder_R","max_degrees":30}]},{"effector":"k_f_handR_00","tip":[0,0,0],"target":[0.03,1.42,0.30],"chain":[{"name":"cf_j_hand_R","max_degrees":25},{"name":"cf_j_forearm01_R","max_degrees":150}]}]})");
 const TCHAR* OKLoverShy(int32 Reaction){
  // Thrilled: the happy one; shy: covering up; fine: in between.
  return Reaction==4?TEXT("lover_shy_2.okanim"):Reaction==1?TEXT("lover_shy_1.okanim"):TEXT("lover_shy_3.okanim");
@@ -25,28 +37,34 @@ void AOKStreetSocialScene::PlayLoverAct(int32 Girl,const FString& Act,int32 Reac
   if(Reaction==2)StartLoverReaction(Girl,TEXT("lover_shy_3.okanim"),2.5f);
   return;
  }
- if(Act==TEXT("kiss")||Act==TEXT("hug")){
+ if(Act==TEXT("kiss")){
   if(S.Pair.Partner!=INDEX_NONE||S.Companion==Girl&&S.OutingGirl!=INDEX_NONE)return; // mid-activity: words only
   if(S.Companion==Girl)FinishCompanion();
   // Face each other where he stands: the two-shot curves carry her offset from the shared anchor.
   S.NextPairYaw=S.Rotations[0].Yaw;
-  S.NextPairFemaleClip=Act==TEXT("kiss")?TEXT("lover_kiss_female.okanim"):TEXT("lover_hold_female.okanim");
-  S.NextPairMaleClip=Act==TEXT("kiss")?TEXT("lover_kiss_male.okanim"):TEXT("lover_hold_male.okanim");
+  S.NextPairFemaleClip=TEXT("lover_kiss_female.okanim");S.NextPairMaleClip=TEXT("lover_kiss_male.okanim");
   BeginPair(Girl,0);
   if(S.Pair.Partner!=Girl){S.NextPairFemaleClip.Reset();S.NextPairMaleClip.Reset();return;}
   S.LoverPose={Girl,FString(OKLoverShy(Reaction)),0.0,Act};
-  S.Message=Act==TEXT("kiss")?OKT(TEXT("ui.lover.kissing_scene_hint")):OKT(TEXT("ui.lover.hugging_scene_hint"));RefreshUI();
+  S.Message=OKT(TEXT("ui.lover.kissing_scene_hint"));RefreshUI();
   UE_LOG(LogTemp,Display,TEXT("Street lover: actor=%d %s (reaction %d)"),Girl,*Act,Reaction);
   return;
  }
- if(Act==TEXT("hold_hands")||Act==TEXT("head_pat")){
+ if(Act==TEXT("hold_hands")||Act==TEXT("head_pat")||Act==TEXT("hug")){
   if(S.Pair.Partner!=INDEX_NONE)return;
-  // She stands just in front of him, facing him: where his hand goes.
+  if(Act==TEXT("hug")&&S.Companion==Girl&&S.OutingGirl!=INDEX_NONE)return; // mid-activity: words only
+  // She stands just in front of him, facing him: where his hands go.
   const FVector Front=FRotator(0,S.Rotations[0].Yaw+90.f,0).Vector();
-  S.Agents[Girl-1].Position=FVector(S.Male.X,S.Male.Y,S.Agents[Girl-1].Position.Z)+Front*(Act==TEXT("head_pat")?45.f:50.f);
-  // A head pat: her reaction. Holding hands: his hand reaches for hers while she gives her shy reaction (a contact
-  // on her side raised the wrong arm, one on his side up to her head could not be evaluated).
-  if(Act==TEXT("head_pat"))StartLoverReaction(Girl,OKLoverShy(Reaction),OKLoverReactSeconds);
+  const float Gap=Act==TEXT("hug")?OKLoverHugGap:Act==TEXT("head_pat")?OKLoverPatGap:50.f;
+  S.Agents[Girl-1].Position=FVector(S.Male.X,S.Male.Y,S.Agents[Girl-1].Position.Z)+Front*Gap;
+  // Holding hands: his hand reaches for hers while she gives her shy reaction (a contact on her side raised the wrong
+  // arm). A head pat: his hand on her head during that reaction. The embrace: both stand and hold each other.
+  if(Act==TEXT("hug")){
+   StartLoverReaction(Girl,FString(TEXT("lover_hug_female.okanim")),OKLoverHugSeconds,TEXT("lover_hug_male.okanim"),OKLoverHugFemaleRecipe,OKLoverHugMaleRecipe);
+   if(S.LoverReact.Girl==Girl){S.Message=OKT(TEXT("ui.lover.hugging_scene_hint"));RefreshUI();}
+   UE_LOG(LogTemp,Display,TEXT("Street lover: actor=%d hug (reaction %d)"),Girl,Reaction);
+  }
+  else if(Act==TEXT("head_pat"))StartLoverReaction(Girl,OKLoverShy(Reaction),OKLoverTouchSeconds,TEXT("lover_pat_male.okanim"),nullptr,OKLoverPatRecipe);
   else StartLoverReaction(Girl,FString(TEXT("lover_hand_shy.okanim")),OKLoverTouchSeconds,TEXT("lover_hand_male.okanim"));
   return;
  }
@@ -117,14 +135,14 @@ bool AOKStreetSocialScene::SwitchPhotoPose(const FString& Pose){
 
 bool AOKStreetSocialScene::S_ValidGirl(int32 Girl) const{return State&&Girl>0&&State->Agents.IsValidIndex(Girl-1)&&State->Manifest.Characters.IsValidIndex(Girl);}
 
-void AOKStreetSocialScene::StartLoverReaction(int32 Girl,const FString& Clip,float Seconds,const FString& MaleClip,const TCHAR* FemaleRecipe){
+void AOKStreetSocialScene::StartLoverReaction(int32 Girl,const FString& Clip,float Seconds,const FString& MaleClip,const TCHAR* FemaleRecipe,const TCHAR* MaleRecipe){
  auto& S=*State;if(S.LoverReact.Girl!=INDEX_NONE||S.Pair.Partner==Girl||S.SoloGirl==Girl)return;
  // Her own hand contact (holding hands), set once per heroine before her clip is first admitted.
  if(FemaleRecipe){const FString Key=FString::Printf(TEXT("%d:%s"),Girl,*Clip);if(!S.LoverContacts.Contains(Key)){FString Ignore;OKConfigureCrowdRuntimeActionContact(this,Girl,Clip,FemaleRecipe,Ignore);S.LoverContacts.Add(Key);}}
  FString Error;if(!OKPrewarmCrowdRuntimeAction(this,Girl,Clip,Error)){UE_LOG(LogTemp,Warning,TEXT("Street lover: reaction %s: %s"),*Clip,*Error);return;}
  if(!MaleClip.IsEmpty()){
   // His hand contact is part of the clip's private pose, set once before it is first admitted.
-  if(!S.LoverContacts.Contains(MaleClip)){FString Ignore;OKConfigureCrowdRuntimeActionContact(this,0,MaleClip,OKLoverHandRecipe,Ignore);S.LoverContacts.Add(MaleClip);}
+  if(!S.LoverContacts.Contains(MaleClip)){FString Ignore;OKConfigureCrowdRuntimeActionContact(this,0,MaleClip,MaleRecipe?MaleRecipe:OKLoverHandRecipe,Ignore);S.LoverContacts.Add(MaleClip);}
   if(!OKPrewarmCrowdRuntimeAction(this,0,MaleClip,Error)){UE_LOG(LogTemp,Warning,TEXT("Street lover: %s: %s"),*MaleClip,*Error);return;}
   const FVector ToHer=S.Agents[Girl-1].Position-S.Male;S.Rotations[0]=OKStreetFacingMovement(ToHer,S.Rotations[0]);
  }
