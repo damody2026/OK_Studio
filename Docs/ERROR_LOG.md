@@ -4712,3 +4712,9 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 錯誤：愛撫實測時用 `/hscene {"kind":2137}` 想放開手，2137 其實是「結束，事後溫存」（Afterglow），放開是 2107（Release）。兩次都把她換成仰躺愛撫並鎖住姿勢，之後選「站立愛撫」沒有作用，鏡頭也沒對到她。上一輪「愛撫數值實測」最後的截圖是仰躺愛撫，就是這個原因。
 - 修正：查 `Source/OpenKoikatsu/OKHScene.h` 的動作編號再送；放開用 2107。
 - 影響：只影響測試步驟，程式沒有錯。站立姿勢的「摸一下放開」改在仰躺愛撫看。
+
+## 2026-11-16 一對一：把放開不能過渡的原因寫成「有其他作用中的層」
+
+- 錯誤：愛撫「摸一下」放開時 CrossFade 被 Rust 拒絕，我只看到 `not a plain base-layer state` 就在 `Docs/ONEONE_PERFECTION_CHECKLIST.md` 寫成 kha_f_base 的 M_Idle／Idle「有其他作用中的層」，判斷要做多層 controller 過渡、先還原不修。實際 log 出 entry 才知道：兩個 state 都是 Studio 組合圖的「[Controller layer 0]」（`studio_layer=Some(0)`），沒有任何疊層，只是被「完全單純 base state」的條件擋下。
+- 修正：`anim/crossfade.rs` 的整個姿勢過渡接受 layer 0／有疊層的 base state；先印出被拒絕的 entry 欄位再下結論。
+- 影響：放開硬切多留了一輪；文件已改正。

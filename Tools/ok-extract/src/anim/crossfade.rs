@@ -30,11 +30,25 @@ pub(crate) fn length(game:&Path,key:&str,values:&HashMap<String,f32>)->Option<f3
 impl CrossFade {
     pub fn new(game:&Path,from:&str,to:&str,values:&HashMap<String,f32>,clock:Clock,start:f32,blend:f32,offset:f32)->Option<Self> {
         if ![start,blend,offset,clock.epoch,clock.phase].iter().all(|v|v.is_finite())||start<0.||blend<0. {return None;}
-        let (a,ea,_,duration)=plan(game,from,values)?;let(b,eb,_,_)=plan(game,to,values)?;
+        let Some((a,ea,_,duration))=plan(game,from,values) else{return Self::new_whole(game,from,to,values,clock,start,blend,offset);};
+        let Some((b,eb,_,_))=plan(game,to,values) else{return Self::new_whole(game,from,to,values,clock,start,blend,offset);};
         if a!=b||!controller::plain_base_pair(&ea,&eb) {return None;}
         let source_length=duration/ea.timing.speed;let seconds=(source_length as f64*blend as f64) as f32;
         if !source_length.is_finite()||source_length<=0.||!seconds.is_finite()||(blend>0.&&seconds<=0.) {return None;}
         Some(Self{from:from.into(),to:to.into(),from_clock:clock,to_clock:Clock{epoch:start,phase:offset},start,seconds,source_length,layer:None})
+    }
+    /// Base states sampled through the composed Studio graph (an H controller such as kha_f_base: "[Controller layer 0]
+    /// Base Layer.M_Idle" to Idle) or with layers over them: the two whole poses blend on the shared clock. Only from and
+    /// to both on the default clock with no restart offset; the target keeps its phase on that clock instead of
+    /// restarting, which a looping idle does not show.
+    fn new_whole(game:&Path,from:&str,to:&str,values:&HashMap<String,f32>,clock:Clock,start:f32,blend:f32,offset:f32)->Option<Self> {
+        if clock!=Clock::default()||offset!=0.||blend<=0. {return None;}
+        let (sa,ea,_,duration)=motion_plan(game,from,values)?;let(sb,eb,_,_)=motion_plan(game,to,values)?;
+        if sa!=sb||[&ea,&eb].iter().any(|e|e.layer.is_some()||e.studio_layer.is_some_and(|i|i!=0))
+            ||!valid_animation_clock(game,from,values)||!valid_animation_clock(game,to,values) {return None;}
+        let source_length=duration/ea.timing.speed;let seconds=(source_length as f64*blend as f64) as f32;
+        if !source_length.is_finite()||source_length<=0.||!seconds.is_finite()||seconds<=0. {return None;}
+        Some(Self{from:from.into(),to:to.into(),from_clock:clock,to_clock:clock,start,seconds,source_length,layer:None})
     }
     pub fn new_layer(game:&Path,from:&str,to:&str,index:usize,values:&HashMap<String,f32>,start:f32,blend:f32,offset:f32)->Option<Self> {
         if ![start,blend,offset].iter().all(|v|v.is_finite())||start<0.||blend<0.||index==0 {return None;}

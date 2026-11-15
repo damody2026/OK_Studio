@@ -409,9 +409,15 @@ void UOKHScenePanel::SelectAibu(int32 Index){
         });
     });
 }
+static TAutoConsoleVariable<float> CVarHReleaseFade(TEXT("ok.HScene.ReleaseFade"),.3f,TEXT("Seconds her caress pose blends back to her idle when she is let go (0 cuts)"));
 void UOKHScenePanel::PlaySolo(const FString& State){
+    const float Fade=SoloFadeSeconds;SoloFadeSeconds=0.f;
     if(!Gallery||!Gallery->PreviewActor)return;const FString* Key=SoloKeys.Find(State);if(!Key)return;
-    if(Gallery->PreviewActor->SetGameAnimation(*Key)){SoloState=State;SoloStarted=FPlatformTime::Seconds();Gallery->SyncGameAnimationSelection(*Key);CaressBreath();if(SoloInfo==5)PlaySecond(State);}
+    AKKPreviewActor* A=Gallery->PreviewActor;
+    // Let go of a place: the hand eases back over Fade instead of jumping (the original hides the switch with a screen fade).
+    const bool bFaded=Fade>0.f&&A->AnimDuration>0.f&&A->CrossFadeGameAnimation(*Key,Fade/A->AnimDuration);
+    if(Fade>0.f)UE_LOG(LogTemp,Display,TEXT("H scene: %s %s over %.2f s"),*State,bFaded?TEXT("cross-fades"):TEXT("cuts (no cross-fade)"),Fade);
+    if(bFaded||A->SetGameAnimation(*Key)){SoloState=State;SoloStarted=FPlatformTime::Seconds();Gallery->SyncGameAnimationSelection(*Key);CaressBreath();if(SoloInfo==5)PlaySecond(State);}
     else UE_LOG(LogTemp,Warning,TEXT("H scene: caress state %s did not play"),*State);
 }
 void UOKHScenePanel::Touch(int32 Area){
@@ -812,7 +818,7 @@ void UOKHScenePanel::UpdateCaress(float Delta){
     const double Now=FPlatformTime::Seconds();
     // A single touch is over: she lets go of the place (a caress clip back to her Idle).
     if(OnceUntil>0.&&Now>=OnceUntil&&Queue.IsEmpty()){OnceUntil=0.;
-        if(TouchArea!=INDEX_NONE){const bool bClip=!BodyTouching();TouchArea=INDEX_NONE;bLipsTouch=false;if(bClip)Chain({TEXT("Idle")});ActionsKey.Reset();}}
+        if(TouchArea!=INDEX_NONE){const bool bClip=!BodyTouching();TouchArea=INDEX_NONE;bLipsTouch=false;if(bClip){SoloFadeSeconds=CVarHReleaseFade.GetValueOnGameThread();Chain({TEXT("Idle")});}ActionsKey.Reset();}}
     const FString& State=SoloState;
     const bool bHolding=TouchArea!=INDEX_NONE&&Queue.IsEmpty()&&(BodyTouching()||State.EndsWith(TEXT("_Idle"))||State==TEXT("K_Loop"));
     if(bHolding&&!bStrokeOnce)CaressSpeed=FMath::FInterpTo(CaressSpeed,SpeedValue*SpeedMax,Delta,10.f); // timeSpeedUpStartAibu 0.1 s
@@ -1042,7 +1048,7 @@ void UOKHScenePanel::Click(int32 Kind){
     if(Kind==PenisXRayToggle){bPenisXRay=!bPenisXRay;ApplyMaleLook();ActionsKey.Reset();return;}
     if(Kind==ToggleMale){MaleView=(MaleView+1)%3;bMaleHidden=MaleView==2;ApplyMaleLook();BuildList();return;}
     if(Kind==MaleBottom){bMaleBottomOff=!bMaleBottomOff;ApplyMaleLook();BuildList();return;}
-    if(Kind==Release&&Mode==0){TouchArea=INDEX_NONE;bLipsTouch=false;OnceUntil=0.;Chain({TEXT("Idle")});ActionsKey.Reset();return;}
+    if(Kind==Release&&Mode==0){TouchArea=INDEX_NONE;bLipsTouch=false;OnceUntil=0.;SoloFadeSeconds=CVarHReleaseFade.GetValueOnGameThread();Chain({TEXT("Idle")});ActionsKey.Reset();return;}
     if(Kind==CoordinateToggle){bCoordinateList=!bCoordinateList;if(bCoordinateList){FindCoordinateCards();if(bSettingsOpen)Click(SettingsToggle);}ShowCoordinates();BuildList();return;}
     if(Kind==HeadCameraToggle){bHeadCamera=!bHeadCamera;HeadCameraGirl=nullptr;ActionsKey.Reset();return;}
     if(Kind==EyesCameraToggle){const bool On=!HEyesOnCamera();HSettingSet(TEXT("EyesCamera"),On?1.f:0.f);HSettingsSave();for(UOKHSettingSlider* Slider:SettingSliders)if(Slider)Slider->Show();
