@@ -27,6 +27,19 @@ pub(crate) fn rig_mesh(
     if r == "body" {
         mesh.skel_kind = 1;
         if let Some(sk) = body_skel {
+            // OK_BODYBONES=<y0>,<y1>,<z max>: the bones weighting the body vertices in that height band behind z (the buttocks).
+            if let Some((y0, y1, zmax)) = std::env::var("OK_BODYBONES").ok().and_then(|v| {
+                let p: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                (p.len() == 3).then(|| (p[0], p[1], p[2])) }) {
+                let mut sum: std::collections::BTreeMap<String, f32> = Default::default();
+                for (i, p) in mesh.positions.iter().enumerate() {
+                    if p[1] < y0 || p[1] > y1 || p[2] > zmax { continue; }
+                    if let (Some(b), Some(w)) = (mesh.bone_idx.get(i), mesh.weights.get(i)) {
+                        for k in 0..4 { if w[k] > 0.0 { *sum.entry(sk.names.get(b[k] as usize).cloned().unwrap_or_default()).or_default() += w[k]; } }
+                    }
+                }
+                for (n, w) in &sum { eprintln!("ok-extract: BODYBONES {n} {w:.1}"); }
+            }
             let _ = skin_mesh(mesh, sk);
         }
         return;

@@ -13,6 +13,7 @@ pub(crate) fn extract_session_from_info(
     if !game_root.join("abdata").ok_is_dir(){
         return Err(format!("game_root missing abdata: {}",game_root.display()));
     }
+    if let Some(card)=parsed_card.as_mut() { card.abm=crate::abmx::for_outfit(&card.abm,outfit.max(0) as usize); }
     if let Some(card)=parsed_card.as_mut(){crate::mods::apply_strip_all_migrations(game_root,card);}
     // What the card says (CardInfo::source_digest): with the outfit and a mesh, the key of its rig (rig_memo).
     let card_digest = parsed_card.as_ref().map(|card| card.source_digest);
@@ -2367,7 +2368,8 @@ pub(crate) fn extract_session_from_info(
         clothes_dynamic_runtime: None,
         bust_softness: parsed_card.as_ref().map_or(0.5, |c| c.bust_softness),
         bust_weight: parsed_card.as_ref().map_or(0.5, |c| c.bust_weight),
-        collider_settings: crate::dbone::game_colliders::Settings::load(game_root),
+        collider_settings: { let settings=crate::dbone::game_colliders::Settings::load(game_root);
+            crate::ffi::ffi_log(0,&format!("ok-extract: KKS_Colliders {settings:?}")); settings },
         collider_overrides: parsed_card.as_ref().map_or(crate::dbone::game_colliders::CardOverrides::default(), |c| c.collider_overrides),
         head_rest,
         body_skel,

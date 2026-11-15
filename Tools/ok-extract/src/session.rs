@@ -333,6 +333,14 @@ impl AccessoryRuntime {
             crate::dbone::implant::prepare(&mut rig,body,&raw.bone_implants,parent_world)
         } else {Default::default()};
         let skel = &rig;
+        // OK_CLOTHBONES=<mesh name part>: the garment's bones, how many vertices each carries, and whether the body has it.
+        if std::env::var("OK_CLOTHBONES").is_ok_and(|filter| raw.name.to_ascii_lowercase().contains(&filter.to_ascii_lowercase())) {
+            let mut count = vec![0usize; rig.names.len()];
+            for (b, w) in raw.bone_idx.iter().zip(&raw.weights) { for k in 0..4 { if w[k] > 0.0 { if let Some(c) = count.get_mut(b[k] as usize) { *c += 1; } } } }
+            for (i, n) in rig.names.iter().enumerate() {
+                eprintln!("ok-extract: CLOTHBONES {} [{i}] {n} verts={} body={}", raw.name, count[i], body.index_of(n).is_some());
+            }
+        }
         let mut owned = raw.deferred_dbones.clone().unwrap_or_default()
             .private_clothes(skel, body, copy_dynamic, component_name);
         if implants_active {owned.add_implanted_colliders(&raw.bone_implants,&implanted_bones);}

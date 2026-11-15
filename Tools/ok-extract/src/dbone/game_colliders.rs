@@ -14,17 +14,35 @@ pub struct Settings { installed: bool, global: Flags, studio_default: u8 }
 impl Default for Settings {
     fn default() -> Self {Self {installed:false,global:Flags::default(),studio_default:0}}
 }
+const PLUGINS: [&str; 4] = [
+    "BepInEx/plugins/KKS_Plugins/KKS_Colliders.dll",
+    "BepInEx/plugins/KKS_Colliders.dll",
+    "BepInEx/plugins/KK_Plugins/KK_Colliders.dll",
+    "BepInEx/plugins/KK_Colliders.dll",
+];
+const CONFIG: &str = "BepInEx/config/com.deathweasel.bepinex.colliders.cfg";
 impl Settings {
-    pub fn load(root: &Path) -> Self {
-        let installed = [
-            "BepInEx/plugins/KKS_Plugins/KKS_Colliders.dll",
-            "BepInEx/plugins/KKS_Colliders.dll",
-            "BepInEx/plugins/KK_Plugins/KK_Colliders.dll",
-            "BepInEx/plugins/KK_Colliders.dll",
-        ]
-            .iter().any(|p| root.join(p).ok_is_file());
-        let text = crate::gamefs::read_to_string(root.join("BepInEx/config/com.deathweasel.bepinex.colliders.cfg")).unwrap_or_default();
+    fn from_installation(root: &Path) -> Self {
+        let installed = PLUGINS.iter().any(|p| root.join(p).ok_is_file());
+        let text = crate::gamefs::read_to_string(root.join(CONFIG)).unwrap_or_default();
         Self::parse(installed, &text)
+    }
+    /// A game installation decides by its plugin and configuration. An OK card opened without one (the library is
+    /// no installation, and a card pack records no plugin) takes the installation given with the card, else the
+    /// project's `Config/KKS_Colliders.cfg` (`OK_COLLIDERS_CONFIG` overrides it), as UncensorSelector does: without
+    /// it a skirt had no thigh colliders and the legs went through it.
+    pub fn load(root: &Path) -> Self {
+        if root.join("BepInEx").is_dir() { return Self::from_installation(root); }
+        if let Some(game) = crate::gamefs::fallback_installation() { return Self::from_installation(&game); }
+        match project_config() {
+            Some(text) => Self::parse(true, &text),
+            None => Self::from_installation(root),
+        }
+    }
+    /// What an open reads for these settings without an installation, for the open cache (oklib).
+    pub fn library_identity() -> String {
+        let root = crate::oklib::active_dir().unwrap_or_default();
+        format!("colliders:{:?}", Self::load(&root))
     }
     fn parse(installed: bool, text: &str) -> Self {
         let mut settings = Self { installed, global: Flags { installed, breast: true, floor: true, skirt: true }, studio_default: 2 };
@@ -58,6 +76,20 @@ impl Settings {
         if let Some(v) = card.skirt { flags.skirt = v; }
         flags
     }
+}
+
+/// The project's KKS_Colliders configuration: `OK_COLLIDERS_CONFIG`, else `<project>/Config/KKS_Colliders.cfg`
+/// found from the library (<project>/Content/IndependentResources/base_v1, also through a stage's junction).
+fn project_config() -> Option<String> {
+    let mut candidates: Vec<std::path::PathBuf> = std::env::var_os("OK_COLLIDERS_CONFIG").map(Into::into).into_iter().collect();
+    if let Some(dir) = crate::oklib::active_dir() {
+        for lib in [Some(dir.clone()), std::fs::canonicalize(&dir).ok()].into_iter().flatten() {
+            if let Some(project) = lib.parent().and_then(Path::parent).and_then(Path::parent) {
+                candidates.push(project.join("Config").join("KKS_Colliders.cfg"));
+            }
+        }
+    }
+    candidates.into_iter().find_map(|p| std::fs::read_to_string(p).ok())
 }
 
 // ColliderController.AddCollider parents an identity child to each named bone.
