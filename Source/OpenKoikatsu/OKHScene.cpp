@@ -791,6 +791,44 @@ void UOKHScenePanel::ApplySpeed(){
     if(!FMath::IsNearlyEqual(Gallery->PairedPlayback->GetSpeed(),Target,.01f))Gallery->OnPairSpeed(Target/4.f);
 }
 
+static TAutoConsoleVariable<int32> CVarHMotion(TEXT("ok.HScene.Motion"),1,TEXT("The loops' animator float \"motion\" drifts between the two takes of the thrust as in the original (HSonyu / HHoushi); 0: always the first take"));
+// HFlag of the H scene (level8): curveMotion, read from the original's serialized keys (time, value, in/out slope).
+static float OKCurveMotion(float X){
+    static const float K[3][3]={{0.f,0.f,0.f},{.5006298f,.5009448f,2.874899f},{1.f,1.f,0.f}};
+    X=FMath::Clamp(X,0.f,1.f);const int32 I=X<K[1][0]?0:1;const float Dt=K[I+1][0]-K[I][0],T=(X-K[I][0])/Dt,T2=T*T,T3=T2*T;
+    return (2.f*T3-3.f*T2+1.f)*K[I][1]+(T3-2.f*T2+T)*K[I][2]*Dt+(-2.f*T3+3.f*T2)*K[I+1][1]+(T3-T2)*K[I+1][2]*Dt;
+}
+void UOKHScenePanel::UpdateMotion(float Delta){
+    if(CVarHMotion.GetValueOnGameThread()==0){HMotion=0.f;bMotionEasing=false;return;}
+    // HSonyu / HHoushi Proc: an easing under way goes on in any state of the pose.
+    if(bMotionEasing){MotionCalc=FMath::Min(MotionCalc+Delta,MotionFor);const float T=OKCurveMotion(MotionFor>0.f?MotionCalc/MotionFor:1.f);
+        HMotion=FMath::Lerp(MotionFrom,MotionTo,T);if(MotionCalc>=MotionFor)bMotionEasing=false;}
+    // LoopProc (WLoop / SLoop of service and intercourse): the next value once the wait is over and no easing is under way.
+    if((Mode!=1&&Mode!=2)||!HIsLoop(HBase(Current()))||(Gallery&&Gallery->PairedPlayback&&Gallery->PairedPlayback->IsPaused()))return;
+    AutoMotionCalc+=Delta;if(AutoMotionCalc<AutoMotionFor||bMotionEasing)return;
+    static constexpr float RateMin=.1f; // rateMotionMin
+    AutoMotionFor=FMath::FRandRange(3.f,5.f);AutoMotionCalc=0.f; // timeAutoMotionMin/Max
+    float To;
+    if(bMotionUp){const float Up=1.f-HMotion;To=Up<=RateMin?1.f:HMotion+FMath::FRandRange(RateMin,Up);if(To>=1.f)bMotionUp=false;}
+    else{To=HMotion<=RateMin?0.f:HMotion-FMath::FRandRange(RateMin,HMotion);if(To<=0.f)bMotionUp=true;}
+    MotionFrom=HMotion;MotionTo=To;MotionCalc=0.f;MotionFor=FMath::FRandRange(2.f,3.f);bMotionEasing=true; // timeMotionMin/Max
+}
+void UOKHScenePanel::ApplyMotion(AKKPreviewActor* Girl,AKKPreviewActor* Him){
+    // SetDefaultAnimatorFloat writes it to her and to him. A state started anew (its parameters cleared) gets it again.
+    // The two takes of every loop are the same length (all 664 pairs of the service and intercourse clips), so the change
+    // keeps the loop's phase and both of them stay together.
+    AKKPairedPlayback* Playback=Gallery?Gallery->PairedPlayback.Get():nullptr;
+    if(!IsValid(Playback)||!IsValid(Girl)||!IsValid(Him)||(Mode!=1&&Mode!=2))return;
+    const FString& State=Playback->GetState();const float Elapsed=Playback->GetElapsed();
+    const bool bAnew=State!=MotionAppliedState||Elapsed+1e-3f<MotionAppliedElapsed||MotionAppliedHer!=Girl;MotionAppliedElapsed=Elapsed;
+    if(!bAnew&&FMath::Abs(HMotion-MotionApplied)<.002f)return;
+    Girl->Session.SetAnimationFloat(TEXT("motion"),HMotion);Him->Session.SetAnimationFloat(TEXT("motion"),HMotion);
+    MotionApplied=HMotion;MotionAppliedState=State;MotionAppliedHer=Girl;
+    auto Read=[](const FOkSession& S){FString Name;float V,Lo,Hi;for(int32 I=0,N=S.AnimationFloatCount();I<N;++I)if(S.AnimationFloatAt(I,Name,V,Lo,Hi)&&Name==TEXT("motion"))return V;return -1.f;};
+    MotionReadHer=Read(Girl->Session);MotionReadHim=Read(Him->Session);
+    if(bAnew)UE_LOG(LogTemp,Display,TEXT("H scene: %s motion %.2f (her %.2f, him %.2f)"),*State,HMotion,MotionReadHer,MotionReadHim);
+}
+
 // A place of hers past 30 (she starts to feel it), 60 (sensitive) or 100 (used to him) with this climax or his coming in
 // her mouth (H_DEVELOPMENT_EXPERIENCE_PLAN P3): said with the event, so her reaction to it speaks of it.
 static FString OKDevStep(const TCHAR* Area,float Before,float After){
@@ -1673,7 +1711,7 @@ void UOKHScenePanel::TickScene(float Delta){
     Her=FMath::Clamp(Her,0.f,100.f);His=FMath::Clamp(His,0.f,100.f);
     // In her mouth she decides herself if he waits (HHoushi Oral_Idle: drink or spit after a while).
     if(Queue.IsEmpty()&&Base==TEXT("Oral_Idle")&&OralIdleSince>0.&&Now-OralIdleSince>8.){OralIdleSince=0.;static const float DrinkChance[]={.2f,.35f,.6f,.85f};Click(FMath::FRand()<DrinkChance[FMath::Clamp(Level(),0,3)]?Drink:Vomit);} // her own choice: the more used to it, the likelier she swallows
-    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSpeed);ApplySpeed();}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSpeed);ApplySpeed();UpdateMotion(Delta);}
     // Her spoken answer is over: her breathing goes on (the line stopped it).
     // What is being put on stays on screen until it is on: without it the wait looks like a hang (user 2026-11-07).
     if(!OutfitLoadingText.IsEmpty()){AOKInteractionMode* Changing=Interaction();if(!Changing||!Changing->IsChangingOutfit())OutfitLoadingText.Reset();else if(Hint)Hint->SetText(FText::FromString(OutfitLoadingText));}
@@ -3929,6 +3967,7 @@ void UOKHScenePanel::ReadPairSessions(){
     auto* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;auto* Him=Gallery?Gallery->PartnerActor.Get():nullptr;FVector P0,Glans;
     ON_SCOPE_EXIT{CoverClothes(Girl);};
     SendPendingIk(false); // both sessions idle: the IK targets set since the last solve
+    ApplyMotion(Girl,Him);
     if(TearsWanted)SpawnTears(Girl);AimIntoMouth(Girl,Him);HideInMouth(Girl,Him);
     if(bHandsReading&&IsValid(Girl)&&IsValid(Him)&&AlignedHim==Him&&AlignedHer==Girl)ReadHands(Girl,Him);
     if(IsValid(Him)&&(PenisSetLength!=PenisLength||PenisSetScale!=PenisScale)&&Him->Session.SetPenisSize(PenisLength,PenisScale)){PenisSetLength=PenisLength;PenisSetScale=PenisScale;
@@ -4356,6 +4395,7 @@ TSharedRef<FJsonObject> UOKHScenePanel::Describe() const{
     O->SetNumberField(TEXT("blush"),BlushMats.IsEmpty()?-1.f:BlushShown);
     O->SetStringField(TEXT("state"),Current());O->SetStringField(TEXT("wanted"),Wanted);O->SetNumberField(TEXT("mode"),Mode);
     TArray<TSharedPtr<FJsonValue>> Q;for(const FString& S:Queue)Q.Add(MakeShared<FJsonValueString>(S));O->SetArrayField(TEXT("queue"),Q);
+    O->SetNumberField(TEXT("motion"),HMotion);O->SetNumberField(TEXT("motion_to"),bMotionEasing?MotionTo:HMotion);O->SetNumberField(TEXT("motion_her"),MotionReadHer);O->SetNumberField(TEXT("motion_him"),MotionReadHim);
     O->SetNumberField(TEXT("playback_speed"),PlaybackSpeed());if(Gallery&&Gallery->PreviewActor)O->SetNumberField(TEXT("breath_rate"),Gallery->PreviewActor->SpeechTempo);O->SetBoolField(TEXT("hooked"),Hooked());O->SetNumberField(TEXT("oral_suck"),OralSuckSet);O->SetNumberField(TEXT("oral_pull"),OralPullSet);O->SetNumberField(TEXT("mouth_turned"),bMouthAimed?MouthTurned:0.f);O->SetStringField(TEXT("mouth_dbg"),MouthDbg.ToString());O->SetNumberField(TEXT("mouth_hidden_verts"),MouthClipVerts);O->SetNumberField(TEXT("bust_swell"),BustSwellSet);O->SetNumberField(TEXT("preg_belly"),PregBellyShown);O->SetNumberField(TEXT("preg_nipples"),PregNipples());O->SetNumberField(TEXT("depth_top"),AlignDeep);O->SetNumberField(TEXT("belly_out"),BulgeTarget.IsNone()?-1.f:BulgePast);O->SetNumberField(TEXT("belly_allow"),FMath::Max(0.f,BulgeMoves-2.5f));O->SetNumberField(TEXT("pullback"),BellyPullback);O->SetNumberField(TEXT("tip_inside"),TipInside);O->SetNumberField(TEXT("aim_relax"),AimRelax);O->SetNumberField(TEXT("skin_out"),SkinOutMost);O->SetNumberField(TEXT("skin_under"),SkinUnderMost);O->SetNumberField(TEXT("skin_worst"),SkinWorst);O->SetNumberField(TEXT("skin_rest"),SkinRest);O->SetNumberField(TEXT("skin_along"),SkinWorstAlong);O->SetNumberField(TEXT("root_dodge"),RootDodge.Size());O->SetNumberField(TEXT("depth_cap"),DepthCap);{auto Wr=MakeShared<FJsonObject>();for(const auto& W:Bulge)if(W.Value>1.f)Wr->SetNumberField(W.Key.ToString(),FMath::RoundToFloat(W.Value));O->SetObjectField(TEXT("swells"),Wr);O->SetNumberField(TEXT("swells_refused"),BulgeRefused);O->SetNumberField(TEXT("wrap_ms"),WrapMs);O->SetNumberField(TEXT("wrap_solve_ms"),WrapSolveMs);O->SetNumberField(TEXT("wrap_verts"),WrapVerts);O->SetNumberField(TEXT("cloth_verts"),ClothVerts);O->SetNumberField(TEXT("cloth_ms"),ClothMs);O->SetNumberField(TEXT("clip_verts"),ClipVerts);O->SetNumberField(TEXT("back_exit"),BackExitCm);O->SetNumberField(TEXT("clip_lead"),ClipLeadCm);O->SetNumberField(TEXT("swell_ms"),SwellMs);O->SetNumberField(TEXT("swell_part"),BulgePart);}O->SetNumberField(TEXT("skin_facing"),SkinFacing);O->SetBoolField(TEXT("belly_side"),bBellySide);if(Gallery&&Gallery->PreviewActor){const FTransform& HerT=Gallery->PreviewActor->GetActorTransform();auto Vec=[&](const TCHAR* Name,const FVector& V){FVector U=AKKPreviewActor::ActorLocalToUnity(HerT.InverseTransformVectorNoScale(V))*100.;float K[16];if(Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_j_kokan"),K)||Gallery->PreviewActor->Session.BoneWorldMatrix(TEXT("cf_J_Kokan"),K)){const FVector X(K[0],K[4],K[8]),Y(K[1],K[5],K[9]),Z(K[2],K[6],K[10]);U=FVector(U|X.GetSafeNormal(),U|Y.GetSafeNormal(),U|Z.GetSafeNormal());}TArray<TSharedPtr<FJsonValue>> A;A.Add(MakeShared<FJsonValueNumber>(U.X));A.Add(MakeShared<FJsonValueNumber>(U.Y));A.Add(MakeShared<FJsonValueNumber>(U.Z));O->SetArrayField(Name,A);};Vec(TEXT("dodge_her"),RootDodge);Vec(TEXT("skin_normal_her"),SkinNormal);Vec(TEXT("front_her"),BellyFront);}O->SetNumberField(TEXT("root_scale"),RootPadScale);O->SetBoolField(TEXT("xray"),bPenisXRay);if(Gallery&&Gallery->PairedPlayback)O->SetNumberField(TEXT("pair_rate"),Gallery->PairedPlayback->GetSpeed());O->SetNumberField(TEXT("held"),Held.Num());O->SetStringField(TEXT("caption"),Caption?Caption->GetText().ToString():FString());
     {const TSharedPtr<FJsonObject>* Areas=nullptr;if(Gallery&&Gallery->HExperience.IsValid()&&Gallery->HExperience->TryGetObjectField(TEXT("areas"),Areas))O->SetObjectField(TEXT("areas"),*Areas);}
     if(IsValid(Second)){auto Two=MakeShared<FJsonObject>();Two->SetStringField(TEXT("name"),SecondName);Two->SetBoolField(TEXT("ready"),bSecondReady);Two->SetStringField(TEXT("state"),SecondState);Two->SetStringField(TEXT("face"),SecondFaceKey);Two->SetBoolField(TEXT("bare"),bSecondBare);Two->SetNumberField(TEXT("orgasms"),SecondRuns.IsValidIndex(SecondRun)?SecondRuns[SecondRun].Orgasms:0);O->SetObjectField(TEXT("second"),Two);}
