@@ -6,6 +6,9 @@
 -- StaticMeshActor_16227). Now the gap is 120 cm, on the side whose 1.3 m apron in front is clear (the old side first);
 -- the screen moves to the other half of the front wall when the door changes side. The booth is found from its back
 -- wall, which is not moved, so a second run gives the same walls. Sofa, table and the seat / screen anchors stay.
+-- Runs on the source map (11-15): KTV_3 first (door side 90; KTV_1 and KTV_2 had no clear apron); then, after KTV_2 was
+-- taken out (Tools/street_city_ktv_remove_payload.lua), KTV_1 (door side 90, front wall 230 -> 190 cm, 20 cm toward
+-- side -90); KTV_3 came out unchanged on the second run.
 -- places-v1/ktv-doors-apply.txt holding 1 saves the map; otherwise it only reports what it would set.
 -- Output: places-v1/ktv-doors-result.json with every KTV piece before / after and the other LoverSpot_* actors'
 -- locations compared before and after (moved must be empty).
