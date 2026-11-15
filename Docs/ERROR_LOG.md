@@ -4723,3 +4723,8 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 查旗袍 O1 時先用 `ok.Anim.SetTime 0` 定格，再切 ok.ClothCover／ok.ClothGpu／ok.Physics.HipMode 比較畫面，結果全相同，差點據此排除物理。實際上 SetTime 會把 `ok.Anim.Pause` 設成 1，時鐘停著，物理根本沒跑。
 - 修正：`ok.Anim.Pause 0` 後重做；之後用 `ok.Debug.DumpPartObj` 量頂點，三種物理後端結果逐位相同，才確定不是物理。
 - 預防：用過 SetTime／Step 之後要測會隨時間變化的東西，先 `ok.Anim.Pause 0`；比較畫面「完全沒變」時先懷疑時鐘是否在跑。
+
+## 2026-11-16 sed 抓行號失敗，一行插到整個檔案每一行後面（F 組，工作室 U273）
+- 想把 `KKPreviewActor.cpp` 裡的 `okNuv` 那一行移回原位，用 `grep -n` 抓行號再交給 `sed "${n}a ..."`。grep 的樣式跳脫錯了，`n` 是空的，`sed a` 對每一行都生效，檔案多了 13,999 行。
+- 修正：所有完全等於這一行的行都刪掉（`grep -v -x -F`），再用 Edit 插回一次；和 HEAD 加上別人未提交修改的行數核對（13,986 + 14），diff 只剩別人的排序修改。
+- 預防：用行號做插入／刪除前，先確認變數非空（`[ -n "$n" ] || exit 1`）；能用 Edit 精確取代的就不要用 sed 行號。
