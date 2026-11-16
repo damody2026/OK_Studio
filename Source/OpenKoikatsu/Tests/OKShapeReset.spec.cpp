@@ -15,7 +15,7 @@ bool FOKShapeResetTest::RunTest(const FString&)
     Slider->Index = 0;
     Slider->SetMinValue(-1.f);
     Slider->SetMaxValue(2.f);
-    Slider->ValueLabel = NewObject<UEditableTextBox>(Slider);
+    Slider->ValueLabel = NewObject<UOKValueField>(Slider);
     Widget->ShapeSliders.Add(Slider);
     for (int32 Sex : {0, 1})
     {

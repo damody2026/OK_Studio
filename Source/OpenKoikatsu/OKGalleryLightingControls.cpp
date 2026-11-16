@@ -1,6 +1,7 @@
 #include "OKCharacterController.h"
 #include "OKMotionComboBox.h"
 #include "OKHGShading.h"
+#include "OKShapeSlider.h"
 #include "KKPreviewActor.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/HorizontalBox.h"
@@ -70,7 +71,7 @@ void UOKCharacterController::BuildLightingControls(UVerticalBox* Parent)
 		T->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 		return T;
 	};
-	auto Labeled = [&](const TCHAR* Label, UWidget* Control, UTextBlock* Value)
+	auto Labeled = [&](const TCHAR* Label, UWidget* Control, UWidget* Value)
 	{
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
 		USizeBox* Box = WidgetTree->ConstructWidget<USizeBox>();
@@ -102,8 +103,11 @@ void UOKCharacterController::BuildLightingControls(UVerticalBox* Parent)
 		S->SetValue(Value);
 		S->SetSliderBarColor(FLinearColor(.95f, .8f, .45f));
 		S->OnValueChanged.AddDynamic(this, &UOKCharacterController::OnLightingSlider);
-		UTextBlock* V = Text(FString(), 14);
-		Labeled(Label, S, V);
+		// The number after the slider can be typed into, in the shown format (40°, 1.00).
+		UOKValueField* V = nullptr;
+		UWidget* Field = UOKValueField::Make(WidgetTree, S, 14, 52.f, &V);
+		V->Format = [this, S](float) { return FormatLighting(this, S); };
+		Labeled(Label, S, Field);
 		LightingValueLabels.Add({ S, V });
 		return S;
 	};
@@ -153,13 +157,13 @@ void UOKCharacterController::BuildLightingControls(UVerticalBox* Parent)
 	LightingAmbientSlider = Slider(TEXT("環境光"), TEXT("LightingAmbient"), 0.f, 4.f, 0.01f, Float(TEXT("Ambient"), 1.f));
 	// Clothes etc. on a card shader (UTS2) shade with their own colours, which the ramp above never reaches.
 	LightingShadeSlider = Slider(TEXT("衣服陰影深淺（卡片 UTS shader）"), TEXT("LightingShade"), 0.f, 1.f, 0.01f, Float(TEXT("Shade"), 1.f));
-	for (const auto& L : LightingValueLabels) L.Value->SetText(FText::FromString(FormatLighting(this, L.Key)));
+	for (const auto& L : LightingValueLabels) L.Value->Refresh(true);
 	Parent->AddChildToVerticalBox(WidgetTree->ConstructWidget<USizeBox>())->SetPadding(FMargin(0.f, 0.f, 0.f, 10.f));
 }
 
 void UOKCharacterController::SyncLightingWidgets()
 {
-	for (const auto& L : LightingValueLabels) if (L.Key && L.Value) L.Value->SetText(FText::FromString(FormatLighting(this, L.Key)));
+	for (const auto& L : LightingValueLabels) if (L.Key && L.Value) L.Value->Refresh();
 	if (!GConfig || !LightingPresetCombo) return;
 	GConfig->SetString(LightingSection, TEXT("Preset"), *LightingPresetCombo->GetSelectedOption(), GGameUserSettingsIni);
 	const int32 Ramp = LightingRampCombo ? LightingRampCombo->GetSelectedIndex() : 0;

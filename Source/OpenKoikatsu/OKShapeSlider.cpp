@@ -6,6 +6,59 @@
 #include "Components/SizeBox.h"
 #include "Styling/CoreStyle.h"
 
+UWidget* UOKValueField::Make(UWidgetTree* Tree, USlider* Slider, int32 FontSize, float MinWidth, UOKValueField** Out)
+{
+	UOKValueField* Box = Tree->ConstructWidget<UOKValueField>(UOKValueField::StaticClass());
+	FEditableTextBoxStyle Style = Box->GetWidgetStyle();
+	Style.SetFont(FCoreStyle::GetDefaultFontStyle("Regular", FontSize));
+	Style.SetPadding(FMargin(2.f, 0.f));
+	Style.SetForegroundColor(FSlateColor(FLinearColor::White));
+	Style.SetFocusedForegroundColor(FSlateColor(FLinearColor::White));
+	Style.SetBackgroundColor(FSlateColor(FLinearColor(0.f, 0.f, 0.f, 0.35f)));
+	Box->SetWidgetStyle(Style);
+	Box->SetJustification(ETextJustify::Center);
+	Box->SetSelectAllTextWhenFocused(true);
+	Box->SetRevertTextOnEscape(true);
+	Box->SetClearKeyboardFocusOnCommit(true);
+	Box->Slider = Slider;
+	Box->OnTextCommitted.AddDynamic(Box, &UOKValueField::OnValueCommitted);
+	if (Out) *Out = Box;
+	USizeBox* Size = Tree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+	Size->SetMinDesiredWidth(MinWidth);
+	Size->SetContent(Box);
+	return Size;
+}
+
+void UOKValueField::Refresh(bool bForce)
+{
+	USlider* S = Slider.Get();
+	if (!S) return;
+	// Slider syncs (card reload, MCP, another control) must not overwrite what the user is typing.
+	if (!bForce && HasKeyboardFocus()) return;
+	SetText(FText::FromString(Format ? Format(S->GetValue()) : FText::AsNumber(S->GetValue()).ToString()));
+}
+
+void UOKValueField::OnValueCommitted(const FText& Entered, ETextCommit::Type Method)
+{
+	USlider* S = Slider.Get();
+	if (!S) return;
+	// Esc (OnCleared) reverts; non-numbers revert; out-of-range numbers clamp to the slider's range.
+	if (Method == ETextCommit::OnCleared) { Refresh(true); return; }
+	FString Input = Entered.ToString().TrimStartAndEnd();
+	// The shown text may carry grouping or a unit (1,000 / 40°).
+	Input.ReplaceInline(TEXT(","), TEXT(""));
+	Input.ReplaceInline(TEXT("°"), TEXT(""));
+	Input.ReplaceInline(TEXT("%"), TEXT(""));
+	Input.TrimStartAndEndInline();
+	double Number = 0.;
+	if (Input.IsEmpty() || !LexTryParseString(Number, *Input) || !FMath::IsFinite(Number)) { Refresh(true); return; }
+	const float Typed = FMath::Clamp(float(FromTyped ? FromTyped(Number) : Number), S->GetMinValue(), S->GetMaxValue());
+	S->SetValue(Typed);
+	// SetValue does not broadcast: apply through the slider's own handler as a drag would, then show the clamped value.
+	S->OnValueChanged.Broadcast(S->GetValue());
+	Refresh(true);
+}
+
 void UOKShapeSlider::OnResetClicked()
 {
 	if(Owner&&!StyleParameter.IsEmpty()){Owner->OnStyleReset(this);return;}
@@ -20,56 +73,35 @@ bool UOKShapeSlider::ShowsPercent() const
 	return StyleParameter.IsEmpty() && AnimationParameter.IsEmpty() && PregnancyParameter.IsEmpty() && ModAxis < 7;
 }
 
+FString UOKShapeSlider::FormatValue(float Shown) const
+{
+	if (!StyleParameter.IsEmpty()) return FString::Printf(TEXT("%.2f"), Shown);
+	return (ShowsPercent() ? FText::AsNumber(FMath::RoundToInt(Shown * 100.f)) : FText::AsNumber(Shown)).ToString();
+}
+
 UWidget* UOKShapeSlider::MakeValueField(UWidgetTree* Tree, int32 FontSize, float MinWidth)
 {
-	UEditableTextBox* Box = Tree->ConstructWidget<UEditableTextBox>(UEditableTextBox::StaticClass());
-	FEditableTextBoxStyle Style = Box->GetWidgetStyle();
-	Style.SetFont(FCoreStyle::GetDefaultFontStyle("Regular", FontSize));
-	Style.SetPadding(FMargin(2.f, 0.f));
-	Style.SetForegroundColor(FSlateColor(FLinearColor::White));
-	Style.SetFocusedForegroundColor(FSlateColor(FLinearColor::White));
-	Style.SetBackgroundColor(FSlateColor(FLinearColor(0.f, 0.f, 0.f, 0.35f)));
-	Box->SetWidgetStyle(Style);
-	Box->SetJustification(ETextJustify::Center);
-	Box->SetSelectAllTextWhenFocused(true);
-	Box->SetRevertTextOnEscape(true);
-	Box->SetClearKeyboardFocusOnCommit(true);
-	Box->OnTextCommitted.AddDynamic(this, &UOKShapeSlider::OnValueCommitted);
-	ValueLabel = Box;
-	USizeBox* Size = Tree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-	Size->SetMinDesiredWidth(MinWidth);
-	Size->SetContent(Box);
-	return Size;
+	UOKValueField* Field = nullptr;
+	UWidget* Wrapped = UOKValueField::Make(Tree, this, FontSize, MinWidth, &Field);
+	// Asked at use time: the row's kind (style, bone, ...) may be set after the field is built.
+	TWeakObjectPtr<UOKShapeSlider> Self(this);
+	Field->Format = [Self](float V) { return Self.IsValid() ? Self->FormatValue(V) : FString(); };
+	Field->FromTyped = [Self](double N) { return Self.IsValid() && Self->ShowsPercent() ? N / 100. : N; };
+	ValueLabel = Field;
+	return Wrapped;
 }
 
 void UOKShapeSlider::RefreshValueLabel(bool bForce)
 {
 	if (!ValueLabel) return;
-	// Slider syncs (card reload, MCP, another control) must not overwrite what the user is typing.
-	if (!bForce && ValueLabel->HasKeyboardFocus()) return;
-	if (!StyleParameter.IsEmpty())
+	// A field built elsewhere (tests: NewObject) gets this slider and its format on first use.
+	if (!ValueLabel->Slider.IsValid()) ValueLabel->Slider = this;
+	if (!ValueLabel->Format)
 	{
-		ValueLabel->SetText(FText::FromString(FString::Printf(TEXT("%.2f"),GetValue())));
+		TWeakObjectPtr<UOKShapeSlider> Self(this);
+		ValueLabel->Format = [Self](float V) { return Self.IsValid() ? Self->FormatValue(V) : FString(); };
 	}
-	else
-	{
-		ValueLabel->SetText(ShowsPercent()?FText::AsNumber(FMath::RoundToInt(GetValue()*100.f)):FText::AsNumber(GetValue()));
-	}
-}
-
-void UOKShapeSlider::OnValueCommitted(const FText& Text, ETextCommit::Type Method)
-{
-	// Esc (OnCleared) reverts; non-numbers revert; out-of-range numbers clamp to the slider's range.
-	if (Method == ETextCommit::OnCleared) { RefreshValueLabel(true); return; }
-	FString Input = Text.ToString().TrimStartAndEnd();
-	Input.ReplaceInline(TEXT(","), TEXT(""));
-	double Number = 0.;
-	if (Input.IsEmpty() || !LexTryParseString(Number, *Input) || !FMath::IsFinite(Number)) { RefreshValueLabel(true); return; }
-	const float Typed = FMath::Clamp(float(ShowsPercent() ? Number / 100. : Number), GetMinValue(), GetMaxValue());
-	SetValue(Typed);
-	// SetValue does not broadcast OnValueChanged: apply as a drag would, then show the clamped value.
-	OnSliderMoved(GetValue());
-	RefreshValueLabel(true);
+	ValueLabel->Refresh(bForce);
 }
 
 void UOKShapeSlider::OnSliderMoved(float NewValue)

@@ -3,13 +3,38 @@
 #include "CoreMinimal.h"
 #include "Components/Slider.h"
 #include "Components/ComboBoxString.h"
+#include "Components/EditableTextBox.h"
 #include "OKShapeSlider.generated.h"
 
 class UOKCharacterController;
 class UTextBlock;
-class UEditableTextBox;
 class UComboBoxString;
 class UButton;
+
+// The number after a slider, typed into like a text box: Enter or leaving it applies, Esc reverts, a non-number reverts,
+// an out-of-range number clamps to the slider's range. Applying sets the slider and broadcasts its OnValueChanged, so
+// the change goes through the same handler as a drag. Used by every slider row with a value (shape, bone, lighting...).
+UCLASS()
+class OPENKOIKATSU_API UOKValueField : public UEditableTextBox
+{
+	GENERATED_BODY()
+
+public:
+	// Builds a styled field for Slider, wrapped in a size box at least MinWidth wide; Out (optional) gets the field.
+	static UWidget* Make(class UWidgetTree* Tree, USlider* Slider, int32 FontSize, float MinWidth, UOKValueField** Out = nullptr);
+
+	TWeakObjectPtr<USlider> Slider;
+	// Slider value -> shown text (default: the number as is).
+	TFunction<FString(float)> Format;
+	// Typed number -> slider value before clamping (default: the number as is; shape rows divide by 100).
+	TFunction<double(double)> FromTyped;
+
+	// Shows the slider's value; unless bForce, leaves the field alone while the user is typing in it.
+	void Refresh(bool bForce = false);
+
+	UFUNCTION()
+	void OnValueCommitted(const FText& Entered, ETextCommit::Type Method);
+};
 
 UCLASS()
 class OPENKOIKATSU_API UOKShapeSlider : public USlider
@@ -31,11 +56,11 @@ public:
 	UPROPERTY()
 	TObjectPtr<UOKCharacterController> Owner;
 
-	// The number after the slider; it can be typed into (Enter or leaving it applies, Esc reverts).
+	// The number after the slider; it can be typed into (UOKValueField).
 	UPROPERTY()
-	TObjectPtr<UEditableTextBox> ValueLabel;
+	TObjectPtr<UOKValueField> ValueLabel;
 
-	// Builds ValueLabel (styled, bound to OnValueCommitted) and returns it, wrapped to MinWidth, for the caller's layout.
+	// Builds ValueLabel and returns it, wrapped to MinWidth, for the caller's layout.
 	UWidget* MakeValueField(class UWidgetTree* Tree, int32 FontSize, float MinWidth = 40.f);
 
 	// bForce also rewrites the field while the user is typing into it.
@@ -43,9 +68,7 @@ public:
 
 	// The field shows the slider value x100 rounded (card shape rows) rather than the raw value.
 	bool ShowsPercent() const;
-
-	UFUNCTION()
-	void OnValueCommitted(const FText& Text, ETextCommit::Type Method);
+	FString FormatValue(float Shown) const;
 
 	UFUNCTION()
 	void OnSliderMoved(float NewValue);
