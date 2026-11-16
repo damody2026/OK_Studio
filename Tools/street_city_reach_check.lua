@@ -7,6 +7,7 @@
 --       minutes (default 17: a test segment holds the machine at most 20) and releases; run again to go on
 --   Tools\lua\lua.exe Tools\street_city_reach_check.lua report          the list, grouped by kind of problem:
 --       Docs/STREET_CITY_REACH.md and places-v1/reach-report.json; exit 1 when there are problems
+--   ... report --diff   also prints what is new and what is gone against the committed report (git HEAD)
 --   Tools\lua\lua.exe Tools\street_city_reach_check.lua probe <z> <x1> <y1> <x2> <y2>
 --       whether two points of floor z are joined, and the scanned cells round the first with their blockers
 -- The editor reads the source map (StreetSocialCity/.../UniversityCity.umap); the game reads the World Partition copy made
@@ -34,7 +35,11 @@ local K = {
   no_cell = '錨點周圍 2.4 m 沒有可走格',
   sealed = '錨點在封死的格子：附近可走，但連不到門或電梯／樓梯',
   in_furniture = '站位在家具或牆裡：遊戲會改用 1.6 m 內走得到的點（不擋路，只是站位不準）',
+  in_sight = '其中站在顯眼位置的（櫃台、收銀、沙發、吧台、接待）：之後優先挪',
 }
+-- kinds where she is watched standing (the shop's till, the counter, a sofa): their in-furniture rows are listed one by one
+local SHOWN = { checkout = true, queue = true, counter = true, cashier = true, reception = true, tv_sofa = true,
+  h_sofa = true, sofa = true, bar = true, counter_seat = true, order = true, ticket = true, register = true }
 
 -- Anchors not walked to on foot, by place and name pattern: why
 local EXEMPT = {
@@ -64,7 +69,7 @@ local function load_points()
   for _, p in ipairs(P) do
     local pts, seen = {}, {}
     pts[#pts + 1] = { name = 'door', pos = p.door, door = true }
-    for _, r in ipairs(rows[p.id] or {}) do seen[r.name] = true; pts[#pts + 1] = { name = r.name, pos = r.pos } end
+    for _, r in ipairs(rows[p.id] or {}) do seen[r.name] = true; pts[#pts + 1] = { name = r.name, pos = r.pos, kinds = r.kinds } end
     for _, a in ipairs(p.anchors or {}) do if not seen[a.name] then pts[#pts + 1] = { name = a.name, pos = a.pos, place_only = true } end end
     -- Floors: the door's and the lift landings' and stairs' heights (a lecture room's tiers, a stage, sit up to 1.5 m over
     -- them: the cell test finds that ground from the floor's height). Points over none of them make floors of their own.
@@ -298,7 +303,13 @@ local function report()
                 local reg = rid(q.ix + dx, q.iy + dy)
                 if good(reg) then reached = rr elseif not best or R.size[reg] > best then best = R.size[reg] end end end end end
             if not reached then add(K.sealed, ('%s，附近最大的區域 %d 格'):format(where, best or 0))
-            elseif reached > 0 and c and c.b then add(K.in_furniture, ('%s，擋住的是 %s，%d 格外走得到'):format(where, c.b, reached)) end
+            elseif reached > 0 and c and c.b then
+              add(K.in_furniture, ('%s，擋住的是 %s，%d 格外走得到'):format(where, c.b, reached))
+              -- in sight: where a player watches her stand (a counter, a till, a sofa): listed one by one
+              local shown
+              for _, k in ipairs(q.kinds or {}) do if SHOWN[k] then shown = k end end
+              if shown then add(K.in_sight, ('%s（%s），擋住的是 %s，%d 格外走得到'):format(where, shown, c.b, reached)) end
+            end
           end
         end end
       end
@@ -308,7 +319,7 @@ local function report()
     '由 `Tools/street_city_reach_check.lua report` 產生：在來源地圖上照遊戲的 NavCellFree 逐格判定（40 cm 格點、半徑 40／30 膠囊、WorldStatic 簡單碰撞、相鄰格高差 40 cm 以內），1 樓從門口、樓上從電梯平台與樓梯錨點灌水。只是線索：可不可以走以遊戲裡實際走為準。', '',
     ('檢查 %d 個地點、%d 個錨點；未掃到的區塊 %d 個。'):format(#places, checked, missing), '' }
   local total = 0
-  for _, kind in ipairs(order) do local list = groups[kind]; table.sort(list); total = total + #list
+  for _, kind in ipairs(order) do local list = groups[kind]; table.sort(list); if kind ~= K.in_sight then total = total + #list end
     md[#md + 1] = ('## %s（%d）'):format(kind, #list); md[#md + 1] = ''
     if kind == K.in_furniture then
       -- thousands: counts per place here, every row in places-v1/reach-report.json
@@ -319,7 +330,30 @@ local function report()
       md[#md + 1] = '各地點筆數（每一筆在 output/street-social-city-production/places-v1/reach-report.json）：' .. table.concat(cells, '、')
     else for _, t in ipairs(list) do md[#md + 1] = '- ' .. t end end
     md[#md + 1] = '' end
-  write('Docs/STREET_CITY_REACH.md', table.concat(md, '\n') .. '\n')
+  local text = table.concat(md, '\n') .. '\n'
+  -- --diff: against the committed report (git HEAD): what is new and what is gone, item by item (per-place counts for the
+  -- in-furniture group), so a map or anchor change shows at once what it broke
+  if DIFF then
+    local function items(s)
+      local set, sec = {}, ''
+      for line in s:gmatch('[^\r\n]+') do
+        if line:match('^## ') then sec = line:gsub('（%d+）$', ''):gsub('^## ', '')
+        elseif line:match('^%- ') then set[sec .. ' :: ' .. line:sub(3)] = true
+        elseif line:match('^各地點筆數') then for id, n in line:gmatch('([%w_%-]+) (%d+)') do set[sec .. ' :: ' .. id .. ' ' .. n] = true end end
+      end
+      return set
+    end
+    local r = ok.proc.run({ 'git', 'show', 'HEAD:Docs/STREET_CITY_REACH.md' }, { capture = true })
+    local old, new = items(r.stdout or ''), items(text)
+    local added, gone = {}, {}
+    for k in pairs(new) do if not old[k] then added[#added + 1] = k end end
+    for k in pairs(old) do if not new[k] then gone[#gone + 1] = k end end
+    table.sort(added); table.sort(gone)
+    print(('against the committed report: %d new, %d gone'):format(#added, #gone))
+    for _, k in ipairs(added) do print('  + ' .. k) end
+    for _, k in ipairs(gone) do print('  - ' .. k) end
+  end
+  write('Docs/STREET_CITY_REACH.md', text)
   write(PLACES .. 'reach-report.json', j.encode({ groups = groups, order = order, checked = checked, missing = missing }))
   for _, kind in ipairs(order) do print(('%5d  %s'):format(#groups[kind], kind)) end
   print(('%d anchors checked, %d problems, %d tiles not scanned'):format(checked, total, missing))
@@ -334,6 +368,6 @@ elseif cmd == 'scan' then
     if arg[i] == '--minutes' then minutes = tonumber(arg[i + 1]); i = i + 2
     elseif arg[i] == '--batch' then batch = tonumber(arg[i + 1]); i = i + 2 else error('unknown argument ' .. arg[i]) end end
   scan(minutes, batch)
-elseif cmd == 'report' then os.exit(report() and 0 or 1)
+elseif cmd == 'report' then DIFF = arg[2] == '--diff'; os.exit(report() and 0 or 1)
 elseif cmd == 'probe' then PROBE = { tonumber(arg[2]), tonumber(arg[3]), tonumber(arg[4]), tonumber(arg[5]), tonumber(arg[6]) }; report()
 else print('usage: plan | scan [--minutes M] [--batch N] | report'); os.exit(2) end

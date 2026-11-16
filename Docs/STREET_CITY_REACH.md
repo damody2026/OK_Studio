@@ -4,16 +4,16 @@
 
 檢查 113 個地點、9596 個錨點；未掃到的區塊 0 個。
 
-## 站位在家具或牆裡：遊戲會改用 1.6 m 內走得到的點（不擋路，只是站位不準）（5083）
+## 站位在家具或牆裡：遊戲會改用 1.6 m 內走得到的點（不擋路，只是站位不準）（5135）
 
-各地點筆數（每一筆在 output/street-social-city-production/places-v1/reach-report.json）：girls_dorm 1148、boys_dorm 1133、campus_ib 270、campus_ma 270、campus_rb 270、campus_t4 270、campus_t1 258、campus_t2 258、campus_ee 257、park 85、cafeteria 79、civic 62、library 56、campus_sports 48、beach 44、onsen 36、restaurant 36、cafe 33、izakaya 29、sushi 29、station 28、clinic_general 19、district_office 18、clinic_gyn 17、craft 16、manga_cafe 15、bookstore 14、campus_e1 14、cat_cafe 14、conveni 13、fastfood 13、lecture 12、school 12、lottery 11、bridal 10、snack 10、museum 9、yakiniku 9、bowling 8、department 8、fruitshop 8、nursery 8、petshop 8、salon 7、campus_ad 6、clinic_beauty 6、post 6、shrine 6、aquarium 5、dentist 5、police 5、breakfast 4、club_room 4、drinkshop 4、fortune 4、hotel 4、livehouse 4、nail 4、realty 4、karaoke 3、supermarket 3、amusement 2、arcade 2、art_room 2、bbq 2、clothing_s30 2、crepe 2、festival 2、fishing 2、gym_storage 2、pool 2、bank 1、bike_shop 1、boat 1、campus_gate 1、cinema 1、clothing_s10 1、clothing_s46 1、clothing_s94 1、infirmary 1、phone_shop 1、photo_studio 1、swimwear 1、waterpark 1、yukata 1
+各地點筆數（每一筆在 output/street-social-city-production/places-v1/reach-report.json）：girls_dorm 1148、boys_dorm 1133、campus_ib 274、campus_ma 274、campus_rb 274、campus_t4 274、campus_t1 262、campus_t2 262、campus_ee 261、park 85、cafeteria 83、civic 66、library 60、campus_sports 52、beach 44、onsen 36、restaurant 36、cafe 33、izakaya 29、sushi 29、station 28、clinic_general 19、campus_e1 18、district_office 18、clinic_gyn 17、craft 16、manga_cafe 15、bookstore 14、cat_cafe 14、conveni 13、fastfood 13、lecture 12、school 12、lottery 11、bridal 10、campus_ad 10、snack 10、museum 9、yakiniku 9、bowling 8、department 8、fruitshop 8、nursery 8、petshop 8、salon 7、clinic_beauty 6、post 6、shrine 6、aquarium 5、dentist 5、police 5、breakfast 4、club_room 4、drinkshop 4、fortune 4、hotel 4、livehouse 4、nail 4、realty 4、karaoke 3、supermarket 3、amusement 2、arcade 2、art_room 2、bbq 2、clothing_s30 2、crepe 2、festival 2、fishing 2、gym_storage 2、pool 2、bank 1、bike_shop 1、boat 1、campus_gate 1、cinema 1、clothing_s10 1、clothing_s46 1、clothing_s94 1、infirmary 1、phone_shop 1、photo_studio 1、swimwear 1、waterpark 1、yukata 1
 
 ## 門到不了街上：門口那一片走不出地點的房間（2）
 
 - arcade 門 (44097,63905,4140)
 - ramen 門 (47835,60370,4560)
 
-## 錨點在封死的格子：附近可走，但連不到門或電梯／樓梯（144）
+## 錨點在封死的格子：附近可走，但連不到門或電梯／樓梯（92）
 
 - arcade.claw (43991,67045,4140)，附近最大的區域 80167 格
 - arcade.claw2 (44121,67090,4140)，附近最大的區域 80167 格
@@ -39,34 +39,6 @@
 - boys_dorm.vanity97 (94293,65630,1980)，附近最大的區域 167 格
 - boys_dorm.vanity98 (94293,65770,2700)，附近最大的區域 167 格
 - boys_dorm.vanity99 (94293,65770,1980)，附近最大的區域 167 格
-- cafeteria.trash10 (70650,49055,1620)，附近最大的區域 173 格
-- cafeteria.trash7 (70650,49055,2020)，附近最大的區域 173 格
-- cafeteria.trash8 (70650,49055,2820)，附近最大的區域 173 格
-- cafeteria.trash9 (70650,49055,2420)，附近最大的區域 173 格
-- campus_ad.trash10 (68150,74055,2400)，附近最大的區域 167 格
-- campus_ad.trash6 (68150,74055,1600)，附近最大的區域 167 格
-- campus_ad.trash8 (68150,74055,2000)，附近最大的區域 167 格
-- campus_ad.trash9 (68150,74055,2800)，附近最大的區域 167 格
-- campus_e1.trash10 (79450,50555,2000)，附近最大的區域 164 格
-- campus_e1.trash7 (79450,50555,2400)，附近最大的區域 164 格
-- campus_e1.trash8 (79450,50555,1600)，附近最大的區域 164 格
-- campus_e1.trash9 (79450,50555,2800)，附近最大的區域 164 格
-- campus_ee.trash10 (84150,65355,1600)，附近最大的區域 164 格
-- campus_ee.trash6 (84150,65355,2400)，附近最大的區域 164 格
-- campus_ee.trash7 (84150,65355,2000)，附近最大的區域 164 格
-- campus_ee.trash8 (84150,65355,2800)，附近最大的區域 164 格
-- campus_ib.trash6 (59150,74355,2400)，附近最大的區域 164 格
-- campus_ib.trash7 (59150,74355,1600)，附近最大的區域 164 格
-- campus_ib.trash8 (59150,74355,2800)，附近最大的區域 164 格
-- campus_ib.trash9 (59150,74355,2000)，附近最大的區域 164 格
-- campus_ma.trash10 (78150,65355,1600)，附近最大的區域 164 格
-- campus_ma.trash6 (78150,65355,2400)，附近最大的區域 164 格
-- campus_ma.trash7 (78150,65355,2000)，附近最大的區域 164 格
-- campus_ma.trash9 (78150,65355,2800)，附近最大的區域 164 格
-- campus_rb.trash10 (59150,48355,2400)，附近最大的區域 164 格
-- campus_rb.trash6 (59150,48355,2000)，附近最大的區域 164 格
-- campus_rb.trash8 (59150,48355,2800)，附近最大的區域 164 格
-- campus_rb.trash9 (59150,48355,1600)，附近最大的區域 164 格
 - campus_sports.tennis_net (68380,124600,1203)，附近最大的區域 1522 格
 - campus_sports.tennis_net2 (68620,124600,1203)，附近最大的區域 1522 格
 - campus_sports.tennis_net3 (68380,129400,1203)，附近最大的區域 1522 格
@@ -75,10 +47,6 @@
 - campus_sports.tennis_net6 (72820,124600,1203)，附近最大的區域 1522 格
 - campus_sports.tennis_net7 (72580,129400,1203)，附近最大的區域 1522 格
 - campus_sports.tennis_net8 (72820,129400,1203)，附近最大的區域 1522 格
-- campus_sports.trash11 (78150,38955,4780)，附近最大的區域 164 格
-- campus_sports.trash7 (78150,38955,2120)，附近最大的區域 164 格
-- campus_sports.trash8 (78150,38955,4160)，附近最大的區域 164 格
-- campus_sports.trash9 (78150,38955,3140)，附近最大的區域 164 格
 - campus_sports.volleyball_net (79580,122400,1202)，附近最大的區域 1542 格
 - campus_sports.volleyball_net2 (79820,122400,1202)，附近最大的區域 1542 格
 - campus_sports.volleyball_net3 (79580,131600,1202)，附近最大的區域 1550 格
@@ -87,22 +55,6 @@
 - campus_sports.volleyball_net6 (84420,122400,1202)，附近最大的區域 1542 格
 - campus_sports.volleyball_net7 (84180,131600,1202)，附近最大的區域 1550 格
 - campus_sports.volleyball_net8 (84420,131600,1202)，附近最大的區域 1550 格
-- campus_t1.trash10 (65150,56355,2000)，附近最大的區域 164 格
-- campus_t1.trash7 (65150,56355,2800)，附近最大的區域 164 格
-- campus_t1.trash8 (65150,56355,2400)，附近最大的區域 164 格
-- campus_t1.trash9 (65150,56355,1600)，附近最大的區域 164 格
-- campus_t2.trash10 (78150,74355,2400)，附近最大的區域 164 格
-- campus_t2.trash7 (78150,74355,2800)，附近最大的區域 164 格
-- campus_t2.trash8 (78150,74355,1600)，附近最大的區域 164 格
-- campus_t2.trash9 (78150,74355,2000)，附近最大的區域 164 格
-- campus_t4.trash6 (65150,48355,2800)，附近最大的區域 164 格
-- campus_t4.trash7 (65150,48355,2000)，附近最大的區域 164 格
-- campus_t4.trash8 (65150,48355,1600)，附近最大的區域 164 格
-- campus_t4.trash9 (65150,48355,2400)，附近最大的區域 164 格
-- civic.trash10 (32650,63755,2510)，附近最大的區域 166 格
-- civic.trash7 (32650,63755,2910)，附近最大的區域 166 格
-- civic.trash8 (32650,63755,1620)，附近最大的區域 166 格
-- civic.trash9 (32650,63755,2020)，附近最大的區域 166 格
 - clinic_beauty.rest (29946,33859,1200)，附近最大的區域 322 格
 - clinic_beauty.seat2 (30175,33886,1200)，附近最大的區域 322 格
 - clinic_beauty.toilet3 (30790,33557,1200)，附近最大的區域 322 格
@@ -139,10 +91,6 @@
 - izakaya.seat38 (34040,26373,1200)，附近最大的區域 140 格
 - izakaya.seat39 (33980,26373,1200)，附近最大的區域 140 格
 - izakaya.seat40 (33980,26433,1200)，附近最大的區域 140 格
-- library.trash10 (59150,66555,2000)，附近最大的區域 166 格
-- library.trash6 (59150,66555,2800)，附近最大的區域 166 格
-- library.trash7 (59150,66555,2400)，附近最大的區域 166 格
-- library.trash8 (59150,66555,1600)，附近最大的區域 166 格
 - playground.field (102791,33791,1198)，附近最大的區域 0 格
 - ramen.counter_seat (48025,60348,4560)，附近最大的區域 77120 格
 - ramen.counter_seat2 (48025,60273,4560)，附近最大的區域 77120 格
@@ -159,6 +107,36 @@
 - swimwear.seat3 (34376,33717,1200)，附近最大的區域 147 格
 - swimwear.seat4 (34316,33717,1200)，附近最大的區域 147 格
 - swimwear.toilet2 (34690,32957,1200)，附近最大的區域 147 格
+
+## 其中站在顯眼位置的（櫃台、收銀、沙發、吧台、接待）：之後優先挪（27）
+
+- bank.counter (32860,59393,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
+- beach.food_cart (17000,12500,1200)（queue），擋住的是 Resort_R025_2_transit-dining，2 格外走得到
+- beach.food_cart2 (17000,13000,1200)（queue），擋住的是 Resort_R026_3_transit-dining，2 格外走得到
+- cinema.ticket (32780,59633,2510)（queue），擋住的是 LoverSpot_R2_cinema_ticket1_Machine，1 格外走得到
+- clinic_gyn.counter (32265,57600,1200)（queue），擋住的是 LoverSpot_R2_fixtures_crib1_End-58，1 格外走得到
+- conveni.counter (47938,27505,1200)（queue），擋住的是 ShopV1_S06_Refit，3 格外走得到
+- department.shoes_counter (48333,60182,2460)（queue），擋住的是 LoverSpot_R2_dept_shoes_counter1_Top，1 格外走得到
+- fastfood.counter (44216,40201,1200)（queue），擋住的是 S41_F01，1 格外走得到
+- hotel.seat17 (31450,65270,1206)（h_sofa），擋住的是 MotelV1_Architecture_H1，1 格外走得到
+- hotel.tv_sofa (27655,65020,1706)（tv_sofa），擋住的是 MotelV1_Suite_imore-93474c507aaf，2 格外走得到
+- onsen.tv (42470,50010,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
+- onsen.tv2 (42470,51380,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
+- onsen.tv3 (43090,50090,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
+- onsen.tv4 (43090,50925,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
+- onsen.tv5 (43090,51755,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
+- onsen.tv6 (44910,51345,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
+- onsen.tv7 (44910,52175,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
+- onsen.tv8 (45530,50010,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
+- onsen.tv9 (45530,51380,2040)（tv_sofa），擋住的是 S19_F03，1 格外走得到
+- post.counter (32180,57420,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
+- post.counter2 (32180,57900,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
+- post.counter3 (32360,57420,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
+- post.counter4 (32360,57900,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
+- post.counter5 (32540,57900,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
+- post.counter6 (32720,57900,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
+- shrine.charm (39956,37551,1198)（queue），擋住的是 LoverSpot_Shrine_LanternCap-150，1 格外走得到
+- supermarket.checkout (34300,50580,1200)（queue），擋住的是 ShopV1_S72_Refit，1 格外走得到
 
 ## 樓層沒有入口：這層沒有門、電梯平台或樓梯錨點（24）
 
