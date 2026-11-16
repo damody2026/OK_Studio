@@ -2744,6 +2744,34 @@ fn subtree_ids(root: i64, tfs: &std::collections::HashMap<i64, Tf>) -> Vec<i64> 
     out
 }
 
+/// The Animator GameObject of a prefab with no character root (an item with its own Animator, HandCtrl's caress
+/// items): its one parentless transform. Clip paths start at its children. None for character skeletons (they have
+/// `animator_root_id`) and for a tree with several parentless transforms.
+pub(crate) fn item_animator_object(skel: &Skeleton) -> Option<i64> {
+    if animator_root_id(skel).is_some() { return None; }
+    let mut roots = skel.tfs.iter().filter(|(_, t)| t.parent.is_none_or(|p| !skel.tfs.contains_key(&p))).map(|(id, _)| *id);
+    let root = roots.next()?;
+    roots.next().is_none().then_some(root)
+}
+/// Every transform under the Animator GameObject with its binding path (names joined by '/', relative to the
+/// Animator object): from the character root (its own name first) or, for an item, from the item object's children.
+pub(crate) fn animator_binding_nodes(skel: &Skeleton) -> Vec<(i64, String)> {
+    let mut children: std::collections::HashMap<i64, Vec<i64>> = std::collections::HashMap::new();
+    for (id, tf) in &skel.tfs { if let Some(parent) = tf.parent { children.entry(parent).or_default().push(*id); } }
+    let heads: Vec<i64> = if let Some(root) = animator_root_id(skel) { vec![root] }
+        else if let Some(object) = item_animator_object(skel) { children.get(&object).cloned().unwrap_or_default() }
+        else { return Vec::new(); };
+    let mut out = Vec::new();
+    let mut stack: Vec<(i64, String)> = heads.into_iter().filter_map(|h| skel.tfs.get(&h).map(|t| (h, t.name.clone()))).collect();
+    while let Some((id, path)) = stack.pop() {
+        if out.len() > skel.tfs.len() { break; }
+        for &child in children.get(&id).into_iter().flatten() {
+            if let Some(t) = skel.tfs.get(&child) { stack.push((child, format!("{path}/{}", t.name))); }
+        }
+        out.push((id, path));
+    }
+    out
+}
 pub fn animator_root_id(skel: &Skeleton) -> Option<i64> {
     animator_tree(skel).map(|(root,_)|root)
 }

@@ -3054,6 +3054,48 @@ pub unsafe extern "C" fn ok_okmodel_open_session(lib: *const c_char, id: *const 
         Err(e) => { write_err(err, cap, &e); 1 }
     }
 }
+/// A prefab with an Animator of its own (`skinned_item`): its skinned meshes and transform tree from a library model.
+/// Draw it with `ok_okmodel_open_session` of the same prefab and pose that session with `ok_skinned_item_pose_session`.
+#[no_mangle]
+pub unsafe extern "C" fn ok_skinned_item_open(lib: *const c_char, id: *const c_char, prefab: *const c_char,
+    out: *mut *mut crate::skinned_item::SkinnedItem, err: *mut c_char, cap: i32) -> i32 {
+    if out.is_null() { return 1; }
+    *out = ptr::null_mut();
+    let prefab = cstr_opt(prefab).unwrap_or_default();
+    let root = cstr_opt(lib).unwrap_or_default();
+    let id = cstr_opt(id).unwrap_or_default();
+    match crate::run_no_panic(|| crate::skinned_item::open_library(std::path::Path::new(&root), &id, &prefab)) {
+        Ok(item) => { *out = Box::into_raw(Box::new(item)); 0 }
+        Err(e) => { write_err(err, cap, &e); 1 }
+    }
+}
+#[no_mangle]
+pub unsafe extern "C" fn ok_skinned_item_close(item: *mut crate::skinned_item::SkinnedItem) {
+    if !item.is_null() { drop(Box::from_raw(item)); }
+}
+/// Poses the item at `t` seconds into `state` (a playable key of `anim_root`, e.g. from `ok_controller_layer_state`),
+/// `values_json` = {"parameter": value, …} (nullable), and writes its vertices into `session`'s parts of the same names.
+/// Returns the parts written, -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn ok_skinned_item_pose_session(item: *mut crate::skinned_item::SkinnedItem, session: *mut OkSession,
+    anim_root: *const c_char, state: *const c_char, t: f32, values_json: *const c_char) -> i32 {
+    if item.is_null() || session.is_null() || !t.is_finite() { return -1; }
+    let (Some(root), Some(state)) = (cstr_opt(anim_root), cstr_opt(state)) else { return -1; };
+    let values: std::collections::HashMap<String, f32> = cstr_opt(values_json).and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default();
+    let (item, session) = (std::panic::AssertUnwindSafe(&mut *item), std::panic::AssertUnwindSafe(&mut *session));
+    crate::run_no_panic(move || { let (std::panic::AssertUnwindSafe(item), std::panic::AssertUnwindSafe(session)) = (item, session);
+        item.sample(std::path::Path::new(&root), &state, t, &values); Ok::<_, String>(item.write_session(session) as i32) }).unwrap_or(-1)
+}
+/// The state of a controller in a `states:` source: on override layer `layer` (> 0, its index in the controller) or
+/// its base state (`layer` <= 0), as `source|label` into `out`; returns the byte length (larger than cap: nothing
+/// written), -1 when the controller has no such state.
+#[no_mangle]
+pub unsafe extern "C" fn ok_controller_layer_state(anim_root: *const c_char, source: *const c_char, owner: *const c_char, layer: i32, out: *mut u8, cap: i32) -> i32 {
+    let (Some(root), Some(source), Some(owner)) = (cstr_opt(anim_root), cstr_opt(source), cstr_opt(owner)) else { return -1; };
+    let root = std::path::Path::new(&root);
+    let key = crate::run_no_panic(|| Ok::<_, String>(if layer > 0 { crate::anim::controller_layer_state(root, &source, &owner, layer as usize) } else { crate::anim::controller_base_state(root, &source, &owner) })).ok().flatten();
+    match key { Some(k) => copy_text(&k, out, cap), None => -1 }
+}
 /// `ok_okmodel_open_session` with Studio item FK: `fk_json` = [[bone, [x, y, z]], …] (local Unity Euler degrees).
 #[no_mangle]
 pub unsafe extern "C" fn ok_okmodel_open_session_fk(lib: *const c_char, id: *const c_char, prefab: *const c_char, include_disabled: i32,

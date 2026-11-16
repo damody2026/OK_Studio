@@ -1208,6 +1208,25 @@ pub(crate) fn native_pair_clip(game:&Path,key:&str,layer:i32)->Option<String>{
     let names=clip_names_for_source(game,&source);if names.len()!=1{return None;}Some(format!("{source}|{}",names[0]))
 }
 
+/// The state on override layer `layer` (its index in the controller, as Animator.SetLayerWeight takes it) of the
+/// controller `owner` in the bundle `source` (a `states:` source): `source|label`, which samples the controller's base
+/// state with that layer over it. An item Animator driven by layer weights (HandCtrl's caress items) plays one of these.
+pub(crate) fn controller_layer_state(game:&Path,source:&str,owner:&str,layer:usize)->Option<String>{
+    let resolved=source_path(game,source.strip_prefix(controller::SOURCE_PREFIX)?)?;
+    let graph=controller::entries(&resolved);
+    let mut matches=graph.iter().filter(|e|e.layer.as_ref().is_some_and(|l|l.index==layer)&&e.label.split_once(" / ").is_some_and(|(o,_)|o==owner));
+    let first=matches.next()?;
+    matches.next().is_none().then(||format!("{source}|{}",first.label))
+}
+/// The base state of the controller `owner` in the bundle `source` (its default layer-0 state): `source|label`.
+pub(crate) fn controller_base_state(game:&Path,source:&str,owner:&str)->Option<String>{
+    let resolved=source_path(game,source.strip_prefix(controller::SOURCE_PREFIX)?)?;
+    let graph=controller::entries(&resolved);
+    let mut matches=graph.iter().filter(|e|e.layer.is_none()&&e.label.split_once(" / ").is_some_and(|(o,_)|o==owner));
+    let first=matches.next()?;
+    matches.next().is_none().then(||format!("{source}|{}",first.label))
+}
+
 pub fn selectable_clip(game_root: &Path, name: &str) -> bool {
     if let Some((source, clip)) = name.split_once('|') {
         source_labels(game_root, source).iter().any(|n| n == clip)
@@ -2500,6 +2519,15 @@ fn resolve_layer_mask_uncached(skel:&Skeleton,mask:&[(u32,f32)])->HashMap<i64,f3
                 }
             }
             visit(root,skel.tfs[&root].name.clone(),default,skel,&children,&masks,&mut resolved);
+        } else {
+            // An item's own Animator: each node by its path from the item object (a parent's weight inherited).
+            let nodes=crate::pose::animator_binding_nodes(skel);
+            let mut by_id:HashMap<i64,f32>=HashMap::new();
+            for (id,path) in &nodes {
+                let inherited=skel.tfs[id].parent.and_then(|p|by_id.get(&p).copied()).unwrap_or(default);
+                let weight=masks.get(&(unity_string_to_hash(path) as u32)).copied().unwrap_or(inherited);
+                by_id.insert(*id,weight);resolved.insert(*id,weight);
+            }
         }
         resolved
 }
@@ -2629,7 +2657,13 @@ fn additive_reference_values(game_root:&Path,state:&str)->Option<(Vec<Binding>,H
 /// Keep duplicate paths/hash collisions unresolved rather than choosing a node.
 fn rig_binding_paths(skel:&Skeleton)->HashMap<u32,Option<(String,i64)>> {
     let mut paths=HashMap::new();
-    let Some(root)=crate::pose::animator_root_id(skel) else {return paths};
+    let Some(root)=crate::pose::animator_root_id(skel) else {
+        // An item's own Animator (no character root): paths from the item object's children.
+        for (id,path) in crate::pose::animator_binding_nodes(skel) {
+            let hash=unity_string_to_hash(&path) as u32;paths.entry(hash).and_modify(|entry|*entry=None).or_insert(Some((path,id)));
+        }
+        return paths;
+    };
     for id in crate::pose::subtree_ids_pub(root,&skel.tfs) {
         let mut names=Vec::new();let mut current=id;
         loop {

@@ -89,6 +89,7 @@ mod studio_items;
 mod studio_sounds;
 mod shader_states;
 mod studio_child_animation;
+pub mod skinned_item;
 mod studio_pose;
 mod studio_scene;
 pub mod vnge;

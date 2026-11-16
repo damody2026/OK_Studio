@@ -627,6 +627,16 @@ int32_t ok_player_apply(OkAnimPlayer* p, OkSession* const* sessions, int32_t cou
    Text/PNG getters return the byte length (call again with a buffer that large); -1 on error. */
 int32_t ok_okmodel_info(const char* library, const char* id_hex, uint8_t* out, int32_t cap);
 int32_t ok_okmodel_open_session(const char* library, const char* id_hex, const char* prefab, int32_t include_disabled, OkSession** out, char* err, int32_t cap);
+/* A prefab with an Animator of its own (the H caress items): its skinned meshes and transform tree from a library model.
+   Draw it with ok_okmodel_open_session of the same prefab; ok_skinned_item_pose_session poses it at t seconds into a state
+   of anim_root (values_json {"parameter": value}, nullable) and writes its vertices into that session's parts of the same
+   names (returns the parts written, -1 on error). ok_controller_layer_state: the state of controller `owner` in a states:
+   source on override layer `layer` (> 0) or its base state (<= 0), as "source|label"; byte length, -1 none. */
+typedef struct SkinnedItem OkSkinnedItem;
+int32_t ok_skinned_item_open(const char* library, const char* id_hex, const char* prefab, OkSkinnedItem** out, char* err, int32_t cap);
+void ok_skinned_item_close(OkSkinnedItem* item);
+int32_t ok_skinned_item_pose_session(OkSkinnedItem* item, OkSession* session, const char* anim_root, const char* state, float t, const char* values_json);
+int32_t ok_controller_layer_state(const char* anim_root, const char* source, const char* owner, int32_t layer, uint8_t* out, int32_t cap);
 /* Studio item FK: fk_json = [[bone, [x, y, z]], ...] (local Unity Euler degrees) turned before the meshes are baked. */
 /* OK Studio character state: status_json = {"tears_lv","hoho_aka_rate","nip_stand_rate","skin_tuya_rate","siru_lv":[5],"show_accessory":[21] (20 slots + one for every MoreAccessories slot)} (each optional); states nullable (clothes as ok_session_open_clothes). */
 int32_t ok_session_open_status(const char* game_root, const char* card, int32_t outfit, const uint8_t* states, const char* status_json, OkSession** out, char* err, int32_t cap);
