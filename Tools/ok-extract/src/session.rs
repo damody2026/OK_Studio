@@ -8291,6 +8291,32 @@ mod jump_probe_tests {
         assert!(bad.is_empty(),"back skirt chain differs from the game: {bad:?}");
     }
 
+    /// OK_JUMP_CARD / OK_JUMP_OUTFIT as jump_probe: after two frames of the jump, every DynamicBone chain (clothes and
+    /// private accessory/hair rigs) whose frames are flattened (dbone::frame_flatness under OK_FLAT_REPORT, default 0.3)
+    /// and the outfit's ABMX scales near 0.
+    #[test]
+    #[ignore="local OK card via OK_JUMP_CARD"]
+    fn flat_chain_scan() {
+        let card=std::env::var("OK_JUMP_CARD").unwrap();
+        let outfit:i32=std::env::var("OK_JUMP_OUTFIT").ok().and_then(|v|v.parse().ok()).unwrap_or(0);
+        let report:f32=std::env::var("OK_FLAT_REPORT").ok().and_then(|v|v.parse().ok()).unwrap_or(0.3);
+        let game=std::ffi::CString::new("").unwrap();let c=std::ffi::CString::new(card.clone()).unwrap();
+        let mut out=std::ptr::null_mut();let mut err=[0i8;512];
+        let r=unsafe{crate::ffi::session_open(game.as_ptr(),c.as_ptr(),outfit,&mut out,err.as_mut_ptr(),512)};
+        assert_eq!(r,0,"{}",unsafe{std::ffi::CStr::from_ptr(err.as_ptr())}.to_string_lossy());
+        let s=unsafe{&mut *out};
+        for b in &s.abm { let d=b.for_coord(0); if d.scale.iter().any(|v|v.abs()<0.1) { eprintln!("SCAN abm {} scale={:?}",b.name,d.scale); } }
+        let clip=std::ffi::CString::new("states:controller@5B22637573746F6D2F637573746F6D706F73652E756E6974793364222C22637573746F6D5F706F7365222C22222C22225D|custom_pose / [Controller layer 0] Base Layer.Stand_D_01").unwrap();
+        let root=std::ffi::CString::new(std::env::var("OK_BASE_LIBRARY").unwrap()+"/paired").unwrap();unsafe{assert_eq!(crate::ffi::ok_select_common_animation(s,root.as_ptr(),clip.as_ptr()),0);}
+        for f in 1..=2 { s.apply_anim_frame(f as f32/60.0,1.0/60.0); }
+        let mut sets:Vec<(String,&crate::dbone::AttachedDynamicSet)>=Vec::new();
+        if let Some((_,st))=s.clothes_dynamic_runtime.as_ref() { sets.push(("clothes".into(),st)); }
+        for p in &s.parts { if let Some(st)=p.runtime_accessory.as_ref().and_then(|r|r.state.as_ref()) { sets.push((p.name.clone(),st)); } }
+        let mut chains=0;
+        for (part,st) in sets { for (name,flat,shortest) in st.chain_flatness() { chains+=1; if flat<report { eprintln!("SCAN chain part={part} root={name} flat={flat:.4} shortest={shortest:.4} collapsed={}",flat<crate::dbone::COLLAPSED_FLATNESS); } } }
+        eprintln!("SCAN chains={chains}");
+        unsafe{crate::ffi::session_free(out);}
+    }
     /// OK_JUMP_CARD=<OK card> OK_JUMP_OUTFIT=<n> (OK_BASE_LIBRARY set): open as the reader does (no game root), play the
     /// jump demo ("Demo：蹦跳"; OK_JUMP_CLIP another) for OK_JUMP_FRAMES frames with the built-in solver, and report each
     /// part's farthest vertex from the hips. OK_JUMP_DESCRIBE=1 prints the clothes chains and skirt bone frames.
