@@ -4784,3 +4784,13 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 錯誤：90602d014 把 `Tools/package_street_social.lua` 挑 stage 的程式改成呼叫 `street_stage.named/newest`，但沒加 `require "street_stage"`；提交時「打包 --check 未實跑」，整合後重打包在第 54 行 `attempt to index a nil value (global 'street_stage')`。
 - 修正：檔頭加 `local street_stage = require "street_stage"`。
 - 防範：改到打包、啟動器這類只在特定流程才會跑的腳本，提交前至少實跑一次（打包可用 `--check`）。
+
+## 2026-11-16 用 PowerShell Get-Content／Set-Content 改 lib.rs，非 ASCII 字元全壞（E 組一對一愛撫的手）
+- 錯誤：在 `Tools/ok-extract/src/lib.rs` 插入 `pub mod skinned_item;` 時用了 Windows PowerShell 5.1 的 `Get-Content`／`Set-Content`（預設系統 ANSI 字碼頁），檔內的中文註解與符號被轉壞。
+- 修正：`git checkout` 還原 lib.rs，改以 UTF-8（無 BOM）讀寫、保留原本的 CRLF，只插入那一行；`git diff` 確認只有一行差異。
+- 防範：改原始碼一律用 Edit，或 `[IO.File]::ReadAllText/WriteAllText` 搭 `UTF8Encoding($false)`；PowerShell 5.1 的 `Set-Content`／`Out-File` 不能用來寫原始碼。寫完先看 `git diff --stat` 是否只有預期的行。
+
+## 2026-11-16 同一個 Mesh 有一般與 silhouette 兩個 renderer，道具被畫成藍色半透明（E 組一對一愛撫的手）
+- 錯誤：H 愛撫道具 `p_handL`、`p_tang` 的網格（`o_hand_L`、`o_tang`）同時被一般 renderer 和 HData 的 silhouette renderer（`Custom/Silhouette`）使用；`attach_material_texs` 取第一個命中的 renderer 材質，取到 silhouette 的，左手與舌頭成了藍色半透明。`p_handR`、`p_fingerL` 剛好取到一般材質，所以只有部分道具壞。
+- 修正：`unity.rs` `prefer_normal_renderer_material`：材質是 silhouette 且網格有多個 renderer 時，改用其中非 silhouette renderer 的材質與貼圖（`renderer_materials` 表與 `material_named` 已錄在基礎庫，重播時也生效，不用重轉）。
+- 防範：一個 Mesh 多個 renderer 時，不能假設第一個 renderer 就是畫它的那個；`skinned_item::library_items_pose_into_their_sessions` 斷言 9 個道具都不是 silhouette。

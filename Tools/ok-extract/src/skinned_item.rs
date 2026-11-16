@@ -289,7 +289,59 @@ mod tests {
         let parents: std::collections::BTreeSet<&String> = lists.areas.iter().flatten().flat_map(|l| &l.parents).filter(|p| !p.is_empty()).collect();
         let missing: Vec<&&String> = parents.iter().filter(|p| crate::bone_world(s.body_skel.as_ref(), s.head_skel.as_ref(), p).is_none()).collect();
         println!("parents {parents:?} missing {missing:?}");
+        for p in &parents {
+            let Some(w) = crate::bone_world(s.body_skel.as_ref(), s.head_skel.as_ref(), p) else { continue };
+            let det = w[0][0] * (w[1][1] * w[2][2] - w[1][2] * w[2][1]) - w[0][1] * (w[1][0] * w[2][2] - w[1][2] * w[2][0]) + w[0][2] * (w[1][0] * w[2][1] - w[1][1] * w[2][0]);
+            println!("{p}: det {det:.3} pos [{:.3} {:.3} {:.3}]", w[0][3], w[1][3], w[2][3]);
+        }
+        for item in &lists.items {
+            let (_, session) = SkinnedItem::new_session_pair(&root.join("IndependentResources/base_v1"), item).unwrap();
+            for part in &session.parts { println!("{} part {} shader {:?} png {}", item.prefab, part.name, part.source_material.as_ref().map(|m| &m.shader), part.png.as_ref().map_or(0, |p| p.len())); }
+        }
         assert!(missing.is_empty(), "missing {missing:?}");
+    }
+
+    #[test]
+    /// Placed on her bone as HandCtrl does (SetParent(bone, false)), the posed hand lies on her breast: most of its
+    /// vertices within 1.5 cm of her body, more than turned any other way.
+    #[ignore = "needs a local OK card and the base library"]
+    fn hand_lies_on_her_breast() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Content");
+        let lib = root.join("IndependentResources/base_v1");
+        let anim = crate::paired_library::library_root(&lib).unwrap();
+        let card = std::fs::read_dir(root.join("CharacterCards/CrowdAPNG")).unwrap().flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|e| e == "png")).unwrap();
+        let s = crate::oklib::open_test_card(&card, 0).unwrap();
+        let body: Vec<[f32; 3]> = s.parts.iter().filter(|p| p.role == "body").flat_map(|p| p.positions.iter().copied()).collect();
+        println!("body verts {}", body.len());
+        let lists: CaressItems = serde_json::from_slice(&std::fs::read(lib.join(CARESS_ITEMS)).unwrap()).unwrap();
+        let l = &lists.areas[0][0];
+        println!("area0 layer: items {:?} parents {:?} actions {:?}", l.items, l.parents, l.actions.iter().map(|a| a.front_item).collect::<Vec<_>>());
+        let item = lists.items.iter().find(|i| i.id == l.items[0]).unwrap();
+        let (mut it, _) = SkinnedItem::new_session_pair(&lib, item).unwrap();
+        let w = crate::bone_world(s.body_skel.as_ref(), s.head_skel.as_ref(), &l.parents[0]).unwrap();
+        println!("{} on {}: bone {:?}", item.prefab, l.parents[0], w);
+        for a in &l.actions {
+            let key = crate::anim::controller_layer_state(&anim, &item.controller_source, &item.controller, a.front_item as usize).unwrap();
+            it.sample(&anim, &key, 0.3, &HashMap::from([("speedHand".to_string(), 1.), ("Breast".to_string(), 0.5)]));
+            let hand = &it.skinned()[0].0;
+            let rots: [(&str, [[f32; 3]; 3]); 4] = [("as-is", [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]), ("y180", [[-1., 0., 0.], [0., 1., 0.], [0., 0., -1.]]),
+                ("y+90", [[0., 0., 1.], [0., 1., 0.], [-1., 0., 0.]]), ("y-90", [[0., 0., -1.], [0., 1., 0.], [1., 0., 0.]])];
+            let mut fits = Vec::new();
+            for (name, r) in rots {
+                let mut near = Vec::new();
+                for v in hand.iter().step_by(4) {
+                    let v = [r[0][0]*v[0]+r[0][1]*v[1]+r[0][2]*v[2], r[1][0]*v[0]+r[1][1]*v[1]+r[1][2]*v[2], r[2][0]*v[0]+r[2][1]*v[1]+r[2][2]*v[2]];
+                    let p = [0, 1, 2].map(|i| w[i][0]*v[0]+w[i][1]*v[1]+w[i][2]*v[2]+w[i][3]);
+                    let d = body.iter().map(|b| (b[0]-p[0]).powi(2)+(b[1]-p[1]).powi(2)+(b[2]-p[2]).powi(2)).fold(f32::MAX, f32::min).sqrt();
+                    near.push(d);
+                }
+                near.sort_by(f32::total_cmp);
+                let within = near.iter().filter(|d| **d < 0.015).count() as f32 / near.len() as f32;
+                println!("  layer {} {name}: nearest median {:.3} m, within 1.5cm {:.0}%", a.front_item, near[near.len()/2], within*100.);
+                fits.push(within);
+            }
+            assert!(fits[0] > 0.7 && fits[1..].iter().all(|f| *f < fits[0]), "layer {}: the hand does not lie on her breast {fits:?}", a.front_item);
+        }
     }
 
     /// From the base library alone (`--oklib h-items` recorded, `paired` converted): every caress item opens with its
@@ -302,7 +354,11 @@ mod tests {
         let lists: CaressItems = serde_json::from_slice(&std::fs::read(lib.join(CARESS_ITEMS)).unwrap()).unwrap();
         let _ = crate::anim::disk_cache::library_misses();
         for item in &lists.items {
+            let opened = std::time::Instant::now();
             let mut s = SkinnedItem::new_session_pair(&lib, item).unwrap_or_else(|e| panic!("{}: {e}", item.prefab));
+            println!("{} opened in {:?}", item.prefab, opened.elapsed());
+            // Drawn with its normal renderer's material, never HData's see-through silhouette (p_handL shares o_hand_L).
+            assert!(s.1.parts.iter().all(|p| p.source_material.as_ref().is_none_or(|m| m.shader != "Custom/Silhouette")), "{} drawn as a silhouette", item.prefab);
             let layers: std::collections::BTreeSet<i64> = lists.areas.iter().flatten().filter(|l| l.items.contains(&item.id))
                 .flat_map(|l| l.actions.iter().flat_map(|a| [a.front_item, a.back_item])).filter(|i| *i > 0).collect();
             let base = crate::anim::controller_base_state(&anim, &item.controller_source, &item.controller).expect("base state");
@@ -354,6 +410,17 @@ mod tests {
             moved = moved.max(d);
         }
         assert!(moved > 0.005, "the hand moves");
+        // The layer is not the base: its own clip shapes the hand (a kneading hand over the base's open one).
+        let base = crate::anim::controller_base_state(game, source, "khp_te_itemR").unwrap();
+        let v = HashMap::from([("speedHand".to_string(), 1.), ("Breast".to_string(), 0.5)]);
+        item.sample(game, &base, 0.3, &v);let b = item.skinned();
+        let root = |it: &SkinnedItem| ["cf_j_handroot_R", "cf_j_hand_R", "cf_j_index02_R"].map(|n| it.pose.tfs.values().find(|t| t.name == n).map(|t| (t.pos, t.rot)));
+        let rb = root(&item);
+        for k in 1..=3 { let key = crate::anim::controller_layer_state(game, source, "khp_te_itemR", k).unwrap();
+            item.sample(game, &key, 0.3, &v);let l = item.skinned();
+            let d = b[0].0.iter().zip(&l[0].0).map(|(a, b)| ((a[0]-b[0]).powi(2)+(a[1]-b[1]).powi(2)+(a[2]-b[2]).powi(2)).sqrt()).fold(0f32, f32::max);
+            println!("layer {k} vs base {d:.4} m; base root {rb:?}\n  layer root {:?}", root(&item));
+            assert!(d > 0.01, "layer {k} shapes the hand"); }
         // The converted animation root (base library `paired`) answers the same states without a bundle.
         let lib = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Content/IndependentResources/base_v1/paired");
         let _ = crate::anim::disk_cache::library_misses();

@@ -3943,6 +3943,7 @@ impl ParsedBundle {
             |(m, c)| { let mut m = m.clone(); self.strip_mesh_textures(&mut m); (m, c.clone()) },
             |(m, _)| self.restore_mesh_textures(m));
         self.clothes_state_filter(&mut picked, &chains, clothes_category);
+        self.prefer_normal_renderer_material(&mut picked);
         if let Some(e) = self.model_edits() { self.apply_mesh_edits(&e, main_data, &mut picked); }
         // A prefab can contain static and skinned renderers together. The
         // first decoded mesh is not necessarily an SMR, so use the first
@@ -4902,20 +4903,36 @@ impl ParsedBundle {
             let Some(mat) = m.mat.as_mut() else { continue };
             let Some(me) = edits.materials.get(&mat.name.to_ascii_lowercase()).cloned() else { continue };
             crate::okmodel_edit::apply_material(edits, mat);
-            for (slot, tex) in &me.textures {
-                let (field, transform) = match slot.as_str() {
-                    "_MainTex" => ("texture_png", 0), "_ColorMask" => ("color_mask_png", 0), "_AlphaMask" => ("alpha_mask_png", 1),
-                    "_DetailMask" => ("detail_mask_png", 1), "_LineMask" => ("line_mask_png", 1), "_NormalMap" => ("normal_map_png", 3),
-                    "_NormalMask" => ("normal_mask_png", 1), "_HairGloss" => ("hair_gloss_png", 1), _ => ("", 0),
-                };
-                let png = self.derive_mesh_texture(tex, transform);
-                if field.is_empty() {
-                    match png { Some(p) => { m.shader_extra_textures.insert(slot.clone(), p); } None => { m.shader_extra_textures.remove(slot); } }
-                    continue;
-                }
-                if field == "texture_png" { m.texture_name = tex.clone(); }
-                if let Some((_, v)) = Self::mesh_texture_fields(m).into_iter().find(|(f, _)| f == field) { *v = png; }
-            }
+            for (slot, tex) in &me.textures { self.set_mesh_texture_slot(m, slot, tex); }
+        }
+    }
+
+    /// A material texture slot into the mesh field the renderer reads it from (re-derived from the named texture).
+    fn set_mesh_texture_slot(&self, m: &mut ExtractedMesh, slot: &str, tex: &str) {
+        let (field, transform) = match slot {
+            "_MainTex" => ("texture_png", 0), "_ColorMask" => ("color_mask_png", 0), "_AlphaMask" => ("alpha_mask_png", 1),
+            "_DetailMask" => ("detail_mask_png", 1), "_LineMask" => ("line_mask_png", 1), "_NormalMap" => ("normal_map_png", 3),
+            "_NormalMask" => ("normal_mask_png", 1), "_HairGloss" => ("hair_gloss_png", 1), _ => ("", 0),
+        };
+        let png = self.derive_mesh_texture(tex, transform);
+        if field.is_empty() {
+            match png { Some(p) => { m.shader_extra_textures.insert(slot.to_owned(), p); } None => { m.shader_extra_textures.remove(slot); } }
+            return;
+        }
+        if field == "texture_png" { m.texture_name = tex.to_owned(); }
+        if let Some((_, v)) = Self::mesh_texture_fields(m).into_iter().find(|(f, _)| *f == field) { *v = png; }
+    }
+
+    /// One Mesh drawn by a normal renderer and by HData's see-through one (SimpleBody: `o_hand_L` and
+    /// `o_hand_L_silhouette`, `o_tang` and `o_tang_silhouette` of the H caress items) is one decoded mesh with one
+    /// material, and it was sometimes the silhouette's (a blue see-through hand). The mesh is drawn with the normal
+    /// renderer's material and its textures; the silhouette is the H scene's own switch.
+    fn prefer_normal_renderer_material(&self, meshes: &mut [ExtractedMesh]) {
+        const SILHOUETTE: &str = "Custom/Silhouette";
+        for m in meshes.iter_mut().filter(|m| m.renderer_ids.len() > 1 && m.mat.as_ref().is_some_and(|x| x.shader == SILHOUETTE)) {
+            let Some(own) = m.renderer_ids.iter().find_map(|id| self.renderer_material_slot(&[*id], m.submesh_index).filter(|x| x.shader != SILHOUETTE)) else { continue };
+            for (slot, tex) in own.tex_slots.clone() { self.set_mesh_texture_slot(m, &slot, &tex); }
+            m.mat = Some(own);
         }
     }
 
