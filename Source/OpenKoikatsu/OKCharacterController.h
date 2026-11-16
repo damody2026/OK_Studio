@@ -69,6 +69,24 @@ public:
 	void HandleClick();
 };
 
+// Title row of one collapsible category in the reader's right column (KK-style drawer).
+// The open state is kept in GameUserSettings [OKGalleryDrawers] <Key>, not in any save.
+UCLASS()
+class OPENKOIKATSU_API UOKDrawerButton : public UButton
+{
+	GENERATED_BODY()
+
+public:
+	FString Key;
+	FString Title;
+	UPROPERTY() TObjectPtr<class UTextBlock> Label;
+	UPROPERTY() TObjectPtr<class UWidget> Body;
+	bool bOpen = false;
+
+	void SetOpen(bool bNewOpen, bool bSave);
+	UFUNCTION() void Toggle();
+};
+
 class USlider;
 
 class UButton;
@@ -473,6 +491,9 @@ public:
     UFUNCTION() void OnResetLeftHand();
     UFUNCTION() void OnResetRightHand();
     UPROPERTY() TObjectPtr<class UScrollBox> HandMotionScroll;
+    /** The right column's category drawers (動作與表情, 光影風格, 左右手動作, 衣服, 選擇動畫). */
+    UPROPERTY() TArray<TObjectPtr<UOKDrawerButton>> MotionDrawers;
+    UOKDrawerButton* MotionDrawer(const FString& Key) const;
 	void RefreshHandControls();
 	void ApplyHandControl(int32 Side);
     UFUNCTION() void OnPairSpeed(float Value);
@@ -780,6 +801,10 @@ public:
 	TObjectPtr<USizeBox> MotionPanel;
 	UPROPERTY()
 	TObjectPtr<USizeBox> PreviewSpace;
+	/** FPS / ms at the preview's top right; the engine's stat fps sat on top of the right column's sliders. */
+	UPROPERTY() TObjectPtr<UTextBlock> FpsText;
+	double FpsShownAt = 0.;
+	void TickFpsText();
 	bool bModelLayout = false;
 	void SetModelLayout(bool bEnabled);
 

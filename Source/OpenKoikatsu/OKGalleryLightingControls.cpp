@@ -74,10 +74,16 @@ void UOKCharacterController::BuildLightingControls(UVerticalBox* Parent)
 	{
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
 		USizeBox* Box = WidgetTree->ConstructWidget<USizeBox>();
-		Box->SetWidthOverride(96.f);
+		// One line per row: a long label (主光水平角（0 鏡頭方向、正值往右）) wrapped into three lines; it is cut with
+		// an ellipsis instead and shown whole as the tooltip. The text keeps the full label (MCP reads it).
+		Box->SetWidthOverride(120.f);
 		Box->SetMinDesiredHeight(36.f);
 		UTextBlock* T = Text(Label, 15);
-		T->SetAutoWrapText(true);
+		T->SetTextOverflowPolicy(ETextOverflowPolicy::Ellipsis);
+		T->SetClipping(EWidgetClipping::ClipToBounds);	// the ellipsis needs the text clipped to the box
+		Box->SetClipping(EWidgetClipping::ClipToBounds);
+		T->SetToolTipText(FText::FromString(Label));
+		T->SetVisibility(ESlateVisibility::Visible);	// hit-testable, so its tooltip shows
 		Box->SetContent(T);
 		Row->AddChild(Box);
 		UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(Control);
@@ -107,7 +113,7 @@ void UOKCharacterController::BuildLightingControls(UVerticalBox* Parent)
 		LightingValueLabels.Add({ S, V });
 		return S;
 	};
-	Parent->AddChildToVerticalBox(Text(TEXT("光影風格"), 17))->SetPadding(FMargin(0.f, 0.f, 0.f, 4.f));
+	// The title is the drawer's (OKGalleryWidget.cpp).
 
 	auto Float = [&](const TCHAR* Key, float Default)
 	{
