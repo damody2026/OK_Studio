@@ -40,7 +40,9 @@ void AOKStreetSocialScene::TickOnani(double Now){
   // The nearest of those at full desire who are out and about (not with him, not sitting at her post, not asleep).
   int32 Best=INDEX_NONE;float BestD=MAX_flt;
   // Why each at full desire is not the one (logged every 30 s): she may be held all day for a reason no one sees.
-  FString Why;const bool Explain=Now>=S.OnaniExplainAt;
+  // Off unless asked (ok.street.OnaniExplain 1): ten girls' reasons every 30 s would bury the rest of game.log.
+  static TAutoConsoleVariable<int32> CVarExplain(TEXT("ok.street.OnaniExplain"),0,TEXT("Log every 30 s why each heroine at full desire is not touching herself now (1 on)."));
+  FString Why;const bool Explain=CVarExplain.GetValueOnGameThread()!=0&&Now>=S.OnaniExplainAt;
   for(const auto& Agent:S.Agents){const int32 I=Agent.Slot;
    if(!S.Manifest.Characters.IsValidIndex(I)||!OKStreetIsFemaleTarget(I,S.Manifest.Characters[I]))continue;
    if(OKStreetViewRelation(S.Store,OKStreetStableId(S.Manifest.Characters[I]),S.Manifest.TalkBudget).SexDesire<OKStreetSexDesireMax)continue;
