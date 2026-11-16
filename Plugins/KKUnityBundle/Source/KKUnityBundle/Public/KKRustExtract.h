@@ -419,6 +419,7 @@ private:
 	friend class FOkAnimBridge;
 	friend class FOkAnimPlayer;
 	friend class FOkAnimBatch;
+	friend class FOkSkinnedItem;
 	FOkSessionHandle Handle;
 	// Capacity hints only: native validates and solves the current pose on every read.
 	mutable TMap<int32, int32> SkinPaletteCapacityHints;
@@ -429,6 +430,30 @@ private:
  int8 ExternalAnimation = -1;
  /** Sends bPhysXSecondary and ExternalAnimation to a newly adopted native session. */
  void ApplyPhysXSecondary() const;
+};
+
+struct SkinnedItem;
+/** A prefab with an Animator of its own (the H caress hands, fingers, tongue, toys): its skinned meshes on its own bones,
+ *  posed by states of its controller. It is drawn by a FOkSession of the same library prefab (OpenOkModel), whose parts
+ *  PoseSession rewrites; the caller refreshes the actor that shows that session (AKKPreviewActor::RefreshEditorGeometry). */
+class KKUNITYBUNDLE_API FOkSkinnedItem
+{
+public:
+	FOkSkinnedItem() = default;
+	~FOkSkinnedItem() { Close(); }
+	FOkSkinnedItem(const FOkSkinnedItem&) = delete;
+	FOkSkinnedItem& operator=(const FOkSkinnedItem&) = delete;
+	bool Open(const FString& Library, const FString& ModelId, const FString& Prefab, FString& OutError);
+	void Close();
+	bool IsOpen() const { return Item != nullptr; }
+	/** Poses the item Seconds into State (a key of AnimRoot, e.g. ControllerLayerState) with the controller's float
+	 *  parameters and writes its vertices into Session's parts of the same names: the parts written, -1 on error. */
+	int32 PoseSession(FOkSession& Session, const FString& AnimRoot, const FString& State, float Seconds, const TMap<FString, float>& Values);
+	/** A controller's state in a states: source: on override layer Layer (> 0, its index in the controller) or its base
+	 *  state (Layer <= 0); empty when it has none. */
+	static FString ControllerLayerState(const FString& AnimRoot, const FString& Source, const FString& Owner, int32 Layer);
+private:
+	SkinnedItem* Item = nullptr;
 };
 
 // Owned handles are kept alive by worker captures. Join all calls before

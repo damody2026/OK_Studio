@@ -687,6 +687,56 @@ bool FOkSession::OpenOkModel(const FString& Library, const FString& ModelId, con
 	return true;
 }
 
+bool FOkSkinnedItem::Open(const FString& Library, const FString& ModelId, const FString& Prefab, FString& OutError)
+{
+	Close();
+	if (!FOkSession::InitBindings()) { OutError = TEXT("ok_register_bindings failed"); return false; }
+	const FTCHARToUTF8 LibUtf(*Library), IdUtf(*ModelId), PrefabUtf(*Prefab);
+	char Err[2048];
+	Err[0] = 0;
+	if (ok_skinned_item_open(LibUtf.Get(), IdUtf.Get(), PrefabUtf.Get(), &Item, Err, 2048) != 0 || !Item)
+	{
+		Item = nullptr;
+		OutError = Err[0] ? UTF8_TO_TCHAR(Err) : TEXT("ok_skinned_item_open failed");
+		return false;
+	}
+	return true;
+}
+void FOkSkinnedItem::Close()
+{
+	if (Item) { ok_skinned_item_close(Item); Item = nullptr; }
+}
+int32 FOkSkinnedItem::PoseSession(FOkSession& Session, const FString& AnimRoot, const FString& State, float Seconds, const TMap<FString, float>& Values)
+{
+	OkSession* Native = Session.Handle.Get();
+	if (!Item || !Native) return -1;
+	FString Json = TEXT("{");
+	for (const TPair<FString, float>& V : Values)
+	{
+		if (Json.Len() > 1) Json += TEXT(",");
+		Json += FString::Printf(TEXT("\"%s\":%.9g"), *V.Key.ReplaceCharWithEscapedChar(), V.Value);
+	}
+	Json += TEXT("}");
+	const FTCHARToUTF8 RootUtf(*AnimRoot), StateUtf(*State), JsonUtf(*Json);
+	return ok_skinned_item_pose_session(Item, Native, RootUtf.Get(), StateUtf.Get(), Seconds, JsonUtf.Get());
+}
+FString FOkSkinnedItem::ControllerLayerState(const FString& AnimRoot, const FString& Source, const FString& Owner, int32 Layer)
+{
+	if (!FOkSession::InitBindings()) return FString();
+	const FTCHARToUTF8 RootUtf(*AnimRoot), SourceUtf(*Source), OwnerUtf(*Owner);
+	TArray<uint8> Buffer;
+	Buffer.SetNumUninitialized(1024);
+	int32 Length = ok_controller_layer_state(RootUtf.Get(), SourceUtf.Get(), OwnerUtf.Get(), Layer, Buffer.GetData(), Buffer.Num());
+	if (Length > Buffer.Num())
+	{
+		Buffer.SetNumUninitialized(Length);
+		Length = ok_controller_layer_state(RootUtf.Get(), SourceUtf.Get(), OwnerUtf.Get(), Layer, Buffer.GetData(), Buffer.Num());
+	}
+	if (Length <= 0 || Length > Buffer.Num()) return FString();
+	const FUTF8ToTCHAR Text(reinterpret_cast<const ANSICHAR*>(Buffer.GetData()), Length);
+	return FString(Text.Length(), Text.Get());
+}
+
 bool FOkSession::OpenOkModelFk(const FString& Library, const FString& ModelId, const FString& Prefab, const FString& FkJson, FString& OutError)
 {
 	if (FkJson.IsEmpty() || FkJson == TEXT("[]")) return OpenOkModel(Library, ModelId, Prefab, false, OutError);
