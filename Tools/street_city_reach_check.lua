@@ -264,11 +264,13 @@ local function report()
     for iy = cy + 15, cy - 15, -1 do local row = {}
       for ix = cx - 30, cx + 30 do local c = at(z, ix, iy)
         local ch = c == nil and '?' or c == false and ' ' or c.b and '#' or (c.g < -60 and 'v') or (c.f40 and '.' or ',')
+        if (ch == '.' or ch == ',') and R.id[ix] and R.id[ix][iy] == (R.id[cx] and R.id[cx][cy]) and R.id[ix][iy] ~= (R.id[cellof(x2)] and R.id[cellof(x2)][cellof(y2)]) then ch = ch == '.' and 'o' or ';'
+        elseif (ch == '.' or ch == ',') and R.id[ix] and R.id[ix][iy] ~= (R.id[cellof(x2)] and R.id[cellof(x2)][cellof(y2)]) then ch = ch == '.' and '-' or '~' end
         if ix == cx and iy == cy then ch = 'A' elseif ix == cellof(x2) and iy == cellof(y2) then ch = 'B' end
         row[#row + 1] = ch end
       print(('%6d %s'):format(iy * CELL, table.concat(row)))
     end
-    print(('x from %d to %d, step 40; ? not scanned, # blocked, v floor below, , free at 30 only'):format((cx - 30) * CELL, (cx + 30) * CELL))
+    print(('x from %d to %d, step 40; ? not scanned, # blocked, v floor below, , free at 30 only; o ; the first point\'s region when the second is elsewhere, - ~ other regions not the second\'s'):format((cx - 30) * CELL, (cx + 30) * CELL))
     local blockers = {}
     for ix = cx - 30, cx + 30 do for iy = cy - 15, cy + 15 do local c = at(z, ix, iy); if c and c.b then blockers[c.b] = (blockers[c.b] or 0) + 1 end end end
     for k, v in pairs(blockers) do print(('  %4d %s'):format(v, k)) end
@@ -341,6 +343,7 @@ local function report()
   end
   local md = { '# 大學城地點與錨點可達性（自動產生）', '',
     '由 `Tools/street_city_reach_check.lua report` 產生：在來源地圖上照遊戲的 NavCellFree 逐格判定（40 cm 格點、半徑 40／30 膠囊、WorldStatic 簡單碰撞、相鄰格高差 40 cm 以內），1 樓從門口、樓上從電梯平台與樓梯錨點灌水。只是線索：可不可以走以遊戲裡實際走為準。', '',
+    '**改動地圖後必跑（安裝家具、切牆、搬道具之後，進遊戲之前）**：`Tools\\lua\\lua.exe Tools\\street_city_reach_check.lua scan`（或只重掃改動處的批次），再 `... gate`。`Tools/build_street_city_stream.lua`（WP 轉換）第一步就跑 gate，沒過不轉換。判準：來源地圖在最新一批掃描之後又存過 → 不過（要重掃）；門被擋、樓層沒有入口、門到不了街上、錨點下沒有地板、錨點周圍沒有可走格、錨點在封死的格子，這六類任一類筆數比已提交的本文件多 → 不過，並列出新增的列。站位在家具裡不擋（遊戲會改站附近走得到的點）。要略過只能 `--skip-reach-gate <原因>`，原因寫進該輪回報。', '',
     ('檢查 %d 個地點、%d 個錨點；未掃到的區塊 %d 個。'):format(#places, checked, missing), '' }
   local total = 0
   for _, kind in ipairs(order) do local list = groups[kind]; table.sort(list); if kind ~= K.in_sight then total = total + #list end
@@ -393,5 +396,30 @@ elseif cmd == 'scan' then
     elseif arg[i] == '--batch' then batch = tonumber(arg[i + 1]); i = i + 2 else error('unknown argument ' .. arg[i]) end end
   scan(minutes, batch)
 elseif cmd == 'report' then DIFF = arg[2] == '--diff'; os.exit(report() and 0 or 1)
+elseif cmd == 'gate' then
+  -- The check after a map change (furniture install, cuts, prop moves), before the map goes to the game: Tools/
+  -- build_street_city_stream.lua runs it first and stops when it fails. Fails when (1) the source map was saved after the
+  -- newest reach grid batch (rescan: scan, or the batches over what changed), or (2) a class that keeps someone from a
+  -- place (door blocked, floor without entry, door off the street, no floor, no cell, sealed) has more rows than in the
+  -- committed report (git HEAD Docs/STREET_CITY_REACH.md); the new rows are printed. Standing spots in furniture are not
+  -- gated (the game moves her to a reachable spot nearby).
+  local map = 'StreetSocialCity/Content/UniversityCity/Maps/UniversityCity.umap'
+  local newest = 0
+  for f in lfs.dir(PLACES .. 'reach-grid') do if f:match('%.json$') then
+    newest = math.max(newest, lfs.attributes(PLACES .. 'reach-grid/' .. f, 'modification') or 0) end end
+  local saved = lfs.attributes(map, 'modification') or 0
+  if saved > newest then
+    print(('reach gate: the source map was saved %s, the newest reach grid batch is from %s: rescan first'):format(os.date('%m-%d %H:%M', saved), os.date('%m-%d %H:%M', newest)))
+    os.exit(1) end
+  local r = ok.proc.run({ 'git', 'show', 'HEAD:Docs/STREET_CITY_REACH.md' }, { capture = true })
+  local function counts(s) local c = {}; for name, n in s:gmatch('\n## ([^\n]-)（(%d+)）') do c[name] = tonumber(n) end; return c end
+  local before = counts(r.stdout or '')
+  DIFF = true; report()
+  local after = counts(read('Docs/STREET_CITY_REACH.md') or '')
+  local bad = {}
+  for _, k in ipairs({ 'door_blocked', 'no_entry', 'door_street', 'no_floor', 'no_cell', 'sealed' }) do
+    local name = K[k]; if (after[name] or 0) > (before[name] or 0) then bad[#bad + 1] = ('%s %d -> %d'):format(name, before[name] or 0, after[name]) end end
+  if #bad > 0 then print('reach gate FAILED (the + rows above are new):'); for _, b in ipairs(bad) do print('  ' .. b) end; os.exit(1) end
+  print('reach gate passed'); os.exit(0)
 elseif cmd == 'probe' then PROBE = { tonumber(arg[2]), tonumber(arg[3]), tonumber(arg[4]), tonumber(arg[5]), tonumber(arg[6]) }; report()
-else print('usage: plan | scan [--minutes M] [--batch N] | report'); os.exit(2) end
+else print('usage: plan | scan [--minutes M] [--batch N] | report [--diff] | gate | probe z x1 y1 x2 y2'); os.exit(2) end

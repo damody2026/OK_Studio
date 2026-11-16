@@ -33,15 +33,28 @@ end
 --   checks that and writes stream-v1/no-hlod-<stamp>.ini, which Tools/migrate_street_city_content.lua takes as "this WP
 --   has no distance models on purpose" (an HLOD run stopped halfway is still refused). The HLOD layer assets the
 --   conversion makes (UniversityCityWP_HLODLayer_*) stay: the map names them, and with no HLOD actor they build nothing.
+-- --skip-reach-gate <why>: convert without the reach gate (the reason is printed; say it in the round's report)
 local hlod_only, batches, from, no_hlod = false, nil, 0, false
+local skip_gate
 local i = 1
 while arg[i] do
   if arg[i] == '--hlod' then hlod_only = true
   elseif arg[i] == '--batches' then i = i + 1; batches = assert(tonumber(arg[i]), '--batches N')
   elseif arg[i] == '--from' then i = i + 1; from = assert(tonumber(arg[i]), '--from I'); hlod_only = true
   elseif arg[i] == '--no-hlod' then no_hlod = true
+  elseif arg[i] == '--skip-reach-gate' then i = i + 1; skip_gate = assert(arg[i], '--skip-reach-gate <why>')
   else error('unknown argument ' .. arg[i]) end
   i = i + 1
+end
+-- The reach gate first (Tools/street_city_reach_check.lua gate): a map that keeps people from places it reached before
+-- (or was changed after the last reach scan) does not go to the game. Not for --hlod, which converts nothing.
+if not hlod_only then
+  if skip_gate then print('reach gate skipped: ' .. skip_gate)
+  else
+    local g = ok.proc.run({ ok.lua_exe, 'Tools/street_city_reach_check.lua', 'gate' }, { capture = true, merge = true })
+    io.write(g.stdout or '')
+    if g.code ~= 0 then print('stopped: the reach gate failed (rescan, fix, or --skip-reach-gate <why>)'); os.exit(1) end
+  end
 end
 if not hlod_only then
   local code = editor({ '-run=WorldPartitionConvertCommandlet', '-Verbose' }, log)
