@@ -121,6 +121,24 @@ pub fn awkwardness(place: &Norms, crowd: f32, act: &ActNeeds) -> f32 {
     unmet * (0.3 + crowd) * (1.0 + place.formality)
 }
 
+/// The act is against the place's own rules: food where none is allowed, noise where people keep quiet, more intimacy
+/// than the place allows.
+pub fn breaks_rules(place: &Norms, act: &ActNeeds) -> bool {
+    (act.food && !place.food) || (act.loud && place.quiet >= 0.5) || place.privacy < act.min_privacy
+}
+
+/// Her reaction here: `react`, and against the place's own rules never "she goes along naturally", however empty it is
+/// (microwave bento with 惠惠 in the library at 22:55 was "indoor, quiet, no food: she goes along naturally", round 16).
+/// She knows the rule; a bold one enjoys breaking it.
+pub fn react_here(place: &Norms, act: &ActNeeds, awkward: f32, shyness: i32, boldness: i32, stage: &str) -> Reaction {
+    let r = react(awkward, shyness, boldness, stage);
+    if r == Reaction::Fine && breaks_rules(place, act) {
+        if boldness >= 70 { Reaction::Thrilled } else { Reaction::Shy }
+    } else {
+        r
+    }
+}
+
 /// Her reaction (plan §9.3) from her shyness and public boldness, and how close they are.
 pub fn react(awkward: f32, shyness: i32, boldness: i32, stage: &str) -> Reaction {
     let ease = match stage {

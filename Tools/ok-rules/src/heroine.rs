@@ -249,18 +249,18 @@ fn interact(acts: &ActsTuning, places: &PlacesTuning, request: &Value) -> Result
         let needs = places.act(&a.id);
         let crowd = places::crowd_at(&place, request.get("hours").and_then(Value::as_f64).unwrap_or(12.0));
         awkward = places::awkwardness(norms, crowd, needs);
-        reaction = places::react(awkward, c.traits.shyness, c.traits.public_boldness, &c.rel.stage);
+        reaction = places::react_here(norms, needs, awkward, c.traits.shyness, c.traits.public_boldness, &c.rel.stage);
         // Her own idea is not refused by her: 安可 held out the pudding to feed him at the restaurant and was told "she
         // refused and pulls you away". Shy as she may be, she does what she offered.
         if hers && reaction == Reaction::Refuse {
             reaction = Reaction::Shy;
         }
+        let breaks_rules = places::breaks_rules(norms, needs);
         let words = [crate::tr::t("heroine.she_goes_along_naturally"), crate::tr::t("heroine.she_shy_but_went_along"), crate::tr::t("heroine.she_whispers_protest_ends"), crate::tr::t("heroine.she_refused_pulls_away"), crate::tr::t("heroine.she_finds_it_thrilling")];
         recent = crate::tr::m("heroine.together_reaction_line", &[("norm_label", crate::tr::a(&norms.label)), ("need_name", crate::tr::a(&needs.name)), ("reaction_text", crate::tr::a(&(words[reaction as usize])))]);
         // Staff speak up when the act breaks the place's rules (food where nobody eats, noise where it is quiet, more
         // intimacy than the place allows), not when it is only embarrassing in a crowd (a bite fed at a busy lunch).
-        let breaks_rules = (needs.food && !norms.food) || (needs.loud && norms.quiet >= 0.5) || norms.privacy < needs.min_privacy;
-        let staff = norms.staff && awkward >= 0.6 && breaks_rules;
+        let staff =norms.staff && awkward >= 0.6 && breaks_rules;
         if staff {
             recent += if norms.quiet >= 0.7 { crate::tr::t("heroine.manager_warned_quiet") } else { crate::tr::t("heroine.clerk_warned_you") };
         }
@@ -309,7 +309,7 @@ pub fn eval(acts: &ActsTuning, places: &PlacesTuning, kind: &str, request: &Valu
             let act = request.get("act").and_then(Value::as_str).unwrap_or("");
             let crowd = places::crowd_at(place, request.get("hours").and_then(Value::as_f64).unwrap_or(12.0));
             let awkward = places::awkwardness(places.norms(place), crowd, places.act(act));
-            let reaction = places::react(awkward, c.traits.shyness, c.traits.public_boldness, &c.rel.stage);
+            let reaction = places::react_here(places.norms(place), places.act(act), awkward, c.traits.shyness, c.traits.public_boldness, &c.rel.stage);
             // A loud act where people keep quiet (library, lecture hall, bookstore, shrine: quiet 0.7 and up) is not
             // done there, however empty it is or however bold she is: 三月七 sang to him in the bookstore at three in the
             // afternoon (R6-13). Her song waits for another place.
@@ -401,6 +401,22 @@ mod tests {
         let mine = interact(&t.acts, &t.places, &req(json!({"act": "kiss", "hers": true, "relation": {"id": "a", "stage": "lover"}, "place": "library", "hours": 10.0, "traits": {"shyness": 1.0}}))).unwrap();
         assert_ne!(mine["reaction"], 3, "her own idea is not refused by her");
         assert!(v["awkward_memory"]["importance"].as_f64().unwrap() >= 0.3);
+    }
+
+    /// Eating in the library late at night with nobody there: still against its rules, not "she goes along naturally"
+    /// (惠惠, microwave bento at 22:55, round 16). A bold one finds it thrilling.
+    #[test]
+    fn against_the_place_rules_is_never_natural() {
+        let t = Tuning::builtin();
+        let food = t.acts.act.iter().find(|a| a.awkward && t.places.act(&a.id).food).expect("an act with food");
+        let at = |boldness: i32| {
+            let r = req(json!({"act": food.id, "relation": {"id": "a", "stage": "lover", "affection": 100}, "profile": {"traits": {"public_boldness": boldness, "shyness": 0}}, "place": "library", "hours": 22.9, "consented": true}));
+            interact(&t.acts, &t.places, &r).unwrap()["reaction"].as_i64().unwrap()
+        };
+        assert_eq!(at(10), Reaction::Shy as i64);
+        assert_eq!(at(90), Reaction::Thrilled as i64);
+        let park = req(json!({"act": food.id, "relation": {"id": "a", "stage": "lover", "affection": 100}, "profile": {"traits": {"public_boldness": 10, "shyness": 0}}, "place": "park", "hours": 22.9, "consented": true}));
+        assert_eq!(interact(&t.acts, &t.places, &park).unwrap()["reaction"].as_i64().unwrap(), Reaction::Fine as i64, "eating in the park at night is fine");
     }
 
     /// A head pat again ten minutes later: she goes along, nothing new; an hour on it counts again (R6-146).
