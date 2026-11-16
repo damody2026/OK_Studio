@@ -9,6 +9,9 @@
 -- claim only succeeds when no agent of higher priority is queued, a slot is free, fewer than two Unreal processes
 -- run and enough commit is free (default 35 GB, --need-gb N); --need-gb 60 or more also needs every other slot free and keeps the others closed while held. It re-reads owner.txt after writing (another agent may have written the same slot) and leaves the queue in the
 -- same step, so a stale queue file never makes a lower-priority agent wait for someone who already runs.
+-- A queue entry stops counting once its claim --wait process has ended (pid + start time in the entry) or it was not
+-- refreshed for 15 minutes (claim --wait refreshes it every poll; a one-shot claim on every call). Ranks match the
+-- longest listed name that is the agent or a "-" prefix of it (f-yvonne-q1 ranks as f-yvonne).
 local ok = require "ok"
 local path, proc = ok.path, ok.proc
 
@@ -22,7 +25,19 @@ local EXCLUSIVE_GB = 60
 -- Lower runs first; agents not listed rank after these.
 local PRIORITY = { ["f-yvonne"] = -11, ["c-lowspec"] = -9, ["e-120fps"] = -5, ["e-120fps-quiet"] = -5, ["f-cover"] = -3, ["c-street-city"] = -1, ["c-conquest"] = 0, FStyle = 1, ["e-galgame"] = 2, ["e-fork"] = 2, ["e-fork-2"] = 2, F = 3, ["e-okcard"] = 4 }
 
-local function rank(agent) return PRIORITY[agent] or 9 end
+-- Agent names carry suffixes (f-yvonne-q1, e-fork-2): the longest listed name that equals the agent or is a "-"
+-- prefix of it gives the rank, so f-yvonne-q1 ranks as f-yvonne (2026-11-16: exact lookup left it at 9, behind e-120fps).
+local function rank(agent)
+  local best, len = nil, -1
+  for name, r in pairs(PRIORITY) do
+    if (agent == name or agent:sub(1, #name + 1) == name .. "-") and #name > len then best, len = r, #name end
+  end
+  return best or 9
+end
+-- A queue entry counts only while its waiter lives: claim --wait writes its process (pid + start time) and refreshes the
+-- timestamp on every poll; an entry whose process is gone, or not refreshed for this long, no longer blocks anyone
+-- (2026-11-16: a dead e-120fps entry kept both slots empty for half an hour with five agents waiting).
+local QUEUE_STALE_MIN = 15
 -- A test run holds a slot for at most this long: past it, whoever is queued gets the machine (2026-11-15, the user's rule).
 local MAX_HOLD_MIN = 20
 local function owner_file(i) return path.join(ROOT, "slot" .. i, "owner.txt") end
@@ -56,13 +71,64 @@ local function free_commit_gb()
   return tonumber(out:match("%d+")) or 0
 end
 
-local function queued()
+-- Minutes since a "YYYY-MM-DD HH:MM:SS" stamp found in text (the last one on its first line), or nil.
+local function age_min(text)
+  local line = (text or ""):match("^[^\n]*") or ""
+  local y, mo, d, h, mi, se = line:match("(%d%d%d%d)-(%d%d)-(%d%d) (%d%d):(%d%d):(%d%d)%s*$")
+  if not y then return nil end
+  local t = os.time({ year = tonumber(y), month = tonumber(mo), day = tonumber(d),
+                      hour = tonumber(h), min = tonumber(mi), sec = tonumber(se) })
+  return math.floor(os.difftime(os.time(), t) / 60)
+end
+
+-- Processes on the machine as { [pid] = start "yyyyMMddHHmmss" } (one query per check).
+local function processes()
+  local out = proc.output({ "powershell", "-NoProfile", "-Command",
+    "Get-CimInstance Win32_Process | %{ '' + $_.ProcessId + ' ' + $_.CreationDate.ToString('yyyyMMddHHmmss') }" }, { check = false }) or ""
+  local list = {}
+  for pid, start in out:gmatch("(%d+) (%d+)") do list[tonumber(pid)] = start end
+  return list
+end
+
+-- This Lua process (the parent of the PowerShell it starts): "pid start".
+local function self_process()
+  local out = proc.output({ "powershell", "-NoProfile", "-Command",
+    "$me = Get-CimInstance Win32_Process -Filter \"ProcessId=$PID\"; " ..
+    "$p = Get-CimInstance Win32_Process -Filter \"ProcessId=$($me.ParentProcessId)\"; " ..
+    "'' + $p.ProcessId + ' ' + $p.CreationDate.ToString('yyyyMMddHHmmss')" }, { check = false }) or ""
+  return out:match("(%d+ %d+)")
+end
+
+-- Why a queue entry no longer counts, or nil while it does: its waiter's process is gone (an entry from claim --wait
+-- names it), or the entry was not refreshed for QUEUE_STALE_MIN minutes (no timestamp at all counts as stale).
+local function queue_dead(text, procs)
+  local pid, start = (text or ""):match("\npid (%d+) (%d+)")
+  if pid then
+    procs = procs or processes()
+    if procs[tonumber(pid)] ~= start then return "process " .. pid .. " ended" end
+  end
+  local age = age_min(text)
+  if not age then return "no timestamp" end
+  if age >= QUEUE_STALE_MIN then return "not refreshed for " .. age .. " min" end
+end
+
+-- Agents queued and still waiting, in file order. Entries of ended processes are removed (nobody will come back for
+-- them); entries that only aged out are skipped but kept, so status can show them.
+local function queued(all)
   local list = {}
   local dir = path.join(ROOT, "queue")
-  if path.is_dir(dir) then
-    for _, n in ipairs(path.list(dir)) do
-      local agent = n:match("^(.-)%.txt$")
-      if agent then list[#list + 1] = agent end
+  if not path.is_dir(dir) then return list end
+  local procs
+  for _, n in ipairs(path.list(dir)) do
+    local agent = n:match("^(.-)%.txt$")
+    if agent then
+      local okr, text = pcall(path.read_text, queue_file(agent))
+      text = okr and text or ""
+      if not procs and text:match("\npid %d+") then procs = processes() end
+      local dead = queue_dead(text, procs)
+      if dead and dead:match("^process") then pcall(path.remove, queue_file(agent)) end
+      if all then list[#list + 1] = dead and (agent .. " (stale: " .. dead .. ")") or agent
+      elseif not dead then list[#list + 1] = agent end
     end
   end
   return list
@@ -72,11 +138,7 @@ end
 local function held_min(i)
   local _, text = owner(i)
   if not text then return nil end
-  local y, mo, d, h, mi, se = text:match("(%d%d%d%d)-(%d%d)-(%d%d) (%d%d):(%d%d):(%d%d)%s*$")
-  if not y then return nil end
-  local t = os.time({ year = tonumber(y), month = tonumber(mo), day = tonumber(d),
-                      hour = tonumber(h), min = tonumber(mi), sec = tonumber(se) })
-  return math.floor(os.difftime(os.time(), t) / 60)
+  return age_min(text)
 end
 
 -- The longest any of this agent's slots has been held.
@@ -97,9 +159,11 @@ local function waiting_above(agent)
   end
 end
 
-local function enqueue(agent, note)
+-- Writes (or refreshes) the agent's queue entry. With `me` ("pid start", claim --wait) the entry lives as long as
+-- that process; without it (a one-shot claim that the agent repeats) it lives QUEUE_STALE_MIN minutes per call.
+local function enqueue(agent, note, me)
   path.mkdir(path.join(ROOT, "queue"), true)
-  if not path.is_file(queue_file(agent)) then path.write_text(queue_file(agent), agent .. " " .. note .. " " .. now() .. "\n") end
+  path.write_text(queue_file(agent), agent .. " " .. note .. " " .. now() .. "\n" .. (me and ("pid " .. me .. "\n") or ""))
 end
 
 -- One attempt: the slot index taken (or already held), or nil and why not.
@@ -129,8 +193,9 @@ local function try_claim(agent, note, need_gb)
 end
 
 local function claim(agent, note, wait, need_gb)
-  enqueue(agent, note)
+  local me = wait and self_process() or nil
   while true do
+    enqueue(agent, note, me)
     local i, why = try_claim(agent, note, need_gb)
     if i then
       -- the queue entry may already be gone (another session cleaned the queue); the slot is ours either way
@@ -164,7 +229,7 @@ local function status()
     end
     print(("slot" .. i .. ": " .. (who and (text:gsub("%s+$", "") .. tail) or "(free)")))
   end
-  io.write("queue: ", table.concat(queued(), ", "), "\n")
+  io.write("queue: ", table.concat(queued(true), ", "), "\n")
   io.write("unreal processes: ", unreal_count(), "\n")
   io.write("free commit: ", free_commit_gb(), " GB\n")
   return 0
