@@ -272,6 +272,54 @@ for _, p in ipairs(places) do
     end
     p.anchors = kept end
 end
+-- Rooms left out of a place (REMOVED.rooms), then the check that a place is one building with its door: an indoor place's
+-- rooms grouped by being within REMOVED.apart_cm of each other (xy, any floor); a group without the door is a part a girl
+-- would be walked to from another building's door (bike_shop, 116 m, 11-16). Listed as problems unless REMOVED.apart_ok.
+-- The dropped rooms' boxes per place: the rules-table rows standing in them go too (city_anchors.json below).
+local DROPPED_ROOMS = {}
+do
+  local function bounds(room)
+    if room.min and room.max then return room.min, room.max end
+    if room.center and room.size then local h = math.max(room.size[1], room.size[2]) / 2
+      return { room.center[1] - h, room.center[2] - h }, { room.center[1] + h, room.center[2] + h } end
+  end
+  local function gap(a, b)
+    local a0, a1 = bounds(a); local b0, b1 = bounds(b)
+    local dx = math.max(0, a0[1] - b1[1], b0[1] - a1[1]); local dy = math.max(0, a0[2] - b1[2], b0[2] - a1[2])
+    return math.sqrt(dx * dx + dy * dy)
+  end
+  for _, p in ipairs(places) do
+    if p.rooms then local kept = {}
+      for _, room in ipairs(p.rooms) do local why = REMOVED.room_gone(p.id, room)
+        if why then print(('room: %s room dropped, %s'):format(p.id, why))
+          local a0, a1 = bounds(room); DROPPED_ROOMS[p.id] = DROPPED_ROOMS[p.id] or {}; table.insert(DROPPED_ROOMS[p.id], { min = a0, max = a1 })
+        else kept[#kept + 1] = room end end
+      p.rooms = kept end
+  end
+  -- Every indoor room of every place, so a building is followed through the rooms of its other places (the sports hall's
+  -- parts join through the gym's floors); rooms of one place are one building when a chain of rooms, each within
+  -- apart_cm of the next, joins them.
+  local all = {}
+  for _, q in ipairs(places) do if not q.outdoor then for _, room in ipairs(q.rooms or {}) do if bounds(room) then all[#all + 1] = room end end end end
+  local link = {}
+  for i = 1, #all do link[i] = i end
+  local function root(i) while link[i] ~= i do link[i] = link[link[i]]; i = link[i] end; return i end
+  for i = 1, #all do for k = i + 1, #all do if gap(all[i], all[k]) <= REMOVED.apart_cm then link[root(k)] = root(i) end end end
+  local index = {}; for i, room in ipairs(all) do index[room] = i end
+  for _, p in ipairs(places) do
+    if not p.outdoor and p.rooms and #p.rooms > 1 and p.door and not REMOVED.apart_ok[p.id] then
+      local n = #p.rooms
+      local function find(i) return index[p.rooms[i]] and root(index[p.rooms[i]]) or -i end
+      local door
+      for i = 1, n do local a0, a1 = bounds(p.rooms[i])
+        if a0 and p.door[1] >= a0[1] - 300 and p.door[1] <= a1[1] + 300 and p.door[2] >= a0[2] - 300 and p.door[2] <= a1[2] + 300 then door = find(i) end end
+      local far = {}
+      for i = 1, n do if find(i) ~= door then local a0, a1 = bounds(p.rooms[i]); if a0 then
+        far[#far + 1] = ('(%d,%d)-(%d,%d)'):format(a0[1], a0[2], a1[1], a1[2]) end end end
+      if #far > 0 then problem(('%s: rooms not in the building of its door (%d m apart or more): %s'):format(p.id, REMOVED.apart_cm // 100, table.concat(far, ' '))) end
+    end
+  end
+end
 
 -- The shops' stairs (Tools/street_city_shop_stairs.lua, found on the source map 11-16): stairN on each floor's end of the
 -- stair, the game's way up in a shop with no lift (c-conquest's shop stairs, stair1116c). Shared with
@@ -471,7 +519,13 @@ do
   local moved = 0; for _, r in ipairs(T.anchors) do if r.moved then moved = moved + 1; r.moved = nil end end
   print(('city_anchors.json: %d rows back from off (the place has stairs now), %d stair rows added'):format(back, stairs))
   local kept, dropped = {}, 0
-  for _, r in ipairs(T.anchors) do if REMOVED.gone(r.place, r.name) then dropped = dropped + 1 else kept[#kept + 1] = r end end
+  -- rows of a removed anchor, and rows standing in a room left out of their place (REMOVED.rooms: bike_shop's S81 racks)
+  local function in_gone_room(r)
+    for _, box in ipairs(DROPPED_ROOMS[r.place] or {}) do
+      if r.pos and r.pos[1] >= box.min[1] and r.pos[1] <= box.max[1] and r.pos[2] >= box.min[2] and r.pos[2] <= box.max[2] then return true end
+    end
+  end
+  for _, r in ipairs(T.anchors) do if REMOVED.gone(r.place, r.name) or in_gone_room(r) then dropped = dropped + 1 else kept[#kept + 1] = r end end
   T.anchors = kept
   table.sort(T.anchors, function(a, b) return a.id < b.id end)
   if n > 0 or dropped > 0 or back > 0 or moved > 0 then local out = okj.encode(T); f = assert(io.open(path, 'wb')); f:write(out); f:close() end
@@ -491,7 +545,7 @@ do
     '下表是剩下的：這幾家沒有可用的樓梯，維持 off，不再追。', '',
     '| 地點 | 樓層 | 類別 | 錨點數 | 規則錨點數 | 錨點 | 為什麼還 off |', '|---|---:|---|---:|---:|---|---|' }, 0
   local WHY = {
-    bike_shop = '地點是相距 116 m 的兩家店（S35、S81，street_city_lover_spots_payload.lua 併成一個，門只在 S35），量到的樓梯在 S81；樓上只有規則表的停車架與高處物件',
+    bike_shop = '只留 S35（原本併了相距 116 m、沒有門的 S81，11-16 拿掉，Tools/street_city_removed_anchors.lua）；S35 沒有量到樓梯，樓上只有規則表的高處物件',
     crepe = '只量到上半段樓梯，找不到 1F 的樓梯腳；樓上沒有座位',
     nail = '只量到上半段樓梯，找不到 1F 的樓梯腳',
     photo_studio = '樓上沒有量到任何樓梯；樓上沒有座位',

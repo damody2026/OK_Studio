@@ -14,8 +14,8 @@
 
 | 地點 | 樓層 | 類別 | 錨點數 | 規則錨點數 | 錨點 | 為什麼還 off |
 |---|---:|---|---:|---:|---|---|
-| bike_shop | - | 高處物件 | 0 | 2 |  | 地點是相距 116 m 的兩家店（S35、S81，street_city_lover_spots_payload.lua 併成一個，門只在 S35），量到的樓梯在 S81；樓上只有規則表的停車架與高處物件 |
-| bike_shop | 2 | 真樓層 | 0 | 12 |  | 地點是相距 116 m 的兩家店（S35、S81，street_city_lover_spots_payload.lua 併成一個，門只在 S35），量到的樓梯在 S81；樓上只有規則表的停車架與高處物件 |
+| bike_shop | - | 高處物件 | 0 | 1 |  | 只留 S35（原本併了相距 116 m、沒有門的 S81，11-16 拿掉，Tools/street_city_removed_anchors.lua）；S35 沒有量到樓梯，樓上只有規則表的高處物件 |
+| bike_shop | 2 | 真樓層 | 0 | 6 |  | 只留 S35（原本併了相距 116 m、沒有門的 S81，11-16 拿掉，Tools/street_city_removed_anchors.lua）；S35 沒有量到樓梯，樓上只有規則表的高處物件 |
 | photo_studio | 2 | 真樓層 | 0 | 1 |  | 樓上沒有量到任何樓梯；樓上沒有座位 |
 
 共 3 個地點樓層、0 個錨點。
