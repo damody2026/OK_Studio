@@ -295,6 +295,7 @@ do
           local a0, a1 = bounds(room); DROPPED_ROOMS[p.id] = DROPPED_ROOMS[p.id] or {}; table.insert(DROPPED_ROOMS[p.id], { min = a0, max = a1 })
         else kept[#kept + 1] = room end end
       p.rooms = kept end
+    if REMOVED.names[p.id] then p.name = REMOVED.names[p.id] end
   end
   -- Every indoor room of every place, so a building is followed through the rooms of its other places (the sports hall's
   -- parts join through the gym's floors); rooms of one place are one building when a chain of rooms, each within

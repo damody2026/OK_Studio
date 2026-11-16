@@ -16,6 +16,8 @@ local GONE = {
 local ROOMS = {
   bike_shop = { { at = { 30200, 32740 }, why = 'S81, 116 m from the door at S35' } },
 }
+-- The place's name once a room is left out (the game says "arrived at <name>").
+local NAMES = { bike_shop = '單車行（S35 城市單車）' }
 -- A place is one building: an indoor place's rooms are joined by chains of indoor rooms (of any place) each within
 -- APART_CM of the next (xy, any floor), and the door's room is in that one chain. Places allowed to be apart, with why
 -- (the exporter lists the rest as problems).
@@ -27,4 +29,4 @@ local function room_gone(place, room)
   end
 end
 return { list = GONE, gone = function(place, name) local p = GONE[place]; return p and p[name] or nil end,
-  rooms = ROOMS, room_gone = room_gone, apart_cm = APART_CM, apart_ok = APART_OK }
+  rooms = ROOMS, room_gone = room_gone, names = NAMES, apart_cm = APART_CM, apart_ok = APART_OK }
