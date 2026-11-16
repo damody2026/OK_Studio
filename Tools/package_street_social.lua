@@ -32,6 +32,7 @@
 local ok = require "ok"
 local json, path, proc, util = ok.json, ok.path, ok.proc, ok.util
 local player_settings = require "street_player_settings"
+local street_stage = require "street_stage"
 
 local function say(s) io.write(s, "\n"); io.flush() end
 local function win(p) return (path.norm(p):gsub("/", "\\")) end

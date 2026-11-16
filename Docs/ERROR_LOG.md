@@ -4779,3 +4779,8 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 想把 `KKPreviewActor.cpp` 裡的 `okNuv` 那一行移回原位，用 `grep -n` 抓行號再交給 `sed "${n}a ..."`。grep 的樣式跳脫錯了，`n` 是空的，`sed a` 對每一行都生效，檔案多了 13,999 行。
 - 修正：所有完全等於這一行的行都刪掉（`grep -v -x -F`），再用 Edit 插回一次；和 HEAD 加上別人未提交修改的行數核對（13,986 + 14），diff 只剩別人的排序修改。
 - 預防：用行號做插入／刪除前，先確認變數非空（`[ -n "$n" ] || exit 1`）；能用 Edit 精確取代的就不要用 sed 行號。
+
+## 2026-11-16 打包腳本改用 street_stage 卻沒 require，打包一開始就失敗（E 組驗證時發現）
+- 錯誤：90602d014 把 `Tools/package_street_social.lua` 挑 stage 的程式改成呼叫 `street_stage.named/newest`，但沒加 `require "street_stage"`；提交時「打包 --check 未實跑」，整合後重打包在第 54 行 `attempt to index a nil value (global 'street_stage')`。
+- 修正：檔頭加 `local street_stage = require "street_stage"`。
+- 防範：改到打包、啟動器這類只在特定流程才會跑的腳本，提交前至少實跑一次（打包可用 `--check`）。
