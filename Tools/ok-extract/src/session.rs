@@ -8195,6 +8195,76 @@ fn acc_shared_solve() -> bool {
 #[cfg(test)]
 mod jump_probe_tests {
 
+    /// Digest of everything a part draws with (material values, textures, visibility, draw order), one line per part.
+    pub(crate) fn part_material_digests(s: &crate::session::OkSession) -> Vec<String> {
+        use std::hash::{Hash, Hasher};
+        let h = |b: &[u8]| { let mut x = std::collections::hash_map::DefaultHasher::new(); b.hash(&mut x); x.finish() };
+        let ho = |b: &Option<Vec<u8>>| b.as_deref().map(h).unwrap_or(0);
+        s.parts.iter().map(|p| {
+            let mut tex = String::new();
+            for (k, v) in &p.shader_textures { tex += &format!("{k}:{:016x},", h(v)); }
+            let mat = p.source_material.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()).unwrap_or_default();
+            let vals = format!("{:?}", ((p.render_visible, p.draw_layer, &p.blend, p.shader_kind, p.unlit, p.overcolor, p.overcolor2,
+                p.shadow_color, p.line_color), (p.main_tex_st, p.alpha_mask_st, p.specular_color, p.metallic, p.smoothness,
+                p.specular_power, p.tex1_mask, p.line_tex_on, &p.runtime_textures)));
+            format!("{} {} vals={:016x} mat={:016x} png={:016x} amask={:016x} over={:016x}/{:016x} vc={:016x} tex=[{tex}]",
+                p.role, p.name, h(vals.as_bytes()), h(mat.as_bytes()), ho(&p.png), ho(&p.alpha_mask), ho(&p.overtex_png),
+                ho(&p.overtex2_png), h(&p.vertex_colors.iter().flatten().copied().collect::<Vec<u8>>()))
+        }).collect()
+    }
+
+    /// Opening the same card and outfit again gives the same parts: material values, textures, visibility and draw order
+    /// (each HashMap gets new random keys, so an iteration-order dependence shows up within one process too). Cards:
+    /// OK_DET_CARDS="<card>|<outfit index>;..." or a few CrowdAPNG ones (qipao, nine tails, bunny pantyhose layers).
+    #[test]
+    #[ignore="local OK cards (CrowdAPNG) or OK_DET_CARDS"]
+    fn reopening_a_card_gives_the_same_parts() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../Content/CharacterCards/CrowdAPNG/");
+        let list = std::env::var("OK_DET_CARDS").unwrap_or_else(|_| ["C074.png|0", "C011.png|0", "C088.png|6", "C006.png|3", "C000.png|4"]
+            .iter().map(|c| format!("{root}{c}")).collect::<Vec<_>>().join(";"));
+        let runs: usize = std::env::var("OK_DET_RUNS").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
+        let mut bad = Vec::new();
+        for item in list.split(';').filter(|s| !s.is_empty()) {
+            let (card, outfit) = item.rsplit_once('|').map(|(c, o)| (c, o.parse().unwrap_or(0))).unwrap_or((item, 0));
+            let mut first: Option<Vec<String>> = None;
+            for run in 0..runs {
+                let game = std::ffi::CString::new("").unwrap(); let c = std::ffi::CString::new(card).unwrap();
+                let mut out = std::ptr::null_mut(); let mut err = [0i8; 512];
+                let r = unsafe { crate::ffi::session_open(game.as_ptr(), c.as_ptr(), outfit, &mut out, err.as_mut_ptr(), 512) };
+                assert_eq!(r, 0, "{card}: {}", unsafe { std::ffi::CStr::from_ptr(err.as_ptr()) }.to_string_lossy());
+                let d = part_material_digests(unsafe { &*out });
+                unsafe { crate::ffi::session_free(out); }
+                match &first {
+                    None => first = Some(d),
+                    Some(f) if *f != d => {
+                        let diff: Vec<_> = f.iter().zip(&d).filter(|(a, b)| a != b).map(|(a, b)| format!("{a}\n  vs {b}")).take(3).collect();
+                        bad.push(format!("{card} outfit {outfit} run {run}: {} parts vs {}\n{}", f.len(), d.len(), diff.join("\n")));
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            eprintln!("DET {card} outfit {outfit}: {} parts, {runs} opens", first.as_ref().map_or(0, |f| f.len()));
+        }
+        assert!(bad.is_empty(), "reopening differs:\n{}", bad.join("\n"));
+    }
+
+    /// OK_DET_CARD=<OK card> OK_DET_OUTFIT=<index>: prints the part material digests of one open (run it in several processes
+    /// and compare: HashMap iteration order differs between processes).
+    #[test]
+    #[ignore="local OK card via OK_DET_CARD"]
+    fn material_digest_dump() {
+        let card = std::env::var("OK_DET_CARD").unwrap();
+        let outfit: i32 = std::env::var("OK_DET_OUTFIT").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+        let game = std::ffi::CString::new("").unwrap(); let c = std::ffi::CString::new(card).unwrap();
+        let mut out = std::ptr::null_mut(); let mut err = [0i8; 512];
+        let r = unsafe { crate::ffi::session_open(game.as_ptr(), c.as_ptr(), outfit, &mut out, err.as_mut_ptr(), 512) };
+        assert_eq!(r, 0, "{}", unsafe { std::ffi::CStr::from_ptr(err.as_ptr()) }.to_string_lossy());
+        for l in part_material_digests(unsafe { &*out }) { eprintln!("DIGEST {l}"); }
+        if let Ok(w) = std::env::var("OK_DET_PART") { for p in &unsafe { &*out }.parts { if p.name == w { eprintln!("PART {} layer={} blend={} kind={} mat={}", p.name, p.draw_layer, p.blend, p.shader_kind, p.source_material.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()).unwrap_or_default()); } } }
+        unsafe { crate::ffi::session_free(out); }
+    }
+
     /// The qipao of C074 outfit index 0 (the reader's 服裝 1; CrowdAPNG; OK_SKIRT_CARD overrides): standing at rest, its back skirt chain settles as
     /// the game's does (CharaStudio, kks encore.png outfit 0, transforms after WaitForEndOfFrame, frames 1..60 equal).
     /// The game bends it low (-16.2° at the third joint); PhysX bent every joint about -7° and her buttocks showed

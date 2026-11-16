@@ -1108,8 +1108,12 @@ static int32 OKInnerGarmentSortBase(const FString& Role, const FString& Blend)
 
 /** Unity draws blended materials by render queue first (kks encore outfit 0: the qipao's pattern layer
  *  Koikano/main_clothes_alpha at 3150 always over its cloth at 3000; ours flipped with distance). The queue is the sort's
- *  main key, 1000 per step from Transparent (3000, so 0 there: the inner-layer and stacking ranks above stay the order
- *  within one queue). Only blended parts: an opaque part's priority orders the opaque base pass instead. */
+ *  main key, 256 per step from Transparent (3000, so 0 there: the inner-layer and stacking ranks above, -100..+110, stay
+ *  the order within one queue). The scene proxy clamps the priority to int16 (PrimitiveSceneProxy.cpp), so the queue
+ *  is kept within +-127 steps: exact within 64 of 3000, every 8 queues one step beyond. (1000 per step overflowed: every
+ *  queue above 3032 became 32767, and a Material Editor copy at 3041 under its cloth at 3050 swapped with it from frame
+ *  to frame by distance, C088 outfit 7's pantyhose black or sheer.) Only blended parts: an opaque part's priority
+ *  orders the opaque base pass instead. */
 static int32 OKUnityQueueSortOffset(const FOkSession& Source, int32 Index, const FString& Blend)
 {
 	if (!Blend.Equals(TEXT("translucent"), ESearchCase::IgnoreCase)) return 0;
@@ -1117,7 +1121,10 @@ static int32 OKUnityQueueSortOffset(const FOkSession& Source, int32 Index, const
 	Source.MaterialValue(Index, "_OKRenderQueue", Queue);
 	if (Queue.R < 0.f) Source.MaterialValue(Index, "_OKShaderQueue", Queue);
 	if (Queue.R < 0.f) return 0;
-	return FMath::Clamp(FMath::RoundToInt(Queue.R) - 3000, -2000, 2000) * 1000;
+	const int32 Delta = FMath::RoundToInt(Queue.R) - 3000;
+	const int32 Mag = FMath::Abs(Delta);
+	const int32 Step = FMath::Min(Mag <= 64 ? Mag : 64 + (Mag - 64) / 8, 127);
+	return (Delta < 0 ? -Step : Step) * 256;
 }
 
 static UMaterialInterface* MakePartMaterial(UTexture2D* Tex, const FString& Blend, bool bUnlit, bool bTwoSided, bool bEye = false, UTexture2D* GlossTex = nullptr, UTexture2D* OverTex = nullptr, FLinearColor OverColor = FLinearColor::White, bool bNoZ = false, bool bPdo = false, bool bVcOverlay = false, UTexture2D* RampTex = nullptr, FLinearColor ShadowTint = FLinearColor(0.628f, 0.628f, 0.628f, 1.f), UTexture2D* DetailTex = nullptr, UTexture2D* LineTex = nullptr, UTexture2D* NormalTex = nullptr, UTexture2D* NormalMaskTex = nullptr, float ShadowExtend = 1.f, int32 ShaderKind = 0, const FOKToonShadowParameters* Shadow = nullptr, UTexture2D* AlphaMaskTex = nullptr, UTexture2D* OverTex2 = nullptr, bool bBodyOverlay = false)
