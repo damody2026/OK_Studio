@@ -5,6 +5,104 @@
 #include "Blueprint/WidgetTree.h"
 #include "Components/SizeBox.h"
 #include "Styling/CoreStyle.h"
+#include "Containers/Ticker.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Widgets/SWindow.h"
+#if PLATFORM_WINDOWS
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include <msctf.h>
+#include "Windows/HideWindowsPlatformTypes.h"
+#endif
+
+namespace
+{
+	// The Slate widgets of every value field, to recognise one when it takes the keyboard.
+	TArray<TWeakPtr<SWidget>> GValueFieldWidgets;
+
+	// A value field holds a number: the input method stays off while it has the keyboard. Slate turns the IME on for any
+	// text field it focuses, and with 注音 (Bopomofo) the main keyboard's "." is ㄡ: it started a composition that took the
+	// next keys too, and "1.5" ended as "1" (2026-11-16). Off is what the game viewport has anyway; the next text field to
+	// take the keyboard turns it on again for itself.
+	void DisableInputMethod(const TSharedRef<SWidget>& Focused)
+	{
+#if PLATFORM_WINDOWS
+		const TSharedPtr<SWindow> Window = FSlateApplication::Get().FindWidgetWindow(Focused);
+		if (!Window || !Window->GetNativeWindow()) return;
+		const HWND Hwnd = static_cast<HWND>(Window->GetNativeWindow()->GetOSWindowHandle());
+		// IMM: no input context for the window (imm32 is loaded by the engine; looked up so nothing new is linked).
+		if (HMODULE Imm = ::GetModuleHandleW(L"imm32.dll"))
+		{
+			using FAssociate = BOOL(WINAPI*)(HWND, void*, DWORD);
+			if (const FAssociate Associate = reinterpret_cast<FAssociate>(::GetProcAddress(Imm, "ImmAssociateContextEx"))) Associate(Hwnd, nullptr, 0);
+		}
+		// TSF: focus a document manager with no context in it, as the engine does for a viewport.
+		static const CLSID ThreadMgrClass = { 0x529a9e6b, 0x6587, 0x4f23, { 0xab, 0x9e, 0x9c, 0x7d, 0x68, 0x3e, 0x3c, 0x50 } };
+		ITfThreadMgr* Manager = nullptr;
+		if (SUCCEEDED(::CoCreateInstance(ThreadMgrClass, nullptr, CLSCTX_INPROC_SERVER, __uuidof(ITfThreadMgr), reinterpret_cast<void**>(&Manager))) && Manager)
+		{
+			static ITfDocumentMgr* Empty = nullptr;
+			if (!Empty) Manager->CreateDocumentMgr(&Empty);
+			if (Empty)
+			{
+				ITfDocumentMgr* Previous = nullptr;
+				Manager->AssociateFocus(Hwnd, Empty, &Previous);
+				if (Previous) Previous->Release();
+				Manager->SetFocus(Empty);
+			}
+			Manager->Release();
+		}
+#endif
+	}
+
+	bool IsValueField(TSharedPtr<SWidget> Widget)
+	{
+		for (int32 Depth = 0; Depth < 8 && Widget; ++Depth, Widget = Widget->GetParentWidget())
+			for (const TWeakPtr<SWidget>& Field : GValueFieldWidgets)
+				if (Field.Pin() == Widget) return true;
+		return false;
+	}
+
+	void HookFocus()
+	{
+		static bool bHooked = false;
+		if (bHooked || !FSlateApplication::IsInitialized()) return;
+		bHooked = true;
+		FSlateApplication::Get().OnFocusChanging().AddLambda([](const FFocusEvent&, const FWeakWidgetPath&, const TSharedPtr<SWidget>&, const FWidgetPath&, const TSharedPtr<SWidget>& Focused)
+		{
+			if (!Focused || !IsValueField(Focused)) return;
+			// Next frame: after Slate's own focus handling, which is what turns the IME on.
+			TWeakPtr<SWidget> Weak = Focused;
+			FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Weak](float)
+			{
+				if (const TSharedPtr<SWidget> Widget = Weak.Pin(); Widget && Widget->HasKeyboardFocus()) DisableInputMethod(Widget.ToSharedRef());
+				return false;
+			}));
+		});
+	}
+}
+
+TSharedRef<SWidget> UOKValueField::RebuildWidget()
+{
+	TSharedRef<SWidget> Widget = Super::RebuildWidget();
+	GValueFieldWidgets.RemoveAll([](const TWeakPtr<SWidget>& W) { return !W.IsValid(); });
+	GValueFieldWidgets.Add(Widget);
+	HookFocus();
+	return Widget;
+}
+
+void UOKValueField::OnValueEdited(const FText& Edited)
+{
+	const FString Typed = Edited.ToString();
+	for (const TCHAR C : Typed)
+	{
+		if (!(FChar::IsDigit(C) || C == TEXT('-') || C == TEXT('+') || C == TEXT('.') || C == TEXT(',') || C == TEXT(' ') || C == TEXT('°') || C == TEXT('%')))
+		{
+			SetText(FText::FromString(LastValid));
+			return;
+		}
+	}
+	LastValid = Typed;
+}
 
 UWidget* UOKValueField::Make(UWidgetTree* Tree, USlider* Slider, int32 FontSize, float MinWidth, UOKValueField** Out)
 {
@@ -22,6 +120,7 @@ UWidget* UOKValueField::Make(UWidgetTree* Tree, USlider* Slider, int32 FontSize,
 	Box->SetClearKeyboardFocusOnCommit(true);
 	Box->Slider = Slider;
 	Box->OnTextCommitted.AddDynamic(Box, &UOKValueField::OnValueCommitted);
+	Box->OnTextChanged.AddDynamic(Box, &UOKValueField::OnValueEdited);
 	if (Out) *Out = Box;
 	USizeBox* Size = Tree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
 	Size->SetMinDesiredWidth(MinWidth);
@@ -35,7 +134,8 @@ void UOKValueField::Refresh(bool bForce)
 	if (!S) return;
 	// Slider syncs (card reload, MCP, another control) must not overwrite what the user is typing.
 	if (!bForce && HasKeyboardFocus()) return;
-	SetText(FText::FromString(Format ? Format(S->GetValue()) : FText::AsNumber(S->GetValue()).ToString()));
+	LastValid = Format ? Format(S->GetValue()) : FText::AsNumber(S->GetValue()).ToString();
+	SetText(FText::FromString(LastValid));
 }
 
 void UOKValueField::OnValueCommitted(const FText& Entered, ETextCommit::Type Method)

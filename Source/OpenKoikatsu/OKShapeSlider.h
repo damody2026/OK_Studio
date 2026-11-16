@@ -34,6 +34,17 @@ public:
 
 	UFUNCTION()
 	void OnValueCommitted(const FText& Entered, ETextCommit::Type Method);
+
+	// Only digits, sign, decimal point, grouping and the shown unit are taken; any other edit (a letter, a pasted word) is
+	// undone at once, so the field never holds anything but a number.
+	UFUNCTION()
+	void OnValueEdited(const FText& Edited);
+
+protected:
+	virtual TSharedRef<SWidget> RebuildWidget() override;
+
+private:
+	FString LastValid;
 };
 
 UCLASS()
