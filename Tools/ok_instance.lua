@@ -21,6 +21,25 @@ function M.ports_at(base, voice)
   return { base = base, tts = base, asr = base + 1, street_control = base + 10, pair_control = base + 11, ui_control = base + 12, song = base + 20, studio_control = base + 30, voice = voice }
 end
 
+-- Records who started the game process `pid`: Saved/OKControl/launched/<pid>.json with the Claude session (the nearest
+-- claude.exe above this launcher, "pid yyyyMMddHHmmss") or none when a person started it. ok-game-mcp counts a game
+-- whose record names its own session as its own, so tools without game_select act on it and not on another session's
+-- (2026-11-16: a reader_call load with nothing selected opened a card in f-yvonne's card reader).
+function M.record_launch(pid, root)
+  root = root or ok.root
+  local proc = ok.proc
+  local out = proc.output({ "powershell", "-NoProfile", "-Command",
+    "$p = Get-CimInstance Win32_Process -Filter \"ProcessId=$PID\"; " ..
+    "for ($i = 0; $i -lt 16 -and $p; $i++) { $p = Get-CimInstance Win32_Process -Filter \"ProcessId=$($p.ParentProcessId)\"; " ..
+    "if ($p -and $p.Name -eq 'claude.exe') { '' + $p.ProcessId + ' ' + $p.CreationDate.ToString('yyyyMMddHHmmss'); break } }" },
+    { check = false }) or ""
+  local session = out:match("(%d+ %d+)")
+  local dir = path.join(root, "Saved", "OKControl", "launched")
+  path.mkdir(dir, true)
+  local record = { pid = pid, session = session or json.null, started = os.date("%Y-%m-%d %H:%M:%S") }
+  pcall(path.write_text, path.join(dir, tostring(pid) .. ".json"), json.encode(record))
+end
+
 function M.ports(root)
   root = root or ok.root
   local base, voice = 47860, true

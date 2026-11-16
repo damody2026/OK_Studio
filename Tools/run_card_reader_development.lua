@@ -133,6 +133,7 @@ local function main()
   for k, v in pairs(saved) do fs.setenv(k, v or nil) end
   if not okv then error(pid, 0) end
   receipt.pid = pid
+  instance.record_launch(pid, root)
   -- A second server on a port already taken just exits: the one there keeps serving.
   if start_tts and not o.dryrun then
     local args = { tts, "serve", "--port", tostring(ports.tts), "--settings", settings_file, "--parent-pid", tostring(pid) }

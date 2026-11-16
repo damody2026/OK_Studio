@@ -148,9 +148,23 @@ fn end_talk(game: &Game) -> Result<()> {
     Ok(())
 }
 
+/// One tool call. With nothing picking the game (game_select, OK_GAME_PID, game_launch) and several running, a change is
+/// refused in control::target; a read says in its reply which pid answered.
 fn run(game: &Game, name: &str, a: &Value) -> Result<Value> {
+    control::begin_call(control::mutates(name, a));
+    let mut r = dispatch(game, name, a)?;
+    let pid = control::default_target();
+    if pid != 0 {
+        if let Some(content) = r["content"].as_array_mut() {
+            content.push(json!({"type": "text", "text": format!("(answered by pid {pid}: no game was picked; game_select it to be sure)")}));
+        }
+    }
+    Ok(r)
+}
+
+fn dispatch(game: &Game, name: &str, a: &Value) -> Result<Value> {
     if name.starts_with("studio_") {
-        return studio::run(&studio::Studio::locate(&game.root), name, a);
+        return studio::run(&studio::Studio::locate(&game.root)?, name, a);
     }
     if matches!(name, "game_instances" | "game_select" | "reader_call" | "pair_call") || name.starts_with("ui_") {
         return control::run(&game.root, name, a);

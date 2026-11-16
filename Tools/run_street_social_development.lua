@@ -656,6 +656,7 @@ Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11
   if o.control then say(("Control channel: http://127.0.0.1:%d (Tools/ok-game-mcp finds it through local-instance.json)"):format(control_port)) end
   local pid = proc.spawn(game, { cwd = root, hide = o.selftest and true or nil })
   print("game pid " .. pid);io.stdout:flush() -- ok-game-mcp watches it: this launcher leaves while the game runs
+instance.record_launch(pid, root) -- whose game it is, for ok-game-mcp calls with nothing selected
   path.write_text(path.join(output, "game.pid"), tostring(pid))
   local server_pids = {}
   for _, s in ipairs(servers) do

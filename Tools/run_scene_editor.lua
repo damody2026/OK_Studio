@@ -151,6 +151,7 @@ local function main()
   local okv, pid = pcall(proc.spawn, args, { cwd = root, env = env })
   if not okv then error(pid, 0) end
   receipt.pid = pid
+  require("ok_instance").record_launch(pid, root)
   path.write_text(path.join(log_root, tag .. ".json"), json.encode(receipt, { indent = 2, ensure_ascii = false }))
   io.write("Scene editor started. PID=", tostring(pid), "\nLog: ", log, "\n")
 end

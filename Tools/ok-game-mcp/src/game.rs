@@ -44,13 +44,13 @@ impl Game {
     }
 
     /// The running street game's port (OK_CONTROL_PORT fixes it; a game takes the next free one when another has it).
-    fn live_port(&self) -> u16 {
-        if std::env::var_os("OK_CONTROL_PORT").is_some() { self.port } else { crate::control::port(&self.root, "street", self.port) }
+    fn live_port(&self) -> Result<u16> {
+        if std::env::var_os("OK_CONTROL_PORT").is_some() { Ok(self.port) } else { crate::control::port(&self.root, "street", self.port) }
     }
 
     /// GET (body None) or POST JSON to the control channel; the reply is JSON.
     pub fn call(&self, path: &str, body: Option<&Value>) -> Result<Value> {
-        let port = self.live_port();
+        let port = self.live_port()?;
         http(port, path, body, Duration::from_secs(60), || {
             format!("the game's control channel is not up on 127.0.0.1:{port} (start it with game_launch)")
         })
@@ -111,7 +111,7 @@ impl Game {
     pub fn launch(&self, window: &str, extra: &[String], timeout: Duration) -> Result<Value> {
         // Only this server's own game stands in the way: another session's sandbox game runs on its own ports.
         if crate::control::own_ready(&self.root) && self.up() {
-            bail!("this session's game still answers on port {}; game_stop it first", self.live_port());
+            bail!("this session's game still answers on port {}; game_stop it first", self.live_port()?);
         }
         crate::control::set_own(0);
         let lua = self.root.join("Tools/lua/lua.exe");
@@ -141,7 +141,7 @@ impl Game {
                 crate::control::set_own(pid);
             }
             if crate::control::own_ready(&self.root) && self.up() {
-                return Ok(json!({"ok": true, "port": self.live_port(), "seconds": start.elapsed().as_secs()}));
+                return Ok(json!({"ok": true, "port": self.live_port()?, "seconds": start.elapsed().as_secs()}));
             }
             std::thread::sleep(Duration::from_secs(2));
         }
@@ -169,7 +169,7 @@ impl Game {
     fn port_pid(&self) -> Result<Option<String>> {
         let out = Command::new("netstat").args(["-ano", "-p", "TCP"]).output()?;
         let text = String::from_utf8_lossy(&out.stdout);
-        let port = self.live_port();
+        let port = self.live_port()?;
         let local = format!("127.0.0.1:{port}");
         let any = format!("0.0.0.0:{port}");
         Ok(text
@@ -190,7 +190,7 @@ impl Game {
         // The port is machine-wide: E:'s server, with the same port base, closed C:'s game listening there (2026-11-08 19:03).
         // Only a game of this checkout (its channels under Saved/OKControl) is stopped.
         if !crate::control::instances(&self.root).iter().any(|v| v["pid"].as_u64().map(|p| p.to_string()) == Some(pid.clone())) {
-            bail!("the game on port {} (pid {pid}) is not a game of this checkout; not stopped", self.live_port());
+            bail!("the game on port {} (pid {pid}) is not a game of this checkout; not stopped", self.live_port()?);
         }
         let status = Command::new("taskkill").args(["/PID", &pid]).output()?;
         Ok(json!({"ok": status.status.success(), "stopped": pid}))

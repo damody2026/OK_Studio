@@ -6,6 +6,8 @@ use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::path::Path;
 use std::process::Command;
+use std::cell::Cell;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -54,27 +56,116 @@ pub fn instances(root: &Path) -> Vec<Value> {
     found
 }
 
-/// The game the tools act on for this value: the selected one, else the newest that has it.
-fn target(root: &Path, key: &str) -> Option<Value> {
+thread_local! {
+    /// Whether the tool call running on this thread changes a game (load, set, press, key...) rather than only reads it.
+    static CALL_MUTATES: Cell<bool> = const { Cell::new(false) };
+    /// The game the call went to when nothing picked it (game_select, OK_GAME_PID, game_launch): shown in the reply.
+    static DEFAULT_TARGET: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Marks the call about to run on this thread; returns nothing to undo (every call sets it first).
+pub fn begin_call(mutates: bool) {
+    CALL_MUTATES.with(|c| c.set(mutates));
+    DEFAULT_TARGET.with(|c| c.set(0));
+}
+
+/// The pid the last call on this thread went to by default (nothing selected), or 0.
+pub fn default_target() -> u32 {
+    DEFAULT_TARGET.with(Cell::get)
+}
+
+/// Whether a tool call changes the game it goes to. Reads may go to the newest game when several run; changes may not
+/// (2026-11-16: reader_call load with nothing selected opened a card in another session's card reader).
+pub fn mutates(name: &str, a: &Value) -> bool {
+    match name {
+        "game_instances" | "game_select" | "game_launch" | "game_stop" | "image_stats" => false,
+        "game_state" | "game_buttons" | "game_screenshot" | "game_log" => false,
+        "ui_state" | "ui_widgets" | "ui_screenshot" => false,
+        "reader_call" => !matches!(a["action"].as_str().unwrap_or(""), "state" | "cards" | "parameters" | "get" | "controls" | "views" | "measure" | "catalog" | "screenshot" | "snapshot"),
+        "pair_call" => !a["path"].as_str().is_some_and(|p| p.starts_with("/stats") || p.starts_with("/pose")),
+        "studio_launch" => false,
+        "studio_state" | "studio_inspect" | "studio_scenes" | "studio_catalog" | "studio_catalog_search" | "studio_bones" | "studio_bounds"
+        | "studio_report" | "studio_capture" | "studio_ui_shot" => false,
+        _ => true,
+    }
+}
+
+/// This process's Claude session: the nearest claude.exe above it, "pid yyyyMMddHHmmss" (as Tools/ok_instance.lua
+/// record_launch writes it), or None outside a session.
+fn my_session() -> Option<&'static str> {
+    static SESSION: OnceLock<Option<String>> = OnceLock::new();
+    SESSION
+        .get_or_init(|| {
+            let script = format!(
+                "$p = Get-CimInstance Win32_Process -Filter \"ProcessId={}\"; for ($i = 0; $i -lt 16 -and $p; $i++) {{ $p = Get-CimInstance Win32_Process -Filter \"ProcessId=$($p.ParentProcessId)\"; if ($p -and $p.Name -eq 'claude.exe') {{ '' + $p.ProcessId + ' ' + $p.CreationDate.ToString('yyyyMMddHHmmss'); break }} }}",
+                std::process::id()
+            );
+            let out = Command::new("powershell").args(["-NoProfile", "-Command", &script]).output().ok()?;
+            let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            (!text.is_empty()).then_some(text)
+        })
+        .as_deref()
+}
+
+/// Whether this session started the game: game_launch here, or CardReaderDevelopment.cmd / SceneEditor.cmd /
+/// studio_launch run from this Claude session (their launchers record it under Saved/OKControl/launched).
+fn is_mine(root: &Path, pid: u64) -> bool {
+    if pid == u64::from(OWN.load(Ordering::Relaxed)) && pid != 0 {
+        return true;
+    }
+    let Some(me) = my_session() else { return false };
+    std::fs::read_to_string(root.join("Saved/OKControl/launched").join(format!("{pid}.json")))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(t.trim_start_matches('\u{feff}')).ok())
+        .is_some_and(|v| v["session"].as_str() == Some(me))
+}
+
+/// The games listed for a caller that has to pick one.
+fn listing(all: &[Value]) -> String {
+    all.iter()
+        .map(|v| format!("pid {} ({} {})", v["pid"], v["game_mode"].as_str().or(v["mode"].as_str()).unwrap_or("?"), v["map"].as_str().unwrap_or("?")))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The game the tools act on for this value: the selected one (game_select, OK_GAME_PID), else this session's own, else
+/// the only one that has it. With several and none picked, a change is refused (listing them); a read goes to the newest
+/// and the reply says which pid answered.
+fn target(root: &Path, key: &str) -> Result<Option<Value>> {
     let all = instances(root);
     // OK_GAME_PID picks the game as game_select does, for `ok-game-mcp call` (a process per call keeps no selection).
     let env_pid = std::env::var("OK_GAME_PID").ok().and_then(|p| p.trim().parse::<u32>().ok()).unwrap_or(0);
     let selected = if env_pid != 0 { env_pid } else { SELECTED.load(Ordering::Relaxed) };
     if selected != 0 {
-        return all.into_iter().find(|v| v["pid"].as_u64() == Some(selected.into()));
+        return Ok(all.into_iter().find(|v| v["pid"].as_u64() == Some(selected.into())));
     }
     let own = OWN.load(Ordering::Relaxed);
     if own != 0 {
         if let Some(v) = all.iter().find(|v| v["pid"].as_u64() == Some(own.into())) {
-            return v[key].is_string().then(|| v.clone());
+            return Ok(v[key].is_string().then(|| v.clone()));
         }
     }
-    all.into_iter().rev().find(|v| v[key].is_string())
+    let with: Vec<Value> = all.into_iter().filter(|v| v[key].is_string()).collect();
+    let mine: Vec<Value> = with.iter().filter(|v| v["pid"].as_u64().is_some_and(|p| is_mine(root, p))).cloned().collect();
+    let pool = if mine.is_empty() { &with } else { &mine };
+    if pool.len() > 1 && CALL_MUTATES.with(Cell::get) {
+        bail!(
+            "{} games run and none is picked for a change: game_select one (or OK_GAME_PID for ok-game-mcp call): {}",
+            pool.len(),
+            listing(pool)
+        );
+    }
+    let chosen = pool.last().cloned();
+    if let Some(pid) = chosen.as_ref().and_then(|v| v["pid"].as_u64()) {
+        DEFAULT_TARGET.with(|c| c.set(pid as u32));
+    }
+    Ok(chosen)
 }
 
 /// The channel's port in the running game (the registry writes values as text), else the default.
-pub fn port(root: &Path, channel: &str, default: u16) -> u16 {
-    target(root, &format!("port_{channel}")).and_then(|v| v[format!("port_{channel}")].as_str()?.parse().ok()).unwrap_or(default)
+pub fn port(root: &Path, channel: &str, default: u16) -> Result<u16> {
+    let key = format!("port_{channel}");
+    Ok(target(root, &key)?.and_then(|v| v[&key].as_str()?.parse().ok()).unwrap_or(default))
 }
 
 fn base(root: &Path) -> u16 {
@@ -86,7 +177,7 @@ fn base(root: &Path) -> u16 {
 }
 
 fn ui(root: &Path, path: &str, body: Option<&Value>) -> Result<Value> {
-    let port = port(root, "ui", base(root) + 12);
+    let port = port(root, "ui", base(root) + 12)?;
     let r = http(port, path, body, Duration::from_secs(60), || format!("no game answers on the UI channel 127.0.0.1:{port} (game_instances lists what runs)"))?;
     if r["ok"] == false {
         bail!("{}", r["error"].as_str().unwrap_or("failed"));
@@ -98,7 +189,7 @@ fn ui(root: &Path, path: &str, body: Option<&Value>) -> Result<Value> {
 /// read first when not given.
 fn reader(root: &Path, a: &Value) -> Result<Value> {
     let action = a["action"].as_str().context("action is required")?;
-    let mailbox = target(root, "mailbox").and_then(|v| v["mailbox"].as_str().map(String::from)).context("no running game has a card reader mailbox (game_instances)")?;
+    let mailbox = target(root, "mailbox")?.and_then(|v| v["mailbox"].as_str().map(String::from)).context("no running game has a card reader mailbox (game_instances)")?;
     let mut body = a.clone();
     if action != "state" && body["session"].is_null() {
         let state = mailbox_call(Path::new(&mailbox), &json!({"action": "state"}), 10.)?;
@@ -191,7 +282,7 @@ pub fn run(root: &Path, name: &str, a: &Value) -> Result<Value> {
         }
         "reader_call" => text(&reader(root, a)?),
         "pair_call" => {
-            let port = port(root, "pair", base(root) + 11);
+            let port = port(root, "pair", base(root) + 11)?;
             let path = a["path"].as_str().context("path is required")?;
             let reply = http_text(port, path, None, Duration::from_secs(60), || format!("no 1-on-1 scene answers on 127.0.0.1:{port}"))?;
             json!({"content": [{"type": "text", "text": reply}], "isError": false})

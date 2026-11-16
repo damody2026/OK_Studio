@@ -17,15 +17,18 @@ pub struct Studio {
 
 impl Studio {
     /// The same checkout as the street game.
-    pub fn locate(root: &Path) -> Studio {
+    pub fn locate(root: &Path) -> Result<Studio> {
         let default = std::fs::read_to_string(root.join("local-instance.json"))
             .ok()
             .and_then(|t| serde_json::from_str::<Value>(t.trim_start_matches('\u{feff}')).ok())
             .and_then(|v| v["port_base"].as_u64())
             .unwrap_or(47860) as u16
             + 30;
-        let port = std::env::var("OK_STUDIO_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or_else(|| crate::control::port(root, "studio", default));
-        Studio { root: root.to_path_buf(), port }
+        let port = match std::env::var("OK_STUDIO_PORT").ok().and_then(|p| p.parse().ok()) {
+            Some(p) => p,
+            None => crate::control::port(root, "studio", default)?,
+        };
+        Ok(Studio { root: root.to_path_buf(), port })
     }
 
     /// POST /studio/<op>; the reply as it came (ok true or false). Loading, saving and capturing can take a while.
