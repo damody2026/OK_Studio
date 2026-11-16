@@ -2372,6 +2372,21 @@ impl OkSession {
         }
     }
 
+    /// Her clothes' and accessories' DynamicBone chains as simulated now (ok_session_dynamic_chains_json): each with the
+    /// part (or "clothes" for the shared clothes set) it belongs to.
+    pub(crate) fn dynamic_chains_report(&self) -> serde_json::Value {
+        let body = self.body_skel.as_ref();
+        let mut out = Vec::new();
+        if let Some((_, set)) = &self.clothes_dynamic_runtime {
+            for chain in set.report(body) { out.push(serde_json::json!({"owner": "clothes", "chain": chain})); }
+        }
+        for part in &self.parts {
+            let Some(set) = part.runtime_accessory.as_ref().and_then(|r| r.state.as_ref()) else { continue; };
+            for chain in set.report(body) { out.push(serde_json::json!({"owner": part.name, "chain": chain})); }
+        }
+        serde_json::Value::Array(out)
+    }
+
     pub(crate) fn update_dynamic_accessories(&mut self, dt: f32) {
         self.update_dynamic_accessories_impl(dt, crate::anim::is_shared_root(&self.game_root));
     }
@@ -8179,6 +8194,33 @@ fn acc_shared_solve() -> bool {
 
 #[cfg(test)]
 mod jump_probe_tests {
+
+    /// The qipao of C074 outfit index 0 (the reader's 服裝 1; CrowdAPNG; OK_SKIRT_CARD overrides): standing at rest, its back skirt chain settles as
+    /// the game's does (CharaStudio, kks encore.png outfit 0, transforms after WaitForEndOfFrame, frames 1..60 equal).
+    /// The game bends it low (-16.2° at the third joint); PhysX bent every joint about -7° and her buttocks showed
+    /// through the back panel. Any change to the clothes' solver must keep these angles.
+    #[test]
+    #[ignore="local OK card C074 (CrowdAPNG) or OK_SKIRT_CARD"]
+    fn qipao_back_skirt_settles_as_the_game() {
+        let card=std::env::var("OK_SKIRT_CARD").unwrap_or_else(|_|concat!(env!("CARGO_MANIFEST_DIR"),"/../../Content/CharacterCards/CrowdAPNG/C074.png").to_string());
+        let game=std::ffi::CString::new("").unwrap();let c=std::ffi::CString::new(card.clone()).unwrap();
+        let mut out=std::ptr::null_mut();let mut err=[0i8;512];
+        let r=unsafe{crate::ffi::session_open(game.as_ptr(),c.as_ptr(),0,&mut out,err.as_mut_ptr(),512)};
+        assert_eq!(r,0,"{}",unsafe{std::ffi::CStr::from_ptr(err.as_ptr())}.to_string_lossy());
+        let s=unsafe{&mut *out};
+        // Her rest pose each frame, then her clothes chains (as the reader's T-pose): the game's DynamicBone without a host.
+        for _ in 0..120 { s.reset_animator_pose(); s.update_clothes_dynamics(1.0/60.0); }
+        let native=[("cf_j_sk_04_00",-2.2337f32),("cf_j_sk_04_01",-3.1237),("cf_j_sk_04_02",-16.2113),("cf_j_sk_04_03",0.0)];
+        let mut bad=Vec::new();
+        for (bone,want) in native {
+            let got=s.body_bone_euler(bone).unwrap_or_else(||panic!("{bone} missing"));
+            eprintln!("QIPAO {bone} x={:.4} (game {want:.4})",got[0]);
+            if (got[0]-want).abs()>0.05 { bad.push(format!("{bone} {:.4} vs game {want:.4}",got[0])); }
+        }
+        unsafe{crate::ffi::session_free(out);}
+        assert!(bad.is_empty(),"back skirt chain differs from the game: {bad:?}");
+    }
+
     /// OK_JUMP_CARD=<OK card> OK_JUMP_OUTFIT=<n> (OK_BASE_LIBRARY set): open as the reader does (no game root), play the
     /// jump demo ("Demo：蹦跳"; OK_JUMP_CLIP another) for OK_JUMP_FRAMES frames with the built-in solver, and report each
     /// part's farthest vertex from the hips. OK_JUMP_DESCRIBE=1 prints the clothes chains and skirt bone frames.

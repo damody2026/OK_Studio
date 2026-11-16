@@ -2947,6 +2947,20 @@ pub unsafe extern "C" fn ok_session_refresh_body_physics(s:*mut OkSession)->i32 
  // only when the shape changed: the modes showed no difference in H, 2026-11-03).
  let Some(s)=sess_ref(s)else{return -1;};s.body_dynamic_runtime=None;0
 }
+/// Her clothes' and accessories' DynamicBone chains as simulated now, as JSON (the reader's ok.Debug.DynamicChains).
+/// Query with a null `out` for the size, then copy; -1 on failure.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_dynamic_chains_json(s:*mut OkSession,out:*mut u8,cap:i32)->i32 {
+    let Some(s)=sess_ref(s) else{return -1;};
+    let Ok(bytes)=serde_json::to_vec(&s.dynamic_chains_report()) else{return -1;};
+    copy_resource(&bytes,out,cap)
+}
+/// Her dynamics (accessory and hair chains, clothes chains, body) back to rest, built again on the next step: a replay
+/// from a known start reaches the same pose at the same time (the reader's ok.Anim.SetTime). 0 on success.
+#[no_mangle]
+pub unsafe extern "C" fn ok_session_reset_dynamics(s:*mut OkSession)->i32 {
+ let Some(s)=sess_ref(s)else{return -1;};s.reset_dynamic_accessories();s.body_dynamic_runtime=None;s.clothes_dynamic_runtime=None;0
+}
 #[no_mangle]
 pub unsafe extern "C" fn ok_editor_body_physics(s:*mut OkSession,softness:f32,weight:f32)->i32 {
  let Some(s)=sess_ref(s)else{return -1;};if !softness.is_finite()||!weight.is_finite(){return -1;}

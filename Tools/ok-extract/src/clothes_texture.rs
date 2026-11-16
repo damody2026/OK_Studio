@@ -542,11 +542,15 @@ pub(crate) fn load_over_clothes_mask(game_root: &Path, e: &ListEntry, key: &str)
     }
     let low = format!("{name}_low");
     let names: Vec<&str> = if character_hi_poly() { vec![&name] } else { vec![&low, &name] };
+    // LoadAlphaMaskTexture is AssetBundle.LoadAsset<Texture2D>(name): an exact name or nothing. A ranked (prefix)
+    // match would take another texture of the bundle as the mask (C077: a top whose OverBodyMask names its own prefab
+    // drew its albedo as the body's mask and cut her legs away, where the game has no mask at all).
+    let exact = |bytes: &[u8]| names.iter().find_map(|n| crate::unity::exact_png_from_ref(bytes, n));
     // Mod bundles live inside the zipmod, not on disk; use the entry's source zip.
     let zip = e.extra.get("__zip").map(String::as_str);
     if let Some(zip) = zip {
         if let Some(bytes) = crate::mods::zipmod_bundle_named(Path::new(zip), &ab) {
-            if let Some((_, b)) = crate::unity::named_png_from_bytes(bytes, &names) {
+            if let Some(b) = exact(&bytes[..]) {
                 return Some(b);
             }
         }
@@ -556,10 +560,11 @@ pub(crate) fn load_over_clothes_mask(game_root: &Path, e: &ListEntry, key: &str)
     if let Some(b) = sideloader_png(zip, game_root, &ab, &names) {
         return Some(b);
     }
-    if let Some((_, b)) = crate::mods::override_bundle(&game_root.join("mods"), &ab).and_then(|b| crate::unity::named_png_from_bytes(b, &names)) {
+    if let Some(b) = crate::mods::override_bundle(&game_root.join("mods"), &ab).and_then(|b| exact(&b)) {
         return Some(b);
     }
-    let found = png_from_ab(game_root, &ab, &names, &[]);
+    let found = if ab.is_empty() || ab == "0" { None }
+        else { crate::gamefs::read(&game_root.join("abdata").join(&ab)).ok().and_then(|b| exact(&b)) };
     if found.is_none() {
         eprintln!("ok-extract: {key} {name} not found in {ab} (zip={:?})", e.extra.get("__zip"));
     }
@@ -594,7 +599,13 @@ pub fn mask_report(game_root: &Path, card_path: &Path) -> Result<Vec<String>, St
             // The extraction now searches every source below too; a source it still misses would be "ours".
             let source = if load_over_clothes_mask(game_root, &entry, key).is_some() { Some(("ok  ", "found")) }
                 else if sideloader_png(zip, game_root, &ab, &names).is_some() { Some(("ours", "Sideloader png")) }
-                else if crate::mods::override_bundle(&mods_dir, &ab).and_then(|b| crate::unity::named_png_from_bytes(b, &names)).is_some() { Some(("ours", "bundle in another zipmod")) }
+                else if crate::mods::override_bundle(&mods_dir, &ab).is_some_and(|b| names.iter().any(|n| crate::unity::exact_png_from_ref(&b, n).is_some())) { Some(("ours", "bundle in another zipmod")) }
+                // Only another texture whose name starts the same: the game's exact lookup loads no mask (an extraction
+                // before exact matching drew that texture as the mask).
+                else if zip.and_then(|z| crate::mods::zipmod_bundle_named(Path::new(z), &ab)).and_then(|b| crate::unity::named_png_from_bytes(b, &names))
+                    .or_else(|| crate::mods::override_bundle(&mods_dir, &ab).and_then(|b| crate::unity::named_png_from_bytes(b, &names))).is_some() {
+                    Some(("near", "no texture of that exact name; the game loads none, only a texture of a similar name is there"))
+                }
                 else { None };
             rows.push(match source {
                 Some((tag, what)) => format!("{tag} {item}: {name} in {ab} ({what})"),

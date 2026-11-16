@@ -33,15 +33,20 @@ pub const FLAG_BUST: u32 = 64;
 /// follows it while OKPhysXSecondary.Backend is -1 (per component); 0..6 there force one solver on every chain.
 pub const FLAG_SOLVER_SHIFT: u32 = 8;
 pub const FLAG_SOLVER_MASK: u32 = 15 << FLAG_SOLVER_SHIFT;
+/// Set by the host on the root of a chain asking for `Solver::Verlet` while no backend is forced: the host left it
+/// untouched and ok-extract steps it with the built-in DynamicBone update.
+pub const FLAG_BUILTIN: u32 = 1 << 12;
 
 /// Host solvers a component can ask for (OKPhysXSecondary.Backend numbers).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Solver { PhysX = 0, Kawaii = 1, Chaos = 2, Jolt = 4, MuJoCo = 5, DynamicBone = 6 }
+/// `Verlet` (7) is not a host solver: the game's own DynamicBone update in ok-extract (the reader's 原始 Verlet), the
+/// chain's own colliders only; it matches the game's post-physics pose bit for bit (C074 outfit 1 skirt chain).
+pub enum Solver { PhysX = 0, Kawaii = 1, Chaos = 2, Jolt = 4, MuJoCo = 5, DynamicBone = 6, Verlet = 7 }
 impl Solver {
-    pub const ALL: [Solver; 6] = [Solver::PhysX, Solver::Kawaii, Solver::Chaos, Solver::Jolt, Solver::MuJoCo, Solver::DynamicBone];
+    pub const ALL: [Solver; 7] = [Solver::PhysX, Solver::Kawaii, Solver::Chaos, Solver::Jolt, Solver::MuJoCo, Solver::DynamicBone, Solver::Verlet];
     /// Name used in OK cards (`okPh`).
     pub fn name(self) -> &'static str {
-        match self { Solver::PhysX => "physx", Solver::Kawaii => "kawaii", Solver::Chaos => "chaos", Solver::Jolt => "jolt", Solver::MuJoCo => "mujoco", Solver::DynamicBone => "dynbone" }
+        match self { Solver::PhysX => "physx", Solver::Kawaii => "kawaii", Solver::Chaos => "chaos", Solver::Jolt => "jolt", Solver::MuJoCo => "mujoco", Solver::DynamicBone => "dynbone", Solver::Verlet => "verlet" }
     }
     pub fn from_name(name: &str) -> Option<Solver> { Solver::ALL.into_iter().find(|s| s.name().eq_ignore_ascii_case(name.trim())) }
     fn flags(self) -> u32 { (self as u32 + 1) << FLAG_SOLVER_SHIFT }
@@ -57,7 +62,8 @@ impl PhysicsComponent {
         else if role.starts_with("clothes") { PhysicsComponent::Clothes }
         else { PhysicsComponent::Accessory }
     }
-    /// Hair, breasts and hips keep the game's own DynamicBone (with collision added); everything else uses PhysX.
+    /// Hair, breasts and hips keep the game's own DynamicBone (with collision added); everything else uses PhysX
+    /// (user decision 2026-10-18, Docs/PER_COMPONENT_PHYSICS_PLAN.md section 5).
     pub fn default_solver(self) -> Solver {
         match self { PhysicsComponent::Hair | PhysicsComponent::Body => Solver::DynamicBone, _ => Solver::PhysX }
     }
@@ -465,6 +471,8 @@ mod component_tests {
         assert_eq!(of("a_n_bust_f", "o_necktie_yure_long", &["j_acs_01"]), Accessory);
         assert_eq!(Tail.default_solver(), super::Solver::PhysX);
         assert_eq!(Hair.default_solver(), super::Solver::DynamicBone);
+        assert_eq!(super::PhysicsComponent::Clothes.default_solver(), super::Solver::PhysX);
+        assert_eq!(super::Solver::from_name("verlet"), Some(super::Solver::Verlet));
     }
 
 }

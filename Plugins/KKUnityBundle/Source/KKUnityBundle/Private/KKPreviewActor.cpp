@@ -47,6 +47,7 @@
 #include "KKRuntimeSkinBounds.h"
 #include "KKRuntimeMaterial.h"
 #include "KKRuntimeSharedMaterial.h"
+#include "KKPreviewDebug.h"
 #include "KKRuntimeDisplayProfile.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/PoseableMeshComponent.h"
@@ -1103,6 +1104,20 @@ static int32 OKInnerGarmentSortBase(const FString& Role, const FString& Blend)
 	if (Role == TEXT("clothes_panst") || Role == TEXT("clothes_socks")) return -200;
 	if (Role == TEXT("clothes_bra") || Role == TEXT("clothes_shorts")) return -100;
 	return 0;
+}
+
+/** Unity draws blended materials by render queue first (kks encore outfit 0: the qipao's pattern layer
+ *  Koikano/main_clothes_alpha at 3150 always over its cloth at 3000; ours flipped with distance). The queue is the sort's
+ *  main key, 1000 per step from Transparent (3000, so 0 there: the inner-layer and stacking ranks above stay the order
+ *  within one queue). Only blended parts: an opaque part's priority orders the opaque base pass instead. */
+static int32 OKUnityQueueSortOffset(const FOkSession& Source, int32 Index, const FString& Blend)
+{
+	if (!Blend.Equals(TEXT("translucent"), ESearchCase::IgnoreCase)) return 0;
+	FLinearColor Queue(-1.f, 0.f, 0.f, 0.f);
+	Source.MaterialValue(Index, "_OKRenderQueue", Queue);
+	if (Queue.R < 0.f) Source.MaterialValue(Index, "_OKShaderQueue", Queue);
+	if (Queue.R < 0.f) return 0;
+	return FMath::Clamp(FMath::RoundToInt(Queue.R) - 3000, -2000, 2000) * 1000;
 }
 
 static UMaterialInterface* MakePartMaterial(UTexture2D* Tex, const FString& Blend, bool bUnlit, bool bTwoSided, bool bEye = false, UTexture2D* GlossTex = nullptr, UTexture2D* OverTex = nullptr, FLinearColor OverColor = FLinearColor::White, bool bNoZ = false, bool bPdo = false, bool bVcOverlay = false, UTexture2D* RampTex = nullptr, FLinearColor ShadowTint = FLinearColor(0.628f, 0.628f, 0.628f, 1.f), UTexture2D* DetailTex = nullptr, UTexture2D* LineTex = nullptr, UTexture2D* NormalTex = nullptr, UTexture2D* NormalMaskTex = nullptr, float ShadowExtend = 1.f, int32 ShaderKind = 0, const FOKToonShadowParameters* Shadow = nullptr, UTexture2D* AlphaMaskTex = nullptr, UTexture2D* OverTex2 = nullptr, bool bBodyOverlay = false)
@@ -6768,6 +6783,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 				const FName FollowName = ComponentName(UKKRuntimePoseableMeshComponent::StaticClass(),FString::Printf(TEXT("Skel_%d"), Published));
 				UPoseableMeshComponent* Follow = NewObject<UKKRuntimePoseableMeshComponent>(this, FollowName);
 				Follow->ComponentTags.Add(*FString::Printf(TEXT("KKSessionPart_%d"),Published));
+				OKTagPreviewPart(Follow, Name);
 				Follow->SetupAttachment(RootComponent);
 				Install(Follow);
 				Follow->SetSkinnedAssetAndUpdate(SkMesh);
@@ -6797,9 +6813,9 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 				{
 					// A later layer of the same surface (Material Editor copy, duplicated accessory) draws after the
 					// earlier ones and keeps equal-depth pixels, as Unity's LEqual (engine r.OK.OpaqueSortPriority).
-					Follow->SetTranslucentSortPriority(OKInnerGarmentSortBase(Part.Role, Blend) + FMath::Min(View.draw_layer, 99));
+					Follow->SetTranslucentSortPriority(OKUnityQueueSortOffset(Source, i, Blend) + OKInnerGarmentSortBase(Part.Role, Blend) + FMath::Min(View.draw_layer, 99));
 				}
-				else if (const int32 Inner = OKInnerGarmentSortBase(Part.Role, Blend))
+				else if (const int32 Inner = OKUnityQueueSortOffset(Source, i, Blend) + OKInnerGarmentSortBase(Part.Role, Blend))
 				{
 					Follow->SetTranslucentSortPriority(Inner);
 				}
@@ -6839,6 +6855,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 						Outline->SetCastShadow(false);
 						Outline->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 						Outline->ComponentTags.Add(TEXT("KKPreviewOutline"));
+						OKTagPreviewPart(Outline, Name);
 						Outline->SetMaterial(0, MakeOutlineMaterial(Tex, Part.LineColor, false, bSkinOutline, View.line_width, DetailTex, &ShadowParams, AlphaMaskTex, !bSkinOutline));
 						Output.Followers.Add(Outline);
 						if (OKIsGenitalMesh(Lower)) Output.GenitalPrimitives.Add(Outline);
@@ -6873,6 +6890,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 					}
 					// Which session part it draws, for whoever looks parts up by tag (the hidden follower keeps KKSessionPart_).
 					MouthComp->ComponentTags.Add(*FString::Printf(TEXT("KKMorphPart_%d"), Published));
+					OKTagPreviewPart(MouthComp, Name);
 					FOkMouthSlot Slot;
 					Slot.Comp = MouthComp;
 					Slot.SessionPartIndex = Published;
@@ -6895,6 +6913,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 							Shell->SetCastShadow(false);
 							Shell->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 							Shell->ComponentTags.Add(TEXT("KKPreviewOutline"));
+							OKTagPreviewPart(Shell, Name);
 							Shell->SetMaterial(0, MakeOutlineMaterial(Tex, Part.LineColor, false, true, View.line_width, DetailTex, &ShadowParams, AlphaMaskTex));
 							Shell->ComponentTags.Add(*FString::Printf(TEXT("KKMorphPart_%d"), Published));
 							Slot.OutlineComp = Shell;
@@ -6957,6 +6976,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 		if (Comp)
 		{
 			Part.SurfaceMat = Comp->GetMaterial(0);
+			OKTagPreviewPart(Comp, Name);
 			// OK_HIDE_SHADER=<prefix>,... (debugging): parts whose source shader starts with one of them are hidden.
 			static const TArray<FString> HiddenShaders = [] { TArray<FString> Out; FPlatformMisc::GetEnvironmentVariable(TEXT("OK_HIDE_SHADER")).ParseIntoArray(Out, TEXT(",")); return Out; }();
 			if (HiddenShaders.Num())
@@ -7307,7 +7327,7 @@ bool AKKPreviewActor::BuildSessionPartRange(FOkSession& Source,FPartBuildOutput&
 				*PartRole, *Name, *ParentBone, View.n_verts, View.n_idx,
 				PositionHash, IndexHash, UvHash);
 			int32& Depth = Output.TranslucentDepth.FindOrAdd(StackKey);
-			Comp->TranslucencySortPriority = OKInnerGarmentSortBase(PartRole, Blend) + FMath::Min(Depth, 99);
+			Comp->TranslucencySortPriority = OKUnityQueueSortOffset(Source, i, Blend) + OKInnerGarmentSortBase(PartRole, Blend) + FMath::Min(Depth, 99);
 			++Depth;
 		}
 		else if (View.draw_layer > 0)
@@ -11541,8 +11561,61 @@ void AKKPreviewActor::OrbitZoom(float WheelNotches)
  OrbitDistance=FMath::Max(0.f,OrbitDistance-WheelNotches*50.f);ApplyOrbitCamera();
 }
 
+// Holding a moment for inspection (ok-game-mcp ui_exec): every character's clocks stand still (animation, physics, face),
+// so two shots of it are the same; ok.Anim.Step moves them on by whole 1/60 s frames, ok.Anim.SetTime replays to a time.
+static TAutoConsoleVariable<int32> CVarOkAnimPause(TEXT("ok.Anim.Pause"),0,
+    TEXT("1: every character's animation, physics and face clocks stand still (ok.Anim.Step / ok.Anim.SetTime move them); 0: they run."));
+static constexpr float OKAnimStepSeconds=1.f/60.f;
+static void OKForEachPlayingActor(UWorld* World,TFunctionRef<void(AKKPreviewActor&)> Do)
+{
+    for(TObjectIterator<AKKPreviewActor> It;It;++It)
+        if(IsValid(*It)&&!It->IsTemplate()&&(!World||It->GetWorld()==World)&&It->Session.IsOpen())Do(**It);
+}
+static FAutoConsoleCommandWithWorldArgsAndOutputDevice GOkAnimStep(TEXT("ok.Anim.Step"),
+    TEXT("ok.Anim.Step [frames=1]: while ok.Anim.Pause is 1, move every character on by that many 1/60 s frames (one per tick)."),
+    FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args,UWorld* World,FOutputDevice& Ar){
+        const int32 Frames=Args.Num()?FCString::Atoi(*Args[0]):1;
+        if(Frames<=0||CVarOkAnimPause.GetValueOnGameThread()==0){Ar.Logf(TEXT("ok.Anim.Step needs ok.Anim.Pause 1 and frames > 0"));return;}
+        int32 Count=0;OKForEachPlayingActor(World,[&](AKKPreviewActor& A){A.PendingAnimSteps+=Frames;A.SetActorTickEnabled(true);++Count;});
+        Ar.Logf(TEXT("ok.Anim.Step frames=%d actors=%d"),Frames,Count);
+    }));
+static FAutoConsoleCommandWithWorldArgsAndOutputDevice GOkAnimSetTime(TEXT("ok.Anim.SetTime"),
+    TEXT("ok.Anim.SetTime <seconds | N%>: every character's dynamics back to rest, her animation replayed from 0 to that time (N% of the clip) and held "
+         "(sets ok.Anim.Pause 1). No argument: print each character's time."),
+    FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args,UWorld* World,FOutputDevice& Ar){
+        if(!Args.Num()){OKForEachPlayingActor(World,[&](AKKPreviewActor& A){Ar.Logf(TEXT("ok.Anim time actor=%s pose_mode=%d time=%.4f duration=%.4f pending_steps=%d"),
+            *A.GetName(),A.PoseMode,A.AnimPhase,A.AnimDuration,A.PendingAnimSteps);});return;}
+        const bool bPercent=Args[0].EndsWith(TEXT("%"));const float Value=FCString::Atof(*Args[0].LeftChop(bPercent?1:0));
+        if(!FMath::IsFinite(Value)||Value<0.f){Ar.Logf(TEXT("ok.Anim.SetTime: not a time: %s"),*Args[0]);return;}
+        if(IConsoleVariable* Pause=IConsoleManager::Get().FindConsoleVariable(TEXT("ok.Anim.Pause")))Pause->Set(1,ECVF_SetByConsole);
+        OKForEachPlayingActor(World,[&](AKKPreviewActor& A){
+            const float Seconds=bPercent?A.AnimDuration*Value/100.f:Value;
+            const bool Ok=A.ReplayAnimationTo(Seconds);
+            Ar.Logf(TEXT("ok.Anim.SetTime actor=%s ok=%d time=%.4f duration=%.4f"),*A.GetName(),Ok?1:0,A.AnimPhase,A.AnimDuration);
+        });
+    }));
+
+bool AKKPreviewActor::ReplayAnimationTo(float Seconds)
+{
+    if(!Session.IsOpen()||!FMath::IsFinite(Seconds)||Seconds<0.f||(PoseMode!=1&&PoseMode!=2&&PoseMode!=3))return false;
+    if(Session.HasAsyncAnimFrame())Session.FinishAsyncAnimFrame();
+    PendingAnimSteps=0;
+    if(!Session.ResetDynamics())return false;
+    // From 0 in whole frames: the same time always takes the same steps.
+    const int32 Steps=FMath::RoundToInt(Seconds/OKAnimStepSeconds);
+    AnimPhase=0.f;
+    ApplyPoseFrame(0.f,false);
+    for(int32 Step=0;Step<Steps;++Step)ApplyPoseFrame(OKAnimStepSeconds,true);
+    return true;
+}
+
 void AKKPreviewActor::TickActor(float DeltaSeconds,ELevelTick TickType,FActorTickFunction& ThisTickFunction)
 {
+    // ok.Anim.Pause: no time passes for her, but ok.Anim.Step's frames, one per tick.
+    if(CVarOkAnimPause.GetValueOnGameThread()!=0){
+        if(PendingAnimSteps>0){--PendingAnimSteps;DeltaSeconds=OKAnimStepSeconds;}
+        else DeltaSeconds=0.f;
+    }
     const bool PreviousWorldTick=bWorldPoseTick;
     const float PreviousDelta=WorldPoseDelta;
     bWorldPoseTick=true;

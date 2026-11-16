@@ -4742,3 +4742,40 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 錯誤：愛撫「摸一下」放開時 CrossFade 被 Rust 拒絕，我只看到 `not a plain base-layer state` 就在 `Docs/ONEONE_PERFECTION_CHECKLIST.md` 寫成 kha_f_base 的 M_Idle／Idle「有其他作用中的層」，判斷要做多層 controller 過渡、先還原不修。實際 log 出 entry 才知道：兩個 state 都是 Studio 組合圖的「[Controller layer 0]」（`studio_layer=Some(0)`），沒有任何疊層，只是被「完全單純 base state」的條件擋下。
 - 修正：`anim/crossfade.rs` 的整個姿勢過渡接受 layer 0／有疊層的 base state；先印出被拒絕的 entry 欄位再下結論。
 - 影響：放開硬切多留了一輪；文件已改正。
+## 2026-11-16 讀卡器：身體遮罩誤用前綴相同的貼圖，腿被裁掉並露出黑色外框殼（C037、C077、C078、C085，F 組）
+- 症狀：C077 服裝 4、5 腿上與手臂有大片黑塊；C037 服裝 1、2、3、5 腿部黑白碎塊。原作（GamePoseProbe，`Saved/Tests/ZW077Native/`）腿完整，身體 `_AlphaMask` 為 null。
+- 錯誤：這些 mod 上衣的 `OverBodyMask` 填的是上衣自己的 prefab 名（例如 `R2T1AogusitaMd10011_top`），bundle 裡沒有這個名字的貼圖，遊戲的 `LoadAsset<Texture2D>` 拿到 null。`load_over_clothes_mask` 用排名比對（前綴相同就算），拿了另一張名稱相近的貼圖當身體遮罩，腿被裁掉；身體的外框殼沒被同一張遮罩裁，從洞裡看到它黑色的內面。
+- 先誤判：一開始以為是「原作會寫深度的半透明衣服」順序問題，做了讀卡器半透明部件依 Unity 順序排序加深度測試，逐像素比對沒有改善（C077 還多出破片），已撤掉。用 `ok.Debug.HideParts`／`ok.Debug.Outline` 逐一隱藏後，才確定黑塊來自身體加外框殼。
+- 修正：衣服遮罩只取完全同名（`name` 或 `name_low`）的貼圖，取不到就沒有遮罩，與遊戲一致；`--mask-report` 新增 `near` 類別，列出「只有名稱相近的貼圖」的服裝。開卡快取版本 44。
+- 驗證：100 張 CrowdAPNG 原卡的 mask-report，`near` 共 10 套，即 C037（服裝 1、2、3、5）、C077（4、5）、C078（4、5）、C085（4、5）。四張重轉並通過 `ok_cards.lua verify`，裝回 CrowdAPNG；C077 服裝 4 讀卡器畫面與原作一致，C037 服裝 1 腿部乾淨。
+- 未處理：身體外框殼不受 `_AlphaMask` 裁切，身體有合法遮罩、外衣又半透明時仍可能看到黑色內面，待查。
+- 重轉四張卡時一開始從原卡轉，`okId` 跟著換掉（街區身分、存檔關係都以它為鍵）；改從已安裝的 OK 卡用 `remake_ok_card` 重轉才保住。**重轉已發布的 OK 卡要用 `remake_ok_card`，從原卡重轉會換掉 `okId`。**
+
+## 2026-11-16 讀卡器：C040 服裝 5 跳躍時前襬下方黑帶，兩個猜測都沒驗證就差點改共用程式（F 組）
+- 症狀：Demo：蹦跳 70–90% 相位，前襬（衣服1.001、衣服1）掀起時下方出現一條黑帶。`ok.Debug.Outline 0` 黑帶消失，是外框殼。
+- 猜測一：Forge 外框像素程式的 v3 是 `SV_IsFrontFace`，共用 outline parent 綁成法線，`_outline` 的背面剪裁失效。原作實拍（`run_renderer_native.lua --capture-view`）讀到這兩件 `_outline=0`，外框本來就開，剪裁不作用 → 不是原因，共用 parent 沒改。
+- 猜測二：外框段用靜止法線推殼。衣服走的兩條路徑（CPU 主路徑、私有 GPU 路徑）都有把法線從靜止轉到目前；`ok.Debug.NormalCheck` 實測靜止與 80% 法線和面朝向的一致程度相同 → 也不是。
+- 實情：衣服1.001 網格本身有一條 10 個三角形的窄帶（橫跨前襬、高約 2 cm），頂點法線和三角形朝向相反（衣服1 也有 45 個左右）。這條帶背對鏡頭時，Cull Front 的外框殼沿反向法線往鏡頭推，ZWrite 後擋住主色。原作 main_alpha 的 pass 狀態（外框 ZWrite On／LEqual／Cull Front，主色 ZWrite On／LEqual／Cull Off）與我們相同，同樣幾何在原作也會黑；原作擺不出跳躍姿勢，無法直接拍到，靜止時同一鏡頭兩邊都不黑。
+- 教訓：找到「看起來合理的機制」先用原作或可重現的量測排除，再決定改不改；三組共用的材質更要先證實。跳躍這類原作沒有的動作，判準改成「同一件布料靜止與變形時，殼相對布料的關係是否一致」。
+- 結案：原作如此（推論）。機制：衣服網格本身有一條反向法線帶 → 該帶轉成背對鏡頭時，Cull Front 的外框殼沿反向法線往鏡頭推 → 外框寫深度後擋住主色。
+- 可能的通用修法（未做）：匯入時修復頂點法線與面繞向相反的三角形，可一次解決這類資產缺陷，但會改動匯入結果，風險另評估；等再出現幾張同症狀的卡再決定。
+
+## 2026-11-16 讀卡器：`ok.Anim.SetTime` 留下暫停，之後的物理開關測試全在定格中做（F 組）
+- 查旗袍 O1 時先用 `ok.Anim.SetTime 0` 定格，再切 ok.ClothCover／ok.ClothGpu／ok.Physics.HipMode 比較畫面，結果全相同，差點據此排除物理。實際上 SetTime 會把 `ok.Anim.Pause` 設成 1，時鐘停著，物理根本沒跑。
+- 修正：`ok.Anim.Pause 0` 後重做；之後用 `ok.Debug.DumpPartObj` 量頂點，三種物理後端結果逐位相同，才確定不是物理。
+- 預防：用過 SetTime／Step 之後要測會隨時間變化的東西，先 `ok.Anim.Pause 0`；比較畫面「完全沒變」時先懷疑時鐘是否在跑。
+
+## 2026-11-16 讀卡器頭髮／飾品動態鏈沒有身體 collider（F 組，未修）
+- 現象：C074 服裝 1 的 `ok.Debug.DynamicChains` 顯示頭髮與飾品鏈（Hair_*、Piao_*、Bip001Head）的 colliders 為空；原作（CharaStudio 截取 `dynamic_bone_collider` 列，F:/OpenKoikatsu/Saved/Tests/ZW074Db3）每條 DynamicBone 都帶同一份 36 個（24 個身體 hit + KKS_Colliders 12 個）。頭髮會穿進身體。
+- 狀態：只記錄未追；疑與裙鏈 collider 綁定同一路徑，待旗袍臀部的求解語義釐清後一起修。
+
+## 2026-11-16 原作 dump 是物理前的狀態，拿它當畫面最終姿勢比對（F 組，旗袍 O1）
+- 查 C074（kks encore）服裝 1 臀部露出內褲時，拿原作截取（GamePoseProbe `--mesh-names`／transforms.tsv）的旗袍後片 z=-0.19 當基準，判定讀卡器的 -0.122 是錯的，再往「體型外張被動畫蓋掉」追。`ok.Debug.BoneLocal` 實測讀卡器 cf_d_sk_04_00＝21.96°（與原作 22° 相同），假設不成立。
+- 實情：原作 dump 裡 cf_j_sk_* 全為精確單位旋轉——這是「DynamicBone 還沒寫入」的指紋，dump 發生在 LateUpdate 之前；z=-0.19 是物理前的值。原作畫面（物理後）沒有破洞才是最終姿勢的對照。讀卡器的收攏來自裙鏈動態骨（cf_j_sk_04_00／01 每節 -7～-11°）。
+- 教訓：**拿原作 dump 當 ground truth 前，先標明它是物理前還是物理後**；動態骨鏈的 local 全為單位旋轉時，就是物理前。
+- 補量（原作探針 `--post-physics`：WaitForEndOfFrame 後第 1／10／60 幀，三者相同）：原作靜止姿勢 cf_j_sk_04_00／01／02／03 = -2.2°／-3.1°／-16.2°／0°；讀卡器同姿勢（T-pose，手臂 -2.52°、大腿 1.0° 與原作相同）= -7.2°／-7.1°／-7.0°／-1.9°。總彎曲相同（約 21.5°），分布不同：原作上段幾乎不折、集中在第 3 節，讀卡器每節平均折，後片上段就貼到臀部。鏈參數（force、damping、inert、逐粒子 elasticity／stiffness／radius）與原作逐項相同；collider 讀卡器少了 KKS_Colliders 的 12 個（原作每條 DynamicBone 都帶），試加大腿 6 個只把跳躍第 0 幀的 -9.69°／-10.98° 改成 -8.95°／-9.17°，背面仍露內褲，已撤回。差異在 DynamicBone 求解本身，待查。
+
+## 2026-11-16 sed 抓行號失敗，一行插到整個檔案每一行後面（F 組，工作室 U273）
+- 想把 `KKPreviewActor.cpp` 裡的 `okNuv` 那一行移回原位，用 `grep -n` 抓行號再交給 `sed "${n}a ..."`。grep 的樣式跳脫錯了，`n` 是空的，`sed a` 對每一行都生效，檔案多了 13,999 行。
+- 修正：所有完全等於這一行的行都刪掉（`grep -v -x -F`），再用 Edit 插回一次；和 HEAD 加上別人未提交修改的行數核對（13,986 + 14），diff 只剩別人的排序修改。
+- 預防：用行號做插入／刪除前，先確認變數非空（`[ -n "$n" ] || exit 1`）；能用 Edit 精確取代的就不要用 sed 行號。

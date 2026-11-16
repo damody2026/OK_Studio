@@ -1699,6 +1699,7 @@ bool FOkSession::ApplyEditorMods(const FString& Json,int32 Coordinate,bool* Geom
 
 bool FOkSession::ApplyBodyPhysics(float Softness,float Weight){return Handle&&ok_editor_body_physics(Handle,Softness,Weight)==0;}
 bool FOkSession::RefreshBodyPhysics(){return Handle&&ok_session_refresh_body_physics(Handle)==0;}
+bool FOkSession::ResetDynamics(){return Handle&&ok_session_reset_dynamics(Handle)==0;}
 int32 FOkSession::RefineBelly(){return Handle?ok_session_refine_belly(Handle):-1;}
 
 extern "C" int32_t ok_appearance_request(const char*,const char*,const char*,char*,int32_t);
@@ -1869,4 +1870,14 @@ bool FOkAppearanceContext::CommitGeometry(FOkAppearanceGeometryCandidate& Candid
  check(IsInGameThread());char Buffer[8192]{};
  const int32 Result=ok_appearance_geometry_commit(Handle,Candidate.Handle,Session.Handle,Apply?1:0,Buffer,UE_ARRAY_COUNT(Buffer));Error=UTF8_TO_TCHAR(Buffer);
  if(Result==0&&Apply)Session.RuntimeMaterials.Reset();return Result==0;
+}
+
+FString FOkSession::DynamicChainsJson() const
+{
+    if (!Handle) return {};
+    const int32 Size=ok_session_dynamic_chains_json(Handle,nullptr,0);
+    if (Size<=0) return {};
+    TArray<uint8> Bytes; Bytes.SetNumZeroed(Size+1);
+    if (ok_session_dynamic_chains_json(Handle,Bytes.GetData(),Size)!=Size) return {};
+    return UTF8_TO_TCHAR(reinterpret_cast<const char*>(Bytes.GetData()));
 }
