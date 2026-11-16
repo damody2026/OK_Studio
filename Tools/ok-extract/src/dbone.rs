@@ -1971,6 +1971,44 @@ fn update_particles2(
     }
 }
 
+/// The game's DynamicBone update of one chain (UpdateDynamicBones before Apply): `num` substeps of UpdateParticles1/2,
+/// none: SkipUpdateParticles. `gravity` is (gravity + force) times the object scale, before the interaction tuning.
+#[allow(clippy::too_many_arguments)]
+fn builtin_update(
+    skel: &mut Skeleton, particles: &mut [DParticle], cache: &mut HashMap<i64, Mat4>, reuse: bool,
+    colliders: &[BodyCollider], external_colliders: &[(BodyCollider, Mat4, f32)],
+    num: i32, object_move: [f32; 3], gravity: [f32; 3], object_scale: f32, dt: f32, db: &DBone,
+) {
+    // Weight/hardness of the one-to-one interaction (identity elsewhere), as the host solvers apply them.
+    let tuning = crate::px::verlet_tuning();
+    let gravity = vadd(gravity, tuning.gravity_step(if db.update_rate > 0.0 { 1.0 / db.update_rate } else { dt }));
+    if num > 0 {
+        for substep in 0..num {
+            let move_this_step = if substep == 0 { object_move } else { [0.0; 3] };
+            for particle in particles.iter_mut() {
+                if particle.parent < 0 {
+                    if let Some(id) = particle.id {
+                        particle.prev = particle.pos;
+                        particle.pos = if reuse { cached_parts_pos(&skel.tfs, id, cache) } else { parts_pos(&skel.tfs, id) };
+                    }
+                    continue;
+                }
+                let velocity = vsub(particle.pos, particle.prev);
+                let inertial_move = vscale(move_this_step, particle.inert);
+                particle.prev = vadd(particle.pos, inertial_move);
+                particle.pos = vadd(vadd(particle.pos,
+                    vscale(velocity, 1.0 - particle.damping * tuning.damp)),
+                    vadd(gravity, inertial_move));
+            }
+            if !reuse { cache.clear(); }
+            update_particles2(skel, particles, cache, colliders, external_colliders, object_scale, db.freeze_axis, db.ver01, tuning);
+        }
+    } else if !db.suppress_skip_update {
+        if !reuse { cache.clear(); }
+        skip_update_particles(skel, particles, object_move, cache, object_scale, db.ver01);
+    }
+}
+
 fn skip_update_particles(
     skel: &mut Skeleton,
     particles: &mut [DParticle],
@@ -3253,10 +3291,18 @@ impl AttachedDynamicSet {
             };
             for (chain, plan) in self.chains.iter_mut().zip(plans) {
                 let db = &chain.db;
-                let Plan { input, .. } = plan;
-                // PhysX owns every chain while it is on: no built-in fallback. A chain it cannot express (a single
-                // particle, no time step) keeps its particles where they are.
-                if let (true, Some(input)) = (solved, input.as_ref()) {
+                let Plan { input, object_move, object_scale, gravity, num } = plan;
+                // A chain asking for Solver::Verlet while no backend is forced: the host left it (FLAG_BUILTIN) and it gets
+                // the game's own update here, after the chains before it were applied, as Unity's LateUpdates run.
+                let builtin = solved && input.as_ref().and_then(|input| input.particles.first())
+                    .is_some_and(|root| root.flags & crate::px::FLAG_BUILTIN != 0);
+                if builtin {
+                    if !reuse {cache.clear();}
+                    builtin_update(&mut self.skel, &mut chain.particles, &mut cache, reuse, &chain.colliders, &chain.external_colliders,
+                        num, object_move, gravity, object_scale, dt, db);
+                } else if let (true, Some(input)) = (solved, input.as_ref()) {
+                    // PhysX owns every other chain while it is on: no built-in fallback. A chain it cannot express (a
+                    // single particle, no time step) keeps its particles where they are.
                     for (p, out) in chain.particles.iter_mut().zip(&input.particles) { p.pos = out.pos; p.prev = out.prev; }
                 }
                 if !reuse {cache.clear();}
@@ -3320,40 +3366,15 @@ impl AttachedDynamicSet {
                 let px_done = crate::px::solver().is_some() && px_solve_ordinary(&self.skel, &mut chain.particles, &mut cache,
                     &chain.colliders, &chain.external_colliders, &chain.px_key, object_scale, gravity, object_move,
                     db.update_rate, dt, db.ver01, db.freeze_axis);
-                // Weight/hardness of the one-to-one interaction (identity elsewhere), as the host solvers apply them.
-                let tuning = crate::px::verlet_tuning();
-                let gravity = vadd(gravity, tuning.gravity_step(if db.update_rate > 0.0 { 1.0 / db.update_rate } else { dt }));
-                if px_done {
-                } else if num > 0 {
-                    for substep in 0..num {
-                        let move_this_step = if substep == 0 { object_move } else { [0.0; 3] };
-                        for particle in &mut chain.particles {
-                            if particle.parent < 0 {
-                                if let Some(id) = particle.id {
-                                    particle.prev = particle.pos;
-                                    particle.pos = if reuse{cached_parts_pos(&self.skel.tfs,id,&mut cache)}else{parts_pos(&self.skel.tfs,id)};
-                                }
-                                continue;
-                            }
-                            let velocity = vsub(particle.pos, particle.prev);
-                            let inertial_move = vscale(move_this_step, particle.inert);
-                            particle.prev = vadd(particle.pos, inertial_move);
-                            particle.pos = vadd(vadd(particle.pos,
-                                vscale(velocity, 1.0 - particle.damping * tuning.damp)),
-                                vadd(gravity, inertial_move));
-                        }
-                        if !reuse {cache.clear();}
-                        update_particles2(&mut self.skel, &mut chain.particles,
-                            &mut cache, &chain.colliders, &chain.external_colliders, object_scale, db.freeze_axis, db.ver01, tuning);
-                    }
-                } else if !db.suppress_skip_update {
-                    if !reuse {cache.clear();}
-                    skip_update_particles(&mut self.skel, &mut chain.particles, object_move,
-                        &mut cache, object_scale, db.ver01);
+                if !px_done {
+                    builtin_update(&mut self.skel, &mut chain.particles, &mut cache, reuse, &chain.colliders, &chain.external_colliders,
+                        num, object_move, gravity, object_scale, dt, db);
                 }
                 drop(particles_trace);
                 if audit {
                     // Same audit as PhysX: the built-in result, before Apply rewrites the bones.
+                    let tuning = crate::px::verlet_tuning();
+                    let gravity = vadd(gravity, tuning.gravity_step(if db.update_rate > 0.0 { 1.0 / db.update_rate } else { dt }));
                     if let Some(input) = px_input_ordinary(&self.skel, &chain.particles, &mut cache, &chain.colliders, &chain.external_colliders,
                         &chain.px_key, object_scale, gravity, [0.0; 3], db.update_rate, dt, db.ver01, db.freeze_axis) { audits.push(input); }
                 }

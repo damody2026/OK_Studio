@@ -99,6 +99,8 @@ static TAutoConsoleVariable<float> CVarDebugHeadTilt(
 	TEXT("OKPhysXSecondary.DebugHeadTilt"), 0.f, TEXT("Clipping audit: throw every character's head back by this many degrees on top of the animation."), ECVF_Default);
 static TAutoConsoleVariable<float> CVarDriveDamping(
 	TEXT("OKPhysXSecondary.DriveDamping"), 1.f, TEXT("Damping ratio of the goal spring, relative to the parent (1 = critical)."), ECVF_Default);
+static TAutoConsoleVariable<int32> CVarOneWayJoints(
+	TEXT("OKPhysXSecondary.OneWayJoints"), 1, TEXT("1: a particle's joints (goal spring, bone length, freeze plane) move only the particle, never its parent, as DynamicBone projects a child onto its parent. 0: two-way joints (the lower particles drag the upper ones down: a qipao's back skirt bent about -7 deg at every joint where the game bends it -2/-3/-16 deg, C074 outfit 1). Read when a chain is built."), ECVF_Default);
 static TAutoConsoleVariable<float> CVarLimitStiffness(
 	TEXT("OKPhysXSecondary.LimitStiffness"), 4000.f, TEXT("Stiffness (1/s^2) of the soft 'stay near the goal' limit; critically damped."), ECVF_Default);
 static TAutoConsoleVariable<float> CVarLengthStiffness(
@@ -376,6 +378,12 @@ namespace
 					// Default tolerance is 0.025 * toleranceScale.length (2.5 cm): longer than most hair bones, so the joint
 					// never engaged and the final exact pass did all the length work.
 					Length->setTolerance(0.f);
+					if (CVarOneWayJoints.GetValueOnAnyThread())
+					{
+						// DynamicBone moves a child toward its parent and never the parent: the parent side weighs nothing to the joint.
+						Spring->setInvMassScale0(0.f); Spring->setInvInertiaScale0(0.f);
+						Length->setInvMassScale0(0.f); Length->setInvInertiaScale0(0.f);
+					}
 					Lengths.Add(Length);
 				}
 				else
@@ -1596,6 +1604,7 @@ namespace OKPhysXSecondary
 						Plane->setLinearLimit(PxD6Axis::eX, PxJointLinearLimitPair(-1e-4f, 1e-4f, PxSpring(PlaneK, 2.f * FMath::Sqrt(PlaneK))));
 					}
 					else Plane->setMotion(PxD6Axis::eX, PxD6Motion::eLOCKED);
+					if (CVarOneWayJoints.GetValueOnAnyThread()) { Plane->setInvMassScale0(0.f); Plane->setInvInertiaScale0(0.f); }
 					Plane->setMotion(PxD6Axis::eY, PxD6Motion::eFREE);
 					Plane->setMotion(PxD6Axis::eZ, PxD6Motion::eFREE);
 					Chain->Planes[i] = Plane;
@@ -2346,7 +2355,22 @@ namespace OKPhysXSecondary
 			Batch = Slot;
 		}
 		UE::TUniqueLock Guard(Batch->Lock);
-		FOKPxChainStep* const All = First;
+		// A chain asking for the built-in solver (ok-extract Solver::Verlet = 7, root flag code 8) while no backend is forced
+		// is left untouched and marked (root flag 4096): ok-extract steps it with the game's own DynamicBone update. Forcing
+		// a backend (menu, console) solves it here like every other chain.
+		TArray<FOKPxChainStep*, TInlineAllocator<64>> All;
+		{
+			const bool bForced = CVarBackend.GetValueOnAnyThread() >= 0;
+			for (uint32 i = 0; i < Count; ++i)
+			{
+				FOKPxChainStep& S = First[i];
+				const bool bBuiltIn = !bForced && S.ParticleCount && ((S.Particles[0].Flags >> 8) & 15u) == 8u;
+				if (S.ParticleCount) { if (bBuiltIn) S.Particles[0].Flags |= 4096u; else S.Particles[0].Flags &= ~4096u; }
+				if (!bBuiltIn) All.Add(&S);
+			}
+		}
+		Count = uint32(All.Num());
+		if (Count == 0) return 1;
 		const int32 Split = FMath::Clamp(CVarBatchSplit.GetValueOnAnyThread(), 1, 16);
 		// Only PhysX chains: the other solvers keep one world per set under BatchKey.
 		bool bAllPhysX = true;
@@ -2354,7 +2378,7 @@ namespace OKPhysXSecondary
 			const int32 Forced = CVarBackend.GetValueOnAnyThread();
 			if (Settling()) bAllPhysX = CVarSettleBackend.GetValueOnAnyThread() == 0;
 			else if (Forced >= 0) bAllPhysX = Forced == 0;
-			else for (uint32 i = 0; i < Count && bAllPhysX; ++i) { const FOKPxChainStep& S = All[i]; bAllPhysX = !S.ParticleCount || ((S.Particles[0].Flags >> 8) & 15u) <= 1u; }
+			else for (uint32 i = 0; i < Count && bAllPhysX; ++i) { const FOKPxChainStep& S = *All[i]; bAllPhysX = !S.ParticleCount || ((S.Particles[0].Flags >> 8) & 15u) <= 1u; }
 		}
 		const int32 PartCount = bAllPhysX ? FMath::Min(Split, int32(Count)) : 1;
 		int32 Solved = 0;
@@ -2362,7 +2386,7 @@ namespace OKPhysXSecondary
 		{
 			TArray<FSolveJob> Jobs;
 			Jobs.SetNum(Count);
-			for (uint32 i = 0; i < Count; ++i) Jobs[i].S = All + i;
+			for (uint32 i = 0; i < Count; ++i) Jobs[i].S = All[i];
 			// No fallback: a chain whose input cannot be prepared is left untouched (it holds still), the others are solved.
 			Solved = SolveJobs(Jobs, Batch, BatchKey);
 		}
@@ -2372,8 +2396,8 @@ namespace OKPhysXSecondary
 			// the same split every frame, so a chain keeps its scene (moving it rebuilds the chain at its animated pose).
 			TArray<int32, TInlineAllocator<64>> Order;
 			for (uint32 i = 0; i < Count; ++i) Order.Add(int32(i));
-			auto Cost = [All](int32 i) { return uint64(All[i].ParticleCount) * (1u + All[i].ColliderCount); };
-			Algo::StableSort(Order, [&](int32 A, int32 B) { const uint64 CA = Cost(A), CB = Cost(B); return CA != CB ? CA > CB : All[A].Key < All[B].Key; });
+			auto Cost = [&All](int32 i) { return uint64(All[i]->ParticleCount) * (1u + All[i]->ColliderCount); };
+			Algo::StableSort(Order, [&](int32 A, int32 B) { const uint64 CA = Cost(A), CB = Cost(B); return CA != CB ? CA > CB : All[A]->Key < All[B]->Key; });
 			TArray<TArray<FSolveJob>, TInlineAllocator<16>> Parts;
 			Parts.SetNum(PartCount);
 			TArray<uint64, TInlineAllocator<16>> Load;
@@ -2383,7 +2407,7 @@ namespace OKPhysXSecondary
 				int32 Best = 0;
 				for (int32 p = 1; p < PartCount; ++p) if (Load[p] < Load[Best]) Best = p;
 				Load[Best] += Cost(i);
-				Parts[Best].AddDefaulted_GetRef().S = All + i;
+				Parts[Best].AddDefaulted_GetRef().S = All[i];
 			}
 			while (Batch->Parts.Num() < PartCount)
 			{

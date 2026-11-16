@@ -162,5 +162,13 @@
 尚未做：
 - 逐部件的重力、柔軟度（仍是全域 CVar）。
 - 衣服逐件指定（目前 `clothes` 一個鍵管全部）。
-- Rust Verlet 逐鏈（Verlet 仍只能全域 `Enabled 0`）。
+- （2026-11-16 已做）Rust Verlet 逐鏈：見下方「原始 Verlet 逐鏈」。
 - `.okclothes` 帶物理段。
+
+## 原始 Verlet 逐鏈（2026-11-16，F 組）
+
+- 新解算器 `verlet`（`px::Solver::Verlet = 7`，卡片 `okPh` 可選，標籤「原作 DynamicBone（原始 Verlet）」）：ok-extract 內建的原作 DynamicBone 更新，只用鏈自己的 collider。
+- 外掛 `SolveBatch`：沒有強制後端（`OKPhysXSecondary.Backend` = -1）時，要 `verlet` 的鏈不進任何後端，根粒子標 4096（`px::FLAG_BUILTIN`），ok-extract 依 Unity 的 LateUpdate 順序自己算；強制後端時照常由後端解。
+- 依據：C074 服裝 1（旗袍）後片裙鏈在站姿下，原始 Verlet 與原作 CharaStudio 物理後角度逐位一致（-2.2337／-3.1237／-16.2113／0°）；PhysX 為 -7.05／-7.94／-10.47／-0.11°，後片貼進臀部。回歸測試 `session::jump_probe_tests::qipao_back_skirt_settles_as_the_game`（ignored，需本機卡）。
+- **預設不變**：第 5 節的元件預設（2026-10-18 使用者定案）仍是衣服、飾品、尾巴用 PhysX。衣服是否改預設待使用者決定；飾品、尾巴沒有證據，維持 PhysX。
+- PhysX 保真度：`OKPhysXSecondary.OneWayJoints`（預設 1）讓粒子的關節（目標彈簧、骨長、凍結平面）只動子粒子、不動父粒子，對應 DynamicBone 的單向投影；0 為舊的雙向關節。

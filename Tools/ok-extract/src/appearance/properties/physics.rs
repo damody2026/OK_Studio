@@ -14,6 +14,7 @@ fn solver_label(s: Solver) -> &'static str {
         Solver::Chaos => "Chaos PBD",
         Solver::Jolt => "Jolt 5.6（開發版限定）",
         Solver::MuJoCo => "MuJoCo 3.15（開發版限定）",
+        Solver::Verlet => "原作 DynamicBone（原始 Verlet）",
     }
 }
 
