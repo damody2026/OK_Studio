@@ -4794,3 +4794,13 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 錯誤：H 愛撫道具 `p_handL`、`p_tang` 的網格（`o_hand_L`、`o_tang`）同時被一般 renderer 和 HData 的 silhouette renderer（`Custom/Silhouette`）使用；`attach_material_texs` 取第一個命中的 renderer 材質，取到 silhouette 的，左手與舌頭成了藍色半透明。`p_handR`、`p_fingerL` 剛好取到一般材質，所以只有部分道具壞。
 - 修正：`unity.rs` `prefer_normal_renderer_material`：材質是 silhouette 且網格有多個 renderer 時，改用其中非 silhouette renderer 的材質與貼圖（`renderer_materials` 表與 `material_named` 已錄在基礎庫，重播時也生效，不用重轉）。
 - 防範：一個 Mesh 多個 renderer 時，不能假設第一個 renderer 就是畫它的那個；`skinned_item::library_items_pose_into_their_sessions` 斷言 9 個道具都不是 silhouette。
+
+## 2026-11-16 一對一愛撫：他的手畫在她後面（LeadsOnTop 沒收到道具），還誤以為是手埋進胸部
+- 錯誤：愛撫的手（`FKKAnimatedItem`）每幀用 `SetActorTransform` 擺到她的骨頭上，但沒掛（attach）到她身上；`ok.HScene.LeadsOnTop`（預設開）把她和他畫成縮向鏡頭的第一人稱 primitive，只收他們自己與掛在身上的元件，所以手的深度比她遠，從正面永遠被她蓋住。我先以為是手埋進胸部，去加了她的 front.body 層與胸部物理暫停（這兩項是原作行為，該做，但不是看不到手的原因）。
+- 修正：`FKKAnimatedItem::Attach` 把道具 actor 以 KeepWorldTransform 掛到 owner 底下；另外 `TickLeadsOnTop` 用同一個陣列反覆呼叫 `GetChildrenComponents`（它每次先清空），只留下最後一個元件的子元件，掛在 BodyMesh 上的道具仍被漏掉，改成逐一累加。
+- 防範：場景裡看不到某個東西時，先用 `ok.Debug.HideParts <renderer>` 藏掉擋住的部件、或關掉 `ok.HScene.LeadsOnTop` 看它在不在，再推論幾何。
+
+## 2026-11-16 沒拿到 slot 就開了遊戲（c-street-city 獨占 cook 時）
+- 錯誤：把 `unreal_slot.lua claim e-120fps` 與 `Start-Process run_street_social_development.lua` 寫在同一串命令裡，沒檢查 claim 的結果；claim 回「queued」（c-street-city 持有 slot1、[need 60]）時遊戲照樣啟動，把可用 commit 壓到 11 GB，差點讓別人的 WP 轉換＋cook 失敗，最後由協調 session 強制關掉。
+- 修正：先 claim，確認輸出是 `slotN` 才啟動；排隊時只等，不開任何 Unreal。
+- 防範：啟動遊戲的命令一律寫成 `$r=claim; if("$r" -match '^slot\d'){ 啟動 } else { 停 }`，不把 claim 與啟動無條件串在一起。

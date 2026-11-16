@@ -62,6 +62,10 @@ void FKKAnimatedItem::Attach(AKKPreviewActor* InOwner, const FString& InBone)
 {
 	Owner = InOwner;
 	Bone = InBone;
+	// Hung from its owner (placed on the bone every tick all the same): whatever the scene does to what hangs from a
+	// character — the H scene's leads drawn over the scene (first-person primitives) — it does to the item with her.
+	AKKPreviewActor* A = Actor.Get();
+	if (A && InOwner && A->GetAttachParentActor() != InOwner) A->AttachToActor(InOwner, FAttachmentTransformRules::KeepWorldTransform);
 }
 
 void FKKAnimatedItem::Play(const FString& InState)

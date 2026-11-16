@@ -843,7 +843,7 @@ void UOKHScenePanel::UpdateCaress(float Delta){
 static TAutoConsoleVariable<int32> CVarHCaressItems(TEXT("ok.HScene.CaressItems"),1,TEXT("1: his hand, finger or tongue (the original's caress items) on the place he caresses; 0 none"));
 void UOKHScenePanel::UpdateCaressItems(float Delta){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HCaressItems);
     AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;
-    auto HideAll=[&](){for(auto& P:CaressItems)if(P.Value&&P.Value->IsVisible())P.Value->SetVisible(false);};
+    auto HideAll=[&](){for(auto& P:CaressItems)if(P.Value&&P.Value->IsVisible())P.Value->SetVisible(false);SetHerBodyLayer(-1);HoldHerDynamics(-1,true);};
     if(CVarHCaressItems.GetValueOnGameThread()==0||Mode!=0||SoloInfo||!IsValid(Girl)||TouchArea<1||TouchArea>5){HideAll();return;}
     if(!bCaressItemsLoaded){bCaressItemsLoaded=true;
         CaressItemAnimRoot=FOkSession::CommonPairRoot();CaressItemLibrary=FPaths::GetPath(CaressItemAnimRoot);FString Text;
@@ -867,6 +867,9 @@ void UOKHScenePanel::UpdateCaressItems(float Delta){ TRACE_CPUPROFILER_EVENT_SCO
     const TArray<TSharedPtr<FJsonValue>>& LayerActions=Layer->GetArrayField(TEXT("actions"));
     if(!LayerActions.IsValidIndex(Action)){HideAll();return;}
     const int32 ItemLayer=int32(LayerActions[Action]->AsObject()->GetNumberField(TEXT("front_item")));
+    SetHerBodyLayer(int32(LayerActions[Action]->AsObject()->GetNumberField(TEXT("front_body"))));
+    {const auto A=LayerActions[Action]->AsObject();const int32 DynamicArea=int32(A->GetNumberField(TEXT("dynamic_area")));
+     HoldHerDynamics(DynamicArea,A->GetBoolField(TEXT("enable_dynamic")));}
     const TArray<TSharedPtr<FJsonValue>>& Ids=Layer->GetArrayField(TEXT("items"));const TArray<TSharedPtr<FJsonValue>>& Parents=Layer->GetArrayField(TEXT("parents"));
     TSet<int32> Shown;
     const TArray<float> Shape=Girl->Session.ShapeBody();
@@ -886,6 +889,34 @@ void UOKHScenePanel::UpdateCaressItems(float Delta){ TRACE_CPUPROFILER_EVENT_SCO
         // HandCtrl: speedHand = 1 + speedItem; its clock runs with his hand's speed.
         ItemSlot->Tick(Delta,1.f+CaressSpeed,Values);Shown.Add(Id);}
     for(auto& P:CaressItems)if(P.Value&&!Shown.Contains(P.Key)&&P.Value->IsVisible())P.Value->SetVisible(false);
+}
+// HandCtrl.SetLayerWeight: her body layer of the place and action (front.body) at weight 1 over the state she plays, so the
+// place gives under his hand (her breast pressed in); off again when he lets go. Layer < 0: none.
+void UOKHScenePanel::SetHerBodyLayer(int32 Layer){
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;const FString* Base=SoloKeys.Find(SoloState);
+    if(!IsValid(Girl)||!Base){HerBodyKey.Reset();return;}
+    const bool bOn=HerBodyStarted==SoloStarted&&!HerBodyKey.IsEmpty(); // ours still plays: PlaySolo since puts her state's own key
+    auto Play=[&](const FString& Key){const float Fade=.15f;
+        if(!(Girl->AnimDuration>0.f&&Girl->CrossFadeGameAnimation(Key,Fade/Girl->AnimDuration))&&!Girl->SetGameAnimation(Key)){UE_LOG(LogTemp,Warning,TEXT("H scene: her body layer key did not play: %s"),*Key);return false;}return true;};
+    if(Layer<=0){if(bOn&&Play(*Base))UE_LOG(LogTemp,Display,TEXT("H scene: her body layer off (%s)"),*SoloState);HerBodyKey.Reset();return;}
+    const FString Cache=FString::Printf(TEXT("%d|%s"),Layer,**Base);
+    const FString* Want=HerBodyKeys.Find(Cache);
+    if(!Want){if(!HerBodyPending.Contains(Cache)){HerBodyPending.Add(Cache);const FString Root=FOkSession::CommonPairRoot();const FString From=*Base;TWeakObjectPtr<UOKHScenePanel> Weak(this);
+        Async(EAsyncExecution::Thread,[Weak,Root,From,Layer,Cache](){FString Key=FOkSession::KeyWithLayer(Root,From,Layer,true);
+            if(!Key.IsEmpty()){FOkSession::BeginAnimationPreparation();if(!FOkSession::PrepareAnimationClip(Root,Key))Key.Reset();FOkSession::EndAnimationPreparation();}
+            AsyncTask(ENamedThreads::GameThread,[Weak,Cache,Key](){if(auto* UI=Weak.Get()){UI->HerBodyPending.Remove(Cache);UI->HerBodyKeys.Add(Cache,Key);
+                if(Key.IsEmpty())UE_LOG(LogTemp,Warning,TEXT("H scene: her body layer does not compose: %s"),*Cache);}});});}
+        return;}
+    if(Want->IsEmpty()||(bOn&&HerBodyKey==*Want))return;
+    if(Play(*Want)){HerBodyKey=*Want;HerBodyStarted=SoloStarted;UE_LOG(LogTemp,Display,TEXT("H scene: her body layer %d on %s"),Layer,*SoloState);}
+}
+// ChaControl.playDynamicBoneBust(kind, enabled) as HandCtrl calls it for the caressed place; every other kind held before
+// moves again (Kind < 0: all of them).
+void UOKHScenePanel::HoldHerDynamics(int32 Kind,bool bEnabled){
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl)){HerHeldDynamics=0;return;}
+    for(int32 K=0;K<4;++K){const bool bHeld=(HerHeldDynamics>>K)&1;const bool bOn=K!=Kind||bEnabled;
+        if(bHeld==!bOn)continue;
+        if(Girl->Session.SetBodyDynamicEnabled(K,bOn)){HerHeldDynamics=bOn?(HerHeldDynamics&~(1<<K)):(HerHeldDynamics|(1<<K));UE_LOG(LogTemp,Display,TEXT("H scene: her body dynamics %d %s"),K,bOn?TEXT("on"):TEXT("held"));}}
 }
 void UOKHScenePanel::UpdateMotion(float Delta){
     if(CVarHMotion.GetValueOnGameThread()==0){HMotion=0.f;bMotionEasing=false;return;}
@@ -3078,8 +3109,10 @@ void UOKHScenePanel::TickLeadsOnTop(){
     for(AKKPreviewActor* A:{Girl,Him})if(IsValid(A)){
         FVector Hips;const FBox Body=HBone(A,TEXT("j_hips"),Hips)?FBox(Hips-FVector(120.),Hips+FVector(120.)):FBox(A->GetActorLocation()-FVector(120.),A->GetActorLocation()+FVector(120.));
         TInlineComponentArray<UPrimitiveComponent*> Own(A);
-        TArray<USceneComponent*> Hanging;
-        for(UPrimitiveComponent* C:Own){C->GetChildrenComponents(true,Hanging);if(Body.Intersect(C->Bounds.GetBox()))Parts.AddUnique(C);}
+        // GetChildrenComponents empties its array first: gathered one component at a time (else only the last one's
+        // children were kept, and an item hung from her body mesh — his caressing hand — stayed behind her).
+        TArray<USceneComponent*> Hanging,Children;
+        for(UPrimitiveComponent* C:Own){C->GetChildrenComponents(true,Children);Hanging.Append(Children);if(Body.Intersect(C->Bounds.GetBox()))Parts.AddUnique(C);}
         for(USceneComponent* C:Hanging)if(auto* P=Cast<UPrimitiveComponent>(C);P&&P->GetOwner()!=A&&Body.Intersect(P->Bounds.GetBox()))Parts.AddUnique(P);}
     // What left them (a drop fallen away) goes back to the scene.
     LeadsOnTopParts.RemoveAll([&](const TWeakObjectPtr<UPrimitiveComponent>& P){UPrimitiveComponent* C=P.Get();if(!C)return true;

@@ -138,6 +138,9 @@ public:
  void ClearBodyReaction();
  bool IsBodyReactionPlaying() const;
  static FString PairClipForRoot(const FString& Root,const FString& Key,int32 Layer);
+ /** Key with the controller's override layer Layer switched on (bOn: SetLayerWeight 1, as HandCtrl does with her body layer
+  *  of the place his hand is on) or off; empty when it does not compose. Root: an animation root (CommonPairRoot). */
+ static FString KeyWithLayer(const FString& Root,const FString& Key,int32 Layer,bool bOn);
 
 	/** StatusJson (optional): an OK Studio character state (tears, blush, nipples, skin gloss, fluids, accessory slots; see ok_session_open_status). */
 	bool Open(const FString& GameRoot, const FString& CardPath, int32 Outfit, FString& OutError, const uint8* Clothes = nullptr, const FString& StatusJson = FString());
@@ -239,6 +242,9 @@ public:
  bool RefreshBodyPhysics();
  // Her dynamics back to rest (built again on the next step), for a replay from a known start (ok.Anim.SetTime).
  bool ResetDynamics();
+ /** ChaControl.playDynamicBoneBust: her bust or hip dynamics of Kind (0 bust L, 1 bust R, 2 hip L, 3 hip R) on, or held
+  *  still on the animated pose (HandCtrl while his hand is there). */
+ bool SetBodyDynamicEnabled(int32 Kind,bool bEnabled);
  // Her dynamic chains as read (owner, component, root, parameters, colliders), JSON, for ok.Debug.DynamicChains.
  FString DynamicChainsJson() const;
  // Her skin where he lifts it cut finer (one-on-one): once, after Open, before her mesh is built. The vertices added.
