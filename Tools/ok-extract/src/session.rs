@@ -961,6 +961,8 @@ impl SessionPart {
         // A Studio item part, also after Material Editor gave it another shader (okmodel_view: _OKStudioItemColors).
         let is_studio_item = hair_shader_name.contains("main_item_studio") && !hair_shader_name.contains("_add")
             || mesh.mat.as_ref().and_then(|m| m.float("_OKStudioItemColors")).is_some_and(|v| v > 0.5);
+        // A library prefab's Koikano/main_clothes_item kept live (okmodel_view: _OKItemColors), all four colours.
+        let live_item_colors = mesh.mat.as_ref().and_then(|m| m.float("_OKItemColors")).is_some_and(|v| v > 0.5);
         Self {
             source_property: None,
             draw_layer: 0,
@@ -1048,7 +1050,7 @@ impl SessionPart {
             render_visible: true,
             eye_draw: None,
             item_draw: (role == "head" && crate::head_uses_item_draw(mesh)
-                || is_hair_shader || is_studio_item).then(|| ItemDrawMaterial {
+                || is_hair_shader || is_studio_item || live_item_colors).then(|| ItemDrawMaterial {
                 color_count: if mesh.mat.as_ref().is_some_and(|m| m.shader.eq_ignore_ascii_case("Shader Forge/main_item"))
                     || is_hair_shader || is_studio_item {3}else{4},
                 colors: std::array::from_fn(|i| {
