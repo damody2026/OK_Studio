@@ -307,7 +307,7 @@ local REMOVED = dofile('Tools/street_city_removed_anchors.lua')
 -- anchors of props moved on the source map after the install (Tools/street_city_moved_props.lua) move with them
 do local PROPS = dofile('Tools/street_city_moved_props.lua')
   for _, p in ipairs(places) do for _, an in ipairs(p.anchors or {}) do local q = PROPS.shift(p.id, an.name, an.pos)
-    if q then print(('anchor: %s %s moved with its prop'):format(p.id, an.name)); an.pos = q end end end end
+    if q then print(('anchor: %s %s moved with its prop'):format(p.id, an.name)); PROPS.carry(an, an.pos, q); an.pos = q end end end end
 for _, p in ipairs(places) do
   if p.anchors then local kept = {}
     for _, an in ipairs(p.anchors) do
@@ -559,7 +559,7 @@ do
   local PROPS = dofile('Tools/street_city_moved_props.lua')
   for _, r in ipairs(T.anchors) do local q = PROPS.shift(r.place, r.name, r.pos)
     if q then print(('anchor: %s %s moved with its prop, %.0f,%.0f -> %.0f,%.0f'):format(r.place, r.name, r.pos[1], r.pos[2], q[1], q[2]))
-      r.pos = q; r.moved = true end end
+      PROPS.carry(r, r.pos, q); r.pos = q; r.moved = true end end
   local moved = 0; for _, r in ipairs(T.anchors) do if r.moved then moved = moved + 1; r.moved = nil end end
   print(('city_anchors.json: %d rows back from off (the place has stairs now), %d stair rows added'):format(back, stairs))
   local kept, dropped = {}, 0

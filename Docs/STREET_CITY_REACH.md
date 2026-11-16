@@ -6,9 +6,9 @@
 
 檢查 113 個地點、9596 個錨點；未掃到的區塊 0 個。
 
-## 站位在家具或牆裡：遊戲會改用 1.6 m 內走得到的點（不擋路，只是站位不準）（5138）
+## 站位在家具或牆裡：遊戲會改用 1.6 m 內走得到的點（不擋路，只是站位不準）（5156）
 
-各地點筆數（每一筆在 output/street-social-city-production/places-v1/reach-report.json）：girls_dorm 1148、boys_dorm 1133、campus_ib 274、campus_ma 274、campus_rb 274、campus_t4 274、campus_t1 262、campus_t2 262、campus_ee 261、park 85、cafeteria 83、civic 66、library 60、campus_sports 52、beach 44、onsen 36、restaurant 36、cafe 33、izakaya 31、sushi 29、station 28、clinic_general 19、campus_e1 18、district_office 18、clinic_gyn 17、craft 16、manga_cafe 15、bookstore 14、cat_cafe 14、conveni 13、fastfood 13、lecture 12、school 12、lottery 11、bridal 10、campus_ad 10、snack 10、museum 9、yakiniku 9、bowling 8、department 8、fruitshop 8、nursery 8、petshop 8、salon 7、clinic_beauty 6、post 6、shrine 6、aquarium 5、dentist 5、police 5、breakfast 4、club_room 4、drinkshop 4、fortune 4、hotel 4、livehouse 4、nail 4、realty 4、karaoke 3、supermarket 3、amusement 2、arcade 2、art_room 2、bbq 2、clothing_s30 2、crepe 2、festival 2、fishing 2、gym_storage 2、pool 2、bank 1、bike_shop 1、boat 1、campus_gate 1、cinema 1、clothing_s10 1、clothing_s46 1、clothing_s94 1、infirmary 1、phone_shop 1、photo_studio 1、ramen 1、swimwear 1、waterpark 1、yukata 1
+各地點筆數（每一筆在 output/street-social-city-production/places-v1/reach-report.json）：girls_dorm 1155、boys_dorm 1140、campus_ib 274、campus_ma 274、campus_rb 274、campus_t4 274、campus_t1 262、campus_t2 262、campus_ee 261、park 85、cafeteria 83、civic 66、library 60、campus_sports 52、beach 44、onsen 36、restaurant 36、cafe 33、izakaya 31、sushi 29、station 28、clinic_general 19、campus_e1 18、district_office 18、clinic_gyn 17、craft 16、manga_cafe 15、bookstore 14、cat_cafe 14、conveni 13、fastfood 13、lecture 12、school 12、lottery 11、bridal 10、campus_ad 10、snack 10、museum 9、yakiniku 9、bowling 8、department 8、fruitshop 8、nursery 8、petshop 8、salon 7、clinic_beauty 6、post 6、shrine 6、aquarium 5、dentist 5、police 5、supermarket 5、breakfast 4、club_room 4、drinkshop 4、fortune 4、hotel 4、livehouse 4、nail 4、realty 4、karaoke 3、amusement 2、arcade 2、art_room 2、bbq 2、clothing_s10 2、clothing_s30 2、crepe 2、festival 2、fishing 2、gym_storage 2、pool 2、swimwear 2、bank 1、bike_shop 1、boat 1、campus_gate 1、cinema 1、clothing_s46 1、clothing_s94 1、infirmary 1、phone_shop 1、photo_studio 1、ramen 1、waterpark 1、yukata 1
 
 ## 其中站在顯眼位置的（櫃台、收銀、沙發、吧台、接待）：之後優先挪（27）
 
@@ -40,74 +40,6 @@
 - shrine.charm (39956,37551,1198)（queue），擋住的是 LoverSpot_Shrine_LanternCap-150，1 格外走得到
 - supermarket.checkout (34300,50580,1200)（queue），擋住的是 ShopV1_S72_Refit，1 格外走得到
 
-## 錨點在封死的格子：附近可走，但連不到門或電梯／樓梯（65）
-
-- boys_dorm.trash10 (94350,65855,1980)，附近最大的區域 167 格
-- boys_dorm.trash11 (94350,65855,2700)，附近最大的區域 167 格
-- boys_dorm.trash7 (94350,65855,2340)，附近最大的區域 167 格
-- boys_dorm.trash8 (94350,65855,1620)，附近最大的區域 167 格
-- boys_dorm.trash9 (94350,65855,3060)，附近最大的區域 167 格
-- boys_dorm.vanity100 (94293,65770,3060)，附近最大的區域 167 格
-- boys_dorm.vanity101 (94293,65770,1620)，附近最大的區域 167 格
-- boys_dorm.vanity102 (94293,65770,2340)，附近最大的區域 167 格
-- boys_dorm.vanity107 (94359,65700,2340)，附近最大的區域 167 格
-- boys_dorm.vanity108 (94359,65700,1980)，附近最大的區域 167 格
-- boys_dorm.vanity109 (94359,65700,3060)，附近最大的區域 167 格
-- boys_dorm.vanity92 (94293,65630,2700)，附近最大的區域 167 格
-- boys_dorm.vanity93 (94293,65630,1620)，附近最大的區域 167 格
-- boys_dorm.vanity95 (94293,65630,2340)，附近最大的區域 167 格
-- boys_dorm.vanity96 (94293,65630,3060)，附近最大的區域 167 格
-- boys_dorm.vanity97 (94293,65630,1980)，附近最大的區域 167 格
-- boys_dorm.vanity98 (94293,65770,2700)，附近最大的區域 167 格
-- boys_dorm.vanity99 (94293,65770,1980)，附近最大的區域 167 格
-- campus_sports.tennis_net (68380,124600,1203)，附近最大的區域 1522 格
-- campus_sports.tennis_net2 (68620,124600,1203)，附近最大的區域 1522 格
-- campus_sports.tennis_net3 (68380,129400,1203)，附近最大的區域 1522 格
-- campus_sports.tennis_net4 (68620,129400,1203)，附近最大的區域 1522 格
-- campus_sports.tennis_net5 (72580,124600,1203)，附近最大的區域 1522 格
-- campus_sports.tennis_net6 (72820,124600,1203)，附近最大的區域 1522 格
-- campus_sports.tennis_net7 (72580,129400,1203)，附近最大的區域 1522 格
-- campus_sports.tennis_net8 (72820,129400,1203)，附近最大的區域 1522 格
-- campus_sports.volleyball_net (79580,122400,1202)，附近最大的區域 1542 格
-- campus_sports.volleyball_net2 (79820,122400,1202)，附近最大的區域 1542 格
-- campus_sports.volleyball_net3 (79580,131600,1202)，附近最大的區域 1550 格
-- campus_sports.volleyball_net4 (79820,131600,1202)，附近最大的區域 1550 格
-- campus_sports.volleyball_net5 (84180,122400,1202)，附近最大的區域 1542 格
-- campus_sports.volleyball_net6 (84420,122400,1202)，附近最大的區域 1542 格
-- campus_sports.volleyball_net7 (84180,131600,1202)，附近最大的區域 1550 格
-- campus_sports.volleyball_net8 (84420,131600,1202)，附近最大的區域 1550 格
-- clinic_beauty.rest (29946,33859,1200)，附近最大的區域 322 格
-- clinic_beauty.seat2 (30175,33886,1200)，附近最大的區域 322 格
-- clinic_beauty.toilet3 (30790,33557,1200)，附近最大的區域 322 格
-- clothing_s10.toilet2 (48490,31957,1200)，附近最大的區域 111 格
-- festival.fireworks (38755,37519,1430)，附近最大的區域 15 格
-- girls_dorm.trash10 (94350,41855,2700)，附近最大的區域 167 格
-- girls_dorm.trash11 (94350,41855,3060)，附近最大的區域 167 格
-- girls_dorm.trash7 (94350,41855,2340)，附近最大的區域 167 格
-- girls_dorm.trash8 (94350,41855,1620)，附近最大的區域 167 格
-- girls_dorm.trash9 (94350,41855,1980)，附近最大的區域 167 格
-- girls_dorm.vanity100 (94293,41770,2700)，附近最大的區域 167 格
-- girls_dorm.vanity101 (94293,41770,1980)，附近最大的區域 167 格
-- girls_dorm.vanity102 (94293,41770,3060)，附近最大的區域 167 格
-- girls_dorm.vanity103 (94293,41770,1620)，附近最大的區域 167 格
-- girls_dorm.vanity107 (94359,41700,3060)，附近最大的區域 167 格
-- girls_dorm.vanity108 (94359,41700,1980)，附近最大的區域 167 格
-- girls_dorm.vanity109 (94359,41700,2340)，附近最大的區域 167 格
-- girls_dorm.vanity92 (94293,41630,1620)，附近最大的區域 167 格
-- girls_dorm.vanity93 (94293,41630,2340)，附近最大的區域 167 格
-- girls_dorm.vanity94 (94293,41630,2700)，附近最大的區域 167 格
-- girls_dorm.vanity95 (94293,41630,1980)，附近最大的區域 167 格
-- girls_dorm.vanity96 (94293,41630,3060)，附近最大的區域 167 格
-- girls_dorm.vanity98 (94293,41770,2340)，附近最大的區域 167 格
-- playground.field (102791,33791,1198)，附近最大的區域 0 格
-- restaurant.private_room2 (48100,25215,1200)，附近最大的區域 56 格
-- supermarket.aisle3 (34751,50410,1200)，附近最大的區域 104 格
-- supermarket.toilet2 (34790,50197,1200)，附近最大的區域 104 格
-- swimwear.seat (34361,33682,1200)，附近最大的區域 147 格
-- swimwear.seat3 (34376,33717,1200)，附近最大的區域 147 格
-- swimwear.seat4 (34316,33717,1200)，附近最大的區域 147 格
-- swimwear.toilet2 (34690,32957,1200)，附近最大的區域 147 格
-
 ## 樓層沒有入口：這層沒有門、電梯平台或樓梯錨點（24）
 
 - bridal 第 3 層（z 1770），2 個錨點
@@ -134,4 +66,29 @@
 - salon 第 4 層（z 1870），1 個錨點
 - school 第 2 層（z 1650），1 個錨點
 - school 第 3 層（z 2020），1 個錨點
+
+## 錨點在封死的格子：附近可走，但連不到門或電梯／樓梯（22）
+
+- campus_sports.tennis_net (68380,124600,1203)，附近最大的區域 1522 格
+- campus_sports.tennis_net2 (68620,124600,1203)，附近最大的區域 1522 格
+- campus_sports.tennis_net3 (68380,129400,1203)，附近最大的區域 1522 格
+- campus_sports.tennis_net4 (68620,129400,1203)，附近最大的區域 1522 格
+- campus_sports.tennis_net5 (72580,124600,1203)，附近最大的區域 1522 格
+- campus_sports.tennis_net6 (72820,124600,1203)，附近最大的區域 1522 格
+- campus_sports.tennis_net7 (72580,129400,1203)，附近最大的區域 1522 格
+- campus_sports.tennis_net8 (72820,129400,1203)，附近最大的區域 1522 格
+- campus_sports.volleyball_net (79580,122400,1202)，附近最大的區域 1542 格
+- campus_sports.volleyball_net2 (79820,122400,1202)，附近最大的區域 1542 格
+- campus_sports.volleyball_net3 (79580,131600,1202)，附近最大的區域 1550 格
+- campus_sports.volleyball_net4 (79820,131600,1202)，附近最大的區域 1550 格
+- campus_sports.volleyball_net5 (84180,122400,1202)，附近最大的區域 1542 格
+- campus_sports.volleyball_net6 (84420,122400,1202)，附近最大的區域 1542 格
+- campus_sports.volleyball_net7 (84180,131600,1202)，附近最大的區域 1550 格
+- campus_sports.volleyball_net8 (84420,131600,1202)，附近最大的區域 1550 格
+- clinic_beauty.rest (29946,33859,1200)，附近最大的區域 322 格
+- clinic_beauty.seat2 (30175,33886,1200)，附近最大的區域 322 格
+- clinic_beauty.toilet3 (30790,33557,1200)，附近最大的區域 322 格
+- festival.fireworks (38755,37519,1430)，附近最大的區域 15 格
+- playground.field (102791,33791,1198)，附近最大的區域 0 格
+- restaurant.private_room2 (48100,25215,1200)，附近最大的區域 56 格
 

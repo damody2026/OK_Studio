@@ -311,7 +311,7 @@ do
   -- props moved on the source map after the install (Tools/street_city_moved_props.lua): their items where they are now
   local PROPS = dofile('Tools/street_city_moved_props.lua')
   if last then local inst_ = load('world-edge-v1/' .. last); for _, it in ipairs(inst_.items or {}) do
-    local q = PROPS.shift_item(it.actor, it.pos); if q then it.pos = q end
+    local q = PROPS.shift_item(it.actor, it.pos); if q then PROPS.carry(it, it.pos, q); it.pos = q end
     newitems[it.place .. ':' .. it.anchor] = it end; LOTS = inst_.lots end
 end
 -- building AABB over all its floor actors
