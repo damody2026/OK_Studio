@@ -4814,3 +4814,8 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 錯誤：測試者把包解壓成 `StreetSocial-20261114-hvoice(1)(1)`。Unreal 讀 `-pakdir=`、`-StreetSocialManifest=` 這類參數時遇到 `)` 或 `,` 就停（`FParse::Value`），路徑被截成 `...hvoice(1`，runtime patch 沒掛上，log 出現「High model shader library RuntimeMaterialBake not found」和 BulkData 錯誤，讀卡開卡成功卻看不見人；街區的 manifest 同樣會讀不到。一開始以為是低規格機器的記憶體或顯卡問題。
 - 修正：`street_stage.ue_path`：路徑含 `,`、`)` 或空白時，改傳相對於執行檔資料夾（遊戲的工作資料夾）的相對路徑；讀卡、場景編輯器、街區啟動器帶路徑的參數都經過它。加引號沒用，遊戲讀的是原始命令列，不是 MSVC 拆好的 argv。
 - 防範：交給玩家的路徑不能假設乾淨；看到「載入成功卻看不見」先查 log 的命令列與 `Mounted Pak file`，確認 patch 有沒有掛上。
+
+## 2026-11-16 愛麗絲的粉紅連身緊身衣胸口不見（1aed475d5 的半透明規則套用過廣）
+- 錯誤：11-09 為了雷電社團服半脫時那片 91% 白的褲襪軀幹，把 `clothes_panst` 的 `o_body*` 部件一律壓到 alpha 89（`sheer_body_tights`）。規則沒限定顏色，愛麗絲不透明的粉紅連身衣（原作 `cf_m_bodytights_04` 整片不透明）也被壓成 35%，讀卡、街區、打包版都看起來胸口沒穿。
+- 修正：只有軀幹貼圖平均色是白色（三色都 ≥ 200、彼此差 ≤ 24）才壓；快取鍵改成 `sheer_body_tights_v2`，舊的壓過結果不再被重用。
+- 防範：照使用者的單一案例做的外觀規則要限定到那個案例的特徵（這裡是「白」），並拿原作 dump（`D:\KoikatuSunshine\mesh_dump`）比一張不同顏色的卡。
