@@ -1338,6 +1338,8 @@ pub struct OkSession {
     pub body_dynamics: crate::dbone::ver02::BodyDynamicSet,
     pub body_dynamic_runtime: Option<crate::dbone::ver02::BodyDynamicRuntime>,
     pub(crate) yure_policy: Option<crate::anim::yure::Policy>,
+    /// Body dynamics an H caress holds still (HandCtrl.EnableDynamicBone), per DynamicBoneKind.
+    pub(crate) dynamics_held: [bool; 4],
     pub(crate) body_colliders: crate::dbone::BodyColliderSet,
     pub(crate) clothes_dynamics: crate::dbone::DBoneSet,
     pub(crate) clothes_dynamic_runtime: Option<(crate::dbone::game_colliders::Flags, crate::dbone::AttachedDynamicSet)>,
@@ -2169,10 +2171,23 @@ impl OkSession {
             if let(Some(a),Some(b))=(&mut a.eye_draw,&b.eye_draw){a.textures=b.textures.clone();}
         }
     }
+    /// The body dynamics that run: the Yure policy's (all without one) less those the scene holds off.
+    pub(crate) fn dynamics_active(&self)->[bool;4] {
+        std::array::from_fn(|k|self.yure_policy.map_or(true,|p|p.active[k])&&!self.dynamics_held[k])
+    }
+    /// ChaControl.playDynamicBoneBust(kind, enabled): holds a bust or hip chain still (on the animated pose) or lets it
+    /// move again (its particle history restarted on the current pose). `false` for a kind outside 0..=3.
+    pub fn set_body_dynamic_enabled(&mut self,kind:usize,enabled:bool)->bool {
+        if kind>3 {return false;}
+        self.dynamics_held[kind]=!enabled;
+        let active=self.dynamics_active();
+        if let (Some(runtime),Some(body))=(&mut self.body_dynamic_runtime,&mut self.body_skel) {runtime.set_actives(body,active);}
+        true
+    }
     pub(crate) fn set_yure_policy(&mut self,policy:crate::anim::yure::Policy) {
         if let (Some(runtime),Some(body))=(&mut self.body_dynamic_runtime,&mut self.body_skel) {
             runtime.set_actives(body,[true;4]); // LoadExcel.ResetShape precedes Proc.
-            runtime.set_actives(body,policy.active);
+            runtime.set_actives(body,std::array::from_fn(|k|policy.active[k]&&!self.dynamics_held[k]));
         }
         self.yure_policy=Some(policy);
         // The first Studio action can be H, before any Animator/shape frame.
@@ -2340,6 +2355,7 @@ impl OkSession {
         let group = self as *const Self as u64;
         let physx = self.physx_secondary;
         let cloth = self.cloth_thickness();
+        let held = (self.yure_policy.is_some()||self.dynamics_held.contains(&true)).then(||self.dynamics_active());
         let Some(sk) = self.body_skel.as_mut() else { return; };
         if self.body_dynamics.len() == 0 { return; }
         let _group = crate::px::enter_group(group, physx);
@@ -2354,7 +2370,7 @@ impl OkSession {
                 self.bust_weight, self.shape_body.get(4).copied().unwrap_or(0.5));
             runtime.suppress_skip_update(honors_dynamic_bones_fix);
             runtime.configure_colliders(&shaped, flags, self.shape_body.get(4).copied().unwrap_or(0.5));
-            if let Some(policy)=self.yure_policy {runtime.set_actives(&mut shaped,policy.active);}
+            if let Some(active)=held {runtime.set_actives(&mut shaped,active);}
             let animated = sk.clone();
             for _ in 0..240 {
                 *sk = animated.clone(); runtime.step(sk, 1.0 / 60.0);
@@ -4562,7 +4578,7 @@ impl SessionBlob {
             body_rest: self.body_rest,
             body_dynamics: self.body_dynamics,
             body_dynamic_runtime: None,
-            yure_policy:None,
+            yure_policy:None,dynamics_held:[false;4],
             body_colliders: self.body_colliders,
             clothes_dynamics: self.clothes_dynamics,
             clothes_dynamic_runtime: None,

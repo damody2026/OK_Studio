@@ -309,9 +309,10 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Content");
         let lib = root.join("IndependentResources/base_v1");
         let anim = crate::paired_library::library_root(&lib).unwrap();
-        let card = std::fs::read_dir(root.join("CharacterCards/CrowdAPNG")).unwrap().flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|e| e == "png")).unwrap();
+        let card = std::env::var("OK_TEST_CARD").map(std::path::PathBuf::from).unwrap_or_else(|_| std::fs::read_dir(root.join("CharacterCards/CrowdAPNG")).unwrap().flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|e| e == "png")).unwrap());
         let s = crate::oklib::open_test_card(&card, 0).unwrap();
         let body: Vec<[f32; 3]> = s.parts.iter().filter(|p| p.role == "body").flat_map(|p| p.positions.iter().copied()).collect();
+        let body_n: Vec<[f32; 3]> = s.parts.iter().filter(|p| p.role == "body").flat_map(|p| p.normals.iter().copied()).collect();
         println!("body verts {}", body.len());
         let lists: CaressItems = serde_json::from_slice(&std::fs::read(lib.join(CARESS_ITEMS)).unwrap()).unwrap();
         let l = &lists.areas[0][0];
@@ -322,22 +323,24 @@ mod tests {
         println!("{} on {}: bone {:?}", item.prefab, l.parents[0], w);
         for a in &l.actions {
             let key = crate::anim::controller_layer_state(&anim, &item.controller_source, &item.controller, a.front_item as usize).unwrap();
-            it.sample(&anim, &key, 0.3, &HashMap::from([("speedHand".to_string(), 1.), ("Breast".to_string(), 0.5)]));
+            it.sample(&anim, &key, 0.3, &HashMap::from([("speedHand".to_string(), 1.), ("Breast".to_string(), s.shape_body.get(4).copied().unwrap_or(0.5))]));
             let hand = &it.skinned()[0].0;
             let rots: [(&str, [[f32; 3]; 3]); 4] = [("as-is", [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]), ("y180", [[-1., 0., 0.], [0., 1., 0.], [0., 0., -1.]]),
                 ("y+90", [[0., 0., 1.], [0., 1., 0.], [-1., 0., 0.]]), ("y-90", [[0., 0., -1.], [0., 1., 0.], [1., 0., 0.]])];
             let mut fits = Vec::new();
             for (name, r) in rots {
-                let mut near = Vec::new();
+                let mut near = Vec::new(); let mut inside = 0usize; let mut n = 0usize;
                 for v in hand.iter().step_by(4) {
                     let v = [r[0][0]*v[0]+r[0][1]*v[1]+r[0][2]*v[2], r[1][0]*v[0]+r[1][1]*v[1]+r[1][2]*v[2], r[2][0]*v[0]+r[2][1]*v[1]+r[2][2]*v[2]];
                     let p = [0, 1, 2].map(|i| w[i][0]*v[0]+w[i][1]*v[1]+w[i][2]*v[2]+w[i][3]);
-                    let d = body.iter().map(|b| (b[0]-p[0]).powi(2)+(b[1]-p[1]).powi(2)+(b[2]-p[2]).powi(2)).fold(f32::MAX, f32::min).sqrt();
+                    let (bi, d2) = body.iter().enumerate().map(|(i, b)| (i, (b[0]-p[0]).powi(2)+(b[1]-p[1]).powi(2)+(b[2]-p[2]).powi(2))).fold((0, f32::MAX), |a, x| if x.1 < a.1 { x } else { a });
+                    let d = d2.sqrt(); n += 1;
+                    if let Some(bn) = body_n.get(bi) { let b = body[bi]; if (p[0]-b[0])*bn[0]+(p[1]-b[1])*bn[1]+(p[2]-b[2])*bn[2] < 0. { inside += 1; } }
                     near.push(d);
                 }
                 near.sort_by(f32::total_cmp);
                 let within = near.iter().filter(|d| **d < 0.015).count() as f32 / near.len() as f32;
-                println!("  layer {} {name}: nearest median {:.3} m, within 1.5cm {:.0}%", a.front_item, near[near.len()/2], within*100.);
+                println!("  layer {} {name}: nearest median {:.3} m, within 1.5cm {:.0}%, inside her {:.0}%", a.front_item, near[near.len()/2], within*100., inside as f32 * 100. / n as f32);
                 fits.push(within);
             }
             assert!(fits[0] > 0.7 && fits[1..].iter().all(|f| *f < fits[0]), "layer {}: the hand does not lie on her breast {fits:?}", a.front_item);
@@ -433,5 +436,45 @@ mod tests {
         let misses = crate::anim::disk_cache::library_misses();
         println!("library vs bundle {d:.6} m, misses {misses:?}");
         assert!(misses.is_empty() && d < 1e-4, "the library poses the item like the bundle");
+    }
+
+
+    /// HandCtrl turns on her body layer of the place (`front.body`) while his hand is there: `key_with_layer` composes it
+    /// over her caress pose's state (from the base library alone), it moves her breast, and turning it off gives the
+    /// pose's own key back.
+    #[test]
+    #[ignore = "needs a local OK card and the base library"]
+    fn her_body_layer_joins_her_caress_state() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Content");
+        let lib = root.join("IndependentResources/base_v1");
+        let anim = std::env::var("OK_TEST_ANIM_ROOT").map(std::path::PathBuf::from).unwrap_or_else(|_| crate::paired_library::library_root(&lib).unwrap());
+        let _ = crate::anim::disk_cache::library_misses();
+        let lists: CaressItems = serde_json::from_slice(&std::fs::read(lib.join(CARESS_ITEMS)).unwrap()).unwrap();
+        let card = std::fs::read_dir(root.join("CharacterCards/CrowdAPNG")).unwrap().flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|e| e == "png")).unwrap();
+        let s = crate::oklib::open_test_card(&card, 0).unwrap();
+        let poses: Vec<_> = crate::h_playback::interaction_poses(&anim).into_iter().filter(|p| p.participants == 1 && p.category == "AnimationInfo_00").collect();
+        assert!(!poses.is_empty());
+        let mut composed = 0;
+        for pose in &poses {
+            for state in ["Idle", "M_Touch"] {
+            let Some(label) = crate::anim::clip_names_for_source(&anim, &pose.female_source).into_iter().find(|l| l.ends_with(&format!("[Controller layer 0] Base Layer.{state}"))) else { continue };
+            let Some(key) = crate::anim::native_pair_clip(&anim, &format!("{}|{label}", pose.female_source), pose.female_layer) else { continue };
+            for action in &lists.areas[0][0].actions {
+                let Some(with) = crate::anim::key_with_layer(&anim, &key, action.front_body as usize, true) else { println!("{} ({}): no body layer {}", pose.name, pose.id, action.front_body); continue };
+                assert_eq!(crate::anim::key_with_layer(&anim, &with, action.front_body as usize, false).as_deref(), Some(key.as_str()), "off gives the pose's key back");
+                let bones = ["k_f_mune03L_02", "cf_d_bust02_L", "cf_s_bust03_L"];
+                let pose_of = |k: &str| { let mut skel = s.body_skel.clone().unwrap(); crate::anim::apply_clip_at_parameters(&anim, &mut skel, k, 0.5, &HashMap::new()); skel.rebuild_worlds();
+                    bones.map(|b| skel.world(b).map(|w| [w[0][3], w[1][3], w[2][3]])) };
+                let (a, b) = (pose_of(&key), pose_of(&with));
+                let moved = a.iter().zip(&b).filter_map(|(a, b)| Some(((a.as_ref()?[0] - b.as_ref()?[0]).powi(2) + (a.as_ref()?[1] - b.as_ref()?[1]).powi(2) + (a.as_ref()?[2] - b.as_ref()?[2]).powi(2)).sqrt())).fold(0f32, f32::max);
+                println!("{} ({}) {state} layer {}: breast bones move {moved:.4} m", pose.name, pose.id, action.front_body);
+                assert!(moved > 0.004, "her body layer moves her breast ({with}); library misses {:?}", crate::anim::disk_cache::library_misses());
+                composed += 1;
+            }
+            }
+        }
+        assert!(composed > 0, "no caress pose took her body layer");
+        let misses = crate::anim::disk_cache::library_misses();
+        assert!(misses.is_empty(), "library misses {misses:?}");
     }
 }

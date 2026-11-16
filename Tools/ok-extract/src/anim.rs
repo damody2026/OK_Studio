@@ -1155,16 +1155,28 @@ pub(crate) fn state_leaf_clips(game:&Path,key:&str)->Option<HashSet<String>> {
     let resolved=source_path(game,source)?;let entries=controller::entries(&resolved);
     let entry=entries.iter().find(|e|e.label==label)?;
     fn motion(m:&controller::MotionNode,source:&str,out:&mut HashSet<String>){match m {
-        controller::MotionNode::Clip{clip,..}=>{out.insert(format!("{}|{}",clip.source.as_deref().unwrap_or(source),clip.label));},
+        controller::MotionNode::Clip{clip,..}=>{out.insert(format!("{}|{}",clip.source.as_deref().unwrap_or(&clip_home(source)),clip.label));},
         controller::MotionNode::OneD{children,..}|controller::MotionNode::Cartesian{children,..}=>for child in children {motion(child,source,out);}
     }}
     fn collect(e:&controller::StateEntry,source:&str,out:&mut HashSet<String>){
-        if let Some(m)=&e.motion {motion(m,source,out);}else{out.insert(format!("{}|{}",e.clip.source.as_deref().unwrap_or(source),e.clip.label));}
+        if let Some(m)=&e.motion {motion(m,source,out);}else{out.insert(format!("{}|{}",e.clip.source.as_deref().unwrap_or(&clip_home(source)),e.clip.label));}
         for child in &e.active_layers {collect(child,source,out);}
     }
     let mut keys=HashSet::new();collect(entry,source,&mut keys);
     if let Some(layer)=&entry.layer {let base=entries.iter().find(|e|e.label==layer.base_label)?;collect(base,source,&mut keys);}
     Some(keys)
+}
+
+/// The source a clip of a controller state is loaded under: a `layers@` key's base and layers are states of the controller
+/// it wraps, so their clips are that controller's (decoded and stored once, not again under each combination of layers).
+pub(crate) fn clip_home(source:&str)->String {
+    thread_local!{static LAST:std::cell::RefCell<(String,String)>=const{std::cell::RefCell::new((String::new(),String::new()))};}
+    let Some(hex)=source.strip_prefix("layers@") else {return source.to_owned()};
+    if let Some(hit)=LAST.with(|l|{let l=l.borrow();(l.0==source).then(||l.1.clone())}) {return hit;}
+    let inner=(hex.len()%2==0).then(||(0..hex.len()).step_by(2).map(|i|u8::from_str_radix(hex.get(i..i+2)?,16).ok()).collect::<Option<Vec<u8>>>()).flatten()
+        .and_then(|b|serde_json::from_slice::<(String,String,Vec<String>)>(&b).ok()).map(|(d,_,_)|d).unwrap_or_else(||source.to_owned());
+    LAST.with(|l|*l.borrow_mut()=(source.to_owned(),inner.clone()));
+    inner
 }
 
 /// Conversion into an OK base library: the raw clips a key plays (itself when it is not a controller state).
@@ -1205,6 +1217,40 @@ pub(crate) fn native_pair_clip(game:&Path,key:&str,layer:i32)->Option<String>{
     let matches:Vec<_>=graph.iter().filter(|e|e.layer.as_ref().is_some_and(|l|l.index==layer as usize&&l.base_label==base.label)).collect();
     if matches.len()!=1{return None;}
     let json=serde_json::to_vec(&(descriptor,label,vec![matches[0].label.clone()])).ok()?;let hex:String=json.iter().map(|v|format!("{v:02X}")).collect();let source=format!("states:layers@{hex}");
+    let names=clip_names_for_source(game,&source);if names.len()!=1{return None;}Some(format!("{source}|{}",names[0]))
+}
+
+/// `key` (a playable `states:` key: a base state, or `states:layers@…` with override layers over it) with the
+/// controller's override layer `layer` switched on (`on`, Animator.SetLayerWeight 1) or off: the layer's state paired with
+/// the key's base state joins (or leaves) the layers it already has. HandCtrl turns on her `front.body` layer while his
+/// hand is on a place of hers, over whatever state and pose layer she plays. `None`: the layer has no single state over
+/// that base, or the key is not a controller state.
+pub(crate) fn key_with_layer(game:&Path,key:&str,layer:usize,on:bool)->Option<String>{
+    let (source,label)=key.split_once('|')?;let source=source.strip_prefix("states:")?;
+    let (descriptor,base,mut selected)=match source.strip_prefix("layers@"){
+        Some(hex)=>{
+            if hex.len()%2!=0{return None;}
+            let bytes=(0..hex.len()).step_by(2).map(|i|u8::from_str_radix(hex.get(i..i+2)?,16).ok()).collect::<Option<Vec<_>>>()?;
+            let (d,b,s):(String,String,Vec<String>)=serde_json::from_slice(&bytes).ok()?;(d,b,s)
+        }
+        None=>(source.to_owned(),label.to_owned(),Vec::new()),
+    };
+    let graph=controller::entries(&source_path(game,&descriptor)?);
+    graph.iter().find(|e|e.label==base&&e.layer.is_none())?;
+    let index_of=|l:&str|graph.iter().find(|e|e.label==l).and_then(|e|e.layer.as_ref()).map(|x|x.index);
+    selected.retain(|s|index_of(s)!=Some(layer));
+    if on {
+        let mut matches:Vec<_>=graph.iter().filter(|e|e.layer.as_ref().is_some_and(|l|l.index==layer&&l.base_label==base)).collect();
+        // A layer of its own state machine is listed over the base state it is paired with; it plays over any.
+        if matches.is_empty(){matches=graph.iter().filter(|e|e.layer.as_ref().is_some_and(|l|l.index==layer&&!l.synchronized&&!l.additive)).collect();}
+        if matches.len()!=1{return None;}
+        selected.push(matches[0].label.clone());
+        // Unity blends override layers in controller order.
+        selected.sort_by_key(|s|index_of(s).unwrap_or(usize::MAX));
+    }
+    if selected.is_empty(){let key=format!("states:{descriptor}|{base}");return selectable_clip(game,&key).then_some(key);}
+    let json=serde_json::to_vec(&(descriptor.as_str(),base.as_str(),&selected)).ok()?;let hex:String=json.iter().map(|v|format!("{v:02X}")).collect();
+    let source=format!("states:layers@{hex}");
     let names=clip_names_for_source(game,&source);if names.len()!=1{return None;}Some(format!("{source}|{}",names[0]))
 }
 
@@ -2373,7 +2419,7 @@ fn motion_plan_entry(game_root:&Path,source:&str,mut entry:controller::StateEntr
     let mut leaves=Vec::new();motion.leaves(&values,1.,&mut leaves);
     let mut duration=0.;let mut sampled=Vec::new();
     for(clip,weight,cycle,duration_factor) in leaves {
-        let key=format!("{}|{}",clip.source.as_deref().unwrap_or(source),clip.label);
+        let key=format!("{}|{}",clip.source.as_deref().unwrap_or(&clip_home(source)),clip.label);
         let length=loaded_clip_duration(game_root,&key)?;
         if entry.layer.as_ref().is_some_and(|l|l.additive) { additive_reference_values(game_root,&key)?; }
         if !length.is_finite()||length<=0. {return None;}
@@ -2440,7 +2486,7 @@ fn sample_motion_pose_impl(game_root:&Path,skel:&mut Skeleton,baseline:&Skeleton
     if prepared&&leaves.len()==1&&leaves[0].1==1.&&!entry.layer.as_ref().is_some_and(|l|l.additive){
         let (clip,_,cycle,length)=&leaves[0];
         let p=if t==f32::MAX {1.}else if entry.timing.looping {(phase+cycle).rem_euclid(1.)}else{(phase+cycle).clamp(0.,1.)};
-        let key=format!("{}|{}",clip.source.as_deref().unwrap_or(source),clip.label);
+        let key=format!("{}|{}",clip.source.as_deref().unwrap_or(&clip_home(source)),clip.label);
         skel.restore_from(baseline);apply_raw_clip_local(game_root,skel,&key,p*length,&cached_rig_bindings(baseline));
         for tf in skel.tfs.values_mut(){for i in 0..3{tf.pos[i]=0.+tf.pos[i]*1.;tf.scale[i]=0.+tf.scale[i]*1.;}tf.rot=norm_quat(tf.rot.map(|x|0.+x*1.*1.));}
         skel.rebuild_worlds();return true;
@@ -2452,7 +2498,7 @@ fn sample_motion_pose_impl(game_root:&Path,skel:&mut Skeleton,baseline:&Skeleton
     for(clip,weight,cycle,length) in leaves {
         let mut pose={let _trace=crate::native_profile::Scope::new(40);SkeletonSnapshot::new(baseline)};
         let p=if t==f32::MAX {1.} else if entry.timing.looping {(phase+cycle).rem_euclid(1.)} else {(phase+cycle).clamp(0.,1.)};
-        let key=format!("{}|{}",clip.source.as_deref().unwrap_or(source),clip.label);
+        let key=format!("{}|{}",clip.source.as_deref().unwrap_or(&clip_home(source)),clip.label);
         {let _trace=crate::native_profile::Scope::new(41);apply_raw_clip_local(game_root,&mut pose,&key,p*length,&rig);}
         if entry.layer.as_ref().is_some_and(|l|l.additive) {
             let mut reference=SkeletonSnapshot::new(baseline);

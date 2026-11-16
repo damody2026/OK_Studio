@@ -541,6 +541,8 @@ int32_t ok_session_refresh_body_physics(OkSession* session);
 /* Her dynamics (accessory/hair chains, clothes chains, body) back to rest, built again on the next step: a replay
  * from a known start reaches the same pose at the same time (ok.Anim.SetTime). 0 on success. */
 int32_t ok_session_reset_dynamics(OkSession* session);
+/* ChaControl.playDynamicBoneBust: body dynamics of kind (0 bust L, 1 bust R, 2 hip L, 3 hip R) on or held still. 0 ok. */
+int32_t ok_session_set_body_dynamic_enabled(OkSession* session, int32_t kind, int32_t enabled);
 /* Her dynamic chains as read: owner, component, root, parameters and colliders, JSON. Size with a null out. */
 int32_t ok_session_dynamic_chains_json(OkSession* session, uint8_t* out, int32_t cap);
 /* Her skin where he lifts it cut finer, one-on-one only: once, after opening, before the mesh is built. The vertices
@@ -637,6 +639,8 @@ int32_t ok_skinned_item_open(const char* library, const char* id_hex, const char
 void ok_skinned_item_close(OkSkinnedItem* item);
 int32_t ok_skinned_item_pose_session(OkSkinnedItem* item, OkSession* session, const char* anim_root, const char* state, float t, const char* values_json);
 int32_t ok_controller_layer_state(const char* anim_root, const char* source, const char* owner, int32_t layer, uint8_t* out, int32_t cap);
+/* key with the controller's override layer `layer` switched on (on != 0) or off, as a playable key; byte length, -1 none. */
+int32_t ok_key_with_layer(const char* anim_root, const char* key, int32_t layer, int32_t on, uint8_t* out, int32_t cap);
 /* Studio item FK: fk_json = [[bone, [x, y, z]], ...] (local Unity Euler degrees) turned before the meshes are baked. */
 /* OK Studio character state: status_json = {"tears_lv","hoho_aka_rate","nip_stand_rate","skin_tuya_rate","siru_lv":[5],"show_accessory":[21] (20 slots + one for every MoreAccessories slot)} (each optional); states nullable (clothes as ok_session_open_clothes). */
 int32_t ok_session_open_status(const char* game_root, const char* card, int32_t outfit, const uint8_t* states, const char* status_json, OkSession** out, char* err, int32_t cap);

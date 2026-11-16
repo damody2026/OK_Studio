@@ -2362,7 +2362,7 @@ pub(crate) fn extract_session_from_info(
         body_rest,
         body_dynamics,
         body_dynamic_runtime: None,
-        yure_policy:None,
+        yure_policy:None,dynamics_held:[false;4],
         body_colliders,
         clothes_dynamics,
         clothes_dynamic_runtime: None,
