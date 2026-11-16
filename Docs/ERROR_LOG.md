@@ -4880,3 +4880,13 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 預防：多個 session 共用同一台機器時，`reader_call` 一律帶 `OK_GAME_PID`；腳本用自己加的命令列標記認行程，不用「最新的那個」。
 - 補查（同日）：`reader_call` 的實例選擇（`Tools/ok-game-mcp/src/control.rs` 的 `target`）和 `ui_*`／`pair_call` 共用同一套規則，會跟著 `game_select` 與 `OK_GAME_PID` 走：有指定 pid 就只找那一台（那台的 OKControl 記錄還沒寫出 `mailbox` 時直接回「no running game has a card reader mailbox」，不會改打別台，c-lowspec 第一次 `state` 失敗就是這個）。**沒指定時預設是「最新啟動、有信箱的那一台」**，`OWN` 只認 `game_launch` 開的遊戲，用 `CardReaderDevelopment.cmd` 開的讀卡器不算。所以同一個 checkout 有好幾台讀卡器時，任何沒有 `game_select`／`OK_GAME_PID` 的 session 送 `reader_call`（包括 `load`），都會打到剛啟動的那一台，通常是別人的。c-lowspec 每次都先 `game_select`，排除；23:18 是誰送的 load 無法再證。
 - `ok-game-mcp` 缺陷（待修，共用工具，未改）：沒指定實例、又有超過一台在跑時，應該拒絕並列出 `game_instances`，而不是默默選最新的；至少 `load`、`control_set` 這類會改狀態的動作要拒絕。
+
+## I-014　paired 轉換輸出不是逐位元決定性，restore 後 verify 必然報 differs（2026-11-17）
+
+- **情境**：整合 `6d4f0ec21` 後，因 `bf6bf3ec6` 改了 `Tools/original_data_manifest.json` 的 base-paired 雜湊，C 與 F 兩個 checkout 跑 `Tools\lua\lua.exe Tools\original_data.lua restore --game D:/KoikatuSunshine --only paired`。
+- **症狀**：轉換本身成功（C：1077 sources、287941 keys、230232 raw clips、117 pairs、128 poses、415 MotionIK assets、pack 472867 entries、1404.4 MB、1488 s），但結束時的 verify 兩邊都報 `differs base-paired 2`，`restore` 回傳碼 1（非零其實來自另一組 `missing base-models 2`，非共用 mod 的模型）。
+- **已證實**：差的兩個檔是 `base_v1/paired/okpaired.json` 與 `paired/cache/pack.bin`。三個 checkout 的檔案大小完全相同（okpaired.json 都是 85566759 bytes），但 SHA-256 三邊各不相同；產出 manifest 的 E 樹 verify 則是 `base-paired` 全同。也就是說 `ok-paired-library convert` 的輸出順序隨執行而變（疑為 HashMap 迭代序），不是資料缺漏。
+- **尚未證實**：內容是否完全等價（只比了大小與項目統計，沒有逐項解包比對）。
+- **處置**：整合照常進行，三個樹的 paired 都是用同一份遊戲安裝與同一個 commit 重新轉出來的；manifest 的 base-paired 雜湊只能對產出它的那台機器成立，不能當成跨 checkout 的完整性檢查。
+- **再試前檢查**：要讓 manifest 的 paired 雜湊跨機器有意義，得先讓 `ok-paired-library` 的 pack 寫出順序固定（排序鍵再寫檔），並另外做一次逐項解包比對確認三邊等價。
+
