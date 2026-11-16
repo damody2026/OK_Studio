@@ -4794,3 +4794,11 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 驗證：暫存 slot 目錄下跑過帶後綴名稱、假前綴（`f-yvonnex`）、死 pid、過期無 pid、活著的 `--wait` 等待者（被殺後立即不擋、檔案被刪）與 yield；實機有兩個 Unreal 在跑，claim 實際拿到 slot 那一步沒跑到（那段沒改）。
 - 教訓：共用的鎖或排隊檔要能自己失效（綁行程或設期限），不能只靠持有者記得清掉；名稱表要對上實際使用的命名方式。
 - 過渡期：改版前就在跑的舊 `claim --wait` 迴圈不會刷新時間戳，15 分鐘後在新版眼中是 stale、不再擋人；它們重新 claim 後就會帶 pid。
+
+## 2026-11-16 Unreal slot：使用者自己開的遊戲佔掉 slot 門檻，兩格只能用一格（C 組 c-lowspec 修）
+
+- 錯誤：`Tools/unreal_slot.lua` 的 `unreal_count()` 數全機所有 Unreal 行程，使用者自己開的遊戲也算進去。讀卡器 1 個＋使用者的遊戲 1 個 = 2，slot2 空著、可用 commit 70 GB，f-studio-ui 的 `claim --wait` 仍永遠拿不到；使用者玩幾小時就等於整晚只跑一條線。
+- 修正（C `cdf933211`、E `6f719b00f`、F `85a65219f`，三棵樹內容相同）：持有者都是 claim 之後才啟動，所以比所有現有 claim 都早啟動的 Unreal 行程不算持有者的。claim 的門檻改成「持有者的行程 < 2」且「全機 Unreal < 3」（2 格 slot＋使用者 1 個）。另加記憶體保護：新 slot 要求 free commit − need-gb ≥ 25 GB（獨佔 claim 只看 need-gb），避免行程數放寬後把機器壓到 11 GB 那種情況。status 改印「slot holders N, others M」。
+- 驗證：暫存 slot 目錄、實機兩個 Unreal（使用者遊戲 20:18、讀卡器 21:48）：slot1 在 21:00 claim → 1 持有＋1 其他，claim 成功；`--need-gb 55`（63−55<25）被拒；slot1 在 20:00 claim → 2 個都算持有者，被拒；無人持有 → 成功；再起一個假 `OpenKoikatsu.exe` 湊成 3 個 → 總量上限拒絕。
+- 已知邊界：持有者 release 後又 claim，舊實例比新 claim 早，只算進總量；使用者在 slot 被持有期間才開的遊戲會被當成持有者的（保守，跟舊行為一樣）。
+- 教訓：資源上限要數「受這套規則管的東西」，使用者自己的用量另算總量，不然規則會跟使用者搶資源。
