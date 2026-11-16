@@ -85,6 +85,13 @@ local function main()
   if cards == nil then
     local prepared = path.join(root, "Content/CharacterCards/CrowdAPNG")
     cards = path.is_dir(prepared) and prepared or (stage_exe and path.is_dir(street) and street) or ""
+    -- A package without cards (the Studio package ships none): its own Content/CharacterCards, made empty, where the
+    -- player puts theirs. "" would scan the game folder named in Config (D:/KoikatuSunshine), which a player may not
+    -- have, and which held the reader at its first frame for minutes on a machine with thousands of cards there.
+    if cards == "" and stage_exe then
+      cards = path.join(root, "Content/CharacterCards")
+      path.mkdir(cards, true)
+    end
   end
   if cards ~= "" then
     cards = path.abs(cards)
