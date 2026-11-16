@@ -1412,7 +1412,10 @@ void AOKStreetSocialScene::SendFreeTalk(){QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_
  // till note) came while he had scrolled back and undid the lines after that point, as if he had spoken there.
  {const FString RollId=OKStreetStableId(S.Manifest.Characters[Character]);if(His)GalgameRollBack({RollId});if(!OKStreetFreeTalkIsNudge(Text))GalgameCheckpoint(Character,RollId);}
  FOKFreeTalkSettings Settings;FString Error,System,UserMessage;
- if(!PrepareFreeTalk(Character,Text,Settings,System,UserMessage,Error)){S.FreeTalkNotice=Error;RefreshUI();return;}
+ // Not sent (no AI talk: no key, -NoCloud): said when he spoke; a note the game wrote for her keeps the notice it came
+ // with ("you hold hands …: she goes along") and is not left in his input box. Every touch with 安可 showed "no key set"
+ // instead of how she took it (round 15).
+ if(!PrepareFreeTalk(Character,Text,Settings,System,UserMessage,Error)){if(His||S.FreeTalkNotice.IsEmpty())S.FreeTalkNotice=Error;if(!His&&S.FreeTalkDraft.TrimStartAndEnd()==Text)S.FreeTalkDraft.Reset();RefreshUI();return;}
  // In the H scene: what she is in the middle of (pose, how fast, how close), in the turn message.
  if(S.PrivateGirl==Character&&!S.PrivateTalkContext.IsEmpty()){UserMessage+=TEXT("\n")+S.PrivateTalkContext;S.PrivateTalkContext.Reset();}
  // The reply is handled in the mode this was sent in (phone or face to face), whatever happens meanwhile.
