@@ -155,6 +155,41 @@ end
 -- 10F that spot is over the atrium, with no floor under it (the game's places_check, 11-09), and a walk to the lingerie
 -- shop, the arcade or the observation cafe ended in the air. Its door is its own spot on its floor nearest that entrance:
 -- an anchor (each stands on the floor, places-v1/anchor-ground.json), not a lift, stair or gate.
+-- Nor an anchor standing on something: the arcade's door was its racing2, on the racing seat 50 cm up, and the ramen
+-- shop's its table2, 45 cm up; the walk grid steps 40 cm at most, so each door was an island and neither shop was reached
+-- (Tools/street_city_reach_check.lua, 11-16). The walk-grid scan of that check (places-v1/reach-grid, the game's own cell
+-- test) gives the ground under each candidate: one more than 40 cm off the floor, or not walkable, is not taken. Without
+-- the scan (a fresh checkout) every candidate stays and a warning says so; the check finds an island door either way.
+local reach_cell
+do
+  local tf = io.open(ROOT .. 'output/street-social-city-production/places-v1/reach-tiles.json', 'rb')
+  local dir = ROOT .. 'output/street-social-city-production/places-v1/reach-grid/'
+  if tf then
+    tf:close()
+    local okl, lfs = pcall(require, 'lfs')
+    local cells = {}
+    if okl and lfs.attributes(dir) then
+      for n in lfs.dir(dir) do if n:match('%.json$') then
+        local g = json.decode(read(dir .. n))
+        for key, rows in pairs(g.tiles) do
+          local tx, ty, z = key:match('^(%-?%d+)_(%-?%d+)_(%-?%d+)$'); tx, ty, z = tonumber(tx), tonumber(ty), tonumber(z)
+          for jy, row in ipairs(rows) do local ix = tx * 40
+            for code in row:gmatch('%S+') do cells[z .. ':' .. ix .. ':' .. (ty * 40 + jy - 1)] = code; ix = ix + 1 end end
+        end end end
+    end
+    if next(cells) then
+      local zs = {}; for k in pairs(cells) do local z = tonumber(k:match('^(%-?%d+)')); zs[z] = true end
+      reach_cell = function(x, y, z)
+        local code
+        for zk in pairs(zs) do if math.abs(zk - z) <= 60 then
+          code = cells[zk .. ':' .. math.floor(x / 40 + .5) .. ':' .. math.floor(y / 40 + .5)]
+          if code then local g = code:match('^(%-?%d+),?$'); if not g then return false end; return math.abs(tonumber(g) + zk - z) <= 40 end end end
+        return nil -- not scanned
+      end
+    end
+  end
+  if not reach_cell then print('warning: no walk-grid scan (Tools/street_city_reach_check.lua scan): upstairs doors not checked for raised spots') end
+end
 do
   local shared = {}
   for _, p in ipairs(places) do
@@ -170,7 +205,9 @@ do
         -- nor a spot to sit or lie on: the ramen shop's door was its counter_seat4, behind the counter, and the walk from
         -- the 9F lift stopped at the counter (R6-197, 11-15)
         local sit = name:find('seat') or name:find('chair') or name:find('bed') or name:find('sofa') or name:find('bench')
-        if not (name:match('^lift') or name:match('^stair') or name:match('^gate') or sit) and math.abs(an.pos[3] - d[3]) < 100 then
+        local raised = reach_cell and reach_cell(an.pos[1], an.pos[2], d[3]) == false
+        if raised and not sit then print(('door: %s upstairs, %s not taken: raised or not walkable on the walk grid'):format(p.id, name)) end
+        if not (name:match('^lift') or name:match('^stair') or name:match('^gate') or sit or raised) and math.abs(an.pos[3] - d[3]) < 100 then
           local dist = (an.pos[1] - d[1]) ^ 2 + (an.pos[2] - d[2]) ^ 2
           if not far or dist < far then best, far = an, dist end
         end
@@ -190,7 +227,9 @@ end
 -- arcade's racing seat LoverSpot_R2_arcade_racing1_Seat), a step the walk grid does not take (40 cm): each door was an
 -- island of 4-7 cells, so neither shop was reached from the mall floor (Tools/street_city_reach_check.lua, 11-16); the doors
 -- move to the mall floor beside them, cells checked joined to the floor's 77-80 thousand cells (reach_check probe).
-local DOORS = { bank = { 32400, 59150, 1620 }, arcade = { 44200, 63920, 4140 }, ramen = { 47760, 60360, 4560 } }
+-- 11-16: the bank's (counter), the arcade's and the ramen shop's are now left to the rule above (raised or unwalkable
+-- candidates are not taken); keep this for a door no rule can place, with the reason
+local DOORS = {}
 for _, p in ipairs(places) do
   local d = DOORS[p.id]
   if d then print(('door: %s by hand, %.0f,%.0f -> %.0f,%.0f'):format(p.id, p.door[1], p.door[2], d[1], d[2])); p.door = { d[1], d[2], d[3] } end
