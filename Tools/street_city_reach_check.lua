@@ -178,6 +178,7 @@ end
 
 local function report()
   local cfg = j.decode(assert(read(PLACES .. 'reach-tiles.json'), 'run plan first'))
+  ROAD = j.decode(assert(read(DATA .. 'city_places.json'))).road
   local have = scanned()
   -- grid[z][ix][iy] = cell (false: scanned, no ground)
   local grid, missing = {}, 0
@@ -215,6 +216,29 @@ local function report()
         size[n] = cnt; edge[n] = open
       end
     end end
+    -- The road graph joins regions too: where the grid finds no way the game walks the road graph, whose passages
+    -- (Tools/street_city_roads_add.lua, the cut shop passages) go through gaps the 30 cm cells do not (the body is 28):
+    -- the izakaya's NE room is 140 cells on the grid and walked out of in the game every time (11-16). A link of this
+    -- floor whose two ends have a passable cell within 2 cells joins their regions.
+    local parent = {}
+    local function root(a) while parent[a] and parent[a] ~= a do a = parent[a] end; return a end
+    local function near(x, y)
+      for r = 0, 2 do for dx = -r, r do for dy = -r, r do
+        if math.max(math.abs(dx), math.abs(dy)) == r and pass(z, x + dx, y + dy, up) then return getid(x + dx, y + dy) end end end end
+    end
+    for _, l in ipairs(ROAD.links) do
+      local a, b = ROAD.nodes[l[1] + 1], ROAD.nodes[l[2] + 1]
+      if a and b and math.abs(a[3] - z) <= 60 and math.abs(b[3] - z) <= 60 then
+        local ra, rb = near(cellof(a[1]), cellof(a[2])), near(cellof(b[1]), cellof(b[2]))
+        if ra and rb then ra, rb = root(ra), root(rb); if ra ~= rb then parent[rb] = ra end end
+      end
+    end
+    if next(parent) then
+      local tot, open = {}, {}
+      for r = 1, n do local q = root(r); tot[q] = (tot[q] or 0) + size[r]; open[q] = open[q] or edge[r] end
+      for _, col in pairs(id) do for iy, r in pairs(col) do col[iy] = root(r) end end
+      for r = 1, n do size[r] = tot[root(r)]; edge[r] = open[root(r)] end
+    end
     regions[key] = { id = id, size = size, edge = edge }; return regions[key]
   end
   -- the nearest passable cell within the goal rings, as the game picks a goal on furniture

@@ -186,7 +186,11 @@ end
 -- Doors picked by hand where the nearest anchor is in a mesh: the bank's (civic 2F) was its counter, inside the counter's
 -- collision (StaticMeshActor_496, pen=1), and every walk from the bank began wedged (nh1115k, 11-15). Its room is open to the
 -- corridor along the south (floor scans z 1710 and 1640): the door is in that opening.
-local DOORS = { bank = { 32400, 59150, 1620 } }
+-- The arcade's (M1 8F, 44097,63905) and the ramen shop's (M1 9F, 47835,60370) doors stood on something 45-50 cm high (the
+-- arcade's racing seat LoverSpot_R2_arcade_racing1_Seat), a step the walk grid does not take (40 cm): each door was an
+-- island of 4-7 cells, so neither shop was reached from the mall floor (Tools/street_city_reach_check.lua, 11-16); the doors
+-- move to the mall floor beside them, cells checked joined to the floor's 77-80 thousand cells (reach_check probe).
+local DOORS = { bank = { 32400, 59150, 1620 }, arcade = { 44200, 63920, 4140 }, ramen = { 47760, 60360, 4560 } }
 for _, p in ipairs(places) do
   local d = DOORS[p.id]
   if d then print(('door: %s by hand, %.0f,%.0f -> %.0f,%.0f'):format(p.id, p.door[1], p.door[2], d[1], d[2])); p.door = { d[1], d[2], d[3] } end

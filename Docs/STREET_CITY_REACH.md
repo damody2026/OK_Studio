@@ -4,23 +4,42 @@
 
 檢查 113 個地點、9596 個錨點；未掃到的區塊 0 個。
 
-## 站位在家具或牆裡：遊戲會改用 1.6 m 內走得到的點（不擋路，只是站位不準）（5135）
+## 站位在家具或牆裡：遊戲會改用 1.6 m 內走得到的點（不擋路，只是站位不準）（5138）
 
-各地點筆數（每一筆在 output/street-social-city-production/places-v1/reach-report.json）：girls_dorm 1148、boys_dorm 1133、campus_ib 274、campus_ma 274、campus_rb 274、campus_t4 274、campus_t1 262、campus_t2 262、campus_ee 261、park 85、cafeteria 83、civic 66、library 60、campus_sports 52、beach 44、onsen 36、restaurant 36、cafe 33、izakaya 29、sushi 29、station 28、clinic_general 19、campus_e1 18、district_office 18、clinic_gyn 17、craft 16、manga_cafe 15、bookstore 14、cat_cafe 14、conveni 13、fastfood 13、lecture 12、school 12、lottery 11、bridal 10、campus_ad 10、snack 10、museum 9、yakiniku 9、bowling 8、department 8、fruitshop 8、nursery 8、petshop 8、salon 7、clinic_beauty 6、post 6、shrine 6、aquarium 5、dentist 5、police 5、breakfast 4、club_room 4、drinkshop 4、fortune 4、hotel 4、livehouse 4、nail 4、realty 4、karaoke 3、supermarket 3、amusement 2、arcade 2、art_room 2、bbq 2、clothing_s30 2、crepe 2、festival 2、fishing 2、gym_storage 2、pool 2、bank 1、bike_shop 1、boat 1、campus_gate 1、cinema 1、clothing_s10 1、clothing_s46 1、clothing_s94 1、infirmary 1、phone_shop 1、photo_studio 1、swimwear 1、waterpark 1、yukata 1
+各地點筆數（每一筆在 output/street-social-city-production/places-v1/reach-report.json）：girls_dorm 1148、boys_dorm 1133、campus_ib 274、campus_ma 274、campus_rb 274、campus_t4 274、campus_t1 262、campus_t2 262、campus_ee 261、park 85、cafeteria 83、civic 66、library 60、campus_sports 52、beach 44、onsen 36、restaurant 36、cafe 33、izakaya 31、sushi 29、station 28、clinic_general 19、campus_e1 18、district_office 18、clinic_gyn 17、craft 16、manga_cafe 15、bookstore 14、cat_cafe 14、conveni 13、fastfood 13、lecture 12、school 12、lottery 11、bridal 10、campus_ad 10、snack 10、museum 9、yakiniku 9、bowling 8、department 8、fruitshop 8、nursery 8、petshop 8、salon 7、clinic_beauty 6、post 6、shrine 6、aquarium 5、dentist 5、police 5、breakfast 4、club_room 4、drinkshop 4、fortune 4、hotel 4、livehouse 4、nail 4、realty 4、karaoke 3、supermarket 3、amusement 2、arcade 2、art_room 2、bbq 2、clothing_s30 2、crepe 2、festival 2、fishing 2、gym_storage 2、pool 2、bank 1、bike_shop 1、boat 1、campus_gate 1、cinema 1、clothing_s10 1、clothing_s46 1、clothing_s94 1、infirmary 1、phone_shop 1、photo_studio 1、ramen 1、swimwear 1、waterpark 1、yukata 1
 
-## 門到不了街上：門口那一片走不出地點的房間（2）
+## 其中站在顯眼位置的（櫃台、收銀、沙發、吧台、接待）：之後優先挪（27）
 
-- arcade 門 (44097,63905,4140)
-- ramen 門 (47835,60370,4560)
+- bank.counter (32860,59393,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
+- beach.food_cart (17000,12500,1200)（queue），擋住的是 Resort_R025_2_transit-dining，2 格外走得到
+- beach.food_cart2 (17000,13000,1200)（queue），擋住的是 Resort_R026_3_transit-dining，2 格外走得到
+- cinema.ticket (32780,59633,2510)（queue），擋住的是 LoverSpot_R2_cinema_ticket1_Machine，1 格外走得到
+- clinic_gyn.counter (32265,57600,1200)（queue），擋住的是 LoverSpot_R2_fixtures_crib1_End-58，1 格外走得到
+- conveni.counter (47938,27505,1200)（queue），擋住的是 ShopV1_S06_Refit，3 格外走得到
+- department.shoes_counter (48333,60182,2460)（queue），擋住的是 LoverSpot_R2_dept_shoes_counter1_Top，1 格外走得到
+- fastfood.counter (44216,40201,1200)（queue），擋住的是 S41_F01，1 格外走得到
+- hotel.seat17 (31450,65270,1206)（h_sofa），擋住的是 MotelV1_Architecture_H1，1 格外走得到
+- hotel.tv_sofa (27655,65020,1706)（tv_sofa），擋住的是 MotelV1_Suite_imore-93474c507aaf，2 格外走得到
+- onsen.tv (42470,50010,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
+- onsen.tv2 (42470,51380,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
+- onsen.tv3 (43090,50090,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
+- onsen.tv4 (43090,50925,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
+- onsen.tv5 (43090,51755,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
+- onsen.tv6 (44910,51345,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
+- onsen.tv7 (44910,52175,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
+- onsen.tv8 (45530,50010,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
+- onsen.tv9 (45530,51380,2040)（tv_sofa），擋住的是 S19_F03，1 格外走得到
+- post.counter (32180,57420,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
+- post.counter2 (32180,57900,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
+- post.counter3 (32360,57420,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
+- post.counter4 (32360,57900,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
+- post.counter5 (32540,57900,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
+- post.counter6 (32720,57900,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
+- shrine.charm (39956,37551,1198)（queue），擋住的是 LoverSpot_Shrine_LanternCap-150，1 格外走得到
+- supermarket.checkout (34300,50580,1200)（queue），擋住的是 ShopV1_S72_Refit，1 格外走得到
 
-## 錨點在封死的格子：附近可走，但連不到門或電梯／樓梯（92）
+## 錨點在封死的格子：附近可走，但連不到門或電梯／樓梯（65）
 
-- arcade.claw (43991,67045,4140)，附近最大的區域 80167 格
-- arcade.claw2 (44121,67090,4140)，附近最大的區域 80167 格
-- arcade.claw3 (44082,67194,4140)，附近最大的區域 80167 格
-- arcade.claw4 (43866,67246,4140)，附近最大的區域 80167 格
-- arcade.counter (43805,63574,4140)，附近最大的區域 80167 格
-- arcade.photobooth (43752,66965,4140)，附近最大的區域 80167 格
 - boys_dorm.trash10 (94350,65855,1980)，附近最大的區域 167 格
 - boys_dorm.trash11 (94350,65855,2700)，附近最大的區域 167 格
 - boys_dorm.trash7 (94350,65855,2340)，附近最大的區域 167 格
@@ -78,28 +97,7 @@
 - girls_dorm.vanity95 (94293,41630,1980)，附近最大的區域 167 格
 - girls_dorm.vanity96 (94293,41630,3060)，附近最大的區域 167 格
 - girls_dorm.vanity98 (94293,41770,2340)，附近最大的區域 167 格
-- izakaya.booth (34307,26339,1200)，附近最大的區域 140 格
-- izakaya.booth2 (33940,26403,1200)，附近最大的區域 140 格
-- izakaya.counter_seat (34293,26152,1200)，附近最大的區域 140 格
-- izakaya.counter_seat2 (34218,26152,1200)，附近最大的區域 140 格
-- izakaya.counter_seat3 (34143,26152,1200)，附近最大的區域 140 格
-- izakaya.seat33 (34277,26439,1200)，附近最大的區域 140 格
-- izakaya.seat34 (34337,26439,1200)，附近最大的區域 140 格
-- izakaya.seat35 (34337,26379,1200)，附近最大的區域 140 格
-- izakaya.seat36 (34277,26379,1200)，附近最大的區域 140 格
-- izakaya.seat37 (34040,26433,1200)，附近最大的區域 140 格
-- izakaya.seat38 (34040,26373,1200)，附近最大的區域 140 格
-- izakaya.seat39 (33980,26373,1200)，附近最大的區域 140 格
-- izakaya.seat40 (33980,26433,1200)，附近最大的區域 140 格
 - playground.field (102791,33791,1198)，附近最大的區域 0 格
-- ramen.counter_seat (48025,60348,4560)，附近最大的區域 77120 格
-- ramen.counter_seat2 (48025,60273,4560)，附近最大的區域 77120 格
-- ramen.counter_seat3 (48025,60198,4560)，附近最大的區域 77120 格
-- ramen.counter_seat4 (48025,60123,4560)，附近最大的區域 77120 格
-- ramen.seat (48113,60510,4560)，附近最大的區域 77120 格
-- ramen.seat3 (48073,60510,4561)，附近最大的區域 77120 格
-- ramen.seat4 (48023,60510,4561)，附近最大的區域 77120 格
-- ramen.ticket (48179,60425,4560)，附近最大的區域 77120 格
 - restaurant.private_room2 (48100,25215,1200)，附近最大的區域 56 格
 - supermarket.aisle3 (34751,50410,1200)，附近最大的區域 104 格
 - supermarket.toilet2 (34790,50197,1200)，附近最大的區域 104 格
@@ -107,36 +105,6 @@
 - swimwear.seat3 (34376,33717,1200)，附近最大的區域 147 格
 - swimwear.seat4 (34316,33717,1200)，附近最大的區域 147 格
 - swimwear.toilet2 (34690,32957,1200)，附近最大的區域 147 格
-
-## 其中站在顯眼位置的（櫃台、收銀、沙發、吧台、接待）：之後優先挪（27）
-
-- bank.counter (32860,59393,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
-- beach.food_cart (17000,12500,1200)（queue），擋住的是 Resort_R025_2_transit-dining，2 格外走得到
-- beach.food_cart2 (17000,13000,1200)（queue），擋住的是 Resort_R026_3_transit-dining，2 格外走得到
-- cinema.ticket (32780,59633,2510)（queue），擋住的是 LoverSpot_R2_cinema_ticket1_Machine，1 格外走得到
-- clinic_gyn.counter (32265,57600,1200)（queue），擋住的是 LoverSpot_R2_fixtures_crib1_End-58，1 格外走得到
-- conveni.counter (47938,27505,1200)（queue），擋住的是 ShopV1_S06_Refit，3 格外走得到
-- department.shoes_counter (48333,60182,2460)（queue），擋住的是 LoverSpot_R2_dept_shoes_counter1_Top，1 格外走得到
-- fastfood.counter (44216,40201,1200)（queue），擋住的是 S41_F01，1 格外走得到
-- hotel.seat17 (31450,65270,1206)（h_sofa），擋住的是 MotelV1_Architecture_H1，1 格外走得到
-- hotel.tv_sofa (27655,65020,1706)（tv_sofa），擋住的是 MotelV1_Suite_imore-93474c507aaf，2 格外走得到
-- onsen.tv (42470,50010,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
-- onsen.tv2 (42470,51380,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
-- onsen.tv3 (43090,50090,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
-- onsen.tv4 (43090,50925,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
-- onsen.tv5 (43090,51755,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
-- onsen.tv6 (44910,51345,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
-- onsen.tv7 (44910,52175,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
-- onsen.tv8 (45530,50010,2040)（tv_sofa），擋住的是 S19_F03，2 格外走得到
-- onsen.tv9 (45530,51380,2040)（tv_sofa），擋住的是 S19_F03，1 格外走得到
-- post.counter (32180,57420,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
-- post.counter2 (32180,57900,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
-- post.counter3 (32360,57420,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
-- post.counter4 (32360,57900,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
-- post.counter5 (32540,57900,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
-- post.counter6 (32720,57900,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
-- shrine.charm (39956,37551,1198)（queue），擋住的是 LoverSpot_Shrine_LanternCap-150，1 格外走得到
-- supermarket.checkout (34300,50580,1200)（queue），擋住的是 ShopV1_S72_Refit，1 格外走得到
 
 ## 樓層沒有入口：這層沒有門、電梯平台或樓梯錨點（24）
 
