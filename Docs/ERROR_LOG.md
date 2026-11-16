@@ -4779,3 +4779,10 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 想把 `KKPreviewActor.cpp` 裡的 `okNuv` 那一行移回原位，用 `grep -n` 抓行號再交給 `sed "${n}a ..."`。grep 的樣式跳脫錯了，`n` 是空的，`sed a` 對每一行都生效，檔案多了 13,999 行。
 - 修正：所有完全等於這一行的行都刪掉（`grep -v -x -F`），再用 Edit 插回一次；和 HEAD 加上別人未提交修改的行數核對（13,986 + 14），diff 只剩別人的排序修改。
 - 預防：用行號做插入／刪除前，先確認變數非空（`[ -n "$n" ] || exit 1`）；能用 Edit 精確取代的就不要用 sed 行號。
+
+## 2026-11-16 街區：`package_street_social.lua` 改用 `street_stage` 卻沒有 `require`，打包一啟動就失敗（C 組 c-lowspec）
+
+- 錯誤：`90602d014` 把挑 stage 的規則統一到 `Tools/street_stage.lua`，在 `Tools/package_street_social.lua` 新增的 `pick_stage` 呼叫了 `street_stage.named`／`street_stage.newest`，但檔頭漏了 `local street_stage = require "street_stage"`。啟動器與 `run_scene_editor.lua` 有加，只有打包腳本漏掉；`loadfile` 語法檢查抓不到未定義的全域變數。
+- 後果：打包腳本一跑到挑 stage 就因 `street_stage` 為 nil 而失敗。e-fork-2 在整合後重新打包時才撞到，多跑了一次打包，修正提交為 `12d9911da`。
+- 起因：那次提交的訊息自己寫了「打包 `--check` 未實跑」——改到別組會用的共用腳本，卻只驗了自己的用例（啟動器 `-ValidateOnly`、測試腳本直接呼叫模組），沒有把每個呼叫端都實際跑一次。
+- 教訓：改 `Tools/` 下被多方呼叫的 Lua（共用模組，或把邏輯搬進共用模組）時，每個呼叫端都要真的跑過一次（能 dry-run／`--check`／`-ValidateOnly` 就跑那個），不能只做語法檢查；跑不了的呼叫端要在提交訊息寫明，並在交出前補跑。
