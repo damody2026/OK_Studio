@@ -13,6 +13,7 @@ class UOKMotionComboBox;
 class UPanelWidget;
 class UTextBlock;
 class UWidgetTree;
+class SWidget;
 
 // Character editor section for user video motions (Docs/VIDEO_MOTION.md):
 // a searchable list separate from the built-in motions, video import with
@@ -44,6 +45,10 @@ public:
 	UFUNCTION() void OnBrowse();
 	UFUNCTION() void OnStart();
 	UFUNCTION() void OnDelete();
+	UFUNCTION() void OnToggleAdvanced();
+	/** 進階參數 shown or folded away (kept in GameUserSettings [OKVideoMotionPanel] AdvancedOpen, not in the save). */
+	void SetAdvancedOpen(bool bOpen);
+	bool IsAdvancedOpen() const { return bAdvancedOpen; }
 
 	virtual void BeginDestroy() override;
 
@@ -71,6 +76,11 @@ private:
 	UPROPERTY() TObjectPtr<UEditableTextBox> FocalBox;
 	UPROPERTY() TObjectPtr<UTextBlock> StartLabel;
 	UPROPERTY() TObjectPtr<UTextBlock> DeleteLabel;
+	UPROPERTY() TObjectPtr<UTextBlock> AdvancedLabel;
+	UPROPERTY() TObjectPtr<UPanelWidget> AdvancedBox;
+	bool bAdvancedOpen = false;
+	/** The Slate text boxes whose hint opacity is set (PathBox, NameBox, the four advanced boxes). */
+	TArray<TWeakPtr<SWidget>> HintApplied;
 
 	TMap<FString, FString> OptionKeys;
 	TMap<FString, FPair> Pairs;
