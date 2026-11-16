@@ -1,7 +1,7 @@
 #include "../OKGalleryWidget.h"
 #include "../OKShapeSlider.h"
 #include "../OKShapeDefaults.h"
-#include "Components/TextBlock.h"
+#include "Components/EditableTextBox.h"
 #include "Misc/AutomationTest.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -15,7 +15,7 @@ bool FOKShapeResetTest::RunTest(const FString&)
     Slider->Index = 0;
     Slider->SetMinValue(-1.f);
     Slider->SetMaxValue(2.f);
-    Slider->ValueLabel = NewObject<UTextBlock>(Slider);
+    Slider->ValueLabel = NewObject<UEditableTextBox>(Slider);
     Widget->ShapeSliders.Add(Slider);
     for (int32 Sex : {0, 1})
     {

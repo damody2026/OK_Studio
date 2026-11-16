@@ -9,6 +9,7 @@
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
+#include "Components/EditableTextBox.h"
 #include "Components/VerticalBox.h"
 #include "Styling/CoreStyle.h"
 #include "Dom/JsonObject.h"
@@ -123,9 +124,7 @@ void UOKCharacterController::BuildStyleControls()
 		RowSlot->SetVerticalAlignment(VAlign_Center);
 		auto ValueBox = WidgetTree->ConstructWidget<USizeBox>();
 		ValueBox->SetWidthOverride(56.f);
-		Slider->ValueLabel = WidgetTree->ConstructWidget<UTextBlock>();
-		Slider->ValueLabel->SetFont(FCoreStyle::GetDefaultFontStyle("Regular", 16));
-		ValueBox->SetContent(Slider->ValueLabel);
+		ValueBox->SetContent(Slider->MakeValueField(WidgetTree, 16, 56.f));
 		Row->AddChild(ValueBox);
 		auto Reset = WidgetTree->ConstructWidget<UButton>();
 		auto Text = WidgetTree->ConstructWidget<UTextBlock>();

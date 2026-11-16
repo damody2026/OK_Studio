@@ -16,6 +16,7 @@
 #include "Components/VerticalBox.h"
 #include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
+#include "Components/EditableTextBox.h"
 #include "Components/Button.h"
 #include "Serialization/JsonSerializer.h"
 #include "Styling/CoreStyle.h"
@@ -77,7 +78,7 @@ void UOKCharacterController::BuildBoneControls(){
   auto Slider=WidgetTree->ConstructWidget<UOKShapeSlider>();Slider->Owner=this;Slider->BodyParameter=Pair.Key;Slider->ModCategory=BoneCategoryLabel(TEXT("BodyBreast2"));Slider->ModRow=Row;
   Slider->SetMinValue(0);Slider->SetMaxValue(1);Slider->SetValue(.5f);Slider->OnValueChanged.AddDynamic(Slider,&UOKShapeSlider::OnSliderMoved);
   auto PhysicsSlot=Row->AddChildToHorizontalBox(Slider);PhysicsSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));PhysicsSlot->SetVerticalAlignment(VAlign_Center);
-  Slider->ValueLabel=WidgetTree->ConstructWidget<UTextBlock>();Slider->ValueLabel->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",16));Row->AddChild(Slider->ValueLabel);
+  {auto ValueSlot=Row->AddChildToHorizontalBox(Slider->MakeValueField(WidgetTree,16,48.f));ValueSlot->SetVerticalAlignment(VAlign_Center);}
   auto Reset=WidgetTree->ConstructWidget<UButton>();auto Text=WidgetTree->ConstructWidget<UTextBlock>();Text->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",14));Text->SetAutoWrapText(false);Text->SetText(FText::FromString(TEXT("重置")));Reset->SetContent(Text);Reset->OnClicked.AddDynamic(Slider,&UOKShapeSlider::OnResetClicked);Row->AddChild(Reset);
   ShapeBox->AddChild(Row);BoneSliders.Add(Slider);Slider->RefreshValueLabel();
  }
@@ -94,8 +95,8 @@ void UOKCharacterController::BuildBoneControls(){
   Slider->SetSliderBarColor(FLinearColor(.35f,.85f,.9f));Slider->SetSliderHandleColor(FLinearColor(.45f,.92f,1));
   Slider->OnValueChanged.AddDynamic(Slider,&UOKShapeSlider::OnSliderMoved);
   auto RowSlot=Row->AddChildToHorizontalBox(Slider);RowSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));RowSlot->SetVerticalAlignment(VAlign_Center);
-  auto ValueBox=WidgetTree->ConstructWidget<USizeBox>();ValueBox->SetWidthOverride(42.f);Slider->ValueLabel=WidgetTree->ConstructWidget<UTextBlock>();Slider->ValueLabel->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",16));
-  Slider->ValueLabel->SetJustification(ETextJustify::Center);ValueBox->SetContent(Slider->ValueLabel);Row->AddChild(ValueBox);
+  auto ValueBox=WidgetTree->ConstructWidget<USizeBox>();ValueBox->SetWidthOverride(42.f);ValueBox->SetContent(Slider->MakeValueField(WidgetTree,16,42.f));
+  Row->AddChild(ValueBox);
   if(!Slider->ModRight.IsEmpty()){
    Slider->ModSide=WidgetTree->ConstructWidget<UOKComboBoxString>();for(const TCHAR* Side:{TEXT("雙側"),TEXT("左"),TEXT("右")})Slider->ModSide->AddOption(Side);
    Slider->ModSide->SetSelectedIndex(0);Slider->ModSide->OnSelectionChanged.AddDynamic(Slider,&UOKShapeSlider::OnModSideChanged);Row->AddChild(Slider->ModSide);

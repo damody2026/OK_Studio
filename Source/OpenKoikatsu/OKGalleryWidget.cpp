@@ -329,15 +329,13 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 		Slider->Owner = this;
 		Slider->OnValueChanged.AddDynamic(Slider, &UOKShapeSlider::OnSliderMoved);
 		USizeBox* ValSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-		ValSize->SetWidthOverride(40.f);
+		// Wide enough for "-100" / "200" once typing allows the whole -1..2 range.
+		ValSize->SetWidthOverride(56.f);
 		ValSize->SetHeightOverride(22.f);
 		UBorder* ValBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
 		ValBorder->SetBrushColor(FLinearColor(0.08f, 0.22f, 0.38f, 1.f));
-		UTextBlock* Val = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
-		Val->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",14));
- Val->SetJustification(ETextJustify::Center);
-		Val->SetColorAndOpacity(FSlateColor(FLinearColor::White));
-		Slider->ValueLabel = Val;
+		ValBorder->SetPadding(FMargin(0.f));
+		UWidget* Val = Slider->MakeValueField(WidgetTree, 14, 56.f);
 		Slider->RefreshValueLabel();
 		ValBorder->AddChild(Val);
 		ValSize->AddChild(ValBorder);
@@ -2474,8 +2472,8 @@ void UOKCharacterController::RefreshGameAnimationParameters()
         UOKShapeSlider* Slider=WidgetTree->ConstructWidget<UOKShapeSlider>(UOKShapeSlider::StaticClass());
         Slider->AnimationParameter=Name;Slider->Owner=this;Slider->SetMinValue(Min);Slider->SetMaxValue(Max);Slider->SetValue(Value);
         UHorizontalBoxSlot* RowSlot=Row->AddChildToHorizontalBox(Slider);RowSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-        UTextBlock* Number=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());Row->AddChild(Number);
-        Slider->ValueLabel=Number;Slider->RefreshValueLabel();Slider->OnValueChanged.AddDynamic(Slider,&UOKShapeSlider::OnSliderMoved);
+        Row->AddChild(Slider->MakeValueField(WidgetTree,14,56.f));
+        Slider->RefreshValueLabel();Slider->OnValueChanged.AddDynamic(Slider,&UOKShapeSlider::OnSliderMoved);
         GameAnimationParameters->AddChild(Row);
     }
 }

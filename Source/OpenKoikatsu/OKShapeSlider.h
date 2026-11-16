@@ -7,6 +7,7 @@
 
 class UOKCharacterController;
 class UTextBlock;
+class UEditableTextBox;
 class UComboBoxString;
 class UButton;
 
@@ -30,10 +31,21 @@ public:
 	UPROPERTY()
 	TObjectPtr<UOKCharacterController> Owner;
 
+	// The number after the slider; it can be typed into (Enter or leaving it applies, Esc reverts).
 	UPROPERTY()
-	TObjectPtr<UTextBlock> ValueLabel;
+	TObjectPtr<UEditableTextBox> ValueLabel;
 
-	void RefreshValueLabel();
+	// Builds ValueLabel (styled, bound to OnValueCommitted) and returns it, wrapped to MinWidth, for the caller's layout.
+	UWidget* MakeValueField(class UWidgetTree* Tree, int32 FontSize, float MinWidth = 40.f);
+
+	// bForce also rewrites the field while the user is typing into it.
+	void RefreshValueLabel(bool bForce = false);
+
+	// The field shows the slider value x100 rounded (card shape rows) rather than the raw value.
+	bool ShowsPercent() const;
+
+	UFUNCTION()
+	void OnValueCommitted(const FText& Text, ETextCommit::Type Method);
 
 	UFUNCTION()
 	void OnSliderMoved(float NewValue);

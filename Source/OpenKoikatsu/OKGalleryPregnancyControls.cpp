@@ -11,6 +11,7 @@
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/VerticalBox.h"
 #include "Components/TextBlock.h"
+#include "Components/EditableTextBox.h"
 #include "Components/SizeBox.h"
 #include "Components/Button.h"
 #include "Serialization/JsonSerializer.h"
@@ -38,7 +39,7 @@ void UOKCharacterController::BuildPregnancyControls(){
   auto Slider=WidgetTree->ConstructWidget<UOKShapeSlider>();Slider->Owner=this;Slider->PregnancyParameter=Def.Key;Slider->ModRow=Row;
   Slider->SetMinValue(Def.Min);Slider->SetMaxValue(Def.Max);Slider->SetValue(0);Slider->SetSliderBarColor(FLinearColor(.35f,.85f,.9f));
   Slider->OnValueChanged.AddDynamic(Slider,&UOKShapeSlider::OnSliderMoved);auto RowSlot=Row->AddChildToHorizontalBox(Slider);RowSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));RowSlot->SetVerticalAlignment(VAlign_Center);
-  auto ValueBox=WidgetTree->ConstructWidget<USizeBox>();ValueBox->SetWidthOverride(48.f);Slider->ValueLabel=WidgetTree->ConstructWidget<UTextBlock>();Slider->ValueLabel->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",16));ValueBox->SetContent(Slider->ValueLabel);Row->AddChild(ValueBox);
+  auto ValueBox=WidgetTree->ConstructWidget<USizeBox>();ValueBox->SetWidthOverride(48.f);ValueBox->SetContent(Slider->MakeValueField(WidgetTree,16,48.f));Row->AddChild(ValueBox);
   auto Reset=WidgetTree->ConstructWidget<UButton>();auto Text=WidgetTree->ConstructWidget<UTextBlock>();Text->SetFont(FCoreStyle::GetDefaultFontStyle("Regular",14));Text->SetAutoWrapText(false);Text->SetText(FText::FromString(TEXT("重置")));Reset->SetContent(Text);Reset->OnClicked.AddDynamic(Slider,&UOKShapeSlider::OnResetClicked);Row->AddChild(Reset);
   PregnancyBox->AddChild(Row);BoneSliders.Add(Slider);Slider->RefreshValueLabel();
  }
