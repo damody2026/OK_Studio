@@ -878,7 +878,11 @@ void UOKHScenePanel::UpdateCaressItems(float Delta){ TRACE_CPUPROFILER_EVENT_SCO
         const FString Bone=Parents.IsValidIndex(K)?Parents[K]->AsString():Parents.Num()?Parents[0]->AsString():FString();if(Bone.IsEmpty())continue;
         TUniquePtr<FKKAnimatedItem>& ItemSlot=CaressItems.FindOrAdd(Id);
         if(!ItemSlot){ItemSlot=MakeUnique<FKKAnimatedItem>();FString Error;
-            if(!ItemSlot->Spawn(GetWorld(),CaressItemLibrary,Item->GetStringField(TEXT("model")),Item->GetStringField(TEXT("prefab")),CaressItemAnimRoot,Error))
+            // HandCtrl.Init(female, male.chaFile.custom.body.skinMainColor): the items it takes the material of
+            // (isMaterialGet: his hands and fingers) are coloured with his skin.
+            TArray<FLinearColor> Colors;FLinearColor Skin;bool bMale=false;
+            if(Item->TryGetBoolField(TEXT("male_colour"),bMale)&&bMale&&Gallery&&FOkSession::CardSkinColor(Gallery->PartnerCardPath,Skin))Colors.Add(Skin);
+            if(!ItemSlot->Spawn(GetWorld(),CaressItemLibrary,Item->GetStringField(TEXT("model")),Item->GetStringField(TEXT("prefab")),CaressItemAnimRoot,Error,Colors))
                 UE_LOG(LogTemp,Warning,TEXT("H scene: caress item %s not shown: %s"),*Item->GetStringField(TEXT("prefab")),*Error);}
         if(!ItemSlot->IsSpawned())continue;
         const FString StateKey=FString::Printf(TEXT("%d|%d"),Id,ItemLayer);FString* State=CaressItemStates.Find(StateKey);

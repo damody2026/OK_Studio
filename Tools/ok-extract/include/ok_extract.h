@@ -641,6 +641,8 @@ int32_t ok_skinned_item_pose_session(OkSkinnedItem* item, OkSession* session, co
 int32_t ok_controller_layer_state(const char* anim_root, const char* source, const char* owner, int32_t layer, uint8_t* out, int32_t cap);
 /* key with the controller's override layer `layer` switched on (on != 0) or off, as a playable key; byte length, -1 none. */
 int32_t ok_key_with_layer(const char* anim_root, const char* key, int32_t layer, int32_t on, uint8_t* out, int32_t cap);
+/* A card's skin colour (skinMainColor, sRGB RGBA) into out[4]: 0, or -1 (no card). */
+int32_t ok_card_skin_color(const char* card, float* out);
 /* Studio item FK: fk_json = [[bone, [x, y, z]], ...] (local Unity Euler degrees) turned before the meshes are baked. */
 /* OK Studio character state: status_json = {"tears_lv","hoho_aka_rate","nip_stand_rate","skin_tuya_rate","siru_lv":[5],"show_accessory":[21] (20 slots + one for every MoreAccessories slot)} (each optional); states nullable (clothes as ok_session_open_clothes). */
 int32_t ok_session_open_status(const char* game_root, const char* card, int32_t outfit, const uint8_t* states, const char* status_json, OkSession** out, char* err, int32_t cap);

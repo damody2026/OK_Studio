@@ -19,8 +19,9 @@ public:
 	FKKAnimatedItem& operator=(const FKKAnimatedItem&) = delete;
 
 	/** Opens the library model's prefab and spawns the actor that draws it (hidden until it is posed). AnimRoot: the
-	 *  animation root its controller's states are read from (the base library's `paired`). */
-	bool Spawn(UWorld* World, const FString& Library, const FString& Model, const FString& Prefab, const FString& AnimRoot, FString& OutError);
+	 *  animation root its controller's states are read from (the base library's `paired`). Colors: its item colours
+	 *  (sRGB _Color.._Color4; alpha < 0 keeps the model's), as HandCtrl gives the caressing hand his skin colour. */
+	bool Spawn(UWorld* World, const FString& Library, const FString& Model, const FString& Prefab, const FString& AnimRoot, FString& OutError, const TArray<FLinearColor>& Colors = TArray<FLinearColor>());
 	void Destroy();
 	bool IsSpawned() const { return Actor.IsValid() && Item.IsOpen(); }
 	AKKPreviewActor* GetActor() const { return Actor.Get(); }

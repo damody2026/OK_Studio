@@ -3104,6 +3104,17 @@ pub unsafe extern "C" fn ok_key_with_layer(anim_root: *const c_char, key: *const
         _ => -1,
     }
 }
+/// A card's skin colour (ChaFileBody.skinMainColor, sRGB RGBA as the card stores it) into out[0..4]: 0, or -1 (no card).
+/// HandCtrl.Init colours the caressing hand with his (SetHandColor -> the hand material's _Color).
+#[no_mangle]
+pub unsafe extern "C" fn ok_card_skin_color(card: *const c_char, out: *mut f32) -> i32 {
+    let Some(card) = cstr_opt(card) else { return -1; };
+    if out.is_null() { return -1; }
+    match crate::run_no_panic(|| crate::card::parse_card(std::path::Path::new(&card))) {
+        Ok(info) => { std::ptr::copy_nonoverlapping(info.skin_color.as_ptr(), out, 4); 0 }
+        Err(_) => -1,
+    }
+}
 /// The state of a controller in a `states:` source: on override layer `layer` (> 0, its index in the controller) or
 /// its base state (`layer` <= 0), as `source|label` into `out`; returns the byte length (larger than cap: nothing
 /// written), -1 when the controller has no such state.

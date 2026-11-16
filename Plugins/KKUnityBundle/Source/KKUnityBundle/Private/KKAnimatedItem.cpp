@@ -9,7 +9,7 @@
 #include "Components/PoseableMeshComponent.h"
 #include "ok_extract.h"
 
-bool FKKAnimatedItem::Spawn(UWorld* World, const FString& Library, const FString& Model, const FString& InPrefab, const FString& InAnimRoot, FString& OutError)
+bool FKKAnimatedItem::Spawn(UWorld* World, const FString& Library, const FString& Model, const FString& InPrefab, const FString& InAnimRoot, FString& OutError, const TArray<FLinearColor>& Colors)
 {
 	Destroy();
 	if (!World) { OutError = TEXT("no world"); return false; }
@@ -26,6 +26,7 @@ bool FKKAnimatedItem::Spawn(UWorld* World, const FString& Library, const FString
 	// Drawn as an item (the game's own item program, toon shadow and _ShadowColor), as OK Studio draws its items.
 	A->bStudioItemShading = true;
 	A->CharacterDisplayShadowsOverride = false;
+	A->ItemColorOverrides = Colors;
 	A->Session = MoveTemp(Session);
 	if (!A->LoadSession(OutError)) { A->Destroy(); Item.Close(); return false; }
 	TArray<UPrimitiveComponent*> Prims;

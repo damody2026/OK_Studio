@@ -141,6 +141,8 @@ public:
  /** Key with the controller's override layer Layer switched on (bOn: SetLayerWeight 1, as HandCtrl does with her body layer
   *  of the place his hand is on) or off; empty when it does not compose. Root: an animation root (CommonPairRoot). */
  static FString KeyWithLayer(const FString& Root,const FString& Key,int32 Layer,bool bOn);
+ /** A card's skin colour (skinMainColor, sRGB as the card stores it); false without a card. */
+ static bool CardSkinColor(const FString& Card,FLinearColor& OutColor);
 
 	/** StatusJson (optional): an OK Studio character state (tears, blush, nipples, skin gloss, fluids, accessory slots; see ok_session_open_status). */
 	bool Open(const FString& GameRoot, const FString& CardPath, int32 Outfit, FString& OutError, const uint8* Clothes = nullptr, const FString& StatusJson = FString());

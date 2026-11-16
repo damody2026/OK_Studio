@@ -196,6 +196,7 @@ FString FOkSession::PairClipForRoot(const FString& Root,const FString& Key,int32
  if(Size<=0||Size>1024*1024)return FString();TArray<ANSICHAR> Bytes;Bytes.SetNumZeroed(Size);
  if(ok_common_animation_pair_clip(TCHAR_TO_UTF8(*Root),TCHAR_TO_UTF8(*Key),Layer,Bytes.GetData(),Size)!=0)return FString();return UTF8_TO_TCHAR(Bytes.GetData());
 }
+bool FOkSession::CardSkinColor(const FString& Card,FLinearColor& OutColor){float C[4]={};if(Card.IsEmpty()||ok_card_skin_color(TCHAR_TO_UTF8(*Card),C)!=0)return false;OutColor=FLinearColor(C[0],C[1],C[2],C[3]);return true;}
 FString FOkSession::KeyWithLayer(const FString& Root,const FString& Key,int32 Layer,bool bOn){
  if(Root.IsEmpty()||Key.IsEmpty()||Layer<=0||!InitBindings())return FString();const FTCHARToUTF8 R(*Root),K(*Key);
  TArray<uint8> Bytes;Bytes.SetNumUninitialized(4096);int32 Size=ok_key_with_layer(R.Get(),K.Get(),Layer,bOn?1:0,Bytes.GetData(),Bytes.Num());
