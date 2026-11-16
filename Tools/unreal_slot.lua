@@ -6,8 +6,10 @@
 --   Tools\lua\lua.exe Tools\unreal_slot.lua yield <agent>                         exit 3 when someone of higher priority waits
 --   Tools\lua\lua.exe Tools\unreal_slot.lua status
 --
--- claim only succeeds when no agent of higher priority is queued, a slot is free, fewer than two Unreal processes
--- run and enough commit is free (default 35 GB, --need-gb N); --need-gb 60 or more also needs every other slot free and keeps the others closed while held. It re-reads owner.txt after writing (another agent may have written the same slot) and leaves the queue in the
+-- claim only succeeds when no agent of higher priority is queued, a slot is free, fewer than two Unreal processes of
+-- slot holders run (those started since the earliest current claim; an older one, e.g. the user's own game, does not
+-- count here), fewer than three run in all, and enough commit is free (default 35 GB, --need-gb N, plus 25 GB left
+-- over); --need-gb 60 or more also needs every other slot free and keeps the others closed while held. It re-reads owner.txt after writing (another agent may have written the same slot) and leaves the queue in the
 -- same step, so a stale queue file never makes a lower-priority agent wait for someone who already runs.
 -- A queue entry stops counting once its claim --wait process has ended (pid + start time in the entry) or it was not
 -- refreshed for 15 minutes (claim --wait refreshes it every poll; a one-shot claim on every call). Ranks match the
@@ -22,6 +24,11 @@ local DEFAULT_NEED_GB = 35
 -- A claim needing this much or more (the WP editor) takes the whole machine: it waits until no other slot is held, and
 -- while it holds its slot nobody else gets one (2026-11-10: a game claimed beside the 56 GB editor, free commit fell to 7 GB).
 local EXCLUSIVE_GB = 60
+-- Unreal processes on the whole machine: the two slots plus one game the user runs themselves (the user's rule).
+local MAX_UNREAL = SLOTS + 1
+-- A new slot also leaves this much commit free beyond its --need-gb (2026-11-16: free commit fell to 11 GB);
+-- exclusive claims (>= EXCLUSIVE_GB) run alone and check --need-gb only.
+local RESERVE_GB = 25
 -- Lower runs first; agents not listed rank after these.
 local PRIORITY = { ["f-yvonne"] = -11, ["c-lowspec"] = -9, ["e-120fps"] = -5, ["e-120fps-quiet"] = -5, ["f-cover"] = -3, ["c-street-city"] = -1, ["c-conquest"] = 0, FStyle = 1, ["e-galgame"] = 2, ["e-fork"] = 2, ["e-fork-2"] = 2, F = 3, ["e-okcard"] = 4 }
 
@@ -53,14 +60,16 @@ end
 
 -- Unreal processes on the machine (editor, commandlet, packaged game, city build); the launcher stub at a stage root
 -- (…\Windows\OpenKoikatsu.exe) only starts the real one and is not counted.
-local function unreal_count()
+-- Returns the start times ("yyyyMMddHHmmss") of those processes.
+local function unreal_starts()
   local out = proc.output({ "powershell", "-NoProfile", "-Command",
-    "Get-CimInstance Win32_Process | ?{$_.Name -match '^(UnrealEditor(-Cmd)?|OpenKoikatsu|StreetSocialCity(-Cmd)?)\\.exe$'} | %{$_.ExecutablePath}" }) or ""
-  local n = 0
-  for line in out:gmatch("[^\r\n]+") do
-    if not line:lower():match("\\windows\\[^\\]+%.exe$") then n = n + 1 end
+    "Get-CimInstance Win32_Process | ?{$_.Name -match '^(UnrealEditor(-Cmd)?|OpenKoikatsu|StreetSocialCity(-Cmd)?)\\.exe$'} | " ..
+    "%{ $_.CreationDate.ToString('yyyyMMddHHmmss') + ' ' + $_.ExecutablePath }" }) or ""
+  local list = {}
+  for start, exe in out:gmatch("(%d+) ([^\r\n]+)") do
+    if not exe:lower():match("\\windows\\[^\\]+%.exe$") then list[#list + 1] = start end
   end
-  return n
+  return list
 end
 
 -- Free commit (RAM + page file) in GB. An editor with the university city WP map commits about 97 GB and the game
@@ -153,6 +162,28 @@ local function held_min_agent(agent)
   return held
 end
 
+-- Unreal processes split into { held = started since the earliest current slot claim (a slot holder's instance),
+-- other = started before every current claim (the user's own game, or one left over from a released slot) }.
+-- Slot holders launch after they claim, so a process older than every claim cannot be theirs (2026-11-16: the
+-- user's game counted against the two slots and kept slot2 empty all evening with 70 GB free).
+local function unreal_counts()
+  local first
+  for i = 1, SLOTS do
+    local who, text = owner(i)
+    if who then
+      local y, mo, d, h, mi, se = (text:match("^[^\n]*") or ""):match(".*(%d%d%d%d)-(%d%d)-(%d%d) (%d%d):(%d%d):(%d%d)")
+      -- a held slot without a readable claim time: treat every process as possibly its own
+      local stamp = y and (y .. mo .. d .. h .. mi .. se) or "0"
+      if not first or stamp < first then first = stamp end
+    end
+  end
+  local held, other = 0, 0
+  for _, start in ipairs(unreal_starts()) do
+    if first and start >= first then held = held + 1 else other = other + 1 end
+  end
+  return held, other
+end
+
 local function waiting_above(agent)
   for _, other in ipairs(queued()) do
     if other ~= agent and rank(other) < rank(agent) then return other end
@@ -179,9 +210,16 @@ local function try_claim(agent, note, need_gb)
       if need_gb >= EXCLUSIVE_GB then return nil, who .. " holds slot" .. i .. "; " .. need_gb .. " GB needs every slot free" end
     end
   end
-  if unreal_count() >= SLOTS then return nil, SLOTS .. " Unreal processes already run" end
+  local held, other = unreal_counts()
+  if held >= SLOTS then return nil, held .. " Unreal processes of slot holders already run" end
+  if held + other >= MAX_UNREAL then
+    return nil, (held + other) .. " Unreal processes run (" .. other .. " not a slot holder's); the machine allows " .. MAX_UNREAL
+  end
   local free = free_commit_gb()
   if free < need_gb then return nil, "only " .. free .. " GB commit free, need " .. need_gb end
+  if need_gb < EXCLUSIVE_GB and free - need_gb < RESERVE_GB then
+    return nil, "only " .. free .. " GB commit free, need " .. need_gb .. " + " .. RESERVE_GB .. " left over"
+  end
   for i = 1, SLOTS do
     if not owner(i) then
       path.mkdir(path.parent(owner_file(i)), true)
@@ -230,7 +268,8 @@ local function status()
     print(("slot" .. i .. ": " .. (who and (text:gsub("%s+$", "") .. tail) or "(free)")))
   end
   io.write("queue: ", table.concat(queued(true), ", "), "\n")
-  io.write("unreal processes: ", unreal_count(), "\n")
+  local held, other = unreal_counts()
+  io.write("unreal processes: ", held + other, " (slot holders ", held, ", others ", other, ")\n")
   io.write("free commit: ", free_commit_gb(), " GB\n")
   return 0
 end
