@@ -8,6 +8,7 @@
 #include "OKArousalDrops.h"
 #include "OKTears.h"
 #include "KKRustExtract.h"
+#include "KKAnimatedItem.h"
 #include "KKSpeech.h"
 #include "OKHScene.generated.h"
 
@@ -287,6 +288,13 @@ private:
     bool bStrokeOnce=false;float CaressSpeed=0.f,CaressMotionShown=-1.f,CaressBodyShown=-1.f,StrokePhase=0.f;double OnceUntil=0.,CaressShownStarted=0.;
     FString CaressShownState,StrokeBone;FVector StrokeAxis=FVector::ZeroVector,StrokeTurn=FVector::ZeroVector;
     void UpdateCaress(float Delta);
+    // His hand there (HandCtrl's caress items: hand, finger, tongue; base library h/caress_items.json): each item its own
+    // actor with its own Animator (FKKAnimatedItem) on the bone of hers the area's layer names, playing the layer of
+    // the action (resting, a single touch, stroking). Spawned on first use, hidden when no place is caressed.
+    TMap<int32,TUniquePtr<FKKAnimatedItem>> CaressItems;
+    TMap<FString,FString> CaressItemStates;
+    TSharedPtr<FJsonObject> CaressItemTable;bool bCaressItemsLoaded=false;FString CaressItemLibrary,CaressItemAnimRoot;
+    void UpdateCaressItems(float Delta);
     bool bAibuLoaded=false;
     void LoadAibuPoses();
     void SelectAibu(int32 Index);
