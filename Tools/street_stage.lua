@@ -92,6 +92,16 @@ function M.named(root, name, flag)
   return exe, stage, path.name(stage), how
 end
 
+-- A path for a -Name=path argument of the game exe. Unreal reads such a value up to the first ',' or ')'
+-- (FParse::Value), so a package unpacked as "StreetSocial-20261114-hvoice(1)(1)" mounted no patch and found no
+-- manifest: then the path goes relative to the exe's folder (the game's working folder), which leaves the shared prefix
+-- with the brackets out. Quotes do not help: the game reads the raw command line, not the MSVC-unquoted argv.
+function M.ue_path(exe, p)
+  p = path.abs(p)
+  if not p:find("[,)%s]") then return p end
+  return path.rel(p, path.parent(exe), true)
+end
+
 -- Running a stage's game from a package (no editor or project): the stage's Content gets links to this folder's
 -- IndependentResources, KKPreview and CharacterCards when missing (a copied stage comes without them; the studio's card
 -- browser and the reader's StreetHeroines list the game's own Content/CharacterCards), the runtime patch is mounted
@@ -110,7 +120,7 @@ function M.packaged_launch(root, exe)
   local launch_file = path.join(root, "Content/IndependentResources/StreetSocialData/Launch/runtime.json")
   local launch = path.is_file(launch_file) and json.decode(path.read_text(launch_file)) or {}
   local patch = launch.patch and path.join(root, launch.patch)
-  if patch and path.exists(patch) then args[#args + 1] = "-pakdir=" .. patch end
+  if patch and path.exists(patch) then args[#args + 1] = "-pakdir=" .. M.ue_path(exe, patch) end
   -- The cooked shared material parents (in the patch): the editor finds them by itself, a packaged game is told
   -- (KKPreviewRuntimeMaterials.inl; not through -StreetSocialManifest=, which turns the reader's UI off).
   local materials_file = launch.materials and path.join(root, launch.materials)

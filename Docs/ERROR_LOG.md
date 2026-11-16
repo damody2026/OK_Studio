@@ -4804,3 +4804,8 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 錯誤：把 `unreal_slot.lua claim e-120fps` 與 `Start-Process run_street_social_development.lua` 寫在同一串命令裡，沒檢查 claim 的結果；claim 回「queued」（c-street-city 持有 slot1、[need 60]）時遊戲照樣啟動，把可用 commit 壓到 11 GB，差點讓別人的 WP 轉換＋cook 失敗，最後由協調 session 強制關掉。
 - 修正：先 claim，確認輸出是 `slotN` 才啟動；排隊時只等，不開任何 Unreal。
 - 防範：啟動遊戲的命令一律寫成 `$r=claim; if("$r" -match '^slot\d'){ 啟動 } else { 停 }`，不把 claim 與啟動無條件串在一起。
+
+## 2026-11-16 包解壓到帶括號的資料夾，角色看不見（測試者 16 GB／8 GB VRAM 回報）
+- 錯誤：測試者把包解壓成 `StreetSocial-20261114-hvoice(1)(1)`。Unreal 讀 `-pakdir=`、`-StreetSocialManifest=` 這類參數時遇到 `)` 或 `,` 就停（`FParse::Value`），路徑被截成 `...hvoice(1`，runtime patch 沒掛上，log 出現「High model shader library RuntimeMaterialBake not found」和 BulkData 錯誤，讀卡開卡成功卻看不見人；街區的 manifest 同樣會讀不到。一開始以為是低規格機器的記憶體或顯卡問題。
+- 修正：`street_stage.ue_path`：路徑含 `,`、`)` 或空白時，改傳相對於執行檔資料夾（遊戲的工作資料夾）的相對路徑；讀卡、場景編輯器、街區啟動器帶路徑的參數都經過它。加引號沒用，遊戲讀的是原始命令列，不是 MSVC 拆好的 argv。
+- 防範：交給玩家的路徑不能假設乾淨；看到「載入成功卻看不見」先查 log 的命令列與 `Mounted Pak file`，確認 patch 有沒有掛上。

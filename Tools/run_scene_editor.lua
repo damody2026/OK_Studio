@@ -114,7 +114,7 @@ local function main()
   -- Explicit map and game mode: the project's default game mode is the card reader's.
   local map = "/Engine/Maps/Entry?game=/Script/OKStudio.OKStudioGameMode"
   local args = stage_exe and { exe, map, "-D3D12", "-SM6" } or { exe, project, map, "-game" }
-  for _, a in ipairs({ "-windowed", "-ResX=" .. width, "-ResY=" .. height, "-NoSplash", "-nop4", "-abslog=" .. log }) do
+  for _, a in ipairs({ "-windowed", "-ResX=" .. width, "-ResY=" .. height, "-NoSplash", "-nop4", "-abslog=" .. (stage_exe and street_stage.ue_path(stage_exe, log) or log) }) do
     args[#args + 1] = a
   end
   if stage_exe then

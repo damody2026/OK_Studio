@@ -602,15 +602,15 @@ Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11
   say("City map: " .. city_map .. (city_map == "UniversityCityWP" and " (streamed: only his surroundings are loaded)" or " (whole map at once)"))
   local map = o.city and ("/Game/UniversityCity/Maps/" .. city_map .. "?game=/Script/OpenKoikatsu.OKCrowdGameMode") or "/Game/Scenes/StreetSocial/StreetSocial"
   local game = { build.executable, map, "-D3D12", "-SM6", "-windowed", "-ResX=" .. win_w, "-ResY=" .. win_h, "-WinX=40", "-WinY=40",
-    "-StreetSocialManifest=" .. manifest }
+    "-StreetSocialManifest=" .. street_stage.ue_path(build.executable, manifest) }
   -- The editor reads the project's uncooked content: the project goes first, and the cooked patch is not mounted.
   if o.editor then table.insert(game, 2, path.join(root, "OpenKoikatsu.uproject")); game[#game + 1] = "-game"
-  elseif path.exists(build.patch) then game[#game + 1] = "-pakdir=" .. build.patch end
+  elseif path.exists(build.patch) then game[#game + 1] = "-pakdir=" .. street_stage.ue_path(build.executable, build.patch) end
   if o.city then game[#game + 1] = "-StreetCity" end
   game[#game + 1] = low_memory and "-OKLowMemory" or "-OKNoLowMemory"
   -- which stage runs, in game.log's command line (a wrong pick shows at a glance)
   do local stage = build.executable:match("([^/\\]+%.stage)[/\\]") if stage then game[#game + 1] = "-OKStage=" .. stage end end
-  game[#game + 1] = "-abslog=" .. path.join(output, "game.log")
+  game[#game + 1] = "-abslog=" .. street_stage.ue_path(build.executable, path.join(output, "game.log"))
   game[#game + 1] = "-RuntimeGpuCacheMiB=4096"
   -- The GPU rig's shaders are verified at startup only when asked for (OKGpuRig.cpp): with gpu_rig on, the patch has them.
   if read_json(manifest).gpu_rig then game[#game + 1] = "-OKGpuRig" end
@@ -635,7 +635,7 @@ Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11
   if #execs > 0 then game[#game + 1] = "-ExecCmds=" .. table.concat(execs, ",") end
   if o.trace then
     game[#game + 1] = "-trace=" .. ((o.trace == true or o.trace == "") and "default,cpu,gpu,frame,bookmark" or o.trace)
-    game[#game + 1] = "-tracefile=" .. path.join(output, "trace.utrace"); game[#game + 1] = "-statnamedevents"
+    game[#game + 1] = "-tracefile=" .. street_stage.ue_path(build.executable, path.join(output, "trace.utrace")); game[#game + 1] = "-statnamedevents"
   end
   if o.selftest then for _, a in ipairs({ "-StreetSocialSelfTest", "-unattended", "-RenderOffscreen" }) do game[#game + 1] = a end end
   -- The control channel (http://127.0.0.1:<port>: state, say, click, key, navigate, screenshot) is always open: the game takes
@@ -648,7 +648,7 @@ Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11
     path.mkdir(settings_dir, true)
     local shared, own = path.join(os.getenv("LOCALAPPDATA") or "", "OpenKoikatsu/HSettings.ini"), path.join(settings_dir, "HSettings.ini")
     if not path.exists(own) and path.is_file(shared) then path.copy(shared, own) end
-    game[#game + 1] = "-OKSettingsDir=" .. settings_dir
+    game[#game + 1] = "-OKSettingsDir=" .. street_stage.ue_path(build.executable, settings_dir)
   end
   if o.inspect then game[#game + 1] = "-StreetSocialInspect=" .. o.inspect end
   if o.clock then game[#game + 1] = "-StreetSocialClock=" .. o.clock end
