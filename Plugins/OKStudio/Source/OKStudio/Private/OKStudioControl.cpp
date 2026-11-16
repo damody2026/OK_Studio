@@ -89,6 +89,7 @@ namespace
 		case EOKSceneObjectKind::Light: return TEXT("light");
 		case EOKSceneObjectKind::Camera: return TEXT("camera");
 		case EOKSceneObjectKind::Effect: return TEXT("effect");
+		case EOKSceneObjectKind::Model: return TEXT("model");
 		default: return TEXT("folder");
 		}
 	}
@@ -914,10 +915,10 @@ namespace
 			const bool bWasHandlingInactive = App.GetHandleDeviceInputWhenApplicationNotActive();
 			App.SetHandleDeviceInputWhenApplicationNotActive(true);
 			ON_SCOPE_EXIT { App.SetHandleDeviceInputWhenApplicationNotActive(bWasHandlingInactive); };
-			// "ctrl", "shift": held during the press (U198: a tree's multi-select), as in "key".
-			bool bCtrl = false, bShift = false;
-			J->TryGetBoolField(TEXT("ctrl"), bCtrl); J->TryGetBoolField(TEXT("shift"), bShift);
-			const FModifierKeysState Mods(bShift, false, bCtrl, false, false, false, false, false, false);
+			// "ctrl", "shift", "alt": held during the press (U198: a tree's multi-select; U276: Maya / Max view navigation).
+			bool bCtrl = false, bShift = false, bAlt = false;
+			J->TryGetBoolField(TEXT("ctrl"), bCtrl); J->TryGetBoolField(TEXT("shift"), bShift); J->TryGetBoolField(TEXT("alt"), bAlt);
+			const FModifierKeysState Mods(bShift, false, bCtrl, false, bAlt, false, false, false, false);
 			const uint32 User = App.GetUserIndexForMouse();
 			// The real mouse's pointer index (0 is a touch's), so these presses and the real mouse's moves are one pointer.
 			const uint32 Pointer = FSlateApplication::CursorPointerIndex;
@@ -1707,7 +1708,8 @@ namespace
 			else if (Kind == TEXT("camera")) bOk = P->RunCommand(TEXT("add.camera"));
 			else if (Kind == TEXT("effect")) { J->TryGetStringField(TEXT("effect"), Value); bOk = !Value.IsEmpty() && P->RunCommand(TEXT("add.effect"), Value); }
 			else if (Kind == TEXT("folder")) bOk = P->RunCommand(TEXT("add.folder"));
-			else return Result(false, TEXT("kind must be character, item, light, camera, effect or folder"));
+			else if (Kind == TEXT("model")) { J->TryGetStringField(TEXT("file"), Value); FString Why; bOk = !Value.IsEmpty() && P->AddModel(Value, Why); if (!bOk) return Result(false, TEXT("could not add model: ") + Why); }
+			else return Result(false, TEXT("kind must be character, item, light, camera, effect, folder or model"));
 			FOKSceneObject* X = Doc->NextId > Before ? Doc->Find(Doc->NextId - 1) : nullptr;
 			if (!bOk || !X) return Result(false, TEXT("could not add ") + Kind + (Value.IsEmpty() ? FString() : TEXT(" ") + Value));
 			if (Parent >= 0 && X->Parent != Parent && Doc->Find(Parent)) Doc->Reparent(X->Id, Parent);

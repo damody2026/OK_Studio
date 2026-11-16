@@ -7,6 +7,7 @@
 #include "HAL/IConsoleManager.h"
 #include "OKStudioImport.h"
 #include "OKStudioImport.h"
+#include "OKStudioFbx.h"
 #include "Camera/CameraComponent.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/PointLightComponent.h"
@@ -859,6 +860,15 @@ bool AOKSceneActor::Build(const FOKSceneObject& Object, FShown& Out, FString& Ou
 		Out.Component = Effect;
 		return true;
 	}
+	case EOKSceneObjectKind::Model:
+	{
+		// U277: an outside FBX, its meshes in one procedural mesh; its materials take the object's live material edits.
+		Out.Model = Object.Model;
+		UProceduralMeshComponent* Mesh = OKStudioFbx::Spawn(this, RootComponent, Object.Model.File, OutError);
+		if (!Mesh) return false;
+		Out.Component = Mesh;
+		return true;
+	}
 	case EOKSceneObjectKind::Camera:
 	{
 		UCameraComponent* Camera = NewObject<UCameraComponent>(this);
@@ -1252,6 +1262,7 @@ void AOKSceneActor::Sync()
 		if (Item) SwapKeyedMotion(Object, *Item);
 		const bool bSame = Item && Item->Kind == Object.Kind && Item->Character.SameContent(Object.Character) && Item->Item.SameContent(Object.Item) && Item->Light == Object.Light
 			&& (Object.Kind != EOKSceneObjectKind::Effect || Item->Effect == Object.Effect.Effect)
+			&& (Object.Kind != EOKSceneObjectKind::Model || Item->Model == Object.Model)
 			&& (Object.Kind != EOKSceneObjectKind::Character || PartsEyes(Item->Character.EyesPattern) == PartsEyes(Object.Character.EyesPattern));
 		// A scene opening: the character is got ready over the frames, Build only finishes it. The next one opens meanwhile.
 		if (!bSame && bProgressiveBuild && Object.Kind == EOKSceneObjectKind::Character)
@@ -1321,7 +1332,7 @@ void AOKSceneActor::Sync()
 			Item->AppliedMorphOverrides = Object.Item.MorphOverrides;
 			Item->Item.MorphOverrides = Object.Item.MorphOverrides;
 		}
-		if (Item->AppliedLiveMaterialEdits != Object.LiveMaterialEdits)
+		if (Object.Kind != EOKSceneObjectKind::Model && Item->AppliedLiveMaterialEdits != Object.LiveMaterialEdits)
 		{
 			if (AKKPreviewActor* Preview = Item->Preview.Get())
 			{
@@ -1350,6 +1361,11 @@ void AOKSceneActor::Sync()
 				}
 				Preview->SetMaterialOverrides(Overrides);
 			}
+			Item->AppliedLiveMaterialEdits = Object.LiveMaterialEdits;
+		}
+		if (Object.Kind == EOKSceneObjectKind::Model && Item->AppliedLiveMaterialEdits != Object.LiveMaterialEdits)
+		{
+			if (UProceduralMeshComponent* Mesh = Cast<UProceduralMeshComponent>(Item->Component.Get())) OKStudioFbx::ApplyEdits(Mesh, Object.Model.File, Object.LiveMaterialEdits);
 			Item->AppliedLiveMaterialEdits = Object.LiveMaterialEdits;
 		}
 		if (Object.Kind == EOKSceneObjectKind::Camera)

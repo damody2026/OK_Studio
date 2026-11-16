@@ -4796,3 +4796,9 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 修正：每級 256，queue 和 3000 差 64 以內精確、以外每 8 級一步，上限 ±127 級（±32512，加上同 queue 內 -100..+110 的層次仍在 int16 內）。C088 服裝 7 一次開卡連拍 20 張、再重開 3 次各 8 張，全部棕色。
 - 影響：排序版與單向關節版兩次全跑都有這個閃爍，凡是同一面有兩層 queue 3032 以上半透明的卡，全跑差異可能只是閃爍。修正後重跑全跑再對照。
 - 預防：`UPrimitiveComponent::TranslucencySortPriority` 雖是 int32，scene proxy 會夾到 int16（-32768..32767，`Engine/Source/Runtime/Engine/Private/PrimitiveSceneProxy.cpp:313`）。任何把 Unity render queue 線性映射成 UE 排序優先度的做法，都要先算出最大、最小值是否落在 int16 內，再加上同 queue 內的層次（-100..+110）。寫進引擎欄位的值一律先查欄位實際型別與夾值，不要只看 setter 的參數型別。
+
+## 2026-11-16 FBX 測試圖看錯，把正確的繞序改反了（F 組，工作室 U277）
+- 第一輪（`Saved/Tests/StudioU276/dropped.png`）照 Interchange 設 `reverse_winding = true`。方塊與 AnimatedCharacter 都放在原點、互相重疊，角色下半身在方塊裡、上半身穿出頂面，影子落在頂面上。我把那塊藍色頂面看成「從上面看到方塊內側的地板」，以為繞序反了，改成 `false`。
+- 第二輪（`Saved/Tests/StudioU277b/models.png`）方塊真的只看得到內側兩面（凹角、沒有頂面），才確認 `false` 是錯的，改回 `true`。
+- 原因：兩個測試物件疊在一起、場景只有一盞方向光（背光面全黑、和黑色背景分不出來），單看一張圖就下結論。
+- 預防：判斷正反面要把物件分開擺，從兩個相反方向各拍一張；凸角／凹角看頂點在畫面上的高低，不要只看顏色。

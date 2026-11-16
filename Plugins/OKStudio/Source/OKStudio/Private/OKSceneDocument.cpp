@@ -273,6 +273,7 @@ FString UOKSceneDocument::ToJson() const
 		if (O.Kind != EOKSceneObjectKind::Light) J->RemoveField(TEXT("light"));
 		if (O.Kind != EOKSceneObjectKind::Camera) J->RemoveField(TEXT("camera"));
 		if (O.Kind != EOKSceneObjectKind::Effect) J->RemoveField(TEXT("effect"));
+		if (O.Kind != EOKSceneObjectKind::Model) J->RemoveField(TEXT("model"));
 		if (O.LiveMaterialEdits.IsEmpty()) J->RemoveField(TEXT("liveMaterialEdits"));
 		Items.Add(MakeShared<FJsonValueObject>(J));
 	}
