@@ -188,6 +188,16 @@ static TAutoConsoleVariable<float> CVarOKStreetNavClearance(TEXT("ok.street.NavC
 static TAutoConsoleVariable<float> CVarOKStreetNavNarrowClearance(TEXT("ok.street.NavNarrowClearance"),30.f,TEXT("Street grid routes: the clearance (cm) a route that failed is planned again with (<= 0 or not below the first: no second pass)."));
 static float OKStreetNavClearance(){return FMath::Max(1.f,CVarOKStreetNavClearance.GetValueOnGameThread());}
 static float OKStreetNavNarrowClearance(){return CVarOKStreetNavNarrowClearance.GetValueOnGameThread();}
+// The world's levels streamed in or out since the start: a cell tested with its part of the city not loaded had no ground
+// and stayed "not free" after it loaded. Back at civic's 5F from the cafe 400 m away, every cell round its lift landing was
+// still the unloaded "not free", the grid had no way, and the walk went the straight line into StaticMeshActor_499 90
+// times (seat6 -> clinic_gyn, gyn1116b, 2026-11-16). The caches are kept only while no level comes or goes.
+static uint32 GOKStreetLevelStreams=1;
+static void OKStreetWatchLevelStreams(){
+ static bool Bound=false;if(Bound)return;Bound=true;
+ FWorldDelegates::LevelAddedToWorld.AddLambda([](ULevel*,UWorld*){++GOKStreetLevelStreams;});
+ FWorldDelegates::LevelRemovedFromWorld.AddLambda([](ULevel*,UWorld*){++GOKStreetLevelStreams;});
+}
 bool AOKStreetSocialScene::NavCellFree(const FIntPoint& Cell,float Z,float Clearance) const{
  if(Clearance<=0.f)Clearance=OKStreetNavClearance();
  // A cache per floor and clearance: a cell free at 30 is not free at 40.
@@ -195,13 +205,19 @@ bool AOKStreetSocialScene::NavCellFree(const FIntPoint& Cell,float Z,float Clear
  if(const bool* Known=Grid.Find(Cell))return *Known;
  QUICK_SCOPE_CYCLE_COUNTER(STAT_Street_NavCellTest);
  const FVector P(Cell.X*OKStreetNavCell,Cell.Y*OKStreetNavCell,Z);
- bool Free=OKStreetObstacleGap(P,30.f)>30.f;
+ const bool Clear=OKStreetObstacleGap(P,30.f)>30.f;bool Free=Clear;
  // The city's ground is not flat: a cell needs ground near this height, and the body is tested above a step's height.
  float GroundZ=Z;if(Free&&OKStreetCityMode())Free=OKStreetGroundZ(GetWorld(),P,GroundZ,this);
  // Upstairs the floor is flat, and ground 1.2 m down is the floor below: the department store's 4F atrium has no rail on
  // most of its edge, the trace hit the 3F escalator 1-2 m under it, and the route to the optician led him into the void
  // (2460 -> 2303, "she is on another floor"). The street keeps its slopes.
+ const bool NoGround=OKStreetCityMode()&&Clear&&(!Free||(GroundZ<Z-60.f&&OKStreetUpstairs(P)));
  if(Free&&OKStreetCityMode()&&GroundZ<Z-60.f&&OKStreetUpstairs(P))Free=false;
+ // No ground: is anything there at all? Nothing 50 m up or down is that part of the city not streamed in, not a void:
+ // unknown, not walkable now and not kept as "not free" (the cells round civic's 5F lift landing, tested before they
+ // loaded, stayed "not free" after: gyn1116b, 2026-11-16). Only what was really tested goes in the cache.
+ if(NoGround){FHitResult Any;FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetNavLoaded),false,this);
+  if(!GetWorld()->LineTraceSingleByChannel(Any,P+FVector(0,0,5000.f),P-FVector(0,0,5000.f),ECC_WorldStatic,Query))return false;}
  if(Free&&OKStreetCityMode())State->NavGround.FindOrAdd(FMath::RoundToInt(Z/100.f)).Add(Cell,GroundZ);
  if(Free){FCollisionQueryParams Query(SCENE_QUERY_STAT(StreetNavCell),false,this);Free=!GetWorld()->OverlapAnyTestByChannel(FVector(P.X,P.Y,GroundZ)+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(Clearance,OKStreetBodyHalf()),Query);}
  Grid.Add(Cell,Free);return Free;
@@ -218,6 +234,12 @@ TArray<FVector> AOKStreetSocialScene::GridRoute(const FVector& From,const FVecto
 }
 bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline) const{
  if(G.Phase==2)return true;
+ // Here, before the step takes any pointer into the caches (levels stream in only between frames).
+ OKStreetWatchLevelStreams();
+ if(State->NavGridLevels!=GOKStreetLevelStreams){
+  int32 Cells=0;for(const auto& Floor:State->NavGrid)Cells+=Floor.Value.Num();
+  UE_LOG(LogTemp,Display,TEXT("Street grid route: levels streamed (%u), %d tested cells cleared"),GOKStreetLevelStreams,Cells);
+  State->NavGridLevels=GOKStreetLevelStreams;State->NavGrid.Reset();State->NavGround.Reset();}
  const float Z=G.From.Z;const FVector From=G.From,To=G.To;
  auto ToCell=[](const FVector& P){return FIntPoint(FMath::RoundToInt(P.X/OKStreetNavCell),FMath::RoundToInt(P.Y/OKStreetNavCell));};
  auto Centre=[Z](const FIntPoint& C){return FVector(C.X*OKStreetNavCell,C.Y*OKStreetNavCell,Z);};
@@ -474,6 +496,12 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
   if(S.NavRide.Elevator!=INDEX_NONE&&ElevatorLanding(S.NavRide.Elevator,S.Male)!=INDEX_NONE){S.NavStep=S.NavPath.Num();return 0;}
   // Blocked: find a new way from where he stands before giving up.
   if(Now-S.NavProgressAt>1.0){
+   // Planned again and nothing found, or only the straight line that has stopped him already: no way, said at once. The
+   // ride to civic's lift kept its two-point line to the landing when the grid had none and walked it 90 times (seat6 ->
+   // clinic_gyn, gyn1116b, 2026-11-16), and the wedge step put that line back itself.
+   auto NoWay=[&](const TCHAR* Why)->float{
+    UE_LOG(LogTemp,Display,TEXT("Street navigation: no way (%s) from %s after %d replans"),Why,*S.Male.ToCompactString(),S.NavReplans);
+    StopNavigation(OKT(TEXT("ui.contacts.unreachable_try_elsewhere")));return 0.f;};
    if(S.NavReplans>=(OKStreetCityMode()?30:6)){StopNavigation(OKT(TEXT("ui.contacts.path_blocked_stop")));return 0;} // each try learns a blocked cell, so a few more find the way round
    ++S.NavReplans;S.NavProgressAt=Now;S.NavBlockedAt=S.Male;
    if(OKStreetCityMode())OKStreetCityBlocked(S.NavPath.IsValidIndex(S.NavStep-1)?S.NavPath[S.NavStep-1]:S.Male,Next); // the road graph learns it too
@@ -508,16 +536,21 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
     // A landing far off (the cafe's wedge on the way to the T2 building's lift, 500 m): the road graph there, not the
     // grid's nothing and a straight line through the cafe's wall, replanned 30 times (round 9, 2026-11-15).
     if(Out){auto Path=S.NavRide.Elevator!=INDEX_NONE&&!S.NavPath.IsEmpty()?WalkToLanding(S.Male,S.NavPath.Last()):S.NavPointActive?PlaceRoute(S.Male,Goal):ContactRoute(S.Male,Goal);
-     if(S.NavRide.Elevator!=INDEX_NONE&&Path.Num()<2&&!S.NavPath.IsEmpty())Path={S.Male,S.NavPath.Last()};
-     if(Path.Num()>=2){S.NavPath=MoveTemp(Path);S.NavStep=1;}return 0;}
+     if(Path.Num()<2)return NoWay(TEXT("out of the wedge"));
+     S.NavPath=MoveTemp(Path);S.NavStep=1;return 0;}
    }
    // First around what is in the way, to the next point only (the grid keeps the body's clearance; the same route again
    // would run into the same wall); the whole way again only when that finds nothing.
    if(S.NavReplans==1){S.NavAround=MakeShared<FOKStreetGridSearch>();S.NavAround->From=S.Male;S.NavAround->To=Next;S.NavAround->NearCm=S.NavPointActive?0.f:200.f;}
    else if(S.NavRide.Elevator==INDEX_NONE){auto Path=S.NavPointActive?PlaceRoute(S.Male,Goal):ContactRoute(S.Male,Goal);
-    if(Path.Num()>=2){S.NavPath=MoveTemp(Path);S.NavStep=1;}}
+    if(Path.Num()<2)return NoWay(TEXT("planned again"));
+    if(Path.Num()==2&&S.NavPath.Num()==2&&S.NavReplans>=4)return NoWay(TEXT("planned again, the same straight line"));
+    S.NavPath=MoveTemp(Path);S.NavStep=1;}
    // On the way to a lift: the way to its landing again, every second time (the way round the next point found nothing).
-   else if(S.NavReplans%2==0&&!S.NavPath.IsEmpty()){auto Path=WalkToLanding(S.Male,S.NavPath.Last());if(Path.Num()>2){S.NavPath=MoveTemp(Path);S.NavStep=1;}}
+   else if(S.NavReplans%2==0&&!S.NavPath.IsEmpty()){auto Path=WalkToLanding(S.Male,S.NavPath.Last());
+    if(Path.Num()<2)return NoWay(TEXT("to the lift landing again"));
+    if(Path.Num()==2&&S.NavPath.Num()==2&&S.NavReplans>=4)return NoWay(TEXT("to the lift landing again, the same straight line"));
+    S.NavPath=MoveTemp(Path);S.NavStep=1;}
    {
     // What is in the way: the clearance gap on his side, and the first thing a body-sized sweep toward the next point hits.
     FString Hit=TEXT("none");FCollisionQueryParams Q(SCENE_QUERY_STAT(StreetNavWhy),false,this);FHitResult H;const FVector Dir=Delta/Distance;
