@@ -1880,13 +1880,21 @@ fn px_input_ordinary(
 
 /// True when a bone's world matrix has (nearly) lost a dimension: a zero or near-zero scale somewhere above it, so its
 /// three axes are close to coplanar (|det| small against the product of the axis lengths).
-fn collapsed_frame(m: &Mat4) -> bool {
+fn collapsed_frame(m: &Mat4) -> bool { frame_flatness(m) < COLLAPSED_FLATNESS }
+
+/// Below this a chain counts as collapsed (|det| over the product of the axis lengths: 1 for orthogonal axes, whatever
+/// their scale; 0 when an axis scale is 0).
+pub(crate) const COLLAPSED_FLATNESS: f32 = 0.05;
+
+/// |det| of the 3x3 part over the product of its axis lengths: 1 for any rotation with (non-uniform) scale, 0 when the
+/// frame has lost a dimension.
+pub(crate) fn frame_flatness(m: &Mat4) -> f32 {
     let c = |k: usize| [m[0][k], m[1][k], m[2][k]];
     let (a, b, d) = (c(0), c(1), c(2));
     let lengths = vlen(a) * vlen(b) * vlen(d);
-    if !(lengths > 1e-12) { return true; }
+    if !(lengths > 1e-12) { return 0.0; }
     let det = vdot(a, [b[1] * d[2] - b[2] * d[1], b[2] * d[0] - b[0] * d[2], b[0] * d[1] - b[1] * d[0]]);
-    (det / lengths).abs() < 0.05
+    (det / lengths).abs()
 }
 
 fn update_particles2(
@@ -2983,6 +2991,24 @@ impl AttachedDynamicSet {
         for (id, tf) in &mut self.skel.tfs {
             if *id != self.parent_id && (tf.parent.is_none() || tf.parent == Some(0)) { tf.parent = Some(self.parent_id); }
         }
+    }
+
+    /// Diagnostic: per chain its first bone, the flattest frame a particle hangs from (frame_flatness) and the shortest
+    /// segment (world units).
+    pub(crate) fn chain_flatness(&self) -> Vec<(String, f32, f32)> {
+        let mut cache = HashMap::new();
+        self.chains.iter().map(|chain| {
+            let name = chain.particles.first().and_then(|p| p.id).and_then(|id| self.skel.tfs.get(&id)).map(|t| t.name.clone()).unwrap_or_default();
+            let (mut flat, mut shortest) = (1.0f32, f32::INFINITY);
+            for p in &chain.particles {
+                let Some(parent) = (p.parent >= 0).then(|| &chain.particles[p.parent as usize]) else { continue };
+                let Some(pid) = parent.id else { continue };
+                let pw = world_of(pid, &self.skel.tfs, &mut cache);
+                flat = flat.min(frame_flatness(&pw));
+                if let Some(id) = p.id { shortest = shortest.min(vlen(vsub(pos_of(&pw), pos_of(&world_of(id, &self.skel.tfs, &mut cache))))); }
+            }
+            (name, flat, shortest)
+        }).collect()
     }
 
     /// Diagnostic: one line per chain (component, body-component flag, particle bones).

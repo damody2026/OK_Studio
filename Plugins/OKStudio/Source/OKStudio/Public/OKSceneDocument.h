@@ -47,6 +47,8 @@ enum class EOKSceneObjectKind : uint8
 	Camera,
 	/** A Niagara effect of the OK effect library (effects.json). */
 	Effect,
+	/** An outside model file (FBX) read when the scene opens (U277). */
+	Model,
 };
 
 UENUM(BlueprintType)
@@ -758,6 +760,20 @@ struct OKSTUDIO_API FOKSceneEffect
 	bool operator==(const FOKSceneEffect& O) const = default;
 };
 
+/** An outside model (U277): an FBX file read at load, its static meshes in one object. Its materials are edited with
+ *  LiveMaterialEdits (material name; _Color, _Metallic, _Glossiness, _EmissionColor, _MainTex, _TwoSided). */
+USTRUCT(BlueprintType)
+struct OKSTUDIO_API FOKSceneModel
+{
+	GENERATED_BODY()
+
+	/** The model file (absolute path). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Model")
+	FString File;
+
+	bool operator==(const FOKSceneModel& O) const = default;
+};
+
 USTRUCT(BlueprintType)
 struct OKSTUDIO_API FOKSceneObject
 {
@@ -806,6 +822,9 @@ struct OKSTUDIO_API FOKSceneObject
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effect", meta = (EditCondition = "Kind == EOKSceneObjectKind::Effect", EditConditionHides))
 	FOKSceneEffect Effect;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Model", meta = (EditCondition = "Kind == EOKSceneObjectKind::Model", EditConditionHides))
+	FOKSceneModel Model;
 
 	/** Live shader / renderer property edits driven by Timeline (MaterialEditor / RendererEditor) without rebuilding. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Material")

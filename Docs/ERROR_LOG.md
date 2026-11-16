@@ -4841,3 +4841,42 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 錯誤：11-09 為了雷電社團服半脫時那片 91% 白的褲襪軀幹，把 `clothes_panst` 的 `o_body*` 部件一律壓到 alpha 89（`sheer_body_tights`）。規則沒限定顏色，愛麗絲不透明的粉紅連身衣（原作 `cf_m_bodytights_04` 整片不透明）也被壓成 35%，讀卡、街區、打包版都看起來胸口沒穿。
 - 修正：只有軀幹貼圖平均色是白色（三色都 ≥ 200、彼此差 ≤ 24）才壓；快取鍵改成 `sheer_body_tights_v2`，舊的壓過結果不再被重用。
 - 防範：照使用者的單一案例做的外觀規則要限定到那個案例的特徵（這裡是「白」），並拿原作 dump（`D:\KoikatuSunshine\mesh_dump`）比一張不同顏色的卡。
+## 2026-11-16 模擬拖放的腳本沒有逾時，占了 Unreal slot 31 分鐘（F 組，工作室 U275）
+- 在遮陽傘截圖的同一段 slot 裡，順便用 PowerShell 腳本模擬 OLE 拖放（WinForms `DoDragDrop`，`SendInput` 按住滑鼠，另一個 runspace 移動游標後放開）。放開沒有生效，`DoDragDrop` 的 modal 迴圈一直不結束；外層 bash 腳本沒有逾時，slot 一直被占著，還跟協調 session 說了「1 分鐘內讓出」。
+- 修正：協調 session 提醒後，強制關掉拖放腳本與自己的編輯器（只關自己的 PID），釋放 slot。拖放測試這次不算測過。
+- 預防：沒在 slot 外驗證過的新工具不要接在 slot 測試後面；每個可能阻塞的步驟都加逾時（例如 `timeout 60`）；向別人承諾時間前先確認腳本還剩哪些步驟。
+
+## 2026-11-16 C088 O7 褲襪黑變棕，二分時把偶發現象當成開關造成的（F 組讀卡器）
+- 全跑對照時 C088 服裝 7 的褲襪：排序版基準是黑色，單向關節版是棕色半透明。用 `OKPhysXSecondary.OneWayJoints` 1／0 各拍一次，1 是棕、0 是黑，差點當成「物理開關影響材質」。
+- 重複五次重新開卡後發現：同樣是 1，有一次棕、兩次黑。顏色跟開關無關，是讀卡器開卡時偶發的狀態；原作 CharaStudio（`Saved/Tests/ZW088O7`）是棕色半透明，所以黑色是錯的。這張卡也只有兔耳兩條動態鏈，和腿無關。
+- 未修：偶發黑色褲襪的原因還沒查（看起來像材質或貼圖載入的時序問題）。截圖在 `Saved/Reports/reader-jump-20261116/c088o7/`。
+- 預防：二分要每個條件重複至少 2–3 次再下結論；單次對照只能當線索。
+
+## 2026-11-16 render queue 排序值超出 int16，同一面的兩層半透明逐幀交換（F 組讀卡器，承上一條 C088 褲襪）
+- 原因：1819fb109 把 Unity render queue 轉成 `TranslucencySortPriority` 時每一級乘 1000，但 scene proxy 會把它夾到 int16（`PrimitiveSceneProxy.cpp:313`）。queue 3032 以上一律變 32767，C088 服裝 7 的褲襪本體（3050）和它的 Material Editor 複本（`IBL_Shader_alpha`，3041）優先度相同，改由距離決定、逐幀交換：複本在上就是黑亮，本體在上是原作的棕色半透明。同一次開卡、不重載也會閃（10 秒間隔拍到 105→0→105）。Rust 端開卡結果是決定性的（`reopening_a_card_gives_the_same_parts`，5 張卡各開 3 次一致）。
+- 修正：每級 256，queue 和 3000 差 64 以內精確、以外每 8 級一步，上限 ±127 級（±32512，加上同 queue 內 -100..+110 的層次仍在 int16 內）。C088 服裝 7 一次開卡連拍 20 張、再重開 3 次各 8 張，全部棕色。
+- 影響：排序版與單向關節版兩次全跑都有這個閃爍，凡是同一面有兩層 queue 3032 以上半透明的卡，全跑差異可能只是閃爍。修正後重跑全跑再對照。
+- 預防：`UPrimitiveComponent::TranslucencySortPriority` 雖是 int32，scene proxy 會夾到 int16（-32768..32767，`Engine/Source/Runtime/Engine/Private/PrimitiveSceneProxy.cpp:313`）。任何把 Unity render queue 線性映射成 UE 排序優先度的做法，都要先算出最大、最小值是否落在 int16 內，再加上同 queue 內的層次（-100..+110）。寫進引擎欄位的值一律先查欄位實際型別與夾值，不要只看 setter 的參數型別。
+
+## 2026-11-16 FBX 測試圖看錯，把正確的繞序改反了（F 組，工作室 U277）
+- 第一輪（`Saved/Tests/StudioU276/dropped.png`）照 Interchange 設 `reverse_winding = true`。方塊與 AnimatedCharacter 都放在原點、互相重疊，角色下半身在方塊裡、上半身穿出頂面，影子落在頂面上。我把那塊藍色頂面看成「從上面看到方塊內側的地板」，以為繞序反了，改成 `false`。
+- 第二輪（`Saved/Tests/StudioU277b/models.png`）方塊真的只看得到內側兩面（凹角、沒有頂面），才確認 `false` 是錯的，改回 `true`。
+- 原因：兩個測試物件疊在一起、場景只有一盞方向光（背光面全黑、和黑色背景分不出來），單看一張圖就下結論。
+- 預防：判斷正反面要把物件分開擺，從兩個相反方向各拍一張；凸角／凹角看頂點在畫面上的高低，不要只看顏色。
+
+## 2026-11-16 讀卡器右欄抽屜與影片動作面板：缺字、看不清的輸入框、沒截斷的長標籤（F 組，U279）
+- 抽屜標題與「進階參數」用了 ▸／▾，這組字型沒有這兩個字，畫成方框（`Saved/OKControl/shots/90856-0001.png`）。改用全形「＋／－」。
+- 影片動作面板的輸入框字色改成白色，可是框是預設的淺灰底，提示字比改之前更看不清。改成深色底（`PanelStyle::Field`）配白字。
+- 光影的長標籤改成 `ETextOverflowPolicy::Ellipsis`，卻沒有省略號，文字直接疊到滑桿上：省略號要文字被裁切才會出現，補上 `SetClipping(ClipToBounds)`。
+- 原因：照程式推想就重建，沒先查字型涵蓋範圍、Slate 的省略號條件與輸入框底色，多建置了兩輪。
+- 預防：UI 用到特殊符號先看同一個畫面裡有沒有人用過、確實畫得出來；改字色要連底色一起看；Ellipsis 一律配 ClipToBounds。右欄整個被 `MotionContentScale` 縮小，字級要比其他面板大。
+
+## 2026-11-16 全跑 C025 LOADFAIL「Provide an existing absolute PNG card path」，卡檔存在（F 組讀卡器）
+- 現象：乾淨基準全跑（render queue 修正後）C025 開卡回這個錯誤，`F:\OpenKoikatsu\Content\CharacterCards\CrowdAPNG\C025.png` 存在，之前兩輪全跑都正常。
+- 原因一（錯誤訊息誤導）：`Source/OpenKoikatsu/OKCharacterMCP.cpp` 的 `load` 把「讀卡器忙碌（Busy）」和「路徑不存在／不是絕對路徑／不是 PNG」合成同一個訊息，忙碌時也回「Provide an existing absolute PNG card path」。
+- 原因二（讀卡器當時在忙）：這次啟動的讀卡器（log `Saved/Logs/CardReader/20261116-231803-6ed94d6a.log`，用共用信箱，代表當時只有它一個讀卡器）啟動後立刻開了 C001.png，而我的腳本沒有要它開 C001。比較可能是別的 session 在沒指定 `OK_GAME_PID` 的情況下送了 `reader_call load` 到共用信箱，打到這個讀卡器；我的 `load C025` 隨後送到，遇上忙碌被拒。
+- 腳本的問題：`seg4.sh` 以「新出現的讀卡器」認自己的行程、以「最新的 log」認自己的 log，別的 session 同時開讀卡器時會認錯（C024 那列的 log 欄指到 q2 開 C065 的讀卡器）。改成 `seg5.sh`：啟動時在命令列加 `-OKLane=<通道>-<卡>-<pid>` 標記，用標記找自己的 PID 與 `-abslog`，另寫 `reader_map.txt`。
+- 未修：`OKCharacterMCP.cpp` 的訊息要分開（忙碌另回「Busy」），等全跑結束能重建時再改。證據在 `Saved/Reports/reader-jump-20261116/qfix/c025-loadfail/`。C025 排在 q1 之後重跑。
+- 預防：多個 session 共用同一台機器時，`reader_call` 一律帶 `OK_GAME_PID`；腳本用自己加的命令列標記認行程，不用「最新的那個」。
+- 補查（同日）：`reader_call` 的實例選擇（`Tools/ok-game-mcp/src/control.rs` 的 `target`）和 `ui_*`／`pair_call` 共用同一套規則，會跟著 `game_select` 與 `OK_GAME_PID` 走：有指定 pid 就只找那一台（那台的 OKControl 記錄還沒寫出 `mailbox` 時直接回「no running game has a card reader mailbox」，不會改打別台，c-lowspec 第一次 `state` 失敗就是這個）。**沒指定時預設是「最新啟動、有信箱的那一台」**，`OWN` 只認 `game_launch` 開的遊戲，用 `CardReaderDevelopment.cmd` 開的讀卡器不算。所以同一個 checkout 有好幾台讀卡器時，任何沒有 `game_select`／`OK_GAME_PID` 的 session 送 `reader_call`（包括 `load`），都會打到剛啟動的那一台，通常是別人的。c-lowspec 每次都先 `game_select`，排除；23:18 是誰送的 load 無法再證。
+- `ok-game-mcp` 缺陷（待修，共用工具，未改）：沒指定實例、又有超過一台在跑時，應該拒絕並列出 `game_instances`，而不是默默選最新的；至少 `load`、`control_set` 這類會改狀態的動作要拒絕。

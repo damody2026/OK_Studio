@@ -43,6 +43,8 @@
 #include "HAL/FileManager.h"
 #include "HAL/IConsoleManager.h"
 #include "KKPreviewActor.h"
+#include "KKPng.h"
+#include "OKStudioFbx.h"
 #include "KKExactSkinning.h"
 #include "ShaderCompiler.h"
 #include "KKRustExtract.h"
@@ -152,6 +154,7 @@ namespace OKStudioPanelText
 		case EOKSceneObjectKind::Light: return TEXT("燈光");
 		case EOKSceneObjectKind::Camera: return TEXT("相機");
 		case EOKSceneObjectKind::Effect: return TEXT("特效");
+		case EOKSceneObjectKind::Model: return TEXT("模型");
 		default: return TEXT("資料夾");
 		}
 	}
@@ -207,13 +210,19 @@ public:
 	virtual void OnMouseCaptureLost(const FCaptureLostEvent&) override
 	{
 		if (Game.IsValid()) { if (DragAxis >= 0) Game->EndGuideDrag(); Game->bFlying = false; Game->FlyKeys.Reset(); Game->bUserDragging = false; }
-		DragAxis = -1; bLookDrag = false; Button = FKey();
+		DragAxis = -1; bLookDrag = false; Button = FKey(); Nav = ENav::None;
 	}
+
+	/** What a mouse drag does to the view (U276): the view scheme maps buttons and modifiers to it. StudioLeft is Studio's
+	 *  left drag, which orbits once it moves and picks when it does not. */
+	enum class ENav : uint8 { None, Orbit, Pan, Dolly, StudioLeft };
+	static ENav NavFor(int32 Scheme, const FKey& Pressed, const FPointerEvent& Event);
 
 private:
 	TWeakObjectPtr<UOKStudioGame> Game;
 	SOKStudioPanel* Owner = nullptr;
 	FKey Button;
+	ENav Nav = ENav::None;
 	int32 DragAxis = -1;
 	bool bLookDrag = false;
 	FVector2D PressAt = FVector2D::ZeroVector;
@@ -323,9 +332,24 @@ public:
 		AsyncTask(ENamedThreads::GameThread, [Weak, Files]() { if (const TSharedPtr<SOKStudioPanel> Panel = Weak.Pin()) Panel->OpenDropped(Files); });
 		return FReply::Handled();
 	}
-	/** What a drop opens: the first scene file, or the first folder in the scene browser. */
+	/** A character card the studio adds: an original KK / KKS / KKSP card or an OK card (its okPv chunk). */
+	static bool IsCharacterCardFile(const FString& Path)
+	{
+		if (FPaths::GetExtension(Path).ToLower() != TEXT("png")) return false;
+		TArray<uint8> Bytes;
+		if (!FFileHelper::LoadFileToArray(Bytes, *Path)) return false;
+		const EKKCardKind Kind = ClassifyCard(Bytes);
+		if (Kind == EKKCardKind::KK || Kind == EKKCardKind::KKS || Kind == EKKCardKind::KKSP) return true;
+		static const uint8 OkPv[4] = { 'o', 'k', 'P', 'v' };
+		for (int32 I = 8; I + 4 <= Bytes.Num(); ++I) if (FMemory::Memcmp(Bytes.GetData() + I, OkPv, 4) == 0) return true;
+		return false;
+	}
+
+	/** What a drop does: the first scene file opens (or the first folder in the scene browser); otherwise every
+	 *  character card (original or OK card) is added as a character and every model file (FBX, OBJ) as a model (U277). */
 	bool OpenDropped(const TArray<FString>& Files)
 	{
+		TArray<FString> DropCards, Models;
 		for (const FString& Raw : Files)
 		{
 			const FString Path = FPaths::ConvertRelativePathToFull(Raw);
@@ -335,13 +359,50 @@ public:
 				SetStatus(TEXT("場景資料夾 ") + Path);
 				return true;
 			}
+			if (!FPaths::FileExists(Path)) continue;
 			const FString Ext = FPaths::GetExtension(Path).ToLower();
 			// As the scene browser opens it: an original KKS/KK KStudio scene is imported (an OK scene beside it, its
 			// characters as cards), and unsaved changes are asked about first.
-			if (FPaths::FileExists(Path) && (Ext == TEXT("okscene") || FOKSceneCard::Kind(Path) != FOKSceneCard::EKind::None)) return OpenScene(Path, false);
+			if (Ext == TEXT("okscene") || FOKSceneCard::Kind(Path) != FOKSceneCard::EKind::None) return OpenScene(Path, false);
+			if (OKStudioFbx::IsModelFile(Path)) Models.Add(Path);
+			else if (IsCharacterCardFile(Path)) DropCards.Add(Path);
 		}
-		SetStatus(TEXT("拖進來的不是場景檔（.okscene、OK 場景卡、原版 KStudio 場景 PNG）或資料夾"));
-		return false;
+		if (DropCards.IsEmpty() && Models.IsEmpty())
+		{
+			SetStatus(TEXT("拖進來的不是場景檔、角色卡、模型（FBX／OBJ）或資料夾"));
+			return false;
+		}
+		for (const FString& Card : DropCards) AddOrReplaceCard(Card, false);
+		int32 ModelsAdded = 0;
+		TArray<FString> Failed;
+		for (const FString& File : Models) { FString Why; if (AddModel(File, Why)) ++ModelsAdded; else Failed.Add(FPaths::GetCleanFilename(File) + TEXT("：") + Why); }
+		FString Said = FString::Printf(TEXT("拖入：%d 個角色、%d 個模型"), DropCards.Num(), ModelsAdded);
+		if (!Failed.IsEmpty()) Said += TEXT("；讀不到 ") + FString::Join(Failed, TEXT("、"));
+		SetStatus(Said);
+		return ModelsAdded > 0 || !DropCards.IsEmpty();
+	}
+
+	/** Adds an outside model (FBX / OBJ) where the view looks, sitting on the floor there; false with the reason when the
+	 *  file cannot be read (nothing is added then). */
+	bool AddModel(const FString& File, FString& OutWhy)
+	{
+		if (!Game.IsValid()) return false;
+		const TSharedPtr<const FOKFbxModel> Model = OKStudioFbx::Load(File, OutWhy);
+		if (!Model) return false;
+		const int32 Id = Game->Add(EOKSceneObjectKind::Model);
+		FOKSceneObject* O = Game->Document->Find(Id);
+		if (!O) return false;
+		O->Model.File = FPaths::ConvertRelativePathToFull(File);
+		O->Name = FPaths::GetBaseFilename(File);
+		// Its middle over the spot Add picked and its lowest point on the floor (the model's own origin is often far from
+		// its mesh); under a folder the spot stays as Add put it.
+		FVector At = O->Transform.GetLocation();
+		At.X -= Model->Bounds.GetCenter().X;
+		At.Y -= Model->Bounds.GetCenter().Y;
+		if (O->Parent < 0) At.Z = -Model->Bounds.Min.Z;
+		O->Transform.SetLocation(At);
+		Changed();
+		return true;
 	}
 
 	void Construct(const FArguments& Args)
@@ -772,6 +833,31 @@ public:
 		Simple(TEXT("camera.store"), TEXT("視角存到所選相機"), [this] { if (!Game->StoreViewInCamera(Game->SelectedId)) SetStatus(TEXT("先選一個相機")); });
 		Simple(TEXT("camera.next"), TEXT("下一相機"), [this] { Game->NextCamera(); });
 		Simple(TEXT("camera.fly"), TEXT("自由飛行"), [this] { FOKStudioSettings& S = FOKStudioSettings::Get(); S.bFlyMode = !S.bFlyMode; S.Save(); SetStatus(S.bFlyMode ? TEXT("自由飛行：按住右鍵用 W A S D Q E") : TEXT("自由飛行：關")); });
+		// U276 操作模式: Studio / Blender / 3ds Max / Maya (argument: 0..3 or the name; none: the next one).
+		AddCommand(TEXT("view.scheme"), TEXT("操作模式（Studio／Blender／3ds Max／Maya）"), [this](const FString& Arg)
+		{
+			FOKStudioSettings& S = FOKStudioSettings::Get();
+			int32 Want = (S.ViewScheme + 1) % FOKStudioSettings::ViewSchemeCount;
+			const FString A = Arg.TrimStartAndEnd();
+			if (!A.IsEmpty())
+			{
+				Want = -1;
+				if (A.IsNumeric()) Want = FCString::Atoi(*A);
+				for (int32 I = 0; I < FOKStudioSettings::ViewSchemeCount; ++I)
+					if (A.Equals(FOKStudioSettings::ViewSchemeName(I), ESearchCase::IgnoreCase) || (I == 2 && A.Equals(TEXT("max"), ESearchCase::IgnoreCase))) Want = I;
+				if (Want < 0 || Want >= FOKStudioSettings::ViewSchemeCount) { SetStatus(TEXT("操作模式只有 Studio、Blender、3ds Max、Maya")); return false; }
+			}
+			S.ViewScheme = Want;
+			S.Save();
+			static const TCHAR* Hints[] = {
+				TEXT("左鍵拖曳繞行、中鍵平移、滾輪縮放；W E R 移動旋轉縮放"),
+				TEXT("中鍵繞行、Shift+中鍵平移、Ctrl+中鍵縮放；G R S 移動旋轉縮放，數字鍵 . 聚焦"),
+				TEXT("中鍵平移、Alt+中鍵繞行、Ctrl+Alt+中鍵縮放；W E R 移動旋轉縮放，Z 聚焦"),
+				TEXT("Alt+左鍵繞行、Alt+中鍵平移、Alt+右鍵縮放；W E R 移動旋轉縮放，F 聚焦"),
+			};
+			SetStatus(FString(TEXT("操作模式：")) + FOKStudioSettings::ViewSchemeName(Want) + TEXT("（") + Hints[Want] + TEXT("）"));
+			return true;
+		});
 		for (int32 N = 0; N < 10; ++N)
 		{
 			Simple(FString::Printf(TEXT("view.save.%d"), N), FString::Printf(TEXT("存視角 %d"), N), [this, N] { Game->SaveBookmark(N); SetStatus(FString::Printf(TEXT("視角 %d 已存"), N)); });
@@ -1200,6 +1286,7 @@ public:
 		J->SetStringField(TEXT("fk_bone"), FkBone);
 		static const TCHAR* GizmoModes[] = { TEXT("move"), TEXT("rotate"), TEXT("scale") };
 		J->SetStringField(TEXT("gizmo_mode"), Game.IsValid() ? GizmoModes[FMath::Clamp(int32(Game->GuideMode), 0, 2)] : TEXT(""));
+		J->SetStringField(TEXT("view_scheme"), FOKStudioSettings::ViewSchemeName(FOKStudioSettings::Get().ViewScheme));
 		J->SetStringField(TEXT("card_folder"), CardFolder);
 		J->SetNumberField(TEXT("card_back"), CardBack.Num());
 		J->SetNumberField(TEXT("card_forward"), CardForward.Num());
@@ -2240,6 +2327,11 @@ public:
 	TMap<int32, TSharedRef<TArray<TSharedPtr<FString>>>> MaterialPropertyOptions;
 	/** HS2Studio6's Material Editor window: renderer, material, filterable properties of the selected item. */
 	TSharedRef<SWidget> BuildMaterialEditor();
+	/** U277: the material editor of an outside model (its materials' colour, metal, gloss, emission, texture, sides). */
+	TSharedRef<SWidget> BuildModelMaterialEditor(int32 Id);
+	/** Where the material editor keeps an object's edits: an item's MaterialEdits (built in), anything else's
+	 *  LiveMaterialEdits (applied in place: characters, outside models). */
+	static TArray<FOKSceneMaterialEdit>& MaterialEditsOf(FOKSceneObject& X) { return X.Kind == EOKSceneObjectKind::Item ? X.Item.MaterialEdits : X.LiveMaterialEdits; }
 	int32 MaterialPart = 0;
 	FString MaterialFilter;
 	/** HS2Studio6 隐藏属性: also list the material's internal `_OK*` values (read only). */
@@ -3043,6 +3135,12 @@ public:
 			Text(TEXT("模型 id"), [](FOKSceneObject& X) { return X.Item.Model; }, [](FOKSceneObject& X, const FString& V) { X.Item.Model = V.TrimStartAndEnd(); X.Item.No = -1; });
 			Text(TEXT("prefab"), [](FOKSceneObject& X) { return X.Item.Prefab; }, [](FOKSceneObject& X, const FString& V) { X.Item.Prefab = V.TrimStartAndEnd(); X.Item.No = -1; });
 			break;
+		case EOKSceneObjectKind::Model:
+			// U277: an outside FBX; another file rebuilds it, its materials are edited in the material editor.
+			Label(TEXT("外部模型（FBX）"));
+			Text(TEXT("檔案"), [](FOKSceneObject& X) { return X.Model.File; }, [](FOKSceneObject& X, const FString& V) { X.Model.File = FPaths::ConvertRelativePathToFull(V.TrimStartAndEnd().TrimQuotes()); });
+			Props->AddSlot().AutoHeight().Padding(0.f, 2.f)[OKStudioStyle::Button(FText::FromString(Tip(TEXT("材質編輯器…"), TEXT("app.material"))), Cmd(TEXT("app.material")), 0.f, 20.f)];
+			break;
 		case EOKSceneObjectKind::Effect:
 		{
 			Label(TEXT("特效（Niagara）"));
@@ -3626,6 +3724,15 @@ public:
 		Props->AddSlot().AutoHeight().Padding(0.f, 2.f)[CheckBox(TEXT("隱藏全部輔助（把手、骨點、光源範圍）"), [this] { return Game.IsValid() && Game->bHideHelpers; }, [this](bool) { RunCommand(TEXT("view.helpers")); })];
 		Props->AddSlot().AutoHeight().Padding(0.f, 2.f)
 			[CheckBox(TEXT("自由飛行（按住右鍵，W A S D Q E 移動）"), [] { return FOKStudioSettings::Get().bFlyMode; }, [this](bool) { RunCommand(TEXT("camera.fly")); })];
+		// U276: which program's mouse and keys the view follows.
+		Label(TEXT("操作模式（滑鼠視角與物件快捷鍵）"));
+		{
+			TSharedRef<SHorizontalBox> Schemes = SNew(SHorizontalBox);
+			for (int32 I = 0; I < FOKStudioSettings::ViewSchemeCount; ++I)
+				Schemes->AddSlot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[Button(FText::FromString(FOKStudioSettings::ViewSchemeName(I)), [this, I] { RunCommand(TEXT("view.scheme"), FString::FromInt(I)); }, 0.f, 18.f,
+					TAttribute<bool>::CreateLambda([I] { return FOKStudioSettings::Get().ViewScheme == I; }), 10.f)];
+			Props->AddSlot().AutoHeight().Padding(0.f, 1.f)[Schemes];
+		}
 		Label(TEXT("視角書籤（Ctrl+數字存、數字讀；存在場景裡）"));
 		TSharedRef<SHorizontalBox> Marks = SNew(SHorizontalBox);
 		for (int32 N = 0; N < 10; ++N)

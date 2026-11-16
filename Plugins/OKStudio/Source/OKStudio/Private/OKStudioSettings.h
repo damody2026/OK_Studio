@@ -16,6 +16,14 @@ struct FOKStudioSettings
 	float ZoomSpeed = 1.f;
 	float FlySpeed = 300.f;
 	bool bFlyMode = false;
+	/** How the view's mouse and the object keys work (U276): 0 Studio (left-drag orbits, middle pans), 1 Blender (middle
+	 *  orbits, Shift+middle pans, Ctrl+middle zooms; G / R / S), 2 3ds Max (middle pans, Alt+middle orbits, Ctrl+Alt+middle
+	 *  zooms; W / E / R, Z frames), 3 Maya (Alt+left orbits, Alt+middle pans, Alt+right zooms; W / E / R, F frames). */
+	int32 ViewScheme = 0;
+	static constexpr int32 ViewSchemeCount = 4;
+	static const TCHAR* ViewSchemeName(int32 Scheme);
+	/** The scheme's own keys, over the bindings (command id -> chords): Blender's G / R / S and so on. */
+	static const TArray<TPair<FString, FString>>& SchemeBindings(int32 Scheme);
 	/** Guide handle size (times the default) and snapping steps: move (cm), rotate (degrees), scale. */
 	float GizmoScale = 1.f;
 	/** FK bone and IK target points on the screen (times the default; HS2Studio6 控制点大小). */
@@ -31,6 +39,8 @@ struct FOKStudioSettings
 	/** More folders for the outside sound list (besides UserData/audio), the pose library (besides UserData/Studio/pose)
 	 *  and the background / frame pictures (besides the base library's and UserData/Studio/bg, frame). */
 	TArray<FString> AudioRoots, PoseRoots, BgRoots, FrameRoots;
+	/** More scene card folders for the scene browser (besides UserData/Studio/scene and the game's KStudio scenes). */
+	TArray<FString> SceneRoots;
 	/** The cards 加入預設角色 adds (HS2Studio6 添加默认角色): [0] male, [1] female (KK sex); empty: the first such card
 	 *  under Content/CharacterCards/Demo. */
 	FString DefaultCards[2];

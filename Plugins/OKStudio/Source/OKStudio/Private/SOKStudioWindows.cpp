@@ -1102,6 +1102,8 @@ TSharedRef<SWidget> SOKStudioPanel::BuildSceneBrowser()
 	FolderButton(TEXT("場景（UserData）"), UOKStudioGame::SceneDirectory());
 	FolderButton(TEXT("KStudio 場景"), KStudioFolder());
 	FolderButton(TEXT("自動備份"), UOKStudioGame::BackupDirectory());
+	// The scene card folders added in the settings (資源目錄), each by its folder name.
+	for (const FString& Root : FOKStudioSettings::Get().SceneRoots) FolderButton(TEXT("★ ") + FPaths::GetCleanFilename(FPaths::ConvertRelativePathToFull(Root).TrimChar(TEXT('/'))), FPaths::ConvertRelativePathToFull(Root));
 	TArray<FString> Subs;
 	IFileManager::Get().FindFiles(Subs, *(SceneFolder / TEXT("*")), false, true);
 	// "<scene>_cards" beside its scene holds the cards an import took out of it: no scenes to browse there.
@@ -1111,7 +1113,8 @@ TSharedRef<SWidget> SOKStudioPanel::BuildSceneBrowser()
 		return S.EndsWith(TEXT("_cards")) && (FPaths::FileExists(Scene + TEXT(".okscene")) || FPaths::FileExists(Scene + TEXT(".png")));
 	};
 	for (const FString& S : Subs) if (!SceneCards(S)) FolderButton(TEXT("▸ ") + S, SceneFolder / S);
-	if (SceneFolder != UOKStudioGame::SceneDirectory() && SceneFolder != KStudioFolder() && SceneFolder != UOKStudioGame::BackupDirectory()) FolderButton(TEXT(".. 上一層"), FPaths::GetPath(SceneFolder));
+	const bool bRootFolder = FOKStudioSettings::Get().SceneRoots.ContainsByPredicate([this](const FString& R) { return FPaths::ConvertRelativePathToFull(R) == SceneFolder; });
+	if (SceneFolder != UOKStudioGame::SceneDirectory() && SceneFolder != KStudioFolder() && SceneFolder != UOKStudioGame::BackupDirectory() && !bRootFolder) FolderButton(TEXT(".. 上一層"), FPaths::GetPath(SceneFolder));
 	// 包含子資料夾 and 選擇資料夾 (HS2Studio6 场景卡选择): any folder, typed or pasted, Enter goes there.
 	Folders->AddSlot().AutoHeight().Padding(0.f, 6.f, 0.f, 2.f)
 		[CheckBox(TEXT("包含子資料夾"), [this] { return bSceneRecursive; }, [this](bool B) { bSceneRecursive = B; ScenePick.Reset(); ScenePage = 0; ScanScenes(); DeferFloat(TEXT("scenes")); })];
@@ -1599,12 +1602,16 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 {
 	// HS2Studio6's Material Editor: the selected item's renderers, the material of the one picked, and that material's
 	// shader properties (filtered by name). A change is a material edit of the item, saved with the scene; 預設 drops it.
+	// U277: characters too (their edits apply in place: colours, numbers, texture scale / offset, showing a renderer; not
+	// textures or shaders, which only an item's rebuild takes), and outside models with their own page.
 	FOKSceneObject* O = Game.IsValid() ? Game->Document->Find(Game->SelectedId) : nullptr;
-	AKKPreviewActor* Shown = O && O->Kind == EOKSceneObjectKind::Item && Game->SceneActor ? Game->SceneActor->PreviewOf(O->Id) : nullptr;
-	const int32 Parts = Shown ? Shown->Session.PartCount() : 0;
 	MaterialPropertiesShown = 0;
 	MaterialNameShown.Reset();
-	if (Parts <= 0) return OKStudioStyle::Label(FText::FromString(TEXT("選取一個已載入的道具，這裡會列出它的模型、材質與屬性。")), 10.f, TextHint());
+	if (O && O->Kind == EOKSceneObjectKind::Model) return BuildModelMaterialEditor(O->Id);
+	const bool bLive = O && O->Kind == EOKSceneObjectKind::Character;
+	AKKPreviewActor* Shown = O && (O->Kind == EOKSceneObjectKind::Item || bLive) && Game->SceneActor ? Game->SceneActor->PreviewOf(O->Id) : nullptr;
+	const int32 Parts = Shown ? Shown->Session.PartCount() : 0;
+	if (Parts <= 0) return OKStudioStyle::Label(FText::FromString(TEXT("選取一個已載入的道具、角色或外部模型，這裡會列出它的模型、材質與屬性。")), 10.f, TextHint());
 	MaterialPart = FMath::Clamp(MaterialPart, 0, Parts - 1);
 	const int32 ItemId = O->Id;
 	auto Column = [this](const FString& Title, const TSharedRef<SWidget>& Body)
@@ -1661,20 +1668,20 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 	{
 		FOKSceneObject* X = Game.IsValid() ? Game->Document->Find(ItemId) : nullptr;
 		if (!X) return nullptr;
-		return X->Item.MaterialEdits.FindByPredicate([&](const FOKSceneMaterialEdit& E) { return E.Kind == Kind && E.Material == Target && (Property.IsEmpty() || E.Property == Property || TEXT("_") + E.Property == Property); });
+		return MaterialEditsOf(*X).FindByPredicate([&](const FOKSceneMaterialEdit& E) { return E.Kind == Kind && E.Material == Target && (Property.IsEmpty() || E.Property == Property || TEXT("_") + E.Property == Property); });
 	};
 	auto Put = [this, ItemId, FindEdit](EOKSceneMaterialEditKind Kind, const FString& Target, const FString& Property) -> FOKSceneMaterialEdit*
 	{
 		FOKSceneObject* X = Game.IsValid() ? Game->Document->Find(ItemId) : nullptr;
 		if (!X) return nullptr;
 		FOKSceneMaterialEdit* E = FindEdit(Kind, Target, Property);
-		if (!E) { E = &X->Item.MaterialEdits.AddDefaulted_GetRef(); E->Kind = Kind; E->Material = Target; E->Property = Property; }
+		if (!E) { E = &MaterialEditsOf(*X).AddDefaulted_GetRef(); E->Kind = Kind; E->Material = Target; E->Property = Property; }
 		return E;
 	};
 	auto Drop = [this, ItemId](EOKSceneMaterialEditKind Kind, const FString& Target, const FString& Property)
 	{
 		if (FOKSceneObject* X = Game.IsValid() ? Game->Document->Find(ItemId) : nullptr)
-			X->Item.MaterialEdits.RemoveAll([&](const FOKSceneMaterialEdit& E) { return E.Kind == Kind && E.Material == Target && (E.Property == Property || TEXT("_") + E.Property == Property); });
+			MaterialEditsOf(*X).RemoveAll([&](const FOKSceneMaterialEdit& E) { return E.Kind == Kind && E.Material == Target && (E.Property == Property || TEXT("_") + E.Property == Property); });
 	};
 	// The picked renderer (HS2Studio6 Renderer 頁): shown or not, and how it casts shadows (Unity ShadowCastingMode).
 	OkMeshView PickedMesh{};
@@ -1691,11 +1698,12 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 		};
 		Materials->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 1.f)[OKStudioStyle::Label(FText::FromString(TEXT("Renderer")), 10.f, TextHint())];
 		Materials->AddSlot().AutoHeight()[CheckBox(TEXT("顯示"), [RendererValue] { return RendererValue(TEXT("Enabled"), 1.f) > 0.5f; }, [SetRenderer](bool B) { SetRenderer(TEXT("Enabled"), B ? 1.f : 0.f, 1.f); })];
-		Materials->AddSlot().AutoHeight().Padding(0.f, 1.f)[Button(TAttribute<FText>::CreateLambda([RendererValue] { return FText::FromString(FString(TEXT("陰影：")) + ShadowNames[FMath::Clamp(FMath::RoundToInt(RendererValue(TEXT("ShadowCastingMode"), 1.f)), 0, 3)]); }),
+		if (!bLive) Materials->AddSlot().AutoHeight().Padding(0.f, 1.f)[Button(TAttribute<FText>::CreateLambda([RendererValue] { return FText::FromString(FString(TEXT("陰影：")) + ShadowNames[FMath::Clamp(FMath::RoundToInt(RendererValue(TEXT("ShadowCastingMode"), 1.f)), 0, 3)]); }),
 			[RendererValue, SetRenderer] { SetRenderer(TEXT("ShadowCastingMode"), float((FMath::Clamp(FMath::RoundToInt(RendererValue(TEXT("ShadowCastingMode"), 1.f)), 0, 3) + 1) % 4), 1.f); }, 0.f, 18.f, false, 10.f)];
-		Materials->AddSlot().AutoHeight()[CheckBox(TEXT("接收陰影"), [RendererValue] { return RendererValue(TEXT("ReceiveShadows"), 1.f) > 0.5f; }, [SetRenderer](bool B) { SetRenderer(TEXT("ReceiveShadows"), B ? 1.f : 0.f, 1.f); })];
+		if (!bLive) Materials->AddSlot().AutoHeight()[CheckBox(TEXT("接收陰影"), [RendererValue] { return RendererValue(TEXT("ReceiveShadows"), 1.f) > 0.5f; }, [SetRenderer](bool B) { SetRenderer(TEXT("ReceiveShadows"), B ? 1.f : 0.f, 1.f); })];
 	}
 	// The material's shader and render queue (Material Editor 换 shader): the item is built again with them.
+	if (!bLive)
 	{
 		auto ShaderEdit = [FindEdit, Material] { return FindEdit(EOKSceneMaterialEditKind::Shader, Material, FString()); };
 		Materials->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 1.f)[OKStudioStyle::Label(FText::FromString(TEXT("Shader（Enter 套用）")), 10.f, TextHint())];
@@ -1738,29 +1746,29 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 		SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[Button(FText::FromString(TEXT("複製改動")), [this, ItemId, Material]
 		{
-			const FOKSceneObject* X = Game.IsValid() ? Game->Document->Find(ItemId) : nullptr;
+			FOKSceneObject* X = Game.IsValid() ? Game->Document->Find(ItemId) : nullptr;
 			if (!X) return;
-			MaterialClipboard = X->Item.MaterialEdits.FilterByPredicate([&](const FOKSceneMaterialEdit& E) { return E.Material == Material && E.Kind != EOKSceneMaterialEditKind::Renderer; });
+			MaterialClipboard = MaterialEditsOf(*X).FilterByPredicate([&](const FOKSceneMaterialEdit& E) { return E.Material == Material && E.Kind != EOKSceneMaterialEditKind::Renderer; });
 			SetStatus(FString::Printf(TEXT("複製了 %d 筆材質改動"), MaterialClipboard.Num()));
 		}, 0.f, 18.f, false, 10.f)]
 		+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("貼上改動")), [this, ItemId, Material]
 		{
 			FOKSceneObject* X = Game.IsValid() ? Game->Document->Find(ItemId) : nullptr;
 			if (!X || MaterialClipboard.IsEmpty()) return;
-			X->Item.MaterialEdits.RemoveAll([&](const FOKSceneMaterialEdit& E) { return E.Material == Material && E.Kind != EOKSceneMaterialEditKind::Renderer; });
-			for (FOKSceneMaterialEdit E : MaterialClipboard) { E.Material = Material; X->Item.MaterialEdits.Add(E); }
+			MaterialEditsOf(*X).RemoveAll([&](const FOKSceneMaterialEdit& E) { return E.Material == Material && E.Kind != EOKSceneMaterialEditKind::Renderer; });
+			for (FOKSceneMaterialEdit E : MaterialClipboard) { E.Material = Material; MaterialEditsOf(*X).Add(E); }
 			Changed();
 			RebuildFloat(TEXT("material"));
 			SetStatus(FString::Printf(TEXT("貼上 %d 筆材質改動"), MaterialClipboard.Num()));
 		}, 0.f, 18.f, false, 10.f)]
 	];
-	Materials->AddSlot().AutoHeight().Padding(0.f, 1.f)[Button(FText::FromString(TEXT("道具全部重置")), [this, ItemId]
+	Materials->AddSlot().AutoHeight().Padding(0.f, 1.f)[Button(FText::FromString(bLive ? TEXT("全部重置") : TEXT("道具全部重置")), [this, ItemId]
 	{
-		if (FOKSceneObject* X = Game.IsValid() ? Game->Document->Find(ItemId) : nullptr) { X->Item.MaterialEdits.Reset(); Changed(); RebuildFloat(TEXT("material")); }
+		if (FOKSceneObject* X = Game.IsValid() ? Game->Document->Find(ItemId) : nullptr) { MaterialEditsOf(*X).Reset(); Changed(); RebuildFloat(TEXT("material")); }
 	}, 0.f, 18.f, false, 10.f)];
 	// Exports (HS2Studio6 导出): the picked renderer's UV layout, the item as OBJ, every texture it shows.
-	Materials->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 1.f)[OKStudioStyle::Label(FText::FromString(TEXT("匯出（位置在視窗下方）")), 9.f, TextHint())];
-	Materials->AddSlot().AutoHeight()
+	if (!bLive) Materials->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 1.f)[OKStudioStyle::Label(FText::FromString(TEXT("匯出（位置在視窗下方）")), 9.f, TextHint())];
+	if (!bLive) Materials->AddSlot().AutoHeight()
 	[
 		SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[Button(FText::FromString(TEXT("UV")), Cmd(TEXT("material.export"), TEXT("uv")), 0.f, 18.f, false, 10.f)]
@@ -1772,7 +1780,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 	{
 		FOKSceneObject* X = Game.IsValid() ? Game->Document->Find(ItemId) : nullptr;
 		if (!X) return nullptr;
-		for (FOKSceneMaterialEdit& E : X->Item.MaterialEdits)
+		for (FOKSceneMaterialEdit& E : MaterialEditsOf(*X))
 			if ((E.Kind == EOKSceneMaterialEditKind::Float || E.Kind == EOKSceneMaterialEditKind::Color) && E.Material == Material
 				&& (E.Property == Property || TEXT("_") + E.Property == Property)) return &E;
 		return nullptr;
@@ -1782,7 +1790,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 		FOKSceneObject* X = Game.IsValid() ? Game->Document->Find(ItemId) : nullptr;
 		if (!X) return;
 		FOKSceneMaterialEdit* E = EditOf(Property);
-		if (!E) { E = &X->Item.MaterialEdits.AddDefaulted_GetRef(); E->Material = Material; E->Property = Property; }
+		if (!E) { E = &MaterialEditsOf(*X).AddDefaulted_GetRef(); E->Material = Material; E->Property = Property; }
 		E->Kind = Kind;
 		E->Value = Value;
 		Changed();
@@ -1791,7 +1799,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 	{
 		FOKSceneObject* X = Game.IsValid() ? Game->Document->Find(ItemId) : nullptr;
 		if (!X) return;
-		X->Item.MaterialEdits.RemoveAll([&](const FOKSceneMaterialEdit& E) { return E.Material == Material && (Property.IsEmpty() || E.Property == Property || TEXT("_") + E.Property == Property); });
+		MaterialEditsOf(*X).RemoveAll([&](const FOKSceneMaterialEdit& E) { return E.Material == Material && (Property.IsEmpty() || E.Property == Property || TEXT("_") + E.Property == Property); });
 		Changed();
 		RebuildFloat(TEXT("material"));
 	};
@@ -1842,7 +1850,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 	}
 	// Texture slots (HS2Studio6 纹理): load a PNG (a path, or a name under UserData/Studio/texture), clear it, back to the
 	// source, export what it shows; scale and offset (_ST).
-	if (!Textures.IsEmpty())
+	if (!Textures.IsEmpty() && !bLive)
 		Properties->AddSlot().AutoHeight().Padding(0.f, 2.f)[SNew(SBox).HeightOverride(18.f)[TextBox([this] { return MaterialTexturePath; }, [this](const FString& V) { MaterialTexturePath = V.TrimStartAndEnd().TrimQuotes(); }, TEXT("載入用的 PNG 路徑（或 UserData/Studio/texture 下的檔名）"))]];
 	for (const TPair<FString, FString>& T : Textures)
 	{
@@ -1897,7 +1905,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 			if (Png.IsEmpty() || !FFileHelper::SaveArrayToFile(Png, *Out)) { SetStatus(TEXT("匯出貼圖失敗：") + Property); return; }
 			SetStatus(TEXT("匯出 ") + Out);
 		};
-		Properties->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)
+		if (!bLive) Properties->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[Button(FText::FromString(TEXT("載入")), Load, 0.f, 16.f, false, 9.f)]
@@ -1959,6 +1967,138 @@ TSharedRef<SWidget> SOKStudioPanel::BuildMaterialEditor()
 			+ SHorizontalBox::Slot().FillWidth(1.f)[SNew(SBox).HeightOverride(20.f)[TextBox([] { const FString& R = FOKStudioSettings::Get().MaterialExportRoot; return R.IsEmpty() ? FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("OKStudio/MaterialExport")) : R; },
 				[this](const FString& V) { RunCommand(TEXT("material.exportroot"), V); }, TEXT("匯出資料夾（Enter 套用）"))]]
 			+ SHorizontalBox::Slot().AutoWidth().Padding(3.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("預設")), Cmd(TEXT("material.exportroot"), FString()), 44.f, 20.f, false, 10.f)]
+		];
+}
+
+TSharedRef<SWidget> SOKStudioPanel::BuildModelMaterialEditor(int32 Id)
+{
+	// U277: an outside model's materials. Each change is a live material edit of the object (material name, property),
+	// saved with the scene; 預設 drops it and the file's value comes back.
+	const FOKSceneObject* O = Game.IsValid() ? Game->Document->Find(Id) : nullptr;
+	FString Error;
+	const TSharedPtr<const FOKFbxModel> Model = O ? OKStudioFbx::Load(O->Model.File, Error) : nullptr;
+	if (!Model) return OKStudioStyle::Label(FText::FromString(TEXT("讀不到模型檔：") + Error), 10.f, TextHint());
+	const int32 Count = Model->Sections.Num();
+	MaterialPart = FMath::Clamp(MaterialPart, 0, Count - 1);
+	const FOKFbxSection& Section = Model->Sections[MaterialPart];
+	const FString Material = Section.Material;
+	MaterialNameShown = Material;
+	auto Column = [this](const FString& Title, const TSharedRef<SWidget>& Body)
+	{
+		return SNew(SVerticalBox)
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)[OKStudioStyle::Label(FText::FromString(Title), 10.f, TextHint())]
+			+ SVerticalBox::Slot().FillHeight(1.f)[SNew(SBorder).BorderImage(Brush(ListArea())).Padding(2.f)[SNew(SScrollBox) + SScrollBox::Slot()[Body]]];
+	};
+	TSharedRef<SVerticalBox> Materials = SNew(SVerticalBox);
+	for (int32 I = 0; I < Count; ++I)
+		Materials->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)[Button(FText::FromString(Model->Sections[I].Material), [this, I] { MaterialPart = I; RebuildFloat(TEXT("material")); }, 0.f, 18.f, MaterialPart == I, 10.f)];
+	// This material's own edit; Find also shows an edit for every material (empty name, from a script or the timeline)
+	// when it has none, Put always writes this material's own.
+	auto FindOwn = [this, Id, Material](EOKSceneMaterialEditKind Kind, const FString& Property) -> FOKSceneMaterialEdit*
+	{
+		FOKSceneObject* X = Game.IsValid() ? Game->Document->Find(Id) : nullptr;
+		return X ? X->LiveMaterialEdits.FindByPredicate([&](const FOKSceneMaterialEdit& E) { return E.Kind == Kind && E.Material == Material && E.Property == Property; }) : nullptr;
+	};
+	auto Find = [this, Id, FindOwn](EOKSceneMaterialEditKind Kind, const FString& Property) -> FOKSceneMaterialEdit*
+	{
+		if (FOKSceneMaterialEdit* Own = FindOwn(Kind, Property)) return Own;
+		FOKSceneObject* X = Game.IsValid() ? Game->Document->Find(Id) : nullptr;
+		return X ? X->LiveMaterialEdits.FindByPredicate([&](const FOKSceneMaterialEdit& E) { return E.Kind == Kind && E.Material.IsEmpty() && E.Property == Property; }) : nullptr;
+	};
+	auto Put = [this, Id, Material, FindOwn](EOKSceneMaterialEditKind Kind, const FString& Property) -> FOKSceneMaterialEdit*
+	{
+		FOKSceneObject* X = Game.IsValid() ? Game->Document->Find(Id) : nullptr;
+		if (!X) return nullptr;
+		FOKSceneMaterialEdit* E = FindOwn(Kind, Property);
+		if (!E) { E = &X->LiveMaterialEdits.AddDefaulted_GetRef(); E->Kind = Kind; E->Material = Material; E->Property = Property; }
+		return E;
+	};
+	auto Drop = [this, Id, Material](const FString& Property)
+	{
+		if (FOKSceneObject* X = Game.IsValid() ? Game->Document->Find(Id) : nullptr)
+			X->LiveMaterialEdits.RemoveAll([&](const FOKSceneMaterialEdit& E) { return E.Material == Material && (Property.IsEmpty() || E.Property == Property); });
+		Changed();
+	};
+	auto Source = [&Section](const FString& Property) { FLinearColor V; OKStudioFbx::SourceValue(Section, Property, V); return V; };
+	TSharedRef<SVerticalBox> Properties = SNew(SVerticalBox);
+	auto Line = [&Properties, Find, Drop, this](const FString& Name, const FString& Property, EOKSceneMaterialEditKind Kind, const TSharedRef<SWidget>& Value)
+	{
+		Properties->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 1.f)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(0.36f).VAlign(VAlign_Center)
+				[OKStudioStyle::Label(TAttribute<FText>::CreateLambda([Find, Name, Property, Kind] { return FText::FromString((Find(Kind, Property) ? TEXT("● ") : TEXT("")) + Name); }), 10.f)]
+			+ SHorizontalBox::Slot().FillWidth(0.64f)[SNew(SBox).HeightOverride(18.f)[Value]]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f, 0.f, 0.f)[Button(FText::FromString(TEXT("預設")), [Drop, Property] { Drop(Property); }, 34.f, 18.f, false, 9.f)]
+		];
+	};
+	auto ColorLine = [&, this](const FString& Name, const FString& Property)
+	{
+		const FLinearColor From = Source(Property);
+		Line(Name, Property, EOKSceneMaterialEditKind::Color, Swatch(FString::Printf(TEXT("model%d:%s:%s"), Id, *Material, *Property), Name,
+			[Find, Property, From] { const FOKSceneMaterialEdit* E = Find(EOKSceneMaterialEditKind::Color, Property); return E ? E->Value : From; },
+			[this, Put, Property](const FLinearColor& V) { if (FOKSceneMaterialEdit* E = Put(EOKSceneMaterialEditKind::Color, Property)) E->Value = V.A < 0.f ? FLinearColor(V.R, V.G, V.B, 1.f) : V; Changed(); }));
+	};
+	auto NumberLine = [&, this](const FString& Name, const FString& Property, float Min, float Max)
+	{
+		const float From = Source(Property).R;
+		Line(Name, Property, EOKSceneMaterialEditKind::Float, Spin([Find, Property, From] { const FOKSceneMaterialEdit* E = Find(EOKSceneMaterialEditKind::Float, Property); return E ? E->Value.R : From; },
+			[this, Put, Property, Min, Max](float V) { if (FOKSceneMaterialEdit* E = Put(EOKSceneMaterialEditKind::Float, Property)) E->Value = FLinearColor(FMath::Clamp(V, Min, Max), 0.f, 0.f, 0.f); Changed(); }, Min, Max, 0.01f));
+	};
+	Properties->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f)
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().FillWidth(1.f)[CheckBox(TEXT("顯示"), [Find] { const FOKSceneMaterialEdit* E = Find(EOKSceneMaterialEditKind::Renderer, TEXT("Enabled")); return !E || E->Value.R > 0.5f; },
+			[this, Put, Drop](bool B) { if (B) { Drop(TEXT("Enabled")); return; } if (FOKSceneMaterialEdit* E = Put(EOKSceneMaterialEditKind::Renderer, TEXT("Enabled"))) E->Value = FLinearColor(0.f, 0.f, 0.f, 0.f); Changed(); })]
+		+ SHorizontalBox::Slot().FillWidth(1.f)[CheckBox(TEXT("雙面"), [Find] { const FOKSceneMaterialEdit* E = Find(EOKSceneMaterialEditKind::Float, TEXT("_TwoSided")); return E && E->Value.R > 0.5f; },
+			[this, Put, Drop](bool B) { if (!B) { Drop(TEXT("_TwoSided")); return; } if (FOKSceneMaterialEdit* E = Put(EOKSceneMaterialEditKind::Float, TEXT("_TwoSided"))) E->Value = FLinearColor(1.f, 0.f, 0.f, 0.f); Changed(); })]
+	];
+	ColorLine(TEXT("顏色"), TEXT("_Color"));
+	NumberLine(TEXT("金屬"), TEXT("_Metallic"), 0.f, 1.f);
+	NumberLine(TEXT("光滑"), TEXT("_Glossiness"), 0.f, 1.f);
+	ColorLine(TEXT("自發光"), TEXT("_EmissionColor"));
+	// The base colour texture: a picture file (PNG / JPG / TGA / BMP; a path, or a name under UserData/Studio/texture).
+	Properties->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 1.f)[OKStudioStyle::Label(TAttribute<FText>::CreateLambda([Find, TextureName = Section.BaseTextureName]
+	{
+		const FOKSceneMaterialEdit* E = Find(EOKSceneMaterialEditKind::Texture, TEXT("_MainTex"));
+		return FText::FromString(FString(TEXT("貼圖：")) + (E ? (E->Value.A < 0.f ? TEXT("（已清空）") : TEXT("（載入的圖）")) : TextureName.IsEmpty() ? TEXT("（無）") : *TextureName));
+	}), 10.f)];
+	Properties->AddSlot().AutoHeight().Padding(0.f, 1.f)[SNew(SBox).HeightOverride(18.f)[TextBox([this] { return MaterialTexturePath; }, [this](const FString& V) { MaterialTexturePath = V.TrimStartAndEnd().TrimQuotes(); }, TEXT("貼圖檔路徑（或 UserData/Studio/texture 下的檔名）"))]];
+	auto Load = [this, Put]
+	{
+		FString Path = MaterialTexturePath;
+		if (!Path.IsEmpty() && FPaths::IsRelative(Path))
+		{
+			const FString Under = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("UserData/Studio/texture") / Path);
+			Path = FPaths::FileExists(Under) ? Under : FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / Path);
+		}
+		TArray<uint8> Bytes;
+		if (Path.IsEmpty() || !FFileHelper::LoadFileToArray(Bytes, *Path) || !FImageUtils::ImportBufferAsTexture2D(Bytes)) { SetStatus(TEXT("載入貼圖：讀不到圖檔 ") + Path); return; }
+		if (FOKSceneMaterialEdit* E = Put(EOKSceneMaterialEditKind::Texture, TEXT("_MainTex"))) { E->Text = FBase64::Encode(Bytes); E->Value = FLinearColor::White; }
+		Changed();
+		SetStatus(TEXT("貼圖換成 ") + FPaths::GetCleanFilename(Path));
+	};
+	auto Clear = [this, Put] { if (FOKSceneMaterialEdit* E = Put(EOKSceneMaterialEditKind::Texture, TEXT("_MainTex"))) { E->Text.Reset(); E->Value = FLinearColor(1.f, 1.f, 1.f, -1.f); } Changed(); };
+	Properties->AddSlot().AutoHeight()
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[Button(FText::FromString(TEXT("載入")), Load, 0.f, 18.f, false, 10.f)]
+		+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 1.f, 0.f)[Button(FText::FromString(TEXT("清空")), Clear, 0.f, 18.f, false, 10.f)]
+		+ SHorizontalBox::Slot().FillWidth(1.f)[Button(FText::FromString(TEXT("預設")), [Drop] { Drop(TEXT("_MainTex")); }, 0.f, 18.f, false, 10.f)]
+	];
+	MaterialPropertiesShown = 5;
+	return SNew(SVerticalBox)
+		+ SVerticalBox::Slot().FillHeight(1.f)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(0.35f).Padding(0.f, 0.f, 3.f, 0.f)[Column(FString::Printf(TEXT("材質（%d）"), Count), Materials)]
+			+ SHorizontalBox::Slot().FillWidth(0.65f)[Column(Material, Properties)]
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 3.f, 0.f, 0.f)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)[OKStudioStyle::Label(FText::FromString(FPaths::GetCleanFilename(O->Model.File) + TEXT("　● 是改過的屬性；改動隨場景儲存。")), 9.f, TextHint())]
+			+ SHorizontalBox::Slot().AutoWidth()[Button(FText::FromString(TEXT("此材質全部預設")), [Drop] { Drop(FString()); }, 0.f, 20.f, false, 10.f)]
 		];
 }
 
@@ -3137,6 +3277,10 @@ TSharedRef<SWidget> SOKStudioPanel::BuildSettings()
 		Setting(TEXT("全部恢復預設"), TEXT("所有設定與快捷鍵回到預設（收藏與最近使用保留）"), Button(FText::FromString(TEXT("恢復預設")), [this] { FOKStudioSettings::Get().Reset(); DeferFloat(TEXT("settings")); }, 0.f, 18.f), nullptr);
 		break;
 	case 1:
+		Setting(TEXT("操作模式"), TEXT("照哪個軟體的滑鼠轉視角、平移、縮放，以及移動／旋轉／縮放物件的快捷鍵（Studio、Blender、3ds Max、Maya）"),
+			Button(TAttribute<FText>::CreateLambda([] { return FText::FromString(FOKStudioSettings::ViewSchemeName(FOKStudioSettings::Get().ViewScheme)); }),
+				[this] { RunCommand(TEXT("view.scheme")); }, 0.f, 18.f, false, 10.f),
+			[] { FOKStudioSettings::Get().ViewScheme = 0; FOKStudioSettings::Get().Save(); });
 		Setting(TEXT("繞行速度"), TEXT("拖動視窗時每像素轉幾度"), Number(&S.OrbitSpeed, 0.05f, 2.f, 0.01f), [] { FOKStudioSettings::Get().OrbitSpeed = 0.3f; });
 		Setting(TEXT("平移速度"), TEXT("中鍵平移的倍率"), Number(&S.PanSpeed, 0.1f, 5.f, 0.05f), [] { FOKStudioSettings::Get().PanSpeed = 1.f; });
 		Setting(TEXT("縮放速度"), TEXT("滾輪縮放的倍率"), Number(&S.ZoomSpeed, 0.1f, 5.f, 0.05f), [] { FOKStudioSettings::Get().ZoomSpeed = 1.f; });
@@ -3179,6 +3323,7 @@ TSharedRef<SWidget> SOKStudioPanel::BuildSettings()
 					})]];
 		};
 		Roots(TEXT("角色卡瀏覽器（Content/CharacterCards 與遊戲的 UserData/chara 一定會列）"), &FOKStudioSettings::CardRoots);
+		Roots(TEXT("場景卡 .okscene／場景卡 PNG（UserData/Studio/scene 與遊戲的 KStudio 場景一定會列；場景瀏覽器左邊 ★ 開啟）"), &FOKStudioSettings::SceneRoots);
 		Roots(TEXT("外部音源 .ogg／.wav（UserData/audio 一定會列）"), &FOKStudioSettings::AudioRoots);
 		Roots(TEXT("姿勢庫 .dat（UserData/Studio/pose 一定會列；存姿勢仍存到那裡）"), &FOKStudioSettings::PoseRoots);
 		Roots(TEXT("背景圖 .png（基礎庫與 UserData/Studio/bg 一定會列）"), &FOKStudioSettings::BgRoots);

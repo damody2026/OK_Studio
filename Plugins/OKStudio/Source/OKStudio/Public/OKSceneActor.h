@@ -216,6 +216,8 @@ private:
 		FOKSceneLight Light;
 		/** The shown effect's id (another id rebuilds it; speed, intensity and colour apply in place). */
 		FString Effect;
+		/** The shown outside model (another file rebuilds it). */
+		FOKSceneModel Model;
 		TWeakObjectPtr<AKKPreviewActor> Preview;
 		/** Studio's guide replaces the prefab root TRS; undo the root baked into model vertices. */
 		FTransform RenderCorrection = FTransform::Identity;

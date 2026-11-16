@@ -21,6 +21,8 @@
 #include "OKMotionComboBox.h"
 #include "Styling/SlateBrush.h"
 #include "Widgets/SWindow.h"
+#include "Widgets/Input/SEditableText.h"
+#include "Misc/ConfigCacheIni.h"
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
@@ -32,16 +34,40 @@ namespace
 {
 	const TCHAR* const Placeholder = TEXT("選擇影片動作（可輸入文字搜尋）");
 
+	// The panel's colours, in one place: body text, field titles, notes (status, the advanced heading), errors, and the
+	// text boxes' text and hint. The hint is drawn at HintOpacity of the text colour (Slate's default 0.35 left
+	// 「按『選擇影片…』…」 nearly unreadable on the dark field).
+	namespace PanelStyle
+	{
+		const FLinearColor Body = FLinearColor::White;
+		const FLinearColor FieldTitle(.85f, .9f, 1.f);
+		const FLinearColor Note(1.f, .92f, .45f);
+		const FLinearColor Error(1.f, .35f, .25f);
+		const FLinearColor FieldText = FLinearColor::White;
+		constexpr float HintOpacity = .75f;
+		// Fields: white text on a dark well (the default light box under white text was unreadable).
+		const FColor Field(12, 18, 26), FieldHovered(20, 30, 42), FieldFocused(16, 40, 64);
+		const FColor Button(24, 82, 132), ButtonHovered(30, 100, 158), ButtonPressed(18, 60, 100);
+	}
+
 	void StyleButton(UButton* Button)
 	{
 		FButtonStyle Style = Button->GetStyle();
-		Style.Normal = FSlateColorBrush(FLinearColor::FromSRGBColor(FColor(24, 82, 132)));
-		Style.Hovered = FSlateColorBrush(FLinearColor::FromSRGBColor(FColor(30, 100, 158)));
-		Style.Pressed = FSlateColorBrush(FLinearColor::FromSRGBColor(FColor(18, 60, 100)));
+		Style.Normal = FSlateColorBrush(FLinearColor::FromSRGBColor(PanelStyle::Button));
+		Style.Hovered = FSlateColorBrush(FLinearColor::FromSRGBColor(PanelStyle::ButtonHovered));
+		Style.Pressed = FSlateColorBrush(FLinearColor::FromSRGBColor(PanelStyle::ButtonPressed));
 		Button->SetStyle(Style);
 	}
 
-	UTextBlock* Label(UWidgetTree* Tree, const FString& Text, int32 Size = 14, FLinearColor Color = FLinearColor::White)
+	/** The hint opacity of the SEditableText inside a text box (UMG does not expose it). */
+	void SetHintOpacity(const TSharedRef<SWidget>& Widget, float Opacity)
+	{
+		if (Widget->GetType() == TEXT("SEditableText")) { StaticCastSharedRef<SEditableText>(Widget)->SetHintTextOpacity(Opacity); return; }
+		if (FChildren* Children = Widget->GetChildren())
+			for (int32 I = 0; I < Children->Num(); ++I) SetHintOpacity(Children->GetChildAt(I), Opacity);
+	}
+
+	UTextBlock* Label(UWidgetTree* Tree, const FString& Text, int32 Size = 14, FLinearColor Color = PanelStyle::Body)
 	{
 		UTextBlock* Block = Tree->ConstructWidget<UTextBlock>();
 		Block->SetText(FText::FromString(Text));
@@ -66,8 +92,14 @@ namespace
 	// Text box with its recommended default prefilled and explained.
 	UEditableTextBox* Field(UWidgetTree* Tree, UPanelWidget* Column, const FString& Title, const FString& Default, const FString& Hint, const FString& Help)
 	{
-		Column->AddChild(Label(Tree, Title, 13, FLinearColor(.85f, .9f, 1.f)));
+		Column->AddChild(Label(Tree, Title, 13, PanelStyle::FieldTitle));
 		UEditableTextBox* Box = Tree->ConstructWidget<UEditableTextBox>();
+		FEditableTextBoxStyle Style = Box->GetWidgetStyle();
+		Style.SetForegroundColor(FSlateColor(PanelStyle::FieldText)).SetFocusedForegroundColor(FSlateColor(PanelStyle::FieldText));
+		Style.SetBackgroundImageNormal(FSlateColorBrush(FLinearColor::FromSRGBColor(PanelStyle::Field)))
+			.SetBackgroundImageHovered(FSlateColorBrush(FLinearColor::FromSRGBColor(PanelStyle::FieldHovered)))
+			.SetBackgroundImageFocused(FSlateColorBrush(FLinearColor::FromSRGBColor(PanelStyle::FieldFocused)));
+		Box->SetWidgetStyle(Style);
 		Box->SetText(FText::FromString(Default));
 		Box->SetHintText(FText::FromString(Hint));
 		Box->SetToolTipText(FText::FromString(Help));
@@ -127,14 +159,24 @@ void UOKVideoMotionPanel::Build(UWidgetTree* Tree, UPanelWidget* Column, UOKChar
 	MaleLeft->SetContent(Label(Tree, TEXT("　男性在畫面左邊（取消＝女性在左）"), 13));
 	MaleLeft->SetToolTipText(FText::FromString(TEXT("用來分辨兩人：依整段影片中兩人的平均左右位置判斷。")));
 	Column->AddChild(MaleLeft);
-	Column->AddChild(Label(Tree, TEXT("進階參數（已預填建議值，一般不需修改）"), 13, FLinearColor(1.f, .92f, .45f)));
-	ArmReachBox = Field(Tree, Column, TEXT("手臂比例修正　建議 1.0（範圍 0–1）"), TEXT("1.0"), TEXT("1.0"),
+	// 進階參數: folded away until opened (the open state is the panel's own setting, not the save).
+	UTextBlock* AdvancedText = nullptr;
+	UButton* AdvancedToggle = Button(Tree, FString(), &AdvancedText);
+	AdvancedLabel = AdvancedText;
+	AdvancedLabel->SetColorAndOpacity(FSlateColor(PanelStyle::Note));
+	AdvancedToggle->SetToolTipText(FText::FromString(TEXT("手臂比例、鎖骨幅度、平滑程度、鏡頭焦距。已預填建議值，一般不需修改。")));
+	AdvancedToggle->OnClicked.AddDynamic(this, &UOKVideoMotionPanel::OnToggleAdvanced);
+	Column->AddChild(AdvancedToggle);
+	AdvancedBox = Tree->ConstructWidget<UVerticalBox>();
+	Column->AddChild(AdvancedBox);
+	UPanelWidget* Advanced = AdvancedBox;
+	ArmReachBox = Field(Tree, Advanced,TEXT("手臂比例修正　建議 1.0（範圍 0–1）"), TEXT("1.0"), TEXT("1.0"),
 		TEXT("戀活角色手臂比真人長約 20%。1.0：垂下的手落在臀側，手肘自然微彎；0：照抄影片角度，手會垂到大腿中段。"));
-	CollarBox = Field(Tree, Column, TEXT("鎖骨幅度　建議 0.5（範圍 0–1）"), TEXT("0.5"), TEXT("0.5"),
+	CollarBox = Field(Tree, Advanced,TEXT("鎖骨幅度　建議 0.5（範圍 0–1）"), TEXT("0.5"), TEXT("0.5"),
 		TEXT("影片中鎖骨的轉動通常比原作大，0.5 可避免肩膀被拉伸；聳肩動作很明顯時可提高到 0.8。"));
-	SmoothBox = Field(Tree, Column, TEXT("平滑程度　建議 1.0（0 為關閉，最大 2.5）"), TEXT("1.0"), TEXT("1.0"),
+	SmoothBox = Field(Tree, Advanced,TEXT("平滑程度　建議 1.0（0 為關閉，最大 2.5）"), TEXT("1.0"), TEXT("1.0"),
 		TEXT("去除影片辨識的抖動。數值越大越平順但會吃掉快速動作的細節；轉換時若仍偵測到抖動會自動加強。"));
-	FocalBox = Field(Tree, Column, TEXT("鏡頭焦距 mm（全片幅等效）　建議留空＝自動"), FString(), TEXT("留空＝自動估計"),
+	FocalBox = Field(Tree, Advanced,TEXT("鏡頭焦距 mm（全片幅等效）　建議留空＝自動"), FString(), TEXT("留空＝自動估計"),
 		TEXT("只有知道拍攝焦距時才填，例如手機主鏡頭約 24、2 倍鏡頭約 48。"));
 
 	UTextBlock* StartText = nullptr;
@@ -143,8 +185,11 @@ void UOKVideoMotionPanel::Build(UWidgetTree* Tree, UPanelWidget* Column, UOKChar
 	Start->SetToolTipText(FText::FromString(TEXT("在背景轉換，期間可繼續操作。轉換會自動修復關節、腳步與比例，並逐幀驗證，完成後自動加入清單並播放。")));
 	Start->OnClicked.AddDynamic(this, &UOKVideoMotionPanel::OnStart);
 	Column->AddChild(Start);
-	Status = Label(Tree, FString(), 13, FLinearColor(1.f, .92f, .45f));
+	Status = Label(Tree, FString(), 13, PanelStyle::Note);
 	Column->AddChild(Status);
+	bool bOpen = false;
+	GConfig->GetBool(TEXT("OKVideoMotionPanel"), TEXT("AdvancedOpen"), bOpen, GGameUserSettingsIni);
+	SetAdvancedOpen(bOpen);
 	Refresh();
 	const FString Exe = ImporterExe();
 	SetStatus(!Exe.IsEmpty() ? TEXT("選擇影片後按「開始轉換」。")
@@ -235,7 +280,7 @@ void UOKVideoMotionPanel::SetStatus(const FString& Text, bool bError)
 {
 	if (!Status) return;
 	Status->SetText(FText::FromString(Text));
-	Status->SetColorAndOpacity(FSlateColor(bError ? FLinearColor(1.f, .35f, .25f) : FLinearColor(1.f, .92f, .45f)));
+	Status->SetColorAndOpacity(FSlateColor(bError ? PanelStyle::Error : PanelStyle::Note));
 }
 
 void UOKVideoMotionPanel::OnSelected(FString Item, ESelectInfo::Type Type)
@@ -399,8 +444,30 @@ void UOKVideoMotionPanel::ParseOutput(bool bFinal)
 	}
 }
 
+void UOKVideoMotionPanel::SetAdvancedOpen(bool bOpen)
+{
+	bAdvancedOpen = bOpen;
+	if (AdvancedBox) AdvancedBox->SetVisibility(bOpen ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	if (AdvancedLabel) AdvancedLabel->SetText(FText::FromString(bOpen ? TEXT("－ 進階參數（已預填建議值，一般不需修改）") : TEXT("＋ 進階參數（手臂比例、鎖骨、平滑、焦距）")));
+	GConfig->SetBool(TEXT("OKVideoMotionPanel"), TEXT("AdvancedOpen"), bOpen, GGameUserSettingsIni);
+}
+
+void UOKVideoMotionPanel::OnToggleAdvanced()
+{
+	SetAdvancedOpen(!bAdvancedOpen);
+	GConfig->Flush(false, GGameUserSettingsIni);
+}
+
 void UOKVideoMotionPanel::Tick()
 {
+	// The text boxes' hint opacity, once per Slate widget (it is made again when the panel is shown again).
+	const UEditableTextBox* Boxes[] = { PathBox, NameBox, ArmReachBox, CollarBox, SmoothBox, FocalBox };
+	HintApplied.SetNum(UE_ARRAY_COUNT(Boxes));
+	for (int32 I = 0; I < UE_ARRAY_COUNT(Boxes); ++I)
+	{
+		const TSharedPtr<SWidget> Slate = Boxes[I] ? Boxes[I]->GetCachedWidget() : nullptr;
+		if (Slate.IsValid() && HintApplied[I].Pin() != Slate) { SetHintOpacity(Slate.ToSharedRef(), PanelStyle::HintOpacity); HintApplied[I] = Slate; }
+	}
 	if (!Proc.IsValid()) return;
 	ParseOutput(false);
 	if (FPlatformProcess::IsProcRunning(Proc)) return;

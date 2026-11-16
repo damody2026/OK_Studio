@@ -32,16 +32,38 @@ namespace
 
 // --- The scene view ---
 
+SOKStudioView::ENav SOKStudioView::NavFor(int32 Scheme, const FKey& Pressed, const FPointerEvent& Event)
+{
+	const bool bAlt = Event.IsAltDown(), bCtrl = Event.IsControlDown(), bShift = Event.IsShiftDown();
+	const bool bLeft = Pressed == EKeys::LeftMouseButton, bMiddle = Pressed == EKeys::MiddleMouseButton, bRight = Pressed == EKeys::RightMouseButton;
+	switch (Scheme)
+	{
+	case 1: // Blender: middle orbits, Shift+middle pans, Ctrl+middle zooms.
+		if (bMiddle) return bShift ? ENav::Pan : bCtrl ? ENav::Dolly : ENav::Orbit;
+		return ENav::None;
+	case 2: // 3ds Max: middle pans, Alt+middle orbits, Ctrl+Alt+middle zooms.
+		if (bMiddle) return bAlt && bCtrl ? ENav::Dolly : bAlt ? ENav::Orbit : ENav::Pan;
+		return ENav::None;
+	case 3: // Maya: Alt+left orbits, Alt+middle pans, Alt+right zooms.
+		if (!bAlt) return ENav::None;
+		return bLeft ? ENav::Orbit : bMiddle ? ENav::Pan : bRight ? ENav::Dolly : ENav::None;
+	default: // Studio: left-drag orbits (a click picks), middle pans, right orbits too unless it flies.
+		return bLeft ? ENav::StudioLeft : bMiddle ? ENav::Pan : bRight && !FOKStudioSettings::Get().bFlyMode ? ENav::StudioLeft : ENav::None;
+	}
+}
+
 FReply SOKStudioView::OnMouseButtonDown(const FGeometry& Geometry, const FPointerEvent& Event)
 {
 	Button = Event.GetEffectingButton();
+	Nav = NavFor(FOKStudioSettings::Get().ViewScheme, Button, Event);
 	const FVector2D Local = Geometry.AbsoluteToLocal(Event.GetScreenSpacePosition());
 	PressAt = Local;
 	Moved = 0.;
 	DragAxis = -1;
 	bLookDrag = false;
 	bool bPoint = false;
-	if (Game.IsValid() && Button == EKeys::LeftMouseButton)
+	// The left button picks and drags the guide unless the scheme's navigation takes it (Maya's Alt+left).
+	if (Game.IsValid() && Button == EKeys::LeftMouseButton && (Nav == ENav::StudioLeft || Nav == ENav::None))
 	{
 		// Pose points sit over the guide and are picked first; then the look point; then the guide's handles. Where a handle
 		// passes, only a click right on a point takes the point: with every FK bone shown (113, with hair and skirt) the
@@ -57,7 +79,7 @@ FReply SOKStudioView::OnMouseButtonDown(const FGeometry& Geometry, const FPointe
 		}
 		Game->bUserDragging = DragAxis >= 0 || bLookDrag;
 	}
-	if (Game.IsValid() && Button == EKeys::RightMouseButton && FOKStudioSettings::Get().bFlyMode) Game->bFlying = true;
+	if (Game.IsValid() && Button == EKeys::RightMouseButton && Nav == ENav::None && FOKStudioSettings::Get().bFlyMode) Game->bFlying = true;
 	// A picked point is a click only: the mouse that follows does not orbit.
 	if (bPoint) Moved = 1e6;
 	return FReply::Handled().CaptureMouse(SharedThis(this)).SetUserFocus(SharedThis(this), EFocusCause::Mouse);
@@ -72,9 +94,12 @@ FReply SOKStudioView::OnMouseMove(const FGeometry&, const FPointerEvent& Event)
 	const FOKStudioSettings& S = FOKStudioSettings::Get();
 	if (DragAxis >= 0) Game->DragGuide(D, Event.IsControlDown());
 	else if (bLookDrag) { if (Owner) Owner->DragLookPoint(D); }
-	else if (Button == EKeys::MiddleMouseButton) Game->Pan(-D.X, D.Y);
+	else if (Nav == ENav::Pan) Game->Pan(-D.X, D.Y);
+	else if (Nav == ENav::Orbit) Game->Orbit(D.X * S.OrbitSpeed, -D.Y * S.OrbitSpeed);
+	// Dragging up zooms in (Blender's Ctrl+middle, Max's Ctrl+Alt+middle); Maya's Alt+right also zooms in to the right.
+	else if (Nav == ENav::Dolly) Game->Zoom(float(FOKStudioSettings::Get().ViewScheme == 3 ? D.X - D.Y : -D.Y) * 0.03f);
 	else if (Button == EKeys::RightMouseButton && Game->bFlying) Game->Look(D.X * S.OrbitSpeed, -D.Y * S.OrbitSpeed);
-	else if (Moved < 1e5 && !(bWasClick && Moved < 4.)) Game->Orbit(D.X * S.OrbitSpeed, -D.Y * S.OrbitSpeed);
+	else if (Nav == ENav::StudioLeft && Moved < 1e5 && !(bWasClick && Moved < 4.)) Game->Orbit(D.X * S.OrbitSpeed, -D.Y * S.OrbitSpeed);
 	return FReply::Handled();
 }
 
@@ -83,7 +108,7 @@ FReply SOKStudioView::OnMouseButtonUp(const FGeometry&, const FPointerEvent& Eve
 	if (Game.IsValid())
 	{
 		// A left click (no drag) picks the object under the mouse; Ctrl / Shift add it to the selection or take it out.
-		if (Button == EKeys::LeftMouseButton && DragAxis < 0 && !bLookDrag && Moved < 4.)
+		if (Button == EKeys::LeftMouseButton && (Nav == ENav::StudioLeft || Nav == ENav::None) && DragAxis < 0 && !bLookDrag && Moved < 4.)
 		{
 			if (Owner && Owner->ChairPicking()) Owner->PickChairAt(PressAt);
 			else
@@ -99,6 +124,7 @@ FReply SOKStudioView::OnMouseButtonUp(const FGeometry&, const FPointerEvent& Eve
 		Game->bUserDragging = false;
 	}
 	Button = FKey();
+	Nav = ENav::None;
 	DragAxis = -1;
 	bLookDrag = false;
 	return FReply::Handled().ReleaseMouseCapture();

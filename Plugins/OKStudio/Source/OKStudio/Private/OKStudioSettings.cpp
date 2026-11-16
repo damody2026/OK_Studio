@@ -67,8 +67,32 @@ const TArray<TPair<FString, FString>>& FOKStudioSettings::DefaultBindings()
 	return Defaults;
 }
 
+const TCHAR* FOKStudioSettings::ViewSchemeName(int32 Scheme)
+{
+	static const TCHAR* Names[ViewSchemeCount] = { TEXT("Studio"), TEXT("Blender"), TEXT("3ds Max"), TEXT("Maya") };
+	return Names[FMath::Clamp(Scheme, 0, ViewSchemeCount - 1)];
+}
+
+const TArray<TPair<FString, FString>>& FOKStudioSettings::SchemeBindings(int32 Scheme)
+{
+	// Only the keys that differ from Studio's or that the program is known by; the rest stay as bound.
+	static const TArray<TPair<FString, FString>> Lists[ViewSchemeCount] = {
+		{},
+		// Blender: G grab, R rotate, S scale, numpad . frames the selection, Home frames all, X / Delete deletes,
+		// Shift+D duplicates, H hides, numpad 1 / 3 / 7 front / side / top.
+		{ { TEXT("gizmo.move"), TEXT("G") }, { TEXT("gizmo.rotate"), TEXT("R") }, { TEXT("gizmo.scale"), TEXT("S") },
+			{ TEXT("camera.focus"), TEXT("Decimal, NumPadPeriod") }, { TEXT("edit.delete"), TEXT("X, Delete") }, { TEXT("edit.duplicate"), TEXT("Shift+D") } },
+		// 3ds Max: W move, E rotate, R scale, Z zoom extents selected, Ctrl+V clone stays copy-paste here.
+		{ { TEXT("gizmo.move"), TEXT("W") }, { TEXT("gizmo.rotate"), TEXT("E") }, { TEXT("gizmo.scale"), TEXT("R") }, { TEXT("camera.focus"), TEXT("Z") } },
+		// Maya: W / E / R, F frames the selection, Ctrl+D duplicates.
+		{ { TEXT("gizmo.move"), TEXT("W") }, { TEXT("gizmo.rotate"), TEXT("E") }, { TEXT("gizmo.scale"), TEXT("R") }, { TEXT("camera.focus"), TEXT("F") }, { TEXT("edit.duplicate"), TEXT("Ctrl+D") } },
+	};
+	return Lists[FMath::Clamp(Scheme, 0, ViewSchemeCount - 1)];
+}
+
 FString FOKStudioSettings::BindingOf(const FString& Id) const
 {
+	for (const TPair<FString, FString>& S : SchemeBindings(ViewScheme)) if (S.Key == Id) return S.Value;
 	if (const FString* B = Bindings.Find(Id)) return *B;
 	for (const TPair<FString, FString>& D : DefaultBindings()) if (D.Key == Id) return D.Value;
 	return FString();
@@ -94,6 +118,8 @@ FString FOKStudioSettings::CommandFor(const FKeyEvent& Event) const
 		for (FString& P : Parts) if (P.TrimStartAndEnd().Equals(Chord, ESearchCase::IgnoreCase)) return true;
 		return false;
 	};
+	// The view scheme's keys come first (Blender's R rotates where Studio's R scales).
+	for (const TPair<FString, FString>& S : SchemeBindings(ViewScheme)) if (Matches(S.Value)) return S.Key;
 	for (const TPair<FString, FString>& B : Bindings) { Seen.Add(B.Key); if (Matches(B.Value)) return B.Key; }
 	for (const TPair<FString, FString>& D : DefaultBindings()) if (!Seen.Contains(D.Key) && Matches(D.Value)) return D.Key;
 	return FString();
@@ -172,6 +198,7 @@ void FOKStudioSettings::Load()
 		J->TryGetNumberField(TEXT("vsync"), VSync);
 		J->TryGetNumberField(TEXT("max_fps"), MaxFps);
 		double D;
+		if (J->TryGetNumberField(TEXT("view_scheme"), D)) ViewScheme = FMath::Clamp(int32(D), 0, ViewSchemeCount - 1);
 		if (J->TryGetNumberField(TEXT("backup_minutes"), D)) BackupMinutes = int32(D);
 		if (J->TryGetNumberField(TEXT("backup_keep"), D)) BackupKeep = FMath::Max(1, int32(D));
 		J->TryGetStringArrayField(TEXT("card_roots"), CardRoots);
@@ -179,6 +206,7 @@ void FOKStudioSettings::Load()
 		J->TryGetStringArrayField(TEXT("pose_roots"), PoseRoots);
 		J->TryGetStringArrayField(TEXT("bg_roots"), BgRoots);
 		J->TryGetStringArrayField(TEXT("frame_roots"), FrameRoots);
+		J->TryGetStringArrayField(TEXT("scene_roots"), SceneRoots);
 		J->TryGetStringField(TEXT("default_card_male"), DefaultCards[0]);
 		J->TryGetStringField(TEXT("default_card_female"), DefaultCards[1]);
 		J->TryGetStringField(TEXT("material_export_root"), MaterialExportRoot);
@@ -203,7 +231,7 @@ void FOKStudioSettings::Save() const
 {
 	TSharedRef<FJsonObject> J = MakeShared<FJsonObject>();
 	J->SetNumberField(TEXT("orbit_speed"), OrbitSpeed); J->SetNumberField(TEXT("pan_speed"), PanSpeed); J->SetNumberField(TEXT("zoom_speed"), ZoomSpeed);
-	J->SetNumberField(TEXT("fly_speed"), FlySpeed); J->SetBoolField(TEXT("fly_mode"), bFlyMode);
+	J->SetNumberField(TEXT("fly_speed"), FlySpeed); J->SetBoolField(TEXT("fly_mode"), bFlyMode); J->SetNumberField(TEXT("view_scheme"), ViewScheme);
 	J->SetNumberField(TEXT("gizmo_scale"), GizmoScale); J->SetNumberField(TEXT("point_scale"), PointScale); J->SetNumberField(TEXT("snap_move"), SnapMove); J->SetNumberField(TEXT("snap_rotate"), SnapRotate); J->SetNumberField(TEXT("snap_scale"), SnapScale);
 	J->SetNumberField(TEXT("backup_minutes"), BackupMinutes); J->SetNumberField(TEXT("backup_keep"), BackupKeep);
 	J->SetNumberField(TEXT("ui_scale"), UiScale);
@@ -222,6 +250,7 @@ void FOKStudioSettings::Save() const
 	Paths(TEXT("pose_roots"), PoseRoots);
 	Paths(TEXT("bg_roots"), BgRoots);
 	Paths(TEXT("frame_roots"), FrameRoots);
+	Paths(TEXT("scene_roots"), SceneRoots);
 	J->SetStringField(TEXT("default_card_male"), DefaultCards[0]);
 	J->SetStringField(TEXT("default_card_female"), DefaultCards[1]);
 	J->SetStringField(TEXT("material_export_root"), MaterialExportRoot);

@@ -37,6 +37,7 @@
 #include "KKGameRoot.h"
 #include "KKModIndex.h"
 #include "Components/Button.h"
+#include "Components/ButtonSlot.h"
 #include "Components/ComboBoxString.h"
 #include "Components/Slider.h"
 #include "Components/EditableTextBox.h"
@@ -196,13 +197,47 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 	UTextBlock* MotionTitle = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("MotionTitle"));
 	MotionTitle->SetText(FText::FromString(TEXT("動作與表情")));
 	MotionFrame->AddChildToVerticalBox(MotionTitle)->SetPadding(FMargin(0.f, 0.f, 0.f, 8.f));
+	MotionTitle->SetVisibility(ESlateVisibility::Collapsed);	// the first drawer carries this title
 	UScrollBox* MotionScroll = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass(), TEXT("MotionScroll"));
 	HandMotionScroll=MotionScroll;
 	MotionScroll->SetAlwaysShowScrollbar(true);
 	MotionScroll->SetScrollbarThickness(FVector2D(10.f, 10.f));
 	UVerticalBox* MotionCol = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("MotionCol"));
 	MotionScroll->AddChild(MotionCol);
-	BuildLightingControls(MotionCol);
+	// KK-style drawers: each category folds away under its title row. Only the most used two start open; the open
+	// state is kept in GameUserSettings [OKGalleryDrawers], not in any save.
+	MotionDrawers.Reset();
+	auto AddDrawer=[&](const TCHAR* Key,const TCHAR* Title,bool bDefaultOpen,const TCHAR* Tip)
+	{
+		UOKDrawerButton* Header=WidgetTree->ConstructWidget<UOKDrawerButton>(UOKDrawerButton::StaticClass(),*FString::Printf(TEXT("Drawer%s"),Key));
+		Header->Key=Key;Header->Title=Title;
+		Header->Label=WidgetTree->ConstructWidget<UTextBlock>();
+		Header->Label->SetFont(FCoreStyle::GetDefaultFontStyle("Bold",22));	// the column is scaled down (MotionContentScale)
+		Header->Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+		if(UButtonSlot* LabelSlot=Cast<UButtonSlot>(Header->SetContent(Header->Label)))LabelSlot->SetHorizontalAlignment(HAlign_Left);
+		FButtonStyle Style=Header->GetStyle();
+		Style.Normal=FSlateColorBrush(FLinearColor::FromSRGBColor(FColor(44,58,74)));
+		Style.Hovered=FSlateColorBrush(FLinearColor::FromSRGBColor(FColor(60,78,98)));
+		Style.Pressed=FSlateColorBrush(FLinearColor::FromSRGBColor(FColor(32,42,54)));
+		Header->SetStyle(Style);
+		Header->SetToolTipText(FText::FromString(Tip?FString(Tip):TEXT("點標題展開／收合")));
+		Header->OnClicked.AddDynamic(Header,&UOKDrawerButton::Toggle);
+		MotionCol->AddChildToVerticalBox(Header)->SetPadding(FMargin(0.f,4.f,0.f,2.f));
+		UVerticalBox* Body=WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(),*FString::Printf(TEXT("Drawer%sBody"),Key));
+		MotionCol->AddChildToVerticalBox(Body)->SetPadding(FMargin(4.f,2.f,0.f,6.f));
+		Header->Body=Body;
+		bool bOpen=bDefaultOpen;
+		if(GConfig)GConfig->GetBool(TEXT("OKGalleryDrawers"),Key,bOpen,GGameUserSettingsIni);
+		Header->SetOpen(bOpen,false);
+		MotionDrawers.Add(Header);
+		return Body;
+	};
+	UVerticalBox* ExpressionCol=AddDrawer(TEXT("Expression"),TEXT("動作與表情"),true,TEXT("嘴型、語音、眨眼、視線與眉眼。點標題展開／收合。"));
+	UVerticalBox* LightingCol=AddDrawer(TEXT("Lighting"),TEXT("光影風格"),false,nullptr);
+	UVerticalBox* HandCol=AddDrawer(TEXT("Hands"),TEXT("左右手動作（獨立設定）"),false,nullptr);
+	UVerticalBox* ClothesCol=AddDrawer(TEXT("Clothes"),TEXT("衣服"),false,TEXT("穿上、半脫、全脫會按遊戲的衣服狀態重載角色。沒有對應網格的單品會自動跳到下一個可用狀態。全脫拿掉上衣、下裝、胸罩和內褲，身體遮罩打開後才看得到解碼的身體。點標題展開／收合。"));
+	UVerticalBox* AnimationCol=AddDrawer(TEXT("Animation"),TEXT("選擇動畫"),true,nullptr);
+	BuildLightingControls(LightingCol);
 	MotionFrame->AddChildToVerticalBox(MotionScroll)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 	MotionBorder->AddChild(MotionFrame);
 	MotionContentScale=WidgetTree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass(),TEXT("MotionContentScale"));
@@ -418,15 +453,13 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 	OutfitBox->AddChild(OutfitCombo);
 	ShapeCol->AddChild(OutfitBox);
 	auto* HandsButton=WidgetTree->ConstructWidget<UButton>();auto* HandsLabel=WidgetTree->ConstructWidget<UTextBlock>();HandsLabel->SetText(FText::FromString(TEXT("左右手動作")));HandsButton->SetContent(HandsLabel);StylePoseButton(HandsButton);HandsButton->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnOpenHandControls);ShapeCol->AddChild(HandsButton);
-	UTextBlock* HandTitle=WidgetTree->ConstructWidget<UTextBlock>();
-	HandTitle->SetText(FText::FromString(TEXT("左右手動作（獨立設定）")));MotionCol->AddChild(HandTitle);
 	HandCombos.Reset();
 	HandBlendSliders.Reset();
 	for (int32 Side = 0; Side < 2; ++Side)
 	{
 		UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
 		Label->SetText(FText::FromString(Side == 0 ? TEXT("左手動作甲 → 乙") : TEXT("右手動作甲 → 乙")));
-		MotionCol->AddChild(Label);
+		HandCol->AddChild(Label);
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 		for (int32 End = 0; End < 2; ++End)
 		{
@@ -434,11 +467,11 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 			Row->AddChildToHorizontalBox(Combo)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 			HandCombos.Add(Combo);
 		}
-		MotionCol->AddChild(Row);
+		HandCol->AddChild(Row);
 		USlider* Blend = WidgetTree->ConstructWidget<USlider>(USlider::StaticClass());
 		Blend->SetMinValue(0.f); Blend->SetMaxValue(1.f); Blend->SetValue(SelectedHandBlend[Side]);
 		Blend->SetToolTipText(FText::FromString(TEXT("姿勢混合：0 為甲，1 為乙")));
-		MotionCol->AddChild(Blend); HandBlendSliders.Add(Blend);
+		HandCol->AddChild(Blend); HandBlendSliders.Add(Blend);
 	}
 	HandCombos[0]->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this), &UOKCharacterController::OnLeftHandA);
 	HandCombos[1]->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this), &UOKCharacterController::OnLeftHandB);
@@ -454,19 +487,18 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 		Label->SetAutoWrapText(true);
 		Reset->SetContent(Label);
 		StylePoseButton(Reset);
-		MotionCol->AddChild(Reset);
+		HandCol->AddChild(Reset);
 		if (Side == 0) Reset->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this), &UOKCharacterController::OnResetLeftHand);
 		else Reset->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this), &UOKCharacterController::OnResetRightHand);
 	}
 	RefreshHandControls();
-	MotionCol->AddChild(PoseNav);
+	AnimationCol->AddChild(PoseNav);
 	{
 		UTextBlock* ClothesTitle = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("ClothesStateTitle"));
 		ClothesTitle->SetText(FText::FromString(TEXT("衣服")));
 		ClothesTitle->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 		ClothesTitle->SetAutoWrapText(true);
 		ClothesTitle->SetToolTipText(FText::FromString(TEXT("穿上、半脫、全脫會按遊戲的衣服狀態重載角色。沒有對應網格的單品會自動跳到下一個可用狀態。全脫拿掉上衣、下裝、胸罩和內褲，身體遮罩打開後才看得到解碼的身體。")));
-		MotionCol->AddChild(ClothesTitle);
 		UHorizontalBox* Bulk = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("ClothesBulk"));
 		const TCHAR* BulkLabels[] = {TEXT("穿上"), TEXT("半脫"), TEXT("全脫")};
 		const int32 BulkKinds[] = {100, 101, 102};
@@ -486,7 +518,7 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 			Bulk->AddChildToHorizontalBox(Button)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 			ClothesStateButtons.Add(Button);
 		}
-		MotionCol->AddChild(Bulk);
+		ClothesCol->AddChild(Bulk);
 		const TCHAR* SlotNames[] = {TEXT("上衣"), TEXT("下裝"), TEXT("胸罩"), TEXT("內褲"), TEXT("手套"), TEXT("褲襪"), TEXT("襪子"), TEXT("內鞋"), TEXT("外鞋")};
 		for (int32 Kind = 0; Kind < 9; ++Kind)
 		{
@@ -501,13 +533,10 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 			StyleMotionButton(Button);
 			ClothesStateLabels.Add(Label);
 			ClothesStateButtons.Add(Button);
-			MotionCol->AddChild(Button);
+			ClothesCol->AddChild(Button);
 		}
 		RefreshClothesStateLabels();
 	}
-	UTextBlock* AnimationTitle=WidgetTree->ConstructWidget<UTextBlock>();
-	AnimationTitle->SetText(FText::FromString(TEXT("選擇動畫")));
-	MotionCol->AddChild(AnimationTitle);
 	// Retain source controls only for internal synchronization and diagnostic
 	// commands. They are not attached to the editor's visible control tree.
 	GameSourceCombo = WidgetTree->ConstructWidget<UOKMotionComboBox>(UOKMotionComboBox::StaticClass(), TEXT("GameSourceCombo"));
@@ -520,23 +549,23 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 	GameClipCombo->SetSelectedIndex(0);
 	GameClipCombo->SetToolTipText(FText::FromString(TEXT("搜尋並選擇動畫即可播放，會自動載入對應的動畫檔。")));
 	GameClipCombo->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this), &UOKCharacterController::OnGameClipSelected);
-	MotionCol->AddChild(GameClipCombo);
+	AnimationCol->AddChild(GameClipCombo);
 	AnimationStatus=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(),TEXT("AnimationStatus"));
-	AnimationStatus->SetAutoWrapText(true);MotionCol->AddChild(AnimationStatus);
+	AnimationStatus->SetAutoWrapText(true);AnimationCol->AddChild(AnimationStatus);
 	ShowAnimationStatus(TEXT("直接選擇上方的遊戲動作，會自動載入對應來源。"));
 	// User video motions: own searchable list, import and delete (the built-in list above stays native-only).
 	VideoMotionPanel=NewObject<UOKVideoMotionPanel>(this);
-	VideoMotionPanel->Build(WidgetTree,MotionCol,static_cast<UOKCharacterController*>(this));
+	VideoMotionPanel->Build(WidgetTree,AnimationCol,static_cast<UOKCharacterController*>(this));
 	StudioCategoryCombo = WidgetTree->ConstructWidget<UOKMotionComboBox>(UOKMotionComboBox::StaticClass(), TEXT("StudioCategoryCombo"));
 	StudioCategoryCombo->AddOption(TEXT("工作室動作分類"));
 	StudioCategoryCombo->SetSelectedIndex(0);
 	StudioCategoryCombo->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this), &UOKCharacterController::OnStudioCategorySelected);
-	MotionCol->AddChild(StudioCategoryCombo);
+	AnimationCol->AddChild(StudioCategoryCombo);
 	StudioMotionCombo = WidgetTree->ConstructWidget<UOKMotionComboBox>(UOKMotionComboBox::StaticClass(), TEXT("StudioMotionCombo"));
 	StudioMotionCombo->AddOption(TEXT("選擇工作室動作"));
 	StudioMotionCombo->SetSelectedIndex(0);
 	StudioMotionCombo->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this), &UOKCharacterController::OnStudioMotionSelected);
-	MotionCol->AddChild(StudioMotionCombo);
+	AnimationCol->AddChild(StudioMotionCombo);
 	GameSceneCombo = WidgetTree->ConstructWidget<UOKMotionComboBox>(UOKMotionComboBox::StaticClass(), TEXT("GameSceneCombo"));
 	GameSceneCombo->AddOption(TEXT("場景校正：依動作來源"));
 	GameSceneCombo->AddOption(TEXT("場景校正：角色編輯器"));
@@ -545,44 +574,44 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 	GameSceneCombo->AddOption(TEXT("場景校正：工作室"));
 	GameSceneCombo->SetSelectedIndex(0);
 	GameSceneCombo->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this), &UOKCharacterController::OnGameSceneSelected);
-	MotionCol->AddChild(GameSceneCombo);
+	AnimationCol->AddChild(GameSceneCombo);
 	GameSourceInput = WidgetTree->ConstructWidget<UEditableTextBox>(UEditableTextBox::StaticClass(), TEXT("GameSourceInput"));
 	GameSourceInput->SetHintText(FText::FromString(TEXT("abdata/...unity3d 或 mods/...zipmod!...unity3d")));
 	GameSourceInput->SetVisibility(ESlateVisibility::Collapsed);
-    auto PlaybackButton=[&](const TCHAR* Name,const TCHAR* Label){UButton* B=WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(),Name);UTextBlock* T=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());T->SetText(FText::FromString(Label));B->AddChild(T);StyleMotionButton(B);MotionCol->AddChild(B);return B;};
+    auto PlaybackButton=[&](const TCHAR* Name,const TCHAR* Label){UButton* B=WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(),Name);UTextBlock* T=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());T->SetText(FText::FromString(Label));B->AddChild(T);StyleMotionButton(B);AnimationCol->AddChild(B);return B;};
     PlaybackButton(TEXT("PausePlayback"),TEXT("暫停／繼續"))->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPausePlayback);
     PlaybackButton(TEXT("ReplayPlayback"),TEXT("從頭重播"))->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnReplayPlayback);
-    UTextBlock* PartnerMaleText=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());PartnerMaleText->SetText(FText::FromString(TEXT("配對男角（點名字）")));PartnerMaleText->SetColorAndOpacity(FSlateColor(FLinearColor::White));MotionCol->AddChild(PartnerMaleText);
-    PartnerMaleCombo=WidgetTree->ConstructWidget<UOKMotionComboBox>(UOKMotionComboBox::StaticClass(),TEXT("PartnerMale"));PartnerMaleCombo->AddOption(TEXT("選擇男角"));PartnerMaleCombo->SetSelectedIndex(0);PartnerMaleCombo->SetToolTipText(FText::FromString(TEXT("也可以從這裡選男角。下面的名字按鈕同樣有效。")));PartnerMaleCombo->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPartnerMaleSelected);MotionCol->AddChild(PartnerMaleCombo);
-    PartnerMaleList=WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(),TEXT("PartnerMaleList"));MotionCol->AddChild(PartnerMaleList);
+    UTextBlock* PartnerMaleText=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());PartnerMaleText->SetText(FText::FromString(TEXT("配對男角（點名字）")));PartnerMaleText->SetColorAndOpacity(FSlateColor(FLinearColor::White));AnimationCol->AddChild(PartnerMaleText);
+    PartnerMaleCombo=WidgetTree->ConstructWidget<UOKMotionComboBox>(UOKMotionComboBox::StaticClass(),TEXT("PartnerMale"));PartnerMaleCombo->AddOption(TEXT("選擇男角"));PartnerMaleCombo->SetSelectedIndex(0);PartnerMaleCombo->SetToolTipText(FText::FromString(TEXT("也可以從這裡選男角。下面的名字按鈕同樣有效。")));PartnerMaleCombo->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPartnerMaleSelected);AnimationCol->AddChild(PartnerMaleCombo);
+    PartnerMaleList=WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(),TEXT("PartnerMaleList"));AnimationCol->AddChild(PartnerMaleList);
     PlaybackButton(TEXT("LoadPartner"),TEXT("載入配對角色"))->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnLoadPartner);
-    PairStatus=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(),TEXT("PairStatus"));PairStatus->SetAutoWrapText(true);PairStatus->SetColorAndOpacity(FSlateColor(FLinearColor(1.f,.92f,.45f)));PairStatus->SetText(FText::FromString(TEXT("先點一位男角，再按載入配對角色。")));MotionCol->AddChild(PairStatus);
-    UTextBlock* PairPoseText=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());PairPoseText->SetText(FText::FromString(TEXT("做愛姿勢")));PairPoseText->SetColorAndOpacity(FSlateColor(FLinearColor::White));MotionCol->AddChild(PairPoseText);
-    PairPreparationStatus=WidgetTree->ConstructWidget<UTextBlock>();PairPreparationStatus->SetAutoWrapText(true);MotionCol->AddChild(PairPreparationStatus);
-    PairCategoryCombo=WidgetTree->ConstructWidget<UOKComboBoxString>();PairCategoryCombo->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPairCategorySelected);MotionCol->AddChild(PairCategoryCombo);
-    PairCombo=WidgetTree->ConstructWidget<UOKMotionComboBox>(UOKMotionComboBox::StaticClass(),TEXT("NativePair"));PairCombo->AddOption(TEXT("選擇姿勢"));PairCombo->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPairSelected);MotionCol->AddChild(PairCombo);
+    PairStatus=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(),TEXT("PairStatus"));PairStatus->SetAutoWrapText(true);PairStatus->SetColorAndOpacity(FSlateColor(FLinearColor(1.f,.92f,.45f)));PairStatus->SetText(FText::FromString(TEXT("先點一位男角，再按載入配對角色。")));AnimationCol->AddChild(PairStatus);
+    UTextBlock* PairPoseText=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());PairPoseText->SetText(FText::FromString(TEXT("做愛姿勢")));PairPoseText->SetColorAndOpacity(FSlateColor(FLinearColor::White));AnimationCol->AddChild(PairPoseText);
+    PairPreparationStatus=WidgetTree->ConstructWidget<UTextBlock>();PairPreparationStatus->SetAutoWrapText(true);AnimationCol->AddChild(PairPreparationStatus);
+    PairCategoryCombo=WidgetTree->ConstructWidget<UOKComboBoxString>();PairCategoryCombo->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPairCategorySelected);AnimationCol->AddChild(PairCategoryCombo);
+    PairCombo=WidgetTree->ConstructWidget<UOKMotionComboBox>(UOKMotionComboBox::StaticClass(),TEXT("NativePair"));PairCombo->AddOption(TEXT("選擇姿勢"));PairCombo->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPairSelected);AnimationCol->AddChild(PairCombo);
     UHorizontalBox* PairPoseNav=WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(),TEXT("PairPoseNav"));
     UButton* PairPrev=PlaybackButton(TEXT("PairPosePrev"),TEXT("上一個姿勢"));PairPrev->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPairPosePrev);
     UButton* PairNext=PlaybackButton(TEXT("PairPoseNext"),TEXT("下一個姿勢"));PairNext->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPairPoseNext);
-    MotionCol->RemoveChild(PairPrev);MotionCol->RemoveChild(PairNext);PairPoseNav->AddChild(PairPrev);PairPoseNav->AddChild(PairNext);MotionCol->AddChild(PairPoseNav);
-    UTextBlock* PairPhaseText=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());PairPhaseText->SetText(FText::FromString(TEXT("動作階段")));MotionCol->AddChild(PairPhaseText);
-    PairStateCombo=WidgetTree->ConstructWidget<UOKMotionComboBox>(UOKMotionComboBox::StaticClass(),TEXT("NativePairState"));PairStateCombo->AddOption(TEXT("選擇階段"));PairStateCombo->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPairStateSelected);MotionCol->AddChild(PairStateCombo);
-    UTextBlock* PairSpeedText=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());PairSpeedText->SetText(FText::FromString(TEXT("雙人時鐘速度（0–4 倍）")));MotionCol->AddChild(PairSpeedText);
-    PairSpeedSlider=WidgetTree->ConstructWidget<USlider>(USlider::StaticClass(),TEXT("PairSpeed"));PairSpeedSlider->SetValue(.25f);PairSpeedSlider->OnValueChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPairSpeed);MotionCol->AddChild(PairSpeedSlider);
-    {UTextBlock* PhysicsText=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());PhysicsText->SetText(FText::FromString(TEXT("物理系統（即時切換）")));MotionCol->AddChild(PhysicsText);
-     PhysicsBackendCombo=WidgetTree->ConstructWidget<UOKComboBoxString>(UOKComboBoxString::StaticClass(),TEXT("PhysicsBackend"));FillPhysicsBackendCombo();PhysicsBackendCombo->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPhysicsBackendSelected);MotionCol->AddChild(PhysicsBackendCombo);
-     UTextBlock* SoftText=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());SoftText->SetText(FText::FromString(TEXT("頭髮／衣物硬度（1 最軟 → 10 最硬＝原設定）")));MotionCol->AddChild(SoftText);
-     PhysicsSoftnessSlider=WidgetTree->ConstructWidget<USlider>(USlider::StaticClass(),TEXT("PhysicsSoftness"));if(IConsoleVariable* Soft=IConsoleManager::Get().FindConsoleVariable(TEXT("OKPhysXSecondary.Hardness"))){PhysicsSoftnessSlider->SetMinValue(1.f);PhysicsSoftnessSlider->SetMaxValue(10.f);PhysicsSoftnessSlider->SetStepSize(1.f);PhysicsSoftnessSlider->SetValue(Soft->GetFloat());}PhysicsSoftnessSlider->OnValueChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPhysicsSoftness);MotionCol->AddChild(PhysicsSoftnessSlider);
-     UTextBlock* WeightText=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());WeightText->SetText(FText::FromString(TEXT("頭髮／衣物重量（1 原設定 → 10 加上完整重力）")));MotionCol->AddChild(WeightText);
-     PhysicsWeightSlider=WidgetTree->ConstructWidget<USlider>(USlider::StaticClass(),TEXT("PhysicsWeight"));if(IConsoleVariable* W=IConsoleManager::Get().FindConsoleVariable(TEXT("OKPhysXSecondary.Weight"))){PhysicsWeightSlider->SetMinValue(1.f);PhysicsWeightSlider->SetMaxValue(10.f);PhysicsWeightSlider->SetStepSize(1.f);PhysicsWeightSlider->SetValue(W->GetFloat());}PhysicsWeightSlider->OnValueChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPhysicsWeight);MotionCol->AddChild(PhysicsWeightSlider);
-     UTextBlock* TailText=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());TailText->SetText(FText::FromString(TEXT("尾巴彈性（0 原設定 → 1 預設 → 2 最彈）")));MotionCol->AddChild(TailText);
-     PhysicsTailSlider=WidgetTree->ConstructWidget<USlider>(USlider::StaticClass(),TEXT("PhysicsTail"));if(IConsoleVariable* Tail=IConsoleManager::Get().FindConsoleVariable(TEXT("OKPhysXSecondary.TailBounce"))){PhysicsTailSlider->SetMinValue(0.f);PhysicsTailSlider->SetMaxValue(2.f);PhysicsTailSlider->SetStepSize(.1f);PhysicsTailSlider->SetValue(Tail->GetFloat());}PhysicsTailSlider->OnValueChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPhysicsTail);MotionCol->AddChild(PhysicsTailSlider);}
+    AnimationCol->RemoveChild(PairPrev);AnimationCol->RemoveChild(PairNext);PairPoseNav->AddChild(PairPrev);PairPoseNav->AddChild(PairNext);AnimationCol->AddChild(PairPoseNav);
+    UTextBlock* PairPhaseText=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());PairPhaseText->SetText(FText::FromString(TEXT("動作階段")));AnimationCol->AddChild(PairPhaseText);
+    PairStateCombo=WidgetTree->ConstructWidget<UOKMotionComboBox>(UOKMotionComboBox::StaticClass(),TEXT("NativePairState"));PairStateCombo->AddOption(TEXT("選擇階段"));PairStateCombo->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPairStateSelected);AnimationCol->AddChild(PairStateCombo);
+    UTextBlock* PairSpeedText=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());PairSpeedText->SetText(FText::FromString(TEXT("雙人時鐘速度（0–4 倍）")));AnimationCol->AddChild(PairSpeedText);
+    PairSpeedSlider=WidgetTree->ConstructWidget<USlider>(USlider::StaticClass(),TEXT("PairSpeed"));PairSpeedSlider->SetValue(.25f);PairSpeedSlider->OnValueChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPairSpeed);AnimationCol->AddChild(PairSpeedSlider);
+    {UTextBlock* PhysicsText=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());PhysicsText->SetText(FText::FromString(TEXT("物理系統（即時切換）")));AnimationCol->AddChild(PhysicsText);
+     PhysicsBackendCombo=WidgetTree->ConstructWidget<UOKComboBoxString>(UOKComboBoxString::StaticClass(),TEXT("PhysicsBackend"));FillPhysicsBackendCombo();PhysicsBackendCombo->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPhysicsBackendSelected);AnimationCol->AddChild(PhysicsBackendCombo);
+     UTextBlock* SoftText=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());SoftText->SetText(FText::FromString(TEXT("頭髮／衣物硬度（1 最軟 → 10 最硬＝原設定）")));AnimationCol->AddChild(SoftText);
+     PhysicsSoftnessSlider=WidgetTree->ConstructWidget<USlider>(USlider::StaticClass(),TEXT("PhysicsSoftness"));if(IConsoleVariable* Soft=IConsoleManager::Get().FindConsoleVariable(TEXT("OKPhysXSecondary.Hardness"))){PhysicsSoftnessSlider->SetMinValue(1.f);PhysicsSoftnessSlider->SetMaxValue(10.f);PhysicsSoftnessSlider->SetStepSize(1.f);PhysicsSoftnessSlider->SetValue(Soft->GetFloat());}PhysicsSoftnessSlider->OnValueChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPhysicsSoftness);AnimationCol->AddChild(PhysicsSoftnessSlider);
+     UTextBlock* WeightText=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());WeightText->SetText(FText::FromString(TEXT("頭髮／衣物重量（1 原設定 → 10 加上完整重力）")));AnimationCol->AddChild(WeightText);
+     PhysicsWeightSlider=WidgetTree->ConstructWidget<USlider>(USlider::StaticClass(),TEXT("PhysicsWeight"));if(IConsoleVariable* W=IConsoleManager::Get().FindConsoleVariable(TEXT("OKPhysXSecondary.Weight"))){PhysicsWeightSlider->SetMinValue(1.f);PhysicsWeightSlider->SetMaxValue(10.f);PhysicsWeightSlider->SetStepSize(1.f);PhysicsWeightSlider->SetValue(W->GetFloat());}PhysicsWeightSlider->OnValueChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPhysicsWeight);AnimationCol->AddChild(PhysicsWeightSlider);
+     UTextBlock* TailText=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());TailText->SetText(FText::FromString(TEXT("尾巴彈性（0 原設定 → 1 預設 → 2 最彈）")));AnimationCol->AddChild(TailText);
+     PhysicsTailSlider=WidgetTree->ConstructWidget<USlider>(USlider::StaticClass(),TEXT("PhysicsTail"));if(IConsoleVariable* Tail=IConsoleManager::Get().FindConsoleVariable(TEXT("OKPhysXSecondary.TailBounce"))){PhysicsTailSlider->SetMinValue(0.f);PhysicsTailSlider->SetMaxValue(2.f);PhysicsTailSlider->SetStepSize(.1f);PhysicsTailSlider->SetValue(Tail->GetFloat());}PhysicsTailSlider->OnValueChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPhysicsTail);AnimationCol->AddChild(PhysicsTailSlider);}
     PlaybackButton(TEXT("StopPair"),TEXT("結束雙人播放"))->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnStopPair);
     PenisCheck=WidgetTree->ConstructWidget<UCheckBox>(UCheckBox::StaticClass(),TEXT("PenisVisible"));
-    {UTextBlock* PenisLabel=WidgetTree->ConstructWidget<UTextBlock>();PenisLabel->SetText(FText::FromString(TEXT("顯示陰莖")));PenisCheck->SetContent(PenisLabel);PenisCheck->SetIsChecked(false);PenisCheck->SetToolTipText(FText::FromString(TEXT("顯示男角分開的陰莖與陰囊。保險套不顯示。預設關閉。")));PenisCheck->OnCheckStateChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPenisVisible);MotionCol->AddChild(PenisCheck);}
+    {UTextBlock* PenisLabel=WidgetTree->ConstructWidget<UTextBlock>();PenisLabel->SetText(FText::FromString(TEXT("顯示陰莖")));PenisCheck->SetContent(PenisLabel);PenisCheck->SetIsChecked(false);PenisCheck->SetToolTipText(FText::FromString(TEXT("顯示男角分開的陰莖與陰囊。保險套不顯示。預設關閉。")));PenisCheck->OnCheckStateChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnPenisVisible);AnimationCol->AddChild(PenisCheck);}
 
 	GameAnimationParameters=WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(),TEXT("GameAnimationParameters"));
-	MotionCol->AddChild(GameAnimationParameters);
+	AnimationCol->AddChild(GameAnimationParameters);
 	BuildAppearanceControls(ShapeCol);
 	ShapeCol->AddChild(ShapeTitle);
  ShapeCol->AddChild(BoneCategoryCombo);
@@ -729,7 +758,7 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 	MouthRow->AddChild(MouthLab);
 	UHorizontalBoxSlot* MouthSlot = MouthRow->AddChildToHorizontalBox(MouthSlider);
 	MouthSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-	MotionCol->AddChild(MouthRow);
+	ExpressionCol->AddChild(MouthRow);
 	MouthPatternCombo = WidgetTree->ConstructWidget<UOKComboBoxString>(UOKComboBoxString::StaticClass(), TEXT("MouthPatternCombo"));
 	for (int32 Pattern = 0; Pattern < 54; ++Pattern)
 	{
@@ -737,22 +766,22 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 	}
 	MouthPatternCombo->SetSelectedIndex(SelectedMouthPattern);
 	MouthPatternCombo->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this), &UOKCharacterController::OnMouthPatternSelected);
-	MotionCol->AddChild(MouthPatternCombo);
+	ExpressionCol->AddChild(MouthPatternCombo);
 	SpeechRootInput=WidgetTree->ConstructWidget<UEditableTextBox>();
 	SpeechRootInput->SetText(FText::FromString(DefaultVoiceRoot()));
 	SpeechRootInput->SetHintText(FText::FromString(TEXT("一般對話語音資料夾")));
-	MotionCol->AddChild(SpeechRootInput);
+	ExpressionCol->AddChild(SpeechRootInput);
 	UTextBlock* VoiceLabel=WidgetTree->ConstructWidget<UTextBlock>();
 	VoiceLabel->SetText(FText::FromString(TEXT("女角聲音")));
-	MotionCol->AddChild(VoiceLabel);
+	ExpressionCol->AddChild(VoiceLabel);
 	SpeechVoiceCombo=WidgetTree->ConstructWidget<UOKComboBoxString>(UOKComboBoxString::StaticClass(),TEXT("SpeechVoice"));
 	SpeechVoiceCombo->AddOption(TEXT("卡片性格"));
 	for(int32 Personality=0;Personality<=39;++Personality) SpeechVoiceCombo->AddOption(HeroineVoiceLabel(Personality));
 	SpeechVoiceCombo->SetSelectedIndex(SelectedSpeechVoice<0?0:SelectedSpeechVoice+1);
 	SpeechVoiceCombo->SetToolTipText(FText::FromString(TEXT("遊戲女角聲線 c00–c39。卡片性格用這張卡自己的性格；男角沒有一般話題，請改選一條女角聲線。")));
 	SpeechVoiceCombo->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnSpeechVoiceSelected);
-	MotionCol->AddChild(SpeechVoiceCombo);
-	SpeechCombo=WidgetTree->ConstructWidget<UOKComboBoxString>();MotionCol->AddChild(SpeechCombo);
+	ExpressionCol->AddChild(SpeechVoiceCombo);
+	SpeechCombo=WidgetTree->ConstructWidget<UOKComboBoxString>();ExpressionCol->AddChild(SpeechCombo);
 	UHorizontalBox* SpeechButtons=WidgetTree->ConstructWidget<UHorizontalBox>();
 	const TCHAR* SpeechLabels[]={TEXT("載入語音"),TEXT("說話"),TEXT("停止語音")};
 	for(int32 I=0;I<3;++I){
@@ -762,8 +791,8 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 		else if(I==1)Button->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnSpeak);
 		else Button->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnStopSpeech);
 	}
-	MotionCol->AddChild(SpeechButtons);
-	SpeechStatus=WidgetTree->ConstructWidget<UTextBlock>();MotionCol->AddChild(SpeechStatus);
+	ExpressionCol->AddChild(SpeechButtons);
+	SpeechStatus=WidgetTree->ConstructWidget<UTextBlock>();ExpressionCol->AddChild(SpeechStatus);
 	FaceCombos.Reset(); FaceOpenSliders.Reset();
 	UHorizontalBox* BlinkRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 	AutomaticBlinkCheck = WidgetTree->ConstructWidget<UCheckBox>(UCheckBox::StaticClass());
@@ -778,7 +807,7 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 	BlinkButton->AddChild(BlinkButtonLabel);
 	BlinkButton->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this), &UOKCharacterController::OnForceBlink);
 	BlinkRow->AddChild(BlinkButton);
-	MotionCol->AddChild(BlinkRow);
+	ExpressionCol->AddChild(BlinkRow);
 	GazeSliders.Reset();
 	for(int32 Index=0;Index<3;++Index)
 	{
@@ -789,7 +818,7 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 		USlider* Slider=WidgetTree->ConstructWidget<USlider>(USlider::StaticClass());
 		Slider->SetMinValue(-1.f);Slider->SetMaxValue(1.f);Slider->SetValue(0.f);
 		Row->AddChildToHorizontalBox(Slider)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-		MotionCol->AddChild(Row);GazeSliders.Add(Slider);
+		ExpressionCol->AddChild(Row);GazeSliders.Add(Slider);
 	}
 	GazeSliders[0]->OnValueChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnGazeLeft);
 	GazeSliders[1]->OnValueChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnGazeRight);
@@ -797,13 +826,13 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 	{
 		UButton* EyeModeButton=WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(),TEXT("EyeMode"));
 		EyeModeLabel=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());EyeModeLabel->SetText(FText::FromString(TEXT("眼睛：面向前方")));
-		EyeModeButton->AddChild(EyeModeLabel);StyleMotionButton(EyeModeButton);MotionCol->AddChild(EyeModeButton);
+		EyeModeButton->AddChild(EyeModeLabel);StyleMotionButton(EyeModeButton);ExpressionCol->AddChild(EyeModeButton);
 		EyeModeButton->OnClicked.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnEyeModeNext);
 	}
 	EyeLookCameraCheck=WidgetTree->ConstructWidget<UCheckBox>();
 	{
 		auto* Label=WidgetTree->ConstructWidget<UTextBlock>();Label->SetText(FText::FromString(TEXT("眼睛跟隨鏡頭")));
-		EyeLookCameraCheck->SetContent(Label);MotionCol->AddChild(EyeLookCameraCheck);
+		EyeLookCameraCheck->SetContent(Label);ExpressionCol->AddChild(EyeLookCameraCheck);
 		EyeLookCameraCheck->OnCheckStateChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnEyeLookCamera);
 	}
 	// The face pressed flat along the view (Wuthering Waves' toon faces): its strength, and the direction held still.
@@ -814,12 +843,12 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 		FaceFlattenLabel=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());Row->AddChild(FaceFlattenLabel);
 		USlider* Slider=WidgetTree->ConstructWidget<USlider>(USlider::StaticClass());
 		Slider->SetMinValue(0.f);Slider->SetMaxValue(.9f);Slider->SetStepSize(.05f);Slider->SetValue(Strength?Strength->GetFloat():0.f);
-		Row->AddChildToHorizontalBox(Slider)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));MotionCol->AddChild(Row);
+		Row->AddChildToHorizontalBox(Slider)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));ExpressionCol->AddChild(Row);
 		Slider->OnValueChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnFaceFlatten);
 		FaceFlattenLabel->SetText(FText::FromString(FString::Printf(TEXT("臉部壓扁 %.2f"),Strength?Strength->GetFloat():0.f)));
 		UCheckBox* LockCheck=WidgetTree->ConstructWidget<UCheckBox>();
 		auto* Label=WidgetTree->ConstructWidget<UTextBlock>();Label->SetText(FText::FromString(TEXT("固定壓扁方向（轉視角檢查）")));
-		LockCheck->SetContent(Label);LockCheck->SetIsChecked(Lock&&Lock->GetInt()!=0);MotionCol->AddChild(LockCheck);
+		LockCheck->SetContent(Label);LockCheck->SetIsChecked(Lock&&Lock->GetInt()!=0);ExpressionCol->AddChild(LockCheck);
 		LockCheck->OnCheckStateChanged.AddDynamic(static_cast<UOKCharacterController*>(this),&UOKCharacterController::OnFaceFlattenLock);
 	}
 	for (int32 Index = 0; Index < 2; ++Index)
@@ -831,9 +860,9 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 		USlider* Slider = WidgetTree->ConstructWidget<USlider>(USlider::StaticClass());
 		Slider->SetMinValue(0.f); Slider->SetMaxValue(1.f);
 		Row->AddChildToHorizontalBox(Slider)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-		MotionCol->AddChild(Row); FaceOpenSliders.Add(Slider);
+		ExpressionCol->AddChild(Row); FaceOpenSliders.Add(Slider);
 		UComboBoxString* Combo = WidgetTree->ConstructWidget<UOKComboBoxString>(UOKComboBoxString::StaticClass());
-		MotionCol->AddChild(Combo); FaceCombos.Add(Combo);
+		ExpressionCol->AddChild(Combo); FaceCombos.Add(Combo);
 	}
 	FaceCombos[0]->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this), &UOKCharacterController::OnEyesPattern);
 	FaceCombos[1]->OnSelectionChanged.AddDynamic(static_cast<UOKCharacterController*>(this), &UOKCharacterController::OnBrowPattern);
@@ -853,6 +882,14 @@ TSharedRef<SWidget> UOKGalleryWidget::RebuildWidget()
 
 	PreviewSpace = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("PreviewSpace"));
 	PreviewSpace->SetVisibility(ESlateVisibility::HitTestInvisible);
+	// The engine's stat fps draws at the window's top right, over the right column's sliders; the reader shows the same
+	// numbers at the preview's top right instead (TickFpsText turns the engine overlay off).
+	FpsText=WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(),TEXT("ReaderFps"));
+	FpsText->SetFont(FCoreStyle::GetDefaultFontStyle("Bold",12));
+	FpsText->SetColorAndOpacity(FSlateColor(FLinearColor(.45f,1.f,.45f)));
+	FpsText->SetShadowOffset(FVector2D(1.f,1.f));
+	FpsText->SetJustification(ETextJustify::Right);
+	if(USizeBoxSlot* FpsSlot=Cast<USizeBoxSlot>(PreviewSpace->AddChild(FpsText))){FpsSlot->SetHorizontalAlignment(HAlign_Right);FpsSlot->SetVerticalAlignment(VAlign_Top);FpsSlot->SetPadding(FMargin(0.f,6.f,10.f,0.f));}
 	RootBox->AddChildToHorizontalBox(PreviewSpace)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 	RootBox->AddChildToHorizontalBox(AppearancePanel)->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));
 	RootBox->AddChildToHorizontalBox(MotionPanel)->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));
@@ -1600,6 +1637,7 @@ void UOKCharacterController::NativeTick(const FGeometry& Geometry,float DeltaSec
  // The shown character solves its next frame while this one draws; the interaction scene and paired playback pose it themselves.
  if(IsValid(PreviewActor))PreviewActor->bAsyncNativePose=!InteractionWidget&&!InteractionScene&&!PairedPlayback;
     OKNoteFrameGraph(this, DeltaSeconds);
+ TickFpsText();
  TickEyeMode();
  TickCharacterMCP();
  TickCardListMetadata();
@@ -2273,7 +2311,28 @@ void UOKCharacterController::ApplyHandControl(int32 Side)
 		SelectedHandB[Side], SelectedHandBlend[Side]);
 }
 
-void UOKCharacterController::OnOpenHandControls(){if(!bModelLayout)return;OnCloseAppearance();if(HandMotionScroll)HandMotionScroll->ScrollToStart();}
+void UOKCharacterController::OnOpenHandControls(){if(!bModelLayout)return;OnCloseAppearance();UOKDrawerButton* Hands=MotionDrawer(TEXT("Hands"));if(Hands&&!Hands->bOpen)Hands->SetOpen(true,true);if(HandMotionScroll){if(Hands)HandMotionScroll->ScrollWidgetIntoView(Hands,false,EDescendantScrollDestination::TopOrLeft);else HandMotionScroll->ScrollToStart();}}
+extern ENGINE_API float GAverageFPS;
+extern ENGINE_API float GAverageMS;
+void UOKCharacterController::TickFpsText()
+{
+	if(!FpsText)return;
+	// The player controller turns stat fps on at start (other modes keep it); here it would cover the right column.
+	if(UWorld* World=GetWorld())if(UGameViewportClient* VP=World->GetGameViewport())if(GEngine&&VP->IsStatEnabled(TEXT("FPS")))GEngine->SetEngineStat(World,VP,TEXT("FPS"),false);
+	const double Now=FPlatformTime::Seconds();
+	if(Now-FpsShownAt<.5)return;	// a text change re-lays out the cached control tree; twice a second is enough
+	FpsShownAt=Now;
+	FpsText->SetText(FText::FromString(FString::Printf(TEXT("%.2f FPS\n%.2f ms"),GAverageFPS,GAverageMS)));
+}
+UOKDrawerButton* UOKCharacterController::MotionDrawer(const FString& Key) const{for(UOKDrawerButton* D:MotionDrawers)if(D&&D->Key==Key)return D;return nullptr;}
+void UOKDrawerButton::SetOpen(bool bNewOpen,bool bSave)
+{
+	bOpen=bNewOpen;
+	if(Body)Body->SetVisibility(bOpen?ESlateVisibility::SelfHitTestInvisible:ESlateVisibility::Collapsed);
+	if(Label)Label->SetText(FText::FromString(FString::Printf(TEXT("%s  %s"),bOpen?TEXT("－"):TEXT("＋"),*Title)));
+	if(bSave&&GConfig){GConfig->SetBool(TEXT("OKGalleryDrawers"),*Key,bOpen,GGameUserSettingsIni);GConfig->Flush(false,GGameUserSettingsIni);}
+}
+void UOKDrawerButton::Toggle(){SetOpen(!bOpen,true);}
 void UOKCharacterController::OnResetLeftHand(){SelectedHandA[0]=-1;SelectedHandB[0]=0;SelectedHandBlend[0]=0;RefreshHandControls();}
 void UOKCharacterController::OnResetRightHand(){SelectedHandA[1]=-1;SelectedHandB[1]=0;SelectedHandBlend[1]=0;RefreshHandControls();}
 

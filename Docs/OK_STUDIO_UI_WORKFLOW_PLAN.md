@@ -1576,6 +1576,54 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
 | 12 | 三張地圖縮圖全黑 | 已修（U257），体育館ライブ、ロッカールーム個室本來就暗，圖偏暗 | 確認 | 完成 |
 | 13 | 「儲存中…」後面留著舊字 | 已修（U257） | 確認 | 完成 |
 
+### U276　操作模式：Blender／3ds Max／Maya 的視角與物件操作（2026-11-16，F 組）
+
+使用者要求：物件控制與相機控制要有 Blender、3ds Max、Maya 三種，可以切換。
+
+- 設定 `view_scheme`（`FOKStudioSettings::ViewScheme`，存在 `Saved/OKStudio/settings.json`）：0 Studio（原本的）、1 Blender、2 3ds Max、3 Maya。切換：視角面板「操作模式」四個按鈕、設定窗相機頁「操作模式」、指令 `view.scheme [0~3 或名稱]`（沒參數就換下一個）；`state` 回傳 `view_scheme`。
+- 滑鼠（`SOKStudioView::NavFor`）：
+
+  | 模式 | 繞行 | 平移 | 拖曳縮放 | 左鍵 |
+  |---|---|---|---|---|
+  | Studio | 左鍵拖曳（右鍵也是，自由飛行時除外） | 中鍵 | 滾輪 | 點選、拖把手、拖曳繞行 |
+  | Blender | 中鍵 | Shift+中鍵 | Ctrl+中鍵（往上拉放大） | 點選、拖把手（空處拖曳不轉視角） |
+  | 3ds Max | Alt+中鍵 | 中鍵 | Ctrl+Alt+中鍵 | 同上 |
+  | Maya | Alt+左鍵 | Alt+中鍵 | Alt+右鍵（往右下拉放大） | 同上；Alt 按著時左鍵只轉視角 |
+
+  滾輪縮放四種都一樣；自由飛行（右鍵＋W A S D Q E）在 Studio 以外的模式也照舊，只要那個按鍵組合沒被模式用掉。
+- 快捷鍵（`FOKStudioSettings::SchemeBindings`，優先於自訂快捷鍵）：Blender G／R／S 移動／旋轉／縮放、數字鍵盤 `.` 聚焦、X 刪除、Shift+D 複製；3ds Max W／E／R、Z 聚焦所選；Maya W／E／R、F 聚焦、Ctrl+D 複製。其他快捷鍵照設定。
+- Blender 的「G 之後直接拖動、X／Y／Z 鎖軸、右鍵取消」那種模態操作沒有做，G／R／S 只是切換把手。
+- 控制通道 `mouse` 多了 `"alt": true`（測 Maya／Max 用）。
+- 驗證（2026-11-16，`Saved/Tests/StudioU276/` 的控制通道輸出）：四種模式各拖八種按鍵組合，相機變化都和上表一致（例如 Maya 的中鍵與左鍵單按都不動、Alt+右鍵距離 400→318；Max 的中鍵平移、Ctrl+Alt+中鍵 400→466）；Blender 下 G／R／S 切成移動／旋轉／縮放。真人滑鼠沒有測。
+
+### U277　拖入 FBX、任意人物卡直接匯入；每個物件的材質可編輯（2026-11-16，F 組）
+
+使用者要求：可以拉 FBX、任意人物卡到程式後自動直接匯入；每個物體的材質可以任意編輯。
+
+- **拖入**（`SOKStudioPanel::OpenDropped`，U275 的同一個入口；控制通道 `cmd scene.drop <路徑>` 走同一段）：
+  - 場景檔、資料夾：照 U275。
+  - 人物卡（原版 KK／KKS／KKSP 卡，或含 `okPv` 的 OK 卡）：直接加成角色（`AddOrReplaceCard`，和卡片瀏覽器「加入」相同）。
+  - 模型檔（`.fbx`、`.obj`）：加成新的物件種類「模型」（`EOKSceneObjectKind::Model`，`FOKSceneModel::File` 記絕對路徑），放在視角中心、模型底部貼地。一次拖多個檔：全部加入，狀態列寫加了幾個角色、幾個模型與讀不到的檔案。
+- **讀 FBX**（`OKStudioFbx.cpp`）：用引擎附的 ufbx（MIT，`Engine/Plugins/Interchange/Runtime/Source/Parsers/ThirdParty/uFBX/0.21.2`，Interchange 的 FBX 解析器也是這份；Build.cs 加 include 路徑），在執行期讀成靜態網格：所有節點的網格烘到物件座標，同材質併成一個 section，畫在一個 `UProceduralMeshComponent` 上。座標與繞序同 Interchange（左手、Z 上、公分、Y 鏡射、反轉繞序；不反轉時每個面都背對，見 ERROR_LOG）。OBJ 沒有單位與座標軸，當成公尺、Y 上（Blender、Maya 匯出的預設）。材質讀 PBR／FBX 的底色、金屬、粗糙、自發光與底色貼圖（內嵌，或檔名指到模型旁、`textures/` 下）。骨架、動畫、法線貼圖不讀。
+  - 材質是程式裡建的一個 lit 材質（BaseMap × Color、Metallic、Roughness、Emissive；單面與雙面兩份），只在編輯器執行檔（SceneEditor 用的）建得出來；Game 目標退回引擎的 BasicShapeMaterial。
+  - 場景檔記的是絕對路徑：模型檔搬走或換電腦就讀不到（物件留著，錯誤寫在 `state` 的 `error`）。
+- **材質編輯器**（`app.material`）：
+  - 道具：照舊（`Item.MaterialEdits`，重建時套用）。
+  - 角色：同一個視窗，列出角色的部件、材質與屬性；改顏色、數值、貼圖縮放位移、部件顯示，寫進物件的 `LiveMaterialEdits`（不重建，隨場景存檔）。換貼圖、換 shader、陰影設定不顯示（只有道具重建時才會套用）。
+  - 模型：自己的頁面（`BuildModelMaterialEditor`）：左邊列材質，右邊顯示、雙面、顏色、金屬、光滑、自發光、底色貼圖（載入圖檔／清空／預設），每項都有「預設」回到檔案的值；寫進 `LiveMaterialEdits`（材質名＋`_Color`、`_Metallic`、`_Glossiness`、`_EmissionColor`、`_MainTex`、`_TwoSided`，Renderer `Enabled`）。材質名空白的改動套用到全部材質，視窗上也會標成改過。
+- 控制通道：`spawn` 多了 `kind: "model", file: <路徑>`；物件種類字串 `model`。
+- 驗證（2026-11-16，`Saved/Tests/StudioU276/`）：spawn 一個、拖入兩個引擎測試 FBX（`Cube_Blue`、`ComplexLodSection`、`AnimatedCharacter`）都讀進來並顯示；`patch` 一筆 `_Color` 後模型從藍變紅（`edited.png`）；材質窗列出 `phong1` 與檔案的顏色 #1E6D7E、光滑 0.447。拖入示範卡 `C050` 有被當成人物卡加入，但那張 OK 卡本身缺 `xukmi/eyewplustess` 資源打不開（和這次無關）。Editor 與 Game 兩個目標都建置成功。
+  - 第二輪（`Saved/Tests/StudioU277b/`）：角色 `Male01` 開材質編輯器列出 25 個部件與材質屬性（`char_material` 的 ui 截圖）；`patch` 一筆 `_Color` 後頭髮變綠（`char_before.png`／`char_after.png`），角色的即時材質改動有效。
+  - 第三輪（`Saved/Tests/StudioU277c/`）：方塊與 AnimatedCharacter 分開擺，從上方看到方塊的頂面、角色模型各部位正常（`above.png`），繞序確定要反轉。拖入 OBJ 與沒有 `okPv` 的卡（`CrowdAPNG/C000.png`）：卡片加成角色並顯示（`imports.png`）；OBJ 有加入但只有 0.6 cm（單位問題，已改成公尺）。
+  - 真正用滑鼠從檔案總管拖放仍沒有自動測：用腳本模擬 OLE 拖放（WinForms `DoDragDrop`＋模擬按鍵）放開按鍵沒有作用、拖放迴圈不會結束（U275 那次也是），會卡住使用者的滑鼠，放棄自動化，要人工拖一次確認。程式在 Windows 拖放後走的是同一個 `OpenDropped`。
+
+### U278　設定窗「資源目錄」加場景卡資料夾（2026-11-16，F 組）
+
+使用者指出資源目錄頁少了場景卡路徑。
+
+- 設定 `scene_roots`（`FOKStudioSettings::SceneRoots`）：資源目錄頁「場景卡」一列，輸入資料夾按 Enter 加入、可移除。
+- 場景瀏覽器左邊的資料夾按鈕多出這些資料夾（`★ 資料夾名`），點了就列那個資料夾的場景（`.okscene`、OK 場景卡、KStudio 場景 PNG）；在加入的資料夾本身不顯示「.. 上一層」。UserData/Studio/scene、遊戲的 KStudio 場景、自動備份照舊一定會列。
+
 ### U275　拖曳檔案進視窗直接開場景（2026-11-14，F 組）
 
 使用者要求：場景檔不必先放進 `UserData/Studio/scene` 才能開。
@@ -1585,6 +1633,7 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
 - 一次拖多個檔案時，只開第一個場景檔或資料夾。拖進其他種類的檔案，狀態列會說明不是場景檔。
 - 實作：`SOKStudioPanel::OnDragOver`／`OnDrop` 接收外部拖放（`FExternalDragOperation`），下一幀才開檔；不是場景的 PNG（例如角色卡）不開，不卡住系統的拖放呼叫。控制通道指令 `scene.drop <路徑>` 走同一段處理，方便自動測試。
 - 驗證（2026-11-14）：Editor 與 Game 建置成功；以 `scene.drop` 測四項都通過：放在 `Saved/Tests/DropTest1114` 的原版 KKS 場景 PNG 匯入並開啟（443 個物件）、拖資料夾後場景瀏覽器列出裡面的場景、非場景 PNG 不開並在狀態列說明、資料夾裡的 `.okscene` 直接開啟。真正用滑鼠從檔案總管拖放還沒測。
+- 2026-11-16 試過用腳本模擬真正的 OLE 拖放（WinForms `DoDragDrop` 加 `SendInput` 按住滑鼠、另一個執行緒移動游標後放開）：腳本卡在 `DoDragDrop` 的 modal 迴圈裡，沒有結束，也沒看到工作室開檔，占了 slot 31 分鐘後強制關掉（見 `Docs/ERROR_LOG.md`）。這次不能算測過；之後要先在不占 slot 的情況下把模擬工具做好（要有逾時），或請使用者手動從檔案總管拖一次。
 
 ### U271 補驗：另外 13 張陰影強度小於 1 的地圖（2026-11-12，F 組）
 
@@ -1640,6 +1689,11 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
       - 原因：遮陽傘網格是多個實體共用的，每個實體的 renderer 各自掛不同的材質（橘或藍），而且一個 renderer 有好幾個材質（每個 submesh 一個）。`prefab_standard_materials` 只收「剛好一個材質」的 renderer，所以這些實體都沿用網格第一次出現時的藍色。
       - 修法：Rust 新增 memo 查詢 `prefab_standard_material_lists`，收「有多個材質且其中有 Standard」的 renderer，以節點記下每個 submesh 的材質；`node_material` 依 `submesh_index` 取用（只取 Standard 材質）。`studio-nodes` 錄貼圖時也收這些材質的貼圖。
       - 結果（`Saved/Tests/MapParasol1115OK/`）：y270 傘面平均 (188, 119, 4)，原作 (191, 122, 5)，修改前 (11, 69, 194)。原作傘面上有樹葉的斑駁影子，OK 比較淡，沒追。
+      - 2026-11-16 查樹葉斑駁影（未修）：
+        - 原作的傘面整片在陰影裡（底色較暗），上面有很多圓形、邊緣清楚的亮斑；OK 的傘面整片受光，只有頂端一條很淡的影子。原作的燈沒有 cookie，亮斑應該是陽光從樹葉縫隙透下來（`Directional Light_sun` 1.5、Soft、strength 0.807）。
+        - 附近的遮擋物有兩種：棕櫚 `toon_tropical03_00`（`Nature/SpeedTree` 的 `Fronds_*`、`GEOM_TYPE_FROND`、`_Cull 0`）和 `toon_tree00_00`（`Leaves_*`、`GEOM_TYPE_LEAF`，有 LOD0～2）。
+        - 拍了四張（`Saved/Tests/MapParasol1116/`）：照常、關 VSM（`r.Shadow.Virtual.Enable 0`）、依原生 bounds 中心藏掉棕櫚零件、藏掉後再關 VSM。原生有 122 個 `toon_tropical` renderer，OK 依中心藏掉 58 個零件。四張的傘面看不出差別：OK 的棕櫚即使在場也沒有投影到傘面，關 VSM 也一樣。
+        - 下一步：先找出原作是哪一棵樹的葉子擋住太陽（傘的位置與太陽方向；可能是 `toon_tree00_00` 而不是棕櫚），再看 OK 那棵樹的葉片零件有沒有投影（`_OKRendererShadowMode`、masked 雙面投影），以及 LOD 只留 LOD0 時 `toon_tree00_00` 的葉片是否在。
       - 海面雜點（2026-11-15 減輕，未除盡）：
         - 原因：Lux 的 deep foam 在 OK 用每像素法線長度算，地圖 54 海面整片白點。
         - 修法：改用 Lux 的作法，用 mip bias `_DeepFoamBlur` 取樣泡沫貼圖。地圖 54 是 7.26，結果是柔和的霧；燈塔（地圖 56）是 1.26，仍接近像素。

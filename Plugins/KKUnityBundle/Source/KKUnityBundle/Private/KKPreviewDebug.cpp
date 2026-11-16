@@ -18,7 +18,7 @@ const FName DebugHiddenTag(TEXT("OKDebugHidden"));
 void ApplyAll(IConsoleVariable*);
 
 TAutoConsoleVariable<FString> CVarHideParts(TEXT("ok.Debug.HideParts"), TEXT(""),
-	TEXT("Comma-separated source renderer names whose drawn parts are hidden (exact match; empty shows them all)."),
+	TEXT("Comma-separated source renderer names, or component names as ok.Debug.DumpParts lists them (Part_15: one layer of a renderer drawn twice), whose drawn parts are hidden (exact match; empty shows them all)."),
 	FConsoleVariableDelegate::CreateStatic(&ApplyAll), ECVF_Default);
 TAutoConsoleVariable<int32> CVarOutline(TEXT("ok.Debug.Outline"), 1,
 	TEXT("0 hides every character outline shell (component shells and procedural outline sections); 1 shows them."),
@@ -56,7 +56,7 @@ void Apply(UPrimitiveComponent* Component, const TSet<FString>& Hidden, bool bOu
 	const FString Name = PartName(Component);
 	if (Name.IsEmpty()) return;
 	const bool bShell = Component->ComponentHasTag(TEXT("KKPreviewOutline"));
-	const bool bHide = Hidden.Contains(Name) || (bShell && !bOutline);
+	const bool bHide = Hidden.Contains(Name) || Hidden.Contains(Component->GetName()) || (bShell && !bOutline);
 	if (bHide && !Component->bHiddenInGame)
 	{
 		Component->SetHiddenInGame(true);
@@ -107,9 +107,9 @@ FAutoConsoleCommandWithWorldArgsAndOutputDevice DumpPartsCommand(TEXT("ok.Debug.
 					Slots += FString::Printf(TEXT(" [%d %s base=%s blend=%d twosided=%d]"), Slot, Material ? *Material->GetName() : TEXT("none"),
 						Base ? *Base->GetName() : TEXT("none"), Material ? int32(Material->GetBlendMode()) : -1, Material ? int32(Material->IsTwoSided()) : -1);
 				}
-				Ar.Logf(TEXT("OK part %s actor=%s component=%s class=%s visible=%d hidden_in_game=%d debug_hidden=%d outline_shell=%d%s"), *Name,
+				Ar.Logf(TEXT("OK part %s actor=%s component=%s class=%s visible=%d hidden_in_game=%d debug_hidden=%d outline_shell=%d sort=%d%s"), *Name,
 					*It->GetName(), *Component->GetName(), *Component->GetClass()->GetName(), int32(Component->IsVisible()), int32(Component->bHiddenInGame),
-					int32(Component->ComponentHasTag(DebugHiddenTag)), int32(Component->ComponentHasTag(TEXT("KKPreviewOutline"))), *Slots);
+					int32(Component->ComponentHasTag(DebugHiddenTag)), int32(Component->ComponentHasTag(TEXT("KKPreviewOutline"))), Component->TranslucencySortPriority, *Slots);
 				++Count;
 			}
 		}
