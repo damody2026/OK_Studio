@@ -20,7 +20,9 @@ use crate::unity::ParsedBundle;
 #[derive(Clone)]
 struct Source { label: String, path: PathBuf, entry: Option<String> }
 
-const CHARACTER_PREFIXES: [&str; 4] = ["abdata/chara/", "abdata/list/characustom/", "abdata/studio/base/", "abdata/list/shapecorrect/"];
+/// The H scene's items with an Animator of their own (HandCtrl's hands, fingers, tongue, toys; `--oklib h-items`
+/// records what their sessions read) are converted like these.
+const CHARACTER_PREFIXES: [&str; 5] = ["abdata/chara/", "abdata/list/characustom/", "abdata/studio/base/", "abdata/list/shapecorrect/", "abdata/h/common/"];
 /// Vanilla Studio items, lights and maps (game files only; mod items come in per scene). Animations and sounds are
 /// not item sources.
 const STUDIO_PREFIX: &str = "abdata/studio/";
