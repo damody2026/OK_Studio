@@ -29,6 +29,12 @@
 --                        loads no local model until the key is typed into the settings)
 --   --readme <file>      copied to the package's root
 -- Keys still never go in.
+--
+-- An OK Studio-only package (--studio, 2026-11-16): a Studio*.stage (rebuild_street_social_runtime.lua --studio, only
+-- /Engine/Maps/Entry cooked); OKStudio.cmd is the only entry (no StreetSocial.cmd, no voice servers, no new player's
+-- street settings); the street's own data groups are left out by default (STUDIO_SKIP); --cards go to
+-- Content/CharacterCards/<the folder's name>, the studio's card browser lists them. A street or city map in the paks
+-- stops it.
 local ok = require "ok"
 local json, path, proc, util = ok.json, ok.path, ok.proc, ok.util
 local player_settings = require "street_player_settings"
@@ -50,10 +56,13 @@ end
 
 -- The stage to pack: --stage, else the newest usable one; the same rules as StreetSocial.cmd (Tools/street_stage.lua),
 -- so the package's launcher accepts what is packed.
-local function pick_stage(root, named)
+local function pick_stage(root, named, studio)
   local _, stage, name, how
   if named then _, stage, name, how = street_stage.named(root, named, "--stage")
-  else _, stage, name, how = street_stage.newest(root, say) end
+  else _, stage, name, how = street_stage.newest(root, say, studio and "studio" or nil) end
+  if stage and studio ~= street_stage.is_studio(name) then
+    error(("--stage %s: %s"):format(name, studio and "--studio packs a Studio*.stage (rebuild --studio)" or "a Studio*.stage has no street map; pack it with --studio"), 0)
+  end
   if stage then say(("Stage: %s (%s; %s)"):format(name, named and "--stage" or "newest", how)) end
   return stage
 end
@@ -89,12 +98,13 @@ local function check_paks(root, paks, allow)
   local original = {}
   local m = json.decode(path.read_text(path.join(root, "Tools/original_data_manifest.json")))
   for _, f in ipairs(m.files) do original[(f.path:gsub("%.[^./]+$", "")):lower()] = f.group end
-  local report = { original = {}, untracked = {}, allowed = {}, tracked = 0 }
+  local report = { original = {}, untracked = {}, allowed = {}, tracked = 0, maps = {} }
   for _, pak in ipairs(paks) do
     local r = proc.run({ win(unrealpak), win(pak), "-List" }, { capture = true })
     if not r.ok then error("UnrealPak could not list " .. win(pak), 0) end
     for line in r.stdout:gmatch("[^\n]+") do
       local p = line:match('"([^"]+)" offset:')
+      if p and p:lower():match("%.umap$") then report.maps[#report.maps + 1] = p end
       if p and p:match("^OpenKoikatsu/") then
         local rel = p:sub(#"OpenKoikatsu/" + 1)
         local key = (rel:gsub("%.[^./]+$", "")):lower()
@@ -136,6 +146,10 @@ local function local_keys(root)
   return keys
 end
 
+-- Original data groups a Studio package leaves out unless --skip-group says otherwise: the street's dialogue, voices
+-- and H poses, the H voices, and the studio sample scenes (they carry characters).
+local STUDIO_SKIP = { "h-voices", "studio-scenes", "street-voices", "street-dialogue", "h-poses" }
+
 local TEXT_EXT = { json = true, txt = true, lua = true, ini = true, cmd = true, bat = true, toml = true, md = true, cfg = true, csv = true, tsv = true, xml = true, yaml = true, yml = true, log = true }
 
 local function main()
@@ -152,14 +166,16 @@ local function main()
   p:opt("--voice")
   p:opt("--readme")
   p:opt("--skip-group", { multiple = true })
+  p:flag("--studio")
   local a = p:parse(arg)
+  local skip_groups = (a.skip_group and #a.skip_group > 0) and a.skip_group or (a.studio and STUDIO_SKIP or { "h-voices", "studio-scenes" })
   if a.voice and a.voice ~= "cloud" and a.voice ~= "builtin" then error("--voice must be cloud or builtin", 0) end
   local root = ok.root
   local out = path.abs(a.out):gsub("/+$", "")
   if out:sub(1, #root + 1) == root .. "/" then error("--out must be outside the repository: " .. win(out), 0) end
   if path.exists(out) and #path.list(out) > 0 and not a.check then error("--out must be a new or empty folder: " .. win(out), 0) end
 
-  local stage = pick_stage(root, a.stage)
+  local stage = pick_stage(root, a.stage, a.studio)
   if not stage then
     error("No StreetSocial stage (Saved/StreetSocial/Build/*.stage); build one with Tools/rebuild_street_social_runtime.lua or pass --stage", 0)
   end
@@ -173,6 +189,7 @@ local function main()
   local stage_rel = "Saved/StreetSocial/Build/" .. path.name(stage)
   for _, f in ipairs(files_under(path.join(stage, "Windows"), function(r)
     return r == "OpenKoikatsu/Content/IndependentResources" or r == "OpenKoikatsu/Content/KKPreview" or r:match("^OpenKoikatsu/Saved")
+      or r == "OpenKoikatsu/Content/CharacterCards" -- the scene editor's junction to this checkout's cards (run_scene_editor.lua)
   end)) do add(f[1], stage_rel .. "/Windows/" .. f[2]) end
   local paks = {}
   for _, f in ipairs(files_under(path.join(stage, "Windows/OpenKoikatsu/Content/Paks"))) do if f[1]:lower():match("%.pak$") then paks[#paks + 1] = f[1] end end
@@ -183,9 +200,13 @@ local function main()
     end
   else say("Runtime patch missing (the player's launcher rebuilds it only with the editor): " .. win(patch)) end
   -- Versioned files: the launcher and its tools, the street's data, the settings guide.
-  for _, rel in ipairs(tracked(root, { "StreetSocial.cmd", "OKStudio.cmd", "Content/IndependentResources", "Tools/lua", "Config",
+  local versioned = a.studio
+    and { "OKStudio.cmd", "Content/IndependentResources", "Tools/lua", "Config", "Tools/original_data_manifest.json",
+      "Tools/base_library_shared_mods.txt", "Docs/SHARED_RESOURCES_SETUP.md", "Docs/STREET_SOCIAL_PACKAGE.md" }
+    or { "StreetSocial.cmd", "OKStudio.cmd", "CardReaderDevelopment.cmd", "Content/IndependentResources", "Tools/lua", "Config",
       "Tools/original_data_manifest.json", "Tools/base_library_shared_mods.txt",
-      "Docs/API_KEYS.md", "Docs/SHARED_RESOURCES_SETUP.md", "Docs/STREET_SOCIAL_PLAY_GUIDE.md", "Docs/STREET_SOCIAL_PACKAGE.md" })) do
+      "Docs/API_KEYS.md", "Docs/SHARED_RESOURCES_SETUP.md", "Docs/STREET_SOCIAL_PLAY_GUIDE.md", "Docs/STREET_SOCIAL_PACKAGE.md" }
+  for _, rel in ipairs(tracked(root, versioned)) do
     add(path.join(root, rel), rel)
   end
   for _, rel in ipairs(tracked(root, { "Tools" })) do if rel:match("^Tools/[^/]+%.lua$") then add(path.join(root, rel), rel) end end
@@ -196,7 +217,7 @@ local function main()
       "Tools/ok-luakit/target/release/ok-luakit.exe" }) do
     if path.is_file(path.join(root, rel)) then add(path.join(root, rel), rel) else say("Not built, left out: " .. rel) end
   end
-  if not a.no_voice_servers then
+  if not a.no_voice_servers and not a.studio then
     for _, server in ipairs({ "ok-tts", "ok-asr" }) do
       local dir = path.join(root, "Build", server)
       if path.is_dir(dir) then
@@ -210,7 +231,7 @@ local function main()
   -- Private: the original data (the tester has no game to restore it from).
   if a.private then
     local skip = {}
-    for _, g in ipairs((a.skip_group and #a.skip_group > 0) and a.skip_group or { "h-voices", "studio-scenes" }) do skip[g] = true end
+    for _, g in ipairs(skip_groups) do skip[g] = true end
     local m = json.decode(path.read_text(path.join(root, "Tools/original_data_manifest.json")))
     local have, missing, groups = 0, 0, {}
     for _, f in ipairs(m.files) do
@@ -224,17 +245,18 @@ local function main()
     for g, n in pairs(groups) do names[#names + 1] = ("%s %s"):format(g, gb(n)) end
     table.sort(names)
     say(("Original data (private): %d files (%s); %d missing here; left out: %s"):format(have, table.concat(names, ", "), missing,
-      table.concat((a.skip_group and #a.skip_group > 0) and a.skip_group or { "h-voices", "studio-scenes" }, ", ")))
+      table.concat(skip_groups, ", ")))
   end
   -- Private: only the given cards, and they are the heroines.
   local roster
   if a.cards then
     if not a.private then error("--cards needs --private (character cards never go into a public package)", 0) end
-    local dir = path.abs(a.cards)
+    local dir = path.abs(a.cards):gsub("/+$", "")
+    local cards_rel = a.studio and ("Content/CharacterCards/" .. path.name(dir)) or "Content/CharacterCards/StreetHeroines"
     roster = json.array({})
     for _, n in ipairs(path.list(dir)) do
       if n:lower():match("%.png$") then
-        local rel = "Content/CharacterCards/StreetHeroines/" .. n
+        local rel = cards_rel .. "/" .. n
         add(path.join(dir, n), rel)
         if #roster < 10 then roster[#roster + 1] = rel end
       end
@@ -270,6 +292,15 @@ local function main()
     for i = 1, math.min(#report.original, 20) do say("  " .. report.original[i]) end
     say("  Cook the stage without them (they must not be referenced by the street's maps) before packing.")
   end
+  table.sort(report.maps)
+  say(("Maps in the paks: %s"):format(#report.maps > 0 and table.concat(report.maps, ", ") or "none"))
+  if a.studio then
+    for _, m in ipairs(report.maps) do
+      if m:match("^OpenKoikatsu/Content/Scenes/StreetSocial/") or m:match("^OpenKoikatsu/Content/UniversityCity/") then
+        stop = true; say("STOP: a street or city map is in the studio's paks: " .. m)
+      end
+    end
+  end
   for top, e in pairs(report.untracked) do
     stop = true
     say(("STOP: %d assets under %s are not tracked in git (e.g. %s); say what they are with --allow %s"):format(e.count, top, e.example, top))
@@ -288,7 +319,9 @@ local function main()
       for _, k in ipairs(keys) do if body:find(k, 1, true) then leaks[#leaks + 1] = e[2] end end
     end
   end
-  for _, k in ipairs(keys) do if template:find(k, 1, true) then leaks[#leaks + 1] = "Saved/StreetSocial/player.json" end end
+  if not a.studio then
+    for _, k in ipairs(keys) do if template:find(k, 1, true) then leaks[#leaks + 1] = "Saved/StreetSocial/player.json" end end
+  end
   say(("Keys on this machine: %d, found in the package: %d"):format(#keys, #leaks))
   if #leaks > 0 then stop = true; for _, l in ipairs(leaks) do say("STOP: a key of this machine is in " .. l) end end
 
@@ -315,9 +348,11 @@ local function main()
       { indent = 2 }) .. "\n", { newline = "\n" })
   end
   -- A new player's settings: built-in voices, no keys (they fill them in the settings menu at the top left).
-  path.mkdir(path.join(out, "Saved/StreetSocial"), true)
-  path.write_text(path.join(out, "Saved/StreetSocial/player.json"), template, { newline = "\n" })
-  if roster then
+  if not a.studio then
+    path.mkdir(path.join(out, "Saved/StreetSocial"), true)
+    path.write_text(path.join(out, "Saved/StreetSocial/player.json"), template, { newline = "\n" })
+  end
+  if roster and not a.studio then
     local file = path.join(out, "Content/IndependentResources/StreetSocialData/Launch/heroines.json")
     path.write_text(file, json.encode(json.object({ { "note", "This package's heroines (Tools/package_street_social.lua --cards)." }, { "cards", roster } }),
       { indent = 2, ensure_ascii = false }) .. "\n", { newline = "\n" })
@@ -326,6 +361,10 @@ local function main()
   for _, e in ipairs(plan) do listing[#listing + 1] = e[2] end
   path.write_text(path.join(out, "PACKAGE.json"), json.encode(json.object({ { "schema", 1 }, { "made", os.date("!%Y-%m-%dT%H:%M:%SZ") },
     { "stage", path.name(stage) }, { "commit", util.strip(proc.run({ "git", "-C", root, "rev-parse", "HEAD" }, { capture = true }).stdout) },
+    { "mode", a.studio and "studio" or "street" }, { "private", a.private and true or false },
+    { "skip_groups", json.array(a.private and skip_groups or {}) }, { "maps_in_paks", json.array(report.maps) },
+    { "cook", a.studio and "/Engine/Maps/Entry + DirectoriesToAlwaysCook (rebuild_street_social_runtime.lua --studio)"
+      or "StreetSocial + UniversityCity maps + DirectoriesToAlwaysCook (rebuild_street_social_runtime.lua)" },
     { "files", listing } }), { indent = 1, ensure_ascii = false }) .. "\n", { newline = "\n" })
   say("Packed into " .. win(out))
   if a.zip then

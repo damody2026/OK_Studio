@@ -48,15 +48,26 @@ end
 
 local function default_say(s) io.write(s, "\n"); io.flush() end
 
+-- Studio*.stage is the OK Studio-only build (rebuild_street_social_runtime.lua --studio: no street or city map cooked),
+-- kept apart like CrowdRoom*.stage. kind: nil = a street stage (StreetSocial.cmd), "studio" = Studio stages only (the
+-- studio packer), "any" = either (the scene editor runs in both).
+function M.is_studio(name) return path.name(name):lower():match("^studio") ~= nil end
+function M.kind_ok(name, kind)
+  if kind == "any" then return true end
+  if kind == "studio" then return M.is_studio(name) end
+  return not M.is_studio(name)
+end
+
 -- Newest usable StreetSocial stage under root's Saved/StreetSocial/Build. Each stage left out is printed with the reason
--- (through say, default stdout). Returns the exe, the stage folder, its name and its staged_at line; nil when none.
-function M.newest(root, say)
+-- (through say, default stdout). kind picks street, studio or any stages (M.kind_ok; default street). Returns the exe,
+-- the stage folder, its name and its staged_at line; nil when none.
+function M.newest(root, say, kind)
   say = say or default_say
   local dir = M.dir(root)
   if not path.is_dir(dir) then return nil end
   local best, best_time, best_name, best_how = nil, -1, nil, nil
   for _, n in ipairs(path.list(dir)) do
-    if n:lower():match("%.stage$") and not n:lower():match("^crowdroom") then
+    if n:lower():match("%.stage$") and not n:lower():match("^crowdroom") and M.kind_ok(n, kind) then
       local exe, t, how, problem = M.info(path.join(dir, n))
       if problem then say(("  Skipped stage %s: %s"):format(n, problem))
       elseif t > best_time then best, best_time, best_name, best_how = exe, t, n, how end
@@ -79,6 +90,34 @@ function M.named(root, name, flag)
   local exe, _, how, problem = M.info(stage)
   if problem then error(("%s %s: %s"):format(flag, name, problem), 0) end
   return exe, stage, path.name(stage), how
+end
+
+-- Running a stage's game from a package (no editor or project): the stage's Content gets links to this folder's
+-- IndependentResources, KKPreview and CharacterCards when missing (a copied stage comes without them; the studio's card
+-- browser and the reader's StreetHeroines list the game's own Content/CharacterCards), the runtime patch is mounted
+-- (runtime.json "patch"), the cooked material parents are named (runtime.json "materials") and the cooked game reads the shared resources by absolute path. Returns the extra arguments
+-- and the environment to add.
+function M.packaged_launch(root, exe)
+  local content = path.join(path.parent(path.parent(path.parent(exe))), "Content")
+  for _, name in ipairs({ "IndependentResources", "KKPreview", "CharacterCards" }) do
+    local link, target = path.join(content, name), path.join(root, "Content", name)
+    if path.is_dir(content) and not path.exists(link) and path.is_dir(target) then
+      local made = proc.run({ "cmd", "/c", "mklink", "/J", (link:gsub("/", "\\")), (target:gsub("/", "\\")) }, { quiet = true })
+      io.write(made.ok and "Linked " or "Could not link ", link, " -> ", target, "\n")
+    end
+  end
+  local args = {}
+  local launch_file = path.join(root, "Content/IndependentResources/StreetSocialData/Launch/runtime.json")
+  local launch = path.is_file(launch_file) and json.decode(path.read_text(launch_file)) or {}
+  local patch = launch.patch and path.join(root, launch.patch)
+  if patch and path.exists(patch) then args[#args + 1] = "-pakdir=" .. patch end
+  -- The cooked shared material parents (in the patch): the editor finds them by itself, a packaged game is told
+  -- (KKPreviewRuntimeMaterials.inl; not through -StreetSocialManifest=, which turns the reader's UI off).
+  local materials_file = launch.materials and path.join(root, launch.materials)
+  local materials = materials_file and path.is_file(materials_file) and json.decode(path.read_text(materials_file)) or {}
+  if type(materials.root) == "string" and materials.root ~= "" then args[#args + 1] = "-RuntimeMaterialRoot=" .. materials.root end
+  if type(materials.hg_root) == "string" and materials.hg_root ~= "" then args[#args + 1] = "-HGMaterialRoot=" .. materials.hg_root end
+  return args, { OK_BUILTIN_RESOURCES = (path.join(root, "Content/IndependentResources/v1"):gsub("/", "\\")) }
 end
 
 return M

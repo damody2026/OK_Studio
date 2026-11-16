@@ -1,4 +1,6 @@
--- Card reader (OpenKoikatsuGameMode) in UnrealEditor -game (CardReaderDevelopment.cmd).
+-- Card reader (OpenKoikatsuGameMode) in UnrealEditor -game (CardReaderDevelopment.cmd). In a package
+-- (Tools/package_street_social.lua: no project or editor) it runs in the packaged game instead: the newest stage
+-- (Tools/street_stage.lua), on the cooked /Engine/Maps/Templates/Template_Default, with StreetHeroines as the default cards.
 --
 --   Tools\lua\lua.exe Tools\run_card_reader_development.lua [-CardDirectory DIR | -StreetHeroines] [-WindowWidth N]
 --     [-WindowHeight N] [-CpuSkin] [-Engine ROOT] [-NoBuild] [-DryRun] [-- UNREAL_ARGS...]
@@ -14,6 +16,7 @@ local fs = require "okfs"
 local editor = require "ok_editor_modules"
 local instance = require "ok_instance"
 local player_settings = require "street_player_settings"
+local street_stage = require "street_stage"
 
 local SWITCHES = { cpuskin = true, nobuild = true, dryrun = true, streetheroines = true }
 local VALUES = { carddirectory = true, windowwidth = true, windowheight = true, engine = true }
@@ -55,37 +58,55 @@ local function main()
   local height = size(o, "windowheight", 1000, 480, 4320)
   local gpu = not o.cpuskin
 
-  -- The prepared APNG library by default; an explicit directory (even "") wins.
+  local project = path.join(root, "OpenKoikatsu.uproject")
+  local editor_exe = path.join(engine, "Engine/Binaries/Win64/UnrealEditor.exe")
+  local stage_exe, stage_name
+  if not path.is_file(project) or not path.is_file(editor_exe) then
+    local how
+    stage_exe, _, stage_name, how = street_stage.newest(root, nil, "any")
+    if not stage_exe then error("No editor and no usable stage in " .. street_stage.dir(root), 0) end
+    io.write(("Stage: %s (newest; %s)\n"):format(stage_name, how))
+  end
+
+  -- The prepared APNG library by default (a package: its street heroines); an explicit directory (even "") wins.
   local street = path.join(root, "Content/CharacterCards/StreetHeroines")
   if o.streetheroines and o.carddirectory ~= nil then error("-StreetHeroines and -CardDirectory are exclusive", 0) end
   local cards = o.streetheroines and street or o.carddirectory
   if cards == nil then
     local prepared = path.join(root, "Content/CharacterCards/CrowdAPNG")
-    cards = path.is_dir(prepared) and prepared or ""
+    cards = path.is_dir(prepared) and prepared or (stage_exe and path.is_dir(street) and street) or ""
   end
   if cards ~= "" then
     cards = path.abs(cards)
     if not path.is_dir(cards) then error("Card directory does not exist: " .. cards, 0) end
   end
 
-  editor.ensure(root, engine, { build = not o.nobuild and not o.dryrun })
-
-  local project = path.join(root, "OpenKoikatsu.uproject")
-  local exe = path.join(engine, "Engine/Binaries/Win64/UnrealEditor.exe")
-  local manifest = path.join(root, "Binaries/Win64/UnrealEditor.modules")
-  for _, f in ipairs({ project, exe, manifest }) do
-    if not path.is_file(f) then error("Missing launch dependency: " .. f, 0) end
+  local exe, module = stage_exe or editor_exe, stage_exe
+  if not stage_exe then
+    editor.ensure(root, engine, { build = not o.nobuild and not o.dryrun })
+    local manifest = path.join(root, "Binaries/Win64/UnrealEditor.modules")
+    for _, f in ipairs({ project, exe, manifest }) do
+      if not path.is_file(f) then error("Missing launch dependency: " .. f, 0) end
+    end
+    module = json.decode((path.read_text(manifest):gsub("^\239\187\191", ""))).Modules.OpenKoikatsu
+    module = module and path.join(path.parent(manifest), module)
+    if not module or not path.is_file(module) then error("Missing project module: " .. tostring(module), 0) end
   end
-  local module = json.decode((path.read_text(manifest):gsub("^\239\187\191", ""))).Modules.OpenKoikatsu
-  module = module and path.join(path.parent(manifest), module)
-  if not module or not path.is_file(module) then error("Missing project module: " .. tostring(module), 0) end
 
   local log_root = path.join(root, "Saved/Logs/CardReader")
   local tag = os.date("%Y%m%d-%H%M%S") .. ("-%08x"):format(math.random(0, 0x7fffffff))
   local log = path.join(log_root, tag .. ".log")
   -- Explicit map and game mode: a saved crowd/demo startup map must not take over.
-  local args = { exe, project, "/Engine/Maps/Templates/Template_Default?game=/Script/OpenKoikatsu.OpenKoikatsuGameMode", "-game", "-windowed",
-    "-ResX=" .. width, "-ResY=" .. height, "-NoSplash", "-nop4", "-abslog=" .. log, table.unpack(o.passthrough) }
+  local map = "/Engine/Maps/Templates/Template_Default?game=/Script/OpenKoikatsu.OpenKoikatsuGameMode"
+  local args = stage_exe and { exe, map, "-D3D12", "-SM6" } or { exe, project, map, "-game" }
+  for _, x in ipairs({ "-windowed", "-ResX=" .. width, "-ResY=" .. height, "-NoSplash", "-nop4", "-abslog=" .. log }) do args[#args + 1] = x end
+  local stage_env = {}
+  if stage_exe and not o.dryrun then
+    local extra
+    extra, stage_env = street_stage.packaged_launch(root, stage_exe)
+    for _, x in ipairs(extra) do args[#args + 1] = x end
+  end
+  for _, x in ipairs(o.passthrough) do args[#args + 1] = x end
   local receipt = json.object({ { "project", project }, { "executable", exe }, { "arguments", json.array({ table.unpack(args, 2) }) },
     { "module", module }, { "card_directory", cards }, { "log", log }, { "skinning", gpu and "GPU" or "CPU" } })
   if o.dryrun then io.write(json.encode(receipt, { indent = 2, ensure_ascii = false }), "\n"); return end
@@ -127,6 +148,7 @@ local function main()
     OK_WARM_PRIORITY = false,
     OK_CPU_SKIN = gpu and "0" or "1", OK_GPU_SKIN = gpu and "1" or "0", OK_SKELMESH = gpu and "1" or "0",
     OK_NOPOSE = false, OK_UE_ANIM = false, OK_HEAD_GPUSKIN = false }
+  for k, v in pairs(stage_env) do env[k] = v end
   local saved = {}
   for k, v in pairs(env) do saved[k] = fs.getenv(k) or false; fs.setenv(k, v or nil) end
   local okv, pid = pcall(proc.spawn, args, { cwd = root })

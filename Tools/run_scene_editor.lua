@@ -51,23 +51,11 @@ local function size(o, key, default, lo, hi)
   return v
 end
 
--- Newest usable StreetSocial stage game: the same pick as StreetSocial.cmd (Tools/street_stage.lua).
+-- Newest usable stage game, street or Studio-only (Tools/street_stage.lua; the same rules as StreetSocial.cmd).
 local function newest_stage(root)
-  local exe, _, name, how = street_stage.newest(root)
+  local exe, _, name, how = street_stage.newest(root, nil, "any")
   if exe then io.write(("Stage: %s (newest; %s)\n"):format(name, how)) end
   return exe
-end
-
--- A packaged stage comes without its junctions into this folder's Content: made here when missing.
-local function link_stage_content(root, exe)
-  local content = path.join(path.parent(path.parent(path.parent(exe))), "Content")
-  for _, name in ipairs({ "IndependentResources", "KKPreview" }) do
-    local link, target = path.join(content, name), path.join(root, "Content", name)
-    if path.is_dir(content) and not path.exists(link) and path.is_dir(target) then
-      local made = proc.run({ "cmd", "/c", "mklink", "/J", (link:gsub("/", "\\")), (target:gsub("/", "\\")) }, { quiet = true })
-      io.write(made.ok and "Linked " or "Could not link ", link, " -> ", target, "\n")
-    end
-  end
 end
 
 local function main()
@@ -132,12 +120,9 @@ local function main()
   if stage_exe then
     -- Like StreetSocial.cmd: the stage's Content links to this folder's resources, the runtime patch is mounted, and
     -- the cooked game reads the shared resources by absolute path.
-    link_stage_content(root, stage_exe)
-    local launch_file = path.join(root, "Content/IndependentResources/StreetSocialData/Launch/runtime.json")
-    local launch = path.is_file(launch_file) and json.decode(path.read_text(launch_file)) or {}
-    local patch = launch.patch and path.join(root, launch.patch)
-    if patch and path.exists(patch) then args[#args + 1] = "-pakdir=" .. patch end
-    env.OK_BUILTIN_RESOURCES = (path.join(root, "Content/IndependentResources/v1"):gsub("/", "\\"))
+    local extra, extra_env = street_stage.packaged_launch(root, stage_exe)
+    for _, x in ipairs(extra) do args[#args + 1] = x end
+    for k, v in pairs(extra_env) do env[k] = v end
   end
   if scene then args[#args + 1] = "-OKScene=" .. scene end
   if story then args[#args + 1] = "-OKStory=" .. story end
