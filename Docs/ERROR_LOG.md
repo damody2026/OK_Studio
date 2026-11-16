@@ -4795,4 +4795,4 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 原因：1819fb109 把 Unity render queue 轉成 `TranslucencySortPriority` 時每一級乘 1000，但 scene proxy 會把它夾到 int16（`PrimitiveSceneProxy.cpp:313`）。queue 3032 以上一律變 32767，C088 服裝 7 的褲襪本體（3050）和它的 Material Editor 複本（`IBL_Shader_alpha`，3041）優先度相同，改由距離決定、逐幀交換：複本在上就是黑亮，本體在上是原作的棕色半透明。同一次開卡、不重載也會閃（10 秒間隔拍到 105→0→105）。Rust 端開卡結果是決定性的（`reopening_a_card_gives_the_same_parts`，5 張卡各開 3 次一致）。
 - 修正：每級 256，queue 和 3000 差 64 以內精確、以外每 8 級一步，上限 ±127 級（±32512，加上同 queue 內 -100..+110 的層次仍在 int16 內）。C088 服裝 7 一次開卡連拍 20 張、再重開 3 次各 8 張，全部棕色。
 - 影響：排序版與單向關節版兩次全跑都有這個閃爍，凡是同一面有兩層 queue 3032 以上半透明的卡，全跑差異可能只是閃爍。修正後重跑全跑再對照。
-- 預防：寫進引擎欄位的值先查欄位實際型別與夾值（int16、uint8 等），不要只看 setter 的參數型別。
+- 預防：`UPrimitiveComponent::TranslucencySortPriority` 雖是 int32，scene proxy 會夾到 int16（-32768..32767，`Engine/Source/Runtime/Engine/Private/PrimitiveSceneProxy.cpp:313`）。任何把 Unity render queue 線性映射成 UE 排序優先度的做法，都要先算出最大、最小值是否落在 int16 內，再加上同 queue 內的層次（-100..+110）。寫進引擎欄位的值一律先查欄位實際型別與夾值，不要只看 setter 的參數型別。
