@@ -6,7 +6,9 @@
 --     level actors use each mesh (a cut changes the mesh asset: shared = every actor using it gets the hole)
 --   thin: a 10x10x187 cm box 3 cm over the floor per cell; '.' clear, ' ' no floor within 15 cm, otherwise the letter of
 --     the actor it hits (legend: letter -> label)
---   fat: the same with a 40x40 cm box (the game's route capsule); '.' clear, '#' blocked
+--   fat: the same with a 40x40 cm box; '.' clear, '#' blocked. Not the game's test: see game
+--   game: the game's grid cell test on its 40 cm lattice (rows from game_origin, +40 cm each); only this one says whether
+--     the game can walk there
 -- Optional find = { words = [...], places = [{ name, box = [x0,y0,z0,x1,y1,z1] }] }: every actor whose label, object name or mesh path
 --   holds a word, inside a place's box (result `found`), e.g. the stairs of the shops with floors and no stair anchors
 -- Optional heights = [{ name, box = [x0,y0,x1,y1], top, low, step }]: a line down per cell from `top` (just over the upper
@@ -64,7 +66,32 @@ def motel_world_room_survey():
      rf.append('.' if box(x,y,f,20) is None else '#')
     x+=STEP
    thin.append(''.join(rt));fat.append(''.join(rf));y+=STEP
-  areas.append(dict(name=ar['name'],box=ar['box'],z=Z,step=STEP,actors=inside,legend={v:k for k,v in leg.items()},thin=thin,fat=fat))
+  # game: the game's own cell test (NavCellFree): cells on the fixed 40 cm lattice, a capsule of radius 40 then 30, half
+  # height 60, centred 105 cm over the floor, overlapping WorldStatic by simple collision. thin/fat trace complex collision
+  # on the visibility channel and slide with the step, so they can call a way open that the game's grid finds closed
+  # (clinic_gyn waiting room, 2026-11-16). '.' free at 40, ',' free at 30 only, ' ' no floor, else the letter at 30.
+  game=[];WS=[unreal.ObjectTypeQuery.OBJECT_TYPE_QUERY1]
+  def capsule(x,y,f,r):
+   res=unreal.SystemLibrary.capsule_overlap_actors(world,V(x,y,f+105),r,60,WS,None,[])
+   acts_=res[1] if isinstance(res,tuple) else res  # the bound returns only the out list
+   return acts_[0].get_actor_label() if acts_ else None
+  import math
+  gy=math.ceil(Y0/40)*40
+  while gy<Y1:
+   row=[];gx=math.ceil(X0/40)*40
+   while gx<X1:
+    f=floor(gx,gy)
+    if f is None or abs(f-Z)>15:row.append(' ')
+    elif capsule(gx,gy,f,40) is None:row.append('.')
+    else:
+     w=capsule(gx,gy,f,30)
+     if w is None:row.append(',')
+     else:
+      if w not in leg:leg[w]=LET[len(leg)] if len(leg)<len(LET) else '#'
+      row.append(leg[w])
+    gx+=40
+   game.append(''.join(row));gy+=40
+  areas.append(dict(name=ar['name'],box=ar['box'],z=Z,step=STEP,actors=inside,legend={v:k for k,v in leg.items()},thin=thin,fat=fat,game=game,game_origin=[math.ceil(X0/40)*40,math.ceil(Y0/40)*40]))
  # find: actors whose label or mesh path holds one of the words (lower case), inside each place's box (its rooms' extent)
  found=[]
  fd=cfg.get('find')
