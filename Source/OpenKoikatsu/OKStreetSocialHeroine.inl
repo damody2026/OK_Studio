@@ -82,9 +82,12 @@ void AOKStreetSocialScene::HeroineRefuseGate(int32 Girl,const FString& ActId,con
  if(ApplyRulesRelation(Id,Answer))S.GatePenaltyAt=SceneTime();
  S.MindRecent.Add(Id,What);
  UE_LOG(LogTemp,Display,TEXT("Street heroine gate: actor=%d %s refused (stage %d)"),Girl,*ActId,int32((*Gate)->GetNumberField(TEXT("stage"))));
+ // Shown in every case: with no AI talk (no key, -NoCloud) the nudge below went nowhere, and the hug button did nothing
+ // anyone could see (惠惠 in the library, round 15). Her own words follow when the talk can ask for them.
+ S.FreeTalkNotice=OKStreetScriptedName(S.Manifest.Characters[Girl].Name)+OKT(TEXT("ui.heroine.dodged_suffix"));RefreshUI();
  if(FreeTalkPartner()==Girl&&!S.FreeTalkBusy&&SceneTime()-S.GateNudgeAt>20.0){
   S.GateNudgeAt=SceneTime();S.SystemNote=true;S.FreeTalkDraft=OKT(TEXT("ui.finance_apps.open_paren"))+What+OKT(TEXT("ui.heroine.react_in_character_suffix"));SendFreeTalk();
- }else{S.FreeTalkNotice=OKStreetScriptedName(S.Manifest.Characters[Girl].Name)+OKT(TEXT("ui.heroine.dodged_suffix"));RefreshUI();}
+ }
 }
 
 // Settled elsewhere (her consent and values were the caller's): her record and the rumour, in the caller's words.

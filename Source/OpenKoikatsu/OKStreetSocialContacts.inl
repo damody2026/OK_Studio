@@ -121,7 +121,7 @@ void AOKStreetSocialScene::NavigateGirl(int32 Character){
  // A new walk: the cells the last one learned blocked were for its way round. Kept, one failed walk on civic's 5F had the
  // lift landing's cell learned blocked, and every walk from that floor after it said "no way" till the game was restarted
  // (c-street-city, nav1116d, 2026-11-16).
- S.NavLearned.Reset();
+ S.NavLearned.Reset();S.NavPrevPlan.Reset();S.NavSamePlan=0;
  S.NavAround.Reset();S.NavRide=FOKStreetLiftRide();S.NavGirl=Character;S.NavPointActive=false;S.NavAt=0;S.NavStep=1;S.NavReplans=0;S.NavBlockedAt=FVector(1e9);S.NavProgressAt=SceneTime();S.NavPath=ContactRoute(S.Male,S.Agents[Character-1].Position);S.ContactsNotice=OKT(TEXT("ui.contacts.auto_travel_to_her_hint"));}
 void AOKStreetSocialScene::NavigatePoint(const FVector& Spot,const FString& Name){
  if(!State)return;auto& S=*State;
@@ -129,7 +129,7 @@ void AOKStreetSocialScene::NavigatePoint(const FVector& Spot,const FString& Name
  if(S.Target!=INDEX_NONE||S.PrivateGirl!=INDEX_NONE||S.Pair.Partner!=INDEX_NONE||S.OutingGirl!=INDEX_NONE||S.Facility!=INDEX_NONE){S.Message=OKT(TEXT("ui.contacts.end_activity_before_map_nav"));return;}
  // On his floor the street grid is searched a slice a frame (TickNavSearch, 3 ms each): a long route held the frame
  // 6-8 ms. Another floor: the place graph (doors and corridors), at once.
- S.NavSearch.Reset();S.NavLearned.Reset(); // a new walk: not the last one's learned cells (NavigateGirl)
+ S.NavSearch.Reset();S.NavLearned.Reset();S.NavPrevPlan.Reset();S.NavSamePlan=0; // a new walk: not the last one's learned cells (NavigateGirl)
  if(OKStreetCityMode()&&OKStreetCityFar(S.Male,Goal)){NavigatePointAlong(Goal,Name,CityRoute(S.Male,Goal));return;}
  if(FMath::Abs(S.Male.Z-Goal.Z)<150.f){S.NavSearch=MakeShared<FOKStreetGridSearch>();S.NavSearch->From=S.Male;S.NavSearch->To=Goal;S.NavSearchGoal=Goal;S.NavSearchName=Name;return;}
  NavigatePointAlong(Goal,Name,PlaceRouteWaypoints(S.Male,Goal));
@@ -168,7 +168,7 @@ void AOKStreetSocialScene::StopNavigation(const FString& Notice){
  if(!State)return;auto& S=*State;S.NavSearch.Reset();S.NavAround.Reset();S.NavGirl=INDEX_NONE;S.NavPointActive=false;S.NavPath.Reset();S.NavRide=FOKStreetLiftRide();S.ContactsNotice.Reset();
  // The cells learned blocked were for this walk's way round: kept, the girls' dorm door he was wedged in stayed shut to
  // every later walk there ("the way is blocked" 9 m from her, R6-207).
- S.NavLearned.Reset();
+ S.NavLearned.Reset();S.NavPrevPlan.Reset();S.NavSamePlan=0;
  if(!Notice.IsEmpty())S.Message=Notice;
 }
 void AOKStreetSocialScene::ToggleBigMap(){
@@ -551,6 +551,15 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
     if(Path.Num()<2)return NoWay(TEXT("to the lift landing again"));
     if(Path.Num()==2&&S.NavPath.Num()==2&&S.NavReplans>=4)return NoWay(TEXT("to the lift landing again, the same straight line"));
     S.NavPath=MoveTemp(Path);S.NavStep=1;}
+   // The same way planned again from the spot it stopped him at: no way either, however many points it has. Off the lift
+   // on campus T1's 3F, StaticMeshActor_344 at his shoulder, every plan was the same five points and he walked into it 30
+   // times (round 15, nav1116g): the cells beside the start are let through, so the cell learned there changed nothing.
+   if(S.NavReplans>=2){
+    bool Same=S.NavPrevPlan.Num()==S.NavPath.Num()&&S.NavPath.Num()>=2;
+    for(int32 I=1;Same&&I<S.NavPath.Num();++I)Same=FVector::Dist2D(S.NavPath[I],S.NavPrevPlan[I])<=40.f;
+    S.NavSamePlan=Same?S.NavSamePlan+1:0;S.NavPrevPlan=S.NavPath;
+    if(S.NavSamePlan>=4)return NoWay(TEXT("the same way again from where it stopped him"));
+   }
    {
     // What is in the way: the clearance gap on his side, and the first thing a body-sized sweep toward the next point hits.
     FString Hit=TEXT("none");FCollisionQueryParams Q(SCENE_QUERY_STAT(StreetNavWhy),false,this);FHitResult H;const FVector Dir=Delta/Distance;
