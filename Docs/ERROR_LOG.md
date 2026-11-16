@@ -4805,6 +4805,11 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 修正：先 claim，確認輸出是 `slotN` 才啟動；排隊時只等，不開任何 Unreal。
 - 防範：啟動遊戲的命令一律寫成 `$r=claim; if("$r" -match '^slot\d'){ 啟動 } else { 停 }`，不把 claim 與啟動無條件串在一起。
 
+## 2026-11-16 打包版讀卡卡片牆是空的：列表的列類別只在編輯器設定（E 組，測試者回報）
+- 錯誤：`UOKCardListView` 建構子整段包在 `#if WITH_EDITOR`，`EntryWidgetClass` 指向從沒被 cook 的 `/Game/UI/WBP_CardListEntry`；打包版沒有列類別，卡片牆只顯示「共 N 張卡片」和「No EntryWidgetClass specified on this list」。dd9129b27 驗收時只用 MCP 的 load 開卡，沒看卡片牆有沒有列，所以漏掉。
+- 修正：編輯器照舊用藍圖（引擎只在編輯器建置檢查列類別必須是藍圖，第一版改成一律原生類別時編輯器顯示「is not a Blueprint class」），打包版改用原生 `UOKCardListEntry`（它自己建列的內容），不必 cook 藍圖；已出的包不能換執行檔，讀卡腳本改成可以把卡片拖到 `CardReaderDevelopment.cmd` 上直接開（`OK_AUTO_3D`／`OK_AUTO_CARD`）。
+- 防範：打包版 UI 驗收要照玩家的操作走一次（看卡片牆、點卡），不能只靠控制通道直接載入；原生類別別在建構子用只有編輯器才找得到的資產。
+
 ## 2026-11-16 包解壓到帶括號的資料夾，角色看不見（測試者 16 GB／8 GB VRAM 回報）
 - 錯誤：測試者把包解壓成 `StreetSocial-20261114-hvoice(1)(1)`。Unreal 讀 `-pakdir=`、`-StreetSocialManifest=` 這類參數時遇到 `)` 或 `,` 就停（`FParse::Value`），路徑被截成 `...hvoice(1`，runtime patch 沒掛上，log 出現「High model shader library RuntimeMaterialBake not found」和 BulkData 錯誤，讀卡開卡成功卻看不見人；街區的 manifest 同樣會讀不到。一開始以為是低規格機器的記憶體或顯卡問題。
 - 修正：`street_stage.ue_path`：路徑含 `,`、`)` 或空白時，改傳相對於執行檔資料夾（遊戲的工作資料夾）的相對路徑；讀卡、場景編輯器、街區啟動器帶路徑的參數都經過它。加引號沒用，遊戲讀的是原始命令列，不是 MSVC 拆好的 argv。

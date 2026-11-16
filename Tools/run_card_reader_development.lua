@@ -2,9 +2,12 @@
 -- (Tools/package_street_social.lua: no project or editor) it runs in the packaged game instead: the newest stage
 -- (Tools/street_stage.lua), on the cooked /Engine/Maps/Templates/Template_Default, with StreetHeroines as the default cards.
 --
---   Tools\lua\lua.exe Tools\run_card_reader_development.lua [-CardDirectory DIR | -StreetHeroines] [-WindowWidth N]
+--   Tools\lua\lua.exe Tools\run_card_reader_development.lua [CARD.png] [-CardDirectory DIR | -StreetHeroines] [-WindowWidth N]
 --     [-WindowHeight N] [-CpuSkin] [-Engine ROOT] [-NoBuild] [-DryRun] [-- UNREAL_ARGS...]
 -- Option names are case-insensitive and may also be written --card-directory, ... ; -Name:value works too.
+-- CARD.png (or a card dropped on CardReaderDevelopment.cmd): that card opens in 3D at once, its folder is the card wall.
+-- Packaged games built before the OKCardListView fix show an empty card wall (its row class was set only in the
+-- editor), so in such a package this is the way to open a card.
 --
 -- Before launching, the editor build must match the shared engine (Tools/ok_editor_modules.lua). When another checkout
 -- rebuilt the engine, this checkout's OpenKoikatsuEditor is rebuilt here (-NoEngineChanges) unless -NoBuild is given.
@@ -30,7 +33,11 @@ local function parse(argv)
     if raw == "--" then table.move(argv, i + 1, #argv, 1, o.passthrough); break end
     local name, inline = raw:match("^%-%-?([%w%-]+):(.*)$")
     if not name then name = raw:match("^%-%-?([%w%-]+)$") end
-    if not name then error("unexpected argument: " .. raw, 0) end
+    if not name then
+      -- A bare argument is a card to open (a PNG dropped onto CardReaderDevelopment.cmd).
+      if o.card or not raw:lower():match("%.png$") then error("unexpected argument: " .. raw, 0) end
+      o.card = raw; i = i + 1; goto continue
+    end
     local key = name:gsub("%-", ""):lower()
     if SWITCHES[key] then o[key] = true
     elseif VALUES[key] then
@@ -40,6 +47,7 @@ local function parse(argv)
       o[key] = v
     else error("unknown option: " .. raw, 0) end
     i = i + 1
+    ::continue::
   end
   return o
 end
@@ -71,7 +79,9 @@ local function main()
   -- The prepared APNG library by default (a package: its street heroines); an explicit directory (even "") wins.
   local street = path.join(root, "Content/CharacterCards/StreetHeroines")
   if o.streetheroines and o.carddirectory ~= nil then error("-StreetHeroines and -CardDirectory are exclusive", 0) end
-  local cards = o.streetheroines and street or o.carddirectory
+  local card = o.card and path.abs(o.card)
+  if card and not path.is_file(card) then error("Card does not exist: " .. card, 0) end
+  local cards = o.streetheroines and street or o.carddirectory or (card and path.parent(card))
   if cards == nil then
     local prepared = path.join(root, "Content/CharacterCards/CrowdAPNG")
     cards = path.is_dir(prepared) and prepared or (stage_exe and path.is_dir(street) and street) or ""
@@ -99,7 +109,7 @@ local function main()
   -- Explicit map and game mode: a saved crowd/demo startup map must not take over.
   local map = "/Engine/Maps/Templates/Template_Default?game=/Script/OpenKoikatsu.OpenKoikatsuGameMode"
   local args = stage_exe and { exe, map, "-D3D12", "-SM6" } or { exe, project, map, "-game" }
-  for _, x in ipairs({ "-windowed", "-ResX=" .. width, "-ResY=" .. height, "-NoSplash", "-nop4", "-abslog=" .. log }) do args[#args + 1] = x end
+  for _, x in ipairs({ "-windowed", "-ResX=" .. width, "-ResY=" .. height, "-NoSplash", "-nop4", "-abslog=" .. (stage_exe and street_stage.ue_path(stage_exe, log) or log) }) do args[#args + 1] = x end
   local stage_env = {}
   if stage_exe and not o.dryrun then
     local extra
@@ -144,7 +154,7 @@ local function main()
     OK_FREE_TALK_SETTINGS = path.is_file(settings_file) and (settings_file:gsub("/", "\\")) or false,
     OK_FREE_TALK_PERSONAS = (path.join(root, "Content/IndependentResources/StreetSocialData/free_talk_personas.json"):gsub("/", "\\")),
     OK_TTS_ENDPOINT = tts_endpoint,
-    OK_MIND_DLL = path.is_file(mind_dll) and (mind_dll:gsub("/", "\\")) or false, OK_AUTO_3D = "0", OK_AUTO_CARD = false, OK_CARD_DIRECTORY = cards ~= "" and (cards:gsub("/", "\\")) or false,
+    OK_MIND_DLL = path.is_file(mind_dll) and (mind_dll:gsub("/", "\\")) or false, OK_AUTO_3D = card and "1" or "0", OK_AUTO_CARD = card and path.name(card) or false, OK_CARD_DIRECTORY = cards ~= "" and (cards:gsub("/", "\\")) or false,
     OK_WARM_PRIORITY = false,
     OK_CPU_SKIN = gpu and "0" or "1", OK_GPU_SKIN = gpu and "1" or "0", OK_SKELMESH = gpu and "1" or "0",
     OK_NOPOSE = false, OK_UE_ANIM = false, OK_HEAD_GPUSKIN = false }
