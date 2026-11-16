@@ -172,3 +172,5 @@
 - 依據：C074 服裝 1（旗袍）後片裙鏈在站姿下，原始 Verlet 與原作 CharaStudio 物理後角度逐位一致（-2.2337／-3.1237／-16.2113／0°）；PhysX 為 -7.05／-7.94／-10.47／-0.11°，後片貼進臀部。回歸測試 `session::jump_probe_tests::qipao_back_skirt_settles_as_the_game`（ignored，需本機卡）。
 - **預設不變**：第 5 節的元件預設（2026-10-18 使用者定案）仍是衣服、飾品、尾巴用 PhysX。衣服是否改預設待使用者決定；飾品、尾巴沒有證據，維持 PhysX。
 - PhysX 保真度：`OKPhysXSecondary.OneWayJoints`（預設 1）讓粒子的關節（目標彈簧、骨長、凍結平面）只動子粒子、不動父粒子，對應 DynamicBone 的單向投影；0 為舊的雙向關節。
+- 單向關節實測（2026-11-16，讀卡器，整合後 d7aaf16e6 建置）：C074 服裝 1 T-pose 的 cf_j_sk_04_00..03，OneWayJoints=1 為 -2.64／-2.60／-15.51／-0.21°，=0 為 -7.05／-7.94／-10.47／-0.11°，原作 -2.23／-3.12／-16.21／0°；背面露內褲已消失。C011 服裝 1 的九尾：原作物理後在腰部高度往兩側扇形展開，OneWayJoints=1 一致，=0 整串下垂（`Saved/Reports/reader-jump-20261116/tail/`）。101×7 蹦跳全跑沒有新的裙子穿腿或穿身體。
+- **PhysX 後端的已知近似誤差**：單向化後仍差約 0.4–0.7°。逐項改參數量（`Saved/Reports/reader-jump-20261116/residual_variants.txt`）：LimitStiffness（100～1e7）、碰撞全關都不變；DriveDamping 0／2、Substep 1/60～1/480、LengthStiffness 1000、ProjectionPasses 0 各動 0.1–1°，方向互相不一致，沒有單一約束能解釋誤差，所以不再追。內建 Verlet（`verlet` 解算器或「物理：原始 Verlet」）可以逐位重現原作。
