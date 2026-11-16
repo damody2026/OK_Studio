@@ -196,6 +196,7 @@ private:
     TArray<FAibuPose> AibuPoses;
     TMap<FString,FString> SoloKeys;      // state -> clip key of the active caress pose
     FString SoloState;double SoloStarted=0.;
+    float SoloFadeSeconds=0.f; // the next PlaySolo cross-fades over this long (letting go of a place), 0 cuts
     int32 SoloInfo=0;void TickSolo(float Delta); // she plays by herself (HMasturbation, HPeeping)
     // The second heroine of the lesbian and 3P poses: her own actor at her place, on her clock, playing the pose's second role.
     UPROPERTY() TObjectPtr<class AKKPreviewActor> Second;

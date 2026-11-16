@@ -1359,7 +1359,7 @@ bool FOkSession::SetAnimationTrigger(const FString& Name)
 }
 bool FOkSession::CrossFadeAnimation(const FString& Name,float Duration,float Offset)
 {
-	if (bPortable) return false;
+	// An OK card's session samples the same controllers (the H caress lets go through here); Rust refuses what it cannot fade.
 
     FTCHARToUTF8 Utf8(*Name);return Handle&&ok_animation_crossfade(Handle,Utf8.Get(),Duration,Offset)==0;
 }
