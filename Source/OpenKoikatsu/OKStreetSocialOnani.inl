@@ -26,7 +26,9 @@ void AOKStreetSocialScene::StopOnani(bool bSettle){
   const float Desire=OKStreetViewRelation(S.Store,OKStreetStableId(S.Manifest.Characters[Girl]),S.Manifest.TalkBudget).SexDesire;
   if(Field!=INDEX_NONE)SetCharacterStat(Girl,Field,FMath::Max(0.f,Desire-10.f*S.OnaniClimaxes));
  }
- S.OnaniCooldown.Add(Girl,SceneTime()+120.0);
+ // Not again soon: some six game hours (a minute is 2.5 s at the street's clock), not 120 s, so her room is not where she
+ // keeps going back to the moment the last time is over.
+ S.OnaniCooldown.Add(Girl,SceneTime()+900.0);
  UE_LOG(LogTemp,Display,TEXT("Street onani: actor %d stops after %d climaxes (%s)"),Girl,S.OnaniClimaxes,bSettle?TEXT("her hour is up"):TEXT("interrupted"));
 }
 
@@ -37,13 +39,25 @@ void AOKStreetSocialScene::TickOnani(double Now){
   const int32 Minute=int32(OKStreetMindNow(S)%1440);
   // The nearest of those at full desire who are out and about (not with him, not sitting at her post, not asleep).
   int32 Best=INDEX_NONE;float BestD=MAX_flt;
+  // Why each at full desire is not the one (logged every 30 s): she may be held all day for a reason no one sees.
+  FString Why;const bool Explain=Now>=S.OnaniExplainAt;
   for(const auto& Agent:S.Agents){const int32 I=Agent.Slot;
-   if(!S.Manifest.Characters.IsValidIndex(I)||!OKStreetIsFemaleTarget(I,S.Manifest.Characters[I])||(Agent.Held&&!S.ScheduleHeld.Contains(I))||BusyWithPlayer(I)||InLifePose(I)||S.AmbientActor==I||S.Commutes.Contains(I)||S.NpcLifts.Contains(I)||S.OnaniCooldown.FindRef(I)>Now)continue;
+   if(!S.Manifest.Characters.IsValidIndex(I)||!OKStreetIsFemaleTarget(I,S.Manifest.Characters[I]))continue;
    if(OKStreetViewRelation(S.Store,OKStreetStableId(S.Manifest.Characters[I]),S.Manifest.TalkBudget).SexDesire<OKStreetSexDesireMax)continue;
-   const FOKStreetPlanBlock* B=LifeBlock(I,Minute);if(B&&(B->Kind==TEXT("sleep")||B->Kind==TEXT("bath")))continue;
-   FOKRuntimeCharacterStatus Status;if(!OKGetCrowdRuntimeCharacterStatus(this,I,Status)||!Status.Visible||!Status.ActionsReady||!Status.Error.IsEmpty())continue;
+   const TCHAR* Skip=nullptr;
+   if(Agent.Held&&!S.ScheduleHeld.Contains(I))Skip=TEXT("held");else if(BusyWithPlayer(I))Skip=TEXT("with him");else if(InLifePose(I))Skip=TEXT("life pose");
+   else if(S.AmbientActor==I)Skip=TEXT("ambient");else if(S.Commutes.Contains(I))Skip=TEXT("walking");else if(S.NpcLifts.Contains(I))Skip=TEXT("lift");else if(S.OnaniCooldown.FindRef(I)>Now)Skip=TEXT("cooldown");
+   if(!Skip){const FOKStreetPlanBlock* B=LifeBlock(I,Minute);if(B&&(B->Kind==TEXT("sleep")||B->Kind==TEXT("bath")))Skip=TEXT("sleep or bath");}
+   if(!Skip){FOKRuntimeCharacterStatus Status;if(!OKGetCrowdRuntimeCharacterStatus(this,I,Status)||!Status.Visible||!Status.ActionsReady||!Status.Error.IsEmpty())Skip=TEXT("not drawn");}
+   // Only somewhere private (ok-rules places.rs self_touch_place): elsewhere she holds it and keeps to her day, her desire
+   // as it is, till her day takes her to her room. 安可 did it in the library at eleven in the morning, 贞德 and 刻晴
+   // wherever they stood (round 15).
+   if(!Skip){auto Ask=OKRulesRequest(TEXT("self_touch_place"));Ask->SetStringField(TEXT("place"),PlaceHere(Agent.Position));Ask->SetNumberField(TEXT("hours"),Minute/60.0);Ask->SetBoolField(TEXT("upstairs"),OKStreetUpstairs(Agent.Position));
+    const TSharedPtr<FJsonObject> Where=OKRulesEval(S,Ask);if(!Where.IsValid()||!Where->GetBoolField(TEXT("ok")))Skip=TEXT("not private");}
+   if(Skip){if(Explain)Why+=FString::Printf(TEXT(" %d:%s@%s"),I,Skip,*PlaceHere(Agent.Position));continue;}
    const float D=FVector::Dist2D(Agent.Position,S.Male);if(D<BestD){BestD=D;Best=I;}
   }
+  if(Explain&&!Why.IsEmpty()){S.OnaniExplainAt=Now+30.0;UE_LOG(LogTemp,Display,TEXT("Street onani: at full desire, not now:%s"),*Why);}
   if(Best==INDEX_NONE)return;
   auto& Agent=S.Agents[Best-1];S.OnaniSaved=Agent;Agent.Held=true;
   S.OnaniGirl=Best;S.OnaniStep=0;S.OnaniPlaying=false;S.OnaniRequested=Now;S.OnaniAskedAt=0;S.OnaniClimaxes=0;S.OnaniStartMinute=OKStreetMindNow(S);

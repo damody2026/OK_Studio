@@ -160,6 +160,20 @@ pub fn react(awkward: f32, shyness: i32, boldness: i32, stage: &str) -> Reaction
     }
 }
 
+/// Where she may touch herself (TickOnani): her own room up in the girls' dorm, or a private room (privacy 2) with
+/// nobody about. 安可 did it in the library at eleven in the morning, 贞德 and 刻晴 wherever they were standing (round 15).
+pub fn self_touch_place(t: &PlacesTuning, place: &str, hours: f64, upstairs: bool) -> Value {
+    if place == "girls_dorm" && upstairs {
+        return json!({"ok": true, "why": "her_room"});
+    }
+    if place.is_empty() {
+        return json!({"ok": false, "why": "outdoors"});
+    }
+    let norms = t.norms(place);
+    let ok = norms.privacy >= 2 && crowd_at(place, hours) <= 0.2;
+    json!({"ok": ok, "why": if ok { "private" } else { "public" }})
+}
+
 /// Where he wakes after skipping to the morning: where he is if there is a bed for him there (his dorm, a hotel, an
 /// inn, the onsen), else his own dorm (not standing all night at the girls' dorm door). Request: place. Answer: place.
 fn wake_place(place: &str) -> &'static str {
@@ -214,6 +228,15 @@ pub fn eval(t: &PlacesTuning, kind: &str, request: &Value) -> Option<Result<Valu
             request.get("minute").and_then(Value::as_i64).unwrap_or(12 * 60),
         )),
         "places_table" => Ok(json!({"default": t.default, "norms": t.norms})),
+        // request: place, hours, upstairs -> {ok, why}: may she touch herself where she is. Only somewhere private: her
+        // room up in the girls' dorm, or a place private enough (privacy 2: a lodge or inn room) with nobody about.
+        // Anywhere else she holds it and keeps to her day; her desire stays as it is.
+        "self_touch_place" => {
+            let place = request.get("place").and_then(Value::as_str).unwrap_or("");
+            let hours = request.get("hours").and_then(Value::as_f64).unwrap_or(12.0);
+            let upstairs = request.get("upstairs").and_then(Value::as_bool).unwrap_or(false);
+            Ok(self_touch_place(t, place, hours, upstairs))
+        }
         "place_crowd" => {
             let place = request.get("place").and_then(Value::as_str).unwrap_or("");
             let hours = request.get("hours").and_then(Value::as_f64).unwrap_or(12.0);
@@ -227,6 +250,19 @@ pub fn eval(t: &PlacesTuning, kind: &str, request: &Value) -> Option<Result<Valu
 mod tests {
     use super::*;
     use crate::tuning::Tuning;
+
+    /// Only somewhere private: her dorm room, not the library at eleven, the street or the dorm's lounge (round 15).
+    #[test]
+    fn self_touch_only_somewhere_private() {
+        let t = Tuning::builtin();
+        let ok = |place: &str, hours: f64, up: bool| self_touch_place(&t.places, place, hours, up)["ok"].as_bool().unwrap();
+        assert!(ok("girls_dorm", 21.0, true), "her room upstairs");
+        assert!(!ok("girls_dorm", 21.0, false), "the lounge downstairs");
+        assert!(!ok("library", 11.0, false));
+        assert!(!ok("library", 23.0, true), "the library is public at any hour");
+        assert!(!ok("", 2.0, false), "the street");
+        assert!(!ok("cafeteria", 15.0, false));
+    }
 
     #[test]
     fn girlfriends_beside_him_friends_in_a_line() {

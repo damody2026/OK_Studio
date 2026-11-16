@@ -262,7 +262,7 @@ struct FOKStreetSceneState {
  double AmbientRequested=0,AmbientPlaying=0,AmbientDuration=0;FOKStreetAgentSim AmbientSaved;
  // Touching herself on the street (OKStreetSocialOnani.inl): who, which step of hers is playing since when, her hour's
  // start (game minutes), her climaxes, her next drop; and who was taken from it into the room (street_onani).
- int32 OnaniGirl=INDEX_NONE,OnaniStep=0,OnaniClimaxes=0,OnaniPrivate=INDEX_NONE;bool OnaniPlaying=false;double OnaniRequested=0,OnaniAskedAt=0,OnaniStepAt=0,OnaniCheckAt=0,OnaniSquirtAt=0;float OnaniStepSeconds=0;int64 OnaniStartMinute=0;FOKStreetAgentSim OnaniSaved;TMap<int32,double> OnaniCooldown;
+ int32 OnaniGirl=INDEX_NONE,OnaniStep=0,OnaniClimaxes=0,OnaniPrivate=INDEX_NONE;bool OnaniPlaying=false;double OnaniRequested=0,OnaniAskedAt=0,OnaniStepAt=0,OnaniCheckAt=0,OnaniSquirtAt=0,OnaniExplainAt=0;float OnaniStepSeconds=0;int64 OnaniStartMinute=0;FOKStreetAgentSim OnaniSaved;TMap<int32,double> OnaniCooldown;
  TMap<int32,double> AmbientCooldown;TArray<TWeakObjectPtr<AStaticMeshActor>> AmbientProps;
  bool AmbientOnlyTest=false,AmbientChecked=false;
  int32 AmbientVerified=0,AmbientProbePhase=0,AmbientPrepareCancels=0,AmbientInterrupts=0,AmbientSamples=0,AmbientNaturalCompletions=0;
