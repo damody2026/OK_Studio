@@ -89,7 +89,8 @@ local function main()
     local maps = "/Game/Scenes/StreetSocial/StreetSocial"
     if path.exists(path.join(root, "Content/UniversityCity/Maps/UniversityCity.umap")) then maps = maps .. "+/Game/UniversityCity/Maps/UniversityCity" end
     if path.exists(path.join(root, "Content/UniversityCity/Maps/UniversityCityWP.umap")) then maps = maps .. "+/Game/UniversityCity/Maps/UniversityCityWP" end
-    if a.studio then maps = "/Engine/Maps/Entry" end
+    -- The studio runs on Entry (run_scene_editor.lua), the card reader on Template_Default (run_card_reader_development.lua).
+    if a.studio then maps = "/Engine/Maps/Entry+/Engine/Maps/Templates/Template_Default" end
     local cook_args = { '"' .. win(root) .. '/OpenKoikatsu.uproject"', "-run=Cook", "-TargetPlatform=Windows",
       "-MAP=" .. maps, "-SkipZenStore", "-CustomConfig=CrowdCookSM6",
       "-DisablePlugins=BpGeneratorUltimate", "-unattended", "-nosound", "-NoSplash", "-corelimit=8", "-MaxParallelActions=8",
@@ -102,7 +103,9 @@ local function main()
     local street_map = path.join(host_dir, "Saved/Cooked/Windows/OpenKoikatsu/Content/Scenes/StreetSocial/StreetSocial.umap")
     if a.studio then
       -- A cook without -iterate starts from an empty output folder; a street map left here would go into the studio's pak.
-      if not path.exists(path.join(host_dir, "Saved/Cooked/Windows/Engine/Content/Maps/Entry.umap")) then error("cook did not produce /Engine/Maps/Entry", 0) end
+      for _, m in ipairs({ "Entry", "Templates/Template_Default" }) do
+        if not path.exists(path.join(host_dir, "Saved/Cooked/Windows/Engine/Content/Maps/" .. m .. ".umap")) then error("cook did not produce /Engine/Maps/" .. m, 0) end
+      end
       if path.exists(street_map) or path.is_dir(path.join(host_dir, "Saved/Cooked/Windows/OpenKoikatsu/Content/UniversityCity/Maps")) then
         error("the studio cook still has the street or city map in " .. win(path.join(host_dir, "Saved/Cooked")), 0)
       end

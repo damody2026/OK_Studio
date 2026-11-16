@@ -31,8 +31,8 @@
 -- Keys still never go in.
 --
 -- An OK Studio-only package (--studio, 2026-11-16): a Studio*.stage (rebuild_street_social_runtime.lua --studio, only
--- /Engine/Maps/Entry cooked); OKStudio.cmd is the only entry (no StreetSocial.cmd, no voice servers, no new player's
--- street settings); the street's own data groups are left out by default (STUDIO_SKIP); --cards go to
+-- /Engine/Maps/Entry and Template_Default cooked); OKStudio.cmd and CardReaderDevelopment.cmd (the card reader's
+-- character editing) are the entries (no StreetSocial.cmd, no voice servers, no new player's street settings); the street's own data groups are left out by default (STUDIO_SKIP); --cards go to
 -- Content/CharacterCards/<the folder's name>, the studio's card browser lists them. A street or city map in the paks
 -- stops it.
 local ok = require "ok"
@@ -147,8 +147,11 @@ local function local_keys(root)
 end
 
 -- Original data groups a Studio package leaves out unless --skip-group says otherwise: the street's dialogue, voices
--- and H poses, the H voices, and the studio sample scenes (they carry characters).
-local STUDIO_SKIP = { "h-voices", "studio-scenes", "street-voices", "street-dialogue", "h-poses" }
+-- and H poses, the H voices, the studio sample scenes (they carry characters), and, to keep it under 10 GB (user
+-- 2026-11-16), the studio sound items (base-sounds, 2.3 GB), the paired H motions (base-paired, 1.5 GB) and the street
+-- runtime clips (runtime-clips).
+local STUDIO_SKIP = { "h-voices", "studio-scenes", "street-voices", "street-dialogue", "h-poses", "base-sounds",
+  "base-paired", "runtime-clips" }
 
 local TEXT_EXT = { json = true, txt = true, lua = true, ini = true, cmd = true, bat = true, toml = true, md = true, cfg = true, csv = true, tsv = true, xml = true, yaml = true, yml = true, log = true }
 
@@ -162,6 +165,7 @@ local function main()
   p:opt("--allow", { multiple = true })
   p:flag("--private")
   p:opt("--cards")
+  p:opt("--max-cards")
   p:opt("--roster")
   p:opt("--voice")
   p:opt("--readme")
@@ -201,13 +205,18 @@ local function main()
   else say("Runtime patch missing (the player's launcher rebuilds it only with the editor): " .. win(patch)) end
   -- Versioned files: the launcher and its tools, the street's data, the settings guide.
   local versioned = a.studio
-    and { "OKStudio.cmd", "Content/IndependentResources", "Tools/lua", "Config", "Tools/original_data_manifest.json",
+    and { "OKStudio.cmd", "CardReaderDevelopment.cmd", "Content/IndependentResources", "Tools/lua", "Config", "Tools/original_data_manifest.json",
       "Tools/base_library_shared_mods.txt", "Docs/SHARED_RESOURCES_SETUP.md", "Docs/STREET_SOCIAL_PACKAGE.md" }
     or { "StreetSocial.cmd", "OKStudio.cmd", "CardReaderDevelopment.cmd", "Content/IndependentResources", "Tools/lua", "Config",
       "Tools/original_data_manifest.json", "Tools/base_library_shared_mods.txt",
       "Docs/API_KEYS.md", "Docs/SHARED_RESOURCES_SETUP.md", "Docs/STREET_SOCIAL_PLAY_GUIDE.md", "Docs/STREET_SOCIAL_PACKAGE.md" }
+  -- A Studio package leaves out the street's models and the runtime materials' uncooked sources (the game reads the
+  -- cooked ones from its paks): half a gigabyte of the 10 GB it has to stay under.
+  local studio_drop = { "Content/IndependentResources/StreetSocialData/Models/", "Content/IndependentResources/RuntimeMaterials/" }
   for _, rel in ipairs(tracked(root, versioned)) do
-    add(path.join(root, rel), rel)
+    local drop = false
+    if a.studio then for _, prefix in ipairs(studio_drop) do if rel:sub(1, #prefix) == prefix then drop = true end end end
+    if not drop then add(path.join(root, rel), rel) end
   end
   for _, rel in ipairs(tracked(root, { "Tools" })) do if rel:match("^Tools/[^/]+%.lua$") then add(path.join(root, rel), rel) end end
   -- Built tools the launcher and the restore use (the player has no cargo).
@@ -254,8 +263,12 @@ local function main()
     local dir = path.abs(a.cards):gsub("/+$", "")
     local cards_rel = a.studio and ("Content/CharacterCards/" .. path.name(dir)) or "Content/CharacterCards/StreetHeroines"
     roster = json.array({})
+    -- A Studio package takes the first --max-cards cards (default 10) to stay small; a street package takes them all.
+    local max_cards = tonumber(a.max_cards) or (a.studio and 10 or math.huge)
+    local taken = 0
     for _, n in ipairs(path.list(dir)) do
-      if n:lower():match("%.png$") then
+      if n:lower():match("%.png$") and taken < max_cards then
+        taken = taken + 1
         local rel = cards_rel .. "/" .. n
         add(path.join(dir, n), rel)
         if #roster < 10 then roster[#roster + 1] = rel end
@@ -363,7 +376,7 @@ local function main()
     { "stage", path.name(stage) }, { "commit", util.strip(proc.run({ "git", "-C", root, "rev-parse", "HEAD" }, { capture = true }).stdout) },
     { "mode", a.studio and "studio" or "street" }, { "private", a.private and true or false },
     { "skip_groups", json.array(a.private and skip_groups or {}) }, { "maps_in_paks", json.array(report.maps) },
-    { "cook", a.studio and "/Engine/Maps/Entry + DirectoriesToAlwaysCook (rebuild_street_social_runtime.lua --studio)"
+    { "cook", a.studio and "/Engine/Maps/Entry + Template_Default + DirectoriesToAlwaysCook (rebuild_street_social_runtime.lua --studio)"
       or "StreetSocial + UniversityCity maps + DirectoriesToAlwaysCook (rebuild_street_social_runtime.lua)" },
     { "files", listing } }), { indent = 1, ensure_ascii = false }) .. "\n", { newline = "\n" })
   say("Packed into " .. win(out))
