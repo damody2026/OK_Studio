@@ -4779,3 +4779,8 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 想把 `KKPreviewActor.cpp` 裡的 `okNuv` 那一行移回原位，用 `grep -n` 抓行號再交給 `sed "${n}a ..."`。grep 的樣式跳脫錯了，`n` 是空的，`sed a` 對每一行都生效，檔案多了 13,999 行。
 - 修正：所有完全等於這一行的行都刪掉（`grep -v -x -F`），再用 Edit 插回一次；和 HEAD 加上別人未提交修改的行數核對（13,986 + 14），diff 只剩別人的排序修改。
 - 預防：用行號做插入／刪除前，先確認變數非空（`[ -n "$n" ] || exit 1`）；能用 Edit 精確取代的就不要用 sed 行號。
+
+## 2026-11-16 模擬拖放的腳本沒有逾時，占了 Unreal slot 31 分鐘（F 組，工作室 U275）
+- 在遮陽傘截圖的同一段 slot 裡，順便用 PowerShell 腳本模擬 OLE 拖放（WinForms `DoDragDrop`，`SendInput` 按住滑鼠，另一個 runspace 移動游標後放開）。放開沒有生效，`DoDragDrop` 的 modal 迴圈一直不結束；外層 bash 腳本沒有逾時，slot 一直被占著，還跟協調 session 說了「1 分鐘內讓出」。
+- 修正：協調 session 提醒後，強制關掉拖放腳本與自己的編輯器（只關自己的 PID），釋放 slot。拖放測試這次不算測過。
+- 預防：沒在 slot 外驗證過的新工具不要接在 slot 測試後面；每個可能阻塞的步驟都加逾時（例如 `timeout 60`）；向別人承諾時間前先確認腳本還剩哪些步驟。

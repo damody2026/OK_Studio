@@ -1585,6 +1585,7 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
 - 一次拖多個檔案時，只開第一個場景檔或資料夾。拖進其他種類的檔案，狀態列會說明不是場景檔。
 - 實作：`SOKStudioPanel::OnDragOver`／`OnDrop` 接收外部拖放（`FExternalDragOperation`），下一幀才開檔；不是場景的 PNG（例如角色卡）不開，不卡住系統的拖放呼叫。控制通道指令 `scene.drop <路徑>` 走同一段處理，方便自動測試。
 - 驗證（2026-11-14）：Editor 與 Game 建置成功；以 `scene.drop` 測四項都通過：放在 `Saved/Tests/DropTest1114` 的原版 KKS 場景 PNG 匯入並開啟（443 個物件）、拖資料夾後場景瀏覽器列出裡面的場景、非場景 PNG 不開並在狀態列說明、資料夾裡的 `.okscene` 直接開啟。真正用滑鼠從檔案總管拖放還沒測。
+- 2026-11-16 試過用腳本模擬真正的 OLE 拖放（WinForms `DoDragDrop` 加 `SendInput` 按住滑鼠、另一個執行緒移動游標後放開）：腳本卡在 `DoDragDrop` 的 modal 迴圈裡，沒有結束，也沒看到工作室開檔，占了 slot 31 分鐘後強制關掉（見 `Docs/ERROR_LOG.md`）。這次不能算測過；之後要先在不占 slot 的情況下把模擬工具做好（要有逾時），或請使用者手動從檔案總管拖一次。
 
 ### U271 補驗：另外 13 張陰影強度小於 1 的地圖（2026-11-12，F 組）
 
@@ -1640,6 +1641,11 @@ U49～U52 做完後再看 `Saved/StudioUIRef/hs2/` 的 07、12、13、14、15、
       - 原因：遮陽傘網格是多個實體共用的，每個實體的 renderer 各自掛不同的材質（橘或藍），而且一個 renderer 有好幾個材質（每個 submesh 一個）。`prefab_standard_materials` 只收「剛好一個材質」的 renderer，所以這些實體都沿用網格第一次出現時的藍色。
       - 修法：Rust 新增 memo 查詢 `prefab_standard_material_lists`，收「有多個材質且其中有 Standard」的 renderer，以節點記下每個 submesh 的材質；`node_material` 依 `submesh_index` 取用（只取 Standard 材質）。`studio-nodes` 錄貼圖時也收這些材質的貼圖。
       - 結果（`Saved/Tests/MapParasol1115OK/`）：y270 傘面平均 (188, 119, 4)，原作 (191, 122, 5)，修改前 (11, 69, 194)。原作傘面上有樹葉的斑駁影子，OK 比較淡，沒追。
+      - 2026-11-16 查樹葉斑駁影（未修）：
+        - 原作的傘面整片在陰影裡（底色較暗），上面有很多圓形、邊緣清楚的亮斑；OK 的傘面整片受光，只有頂端一條很淡的影子。原作的燈沒有 cookie，亮斑應該是陽光從樹葉縫隙透下來（`Directional Light_sun` 1.5、Soft、strength 0.807）。
+        - 附近的遮擋物有兩種：棕櫚 `toon_tropical03_00`（`Nature/SpeedTree` 的 `Fronds_*`、`GEOM_TYPE_FROND`、`_Cull 0`）和 `toon_tree00_00`（`Leaves_*`、`GEOM_TYPE_LEAF`，有 LOD0～2）。
+        - 拍了四張（`Saved/Tests/MapParasol1116/`）：照常、關 VSM（`r.Shadow.Virtual.Enable 0`）、依原生 bounds 中心藏掉棕櫚零件、藏掉後再關 VSM。原生有 122 個 `toon_tropical` renderer，OK 依中心藏掉 58 個零件。四張的傘面看不出差別：OK 的棕櫚即使在場也沒有投影到傘面，關 VSM 也一樣。
+        - 下一步：先找出原作是哪一棵樹的葉子擋住太陽（傘的位置與太陽方向；可能是 `toon_tree00_00` 而不是棕櫚），再看 OK 那棵樹的葉片零件有沒有投影（`_OKRendererShadowMode`、masked 雙面投影），以及 LOD 只留 LOD0 時 `toon_tree00_00` 的葉片是否在。
       - 海面雜點（2026-11-15 減輕，未除盡）：
         - 原因：Lux 的 deep foam 在 OK 用每像素法線長度算，地圖 54 海面整片白點。
         - 修法：改用 Lux 的作法，用 mip bias `_DeepFoamBlur` 取樣泡沫貼圖。地圖 54 是 7.26，結果是柔和的霧；燈塔（地圖 56）是 1.26，仍接近像素。
