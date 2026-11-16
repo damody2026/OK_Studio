@@ -82,12 +82,15 @@ void AOKStreetSocialScene::HeroineRefuseGate(int32 Girl,const FString& ActId,con
  if(ApplyRulesRelation(Id,Answer))S.GatePenaltyAt=SceneTime();
  S.MindRecent.Add(Id,What);
  UE_LOG(LogTemp,Display,TEXT("Street heroine gate: actor=%d %s refused (stage %d)"),Girl,*ActId,int32((*Gate)->GetNumberField(TEXT("stage"))));
- // Shown in every case: with no AI talk (no key, -NoCloud) the nudge below went nowhere, and the hug button did nothing
- // anyone could see (惠惠 in the library, round 15). Her own words follow when the talk can ask for them.
- S.FreeTalkNotice=OKStreetScriptedName(S.Manifest.Characters[Girl].Name)+OKT(TEXT("ui.heroine.dodged_suffix"));RefreshUI();
+ // Her own words when the talk can ask for them; otherwise (no AI talk: no key, -NoCloud) at least that she dodged. The
+ // nudge went nowhere there, its "no key" notice took the line's place, and the hug button did nothing anyone could see
+ // (惠惠 in the library, 贞德·Alter in T1, round 15); the game's note was left in his input box too.
+ bool Asked=false;
  if(FreeTalkPartner()==Girl&&!S.FreeTalkBusy&&SceneTime()-S.GateNudgeAt>20.0){
   S.GateNudgeAt=SceneTime();S.SystemNote=true;S.FreeTalkDraft=OKT(TEXT("ui.finance_apps.open_paren"))+What+OKT(TEXT("ui.heroine.react_in_character_suffix"));SendFreeTalk();
+  Asked=S.FreeTalkBusy;if(!Asked){S.FreeTalkDraft.Reset();S.SystemNote=false;}
  }
+ if(!Asked){S.FreeTalkNotice=OKStreetScriptedName(S.Manifest.Characters[Girl].Name)+OKT(TEXT("ui.heroine.dodged_suffix"));RefreshUI();}
 }
 
 // Settled elsewhere (her consent and values were the caller's): her record and the rumour, in the caller's words.
@@ -233,6 +236,8 @@ FOKHeroineResult AOKStreetSocialScene::Interact(int32 Girl,const FString& ActId,
  // Game minutes since he last did this with her (the rules give a touch again soon nothing new; R6-146).
  const FString ActKey=Id+TEXT("|")+ActId;const int64 NowMinute=Now.GetTicks()/ETimespan::TicksPerMinute;
  if(const int64* Last=S.ActDoneAt.Find(ActKey))Request->SetNumberField(TEXT("since_same"),double(NowMinute-*Last));
+ // And how many touches with her counted this past hour, any kind: each one more is worth less (heroine.rs acts_recent).
+ {int32 Recent=0;const FString Prefix=Id+TEXT("|");for(const auto& P:S.ActDoneAt)if(P.Key.StartsWith(Prefix)&&NowMinute-P.Value<60)++Recent;Request->SetNumberField(TEXT("acts_recent"),Recent);}
  TSharedPtr<FJsonObject> A=OKRulesEval(S,Request);if(!A.IsValid())return Out;
  // Settled elsewhere: only the record (and the rumour).
  if(Args.RecordOnly){HeroineApplyRecord(Girl,*A,Args.Place);Out.Done=true;return Out;}

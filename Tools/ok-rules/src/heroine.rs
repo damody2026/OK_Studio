@@ -275,6 +275,20 @@ fn interact(acts: &ActsTuning, places: &PlacesTuning, request: &Value) -> Result
         let mut r = c.rel.clone();
         if fresh || matches!(reaction, Reaction::Protest | Reaction::Refuse) {
             reaction_delta(&mut r, reaction, needs.intimate);
+            // Other touches with her this past hour (any kind, request "acts_recent"): each one more is worth less, the
+            // n-th 1/n of the first. A chocolate, a head pat and her hand in six minutes took 贞德·Alter from 53 to 71, and
+            // 惠惠 62 -> 76 in five, to where she could be asked out (round 15). What she loses is not lessened.
+            let recent_acts = request.get("acts_recent").and_then(Value::as_f64).unwrap_or(0.0).max(0.0) as f32;
+            let k = 1.0 / (1.0 + recent_acts);
+            if r.favor > c.rel.favor {
+                r.favor = c.rel.favor + (r.favor - c.rel.favor) * k;
+            }
+            let was = c.rel.clone().axis_mut("attraction").map(|v| *v);
+            if let (Some(now), Some(was)) = (r.axis_mut("attraction"), was) {
+                if *now > was {
+                    *now = was + (*now - was) * k;
+                }
+            }
         }
         out.insert("counted".into(), json!(fresh && reaction != Reaction::Refuse));
         out.insert("relation".into(), Value::Object(r.patch(&c.rel)));
@@ -417,6 +431,21 @@ mod tests {
         assert_eq!(at(90), Reaction::Thrilled as i64);
         let park = req(json!({"act": food.id, "relation": {"id": "a", "stage": "lover", "affection": 100}, "profile": {"traits": {"public_boldness": 10, "shyness": 0}}, "place": "park", "hours": 22.9, "consented": true}));
         assert_eq!(interact(&t.acts, &t.places, &park).unwrap()["reaction"].as_i64().unwrap(), Reaction::Fine as i64, "eating in the park at night is fine");
+    }
+
+    /// Touches one after another this hour, of any kind: the n-th is worth 1/n of the first (round 15: 53 -> 71 in six
+    /// minutes from a chocolate, a head pat and her hand).
+    #[test]
+    fn more_touches_this_hour_are_worth_less() {
+        let t = Tuning::builtin();
+        let gain = |recent: f64| {
+            let r = req(json!({"act": "hold_hands", "relation": {"id": "a", "stage": "friend", "favor": 50, "affection": 60}, "profile": {"traits": {"public_boldness": 30, "shyness": 0}}, "place": "park", "hours": 20.0, "acts_recent": recent}));
+            let v = interact(&t.acts, &t.places, &r).unwrap();
+            v["relation"]["favor"].as_f64().unwrap_or(50.0) - 50.0
+        };
+        let first = gain(0.0);
+        assert!(first > 0.0, "the first touch counts: {first}");
+        assert!((gain(2.0) - first / 3.0).abs() < 0.01, "the third is a third");
     }
 
     /// A head pat again ten minutes later: she goes along, nothing new; an hour on it counts again (R6-146).

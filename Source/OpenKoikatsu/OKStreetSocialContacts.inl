@@ -112,6 +112,8 @@ TArray<FVector> AOKStreetSocialScene::ContactRoute(const FVector& From,const FVe
  });
 }
 void AOKStreetSocialScene::SelectContact(int32 Character){if(!State||!State->Agents.IsValidIndex(Character-1))return;State->ContactSelection=Character;RefreshUI(OKStreetUi::Right|OKStreetUi::Debug);}
+// His own walk being planned (GridRoute's longer budget, PlayerPlanning): set for the plan, cleared after.
+struct FOKStreetPlayerPlanning{int32& N;explicit FOKStreetPlayerPlanning(int32& In):N(In){++N;}~FOKStreetPlayerPlanning(){--N;}};
 void AOKStreetSocialScene::NavigateGirl(int32 Character){
  // Not ContactReady: it asks for her being drawn, and across the city she is not, so the button did nothing. Her place is enough.
  if(!State||!State->Agents.IsValidIndex(Character-1)||State->OnaniGirl==Character||State->PrivateGirl!=INDEX_NONE)return;auto& S=*State;
@@ -121,7 +123,13 @@ void AOKStreetSocialScene::NavigateGirl(int32 Character){
  // A new walk: the cells the last one learned blocked were for its way round. Kept, one failed walk on civic's 5F had the
  // lift landing's cell learned blocked, and every walk from that floor after it said "no way" till the game was restarted
  // (c-street-city, nav1116d, 2026-11-16).
- S.NavLearned.Reset();S.NavPrevPlan.Reset();S.NavSamePlan=0;
+ FOKStreetPlayerPlanning Planning(S.PlayerPlanning);
+ S.NavLearned.Reset();S.NavPrevPlan.Reset();S.NavSamePlan=0;S.NavSearch.Reset();S.NavSearchGirl=INDEX_NONE;
+ // Her on his floor, not across the city: the grid a slice a frame (TickNavSearch, as NavigatePoint), the walk once it is
+ // found. At once it held the frame: library 5F, its lift to 胡桃's desk, 13119 cells, 37-41 ms (nav1116j, round 15).
+ if(OKStreetCityMode()&&FMath::Abs(S.Agents[Character-1].Position.Z-S.Male.Z)<150.f&&(!OKStreetCityFar(S.Male,S.Agents[Character-1].Position)||OKStreetUpstairs(S.Male))&&!NavNeedsLift(S.Agents[Character-1].Position)){
+  S.NavSearch=MakeShared<FOKStreetGridSearch>();S.NavSearch->From=S.Male;S.NavSearch->To=S.Agents[Character-1].Position;S.NavSearch->NearCm=200.f;S.NavSearchGirl=Character;
+  S.ContactsNotice=OKT(TEXT("ui.contacts.auto_travel_to_her_hint"));return;}
  S.NavAround.Reset();S.NavRide=FOKStreetLiftRide();S.NavGirl=Character;S.NavPointActive=false;S.NavAt=0;S.NavStep=1;S.NavReplans=0;S.NavBlockedAt=FVector(1e9);S.NavProgressAt=SceneTime();S.NavPath=ContactRoute(S.Male,S.Agents[Character-1].Position);S.ContactsNotice=OKT(TEXT("ui.contacts.auto_travel_to_her_hint"));}
 void AOKStreetSocialScene::NavigatePoint(const FVector& Spot,const FString& Name){
  if(!State)return;auto& S=*State;
@@ -129,7 +137,8 @@ void AOKStreetSocialScene::NavigatePoint(const FVector& Spot,const FString& Name
  if(S.Target!=INDEX_NONE||S.PrivateGirl!=INDEX_NONE||S.Pair.Partner!=INDEX_NONE||S.OutingGirl!=INDEX_NONE||S.Facility!=INDEX_NONE){S.Message=OKT(TEXT("ui.contacts.end_activity_before_map_nav"));return;}
  // On his floor the street grid is searched a slice a frame (TickNavSearch, 3 ms each): a long route held the frame
  // 6-8 ms. Another floor: the place graph (doors and corridors), at once.
- S.NavSearch.Reset();S.NavLearned.Reset();S.NavPrevPlan.Reset();S.NavSamePlan=0; // a new walk: not the last one's learned cells (NavigateGirl)
+ FOKStreetPlayerPlanning Planning(S.PlayerPlanning);
+ S.NavSearch.Reset();S.NavSearchGirl=INDEX_NONE;S.NavLearned.Reset();S.NavPrevPlan.Reset();S.NavSamePlan=0; // a new walk: not the last one's learned cells (NavigateGirl)
  if(OKStreetCityMode()&&OKStreetCityFar(S.Male,Goal)){NavigatePointAlong(Goal,Name,CityRoute(S.Male,Goal));return;}
  if(FMath::Abs(S.Male.Z-Goal.Z)<150.f){S.NavSearch=MakeShared<FOKStreetGridSearch>();S.NavSearch->From=S.Male;S.NavSearch->To=Goal;S.NavSearchGoal=Goal;S.NavSearchName=Name;return;}
  NavigatePointAlong(Goal,Name,PlaceRouteWaypoints(S.Male,Goal));
@@ -138,6 +147,13 @@ void AOKStreetSocialScene::TickNavSearch(){
  if(!State||!State->NavSearch)return;auto& S=*State;
  if(!GridSearchStep(*S.NavSearch,FPlatformTime::Seconds()+0.003))return;
  TArray<FVector> Path=MoveTemp(S.NavSearch->Route);const FVector From=S.NavSearch->From;S.NavSearch.Reset();
+ // His walk to her (NavigateGirl on one floor): the grid's way, or the whole contact route when the grid found none.
+ if(S.NavSearchGirl!=INDEX_NONE){const int32 Girl=S.NavSearchGirl;S.NavSearchGirl=INDEX_NONE;if(!S.Agents.IsValidIndex(Girl-1))return;
+  FOKStreetPlayerPlanning Planning(S.PlayerPlanning);
+  if(Path.Num()<2)Path=ContactRoute(S.Male,S.Agents[Girl-1].Position);
+  UE_LOG(LogTemp,Display,TEXT("Street navigation: to actor %d on his floor, a slice a frame: %d points"),Girl,Path.Num());
+  S.NavAround.Reset();S.NavRide=FOKStreetLiftRide();S.NavGirl=Girl;S.NavPointActive=false;S.NavAt=0;S.NavStep=1;S.NavReplans=0;S.NavBlockedAt=FVector(1e9);S.NavProgressAt=SceneTime();S.NavPath=MoveTemp(Path);
+  return;}
  if(Path.Num()<2)Path=PlaceRouteWaypoints(From,S.NavSearchGoal); // as PlaceRoute: no grid way, the place graph
  NavigatePointAlong(S.NavSearchGoal,S.NavSearchName,MoveTemp(Path));
 }
@@ -165,7 +181,7 @@ void AOKStreetSocialScene::NavigatePointAlong(const FVector& Goal,const FString&
  if(S.BigMapOpen)ToggleBigMap(); // navigation, its notice and the message are bound to state: no rebuild
 }
 void AOKStreetSocialScene::StopNavigation(const FString& Notice){
- if(!State)return;auto& S=*State;S.NavSearch.Reset();S.NavAround.Reset();S.NavGirl=INDEX_NONE;S.NavPointActive=false;S.NavPath.Reset();S.NavRide=FOKStreetLiftRide();S.ContactsNotice.Reset();
+ if(!State)return;auto& S=*State;S.NavSearch.Reset();S.NavSearchGirl=INDEX_NONE;S.NavAround.Reset();S.NavGirl=INDEX_NONE;S.NavPointActive=false;S.NavPath.Reset();S.NavRide=FOKStreetLiftRide();S.ContactsNotice.Reset();
  // The cells learned blocked were for this walk's way round: kept, the girls' dorm door he was wedged in stayed shut to
  // every later walk there ("the way is blocked" 9 m from her, R6-207).
  S.NavLearned.Reset();S.NavPrevPlan.Reset();S.NavSamePlan=0;
@@ -229,8 +245,16 @@ TArray<FVector> AOKStreetSocialScene::GridRoute(const FVector& From,const FVecto
  // on the department store's 4F went through the shop's wall to the lift ("the way is blocked") or across the atrium.
  // Inside a building on its ground floor too: from the department store's lift to its door, 4 ms was never enough among
  // the shops, the straight line ran into a shop wall, and he and Raiden circled the 1F for three hours (R6-183).
- const double Budget=!OKStreetCityMode()?TNumericLimits<double>::Max():OKStreetUpstairs(From)||!PlaceHere(From).IsEmpty()?.025:.004;
- FOKStreetGridSearch G;G.From=From;G.To=To;G.NearCm=NearCm;GridSearchStep(G,FPlatformTime::Seconds()+Budget);return MoveTemp(G.Route);
+ double Budget=!OKStreetCityMode()?TNumericLimits<double>::Max():OKStreetUpstairs(From)||!PlaceHere(From).IsEmpty()?.025:.004;
+ // His own walk being planned (a press, a replan): the time a long floor needs, once. The library's 5F from its lift to
+ // 惠惠's desk is 65 m round the shelves, thousands of cells to test the first time; 25 ms ran out, the grid said nothing,
+ // and that was taken for no way (round 15, c-street-city checked the cells are joined). Out of time is not no way.
+ if(State->PlayerPlanning>0)Budget=FMath::Max(Budget,.15);
+ FOKStreetGridSearch G;G.From=From;G.To=To;G.NearCm=NearCm;const double Start=FPlatformTime::Seconds();
+ const bool Done=GridSearchStep(G,Start+Budget);
+ // What his plans cost (the budget above is a cap, not the cost): the time, the cells expanded, and whether it finished.
+ if(State->PlayerPlanning>0)UE_LOG(LogTemp,Display,TEXT("Street grid route: his plan %.1f ms, %d cells, %s, %d points (%s -> %s)"),(FPlatformTime::Seconds()-Start)*1000.0,G.Expanded,Done?TEXT("finished"):TEXT("out of time"),G.Route.Num(),*From.ToCompactString(),*To.ToCompactString());
+ return MoveTemp(G.Route);
 }
 bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline) const{
  if(G.Phase==2)return true;
@@ -340,7 +364,11 @@ bool AOKStreetSocialScene::GridSearchStep(FOKStreetGridSearch& G,double Deadline
  auto Clear=[&](const FVector& A,const FVector& B){
   if(CrossesAWall(A,B))return false;
   const int32 N=FMath::Max(1,FMath::CeilToInt(FVector::Dist2D(A,B)/(OKStreetNavCell*.5f)));
-  for(int32 I=1;I<N;++I)if(!Passable(ToCell(FMath::Lerp(A,B,float(I)/N))))return false;
+  // Free cells only, not the search's leave to pass the cells beside the start: off the lift on campus T1's 3F, standing
+  // against the wall beside its 120 cm opening, the pulled line from him cut through that wall (the cells beside him are
+  // let through) and he walked into StaticMeshActor_344 30 times instead of through the opening (round 15, c-street-city
+  // checked the cells). The search's own steps stay: neighbouring cells are never pulled.
+  for(int32 I=1;I<N;++I){const FIntPoint C=ToCell(FMath::Lerp(A,B,float(I)/N));const uint8 K=Known(C);if((K&4)||(!(K&2)&&C!=Start))return false;}
   FHitResult Hit;
   // Starting against a wall counts as clear only when the line leads away from it (as StreetStep backs out of one).
   if(GetWorld()->SweepSingleByChannel(Hit,FVector(A.X,A.Y,Z)+FVector(0,0,OKStreetBodyLift()),FVector(B.X,B.Y,Z)+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(30,OKStreetBodyHalf()),SweepQuery)&&(!Hit.bStartPenetrating||FVector::DotProduct((B-A).GetSafeNormal2D(),Hit.Normal)<=0.f))return false;
@@ -441,7 +469,7 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
   return 0;}
  // On another floor: to an elevator first, then the ride (the route there is the plan's).
  // The shop's stairs first: from a shop's 2F to the department store's lift he walked into the shop's wall.
- if(S.NavRide.Elevator==INDEX_NONE&&NavNeedsLift(Goal)&&!NavByShopStairs(Goal)&&!PlanNavLift(Goal)){StopNavigation(OKT(TEXT("ui.contacts.other_floor_no_path")));return 0;}
+ if(S.NavRide.Elevator==INDEX_NONE&&NavNeedsLift(Goal)&&!NavByShopStairs(Goal)&&![&]{FOKStreetPlayerPlanning Planning(S.PlayerPlanning);return PlanNavLift(Goal);}()){StopNavigation(OKT(TEXT("ui.contacts.other_floor_no_path")));return 0;}
  if(S.NavRide.Elevator!=INDEX_NONE&&S.NavStep>=S.NavPath.Num()){
   float Rate=0;const int32 Done=AdvanceLiftRide(S.NavRide,Dt,Rate);
   if(Done==2){StopNavigation(OKT(TEXT("ui.contacts.path_blocked_stop")));return 0;}
@@ -485,6 +513,10 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
  if(!S.NavPointActive&&FMath::Abs(Goal.Z-S.Male.Z)<150.f&&FVector::Dist2D(S.Male,Goal)<900.f){
   bool Clear=true;const int32 Steps=FMath::Max(1,FMath::CeilToInt(FVector::Dist2D(S.Male,Goal)/40.f));
   for(int32 I=1;I<Steps&&Clear;++I)if(OKStreetBlockedPoint(FMath::Lerp(S.Male,Goal,float(I)/Steps),30))Clear=false;
+  // And nothing of the world in the body's way (the street's own block list does not hold a building's walls): 胡桃 at her
+  // library desk 6 m off on the other side of a wall, the route went round by its opening, this took him straight at her
+  // into StaticMeshActor_361, and the same plan came back till "no way" (library 5F, nav1116j, round 15).
+  if(Clear&&OKStreetCityMode()&&!OKStreetCityClear(GetWorld(),S.Male,Goal,28.f))Clear=false;
   if(Clear)Next=Goal;
  }
  FVector Delta=Next-S.Male;Delta.Z=0;const float Distance=Delta.Size();if(Distance<1)return 0;
@@ -496,6 +528,7 @@ float AOKStreetSocialScene::StepNavigation(float Dt){
   if(S.NavRide.Elevator!=INDEX_NONE&&ElevatorLanding(S.NavRide.Elevator,S.Male)!=INDEX_NONE){S.NavStep=S.NavPath.Num();return 0;}
   // Blocked: find a new way from where he stands before giving up.
   if(Now-S.NavProgressAt>1.0){
+   FOKStreetPlayerPlanning Planning(S.PlayerPlanning);
    // Planned again and nothing found, or only the straight line that has stopped him already: no way, said at once. The
    // ride to civic's lift kept its two-point line to the landing when the grid had none and walked it 90 times (seat6 ->
    // clinic_gyn, gyn1116b, 2026-11-16), and the wedge step put that line back itself.
@@ -812,6 +845,9 @@ void AOKStreetSocialScene::TickContacts(float Dt,double Now){
    // But she walks on: the kept route ended where she had been, and he stopped 4 m behind her (R6-209). A route ending
    // beyond talking range of where she is now is stale, and the fresh one replaces it.
    const FVector Spot=NavApproachSpot(S.Agents[S.NavGirl-1].Position);
+   // She has not moved off the route's end: the route stands. Drawn again anyway, every 0.75 s the library's 5F was
+   // searched to its 25 ms and found nothing (胡桃 sitting at her desk, nav1116k, round 15): a held frame for nothing.
+   if(S.NavPath.Num()>=2&&FVector::Dist2D(S.NavPath.Last(),Spot)<=100.f&&FMath::Abs(S.NavPath.Last().Z-Spot.Z)<150.f)return;
    TArray<FVector> Fresh=ContactRoute(S.Male,Spot);if(Fresh.Num()>2||S.NavPath.Num()<=2||(Fresh.Num()>=2&&FVector::Dist2D(S.NavPath.Last(),Spot)>OKStreetTalkRangeCm)){S.NavPath=MoveTemp(Fresh);S.NavStep=1;}}}
 }
 void AOKStreetSocialScene::RunContactsProbe(double Now){
