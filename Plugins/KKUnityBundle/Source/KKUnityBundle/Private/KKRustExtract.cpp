@@ -196,6 +196,13 @@ FString FOkSession::PairClipForRoot(const FString& Root,const FString& Key,int32
  if(Size<=0||Size>1024*1024)return FString();TArray<ANSICHAR> Bytes;Bytes.SetNumZeroed(Size);
  if(ok_common_animation_pair_clip(TCHAR_TO_UTF8(*Root),TCHAR_TO_UTF8(*Key),Layer,Bytes.GetData(),Size)!=0)return FString();return UTF8_TO_TCHAR(Bytes.GetData());
 }
+bool FOkSession::CardSkinColor(const FString& Card,FLinearColor& OutColor){float C[4]={};if(Card.IsEmpty()||ok_card_skin_color(TCHAR_TO_UTF8(*Card),C)!=0)return false;OutColor=FLinearColor(C[0],C[1],C[2],C[3]);return true;}
+FString FOkSession::KeyWithLayer(const FString& Root,const FString& Key,int32 Layer,bool bOn){
+ if(Root.IsEmpty()||Key.IsEmpty()||Layer<=0||!InitBindings())return FString();const FTCHARToUTF8 R(*Root),K(*Key);
+ TArray<uint8> Bytes;Bytes.SetNumUninitialized(4096);int32 Size=ok_key_with_layer(R.Get(),K.Get(),Layer,bOn?1:0,Bytes.GetData(),Bytes.Num());
+ if(Size>Bytes.Num()){Bytes.SetNumUninitialized(Size);Size=ok_key_with_layer(R.Get(),K.Get(),Layer,bOn?1:0,Bytes.GetData(),Bytes.Num());}
+ if(Size<=0||Size>Bytes.Num())return FString();return FString(Size,reinterpret_cast<const UTF8CHAR*>(Bytes.GetData()));
+}
 FString FOkSession::NativePairClip(const FString& Key,int32 Layer)const{
     if(bPortable){const FString Root=CommonPairRoot();if(Root.IsEmpty())return FString();const int32 Size=ok_common_animation_pair_clip(TCHAR_TO_UTF8(*Root),TCHAR_TO_UTF8(*Key),Layer,nullptr,0);if(Size<=0||Size>1024*1024)return FString();TArray<ANSICHAR> Bytes;Bytes.SetNumZeroed(Size);if(ok_common_animation_pair_clip(TCHAR_TO_UTF8(*Root),TCHAR_TO_UTF8(*Key),Layer,Bytes.GetData(),Size)!=0)return FString();return UTF8_TO_TCHAR(Bytes.GetData());}
     if(!Handle)return FString();int32 Size=ok_animation_pair_clip(Handle,TCHAR_TO_UTF8(*Key),Layer,nullptr,0);if(Size<=0||Size>1024*1024)return FString();TArray<ANSICHAR> Bytes;Bytes.SetNumZeroed(Size);if(ok_animation_pair_clip(Handle,TCHAR_TO_UTF8(*Key),Layer,Bytes.GetData(),Size)!=0)return FString();return UTF8_TO_TCHAR(Bytes.GetData());
@@ -685,6 +692,56 @@ bool FOkSession::OpenOkModel(const FString& Library, const FString& ModelId, con
 	// No game root: the preview behaves like a self-contained (portable) session.
 	bPortable = true;
 	return true;
+}
+
+bool FOkSkinnedItem::Open(const FString& Library, const FString& ModelId, const FString& Prefab, FString& OutError)
+{
+	Close();
+	if (!FOkSession::InitBindings()) { OutError = TEXT("ok_register_bindings failed"); return false; }
+	const FTCHARToUTF8 LibUtf(*Library), IdUtf(*ModelId), PrefabUtf(*Prefab);
+	char Err[2048];
+	Err[0] = 0;
+	if (ok_skinned_item_open(LibUtf.Get(), IdUtf.Get(), PrefabUtf.Get(), &Item, Err, 2048) != 0 || !Item)
+	{
+		Item = nullptr;
+		OutError = Err[0] ? UTF8_TO_TCHAR(Err) : TEXT("ok_skinned_item_open failed");
+		return false;
+	}
+	return true;
+}
+void FOkSkinnedItem::Close()
+{
+	if (Item) { ok_skinned_item_close(Item); Item = nullptr; }
+}
+int32 FOkSkinnedItem::PoseSession(FOkSession& Session, const FString& AnimRoot, const FString& State, float Seconds, const TMap<FString, float>& Values)
+{
+	OkSession* Native = Session.Handle.Get();
+	if (!Item || !Native) return -1;
+	FString Json = TEXT("{");
+	for (const TPair<FString, float>& V : Values)
+	{
+		if (Json.Len() > 1) Json += TEXT(",");
+		Json += FString::Printf(TEXT("\"%s\":%.9g"), *V.Key.ReplaceCharWithEscapedChar(), V.Value);
+	}
+	Json += TEXT("}");
+	const FTCHARToUTF8 RootUtf(*AnimRoot), StateUtf(*State), JsonUtf(*Json);
+	return ok_skinned_item_pose_session(Item, Native, RootUtf.Get(), StateUtf.Get(), Seconds, JsonUtf.Get());
+}
+FString FOkSkinnedItem::ControllerLayerState(const FString& AnimRoot, const FString& Source, const FString& Owner, int32 Layer)
+{
+	if (!FOkSession::InitBindings()) return FString();
+	const FTCHARToUTF8 RootUtf(*AnimRoot), SourceUtf(*Source), OwnerUtf(*Owner);
+	TArray<uint8> Buffer;
+	Buffer.SetNumUninitialized(1024);
+	int32 Length = ok_controller_layer_state(RootUtf.Get(), SourceUtf.Get(), OwnerUtf.Get(), Layer, Buffer.GetData(), Buffer.Num());
+	if (Length > Buffer.Num())
+	{
+		Buffer.SetNumUninitialized(Length);
+		Length = ok_controller_layer_state(RootUtf.Get(), SourceUtf.Get(), OwnerUtf.Get(), Layer, Buffer.GetData(), Buffer.Num());
+	}
+	if (Length <= 0 || Length > Buffer.Num()) return FString();
+	const FUTF8ToTCHAR Text(reinterpret_cast<const ANSICHAR*>(Buffer.GetData()), Length);
+	return FString(Text.Length(), Text.Get());
 }
 
 bool FOkSession::OpenOkModelFk(const FString& Library, const FString& ModelId, const FString& Prefab, const FString& FkJson, FString& OutError)
@@ -1700,6 +1757,7 @@ bool FOkSession::ApplyEditorMods(const FString& Json,int32 Coordinate,bool* Geom
 bool FOkSession::ApplyBodyPhysics(float Softness,float Weight){return Handle&&ok_editor_body_physics(Handle,Softness,Weight)==0;}
 bool FOkSession::RefreshBodyPhysics(){return Handle&&ok_session_refresh_body_physics(Handle)==0;}
 bool FOkSession::ResetDynamics(){return Handle&&ok_session_reset_dynamics(Handle)==0;}
+bool FOkSession::SetBodyDynamicEnabled(int32 Kind,bool bEnabled){return Handle&&ok_session_set_body_dynamic_enabled(Handle,Kind,bEnabled?1:0)==0;}
 int32 FOkSession::RefineBelly(){return Handle?ok_session_refine_belly(Handle):-1;}
 
 extern "C" int32_t ok_appearance_request(const char*,const char*,const char*,char*,int32_t);

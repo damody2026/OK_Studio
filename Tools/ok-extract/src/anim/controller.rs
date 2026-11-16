@@ -726,6 +726,12 @@ fn studio_entries(base:&ClipBundleSource,owner:&str,overlay:Option<&(Box<ClipBun
     // A runtime replacement brings its own reference metadata. Revalidate
     // after PPtr replacement so unsupported clips never become public states.
     graph.retain(|e|!e.layer.as_ref().is_some_and(|l|l.additive)||e.motion.as_ref().is_some_and(MotionNode::valid_additive_reference));
+    // An override layer of one state that is not synchronized (its own state machine: HandCtrl's caress layers, her breast
+    // under his hand) is public over the base state the controller pairs it with; a layers@ key puts it over any other
+    // base state (multi_layer_entries), as Unity plays it once its weight is up whatever the base layer runs.
+    let mut layer_states=HashMap::<usize,usize>::new();
+    for l in graph.iter().filter_map(|e|e.layer.as_ref()) {*layer_states.entry(l.index).or_default()+=1;}
+    let independent=|e:&StateEntry,base:&StateEntry|e.layer.as_ref().is_some_and(|l|!l.additive&&!l.synchronized&&layer_states.get(&l.index)==Some(&1)&&l.base_state_index==base.state_index);
     let mut result=Vec::new();
     let context=if studio_profile {"Studio"} else {"Controller"};
     for base_state in graph.iter().filter(|e|e.layer.is_none()) {
@@ -734,7 +740,7 @@ fn studio_entries(base:&ClipBundleSource,owner:&str,overlay:Option<&(Box<ClipBun
         let mut entry=base_state.clone();entry.label=base_label.clone();entry.studio_layer=Some(0);
         add_studio_controls(&mut entry);result.push(entry);
         let mut by_layer=HashMap::<usize,Vec<&StateEntry>>::new();
-        for e in graph.iter().filter(|e|e.layer.as_ref().is_some_and(|l|l.additive)||e.layer.is_some()&&e.short_name_id==base_state.short_name_id) {
+        for e in graph.iter().filter(|e|e.layer.as_ref().is_some_and(|l|l.additive)||e.layer.is_some()&&e.short_name_id==base_state.short_name_id||independent(e,base_state)) {
             by_layer.entry(e.layer.as_ref().unwrap().index).or_default().push(e);
         }
         for (index,matches) in by_layer {
@@ -866,7 +872,9 @@ fn multi_layer_entries(source:&ClipBundleSource,base_label:&str,selected:&[Strin
     for label in selected {
         let Some(entry)=graph.iter().find(|e|e.label==*label) else {return Vec::new();};
         let Some(layer)=&entry.layer else {return Vec::new();};
-        if layer.base_label!=base_label||layer.index==0||layer.index>=u32::MAX as usize||!indices.insert(layer.index) {return Vec::new();}
+        // A layer of its own state machine (not synchronized, an override) plays over whichever base state runs.
+        let free=!layer.synchronized&&!layer.additive;
+        if (layer.base_label!=base_label&&!free)||layer.index==0||layer.index>=u32::MAX as usize||!indices.insert(layer.index) {return Vec::new();}
         for p in entry.parameters.iter().filter(|p|p.name!=LAYER_WEIGHT_PARAMETER) {add_parameter(&mut result.parameters,p);}
         result.active_layers.push(entry.clone());
     }

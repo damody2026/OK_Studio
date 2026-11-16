@@ -8,12 +8,18 @@
 
 UOKCardListView::UOKCardListView(const FObjectInitializer& Initializer):Super(Initializer)
 {
+ // The row builds its own tree (UOKCardListEntry::RebuildWidget). The editor's list insists on a Blueprint row class
+ // (UListViewBase::RebuildWidget, WITH_EDITOR only), so the editor keeps /Game/UI/WBP_CardListEntry; a packaged game
+ // does not check and uses the native class, so nothing has to cook that Blueprint. Setting the class only in the
+ // editor left packaged games with an empty card wall (2026-11-16, Docs/ERROR_LOG.md).
 #if WITH_EDITOR
  static ConstructorHelpers::FClassFinder<UUserWidget> Entry(TEXT("/Game/UI/WBP_CardListEntry"));
  EntryWidgetClass=Entry.Class;
+#else
+ EntryWidgetClass=UOKCardListEntry::StaticClass();
+#endif
  SetSelectionMode(ESelectionMode::None);
  SetScrollbarVisibility(ESlateVisibility::Visible);
-#endif
 }
 
 TSharedRef<SWidget> UOKCardListEntry::RebuildWidget()

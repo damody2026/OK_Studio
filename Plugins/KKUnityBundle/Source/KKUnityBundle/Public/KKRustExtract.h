@@ -138,6 +138,11 @@ public:
  void ClearBodyReaction();
  bool IsBodyReactionPlaying() const;
  static FString PairClipForRoot(const FString& Root,const FString& Key,int32 Layer);
+ /** Key with the controller's override layer Layer switched on (bOn: SetLayerWeight 1, as HandCtrl does with her body layer
+  *  of the place his hand is on) or off; empty when it does not compose. Root: an animation root (CommonPairRoot). */
+ static FString KeyWithLayer(const FString& Root,const FString& Key,int32 Layer,bool bOn);
+ /** A card's skin colour (skinMainColor, sRGB as the card stores it); false without a card. */
+ static bool CardSkinColor(const FString& Card,FLinearColor& OutColor);
 
 	/** StatusJson (optional): an OK Studio character state (tears, blush, nipples, skin gloss, fluids, accessory slots; see ok_session_open_status). */
 	bool Open(const FString& GameRoot, const FString& CardPath, int32 Outfit, FString& OutError, const uint8* Clothes = nullptr, const FString& StatusJson = FString());
@@ -239,6 +244,9 @@ public:
  bool RefreshBodyPhysics();
  // Her dynamics back to rest (built again on the next step), for a replay from a known start (ok.Anim.SetTime).
  bool ResetDynamics();
+ /** ChaControl.playDynamicBoneBust: her bust or hip dynamics of Kind (0 bust L, 1 bust R, 2 hip L, 3 hip R) on, or held
+  *  still on the animated pose (HandCtrl while his hand is there). */
+ bool SetBodyDynamicEnabled(int32 Kind,bool bEnabled);
  // Her dynamic chains as read (owner, component, root, parameters, colliders), JSON, for ok.Debug.DynamicChains.
  FString DynamicChainsJson() const;
  // Her skin where he lifts it cut finer (one-on-one): once, after Open, before her mesh is built. The vertices added.
@@ -419,6 +427,7 @@ private:
 	friend class FOkAnimBridge;
 	friend class FOkAnimPlayer;
 	friend class FOkAnimBatch;
+	friend class FOkSkinnedItem;
 	FOkSessionHandle Handle;
 	// Capacity hints only: native validates and solves the current pose on every read.
 	mutable TMap<int32, int32> SkinPaletteCapacityHints;
@@ -429,6 +438,30 @@ private:
  int8 ExternalAnimation = -1;
  /** Sends bPhysXSecondary and ExternalAnimation to a newly adopted native session. */
  void ApplyPhysXSecondary() const;
+};
+
+struct SkinnedItem;
+/** A prefab with an Animator of its own (the H caress hands, fingers, tongue, toys): its skinned meshes on its own bones,
+ *  posed by states of its controller. It is drawn by a FOkSession of the same library prefab (OpenOkModel), whose parts
+ *  PoseSession rewrites; the caller refreshes the actor that shows that session (AKKPreviewActor::RefreshEditorGeometry). */
+class KKUNITYBUNDLE_API FOkSkinnedItem
+{
+public:
+	FOkSkinnedItem() = default;
+	~FOkSkinnedItem() { Close(); }
+	FOkSkinnedItem(const FOkSkinnedItem&) = delete;
+	FOkSkinnedItem& operator=(const FOkSkinnedItem&) = delete;
+	bool Open(const FString& Library, const FString& ModelId, const FString& Prefab, FString& OutError);
+	void Close();
+	bool IsOpen() const { return Item != nullptr; }
+	/** Poses the item Seconds into State (a key of AnimRoot, e.g. ControllerLayerState) with the controller's float
+	 *  parameters and writes its vertices into Session's parts of the same names: the parts written, -1 on error. */
+	int32 PoseSession(FOkSession& Session, const FString& AnimRoot, const FString& State, float Seconds, const TMap<FString, float>& Values);
+	/** A controller's state in a states: source: on override layer Layer (> 0, its index in the controller) or its base
+	 *  state (Layer <= 0); empty when it has none. */
+	static FString ControllerLayerState(const FString& AnimRoot, const FString& Source, const FString& Owner, int32 Layer);
+private:
+	SkinnedItem* Item = nullptr;
 };
 
 // Owned handles are kept alive by worker captures. Join all calls before

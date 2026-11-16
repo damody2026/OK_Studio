@@ -8,6 +8,7 @@
 #include "OKArousalDrops.h"
 #include "OKTears.h"
 #include "KKRustExtract.h"
+#include "KKAnimatedItem.h"
 #include "KKSpeech.h"
 #include "OKHScene.generated.h"
 
@@ -287,6 +288,21 @@ private:
     bool bStrokeOnce=false;float CaressSpeed=0.f,CaressMotionShown=-1.f,CaressBodyShown=-1.f,StrokePhase=0.f;double OnceUntil=0.,CaressShownStarted=0.;
     FString CaressShownState,StrokeBone;FVector StrokeAxis=FVector::ZeroVector,StrokeTurn=FVector::ZeroVector;
     void UpdateCaress(float Delta);
+    // His hand there (HandCtrl's caress items: hand, finger, tongue; base library h/caress_items.json): each item its own
+    // actor with its own Animator (FKKAnimatedItem) on the bone of hers the area's layer names, playing the layer of
+    // the action (resting, a single touch, stroking). Spawned on first use, hidden when no place is caressed.
+    TMap<int32,TUniquePtr<FKKAnimatedItem>> CaressItems;
+    TMap<FString,FString> CaressItemStates;
+    TSharedPtr<FJsonObject> CaressItemTable;bool bCaressItemsLoaded=false;FString CaressItemLibrary,CaressItemAnimRoot;
+    void UpdateCaressItems(float Delta);
+    // Her body layer of the place his hand is on (HandCtrl: female.setLayerWeight(1, layerActions[action].front.body)):
+    // her caress state's key with that layer on (FOkSession::KeyWithLayer, made off the game thread, cached), played
+    // while the item is there; her state's own key again once he lets go. HerBodyStarted: SoloStarted it was put on.
+    TMap<FString,FString> HerBodyKeys;TSet<FString> HerBodyPending;FString HerBodyKey;double HerBodyStarted=-1.;
+    void SetHerBodyLayer(int32 Layer);
+    // HandCtrl.EnableDynamicBone: her bust (or hip) dynamics the action holds still (layerActions dynamicArea/enableDynamic),
+    // a bit per DynamicBoneKind; all let go again when no place is caressed.
+    int32 HerHeldDynamics=0;void HoldHerDynamics(int32 Kind,bool bEnabled);
     bool bAibuLoaded=false;
     void LoadAibuPoses();
     void SelectAibu(int32 Index);

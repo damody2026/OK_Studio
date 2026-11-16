@@ -89,6 +89,7 @@ mod studio_items;
 mod studio_sounds;
 mod shader_states;
 mod studio_child_animation;
+pub mod skinned_item;
 mod studio_pose;
 mod studio_scene;
 pub mod vnge;
@@ -693,14 +694,16 @@ pub fn extract_card_outfit(
 /// The most a body-tights piece over her torso covers (alpha 89 = 35%).
 pub(crate) const SHEER_BODY_TIGHTS_ALPHA: u8 = 89;
 
-/// A pantyhose item's piece over her torso (a full-body tights' `o_body_*` mesh beside its `o_panst_*` legs) drawn
-/// see-through: at most `SHEER_BODY_TIGHTS_ALPHA` covers her skin. With her top half off, Raiden's club outfit showed
-/// that piece's 91% white torso as white skin (user 2026-11-09: make it see-through). Capping, not scaling, keeps it
-/// the same however often the parts are revisited.
+/// A pantyhose item's white piece over her torso (a full-body tights' `o_body_*` mesh beside its `o_panst_*` legs)
+/// drawn see-through: at most `SHEER_BODY_TIGHTS_ALPHA` covers her skin. With her top half off, Raiden's club outfit
+/// showed that piece's 91% white torso as white skin (user 2026-11-09: make it see-through). Only a white one: Alice's
+/// pink bodysuit (`o_body_allbodytights_top_a`, opaque pink in the game) lost its chest to it (user 2026-11-16: only the
+/// white ones see-through). Capping, not scaling, keeps it the same however often the parts are revisited.
 pub(crate) fn sheer_body_tights(parts: &mut [crate::session::SessionPart]) {
-    let cap = |png: &Vec<u8>| png_transform_cache::transform("sheer_body_tights_v1", png, &[SHEER_BODY_TIGHTS_ALPHA], || {
+    let cap = |png: &Vec<u8>| png_transform_cache::transform("sheer_body_tights_v2", png, &[SHEER_BODY_TIGHTS_ALPHA], || {
         let mut image = crate::teximg::load_from_memory(png).ok()?.into_rgba8();
         if image.pixels().all(|p| p[3] <= SHEER_BODY_TIGHTS_ALPHA) { return None; }
+        if !is_white_texture(&image) { return None; }
         for p in image.pixels_mut() { p[3] = p[3].min(SHEER_BODY_TIGHTS_ALPHA); }
         crate::texture_bake::encode_png(&image)
     });
@@ -710,6 +713,24 @@ pub(crate) fn sheer_body_tights(parts: &mut [crate::session::SessionPart]) {
         if let Some(capped) = part.png.as_ref().and_then(cap) { part.png = Some(capped); }
         if let Some(capped) = part.shader_textures.get("_MainTex").and_then(cap) { part.shader_textures.insert("_MainTex".into(), capped); }
     }
+}
+
+/// Whether a texture is white where it covers anything: the mean colour of its visible pixels is light (every channel
+/// at least `WHITE_MIN`) and grey (channels within `WHITE_SPREAD` of each other). A pastel pink (Alice's bodysuit,
+/// about 250/200/210) is light but not grey.
+fn is_white_texture(image: &image::RgbaImage) -> bool {
+    const WHITE_MIN: f64 = 200.;
+    const WHITE_SPREAD: f64 = 24.;
+    let (mut sum, mut n) = ([0f64; 3], 0f64);
+    for p in image.pixels() {
+        if p[3] == 0 { continue; }
+        for c in 0..3 { sum[c] += p[c] as f64; }
+        n += 1.;
+    }
+    if n == 0. { return false; }
+    let mean = sum.map(|v| v / n);
+    let (lo, hi) = (mean.iter().cloned().fold(f64::MAX, f64::min), mean.iter().cloned().fold(f64::MIN, f64::max));
+    lo >= WHITE_MIN && hi - lo <= WHITE_SPREAD
 }
 
 /// Opaque and alpha-tested parts that draw the very same surface (a Material Editor copy on the renderer, a second
@@ -788,6 +809,15 @@ fn body_tights_torso_is_sheer() {
     let once = parts[1].png.clone();
     assign_draw_layers(&mut parts);
     assert_eq!(parts[1].png, once, "revisiting leaves it as it is");
+    // Alice's pink bodysuit stays as opaque as the game draws it.
+    let pink = crate::unity::solid_png([250. / 255., 200. / 255., 210. / 255., 1.], 4, 4).unwrap();
+    let mut pink_mesh = mesh("o_body_allbodytights_top_a");
+    pink_mesh.texture_png = Some(pink.clone());
+    let mut parts = preview_session_parts(Path::new(""), "clothes_panst", vec![pink_mesh], None).unwrap();
+    parts[0].shader_textures.insert("_MainTex".into(), pink.clone());
+    assign_draw_layers(&mut parts);
+    assert_eq!(alpha(&parts[0]), 255, "a coloured torso piece keeps its alpha");
+    assert_eq!(main_alpha(&parts[0]), 255, "and so does its material");
 }
 
 pub(crate) fn extract_session(

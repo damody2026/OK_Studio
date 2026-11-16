@@ -836,6 +836,92 @@ void UOKHScenePanel::UpdateCaress(float Delta){
     CaressShownState=State;CaressShownStarted=SoloStarted;
     if(bAnew)UE_LOG(LogTemp,Display,TEXT("H scene: caress %s speed %.2f motion %.2f (shown %.2f, speedBody %.2f)"),*State,CaressSpeed,Motion,CaressMotionShown,CaressBodyShown);
 }
+// His hand on the place he caresses (HandCtrl.SetItem): the area's layer (aibulayer_NN: 0 bust L, 1 bust R, 2 crotch,
+// 3 anal, 4 hip L, 5 hip R) with an item of the kind he uses there (0 hand, 1 finger, 2 tongue when kissing or licking),
+// each of its items on its bone of hers, playing the item layer of the action: 0 resting, 1 a single touch (the
+// original's click), 2 stroking (its drag). The male body stays hidden, as in the original's caress.
+static TAutoConsoleVariable<int32> CVarHCaressItems(TEXT("ok.HScene.CaressItems"),1,TEXT("1: his hand, finger or tongue (the original's caress items) on the place he caresses; 0 none"));
+void UOKHScenePanel::UpdateCaressItems(float Delta){ TRACE_CPUPROFILER_EVENT_SCOPE(OK_HCaressItems);
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;
+    auto HideAll=[&](){for(auto& P:CaressItems)if(P.Value&&P.Value->IsVisible())P.Value->SetVisible(false);SetHerBodyLayer(-1);HoldHerDynamics(-1,true);};
+    if(CVarHCaressItems.GetValueOnGameThread()==0||Mode!=0||SoloInfo||!IsValid(Girl)||TouchArea<1||TouchArea>5){HideAll();return;}
+    if(!bCaressItemsLoaded){bCaressItemsLoaded=true;
+        CaressItemAnimRoot=FOkSession::CommonPairRoot();CaressItemLibrary=FPaths::GetPath(CaressItemAnimRoot);FString Text;
+        if(CaressItemAnimRoot.IsEmpty()||!FFileHelper::LoadFileToString(Text,*(CaressItemLibrary/TEXT("h/caress_items.json")))||!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text),CaressItemTable))
+            UE_LOG(LogTemp,Warning,TEXT("H scene: no caress items (%s/h/caress_items.json; ok-extract --oklib h-items)"),*CaressItemLibrary);}
+    if(!CaressItemTable.IsValid()){HideAll();return;}
+    const TArray<TSharedPtr<FJsonValue>>* Items=nullptr;const TArray<TSharedPtr<FJsonValue>>* Areas=nullptr;
+    if(!CaressItemTable->TryGetArrayField(TEXT("items"),Items)||!CaressItemTable->TryGetArrayField(TEXT("areas"),Areas)){HideAll();return;}
+    auto ItemOf=[&](int32 Id)->TSharedPtr<FJsonObject>{for(const auto& V:*Items){const auto O=V->AsObject();if(O&&int32(O->GetNumberField(TEXT("id")))==Id)return O;}return nullptr;};
+    // Ours (TouchArea): 1 chest, 2 crotch, 3 anal, 4 butt, 5 nipple; his hand on the chest and her bottom, fingers on a
+    // nipple and her anus, his tongue anywhere he licks.
+    static const int32 AreaOf[6]={-1,0,2,3,4,0};static const int32 KindOf[6]={-1,0,0,1,0,1};
+    const int32 Area=AreaOf[TouchArea],Kind=bLickMode?2:KindOf[TouchArea];
+    if(!Areas->IsValidIndex(Area)){HideAll();return;}
+    TSharedPtr<FJsonObject> Layer;
+    for(const auto& V:(*Areas)[Area]->AsArray()){const auto L=V->AsObject();if(!L)continue;const TArray<TSharedPtr<FJsonValue>>* Ids=nullptr;
+        if(!L->TryGetArrayField(TEXT("items"),Ids)||Ids->IsEmpty())continue;const auto First=ItemOf(int32((*Ids)[0]->AsNumber()));
+        if(First&&int32(First->GetNumberField(TEXT("kind")))==Kind){Layer=L;break;}}
+    if(!Layer.IsValid()){HideAll();return;}
+    const int32 Action=OnceUntil>0.?1:CaressSpeed>.05f?2:0;
+    const TArray<TSharedPtr<FJsonValue>>& LayerActions=Layer->GetArrayField(TEXT("actions"));
+    if(!LayerActions.IsValidIndex(Action)){HideAll();return;}
+    const int32 ItemLayer=int32(LayerActions[Action]->AsObject()->GetNumberField(TEXT("front_item")));
+    SetHerBodyLayer(int32(LayerActions[Action]->AsObject()->GetNumberField(TEXT("front_body"))));
+    {const auto A=LayerActions[Action]->AsObject();const int32 DynamicArea=int32(A->GetNumberField(TEXT("dynamic_area")));
+     HoldHerDynamics(DynamicArea,A->GetBoolField(TEXT("enable_dynamic")));}
+    const TArray<TSharedPtr<FJsonValue>>& Ids=Layer->GetArrayField(TEXT("items"));const TArray<TSharedPtr<FJsonValue>>& Parents=Layer->GetArrayField(TEXT("parents"));
+    TSet<int32> Shown;
+    const TArray<float> Shape=Girl->Session.ShapeBody();
+    const TMap<FString,float> Values={{TEXT("speedHand"),1.f},{TEXT("Breast"),Shape.IsValidIndex(4)?Shape[4]:.5f}};
+    for(int32 K=0;K<Ids.Num();++K){const int32 Id=int32(Ids[K]->AsNumber());const auto Item=Id>=0?ItemOf(Id):nullptr;if(!Item)continue;
+        const FString Bone=Parents.IsValidIndex(K)?Parents[K]->AsString():Parents.Num()?Parents[0]->AsString():FString();if(Bone.IsEmpty())continue;
+        TUniquePtr<FKKAnimatedItem>& ItemSlot=CaressItems.FindOrAdd(Id);
+        if(!ItemSlot){ItemSlot=MakeUnique<FKKAnimatedItem>();FString Error;
+            // HandCtrl.Init(female, male.chaFile.custom.body.skinMainColor): the items it takes the material of
+            // (isMaterialGet: his hands and fingers) are coloured with his skin.
+            TArray<FLinearColor> Colors;FLinearColor Skin;bool bMale=false;
+            if(Item->TryGetBoolField(TEXT("male_colour"),bMale)&&bMale&&Gallery&&FOkSession::CardSkinColor(Gallery->PartnerCardPath,Skin))Colors.Add(Skin);
+            if(!ItemSlot->Spawn(GetWorld(),CaressItemLibrary,Item->GetStringField(TEXT("model")),Item->GetStringField(TEXT("prefab")),CaressItemAnimRoot,Error,Colors))
+                UE_LOG(LogTemp,Warning,TEXT("H scene: caress item %s not shown: %s"),*Item->GetStringField(TEXT("prefab")),*Error);}
+        if(!ItemSlot->IsSpawned())continue;
+        const FString StateKey=FString::Printf(TEXT("%d|%d"),Id,ItemLayer);FString* State=CaressItemStates.Find(StateKey);
+        if(!State){State=&CaressItemStates.Add(StateKey,FOkSkinnedItem::ControllerLayerState(CaressItemAnimRoot,Item->GetStringField(TEXT("controller_source")),Item->GetStringField(TEXT("controller")),ItemLayer));
+            if(State->IsEmpty())UE_LOG(LogTemp,Warning,TEXT("H scene: caress item %s has no layer %d"),*Item->GetStringField(TEXT("controller")),ItemLayer);}
+        if(State->IsEmpty())continue;
+        ItemSlot->Attach(Girl,Bone);ItemSlot->Play(*State);if(!ItemSlot->IsVisible())ItemSlot->SetVisible(true);
+        // HandCtrl: speedHand = 1 + speedItem; its clock runs with his hand's speed.
+        ItemSlot->Tick(Delta,1.f+CaressSpeed,Values);Shown.Add(Id);}
+    for(auto& P:CaressItems)if(P.Value&&!Shown.Contains(P.Key)&&P.Value->IsVisible())P.Value->SetVisible(false);
+}
+// HandCtrl.SetLayerWeight: her body layer of the place and action (front.body) at weight 1 over the state she plays, so the
+// place gives under his hand (her breast pressed in); off again when he lets go. Layer < 0: none.
+void UOKHScenePanel::SetHerBodyLayer(int32 Layer){
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;const FString* Base=SoloKeys.Find(SoloState);
+    if(!IsValid(Girl)||!Base){HerBodyKey.Reset();return;}
+    const bool bOn=HerBodyStarted==SoloStarted&&!HerBodyKey.IsEmpty(); // ours still plays: PlaySolo since puts her state's own key
+    auto Play=[&](const FString& Key){const float Fade=.15f;
+        if(!(Girl->AnimDuration>0.f&&Girl->CrossFadeGameAnimation(Key,Fade/Girl->AnimDuration))&&!Girl->SetGameAnimation(Key)){UE_LOG(LogTemp,Warning,TEXT("H scene: her body layer key did not play: %s"),*Key);return false;}return true;};
+    if(Layer<=0){if(bOn&&Play(*Base))UE_LOG(LogTemp,Display,TEXT("H scene: her body layer off (%s)"),*SoloState);HerBodyKey.Reset();return;}
+    const FString Cache=FString::Printf(TEXT("%d|%s"),Layer,**Base);
+    const FString* Want=HerBodyKeys.Find(Cache);
+    if(!Want){if(!HerBodyPending.Contains(Cache)){HerBodyPending.Add(Cache);const FString Root=FOkSession::CommonPairRoot();const FString From=*Base;TWeakObjectPtr<UOKHScenePanel> Weak(this);
+        Async(EAsyncExecution::Thread,[Weak,Root,From,Layer,Cache](){FString Key=FOkSession::KeyWithLayer(Root,From,Layer,true);
+            if(!Key.IsEmpty()){FOkSession::BeginAnimationPreparation();if(!FOkSession::PrepareAnimationClip(Root,Key))Key.Reset();FOkSession::EndAnimationPreparation();}
+            AsyncTask(ENamedThreads::GameThread,[Weak,Cache,Key](){if(auto* UI=Weak.Get()){UI->HerBodyPending.Remove(Cache);UI->HerBodyKeys.Add(Cache,Key);
+                if(Key.IsEmpty())UE_LOG(LogTemp,Warning,TEXT("H scene: her body layer does not compose: %s"),*Cache);}});});}
+        return;}
+    if(Want->IsEmpty()||(bOn&&HerBodyKey==*Want))return;
+    if(Play(*Want)){HerBodyKey=*Want;HerBodyStarted=SoloStarted;UE_LOG(LogTemp,Display,TEXT("H scene: her body layer %d on %s"),Layer,*SoloState);}
+}
+// ChaControl.playDynamicBoneBust(kind, enabled) as HandCtrl calls it for the caressed place; every other kind held before
+// moves again (Kind < 0: all of them).
+void UOKHScenePanel::HoldHerDynamics(int32 Kind,bool bEnabled){
+    AKKPreviewActor* Girl=Gallery?Gallery->PreviewActor.Get():nullptr;if(!IsValid(Girl)){HerHeldDynamics=0;return;}
+    for(int32 K=0;K<4;++K){const bool bHeld=(HerHeldDynamics>>K)&1;const bool bOn=K!=Kind||bEnabled;
+        if(bHeld==!bOn)continue;
+        if(Girl->Session.SetBodyDynamicEnabled(K,bOn)){HerHeldDynamics=bOn?(HerHeldDynamics&~(1<<K)):(HerHeldDynamics|(1<<K));UE_LOG(LogTemp,Display,TEXT("H scene: her body dynamics %d %s"),K,bOn?TEXT("on"):TEXT("held"));}}
+}
 void UOKHScenePanel::UpdateMotion(float Delta){
     if(CVarHMotion.GetValueOnGameThread()==0){HMotion=0.f;bMotionEasing=false;return;}
     // HSonyu / HHoushi Proc: an easing under way goes on in any state of the pose.
@@ -1753,7 +1839,7 @@ void UOKHScenePanel::TickScene(float Delta){
     Her=FMath::Clamp(Her,0.f,100.f);His=FMath::Clamp(His,0.f,100.f);
     // In her mouth she decides herself if he waits (HHoushi Oral_Idle: drink or spit after a while).
     if(Queue.IsEmpty()&&Base==TEXT("Oral_Idle")&&OralIdleSince>0.&&Now-OralIdleSince>8.){OralIdleSince=0.;static const float DrinkChance[]={.2f,.35f,.6f,.85f};Click(FMath::FRand()<DrinkChance[FMath::Clamp(Level(),0,3)]?Drink:Vomit);} // her own choice: the more used to it, the likelier she swallows
-    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSpeed);ApplySpeed();UpdateMotion(Delta);UpdateCaress(Delta);}
+    {TRACE_CPUPROFILER_EVENT_SCOPE(OK_HTickSpeed);ApplySpeed();UpdateMotion(Delta);UpdateCaress(Delta);UpdateCaressItems(Delta);}
     // Her spoken answer is over: her breathing goes on (the line stopped it).
     // What is being put on stays on screen until it is on: without it the wait looks like a hang (user 2026-11-07).
     if(!OutfitLoadingText.IsEmpty()){AOKInteractionMode* Changing=Interaction();if(!Changing||!Changing->IsChangingOutfit())OutfitLoadingText.Reset();else if(Hint)Hint->SetText(FText::FromString(OutfitLoadingText));}
@@ -3027,8 +3113,10 @@ void UOKHScenePanel::TickLeadsOnTop(){
     for(AKKPreviewActor* A:{Girl,Him})if(IsValid(A)){
         FVector Hips;const FBox Body=HBone(A,TEXT("j_hips"),Hips)?FBox(Hips-FVector(120.),Hips+FVector(120.)):FBox(A->GetActorLocation()-FVector(120.),A->GetActorLocation()+FVector(120.));
         TInlineComponentArray<UPrimitiveComponent*> Own(A);
-        TArray<USceneComponent*> Hanging;
-        for(UPrimitiveComponent* C:Own){C->GetChildrenComponents(true,Hanging);if(Body.Intersect(C->Bounds.GetBox()))Parts.AddUnique(C);}
+        // GetChildrenComponents empties its array first: gathered one component at a time (else only the last one's
+        // children were kept, and an item hung from her body mesh — his caressing hand — stayed behind her).
+        TArray<USceneComponent*> Hanging,Children;
+        for(UPrimitiveComponent* C:Own){C->GetChildrenComponents(true,Children);Hanging.Append(Children);if(Body.Intersect(C->Bounds.GetBox()))Parts.AddUnique(C);}
         for(USceneComponent* C:Hanging)if(auto* P=Cast<UPrimitiveComponent>(C);P&&P->GetOwner()!=A&&Body.Intersect(P->Bounds.GetBox()))Parts.AddUnique(P);}
     // What left them (a drop fallen away) goes back to the scene.
     LeadsOnTopParts.RemoveAll([&](const TWeakObjectPtr<UPrimitiveComponent>& P){UPrimitiveComponent* C=P.Get();if(!C)return true;

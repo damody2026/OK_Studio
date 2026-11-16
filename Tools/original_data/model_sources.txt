@@ -331,6 +331,7 @@ abdata/chara/thumb/mt_pattern_30.unity3d
 abdata/chara/thumb/mt_pattern_60.unity3d
 abdata/chara/thumb/mt_sunburn_00.unity3d
 abdata/chara/thumb/mt_underhair_00.unity3d
+abdata/h/common/01.unity3d
 abdata/list/characustom/00.unity3d
 abdata/list/characustom/01.unity3d
 abdata/list/characustom/02.unity3d

@@ -3305,6 +3305,9 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             crate::studio_items::record_scene_mod_nodes(game, &lib, std::path::Path::new(args.get(2).ok_or("scene folder required")?), threads)?;
         }
         "studio-child-anims" => crate::studio_child_animation::convert(game, &lib.ok_or("library directory required")?)?,
+        // h-items <lib>: the H caress items (HandCtrl: hands, fingers, tongue, toys; prefabs with an Animator of their own)
+        // into the library and h/caress_items.json.
+        "h-items" => println!("OKCONVERT h caress items={}", crate::skinned_item::record_caress_items(game, &lib.ok_or("library directory required")?)?),
         "studio-check" => crate::studio_items::check(&lib.ok_or("library directory required")?)?,
         "studio-images" => println!("OKCONVERT studio images copied={}", crate::studio_items::copy_user_images(game, &lib.ok_or("library directory required")?)?),
         // saturation-lut <dir>: the KKS display colour transform (BetterColorPicker's table, inverted) as

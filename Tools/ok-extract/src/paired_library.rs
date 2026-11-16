@@ -33,6 +33,10 @@ pub struct Inventory {
     pub unsupported: Vec<String>,
     /// Paired layer clips: (key, layer, resolved clip).
     pub pair_layers: Vec<(String, i32, String)>,
+    /// Caress body layers (HandCtrl: her `front.body`/`back.body` layer of the place his hand is on): (key, layer, the key
+    /// with that layer on), for every state of the caress poses (`anim::key_with_layer`).
+    #[serde(default)]
+    pub body_layers: Vec<(String, i32, String)>,
     pub pairs: usize,
     pub poses: usize,
     pub motions: usize,
@@ -166,7 +170,19 @@ fn convert_into(source: &Path) -> Result<Inventory, String> {
     for (key, layer) in layered {
         if let Some(clip) = crate::anim::native_pair_clip(source, &key, layer) { keys.insert(clip.clone()); inv.pair_layers.push((key, layer, clip)); }
     }
-    // A trial conversion (`OK_PAIRED_SAMPLE=N`): every Nth key only.
+    // The caress: while his hand is on a place of hers, HandCtrl turns on her body layer of that place and action over
+    // whatever state of the caress pose she plays (aibulayer_NN layerActions front/back.body). Each such key is one of
+    // its own, as the paired layers are.
+    let caress = crate::skinned_item::caress_lists(source);
+    let bodies: BTreeSet<i64> = caress.areas.iter().flatten().flat_map(|l| l.actions.iter().flat_map(|a| [a.front_body, a.back_body])).filter(|b| *b > 0).collect();
+    for p in poses.iter().filter(|p| p.participants == 1 && p.category == "AnimationInfo_00" && !p.female_source.is_empty()) {
+        for label in crate::anim::clip_names_for_source(source, &p.female_source).into_iter().filter(|l| l.contains("[Controller layer 0] ") || l.contains("[Studio layer 0] ")) {
+            let Some(key) = crate::anim::native_pair_clip(source, &format!("{}|{label}", p.female_source), p.female_layer) else { continue };
+            for body in &bodies {
+                if let Some(with) = crate::anim::key_with_layer(source, &key, *body as usize, true) { keys.insert(with.clone()); inv.body_layers.push((key.clone(), *body as i32, with)); }
+            }
+        }
+    }    // A trial conversion (`OK_PAIRED_SAMPLE=N`): every Nth key only.
     if let Some(n) = std::env::var("OK_PAIRED_SAMPLE").ok().and_then(|v| v.parse::<usize>().ok()).filter(|n| *n > 1) {
         keys = keys.into_iter().step_by(n).collect();
     }
@@ -211,6 +227,9 @@ pub fn verify(source: &Path, library: &Path) -> Result<Vec<String>, String> {
     }
     for (key, layer, clip) in &inv.pair_layers {
         if crate::anim::native_pair_clip(library, key, *layer).as_deref() != Some(clip.as_str()) { bad.push(format!("pair layer {layer} of {key}")); }
+    }
+    for (key, layer, with) in &inv.body_layers {
+        if crate::anim::key_with_layer(library, key, *layer as usize, true).as_deref() != Some(with.as_str()) { bad.push(format!("body layer {layer} of {key}")); }
     }
     // Misses first: they explain the mismatches after them.
     let misses = disk_cache::library_misses();

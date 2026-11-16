@@ -34,7 +34,7 @@ local SSD = "Content/IndependentResources/StreetSocialData"
 -- "optional" (converted from the install, or from its own zip; without it the feature is just quiet), "no".
 -- part: the zip a group is packed into ("main" when not given; the H voices are a separate download).
 local GROUPS = {
-  { name = "base-models", need = "game", step = "models", paths = { LIB .. "/models/" } },
+  { name = "base-models", need = "game", step = "models", paths = { LIB .. "/models/", LIB .. "/h/caress_items.json" } },
   { name = "base-index", need = "game", step = "models", paths = { LIB .. "/sources.okidx", LIB .. "/converted.tsv", LIB .. "/oklib.json", LIB .. "/shared_mods.txt" } },
   -- What one machine has beside the conversion: the coverage gaps it saw, the time models were last edited, a test
   -- scene that did not come with the game.
@@ -326,6 +326,9 @@ local function cmd_restore(o)
   end
   step("models", "base library models from the game and its mods/", function()
     x("convert", lib, "8", "@" .. MODEL_SOURCES)
+    -- The H caress items (hands, fingers, tongue, toys with an Animator of their own): what their sessions read and
+    -- h/caress_items.json (OKHScene's caress, KKAnimatedItem).
+    x("h-items", lib)
     -- The library's list of models that are not shared (models/.gitignore) and its shared_mods.txt, which an OK card's
     -- strict open reads (okstrict.rs).
     x("shared-ignore", lib)

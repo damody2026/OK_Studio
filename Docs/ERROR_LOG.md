@@ -4802,3 +4802,42 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 驗證：暫存 slot 目錄、實機兩個 Unreal（使用者遊戲 20:18、讀卡器 21:48）：slot1 在 21:00 claim → 1 持有＋1 其他，claim 成功；`--need-gb 55`（63−55<25）被拒；slot1 在 20:00 claim → 2 個都算持有者，被拒；無人持有 → 成功；再起一個假 `OpenKoikatsu.exe` 湊成 3 個 → 總量上限拒絕。
 - 已知邊界：持有者 release 後又 claim，舊實例比新 claim 早，只算進總量；使用者在 slot 被持有期間才開的遊戲會被當成持有者的（保守，跟舊行為一樣）。
 - 教訓：資源上限要數「受這套規則管的東西」，使用者自己的用量另算總量，不然規則會跟使用者搶資源。
+## 2026-11-16 打包腳本改用 street_stage 卻沒 require，打包一開始就失敗（E 組驗證時發現）
+- 錯誤：90602d014 把 `Tools/package_street_social.lua` 挑 stage 的程式改成呼叫 `street_stage.named/newest`，但沒加 `require "street_stage"`；提交時「打包 --check 未實跑」，整合後重打包在第 54 行 `attempt to index a nil value (global 'street_stage')`。
+- 修正：檔頭加 `local street_stage = require "street_stage"`。
+- 防範：改到打包、啟動器這類只在特定流程才會跑的腳本，提交前至少實跑一次（打包可用 `--check`）。
+
+## 2026-11-16 用 PowerShell Get-Content／Set-Content 改 lib.rs，非 ASCII 字元全壞（E 組一對一愛撫的手）
+- 錯誤：在 `Tools/ok-extract/src/lib.rs` 插入 `pub mod skinned_item;` 時用了 Windows PowerShell 5.1 的 `Get-Content`／`Set-Content`（預設系統 ANSI 字碼頁），檔內的中文註解與符號被轉壞。
+- 修正：`git checkout` 還原 lib.rs，改以 UTF-8（無 BOM）讀寫、保留原本的 CRLF，只插入那一行；`git diff` 確認只有一行差異。
+- 防範：改原始碼一律用 Edit，或 `[IO.File]::ReadAllText/WriteAllText` 搭 `UTF8Encoding($false)`；PowerShell 5.1 的 `Set-Content`／`Out-File` 不能用來寫原始碼。寫完先看 `git diff --stat` 是否只有預期的行。
+
+## 2026-11-16 同一個 Mesh 有一般與 silhouette 兩個 renderer，道具被畫成藍色半透明（E 組一對一愛撫的手）
+- 錯誤：H 愛撫道具 `p_handL`、`p_tang` 的網格（`o_hand_L`、`o_tang`）同時被一般 renderer 和 HData 的 silhouette renderer（`Custom/Silhouette`）使用；`attach_material_texs` 取第一個命中的 renderer 材質，取到 silhouette 的，左手與舌頭成了藍色半透明。`p_handR`、`p_fingerL` 剛好取到一般材質，所以只有部分道具壞。
+- 修正：`unity.rs` `prefer_normal_renderer_material`：材質是 silhouette 且網格有多個 renderer 時，改用其中非 silhouette renderer 的材質與貼圖（`renderer_materials` 表與 `material_named` 已錄在基礎庫，重播時也生效，不用重轉）。
+- 防範：一個 Mesh 多個 renderer 時，不能假設第一個 renderer 就是畫它的那個；`skinned_item::library_items_pose_into_their_sessions` 斷言 9 個道具都不是 silhouette。
+
+## 2026-11-16 一對一愛撫：他的手畫在她後面（LeadsOnTop 沒收到道具），還誤以為是手埋進胸部
+- 錯誤：愛撫的手（`FKKAnimatedItem`）每幀用 `SetActorTransform` 擺到她的骨頭上，但沒掛（attach）到她身上；`ok.HScene.LeadsOnTop`（預設開）把她和他畫成縮向鏡頭的第一人稱 primitive，只收他們自己與掛在身上的元件，所以手的深度比她遠，從正面永遠被她蓋住。我先以為是手埋進胸部，去加了她的 front.body 層與胸部物理暫停（這兩項是原作行為，該做，但不是看不到手的原因）。
+- 修正：`FKKAnimatedItem::Attach` 把道具 actor 以 KeepWorldTransform 掛到 owner 底下；另外 `TickLeadsOnTop` 用同一個陣列反覆呼叫 `GetChildrenComponents`（它每次先清空），只留下最後一個元件的子元件，掛在 BodyMesh 上的道具仍被漏掉，改成逐一累加。
+- 防範：場景裡看不到某個東西時，先用 `ok.Debug.HideParts <renderer>` 藏掉擋住的部件、或關掉 `ok.HScene.LeadsOnTop` 看它在不在，再推論幾何。
+
+## 2026-11-16 沒拿到 slot 就開了遊戲（c-street-city 獨占 cook 時）
+- 錯誤：把 `unreal_slot.lua claim e-120fps` 與 `Start-Process run_street_social_development.lua` 寫在同一串命令裡，沒檢查 claim 的結果；claim 回「queued」（c-street-city 持有 slot1、[need 60]）時遊戲照樣啟動，把可用 commit 壓到 11 GB，差點讓別人的 WP 轉換＋cook 失敗，最後由協調 session 強制關掉。
+- 修正：先 claim，確認輸出是 `slotN` 才啟動；排隊時只等，不開任何 Unreal。
+- 防範：啟動遊戲的命令一律寫成 `$r=claim; if("$r" -match '^slot\d'){ 啟動 } else { 停 }`，不把 claim 與啟動無條件串在一起。
+
+## 2026-11-16 打包版讀卡卡片牆是空的：列表的列類別只在編輯器設定（E 組，測試者回報）
+- 錯誤：`UOKCardListView` 建構子整段包在 `#if WITH_EDITOR`，`EntryWidgetClass` 指向從沒被 cook 的 `/Game/UI/WBP_CardListEntry`；打包版沒有列類別，卡片牆只顯示「共 N 張卡片」和「No EntryWidgetClass specified on this list」。dd9129b27 驗收時只用 MCP 的 load 開卡，沒看卡片牆有沒有列，所以漏掉。
+- 修正：編輯器照舊用藍圖（引擎只在編輯器建置檢查列類別必須是藍圖，第一版改成一律原生類別時編輯器顯示「is not a Blueprint class」），打包版改用原生 `UOKCardListEntry`（它自己建列的內容），不必 cook 藍圖；已出的包不能換執行檔，讀卡腳本改成可以把卡片拖到 `CardReaderDevelopment.cmd` 上直接開（`OK_AUTO_3D`／`OK_AUTO_CARD`）。
+- 防範：打包版 UI 驗收要照玩家的操作走一次（看卡片牆、點卡），不能只靠控制通道直接載入；原生類別別在建構子用只有編輯器才找得到的資產。
+
+## 2026-11-16 包解壓到帶括號的資料夾，角色看不見（測試者 16 GB／8 GB VRAM 回報）
+- 錯誤：測試者把包解壓成 `StreetSocial-20261114-hvoice(1)(1)`。Unreal 讀 `-pakdir=`、`-StreetSocialManifest=` 這類參數時遇到 `)` 或 `,` 就停（`FParse::Value`），路徑被截成 `...hvoice(1`，runtime patch 沒掛上，log 出現「High model shader library RuntimeMaterialBake not found」和 BulkData 錯誤，讀卡開卡成功卻看不見人；街區的 manifest 同樣會讀不到。一開始以為是低規格機器的記憶體或顯卡問題。
+- 修正：`street_stage.ue_path`：路徑含 `,`、`)` 或空白時，改傳相對於執行檔資料夾（遊戲的工作資料夾）的相對路徑；讀卡、場景編輯器、街區啟動器帶路徑的參數都經過它。加引號沒用，遊戲讀的是原始命令列，不是 MSVC 拆好的 argv。
+- 防範：交給玩家的路徑不能假設乾淨；看到「載入成功卻看不見」先查 log 的命令列與 `Mounted Pak file`，確認 patch 有沒有掛上。
+
+## 2026-11-16 愛麗絲的粉紅連身緊身衣胸口不見（1aed475d5 的半透明規則套用過廣）
+- 錯誤：11-09 為了雷電社團服半脫時那片 91% 白的褲襪軀幹，把 `clothes_panst` 的 `o_body*` 部件一律壓到 alpha 89（`sheer_body_tights`）。規則沒限定顏色，愛麗絲不透明的粉紅連身衣（原作 `cf_m_bodytights_04` 整片不透明）也被壓成 35%，讀卡、街區、打包版都看起來胸口沒穿。
+- 修正：只有軀幹貼圖平均色是白色（三色都 ≥ 200、彼此差 ≤ 24）才壓；快取鍵改成 `sheer_body_tights_v2`，舊的壓過結果不再被重用。
+- 防範：照使用者的單一案例做的外觀規則要限定到那個案例的特徵（這裡是「白」），並拿原作 dump（`D:\KoikatuSunshine\mesh_dump`）比一張不同顏色的卡。

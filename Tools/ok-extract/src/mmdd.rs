@@ -5373,7 +5373,7 @@ mod tests {
             body_rest: body_rest.clone(),
             body_dynamics: Default::default(),
             body_dynamic_runtime: None,
-            yure_policy: None,
+            yure_policy: None, dynamics_held: [false; 4],
             body_colliders: Default::default(),
             clothes_dynamics: Default::default(),
             clothes_dynamic_runtime: None,

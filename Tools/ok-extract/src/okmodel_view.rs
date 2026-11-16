@@ -100,6 +100,16 @@ impl ItemMaterialEdits {
 /// What a Standard part's own material brings besides `_MainTex`.
 pub(crate) const STANDARD_NODE_SLOTS: &[&str] = &["_BumpMap", "_MetallicGlossMap", "_EmissionMap"];
 
+/// Koikano/main_clothes_item mixes its _Color.._Color4 by the ColorMask's channels over _MainTex. A card's clothes and
+/// accessories bake that mix (their colours come from the card); a library prefab keeps it live like a Studio item
+/// (SessionPart::item_draw, all four colours), so what the scene writes to _Color reaches it, as HandCtrl.SetHandColor
+/// gives the caressing hand his skin. Without either it was the shader's white default: H caress's hands and fingers
+/// white, the tongue pale blue under its _ShadowColor.
+fn mark_clothes_item_colors(m: &mut ExtractedMesh) {
+    if m.color_mask_png.is_none() { return; }
+    let Some(mat) = m.mat.as_mut() else { return };
+    if mat.shader.eq_ignore_ascii_case("Koikano/main_clothes_item") && !mat.floats.contains_key("_OKStudioItemColors") { mat.floats.insert("_OKItemColors".into(), 1.0); }
+}
 fn bake_lightmap(m: &mut ExtractedMesh, lightmaps: &crate::unity::PrefabLightmaps, node: i32) {
     let Some(&(_, index, st)) = lightmaps.renderers.iter().find(|(n, _, _)| *n == node) else { return; };
     if !m.uv4.is_empty() || lightmaps.textures.get(index as usize).is_none_or(|t| t.is_empty()) { return; }
@@ -704,6 +714,7 @@ impl ModelView {
             let detail = m.mat.as_ref().filter(|mat| mat.shader.starts_with("Standard") && mat.keywords.iter().any(|k| k == "_DETAIL_MULX2"))
                 .and_then(|mat| mat.slot("_DetailAlbedoMap")).and_then(|name| self.parsed.texture_png_named(name));
             if let Some(png) = detail { m.shader_extra_textures.insert("_DetailAlbedoMap".into(), png); }
+            mark_clothes_item_colors(m);
         }
         // A LODGroup draws one level at a time; the parts of every level drawn at once stacked the lighthouse's plants
         // three deep (U149). Levels above 0 go where the mesh's LOD0 is in the prefab (Unity's `<name>_LOD<n>` naming).

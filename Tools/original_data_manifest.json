@@ -136729,16 +136729,22 @@
    "sha256": "b076b4ddece1f20768daf794d81a370787ca85878b0681be48cef3c96c8f04e9"
   },
   {
-   "bytes": 7514621,
+   "bytes": 7514749,
    "group": "base-index",
    "path": "Content/IndependentResources/base_v1/converted.tsv",
-   "sha256": "02d0e26738ccebaca58db5aa8a5b2bc5f47815b3987167c8ae26450979bde668"
+   "sha256": "41a4bdb7a25688a2791b592f9fab9b752d4c2b31db2e33241198bfbd74293d9a"
   },
   {
    "bytes": 19,
    "group": "base-index",
    "path": "Content/IndependentResources/base_v1/edits.stamp",
    "sha256": "d2662c04e2750de298401b1fc8c11a57ca13987f6e473177d3e388956d9f1d2a"
+  },
+  {
+   "bytes": 23897,
+   "group": "base-models",
+   "path": "Content/IndependentResources/base_v1/h/caress_items.json",
+   "sha256": "f8457226ceeecfc143ffedd4b7be7ed6bb7f0586a22ab361ea6327bf775a512e"
   },
   {
    "bytes": 578737,
@@ -869275,6 +869281,12 @@
    "sha256": "aff6e5074a3f6257b79a8b85923303bd952507e79dc21dd17de118cc818dc6c2"
   },
   {
+   "bytes": 28485287,
+   "group": "base-models",
+   "path": "Content/IndependentResources/base_v1/models/bc/bc3df5030000000068a089c04f4b4331.okmodel",
+   "sha256": "833db4c349389270567fdc21cb0347709c40c41b60a9035c0bda02e5e7550245"
+  },
+  {
    "bytes": 22605,
    "group": "base-models",
    "path": "Content/IndependentResources/base_v1/models/bd/bdaf000000000000af4123604f4b4331.okmodel",
@@ -870163,10 +870175,10 @@
    "sha256": "6446fe0bc059f725a87de73dfa4bcd40319b97c555a0c22c390c93fbb6ecec63"
   },
   {
-   "bytes": 1398735682,
+   "bytes": 1472628388,
    "group": "base-paired",
    "path": "Content/IndependentResources/base_v1/paired/cache/pack.bin",
-   "sha256": "39a6770e457fba17be16038b62def8946638b2ee3ad7b59a8138faa145e2327a"
+   "sha256": "fcc28e202f86572ee22bbe2b653220ad5a055b3953de17433740425653ca1a90"
   },
   {
    "bytes": 339537,
@@ -870181,10 +870193,10 @@
    "sha256": "6dceb5697770fb357db384d4991c86afac27318972562e4e1e7a4e60f7af24b2"
   },
   {
-   "bytes": 64672090,
+   "bytes": 85566759,
    "group": "base-paired",
    "path": "Content/IndependentResources/base_v1/paired/okpaired.json",
-   "sha256": "693d0932d4dcc0b796900e0ebaaf9b95b3f33c4fea62ce614127fb3ef918eb9b"
+   "sha256": "377c2ea4152f0d2c25fc6a6b5b38529491498b6068c28a9f071d967035b7dced"
   },
   {
    "bytes": 107868,
@@ -870199,10 +870211,10 @@
    "sha256": "7c3f05df52538d4cf65eda06255321258ce59ed37abf86c025744f5b25cd288d"
   },
   {
-   "bytes": 1063336283,
+   "bytes": 1077443477,
    "group": "base-index",
    "path": "Content/IndependentResources/base_v1/sources.okidx",
-   "sha256": "48da77613accf61e5286631cc6a58e4eb83db161b6811fc7dc0b14e2203028b4"
+   "sha256": "9279ce0d1556677d5198c02ac0a37555274fd39949c53a564699939d2907a211"
   },
   {
    "bytes": 3084930,
