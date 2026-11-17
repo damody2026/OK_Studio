@@ -4,19 +4,20 @@
 
 **改動地圖後必跑（安裝家具、切牆、搬道具之後，進遊戲之前）**：`Tools\lua\lua.exe Tools\street_city_reach_check.lua scan`（或只重掃改動處的批次），再 `... gate`。`Tools/build_street_city_stream.lua`（WP 轉換）第一步就跑 gate，沒過不轉換。判準：來源地圖在最新一批掃描之後又存過 → 不過（要重掃）；門被擋、樓層沒有入口、門到不了街上、錨點下沒有地板、錨點周圍沒有可走格、錨點在封死的格子，這六類任一類筆數比已提交的本文件多 → 不過，並列出新增的列。站位在家具裡不擋（遊戲會改站附近走得到的點）。要略過只能 `--skip-reach-gate <原因>`，原因寫進該輪回報。
 
-檢查 113 個地點、9631 個錨點；未掃到的區塊 0 個。
+檢查 113 個地點、9673 個錨點；未掃到的區塊 0 個。
 
-## 站位在家具或牆裡：遊戲會改用 1.6 m 內走得到的點（不擋路，只是站位不準）（5149）
+## 站位在家具或牆裡：遊戲會改用 1.6 m 內走得到的點（不擋路，只是站位不準）（5157）
 
-各地點筆數（每一筆在 output/street-social-city-production/places-v1/reach-report.json）：girls_dorm 1155、boys_dorm 1140、campus_ib 274、campus_ma 274、campus_rb 274、campus_t4 274、campus_t1 262、campus_t2 262、campus_ee 261、park 84、cafeteria 83、civic 66、library 60、campus_sports 48、beach 44、onsen 36、restaurant 36、cafe 33、izakaya 31、sushi 29、station 28、clinic_general 19、campus_e1 18、district_office 18、clinic_gyn 17、craft 16、manga_cafe 15、bookstore 14、cat_cafe 14、conveni 13、fastfood 13、lecture 12、school 12、lottery 11、bridal 10、campus_ad 10、snack 10、museum 9、yakiniku 9、bowling 8、department 8、fruitshop 8、nursery 8、petshop 8、salon 7、post 6、shrine 6、aquarium 5、dentist 5、police 5、supermarket 5、breakfast 4、clinic_beauty 4、club_room 4、drinkshop 4、fortune 4、hotel 4、livehouse 4、nail 4、realty 4、karaoke 3、amusement 2、arcade 2、art_room 2、bbq 2、clothing_s10 2、clothing_s30 2、crepe 2、festival 2、fishing 2、gym_storage 2、pool 2、swimwear 2、bank 1、bike_shop 1、boat 1、campus_gate 1、cinema 1、clothing_s46 1、clothing_s94 1、infirmary 1、phone_shop 1、photo_studio 1、ramen 1、waterpark 1、yukata 1
+各地點筆數（每一筆在 output/street-social-city-production/places-v1/reach-report.json）：girls_dorm 1155、boys_dorm 1140、campus_ib 274、campus_ma 274、campus_rb 274、campus_t4 274、campus_t1 262、campus_t2 262、campus_ee 261、park 84、cafeteria 83、civic 66、library 60、campus_sports 48、beach 44、onsen 36、restaurant 36、cafe 33、izakaya 31、sushi 29、station 28、clinic_general 19、campus_e1 18、district_office 18、clinic_gyn 17、craft 16、manga_cafe 15、bookstore 14、cat_cafe 14、conveni 13、fastfood 13、school 13、lecture 12、lottery 11、bridal 10、campus_ad 10、club_room 10、snack 10、museum 9、yakiniku 9、bowling 8、department 8、fruitshop 8、nursery 8、petshop 8、salon 7、post 6、shrine 6、aquarium 5、dentist 5、police 5、supermarket 5、breakfast 4、clinic_beauty 4、drinkshop 4、fortune 4、hotel 4、livehouse 4、nail 4、realty 4、karaoke 3、amusement 2、arcade 2、art_room 2、bbq 2、clothing_s10 2、clothing_s30 2、crepe 2、festival 2、fishing 2、gym_storage 2、pool 2、swimwear 2、bank 1、bike_shop 1、boat 1、campus_gate 1、cinema 1、clothing 1、clothing_s46 1、clothing_s94 1、infirmary 1、phone_shop 1、photo_studio 1、ramen 1、waterpark 1、yukata 1
 
-## 其中站在顯眼位置的（櫃台、收銀、沙發、吧台、接待）：之後優先挪（27）
+## 其中站在顯眼位置的（櫃台、收銀、沙發、吧台、接待）：之後優先挪（28）
 
 - bank.counter (32860,59393,1620)（queue），擋住的是 City_CV_F02，2 格外走得到
 - beach.food_cart (17000,12500,1200)（queue），擋住的是 Resort_R025_2_transit-dining，2 格外走得到
 - beach.food_cart2 (17000,13000,1200)（queue），擋住的是 Resort_R026_3_transit-dining，2 格外走得到
 - cinema.ticket (32780,59633,2510)（queue），擋住的是 LoverSpot_R2_cinema_ticket1_Machine，1 格外走得到
 - clinic_gyn.counter (32265,57600,1200)（queue），擋住的是 LoverSpot_R2_fixtures_crib1_End-58，1 格外走得到
+- clothing.counter8 (47393,67217,2040)（queue），擋住的是 LoverSpot_R2_clothing_counter8_Top，1 格外走得到
 - conveni.counter (47938,27505,1200)（queue），擋住的是 ShopV1_S06_Refit，3 格外走得到
 - department.shoes_counter (48333,60182,2460)（queue），擋住的是 LoverSpot_R2_dept_shoes_counter1_Top，1 格外走得到
 - fastfood.counter (44216,40201,1200)（queue），擋住的是 S41_F01，1 格外走得到
@@ -59,11 +60,14 @@
 - campus_sports.volleyball_net7 (84180,131600,1202)，附近最大的區域 1550 格
 - campus_sports.volleyball_net8 (84420,131600,1202)，附近最大的區域 1550 格
 
-## 樓層沒有入口：這層沒有門、電梯平台或樓梯錨點（5）
+## 樓層入口由同棟其他地點提供（地點自己沒有這層的門、電梯或樓梯；不算問題）（4）
 
-- clothing 第 2 層（z 2040），32 個錨點
-- club_room 第 2 層（z 2020），6 個錨點
-- lodge 第 1 層（z 1200），3 個錨點
-- school 第 2 層（z 1650），1 個錨點
+- clothing 第 2 層（z 2040），M1 棟：department.lift3:3F、department.stair3
+- club_room 第 2 層（z 2020），SC 棟：cafeteria.lift3:3F、cafeteria.stair3
+- lodge 第 1 層（z 1200），H1 棟：hotel.door、hotel.lift1:1F、hotel.stair1…（共 4 個）
+- school 第 2 層（z 1650），T1 棟：campus_t1.lift2:2F
+
+## 樓層沒有入口：這層沒有門、電梯平台或樓梯錨點（1）
+
 - school 第 3 層（z 2020），1 個錨點
 
