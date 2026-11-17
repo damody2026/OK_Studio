@@ -38,6 +38,14 @@ M.list = {
   -- and the cart stood in the one gap from the sales floor to the back passage (x 34194-34282, y 50961-51013).
   { prefix = 'LoverSpot_R2_supermarket_cart1_', main = 'Basket', from = { 34237.857, 50987.117 }, delta = { -18, -627, 0 },
     anchors = { { place = 'supermarket', name = 'cart', from = { 34167.857, 50987.117 } } } },
+  -- restaurant (S04): the private room (440 x 340 cm, walls, door, table) stood with its front wall (east face x 48195)
+  -- against the shell's inner wall (x 48240-48280): its doorway (y 25350-25460) opened onto no free cell, the room's 56
+  -- cells were sealed (reach grid 11-17). 40 cm west leaves the x 48200 column (about 85 cm clear) from the doorway north
+  -- to the open floor at y 25520; the aisle west of it (by the shell's gap at x 47720-47760) keeps its two 40 cm cells.
+  { prefix = 'LoverSpot_R8_private_room_', main = 'WallBack', from = { 47860, 25240 }, delta = { -40, 0, 0 },
+    anchors = { { place = 'restaurant', name = 'private_room', from = { 47920.0, 25215.0 } },
+      { place = 'restaurant', name = 'private_room2', from = { 48100.0, 25215.0 } },
+      { place = 'restaurant', name = 'private_door', from = { 48265.0, 25405.0 } } } },
 }
 -- the anchor's position after the move, or nil when the row is not one of these (or already moved)
 function M.shift(place, name, pos)
