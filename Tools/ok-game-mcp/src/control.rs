@@ -88,7 +88,7 @@ pub fn default_target() -> u32 {
 /// (2026-11-16: reader_call load with nothing selected opened a card in another session's card reader).
 pub fn mutates(name: &str, a: &Value) -> bool {
     match name {
-        "game_instances" | "game_select" | "game_launch" | "game_stop" | "image_stats" => false,
+        "game_instances" | "game_select" | "game_launch" | "game_stop" | "image_stats" | "image_diff" => false,
         "game_state" | "game_buttons" | "game_screenshot" | "game_log" => false,
         "ui_state" | "ui_widgets" | "ui_screenshot" => false,
         "reader_call" => !matches!(a["action"].as_str().unwrap_or(""), "state" | "cards" | "parameters" | "get" | "controls" | "views" | "measure" | "catalog" | "screenshot" | "snapshot"),
