@@ -172,6 +172,11 @@ pub fn stance(r: &Relation, appeal: f32, awkward: f32, cooling: &[bool], seed: i
     (accept, lines.join(crate::tr::t("academics.semicolon_sep")))
 }
 
+/// She is eating here already: joining her is a yes unless he is a stranger, she is angry with him or she just said no.
+pub fn eats_with_him(r: &Relation, cooling: bool) -> bool {
+    r.stage != "stranger" && r.resentment < 50.0 && !cooling
+}
+
 /// She is working now (her plan's work block; request: shift_until, minute of the day it ends): the reason she gives.
 fn on_shift(request: &Value) -> Option<String> {
     let until = request.get("shift_until").and_then(Value::as_i64).filter(|m| *m > 0)?;
@@ -205,6 +210,17 @@ fn handle(places: &crate::places::PlacesTuning, kind: &str, request: &Value) -> 
             let crowd = crate::places::crowd_at(&place, request.get("hours").and_then(Value::as_f64).unwrap_or(12.0));
             let awkward = crate::places::awkwardness(places.norms(&place), crowd, places.act("loud")) * 0.3;
             let (mut accept, mut line) = stance(&c.rel, appeal, awkward, &cooling, seed);
+            // She is having her meal right here (her plan's meal block at this place): eating with him at her table is a
+            // yes to anyone she knows and is not angry with (round 15: 贞德, a friend, at lunch in the yakiniku shop said
+            // "not now" to "let's eat together").
+            if flag("eating_here") && eats_with_him(&c.rel, cooling.get(MEAL).copied().unwrap_or(false)) && !accept[MEAL] {
+                accept[MEAL] = true;
+                let mut lines: Vec<String> = line.split(crate::tr::t("academics.semicolon_sep")).map(str::to_string).collect();
+                if let Some(l) = lines.get_mut(MEAL) {
+                    *l = crate::tr::m("invite.will_accept", &[("name", crate::tr::a(crate::tr::t(NAMES[MEAL])))]);
+                }
+                line = lines.join(crate::tr::t("academics.semicolon_sep"));
+            }
             // On her shift (serving drinks at the shop): no sitting down with him, no going off until it ends.
             if let Some(why) = on_shift(request) {
                 accept = vec![false; accept.len()];
@@ -302,6 +318,22 @@ mod tests {
         let req = serde_json::json!({"relation": {"id": "a"}, "profile": {}, "action": "drink_shop", "shift_until": 900});
         let v = eval(&places, "invite_refused", &req).unwrap().unwrap();
         assert!(v["why"].as_str().unwrap().contains("15:00"), "{v}");
+    }
+
+    #[test]
+    fn eating_here_she_eats_with_him() {
+        let places = crate::tuning::Tuning::builtin().places;
+        let friend = serde_json::json!({"id": "a", "stage": "friend", "affection": 38, "satiety": 90, "resentment": 0});
+        for seed in 0..20 {
+            let req = serde_json::json!({"relation": friend, "profile": {}, "seed": seed, "eating_here": true, "place": "yakiniku", "hours": 12.4});
+            let v = eval(&places, "invite_stance", &req).unwrap().unwrap();
+            assert_eq!(v["accept"][MEAL], true, "seed {seed}: {v}");
+        }
+        let angry = serde_json::json!({"id": "a", "stage": "friend", "resentment": 80});
+        let stranger = serde_json::json!({"id": "a"});
+        assert!(!eats_with_him(&serde_json::from_value(angry).unwrap(), false));
+        assert!(!eats_with_him(&serde_json::from_value(stranger).unwrap(), false));
+        assert!(!eats_with_him(&Relation { stage: "friend".into(), ..Default::default() }, true), "she just said no");
     }
 
     #[test]

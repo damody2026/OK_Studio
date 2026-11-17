@@ -31,6 +31,8 @@ FString AOKStreetSocialScene::RollInviteStance(int32 Character){
  auto Request=OKRulesHeroineRequest(S,TEXT("invite_stance"),Id);
  Request->SetNumberField(TEXT("look"),PlayerLook());Request->SetStringField(TEXT("place"),Place);Request->SetNumberField(TEXT("hours"),Now.GetHour()+Now.GetMinute()/60.0);
  Request->SetArrayField(TEXT("cooling"),Cooling);Request->SetNumberField(TEXT("seed"),FMath::Rand());Request->SetNumberField(TEXT("shift_until"),ShiftUntil(Character));
+ // Her meal block is here and now (invite.rs eats_with_him): asked to eat with him where she is eating.
+ {const FOKStreetPlanBlock* B=BlockNow(Character,int32(OKStreetMindNow(S)%1440));Request->SetBoolField(TEXT("eating_here"),B&&B->Kind==TEXT("meal")&&B->Place==Place);}
  const TSharedPtr<FJsonObject> Out=OKRulesEval(S,Request);if(!Out.IsValid())return FString();
  TArray<bool> Accept;for(const auto& V:Out->GetArrayField(TEXT("accept")))Accept.Add(V->AsBool());
  S.InviteStance.Add(Id,Accept);
