@@ -5148,3 +5148,10 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - 原作上衣的校徽 o_emblem_*（`Koikano/main_clothes_emblem`）沒有共用母材質，打包版讀卡器與工作室遇到穿這種上衣的原作卡就整張報 `Unsupported shared material family`，與 mod 無關。校徽改用 Studio 半透明道具母材質（ForgeStudioAlpha，已在共用資源裡）。
 - 通則：打包版某個部件拿不到共用材質時，只把那個部件拿掉（不畫、記一行 `Part N (...) left out`），角色其他部分照常載入；以前是整張卡失敗。
 - 順便：淚水部件建出來時是隱藏的，打包版以前沒給它材質，之後顯示會變引擎預設材質；現在一起做。
+
+## 2026-11-18 包在 16 GB 筆電上整個 3D 畫面全黑（低記憶體模式）
+
+- 現象：使用者在 RTX 4060 筆電（8 GB VRAM）解開工作室包，讀卡器開卡成功（ok=1、沒有缺 shader），但 3D 區整片黑；日誌只多一行 `LogSerialization: Error: Attempting to load a BulkData object that cannot be loaded from disk`。開發機（125 GB／32 GB）不會發生，我先前所有包內測試都沒碰到。
+- 根因：RAM < 48 GB 或 VRAM < 20 GB 自動開低記憶體模式（`OKRuntimeLowMemory`），執行期貼圖標 `BULKDATA_SingleUse`，第一次上傳後丟掉 CPU 那份。讀卡器與工作室的調色 LUT（`KKSDefaultSaturationLUT16.png`）先用 `TextureFromPngFile` 建好（已上傳），再改 `SRGB=false`、`LODGroup` 後 `UpdateResource()` 第二次上傳，這時像素已經沒了，LUT 全黑，整個畫面經過調色變黑。
+- 修法：`ColorLookupTextureFromPngFile` 在第一次上傳前就設好線性、LUT 群組與夾邊，只上傳一次，不丟 CPU 資料。
+- 教訓：包要在低記憶體模式下也跑一次（`CardReaderDevelopment.cmd <卡> -- -OKLowMemory`）；開發機不會自動進這個模式。
