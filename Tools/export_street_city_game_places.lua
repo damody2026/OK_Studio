@@ -297,7 +297,19 @@ local SPOTS = { ['cafeteria table'] = { 70230, 42470, 1200 }, ['cafe seat'] = { 
   -- The nail salon's 2F chairs: each stand spot was 16 cm off its chair's collision (S59_F02, the editor walk probe from
   -- stair2 stopped 40 cm short of seat6, 11-16); 40 cm further from the chair, the seat stays 80 cm off
   ['nail seat6'] = { 33470, 34510, 1580 }, ['nail seat8'] = { 33470, 34890, 1580 },
-  ['nail seat10'] = { 33890, 34510, 1580 }, ['nail seat12'] = { 33890, 34890, 1580 } }
+  ['nail seat10'] = { 33890, 34510, 1580 }, ['nail seat12'] = { 33890, 34890, 1580 },
+  -- The sports hall's stair landings (campus_sports stair1-5, Tools/build_street_city_places.lua: the stair core's
+  -- middle) stood at 77600,21300, on the stair's handrails (Immersion_Continuous_StairHandrails): no cell there on the
+  -- 2F-5F (blocked or no floor), and from the 3F, 4F and the gym's door the game found no way down to the ground
+  -- ("on another floor, no way there", c3b1117a, 11-17). The cell beside the flights' top, 77360,21320, is open on every
+  -- floor and joined to that floor's lift landing (reach grid); the gym's stair4 / stair5 are there too. The rules'
+  -- landing rows (stair_landing, kiss, wall_pin) stood on the same handrails and go with them.
+  ['campus_sports stair1'] = { 77360, 21320, 1200 }, ['campus_sports stair2'] = { 77360, 21320, 2120 },
+  ['campus_sports stair3'] = { 77360, 21320, 3140 }, ['campus_sports stair4'] = { 77360, 21320, 4160 },
+  ['campus_sports stair5'] = { 77360, 21320, 4780 },
+  ['campus_sports landing'] = { 77360, 21320, 1200 }, ['campus_sports landing2'] = { 77360, 21320, 2120 },
+  ['campus_sports landing3'] = { 77360, 21320, 3140 }, ['campus_sports landing4'] = { 77360, 21320, 4160 },
+  ['campus_sports landing5'] = { 77360, 21320, 4780 } }
 for _, p in ipairs(places) do
   for _, an in ipairs(p.anchors or {}) do
     local s = SPOTS[p.id .. ' ' .. an.name]
