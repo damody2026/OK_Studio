@@ -5065,3 +5065,10 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
   - shell 里不要用 `VAR=$v` 搭配空值表示「不设」；要么两条命令分开写，要么用 `env` 只在需要时传。
   - 两种设定量到「几乎一样」时，先怀疑开关没生效，再怀疑优化没用 —— 这次正好两个症状长得一样。
   - 这和 11-17 早先那次「把精确名字查表放在关闭开关前面」是同一类错：**开关必须真的还原成旧路径，而且要验证**。
+
+## 2026-11-17 讀卡全跑開著時，別組的編輯器建置失敗：Live Coding mutex 與已載入 DLL 兩個原因（F 組讀卡器）
+- 症狀一：別組建 `OpenKoikatsuEditor` 回「Unable to build while Live Coding is active」。讀卡器（UnrealEditor）帶起的 `LiveCodingConsole` 持有 Live Coding mutex，每次有人要建編輯器就得停全跑讓窗口（今天停了三次）。
+- 症狀二：13 點多我建編輯器（那台 UnrealEditor 不是我的、Live Coding 沒擋到這次），回 `LINK : fatal error LNK1104` 寫不進 `F:\OpenKoikatsu\Binaries\Win64\UnrealEditor-OpenKoikatsu.dll`：別的 session 的 UnrealEditor 已載入這個 DLL，Windows 鎖住已載入的 DLL。
+- 處置：`Tools/reader_jump_check.lua` 啟動讀卡器加 `-LiveCoding=false`（UE5.8 `LiveCodingModule.cpp` 讀 `-LiveCoding=`，不是 `-NoLiveCoding`），不再起 LiveCodingConsole，症狀一消失。症狀二沒有解：讀卡器仍載入編輯器 DLL。
+- 分界：可以和全跑並存的建置是 Rust lib、遊戲目標（`OpenKoikatsu`）、以及不重連結讀卡器已載入的編輯器模組的建置；要重連結那些模組（改到它們的 C++）就得請全跑在卡片邊界停下、釋放 slot，否則 LNK1104。
+- 防範：要建編輯器前先看 `unreal_slot.lua status` 與 `tasklist` 有沒有讀卡器，要重連結就先要窗口；讀卡器以外的長跑工具也該帶 `-LiveCoding=false`。

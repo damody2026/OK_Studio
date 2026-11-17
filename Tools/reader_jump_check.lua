@@ -12,6 +12,14 @@
 --   --segment   cards per slot claim (default 3; a claim is held at most ~20 minutes)
 --   --mcp       ok-game-mcp.exe (default Tools/ok-game-mcp/target/release/ok-game-mcp.exe)
 --
+-- Readers start with -LiveCoding=false (UE5.8 LiveCodingModule.cpp reads `-LiveCoding=`, not -NoLiveCoding): no
+-- LiveCodingConsole, so another group's editor build is not refused by the Live Coding mutex. That is all it solves: a
+-- reader is UnrealEditor with the editor DLLs (UnrealEditor-OpenKoikatsu.dll ..) loaded, and Windows locks loaded DLLs.
+--   builds that can run beside a full run: the Rust lib, the game target (OpenKoikatsu), and editor builds that relink
+--     none of the editor modules a reader loads;
+--   builds that need the run stopped (its slots given back): any that relinks an editor module the reader loaded (a C++
+--     change to it), else LNK1104.
+--
 -- The reader is found by the marker on its own command line, never as "the newest reader", and every call names it
 -- (OK_GAME_PID): another session's reader started at the same moment is never taken (C025, 2026-11-16).
 --
@@ -183,7 +191,9 @@ end
 local function check_card(c)
   retries = 0
   local tag = ("-OKLane=%s-%s-%d"):format(lane, c, math.random(10000, 99999))
-  ps(("Start-Process -FilePath '%s\\CardReaderDevelopment.cmd' -ArgumentList '-NoBuild','--','-NoCloud','%s' -WorkingDirectory '%s'"):format(root:gsub("/", "\\"), tag, root:gsub("/", "\\")))
+  -- -LiveCoding=false: no LiveCodingConsole (LiveCodingModule.cpp reads `-LiveCoding=`), whose mutex made every other
+  -- group's editor build fail ("Unable to build while Live Coding is active") while a full run was going.
+  ps(("Start-Process -FilePath '%s\\CardReaderDevelopment.cmd' -ArgumentList '-NoBuild','--','-NoCloud','-LiveCoding=false','%s' -WorkingDirectory '%s'"):format(root:gsub("/", "\\"), tag, root:gsub("/", "\\")))
   local log
   pid = nil
   for _ = 1, 90 do
