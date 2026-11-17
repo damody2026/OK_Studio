@@ -97,6 +97,15 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   有 override 贴图的卡，正面＋近拍）＋改前后平均 RGB 绝对差＋贴图总量。
 - **第一张卡 `base: head textures` 还有约 190–200 ms** 没搬走，原因见第二节 `BUNDLE_CACHE` 那一列
   （要搬得先重构 `ParsedBundle` 的内部可变性模型，代价远大于收益）。
+- **转卡的 view 身分已改由树的内容决定**（`baf5cec10`，场景导入 5 张卡 wall 15 → 12 s）。要再往下拿，
+  还有两处挡着，都查过了：
+  1. `entries.rs` 的 `pack_memo` 键里有 `gamefs::fallback_generation()`，而它每次 `set_fallback` 都递增，
+     所以光改 view 身分不会让它跨卡命中。要共用得先想清楚「同一棵树、不同卡包」在那层安不安全。
+  2. `unity/references.rs` 的 `inventory_signature` 在严格开卡时直接回传 `"ok card:<identity>"` 当来源
+     epoch，注解写着「the card's own pack has its identity」—— 它**预设身分是每张卡一个**。身分改成按树
+     之后这个前提就不再成立；目前靠次序关卡与 5 张场景卡的实测确认没有问题，但再动这一带的人要先看它。
+- 转卡的次序迴归关卡：`Tools\ok_convert_order_check.lua`（小绯雪／Denia，2026-10-28 那个 bug）。动到
+  `remake_ok_card` 的 view 身分、`with_zipmods_and`，或 `--oklib cards` 的 worker 配置，都要先跑它。
 - `library_zip_memo` 里 `|| crate::okstrict::active().is_some()` 这道闸门：整合保住 F 组的 gap guard
   （`0dbce369f`）、两边验证都过之后，由我单独一步拿掉并重验（F 组的 repro
   `failed_remake_leaves_the_card_openable` 把关，我的 dump 不涵盖「开卡 → `ok_okcard_make` → 再开卡」）。
