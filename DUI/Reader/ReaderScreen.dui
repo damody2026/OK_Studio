@@ -18,6 +18,7 @@ style RailButton {
     @slot { HorizontalAlignment = Fill  MinDesiredSize = (0, 52) }
 }
 style TopButton {
+    Style.ContentPadding = (8, 4, 8, 4)
     @slot { VerticalAlignment = Fill  MinDesiredSize = (0, 44) }
 }
 

@@ -124,7 +124,7 @@ protected:
 	UFUNCTION() void HandleTab3();
 
 private:
-	struct FGroup {FString Name;TArray<TWeakObjectPtr<UWidget>> Sources;};
+	struct FGroup {FString Name;TArray<TWeakObjectPtr<UWidget>> Sources;TFunction<void()> OnEnter;};
 	struct FCategory {FString Name;int32 Tab=0;TArray<FGroup> Groups;TFunction<void()> OnEnter;};
 
 	TWeakObjectPtr<UOKCharacterController> Controller;

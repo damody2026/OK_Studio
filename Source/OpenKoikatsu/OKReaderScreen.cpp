@@ -267,12 +267,15 @@ UOKDreamControl* UOKReaderScreen::MakeControl(const TCHAR* Kind,UDreamWidget* In
 	if(!C)return nullptr;
 	// The .dui gives its root the control's natural size: the control takes that size and its root fills it, so a panel that
 	// stretches the control stretches what is drawn.
+	float Height=0;
 	if(UDreamWidget* Root=C->GetWidgetTree()?C->GetWidgetTree()->GetRootWidget():nullptr)
 	{
-		const FVector2D Natural=Root->GetSizeDelta();C->SetSizeDelta(Natural);
+		const FVector2D Natural=Root->GetSizeDelta();C->SetSizeDelta(Natural);Height=Natural.Y;
 		Root->SetAnchorMin(FVector2D(0,0));Root->SetAnchorMax(FVector2D(1,1));Root->SetAnchoredPosition(FVector2D::ZeroVector);Root->SetSizeDelta(FVector2D::ZeroVector);
 	}
 	if(Into)AddToHost(Into,C,false);
+	// Its height is the designed one: a slider measures itself 100 high and stretched every row to that.
+	if(Height>0)if(UDreamPanelSlot* Slot=C->GetPanelSlot()){Slot->SetMinDesiredSize(FVector2D(0,Height));Slot->SetMaxDesiredSize(FVector2D(0,Height));}
 	Controls.Add(C);return C;
 }
 
@@ -291,6 +294,8 @@ UDreamWidget* UOKReaderScreen::MakePanel(UDreamWidget* Into,bool bHorizontal,flo
 	// A panel is a widget with a layout container (CreateNewLayoutContainer, not AddComponent: a container is no behaviour).
 	if(bHorizontal){if(auto* L=W->CreateNewLayoutContainer<UDreamLayoutContainerHorizontalBox>())L->SetSpacing(Spacing);}
 	else if(auto* L=W->CreateNewLayoutContainer<UDreamLayoutContainerVerticalBox>())L->SetSpacing(Spacing);
+	// No size of its own: a panel left at the default 100 x 100 kept rows 100 high whatever they held.
+	W->SetSizeDelta(FVector2D::ZeroVector);
 	if(Into)AddToHost(Into,W,false);
 	return W;
 }
@@ -373,6 +378,9 @@ void UOKReaderScreen::BuildCategories()
 	};
 	auto Group=[](const FString& Name,const TArray<UWidget*>& Sources){FGroup Out;Out.Name=Name;for(UWidget* W:Sources)if(W)Out.Sources.Add(W);return Out;};
 	auto Named=[G](const TCHAR* Name){return G->WidgetTree?G->WidgetTree->FindWidget(FName(Name)):nullptr;};
+	// A UMG drawer body shows (and so mirrors) only while its drawer is open; the appearance panel only once opened.
+	auto OpenDrawer=[](UOKDrawerButton* D){return TFunction<void()>([Weak=TWeakObjectPtr<UOKDrawerButton>(D)](){if(Weak.IsValid()&&!Weak->bOpen)Weak->SetOpen(true,false);});};
+	TFunction<void()> OpenAppearance=[Weak=TWeakObjectPtr<UOKCharacterController>(G)](){if(Weak.IsValid()&&Weak->AppearancePanel&&Weak->AppearancePanel->GetVisibility()==ESlateVisibility::Collapsed)Weak->OnOpenAppearance();};
 
 	FCategory Face;Face.Name=TEXT("臉");Face.Groups=ShapeGroups(false,{TEXT("臉型"),TEXT("下巴"),TEXT("臉頰"),TEXT("眉毛"),TEXT("眼睛"),TEXT("鼻子"),TEXT("嘴巴"),TEXT("耳朵")});
 	Categories.Add(MoveTemp(Face));
@@ -392,14 +400,14 @@ void UOKReaderScreen::BuildCategories()
 	Categories.Add(MoveTemp(Body));
 
 	FCategory Clothes;Clothes.Name=TEXT("衣服");
-	for(UOKDrawerButton* D:G->MotionDrawers)if(D&&D->Key==TEXT("Clothes"))Clothes.Groups.Add(Group(TEXT("穿著狀態"),{D->Body.Get()}));
+	for(UOKDrawerButton* D:G->MotionDrawers)if(D&&D->Key==TEXT("Clothes")){Clothes.Groups.Add(Group(TEXT("穿著狀態"),{D->Body.Get()}));Clothes.Groups.Last().OnEnter=OpenDrawer(D);}
 	Clothes.Groups.Add(Group(TEXT("服裝"),{G->OutfitCombo?static_cast<UWidget*>(G->OutfitCombo->GetParent()):nullptr,G->OutfitNav.Get()}));
-	Clothes.Groups.Add(Group(TEXT("外觀選擇"),{G->AppearancePanel.Get()}));
+	Clothes.Groups.Add(Group(TEXT("外觀選擇"),{G->AppearancePanel.Get()}));Clothes.Groups.Last().OnEnter=OpenAppearance;
 	for(FGroup& Each:Clothes.Groups)Each.Sources.RemoveAll([](const TWeakObjectPtr<UWidget>& W){return !W.IsValid();});
 	Categories.Add(MoveTemp(Clothes));
 
 	FCategory Accessory;Accessory.Name=TEXT("配件");
-	Accessory.Groups.Add(Group(TEXT("外觀選擇"),{G->AppearancePanel.Get()}));
+	Accessory.Groups.Add(Group(TEXT("外觀選擇"),{G->AppearancePanel.Get()}));Accessory.Groups.Last().OnEnter=OpenAppearance;
 	Accessory.Groups.Add(Group(TEXT("屬性"),{G->PropertyPanel.Get()}));
 	Categories.Add(MoveTemp(Accessory));
 
@@ -416,7 +424,7 @@ void UOKReaderScreen::BuildCategories()
 	Categories.Add(MoveTemp(ClothesCards));
 
 	FCategory Settings;Settings.Name=TEXT("設定／介面");Settings.Tab=3;
-	for(UOKDrawerButton* D:G->MotionDrawers)if(D&&D->Key==TEXT("Lighting"))Settings.Groups.Add(Group(TEXT("光影"),{D->Body.Get()}));
+	for(UOKDrawerButton* D:G->MotionDrawers)if(D&&D->Key==TEXT("Lighting")){Settings.Groups.Add(Group(TEXT("光影"),{D->Body.Get()}));Settings.Groups.Last().OnEnter=OpenDrawer(D);}
 	if(G->StyleBox)Settings.Groups.Add(Group(TEXT("角色風格"),{G->StyleBox.Get()}));
 	Settings.Groups.Add(Group(TEXT("物理"),{G->PhysicsBackendCombo?static_cast<UWidget*>(G->PhysicsBackendCombo->GetParent()):nullptr}));
 	Settings.Groups.Add(Group(TEXT("介面"),{G->EditorWidthInput?static_cast<UWidget*>(G->EditorWidthInput->GetParent()):nullptr,G->EditorFontInput?static_cast<UWidget*>(G->EditorFontInput->GetParent()):nullptr}));
@@ -542,6 +550,7 @@ void UOKReaderScreen::ShowCategory(int32 Index,int32 SubIndex)
 	if(SubMenuHost)SubMenuHost->SetShown(C.Groups.Num()>1);
 	if(LeftScroll&&C.Groups.IsValidIndex(Sub))
 	{
+		if(C.Groups[Sub].OnEnter)C.Groups[Sub].OnEnter();
 		UDreamWidget* Page=MakePanel(nullptr,false,8.f);
 		if(Page){LeftScroll->AddContent(Page);PageWidgets.Add(Page);}
 		for(const TWeakObjectPtr<UWidget>& Source:C.Groups[Sub].Sources)if(Source.IsValid()&&Page)Mirror(Source.Get(),Page,false);
