@@ -94,6 +94,11 @@ local function open_ground(x, y)
   return 9
 end
 local moved_doors = 0
+-- The anchors standing at a door's old spot move with it (DOOR_MOVES below): the playground's 'field' was its landmark's
+-- middle like its door, in the swing set's collision box, 2 m from any open cell (out of the 80/140 cm rings the game
+-- tries); the festival's 'fireworks' was fitted onto the ground at its door (Tools/street_city_anchor_fit_payload.lua)
+-- and the trace down found the goldfish stall's top, 2.3 m up (the reach check, C4, 11-17).
+local DOOR_MOVES = {}
 for _, p in ipairs(places) do
   local d = p.door
   local hit = d and #d == 3 and solid_at(d[1], d[2], d[3], 0)
@@ -119,11 +124,23 @@ for _, p in ipairs(places) do
     end
     if best then
       print(('door: %s moved out of %s, %.0f,%.0f -> %.0f,%.0f'):format(p.id, hit.label, d[1], d[2], best[1], best[2]))
+      DOOR_MOVES[p.id] = { from = d, to = best }
       p.door = best; moved_doors = moved_doors + 1
     else problem(p.id .. ': door inside ' .. hit.label .. ' and no open ground round it') end
   end
 end
 if moved_doors > 0 then print(('%d doors moved out of props'):format(moved_doors)) end
+-- the row (a place anchor or a rules-table row) to the door's new spot when it stood at the old one (x y within 5 cm, any
+-- height); its seat and pair slots by the same offset. true when it moved.
+local function with_door(place, r)
+  local m = DOOR_MOVES[place]; local q = r.pos
+  if not (m and q and math.abs(q[1] - m.from[1]) < 5 and math.abs(q[2] - m.from[2]) < 5) then return false end
+  local to = { m.to[1], m.to[2], m.to[3] }
+  print(('anchor: %s %s moved with its door, %.0f,%.0f,%.0f -> %.0f,%.0f,%.0f'):format(place, r.name, q[1], q[2], q[3], to[1], to[2], to[3]))
+  dofile('Tools/street_city_moved_props.lua').carry(r, q, to); r.pos = to
+  return true
+end
+for _, p in ipairs(places) do for _, an in ipairs(p.anchors or {}) do with_door(p.id, an) end end
 -- A spot taken from a room's middle (its source is the room id, 'M1-0901 ...') can land in the furniture: the department
 -- store's 'food' was in the ramen shop's counter seats, and a walk there from the 9F lift found no way (R6-197, 11-10). Such an
 -- anchor moves to the nearest spot clear of the props round it, on its own floor.
@@ -556,6 +573,7 @@ do
   local spotted = 0
   for _, r in ipairs(T.anchors) do if spot_row(r) then r.moved = true; spotted = spotted + 1 end end
   print(('city_anchors.json: %d rows moved to their spots by hand'):format(spotted))
+  for _, r in ipairs(T.anchors) do if with_door(r.place, r) then r.moved = true end end
   local PROPS = dofile('Tools/street_city_moved_props.lua')
   for _, r in ipairs(T.anchors) do local q = PROPS.shift(r.place, r.name, r.pos)
     if q then print(('anchor: %s %s moved with its prop, %.0f,%.0f -> %.0f,%.0f'):format(r.place, r.name, r.pos[1], r.pos[2], q[1], q[2]))

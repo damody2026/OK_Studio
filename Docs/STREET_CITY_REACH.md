@@ -6,9 +6,9 @@
 
 檢查 113 個地點、9596 個錨點；未掃到的區塊 0 個。
 
-## 站位在家具或牆裡：遊戲會改用 1.6 m 內走得到的點（不擋路，只是站位不準）（5154）
+## 站位在家具或牆裡：遊戲會改用 1.6 m 內走得到的點（不擋路，只是站位不準）（5153）
 
-各地點筆數（每一筆在 output/street-social-city-production/places-v1/reach-report.json）：girls_dorm 1155、boys_dorm 1140、campus_ib 274、campus_ma 274、campus_rb 274、campus_t4 274、campus_t1 262、campus_t2 262、campus_ee 261、park 85、cafeteria 83、civic 66、library 60、campus_sports 52、beach 44、onsen 36、restaurant 36、cafe 33、izakaya 31、sushi 29、station 28、clinic_general 19、campus_e1 18、district_office 18、clinic_gyn 17、craft 16、manga_cafe 15、bookstore 14、cat_cafe 14、conveni 13、fastfood 13、lecture 12、school 12、lottery 11、bridal 10、campus_ad 10、snack 10、museum 9、yakiniku 9、bowling 8、department 8、fruitshop 8、nursery 8、petshop 8、salon 7、post 6、shrine 6、aquarium 5、dentist 5、police 5、supermarket 5、breakfast 4、clinic_beauty 4、club_room 4、drinkshop 4、fortune 4、hotel 4、livehouse 4、nail 4、realty 4、karaoke 3、amusement 2、arcade 2、art_room 2、bbq 2、clothing_s10 2、clothing_s30 2、crepe 2、festival 2、fishing 2、gym_storage 2、pool 2、swimwear 2、bank 1、bike_shop 1、boat 1、campus_gate 1、cinema 1、clothing_s46 1、clothing_s94 1、infirmary 1、phone_shop 1、photo_studio 1、ramen 1、waterpark 1、yukata 1
+各地點筆數（每一筆在 output/street-social-city-production/places-v1/reach-report.json）：girls_dorm 1155、boys_dorm 1140、campus_ib 274、campus_ma 274、campus_rb 274、campus_t4 274、campus_t1 262、campus_t2 262、campus_ee 261、park 84、cafeteria 83、civic 66、library 60、campus_sports 52、beach 44、onsen 36、restaurant 36、cafe 33、izakaya 31、sushi 29、station 28、clinic_general 19、campus_e1 18、district_office 18、clinic_gyn 17、craft 16、manga_cafe 15、bookstore 14、cat_cafe 14、conveni 13、fastfood 13、lecture 12、school 12、lottery 11、bridal 10、campus_ad 10、snack 10、museum 9、yakiniku 9、bowling 8、department 8、fruitshop 8、nursery 8、petshop 8、salon 7、post 6、shrine 6、aquarium 5、dentist 5、police 5、supermarket 5、breakfast 4、clinic_beauty 4、club_room 4、drinkshop 4、fortune 4、hotel 4、livehouse 4、nail 4、realty 4、karaoke 3、amusement 2、arcade 2、art_room 2、bbq 2、clothing_s10 2、clothing_s30 2、crepe 2、festival 2、fishing 2、gym_storage 2、pool 2、swimwear 2、bank 1、bike_shop 1、boat 1、campus_gate 1、cinema 1、clothing_s46 1、clothing_s94 1、infirmary 1、phone_shop 1、photo_studio 1、ramen 1、waterpark 1、yukata 1
 
 ## 其中站在顯眼位置的（櫃台、收銀、沙發、吧台、接待）：之後優先挪（27）
 
@@ -67,7 +67,7 @@
 - school 第 2 層（z 1650），1 個錨點
 - school 第 3 層（z 2020），1 個錨點
 
-## 錨點在封死的格子：附近可走，但連不到門或電梯／樓梯（18）
+## 錨點在封死的格子：附近可走，但連不到門或電梯／樓梯（16）
 
 - campus_sports.tennis_net (68380,124600,1203)，附近最大的區域 1522 格
 - campus_sports.tennis_net2 (68620,124600,1203)，附近最大的區域 1522 格
@@ -85,6 +85,4 @@
 - campus_sports.volleyball_net6 (84420,122400,1202)，附近最大的區域 1542 格
 - campus_sports.volleyball_net7 (84180,131600,1202)，附近最大的區域 1550 格
 - campus_sports.volleyball_net8 (84420,131600,1202)，附近最大的區域 1550 格
-- festival.fireworks (38755,37519,1430)，附近最大的區域 15 格
-- playground.field (102791,33791,1198)，附近最大的區域 0 格
 
