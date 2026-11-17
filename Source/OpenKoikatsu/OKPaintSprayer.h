@@ -110,6 +110,9 @@ private:
  // at the latest before the next surface step or any public call (SyncTransport).
  TArray<TSharedPtr<FSurface>> DueTransport,InTransport;double DueTransportDt=0;
  mutable UE::Tasks::FTask TransportTask;mutable bool bTransportInFlight=false;
+ // The transport's copies of the surfaces' film and mask, made on a worker before it moves them (TransportTask waits for
+ // it): the next tick waits for this alone before it writes either.
+ UE::Tasks::FTask TransportCopy;
  void RunDueTransport();void LaunchDueTransport();void SyncTransport() const;void MergeTransport();
  /** SyncTransport only when the transport is already done: a tick does not wait for it. */
  void TakeFinishedTransport() const {if(bTransportInFlight&&TransportTask.IsCompleted())SyncTransport();}

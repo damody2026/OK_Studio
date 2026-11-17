@@ -709,18 +709,24 @@ void AOKPaintSprayer::LaunchDueTransport(){
  TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintTransportLaunch);
  const double Speed=Settings.SurfaceSpeed,Viscosity=Settings.Viscosity,Residual=Settings.ResidualThickness,Step=DueTransportDt;
  TArray<TPair<TSharedPtr<FSurface>,uint64>> Work;
- for(auto& S:DueTransport){FSurface& F=*S;
-  F.TransportMask=MoveTemp(F.Mask);
-  // What the ticks draw and deposit on meanwhile: the texels as they are, the faces still owed to the atlas.
-  F.Mask.Size=F.TransportMask.Size;F.Mask.Height=F.TransportMask.Height;F.Mask.EdgeCoverage=F.TransportMask.EdgeCoverage;
-  F.Mask.DirtyFaces=MoveTemp(F.TransportMask.DirtyFaces);F.TransportMask.DirtyFaces.Reset();
-  F.Mask.ChartBary=F.TransportMask.ChartBary;F.Mask.ChartInterior=F.TransportMask.ChartInterior;F.Mask.ChartResolution=F.TransportMask.ChartResolution;
-  F.TransportFilm=F.Film;F.HeldDeposits.Reset();F.bInTransport=true;
-  Work.Emplace(S,F.GeometryRevision);InTransport.Add(S);}
+ for(auto& S:DueTransport){FSurface& F=*S;F.HeldDeposits.Reset();F.bInTransport=true;Work.Emplace(S,F.GeometryRevision);InTransport.Add(S);}
  DueTransport.Reset();
+ // Its copies are made on a worker as well (her body's film and texels, up to 3 ms of the game thread, 2026-11-18): the
+ // surfaces' mask and film are only read there, and the next tick waits for TransportCopy before it writes them. What
+ // the ticks draw and deposit on meanwhile stays in Mask (the texels as they are, the faces still owed to the atlas); the
+ // transport's own caches go with the transport (nothing else uses them) and come back with it (MergeTransport).
+ TransportCopy=UE::Tasks::Launch(UE_SOURCE_LOCATION,[Work]{
+  TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintTransportCopy);
+  for(const auto& W:Work){FSurface& F=*W.Key;FOKPaintMask& T=F.TransportMask;FOKPaintMask& M=F.Mask;
+   T.Size=M.Size;T.Height=M.Height;T.EdgeCoverage=M.EdgeCoverage;T.DirtyFaces.Reset();
+   T.ChartBary=M.ChartBary;T.ChartInterior=M.ChartInterior;T.ChartResolution=M.ChartResolution;
+   T.PreviousHeight=MoveTemp(M.PreviousHeight);T.RouteScratch=MoveTemp(M.RouteScratch);T.TransportGeometry=MoveTemp(M.TransportGeometry);
+   T.TransportGeometryReady=MoveTemp(M.TransportGeometryReady);T.TransportRoutes=MoveTemp(M.TransportRoutes);
+   T.TransportRevision=M.TransportRevision;T.TransportTravel=M.TransportTravel;T.TransportSize=M.TransportSize;
+   F.TransportFilm=F.Film;}});
  TransportTask=UE::Tasks::Launch(UE_SOURCE_LOCATION,[Work=MoveTemp(Work),Speed,Viscosity,Residual,Step]{
   TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintAsyncTransport);
-  for(const auto& W:Work)W.Key->TransportMask.Transport(W.Key->TransportFilm,Step,Speed,Viscosity,Residual,W.Value);});
+  for(const auto& W:Work)W.Key->TransportMask.Transport(W.Key->TransportFilm,Step,Speed,Viscosity,Residual,W.Value);},TransportCopy);
  bTransportInFlight=true;
 }
 void AOKPaintSprayer::SyncTransport() const{
@@ -751,6 +757,8 @@ void AOKPaintSprayer::Tick(float Dt)
 {
  TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintTick);
  TakeFinishedTransport();
+ // Nothing below writes a surface's mask or film before the transport has its copies of them (LaunchDueTransport).
+ if(bTransportInFlight){TRACE_CPUPROFILER_EVENT_SCOPE(OK_PaintTransportCopyWait);TransportCopy.Wait();}
  Super::Tick(Dt);const double Start=FPlatformTime::Seconds();
  // Ownership is this tick, not GFrameCounter: explicit/manual updates can
  // publish more than one pose in the same engine frame. Never reuse across ticks.
