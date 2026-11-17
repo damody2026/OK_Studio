@@ -188,3 +188,38 @@ OK_NOCACHE=1 OK_CARDS_WORKERS=5  ok-extract.exe D:/KoikatuSunshine --oklib cards
 
 最终预设＝量完 `2／3／4` 的 wall 与**导入期间峰值记忆体**（5 角色与 21 角色两个场景）之后定；
 峰值若接近 16 GB 就往下压，即使 wall 慢一点。
+
+## 量了才知道：worker 数的约束是记忆体，不是执行绪
+
+协调 session 提醒「量之前先确认实际起了几条，不要只照公式推」。量完之后，**「最多 8 执行绪」这个框架在这条路径上
+根本不是约束**：
+
+| `[threads]` | 峰值 OS 执行绪 | wall | CPU | 峰值 working set |
+|---|---:|---:|---:|---:|
+| 不给（`OK_THREADS` 未设） | 130 | 7.04 s | 11.22 s | 2 370 MB |
+| `2` | 119 | 7.63 s | 11.02 s | 2 352 MB |
+| `1` | 119 | — | — | — |
+
+**单一个转卡行程本来就跑 119–130 条 OS 执行绪**（GPU 烘焙的 D3D11／DXGI、各种池、zip 读取、Windows 自己的
+worker），所以专案那条规矩讲的显然是 rayon 这类**运算**执行绪，不是 OS 执行绪；拿「8 个 worker × 8 条 = 64」
+去推是用错了单位。而且 `OK_THREADS` 现在对 CPU 几乎没有影响（11.02 vs 11.22 s）——正是 e-cardload 查出的
+`limit_threads()` 写死 `MAX_THREADS` 那个洞，`1a3a55dc2` 修了。
+
+**真正的约束是记忆体。** `--oklib cards` 转同一批 5 张卡（`procs_seen` ＝ worker 数 ＋ 父行程）：
+
+| worker 数 | wall | 峰值私有记忆体合计 | 峰值 working set 合计 |
+|---:|---:|---:|---:|
+| 1 | 18.86 s | 2.23 GB | 2.92 GB |
+| 2 | 14.85 s | 3.74 GB | 5.20 GB |
+| 4 | 12.47 s | 5.65 GB | **8.95 GB** |
+
+每多一个 worker 约 ＋1.5 GB 私有／＋2 GB working set（次线性，因为同一批 bundle 的档案页是共用的）。
+照这个斜率 8 个 worker 约 11 GB 私有／**约 17 GB working set** —— **使用者的目标机是 16 GB，而 UE 自己
+还要好几 GB，所以 8 个 worker 不可行**，这和执行绪无关。
+
+换来的时间：1 → 2 个 worker 买 4 s，2 → 4 个只再买 2.4 s，代价是多 3.75 GB working set。
+所以**预设往 2 走、上限 4**；4 只适合大机器。最终值等 `1a3a55dc2` 合进来、在 UE 导入这条路上量
+`= 2／3／4` 的 wall 与导入期间峰值记忆体（5 角色与 21 角色两个场景）之后定，量到的峰值直接写进 cvar 说明。
+
+（系统层的 `\Memory\Committed Bytes` 在这台机器量不出来：基线 94 GB 还在随别组的工作变动，8 worker 那趟
+甚至量到负的 delta。要量就量自己那些行程的私有／working set 合计。）
