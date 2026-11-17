@@ -8267,6 +8267,37 @@ mod jump_probe_tests {
         assert!(bad.is_empty(), "reopening differs:\n{}", bad.join("\n"));
     }
 
+    /// A failed save of an edited OK card (the reader's 另存: remake from the library, its zipmods absent) must not stop the
+    /// card itself from opening afterwards in the same process (tester 2026-11-16: alice outfit 0 then lacked
+    /// `okLt override abdata/chara/hibari/hibari.unity3d`). OK_REMAKE_CARD overrides the card.
+    #[test]
+    #[ignore="local OK card (StreetHeroines/alice.png) and base library"]
+    fn failed_remake_leaves_the_card_openable() {
+        let card = std::env::var("OK_REMAKE_CARD").unwrap_or_else(|_|
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../Content/CharacterCards/StreetHeroines/alice.png").to_owned());
+        let open = |what: &str| {
+            let game = std::ffi::CString::new("").unwrap(); let c = std::ffi::CString::new(card.as_str()).unwrap();
+            let mut out = std::ptr::null_mut(); let mut err = [0i8; 1024];
+            let r = unsafe { crate::ffi::session_open(game.as_ptr(), c.as_ptr(), 0, &mut out, err.as_mut_ptr(), 1024) };
+            let msg = unsafe { std::ffi::CStr::from_ptr(err.as_ptr()) }.to_string_lossy().into_owned();
+            if r == 0 { unsafe { crate::ffi::session_free(out); } }
+            eprintln!("REMAKE {what}: r={r} {msg}");
+            (r, msg)
+        };
+        assert_eq!(open("before").0, 0);
+        let dir = std::env::temp_dir().join(format!("ok-remake-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let edited = dir.join("edited.png");
+        std::fs::copy(&card, &edited).unwrap();
+        let (c, o) = (std::ffi::CString::new(edited.to_string_lossy().as_ref()).unwrap(), std::ffi::CString::new(dir.join("out.png").to_string_lossy().as_ref()).unwrap());
+        let mut msg = [0i8; 2048];
+        let r = unsafe { crate::ffi::ok_okcard_make(std::ptr::null(), c.as_ptr(), o.as_ptr(), msg.as_mut_ptr(), 2048) };
+        eprintln!("REMAKE save: r={r} {}", unsafe { std::ffi::CStr::from_ptr(msg.as_ptr()) }.to_string_lossy());
+        let (after, text) = open("after");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(after, 0, "the card no longer opens after the failed save: {text}");
+    }
+
     /// OK_DET_CARD=<OK card> OK_DET_OUTFIT=<index>: prints the part material digests of one open (run it in several processes
     /// and compare: HashMap iteration order differs between processes).
     #[test]

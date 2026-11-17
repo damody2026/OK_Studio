@@ -1528,7 +1528,11 @@ pub fn library_zip_memo<T: Clone + Send + Sync + 'static>(what: &str, zip: &Path
     let key = format!("{what}\n{}\n{key}\n{generation}", st.root);
     let memo = MEMO.get_or_init(Default::default);
     if let Some(hit) = memo.lock().unwrap().get(&key).and_then(|v| v.downcast_ref::<T>().cloned()) { return hit; }
+    let gaps = crate::okstrict::gaps_on_thread();
     let value = build();
+    // A value built while a strict open met a gap is a stand-in (as entries::pack_memo, mods ZIP_AB_CACHE): kept, the
+    // next open of a card reused what a failed remake could not read (alice's hibari/klee, 2026-11-16).
+    if crate::okstrict::gaps_on_thread() != gaps { return value; }
     memo.lock().unwrap().insert(key, Arc::new(value.clone()));
     value
 }
