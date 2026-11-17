@@ -1,6 +1,9 @@
 #include "OKStudioImport.h"
 #include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
+#include "HAL/IConsoleManager.h"
+#include "HAL/PlatformProcess.h"
+#include "Misc/ConfigCacheIni.h"
 #include "KKCardReader.h"
 #include "KKRustExtract.h"
 #include "Misc/FileHelper.h"
@@ -101,11 +104,174 @@ namespace
 		return FVector(Fix360(PreLig.X - DeltaBeta), Fix360(PreLig.Y + DeltaYaw), 0.0);
 	}
 
+	/**
+	 * How many child processes convert the scene's character cards at once; 0: none, the characters convert one after
+	 * another in this process as they always did. -1 (the default): half the hardware threads, at most 8.
+	 *
+	 * Why child processes: converting one original card holds `ORIGINAL_OPEN` (ok-extract's oklib.rs) for the whole
+	 * card, because what a card may read is a process-wide view (gamefs's fallback directories, the mounted pack, the
+	 * recording overlay). Two cards need two of those at once, so they cannot share a process: converting a five
+	 * character scene's cards with ParallelFor in this process took 11.7 s against 11.0 s one after another, all of it
+	 * waiting on that one lock (F-sceneload, 2026-11-17). The same five cards in five processes: 7.8 s against 12.3 s.
+	 *
+	 * This only makes the cards sooner; it changes nothing about what is made. A card whose child process did not
+	 * produce it is converted in this process afterwards, down the path it always took (including the search for a
+	 * mods folder beside the scene), so a failed worker costs time and never loses a character.
+	 */
+	static TAutoConsoleVariable<int32> CVarOkStudioImportCardWorkers(TEXT("ok.Studio.ImportCardWorkers"), -1,
+		TEXT("KStudio scene import: child processes converting character cards at once (0: convert them in this process, -1: half the hardware threads)."),
+		ECVF_Default);
+
+	int32 ImportCardWorkers()
+	{
+		const int32 Configured = CVarOkStudioImportCardWorkers.GetValueOnAnyThread();
+		if (Configured >= 0) return Configured;
+		return FMath::Clamp(FPlatformMisc::NumberOfCoresIncludingHyperthreads() / 2, 1, 8);
+	}
+
+	/** A character card the scene import has to convert: the KKS card the scene export wrote, and where its OK card goes. */
+	struct FImportCardJob
+	{
+		FString Kks;
+		FString Ok;
+		int32 Outfit = 0;
+		int32 Key = 0;
+	};
+
+	/** Every character of the exported scene with a card, in the order the import walks them. */
+	void CollectCardJobs(const TSharedPtr<FJsonObject>& O, const FString& CardDirectory, TArray<FImportCardJob>& Out)
+	{
+		if (!O) return;
+		FString Kind;
+		if (O->TryGetStringField(TEXT("kind"), Kind) && Kind == TEXT("Character"))
+		{
+			FImportCardJob Job;
+			if (O->TryGetStringField(TEXT("card"), Job.Kks) && !Job.Kks.IsEmpty())
+			{
+				Job.Key = int32(O->GetNumberField(TEXT("key")));
+				Job.Ok = CardDirectory / FString::Printf(TEXT("char_%d.png"), Job.Key);
+				// The scene's own coordinate, as the walk reads it (the saved outfit is authoritative).
+				const TSharedPtr<FJsonObject>* Status = nullptr;
+				int32 Outfit = 0;
+				if (O->TryGetObjectField(TEXT("status"), Status)) (*Status)->TryGetNumberField(TEXT("coordinate"), Outfit);
+				Job.Outfit = FMath::Max(0, Outfit);
+				Out.Add(MoveTemp(Job));
+			}
+		}
+		const TArray<TSharedPtr<FJsonValue>>* Kids = nullptr;
+		if (O->TryGetArrayField(TEXT("children"), Kids)) for (const TSharedPtr<FJsonValue>& K : *Kids) CollectCardJobs(K->AsObject(), CardDirectory, Out);
+	}
+
+	/** `ok-extract.exe` beside this checkout's Rust crate, or empty: a build without it converts in process. */
+	const FString& OkExtractExe()
+	{
+		static const FString Found = []
+		{
+			const FString Release = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("Tools/ok-extract/target/release/ok-extract.exe"));
+			if (FPaths::FileExists(Release)) return Release;
+			const FString Beside = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("Tools/ok-extract/ok-extract.exe"));
+			if (FPaths::FileExists(Beside)) return Beside;
+			return FString();
+		}();
+		return Found;
+	}
+
+	/**
+	 * Converts the scene's character cards in child processes, `Workers` of them at a time. Returns what each card's
+	 * process said (empty for a card whose process could not be started), and leaves every OK card it made on disk;
+	 * what is missing afterwards the import converts in process itself.
+	 */
+	TMap<FString, FString> ConvertCardsInWorkers(const TArray<FImportCardJob>& Jobs, int32 Workers, TArray<FString>& OutFailures)
+	{
+		TMap<FString, FString> Made;
+		const FString& Exe = OkExtractExe();
+		if (Jobs.IsEmpty() || Workers <= 0 || Exe.IsEmpty()) return Made;
+		// The library and the installation as the in-process conversion resolves them (KKRustExtract's card
+		// environment): the environment when it is set, else this project's base library and the KKGameRoot setting.
+		// The child inherits the environment, so it would find OK_GAME_ROOT itself; it is passed for the log to show.
+		FString Library = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_BASE_LIBRARY"));
+		if (Library.IsEmpty())
+		{
+			const FString Project = FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir() / TEXT("IndependentResources/base_v1"));
+			if (FPaths::FileExists(Project / TEXT("oklib.json"))) Library = Project;
+		}
+		if (Library.IsEmpty()) return Made;
+		FString GameRoot = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_GAME_ROOT"));
+		if (GameRoot.IsEmpty() && GConfig)
+		{
+			FString Configured;
+			if (GConfig->GetString(TEXT("/Script/KKSideloader.KKGameRoot"), TEXT("Root"), Configured, GGameIni)
+				&& !Configured.IsEmpty() && FPaths::DirectoryExists(Configured / TEXT("mods"))) GameRoot = Configured;
+		}
+		const double Start = FPlatformTime::Seconds();
+		struct FRun
+		{
+			const FImportCardJob* Job = nullptr;
+			FProcHandle Handle;
+			void* ReadPipe = nullptr;
+			void* WritePipe = nullptr;
+			FString Output;
+		};
+		TArray<FRun> Running;
+		int32 Next = 0, Done = 0;
+		auto Launch = [&](const FImportCardJob& Job)
+		{
+			FRun Run;
+			Run.Job = &Job;
+			FPlatformProcess::CreatePipe(Run.ReadPipe, Run.WritePipe);
+			// An empty installation argument means "whatever OK_GAME_ROOT says", which the child inherits. The last
+			// argument is the worker's thread share: the workers are on one machine, as `--oklib cards` splits it.
+			const FString Params = FString::Printf(TEXT("\"%s\" --oklib card-outfit \"%s\" \"%s\" \"%s\" %d %d"),
+				*GameRoot, *Library, *FPaths::ConvertRelativePathToFull(Job.Kks), *FPaths::ConvertRelativePathToFull(Job.Ok), Job.Outfit,
+				FMath::Max(2, 8 / FMath::Max(1, Workers)));
+			// The child writes into WritePipe (what it says is read from ReadPipe here); it is given no stdin.
+			Run.Handle = FPlatformProcess::CreateProc(*Exe, *Params, false, true, true, nullptr, 0, nullptr, Run.WritePipe, nullptr);
+			if (!Run.Handle.IsValid())
+			{
+				FPlatformProcess::ClosePipe(Run.ReadPipe, Run.WritePipe);
+				OutFailures.Add(FString::Printf(TEXT("character %d: could not start %s"), Job.Key, *FPaths::GetCleanFilename(Exe)));
+				return;
+			}
+			Running.Add(MoveTemp(Run));
+		};
+		while (Next < Jobs.Num() || !Running.IsEmpty())
+		{
+			while (Next < Jobs.Num() && Running.Num() < Workers) Launch(Jobs[Next++]);
+			if (Running.IsEmpty()) break;
+			for (int32 i = Running.Num() - 1; i >= 0; --i)
+			{
+				FRun& Run = Running[i];
+				Run.Output += FPlatformProcess::ReadPipe(Run.ReadPipe);
+				if (FPlatformProcess::IsProcRunning(Run.Handle)) continue;
+				Run.Output += FPlatformProcess::ReadPipe(Run.ReadPipe);
+				int32 Code = -1;
+				FPlatformProcess::GetProcReturnCode(Run.Handle, &Code);
+				FPlatformProcess::CloseProc(Run.Handle);
+				FPlatformProcess::ClosePipe(Run.ReadPipe, Run.WritePipe);
+				const bool bOk = Code == 0 && FPaths::FileExists(Run.Job->Ok);
+				// The import has no way to show progress while it runs (it holds the game thread), so the log is where
+				// a scene of twenty characters says how far it is.
+				UE_LOG(LogTemp, Display, TEXT("OK studio: import converted card %d/%d (character %d) %s"),
+					++Done, Jobs.Num(), Run.Job->Key, bOk ? TEXT("ok") : TEXT("FAILED"));
+				if (bOk) Made.Add(Run.Job->Ok, Run.Output.TrimStartAndEnd());
+				else OutFailures.Add(FString::Printf(TEXT("character %d: card worker exit %d (%s); converted in process instead"),
+					Run.Job->Key, Code, *Run.Output.TrimStartAndEnd().Right(300)));
+				Running.RemoveAt(i);
+			}
+			if (!Running.IsEmpty()) FPlatformProcess::Sleep(0.005f);
+		}
+		UE_LOG(LogTemp, Display, TEXT("OK studio: import converted %d of %d cards in %d processes in %.2f s"),
+			Made.Num(), Jobs.Num(), Workers, FPlatformTime::Seconds() - Start);
+		return Made;
+	}
+
 	struct FImporter
 	{
 		UOKSceneDocument* Doc = nullptr;
 		FString CardDirectory;
 		FOKStudioImport::FReport* Report = nullptr;
+		/** OK cards the workers already made (by output path), so the walk does not convert them again. */
+		TSet<FString> CardsMadeAhead;
 		TMap<FString, int32> Notes;
 		/** Material Editor's scene data: material edits by object key. */
 		TMap<int32, TArray<FOKSceneMaterialEdit>> MaterialEdits;
@@ -440,7 +606,10 @@ namespace
 				int32 SavedOutfit = 0;
 				if (O->TryGetObjectField(TEXT("status"), SavedStatus)) (*SavedStatus)->TryGetNumberField(TEXT("coordinate"), SavedOutfit);
 				SavedOutfit = FMath::Max(0, SavedOutfit);
-				bool bCard = !KksCard.IsEmpty() && FOkSession::MakeOkCardForOutfit(KksCard, OkCard, SavedOutfit, Summary);
+				// A child process already converted this card ahead of the walk (ConvertCardsInWorkers): the same
+				// call with the same card and outfit, so there is nothing left to do for it here.
+				bool bCard = CardsMadeAhead.Contains(OkCard);
+				if (!bCard) bCard = !KksCard.IsEmpty() && FOkSession::MakeOkCardForOutfit(KksCard, OkCard, SavedOutfit, Summary);
 				if (!bCard && !KksCard.IsEmpty() && !Report->Source.IsEmpty())
 				{
 					FString Dir = FPaths::ConvertRelativePathToFull(FPaths::GetPath(Report->Source));
@@ -852,7 +1021,19 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 			Importer.MaterialEdits.FindOrAdd(int32(E->GetNumberField(TEXT("id")))).Add(Edit);
 		}
 	const TArray<TSharedPtr<FJsonValue>>* Objects = nullptr;
-	if (Scene->TryGetArrayField(TEXT("objects"), Objects)) for (const TSharedPtr<FJsonValue>& O : *Objects) Importer.Object(O->AsObject(), -1);
+	// The characters' cards first, several processes at a time: converting them is almost the whole import (a five
+	// character scene: 206 ms to parse the scene and write its KKS cards, 12.3 s to convert them), and one process
+	// can only convert one at a time. What the workers made the walk below picks up; what they did not it converts
+	// itself, exactly as it did before, so nothing is lost when a worker fails.
+	if (Scene->TryGetArrayField(TEXT("objects"), Objects) && Objects)
+	{
+		TArray<FImportCardJob> Jobs;
+		for (const TSharedPtr<FJsonValue>& O : *Objects) CollectCardJobs(O->AsObject(), CardDirectory, Jobs);
+		TArray<FString> Failures;
+		for (const TPair<FString, FString>& Pair : ConvertCardsInWorkers(Jobs, ImportCardWorkers(), Failures)) Importer.CardsMadeAhead.Add(Pair.Key);
+		for (const FString& Failure : Failures) Report.Notes.Add(Failure);
+	}
+	if (Objects) for (const TSharedPtr<FJsonValue>& O : *Objects) Importer.Object(O->AsObject(), -1);
 	const TArray<TSharedPtr<FJsonValue>>* CardErrors = nullptr;
 	if (Scene->TryGetArrayField(TEXT("card_errors"), CardErrors)) for (const TSharedPtr<FJsonValue>& E : *CardErrors) Report.Notes.Add(E->AsString());
 	// Screen settings (System menu): the Amplify Color filter (the grading LUT is lerp(filter, Lut_Amount, aceBlend):

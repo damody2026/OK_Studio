@@ -2617,6 +2617,27 @@ pub fn cli(game: &Path, args: &[String]) -> Result<(), String> {
             if !absent.is_empty() { println!("OKCARD absent zipmods {}", absent.join(" | ")); }
             size_rule?;
         }
+        "card-outfit" => {
+            // card-outfit <lib> <card> <out> <outfit> [threads]: one explicitly selected saved outfit (Studio's saved
+            // coordinate), exactly as ok_okcard_make_outfit does in-process: the same call, the same bytes written,
+            // the same summary line. The KStudio scene importer runs one of these per character so the characters
+            // convert at the same time: within a process only one original card can be open at a time
+            // (ORIGINAL_OPEN, the fallback directories are process-wide), so parallel cards need parallel processes.
+            let lib = lib.ok_or("library directory required")?;
+            let card = PathBuf::from(args.get(2).ok_or("card required")?);
+            let out = PathBuf::from(args.get(3).ok_or("output required")?);
+            let outfit: i32 = args.get(4).ok_or("outfit required")?.parse().map_err(|_| "outfit must be a number".to_owned())?;
+            // Optional thread share (as `cards` gives its workers): several of these run at once on one machine.
+            // Set before any pool is built, so cpu_threads() answers with it.
+            if let Some(threads) = args.get(5).filter(|t| t.parse::<usize>().is_ok_and(|n| n > 0)) { std::env::set_var("OK_THREADS", threads); }
+            // As the FFI resolves it: the given installation, else OK_GAME_ROOT, else none.
+            let game = if game.as_os_str().is_empty() || !game.is_dir() {
+                std::env::var_os("OK_GAME_ROOT").map(PathBuf::from).filter(|g| g.is_dir()).unwrap_or_default()
+            } else { game.to_owned() };
+            let (digest, parts, bytes, pack) = remake_ok_card_for_outfit(&lib, &game, &card, outfit)?;
+            std::fs::write(&out, &bytes).map_err(|e| format!("{}: {e}", out.display()))?;
+            println!("OKCARDOUTFIT {digest} parts={parts} pack={pack}");
+        }
         "cards" => {
             // cards <lib> <card list> <out dir>: `card` for every listed original card (convert in one pass, okstrict.rs).
             // Worker processes (OK_CARDS_WORKERS, default half the hardware threads, at most 16) each set up the

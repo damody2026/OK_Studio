@@ -80,6 +80,13 @@ public:
 		double ItemOpenWorkerMs = 0.;
 		/** All the game-thread time inside Sync(), and the part of it spent wiring render textures. */
 		double SyncMs = 0., WireMs = 0.;
+		/** The parts of Sync()'s walk over every object that are not Build(): deciding whether the object still shows
+		 *  the same content (SameContent), working out its world transform and whether it shows, and setting those on
+		 *  the preview and the component. A loading scene walks all of its objects every frame, so these are paid by
+		 *  the objects already built as well (5867 items: 62 s in Sync of which 23 s in Build). */
+		double SyncSameMs = 0., SyncWorldMs = 0., SyncPlaceMs = 0.;
+		/** Placements written, and those a Sync left alone because the transform and visibility had not changed. */
+		int32 PlacementWrites = 0, PlacementSkips = 0;
 		int32 Characters = 0, Items = 0, Others = 0;
 		/** Syncs in all, and those that built nothing because every character was still opening. */
 		int32 Syncs = 0, StarvedSyncs = 0;
@@ -339,6 +346,8 @@ private:
 	/** Objects one Sync may build (ok.Studio.BuildsPerFrame; 0 keeps BuildsPerFrame) and how long it may take. */
 	static int32 ObjectBuildBudget();
 	static double BuildSliceSeconds();
+	/** ok.Studio.SkipUnchangedPlacement: a Sync does not move an object already standing where it would put it. */
+	static bool SkipUnchangedPlacement();
 	/** Of the prepared characters, those whose worker has not finished. */
 	int32 OpeningCharacters() const;
 	/** An item whose session opens on a worker while the frames build the ones already open (F-sceneload: 634 items

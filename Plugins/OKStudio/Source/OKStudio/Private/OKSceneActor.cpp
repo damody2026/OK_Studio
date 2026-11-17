@@ -519,6 +519,13 @@ static TAutoConsoleVariable<int32> CVarOkStudioBuildsPerFrame(TEXT("ok.Studio.Bu
 	TEXT("Objects built per Sync while a scene opens (0: the scene actor's own BuildsPerFrame, 24)."));
 static TAutoConsoleVariable<int32> CVarOkStudioBuildSliceMs(TEXT("ok.Studio.BuildSliceMs"), 250,
 	TEXT("Milliseconds one Sync may spend building objects before the rest wait for the next frame."));
+static TAutoConsoleVariable<int32> CVarOkStudioSkipUnchangedPlacement(TEXT("ok.Studio.SkipUnchangedPlacement"), 1,
+	TEXT("A Sync leaves an object where it is when its transform is already the one that Sync would set (0: set it every Sync, as before)."));
+
+bool AOKSceneActor::SkipUnchangedPlacement()
+{
+	return CVarOkStudioSkipUnchangedPlacement.GetValueOnGameThread() != 0;
+}
 
 int32 AOKSceneActor::ObjectBuildBudget()
 {
@@ -1435,10 +1442,12 @@ void AOKSceneActor::Sync()
 		// An eyes pattern is set on the live face, unless its eye set changes parts (gag eyes): then it is built in.
 		auto PartsEyes = [](int32 Ptn) { return Ptn >= 0 && FOKStudioCatalog::Get().EyeSet(Ptn).bChangesParts ? Ptn : -1; };
 		if (Item) SwapKeyedMotion(Object, *Item);
+		const double SameStart = FPlatformTime::Seconds();
 		const bool bSame = Item && Item->Kind == Object.Kind && Item->Character.SameContent(Object.Character) && Item->Item.SameContent(Object.Item) && Item->Light == Object.Light
 			&& (Object.Kind != EOKSceneObjectKind::Effect || Item->Effect == Object.Effect.Effect)
 			&& (Object.Kind != EOKSceneObjectKind::Model || Item->Model == Object.Model)
 			&& (Object.Kind != EOKSceneObjectKind::Character || PartsEyes(Item->Character.EyesPattern) == PartsEyes(Object.Character.EyesPattern));
+		LoadStats.SyncSameMs += (FPlatformTime::Seconds() - SameStart) * 1000.;
 		// A scene opening: the character is got ready over the frames, Build only finishes it. The next one opens meanwhile.
 		if (!bSame && bProgressiveBuild && Object.Kind == EOKSceneObjectKind::Character)
 		{
@@ -1582,6 +1591,7 @@ void AOKSceneActor::Sync()
 								}
 			}
 		}
+		const double WorldStart = FPlatformTime::Seconds();
 		const FTransform World = Document->WorldTransform(Object.Id) * GetActorTransform();
 		// OK_STUDIO_ITEM_DUMP=<group/category/no>: that item's world transform (Unreal), to compare with Studio's.
 		static const FString ItemDump = FPlatformMisc::GetEnvironmentVariable(TEXT("OK_STUDIO_ITEM_DUMP"));
@@ -1596,18 +1606,43 @@ void AOKSceneActor::Sync()
 				World.GetScale3D().X, World.GetScale3D().Z, World.GetScale3D().Y);
 		}
 		const bool bShown = Document->IsShown(Object.Id);
+		LoadStats.SyncWorldMs += (FPlatformTime::Seconds() - WorldStart) * 1000.;
+		// Moving a component dirties its transform, its children's and its render state whether or not the transform
+		// changed, and a loading scene walks every object it has already built every frame (5867 items: 62 s in Sync
+		// of which 23 s in Build). An object already standing exactly where this Sync would put it is left alone.
+		// The comparison is against what the component actually holds, not against what this Sync wrote last time,
+		// because the frame's PlaceAttached and SolveConstraints move attached and constrained objects too: whoever
+		// moved it last, a skip means the value is already the one this line would write. Visibility is still set
+		// every Sync (SetVisibility walks the children whether or not the flag changed; whether that is worth
+		// skipping is what LoadStats.SyncPlaceMs is there to say). ok.Studio.SkipUnchangedPlacement=0: move them
+		// every Sync, as before.
+		const double PlaceStart = FPlatformTime::Seconds();
+		const bool bSkipUnchanged = SkipUnchangedPlacement();
 		if (AKKPreviewActor* Preview = Item->Preview.Get())
 		{
-			Preview->SetActorTransform(Compose(Item->RenderCorrection, World));
+			const FTransform Want = Compose(Item->RenderCorrection, World);
+			if (!bSkipUnchanged || !Preview->GetActorTransform().Equals(Want, 0.))
+			{
+				++LoadStats.PlacementWrites;
+				Preview->SetActorTransform(Want);
+			}
+			else ++LoadStats.PlacementSkips;
 			Preview->SetActorHiddenInGame(!bShown);
 			if (USceneComponent* Root = Preview->GetRootComponent()) Root->SetVisibility(bShown, true);
 		}
 		if (USceneComponent* Component = Item->Component.Get())
 		{
-			Component->SetWorldTransform(Item->ComponentOffset * World);
+			const FTransform Want = Item->ComponentOffset * World;
+			if (!bSkipUnchanged || !Component->GetComponentTransform().Equals(Want, 0.))
+			{
+				++LoadStats.PlacementWrites;
+				Component->SetWorldTransform(Want);
+			}
+			else ++LoadStats.PlacementSkips;
 			// A camera item's capture keeps drawing while the item is hidden (Studio hides only renderers).
 			if (Item->RenderCameraKey == 0) Component->SetVisibility(bShown, true);
 		}
+		LoadStats.SyncPlaceMs += (FPlatformTime::Seconds() - PlaceStart) * 1000.;
 	}
 	for (auto It = Shown.CreateIterator(); It; ++It)
 	{
