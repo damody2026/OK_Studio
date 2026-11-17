@@ -2205,6 +2205,11 @@ pub(crate) fn extract_session_from_info(
     profile_tick("load shape keys (session)", t_keys);
     clear_entry_prefetch();
     profile_tick("extract_card_outfit TOTAL", t_all);
+    if std::env::var_os("OK_PROFILE").is_some() {
+        let (total, repeats, rows) = crate::unity::take_work_counts();
+        eprintln!("ok-extract: PROFILE from scratch {total} ({repeats} repeat)");
+        for (source, n) in rows.iter().filter(|(_, n)| *n > 1) { eprintln!("ok-extract: PROFILE   {n}x {source}"); }
+    }
     for (name, s) in stages.map(crate::appearance::timings::Capture::finish).unwrap_or_default() {
         eprintln!("ok-extract: STAGE {name:28} {:8.1}ms x{} max {:.1}ms", s.total_ms, s.calls, s.max_ms);
     }
@@ -2995,13 +3000,17 @@ fn lists_stage(game_root: &Path, parsed_card: &Option<CardInfo>, outfit: i32, ou
                 items.push((zip, entry.clone(), true));
             }
         }
+        let t_sub = Instant::now();
         prefetch_entries(game_root, items);
+        profile_tick("lists: prefetch spawn", t_sub);
     }
     if std::env::var("OK_DIAG").is_ok() {
         eprintln!("ok-extract: clothes requested={requested_states:?} resolved={resolved_states:?} types={state_types:?} refs={reference_flags:?} notBot={linked_not_bot} notShorts={linked_not_shorts}");
     }
+    let t_sub = Instant::now();
     let selected_hair_gloss = parsed_card.as_ref()
         .and_then(|card| selected_hair_gloss_texture(game_root, card, &vanilla, &mod_catalog, &guid_index));
+    profile_tick("lists: hair gloss", t_sub);
     Ok(ListsStage { vanilla, ramp_png, mods_dir, mod_catalog: mod_catalog_shared, guid_index, selected_clothes,
         selected_top_type, selected_top_subparts, state_types, linked_not_bot, linked_not_shorts, requested_states,
         reference_flags, resolved_states, selected_hair_gloss, clothes_scope: _clothes_scope,

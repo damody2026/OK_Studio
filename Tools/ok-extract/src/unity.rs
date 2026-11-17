@@ -5823,3 +5823,40 @@ mod shader_pass_state_dump {
         });
     }
 }
+
+/// OK_PROFILE: how many times this open did a named piece of work from scratch — a bundle parse
+/// (`parse_bundle_uncached`), a texture payload decode (`png_from_payload_uncached`). Caches on these paths are per
+/// thread, so the same item wanted by the asking thread and by a prefetch helper is done once each: **countable**
+/// duplicated work, and unlike a wall time it does not move with what else the machine is doing — which is why it,
+/// not a stopwatch, is what to optimise against while other sessions share the machine.
+static WORK_COUNTS: std::sync::Mutex<std::collections::BTreeMap<String, u32>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+pub(crate) fn counting_work() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("OK_PROFILE").is_some())
+}
+
+/// The label is built only while counting: this sits on the per-texture path.
+pub(crate) fn note_work(kind: &str, label: impl FnOnce() -> String) {
+    if !counting_work() { return; }
+    let mut counts = WORK_COUNTS.lock().unwrap_or_else(|e| e.into_inner());
+    // `take_work_counts` drains this at the end of each open; an open that ends before that (an error) leaves its
+    // labels behind, so a long profiled batch does not grow without bound.
+    if counts.len() > 20_000 { counts.clear(); }
+    *counts.entry(format!("{kind} {}", label())).or_insert(0) += 1;
+}
+
+pub(crate) fn note_bundle_parse(source: &str, bytes: usize) {
+    note_work("bundle", || if source.is_empty() { format!("<{bytes} bytes>") } else { source.to_string() });
+}
+
+/// The counts since the last call, the busiest first, and how many of them were a second or later time for one label.
+pub fn take_work_counts() -> (u32, u32, Vec<(String, u32)>) {
+    let counts = std::mem::take(&mut *WORK_COUNTS.lock().unwrap_or_else(|e| e.into_inner()));
+    let mut rows: Vec<(String, u32)> = counts.into_iter().collect();
+    rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let total: u32 = rows.iter().map(|(_, n)| n).sum();
+    let repeats: u32 = rows.iter().map(|(_, n)| n.saturating_sub(1)).sum();
+    (total, repeats, rows)
+}

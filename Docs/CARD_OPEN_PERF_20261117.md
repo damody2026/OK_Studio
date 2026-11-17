@@ -56,6 +56,11 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 | `BUNDLE_CACHE`（`parse_bundle_cached` 的 thread_local）改程序共用 | `ParsedBundle` 有 18 个 `RefCell` 栏位且 `external_files` 装 `Rc<ExternalFile>` → `!Send + !Sync`，**型别上就放不进跨执行绪的 static**；还骑着「OK 卡资源包只记录真的跑过的查询」这条不变式（F 组 11-16 alice 那个 bug 的同一类）；`TEXTURE_CACHE_BYTES` 已经是每 bundle 192 MiB、每执行绪各一份。`native_workers_broadcast` 也救不了，因为 `base: head textures` 是在开卡那条执行绪上同步跑的 | 不做 |
 | 拿掉 `library_zip_memo` 的 strict 闸门（让 OK 卡也共用按 archive 的新键）<br>`d352dcb90`，整合 #15 后做的 | gap guard（`0dbce369f`）进来之后这道闸门的理由就过期了，所以照计划拿掉并重验 —— **零收益**：同行程 5 张 OK 卡，共用 1498 次 `open_zip`、不共用 1503 次（噪声内），35 个 dump 两边逐位元相同。**开关是活的**（同一执行档两张原作卡 38094 对 52645 次），所以这个零是真的。原因是设计使然：**OK 卡自带资源包**，读的档案几乎都来自自己的包，走 `own` 分支本来就保留 generation；只有「library 记录的档案」能共用，而 OK 卡几乎不读那些 | **放回去**，只留注解写明不要再试（在两次严格开卡之间共用值正是 pack 身分要防的：花火 11-12、alice 11-16，没有收益去换这风险） |
 
+| 把 hair gloss 的贴图读取搬离主执行绪（`lists_stage` 结束时丢给自己的执行绪，到 accessory context 才等）<br>11-18 做的 | `lists+mods+guids` 2379 ms 里有 2340 ms 没被任何子项盖住，拆开才看到是 `lists: hair gloss`（暖磁碟 588 ms、冷磁碟约 2.3 s）。搬走之后 `hair gloss wait` **0.0 ms**、容器 633 → 20 ms，**搬移本身完全成功**；但冷开中位数 1.174 → 1.21 s（没有收益），而 `load_base_bundles` 160–184 → 580–615 ms —— **那约 500 ms 原样换了个地方付**，主执行绪的阶段合计两边一样（1429/1402 对 1324/1410）。把 entry prefetch 关掉再量，**同一笔 gloss 只要约 5 ms** | 回退，只留 `lists: prefetch spawn`／`lists: hair gloss` 两个子计时。**一般结论**：那 500 ms 不是 gloss 自己贵，是它排在 8 个 prefetch helper 后面等基础库读取路径，所以**在 prefetch 那个窗口里「把工作搬到别的执行绪」买不到东西** —— 要拿的是那条路径的吞吐，不是工作的位置 |
+| 贴图 payload 的 memo 从「只收 block-compressed」放宽到「≥512² 的任何格式」，另加 single-flight（同键只算一次）<br>11-18 做的 | 从零解码的次数 C006 124 → 117、C001 124 → 118、C049 93 → 86，其中重复 12 → 5／21 → 15／17 → 10（确定性指标，真的降了：C006 的 `liquid01_t` RGB24 512² 本来一次开卡解 7 遍、`cf_body_00_t` RGBA32 2048²（16 MiB）解 2 遍）。**但冷开 wall 中位数 1.594 → 1.637 s（10 轮交错，更慢）**：这个 memo 的键要雜凑整个 texel，新放进来的约 40 张未命中各付一次雜凑，去换省下的 6–7 次解码，净值是负的。single-flight 单独量只去掉 12–23 次里的 0–2 次，时间无变化 | 两者都放回去。**作者原本只收 block-compressed 是对的** —— 它只在「解码＋编码比雜凑贵」的地方才划算；这一轮量到的次数与为什么不划算写在那个格式闸门旁边 |
+
+| 打开已经做好但没人开的 `OK_RAW_TEXTURES=1`（阶段之间的贴图改用 raw LZ4 容器而非 PNG，UE 侧有 `ok_raw_texture.h`，持久化输出仍写 PNG）<br>11-18 量的 | 冷开中位数 1.950 → 1.917 s（8 轮交错，**−1.7%，区间完全重叠**），而 session 每张多 6.7%（43 523 827 → 46 449 563 bytes）。**开关是活的**（同一张卡的 dump：OKRAW 容器 0 → 172 个、PNG 签章 183 → 11），所以这个零是真的。还有机制上的上限佐证：`encode_png` 跨执行绪合计只有 208 ms／149 次，整条链的编解码顶多约 400 ms，对约 1.6 s 的冷开是约 3% —— 和量到的一致 | 继续关着。**不是功能有问题，是这条路上编解码本来就不是瓶颈**（贴图成本的大头是 payload 解码 1133 ms／148 次，那是真工作）；使用者的目标机是 16 GB，不值得为噪声级的时间多付每张 2.9 MB |
+
 ## 三、量测方法与陷阱
 
 **方法（这台机器上唯一可信的做法）**
@@ -66,6 +71,11 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
    OK 卡 28 个 dump（C001／C006／C049／klara／C050／megumin，含 override 与眼睛贴图）＋原作卡 21 个。
 4. 一切建置与量测**最多 8 执行绪**（`cargo -j 8`、`-MaxParallelActions=8`、`RAYON_NUM_THREADS=8`）。
 5. 会改变输出位元组的改动（例如缩小底图）**不适用**第 3 条，要改成目视＋平均 RGB 绝对差＋贴图记忆体。
+6. **机器吵的时候改用确定性指标**：其他 session 同时在跑时，同一设定的冷开 wall 落在 1.46–2.79 s，
+   100 ms 级的差异量不出来。`OK_PROFILE` 现在会印「这次开卡从零做了几件、其中几件是同一件做第二次」
+   （`unity::take_work_counts`），这个数与机器忙不忙无关，可以在吵的机器上判断一个改动有没有真的少做事。
+   **但它不能代替时间**：这一轮就有一笔「次数降了 6–7 次、时间反而慢 2.7%」（上一节最后一列）。
+   次数用来**定位**，时间用来**定案**；时间要等得到一段安静，或者多轮交错取中位数。
 
 **踩过的坑（都已写进 `Docs/ERROR_LOG.md`）**
 
@@ -87,6 +97,14 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   空值也算设了，于是**两边都是关的**。A/B 看起来「优化没用」，而且**那 49 个 dump 的「IDENTICAL」
   什么都没证明** —— 正确性闸门整个空转。是数字自相矛盾（单独跑 537 ms vs A/B 1000 ms）才抓到的。
   **每次 A/B 前先印一行确认开关真的在切。**
+- **多行 `perl -0777 -pe 's/…\n…/…/'` 在这棵树上会静静地配不上**：档案是 CRLF，pattern 里的 `\n` 对不上
+  `\r\n`，于是**档案没变、`cargo build` 成功、A/B 两边当然一模一样**。11-18 一天就因此产出两个幻觉实验：
+  「prefetch helper 数 8／6／4／3 的扫描」其实是把同一个设定量了 12 次（难怪只有噪声没有形状），
+  「贴图 memo 放宽」第一次量到的「零效果」也是因为那笔改动从未进档案（改用 `Edit` 重做，立刻看到
+  重复 12 → 5）。**多行改动用 `Edit` 或指定行号的 `sed`，不要用 perl 的多行 pattern**；单行 pattern 没问题。
+  现成的防线还是同一条：**先证明开关是活的**。这次是加临时的分支计数器才看出改动不在那条路上
+  （`branch plain` 41 次、`branch transform` 41 次、`branch memo` **0 次** —— `memosnap::active(TEX)`
+  在这些开卡里一直是 false，所以我第一个 single-flight 放的位置是死码）。
 
 **这类坑的共同点（f-sceneload 整理成 F 树 `Docs/ERROR_LOG.md` 的一类，`2026ed16c`，三个实例）**：
 失效的是**量测本身**，不是被测的程式，所以**不会有任何红字**——关卡照样 PASS、数字照样印出来。
@@ -109,6 +127,7 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 | 变数 | 作用 |
 |---|---|
 | `OK_PROFILE=1` | 阶段计时。本轮新增 `batch: slot colour`／`slot finish`／`keys+memo`／`transform`／`emit`，`emit/memo_put`、`emit/regroup`、`emit/ctx.emit`，`base: head textures`、`base: head shape keys+md`、`base: body dynamics+colliders`，`mask bake: decode`／`math`／`encode` |
+| `OK_PROFILE=1`（11-18 新增） | **「从零做了几件、其中几件是重复」**：每次开卡结束印 `from scratch <n> (<m> repeat)`，再把做了两次以上的逐项列出（例如 `7x payload liquid01_t RGB24 512x512`）。数的是 bundle 解析（`parse_bundle_uncached`）与贴图 payload 解码（`png_from_payload_uncached`）；**这个数与机器忙不忙无关**，是吵机器上唯一能用的指标。另外 `lists: prefetch spawn`／`lists: hair gloss`，把原本 2.4 s 却没有任何子项盖住的 `lists+mods+guids` 拆开 |
 | `OK_GRID_DIAG=1` | 一次烘焙的贴图与遮罩尺寸、filter |
 | `OK_TILE_DIAG=1` | 同值 texel 比例、`has_pat`，以及查表／逐 texel 两条路径各处理多少 texel |
 
@@ -122,6 +141,30 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   （256 MiB），在 8 GB VRAM 的目标机上可疑；但**底图的细节不是遮罩给的**，缩的是底图自己那 4096² 的花纹、
   缝线、字样，不是只掉插值。会改变输出位元组，所以验证标准要换成目视（配件上色／头发上色／眼睛贴图／
   有 override 贴图的卡，正面＋近拍）＋改前后平均 RGB 绝对差＋贴图总量。
+- **最大的剩余杠杆是「压缩贴图直通」，但它跨 Rust／C header／UE 三边，不该顺手动**（11-18 盘的）：
+  一张 OK 卡冷开，`png_from_payload` 跨执行绪合计 **1133 ms／148 次**，扣掉里面的 `encode_png`（208 ms）
+  约 **925 ms 是 GPU 格式解码**，做的人是纯 Rust 的纯量 `texture2ddecoder 0.1`（BC1／BC3／BC7）。
+  而 **DXT1／DXT5／BC7 正是 UE 原生的格式** —— 没被遮罩、上色、翻转或合成动过的贴图，压缩块可以原样
+  交给 UE，解码与编码一起省掉，**而且在 16 GB／8 GB VRAM 的目标机上还省记忆体**（压缩的就一直压缩着）。
+  现况：`teximg` 的 `OKRAW\0\x02\0` 容器只有宽高＋LZ4 的 RGBA8，FFI（`ok_part_texture` 一路）也只传
+  PNG／raw blob，**没有格式栏位**；内部倒是已经有 GPU 格式的路（`texture_gpu_named_unity` 产 71/72/77/78/98/99
+  给衣服的 GPU 烘焙），所以不是从零开始。要动的是：容器加一个带 format 的版本、UE 侧照那个 format 建贴图
+  （`ok_raw_texture.h` 已经在 UE 侧）、以及**判断哪些贴图真的没被动过**。
+  **开工之前先做这个便宜又决定性的量测**：把 `png_from_payload` 的输出雜凑记下来，和 session 里真正送出去的
+  贴图雜凑比，**原样送出的有几张**。148 张里若只有少数没被动过，整件事就不值得做；上限就是那个比例乘 925 ms。
+  （别用「反正 UE 支援 BC」当理由就开工 —— 这份文件里每条没量过的推估都踩过。）
+  **而且先别抱期望**：同一次开卡的 SPOT 次数加起来，「会改到贴图」的操作有约 141 次（`flip_png_v` 56、
+  `convert_runtime_normal_map_rows` 28、`flip_runtime_blit_v` 24、`apply_clothes_color_mask` 15、
+  `exact_texture_png` 9、`tint_png` 4、`over_layer_mask_png` 3、`compose_body/face_texture` 2）对 148 次解码。
+  **这只是比例粗估、不是量测**（同一张可能被动好几次，有些动的是合成后的结果），但它指向「原样送出的不多」，
+  所以上限可能远低于 925 ms。这正是为什么要先量再决定，而不是看到 925 ms 就开工。
+- **下一个该查的是 entry prefetch 那个窗口的吞吐，不是谁在哪条执行绪上**（11-18 量到的）：
+  一张 OK 卡的冷开，8 个 prefetch helper 各自读一个来源包，暖磁碟时每项 207–341 ms、**磁碟冷时 1.8–2.2 s**，
+  而主执行绪同时在走 `load_base_bundles` 与身体／脸／头。这段时间里那条基础库读取路径是饱和的，
+  证据有两笔：（a）把 hair gloss 搬离主执行绪，约 500 ms 原样出现在 `load_base_bundles`；
+  （b）把 prefetch 整个关掉，同一笔 gloss 从 588 ms 掉到约 5 ms。**所以在这个窗口里重排工作一律零收益**，
+  要动的是读取本身（一项为什么要 200 ms／冷时 2 s）。`hair slots` 只花 77 ms 说明 **helper 有余裕、
+  主执行绪没有**，但 helper 数该不该降目前**没有量过**（11-18 那次扫描因 CRLF 没生效，见第三节）。
 - **第一张卡 `base: head textures` 还有约 190–200 ms** 没搬走，原因见第二节 `BUNDLE_CACHE` 那一列
   （要搬得先重构 `ParsedBundle` 的内部可变性模型，代价远大于收益）。
 - **转卡的 view 身分已改由树的内容决定**（`baf5cec10`）。21 角色场景（`koikatu_cs0001521`）同行程依序转，
@@ -281,14 +324,13 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 | `0dbdf222f` | 文件 | 量测失效的辨识法：形状可疑，不是数值可疑 |
 | `f61d7c8df` | 文件 | 想解释一个漂亮或难看的结果，这个冲动本身就是讯号 |
 | `d352dcb90` | 记 | 拿掉 `library_zip_memo` 的 strict 闸门：量到零收益，放回去（见第二节） |
+| `d63b37a86` | 改 | `OK_THREADS`／`RAYON_NUM_THREADS` 可以调高不只调低（预设仍是 8），17 支工具说明各加一行 |
+| `4787256d7` `23060e03c` `8a276cfb1` `ca69998e4` | 文件 | 闸门结案、跨行程证据换成整合后的次序关卡（`e7b34e6f2` 上 PASS，附完整 digest 与命令）、判断一个计时能不能当墙钟减的现成检查 |
+| （2026-11-18） | 改 | 吵机器上也能用的指标（`from scratch <n> (<m> repeat)`）、`lists` 两个子计时；hair gloss 搬离主执行绪与贴图 memo 放宽都量到零／负收益并退回（见第二节） |
 
-**还没提交**：`cpu_threads()` 改成「环境变数明确给了就照给的、上限硬件执行绪；没给才用 8」，具名池的硬上限
-跟着它，17 支工具说明各加一行。程式码已写、两个 `cargo check` 都过，等安静机器窗口结束再跑
-`cargo test --lib` 与两个 UE 目标然后提交（2026-11-17 下午，f-sceneload 正在量 `ImportCardWorkers` 的峰值
-记忆体，8 执行绪的编译会污染它）。
-
-**整合注意**：`8fe9c24ab` 要连同上面那笔未提交的一起合，否则批次工具只会被限回 8 条、没有调高的办法
-（协调者 2026-11-17 的决定，并先跟 C 组打过招呼——百人房间的低模是 `ok-lowpoly` 产的）。
+`d63b37a86` 与 `8fe9c24ab`（17 支工具补 `limit_threads`）已由协调者的 `c0e242763` 一起整合进来，所以批次
+工具既被限回 8 条、也有调高的办法（协调者 2026-11-17 的决定，先跟 C 组打过招呼——百人房间的低模是
+`ok-lowpoly` 产的）。
 
 另外 `ec2953393` 是协调者合进 F 组 `18aee76f8`／`0dbce369f` 的合并提交。
 

@@ -198,6 +198,8 @@ pub(crate) fn derived_png_save(id: &crate::oklib::Id, key: &str, name: &str, png
 }
 
 pub(crate) fn png_from_payload_uncached(tex: unity_asset_decode::texture::Texture2D, object_name: Option<String>) -> Option<(String, Vec<u8>)> {
+    crate::unity::note_work("payload", || format!("{} {:?} {}x{}",
+        if tex.name.is_empty() { object_name.as_deref().unwrap_or("tex") } else { &tex.name }, tex.format, tex.width, tex.height));
     use std::io::Cursor;
     use unity_asset_decode::texture::{TextureFormat,TextureProcessor};
     let proc=TextureProcessor::new(version());

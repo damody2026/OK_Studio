@@ -5155,3 +5155,18 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - 根因：RAM < 48 GB 或 VRAM < 20 GB 自動開低記憶體模式（`OKRuntimeLowMemory`），執行期貼圖標 `BULKDATA_SingleUse`，第一次上傳後丟掉 CPU 那份。讀卡器與工作室的調色 LUT（`KKSDefaultSaturationLUT16.png`）先用 `TextureFromPngFile` 建好（已上傳），再改 `SRGB=false`、`LODGroup` 後 `UpdateResource()` 第二次上傳，這時像素已經沒了，LUT 全黑，整個畫面經過調色變黑。
 - 修法：`ColorLookupTextureFromPngFile` 在第一次上傳前就設好線性、LUT 群組與夾邊，只上傳一次，不丟 CPU 資料。
 - 教訓：包要在低記憶體模式下也跑一次（`CardReaderDevelopment.cmd <卡> -- -OKLowMemory`）；開發機不會自動進這個模式。
+
+## 2026-11-18 多行 perl 替换配不上 CRLF，一天做出两个「量过了」的幻觉实验
+
+- 现象：`perl -0777 -i -pe 's/…\n…/…/'` 改 `Tools/ok-extract/src/*.rs` 时，**pattern 里的 `\n` 配不上档案的
+  `\r\n`，所以什么都没替换**；接着 `cargo build` 成功（本来就能编），A/B 两边当然一模一样。没有任何红字。
+- 因此产出两个看起来量过、其实没量的结论：（a）「prefetch helper 数 8／6／4／3 的扫描」——
+  `OK_PREFETCH_HELPERS` 这个旋钮从未进档案，等于把同一个设定量了 12 次（1.46–2.79 s 只有噪声没有形状，
+  我当时归因于机器吵）；（b）「贴图 payload memo 放宽到 ≥512²」第一次量到「零效果」，改用 `Edit` 重做
+  之后立刻看到重复 12 → 5。要是没重做，就会留下一条「量过、没用」的错误纪录，比没查更糟。
+- 修法与通则：**这棵树的多行改动用 `Edit`，或用指定行号的 `sed`／`sed -n` 拼档；perl 只用单行 pattern。**
+  改完先 `git diff --stat` 确认行数变了再建置。
+- 更一般的防线还是同一条（和 `VAR=$v` 那次一样）：**先证明开关是活的**。这次是加临时的分支计数器才看出
+  改动不在那条路上（`branch plain` 41 次、`branch transform` 41 次、`branch memo` 0 次），顺带发现
+  `memosnap::active(TEX)` 在这些开卡里一直是 false，我第一个 single-flight 放的位置根本是死码。
+- 量测细节见 [Docs/CARD_OPEN_PERF_20261117.md](CARD_OPEN_PERF_20261117.md) 第二、三节。
