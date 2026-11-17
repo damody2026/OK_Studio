@@ -46,6 +46,17 @@ M.list = {
     anchors = { { place = 'restaurant', name = 'private_room', from = { 47920.0, 25215.0 } },
       { place = 'restaurant', name = 'private_room2', from = { 48100.0, 25215.0 } },
       { place = 'restaurant', name = 'private_door', from = { 48265.0, 25405.0 } } } },
+  -- clinic_beauty (S82): the waiting bench (200 x 50 cm, seat 45 cm high, a back) stood in the one-cell passage at
+  -- y 33880 between the refit's walls (x 30125-30325), the only way from the stairs' corridor to the back: consult
+  -- room, recovery bed, the toilets (rest, seat2, toilet3 sealed, 322 cells; reach grid 11-17). It goes to the front
+  -- hall (x 30120-30320, y 34415-34466), on the door's floor, 60 cm clear of the place's anchors; the door's region
+  -- loses only the cells it covers. seat6 and seat7 (the builder's seats on the same bench) and wait go with it.
+  { prefix = 'LoverSpot_Beauty_Bench_', main = 'Seat', from = { 30225.192, 33876.415 }, delta = { -5, 564, 0 },
+    anchors = { { place = 'clinic_beauty', name = 'seat', from = { 30275.19, 33886.42 } },
+      { place = 'clinic_beauty', name = 'seat2', from = { 30175.19, 33886.42 } },
+      { place = 'clinic_beauty', name = 'wait', from = { 30225.19, 33956.42 } },
+      { place = 'clinic_beauty', name = 'seat6', from = { 30291.9, 33916.4 } },
+      { place = 'clinic_beauty', name = 'seat7', from = { 30225.2, 33916.4 } } } },
 }
 -- the anchor's position after the move, or nil when the row is not one of these (or already moved)
 function M.shift(place, name, pos)
