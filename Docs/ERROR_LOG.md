@@ -5237,3 +5237,11 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - **原因（已证实）**：是 MSYS 把 POSIX 路径转成 Windows 路径时，遇到方括号没转对，不是 `ok-extract`。同一张卡同一条命令改用 PowerShell、或在 Git Bash 里用 `cygpath -w` 给 Windows 路径并设 `MSYS2_ARG_CONV_EXCL='*'`，8 张全部转成。OK Studio 用 `CreateProc` 传 Windows 路径，不受影响。
 - **处置**：没有改任何程式码；批次脚本改给 Windows 路径重跑。
 - **再试前检查**：在 Git Bash 里传路径给 Windows 程式，档名可能含方括号（mod 作者名常这样写）时，一律 `cygpath -w` 加 `MSYS2_ARG_CONV_EXCL='*'`；看到「只在某些档名失败」先换 PowerShell 跑一次，排除壳层再去查程式。
+
+## 2026-11-18 Build.bat 接了 `| tail` 之后回 exit 0，把失败的建置当成成功（F 组 f-sceneload）
+
+- **变更**：背景跑 `Build.bat OpenKoikatsuEditor ... 2>&1 | tail -5`，只想看结尾几行。
+- **症状**：工作回报 `exit code 0`，看起来建置过了；实际是 `Result: Failed (OtherCompilationError)`。失败原因无害（编译全过，连结时 `LNK1104`：别组的编辑器正载着 `Plugins/OKStudio/Binaries/Win64/UnrealEditor-OKStudio.dll`，UBA 等 20 秒后放弃），但如果当成成功就会拿旧 DLL 去量测，并把结果当成新码的。
+- **原因**：管线的退出码是**最后一个指令**的（`tail` 一定成功），不是 `Build.bat` 的。`tail -5` 又刚好把 UBT 打在中间的错误行切掉，只留下时间统计。
+- **处置**：判断建置成不成一律看输出里的 `Result:` 那行（或用 `PIPESTATUS`／不接管线）；`tail` 的行数不够时改 `grep -E "^Result|error|LNK|C[0-9]{4}"`。
+- **再试前检查**：共用工作树上连结 `Plugins/*/Binaries` 的 DLL，要先确认没有别组的编辑器开着——那不是自己的码坏了，也不可以去关别人的进程，等就好。
