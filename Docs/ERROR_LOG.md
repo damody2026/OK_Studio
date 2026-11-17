@@ -5149,3 +5149,10 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - 修正：像素改在上傳那一幀結束時才丟（`OKDropRuntimeTexturePixelsAfterFrame`，FCoreDelegates::OnEndFrame；FTexture2DResource 的建構子已在遊戲執行緒拷走初始 mip），同一幀內改設定再上傳都有資料；之後幾幀才改設定的地方（眼睛 Clamp、overtex、MakeOvertexMaterial）先呼叫 `OKRestoreRuntimeTexturePixels`，從 GPU 讀回各 mip 再改，並在那一幀結束後再丟一次。審核加「去高光後瞳孔還在」：去高光的畫面要和白色測試瞳孔有足夠差異（≥ 黑點像素的一半），且去高光造成的變化要少於那個差異的六成，json 多 iris_px／iris_ok。
 - 驗證：見提交訊息。
 - 教訓：「上傳後就丟資料」這類省記憶體的做法，必須讓之後的重新上傳也成立，否則每個「建好再改設定」的呼叫端都是地雷；審核除了「該變的有變」，也要檢查「該在的還在」。
+
+## 2026-11-18 低配：每 30 秒的 OKMem 記錄在遊戲執行緒上等 log 寫盤，走路卡 110–250 ms（C 組 c-lowspec 修）
+
+- 錯誤：OKMemoryDiagnostics 的 OKMem 每 30 秒在 FTicker 裡取樣、寫 log，再 GLog->Flush()，等 log 檔寫入執行緒寫完；磁碟忙的時候一次 110–250 ms。conq1117d 低配走路（教堂→百貨）8 個 >60 ms 卡頓裡有 3 個（173、110、250 ms）緊接在 OKMem 那行之後，stat dumphitches 只看得到 FTicker Self。測試者的慢硬碟筆電只會更久。
+- 修正：遊戲執行緒只讀串流關卡數（UObject），取樣、寫 log、Flush 丟到 thread pool；上一輪還沒完成就跳過這輪。
+- 驗證：見提交訊息。另外 2 個 FTicker Self 卡頓（143、175 ms）不在 OKMem 的時間點，原因未查明，下一輪用 Insights trace 找。
+- 教訓：為了當機時留得住 log 而 Flush，不能放在遊戲執行緒的固定節奏裡；診斷程式本身也要量它的成本。

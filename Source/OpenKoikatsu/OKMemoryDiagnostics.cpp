@@ -1,7 +1,7 @@
 // Memory and machine lines in game.log, so a crash on a tester's PC can be read from the log alone
 // (Docs/STREET_CITY_STREAMING_LOWSPEC_20261114.md):
 //   OKMachine  once the RHI is up: CPU, RAM, commit limit, GPU, driver, VRAM, low-memory mode, stage, patch
-//   OKMem      every 30 s (-OKMemLogSeconds=N, 0 = off): this process's commit and working set, the system's free commit,
+//   OKMem      every 30 s (-OKMemLogSeconds=N, 0 = off), sampled and flushed on a worker: this process's commit and working set, the system's free commit,
 //              this process's VRAM use against the driver's budget (DXGI), loaded streaming levels, installed characters
 //   warnings   VRAM over the driver budget, under 2 GB of free system commit
 //   an OKMem line at Error when an allocation fails (the engine's out-of-memory delegate), flushed before the engine dies
@@ -9,6 +9,7 @@
 #include "CoreMinimal.h"
 #include <atomic>
 #include "Containers/Ticker.h"
+#include "Async/Async.h"
 #include "HAL/PlatformMemory.h"
 #include "HAL/PlatformMisc.h"
 #include "Misc/CommandLine.h"
@@ -83,10 +84,12 @@ int32 LoadedLevels() {
 	return N;
 }
 
-FString Line(const FSample& S) {
+FString Line(const FSample& S, int32 Levels) {
 	return FString::Printf(TEXT("OKMem: commit %.2f GB (peak %.2f), working set %.2f GB, system free commit %.1f of %.1f GB, VRAM %.2f GB of budget %.2f GB, streaming levels loaded %d, characters %d"),
-		Gb(S.Commit), Gb(S.PeakCommit), Gb(S.WorkingSet), Gb(S.FreeCommit), Gb(S.CommitLimit), Gb(S.Vram), Gb(S.VramBudget), LoadedLevels(), GOKRuntimeCharactersInstalled.load());
+		Gb(S.Commit), Gb(S.PeakCommit), Gb(S.WorkingSet), Gb(S.FreeCommit), Gb(S.CommitLimit), Gb(S.Vram), Gb(S.VramBudget), Levels, GOKRuntimeCharactersInstalled.load());
 }
+FString Line(const FSample& S) { return Line(S, LoadedLevels()); }
+std::atomic<bool> GSampling{false};
 
 void LogMachine() {
 	const FPlatformMemoryConstants& C = FPlatformMemory::GetConstants();
@@ -110,11 +113,19 @@ void OKStartMemoryDiagnostics() {
 		LogMachine();
 		if (Seconds <= 0.f) return;
 		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float) {
-			const FSample S = Sample();
-			UE_LOG(LogTemp, Display, TEXT("%s"), *Line(S));
-			if (S.VramBudget && S.Vram > S.VramBudget) UE_LOG(LogTemp, Warning, TEXT("OKMem: VRAM %.2f GB is over the driver budget %.2f GB (textures may be evicted; the driver can stall or reset)"), Gb(S.Vram), Gb(S.VramBudget));
-			if (S.CommitLimit && S.FreeCommit < (2ull << 30)) UE_LOG(LogTemp, Warning, TEXT("OKMem: system free commit %.2f GB: close to out of memory (raise the page file or close other programs)"), Gb(S.FreeCommit));
-			GLog->Flush();
+			// Only the streaming levels are read here (UObjects); the sample, the lines and the flush go to a worker. The
+			// flush waits for the log file's writer: on the game thread it took 110-250 ms whenever the disk was busy, three
+			// of the eight hitches of a low-memory walk (2026-11-18, stage conq1117d).
+			if (GSampling.exchange(true)) return true;
+			const int32 Levels = LoadedLevels();
+			Async(EAsyncExecution::ThreadPool, [Levels]() {
+				const FSample S = Sample();
+				UE_LOG(LogTemp, Display, TEXT("%s"), *Line(S, Levels));
+				if (S.VramBudget && S.Vram > S.VramBudget) UE_LOG(LogTemp, Warning, TEXT("OKMem: VRAM %.2f GB is over the driver budget %.2f GB (textures may be evicted; the driver can stall or reset)"), Gb(S.Vram), Gb(S.VramBudget));
+				if (S.CommitLimit && S.FreeCommit < (2ull << 30)) UE_LOG(LogTemp, Warning, TEXT("OKMem: system free commit %.2f GB: close to out of memory (raise the page file or close other programs)"), Gb(S.FreeCommit));
+				GLog->Flush();
+				GSampling = false;
+			});
 			return true;
 		}), Seconds);
 	});
