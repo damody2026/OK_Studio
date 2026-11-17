@@ -367,6 +367,33 @@ for _, p in ipairs(places) do
     end
     p.anchors = kept end
 end
+-- One room for a whole building of floors: campus_sports' was the sports hall's box from z 960 to 5900, floor 1, so the
+-- game (OKStreetUpstairs: the rooms' floor numbers) took its 3F and 4F lift landings and the gym's door for the ground
+-- floor and never planned the ride down: "on another floor, no way there" from every upper floor (c3b1117a, 11-17). A
+-- room spanning more than 8 m in z, over the heights of the place's lift landings (three or more), is cut at them: one
+-- room a floor, each from 30 cm under its landing up to 30 cm under the next (the first from the room's foot, the last
+-- to its top).
+do local cut = 0
+  for _, p in ipairs(places) do
+    local zs, have = {}, {}
+    for _, an in ipairs(p.anchors or {}) do if an.name:match('^lift%d') and an.pos then
+      local z = math.floor(an.pos[3] + .5); if not have[z] then have[z] = true; zs[#zs + 1] = z end end end
+    table.sort(zs)
+    if #zs >= 3 and p.rooms then local out = {}
+      for _, room in ipairs(p.rooms) do
+        if room.min and room.max and room.max[3] - room.min[3] > 800 and room.min[3] <= zs[1] + 50 and room.max[3] >= zs[#zs] then
+          for k, z in ipairs(zs) do
+            out[#out + 1] = { min = { room.min[1], room.min[2], k == 1 and room.min[3] or z - 30 },
+              max = { room.max[1], room.max[2], k == #zs and room.max[3] or zs[k + 1] - 30 }, floor = k }
+          end
+          cut = cut + 1; print(('room: %s cut into %d floors at its lift landings'):format(p.id, #zs))
+        else out[#out + 1] = room end
+      end
+      p.rooms = out
+    end
+  end
+  if cut > 0 then print(('%d rooms cut into floors'):format(cut)) end
+end
 -- Rooms left out of a place (REMOVED.rooms), then the check that a place is one building with its door: an indoor place's
 -- rooms grouped by being within REMOVED.apart_cm of each other (xy, any floor); a group without the door is a part a girl
 -- would be walked to from another building's door (bike_shop, 116 m, 11-16). Listed as problems unless REMOVED.apart_ok.
