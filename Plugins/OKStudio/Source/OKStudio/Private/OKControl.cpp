@@ -13,6 +13,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopeLock.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "SocketSubsystem.h"
@@ -336,6 +337,9 @@ namespace
 					Replies.Enqueue({ Id, TSharedPtr<FHttpServerResponse>(Response.Release()) });
 				};
 				const TMap<FString, FRoute>* Port = Routes.Find(Request.Port);
+				// Each request named in an Insights trace: a low-memory walk had 70-85 ms game-thread hitches inside this ticker
+				// with nothing under them (2026-11-18), and the route was not to be told.
+				TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*(TEXT("OKControl ") + Request.Http->RelativePath.GetPath()));
 				const FRoute* Route = Port ? Port->Find(Request.Http->RelativePath.GetPath()) : nullptr;
 				if (Route && EnumHasAnyFlags(Route->Verbs, Request.Http->Verb)) Route->Handler(*Request.Http, Done);
 				else
