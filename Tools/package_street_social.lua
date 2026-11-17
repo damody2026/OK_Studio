@@ -148,10 +148,11 @@ end
 
 -- Original data groups a Studio package leaves out unless --skip-group says otherwise: the street's dialogue, voices
 -- and H poses, the H voices, the studio sample scenes (they carry characters), and, to keep it under 10 GB (user
--- 2026-11-16), the studio sound items (base-sounds, 2.3 GB), the paired H motions (base-paired, 1.5 GB) and the street
--- runtime clips (runtime-clips).
+-- 2026-11-16), the studio sound items (base-sounds, 2.3 GB) and the street
+-- runtime clips (runtime-clips). base-paired (1.5 GB) stays: it is the card reader's game motion list (base_v1/paired; left
+-- out, the list was empty; user 2026-11-18: over 10 GB is fine).
 local STUDIO_SKIP = { "h-voices", "studio-scenes", "street-voices", "street-dialogue", "h-poses", "base-sounds",
-  "base-paired", "runtime-clips" }
+  "runtime-clips" }
 
 local TEXT_EXT = { json = true, txt = true, lua = true, ini = true, cmd = true, bat = true, toml = true, md = true, cfg = true, csv = true, tsv = true, xml = true, yaml = true, yml = true, log = true }
 
