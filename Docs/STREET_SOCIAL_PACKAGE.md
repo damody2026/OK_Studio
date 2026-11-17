@@ -59,3 +59,18 @@
   3. 再搜一次本機金鑰（逐字搜整包含 pak，加 `sk-` 與 `"api_key"` 格式搜）。
 - 2026-11-14 起包裡啟動（根目錄有 `PACKAGE.json`）不再讀寫 `%LOCALAPPDATA%\OpenKoikatsu` 的設定與金鑰，金鑰空白就保持空白。
 - 壓縮前一定要先刪掉 stage 裡的兩個 junction（`Pack*.stage/Windows/OpenKoikatsu/Content/IndependentResources`、`KKPreview`，用 `cmd /c rmdir` 只刪連結）：7-Zip 會跟著 junction 把 `Content/IndependentResources` 再壓一次，51 GB 的包變成 80 GB。啟動器下次開遊戲時會再建回來。
+
+## 讓 AI 透過 MCP 操作包（2026-11-17）
+
+街區包與工作室包（`--studio`）都附兩個 MCP server 與 `WriteMcpConfig.cmd`：
+
+| server | 檔案 | 做什麼 |
+|---|---|---|
+| `ok-game` | `Tools/ok-game-mcp/target/release/ok-game-mcp.exe` | 讀卡器（`reader_call`：開卡、參數、截圖、量測）、OK Studio（`studio_*`）、任何畫面（`ui_*`） |
+| `openkoikatsu-character` | `Tools/character_mcp/bin/ok-character-mcp.exe` | 人物編輯器 31 個工具，含參考圖與依 2D 圖自動調身材（`reference_prepare`、`body_fit_start`），見 [人物編輯 MCP 使用說明](CHARACTER_EDITOR_MCP_USAGE.md) |
+
+1. 解壓後執行一次 `WriteMcpConfig.cmd`（`Tools/write_mcp_config.lua`），在包的根目錄產生 `mcp.json`，裡面是這個資料夾的絕對路徑；包搬了位置要再執行一次。
+2. 把 `mcp.json` 的 `mcpServers` 加到 AI 客戶端的 MCP 設定（Claude Code：放進專案的 `.mcp.json`）。
+3. 執行 `CardReaderDevelopment.cmd` 開一張卡，再請 AI 照圖調整。兩個 server 都只走本機的控制通道與信箱（`Saved/OKControl`、`Saved/CharacterMCP`），不開網路埠。
+
+打包版的身體由 GPU 顯示，跟隨用的 skeletal component 沒有 mesh object；`FOKPaintPose::Prepare` 以前一律要求它，打包版的 `body_masks`、`character_measure` 都失敗（「no readable CPU data」）。現在只有走引擎 CPU 蒙皮的路徑才需要。驗證：工作室包裡用胡桃的 OK 卡，以 `body_masks` 為目標、打亂身高與兩項體型後背景擬合，loss 0.146 → 0.0076，三個值回到原值附近。

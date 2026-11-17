@@ -206,10 +206,12 @@ local function main()
   -- Versioned files: the launcher and its tools, the street's data, the settings guide.
   local versioned = a.studio
     and { "OKStudio.cmd", "CardReaderDevelopment.cmd", "Content/IndependentResources", "Tools/lua", "Config", "Tools/original_data_manifest.json",
-      "Tools/base_library_shared_mods.txt", "Docs/SHARED_RESOURCES_SETUP.md", "Docs/STREET_SOCIAL_PACKAGE.md" }
+      "Tools/base_library_shared_mods.txt", "Docs/SHARED_RESOURCES_SETUP.md", "Docs/STREET_SOCIAL_PACKAGE.md",
+      "WriteMcpConfig.cmd", "Docs/CHARACTER_EDITOR_MCP_USAGE.md" }
     or { "StreetSocial.cmd", "OKStudio.cmd", "CardReaderDevelopment.cmd", "Content/IndependentResources", "Tools/lua", "Config",
       "Tools/original_data_manifest.json", "Tools/base_library_shared_mods.txt",
-      "Docs/API_KEYS.md", "Docs/SHARED_RESOURCES_SETUP.md", "Docs/STREET_SOCIAL_PLAY_GUIDE.md", "Docs/STREET_SOCIAL_PACKAGE.md" }
+      "Docs/API_KEYS.md", "Docs/SHARED_RESOURCES_SETUP.md", "Docs/STREET_SOCIAL_PLAY_GUIDE.md", "Docs/STREET_SOCIAL_PACKAGE.md",
+      "WriteMcpConfig.cmd", "Docs/CHARACTER_EDITOR_MCP_USAGE.md" }
   -- A Studio package leaves out the street's models and the runtime materials' uncooked sources (the game reads the
   -- cooked ones from its paks): half a gigabyte of the 10 GB it has to stay under.
   local studio_drop = { "Content/IndependentResources/StreetSocialData/Models/", "Content/IndependentResources/RuntimeMaterials/" }
@@ -223,7 +225,9 @@ local function main()
   for _, rel in ipairs({ "Tools/ok-rules/target/release/ok_rules.dll", "Tools/ok-mind/target/release/ok_mind.dll",
       "Tools/ok-story/target/release/ok_story.dll", "Tools/ok-extract/target/release/ok-extract.exe",
       -- Tools/lua/ok/kit.lua: the launcher's card checks (prepare_street_social_selection.lua) decode with it.
-      "Tools/ok-luakit/target/release/ok-luakit.exe" }) do
+      "Tools/ok-luakit/target/release/ok-luakit.exe",
+      -- The MCP servers an AI client drives the reader and OK Studio with (WriteMcpConfig.cmd writes their mcp.json).
+      "Tools/ok-game-mcp/target/release/ok-game-mcp.exe", "Tools/character_mcp/bin/ok-character-mcp.exe" }) do
     if path.is_file(path.join(root, rel)) then add(path.join(root, rel), rel) else say("Not built, left out: " .. rel) end
   end
   if not a.no_voice_servers and not a.studio then
