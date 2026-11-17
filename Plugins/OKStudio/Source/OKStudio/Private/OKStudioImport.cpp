@@ -7,6 +7,7 @@
 #include "Misc/ConfigCacheIni.h"
 #include "KKCardReader.h"
 #include "KKRustExtract.h"
+#include "Misc/Base64.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "OKSceneDocument.h"
@@ -1086,6 +1087,9 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 	Importer.CardDirectory = CardDirectory;
 	Importer.Report = &Report;
 	const TArray<TSharedPtr<FJsonValue>>* MaterialEdits = nullptr;
+	// A texture edit's PNG comes as a file beside the cards (the export writes each distinct one once, rather than as
+	// base64 inside the JSON): the document keeps it as base64 text, made once per file. The files are not needed after.
+	TMap<FString, FString> TextureFiles;
 	if (Scene->TryGetArrayField(TEXT("material_edits"), MaterialEdits))
 		for (const TSharedPtr<FJsonValue>& V : *MaterialEdits)
 		{
@@ -1102,9 +1106,22 @@ bool FOKStudioImport::Import(const FString& ScenePng, UOKSceneDocument* Document
 			if (!Kind) continue;
 			Edit.Kind = *Kind;
 			E->TryGetStringField(TEXT("text"), Edit.Text);
+			FString TextureFile;
+			if (Edit.Kind == EOKSceneMaterialEditKind::Texture && E->TryGetStringField(TEXT("file"), TextureFile) && !TextureFile.IsEmpty())
+			{
+				FString* Text = TextureFiles.Find(TextureFile);
+				if (!Text)
+				{
+					TArray<uint8> Png;
+					Text = &TextureFiles.Add(TextureFile, FFileHelper::LoadFileToArray(Png, *TextureFile) ? FBase64::Encode(Png) : FString());
+				}
+				if (Text->IsEmpty()) { Report.Notes.Add(FString::Printf(TEXT("Material Editor texture %s could not be read"), *TextureFile)); continue; }
+				Edit.Text = *Text;
+			}
 			Edit.Value = FLinearColor(float((*Value)[0]->AsNumber()), float((*Value)[1]->AsNumber()), float((*Value)[2]->AsNumber()), float((*Value)[3]->AsNumber()));
 			Importer.MaterialEdits.FindOrAdd(int32(E->GetNumberField(TEXT("id")))).Add(Edit);
 		}
+	for (const TPair<FString, FString>& File : TextureFiles) IFileManager::Get().Delete(*File.Key);
 	const TArray<TSharedPtr<FJsonValue>>* Objects = nullptr;
 	// The characters' cards first, several processes at a time: converting them is almost the whole import (a five
 	// character scene: 206 ms to parse the scene and write its KKS cards, 12.3 s to convert them), and one process
