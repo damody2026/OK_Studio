@@ -84,6 +84,8 @@ end
 -- Minutes since a "YYYY-MM-DD HH:MM:SS" stamp found in text (the last one on its first line), or nil.
 local function age_min(text)
   local line = (text or ""):match("^[^\n]*") or ""
+  -- owner lines may end in " [need N]" / " [until=T]" after the stamp
+  repeat local n; line, n = line:gsub("%s*%b[]%s*$", "") until n == 0
   local y, mo, d, h, mi, se = line:match("(%d%d%d%d)-(%d%d)-(%d%d) (%d%d):(%d%d):(%d%d)%s*$")
   if not y then return nil end
   local t = os.time({ year = tonumber(y), month = tonumber(mo), day = tonumber(d),
@@ -185,17 +187,58 @@ local function unreal_counts()
   return held, other
 end
 
-local function waiting_above(agent)
-  for _, other in ipairs(queued()) do
-    if other ~= agent and rank(other) < rank(agent) then return other end
-  end
+-- GB a queued agent asked for ("need N" line of its queue entry; entries without one are ordinary claims).
+local function queued_need(agent)
+  local okr, text = pcall(path.read_text, queue_file(agent))
+  return okr and tonumber((text or ""):match("\nneed (%d+)")) or 0
 end
+
+-- The higher-priority agents still waiting, as { {agent, need_gb}... }.
+local function waiting_above_all(agent)
+  local list = {}
+  for _, other in ipairs(queued()) do
+    if other ~= agent and rank(other) < rank(agent) then list[#list + 1] = { other, queued_need(other) } end
+  end
+  return list
+end
+
+local function waiting_above(agent)
+  local first = waiting_above_all(agent)[1]
+  return first and first[1]
+end
+
+-- os.time() of the last "YYYY-MM-DD HH:MM:SS" stamp on a line, or nil.
+local function stamp_time(line)
+  local y, mo, d, h, mi, se = (line or ""):match(".*(%d%d%d%d)-(%d%d)-(%d%d) (%d%d):(%d%d):(%d%d)")
+  if not y then return nil end
+  return os.time({ year = tonumber(y), month = tonumber(mo), day = tonumber(d), hour = tonumber(h), min = tonumber(mi), sec = tonumber(se) })
+end
+
+-- When the slots other agents hold must be back: claim time + MAX_HOLD_MIN, or the [until=] of a lent slot; the latest
+-- of them (an exclusive waiter starts only when all are back), or nil when nobody else holds a slot.
+local function holders_back(agent)
+  local latest
+  for i = 1, SLOTS do
+    local who, text = owner(i)
+    if who and who ~= agent then
+      local line = text:match("^[^\n]*") or ""
+      local t = tonumber(line:match("%[until=(%d+)%]")) or ((stamp_time(line) or os.time()) + MAX_HOLD_MIN * 60)
+      if not latest or t > latest then latest = t end
+    end
+  end
+  return latest
+end
+
+-- A lent slot shorter than this is not worth starting Unreal for.
+local MIN_LEND_MIN = 5
 
 -- Writes (or refreshes) the agent's queue entry. With `me` ("pid start", claim --wait) the entry lives as long as
 -- that process; without it (a one-shot claim that the agent repeats) it lives QUEUE_STALE_MIN minutes per call.
-local function enqueue(agent, note, me)
+-- An exclusive claim records its need ("need N"): while it waits, a free slot can still be lent (see try_claim_locked).
+local function enqueue(agent, note, me, need_gb)
   path.mkdir(path.join(ROOT, "queue"), true)
-  path.write_text(queue_file(agent), agent .. " " .. note .. " " .. now() .. "\n" .. (me and ("pid " .. me .. "\n") or ""))
+  path.write_text(queue_file(agent), agent .. " " .. note .. " " .. now() .. "\n" .. (me and ("pid " .. me .. "\n") or "")
+    .. ((need_gb or 0) >= EXCLUSIVE_GB and ("need " .. need_gb .. "\n") or ""))
 end
 
 -- Test hook, honoured only with OK_UNREAL_SLOTS set (a scratch slot folder): OK_UNREAL_SLOTS_FAKE="free=<GB> pause=<s>"
@@ -245,8 +288,19 @@ end
 -- One attempt: the slot index taken (or already held), or nil and why not.
 local function try_claim_locked(agent, note, need_gb)
   for i = 1, SLOTS do if owner(i) == agent then return i end end
-  local blocker = waiting_above(agent)
-  if blocker then return nil, blocker .. " has higher priority and is waiting" end
+  -- A higher-priority waiter blocks this claim. An exclusive waiter only blocks it when lending would delay it: it
+  -- starts once every held slot is back, so a free slot is lent until the latest of those returns ([until=], enforced
+  -- by yield); with no slot held it gets the machine next (2026-11-18: a queued [need 60] kept slot2 empty for 14 min).
+  local lend_until
+  for _, w in ipairs(waiting_above_all(agent)) do
+    if w[2] < EXCLUSIVE_GB or need_gb >= EXCLUSIVE_GB then return nil, w[1] .. " has higher priority and is waiting" end
+    local back = holders_back(agent)
+    if not back then return nil, w[1] .. " (exclusive) has higher priority and gets the free machine next" end
+    if back - os.time() < MIN_LEND_MIN * 60 then
+      return nil, w[1] .. " (exclusive) is waiting; the held slots are back in " .. math.max(0, math.floor((back - os.time()) / 60)) .. " min, too short to lend"
+    end
+    lend_until = back
+  end
   local conflict = exclusive_conflict(agent, need_gb)
   if conflict then return nil, conflict end
   local held, other = unreal_counts()
@@ -263,7 +317,8 @@ local function try_claim_locked(agent, note, need_gb)
   for i = 1, SLOTS do
     if not owner(i) then
       path.mkdir(path.parent(owner_file(i)), true)
-      path.write_text(owner_file(i), agent .. " " .. note .. " " .. now() .. (need_gb >= EXCLUSIVE_GB and (" [need " .. need_gb .. "]") or "") .. "\n")
+      path.write_text(owner_file(i), agent .. " " .. note .. " " .. now() .. (need_gb >= EXCLUSIVE_GB and (" [need " .. need_gb .. "]") or "")
+        .. (lend_until and (" [until=" .. lend_until .. "]") or "") .. "\n")
       if owner(i) == agent then
         -- A claim made by an older copy of this script (another checkout) does not take the lock: if one landed
         -- meanwhile and the two conflict, give the slot back and try again later.
@@ -284,12 +339,14 @@ end
 local function claim(agent, note, wait, need_gb)
   local me = wait and self_process() or nil
   while true do
-    enqueue(agent, note, me)
+    enqueue(agent, note, me, need_gb)
     local i, why = try_claim(agent, note, need_gb)
     if i then
       -- the queue entry may already be gone (another session cleaned the queue); the slot is ours either way
       pcall(path.remove, queue_file(agent))
-      io.write("slot", i, "\n")
+      local _, text = owner(i)
+      local lent = tonumber((text or ""):match("%[until=(%d+)%]"))
+      io.write("slot", i, lent and (" (lent: an exclusive claim waits; give it back by " .. os.date("%H:%M", lent) .. ", yield says when)") or "", "\n")
       return 0
     end
     if not wait then io.write("queued: ", why, "\n"); return 2 end
@@ -340,7 +397,19 @@ local function main()
   if cmd == "claim" and agent then os.exit(claim(agent, note, wait, need_gb))
   elseif cmd == "release" and agent then os.exit(release(agent))
   elseif cmd == "yield" and agent then
-    local other = waiting_above(agent)
+    -- A lent slot goes back at its [until=] even if the exclusive waiter is not yet first in line.
+    for i = 1, SLOTS do
+      local who, text = owner(i)
+      local lent = who == agent and tonumber((text or ""):match("%[until=(%d+)%]"))
+      if lent and os.time() >= lent then print("release (slot" .. i .. " was lent until " .. os.date("%H:%M", lent) .. ")"); os.exit(3) end
+    end
+    -- Exclusive waiters lend free slots (try_claim_locked); a holder yields to them only once its lent time is up.
+    local other
+    for _, w in ipairs(waiting_above_all(agent)) do
+      local mine
+      for i = 1, SLOTS do if owner(i) == agent then local _, t = owner(i); mine = mine or (t or ""):match("%[until=%d+%]") end end
+      if w[2] < EXCLUSIVE_GB or not mine then other = w[1]; break end
+    end
     if other then io.write("yield to ", other, "\n"); os.exit(3) end
     -- No slot is held for more than 20 minutes (2026-11-15, the user's rule): past the cap, give it back,
     -- to whoever is queued if anyone is, otherwise just release and re-claim if more time is needed.

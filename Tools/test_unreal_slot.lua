@@ -75,6 +75,74 @@ T:case("test_claim_refused_while_exclusive_held", function(t)
   P.rmtree(root)
 end)
 
+-- A queue entry / owner line written directly, as another agent's claim would leave them.
+local function put(root, rel, text)
+  P.mkdir(P.parent(P.join(root, rel)), true)
+  P.write_text(P.join(root, rel), text)
+end
+local function stamp(min_ago) return os.date("%Y-%m-%d %H:%M:%S", os.time() - min_ago * 60) end
+local function run(root, ...)
+  local args = { ok.lua_exe, script, ... }
+  local fs = require "okfs"
+  local saved = { os.getenv("OK_UNREAL_SLOTS"), os.getenv("OK_UNREAL_SLOTS_FAKE") }
+  fs.setenv("OK_UNREAL_SLOTS", root); fs.setenv("OK_UNREAL_SLOTS_FAKE", "free=200")
+  local p = proc.popen(args, { stderr = "stdout", hide = true })
+  fs.setenv("OK_UNREAL_SLOTS", saved[1]); fs.setenv("OK_UNREAL_SLOTS_FAKE", saved[2])
+  return finish(p)
+end
+-- c-lowspec-t ranks as c-lowspec (-9), above the t-* agents (9).
+local function exclusive_waiting(root) put(root, "queue/c-lowspec-t.txt", "c-lowspec-t test " .. stamp(0) .. "\nneed 60\n") end
+
+T:case("test_queued_exclusive_lends_free_slot_until_holder_is_back", function(t)
+  local root = scratch()
+  exclusive_waiting(root)
+  put(root, "slot1/owner.txt", "t-holder test " .. stamp(5) .. "\n")
+  local code, out = run(root, "claim", "t-borrow", "test")
+  t:eq(code, 0, out)
+  t:contains(out, "lent")
+  local line = P.read_text(P.join(root, "slot2", "owner.txt"))
+  local back = tonumber(line:match("%[until=(%d+)%]"))
+  t:truthy(back, line)
+  t:less_eq(math.abs(back - (os.time() + 15 * 60)), 5, "lent until the holder's 20 min are up")
+  t:eq((run(root, "yield", "t-borrow")), 0, "keeps the slot before its time")
+  put(root, "slot2/owner.txt", (line:gsub("%[until=%d+%]", "[until=" .. (os.time() - 1) .. "]")))
+  local yc, yout = run(root, "yield", "t-borrow")
+  t:eq(yc, 3, yout)
+  t:eq((run(root, "yield", "t-holder")), 3, "an ordinary holder still yields to the exclusive waiter")
+  P.rmtree(root)
+end)
+
+T:case("test_queued_exclusive_takes_empty_machine", function(t)
+  local root = scratch()
+  exclusive_waiting(root)
+  local code, out = run(root, "claim", "t-normal", "test")
+  t:eq(code, 2, out)
+  t:contains(out, "free machine next")
+  local c2 = run(root, "claim", "c-lowspec-t", "test", "--need-gb", "60")
+  t:eq(c2, 0)
+  P.rmtree(root)
+end)
+
+T:case("test_no_lend_when_holder_nearly_done", function(t)
+  local root = scratch()
+  exclusive_waiting(root)
+  put(root, "slot1/owner.txt", "t-holder test " .. stamp(17) .. "\n")
+  local code, out = run(root, "claim", "t-borrow", "test")
+  t:eq(code, 2, out)
+  t:contains(out, "too short to lend")
+  P.rmtree(root)
+end)
+
+T:case("test_queued_ordinary_higher_still_blocks", function(t)
+  local root = scratch()
+  put(root, "queue/c-lowspec-t.txt", "c-lowspec-t test " .. stamp(0) .. "\n")
+  put(root, "slot1/owner.txt", "t-holder test " .. stamp(5) .. "\n")
+  local code, out = run(root, "claim", "t-borrow", "test")
+  t:eq(code, 2, out)
+  t:contains(out, "has higher priority")
+  P.rmtree(root)
+end)
+
 T:case("test_two_normal_both_win", function(t)
   local root = scratch()
   local a = start(root, "t-one", 35)
