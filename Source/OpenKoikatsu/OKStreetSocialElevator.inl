@@ -336,7 +336,11 @@ bool AOKStreetSocialScene::NavNeedsLift(const FVector& Goal) const{
 // 2026-11-15): the road graph (its 1F corridor points) when the grid finds no way or it is far. Upstairs only a way that
 // stays on his floor (the street graph would take him down and out).
 TArray<FVector> AOKStreetSocialScene::WalkToLanding(const FVector& From,const FVector& Landing) const{
- if(!OKStreetCityFar(From,Landing)){TArray<FVector> Grid=GridRoute(From,Landing);if(Grid.Num()>=2)return Grid;}
+ // Upstairs the grid even when far: the road graph is all on the ground (Tools/export_street_city_game_places.lua writes
+ // GROUND_Z), so above the street it never has a way, and only the straight line through the walls was left. Out of the
+ // arcade on M1 8F and from the ramen's door on 9F (33 m to the lift) every walk down said "no way" in 2 s, though the
+ // grid joins them to the landing (reach check, c3b1117a 11-18, Docs/STREET_UPSTAIRS_LEAVE_GAP.md).
+ if(!OKStreetCityFar(From,Landing)||OKStreetUpstairs(From)){TArray<FVector> Grid=GridRoute(From,Landing);if(Grid.Num()>=2)return Grid;}
  TArray<FVector> Way=PlaceRouteWaypoints(From,Landing);
  if(Way.Num()<2||Way.ContainsByPredicate([&](const FVector& P){return FMath::Abs(P.Z-From.Z)>150.f;}))return {};
  if(FVector::Dist2D(Way.Last(),Landing)>50.f)Way.Add(Landing);

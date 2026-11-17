@@ -36,7 +36,18 @@ Street navigation: no way (to the lift landing again) from V(X=48179.40, Y=60425
 
 可达性扫描（`Tools/street_city_reach_check.lua probe`）上，arcade、ramen 的门和该层电梯口在同一个大区（8F 约 8 万格、9F 7.7 万格），格子路线是存在的。
 
-## 修法（整合 #16 之后，c-street-city 来改）
+## 已修（11-18，c4w1118a）
+
+`WalkToLanding` 的条件从「不远才试格子」改成「不远，或人在楼上，就先试同一层的格子」（`OKStreetSocialElevator.inl:339`）；格子失败才走原本的路网或直线。编辑器与游戏两个目标都建置成功。实走（c4w1118a，stage 前先跑 `Tools/rebuild_street_social_patch.lua` 补 DreamGUI 的 global shader）：
+
+| 步骤 | 修前 | 修后 |
+|---|---|---|
+| cafe → arcade，再从 arcade 去 cafe | 离开 2 s 报走不到 | 到 arcade 132 s，离开到 cafe 130 s 抵达 |
+| ramen 门点 → arcade | 3 s 报走不到 | 46 s 抵达 |
+| arcade → cafe（上一行的终点出发） | 2 s 报走不到 | 130 s 抵达 |
+| gym 5F 垫子 (81020,23760,4790) → campus_sports | 走不回 1F | 45 s 抵达 |
+
+## 当初的修法规划
 
 - 楼上（`OKStreetUpstairs(From)`）时，就算 `OKStreetCityFar`，也先在同一层跑 `GridRoute(From, Landing)`；格子找到就用。
 - 格子也失败，才退回路网或直线，维持现在的报错。
