@@ -186,4 +186,14 @@ return {
     { name = "stair1", pos = { 29770, 25920, 1200 } }, -- was 29750, 26030
     { name = "stair2", pos = { 29790, 25850, 1580 } },
   },
+  -- gym (SP 4F, its door at 4160) has its mats and mirrors on the 5F (4780) and no stair or lift of its own: the game said
+  -- "no way there" walking from those mats even to the gym's own door (c3b1117a, 11-17; the reach check's B4). The
+  -- building's stair is campus_sports' (stair4 / stair5 at 77600,21300, on its handrails, no cell there): the gym's
+  -- landings are the cell beside the flight's top, 77360,21320, joined on the 4F to the gym's door and on the 5F to the
+  -- mats (reach grid). (clothing M1 3F, club_room SC 3F, school T1 2F/3F and lodge H1 1F were walked out of in the game
+  -- as they are: the building's lifts take them, nothing added.)
+  gym = {
+    { name = "stair4", pos = { 77360, 21320, 4160 } },
+    { name = "stair5", pos = { 77360, 21320, 4780 } },
+  },
 }
