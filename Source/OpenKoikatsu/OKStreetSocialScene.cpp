@@ -1078,6 +1078,8 @@ void AOKStreetSocialScene::Topic(const FString& Category){
  if(S.Catalogue.Nodes.IsEmpty()){S.Message=OKT(TEXT("ui.scene.free_talk_only_hint"));RefreshUI();return;}
  if(S.FreeTalkBusy){S.PendingTopic=Category;UE_LOG(LogTemp,Display,TEXT("Street topic %s waits for her answer in progress"),*Category);return;}
  S.BranchLine=false;S.RelationshipPending=false;S.PlayerLine.Reset();
+ // Picking a topic is him talking: it ends a silence like a typed line does (R15-33: topics every 8 s still cost "he keeps quiet").
+ S.FreeTalkSilenceSince=FPlatformTime::Seconds();S.FreeTalkSilencePenalties=0;S.FreeTalkLeavePending=false;
  const auto& Meta=S.Manifest.Characters[S.Target];
  auto Request=OKRulesTalkRequest(S,TEXT("talk_topic"),OKStreetViewRelation(S.Store,OKStreetStableId(Meta),S.Manifest.TalkBudget),&Meta);
  Request->SetStringField(TEXT("category"),Category);Request->SetStringField(TEXT("previous_node"),S.PreviousNode);Request->SetStringField(TEXT("last_branch"),S.LastBranchId);Request->SetNumberField(TEXT("seed"),S.Random.RandRange(0,MAX_int32-1));
@@ -2502,6 +2504,7 @@ void AOKStreetSocialScene::AskHerTopic(){
  const auto Relation=OKStreetViewRelation(S.Store,OKStreetStableId(S.Manifest.Characters[S.Target]),S.Manifest.TalkBudget);if(GOKStreetTalkLimit&&Relation.TalksRemaining<1){S.Message=OKT(TEXT("ui.scene.no_talks_left_today"));RefreshUI();return;}
  TArray<int32> Pool;for(int32 I=0;I<Profile->Listen.Num();++I)if(!Relation.ListenRecent.Contains(Profile->Listen[I].Topic))Pool.Add(I);
  if(Pool.IsEmpty())return;const auto& Listen=Profile->Listen[Pool[S.Random.RandRange(0,Pool.Num()-1)]];
+ S.FreeTalkSilenceSince=FPlatformTime::Seconds();S.FreeTalkSilencePenalties=0;S.FreeTalkLeavePending=false; // asking her is talking too
  S.AskedTopic=Listen.Topic;S.UsedTopic=INDEX_NONE;S.CollectedActive=true;S.TopicIntroduction=true;S.AwaitTopicAnswer=false;S.TopicSequence=Listen.Intro;S.TopicPart=0;S.CollectedVoiceIds.Reset();S.PlayerLine=OKT(TEXT("ui.scene.your_turn_topic"));AdvanceCollectedTopic();
 }
 void AOKStreetSocialScene::UseCollectedTopic(int32 No){
@@ -2509,6 +2512,7 @@ void AOKStreetSocialScene::UseCollectedTopic(int32 No){
  const auto* Answer=S.CollectedTopics.Find(No);if((!Answer||S.Store.TopicStock.FindRef(No)<1)&&!(S.AwaitTopicAnswer&&No==INDEX_NONE))return;
  const auto* Profile=S.CollectedTopics.Profile(S.Manifest.Characters[S.Target].PersonalityId);if(!Profile)return;
  const auto Relation=OKStreetViewRelation(S.Store,OKStreetStableId(S.Manifest.Characters[S.Target]),S.Manifest.TalkBudget);if(GOKStreetTalkLimit&&Relation.TalksRemaining<1)return;
+ S.FreeTalkSilenceSince=FPlatformTime::Seconds();S.FreeTalkSilencePenalties=0;S.FreeTalkLeavePending=false; // telling her a topic is talking too
  const auto* Asked=S.AwaitTopicAnswer?S.CollectedTopics.Find(S.AskedTopic):nullptr;
  TArray<FOKStreetTopicPart> Sequence;
  // What the answer is worth and how well it matches are rules (talk.rs topic_effect).
