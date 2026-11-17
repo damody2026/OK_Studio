@@ -55,7 +55,7 @@ F 树 `8bf22542f` ＋ 未提交的改动、编辑器 `-game`、`OKStudio.Profile
 改之前这 38 张全部转卡失败。OK Studio 实际导入 63-2：4/4 角色转成 OK 卡、身体完整、缺 zipmod 的头发等不显示
 （`Saved/Reports/scene-load/big63-absent_63-2_pass0.png`）。
 
-## 第二处：贴图搬出场景 JSON（CLI 已验证，UE 端 A/B 待量）
+## 第二处：贴图搬出场景 JSON（`4a07d42fa`，CLI 与 UE 端都已量）
 
 63-2 的 365 MB JSON 里 359 MB 是 MaterialEditor 道具贴图的 base64 PNG（200 处，去重后 270 MB）；
 SD42 full 是 142 MB base64、去重后 15.5 MB；65 是 130 → 46.5 MB。
@@ -82,8 +82,24 @@ Rust 导出本身差不多（写档多 0.3–0.5 s）；省下的在 UE 端：JS
 **正确性**：六张场景两种 JSON 去掉贴图栏位与输出资料夹之后**逐位元组相同**；452 处贴图引用，每个档案重新编成 base64
 都与内嵌版本的文字完全相同（含 JPEG 贴图，副档名一律写 `.png`，UE 端按内容辨识格式）。
 
+**UE 端导入 A/B**：同一执行档，交错两轮；`OK_SCENE_TEXTURES_INLINE=1` 是旧行为。冷开，`OK_NOCACHE=1`，
+`RAYON_NUM_THREADS=8`，F 树 `fe70e946e`（整合 #16 之后）。量测时机器上**还有另一个 Unreal**（e-fork-2 的读卡器），
+所以绝对数字偏高、`build_ms` 抖动大，请看同轮的差值。
+
+| 场景 | | 导出＋解析 s（两轮） | `load_call_ms` 中位数 | `ready_ms` 中位数 |
+|---|---|---|---:|---:|
+| 63-2 | 内嵌（347.7 MB JSON） | 6.38+3.12／5.38+3.05 | 22 689 | 27 894 |
+| 63-2 | 档案（3.6 MB JSON） | 3.94+0.23／3.01+0.13 | **18 420** | **25 112** |
+| 65 | 内嵌（297.3 MB JSON） | 4.57+2.67／4.53+2.59 | 21 960 | 33 781 |
+| 65 | 档案（2.6 MB JSON） | 2.76+0.10／2.39+0.09 | **18 903** | **31 855** |
+
+导出＋解析：63-2 约省 5.3 s，65 约省 4.5 s。`load_call_ms` 各省 4.3／3.1 s，`ready_ms` 各省 2.8／1.9 s。
+`ready_ms` 少省的那一截，是两轮 `build_ms` 的抖动（65 档案版第 1 轮 14.2 s，其余 11.7 s 左右）。
+开关确认真的在切：每趟日志 `import scene export ... JSON X MB` 的 X 是 3.6／2.6 MB 对 347.7／297.3 MB。
+两种都是 4/4、3/3 角色转成 OK 卡（`import converted`）。
+
 ## 还没看的
 
 - `character_open_ms` 约 9.8 s（以原作卡开那 4 位角色，在 worker 上）。
 - `OKSceneActor.cpp` 的 `EditTexture`：每次都对整串 base64 算 MD5，并把同一张 PNG 解码两次（sRGB 与 linear）。
-- 其余五张场景还没在 UE 里量。
+- 其余五张场景还没在 UE 里拍照确认身体（等 c-lowspec 独占量测结束）。
