@@ -5245,3 +5245,12 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - **原因**：管线的退出码是**最后一个指令**的（`tail` 一定成功），不是 `Build.bat` 的。`tail -5` 又刚好把 UBT 打在中间的错误行切掉，只留下时间统计。
 - **处置**：判断建置成不成一律看输出里的 `Result:` 那行（或用 `PIPESTATUS`／不接管线）；`tail` 的行数不够时改 `grep -E "^Result|error|LNK|C[0-9]{4}"`。
 - **再试前检查**：共用工作树上连结 `Plugins/*/Binaries` 的 DLL，要先确认没有别组的编辑器开着——那不是自己的码坏了，也不可以去关别人的进程，等就好。
+
+## 2026-11-18 以为自己的 Unreal 行程已经结束，实际还满载跑着，污染了别组的独占量测（F 组 f-sceneload）
+
+- **变更**：借用的 slot 到期（`until`）前把自己的 `UnrealEditor-Cmd.exe`（自动化测试，还没跑完）杀掉并 `release`。
+- **症状**：`taskkill /F /PID`、`taskkill /F /T /PID`、`Stop-Process -Force` 全部回「错误: ... 无法终止。原因: 没有正在执行的工作阶段」，行程却还列在 `tasklist` 里。我看 PowerShell 的 `HasExited=True`、`Threads.Count=1`，加上 `tasklist` 的记忆体栏两次完全一样（3,544,012 K），就判断「它已经结束，只是被还没关的 handle 留在列表里」，回报说机器是干净的。别组随后在同一台机器上开始独占的低配 A/B。
+- **原因（已证实）**：那个判断是错的。再量一次 **CPU 时间**：4 秒内从 750.6 s 跳到 754.7 s，等于一颗核心满载——行程活着。`HasExited` 与记忆体栏在这种「主执行绪已退出、工作执行绪还在跑」的状态下都会骗人，`tasklist` 的记忆体是停住不更新的旧值。最后用 `Invoke-CimMethod -InputObject (Get-CimInstance Win32_Process -Filter "ProcessId=N") -MethodName Terminate`（`ReturnValue=0`）才真的收掉。
+- **处置**：收掉后确认 `unreal_slot.lua status` 的 `unreal processes: 0`，并告知协调者那段时间别组的量测要重跑。
+- **再试前检查**：判断行程死没死，看 **CPU 时间是否还在增加**（隔几秒量两次），不要看 `HasExited`、不要看 `tasklist` 的记忆体数字；`taskkill` 回「没有正在执行的工作阶段」只说明这条路杀不掉，不是死讯，换 CIM `Terminate`。借用的 slot 到期是「先确认行程真的收掉、再 release」，行程还在就等于没还。
+- **顺带**：借来的短窗口（11 分钟）不要拿去跑 `UnrealEditor-Cmd` 的自动化测试——这个专案的冷启动超过 9 分钟（`-NullRHI -nosound` 也一样），整段会白费。短窗口先跑能拿到数字的那几趟。
