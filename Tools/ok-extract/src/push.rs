@@ -107,13 +107,19 @@ impl<'a> PushBatch<'a> {
             todo.into_par_iter().map(|(n, g, item, key)| (n, g, key, ctxs[g].run_on_worker(item))).collect());
         crate::profile_tick("batch: transform (par)", t_phase);
         let t_phase = std::time::Instant::now();
+        let t_sub = std::time::Instant::now();
         for (n, g, key, d) in ran {
             if let Some(key) = key { crate::view_memo_put(key, (d.1.clone(), d.2.clone())); }
             done[n] = Some((g, d));
         }
+        crate::profile_tick("batch: emit/memo_put", t_sub);
+        let t_sub = std::time::Instant::now();
         let mut by_group: Vec<Vec<PushDone>> = (0..ctxs.len()).map(|_| Vec::new()).collect();
         for (g, d) in done.into_iter().flatten() { by_group[g].push(d); }
+        crate::profile_tick("batch: emit/regroup", t_sub);
+        let t_sub = std::time::Instant::now();
         for (ctx, done) in ctxs.iter().zip(by_group) { ctx.emit(done, parts, session_parts)?; }
+        crate::profile_tick("batch: emit/ctx.emit", t_sub);
         crate::profile_tick("batch: emit (serial)", t_phase);
         Ok(())
     }
