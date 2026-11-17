@@ -1,4 +1,4 @@
-# 試錯與回退紀錄
+﻿# 試錯與回退紀錄
 
 這份紀錄供 `HANDOFF2.md` 的實作與驗證使用。每次出現錯誤、視覺退步或錯誤推論，當次增列一筆：寫明變更、可重現的症狀、已證實與仍待查的原因、回退／修正、下一次試驗前的檢查。未證實的原因不得寫成結論；保留診斷圖片與 log 路徑。正式截圖只放在 `Saved/Screenshots` 根目錄，失敗圖放 `Saved/DebugShots`。
 
@@ -4876,10 +4876,11 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - 原因一（錯誤訊息誤導）：`Source/OpenKoikatsu/OKCharacterMCP.cpp` 的 `load` 把「讀卡器忙碌（Busy）」和「路徑不存在／不是絕對路徑／不是 PNG」合成同一個訊息，忙碌時也回「Provide an existing absolute PNG card path」。
 - 原因二（讀卡器當時在忙）：這次啟動的讀卡器（log `Saved/Logs/CardReader/20261116-231803-6ed94d6a.log`，用共用信箱，代表當時只有它一個讀卡器）啟動後立刻開了 C001.png，而我的腳本沒有要它開 C001。比較可能是別的 session 在沒指定 `OK_GAME_PID` 的情況下送了 `reader_call load` 到共用信箱，打到這個讀卡器；我的 `load C025` 隨後送到，遇上忙碌被拒。
 - 腳本的問題：`seg4.sh` 以「新出現的讀卡器」認自己的行程、以「最新的 log」認自己的 log，別的 session 同時開讀卡器時會認錯（C024 那列的 log 欄指到 q2 開 C065 的讀卡器）。改成 `seg5.sh`：啟動時在命令列加 `-OKLane=<通道>-<卡>-<pid>` 標記，用標記找自己的 PID 與 `-abslog`，另寫 `reader_map.txt`。
-- 未修：`OKCharacterMCP.cpp` 的訊息要分開（忙碌另回「Busy」），等全跑結束能重建時再改。證據在 `Saved/Reports/reader-jump-20261116/qfix/c025-loadfail/`。C025 排在 q1 之後重跑。
+- 已修（2026-11-17）：`OKCharacterMCP.cpp` 的拒絕回覆另帶 `code`（busy／bad_request／stale／expired／wrong_screen），忙碌一律先回 `busy`，也排在「請先進人物編輯」之前（切服裝時人物正被替換，原本回的是 wrong_screen）；`ok-game-mcp` 把錯誤寫成 `<code>: <訊息>`，自己找讀卡器時回 `not_ready:`（指定的那台還在啟動）、`no_reader:`、`ambiguous_target:`。證據在 `Saved/Reports/reader-jump-20261116/qfix/c025-loadfail/`。C025 排在 q1 之後重跑。
 - 預防：多個 session 共用同一台機器時，`reader_call` 一律帶 `OK_GAME_PID`；腳本用自己加的命令列標記認行程，不用「最新的那個」。
 - 補查（同日）：`reader_call` 的實例選擇（`Tools/ok-game-mcp/src/control.rs` 的 `target`）和 `ui_*`／`pair_call` 共用同一套規則，會跟著 `game_select` 與 `OK_GAME_PID` 走：有指定 pid 就只找那一台（那台的 OKControl 記錄還沒寫出 `mailbox` 時直接回「no running game has a card reader mailbox」，不會改打別台，c-lowspec 第一次 `state` 失敗就是這個）。**沒指定時預設是「最新啟動、有信箱的那一台」**，`OWN` 只認 `game_launch` 開的遊戲，用 `CardReaderDevelopment.cmd` 開的讀卡器不算。所以同一個 checkout 有好幾台讀卡器時，任何沒有 `game_select`／`OK_GAME_PID` 的 session 送 `reader_call`（包括 `load`），都會打到剛啟動的那一台，通常是別人的。c-lowspec 每次都先 `game_select`，排除；23:18 是誰送的 load 無法再證。
-- `ok-game-mcp` 缺陷（待修，共用工具，未改）：沒指定實例、又有超過一台在跑時，應該拒絕並列出 `game_instances`，而不是默默選最新的；至少 `load`、`control_set` 這類會改狀態的動作要拒絕。
+- 後續（2026-11-17 單張重跑）：結論是當初的「開卡失敗」是誤判，卡與開卡路徑都沒問題。`Tools/ok_cards.lua verify`（新程序、無快取、嚴格開卡）C025 七套服裝全過、沒有缺項；讀卡器單張重跑（seg6，`-OKLane=q3-C025-…`，log `Saved/Logs/CardReader/20261117-131941-4962ec90.log`，帶 7ec4cf1ea 的 busy／not_ready 分流）7 套服裝全部開成、assert=0、loadfail=0，O1／O7 截圖正常。當時的 LOADFAIL 只是讀卡器正忙（另一個 session 的 load 打進來）被舊訊息說成「路徑不存在」。結果在 `Saved/Reports/reader-jump-20261116/qfix/full_q3.txt`。
+- `ok-game-mcp` 缺陷（7f8f974eb 已修，c-lowspec）：沒指定實例、又有超過一台在跑時，應該拒絕並列出 `game_instances`，而不是默默選最新的；至少 `load`、`control_set` 這類會改狀態的動作要拒絕。
 
 ## I-014　paired 轉換輸出不是逐位元決定性，restore 後 verify 必然報 differs（2026-11-17）
 
@@ -4972,9 +4973,20 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - 經過：另存走 `FinishOkCardSave` → `ok_okcard_make` → `remake_ok_card`：去掉 OK chunk（含卡內資源包 okLc）從基礎庫重轉。測試者沒有 `[nep] hibari stuff`／`klee stuff` zipmod，轉換在 strict 下記缺口並失敗。
 - 原因：`mods.rs` 的 `ZIP_AB_CACHE` 以「zipmod 路徑＋bundle」當鍵、整個程序共用，轉換時讀不到的結果（None）也存進去。之後正常開 alice，卡內資源包明明有同路徑的 bundle，`zipmod_one_unity3d_source` 卻拿到快取的 None，退去問 override，卡的 okLt 沒有這題（本來不必問）→ 缺口。
 - 修正：讀 bundle 期間這條執行緒記到 strict 缺口（`okstrict::gaps_on_thread` 有變）時不寫進 `ZIP_AB_CACHE`（`zipmod_one_unity3d_arc`、`zipmod_bundle_named`），和 `entries::pack_memo` 的規則一致。測試 `session::jump_probe_tests::failed_remake_leaves_the_card_openable`（ignored，需本機 alice 與基礎庫，`OK_GAME_ROOT=X:/NoGame`）修正前「after: r=1」同一訊息，修正後通過。
-- 未修：另存已編輯的 OK 卡會丟掉原卡的 okLc，在沒有那些 zipmod 的機器上一定轉不成 OK 卡（測試者這次缺 30 項）。
+- 另存的第二個問題（同日修）：另存已編輯的 OK 卡一律去掉 OK chunk 從 zipmod 重轉，丟掉卡內資源包 okLc，在沒有那些 zipmod 的機器上一定轉不成 OK 卡（測試者這次缺 30 項）。改成 `remake_ok_card` 先試 `refresh_edited_ok_card`：卡仍帶 okLb＋okLt（讀卡另存會保留 `ok*` chunk）時，用卡自己的資源包與答案嚴格開每套服裝，過了就只重算 okLb 的 digest 與 models，okLc／okLt／okId 原樣保留；開不過才走原本的 zipmod 重轉。讀卡實測：alice 身高改 0.8 →「另存新卡（身材／名稱）」made=1、資源包與原卡相同；新開讀卡直接開存出的卡，zipmod data used false、身高 0.8、畫面正常。測試 `edited_ok_card_saves_without_its_zipmods`。
 - 防範：程序共用的快取，鍵不含「哪張卡／哪個資源包」時，不能存 strict 缺口期間得到的結果，尤其是「沒有」。
 
+## 2026-11-17 開場景效能：兩個做錯的推論（F 組 f-sceneload）
+- **拿「物件建完」當下的截圖比畫面，比到的是材質編譯進度**：`OKStudio.ProfileSceneLoad` 原本在場景建完的那一幀就要截圖。新舊設定比對時，0 角色／48 道具那個場景的逐像素平均差是 31.8/255，畫面裡背景一亮一暗、一個道具一黑一粉，看起來像嚴重回退。實際上兩邊的物件傾印（物件數、座標、parts、元件數）完全相同；差別是新設定比較快到達「建完」，那時 runtime material 還在編譯。改成等 240 幀而且 `GShaderCompilingManager->IsCompiling()` 為假再截圖後，同一組比對是 0.146/255，和同設定重跑的雜訊（0.14）一樣。**往後比畫面一定要等 shader 編譯結束，否則比的是誰跑得快。**
+- **先開好的 session 沒有上限會吃掉記憶體**：道具 session 改成在 worker 上先開（`ok.Studio.ItemOpensAhead`）時，只限制「同時在開幾個」，沒限制「開好但還沒建的有幾個」。`Sync()` 每一幀會走過全部物件，所以幾千個道具的場景會一直補開，開好的排在那裡等，一個場景可能同時握著幾千個 session。已加上 `PreparedItems.Num() >= Ahead * 3` 的上限，並且在算出型號與 build 選項**之前**就回報「沒位子」（否則光是每幀對幾千個道具算一次 `ItemBuildJson` 就是白工）。
+- **同機競爭會汙染數字**：量 5867 道具那個場景時，E 組同時有 4 個 UnrealEditor 在跑，我的兩個測量行程都在載入中途被殺（沒有 crash dump，像是記憶體壓力）。所有前後對比一律改成同一段時間內背靠背跑兩個行程，跨時段的數字差得到 15%。
+
+## 2026-11-17 KStudio 場景匯入：原作卡轉 OK 卡併行化沒有變快（F 組，已回退）
+- **推論**：開原作 KStudio 場景 PNG（5 角色）要 16.6 s，其中 11.3 s 是 `UOKStudioGame::Load` 這一次阻塞呼叫；`FOKStudioImport::Import` 在走 JSON 時對每個角色依序呼叫 `FOkSession::MakeOkCardForOutfit`，看起來只要先收集角色再併行轉就能砍掉大半。
+- **做法**：加了一個前置走訪收集全部 Character，`ParallelFor` 一次轉 4 張（`ok.Studio.CardsMadeAhead`），走訪時改成查表。
+- **結果**：5 張卡依序 11.0 s，4 個併行 11.7 s，**沒有變快**。同一個行程的 `ok_studio_scene_export` 與其他階段也沒變。合理的解釋是 `MakeOkCardForOutfit` 在 Rust 那邊被某個全域鎖（或共用快取的鎖）序列化了；這點還沒證實。
+- **處置**：改動回退，沒有進版控。要繼續查得先量 Rust 那邊這條路徑上的鎖，或改走「OK 卡已存在且夠新就不重轉」的快取（要有版本戳記，否則 2026-10-28 以前缺 okLt 的舊卡會被重用）。
+- **預防**：把工作搬到 worker 之前，先確認那段工作在 Rust／C++ 底下真的能同時跑。這次場景層的道具與角色 session 併行是有效的（同一天的另一筆），但不是每個 Rust 入口都這樣。
 ## 2026-11-17 `read_strip_all_guids` 的 430 ms 其实是冷的 Windows 目录元数据，三种优化全部回退
 - 原估：原作卡「第一张之后的每一张新卡」在 `read_strip_all_guids` 上花 430–590 ms，做法是「StripAll 是併集、
   可以快取，键含 serving id」。量测后这个前提整个站不住，三种做法 A/B 都拿不到，已全部回退（工作树只剩别人的
@@ -5019,6 +5031,23 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
   是换画质换 VRAM 的另一件事，属于使用者的决定。
 - 防范：注解里描述取样关系时不要用「upsample」这种像是「我们主动放大」的词；要写清楚尺寸是谁决定的。
 
+## 2026-11-17 以为 Sync 每帧重写 transform 是成本，量出来是 2 s／63 s，真正的 23.5 s 在算那个 transform
+- 前提错在哪：`AOKSceneActor::Sync()` 对已经建好的物件每帧仍然无条件 `SetActorTransform`／
+  `SetWorldTransform`，而写入会 dirty transform 与 render state。我（和协调 session）都据此推断那是
+  5867 道具场景「`Sync` 62 s、只有 23 s 在 `Build()`」里的大头，于是做了 `ok.Studio.SkipUnchangedPlacement`
+  （物件已经站在要放的位置就不写）。
+- 事实（8806 物件场景 `koikatu_cs0003420_2.okscene`，冷开，新加的计时）：`Sync` 63 406 ms 里
+  **写 transform／visibility 只有 1 979 ms**；`SameContent` 深比较只有 516 ms（协调 session 原本提的
+  revision 优化上限就是这 0.5 s）；真正的大块是 **`Document->WorldTransform(Id)` 与 `IsShown(Id)`
+  共 23 526 ms**，占 `Sync` 的 37%、整趟 88 s 载入的 27% —— 两者都为每个物件走一遍父链，每帧都走。
+- A/B 也直接否定了那个修正：开 88 003 ms、关 87 573 ms（关的还快 0.5%，在噪声内），而且跳过只命中
+  1 231 243 次摆放里的 19 992 次（1.6%）—— 因为 `SetActorTransform` 存回去的值和下一帧重算的
+  `Compose(RenderCorrection, World)` 不是逐位元相同，用零容差比就几乎永远不等。
+- 处置：**回退 `ok.Studio.SkipUnchangedPlacement`**（包含那两个计数器），只保留三个计时
+  `SyncSameMs`／`SyncWorldMs`／`SyncPlaceMs` —— 它们是这次唯一有价值的产出，指出了下一步该改哪里。
+- 教训：这次是先加计时再改，所以只花一个窗口就否定了两个方向（我的 transform 跳过、协调 session 的
+  revision），没有把时间花在实作它们上面。「写入会 dirty render state」是真的，但「每帧写入」在这条路径上
+  一帧只有几微秒；会 dirty 不等于是瓶颈，要先量。
 ## 2026-11-17 用 `VAR=$v`（$v 为空）当关闭开关，两边其实都是关的 —— A/B 与逐位元组比对一起失效
 - 怎么发生的：量遮罩烘焙的同值区段优化时，我用一行 shell 同时跑两种设定：
   `OK_NO_MASK_RUNS=$v`，`$v` 为空代表「开启优化」。但 `VAR=` **仍然把变数设起来**，而程式码里的开关是
@@ -5037,6 +5066,12 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
   - 两种设定量到「几乎一样」时，先怀疑开关没生效，再怀疑优化没用 —— 这次正好两个症状长得一样。
   - 这和 11-17 早先那次「把精确名字查表放在关闭开关前面」是同一类错：**开关必须真的还原成旧路径，而且要验证**。
 
+## 2026-11-17 讀卡全跑開著時，別組的編輯器建置失敗：Live Coding mutex 與已載入 DLL 兩個原因（F 組讀卡器）
+- 症狀一：別組建 `OpenKoikatsuEditor` 回「Unable to build while Live Coding is active」。讀卡器（UnrealEditor）帶起的 `LiveCodingConsole` 持有 Live Coding mutex，每次有人要建編輯器就得停全跑讓窗口（今天停了三次）。
+- 症狀二：13 點多我建編輯器（那台 UnrealEditor 不是我的、Live Coding 沒擋到這次），回 `LINK : fatal error LNK1104` 寫不進 `F:\OpenKoikatsu\Binaries\Win64\UnrealEditor-OpenKoikatsu.dll`：別的 session 的 UnrealEditor 已載入這個 DLL，Windows 鎖住已載入的 DLL。
+- 處置：`Tools/reader_jump_check.lua` 啟動讀卡器加 `-LiveCoding=false`（UE5.8 `LiveCodingModule.cpp` 讀 `-LiveCoding=`，不是 `-NoLiveCoding`），不再起 LiveCodingConsole，症狀一消失。症狀二沒有解：讀卡器仍載入編輯器 DLL。
+- 分界：可以和全跑並存的建置是 Rust lib、遊戲目標（`OpenKoikatsu`）、以及不重連結讀卡器已載入的編輯器模組的建置；要重連結那些模組（改到它們的 C++）就得請全跑在卡片邊界停下、釋放 slot，否則 LNK1104。
+- 防範：要建編輯器前先看 `unreal_slot.lua status` 與 `tasklist` 有沒有讀卡器，要重連結就先要窗口；讀卡器以外的長跑工具也該帶 `-LiveCoding=false`。
 ## 2026-11-17 `RAYON_NUM_THREADS` 从来没有生效过；子行程各拿满 8 条，破掉「最多 8 执行绪」那条规矩
 - 谁发现的：f-sceneload（它要在 UE 侧每个角色开一个子行程转卡，上限 8 个 worker，先来问执行绪怎么分）。
 - 事实：`lib.rs` 的 `limit_threads()` 写死 `ThreadPoolBuilder::new().num_threads(MAX_THREADS)`，而
@@ -5073,3 +5108,30 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
   防範：**警告別組「會慢幾倍」之前先量，或明說是未量的機制上限** —— 一個隨口的倍數會被原樣轉給第三組，
   而我手邊其實就有反駁它的數字。
 
+
+## 2026-11-17 一整类：失效的是量测本身，不是被测的程式，所以不会有红字
+- 共同点：**量测悄悄失去意义，而程式、测试、关卡全部照样「通过」**。没有任何错误讯息，所以只能靠
+  「这个数字的形状合理吗」自己察觉。今天 F 组踩到两次、E 组一次：
+- **(a) 基点在量测中途被别人的合并改掉**（f-sceneload）：15:00 跑的「`ImportCardWorkers 0` 对并行」傾印
+  对照是在 `baf5cec10`（view 身分改由树的内容决定）合进 F 树**之前**跑的，所以比的是旧实作。两份 dump
+  逐位元相同、看起来是完美的证据，其实验的不是现在的程式。共用工作树里别组随时在合并，而**合并不会
+  让你的量测报错**。处置：在含该笔的基点上重跑（5 角色逐位元相同、21 角色只差那 5 个已知的骨头道具）。
+  防范：每组数字都记下**当时的 commit**，不只记日期；回报之前对一次 `git log -1`。
+- **(b) 比画面时 shader 还在编译**（f-sceneload，同日另一笔）：在「物件建完」那一帧截图，比到的是材质
+  编译进度，看起来像严重回退（31.8/255），等编译结束再比是 0.146/255。
+- **(c) 开关根本没生效**（e-cardload）：两种设定量到「几乎一样」，而 49 个 dump 跟着一起报 IDENTICAL
+  —— 其实两边都没开，关卡在空转。
+- 教训：量完先问「这个结果的形状对吗」。(a) 的形状是「逐位元相同太干净了」，(b) 是「退步得太夸张」，
+  (c) 是「两边一样得太彻底」。三个都是**形状**可疑而不是数值可疑；数值本身永远看不出量测已经失效。
+- 推广（e-cardload 补的）：**任何一个结果大到或小到让你想找理由解释它，先怀疑量测。** 它那个 −17.6% 当时
+  想的是「怎么这么好」却没停下来查，后来发现是背景的 `find` 吃了 92% CPU；(b) 的「退步得太夸张」是同一型。
+  想解释一个漂亮或难看的结果，这个冲动本身就是讯号。
+- 分三层（和 e-cardload 对完之后的整理），下一个人照这三层自检就够：
+  1. **量测本身失效** —— 它的 `VAR=$v` 开关没生效、我的基点被别人的合并改掉。讯号是**形状可疑**
+     （太干净／太夸张／太彻底），而且某处通常会自相矛盾（它那笔是 537 vs 1000 ms）。
+  2. **数字是真的，但代表的不是你以为的那件事** —— 我报的 −51% 没错，错的是它属于 `workers=8`，
+     而使用者在 16 GB 机器上拿到的是预设 2 的 −28%／−34%。这层**比第 1 层更难发现**：它在任何自我
+     检查里都一致，只有去问「这个设定使用者拿得到吗」才会倒。防范不是多量一次，是**每个回报出去的
+     数字都连同量测条件一起写**（设定值、基点 commit、机器当时在跑什么）。
+  3. **根本没量就讲** —— 我转述的「批次工具从 32 条降到 8 条会慢近 4 倍」是从机制推的上限，同类工作
+     的唯一实测只有约 10%。这层最糟也最容易犯，因为它不需要任何失误，**只需要一个说得通的推理**。

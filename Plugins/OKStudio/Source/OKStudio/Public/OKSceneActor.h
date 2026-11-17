@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
@@ -63,6 +63,33 @@ public:
 	bool bProgressiveBuild = false;
 	/** Objects still waiting for their turn to build. */
 	int32 PendingBuilds() const { return BuildsLeft; }
+
+	/** Scene load timings in milliseconds, for OKStudio.ProfileSceneLoad; reset when a scene starts to load. */
+	struct FLoadStats
+	{
+		/** Game-thread Build() time by object kind. */
+		double CharacterBuildMs = 0., ItemBuildMs = 0., OtherBuildMs = 0.;
+		/** Worker time opening character sessions (overlaps the frames). */
+		double CharacterOpenMs = 0.;
+		/** Game-thread slices of ContinueSessionLoad and of the map's prepare. */
+		double CharacterContinueMs = 0., MapContinueMs = 0.;
+		/** Where an item's Build() time goes: its catalogue model, the Rust open, the Unreal spawn, and the two
+		 *  model-only queries after it (the prefab's root transform and its render cameras). */
+		double ItemModelMs = 0., ItemOpenMs = 0., ItemSpawnMs = 0., ItemNodeWorldMs = 0., ItemCamerasMs = 0.;
+		/** Worker time opening item sessions ahead of their frame (overlaps the frames, unlike ItemOpenMs). */
+		double ItemOpenWorkerMs = 0.;
+		/** All the game-thread time inside Sync(), and the part of it spent wiring render textures. */
+		double SyncMs = 0., WireMs = 0.;
+		/** The parts of Sync()'s walk over every object that are not Build(): deciding whether the object still shows
+		 *  the same content (SameContent), working out its world transform and whether it shows, and setting those on
+		 *  the preview and the component. A loading scene walks all of its objects every frame, so these are paid by
+		 *  the objects already built as well (5867 items: 62 s in Sync of which 23 s in Build). */
+		double SyncSameMs = 0., SyncWorldMs = 0., SyncPlaceMs = 0.;
+		int32 Characters = 0, Items = 0, Others = 0;
+		/** Syncs in all, and those that built nothing because every character was still opening. */
+		int32 Syncs = 0, StarvedSyncs = 0;
+	};
+	FLoadStats LoadStats;
 
 	/** Advances character animations (seconds). */
 	UFUNCTION(BlueprintCallable, Category = "OK Studio")
@@ -309,6 +336,27 @@ private:
 	TArray<TSharedPtr<FPreparedMap>> DroppedMaps;
 	struct FPreparedCharacter;
 	TMap<int32, TSharedPtr<FPreparedCharacter>> Prepared;
+	/** How many character sessions may open on the workers at once (ok.Studio.CharacterOpensAhead). */
+	static int32 CharacterOpensAhead();
+	/** How long a frame may spend taking a character's or the map's session a step further while a scene opens
+	 *  (ok.Studio.OpenSliceMs). The frames themselves cost 20 ms or more each, so small slices stretch the load. */
+	static double OpenSliceSeconds();
+	/** Objects one Sync may build (ok.Studio.BuildsPerFrame; 0 keeps BuildsPerFrame) and how long it may take. */
+	static int32 ObjectBuildBudget();
+	static double BuildSliceSeconds();
+	/** Of the prepared characters, those whose worker has not finished. */
+	int32 OpeningCharacters() const;
+	/** An item whose session opens on a worker while the frames build the ones already open (F-sceneload: 634 items
+	 *  cost a 21-character scene 9 of its 37 seconds in OpenOkModelFk on the game thread). */
+	struct FPreparedItem;
+	TMap<int32, TSharedPtr<FPreparedItem>> PreparedItems;
+	/** Starts or keeps the item's session opening; true when Build can have it (or should open it itself). */
+	bool PrepareItem(const FOKSceneObject& Object);
+	void DropPreparedItem(int32 Id);
+	/** The item's prepared session, keyed by model, prefab and build options. */
+	FString ItemPrepareKey(const FOKSceneItem& Item, const FString& Model, const FString& Prefab) const;
+	/** How many item sessions may open on the workers at once (ok.Studio.ItemOpensAhead; 0 opens them in the frame). */
+	static int32 ItemOpensAhead();
 	void StartCharacterOpen(const FOKSceneObject& Object);
 	/** Takes the character a step further; true when Build can have it (or should try by itself). */
 	bool PrepareCharacter(const FOKSceneObject& Object);

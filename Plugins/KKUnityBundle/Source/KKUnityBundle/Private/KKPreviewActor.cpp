@@ -240,6 +240,9 @@ struct FOkCardLoadProfile
 	double RoleTextureSeconds = 0.0;
 	double RoleParentSeconds = 0.0;
 	double RoleInstanceSeconds = 0.0;
+	// The character display ramp texture, and the shared-parent role preparation, per preview (OK_LOAD_PROFILE).
+	double RampSeconds = 0.0;
+	double CookedRoleSeconds = 0.0;
 	int32 TextureCount = 0;
 	int32 MaterialCount = 0;
 };
@@ -7932,6 +7935,7 @@ bool AKKPreviewActor::LoadSessionBatch(FString& OutError, int32 PartLimit, bool 
 	if (!SessionLoadState || !Session.IsOpen() || ToonShadowTargets.Num() != 2) { OutError = TEXT("session load was cancelled"); return false; }
 	auto& ShadowParams = SessionLoadState->Shadow;
     if(!ToonRampTex){TRACE_CPUPROFILER_EVENT_SCOPE(KK_PreviewRampTexture);
+        FOkCardProfileScope RampScope(GOkCardLoadProfile.bActive?&GOkCardLoadProfile.RampSeconds:nullptr);
         const FString RampPath=OKCharacterDisplayRampPath();
         if(!RampPath.IsEmpty()){
             TArray<uint8> Bytes;const OkTextureSettings Settings{1,1,1,0,1};
@@ -7943,7 +7947,7 @@ bool AKKPreviewActor::LoadSessionBatch(FString& OutError, int32 PartLimit, bool 
 	int32& Extra = SessionLoadExtra;
 	const int32 N = Session.PartCount();
  // A progressive load makes the shared-parent instances a few milliseconds per batch before its first part.
- int32 CookedRole=1;{TRACE_CPUPROFILER_EVENT_SCOPE(KK_PreviewCookedRole);if(OKSharedParents()&&bUseSharedParents)CookedRole=OKPrepareCookedRole(this,OutError,PartLimit==MAX_int32?0.:0.004);}
+ int32 CookedRole=1;{TRACE_CPUPROFILER_EVENT_SCOPE(KK_PreviewCookedRole);FOkCardProfileScope RoleScope(GOkCardLoadProfile.bActive?&GOkCardLoadProfile.CookedRoleSeconds:nullptr);if(OKSharedParents()&&bUseSharedParents)CookedRole=OKPrepareCookedRole(this,OutError,PartLimit==MAX_int32?0.:0.004);}
  if(CookedRole==0)return true;
  if(CookedRole<0){
 #if WITH_EDITOR
@@ -8037,6 +8041,9 @@ bool AKKPreviewActor::LoadSessionBatch(FString& OutError, int32 PartLimit, bool 
 			GOkCardLoadProfile.TextureDecodeSeconds * 1000.0, GOkCardLoadProfile.TextureCount,
 			GOkCardLoadProfile.MaterialSeconds * 1000.0, GOkCardLoadProfile.MaterialFinalizeSeconds * 1000.0,
 			GOkCardLoadProfile.MaterialCount, GOkCardLoadProfile.SkeletonSeconds * 1000.0, Parts.Num());
+		UE_LOG(LogTemp, Display, TEXT("OKCARD_PROFILE ue setup ramp_ms=%.1f cooked_role_ms=%.1f role_texture_ms=%.1f role_parent_ms=%.1f role_instance_ms=%.1f"),
+			GOkCardLoadProfile.RampSeconds * 1000.0, GOkCardLoadProfile.CookedRoleSeconds * 1000.0,
+			GOkCardLoadProfile.RoleTextureSeconds * 1000.0, GOkCardLoadProfile.RoleParentSeconds * 1000.0, GOkCardLoadProfile.RoleInstanceSeconds * 1000.0);
 		GOkCardLoadProfile.bActive = false;
 	}
 	if (PartLimit != MAX_int32 && GOkCardLoadProfile.bActive && FPlatformMisc::GetEnvironmentVariable(TEXT("OK_LOAD_PROFILE")) == TEXT("1"))

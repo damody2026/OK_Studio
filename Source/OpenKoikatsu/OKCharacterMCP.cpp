@@ -108,10 +108,14 @@ static void Refresh(UOKCharacterController* G,FOKCharacterMCPState& S)
  if(H!=S.Fingerprint){S.Fingerprint=H;++S.Revision;}
 }
 static void RestoreCamera(FOKCharacterMCPState& S){if(auto* A=S.CaptureActor.Get()){A->OrbitYaw=S.SavedYaw;A->OrbitPitch=S.SavedPitch;A->ApplyOrbitCamera();A->SetActorTickEnabled(S.WasTicking);}S.CaptureActor.Reset();}
-static void Finish(FOKCharacterMCPState& S,FMCPObject Result,const FString& Error=FString())
+// A refusal also carries `code`, for callers that decide what to do next: "busy" (loading, preparing or saving: retry
+// once state shows busy=false; the request itself was fine), "bad_request" (fix the request), "stale" (re-query state),
+// "expired", "wrong_screen". A busy reader used to answer a load with "Provide an existing absolute PNG card path",
+// which read as a missing card (C025 2026-11-16).
+static void Finish(FOKCharacterMCPState& S,FMCPObject Result,const FString& Error=FString(),const TCHAR* Code=nullptr)
 {
  if(S.ShotHandle.IsValid()){UGameViewportClient::OnScreenshotCaptured().Remove(S.ShotHandle);S.ShotHandle.Reset();}S.ShotPixels.Reset();
- RestoreCamera(S);auto R=MakeShared<FJsonObject>();R->SetBoolField(TEXT("ok"),Error.IsEmpty());R->SetStringField(TEXT("session"),S.Session);R->SetNumberField(TEXT("revision"),S.Revision);if(Result)R->SetObjectField(TEXT("result"),Result.ToSharedRef());if(!Error.IsEmpty())R->SetStringField(TEXT("error"),Error);
+ RestoreCamera(S);auto R=MakeShared<FJsonObject>();R->SetBoolField(TEXT("ok"),Error.IsEmpty());R->SetStringField(TEXT("session"),S.Session);R->SetNumberField(TEXT("revision"),S.Revision);if(Result)R->SetObjectField(TEXT("result"),Result.ToSharedRef());if(!Error.IsEmpty())R->SetStringField(TEXT("error"),Error);if(!Error.IsEmpty()&&Code)R->SetStringField(TEXT("code"),Code);
  S.Box->Outgoing.Enqueue({S.Root/TEXT("responses")/(S.RequestId+TEXT(".json")),Encode(R)});
  S.Request.Reset();S.Phase=0;S.RequestId.Empty();S.Images.Reset();
 }
@@ -218,7 +222,7 @@ void UOKCharacterController::TickCharacterMCP()
  }}
  if(!S.Request){TPair<FString,FString> In;if(S.Box->Incoming.Dequeue(In)){FMCPObject R;S.RequestId=In.Key;S.LastRequestAt=FPlatformTime::Seconds();if(In.Value.IsEmpty()||!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(In.Value),R)||!R){Finish(S,nullptr,TEXT("Invalid request JSON"));return;}
   S.Request=R;if(!R->TryGetStringField(TEXT("action"),S.Action))S.Action.Empty();if(!R->TryGetNumberField(TEXT("deadline"),S.Deadline))S.Deadline=0;S.Selection=SelectedIndex;S.Outfit=OutfitIndex;S.Source=Source(this);S.BeforePath=Entries.IsValidIndex(SelectedIndex)?Entries[SelectedIndex].Path:FString();Refresh(this,S);}}
- if(!S.Request)return;if(!FMath::IsFinite(S.Deadline)||FDateTime::UtcNow().ToUnixTimestamp()>S.Deadline){Finish(S,nullptr,TEXT("Request expired; re-query state before retrying"));return;}
+ if(!S.Request)return;if(!FMath::IsFinite(S.Deadline)||FDateTime::UtcNow().ToUnixTimestamp()>S.Deadline){Finish(S,nullptr,TEXT("Request expired; re-query state before retrying"),TEXT("expired"));return;}
  if(S.Phase==6){DriveShapeRamp(this,S);return;}
  if(S.Phase>0&&Busy(this)){S.ReadyAt=0;return;}
  auto LoadCard=[&](const FString& Path){bIndependentCards=!UKKCardWorkspace::PortableSourcePath(Path).IsEmpty();int32 Index=Entries.IndexOfByPredicate([&](const auto& E){return FPaths::IsSamePath(E.Path,Path);});if(Index==INDEX_NONE){FKKCardListEntry E;E.Path=Path;E.FileName=FPaths::GetCleanFilename(Path);Index=Entries.Add(E);}SelectIndex(Index);if(SelectedIndex!=Index){Finish(S,nullptr,TEXT("Card could not be read"));return;}OnLoad3D();S.Selection=SelectedIndex;S.Outfit=OutfitIndex;S.Source=Source(this);S.Phase=4;S.ReadyAt=0;};
@@ -226,15 +230,18 @@ void UOKCharacterController::TickCharacterMCP()
  // The card wall and the state need no character.
  if(S.Phase==0&&S.Action==TEXT("state")){Finish(S,State(this,S));return;}
  if(S.Phase==0&&S.Action==TEXT("cards")){FMCPRows Rows;for(int32 I=0;I<Entries.Num();++I){auto O=MakeShared<FJsonObject>();O->SetStringField(TEXT("key"),Entries[I].Path);O->SetStringField(TEXT("label"),Entries[I].FileName);O->SetNumberField(TEXT("index"),I);Rows.Add(MakeShared<FJsonValueObject>(O));}Page(this,S,Rows,TEXT("cards"));return;}
- if(S.Phase==0&&S.Action==TEXT("select")){double Index=-1;if(Interaction||Busy(this)||!S.Request->TryGetNumberField(TEXT("index"),Index)||!Entries.IsValidIndex(int32(Index))){Finish(S,nullptr,TEXT("Busy, in the 1-on-1 scene, or no such card index"));return;}SelectIndex(int32(Index));Finish(S,State(this,S));return;}
- if(S.Phase==0&&S.Action==TEXT("load")&&!Interaction&&!IsValid(PreviewActor)){FString Path;if(Busy(this)||!S.Request->TryGetStringField(TEXT("path"),Path)||FPaths::IsRelative(Path)||!FPaths::GetExtension(Path).Equals(TEXT("png"),ESearchCase::IgnoreCase)||!IFileManager::Get().FileExists(*Path)){Finish(S,nullptr,TEXT("Provide an existing absolute PNG card path"));return;}LoadCard(Path);return;}
- if(!bOkStudioOpen&&GetVisibility()==ESlateVisibility::Collapsed){Finish(S,nullptr,TEXT("In the 1-on-1 scene: use ui_widgets, ui_press, ui_set"));return;}
+ auto FinishBusy=[&](){Finish(S,nullptr,TEXT("Busy: the card reader is loading, preparing or saving; retry when state shows busy=false"),TEXT("busy"));};
+ if(S.Phase==0&&S.Action==TEXT("select")){double Index=-1;if(Busy(this)){FinishBusy();return;}if(Interaction){Finish(S,nullptr,TEXT("In the 1-on-1 scene: leave it before selecting a card"),TEXT("wrong_screen"));return;}if(!S.Request->TryGetNumberField(TEXT("index"),Index)||!Entries.IsValidIndex(int32(Index))){Finish(S,nullptr,TEXT("No such card index"),TEXT("bad_request"));return;}SelectIndex(int32(Index));Finish(S,State(this,S));return;}
+ if(S.Phase==0&&S.Action==TEXT("load")&&!Interaction&&!IsValid(PreviewActor)){FString Path;if(Busy(this)){FinishBusy();return;}if(!S.Request->TryGetStringField(TEXT("path"),Path)||FPaths::IsRelative(Path)||!FPaths::GetExtension(Path).Equals(TEXT("png"),ESearchCase::IgnoreCase)||!IFileManager::Get().FileExists(*Path)){Finish(S,nullptr,TEXT("Provide an existing absolute PNG card path"),TEXT("bad_request"));return;}LoadCard(Path);return;}
+ if(!bOkStudioOpen&&GetVisibility()==ESlateVisibility::Collapsed){Finish(S,nullptr,TEXT("In the 1-on-1 scene: use ui_widgets, ui_press, ui_set"),TEXT("wrong_screen"));return;}
  static const TSet<FString> InInteraction={TEXT("controls"),TEXT("control_set"),TEXT("action"),TEXT("screenshot")};
- if(Interaction&&!InInteraction.Contains(S.Action)){Finish(S,nullptr,TEXT("Not in the 1-on-1 scene: use controls, control_set, action, screenshot here, and ui_widgets for its panel"));return;}
- if(!IsValid(PreviewActor)||(!Interaction&&(!Entries.IsValidIndex(SelectedIndex)||!bModelLayout))){Finish(S,nullptr,TEXT("Open character edit mode and load a 3D character first"));return;}
- if(S.Phase==0){FString Expected;S.Request->TryGetStringField(TEXT("session"),Expected);if(S.Action!=TEXT("state")&&Expected!=S.Session){Finish(S,nullptr,TEXT("Character changed; obtain a new session"));return;}static const TSet<FString> Mutations={TEXT("set"),TEXT("reset"),TEXT("control_set"),TEXT("apply"),TEXT("appearance"),TEXT("add_accessory"),TEXT("restore"),TEXT("camera"),TEXT("save"),TEXT("action"),TEXT("load"),TEXT("product_sweep")};if(Mutations.Contains(S.Action)){double Revision;if(!S.Request->TryGetNumberField(TEXT("revision"),Revision)||Revision!=S.Revision){Finish(S,nullptr,TEXT("Stale revision; re-query state"));return;}}}
- else if(SelectedIndex!=S.Selection||OutfitIndex!=S.Outfit||Source(this)!=S.Source){Finish(S,nullptr,TEXT("Character changed during operation"));return;}
- if(S.Phase==0&&Busy(this)){Finish(S,nullptr,TEXT("Editor busy; wait and re-query state"));return;}if(S.Phase>0&&Busy(this)){S.ReadyAt=0;return;}
+ if(Interaction&&!InInteraction.Contains(S.Action)){Finish(S,nullptr,TEXT("Not in the 1-on-1 scene: use controls, control_set, action, screenshot here, and ui_widgets for its panel"),TEXT("wrong_screen"));return;}
+ // (busy first: while an outfit or card loads the preview actor is being replaced, which read as "not in edit mode")
+ if(S.Phase==0&&Busy(this)){FinishBusy();return;}
+ if(!IsValid(PreviewActor)||(!Interaction&&(!Entries.IsValidIndex(SelectedIndex)||!bModelLayout))){Finish(S,nullptr,TEXT("Open character edit mode and load a 3D character first"),TEXT("wrong_screen"));return;}
+ if(S.Phase==0){FString Expected;S.Request->TryGetStringField(TEXT("session"),Expected);if(S.Action!=TEXT("state")&&Expected!=S.Session){Finish(S,nullptr,TEXT("Character changed; obtain a new session"),TEXT("stale"));return;}static const TSet<FString> Mutations={TEXT("set"),TEXT("reset"),TEXT("control_set"),TEXT("apply"),TEXT("appearance"),TEXT("add_accessory"),TEXT("restore"),TEXT("camera"),TEXT("save"),TEXT("action"),TEXT("load"),TEXT("product_sweep")};if(Mutations.Contains(S.Action)){double Revision;if(!S.Request->TryGetNumberField(TEXT("revision"),Revision)||Revision!=S.Revision){Finish(S,nullptr,TEXT("Stale revision; re-query state"),TEXT("stale"));return;}}}
+ else if(SelectedIndex!=S.Selection||OutfitIndex!=S.Outfit||Source(this)!=S.Source){Finish(S,nullptr,TEXT("Character changed during operation"),TEXT("stale"));return;}
+ if(S.Phase==0&&Busy(this)){FinishBusy();return;}if(S.Phase>0&&Busy(this)){S.ReadyAt=0;return;}
  if(S.Phase==4){if(!Settled(this,S))return;Finish(S,State(this,S));return;}
  if(S.Phase==5){Capture(this,S);return;}
  if(S.Phase==3){if(!Settled(this,S))return;FString Target,Item;S.Request->TryGetStringField(TEXT("target"),Target);S.Request->TryGetStringField(TEXT("item"),Item);if((S.Action==TEXT("apply")&&!PendingProperties.IsEmpty())||(S.Action==TEXT("appearance")&&AppearanceSelectedKeys.FindRef(Target)!=Item)||(S.Action==TEXT("add_accessory")&&Entries[SelectedIndex].Path==S.BeforePath)){Finish(S,nullptr,TEXT("Operation failed; inspect editor status"));return;}Finish(S,State(this,S));return;}

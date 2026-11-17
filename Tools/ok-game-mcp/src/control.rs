@@ -150,7 +150,7 @@ fn target(root: &Path, key: &str) -> Result<Option<Value>> {
     let pool = if mine.is_empty() { &with } else { &mine };
     if pool.len() > 1 && CALL_MUTATES.with(Cell::get) {
         bail!(
-            "{} games run and none is picked for a change: game_select one (or OK_GAME_PID for ok-game-mcp call): {}",
+            "ambiguous_target: {} games run and none is picked for a change: game_select one (or OK_GAME_PID for ok-game-mcp call): {}",
             pool.len(),
             listing(pool)
         );
@@ -189,7 +189,19 @@ fn ui(root: &Path, path: &str, body: Option<&Value>) -> Result<Value> {
 /// read first when not given.
 fn reader(root: &Path, a: &Value) -> Result<Value> {
     let action = a["action"].as_str().context("action is required")?;
-    let mailbox = target(root, "mailbox")?.and_then(|v| v["mailbox"].as_str().map(String::from)).context("no running game has a card reader mailbox (game_instances)")?;
+    // (a picked game whose mailbox is not up yet is still starting: not the same as no card reader at all)
+    let picked = target(root, "mailbox")?;
+    let mailbox = match picked.as_ref().and_then(|v| v["mailbox"].as_str().map(String::from)) {
+        Some(m) => m,
+        None => {
+            let env_pid = std::env::var("OK_GAME_PID").ok().and_then(|p| p.trim().parse::<u32>().ok()).unwrap_or(0);
+            let chosen = if env_pid != 0 { env_pid } else { SELECTED.load(Ordering::Relaxed) };
+            match picked.and_then(|v| v["pid"].as_u64()).or((chosen != 0).then_some(chosen.into())) {
+                Some(pid) => bail!("not_ready: game pid {pid} has no card reader mailbox yet (still starting, or not the card reader); retry, or game_instances"),
+                None => bail!("no_reader: no running game has a card reader mailbox (game_instances)"),
+            }
+        }
+    };
     let mut body = a.clone();
     if action != "state" && body["session"].is_null() {
         let state = mailbox_call(Path::new(&mailbox), &json!({"action": "state"}), 10.)?;
@@ -219,7 +231,13 @@ fn mailbox_call(root: &Path, body: &Value, timeout: f64) -> Result<Value> {
             let _ = std::fs::remove_file(&response);
             let r: Value = serde_json::from_str(&text)?;
             if r["ok"] != true {
-                bail!("{}", r["error"].as_str().unwrap_or("failed"));
+                // "<code>: <error>" (OKCharacterMCP.cpp Finish): busy, bad_request, stale, expired, wrong_screen. A
+                // caller retries "busy:" after state shows busy=false; the others are real refusals.
+                let error = r["error"].as_str().unwrap_or("failed");
+                match r["code"].as_str() {
+                    Some(code) => bail!("{code}: {error}"),
+                    None => bail!("{error}"),
+                }
             }
             return Ok(r["result"].clone());
         }
