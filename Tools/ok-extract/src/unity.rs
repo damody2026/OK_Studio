@@ -5832,6 +5832,23 @@ mod shader_pass_state_dump {
 static WORK_COUNTS: std::sync::Mutex<std::collections::BTreeMap<String, u32>> =
     std::sync::Mutex::new(std::collections::BTreeMap::new());
 
+/// How much `gamefs::read` copied out of the library index and the card's pack in this open, and how many reads.
+/// Every read hands its caller an owned `Vec<u8>`, so this is a memcpy the open pays on top of the work it then does
+/// with the bytes. It is a **count**, so it does not move with what else the machine is doing.
+static READ_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static READ_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub(crate) fn note_read_bytes(bytes: usize) {
+    if !counting_work() { return; }
+    READ_BYTES.fetch_add(bytes as u64, std::sync::atomic::Ordering::Relaxed);
+    READ_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The bytes and reads since the last call.
+pub fn take_read_bytes() -> (u64, u64) {
+    (READ_BYTES.swap(0, std::sync::atomic::Ordering::Relaxed), READ_CALLS.swap(0, std::sync::atomic::Ordering::Relaxed))
+}
+
 pub(crate) fn counting_work() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("OK_PROFILE").is_some())

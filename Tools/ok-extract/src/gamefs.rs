@@ -832,6 +832,14 @@ fn is_unity(path: &Path, bytes: &[u8]) -> bool {
 }
 
 fn entry_bytes(entry: &Entry) -> Option<Vec<u8>> {
+    let out = entry_bytes_inner(entry);
+    if let Some(bytes) = out.as_ref() { crate::unity::note_read_bytes(bytes.len()); }
+    out
+}
+
+/// Every call copies the entry's bytes out of the library index's map or the mounted pack into an owned `Vec`
+/// (`note_read_bytes` counts how much an open does of this).
+fn entry_bytes_inner(entry: &Entry) -> Option<Vec<u8>> {
     match entry {
         Entry::Data(_) | Entry::Mapped(..) | Entry::Shared(_) => entry.data(),
         Entry::Model(id, _) => Some(crate::oklib::token(id)),
@@ -1376,6 +1384,7 @@ impl Zip {
                 // as its token: the item catalog scan walks every zipmod's bundles, and only a query a session really
                 // makes on that model is a gap (it names the model, which `zips_with_model` turns into the zipmod).
                 let data = if use_real { None } else { recorded.and_then(entry_bytes).map(io::Cursor::new) };
+
                 let label = Label { key, name: entry_name };
                 if data.is_none() && !dir {
                     // Not converted (character-specific): the real archive's entry, read when the entry is read.

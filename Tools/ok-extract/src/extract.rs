@@ -2227,6 +2227,10 @@ pub(crate) fn extract_session_from_info(
             }
         }
         eprintln!("ok-extract: PROFILE passthrough {untouched}/{carried} session textures are an undecoded payload, by source format {formats:?}");
+        // What `gamefs::read` copied out of the library index and the card's pack: every read hands back an owned
+        // Vec, so this is memcpy on top of the work done with the bytes.
+        let (read_bytes, read_calls) = crate::unity::take_read_bytes();
+        eprintln!("ok-extract: PROFILE copied out of the sources {:.1} MiB in {read_calls} reads", read_bytes as f64 / (1 << 20) as f64);
     }
     for (name, s) in stages.map(crate::appearance::timings::Capture::finish).unwrap_or_default() {
         eprintln!("ok-extract: STAGE {name:28} {:8.1}ms x{} max {:.1}ms", s.total_ms, s.calls, s.max_ms);
