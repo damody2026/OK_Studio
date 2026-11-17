@@ -4034,7 +4034,10 @@ float AOKStreetSocialScene::StepCompanion(float Dt){
  auto IsBlocked=[&](const FVector& To){
   Why=0;
   if(OKStreetBlockedPoint(To,Boxed?12.f:28.f))Why|=1;
-  else if(!Boxed&&GetWorld()->SweepSingleByChannel(Hit,Agent.Position+FVector(0,0,85),To+FVector(0,0,85),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(28,78),Query))Why|=2;
+  // His body's capsule (lifted over kerbs and slopes, StreetStep): with the old 85/78 one she hit the pavement he walked
+  // over, outdoors from the cafeteria to the snack shop 150 times in one walk, stood beside him every 3 s (round 15).
+  // Starting against a wall counts only when the step leads into it, as his route's pull does.
+  else if(!Boxed&&GetWorld()->SweepSingleByChannel(Hit,Agent.Position+FVector(0,0,OKStreetBodyLift()),To+FVector(0,0,OKStreetBodyLift()),FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeCapsule(28,OKStreetBodyHalf()),Query)&&(!Hit.bStartPenetrating||FVector::DotProduct((To-Agent.Position).GetSafeNormal2D(),Hit.Normal)<=0.f))Why|=2;
   for(const auto& Other:S.Agents)if(Other.Slot!=Agent.Slot){const float After=FVector::Dist2D(To,Other.Position);if(After<55&&After<FVector::Dist2D(Agent.Position,Other.Position))Why|=4;}
   if(FVector::Dist2D(To,S.Male)<65)Why|=8;
   return Why!=0;
