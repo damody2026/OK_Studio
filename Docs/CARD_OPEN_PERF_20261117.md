@@ -143,9 +143,23 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   **整合后在 `e7b34e6f2` 上还有更直接的一笔**（f-sceneload，`6824c7e30`）：转卡次序关卡 **PASS**，8 笔
   （正序 4、反序 4）全部一致，而**这一关的基准本来就是一张卡一个行程**，正反序是同一行程依序转，比的是
   开起来的 session 位元组——所以 PASS 就等于「**子行程转卡 == 行程内转卡，逐位元组相同**」，不必另外
-  设计实验。四张卡的基准可当以后的对照：`klara` digest=`23a1e5f8…` parts=37、`lan` `bdd342cf…` 64、
-  `keqing` `0f6c9f76…` 34、`hu_tao` `734a2acc…` 28，全部 `absent=[]`、各 7 套服装。
-  在这之前跨行程只有 UE 侧的物件傾印验过，Rust 侧没有。
+  设计实验。**它能一次覆盖两件事**（我的 view 身分在同行程多卡之间不串、子行程转卡与行程内转卡逐位元组
+  相同），是因为它的基准恰好是一张卡一个行程，不是谁设计出来的。在这之前跨行程只有 UE 侧的物件傾印验过，
+  Rust 侧没有。四张卡在 `e7b34e6f2` 的基准，可当以后的对照（全部 `absent=[]`、各 7 套服装）：
+
+  | 卡 | digest | parts |
+  |---|---|---:|
+  | klara | `23a1e5f8d7f904e273f6436840fd92be` | 37 |
+  | lan | `bdd342cf05503b17eeff3bad54e419ad` | 64 |
+  | keqing | `0f6c9f7663c1a22224b7e2daae6c24fa` | 34 |
+  | hu_tao | `734a2acc9c2ded583947b9e9aedd14b9` | 28 |
+
+  ```
+  OK_BASE_LIBRARY=<base_v1> Tools\lua\lua.exe Tools\ok_convert_order_check.lua D:/KoikatuSunshine ^
+    Content/IndependentResources/base_v1 <输出目录> <四张卡>
+  ```
+  同一基点上开卡退路那一关也 PASS（`failed_remake_leaves_the_card_openable`，17.57 s）——它现在的用处
+  不是把关而是**现况证据**：`e7b34e6f2` 上「OK 卡失败另存后仍可开」有一笔带条件的 PASS 可以对照。
 - **这项的收益和「子行程并行转卡」互相抵销**，定 worker 数之前要知道（实测 5 张场景卡）：
 
   | | wall | CPU 合计 |
