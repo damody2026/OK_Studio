@@ -135,6 +135,11 @@ impl<'a> GridSampler<'a> {
             let value = v as f32 / 255.0;
             if sampling.srgb { srgb_channel_to_linear(value) } else { value }
         })];
+        // OK_GRID_DIAG: the texture and mask sizes a bake samples between. An accessory bake is nearly all per-texel
+        // work (OK_PROFILE's "mask bake:" spots: ~940 ms of maths against ~90 ms of decode and ~40 ms of encode for
+        // one card), and these sizes are why — a card's heavy bakes upsample a 64² or 512² mask onto a 4096² texture,
+        // ~67M texels. So the bilinear weights are not 0 and reading one texel instead of four is not available here.
+        if std::env::var_os("OK_GRID_DIAG").is_some() { eprintln!("ok-extract: GRID tex={w}x{h} mask={iw}x{ih} filter={}", sampling.filter); }
         GridSampler { image, cols: axis(w, iw, sampling.wrap_u), rows: axis(h, ih, sampling.wrap_v), nearest, lut }
     }
 
@@ -192,8 +197,11 @@ pub(crate) fn apply_clothes_color_mask_sampled(
     // alpha-dependent pattern colour arithmetic, then cascading RGB masks.
     if !crate::okstrict::assembling() { return Some(main.to_vec()); }
     let mask_mode = std::env::var("OK_CLOTHES_MASK").unwrap_or_default();
+    // OK_PROFILE: how a bake splits between the two PNG decodes, the per-texel work and the encode.
+    let t_decode = crate::profile::spot("mask bake: decode");
     let src = crate::teximg::load_from_memory(main).ok()?.into_rgba8();
     let mask = crate::teximg::load_from_memory(mask).ok()?.into_rgba8();
+    drop(t_decode);
     let (w, h) = src.dimensions();
     let (mw, mh) = mask.dimensions();
     if w == 0 || h == 0 || mw == 0 || mh == 0 {
@@ -216,6 +224,7 @@ pub(crate) fn apply_clothes_color_mask_sampled(
             has_pat[c] = p.png.is_some();
         }
     }
+    let t_math = crate::profile::spot("mask bake: math");
     let mut out = src;
     let grid = GridSampler::new(&mask, w, h, sampling);
     let rotations: Vec<(f32, f32)> = patterns.iter().map(|p| ((p.rotate - 0.5) * std::f32::consts::TAU).sin_cos()).collect();
@@ -288,6 +297,8 @@ pub(crate) fn apply_clothes_color_mask_sampled(
             }
         }
     });
+    drop(t_math);
+    let _t_encode = crate::profile::spot("mask bake: encode");
     encode_png(&out)
 }
 

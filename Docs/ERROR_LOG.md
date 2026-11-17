@@ -4948,3 +4948,22 @@ UnrealEditor.exe 而不经 Lua 启动器），或等到「最新档名和启动�
 **量测坑 2：kill 回圈用 `head -1` 只杀一个 PID。** 三轮跑完留下 3 个 UnrealEditor 在背景。解法：按命令列
 筛出自己的（用 `-abslog` 路径里的标记字串）全部杀掉，并确认剩余数为 0 —— 绝对不要按进程名一律杀，
 别组的编辑器也叫 UnrealEditor.exe。
+
+## 2026-11-17 开卡性能第三轮：一个 no-op 优化（已回退）与一个 thread_local 盲点
+
+**试过并整个回退：`GridSampler` 的「同尺寸就只读一个 texel」。** 我以为遮罩和贴图同尺寸时双线性权重恰好是 0
+（`lerp_f(a,b,0.0) = a + (b-a)*0.0 = a`，对有限的 LUT 值逐位元组安全），可以省掉四次取样与十二次 lerp。
+实测 A/B 完全没有差别。用 `OK_GRID_DIAG` 印出尺寸才知道真实情况是**把 64² 或 512² 的遮罩升采样到 4096²
+的贴图**，权重本来就不是 0，只有一个 64²→64² 的小烘焙命中。该改动是真正的 no-op，已整个回退，只留 `OK_GRID_DIAG`
+与 `mask bake: decode/math/encode` 三个子计时。教训：改取样器之前先印出实际尺寸，不要从「通常同尺寸」假设出发。
+
+**盲点：`parse_bundle_cached` 的 `BUNDLE_CACHE` 是 `thread_local`。** 我把基础身体／头部 bundle 的解码加进
+`prewarm` 的背景执行绪，想把第一张卡的 `load_base_bundles` 292 ms 搬离关键路径。结果 `load_base_bundle body`
+50.8 → 3.1 ms（它走的是进程共用的 `png_transform_cache`），但 `base: head textures` 只从 204.6 降到 191.7 ——
+因为头部贴图是靠开卡执行绪自己的 thread-local parsed-bundle 快取跨卡共用的（所以第二、三张卡才会从 226 ms
+降到 24–46 ms），预热执行绪填的是它自己那一份，填不到开卡执行绪。整体仍有 −57 ms 第一张卡的收益，保留；
+要连头部那 200 ms 一起预热得先把那层快取改成进程共用，记忆体影响未评估，没做。
+
+**另外两项量了之后放弃／降级**（数字在 `Saved/Reports/card-open-perf-20261117/README.md`）：配件颜色烘焙的
+PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估的 80–120 ms；`emit` 并行约只省 34 ms。
+两项都是我先前凭 SPOT 的次数与总时间推估、没有量子阶段就报给协调者的，推估偏高。
