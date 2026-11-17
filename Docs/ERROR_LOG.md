@@ -5254,3 +5254,12 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - **处置**：收掉后确认 `unreal_slot.lua status` 的 `unreal processes: 0`，并告知协调者那段时间别组的量测要重跑。
 - **再试前检查**：判断行程死没死，看 **CPU 时间是否还在增加**（隔几秒量两次），不要看 `HasExited`、不要看 `tasklist` 的记忆体数字；`taskkill` 回「没有正在执行的工作阶段」只说明这条路杀不掉，不是死讯，换 CIM `Terminate`。借用的 slot 到期是「先确认行程真的收掉、再 release」，行程还在就等于没还。
 - **顺带**：借来的短窗口（11 分钟）不要拿去跑 `UnrealEditor-Cmd` 的自动化测试——这个专案的冷启动超过 9 分钟（`-NullRHI -nosound` 也一样），整段会白费。短窗口先跑能拿到数字的那几趟。
+- **归属怎么一眼看出来**：共用机器上「这个 Unreal 是谁的」别靠记忆或互相追问，列 `CreationDate` 就好——
+  启动时间对不上自己那趟的时间，就不是自己的：
+
+  ```
+  powershell -c "Get-CimInstance Win32_Process -Filter \"Name like '%Unreal%' or Name like '%OpenKoikatsu%'\" | Select-Object ProcessId, Name, CreationDate, @{n='GB';e={[math]::Round($_.WorkingSetSize/1GB,2)}} | Format-Table -AutoSize"
+  ```
+
+  2026-11-18 这次就是这样分清的：机器上剩的 `OpenKoikatsu.exe` 建立于 07:16:17，不可能是 07:01 起的那趟测试，
+  是别组的量测行程。`tasklist` 没有这一栏，所以查归属要用 CIM，不要用 `tasklist`。
