@@ -4892,6 +4892,82 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - **再試前檢查**：要讓 manifest 的 paired 雜湊跨機器有意義，得先讓 `ok-paired-library` 的 pack 寫出順序固定（排序鍵再寫檔），並另外做一次逐項解包比對確認三邊等價。
 
 
+## 2026-11-17 开卡性能：把两次先后跑的结果当成 A/B
+
+做完 `compose_body_texture` 的「解码一次、串起来、编码一次」之后，我用 `Tools/card_open_bench.lua` 跑了一次
+（3 轮中位数合计 4.130 s），和改动前存下的基准（5.010 s）相减，得出 **−17.6%** 并据此回报协调者。
+
+后来给每个改动都加了关掉的开关，用**同一个执行档、同一时段、交替**跑 9 轮，结果是：优化前合计 5.020 s
+（和原基准 5.010 吻合，基准本身没问题）、优化后 4.910 s，真实只有 **−2.2%**。直接量 `compose_body_texture`
+这个阶段也只省约 20–35 ms（C001 214→182 ms、klara 91→69 ms），不是 250 ms。那次 4.130 s 是机器状态漂移。
+
+修正：这台机器（常驻模拟器、Defender、还有别组的建置）上，前后两次独立跑分不能相减；只有「同一执行档用环境
+变量开关切换、交替跑、取中位数」的 A/B 可信。所以四个改动都留了开关：`OK_NO_CHAINED_BODY`、
+`OK_COARSE_ZIP_MEMO`、`OK_NO_ROOT_PROBE`、`OK_NO_TREE_WALK_MEMO`。
+
+同一轮还有一个自己造成的干扰：我放进背景的 `find Tools/ok-extract/src -name ...` 卡住后以 92% CPU 跑了很久，
+期间同一条命令从 1.4 s 跳到 31.9 s，量到的数字全部不可信。量测前要用
+`Get-Counter '\Process(*)\% Processor Time'` 看谁在吃 CPU；不要只数 `cargo` 进程，这台机器常驻 18 个
+`cargo run ... ok-game-mcp`（别的 session 的 MCP 服务器），它们是闲着的。另外 `find` 在这个工作树上非常慢
+（`Content/IndependentResources/base_v1` 有 45 GB），要用 glob 或限定目录。
+
+报告与原始数据：`Saved/Reports/card-open-perf-20261117/`。
+
+## 2026-11-17 三个既有测试失败的真正原因（不是档案被锁，也不是开卡优化造成）
+
+`cargo test --release --lib` 有 3 个失败，一开始以为是别的 session 锁住 C 树的目录（「存取被拒」），不是：
+
+- `appearance::properties::tests::every_heroine_takes_the_dye_even_with_hair_painted_into_its_texture`
+  （properties.rs:259）与 `dress_takes_off_what_she_wears_as_accessories`（properties.rs:266）：两个都是
+  `for e in fs::read_dir(dir).unwrap()` 之后对**每一个** entry 直接 `crate::gamefs::read(path)`，没有过滤档案／
+  副档名。`C:\portable\OpenKoikatsu\Content\CharacterCards\StreetHeroines` 里 2026-11-09 多了一个 `KKS\`
+  **子目录**，而 Windows 上 `std::fs::read` 读目录会回 `PermissionDenied` / raw os error 5 /「存取被拒。」——
+  和测试的 panic 讯息逐字相同（已单独写一个小程式确认）。测试该只取 `*.png` 档案。
+- `appearance::tests::head_texture_commit_preserves_live_state_and_rejects_geometry`（appearance.rs:489）：
+  不是档案问题，是 `live.head_texture_changes(&source).unwrap()` 回了 None。C001 本身有 `cf_O_mayuge`
+  这个 part（486 行的 position 过得了），所以是 `head_texture_changes` 自己的问题。
+
+三个都与开卡优化无关：把四个开关全关（`OK_COARSE_ZIP_MEMO=1 OK_NO_CHAINED_BODY=1 OK_NO_ROOT_PROBE=1
+OK_NO_TREE_WALK_MEMO=1`）一样以同样的行号失败。没有修（不在这轮范围内）。
+
+## 2026-11-17 开卡性能第二轮：两个推论错误与两个量测坑
+
+**推论错误 1：以为 `emit` 里的 136 次 `flip_png_v` 是串行的。** 我据此跟协调者说「195 ms 可以整批并行」。
+实际上那 136 次全在 `PushCtx::transform`（push.rs 379–520），而 `transform` 是经 `run_on_worker` →
+`todo.into_par_iter()` 跑的，本来就并行；`emit` 里根本没有 flip。加阶段计时进 `PushBatch::flush` 才看清
+（C001，deferred meshes 582.8 ms）：slot colour 并行 316.0、transform 并行 191.3、emit 串行 61.4、
+slot finish 5.4、keys+memo 6.9。教训：说「某段是串行的」之前先量，不要从 SPOT 的次数与总时间推。
+
+**推论错误 2：以为预载 parent 就够，忘了 `_Flat` 变体。** 第一版只要 `<Name>` 与 `<Name>_Outline`
+（97 个 package），`parent_load_ms` 只从 247.4 降到 159.5。头部的 parent 是 `OKRuntimeFlatFaceParent` 载的
+`<Name>_Flat`，读卡器会 live 要它，也算进同一个 `parent_load_ms`。补上 `_Flat`（194 个）之后才降到 60.0。
+
+**量测坑 1：用 `ls -t <日志目录>/*.log | head -1` 找「这次的日志」会拿到上一次的。** mtime 排序在并发写入下
+不可靠，结果两组配置印出完全相同的数字，我一度以为开关没生效。解法：自己给 `-abslog=<路径>`（我直接驱动
+UnrealEditor.exe 而不经 Lua 启动器），或等到「最新档名和启动前不同」才开始读。
+
+**量测坑 2：kill 回圈用 `head -1` 只杀一个 PID。** 三轮跑完留下 3 个 UnrealEditor 在背景。解法：按命令列
+筛出自己的（用 `-abslog` 路径里的标记字串）全部杀掉，并确认剩余数为 0 —— 绝对不要按进程名一律杀，
+别组的编辑器也叫 UnrealEditor.exe。
+
+## 2026-11-17 开卡性能第三轮：一个 no-op 优化（已回退）与一个 thread_local 盲点
+
+**试过并整个回退：`GridSampler` 的「同尺寸就只读一个 texel」。** 我以为遮罩和贴图同尺寸时双线性权重恰好是 0
+（`lerp_f(a,b,0.0) = a + (b-a)*0.0 = a`，对有限的 LUT 值逐位元组安全），可以省掉四次取样与十二次 lerp。
+实测 A/B 完全没有差别。用 `OK_GRID_DIAG` 印出尺寸才知道真实情况是**把 64² 或 512² 的遮罩升采样到 4096²
+的贴图**，权重本来就不是 0，只有一个 64²→64² 的小烘焙命中。该改动是真正的 no-op，已整个回退，只留 `OK_GRID_DIAG`
+与 `mask bake: decode/math/encode` 三个子计时。教训：改取样器之前先印出实际尺寸，不要从「通常同尺寸」假设出发。
+
+**盲点：`parse_bundle_cached` 的 `BUNDLE_CACHE` 是 `thread_local`。** 我把基础身体／头部 bundle 的解码加进
+`prewarm` 的背景执行绪，想把第一张卡的 `load_base_bundles` 292 ms 搬离关键路径。结果 `load_base_bundle body`
+50.8 → 3.1 ms（它走的是进程共用的 `png_transform_cache`），但 `base: head textures` 只从 204.6 降到 191.7 ——
+因为头部贴图是靠开卡执行绪自己的 thread-local parsed-bundle 快取跨卡共用的（所以第二、三张卡才会从 226 ms
+降到 24–46 ms），预热执行绪填的是它自己那一份，填不到开卡执行绪。整体仍有 −57 ms 第一张卡的收益，保留；
+要连头部那 200 ms 一起预热得先把那层快取改成进程共用，记忆体影响未评估，没做。
+
+**另外两项量了之后放弃／降级**（数字在 `Saved/Reports/card-open-perf-20261117/README.md`）：配件颜色烘焙的
+PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估的 80–120 ms；`emit` 并行约只省 34 ms。
+两项都是我先前凭 SPOT 的次数与总时间推估、没有量子阶段就报给协调者的，推估偏高。
 ## 2026-11-17 讀卡「另存」OK 卡失敗後，同一程序再開原卡缺 hibari／klee（F 組讀卡器，測試者 log）
 - 現象：測試者包（Pack1115）讀卡開 `StreetHeroines/alice.png`，按「另存」後再開 alice 服裝 1（outfit 0），回「the OK card lacks 2 thing(s)…: okLt override abdata/chara/hibari/hibari.unity3d; okLt override abdata/chara/klee/klee.unity3d」；重開程序就正常。
 - 經過：另存走 `FinishOkCardSave` → `ok_okcard_make` → `remake_ok_card`：去掉 OK chunk（含卡內資源包 okLc）從基礎庫重轉。測試者沒有 `[nep] hibari stuff`／`klee stuff` zipmod，轉換在 strict 下記缺口並失敗。
@@ -4911,3 +4987,46 @@ c-conquest 建了 `nh1115z.stage`（含後來依協調決定撤回的細分格�
 - **結果**：5 張卡依序 11.0 s，4 個併行 11.7 s，**沒有變快**。同一個行程的 `ok_studio_scene_export` 與其他階段也沒變。合理的解釋是 `MakeOkCardForOutfit` 在 Rust 那邊被某個全域鎖（或共用快取的鎖）序列化了；這點還沒證實。
 - **處置**：改動回退，沒有進版控。要繼續查得先量 Rust 那邊這條路徑上的鎖，或改走「OK 卡已存在且夠新就不重轉」的快取（要有版本戳記，否則 2026-10-28 以前缺 okLt 的舊卡會被重用）。
 - **預防**：把工作搬到 worker 之前，先確認那段工作在 Rust／C++ 底下真的能同時跑。這次場景層的道具與角色 session 併行是有效的（同一天的另一筆），但不是每個 Rust 入口都這樣。
+## 2026-11-17 `read_strip_all_guids` 的 430 ms 其实是冷的 Windows 目录元数据，三种优化全部回退
+- 原估：原作卡「第一张之后的每一张新卡」在 `read_strip_all_guids` 上花 430–590 ms，做法是「StripAll 是併集、
+  可以快取，键含 serving id」。量测后这个前提整个站不住，三种做法 A/B 都拿不到，已全部回退（工作树只剩别人的
+  `OKExtractBuildStamp.h`）。
+- 先补量测：`OK_STRIP_DIAG=1` 把这一阶段拆成 walk／逐档读／併集三段。走树已经被我上一轮的 memo 收掉
+  （0.3 ms），併集本身是 0.3 ms，**全部成本都在 7300 次 `gamefs::zip_memo` 的派发上**（1461／378／246 ms，
+  三张卡）。再往里拆：其中约 97% 是 `fallback_serving_id`（card 2：436 ms／451 ms），每张卡 5816 次 miss。
+- 做法一「把 serving 的 memo 从 fallback generation 改成 `fallback_identity` 的 token」：没用。每张卡仍然 5816
+  次 miss —— `fallback_identity` 本来就含「卡自己指名的 zipmod 与卡目录」，**不同卡的 identity 本来就不同**，
+  跨卡不可能共用。我以为「同一个游戏目录、同一个卡目录就该一样」，错在没看 `set_fallback` 每张卡带的是卡自己
+  的 `files`。
+- 做法二「`resolve_mod_archive` 的两次 7000 元素线性扫描换成 by_name／by_stem 两张表」：A/B 没有差别
+  （strip 读取中位数 1626/390/266 → 1615/457/282）。我推的 O(n²) 不成立，因为 `direct.is_file()` 对多数键直接
+  命中就回传了，线性扫描根本不是热路径。中途还一度把「精确名字查表」放在关闭开关的**前面**，关掉也享受到新
+  路径，差点拿这个假 A/B 当结果 —— 开关必须还原成一模一样的旧路径。
+- 做法三「整个 whole-tree pass 用 rayon 并行」（併集与顺序无关，安全）：也没有差别。
+- 真正的原因：把 `fallback_serving_id` 用环境变量短路掉之后，这一阶段两张新卡都只剩 **18 ms**，而且开关开与
+  关都是 18 ms —— 也就是说，前面那 390/266 ms 是**冷的 Windows 目录元数据**，被我连续跑十来次之后暖起来了。
+  一次开卡自己要读几百 MB 的 bundle，会把目录元数据挤出快取，所以下一张卡的全树 stat 又要回磁碟。暖的时候
+  18 ms，被挤掉的时候 250–400 ms，第一张卡 1.3–1.6 s（含第一次读每个 manifest）。并行拿不到就是因为暖的时候
+  本来就没成本、冷的时候 MFT 读取自己会排队。
+- serving id 不能拿掉：`open_zip` 的 replay 分支对「library 记录了但本机没有模型」的档案本来就会
+  `fallback_source` 去 stat，而且 `real_zip_matches_recorded` 不符时会 `open_real` 直接读真档 —— manifest 真的
+  可能来自真档，键不含 serving id 就会重现 2026-11-12 花火那个 bug。
+- 唯一还剩的方向（没做）：`fallback_identity_now` 每个 generation 已经走过一次整棵 mods 树，`read_dir` 的
+  entry 本来就带 metadata；若 `fallback_serving_id` 能吃那趟走树的结果，就能把 5816 次单档 stat 换成一次走树。
+  但**我没有办法按需清掉 Windows 的档案快取，冷成本无法重现**，也就没法照规格做交错 A/B 取中位数，所以没有
+  改 —— 要做的人先准备一个能清快取的办法。
+- 教训：量到的「每张卡 430 ms」如果在连续跑十几次之后自己掉到 18 ms，那它不是程式的成本，是 OS 快取状态；
+  基准要先确认同一个数字在冷／暖两种状态下各是多少，再决定值不值得改。
+
+## 2026-11-17 以为烘焙「把遮罩升采样到 4096²」，其实 4096 是来源贴图自己的尺寸
+- 前提错在哪：我在 `GridSampler` 的注解里写「a card's heavy bakes upsample a 64² or 512² mask onto a 4096²
+  texture」，读起来像是我们为了对齐底图而把遮罩放大，于是被排了一项「改成在来源尺寸上烘焙」的优化。
+- 事实：`apply_clothes_color_mask_sampled` 的输出尺寸是 `src.dimensions()`，也就是**被上色的那张底图自己的
+  尺寸**；底图来自 `m.texture_png`，即 mod／原作 bundle 里的 Texture2D。程式码里没有 4096 常数（唯一那个
+  `default_texture_size() -> 4096` 在 `okchara.rs` 的 OK 卡**汇出**选项，不在这条路径上），也没有任何 resize。
+  遮罩一直都是**逐输出 texel 按需读**的，`GridSampler` 只预存 w+h 项索引与权重，没有放大后的缓冲区。
+- 所以那 939 ms 不是插值遮罩的成本，是「要产生一张 4096² 的 albedo」本身的逐 texel 成本。实测 6 次 CPU
+  烘焙里 4 次输出 4096²（2 次配 64² 遮罩、2 次配 512²），合计约 6700 万 texel。
+- 处置：这条路径无事可改。把结论写进 `clothes_texture.rs` 的同一段注解，免得下一个人再追一次；「把底图缩掉」
+  是换画质换 VRAM 的另一件事，属于使用者的决定。
+- 防范：注解里描述取样关系时不要用「upsample」这种像是「我们主动放大」的词；要写清楚尺寸是谁决定的。

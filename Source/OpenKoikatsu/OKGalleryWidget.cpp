@@ -77,6 +77,7 @@
 #include "Misc/Parse.h"
 #include "Misc/CommandLine.h"
 #include "Containers/Ticker.h"
+#include "KKRuntimeSharedMaterial.h"
 
 namespace
 {
@@ -1004,6 +1005,18 @@ void UOKGalleryWidget::NativeConstruct()
 			bPrewarmed=true;
 			// Library sessions are portable: their pair menu reads the shared PairedAnimations root.
 			Async(EAsyncExecution::Thread,[Root,bLibrary](){FOkSession::Prewarm(Root);if(bLibrary)FOkSession::CommonAnimationPairs();});
+		}
+		// The cooked shared material parents of the first card, asked for here instead of on its own load: it spent
+		// ~164 ms loading them one by one on the game thread (OK_LOAD_PROFILE cooked_role parent_load_ms), later cards
+		// ~1 ms. Engine assets, not card data. The root is the one KKPreviewRuntimeMaterials.inl resolves for the
+		// reader; a wrong or absent one asks for nothing and the first card loads them itself as before.
+		static bool bParentsAsked=false;
+		if(!bParentsAsked){
+			bParentsAsked=true;
+			FString MaterialRoot;
+			if(!FParse::Value(FCommandLine::Get(),TEXT("RuntimeMaterialRoot="),MaterialRoot))
+				MaterialRoot=TEXT("/Game/IndependentResources/RuntimeMaterials/StreetDisplay27");
+			OKPreloadRuntimeSharedMaterialParents(MaterialRoot);
 		}
 	}
 	if (FPlatformMisc::GetEnvironmentVariable(TEXT("OK_AUTO_3D")) == TEXT("1"))

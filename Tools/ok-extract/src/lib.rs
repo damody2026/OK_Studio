@@ -585,6 +585,21 @@ pub fn prewarm(game_root: &Path) -> Result<(), String> {
         scope.spawn(|_| { let _ = crate::mods::uncensor_sources(game_root); });
         scope.spawn(|_| { let _ = me_manifest_sections(game_root); });
         scope.spawn(|_| { let _ = crate::h_playback::pairs(game_root); });
+        // The base body and vanilla head bundles: the same for every card, and only the first card of a process pays
+        // for them. OK_PROFILE on a fresh process: "load_base_bundle body" ~50 ms and "base: head textures" ~220 ms
+        // for the first card, 1–45 ms for the next ones, which found them in this process's content caches. Decoded
+        // here they are there for the first card too. Not a disk cache (that stays off, 70d8a21c7): the shared
+        // library's own bundles, decoded in memory on a background thread that is outside every open.
+        // OK_NO_BASE_BUNDLE_PREWARM=1: the first card decodes them itself again (to compare).
+        if std::env::var_os("OK_NO_BASE_BUNDLE_PREWARM").is_none() {
+            scope.spawn(|_| { let _ = crate::unity::load_base_bundle(&game_root.join("abdata/chara/oo_base.unity3d")); });
+            scope.spawn(|_| {
+                if let Ok(bytes) = crate::gamefs::read_source(game_root.join("abdata/chara/bo_head_00.unity3d")) {
+                    let _ = crate::unity::parse_bundle_cached(bytes).textures_keep_base();
+                }
+            });
+            scope.spawn(|_| { let _ = crate::gamefs::read_source(game_root.join("abdata/chara/mm_base.unity3d")).map(crate::unity::parse_bundle_cached); });
+        }
         // Original KKS cards open from the library plus the installation's zipmods they name (OK_GAME_ROOT).
         if let Some(game) = std::env::var_os("OK_GAME_ROOT").map(PathBuf::from).filter(|g| g.join("mods").is_dir()) {
             scope.spawn(move |_| crate::mods::prewarm_guid_index(&game.join("mods")));

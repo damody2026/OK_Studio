@@ -135,6 +135,15 @@ impl<'a> GridSampler<'a> {
             let value = v as f32 / 255.0;
             if sampling.srgb { srgb_channel_to_linear(value) } else { value }
         })];
+        // OK_GRID_DIAG: the texture and mask sizes a bake samples between. An accessory bake is nearly all per-texel
+        // work (OK_PROFILE's "mask bake:" spots: ~940 ms of maths against ~90 ms of decode and ~40 ms of encode for
+        // one card), and these sizes are why — a card's heavy bakes sample a 64² or 512² mask over a 4096² texture,
+        // ~67M texels. So the bilinear weights are not 0 and reading one texel instead of four is not available here.
+        // That 4096 is the albedo's own size (the mod's or the original's Texture2D), not ours: nothing here resizes,
+        // and the mask is read per output texel, never widened into a buffer of its own. So there is no upsampling
+        // step to remove (asked 2026-11-17) — the per-texel work is the cost of producing a 4096² albedo, and the only
+        // way to cut it is a smaller output, which trades picture for VRAM and is the user's call, not this code's.
+        if std::env::var_os("OK_GRID_DIAG").is_some() { eprintln!("ok-extract: GRID tex={w}x{h} mask={iw}x{ih} filter={}", sampling.filter); }
         GridSampler { image, cols: axis(w, iw, sampling.wrap_u), rows: axis(h, ih, sampling.wrap_v), nearest, lut }
     }
 
@@ -192,8 +201,11 @@ pub(crate) fn apply_clothes_color_mask_sampled(
     // alpha-dependent pattern colour arithmetic, then cascading RGB masks.
     if !crate::okstrict::assembling() { return Some(main.to_vec()); }
     let mask_mode = std::env::var("OK_CLOTHES_MASK").unwrap_or_default();
+    // OK_PROFILE: how a bake splits between the two PNG decodes, the per-texel work and the encode.
+    let t_decode = crate::profile::spot("mask bake: decode");
     let src = crate::teximg::load_from_memory(main).ok()?.into_rgba8();
     let mask = crate::teximg::load_from_memory(mask).ok()?.into_rgba8();
+    drop(t_decode);
     let (w, h) = src.dimensions();
     let (mw, mh) = mask.dimensions();
     if w == 0 || h == 0 || mw == 0 || mh == 0 {
@@ -216,6 +228,7 @@ pub(crate) fn apply_clothes_color_mask_sampled(
             has_pat[c] = p.png.is_some();
         }
     }
+    let t_math = crate::profile::spot("mask bake: math");
     let mut out = src;
     let grid = GridSampler::new(&mask, w, h, sampling);
     let rotations: Vec<(f32, f32)> = patterns.iter().map(|p| ((p.rotate - 0.5) * std::f32::consts::TAU).sin_cos()).collect();
@@ -288,6 +301,8 @@ pub(crate) fn apply_clothes_color_mask_sampled(
             }
         }
     });
+    drop(t_math);
+    let _t_encode = crate::profile::spot("mask bake: encode");
     encode_png(&out)
 }
 
@@ -910,15 +925,30 @@ pub(crate) fn composite_overlay_space(base:&[u8],overlay:&[u8],base_srgb:bool,ou
 }
 pub(crate) fn composite_overlay_space_uncached(base:&[u8],overlay:&[u8],base_srgb:bool,output_srgb:bool)->Option<Vec<u8>> {
     let mut dst=crate::teximg::load_from_memory(base).ok()?.into_rgba8();let over=crate::teximg::load_from_memory(overlay).ok()?.into_rgba8();
+    composite_overlay_rgba(&mut dst,&over,base_srgb,output_srgb)?;
+    encode_png(&dst)
+}
+
+/// `composite_overlay_space` on images already decoded: the body composite chains its steps without a PNG between
+/// them (head_body::compose_body_texture_uncached), so the arithmetic lives here and the PNG wrapper calls it.
+/// None: an empty image, which the wrapper reports as before.
+pub(crate) fn composite_overlay_rgba(dst:&mut image::RgbaImage,over:&image::RgbaImage,base_srgb:bool,output_srgb:bool)->Option<()> {
     let (w,h)=dst.dimensions();if w==0||h==0||over.width()==0||over.height()==0{return None;}
-    for y in 0..h {for x in 0..w {
-        let p=sample_rgba_linear(&over,(x as f32+0.5)/w as f32,(y as f32+0.5)/h as f32);
-        let d=dst.get_pixel_mut(x,y);let alpha=d[3] as f32/255.0;let source_alpha=alpha.max(p[3]);
-        for c in 0..3 {
-            let base=d[c] as f32/255.;let base=if base_srgb {srgb_channel_to_linear(base)}else{base};
-            let value=lerp_f(base,p[c],p[3]*source_alpha);
-            d[c]=to_unorm8(if output_srgb {linear_channel_to_srgb(value)}else{value});
+    // Each texel reads only the overlay and its own base texel: the rows go in parallel (a 2048 body took ~90 ms on
+    // one thread). The bytes are the ones the texel-by-texel loop produced.
+    use rayon::prelude::*;
+    let row=w as usize*4;
+    dst.as_mut().par_chunks_mut(row).enumerate().for_each(|(y,line)|{
+        for x in 0..w {
+            let p=sample_rgba_linear(over,(x as f32+0.5)/w as f32,(y as f32+0.5)/h as f32);
+            let d=&mut line[x as usize*4..x as usize*4+4];let alpha=d[3] as f32/255.0;let source_alpha=alpha.max(p[3]);
+            for c in 0..3 {
+                let base=d[c] as f32/255.;let base=if base_srgb {srgb_channel_to_linear(base)}else{base};
+                let value=lerp_f(base,p[c],p[3]*source_alpha);
+                d[c]=to_unorm8(if output_srgb {linear_channel_to_srgb(value)}else{value});
+            }
+            d[3]=to_unorm8(lerp_f(alpha,source_alpha,source_alpha));
         }
-        d[3]=to_unorm8(lerp_f(alpha,source_alpha,source_alpha));
-    }}encode_png(&dst)
+    });
+    Some(())
 }

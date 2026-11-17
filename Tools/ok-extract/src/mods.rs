@@ -709,6 +709,41 @@ fn collect_zipmods(root: &Path) -> std::io::Result<Vec<PathBuf>> {
 }
 
 fn collect_zipmods_checked(root: &Path) -> std::io::Result<(Vec<PathBuf>,bool)> {
+    // The OK base library's recorded tree is not a real directory, so `watched_tree_zips` can never cache it and
+    // every consumer of an open walked it again (the StripAll list, the override index, the GUID index, the list
+    // signature): ~7000 synthesized entries, several times per open. It only changes with the zipmod fallback and the
+    // mounted pack, which is exactly what the fallback generation counts, so one walk per generation serves them all.
+    // A real directory keeps the unmemoized walk: it can change under us without a generation of its own.
+    // OK_NO_TREE_WALK_MEMO=1: every consumer walks it again (to compare with the memo).
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if root.canonicalize().is_err() && !*OFF.get_or_init(|| std::env::var_os("OK_NO_TREE_WALK_MEMO").is_some()) {
+        use std::sync::Mutex;
+        type Walk = std::io::Result<(Vec<PathBuf>, bool)>;
+        static MEMO: std::sync::OnceLock<Mutex<(u64, Vec<(PathBuf, std::sync::Arc<(Vec<PathBuf>, bool)>)>)>> = std::sync::OnceLock::new();
+        let generation = crate::gamefs::fallback_generation();
+        let memo = MEMO.get_or_init(|| Mutex::new((generation, Vec::new())));
+        {
+            let mut memo = memo.lock().unwrap_or_else(|e| e.into_inner());
+            if memo.0 != generation { *memo = (generation, Vec::new()); }
+            if let Some((_, hit)) = memo.1.iter().find(|(r, _)| r == root) { return Ok((**hit).clone()); }
+        }
+        let walked: Walk = collect_zipmods_walk(root);
+        if let Ok(value) = walked {
+            let value = std::sync::Arc::new(value);
+            let mut memo = memo.lock().unwrap_or_else(|e| e.into_inner());
+            if memo.0 == generation {
+                memo.1.retain(|(r, _)| r != root);
+                if memo.1.len() >= 8 { memo.1.remove(0); }
+                memo.1.push((root.to_path_buf(), value.clone()));
+            }
+            return Ok((*value).clone());
+        }
+        return walked;
+    }
+    collect_zipmods_walk(root)
+}
+
+fn collect_zipmods_walk(root: &Path) -> std::io::Result<(Vec<PathBuf>,bool)> {
     let mut out = Vec::new();
     let mut trackable=true;
     fn rec(dir: &Path, out: &mut Vec<PathBuf>,trackable:&mut bool) -> std::io::Result<()> {

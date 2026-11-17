@@ -2585,6 +2585,7 @@ fn base_bundles_stage(game_root: &Path, parsed_card: &Option<CardInfo>, vanilla:
     let head_bundle_bytes = crate::gamefs::read_source(&head_bundle).unwrap_or_default();
     let mut parsed_head = crate::unity::parse_bundle_cached(head_bundle_bytes);
     profile_tick("load_base_bundle head", t_head);
+    let t_base_seg = Instant::now();
     let mut head_texs = parsed_head.textures_keep_base();
     // The Face Fixes bundle omits `cf_face_00_t`/`_mc`, so borrow the vanilla
     // bundle's textures for anything the override does not ship.
@@ -2689,6 +2690,8 @@ fn base_bundles_stage(game_root: &Path, parsed_card: &Option<CardInfo>, vanilla:
             }
         }
     }
+    profile_tick("base: head textures", t_base_seg);
+    let t_base_seg = Instant::now();
     let mut head_shape_keys = mod_shape_keys.unwrap_or_else(|| crate::shape::load_head_keys_named(&shape_bundle, &head_shape_asset));
     if head_shape_keys.is_empty() && shape_bundle != vanilla_head_bundle {
         head_shape_keys = crate::shape::load_head_keys_named(&vanilla_head_bundle, &head_shape_asset);
@@ -2713,6 +2716,8 @@ fn base_bundles_stage(game_root: &Path, parsed_card: &Option<CardInfo>, vanilla:
             got
         };
     profile_tick("meshes_skel_for_maindata head", t_head_md);
+    profile_tick("base: head shape keys+md", t_base_seg);
+    let t_base_seg = Instant::now();
     let head_meshes = if head_filtered.is_empty() {
         parsed_head.decode_all().0
     } else {
@@ -2802,6 +2807,7 @@ fn base_bundles_stage(game_root: &Path, parsed_card: &Option<CardInfo>, vanilla:
         .map(|s| parsed_body.body_dynamics_for_skeleton(&s)).unwrap_or_default();
     let body_colliders = parsed_body.skeleton_for_prefab_name("p_cf_body_bone")
         .map(|s| parsed_body.body_colliders_for_skeleton(&s)).unwrap_or_default();
+    profile_tick("base: body dynamics+colliders", t_base_seg);
     let mut clothes_dynamics = crate::dbone::DBoneSet::default();
     eprintln!("ok-extract: body Ver02 components={}", body_dynamics.len());
     let head_rest = head_skel.clone();
