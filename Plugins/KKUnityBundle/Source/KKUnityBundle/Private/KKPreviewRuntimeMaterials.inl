@@ -38,17 +38,14 @@ static int32 OKPrepareCookedRole(AKKPreviewActor* Actor,FString& Error,double Bu
     // The cooked parents' shaders live in their own library (Tools/rebuild_street_social_patch.ps1 cooks it as
     // RuntimeMaterialBake), which the engine does not open by itself: RuntimeMaterialLibrary= or manifest material_library.
 #if !WITH_EDITOR
-    static TSet<FString> OpenedLibraries;
     FString Library;
     if(!FParse::Value(FCommandLine::Get(),TEXT("RuntimeMaterialLibrary="),Library)){
         FString Json;TSharedPtr<FJsonObject> Object;
         if(FFileHelper::LoadFileToString(Json,*Manifest)&&FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json),Object)&&Object)Object->TryGetStringField(TEXT("material_library"),Library);
     }
     if(Library.IsEmpty())Library=TEXT("RuntimeMaterialBake");
-    if(!OpenedLibraries.Contains(Library)){
-        if(!FShaderCodeLibrary::OpenLibrary(Library,FPaths::ProjectContentDir()))UE_LOG(LogTemp,Warning,TEXT("High model shader library %s not found; cooked parents may lack shaders"),*Library);
-        OpenedLibraries.Add(Library);
-    }
+    // Shared with the reader's startup preload (OKPreloadRuntimeSharedMaterialParents), which opens it first.
+    OKOpenRuntimeMaterialShaderLibrary(Library);
 #endif
     // Render style (ok.RenderStyle, OKHGShading): HG has its own cooked parents
     // next to the Koikatsu ones (HGMaterialRoot= or manifest hg_material_root).

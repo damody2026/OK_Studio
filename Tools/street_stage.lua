@@ -11,6 +11,7 @@
 -- CrowdRoom*.stage lives in the same folder but is the crowd room's build.
 local ok = require "ok"
 local json, path, proc = ok.json, ok.path, ok.proc
+local lfs = require "lfs"
 
 local M = {}
 
@@ -107,15 +108,35 @@ end
 -- browser and the reader's StreetHeroines list the game's own Content/CharacterCards), the runtime patch is mounted
 -- (runtime.json "patch"), the cooked material parents are named (runtime.json "materials") and the cooked game reads the shared resources by absolute path. Returns the extra arguments
 -- and the environment to add.
-function M.packaged_launch(root, exe)
+-- Links <stage>/Windows/OpenKoikatsu/Content/<name> to root's Content/<name> for each name. A junction left from where
+-- the package was unpacked before points at nothing once the folder is moved (E:\Studio-20261117\Studio-20261117 moved
+-- up one level, 2026-11-17): the game then found no base library, fell back to Config's game root and every card failed
+-- with "game_root missing abdata". Such a junction, or one into another folder, is remade; a real folder is left alone.
+function M.link_content(exe, root, names, say)
+  say = say or default_say
   local content = path.join(path.parent(path.parent(path.parent(exe))), "Content")
-  for _, name in ipairs({ "IndependentResources", "KKPreview", "CharacterCards" }) do
+  if not path.is_dir(content) then return end
+  local function key(p) return (path.norm(path.abs(p)):gsub("\\", "/"):gsub("/+$", ""):lower()) end
+  for _, name in ipairs(names) do
     local link, target = path.join(content, name), path.join(root, "Content", name)
-    if path.is_dir(content) and not path.exists(link) and path.is_dir(target) then
-      local made = proc.run({ "cmd", "/c", "mklink", "/J", (link:gsub("/", "\\")), (target:gsub("/", "\\")) }, { quiet = true })
-      io.write(made.ok and "Linked " or "Could not link ", link, " -> ", target, "\n")
+    if path.is_dir(target) then
+      -- lfs raises on a junction whose target is gone and returns nil for a missing path.
+      local read, attr = pcall(lfs.symlinkattributes, link)
+      local stale = not read or (attr and attr.mode == "link" and key(attr.target or "") ~= key(target))
+      if stale then
+        local gone = proc.run({ "cmd", "/c", "rmdir", (link:gsub("/", "\\")) }, { quiet = true })
+        say((gone.ok and "Removed stale link " or "Could not remove stale link ") .. link)
+      end
+      if stale or (read and not attr) then
+        local made = proc.run({ "cmd", "/c", "mklink", "/J", (link:gsub("/", "\\")), (target:gsub("/", "\\")) }, { quiet = true })
+        say((made.ok and "Linked " or "Could not link ") .. link .. " -> " .. target)
+      end
     end
   end
+end
+
+function M.packaged_launch(root, exe)
+  M.link_content(exe, root, { "IndependentResources", "KKPreview", "CharacterCards" })
   local args = {}
   local launch_file = path.join(root, "Content/IndependentResources/StreetSocialData/Launch/runtime.json")
   local launch = path.is_file(launch_file) and json.decode(path.read_text(launch_file)) or {}
@@ -127,6 +148,9 @@ function M.packaged_launch(root, exe)
   local materials = materials_file and path.is_file(materials_file) and json.decode(path.read_text(materials_file)) or {}
   if type(materials.root) == "string" and materials.root ~= "" then args[#args + 1] = "-RuntimeMaterialRoot=" .. materials.root end
   if type(materials.hg_root) == "string" and materials.hg_root ~= "" then args[#args + 1] = "-HGMaterialRoot=" .. materials.hg_root end
+  -- A package (PACKAGE.json, Tools/package_street_social.lua) carries its own base library and no game: the cooked
+  -- Config's game root (the build machine's D:/KoikatuSunshine) is not used (KKGameRoot -NoGameRoot).
+  if path.is_file(path.join(root, "PACKAGE.json")) then args[#args + 1] = "-NoGameRoot" end
   return args, { OK_BUILTIN_RESOURCES = (path.join(root, "Content/IndependentResources/v1"):gsub("/", "\\")) }
 end
 

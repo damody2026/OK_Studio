@@ -5135,3 +5135,10 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
      数字都连同量测条件一起写**（设定值、基点 commit、机器当时在跑什么）。
   3. **根本没量就讲** —— 我转述的「批次工具从 32 条降到 8 条会慢近 4 倍」是从机制推的上限，同类工作
      的唯一实测只有约 10%。这层最糟也最容易犯，因为它不需要任何失误，**只需要一个说得通的推理**。
+
+## 2026-11-17 工作室包角色全黑、搬目錄後每張卡都說 game_root missing abdata
+
+- **全黑**：ef829dc3a 讓讀卡器一啟動就背景預載 194 個共用母材質，但放它們 shader 的 RuntimeMaterialBake 庫要到第一張卡才打開。打包版預載時找不到 shader（`Missing shader resource ... M_ForgeNose` 共 194 筆），母材質整個執行期都退回預設材質。編輯器與 -game 不 cook，所以只有包會黑。協調者原先懷疑是「新 stage 配 11-15 的舊 patch」，量過不是：材質 patch 自帶自己的 shader 庫，與 stage 主 pak 無關。修法：`OKOpenRuntimeMaterialShaderLibrary` 先開庫再預載，開卡也走同一個函式。
+- **搬目錄**：使用者把包從 `E:\Studio-20261117\Studio-20261117` 往上移一層，stage 裡的 junction 還指著舊位置。`packaged_launch` 只看連結「在不在」，失效的連結被當成存在，遊戲找不到 base_v1，退回 cook 進包的 Config `Root=D:/KoikatuSunshine`，不管卡有沒有 mod 都報 `game_root missing abdata`，ramps.json、MotionCatalogue.json 也讀不到。修法：`street_stage.link_content` 失效或指向別處就重建。
+- **包依賴開發機的遊戲**：同一個 Config 讓包裡的讀卡器去列、去開 `D:\KoikatuSunshine\UserData\chara\male`，語音也試寫死的 C:/D:/E: 路徑；使用者搬那個資料夾時被佔用。修法：包（有 PACKAGE.json）啟動時帶 `-NoGameRoot`，`UKKGameRoot` 的 Root 清空、語音不再試開發機路徑。
+- 教訓：打包產物一定要從包裡實際開一張卡再交出去；要測「沒有遊戲」得讓遊戲真的看不到開發機的遊戲目錄，日誌裡 grep 不到 KoikatuSunshine 才算。

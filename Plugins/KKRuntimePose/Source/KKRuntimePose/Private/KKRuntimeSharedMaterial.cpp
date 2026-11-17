@@ -7,6 +7,10 @@
 #include "Misc/PackageName.h"
 #include "Engine/StreamableManager.h"
 #include "Engine/AssetManager.h"
+#include "Misc/Paths.h"
+#if !WITH_EDITOR
+#include "ShaderCodeLibrary.h"
+#endif
 #include "HAL/IConsoleManager.h"
 #include "UObject/WeakObjectPtrTemplates.h"
 struct FOKForgeOpaqueUniform {const TCHAR* Name;int32 CB,Offset,Dim,Type,Rows;};
@@ -481,12 +485,28 @@ UMaterialInterface* OKLoadRuntimeSharedMaterialParent(const FString& Root,EKKRun
  }
  return nullptr;
 }
-void OKPreloadRuntimeSharedMaterialParents(const FString& Root){
+bool OKOpenRuntimeMaterialShaderLibrary(const FString& Library){
+#if WITH_EDITOR
+ return true;
+#else
+ static TMap<FString,bool> Opened;
+ if(const bool* Was=Opened.Find(Library))return *Was;
+ const bool bOpen=FShaderCodeLibrary::OpenLibrary(Library,FPaths::ProjectContentDir());
+ if(!bOpen)UE_LOG(LogTemp,Warning,TEXT("High model shader library %s not found; cooked parents may lack shaders"),*Library);
+ Opened.Add(Library,bOpen);
+ return bOpen;
+#endif
+}
+void OKPreloadRuntimeSharedMaterialParents(const FString& Root,const FString& Library){
  if(Root.IsEmpty())return;
  // OK_NO_MATERIAL_PRELOAD=1: the first card loads each parent itself again (to compare with the preload).
  static const bool bOff=FPlatformMisc::GetEnvironmentVariable(TEXT("OK_NO_MATERIAL_PRELOAD"))==TEXT("1");
  if(bOff)return;
  if(!UAssetManager::IsInitialized())return;
+ // A cooked parent takes its shaders from the library open when it is serialized: loaded before RuntimeMaterialBake
+ // is open, every parent fell back to the default material for the whole run and the cards drew black (the Studio
+ // package, 2026-11-17). No library, no preload: the first card then reports it.
+ if(!OKOpenRuntimeMaterialShaderLibrary(Library))return;
  // One request per root; the handles are kept for the process so the parents stay resident.
  static TMap<FString,TSharedPtr<FStreamableHandle>> Requested;
  if(Requested.Contains(Root))return;
