@@ -2,6 +2,7 @@
 #include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
 #include "HAL/IConsoleManager.h"
+#include "HAL/PlatformMemory.h"
 #include "HAL/PlatformProcess.h"
 #include "Misc/ConfigCacheIni.h"
 #include "KKCardReader.h"
@@ -104,29 +105,84 @@ namespace
 		return FVector(Fix360(PreLig.X - DeltaBeta), Fix360(PreLig.Y + DeltaYaw), 0.0);
 	}
 
+	/** The most workers the default ever asks for, however much memory the machine has: a fifth would put a 16 GB
+	 *  machine at about 15.8 GB (see the figures below), and the fourth already earns nothing on a small scene.
+	 *  A number given explicitly is taken as given. */
+	constexpr int32 ImportCardWorkerCap = 4;
+
 	/**
 	 * How many child processes convert the scene's character cards at once; 0: none, the characters convert one after
-	 * another in this process as they always did. -1 (the default): half the hardware threads, at most 8.
+	 * another in this process as they always did. -1 (the default): chosen from how much memory the machine has,
+	 * 2 on a 16 GB machine, up to `ImportCardWorkerCap` on a large one. A number given explicitly is used as it is.
 	 *
 	 * Why child processes: converting one original card holds `ORIGINAL_OPEN` (ok-extract's oklib.rs) for the whole
 	 * card, because what a card may read is a process-wide view (gamefs's fallback directories, the mounted pack, the
 	 * recording overlay). Two cards need two of those at once, so they cannot share a process: converting a five
 	 * character scene's cards with ParallelFor in this process took 11.7 s against 11.0 s one after another, all of it
-	 * waiting on that one lock (F-sceneload, 2026-11-17). The same five cards in five processes: 7.8 s against 12.3 s.
+	 * waiting on that one lock (F-sceneload, 2026-11-17). The same five cards in five processes: 7.8 s against 12.3 s,
+	 * and the scene's whole import 16.5 s against 8.0 s.
+	 *
+	 * Why so few of them: **memory**, not threads. Measured in the editor, two interleaved rounds each, peak working
+	 * set of the editor and its workers together (`-NullRHI`, so a windowed session is higher still):
+	 *
+	 *     workers        0          2          3          4
+	 *     5 characters   18.8 s     13.5 s     11.0 s     11.0 s
+	 *                    5.3 GB     7.5 GB     9.6 GB     11.7 GB
+	 *     21 characters  87.8 s     58.0 s     45.1 s     37.8 s
+	 *                    5.5 GB     7.6 GB     9.8 GB     11.6 GB
+	 *
+	 * Each worker is about 2.1 GB on top of the editor's own 5.3-5.5 GB, and that **does not grow with the scene**:
+	 * the workers take their cards from a queue, so a scene of twenty-one peaks no higher than one of five. On a
+	 * 16 GB machine four workers are already 11.6 GB of it, and five would be about 15.8 GB -- that is why eight,
+	 * which does import those five cards in 8.0 s, is not on offer. Nor does the fourth worker always earn its
+	 * 2.1 GB: with five cards it saves nothing at all over three (11.0 s either way, four workers for five cards),
+	 * while with twenty-one it still saves 16%. So the cap stays at four for the scenes that can use it, and the
+	 * default follows the machine's memory rather than its cores.
+	 *
+	 * The thread share each worker is given (so that the workers together stay inside the project's thread budget
+	 * instead of each taking all of it) is a small real trade, not free and not large. One conversion, three
+	 * interleaved rounds, medians: the whole budget 5.01 s of wall and 8.92 s of CPU, four threads 5.15 s and 8.27 s,
+	 * two threads 5.30 s and 7.92 s. So narrowing a worker from eight threads to two costs about 6% of its wall and
+	 * gives back about 11% of its CPU; at the two workers the default picks, each gets four and pays about 3%. Memory
+	 * does not move with it at all (2.34-2.38 GB whichever it is), which is why it does not change the choice above.
+	 * This path is mostly single threaded reading and a GPU bake, so it does not scale with width: a single
+	 * measurement once suggested the gap was 0.8 s, and interleaving three rounds put it at 0.29 s.
 	 *
 	 * This only makes the cards sooner; it changes nothing about what is made. A card whose child process did not
 	 * produce it is converted in this process afterwards, down the path it always took (including the search for a
 	 * mods folder beside the scene), so a failed worker costs time and never loses a character.
 	 */
 	static TAutoConsoleVariable<int32> CVarOkStudioImportCardWorkers(TEXT("ok.Studio.ImportCardWorkers"), -1,
-		TEXT("KStudio scene import: child processes converting character cards at once (0: convert them in this process, -1: half the hardware threads)."),
+		TEXT("KStudio scene import: child processes converting character cards at once. Each costs about 2.1 GB on top of the editor's own 5.3 GB, "
+			 "whatever the scene's size (measured: a 21 character scene imports in 87.8 s with none, 58.0 s and 7.6 GB with 2, 45.1 s and 9.8 GB with 3, "
+			 "37.8 s and 11.6 GB with 4), so -1 (the default) picks 2 on a 16 GB machine, 3 on a 24 GB one and 4 above 48 GB. "
+			 "0: convert them in this process, one after another. A number given explicitly is used as it is."),
 		ECVF_Default);
 
 	int32 ImportCardWorkers()
 	{
 		const int32 Configured = CVarOkStudioImportCardWorkers.GetValueOnAnyThread();
-		if (Configured >= 0) return Configured;
-		return FMath::Clamp(FPlatformMisc::NumberOfCoresIncludingHyperthreads() / 2, 1, 8);
+		// A number asked for explicitly is used as it is: whoever sets it knows their machine. Only said once, since a
+		// scene import is not the place to repeat it.
+		if (Configured > 0)
+		{
+			static bool bWarned = false;
+			if (Configured > ImportCardWorkerCap && !bWarned)
+			{
+				bWarned = true;
+				UE_LOG(LogTemp, Warning, TEXT("OK studio: ok.Studio.ImportCardWorkers %d is above the %d the default would ever pick; each worker peaks at about 2.3 GB"),
+					Configured, ImportCardWorkerCap);
+			}
+			return Configured;
+		}
+		if (Configured == 0) return 0;
+		// The default follows the machine's memory, because that is what bounds the workers (about 2.3 GB each): this
+		// code also runs on other people's machines, so a fixed 2 would waste a 32 GB one and a fixed 4 would put a
+		// 16 GB one at risk. The editor or the game already holds several gigabytes when the import starts.
+		const uint64 PhysicalGb = FPlatformMemory::GetConstants().TotalPhysical >> 30;
+		if (PhysicalGb >= 48) return ImportCardWorkerCap;
+		if (PhysicalGb >= 24) return 3;
+		return 2;
 	}
 
 	/** A character card the scene import has to convert: the KKS card the scene export wrote, and where its OK card goes. */
@@ -220,7 +276,9 @@ namespace
 			Run.Job = &Job;
 			FPlatformProcess::CreatePipe(Run.ReadPipe, Run.WritePipe);
 			// An empty installation argument means "whatever OK_GAME_ROOT says", which the child inherits. The last
-			// argument is the worker's thread share: the workers are on one machine, as `--oklib cards` splits it.
+			// argument is the worker's thread share (as `--oklib cards` splits it among its workers): it keeps the
+			// workers together inside the project's thread budget rather than each taking the whole of it, and costs
+			// that worker about 3% of its wall at the default two (the figures are above the cvar).
 			const FString Params = FString::Printf(TEXT("\"%s\" --oklib card-outfit \"%s\" \"%s\" \"%s\" %d %d"),
 				*GameRoot, *Library, *FPaths::ConvertRelativePathToFull(Job.Kks), *FPaths::ConvertRelativePathToFull(Job.Ok), Job.Outfit,
 				FMath::Max(2, 8 / FMath::Max(1, Workers)));
