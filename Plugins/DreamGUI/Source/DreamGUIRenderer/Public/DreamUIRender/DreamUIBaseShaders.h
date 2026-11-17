@@ -126,7 +126,7 @@ public:
 		SHADER_PARAMETER_TEXTURE(Texture2D, DreamUI_RenderLayerWidgetData)
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted()) { return false; } return true; }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { if (!DreamGUIGlobalShadersWanted(Parameters.Platform)) { return false; } return true; }
 };
 
 /**
@@ -183,7 +183,7 @@ public:
 	END_SHADER_PARAMETER_STRUCT()
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{ if (!DreamGUIGlobalShadersWanted()) { return false; }
+	{ if (!DreamGUIGlobalShadersWanted(Parameters.Platform)) { return false; }
 		FPermutationDomain PermutationVector(Parameters.PermutationId);
 		// Depth fade only means something when blending against depth.
 		if (PermutationVector.Get<FDepthFade>() && !PermutationVector.Get<FBlendDepth>())

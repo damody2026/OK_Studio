@@ -5245,3 +5245,14 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - **原因（已证实）**：`--sequence` 会先印 `ok-extract: prewarm <库> in 0.46s`，才印要的 `ok-card-open-bench: <卡>@0 1.82s`。`head -1` 拿的是前者，**所以量的是启动预热自己的耗时，不是开卡**。两者差一个量级：同一笔改动在预热上是 −83%，在开卡上只有 −2.3%（预热跑在 below-normal 优先权的自己的池上，本来就不太抢开卡的 CPU）。
 - **处置**：匹配钉住自己那行的前缀（`ok-card-open-bench: .*@[0-9]+ [0-9.]+s`）后重量两笔改动，并改掉已提交的 `43efd74c7` 在 `Docs/CARD_OPEN_PERF_20261117.md` 里写错的那个数字（它是预热耗时，不是 wall）。
 - **再试前检查**：从别人的 stdout 取数字，一律用**自己那行的前缀**定位，不要用「第一个／最后一个数字」这种靠位置的匹配 —— 被测程式多印一行就全盘错，而且不会有错误讯息。这是这一天第三个「数字是真的、代表的不是那件事」，前两个都在量测的程式侧，这个在量测的脚本侧。
+
+## 2026-11-18 新增 DreamGUI 的 global shader，所有沿用舊 base、只重編執行檔的 stage 一啟動就 Fatal（E 組 e-fork-2）
+
+- **變更**：574b01b7c 把 DreamGUI 外掛加進專案（讀卡器新介面），外掛的 DreamGUIRenderer 帶 25 個 global shader。
+- **症狀**：沿用 11-18 之前的 base、只重編執行檔的 stage 一啟動就 `Missing global shader FDreamUIBackdropCompositePS's permutation 0, Please make sure cooking was successful`（`ShaderCompiler.cpp:4973` Fatal），**跟有沒有開新讀卡器介面無關**。c-lowspec 的 lowspec1118c、c-conquest 的 conq1118a、c-street-city 的 c4w1118a 與協調者的 Studio 包都踩到。完整 cook 不會出錯：包裡 11-15 的 `RuntimeGlobalShaderPatch` 是 `_P` 修補包，優先權壓過新 cook 的 shader 庫。
+- **原因（已證實）**：引擎啟動時 `VerifyGlobalShaders` 逐一檢查每個已註冊、`ShouldCompilePermutation` 為真的 global shader 都在 cook 好的 global shader map 裡；只要模組連結進執行檔就算數，沒畫 DreamGUI 也一樣。新增 global shader 等於換了 base。
+- **處置**：
+  1. 短期：`Tools\lua\lua.exe Tools\rebuild_street_social_patch.lua` 重建 runtime patch（含新的 global shader map）。
+  2. 根本：4ca2d675a 的 `DreamGUIGlobalShadersWanted()`（`Plugins/DreamGUI/Source/DreamGUIRenderer/Public/DreamUIRender/DreamUIShaderGate.h`）：編輯器與 cook 一律編譯（新 base 照樣帶上），cook 好的遊戲只有 `-OKDreamReader`／`-DreamGUI` 時才列為必須；有旗標卻缺 shader 時印出要重建什麼的訊息再結束，不是引擎的裸 Fatal。
+- **驗證**：stage DGate1118a（舊 base BaseHFace1115，`-pakdir` 只放材質與音效 patch、不放新的 global shader patch）不加參數正常進讀卡器；同一組加 `-OKDreamReader` 照舊 Fatal（陽性對照）。
+- **再試前檢查**：加任何帶 global shader 的程式（外掛、`IMPLEMENT_GLOBAL_SHADER`、`.usf` 改簽名）前，先決定沒用到它的模式要不要列為必須（`ShouldCompilePermutation` 加條件）；提交前拿一個舊 base 的 stage、不掛新 patch 實際啟動一次。
