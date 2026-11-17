@@ -104,6 +104,19 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
   2. `unity/references.rs` 的 `inventory_signature` 在严格开卡时直接回传 `"ok card:<identity>"` 当来源
      epoch，注解写着「the card's own pack has its identity」—— 它**预设身分是每张卡一个**。身分改成按树
      之后这个前提就不再成立；目前靠次序关卡与 5 张场景卡的实测确认没有问题，但再动这一带的人要先看它。
+- **这项的收益和「子行程并行转卡」互相抵销**，定 worker 数之前要知道（实测 5 张场景卡）：
+
+  | | wall | CPU 合计 |
+  |---|---:|---:|
+  | `OK_CARDS_WORKERS=5`（被 clamp 成 4），计数器 | 7.6 s | 17.8 s |
+  | 同上，按树 | 7.2 s | 18.3 s |
+  | `OK_CARDS_WORKERS=2`，计数器 | 8.6 s | 13.1 s |
+  | `OK_CARDS_WORKERS=2`，**按树** | **7.8 s** | **11.8 s** |
+
+  一张卡一个 worker 时每个 worker 都是新程序、各自重付一次暖机，这项的收益归零（开关两边差 0.4 s，在噪声内）；
+  每个 worker 依序转 2–3 张时才有 −0.8 s wall／−1.3 s CPU。注意最后两列：**worker=2 加这项的 wall 和
+  4 个 worker 差不多，CPU 却少三分之一** —— 使用者的目标机是 16 GB，每个 worker 自己扛一份库与快取，
+  所以 worker 数不是愈多愈好。要两项的收益叠加，就让 worker 数小于卡数、每人依序转好几张。
 - 转卡的次序迴归关卡：`Tools\ok_convert_order_check.lua`（小绯雪／Denia，2026-10-28 那个 bug）。动到
   `remake_ok_card` 的 view 身分、`with_zipmods_and`，或 `--oklib cards` 的 worker 配置，都要先跑它。
 - `library_zip_memo` 里 `|| crate::okstrict::active().is_some()` 这道闸门：整合保住 F 组的 gap guard
