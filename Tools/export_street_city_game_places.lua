@@ -321,6 +321,24 @@ end
 -- Anchors of furniture taken off the source map (the karaoke's KTV_2, 11-15): dropped here and from city_anchors.json
 -- below (Tools/street_city_removed_anchors.lua, shared with Tools/build_street_city_places.lua)
 local REMOVED = dofile('Tools/street_city_removed_anchors.lua')
+-- Seats over no floor of their own: the S-row shops' third floor has a sofa and a chair planned over the stairwell
+-- (places-v1/seats-fit.json, fit 'nominal', never measured; z 1960 where that floor has a hole). The build's floor
+-- measurement (Tools/build_street_city_places.lua, 'at most one storey down') put their stand points on the stair's
+-- landing (z 1770) and on its flight (1849, 1865), the seats staying up at 2002 / 1897: 188 rows, 14 floors of 7 shops
+-- with no way up, girls sent to sit on a stair (the reach check's B1, S82 seen in the game 11-17). A row whose nominal
+-- seats-fit source stood 60 to 300 cm above where it stands now is dropped; a measured one is never touched.
+local VOID_SEATS = {}
+do local f = io.open('output/street-social-city-production/places-v1/seats-fit.json', 'rb')
+  if f then for _, r in ipairs(json.decode(f:read('a')).rows) do
+    if r.fit == 'nominal' then local k = ('%.0f,%.0f'):format(r.pos[1], r.pos[2]); VOID_SEATS[k] = VOID_SEATS[k] or {}; table.insert(VOID_SEATS[k], r.pos[3]) end end
+    f:close()
+  else problem('no places-v1/seats-fit.json: seats over the stairwells not dropped') end
+end
+local function void_seat(r)
+  local q = r.pos; if not (q and r.seat_pos) then return nil end
+  for _, z in ipairs(VOID_SEATS[('%.0f,%.0f'):format(q[1], q[2])] or {}) do
+    if z - q[3] > 60 and z - q[3] < 300 then return ('a nominal seat at z %.0f, its stand point pulled down to %.0f'):format(z, q[3]) end end
+end
 -- anchors of props moved on the source map after the install (Tools/street_city_moved_props.lua) move with them
 do local PROPS = dofile('Tools/street_city_moved_props.lua')
   for _, p in ipairs(places) do for _, an in ipairs(p.anchors or {}) do local q = PROPS.shift(p.id, an.name, an.pos)
@@ -328,7 +346,8 @@ do local PROPS = dofile('Tools/street_city_moved_props.lua')
 for _, p in ipairs(places) do
   if p.anchors then local kept = {}
     for _, an in ipairs(p.anchors) do
-      if REMOVED.gone(p.id, an.name) then print(('anchor: %s %s dropped, %s'):format(p.id, an.name, REMOVED.gone(p.id, an.name))) else kept[#kept + 1] = an end
+      local why = REMOVED.gone(p.id, an.name) or void_seat(an)
+      if why then print(('anchor: %s %s dropped, %s'):format(p.id, an.name, why)) else kept[#kept + 1] = an end
     end
     p.anchors = kept end
 end
@@ -587,10 +606,14 @@ do
       if r.pos and r.pos[1] >= box.min[1] and r.pos[1] <= box.max[1] and r.pos[2] >= box.min[2] and r.pos[2] <= box.max[2] then return true end
     end
   end
-  for _, r in ipairs(T.anchors) do if REMOVED.gone(r.place, r.name) or in_gone_room(r) then dropped = dropped + 1 else kept[#kept + 1] = r end end
+  local voids = 0
+  for _, r in ipairs(T.anchors) do
+    if REMOVED.gone(r.place, r.name) or in_gone_room(r) then dropped = dropped + 1
+    elseif void_seat(r) then voids = voids + 1 else kept[#kept + 1] = r end end
+  print(('city_anchors.json: %d seat rows over a stairwell dropped'):format(voids))
   T.anchors = kept
   table.sort(T.anchors, function(a, b) return a.id < b.id end)
-  if n > 0 or dropped > 0 or back > 0 or moved > 0 then local out = okj.encode(T); f = assert(io.open(path, 'wb')); f:write(out); f:close() end
+  if n > 0 or dropped > 0 or voids > 0 or back > 0 or moved > 0 then local out = okj.encode(T); f = assert(io.open(path, 'wb')); f:write(out); f:close() end
   print(('city_anchors.json: %d rows marked off now, %d rows of removed furniture dropped'):format(n, dropped))
 end
 do

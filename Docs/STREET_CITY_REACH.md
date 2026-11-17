@@ -40,33 +40,6 @@
 - shrine.charm (39956,37551,1198)（queue），擋住的是 LoverSpot_Shrine_LanternCap-150，1 格外走得到
 - supermarket.checkout (34300,50580,1200)（queue），擋住的是 ShopV1_S72_Refit，1 格外走得到
 
-## 樓層沒有入口：這層沒有門、電梯平台或樓梯錨點（24）
-
-- bridal 第 3 層（z 1770），2 個錨點
-- bridal 第 4 層（z 1870），1 個錨點
-- clinic_beauty 第 3 層（z 1770），2 個錨點
-- clinic_beauty 第 4 層（z 1870），1 個錨點
-- clothing 第 2 層（z 2040），32 個錨點
-- clothing_s30 第 3 層（z 1770），2 個錨點
-- clothing_s30 第 4 層（z 1870），1 個錨點
-- club_room 第 2 層（z 2020），6 個錨點
-- gym 第 2 層（z 4780），5 個錨點
-- hotel 第 3 層（z 1900），1 個錨點
-- hotel 第 4 層（z 2090），6 個錨點
-- hotel 第 6 層（z 2560），12 個錨點
-- hotel 第 9 層（z 3430），10 個錨點
-- karaoke 第 3 層（z 1770），2 個錨點
-- karaoke 第 4 層（z 1870），1 個錨點
-- livehouse 第 3 層（z 1770），2 個錨點
-- livehouse 第 4 層（z 1870），1 個錨點
-- lodge 第 1 層（z 1200），3 個錨點
-- manga_cafe 第 3 層（z 1770），2 個錨點
-- manga_cafe 第 4 層（z 1870），1 個錨點
-- salon 第 3 層（z 1770），2 個錨點
-- salon 第 4 層（z 1870），1 個錨點
-- school 第 2 層（z 1650），1 個錨點
-- school 第 3 層（z 2020），1 個錨點
-
 ## 錨點在封死的格子：附近可走，但連不到門或電梯／樓梯（16）
 
 - campus_sports.tennis_net (68380,124600,1203)，附近最大的區域 1522 格
@@ -85,4 +58,17 @@
 - campus_sports.volleyball_net6 (84420,122400,1202)，附近最大的區域 1542 格
 - campus_sports.volleyball_net7 (84180,131600,1202)，附近最大的區域 1550 格
 - campus_sports.volleyball_net8 (84420,131600,1202)，附近最大的區域 1550 格
+
+## 樓層沒有入口：這層沒有門、電梯平台或樓梯錨點（10）
+
+- clothing 第 2 層（z 2040），32 個錨點
+- club_room 第 2 層（z 2020），6 個錨點
+- gym 第 2 層（z 4780），5 個錨點
+- hotel 第 3 層（z 1900），1 個錨點
+- hotel 第 4 層（z 2090），6 個錨點
+- hotel 第 6 層（z 2560），12 個錨點
+- hotel 第 9 層（z 3430），10 個錨點
+- lodge 第 1 層（z 1200），3 個錨點
+- school 第 2 層（z 1650），1 個錨點
+- school 第 3 層（z 2020），1 個錨點
 
