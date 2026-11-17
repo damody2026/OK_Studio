@@ -1,4 +1,4 @@
-#include "OKSceneActor.h"
+﻿#include "OKSceneActor.h"
 #include "ProceduralMeshComponent.h"
 #include "Async/Async.h"
 #include "Async/ParallelFor.h"
@@ -519,14 +519,6 @@ static TAutoConsoleVariable<int32> CVarOkStudioBuildsPerFrame(TEXT("ok.Studio.Bu
 	TEXT("Objects built per Sync while a scene opens (0: the scene actor's own BuildsPerFrame, 24)."));
 static TAutoConsoleVariable<int32> CVarOkStudioBuildSliceMs(TEXT("ok.Studio.BuildSliceMs"), 250,
 	TEXT("Milliseconds one Sync may spend building objects before the rest wait for the next frame."));
-static TAutoConsoleVariable<int32> CVarOkStudioSkipUnchangedPlacement(TEXT("ok.Studio.SkipUnchangedPlacement"), 1,
-	TEXT("A Sync leaves an object where it is when its transform is already the one that Sync would set (0: set it every Sync, as before)."));
-
-bool AOKSceneActor::SkipUnchangedPlacement()
-{
-	return CVarOkStudioSkipUnchangedPlacement.GetValueOnGameThread() != 0;
-}
-
 int32 AOKSceneActor::ObjectBuildBudget()
 {
 	return FMath::Clamp(CVarOkStudioBuildsPerFrame.GetValueOnGameThread(), 0, 4096);
@@ -1607,38 +1599,20 @@ void AOKSceneActor::Sync()
 		}
 		const bool bShown = Document->IsShown(Object.Id);
 		LoadStats.SyncWorldMs += (FPlatformTime::Seconds() - WorldStart) * 1000.;
-		// Moving a component dirties its transform, its children's and its render state whether or not the transform
-		// changed, and a loading scene walks every object it has already built every frame (5867 items: 62 s in Sync
-		// of which 23 s in Build). An object already standing exactly where this Sync would put it is left alone.
-		// The comparison is against what the component actually holds, not against what this Sync wrote last time,
-		// because the frame's PlaceAttached and SolveConstraints move attached and constrained objects too: whoever
-		// moved it last, a skip means the value is already the one this line would write. Visibility is still set
-		// every Sync (SetVisibility walks the children whether or not the flag changed; whether that is worth
-		// skipping is what LoadStats.SyncPlaceMs is there to say). ok.Studio.SkipUnchangedPlacement=0: move them
-		// every Sync, as before.
+		// Writing the placement every Sync is not what a loading scene spends its time on: of the 63.4 s one 8806
+		// object scene spends in Sync, this is 2.0 s, and a switch that left an object alone when its transform was
+		// already the one to write skipped 19 992 of 1 231 243 placements and made the load no faster (88.0 s against
+		// 87.6 s without it, F-sceneload 2026-11-17). The 23.5 s above it, working out that transform, is the cost.
 		const double PlaceStart = FPlatformTime::Seconds();
-		const bool bSkipUnchanged = SkipUnchangedPlacement();
 		if (AKKPreviewActor* Preview = Item->Preview.Get())
 		{
-			const FTransform Want = Compose(Item->RenderCorrection, World);
-			if (!bSkipUnchanged || !Preview->GetActorTransform().Equals(Want, 0.))
-			{
-				++LoadStats.PlacementWrites;
-				Preview->SetActorTransform(Want);
-			}
-			else ++LoadStats.PlacementSkips;
+			Preview->SetActorTransform(Compose(Item->RenderCorrection, World));
 			Preview->SetActorHiddenInGame(!bShown);
 			if (USceneComponent* Root = Preview->GetRootComponent()) Root->SetVisibility(bShown, true);
 		}
 		if (USceneComponent* Component = Item->Component.Get())
 		{
-			const FTransform Want = Item->ComponentOffset * World;
-			if (!bSkipUnchanged || !Component->GetComponentTransform().Equals(Want, 0.))
-			{
-				++LoadStats.PlacementWrites;
-				Component->SetWorldTransform(Want);
-			}
-			else ++LoadStats.PlacementSkips;
+			Component->SetWorldTransform(Item->ComponentOffset * World);
 			// A camera item's capture keeps drawing while the item is hidden (Studio hides only renderers).
 			if (Item->RenderCameraKey == 0) Component->SetVisibility(bShown, true);
 		}

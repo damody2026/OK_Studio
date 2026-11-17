@@ -154,8 +154,6 @@ namespace
 				Row->SetNumberField(TEXT("sync_same_ms"), S.SyncSameMs);
 				Row->SetNumberField(TEXT("sync_world_ms"), S.SyncWorldMs);
 				Row->SetNumberField(TEXT("sync_place_ms"), S.SyncPlaceMs);
-				Row->SetNumberField(TEXT("placement_writes"), S.PlacementWrites);
-				Row->SetNumberField(TEXT("placement_skips"), S.PlacementSkips);
 				Row->SetNumberField(TEXT("characters"), S.Characters);
 				Row->SetNumberField(TEXT("items"), S.Items);
 				Row->SetNumberField(TEXT("others"), S.Others);
@@ -167,9 +165,9 @@ namespace
 					*FPaths::GetCleanFilename(Scenes[Scene]), Pass, ReadyMs, LoadCallMs, ReadyMs - LoadCallMs, Frames,
 					S.Characters, S.CharacterOpenMs, S.CharacterContinueMs, S.CharacterBuildMs, S.Items, S.ItemBuildMs,
 					S.ItemModelMs, S.ItemOpenMs, S.ItemOpenWorkerMs, S.ItemSpawnMs, S.ItemNodeWorldMs, S.ItemCamerasMs, S.MapContinueMs, S.StarvedSyncs, S.Syncs);
-				UE_LOG(LogTemp, Display, TEXT("OK studio scene load: %s pass=%d sync=%.0f ms of %.0f (wire=%.0f, outside Sync %.0f); walk: same=%.0f world=%.0f place=%.0f (moved %d, left alone %d)"),
+				UE_LOG(LogTemp, Display, TEXT("OK studio scene load: %s pass=%d sync=%.0f ms of %.0f (wire=%.0f, outside Sync %.0f); walk: same=%.0f world=%.0f place=%.0f"),
 					*FPaths::GetCleanFilename(Scenes[Scene]), Pass, S.SyncMs, ReadyMs, S.WireMs, ReadyMs - LoadCallMs - S.SyncMs,
-					S.SyncSameMs, S.SyncWorldMs, S.SyncPlaceMs, S.PlacementWrites, S.PlacementSkips);
+					S.SyncSameMs, S.SyncWorldMs, S.SyncPlaceMs);
 				UE_LOG(LogTemp, Display, TEXT("OK studio scene load: %s pass=%d peak memory %.1f GB"), *FPaths::GetCleanFilename(Scenes[Scene]), Pass, PeakUsedGb);
 				if (FPlatformMisc::GetEnvironmentVariable(TEXT("OK_SCENE_PROFILE_SHOT")) == TEXT("1"))
 				{
