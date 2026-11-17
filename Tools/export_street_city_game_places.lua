@@ -310,6 +310,23 @@ local SPOTS = { ['cafeteria table'] = { 70230, 42470, 1200 }, ['cafe seat'] = { 
   ['campus_sports landing'] = { 77360, 21320, 1200 }, ['campus_sports landing2'] = { 77360, 21320, 2120 },
   ['campus_sports landing3'] = { 77360, 21320, 3140 }, ['campus_sports landing4'] = { 77360, 21320, 4160 },
   ['campus_sports landing5'] = { 77360, 21320, 4780 } }
+-- The campus buildings' north restroom (one module in 13 buildings, Tools/street_city_restroom_doors.lua): its trash anchor
+-- (tx, ty) is in the north wall, on the line of the partition running south from it, so on 2F-5F every one stood in a
+-- blocked cell (52, the reach list's E, 11-18). 80 cm east and 40 cm south of it is the restroom's floor in all 52 (reach
+-- grid, the floor's own level). 1F and the dorms' washrooms (the same module) are left as they are.
+local RESTROOM_TRASH_Y = { campus_t1 = 56355, campus_t2 = 74355, campus_t4 = 48355, campus_ee = 65355, campus_ib = 74355,
+  campus_ma = 65355, campus_rb = 48355, campus_ad = 74055, campus_e1 = 50555, library = 66555, cafeteria = 49055,
+  campus_sports = 38955, civic = 63755 }
+-- Matched at the old spot only (the rules' rows are edited in place: once moved, a re-run leaves them).
+local DOOR_Z = {}; for _, p in ipairs(places) do DOOR_Z[p.id] = p.door[3] end
+local function restroom_trash(place, a)
+  local ty = RESTROOM_TRASH_Y[place or '']
+  if ty and a.pos and (a.name or ''):match('^trash') and math.abs(a.pos[2] - ty) < 5 and a.pos[3] > (DOOR_Z[place] or 1200) + 200 then
+    return { a.pos[1] + 80, ty - 40, a.pos[3] } end
+end
+for _, p in ipairs(places) do for _, an in ipairs(p.anchors or {}) do
+  local s = not SPOTS[p.id .. ' ' .. an.name] and restroom_trash(p.id, an)
+  if s then SPOTS[p.id .. ' ' .. an.name] = s end end end
 for _, p in ipairs(places) do
   for _, an in ipairs(p.anchors or {}) do
     local s = SPOTS[p.id .. ' ' .. an.name]
@@ -322,7 +339,7 @@ end
 -- The same spots for the rules' rows (city_anchors.json, below): the game's activities and c-conquest's navigation read the
 -- anchors from there, and until 11-16 the spots were only in city_places.json (nav1116d still started civic seat6 in the desk)
 local function spot_row(r)
-  local s = SPOTS[(r.place or '') .. ' ' .. (r.name or '')]
+  local s = SPOTS[(r.place or '') .. ' ' .. (r.name or '')] or restroom_trash(r.place, r)
   if not s or r.slots then return false end
   if r.pos and r.pos[1] == s[1] and r.pos[2] == s[2] and r.pos[3] == s[3] then return false end
   if r.seat_pos and math.sqrt((r.seat_pos[1] - s[1]) ^ 2 + (r.seat_pos[2] - s[2]) ^ 2) > 150 then r.seat_pos = nil end
