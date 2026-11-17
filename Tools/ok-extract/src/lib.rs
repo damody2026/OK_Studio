@@ -569,6 +569,38 @@ pub fn open_session(game_root: &Path, card_path: Option<&Path>, outfit: i32) -> 
 /// from a background thread, also while a card opens: it works in a pool of its own whose threads belong to no open
 /// (`oklib::mark_outside_opens`; they were handed the card being opened) and run below normal priority, so a card
 /// picked right after startup is not slowed by it. It mounts no card pack.
+/// Whether `prewarm` leaves out the scans that walk every zipmod of the mods tree (the catalogue, the GUID index,
+/// `strip_all_guids`, the Material Editor sections).
+///
+/// **A library session with no game installation behind it cannot need them.** Those scans exist for original cards
+/// and for listing mods; an OK card opens from its own pack and the library, and a strict open does not even ask the
+/// tree — `tree_answers::unanswered` answers `find_guids` with nothing and reports a gap instead. So in that session
+/// they read about 7 300 archives' manifests for nobody: measured 2026-11-18 on one OK card's open,
+/// `open_zip` 29 224 → 7 336 calls and the first card 1.09 → 0.45 s (single runs, busy machine).
+///
+/// A plain game installation (no library, no card pack) keeps them: that is what the prewarm was written for —
+/// reading those manifests took about 11 s at the start of every process. A library session that *does* have an
+/// installation behind it (a dev machine whose reader has `Root=`) keeps them too, because original cards can come
+/// from that tree.
+///
+/// Skipping a prewarm can only move **when** a cost is paid, never what an open produces: whoever needs the index
+/// builds it (`mods::find_guids_uncached`, the `*_shared` memos). OK_PREWARM_ALL_MODS=1: prewarm them anyway
+/// (to compare with).
+///
+/// The decision is read off **the root this prewarm was given**, not off the session's state: a base library has
+/// `oklib.json` and no `abdata`, a game installation is the other way round, and the reader passes exactly one of
+/// them (`ok_prewarm("")` is the configured base library — what the street scene and the gallery's library mode
+/// pass; the gallery passes the game root when it has one). Reading it off the argument has no ordering hazard,
+/// whereas asking whether an installation is registered depends on when the fallback was set.
+///
+/// **Not exercised locally for an installation**: this machine has no game installed (`D:\KoikatuSunshine` is gone,
+/// 2026-11-18), so only the base-library side was measured. The installation side is the `false` branch — the
+/// behaviour that was there before — and a game root is never a base library.
+pub(crate) fn prewarm_skips_the_tree(game_root: &Path) -> bool {
+    if std::env::var_os("OK_PREWARM_ALL_MODS").is_some() { return false; }
+    game_root.join("oklib.json").is_file() && !game_root.join("abdata").is_dir()
+}
+
 pub fn prewarm(game_root: &Path) -> Result<(), String> {
     let t = Instant::now();
     crate::oklib::ensure_library(game_root)?;
@@ -578,12 +610,27 @@ pub fn prewarm(game_root: &Path) -> Result<(), String> {
         .num_threads(cpu_threads().max(2)).thread_name(|i| format!("OKPrewarm{i}"))
         .start_handler(|_| { crate::oklib::mark_outside_opens(); below_normal_priority(); }).build().ok());
     let work = || rayon::scope(|scope| {
-        scope.spawn(|_| { let vanilla = load_characustom_dir(&game_root.join("abdata/list/characustom")); let _ = configured_ramp_png(game_root, &vanilla); });
-        scope.spawn(|_| { let _ = crate::list::load_mods_catalog_shared(&mods_dir); });
-        scope.spawn(|_| { let _ = crate::sqlcache::guid_index_shared(&mods_dir); });
-        scope.spawn(|_| { let _ = crate::mods::strip_all_guids(&mods_dir); });
-        scope.spawn(|_| { let _ = crate::mods::uncensor_sources(game_root); });
-        scope.spawn(|_| { let _ = me_manifest_sections(game_root); });
+        scope.spawn(|_| {
+            let vanilla = load_characustom_dir(&game_root.join("abdata/list/characustom"));
+            // The ramp too: its mod's GUID goes through `find_guids`, and in a library session resolving even one
+            // GUID builds the whole tree's index (`find_guids_uncached` → `tree_guid_index`, about 7 300 archives).
+            // The open gets the ramp in 2–3 ms (its card answers the GUID question, `tree_answers`), so prewarming
+            // it there buys nothing and costs that walk.
+            if !prewarm_skips_the_tree(game_root) { let _ = configured_ramp_png(game_root, &vanilla); }
+        });
+        // These walk every zipmod of the tree, and `prewarm_skips_the_tree` leaves them out where nothing can need
+        // them. They are lazy (`*_shared`), so this only moves when a cost is paid, never what an open produces.
+        if !prewarm_skips_the_tree(game_root) {
+            scope.spawn(|_| { let _ = crate::list::load_mods_catalog_shared(&mods_dir); });
+            scope.spawn(|_| { let _ = crate::sqlcache::guid_index_shared(&mods_dir); });
+            scope.spawn(|_| { let _ = crate::mods::strip_all_guids(&mods_dir); });
+            scope.spawn(|_| { let _ = me_manifest_sections(game_root); });
+            // Every archive UncensorSelector manifest. An OK card resolves its body and genitals from its own pack
+            // and the library (`uncensor_body_for_card` takes 0.5 ms either way, measured), and a piece the library
+            // does not hold is a gap by contract, not a zipmod to go looking for.
+            scope.spawn(|_| { let _ = crate::mods::uncensor_sources(game_root); });
+        }
+
         scope.spawn(|_| { let _ = crate::h_playback::pairs(game_root); });
         // The base body and vanilla head bundles: the same for every card, and only the first card of a process pays
         // for them. OK_PROFILE on a fresh process: "load_base_bundle body" ~50 ms and "base: head textures" ~220 ms
