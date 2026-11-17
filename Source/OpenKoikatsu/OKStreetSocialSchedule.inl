@@ -75,10 +75,16 @@ FVector AOKStreetSocialScene::SpotFor(int32 I,const FString& PlaceId,const FStri
    // Upstairs: from that floor's stair landing, where she comes out (from the 1F door the grid never reaches a floor above).
    FVector Inside=PlaceInsideSpot(*P);const FVector* First=nullptr;
    if(const int32 Floor=OKStreetPlaceFloor(*P,RowSpot);Floor>1)if(const auto* Landing=OKStreetStairLanding(*P,Floor,RowSpot))Inside=Landing->Position;
+   // One budget for all the tries, not 25 ms each (GridRoute's cap inside a place): up to 19 tries, and a heroine's new
+   // place took the game thread 86 ms in one frame on a low-memory walk (department, 10731 cells tested, 2026-11-18).
+   // Out of time: the first clear one for now, asked again in 2 s; the cells tested stay known, so it gets further.
+   const double SearchUntil=FPlatformTime::Seconds()+.025;bool OutOfTime=false;
    for(const FVector& Try:Tries)if(Clear(Try)){if(!First)First=&Try;
+    if(FPlatformTime::Seconds()>SearchUntil){OutOfTime=true;break;}
     const TArray<FVector> Way=GridRoute(Inside,Try,0.f);if(Way.Num()<2||FVector::Dist2D(Way.Last(),Try)>60.f)continue;
     UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d at %s, %s is in furniture, %s instead"),I,*PlaceId,*RowSpot.ToCompactString(),*Try.ToCompactString());
     Chosen.Add(Key,Try);return Try;}
+   if(First&&OutOfTime){Retry.Add(Key,TPair<FVector,double>(*First,FPlatformTime::Seconds()+2.0));return *First;}
    if(First){Retry.Add(Key,TPair<FVector,double>(*First,FPlatformTime::Seconds()+30.0));UE_LOG(LogTemp,Display,TEXT("Street spot: actor %d at %s, %s is in furniture, %s instead (none walkable from the door; asked again in 30 s)"),I,*PlaceId,*RowSpot.ToCompactString(),*First->ToCompactString());return *First;}}}
  return RowSpot;
 }
