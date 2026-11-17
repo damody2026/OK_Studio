@@ -19,6 +19,14 @@ local ok = require "ok"
 local path, proc = ok.path, ok.proc
 
 local ROOT = os.getenv("OK_UNREAL_SLOTS") or "C:/portable/OpenKoikatsu/Saved/UnrealSlots"
+-- Slot arbitration runs only from the C checkout's copy: E:/F: carry their own copies of this script, and an older copy
+-- does not take the claim lock or know the lending rules (2026-11-18: E/F claims stayed blocked by rules they lacked).
+local ARBITER = "C:/portable/OpenKoikatsu/Tools/unreal_slot.lua"
+local SELF = path.abs(arg[0] or "")
+if not os.getenv("OK_UNREAL_SLOTS") and SELF:lower() ~= ARBITER:lower() then
+  io.stderr:write("warning: slots are arbitrated by " .. ARBITER .. "; this copy (" .. SELF .. ") may be out of date. Run:\n"
+    .. "  C:\\portable\\OpenKoikatsu\\Tools\\lua\\lua.exe C:\\portable\\OpenKoikatsu\\Tools\\unreal_slot.lua " .. table.concat(arg, " ") .. "\n")
+end
 local SLOTS = 2
 -- claim also waits until this much commit is free; pass --need-gb 105 before opening the editor on UniversityCityWP.
 local DEFAULT_NEED_GB = 35

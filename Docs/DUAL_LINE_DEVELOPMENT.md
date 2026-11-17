@@ -67,6 +67,7 @@ E 那邊做好一段，就把 `duo` 合併進 `master`。
 7. **錯誤紀錄**：兩邊都往 `Docs/STREET_ERRORS.md` 後面加列。合併時兩邊的列都要保留，這種衝突直接把兩邊的內容都留下。
 8. **快取版本號**：C 和 E 共用 `%LOCALAPPDATA%\OpenKoikatsu\oklib-cache`。`SESSION_CACHE_REVISION` 升號前先看另一條線用到哪一號，取兩邊最大值再加一；同一號兩邊內容不同時，會互相讀到對方的快取。合併衝突時取較大的號再加一。
 9. **快取結構**：會寫進 `oklib::memo` 或 session 快取的 bincode 結構不能加減欄位，否則舊紀錄全部讀不出來。
+10. **Unreal slot 只認 C 檢出的腳本**：C／E／F 不論在哪個檢出工作，claim／release／yield 一律執行 `C:\portable\OpenKoikatsu\Tools\lua\lua.exe C:\portable\OpenKoikatsu\Tools\unreal_slot.lua …`。三個檢出各有一份 `unreal_slot.lua`，舊版不拿 claim 鎖、不懂獨占排隊時的借用規則，各跑各的就不是同一套仲裁（2026-11-18 E／F 的 claim 被舊規則擋住、空 slot 閒置）。從別的檢出執行時，腳本會在 stderr 印警告並給出 C 的指令。
 
 ## 四、Claude 的記憶
 
