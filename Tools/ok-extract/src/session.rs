@@ -8271,7 +8271,10 @@ mod jump_probe_tests {
     /// card itself from opening afterwards in the same process (tester 2026-11-16: alice outfit 0 then lacked
     /// `okLt override abdata/chara/hibari/hibari.unity3d`). OK_REMAKE_CARD overrides the card.
     #[test]
-    #[ignore="local OK card (StreetHeroines/alice.png) and base library"]
+    /// Set OK_BASE_LIBRARY to the base library, or `configured_library()` finds none, the first open
+    /// returns r=1 and this fails in 0.08 s at the `before` assert — which reads exactly like a
+    /// regression in the code under test (f-sceneload lost time to this on 2026-11-17).
+    #[ignore="local OK card (StreetHeroines/alice.png) and OK_BASE_LIBRARY=<base_v1>"]
     fn failed_remake_leaves_the_card_openable() {
         let card = std::env::var("OK_REMAKE_CARD").unwrap_or_else(|_|
             concat!(env!("CARGO_MANIFEST_DIR"), "/../../Content/CharacterCards/StreetHeroines/alice.png").to_owned());

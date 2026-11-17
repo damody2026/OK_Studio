@@ -148,6 +148,13 @@ OK 卡不读 mods 树，所以改动 1 对它几乎无效，它的收益来自�
 - `library_zip_memo` 里 `|| crate::okstrict::active().is_some()` 这道闸门：整合保住 F 组的 gap guard
   （`0dbce369f`）、两边验证都过之后，由我单独一步拿掉并重验（F 组的 repro
   `failed_remake_leaves_the_card_openable` 把关，我的 dump 不涵盖「开卡 → `ok_okcard_make` → 再开卡」）。
+  **基线已经跑好**：f-sceneload 在 F 树 `339a526b4` 上 **12.2 s PASS**（`before: r=0` → save 如预期失败
+  并列出缺的 `hibari.unity3d`／`klee.unity3d` → `after: r=0`），所以动闸门之后有对照。动之前先通知它，
+  由它同一轮跑——它的「worker 失败回本行程再转」正踩这条路径，我自己只验得到 memo 不存缺口期间的值。
+  **跑之前一定要设 `OK_BASE_LIBRARY=<base_v1>`**，否则第一个 open 回 `r=1`、0.08 秒就在 `before` 那个
+  assert 挂掉，**看起来完全像回归其实是环境没设**（`configured_library()` 读那个变数）；这句也补进了
+  那条 `#[ignore]` 的字串与注解。另外 `0dbce369f` 虽是 F 树的提交，**但不是 f-sceneload 那一轮做的**
+  （11:42，F 树另一个 session），所以它保不保得住要问协调者，不能向 f-sceneload 要保证。
 
 ## 五、执行绪预算
 
