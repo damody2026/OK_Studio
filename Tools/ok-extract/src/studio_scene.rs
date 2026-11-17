@@ -1225,6 +1225,10 @@ mod tests {
         assert_eq!(super::base64(b"foo"), "Zm9v");
         assert_eq!(super::base64(b"foobar"), "Zm9vYmFy");
         assert_eq!(super::base64(&[0xff, 0xee]), "/+4=");
+        for bytes in [&b""[..], b"f", b"fo", b"foo", b"foob", b"fooba", b"foobar", &[0xff, 0xee, 0x00, 0x7f]] {
+            assert_eq!(super::unbase64(&super::base64(bytes)).as_deref(), Some(bytes));
+        }
+        assert_eq!(super::unbase64("Zm9v!"), None);
     }
     #[test]
     fn versions_compare_like_dotnet() {
@@ -1386,8 +1390,65 @@ pub fn export(scene_path: &std::path::Path, out_dir: &std::path::Path) -> Result
     if let Some(linked) = scene_chara_light_linked_to_camera(&bytes) { json["chara_light_linked_to_camera"] = linked; }
     if let Some(light_settings) = scene_light_settings(&bytes) { json["light_settings"] = light_settings; }
     crate::studio_scene_plugins::export_scene_plugins(&bytes, &scene, &char_card_bytes, out_dir, &mut json);
+    texture_edits_to_files(&mut json, out_dir, &mut errors);
     json["card_errors"] = errors.into();
     Ok(json)
+}
+
+/// Material Editor texture edits leave the JSON as files beside the cards (`file`, in place of the base64 `text`), each
+/// distinct texture once. A scene's textures can be most of it: one of 395 objects had 200 texture edits, 360 MB of
+/// base64 for 270 MB of distinct PNGs, and the importer spent seconds parsing that out of the JSON again (another scene:
+/// 142 MB of base64 for 15.5 MB of distinct PNGs). OK_SCENE_TEXTURES_INLINE=1 keeps them inline (the old JSON).
+fn texture_edits_to_files(json: &mut serde_json::Value, out_dir: &std::path::Path, errors: &mut Vec<String>) {
+    use sha2::Digest;
+    if std::env::var_os("OK_SCENE_TEXTURES_INLINE").is_some() { return; }
+    let Some(edits) = json.get_mut("material_edits").and_then(serde_json::Value::as_array_mut) else { return };
+    let mut written: std::collections::HashMap<u64, String> = std::collections::HashMap::new();
+    for edit in edits.iter_mut() {
+        let Some(obj) = edit.as_object_mut() else { continue };
+        if obj.get("kind").and_then(serde_json::Value::as_str) != Some("texture") { continue; }
+        let Some(text) = obj.get("text").and_then(serde_json::Value::as_str) else { continue };
+        if text.is_empty() { continue; }
+        let key = { use std::hash::{Hash, Hasher}; let mut h = std::collections::hash_map::DefaultHasher::new(); text.hash(&mut h); h.finish() };
+        let file = match written.get(&key) {
+            Some(file) => file.clone(),
+            None => {
+                let Some(png) = unbase64(text) else { continue };
+                let digest = sha2::Sha256::digest(&png);
+                let name = format!("mat_{}.png", digest.iter().take(10).map(|b| format!("{b:02x}")).collect::<String>());
+                let path = out_dir.join(&name);
+                if let Err(e) = std::fs::write(&path, &png) { errors.push(format!("material texture {name}: {e}")); continue; }
+                let file = path.display().to_string();
+                written.insert(key, file.clone());
+                file
+            }
+        };
+        obj.remove("text");
+        obj.insert("file".into(), serde_json::Value::String(file));
+    }
+}
+
+/// Standard base64 back to bytes (what `base64` writes); None for anything else.
+fn unbase64(text: &str) -> Option<Vec<u8>> {
+    let mut table = [255u8; 256];
+    for (i, c) in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".iter().enumerate() { table[*c as usize] = i as u8; }
+    let s = text.trim_end_matches('=').as_bytes();
+    let mut out = Vec::with_capacity(s.len() * 3 / 4);
+    for c in s.chunks(4) {
+        let mut n = 0u32;
+        for (k, b) in c.iter().enumerate() {
+            let v = table[*b as usize];
+            if v == 255 { return None; }
+            n |= u32::from(v) << (18 - 6 * k);
+        }
+        match c.len() {
+            4 => out.extend_from_slice(&[(n >> 16) as u8, (n >> 8) as u8, n as u8]),
+            3 => out.extend_from_slice(&[(n >> 16) as u8, (n >> 8) as u8]),
+            2 => out.push((n >> 16) as u8),
+            _ => return None,
+        }
+    }
+    Some(out)
 }
 
 pub(crate) fn classify_light_csv_row(name: &str, prefab: &str) -> Option<&'static str> {

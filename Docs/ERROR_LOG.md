@@ -5229,3 +5229,11 @@ PNG 往返只占 12%（math 939 ms / decode 91 / encode 43），拿不到原估�
 - 修正（C `5ad889ded`）：第一台把自己的暫存檔 rename 成 Saved/CharacterMCP/owner.lock（MoveFileW 不覆蓋，兩台不可能都成功），其餘用 instances/<pid>；鎖的主人已不在就接管，正常結束時刪鎖。第一版把 GetApplicationName 的完整路徑拿去比對程式名，存活判斷永遠不成立、後到的刪掉對方的鎖，測試時抓到改成比對檔名。
 - 驗證：OpenKoikatsuEditor 與 OpenKoikatsu（Development, D:/PhysX/UE5.8）建置連結成功；只改 C++（OKCharacterMCP.cpp），沒動 Rust，所以沒跑 cargo check。兩台同時啟動各拿到自己的信箱、各自設值互不干擾、沒指定時 ambiguous_target 拒絕；強制結束鎖的主人後新開的接管共用目錄；正常關閉（ui_exec quit）後 owner.lock 消失，下一台直接拿到 Saved/CharacterMCP（2026-11-17 補測，兩次都是）。
 - 教訓：「先查再佔」在兩個行程同時啟動時一定有競態，佔用要用一個原子動作（不覆蓋的 rename、獨佔建立）；判斷行程是否還在時，先確認 API 回的是檔名還是完整路徑。
+
+## 2026-11-18 Git Bash 传带方括号的路径给 ok-extract，转卡「找不到路径」被当成产品 bug 去查（F 组 f-studio-ui）
+
+- **变更**：用 Git Bash 批次转 `[EveKaczmarek] Evelyn on Top` 场景拆出的 8 张卡，参数写成 `"$PWD/$c"`（POSIX 路径 `/f/OpenKoikatsu/...`）。
+- **症状**：8 张全部 0 秒失败，只有一行 `oklib: 系統找不到指定的路徑。 (os error 3)`；同一张卡复制到没有方括号的路径就转成。二分后确认只要路径含 `[`／`]` 就失败，空格没事。
+- **原因（已证实）**：是 MSYS 把 POSIX 路径转成 Windows 路径时，遇到方括号没转对，不是 `ok-extract`。同一张卡同一条命令改用 PowerShell、或在 Git Bash 里用 `cygpath -w` 给 Windows 路径并设 `MSYS2_ARG_CONV_EXCL='*'`，8 张全部转成。OK Studio 用 `CreateProc` 传 Windows 路径，不受影响。
+- **处置**：没有改任何程式码；批次脚本改给 Windows 路径重跑。
+- **再试前检查**：在 Git Bash 里传路径给 Windows 程式，档名可能含方括号（mod 作者名常这样写）时，一律 `cygpath -w` 加 `MSYS2_ARG_CONV_EXCL='*'`；看到「只在某些档名失败」先换 PowerShell 跑一次，排除壳层再去查程式。
