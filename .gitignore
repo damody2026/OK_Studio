@@ -195,3 +195,4 @@ deepseek.json
 
 # DreamGUI writes this symbol table for .dui authoring on every editor start (Docs/CARD_READER_DREAMGUI.md)
 /DUI/.dui-symbols.json
+/DUI/.dui-diagnostics.json
