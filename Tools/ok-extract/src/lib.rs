@@ -1213,7 +1213,7 @@ pub fn export_session_posed_objs(game_root: &Path, card_path: &Path, outfit: i32
 }
 
 /// Threads one process's pools may use: OK_THREADS (set by `--oklib cards` for its workers, which share the machine),
-/// else the hardware threads.
+/// else RAYON_NUM_THREADS, else the hardware threads; never more than MAX_THREADS.
 /// This thread below normal priority (background work beside the opens a user waits for).
 fn below_normal_priority() {
     #[cfg(windows)]
@@ -1228,12 +1228,21 @@ fn below_normal_priority() {
 /// The most threads an ok tool may use (the user's machine-wide rule, 2026-11-03: ok-extract once filled every core).
 pub const MAX_THREADS: usize = 8;
 pub fn cpu_threads() -> usize {
-    std::env::var("OK_THREADS").ok().and_then(|v| v.parse().ok()).filter(|&n: &usize| n > 0)
+    let asked = |name: &str| std::env::var(name).ok().and_then(|v| v.parse().ok()).filter(|&n: &usize| n > 0);
+    // RAYON_NUM_THREADS too: it is what the project's own instructions tell a caller to set, and rayon reads it only
+    // for a pool built without a thread count, which `limit_threads` is not.
+    asked("OK_THREADS").or_else(|| asked("RAYON_NUM_THREADS"))
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| n.get())).min(MAX_THREADS)
 }
-/// rayon's global pool (every bare par_iter) at MAX_THREADS; once, at the entry points. Already built: left as it is.
+/// rayon's global pool (every bare par_iter) at `cpu_threads()`; once, at the entry points. Already built: left as it is.
+///
+/// Not MAX_THREADS: `--oklib cards` runs its workers as processes of their own and gives each one its share of the
+/// machine in OK_THREADS, but a count passed here overrides what rayon would read from the environment, so every
+/// worker's bare `par_iter` used to get the full 8 whatever its share was (8 workers = 64 threads, past the rule this
+/// constant is here to keep). With no OK_THREADS/RAYON_NUM_THREADS this is the hardware threads clamped to
+/// MAX_THREADS, which is what it was before, so a single process is unchanged.
 pub fn limit_threads() {
-    let _ = rayon::ThreadPoolBuilder::new().num_threads(MAX_THREADS).build_global();
+    let _ = rayon::ThreadPoolBuilder::new().num_threads(cpu_threads()).build_global();
 }
 
 /// `f` with these garment states requested for the opens it makes (tools: ok-card-open-bench).
